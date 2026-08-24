@@ -1015,45 +1015,6 @@
 {"query": "\"to be or not to be\"", "tags": ["phrase", "phrase:num_tokens_>3"]}
 {"query": "to be or not to be", "tags": ["union", "union:num_tokens_>3"]}
 {"query": "a search engine is an information retrieval software system designed to help find information stored on one or more computer systems", "tags": ["union", "union:num_tokens_>3"]}
-{"query": "+python -snake -monty", "tags": ["negated", "global", "negated:num_tokens_3"]}
-{"query": "+python -snake", "tags": ["negated", "global", "negated:num_tokens_2"]}
-{"query": "+jaguar -car -football", "tags": ["negated", "global", "negated:num_tokens_3"]}
-{"query": "+jaguar -car", "tags": ["negated", "global", "negated:num_tokens_2"]}
-{"query": "+mercury -planet -element", "tags": ["negated", "global", "negated:num_tokens_3"]}
-{"query": "+mercury -planet", "tags": ["negated", "global", "negated:num_tokens_2"]}
-{"query": "+java -coffee -island", "tags": ["negated", "global", "negated:num_tokens_3"]}
-{"query": "+java -coffee", "tags": ["negated", "global", "negated:num_tokens_2"]}
-{"query": "+saturn -planet -car", "tags": ["negated", "global", "negated:num_tokens_3"]}
-{"query": "+mustang -car -horse", "tags": ["negated", "global", "negated:num_tokens_3"]}
-{"query": "+amazon -river -rainforest", "tags": ["negated", "global", "negated:num_tokens_3"]}
-{"query": "+apple -fruit -tree", "tags": ["negated", "global", "negated:num_tokens_3"]}
-{"query": "+delta -airlines -river", "tags": ["negated", "global", "negated:num_tokens_3"]}
-{"query": "+jordan -country -basketball", "tags": ["negated", "global", "negated:num_tokens_3"]}
-{"query": "+orion -constellation -spacecraft", "tags": ["negated", "global", "negated:num_tokens_3"]}
-{"query": "+bass -fish -guitar", "tags": ["negated", "global", "negated:num_tokens_3"]}
-{"query": "+eclipse -lunar -solar", "tags": ["negated", "global", "negated:num_tokens_3"]}
-{"query": "+springfield -illinois -missouri", "tags": ["negated", "global", "negated:num_tokens_3"]}
-{"query": "+puma -cat -shoes", "tags": ["negated", "global", "negated:num_tokens_3"]}
-{"query": "+climate +policy", "tags": ["intersection", "global", "intersection:num_tokens_2"]}
-{"query": "+data +privacy", "tags": ["intersection", "global", "intersection:num_tokens_2"]}
-{"query": "+global +markets", "tags": ["intersection", "global", "intersection:num_tokens_2"]}
-{"query": "+public +transit", "tags": ["intersection", "global", "intersection:num_tokens_2"]}
-{"query": "+consumer +rights", "tags": ["intersection", "global", "intersection:num_tokens_2"]}
-{"query": "+financial +reporting +standards", "tags": ["intersection", "global", "intersection:num_tokens_3"]}
-{"query": "+mental +health +resources", "tags": ["intersection", "global", "intersection:num_tokens_3"]}
-{"query": "+water +quality +report", "tags": ["intersection", "global", "intersection:num_tokens_3"]}
-{"query": "+housing +market +trends", "tags": ["intersection", "global", "intersection:num_tokens_3"]}
-{"query": "+electric +grid +stability", "tags": ["intersection", "global", "intersection:num_tokens_3"]}
-{"query": "+disaster +relief +funds", "tags": ["intersection", "global", "intersection:num_tokens_3"]}
-{"query": "+insurance +claim +process", "tags": ["intersection", "global", "intersection:num_tokens_3"]}
-{"query": "+credit +card +rewards", "tags": ["intersection", "global", "intersection:num_tokens_3"]}
-{"query": "+data +center +cooling", "tags": ["intersection", "global", "intersection:num_tokens_3"]}
-{"query": "+remote +learning +tools", "tags": ["intersection", "global", "intersection:num_tokens_3"]}
-{"query": "+open +source +software +licenses", "tags": ["intersection", "global", "intersection:num_tokens_>3"]}
-{"query": "+health +care +cost +trends", "tags": ["intersection", "global", "intersection:num_tokens_>3"]}
-{"query": "+renewable +energy +policy +goals", "tags": ["intersection", "global", "intersection:num_tokens_>3"]}
-{"query": "+airport +security +screening +rules", "tags": ["intersection", "global", "intersection:num_tokens_>3"]}
-{"query": "+climate +change +impact +report", "tags": ["intersection", "global", "intersection:num_tokens_>3"]}
 {"query": "+climate policy", "tags": ["intersection_union", "global", "intersection_union:num_tokens_2"]}
 {"query": "remote +work", "tags": ["intersection_union", "global", "intersection_union:num_tokens_2"]}
 {"query": "+data privacy", "tags": ["intersection_union", "global", "intersection_union:num_tokens_2"]}
@@ -1094,3 +1055,403 @@
 {"query": "local +election ballot measures", "tags": ["intersection_union", "global", "intersection_union:num_tokens_>3"]}
 {"query": "+climate change impact report", "tags": ["intersection_union", "global", "intersection_union:num_tokens_>3"]}
 {"query": "customer +service phone number", "tags": ["intersection_union", "global", "intersection_union:num_tokens_>3"]}
+{"query": "+python -snake -monty", "tags": ["negated", "global", "negated:num_tokens_3"]}
+{"query": "+python -snake", "tags": ["negated", "global", "negated:num_tokens_2"]}
+{"query": "+jaguar -car -football", "tags": ["negated", "global", "negated:num_tokens_3"]}
+{"query": "+jaguar -car", "tags": ["negated", "global", "negated:num_tokens_2"]}
+{"query": "+mercury -planet -element", "tags": ["negated", "global", "negated:num_tokens_3"]}
+{"query": "+mercury -planet", "tags": ["negated", "global", "negated:num_tokens_2"]}
+{"query": "+java -coffee -island", "tags": ["negated", "global", "negated:num_tokens_3"]}
+{"query": "+java -coffee", "tags": ["negated", "global", "negated:num_tokens_2"]}
+{"query": "+saturn -planet -car", "tags": ["negated", "global", "negated:num_tokens_3"]}
+{"query": "+mustang -car -horse", "tags": ["negated", "global", "negated:num_tokens_3"]}
+{"query": "+amazon -river -rainforest", "tags": ["negated", "global", "negated:num_tokens_3"]}
+{"query": "+apple -fruit -tree", "tags": ["negated", "global", "negated:num_tokens_3"]}
+{"query": "+delta -airlines -river", "tags": ["negated", "global", "negated:num_tokens_3"]}
+{"query": "+jordan -country -basketball", "tags": ["negated", "global", "negated:num_tokens_3"]}
+{"query": "+orion -constellation -spacecraft", "tags": ["negated", "global", "negated:num_tokens_3"]}
+{"query": "+bass -fish -guitar", "tags": ["negated", "global", "negated:num_tokens_3"]}
+{"query": "+eclipse -lunar -solar", "tags": ["negated", "global", "negated:num_tokens_3"]}
+{"query": "+springfield -illinois -missouri", "tags": ["negated", "global", "negated:num_tokens_3"]}
+{"query": "+puma -cat -shoes", "tags": ["negated", "global", "negated:num_tokens_3"]}
+{"query": "(the world state)@2", "tags": ["minmatch", "minmatch:num_tokens_3"]}
+{"query": "(the world state history)@3", "tags": ["minmatch", "minmatch:num_tokens_>3"]}
+{"query": "(world state history)@2", "tags": ["minmatch", "minmatch:num_tokens_3"]}
+{"query": "(world state history president)@3", "tags": ["minmatch", "minmatch:num_tokens_>3"]}
+{"query": "(state history president)@2", "tags": ["minmatch", "minmatch:num_tokens_3"]}
+{"query": "(state history president river)@3", "tags": ["minmatch", "minmatch:num_tokens_>3"]}
+{"query": "(history president river)@2", "tags": ["minmatch", "minmatch:num_tokens_3"]}
+{"query": "(history president river population)@3", "tags": ["minmatch", "minmatch:num_tokens_>3"]}
+{"query": "(president river population)@2", "tags": ["minmatch", "minmatch:num_tokens_3"]}
+{"query": "(president river population university)@3", "tags": ["minmatch", "minmatch:num_tokens_>3"]}
+{"query": "(river population university)@2", "tags": ["minmatch", "minmatch:num_tokens_3"]}
+{"query": "(river population university germany)@3", "tags": ["minmatch", "minmatch:num_tokens_>3"]}
+{"query": "(population university germany)@2", "tags": ["minmatch", "minmatch:num_tokens_3"]}
+{"query": "(population university germany album)@3", "tags": ["minmatch", "minmatch:num_tokens_>3"]}
+{"query": "(university germany album)@2", "tags": ["minmatch", "minmatch:num_tokens_3"]}
+{"query": "(university germany album military)@3", "tags": ["minmatch", "minmatch:num_tokens_>3"]}
+{"query": "(germany album military)@2", "tags": ["minmatch", "minmatch:num_tokens_3"]}
+{"query": "(germany album military railway)@3", "tags": ["minmatch", "minmatch:num_tokens_>3"]}
+{"query": "(album military railway)@2", "tags": ["minmatch", "minmatch:num_tokens_3"]}
+{"query": "(album military railway football)@3", "tags": ["minmatch", "minmatch:num_tokens_>3"]}
+{"query": "(the world \"griffith observatory\")@2", "tags": ["minmatch", "minmatch:mixed"]}
+{"query": "(\"griffith observatory\" \"bowel obstruction\" the)@2", "tags": ["minmatch", "minmatch:mixed"]}
+{"query": "(world state \"bowel obstruction\")@2", "tags": ["minmatch", "minmatch:mixed"]}
+{"query": "(\"bowel obstruction\" \"vicenza italy\" world)@2", "tags": ["minmatch", "minmatch:mixed"]}
+{"query": "(state history \"vicenza italy\")@2", "tags": ["minmatch", "minmatch:mixed"]}
+{"query": "(\"vicenza italy\" \"digital scanning\" state)@2", "tags": ["minmatch", "minmatch:mixed"]}
+{"query": "(history president \"digital scanning\")@2", "tags": ["minmatch", "minmatch:mixed"]}
+{"query": "(\"digital scanning\" \"borders books\" history)@2", "tags": ["minmatch", "minmatch:mixed"]}
+{"query": "(president river \"borders books\")@2", "tags": ["minmatch", "minmatch:mixed"]}
+{"query": "(\"borders books\" \"american funds\" president)@2", "tags": ["minmatch", "minmatch:mixed"]}
+{"query": "(river population \"american funds\")@2", "tags": ["minmatch", "minmatch:mixed"]}
+{"query": "(\"american funds\" \"scottsdale az\" river)@2", "tags": ["minmatch", "minmatch:mixed"]}
+{"query": "(population university \"scottsdale az\")@2", "tags": ["minmatch", "minmatch:mixed"]}
+{"query": "(\"scottsdale az\" \"freelance work\" population)@2", "tags": ["minmatch", "minmatch:mixed"]}
+{"query": "(university germany \"freelance work\")@2", "tags": ["minmatch", "minmatch:mixed"]}
+{"query": "(\"freelance work\" \"color combinations\" university)@2", "tags": ["minmatch", "minmatch:mixed"]}
+{"query": "\"griffith 1-1 observatory\"", "tags": ["interval_phrase", "interval_phrase:num_tokens_2"]}
+{"query": "\"griffith 1-3 observatory\"", "tags": ["interval_phrase", "interval_phrase:num_tokens_2"]}
+{"query": "\"griffith observatory\"~1", "tags": ["slop_phrase", "slop_phrase:num_tokens_2"]}
+{"query": "\"griffith observatory\"~3", "tags": ["slop_phrase", "slop_phrase:num_tokens_2"]}
+{"query": "\"bowel 1-1 obstruction\"", "tags": ["interval_phrase", "interval_phrase:num_tokens_2"]}
+{"query": "\"bowel 1-3 obstruction\"", "tags": ["interval_phrase", "interval_phrase:num_tokens_2"]}
+{"query": "\"bowel obstruction\"~1", "tags": ["slop_phrase", "slop_phrase:num_tokens_2"]}
+{"query": "\"bowel obstruction\"~3", "tags": ["slop_phrase", "slop_phrase:num_tokens_2"]}
+{"query": "\"vicenza 1-1 italy\"", "tags": ["interval_phrase", "interval_phrase:num_tokens_2"]}
+{"query": "\"vicenza 1-3 italy\"", "tags": ["interval_phrase", "interval_phrase:num_tokens_2"]}
+{"query": "\"vicenza italy\"~1", "tags": ["slop_phrase", "slop_phrase:num_tokens_2"]}
+{"query": "\"vicenza italy\"~3", "tags": ["slop_phrase", "slop_phrase:num_tokens_2"]}
+{"query": "\"digital 1-1 scanning\"", "tags": ["interval_phrase", "interval_phrase:num_tokens_2"]}
+{"query": "\"digital 1-3 scanning\"", "tags": ["interval_phrase", "interval_phrase:num_tokens_2"]}
+{"query": "\"digital scanning\"~1", "tags": ["slop_phrase", "slop_phrase:num_tokens_2"]}
+{"query": "\"digital scanning\"~3", "tags": ["slop_phrase", "slop_phrase:num_tokens_2"]}
+{"query": "\"borders 1-1 books\"", "tags": ["interval_phrase", "interval_phrase:num_tokens_2"]}
+{"query": "\"borders 1-3 books\"", "tags": ["interval_phrase", "interval_phrase:num_tokens_2"]}
+{"query": "\"borders books\"~1", "tags": ["slop_phrase", "slop_phrase:num_tokens_2"]}
+{"query": "\"borders books\"~3", "tags": ["slop_phrase", "slop_phrase:num_tokens_2"]}
+{"query": "\"american 1-1 funds\"", "tags": ["interval_phrase", "interval_phrase:num_tokens_2"]}
+{"query": "\"american 1-3 funds\"", "tags": ["interval_phrase", "interval_phrase:num_tokens_2"]}
+{"query": "\"american funds\"~1", "tags": ["slop_phrase", "slop_phrase:num_tokens_2"]}
+{"query": "\"american funds\"~3", "tags": ["slop_phrase", "slop_phrase:num_tokens_2"]}
+{"query": "\"scottsdale 1-1 az\"", "tags": ["interval_phrase", "interval_phrase:num_tokens_2"]}
+{"query": "\"scottsdale 1-3 az\"", "tags": ["interval_phrase", "interval_phrase:num_tokens_2"]}
+{"query": "\"scottsdale az\"~1", "tags": ["slop_phrase", "slop_phrase:num_tokens_2"]}
+{"query": "\"scottsdale az\"~3", "tags": ["slop_phrase", "slop_phrase:num_tokens_2"]}
+{"query": "\"freelance 1-1 work\"", "tags": ["interval_phrase", "interval_phrase:num_tokens_2"]}
+{"query": "\"freelance 1-3 work\"", "tags": ["interval_phrase", "interval_phrase:num_tokens_2"]}
+{"query": "\"freelance work\"~1", "tags": ["slop_phrase", "slop_phrase:num_tokens_2"]}
+{"query": "\"freelance work\"~3", "tags": ["slop_phrase", "slop_phrase:num_tokens_2"]}
+{"query": "\"color 1-1 combinations\"", "tags": ["interval_phrase", "interval_phrase:num_tokens_2"]}
+{"query": "\"color 1-3 combinations\"", "tags": ["interval_phrase", "interval_phrase:num_tokens_2"]}
+{"query": "\"color combinations\"~1", "tags": ["slop_phrase", "slop_phrase:num_tokens_2"]}
+{"query": "\"color combinations\"~3", "tags": ["slop_phrase", "slop_phrase:num_tokens_2"]}
+{"query": "\"italian 1-1 translation\"", "tags": ["interval_phrase", "interval_phrase:num_tokens_2"]}
+{"query": "\"italian 1-3 translation\"", "tags": ["interval_phrase", "interval_phrase:num_tokens_2"]}
+{"query": "\"italian translation\"~1", "tags": ["slop_phrase", "slop_phrase:num_tokens_2"]}
+{"query": "\"italian translation\"~3", "tags": ["slop_phrase", "slop_phrase:num_tokens_2"]}
+{"query": "\"milwaukee 1-1 newspaper\"", "tags": ["interval_phrase", "interval_phrase:num_tokens_2"]}
+{"query": "\"milwaukee 1-3 newspaper\"", "tags": ["interval_phrase", "interval_phrase:num_tokens_2"]}
+{"query": "\"milwaukee newspaper\"~1", "tags": ["slop_phrase", "slop_phrase:num_tokens_2"]}
+{"query": "\"milwaukee newspaper\"~3", "tags": ["slop_phrase", "slop_phrase:num_tokens_2"]}
+{"query": "\"omaha 1-1 symphony\"", "tags": ["interval_phrase", "interval_phrase:num_tokens_2"]}
+{"query": "\"omaha 1-3 symphony\"", "tags": ["interval_phrase", "interval_phrase:num_tokens_2"]}
+{"query": "\"omaha symphony\"~1", "tags": ["slop_phrase", "slop_phrase:num_tokens_2"]}
+{"query": "\"omaha symphony\"~3", "tags": ["slop_phrase", "slop_phrase:num_tokens_2"]}
+{"query": "\"body 1-1 painting\"", "tags": ["interval_phrase", "interval_phrase:num_tokens_2"]}
+{"query": "\"body 1-3 painting\"", "tags": ["interval_phrase", "interval_phrase:num_tokens_2"]}
+{"query": "\"body painting\"~1", "tags": ["slop_phrase", "slop_phrase:num_tokens_2"]}
+{"query": "\"body painting\"~3", "tags": ["slop_phrase", "slop_phrase:num_tokens_2"]}
+{"query": "\"stone 1-1 mountain\"", "tags": ["interval_phrase", "interval_phrase:num_tokens_2"]}
+{"query": "\"stone 1-3 mountain\"", "tags": ["interval_phrase", "interval_phrase:num_tokens_2"]}
+{"query": "\"stone mountain\"~1", "tags": ["slop_phrase", "slop_phrase:num_tokens_2"]}
+{"query": "\"stone mountain\"~3", "tags": ["slop_phrase", "slop_phrase:num_tokens_2"]}
+{"query": "\"plus 1-2 size 1-3 clothing\"", "tags": ["interval_phrase", "interval_phrase:num_tokens_3"]}
+{"query": "\"plus size clothing\"~2", "tags": ["slop_phrase", "slop_phrase:num_tokens_3"]}
+{"query": "\"wisconsin 1-2 attorney 1-3 general\"", "tags": ["interval_phrase", "interval_phrase:num_tokens_3"]}
+{"query": "\"wisconsin attorney general\"~2", "tags": ["slop_phrase", "slop_phrase:num_tokens_3"]}
+{"query": "\"the 1-2 english 1-3 restoration\"", "tags": ["interval_phrase", "interval_phrase:num_tokens_3"]}
+{"query": "\"the english restoration\"~2", "tags": ["slop_phrase", "slop_phrase:num_tokens_3"]}
+{"query": "\"french 1-2 culinary 1-3 institute\"", "tags": ["interval_phrase", "interval_phrase:num_tokens_3"]}
+{"query": "\"french culinary institute\"~2", "tags": ["slop_phrase", "slop_phrase:num_tokens_3"]}
+{"query": "\"robert 1-2 green 1-3 ingersoll\"", "tags": ["interval_phrase", "interval_phrase:num_tokens_3"]}
+{"query": "\"robert green ingersoll\"~2", "tags": ["slop_phrase", "slop_phrase:num_tokens_3"]}
+{"query": "\"who 1-2 dares 1-3 wins\"", "tags": ["interval_phrase", "interval_phrase:num_tokens_3"]}
+{"query": "\"who dares wins\"~2", "tags": ["slop_phrase", "slop_phrase:num_tokens_3"]}
+{"query": "\"ford 1-2 modeling 1-3 agency\"", "tags": ["interval_phrase", "interval_phrase:num_tokens_3"]}
+{"query": "\"ford modeling agency\"~2", "tags": ["slop_phrase", "slop_phrase:num_tokens_3"]}
+{"query": "\"texas 1-2 state 1-3 legislature\"", "tags": ["interval_phrase", "interval_phrase:num_tokens_3"]}
+{"query": "\"texas state legislature\"~2", "tags": ["slop_phrase", "slop_phrase:num_tokens_3"]}
+{"query": "\"georgia 1-2 public 1-3 broadcasting\"", "tags": ["interval_phrase", "interval_phrase:num_tokens_3"]}
+{"query": "\"georgia public broadcasting\"~2", "tags": ["slop_phrase", "slop_phrase:num_tokens_3"]}
+{"query": "\"texas 1-2 death 1-3 row\"", "tags": ["interval_phrase", "interval_phrase:num_tokens_3"]}
+{"query": "\"texas death row\"~2", "tags": ["slop_phrase", "slop_phrase:num_tokens_3"]}
+{"query": "\"griffith observatory\" the", "tags": ["bool_or", "bool_or:mixed"]}
+{"query": "\"griffith observatory\" \"bowel obstruction\" the", "tags": ["bool_or", "bool_or:mixed"]}
+{"query": "+\"griffith observatory\" +the", "tags": ["bool_and", "bool_and:mixed"]}
+{"query": "+\"griffith observatory\" +the +world", "tags": ["bool_and", "bool_and:mixed"]}
+{"query": "+the -\"griffith observatory\"", "tags": ["bool_not", "bool_not:mixed"]}
+{"query": "+\"griffith observatory\" -california", "tags": ["bool_not", "bool_not:mixed"]}
+{"query": "the^2 world", "tags": ["bool_boost", "bool_boost:terms"]}
+{"query": "+\"griffith observatory\" the^3", "tags": ["bool_boost", "bool_boost:mixed"]}
+{"query": "the~1", "tags": ["fuzzy", "fuzzy:num_tokens_1"]}
+{"query": "+the~1 +\"griffith observatory\"", "tags": ["fuzzy", "fuzzy:mixed"]}
+{"query": "\"bowel obstruction\" world", "tags": ["bool_or", "bool_or:mixed"]}
+{"query": "\"bowel obstruction\" \"vicenza italy\" world", "tags": ["bool_or", "bool_or:mixed"]}
+{"query": "+\"bowel obstruction\" +world", "tags": ["bool_and", "bool_and:mixed"]}
+{"query": "+\"bowel obstruction\" +world +state", "tags": ["bool_and", "bool_and:mixed"]}
+{"query": "+world -\"bowel obstruction\"", "tags": ["bool_not", "bool_not:mixed"]}
+{"query": "+\"bowel obstruction\" -world", "tags": ["bool_not", "bool_not:mixed"]}
+{"query": "world^2 state", "tags": ["bool_boost", "bool_boost:terms"]}
+{"query": "+\"bowel obstruction\" world^3", "tags": ["bool_boost", "bool_boost:mixed"]}
+{"query": "world~1", "tags": ["fuzzy", "fuzzy:num_tokens_1"]}
+{"query": "+world~1 +\"bowel obstruction\"", "tags": ["fuzzy", "fuzzy:mixed"]}
+{"query": "\"vicenza italy\" state", "tags": ["bool_or", "bool_or:mixed"]}
+{"query": "\"vicenza italy\" \"digital scanning\" state", "tags": ["bool_or", "bool_or:mixed"]}
+{"query": "+\"vicenza italy\" +state", "tags": ["bool_and", "bool_and:mixed"]}
+{"query": "+\"vicenza italy\" +state +history", "tags": ["bool_and", "bool_and:mixed"]}
+{"query": "+state -\"vicenza italy\"", "tags": ["bool_not", "bool_not:mixed"]}
+{"query": "+\"vicenza italy\" -state", "tags": ["bool_not", "bool_not:mixed"]}
+{"query": "state^2 history", "tags": ["bool_boost", "bool_boost:terms"]}
+{"query": "+\"vicenza italy\" state^3", "tags": ["bool_boost", "bool_boost:mixed"]}
+{"query": "state~1", "tags": ["fuzzy", "fuzzy:num_tokens_1"]}
+{"query": "+state~1 +\"vicenza italy\"", "tags": ["fuzzy", "fuzzy:mixed"]}
+{"query": "\"digital scanning\" history", "tags": ["bool_or", "bool_or:mixed"]}
+{"query": "\"digital scanning\" \"borders books\" history", "tags": ["bool_or", "bool_or:mixed"]}
+{"query": "+\"digital scanning\" +history", "tags": ["bool_and", "bool_and:mixed"]}
+{"query": "+\"digital scanning\" +history +album", "tags": ["bool_and", "bool_and:mixed"]}
+{"query": "+history -\"digital scanning\"", "tags": ["bool_not", "bool_not:mixed"]}
+{"query": "+\"digital scanning\" -history", "tags": ["bool_not", "bool_not:mixed"]}
+{"query": "history^2 president", "tags": ["bool_boost", "bool_boost:terms"]}
+{"query": "+\"digital scanning\" history^3", "tags": ["bool_boost", "bool_boost:mixed"]}
+{"query": "history~1", "tags": ["fuzzy", "fuzzy:num_tokens_1"]}
+{"query": "+history~1 +\"digital scanning\"", "tags": ["fuzzy", "fuzzy:mixed"]}
+{"query": "\"borders books\" president", "tags": ["bool_or", "bool_or:mixed"]}
+{"query": "\"borders books\" \"american funds\" president", "tags": ["bool_or", "bool_or:mixed"]}
+{"query": "+\"borders books\" +president", "tags": ["bool_and", "bool_and:mixed"]}
+{"query": "+\"borders books\" +president +australia", "tags": ["bool_and", "bool_and:mixed"]}
+{"query": "+president -\"borders books\"", "tags": ["bool_not", "bool_not:mixed"]}
+{"query": "+\"borders books\" -president", "tags": ["bool_not", "bool_not:mixed"]}
+{"query": "president^2 river", "tags": ["bool_boost", "bool_boost:terms"]}
+{"query": "+\"borders books\" president^3", "tags": ["bool_boost", "bool_boost:mixed"]}
+{"query": "president~1", "tags": ["fuzzy", "fuzzy:num_tokens_1"]}
+{"query": "+president~1 +\"borders books\"", "tags": ["fuzzy", "fuzzy:mixed"]}
+{"query": "\"american funds\" river", "tags": ["bool_or", "bool_or:mixed"]}
+{"query": "\"american funds\" \"scottsdale az\" river", "tags": ["bool_or", "bool_or:mixed"]}
+{"query": "+\"american funds\" +river", "tags": ["bool_and", "bool_and:mixed"]}
+{"query": "+\"american funds\" +river +population", "tags": ["bool_and", "bool_and:mixed"]}
+{"query": "+river -\"american funds\"", "tags": ["bool_not", "bool_not:mixed"]}
+{"query": "+\"american funds\" -river", "tags": ["bool_not", "bool_not:mixed"]}
+{"query": "river^2 population", "tags": ["bool_boost", "bool_boost:terms"]}
+{"query": "+\"american funds\" river^3", "tags": ["bool_boost", "bool_boost:mixed"]}
+{"query": "river~1", "tags": ["fuzzy", "fuzzy:num_tokens_1"]}
+{"query": "+river~1 +\"american funds\"", "tags": ["fuzzy", "fuzzy:mixed"]}
+{"query": "\"scottsdale az\" population", "tags": ["bool_or", "bool_or:mixed"]}
+{"query": "\"scottsdale az\" \"freelance work\" population", "tags": ["bool_or", "bool_or:mixed"]}
+{"query": "+\"scottsdale az\" +population", "tags": ["bool_and", "bool_and:mixed"]}
+{"query": "+\"scottsdale az\" +population +district", "tags": ["bool_and", "bool_and:mixed"]}
+{"query": "+population -\"scottsdale az\"", "tags": ["bool_not", "bool_not:mixed"]}
+{"query": "+\"scottsdale az\" -population", "tags": ["bool_not", "bool_not:mixed"]}
+{"query": "population^2 university", "tags": ["bool_boost", "bool_boost:terms"]}
+{"query": "+\"scottsdale az\" population^3", "tags": ["bool_boost", "bool_boost:mixed"]}
+{"query": "population~1", "tags": ["fuzzy", "fuzzy:num_tokens_1"]}
+{"query": "+population~1 +\"scottsdale az\"", "tags": ["fuzzy", "fuzzy:mixed"]}
+{"query": "\"freelance work\" university", "tags": ["bool_or", "bool_or:mixed"]}
+{"query": "\"freelance work\" \"color combinations\" university", "tags": ["bool_or", "bool_or:mixed"]}
+{"query": "+\"freelance work\" +university", "tags": ["bool_and", "bool_and:mixed"]}
+{"query": "+\"freelance work\" +university +germany", "tags": ["bool_and", "bool_and:mixed"]}
+{"query": "+university -\"freelance work\"", "tags": ["bool_not", "bool_not:mixed"]}
+{"query": "+\"freelance work\" -university", "tags": ["bool_not", "bool_not:mixed"]}
+{"query": "university^2 germany", "tags": ["bool_boost", "bool_boost:terms"]}
+{"query": "+\"freelance work\" university^3", "tags": ["bool_boost", "bool_boost:mixed"]}
+{"query": "university~1", "tags": ["fuzzy", "fuzzy:num_tokens_1"]}
+{"query": "+university~1 +\"freelance work\"", "tags": ["fuzzy", "fuzzy:mixed"]}
+{"query": "\"color combinations\" germany", "tags": ["bool_or", "bool_or:mixed"]}
+{"query": "\"color combinations\" \"italian translation\" germany", "tags": ["bool_or", "bool_or:mixed"]}
+{"query": "+\"color combinations\" +germany", "tags": ["bool_and", "bool_and:mixed"]}
+{"query": "+\"color combinations\" +germany +album", "tags": ["bool_and", "bool_and:mixed"]}
+{"query": "+germany -\"color combinations\"", "tags": ["bool_not", "bool_not:mixed"]}
+{"query": "+\"color combinations\" -germany", "tags": ["bool_not", "bool_not:mixed"]}
+{"query": "germany^2 album", "tags": ["bool_boost", "bool_boost:terms"]}
+{"query": "+\"color combinations\" germany^3", "tags": ["bool_boost", "bool_boost:mixed"]}
+{"query": "germany~1", "tags": ["fuzzy", "fuzzy:num_tokens_1"]}
+{"query": "+germany~1 +\"color combinations\"", "tags": ["fuzzy", "fuzzy:mixed"]}
+{"query": "\"italian translation\" album", "tags": ["bool_or", "bool_or:mixed"]}
+{"query": "\"italian translation\" \"milwaukee newspaper\" album", "tags": ["bool_or", "bool_or:mixed"]}
+{"query": "+\"italian translation\" +album", "tags": ["bool_and", "bool_and:mixed"]}
+{"query": "+\"italian translation\" +album +military", "tags": ["bool_and", "bool_and:mixed"]}
+{"query": "+album -\"italian translation\"", "tags": ["bool_not", "bool_not:mixed"]}
+{"query": "+\"italian translation\" -album", "tags": ["bool_not", "bool_not:mixed"]}
+{"query": "album^2 military", "tags": ["bool_boost", "bool_boost:terms"]}
+{"query": "+\"italian translation\" album^3", "tags": ["bool_boost", "bool_boost:mixed"]}
+{"query": "album~1", "tags": ["fuzzy", "fuzzy:num_tokens_1"]}
+{"query": "+album~1 +\"italian translation\"", "tags": ["fuzzy", "fuzzy:mixed"]}
+{"query": "fn:ngram(1.0 milwaukee newspaper)", "tags": ["ngram", "ngram:all"]}
+{"query": "fn:ngram(1.0 new york population)", "tags": ["ngram", "ngram:all"]}
+{"query": "fn:ngram(0.7 ford modeling agency population)", "tags": ["ngram", "ngram:partial"]}
+{"query": "fn:ngram(0.5 griffith bowel obstruction vicenza)", "tags": ["ngram", "ngram:partial"]}
+{"query": "fn:ngram(0.34 griffith bowel obstruction)", "tags": ["ngram", "ngram:any"]}
+{"query": "fn:ngram(1.0 italy digital)", "tags": ["ngram", "ngram:all"]}
+{"query": "fn:ngram(1.0 robert green ingersoll)", "tags": ["ngram", "ngram:all"]}
+{"query": "fn:ngram(0.7 who dares wins river)", "tags": ["ngram", "ngram:partial"]}
+{"query": "fn:ngram(0.5 italy digital scanning plus)", "tags": ["ngram", "ngram:partial"]}
+{"query": "fn:ngram(0.34 italy digital scanning)", "tags": ["ngram", "ngram:any"]}
+{"query": "fn:ngram(1.0 size clothing)", "tags": ["ngram", "ngram:all"]}
+{"query": "fn:ngram(1.0 people having sex)", "tags": ["ngram", "ngram:all"]}
+{"query": "fn:ngram(0.7 texas death row album)", "tags": ["ngram", "ngram:partial"]}
+{"query": "fn:ngram(0.5 size clothing borders books)", "tags": ["ngram", "ngram:partial"]}
+{"query": "fn:ngram(0.34 size clothing borders)", "tags": ["ngram", "ngram:any"]}
+{"query": "fn:ngram(1.0 american funds)", "tags": ["ngram", "ngram:all"]}
+{"query": "fn:ngram(1.0 texas death row)", "tags": ["ngram", "ngram:all"]}
+{"query": "fn:ngram(0.7 robert green ingersoll president)", "tags": ["ngram", "ngram:partial"]}
+{"query": "fn:ngram(0.5 american funds scottsdale wisconsin)", "tags": ["ngram", "ngram:partial"]}
+{"query": "fn:ngram(0.34 american funds scottsdale)", "tags": ["ngram", "ngram:any"]}
+{"query": "fn:ngram(1.0 attorney general)", "tags": ["ngram", "ngram:all"]}
+{"query": "fn:ngram(1.0 ford modeling agency)", "tags": ["ngram", "ngram:all"]}
+{"query": "fn:ngram(0.7 georgia public broadcasting germany)", "tags": ["ngram", "ngram:partial"]}
+{"query": "fn:ngram(0.5 attorney general english restoration)", "tags": ["ngram", "ngram:partial"]}
+{"query": "fn:ngram(0.34 attorney general english)", "tags": ["ngram", "ngram:any"]}
+{"query": "fn:ngram(1.0 freelance work)", "tags": ["ngram", "ngram:all"]}
+{"query": "fn:ngram(1.0 cured of cancer)", "tags": ["ngram", "ngram:all"]}
+{"query": "fn:ngram(0.7 hempstead new york bridge)", "tags": ["ngram", "ngram:partial"]}
+{"query": "fn:ngram(0.5 freelance work french culinary)", "tags": ["ngram", "ngram:partial"]}
+{"query": "fn:ngram(0.34 freelance work french)", "tags": ["ngram", "ngram:any"]}
+{"query": "fn:ngram(1.0 omaha symphony)", "tags": ["ngram", "ngram:all"]}
+{"query": "fn:ngram(1.0 georgia public broadcasting)", "tags": ["ngram", "ngram:all"]}
+{"query": "fn:ngram(0.7 cured of cancer television)", "tags": ["ngram", "ngram:partial"]}
+{"query": "fn:ngram(0.5 institute color combinations italian)", "tags": ["ngram", "ngram:partial"]}
+{"query": "fn:ngram(0.34 institute color combinations)", "tags": ["ngram", "ngram:any"]}
+{"query": "fn:ngram(1.0 catholic answers)", "tags": ["ngram", "ngram:all"]}
+{"query": "fn:ngram(1.0 the globe newspaper)", "tags": ["ngram", "ngram:all"]}
+{"query": "fn:ngram(0.7 helen of troy aircraft)", "tags": ["ngram", "ngram:partial"]}
+{"query": "fn:ngram(0.5 translation milwaukee newspaper robert)", "tags": ["ngram", "ngram:partial"]}
+{"query": "fn:ngram(0.34 translation milwaukee newspaper)", "tags": ["ngram", "ngram:any"]}
+{"query": "fn:ngram(1.0 green ingersoll)", "tags": ["ngram", "ngram:all"]}
+{"query": "fn:ngram(1.0 world bank president)", "tags": ["ngram", "ngram:all"]}
+{"query": "fn:ngram(0.7 trans siberian orchestra stadium)", "tags": ["ngram", "ngram:partial"]}
+{"query": "fn:ngram(0.5 green ingersoll omaha body)", "tags": ["ngram", "ngram:partial"]}
+{"query": "fn:ngram(0.34 green ingersoll omaha)", "tags": ["ngram", "ngram:any"]}
+{"query": "\"griffith obse*\"", "tags": ["variadic_phrase", "variadic_phrase:wide"]}
+{"query": "\"griffith obse*\"~2", "tags": ["variadic_phrase", "variadic_phrase:slop"]}
+{"query": "\"griffith 1-2 obse*\"", "tags": ["variadic_phrase", "variadic_phrase:gaps"]}
+{"query": "\"griffith observator*\"", "tags": ["variadic_phrase", "variadic_phrase:narrow"]}
+{"query": "\"bowel obst*\"", "tags": ["variadic_phrase", "variadic_phrase:wide"]}
+{"query": "\"bowel obst*\"~2", "tags": ["variadic_phrase", "variadic_phrase:slop"]}
+{"query": "\"bowel 1-2 obst*\"", "tags": ["variadic_phrase", "variadic_phrase:gaps"]}
+{"query": "\"bowel obstructio*\"", "tags": ["variadic_phrase", "variadic_phrase:narrow"]}
+{"query": "\"vicenza ital*\"", "tags": ["variadic_phrase", "variadic_phrase:narrow"]}
+{"query": "\"digital scan*\"", "tags": ["variadic_phrase", "variadic_phrase:wide"]}
+{"query": "\"digital scan*\"~2", "tags": ["variadic_phrase", "variadic_phrase:slop"]}
+{"query": "\"digital 1-2 scan*\"", "tags": ["variadic_phrase", "variadic_phrase:gaps"]}
+{"query": "\"digital scannin*\"", "tags": ["variadic_phrase", "variadic_phrase:narrow"]}
+{"query": "\"plus size clot*\"", "tags": ["variadic_phrase", "variadic_phrase:wide"]}
+{"query": "\"plus size clot*\"~2", "tags": ["variadic_phrase", "variadic_phrase:slop"]}
+{"query": "\"plus 1-2 clot*\"", "tags": ["variadic_phrase", "variadic_phrase:gaps"]}
+{"query": "\"plus size clothin*\"", "tags": ["variadic_phrase", "variadic_phrase:narrow"]}
+{"query": "\"borders book*\"", "tags": ["variadic_phrase", "variadic_phrase:narrow"]}
+{"query": "\"american fund*\"", "tags": ["variadic_phrase", "variadic_phrase:narrow"]}
+{"query": "\"wisconsin attorney gene*\"", "tags": ["variadic_phrase", "variadic_phrase:wide"]}
+{"query": "\"wisconsin attorney gene*\"~2", "tags": ["variadic_phrase", "variadic_phrase:slop"]}
+{"query": "\"wisconsin 1-2 gene*\"", "tags": ["variadic_phrase", "variadic_phrase:gaps"]}
+{"query": "\"wisconsin attorney genera*\"", "tags": ["variadic_phrase", "variadic_phrase:narrow"]}
+{"query": "\"the english rest*\"", "tags": ["variadic_phrase", "variadic_phrase:wide"]}
+{"query": "\"the english rest*\"~2", "tags": ["variadic_phrase", "variadic_phrase:slop"]}
+{"query": "\"the 1-2 rest*\"", "tags": ["variadic_phrase", "variadic_phrase:gaps"]}
+{"query": "\"the english restoratio*\"", "tags": ["variadic_phrase", "variadic_phrase:narrow"]}
+{"query": "\"freelance wor*\"", "tags": ["variadic_phrase", "variadic_phrase:narrow"]}
+{"query": "\"french culinary inst*\"", "tags": ["variadic_phrase", "variadic_phrase:wide"]}
+{"query": "\"french culinary inst*\"~2", "tags": ["variadic_phrase", "variadic_phrase:slop"]}
+{"query": "\"french 1-2 inst*\"", "tags": ["variadic_phrase", "variadic_phrase:gaps"]}
+{"query": "\"french culinary institut*\"", "tags": ["variadic_phrase", "variadic_phrase:narrow"]}
+{"query": "\"color comb*\"", "tags": ["variadic_phrase", "variadic_phrase:wide"]}
+{"query": "\"color comb*\"~2", "tags": ["variadic_phrase", "variadic_phrase:slop"]}
+{"query": "\"color 1-2 comb*\"", "tags": ["variadic_phrase", "variadic_phrase:gaps"]}
+{"query": "\"color combination*\"", "tags": ["variadic_phrase", "variadic_phrase:narrow"]}
+{"query": "\"italian tran*\"", "tags": ["variadic_phrase", "variadic_phrase:wide"]}
+{"query": "\"italian tran*\"~2", "tags": ["variadic_phrase", "variadic_phrase:slop"]}
+{"query": "\"italian 1-2 tran*\"", "tags": ["variadic_phrase", "variadic_phrase:gaps"]}
+{"query": "\"italian translatio*\"", "tags": ["variadic_phrase", "variadic_phrase:narrow"]}
+{"query": "\"milwaukee news*\"", "tags": ["variadic_phrase", "variadic_phrase:wide"]}
+{"query": "\"milwaukee news*\"~2", "tags": ["variadic_phrase", "variadic_phrase:slop"]}
+{"query": "\"milwaukee 1-2 news*\"", "tags": ["variadic_phrase", "variadic_phrase:gaps"]}
+{"query": "\"milwaukee newspape*\"", "tags": ["variadic_phrase", "variadic_phrase:narrow"]}
+{"query": "\"robert green inge*\"", "tags": ["variadic_phrase", "variadic_phrase:wide"]}
+{"query": "\"robert green inge*\"~2", "tags": ["variadic_phrase", "variadic_phrase:slop"]}
+{"query": "\"robert 1-2 inge*\"", "tags": ["variadic_phrase", "variadic_phrase:gaps"]}
+{"query": "\"robert green ingersol*\"", "tags": ["variadic_phrase", "variadic_phrase:narrow"]}
+{"query": "\"omaha symp*\"", "tags": ["variadic_phrase", "variadic_phrase:wide"]}
+{"query": "\"omaha symp*\"~2", "tags": ["variadic_phrase", "variadic_phrase:slop"]}
+{"query": "\"omaha 1-2 symp*\"", "tags": ["variadic_phrase", "variadic_phrase:gaps"]}
+{"query": "\"omaha symphon*\"", "tags": ["variadic_phrase", "variadic_phrase:narrow"]}
+{"query": "\"body pain*\"", "tags": ["variadic_phrase", "variadic_phrase:wide"]}
+{"query": "\"body pain*\"~2", "tags": ["variadic_phrase", "variadic_phrase:slop"]}
+{"query": "\"body 1-2 pain*\"", "tags": ["variadic_phrase", "variadic_phrase:gaps"]}
+{"query": "\"body paintin*\"", "tags": ["variadic_phrase", "variadic_phrase:narrow"]}
+{"query": "\"who dares win*\"", "tags": ["variadic_phrase", "variadic_phrase:narrow"]}
+{"query": "\"west palm beach flor*\"", "tags": ["variadic_phrase", "variadic_phrase:wide"]}
+{"query": "\"west palm beach flor*\"~2", "tags": ["variadic_phrase", "variadic_phrase:slop"]}
+{"query": "\"west 1-2 flor*\"", "tags": ["variadic_phrase", "variadic_phrase:gaps"]}
+{"query": "\"west palm beach florid*\"", "tags": ["variadic_phrase", "variadic_phrase:narrow"]}
+{"query": "\"stone moun*\"", "tags": ["variadic_phrase", "variadic_phrase:wide"]}
+{"query": "\"stone moun*\"~2", "tags": ["variadic_phrase", "variadic_phrase:slop"]}
+{"query": "\"stone 1-2 moun*\"", "tags": ["variadic_phrase", "variadic_phrase:gaps"]}
+{"query": "\"stone mountai*\"", "tags": ["variadic_phrase", "variadic_phrase:narrow"]}
+{"query": "\"san fran*\"", "tags": ["variadic_phrase", "variadic_phrase:wide"]}
+{"query": "\"san fran*\"~2", "tags": ["variadic_phrase", "variadic_phrase:slop"]}
+{"query": "\"san 1-2 fran*\"", "tags": ["variadic_phrase", "variadic_phrase:gaps"]}
+{"query": "\"san francisc*\"", "tags": ["variadic_phrase", "variadic_phrase:narrow"]}
+{"query": "\"ford modeling agenc*\"", "tags": ["variadic_phrase", "variadic_phrase:narrow"]}
+{"query": "\"glass work*\"", "tags": ["variadic_phrase", "variadic_phrase:narrow"]}
+{"query": "\"personal loa*\"", "tags": ["variadic_phrase", "variadic_phrase:narrow"]}
+{"query": "\"texas state legi*\"", "tags": ["variadic_phrase", "variadic_phrase:wide"]}
+{"query": "\"texas state legi*\"~2", "tags": ["variadic_phrase", "variadic_phrase:slop"]}
+{"query": "\"texas 1-2 legi*\"", "tags": ["variadic_phrase", "variadic_phrase:gaps"]}
+{"query": "\"texas state legislatur*\"", "tags": ["variadic_phrase", "variadic_phrase:narrow"]}
+{"query": "\"spiritual warf*\"", "tags": ["variadic_phrase", "variadic_phrase:wide"]}
+{"query": "\"spiritual warf*\"~2", "tags": ["variadic_phrase", "variadic_phrase:slop"]}
+{"query": "\"spiritual 1-2 warf*\"", "tags": ["variadic_phrase", "variadic_phrase:gaps"]}
+{"query": "\"spiritual warfar*\"", "tags": ["variadic_phrase", "variadic_phrase:narrow"]}
+{"query": "\"georgia public broa*\"", "tags": ["variadic_phrase", "variadic_phrase:wide"]}
+{"query": "\"georgia public broa*\"~2", "tags": ["variadic_phrase", "variadic_phrase:slop"]}
+{"query": "\"georgia 1-2 broa*\"", "tags": ["variadic_phrase", "variadic_phrase:gaps"]}
+{"query": "\"georgia public broadcastin*\"", "tags": ["variadic_phrase", "variadic_phrase:narrow"]}
+{"query": "\"catholic answ*\"", "tags": ["variadic_phrase", "variadic_phrase:wide"]}
+{"query": "\"catholic answ*\"~2", "tags": ["variadic_phrase", "variadic_phrase:slop"]}
+{"query": "\"catholic 1-2 answ*\"", "tags": ["variadic_phrase", "variadic_phrase:gaps"]}
+{"query": "\"catholic answer*\"", "tags": ["variadic_phrase", "variadic_phrase:narrow"]}
+{"query": "\"interest onl*\"", "tags": ["variadic_phrase", "variadic_phrase:narrow"]}
+{"query": "\"army rese*\"", "tags": ["variadic_phrase", "variadic_phrase:wide"]}
+{"query": "\"army rese*\"~2", "tags": ["variadic_phrase", "variadic_phrase:slop"]}
+{"query": "\"army 1-2 rese*\"", "tags": ["variadic_phrase", "variadic_phrase:gaps"]}
+{"query": "\"army reserv*\"", "tags": ["variadic_phrase", "variadic_phrase:narrow"]}
+{"query": "\"chicken coo*\"", "tags": ["variadic_phrase", "variadic_phrase:narrow"]}
+{"query": "\"new york popu*\"", "tags": ["variadic_phrase", "variadic_phrase:wide"]}
+{"query": "\"new york popu*\"~2", "tags": ["variadic_phrase", "variadic_phrase:slop"]}
+{"query": "\"new 1-2 popu*\"", "tags": ["variadic_phrase", "variadic_phrase:gaps"]}
+{"query": "\"new york populatio*\"", "tags": ["variadic_phrase", "variadic_phrase:narrow"]}
+{"query": "\"most improved playe*\"", "tags": ["variadic_phrase", "variadic_phrase:narrow"]}
+{"query": "\"ear ach*\"", "tags": ["variadic_phrase", "variadic_phrase:narrow"]}
+{"query": "\"mercury insu*\"", "tags": ["variadic_phrase", "variadic_phrase:wide"]}
+{"query": "\"mercury insu*\"~2", "tags": ["variadic_phrase", "variadic_phrase:slop"]}
+{"query": "\"mercury 1-2 insu*\"", "tags": ["variadic_phrase", "variadic_phrase:gaps"]}
+{"query": "\"mercury insuranc*\"", "tags": ["variadic_phrase", "variadic_phrase:narrow"]}
+{"query": "+climate +policy", "tags": ["intersection", "global", "intersection:num_tokens_2"]}
+{"query": "+data +privacy", "tags": ["intersection", "global", "intersection:num_tokens_2"]}
+{"query": "+global +markets", "tags": ["intersection", "global", "intersection:num_tokens_2"]}
+{"query": "+public +transit", "tags": ["intersection", "global", "intersection:num_tokens_2"]}
+{"query": "+consumer +rights", "tags": ["intersection", "global", "intersection:num_tokens_2"]}
+{"query": "+financial +reporting +standards", "tags": ["intersection", "global", "intersection:num_tokens_3"]}
+{"query": "+mental +health +resources", "tags": ["intersection", "global", "intersection:num_tokens_3"]}
+{"query": "+water +quality +report", "tags": ["intersection", "global", "intersection:num_tokens_3"]}
+{"query": "+housing +market +trends", "tags": ["intersection", "global", "intersection:num_tokens_3"]}
+{"query": "+electric +grid +stability", "tags": ["intersection", "global", "intersection:num_tokens_3"]}
+{"query": "+disaster +relief +funds", "tags": ["intersection", "global", "intersection:num_tokens_3"]}
+{"query": "+insurance +claim +process", "tags": ["intersection", "global", "intersection:num_tokens_3"]}
+{"query": "+credit +card +rewards", "tags": ["intersection", "global", "intersection:num_tokens_3"]}
+{"query": "+data +center +cooling", "tags": ["intersection", "global", "intersection:num_tokens_3"]}
+{"query": "+remote +learning +tools", "tags": ["intersection", "global", "intersection:num_tokens_3"]}
+{"query": "+open +source +software +licenses", "tags": ["intersection", "global", "intersection:num_tokens_>3"]}
+{"query": "+health +care +cost +trends", "tags": ["intersection", "global", "intersection:num_tokens_>3"]}
+{"query": "+renewable +energy +policy +goals", "tags": ["intersection", "global", "intersection:num_tokens_>3"]}
+{"query": "+airport +security +screening +rules", "tags": ["intersection", "global", "intersection:num_tokens_>3"]}
+{"query": "+climate +change +impact +report", "tags": ["intersection", "global", "intersection:num_tokens_>3"]}

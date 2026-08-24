@@ -40,6 +40,20 @@ class RegexpUtilsTest : public TestBase {
     return irs::ViewCast<irs::byte_type>(sv);
   }
 
+  // Only the sink reads nothing, and the sink accepts nothing -- see
+  // `EmplaceSinkArcs`.
+  static void AssertSink(const irs::automaton& a) {
+    size_t without_arcs = 0;
+    for (irs::automaton::StateId state = 0; state < a.NumStates(); ++state) {
+      if (a.NumArcs(state)) {
+        continue;
+      }
+      ++without_arcs;
+      EXPECT_FALSE(bool(a.Final(state))) << "state " << state << " accepts";
+    }
+    EXPECT_LE(without_arcs, 1) << "more than one state reads nothing";
+  }
+
   static irs::automaton FromPosix(std::string_view pattern) {
     return irs::FromRegexp(pattern, irs::kDefaultMaxDfaStates,
                            irs::RegexpSyntax::PosixEre);
@@ -2786,4 +2800,28 @@ TEST_F(RegexpUtilsTest, posix_ere_default_is_perl) {
     AssertProperties(a);
     EXPECT_TRUE(Accepts(a, "ababc"));
   }
+}
+
+// EmplaceSinkArcs
+
+TEST_F(RegexpUtilsTest, sink_arcs) {
+  // patterns whose accepting state has nothing left to read
+  for (const auto* pattern :
+       {"foo", "f.o", "f[o]o", "(foo)", "foo|bar", "fo+", "f.?o"}) {
+    auto a = irs::FromRegexp(ToBytesView(pattern));
+    AssertProperties(a);
+    AssertSink(a);
+  }
+}
+
+TEST_F(RegexpUtilsTest, sink_arcs_accept_unchanged) {
+  auto a = irs::FromRegexp(ToBytesView("f.o"));
+  AssertSink(a);
+
+  EXPECT_TRUE(Accepts(a, "foo"));
+  EXPECT_TRUE(Accepts(a, "fao"));
+  // what the sink swallowed is still no match
+  EXPECT_FALSE(Accepts(a, "fooo"));
+  EXPECT_FALSE(Accepts(a, "fo"));
+  EXPECT_FALSE(Accepts(a, "bar"));
 }

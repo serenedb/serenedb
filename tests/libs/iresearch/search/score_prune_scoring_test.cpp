@@ -48,6 +48,7 @@ std::ostream& operator<<(std::ostream& os, const std::pair<T1, T2>& p) {
 #include "iresearch/search/doc_collector.hpp"
 #include "iresearch/search/filter_optimizer.hpp"
 #include "iresearch/search/scorer.hpp"
+#include "iresearch/search/terms_filter.hpp"
 #include "iresearch/search/tfidf.hpp"
 #include "iresearch/types.hpp"
 #include "tests_shared.hpp"
@@ -418,6 +419,26 @@ TEST_P(ScorePruneScoringTestCase, TfidfPrunedVsBaseline) {
   ASSERT_NE(nullptr, filter);
 
   ComparePrunedVsBaseline(reader, *filter, scorer, 10);
+}
+
+// A query that takes the best of its terms rather than adding them up must be
+// scored that way whether or not it prunes. `MaxScoreIterator` bounds a sum,
+// so it cannot serve a `Max` query: with `index` and `search` in the same
+// documents, summing scores both differently and higher than taking the best.
+TEST_P(ScorePruneScoringTestCase, MaxMergePrunedVsBaseline) {
+  auto scorer = irs::BM25{irs::BM25::K(), irs::BM25::B()};
+  auto reader = CreateLargeIndex(scorer, 10);
+
+  irs::ByTerms filter;
+  *filter.mutable_field_id() = ColumnIdFor("content");
+  auto* options = filter.mutable_options();
+  options->merge_type = irs::ScoreMergeType::Max;
+  options->terms.emplace(
+    irs::ViewCast<irs::byte_type>(std::string_view{"index"}), irs::kNoBoost);
+  options->terms.emplace(
+    irs::ViewCast<irs::byte_type>(std::string_view{"search"}), irs::kNoBoost);
+
+  ComparePrunedVsBaseline(reader, filter, scorer, 10);
 }
 
 // BM25 single-term, 4200 docs (~840 matching "search" = ~6 blocks)

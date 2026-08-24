@@ -12204,474 +12204,6 @@
     ]
   },
   {
-    "query": "+python -snake -monty",
-    "count": 2281,
-    "top_100": 2281,
-    "result_type": "Hash",
-    "top_100_result": [
-      "351ec72a2bc0725674ffe14e69cc143e33796385fb9686e17feb7c0f49a0220c"
-    ],
-    "top_100_count_result": [
-      "351ec72a2bc0725674ffe14e69cc143e33796385fb9686e17feb7c0f49a0220c"
-    ]
-  },
-  {
-    "query": "+python -snake",
-    "count": 3151,
-    "top_100": 3151,
-    "result_type": "Hash",
-    "top_100_result": [
-      "0923316124cccc0a2bf105e5769b0e4bda672b4ea9312c6f5a2fd7695c2c0465"
-    ],
-    "top_100_count_result": [
-      "0923316124cccc0a2bf105e5769b0e4bda672b4ea9312c6f5a2fd7695c2c0465"
-    ]
-  },
-  {
-    "query": "+jaguar -car -football",
-    "count": 1672,
-    "top_100": 1672,
-    "result_type": "Hash",
-    "top_100_result": [
-      "7858faf8278314f497d0062b3ba7da629cd4f0f1c40a8ebb45ebd800985bac10"
-    ],
-    "top_100_count_result": [
-      "7858faf8278314f497d0062b3ba7da629cd4f0f1c40a8ebb45ebd800985bac10"
-    ]
-  },
-  {
-    "query": "+jaguar -car",
-    "count": 1791,
-    "top_100": 1791,
-    "result_type": "Hash",
-    "top_100_result": [
-      "3ee6f9f6c7a8d9e79184d47ec8a038905e02f0610a370a1d2023dd9cac4778a4"
-    ],
-    "top_100_count_result": [
-      "3ee6f9f6c7a8d9e79184d47ec8a038905e02f0610a370a1d2023dd9cac4778a4"
-    ]
-  },
-  {
-    "query": "+mercury -planet -element",
-    "count": 9895,
-    "top_100": 8970,
-    "result_type": "Hash",
-    "top_100_result": [
-      "0e7f84475af3fe6c0267d5b8b6fc8d5f970111a16d48502cbca08426cce2f362"
-    ],
-    "top_100_count_result": [
-      "0e7f84475af3fe6c0267d5b8b6fc8d5f970111a16d48502cbca08426cce2f362"
-    ]
-  },
-  {
-    "query": "+mercury -planet",
-    "count": 10327,
-    "top_100": 9369,
-    "result_type": "Hash",
-    "top_100_result": [
-      "740230b40e3b85b67cc2c7016a226c285cf64442b334d42cae6c4fc09b1ed6ea"
-    ],
-    "top_100_count_result": [
-      "740230b40e3b85b67cc2c7016a226c285cf64442b334d42cae6c4fc09b1ed6ea"
-    ]
-  },
-  {
-    "query": "+java -coffee -island",
-    "count": 9756,
-    "top_100": 8533,
-    "result_type": "Hash",
-    "top_100_result": [
-      "958097c90dcab2b6d61390ad1803e6f148a7030c6b84ea0f9f32109cfd71753b"
-    ],
-    "top_100_count_result": [
-      "958097c90dcab2b6d61390ad1803e6f148a7030c6b84ea0f9f32109cfd71753b"
-    ]
-  },
-  {
-    "query": "+java -coffee",
-    "count": 11530,
-    "top_100": 10010,
-    "result_type": "Hash",
-    "top_100_result": [
-      "f4faa9b0d10699fba2715be3d998e8f95ba513b00493768cc9ba9890a6e27391"
-    ],
-    "top_100_count_result": [
-      "f4faa9b0d10699fba2715be3d998e8f95ba513b00493768cc9ba9890a6e27391"
-    ]
-  },
-  {
-    "query": "+saturn -planet -car",
-    "count": 3045,
-    "top_100": 3045,
-    "result_type": "Hash",
-    "top_100_result": [
-      "e67a70ce3420df90b18a4ec291cbccb7118fde7914badf81a8b74844641d1313"
-    ],
-    "top_100_count_result": [
-      "e67a70ce3420df90b18a4ec291cbccb7118fde7914badf81a8b74844641d1313"
-    ]
-  },
-  {
-    "query": "+mustang -car -horse",
-    "count": 1492,
-    "top_100": 1492,
-    "result_type": "Hash",
-    "top_100_result": [
-      "0f2a6a6f92a0a218252b2322294a1e802d311980741a6e633fd5f475501b6c89"
-    ],
-    "top_100_count_result": [
-      "0f2a6a6f92a0a218252b2322294a1e802d311980741a6e633fd5f475501b6c89"
-    ]
-  },
-  {
-    "query": "+amazon -river -rainforest",
-    "count": 7740,
-    "top_100": 7358,
-    "result_type": "Hash",
-    "top_100_result": [
-      "d90e2acb4c67c3109acf1d2e6a5089d548c965cc5ddf153ffba326dc381359f8"
-    ],
-    "top_100_count_result": [
-      "d90e2acb4c67c3109acf1d2e6a5089d548c965cc5ddf153ffba326dc381359f8"
-    ]
-  },
-  {
-    "query": "+apple -fruit -tree",
-    "count": 12832,
-    "top_100": 11338,
-    "result_type": "Hash",
-    "top_100_result": [
-      "8ed6cc4fd10b3b1f0e97e9180bfad7940322f472f1bfa2c582e6647d068d7855"
-    ],
-    "top_100_count_result": [
-      "8ed6cc4fd10b3b1f0e97e9180bfad7940322f472f1bfa2c582e6647d068d7855"
-    ]
-  },
-  {
-    "query": "+delta -airlines -river",
-    "count": 11876,
-    "top_100": 9864,
-    "result_type": "Hash",
-    "top_100_result": [
-      "435dd9fbce603064c6f5f9b8d22757e85ed6e6427978b823b4af8d9a1c4ae899"
-    ],
-    "top_100_count_result": [
-      "435dd9fbce603064c6f5f9b8d22757e85ed6e6427978b823b4af8d9a1c4ae899"
-    ]
-  },
-  {
-    "query": "+jordan -country -basketball",
-    "count": 16503,
-    "top_100": 12814,
-    "result_type": "Hash",
-    "top_100_result": [
-      "556a08301a7ca8453491e391adad0e0673fb7e23737eb53d74c68a0e23c8e23a"
-    ],
-    "top_100_count_result": [
-      "556a08301a7ca8453491e391adad0e0673fb7e23737eb53d74c68a0e23c8e23a"
-    ]
-  },
-  {
-    "query": "+orion -constellation -spacecraft",
-    "count": 2357,
-    "top_100": 2357,
-    "result_type": "Hash",
-    "top_100_result": [
-      "dc8d6730cb64dafefcae53bd4ec79e2ba7f7d6679410fedef388108824f9c1e8"
-    ],
-    "top_100_count_result": [
-      "dc8d6730cb64dafefcae53bd4ec79e2ba7f7d6679410fedef388108824f9c1e8"
-    ]
-  },
-  {
-    "query": "+bass -fish -guitar",
-    "count": 17780,
-    "top_100": 12485,
-    "result_type": "Hash",
-    "top_100_result": [
-      "e388dac4ee054df8105bbd4a9d7666f441764f2239aab8e501489c41afe51aca"
-    ],
-    "top_100_count_result": [
-      "e388dac4ee054df8105bbd4a9d7666f441764f2239aab8e501489c41afe51aca"
-    ]
-  },
-  {
-    "query": "+eclipse -lunar -solar",
-    "count": 3733,
-    "top_100": 3733,
-    "result_type": "Hash",
-    "top_100_result": [
-      "b08f3cb11449a2ab3d968db661539cee9ee6941ca7de8be78da466ad86fe34fc"
-    ],
-    "top_100_count_result": [
-      "b08f3cb11449a2ab3d968db661539cee9ee6941ca7de8be78da466ad86fe34fc"
-    ]
-  },
-  {
-    "query": "+springfield -illinois -missouri",
-    "count": 6315,
-    "top_100": 6315,
-    "result_type": "Hash",
-    "top_100_result": [
-      "54a84efc24470ea8e9e890ae37ba79ecda5c160a1ebf55c02fe8ee2778b65c1d"
-    ],
-    "top_100_count_result": [
-      "54a84efc24470ea8e9e890ae37ba79ecda5c160a1ebf55c02fe8ee2778b65c1d"
-    ]
-  },
-  {
-    "query": "+puma -cat -shoes",
-    "count": 1339,
-    "top_100": 1339,
-    "result_type": "Hash",
-    "top_100_result": [
-      "d60b88ce4dd1008b2a9b968aad743450ba5e7d3f19dc50a539770c23bdc50b65"
-    ],
-    "top_100_count_result": [
-      "d60b88ce4dd1008b2a9b968aad743450ba5e7d3f19dc50a539770c23bdc50b65"
-    ]
-  },
-  {
-    "query": "+climate +policy",
-    "count": 4509,
-    "top_100": 4509,
-    "result_type": "Hash",
-    "top_100_result": [
-      "cf70de227d79ea127dfe511112bd74fc7ae1457172afe8b86af0b1520a14f86f"
-    ],
-    "top_100_count_result": [
-      "cf70de227d79ea127dfe511112bd74fc7ae1457172afe8b86af0b1520a14f86f"
-    ]
-  },
-  {
-    "query": "+data +privacy",
-    "count": 1783,
-    "top_100": 1783,
-    "result_type": "Hash",
-    "top_100_result": [
-      "c43db4051e6c1f29cb3f487fa078e30e4ea609640caa4919552fc60d54fa5f56"
-    ],
-    "top_100_count_result": [
-      "c43db4051e6c1f29cb3f487fa078e30e4ea609640caa4919552fc60d54fa5f56"
-    ]
-  },
-  {
-    "query": "+global +markets",
-    "count": 4718,
-    "top_100": 4718,
-    "result_type": "Hash",
-    "top_100_result": [
-      "8c2176c8004108723bd04d11a1bca17ddb983a1cb172c3888b89dd8426acee74"
-    ],
-    "top_100_count_result": [
-      "8c2176c8004108723bd04d11a1bca17ddb983a1cb172c3888b89dd8426acee74"
-    ]
-  },
-  {
-    "query": "+public +transit",
-    "count": 7598,
-    "top_100": 7598,
-    "result_type": "Hash",
-    "top_100_result": [
-      "6599d4ec925e28586c5ebc2df82f3b815d0c21ff99aabcc6adba10776b432586"
-    ],
-    "top_100_count_result": [
-      "6599d4ec925e28586c5ebc2df82f3b815d0c21ff99aabcc6adba10776b432586"
-    ]
-  },
-  {
-    "query": "+consumer +rights",
-    "count": 2605,
-    "top_100": 2605,
-    "result_type": "Hash",
-    "top_100_result": [
-      "40dd84abb15a75a6ac01628d1b6451428546349d7b2c5f13f788ced5979a6104"
-    ],
-    "top_100_count_result": [
-      "40dd84abb15a75a6ac01628d1b6451428546349d7b2c5f13f788ced5979a6104"
-    ]
-  },
-  {
-    "query": "+financial +reporting +standards",
-    "count": 933,
-    "top_100": 933,
-    "result_type": "Hash",
-    "top_100_result": [
-      "4baf7dd751c7d36aea5c8b05f2fe75115852155cc8ff39d4e38093cf19a12e57"
-    ],
-    "top_100_count_result": [
-      "4baf7dd751c7d36aea5c8b05f2fe75115852155cc8ff39d4e38093cf19a12e57"
-    ]
-  },
-  {
-    "query": "+mental +health +resources",
-    "count": 1204,
-    "top_100": 1204,
-    "result_type": "Hash",
-    "top_100_result": [
-      "c06b179bce122c69934c1b46444f5b0edcce6e49d2ed4961485bbd08a7f74c21"
-    ],
-    "top_100_count_result": [
-      "c06b179bce122c69934c1b46444f5b0edcce6e49d2ed4961485bbd08a7f74c21"
-    ]
-  },
-  {
-    "query": "+water +quality +report",
-    "count": 2340,
-    "top_100": 2340,
-    "result_type": "Hash",
-    "top_100_result": [
-      "6455ad889116ea70a780492230aa375d62957cb3e7749b4f29e04947a0d64748"
-    ],
-    "top_100_count_result": [
-      "6455ad889116ea70a780492230aa375d62957cb3e7749b4f29e04947a0d64748"
-    ]
-  },
-  {
-    "query": "+housing +market +trends",
-    "count": 275,
-    "top_100": 275,
-    "result_type": "Hash",
-    "top_100_result": [
-      "a77747ab6c8cbfdd1ba7b4f6997d2f51a6aa0a73976fb7210b997c0bdd69ad12"
-    ],
-    "top_100_count_result": [
-      "a77747ab6c8cbfdd1ba7b4f6997d2f51a6aa0a73976fb7210b997c0bdd69ad12"
-    ]
-  },
-  {
-    "query": "+electric +grid +stability",
-    "count": 118,
-    "top_100": 118,
-    "result_type": "Hash",
-    "top_100_result": [
-      "22aa8e4a5a646722f85765f56d8a735921690fd265205fc92bc04c7b51ab6d9c"
-    ],
-    "top_100_count_result": [
-      "22aa8e4a5a646722f85765f56d8a735921690fd265205fc92bc04c7b51ab6d9c"
-    ]
-  },
-  {
-    "query": "+disaster +relief +funds",
-    "count": 566,
-    "top_100": 566,
-    "result_type": "Hash",
-    "top_100_result": [
-      "c86aa06617a2e75f76ffa0162cb6ac10f3dff9f8a2a77f3caf95b90e214a3f8e"
-    ],
-    "top_100_count_result": [
-      "c86aa06617a2e75f76ffa0162cb6ac10f3dff9f8a2a77f3caf95b90e214a3f8e"
-    ]
-  },
-  {
-    "query": "+insurance +claim +process",
-    "count": 647,
-    "top_100": 647,
-    "result_type": "Hash",
-    "top_100_result": [
-      "38657e8024eb8054d632e42458ab92ea4247802bc46c602fd6d76d514f9c9981"
-    ],
-    "top_100_count_result": [
-      "38657e8024eb8054d632e42458ab92ea4247802bc46c602fd6d76d514f9c9981"
-    ]
-  },
-  {
-    "query": "+credit +card +rewards",
-    "count": 99,
-    "top_100": 99,
-    "result_type": "Hash",
-    "top_100_result": [
-      "d7ed79b670ce798b67a7aa0f6f7c48da6d950f2d3a6fb7ea1c36d5fbb56ad82c"
-    ],
-    "top_100_count_result": [
-      "d7ed79b670ce798b67a7aa0f6f7c48da6d950f2d3a6fb7ea1c36d5fbb56ad82c"
-    ]
-  },
-  {
-    "query": "+data +center +cooling",
-    "count": 416,
-    "top_100": 416,
-    "result_type": "Hash",
-    "top_100_result": [
-      "98c174588c2e9313c44a678256e4261ccf4f771cb32eb39ac987a18e620069e1"
-    ],
-    "top_100_count_result": [
-      "98c174588c2e9313c44a678256e4261ccf4f771cb32eb39ac987a18e620069e1"
-    ]
-  },
-  {
-    "query": "+remote +learning +tools",
-    "count": 187,
-    "top_100": 187,
-    "result_type": "Hash",
-    "top_100_result": [
-      "5b05dd81504c687710b730b9be69c6419f4fb4c0e447bc81a99a6f26547ee956"
-    ],
-    "top_100_count_result": [
-      "5b05dd81504c687710b730b9be69c6419f4fb4c0e447bc81a99a6f26547ee956"
-    ]
-  },
-  {
-    "query": "+open +source +software +licenses",
-    "count": 424,
-    "top_100": 424,
-    "result_type": "Hash",
-    "top_100_result": [
-      "252d593717f40848479b403bf365f0a4dd0cb1d54094fb0c534649e73f9042f4"
-    ],
-    "top_100_count_result": [
-      "252d593717f40848479b403bf365f0a4dd0cb1d54094fb0c534649e73f9042f4"
-    ]
-  },
-  {
-    "query": "+health +care +cost +trends",
-    "count": 240,
-    "top_100": 240,
-    "result_type": "Hash",
-    "top_100_result": [
-      "daee59f1d2b1cbf5faf51df45d30d168bacc01bb6bb02888503d2b53a1674b4b"
-    ],
-    "top_100_count_result": [
-      "daee59f1d2b1cbf5faf51df45d30d168bacc01bb6bb02888503d2b53a1674b4b"
-    ]
-  },
-  {
-    "query": "+renewable +energy +policy +goals",
-    "count": 183,
-    "top_100": 183,
-    "result_type": "Hash",
-    "top_100_result": [
-      "99420e5b7b0e455ffa9b97248ede414d10d6f9197a7511caa976769bd32d21fc"
-    ],
-    "top_100_count_result": [
-      "99420e5b7b0e455ffa9b97248ede414d10d6f9197a7511caa976769bd32d21fc"
-    ]
-  },
-  {
-    "query": "+airport +security +screening +rules",
-    "count": 33,
-    "top_100": 33,
-    "result_type": "Hash",
-    "top_100_result": [
-      "7cb7110ab964b0af5b458d0a29f6da4b598bde574c332ca25df74447f66c97b2"
-    ],
-    "top_100_count_result": [
-      "7cb7110ab964b0af5b458d0a29f6da4b598bde574c332ca25df74447f66c97b2"
-    ]
-  },
-  {
-    "query": "+climate +change +impact +report",
-    "count": 807,
-    "top_100": 807,
-    "result_type": "Hash",
-    "top_100_result": [
-      "f28d1d01a91d7c0599ce1867cee88d81ab73bb3c32b47c7e6c4a45d260462b91"
-    ],
-    "top_100_count_result": [
-      "f28d1d01a91d7c0599ce1867cee88d81ab73bb3c32b47c7e6c4a45d260462b91"
-    ]
-  },
-  {
     "query": "+climate policy",
     "count": 42009,
     "top_100": 42009,
@@ -13149,6 +12681,4806 @@
     ],
     "top_100_count_result": [
       "336362aef34474b0ec293e5c1d6c55a3d7944d7bb469bf0795e38e9390950f09"
+    ]
+  },
+  {
+    "query": "+python -snake -monty",
+    "count": 2281,
+    "top_100": 2281,
+    "result_type": "Hash",
+    "top_100_result": [
+      "351ec72a2bc0725674ffe14e69cc143e33796385fb9686e17feb7c0f49a0220c"
+    ],
+    "top_100_count_result": [
+      "351ec72a2bc0725674ffe14e69cc143e33796385fb9686e17feb7c0f49a0220c"
+    ]
+  },
+  {
+    "query": "+python -snake",
+    "count": 3151,
+    "top_100": 3151,
+    "result_type": "Hash",
+    "top_100_result": [
+      "0923316124cccc0a2bf105e5769b0e4bda672b4ea9312c6f5a2fd7695c2c0465"
+    ],
+    "top_100_count_result": [
+      "0923316124cccc0a2bf105e5769b0e4bda672b4ea9312c6f5a2fd7695c2c0465"
+    ]
+  },
+  {
+    "query": "+jaguar -car -football",
+    "count": 1672,
+    "top_100": 1672,
+    "result_type": "Hash",
+    "top_100_result": [
+      "7858faf8278314f497d0062b3ba7da629cd4f0f1c40a8ebb45ebd800985bac10"
+    ],
+    "top_100_count_result": [
+      "7858faf8278314f497d0062b3ba7da629cd4f0f1c40a8ebb45ebd800985bac10"
+    ]
+  },
+  {
+    "query": "+jaguar -car",
+    "count": 1791,
+    "top_100": 1791,
+    "result_type": "Hash",
+    "top_100_result": [
+      "3ee6f9f6c7a8d9e79184d47ec8a038905e02f0610a370a1d2023dd9cac4778a4"
+    ],
+    "top_100_count_result": [
+      "3ee6f9f6c7a8d9e79184d47ec8a038905e02f0610a370a1d2023dd9cac4778a4"
+    ]
+  },
+  {
+    "query": "+mercury -planet -element",
+    "count": 9895,
+    "top_100": 8970,
+    "result_type": "Hash",
+    "top_100_result": [
+      "0e7f84475af3fe6c0267d5b8b6fc8d5f970111a16d48502cbca08426cce2f362"
+    ],
+    "top_100_count_result": [
+      "0e7f84475af3fe6c0267d5b8b6fc8d5f970111a16d48502cbca08426cce2f362"
+    ]
+  },
+  {
+    "query": "+mercury -planet",
+    "count": 10327,
+    "top_100": 9369,
+    "result_type": "Hash",
+    "top_100_result": [
+      "740230b40e3b85b67cc2c7016a226c285cf64442b334d42cae6c4fc09b1ed6ea"
+    ],
+    "top_100_count_result": [
+      "740230b40e3b85b67cc2c7016a226c285cf64442b334d42cae6c4fc09b1ed6ea"
+    ]
+  },
+  {
+    "query": "+java -coffee -island",
+    "count": 9756,
+    "top_100": 8533,
+    "result_type": "Hash",
+    "top_100_result": [
+      "958097c90dcab2b6d61390ad1803e6f148a7030c6b84ea0f9f32109cfd71753b"
+    ],
+    "top_100_count_result": [
+      "958097c90dcab2b6d61390ad1803e6f148a7030c6b84ea0f9f32109cfd71753b"
+    ]
+  },
+  {
+    "query": "+java -coffee",
+    "count": 11530,
+    "top_100": 10010,
+    "result_type": "Hash",
+    "top_100_result": [
+      "f4faa9b0d10699fba2715be3d998e8f95ba513b00493768cc9ba9890a6e27391"
+    ],
+    "top_100_count_result": [
+      "f4faa9b0d10699fba2715be3d998e8f95ba513b00493768cc9ba9890a6e27391"
+    ]
+  },
+  {
+    "query": "+saturn -planet -car",
+    "count": 3045,
+    "top_100": 3045,
+    "result_type": "Hash",
+    "top_100_result": [
+      "e67a70ce3420df90b18a4ec291cbccb7118fde7914badf81a8b74844641d1313"
+    ],
+    "top_100_count_result": [
+      "e67a70ce3420df90b18a4ec291cbccb7118fde7914badf81a8b74844641d1313"
+    ]
+  },
+  {
+    "query": "+mustang -car -horse",
+    "count": 1492,
+    "top_100": 1492,
+    "result_type": "Hash",
+    "top_100_result": [
+      "0f2a6a6f92a0a218252b2322294a1e802d311980741a6e633fd5f475501b6c89"
+    ],
+    "top_100_count_result": [
+      "0f2a6a6f92a0a218252b2322294a1e802d311980741a6e633fd5f475501b6c89"
+    ]
+  },
+  {
+    "query": "+amazon -river -rainforest",
+    "count": 7740,
+    "top_100": 7358,
+    "result_type": "Hash",
+    "top_100_result": [
+      "d90e2acb4c67c3109acf1d2e6a5089d548c965cc5ddf153ffba326dc381359f8"
+    ],
+    "top_100_count_result": [
+      "d90e2acb4c67c3109acf1d2e6a5089d548c965cc5ddf153ffba326dc381359f8"
+    ]
+  },
+  {
+    "query": "+apple -fruit -tree",
+    "count": 12832,
+    "top_100": 11338,
+    "result_type": "Hash",
+    "top_100_result": [
+      "8ed6cc4fd10b3b1f0e97e9180bfad7940322f472f1bfa2c582e6647d068d7855"
+    ],
+    "top_100_count_result": [
+      "8ed6cc4fd10b3b1f0e97e9180bfad7940322f472f1bfa2c582e6647d068d7855"
+    ]
+  },
+  {
+    "query": "+delta -airlines -river",
+    "count": 11876,
+    "top_100": 9864,
+    "result_type": "Hash",
+    "top_100_result": [
+      "435dd9fbce603064c6f5f9b8d22757e85ed6e6427978b823b4af8d9a1c4ae899"
+    ],
+    "top_100_count_result": [
+      "435dd9fbce603064c6f5f9b8d22757e85ed6e6427978b823b4af8d9a1c4ae899"
+    ]
+  },
+  {
+    "query": "+jordan -country -basketball",
+    "count": 16503,
+    "top_100": 12814,
+    "result_type": "Hash",
+    "top_100_result": [
+      "556a08301a7ca8453491e391adad0e0673fb7e23737eb53d74c68a0e23c8e23a"
+    ],
+    "top_100_count_result": [
+      "556a08301a7ca8453491e391adad0e0673fb7e23737eb53d74c68a0e23c8e23a"
+    ]
+  },
+  {
+    "query": "+orion -constellation -spacecraft",
+    "count": 2357,
+    "top_100": 2357,
+    "result_type": "Hash",
+    "top_100_result": [
+      "dc8d6730cb64dafefcae53bd4ec79e2ba7f7d6679410fedef388108824f9c1e8"
+    ],
+    "top_100_count_result": [
+      "dc8d6730cb64dafefcae53bd4ec79e2ba7f7d6679410fedef388108824f9c1e8"
+    ]
+  },
+  {
+    "query": "+bass -fish -guitar",
+    "count": 17780,
+    "top_100": 12485,
+    "result_type": "Hash",
+    "top_100_result": [
+      "e388dac4ee054df8105bbd4a9d7666f441764f2239aab8e501489c41afe51aca"
+    ],
+    "top_100_count_result": [
+      "e388dac4ee054df8105bbd4a9d7666f441764f2239aab8e501489c41afe51aca"
+    ]
+  },
+  {
+    "query": "+eclipse -lunar -solar",
+    "count": 3733,
+    "top_100": 3733,
+    "result_type": "Hash",
+    "top_100_result": [
+      "b08f3cb11449a2ab3d968db661539cee9ee6941ca7de8be78da466ad86fe34fc"
+    ],
+    "top_100_count_result": [
+      "b08f3cb11449a2ab3d968db661539cee9ee6941ca7de8be78da466ad86fe34fc"
+    ]
+  },
+  {
+    "query": "+springfield -illinois -missouri",
+    "count": 6315,
+    "top_100": 6315,
+    "result_type": "Hash",
+    "top_100_result": [
+      "54a84efc24470ea8e9e890ae37ba79ecda5c160a1ebf55c02fe8ee2778b65c1d"
+    ],
+    "top_100_count_result": [
+      "54a84efc24470ea8e9e890ae37ba79ecda5c160a1ebf55c02fe8ee2778b65c1d"
+    ]
+  },
+  {
+    "query": "+puma -cat -shoes",
+    "count": 1339,
+    "top_100": 1339,
+    "result_type": "Hash",
+    "top_100_result": [
+      "d60b88ce4dd1008b2a9b968aad743450ba5e7d3f19dc50a539770c23bdc50b65"
+    ],
+    "top_100_count_result": [
+      "d60b88ce4dd1008b2a9b968aad743450ba5e7d3f19dc50a539770c23bdc50b65"
+    ]
+  },
+  {
+    "query": "(the world state)@2",
+    "count": 1027681,
+    "top_100": 1027681,
+    "result_type": "Hash",
+    "top_100_result": [
+      "3e374e4991c856f337b9e05cc0d438a0c604a6f8ae12ee7603f6bf0c1355dfc0"
+    ],
+    "top_100_count_result": [
+      "3e374e4991c856f337b9e05cc0d438a0c604a6f8ae12ee7603f6bf0c1355dfc0"
+    ]
+  },
+  {
+    "query": "(the world state history)@3",
+    "count": 368422,
+    "top_100": 368422,
+    "result_type": "Hash",
+    "top_100_result": [
+      "a3835f66c3bae1b24eb0ff760436df94c65158e12e9c236aeba7fffd34643364"
+    ],
+    "top_100_count_result": [
+      "a3835f66c3bae1b24eb0ff760436df94c65158e12e9c236aeba7fffd34643364"
+    ]
+  },
+  {
+    "query": "(world state history)@2",
+    "count": 368515,
+    "top_100": 368515,
+    "result_type": "Hash",
+    "top_100_result": [
+      "36c99f3958833b01ac613159500426eaf847d4ec04c43dafd17288b76aa47879"
+    ],
+    "top_100_count_result": [
+      "36c99f3958833b01ac613159500426eaf847d4ec04c43dafd17288b76aa47879"
+    ]
+  },
+  {
+    "query": "(world state history president)@3",
+    "count": 110309,
+    "top_100": 110309,
+    "result_type": "Hash",
+    "top_100_result": [
+      "d361ebeb89c7f5007a7152f6bf7451c46c832f9f8b4891db99d8b9e5a9ea3e50"
+    ],
+    "top_100_count_result": [
+      "d361ebeb89c7f5007a7152f6bf7451c46c832f9f8b4891db99d8b9e5a9ea3e50"
+    ]
+  },
+  {
+    "query": "(state history president)@2",
+    "count": 268897,
+    "top_100": 268897,
+    "result_type": "Hash",
+    "top_100_result": [
+      "5161b578bdebb421113f9822065eb4514fd53b8bc966c4b84141a87e5ca2073c"
+    ],
+    "top_100_count_result": [
+      "5161b578bdebb421113f9822065eb4514fd53b8bc966c4b84141a87e5ca2073c"
+    ]
+  },
+  {
+    "query": "(state history president river)@3",
+    "count": 73165,
+    "top_100": 73165,
+    "result_type": "Hash",
+    "top_100_result": [
+      "fda9b237d8509955c0a7e0e981559e7781a3dff9f64da68b2909b785468d3483"
+    ],
+    "top_100_count_result": [
+      "fda9b237d8509955c0a7e0e981559e7781a3dff9f64da68b2909b785468d3483"
+    ]
+  },
+  {
+    "query": "(history president river)@2",
+    "count": 164261,
+    "top_100": 164261,
+    "result_type": "Hash",
+    "top_100_result": [
+      "91e8ecaf00d763ff58eab4874cb90476992ccc2504294e1fb707644483dfbe54"
+    ],
+    "top_100_count_result": [
+      "91e8ecaf00d763ff58eab4874cb90476992ccc2504294e1fb707644483dfbe54"
+    ]
+  },
+  {
+    "query": "(history president river population)@3",
+    "count": 49741,
+    "top_100": 49741,
+    "result_type": "Hash",
+    "top_100_result": [
+      "c9295e0c95d6c9139fb935416567488bb147af9123ff56cef46b6fa773d793ea"
+    ],
+    "top_100_count_result": [
+      "c9295e0c95d6c9139fb935416567488bb147af9123ff56cef46b6fa773d793ea"
+    ]
+  },
+  {
+    "query": "(president river population)@2",
+    "count": 82487,
+    "top_100": 82487,
+    "result_type": "Hash",
+    "top_100_result": [
+      "634c6a760c2407d8302ce2129e54577e79fc182081fce32f21d0269ee6794ef1"
+    ],
+    "top_100_count_result": [
+      "634c6a760c2407d8302ce2129e54577e79fc182081fce32f21d0269ee6794ef1"
+    ]
+  },
+  {
+    "query": "(president river population university)@3",
+    "count": 20387,
+    "top_100": 20387,
+    "result_type": "Hash",
+    "top_100_result": [
+      "c78444d0325812694a696dd77e365f6fb7e0691bc3ba31b71f2d7896b397fa0a"
+    ],
+    "top_100_count_result": [
+      "c78444d0325812694a696dd77e365f6fb7e0691bc3ba31b71f2d7896b397fa0a"
+    ]
+  },
+  {
+    "query": "(river population university)@2",
+    "count": 89970,
+    "top_100": 89970,
+    "result_type": "Hash",
+    "top_100_result": [
+      "0d0a6b6c850fc2f15b97e00b41e69d367665a16ffb4ade288efcf10193c96646"
+    ],
+    "top_100_count_result": [
+      "0d0a6b6c850fc2f15b97e00b41e69d367665a16ffb4ade288efcf10193c96646"
+    ]
+  },
+  {
+    "query": "(river population university germany)@3",
+    "count": 14182,
+    "top_100": 14182,
+    "result_type": "Hash",
+    "top_100_result": [
+      "adafc02c59a4e6dd9cd1201572fdfcc4d6dee1c7fdf8aefdbc2257118ccbd90e"
+    ],
+    "top_100_count_result": [
+      "adafc02c59a4e6dd9cd1201572fdfcc4d6dee1c7fdf8aefdbc2257118ccbd90e"
+    ]
+  },
+  {
+    "query": "(population university germany)@2",
+    "count": 69322,
+    "top_100": 69322,
+    "result_type": "Hash",
+    "top_100_result": [
+      "f4c3f856eb1ad7f343ad0cbb40a8ec78e13f71710c2846ed16d89f0d97a52603"
+    ],
+    "top_100_count_result": [
+      "f4c3f856eb1ad7f343ad0cbb40a8ec78e13f71710c2846ed16d89f0d97a52603"
+    ]
+  },
+  {
+    "query": "(population university germany album)@3",
+    "count": 4781,
+    "top_100": 4781,
+    "result_type": "Hash",
+    "top_100_result": [
+      "a72ca45bff62a394ca1a938d134efaad787f683f7a060ad6c37e35197f138c4b"
+    ],
+    "top_100_count_result": [
+      "a72ca45bff62a394ca1a938d134efaad787f683f7a060ad6c37e35197f138c4b"
+    ]
+  },
+  {
+    "query": "(university germany album)@2",
+    "count": 48557,
+    "top_100": 48557,
+    "result_type": "Hash",
+    "top_100_result": [
+      "64eb41ab3fb61735828b5a9a67133833df1fbe9a2fcf53f7e73a3569a7cdd7e1"
+    ],
+    "top_100_count_result": [
+      "64eb41ab3fb61735828b5a9a67133833df1fbe9a2fcf53f7e73a3569a7cdd7e1"
+    ]
+  },
+  {
+    "query": "(university germany album military)@3",
+    "count": 7934,
+    "top_100": 7934,
+    "result_type": "Hash",
+    "top_100_result": [
+      "0d6c63b6fee7dfda7561721b55aabc7eae1ab58c2f815c89e3e09b3fd6510b6a"
+    ],
+    "top_100_count_result": [
+      "0d6c63b6fee7dfda7561721b55aabc7eae1ab58c2f815c89e3e09b3fd6510b6a"
+    ]
+  },
+  {
+    "query": "(germany album military)@2",
+    "count": 34334,
+    "top_100": 34334,
+    "result_type": "Hash",
+    "top_100_result": [
+      "603738b943469191db3efa00239c6926d3f0297a1e8cb6878a855c46efec0437"
+    ],
+    "top_100_count_result": [
+      "603738b943469191db3efa00239c6926d3f0297a1e8cb6878a855c46efec0437"
+    ]
+  },
+  {
+    "query": "(germany album military railway)@3",
+    "count": 2677,
+    "top_100": 2677,
+    "result_type": "Hash",
+    "top_100_result": [
+      "40e3a89fa4f8f64ed53c8419b5f16a68ee2cbb8333df9fc6d2f8156309144629"
+    ],
+    "top_100_count_result": [
+      "40e3a89fa4f8f64ed53c8419b5f16a68ee2cbb8333df9fc6d2f8156309144629"
+    ]
+  },
+  {
+    "query": "(album military railway)@2",
+    "count": 10976,
+    "top_100": 10976,
+    "result_type": "Hash",
+    "top_100_result": [
+      "ed67e6a909a05ff7b9e8a7fc4e8c7ac5bbc61f645cc68007f28b5bfd021e9a4a"
+    ],
+    "top_100_count_result": [
+      "ed67e6a909a05ff7b9e8a7fc4e8c7ac5bbc61f645cc68007f28b5bfd021e9a4a"
+    ]
+  },
+  {
+    "query": "(album military railway football)@3",
+    "count": 985,
+    "top_100": 985,
+    "result_type": "Hash",
+    "top_100_result": [
+      "a71d3f3530b32fb81d4afe2f8045710b2561a6549910a76ab1d35a22012166c7"
+    ],
+    "top_100_count_result": [
+      "a71d3f3530b32fb81d4afe2f8045710b2561a6549910a76ab1d35a22012166c7"
+    ]
+  },
+  {
+    "query": "(the world \"griffith observatory\")@2",
+    "count": 631199,
+    "top_100": 631199,
+    "result_type": "Hash",
+    "top_100_result": [
+      "a7d61753fbc0b7f07c50c97592cdc6a03e0ec561fed4180ccb31d1d956f353ea"
+    ],
+    "top_100_count_result": [
+      "a7d61753fbc0b7f07c50c97592cdc6a03e0ec561fed4180ccb31d1d956f353ea"
+    ]
+  },
+  {
+    "query": "(\"griffith observatory\" \"bowel obstruction\" the)@2",
+    "count": 167,
+    "top_100": 167,
+    "result_type": "Hash",
+    "top_100_result": [
+      "6ba542209bc4147e56098922b4b036d864d6119276a09dfd70757693b0ba3bfc"
+    ],
+    "top_100_count_result": [
+      "6ba542209bc4147e56098922b4b036d864d6119276a09dfd70757693b0ba3bfc"
+    ]
+  },
+  {
+    "query": "(world state \"bowel obstruction\")@2",
+    "count": 120792,
+    "top_100": 120792,
+    "result_type": "Hash",
+    "top_100_result": [
+      "d07996080bedafefc5f2500ec889cb9476fa199d7f34b840429b1458604b5924"
+    ],
+    "top_100_count_result": [
+      "d07996080bedafefc5f2500ec889cb9476fa199d7f34b840429b1458604b5924"
+    ]
+  },
+  {
+    "query": "(\"bowel obstruction\" \"vicenza italy\" world)@2",
+    "count": 74,
+    "top_100": 74,
+    "result_type": "Hash",
+    "top_100_result": [
+      "99ad84464f29e34df0697ce78bd5fca155443fa5c85542084dc5a2170ddec0fc"
+    ],
+    "top_100_count_result": [
+      "99ad84464f29e34df0697ce78bd5fca155443fa5c85542084dc5a2170ddec0fc"
+    ]
+  },
+  {
+    "query": "(state history \"vicenza italy\")@2",
+    "count": 173725,
+    "top_100": 173725,
+    "result_type": "Hash",
+    "top_100_result": [
+      "b63b582db4ceae025d3e2ece99a94e94bb6167c60153155ae4fc6f5c833c0168"
+    ],
+    "top_100_count_result": [
+      "b63b582db4ceae025d3e2ece99a94e94bb6167c60153155ae4fc6f5c833c0168"
+    ]
+  },
+  {
+    "query": "(\"vicenza italy\" \"digital scanning\" state)@2",
+    "count": 18,
+    "top_100": 18,
+    "result_type": "Hash",
+    "top_100_result": [
+      "b08c4918402d70a2ed16afc843264ec6c91a4eecfbe2f06a6de0ff9edcffcebe"
+    ],
+    "top_100_count_result": [
+      "b08c4918402d70a2ed16afc843264ec6c91a4eecfbe2f06a6de0ff9edcffcebe"
+    ]
+  },
+  {
+    "query": "(history president \"digital scanning\")@2",
+    "count": 77787,
+    "top_100": 77787,
+    "result_type": "Hash",
+    "top_100_result": [
+      "bd52e97a29059f2254c97f30a29ec2e26445f07e6dde9b43ad451a669725021f"
+    ],
+    "top_100_count_result": [
+      "bd52e97a29059f2254c97f30a29ec2e26445f07e6dde9b43ad451a669725021f"
+    ]
+  },
+  {
+    "query": "(\"digital scanning\" \"borders books\" history)@2",
+    "count": 10,
+    "top_100": 10,
+    "result_type": "Hash",
+    "top_100_result": [
+      "84984ff6d92e6ceb012911854eb427cefec6bda755d9678e3bfb53140a74cf3f"
+    ],
+    "top_100_count_result": [
+      "84984ff6d92e6ceb012911854eb427cefec6bda755d9678e3bfb53140a74cf3f"
+    ]
+  },
+  {
+    "query": "(president river \"borders books\")@2",
+    "count": 18514,
+    "top_100": 18514,
+    "result_type": "Hash",
+    "top_100_result": [
+      "449d0d4d37bf012682ed80b621c68f13f58590dcd817ae62d87d17f24ce6ffc1"
+    ],
+    "top_100_count_result": [
+      "449d0d4d37bf012682ed80b621c68f13f58590dcd817ae62d87d17f24ce6ffc1"
+    ]
+  },
+  {
+    "query": "(\"borders books\" \"american funds\" president)@2",
+    "count": 15,
+    "top_100": 15,
+    "result_type": "Hash",
+    "top_100_result": [
+      "028b4f3563d78e29597fab50660532df1fbe275768785b2fbe6241483ca7eebb"
+    ],
+    "top_100_count_result": [
+      "028b4f3563d78e29597fab50660532df1fbe275768785b2fbe6241483ca7eebb"
+    ]
+  },
+  {
+    "query": "(river population \"american funds\")@2",
+    "count": 53989,
+    "top_100": 53989,
+    "result_type": "Hash",
+    "top_100_result": [
+      "31f1e01cb3d36f19adc0d8a0b0ecd70f1c74c72f16292851ba76df56493de093"
+    ],
+    "top_100_count_result": [
+      "31f1e01cb3d36f19adc0d8a0b0ecd70f1c74c72f16292851ba76df56493de093"
+    ]
+  },
+  {
+    "query": "(\"american funds\" \"scottsdale az\" river)@2",
+    "count": 7,
+    "top_100": 7,
+    "result_type": "Hash",
+    "top_100_result": [
+      "1c33a32deb15f012752ce8c276986bb0664761199fe06c431a90cd3c31503440"
+    ],
+    "top_100_count_result": [
+      "1c33a32deb15f012752ce8c276986bb0664761199fe06c431a90cd3c31503440"
+    ]
+  },
+  {
+    "query": "(population university \"scottsdale az\")@2",
+    "count": 26631,
+    "top_100": 26631,
+    "result_type": "Hash",
+    "top_100_result": [
+      "25fe3b990f04f46c28b7c0e925d629f2b1a04ff482ebe2126f5f9f07509d76ea"
+    ],
+    "top_100_count_result": [
+      "25fe3b990f04f46c28b7c0e925d629f2b1a04ff482ebe2126f5f9f07509d76ea"
+    ]
+  },
+  {
+    "query": "(\"scottsdale az\" \"freelance work\" population)@2",
+    "count": 6,
+    "top_100": 6,
+    "result_type": "Hash",
+    "top_100_result": [
+      "6a0184616fad0bcf4a66d68565392d02e34fba1ccf4922e315411e47689f1632"
+    ],
+    "top_100_count_result": [
+      "6a0184616fad0bcf4a66d68565392d02e34fba1ccf4922e315411e47689f1632"
+    ]
+  },
+  {
+    "query": "(university germany \"freelance work\")@2",
+    "count": 31745,
+    "top_100": 31745,
+    "result_type": "Hash",
+    "top_100_result": [
+      "44cf56f80301e2418adfc5873c9968691c0a9e5bf070c75e3a9328cf4e8aa126"
+    ],
+    "top_100_count_result": [
+      "44cf56f80301e2418adfc5873c9968691c0a9e5bf070c75e3a9328cf4e8aa126"
+    ]
+  },
+  {
+    "query": "(\"freelance work\" \"color combinations\" university)@2",
+    "count": 160,
+    "top_100": 160,
+    "result_type": "Hash",
+    "top_100_result": [
+      "8f60f098f6a6fa11e35ab59faf989c4506b7f1ac55ed19cb72d3d3d8ca72c1a1"
+    ],
+    "top_100_count_result": [
+      "8f60f098f6a6fa11e35ab59faf989c4506b7f1ac55ed19cb72d3d3d8ca72c1a1"
+    ]
+  },
+  {
+    "query": "\"griffith 1-1 observatory\"",
+    "count": 57,
+    "top_100": 57,
+    "result_type": "Hash",
+    "top_100_result": [
+      "7e4884c3c11d91a7f71d792596d90b6a2efca9de9d517dc82583c6f55c5eab9e"
+    ],
+    "top_100_count_result": [
+      "7e4884c3c11d91a7f71d792596d90b6a2efca9de9d517dc82583c6f55c5eab9e"
+    ]
+  },
+  {
+    "query": "\"griffith 1-3 observatory\"",
+    "count": 63,
+    "top_100": 63,
+    "result_type": "Hash",
+    "top_100_result": [
+      "e6be646a7c6a0f3f9aeb40fde48f850fcb8e43b451f8961753d4bb226ca650ae"
+    ],
+    "top_100_count_result": [
+      "e6be646a7c6a0f3f9aeb40fde48f850fcb8e43b451f8961753d4bb226ca650ae"
+    ]
+  },
+  {
+    "query": "\"griffith observatory\"~1",
+    "count": 63,
+    "top_100": 63,
+    "result_type": "Hash",
+    "top_100_result": [
+      "ea0cdeb6518dae26ca00a4346f1c8aff5e285512f0b49738e81d80e76cf4ca4b"
+    ],
+    "top_100_count_result": [
+      "ea0cdeb6518dae26ca00a4346f1c8aff5e285512f0b49738e81d80e76cf4ca4b"
+    ]
+  },
+  {
+    "query": "\"griffith observatory\"~3",
+    "count": 64,
+    "top_100": 64,
+    "result_type": "Hash",
+    "top_100_result": [
+      "eef43e0b70d227a5bdfb510eeae7f55086c4f597ad505c30886f65b4d503eda1"
+    ],
+    "top_100_count_result": [
+      "eef43e0b70d227a5bdfb510eeae7f55086c4f597ad505c30886f65b4d503eda1"
+    ]
+  },
+  {
+    "query": "\"bowel 1-1 obstruction\"",
+    "count": 110,
+    "top_100": 110,
+    "result_type": "Hash",
+    "top_100_result": [
+      "350a4d52c6c674487e843c8ea6445b62b8399f474d4217a6e2d6ee7fbcaf81a8"
+    ],
+    "top_100_count_result": [
+      "350a4d52c6c674487e843c8ea6445b62b8399f474d4217a6e2d6ee7fbcaf81a8"
+    ]
+  },
+  {
+    "query": "\"bowel 1-3 obstruction\"",
+    "count": 112,
+    "top_100": 112,
+    "result_type": "Hash",
+    "top_100_result": [
+      "c82acaf16fb3914e3d23336cfc7dc5b92026b29d10e9fe1949870e2b3953506e"
+    ],
+    "top_100_count_result": [
+      "c82acaf16fb3914e3d23336cfc7dc5b92026b29d10e9fe1949870e2b3953506e"
+    ]
+  },
+  {
+    "query": "\"bowel obstruction\"~1",
+    "count": 110,
+    "top_100": 110,
+    "result_type": "Hash",
+    "top_100_result": [
+      "350a4d52c6c674487e843c8ea6445b62b8399f474d4217a6e2d6ee7fbcaf81a8"
+    ],
+    "top_100_count_result": [
+      "350a4d52c6c674487e843c8ea6445b62b8399f474d4217a6e2d6ee7fbcaf81a8"
+    ]
+  },
+  {
+    "query": "\"bowel obstruction\"~3",
+    "count": 117,
+    "top_100": 117,
+    "result_type": "Hash",
+    "top_100_result": [
+      "4c6dc8484e91bd5428d1258c7883d7ab3ab974c76c6803cccad5d2ba42e28847"
+    ],
+    "top_100_count_result": [
+      "4c6dc8484e91bd5428d1258c7883d7ab3ab974c76c6803cccad5d2ba42e28847"
+    ]
+  },
+  {
+    "query": "\"vicenza 1-1 italy\"",
+    "count": 112,
+    "top_100": 111,
+    "result_type": "Hash",
+    "top_100_result": [
+      "9b07b23dff9e343929419b85b5c1accc47657e73482332d249d69e849e12d495"
+    ],
+    "top_100_count_result": [
+      "9b07b23dff9e343929419b85b5c1accc47657e73482332d249d69e849e12d495"
+    ]
+  },
+  {
+    "query": "\"vicenza 1-3 italy\"",
+    "count": 271,
+    "top_100": 227,
+    "result_type": "Hash",
+    "top_100_result": [
+      "817570beb396b0ead6ba0101ede139a7f8a98309b250a746d7dd606ec8f5e11b"
+    ],
+    "top_100_count_result": [
+      "817570beb396b0ead6ba0101ede139a7f8a98309b250a746d7dd606ec8f5e11b"
+    ]
+  },
+  {
+    "query": "\"vicenza italy\"~1",
+    "count": 241,
+    "top_100": 241,
+    "result_type": "Hash",
+    "top_100_result": [
+      "4e109b00f71185cdfa92d3db87626571dea8f820ff114f54af17fba77604c567"
+    ],
+    "top_100_count_result": [
+      "4e109b00f71185cdfa92d3db87626571dea8f820ff114f54af17fba77604c567"
+    ]
+  },
+  {
+    "query": "\"vicenza italy\"~3",
+    "count": 287,
+    "top_100": 287,
+    "result_type": "Hash",
+    "top_100_result": [
+      "3f002240786bc5efca617f6e3a3dfe3512e7e7cc880ff2d70569fb24841de536"
+    ],
+    "top_100_count_result": [
+      "3f002240786bc5efca617f6e3a3dfe3512e7e7cc880ff2d70569fb24841de536"
+    ]
+  },
+  {
+    "query": "\"digital 1-1 scanning\"",
+    "count": 17,
+    "top_100": 17,
+    "result_type": "Hash",
+    "top_100_result": [
+      "b38c7ab0c5978b9e06f6609029b8cfe6db3bddce1ac7d4ef2c21ee1691012fe8"
+    ],
+    "top_100_count_result": [
+      "b38c7ab0c5978b9e06f6609029b8cfe6db3bddce1ac7d4ef2c21ee1691012fe8"
+    ]
+  },
+  {
+    "query": "\"digital 1-3 scanning\"",
+    "count": 26,
+    "top_100": 26,
+    "result_type": "Hash",
+    "top_100_result": [
+      "d378b83ad2c5393e0611134197545a0faeb7a63dd00e5f790384e3fe21bada8e"
+    ],
+    "top_100_count_result": [
+      "d378b83ad2c5393e0611134197545a0faeb7a63dd00e5f790384e3fe21bada8e"
+    ]
+  },
+  {
+    "query": "\"digital scanning\"~1",
+    "count": 22,
+    "top_100": 22,
+    "result_type": "Hash",
+    "top_100_result": [
+      "9b9c79e0c32ba6ee202529feb898e6459deb8a065b0cd0a18f6e943e4fd45cca"
+    ],
+    "top_100_count_result": [
+      "9b9c79e0c32ba6ee202529feb898e6459deb8a065b0cd0a18f6e943e4fd45cca"
+    ]
+  },
+  {
+    "query": "\"digital scanning\"~3",
+    "count": 47,
+    "top_100": 47,
+    "result_type": "Hash",
+    "top_100_result": [
+      "f2fdde1a2da7a58c99396ae65f7956c96a1d18e0ebb5c353c0fd631492b4fbc2"
+    ],
+    "top_100_count_result": [
+      "f2fdde1a2da7a58c99396ae65f7956c96a1d18e0ebb5c353c0fd631492b4fbc2"
+    ]
+  },
+  {
+    "query": "\"borders 1-1 books\"",
+    "count": 25,
+    "top_100": 25,
+    "result_type": "Hash",
+    "top_100_result": [
+      "1766ac6f7247df82418bb59ac6497672a89f23148df88de26e8b48bda8c185f8"
+    ],
+    "top_100_count_result": [
+      "1766ac6f7247df82418bb59ac6497672a89f23148df88de26e8b48bda8c185f8"
+    ]
+  },
+  {
+    "query": "\"borders 1-3 books\"",
+    "count": 36,
+    "top_100": 36,
+    "result_type": "Hash",
+    "top_100_result": [
+      "ab3d03a86f83707f9a6e1c042f225809d667f22487ca8f9659813db6ecfc358a"
+    ],
+    "top_100_count_result": [
+      "ab3d03a86f83707f9a6e1c042f225809d667f22487ca8f9659813db6ecfc358a"
+    ]
+  },
+  {
+    "query": "\"borders books\"~1",
+    "count": 33,
+    "top_100": 33,
+    "result_type": "Hash",
+    "top_100_result": [
+      "9daf1ca3d502123f94be6a075229a7712ec18366df44b028ff895cb5b7606581"
+    ],
+    "top_100_count_result": [
+      "9daf1ca3d502123f94be6a075229a7712ec18366df44b028ff895cb5b7606581"
+    ]
+  },
+  {
+    "query": "\"borders books\"~3",
+    "count": 42,
+    "top_100": 42,
+    "result_type": "Hash",
+    "top_100_result": [
+      "eed28a42890426cdc3d8c09950c8e1f289c4b998aa28298c8158292a24cddcda"
+    ],
+    "top_100_count_result": [
+      "eed28a42890426cdc3d8c09950c8e1f289c4b998aa28298c8158292a24cddcda"
+    ]
+  },
+  {
+    "query": "\"american 1-1 funds\"",
+    "count": 23,
+    "top_100": 23,
+    "result_type": "Hash",
+    "top_100_result": [
+      "e44b46023950861b00a91b4e12cef7e35f61be4203c4b8954ce2506027d64320"
+    ],
+    "top_100_count_result": [
+      "e44b46023950861b00a91b4e12cef7e35f61be4203c4b8954ce2506027d64320"
+    ]
+  },
+  {
+    "query": "\"american 1-3 funds\"",
+    "count": 57,
+    "top_100": 57,
+    "result_type": "Hash",
+    "top_100_result": [
+      "af82f4d1bd4d8cb4370bd749b550631761d1e60aaa23ea0a82195479be142c95"
+    ],
+    "top_100_count_result": [
+      "af82f4d1bd4d8cb4370bd749b550631761d1e60aaa23ea0a82195479be142c95"
+    ]
+  },
+  {
+    "query": "\"american funds\"~1",
+    "count": 39,
+    "top_100": 39,
+    "result_type": "Hash",
+    "top_100_result": [
+      "1af6d8b7feda31c545edf2ae82877e5a919a858d2f098ac65eaa8c9d73328c23"
+    ],
+    "top_100_count_result": [
+      "1af6d8b7feda31c545edf2ae82877e5a919a858d2f098ac65eaa8c9d73328c23"
+    ]
+  },
+  {
+    "query": "\"american funds\"~3",
+    "count": 119,
+    "top_100": 119,
+    "result_type": "Hash",
+    "top_100_result": [
+      "600b438973042ceb4fc808fa8dd157b47514d87f251347c06f3e6703fa53aa6c"
+    ],
+    "top_100_count_result": [
+      "600b438973042ceb4fc808fa8dd157b47514d87f251347c06f3e6703fa53aa6c"
+    ]
+  },
+  {
+    "query": "\"scottsdale 1-1 az\"",
+    "count": 56,
+    "top_100": 56,
+    "result_type": "Hash",
+    "top_100_result": [
+      "1d02facb3b006bd47f6f742394b4a2d750e37675c2b8d2bc19db77004c12c8ed"
+    ],
+    "top_100_count_result": [
+      "1d02facb3b006bd47f6f742394b4a2d750e37675c2b8d2bc19db77004c12c8ed"
+    ]
+  },
+  {
+    "query": "\"scottsdale 1-3 az\"",
+    "count": 57,
+    "top_100": 57,
+    "result_type": "Hash",
+    "top_100_result": [
+      "5e489ec551c629347e636e4fdbf31302e5524dd09002c6917e8fc65f1fd1e9e6"
+    ],
+    "top_100_count_result": [
+      "5e489ec551c629347e636e4fdbf31302e5524dd09002c6917e8fc65f1fd1e9e6"
+    ]
+  },
+  {
+    "query": "\"scottsdale az\"~1",
+    "count": 56,
+    "top_100": 56,
+    "result_type": "Hash",
+    "top_100_result": [
+      "1d02facb3b006bd47f6f742394b4a2d750e37675c2b8d2bc19db77004c12c8ed"
+    ],
+    "top_100_count_result": [
+      "1d02facb3b006bd47f6f742394b4a2d750e37675c2b8d2bc19db77004c12c8ed"
+    ]
+  },
+  {
+    "query": "\"scottsdale az\"~3",
+    "count": 58,
+    "top_100": 58,
+    "result_type": "Hash",
+    "top_100_result": [
+      "8c1bcaf5d785a93e73dc11e85e24b4d5c6ed4942ed2a9eb405a0ec550db7eecd"
+    ],
+    "top_100_count_result": [
+      "8c1bcaf5d785a93e73dc11e85e24b4d5c6ed4942ed2a9eb405a0ec550db7eecd"
+    ]
+  },
+  {
+    "query": "\"freelance 1-1 work\"",
+    "count": 307,
+    "top_100": 228,
+    "result_type": "Hash",
+    "top_100_result": [
+      "4da8acade67f8fbb3ac6f91dbd91e6e6298333b6022ce5861e3d2f2fcba76aca"
+    ],
+    "top_100_count_result": [
+      "4da8acade67f8fbb3ac6f91dbd91e6e6298333b6022ce5861e3d2f2fcba76aca"
+    ]
+  },
+  {
+    "query": "\"freelance 1-3 work\"",
+    "count": 409,
+    "top_100": 336,
+    "result_type": "Hash",
+    "top_100_result": [
+      "a6da96dc7d9430a108e92b770f5d5d6df399479ac914899bfaa32f89e3f94383"
+    ],
+    "top_100_count_result": [
+      "a6da96dc7d9430a108e92b770f5d5d6df399479ac914899bfaa32f89e3f94383"
+    ]
+  },
+  {
+    "query": "\"freelance work\"~1",
+    "count": 354,
+    "top_100": 354,
+    "result_type": "Hash",
+    "top_100_result": [
+      "32a235d6e1f0464434e1607fab7515a2acb0b96c5d5b2f8bb80aff0883294d78"
+    ],
+    "top_100_count_result": [
+      "32a235d6e1f0464434e1607fab7515a2acb0b96c5d5b2f8bb80aff0883294d78"
+    ]
+  },
+  {
+    "query": "\"freelance work\"~3",
+    "count": 495,
+    "top_100": 495,
+    "result_type": "Hash",
+    "top_100_result": [
+      "df62f1a4cb8636d3fb1812f4469fe709c8037fa7fcdf2785d3300de70886a93c"
+    ],
+    "top_100_count_result": [
+      "df62f1a4cb8636d3fb1812f4469fe709c8037fa7fcdf2785d3300de70886a93c"
+    ]
+  },
+  {
+    "query": "\"color 1-1 combinations\"",
+    "count": 177,
+    "top_100": 160,
+    "result_type": "Hash",
+    "top_100_result": [
+      "49b9380d98fcf635ab6379c2f507b936fb909a1de5573be487d2c2547426b06e"
+    ],
+    "top_100_count_result": [
+      "49b9380d98fcf635ab6379c2f507b936fb909a1de5573be487d2c2547426b06e"
+    ]
+  },
+  {
+    "query": "\"color 1-3 combinations\"",
+    "count": 193,
+    "top_100": 183,
+    "result_type": "Hash",
+    "top_100_result": [
+      "162b44a3bb744f3cc0595eb7df8b3d9d1d5edee1d624a1f9b886d0fd9c522ad4"
+    ],
+    "top_100_count_result": [
+      "162b44a3bb744f3cc0595eb7df8b3d9d1d5edee1d624a1f9b886d0fd9c522ad4"
+    ]
+  },
+  {
+    "query": "\"color combinations\"~1",
+    "count": 183,
+    "top_100": 183,
+    "result_type": "Hash",
+    "top_100_result": [
+      "4eed3aa79a49283b13baa2732127d0d700484d5b9280167f63cc96bb81f224eb"
+    ],
+    "top_100_count_result": [
+      "4eed3aa79a49283b13baa2732127d0d700484d5b9280167f63cc96bb81f224eb"
+    ]
+  },
+  {
+    "query": "\"color combinations\"~3",
+    "count": 203,
+    "top_100": 203,
+    "result_type": "Hash",
+    "top_100_result": [
+      "3713e1157b0dcbf158a17e94eecbbc6875c38cd7d172931650643e7fc0dd68a2"
+    ],
+    "top_100_count_result": [
+      "3713e1157b0dcbf158a17e94eecbbc6875c38cd7d172931650643e7fc0dd68a2"
+    ]
+  },
+  {
+    "query": "\"italian 1-1 translation\"",
+    "count": 252,
+    "top_100": 208,
+    "result_type": "Hash",
+    "top_100_result": [
+      "617f683debe59a9e59f6364156af31ec4f3e4364e87316760e40714a5221ee72"
+    ],
+    "top_100_count_result": [
+      "617f683debe59a9e59f6364156af31ec4f3e4364e87316760e40714a5221ee72"
+    ]
+  },
+  {
+    "query": "\"italian 1-3 translation\"",
+    "count": 284,
+    "top_100": 264,
+    "result_type": "Hash",
+    "top_100_result": [
+      "6c275e9db2859a29b6d0479fe43c5e0e42234dfaa02e728c613d94626b1cd732"
+    ],
+    "top_100_count_result": [
+      "6c275e9db2859a29b6d0479fe43c5e0e42234dfaa02e728c613d94626b1cd732"
+    ]
+  },
+  {
+    "query": "\"italian translation\"~1",
+    "count": 265,
+    "top_100": 265,
+    "result_type": "Hash",
+    "top_100_result": [
+      "617f683debe59a9e59f6364156af31ec4f3e4364e87316760e40714a5221ee72"
+    ],
+    "top_100_count_result": [
+      "617f683debe59a9e59f6364156af31ec4f3e4364e87316760e40714a5221ee72"
+    ]
+  },
+  {
+    "query": "\"italian translation\"~3",
+    "count": 362,
+    "top_100": 362,
+    "result_type": "Hash",
+    "top_100_result": [
+      "23ec7de81a56d8761d41a96fe7a9b2530a78be3442e521c72dd354afd917eb0d"
+    ],
+    "top_100_count_result": [
+      "23ec7de81a56d8761d41a96fe7a9b2530a78be3442e521c72dd354afd917eb0d"
+    ]
+  },
+  {
+    "query": "\"milwaukee 1-1 newspaper\"",
+    "count": 10,
+    "top_100": 10,
+    "result_type": "Hash",
+    "top_100_result": [
+      "ae6ed0faea751efe17ef0336f0746e921e50f45676024d1d36ba578d5d0e84bf"
+    ],
+    "top_100_count_result": [
+      "ae6ed0faea751efe17ef0336f0746e921e50f45676024d1d36ba578d5d0e84bf"
+    ]
+  },
+  {
+    "query": "\"milwaukee 1-3 newspaper\"",
+    "count": 26,
+    "top_100": 26,
+    "result_type": "Hash",
+    "top_100_result": [
+      "282eca6bad12126763271ccade38e7ec66eb21a9e435d4ad4074c1b5f1f7fac9"
+    ],
+    "top_100_count_result": [
+      "282eca6bad12126763271ccade38e7ec66eb21a9e435d4ad4074c1b5f1f7fac9"
+    ]
+  },
+  {
+    "query": "\"milwaukee newspaper\"~1",
+    "count": 15,
+    "top_100": 15,
+    "result_type": "Hash",
+    "top_100_result": [
+      "d191389fa479a9aaadf115ee4aaf0762cc16d0ee9805f630af6491442167ba8d"
+    ],
+    "top_100_count_result": [
+      "d191389fa479a9aaadf115ee4aaf0762cc16d0ee9805f630af6491442167ba8d"
+    ]
+  },
+  {
+    "query": "\"milwaukee newspaper\"~3",
+    "count": 38,
+    "top_100": 38,
+    "result_type": "Hash",
+    "top_100_result": [
+      "d8dcdbaab0917577020d9072882f01cfc31fe7588ed67f8236b850d719282176"
+    ],
+    "top_100_count_result": [
+      "d8dcdbaab0917577020d9072882f01cfc31fe7588ed67f8236b850d719282176"
+    ]
+  },
+  {
+    "query": "\"omaha 1-1 symphony\"",
+    "count": 25,
+    "top_100": 25,
+    "result_type": "Hash",
+    "top_100_result": [
+      "805decbb30b6594519b8ac284ce1453d1793d21856b8ba6f1fda717b8cfe4a17"
+    ],
+    "top_100_count_result": [
+      "805decbb30b6594519b8ac284ce1453d1793d21856b8ba6f1fda717b8cfe4a17"
+    ]
+  },
+  {
+    "query": "\"omaha 1-3 symphony\"",
+    "count": 25,
+    "top_100": 25,
+    "result_type": "Hash",
+    "top_100_result": [
+      "4541ebc711bd353f8abeb1f474a0fa2e5fce255ee75e48d52205524666900fc1"
+    ],
+    "top_100_count_result": [
+      "4541ebc711bd353f8abeb1f474a0fa2e5fce255ee75e48d52205524666900fc1"
+    ]
+  },
+  {
+    "query": "\"omaha symphony\"~1",
+    "count": 25,
+    "top_100": 25,
+    "result_type": "Hash",
+    "top_100_result": [
+      "805decbb30b6594519b8ac284ce1453d1793d21856b8ba6f1fda717b8cfe4a17"
+    ],
+    "top_100_count_result": [
+      "805decbb30b6594519b8ac284ce1453d1793d21856b8ba6f1fda717b8cfe4a17"
+    ]
+  },
+  {
+    "query": "\"omaha symphony\"~3",
+    "count": 25,
+    "top_100": 25,
+    "result_type": "Hash",
+    "top_100_result": [
+      "087207b8f4c21473390f2718275b6a9ae391612f3cee92b7e9013874ffd142e5"
+    ],
+    "top_100_count_result": [
+      "087207b8f4c21473390f2718275b6a9ae391612f3cee92b7e9013874ffd142e5"
+    ]
+  },
+  {
+    "query": "\"body 1-1 painting\"",
+    "count": 141,
+    "top_100": 139,
+    "result_type": "Hash",
+    "top_100_result": [
+      "84498db6b2ae912b1ddecc0e7d7e9cb2a992a9e7cff4c40531edb9d862f3d681"
+    ],
+    "top_100_count_result": [
+      "84498db6b2ae912b1ddecc0e7d7e9cb2a992a9e7cff4c40531edb9d862f3d681"
+    ]
+  },
+  {
+    "query": "\"body 1-3 painting\"",
+    "count": 175,
+    "top_100": 172,
+    "result_type": "Hash",
+    "top_100_result": [
+      "b046b3c4dd19cf193fe06262cd0ea311807ee3a4c0bda6b06b4bd8409b0585bf"
+    ],
+    "top_100_count_result": [
+      "b046b3c4dd19cf193fe06262cd0ea311807ee3a4c0bda6b06b4bd8409b0585bf"
+    ]
+  },
+  {
+    "query": "\"body painting\"~1",
+    "count": 154,
+    "top_100": 154,
+    "result_type": "Hash",
+    "top_100_result": [
+      "35587444eec605c6b571a9ee8dce3917009ec7dbe837530bcce8f72f343e974f"
+    ],
+    "top_100_count_result": [
+      "35587444eec605c6b571a9ee8dce3917009ec7dbe837530bcce8f72f343e974f"
+    ]
+  },
+  {
+    "query": "\"body painting\"~3",
+    "count": 206,
+    "top_100": 206,
+    "result_type": "Hash",
+    "top_100_result": [
+      "e0f3ee10837cb84a8276fc29bf69c73100d81fa13183cf3d89958e38863d269b"
+    ],
+    "top_100_count_result": [
+      "e0f3ee10837cb84a8276fc29bf69c73100d81fa13183cf3d89958e38863d269b"
+    ]
+  },
+  {
+    "query": "\"stone 1-1 mountain\"",
+    "count": 329,
+    "top_100": 231,
+    "result_type": "Hash",
+    "top_100_result": [
+      "87a7bcdbb987dd4955868112581a68bb23ca3dd63d94d735111e6b6658005038"
+    ],
+    "top_100_count_result": [
+      "87a7bcdbb987dd4955868112581a68bb23ca3dd63d94d735111e6b6658005038"
+    ]
+  },
+  {
+    "query": "\"stone 1-3 mountain\"",
+    "count": 385,
+    "top_100": 293,
+    "result_type": "Hash",
+    "top_100_result": [
+      "43758e8c7b0926857840bca59af28a37e03fe6187915e55b64ffc133f7008759"
+    ],
+    "top_100_count_result": [
+      "43758e8c7b0926857840bca59af28a37e03fe6187915e55b64ffc133f7008759"
+    ]
+  },
+  {
+    "query": "\"stone mountain\"~1",
+    "count": 348,
+    "top_100": 348,
+    "result_type": "Hash",
+    "top_100_result": [
+      "396f1af02885f7e8a3017ea7dfc1e7d5dfd6c7d0ee041e6a4060fd5465c8b690"
+    ],
+    "top_100_count_result": [
+      "396f1af02885f7e8a3017ea7dfc1e7d5dfd6c7d0ee041e6a4060fd5465c8b690"
+    ]
+  },
+  {
+    "query": "\"stone mountain\"~3",
+    "count": 479,
+    "top_100": 479,
+    "result_type": "Hash",
+    "top_100_result": [
+      "426a20f7b94beecb457c529d44a359b2fb85c32f8b22c6468fdf7232b70b8bc7"
+    ],
+    "top_100_count_result": [
+      "426a20f7b94beecb457c529d44a359b2fb85c32f8b22c6468fdf7232b70b8bc7"
+    ]
+  },
+  {
+    "query": "\"plus 1-2 size 1-3 clothing\"",
+    "count": 20,
+    "top_100": 20,
+    "result_type": "Hash",
+    "top_100_result": [
+      "79caa21b751dcd6b2add59608a1192631c73e35e693d0a6e5f1a95a8d4423376"
+    ],
+    "top_100_count_result": [
+      "79caa21b751dcd6b2add59608a1192631c73e35e693d0a6e5f1a95a8d4423376"
+    ]
+  },
+  {
+    "query": "\"plus size clothing\"~2",
+    "count": 20,
+    "top_100": 20,
+    "result_type": "Hash",
+    "top_100_result": [
+      "221f638a87e030065c62cea7d3b5853fd00f9e74825477c4b4b105bcca42fc9d"
+    ],
+    "top_100_count_result": [
+      "221f638a87e030065c62cea7d3b5853fd00f9e74825477c4b4b105bcca42fc9d"
+    ]
+  },
+  {
+    "query": "\"wisconsin 1-2 attorney 1-3 general\"",
+    "count": 61,
+    "top_100": 61,
+    "result_type": "Hash",
+    "top_100_result": [
+      "a057d944021152b96714272b696de57797592556fded91e963f63eaa46c6113d"
+    ],
+    "top_100_count_result": [
+      "a057d944021152b96714272b696de57797592556fded91e963f63eaa46c6113d"
+    ]
+  },
+  {
+    "query": "\"wisconsin attorney general\"~2",
+    "count": 61,
+    "top_100": 61,
+    "result_type": "Hash",
+    "top_100_result": [
+      "a92b431001abafb24da468f6f931e7c6ec49499dab002661ee7c4966376aa2c8"
+    ],
+    "top_100_count_result": [
+      "a92b431001abafb24da468f6f931e7c6ec49499dab002661ee7c4966376aa2c8"
+    ]
+  },
+  {
+    "query": "\"the 1-2 english 1-3 restoration\"",
+    "count": 212,
+    "top_100": 212,
+    "result_type": "Hash",
+    "top_100_result": [
+      "56a6b74c5ca4919a2e2398e2941c679a11bbbb8359335a331e068edf1b9c5cd7"
+    ],
+    "top_100_count_result": [
+      "56a6b74c5ca4919a2e2398e2941c679a11bbbb8359335a331e068edf1b9c5cd7"
+    ]
+  },
+  {
+    "query": "\"the english restoration\"~2",
+    "count": 214,
+    "top_100": 214,
+    "result_type": "Hash",
+    "top_100_result": [
+      "c186e449ab1156b3f75e2b8eb98fec2ade1b7163c9bf2500b97e4814a437053b"
+    ],
+    "top_100_count_result": [
+      "c186e449ab1156b3f75e2b8eb98fec2ade1b7163c9bf2500b97e4814a437053b"
+    ]
+  },
+  {
+    "query": "\"french 1-2 culinary 1-3 institute\"",
+    "count": 31,
+    "top_100": 31,
+    "result_type": "Hash",
+    "top_100_result": [
+      "adf2a419032fe4466cb141109a4592f869e6fc0a0dd1adc3ec5ce94a0bb642b5"
+    ],
+    "top_100_count_result": [
+      "adf2a419032fe4466cb141109a4592f869e6fc0a0dd1adc3ec5ce94a0bb642b5"
+    ]
+  },
+  {
+    "query": "\"french culinary institute\"~2",
+    "count": 31,
+    "top_100": 31,
+    "result_type": "Hash",
+    "top_100_result": [
+      "adf2a419032fe4466cb141109a4592f869e6fc0a0dd1adc3ec5ce94a0bb642b5"
+    ],
+    "top_100_count_result": [
+      "adf2a419032fe4466cb141109a4592f869e6fc0a0dd1adc3ec5ce94a0bb642b5"
+    ]
+  },
+  {
+    "query": "\"robert 1-2 green 1-3 ingersoll\"",
+    "count": 12,
+    "top_100": 12,
+    "result_type": "Hash",
+    "top_100_result": [
+      "ac2ec5ba3e53451dfd8f5b9a42bb62e6035a132840f93b54397a38009d1b7689"
+    ],
+    "top_100_count_result": [
+      "ac2ec5ba3e53451dfd8f5b9a42bb62e6035a132840f93b54397a38009d1b7689"
+    ]
+  },
+  {
+    "query": "\"robert green ingersoll\"~2",
+    "count": 12,
+    "top_100": 12,
+    "result_type": "Hash",
+    "top_100_result": [
+      "ac2ec5ba3e53451dfd8f5b9a42bb62e6035a132840f93b54397a38009d1b7689"
+    ],
+    "top_100_count_result": [
+      "ac2ec5ba3e53451dfd8f5b9a42bb62e6035a132840f93b54397a38009d1b7689"
+    ]
+  },
+  {
+    "query": "\"who 1-2 dares 1-3 wins\"",
+    "count": 65,
+    "top_100": 65,
+    "result_type": "Hash",
+    "top_100_result": [
+      "7ae0b6d782e2a001c71f68075ae84076d2f2d46683581e443fd0f37b949f0550"
+    ],
+    "top_100_count_result": [
+      "7ae0b6d782e2a001c71f68075ae84076d2f2d46683581e443fd0f37b949f0550"
+    ]
+  },
+  {
+    "query": "\"who dares wins\"~2",
+    "count": 65,
+    "top_100": 65,
+    "result_type": "Hash",
+    "top_100_result": [
+      "7ae0b6d782e2a001c71f68075ae84076d2f2d46683581e443fd0f37b949f0550"
+    ],
+    "top_100_count_result": [
+      "7ae0b6d782e2a001c71f68075ae84076d2f2d46683581e443fd0f37b949f0550"
+    ]
+  },
+  {
+    "query": "\"ford 1-2 modeling 1-3 agency\"",
+    "count": 55,
+    "top_100": 55,
+    "result_type": "Hash",
+    "top_100_result": [
+      "f79e8219bfa6159879f42ae9356175a993933532210ab8aed574cb5fd2b3ac02"
+    ],
+    "top_100_count_result": [
+      "f79e8219bfa6159879f42ae9356175a993933532210ab8aed574cb5fd2b3ac02"
+    ]
+  },
+  {
+    "query": "\"ford modeling agency\"~2",
+    "count": 55,
+    "top_100": 55,
+    "result_type": "Hash",
+    "top_100_result": [
+      "d926be8661041a811671021c546f426e60a97d79db2308123cd460d0503e0358"
+    ],
+    "top_100_count_result": [
+      "d926be8661041a811671021c546f426e60a97d79db2308123cd460d0503e0358"
+    ]
+  },
+  {
+    "query": "\"texas 1-2 state 1-3 legislature\"",
+    "count": 94,
+    "top_100": 94,
+    "result_type": "Hash",
+    "top_100_result": [
+      "c0bbb33a000a3fdd809f4aecd3abd7e7c8f187a0249f5677c4b0c8094571053e"
+    ],
+    "top_100_count_result": [
+      "c0bbb33a000a3fdd809f4aecd3abd7e7c8f187a0249f5677c4b0c8094571053e"
+    ]
+  },
+  {
+    "query": "\"texas state legislature\"~2",
+    "count": 96,
+    "top_100": 96,
+    "result_type": "Hash",
+    "top_100_result": [
+      "c185eb1a5975871aec643a9e2f2b10e29d35173484c7f7deb33fef5cc478063d"
+    ],
+    "top_100_count_result": [
+      "c185eb1a5975871aec643a9e2f2b10e29d35173484c7f7deb33fef5cc478063d"
+    ]
+  },
+  {
+    "query": "\"georgia 1-2 public 1-3 broadcasting\"",
+    "count": 61,
+    "top_100": 61,
+    "result_type": "Hash",
+    "top_100_result": [
+      "222ed6cee27b2fa7d27351a9b8fca16aebf97c8854e623c2ef0ae29617914d2f"
+    ],
+    "top_100_count_result": [
+      "222ed6cee27b2fa7d27351a9b8fca16aebf97c8854e623c2ef0ae29617914d2f"
+    ]
+  },
+  {
+    "query": "\"georgia public broadcasting\"~2",
+    "count": 62,
+    "top_100": 62,
+    "result_type": "Hash",
+    "top_100_result": [
+      "00acda8586bed4f981b0e805d0fbeb84fdf3247d2bd9ea8f058b534f9f272985"
+    ],
+    "top_100_count_result": [
+      "00acda8586bed4f981b0e805d0fbeb84fdf3247d2bd9ea8f058b534f9f272985"
+    ]
+  },
+  {
+    "query": "\"texas 1-2 death 1-3 row\"",
+    "count": 28,
+    "top_100": 28,
+    "result_type": "Hash",
+    "top_100_result": [
+      "227f57b22895a04677e36770b9e535c61fbe9adb9aa40b5f802b3c78f7d903d8"
+    ],
+    "top_100_count_result": [
+      "227f57b22895a04677e36770b9e535c61fbe9adb9aa40b5f802b3c78f7d903d8"
+    ]
+  },
+  {
+    "query": "\"texas death row\"~2",
+    "count": 35,
+    "top_100": 35,
+    "result_type": "Hash",
+    "top_100_result": [
+      "d315698ec13beec40829bfb6fe080a67706eb827b029874c87b80fca13d1da3e"
+    ],
+    "top_100_count_result": [
+      "d315698ec13beec40829bfb6fe080a67706eb827b029874c87b80fca13d1da3e"
+    ]
+  },
+  {
+    "query": "\"griffith observatory\" the",
+    "count": 4168066,
+    "top_100": 4168066,
+    "result_type": "Hash",
+    "top_100_result": [
+      "8b461a8b2d3063db50ec587df757e93d83d9bc83b0950e7dc6d1757becfe6dbb"
+    ],
+    "top_100_count_result": [
+      "8b461a8b2d3063db50ec587df757e93d83d9bc83b0950e7dc6d1757becfe6dbb"
+    ]
+  },
+  {
+    "query": "\"griffith observatory\" \"bowel obstruction\" the",
+    "count": 4168066,
+    "top_100": 4168066,
+    "result_type": "Hash",
+    "top_100_result": [
+      "6ba542209bc4147e56098922b4b036d864d6119276a09dfd70757693b0ba3bfc"
+    ],
+    "top_100_count_result": [
+      "6ba542209bc4147e56098922b4b036d864d6119276a09dfd70757693b0ba3bfc"
+    ]
+  },
+  {
+    "query": "+\"griffith observatory\" +the",
+    "count": 57,
+    "top_100": 57,
+    "result_type": "Hash",
+    "top_100_result": [
+      "f408c013b3bf3912b54e782b618b333ea37736662bf3f71989a03dd2ecffe80b"
+    ],
+    "top_100_count_result": [
+      "f408c013b3bf3912b54e782b618b333ea37736662bf3f71989a03dd2ecffe80b"
+    ]
+  },
+  {
+    "query": "+\"griffith observatory\" +the +world",
+    "count": 19,
+    "top_100": 19,
+    "result_type": "Hash",
+    "top_100_result": [
+      "f764a1db063d70e9364c8562ab2a930772c768763f8ee81b611c76d04ac160be"
+    ],
+    "top_100_count_result": [
+      "f764a1db063d70e9364c8562ab2a930772c768763f8ee81b611c76d04ac160be"
+    ]
+  },
+  {
+    "query": "+the -\"griffith observatory\"",
+    "count": 4168009,
+    "top_100": 78209,
+    "result_type": "Hash",
+    "top_100_result": [
+      "f3ba46b2bcb4e2a8c3dc450d2fdbb86c8576e50277d958ad1cdf10d48e4ce19a"
+    ],
+    "top_100_count_result": [
+      "f3ba46b2bcb4e2a8c3dc450d2fdbb86c8576e50277d958ad1cdf10d48e4ce19a"
+    ]
+  },
+  {
+    "query": "+\"griffith observatory\" -california",
+    "count": 26,
+    "top_100": 26,
+    "result_type": "Hash",
+    "top_100_result": [
+      "1406c8d91d16057412fae9e91cbfe998393dbe1205f07936099076c654ad5ef9"
+    ],
+    "top_100_count_result": [
+      "1406c8d91d16057412fae9e91cbfe998393dbe1205f07936099076c654ad5ef9"
+    ]
+  },
+  {
+    "query": "the^2 world",
+    "count": 4170957,
+    "top_100": 1576,
+    "result_type": "Hash",
+    "top_100_result": [
+      "d2613368071656753909f8b6386d17fc79194c057cad1ed67c561ed66e41df2d"
+    ],
+    "top_100_count_result": [
+      "d2613368071656753909f8b6386d17fc79194c057cad1ed67c561ed66e41df2d"
+    ]
+  },
+  {
+    "query": "+\"griffith observatory\" the^3",
+    "count": 57,
+    "top_100": 57,
+    "result_type": "Hash",
+    "top_100_result": [
+      "f408c013b3bf3912b54e782b618b333ea37736662bf3f71989a03dd2ecffe80b"
+    ],
+    "top_100_count_result": [
+      "f408c013b3bf3912b54e782b618b333ea37736662bf3f71989a03dd2ecffe80b"
+    ]
+  },
+  {
+    "query": "the~1",
+    "count": 4203952,
+    "top_100": 4203952,
+    "result_type": "Hash",
+    "top_100_result": [
+      "f3ba46b2bcb4e2a8c3dc450d2fdbb86c8576e50277d958ad1cdf10d48e4ce19a"
+    ],
+    "top_100_count_result": [
+      "f3ba46b2bcb4e2a8c3dc450d2fdbb86c8576e50277d958ad1cdf10d48e4ce19a"
+    ]
+  },
+  {
+    "query": "+the~1 +\"griffith observatory\"",
+    "count": 57,
+    "top_100": 57,
+    "result_type": "Hash",
+    "top_100_result": [
+      "00335192ac593287495566a815c75064ad75c90b19abcf9887051b7d06b2b4cf"
+    ],
+    "top_100_count_result": [
+      "00335192ac593287495566a815c75064ad75c90b19abcf9887051b7d06b2b4cf"
+    ]
+  },
+  {
+    "query": "\"bowel obstruction\" world",
+    "count": 634131,
+    "top_100": 634131,
+    "result_type": "Hash",
+    "top_100_result": [
+      "6fa1fc7ee1ab996b3c8901d31a430bd0ba71adb6f8de2283d098803a0cacc630"
+    ],
+    "top_100_count_result": [
+      "6fa1fc7ee1ab996b3c8901d31a430bd0ba71adb6f8de2283d098803a0cacc630"
+    ]
+  },
+  {
+    "query": "\"bowel obstruction\" \"vicenza italy\" world",
+    "count": 634200,
+    "top_100": 634200,
+    "result_type": "Hash",
+    "top_100_result": [
+      "54a22d07d4bddb7d44c19383c856e3422f1c04ce38ece6c73e2a2ee806349624"
+    ],
+    "top_100_count_result": [
+      "54a22d07d4bddb7d44c19383c856e3422f1c04ce38ece6c73e2a2ee806349624"
+    ]
+  },
+  {
+    "query": "+\"bowel obstruction\" +world",
+    "count": 31,
+    "top_100": 31,
+    "result_type": "Hash",
+    "top_100_result": [
+      "1035cb8f1baf18cc2a701efd061aa876710df062fb1507b93239eb8577f8011a"
+    ],
+    "top_100_count_result": [
+      "1035cb8f1baf18cc2a701efd061aa876710df062fb1507b93239eb8577f8011a"
+    ]
+  },
+  {
+    "query": "+\"bowel obstruction\" +world +state",
+    "count": 11,
+    "top_100": 11,
+    "result_type": "Hash",
+    "top_100_result": [
+      "2f6521864e6881e2b2cad985c4448e9ef21c6c033705a0ff7a2a4b37aa3e272e"
+    ],
+    "top_100_count_result": [
+      "2f6521864e6881e2b2cad985c4448e9ef21c6c033705a0ff7a2a4b37aa3e272e"
+    ]
+  },
+  {
+    "query": "+world -\"bowel obstruction\"",
+    "count": 634021,
+    "top_100": 40257,
+    "result_type": "Hash",
+    "top_100_result": [
+      "d8d9d42715b2fcedebdfe9077aed4354860b2e9a66ceba80f2603d9183b6389a"
+    ],
+    "top_100_count_result": [
+      "d8d9d42715b2fcedebdfe9077aed4354860b2e9a66ceba80f2603d9183b6389a"
+    ]
+  },
+  {
+    "query": "+\"bowel obstruction\" -world",
+    "count": 79,
+    "top_100": 79,
+    "result_type": "Hash",
+    "top_100_result": [
+      "1607a0a91cf8a88bf9a183270b4350960529e23492bb75baae3414b0a4e6f0f7"
+    ],
+    "top_100_count_result": [
+      "1607a0a91cf8a88bf9a183270b4350960529e23492bb75baae3414b0a4e6f0f7"
+    ]
+  },
+  {
+    "query": "world^2 state",
+    "count": 1036349,
+    "top_100": 11345,
+    "result_type": "Hash",
+    "top_100_result": [
+      "83f8e3bb314af70142ee3ad4b66dd7691f93ce3a946647caf323ddba29cf9c42"
+    ],
+    "top_100_count_result": [
+      "83f8e3bb314af70142ee3ad4b66dd7691f93ce3a946647caf323ddba29cf9c42"
+    ]
+  },
+  {
+    "query": "+\"bowel obstruction\" world^3",
+    "count": 110,
+    "top_100": 110,
+    "result_type": "Hash",
+    "top_100_result": [
+      "8dc752c501eeef185966c397ece1a1f33f9c682775a1bdb62364b9c7c3936da6"
+    ],
+    "top_100_count_result": [
+      "8dc752c501eeef185966c397ece1a1f33f9c682775a1bdb62364b9c7c3936da6"
+    ]
+  },
+  {
+    "query": "world~1",
+    "count": 1017625,
+    "top_100": 1017625,
+    "result_type": "Hash",
+    "top_100_result": [
+      "d8d9d42715b2fcedebdfe9077aed4354860b2e9a66ceba80f2603d9183b6389a"
+    ],
+    "top_100_count_result": [
+      "d8d9d42715b2fcedebdfe9077aed4354860b2e9a66ceba80f2603d9183b6389a"
+    ]
+  },
+  {
+    "query": "+world~1 +\"bowel obstruction\"",
+    "count": 47,
+    "top_100": 47,
+    "result_type": "Hash",
+    "top_100_result": [
+      "0f3989f227006d6969e66adb54cd8ad3061091dafb9cfcbfd71b98b9eb5c3310"
+    ],
+    "top_100_count_result": [
+      "0f3989f227006d6969e66adb54cd8ad3061091dafb9cfcbfd71b98b9eb5c3310"
+    ]
+  },
+  {
+    "query": "\"vicenza italy\" state",
+    "count": 523159,
+    "top_100": 523159,
+    "result_type": "Hash",
+    "top_100_result": [
+      "70803fd592b900e8f34884228d54ae38690ad7046e7c2f2dd000f967d7ab87ce"
+    ],
+    "top_100_count_result": [
+      "70803fd592b900e8f34884228d54ae38690ad7046e7c2f2dd000f967d7ab87ce"
+    ]
+  },
+  {
+    "query": "\"vicenza italy\" \"digital scanning\" state",
+    "count": 523173,
+    "top_100": 523173,
+    "result_type": "Hash",
+    "top_100_result": [
+      "9e70b98cf4f4f5ab2f13d8d7defff8d4634127157ddd3438cf11dc7128fe4e1f"
+    ],
+    "top_100_count_result": [
+      "9e70b98cf4f4f5ab2f13d8d7defff8d4634127157ddd3438cf11dc7128fe4e1f"
+    ]
+  },
+  {
+    "query": "+\"vicenza italy\" +state",
+    "count": 15,
+    "top_100": 15,
+    "result_type": "Hash",
+    "top_100_result": [
+      "0fb84dcc8e231266995e761f8858940d36832bf3e6a2f55691ffc74075ac2990"
+    ],
+    "top_100_count_result": [
+      "0fb84dcc8e231266995e761f8858940d36832bf3e6a2f55691ffc74075ac2990"
+    ]
+  },
+  {
+    "query": "+\"vicenza italy\" +state +history",
+    "count": 8,
+    "top_100": 8,
+    "result_type": "Hash",
+    "top_100_result": [
+      "f2f0c808937a335f634105a19ddaefad1a3136699e8f930f66f3eda5137af0e8"
+    ],
+    "top_100_count_result": [
+      "f2f0c808937a335f634105a19ddaefad1a3136699e8f930f66f3eda5137af0e8"
+    ]
+  },
+  {
+    "query": "+state -\"vicenza italy\"",
+    "count": 523047,
+    "top_100": 48053,
+    "result_type": "Hash",
+    "top_100_result": [
+      "ddf882df6167f7336d6bec5bf44e59227c13f0c100f8e1d7ea08a849904733d5"
+    ],
+    "top_100_count_result": [
+      "ddf882df6167f7336d6bec5bf44e59227c13f0c100f8e1d7ea08a849904733d5"
+    ]
+  },
+  {
+    "query": "+\"vicenza italy\" -state",
+    "count": 97,
+    "top_100": 97,
+    "result_type": "Hash",
+    "top_100_result": [
+      "8a2a2b06f1afc130841140e0a8526f7998ef5bd937afbc8bacc5bf3e6033ac74"
+    ],
+    "top_100_count_result": [
+      "8a2a2b06f1afc130841140e0a8526f7998ef5bd937afbc8bacc5bf3e6033ac74"
+    ]
+  },
+  {
+    "query": "state^2 history",
+    "count": 1030384,
+    "top_100": 12354,
+    "result_type": "Hash",
+    "top_100_result": [
+      "ba0f7841a01a77cc9d4657eac0687314d82548c6be82ef04ae4be4906c1f5980"
+    ],
+    "top_100_count_result": [
+      "ba0f7841a01a77cc9d4657eac0687314d82548c6be82ef04ae4be4906c1f5980"
+    ]
+  },
+  {
+    "query": "+\"vicenza italy\" state^3",
+    "count": 112,
+    "top_100": 112,
+    "result_type": "Hash",
+    "top_100_result": [
+      "e6d75df2e652926a7e020348cef0c69988155ccb150b149fc6924bc6aa2a0567"
+    ],
+    "top_100_count_result": [
+      "e6d75df2e652926a7e020348cef0c69988155ccb150b149fc6924bc6aa2a0567"
+    ]
+  },
+  {
+    "query": "state~1",
+    "count": 1105658,
+    "top_100": 1105658,
+    "result_type": "Hash",
+    "top_100_result": [
+      "ddf882df6167f7336d6bec5bf44e59227c13f0c100f8e1d7ea08a849904733d5"
+    ],
+    "top_100_count_result": [
+      "ddf882df6167f7336d6bec5bf44e59227c13f0c100f8e1d7ea08a849904733d5"
+    ]
+  },
+  {
+    "query": "+state~1 +\"vicenza italy\"",
+    "count": 54,
+    "top_100": 54,
+    "result_type": "Hash",
+    "top_100_result": [
+      "759758e00649d912ae67d4c2fbbc4c90aeee426fdfaaf322f37efdcc3a28ecfb"
+    ],
+    "top_100_count_result": [
+      "759758e00649d912ae67d4c2fbbc4c90aeee426fdfaaf322f37efdcc3a28ecfb"
+    ]
+  },
+  {
+    "query": "\"digital scanning\" history",
+    "count": 681025,
+    "top_100": 681025,
+    "result_type": "Hash",
+    "top_100_result": [
+      "3f6104db14c744f907b0cc596959e6bb0217f6e5daa447fae36dcb5aa0d9a5d7"
+    ],
+    "top_100_count_result": [
+      "3f6104db14c744f907b0cc596959e6bb0217f6e5daa447fae36dcb5aa0d9a5d7"
+    ]
+  },
+  {
+    "query": "\"digital scanning\" \"borders books\" history",
+    "count": 681042,
+    "top_100": 681042,
+    "result_type": "Hash",
+    "top_100_result": [
+      "1ce585f9d57914d21e27baa0b20ae53bb89e725f3a9df6b2d8f9ba9369f2f375"
+    ],
+    "top_100_count_result": [
+      "1ce585f9d57914d21e27baa0b20ae53bb89e725f3a9df6b2d8f9ba9369f2f375"
+    ]
+  },
+  {
+    "query": "+\"digital scanning\" +history",
+    "count": 2,
+    "top_100": 2,
+    "result_type": "Hash",
+    "top_100_result": [
+      "5936492c4c468715dc5a914b5cea2a052143f408ff7b8ed95a3b0378fd13439b"
+    ],
+    "top_100_count_result": [
+      "5936492c4c468715dc5a914b5cea2a052143f408ff7b8ed95a3b0378fd13439b"
+    ]
+  },
+  {
+    "query": "+\"digital scanning\" +history +album",
+    "count": 1,
+    "top_100": 1,
+    "result_type": "Hash",
+    "top_100_result": [
+      "c9509982311a2685bf365864f0e1edb5d1c6ca63369f2ef54ad8cdd13cf29670"
+    ],
+    "top_100_count_result": [
+      "c9509982311a2685bf365864f0e1edb5d1c6ca63369f2ef54ad8cdd13cf29670"
+    ]
+  },
+  {
+    "query": "+history -\"digital scanning\"",
+    "count": 681008,
+    "top_100": 48306,
+    "result_type": "Hash",
+    "top_100_result": [
+      "5c4d7d9ca791e80316c84e7b3f93b61e20fc0168bd2a6387dcdf40454766617a"
+    ],
+    "top_100_count_result": [
+      "5c4d7d9ca791e80316c84e7b3f93b61e20fc0168bd2a6387dcdf40454766617a"
+    ]
+  },
+  {
+    "query": "+\"digital scanning\" -history",
+    "count": 15,
+    "top_100": 15,
+    "result_type": "Hash",
+    "top_100_result": [
+      "be7058cd5a9dcf5ac13799a096b0dbb5e1408367dd6027c3fa46886fa12e5046"
+    ],
+    "top_100_count_result": [
+      "be7058cd5a9dcf5ac13799a096b0dbb5e1408367dd6027c3fa46886fa12e5046"
+    ]
+  },
+  {
+    "query": "history^2 president",
+    "count": 847081,
+    "top_100": 22463,
+    "result_type": "Hash",
+    "top_100_result": [
+      "4fa9dd5c21020367a88988b17d08617e524a22ca569ad6d49ca2893cc8f37e95"
+    ],
+    "top_100_count_result": [
+      "4fa9dd5c21020367a88988b17d08617e524a22ca569ad6d49ca2893cc8f37e95"
+    ]
+  },
+  {
+    "query": "+\"digital scanning\" history^3",
+    "count": 17,
+    "top_100": 17,
+    "result_type": "Hash",
+    "top_100_result": [
+      "3de6bf34602f67b3d14d4d4ba44e58d5f7f194e69ecd5f32c342459a1b1e6171"
+    ],
+    "top_100_count_result": [
+      "3de6bf34602f67b3d14d4d4ba44e58d5f7f194e69ecd5f32c342459a1b1e6171"
+    ]
+  },
+  {
+    "query": "history~1",
+    "count": 681097,
+    "top_100": 681097,
+    "result_type": "Hash",
+    "top_100_result": [
+      "5c4d7d9ca791e80316c84e7b3f93b61e20fc0168bd2a6387dcdf40454766617a"
+    ],
+    "top_100_count_result": [
+      "5c4d7d9ca791e80316c84e7b3f93b61e20fc0168bd2a6387dcdf40454766617a"
+    ]
+  },
+  {
+    "query": "+history~1 +\"digital scanning\"",
+    "count": 2,
+    "top_100": 2,
+    "result_type": "Hash",
+    "top_100_result": [
+      "5936492c4c468715dc5a914b5cea2a052143f408ff7b8ed95a3b0378fd13439b"
+    ],
+    "top_100_count_result": [
+      "5936492c4c468715dc5a914b5cea2a052143f408ff7b8ed95a3b0378fd13439b"
+    ]
+  },
+  {
+    "query": "\"borders books\" president",
+    "count": 243875,
+    "top_100": 243875,
+    "result_type": "Hash",
+    "top_100_result": [
+      "bdc86d5b527870d2b320a539bced4d319bb3fe50f5f41eb81835ba5b20ef364a"
+    ],
+    "top_100_count_result": [
+      "bdc86d5b527870d2b320a539bced4d319bb3fe50f5f41eb81835ba5b20ef364a"
+    ]
+  },
+  {
+    "query": "\"borders books\" \"american funds\" president",
+    "count": 243887,
+    "top_100": 243887,
+    "result_type": "Hash",
+    "top_100_result": [
+      "a6420a1f7b73b8cf28cc39c6fbf3c36cd7b73b4e023ec5100ab97fc37457877e"
+    ],
+    "top_100_count_result": [
+      "a6420a1f7b73b8cf28cc39c6fbf3c36cd7b73b4e023ec5100ab97fc37457877e"
+    ]
+  },
+  {
+    "query": "+\"borders books\" +president",
+    "count": 4,
+    "top_100": 4,
+    "result_type": "Hash",
+    "top_100_result": [
+      "e5b448a8562a7abc3fb9ea95186127becc11955bf26a2a6807205ec4ac73e485"
+    ],
+    "top_100_count_result": [
+      "e5b448a8562a7abc3fb9ea95186127becc11955bf26a2a6807205ec4ac73e485"
+    ]
+  },
+  {
+    "query": "+\"borders books\" +president +australia",
+    "count": 1,
+    "top_100": 1,
+    "result_type": "Hash",
+    "top_100_result": [
+      "e4ed21166dbd4d8b9ae32fc009d950d91776c795da5af79ade5e5a0d4ec76d7a"
+    ],
+    "top_100_count_result": [
+      "e4ed21166dbd4d8b9ae32fc009d950d91776c795da5af79ade5e5a0d4ec76d7a"
+    ]
+  },
+  {
+    "query": "+president -\"borders books\"",
+    "count": 243850,
+    "top_100": 44046,
+    "result_type": "Hash",
+    "top_100_result": [
+      "fb0c4340983c1cf42d7a0c4d0227261d43b5bb715ebd9e459d210b0deddf9267"
+    ],
+    "top_100_count_result": [
+      "fb0c4340983c1cf42d7a0c4d0227261d43b5bb715ebd9e459d210b0deddf9267"
+    ]
+  },
+  {
+    "query": "+\"borders books\" -president",
+    "count": 21,
+    "top_100": 21,
+    "result_type": "Hash",
+    "top_100_result": [
+      "7f47755fa89894fa3fc846575076fd58001926f51891292bc7b89a8e2c13ce35"
+    ],
+    "top_100_count_result": [
+      "7f47755fa89894fa3fc846575076fd58001926f51891292bc7b89a8e2c13ce35"
+    ]
+  },
+  {
+    "query": "president^2 river",
+    "count": 477628,
+    "top_100": 11369,
+    "result_type": "Hash",
+    "top_100_result": [
+      "1aff47a483892845cdf5cac53f1d2f263e8c9877bd4295e5f3eb8313c4bab420"
+    ],
+    "top_100_count_result": [
+      "1aff47a483892845cdf5cac53f1d2f263e8c9877bd4295e5f3eb8313c4bab420"
+    ]
+  },
+  {
+    "query": "+\"borders books\" president^3",
+    "count": 25,
+    "top_100": 25,
+    "result_type": "Hash",
+    "top_100_result": [
+      "6617dec3c74e7fc3476af98349d4a3d384d01cf413b9dbe5aaf04804c2d03b1e"
+    ],
+    "top_100_count_result": [
+      "6617dec3c74e7fc3476af98349d4a3d384d01cf413b9dbe5aaf04804c2d03b1e"
+    ]
+  },
+  {
+    "query": "president~1",
+    "count": 279000,
+    "top_100": 279000,
+    "result_type": "Hash",
+    "top_100_result": [
+      "fb0c4340983c1cf42d7a0c4d0227261d43b5bb715ebd9e459d210b0deddf9267"
+    ],
+    "top_100_count_result": [
+      "fb0c4340983c1cf42d7a0c4d0227261d43b5bb715ebd9e459d210b0deddf9267"
+    ]
+  },
+  {
+    "query": "+president~1 +\"borders books\"",
+    "count": 4,
+    "top_100": 4,
+    "result_type": "Hash",
+    "top_100_result": [
+      "e5b448a8562a7abc3fb9ea95186127becc11955bf26a2a6807205ec4ac73e485"
+    ],
+    "top_100_count_result": [
+      "e5b448a8562a7abc3fb9ea95186127becc11955bf26a2a6807205ec4ac73e485"
+    ]
+  },
+  {
+    "query": "\"american funds\" river",
+    "count": 252300,
+    "top_100": 252300,
+    "result_type": "Hash",
+    "top_100_result": [
+      "f216ab7017873a8114cfdd41f8402e3745e57fb484b034a10002b6571a5668d9"
+    ],
+    "top_100_count_result": [
+      "f216ab7017873a8114cfdd41f8402e3745e57fb484b034a10002b6571a5668d9"
+    ]
+  },
+  {
+    "query": "\"american funds\" \"scottsdale az\" river",
+    "count": 252354,
+    "top_100": 252354,
+    "result_type": "Hash",
+    "top_100_result": [
+      "cd317127776128e326d328a88eaaf2746349ddfb7ad241643adb01cf5e46e1a8"
+    ],
+    "top_100_count_result": [
+      "cd317127776128e326d328a88eaaf2746349ddfb7ad241643adb01cf5e46e1a8"
+    ]
+  },
+  {
+    "query": "+\"american funds\" +river",
+    "count": 5,
+    "top_100": 5,
+    "result_type": "Hash",
+    "top_100_result": [
+      "0ac2005f1ca0f8a4bd2d23c1b93ea6c0e2298e45f0946d607b2f2af7e8b7d476"
+    ],
+    "top_100_count_result": [
+      "0ac2005f1ca0f8a4bd2d23c1b93ea6c0e2298e45f0946d607b2f2af7e8b7d476"
+    ]
+  },
+  {
+    "query": "+\"american funds\" +river +population",
+    "count": 3,
+    "top_100": 3,
+    "result_type": "Hash",
+    "top_100_result": [
+      "0744cc92cbe5d3cc160211d43667262a7d5e40234cb90944a472ad14918becdc"
+    ],
+    "top_100_count_result": [
+      "0744cc92cbe5d3cc160211d43667262a7d5e40234cb90944a472ad14918becdc"
+    ]
+  },
+  {
+    "query": "+river -\"american funds\"",
+    "count": 252277,
+    "top_100": 44666,
+    "result_type": "Hash",
+    "top_100_result": [
+      "917d58d81f5a45ee502028f36c31d4bf324101831c65bbb0c013ab2a03b5f142"
+    ],
+    "top_100_count_result": [
+      "917d58d81f5a45ee502028f36c31d4bf324101831c65bbb0c013ab2a03b5f142"
+    ]
+  },
+  {
+    "query": "+\"american funds\" -river",
+    "count": 18,
+    "top_100": 18,
+    "result_type": "Hash",
+    "top_100_result": [
+      "f08baa5304662d87936fe23a8e0e38b09eadb1b8c49cfc9789348dad8d30239b"
+    ],
+    "top_100_count_result": [
+      "f08baa5304662d87936fe23a8e0e38b09eadb1b8c49cfc9789348dad8d30239b"
+    ]
+  },
+  {
+    "query": "river^2 population",
+    "count": 564004,
+    "top_100": 6889,
+    "result_type": "Hash",
+    "top_100_result": [
+      "a0b0a984c56f43e9ccc2eb668eac13e90efdf05825691ab950c6e77a28b11ff8"
+    ],
+    "top_100_count_result": [
+      "a0b0a984c56f43e9ccc2eb668eac13e90efdf05825691ab950c6e77a28b11ff8"
+    ]
+  },
+  {
+    "query": "+\"american funds\" river^3",
+    "count": 23,
+    "top_100": 23,
+    "result_type": "Hash",
+    "top_100_result": [
+      "4022b9774521f2f94143cbab72b2a1ca66065b45348053acabfa26c3d5cc8582"
+    ],
+    "top_100_count_result": [
+      "4022b9774521f2f94143cbab72b2a1ca66065b45348053acabfa26c3d5cc8582"
+    ]
+  },
+  {
+    "query": "river~1",
+    "count": 337408,
+    "top_100": 337408,
+    "result_type": "Hash",
+    "top_100_result": [
+      "917d58d81f5a45ee502028f36c31d4bf324101831c65bbb0c013ab2a03b5f142"
+    ],
+    "top_100_count_result": [
+      "917d58d81f5a45ee502028f36c31d4bf324101831c65bbb0c013ab2a03b5f142"
+    ]
+  },
+  {
+    "query": "+river~1 +\"american funds\"",
+    "count": 7,
+    "top_100": 7,
+    "result_type": "Hash",
+    "top_100_result": [
+      "c02c30ac104ea5207a755279bbab20c94b51460b930ddcd78ea863febe9fb2b2"
+    ],
+    "top_100_count_result": [
+      "c02c30ac104ea5207a755279bbab20c94b51460b930ddcd78ea863febe9fb2b2"
+    ]
+  },
+  {
+    "query": "\"scottsdale az\" population",
+    "count": 365759,
+    "top_100": 365759,
+    "result_type": "Hash",
+    "top_100_result": [
+      "64d2d10c97d63b0ac9f7e99c87a89b5f9822780ba28ce33912fb685d20f6abe0"
+    ],
+    "top_100_count_result": [
+      "64d2d10c97d63b0ac9f7e99c87a89b5f9822780ba28ce33912fb685d20f6abe0"
+    ]
+  },
+  {
+    "query": "\"scottsdale az\" \"freelance work\" population",
+    "count": 366062,
+    "top_100": 366062,
+    "result_type": "Hash",
+    "top_100_result": [
+      "4d6dc4a22bd0c5456bc105922f1d4918ad3f0294288be7d5e850588fa3e60c33"
+    ],
+    "top_100_count_result": [
+      "4d6dc4a22bd0c5456bc105922f1d4918ad3f0294288be7d5e850588fa3e60c33"
+    ]
+  },
+  {
+    "query": "+\"scottsdale az\" +population",
+    "count": 2,
+    "top_100": 2,
+    "result_type": "Hash",
+    "top_100_result": [
+      "726bb55ef1403cbdcc62960508267ebf8dacc6450bbf3261eff00fd7675a7c62"
+    ],
+    "top_100_count_result": [
+      "726bb55ef1403cbdcc62960508267ebf8dacc6450bbf3261eff00fd7675a7c62"
+    ]
+  },
+  {
+    "query": "+\"scottsdale az\" +population +district",
+    "count": 1,
+    "top_100": 1,
+    "result_type": "Hash",
+    "top_100_result": [
+      "462dab448ecc0571a58af3f8deac5bfa7bb96acf14a30badbf32e7ced82beb86"
+    ],
+    "top_100_count_result": [
+      "462dab448ecc0571a58af3f8deac5bfa7bb96acf14a30badbf32e7ced82beb86"
+    ]
+  },
+  {
+    "query": "+population -\"scottsdale az\"",
+    "count": 365703,
+    "top_100": 34824,
+    "result_type": "Hash",
+    "top_100_result": [
+      "5d57ec32f58395a6de2a58a98b3f85437d037a17cdb318dbca582d4abef358cc"
+    ],
+    "top_100_count_result": [
+      "5d57ec32f58395a6de2a58a98b3f85437d037a17cdb318dbca582d4abef358cc"
+    ]
+  },
+  {
+    "query": "+\"scottsdale az\" -population",
+    "count": 54,
+    "top_100": 54,
+    "result_type": "Hash",
+    "top_100_result": [
+      "bd4c5e59000a35d7f0a7c8c611a532443f87c07c2f4abc9dc02f6091da268038"
+    ],
+    "top_100_count_result": [
+      "bd4c5e59000a35d7f0a7c8c611a532443f87c07c2f4abc9dc02f6091da268038"
+    ]
+  },
+  {
+    "query": "population^2 university",
+    "count": 805142,
+    "top_100": 9849,
+    "result_type": "Hash",
+    "top_100_result": [
+      "4486afb3cc2ca6ce187f3e3705aedaee3b2b47760ecc5c1bb75e74bb778fb69c"
+    ],
+    "top_100_count_result": [
+      "4486afb3cc2ca6ce187f3e3705aedaee3b2b47760ecc5c1bb75e74bb778fb69c"
+    ]
+  },
+  {
+    "query": "+\"scottsdale az\" population^3",
+    "count": 56,
+    "top_100": 56,
+    "result_type": "Hash",
+    "top_100_result": [
+      "e9b1d08cf293fc51a74cd1a1ce5455654113b2c6d04739a220293bf6a5240a83"
+    ],
+    "top_100_count_result": [
+      "e9b1d08cf293fc51a74cd1a1ce5455654113b2c6d04739a220293bf6a5240a83"
+    ]
+  },
+  {
+    "query": "population~1",
+    "count": 378747,
+    "top_100": 378747,
+    "result_type": "Hash",
+    "top_100_result": [
+      "5d57ec32f58395a6de2a58a98b3f85437d037a17cdb318dbca582d4abef358cc"
+    ],
+    "top_100_count_result": [
+      "5d57ec32f58395a6de2a58a98b3f85437d037a17cdb318dbca582d4abef358cc"
+    ]
+  },
+  {
+    "query": "+population~1 +\"scottsdale az\"",
+    "count": 3,
+    "top_100": 3,
+    "result_type": "Hash",
+    "top_100_result": [
+      "f5afba174fd1a2565a4ddf0caf89dbdd1b15a6905ad0729bb48cbde43506aa65"
+    ],
+    "top_100_count_result": [
+      "f5afba174fd1a2565a4ddf0caf89dbdd1b15a6905ad0729bb48cbde43506aa65"
+    ]
+  },
+  {
+    "query": "\"freelance work\" university",
+    "count": 466222,
+    "top_100": 466222,
+    "result_type": "Hash",
+    "top_100_result": [
+      "063a24cd0d473eea1acd0677d7a9b82d8b93b305ef51a42c94c38cd92ce5e683"
+    ],
+    "top_100_count_result": [
+      "063a24cd0d473eea1acd0677d7a9b82d8b93b305ef51a42c94c38cd92ce5e683"
+    ]
+  },
+  {
+    "query": "\"freelance work\" \"color combinations\" university",
+    "count": 466370,
+    "top_100": 466370,
+    "result_type": "Hash",
+    "top_100_result": [
+      "1dcc0c8f5c42fea9ee49c1b8a4a943d073664874411b2474e6c6da85b1517202"
+    ],
+    "top_100_count_result": [
+      "1dcc0c8f5c42fea9ee49c1b8a4a943d073664874411b2474e6c6da85b1517202"
+    ]
+  },
+  {
+    "query": "+\"freelance work\" +university",
+    "count": 131,
+    "top_100": 131,
+    "result_type": "Hash",
+    "top_100_result": [
+      "05f01c4f9e79b29ea638640a2f3348c47f14d7c6911395b24e4662b87ad302a1"
+    ],
+    "top_100_count_result": [
+      "05f01c4f9e79b29ea638640a2f3348c47f14d7c6911395b24e4662b87ad302a1"
+    ]
+  },
+  {
+    "query": "+\"freelance work\" +university +germany",
+    "count": 8,
+    "top_100": 8,
+    "result_type": "Hash",
+    "top_100_result": [
+      "efbe56ca9dd3b76097e04c8df56be7ac1b2233cd55617dc6a4578b7d93c09159"
+    ],
+    "top_100_count_result": [
+      "efbe56ca9dd3b76097e04c8df56be7ac1b2233cd55617dc6a4578b7d93c09159"
+    ]
+  },
+  {
+    "query": "+university -\"freelance work\"",
+    "count": 465915,
+    "top_100": 48881,
+    "result_type": "Hash",
+    "top_100_result": [
+      "3f0e8fc44d7da76215ad43da6949522b285636dcaf86750600b5b4c801884623"
+    ],
+    "top_100_count_result": [
+      "3f0e8fc44d7da76215ad43da6949522b285636dcaf86750600b5b4c801884623"
+    ]
+  },
+  {
+    "query": "+\"freelance work\" -university",
+    "count": 176,
+    "top_100": 162,
+    "result_type": "Hash",
+    "top_100_result": [
+      "1793516895f6db1e367546d0793aaf3e3714900510282b42a07c7b1232ce0052"
+    ],
+    "top_100_count_result": [
+      "1793516895f6db1e367546d0793aaf3e3714900510282b42a07c7b1232ce0052"
+    ]
+  },
+  {
+    "query": "university^2 germany",
+    "count": 609769,
+    "top_100": 11120,
+    "result_type": "Hash",
+    "top_100_result": [
+      "56087b9659ba7537fae846892c85cc4c3e6c0abcd2bf279f0b94fe6d881c6c8c"
+    ],
+    "top_100_count_result": [
+      "56087b9659ba7537fae846892c85cc4c3e6c0abcd2bf279f0b94fe6d881c6c8c"
+    ]
+  },
+  {
+    "query": "+\"freelance work\" university^3",
+    "count": 307,
+    "top_100": 307,
+    "result_type": "Hash",
+    "top_100_result": [
+      "317174d6c1b2d1146bf3ef9ba8e3621195ba4f3620f654922c0f64c8878a766b"
+    ],
+    "top_100_count_result": [
+      "317174d6c1b2d1146bf3ef9ba8e3621195ba4f3620f654922c0f64c8878a766b"
+    ]
+  },
+  {
+    "query": "university~1",
+    "count": 468726,
+    "top_100": 468726,
+    "result_type": "Hash",
+    "top_100_result": [
+      "3f0e8fc44d7da76215ad43da6949522b285636dcaf86750600b5b4c801884623"
+    ],
+    "top_100_count_result": [
+      "3f0e8fc44d7da76215ad43da6949522b285636dcaf86750600b5b4c801884623"
+    ]
+  },
+  {
+    "query": "+university~1 +\"freelance work\"",
+    "count": 131,
+    "top_100": 131,
+    "result_type": "Hash",
+    "top_100_result": [
+      "d909c5ca4e4b8a6155ecf1a51cb00e2f33b15010840beec3f3a7eb8f08568234"
+    ],
+    "top_100_count_result": [
+      "d909c5ca4e4b8a6155ecf1a51cb00e2f33b15010840beec3f3a7eb8f08568234"
+    ]
+  },
+  {
+    "query": "\"color combinations\" germany",
+    "count": 175494,
+    "top_100": 175494,
+    "result_type": "Hash",
+    "top_100_result": [
+      "07d8989dad7b633f9d0d135ba948e15123e1baab09dc1b304d481b2c6c41292e"
+    ],
+    "top_100_count_result": [
+      "07d8989dad7b633f9d0d135ba948e15123e1baab09dc1b304d481b2c6c41292e"
+    ]
+  },
+  {
+    "query": "\"color combinations\" \"italian translation\" germany",
+    "count": 175711,
+    "top_100": 175711,
+    "result_type": "Hash",
+    "top_100_result": [
+      "5524775866f5692be7cfb91a5516d6b28fc7f0e6219699bdbfb61a0e2101d038"
+    ],
+    "top_100_count_result": [
+      "5524775866f5692be7cfb91a5516d6b28fc7f0e6219699bdbfb61a0e2101d038"
+    ]
+  },
+  {
+    "query": "+\"color combinations\" +germany",
+    "count": 14,
+    "top_100": 14,
+    "result_type": "Hash",
+    "top_100_result": [
+      "9174dc100de8eb469056847bf953957ada9d50fb361580bae9b098a993fa86d6"
+    ],
+    "top_100_count_result": [
+      "9174dc100de8eb469056847bf953957ada9d50fb361580bae9b098a993fa86d6"
+    ]
+  },
+  {
+    "query": "+\"color combinations\" +germany +album",
+    "count": 1,
+    "top_100": 1,
+    "result_type": "Hash",
+    "top_100_result": [
+      "2d1f6cc74a8f72a788d96774a9c47f84741e16c84e44a671715bec488b2d0aed"
+    ],
+    "top_100_count_result": [
+      "2d1f6cc74a8f72a788d96774a9c47f84741e16c84e44a671715bec488b2d0aed"
+    ]
+  },
+  {
+    "query": "+germany -\"color combinations\"",
+    "count": 175317,
+    "top_100": 34913,
+    "result_type": "Hash",
+    "top_100_result": [
+      "37f8fad789f42bff29cf48ae0184a87f92b6688d0905b4e272d953eba12bcc88"
+    ],
+    "top_100_count_result": [
+      "37f8fad789f42bff29cf48ae0184a87f92b6688d0905b4e272d953eba12bcc88"
+    ]
+  },
+  {
+    "query": "+\"color combinations\" -germany",
+    "count": 163,
+    "top_100": 149,
+    "result_type": "Hash",
+    "top_100_result": [
+      "4d34b0124302669ddec2d6c051203cdc22fafe0bbf6818c53c5597f791d57f4f"
+    ],
+    "top_100_count_result": [
+      "4d34b0124302669ddec2d6c051203cdc22fafe0bbf6818c53c5597f791d57f4f"
+    ]
+  },
+  {
+    "query": "germany^2 album",
+    "count": 364656,
+    "top_100": 4918,
+    "result_type": "Hash",
+    "top_100_result": [
+      "c7497e988ca28c73aa53ef56255109d08dd2bb28ce8f52ccc6f130024922c68d"
+    ],
+    "top_100_count_result": [
+      "c7497e988ca28c73aa53ef56255109d08dd2bb28ce8f52ccc6f130024922c68d"
+    ]
+  },
+  {
+    "query": "+\"color combinations\" germany^3",
+    "count": 177,
+    "top_100": 177,
+    "result_type": "Hash",
+    "top_100_result": [
+      "aa5e4101d1dcad64be31b43e2a287701382fecea5f5c4de5d0385e9f8c927100"
+    ],
+    "top_100_count_result": [
+      "aa5e4101d1dcad64be31b43e2a287701382fecea5f5c4de5d0385e9f8c927100"
+    ]
+  },
+  {
+    "query": "germany~1",
+    "count": 318207,
+    "top_100": 318207,
+    "result_type": "Hash",
+    "top_100_result": [
+      "37f8fad789f42bff29cf48ae0184a87f92b6688d0905b4e272d953eba12bcc88"
+    ],
+    "top_100_count_result": [
+      "37f8fad789f42bff29cf48ae0184a87f92b6688d0905b4e272d953eba12bcc88"
+    ]
+  },
+  {
+    "query": "+germany~1 +\"color combinations\"",
+    "count": 27,
+    "top_100": 27,
+    "result_type": "Hash",
+    "top_100_result": [
+      "f3bc1050550a9173d6667ccc06d7a768b86b3ee114429c73372907731c7d9f94"
+    ],
+    "top_100_count_result": [
+      "f3bc1050550a9173d6667ccc06d7a768b86b3ee114429c73372907731c7d9f94"
+    ]
+  },
+  {
+    "query": "\"italian translation\" album",
+    "count": 198452,
+    "top_100": 198452,
+    "result_type": "Hash",
+    "top_100_result": [
+      "c52645f9274613b149db160f60723cf36da3964256b582c587e88107b354f0e9"
+    ],
+    "top_100_count_result": [
+      "c52645f9274613b149db160f60723cf36da3964256b582c587e88107b354f0e9"
+    ]
+  },
+  {
+    "query": "\"italian translation\" \"milwaukee newspaper\" album",
+    "count": 198462,
+    "top_100": 198462,
+    "result_type": "Hash",
+    "top_100_result": [
+      "be5f691f3f875f24c177cdca73792872df64a4c487be6ed0519a8b0772b0b633"
+    ],
+    "top_100_count_result": [
+      "be5f691f3f875f24c177cdca73792872df64a4c487be6ed0519a8b0772b0b633"
+    ]
+  },
+  {
+    "query": "+\"italian translation\" +album",
+    "count": 10,
+    "top_100": 10,
+    "result_type": "Hash",
+    "top_100_result": [
+      "305cac079531c0eceffeddd3e4dc377a4e600e56d92e6a98d13c9884ced1938d"
+    ],
+    "top_100_count_result": [
+      "305cac079531c0eceffeddd3e4dc377a4e600e56d92e6a98d13c9884ced1938d"
+    ]
+  },
+  {
+    "query": "+\"italian translation\" +album +military",
+    "count": 1,
+    "top_100": 1,
+    "result_type": "Hash",
+    "top_100_result": [
+      "5e8e230749b946193669464235549718b4d241c2779f25ee4c099ab58bfd23a0"
+    ],
+    "top_100_count_result": [
+      "5e8e230749b946193669464235549718b4d241c2779f25ee4c099ab58bfd23a0"
+    ]
+  },
+  {
+    "query": "+album -\"italian translation\"",
+    "count": 198200,
+    "top_100": 38849,
+    "result_type": "Hash",
+    "top_100_result": [
+      "f4f4486654c11cb4752647f3199a94c723002f31ab8cfa3e2a52349500dfd2bd"
+    ],
+    "top_100_count_result": [
+      "f4f4486654c11cb4752647f3199a94c723002f31ab8cfa3e2a52349500dfd2bd"
+    ]
+  },
+  {
+    "query": "+\"italian translation\" -album",
+    "count": 242,
+    "top_100": 201,
+    "result_type": "Hash",
+    "top_100_result": [
+      "ab43265306f4f660a02d49b3911a2f10e29d7aa2ae0ba6c902f48d91e48872e1"
+    ],
+    "top_100_count_result": [
+      "ab43265306f4f660a02d49b3911a2f10e29d7aa2ae0ba6c902f48d91e48872e1"
+    ]
+  },
+  {
+    "query": "album^2 military",
+    "count": 377480,
+    "top_100": 16506,
+    "result_type": "Hash",
+    "top_100_result": [
+      "e17f0472a8cdb6e7fb948cd5365b0f7220f710e0dd0be4e9d296b2d2d2d30ae8"
+    ],
+    "top_100_count_result": [
+      "e17f0472a8cdb6e7fb948cd5365b0f7220f710e0dd0be4e9d296b2d2d2d30ae8"
+    ]
+  },
+  {
+    "query": "+\"italian translation\" album^3",
+    "count": 252,
+    "top_100": 252,
+    "result_type": "Hash",
+    "top_100_result": [
+      "d3d656defa874bdbd86f9a98e4e63a097d857eb3d30d31e6e71948687107b458"
+    ],
+    "top_100_count_result": [
+      "d3d656defa874bdbd86f9a98e4e63a097d857eb3d30d31e6e71948687107b458"
+    ]
+  },
+  {
+    "query": "album~1",
+    "count": 211758,
+    "top_100": 211758,
+    "result_type": "Hash",
+    "top_100_result": [
+      "f4f4486654c11cb4752647f3199a94c723002f31ab8cfa3e2a52349500dfd2bd"
+    ],
+    "top_100_count_result": [
+      "f4f4486654c11cb4752647f3199a94c723002f31ab8cfa3e2a52349500dfd2bd"
+    ]
+  },
+  {
+    "query": "+album~1 +\"italian translation\"",
+    "count": 12,
+    "top_100": 12,
+    "result_type": "Hash",
+    "top_100_result": [
+      "ad0b646704491ed51b3860af70289d1dddb850dce23133d9c70c09bfbaec6cd2"
+    ],
+    "top_100_count_result": [
+      "ad0b646704491ed51b3860af70289d1dddb850dce23133d9c70c09bfbaec6cd2"
+    ]
+  },
+  {
+    "query": "fn:ngram(1.0 milwaukee newspaper)",
+    "count": 10,
+    "top_100": 10,
+    "result_type": "Hash",
+    "top_100_result": [
+      "ae6ed0faea751efe17ef0336f0746e921e50f45676024d1d36ba578d5d0e84bf"
+    ],
+    "top_100_count_result": [
+      "ae6ed0faea751efe17ef0336f0746e921e50f45676024d1d36ba578d5d0e84bf"
+    ]
+  },
+  {
+    "query": "fn:ngram(1.0 new york population)",
+    "count": 11,
+    "top_100": 11,
+    "result_type": "Hash",
+    "top_100_result": [
+      "61b6b1356372d96e9e0a25f85459386ecb7d55e8a6231eff4d29572ef8b23f99"
+    ],
+    "top_100_count_result": [
+      "61b6b1356372d96e9e0a25f85459386ecb7d55e8a6231eff4d29572ef8b23f99"
+    ]
+  },
+  {
+    "query": "fn:ngram(0.7 ford modeling agency population)",
+    "count": 199,
+    "top_100": 199,
+    "result_type": "Hash",
+    "top_100_result": [
+      "49565018504132a1fbfd697c195318c4eaa8fdc84445049d5ede3102485e0f01"
+    ],
+    "top_100_count_result": [
+      "49565018504132a1fbfd697c195318c4eaa8fdc84445049d5ede3102485e0f01"
+    ]
+  },
+  {
+    "query": "fn:ngram(0.5 griffith bowel obstruction vicenza)",
+    "count": 178,
+    "top_100": 178,
+    "result_type": "Hash",
+    "top_100_result": [
+      "e402339ad268353274d5b82ddd86e4ae28d6ff3d4d4ec3316a03225aaa0a87ef"
+    ],
+    "top_100_count_result": [
+      "e402339ad268353274d5b82ddd86e4ae28d6ff3d4d4ec3316a03225aaa0a87ef"
+    ]
+  },
+  {
+    "query": "fn:ngram(0.34 griffith bowel obstruction)",
+    "count": 178,
+    "top_100": 178,
+    "result_type": "Hash",
+    "top_100_result": [
+      "e402339ad268353274d5b82ddd86e4ae28d6ff3d4d4ec3316a03225aaa0a87ef"
+    ],
+    "top_100_count_result": [
+      "e402339ad268353274d5b82ddd86e4ae28d6ff3d4d4ec3316a03225aaa0a87ef"
+    ]
+  },
+  {
+    "query": "fn:ngram(1.0 italy digital)",
+    "count": 2,
+    "top_100": 2,
+    "result_type": "Hash",
+    "top_100_result": [
+      "2806a6af9e57ea1576fb7e824cfc4687dbfab5ed318c857fe0f3e6fc2242d2a1"
+    ],
+    "top_100_count_result": [
+      "2806a6af9e57ea1576fb7e824cfc4687dbfab5ed318c857fe0f3e6fc2242d2a1"
+    ]
+  },
+  {
+    "query": "fn:ngram(1.0 robert green ingersoll)",
+    "count": 11,
+    "top_100": 11,
+    "result_type": "Hash",
+    "top_100_result": [
+      "e534aa5c1915425e4c597cc409695be94f94380aaf9b1c8afdda1ae66045e110"
+    ],
+    "top_100_count_result": [
+      "e534aa5c1915425e4c597cc409695be94f94380aaf9b1c8afdda1ae66045e110"
+    ]
+  },
+  {
+    "query": "fn:ngram(0.7 who dares wins river)",
+    "count": 552,
+    "top_100": 552,
+    "result_type": "Hash",
+    "top_100_result": [
+      "57e64634c939b3703df587637043502fa7ded30c410915f4f98d17d4ce7bc30a"
+    ],
+    "top_100_count_result": [
+      "57e64634c939b3703df587637043502fa7ded30c410915f4f98d17d4ce7bc30a"
+    ]
+  },
+  {
+    "query": "fn:ngram(0.5 italy digital scanning plus)",
+    "count": 5039,
+    "top_100": 5039,
+    "result_type": "Hash",
+    "top_100_result": [
+      "28d38f80de2872c8cabd6db6ff2b5ec3192f7588c1404b394307ae93bce08cd0"
+    ],
+    "top_100_count_result": [
+      "28d38f80de2872c8cabd6db6ff2b5ec3192f7588c1404b394307ae93bce08cd0"
+    ]
+  },
+  {
+    "query": "fn:ngram(0.34 italy digital scanning)",
+    "count": 1687,
+    "top_100": 1687,
+    "result_type": "Hash",
+    "top_100_result": [
+      "0eb5532425de03d8f0d32ab70d64bb5adc14d98b6060333c653fdaddc9fd6149"
+    ],
+    "top_100_count_result": [
+      "0eb5532425de03d8f0d32ab70d64bb5adc14d98b6060333c653fdaddc9fd6149"
+    ]
+  },
+  {
+    "query": "fn:ngram(1.0 size clothing)",
+    "count": 20,
+    "top_100": 20,
+    "result_type": "Hash",
+    "top_100_result": [
+      "bff295118edb5ec054228693d0e802e9abe58ead0b6ad76f6d19e0e6523dfc3e"
+    ],
+    "top_100_count_result": [
+      "bff295118edb5ec054228693d0e802e9abe58ead0b6ad76f6d19e0e6523dfc3e"
+    ]
+  },
+  {
+    "query": "fn:ngram(1.0 people having sex)",
+    "count": 15,
+    "top_100": 15,
+    "result_type": "Hash",
+    "top_100_result": [
+      "67ed251c6b3253a2d86c7175dc6cf2685711988bad13df16e0670c780bf94f97"
+    ],
+    "top_100_count_result": [
+      "67ed251c6b3253a2d86c7175dc6cf2685711988bad13df16e0670c780bf94f97"
+    ]
+  },
+  {
+    "query": "fn:ngram(0.7 texas death row album)",
+    "count": 799,
+    "top_100": 799,
+    "result_type": "Hash",
+    "top_100_result": [
+      "791e1106f0affdbee6fadb993e9fc2871c341b6a1b78a85b0be7a6464990a23f"
+    ],
+    "top_100_count_result": [
+      "791e1106f0affdbee6fadb993e9fc2871c341b6a1b78a85b0be7a6464990a23f"
+    ]
+  },
+  {
+    "query": "fn:ngram(0.5 size clothing borders books)",
+    "count": 9723,
+    "top_100": 9723,
+    "result_type": "Hash",
+    "top_100_result": [
+      "87a455e614efb8793b4500c137ee8d700cde2480feb3450022f2c6c8d6b8e0f3"
+    ],
+    "top_100_count_result": [
+      "87a455e614efb8793b4500c137ee8d700cde2480feb3450022f2c6c8d6b8e0f3"
+    ]
+  },
+  {
+    "query": "fn:ngram(0.34 size clothing borders)",
+    "count": 3845,
+    "top_100": 3845,
+    "result_type": "Hash",
+    "top_100_result": [
+      "dbb2058a70c5ef6b6d9685255400c2f679550285a8a48cb61f542ea24791df92"
+    ],
+    "top_100_count_result": [
+      "dbb2058a70c5ef6b6d9685255400c2f679550285a8a48cb61f542ea24791df92"
+    ]
+  },
+  {
+    "query": "fn:ngram(1.0 american funds)",
+    "count": 23,
+    "top_100": 23,
+    "result_type": "Hash",
+    "top_100_result": [
+      "e44b46023950861b00a91b4e12cef7e35f61be4203c4b8954ce2506027d64320"
+    ],
+    "top_100_count_result": [
+      "e44b46023950861b00a91b4e12cef7e35f61be4203c4b8954ce2506027d64320"
+    ]
+  },
+  {
+    "query": "fn:ngram(1.0 texas death row)",
+    "count": 22,
+    "top_100": 22,
+    "result_type": "Hash",
+    "top_100_result": [
+      "34e676bc234cbe0c36527f463d77c5fe1153d13e5a21382435a4cd9348822402"
+    ],
+    "top_100_count_result": [
+      "34e676bc234cbe0c36527f463d77c5fe1153d13e5a21382435a4cd9348822402"
+    ]
+  },
+  {
+    "query": "fn:ngram(0.7 robert green ingersoll president)",
+    "count": 807,
+    "top_100": 807,
+    "result_type": "Hash",
+    "top_100_result": [
+      "eabb3229605f376a2c19833d8d30d5bfe70c1e792704a9d568e1b5260a42d355"
+    ],
+    "top_100_count_result": [
+      "eabb3229605f376a2c19833d8d30d5bfe70c1e792704a9d568e1b5260a42d355"
+    ]
+  },
+  {
+    "query": "fn:ngram(0.5 american funds scottsdale wisconsin)",
+    "count": 23420,
+    "top_100": 23420,
+    "result_type": "Hash",
+    "top_100_result": [
+      "fc2af5e47d8a62d8708a45cdc371de69b9ab12e06d8c7a825d6b890e919d0cf8"
+    ],
+    "top_100_count_result": [
+      "fc2af5e47d8a62d8708a45cdc371de69b9ab12e06d8c7a825d6b890e919d0cf8"
+    ]
+  },
+  {
+    "query": "fn:ngram(0.34 american funds scottsdale)",
+    "count": 11623,
+    "top_100": 11623,
+    "result_type": "Hash",
+    "top_100_result": [
+      "ede900c683df85ad842b8f44c7c7ab2162a2146b9cd7b0dfea7254d089a66bb9"
+    ],
+    "top_100_count_result": [
+      "ede900c683df85ad842b8f44c7c7ab2162a2146b9cd7b0dfea7254d089a66bb9"
+    ]
+  },
+  {
+    "query": "fn:ngram(1.0 attorney general)",
+    "count": 13386,
+    "top_100": 613,
+    "result_type": "Hash",
+    "top_100_result": [
+      "6463f708edab982d8a541647da13915af5991c9cbb1ca0b7598d4b4701384a69"
+    ],
+    "top_100_count_result": [
+      "6463f708edab982d8a541647da13915af5991c9cbb1ca0b7598d4b4701384a69"
+    ]
+  },
+  {
+    "query": "fn:ngram(1.0 ford modeling agency)",
+    "count": 53,
+    "top_100": 53,
+    "result_type": "Hash",
+    "top_100_result": [
+      "7f0b8285cdaa1020050c71593e96f2203794c4e3ce755a68280bbebc296f3e33"
+    ],
+    "top_100_count_result": [
+      "7f0b8285cdaa1020050c71593e96f2203794c4e3ce755a68280bbebc296f3e33"
+    ]
+  },
+  {
+    "query": "fn:ngram(0.7 georgia public broadcasting germany)",
+    "count": 933,
+    "top_100": 933,
+    "result_type": "Hash",
+    "top_100_result": [
+      "93b18010ca51ed47a5bc4eea31dade00973c0c70cc262e3d4870240d5f3130d1"
+    ],
+    "top_100_count_result": [
+      "93b18010ca51ed47a5bc4eea31dade00973c0c70cc262e3d4870240d5f3130d1"
+    ]
+  },
+  {
+    "query": "fn:ngram(0.5 attorney general english restoration)",
+    "count": 52762,
+    "top_100": 52762,
+    "result_type": "Hash",
+    "top_100_result": [
+      "8749fc5be92298352ef50be2257f4fbeb7fb1efcc6b796f74b6a897eb7e8542f"
+    ],
+    "top_100_count_result": [
+      "8749fc5be92298352ef50be2257f4fbeb7fb1efcc6b796f74b6a897eb7e8542f"
+    ]
+  },
+  {
+    "query": "fn:ngram(0.34 attorney general english)",
+    "count": 43652,
+    "top_100": 43652,
+    "result_type": "Hash",
+    "top_100_result": [
+      "e84a6a862f0464b83b2ba641dff8cb38aed2f65eb028b7f54d0200fde4e71b5d"
+    ],
+    "top_100_count_result": [
+      "e84a6a862f0464b83b2ba641dff8cb38aed2f65eb028b7f54d0200fde4e71b5d"
+    ]
+  },
+  {
+    "query": "fn:ngram(1.0 freelance work)",
+    "count": 307,
+    "top_100": 228,
+    "result_type": "Hash",
+    "top_100_result": [
+      "4da8acade67f8fbb3ac6f91dbd91e6e6298333b6022ce5861e3d2f2fcba76aca"
+    ],
+    "top_100_count_result": [
+      "4da8acade67f8fbb3ac6f91dbd91e6e6298333b6022ce5861e3d2f2fcba76aca"
+    ]
+  },
+  {
+    "query": "fn:ngram(1.0 cured of cancer)",
+    "count": 13,
+    "top_100": 13,
+    "result_type": "Hash",
+    "top_100_result": [
+      "8d0ebe7075f5d277c5135673aa8bae7b5dc5ff12e3edc07d4939ebd80a954abb"
+    ],
+    "top_100_count_result": [
+      "8d0ebe7075f5d277c5135673aa8bae7b5dc5ff12e3edc07d4939ebd80a954abb"
+    ]
+  },
+  {
+    "query": "fn:ngram(0.7 hempstead new york bridge)",
+    "count": 6699,
+    "top_100": 6699,
+    "result_type": "Hash",
+    "top_100_result": [
+      "9e2b50afddab28b1e53cabad256ff3295f533ee52c2a0b378f0f327a4de40355"
+    ],
+    "top_100_count_result": [
+      "9e2b50afddab28b1e53cabad256ff3295f533ee52c2a0b378f0f327a4de40355"
+    ]
+  },
+  {
+    "query": "fn:ngram(0.5 freelance work french culinary)",
+    "count": 37467,
+    "top_100": 37467,
+    "result_type": "Hash",
+    "top_100_result": [
+      "3670a9525535dbccf3cc588019a95c7a40fe94dd697bd23d989f0fcb1e752c7a"
+    ],
+    "top_100_count_result": [
+      "3670a9525535dbccf3cc588019a95c7a40fe94dd697bd23d989f0fcb1e752c7a"
+    ]
+  },
+  {
+    "query": "fn:ngram(0.34 freelance work french)",
+    "count": 36611,
+    "top_100": 36611,
+    "result_type": "Hash",
+    "top_100_result": [
+      "fa84041341bfb46662263e7d5d3765496242e47792d6416b499a25bb4bbede98"
+    ],
+    "top_100_count_result": [
+      "fa84041341bfb46662263e7d5d3765496242e47792d6416b499a25bb4bbede98"
+    ]
+  },
+  {
+    "query": "fn:ngram(1.0 omaha symphony)",
+    "count": 25,
+    "top_100": 25,
+    "result_type": "Hash",
+    "top_100_result": [
+      "805decbb30b6594519b8ac284ce1453d1793d21856b8ba6f1fda717b8cfe4a17"
+    ],
+    "top_100_count_result": [
+      "805decbb30b6594519b8ac284ce1453d1793d21856b8ba6f1fda717b8cfe4a17"
+    ]
+  },
+  {
+    "query": "fn:ngram(1.0 georgia public broadcasting)",
+    "count": 61,
+    "top_100": 61,
+    "result_type": "Hash",
+    "top_100_result": [
+      "3362b5c274c9b2680118e301726316182cf83c28cfe332b4e4941af821a72d2b"
+    ],
+    "top_100_count_result": [
+      "3362b5c274c9b2680118e301726316182cf83c28cfe332b4e4941af821a72d2b"
+    ]
+  },
+  {
+    "query": "fn:ngram(0.7 cured of cancer television)",
+    "count": 2856,
+    "top_100": 2856,
+    "result_type": "Hash",
+    "top_100_result": [
+      "6b1e652bbd0b07bad4eeddd71111144b83736237ce194e326f9bdb30e0f5ab39"
+    ],
+    "top_100_count_result": [
+      "6b1e652bbd0b07bad4eeddd71111144b83736237ce194e326f9bdb30e0f5ab39"
+    ]
+  },
+  {
+    "query": "fn:ngram(0.5 institute color combinations italian)",
+    "count": 7537,
+    "top_100": 7537,
+    "result_type": "Hash",
+    "top_100_result": [
+      "9d976b05013325fc8e31167270d1a0d33c6d006b99d1aa60e29b290bd3edf80e"
+    ],
+    "top_100_count_result": [
+      "9d976b05013325fc8e31167270d1a0d33c6d006b99d1aa60e29b290bd3edf80e"
+    ]
+  },
+  {
+    "query": "fn:ngram(0.34 institute color combinations)",
+    "count": 3152,
+    "top_100": 3152,
+    "result_type": "Hash",
+    "top_100_result": [
+      "bc64b68f9c18ec5bcab4b117e3baa066e7926660e78162857d5ac66129703354"
+    ],
+    "top_100_count_result": [
+      "bc64b68f9c18ec5bcab4b117e3baa066e7926660e78162857d5ac66129703354"
+    ]
+  },
+  {
+    "query": "fn:ngram(1.0 catholic answers)",
+    "count": 23,
+    "top_100": 23,
+    "result_type": "Hash",
+    "top_100_result": [
+      "28456271d550dfb57ad28840cd85e5f99e027fe87afb4359330ea52a036c0ded"
+    ],
+    "top_100_count_result": [
+      "28456271d550dfb57ad28840cd85e5f99e027fe87afb4359330ea52a036c0ded"
+    ]
+  },
+  {
+    "query": "fn:ngram(1.0 the globe newspaper)",
+    "count": 22,
+    "top_100": 22,
+    "result_type": "Hash",
+    "top_100_result": [
+      "f97f848f80de72114fa0e180968cd96a37fe787ad50507de3fd31213f781d758"
+    ],
+    "top_100_count_result": [
+      "f97f848f80de72114fa0e180968cd96a37fe787ad50507de3fd31213f781d758"
+    ]
+  },
+  {
+    "query": "fn:ngram(0.7 helen of troy aircraft)",
+    "count": 641,
+    "top_100": 641,
+    "result_type": "Hash",
+    "top_100_result": [
+      "bcf098f8d36e0a419de94333752c4115d2b568f4da6315cc7ac2b6f8a9afecb3"
+    ],
+    "top_100_count_result": [
+      "bcf098f8d36e0a419de94333752c4115d2b568f4da6315cc7ac2b6f8a9afecb3"
+    ]
+  },
+  {
+    "query": "fn:ngram(0.5 translation milwaukee newspaper robert)",
+    "count": 8522,
+    "top_100": 8522,
+    "result_type": "Hash",
+    "top_100_result": [
+      "33d770f829a77b200a03068f3e606aa318bffa76b8d64cd91145e07142360915"
+    ],
+    "top_100_count_result": [
+      "33d770f829a77b200a03068f3e606aa318bffa76b8d64cd91145e07142360915"
+    ]
+  },
+  {
+    "query": "fn:ngram(0.34 translation milwaukee newspaper)",
+    "count": 1437,
+    "top_100": 1437,
+    "result_type": "Hash",
+    "top_100_result": [
+      "2010de502000d38a1b9adc343059d3765eaf186497d5f8c39871b77da9448970"
+    ],
+    "top_100_count_result": [
+      "2010de502000d38a1b9adc343059d3765eaf186497d5f8c39871b77da9448970"
+    ]
+  },
+  {
+    "query": "fn:ngram(1.0 green ingersoll)",
+    "count": 11,
+    "top_100": 11,
+    "result_type": "Hash",
+    "top_100_result": [
+      "e534aa5c1915425e4c597cc409695be94f94380aaf9b1c8afdda1ae66045e110"
+    ],
+    "top_100_count_result": [
+      "e534aa5c1915425e4c597cc409695be94f94380aaf9b1c8afdda1ae66045e110"
+    ]
+  },
+  {
+    "query": "fn:ngram(1.0 world bank president)",
+    "count": 57,
+    "top_100": 57,
+    "result_type": "Hash",
+    "top_100_result": [
+      "d453e18c36e5ca242f20348bc46769ecabafa4cd83465cf0618f58543811b26e"
+    ],
+    "top_100_count_result": [
+      "d453e18c36e5ca242f20348bc46769ecabafa4cd83465cf0618f58543811b26e"
+    ]
+  },
+  {
+    "query": "fn:ngram(0.7 trans siberian orchestra stadium)",
+    "count": 122,
+    "top_100": 122,
+    "result_type": "Hash",
+    "top_100_result": [
+      "aed5db1b3f91dba822ce71d334ebe768fe47b658a370505fb5415cfcf490ebb9"
+    ],
+    "top_100_count_result": [
+      "aed5db1b3f91dba822ce71d334ebe768fe47b658a370505fb5415cfcf490ebb9"
+    ]
+  },
+  {
+    "query": "fn:ngram(0.5 green ingersoll omaha body)",
+    "count": 8357,
+    "top_100": 8357,
+    "result_type": "Hash",
+    "top_100_result": [
+      "fefc0e63482ab5753b07798b14f71c7a364215f9e6731889a5308b7eb8059658"
+    ],
+    "top_100_count_result": [
+      "fefc0e63482ab5753b07798b14f71c7a364215f9e6731889a5308b7eb8059658"
+    ]
+  },
+  {
+    "query": "fn:ngram(0.34 green ingersoll omaha)",
+    "count": 237,
+    "top_100": 237,
+    "result_type": "Hash",
+    "top_100_result": [
+      "ecba8eb867afb14fee76317ee3b33b75cce65b26d699aa3c00ebc0d9d7bd7452"
+    ],
+    "top_100_count_result": [
+      "ecba8eb867afb14fee76317ee3b33b75cce65b26d699aa3c00ebc0d9d7bd7452"
+    ]
+  },
+  {
+    "query": "\"griffith obse*\"",
+    "count": 60,
+    "top_100": 60,
+    "result_type": "Hash",
+    "top_100_result": [
+      "dae80cf4110d77d0acc036d91e2d5a379be178c7e5bb3c57d84d88e9757ed8e9"
+    ],
+    "top_100_count_result": [
+      "dae80cf4110d77d0acc036d91e2d5a379be178c7e5bb3c57d84d88e9757ed8e9"
+    ]
+  },
+  {
+    "query": "\"griffith obse*\"~2",
+    "count": 68,
+    "top_100": 68,
+    "result_type": "Hash",
+    "top_100_result": [
+      "d11cc24960f9a9a820d5468570517266e4bf538ab60675028328a79929f4e366"
+    ],
+    "top_100_count_result": [
+      "d11cc24960f9a9a820d5468570517266e4bf538ab60675028328a79929f4e366"
+    ]
+  },
+  {
+    "query": "\"griffith 1-2 obse*\"",
+    "count": 68,
+    "top_100": 68,
+    "result_type": "Hash",
+    "top_100_result": [
+      "f7517b2c85fbc7c58305470148d142836d9c9283542ec626344d0e060824b299"
+    ],
+    "top_100_count_result": [
+      "f7517b2c85fbc7c58305470148d142836d9c9283542ec626344d0e060824b299"
+    ]
+  },
+  {
+    "query": "\"griffith observator*\"",
+    "count": 57,
+    "top_100": 57,
+    "result_type": "Hash",
+    "top_100_result": [
+      "7e4884c3c11d91a7f71d792596d90b6a2efca9de9d517dc82583c6f55c5eab9e"
+    ],
+    "top_100_count_result": [
+      "7e4884c3c11d91a7f71d792596d90b6a2efca9de9d517dc82583c6f55c5eab9e"
+    ]
+  },
+  {
+    "query": "\"bowel obst*\"",
+    "count": 118,
+    "top_100": 118,
+    "result_type": "Hash",
+    "top_100_result": [
+      "c6d0767ad324166e1b3ed3fa1b9e52c0c7fa6a9be9283acd3e4800b5a5a2f8bb"
+    ],
+    "top_100_count_result": [
+      "c6d0767ad324166e1b3ed3fa1b9e52c0c7fa6a9be9283acd3e4800b5a5a2f8bb"
+    ]
+  },
+  {
+    "query": "\"bowel obst*\"~2",
+    "count": 122,
+    "top_100": 122,
+    "result_type": "Hash",
+    "top_100_result": [
+      "7f3cdd3bbd7b19f4a3681814b9a0470f980b36257ef00a5070854172a83e26d6"
+    ],
+    "top_100_count_result": [
+      "7f3cdd3bbd7b19f4a3681814b9a0470f980b36257ef00a5070854172a83e26d6"
+    ]
+  },
+  {
+    "query": "\"bowel 1-2 obst*\"",
+    "count": 118,
+    "top_100": 118,
+    "result_type": "Hash",
+    "top_100_result": [
+      "65c395a0cc89c1bbe2ab9f9ff03aaf4f86eeefc5be42952afef6bd3be49ab405"
+    ],
+    "top_100_count_result": [
+      "65c395a0cc89c1bbe2ab9f9ff03aaf4f86eeefc5be42952afef6bd3be49ab405"
+    ]
+  },
+  {
+    "query": "\"bowel obstructio*\"",
+    "count": 118,
+    "top_100": 118,
+    "result_type": "Hash",
+    "top_100_result": [
+      "0810021de80d8983c4931dbb1e9a3771bcc1a744c3e18f11759234d10e89f5f6"
+    ],
+    "top_100_count_result": [
+      "0810021de80d8983c4931dbb1e9a3771bcc1a744c3e18f11759234d10e89f5f6"
+    ]
+  },
+  {
+    "query": "\"vicenza ital*\"",
+    "count": 114,
+    "top_100": 114,
+    "result_type": "Hash",
+    "top_100_result": [
+      "fc52870c058156bcc9281f05cab33c29311136e00d907bc608df5a6d6f23040a"
+    ],
+    "top_100_count_result": [
+      "fc52870c058156bcc9281f05cab33c29311136e00d907bc608df5a6d6f23040a"
+    ]
+  },
+  {
+    "query": "\"digital scan*\"",
+    "count": 55,
+    "top_100": 55,
+    "result_type": "Hash",
+    "top_100_result": [
+      "2e8dcf60372fd0e75e533ba1433f91082fbcb66efa3b2c74e041db264f43605c"
+    ],
+    "top_100_count_result": [
+      "2e8dcf60372fd0e75e533ba1433f91082fbcb66efa3b2c74e041db264f43605c"
+    ]
+  },
+  {
+    "query": "\"digital scan*\"~2",
+    "count": 157,
+    "top_100": 157,
+    "result_type": "Hash",
+    "top_100_result": [
+      "a436f917490b6cc3c8f0964df41a5126c3da6fd9df9e479e7ef80ded153d07aa"
+    ],
+    "top_100_count_result": [
+      "a436f917490b6cc3c8f0964df41a5126c3da6fd9df9e479e7ef80ded153d07aa"
+    ]
+  },
+  {
+    "query": "\"digital 1-2 scan*\"",
+    "count": 91,
+    "top_100": 91,
+    "result_type": "Hash",
+    "top_100_result": [
+      "22f6255cb7eda025ca97f446aecaa9d403139fbd071d2b2f0d92ba8814f28e1a"
+    ],
+    "top_100_count_result": [
+      "22f6255cb7eda025ca97f446aecaa9d403139fbd071d2b2f0d92ba8814f28e1a"
+    ]
+  },
+  {
+    "query": "\"digital scannin*\"",
+    "count": 17,
+    "top_100": 17,
+    "result_type": "Hash",
+    "top_100_result": [
+      "b38c7ab0c5978b9e06f6609029b8cfe6db3bddce1ac7d4ef2c21ee1691012fe8"
+    ],
+    "top_100_count_result": [
+      "b38c7ab0c5978b9e06f6609029b8cfe6db3bddce1ac7d4ef2c21ee1691012fe8"
+    ]
+  },
+  {
+    "query": "\"plus size clot*\"",
+    "count": 18,
+    "top_100": 18,
+    "result_type": "Hash",
+    "top_100_result": [
+      "4585d8ce11873744208921228371a08c56b0ebad89af4399f97ddd4274914d88"
+    ],
+    "top_100_count_result": [
+      "4585d8ce11873744208921228371a08c56b0ebad89af4399f97ddd4274914d88"
+    ]
+  },
+  {
+    "query": "\"plus size clot*\"~2",
+    "count": 20,
+    "top_100": 20,
+    "result_type": "Hash",
+    "top_100_result": [
+      "221f638a87e030065c62cea7d3b5853fd00f9e74825477c4b4b105bcca42fc9d"
+    ],
+    "top_100_count_result": [
+      "221f638a87e030065c62cea7d3b5853fd00f9e74825477c4b4b105bcca42fc9d"
+    ]
+  },
+  {
+    "query": "\"plus 1-2 clot*\"",
+    "count": 26,
+    "top_100": 26,
+    "result_type": "Hash",
+    "top_100_result": [
+      "d1670eab23f6fc390ffb2093fcbceb9e35d9bb24111ff4bbf86f9946c8ae3de8"
+    ],
+    "top_100_count_result": [
+      "d1670eab23f6fc390ffb2093fcbceb9e35d9bb24111ff4bbf86f9946c8ae3de8"
+    ]
+  },
+  {
+    "query": "\"plus size clothin*\"",
+    "count": 18,
+    "top_100": 18,
+    "result_type": "Hash",
+    "top_100_result": [
+      "4585d8ce11873744208921228371a08c56b0ebad89af4399f97ddd4274914d88"
+    ],
+    "top_100_count_result": [
+      "4585d8ce11873744208921228371a08c56b0ebad89af4399f97ddd4274914d88"
+    ]
+  },
+  {
+    "query": "\"borders book*\"",
+    "count": 68,
+    "top_100": 68,
+    "result_type": "Hash",
+    "top_100_result": [
+      "ae9d3cc76740b3be9e390b85bd7f6f77cd53a7eebf76cb375ee3108b1f2a0c97"
+    ],
+    "top_100_count_result": [
+      "ae9d3cc76740b3be9e390b85bd7f6f77cd53a7eebf76cb375ee3108b1f2a0c97"
+    ]
+  },
+  {
+    "query": "\"american fund*\"",
+    "count": 118,
+    "top_100": 118,
+    "result_type": "Hash",
+    "top_100_result": [
+      "589288ea30371d24cdd9c1a8686615bd148e832bf13752ac52ff23c87b4843ad"
+    ],
+    "top_100_count_result": [
+      "589288ea30371d24cdd9c1a8686615bd148e832bf13752ac52ff23c87b4843ad"
+    ]
+  },
+  {
+    "query": "\"wisconsin attorney gene*\"",
+    "count": 47,
+    "top_100": 47,
+    "result_type": "Hash",
+    "top_100_result": [
+      "ef8f45bc8e8f51b6f4969ea0994e7a1ffa19e6356fc5ade7a993f1c14a273fc0"
+    ],
+    "top_100_count_result": [
+      "ef8f45bc8e8f51b6f4969ea0994e7a1ffa19e6356fc5ade7a993f1c14a273fc0"
+    ]
+  },
+  {
+    "query": "\"wisconsin attorney gene*\"~2",
+    "count": 61,
+    "top_100": 61,
+    "result_type": "Hash",
+    "top_100_result": [
+      "a92b431001abafb24da468f6f931e7c6ec49499dab002661ee7c4966376aa2c8"
+    ],
+    "top_100_count_result": [
+      "a92b431001abafb24da468f6f931e7c6ec49499dab002661ee7c4966376aa2c8"
+    ]
+  },
+  {
+    "query": "\"wisconsin 1-2 gene*\"",
+    "count": 98,
+    "top_100": 98,
+    "result_type": "Hash",
+    "top_100_result": [
+      "0f45005461d3d92e667aef511829700035ed8de15c1590b8359d3ed4082b93a0"
+    ],
+    "top_100_count_result": [
+      "0f45005461d3d92e667aef511829700035ed8de15c1590b8359d3ed4082b93a0"
+    ]
+  },
+  {
+    "query": "\"wisconsin attorney genera*\"",
+    "count": 47,
+    "top_100": 47,
+    "result_type": "Hash",
+    "top_100_result": [
+      "ef8f45bc8e8f51b6f4969ea0994e7a1ffa19e6356fc5ade7a993f1c14a273fc0"
+    ],
+    "top_100_count_result": [
+      "ef8f45bc8e8f51b6f4969ea0994e7a1ffa19e6356fc5ade7a993f1c14a273fc0"
+    ]
+  },
+  {
+    "query": "\"the english rest*\"",
+    "count": 204,
+    "top_100": 204,
+    "result_type": "Hash",
+    "top_100_result": [
+      "a09b0db121cc96cfcd7b5750144f08849f4944136e139740e098f173563fc0a5"
+    ],
+    "top_100_count_result": [
+      "a09b0db121cc96cfcd7b5750144f08849f4944136e139740e098f173563fc0a5"
+    ]
+  },
+  {
+    "query": "\"the english rest*\"~2",
+    "count": 254,
+    "top_100": 254,
+    "result_type": "Hash",
+    "top_100_result": [
+      "c186e449ab1156b3f75e2b8eb98fec2ade1b7163c9bf2500b97e4814a437053b"
+    ],
+    "top_100_count_result": [
+      "c186e449ab1156b3f75e2b8eb98fec2ade1b7163c9bf2500b97e4814a437053b"
+    ]
+  },
+  {
+    "query": "\"the 1-2 rest*\"",
+    "count": 150321,
+    "top_100": 150321,
+    "result_type": "Hash",
+    "top_100_result": [
+      "9ac448223e68fa86b54b8e51f61f138a275931345fe6358b55dfb726c34f79f6"
+    ],
+    "top_100_count_result": [
+      "9ac448223e68fa86b54b8e51f61f138a275931345fe6358b55dfb726c34f79f6"
+    ]
+  },
+  {
+    "query": "\"the english restoratio*\"",
+    "count": 201,
+    "top_100": 201,
+    "result_type": "Hash",
+    "top_100_result": [
+      "a09b0db121cc96cfcd7b5750144f08849f4944136e139740e098f173563fc0a5"
+    ],
+    "top_100_count_result": [
+      "a09b0db121cc96cfcd7b5750144f08849f4944136e139740e098f173563fc0a5"
+    ]
+  },
+  {
+    "query": "\"freelance wor*\"",
+    "count": 340,
+    "top_100": 340,
+    "result_type": "Hash",
+    "top_100_result": [
+      "1d82c1abebf7d5bcf1169022b6ee4dddd1d5247ecc5a7fb49c416c7c7d1042fa"
+    ],
+    "top_100_count_result": [
+      "1d82c1abebf7d5bcf1169022b6ee4dddd1d5247ecc5a7fb49c416c7c7d1042fa"
+    ]
+  },
+  {
+    "query": "\"french culinary inst*\"",
+    "count": 32,
+    "top_100": 32,
+    "result_type": "Hash",
+    "top_100_result": [
+      "e2a40df2890639cd651c5915c8700732622b476121c6fa7e22c48b3363f190f9"
+    ],
+    "top_100_count_result": [
+      "e2a40df2890639cd651c5915c8700732622b476121c6fa7e22c48b3363f190f9"
+    ]
+  },
+  {
+    "query": "\"french culinary inst*\"~2",
+    "count": 32,
+    "top_100": 32,
+    "result_type": "Hash",
+    "top_100_result": [
+      "e2a40df2890639cd651c5915c8700732622b476121c6fa7e22c48b3363f190f9"
+    ],
+    "top_100_count_result": [
+      "e2a40df2890639cd651c5915c8700732622b476121c6fa7e22c48b3363f190f9"
+    ]
+  },
+  {
+    "query": "\"french 1-2 inst*\"",
+    "count": 1118,
+    "top_100": 1118,
+    "result_type": "Hash",
+    "top_100_result": [
+      "57dfc2448c0c207d8658e987663beab6bf042ed6608f49986fd9827ebb01a94e"
+    ],
+    "top_100_count_result": [
+      "57dfc2448c0c207d8658e987663beab6bf042ed6608f49986fd9827ebb01a94e"
+    ]
+  },
+  {
+    "query": "\"french culinary institut*\"",
+    "count": 32,
+    "top_100": 32,
+    "result_type": "Hash",
+    "top_100_result": [
+      "e2a40df2890639cd651c5915c8700732622b476121c6fa7e22c48b3363f190f9"
+    ],
+    "top_100_count_result": [
+      "e2a40df2890639cd651c5915c8700732622b476121c6fa7e22c48b3363f190f9"
+    ]
+  },
+  {
+    "query": "\"color comb*\"",
+    "count": 259,
+    "top_100": 259,
+    "result_type": "Hash",
+    "top_100_result": [
+      "cd6dbd6fe2f066639b2a3fb9a363e56ef5e0cfbb89f8186b1792782904b81ae8"
+    ],
+    "top_100_count_result": [
+      "cd6dbd6fe2f066639b2a3fb9a363e56ef5e0cfbb89f8186b1792782904b81ae8"
+    ]
+  },
+  {
+    "query": "\"color comb*\"~2",
+    "count": 366,
+    "top_100": 366,
+    "result_type": "Hash",
+    "top_100_result": [
+      "b6f81b6d9547c9ec616cabd69e388abd8b3a3047bc75e0a3c020bfb1472025f8"
+    ],
+    "top_100_count_result": [
+      "b6f81b6d9547c9ec616cabd69e388abd8b3a3047bc75e0a3c020bfb1472025f8"
+    ]
+  },
+  {
+    "query": "\"color 1-2 comb*\"",
+    "count": 298,
+    "top_100": 298,
+    "result_type": "Hash",
+    "top_100_result": [
+      "442d76da0338b14a256484f7e5669c8000cc798c42419f4771c2e420720afad3"
+    ],
+    "top_100_count_result": [
+      "442d76da0338b14a256484f7e5669c8000cc798c42419f4771c2e420720afad3"
+    ]
+  },
+  {
+    "query": "\"color combination*\"",
+    "count": 239,
+    "top_100": 239,
+    "result_type": "Hash",
+    "top_100_result": [
+      "5f263ca0a5ccae3fe6a4bece94b5d8906f78a8831c5c1de1b3b0f767f1f9d912"
+    ],
+    "top_100_count_result": [
+      "5f263ca0a5ccae3fe6a4bece94b5d8906f78a8831c5c1de1b3b0f767f1f9d912"
+    ]
+  },
+  {
+    "query": "\"italian tran*\"",
+    "count": 406,
+    "top_100": 406,
+    "result_type": "Hash",
+    "top_100_result": [
+      "c53177c7447514f65e910ef71b88d9d9a9881060d53f15b5e806371d095ac7dd"
+    ],
+    "top_100_count_result": [
+      "c53177c7447514f65e910ef71b88d9d9a9881060d53f15b5e806371d095ac7dd"
+    ]
+  },
+  {
+    "query": "\"italian tran*\"~2",
+    "count": 861,
+    "top_100": 861,
+    "result_type": "Hash",
+    "top_100_result": [
+      "5768d52a8d34c7f11366bf14919990a825f80f5094e7981ac17a41eff75b2902"
+    ],
+    "top_100_count_result": [
+      "5768d52a8d34c7f11366bf14919990a825f80f5094e7981ac17a41eff75b2902"
+    ]
+  },
+  {
+    "query": "\"italian 1-2 tran*\"",
+    "count": 587,
+    "top_100": 587,
+    "result_type": "Hash",
+    "top_100_result": [
+      "70d1a0fc3d2e090e3cf5b3499678c2e1fccc453ffc9c38c02007873b51ffc031"
+    ],
+    "top_100_count_result": [
+      "70d1a0fc3d2e090e3cf5b3499678c2e1fccc453ffc9c38c02007873b51ffc031"
+    ]
+  },
+  {
+    "query": "\"italian translatio*\"",
+    "count": 300,
+    "top_100": 300,
+    "result_type": "Hash",
+    "top_100_result": [
+      "b9cec090c360bc3e943912744f2df64413a54d9614f1f5077fbf4fe3e5f06a18"
+    ],
+    "top_100_count_result": [
+      "b9cec090c360bc3e943912744f2df64413a54d9614f1f5077fbf4fe3e5f06a18"
+    ]
+  },
+  {
+    "query": "\"milwaukee news*\"",
+    "count": 18,
+    "top_100": 18,
+    "result_type": "Hash",
+    "top_100_result": [
+      "2419d1e3afeba57fdf82213a676252da89eb2a2b148549309f9823429b846b8f"
+    ],
+    "top_100_count_result": [
+      "2419d1e3afeba57fdf82213a676252da89eb2a2b148549309f9823429b846b8f"
+    ]
+  },
+  {
+    "query": "\"milwaukee news*\"~2",
+    "count": 45,
+    "top_100": 45,
+    "result_type": "Hash",
+    "top_100_result": [
+      "4db874dce94f51c1f0316ed5437fc6d8a7c6d4e74a74d82d9d31565ad60c1f7e"
+    ],
+    "top_100_count_result": [
+      "4db874dce94f51c1f0316ed5437fc6d8a7c6d4e74a74d82d9d31565ad60c1f7e"
+    ]
+  },
+  {
+    "query": "\"milwaukee 1-2 news*\"",
+    "count": 28,
+    "top_100": 28,
+    "result_type": "Hash",
+    "top_100_result": [
+      "ef507ac16265cbd9d932cce4264532476e60a1127107a76738b009f770411080"
+    ],
+    "top_100_count_result": [
+      "ef507ac16265cbd9d932cce4264532476e60a1127107a76738b009f770411080"
+    ]
+  },
+  {
+    "query": "\"milwaukee newspape*\"",
+    "count": 13,
+    "top_100": 13,
+    "result_type": "Hash",
+    "top_100_result": [
+      "486ee51f9af3db1281e271c4e4588b9f659baa2bf7f24d9001b9627fd9a334cf"
+    ],
+    "top_100_count_result": [
+      "486ee51f9af3db1281e271c4e4588b9f659baa2bf7f24d9001b9627fd9a334cf"
+    ]
+  },
+  {
+    "query": "\"robert green inge*\"",
+    "count": 11,
+    "top_100": 11,
+    "result_type": "Hash",
+    "top_100_result": [
+      "e534aa5c1915425e4c597cc409695be94f94380aaf9b1c8afdda1ae66045e110"
+    ],
+    "top_100_count_result": [
+      "e534aa5c1915425e4c597cc409695be94f94380aaf9b1c8afdda1ae66045e110"
+    ]
+  },
+  {
+    "query": "\"robert green inge*\"~2",
+    "count": 12,
+    "top_100": 12,
+    "result_type": "Hash",
+    "top_100_result": [
+      "ac2ec5ba3e53451dfd8f5b9a42bb62e6035a132840f93b54397a38009d1b7689"
+    ],
+    "top_100_count_result": [
+      "ac2ec5ba3e53451dfd8f5b9a42bb62e6035a132840f93b54397a38009d1b7689"
+    ]
+  },
+  {
+    "query": "\"robert 1-2 inge*\"",
+    "count": 111,
+    "top_100": 111,
+    "result_type": "Hash",
+    "top_100_result": [
+      "48180c4b145ce6211af8dbd2799392cdb03e18431af26b90b46db54c4c047fdc"
+    ],
+    "top_100_count_result": [
+      "48180c4b145ce6211af8dbd2799392cdb03e18431af26b90b46db54c4c047fdc"
+    ]
+  },
+  {
+    "query": "\"robert green ingersol*\"",
+    "count": 11,
+    "top_100": 11,
+    "result_type": "Hash",
+    "top_100_result": [
+      "e534aa5c1915425e4c597cc409695be94f94380aaf9b1c8afdda1ae66045e110"
+    ],
+    "top_100_count_result": [
+      "e534aa5c1915425e4c597cc409695be94f94380aaf9b1c8afdda1ae66045e110"
+    ]
+  },
+  {
+    "query": "\"omaha symp*\"",
+    "count": 25,
+    "top_100": 25,
+    "result_type": "Hash",
+    "top_100_result": [
+      "805decbb30b6594519b8ac284ce1453d1793d21856b8ba6f1fda717b8cfe4a17"
+    ],
+    "top_100_count_result": [
+      "805decbb30b6594519b8ac284ce1453d1793d21856b8ba6f1fda717b8cfe4a17"
+    ]
+  },
+  {
+    "query": "\"omaha symp*\"~2",
+    "count": 26,
+    "top_100": 26,
+    "result_type": "Hash",
+    "top_100_result": [
+      "8eda70cbe241914a69de3c8a066863800bc3375f9253e88fdfbc9680af399fe9"
+    ],
+    "top_100_count_result": [
+      "8eda70cbe241914a69de3c8a066863800bc3375f9253e88fdfbc9680af399fe9"
+    ]
+  },
+  {
+    "query": "\"omaha 1-2 symp*\"",
+    "count": 25,
+    "top_100": 25,
+    "result_type": "Hash",
+    "top_100_result": [
+      "805decbb30b6594519b8ac284ce1453d1793d21856b8ba6f1fda717b8cfe4a17"
+    ],
+    "top_100_count_result": [
+      "805decbb30b6594519b8ac284ce1453d1793d21856b8ba6f1fda717b8cfe4a17"
+    ]
+  },
+  {
+    "query": "\"omaha symphon*\"",
+    "count": 25,
+    "top_100": 25,
+    "result_type": "Hash",
+    "top_100_result": [
+      "805decbb30b6594519b8ac284ce1453d1793d21856b8ba6f1fda717b8cfe4a17"
+    ],
+    "top_100_count_result": [
+      "805decbb30b6594519b8ac284ce1453d1793d21856b8ba6f1fda717b8cfe4a17"
+    ]
+  },
+  {
+    "query": "\"body pain*\"",
+    "count": 352,
+    "top_100": 352,
+    "result_type": "Hash",
+    "top_100_result": [
+      "374c6a9887f1a6279b4dd97df6e6a50c5c535db64b7b6e9c757fc2a10ba5072d"
+    ],
+    "top_100_count_result": [
+      "374c6a9887f1a6279b4dd97df6e6a50c5c535db64b7b6e9c757fc2a10ba5072d"
+    ]
+  },
+  {
+    "query": "\"body pain*\"~2",
+    "count": 597,
+    "top_100": 597,
+    "result_type": "Hash",
+    "top_100_result": [
+      "b780aed7ad966f9614bc744ee006cf21f5b4f1d3606f243e684e6cd985cd2768"
+    ],
+    "top_100_count_result": [
+      "b780aed7ad966f9614bc744ee006cf21f5b4f1d3606f243e684e6cd985cd2768"
+    ]
+  },
+  {
+    "query": "\"body 1-2 pain*\"",
+    "count": 466,
+    "top_100": 466,
+    "result_type": "Hash",
+    "top_100_result": [
+      "b15140a49655eae5ce664bf30e1330aded4eb761436bbb2a62dff674dffdcf30"
+    ],
+    "top_100_count_result": [
+      "b15140a49655eae5ce664bf30e1330aded4eb761436bbb2a62dff674dffdcf30"
+    ]
+  },
+  {
+    "query": "\"body paintin*\"",
+    "count": 144,
+    "top_100": 144,
+    "result_type": "Hash",
+    "top_100_result": [
+      "a3708d20c64076afc60173a4325635b76f6e25db93496f07580d96492fba434b"
+    ],
+    "top_100_count_result": [
+      "a3708d20c64076afc60173a4325635b76f6e25db93496f07580d96492fba434b"
+    ]
+  },
+  {
+    "query": "\"who dares win*\"",
+    "count": 64,
+    "top_100": 64,
+    "result_type": "Hash",
+    "top_100_result": [
+      "bc18794ac9a30806265668d948c56024673592ea65173a369f40d943ef2325e7"
+    ],
+    "top_100_count_result": [
+      "bc18794ac9a30806265668d948c56024673592ea65173a369f40d943ef2325e7"
+    ]
+  },
+  {
+    "query": "\"west palm beach flor*\"",
+    "count": 566,
+    "top_100": 566,
+    "result_type": "Hash",
+    "top_100_result": [
+      "e57ff544c2bc90aa6b86631980d7a74b58b943cb97cda6d2609b6bb4dd0951a8"
+    ],
+    "top_100_count_result": [
+      "e57ff544c2bc90aa6b86631980d7a74b58b943cb97cda6d2609b6bb4dd0951a8"
+    ]
+  },
+  {
+    "query": "\"west palm beach flor*\"~2",
+    "count": 582,
+    "top_100": 582,
+    "result_type": "Hash",
+    "top_100_result": [
+      "f75e1b4461de3f8c20d977153461b6a2ab5dce52d4ffab6326ff4918c3e59e86"
+    ],
+    "top_100_count_result": [
+      "f75e1b4461de3f8c20d977153461b6a2ab5dce52d4ffab6326ff4918c3e59e86"
+    ]
+  },
+  {
+    "query": "\"west 1-2 flor*\"",
+    "count": 1667,
+    "top_100": 1667,
+    "result_type": "Hash",
+    "top_100_result": [
+      "5cdc978accc536d8cc05dddc3d3117685027a0fcd3e28b3416a2e9bcbf6782c7"
+    ],
+    "top_100_count_result": [
+      "5cdc978accc536d8cc05dddc3d3117685027a0fcd3e28b3416a2e9bcbf6782c7"
+    ]
+  },
+  {
+    "query": "\"west palm beach florid*\"",
+    "count": 566,
+    "top_100": 566,
+    "result_type": "Hash",
+    "top_100_result": [
+      "e57ff544c2bc90aa6b86631980d7a74b58b943cb97cda6d2609b6bb4dd0951a8"
+    ],
+    "top_100_count_result": [
+      "e57ff544c2bc90aa6b86631980d7a74b58b943cb97cda6d2609b6bb4dd0951a8"
+    ]
+  },
+  {
+    "query": "\"stone moun*\"",
+    "count": 398,
+    "top_100": 398,
+    "result_type": "Hash",
+    "top_100_result": [
+      "2e17b4d50a7ee5e446f7e8180ef739cb2e00741bc815cf6d84741484e5d5f835"
+    ],
+    "top_100_count_result": [
+      "2e17b4d50a7ee5e446f7e8180ef739cb2e00741bc815cf6d84741484e5d5f835"
+    ]
+  },
+  {
+    "query": "\"stone moun*\"~2",
+    "count": 598,
+    "top_100": 598,
+    "result_type": "Hash",
+    "top_100_result": [
+      "cb470a7646e070188f3c2d08a784e0bd0008ed25ca3121ec8e8414bf2aa6197d"
+    ],
+    "top_100_count_result": [
+      "cb470a7646e070188f3c2d08a784e0bd0008ed25ca3121ec8e8414bf2aa6197d"
+    ]
+  },
+  {
+    "query": "\"stone 1-2 moun*\"",
+    "count": 465,
+    "top_100": 465,
+    "result_type": "Hash",
+    "top_100_result": [
+      "8aee7970fb2cbe302596854cf897310f536fc2821f9fe19cb6ac99d6b54c10b1"
+    ],
+    "top_100_count_result": [
+      "8aee7970fb2cbe302596854cf897310f536fc2821f9fe19cb6ac99d6b54c10b1"
+    ]
+  },
+  {
+    "query": "\"stone mountai*\"",
+    "count": 343,
+    "top_100": 343,
+    "result_type": "Hash",
+    "top_100_result": [
+      "4dd99b9ce47d3423e2b48310651dee5fb4ae73d8e7448aeef73e82fb0b22350f"
+    ],
+    "top_100_count_result": [
+      "4dd99b9ce47d3423e2b48310651dee5fb4ae73d8e7448aeef73e82fb0b22350f"
+    ]
+  },
+  {
+    "query": "\"san fran*\"",
+    "count": 45521,
+    "top_100": 45521,
+    "result_type": "Hash",
+    "top_100_result": [
+      "7947ee45d4761f8335aa6f5998be512bac0a5d579ba833370f67307e4b0d2e59"
+    ],
+    "top_100_count_result": [
+      "7947ee45d4761f8335aa6f5998be512bac0a5d579ba833370f67307e4b0d2e59"
+    ]
+  },
+  {
+    "query": "\"san fran*\"~2",
+    "count": 45786,
+    "top_100": 45786,
+    "result_type": "Hash",
+    "top_100_result": [
+      "3ea68fd2817c6ec6a5bcc9aa9a311951391cbba6fe9c1f7eaa1416572d6a9b62"
+    ],
+    "top_100_count_result": [
+      "3ea68fd2817c6ec6a5bcc9aa9a311951391cbba6fe9c1f7eaa1416572d6a9b62"
+    ]
+  },
+  {
+    "query": "\"san 1-2 fran*\"",
+    "count": 45584,
+    "top_100": 45584,
+    "result_type": "Hash",
+    "top_100_result": [
+      "68b516fcc56b6e037e6f5f618cce90ce110e1250e2b06ef29c812fd4d527765f"
+    ],
+    "top_100_count_result": [
+      "68b516fcc56b6e037e6f5f618cce90ce110e1250e2b06ef29c812fd4d527765f"
+    ]
+  },
+  {
+    "query": "\"san francisc*\"",
+    "count": 44914,
+    "top_100": 44914,
+    "result_type": "Hash",
+    "top_100_result": [
+      "6074f178cb96418527bc3ffd0b79a5cbcbaeb4bc66d6c93b4ef29318c3cfd890"
+    ],
+    "top_100_count_result": [
+      "6074f178cb96418527bc3ffd0b79a5cbcbaeb4bc66d6c93b4ef29318c3cfd890"
+    ]
+  },
+  {
+    "query": "\"ford modeling agenc*\"",
+    "count": 53,
+    "top_100": 53,
+    "result_type": "Hash",
+    "top_100_result": [
+      "7f0b8285cdaa1020050c71593e96f2203794c4e3ce755a68280bbebc296f3e33"
+    ],
+    "top_100_count_result": [
+      "7f0b8285cdaa1020050c71593e96f2203794c4e3ce755a68280bbebc296f3e33"
+    ]
+  },
+  {
+    "query": "\"glass work*\"",
+    "count": 546,
+    "top_100": 546,
+    "result_type": "Hash",
+    "top_100_result": [
+      "d36c82ba41a668efb2d26bf581939d8c427ad5182be9d2f0f85ed442fc35e9e7"
+    ],
+    "top_100_count_result": [
+      "d36c82ba41a668efb2d26bf581939d8c427ad5182be9d2f0f85ed442fc35e9e7"
+    ]
+  },
+  {
+    "query": "\"personal loa*\"",
+    "count": 201,
+    "top_100": 201,
+    "result_type": "Hash",
+    "top_100_result": [
+      "f9a9e2a7bf9687aee49eb0ee0d9479ef3b674fa41571f4f04e78cfe408cf5e5b"
+    ],
+    "top_100_count_result": [
+      "f9a9e2a7bf9687aee49eb0ee0d9479ef3b674fa41571f4f04e78cfe408cf5e5b"
+    ]
+  },
+  {
+    "query": "\"texas state legi*\"",
+    "count": 114,
+    "top_100": 114,
+    "result_type": "Hash",
+    "top_100_result": [
+      "6a189eb93265817e7615a3399cc6c6077624f9df364342511d5edd49141d504b"
+    ],
+    "top_100_count_result": [
+      "6a189eb93265817e7615a3399cc6c6077624f9df364342511d5edd49141d504b"
+    ]
+  },
+  {
+    "query": "\"texas state legi*\"~2",
+    "count": 118,
+    "top_100": 118,
+    "result_type": "Hash",
+    "top_100_result": [
+      "4c482130f3c1d2b94484fea6d3d14a90dafc624e9a80197a2cf5df007b66bc6b"
+    ],
+    "top_100_count_result": [
+      "4c482130f3c1d2b94484fea6d3d14a90dafc624e9a80197a2cf5df007b66bc6b"
+    ]
+  },
+  {
+    "query": "\"texas 1-2 legi*\"",
+    "count": 757,
+    "top_100": 757,
+    "result_type": "Hash",
+    "top_100_result": [
+      "dcc8fafde7a21bd85d0194acb46345cdfb398938b6d3d31136d56dd321219c58"
+    ],
+    "top_100_count_result": [
+      "dcc8fafde7a21bd85d0194acb46345cdfb398938b6d3d31136d56dd321219c58"
+    ]
+  },
+  {
+    "query": "\"texas state legislatur*\"",
+    "count": 95,
+    "top_100": 95,
+    "result_type": "Hash",
+    "top_100_result": [
+      "3b086400d40131a30fa88cfcc9de47ba1641dad9ca396b0720ae24adf1cc23a3"
+    ],
+    "top_100_count_result": [
+      "3b086400d40131a30fa88cfcc9de47ba1641dad9ca396b0720ae24adf1cc23a3"
+    ]
+  },
+  {
+    "query": "\"spiritual warf*\"",
+    "count": 76,
+    "top_100": 76,
+    "result_type": "Hash",
+    "top_100_result": [
+      "773a1e5f1c71b330e2cadf09efc4e29465a988ff28c4635b3997fce7869b43de"
+    ],
+    "top_100_count_result": [
+      "773a1e5f1c71b330e2cadf09efc4e29465a988ff28c4635b3997fce7869b43de"
+    ]
+  },
+  {
+    "query": "\"spiritual warf*\"~2",
+    "count": 77,
+    "top_100": 77,
+    "result_type": "Hash",
+    "top_100_result": [
+      "73c04d054eb2250608ad838d7392c3c4461f4bf343750bde5ad02283d9599126"
+    ],
+    "top_100_count_result": [
+      "73c04d054eb2250608ad838d7392c3c4461f4bf343750bde5ad02283d9599126"
+    ]
+  },
+  {
+    "query": "\"spiritual 1-2 warf*\"",
+    "count": 76,
+    "top_100": 76,
+    "result_type": "Hash",
+    "top_100_result": [
+      "703bd947b87b64ce6a89d2e9b5b47333e5a469b4b13faf88a1ec1d2593cacde3"
+    ],
+    "top_100_count_result": [
+      "703bd947b87b64ce6a89d2e9b5b47333e5a469b4b13faf88a1ec1d2593cacde3"
+    ]
+  },
+  {
+    "query": "\"spiritual warfar*\"",
+    "count": 76,
+    "top_100": 76,
+    "result_type": "Hash",
+    "top_100_result": [
+      "773a1e5f1c71b330e2cadf09efc4e29465a988ff28c4635b3997fce7869b43de"
+    ],
+    "top_100_count_result": [
+      "773a1e5f1c71b330e2cadf09efc4e29465a988ff28c4635b3997fce7869b43de"
+    ]
+  },
+  {
+    "query": "\"georgia public broa*\"",
+    "count": 61,
+    "top_100": 61,
+    "result_type": "Hash",
+    "top_100_result": [
+      "3362b5c274c9b2680118e301726316182cf83c28cfe332b4e4941af821a72d2b"
+    ],
+    "top_100_count_result": [
+      "3362b5c274c9b2680118e301726316182cf83c28cfe332b4e4941af821a72d2b"
+    ]
+  },
+  {
+    "query": "\"georgia public broa*\"~2",
+    "count": 64,
+    "top_100": 64,
+    "result_type": "Hash",
+    "top_100_result": [
+      "ce5493074fc5fb2d693067cc8891c4daead47012796734a5e9f69f4d6bd59a60"
+    ],
+    "top_100_count_result": [
+      "ce5493074fc5fb2d693067cc8891c4daead47012796734a5e9f69f4d6bd59a60"
+    ]
+  },
+  {
+    "query": "\"georgia 1-2 broa*\"",
+    "count": 127,
+    "top_100": 127,
+    "result_type": "Hash",
+    "top_100_result": [
+      "03f32a9654790d8f9023d6cb0a961a3abd0bc395fa3600b537e686b70cf88b4c"
+    ],
+    "top_100_count_result": [
+      "03f32a9654790d8f9023d6cb0a961a3abd0bc395fa3600b537e686b70cf88b4c"
+    ]
+  },
+  {
+    "query": "\"georgia public broadcastin*\"",
+    "count": 61,
+    "top_100": 61,
+    "result_type": "Hash",
+    "top_100_result": [
+      "3362b5c274c9b2680118e301726316182cf83c28cfe332b4e4941af821a72d2b"
+    ],
+    "top_100_count_result": [
+      "3362b5c274c9b2680118e301726316182cf83c28cfe332b4e4941af821a72d2b"
+    ]
+  },
+  {
+    "query": "\"catholic answ*\"",
+    "count": 29,
+    "top_100": 29,
+    "result_type": "Hash",
+    "top_100_result": [
+      "73aa5ef6814c2294a494da7f21ebf52ce1aa5c631e554d91c8b396b48692bb33"
+    ],
+    "top_100_count_result": [
+      "73aa5ef6814c2294a494da7f21ebf52ce1aa5c631e554d91c8b396b48692bb33"
+    ]
+  },
+  {
+    "query": "\"catholic answ*\"~2",
+    "count": 44,
+    "top_100": 44,
+    "result_type": "Hash",
+    "top_100_result": [
+      "b78dbbaea7c0c0dd5f08dad873e1bee3efabce4a4e91330e05c68cd1dd5c345d"
+    ],
+    "top_100_count_result": [
+      "b78dbbaea7c0c0dd5f08dad873e1bee3efabce4a4e91330e05c68cd1dd5c345d"
+    ]
+  },
+  {
+    "query": "\"catholic 1-2 answ*\"",
+    "count": 38,
+    "top_100": 38,
+    "result_type": "Hash",
+    "top_100_result": [
+      "099b9b9b7edc9d78a50769b01746e67a6711750a7be20c1567f2286d842b8ef9"
+    ],
+    "top_100_count_result": [
+      "099b9b9b7edc9d78a50769b01746e67a6711750a7be20c1567f2286d842b8ef9"
+    ]
+  },
+  {
+    "query": "\"catholic answer*\"",
+    "count": 29,
+    "top_100": 29,
+    "result_type": "Hash",
+    "top_100_result": [
+      "73aa5ef6814c2294a494da7f21ebf52ce1aa5c631e554d91c8b396b48692bb33"
+    ],
+    "top_100_count_result": [
+      "73aa5ef6814c2294a494da7f21ebf52ce1aa5c631e554d91c8b396b48692bb33"
+    ]
+  },
+  {
+    "query": "\"interest onl*\"",
+    "count": 198,
+    "top_100": 198,
+    "result_type": "Hash",
+    "top_100_result": [
+      "f11849fcc2e9d41ee720edb52cd7a4e9edb621f1bb112464701b956a616f357c"
+    ],
+    "top_100_count_result": [
+      "f11849fcc2e9d41ee720edb52cd7a4e9edb621f1bb112464701b956a616f357c"
+    ]
+  },
+  {
+    "query": "\"army rese*\"",
+    "count": 2398,
+    "top_100": 2398,
+    "result_type": "Hash",
+    "top_100_result": [
+      "041f677c9d8fee4187562d477f958aecf0921ca61664d87a0695446f4768f0c8"
+    ],
+    "top_100_count_result": [
+      "041f677c9d8fee4187562d477f958aecf0921ca61664d87a0695446f4768f0c8"
+    ]
+  },
+  {
+    "query": "\"army rese*\"~2",
+    "count": 3451,
+    "top_100": 3451,
+    "result_type": "Hash",
+    "top_100_result": [
+      "98e3445ca5280a2574dbfeb5030c252234c971f42c071ad914b2ec7e78416604"
+    ],
+    "top_100_count_result": [
+      "98e3445ca5280a2574dbfeb5030c252234c971f42c071ad914b2ec7e78416604"
+    ]
+  },
+  {
+    "query": "\"army 1-2 rese*\"",
+    "count": 2832,
+    "top_100": 2832,
+    "result_type": "Hash",
+    "top_100_result": [
+      "ae1f82ab98962e718c23d6dfd80b1a2e21dd563308c1f26579b689a8096b7b87"
+    ],
+    "top_100_count_result": [
+      "ae1f82ab98962e718c23d6dfd80b1a2e21dd563308c1f26579b689a8096b7b87"
+    ]
+  },
+  {
+    "query": "\"army reserv*\"",
+    "count": 2214,
+    "top_100": 2214,
+    "result_type": "Hash",
+    "top_100_result": [
+      "385f59da5b557c594e40e82ab6c9d2bc1ec021391fb2af7d1f1e68e799468911"
+    ],
+    "top_100_count_result": [
+      "385f59da5b557c594e40e82ab6c9d2bc1ec021391fb2af7d1f1e68e799468911"
+    ]
+  },
+  {
+    "query": "\"chicken coo*\"",
+    "count": 406,
+    "top_100": 406,
+    "result_type": "Hash",
+    "top_100_result": [
+      "e04b9c6e8ac299d477e8c5a189729dac81ed185e8662ec2983565f2977616eb9"
+    ],
+    "top_100_count_result": [
+      "e04b9c6e8ac299d477e8c5a189729dac81ed185e8662ec2983565f2977616eb9"
+    ]
+  },
+  {
+    "query": "\"new york popu*\"",
+    "count": 26,
+    "top_100": 26,
+    "result_type": "Hash",
+    "top_100_result": [
+      "d3c09d6586e8d05efbf8c6df0142fea65510e1daf097f54c93d6717641858f0f"
+    ],
+    "top_100_count_result": [
+      "d3c09d6586e8d05efbf8c6df0142fea65510e1daf097f54c93d6717641858f0f"
+    ]
+  },
+  {
+    "query": "\"new york popu*\"~2",
+    "count": 498,
+    "top_100": 498,
+    "result_type": "Hash",
+    "top_100_result": [
+      "fa97585afb9c0e2933834a92936080557eec4fb42f7cc00cefac5e3d58634723"
+    ],
+    "top_100_count_result": [
+      "fa97585afb9c0e2933834a92936080557eec4fb42f7cc00cefac5e3d58634723"
+    ]
+  },
+  {
+    "query": "\"new 1-2 popu*\"",
+    "count": 951,
+    "top_100": 951,
+    "result_type": "Hash",
+    "top_100_result": [
+      "db99693ef52f1e5d95af510616d6dbf6e024b9ce195d8a56e1423da082925eec"
+    ],
+    "top_100_count_result": [
+      "db99693ef52f1e5d95af510616d6dbf6e024b9ce195d8a56e1423da082925eec"
+    ]
+  },
+  {
+    "query": "\"new york populatio*\"",
+    "count": 13,
+    "top_100": 13,
+    "result_type": "Hash",
+    "top_100_result": [
+      "e8c338167a54e452e8b04827c19ed86ef6d9dceac6e4735d3c4f25f5ec2a6b7a"
+    ],
+    "top_100_count_result": [
+      "e8c338167a54e452e8b04827c19ed86ef6d9dceac6e4735d3c4f25f5ec2a6b7a"
+    ]
+  },
+  {
+    "query": "\"most improved playe*\"",
+    "count": 458,
+    "top_100": 458,
+    "result_type": "Hash",
+    "top_100_result": [
+      "e9abf7e1fdbbda02fc1f44c482b0fb440f72ca02378311890756bee648f72851"
+    ],
+    "top_100_count_result": [
+      "e9abf7e1fdbbda02fc1f44c482b0fb440f72ca02378311890756bee648f72851"
+    ]
+  },
+  {
+    "query": "\"ear ach*\"",
+    "count": 15,
+    "top_100": 15,
+    "result_type": "Hash",
+    "top_100_result": [
+      "e4c09ed6c84b48b69511b4047798877b5683b667d64a7600c4c24fe09a2d2c7a"
+    ],
+    "top_100_count_result": [
+      "e4c09ed6c84b48b69511b4047798877b5683b667d64a7600c4c24fe09a2d2c7a"
+    ]
+  },
+  {
+    "query": "\"mercury insu*\"",
+    "count": 22,
+    "top_100": 22,
+    "result_type": "Hash",
+    "top_100_result": [
+      "00165fadaa3a87df9be084dd8c5e2d75827672929054c0e026beb60db8b58069"
+    ],
+    "top_100_count_result": [
+      "00165fadaa3a87df9be084dd8c5e2d75827672929054c0e026beb60db8b58069"
+    ]
+  },
+  {
+    "query": "\"mercury insu*\"~2",
+    "count": 22,
+    "top_100": 22,
+    "result_type": "Hash",
+    "top_100_result": [
+      "2938bdd260849423622cee1b488cfb86a547a51c7ae330ff6b7d5b83b2b6da6d"
+    ],
+    "top_100_count_result": [
+      "2938bdd260849423622cee1b488cfb86a547a51c7ae330ff6b7d5b83b2b6da6d"
+    ]
+  },
+  {
+    "query": "\"mercury 1-2 insu*\"",
+    "count": 22,
+    "top_100": 22,
+    "result_type": "Hash",
+    "top_100_result": [
+      "00165fadaa3a87df9be084dd8c5e2d75827672929054c0e026beb60db8b58069"
+    ],
+    "top_100_count_result": [
+      "00165fadaa3a87df9be084dd8c5e2d75827672929054c0e026beb60db8b58069"
+    ]
+  },
+  {
+    "query": "\"mercury insuranc*\"",
+    "count": 22,
+    "top_100": 22,
+    "result_type": "Hash",
+    "top_100_result": [
+      "00165fadaa3a87df9be084dd8c5e2d75827672929054c0e026beb60db8b58069"
+    ],
+    "top_100_count_result": [
+      "00165fadaa3a87df9be084dd8c5e2d75827672929054c0e026beb60db8b58069"
+    ]
+  },
+  {
+    "query": "+climate +policy",
+    "count": 4509,
+    "top_100": 4509,
+    "result_type": "Hash",
+    "top_100_result": [
+      "cf70de227d79ea127dfe511112bd74fc7ae1457172afe8b86af0b1520a14f86f"
+    ],
+    "top_100_count_result": [
+      "cf70de227d79ea127dfe511112bd74fc7ae1457172afe8b86af0b1520a14f86f"
+    ]
+  },
+  {
+    "query": "+data +privacy",
+    "count": 1783,
+    "top_100": 1783,
+    "result_type": "Hash",
+    "top_100_result": [
+      "c43db4051e6c1f29cb3f487fa078e30e4ea609640caa4919552fc60d54fa5f56"
+    ],
+    "top_100_count_result": [
+      "c43db4051e6c1f29cb3f487fa078e30e4ea609640caa4919552fc60d54fa5f56"
+    ]
+  },
+  {
+    "query": "+global +markets",
+    "count": 4718,
+    "top_100": 4718,
+    "result_type": "Hash",
+    "top_100_result": [
+      "8c2176c8004108723bd04d11a1bca17ddb983a1cb172c3888b89dd8426acee74"
+    ],
+    "top_100_count_result": [
+      "8c2176c8004108723bd04d11a1bca17ddb983a1cb172c3888b89dd8426acee74"
+    ]
+  },
+  {
+    "query": "+public +transit",
+    "count": 7598,
+    "top_100": 7598,
+    "result_type": "Hash",
+    "top_100_result": [
+      "6599d4ec925e28586c5ebc2df82f3b815d0c21ff99aabcc6adba10776b432586"
+    ],
+    "top_100_count_result": [
+      "6599d4ec925e28586c5ebc2df82f3b815d0c21ff99aabcc6adba10776b432586"
+    ]
+  },
+  {
+    "query": "+consumer +rights",
+    "count": 2605,
+    "top_100": 2605,
+    "result_type": "Hash",
+    "top_100_result": [
+      "40dd84abb15a75a6ac01628d1b6451428546349d7b2c5f13f788ced5979a6104"
+    ],
+    "top_100_count_result": [
+      "40dd84abb15a75a6ac01628d1b6451428546349d7b2c5f13f788ced5979a6104"
+    ]
+  },
+  {
+    "query": "+financial +reporting +standards",
+    "count": 933,
+    "top_100": 933,
+    "result_type": "Hash",
+    "top_100_result": [
+      "4baf7dd751c7d36aea5c8b05f2fe75115852155cc8ff39d4e38093cf19a12e57"
+    ],
+    "top_100_count_result": [
+      "4baf7dd751c7d36aea5c8b05f2fe75115852155cc8ff39d4e38093cf19a12e57"
+    ]
+  },
+  {
+    "query": "+mental +health +resources",
+    "count": 1204,
+    "top_100": 1204,
+    "result_type": "Hash",
+    "top_100_result": [
+      "c06b179bce122c69934c1b46444f5b0edcce6e49d2ed4961485bbd08a7f74c21"
+    ],
+    "top_100_count_result": [
+      "c06b179bce122c69934c1b46444f5b0edcce6e49d2ed4961485bbd08a7f74c21"
+    ]
+  },
+  {
+    "query": "+water +quality +report",
+    "count": 2340,
+    "top_100": 2340,
+    "result_type": "Hash",
+    "top_100_result": [
+      "6455ad889116ea70a780492230aa375d62957cb3e7749b4f29e04947a0d64748"
+    ],
+    "top_100_count_result": [
+      "6455ad889116ea70a780492230aa375d62957cb3e7749b4f29e04947a0d64748"
+    ]
+  },
+  {
+    "query": "+housing +market +trends",
+    "count": 275,
+    "top_100": 275,
+    "result_type": "Hash",
+    "top_100_result": [
+      "a77747ab6c8cbfdd1ba7b4f6997d2f51a6aa0a73976fb7210b997c0bdd69ad12"
+    ],
+    "top_100_count_result": [
+      "a77747ab6c8cbfdd1ba7b4f6997d2f51a6aa0a73976fb7210b997c0bdd69ad12"
+    ]
+  },
+  {
+    "query": "+electric +grid +stability",
+    "count": 118,
+    "top_100": 118,
+    "result_type": "Hash",
+    "top_100_result": [
+      "22aa8e4a5a646722f85765f56d8a735921690fd265205fc92bc04c7b51ab6d9c"
+    ],
+    "top_100_count_result": [
+      "22aa8e4a5a646722f85765f56d8a735921690fd265205fc92bc04c7b51ab6d9c"
+    ]
+  },
+  {
+    "query": "+disaster +relief +funds",
+    "count": 566,
+    "top_100": 566,
+    "result_type": "Hash",
+    "top_100_result": [
+      "c86aa06617a2e75f76ffa0162cb6ac10f3dff9f8a2a77f3caf95b90e214a3f8e"
+    ],
+    "top_100_count_result": [
+      "c86aa06617a2e75f76ffa0162cb6ac10f3dff9f8a2a77f3caf95b90e214a3f8e"
+    ]
+  },
+  {
+    "query": "+insurance +claim +process",
+    "count": 647,
+    "top_100": 647,
+    "result_type": "Hash",
+    "top_100_result": [
+      "38657e8024eb8054d632e42458ab92ea4247802bc46c602fd6d76d514f9c9981"
+    ],
+    "top_100_count_result": [
+      "38657e8024eb8054d632e42458ab92ea4247802bc46c602fd6d76d514f9c9981"
+    ]
+  },
+  {
+    "query": "+credit +card +rewards",
+    "count": 99,
+    "top_100": 99,
+    "result_type": "Hash",
+    "top_100_result": [
+      "d7ed79b670ce798b67a7aa0f6f7c48da6d950f2d3a6fb7ea1c36d5fbb56ad82c"
+    ],
+    "top_100_count_result": [
+      "d7ed79b670ce798b67a7aa0f6f7c48da6d950f2d3a6fb7ea1c36d5fbb56ad82c"
+    ]
+  },
+  {
+    "query": "+data +center +cooling",
+    "count": 416,
+    "top_100": 416,
+    "result_type": "Hash",
+    "top_100_result": [
+      "98c174588c2e9313c44a678256e4261ccf4f771cb32eb39ac987a18e620069e1"
+    ],
+    "top_100_count_result": [
+      "98c174588c2e9313c44a678256e4261ccf4f771cb32eb39ac987a18e620069e1"
+    ]
+  },
+  {
+    "query": "+remote +learning +tools",
+    "count": 187,
+    "top_100": 187,
+    "result_type": "Hash",
+    "top_100_result": [
+      "5b05dd81504c687710b730b9be69c6419f4fb4c0e447bc81a99a6f26547ee956"
+    ],
+    "top_100_count_result": [
+      "5b05dd81504c687710b730b9be69c6419f4fb4c0e447bc81a99a6f26547ee956"
+    ]
+  },
+  {
+    "query": "+open +source +software +licenses",
+    "count": 424,
+    "top_100": 424,
+    "result_type": "Hash",
+    "top_100_result": [
+      "252d593717f40848479b403bf365f0a4dd0cb1d54094fb0c534649e73f9042f4"
+    ],
+    "top_100_count_result": [
+      "252d593717f40848479b403bf365f0a4dd0cb1d54094fb0c534649e73f9042f4"
+    ]
+  },
+  {
+    "query": "+health +care +cost +trends",
+    "count": 240,
+    "top_100": 240,
+    "result_type": "Hash",
+    "top_100_result": [
+      "daee59f1d2b1cbf5faf51df45d30d168bacc01bb6bb02888503d2b53a1674b4b"
+    ],
+    "top_100_count_result": [
+      "daee59f1d2b1cbf5faf51df45d30d168bacc01bb6bb02888503d2b53a1674b4b"
+    ]
+  },
+  {
+    "query": "+renewable +energy +policy +goals",
+    "count": 183,
+    "top_100": 183,
+    "result_type": "Hash",
+    "top_100_result": [
+      "99420e5b7b0e455ffa9b97248ede414d10d6f9197a7511caa976769bd32d21fc"
+    ],
+    "top_100_count_result": [
+      "99420e5b7b0e455ffa9b97248ede414d10d6f9197a7511caa976769bd32d21fc"
+    ]
+  },
+  {
+    "query": "+airport +security +screening +rules",
+    "count": 33,
+    "top_100": 33,
+    "result_type": "Hash",
+    "top_100_result": [
+      "7cb7110ab964b0af5b458d0a29f6da4b598bde574c332ca25df74447f66c97b2"
+    ],
+    "top_100_count_result": [
+      "7cb7110ab964b0af5b458d0a29f6da4b598bde574c332ca25df74447f66c97b2"
+    ]
+  },
+  {
+    "query": "+climate +change +impact +report",
+    "count": 807,
+    "top_100": 807,
+    "result_type": "Hash",
+    "top_100_result": [
+      "f28d1d01a91d7c0599ce1867cee88d81ab73bb3c32b47c7e6c4a45d260462b91"
+    ],
+    "top_100_count_result": [
+      "f28d1d01a91d7c0599ce1867cee88d81ab73bb3c32b47c7e6c4a45d260462b91"
     ]
   }
 ]

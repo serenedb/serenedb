@@ -34,7 +34,59 @@ class WildcardUtilsTest : public TestBase {
 
     EXPECT_EQ(kExpectedProperties, a.Properties(kExpectedProperties, true));
   }
+
+  // Only the sink reads nothing, and the sink accepts nothing. The term
+  // dictionary walk descends into a block while the acceptor has arcs, so a
+  // state that accepts and reads nothing would stop it at the term a block is
+  // named by.
+  static void AssertSink(const irs::automaton& a) {
+    size_t without_arcs = 0;
+    for (irs::automaton::StateId state = 0; state < a.NumStates(); ++state) {
+      if (a.NumArcs(state)) {
+        continue;
+      }
+      ++without_arcs;
+      EXPECT_FALSE(bool(a.Final(state))) << "state " << state << " accepts";
+    }
+    EXPECT_LE(without_arcs, 1) << "more than one state reads nothing";
+  }
 };
+
+TEST_F(WildcardUtilsTest, sink_arcs) {
+  // patterns whose accepting state has nothing left to read
+  for (const auto* pattern : {"foo", "f_o", "_oo", "fo_", "f_o_", "___"}) {
+    auto a = irs::FromWildcard(
+      irs::ViewCast<irs::byte_type>(std::string_view{pattern}));
+    AssertProperties(a);
+    AssertSink(a);
+  }
+
+  // and one that reads on where it accepts
+  {
+    auto a =
+      irs::FromWildcard(irs::ViewCast<irs::byte_type>(std::string_view{"fo%"}));
+    AssertProperties(a);
+    AssertSink(a);
+  }
+}
+
+TEST_F(WildcardUtilsTest, sink_arcs_accept_unchanged) {
+  auto a =
+    irs::FromWildcard(irs::ViewCast<irs::byte_type>(std::string_view{"f_o"}));
+  AssertSink(a);
+
+  ASSERT_TRUE(irs::Accept<irs::byte_type>(
+    a, irs::ViewCast<irs::byte_type>(std::string_view{"foo"})));
+  ASSERT_TRUE(irs::Accept<irs::byte_type>(
+    a, irs::ViewCast<irs::byte_type>(std::string_view{"fao"})));
+  // what the sink swallowed is still no match
+  ASSERT_FALSE(irs::Accept<irs::byte_type>(
+    a, irs::ViewCast<irs::byte_type>(std::string_view{"fooo"})));
+  ASSERT_FALSE(irs::Accept<irs::byte_type>(
+    a, irs::ViewCast<irs::byte_type>(std::string_view{"fo"})));
+  ASSERT_FALSE(irs::Accept<irs::byte_type>(
+    a, irs::ViewCast<irs::byte_type>(std::string_view{"bar"})));
+}
 
 TEST_F(WildcardUtilsTest, same_start) {
   {
@@ -1498,10 +1550,11 @@ TEST_F(WildcardUtilsTest, match_wildcard) {
       a, irs::ViewCast<irs::byte_type>(std::string_view("vczczvccccc"))));
   }
 
-  // invalid UTF-8 sequence
-  ASSERT_EQ(2, irs::FromWildcard("\xD0").NumStates());
-  ASSERT_EQ(3, irs::FromWildcard("\xE2\x9E").NumStates());
-  ASSERT_EQ(4, irs::FromWildcard("\xF0\x9F\x98").NumStates());
+  // invalid UTF-8 sequence -- one state per byte read, plus the sink the
+  // accepting state reads into
+  ASSERT_EQ(3, irs::FromWildcard("\xD0").NumStates());
+  ASSERT_EQ(4, irs::FromWildcard("\xE2\x9E").NumStates());
+  ASSERT_EQ(5, irs::FromWildcard("\xF0\x9F\x98").NumStates());
 }
 
 TEST_F(WildcardUtilsTest, wildcard_type) {

@@ -65,13 +65,6 @@ std::optional<std::string> SetHbaFromTextString(std::string_view text);
 namespace {
 
 template<basics::detail::FixedString Name>
-void Readonly(duckdb::ClientContext&, duckdb::SetScope, duckdb::Value&) {
-  THROW_SQL_ERROR(
-    ERR_CODE(ERRCODE_CANT_CHANGE_RUNTIME_PARAM),
-    ERR_MSG("parameter \"", std::string_view{Name}, "\" cannot be changed"));
-}
-
-template<basics::detail::FixedString Name>
 void RejectZero(duckdb::ClientContext&, duckdb::SetScope,
                 duckdb::Value& value) {
   if (value.GetValue<uint64_t>() == 0) {
@@ -655,7 +648,7 @@ constexpr std::pair<std::string_view, VariableDescription>
         LogicalTypeId::BOOLEAN,
         "Shows whether hot standby is currently active.",
         [] { return duckdb::Value{false}; },
-        Readonly<"in_hot_standby">,
+        nullptr,  // refused via kUnchangeableSettings
       },
     },
     {
@@ -673,7 +666,7 @@ constexpr std::pair<std::string_view, VariableDescription>
         LogicalTypeId::INTEGER,
         "Sets the iteration count for SCRAM secret generation.",
         [] { return duckdb::Value{"4096"}; },
-        Readonly<"scram_iterations">,
+        NoOverwrite<"scram_iterations">,
       },
     },
     {
@@ -682,7 +675,7 @@ constexpr std::pair<std::string_view, VariableDescription>
         LogicalTypeId::VARCHAR,
         "Shows the server (database) character set encoding.",
         [] { return duckdb::Value{"UTF8"}; },
-        Readonly<"server_encoding">,
+        nullptr,  // refused via kUnchangeableSettings
       },
     },
     {
@@ -691,7 +684,7 @@ constexpr std::pair<std::string_view, VariableDescription>
         LogicalTypeId::VARCHAR,
         "Shows the server version.",
         [] { return duckdb::Value{"18.3"}; },
-        Readonly<"server_version">,
+        nullptr,  // refused via kUnchangeableSettings
       },
     },
     {
@@ -700,7 +693,7 @@ constexpr std::pair<std::string_view, VariableDescription>
         LogicalTypeId::INTEGER,
         "Shows the server version as an integer.",
         [] { return duckdb::Value::INTEGER(180003); },
-        Readonly<"server_version_num">,
+        nullptr,  // refused via kUnchangeableSettings
       },
     },
     {
@@ -757,7 +750,7 @@ constexpr std::pair<std::string_view, VariableDescription>
         LogicalTypeId::BOOLEAN,
         "Shows whether the current session's user is a superuser.",
         [] { return duckdb::Value{true}; },
-        Readonly<"is_superuser">,
+        nullptr,  // refused via kUnchangeableSettings
       },
     },
     {

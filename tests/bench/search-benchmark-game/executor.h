@@ -43,6 +43,14 @@ struct BenchConfig {
   size_t segment_mem_max = 1 << 28;
 };
 
+// What a query line asks for besides the documents themselves: a checksum
+// over them, every one of them printed, or both -- and by default neither,
+// which leaves only how many there were.
+struct Report {
+  bool hash = false;
+  bool print = false;
+};
+
 struct EmitResult {
   size_t count = 0;
   size_t hash = 0;
@@ -56,9 +64,9 @@ class Executor {
   size_t ExecuteTopKWithCount(size_t k, std::string_view query);
   size_t ExecuteCount(std::string_view query);
   size_t HashResults() const;
-  EmitResult ExecuteEmitDocs(std::string_view query, bool checksum = false);
-  EmitResult ExecuteEmitScoredDocs(std::string_view query,
-                                   bool checksum = false);
+  void PrintResults() const;
+  EmitResult ExecuteEmitDocs(std::string_view query, Report report = {});
+  EmitResult ExecuteEmitScoredDocs(std::string_view query, Report report = {});
 
   const irs::DirectoryReader& GetReader() const { return _reader; }
   auto GetResults(this auto& self) {
@@ -66,7 +74,6 @@ class Executor {
   }
 
   irs::Filter::ptr ParseFilter(std::string_view str);
-  irs::Filter::ptr ParseIntervalPhrase(std::string_view str);
 
  private:
   void ResetResults(size_t k) noexcept {

@@ -18,129 +18,120 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include <absl/strings/str_split.h>
+#include <absl/strings/ascii.h>
+#include <absl/strings/str_format.h>
+#include <fast_float/fast_float.h>
 
+#include <cstdio>
 #include <iostream>
 #include <iresearch/search/filter_optimizer.hpp>
 #include <iresearch/utils/levenshtein_default_pdp.hpp>
-#include <magic_enum/magic_enum.hpp>
+#include <optional>
 #include <string>
+#include <system_error>
 
 #include "basics/duckdb_engine.h"
 #include "executor.h"
 
-enum class QueryType {
-  Count,
-  UnoptimizedCount,
-  Top10,
-  Top100,
-  Top1000,
-  Top10Count,
-  Top100Count,
-  Top1000Count,
-  Top100Debug,
-  Top100CountDebug,
-  EmitDocs,
-  EmitDocsDebug,
-  EmitScoredDocs,
-  EmitScoredDocsDebug,
-  Unsupported,
-};
-
-namespace magic_enum {
-
-template<>
-constexpr customize::customize_t customize::enum_name<QueryType>(
-  QueryType value) noexcept {
-  switch (value) {
-    case QueryType::Count:
-    case QueryType::UnoptimizedCount:
-      return "COUNT";
-    case QueryType::Top10:
-      return "TOP_10";
-    case QueryType::Top100:
-      return "TOP_100";
-    case QueryType::Top1000:
-      return "TOP_1000";
-    case QueryType::Top10Count:
-      return "TOP_10_COUNT";
-    case QueryType::Top100Count:
-      return "TOP_100_COUNT";
-    case QueryType::Top1000Count:
-      return "TOP_1000_COUNT";
-    case QueryType::Top100Debug:
-      return "TOP_100_DEBUG";
-    case QueryType::Top100CountDebug:
-      return "TOP_100_COUNT_DEBUG";
-    case QueryType::EmitDocs:
-      return "EMIT_DOCS";
-    case QueryType::EmitDocsDebug:
-      return "EMIT_DOCS_DEBUG";
-    case QueryType::EmitScoredDocs:
-      return "EMIT_SCORED_DOCS";
-    case QueryType::EmitScoredDocsDebug:
-      return "EMIT_SCORED_DOCS_DEBUG";
-    default:
-      return "UNSUPPORTED";
-  }
-}
-
-}  // namespace magic_enum
 namespace {
 
-struct Query {
-  QueryType type = QueryType::Unsupported;
-  std::string_view query;
+// What a line asks of its query, spelled as `count`, `docs`, `scored` or
+// `top_<N>`. A top-k reads `_count` as "do not prune, take the exact total",
+// and anything that is not a bare count may end in `_hash` for a checksum
+// over what it found and `_print` for all of it -- either, both, in either
+// order.
+enum class Kind : uint8_t {
+  Count,
+  Docs,
+  Scored,
+  TopK,
 };
 
-Query ParseQuery(std::string_view str) {
-  auto parts = absl::StrSplit(str, '\t');
-  auto begin = parts.begin();
+struct Command {
+  Kind kind;
+  bench::Report report;
+  size_t k = 0;        // top-k only
+  bool exact = false;  // top-k only: `_count`
+};
 
-  auto type = magic_enum::enum_cast<QueryType>(*begin);
-  if (!type) {
-    return {};
+constexpr std::string_view kUnsupported = "UNSUPPORTED";
+
+bool StripSuffix(std::string_view& name, std::string_view suffix) {
+  if (!name.ends_with(suffix)) {
+    return false;
   }
-
-  ++begin;
-  return {*type, *begin};
+  name.remove_suffix(suffix.size());
+  return true;
 }
 
-size_t ExecuteQuery(bench::Executor& executor, Query q) {
-  auto [type, query] = q;
-  switch (type) {
-    case QueryType::UnoptimizedCount:
-    case QueryType::Count:
-      return executor.ExecuteCount(query);
-    case QueryType::Top10:
-      return executor.ExecuteTopK(10, query);
-    case QueryType::Top100:
-      return executor.ExecuteTopK(100, query);
-    case QueryType::Top1000:
-      return executor.ExecuteTopK(1000, query);
-    case QueryType::Top10Count:
-      return executor.ExecuteTopKWithCount(10, query);
-    case QueryType::Top100Count:
-      return executor.ExecuteTopKWithCount(100, query);
-    case QueryType::Top1000Count:
-      return executor.ExecuteTopKWithCount(1000, query);
-    case QueryType::Top100Debug:
-      executor.ExecuteTopK(100, query);
-      return executor.HashResults();
-    case QueryType::Top100CountDebug:
-      executor.ExecuteTopKWithCount(100, query);
-      return executor.HashResults();
-    case QueryType::EmitDocs:
-      return executor.ExecuteEmitDocs(query).count;
-    case QueryType::EmitDocsDebug:
-      return executor.ExecuteEmitDocs(query, true).hash;
-    case QueryType::EmitScoredDocs:
-      return executor.ExecuteEmitScoredDocs(query).count;
-    case QueryType::EmitScoredDocsDebug:
-      return executor.ExecuteEmitScoredDocs(query, true).hash;
-    default:
-      return 0;
+std::optional<Command> ParseCommand(std::string_view name) {
+  Command cmd{.kind = Kind::Count};
+
+  for (;;) {
+    if (!cmd.report.print && StripSuffix(name, "_print")) {
+      cmd.report.print = true;
+      continue;
+    }
+    if (!cmd.report.hash && StripSuffix(name, "_hash")) {
+      cmd.report.hash = true;
+      continue;
+    }
+    break;
   }
+
+  if (name == "count") {
+    // A count is a number and nothing else: there are no documents in hand to
+    // checksum or to print.
+    return cmd.report.hash || cmd.report.print ? std::nullopt
+                                               : std::optional{cmd};
+  }
+  if (name == "docs") {
+    cmd.kind = Kind::Docs;
+    return cmd;
+  }
+  if (name == "scored") {
+    cmd.kind = Kind::Scored;
+    return cmd;
+  }
+
+  cmd.exact = StripSuffix(name, "_count");
+  if (!name.starts_with("top_")) {
+    return std::nullopt;
+  }
+  name.remove_prefix(4);
+
+  const auto* const end = name.data() + name.size();
+  const auto [stop, ec] = fast_float::from_chars(name.data(), end, cmd.k);
+  if (ec != std::errc{} || stop != end || cmd.k == 0) {
+    return std::nullopt;
+  }
+  cmd.kind = Kind::TopK;
+  return cmd;
+}
+
+size_t ExecuteCommand(bench::Executor& executor, const Command& cmd,
+                      std::string_view query) {
+  switch (cmd.kind) {
+    case Kind::Count:
+      return executor.ExecuteCount(query);
+    case Kind::Docs: {
+      const auto result = executor.ExecuteEmitDocs(query, cmd.report);
+      return cmd.report.hash ? result.hash : result.count;
+    }
+    case Kind::Scored: {
+      const auto result = executor.ExecuteEmitScoredDocs(query, cmd.report);
+      return cmd.report.hash ? result.hash : result.count;
+    }
+    case Kind::TopK: {
+      const auto count = cmd.exact ? executor.ExecuteTopKWithCount(cmd.k, query)
+                                   : executor.ExecuteTopK(cmd.k, query);
+      if (cmd.report.print) {
+        executor.PrintResults();
+      }
+      return cmd.report.hash ? executor.HashResults() : count;
+    }
+  }
+  return 0;
 }
 
 }  // namespace
@@ -164,15 +155,33 @@ int main(int argc, const char* argv[]) {
 
     std::string data;
     while (std::getline(std::cin, data)) {
-      const auto count = ExecuteQuery(executor, ParseQuery(data));
-      if (!count) {
-        std::cout << magic_enum::enum_name(QueryType::Unsupported) << "\n";
+      size_t count = 0;
+      const std::string_view line{data};
+      const auto tab = line.find('\t');
+      const auto cmd =
+        tab == std::string_view::npos
+          ? std::nullopt
+          : ParseCommand(absl::AsciiStrToLower(line.substr(0, tab)));
+      if (!cmd) {
+        absl::FPrintF(stderr, "unknown command: %s\n", line);
       } else {
-        std::cout << count << "\n";
+        try {
+          count = ExecuteCommand(executor, *cmd, line.substr(tab + 1));
+        } catch (const std::exception& ex) {
+          absl::FPrintF(stderr, "unsupported: %s\n", ex.what());
+        }
       }
+      if (!count) {
+        absl::PrintF("%s\n", kUnsupported);
+      } else {
+        absl::PrintF("%d\n", count);
+      }
+      // The driver writes one query and waits for its line, and nothing ties
+      // this output to the input any more.
+      std::fflush(stdout);
     }
   } catch (const std::exception& ex) {
-    std::cerr << "fatal: " << ex.what() << std::endl;
+    absl::FPrintF(stderr, "fatal: %s\n", ex.what());
     exit_code = 1;
   }
   sdb::DuckDBEngine::Instance().Shutdown();

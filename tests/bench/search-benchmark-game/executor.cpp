@@ -20,17 +20,20 @@
 
 #include "executor.h"
 
+#include <absl/strings/str_format.h>
+
 #include <algorithm>
-#include <charconv>
 #include <cmath>
-#include <cstring>
+#include <cstdio>
 #include <iresearch/analysis/segmentation_tokenizer.hpp>
 #include <iresearch/index/norm.hpp>
 #include <iresearch/parser/parser.hpp>
 #include <iresearch/search/bm25.hpp>
 #include <iresearch/search/boolean_filter.hpp>
 #include <iresearch/search/filter_optimizer.hpp>
+#include <iresearch/search/ngram_similarity_filter.hpp>
 #include <iresearch/search/phrase_filter.hpp>
+#include <iresearch/search/term_filter.hpp>
 #include <iresearch/store/store_utils.hpp>
 #include <tuple>
 #include <vector>
@@ -44,7 +47,19 @@ namespace {
 
 template<typename T>
 size_t HashBatch(size_t hash, const T* data, size_t size) {
-  return sdb::basics::WyHash(data, size * sizeof(T), hash);
+  for (size_t i = 0; i != size; ++i) {
+    hash = sdb::basics::WyHash(data + i, sizeof(T), hash);
+  }
+  return hash;
+}
+
+template<typename T, typename U>
+size_t HashPairs(size_t hash, const T* docs, const U* scores, size_t size) {
+  for (size_t i = 0; i != size; ++i) {
+    hash = sdb::basics::WyHash(docs + i, sizeof(T), hash);
+    hash = sdb::basics::WyHash(scores + i, sizeof(U), hash);
+  }
+  return hash;
 }
 
 }  // namespace
@@ -111,7 +126,7 @@ size_t Executor::ExecuteCount(std::string_view query) {
   return count;
 }
 
-EmitResult Executor::ExecuteEmitDocs(std::string_view query, bool checksum) {
+EmitResult Executor::ExecuteEmitDocs(std::string_view query, Report report) {
   auto filter = ParseFilter(query);
   if (!filter) {
     return {};
@@ -135,8 +150,13 @@ EmitResult Executor::ExecuteEmitDocs(std::string_view query, bool checksum) {
     while (!irs::doc_limits::eof(min)) {
       const auto n = docs->EmitDocs(_emit_docs.data(), min, min + kEmitWindow);
       result.count += n;
-      if (checksum) {
+      if (report.hash) {
         result.hash = HashBatch(result.hash, _emit_docs.data(), n);
+      }
+      if (report.print) {
+        for (uint32_t i = 0; i != n; ++i) {
+          absl::FPrintF(stderr, "doc=%u\n", _emit_docs[i]);
+        }
       }
       min = docs->value();
     }
@@ -145,7 +165,7 @@ EmitResult Executor::ExecuteEmitDocs(std::string_view query, bool checksum) {
 }
 
 EmitResult Executor::ExecuteEmitScoredDocs(std::string_view query,
-                                           bool checksum) {
+                                           Report report) {
   auto filter = ParseFilter(query);
   if (!filter) {
     return {};
@@ -180,9 +200,19 @@ EmitResult Executor::ExecuteEmitScoredDocs(std::string_view query,
         docs->EmitScoredDocs(_emit_docs.data(), _emit_scores.data(),
                              min + kEmitWindow, score_func, &fetcher, min);
       result.count += n;
-      if (checksum) {
-        result.hash = HashBatch(result.hash, _emit_docs.data(), n);
-        result.hash = HashBatch(result.hash, _emit_scores.data(), n);
+      if (report.hash) {
+        // Pairwise, so the checksum does not depend on where the batch
+        // boundaries happen to fall: docs-then-scores per batch interleaves
+        // differently for a path that emits per window of ids and one that
+        // emits per window of results.
+        result.hash =
+          HashPairs(result.hash, _emit_docs.data(), _emit_scores.data(), n);
+      }
+      if (report.print) {
+        for (uint32_t i = 0; i != n; ++i) {
+          absl::FPrintF(stderr, "doc=%u score=%.6f\n", _emit_docs[i],
+                        _emit_scores[i]);
+        }
       }
       min = docs->value();
     }
@@ -210,63 +240,21 @@ size_t Executor::HashResults() const {
   return hash;
 }
 
-// "~term MIN-MAX term MIN-MAX term" builds a phrase whose gaps are ranges,
-// one range per adjacent pair. The Lucene syntax cannot express this (it only
-// carries a whole-phrase slop), and it is the only way to reach the interval
-// phrase iterator from a query string.
-irs::Filter::ptr Executor::ParseIntervalPhrase(std::string_view str) {
-  auto root = std::make_unique<irs::MixedBooleanFilter>();
-  auto& phrase = root->GetOptional().add<irs::ByPhrase>();
-  *phrase.mutable_field_id() = kTextFieldId;
-  auto* options = phrase.mutable_options();
-
-  size_t offs_min = 0;
-  size_t offs_max = 0;
-  bool want_term = true;
-  for (size_t pos = 0; pos <= str.size();) {
-    const auto next = std::min(str.find(' ', pos), str.size());
-    const auto word = str.substr(pos, next - pos);
-    pos = next + 1;
-    if (word.empty()) {
-      continue;
+void Executor::PrintResults() const {
+  for (size_t i = 0; i != _result_count; ++i) {
+    const auto& hit = _results[i];
+    if (irs::doc_limits::valid(hit.doc)) {
+      absl::FPrintF(stderr, "doc=%u segment=%u score=%.6f\n", hit.doc,
+                    hit.segment_idx, hit.score);
     }
-    if (want_term) {
-      _tokenizer->reset(word);
-      const auto* token = irs::get<irs::TermAttr>(*_tokenizer);
-      if (!_tokenizer->next()) {
-        return {};
-      }
-      options->push_back<irs::ByTermOptions>(offs_min, offs_max).term =
-        token->value;
-    } else {
-      const auto dash = word.find('-');
-      if (dash == std::string_view::npos) {
-        return {};
-      }
-      std::from_chars(word.data(), word.data() + dash, offs_min);
-      std::from_chars(word.data() + dash + 1, word.data() + word.size(),
-                      offs_max);
-      if (offs_min == 0 || offs_min > offs_max) {
-        return {};
-      }
-    }
-    want_term = !want_term;
   }
-  if (options->size() < 2 || want_term) {
-    return {};
-  }
-  irs::Filter::ptr filter = std::move(root);
-  irs::Optimize(filter, {.scored = _scorer_ptr != nullptr});
-  return filter;
 }
 
 irs::Filter::ptr Executor::ParseFilter(std::string_view str) {
-  if (str.starts_with('~')) {
-    return ParseIntervalPhrase(str.substr(1));
-  }
   auto root = std::make_unique<irs::MixedBooleanFilter>();
   sdb::ParserContext context{*root, kTextFieldId, *_tokenizer};
   if (!sdb::ParseQuery(context, str)) {
+    absl::FPrintF(stderr, "parse error: %s: %s\n", context.error_message, str);
     return {};
   }
   if (root->empty()) {

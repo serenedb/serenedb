@@ -53,7 +53,8 @@
 namespace {
 
 // Only "1_5simd" is registered, so a codec-mismatch case needs a stub. Nothing
-// but type() is ever reached: AdoptSegment compares it before touching any file.
+// but type() is ever reached: AdoptSegment compares it before touching any
+// file.
 struct ForeignFormatTag {};
 
 class ForeignFormat final : public irs::Format {
@@ -169,9 +170,9 @@ class IndexAdoptTest : public TestBase {
 };
 
 // FlushAndFsync must report EVERY segment the transaction flushed, not just the
-// one it serialized: a transaction over segment_docs_max auto-flushes mid-insert,
-// so earlier segments are already on disk by the time it runs. Reporting only
-// the last would leave the rest out of the caller's WAL record.
+// one it serialized: a transaction over segment_docs_max auto-flushes
+// mid-insert, so earlier segments are already on disk by the time it runs.
+// Reporting only the last would leave the rest out of the caller's WAL record.
 TEST_F(IndexAdoptTest, FlushAndFsyncReportsEveryFlushedSegment) {
   Restart(/*cleanup_on_open=*/true, /*segment_docs_max=*/1);
 
@@ -315,9 +316,10 @@ TEST_F(IndexAdoptTest, AdoptSegmentTickOrdersAgainstRemoval) {
 }
 
 // The rule a host must place adopt ticks by: a removal masks an adopted segment
-// iff `segment tick <= removal tick`. Two segments straddling one removal's tick
-// must therefore end up one masked, one live -- so whichever tick space the host
-// picks, it has to put a segment below exactly the removals that should mask it.
+// iff `segment tick <= removal tick`. Two segments straddling one removal's
+// tick must therefore end up one masked, one live -- so whichever tick space
+// the host picks, it has to put a segment below exactly the removals that
+// should mask it.
 TEST_F(IndexAdoptTest, AdoptTickDecidesRemovalMasking) {
   std::vector<irs::IndexSegment> before;
   std::vector<irs::IndexSegment> after;
@@ -350,7 +352,8 @@ TEST_F(IndexAdoptTest, AdoptTickDecidesRemovalMasking) {
   ASSERT_TRUE(_writer->RefreshCommit());
 
   // The one at 19 is masked; masking its only document drops the segment
-  // outright, so what remains must be exactly the one adopted above the removal.
+  // outright, so what remains must be exactly the one adopted above the
+  // removal.
   auto reader = _writer->GetSnapshot();
   EXPECT_EQ(1, reader.live_docs_count());
   ASSERT_EQ(1, reader.size());
@@ -361,12 +364,12 @@ TEST_F(IndexAdoptTest, AdoptTickDecidesRemovalMasking) {
 // distinguishes it from adopting at the record's tick.
 //
 // Replay of: DELETE x (record 1), SEGMENT inserting x (record 2), DELETE y
-// (record 3). `x` must survive -- it was re-inserted after its delete -- and the
-// only signal saying so is where the segment sits relative to the first removal.
-// Adopting at the record tick (20) would put it below both rebased removals
-// (which cluster just under the commit tick) and delete `x` again. Adopting at
-// `commit_tick - queries + removals_seen_so_far` puts it above the first removal
-// and below the second, which is exactly its manifest position.
+// (record 3). `x` must survive -- it was re-inserted after its delete -- and
+// the only signal saying so is where the segment sits relative to the first
+// removal. Adopting at the record tick (20) would put it below both rebased
+// removals (which cluster just under the commit tick) and delete `x` again.
+// Adopting at `commit_tick - queries + removals_seen_so_far` puts it above the
+// first removal and below the second, which is exactly its manifest position.
 TEST_F(IndexAdoptTest, AdoptTickFollowsManifestPositionNotRecordTick) {
   std::vector<irs::IndexSegment> adopt;
   {
@@ -402,10 +405,10 @@ TEST_F(IndexAdoptTest, AdoptTickFollowsManifestPositionNotRecordTick) {
     << "the re-inserted document was masked by the delete that preceded it";
 }
 
-// A segment claiming a codec this writer did not produce cannot be read with the
-// writer's format, so adoption has to fail rather than read it with the wrong
-// one. Reporting it is the caller's job -- only the caller knows which durable
-// record claimed these documents.
+// A segment claiming a codec this writer did not produce cannot be read with
+// the writer's format, so adoption has to fail rather than read it with the
+// wrong one. Reporting it is the caller's job -- only the caller knows which
+// durable record claimed these documents.
 TEST_F(IndexAdoptTest, AdoptSegmentRejectsForeignCodec) {
   std::vector<irs::IndexSegment> adopt;
   {

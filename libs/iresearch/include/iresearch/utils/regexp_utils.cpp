@@ -646,6 +646,8 @@ automaton FromRegexp(bytes_view pattern, int64_t max_dfa_states,
     return {};
   }
 
+  EmplaceSinkArcs(dfa);
+
   return dfa;
 }
 

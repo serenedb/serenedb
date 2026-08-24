@@ -67,6 +67,29 @@ void Utf8EmplaceArc(automaton& a, automaton::StateId from, bytes_view label,
   }
 }
 
+void EmplaceSinkArcs(automaton& a) {
+  // States are visited by index and only arcs are added to them, so the one
+  // state this may append is past `count` and needs no visit of its own.
+  const auto count = a.NumStates();
+
+  auto sink = fst::kNoStateId;
+  for (automaton::StateId state = 0; state < count; ++state) {
+    if (a.NumArcs(state)) {
+      continue;
+    }
+    if (!a.Final(state)) {
+      if (fst::kNoStateId == sink) {
+        sink = state;  // a state that reads nothing and accepts nothing is one
+      }
+      continue;
+    }
+    if (fst::kNoStateId == sink) {
+      sink = a.AddState();
+    }
+    a.EmplaceArc(state, RangeLabel::From(0, 255), sink);
+  }
+}
+
 void Utf8EmplaceRhoArc(automaton& a, automaton::StateId from,
                        automaton::StateId to) {
   const auto id = a.NumStates();  // stated ids are sequential

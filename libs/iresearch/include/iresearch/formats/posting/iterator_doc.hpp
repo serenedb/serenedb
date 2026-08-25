@@ -24,7 +24,7 @@
 #include "iresearch/analysis/token_attributes.hpp"
 #include "iresearch/formats/formats.hpp"
 #include "iresearch/formats/posting/iterator_pos.hpp"
-#include "iresearch/formats/posting/skip_list.hpp"
+#include "iresearch/formats/posting/skip_column.hpp"
 #include "iresearch/index/iterators.hpp"
 #include "iresearch/search/cost.hpp"
 #include "iresearch/utils/attribute_helper.hpp"
@@ -507,11 +507,11 @@ class PostingIteratorImpl : public PostingIteratorBase<IteratorTraits> {
                 "kBlockSize must be a multiple of kScoreBlock");
 
  public:
-  PostingIteratorImpl()
-    : _skip{doc_limits::kBlockSize, doc_limits::kSkipSize} {}
+  PostingIteratorImpl() = default;
 
-  void Prepare(const PostingCookie& meta, const IndexInput* doc_in,
-               const IndexInput* pos_in, const IndexInput* pay_in,
+  void Prepare(const PostingCookie& meta, const IteratorFieldOptions& options,
+               const IndexInput* doc_in, const IndexInput* pos_in,
+               const IndexInput* pay_in, const IndexInput* skip_in,
                bool score_prune = false);
 
   std::pair<doc_id_t, bool> FillBlock(const doc_id_t min, const doc_id_t max,
@@ -523,88 +523,6 @@ class PostingIteratorImpl : public PostingIteratorBase<IteratorTraits> {
   IRS_FORCE_INLINE InputType& GetDocIn() const noexcept {
     return sdb::basics::downCast<InputType>(*this->_doc_in);
   }
-
-  class ReadSkip {
-   public:
-    explicit ReadSkip() : _skip_levels(1) {
-      Disable();  // Prevent using skip-list by default
-    }
-
-    void Disable() noexcept {
-      SDB_ASSERT(!_skip_levels.empty());
-      SDB_ASSERT(!doc_limits::valid(_skip_levels.back().doc));
-      _skip_levels.back().doc = doc_limits::eof();
-    }
-
-    void Enable(const PostingMeta& state) noexcept {
-      SDB_ASSERT(!_skip_levels.empty());
-      SDB_ASSERT(state.docs_count > doc_limits::kBlockSize);
-
-      // Since we store pointer deltas, add postings offset
-      auto& top = _skip_levels.front();
-      CopyState<IteratorTraits>(top, state);
-
-      SDB_ASSERT(doc_limits::eof(_skip_levels.back().doc));
-      _skip_levels.back().doc = doc_limits::invalid();
-    }
-
-    void Init(size_t num_levels) {
-      SDB_ASSERT(num_levels);
-      _skip_levels.resize(num_levels);
-    }
-
-    IRS_FORCE_INLINE bool IsLess(size_t level, doc_id_t target) const noexcept {
-      return _skip_levels[level].doc < target;
-    }
-
-    void MoveDown(size_t level) noexcept {
-      auto& next = _skip_levels[level];
-      // Move to the more granular level
-      SDB_ASSERT(_prev);
-      CopyState<IteratorTraits>(next, *_prev);
-    }
-
-    void Read(size_t level, InputType& in) {
-      auto& next = _skip_levels[level];
-      // Store previous step on the same level
-      CopyState<IteratorTraits>(*_prev, next);
-      ReadState<FieldTraits>(next, in);
-      SkipScoreBounds(in);
-    }
-
-    void Seal(size_t level) {
-      auto& next = _skip_levels[level];
-      // Store previous step on the same level
-      CopyState<IteratorTraits>(*_prev, next);
-      // Stream exhausted
-      next.doc = doc_limits::eof();
-    }
-
-    IRS_FORCE_INLINE static size_t AdjustLevel(size_t level) noexcept {
-      return level;
-    }
-
-    void Reset(SkipState& state) noexcept {
-      SDB_ASSERT(absl::c_is_sorted(
-        _skip_levels,
-        [](const auto& lhs, const auto& rhs) { return lhs.doc > rhs.doc; }));
-
-      _prev = &state;
-    }
-
-    IRS_FORCE_INLINE doc_id_t UpperBound() const noexcept {
-      SDB_ASSERT(!_skip_levels.empty());
-      return _skip_levels.back().doc;
-    }
-
-    IRS_FORCE_INLINE void SkipScoreBounds(InputType& in) {
-      irs::SkipScoreBounds(HasScoreBounds, in);
-    }
-
-   private:
-    std::vector<SkipState> _skip_levels;
-    SkipState* _prev{};  // Pointer to skip context used by skip reader
-  };
 
   IRS_FORCE_INLINE void ReadTail(doc_id_t prev_doc);
   IRS_FORCE_INLINE void ReadBlock(doc_id_t prev_doc);
@@ -626,22 +544,36 @@ class PostingIteratorImpl : public PostingIteratorBase<IteratorTraits> {
     }
   }
 
-  IRS_FORCE_INLINE bool SeekAfterInit(SkipState& last, doc_id_t target);
-  IRS_NO_INLINE bool InitAndSeek(SkipState& last, doc_id_t target);
   bool SeekToLeaf(doc_id_t target) final;
 
-  uint64_t _skip_offs{};
-  SkipReader<ReadSkip, InputType> _skip;
-  uint32_t _docs_count{};
+  // Index of the doc block the read path is about to reach. Derived rather
+  // than tracked: `_left_in_list` already says exactly how far along the
+  // term's documents we are.
+  IRS_FORCE_INLINE uint64_t NextBlock() const noexcept {
+    return (_docs_total - this->_left_in_list) / doc_limits::kBlockSize;
+  }
+
+  IndexInput::ptr _skip_own;
+  SkipColumnsReader<InputType> _cols;
+  SkipColumnIndex _idx{2, false, false};
+  // The term's entries are `[_entry_first, _entry_last]`, one per doc block.
+  uint64_t _entry_first{};
+  uint64_t _entry_last{};
+  uint64_t _doc_origin{};
+  uint64_t _pos_start{};
+  uint64_t _pay_start{};
+  uint32_t _docs_total{};
 };
 
 template<typename IteratorTraits, typename FieldTraits, bool HasScoreBounds,
          typename InputType>
 void PostingIteratorImpl<IteratorTraits, FieldTraits, HasScoreBounds,
                          InputType>::Prepare(const PostingCookie& meta,
+                                             const IteratorFieldOptions& opts,
                                              const IndexInput* doc_in,
                                              const IndexInput* pos_in,
                                              const IndexInput* pay_in,
+                                             const IndexInput* skip_in,
                                              bool score_prune) {
   this->Init(meta);
 
@@ -650,7 +582,6 @@ void PostingIteratorImpl<IteratorTraits, FieldTraits, HasScoreBounds,
 
   SDB_ASSERT(this->_left_in_leaf == 0);
   SDB_ASSERT(this->_max_in_leaf == doc_limits::invalid());
-  SDB_ASSERT(doc_limits::eof(_skip.Reader().UpperBound()));
 
   if (term_state.docs_count > 1) {
     this->_left_in_list = term_state.docs_count;
@@ -667,12 +598,45 @@ void PostingIteratorImpl<IteratorTraits, FieldTraits, HasScoreBounds,
       std::get<FreqBlockAttr>(this->_attrs).value = this->_freq_block;
     }
 
-    GetDocIn().Seek(term_state.doc_start);
+    if (term_state.docs_count > doc_limits::kBlockSize) {
+      // A long term keeps no `doc_start`: entry 0 describes doc block 0, so
+      // it is where the term's `.doc` data begins.
+      if (skip_in == nullptr || opts.skip.Empty()) [[unlikely]] {
+        throw IndexError{absl::StrCat(
+          "while preparing postings, error: term of ", term_state.docs_count,
+          " docs needs skip columns; skip_in=", skip_in != nullptr,
+          " count=", opts.skip.count, " columns=", opts.skip.columns,
+          " dir=", opts.skip.dir != nullptr, " first_entry=",
+          term_state.first_entry)};
+      }
+      _skip_own = skip_in->Reopen();
+      if (!_skip_own) {
+        SDB_ERROR(IRESEARCH, "Failed to reopen skip input");
+        throw IoError("failed to reopen skip input");
+      }
+      _idx = SkipColumnIndex{opts.skip.columns, FieldTraits::Position(),
+                             FieldTraits::Offset()};
+      _cols.Prepare(opts.skip.dir, opts.skip.count, opts.skip.columns,
+                    opts.skip.origin,
+                    sdb::basics::downCast<InputType>(*_skip_own));
+      _doc_origin = opts.skip.doc_origin;
+      _pos_start = term_state.pos_start;
+      _pay_start = term_state.pay_start;
+      _docs_total = term_state.docs_count;
+      _entry_first = term_state.first_entry;
+      _entry_last =
+        _entry_first +
+        math::DivCeil32(term_state.docs_count, doc_limits::kBlockSize) - 1;
+      SDB_ASSERT(_entry_last < opts.skip.count);
+      GetDocIn().Seek(_doc_origin + _cols.GetOnce(_idx.docoff, _entry_first));
+    } else {
+      GetDocIn().Seek(term_state.doc_start);
+    }
     SDB_ASSERT(!GetDocIn().IsEOF());
   } else {
     SDB_ASSERT(term_state.docs_count == 1);
     auto* doc = std::end(this->_docs) - 1;
-    *doc = doc_limits::min() + term_state.doc_delta;
+    *doc = term_state.doc;
     if constexpr (IteratorTraits::Frequency()) {
       *(std::end(this->_freqs) - 1) = term_state.freq;
       this->_freq_block[0] = term_state.freq;
@@ -697,15 +661,11 @@ void PostingIteratorImpl<IteratorTraits, FieldTraits, HasScoreBounds,
     std::get<Position>(this->_attrs).template Prepare<InputType>(state);
   }
 
-  if (term_state.docs_count > doc_limits::kBlockSize) {
-    // Allow using skip-list for long enough postings
-    _skip.Reader().Enable(term_state);
-    _skip_offs = term_state.doc_start + term_state.doc_delta;
-  } else if (1 < term_state.docs_count &&
-             term_state.docs_count < doc_limits::kBlockSize && !score_prune) {
-    _skip.Reader().SkipScoreBounds(GetDocIn());
+  if (1 < term_state.docs_count &&
+      term_state.docs_count < doc_limits::kBlockSize && !score_prune) {
+    // A term of one block keeps its score bound ahead of that block.
+    irs::SkipScoreBounds(HasScoreBounds, GetDocIn());
   }
-  _docs_count = term_state.docs_count;
 }
 
 template<typename IteratorTraits, typename FieldTraits, bool HasScoreBounds,
@@ -882,76 +842,20 @@ void PostingIteratorImpl<IteratorTraits, FieldTraits, HasScoreBounds,
 template<typename IteratorTraits, typename FieldTraits, bool HasScoreBounds,
          typename InputType>
 bool PostingIteratorImpl<IteratorTraits, FieldTraits, HasScoreBounds,
-                         InputType>::SeekAfterInit(SkipState& last,
-                                                   doc_id_t target) {
-  SDB_ASSERT(_skip.NumLevels());
-
-  SDB_ASSERT(target > _skip.Reader().UpperBound());
-  this->_left_in_list = _skip.Seek(target);
-  SDB_ASSERT(target <= _skip.Reader().UpperBound());
-
-  if (this->_left_in_list == 0) [[unlikely]] {
-    return false;
-  }
-
-  GetDocIn().Seek(last.doc_ptr);
-  if constexpr (IteratorTraits::Position()) {
-    auto& pos = std::get<Position>(this->_attrs);
-    pos.template Prepare<InputType>(last);  // Notify positions
-  }
-
-  ReadLeaf(last.doc);
-  return true;
-}
-
-template<typename IteratorTraits, typename FieldTraits, bool HasScoreBounds,
-         typename InputType>
-bool PostingIteratorImpl<IteratorTraits, FieldTraits, HasScoreBounds,
-                         InputType>::InitAndSeek(SkipState& last,
-                                                 doc_id_t target) {
-  SDB_ASSERT(target > _skip.Reader().UpperBound());
-  SDB_ASSERT(_docs_count != 0);
-
-  std::unique_ptr<InputType> skip_in_ptr{
-    sdb::basics::downCast<InputType>(this->_doc_in->Dup().release())};
-  if (!skip_in_ptr) [[unlikely]] {
-    SDB_ERROR(IRESEARCH, "Failed to duplicate document input");
-    throw IoError("Failed to duplicate document input");
-  }
-  auto& skip_in = *skip_in_ptr;
-
-  SDB_ASSERT(_skip.NumLevels() == 0);
-  skip_in.Seek(_skip_offs);
-  _skip.Reader().SkipScoreBounds(skip_in);
-  _skip.Prepare(std::move(skip_in_ptr), _docs_count);
-
-  // initialize skip levels
-  const auto num_levels = _skip.NumLevels();
-  SDB_ENSURE(1 <= num_levels && num_levels <= doc_limits::kMaxSkipLevels,
-             "Invalid number of skip levels ", num_levels,
-             ", must be in range of [1, ", doc_limits::kMaxSkipLevels, "].");
-  SDB_ASSERT(!doc_limits::valid(_skip.Reader().UpperBound()));
-  _skip.Reader().Init(num_levels);
-  _docs_count = 0;
-
-  return SeekAfterInit(last, target);
-}
-
-template<typename IteratorTraits, typename FieldTraits, bool HasScoreBounds,
-         typename InputType>
-bool PostingIteratorImpl<IteratorTraits, FieldTraits, HasScoreBounds,
                          InputType>::SeekToLeaf(doc_id_t target) {
-  const bool avoid_seek = [&] IRS_FORCE_INLINE {
-    if constexpr (!IteratorTraits::Position()) {
-      const auto distance = target - this->_max_in_leaf;
-      if (distance <= doc_limits::kBlockSize) [[unlikely]] {
-        return true;
+  if constexpr (!IteratorTraits::Position()) {
+    // Close enough that decoding the next leaf beats addressing a new block.
+    if (target - this->_max_in_leaf <= doc_limits::kBlockSize) [[unlikely]] {
+      if (this->_left_in_list == 0) [[unlikely]] {
+        return false;
       }
+      ReadLeaf(this->_max_in_leaf);
+      return true;
     }
-    return target <= _skip.Reader().UpperBound();
-  }();
+  }
 
-  if (avoid_seek) [[unlikely]] {
+  if (_docs_total == 0) [[unlikely]] {
+    // One doc block, so there is nothing to address: read on or run out.
     if (this->_left_in_list == 0) [[unlikely]] {
       return false;
     }
@@ -959,13 +863,40 @@ bool PostingIteratorImpl<IteratorTraits, FieldTraits, HasScoreBounds,
     return true;
   }
 
-  SkipState last;  // Where block starts
-  _skip.Reader().Reset(last);
-  // Init skip writer in lazy fashion
-  if (_docs_count != 0) [[unlikely]] {
-    return InitAndSeek(last, target);
+  // Entries are ordered by the max doc of their block, and seeks only move
+  // forward, so gallop from where the read path has reached.
+  const auto first = _entry_first + NextBlock();
+  const auto k =
+    SkipColumnSeek(_cols, first, _entry_last + 1, target);
+  if (k > _entry_last) [[unlikely]] {
+    this->_left_in_list = 0;
+    return false;
   }
-  return SeekAfterInit(last, target);
+
+  const auto block = k - _entry_first;
+  const auto skipped = static_cast<uint32_t>(block) * doc_limits::kBlockSize;
+  SDB_ASSERT(skipped < _docs_total);
+  this->_left_in_list = _docs_total - skipped;
+
+  // Block `k`'s deltas are based on the last doc before it, which is the max
+  // doc of block `k - 1` -- entry `k - 1`, usually in the same group.
+  const auto prev_doc = block == 0 ? doc_limits::invalid()
+                                   : _cols.Get(_idx.docs, k - 1);
+
+  GetDocIn().Seek(_doc_origin + _cols.Get(_idx.docoff, k));
+  if constexpr (IteratorTraits::Position()) {
+    SkipState state;
+    state.doc = prev_doc;
+    state.pos_ptr = _pos_start + _cols.Get(_idx.posoff, k);
+    state.pos_offset = _cols.Get(_idx.posslot, k);
+    if constexpr (IteratorTraits::Offset()) {
+      state.pay_ptr = _pay_start + _cols.Get(_idx.payoff, k);
+    }
+    std::get<Position>(this->_attrs).template Prepare<InputType>(state);
+  }
+
+  ReadLeaf(prev_doc);
+  return true;
 }
 
 }  // namespace irs

@@ -72,6 +72,11 @@ class EmptyTermReader final : public irs::TermReader {
 
   bool HasScoreBounds() const noexcept final { return false; }
 
+  const SkipColumnsView& Skip() const noexcept final {
+    static constexpr SkipColumnsView kNone;
+    return kNone;
+  }
+
  private:
   uint64_t _docs_count;
 };

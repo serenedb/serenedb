@@ -88,7 +88,6 @@ set(IResearch_core_sources
     ./formats/column/read_context.cpp
     ./formats/formats.cpp
     ./formats/format_utils.cpp
-    ./formats/posting/skip_list.cpp
     ./formats/format_block_128.cpp
     ./formats/index/burst_trie.cpp
     ./formats/index/idx_reader.cpp

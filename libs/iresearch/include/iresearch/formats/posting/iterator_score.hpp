@@ -21,7 +21,7 @@
 #pragma once
 
 #include "iresearch/formats/posting/common.hpp"
-#include "iresearch/formats/posting/skip_list.hpp"
+#include "iresearch/formats/posting/skip_column.hpp"
 #include "iresearch/index/index_reader.hpp"
 
 namespace irs {
@@ -50,14 +50,14 @@ class SinglePruningIterator : public DocIterator {
         in.ReadByte();
       }
     }
+    void Set(ScoreBound) noexcept final {}
   };
 
  public:
   static_assert(doc_limits::kBlockSize % kScoreBlock == 0,
                 "kBlockSize must be a multiple of kScoreBlock");
 
-  explicit SinglePruningIterator()
-    : _skip{doc_limits::kBlockSize, doc_limits::kSkipSize, true} {}
+  explicit SinglePruningIterator() = default;
 
   ScoreFunction PrepareScore(const PrepareScoreContext& ctx) final {
     SDB_ASSERT(ctx.scorer);
@@ -69,12 +69,8 @@ class SinglePruningIterator : public DocIterator {
         .stats = _stats,
         .boost = _boost,
       });
-      _skip.Reader().SetScoreBoundScorer(std::move(bound_func),
+      _skip.SetScoreBoundScorer(std::move(bound_func),
                                          std::move(bound_source));
-    }
-    if (_deferred_skip_offs) {
-      PrepareSkipReader(_deferred_skip_offs, _deferred_skip_docs_count);
-      _deferred_skip_offs = 0;
     }
     return ctx.scorer->PrepareScorer({
       .segment = *ctx.segment,
@@ -86,15 +82,16 @@ class SinglePruningIterator : public DocIterator {
     });
   }
 
-  void Prepare(const PostingCookie& meta, const IndexInput* doc_in);
+  void Prepare(const PostingCookie& meta, const IteratorFieldOptions& options,
+               const IndexInput* doc_in, const IndexInput* skip_in);
 
   void SetSkipBoundsBelow(doc_id_t max) noexcept {
-    _skip.Reader().SetSkipBoundsBelow(max);
+    _skip.SetSkipBoundsBelow(max);
   }
 
   IRS_NO_INLINE Attribute* GetMutable(TypeInfo::type_id type) noexcept final {
     if (type == irs::Type<ScoreThresholdAttr>::id()) {
-      return &_skip.Reader().Threshold();
+      return &_skip.Threshold();
     }
     return irs::GetMutable(_attrs, type);
   }
@@ -154,165 +151,206 @@ class SinglePruningIterator : public DocIterator {
   }
 
  private:
-  class ScoreBoundReadSkip {
+  // The term's skip entries, one per doc block, as a flat column read.
+  //
+  // The old shape had a skip level per granularity and pruned by dropping
+  // whole levels whose bound fell under the threshold. There is one
+  // granularity now -- the doc block -- so pruning is block-max: a seek walks
+  // past blocks whose bound cannot beat the threshold and stops at the first
+  // one that can.
+  class SkipBounds {
    public:
-    explicit ScoreBoundReadSkip(bool)
-      : _skip_levels(1), _skip_scores(1, std::numeric_limits<score_t>::max()) {
-      Disable();
-    }
-
     void SetScoreBoundScorer(ScoreFunction func,
                              ScoreBoundSource::ptr bound_source) noexcept {
       _bound_func = std::move(func);
       _bound_source = std::move(bound_source);
+      // The real scorer arrives after `Prepare`, so the term's bound has to
+      // be turned into a score again.
+      RecomputeGlobal();
     }
 
     void SetSkipBoundsBelow(doc_id_t max) noexcept { _skip_bounds_below = max; }
-
     doc_id_t SkipBoundsBelow() const noexcept { return _skip_bounds_below; }
-
     ScoreThresholdAttr& Threshold() noexcept { return _threshold; }
+    void EnsureSorted() const noexcept {}
 
-    void EnsureSorted() const noexcept {
-      SDB_ASSERT(absl::c_is_sorted(
-        _skip_levels,
-        [](const auto& lhs, const auto& rhs) { return lhs.doc > rhs.doc; }));
-      if constexpr (Root) {
-        SDB_ASSERT(absl::c_is_sorted(_skip_scores, std::greater<>{}));
-      }
-    }
+    // Kept so the call sites read the same as before; there are no levels to
+    // count, only whether this term has entries at all.
+    size_t NumLevels() const noexcept { return _entry_last >= _entry_first; }
 
-    void Disable() noexcept {
-      SDB_ASSERT(!_skip_levels.empty());
-      SDB_ASSERT(!doc_limits::valid(_skip_levels.back().doc));
-      _skip_levels.back().doc = doc_limits::eof();
-    }
-
-    void Enable(const PostingMeta& state) noexcept {
+    void Prepare(const IteratorFieldOptions& opts, const PostingMeta& state,
+                 uint64_t doc_origin, InputType& skip_in) {
       SDB_ASSERT(state.docs_count > doc_limits::kBlockSize);
-      auto& top = _skip_levels.front();
-      CopyState<IteratorTraits>(top, state);
-      Enable();
+      _idx = SkipColumnIndex{opts.skip.columns, FieldTraits::Position(),
+                             FieldTraits::Offset()};
+      _cols.Prepare(opts.skip.dir, opts.skip.count, opts.skip.columns,
+                    opts.skip.origin, skip_in);
+      _doc_origin = doc_origin;
+      _docs_total = state.docs_count;
+      _entry_first = state.first_entry;
+      _entry_last =
+        _entry_first +
+        math::DivCeil32(state.docs_count, doc_limits::kBlockSize) - 1;
+      _next = _entry_first;
+      _upper = doc_limits::invalid();
+      // Entry 0 carries the term's bound rather than block 0's own.
+      _root.freq = _cols.Get(_idx.bfreq, _entry_first);
+      _root.delta =
+        _idx.has_norm ? _cols.Get(_idx.bdelta, _entry_first) : uint32_t{0};
+      _has_root = _idx.has_bound;
+      RecomputeGlobal();
     }
 
-    void Init(size_t num_levels, score_t max_score) {
-      SDB_ASSERT(num_levels);
-      _skip_levels.resize(num_levels);
-      _skip_scores.resize(num_levels, std::numeric_limits<score_t>::max());
-      _global_max_score = max_score;
+    uint64_t DocStart() {
+      SDB_ASSERT(NumLevels());
+      return _doc_origin + _cols.GetOnce(_idx.docoff, _entry_first);
     }
 
-    IRS_FORCE_INLINE bool IsLess(size_t level, doc_id_t target) const noexcept {
-      if constexpr (Root) {
-        return _skip_levels[level].doc < target ||
-               _skip_scores[level] <= _threshold.value;
-      } else {
-        return _skip_levels[level].doc < target;
+    IRS_FORCE_INLINE doc_id_t UpperBound() const noexcept { return _upper; }
+
+    // The read path also advances a block at a time without seeking, which
+    // leaves the resolved block behind the one being read -- and then every
+    // question about the current window has to scan forward to catch up.
+    // Blocks are only ever left behind, so catching up is O(1).
+    void SyncTo(uint64_t block) {
+      const auto k = _entry_first + block;
+      if (k <= _cur || k > _entry_last) {
+        return;
       }
+      _cur = k;
+      _next = k + 1;
+      _upper = _cols.Get(_idx.docs, k);
+      _score = Bound(k);
     }
+
     IRS_FORCE_INLINE bool IsLessThanUpperBound(doc_id_t target) const noexcept {
       if constexpr (Root) {
-        return _skip_levels.back().doc < target ||
-               _skip_scores.back() <= _threshold.value;
+        return _upper < target || _score <= _threshold.value;
       } else {
-        return _skip_levels.back().doc < target;
+        return _upper < target;
       }
     }
 
-    IRS_FORCE_INLINE void MoveDown(size_t level) noexcept {
-      auto& next = _skip_levels[level];
-      CopyState<IteratorTraits>(next, _prev_skip);
-    }
+    SkipState& State() noexcept { return _state; }
 
-    IRS_FORCE_INLINE void Read(size_t level, InputType& in) {
-      auto& next = _skip_levels[level];
-      CopyState<IteratorTraits>(_prev_skip, next);
-      ReadState<FieldTraits>(next, in);
-      if (_skip_bounds_below && next.doc < _skip_bounds_below) [[unlikely]] {
-        SkipScoreBounds(in);
-      } else {
-        _skip_scores[level] = ReadScoreBound(in);
-      }
-    }
-
-    void Seal(size_t level) {
-      auto& next = _skip_levels[level];
-
-      // Store previous step on the same level
-      CopyState<IteratorTraits>(_prev_skip, next);
-
-      // Stream exhausted
-      next.doc = doc_limits::eof();
-      _skip_scores[level] = std::numeric_limits<score_t>::max();
-    }
-
-    IRS_FORCE_INLINE size_t AdjustLevel(size_t level) const noexcept {
-      if constexpr (Root) {
-        while (level &&
-               _skip_levels[level].doc >= _skip_levels[level - 1].doc) {
-          SDB_ASSERT(_skip_levels[level - 1].doc != doc_limits::eof());
-          --level;
-        }
-      }
-      return level;
-    }
-
-    IRS_FORCE_INLINE doc_id_t UpperBound() const noexcept {
-      SDB_ASSERT(!_skip_levels.empty());
-      return _skip_levels.back().doc;
-    }
-
-    IRS_FORCE_INLINE score_t ReadScoreBound(IndexInput& in) {
-      return irs::ReadScoreBound(_bound_func, *_bound_source, in);
-    }
-
-    IRS_FORCE_INLINE void SkipScoreBounds(InputType& in) {
-      irs::SkipScoreBounds(true, in);
-    }
-
-    SkipState& State() noexcept { return _prev_skip; }
-    SkipState& Next() noexcept { return _skip_levels.back(); }
-
+    // The caller seeks to the window's start and then asks what the term can
+    // score anywhere in it. Inside the resolved block that is just its bound;
+    // when the window reaches past it, the answer is the largest bound among
+    // the blocks the window actually touches -- which the column already
+    // holds, so it is exact rather than the coarse level v1 fell back to.
+    // Inside the block the reader has reached, that block's own bound. Past
+    // it, the term's bound, which entry 0 carries.
     IRS_FORCE_INLINE score_t GetMaxScore(doc_id_t doc) noexcept {
-      for (size_t i = _skip_levels.size(); i--;) {
-        if (_skip_levels[i].doc >= doc) {
-          return _skip_scores[i];
-        }
-      }
-      return _global_max_score;
+      return doc <= _upper ? _score : _global_max_score;
     }
 
-    doc_id_t GetUpperBound(size_t i) noexcept {
-      SDB_ASSERT(i < _skip_levels.size());
-      return _skip_levels[i].doc;
+    // Positions at the first block that can hold `target` and, when pruning,
+    // whose bound can still beat the threshold. Returns how many documents
+    // remain from that block on, 0 once the term is exhausted.
+    uint32_t Seek(doc_id_t target) {
+      auto k = SkipColumnSeek(_cols, _next, _entry_last + 1, target);
+      if constexpr (Root) {
+        // Step past blocks that cannot beat the threshold. Each step reads
+        // columns already decoded for the group.
+        while (k <= _entry_last && Bound(k) <= _threshold.value) {
+          ++k;
+        }
+      }
+      if (k > _entry_last) [[unlikely]] {
+        _upper = doc_limits::eof();
+        _score = std::numeric_limits<score_t>::max();
+        _next = _entry_last + 1;
+        return 0;
+      }
+
+      const auto block = k - _entry_first;
+      _state.doc = block == 0 ? doc_limits::invalid()
+                              : _cols.Get(_idx.docs, k - 1);
+      _state.doc_ptr = _doc_origin + _cols.Get(_idx.docoff, k);
+      if constexpr (IteratorTraits::Position()) {
+        _state.pos_ptr = _pos_start + _cols.Get(_idx.posoff, k);
+        _state.pos_offset = _cols.Get(_idx.posslot, k);
+        if constexpr (IteratorTraits::Offset()) {
+          _state.pay_ptr = _pay_start + _cols.Get(_idx.payoff, k);
+        }
+      }
+      _upper = _cols.Get(_idx.docs, k);
+      _score = Bound(k);
+      _cur = k;
+      _next = k + 1;
+      return _docs_total -
+             static_cast<uint32_t>(block) * doc_limits::kBlockSize;
     }
 
    private:
-    void Enable() noexcept {
-      SDB_ASSERT(!_skip_levels.empty());
-      SDB_ASSERT(doc_limits::eof(_skip_levels.back().doc));
-      _skip_levels.back().doc = doc_limits::invalid();
+    void RecomputeGlobal() noexcept {
+      if (!_has_root || !_bound_source) {
+        _global_max_score = std::numeric_limits<score_t>::max();
+        return;
+      }
+      _bound_source->Set(_root);
+      _global_max_score = _bound_func.Score();
     }
 
-    std::vector<SkipState> _skip_levels;
-    std::vector<score_t> _skip_scores;
-    score_t _global_max_score = std::numeric_limits<score_t>::max();
-    SkipState _prev_skip;
+    // What block `k` can score.
+    score_t BlockBound(uint64_t k) {
+      if (!_idx.has_bound) {
+        return std::numeric_limits<score_t>::max();
+      }
+      ScoreBound bound;
+      bound.freq = _cols.Get(_idx.bfreq, k);
+      if (_idx.has_norm) {
+        bound.delta = _cols.Get(_idx.bdelta, k);
+      }
+      SDB_ASSERT(_bound_source);
+      _bound_source->Set(bound);
+      return _bound_func.Score();
+    }
+
+    // The same, or "unbounded" for a block below the range the caller cares
+    // about, which is not worth evaluating just to skip past it.
+    score_t Bound(uint64_t k) {
+      if (_skip_bounds_below && _cols.Get(_idx.docs, k) < _skip_bounds_below)
+        [[unlikely]] {
+        return std::numeric_limits<score_t>::max();
+      }
+      return BlockBound(k);
+    }
+
+    SkipColumnsReader<InputType> _cols;
+    SkipColumnIndex _idx{2, false, false};
+    SkipState _state;
     ScoreFunction _bound_func;
     ScoreBoundSource::ptr _bound_source;
     ScoreThresholdAttr _threshold;
+    uint64_t _doc_origin = 0;
+    uint64_t _pos_start = 0;
+    uint64_t _pay_start = 0;
+    uint64_t _entry_first = 1;
+    uint64_t _entry_last = 0;
+    uint64_t _cur = 0;
+    uint64_t _next = 0;
+    uint32_t _docs_total = 0;
+    doc_id_t _upper = doc_limits::eof();
     doc_id_t _skip_bounds_below = 0;
+    score_t _score = std::numeric_limits<score_t>::max();
+    score_t _global_max_score = std::numeric_limits<score_t>::max();
+    ScoreBound _root;
+    bool _has_root = false;
   };
 
  public:
   score_t GetMaxScore(doc_id_t doc) noexcept {
-    return _skip.Reader().GetMaxScore(doc);
+    if (_skip.NumLevels()) [[likely]] {
+      _skip.SyncTo(CurrentBlock());
+    }
+    return _skip.GetMaxScore(doc);
   }
 
   doc_id_t SeekToBlock(doc_id_t target) {
     target = ShallowSeekToBlock(target);
     if (!doc_limits::eof(target)) {
-      _doc = _skip.Reader().State().doc;
+      _doc = _skip.State().doc;
     }
     return target;
   }
@@ -321,19 +359,17 @@ class SinglePruningIterator : public DocIterator {
     if (!_skip.NumLevels()) [[unlikely]] {
       return doc_limits::eof();
     }
-    auto& reader = _skip.Reader();
-    reader.EnsureSorted();
-    const auto upper_bound = reader.UpperBound();
+    const auto upper_bound = _skip.UpperBound();
     if (upper_bound >= target) {
       return upper_bound;
     }
-    const auto bounds_below = reader.SkipBoundsBelow();
-    reader.SetSkipBoundsBelow(std::max(bounds_below, target));
+    const auto bounds_below = _skip.SkipBoundsBelow();
+    _skip.SetSkipBoundsBelow(std::max(bounds_below, target));
     _left_in_list = _skip.Seek(target);
-    reader.SetSkipBoundsBelow(bounds_below);
+    _skip.SetSkipBoundsBelow(bounds_below);
     _left_in_leaf = 0;
     _needs_reposition = true;
-    return reader.UpperBound();
+    return _skip.UpperBound();
   }
 
   std::pair<doc_id_t, bool> FillBlock(
@@ -362,7 +398,6 @@ class SinglePruningIterator : public DocIterator {
                                        ColumnArgsFetcher* fetcher);
 
   IRS_FORCE_INLINE void ReadBlock(doc_id_t prev_doc);
-  void PrepareSkipReader(uint64_t skip_offs, uint32_t docs_count);
 
   template<size_t N>
   void ProcessBatch(std::span<const doc_id_t, N> docs, const doc_id_t min,
@@ -387,9 +422,16 @@ class SinglePruningIterator : public DocIterator {
   bool _needs_reposition = false;
   IndexInput::ptr _doc_in;
   Attributes _attrs;
-  SkipReader<ScoreBoundReadSkip, InputType> _skip;
-  uint64_t _deferred_skip_offs = 0;
-  uint32_t _deferred_skip_docs_count = 0;
+  SkipBounds _skip;
+  IndexInput::ptr _skip_own;
+  uint32_t _docs_total = 0;
+
+  // Index of the doc block the read path has reached, derived rather than
+  // tracked: `_left_in_list` already says how far along the term we are.
+  IRS_FORCE_INLINE uint64_t CurrentBlock() const noexcept {
+    const auto read = _docs_total - _left_in_list;
+    return read == 0 ? 0 : (read - 1) / doc_limits::kBlockSize;
+  }
   uint32_t _freq_block[kScoreBlock];
 };
 
@@ -454,9 +496,14 @@ void SinglePruningIterator<IteratorTraits, Root, Pos, Offs, InputType>::Collect(
     SDB_ASSERT(_left_in_leaf == 0);
     while (_left_in_list != 0) {
       auto last_doc = *(std::end(_docs) - 1);
-      if (last_doc + 1 > _skip.Reader().UpperBound()) {
+      if (last_doc + 1 > _skip.UpperBound()) {
         _left_in_list = _skip.Seek(last_doc + 1);
-        auto& state = _skip.Reader().State();
+        if (_left_in_list == 0) [[unlikely]] {
+          // Nothing left that can beat the threshold, so the term is done.
+          _left_in_leaf = 0;
+          break;
+        }
+        auto& state = _skip.State();
         if (state.doc_ptr) [[likely]] {
           GetDocIn().Seek(state.doc_ptr);
         }
@@ -511,7 +558,7 @@ void SinglePruningIterator<IteratorTraits, Root, Pos, Offs, InputType>::
 
   if (_needs_reposition && _left_in_list != 0) [[unlikely]] {
     _needs_reposition = false;
-    auto& state = _skip.Reader().State();
+    auto& state = _skip.State();
     if (state.doc_ptr) [[likely]] {
       GetDocIn().Seek(state.doc_ptr);
     }
@@ -670,7 +717,7 @@ void SinglePruningIterator<IteratorTraits, Root, Pos, Offs, InputType>::
   // Reposition if needed (same logic as ForEachScoredBlock).
   if (_needs_reposition && _left_in_list != 0) [[unlikely]] {
     _needs_reposition = false;
-    auto& state = _skip.Reader().State();
+    auto& state = _skip.State();
     if (state.doc_ptr) [[likely]] {
       GetDocIn().Seek(state.doc_ptr);
     }
@@ -708,9 +755,14 @@ void SinglePruningIterator<IteratorTraits, Root, Pos, Offs, InputType>::
     // Skip ahead if next candidate is beyond the current block's upper bound.
     {
       const doc_id_t next_cand = cand_docs[cand_idx];
-      if (next_cand > _skip.Reader().UpperBound()) {
+      if (next_cand > _skip.UpperBound()) {
         _left_in_list = _skip.Seek(next_cand);
-        auto& state = _skip.Reader().State();
+        if (_left_in_list == 0) [[unlikely]] {
+          // Nothing left that can beat the threshold, so the term is done.
+          _left_in_leaf = 0;
+          goto score_cand_done;
+        }
+        auto& state = _skip.State();
         if (state.doc_ptr) [[likely]] {
           GetDocIn().Seek(state.doc_ptr);
         }
@@ -777,7 +829,7 @@ SinglePruningIterator<IteratorTraits, Root, Pos, Offs, InputType>::FillBlock(
 
   if (_needs_reposition && _left_in_list != 0) [[unlikely]] {
     _needs_reposition = false;
-    auto& state = _skip.Reader().State();
+    auto& state = _skip.State();
     if (state.doc_ptr) [[likely]] {
       GetDocIn().Seek(state.doc_ptr);
     }
@@ -855,7 +907,7 @@ doc_id_t SinglePruningIterator<IteratorTraits, Root, Pos, Offs,
     return _doc;
   }
 
-  if (_skip.Reader().IsLessThanUpperBound(target)) [[unlikely]] {
+  if (_skip.IsLessThanUpperBound(target)) [[unlikely]] {
     SeekToBlock(target);
   }
 
@@ -867,7 +919,7 @@ doc_id_t SinglePruningIterator<IteratorTraits, Root, Pos, Offs,
 
     if (_needs_reposition) {
       _needs_reposition = false;
-      auto& state = _skip.Reader().State();
+      auto& state = _skip.State();
       if (state.doc_ptr) [[likely]] {
         GetDocIn().Seek(state.doc_ptr);
       }
@@ -900,11 +952,12 @@ doc_id_t SinglePruningIterator<IteratorTraits, Root, Pos, Offs,
 template<typename FormatTraits, bool Root, bool Pos, bool Offs,
          typename InputType>
 void SinglePruningIterator<FormatTraits, Root, Pos, Offs, InputType>::Prepare(
-  const PostingCookie& meta, const IndexInput* doc_in) {
+  const PostingCookie& meta, const IteratorFieldOptions& opts,
+  const IndexInput* doc_in, const IndexInput* skip_in) {
   Init(meta);
 
   // Set default bound with max score so no blocks are ever pruned
-  _skip.Reader().SetScoreBoundScorer(
+  _skip.SetScoreBoundScorer(
     ScoreFunction::Constant(std::numeric_limits<score_t>::max()),
     std::make_unique<DefaultScoreBoundSource>());
 
@@ -926,12 +979,30 @@ void SinglePruningIterator<FormatTraits, Root, Pos, Offs, InputType>::Prepare(
 
     std::get<FreqBlockAttr>(_attrs).value = _freq_block;
 
-    GetDocIn().Seek(term_state.doc_start);
+    if (term_state.docs_count > doc_limits::kBlockSize) {
+      if (skip_in == nullptr || opts.skip.Empty()) [[unlikely]] {
+        throw IndexError{
+          "while preparing postings, error: term needs skip columns the "
+          "field does not have"};
+      }
+      _skip_own = skip_in->Reopen();
+      if (!_skip_own) {
+        SDB_ERROR(IRESEARCH, "Failed to reopen skip input");
+        throw IoError("failed to reopen skip input");
+      }
+      _skip.Prepare(opts, term_state, opts.skip.doc_origin,
+                    sdb::basics::downCast<InputType>(*_skip_own));
+      _docs_total = term_state.docs_count;
+      // A long term keeps no `doc_start`: entry 0 describes doc block 0.
+      GetDocIn().Seek(_skip.DocStart());
+    } else {
+      GetDocIn().Seek(term_state.doc_start);
+    }
     SDB_ASSERT(!GetDocIn().IsEOF());
   } else {
     SDB_ASSERT(term_state.docs_count == 1);
     auto* doc = std::end(_docs) - 1;
-    *doc = doc_limits::min() + term_state.doc_delta;
+    *doc = term_state.doc;
 
     *(std::end(_freqs) - 1) = term_state.freq;
     _freq_block[0] = term_state.freq;
@@ -944,13 +1015,10 @@ void SinglePruningIterator<FormatTraits, Root, Pos, Offs, InputType>::Prepare(
 
   SDB_ASSERT(term_state.freq);
 
-  if (term_state.docs_count > doc_limits::kBlockSize) {
-    _skip.Reader().Enable(term_state);
-    _deferred_skip_offs = term_state.doc_start + term_state.doc_delta;
-    _deferred_skip_docs_count = term_state.docs_count;
-  } else if (1 < term_state.docs_count &&
-             term_state.docs_count < doc_limits::kBlockSize) {
-    _skip.Reader().SkipScoreBounds(GetDocIn());
+  if (1 < term_state.docs_count &&
+      term_state.docs_count < doc_limits::kBlockSize) {
+    // A term of one block keeps its score bound ahead of that block.
+    irs::SkipScoreBounds(true, GetDocIn());
   }
 }
 
@@ -971,38 +1039,6 @@ void SinglePruningIterator<FormatTraits, Root, Pos, Offs, InputType>::ReadBlock(
     _left_in_leaf = tail;
     _left_in_list = 0;
     IteratorTraits::ReadTail(tail, GetDocIn(), _enc_buf, _freqs);
-  }
-}
-
-template<typename FormatTraits, bool Root, bool Pos, bool Offs,
-         typename InputType>
-void SinglePruningIterator<FormatTraits, Root, Pos, Offs,
-                           InputType>::PrepareSkipReader(uint64_t skip_offs,
-                                                         uint32_t docs_count) {
-  SDB_ASSERT(docs_count > 0);
-
-  std::unique_ptr<InputType> skip_in_ptr{
-    sdb::basics::downCast<InputType>(GetDocIn().Dup().release())};
-  if (!skip_in_ptr) {
-    SDB_ERROR(IRESEARCH, "Failed to duplicate document input");
-    throw IoError("Failed to duplicate document input");
-  }
-  auto& skip_in = *skip_in_ptr;
-
-  SDB_ASSERT(!_skip.NumLevels());
-  skip_in.Seek(skip_offs);
-  const auto global_max_score = _skip.Reader().ReadScoreBound(skip_in);
-  _skip.Prepare(std::move(skip_in_ptr), docs_count);
-
-  if (const auto num_levels = _skip.NumLevels();
-      0 < num_levels && num_levels <= doc_limits::kMaxSkipLevels) [[likely]] {
-    SDB_ASSERT(!doc_limits::valid(_skip.Reader().UpperBound()));
-    _skip.Reader().Init(num_levels, global_max_score);
-  } else {
-    SDB_ASSERT(false);
-    throw IndexError{absl::StrCat("Invalid number of skip levels ", num_levels,
-                                  ", must be in range of [1, ",
-                                  doc_limits::kMaxSkipLevels, "].")};
   }
 }
 

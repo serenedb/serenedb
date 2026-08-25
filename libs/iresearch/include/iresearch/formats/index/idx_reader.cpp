@@ -135,6 +135,11 @@ IdxReader::IdxReader(const Directory& dir, std::string_view segment_name)
         meta.has_score_bounds = obj.ReadProperty<bool>(6, "has_score_bounds");
         meta.body_offset = obj.ReadProperty<uint64_t>(7, "body_offset");
         meta.norm = obj.ReadProperty<uint64_t>(8, "norm");
+        meta.doc_origin = obj.ReadProperty<uint64_t>(9, "doc_origin");
+        meta.skip_origin = obj.ReadProperty<uint64_t>(10, "skip_origin");
+        meta.skip_dir = obj.ReadProperty<uint64_t>(11, "skip_dir");
+        meta.skip_count = obj.ReadProperty<uint64_t>(12, "skip_count");
+        meta.skip_columns = obj.ReadProperty<uint32_t>(13, "skip_columns");
         _impl->term_dicts.emplace_back(id, std::move(meta));
       });
     });

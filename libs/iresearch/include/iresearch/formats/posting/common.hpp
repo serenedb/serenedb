@@ -62,29 +62,28 @@ IRS_FORCE_INLINE void CopyState(SkipState& to, const SkipState& from) noexcept {
   }
 }
 
-template<typename FieldTraits, typename Input>
+template<typename FieldTraits, typename IteratorTraits, typename Input>
 IRS_FORCE_INLINE void ReadState(SkipState& state, Input& in) {
   state.doc = in.ReadV32();
   state.doc_ptr += in.ReadV64();
   if constexpr (FieldTraits::Position()) {
-    state.pos_ptr += in.ReadV64();
-    if constexpr (FieldTraits::Offset()) {
-      state.pay_ptr += in.ReadV64();
+    if constexpr (IteratorTraits::Position()) {
+      state.pos_ptr += in.ReadV64();
+      if constexpr (FieldTraits::Offset()) {
+        if constexpr (IteratorTraits::Offset()) {
+          state.pay_ptr += in.ReadV64();
+        } else {
+          in.SkipV64();
+        }
+      }
+      state.pos_offset = in.ReadByte();
+    } else {
+      in.SkipV64();
+      if constexpr (FieldTraits::Offset()) {
+        in.SkipV64();
+      }
+      in.ReadByte();
     }
-    state.pos_offset = in.ReadByte();
-  }
-}
-
-template<typename IteratorTraits>
-IRS_FORCE_INLINE void CopyState(SkipState& to,
-                                const PostingMeta& from) noexcept {
-  to.doc_ptr = from.doc_start;
-  if constexpr (IteratorTraits::Position()) {
-    to.pos_ptr = from.pos_start;
-    if constexpr (IteratorTraits::Offset()) {
-      to.pay_ptr = from.pay_start;
-    }
-    to.pos_offset = from.pos_offset;
   }
 }
 

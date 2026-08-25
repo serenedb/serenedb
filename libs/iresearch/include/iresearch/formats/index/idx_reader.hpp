@@ -49,6 +49,14 @@ struct TermDictMeta {
   bool has_score_bounds{false};
   uint64_t body_offset{};
   field_id norm{field_limits::invalid()};
+  // Where this field's skip columns live in ".skp": `skip_origin` is the
+  // first group's payload, `skip_dir` the directory, `skip_count` how many
+  // entries the columns hold and `skip_columns` how many columns there are.
+  uint64_t doc_origin{};
+  uint64_t skip_origin{};
+  uint64_t skip_dir{};
+  uint64_t skip_count{};
+  uint32_t skip_columns{};
 };
 
 struct IvfCentroidMeta {

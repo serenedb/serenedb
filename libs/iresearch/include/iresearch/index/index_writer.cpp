@@ -1649,10 +1649,11 @@ bool IndexWriter::AdoptSegment(std::string_view meta_file,
   }
 
   // The files already exist and are already durable, meta file included -- this
-  // is Import without the MergeWriter copy and without writing anything. Refs
-  // are taken so the cleaner cannot reclaim the segment from under us.
-  RefTrackingDirectory dir{_dir};
-  if (!directory_utils::Reference(dir, segment.filename)) {
+  // is Import without the MergeWriter copy and without writing anything.
+  // Refs still have to be taken, or the cleaner reclaims the segment from under
+  // us before the commit publishes it.
+  auto meta_ref = directory_utils::Reference(_dir, segment.filename);
+  if (!meta_ref) {
     SDB_WARN(IRESEARCH, "Cannot adopt segment meta '", segment.filename,
              "': failed to reference it");
     return false;
@@ -1671,7 +1672,8 @@ bool IndexWriter::AdoptSegment(std::string_view meta_file,
     _seg_counter.store(id, std::memory_order_relaxed);
   }
 
-  auto refs = dir.GetRefs();
+  FileRefs refs;
+  refs.emplace_back(std::move(meta_ref));
   auto flush = GetFlushContext();
 
   // lock due to context modification

@@ -377,6 +377,41 @@ TEST_F(IndexAdoptTest, AdoptTickFollowsManifestPositionNotRecordTick) {
     << "the re-inserted document was masked by the delete that preceded it";
 }
 
+// An adopted segment is not published until the next commit, so everything it
+// consists of has to stay referenced across that window -- including its meta
+// file, which the segment reader does NOT pin (it refs meta.files only).
+// Nothing else holds that file either: unlike Import, adoption does not create
+// it. So a cleanup pass landing in the window must leave the whole segment
+// alone.
+TEST_F(IndexAdoptTest, AdoptedSegmentSurvivesCleanupBeforePublish) {
+  std::vector<std::string> adopt;
+  std::vector<std::string> data_files;
+  {
+    auto trx = _writer->GetBatch(/*exclusive_segment=*/true);
+    ASSERT_TRUE(InsertDoc(trx, "kept"));
+    const auto flushed = trx.FlushAndFsync();
+    adopt = MetaFilesOf(flushed);
+    data_files = FilesOf(flushed);
+    trx.Abort();
+  }
+  ASSERT_EQ(1, adopt.size());
+  ASSERT_FALSE(data_files.empty());
+
+  Restart(/*cleanup_on_open=*/false);
+  ASSERT_TRUE(_writer->AdoptSegment(adopt.front(), _codec, /*tick=*/7));
+
+  // Before the commit that publishes it.
+  irs::directory_utils::RemoveAllUnreferenced(*_dir);
+  EXPECT_TRUE(Exists(adopt.front()))
+    << adopt.front() << " (meta file) was reclaimed before publish";
+  for (const auto& file : data_files) {
+    EXPECT_TRUE(Exists(file)) << file << " was reclaimed before publish";
+  }
+
+  ASSERT_TRUE(_writer->RefreshCommit());
+  EXPECT_EQ(1, _writer->GetSnapshot().live_docs_count());
+}
+
 // A codec name that no longer resolves leaves nothing to read the segment's
 // files with, so adoption must fail rather than guess. (A codec that resolves
 // but differs from this writer's is legal -- segments carry their own, as in

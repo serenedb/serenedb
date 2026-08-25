@@ -10,7 +10,6 @@ bench_remote_fs.sh -- remote file read/write benchmark: serened shell vs upstrea
 Engines (BRFS_ENGINES):
   sdb               serened shell (patched httpfs, curl-only; azure routed through duckdb's HTTPUtil)
   duckdb-curl       duckdb CLI, SET httpfs_client_implementation='curl'    (s3/http backends)
-  duckdb-httplib    duckdb CLI, SET httpfs_client_implementation='httplib' (s3/http backends)
   duckdb-azure-sdk  duckdb CLI, Azure SDK transport (libcurl on Linux)     (az backend)
 
 Backends (BRFS_BACKENDS): s3 (MinIO), az (Azurite), http (anonymous MinIO GET).
@@ -58,7 +57,7 @@ EOF
 : "${BRFS_REPS_READ:=5}"
 : "${BRFS_REPS_WRITE:=3}"
 : "${BRFS_EXT_FILE_CACHE:=0}"
-: "${BRFS_ENGINES:=sdb duckdb-curl duckdb-httplib duckdb-azure-sdk}"
+: "${BRFS_ENGINES:=sdb duckdb-curl duckdb-azure-sdk}"
 : "${BRFS_BACKENDS:=s3 az http}"
 : "${BRFS_SCENARIOS:=read_large read_glob read_pruned write_large write_many iceberg_scan}"
 : "${BRFS_LATENCIES:=wan}"
@@ -70,11 +69,11 @@ EOF
 : "${BRFS_ROWS_SMALL_TOTAL:=1800000}"
 : "${BRFS_SMALL_FILES:=180}"
 : "${BRFS_ROWS_WRITE_LARGE:=1200000}"
-: "${BRFS_ROWS_WRITE_MANY:=300000}"
-: "${BRFS_ROWS_ICEBERG:=1200000}"
+: "${BRFS_ROWS_WRITE_MANY:=1500000}"
+: "${BRFS_ROWS_ICEBERG:=60000000}"
 : "${BRFS_WRITE_PARTS:=10}"
 : "${BRFS_PREFIX:=brfs}"
-: "${BRFS_KEEP:=0}"
+: "${BRFS_KEEP:=1}"
 : "${BRFS_BUCKET:=testbucket}"
 : "${BRFS_CONTAINER:=testcont}"
 : "${BRFS_MINIO_IMAGE:=minio/minio:latest}"
@@ -95,8 +94,14 @@ SDB_RSS=NA
 SDB_MBPS=NA
 SZ_LARGE=0
 SZ_SMALL=0
-PRUNE_LO=$((BRFS_ROWS_LARGE / 2))
-PRUNE_HI=$((PRUNE_LO + 1200000))
+: "${BRFS_PRUNE_ROWS:=12000000}"
+# Centered pruned window, clamped to the file: with the default 6M-row dataset a
+# 12M-row window degenerates to (almost) the whole file, so raise BRFS_ROWS_LARGE
+# if true pruning is wanted at this window size.
+PRUNE_LO=$(((BRFS_ROWS_LARGE - BRFS_PRUNE_ROWS) / 2))
+if [[ $PRUNE_LO -lt 0 ]]; then PRUNE_LO=0; fi
+PRUNE_HI=$((PRUNE_LO + BRFS_PRUNE_ROWS))
+if [[ $PRUNE_HI -ge BRFS_ROWS_LARGE ]]; then PRUNE_HI=$((BRFS_ROWS_LARGE - 1)); fi
 
 die() {
 	echo "ERROR: $*" >&2
@@ -132,7 +137,6 @@ engine_label() {
 client_label() {
 	case "$1" in
 	sdb | duckdb-curl) printf 'curl' ;;
-	duckdb-httplib) printf 'httplib' ;;
 	duckdb-azure-sdk) printf 'azure-sdk' ;;
 	esac
 }
@@ -141,7 +145,7 @@ cell_ok() {
 	local engine="$1" backend="$2" scen="$3"
 	case "$backend" in
 	s3 | http)
-		case "$engine" in sdb | duckdb-curl | duckdb-httplib) ;; *) return 1 ;; esac
+		case "$engine" in sdb | duckdb-curl) ;; *) return 1 ;; esac
 		;;
 	az)
 		case "$engine" in sdb | duckdb-azure-sdk) ;; *) return 1 ;; esac
@@ -162,7 +166,6 @@ setup_sql() {
 	fi
 	case "$engine" in
 	duckdb-curl) sql+="SET httpfs_client_implementation='curl';" ;;
-	duckdb-httplib) sql+="SET httpfs_client_implementation='httplib';" ;;
 	esac
 	# Connection reuse for every engine except duckdb-azure-sdk: its azure traffic is
 	# pooled inside the Azure SDK's own curl transport, unconditionally, so the httpfs
@@ -545,9 +548,17 @@ cat = SqlCatalog(
     },
 )
 cat.create_namespace_if_not_exists("b")
-pf = pq.ParquetFile(BENCH / "large.parquet")
-chunk = max(ROWS_ICE // 4, 1)
-batches = pf.iter_batches(batch_size=chunk)
+chunk = max(min(ROWS_ICE // 4, 1500000), 1)
+
+
+def batch_stream():
+    while True:
+        pf = pq.ParquetFile(BENCH / "large.parquet")
+        for b in pf.iter_batches(batch_size=chunk):
+            yield b
+
+
+batches = batch_stream()
 first = pa.Table.from_batches([next(batches)])
 if first.num_rows > ROWS_ICE:
     first = first.slice(0, ROWS_ICE)

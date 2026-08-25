@@ -14,10 +14,11 @@ SELECT .50;
 ?column?
 0.50
 
-query error
+query
 SELECT 2.;
 ----
-db error: ERROR: syntax error at or near <slt:ignore>
+?column?
+2
 
 
 # DOCS_TEST: example_002

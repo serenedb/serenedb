@@ -189,17 +189,27 @@ col1	col2
 
 # DOCS_TEST_BODY
 
-query error db error: ERROR: Pattern applied to a star expression must be a constant
+query
 SELECT * SIMILAR TO 'col.'
 FROM tbl;
+----
+col1	col2
+1	2
+4	5
+9	16
 
 # DOCS_TEST: example_010
 
 # DOCS_TEST_BODY
 
-query error db error: ERROR: Pattern applied to a star expression must be a constant
+query
 SELECT * NOT SIMILAR TO 'col.'
 FROM tbl;
+----
+id	name	Some Column Name	i	a	b	c	number	number1	number2
+1	mark	alpha	1	10	20	30	10	100	1000
+3	bookmark	beta	2	11	21	31	20	200	2000
+7	other	gamma	3	12	22	32	NULL	300	3000
 
 # DOCS_TEST: example_011
 

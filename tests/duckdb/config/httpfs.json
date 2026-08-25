@@ -1,0 +1,17 @@
+{
+  "description": "SereneDB test-config for the vendored duckdb_httpfs test suite. Entries are known SereneDB divergences, plus one upstream test that depends on a live third-party bucket -- see tests/duckdb/README.md.",
+  "skip_tests": [
+    {
+      "reason": "Flaky by construction: the only test in this suite that reads a live third-party bucket (Overture Maps on S3) with no require-env guard, while every other network test here is guarded. It sets empty S3 credentials, so SereneDB sends an unsigned GET (s3fs.cpp:36 returns the header map without an Authorization header when key and secret are both empty), and AWS intermittently answers `HTTP 400 InvalidArgument: Unsupported Authorization Type`. Observed passing standalone (3/3), passing for the whole sql/s3 group (3/3), and failing 2 of 5 full-suite runs at the same position with the same duration -- nothing in the request varies between runs.",
+      "paths": [
+        "test/sql/s3/connection_caching_s3.test"
+      ]
+    },
+    {
+      "reason": "There is no runtime extension loader: SereneDB builds with DISABLE_EXTENSION_LOAD and links its extension set statically, so `INSTALL non_existent_extension` reports that instead of the HTTP download failure the file asserts. The whole file is about installing an extension over HTTP with the curl client, so there is nothing left to test once the loader is gone. Same reason as the 27 core-suite paths, tracked in issue #887.",
+      "paths": [
+        "test/sql/curl_client/test_load_other_extensions.test"
+      ]
+    }
+  ]
+}

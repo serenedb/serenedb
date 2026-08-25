@@ -47,39 +47,9 @@
 #include "iresearch/search/term_filter.hpp"
 #include "iresearch/store/mmap_directory.hpp"
 #include "iresearch/utils/directory_utils.hpp"
-#include "iresearch/utils/type_id.hpp"
 #include "tests_shared.hpp"
 
 namespace {
-
-// Only "1_5simd" is registered, so a codec-mismatch case needs a stub. Nothing
-// but type() is ever reached: AdoptSegment compares it before touching any
-// file.
-struct ForeignFormatTag {};
-
-class ForeignFormat final : public irs::Format {
- public:
-  irs::IndexMetaWriter::ptr get_index_meta_writer() const final {
-    return nullptr;
-  }
-  irs::IndexMetaReader::ptr get_index_meta_reader() const final {
-    return nullptr;
-  }
-  irs::SegmentMetaWriter::ptr get_segment_meta_writer() const final {
-    return nullptr;
-  }
-  irs::SegmentMetaReader::ptr get_segment_meta_reader() const final {
-    return nullptr;
-  }
-  irs::PostingsWriter::ptr get_postings_writer(
-    bool /*compaction*/, irs::IResourceManager& /*rm*/) const final {
-    return nullptr;
-  }
-  irs::PostingsReader::ptr get_postings_reader() const final { return nullptr; }
-  irs::TypeInfo::type_id type() const noexcept final {
-    return irs::Type<ForeignFormatTag>::id();
-  }
-};
 
 class IndexAdoptTest : public TestBase {
  protected:
@@ -141,14 +111,14 @@ class IndexAdoptTest : public TestBase {
     return _dir->exists(exists, name) && exists;
   }
 
-  // The metadata a host WAL would record, recovered into what AdoptSegment
-  // takes. The filename is left empty: AdoptSegment writes the segment meta.
-  static std::vector<irs::IndexSegment> AsAdoptable(
+  // All a host WAL records: the name of each segment's own meta file, which
+  // FlushAndFsync has already written and synced.
+  static std::vector<std::string> MetaFilesOf(
     std::span<const irs::IndexWriter::FlushedSegment> flushed) {
-    std::vector<irs::IndexSegment> out;
+    std::vector<std::string> out;
     out.reserve(flushed.size());
     for (const auto& segment : flushed) {
-      out.emplace_back().meta = segment.meta;
+      out.emplace_back(segment.filename);
     }
     return out;
   }
@@ -265,12 +235,12 @@ TEST_F(IndexAdoptTest, SegmentIdFlooredAboveKeptSegments) {
 // The point of the whole exercise: rows flushed but never published come back
 // after a restart, without re-encoding them.
 TEST_F(IndexAdoptTest, AdoptSegmentRepublishesFlushedRows) {
-  std::vector<irs::IndexSegment> adopt;
+  std::vector<std::string> adopt;
   {
     auto trx = _writer->GetBatch(/*exclusive_segment=*/true);
     ASSERT_TRUE(InsertDoc(trx, "kept0"));
     ASSERT_TRUE(InsertDoc(trx, "kept1"));
-    adopt = AsAdoptable(trx.FlushAndFsync());
+    adopt = MetaFilesOf(trx.FlushAndFsync());
     trx.Abort();  // the publish never happened
   }
   ASSERT_EQ(1, adopt.size());
@@ -278,8 +248,8 @@ TEST_F(IndexAdoptTest, AdoptSegmentRepublishesFlushedRows) {
   Restart(/*cleanup_on_open=*/false);
   ASSERT_EQ(0, _writer->GetSnapshot().live_docs_count());
 
-  for (auto& segment : adopt) {
-    ASSERT_TRUE(_writer->AdoptSegment(std::move(segment), /*tick=*/7));
+  for (const auto& meta_file : adopt) {
+    ASSERT_TRUE(_writer->AdoptSegment(meta_file, _codec, /*tick=*/7));
   }
   ASSERT_TRUE(_writer->RefreshCommit());
   EXPECT_EQ(2, _writer->GetSnapshot().live_docs_count());
@@ -293,17 +263,17 @@ TEST_F(IndexAdoptTest, AdoptSegmentRepublishesFlushedRows) {
 // what orders a replayed delete against replayed inserts. Adopting at a tick
 // above the removal's must leave the documents alone.
 TEST_F(IndexAdoptTest, AdoptSegmentTickOrdersAgainstRemoval) {
-  std::vector<irs::IndexSegment> adopt;
+  std::vector<std::string> adopt;
   {
     auto trx = _writer->GetBatch(/*exclusive_segment=*/true);
     ASSERT_TRUE(InsertDoc(trx, "kept"));
-    adopt = AsAdoptable(trx.FlushAndFsync());
+    adopt = MetaFilesOf(trx.FlushAndFsync());
     trx.Abort();
   }
 
   Restart(/*cleanup_on_open=*/false);
-  for (auto& segment : adopt) {
-    ASSERT_TRUE(_writer->AdoptSegment(std::move(segment), /*tick=*/10));
+  for (const auto& meta_file : adopt) {
+    ASSERT_TRUE(_writer->AdoptSegment(meta_file, _codec, /*tick=*/10));
   }
   {
     // Removal below the adopted tick: the segment is newer, so it survives.
@@ -321,29 +291,29 @@ TEST_F(IndexAdoptTest, AdoptSegmentTickOrdersAgainstRemoval) {
 // the host picks, it has to put a segment below exactly the removals that
 // should mask it.
 TEST_F(IndexAdoptTest, AdoptTickDecidesRemovalMasking) {
-  std::vector<irs::IndexSegment> before;
-  std::vector<irs::IndexSegment> after;
+  std::vector<std::string> before;
+  std::vector<std::string> after;
   {
     auto trx = _writer->GetBatch(/*exclusive_segment=*/true);
     ASSERT_TRUE(InsertDoc(trx, "target"));
-    before = AsAdoptable(trx.FlushAndFsync());
+    before = MetaFilesOf(trx.FlushAndFsync());
     trx.Abort();
   }
   {
     auto trx = _writer->GetBatch(/*exclusive_segment=*/true);
     ASSERT_TRUE(InsertDoc(trx, "target"));
-    after = AsAdoptable(trx.FlushAndFsync());
+    after = MetaFilesOf(trx.FlushAndFsync());
     trx.Abort();
   }
   ASSERT_EQ(1, before.size());
   ASSERT_EQ(1, after.size());
-  const std::string survivor = after.front().meta.name;
-  ASSERT_NE(survivor, before.front().meta.name);
+  const std::string survivor_meta = after.front();
+  ASSERT_NE(survivor_meta, before.front());
 
   Restart(/*cleanup_on_open=*/false);
   // One removal at tick 20; one segment below it, one above.
-  ASSERT_TRUE(_writer->AdoptSegment(std::move(before.front()), /*tick=*/19));
-  ASSERT_TRUE(_writer->AdoptSegment(std::move(after.front()), /*tick=*/21));
+  ASSERT_TRUE(_writer->AdoptSegment(before.front(), _codec, /*tick=*/19));
+  ASSERT_TRUE(_writer->AdoptSegment(after.front(), _codec, /*tick=*/21));
   {
     auto trx = _writer->GetBatch();
     trx.Remove(ByName("target"));
@@ -357,7 +327,9 @@ TEST_F(IndexAdoptTest, AdoptTickDecidesRemovalMasking) {
   auto reader = _writer->GetSnapshot();
   EXPECT_EQ(1, reader.live_docs_count());
   ASSERT_EQ(1, reader.size());
-  EXPECT_EQ(survivor, reader.begin()->Meta().name);
+  // `_N.V.sm` -> `_N`: the survivor must be the one adopted above the removal.
+  EXPECT_TRUE(survivor_meta.starts_with(reader.begin()->Meta().name + "."))
+    << survivor_meta << " vs " << reader.begin()->Meta().name;
 }
 
 // The scheme RunSearchTableRecovery places adopt ticks by, on the case that
@@ -371,11 +343,11 @@ TEST_F(IndexAdoptTest, AdoptTickDecidesRemovalMasking) {
 // Adopting at `commit_tick - queries + removals_seen_so_far` puts it above the
 // first removal and below the second, which is exactly its manifest position.
 TEST_F(IndexAdoptTest, AdoptTickFollowsManifestPositionNotRecordTick) {
-  std::vector<irs::IndexSegment> adopt;
+  std::vector<std::string> adopt;
   {
     auto trx = _writer->GetBatch(/*exclusive_segment=*/true);
     ASSERT_TRUE(InsertDoc(trx, "x"));
-    adopt = AsAdoptable(trx.FlushAndFsync());
+    adopt = MetaFilesOf(trx.FlushAndFsync());
     trx.Abort();
   }
   ASSERT_EQ(1, adopt.size());
@@ -396,7 +368,7 @@ TEST_F(IndexAdoptTest, AdoptTickFollowsManifestPositionNotRecordTick) {
   ASSERT_EQ(2, queries);
   ASSERT_EQ(1, queries_before_segment);
   const uint64_t first_tick = kMaxTick - queries;
-  ASSERT_TRUE(_writer->AdoptSegment(std::move(adopt.front()),
+  ASSERT_TRUE(_writer->AdoptSegment(adopt.front(), _codec,
                                     first_tick + queries_before_segment));
   ASSERT_TRUE(trx.Commit(kMaxTick));
   ASSERT_TRUE(_writer->RefreshCommit());
@@ -405,24 +377,24 @@ TEST_F(IndexAdoptTest, AdoptTickFollowsManifestPositionNotRecordTick) {
     << "the re-inserted document was masked by the delete that preceded it";
 }
 
-// A segment claiming a codec this writer did not produce cannot be read with
-// the writer's format, so adoption has to fail rather than read it with the
-// wrong one. Reporting it is the caller's job -- only the caller knows which
-// durable record claimed these documents.
-TEST_F(IndexAdoptTest, AdoptSegmentRejectsForeignCodec) {
-  std::vector<irs::IndexSegment> adopt;
+// A codec name that no longer resolves leaves nothing to read the segment's
+// files with, so adoption must fail rather than guess. (A codec that resolves
+// but differs from this writer's is legal -- segments carry their own, as in
+// the index meta -- so it is a null codec, not a different one, that is
+// rejected.)
+TEST_F(IndexAdoptTest, AdoptSegmentRejectsUnresolvableCodec) {
+  std::vector<std::string> adopt;
   {
     auto trx = _writer->GetBatch(/*exclusive_segment=*/true);
     ASSERT_TRUE(InsertDoc(trx, "kept"));
-    adopt = AsAdoptable(trx.FlushAndFsync());
+    adopt = MetaFilesOf(trx.FlushAndFsync());
     trx.Abort();
   }
   ASSERT_EQ(1, adopt.size());
 
   Restart(/*cleanup_on_open=*/false);
-  adopt.front().meta.codec = std::make_shared<const ForeignFormat>();
-  ASSERT_NE(adopt.front().meta.codec->type(), _codec->type());
-  EXPECT_FALSE(_writer->AdoptSegment(std::move(adopt.front()), /*tick=*/1));
+  // What formats::Get hands back for a name this build no longer knows.
+  EXPECT_FALSE(_writer->AdoptSegment(adopt.front(), nullptr, /*tick=*/1));
 
   _writer->RefreshCommit();
   EXPECT_EQ(0, _writer->GetSnapshot().live_docs_count())

@@ -77,10 +77,10 @@ struct Collected {
   std::vector<std::tuple<uint64_t, uint64_t, std::vector<std::string>>> deletes;
   // (tick, table_id) per replayed TRUNCATE op, in order.
   std::vector<std::tuple<uint64_t, uint64_t>> truncates;
-  // (tick, table_id, meta) per adopted SEGMENT, in order. The tick is the
+  // (tick, table_id, ref) per adopted SEGMENT, in order. The tick is the
   // record's own -- placing the segment in the replay transaction's tick space
   // is the host's job.
-  std::vector<std::tuple<uint64_t, uint64_t, irs::SegmentMeta>> segments;
+  std::vector<std::tuple<uint64_t, uint64_t, SearchDbWal::SegmentRef>> segments;
 };
 
 SearchDbWal::ReplayCallback MakeCollector(Collected& out) {
@@ -123,28 +123,22 @@ SearchDbWal::TruncateReplayCallback NoTruncates() {
 }
 
 SearchDbWal::AdoptReplayCallback MakeAdoptCollector(Collected& out) {
-  return [&out](uint64_t tick, ObjectId table_id, irs::SegmentMeta&& meta) {
-    out.segments.emplace_back(tick, table_id.id(), std::move(meta));
+  return [&out](uint64_t tick, ObjectId table_id,
+                const SearchDbWal::SegmentRef& ref) {
+    out.segments.emplace_back(tick, table_id.id(), ref);
   };
 }
 
 // No-op adopt sink for tests that don't exercise SEGMENT ops.
 SearchDbWal::AdoptReplayCallback NoAdopts() {
-  return [](uint64_t, ObjectId, irs::SegmentMeta&&) {};
+  return [](uint64_t, ObjectId, const SearchDbWal::SegmentRef&) {};
 }
 
-// A recorded segment as the write path would hand it over: real codec, files
-// named after it, no removals.
-SearchDbWal::SegmentRef MakeSegmentRef(std::string name, uint32_t docs) {
-  SearchDbWal::SegmentRef ref;
-  ref.meta.name = name;
-  ref.meta.codec = irs::formats::Get("1_5simd");
-  ref.meta.docs_count = docs;
-  ref.meta.live_docs_count = docs;
-  ref.meta.byte_size = 4096 + docs;
-  ref.meta.version = 0;
-  ref.meta.files = {name + ".doc", name + ".idx", name + ".0.sm"};
-  return ref;
+// A recorded segment as the write path would hand it over: the name of the
+// segment's own meta file plus the codec that reads it.
+SearchDbWal::SegmentRef MakeSegmentRef(std::string name) {
+  return SearchDbWal::SegmentRef{.meta_file = name + ".0.sm",
+                                 .codec = "1_5simd"};
 }
 
 // Replay hooks: every shard exists and nothing is durable yet (committed 0).
@@ -511,7 +505,7 @@ TEST_F(SearchDbWalTest, MinTickGcReclaimsLoneSealedSegment) {
   // be reclaimed once consumed -- regression guard: an earlier filename-only
   // rule never deleted the last segment.
   SearchDbWal wal(Fs(), _dir, /*seal_threshold=*/1);
-  auto ref = MakeSegmentRef("_1", 1);
+  auto ref = MakeSegmentRef("_1");
   auto sec = SegmentSection(7, std::span{&ref, 1});
   EXPECT_EQ(wal.AppendCommit(std::span{&sec, 1}, /*tick_span=*/1),
             1u);  // sealed seg 1, no successor
@@ -658,7 +652,7 @@ TEST_F(SearchDbWalTest, MultipleInlineOpsOneSection) {
 // the bulk rows stay in their segments. Recovery replays both, in manifest
 // order.
 TEST_F(SearchDbWalTest, MixedInlineAndSegmentOps) {
-  auto ref = MakeSegmentRef("_9", 2);
+  auto ref = MakeSegmentRef("_9");
   {
     SearchDbWal wal(Fs(), _dir);
     auto inl = MakeIntCdc(Alloc(), {10, 11});
@@ -684,7 +678,7 @@ TEST_F(SearchDbWalTest, MixedInlineAndSegmentOps) {
   EXPECT_EQ(std::get<2>(got.chunks[0]), (std::vector<int32_t>{10, 11}));
   EXPECT_EQ(std::get<3>(got.chunks[0]), 1000u);
   ASSERT_EQ(got.segments.size(), 1u);
-  EXPECT_EQ(std::get<2>(got.segments[0]).name, "_9");
+  EXPECT_EQ(std::get<2>(got.segments[0]).meta_file, "_9.0.sm");
 }
 
 // Interleaved INSERT/DELETE in ONE txn must replay in EXACT manifest order.
@@ -759,7 +753,7 @@ TEST_F(SearchDbWalTest, TruncateRoundTrip) {
 // needs must survive the round trip -- including the file list, which is how
 // the segment is reopened at all.
 TEST_F(SearchDbWalTest, SegmentRoundTrip) {
-  auto ref = MakeSegmentRef("_7", /*docs=*/42);
+  auto ref = MakeSegmentRef("_7");
   {
     SearchDbWal wal(Fs(), _dir);
     auto sec = SegmentSection(/*table=*/5, std::span{&ref, 1});
@@ -772,27 +766,20 @@ TEST_F(SearchDbWalTest, SegmentRoundTrip) {
             1u);
   EXPECT_TRUE(got.chunks.empty()) << "a segment op must not replay rows";
   ASSERT_EQ(got.segments.size(), 1u);
-  const auto& [tick, table_id, meta] = got.segments[0];
+  const auto& [tick, table_id, recovered] = got.segments[0];
   EXPECT_EQ(tick, 1u);
   EXPECT_EQ(table_id, 5u);
-  EXPECT_EQ(meta.name, ref.meta.name);
-  EXPECT_EQ(meta.docs_count, ref.meta.docs_count);
-  EXPECT_EQ(meta.byte_size, ref.meta.byte_size);
-  EXPECT_EQ(meta.version, ref.meta.version);
-  EXPECT_EQ(meta.files, ref.meta.files);
-  EXPECT_EQ(meta.codec, ref.meta.codec) << "codec must resolve back by name";
-  // Never recorded, so restored from docs_count -- a recorded segment has no
-  // removals.
-  EXPECT_EQ(meta.live_docs_count, ref.meta.docs_count);
-  EXPECT_EQ(meta.docs_mask, nullptr);
+  // The record names the segment's own meta file and the codec that reads it --
+  // every other field lives in that file, so there is nothing else to compare.
+  EXPECT_EQ(recovered.meta_file, ref.meta_file);
+  EXPECT_EQ(recovered.codec, ref.codec);
 }
 
 // One op can carry every segment a bulk worker flushed, which is the normal
 // case once a transaction exceeds segment_memory_max.
 TEST_F(SearchDbWalTest, SegmentOpCarriesManySegments) {
-  std::vector<SearchDbWal::SegmentRef> refs{MakeSegmentRef("_1", 10),
-                                            MakeSegmentRef("_2", 20),
-                                            MakeSegmentRef("_3", 30)};
+  std::vector<SearchDbWal::SegmentRef> refs{
+    MakeSegmentRef("_1"), MakeSegmentRef("_2"), MakeSegmentRef("_3")};
   {
     SearchDbWal wal(Fs(), _dir);
     auto sec = SegmentSection(/*table=*/5, refs);
@@ -804,8 +791,7 @@ TEST_F(SearchDbWalTest, SegmentOpCarriesManySegments) {
                NoTruncates(), MakeAdoptCollector(got));
   ASSERT_EQ(got.segments.size(), 3u);
   for (size_t i = 0; i < refs.size(); ++i) {
-    EXPECT_EQ(std::get<2>(got.segments[i]).name, refs[i].meta.name);
-    EXPECT_EQ(std::get<2>(got.segments[i]).docs_count, refs[i].meta.docs_count);
+    EXPECT_EQ(std::get<2>(got.segments[i]).meta_file, refs[i].meta_file);
   }
 }
 
@@ -813,7 +799,7 @@ TEST_F(SearchDbWalTest, SegmentOpCarriesManySegments) {
 // transaction's tick space is the host's decision (see RunSearchTableRecovery),
 // so the record carries no tick of its own.
 TEST_F(SearchDbWalTest, SegmentReportsRecordTick) {
-  auto ref = MakeSegmentRef("_1", 10);
+  auto ref = MakeSegmentRef("_1");
   {
     SearchDbWal wal(Fs(), _dir);
     auto sec = SegmentSection(/*table=*/5, std::span{&ref, 1});
@@ -830,7 +816,7 @@ TEST_F(SearchDbWalTest, SegmentReportsRecordTick) {
 // Same per-shard skip as every other op kind: data already durable in iresearch
 // must not be adopted a second time.
 TEST_F(SearchDbWalTest, SegmentSkippedWhenAlreadyCommitted) {
-  auto ref = MakeSegmentRef("_7", 42);
+  auto ref = MakeSegmentRef("_7");
   {
     SearchDbWal wal(Fs(), _dir);
     auto sec = SegmentSection(/*table=*/5, std::span{&ref, 1});
@@ -846,7 +832,7 @@ TEST_F(SearchDbWalTest, SegmentSkippedWhenAlreadyCommitted) {
 // A dropped table's segments are gone with its directory, so its sections are
 // skipped rather than adopted.
 TEST_F(SearchDbWalTest, SegmentSkippedWhenShardDropped) {
-  auto ref = MakeSegmentRef("_7", 42);
+  auto ref = MakeSegmentRef("_7");
   {
     SearchDbWal wal(Fs(), _dir);
     auto sec = SegmentSection(/*table=*/5, std::span{&ref, 1});
@@ -865,7 +851,7 @@ TEST_F(SearchDbWalTest, SegmentSkippedWhenShardDropped) {
 // resulting mask is right is asserted where the real writer is
 // (IndexAdoptTest.AdoptTickDecidesRemovalMasking).
 TEST_F(SearchDbWalTest, SegmentAndDeleteReplayInManifestOrder) {
-  auto ref = MakeSegmentRef("_7", 2);
+  auto ref = MakeSegmentRef("_7");
   std::vector<std::string> pks{"pk-a"};
   {
     SearchDbWal wal(Fs(), _dir);
@@ -885,7 +871,7 @@ TEST_F(SearchDbWalTest, SegmentAndDeleteReplayInManifestOrder) {
                MakeAdoptCollector(got));
   ASSERT_EQ(got.segments.size(), 1u);
   ASSERT_EQ(got.deletes.size(), 1u);
-  EXPECT_EQ(std::get<2>(got.segments[0]).name, "_7");
+  EXPECT_EQ(std::get<2>(got.segments[0]).meta_file, "_7.0.sm");
   EXPECT_EQ(std::get<2>(got.deletes[0]), std::vector<std::string>{"pk-a"});
 }
 
@@ -893,7 +879,7 @@ TEST_F(SearchDbWalTest, SegmentAndDeleteReplayInManifestOrder) {
 // which iresearch reclaims, so a consumed record must be dropped without
 // touching them.
 TEST_F(SearchDbWalTest, SegmentRecordGcdWithoutTouchingSegmentFiles) {
-  auto ref = MakeSegmentRef("_7", 42);
+  auto ref = MakeSegmentRef("_7");
   SearchDbWal wal(Fs(), _dir);
   wal.RegisterShard(ObjectId{5}, 0);
   {

@@ -717,10 +717,15 @@ IndexWriter::Transaction::FlushAndFsync() {
   // One batched sync over the whole flushed set: a segment that auto-flushed
   // mid-insert is as much this transaction's data as the one just serialized.
   std::vector<std::string_view> files;
-  files.reserve(flushed.size() * 8);
-  for (const auto& entry : flushed) {
+  files.reserve(flushed.size() * (flushed.front().meta.files.size() + 1));
+  for (auto& entry : flushed) {
     SDB_ASSERT(!entry.meta.files.empty());
+    // TODO (Dronplane): try to avoid double write.
+    // On final commit we will rewrite same file again
+    // Setting was_flush will only trigger version bump so no simple option now.
+    index_utils::FlushIndexSegment(segment->dir, entry, false);
     files.insert(files.end(), entry.meta.files.begin(), entry.meta.files.end());
+    files.emplace_back(entry.filename);
   }
   if (!segment->dir.sync(files)) {
     throw IoError{absl::StrCat("Failed to sync ", files.size(), " file(s) of ",
@@ -1622,32 +1627,36 @@ CompactionResult IndexWriter::Compact(
   return result;
 }
 
-bool IndexWriter::AdoptSegment(IndexSegment&& segment, uint64_t tick) {
+bool IndexWriter::AdoptSegment(std::string_view meta_file,
+                               const Format::ptr& codec, uint64_t tick) {
+  if (codec == nullptr) {
+    SDB_WARN(IRESEARCH, "Cannot adopt segment meta '", meta_file,
+             "': unresolvable codec");
+    return false;
+  }
+  IndexSegment segment;
+  segment.filename = meta_file;
+  segment.meta.codec = codec;
+  try {
+    codec->get_segment_meta_reader()->read(_dir, segment.meta, meta_file);
+  } catch (const std::exception& e) {
+    SDB_WARN(IRESEARCH, "Cannot adopt segment meta '", meta_file,
+             "': ", e.what());
+    return false;
+  }
   if (segment.meta.live_docs_count == 0) {
     return true;  // Nothing to adopt
   }
-  SDB_ASSERT(!segment.meta.files.empty());
-  // Never guess the codec: the caller reconstructs the segment from its own
-  // durable description, and every file here was encoded by a specific format,
-  // so falling back to _codec would read those files with the wrong one. This
-  // writer also wrote every segment in the directory with a single codec, so
-  // one claiming a different format is not something we produced -- a corrupt
-  // or misparsed description, or an unsupported format change between runs.
-  if (segment.meta.codec == nullptr ||
-      segment.meta.codec->type() != _codec->type()) {
-    SDB_WARN(
-      IRESEARCH, "Cannot adopt segment '", segment.meta.name, "': codec '",
-      segment.meta.codec ? segment.meta.codec->type()().name() : "<none>",
-      "' does not match the writer's '", _codec->type()().name(), "'");
+
+  // The files already exist and are already durable, meta file included -- this
+  // is Import without the MergeWriter copy and without writing anything. Refs
+  // are taken so the cleaner cannot reclaim the segment from under us.
+  RefTrackingDirectory dir{_dir};
+  if (!directory_utils::Reference(dir, segment.filename)) {
+    SDB_WARN(IRESEARCH, "Cannot adopt segment meta '", segment.filename,
+             "': failed to reference it");
     return false;
   }
-
-  // The files already exist and are already durable -- this is Import without
-  // the MergeWriter copy. Only the segment meta is written, so the upcoming
-  // commit can name the segment, and refs are taken so the cleaner cannot
-  // reclaim it from under us.
-  RefTrackingDirectory dir{_dir};  // Track references
-  index_utils::FlushIndexSegment(dir, segment);
 
   auto adopted_reader =
     SegmentReaderImpl::Open(_dir, segment.meta, GetSnapshotImpl()->Options());

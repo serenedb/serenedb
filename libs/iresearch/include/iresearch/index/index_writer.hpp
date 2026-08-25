@@ -638,24 +638,9 @@ class IndexWriter : private util::Noncopyable {
                            const MergeWriter::FlushProgress& progress = {});
 
   // Adopts a segment whose files already exist in this writer's directory --
-  // Import without the data copy. For a host that flushed the segment itself
-  // (Transaction::FlushAndFsync), recorded its metadata durably, and now needs
-  // it back after a restart that left it unreferenced by any committed meta.
-  //
-  // `segment` must describe files physically present and encoded by this
-  // writer's codec. `tick` is the tick the segment's documents were committed
-  // at: a removal reaches the segment only when `tick <= query.tick`, which is
-  // what orders a replayed delete against it. Published by the next commit,
-  // like any import.
-  //
-  // Returns false if the segment cannot be adopted (codec mismatch, unreadable
-  // files). The caller must treat that as an error and not as "skipped" -- it
-  // holds a durable record saying these documents are committed, and only the
-  // caller knows which one, so only the caller can report it usefully.
-  //
-  // Requires the directory to have been opened with `cleanup_on_open = false`,
-  // or Make() will already have deleted the files.
-  bool AdoptSegment(IndexSegment&& segment, uint64_t tick);
+  // Import without the data copy.
+  bool AdoptSegment(std::string_view meta_file, const Format::ptr& codec,
+                    uint64_t tick);
 
   // Imports index from the specified index reader into new segment
   // Reader the index reader to import.

@@ -43,6 +43,7 @@
 #include "basics/assert.h"
 #include "basics/log.h"
 #include "basics/serialization.h"
+#include "basics/serializer.h"
 #include "iresearch/formats/formats.hpp"
 #include "pg/sql_exception_macro.h"
 
@@ -186,19 +187,8 @@ struct ParsedOp {
   // DELETE (views into the payload, into scratch.pks)
   std::span<const std::string_view> delete_pks;
   // SEGMENT (into scratch.segments; owns its strings, unlike the views above)
-  std::span<SearchDbWal::SegmentRef> segments;
+  std::span<const SearchDbWal::SegmentRef> segments;
 };
-
-std::string ReadString(Cursor& c) {
-  const auto len = c.Read<uint32_t>();
-  const auto* bytes = c.ReadBlob(len);
-  return std::string{reinterpret_cast<const char*>(bytes), len};
-}
-
-void WriteString(duckdb::MemoryStream& out, std::string_view s) {
-  out.Write<uint32_t>(static_cast<uint32_t>(s.size()));
-  out.WriteData(reinterpret_cast<const uint8_t*>(s.data()), s.size());
-}
 
 ParsedOp ParseOp(Cursor& c, ParseScratch& scratch) {
   auto& pk_scratch = scratch.pks;
@@ -224,30 +214,15 @@ ParsedOp ParseOp(Cursor& c, ParseScratch& scratch) {
       break;
     }
     case kKindSegment: {
-      const auto n = c.Read<uint32_t>();
-      auto& segments = scratch.segments;
-      segments.clear();
-      segments.resize(n);
-      for (uint32_t k = 0; k < n; ++k) {
-        auto& ref = segments[k];
-        ref.meta.name = ReadString(c);
-        // Unknown name -> null codec, which AdoptSegment rejects. That is the
-        // point of recording it: a format we can no longer resolve must not be
-        // read with whatever codec the writer happens to hold.
-        ref.meta.codec = irs::formats::Get(ReadString(c));
-        ref.meta.version = c.Read<uint64_t>();
-        ref.meta.byte_size = c.Read<uint64_t>();
-        ref.meta.docs_count = c.Read<uint32_t>();
-        // No docs_mask is ever recorded, so every document is live.
-        ref.meta.live_docs_count = ref.meta.docs_count;
-        const auto file_count = c.Read<uint32_t>();
-        ref.meta.files.clear();
-        ref.meta.files.reserve(file_count);
-        for (uint32_t f = 0; f < file_count; ++f) {
-          ref.meta.files.emplace_back(ReadString(c));
-        }
-      }
-      op.segments = segments;
+      const auto len = c.Read<uint64_t>();
+      const auto* blob = c.ReadBlob(len);
+      duckdb::MemoryStream ms(const_cast<uint8_t*>(blob), len);
+      duckdb::BinaryDeserializer deser{ms};
+      deser.Begin();
+      // Resizes the scratch and reads each element via SerdeRead on SegmentRef.
+      basics::ReadTuple(deser, scratch.segments);
+      deser.End();
+      op.segments = scratch.segments;
       break;
     }
     case kKindTruncate:
@@ -387,26 +362,18 @@ uint64_t SearchDbWal::AppendCommit(std::span<const ShardSection> sections,
         payload.Write<uint64_t>(len);
         payload.WriteData(tmp.GetData(), len);
       } else if (kind == kKindSegment) {
-        payload.Write<uint32_t>(static_cast<uint32_t>(op.segments.size()));
-        for (const auto& ref : op.segments) {
-          const auto& meta = ref.meta;
-          SDB_ASSERT(!meta.name.empty() && !meta.files.empty(),
-                     "recorded segment must name real files");
-          SDB_ASSERT(meta.codec != nullptr, "recorded segment needs a codec");
-          // A recorded segment never carries a docs_mask, so docs_count is the
-          // whole truth and live_docs_count need not be on the wire.
-          SDB_ASSERT(meta.live_docs_count == meta.docs_count && !meta.docs_mask,
-                     "recorded segment must have no removals");
-          WriteString(payload, meta.name);
-          WriteString(payload, meta.codec->type()().name());
-          payload.Write<uint64_t>(meta.version);
-          payload.Write<uint64_t>(meta.byte_size);
-          payload.Write<uint32_t>(meta.docs_count);
-          payload.Write<uint32_t>(static_cast<uint32_t>(meta.files.size()));
-          for (const auto& file : meta.files) {
-            WriteString(payload, file);
-          }
-        }
+        // The list, its element count and each segment's fields all go through
+        // the serializer (SerdeWrite on SegmentRef), so there is nothing to
+        // frame here beyond the blob's length.
+        tmp.Rewind();
+        duckdb::BinarySerializer serializer{tmp,
+                                            duckdb::VersionStorageOptions()};
+        serializer.Begin();
+        basics::WriteTuple(serializer, op.segments);
+        serializer.End();
+        const auto len = static_cast<uint64_t>(tmp.GetPosition());
+        payload.Write<uint64_t>(len);
+        payload.WriteData(tmp.GetData(), len);
       } else if (kind == kKindDelete) {
         payload.Write<uint32_t>(static_cast<uint32_t>(op.delete_pks.size()));
         for (const auto& pk : op.delete_pks) {
@@ -561,8 +528,8 @@ uint64_t SearchDbWal::Recover(const ShardExistsFn& exists_of,
             if (live) {
               // In manifest order, so the host can place each segment
               // relative to the deletes it has replayed so far.
-              for (auto& ref : op.segments) {
-                adopt_cb(tick, tid, std::move(ref.meta));
+              for (const auto& ref : op.segments) {
+                adopt_cb(tick, tid, ref);
               }
             }
             break;

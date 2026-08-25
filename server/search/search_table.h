@@ -143,14 +143,16 @@ class SearchTable : public std::enable_shared_from_this<SearchTable> {
     return _writer->GetBatch(exclusive_segment);
   }
 
-  // Re-attach a segment this shard flushed + fsynced before a crash. `tick`
-  // must be in the replaying transaction's tick space, since it is what orders
-  // the segment against replayed removals. False means the segment cannot be
-  // reopened -- the caller holds a durable record claiming those documents, so
-  // it must treat that as an error rather than skipping them.
-  bool AdoptSegment(irs::SegmentMeta&& meta, uint64_t tick) {
+  // Re-attach a segment this shard flushed + fsynced before a crash, named by
+  // its meta file (which carries every other field). `tick` must be in the
+  // replaying transaction's tick space, since it is what orders the segment
+  // against replayed removals. False means the segment cannot be reopened --
+  // the caller holds a durable record claiming those documents, so it must
+  // treat that as an error rather than skipping them.
+  bool AdoptSegment(std::string_view meta_file, std::string_view codec_name,
+                    uint64_t tick) {
     SDB_ASSERT(_writer);
-    return _writer->AdoptSegment(irs::IndexSegment{.meta = std::move(meta)},
+    return _writer->AdoptSegment(meta_file, irs::formats::Get(codec_name),
                                  tick);
   }
 

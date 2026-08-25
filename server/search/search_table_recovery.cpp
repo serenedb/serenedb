@@ -89,7 +89,8 @@ void RunSearchTableRecovery(bool skip_wal_recovery) {
     // was reached in the manifest. The adopt tick can only be computed once the
     // sweep is over -- see the finalize loop.
     struct PendingAdopt {
-      irs::SegmentMeta meta;
+      std::string meta_file;
+      std::string codec;
       uint64_t queries_before;
     };
     std::vector<PendingAdopt> adopts;
@@ -194,9 +195,9 @@ void RunSearchTableRecovery(bool skip_wal_recovery) {
     // ends. What we can capture now is its manifest position, as the query
     // count.
     auto replay_adopt = [&](uint64_t tick, ObjectId table_id,
-                            irs::SegmentMeta&& meta) {
+                            const SearchDbWal::SegmentRef& ref) {
       auto& ctx = ensure_ctx(table_id);
-      ctx.adopts.push_back({std::move(meta), ctx.trx.GetQueries()});
+      ctx.adopts.push_back({ref.meta_file, ref.codec, ctx.trx.GetQueries()});
       ctx.max_tick = std::max(ctx.max_tick, tick);
     };
     wal.Recover(exists_of, committed_of, replay, replay_delete, replay_truncate,
@@ -227,16 +228,16 @@ void RunSearchTableRecovery(bool skip_wal_recovery) {
                    " cannot cover ", queries, " removals for table ",
                    table_id.id());
       const uint64_t first_tick = ctx.max_tick - queries;
-      for (auto& pending : ctx.adopts) {
-        const std::string name = pending.meta.name;
+      for (const auto& pending : ctx.adopts) {
         const uint64_t tick = first_tick + pending.queries_before;
         // A durable record claims these documents, so failing to reopen them is
         // data loss, not something to skip. Only this layer knows the table.
         const bool adopted =
-          info.search->AdoptSegment(std::move(pending.meta), tick);
+          info.search->AdoptSegment(pending.meta_file, pending.codec, tick);
         SDB_FATAL_IF(SEARCH, !adopted,
                      "search-table WAL recovery: failed to adopt segment '",
-                     name, "' for table ", table_id.id(), " tick=", tick);
+                     pending.meta_file, "' for table ", table_id.id(),
+                     " tick=", tick);
       }
 
       // A failed commit during replay leaves the index inconsistent with the

@@ -224,6 +224,15 @@ echo "  test-dir: ${SUITE_DIR[core]}"
 echo "  filter:   $spec"
 echo "  log:      $log"
 
+# The scratch dir is duckdb_unittest_tempdir/<pid>/ under each vendored repo,
+# and ClearTestDirectory() only clears the current pid's subdir. A self-hosted
+# runner keeps the workspace between runs and a fresh container hands the binary
+# the same low pid, so last run's files get adopted -- an ATTACH'd db survives
+# and its test fails with "Table with name ... already exists". Start clean.
+for suite in "${SUITE_ORDER[@]}"; do
+	rm -rf "${SUITE_DIR[$suite]:?}/duckdb_unittest_tempdir"
+done
+
 if [[ " $SUITES " == *" postgres_scanner "* ]] && ! ensure_postgres_fixture; then
 	echo "===== [duckdb] END (rc=1, postgres fixture failed) ====="
 	exit 1

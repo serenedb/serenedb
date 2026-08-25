@@ -8,7 +8,11 @@ CREATE TEXT SEARCH DICTIONARY ng_dict(template = 'ngram', mingram = 2,
     maxgram = 3, preserveoriginal = false, frequency = true, position = true);
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY any_text_dict(template = 'text', locale = 'en_US.UTF-8', case = 'none', stemming = false, accent = false, frequency = true, position = true);
+CREATE TEXT SEARCH DICTIONARY any_text_dict(template = 'text', locale = 'en_US.UTF-8', case = 'none', stemming = false, accent = false, frequency = true, position = true)
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY wc_dict(template = 'wildcard', ngramsize = 3,
+    tokenizer_template = 'delimiter', tokenizer_delimiter = ' ');
 
 
 # ============================================================================
@@ -31,10 +35,24 @@ CREATE TEXT SEARCH DICTIONARY any_text_dict(template = 'text', locale = 'en_US.U
 #      implicit. g17 builds that entire matrix, plus implicit-path
 #      expression-source LIST<JSON>.
 #
-# Reuses existing dicts (kw_dict, ng_dict, any_text_dict) -- no new dict
-# declarations. All cells in g17 are validator-positive; the negative cells
-# (LIST<JSON> + tokenizer, LIST<GEOMETRY>) are already pinned by m_jl_*,
-# g1_reject_*, m_gl_*, g7_gl, and g7_ga.
+#  (3) wc_dict (template = 'wildcard') was missing from the grid entirely --
+#      the one tokenizer whose analyzer exposes a StoreAttr, so the one where
+#      the LIST/ARRAY write path has extra work to do (a per-row stored-token
+#      blob accumulated across the row's elements). It was absent precisely
+#      where it mattered most, and the store column went unwritten for list
+#      values until that was fixed.
+#
+#      wc_dict cells assert ts_like results rather than only count(*): a bare
+#      count over the index passes even when the store column is empty, since
+#      the n-gram postings are written either way and only the RE2 re-check
+#      against the store consumes it. Cell-level row counts are what let (1)
+#      and (2) miss this class of bug; do not add a wc_dict cell that only
+#      counts rows.
+#
+# Reuses kw_dict / ng_dict / any_text_dict and adds wc_dict. All cells in g17
+# are validator-positive; the negative cells (LIST<JSON> + tokenizer,
+# LIST<GEOMETRY>) are already pinned by m_jl_*, g1_reject_*, m_gl_*, g7_gl,
+# and g7_ga.
 # ============================================================================
 
 statement ok
@@ -194,6 +212,18 @@ statement ok
 CREATE INDEX g17_vla_va_expr_imp  ON g17_vla USING inverted(pk, (va));
 
 statement ok
+CREATE INDEX g17_vla_vs_col_wc    ON g17_vla USING inverted(pk, vs wc_dict);
+
+statement ok
+CREATE INDEX g17_vla_va_col_wc    ON g17_vla USING inverted(pk, va wc_dict);
+
+statement ok
+CREATE INDEX g17_vla_vs_expr_wc   ON g17_vla USING inverted(pk, (vs) wc_dict);
+
+statement ok
+CREATE INDEX g17_vla_va_expr_wc   ON g17_vla USING inverted(pk, (va) wc_dict);
+
+statement ok
 INSERT INTO g17_vla VALUES
     (1, ['alpha', 'beta'], ['alpha', 'beta', 'gamma']),
     (2, ['delta'],         ['delta', 'epsilon', 'zeta']);
@@ -255,6 +285,69 @@ SELECT count(*) FROM g17_vla_va_expr_imp;
 count
 2
 
+# wc_dict cells. Data is
+#   pk 1: vs = [alpha, beta],  va = [alpha, beta, gamma]
+#   pk 2: vs = [delta],        va = [delta, epsilon, zeta]
+# so '%lph%' hits element 0, '%psilo%' element 1 and '%amma' element 2 -- a
+# store blob that only carried the row's first element would miss the last two.
+
+query I
+SELECT pk FROM g17_vla_vs_col_wc WHERE vs @@ ts_like('%lph%') ORDER BY pk;
+----
+pk
+1
+
+query I
+SELECT pk FROM g17_vla_vs_col_wc WHERE vs @@ ts_like('%elt%') ORDER BY pk;
+----
+pk
+2
+
+query I
+SELECT pk FROM g17_vla_va_col_wc WHERE va @@ ts_like('%amma') ORDER BY pk;
+----
+pk
+1
+
+query I
+SELECT pk FROM g17_vla_va_col_wc WHERE va @@ ts_like('%psilo%') ORDER BY pk;
+----
+pk
+2
+
+# '%psilo%' is present in va but not in vs, so the two columns must disagree.
+query I
+SELECT pk FROM g17_vla_vs_col_wc WHERE vs @@ ts_like('%psilo%') ORDER BY pk;
+----
+pk
+
+query I
+SELECT pk FROM g17_vla_vs_expr_wc
+WHERE vs @@ ts_like('%lph%') ORDER BY pk;
+----
+pk
+1
+
+query I
+SELECT pk FROM g17_vla_va_expr_wc
+WHERE va @@ ts_like('%amma') ORDER BY pk;
+----
+pk
+1
+
+query I
+SELECT pk FROM g17_vla_va_expr_wc
+WHERE va @@ ts_like('%psilo%') ORDER BY pk;
+----
+pk
+2
+
+query I
+SELECT pk FROM g17_vla_va_expr_wc
+WHERE va @@ ts_like('%zzz%') ORDER BY pk;
+----
+pk
+
 
 # --- (b) ng_dict on LIST<BLOB>      column ---------------------------------
 # --- (c) ng_dict on ARRAY<BLOB, 3>  column ---------------------------------
@@ -292,6 +385,15 @@ CREATE INDEX g17_bla_ba_expr_at   ON g17_bla USING inverted(pk, (ba) any_text_di
 
 statement ok
 CREATE INDEX g17_bla_bs_expr_imp  ON g17_bla USING inverted(pk, (bs));
+
+statement ok
+CREATE INDEX g17_bla_bs_col_wc    ON g17_bla USING inverted(pk, bs wc_dict);
+
+statement ok
+CREATE INDEX g17_bla_ba_col_wc    ON g17_bla USING inverted(pk, ba wc_dict);
+
+statement ok
+CREATE INDEX g17_bla_bs_expr_wc   ON g17_bla USING inverted(pk, (bs) wc_dict);
 
 statement ok
 INSERT INTO g17_bla VALUES
@@ -355,6 +457,38 @@ SELECT count(*) FROM g17_bla_bs_expr_imp;
 count
 2
 
+# wc_dict on BLOB lists. bs pk 1 = [hello, world] so '%orl%' is element 1;
+# ba pk 2 = [ddd, eee, fff] so '%fff%' is element 2.
+
+query I
+SELECT pk FROM g17_bla_bs_col_wc WHERE bs @@ ts_like('%orl%') ORDER BY pk;
+----
+pk
+1
+
+query I
+SELECT pk FROM g17_bla_bs_col_wc WHERE bs @@ ts_like('%adbee%') ORDER BY pk;
+----
+pk
+2
+
+query I
+SELECT pk FROM g17_bla_ba_col_wc WHERE ba @@ ts_like('%fff%') ORDER BY pk;
+----
+pk
+2
+
+query I
+SELECT pk FROM g17_bla_bs_expr_wc WHERE bs @@ ts_like('%orl%') ORDER BY pk;
+----
+pk
+1
+
+query I
+SELECT pk FROM g17_bla_bs_expr_wc WHERE bs @@ ts_like('%zzz%') ORDER BY pk;
+----
+pk
+
 
 # --- (z) implicit (no opclass) LIST<JSON> expression source -----------------
 # Mirrors g7_jl_imp on the column side; this is the expression-source twin.
@@ -405,3 +539,6 @@ DROP TEXT SEARCH DICTIONARY ng_dict;
 
 statement ok
 DROP TEXT SEARCH DICTIONARY any_text_dict;
+
+statement ok
+DROP TEXT SEARCH DICTIONARY wc_dict;

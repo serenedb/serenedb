@@ -26,6 +26,7 @@
 #include <duckdb/common/vector/struct_vector.hpp>
 #include <iresearch/analysis/geo_analyzer.hpp>
 #include <iresearch/analysis/tokenizers.hpp>
+#include <iresearch/analysis/wildcard_analyzer.hpp>
 
 #include "basics/assert.h"
 #include "basics/down_cast.h"
@@ -41,6 +42,15 @@ namespace {
 constexpr size_t kDefaultPoolSize = 8;  // arbitrary value
 
 using StreamPool = irs::UnboundedObjectPool<search::AnalyzerImpl::Builder>;
+
+irs::analysis::WildcardAnalyzer* AsAccumulatingStore(
+  const catalog::Tokenizer::TokenizerWrapper& analyzer) {
+  if (!analyzer ||
+      analyzer->type() != irs::Type<irs::analysis::WildcardAnalyzer>::id()) {
+    return nullptr;
+  }
+  return &basics::downCast<irs::analysis::WildcardAnalyzer>(*analyzer);
+}
 
 }  // namespace
 
@@ -148,9 +158,13 @@ void SearchSinkInsertBaseImpl::WriteScalarBatch(
   auto* store_writer = irs::field_limits::valid(tokenizer_column)
                          ? EnsurePerRowBlobWriter(tokenizer_column)
                          : nullptr;
+  auto* accumulating_store = AsAccumulatingStore(_field.string_analyzer);
   _document->NextFieldBatch();
 
   for (duckdb::idx_t i = 0; i < count; ++i) {
+    if (accumulating_store) {
+      accumulating_store->ClearStore();
+    }
     if constexpr (Kind == duckdb::LogicalTypeId::SQLNULL) {
       _null_field.SetNullValue();
       EmitField(&_null_field);
@@ -174,13 +188,22 @@ void SearchSinkInsertBaseImpl::WriteScalarBatch(
 
 template<duckdb::LogicalTypeId ChildKind>
 void SearchSinkInsertBaseImpl::WriteListBatch(duckdb::idx_t count,
-                                              duckdb::idx_t array_size) {
+                                              duckdb::idx_t array_size,
+                                              irs::field_id tokenizer_column) {
   SDB_ASSERT(_document);
+  auto* store_writer = irs::field_limits::valid(tokenizer_column)
+                         ? EnsurePerRowBlobWriter(tokenizer_column)
+                         : nullptr;
+  const auto* store_attr = store_writer ? _field.store_attr : nullptr;
+  auto* accumulating_store = AsAccumulatingStore(_field.string_analyzer);
   _document->NextFieldBatch();
 
   const auto& parent_fmt = _vec_fmt.unified;
   const auto& child_fmt = _vec_fmt.children[0].unified;
   for (duckdb::idx_t i = 0; i < count; ++i) {
+    if (accumulating_store) {
+      accumulating_store->ClearStore();
+    }
     const auto parent_idx = parent_fmt.sel->get_index(i);
     if (!parent_fmt.validity.RowIsValid(parent_idx)) {
       InsertNullValue();
@@ -213,6 +236,10 @@ void SearchSinkInsertBaseImpl::WriteListBatch(duckdb::idx_t count,
       }
     }
 
+    if (store_attr && !irs::IsNull(store_attr->value) &&
+        !store_attr->value.empty()) {
+      AppendBlobTo(*store_writer, store_attr->value);
+    }
     _document->NextDocument();
   }
 }
@@ -301,74 +328,74 @@ bool SearchSinkInsertBaseImpl::DispatchScalarBatch(
 
 bool SearchSinkInsertBaseImpl::DispatchListBatch(
   duckdb::LogicalTypeId child_kind, duckdb::idx_t count,
-  duckdb::idx_t array_size) {
+  duckdb::idx_t array_size, irs::field_id tokenizer_column) {
   using enum duckdb::LogicalTypeId;
   switch (child_kind) {
     case VARCHAR:
-      WriteListBatch<VARCHAR>(count, array_size);
+      WriteListBatch<VARCHAR>(count, array_size, tokenizer_column);
       return true;
     case BLOB:
-      WriteListBatch<BLOB>(count, array_size);
+      WriteListBatch<BLOB>(count, array_size, tokenizer_column);
       return true;
     case BOOLEAN:
-      WriteListBatch<BOOLEAN>(count, array_size);
+      WriteListBatch<BOOLEAN>(count, array_size, tokenizer_column);
       return true;
     case TINYINT:
-      WriteListBatch<TINYINT>(count, array_size);
+      WriteListBatch<TINYINT>(count, array_size, tokenizer_column);
       return true;
     case SMALLINT:
-      WriteListBatch<SMALLINT>(count, array_size);
+      WriteListBatch<SMALLINT>(count, array_size, tokenizer_column);
       return true;
     case INTEGER:
-      WriteListBatch<INTEGER>(count, array_size);
+      WriteListBatch<INTEGER>(count, array_size, tokenizer_column);
       return true;
     case DATE:
-      WriteListBatch<DATE>(count, array_size);
+      WriteListBatch<DATE>(count, array_size, tokenizer_column);
       return true;
     case BIGINT:
-      WriteListBatch<BIGINT>(count, array_size);
+      WriteListBatch<BIGINT>(count, array_size, tokenizer_column);
       return true;
     case UTINYINT:
-      WriteListBatch<UTINYINT>(count, array_size);
+      WriteListBatch<UTINYINT>(count, array_size, tokenizer_column);
       return true;
     case USMALLINT:
-      WriteListBatch<USMALLINT>(count, array_size);
+      WriteListBatch<USMALLINT>(count, array_size, tokenizer_column);
       return true;
     case UINTEGER:
-      WriteListBatch<UINTEGER>(count, array_size);
+      WriteListBatch<UINTEGER>(count, array_size, tokenizer_column);
       return true;
     case TIME:
-      WriteListBatch<TIME>(count, array_size);
+      WriteListBatch<TIME>(count, array_size, tokenizer_column);
       return true;
     case TIME_TZ:
-      WriteListBatch<TIME_TZ>(count, array_size);
+      WriteListBatch<TIME_TZ>(count, array_size, tokenizer_column);
       return true;
     case TIME_NS:
-      WriteListBatch<TIME_NS>(count, array_size);
+      WriteListBatch<TIME_NS>(count, array_size, tokenizer_column);
       return true;
     case TIMESTAMP:
-      WriteListBatch<TIMESTAMP>(count, array_size);
+      WriteListBatch<TIMESTAMP>(count, array_size, tokenizer_column);
       return true;
     case TIMESTAMP_TZ:
-      WriteListBatch<TIMESTAMP_TZ>(count, array_size);
+      WriteListBatch<TIMESTAMP_TZ>(count, array_size, tokenizer_column);
       return true;
     case TIMESTAMP_SEC:
-      WriteListBatch<TIMESTAMP_SEC>(count, array_size);
+      WriteListBatch<TIMESTAMP_SEC>(count, array_size, tokenizer_column);
       return true;
     case TIMESTAMP_MS:
-      WriteListBatch<TIMESTAMP_MS>(count, array_size);
+      WriteListBatch<TIMESTAMP_MS>(count, array_size, tokenizer_column);
       return true;
     case TIMESTAMP_NS:
-      WriteListBatch<TIMESTAMP_NS>(count, array_size);
+      WriteListBatch<TIMESTAMP_NS>(count, array_size, tokenizer_column);
       return true;
     case TIMESTAMP_TZ_NS:
-      WriteListBatch<TIMESTAMP_TZ_NS>(count, array_size);
+      WriteListBatch<TIMESTAMP_TZ_NS>(count, array_size, tokenizer_column);
       return true;
     case FLOAT:
-      WriteListBatch<FLOAT>(count, array_size);
+      WriteListBatch<FLOAT>(count, array_size, tokenizer_column);
       return true;
     case DOUBLE:
-      WriteListBatch<DOUBLE>(count, array_size);
+      WriteListBatch<DOUBLE>(count, array_size, tokenizer_column);
       return true;
     default:
       return false;
@@ -387,8 +414,13 @@ void SearchSinkInsertBaseImpl::WriteJsonBatch(const duckdb::Vector& vec,
   const bool has_store = irs::field_limits::valid(jpf.tokenizer_column);
   auto* store_writer =
     has_store ? EnsurePerRowBlobWriter(jpf.tokenizer_column) : nullptr;
+  auto* accumulating_store =
+    AsAccumulatingStore(jpf.string_field.string_analyzer);
 
   for (duckdb::idx_t i = 0; i < count; ++i) {
+    if (accumulating_store) {
+      accumulating_store->ClearStore();
+    }
     const auto sel_idx = fmt.sel->get_index(i);
     const bool is_null = !fmt.validity.RowIsValid(sel_idx);
     bool wrote_string_blob = false;
@@ -527,9 +559,15 @@ void SearchSinkInsertBaseImpl::SwitchFieldImpl(irs::field_id field_id,
     const duckdb::idx_t array_size =
       (kind == duckdb::LogicalTypeId::ARRAY ? duckdb::ArrayType::GetSize(type)
                                             : 0);
+    irs::field_id list_tokenizer_column = irs::field_limits::invalid();
     if (child_kind == duckdb::LogicalTypeId::VARCHAR ||
         child_kind == duckdb::LogicalTypeId::BLOB) {
-      _field.PrepareForStringValue(resolve_tokenizer());
+      auto tokenizer = resolve_tokenizer();
+      list_tokenizer_column = tokenizer.tokenizer_column;
+      _field.PrepareForStringValue(std::move(tokenizer));
+      if (!_field.store_attr) {
+        list_tokenizer_column = irs::field_limits::invalid();
+      }
     } else if (child_kind == duckdb::LogicalTypeId::BOOLEAN) {
       _field.PrepareForBooleanValue();
     } else if (catalog::term_dict::IsNumeric(
@@ -542,7 +580,7 @@ void SearchSinkInsertBaseImpl::SwitchFieldImpl(irs::field_id field_id,
     if (is_stored) {
       AppendToColumn(field_id, type, vec, count);
     }
-    DispatchListBatch(child_kind, count, array_size);
+    DispatchListBatch(child_kind, count, array_size, list_tokenizer_column);
     return;
   }
 

@@ -13,6 +13,11 @@ services:
       interval: 1s
       timeout: 3s
       retries: 30
+    # Same path as the tests container mounts, so a test that hands the postgres
+    # backend a workspace path -- COPY FROM via postgres_execute() -- resolves it
+    # server-side. Mirrors tests/duckdb/docker-compose.postgres.yml.
+    volumes:
+      - "${WORKSPACE}:/serenedb:ro"
     networks:
       - test-network
 

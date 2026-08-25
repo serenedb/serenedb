@@ -49,7 +49,7 @@ EOF
 
 : "${BRFS_SDB_BIN:=$ROOT/build_bench/bin/serened}"
 : "${BRFS_DUCKDB_BIN:=}"
-: "${BRFS_DUCKDB_VERSION:=v1.5.4}"
+: "${BRFS_DUCKDB_VERSION:=v1.5.5}"
 : "${BRFS_DATA:=${HOME}/.cache/serenedb-bench-remote-fs}"
 : "${BRFS_RESULTS:=$ROOT/scripts/perf/results/bench_remote_fs_$(date +%Y%m%d_%H%M%S).txt}"
 : "${BRFS_THREADS:=8}"
@@ -70,7 +70,7 @@ EOF
 : "${BRFS_SMALL_FILES:=180}"
 : "${BRFS_ROWS_WRITE_LARGE:=1200000}"
 : "${BRFS_ROWS_WRITE_MANY:=1500000}"
-: "${BRFS_ROWS_ICEBERG:=60000000}"
+: "${BRFS_ROWS_ICEBERG:=180000000}"
 : "${BRFS_WRITE_PARTS:=10}"
 : "${BRFS_PREFIX:=brfs}"
 : "${BRFS_KEEP:=1}"

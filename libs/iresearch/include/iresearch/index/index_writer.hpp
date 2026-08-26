@@ -495,19 +495,9 @@ class IndexWriter : private util::Noncopyable {
 
     // Serialize the active segment on the calling thread without committing,
     // then fsync every segment this transaction has flushed and return their
-    // metadata, so a host WAL can reference them as durable artifacts. No tick
-    // is assigned; pair with a later Commit(last_tick), which back-dates the
-    // ticks of the flushed documents.
-    //
-    // The span covers the whole flushed set, not just the segment serialized
-    // here: a transaction large enough to trip FlushRequired auto-flushes
-    // mid-insert, so several segments may already be on disk by this point.
-    // Requires an exclusive segment (see GetBatch) -- otherwise the set would
-    // also include segments holding a previous transaction's documents.
-    //
-    // Throws IoError if the fsync fails, so a caller cannot record a segment it
-    // has not made durable. The span points into the segment context and stays
-    // valid until this transaction commits or aborts.
+
+    // Call once, on a complete transaction: this marks the durability of
+    // everything the transaction holds, so nothing may be added afterwards.
     std::span<const FlushedSegment> FlushAndFsync();
 
     bool FlushAndCommit(uint64_t tick) noexcept {

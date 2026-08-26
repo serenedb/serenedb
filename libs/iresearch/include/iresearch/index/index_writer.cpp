@@ -719,16 +719,22 @@ IndexWriter::Transaction::FlushAndFsync() {
   std::vector<std::string_view> files;
   files.reserve(flushed.size() * (flushed.front().meta.files.size() + 1));
   for (auto& entry : flushed) {
+    SDB_ASSERT(!entry.meta_on_disk,
+               "FlushAndFsync called twice on one transaction");
     SDB_ASSERT(!entry.meta.files.empty());
     index_utils::FlushIndexSegment(segment->dir, entry, false);
-    // Do not set was_flush here, it forces rewrite that we want to avoid
-    entry.meta_on_disk = true;
+    // Deliberately not `was_flush`: that flag means "published before" and
+    // forces the version bump this exists to avoid.
     files.insert(files.end(), entry.meta.files.begin(), entry.meta.files.end());
     files.emplace_back(entry.filename);
   }
   if (!segment->dir.sync(files)) {
     throw IoError{absl::StrCat("Failed to sync ", files.size(), " file(s) of ",
                                flushed.size(), " flushed segment(s)")};
+  }
+  // Only now: the flag says "durable", so a caller may reference these by name.
+  for (auto& entry : flushed) {
+    entry.meta_on_disk = true;
   }
   return flushed;
 }

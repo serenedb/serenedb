@@ -62,7 +62,7 @@ The test tree is split by what runs the test and what it covers:
 - `tests/sqllogic/recovery/...` -- sqllogic with crash injection (`SET sdb_faults = '...'`) plus a restart; each test runs against a fresh serened + datadir.
 - `tests/server/<area>/...`, `tests/libs/<lib>/...` -- gtest unit tests; use for isolated C++ logic where a sqllogic test would be awkward (library classes / pure functions / hard-to-reproduce bugs).
 - `tests/bench/micro/...` -- microbenchmarks for performance claims.
-- `tests/postgres_scanner/`, `tests/avro/`, `tests/httpfs/` -- drivers that run the **vendored DuckDB extension** test suites via DuckDB's own `unittest` binary. Built only when configured with `-DSDB_BUILD_DUCKDB_UNITTESTS=ON`.
+- `tests/duckdb/` -- driver for the **DuckDB-level** suites: DuckDB core's own test tree and each vendored extension's, via DuckDB's `unittest` binary. Built only when configured with `-DSDB_BUILD_DUCKDB_UNITTESTS=ON`.
 
 When a change needs a test:
 
@@ -109,18 +109,23 @@ run it whenever you touch `.github/workflows/`. Full `run` needs the build image
 and `/mnt/data` caches for heavy jobs; put fake secrets in `.secrets`
 (gitignored) for workflows that reference them.
 
-### Running vendored DuckDB extension tests
+### Running DuckDB's own test suites
 
-The `postgres_scanner`, `avro`, `httpfs` extensions ship with their own
-sqllogic-style test suites under `third_party/duckdb_<name>/test/`. They
-run through DuckDB's `unittest` binary, which is built by default
-(opt out with `-DSDB_BUILD_DUCKDB_UNITTESTS=OFF` if you want to skip
-its ~1GB output).
+DuckDB core and each vendored extension ship sqllogic-style test suites under
+`third_party/duckdb/test/` and `third_party/duckdb_<name>/test/`. They run
+through DuckDB's `unittest` binary, which is built by default (opt out with
+`-DSDB_BUILD_DUCKDB_UNITTESTS=OFF` if you want to skip its ~1.3GB output).
 
 ```bash
-# postgres_scanner -- postgres fixture comes up via docker
-./tests/postgres_scanner/run.sh
+./tests/duckdb/run.sh                    # every suite
+./tests/duckdb/run.sh --suite core       # just duckdb core
+./tests/duckdb/run.sh --list             # suite names
 ```
+
+Each suite carries a checked-in skip list (`tests/duckdb/config/<suite>.json`)
+naming the SereneDB divergences that can't pass, with a reason per entry;
+everything else is a regression gate on the fork. See
+[tests/duckdb/README.md](tests/duckdb/README.md) before adding to it.
 
 The serened-level postgres_scanner tests
 (`tests/sqllogic/sdb/pg/duckdb_postgres/*_pgscan.test_slow`) ride the regular

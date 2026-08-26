@@ -149,6 +149,8 @@ automaton FromWildcard(bytes_view expr) {
              dfa.Properties(kExpectedDfaProperties, true));
 #endif
 
+  EmplaceSinkArcs(dfa);
+
   return dfa;
 }
 

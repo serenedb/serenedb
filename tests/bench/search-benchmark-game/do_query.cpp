@@ -18,129 +18,46 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include <absl/strings/str_split.h>
+#include <absl/strings/ascii.h>
+#include <absl/strings/str_format.h>
 
-#include <iostream>
+#include <cstdio>
+#include <iostream>  // std::cin
 #include <iresearch/search/filter_optimizer.hpp>
 #include <iresearch/utils/levenshtein_default_pdp.hpp>
-#include <magic_enum/magic_enum.hpp>
 #include <string>
 
 #include "basics/duckdb_engine.h"
 #include "executor.h"
 
-enum class QueryType {
-  Count,
-  UnoptimizedCount,
-  Top10,
-  Top100,
-  Top1000,
-  Top10Count,
-  Top100Count,
-  Top1000Count,
-  Top100Debug,
-  Top100CountDebug,
-  EmitDocs,
-  EmitDocsDebug,
-  EmitScoredDocs,
-  EmitScoredDocsDebug,
-  Unsupported,
-};
-
-namespace magic_enum {
-
-template<>
-constexpr customize::customize_t customize::enum_name<QueryType>(
-  QueryType value) noexcept {
-  switch (value) {
-    case QueryType::Count:
-    case QueryType::UnoptimizedCount:
-      return "COUNT";
-    case QueryType::Top10:
-      return "TOP_10";
-    case QueryType::Top100:
-      return "TOP_100";
-    case QueryType::Top1000:
-      return "TOP_1000";
-    case QueryType::Top10Count:
-      return "TOP_10_COUNT";
-    case QueryType::Top100Count:
-      return "TOP_100_COUNT";
-    case QueryType::Top1000Count:
-      return "TOP_1000_COUNT";
-    case QueryType::Top100Debug:
-      return "TOP_100_DEBUG";
-    case QueryType::Top100CountDebug:
-      return "TOP_100_COUNT_DEBUG";
-    case QueryType::EmitDocs:
-      return "EMIT_DOCS";
-    case QueryType::EmitDocsDebug:
-      return "EMIT_DOCS_DEBUG";
-    case QueryType::EmitScoredDocs:
-      return "EMIT_SCORED_DOCS";
-    case QueryType::EmitScoredDocsDebug:
-      return "EMIT_SCORED_DOCS_DEBUG";
-    default:
-      return "UNSUPPORTED";
-  }
-}
-
-}  // namespace magic_enum
 namespace {
 
-struct Query {
-  QueryType type = QueryType::Unsupported;
-  std::string_view query;
-};
-
-Query ParseQuery(std::string_view str) {
-  auto parts = absl::StrSplit(str, '\t');
-  auto begin = parts.begin();
-
-  auto type = magic_enum::enum_cast<QueryType>(*begin);
-  if (!type) {
-    return {};
-  }
-
-  ++begin;
-  return {*type, *begin};
-}
-
-size_t ExecuteQuery(bench::Executor& executor, Query q) {
-  auto [type, query] = q;
-  switch (type) {
-    case QueryType::UnoptimizedCount:
-    case QueryType::Count:
+size_t ExecuteCommand(bench::Executor& executor, const bench::Command& cmd,
+                      std::string_view query) {
+  switch (cmd.kind) {
+    case bench::Kind::Unsupported:
+      break;
+    case bench::Kind::Count:
       return executor.ExecuteCount(query);
-    case QueryType::Top10:
-      return executor.ExecuteTopK(10, query);
-    case QueryType::Top100:
-      return executor.ExecuteTopK(100, query);
-    case QueryType::Top1000:
-      return executor.ExecuteTopK(1000, query);
-    case QueryType::Top10Count:
-      return executor.ExecuteTopKWithCount(10, query);
-    case QueryType::Top100Count:
-      return executor.ExecuteTopKWithCount(100, query);
-    case QueryType::Top1000Count:
-      return executor.ExecuteTopKWithCount(1000, query);
-    case QueryType::Top100Debug:
-      executor.ExecuteTopK(100, query);
-      return executor.HashResults();
-    case QueryType::Top100CountDebug:
-      executor.ExecuteTopKWithCount(100, query);
-      return executor.HashResults();
-    case QueryType::EmitDocs:
-      return executor.ExecuteEmitDocs(query).count;
-    case QueryType::EmitDocsDebug:
-      return executor.ExecuteEmitDocs(query, true).hash;
-    case QueryType::EmitScoredDocs:
-      return executor.ExecuteEmitScoredDocs(query).count;
-    case QueryType::EmitScoredDocsDebug:
-      return executor.ExecuteEmitScoredDocs(query, true).hash;
-    default:
-      return 0;
+    case bench::Kind::Docs: {
+      const auto result = executor.ExecuteEmitDocs(query, cmd.report);
+      return cmd.report.hash ? result.hash : result.count;
+    }
+    case bench::Kind::Scored: {
+      const auto result = executor.ExecuteEmitScoredDocs(query, cmd.report);
+      return cmd.report.hash ? result.hash : result.count;
+    }
+    case bench::Kind::TopK: {
+      const auto count = cmd.prune
+                           ? executor.ExecuteTopK(cmd.k, query)
+                           : executor.ExecuteTopKWithCount(cmd.k, query);
+      if (cmd.report.print) {
+        executor.PrintResults();
+      }
+      return cmd.report.hash ? executor.HashResults() : count;
+    }
   }
+  return 0;
 }
 
 }  // namespace
@@ -164,15 +81,33 @@ int main(int argc, const char* argv[]) {
 
     std::string data;
     while (std::getline(std::cin, data)) {
-      const auto count = ExecuteQuery(executor, ParseQuery(data));
-      if (!count) {
-        std::cout << magic_enum::enum_name(QueryType::Unsupported) << "\n";
+      size_t count = 0;
+      const std::string_view line{data};
+      const auto tab = line.find('\t');
+      const auto cmd =
+        tab == std::string_view::npos
+          ? bench::Command{}
+          : bench::ParseCommand(absl::AsciiStrToLower(line.substr(0, tab)));
+      if (cmd.kind == bench::Kind::Unsupported) {
+        absl::FPrintF(stderr, "unknown command: %s\n", line);
       } else {
-        std::cout << count << "\n";
+        try {
+          count = ExecuteCommand(executor, cmd, line.substr(tab + 1));
+        } catch (const std::exception& ex) {
+          absl::FPrintF(stderr, "unsupported: %s\n", ex.what());
+        }
       }
+      if (!count) {
+        absl::PrintF("UNSUPPORTED\n");
+      } else {
+        absl::PrintF("%d\n", count);
+      }
+      // The driver writes one query and waits for its line, and nothing ties
+      // this output to the input any more.
+      std::fflush(stdout);
     }
   } catch (const std::exception& ex) {
-    std::cerr << "fatal: " << ex.what() << std::endl;
+    absl::FPrintF(stderr, "fatal: %s\n", ex.what());
     exit_code = 1;
   }
   sdb::DuckDBEngine::Instance().Shutdown();

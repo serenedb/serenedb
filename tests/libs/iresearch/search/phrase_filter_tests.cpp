@@ -6200,6 +6200,231 @@ TEST_P(PhraseFilterTestCase, interval_several_terms) {
     ASSERT_FALSE(!irs::doc_limits::eof(disj_docs->advance()));
   }
 
+  {
+    auto sub = rdr.begin();
+    const auto* column = sub->Column(kName);
+    ASSERT_NE(nullptr, column);
+    irs::tests::BlobPointReader values{*sub, *column};
+
+    auto check_freq = [&](const irs::ByPhrase& q, std::string_view name,
+                          uint32_t expected) {
+      tests::sort::FrequencyScore scorer;
+      tests::PreparedFilter prepared{q, rdr, &scorer};
+
+      auto docs = prepared.Execute(0);
+      auto* freq = irs::get<irs::FreqBlockAttr>(*docs);
+      ASSERT_TRUE(freq);
+      ASSERT_FALSE(irs::get<irs::BoostBlockAttr>(*docs));
+      ASSERT_FALSE(irs::doc_limits::valid(docs->value()));
+      auto docs_seek = prepared.Execute(0);
+      ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
+      auto score = docs->PrepareScore({.scorer = &scorer, .segment = &*sub});
+
+      ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
+      docs->FetchScoreArgs(0);
+      ASSERT_EQ(expected, freq->value[0]);
+      irs::score_t score_val;
+      score.Score(&score_val, 1);
+      ASSERT_DOUBLE_EQ(expected, score_val);
+      ASSERT_EQ(name, irs::tests::ReadStoredStr<std::string_view>(
+                        values, docs->value()));
+      ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
+      docs_seek->FetchScoreArgs(0);
+      ASSERT_EQ(freq->value[0],
+                irs::get<irs::FreqBlockAttr>(*docs_seek)->value[0]);
+      ASSERT_TRUE(irs::doc_limits::eof(docs->advance()));
+    };
+
+    {
+      irs::ByPhrase q;
+      *q.mutable_field_id() = kPhraseAnl;
+      q.mutable_options()->push_back<irs::ByTermOptions>().term =
+        irs::ViewCast<irs::byte_type>(std::string_view("konstantin"));
+      q.mutable_options()->push_back<irs::ByTermOptions>(1, 3).term =
+        irs::ViewCast<irs::byte_type>(std::string_view("vedernikoff"));
+      q.mutable_options()->push_back<irs::ByTermOptions>(1, 3).term =
+        irs::ViewCast<irs::byte_type>(std::string_view("is"));
+      q.mutable_options()->push_back<irs::ByTermOptions>(1, 3).term =
+        irs::ViewCast<irs::byte_type>(std::string_view("intern"));
+      check_freq(q, "L", 2);
+    }
+
+    {
+      irs::ByPhrase q;
+      *q.mutable_field_id() = kPhraseAnl;
+      q.mutable_options()->push_back<irs::ByTermOptions>().term =
+        irs::ViewCast<irs::byte_type>(std::string_view("alfa"));
+      q.mutable_options()->push_back<irs::ByTermOptions>(2, 3).term =
+        irs::ViewCast<irs::byte_type>(std::string_view("mike"));
+      q.mutable_options()->push_back<irs::ByTermOptions>(1, 3).term =
+        irs::ViewCast<irs::byte_type>(std::string_view("oscar"));
+      check_freq(q, "M", 2);
+    }
+
+    {
+      irs::ByPhrase q;
+      *q.mutable_field_id() = kPhraseAnl;
+      q.mutable_options()->push_back<irs::ByPrefixOptions>().term =
+        irs::ViewCast<irs::byte_type>(std::string_view("alf"));
+      q.mutable_options()->push_back<irs::ByPrefixOptions>(2, 3).term =
+        irs::ViewCast<irs::byte_type>(std::string_view("mik"));
+      q.mutable_options()->push_back<irs::ByPrefixOptions>(1, 3).term =
+        irs::ViewCast<irs::byte_type>(std::string_view("osc"));
+      check_freq(q, "M", 2);
+    }
+
+    {
+      irs::ByPhrase q;
+      *q.mutable_field_id() = kPhraseAnl;
+      q.mutable_options()->push_back<irs::ByTermOptions>().term =
+        irs::ViewCast<irs::byte_type>(std::string_view("quebec"));
+      q.mutable_options()->push_back<irs::ByPrefixOptions>(1, 2).term =
+        irs::ViewCast<irs::byte_type>(std::string_view("mike"));
+      q.mutable_options()->push_back<irs::ByTermOptions>(1, 2).term =
+        irs::ViewCast<irs::byte_type>(std::string_view("sierra"));
+      check_freq(q, "P", 2);
+    }
+
+    {
+      irs::ByPhrase q;
+      *q.mutable_field_id() = kPhraseAnl;
+      q.mutable_options()->push_back<irs::ByTermOptions>().term =
+        irs::ViewCast<irs::byte_type>(std::string_view("quebec"));
+      q.mutable_options()->push_back<irs::ByTermOptions>(1, 2).term =
+        irs::ViewCast<irs::byte_type>(std::string_view("mikeone"));
+      q.mutable_options()->push_back<irs::ByTermOptions>(1, 2).term =
+        irs::ViewCast<irs::byte_type>(std::string_view("sierra"));
+      check_freq(q, "P", 1);
+    }
+
+    {
+      irs::ByPhrase q;
+      *q.mutable_field_id() = kPhraseAnl;
+      q.mutable_options()->push_back<irs::ByTermOptions>().term =
+        irs::ViewCast<irs::byte_type>(std::string_view("quebec"));
+      q.mutable_options()->push_back<irs::ByTermOptions>(1, 2).term =
+        irs::ViewCast<irs::byte_type>(std::string_view("miketwo"));
+      q.mutable_options()->push_back<irs::ByTermOptions>(1, 2).term =
+        irs::ViewCast<irs::byte_type>(std::string_view("sierra"));
+      check_freq(q, "P", 1);
+    }
+
+    {
+      irs::ByPhrase q;
+      *q.mutable_field_id() = kPhraseAnl;
+      q.mutable_options()->push_back<irs::ByTermOptions>().term =
+        irs::ViewCast<irs::byte_type>(std::string_view("tangoq"));
+      q.mutable_options()->push_back<irs::ByPrefixOptions>(0, 2).term =
+        irs::ViewCast<irs::byte_type>(std::string_view("zeta"));
+      check_freq(q, "Q", 2);
+    }
+
+    {
+      irs::ByPhrase q;
+      *q.mutable_field_id() = kPhraseAnl;
+      q.mutable_options()->push_back<irs::ByTermOptions>().term =
+        irs::ViewCast<irs::byte_type>(std::string_view("romeor"));
+      q.mutable_options()->push_back<irs::ByPrefixOptions>(1, 2).term =
+        irs::ViewCast<irs::byte_type>(std::string_view("zeta"));
+      q.mutable_options()->push_back<irs::ByTermOptions>(2, 2).term =
+        irs::ViewCast<irs::byte_type>(std::string_view("sierrar"));
+      check_freq(q, "R", 1);
+    }
+
+    {
+      irs::ByPhrase q;
+      *q.mutable_field_id() = kPhraseAnl;
+      q.mutable_options()->push_back<irs::ByTermOptions>().term =
+        irs::ViewCast<irs::byte_type>(std::string_view("romeor"));
+      q.mutable_options()->push_back<irs::ByPrefixOptions>(1, 2).term =
+        irs::ViewCast<irs::byte_type>(std::string_view("zeta"));
+      q.mutable_options()->push_back<irs::ByTermOptions>(2, 2).term =
+        irs::ViewCast<irs::byte_type>(std::string_view("sierrar"));
+
+      tests::PreparedFilter prepared{q, rdr};
+      auto docs = prepared.Execute(0);
+      ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
+      ASSERT_EQ("R", irs::tests::ReadStoredStr<std::string_view>(
+                       values, docs->value()));
+      ASSERT_TRUE(irs::doc_limits::eof(docs->advance()));
+    }
+
+    {
+      auto q = std::make_unique<irs::ByPhrase>();
+      *q->mutable_field_id() = kPhraseAnl;
+      q->mutable_options()->push_back<irs::ByTermOptions>().term =
+        irs::ViewCast<irs::byte_type>(std::string_view("delta"));
+      q->mutable_options()->push_back<irs::ByTermOptions>(2, 3).term =
+        irs::ViewCast<irs::byte_type>(std::string_view("golf"));
+      auto& lt =
+        q->mutable_options()->push_back<irs::ByEditDistanceOptions>(1, 3);
+      lt.max_distance = 1;
+      lt.term = irs::ViewCast<irs::byte_type>(std::string_view("hotel"));
+
+      tests::sort::FrequencyScore scorer;
+      tests::PreparedFilter prepared{*Lower(std::move(q), &scorer), rdr,
+                                     &scorer};
+      auto docs = prepared.Execute(0);
+      auto* freq = irs::get<irs::FreqBlockAttr>(*docs);
+      ASSERT_TRUE(freq);
+      auto* boost = irs::get<irs::BoostBlockAttr>(*docs);
+      ASSERT_TRUE(boost);
+      ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
+      docs->FetchScoreArgs(0);
+      ASSERT_EQ(2, freq->value[0]);
+      ASSERT_DOUBLE_EQ(irs::kNoBoost, boost->value[0]);
+      ASSERT_EQ("S", irs::tests::ReadStoredStr<std::string_view>(
+                       values, docs->value()));
+      ASSERT_TRUE(irs::doc_limits::eof(docs->advance()));
+    }
+
+    {
+      irs::ByPhrase q;
+      *q.mutable_field_id() = kPhraseAnl;
+      q.mutable_options()->push_back<irs::ByTermOptions>().term =
+        irs::ViewCast<irs::byte_type>(std::string_view("papa"));
+      q.mutable_options()->push_back<irs::ByTermOptions>(1, 3).term =
+        irs::ViewCast<irs::byte_type>(std::string_view("romeo"));
+      q.mutable_options()->push_back<irs::ByTermOptions>(3, 4).term =
+        irs::ViewCast<irs::byte_type>(std::string_view("tango"));
+      check_freq(q, "N", 2);
+    }
+
+    {
+      irs::ByPhrase q;
+      *q.mutable_field_id() = kPhraseAnl;
+      q.mutable_options()->push_back<irs::ByTermOptions>().term =
+        irs::ViewCast<irs::byte_type>(std::string_view("uniform"));
+      q.mutable_options()->push_back<irs::ByTermOptions>(1, 2).term =
+        irs::ViewCast<irs::byte_type>(std::string_view("victor"));
+      q.mutable_options()->push_back<irs::ByTermOptions>(2, 4).term =
+        irs::ViewCast<irs::byte_type>(std::string_view("xray"));
+      q.mutable_options()->push_back<irs::ByTermOptions>(3, 5).term =
+        irs::ViewCast<irs::byte_type>(std::string_view("zulu"));
+      check_freq(q, "O", 2);
+    }
+
+    {
+      irs::ByPhrase q;
+      *q.mutable_field_id() = kPhraseAnl;
+      q.mutable_options()->push_back<irs::ByTermOptions>().term =
+        irs::ViewCast<irs::byte_type>(std::string_view("uniform"));
+      q.mutable_options()->push_back<irs::ByTermOptions>(1, 2).term =
+        irs::ViewCast<irs::byte_type>(std::string_view("victor"));
+      q.mutable_options()->push_back<irs::ByTermOptions>(2, 4).term =
+        irs::ViewCast<irs::byte_type>(std::string_view("xray"));
+      q.mutable_options()->push_back<irs::ByTermOptions>(3, 5).term =
+        irs::ViewCast<irs::byte_type>(std::string_view("zulu"));
+
+      tests::PreparedFilter prepared{q, rdr};
+      auto docs = prepared.Execute(0);
+      ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
+      ASSERT_EQ("O", irs::tests::ReadStoredStr<std::string_view>(
+                       values, docs->value()));
+      ASSERT_TRUE(irs::doc_limits::eof(docs->advance()));
+    }
+  }
+
   // mix interval and single
   {
     irs::ByPhrase q;
@@ -8498,6 +8723,243 @@ TEST_P(PhraseFilterTestCase, sloppy_phrase_variadic_scoring) {
 
     ASSERT_FALSE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_TRUE(irs::doc_limits::eof(docs->value()));
+  }
+}
+
+TEST_P(PhraseFilterTestCase, interval_combinations) {
+  {
+    tests::JsonDocGenerator gen(resource("phrase_interval.json"),
+                                &tests::AnalyzedJsonFieldFactory);
+    add_segment(gen, irs::kOmCreate, irs::tests::DefaultWriterOptions(),
+                StoreName());
+  }
+
+  auto rdr = open_reader(irs::tests::DefaultReaderOptions());
+  auto sub = rdr.begin();
+  const auto* column = sub->Column(kName);
+  ASSERT_NE(nullptr, column);
+  irs::tests::BlobPointReader values{*sub, *column};
+
+  enum class Part {
+    kTerm,
+    kPrefix,
+    kEditDistance,
+  };
+  enum class Entry {
+    kMatch,
+    kScore,
+    kOffsets,
+  };
+
+  struct Case {
+    std::string_view label;
+    Part part;
+    bool intervals;
+    Entry entry;
+    uint32_t freq;
+    bool boost;
+  };
+
+  static constexpr Case kCases[] = {
+    {"fixed match", Part::kTerm, false, Entry::kMatch, 0, false},
+    {"fixed score", Part::kTerm, false, Entry::kScore, 1, false},
+    {"fixed offsets", Part::kTerm, false, Entry::kOffsets, 0, false},
+    {"fixed interval match", Part::kTerm, true, Entry::kMatch, 0, false},
+    {"fixed interval score", Part::kTerm, true, Entry::kScore, 2, false},
+    {"fixed interval offsets", Part::kTerm, true, Entry::kOffsets, 0, false},
+    {"variadic match", Part::kPrefix, false, Entry::kMatch, 0, false},
+    {"variadic score", Part::kPrefix, false, Entry::kScore, 1, false},
+    {"variadic offsets", Part::kPrefix, false, Entry::kOffsets, 0, false},
+    {"variadic interval match", Part::kPrefix, true, Entry::kMatch, 0, false},
+    {"variadic interval score", Part::kPrefix, true, Entry::kScore, 2, false},
+    {"variadic interval offsets", Part::kPrefix, true, Entry::kOffsets, 0,
+     false},
+    {"editdist match", Part::kEditDistance, false, Entry::kMatch, 0, false},
+    {"editdist score", Part::kEditDistance, false, Entry::kScore, 1, true},
+    {"editdist offsets", Part::kEditDistance, false, Entry::kOffsets, 0, false},
+    {"editdist interval match", Part::kEditDistance, true, Entry::kMatch, 0,
+     false},
+    {"editdist interval score", Part::kEditDistance, true, Entry::kScore, 2,
+     true},
+    {"editdist interval offsets", Part::kEditDistance, true, Entry::kOffsets, 0,
+     false},
+  };
+
+  for (const auto& c : kCases) {
+    SCOPED_TRACE(c.label);
+
+    auto q = std::make_unique<irs::ByPhrase>();
+    *q->mutable_field_id() = kPhraseAnl;
+    auto& opts = *q->mutable_options();
+    const size_t max1 = c.intervals ? 3 : 2;
+    const size_t min2 = c.intervals ? 1 : 2;
+    const size_t max2 = c.intervals ? 3 : 2;
+    switch (c.part) {
+      case Part::kTerm:
+        opts.push_back<irs::ByTermOptions>().term =
+          irs::ViewCast<irs::byte_type>(std::string_view("delta"));
+        opts.push_back<irs::ByTermOptions>(2, max1).term =
+          irs::ViewCast<irs::byte_type>(std::string_view("golf"));
+        opts.push_back<irs::ByTermOptions>(min2, max2).term =
+          irs::ViewCast<irs::byte_type>(std::string_view("hotel"));
+        break;
+      case Part::kPrefix:
+        opts.push_back<irs::ByPrefixOptions>().term =
+          irs::ViewCast<irs::byte_type>(std::string_view("del"));
+        opts.push_back<irs::ByPrefixOptions>(2, max1).term =
+          irs::ViewCast<irs::byte_type>(std::string_view("gol"));
+        opts.push_back<irs::ByPrefixOptions>(min2, max2).term =
+          irs::ViewCast<irs::byte_type>(std::string_view("hot"));
+        break;
+      case Part::kEditDistance: {
+        opts.push_back<irs::ByTermOptions>().term =
+          irs::ViewCast<irs::byte_type>(std::string_view("delta"));
+        opts.push_back<irs::ByTermOptions>(2, max1).term =
+          irs::ViewCast<irs::byte_type>(std::string_view("golf"));
+        auto& lt = opts.push_back<irs::ByEditDistanceOptions>(min2, max2);
+        lt.max_distance = 1;
+        lt.term = irs::ViewCast<irs::byte_type>(std::string_view("hotel"));
+      } break;
+    }
+
+    tests::sort::FrequencyScore scorer;
+    const auto* used = c.entry == Entry::kScore ? &scorer : nullptr;
+    auto lowered = Lower(std::move(q), used);
+    tests::PreparedFilter prepared{*lowered, rdr, used};
+    const auto* query = prepared.Query(0);
+    ASSERT_NE(nullptr, query);
+
+    irs::DocIterator::ptr docs;
+    if (c.entry == Entry::kOffsets) {
+      if (const auto* fixed =
+            dynamic_cast<const irs::FixedPhraseQuery*>(query)) {
+        docs = fixed->ExecuteWithOffsets(*sub);
+      } else {
+        const auto* variadic =
+          dynamic_cast<const irs::VariadicPhraseQuery*>(query);
+        ASSERT_NE(nullptr, variadic);
+        docs = variadic->ExecuteWithOffsets(*sub);
+      }
+    } else {
+      docs = prepared.Execute(0);
+    }
+    ASSERT_NE(nullptr, docs);
+
+    auto* freq = irs::get<irs::FreqBlockAttr>(*docs);
+    auto* boost = irs::get<irs::BoostBlockAttr>(*docs);
+    ASSERT_EQ(c.entry == Entry::kScore, freq != nullptr);
+    ASSERT_EQ(c.boost, boost != nullptr);
+
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
+    ASSERT_EQ(
+      "S", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
+
+    if (c.entry == Entry::kScore) {
+      docs->FetchScoreArgs(0);
+      ASSERT_EQ(c.freq, freq->value[0]);
+      if (c.boost) {
+        ASSERT_DOUBLE_EQ(irs::kNoBoost, boost->value[0]);
+      }
+    } else if (c.entry == Entry::kOffsets) {
+      auto* pos = irs::GetMutable<irs::PosAttr>(docs.get());
+      ASSERT_NE(nullptr, pos);
+      const auto* offs = irs::get<irs::OffsAttr>(*pos);
+      ASSERT_NE(nullptr, offs);
+      ASSERT_TRUE(pos->next());
+      ASSERT_EQ(4, offs->start);
+      ASSERT_EQ(29, offs->end);
+    }
+
+    ASSERT_TRUE(irs::doc_limits::eof(docs->advance()));
+  }
+}
+
+TEST_P(PhraseFilterTestCase, interval_execute_with_offsets) {
+  {
+    tests::JsonDocGenerator gen(resource("phrase_interval.json"),
+                                &tests::AnalyzedJsonFieldFactory);
+    add_segment(gen, irs::kOmCreate, irs::tests::DefaultWriterOptions(),
+                StoreName());
+  }
+
+  auto rdr = open_reader(irs::tests::DefaultReaderOptions());
+
+  {
+    irs::ByPhrase q;
+    *q.mutable_field_id() = kPhraseAnl;
+    q.mutable_options()->push_back<irs::ByTermOptions>().term =
+      irs::ViewCast<irs::byte_type>(std::string_view("alfa"));
+    q.mutable_options()->push_back<irs::ByTermOptions>(2, 3).term =
+      irs::ViewCast<irs::byte_type>(std::string_view("mike"));
+    q.mutable_options()->push_back<irs::ByTermOptions>(1, 3).term =
+      irs::ViewCast<irs::byte_type>(std::string_view("oscar"));
+
+    tests::PreparedFilter prepared{q, rdr};
+    auto* phrase_query =
+      dynamic_cast<const irs::FixedPhraseQuery*>(prepared.Query(0));
+    ASSERT_NE(nullptr, phrase_query);
+
+    auto sub = rdr.begin();
+    auto docs = phrase_query->ExecuteWithOffsets(*sub);
+    ASSERT_NE(nullptr, docs);
+
+    auto* pos = irs::GetMutable<irs::PosAttr>(docs.get());
+    ASSERT_NE(nullptr, pos);
+    auto* offs = irs::get<irs::OffsAttr>(*pos);
+    ASSERT_NE(nullptr, offs);
+
+    const auto* column = sub->Column(kName);
+    ASSERT_NE(nullptr, column);
+    irs::tests::BlobPointReader values{*sub, *column};
+
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
+    ASSERT_EQ(
+      "M", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
+    ASSERT_TRUE(pos->next());
+    ASSERT_EQ(4, offs->start);
+    ASSERT_EQ(28, offs->end);
+    ASSERT_FALSE(pos->next());
+    ASSERT_TRUE(irs::doc_limits::eof(docs->advance()));
+  }
+
+  {
+    irs::ByPhrase q;
+    *q.mutable_field_id() = kPhraseAnl;
+    q.mutable_options()->push_back<irs::ByTermOptions>().term =
+      irs::ViewCast<irs::byte_type>(std::string_view("uniform"));
+    q.mutable_options()->push_back<irs::ByTermOptions>(1, 2).term =
+      irs::ViewCast<irs::byte_type>(std::string_view("victor"));
+    q.mutable_options()->push_back<irs::ByTermOptions>(2, 4).term =
+      irs::ViewCast<irs::byte_type>(std::string_view("xray"));
+    q.mutable_options()->push_back<irs::ByTermOptions>(3, 5).term =
+      irs::ViewCast<irs::byte_type>(std::string_view("zulu"));
+
+    tests::PreparedFilter prepared{q, rdr};
+    auto* phrase_query =
+      dynamic_cast<const irs::FixedPhraseQuery*>(prepared.Query(0));
+    ASSERT_NE(nullptr, phrase_query);
+
+    auto sub = rdr.begin();
+    auto docs = phrase_query->ExecuteWithOffsets(*sub);
+    ASSERT_NE(nullptr, docs);
+
+    auto* pos = irs::GetMutable<irs::PosAttr>(docs.get());
+    ASSERT_NE(nullptr, pos);
+    auto* offs = irs::get<irs::OffsAttr>(*pos);
+    ASSERT_NE(nullptr, offs);
+
+    const auto* column = sub->Column(kName);
+    ASSERT_NE(nullptr, column);
+    irs::tests::BlobPointReader values{*sub, *column};
+
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
+    ASSERT_EQ(
+      "O", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
+    ASSERT_TRUE(pos->next());
+    ASSERT_EQ(0, offs->start);
+    ASSERT_EQ(57, offs->end);
+    ASSERT_FALSE(pos->next());
+    ASSERT_TRUE(irs::doc_limits::eof(docs->advance()));
   }
 }
 

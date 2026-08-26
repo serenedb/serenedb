@@ -106,41 +106,79 @@ enum yysymbol_kind_t
   YYSYMBOL_YYerror = 1,                    /* error  */
   YYSYMBOL_YYUNDEF = 2,                    /* "invalid token"  */
   YYSYMBOL_TERM = 3,                       /* TERM  */
-  YYSYMBOL_PHRASE = 4,                     /* PHRASE  */
-  YYSYMBOL_REGEX = 5,                      /* REGEX  */
-  YYSYMBOL_PREFIX = 6,                     /* PREFIX  */
-  YYSYMBOL_SUFFIX = 7,                     /* SUFFIX  */
-  YYSYMBOL_WILDCARD = 8,                   /* WILDCARD  */
-  YYSYMBOL_STAR = 9,                       /* STAR  */
-  YYSYMBOL_NUMBER = 10,                    /* NUMBER  */
-  YYSYMBOL_FLOAT = 11,                     /* FLOAT  */
-  YYSYMBOL_AND = 12,                       /* AND  */
-  YYSYMBOL_OR = 13,                        /* OR  */
-  YYSYMBOL_NOT = 14,                       /* NOT  */
-  YYSYMBOL_TO = 15,                        /* TO  */
-  YYSYMBOL_LPAREN = 16,                    /* LPAREN  */
-  YYSYMBOL_RPAREN = 17,                    /* RPAREN  */
-  YYSYMBOL_LBRACKET = 18,                  /* LBRACKET  */
-  YYSYMBOL_RBRACKET = 19,                  /* RBRACKET  */
-  YYSYMBOL_LBRACE = 20,                    /* LBRACE  */
-  YYSYMBOL_RBRACE = 21,                    /* RBRACE  */
-  YYSYMBOL_COLON = 22,                     /* COLON  */
-  YYSYMBOL_CARET = 23,                     /* CARET  */
-  YYSYMBOL_TILDE = 24,                     /* TILDE  */
-  YYSYMBOL_PLUS = 25,                      /* PLUS  */
-  YYSYMBOL_MINUS = 26,                     /* MINUS  */
-  YYSYMBOL_YYACCEPT = 27,                  /* $accept  */
-  YYSYMBOL_query = 28,                     /* query  */
-  YYSYMBOL_clause_list = 29,               /* clause_list  */
-  YYSYMBOL_mod_clause = 30,                /* mod_clause  */
-  YYSYMBOL_term_expr = 31,                 /* term_expr  */
-  YYSYMBOL_32_1 = 32,                      /* $@1  */
-  YYSYMBOL_boosted_expr = 33,              /* boosted_expr  */
-  YYSYMBOL_modified_term = 34,             /* modified_term  */
-  YYSYMBOL_base_term = 35,                 /* base_term  */
-  YYSYMBOL_36_2 = 36,                      /* @2  */
-  YYSYMBOL_range_expr = 37,                /* range_expr  */
-  YYSYMBOL_range_bound = 38                /* range_bound  */
+  YYSYMBOL_REGEX = 4,                      /* REGEX  */
+  YYSYMBOL_PREFIX = 5,                     /* PREFIX  */
+  YYSYMBOL_WILDCARD = 6,                   /* WILDCARD  */
+  YYSYMBOL_STAR = 7,                       /* STAR  */
+  YYSYMBOL_NUMBER = 8,                     /* NUMBER  */
+  YYSYMBOL_FLOAT = 9,                      /* FLOAT  */
+  YYSYMBOL_GAP = 10,                       /* GAP  */
+  YYSYMBOL_AND = 11,                       /* AND  */
+  YYSYMBOL_OR = 12,                        /* OR  */
+  YYSYMBOL_NOT = 13,                       /* NOT  */
+  YYSYMBOL_TO = 14,                        /* TO  */
+  YYSYMBOL_LPAREN = 15,                    /* LPAREN  */
+  YYSYMBOL_RPAREN = 16,                    /* RPAREN  */
+  YYSYMBOL_LBRACKET = 17,                  /* LBRACKET  */
+  YYSYMBOL_RBRACKET = 18,                  /* RBRACKET  */
+  YYSYMBOL_LBRACE = 19,                    /* LBRACE  */
+  YYSYMBOL_RBRACE = 20,                    /* RBRACE  */
+  YYSYMBOL_COLON = 21,                     /* COLON  */
+  YYSYMBOL_CARET = 22,                     /* CARET  */
+  YYSYMBOL_PLUS = 23,                      /* PLUS  */
+  YYSYMBOL_MINUS = 24,                     /* MINUS  */
+  YYSYMBOL_AT = 25,                        /* AT  */
+  YYSYMBOL_QUOTE = 26,                     /* QUOTE  */
+  YYSYMBOL_LT = 27,                        /* LT  */
+  YYSYMBOL_LE = 28,                        /* LE  */
+  YYSYMBOL_GT = 29,                        /* GT  */
+  YYSYMBOL_GE = 30,                        /* GE  */
+  YYSYMBOL_EQ = 31,                        /* EQ  */
+  YYSYMBOL_FUZZY = 32,                     /* FUZZY  */
+  YYSYMBOL_FN_NGRAM = 33,                  /* FN_NGRAM  */
+  YYSYMBOL_FN_PHRASE = 34,                 /* FN_PHRASE  */
+  YYSYMBOL_FN_WILDCARD = 35,               /* FN_WILDCARD  */
+  YYSYMBOL_FN_FUZZY = 36,                  /* FN_FUZZY  */
+  YYSYMBOL_FN_OR = 37,                     /* FN_OR  */
+  YYSYMBOL_FN_UNORDERED = 38,              /* FN_UNORDERED  */
+  YYSYMBOL_FN_ATLEAST = 39,                /* FN_ATLEAST  */
+  YYSYMBOL_FN_ORDERED = 40,                /* FN_ORDERED  */
+  YYSYMBOL_FN_MAXGAPS = 41,                /* FN_MAXGAPS  */
+  YYSYMBOL_FN_MAXWIDTH = 42,               /* FN_MAXWIDTH  */
+  YYSYMBOL_FN_OTHER = 43,                  /* FN_OTHER  */
+  YYSYMBOL_YYACCEPT = 44,                  /* $accept  */
+  YYSYMBOL_query = 45,                     /* query  */
+  YYSYMBOL_clause_list = 46,               /* clause_list  */
+  YYSYMBOL_mod_clause = 47,                /* mod_clause  */
+  YYSYMBOL_term_expr = 48,                 /* term_expr  */
+  YYSYMBOL_field_prefix = 49,              /* field_prefix  */
+  YYSYMBOL_field_name = 50,                /* field_name  */
+  YYSYMBOL_boosted_expr = 51,              /* boosted_expr  */
+  YYSYMBOL_modified_term = 52,             /* modified_term  */
+  YYSYMBOL_base_term = 53,                 /* base_term  */
+  YYSYMBOL_group = 54,                     /* group  */
+  YYSYMBOL_55_1 = 55,                      /* @1  */
+  YYSYMBOL_phrase = 56,                    /* phrase  */
+  YYSYMBOL_57_2 = 57,                      /* $@2  */
+  YYSYMBOL_phrase_body = 58,               /* phrase_body  */
+  YYSYMBOL_59_3 = 59,                      /* $@3  */
+  YYSYMBOL_phrase_part = 60,               /* phrase_part  */
+  YYSYMBOL_ngram_expr = 61,                /* ngram_expr  */
+  YYSYMBOL_62_4 = 62,                      /* $@4  */
+  YYSYMBOL_63_5 = 63,                      /* $@5  */
+  YYSYMBOL_64_6 = 64,                      /* $@6  */
+  YYSYMBOL_65_7 = 65,                      /* $@7  */
+  YYSYMBOL_66_8 = 66,                      /* $@8  */
+  YYSYMBOL_67_9 = 67,                      /* $@9  */
+  YYSYMBOL_68_10 = 68,                     /* $@10  */
+  YYSYMBOL_69_11 = 69,                     /* $@11  */
+  YYSYMBOL_fn_terms = 70,                  /* fn_terms  */
+  YYSYMBOL_fn_source = 71,                 /* fn_source  */
+  YYSYMBOL_fn_args = 72,                   /* fn_args  */
+  YYSYMBOL_threshold = 73,                 /* threshold  */
+  YYSYMBOL_ngram_terms = 74,               /* ngram_terms  */
+  YYSYMBOL_range_expr = 75,                /* range_expr  */
+  YYSYMBOL_range_bound = 76                /* range_bound  */
 };
 typedef enum yysymbol_kind_t yysymbol_kind_t;
 
@@ -152,7 +190,7 @@ typedef enum yysymbol_kind_t yysymbol_kind_t;
 int yylex(YYSTYPE* yylval);
 void yyerror(sdb::ParserContext& ctx, const char *s);
 
-#line 155 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
+#line 193 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
 
 #ifdef short
 # undef short
@@ -264,7 +302,7 @@ typedef int yytype_uint16;
 
 
 /* Stored state numbers (used for stacks). */
-typedef yytype_int8 yy_state_t;
+typedef yytype_uint8 yy_state_t;
 
 /* State numbers in computations.  */
 typedef int yy_state_fast_t;
@@ -473,21 +511,21 @@ union yyalloc
 #endif /* !YYCOPY_NEEDED */
 
 /* YYFINAL -- State number of the termination state.  */
-#define YYFINAL  32
+#define YYFINAL  61
 /* YYLAST -- Last index in YYTABLE.  */
-#define YYLAST   105
+#define YYLAST   555
 
 /* YYNTOKENS -- Number of terminals.  */
-#define YYNTOKENS  27
+#define YYNTOKENS  44
 /* YYNNTS -- Number of nonterminals.  */
-#define YYNNTS  12
+#define YYNNTS  33
 /* YYNRULES -- Number of rules.  */
-#define YYNRULES  36
+#define YYNRULES  94
 /* YYNSTATES -- Number of states.  */
-#define YYNSTATES  55
+#define YYNSTATES  167
 
 /* YYMAXUTOK -- Last valid token kind.  */
-#define YYMAXUTOK   281
+#define YYMAXUTOK   298
 
 
 /* YYTRANSLATE(TOKEN-NUM) -- Symbol number corresponding to TOKEN-NUM
@@ -529,17 +567,24 @@ static const yytype_int8 yytranslate[] =
        2,     2,     2,     2,     2,     2,     1,     2,     3,     4,
        5,     6,     7,     8,     9,    10,    11,    12,    13,    14,
       15,    16,    17,    18,    19,    20,    21,    22,    23,    24,
-      25,    26
+      25,    26,    27,    28,    29,    30,    31,    32,    33,    34,
+      35,    36,    37,    38,    39,    40,    41,    42,    43
 };
 
 #if YYDEBUG
 /* YYRLINE[YYN] -- Source line where rule number YYN was defined.  */
-static const yytype_uint8 yyrline[] =
+static const yytype_int16 yyrline[] =
 {
-       0,    80,    80,    84,    85,    86,    87,    91,    92,    93,
-      94,    98,    99,    99,   113,   114,   115,   119,   120,   121,
-     122,   123,   127,   128,   129,   130,   131,   132,   133,   134,
-     134,   145,   147,   149,   151,   156,   157
+       0,    95,    95,    99,   100,   101,   102,   106,   107,   108,
+     109,   113,   114,   115,   118,   119,   120,   121,   125,   126,
+     130,   138,   139,   142,   149,   153,   156,   163,   164,   165,
+     166,   167,   168,   169,   170,   171,   172,   173,   174,   178,
+     178,   191,   191,   196,   197,   198,   198,   203,   204,   205,
+     206,   216,   216,   218,   218,   220,   221,   222,   223,   224,
+     228,   228,   230,   230,   232,   232,   234,   234,   239,   239,
+     241,   241,   243,   253,   254,   258,   259,   260,   261,   262,
+     263,   266,   268,   269,   270,   274,   275,   279,   280,   284,
+     286,   288,   290,   295,   296
 };
 #endif
 
@@ -555,13 +600,18 @@ static const char *yysymbol_name (yysymbol_kind_t yysymbol) YY_ATTRIBUTE_UNUSED;
    First, the terminals, then, starting at YYNTOKENS, nonterminals.  */
 static const char *const yytname[] =
 {
-  "\"end of file\"", "error", "\"invalid token\"", "TERM", "PHRASE",
-  "REGEX", "PREFIX", "SUFFIX", "WILDCARD", "STAR", "NUMBER", "FLOAT",
-  "AND", "OR", "NOT", "TO", "LPAREN", "RPAREN", "LBRACKET", "RBRACKET",
-  "LBRACE", "RBRACE", "COLON", "CARET", "TILDE", "PLUS", "MINUS",
-  "$accept", "query", "clause_list", "mod_clause", "term_expr", "$@1",
-  "boosted_expr", "modified_term", "base_term", "@2", "range_expr",
-  "range_bound", YY_NULLPTR
+  "\"end of file\"", "error", "\"invalid token\"", "TERM", "REGEX",
+  "PREFIX", "WILDCARD", "STAR", "NUMBER", "FLOAT", "GAP", "AND", "OR",
+  "NOT", "TO", "LPAREN", "RPAREN", "LBRACKET", "RBRACKET", "LBRACE",
+  "RBRACE", "COLON", "CARET", "PLUS", "MINUS", "AT", "QUOTE", "LT", "LE",
+  "GT", "GE", "EQ", "FUZZY", "FN_NGRAM", "FN_PHRASE", "FN_WILDCARD",
+  "FN_FUZZY", "FN_OR", "FN_UNORDERED", "FN_ATLEAST", "FN_ORDERED",
+  "FN_MAXGAPS", "FN_MAXWIDTH", "FN_OTHER", "$accept", "query",
+  "clause_list", "mod_clause", "term_expr", "field_prefix", "field_name",
+  "boosted_expr", "modified_term", "base_term", "group", "@1", "phrase",
+  "$@2", "phrase_body", "$@3", "phrase_part", "ngram_expr", "$@4", "$@5",
+  "$@6", "$@7", "$@8", "$@9", "$@10", "$@11", "fn_terms", "fn_source",
+  "fn_args", "threshold", "ngram_terms", "range_expr", "range_bound", YY_NULLPTR
 };
 
 static const char *
@@ -571,26 +621,37 @@ yysymbol_name (yysymbol_kind_t yysymbol)
 }
 #endif
 
-#define YYPACT_NINF (-21)
+#define YYPACT_NINF (-91)
 
 #define yypact_value_is_default(Yyn) \
   ((Yyn) == YYPACT_NINF)
 
-#define YYTABLE_NINF (-1)
+#define YYTABLE_NINF (-21)
 
 #define yytable_value_is_error(Yyn) \
   0
 
 /* YYPACT[STATE-NUM] -- Index in YYTABLE of the portion describing
    STATE-NUM.  */
-static const yytype_int8 yypact[] =
+static const yytype_int16 yypact[] =
 {
-      79,   -20,    -9,   -21,   -21,   -21,   -21,     6,   -21,    14,
-      14,     6,     6,    19,    55,   -21,   -21,   -21,     2,   -21,
-     -21,   -21,    30,    32,   -21,    79,   -21,   -21,    26,    35,
-     -21,   -21,   -21,    79,    79,   -21,    -5,     6,   -21,   -21,
-      31,    14,    14,   -21,   -21,   -21,   -21,   -21,   -21,    -3,
-       9,   -21,   -21,   -21,   -21
+     166,   200,   -91,   -91,   -91,     7,   -91,   -91,   207,   -91,
+      72,    72,   207,   207,   -91,    26,    33,    38,    46,    51,
+      59,    62,    68,    69,    70,    79,    55,   125,   -91,   -91,
+     207,    85,   -91,    76,   -91,    86,    77,   -91,   -91,   -91,
+     128,   -91,   166,   -91,   -91,   127,   129,   -91,   -91,    20,
+      27,   -91,    99,   136,   -91,   -91,   137,   -91,   138,   139,
+     -91,   -91,   166,   166,   -91,   -91,   -91,    72,    72,    72,
+      72,   -91,    27,   142,   -91,   -91,    84,    72,    72,   120,
+     -91,   -91,    28,   -91,   -91,   -91,   -91,    20,   140,   141,
+     160,     8,   512,   512,   -91,   512,   113,   114,   248,   -91,
+     -91,   -91,   -91,   -91,   -91,   123,   -91,   -91,   -14,    -9,
+     -91,   -91,   -91,   -91,   174,    40,   -91,   -91,   -91,   162,
+     -91,   -91,   -91,   -91,   -91,   -91,   -91,   289,   -91,   330,
+     512,   371,   165,   167,   -91,   -91,   -91,   -91,   -91,   -91,
+     -91,   -91,   -91,    20,   -91,     4,   -91,   -91,   -91,   -91,
+     -91,   412,   -91,   -91,   -91,   -91,   -91,   -91,   -91,   512,
+     512,   453,   494,   168,   170,   -91,   -91
 };
 
 /* YYDEFACT[STATE-NUM] -- Default reduction number in state STATE-NUM.
@@ -598,89 +659,217 @@ static const yytype_int8 yypact[] =
    means the default is an error.  */
 static const yytype_int8 yydefact[] =
 {
-       0,    22,    23,    24,    25,    26,    27,     0,    29,     0,
-       0,     0,     0,     0,     2,     3,     7,    11,    14,    17,
-      28,    12,    18,    20,    10,     0,    35,    36,     0,     0,
-       8,     9,     1,     0,     0,     4,     0,     0,    19,    21,
-       0,     0,     0,     5,     6,    15,    16,    13,    30,     0,
-       0,    31,    33,    34,    32
+       0,    27,    31,    32,    33,    38,    28,    29,     0,    39,
+       0,     0,     0,     0,    41,     0,     0,     0,     0,     0,
+       0,     0,     0,     0,     0,     0,     0,     2,     3,     7,
+       0,     0,    11,    21,    24,    36,    30,    35,    34,    25,
+       0,    10,     0,    93,    94,     0,     0,     8,     9,     0,
+       0,    53,     0,     0,    60,    62,     0,    66,     0,     0,
+      81,     1,     0,     0,     4,    13,    18,     0,     0,     0,
+       0,    19,     0,     0,    26,    12,     0,     0,     0,    47,
+      48,    49,     0,    43,    85,    86,    51,     0,     0,     0,
+       0,     0,     0,     0,    64,     0,     0,     0,     0,     5,
+       6,    14,    15,    16,    17,    22,    37,    40,     0,     0,
+      50,    45,    42,    44,     0,     0,    57,    56,    55,     0,
+      58,    75,    78,    76,    77,    79,    80,     0,    73,     0,
+       0,     0,     0,     0,    83,    84,    72,    82,    23,    89,
+      91,    92,    90,     0,    87,     0,    54,    59,    61,    74,
+      63,     0,    67,    68,    70,    46,    88,    52,    65,     0,
+       0,     0,     0,     0,     0,    69,    71
 };
 
 /* YYPGOTO[NTERM-NUM].  */
-static const yytype_int8 yypgoto[] =
+static const yytype_int16 yypgoto[] =
 {
-     -21,   -21,     4,   -13,    -4,   -21,   -21,   -21,   -21,   -21,
-     -21,   -10
+     -91,   -91,   145,    10,     9,   -91,   -91,   -91,   -91,   -91,
+     -91,   -91,     0,   -91,   101,   -91,   -63,     2,   -91,   -91,
+     -91,   -91,   -91,   -91,   -91,   -91,   -90,   -80,   -91,   119,
+     -91,   -91,   -10
 };
 
 /* YYDEFGOTO[NTERM-NUM].  */
-static const yytype_int8 yydefgoto[] =
+static const yytype_uint8 yydefgoto[] =
 {
-       0,    13,    14,    15,    16,    37,    17,    18,    19,    25,
-      20,    28
+       0,    26,    27,    28,    29,    30,    31,    32,    33,    34,
+      35,    42,   125,    49,    82,   143,    83,   126,   114,    87,
+      92,    93,   130,    95,   159,   160,   127,   128,    98,    86,
+     145,    38,    45
 };
 
 /* YYTABLE[YYPACT[STATE-NUM]] -- What to do in state STATE-NUM.  If
    positive, shift that token.  If negative, reduce the rule whose
    number is the opposite.  If YYTABLE_NINF, syntax error.  */
-static const yytype_int8 yytable[] =
+static const yytype_int16 yytable[] =
 {
-      29,    35,    21,    24,    22,    45,    46,    30,    31,     1,
-       2,     3,     4,     5,     6,    23,    51,    26,    52,    32,
-      43,    44,     8,    27,     9,    36,    10,    35,    53,    40,
-      54,    49,    50,    47,     1,     2,     3,     4,     5,     6,
-      38,    41,    39,    33,    34,     7,     0,     8,    48,     9,
-      42,    10,     0,     0,     0,     0,    11,    12,     1,     2,
-       3,     4,     5,     6,     0,     0,     0,    33,    34,     7,
-       0,     8,     0,     9,     0,    10,     0,     0,     0,     0,
-      11,    12,     1,     2,     3,     4,     5,     6,     0,     0,
-       0,     0,     0,     7,     0,     8,     0,     9,     0,    10,
-       0,     0,     0,     0,    11,    12
+      36,    46,    37,   129,   139,   131,   140,   156,    36,   141,
+      37,   142,    36,    36,    37,    37,   119,    41,   137,   113,
+     157,    47,    48,    79,   120,    80,    81,    36,    40,    37,
+      36,    79,    37,    80,    81,    84,    85,    64,   111,    65,
+     151,    50,    36,    79,    37,    80,    81,   149,    51,   149,
+     111,   149,   113,    52,   112,    61,   146,   101,   102,   103,
+     104,    53,    36,    36,    37,    37,    54,   108,   109,   161,
+     162,   149,    99,   100,    55,    43,    36,    56,    37,    44,
+     155,   149,   149,    57,    58,    59,    64,     1,     2,     3,
+       4,     5,     6,     7,    60,    62,    63,     8,    72,     9,
+     107,    10,    88,    11,    89,    90,    66,    12,    13,    74,
+      14,    73,    67,    68,    69,    70,    71,    15,    16,    17,
+      18,    19,    20,    21,    22,    23,    24,    25,     1,     2,
+       3,     4,     5,     6,     7,    75,    62,    63,     8,    91,
+       9,    77,    10,    78,    11,    94,    96,    97,    12,    13,
+     106,    14,   110,   132,   133,   138,   116,   117,    15,    16,
+      17,    18,    19,    20,    21,    22,    23,    24,    25,     1,
+       2,     3,     4,     5,     6,     7,   118,   144,   147,     8,
+     153,     9,   154,    10,   165,    11,   166,    76,   115,    12,
+      13,   105,    14,     0,     0,     0,     0,     0,     0,    15,
+      16,    17,    18,    19,    20,    21,    22,    23,    24,    25,
+       1,     2,     3,     4,     5,     6,     7,     0,     0,     0,
+       0,   -20,     9,     0,    10,     0,    11,   -20,   -20,   -20,
+     -20,   -20,    39,    14,     0,     0,     0,     0,     0,     0,
+      15,    16,    17,    18,    19,    20,    21,    22,    23,    24,
+      25,   121,   122,   123,   124,     0,   134,   135,     0,     0,
+       0,     0,     0,     0,   136,     0,     0,     0,     0,     0,
+       0,     0,     0,     0,    14,     0,     0,     0,     0,     0,
+       0,    15,    16,    17,    18,    19,    20,    21,    22,    23,
+      24,    25,   121,   122,   123,   124,     0,     0,     0,     0,
+       0,     0,     0,     0,     0,   148,     0,     0,     0,     0,
+       0,     0,     0,     0,     0,    14,     0,     0,     0,     0,
+       0,     0,    15,    16,    17,    18,    19,    20,    21,    22,
+      23,    24,    25,   121,   122,   123,   124,     0,     0,     0,
+       0,     0,     0,     0,     0,     0,   150,     0,     0,     0,
+       0,     0,     0,     0,     0,     0,    14,     0,     0,     0,
+       0,     0,     0,    15,    16,    17,    18,    19,    20,    21,
+      22,    23,    24,    25,   121,   122,   123,   124,     0,     0,
+       0,     0,     0,     0,     0,     0,     0,   152,     0,     0,
+       0,     0,     0,     0,     0,     0,     0,    14,     0,     0,
+       0,     0,     0,     0,    15,    16,    17,    18,    19,    20,
+      21,    22,    23,    24,    25,   121,   122,   123,   124,     0,
+       0,     0,     0,     0,     0,     0,     0,     0,   158,     0,
+       0,     0,     0,     0,     0,     0,     0,     0,    14,     0,
+       0,     0,     0,     0,     0,    15,    16,    17,    18,    19,
+      20,    21,    22,    23,    24,    25,   121,   122,   123,   124,
+       0,     0,     0,     0,     0,     0,     0,     0,     0,   163,
+       0,     0,     0,     0,     0,     0,     0,     0,     0,    14,
+       0,     0,     0,     0,     0,     0,    15,    16,    17,    18,
+      19,    20,    21,    22,    23,    24,    25,   121,   122,   123,
+     124,     0,     0,     0,     0,     0,     0,     0,     0,     0,
+     164,     0,     0,     0,     0,   121,   122,   123,   124,     0,
+      14,     0,     0,     0,     0,     0,     0,    15,    16,    17,
+      18,    19,    20,    21,    22,    23,    24,    25,    14,     0,
+       0,     0,     0,     0,     0,    15,    16,    17,    18,    19,
+      20,    21,    22,    23,    24,    25
 };
 
-static const yytype_int8 yycheck[] =
+static const yytype_int16 yycheck[] =
 {
-      10,    14,    22,     7,    24,    10,    11,    11,    12,     3,
-       4,     5,     6,     7,     8,    24,    19,     3,    21,     0,
-      33,    34,    16,     9,    18,    23,    20,    40,    19,    25,
-      21,    41,    42,    37,     3,     4,     5,     6,     7,     8,
-      10,    15,    10,    12,    13,    14,    -1,    16,    17,    18,
-      15,    20,    -1,    -1,    -1,    -1,    25,    26,     3,     4,
-       5,     6,     7,     8,    -1,    -1,    -1,    12,    13,    14,
-      -1,    16,    -1,    18,    -1,    20,    -1,    -1,    -1,    -1,
-      25,    26,     3,     4,     5,     6,     7,     8,    -1,    -1,
-      -1,    -1,    -1,    14,    -1,    16,    -1,    18,    -1,    20,
-      -1,    -1,    -1,    -1,    25,    26
+       0,    11,     0,    93,    18,    95,    20,     3,     8,    18,
+       8,    20,    12,    13,    12,    13,     8,     8,    98,    82,
+      16,    12,    13,     3,    16,     5,     6,    27,    21,    27,
+      30,     3,    30,     5,     6,     8,     9,    27,    10,    30,
+     130,    15,    42,     3,    42,     5,     6,   127,    15,   129,
+      10,   131,   115,    15,    26,     0,    16,    67,    68,    69,
+      70,    15,    62,    63,    62,    63,    15,    77,    78,   159,
+     160,   151,    62,    63,    15,     3,    76,    15,    76,     7,
+     143,   161,   162,    15,    15,    15,    76,     3,     4,     5,
+       6,     7,     8,     9,    15,    11,    12,    13,    22,    15,
+      16,    17,     3,    19,     5,     6,    21,    23,    24,    32,
+      26,    25,    27,    28,    29,    30,    31,    33,    34,    35,
+      36,    37,    38,    39,    40,    41,    42,    43,     3,     4,
+       5,     6,     7,     8,     9,     7,    11,    12,    13,     3,
+      15,    14,    17,    14,    19,     8,     8,     8,    23,    24,
+       8,    26,    32,    40,    40,    32,    16,    16,    33,    34,
+      35,    36,    37,    38,    39,    40,    41,    42,    43,     3,
+       4,     5,     6,     7,     8,     9,    16,     3,    16,    13,
+      15,    15,    15,    17,    16,    19,    16,    42,    87,    23,
+      24,    72,    26,    -1,    -1,    -1,    -1,    -1,    -1,    33,
+      34,    35,    36,    37,    38,    39,    40,    41,    42,    43,
+       3,     4,     5,     6,     7,     8,     9,    -1,    -1,    -1,
+      -1,    21,    15,    -1,    17,    -1,    19,    27,    28,    29,
+      30,    31,    32,    26,    -1,    -1,    -1,    -1,    -1,    -1,
+      33,    34,    35,    36,    37,    38,    39,    40,    41,    42,
+      43,     3,     4,     5,     6,    -1,     8,     9,    -1,    -1,
+      -1,    -1,    -1,    -1,    16,    -1,    -1,    -1,    -1,    -1,
+      -1,    -1,    -1,    -1,    26,    -1,    -1,    -1,    -1,    -1,
+      -1,    33,    34,    35,    36,    37,    38,    39,    40,    41,
+      42,    43,     3,     4,     5,     6,    -1,    -1,    -1,    -1,
+      -1,    -1,    -1,    -1,    -1,    16,    -1,    -1,    -1,    -1,
+      -1,    -1,    -1,    -1,    -1,    26,    -1,    -1,    -1,    -1,
+      -1,    -1,    33,    34,    35,    36,    37,    38,    39,    40,
+      41,    42,    43,     3,     4,     5,     6,    -1,    -1,    -1,
+      -1,    -1,    -1,    -1,    -1,    -1,    16,    -1,    -1,    -1,
+      -1,    -1,    -1,    -1,    -1,    -1,    26,    -1,    -1,    -1,
+      -1,    -1,    -1,    33,    34,    35,    36,    37,    38,    39,
+      40,    41,    42,    43,     3,     4,     5,     6,    -1,    -1,
+      -1,    -1,    -1,    -1,    -1,    -1,    -1,    16,    -1,    -1,
+      -1,    -1,    -1,    -1,    -1,    -1,    -1,    26,    -1,    -1,
+      -1,    -1,    -1,    -1,    33,    34,    35,    36,    37,    38,
+      39,    40,    41,    42,    43,     3,     4,     5,     6,    -1,
+      -1,    -1,    -1,    -1,    -1,    -1,    -1,    -1,    16,    -1,
+      -1,    -1,    -1,    -1,    -1,    -1,    -1,    -1,    26,    -1,
+      -1,    -1,    -1,    -1,    -1,    33,    34,    35,    36,    37,
+      38,    39,    40,    41,    42,    43,     3,     4,     5,     6,
+      -1,    -1,    -1,    -1,    -1,    -1,    -1,    -1,    -1,    16,
+      -1,    -1,    -1,    -1,    -1,    -1,    -1,    -1,    -1,    26,
+      -1,    -1,    -1,    -1,    -1,    -1,    33,    34,    35,    36,
+      37,    38,    39,    40,    41,    42,    43,     3,     4,     5,
+       6,    -1,    -1,    -1,    -1,    -1,    -1,    -1,    -1,    -1,
+      16,    -1,    -1,    -1,    -1,     3,     4,     5,     6,    -1,
+      26,    -1,    -1,    -1,    -1,    -1,    -1,    33,    34,    35,
+      36,    37,    38,    39,    40,    41,    42,    43,    26,    -1,
+      -1,    -1,    -1,    -1,    -1,    33,    34,    35,    36,    37,
+      38,    39,    40,    41,    42,    43
 };
 
 /* YYSTOS[STATE-NUM] -- The symbol kind of the accessing symbol of
    state STATE-NUM.  */
 static const yytype_int8 yystos[] =
 {
-       0,     3,     4,     5,     6,     7,     8,    14,    16,    18,
-      20,    25,    26,    28,    29,    30,    31,    33,    34,    35,
-      37,    22,    24,    24,    31,    36,     3,     9,    38,    38,
-      31,    31,     0,    12,    13,    30,    23,    32,    10,    10,
-      29,    15,    15,    30,    30,    10,    11,    31,    17,    38,
-      38,    19,    21,    19,    21
+       0,     3,     4,     5,     6,     7,     8,     9,    13,    15,
+      17,    19,    23,    24,    26,    33,    34,    35,    36,    37,
+      38,    39,    40,    41,    42,    43,    45,    46,    47,    48,
+      49,    50,    51,    52,    53,    54,    56,    61,    75,    32,
+      21,    48,    55,     3,     7,    76,    76,    48,    48,    57,
+      15,    15,    15,    15,    15,    15,    15,    15,    15,    15,
+      15,     0,    11,    12,    47,    48,    21,    27,    28,    29,
+      30,    31,    22,    25,    32,     7,    46,    14,    14,     3,
+       5,     6,    58,    60,     8,     9,    73,    63,     3,     5,
+       6,     3,    64,    65,     8,    67,     8,     8,    72,    47,
+      47,    76,    76,    76,    76,    73,     8,    16,    76,    76,
+      32,    10,    26,    60,    62,    58,    16,    16,    16,     8,
+      16,     3,     4,     5,     6,    56,    61,    70,    71,    70,
+      66,    70,    40,    40,     8,     9,    16,    71,    32,    18,
+      20,    18,    20,    59,     3,    74,    16,    16,    16,    71,
+      16,    70,    16,    15,    15,    60,     3,    16,    16,    68,
+      69,    70,    70,    16,    16,    16,    16
 };
 
 /* YYR1[RULE-NUM] -- Symbol kind of the left-hand side of rule RULE-NUM.  */
 static const yytype_int8 yyr1[] =
 {
-       0,    27,    28,    29,    29,    29,    29,    30,    30,    30,
-      30,    31,    32,    31,    33,    33,    33,    34,    34,    34,
-      34,    34,    35,    35,    35,    35,    35,    35,    35,    36,
-      35,    37,    37,    37,    37,    38,    38
+       0,    44,    45,    46,    46,    46,    46,    47,    47,    47,
+      47,    48,    48,    48,    48,    48,    48,    48,    49,    49,
+      50,    51,    51,    51,    52,    52,    52,    53,    53,    53,
+      53,    53,    53,    53,    53,    53,    53,    53,    53,    55,
+      54,    57,    56,    58,    58,    59,    58,    60,    60,    60,
+      60,    62,    61,    63,    61,    61,    61,    61,    61,    61,
+      64,    61,    65,    61,    66,    61,    67,    61,    68,    61,
+      69,    61,    61,    70,    70,    71,    71,    71,    71,    71,
+      71,    72,    72,    72,    72,    73,    73,    74,    74,    75,
+      75,    75,    75,    76,    76
 };
 
 /* YYR2[RULE-NUM] -- Number of symbols on the right-hand side of rule RULE-NUM.  */
 static const yytype_int8 yyr2[] =
 {
        0,     2,     1,     1,     2,     3,     3,     1,     2,     2,
-       2,     1,     0,     4,     1,     3,     3,     1,     2,     3,
-       2,     3,     1,     1,     1,     1,     1,     1,     1,     0,
-       4,     5,     5,     5,     5,     1,     1
+       2,     1,     3,     2,     3,     3,     3,     3,     2,     2,
+       1,     1,     3,     4,     1,     2,     2,     1,     1,     1,
+       1,     1,     1,     1,     1,     1,     1,     3,     1,     0,
+       4,     0,     4,     1,     2,     0,     4,     1,     1,     1,
+       2,     0,     6,     0,     5,     4,     4,     4,     4,     5,
+       0,     5,     0,     5,     0,     6,     0,     5,     0,     9,
+       0,     9,     4,     1,     2,     1,     1,     1,     1,     1,
+       1,     0,     2,     2,     2,     1,     1,     1,     2,     5,
+       5,     5,     5,     1,     1
 };
 
 
@@ -1152,208 +1341,513 @@ yyreduce:
   switch (yyn)
     {
   case 3: /* clause_list: mod_clause  */
-#line 84 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
+#line 99 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
                                     { ctx.AddClause(sdb::Conjunction::Or); }
-#line 1157 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
+#line 1346 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
     break;
 
   case 4: /* clause_list: clause_list mod_clause  */
-#line 85 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
+#line 100 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
                                     { ctx.AddClause(sdb::Conjunction::Or); }
-#line 1163 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
+#line 1352 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
     break;
 
   case 5: /* clause_list: clause_list AND mod_clause  */
-#line 86 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
+#line 101 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
                                     { ctx.AddClause(sdb::Conjunction::And); }
-#line 1169 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
+#line 1358 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
     break;
 
   case 6: /* clause_list: clause_list OR mod_clause  */
-#line 87 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
+#line 102 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
                                     { ctx.AddClause(sdb::Conjunction::Or); }
-#line 1175 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
+#line 1364 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
     break;
 
   case 7: /* mod_clause: term_expr  */
-#line 91 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
+#line 106 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
                                     { ctx.last_mod = sdb::Modifier::None; }
-#line 1181 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
+#line 1370 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
     break;
 
   case 8: /* mod_clause: PLUS term_expr  */
-#line 92 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
+#line 107 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
                                     { ctx.last_mod = sdb::Modifier::Required; }
-#line 1187 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
+#line 1376 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
     break;
 
   case 9: /* mod_clause: MINUS term_expr  */
-#line 93 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
+#line 108 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
                                     { ctx.last_mod = sdb::Modifier::Not; }
-#line 1193 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
+#line 1382 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
     break;
 
   case 10: /* mod_clause: NOT term_expr  */
-#line 94 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
+#line 109 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
                                     { ctx.last_mod = sdb::Modifier::Not; }
-#line 1199 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
+#line 1388 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
     break;
 
-  case 12: /* $@1: %empty  */
-#line 99 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
+  case 11: /* term_expr: boosted_expr  */
+#line 113 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
+                                    { (yyval.filter) = (yyvsp[0].filter); }
+#line 1394 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
+    break;
+
+  case 12: /* term_expr: STAR COLON STAR  */
+#line 114 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
+                                    { (yyval.filter) = &ctx.AddAll(); }
+#line 1400 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
+    break;
+
+  case 13: /* term_expr: field_prefix term_expr  */
+#line 115 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
+                                    { (yyval.filter) = (yyvsp[0].filter); }
+#line 1406 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
+    break;
+
+  case 14: /* term_expr: field_name LT range_bound  */
+#line 118 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
+                                    { (yyval.filter) = &ctx.AddRange("*", (yyvsp[0].sv), false, false); }
+#line 1412 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
+    break;
+
+  case 15: /* term_expr: field_name LE range_bound  */
+#line 119 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
+                                    { (yyval.filter) = &ctx.AddRange("*", (yyvsp[0].sv), false, true); }
+#line 1418 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
+    break;
+
+  case 16: /* term_expr: field_name GT range_bound  */
+#line 120 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
+                                    { (yyval.filter) = &ctx.AddRange((yyvsp[0].sv), "*", false, false); }
+#line 1424 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
+    break;
+
+  case 17: /* term_expr: field_name GE range_bound  */
+#line 121 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
+                                    { (yyval.filter) = &ctx.AddRange((yyvsp[0].sv), "*", true, false); }
+#line 1430 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
+    break;
+
+  case 20: /* field_name: TERM  */
+#line 130 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
                                     {
-                                      if (ctx.strict_field &&
-                                          std::string_view{(yyvsp[-1].sv)} !=
-                                              ctx.default_field_name) {
-                                        ctx.error_message =
-                                          "field-prefix in strict-field mode "
-                                          "must match the default field";
+                                      if (!ctx.CheckField((yyvsp[0].sv))) {
                                         YYABORT;
                                       }
                                     }
-#line 1214 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
+#line 1440 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
     break;
 
-  case 15: /* boosted_expr: modified_term CARET NUMBER  */
-#line 114 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
-                                    { (yyvsp[-2].filter)->boost(static_cast<float>((yyvsp[0].num))); }
-#line 1220 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
-    break;
-
-  case 16: /* boosted_expr: modified_term CARET FLOAT  */
-#line 115 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
-                                    { (yyvsp[-2].filter)->boost((yyvsp[0].fnum)); }
-#line 1226 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
-    break;
-
-  case 17: /* modified_term: base_term  */
-#line 119 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
+  case 21: /* boosted_expr: modified_term  */
+#line 138 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
                                     { (yyval.filter) = (yyvsp[0].filter); }
-#line 1232 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
+#line 1446 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
     break;
 
-  case 18: /* modified_term: TERM TILDE  */
-#line 120 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
-                                    { (yyval.filter) = &ctx.AddFuzzy((yyvsp[-1].sv), 2); }
-#line 1238 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
+  case 22: /* boosted_expr: modified_term CARET threshold  */
+#line 139 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
+                                    { (yyvsp[-2].filter)->boost((yyvsp[0].fnum)); (yyval.filter) = (yyvsp[-2].filter); }
+#line 1452 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
     break;
 
-  case 19: /* modified_term: TERM TILDE NUMBER  */
-#line 121 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
-                                    { (yyval.filter) = &ctx.AddFuzzy((yyvsp[-2].sv), (yyvsp[0].num)); }
-#line 1244 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
+  case 23: /* boosted_expr: modified_term CARET threshold FUZZY  */
+#line 143 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
+                                    { (yyvsp[-3].filter)->boost((yyvsp[-1].fnum));
+                                      (yyval.filter) = &ctx.ApplyFuzzy((yyvsp[-3].filter), (yyvsp[0].fuzzy).has_value,
+                                                           (yyvsp[0].fuzzy).value); }
+#line 1460 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
     break;
 
-  case 20: /* modified_term: PHRASE TILDE  */
-#line 122 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
-                                    { (yyval.filter) = &ctx.AddPhrase((yyvsp[-1].sv), 0); }
-#line 1250 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
+  case 24: /* modified_term: base_term  */
+#line 149 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
+                                    { (yyval.filter) = (yyvsp[0].filter); }
+#line 1466 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
     break;
 
-  case 21: /* modified_term: PHRASE TILDE NUMBER  */
-#line 123 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
-                                    { (yyval.filter) = &ctx.AddPhrase((yyvsp[-2].sv), (yyvsp[0].num)); }
-#line 1256 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
+  case 25: /* modified_term: TERM FUZZY  */
+#line 153 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
+                                    { (yyval.filter) = (yyvsp[0].fuzzy).has_value
+                                          ? &ctx.AddFuzzySimilarity((yyvsp[-1].sv), (yyvsp[0].fuzzy).value)
+                                          : &ctx.AddFuzzy((yyvsp[-1].sv), 2); }
+#line 1474 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
     break;
 
-  case 22: /* base_term: TERM  */
-#line 127 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
+  case 26: /* modified_term: phrase FUZZY  */
+#line 156 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
+                                    { if ((yyvsp[0].fuzzy).has_value) {
+                                        ctx.SetSlop((yyvsp[-1].filter), static_cast<int>((yyvsp[0].fuzzy).value));
+                                      }
+                                      (yyval.filter) = (yyvsp[-1].filter); }
+#line 1483 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
+    break;
+
+  case 27: /* base_term: TERM  */
+#line 163 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
                                     { (yyval.filter) = &ctx.AddTerm((yyvsp[0].sv)); }
-#line 1262 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
+#line 1489 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
     break;
 
-  case 23: /* base_term: PHRASE  */
-#line 128 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
-                                    { (yyval.filter) = &ctx.AddPhrase((yyvsp[0].sv), 0); }
-#line 1268 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
+  case 28: /* base_term: NUMBER  */
+#line 164 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
+                                    { (yyval.filter) = &ctx.AddTerm((yyvsp[0].num).text); }
+#line 1495 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
     break;
 
-  case 24: /* base_term: REGEX  */
-#line 129 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
-                                    { (yyval.filter) = &ctx.AddWildcard((yyvsp[0].sv)); }
-#line 1274 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
+  case 29: /* base_term: FLOAT  */
+#line 165 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
+                                    { (yyval.filter) = &ctx.AddTerm((yyvsp[0].flt).text); }
+#line 1501 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
     break;
 
-  case 25: /* base_term: PREFIX  */
-#line 130 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
-                                    { (yyval.filter) = &ctx.AddPrefix((yyvsp[0].sv)); }
-#line 1280 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
-    break;
-
-  case 26: /* base_term: SUFFIX  */
-#line 131 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
-                                    { (yyval.filter) = &ctx.AddWildcard((yyvsp[0].sv)); }
-#line 1286 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
-    break;
-
-  case 27: /* base_term: WILDCARD  */
-#line 132 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
-                                    { (yyval.filter) = &ctx.AddWildcard((yyvsp[0].sv)); }
-#line 1292 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
-    break;
-
-  case 28: /* base_term: range_expr  */
-#line 133 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
+  case 30: /* base_term: phrase  */
+#line 166 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
                                     { (yyval.filter) = (yyvsp[0].filter); }
-#line 1298 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
+#line 1507 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
     break;
 
-  case 29: /* @2: %empty  */
-#line 134 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
+  case 31: /* base_term: REGEX  */
+#line 167 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
+                                    { (yyval.filter) = &ctx.AddRegex((yyvsp[0].sv)); }
+#line 1513 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
+    break;
+
+  case 32: /* base_term: PREFIX  */
+#line 168 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
+                                    { (yyval.filter) = &ctx.AddPrefix((yyvsp[0].sv)); }
+#line 1519 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
+    break;
+
+  case 33: /* base_term: WILDCARD  */
+#line 169 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
+                                    { (yyval.filter) = &ctx.AddWildcard((yyvsp[0].sv)); }
+#line 1525 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
+    break;
+
+  case 34: /* base_term: range_expr  */
+#line 170 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
+                                    { (yyval.filter) = (yyvsp[0].filter); }
+#line 1531 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
+    break;
+
+  case 35: /* base_term: ngram_expr  */
+#line 171 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
+                                    { (yyval.filter) = (yyvsp[0].filter); }
+#line 1537 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
+    break;
+
+  case 36: /* base_term: group  */
+#line 172 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
+                                    { (yyval.filter) = (yyvsp[0].filter); }
+#line 1543 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
+    break;
+
+  case 37: /* base_term: group AT NUMBER  */
+#line 173 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
+                                    { ctx.SetMinMatch((yyvsp[-2].filter), (yyvsp[0].num).value); (yyval.filter) = (yyvsp[-2].filter); }
+#line 1549 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
+    break;
+
+  case 38: /* base_term: STAR  */
+#line 174 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
+                                    { (yyval.filter) = &ctx.AddFieldExists(); }
+#line 1555 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
+    break;
+
+  case 39: /* @1: %empty  */
+#line 178 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
                                     {
                                       (yyval.filter) = ctx.current_root;
                                       ctx.current_root = &ctx.current_root->GetOptional().add<irs::MixedBooleanFilter>();
                                     }
-#line 1307 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
+#line 1564 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
     break;
 
-  case 30: /* base_term: LPAREN @2 clause_list RPAREN  */
-#line 138 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
+  case 40: /* group: LPAREN @1 clause_list RPAREN  */
+#line 182 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
                                     {
                                       (yyval.filter) = ctx.current_root;
                                       ctx.current_root = sdb::basics::downCast<irs::MixedBooleanFilter>((yyvsp[-2].filter));
                                     }
-#line 1316 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
+#line 1573 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
     break;
 
-  case 31: /* range_expr: LBRACKET range_bound TO range_bound RBRACKET  */
-#line 146 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
+  case 41: /* $@2: %empty  */
+#line 191 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
+                                    { ctx.BeginPhrase(); }
+#line 1579 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
+    break;
+
+  case 42: /* phrase: QUOTE $@2 phrase_body QUOTE  */
+#line 192 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
+                                    { (yyval.filter) = &ctx.EndPhrase(); }
+#line 1585 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
+    break;
+
+  case 45: /* $@3: %empty  */
+#line 198 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
+                                    { ctx.SetGap((yyvsp[0].gap).min, (yyvsp[0].gap).max); }
+#line 1591 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
+    break;
+
+  case 47: /* phrase_part: TERM  */
+#line 203 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
+                                    { ctx.AddPhraseTerm((yyvsp[0].sv)); }
+#line 1597 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
+    break;
+
+  case 48: /* phrase_part: PREFIX  */
+#line 204 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
+                                    { ctx.AddPhrasePrefix((yyvsp[0].sv)); }
+#line 1603 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
+    break;
+
+  case 49: /* phrase_part: WILDCARD  */
+#line 205 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
+                                    { ctx.AddPhraseWildcard((yyvsp[0].sv)); }
+#line 1609 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
+    break;
+
+  case 50: /* phrase_part: TERM FUZZY  */
+#line 206 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
+                                    { ctx.AddPhraseFuzzy(
+                                        (yyvsp[-1].sv), (yyvsp[0].fuzzy).has_value
+                                              ? static_cast<int>((yyvsp[0].fuzzy).value)
+                                              : 2); }
+#line 1618 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
+    break;
+
+  case 51: /* $@4: %empty  */
+#line 216 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
+                                    { ctx.BeginNGram((yyvsp[0].fnum)); }
+#line 1624 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
+    break;
+
+  case 52: /* ngram_expr: FN_NGRAM LPAREN threshold $@4 ngram_terms RPAREN  */
+#line 217 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
+                                    { (yyval.filter) = &ctx.EndNGram(); }
+#line 1630 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
+    break;
+
+  case 53: /* $@5: %empty  */
+#line 218 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
+                                    { ctx.BeginPhrase(); }
+#line 1636 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
+    break;
+
+  case 54: /* ngram_expr: FN_PHRASE LPAREN $@5 phrase_body RPAREN  */
+#line 219 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
+                                    { (yyval.filter) = &ctx.EndPhrase(); }
+#line 1642 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
+    break;
+
+  case 55: /* ngram_expr: FN_WILDCARD LPAREN WILDCARD RPAREN  */
+#line 220 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
+                                          { (yyval.filter) = &ctx.AddWildcard((yyvsp[-1].sv)); }
+#line 1648 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
+    break;
+
+  case 56: /* ngram_expr: FN_WILDCARD LPAREN PREFIX RPAREN  */
+#line 221 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
+                                          { (yyval.filter) = &ctx.AddWildcard((yyvsp[-1].sv)); }
+#line 1654 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
+    break;
+
+  case 57: /* ngram_expr: FN_WILDCARD LPAREN TERM RPAREN  */
+#line 222 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
+                                          { (yyval.filter) = &ctx.AddWildcard((yyvsp[-1].sv)); }
+#line 1660 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
+    break;
+
+  case 58: /* ngram_expr: FN_FUZZY LPAREN TERM RPAREN  */
+#line 223 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
+                                          { (yyval.filter) = &ctx.AddFuzzy((yyvsp[-1].sv), 2); }
+#line 1666 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
+    break;
+
+  case 59: /* ngram_expr: FN_FUZZY LPAREN TERM NUMBER RPAREN  */
+#line 224 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
+                                          { (yyval.filter) = &ctx.AddFuzzy((yyvsp[-2].sv), (yyvsp[-1].num).value); }
+#line 1672 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
+    break;
+
+  case 60: /* $@6: %empty  */
+#line 228 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
+                                    { ctx.BeginFn(); }
+#line 1678 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
+    break;
+
+  case 61: /* ngram_expr: FN_OR LPAREN $@6 fn_terms RPAREN  */
+#line 229 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
+                                    { (yyval.filter) = &ctx.EndFnAny(); }
+#line 1684 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
+    break;
+
+  case 62: /* $@7: %empty  */
+#line 230 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
+                                    { ctx.BeginFn(); }
+#line 1690 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
+    break;
+
+  case 63: /* ngram_expr: FN_UNORDERED LPAREN $@7 fn_terms RPAREN  */
+#line 231 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
+                                    { (yyval.filter) = &ctx.EndFnAll(); }
+#line 1696 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
+    break;
+
+  case 64: /* $@8: %empty  */
+#line 232 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
+                                    { ctx.BeginFn(); }
+#line 1702 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
+    break;
+
+  case 65: /* ngram_expr: FN_ATLEAST LPAREN NUMBER $@8 fn_terms RPAREN  */
+#line 233 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
+                                    { (yyval.filter) = &ctx.EndFnAtLeast((yyvsp[-3].num).value); }
+#line 1708 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
+    break;
+
+  case 66: /* $@9: %empty  */
+#line 234 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
+                                    { ctx.BeginFn(); }
+#line 1714 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
+    break;
+
+  case 67: /* ngram_expr: FN_ORDERED LPAREN $@9 fn_terms RPAREN  */
+#line 235 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
+                                    { (yyval.filter) = &ctx.EndFnOrdered(); }
+#line 1720 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
+    break;
+
+  case 68: /* $@10: %empty  */
+#line 239 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
+                                                 { ctx.BeginFn(); }
+#line 1726 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
+    break;
+
+  case 69: /* ngram_expr: FN_MAXGAPS LPAREN NUMBER FN_ORDERED LPAREN $@10 fn_terms RPAREN RPAREN  */
+#line 240 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
+                                    { (yyval.filter) = &ctx.EndFnMaxGaps((yyvsp[-6].num).value); }
+#line 1732 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
+    break;
+
+  case 70: /* $@11: %empty  */
+#line 241 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
+                                                  { ctx.BeginFn(); }
+#line 1738 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
+    break;
+
+  case 71: /* ngram_expr: FN_MAXWIDTH LPAREN NUMBER FN_ORDERED LPAREN $@11 fn_terms RPAREN RPAREN  */
+#line 242 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
+                                    { (yyval.filter) = &ctx.EndFnMaxWidth((yyvsp[-6].num).value); }
+#line 1744 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
+    break;
+
+  case 72: /* ngram_expr: FN_OTHER LPAREN fn_args RPAREN  */
+#line 243 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
+                                      { ctx.Unsupported((yyvsp[-3].sv)); (yyval.filter) = nullptr; }
+#line 1750 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
+    break;
+
+  case 75: /* fn_source: TERM  */
+#line 258 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
+                                    { ctx.AddFnTerm((yyvsp[0].sv)); }
+#line 1756 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
+    break;
+
+  case 76: /* fn_source: PREFIX  */
+#line 259 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
+                                    { ctx.AddFnOther("a prefix"); }
+#line 1762 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
+    break;
+
+  case 77: /* fn_source: WILDCARD  */
+#line 260 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
+                                    { ctx.AddFnOther("a wildcard"); }
+#line 1768 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
+    break;
+
+  case 78: /* fn_source: REGEX  */
+#line 261 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
+                                    { ctx.AddFnOther("a regular expression"); }
+#line 1774 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
+    break;
+
+  case 79: /* fn_source: phrase  */
+#line 262 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
+                                    { ctx.AddFnOther("a phrase"); }
+#line 1780 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
+    break;
+
+  case 80: /* fn_source: ngram_expr  */
+#line 263 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
+                                    { ctx.AddFnOther("a function"); }
+#line 1786 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
+    break;
+
+  case 85: /* threshold: NUMBER  */
+#line 274 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
+                                    { (yyval.fnum) = static_cast<float>((yyvsp[0].num).value); }
+#line 1792 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
+    break;
+
+  case 86: /* threshold: FLOAT  */
+#line 275 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
+                                    { (yyval.fnum) = (yyvsp[0].flt).value; }
+#line 1798 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
+    break;
+
+  case 87: /* ngram_terms: TERM  */
+#line 279 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
+                                    { ctx.AddNGram((yyvsp[0].sv)); }
+#line 1804 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
+    break;
+
+  case 88: /* ngram_terms: ngram_terms TERM  */
+#line 280 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
+                                    { ctx.AddNGram((yyvsp[0].sv)); }
+#line 1810 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
+    break;
+
+  case 89: /* range_expr: LBRACKET range_bound TO range_bound RBRACKET  */
+#line 285 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
                                     { (yyval.filter) = &ctx.AddRange((yyvsp[-3].sv), (yyvsp[-1].sv), true, true); }
-#line 1322 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
+#line 1816 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
     break;
 
-  case 32: /* range_expr: LBRACE range_bound TO range_bound RBRACE  */
-#line 148 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
+  case 90: /* range_expr: LBRACE range_bound TO range_bound RBRACE  */
+#line 287 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
                                     { (yyval.filter) = &ctx.AddRange((yyvsp[-3].sv), (yyvsp[-1].sv), false, false); }
-#line 1328 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
+#line 1822 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
     break;
 
-  case 33: /* range_expr: LBRACKET range_bound TO range_bound RBRACE  */
-#line 150 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
+  case 91: /* range_expr: LBRACKET range_bound TO range_bound RBRACE  */
+#line 289 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
                                     { (yyval.filter) = &ctx.AddRange((yyvsp[-3].sv), (yyvsp[-1].sv), true, false); }
-#line 1334 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
+#line 1828 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
     break;
 
-  case 34: /* range_expr: LBRACE range_bound TO range_bound RBRACKET  */
-#line 152 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
+  case 92: /* range_expr: LBRACE range_bound TO range_bound RBRACKET  */
+#line 291 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
                                     { (yyval.filter) = &ctx.AddRange((yyvsp[-3].sv), (yyvsp[-1].sv), false, true); }
-#line 1340 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
+#line 1834 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
     break;
 
-  case 35: /* range_bound: TERM  */
-#line 156 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
+  case 93: /* range_bound: TERM  */
+#line 295 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
                                     { (yyval.sv) = (yyvsp[0].sv); }
-#line 1346 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
+#line 1840 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
     break;
 
-  case 36: /* range_bound: STAR  */
-#line 157 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
+  case 94: /* range_bound: STAR  */
+#line 296 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
                                     { (yyval.sv) = (yyvsp[0].sv); }
-#line 1352 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
+#line 1846 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
     break;
 
 
-#line 1356 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
+#line 1850 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
 
       default: break;
     }
@@ -1546,7 +2040,7 @@ yyreturnlab:
   return yyresult;
 }
 
-#line 160 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
+#line 299 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
 
 
 void yyerror(sdb::ParserContext& ctx, const char *s) {

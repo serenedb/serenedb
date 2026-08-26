@@ -788,35 +788,6 @@ void LikeEscapeFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
     });
 }
 
-void SimilarToEscapeFunction2(duckdb::DataChunk& args, duckdb::ExpressionState&,
-                              duckdb::Vector& result) {
-  duckdb::BinaryExecutor::Execute<duckdb::string_t, duckdb::string_t,
-                                  duckdb::string_t>(
-    args.data[0], args.data[1], result, args.size(),
-    [&](duckdb::string_t pattern, duckdb::string_t escape) -> duckdb::string_t {
-      std::string_view esc_sv{escape.GetData(), escape.GetSize()};
-      if (esc_sv.size() != 1) {
-        THROW_SQL_ERROR(
-          ERR_CODE(ERRCODE_INVALID_ESCAPE_SEQUENCE),
-          ERR_MSG("invalid escape string: must be one character"));
-      }
-      auto out = SimilarToEscapePattern({pattern.GetData(), pattern.GetSize()},
-                                        esc_sv[0]);
-      return duckdb::StringVector::AddString(result, out);
-    });
-}
-
-void SimilarToEscapeFunction1(duckdb::DataChunk& args, duckdb::ExpressionState&,
-                              duckdb::Vector& result) {
-  duckdb::UnaryExecutor::Execute<duckdb::string_t, duckdb::string_t>(
-    args.data[0], result, args.size(),
-    [&](duckdb::string_t pattern) -> duckdb::string_t {
-      auto out =
-        SimilarToEscapePattern({pattern.GetData(), pattern.GetSize()}, '\\');
-      return duckdb::StringVector::AddString(result, out);
-    });
-}
-
 // ---------------------------------------------------------------------------
 // UTF-8 helpers for regexp_instr (same as server/pg/functions/regexp.cpp)
 // ---------------------------------------------------------------------------
@@ -1094,78 +1065,6 @@ std::string LikeEscapePattern(std::string_view pattern, char escape_char) {
   return result;
 }
 
-std::string SimilarToEscapePattern(std::string_view pattern, char escape_char) {
-  std::string result;
-  result.reserve(pattern.size() + 6);
-
-  bool afterescape = false;
-  int nquotes = 0;
-  int bracket_depth = 0;
-  int charclass_pos = 0;
-
-  result += "^(?:";
-
-  for (size_t i = 0; i < pattern.size(); ++i) {
-    char pchar = pattern[i];
-
-    if (afterescape) {
-      if (pchar == '"' && bracket_depth < 1) {
-        if (nquotes == 0) {
-          result += "){1,1}?(";
-        } else if (nquotes == 1) {
-          result += "){1,1}(?:";
-        } else {
-          THROW_SQL_ERROR(
-            ERR_CODE(ERRCODE_INVALID_USE_OF_ESCAPE_CHARACTER),
-            ERR_MSG("SQL regular expression may not contain more than "
-                    "two escape-double-quote separators"));
-        }
-        nquotes++;
-      } else {
-        result += '\\';
-        result += pchar;
-        charclass_pos = 3;
-      }
-      afterescape = false;
-    } else if (pchar == escape_char) {
-      afterescape = true;
-    } else if (bracket_depth > 0) {
-      if (pchar == '\\') {
-        result += '\\';
-      }
-      result += pchar;
-      if (pchar == ']' && charclass_pos > 2) {
-        bracket_depth--;
-      } else if (pchar == '[') {
-        bracket_depth++;
-        charclass_pos = 3;
-      } else if (pchar == '^') {
-        charclass_pos++;
-      } else {
-        charclass_pos = 3;
-      }
-    } else if (pchar == '[') {
-      result += pchar;
-      bracket_depth = 1;
-      charclass_pos = 1;
-    } else if (pchar == '%') {
-      result += ".*";
-    } else if (pchar == '_') {
-      result += '.';
-    } else if (pchar == '(') {
-      result += "(?:";
-    } else if (pchar == '\\' || pchar == '.' || pchar == '^' || pchar == '$') {
-      result += '\\';
-      result += pchar;
-    } else {
-      result += pchar;
-    }
-  }
-
-  result += ")$";
-  return result;
-}
-
 void RegisterPgStringFunctions(duckdb::DatabaseInstance& db) {
   duckdb::ExtensionLoader loader{db, "serenedb"};
 
@@ -1380,18 +1279,8 @@ void RegisterPgStringFunctions(duckdb::DatabaseInstance& db) {
   // regexp_substr, regexp_count -- implemented as macros in
   // default_functions.cpp
 
-  // similar_to_escape(pattern, escape) -> varchar
-  loader.RegisterFunction(duckdb::ScalarFunction{
-    "similar_to_escape",
-    {duckdb::LogicalType::VARCHAR, duckdb::LogicalType::VARCHAR},
-    duckdb::LogicalType::VARCHAR,
-    SimilarToEscapeFunction2});
-
-  // similar_to_escape(pattern) -> varchar (default escape = '\')
-  loader.RegisterFunction(duckdb::ScalarFunction{"similar_to_escape",
-                                                 {duckdb::LogicalType::VARCHAR},
-                                                 duckdb::LogicalType::VARCHAR,
-                                                 SimilarToEscapeFunction1});
+  // similar_to_escape -- lives in duckdb (src/function/scalar/string/like.cpp),
+  // next to like_escape and to the parser rewrite that emits the call.
 }
 
 }  // namespace sdb::connector

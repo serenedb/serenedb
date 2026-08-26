@@ -12,8 +12,10 @@ if ! command -v Rscript >/dev/null 2>&1; then
 	exit 0
 fi
 
-# RPostgres + DBI on first run. Installed under R_LIBS_USER so we don't
-# need root inside the container. Both packages compile against libpq.
+# The CI build image ships DBI/yaml (apt) and RPostgres (compiled at image
+# build), so this block is a no-op there. It stays for local runs on a bare R:
+# RPostgres has no Ubuntu package and takes ~1min to compile against libpq,
+# so install under R_LIBS_USER where we don't need root.
 R_USER_LIB="${R_LIBS_USER:-${HOME}/R/library}"
 mkdir -p "$R_USER_LIB"
 export R_LIBS_USER="$R_USER_LIB"

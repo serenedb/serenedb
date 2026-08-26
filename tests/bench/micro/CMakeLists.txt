@@ -47,6 +47,7 @@ add_bench(clustering)
 add_bench(simd_base64)
 add_bench(simd_json_validate)
 add_bench(simd_utf8_validate)
+add_bench(virtual_column_map)
 
 if(ARCH_AMD64)
     add_bench(ci_lower)

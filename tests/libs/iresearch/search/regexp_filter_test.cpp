@@ -18,6 +18,8 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
+#include <absl/strings/str_cat.h>
+
 #include <chrono>
 #include <type_traits>
 
@@ -195,7 +197,62 @@ TEST(by_regexp_test, type_of_prepared_query) {
 }
 
 // Parametrized tests
+namespace {
+
+class TermsGenerator : public tests::DocGeneratorBase {
+ public:
+  explicit TermsGenerator(std::vector<std::string> terms)
+    : _terms{std::move(terms)} {}
+
+  const tests::Document* next() final {
+    if (_pos == _terms.size()) {
+      return nullptr;
+    }
+    _doc.clear();
+    auto field = std::make_shared<tests::StringField>("name", _terms[_pos++]);
+    field->id = kNameId;
+    _doc.insert(field);
+    return &_doc;
+  }
+
+  void reset() final { _pos = 0; }
+
+ private:
+  std::vector<std::string> _terms;
+  size_t _pos{0};
+  tests::Document _doc;
+};
+
+}  // namespace
+
 class RegexpFilterTestCase : public tests::FilterTestCaseBase {};
+
+// A term other terms extend is written inside the block it names, as the
+// entry with an empty suffix. A pattern that ends where such a block begins
+// has to descend into it, which needs an acceptor that can still read -- see
+// `EmplaceSinkArcs`.
+TEST_P(RegexpFilterTestCase, term_a_block_is_named_by) {
+  constexpr size_t kTermsPerBlock = 32;  // over the dictionary's block minimum
+
+  std::vector<std::string> terms{"hello"};
+  for (size_t i = 0; i < kTermsPerBlock; ++i) {
+    terms.push_back(absl::StrCat("hello", i));
+  }
+  terms.emplace_back("hellp");
+
+  {
+    TermsGenerator gen{terms};
+    add_segment(gen);
+  }
+
+  auto rdr = open_reader();
+
+  const Docs both{1, irs::doc_id_t(terms.size())};  // hello, hellp
+  CheckQuery(*MakeRegexp("name", "hell."), both, Costs{both.size()}, rdr);
+  CheckQuery(*MakeRegexp("name", "hel(l|p)o"), Docs{1}, Costs{1}, rdr);
+  CheckQuery(*MakeRegexp("name", "(hello)"), Docs{1}, Costs{1}, rdr);
+  CheckQuery(*MakeRegexp("name", "hel[l]o"), Docs{1}, Costs{1}, rdr);
+}
 
 // Basic patterns
 

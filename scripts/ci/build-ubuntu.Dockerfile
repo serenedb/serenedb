@@ -47,7 +47,7 @@ RUN \
       dotnet-sdk-8.0 \
       libpq-dev pkg-config \
       ruby-full \
-      r-base-core \
+      r-base-core r-cran-dbi r-cran-yaml \
       sqlsmith && \
   ARCH=$(uname -m) && \
   case "$ARCH" in \
@@ -60,6 +60,8 @@ RUN \
   python3 -m pip install --break-system-packages --no-cache-dir \
       pytest pyyaml \
       "psycopg[binary]" psycopg2-binary asyncpg pytest-asyncio && \
+  Rscript -e 'install.packages("RPostgres", repos="https://cloud.r-project.org", quiet=TRUE)' && \
+  Rscript -e 'library(RPostgres)' && \
   ln -sf /usr/bin/clang-21 /usr/bin/clang && \
   ln -sf /usr/bin/clang++-21 /usr/bin/clang++ && \
   ln -sf /usr/bin/ccache /usr/local/bin/clang && \

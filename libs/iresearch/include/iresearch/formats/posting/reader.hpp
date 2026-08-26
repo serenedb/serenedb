@@ -229,8 +229,7 @@ class PostingsReaderImpl final : public PostingsReaderBase {
  private:
   DocIterator::ptr PruningIterator(IndexFeatures field_features,
                                    std::span<const PostingCookie> metas,
-                                   IteratorFieldOptions options,
-                                   ScoreMergeType type) const;
+                                   IteratorFieldOptions options) const;
 
   template<typename FieldTraits, typename Factory>
   static DocIterator::ptr IteratorImpl(IndexFeatures enabled,
@@ -449,7 +448,7 @@ auto ResolveScoreBoundType(IndexFeatures field_features, bool has_score_bounds,
 template<typename FormatTraits>
 DocIterator::ptr PostingsReaderImpl<FormatTraits>::PruningIterator(
   IndexFeatures field_features, std::span<const PostingCookie> metas,
-  IteratorFieldOptions options, ScoreMergeType type) const {
+  IteratorFieldOptions options) const {
   SDB_IF_FAILURE("irs::PruningIterator") {
     THROW_SQL_ERROR(ERR_MSG("intentional debug error"));
   }
@@ -511,13 +510,18 @@ DocIterator::ptr PostingsReaderImpl<FormatTraits>::Iterator(
   // (2) the field has score bounds persisted,
   // (3) the field exposes Freq,
   // (4) the query doesn't need positional/offset data,
-  // (5) min_match is 1.
+  // (5) min_match is 1,
+  // (6) there is nothing to merge, or the query adds its terms up --
+  //     `MaxScoreIterator` bounds a sum, and a query that takes the best of
+  //     its terms instead (a fuzzy one) would be scored as something else
+  //     entirely. Such a query still prunes, in the weak disjunction below,
+  //     which merges the way it was asked to.
   if (options.score_prune && options.has_score_bounds &&
       IndexFeatures::None != (field_features & IndexFeatures::Freq) &&
       IndexFeatures::None ==
         (required_features & (IndexFeatures::Pos | IndexFeatures::Offs)) &&
-      min_match == 1) {
-    return PruningIterator(field_features, metas, options, type);
+      min_match == 1 && (metas.size() == 1 || type == ScoreMergeType::Sum)) {
+    return PruningIterator(field_features, metas, options);
   }
 
   auto make_postings_iterator = [&](const PostingCookie& cookie) {

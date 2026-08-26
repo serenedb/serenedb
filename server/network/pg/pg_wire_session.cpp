@@ -139,15 +139,11 @@ inline CopyKind ClassifyCopy(duckdb::SQLStatement& statement) {
     format = CopyFormat::Text;
   } else if (info.format == "parquet") {
     format = CopyFormat::Parquet;
-  } else if (!info.is_from && info.format == "csv" &&
-             !info.options.contains("header") &&
-             !info.parsed_options.contains("header")) {
-    // PostgreSQL writes no CSV header unless HEADER is given; DuckDB's CSV
-    // writer writes one by default. Every COPY is classified here, so pin the
-    // header off for COPY TO csv (covering both file and stdout); COPY FROM
-    // keeps DuckDB's header auto-detection.
-    info.options["header"] = {duckdb::Value::BOOLEAN(false)};
   }
+  // The CSV header default is not decided here: this runs before binding, so it
+  // cannot see the format of a target that only resolves later (COPY TO $1).
+  // The `copy_csv_header_default` setting, which serened pins off, covers every
+  // target shape from the binder instead.
   if (info.is_from) {
     return {info.file_path == "/dev/stdin" ? CopyDir::FromStdin : CopyDir::None,
             format};

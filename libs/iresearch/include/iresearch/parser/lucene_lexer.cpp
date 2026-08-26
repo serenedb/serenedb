@@ -365,8 +365,8 @@ static void yynoreturn yy_fatal_error ( const char* msg  );
 	(yy_hold_char) = *yy_cp; \
 	*yy_cp = '\0'; \
 	(yy_c_buf_p) = yy_cp;
-#define YY_NUM_RULES 28
-#define YY_END_OF_BUFFER 29
+#define YY_NUM_RULES 56
+#define YY_END_OF_BUFFER 57
 /* This struct is not used in this scanner,
    but its presence is necessary. */
 struct yy_trans_info
@@ -374,15 +374,28 @@ struct yy_trans_info
 	flex_int32_t yy_verify;
 	flex_int32_t yy_nxt;
 	};
-static const flex_int16_t yy_accept[62] =
+static const flex_int16_t yy_accept[186] =
     {   0,
-        0,    0,   29,   27,    1,    1,    4,   27,   27,    6,
-        7,   23,   15,   16,   27,   18,   12,   24,   25,   25,
-       25,   25,   25,    8,   27,    9,   13,   10,   27,   11,
-       14,    1,    0,   19,    0,    2,   24,   22,    0,    0,
-       20,    0,   21,    0,   18,   26,    0,   24,    0,   25,
-       25,    0,   25,    3,    5,   25,    3,   17,    2,    4,
-        0
+        0,    0,    0,    0,    0,    0,   57,   54,    1,    1,
+        5,   41,   55,   18,   19,   52,   37,   38,   55,   40,
+       28,   34,   36,   35,   53,   31,   54,   54,   54,   54,
+       20,   55,   55,   29,   54,   21,   55,   30,   48,   43,
+       43,   42,   47,   48,   49,   45,   27,   22,   27,   27,
+       23,   24,   54,   51,   53,    0,    1,    2,    3,   53,
+        0,    0,   50,    0,   54,   40,   32,   33,   54,   54,
+        4,    6,   54,   54,    4,    0,   30,   48,   46,   47,
+        0,   43,   47,    0,   48,   48,    0,   45,   27,   22,
+       27,    0,   27,   25,   39,    3,    5,    0,   30,   44,
+
+       45,   26,   26,    0,   26,   17,   17,   17,   17,   17,
+       17,   17,   17,   17,   26,   17,   17,   17,   17,    9,
+       17,   17,   17,   17,   17,   17,   17,   17,   17,   17,
+       17,   17,   17,   17,   17,   17,   17,   17,   17,   17,
+       17,   17,   17,   17,   17,   17,   17,   17,   17,   17,
+       17,    7,   17,   17,   17,   17,   17,   17,   17,   17,
+       17,   17,   17,   17,   17,    8,   17,   17,   11,   17,
+       17,   13,   17,   17,   12,   17,   17,   17,   17,   14,
+       17,   15,   16,   10,    0
     } ;
 
 static const YY_CHAR yy_ec[256] =
@@ -392,15 +405,15 @@ static const YY_CHAR yy_ec[256] =
         1,    1,    1,    1,    1,    1,    1,    1,    1,    1,
         1,    2,    4,    5,    1,    1,    1,    6,    1,    7,
         8,    9,   10,    1,   11,   12,   13,   14,   14,   14,
-       14,   14,   14,   14,   14,   14,   14,   15,    1,    1,
-        1,    1,   16,    1,   17,   18,   18,   19,   18,   18,
-       18,   18,   18,   18,   18,   18,   18,   20,   21,   18,
-       18,   22,   18,   23,   18,   18,   18,   18,   18,   18,
-       24,   25,   26,   27,   18,    1,   18,   18,   18,   18,
+       14,   14,   14,   14,   14,   14,   14,   15,    1,   16,
+       17,   18,   19,   20,   21,   22,   22,   23,   22,   22,
+       24,   22,   22,   22,   22,   25,   22,   26,   27,   22,
+       22,   28,   22,   29,   22,   22,   30,   22,   22,   22,
+       31,   32,   33,   34,   22,    1,   35,   22,   36,   37,
 
-       18,   18,   18,   18,   18,   18,   18,   18,   18,   18,
-       18,   18,   18,   18,   18,   18,   18,   18,   18,   18,
-       18,   18,   28,   29,   30,   31,    1,    1,    1,    1,
+       38,   39,   40,   41,   42,   22,   22,   43,   44,   45,
+       46,   47,   22,   48,   49,   50,   51,   22,   52,   53,
+       54,   55,   56,   57,   58,   59,    1,    1,    1,    1,
         1,    1,    1,    1,    1,    1,    1,    1,    1,    1,
         1,    1,    1,    1,    1,    1,    1,    1,    1,    1,
         1,    1,    1,    1,    1,    1,    1,    1,    1,    1,
@@ -417,76 +430,190 @@ static const YY_CHAR yy_ec[256] =
         1,    1,    1,    1,    1
     } ;
 
-static const YY_CHAR yy_meta[32] =
+static const YY_CHAR yy_meta[60] =
     {   0,
-        1,    1,    1,    2,    2,    2,    2,    2,    3,    2,
-        2,    1,    2,    4,    2,    3,    4,    4,    4,    4,
-        4,    4,    4,    2,    3,    2,    2,    2,    2,    2,
-        2
+        1,    2,    3,    4,    5,    1,    4,    4,    1,    1,
+        1,    1,    4,    6,    4,    4,    4,    4,    1,    4,
+        6,    6,    6,    6,    6,    6,    6,    6,    6,    6,
+        4,    1,    7,    4,    6,    6,    6,    6,    6,    6,
+        6,    6,    6,    6,    6,    6,    6,    6,    6,    6,
+        6,    6,    6,    6,    6,    4,    1,    7,    5
     } ;
 
-static const flex_int16_t yy_base[72] =
+static const flex_int16_t yy_base[198] =
     {   0,
-        0,    0,   88,  116,   30,   32,  116,   31,   81,  116,
-      116,   28,  116,  116,   25,   48,  116,   30,   38,   36,
-       65,   63,   62,  116,    0,  116,  116,  116,   51,  116,
-      116,   38,   54,  116,   75,  116,   65,   66,    0,   59,
-      116,   74,    0,   62,    0,   37,    0,    0,    0,    0,
-       29,    0,   20,    0,    0,    0,  116,   28,    0,    0,
-      116,   91,   93,   97,   99,  101,  104,  106,  108,  110,
-      112
+        0,    0,   58,   66,   71,   76,  406,   74,   62,   84,
+       86,  462,  399,  462,  462,  372,   89,   92,   69,   99,
+      462,  386,  462,  369,  353,  462,   88,  103,  114,  117,
+      462,    0,  462,  462,  118,  462,  327,  107,  119,  100,
+      113,  462,  351,  134,  150,  127,    0,  154,  156,  355,
+      462,  462,  145,  349,  348,  213,  165,  462,  462,  347,
+      271,  147,  462,  375,  161,  162,  462,  462,  163,  178,
+      164,  181,  192,  193,  462,  363,  191,  213,  344,  343,
+      160,  182,  342,  233,  234,  245,  359,  192,    0,  189,
+      265,  218,  278,    0,  276,  230,  233,  268,  358,  307,
+
+      357,    0,  462,  229,  329,    0,  320,  318,  333,  327,
+      318,  324,  319,  321,  231,   41,  305,  306,  310,  320,
+      308,  309,  311,  315,  314,  296,  298,  314,  310,  312,
+      298,  308,  309,  308,  288,  306,  298,  302,  293,  289,
+      277,  275,  281,  281,  260,  257,  149,  254,  263,  252,
+      259,    0,  256,  255,  244,  239,  210,  208,  219,  217,
+      202,  191,  191,  187,  190,    0,  168,  150,    0,  121,
+       99,    0,   99,   91,    0,   86,   73,   55,   52,    0,
+       33,    0,    0,    0,  462,  387,  394,  401,  407,  413,
+      420,  427,  434,  441,  447,  454,   56
+
     } ;
 
-static const flex_int16_t yy_def[72] =
+static const flex_int16_t yy_def[198] =
     {   0,
-       61,    1,   61,   61,   61,   61,   61,   62,   61,   61,
-       61,   63,   61,   61,   64,   61,   61,   65,   66,   66,
-       20,   20,   20,   61,   67,   61,   61,   61,   61,   61,
-       61,   61,   62,   61,   62,   61,   65,   63,   68,   64,
-       61,   64,   37,   61,   16,   16,   69,   37,   70,   20,
-       20,   71,   20,   20,   20,   20,   61,   61,   20,   20,
-        0,   61,   61,   61,   61,   61,   61,   61,   61,   61,
-       61
+      185,    1,  186,  186,  187,  187,  185,  188,  185,  185,
+      185,  185,  185,  185,  185,  189,  185,  185,  190,  188,
+      185,  185,  185,  185,  189,  185,  188,  188,  188,  188,
+      185,  191,  185,  185,  188,  185,  185,  185,  192,  185,
+      185,  185,  193,  192,  192,  185,  194,  185,  195,  194,
+      185,  185,  188,  189,  189,  188,  185,  185,  185,  189,
+      189,  190,  185,  190,  188,  188,  185,  185,  188,  188,
+      188,  188,  188,  188,  185,  185,  185,  192,  193,  193,
+      192,  185,  193,  193,  192,  192,  185,  185,  194,  185,
+      195,  196,  195,  194,  188,  188,  188,  197,  185,  192,
+
+      185,  194,  185,  196,  195,  197,  197,  197,  197,  197,
+      197,  197,  197,  197,  196,  197,  197,  197,  197,  197,
+      197,  197,  197,  197,  197,  197,  197,  197,  197,  197,
+      197,  197,  197,  197,  197,  197,  197,  197,  197,  197,
+      197,  197,  197,  197,  197,  197,  197,  197,  197,  197,
+      197,  197,  197,  197,  197,  197,  197,  197,  197,  197,
+      197,  197,  197,  197,  197,  197,  197,  197,  197,  197,
+      197,  197,  197,  197,  197,  197,  197,  197,  197,  197,
+      197,  197,  197,  197,    0,  185,  185,  185,  185,  185,
+      185,  185,  185,  185,  185,  185,  185
+
     } ;
 
-static const flex_int16_t yy_nxt[148] =
+static const flex_int16_t yy_nxt[522] =
     {   0,
-        4,    5,    6,    7,    8,    9,   10,   11,   12,   13,
-       14,    4,   15,   16,   17,   18,   19,   20,   20,   21,
-       22,   20,   23,   24,   25,   26,   27,   28,   29,   30,
-       31,   32,   32,   32,   32,   34,   37,   41,   37,   32,
-       32,   58,   60,   37,   43,   37,   43,   59,   61,   42,
-       46,   37,   39,   37,   49,   35,   43,   51,   34,   44,
-       52,   45,   52,   37,   46,   46,   46,   46,   46,   46,
-       46,   41,   47,   37,   37,   58,   61,   61,   35,   57,
-       37,   37,   55,   42,   54,   53,   36,   61,   61,   49,
-       39,   33,   33,   33,   33,   38,   38,   40,   40,   40,
+        8,    9,   10,   11,   12,   13,   14,   15,   16,   17,
+       18,    8,   19,   20,   21,   22,   23,   24,   25,   26,
+       27,    8,    8,    8,    8,   28,   29,    8,   30,    8,
+       31,   32,   33,   34,    8,    8,    8,    8,   35,    8,
+        8,    8,    8,    8,    8,    8,    8,    8,    8,    8,
+        8,    8,    8,    8,    8,   36,   37,   33,   38,   40,
+       41,  106,   42,   57,   57,  124,   43,   40,   41,  184,
+       42,   44,   48,   48,   43,   49,   43,   48,   48,   44,
+       49,   63,   54,  125,   43,   57,   57,   58,   58,   45,
+       58,   58,   55,   58,   58,  183,   54,   45,  183,   50,
 
-       40,   48,   48,   50,   50,   56,   56,   38,   38,   46,
-       46,   48,   48,   50,   50,    3,   61,   61,   61,   61,
-       61,   61,   61,   61,   61,   61,   61,   61,   61,   61,
-       61,   61,   61,   61,   61,   61,   61,   61,   61,   61,
-       61,   61,   61,   61,   61,   61,   61
+       64,   82,   82,   51,   50,   56,   55,   54,   51,  182,
+       65,   54,   66,   69,   82,   82,   46,   55,   76,   56,
+       77,   55,   54,  181,   46,   54,   54,   79,   52,   70,
+       56,  180,   55,   52,   56,   55,   55,   80,   87,  180,
+       88,   71,   79,   72,   85,   56,  179,   86,   56,   56,
+       81,   78,   80,   54,   78,   90,   90,   92,   92,   63,
+       89,   78,   74,   55,   78,   81,   57,   57,  178,   54,
+       54,   54,   54,   65,   95,   66,   56,  159,   64,   55,
+       55,   55,   55,   82,   82,   96,   54,   93,   92,   54,
+       90,   90,   56,   56,   56,   56,   55,  177,  160,   55,
+
+       54,   54,   76,   87,   77,   88,   97,   98,   78,   56,
+       55,   55,   56,   92,   53,  176,   53,   53,   78,   53,
+       53,   79,  103,   56,   56,   53,  175,   53,   53,   53,
+       53,   80,   53,  115,   83,  103,  174,   83,   54,  172,
+      173,   54,   79,   53,   81,   53,   53,  100,   55,  104,
+      172,   55,   80,   79,  171,   85,  170,  169,   86,  169,
+      104,   56,  104,   80,   56,   81,   92,   92,   53,  102,
+       53,   53,   60,  168,   60,   60,   81,   60,   60,   92,
+       92,  167,  105,   60,   54,   60,   60,   60,   60,   95,
+       60,   83,  166,  165,   55,  164,   93,   92,  163,  162,
+
+      161,   60,  107,   60,   60,  158,  108,   56,  157,   93,
+       92,  109,  110,  111,  112,   79,  156,  155,  113,  114,
+      100,  136,   92,  154,  153,   80,   60,  137,   60,   60,
+       92,   92,  152,  102,  151,   92,  150,  138,   81,  149,
+      148,  147,  146,  145,  144,  143,  142,  141,  140,  139,
+      135,  134,  133,  132,  131,  130,  129,  128,  127,  126,
+       93,   92,  123,  122,  121,  120,  119,  118,  117,  116,
+      101,   99,  101,   84,   84,   84,   99,  185,   61,   61,
+       61,   94,   84,   75,   61,   68,   92,   39,   39,   39,
+       39,   39,   39,   39,   47,   47,   47,   47,   47,   47,
+
+       47,   53,   67,   61,   59,  185,   53,   60,  185,  185,
+      185,  185,   60,   62,   62,   62,   62,   62,   62,   62,
+       73,   73,  185,   73,   73,   73,   73,   78,  185,  185,
+       78,  185,   78,   78,   83,  185,  185,   83,  185,   83,
+       83,   89,  185,  185,   89,   89,   89,   91,   91,   91,
+       91,   91,   91,   91,   92,   92,   92,   92,   92,   92,
+       92,    7,  185,  185,  185,  185,  185,  185,  185,  185,
+      185,  185,  185,  185,  185,  185,  185,  185,  185,  185,
+      185,  185,  185,  185,  185,  185,  185,  185,  185,  185,
+      185,  185,  185,  185,  185,  185,  185,  185,  185,  185,
+
+      185,  185,  185,  185,  185,  185,  185,  185,  185,  185,
+      185,  185,  185,  185,  185,  185,  185,  185,  185,  185,
+      185
     } ;
 
-static const flex_int16_t yy_chk[148] =
+static const flex_int16_t yy_chk[522] =
     {   0,
         1,    1,    1,    1,    1,    1,    1,    1,    1,    1,
         1,    1,    1,    1,    1,    1,    1,    1,    1,    1,
         1,    1,    1,    1,    1,    1,    1,    1,    1,    1,
-        1,    5,    5,    6,    6,    8,   12,   15,   18,   32,
-       32,   58,   53,   12,   20,   18,   19,   51,   46,   15,
-       46,   20,   12,   19,   18,    8,   16,   19,   33,   16,
-       20,   16,   19,   16,   16,   16,   16,   16,   16,   16,
-       16,   40,   16,   37,   38,   44,   42,   35,   33,   29,
-       37,   38,   23,   40,   22,   21,    9,    3,    0,   37,
-       38,   62,   62,   62,   62,   63,   63,   64,   64,   64,
+        1,    1,    1,    1,    1,    1,    1,    1,    1,    1,
+        1,    1,    1,    1,    1,    1,    1,    1,    1,    1,
+        1,    1,    1,    1,    1,    1,    1,    1,    1,    3,
+        3,  197,    3,    9,    9,  116,    3,    4,    4,  181,
+        4,    3,    5,    5,    4,    5,    3,    6,    6,    4,
+        6,   19,    8,  116,    4,   10,   10,   11,   11,    3,
+       17,   17,    8,   18,   18,  179,   27,    4,  178,    5,
 
-       64,   65,   65,   66,   66,   67,   67,   68,   68,   69,
-       69,   70,   70,   71,   71,   61,   61,   61,   61,   61,
-       61,   61,   61,   61,   61,   61,   61,   61,   61,   61,
-       61,   61,   61,   61,   61,   61,   61,   61,   61,   61,
-       61,   61,   61,   61,   61,   61,   61
+       19,   40,   40,    5,    6,    8,   27,   20,    6,  177,
+       20,   28,   20,   27,   41,   41,    3,   20,   38,   27,
+       38,   28,   29,  176,    4,   30,   35,   39,    5,   28,
+       20,  174,   29,    6,   28,   30,   35,   39,   46,  173,
+       46,   29,   44,   30,   44,   29,  171,   44,   30,   35,
+       39,   45,   44,   53,   45,   48,   48,   49,   49,   62,
+       49,   81,   35,   53,   81,   44,   57,   57,  170,   65,
+       66,   69,   71,   66,   65,   66,   53,  147,   62,   65,
+       66,   69,   71,   82,   82,   69,   70,   49,   49,   72,
+       90,   90,   65,   66,   69,   71,   70,  168,  147,   72,
+
+       73,   74,   77,   88,   77,   88,   70,   74,   45,   70,
+       73,   74,   72,   49,   56,  167,   56,   56,   81,   56,
+       56,   78,   92,   73,   74,   56,  165,   56,   56,   56,
+       56,   78,   56,  104,   84,  115,  164,   84,   96,  163,
+      162,   97,   85,   56,   78,   56,   56,   85,   96,   92,
+      161,   97,   85,   86,  160,   86,  159,  158,   86,  157,
+      104,   96,  115,   86,   97,   85,   91,   91,   56,   91,
+       56,   56,   61,  156,   61,   61,   86,   61,   61,   93,
+       93,  155,   93,   61,   95,   61,   61,   61,   61,   95,
+       61,   84,  154,  153,   95,  151,   91,   91,  150,  149,
+
+      148,   61,   98,   61,   61,  146,   98,   95,  145,   93,
+       93,   98,   98,   98,   98,  100,  144,  143,   98,   98,
+      100,  127,   91,  142,  141,  100,   61,  127,   61,   61,
+      105,  105,  140,  105,  139,   93,  138,  127,  100,  137,
+      136,  135,  134,  133,  132,  131,  130,  129,  128,  127,
+      126,  125,  124,  123,  122,  121,  120,  119,  118,  117,
+      105,  105,  114,  113,  112,  111,  110,  109,  108,  107,
+      101,   99,   87,   83,   80,   79,   76,   64,   60,   55,
+       54,   50,   43,   37,   25,   24,  105,  186,  186,  186,
+      186,  186,  186,  186,  187,  187,  187,  187,  187,  187,
+
+      187,  188,   22,   16,   13,    7,  188,  189,    0,    0,
+        0,    0,  189,  190,  190,  190,  190,  190,  190,  190,
+      191,  191,    0,  191,  191,  191,  191,  192,    0,    0,
+      192,    0,  192,  192,  193,    0,    0,  193,    0,  193,
+      193,  194,    0,    0,  194,  194,  194,  195,  195,  195,
+      195,  195,  195,  195,  196,  196,  196,  196,  196,  196,
+      196,  185,  185,  185,  185,  185,  185,  185,  185,  185,
+      185,  185,  185,  185,  185,  185,  185,  185,  185,  185,
+      185,  185,  185,  185,  185,  185,  185,  185,  185,  185,
+      185,  185,  185,  185,  185,  185,  185,  185,  185,  185,
+
+      185,  185,  185,  185,  185,  185,  185,  185,  185,  185,
+      185,  185,  185,  185,  185,  185,  185,  185,  185,  185,
+      185
     } ;
 
 static yy_state_type yy_last_accepting_state;
@@ -523,15 +650,35 @@ char *yytext;
  Copyright holder is SereneDB GmbH, Berlin, Germany
 */
 
-#include <cstdlib>
+#include <fast_float/fast_float.h>
+
 #include <cstring>
 #include <string_view>
+
 #include "lucene_parser.hpp"
 
 static YY_BUFFER_STATE current_buffer = nullptr;
 #define YY_NO_INPUT 1
+/* Inside quotes the words are words: `and` is a term there rather than an
+   operator, and a phrase is a list of parts rather than one string to be
+   taken apart afterwards. */
+
+/* Between brackets a bound is almost anything, as Lucene reads it: a date or
+   a hyphenated word is a bound there, not an expression. */
+
+/* A backslash protects whatever follows it, as Lucene's `_ESCAPED_CHAR`
+   does: the set of characters worth escaping is not the parser's to guess. */
+/* Lucene's `_TERM_START_CHAR` and `_TERM_CHAR`, which say what a term is by
+   what it is not: everything the syntax has not claimed. That is how `café`,
+   `u.s.a` and `don't` are terms, and why the characters this parser reads as
+   operators -- `@` for a minimum match, `<`, `>` and `=` for a comparison --
+   are excluded where Lucene's classic parser keeps them. A `+` or a `-` is an
+   operator only where a term begins, and `&` and `|` only where they pair. */
+/* Inside quotes the space and the quote end a word, and nothing else does. */
 
 #define INITIAL 0
+#define PHRASE_BODY 1
+#define RANGE 2
 
 #ifndef YY_NO_UNISTD_H
 /* Special case for "unistd.h", since it is non-ANSI. We include it way
@@ -780,13 +927,13 @@ yy_match:
 			while ( yy_chk[yy_base[yy_current_state] + yy_c] != yy_current_state )
 				{
 				yy_current_state = (int) yy_def[yy_current_state];
-				if ( yy_current_state >= 62 )
+				if ( yy_current_state >= 186 )
 					yy_c = yy_meta[yy_c];
 				}
 			yy_current_state = yy_nxt[yy_base[yy_current_state] + yy_c];
 			++yy_cp;
 			}
-		while ( yy_base[yy_current_state] != 116 );
+		while ( yy_base[yy_current_state] != 462 );
 
 yy_find_action:
 		yy_act = yy_accept[yy_current_state];
@@ -816,90 +963,296 @@ YY_RULE_SETUP
 { /* Skip whitespace */ }
 	YY_BREAK
 case 2:
+/* rule 2 can match eol */
+*yy_cp = (yy_hold_char); /* undo effects of setting up yytext */
+YY_LINENO_REWIND_TO(yy_bp + 1);
+(yy_c_buf_p) = yy_cp = yy_bp + 1;
+YY_DO_BEFORE_ACTION; /* set up yytext again */
 YY_RULE_SETUP
-{ return AND; }
+{
+                              /* A lone `+`, `-` or `!` is a term: what was
+                                 pasted in is searched for, rather than read
+                                 as an operator with nothing to apply to. */
+                              yylval->sv = {yytext, 1};
+                              return TERM;
+                            }
 	YY_BREAK
 case 3:
 YY_RULE_SETUP
-{ return OR; }
+{ return AND; }
 	YY_BREAK
 case 4:
 YY_RULE_SETUP
-{ return NOT; }
+{ return OR; }
 	YY_BREAK
 case 5:
 YY_RULE_SETUP
-{ return TO; }
+{ return NOT; }
 	YY_BREAK
 case 6:
 YY_RULE_SETUP
-{ return LPAREN; }
+{ return TO; }
 	YY_BREAK
 case 7:
 YY_RULE_SETUP
-{ return RPAREN; }
+{ return FN_NGRAM; }
 	YY_BREAK
 case 8:
 YY_RULE_SETUP
-{ return LBRACKET; }
+{ return FN_PHRASE; }
 	YY_BREAK
 case 9:
 YY_RULE_SETUP
-{ return RBRACKET; }
+{ return FN_OR; }
 	YY_BREAK
 case 10:
 YY_RULE_SETUP
-{ return LBRACE; }
+{ return FN_UNORDERED; }
 	YY_BREAK
 case 11:
 YY_RULE_SETUP
-{ return RBRACE; }
+{ return FN_ATLEAST; }
 	YY_BREAK
 case 12:
 YY_RULE_SETUP
-{ return COLON; }
+{ return FN_ORDERED; }
 	YY_BREAK
 case 13:
 YY_RULE_SETUP
-{ return CARET; }
+{ return FN_MAXGAPS; }
 	YY_BREAK
 case 14:
 YY_RULE_SETUP
-{ return TILDE; }
+{ return FN_MAXWIDTH; }
 	YY_BREAK
 case 15:
 YY_RULE_SETUP
-{ return PLUS; }
+{ return FN_WILDCARD; }
 	YY_BREAK
 case 16:
 YY_RULE_SETUP
-{ return MINUS; }
+{ return FN_FUZZY; }
 	YY_BREAK
 case 17:
 YY_RULE_SETUP
 {
-                              yylval->fnum = std::strtof(yytext, nullptr);
-                              return FLOAT;
+                              /* An interval function Lucene has and this
+                                 engine has no algebra for. It is read, and
+                                 refused where it would be executed. */
+                              yylval->sv = {yytext, static_cast<size_t>(yyleng)};
+                              return FN_OTHER;
                             }
 	YY_BREAK
 case 18:
 YY_RULE_SETUP
+{ return LPAREN; }
+	YY_BREAK
+case 19:
+YY_RULE_SETUP
+{ return RPAREN; }
+	YY_BREAK
+case 20:
+YY_RULE_SETUP
+{ BEGIN(RANGE); return LBRACKET; }
+	YY_BREAK
+case 21:
+YY_RULE_SETUP
+{ BEGIN(RANGE); return LBRACE; }
+	YY_BREAK
+case 22:
+/* rule 22 can match eol */
+YY_RULE_SETUP
+{ /* Skip whitespace */ }
+	YY_BREAK
+case 23:
+YY_RULE_SETUP
+{ BEGIN(INITIAL); return RBRACKET; }
+	YY_BREAK
+case 24:
+YY_RULE_SETUP
+{ BEGIN(INITIAL); return RBRACE; }
+	YY_BREAK
+case 25:
+YY_RULE_SETUP
+{ return TO; }
+	YY_BREAK
+case 26:
+/* rule 26 can match eol */
+YY_RULE_SETUP
 {
-                              yylval->num = std::atoi(yytext);
+                              /* A quoted bound holds what a bare one cannot:
+                                 spaces, brackets, the word TO. */
+                              yylval->sv = {yytext + 1, static_cast<size_t>(yyleng - 2)};
+                              return TERM;
+                            }
+	YY_BREAK
+case 27:
+YY_RULE_SETUP
+{
+                              /* Anything up to the delimiter, which is how
+                                 a date or a hyphenated bound gets through. */
+                              yylval->sv = {yytext, static_cast<size_t>(yyleng)};
+                              return TERM;
+                            }
+	YY_BREAK
+case 28:
+YY_RULE_SETUP
+{ return COLON; }
+	YY_BREAK
+case 29:
+YY_RULE_SETUP
+{ return CARET; }
+	YY_BREAK
+case 30:
+YY_RULE_SETUP
+{
+                              /* Lucene's `FUZZY_SLOP`: an edit distance after
+                                 a term, a slop after a phrase, and the two
+                                 are one token so that `the~2` cannot read as
+                                 a fuzzy `the` beside the term `2`. */
+                              yylval->fuzzy.has_value = yyleng > 1;
+                              if (yylval->fuzzy.has_value) {
+                                fast_float::from_chars(yytext + 1,
+                                                       yytext + yyleng,
+                                                       yylval->fuzzy.value);
+                              }
+                              return FUZZY;
+                            }
+	YY_BREAK
+case 31:
+YY_RULE_SETUP
+{ return AT; }
+	YY_BREAK
+case 32:
+YY_RULE_SETUP
+{ return LE; }
+	YY_BREAK
+case 33:
+YY_RULE_SETUP
+{ return GE; }
+	YY_BREAK
+case 34:
+YY_RULE_SETUP
+{ return LT; }
+	YY_BREAK
+case 35:
+YY_RULE_SETUP
+{ return GT; }
+	YY_BREAK
+case 36:
+YY_RULE_SETUP
+{ return EQ; }
+	YY_BREAK
+case 37:
+YY_RULE_SETUP
+{ return PLUS; }
+	YY_BREAK
+case 38:
+YY_RULE_SETUP
+{ return MINUS; }
+	YY_BREAK
+case 39:
+YY_RULE_SETUP
+{
+                              fast_float::from_chars(yytext, yytext + yyleng,
+                                                     yylval->flt.value);
+                              yylval->flt.text = {yytext,
+                                                  static_cast<size_t>(yyleng)};
+                              return FLOAT;
+                            }
+	YY_BREAK
+case 40:
+YY_RULE_SETUP
+{
+                              fast_float::from_chars(yytext, yytext + yyleng,
+                                                     yylval->num.value);
+                              yylval->num.text = {yytext,
+                                                  static_cast<size_t>(yyleng)};
                               return NUMBER;
                             }
 	YY_BREAK
-case 19:
-/* rule 19 can match eol */
+case 41:
+YY_RULE_SETUP
+{ BEGIN(PHRASE_BODY); return QUOTE; }
+	YY_BREAK
+case 42:
+YY_RULE_SETUP
+{ BEGIN(INITIAL); return QUOTE; }
+	YY_BREAK
+case 43:
+/* rule 43 can match eol */
+YY_RULE_SETUP
+{ /* Skip whitespace */ }
+	YY_BREAK
+case 44:
 YY_RULE_SETUP
 {
-                              /* Quoted phrase - point to content inside quotes */
-                              yylval->sv = {yytext + 1, static_cast<size_t>(yyleng - 2)};
-                              return PHRASE;
+                              /* A gap: how far the part after it may sit from
+                                 the part before it, rather than next to it.
+                                 The pattern already said both are digits, so
+                                 neither conversion can fail. */
+                              const char* dash = std::strchr(yytext, '-');
+                              const char* end = yytext + yyleng;
+                              fast_float::from_chars(yytext, dash,
+                                                     yylval->gap.min);
+                              fast_float::from_chars(dash + 1, end,
+                                                     yylval->gap.max);
+                              return GAP;
                             }
 	YY_BREAK
-case 20:
-/* rule 20 can match eol */
+case 45:
+YY_RULE_SETUP
+{
+                              /* Lucene's `FUZZY_SLOP`: an edit distance after
+                                 a term, a slop after a phrase, and the two
+                                 are one token so that `the~2` cannot read as
+                                 a fuzzy `the` beside the term `2`. */
+                              yylval->fuzzy.has_value = yyleng > 1;
+                              if (yylval->fuzzy.has_value) {
+                                fast_float::from_chars(yytext + 1,
+                                                       yytext + yyleng,
+                                                       yylval->fuzzy.value);
+                              }
+                              return FUZZY;
+                            }
+	YY_BREAK
+case 46:
+YY_RULE_SETUP
+{
+                              yylval->sv = {yytext, static_cast<size_t>(yyleng)};
+                              return PREFIX;
+                            }
+	YY_BREAK
+case 47:
+YY_RULE_SETUP
+{
+                              yylval->sv = {yytext, static_cast<size_t>(yyleng)};
+                              return WILDCARD;
+                            }
+	YY_BREAK
+case 48:
+YY_RULE_SETUP
+{
+                              /* A word of a phrase is anything that is not a
+                                 space, a quote, or one of the characters that
+                                 mean something here -- `war-torn` and `2` are
+                                 words, and what they become is the analyzer's
+                                 answer rather than the lexer's. */
+                              yylval->sv = {yytext, static_cast<size_t>(yyleng)};
+                              return TERM;
+                            }
+	YY_BREAK
+case 49:
+YY_RULE_SETUP
+{
+                              /* The parser turns this into a message on the
+                                 context, which is where every other failure
+                                 to read a query is reported. */
+                              return YYUNDEF;
+                            }
+	YY_BREAK
+case 50:
+/* rule 50 can match eol */
 YY_RULE_SETUP
 {
                               /* Regex pattern - point to content inside slashes */
@@ -907,39 +1260,17 @@ YY_RULE_SETUP
                               return REGEX;
                             }
 	YY_BREAK
-case 21:
+case 51:
 YY_RULE_SETUP
 {
-                              /* Check if it's a pure prefix (ends with single *, no other wildcards) */
-                              bool has_inner_wild = false;
-                              for (int i = 0; i < yyleng - 1; i++) {
-                                  if (yytext[i] == '\\') { i++; continue; }
-                                  if (yytext[i] == '*' || yytext[i] == '?') {
-                                      has_inner_wild = true;
-                                      break;
-                                  }
-                              }
+                              /* A word with a star at its end and none
+                                 within, which is what a term character class
+                                 that holds neither `*` nor `?` already says. */
                               yylval->sv = {yytext, static_cast<size_t>(yyleng)};
-                              return has_inner_wild ? WILDCARD : PREFIX;
+                              return PREFIX;
                             }
 	YY_BREAK
-case 22:
-YY_RULE_SETUP
-{
-                              /* Check if it's a pure suffix (starts with single *, no other wildcards) */
-                              bool has_inner_wild = false;
-                              for (int i = 1; i < yyleng; i++) {
-                                  if (yytext[i] == '\\') { i++; continue; }
-                                  if (yytext[i] == '*' || yytext[i] == '?') {
-                                      has_inner_wild = true;
-                                      break;
-                                  }
-                              }
-                              yylval->sv = {yytext, static_cast<size_t>(yyleng)};
-                              return has_inner_wild ? WILDCARD : SUFFIX;
-                            }
-	YY_BREAK
-case 23:
+case 52:
 YY_RULE_SETUP
 {
                               /* Standalone star (for range bounds) */
@@ -947,40 +1278,34 @@ YY_RULE_SETUP
                               return STAR;
                             }
 	YY_BREAK
-case 24:
+case 53:
 YY_RULE_SETUP
 {
-                              /* General wildcard pattern with * or ? */
+                              /* A pattern anywhere in the word, a leading one
+                                 included -- Lucene's classic parser refuses
+                                 that one, and nothing downstream needs it to. */
                               yylval->sv = {yytext, static_cast<size_t>(yyleng)};
                               return WILDCARD;
                             }
 	YY_BREAK
-case 25:
+case 54:
 YY_RULE_SETUP
 {
                               yylval->sv = {yytext, static_cast<size_t>(yyleng)};
                               return TERM;
                             }
 	YY_BREAK
-case 26:
+case 55:
 YY_RULE_SETUP
-{
-                              /* Terms starting with digits (like dates) */
-                              yylval->sv = {yytext, static_cast<size_t>(yyleng)};
-                              return TERM;
-                            }
+{ return YYUNDEF; }
 	YY_BREAK
-case 27:
-YY_RULE_SETUP
-{
-                              std::fprintf(stderr, "Unexpected character: %c\n", yytext[0]);
-                            }
-	YY_BREAK
-case 28:
+case 56:
 YY_RULE_SETUP
 ECHO;
 	YY_BREAK
 case YY_STATE_EOF(INITIAL):
+case YY_STATE_EOF(PHRASE_BODY):
+case YY_STATE_EOF(RANGE):
 	yyterminate();
 
 	case YY_END_OF_BUFFER:
@@ -1276,7 +1601,7 @@ static int yy_get_next_buffer (void)
 		while ( yy_chk[yy_base[yy_current_state] + yy_c] != yy_current_state )
 			{
 			yy_current_state = (int) yy_def[yy_current_state];
-			if ( yy_current_state >= 62 )
+			if ( yy_current_state >= 186 )
 				yy_c = yy_meta[yy_c];
 			}
 		yy_current_state = yy_nxt[yy_base[yy_current_state] + yy_c];
@@ -1304,11 +1629,11 @@ static int yy_get_next_buffer (void)
 	while ( yy_chk[yy_base[yy_current_state] + yy_c] != yy_current_state )
 		{
 		yy_current_state = (int) yy_def[yy_current_state];
-		if ( yy_current_state >= 62 )
+		if ( yy_current_state >= 186 )
 			yy_c = yy_meta[yy_c];
 		}
 	yy_current_state = yy_nxt[yy_base[yy_current_state] + yy_c];
-	yy_is_jam = (yy_current_state == 61);
+	yy_is_jam = (yy_current_state == 185);
 
 		return yy_is_jam ? 0 : yy_current_state;
 }
@@ -1951,6 +2276,10 @@ void LexerSetInput(std::string_view input) {
     if (current_buffer) {
         yy_delete_buffer(current_buffer);
     }
+    /* A query that failed to parse while inside quotes left the scanner
+       there, and the one after it would be read as the rest of a phrase --
+       silently, since a word is a word in both. Every query starts outside. */
+    BEGIN(INITIAL);
     current_buffer = yy_scan_bytes(input.data(), static_cast<int>(input.size()));
 }
 

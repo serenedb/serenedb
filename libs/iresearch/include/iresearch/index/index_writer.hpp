@@ -794,6 +794,8 @@ class IndexWriter : private util::Noncopyable {
     DocsMask docs_mask;
     DocumentMask document_mask;
     bool was_flush = false;
+    // A meta file matching this segment is already on disk
+    bool meta_on_disk = false;
 
    private:
     // starting doc_id that should be added to docs_mask

@@ -720,10 +720,9 @@ IndexWriter::Transaction::FlushAndFsync() {
   files.reserve(flushed.size() * (flushed.front().meta.files.size() + 1));
   for (auto& entry : flushed) {
     SDB_ASSERT(!entry.meta.files.empty());
-    // TODO (Dronplane): try to avoid double write.
-    // On final commit we will rewrite same file again
-    // Setting was_flush will only trigger version bump so no simple option now.
     index_utils::FlushIndexSegment(segment->dir, entry, false);
+    // Do not set was_flush here, it forces rewrite that we want to avoid
+    entry.meta_on_disk = true;
     files.insert(files.end(), entry.meta.files.begin(), entry.meta.files.end());
     files.emplace_back(entry.filename);
   }
@@ -2261,7 +2260,10 @@ IndexWriter::PendingContext IndexWriter::PrepareFlush(const CommitInfo& info) {
         new_segment.meta.docs_mask =
           std::make_shared<DocumentMask>(std::move(document_mask));
       }
-      index_utils::FlushIndexSegment(dir, new_segment, false);
+      if (need_flush || !segment_ctx.flushed.meta_on_disk) {
+        index_utils::FlushIndexSegment(dir, new_segment, false);
+        segment_ctx.flushed.meta_on_disk = true;
+      }
       if (need_flush) {
         segment_ctx.reader =
           segment_ctx.reader->UpdateMeta(dir, new_segment.meta);

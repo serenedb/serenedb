@@ -34,6 +34,7 @@
 
 #include <algorithm>
 #include <filesystem>
+#include <map>
 #include <memory>
 #include <string>
 #include <vector>
@@ -51,6 +52,29 @@
 
 namespace {
 
+// Counts how many times each file is created, so a test can pin "written once".
+class CountingDirectory : public tests::DirectoryMock {
+ public:
+  explicit CountingDirectory(irs::Directory& impl)
+    : tests::DirectoryMock{impl} {}
+
+  irs::IndexOutput::ptr create(std::string_view name) noexcept final {
+    auto out = tests::DirectoryMock::create(name);
+    if (out) {
+      ++_creates[std::string{name}];
+    }
+    return out;
+  }
+
+  size_t Creates(std::string_view name) const {
+    const auto it = _creates.find(std::string{name});
+    return it == _creates.end() ? 0 : it->second;
+  }
+
+ private:
+  std::map<std::string, size_t> _creates;
+};
+
 class IndexAdoptTest : public TestBase {
  protected:
   void SetUp() override {
@@ -65,14 +89,16 @@ class IndexAdoptTest : public TestBase {
   void TearDown() override {
     _writer.reset();
     _dir.reset();
+    _impl.reset();
     TestBase::TearDown();
     std::filesystem::remove_all(_path);
   }
 
   void Open(irs::OpenMode mode, bool cleanup_on_open = true,
             uint32_t segment_docs_max = 0) {
-    _dir = std::make_unique<irs::MMapDirectory>(
+    _impl = std::make_unique<irs::MMapDirectory>(
       _path, irs::DirectoryAttributes{}, GetResourceManager().options);
+    _dir = std::make_unique<CountingDirectory>(*_impl);
     auto options = tests::EnsureWriterDb(tests::CsDefaultWriterOptions());
     options.cleanup_on_open = cleanup_on_open;
     options.segment_docs_max = segment_docs_max;
@@ -84,6 +110,7 @@ class IndexAdoptTest : public TestBase {
   void Restart(bool cleanup_on_open, uint32_t segment_docs_max = 0) {
     _writer.reset();
     _dir.reset();
+    _impl.reset();
     Open(irs::kOmAppend | irs::kOmCreate, cleanup_on_open, segment_docs_max);
   }
 
@@ -135,7 +162,8 @@ class IndexAdoptTest : public TestBase {
 
   std::filesystem::path _path;
   irs::Format::ptr _codec;
-  std::unique_ptr<irs::MMapDirectory> _dir;
+  std::unique_ptr<irs::MMapDirectory> _impl;
+  std::unique_ptr<CountingDirectory> _dir;
   irs::IndexWriter::ptr _writer;
 };
 
@@ -184,6 +212,67 @@ TEST_F(IndexAdoptTest, ExclusiveSegmentDoesNotResumeAPooledOne) {
   ASSERT_EQ(1, flushed.size());
   EXPECT_EQ(1, flushed.front().meta.docs_count) << "resumed a pooled segment";
   trx.Abort();
+}
+
+// After our transaction commits, its segment context goes back to the pending
+// free-list and a later transaction may resume it. That must not touch what we
+// already flushed: each flush cycle takes a fresh segment name, so our files
+// are immutable, and `meta_on_disk` lives on the FlushedSegment rather than the
+// context, so the later transaction's own segment is still written normally.
+TEST_F(IndexAdoptTest, LaterTransactionReusingTheContextLeavesOurSegmentAlone) {
+  std::string our_meta;
+  {
+    auto trx = _writer->GetBatch(/*exclusive_segment=*/true);
+    ASSERT_TRUE(InsertDoc(trx, "mine"));
+    const auto flushed = trx.FlushAndFsync();
+    ASSERT_EQ(1, flushed.size());
+    our_meta = flushed.front().filename;
+    ASSERT_TRUE(trx.Commit(/*last_tick=*/1));
+  }
+  // Non-exclusive, so it pops the context we just released.
+  {
+    auto later = _writer->GetBatch();
+    ASSERT_TRUE(InsertDoc(later, "theirs"));
+    ASSERT_TRUE(later.Commit(/*last_tick=*/2));
+  }
+  ASSERT_TRUE(_writer->RefreshCommit());
+
+  auto reader = _writer->GetSnapshot();
+  EXPECT_EQ(2, reader.live_docs_count());
+  // Two separate segments: the later transaction could not append to ours.
+  ASSERT_EQ(2, reader.size());
+  for (const auto& segment : reader) {
+    EXPECT_EQ(1, segment.docs_count())
+      << "a segment absorbed both transactions";
+  }
+  // And ours was still not rewritten at publish.
+  EXPECT_EQ(1, _dir->Creates(our_meta));
+}
+
+// The dangerous direction of that sharing: if the resuming transaction aborts,
+// SegmentContext::Rollback truncates the flushed tail -- it must cut only the
+// entries past `committed_flushed_docs`, leaving ours (already committed, and
+// named by a durable record) in place.
+TEST_F(IndexAdoptTest, LaterTransactionAbortKeepsOurFlushedSegment) {
+  std::string our_meta;
+  {
+    auto trx = _writer->GetBatch(/*exclusive_segment=*/true);
+    ASSERT_TRUE(InsertDoc(trx, "mine"));
+    const auto flushed = trx.FlushAndFsync();
+    ASSERT_EQ(1, flushed.size());
+    our_meta = flushed.front().filename;
+    ASSERT_TRUE(trx.Commit(/*last_tick=*/1));
+  }
+  {
+    auto later = _writer->GetBatch();
+    ASSERT_TRUE(InsertDoc(later, "theirs"));
+    later.Abort();
+  }
+  ASSERT_TRUE(_writer->RefreshCommit());
+
+  auto reader = _writer->GetSnapshot();
+  EXPECT_EQ(1, reader.live_docs_count()) << "our committed document was lost";
+  EXPECT_TRUE(Exists(our_meta)) << our_meta << " was reclaimed";
 }
 
 // cleanup_on_open == false is what lets a flushed-but-unpublished segment
@@ -375,6 +464,56 @@ TEST_F(IndexAdoptTest, AdoptTickFollowsManifestPositionNotRecordTick) {
 
   EXPECT_EQ(1, _writer->GetSnapshot().live_docs_count())
     << "the re-inserted document was masked by the delete that preceded it";
+}
+
+// The whole point of writing the meta early is that the publish then has
+// nothing new to write: same name, same content. Pin that -- the meta file must
+// be created exactly once across flush + commit + publish. (Existing writers
+// are unaffected: nothing sets `meta_on_disk` unless FlushAndFsync ran, so
+// their publish writes the meta as before.)
+TEST_F(IndexAdoptTest, EarlyFlushedMetaIsWrittenOnce) {
+  auto trx = _writer->GetBatch(/*exclusive_segment=*/true);
+  ASSERT_TRUE(InsertDoc(trx, "kept"));
+  const auto flushed = trx.FlushAndFsync();
+  ASSERT_EQ(1, flushed.size());
+  const std::string meta_file = flushed.front().filename;
+  ASSERT_FALSE(meta_file.empty());
+  EXPECT_EQ(1, _dir->Creates(meta_file)) << "FlushAndFsync wrote it";
+
+  ASSERT_TRUE(trx.Commit(/*last_tick=*/1));
+  ASSERT_TRUE(_writer->RefreshCommit());
+  EXPECT_EQ(1, _writer->GetSnapshot().live_docs_count());
+
+  EXPECT_EQ(1, _dir->Creates(meta_file))
+    << "the publish rewrote a meta that was already on disk unchanged";
+}
+
+// A removal landing on the segment before it is published DOES change the meta,
+// so that publish must write a new version rather than reuse the early file --
+// the skip above must not swallow this case.
+TEST_F(IndexAdoptTest, MetaIsRewrittenWhenARemovalMasksTheSegment) {
+  auto trx = _writer->GetBatch(/*exclusive_segment=*/true);
+  ASSERT_TRUE(InsertDoc(trx, "doomed"));
+  ASSERT_TRUE(InsertDoc(trx, "kept"));
+  const auto flushed = trx.FlushAndFsync();
+  ASSERT_EQ(1, flushed.size());
+  const std::string early_meta = flushed.front().filename;
+  ASSERT_TRUE(trx.Commit(/*last_tick=*/1));
+
+  {
+    auto remover = _writer->GetBatch();
+    remover.Remove(ByName("doomed"));
+    ASSERT_TRUE(remover.Commit(/*last_tick=*/2));
+  }
+  ASSERT_TRUE(_writer->RefreshCommit());
+
+  EXPECT_EQ(1, _writer->GetSnapshot().live_docs_count());
+  // The early file is still the one FlushAndFsync made; the masked meta went to
+  // a bumped version, so the publish did write.
+  EXPECT_EQ(1, _dir->Creates(early_meta));
+  ASSERT_EQ(1, _writer->GetSnapshot().size());
+  const auto& published = _writer->GetSnapshot().begin()->Meta();
+  EXPECT_GT(published.version, 0u) << "a masked segment must bump its version";
 }
 
 // An adopted segment is not published until the next commit, so everything it

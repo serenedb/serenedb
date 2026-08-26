@@ -145,6 +145,8 @@ CLICKHOUSE_LOG_FILE=""
 CLICKHOUSE_IMAGE="clickhouse/clickhouse-server:24.8"
 TEST_NETWORK=""
 cancel_pid=""
+# Bounds the docker event query in report_failed_container to this run.
+RUN_START_TS=$(date +%s)
 
 # Post-mortem for an auxiliary container that should still have been up when
 # cleanup ran. One that died mid-suite is deregistered from docker's embedded
@@ -160,7 +162,7 @@ report_failed_container() {
 	[[ "$state" == running* ]] && return 0
 
 	echo "ERROR: $label container did not survive the run ($state)." >&2
-	echo "       Tests using it after it died fail with connection or name-resolution errors." >&2
+	echo "       Tests using it after that point fail with connection or name-resolution errors." >&2
 
 	# Where the launcher set a healthcheck, it keeps probing for the container's
 	# whole life and its log survives the death, so the last passing probe bounds
@@ -172,16 +174,61 @@ report_failed_container() {
 	[[ -n "$last_ok" ]] &&
 		echo "       Last healthy at ${last_ok}; it stopped answering after that." >&2
 
-	# These containers carry no memory limit, so a host OOM kill reports
-	# oom=false and exit=137 (SIGKILL) is the only signature. dmesg is unreadable
-	# from inside the tests container (dmesg_restrict), so read the host ring
-	# buffer through a throwaway container holding CAP_SYSLOG, built from the
-	# dead container's own image -- already pulled, so this never fetches.
+	# The daemon's event log outlives the container, so it explains even one that
+	# was removed outright -- the case `docker inspect` cannot speak to at all.
+	# It also needs no capabilities and starts no container, unlike the dmesg
+	# probe below. Signatures:
+	#   kill + destroy -> removed through the API while running (an orphan
+	#                     reaper, a stray `docker rm`) -- NOT a crash
+	#   oom            -> the cgroup OOM killer fired
+	#   die alone      -> exited on its own, or the kernel killed it (host OOM)
+	local events
+	# --until must sit a second in the future: at whole-second granularity an
+	# --until of "now" drops events from the current second -- i.e. exactly the
+	# kill/die/destroy of a container that died just before cleanup ran.
+	events=$(docker events --since "$RUN_START_TS" --until "$(($(date +%s) + 1))" \
+		--filter "container=$name" \
+		--format '{{.Action}} exit={{index .Actor.Attributes "exitCode"}}' 2>/dev/null |
+		grep -vE '^(create|attach|start|exec_|health_status)' | tail -10)
+	if [[ -n "$events" ]]; then
+		echo "       Docker event log:" >&2
+		echo "$events" | sed 's/^/         /' >&2
+	fi
+	if grep -q '^destroy' <<<"$events"; then
+		echo "       => REMOVED while running, not a crash. Look for an orphan reaper" >&2
+		echo "          or a stray 'docker rm' racing this run, not for a fault here." >&2
+		return 0
+	fi
+	if grep -q '^oom' <<<"$events"; then
+		echo "       => the cgroup OOM killer fired." >&2
+		return 0
+	fi
+	if grep -q '^kill' <<<"$events"; then
+		echo "       => signalled through the docker API ('docker kill'/'docker stop')," >&2
+		echo "          not by the kernel -- a host OOM kill leaves no 'kill' event." >&2
+		return 0
+	fi
+
+	# Nothing removed, signalled or cgroup-OOM'd it, so the one memory suspect
+	# left is a host OOM kill -- and docker cannot see that one at all: no `oom`
+	# event (that is cgroup-only) and OOMKilled=false, because these containers
+	# carry no memory limit. SIGKILL's exit=137 is its whole signature, and the
+	# kernel ring buffer is the only remaining evidence. Any other exit code was
+	# not a kill, so the OOM killer is not a candidate and the probe is skipped.
+	[[ "$state" == *exit=137* ]] || return 0
+
+	# dmesg is unreadable from inside the tests container (dmesg_restrict), so
+	# read the host ring buffer through a throwaway container holding CAP_SYSLOG,
+	# built from the dead container's own image -- already pulled, so this never
+	# fetches. Not every image ships dmesg.
 	local image dmesg_out
 	image=$(docker inspect -f '{{.Config.Image}}' "$name" 2>/dev/null)
-	if [[ -z "$image" ]] ||
-		! dmesg_out=$(docker run --rm --cap-add SYSLOG --entrypoint dmesg "$image" 2>/dev/null); then
-		echo "       Host dmesg unreadable; cannot say whether the OOM killer fired." >&2
+	if [[ -z "$image" ]]; then
+		echo "       Container already gone; no image left to run the dmesg probe from." >&2
+		return 0
+	fi
+	if ! dmesg_out=$(docker run --rm --cap-add SYSLOG --entrypoint dmesg "$image" 2>/dev/null); then
+		echo "       ${image} ships no dmesg; cannot say whether the host OOM killer fired." >&2
 		return 0
 	fi
 	local oom_lines

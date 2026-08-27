@@ -912,7 +912,7 @@ const irs::Filter& MatchAllFilter() {
 }
 
 uint32_t ReadRerankFactor(duckdb::ClientContext& context) {
-  return ReadBoundedIntSetting(context, "sdb_rerank_factor", 0, 4);
+  return ReadIntSetting(context, "sdb_rerank_factor");
 }
 
 size_t CollectorPoolSize(const IResearchScanGlobalState& g,

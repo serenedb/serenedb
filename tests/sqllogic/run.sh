@@ -142,8 +142,104 @@ POSTGRES_CONTAINER_NAME=""
 POSTGRES_LOG_FILE=""
 CLICKHOUSE_CONTAINER_NAME=""
 CLICKHOUSE_LOG_FILE=""
+CLICKHOUSE_IMAGE="clickhouse/clickhouse-server:24.8"
 TEST_NETWORK=""
 cancel_pid=""
+# Bounds the docker event query in report_failed_container to this run.
+RUN_START_TS=$(date +%s)
+
+# Post-mortem for an auxiliary container that should still have been up when
+# cleanup ran. One that died mid-suite is deregistered from docker's embedded
+# DNS, so every later test fails against it in ~4ms with EAI_AGAIN ("Temporary
+# failure in name resolution") -- a symptom that names neither the service nor
+# the death. Silent while the container is still running.
+report_failed_container() {
+	local name=$1 label=$2
+	local state
+	state=$(docker inspect -f '{{.State.Status}} exit={{.State.ExitCode}} oom={{.State.OOMKilled}}' \
+		"$name" 2>/dev/null | tr -d '\n')
+	[[ -n "$state" ]] || state="gone (container no longer exists)"
+	[[ "$state" == running* ]] && return 0
+
+	echo "ERROR: $label container did not survive the run ($state)." >&2
+	echo "       Tests using it after that point fail with connection or name-resolution errors." >&2
+
+	# Where the launcher set a healthcheck, it keeps probing for the container's
+	# whole life and its log survives the death, so the last passing probe bounds
+	# when the service stopped answering. Silent for containers without one.
+	local last_ok
+	last_ok=$(docker inspect \
+		-f '{{range .State.Health.Log}}{{if eq .ExitCode 0}}{{.End}}{{"\n"}}{{end}}{{end}}' \
+		"$name" 2>/dev/null | sed '/^$/d' | tail -1 | cut -d. -f1)
+	[[ -n "$last_ok" ]] &&
+		echo "       Last healthy at ${last_ok}; it stopped answering after that." >&2
+
+	# The daemon's event log outlives the container, so it explains even one that
+	# was removed outright -- the case `docker inspect` cannot speak to at all.
+	# It also needs no capabilities and starts no container, unlike the dmesg
+	# probe below. Signatures:
+	#   kill + destroy -> removed through the API while running (an orphan
+	#                     reaper, a stray `docker rm`) -- NOT a crash
+	#   oom            -> the cgroup OOM killer fired
+	#   die alone      -> exited on its own, or the kernel killed it (host OOM)
+	local events
+	# --until must sit a second in the future: at whole-second granularity an
+	# --until of "now" drops events from the current second -- i.e. exactly the
+	# kill/die/destroy of a container that died just before cleanup ran.
+	events=$(docker events --since "$RUN_START_TS" --until "$(($(date +%s) + 1))" \
+		--filter "container=$name" \
+		--format '{{.Action}} exit={{index .Actor.Attributes "exitCode"}}' 2>/dev/null |
+		grep -vE '^(create|attach|start|exec_|health_status)' | tail -10)
+	if [[ -n "$events" ]]; then
+		echo "       Docker event log:" >&2
+		echo "$events" | sed 's/^/         /' >&2
+	fi
+	if grep -q '^destroy' <<<"$events"; then
+		echo "       => REMOVED while running, not a crash. Look for an orphan reaper" >&2
+		echo "          or a stray 'docker rm' racing this run, not for a fault here." >&2
+		return 0
+	fi
+	if grep -q '^oom' <<<"$events"; then
+		echo "       => the cgroup OOM killer fired." >&2
+		return 0
+	fi
+	if grep -q '^kill' <<<"$events"; then
+		echo "       => signalled through the docker API ('docker kill'/'docker stop')," >&2
+		echo "          not by the kernel -- a host OOM kill leaves no 'kill' event." >&2
+		return 0
+	fi
+
+	# Nothing removed, signalled or cgroup-OOM'd it, so the one memory suspect
+	# left is a host OOM kill -- and docker cannot see that one at all: no `oom`
+	# event (that is cgroup-only) and OOMKilled=false, because these containers
+	# carry no memory limit. SIGKILL's exit=137 is its whole signature, and the
+	# kernel ring buffer is the only remaining evidence. Any other exit code was
+	# not a kill, so the OOM killer is not a candidate and the probe is skipped.
+	[[ "$state" == *exit=137* ]] || return 0
+
+	# dmesg is unreadable from inside the tests container (dmesg_restrict), so
+	# read the host ring buffer through a throwaway container holding CAP_SYSLOG,
+	# built from the dead container's own image -- already pulled, so this never
+	# fetches. Not every image ships dmesg.
+	local image dmesg_out
+	image=$(docker inspect -f '{{.Config.Image}}' "$name" 2>/dev/null)
+	if [[ -z "$image" ]]; then
+		echo "       Container already gone; no image left to run the dmesg probe from." >&2
+		return 0
+	fi
+	if ! dmesg_out=$(docker run --rm --cap-add SYSLOG --entrypoint dmesg "$image" 2>/dev/null); then
+		echo "       ${image} ships no dmesg; cannot say whether the host OOM killer fired." >&2
+		return 0
+	fi
+	local oom_lines
+	oom_lines=$(grep -iE 'out of memory|oom[-_]kill' <<<"$dmesg_out" | tail -20)
+	if [[ -n "$oom_lines" ]]; then
+		echo "       Host OOM killer activity:" >&2
+		echo "$oom_lines" | sed 's/^/         /' >&2
+	else
+		echo "       No host OOM killer activity in dmesg." >&2
+	fi
+}
 
 cleanup_test_network() {
 	if [[ -n "$TEST_NETWORK" ]]; then
@@ -160,6 +256,7 @@ cleanup_minio() {
 	if [[ -n "$MINIO_CONTAINER_NAME" ]]; then
 		local name="$MINIO_CONTAINER_NAME"
 		MINIO_CONTAINER_NAME=""
+		report_failed_container "$name" "MinIO"
 		if [[ -n "$MINIO_LOG_FILE" ]]; then
 			echo "Saving MinIO logs to ${MINIO_LOG_FILE}..."
 			docker logs "$name" >"${MINIO_LOG_FILE}" 2>&1 || true
@@ -173,6 +270,7 @@ cleanup_azure() {
 	if [[ -n "$AZURITE_CONTAINER_NAME" ]]; then
 		local name="$AZURITE_CONTAINER_NAME"
 		AZURITE_CONTAINER_NAME=""
+		report_failed_container "$name" "Azurite"
 		if [[ -n "$AZURITE_LOG_FILE" ]]; then
 			echo "Saving Azurite logs to ${AZURITE_LOG_FILE}..."
 			docker logs "$name" >"${AZURITE_LOG_FILE}" 2>&1 || true
@@ -186,6 +284,7 @@ cleanup_iceberg_rest() {
 	if [[ -n "$ICEBERG_REST_CONTAINER_NAME" ]]; then
 		local name="$ICEBERG_REST_CONTAINER_NAME"
 		ICEBERG_REST_CONTAINER_NAME=""
+		report_failed_container "$name" "iceberg-rest"
 		if [[ -n "$ICEBERG_REST_LOG_FILE" ]]; then
 			echo "Saving iceberg-rest logs to ${ICEBERG_REST_LOG_FILE}..."
 			docker logs "$name" >"${ICEBERG_REST_LOG_FILE}" 2>&1 || true
@@ -208,6 +307,7 @@ cleanup_ollama() {
 	if [[ -n "$OLLAMA_CONTAINER_NAME" ]]; then
 		local name="$OLLAMA_CONTAINER_NAME"
 		OLLAMA_CONTAINER_NAME=""
+		report_failed_container "$name" "Ollama"
 		if [[ -n "$OLLAMA_LOG_FILE" ]]; then
 			echo "Saving Ollama logs to ${OLLAMA_LOG_FILE}..."
 			docker logs "$name" >"${OLLAMA_LOG_FILE}" 2>&1 || true
@@ -221,6 +321,7 @@ cleanup_postgres() {
 	if [[ -n "$POSTGRES_CONTAINER_NAME" ]]; then
 		local name="$POSTGRES_CONTAINER_NAME"
 		POSTGRES_CONTAINER_NAME=""
+		report_failed_container "$name" "postgres"
 		if [[ -n "$POSTGRES_LOG_FILE" ]]; then
 			echo "Saving postgres logs to ${POSTGRES_LOG_FILE}..."
 			docker logs "$name" >"${POSTGRES_LOG_FILE}" 2>&1 || true
@@ -234,6 +335,7 @@ cleanup_clickhouse() {
 	if [[ -n "$CLICKHOUSE_CONTAINER_NAME" ]]; then
 		local name="$CLICKHOUSE_CONTAINER_NAME"
 		CLICKHOUSE_CONTAINER_NAME=""
+		report_failed_container "$name" "clickhouse"
 		if [[ -n "$CLICKHOUSE_LOG_FILE" ]]; then
 			echo "Saving clickhouse logs to ${CLICKHOUSE_LOG_FILE}..."
 			docker logs "$name" >"${CLICKHOUSE_LOG_FILE}" 2>&1 || true
@@ -641,7 +743,12 @@ launch_clickhouse() {
 		--name "$CLICKHOUSE_CONTAINER_NAME" \
 		"${network_args[@]}" \
 		-e CLICKHOUSE_SKIP_USER_SETUP=1 \
-		clickhouse/clickhouse-server:24.8
+		--health-cmd 'clickhouse-client --query "SELECT 1"' \
+		--health-interval 5s \
+		--health-timeout 3s \
+		--health-retries 3 \
+		--health-start-period 60s \
+		"$CLICKHOUSE_IMAGE"
 
 	echo "Waiting for clickhouse to be ready..."
 	for i in $(seq 1 60); do

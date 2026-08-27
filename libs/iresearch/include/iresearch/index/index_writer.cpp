@@ -591,9 +591,6 @@ uint64_t LimitTick(uint64_t tick, uint64_t def) noexcept {
   return tick != writer_limits::kMaxTick ? tick : def;
 }
 
-// Id of the segment a file belongs to. Every file of a segment is named
-// `_<id>` or `_<id>.<...>` (see FileName), so the id is the digit run right
-// after the leading '_'. Returns false for anything else (index metas, locks).
 bool ParseSegmentId(std::string_view name, uint64_t& id) noexcept {
   if (name.size() < 2 || name.front() != '_') {
     return false;
@@ -604,8 +601,6 @@ bool ParseSegmentId(std::string_view name, uint64_t& id) noexcept {
   return ec == std::errc{} && (ptr == end || *ptr == '.');
 }
 
-// Largest segment id with a file physically present in the directory, including
-// segments no committed meta references.
 uint64_t MaxSegmentId(const Directory& dir) {
   uint64_t max_id = 0;
   dir.visit([&max_id](std::string_view name) {
@@ -1670,12 +1665,11 @@ bool IndexWriter::AdoptSegment(std::string_view meta_file,
     return false;
   }
 
-  // Keep the counter above the adopted id: this segment was named by a previous
-  // process whose counter never reached the committed meta we opened from.
-  if (uint64_t id = 0; ParseSegmentId(segment.meta.name, id) &&
-                       _seg_counter.load(std::memory_order_relaxed) < id) {
-    _seg_counter.store(id, std::memory_order_relaxed);
-  }
+  [[maybe_unused]] uint64_t id = 0;
+  SDB_ASSERT(ParseSegmentId(segment.meta.name, id) &&
+               id <= _seg_counter.load(std::memory_order_relaxed),
+             "Adopted segment id is above the segment counter; the writer was "
+             "not opened with cleanup_on_open = false");
 
   FileRefs refs;
   refs.emplace_back(std::move(meta_ref));

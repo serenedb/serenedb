@@ -75,6 +75,7 @@ compaction_max_segments	10	Maximum inverted-index segments merged by one backgro
 compaction_max_segments_bytes	5368709120	Byte budget of one background inverted-index compaction (the tier target size). Per-index WITH (compaction_max_segments_bytes = ...) overrides. Default 5368709120 (5GB).
 configure_metrics	[*]	Accepts a JSON enabling custom metrics
 configure_profiling	[*]	Accepts a JSON enabling custom metrics
+copy_csv_header_default	off	Whether COPY ... TO a CSV file writes a header line when HEADER is not specified
 current_transaction_invalidation_policy	STANDARD_POLICY	Which types of exceptions invalidate the database for the current transaction
 custom_extension_repository	(empty)	Overrides the custom endpoint for remote extension installation
 custom_profiling_settings	[*]	Accepts a JSON enabling custom metrics
@@ -135,7 +136,6 @@ enable_global_s3_configuration	on	Automatically fetch AWS credentials from envir
 enable_http_metadata_cache	off	Whether or not the global http metadata is used to cache HTTP metadata
 enable_logging	1	Enables the logger
 enable_macro_dependencies	off	Enable created MACROs to create dependencies on the referenced objects (such as tables)
-enable_object_cache	off	[PLACEHOLDER] Legacy setting - does nothing
 enable_optimizer	on	Whether or not query optimization is enabled
 enable_profiling	NULL	Enables profiling, and sets the output format (JSON, QUERY_TREE, QUERY_TREE_OPTIMIZER)
 enable_progress_bar	on	Enables the progress bar, printing progress to the terminal for long queries
@@ -191,7 +191,7 @@ index_scan_max_count	2048	The maximum index scan count sets a threshold for inde
 index_scan_percentage	0.001	The index scan percentage sets a threshold for index scans. If fewer than MAX(index_scan_max_count, index_scan_percentage * total_row_count) rows match, we perform an index scan instead of a table scan.
 initial_column_segment_size	2048	The initial memory (in bytes) reserved for the first transient column segment. Must be a power of two. Internally, we subtract the block header size (typically 8 bytes) for segments with or exceeding 1024 bytes. Subsequent segments double in size until reaching the block size.
 integer_datetimes	on	Shows whether datetimes are integer based.
-integer_division	off	Whether or not the / operator defaults to integer division, or to floating point division
+integer_division	on	Whether or not the / operator defaults to integer division, or to floating point division
 is_superuser	on	Shows whether the current session's user is a superuser.
 lambda_syntax	ENABLE_SINGLE_ARROW	Configures the use of the deprecated single arrow operator (->) for lambda functions.
 late_materialization_max_rows	50	The maximum amount of rows in the LIMIT/SAMPLE for which we trigger late materialization
@@ -216,7 +216,6 @@ old_implicit_casting	off	Allow implicit casting to/from VARCHAR
 operator_memory_limit	NULL	The maximum memory for query intermediates (sorts, hash tables) per connection (e.g. 256MB)
 order_by_non_integer_literal	off	Allow ordering by non-integer literals - ordering by such literals has no effect.
 ordered_aggregate_threshold	262144	The number of rows to accumulate before sorting, used for tuning
-parallelize_sequential_sources	on	Whether to automatically parallelize sequential sources
 parquet_metadata_cache	off	Cache Parquet metadata - useful when reading the same files multiple times
 parquet_prefetch_column_gap	NULL	Byte gap under which Parquet prefetch I/O ranges are coalesced (NULL lets the cost model adapt it)
 partitioned_write_flush_threshold	524288	The threshold in number of rows after which we flush a thread state when writing using PARTITION_BY
@@ -411,6 +410,7 @@ compaction_max_segments	10	Maximum inverted-index segments merged by one backgro
 compaction_max_segments_bytes	5368709120	Byte budget of one background inverted-index compaction (the tier target size). Per-index WITH (compaction_max_segments_bytes = ...) overrides. Default 5368709120 (5GB).
 configure_metrics	[*]	Accepts a JSON enabling custom metrics
 configure_profiling	[*]	Accepts a JSON enabling custom metrics
+copy_csv_header_default	off	Whether COPY ... TO a CSV file writes a header line when HEADER is not specified
 current_transaction_invalidation_policy	STANDARD_POLICY	Which types of exceptions invalidate the database for the current transaction
 custom_extension_repository	(empty)	Overrides the custom endpoint for remote extension installation
 custom_profiling_settings	[*]	Accepts a JSON enabling custom metrics
@@ -471,7 +471,6 @@ enable_global_s3_configuration	on	Automatically fetch AWS credentials from envir
 enable_http_metadata_cache	off	Whether or not the global http metadata is used to cache HTTP metadata
 enable_logging	1	Enables the logger
 enable_macro_dependencies	off	Enable created MACROs to create dependencies on the referenced objects (such as tables)
-enable_object_cache	off	[PLACEHOLDER] Legacy setting - does nothing
 enable_optimizer	on	Whether or not query optimization is enabled
 enable_profiling	NULL	Enables profiling, and sets the output format (JSON, QUERY_TREE, QUERY_TREE_OPTIMIZER)
 enable_progress_bar	on	Enables the progress bar, printing progress to the terminal for long queries
@@ -527,7 +526,7 @@ index_scan_max_count	2048	The maximum index scan count sets a threshold for inde
 index_scan_percentage	0.001	The index scan percentage sets a threshold for index scans. If fewer than MAX(index_scan_max_count, index_scan_percentage * total_row_count) rows match, we perform an index scan instead of a table scan.
 initial_column_segment_size	2048	The initial memory (in bytes) reserved for the first transient column segment. Must be a power of two. Internally, we subtract the block header size (typically 8 bytes) for segments with or exceeding 1024 bytes. Subsequent segments double in size until reaching the block size.
 integer_datetimes	on	Shows whether datetimes are integer based.
-integer_division	off	Whether or not the / operator defaults to integer division, or to floating point division
+integer_division	on	Whether or not the / operator defaults to integer division, or to floating point division
 is_superuser	on	Shows whether the current session's user is a superuser.
 lambda_syntax	ENABLE_SINGLE_ARROW	Configures the use of the deprecated single arrow operator (->) for lambda functions.
 late_materialization_max_rows	50	The maximum amount of rows in the LIMIT/SAMPLE for which we trigger late materialization
@@ -552,7 +551,6 @@ old_implicit_casting	off	Allow implicit casting to/from VARCHAR
 operator_memory_limit	NULL	The maximum memory for query intermediates (sorts, hash tables) per connection (e.g. 256MB)
 order_by_non_integer_literal	off	Allow ordering by non-integer literals - ordering by such literals has no effect.
 ordered_aggregate_threshold	262144	The number of rows to accumulate before sorting, used for tuning
-parallelize_sequential_sources	on	Whether to automatically parallelize sequential sources
 parquet_metadata_cache	off	Cache Parquet metadata - useful when reading the same files multiple times
 parquet_prefetch_column_gap	NULL	Byte gap under which Parquet prefetch I/O ranges are coalesced (NULL lets the cost model adapt it)
 partitioned_write_flush_threshold	524288	The threshold in number of rows after which we flush a thread state when writing using PARTITION_BY

@@ -894,10 +894,14 @@ TEST_F(LoadTest, ScoreAccuracyAcrossQueryShapes) {
     return out;
   };
 
-  // Phrases are positional, not a sum over terms, so the oracle does not model
-  // them.
+  // The oracle sums what each term of a plain disjunction contributes, so it
+  // models nothing positional (a phrase), nothing that scores a chosen subset
+  // of its terms (a minimum match), nothing weighted (a boost), and nothing
+  // that stands for terms it cannot name (a wildcard, a fuzziness, an
+  // interval function).
   const auto skippable = [](std::string_view q) {
-    return q.find('"') != std::string_view::npos || q.starts_with('~');
+    return q.find_first_of("\"()@*?~^[]{}<>/") != std::string_view::npos ||
+           q.find("fn:") != std::string_view::npos;
   };
 
   size_t eligible_queries = 0;
@@ -961,8 +965,8 @@ TEST_F(LoadTest, ScoreAccuracyAcrossQueryShapes) {
   }
 
   // The query set is checked in, so coverage is a fixed number: 795 of the
-  // 1096 queries carry a term to score (the other 301 are phrases), and each
-  // is checked in both modes.
+  // 1457 queries are a sum over terms the oracle can name, and each is
+  // checked in both modes.
   EXPECT_EQ(eligible_queries, 795);
   EXPECT_EQ(checked_queries, 795 * 2);
 }
@@ -1113,6 +1117,50 @@ TEST_F(LoadTest, DisjunctionScoreAccuracy) {
   }
 }
 
+// Asking for the documents to be printed must not change which ones they are:
+// `_print` is a way of looking, not a different query.
+TEST_F(LoadTest, ReportIsOnlyAWayOfLooking) {
+  ASSERT_NE(nullptr, gExecutor);
+
+  for (auto query : kQueries) {
+    SCOPED_TRACE(query);
+
+    const auto docs = gExecutor->ExecuteEmitDocs(query, {});
+    const auto docs_hash = gExecutor->ExecuteEmitDocs(query, {.hash = true});
+    const auto docs_both =
+      gExecutor->ExecuteEmitDocs(query, {.hash = true, .print = true});
+    EXPECT_EQ(docs.count, docs_hash.count);
+    EXPECT_EQ(docs.count, docs_both.count);
+    EXPECT_EQ(docs_hash.hash, docs_both.hash);
+    EXPECT_NE(0, docs.count);
+
+    const auto scored = gExecutor->ExecuteEmitScoredDocs(query, {});
+    const auto scored_hash =
+      gExecutor->ExecuteEmitScoredDocs(query, {.hash = true});
+    const auto scored_both =
+      gExecutor->ExecuteEmitScoredDocs(query, {.hash = true, .print = true});
+    EXPECT_EQ(scored.count, scored_hash.count);
+    EXPECT_EQ(scored.count, scored_both.count);
+    EXPECT_EQ(scored_hash.hash, scored_both.hash);
+
+    // the same documents, however they were asked for
+    EXPECT_EQ(docs.count, scored.count);
+  }
+}
+
+TEST_F(LoadTest, TopKPrunedAndExactAgree) {
+  ASSERT_NE(nullptr, gExecutor);
+
+  for (auto query : kQueries) {
+    SCOPED_TRACE(query);
+
+    gExecutor->ExecuteTopK(100, query);
+    const auto pruned = gExecutor->HashResults();
+    gExecutor->ExecuteTopKWithCount(100, query);
+    EXPECT_EQ(pruned, gExecutor->HashResults());
+  }
+}
+
 TEST_F(LoadTest, AdvanceVsFillBlock) {
   auto factories = MakeFactories(*gExecutor);
   TestAdvanceVsFillBlock(gExecutor->GetReader(), factories, kWindowSizes);
@@ -1143,4 +1191,78 @@ TEST_F(LoadTest, SeekSkipFillBlock) {
   auto factories = MakeFactories(*gExecutor);
   TestSeekSkipFillBlock(gExecutor->GetReader(), factories, kWindowSizes,
                         kSeekSkips);
+}
+
+// The command grammar the benchmark driver speaks. Named `LoadTest...` so the
+// filter CI runs picks it up; it needs no corpus.
+TEST(LoadTestCommands, Kinds) {
+  using bench::Kind;
+
+  auto cmd = bench::ParseCommand("count");
+  EXPECT_EQ(Kind::Count, cmd.kind);
+  EXPECT_FALSE(cmd.report.hash);
+  EXPECT_FALSE(cmd.report.print);
+
+  EXPECT_EQ(Kind::Docs, bench::ParseCommand("docs").kind);
+  EXPECT_EQ(Kind::Scored, bench::ParseCommand("scored").kind);
+
+  cmd = bench::ParseCommand("top_100");
+  EXPECT_EQ(Kind::TopK, cmd.kind);
+  EXPECT_EQ(100, cmd.k);
+  EXPECT_TRUE(cmd.prune);
+}
+
+TEST(LoadTestCommands, AnyK) {
+  for (const auto [name, k] :
+       {std::pair<std::string_view, uint32_t>{"top_1", 1},
+        {"top_7", 7},
+        {"top_1000", 1000},
+        {"top_4294967295", 4294967295}}) {
+    const auto cmd = bench::ParseCommand(name);
+    EXPECT_EQ(bench::Kind::TopK, cmd.kind) << name;
+    EXPECT_EQ(k, cmd.k) << name;
+  }
+}
+
+TEST(LoadTestCommands, CountSuffixTurnsPruningOff) {
+  const auto cmd = bench::ParseCommand("top_100_count");
+  EXPECT_EQ(bench::Kind::TopK, cmd.kind);
+  EXPECT_EQ(100, cmd.k);
+  EXPECT_FALSE(cmd.prune);
+}
+
+TEST(LoadTestCommands, HashAndPrintEitherOrBoth) {
+  for (const auto* name :
+       {"docs_hash", "scored_hash", "top_10_hash", "top_10_count_hash"}) {
+    const auto cmd = bench::ParseCommand(name);
+    EXPECT_NE(bench::Kind::Unsupported, cmd.kind) << name;
+    EXPECT_TRUE(cmd.report.hash) << name;
+    EXPECT_FALSE(cmd.report.print) << name;
+  }
+
+  const auto printed = bench::ParseCommand("docs_print");
+  EXPECT_EQ(bench::Kind::Docs, printed.kind);
+  EXPECT_FALSE(printed.report.hash);
+  EXPECT_TRUE(printed.report.print);
+
+  for (const auto* name : {"docs_hash_print", "docs_print_hash",
+                           "top_3_print_hash", "scored_hash_print"}) {
+    const auto cmd = bench::ParseCommand(name);
+    EXPECT_NE(bench::Kind::Unsupported, cmd.kind) << name;
+    EXPECT_TRUE(cmd.report.hash) << name;
+    EXPECT_TRUE(cmd.report.print) << name;
+  }
+}
+
+TEST(LoadTestCommands, WhatIsNotACommand) {
+  for (const auto* name : {// a count is a number and nothing else
+                           "count_hash", "count_print",
+                           // each modifier at most once
+                           "docs_hash_hash", "docs_print_print",
+                           // a top-k needs a count of its own
+                           "top_", "top_0", "top_abc", "top_10x", "top_-1",
+                           // and the rest is not a command at all
+                           "", "bogus", "docs_debug", "_hash"}) {
+    EXPECT_EQ(bench::Kind::Unsupported, bench::ParseCommand(name).kind) << name;
+  }
 }

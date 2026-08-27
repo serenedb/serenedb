@@ -420,6 +420,14 @@ void Utf8EmplaceArc(automaton& a, automaton::StateId from, bytes_view label,
 void Utf8EmplaceRhoArc(automaton& a, automaton::StateId from,
                        automaton::StateId to);
 
+// Gives a state that accepts and reads nothing something to read: what
+// matches nothing goes to a sink, which is then the only state left without
+// arcs, and is not final. `TableMatcher` finds the sink that way, and the
+// term dictionary walk expects a live state to have arcs. Levenshtein
+// automatons are built like this already; ones assembled from parts and
+// determinized are not.
+void EmplaceSinkArcs(automaton& a);
+
 inline automaton MakeChar(bytes_view c) {
   automaton a;
   a.AddStates(2);

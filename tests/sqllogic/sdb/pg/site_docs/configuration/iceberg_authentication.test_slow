@@ -1,0 +1,172 @@
+# Configuration: Iceberg catalog authentication reference.
+# Every snippet targets an external catalog, so all bodies are noops; the
+# RAW blocks are what the site renders.
+
+# DOCS_TEST: example_none
+
+# DOCS_TEST_RAW
+#| CREATE SERVER dev_lake FOREIGN DATA WRAPPER iceberg_fdw OPTIONS (
+#|     warehouse '⟨warehouse⟩',
+#|     endpoint 'http://localhost:8181',
+#|     authorization_type 'none'
+#| );
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TABLE __docs_noop_iceauth_001 (i INTEGER);
+
+# DOCS_TEST: example_static_token
+
+# DOCS_TEST_RAW
+#| CREATE SERVER lake FOREIGN DATA WRAPPER iceberg_fdw OPTIONS (
+#|     warehouse '⟨warehouse⟩',
+#|     endpoint '⟨https://catalog.example.com/api/catalog⟩',
+#|     authorization_type 'oauth2',
+#|     token '⟨access token⟩'
+#| );
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TABLE __docs_noop_iceauth_002 (i INTEGER);
+
+# DOCS_TEST: example_client_credentials
+
+# DOCS_TEST_RAW
+#| CREATE PERSISTENT SECRET catalog_oauth (
+#|     TYPE ICEBERG,
+#|     CLIENT_ID '⟨client id⟩',
+#|     CLIENT_SECRET '⟨client secret⟩',
+#|     OAUTH2_SERVER_URI '⟨https://idp.example.com/realms/lake/protocol/openid-connect/token⟩',
+#|     OAUTH2_SCOPE 'PRINCIPAL_ROLE:ALL'
+#| );
+#|
+#| CREATE SERVER lake FOREIGN DATA WRAPPER iceberg_fdw OPTIONS (
+#|     warehouse '⟨warehouse⟩',
+#|     endpoint '⟨https://catalog.example.com/api/catalog⟩',
+#|     secret 'catalog_oauth'
+#| );
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TABLE __docs_noop_iceauth_003 (i INTEGER);
+
+# DOCS_TEST: example_google_sa
+
+# DOCS_TEST_RAW
+#| CREATE PERSISTENT SECRET gcp (
+#|     TYPE ICEBERG,
+#|     PROVIDER google,
+#|     CLIENT_EMAIL '⟨engine@my-project.iam.gserviceaccount.com⟩',
+#|     PRIVATE_KEY '⟨-----BEGIN PRIVATE KEY-----\nMIIE...\n-----END PRIVATE KEY-----\n⟩',
+#|     EXTRA_HTTP_HEADERS MAP {'x-goog-user-project': '⟨my-project⟩'}
+#| );
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TABLE __docs_noop_iceauth_004 (i INTEGER);
+
+# DOCS_TEST: example_google_vm
+
+# DOCS_TEST_RAW
+#| CREATE PERSISTENT SECRET gcp (
+#|     TYPE ICEBERG,
+#|     PROVIDER google,
+#|     EXTRA_HTTP_HEADERS MAP {'x-goog-user-project': '⟨my-project⟩'}
+#| );
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TABLE __docs_noop_iceauth_005 (i INTEGER);
+
+# DOCS_TEST: example_google_adc
+
+# DOCS_TEST_RAW
+#| CREATE PERSISTENT SECRET gcp (
+#|     TYPE ICEBERG,
+#|     OAUTH2_GRANT_TYPE 'refresh_token',
+#|     OAUTH2_SERVER_URI 'https://oauth2.googleapis.com/token',
+#|     CLIENT_ID '⟨client_id from the ADC file⟩',
+#|     CLIENT_SECRET '⟨client_secret from the ADC file⟩',
+#|     REFRESH_TOKEN '⟨refresh_token from the ADC file⟩',
+#|     EXTRA_HTTP_HEADERS MAP {'x-goog-user-project': '⟨my-project⟩'}
+#| );
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TABLE __docs_noop_iceauth_006 (i INTEGER);
+
+# DOCS_TEST: example_sigv4_s3tables
+
+# DOCS_TEST_RAW
+#| CREATE PERSISTENT SECRET aws (
+#|     TYPE S3,
+#|     KEY_ID '⟨AKIA...⟩',
+#|     SECRET '⟨aws secret access key⟩',
+#|     REGION '⟨us-east-1⟩'
+#| );
+#|
+#| CREATE SERVER tables FOREIGN DATA WRAPPER iceberg_fdw OPTIONS (
+#|     warehouse 'arn:aws:s3tables:⟨us-east-1⟩:⟨123456789012⟩:bucket/⟨my-table-bucket⟩',
+#|     endpoint_type 's3_tables',
+#|     secret 'aws'
+#| );
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TABLE __docs_noop_iceauth_007 (i INTEGER);
+
+# DOCS_TEST: example_sigv4_glue
+
+# DOCS_TEST_RAW
+#| CREATE SERVER glue FOREIGN DATA WRAPPER iceberg_fdw OPTIONS (
+#|     warehouse '⟨123456789012⟩',
+#|     endpoint_type 'glue',
+#|     secret 'aws'
+#| );
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TABLE __docs_noop_iceauth_008 (i INTEGER);
+
+# DOCS_TEST: example_vended
+
+# DOCS_TEST_RAW
+#| CREATE SERVER lake FOREIGN DATA WRAPPER iceberg_fdw OPTIONS (
+#|     warehouse '⟨warehouse⟩',
+#|     endpoint '⟨https://catalog.example.com/api/catalog⟩',
+#|     secret 'catalog_oauth'
+#| );
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TABLE __docs_noop_iceauth_009 (i INTEGER);
+
+# DOCS_TEST: example_own_storage
+
+# DOCS_TEST_RAW
+#| CREATE PERSISTENT SECRET gcs_data (
+#|     TYPE GCS,
+#|     KEY_ID '⟨GOOG1E...⟩',
+#|     SECRET '⟨hmac secret⟩'
+#| );
+#|
+#| CREATE SERVER lake FOREIGN DATA WRAPPER iceberg_fdw OPTIONS (
+#|     warehouse 'bl://projects/⟨my-project⟩/catalogs/⟨my-catalog⟩',
+#|     endpoint 'https://biglake.googleapis.com/iceberg/v1/restcatalog',
+#|     secret 'gcp',
+#|     access_delegation_mode 'none'
+#| );
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TABLE __docs_noop_iceauth_010 (i INTEGER);

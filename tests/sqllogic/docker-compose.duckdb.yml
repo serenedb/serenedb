@@ -1,0 +1,65 @@
+services:
+  postgres:
+    image: postgres:18.3
+    environment:
+      POSTGRES_HOST_AUTH_METHOD: trust
+      POSTGRES_DB: postgres
+      # C.UTF-8 for bytewise collation; mirrors tests/duckdb/docker-compose.postgres.yml.
+      # See tests/duckdb/README.md for why (attach_like.test).
+      POSTGRES_INITDB_ARGS: "--locale=C.UTF-8"
+      LANG: C.UTF-8
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 1s
+      timeout: 3s
+      retries: 30
+    # Same path as the tests container mounts, so a test that hands the postgres
+    # backend a workspace path -- COPY FROM via postgres_execute() -- resolves it
+    # server-side. Mirrors tests/duckdb/docker-compose.postgres.yml.
+    volumes:
+      - "${WORKSPACE}:/serenedb:ro"
+    networks:
+      - test-network
+
+  tests:
+    image: ${BUILD_IMAGE}
+    user: "${DOCKER_UID:-1000}:${DOCKER_GID:-1000}"
+    volumes:
+      - "${WORKSPACE}:/serenedb"
+      - "${WORKSPACE}/out/logs:/logs"
+    env_file:
+      - "${WORKSPACE}/docker.env"
+    environment:
+      - BUILD_DIR
+      - DUCKDB_SUITES
+      - HOME=/serenedb
+      - LOG_DIR=/logs
+      # out/ is what the workflow uploads as the job artifact; tests/sqllogic is not.
+      - REPORTS_DIR=/serenedb/out/test-results
+      - PGHOST=postgres
+      - PGPORT=5432
+      - PGUSER=postgres
+      - PGDATABASE=postgres
+    networks:
+      - test-network
+    depends_on:
+      postgres:
+        condition: service_healthy
+    # One entry point for every DuckDB-level suite: duckdb core, each vendored
+    # extension, and postgres_scanner against the postgres service above.
+    # DUCKDB_SUITES is the diff-derived suite list (scripts/ci/classify-changes.sh);
+    # empty would mean "every suite", but the step never runs in that case.
+    command: >
+      sh -c '
+        cd /serenedb &&
+        if [ -n "$$DUCKDB_SUITES" ]; then
+          exec ./tests/duckdb/run.sh --suite "$$DUCKDB_SUITES";
+        else
+          exec ./tests/duckdb/run.sh;
+        fi
+      '
+
+networks:
+  test-network:
+    driver: bridge
+    name: ${COMPOSE_PROJECT_NAME}_test-network

@@ -18,7 +18,10 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include <iostream>
+#include <absl/strings/str_format.h>
+
+#include <cstdio>
+#include <iostream>  // std::cin
 #include <iresearch/index/index_reader.hpp>
 #include <iresearch/utils/timer_utils.hpp>
 
@@ -49,10 +52,9 @@ int main(int argc, const char* argv[]) {
         });
       std::sort(output.begin(), output.end());
       for (auto& [key, count, time_us] : output) {
-        std::cout << key << " calls:" << count << ", time: " << time_us
-                  << " us, avg call: "
-                  << static_cast<double>(time_us) / static_cast<double>(count)
-                  << " us" << std::endl;
+        absl::PrintF("%s calls:%d, time: %d us, avg call: %g us\n", key, count,
+                     time_us,
+                     static_cast<double>(time_us) / static_cast<double>(count));
       }
     };
 
@@ -89,10 +91,9 @@ int main(int argc, const char* argv[]) {
                               return std::make_unique<IndexAllFields>();
                             });
 
-    std::cout << "Number of documents: " << builder.GetReader().docs_count()
-              << std::endl;
+    absl::PrintF("Number of documents: %d\n", builder.GetReader().docs_count());
   } catch (const std::exception& ex) {
-    std::cerr << "fatal: " << ex.what() << std::endl;
+    absl::FPrintF(stderr, "fatal: %s\n", ex.what());
     exit_code = 1;
   }
   // MUST run before main() returns -- see comment at top of main().

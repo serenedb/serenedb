@@ -1,0 +1,48 @@
+# name: tests/duckdb/provision_tpch.test
+# description: Load a real TPC-H sf=0.01 dataset into the postgres fixture's tpch schema
+# group: [provision]
+
+# Not registered as a test: run.sh feeds this to `unittest --stdin` from provision_postgres.
+# The scale factor has to stay 0.01 -- scanner/tpch.test_slow compares against the sf0.01 answers.
+
+require tpch
+
+require postgres_scanner
+
+statement ok
+CALL dbgen(sf=0.01)
+
+statement ok
+ATTACH 'dbname=postgresscanner' AS pg (TYPE POSTGRES)
+
+statement ok
+CREATE SCHEMA IF NOT EXISTS pg.tpch
+
+statement ok
+CREATE OR REPLACE TABLE pg.tpch.lineitem AS FROM lineitem
+
+statement ok
+CREATE OR REPLACE TABLE pg.tpch.orders AS FROM orders
+
+statement ok
+CREATE OR REPLACE TABLE pg.tpch.partsupp AS FROM partsupp
+
+statement ok
+CREATE OR REPLACE TABLE pg.tpch.part AS FROM part
+
+statement ok
+CREATE OR REPLACE TABLE pg.tpch.customer AS FROM customer
+
+statement ok
+CREATE OR REPLACE TABLE pg.tpch.supplier AS FROM supplier
+
+statement ok
+CREATE OR REPLACE TABLE pg.tpch.nation AS FROM nation
+
+statement ok
+CREATE OR REPLACE TABLE pg.tpch.region AS FROM region
+
+query I
+SELECT count(*) FROM pg.tpch.lineitem
+----
+60175

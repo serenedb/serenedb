@@ -20,12 +20,15 @@
 
 #include "index_builder.h"
 
+#include <absl/strings/str_format.h>
+
 #include <atomic>
+#include <cstdio>
 #include <duckdb/main/database.hpp>
-#include <iostream>
 #include <iresearch/search/bm25.hpp>
 #include <iresearch/store/store_utils.hpp>
 #include <iresearch/utils/index_utils.hpp>
+#include <istream>
 #include <memory>
 
 #include "basics/duckdb_engine.h"
@@ -130,7 +133,8 @@ void IndexBuilder::IndexFromStream(std::istream& input,
     thread_pool.run([&compaction_cv, &compaction_mutex, &batch_provider, this] {
       while (!batch_provider.done.load()) {
         {
-          std::cout << "[COMMIT]" << std::endl;
+          absl::PrintF("[COMMIT]\n");
+          std::fflush(stdout);
           _writer->RefreshCommit();
         }
 
@@ -163,7 +167,8 @@ void IndexBuilder::IndexFromStream(std::istream& input,
         }
 
         {
-          std::cout << "[COMPACT]" << std::flush;
+          absl::PrintF("[COMPACT]");
+          std::fflush(stdout);
           _writer->Compact(policy);
         }
 
@@ -183,18 +188,21 @@ void IndexBuilder::IndexFromStream(std::istream& input,
         auto ctx = _writer->GetBatch();
         (*handler)(buf, ctx);
         ctx.Commit();
-        std::cout << "." << std::flush;
+        absl::PrintF(".");
+        std::fflush(stdout);
       }
     });
   }
 
   thread_pool.stop();
 
-  std::cout << "[COMMIT]" << std::endl;
+  absl::PrintF("[COMMIT]\n");
+  std::fflush(stdout);
   _writer->RefreshCommit();
 
   if (_opts.compact_all) {
-    std::cout << "Compacting all segments:" << std::endl;
+    absl::PrintF("Compacting all segments:\n");
+    std::fflush(stdout);
     CompactAll();
   } else if (_opts.compaction_threads) {
     irs::directory_utils::RemoveAllUnreferenced(_dir);

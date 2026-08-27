@@ -1,0 +1,87 @@
+{
+  "description": "SereneDB test-config for DuckDB core's own test tree. Every entry is a known SereneDB divergence from upstream DuckDB, not a flake -- see tests/duckdb/README.md.",
+  "skip_tests": [
+    {
+      "reason": "printf/format behaviour that DuckDB gets from local patches to its bundled fmt, which SereneDB dropped in favour of one shared vendored fmt (see 'link serenedb's vendored fmt/fast_float/...' -- dependency dedup). DuckDB's copy adds an int128 branch to printf's arg_converter (so '%d' on UBIGINT/HUGEINT keeps the full value instead of narrowing to long long, which is what standard fmt and C printf do), a ',' specifier for thousands separators, and int128-aware int_checker/make_unsigned_or_bool. Vendored fmt 12.2 has native int128 types but none of those printf patches, and '{:.3}' on a double renders differently between the two fmt versions.",
+      "paths": [
+        "test/sql/function/string/test_format.test",
+        "test/sql/function/string/test_format_extensions.test",
+        "test/sql/function/string/test_printf.test"
+      ]
+    },
+    {
+      "reason": "Out-of-range float values are rejected where DuckDB saturates to +/-inf (overflow) or +/-0 (underflow): 'SELECT 1e1000', \"'1e309'::float8\", \"'3.5e38'::float4\", \"'1e-46'::float4\". DuckDB's bundled fast_float is a 2022 vintage that predates upstream reporting result_out_of_range; SereneDB links one shared vendored fast_float (v8.2.10) which does report it, and TryDoubleCast treats any error code as a failed cast. For string casts this matches PostgreSQL exactly, which errors on both ends (verified on PG 18: `'1e308'::real` and `'1e-320'::real` both raise `is out of range for type real`); for a bare literal PostgreSQL parses it as an exact numeric, so that case matches neither. Three more files reach the same rejection by other routes: json_execute_serialized_null's VALUES list contains the literal 1e1000, so constant folding raises `Invalid Input Error: Could not convert string '1e1000' to DOUBLE` and the `Binder Error` the file asserts (from the window/FULL JOIN construct further in) is never reached; rigger/test_523 is `SELECT SIN(1e1000)` and expects a value; test_json_serialize_sql round-trips `SELECT 1e10000` through json_serialize_sql and now fails on the way back in with `Parser Error: Error parsing json: invalid input: Could not convert string '1e10000' to DOUBLE`. uhugeint_try_cast reaches it through the test harness rather than the query: both engines evaluate `SELECT i::FLOAT` for 2^128-1 to `inf` (verified against the fork point), but TestResultHelper::CompareValues casts the expected string `340282366920938463463374607431768211455` to the column type first (result_helper.cpp:513-525), and that string -> FLOAT cast saturates to `inf` upstream while it is rejected here, so the comparison has nothing to compare.",
+      "paths": [
+        "test/fuzzer/duckfuzz/json_execute_serialized_null.test",
+        "test/issues/rigger/test_523.test",
+        "test/sql/cast/double_float_cast.test",
+        "test/sql/json/test_json_serialize_sql.test",
+        "test/sql/overflow/test_numeric_overflow.test",
+        "test/sql/types/numeric/uhugeint_try_cast.test"
+      ]
+    },
+    {
+      "reason": "Only the string -> DOUBLE/FLOAT cast rejects '_' digit separators ('1_2.1_2E1_0'::DOUBLE). Separators in literals, in INT/DECIMAL casts and in hex/binary casts all work. DuckDB gets this from local patches to its bundled fast_float; SereneDB links one shared vendored fast_float (see 'link serenedb's vendored fmt/fast_float/...' -- dependency dedup) and deliberately does not fork it for this, so the float cast is the one place the separator syntax stops. PostgreSQL has no digit-separator syntax at all, so nothing is lost against it.",
+      "paths": [
+        "test/sql/parser/digit_separators.test"
+      ]
+    },
+    {
+      "reason": "There is no runtime extension loader: SereneDB builds with DISABLE_EXTENSION_LOAD and links its extension set statically, so `Binder::Bind(LoadStatement&)` (src/planner/binder/statement/bind_load.cpp:19) calls ExtensionHelper::ThrowExtensionRuntimeUnsupported() for any name that is not an ExtensionHelper::IsLinkedExtension(). Every file below dies on that one bind-time refusal -- verified by running all 27, each stops at `Not implemented Error: INSTALL|LOAD is not supported by SereneDB: extensions are compiled into the server binary and cannot be installed|loaded at runtime` and none for any other reason -- and every one of them is unskipped by the same change, tracked as https://github.com/serenedb/serenedb/issues/887. They arrive there four ways. (1) Loading a demo extension by file path, `LOAD '{BUILD_DIRECTORY}/test/extension/*.duckdb_extension'`: concurrent_load_extension, consistent_semicolon_extension_parse, explicit_extension_schema_testing, load_test_alias, loadable_parser_override, reset_global_extension_option, test_alias_point, test_custom_type_modifier_cast, test_extensible_filter, test_function_named_args, test_tags, window_extension, test_custom_type_modifier, aliasing, quack_peeling. (2) Asserting what the installer itself does: install_extension and install_extension_httpfs expect per-repository download failures naming https://extensions.duckdb.org, load_error expects the typo suggester to turn `motherduk` into `motherduck`, load_extension expects a loaded demo to register a QUACK parser extension. (3) Extension-security gates that sit behind the refusal, so the property they test holds only vacuously: checked_load expects `Permission Error: DuckDB extensions are files ending with '.duckdb_extension'` for `LOAD 'README.md'`, load_arbitrary_path the same for `LOAD 'folder/a.csv'`, while allowed_directories_install and allowed_directories expect `allowed_directories` / `enable_external_access=false` to govern the extension directory. (4) Scenarios whose setup needs the loader to run: create_secret_persistence_no_client_context does `INSTALL bogus FROM 'http://not.existent'` after a restart precisely so the download initialises the secret manager without a ClientContext; logging_memory_after_truncate expects the `Failed to load` log line that ExtensionActiveLoad::LoadFail (src/main/extension_manager.cpp:40) writes, so its `SELECT COUNT(*) FROM duckdb_logs` returns 0 instead of 1; attach_fsspec does `ATTACH 'dummy_extension:/hello.world'` expecting the autoloader to report the filesystem extension as missing, and that path reaches LoadExternalExtension (src/main/extension/extension_load.cpp:403) and the same refusal.",
+      "paths": [
+        "test/extension/concurrent_load_extension.test",
+        "test/extension/consistent_semicolon_extension_parse.test",
+        "test/extension/explicit_extension_schema_testing.test",
+        "test/extension/load_test_alias.test",
+        "test/extension/loadable_parser_override.test",
+        "test/extension/reset_global_extension_option.test",
+        "test/extension/test_alias_point.test",
+        "test/extension/test_custom_type_modifier_cast.test",
+        "test/extension/test_extensible_filter.test",
+        "test/extension/test_function_named_args.test",
+        "test/extension/test_tags.test",
+        "test/extension/window_extension.test",
+        "test/extension/test_custom_type_modifier.test_slow",
+        "test/sql/extensions/aliasing.test",
+        "test/sql/extensions/quack_peeling.test",
+        "test/extension/install_extension.test",
+        "test/extension/install_extension.test_slow",
+        "test/extension/install_extension_httpfs.test",
+        "test/extension/load_error.test",
+        "test/extension/load_extension.test",
+        "test/sql/extensions/allowed_directories_install.test",
+        "test/sql/extensions/checked_load.test",
+        "test/sql/extensions/load_arbitrary_path.test",
+        "test/sql/settings/allowed_directories.test",
+        "test/sql/attach/attach_fsspec.test",
+        "test/sql/logging/logging_memory_after_truncate.test",
+        "test/sql/secrets/create_secret_persistence_no_client_context.test"
+      ]
+    },
+    {
+      "reason": "SereneDB implements a feature DuckDB does not have, and each of these files exists only to assert DuckDB's lack of it, so the expected error can never be produced -- editing the expectations would assert the opposite of the file's stated purpose. Per file. test/sql/create/create_database.test: CREATE DATABASE is a parse error in DuckDB, the file asserts `syntax error at or near \"DATABASE\"` for `CREATE DATABASE mydb`, `CREATE DATABASE mydb FROM './path'` and `DROP DATABASE mydb`; src/parser/peg/transformer/transform_create_database.cpp rewrites them into `ATTACH '' AS foo (TYPE serenedb)` and `DETACH foo`, which works against serened (psql reports ATTACH and DETACH), while inside the unittest binary the serenedb storage type is not registered so the ATTACH lands on the INSTALL/LOAD refusal instead. test/sql/error/table_function_as_scalar_function.test: the whole file is `SELECT read_csv('test.csv')` expecting DuckDB's 'is a table function but it was used as a scalar function ... has to be called in a FROM clause'; table functions in the SELECT list are rewritten into `unnest(<table function as list>)` for PostgreSQL compatibility (src/planner/binder/expression/bind_function_expression.cpp:381-389), so binding succeeds and the failure moves to the reader (`IO Error: No files found that match the pattern \"test.csv\"`). test/issues/rigger/test_507.test: `CREATE TABLE t0()` raises `Parser Error: ... at least one column ...` in DuckDB; SereneDB allows zero-column tables the way PostgreSQL does. test/sql/generated_columns/stored/basic.test: STORED generated columns -- `CREATE TABLE tbl (price INTEGER, gcol AS (price) STORED)` is a `statement error` upstream and succeeds here, because the fork implements them. test/sql/select/test_select_into.test: `SELECT * INTO t2 FROM t WHERE t LIKE 'b%'` is marked '# unsupported' and expects either `SELECT INTO not supported` or `syntax error at or near \"INTO\"`; SereneDB implements PostgreSQL's SELECT INTO and creates t2 with one row.",
+      "paths": [
+        "test/sql/create/create_database.test",
+        "test/sql/error/table_function_as_scalar_function.test",
+        "test/issues/rigger/test_507.test",
+        "test/sql/generated_columns/stored/basic.test",
+        "test/sql/select/test_select_into.test"
+      ]
+    },
+    {
+      "reason": "search_path is a plain PostgreSQL search path: SereneDB neither validates its entries nor derives it from the attached catalogs, both of which DuckDB does. Per file. test/sql/catalog/test_set_search_path.test: `SET SEARCH_PATH = 'does_not_exist'` is a `statement error` upstream and succeeds here, because PostgreSQL accepts a path naming a schema that does not exist (verified on PG 18: dropping a schema leaves it in the path and only makes `current_schema()` NULL). test/sql/peg_parser/transformer/set_statement.test: same for `SET SEARCH_PATH TO app2`. test/sql/catalog/test_querying_from_detached_catalog.test: after `ATTACH ... AS db1; USE db1`, `CURRENT_SETTING('search_path')` reads `main` where DuckDB reads `db1.main` -- USE selects the current database, it does not rewrite the path, as PostgreSQL has no such statement at all. test/sql/pg_catalog/system_functions.test: `SELECT current_schemas(true)` returns the path plus the implicit `pg_catalog`, where DuckDB expands one entry per attached catalog (`[main, main, main, pg_catalog]`); over the wire we match PostgreSQL exactly.",
+      "paths": [
+        "test/sql/catalog/test_set_search_path.test",
+        "test/sql/peg_parser/transformer/set_statement.test",
+        "test/sql/catalog/test_querying_from_detached_catalog.test",
+        "test/sql/pg_catalog/system_functions.test"
+      ]
+    },
+    {
+      "reason": "BUG, not a divergence: rows committed while a `CREATE INDEX` runs never reach that index, so the test counts 6 rows where 20001 are expected. `CREATE INDEX` builds from a snapshot and publishes the index only in `PhysicalCreateIndex::Finalize`, while a committing INSERT maintains only the indexes published at that moment, so commits landing in between are in neither. Reproduces on pristine DuckDB at our fork point (it passes upstream only because the 1M-row build finishes before most inserts commit). Tracked in https://github.com/serenedb/serenedb/issues/1046; skipped to keep the suite runnable.",
+      "paths": [
+        "test/sql/parallelism/interquery/concurrent_writes_during_index_creation.test_slow"
+      ]
+    }
+  ]
+}

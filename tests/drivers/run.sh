@@ -27,7 +27,7 @@ declare -A defaults=(
 	[port]='5432'
 	[database]='postgres'
 	[user]='postgres'
-	[lang]='python,java,js,go,rust,php,csharp,c,ruby,psql'
+	[lang]='python,java,js,go,rust,php,csharp,c,ruby,r,psql'
 	[driver]=''
 	[protocols]='simple,extended-noparam,extended-text,extended-binary'
 	[types]='.*'
@@ -50,8 +50,8 @@ usage() {
 
 		Selection:
 		  --lang LIST          comma list: python,java,js,go,rust,php,csharp,c,ruby,r,sqlsmith,psql
-		                       (default: all except r; r is slow, so pass --lang r
-		                        explicitly -- in CI it rides the sqlsmith tier)
+		                       (default: every driver language; sqlsmith is a fuzzer,
+		                        not a conformance driver, so it stays opt-in)
 		  --driver LIST        comma list of <lang>_<driver> filters,
 		                       e.g. python_psycopg3,go_pgx
 		  --protocols LIST     simple,extended-noparam,extended-text,extended-binary
@@ -406,6 +406,17 @@ for lang in "${langs[@]}"; do
 	# present in the build image; pick up the count from there.
 	if [[ "$lang" == "rust" && "${tests:-0}" -eq 0 ]]; then
 		read -r tests fails errs <<<"$(count_rust_log "$SDB_DRV_JUNIT/tests-drivers-rust.log")"
+	fi
+	# Every per-lang runner exits 0 when its toolchain is missing, so a driver
+	# dropping out of the build image would otherwise read as a pass. A lang we
+	# were asked to run that produced no test at all is a failure, not a skip.
+	# Only checked for an unfiltered run: --types / --driver can legitimately
+	# select nothing. sqlsmith has no junit glob, so it is never checked.
+	if [[ -n "${lang_junit_glob[$lang]:-}" && "${tests:-0}" -eq 0 &&
+		"${args[types]}" == ".*" && -z "${args[driver]}" ]]; then
+		echo "[drivers] ERROR: $lang ran no tests -- toolchain or driver missing?" >&2
+		status=FAIL
+		final_exit=1
 	fi
 	printf '  %-10s %5s %5s %5s %4ss  %s\n' "$lang" "$tests" "$fails" "$errs" "$secs" "$status"
 done

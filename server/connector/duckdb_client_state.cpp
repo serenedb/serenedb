@@ -23,6 +23,7 @@
 #include <absl/strings/match.h>
 
 #include <duckdb/catalog/catalog_entry.hpp>
+#include <duckdb/common/case_insensitive_map.hpp>
 #include <duckdb/common/enum_util.hpp>
 #include <duckdb/common/exception.hpp>
 #include <duckdb/main/attached_database.hpp>
@@ -40,6 +41,25 @@
 #include "pg/sql_exception_macro.h"
 
 namespace sdb::connector {
+namespace {
+
+// Settings a client may never change, refused for the lifetime of the process
+// by the setting_change_handler below.
+const duckdb::case_insensitive_set_view_t kUnchangeableSettings = {
+  // Describes how this process is wired rather than a preference, and is pinned
+  // at startup in
+  // ConfigureServerDBConfig.
+  "external_threads",
+  // Read-only in PostgreSQL, where reporting the value is the whole point of
+  // the GUC.
+  "in_hot_standby",
+  "is_superuser",
+  "server_encoding",
+  "server_version",
+  "server_version_num",
+};
+
+}  // namespace
 
 SereneDBClientState& SereneDBClientState::Register(
   duckdb::ClientContext& client_ctx,
@@ -78,6 +98,16 @@ SereneDBClientState& SereneDBClientState::Register(
                                          const std::string& name,
                                          duckdb::SetScope scope,
                                          const duckdb::Value* new_value) {
+    // Refused the way PG refuses a postmaster-scoped GUC. Checked before the
+    // SetScope::GLOBAL return below, since some of these are global and would
+    // otherwise slip past it. DuckDB routes SET and RESET, for built-in
+    // settings and extension options alike, through this handler, and does so
+    // before invoking an option's own set_function -- so an entry here needs no
+    // callback of its own.
+    if (kUnchangeableSettings.contains(name)) {
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_CANT_CHANGE_RUNTIME_PARAM),
+                      ERR_MSG("parameter \"", name, "\" cannot be changed"));
+    }
     // Resolve AUTOMATIC against the setting's target scope so the downstream
     // check works uniformly regardless of how the user wrote the SET.
     if (scope == duckdb::SetScope::AUTOMATIC) {

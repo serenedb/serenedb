@@ -20,6 +20,8 @@
 /// @author Andrey Abramov
 ////////////////////////////////////////////////////////////////////////////////
 
+#include <absl/strings/str_cat.h>
+
 #include "filter_test_case_base.hpp"
 #include "iresearch/search/all_filter.hpp"
 #include "iresearch/search/automaton_filter.hpp"
@@ -603,6 +605,64 @@ TEST_P(WildcardFilterTestCase, visit) {
 }
 
 static constexpr auto kTestDirs = tests::GetDirectories<tests::kTypesDefault>();
+
+// A term other terms extend is written inside the block it names, as the
+// entry with an empty suffix, so finding it means descending into that block.
+// The dictionary only makes such a block once a prefix has enough terms under
+// it, which is why nothing smaller catches this.
+namespace {
+
+class TermsGenerator : public tests::DocGeneratorBase {
+ public:
+  explicit TermsGenerator(std::vector<std::string> terms)
+    : _terms{std::move(terms)} {}
+
+  const tests::Document* next() final {
+    if (_pos == _terms.size()) {
+      return nullptr;
+    }
+    _doc.clear();
+    auto field = std::make_shared<tests::StringField>("name", _terms[_pos++]);
+    field->id = kNameId;
+    _doc.insert(field);
+    return &_doc;
+  }
+
+  void reset() final { _pos = 0; }
+
+ private:
+  std::vector<std::string> _terms;
+  size_t _pos{0};
+  tests::Document _doc;
+};
+
+}  // namespace
+
+TEST_P(WildcardFilterTestCase, term_a_block_is_named_by) {
+  constexpr size_t kTermsPerBlock = 32;  // over the dictionary's block minimum
+
+  std::vector<std::string> terms{"hello"};  // doc 1: the block's own term
+  for (size_t i = 0; i < kTermsPerBlock; ++i) {
+    terms.push_back(absl::StrCat("hello", i));  // and what extends it
+  }
+  terms.emplace_back("hellp");  // a neighbour with nothing under it
+
+  {
+    TermsGenerator gen{terms};
+    add_segment(gen);
+  }
+
+  auto rdr = open_reader();
+
+  // the term itself is still a term
+  CheckQuery(*MakeWildcard(kNameId, "hello"), Docs{1}, Costs{1}, rdr);
+
+  // and a pattern that ends where the block begins must find it
+  const Docs expected{1, irs::doc_id_t(terms.size())};  // hello, hellp
+  CheckQuery(*MakeWildcard(kNameId, "hell_"), expected, Costs{expected.size()},
+             rdr);
+  CheckQuery(*MakeWildcard(kNameId, "_ello"), Docs{1}, Costs{1}, rdr);
+}
 
 INSTANTIATE_TEST_SUITE_P(wildcard_filter_test, WildcardFilterTestCase,
                          ::testing::Combine(::testing::ValuesIn(kTestDirs),

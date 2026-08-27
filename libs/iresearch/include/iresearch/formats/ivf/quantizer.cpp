@@ -41,6 +41,7 @@
 #include <cstring>
 #include <limits>
 #include <optional>
+#include <random>
 #include <vector>
 
 #include "basics/assert.h"
@@ -88,12 +89,50 @@ uint32_t RotatedDim(uint32_t d) noexcept {
   return std::max<uint32_t>(kFastScanBits, std::bit_ceil(d));
 }
 
+constexpr size_t SignBytes(uint32_t rotated_d) noexcept {
+  return (static_cast<size_t>(rotated_d) + 7) / 8;
+}
+
 void GenerateSigns(uint32_t rotated_d, int64_t seed,
                    std::vector<float>& signs) {
+  signs.resize(rotated_d);
+  std::mt19937_64 rng{static_cast<uint64_t>(seed)};
+  for (uint32_t i = 0; i < rotated_d;) {
+    const uint64_t bits = rng();
+    for (uint32_t b = 0; b < 64 && i < rotated_d; ++b, ++i) {
+      signs[i] = ((bits >> b) & 1U) != 0 ? 1.f : -1.f;
+    }
+  }
+}
+
+void LegacySigns(uint32_t rotated_d, int64_t seed, std::vector<float>& signs) {
   signs.resize(rotated_d);
   faiss::float_randn(signs.data(), signs.size(), seed);
   for (uint32_t i = 0; i < rotated_d; ++i) {
     signs[i] = signs[i] < 0.f ? -1.f : 1.f;
+  }
+}
+
+std::vector<byte_type> PackSigns(const std::vector<float>& signs) {
+  std::vector<byte_type> out(SignBytes(static_cast<uint32_t>(signs.size())), 0);
+  for (size_t i = 0; i < signs.size(); ++i) {
+    if (signs[i] > 0.f) {
+      out[i / 8] = static_cast<byte_type>(out[i / 8] | (1U << (i % 8)));
+    }
+  }
+  return out;
+}
+
+void LoadSigns(std::span<const byte_type> stats, size_t offset, uint32_t rd,
+               std::vector<float>& signs) {
+  if (stats.size() < offset + SignBytes(rd)) {
+    LegacySigns(rd, kRaBitQRotationSeed, signs);
+    return;
+  }
+  const byte_type* p = stats.data() + offset;
+  signs.resize(rd);
+  for (uint32_t i = 0; i < rd; ++i) {
+    signs[i] = ((p[i / 8] >> (i % 8)) & 1U) != 0 ? 1.f : -1.f;
   }
 }
 
@@ -1023,8 +1062,10 @@ class RaBitQuantizerWriter final : public QuantizerWriter {
   }
 
   void Serialize(DataOutput& out) const final {
-    out.WriteU64(sizeof(RaBitQStatsHeader));
+    const auto packed = PackSigns(_signs);
+    out.WriteU64(sizeof(RaBitQStatsHeader) + packed.size());
     WritePod(out, RaBitQStatsHeader{_nb_bits, _d});
+    out.WriteData(packed.data(), packed.size());
   }
 
   VectorQuantization Kind() const noexcept final {
@@ -1117,7 +1158,7 @@ class RaBitQuantizerStats final : public QuantizerStats {
       _d = d;
       _rd = RotatedDim(d);
       _nb_bits = hdr.nb_bits;
-      GenerateSigns(_rd, kRaBitQRotationSeed, _signs);
+      LoadSigns(stats, sizeof(RaBitQStatsHeader), _rd, _signs);
       _valid = true;
     }
   }

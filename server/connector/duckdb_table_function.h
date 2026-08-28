@@ -95,7 +95,7 @@ struct VectorScorerOptions {
   irs::field_id postings_id = irs::field_limits::invalid();
   irs::VectorQuantization quant = irs::VectorQuantization::None;
   uint32_t nprobe = 1;
-  uint32_t max_search_fanout = 0;
+  uint32_t max_search_fanout = 16;
   float radius = std::numeric_limits<float>::max();
   bool radius_inclusive = false;
 

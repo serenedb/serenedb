@@ -21,6 +21,7 @@
 #pragma once
 
 #include "basics/assert.h"
+#include "iresearch/analysis/token_attributes.hpp"
 #include "iresearch/search/score_function.hpp"
 #include "iresearch/search/scorer.hpp"
 
@@ -74,5 +75,14 @@ class VolatileBoostScore : public ScoreOperator {
   score_t _constant;
   const score_t* _volatile_boost;
 };
+
+inline ScoreFunction MakeVolatileBoostScore(const ScoreContext& ctx,
+                                            score_t value) {
+  const auto* volatile_boost = irs::get<BoostBlockAttr>(ctx.doc_attrs);
+  if (!volatile_boost) {
+    return ScoreFunction::Constant(value);
+  }
+  return ScoreFunction::Make<VolatileBoostScore>(volatile_boost->value, value);
+}
 
 }  // namespace irs

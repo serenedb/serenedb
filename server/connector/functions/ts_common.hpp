@@ -39,6 +39,7 @@
 #include <magic_enum/magic_enum.hpp>
 
 #include "basics/containers/node_hash_map.h"
+#include "connector/functions/ts_query_codec.h"
 #include "connector/search_filter_builder.hpp"
 
 namespace sdb::catalog {
@@ -61,6 +62,7 @@ struct FilterContext {
   duckdb::ClientContext& client_context;
   uint32_t scored_terms_limit = 1024;
   uint32_t levenshtein_max_terms = 64;
+  FilterScorers* scorer_sink = nullptr;
 
   FilterContext WithTokenizer(irs::analysis::Analyzer& tokenizer) const {
     return {
@@ -76,6 +78,7 @@ struct FilterContext {
       .client_context = client_context,
       .scored_terms_limit = scored_terms_limit,
       .levenshtein_max_terms = levenshtein_max_terms,
+      .scorer_sink = scorer_sink,
     };
   }
 
@@ -93,6 +96,7 @@ struct FilterContext {
       .client_context = client_context,
       .scored_terms_limit = scored_terms_limit,
       .levenshtein_max_terms = levenshtein_max_terms,
+      .scorer_sink = scorer_sink,
     };
   }
 
@@ -110,6 +114,7 @@ struct FilterContext {
       .client_context = client_context,
       .scored_terms_limit = scored_terms_limit,
       .levenshtein_max_terms = levenshtein_max_terms,
+      .scorer_sink = scorer_sink,
     };
   }
 };
@@ -313,5 +318,8 @@ TSQueryOp ClassifyTSQueryFunction(std::string_view name);
 std::string_view TryGetTokenizerModifier(const duckdb::LogicalType& type);
 std::optional<double> TryGetBoostModifier(const duckdb::LogicalType& type);
 std::optional<int64_t> TryGetSlopModifier(const duckdb::LogicalType& type);
+std::optional<std::string> TryGetScoreModifier(const duckdb::LogicalType& type);
+std::optional<TSQueryMerge> TryGetMergeModifier(
+  const duckdb::LogicalType& type);
 
 }  // namespace sdb::connector

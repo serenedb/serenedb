@@ -44,7 +44,7 @@ void FromPrefix(irs::BooleanFilter& parent, const FilterContext& ctx,
                              "requires a VARCHAR column."));
   }
   auto& filter = AddMaybeNegated<irs::ByPrefix>(parent, ctx, column_info);
-  filter.boost(ctx.boost);
+  filter.SetBoost(ctx.boost);
   *filter.mutable_field_id() =
     PickPerKindFieldId(column_info, duckdb::LogicalTypeId::VARCHAR);
   auto& pf_opts = *filter.mutable_options();

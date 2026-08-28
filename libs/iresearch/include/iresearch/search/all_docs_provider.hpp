@@ -28,7 +28,7 @@ namespace irs {
 
 class AllDocsProvider {
  public:
-  using Ptr = std::unique_ptr<FilterWithBoost>;
+  using Ptr = std::unique_ptr<Filter>;
   using ProviderFunc = std::function<Ptr(score_t)>;
 
   static Ptr Default(score_t boost);

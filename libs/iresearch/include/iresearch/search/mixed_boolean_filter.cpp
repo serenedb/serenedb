@@ -56,7 +56,7 @@ const ByTerms* AsSplittableByTerms(const Filter& side) noexcept {
 
 }  // namespace
 
-PrepareCollector::ptr MixedBooleanFilter::MakeCollector(
+PrepareCollector::ptr MixedBooleanFilter::MakeCollectorImpl(
   const Scorer* scorer) const {
   const auto& req = RequiredSlot();
   const auto& opt = OptionalSlot();
@@ -112,12 +112,12 @@ QueryBuilder::ptr MixedBooleanFilter::PrepareSegment(
   if (const auto* opt_or = AsOr(*opt)) {
     opt_queries.reserve(opt_or->size());
     for (const auto& clause : *opt_or) {
-      add_clause(*clause, opt_or->Boost());
+      add_clause(*clause, opt_or->GetBoost());
     }
   } else if (const auto* opt_terms = AsSplittableByTerms(*opt)) {
     const auto& terms = opt_terms->options().terms;
     const auto field = opt_terms->field_id();
-    const auto boost = ctx.boost * opt_terms->Boost();
+    const auto boost = ctx.boost * opt_terms->GetBoost();
     opt_queries.reserve(terms.size());
     for (const auto& term : terms) {
       PrepareContext child = ctx;

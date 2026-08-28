@@ -99,6 +99,151 @@ def test_scored_param(conn, schema):
         assert [r[0] for r in cur.fetchall()] == [1, 4]
 
 
+# ---- modifiers over the client protocol -------------------------------------
+#
+# A modifier travels inside the TSQUERY value, not only in its type: the struct
+# carries a slop and a scorer alongside the text, tokenizer and boost. These
+# pin what a client sees of that -- including that a plain value still renders
+# as its bare text, because the TSQUERY -> VARCHAR cast feeds overload
+# resolution and quoting an unmodified value would turn a term into a quoted
+# term.
+#
+# Both spellings are covered: a modifier on a literal operand, and one on a
+# bound parameter, which reaches the value through a different road entirely.
+
+
+def test_modifier_scorer_literal(conn, schema):
+    sql = (
+        f"SELECT a, bm25(tableoid) FROM {schema}.sp_idx "
+        "WHERE b @@ 'quick'::score('constant(42)') ORDER BY a"
+    )
+    with conn.cursor() as cur:
+        cur.execute(sql)
+        assert [(r[0], round(r[1], 4)) for r in cur.fetchall()] == [
+            (1, 42.0), (4, 42.0)
+        ]
+
+
+def test_modifier_unscored_literal(conn, schema):
+    sql = (
+        f"SELECT a, bm25(tableoid) FROM {schema}.sp_idx "
+        "WHERE b @@ 'quick'::score(NULL) ORDER BY a"
+    )
+    with conn.cursor() as cur:
+        cur.execute(sql)
+        assert [(r[0], round(r[1], 4)) for r in cur.fetchall()] == [
+            (1, 0.0), (4, 0.0)
+        ]
+
+
+def test_modifier_in_list_element(conn, schema):
+    # The modifier applies to its own element only: doc 4 matches both, so it
+    # collects the constant plus the other element's ordinary score.
+    sql = (
+        f"SELECT a, bm25(tableoid) FROM {schema}.sp_idx "
+        "WHERE b @@ ts_any(['quick'::score('constant(42)'), 'dog']) ORDER BY a"
+    )
+    with conn.cursor() as cur:
+        cur.execute(sql)
+        got = dict((r[0], round(r[1], 4)) for r in cur.fetchall())
+    assert sorted(got) == [1, 2, 4]
+    assert got[1] == 42.0
+    assert got[2] < 42.0
+    assert got[4] > 42.0
+
+
+def test_modifier_param_scorer(conn, schema):
+    # `$1::score(...)` names the modifier type directly, so DuckDB types the
+    # parameter as that type and leaves no cast behind. The modifier therefore
+    # has to be folded in when the wire value is materialised, or it is gone
+    # before anything can read it.
+    sql = (
+        f"SELECT a, bm25(tableoid) FROM {schema}.sp_idx "
+        "WHERE b @@ %s::score('constant(42)') ORDER BY a"
+    )
+    with conn.cursor() as cur:
+        cur.execute(sql, ("quick",))
+        assert [(r[0], round(r[1], 4)) for r in cur.fetchall()] == [
+            (1, 42.0), (4, 42.0)
+        ]
+
+
+def test_modifier_param_unscored(conn, schema):
+    sql = (
+        f"SELECT a, bm25(tableoid) FROM {schema}.sp_idx "
+        "WHERE b @@ %s::score(NULL) ORDER BY a"
+    )
+    with conn.cursor() as cur:
+        cur.execute(sql, ("quick",))
+        assert [(r[0], round(r[1], 4)) for r in cur.fetchall()] == [
+            (1, 0.0), (4, 0.0)
+        ]
+
+
+def test_modifier_param_boost(conn, schema):
+    # Boost travels the same road, so it is asserted against the unmodified
+    # score rather than a constant: five times, whatever the column scores.
+    plain = f"SELECT a, bm25(tableoid) FROM {schema}.sp_idx WHERE b @@ %s ORDER BY a"
+    boosted = (
+        f"SELECT a, bm25(tableoid) FROM {schema}.sp_idx "
+        "WHERE b @@ %s::boost(5.0) ORDER BY a"
+    )
+    with conn.cursor() as cur:
+        cur.execute(plain, ("quick",))
+        base = dict(cur.fetchall())
+        cur.execute(boosted, ("quick",))
+        got = dict(cur.fetchall())
+    assert sorted(got) == sorted(base) == [1, 4]
+    for a, score in got.items():
+        assert round(score, 4) == round(base[a] * 5.0, 4)
+
+
+def test_modifier_param_reexecute_prepared(conn, schema):
+    sql = (
+        f"SELECT a, bm25(tableoid) FROM {schema}.sp_idx "
+        "WHERE b @@ %s::score('constant(7)') ORDER BY a"
+    )
+    with conn.cursor() as cur:
+        cur.execute(sql, ("quick",), prepare=True)
+        assert [(r[0], round(r[1], 4)) for r in cur.fetchall()] == [
+            (1, 7.0), (4, 7.0)
+        ]
+        cur.execute(sql, ("lazy",), prepare=True)
+        assert [(r[0], round(r[1], 4)) for r in cur.fetchall()] == [(2, 7.0)]
+
+
+def test_modifier_param_in_list_element(conn, schema):
+    sql = (
+        f"SELECT a, bm25(tableoid) FROM {schema}.sp_idx "
+        "WHERE b @@ ts_any([%s::score('constant(42)'), 'dog']) ORDER BY a"
+    )
+    with conn.cursor() as cur:
+        cur.execute(sql, ("quick",))
+        got = dict((r[0], round(r[1], 4)) for r in cur.fetchall())
+    assert sorted(got) == [1, 2, 4]
+    assert got[1] == 42.0
+    assert got[2] < 42.0
+    assert got[4] > 42.0
+
+
+def test_tsquery_value_text_form(conn):
+    with conn.cursor() as cur:
+        # Plain value: bare text, no quoting.
+        cur.execute("SELECT 'fox'::TSQUERY::VARCHAR")
+        assert cur.fetchone()[0] == "fox"
+        # Carrying every modifier: reads back as an expression that rebuilds it.
+        cur.execute(
+            "SELECT (ts_phrase('a', 'b')::slop(2)::boost(3.0)"
+            "::score('constant(7)'))::TSQUERY::VARCHAR"
+        )
+        assert cur.fetchone()[0] == (
+            "((ts_phrase('a', 'b'))::slop(2) ^ 3)::score('constant(7)')"
+        )
+        # ::score(NULL) is its own state, distinct from no scorer at all.
+        cur.execute("SELECT ('fox'::TSQUERY)::score(NULL)::TSQUERY::VARCHAR")
+        assert cur.fetchone()[0] == "'fox'::score(NULL)"
+
+
 # ---- raw wire: parameter OID and both parameter formats ---------------------
 
 
@@ -110,6 +255,60 @@ def _bind_with_format(conn: WireConn, portal: str, stmt: str, value: bytes,
     payload += struct.pack("!I", len(value)) + value
     payload += struct.pack("!H", 0)
     conn.send("B", payload)
+
+
+def _data_row_fields(payload: bytes) -> list[bytes | None]:
+    """DataRow payload -> its column values (None for a -1 length)."""
+    (count,) = struct.unpack_from("!H", payload, 0)
+    out: list[bytes | None] = []
+    off = 2
+    for _ in range(count):
+        (size,) = struct.unpack_from("!i", payload, off)
+        off += 4
+        if size < 0:
+            out.append(None)
+            continue
+        out.append(payload[off:off + size])
+        off += size
+    return out
+
+
+def test_wire_param_modifier_both_formats(schema):
+    # The deepest form of the same check: a modifier-typed parameter over the
+    # raw protocol, in both parameter formats. The scored rows come back with
+    # the constant, which is only possible if the modifier survived being
+    # materialised from the wire bytes.
+    scored_sql = (
+        f"SELECT a, bm25(tableoid) FROM {schema}.sp_idx "
+        "WHERE b @@ $1::score('constant(42)') ORDER BY a"
+    )
+    c = WireConn()
+    try:
+        c.run(f'SET search_path TO "{schema}", public, pg_catalog')
+        c.parse("spm", scored_sql)
+        c.describe("S", "spm")
+        c.sync()
+        msgs = c.drain_to_ready()
+        assert not errors(msgs), errors(msgs)
+        # The parameter still presents as text on the wire even though its type
+        # carries a modifier.
+        (param_desc,) = [p for t, p in msgs if t == "t"]
+        count, oid = struct.unpack("!HI", param_desc[:6])
+        assert (count, oid) == (1, 25)
+
+        for fmt in (0, 1):
+            _bind_with_format(c, "", "spm", b"quick", fmt)
+            c.execute("")
+            c.sync()
+            msgs = c.drain_to_ready()
+            assert not errors(msgs), (fmt, errors(msgs))
+            data = rows(msgs)
+            assert len(data) == 2, (fmt, types(msgs))
+            # Second column is the score: exactly the constant.
+            scores = [_data_row_fields(p)[1] for p in data]
+            assert all(float(s) == 42.0 for s in scores), (fmt, scores)
+    finally:
+        c.close()
 
 
 def test_wire_param_oid_and_formats(schema):

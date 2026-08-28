@@ -1063,9 +1063,9 @@ class PhraseIterator : public DocIterator {
   template<typename Adapters>
   PhraseIterator(doc_id_t docs_count, Adapters&& itrs,
                  std::vector<TermPosition>&& pos, const FieldProperties& field,
-                 const byte_type* stats, score_t boost)
+                 ScoreSource score, score_t boost)
     : PhraseIterator{docs_count, std::forward<Adapters>(itrs), std::move(pos)} {
-    _stats = stats;
+    _score = score;
     _boost = boost;
     _field = field;
   }
@@ -1097,23 +1097,22 @@ class PhraseIterator : public DocIterator {
   PhraseIterator(doc_id_t docs_count, Adapters&& itrs,
                  std::vector<TermPosition>&& pos, PosAttr::value_t max_slop,
                  std::vector<PosAttr::value_t>&& expected_steps,
-                 const FieldProperties& field, const byte_type* stats,
-                 score_t boost)
+                 const FieldProperties& field, ScoreSource score, score_t boost)
     : PhraseIterator{docs_count, std::forward<Adapters>(itrs), std::move(pos),
                      max_slop, std::move(expected_steps)} {
-    _stats = stats;
+    _score = score;
     _boost = boost;
     _field = field;
   }
 
   ScoreFunction PrepareScore(const PrepareScoreContext& ctx) final {
-    SDB_ASSERT(ctx.scorer);
-    return ctx.scorer->PrepareScorer({
+    SDB_ASSERT(_score.scorer);
+    return _score.scorer->PrepareScorer({
       .segment = *ctx.segment,
       .field = _field,
       .doc_attrs = *this,
       .fetcher = ctx.fetcher,
-      .stats = _stats,
+      .stats = _score.stats,
       .boost = _boost,
     });
   }
@@ -1227,7 +1226,7 @@ class PhraseIterator : public DocIterator {
   IRS_DOC_ITERATOR_EMIT_SCORED_DOCS
 
  private:
-  const byte_type* _stats = nullptr;
+  ScoreSource _score;
   score_t _boost = kNoBoost;
   FieldProperties _field;
   [[no_unique_address]] utils::Need<Prune, ScoreThresholdAttr> _threshold;

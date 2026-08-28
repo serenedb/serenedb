@@ -59,10 +59,10 @@ QueryBuilder::ptr AutomatonFilter::PrepareSegment(
   const SubReader& segment, const PrepareContext& ctx) const {
   SDB_ASSERT(options().compiled);
   return PrepareAutomatonSegment(segment, ctx, field_id(),
-                                 options().compiled->matcher, Boost());
+                                 options().compiled->matcher, GetBoost());
 }
 
-PrepareCollector::ptr AutomatonFilter::MakeCollector(
+PrepareCollector::ptr AutomatonFilter::MakeCollectorImpl(
   const Scorer* scorer) const {
   return std::make_unique<LimitedTermsCollector>(scorer,
                                                  options().scored_terms_limit);

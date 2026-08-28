@@ -158,7 +158,7 @@ void ParseWebsearchQuery(std::string_view text,
       return;
     }
     auto& or_group = AddMaybeNegated<irs::Or>(into, c, column_info);
-    or_group.boost(c.boost);
+    or_group.SetBoost(c.boost);
     auto inner = c;
     inner.negated = false;
     inner.boost = irs::kNoBoost;
@@ -173,7 +173,7 @@ void ParseWebsearchQuery(std::string_view text,
   }
 
   auto& and_group = AddMaybeNegated<irs::And>(parent, ctx, column_info);
-  and_group.boost(ctx.boost);
+  and_group.SetBoost(ctx.boost);
   auto inner = ctx;
   inner.negated = false;
   inner.boost = irs::kNoBoost;
@@ -233,7 +233,7 @@ void FromToTsquery(irs::BooleanFilter& parent, const FilterContext& ctx,
   GetVarcharArg(*func.GetChildren()[0], text, {"to_tsquery text", kSyntaxHint});
   auto& mixed =
     AddMaybeNegated<irs::MixedBooleanFilter>(parent, ctx, column_info);
-  mixed.boost(ctx.boost);
+  mixed.SetBoost(ctx.boost);
   sdb::ParserContext parser_ctx{
     mixed, PickPerKindFieldId(column_info, duckdb::LogicalTypeId::VARCHAR),
     ctx.tokenizer};

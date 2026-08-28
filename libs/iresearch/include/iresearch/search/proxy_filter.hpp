@@ -45,7 +45,7 @@ class ProxyFilter final : public Filter {
   QueryBuilder::ptr PrepareSegment(const SubReader& segment,
                                    const PrepareContext& ctx) const final;
 
-  PrepareCollector::ptr MakeCollector(const Scorer* scorer) const final;
+  PrepareCollector::ptr MakeCollectorImpl(const Scorer* scorer) const final;
 
   template<typename Impl, typename Base = Impl, typename... Args>
   std::pair<Base&, cache_ptr> set_filter(IResourceManager& memory,

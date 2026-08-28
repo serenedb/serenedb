@@ -268,7 +268,7 @@ bool TryClaimIResearchConjunct(
   irs::And& and_root, const duckdb::unique_ptr<duckdb::Expression>& conjunct,
   const connector::ColumnGetter& getter,
   const connector::ExpressionGetter& expr_getter,
-  duckdb::ClientContext& context) {
+  duckdb::ClientContext& context, connector::FilterScorers* scorers) {
   // A conjunct with an unbound parameter only appears in a prepared
   // statement's template plan, which duckdb rebinds with the values
   // substituted as constants before every execution. Decline instead of
@@ -278,8 +278,8 @@ bool TryClaimIResearchConjunct(
   }
   const auto before = and_root.size();
   std::span<const duckdb::unique_ptr<duckdb::Expression>> single{&conjunct, 1};
-  const auto claimed =
-    connector::MakeSearchFilter(and_root, single, getter, context, expr_getter);
+  const auto claimed = connector::MakeSearchFilter(
+    and_root, single, getter, context, expr_getter, scorers);
   if (claimed.ok() && and_root.size() > before) {
     return true;
   }
@@ -471,6 +471,7 @@ bool IsScorerFunctionName(std::string_view name) {
     S::IndriDirichlet::Owner::type_name(), S::Dfi::Owner::type_name(),
     S::RawBoost::Owner::type_name(),       S::RawTf::Owner::type_name(),
     S::RawDL::Owner::type_name(),          S::Idf::Owner::type_name(),
+    S::Constant::Owner::type_name(),
   };
   return kScorerNames.contains(name);
 }
@@ -1027,9 +1028,10 @@ bool TryClaimSearchFilter(
 
       auto root_and = std::make_unique<irs::And>();
       bool any_claimed = false;
+      connector::FilterScorers filter_scorers;
       for (size_t i = 0; i < filters.size();) {
         if (TryClaimIResearchConjunct(*root_and, filters[i], getter,
-                                      expr_getter, context)) {
+                                      expr_getter, context, &filter_scorers)) {
           any_claimed = true;
           std::swap(filters[i], filters.back());
           filters.pop_back();
@@ -1047,6 +1049,7 @@ bool TryClaimSearchFilter(
                            .null_markers = &null_markers});
 
       scan.stored_filter = std::move(root);
+      scan.filter_scorers = std::move(filter_scorers);
       for (auto& req : scan.offsets) {
         if (req.bind) {
           req.bind->stored_filter = scan.stored_filter;

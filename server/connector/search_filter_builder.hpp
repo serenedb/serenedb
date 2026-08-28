@@ -82,11 +82,13 @@ using ExpressionGetter = absl::AnyInvocable<std::optional<SearchColumnInfo>(
 // hold partially-added children the caller must roll back), ts_offsets
 // surfaces it as a SQL error. Genuine user errors under index-only syntax
 // (`@@`, ts_*, geo, ::boost) throw SqlException at origin instead.
+using FilterScorers = std::vector<std::shared_ptr<irs::Scorer>>;
+
 absl::Status MakeSearchFilter(
   irs::And& root,
   std::span<const duckdb::unique_ptr<duckdb::Expression>> conjuncts,
   const ColumnGetter& column_getter, duckdb::ClientContext& context,
-  const ExpressionGetter& expr_getter = {});
+  const ExpressionGetter& expr_getter, FilterScorers* scorers);
 
 inline irs::field_id PickPerKindFieldId(const SearchColumnInfo& column_info,
                                         duckdb::LogicalTypeId type_id) {

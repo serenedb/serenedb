@@ -35,7 +35,7 @@
 namespace irs {
 
 // Represents user-side boolean filter as the container for other filters
-class BooleanFilter : public FilterWithBoost, public AllDocsProvider {
+class BooleanFilter : public Filter, public AllDocsProvider {
  public:
   BooleanFilter() = default;
   BooleanFilter(std::vector<Filter::ptr> filters)
@@ -103,7 +103,7 @@ class And final : public BooleanFilter {
   QueryBuilder::ptr PrepareSegment(const SubReader& segment,
                                    const PrepareContext& ctx) const final;
 
-  PrepareCollector::ptr MakeCollector(const Scorer* scorer) const final;
+  PrepareCollector::ptr MakeCollectorImpl(const Scorer* scorer) const final;
 
   TermPredicate::ptr CompileTermPredicate() const final;
 
@@ -130,7 +130,7 @@ class Or final : public BooleanFilter {
   QueryBuilder::ptr PrepareSegment(const SubReader& segment,
                                    const PrepareContext& ctx) const final;
 
-  PrepareCollector::ptr MakeCollector(const Scorer* scorer) const final;
+  PrepareCollector::ptr MakeCollectorImpl(const Scorer* scorer) const final;
 
   TermPredicate::ptr CompileTermPredicate() const final;
 
@@ -203,7 +203,7 @@ class Exclusion : public FilterWithType<Exclusion> {
 
   TermIterator::ptr CompileTermIterator(const TermReader& reader) const final;
 
-  PrepareCollector::ptr MakeCollector(const Scorer* scorer) const final;
+  PrepareCollector::ptr MakeCollectorImpl(const Scorer* scorer) const final;
 
   std::span<Filter::ptr> GetChildren() final { return std::span{_filters}; }
 
@@ -236,7 +236,7 @@ class Not final : public FilterWithType<Not> {
   QueryBuilder::ptr PrepareSegment(const SubReader& segment,
                                    const PrepareContext& ctx) const final;
 
-  PrepareCollector::ptr MakeCollector(const Scorer* scorer) const final;
+  PrepareCollector::ptr MakeCollectorImpl(const Scorer* scorer) const final;
 
   TermPredicate::ptr CompileTermPredicate() const final;
 

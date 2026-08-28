@@ -83,6 +83,7 @@ void CopyCommon(const SereneDBScanBindData& src, SereneDBScanBindData& dst) {
   dst.entry_kind = src.entry_kind;
   dst.inverted_index = src.inverted_index;
   dst.stored_filter = src.stored_filter;
+  dst.filter_scorers = src.filter_scorers;
   dst.snapshot = src.snapshot;
   dst.text_scorer = src.text_scorer;
   dst.vector_scorer = src.vector_scorer;
@@ -366,14 +367,13 @@ static duckdb::vector<duckdb::column_t> SereneDBScanGetRowIdColumns(
   return result;
 }
 
-bool ScorePruneEnabled(const catalog::InvertedIndex* index,
-                       const std::optional<catalog::ScorerOptions>& scorer) {
-  if (!index) {
-    return false;
+const irs::Scorer* ResolvePruneScorer(const catalog::InvertedIndex* index,
+                                      const irs::Scorer* scorer) {
+  if (!index || !scorer) {
+    return nullptr;
   }
-  // TODO(mbkkt) use compatibility instead
   const auto& topk = index->GetTopKScorer();
-  return topk && topk == scorer;
+  return topk && scorer->Compatible(*topk) ? scorer : nullptr;
 }
 
 std::string SereneDBScanBindData::DisplayColumnName(
@@ -622,17 +622,29 @@ void SereneDBScanBindData::AppendSummary(
                               "(", fname, ", ", ctype.ToString(), ")"));
     }
   }
+  std::unique_ptr<irs::Scorer> query_scorer;
   if (text_scorer) {
-    out.insert("Score", text_scorer->ToString());
+    query_scorer = catalog::MakeScorer(*text_scorer);
+    if (query_scorer) {
+      out.insert("Score", query_scorer->ToString());
+    }
   }
   if (score_top_k) {
     // TODO(mbkkt): prunnable/etc instead of optimized?
     // TODO(mbkkt): streaming top k also should be marked when pruning enabled
     std::string topk_val = absl::StrCat(*score_top_k);
-    if (ScorePruneEnabled(bind.inverted_index.get(), text_scorer)) {
+    const auto* index = bind.inverted_index.get();
+    const auto* pruning = ResolvePruneScorer(index, query_scorer.get());
+    if (pruning) {
       absl::StrAppend(&topk_val, ", optimized");
     }
     out.insert("Top", std::move(topk_val));
+    if (const auto& topk = index->GetTopKScorer();
+        pruning && topk && topk != text_scorer) {
+      if (auto bounds = catalog::MakeScorer(*topk)) {
+        out.insert("Bounds", bounds->ToString());
+      }
+    }
   }
   if (EmitOffsets()) {
     auto cols =

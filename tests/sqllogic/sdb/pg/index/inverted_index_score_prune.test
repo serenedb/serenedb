@@ -175,6 +175,67 @@ QUERY PLAN
 ╰─────────────────────────────────────────────────────────╯
 
 
+# Same bound type, different k1: the stored bound is a representative
+# (freq, norm) pair, and k1 cancels out of the comparison that picks it, so the
+# pair a bm25 index stored is still the argmax for any k1. Pruning stays on.
+
+query
+EXPLAIN SELECT id FROM prune_small_idx WHERE body @@ ts_phrase('fox') ORDER BY BM25(prune_small_idx.tableoid, 2.0, 0.75) DESC LIMIT 3;
+----
+QUERY PLAN
+╭─ TOP_N ────────────────────────────────╮
+│ Top: 3                                 │
+│ Order By: #1 DESC                      │
+│ ~1 row                                 │
+╰────────────────────┬───────────────────╯
+╭─ IRESEARCH_SCAN ───┴───────────────────╮
+│ Index: prune_small_idx                 │
+│ Lookup: table                          │
+│ Index Filter:                          │
+│ ╭─ Term ──────────────╮                │
+│ │ Field: body(string) │                │
+│ │ Value: fox          │                │
+│ ╰─────────────────────╯                │
+│ Score: bm25(k1=2, b=0.75)              │
+│ Top: 3, optimized                      │
+│ Bounds: bm25(k1=1.2, b=0.75)           │
+│ Projections: id,                       │
+│              sdb_inverted_index_score  │
+│ ~1 row                                 │
+╰────────────────────────────────────────╯
+
+
+# Same bound type, different b: b does NOT cancel out of the comparison that
+# picks the stored (freq, norm) pair, so the pair the index stored for b = 0.75
+# need not be the argmax for b = 0.5. Scoring it would under-estimate the block
+# maximum and skip blocks holding qualifying rows, so pruning is refused: no
+# `, optimized` and no `Bounds:` row.
+
+query
+EXPLAIN SELECT id FROM prune_small_idx WHERE body @@ ts_phrase('fox') ORDER BY BM25(prune_small_idx.tableoid, 1.2, 0.5) DESC LIMIT 3;
+----
+QUERY PLAN
+╭─ TOP_N ────────────────────────────────╮
+│ Top: 3                                 │
+│ Order By: #1 DESC                      │
+│ ~1 row                                 │
+╰────────────────────┬───────────────────╯
+╭─ IRESEARCH_SCAN ───┴───────────────────╮
+│ Index: prune_small_idx                 │
+│ Lookup: table                          │
+│ Index Filter:                          │
+│ ╭─ Term ──────────────╮                │
+│ │ Field: body(string) │                │
+│ │ Value: fox          │                │
+│ ╰─────────────────────╯                │
+│ Score: bm25(k1=1.2, b=0.5)             │
+│ Top: 3                                 │
+│ Projections: id,                       │
+│              sdb_inverted_index_score  │
+│ ~1 row                                 │
+╰────────────────────────────────────────╯
+
+
 # Mismatched scorer: index carries BM25 score bounds, ORDER BY uses TFIDF.
 # Top-K still pulls up but `score_prune` is false
 # (topk_scorer != scorer), so no `, optimized` suffix.
@@ -398,7 +459,350 @@ SELECT COUNT(*) FROM (SELECT * FROM w EXCEPT SELECT * FROM p) d;
 count
 0
 
+# Cross-k1 pruning must not drop documents. The bound was written with
+# bm25(1.2, 0.75) and is read by bm25(2.0, 0.75); if it were not a valid upper
+# bound for the query scorer, blocks would be skipped and rows would vanish.
+
+query
+WITH w AS (SELECT id FROM prune_big_idx
+           WHERE body @@ ts_phrase('fox')
+           ORDER BY BM25(prune_big_idx.tableoid, 2.0, 0.75) DESC, id
+           LIMIT 50),
+     p AS (SELECT id FROM plain_big_idx
+           WHERE body @@ ts_phrase('fox')
+           ORDER BY BM25(plain_big_idx.tableoid, 2.0, 0.75) DESC, id
+           LIMIT 50)
+SELECT COUNT(*) FROM (SELECT * FROM w EXCEPT SELECT * FROM p) d;
+----
+count
+0
+
+
+# Same, over a ByTerms disjunction rather than a single term.
+
+query
+WITH w AS (SELECT id FROM prune_big_idx
+           WHERE body @@ ts_any(['fox', 'rabbit'])
+           ORDER BY BM25(prune_big_idx.tableoid, 2.0, 0.75) DESC, id
+           LIMIT 50),
+     p AS (SELECT id FROM plain_big_idx
+           WHERE body @@ ts_any(['fox', 'rabbit'])
+           ORDER BY BM25(plain_big_idx.tableoid, 2.0, 0.75) DESC, id
+           LIMIT 50)
+SELECT COUNT(*) FROM (SELECT * FROM w EXCEPT SELECT * FROM p) d;
+----
+count
+0
+
+
 # Comprehensive 100k-row pruned-vs-plain coverage across every multi-term
 # filter shape (Range / Prefix / Regexp / Levenshtein) lives in the sibling
 # inverted_index_score_prune.test_slow -- kept out of this file so the cheap
 # correctness checks above stay fast.
+
+
+# ============================================================================
+# Score bounds beyond bm25 / tfidf.
+#
+# A scorer can persist skip-list bounds whenever its score is monotone in the
+# quantities the bound stores: increasing in tf alone (MaxFreq), in tf/dl
+# (DivNorm), or separably in max tf and min dl (MinNorm). The bodies below vary
+# both tf and dl heavily -- one-word documents next to 30-repeat and 200-pad
+# ones -- so the stored representative pair is actually exercised rather than
+# being the same for every block.
+# ============================================================================
+
+statement ok
+CREATE TABLE bnd (id INTEGER PRIMARY KEY, body VARCHAR);
+
+
+statement ok
+INSERT INTO bnd SELECT i, CASE i % 7
+    WHEN 0 THEN 'fox'
+    WHEN 1 THEN repeat('fox ', 30)
+    WHEN 2 THEN 'fox ' || repeat('pad ', 200)
+    WHEN 3 THEN repeat('fox ', 12) || repeat('pad ', 3)
+    WHEN 4 THEN 'fox fox'
+    WHEN 5 THEN repeat('pad ', 100) || repeat('fox ', 25)
+    ELSE 'fox ' || repeat('z ', 2)
+  END
+  FROM generate_series(1, 20000) AS s(i);
+
+
+statement ok
+CREATE INDEX bnd_plain_idx ON bnd USING inverted(id, body en_prune);
+
+
+statement ok
+CREATE INDEX bnd_jm_idx ON bnd USING inverted(id, body en_prune)
+  WITH (optimize_top_k = 'lm_jm(0.7)');
+
+
+statement ok
+CREATE INDEX bnd_dir_idx ON bnd USING inverted(id, body en_prune)
+  WITH (optimize_top_k = 'lm_dirichlet(2000)');
+
+
+statement ok
+CREATE INDEX bnd_dfi_idx ON bnd USING inverted(id, body en_prune)
+  WITH (optimize_top_k = 'dfi()');
+
+
+statement ok
+CREATE INDEX bnd_rtf_idx ON bnd USING inverted(id, body en_prune)
+  WITH (optimize_top_k = 'raw_tf()');
+
+
+statement ok
+CREATE INDEX bnd_ind_idx ON bnd USING inverted(id, body en_prune)
+  WITH (optimize_top_k = 'indri_dirichlet(2000)');
+
+
+statement ok
+VACUUM (REFRESH_TABLE) bnd;
+
+
+# lm_jm: DivNorm -- log1p(c * tf/dl) is monotone in tf/dl, and the constant folds
+# into a monotone log, so the stored argmax holds for every lambda.
+
+query
+EXPLAIN SELECT id FROM bnd_jm_idx WHERE body @@ ts_phrase('fox')
+  ORDER BY LM_JM(bnd_jm_idx.tableoid, 0.7) DESC LIMIT 3;
+----
+QUERY PLAN
+╭─ TOP_N ────────────────────────────────╮
+│ Top: 3                                 │
+│ Order By: #1 DESC                      │
+│ ~3 rows                                │
+╰────────────────────┬───────────────────╯
+╭─ IRESEARCH_SCAN ───┴───────────────────╮
+│ Index: bnd_jm_idx                      │
+│ Lookup: table                          │
+│ Index Filter:                          │
+│ ╭─ Term ──────────────╮                │
+│ │ Field: body(string) │                │
+│ │ Value: fox          │                │
+│ ╰─────────────────────╯                │
+│ Score: lm_jm(lambda=0.7)               │
+│ Top: 3, optimized                      │
+│ Projections: id,                       │
+│              sdb_inverted_index_score  │
+│ ~4,000 rows                            │
+╰────────────────────────────────────────╯
+
+
+# Pruned and unpruned must agree exactly; a bound that under-estimates a block
+# maximum would skip blocks holding qualifying rows and the counts would part.
+
+query
+WITH w AS (SELECT id FROM bnd_jm_idx
+           WHERE body @@ ts_phrase('fox')
+           ORDER BY LM_JM(bnd_jm_idx.tableoid, 0.7) DESC, id
+           LIMIT 50),
+     p AS (SELECT id FROM bnd_plain_idx
+           WHERE body @@ ts_phrase('fox')
+           ORDER BY LM_JM(bnd_plain_idx.tableoid, 0.7) DESC, id
+           LIMIT 50)
+SELECT (SELECT COUNT(*) FROM (SELECT * FROM w EXCEPT SELECT * FROM p) a)
+     + (SELECT COUNT(*) FROM (SELECT * FROM p EXCEPT SELECT * FROM w) b) AS diff;
+----
+diff
+0
+
+
+# lm_dirichlet: MinNorm -- log1p(tf/(mu*p)) - log1p(dl/mu) separates into a term that only
+# grows with tf and one that only shrinks with dl, so max tf with min dl
+# bounds the block for every mu.
+
+query
+EXPLAIN SELECT id FROM bnd_dir_idx WHERE body @@ ts_phrase('fox')
+  ORDER BY LM_DIRICHLET(bnd_dir_idx.tableoid, 2000) DESC LIMIT 3;
+----
+QUERY PLAN
+╭─ TOP_N ────────────────────────────────╮
+│ Top: 3                                 │
+│ Order By: #1 DESC                      │
+│ ~3 rows                                │
+╰────────────────────┬───────────────────╯
+╭─ IRESEARCH_SCAN ───┴───────────────────╮
+│ Index: bnd_dir_idx                     │
+│ Lookup: table                          │
+│ Index Filter:                          │
+│ ╭─ Term ──────────────╮                │
+│ │ Field: body(string) │                │
+│ │ Value: fox          │                │
+│ ╰─────────────────────╯                │
+│ Score: lm_dirichlet(mu=2000)           │
+│ Top: 3, optimized                      │
+│ Projections: id,                       │
+│              sdb_inverted_index_score  │
+│ ~4,000 rows                            │
+╰────────────────────────────────────────╯
+
+
+# Pruned and unpruned must agree exactly; a bound that under-estimates a block
+# maximum would skip blocks holding qualifying rows and the counts would part.
+
+query
+WITH w AS (SELECT id FROM bnd_dir_idx
+           WHERE body @@ ts_phrase('fox')
+           ORDER BY LM_DIRICHLET(bnd_dir_idx.tableoid, 2000) DESC, id
+           LIMIT 50),
+     p AS (SELECT id FROM bnd_plain_idx
+           WHERE body @@ ts_phrase('fox')
+           ORDER BY LM_DIRICHLET(bnd_plain_idx.tableoid, 2000) DESC, id
+           LIMIT 50)
+SELECT (SELECT COUNT(*) FROM (SELECT * FROM w EXCEPT SELECT * FROM p) a)
+     + (SELECT COUNT(*) FROM (SELECT * FROM p EXCEPT SELECT * FROM w) b) AS diff;
+----
+diff
+0
+
+
+# dfi: MinNorm -- every measure ((tf-e)/sqrt(e), (tf-e)/e, (tf-e)^2/e) grows with
+# tf and shrinks with e = ratio*dl, and the tf <= e -> 0 floor is monotone.
+
+query
+EXPLAIN SELECT id FROM bnd_dfi_idx WHERE body @@ ts_phrase('fox')
+  ORDER BY DFI(bnd_dfi_idx.tableoid) DESC LIMIT 3;
+----
+QUERY PLAN
+╭─ TOP_N ────────────────────────────────╮
+│ Top: 3                                 │
+│ Order By: #1 DESC                      │
+│ ~3 rows                                │
+╰────────────────────┬───────────────────╯
+╭─ IRESEARCH_SCAN ───┴───────────────────╮
+│ Index: bnd_dfi_idx                     │
+│ Lookup: table                          │
+│ Index Filter:                          │
+│ ╭─ Term ──────────────╮                │
+│ │ Field: body(string) │                │
+│ │ Value: fox          │                │
+│ ╰─────────────────────╯                │
+│ Score: dfi(measure=standardized)       │
+│ Top: 3, optimized                      │
+│ Projections: id,                       │
+│              sdb_inverted_index_score  │
+│ ~4,000 rows                            │
+╰────────────────────────────────────────╯
+
+
+# Pruned and unpruned must agree exactly; a bound that under-estimates a block
+# maximum would skip blocks holding qualifying rows and the counts would part.
+
+query
+WITH w AS (SELECT id FROM bnd_dfi_idx
+           WHERE body @@ ts_phrase('fox')
+           ORDER BY DFI(bnd_dfi_idx.tableoid) DESC, id
+           LIMIT 50),
+     p AS (SELECT id FROM bnd_plain_idx
+           WHERE body @@ ts_phrase('fox')
+           ORDER BY DFI(bnd_plain_idx.tableoid) DESC, id
+           LIMIT 50)
+SELECT (SELECT COUNT(*) FROM (SELECT * FROM w EXCEPT SELECT * FROM p) a)
+     + (SELECT COUNT(*) FROM (SELECT * FROM p EXCEPT SELECT * FROM w) b) AS diff;
+----
+diff
+0
+
+
+# raw_tf: MaxFreq -- the score is the frequency itself, so no norm is stored at all:
+# Need<kNorm, uint32_t> collapses to an empty member for this tag.
+
+query
+EXPLAIN SELECT id FROM bnd_rtf_idx WHERE body @@ ts_phrase('fox')
+  ORDER BY RAW_TF(bnd_rtf_idx.tableoid) DESC LIMIT 3;
+----
+QUERY PLAN
+╭─ TOP_N ────────────────────────────────╮
+│ Top: 3                                 │
+│ Order By: #1 DESC                      │
+│ ~3 rows                                │
+╰────────────────────┬───────────────────╯
+╭─ IRESEARCH_SCAN ───┴───────────────────╮
+│ Index: bnd_rtf_idx                     │
+│ Lookup: table                          │
+│ Index Filter:                          │
+│ ╭─ Term ──────────────╮                │
+│ │ Field: body(string) │                │
+│ │ Value: fox          │                │
+│ ╰─────────────────────╯                │
+│ Score: raw_tf()                        │
+│ Top: 3, optimized                      │
+│ Projections: id,                       │
+│              sdb_inverted_index_score  │
+│ ~4,000 rows                            │
+╰────────────────────────────────────────╯
+
+
+# Pruned and unpruned must agree exactly; a bound that under-estimates a block
+# maximum would skip blocks holding qualifying rows and the counts would part.
+
+query
+WITH w AS (SELECT id FROM bnd_rtf_idx
+           WHERE body @@ ts_phrase('fox')
+           ORDER BY RAW_TF(bnd_rtf_idx.tableoid) DESC, id
+           LIMIT 50),
+     p AS (SELECT id FROM bnd_plain_idx
+           WHERE body @@ ts_phrase('fox')
+           ORDER BY RAW_TF(bnd_plain_idx.tableoid) DESC, id
+           LIMIT 50)
+SELECT (SELECT COUNT(*) FROM (SELECT * FROM w EXCEPT SELECT * FROM p) a)
+     + (SELECT COUNT(*) FROM (SELECT * FROM p EXCEPT SELECT * FROM w) b) AS diff;
+----
+diff
+0
+
+
+# indri_dirichlet is deliberately NOT given bounds. log((tf + mu*p) / (dl + mu))
+# is monotone the same way the two above are, but unlike them it has no floor at
+# zero and scores negative whenever tf < mu * P(t|C) -- which on this data is
+# every document. Pruning drops rows in that regime, so the scorer reports no
+# bound type and the plan must show a bare `Top:` with no `Bounds:` row. Give it
+# bounds again only together with a fix for negative scores.
+
+query
+EXPLAIN SELECT id FROM bnd_ind_idx WHERE body @@ ts_phrase('fox')
+  ORDER BY INDRI_DIRICHLET(bnd_ind_idx.tableoid, 2000) DESC LIMIT 3;
+----
+QUERY PLAN
+╭─ TOP_N ────────────────────────────────╮
+│ Top: 3                                 │
+│ Order By: #1 DESC                      │
+│ ~3 rows                                │
+╰────────────────────┬───────────────────╯
+╭─ IRESEARCH_SCAN ───┴───────────────────╮
+│ Index: bnd_ind_idx                     │
+│ Lookup: table                          │
+│ Index Filter:                          │
+│ ╭─ Term ──────────────╮                │
+│ │ Field: body(string) │                │
+│ │ Value: fox          │                │
+│ ╰─────────────────────╯                │
+│ Score: indri_dirichlet(mu=2000)        │
+│ Top: 3                                 │
+│ Projections: id,                       │
+│              sdb_inverted_index_score  │
+│ ~4,000 rows                            │
+╰────────────────────────────────────────╯
+
+
+query
+WITH w AS (SELECT id FROM bnd_ind_idx
+           WHERE body @@ ts_phrase('fox')
+           ORDER BY INDRI_DIRICHLET(bnd_ind_idx.tableoid, 2000) DESC, id
+           LIMIT 50),
+     p AS (SELECT id FROM bnd_plain_idx
+           WHERE body @@ ts_phrase('fox')
+           ORDER BY INDRI_DIRICHLET(bnd_plain_idx.tableoid, 2000) DESC, id
+           LIMIT 50)
+SELECT (SELECT COUNT(*) FROM (SELECT * FROM w EXCEPT SELECT * FROM p) a)
+     + (SELECT COUNT(*) FROM (SELECT * FROM p EXCEPT SELECT * FROM w) b) AS diff;
+----
+diff
+0
+
+
+statement ok
+DROP TABLE bnd;

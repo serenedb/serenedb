@@ -24,6 +24,7 @@
 
 #include <absl/algorithm/container.h>
 #include <absl/container/inlined_vector.h>
+#include <absl/strings/str_cat.h>
 
 #include <cstdint>
 #include <exception>
@@ -42,6 +43,7 @@
 #include "iresearch/search/column_collector.hpp"
 #include "iresearch/search/score_function.hpp"
 #include "iresearch/search/scorer.hpp"
+#include "iresearch/search/scorer_options.hpp"
 #include "iresearch/types.hpp"
 #include "iresearch/utils/attribute_provider.hpp"
 
@@ -402,17 +404,23 @@ ScoreBoundSource::ptr BM25::PrepareScoreBoundSource() const {
   return std::make_unique<FreqNormSource<kScoreBoundFreq | kScoreBoundNorm>>();
 }
 
-Scorer::ScoreBoundType BM25::GetScoreBoundType() const noexcept {
-  if (IsBM1()) {
-    return ScoreBoundType::None;
+bool BM25::Compatible(const ScorerOptions& persisted) const noexcept {
+  const auto type = BoundTypeOf({.k1 = _k, .b = _b});
+  if (type == ScoreBoundType::None || type != irs::BoundTypeOf(persisted)) {
+    return false;
   }
-  if (IsBM15()) {
-    return ScoreBoundType::MaxFreq;
+  if (type != ScoreBoundType::MinNorm) {
+    return true;
   }
-  if (IsBM11()) {
-    return ScoreBoundType::DivNorm;
-  }
-  return ScoreBoundType::MinNorm;
+  // MinNorm here means 0 < b < 1: the pair is the argmax for this b under this
+  // avg_dl mode -- kScoreBoundAvgDL and kScoreBoundBM25 pick different ones --
+  // so only a bm25 agreeing on both may read it. k1 cancels out.
+  const auto* other = std::get_if<Options>(&persisted.params);
+  return other && other->b == _b && other->approximate == _approximate;
+}
+
+std::string BM25::ToString() const {
+  return absl::StrCat("bm25(k1=", _k, ", b=", _b, ")");
 }
 
 bool BM25::equals(const Scorer& other) const noexcept {

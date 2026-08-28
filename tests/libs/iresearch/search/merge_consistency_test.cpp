@@ -143,7 +143,6 @@ void CollectSegment(const tests::PreparedFilter& prepared, size_t i,
   irs::ScoreFunction score;
   if (scorer != nullptr) {
     score = docs->PrepareScore({
-      .scorer = scorer,
       .segment = &sub,
     });
   }

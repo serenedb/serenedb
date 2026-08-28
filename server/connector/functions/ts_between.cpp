@@ -158,7 +158,7 @@ void FromHalfRange(irs::BooleanFilter& parent, const FilterContext& ctx,
     }
     auto& range = AddMaybeNegated<irs::ByRange>(parent, ctx, column_info);
     *range.mutable_field_id() = PickPerKindFieldId(column_info, col_type);
-    range.boost(ctx.boost);
+    range.SetBoost(ctx.boost);
     auto* options = range.mutable_options();
     options->scored_terms_limit = ctx.scored_terms_limit;
     auto& rng = options->range;
@@ -183,7 +183,7 @@ void FromHalfRange(irs::BooleanFilter& parent, const FilterContext& ctx,
   if (col_type == duckdb::LogicalTypeId::BOOLEAN) {
     auto& range = AddMaybeNegated<irs::ByRange>(parent, ctx, column_info);
     *range.mutable_field_id() = PickPerKindFieldId(column_info, col_type);
-    range.boost(ctx.boost);
+    range.SetBoost(ctx.boost);
     auto* options = range.mutable_options();
     options->scored_terms_limit = ctx.scored_terms_limit;
     auto& rng = options->range;
@@ -201,7 +201,7 @@ void FromHalfRange(irs::BooleanFilter& parent, const FilterContext& ctx,
 
   auto& range = AddMaybeNegated<irs::ByGranularRange>(parent, ctx, column_info);
   *range.mutable_field_id() = PickPerKindFieldId(column_info, col_type);
-  range.boost(ctx.boost);
+  range.SetBoost(ctx.boost);
   auto* options = range.mutable_options();
   options->scored_terms_limit = ctx.scored_terms_limit;
   auto& rng = options->range;
@@ -228,7 +228,7 @@ void FromBetween(irs::BooleanFilter& parent, const FilterContext& ctx,
     if (ctx.negated) {
       AddFilter<irs::Empty>(parent);
     } else {
-      AddFilter<irs::All>(parent).boost(ctx.boost);
+      AddFilter<irs::All>(parent).SetBoost(ctx.boost);
     }
     return;
   }
@@ -284,14 +284,14 @@ void FromBetween(irs::BooleanFilter& parent, const FilterContext& ctx,
       col_type == duckdb::LogicalTypeId::BLOB) {
     auto& range = AddMaybeNegated<irs::ByRange>(parent, ctx, column_info);
     *range.mutable_field_id() = PickPerKindFieldId(column_info, col_type);
-    range.boost(ctx.boost);
+    range.SetBoost(ctx.boost);
     auto* options = range.mutable_options();
     options->scored_terms_limit = ctx.scored_terms_limit;
     FillByRangeOptionsVarchar(args, *options);
   } else if (col_type == duckdb::LogicalTypeId::BOOLEAN) {
     auto& range = AddMaybeNegated<irs::ByRange>(parent, ctx, column_info);
     *range.mutable_field_id() = PickPerKindFieldId(column_info, col_type);
-    range.boost(ctx.boost);
+    range.SetBoost(ctx.boost);
     auto* options = range.mutable_options();
     options->scored_terms_limit = ctx.scored_terms_limit;
     auto& rng = options->range;
@@ -313,7 +313,7 @@ void FromBetween(irs::BooleanFilter& parent, const FilterContext& ctx,
     auto& range =
       AddMaybeNegated<irs::ByGranularRange>(parent, ctx, column_info);
     *range.mutable_field_id() = PickPerKindFieldId(column_info, col_type);
-    range.boost(ctx.boost);
+    range.SetBoost(ctx.boost);
     auto* range_opts = range.mutable_options();
     range_opts->scored_terms_limit = ctx.scored_terms_limit;
     auto& rng = range_opts->range;

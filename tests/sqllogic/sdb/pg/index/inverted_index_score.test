@@ -1807,5 +1807,1206 @@ statement ok
 DROP TABLE bm1_kw;
 
 
+# ============================================================================
+# `(<predicate>)::score(<scorer>)` -- overrides how the wrapped subtree is
+# scored, leaving the rest of the query on the ORDER BY scorer.
+# ============================================================================
+
+statement ok
+CREATE TABLE score_docs (id INTEGER PRIMARY KEY, body VARCHAR);
+
+
+statement ok
+CREATE INDEX score_idx ON score_docs USING inverted(id, body en)
+  WITH (compaction_interval = 0);
+
+
+statement ok
+INSERT INTO score_docs VALUES
+    (1, 'fox fox fox dog'), (2, 'cat cat'), (3, 'fox cat');
+
+
+statement ok
+VACUUM (REFRESH_TABLE) score_docs;
+
+
+# Baseline: both branches on the query's BM25.
+query
+SELECT id, round(BM25(score_idx.tableoid)::DOUBLE, 4) AS score
+FROM score_idx WHERE body @@ 'fox' OR body @@ 'cat' ORDER BY id;
+----
+id	score
+1	0.6671
+2	0.6951
+3	1.0471
+
+
+# raw_boost scores a flat 1 regardless of frequency. Only the overridden
+# branch moves: doc 1 (fox only) is untouched, doc 2 (cat only) becomes 1,
+# doc 3 sums fox's 0.5235 with cat's 1.
+query
+SELECT id, round(BM25(score_idx.tableoid)::DOUBLE, 4) AS score
+FROM score_idx WHERE body @@ 'fox' OR (body @@ 'cat')::score('raw_boost()')
+ORDER BY id;
+----
+id	score
+1	0.6671
+2	1
+3	1.5235
+
+
+# raw_tf scores the term frequency: doc 2 carries 'cat' twice.
+query
+SELECT id, round(BM25(score_idx.tableoid)::DOUBLE, 4) AS score
+FROM score_idx WHERE body @@ 'fox' OR (body @@ 'cat')::score('raw_tf()')
+ORDER BY id;
+----
+id	score
+1	0.6671
+2	2
+3	1.5235
+
+
+# An override on the whole predicate applies to the root node.
+query
+SELECT id, round(BM25(score_idx.tableoid)::DOUBLE, 4) AS score
+FROM score_idx WHERE (body @@ 'cat')::score('raw_tf()') ORDER BY id;
+----
+id	score
+2	2
+3	1
+
+
+# ::boost composes with the overridden scorer: 3.0 * tf 2.
+query
+SELECT id, round(BM25(score_idx.tableoid)::DOUBLE, 4) AS score
+FROM score_idx
+WHERE body @@ 'fox' OR ((body @@ 'cat')::boost(3.0))::score('raw_tf()')
+ORDER BY id;
+----
+id	score
+1	0.6671
+2	6
+3	3.5235
+
+
+# A nested override wins for its own subtree.
+query
+SELECT id, round(BM25(score_idx.tableoid)::DOUBLE, 4) AS score
+FROM score_idx
+WHERE ((body @@ 'cat')::score('raw_boost()'))::score('raw_tf()')
+ORDER BY id;
+----
+id	score
+2	1
+3	1
+
+
+# The in-scan top-k collects overridden hits like any other.
+query
+SELECT id, score FROM (
+  SELECT id, round(BM25(score_idx.tableoid)::DOUBLE, 4) AS score
+  FROM score_idx WHERE body @@ 'fox' OR (body @@ 'cat')::score('raw_boost()')
+  ORDER BY BM25(score_idx.tableoid) DESC LIMIT 5
+) t ORDER BY id;
+----
+id	score
+1	0.6671
+2	1
+3	1.5235
+
+
+# ::score(NULL) excludes the subtree from scoring: it still selects rows, but
+# contributes nothing. Docs 1 and 3 score their fox-only BM25 and doc 2, which
+# only matches through the unscored branch, comes back with 0.
+#
+# Note the in-scan top-k is deliberately not exercised here: an unscored branch
+# makes 0 a legitimate score, and `ORDER BY score ... LIMIT k` only keeps such
+# rows once the top-k collector stops seeding its threshold above zero.
+query
+SELECT id, round(BM25(score_idx.tableoid)::DOUBLE, 4) AS score
+FROM score_idx WHERE body @@ 'fox' OR (body @@ 'cat')::score(NULL)
+ORDER BY id;
+----
+id	score
+1	0.6671
+2	0
+3	0.5235
+
+
+# ::score(NULL) applies to a whole boolean group, nested groups included: the
+# group still matches, and nothing in it reaches the score.
+query
+SELECT id, round(BM25(score_idx.tableoid)::DOUBLE, 4) AS score
+FROM score_idx WHERE (body @@ 'fox' OR body @@ 'cat')::score(NULL)
+ORDER BY id;
+----
+id	score
+1	0
+2	0
+3	0
+
+
+# Doc 1 matches both 'dog' and the unscored group, and scores 'dog' alone.
+query
+SELECT id, round(BM25(score_idx.tableoid)::DOUBLE, 4) AS score
+FROM score_idx
+WHERE body @@ 'dog' OR (body @@ 'fox' OR body @@ 'cat')::score(NULL)
+ORDER BY id;
+----
+id	score
+1	0.8143
+2	0
+3	0
+
+
+# Inside an AND the unscored side still gates the match, so doc 1 must carry
+# 'dog', but scores as if only 'fox' were there -- 1.4814 without the override,
+# 0.6671 with it, and 'dog' alone is the 0.8143 difference.
+query
+SELECT id, round(BM25(score_idx.tableoid)::DOUBLE, 4) AS score
+FROM score_idx WHERE body @@ 'fox' AND body @@ 'dog' ORDER BY id;
+----
+id	score
+1	1.4814
+
+
+query
+SELECT id, round(BM25(score_idx.tableoid)::DOUBLE, 4) AS score
+FROM score_idx WHERE body @@ 'fox' AND (body @@ 'dog')::score(NULL)
+ORDER BY id;
+----
+id	score
+1	0.6671
+
+
+# Two branches agreeing on the override fuse into one node carrying it, so the
+# override costs nothing in plan shape: raw_tf sums the term frequencies.
+query
+SELECT id, round(BM25(score_idx.tableoid)::DOUBLE, 4) AS score
+FROM score_idx
+WHERE (body @@ 'fox')::score('raw_tf()') OR (body @@ 'cat')::score('raw_tf()')
+ORDER BY id;
+----
+id	score
+1	3
+2	2
+3	2
+
+
+# Branches disagreeing cannot fuse into one node, and each keeps its own
+# scorer: doc 2 gets raw_boost's flat 1 while doc 1 keeps raw_tf's 3.
+query
+SELECT id, round(BM25(score_idx.tableoid)::DOUBLE, 4) AS score
+FROM score_idx
+WHERE (body @@ 'fox')::score('raw_tf()')
+   OR (body @@ 'cat')::score('raw_boost()')
+ORDER BY id;
+----
+id	score
+1	3
+2	1
+3	2
+
+
+# A constant scorer on a group applies per matching branch, and the group's
+# merge type sums them -- doc 3 matches both branches and scores 2, not 1. A
+# constant for the whole group needs the group merged with max instead, which
+# no SQL surface reaches yet. ::score(NULL) is immune to this: 0 + 0 is 0.
+query
+SELECT id, round(BM25(score_idx.tableoid)::DOUBLE, 4) AS score
+FROM score_idx WHERE (body @@ 'fox' OR body @@ 'cat')::score('raw_boost()')
+ORDER BY id;
+----
+id	score
+1	1
+2	1
+3	2
+
+
+# An empty scorer expression is rejected at bind time.
+statement error
+SELECT id FROM score_idx WHERE (body @@ 'cat')::score('') ORDER BY id;
+
+# Something that is not a scorer call is rejected.
+statement error
+SELECT id FROM score_idx WHERE (body @@ 'cat')::score('42') ORDER BY id;
+
+# A predicate the index cannot claim is a user error, as it is for ::boost.
+query error ::score\(\.\.\.\) used on a predicate the inverted index could not claim
+SELECT id FROM score_idx WHERE (id > id)::score('raw_tf()');
+
+
+# Phrase leaves resolve their scorer from the node they were collected for, so
+# an override reaches them. A single-term phrase scores its phrase frequency,
+# which is the term frequency -- the same values the plain term spelling gives
+# below.
+query
+SELECT id, round(BM25(score_idx.tableoid)::DOUBLE, 4) AS score
+FROM score_idx WHERE (body @@ ts_phrase('fox'))::score('raw_tf()') ORDER BY id;
+----
+id	score
+1	3
+3	1
+
+
+# A two-term phrase occurs twice in doc 1 ('fox fox fox' has two 'fox fox'
+# windows) and nowhere else, so raw_tf on the phrase is 2.
+query
+SELECT id, round(BM25(score_idx.tableoid)::DOUBLE, 4) AS score
+FROM score_idx WHERE (body @@ ts_phrase('fox fox'))::score('raw_tf()') ORDER BY id;
+----
+id	score
+1	2
+
+
+# ::score(NULL) on a phrase drops it out of the ranking entirely.
+query
+SELECT id, round(BM25(score_idx.tableoid)::DOUBLE, 4) AS score
+FROM score_idx WHERE (body @@ ts_phrase('fox'))::score(NULL) ORDER BY id;
+----
+id	score
+1	0
+3	0
+
+
+# A negated branch is collected with no scorer, so there is nothing to
+# override and saying so beats ignoring it.
+query error ::score\(\.\.\.\) cannot apply to a negated predicate
+SELECT id FROM score_idx WHERE NOT (body @@ 'cat')::score('raw_tf()');
+
+
+# ::score also attaches to the tsquery operand of `@@`, not just to a whole
+# predicate. The two spellings mean the same thing on a single leaf, so they
+# must score the same; the modifier reaching the builder at all depends on the
+# cast declining to fold, the way ::tokenize and ::slop already do.
+query
+SELECT id, round(BM25(score_idx.tableoid)::DOUBLE, 4) AS score
+FROM score_idx WHERE body @@ 'fox'::score('raw_tf()') ORDER BY id;
+----
+id	score
+1	3
+3	1
+
+
+# Same, on the predicate instead of the operand.
+query
+SELECT id, round(BM25(score_idx.tableoid)::DOUBLE, 4) AS score
+FROM score_idx WHERE (body @@ 'fox')::score('raw_tf()') ORDER BY id;
+----
+id	score
+1	3
+3	1
+
+
+# score(NULL) on an operand leaves that branch out of the score, so doc 1
+# (fox only) collects nothing and doc 3 keeps only its cat contribution.
+query
+SELECT id, round(BM25(score_idx.tableoid)::DOUBLE, 4) AS score
+FROM score_idx WHERE body @@ 'fox'::score(NULL) OR body @@ 'cat' ORDER BY id;
+----
+id	score
+1	0
+2	0.6951
+3	0.5235
+
+
+# A boost on the same operand still multiplies the overriding scorer.
+query
+SELECT id, round(BM25(score_idx.tableoid)::DOUBLE, 4) AS score
+FROM score_idx WHERE body @@ 'fox'::boost(2.0)::score('raw_tf()') ORDER BY id;
+----
+id	score
+1	6
+3	2
+
+
+# Chained after another modifier, which resolves through a different cast.
+query
+SELECT id, round(BM25(score_idx.tableoid)::DOUBLE, 4) AS score
+FROM score_idx WHERE body @@ 'fox'::tokenize('keyword')::score('raw_tf()')
+ORDER BY id;
+----
+id	score
+1	3
+3	1
+
+
+# Outside an `@@` match there is no subtree to score, as for ::tokenize.
+statement error
+SELECT 'fox'::score('raw_tf()');
+
+# Siblings that name the same scorer must resolve to one instance, or the
+# ByTerms fusion would decline and run a separate iterator per term.
+query
+EXPLAIN SELECT id FROM score_idx
+WHERE (body @@ 'fox')::score('bm25(1.2, 0.75)')
+   OR (body @@ 'cat')::score('bm25(1.2, 0.75)');
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ────────────────╮
+│ Index: score_idx                │
+│ Lookup: table                   │
+│ Index Filter:                   │
+│ ╭─ Terms ─────────────────────╮ │
+│ │ Field: body(string)         │ │
+│ │ Values: 'cat', 'fox'        │ │
+│ │ Min Match: 1                │ │
+│ │ Score: bm25(k1=1.2, b=0.75) │ │
+│ ╰─────────────────────────────╯ │
+│ Projections: id                 │
+│ ~1 row                          │
+╰─────────────────────────────────╯
+
+
+# Two score(NULL) siblings must fuse as well: the marker behind it is one
+# shared instance, so they are the same override rather than two equal ones.
+query
+EXPLAIN SELECT id FROM score_idx
+WHERE (body @@ 'fox')::score(NULL) OR (body @@ 'cat')::score(NULL);
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ─────────╮
+│ Index: score_idx         │
+│ Lookup: table            │
+│ Index Filter:            │
+│ ╭─ Terms ──────────────╮ │
+│ │ Field: body(string)  │ │
+│ │ Values: 'cat', 'fox' │ │
+│ │ Min Match: 1         │ │
+│ │ Score: unscored      │ │
+│ ╰──────────────────────╯ │
+│ Projections: id          │
+│ ~1 row                   │
+╰──────────────────────────╯
+
+
+# Naming the same scorer with different parameters is a different override,
+# so these must not fuse.
+query
+EXPLAIN SELECT id FROM score_idx
+WHERE (body @@ 'fox')::score('bm25(1.2, 0.75)')
+   OR (body @@ 'cat')::score('bm25(1.3, 0.75)');
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ─────────────────────────────────────────────────╮
+│ Index: score_idx                                                 │
+│ Lookup: table                                                    │
+│ Index Filter:                                                    │
+│ ╭─ Or ────────────────────────╮                                  │
+│ ╰──────────────┬──────────────╯                                  │
+│                ├────────────────────────────────╮                │
+│ ╭─ Term ───────┴──────────────╮  ╭─ Term ───────┴──────────────╮ │
+│ │ Field: body(string)         │  │ Field: body(string)         │ │
+│ │ Value: fox                  │  │ Value: cat                  │ │
+│ │ Score: bm25(k1=1.2, b=0.75) │  │ Score: bm25(k1=1.3, b=0.75) │ │
+│ ╰─────────────────────────────╯  ╰─────────────────────────────╯ │
+│ Projections: id                                                  │
+│ ~1 row                                                           │
+╰──────────────────────────────────────────────────────────────────╯
+
+
+# An override may need index features the query's own scorer does not. The
+# features a leaf's postings are read with come from the scorer its collector
+# was built for, and the override replaces that scorer for its own subtree, so
+# bm25 still gets frequency and norms under an IDF query -- the same values a
+# bm25 query produces.
+query
+SELECT id, round(BM25(score_idx.tableoid)::DOUBLE, 4) AS score
+FROM score_idx WHERE body @@ 'fox' ORDER BY id;
+----
+id	score
+1	0.6671
+3	0.5235
+
+
+query
+SELECT id, round(IDF(score_idx.tableoid)::DOUBLE, 4) AS score
+FROM score_idx WHERE (body @@ 'fox')::score('bm25(1.2, 0.75)') ORDER BY id;
+----
+id	score
+1	0.6671
+3	0.5235
+
+
+# Same shape one step further: raw_boost asks for nothing, raw_tf wants
+# frequency, and the override gets it.
+query
+SELECT id, round(RAW_BOOST(score_idx.tableoid)::DOUBLE, 4) AS score
+FROM score_idx WHERE (body @@ 'fox')::score('raw_tf()') ORDER BY id;
+----
+id	score
+1	3
+3	1
+
+
+statement ok
+CREATE TABLE score_kw (id INTEGER PRIMARY KEY, tag VARCHAR);
+
+
+statement ok
+CREATE INDEX score_kw_idx ON score_kw USING inverted(id, tag)
+  WITH (compaction_interval = 0);
+
+
+statement ok
+INSERT INTO score_kw VALUES (1, 'red'), (2, 'red'), (3, 'blue');
+
+
+statement ok
+VACUUM (REFRESH_TABLE) score_kw;
+
+
+# Without a dictionary the column stores no frequency and no norms, so a
+# scorer that needs neither still scores.
+query
+SELECT id, round(IDF(score_kw_idx.tableoid)::DOUBLE, 4) AS score
+FROM score_kw_idx WHERE tag @@ 'red' ORDER BY id;
+----
+id	score
+1	0.47
+2	0.47
+
+
+# An override that needs features the index never stored scores zero rather
+# than failing. This is what the query scorer does on such a column too, so
+# the override inherits it rather than introducing it -- pinned here so a
+# change in that behaviour is visible.
+query
+SELECT id, round(IDF(score_kw_idx.tableoid)::DOUBLE, 4) AS score
+FROM score_kw_idx WHERE (tag @@ 'red')::score('bm25(1.2, 0.75)') ORDER BY id;
+----
+id	score
+1	0
+2	0
+
+
+query
+SELECT id, round(IDF(score_kw_idx.tableoid)::DOUBLE, 4) AS score
+FROM score_kw_idx WHERE (tag @@ 'red')::score('raw_tf()') ORDER BY id;
+----
+id	score
+1	0
+2	0
+
+
+query
+SELECT id, round(BM25(score_kw_idx.tableoid)::DOUBLE, 4) AS score
+FROM score_kw_idx WHERE tag @@ 'red' ORDER BY id;
+----
+id	score
+1	0
+2	0
+
+
+statement ok
+DROP TABLE score_kw;
+
+
+# constant(K) scores every match the same and asks for no index features, so
+# it is the scorer to reach for where frequency and norms are not stored.
+query
+SELECT id, round(BM25(score_idx.tableoid)::DOUBLE, 4) AS score
+FROM score_idx WHERE (body @@ 'fox')::score('constant(42)') ORDER BY id;
+----
+id	score
+1	42
+3	42
+
+
+# Over a group the constant is collected per branch and merged, so a document
+# matching both branches collects it twice. This is the boolean node's merge,
+# not the scorer's doing.
+query
+SELECT id, round(BM25(score_idx.tableoid)::DOUBLE, 4) AS score
+FROM score_idx WHERE (body @@ 'fox' OR body @@ 'cat')::score('constant(42)')
+ORDER BY id;
+----
+id	score
+1	42
+2	42
+3	84
+
+
+# constant() with no argument is the query boost alone, which is what
+# raw_boost already scores.
+query
+SELECT id, round(BM25(score_idx.tableoid)::DOUBLE, 4) AS score
+FROM score_idx WHERE (body @@ 'fox')::score('constant()') ORDER BY id;
+----
+id	score
+1	1
+3	1
+
+
+# A modifier on one element of a list applies to that element only. It reaches
+# the element through the tsquery value rather than through the element's type,
+# which is what lets it survive the list settling on one element type.
+query
+SELECT id, round(BM25(score_idx.tableoid)::DOUBLE, 4) AS score
+FROM score_idx WHERE body @@ ts_any(['fox'::score('constant(42)'), 'cat'])
+ORDER BY id;
+----
+id	score
+1	42
+2	0.6951
+3	42.5235
+
+
+# Doc 3 above is 42 for fox plus cat's ordinary BM25, so the two elements are
+# scored independently rather than one scorer winning the list.
+query
+SELECT id, round(BM25(score_idx.tableoid)::DOUBLE, 4) AS score
+FROM score_idx WHERE body @@ ts_any(['fox'::score(NULL), 'cat']) ORDER BY id;
+----
+id	score
+1	0
+2	0.6951
+3	0.5235
+
+
+# Same for a per-element boost, and in either element order -- the leading
+# element used to decide the whole list's type and so its modifier.
+query
+SELECT id, round(BM25(score_idx.tableoid)::DOUBLE, 4) AS score
+FROM score_idx WHERE body @@ ts_any(['fox'::boost(5.0), 'cat']) ORDER BY id;
+----
+id	score
+1	3.3355
+2	0.6951
+3	3.1413
+
+
+query
+SELECT id, round(BM25(score_idx.tableoid)::DOUBLE, 4) AS score
+FROM score_idx WHERE body @@ ts_any(['cat', 'fox'::boost(5.0)]) ORDER BY id;
+----
+id	score
+1	3.3355
+2	0.6951
+3	3.1413
+
+
+query
+SELECT id, round(BM25(score_idx.tableoid)::DOUBLE, 4) AS score
+FROM score_idx WHERE body @@ ts_all(['fox'::score('constant(9)'), 'cat'])
+ORDER BY id;
+----
+id	score
+3	9.5235
+
+
+# Every modifier now lives in the value, so a tsquery reads back as the
+# expression that produced it -- which is also how it crosses the wire.
+query
+SELECT (ts_phrase('a', 'b')::slop(2)::boost(3.0)::score('constant(7)'))::TSQUERY::VARCHAR
+  AS rendered;
+----
+rendered
+((ts_phrase('a', 'b'))::slop(2) ^ 3)::score('constant(7)')
+
+
+query
+SELECT ('fox'::TSQUERY)::score(NULL)::TSQUERY::VARCHAR AS rendered;
+----
+rendered
+'fox'::score(NULL)
+
+
+# ::merge(<policy>) says how a boolean node combines what its branches score.
+# 'max' takes the best branch instead of adding them up, so a document matching
+# both branches stops collecting twice.
+query
+SELECT id, round(BM25(score_idx.tableoid)::DOUBLE, 4) AS score
+FROM score_idx WHERE (body @@ 'fox' OR body @@ 'cat')::merge('max') ORDER BY id;
+----
+id	score
+1	0.6671
+2	0.6951
+3	0.5235
+
+
+# 'sum' and 'default' are what the node already did, so both read like the
+# unmodified query.
+query
+SELECT id, round(BM25(score_idx.tableoid)::DOUBLE, 4) AS score
+FROM score_idx WHERE (body @@ 'fox' OR body @@ 'cat')::merge('sum') ORDER BY id;
+----
+id	score
+1	0.6671
+2	0.6951
+3	1.0471
+
+
+query
+SELECT id, round(BM25(score_idx.tableoid)::DOUBLE, 4) AS score
+FROM score_idx WHERE (body @@ 'fox' OR body @@ 'cat')::merge('default')
+ORDER BY id;
+----
+id	score
+1	0.6671
+2	0.6951
+3	1.0471
+
+
+# Together with a constant this is what makes a constant score constant: doc 3
+# matches both branches and still scores 42 rather than 84.
+query
+SELECT id, round(BM25(score_idx.tableoid)::DOUBLE, 4) AS score
+FROM score_idx
+WHERE (body @@ 'fox' OR body @@ 'cat')::score('constant(42)')::merge('max')
+ORDER BY id;
+----
+id	score
+1	42
+2	42
+3	42
+
+
+# Either order: ::score wraps the group, and ::merge looks through that wrapper
+# to the node whose branches actually merge.
+query
+SELECT id, round(BM25(score_idx.tableoid)::DOUBLE, 4) AS score
+FROM score_idx
+WHERE (body @@ 'fox' OR body @@ 'cat')::merge('max')::score('constant(42)')
+ORDER BY id;
+----
+id	score
+1	42
+2	42
+3	42
+
+
+query
+SELECT id, round(BM25(score_idx.tableoid)::DOUBLE, 4) AS score
+FROM score_idx WHERE (body @@ 'fox' AND body @@ 'cat')::merge('max') ORDER BY id;
+----
+id	score
+3	0.5235
+
+
+# The policy shows in the plan. Same-field branches fuse into one Terms, which
+# carries the policy of the Or it replaced.
+query
+EXPLAIN SELECT id FROM score_idx
+WHERE (body @@ 'fox' OR body @@ 'cat')::merge('max');
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ─────────╮
+│ Index: score_idx         │
+│ Lookup: table            │
+│ Index Filter:            │
+│ ╭─ Terms ──────────────╮ │
+│ │ Field: body(string)  │ │
+│ │ Values: 'cat', 'fox' │ │
+│ │ Min Match: 1         │ │
+│ │ Merge: max           │ │
+│ ╰──────────────────────╯ │
+│ Projections: id          │
+│ ~1 row                   │
+╰──────────────────────────╯
+
+
+# A group the fusion leaves alone keeps the policy on the Or itself.
+query
+EXPLAIN SELECT id FROM score_idx
+WHERE (body @@ 'fox' OR id = 2)::merge('max');
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ────────────────────────────────╮
+│ Index: score_idx                                │
+│ Lookup: table                                   │
+│ Index Filter:                                   │
+│ ╭─ Or ────────────────╮                         │
+│ │ Merge: max          │                         │
+│ ╰──────────┬──────────╯                         │
+│            ├────────────────────────╮           │
+│ ╭─ Term ───┴──────────╮  ╭─ Term ───┴─────────╮ │
+│ │ Field: body(string) │  │ Field: id(numeric) │ │
+│ │ Value: fox          │  │ Value: 2           │ │
+│ ╰─────────────────────╯  ╰────────────────────╯ │
+│ Projections: id                                 │
+│ ~1 row                                          │
+╰─────────────────────────────────────────────────╯
+
+
+# Nothing is printed when the node keeps its own default.
+query
+EXPLAIN SELECT id FROM score_idx WHERE body @@ 'fox' OR id = 2;
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ────────────────────────────────╮
+│ Index: score_idx                                │
+│ Lookup: table                                   │
+│ Index Filter:                                   │
+│ ╭─ Or ────────────────╮                         │
+│ ╰──────────┬──────────╯                         │
+│            ├────────────────────────╮           │
+│ ╭─ Term ───┴──────────╮  ╭─ Term ───┴─────────╮ │
+│ │ Field: body(string) │  │ Field: id(numeric) │ │
+│ │ Value: fox          │  │ Value: 2           │ │
+│ ╰─────────────────────╯  ╰────────────────────╯ │
+│ Projections: id                                 │
+│ ~1 row                                          │
+╰─────────────────────────────────────────────────╯
+
+
+# ::merge needs a boolean group -- a leaf has no branches to combine, and
+# saying so beats ignoring it.
+query error ::merge\(\.\.\.\) applies to a boolean group
+SELECT id FROM score_idx WHERE (body @@ 'fox')::merge('max');
+
+
+statement error
+SELECT id FROM score_idx WHERE (body @@ 'fox' OR body @@ 'cat')::merge('avg');
+
+# The policy name is read case-insensitively.
+query
+SELECT id, round(BM25(score_idx.tableoid)::DOUBLE, 4) AS score
+FROM score_idx WHERE (body @@ 'fox' OR body @@ 'cat')::merge('MAX') ORDER BY id;
+----
+id	score
+1	0.6671
+2	0.6951
+3	0.5235
+
+
+# A policy binds to its own node. The inner group takes the best of
+# fox / cat, and the outer one still adds dog on top -- doc 1 is fox's 0.6671
+# plus dog's 0.8143.
+query
+SELECT id, round(BM25(score_idx.tableoid)::DOUBLE, 4) AS score
+FROM score_idx WHERE ((body @@ 'fox' OR body @@ 'cat')::merge('max') OR body @@ 'dog')
+ORDER BY id;
+----
+id	score
+1	1.4814
+2	0.6951
+3	0.5235
+
+
+# Written on the outer group instead, and the nested Or flattens into it,
+# so the best of all three wins: doc 1 is dog's 0.8143 alone.
+query
+SELECT id, round(BM25(score_idx.tableoid)::DOUBLE, 4) AS score
+FROM score_idx WHERE ((body @@ 'fox' OR body @@ 'cat') OR body @@ 'dog')::merge('max')
+ORDER BY id;
+----
+id	score
+1	0.8143
+2	0.6951
+3	0.5235
+
+
+# Same thing written flat.
+query
+SELECT id, round(BM25(score_idx.tableoid)::DOUBLE, 4) AS score
+FROM score_idx WHERE (body @@ 'fox' OR body @@ 'cat' OR body @@ 'dog')::merge('max')
+ORDER BY id;
+----
+id	score
+1	0.8143
+2	0.6951
+3	0.5235
+
+
+# A per-branch scorer under a group policy: doc 3 matches both, and 10
+# beats cat's 0.5235, so the constant is what survives.
+query
+SELECT id, round(BM25(score_idx.tableoid)::DOUBLE, 4) AS score
+FROM score_idx WHERE ((body @@ 'fox')::score('constant(10)') OR body @@ 'cat')::merge('max')
+ORDER BY id;
+----
+id	score
+1	10
+2	0.6951
+3	10
+
+
+# An unscored branch contributes nothing to compare, so the other branch
+# is the maximum by default.
+query
+SELECT id, round(BM25(score_idx.tableoid)::DOUBLE, 4) AS score
+FROM score_idx WHERE ((body @@ 'fox')::score(NULL) OR body @@ 'cat')::merge('max')
+ORDER BY id;
+----
+id	score
+1	0
+2	0.6951
+3	0.5235
+
+
+# A boost multiplies what the winning branch scored rather than what the
+# sum would have been: doc 3 is 2 x 0.5235, not 2 x 1.0471.
+query
+SELECT id, round(BM25(score_idx.tableoid)::DOUBLE, 4) AS score
+FROM score_idx WHERE (body @@ 'fox' OR body @@ 'cat')::boost(2.0)::merge('max')
+ORDER BY id;
+----
+id	score
+1	1.3342
+2	1.3903
+3	1.0471
+
+
+# The policy also reaches a group built from a tsquery value, where it
+# travels in the value rather than on a predicate.
+query
+SELECT id, round(BM25(score_idx.tableoid)::DOUBLE, 4) AS score
+FROM score_idx WHERE body @@ ts_any(['fox', 'cat'])::merge('max')
+ORDER BY id;
+----
+id	score
+1	0.6671
+2	0.6951
+3	0.5235
+
+
+# And an AND group with an exclusion in it.
+query
+SELECT id, round(BM25(score_idx.tableoid)::DOUBLE, 4) AS score
+FROM score_idx WHERE (NOT body @@ 'dog' AND body @@ 'fox')::merge('max')
+ORDER BY id;
+----
+id	score
+3	0.5235
+
+
+# The plans for those combinations. Nesting first: the policy sits on the inner
+# node only, and the outer one is left at its default.
+query
+EXPLAIN SELECT id FROM score_idx
+WHERE ((body @@ 'fox' OR body @@ 'cat')::merge('max') OR body @@ 'dog');
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ──────────────────────────────────╮
+│ Index: score_idx                                  │
+│ Lookup: table                                     │
+│ Index Filter:                                     │
+│ ╭─ Or ─────────────────╮                          │
+│ ╰───────────┬──────────╯                          │
+│             ├────────────────────────╮            │
+│ ╭─ Terms ───┴──────────╮  ╭─ Term ───┴──────────╮ │
+│ │ Field: body(string)  │  │ Field: body(string) │ │
+│ │ Values: 'cat', 'fox' │  │ Value: dog          │ │
+│ │ Min Match: 1         │  ╰─────────────────────╯ │
+│ │ Merge: max           │                          │
+│ ╰──────────────────────╯                          │
+│ Projections: id                                   │
+│ ~1 row                                            │
+╰───────────────────────────────────────────────────╯
+
+
+# Written on the outer group, the nested Or flattens into it and one node
+# carries the policy for all three branches.
+query
+EXPLAIN SELECT id FROM score_idx
+WHERE ((body @@ 'fox' OR body @@ 'cat') OR body @@ 'dog')::merge('max');
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ────────────────╮
+│ Index: score_idx                │
+│ Lookup: table                   │
+│ Index Filter:                   │
+│ ╭─ Terms ─────────────────────╮ │
+│ │ Field: body(string)         │ │
+│ │ Values: 'cat', 'dog', 'fox' │ │
+│ │ Min Match: 1                │ │
+│ │ Merge: max                  │ │
+│ ╰─────────────────────────────╯ │
+│ Projections: id                 │
+│ ~1 row                          │
+╰─────────────────────────────────╯
+
+
+# A per-branch scorer and a group policy show up as separate attributes: the
+# wrapper's Score on the branch, the node's Merge on the group.
+query
+EXPLAIN SELECT id FROM score_idx
+WHERE ((body @@ 'fox')::score('constant(10)') OR body @@ 'cat')::merge('max');
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ───────────────────────────────────────╮
+│ Index: score_idx                                       │
+│ Lookup: table                                          │
+│ Index Filter:                                          │
+│ ╭─ Or ──────────────────────╮                          │
+│ │ Merge: max                │                          │
+│ ╰─────────────┬─────────────╯                          │
+│               ├───────────────────────────╮            │
+│ ╭─ Term ──────┴─────────────╮  ╭─ Term ───┴──────────╮ │
+│ │ Field: body(string)       │  │ Field: body(string) │ │
+│ │ Value: fox                │  │ Value: cat          │ │
+│ │ Score: constant(value=10) │  ╰─────────────────────╯ │
+│ ╰───────────────────────────╯                          │
+│ Projections: id                                        │
+│ ~1 row                                                 │
+╰────────────────────────────────────────────────────────╯
+
+
+query
+EXPLAIN SELECT id FROM score_idx
+WHERE (body @@ 'fox' OR body @@ 'cat')::boost(2.0)::merge('max');
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ─────────╮
+│ Index: score_idx         │
+│ Lookup: table            │
+│ Index Filter:            │
+│ ╭─ Terms ──────────────╮ │
+│ │ Field: body(string)  │ │
+│ │ Values: 'cat', 'fox' │ │
+│ │ Min Match: 1         │ │
+│ │ Merge: max           │ │
+│ │ Boost: 2             │ │
+│ ╰──────────────────────╯ │
+│ Projections: id          │
+│ ~1 row                   │
+╰──────────────────────────╯
+
+
+# Now the leaf kinds that used to reject the override because their iterators
+# read the query scorer instead of the node's.
+
+# constant(K) on a phrase: frequency-independent, so the value is exact.
+query
+SELECT id, round(BM25(score_idx.tableoid)::DOUBLE, 4) AS score
+FROM score_idx WHERE (body @@ ts_phrase('fox'))::score('constant(42)')
+ORDER BY id;
+----
+id	score
+1	42
+3	42
+
+
+# A phrase with slop is a different iterator from a plain one, so it gets its
+# own case.
+query
+SELECT id, round(BM25(score_idx.tableoid)::DOUBLE, 4) AS score
+FROM score_idx WHERE (body @@ ts_phrase('fox dog')::slop(2))::score('constant(7)')
+ORDER BY id;
+----
+id	score
+1	7
+
+
+# n-gram similarity: two n-grams at a 0.5 threshold need only one to match, so
+# doc 1 matches on both and doc 3 on 'fox' alone. The node publishes the match
+# ratio as a per-document boost, and constant(K) multiplies by it -- so doc 1
+# scores the full 5 and doc 3, matching one n-gram of two, scores half.
+query
+SELECT id, round(BM25(score_idx.tableoid)::DOUBLE, 4) AS score
+FROM score_idx WHERE (body @@ ts_ngram('fox dog', 0.5))::score('constant(5)')
+ORDER BY id;
+----
+id	score
+1	5
+3	2.5
+
+
+# The hole this fixes: an override written on a group used to pass validation
+# because the wrapped node is an Or, and then be ignored by the phrase leaf
+# underneath it. Every branch is unscored now, phrase included.
+query
+SELECT id, round(BM25(score_idx.tableoid)::DOUBLE, 4) AS score
+FROM score_idx WHERE (body @@ ts_phrase('fox') OR body @@ 'cat')::score(NULL)
+ORDER BY id;
+----
+id	score
+1	0
+2	0
+3	0
+
+
+# A phrase branch and a term branch keep their own scorers inside one group.
+query
+SELECT id, round(BM25(score_idx.tableoid)::DOUBLE, 4) AS score
+FROM score_idx
+WHERE (body @@ ts_phrase('fox'))::score('raw_tf()') OR (body @@ 'cat')::score('constant(10)')
+ORDER BY id;
+----
+id	score
+1	3
+2	10
+3	11
+
+
+# The plans. A per-node override prints as a Score attribute on the node it
+# wraps, not as a node of its own -- the wrapper is transparent here the same
+# way it is to the optimizer. On a phrase that attribute used to be
+# unreachable, because the leaf could not have honoured it.
+query
+EXPLAIN SELECT id FROM score_idx
+WHERE (body @@ ts_phrase('fox dog'))::score('constant(42)');
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ────────────────────────────╮
+│ Index: score_idx                            │
+│ Lookup: table                               │
+│ Index Filter:                               │
+│ ╭─ Phrase ────────────────────────────────╮ │
+│ │ Field: body(string)                     │ │
+│ │ Parts: Term:fox(0, 0); Term:dog(1, 1);  │ │
+│ │ Score: constant(value=42)               │ │
+│ ╰─────────────────────────────────────────╯ │
+│ Projections: id                             │
+│ ~1 row                                      │
+╰─────────────────────────────────────────────╯
+
+
+# Slop is the phrase node's own attribute and the override is appended after
+# it, so a sloppy phrase carries both.
+query
+EXPLAIN SELECT id FROM score_idx
+WHERE (body @@ ts_phrase('fox dog')::slop(2))::score('constant(7)');
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ────────────────────────────╮
+│ Index: score_idx                            │
+│ Lookup: table                               │
+│ Index Filter:                               │
+│ ╭─ Phrase ────────────────────────────────╮ │
+│ │ Field: body(string)                     │ │
+│ │ Parts: Term:fox(0, 0); Term:dog(1, 1);  │ │
+│ │ Slop: 2                                 │ │
+│ │ Score: constant(value=7)                │ │
+│ ╰─────────────────────────────────────────╯ │
+│ Projections: id                             │
+│ ~1 row                                      │
+╰─────────────────────────────────────────────╯
+
+
+# Score-bound pruning writes per-block bounds with the index's scorer, which is
+# not an upper bound for an overridden node. Pruning is turned off under the
+# override, so the ranking must be identical with the optimization forced off.
+query
+SELECT id, round(BM25(score_idx.tableoid)::DOUBLE, 4) AS score
+FROM score_idx WHERE (body @@ ts_phrase('fox'))::score('raw_tf()')
+ORDER BY BM25(score_idx.tableoid) DESC, id LIMIT 2;
+----
+id	score
+1	3
+3	1
+
+
+statement ok
+SET sdb_disable_top_k_optimization = true
+
+
+query
+SELECT id, round(BM25(score_idx.tableoid)::DOUBLE, 4) AS score
+FROM score_idx WHERE (body @@ ts_phrase('fox'))::score('raw_tf()')
+ORDER BY BM25(score_idx.tableoid) DESC, id LIMIT 2;
+----
+id	score
+1	3
+3	1
+
+
+statement ok
+RESET sdb_disable_top_k_optimization
+
+
+# Wildcards, regexps and edit distances are lowered to an automaton or a
+# multiterm in a pass of their own, and that pass replaces the node the override
+# sits on. The scorer has to survive the replacement, or `::score` on any of
+# them would silently fall back to the ORDER BY scorer.
+
+query
+SELECT id, round(BM25(score_idx.tableoid)::DOUBLE, 4) AS score
+FROM score_idx WHERE (body @@ ts_like('fo%'))::score(NULL) ORDER BY id;
+----
+id	score
+1	0
+3	0
+
+
+query
+SELECT id, round(BM25(score_idx.tableoid)::DOUBLE, 4) AS score
+FROM score_idx WHERE (body @@ ts_regexp('fo.'))::score(NULL) ORDER BY id;
+----
+id	score
+1	0
+3	0
+
+
+query
+SELECT id, round(BM25(score_idx.tableoid)::DOUBLE, 4) AS score
+FROM score_idx
+WHERE (body @@ ts_levenshtein('fox', 1))::score(NULL) ORDER BY id;
+----
+id	score
+1	0
+3	0
+
+
+# Without an override the same predicate keeps the ORDER BY scorer, so the zeros
+# above are the override landing rather than scoring disappearing.
+
+query
+SELECT id, BM25(score_idx.tableoid) > 0 AS scored
+FROM score_idx WHERE body @@ ts_like('fo%') ORDER BY id;
+----
+id	scored
+1	t
+3	t
+
+
+# And a scoring override is applied, not merely absent: raw_tf counts 'fox'
+# three times in doc 1 and once in doc 3.
+
+query
+SELECT id, round(BM25(score_idx.tableoid)::DOUBLE, 4) AS score
+FROM score_idx WHERE (body @@ ts_like('fo%'))::score('raw_tf()') ORDER BY id;
+----
+id	score
+1	3
+3	1
+
+
+statement ok
+DROP TABLE score_docs;
+
+
 statement ok
 SET disabled_optimizers = '';
+
+
+statement ok
+CREATE TABLE score_vec(id INTEGER PRIMARY KEY, body VARCHAR, emb FLOAT[3]);
+
+
+statement ok
+INSERT INTO score_vec VALUES (1, 'quick brown fox', '[1,0,0]'), (2, 'lazy dog fox', '[0,1,0]');
+
+
+statement ok
+CREATE INDEX score_vec_idx ON score_vec USING inverted(id, body en, emb)
+  WITH (refresh_interval = 0, compaction_interval = 0);
+
+
+statement ok
+VACUUM (REFRESH_TABLE) score_vec;
+
+
+query error ::score\(\.\.\.\) used on a predicate the inverted index could not claim
+SELECT id FROM score_vec_idx
+WHERE ((emb <-> '[1,0,0]'::FLOAT[3]) < 0.5)::score('raw_tf()');
+
+
+query
+SELECT id FROM score_vec_idx
+WHERE (emb <-> '[1,0,0]'::FLOAT[3]) < 0.5
+  AND body @@ ts_phrase('fox')::score('raw_tf()') ORDER BY id;
+----
+id
+1
+
+
+query error ::score\(\.\.\.\) is not supported in this context
+SELECT ts_dict_agg(body) FROM score_vec_idx
+WHERE body @@ ts_phrase('fox')::score('raw_tf()');
+
+
+statement ok
+DROP TABLE score_vec;

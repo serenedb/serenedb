@@ -169,7 +169,6 @@ class MaxScoreIterator : public DocIterator {
 
   ScoreFunction PrepareScore(const PrepareScoreContext& ctx) final {
     const PrepareScoreContext sub{
-      .scorer = ctx.scorer,
       .segment = ctx.segment,
       .fetcher = &_fetcher,
     };

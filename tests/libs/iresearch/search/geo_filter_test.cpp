@@ -29,7 +29,9 @@
 #include "iresearch/search/collectors.hpp"
 #include "iresearch/search/cost.hpp"
 #include "iresearch/search/geo_filter.hpp"
+#include "iresearch/search/raw_boost.hpp"
 #include "iresearch/search/scorer.hpp"
+#include "iresearch/search/unscored.hpp"
 #include "iresearch/store/memory_directory.hpp"
 #include "iresearch/store/store_utils.hpp"
 #include "s2/s2point_region.h"
@@ -136,7 +138,7 @@ TEST(GeoFilterTest, ctor) {
   GeoFilter q;
   ASSERT_EQ(irs::Type<GeoFilter>::id(), q.type());
   ASSERT_EQ(irs::field_limits::invalid(), q.field_id());
-  ASSERT_EQ(irs::kNoBoost, q.Boost());
+  ASSERT_EQ(irs::kNoBoost, q.GetBoost());
 #ifndef SDB_DEV
   ASSERT_EQ(GeoFilterOptions{}, q.options());
 #endif
@@ -162,7 +164,7 @@ TEST(GeoFilterTest, equal) {
 
   {
     GeoFilter q1;
-    q1.boost(1.5);
+    q1.SetBoost(1.5);
     q1.mutable_options()->type = GeoFilterType::Intersects;
     q1.mutable_options()->shape.reset(
       std::make_unique<S2PointRegion>(S2Point{1., 0., 0.}),
@@ -226,7 +228,7 @@ TEST(GeoFilterTest, boost) {
       ShapeContainer::Type::S2Point);
     *q.mutable_field_id() = 1;
     q.mutable_options()->store_field_id = kGeo;
-    q.boost(boost);
+    q.SetBoost(boost);
 
     ::tests::PreparedFilter prepared{q, irs::SubReader::empty()};
     ASSERT_EQ(boost, prepared.Query(0)->Boost());
@@ -714,7 +716,6 @@ TEST(GeoFilterTest, checkScorer) {
       }
 
       const auto score = it->PrepareScore({
-        .scorer = &ord,
         .segment = &segment,
       });
       EXPECT_FALSE(score.IsDefault());
@@ -803,7 +804,7 @@ TEST(GeoFilterTest, checkScorer) {
       collector_field_docs += field->docs_with_field;
     };
     sort._prepare_scorer = [&](const irs::ScoreContext& ctx) {
-      EXPECT_EQ(q.Boost(), ctx.boost);
+      EXPECT_EQ(q.GetBoost(), ctx.boost);
       ++prepare_scorer_count;
     };
 
@@ -839,7 +840,7 @@ TEST(GeoFilterTest, checkScorer) {
     })");
 
     GeoFilter q;
-    q.boost(1.5f);
+    q.SetBoost(1.5f);
     q.mutable_options()->type = GeoFilterType::Intersects;
     json::ParseRegion(json.value(), q.mutable_options()->shape);
     ASSERT_EQ(ShapeContainer::Type::S2Polygon,
@@ -864,7 +865,7 @@ TEST(GeoFilterTest, checkScorer) {
       collector_field_docs += field->docs_with_field;
     };
     sort._prepare_scorer = [&](const irs::ScoreContext& ctx) {
-      EXPECT_EQ(q.Boost(), ctx.boost);
+      EXPECT_EQ(q.GetBoost(), ctx.boost);
       ++prepare_scorer_count;
     };
 
@@ -884,4 +885,102 @@ TEST(GeoFilterTest, checkScorer) {
     ASSERT_GT(collector_field_docs, 0u);  // field collector ran on segments
     ASSERT_EQ(2, scorer_score_count);
   }
+}
+
+TEST(GeoFilterTest, per_node_scorer_override) {
+  auto docs = irs::tests::ParseGeoDocs(R"([
+    { "name": "A", "geometry": { "type": "Point", "coordinates": [ 37.605,    55.707917 ] } },
+    { "name": "B", "geometry": { "type": "Point", "coordinates": [ 37.610235, 55.709754 ] } },
+    { "name": "C", "geometry": { "type": "Point", "coordinates": [ 37.75589,  55.798193 ] } }
+  ])");
+
+  irs::MemoryDirectory dir;
+  irs::DirectoryReader reader;
+  {
+    auto codec = irs::formats::Get("1_5simd");
+    ASSERT_NE(nullptr, codec);
+    auto writer = irs::IndexWriter::Make(dir, codec, irs::kOmCreate,
+                                         irs::tests::DefaultWriterOptions());
+    ASSERT_NE(nullptr, writer);
+    GeoField geo_field;
+    geo_field.field_name = "geometry";
+    geo_field.id = kGeo;
+    StringField name_field;
+    name_field.field_name = "name";
+    name_field.id = kName;
+    {
+      auto segment = writer->GetBatch();
+      for (const auto& doc_entry : docs) {
+        geo_field.value = doc_entry.geometry;
+        name_field.value = doc_entry.name;
+        auto doc = segment.Insert();
+        ASSERT_TRUE(doc.Insert(name_field));
+        ASSERT_TRUE(doc.Insert(geo_field));
+        irs::tests::StoreFieldAt(*doc.GetColWriter(), kName, doc.DocId(),
+                                 name_field);
+        irs::tests::StoreFieldAt(*doc.GetColWriter(), kGeo, doc.DocId(),
+                                 geo_field);
+      }
+      segment.Commit();
+    }
+    writer->RefreshCommit();
+    reader = writer->GetSnapshot();
+  }
+  ASSERT_NE(nullptr, reader);
+  ASSERT_EQ(1, reader->size());
+
+  auto make_filter = [] {
+    auto json = irs::tests::FromJson(R"({
+      "type": "Polygon",
+      "coordinates": [
+          [
+              [37.602682, 55.706853],
+              [37.613025, 55.706853],
+              [37.613025, 55.711906],
+              [37.602682, 55.711906],
+              [37.602682, 55.706853]
+          ]
+      ]
+    })");
+    auto q = std::make_unique<GeoFilter>();
+    q->mutable_options()->type = GeoFilterType::Intersects;
+    json::ParseRegion(json.value(), q->mutable_options()->shape);
+    *q->mutable_field_id() = kGeo;
+    q->mutable_options()->store_field_id = kGeo;
+    return q;
+  };
+
+  auto run = [&](const irs::Filter& q, const irs::Scorer& ord) {
+    std::map<std::string, irs::score_t> results;
+    ::tests::PreparedFilter prepared{q, *reader, &ord};
+    for (size_t i = 0; auto& segment : *reader) {
+      const auto* column = segment.Column(kName);
+      EXPECT_NE(nullptr, column);
+      irs::tests::BlobPointReader values{segment, *column};
+      auto it = prepared.Execute(i++);
+      EXPECT_NE(nullptr, it);
+      const auto score = it->PrepareScore({.segment = &segment});
+      while (!irs::doc_limits::eof(it->advance())) {
+        irs::score_t value{};
+        score.Score(&value, 1);
+        results.emplace(
+          irs::tests::ReadStoredStr<std::string>(values, it->value()), value);
+      }
+    }
+    return results;
+  };
+
+  irs::RawBoost raw_boost;
+  irs::Unscored unscored;
+
+  const std::map<std::string, irs::score_t> expected_boost{{"A", 1.f},
+                                                           {"B", 1.f}};
+  ASSERT_EQ(expected_boost, run(*make_filter(), raw_boost));
+
+  auto overridden = make_filter();
+  overridden->SetScorer(&unscored);
+
+  const std::map<std::string, irs::score_t> expected_unscored{{"A", 0.f},
+                                                              {"B", 0.f}};
+  ASSERT_EQ(expected_unscored, run(*overridden, raw_boost));
 }

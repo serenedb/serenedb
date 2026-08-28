@@ -151,7 +151,7 @@ void FromPhrase(irs::BooleanFilter& filter, const FilterContext& ctx,
   }
 
   auto& phrase = AddMaybeNegated<irs::ByPhrase>(filter, ctx, column_info);
-  phrase.boost(ctx.boost);
+  phrase.SetBoost(ctx.boost);
   *phrase.mutable_field_id() =
     PickPerKindFieldId(column_info, duckdb::LogicalTypeId::VARCHAR);
   auto* opts = phrase.mutable_options();
@@ -287,7 +287,7 @@ void BuildFtsPhrase(irs::BooleanFilter& parent, const FilterContext& ctx,
   auto& phrase = AddMaybeNegated<irs::ByPhrase>(parent, ctx, column_info);
   *phrase.mutable_field_id() =
     PickPerKindFieldId(column_info, duckdb::LogicalTypeId::VARCHAR);
-  phrase.boost(ctx.boost);
+  phrase.SetBoost(ctx.boost);
   auto* opts = phrase.mutable_options();
   EmitPhraseTokens(*opts, ctx, column_info, text, PhraseGap{});
   if (opts->size() > 1 &&
@@ -482,7 +482,7 @@ void EmitPhraseSeq(irs::BooleanFilter& parent, const FilterContext& ctx,
   auto& phrase = AddMaybeNegated<irs::ByPhrase>(parent, ctx, column_info);
   *phrase.mutable_field_id() =
     PickPerKindFieldId(column_info, duckdb::LogicalTypeId::VARCHAR);
-  phrase.boost(ctx.boost);
+  phrase.SetBoost(ctx.boost);
 
   auto* options = phrase.mutable_options();
 

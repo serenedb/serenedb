@@ -709,8 +709,8 @@ IndexWriter::Transaction::FlushAndFsync() {
     return flushed;  // every document was masked away
   }
 
-  // One batched sync over the whole flushed set: a segment that auto-flushed
-  // mid-insert is as much this transaction's data as the one just serialized.
+  // The whole flushed set, not just the segment serialized above: a mid-insert
+  // auto-flush is this transaction's data too.
   std::vector<std::string_view> files;
   files.reserve(flushed.size() * (flushed.front().meta.files.size() + 1));
   for (auto& entry : flushed) {
@@ -718,8 +718,6 @@ IndexWriter::Transaction::FlushAndFsync() {
                "FlushAndFsync called twice on one transaction");
     SDB_ASSERT(!entry.meta.files.empty());
     index_utils::FlushIndexSegment(segment->dir, entry, false);
-    // Deliberately not `was_flush`: that flag means "published before" and
-    // forces the version bump this exists to avoid.
     files.insert(files.end(), entry.meta.files.begin(), entry.meta.files.end());
     files.emplace_back(entry.filename);
   }
@@ -727,7 +725,8 @@ IndexWriter::Transaction::FlushAndFsync() {
     throw IoError{absl::StrCat("Failed to sync ", files.size(), " file(s) of ",
                                flushed.size(), " flushed segment(s)")};
   }
-  // Only now: the flag says "durable", so a caller may reference these by name.
+  // Only after the sync: the flag says "durable, referenceable by name". Not
+  // `was_flush`, which means "published before" and forces a version bump.
   for (auto& entry : flushed) {
     entry.meta_on_disk = true;
   }
@@ -1342,10 +1341,8 @@ IndexWriter::ptr IndexWriter::Make(Directory& dir, Format::ptr codec,
     // Remove non-index files from directory
     directory_utils::RemoveAllUnreferenced(dir);
   } else {
-    // Segments the committed meta does not reference are being kept for a host
-    // WAL to adopt, so their ids are still live: floor the counter above every
-    // id on disk, or the next segment would be created over a survivor (the
-    // committed meta's seg_counter sits below them).
+    // Unreferenced segments are kept for a host WAL to adopt, so their ids are
+    // still live and the committed seg_counter sits below them.
     const auto max_id = MaxSegmentId(dir);
     if (writer->_seg_counter.load(std::memory_order_relaxed) < max_id) {
       writer->_seg_counter.store(max_id, std::memory_order_relaxed);
@@ -1648,10 +1645,9 @@ bool IndexWriter::AdoptSegment(std::string_view meta_file,
     return true;  // Nothing to adopt
   }
 
-  // The files already exist and are already durable, meta file included -- this
-  // is Import without the MergeWriter copy and without writing anything.
-  // Refs still have to be taken, or the cleaner reclaims the segment from under
-  // us before the commit publishes it.
+  // Import without the MergeWriter copy: every file, meta included, already
+  // exists and is durable. Refs are still needed, or the cleaner reclaims the
+  // segment before the commit publishes it.
   auto meta_ref = directory_utils::Reference(_dir, segment.filename);
   if (!meta_ref) {
     SDB_WARN(IRESEARCH, "Cannot adopt segment meta '", segment.filename,
@@ -1678,10 +1674,8 @@ bool IndexWriter::AdoptSegment(std::string_view meta_file,
   // lock due to context modification
   std::lock_guard lock{flush->pending_mutex};
 
-  // Unlike Import, the tick is the caller's: a removal reaches an imported
-  // segment only when `import.tick <= query.tick` (PrepareFlush stage 2), so
-  // passing the tick these documents were originally committed at is what keeps
-  // a replayed delete ordered against them.
+  // The tick is the caller's, unlike Import: a removal reaches an imported
+  // segment only when `import.tick <= query.tick` (PrepareFlush stage 2).
   flush->imports.emplace_back(std::move(segment), tick, std::move(refs),
                               std::move(adopted_reader));
 

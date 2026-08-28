@@ -143,12 +143,9 @@ class SearchTable : public std::enable_shared_from_this<SearchTable> {
     return _writer->GetBatch(exclusive_segment);
   }
 
-  // Re-attach a segment this shard flushed + fsynced before a crash, named by
-  // its meta file (which carries every other field). `tick` must be in the
-  // replaying transaction's tick space, since it is what orders the segment
-  // against replayed removals. False means the segment cannot be reopened --
-  // the caller holds a durable record claiming those documents, so it must
-  // treat that as an error rather than skipping them.
+  // Re-attach a segment this shard already flushed + fsynced, named by its meta
+  // file. `tick` must be in the adopting transaction's space -- it orders the
+  // segment against that transaction's removals. False == cannot be reopened.
   bool AdoptSegment(std::string_view meta_file, std::string_view codec_name,
                     uint64_t tick) {
     SDB_ASSERT(_writer);
@@ -156,12 +153,9 @@ class SearchTable : public std::enable_shared_from_this<SearchTable> {
                                  tick);
   }
 
-  // Called once this shard's WAL has been replayed. The writer was opened with
-  // cleanup suppressed so un-replayed segments would survive Make(), so this
-  // reclaims whatever the replay did not adopt -- a crashed bulk load can leave
-  // gigabytes behind. Only about promptness: the refresh loop's periodic
-  // cleanup would reclaim the same files a tick later, so skipping this leaks
-  // nothing.
+  // Called once this shard's WAL has been replayed, to reclaim what the replay
+  // did not adopt (the writer was opened with cleanup suppressed). Promptness
+  // only: the refresh loop's periodic cleanup would get there a tick later.
   void FinishRecovery() { CleanupUnsafe(); }
 
   irs::DirectoryReader GetDirectoryReader() noexcept {

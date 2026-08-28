@@ -18,18 +18,6 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-// Covers the primitives a host WAL needs to treat a flushed-but-unpublished
-// segment as a durable artifact it can reference and later re-attach:
-//   Transaction::FlushAndFsync   -- serialize + fsync, report the metadata
-//   GetBatch(exclusive_segment)  -- segments hold only this transaction's docs
-//   IndexWriterOptions::cleanup_on_open == false
-//                                -- survive the open that would unlink them,
-//                                   and never reissue their ids
-//   IndexWriter::AdoptSegment    -- publish them again after a restart
-//
-// "Restart" here is: destroy the writer AND the Directory, so no in-memory
-// IndexFileRefs survive, then rebuild both over the same path.
-
 #include <gtest/gtest.h>
 
 #include <algorithm>
@@ -105,8 +93,7 @@ class IndexAdoptTest : public TestBase {
     _writer = irs::IndexWriter::Make(*_dir, _codec, mode, options);
   }
 
-  // Drops every in-memory reference to the directory's files, then reopens --
-  // the state a process restart leaves behind.
+  // Drops the Directory too, so no in-memory IndexFileRefs survive.
   void Restart(bool cleanup_on_open, uint32_t segment_docs_max = 0) {
     _writer.reset();
     _dir.reset();
@@ -116,9 +103,8 @@ class IndexAdoptTest : public TestBase {
 
   static constexpr irs::field_id kNameFieldId = tests::FieldIdFor("name");
 
-  // One indexed doc, so a flushed segment has real files behind it. The writer
-  // indexes by field id, and StringField's ctor leaves it invalid, so it has to
-  // be set here or a ByTerm filter on kNameFieldId matches nothing.
+  // field.id has to be set: StringField's ctor leaves it invalid and the writer
+  // indexes by field id, so a ByTerm filter would match nothing.
   static bool InsertDoc(irs::IndexWriter::Transaction& trx,
                         std::string_view value) {
     tests::StringField field{"name", value};
@@ -138,8 +124,6 @@ class IndexAdoptTest : public TestBase {
     return _dir->exists(exists, name) && exists;
   }
 
-  // All a host WAL records: the name of each segment's own meta file, which
-  // FlushAndFsync has already written and synced.
   static std::vector<std::string> MetaFilesOf(
     std::span<const irs::IndexWriter::FlushedSegment> flushed) {
     std::vector<std::string> out;
@@ -167,10 +151,6 @@ class IndexAdoptTest : public TestBase {
   irs::IndexWriter::ptr _writer;
 };
 
-// FlushAndFsync must report EVERY segment the transaction flushed, not just the
-// one it serialized: a transaction over segment_docs_max auto-flushes
-// mid-insert, so earlier segments are already on disk by the time it runs.
-// Reporting only the last would leave the rest out of the caller's WAL record.
 TEST_F(IndexAdoptTest, FlushAndFsyncReportsEveryFlushedSegment) {
   Restart(/*cleanup_on_open=*/true, /*segment_docs_max=*/1);
 
@@ -195,9 +175,6 @@ TEST_F(IndexAdoptTest, FlushAndFsyncReportsEveryFlushedSegment) {
   trx.Abort();
 }
 
-// An exclusive segment never resumes a pooled one, so its whole flushed set is
-// the caller's own data -- a resumed segment would also carry the previous
-// transaction's documents, which that transaction's own record already covers.
 TEST_F(IndexAdoptTest, ExclusiveSegmentDoesNotResumeAPooledOne) {
   {
     auto pooled = _writer->GetBatch();
@@ -214,11 +191,6 @@ TEST_F(IndexAdoptTest, ExclusiveSegmentDoesNotResumeAPooledOne) {
   trx.Abort();
 }
 
-// After our transaction commits, its segment context goes back to the pending
-// free-list and a later transaction may resume it. That must not touch what we
-// already flushed: each flush cycle takes a fresh segment name, so our files
-// are immutable, and `meta_on_disk` lives on the FlushedSegment rather than the
-// context, so the later transaction's own segment is still written normally.
 TEST_F(IndexAdoptTest, LaterTransactionReusingTheContextLeavesOurSegmentAlone) {
   std::string our_meta;
   {
@@ -249,10 +221,7 @@ TEST_F(IndexAdoptTest, LaterTransactionReusingTheContextLeavesOurSegmentAlone) {
   EXPECT_EQ(1, _dir->Creates(our_meta));
 }
 
-// The dangerous direction of that sharing: if the resuming transaction aborts,
-// SegmentContext::Rollback truncates the flushed tail -- it must cut only the
-// entries past `committed_flushed_docs`, leaving ours (already committed, and
-// named by a durable record) in place.
+// SegmentContext::Rollback must cut only the tail past committed_flushed_docs.
 TEST_F(IndexAdoptTest, LaterTransactionAbortKeepsOurFlushedSegment) {
   std::string our_meta;
   {
@@ -275,8 +244,6 @@ TEST_F(IndexAdoptTest, LaterTransactionAbortKeepsOurFlushedSegment) {
   EXPECT_TRUE(Exists(our_meta)) << our_meta << " was reclaimed";
 }
 
-// cleanup_on_open == false is what lets a flushed-but-unpublished segment
-// survive the open that would otherwise unlink it; the default reclaims it.
 TEST_F(IndexAdoptTest, CleanupOnOpenDecidesUnreferencedSegmentSurvival) {
   std::vector<std::string> files;
   {
@@ -298,9 +265,6 @@ TEST_F(IndexAdoptTest, CleanupOnOpenDecidesUnreferencedSegmentSurvival) {
   }
 }
 
-// Keeping unreferenced segments means their ids are still live. The committed
-// meta's seg_counter sits below them, so without a floor the next segment would
-// be created right on top of a survivor.
 TEST_F(IndexAdoptTest, SegmentIdFlooredAboveKeptSegments) {
   std::vector<std::string> kept;
   {
@@ -321,8 +285,6 @@ TEST_F(IndexAdoptTest, SegmentIdFlooredAboveKeptSegments) {
   trx.Abort();
 }
 
-// The point of the whole exercise: rows flushed but never published come back
-// after a restart, without re-encoding them.
 TEST_F(IndexAdoptTest, AdoptSegmentRepublishesFlushedRows) {
   std::vector<std::string> adopt;
   {
@@ -348,9 +310,6 @@ TEST_F(IndexAdoptTest, AdoptSegmentRepublishesFlushedRows) {
   EXPECT_EQ(2, _writer->GetSnapshot().live_docs_count());
 }
 
-// A removal reaches an adopted segment only when `tick <= query.tick`, which is
-// what orders a replayed delete against replayed inserts. Adopting at a tick
-// above the removal's must leave the documents alone.
 TEST_F(IndexAdoptTest, AdoptSegmentTickOrdersAgainstRemoval) {
   std::vector<std::string> adopt;
   {
@@ -374,11 +333,7 @@ TEST_F(IndexAdoptTest, AdoptSegmentTickOrdersAgainstRemoval) {
   EXPECT_EQ(1, _writer->GetSnapshot().live_docs_count());
 }
 
-// The rule a host must place adopt ticks by: a removal masks an adopted segment
-// iff `segment tick <= removal tick`. Two segments straddling one removal's
-// tick must therefore end up one masked, one live -- so whichever tick space
-// the host picks, it has to put a segment below exactly the removals that
-// should mask it.
+// A removal masks an adopted segment iff `segment tick <= removal tick`.
 TEST_F(IndexAdoptTest, AdoptTickDecidesRemovalMasking) {
   std::vector<std::string> before;
   std::vector<std::string> after;
@@ -410,27 +365,18 @@ TEST_F(IndexAdoptTest, AdoptTickDecidesRemovalMasking) {
   }
   ASSERT_TRUE(_writer->RefreshCommit());
 
-  // The one at 19 is masked; masking its only document drops the segment
-  // outright, so what remains must be exactly the one adopted above the
-  // removal.
+  // Masking its only document drops the segment at 19 outright.
   auto reader = _writer->GetSnapshot();
   EXPECT_EQ(1, reader.live_docs_count());
   ASSERT_EQ(1, reader.size());
-  // `_N.V.sm` -> `_N`: the survivor must be the one adopted above the removal.
+  // `_N.V.sm` -> `_N`: the survivor is the one adopted above the removal.
   EXPECT_TRUE(survivor_meta.starts_with(reader.begin()->Meta().name + "."))
     << survivor_meta << " vs " << reader.begin()->Meta().name;
 }
 
-// The scheme RunSearchTableRecovery places adopt ticks by, on the case that
-// distinguishes it from adopting at the record's tick.
-//
-// Replay of: DELETE x (record 1), SEGMENT inserting x (record 2), DELETE y
-// (record 3). `x` must survive -- it was re-inserted after its delete -- and
-// the only signal saying so is where the segment sits relative to the first
-// removal. Adopting at the record tick (20) would put it below both rebased
-// removals (which cluster just under the commit tick) and delete `x` again.
-// Adopting at `commit_tick - queries + removals_seen_so_far` puts it above the
-// first removal and below the second, which is exactly its manifest position.
+// Replay of DELETE x, SEGMENT re-inserting x, DELETE y: `x` must survive. The
+// record tick (20) would sit below both rebased removals and delete it again;
+// `commit_tick - queries + removals_before` lands in manifest order.
 TEST_F(IndexAdoptTest, AdoptTickFollowsManifestPositionNotRecordTick) {
   std::vector<std::string> adopt;
   {
@@ -466,11 +412,8 @@ TEST_F(IndexAdoptTest, AdoptTickFollowsManifestPositionNotRecordTick) {
     << "the re-inserted document was masked by the delete that preceded it";
 }
 
-// The whole point of writing the meta early is that the publish then has
-// nothing new to write: same name, same content. Pin that -- the meta file must
-// be created exactly once across flush + commit + publish. (Existing writers
-// are unaffected: nothing sets `meta_on_disk` unless FlushAndFsync ran, so
-// their publish writes the meta as before.)
+// Existing writers keep writing it at publish: nothing sets `meta_on_disk`
+// unless FlushAndFsync ran.
 TEST_F(IndexAdoptTest, EarlyFlushedMetaIsWrittenOnce) {
   auto trx = _writer->GetBatch(/*exclusive_segment=*/true);
   ASSERT_TRUE(InsertDoc(trx, "kept"));
@@ -488,9 +431,7 @@ TEST_F(IndexAdoptTest, EarlyFlushedMetaIsWrittenOnce) {
     << "the publish rewrote a meta that was already on disk unchanged";
 }
 
-// A removal landing on the segment before it is published DOES change the meta,
-// so that publish must write a new version rather than reuse the early file --
-// the skip above must not swallow this case.
+// The skip above must not swallow this case: the meta genuinely changed.
 TEST_F(IndexAdoptTest, MetaIsRewrittenWhenARemovalMasksTheSegment) {
   auto trx = _writer->GetBatch(/*exclusive_segment=*/true);
   ASSERT_TRUE(InsertDoc(trx, "doomed"));
@@ -516,12 +457,8 @@ TEST_F(IndexAdoptTest, MetaIsRewrittenWhenARemovalMasksTheSegment) {
   EXPECT_GT(published.version, 0u) << "a masked segment must bump its version";
 }
 
-// An adopted segment is not published until the next commit, so everything it
-// consists of has to stay referenced across that window -- including its meta
-// file, which the segment reader does NOT pin (it refs meta.files only).
-// Nothing else holds that file either: unlike Import, adoption does not create
-// it. So a cleanup pass landing in the window must leave the whole segment
-// alone.
+// The meta file needs its own ref: the segment reader pins meta.files only, and
+// unlike Import adoption does not create the file.
 TEST_F(IndexAdoptTest, AdoptedSegmentSurvivesCleanupBeforePublish) {
   std::vector<std::string> adopt;
   std::vector<std::string> data_files;
@@ -551,11 +488,8 @@ TEST_F(IndexAdoptTest, AdoptedSegmentSurvivesCleanupBeforePublish) {
   EXPECT_EQ(1, _writer->GetSnapshot().live_docs_count());
 }
 
-// A codec name that no longer resolves leaves nothing to read the segment's
-// files with, so adoption must fail rather than guess. (A codec that resolves
-// but differs from this writer's is legal -- segments carry their own, as in
-// the index meta -- so it is a null codec, not a different one, that is
-// rejected.)
+// Only a null codec is rejected: one that resolves but differs from this
+// writer's is legal, since segments carry their own as in the index meta.
 TEST_F(IndexAdoptTest, AdoptSegmentRejectsUnresolvableCodec) {
   std::vector<std::string> adopt;
   {
@@ -582,9 +516,8 @@ TEST_F(IndexAdoptTest, AdoptSegmentRejectsUnresolvableCodec) {
   EXPECT_EQ(1, _writer->GetSnapshot().live_docs_count());
 }
 
-// Aborting must leave the flushed files unreferenced. Reclaiming them is the
-// host's background cleanup, but a file still holding a ref is invisible to it,
-// so eligibility is the part that has to hold here.
+// Eligibility, not promptness: reclaiming is the host's background cleanup, but
+// a file still holding a ref is invisible to it.
 TEST_F(IndexAdoptTest, AbortLeavesFlushedFilesUnreferenced) {
   std::vector<std::string> files;
   {

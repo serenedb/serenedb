@@ -267,9 +267,8 @@ SereneDBSearchInsert::GetLocalSinkState(
   lstate->bulk = context.pipeline && context.pipeline->GetMaxThreads() > 1;
 
   if (lstate->bulk) {
-    // Exclusive: this thread's segments are fsynced and reported at Combine for
-    // the WAL to reference, so they must not also carry a previous
-    // transaction's documents.
+    // Exclusive: Combine reports this thread's segments to the WAL, so they
+    // must not also carry a previous transaction's documents.
     lstate->search_trx = std::make_unique<irs::IndexWriter::Transaction>(
       gstate->search_table->GetTransaction(/*exclusive_segment=*/true));
     lstate->sink =
@@ -305,9 +304,8 @@ duckdb::SinkResultType SereneDBSearchInsert::Sink(
   WriteChunkToSearchSink(*lstate->sink, chunk, gstate.column_ids, pk_base,
                          gstate.table_id, context.client);
 
-  // The bulk path records nothing here: these rows (and the PKs assigned to
-  // them) are already in this thread's iresearch segment, which Combine makes
-  // durable and hands to the WAL by reference.
+  // The bulk path records nothing here: these rows and their PKs are already in
+  // this thread's segment, which Combine hands to the WAL by reference.
   if (!lstate->bulk) {
     gstate.sdb_txn->SearchTxn().AddInlineInsertChunk(
       gstate.search_table,
@@ -333,15 +331,11 @@ duckdb::SinkCombineResultType SereneDBSearchInsert::Combine(
     return duckdb::SinkCombineResultType::FINISHED;
   }
 
-  // Serialize this worker's segments now, in parallel with the other workers,
-  // rather than deferring the tail to the single-threaded refresh commit, and
-  // fsync them so they are durable artifacts the WAL can reference by name
-  // instead of carrying a second copy of the rows. The commit tick is still
-  // assigned serially, later, in SearchTableTransaction::Commit -- so flush
-  // only, never FlushAndCommit.
-  //
-  // The returned span points into the transaction's segment context, so the
-  // metas are copied out here rather than held until commit.
+  // On the worker, in parallel with the others, rather than deferring the tail
+  // to the single-threaded refresh commit; the fsync is what lets the WAL
+  // reference these by name instead of copying the rows. The tick is still
+  // assigned serially in SearchTableTransaction::Commit -- so never
+  // FlushAndCommit -- and the returned span points into the segment context.
   std::vector<search::SearchDbWal::SegmentRef> segments;
   if (lstate->bulk) {
     const auto flushed = lstate->search_trx->FlushAndFsync();

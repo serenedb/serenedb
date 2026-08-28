@@ -71,9 +71,9 @@ struct LocalTableChangesEntry {
     }
   }
 
-  // Move a bulk statement's already-flushed iresearch segments into the current
-  // insert run (does not seal it). Batched: one statement's segments resolve
-  // the current run once, instead of per segment on this hot path.
+  // Move a bulk statement's already-flushed segments into the current insert
+  // run (does not seal it). Batched: one run lookup per statement, not per
+  // segment.
   void AppendSegments(std::vector<SearchDbWal::SegmentRef>&& segments) {
     if (segments.empty()) {
       return;

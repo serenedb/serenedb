@@ -78,8 +78,7 @@ struct Collected {
   // (tick, table_id) per replayed TRUNCATE op, in order.
   std::vector<std::tuple<uint64_t, uint64_t>> truncates;
   // (tick, table_id, ref) per adopted SEGMENT, in order. The tick is the
-  // record's own -- placing the segment in the replay transaction's tick space
-  // is the host's job.
+  // record's own; placing it in the replay trx's space is the host's job.
   std::vector<std::tuple<uint64_t, uint64_t, SearchDbWal::SegmentRef>> segments;
 };
 
@@ -544,8 +543,7 @@ TEST_F(SearchDbWalTest, InlineInsertsAccumulateInOneSegment) {
 }
 
 // Only the INLINE path records generated-PK bases: a SEGMENT op needs none,
-// because those PKs were assigned before the rows were written and are already
-// inside the segment.
+// those PKs having been assigned before the rows reached the segment.
 TEST_F(SearchDbWalTest, GeneratedPkBaseRoundTrip) {
   {
     SearchDbWal wal(Fs(), _dir);
@@ -646,11 +644,8 @@ TEST_F(SearchDbWalTest, MultipleInlineOpsOneSection) {
   EXPECT_EQ(std::get<3>(got.chunks[1]), 2000u);
 }
 
-// A bulk+inline mix in one txn -> ONE shard section carrying an INLINE op AND a
-// One section carrying BOTH an INLINE op and a SEGMENT op -- a transaction that
-// did a small insert and a bulk one. No fold: the inline rows ride the record,
-// the bulk rows stay in their segments. Recovery replays both, in manifest
-// order.
+// A transaction that did both a small insert and a bulk one. No fold: the
+// inline rows ride the record, the bulk rows stay in their segments.
 TEST_F(SearchDbWalTest, MixedInlineAndSegmentOps) {
   auto ref = MakeSegmentRef("_9");
   {
@@ -749,9 +744,6 @@ TEST_F(SearchDbWalTest, TruncateRoundTrip) {
   EXPECT_EQ(std::get<1>(got.truncates[0]), 5u);  // table_id
 }
 
-// A SEGMENT op carries iresearch's own SegmentMeta, so every field AdoptSegment
-// needs must survive the round trip -- including the file list, which is how
-// the segment is reopened at all.
 TEST_F(SearchDbWalTest, SegmentRoundTrip) {
   auto ref = MakeSegmentRef("_7");
   {
@@ -795,9 +787,8 @@ TEST_F(SearchDbWalTest, SegmentOpCarriesManySegments) {
   }
 }
 
-// A segment op reports the record's tick; where the segment lands in the replay
-// transaction's tick space is the host's decision (see RunSearchTableRecovery),
-// so the record carries no tick of its own.
+// The record carries no tick of its own: where the segment lands in the replay
+// transaction's space is the host's decision (see RunSearchTableRecovery).
 TEST_F(SearchDbWalTest, SegmentReportsRecordTick) {
   auto ref = MakeSegmentRef("_1");
   {
@@ -846,10 +837,8 @@ TEST_F(SearchDbWalTest, SegmentSkippedWhenShardDropped) {
   EXPECT_TRUE(got.segments.empty());
 }
 
-// Ops of one record arrive in manifest order, which is how the host knows a
-// segment preceded or followed a delete in the same transaction. Whether the
-// resulting mask is right is asserted where the real writer is
-// (IndexAdoptTest.AdoptTickDecidesRemovalMasking).
+// Order only; whether the resulting mask is right is asserted against the real
+// writer in IndexAdoptTest.AdoptTickDecidesRemovalMasking.
 TEST_F(SearchDbWalTest, SegmentAndDeleteReplayInManifestOrder) {
   auto ref = MakeSegmentRef("_7");
   std::vector<std::string> pks{"pk-a"};
@@ -875,9 +864,8 @@ TEST_F(SearchDbWalTest, SegmentAndDeleteReplayInManifestOrder) {
   EXPECT_EQ(std::get<2>(got.deletes[0]), std::vector<std::string>{"pk-a"});
 }
 
-// GC owns WAL-side files only. A segment op points at the index's own segments,
-// which iresearch reclaims, so a consumed record must be dropped without
-// touching them.
+// GC owns WAL-side files only: a segment op points at the index's own segments,
+// which iresearch reclaims.
 TEST_F(SearchDbWalTest, SegmentRecordGcdWithoutTouchingSegmentFiles) {
   auto ref = MakeSegmentRef("_7");
   SearchDbWal wal(Fs(), _dir);

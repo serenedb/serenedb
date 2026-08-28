@@ -49,45 +49,19 @@ namespace sdb::search {
 class SearchDbWal {
  public:
   // One inserted Sink chunk's generated-PK run: `count` rows keyed
-  // [base, base+count). Recorded per Sink chunk -- NOT per inline_data Chunk:
-  // ColumnDataCollection coalesces partial appends, so its Chunks() boundaries
-  // don't line up with the Sink chunks the bases are keyed to. base is 0 for
-  // explicit-PK.
+  // [base, base+count), base 0 for explicit-PK. Per Sink chunk, NOT per
+  // inline_data Chunk -- ColumnDataCollection coalesces partial appends, so its
+  // Chunks() boundaries don't line up.
   struct InlinePk {
     uint64_t base;
     uint64_t count;
   };
 
-  // One iresearch segment a transaction flushed and fsynced (via
-  // Transaction::FlushAndFsync) before its commit record was written. The
-  // segment files belong to the index, so the WAL records only enough to reopen
-  // them and the rows are never written twice.
-  //
-  // This is exactly what iresearch's own index meta stores per segment
-  // (index_meta_writer.hpp): the name of the segment's meta file plus the codec
-  // it was written with. That meta file carries every other field -- and its
-  // own checksum -- so AdoptSegment reads it back with the codec's
-  // SegmentMetaReader, and nothing about a segment's shape appears in this
-  // format. A field added upstream cannot drift out of the record, because the
-  // record never described the fields in the first place.
-  //
-  // The codec is recorded even though this build writes only one, for the same
-  // reason the index meta records it per segment rather than per index: a
-  // directory may hold segments written by different formats (the writer's
-  // codec changing between runs leaves the older ones as they were), and each
-  // is read by its own. Assuming the writer's current codec would fail exactly
-  // when a format transition made recovery matter most.
-  //
-  // No tick either. A segment's ordering against the deletes around it is
-  // carried by its position in the op manifest, and replay has to translate
-  // that into a tick in ITS OWN space: removals replayed into one transaction
-  // are rebased to `commit_tick - queries + k`, which has nothing to do with
-  // the tick bands the record was written under. Recording a tick from the
-  // write side would invite using it directly, which masks the wrong segments
-  // -- see RunSearchTableRecovery.
-  //
-  // A plain aggregate on purpose: the serializer reflects over it, so this
-  // declaration is the whole format.
+  // One iresearch segment flushed and fsynced before the commit record was
+  // written, so its rows are never written twice. The same pair iresearch's own
+  // index meta keeps per segment (index_meta_writer.hpp): the meta file holds
+  // every other field behind its own checksum. Ordering against the deletes
+  // around it comes from the op manifest, so no tick is recorded.
   struct SegmentRef {
     std::string meta_file;
     std::string codec;
@@ -122,9 +96,8 @@ class SearchDbWal {
                             std::span<const std::string_view> pks) const>;
 
   // Invoked once per recorded segment, in manifest order. `tick` is the
-  // record's own tick, for the caller's high-water mark -- NOT the tick to
-  // adopt at; that one lives in the replay transaction's tick space (see
-  // SegmentRef).
+  // record's own, for the caller's high-water mark -- the tick to adopt at
+  // lives in the replay transaction's space (see RunSearchTableRecovery).
   using AdoptReplayCallback = absl::AnyInvocable<void(
     uint64_t tick, ObjectId table_id, const SegmentRef& ref) const>;
 

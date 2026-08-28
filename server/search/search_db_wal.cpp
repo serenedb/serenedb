@@ -362,9 +362,8 @@ uint64_t SearchDbWal::AppendCommit(std::span<const ShardSection> sections,
         payload.Write<uint64_t>(len);
         payload.WriteData(tmp.GetData(), len);
       } else if (kind == kKindSegment) {
-        // The list, its element count and each segment's fields all go through
-        // the serializer (SerdeWrite on SegmentRef), so there is nothing to
-        // frame here beyond the blob's length.
+        // The list, its count and each segment's fields all go through the
+        // serializer, so only the blob's length is framed here.
         tmp.Rewind();
         duckdb::BinarySerializer serializer{tmp,
                                             duckdb::VersionStorageOptions()};
@@ -450,10 +449,8 @@ void SearchDbWal::RunGc() {
     active_first_tick = _active_first_tick;
   }
 
-  // Only the frame headers matter here: a sealed segment is reclaimable once
-  // every record in it is durable in every shard, and its records own no other
-  // files. A SEGMENT op points at the index's own segments, which iresearch
-  // reclaims itself.
+  // Only the frame headers matter: a record owns no other files, and a SEGMENT
+  // op points at the index's own segments, which iresearch reclaims itself.
   for (const auto& [first_tick, path] : EnumerateSegments(_wal_dir)) {
     if (active_first_tick != 0 && first_tick == active_first_tick) {
       continue;  // the live, still-appended segment

@@ -170,13 +170,9 @@ struct IndexWriterOptions : public SegmentOptions {
   // corruption from multiple index_writers
   bool lock_repository = true;
 
-  // Remove files not referenced by the committed meta at Make().
-  // false == keep them, for a host whose own WAL may still reference segments
-  // flushed but not yet published (they must survive until it has replayed and
-  // adopted them; the host then calls RemoveAllUnreferenced itself). Keeping
-  // them also forces the segment counter to be floored above every segment id
-  // present in the directory, so a new segment cannot overwrite a survivor
-  // whose id is above the committed meta's seg_counter.
+  // Remove files not referenced by the committed meta at Make(). false == keep
+  // them until a host WAL has replayed and adopted them, and floor the segment
+  // counter above every id in the directory so none is overwritten.
   bool cleanup_on_open = true;
 
   // Enables the typed .col on segments allocated by this writer.
@@ -493,11 +489,11 @@ class IndexWriter : private util::Noncopyable {
       return Commit();
     }
 
-    // Serialize the active segment on the calling thread without committing,
-    // then fsync every segment this transaction has flushed and return their
-
-    // Call once, on a complete transaction: this marks the durability of
-    // everything the transaction holds, so nothing may be added afterwards.
+    // Serialize the active segment and fsync every segment this transaction
+    // flushed, without committing; returns their metadata, valid until commit
+    // or abort. Throws IoError if the fsync fails. Requires an exclusive
+    // segment (see GetBatch), and marks durability of the whole transaction --
+    // call it once, with nothing added afterwards.
     std::span<const FlushedSegment> FlushAndFsync();
 
     bool FlushAndCommit(uint64_t tick) noexcept {
@@ -569,12 +565,9 @@ class IndexWriter : private util::Noncopyable {
   // All document insertions will be applied to the same segment on a
   // best effort basis, e.g. a flush_all() will cause a segment switch
   // `exclusive_segment` starts from an empty segment instead of resuming a
-  // pooled one, so every segment this transaction flushes holds only its own
-  // documents -- required by a host that records those segments in its own WAL
-  // (a resumed segment would also carry a previous transaction's documents,
-  // which that transaction's own WAL record already covers). Costs the pooled
-  // reuse that lets many small transactions bake into one segment, so it is
-  // opt-in and meant for bulk writes.
+  // pooled one, so every segment flushed holds only this transaction's
+  // documents -- required to record them in a host WAL. Costs the pooled reuse
+  // that bakes many small transactions into one segment, so it suits bulk only.
   Transaction GetBatch(bool exclusive_segment = false) noexcept {
     return Transaction{*this, exclusive_segment};
   }

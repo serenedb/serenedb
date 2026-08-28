@@ -46,7 +46,7 @@ Filter::ptr LowerWildcard(irs::field_id id, bytes_view term,
       auto filter = std::make_unique<ByTerm>();
       *filter->mutable_field_id() = id;
       filter->mutable_options()->term = term;
-      filter->boost(boost);
+      filter->SetBoost(boost);
       return filter;
     },
     [&](bytes_view term) -> Filter::ptr {
@@ -54,7 +54,7 @@ Filter::ptr LowerWildcard(irs::field_id id, bytes_view term,
       *filter->mutable_field_id() = id;
       filter->mutable_options()->term = term;
       filter->mutable_options()->scored_terms_limit = scored_terms_limit;
-      filter->boost(boost);
+      filter->SetBoost(boost);
       return filter;
     },
     [&](bytes_view term) -> Filter::ptr {
@@ -62,7 +62,7 @@ Filter::ptr LowerWildcard(irs::field_id id, bytes_view term,
       *filter->mutable_field_id() = id;
       *filter->mutable_options() =
         AutomatonOptions{FromWildcard(term), term, scored_terms_limit};
-      filter->boost(boost);
+      filter->SetBoost(boost);
       return filter;
     });
 }
@@ -73,7 +73,7 @@ Filter::ptr CreateByWildcard(irs::field_id id, bytes_view term,
   *filter->mutable_field_id() = id;
   filter->mutable_options()->term = term;
   filter->mutable_options()->scored_terms_limit = scored_terms_limit;
-  filter->boost(boost);
+  filter->SetBoost(boost);
   return filter;
 }
 

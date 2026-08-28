@@ -145,7 +145,7 @@ TEST(GeoDistanceFilterTest, ctor) {
   GeoDistanceFilter q;
   ASSERT_EQ(irs::Type<GeoDistanceFilter>::id(), q.type());
   ASSERT_EQ(irs::field_limits::invalid(), q.field_id());
-  ASSERT_EQ(irs::kNoBoost, q.Boost());
+  ASSERT_EQ(irs::kNoBoost, q.GetBoost());
 #ifndef SDB_DEV
   ASSERT_EQ(GeoDistanceFilterOptions{}, q.options());
 #endif
@@ -174,7 +174,7 @@ TEST(GeoDistanceFilterTest, equal) {
 
   {
     GeoDistanceFilter q1;
-    q1.boost(1.5);
+    q1.SetBoost(1.5);
     q1.mutable_options()->origin = S2Point{1., 0., 0.};
     q1.mutable_options()->range.min = 5000.;
     q1.mutable_options()->range.min_type = irs::BoundType::Inclusive;
@@ -187,7 +187,7 @@ TEST(GeoDistanceFilterTest, equal) {
 
   {
     GeoDistanceFilter q1;
-    q1.boost(1.5);
+    q1.SetBoost(1.5);
     q1.mutable_options()->origin = S2Point{1., 0., 0.};
     q1.mutable_options()->range.min = 5000.;
     q1.mutable_options()->range.min_type = irs::BoundType::Inclusive;
@@ -301,7 +301,7 @@ TEST(GeoDistanceFilterTest, boost) {
     q.mutable_options()->range.min_type = irs::BoundType::Inclusive;
     *q.mutable_field_id() = kFieldFieldId;
     q.mutable_options()->store_field_id = kGeo;
-    q.boost(boost);
+    q.SetBoost(boost);
 
     ::tests::PreparedFilter prepared{q, irs::SubReader::empty()};
     ASSERT_EQ(boost, prepared.Query(0)->Boost());
@@ -320,7 +320,7 @@ TEST(GeoDistanceFilterTest, boost) {
     q.mutable_options()->range.max_type = irs::BoundType::Inclusive;
     *q.mutable_field_id() = kFieldFieldId;
     q.mutable_options()->store_field_id = kGeo;
-    q.boost(boost);
+    q.SetBoost(boost);
 
     ::tests::PreparedFilter prepared{q, irs::SubReader::empty()};
     ASSERT_EQ(boost, prepared.Query(0)->Boost());
@@ -944,12 +944,10 @@ TEST(GeoDistanceFilterTest, checkScorer) {
       }
 
       const auto score = it->PrepareScore({
-        .scorer = &ord,
         .segment = &segment,
       });
       EXPECT_FALSE(score.IsDefault());
       const auto& seek_score = seek_it->PrepareScore({
-        .scorer = &ord,
         .segment = &segment,
       });
       EXPECT_FALSE(seek_score.IsDefault());
@@ -1030,7 +1028,7 @@ TEST(GeoDistanceFilterTest, checkScorer) {
       collector_field_docs += field->docs_with_field;
     };
     sort._prepare_scorer = [&](const irs::ScoreContext& ctx) {
-      EXPECT_EQ(q.Boost(), ctx.boost);
+      EXPECT_EQ(q.GetBoost(), ctx.boost);
       ++prepare_scorer_count;
     };
     sort.scorer_score = [&](const irs::ScoreOperator* ctx, irs::score_t* res,
@@ -1052,7 +1050,7 @@ TEST(GeoDistanceFilterTest, checkScorer) {
 
   {
     GeoDistanceFilter q;
-    q.boost(1.5f);
+    q.SetBoost(1.5f);
     q.mutable_options()->store_field_id = kGeo;
     *q.mutable_field_id() = kGeo;
     q.mutable_options()->origin =
@@ -1078,7 +1076,7 @@ TEST(GeoDistanceFilterTest, checkScorer) {
       collector_field_docs += field->docs_with_field;
     };
     sort._prepare_scorer = [&](const irs::ScoreContext& ctx) {
-      EXPECT_EQ(q.Boost(), ctx.boost);
+      EXPECT_EQ(q.GetBoost(), ctx.boost);
       ++prepare_scorer_count;
     };
     sort.scorer_score = [&](const irs::ScoreOperator* ctx, irs::score_t* res,

@@ -20,55 +20,12 @@
 
 #pragma once
 
-#include <iresearch/search/bm25.hpp>
-#include <iresearch/search/dfi.hpp>
-#include <iresearch/search/idf.hpp>
-#include <iresearch/search/indri_dirichlet.hpp>
-#include <iresearch/search/lm_dirichlet.hpp>
-#include <iresearch/search/lm_jelinek_mercer.hpp>
-#include <iresearch/search/raw_boost.hpp>
-#include <iresearch/search/raw_dl.hpp>
-#include <iresearch/search/raw_tf.hpp>
-#include <iresearch/search/scorer.hpp>
-#include <iresearch/search/tfidf.hpp>
+#include <iresearch/search/scorer_options.hpp>
 #include <magic_enum/magic_enum.hpp>
-#include <string>
-#include <string_view>
-#include <variant>
 
 namespace sdb::catalog::persistence {
 
-struct ScorerOptions {
-  using DfiMeasure = irs::DFIMeasure;
-  using Bm25 = irs::BM25::Options;
-  using Tfidf = irs::TFIDF::Options;
-  using LmJm = irs::LMJelinekMercer::Options;
-  using LmDirichlet = irs::LMDirichlet::Options;
-  using IndriDirichlet = irs::IndriDirichlet::Options;
-  using Dfi = irs::DFI::Options;
-  using RawBoost = irs::RawBoost::Options;
-  using RawTf = irs::RawTF::Options;
-  using RawDL = irs::RawDL::Options;
-  using Idf = irs::IDF::Options;
-
-  using Params = std::variant<Bm25, Tfidf, LmJm, LmDirichlet, IndriDirichlet,
-                              Dfi, RawBoost, RawTf, RawDL, Idf>;
-
-  Params params;
-
-  bool operator==(const ScorerOptions&) const = default;
-
-  std::string_view Name() const noexcept {
-    return std::visit(
-      []<typename P>(const P&) -> std::string_view {
-        return P::Owner::type_name();
-      },
-      params);
-  }
-
-  // EXPLAIN-friendly spelling, e.g. `bm25(k1=1.2, b=0.75)`.
-  std::string ToString() const;
-};
+using irs::ScorerOptions;
 
 }  // namespace sdb::catalog::persistence
 namespace magic_enum {

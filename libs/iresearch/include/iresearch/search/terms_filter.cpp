@@ -119,10 +119,10 @@ QueryBuilder::ptr ByTerms::PrepareSegment(const SubReader& segment,
 
 QueryBuilder::ptr ByTerms::PrepareSegment(const SubReader& segment,
                                           const PrepareContext& ctx) const {
-  return PrepareSegment(segment, ctx, field_id(), options(), Boost());
+  return PrepareSegment(segment, ctx, field_id(), options(), GetBoost());
 }
 
-PrepareCollector::ptr ByTerms::MakeCollector(const Scorer* scorer) const {
+PrepareCollector::ptr ByTerms::MakeCollectorImpl(const Scorer* scorer) const {
   return std::make_unique<ByTermsCollector>(scorer, options().terms.size());
 }
 

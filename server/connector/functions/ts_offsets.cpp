@@ -352,7 +352,8 @@ std::shared_ptr<irs::Filter> BuildFilterFromTSQuery(
   duckdb::unique_ptr<duckdb::Expression> match_owner = std::move(match_expr);
   std::span<const duckdb::unique_ptr<duckdb::Expression>> conjuncts{
     &match_owner, 1};
-  if (auto s = MakeSearchFilter(*root, conjuncts, column_getter, context);
+  if (auto s = MakeSearchFilter(*root, conjuncts, column_getter, context, {},
+                                /*scorers=*/nullptr);
       !s.ok()) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
                     ERR_MSG(s.message()));

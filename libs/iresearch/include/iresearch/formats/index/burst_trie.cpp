@@ -2587,18 +2587,17 @@ class FieldReader::Impl {
 
     DocIterator::ptr Iterator(IndexFeatures features,
                               std::span<const PostingCookie> cookies,
-                              bool score_prune, size_t min_match,
+                              IteratorFieldOptions options, size_t min_match,
                               ScoreMergeType type) const final {
       SDB_ASSERT(_owner);
       SDB_ASSERT(_owner->_pr);
       SDB_ASSERT(!cookies.empty());
       SDB_ASSERT(1 <= min_match);
       SDB_ASSERT(min_match <= cookies.size());
-      const IteratorFieldOptions field_options{
-        .score_prune = score_prune, .has_score_bounds = HasScoreBounds()};
+      options.has_score_bounds = HasScoreBounds();
 
       return _owner->_pr->Iterator(meta().index_features, features, cookies,
-                                   field_options, min_match, type);
+                                   options, min_match, type);
     }
 
     std::unique_ptr<IndexInput> ReopenPayload() const final {

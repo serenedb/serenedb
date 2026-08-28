@@ -2743,3 +2743,75 @@ SELECT a FROM tsq_idx WHERE b @@ (repeat('(', 80) || 'ts_like(''qui%'')' || repe
 a
 1
 2
+
+
+# ----------------------------------------------------------------------
+# Modifiers on one element of a ts_any / ts_all list. A modifier travels in
+# the tsquery value, not only in its type, so it survives the list settling
+# on a single element type -- and it applies to its own element only.
+# ----------------------------------------------------------------------
+
+# 'quick' and 'fox' are never adjacent, so the bare phrase matches nothing.
+query
+SELECT a FROM tsq_idx WHERE b @@ ts_phrase('quick', 'fox') ORDER BY a;
+----
+a
+
+
+query
+SELECT a FROM tsq_idx WHERE b @@ ts_phrase('quick', 'fox')::slop(1) ORDER BY a;
+----
+a
+1
+2
+
+
+# Inside a list the slop still reaches its own element: docs 1 and 2 come from
+# the widened phrase, doc 3 from the other element.
+query
+SELECT a FROM tsq_idx
+WHERE b @@ ts_any([ts_phrase('quick', 'fox')::slop(1), 'turtle']) ORDER BY a;
+----
+a
+1
+2
+3
+
+
+# Drop the slop and the phrase stops matching, which is what shows the slop
+# above was carried rather than ignored.
+query
+SELECT a FROM tsq_idx
+WHERE b @@ ts_any([ts_phrase('quick', 'fox'), 'turtle']) ORDER BY a;
+----
+a
+3
+
+
+# Element order does not matter. It used to: the leading element decided the
+# whole list's type, and with it which modifier survived.
+query
+SELECT a FROM tsq_idx
+WHERE b @@ ts_any(['turtle', ts_phrase('quick', 'fox')::slop(1)]) ORDER BY a;
+----
+a
+1
+2
+3
+
+
+query
+SELECT a FROM tsq_idx
+WHERE b @@ ts_all([ts_phrase('quick', 'fox')::slop(1), 'brown']) ORDER BY a;
+----
+a
+1
+
+
+# ::slop stays phrase-only wherever it is written.
+query error ::slop\(N\) is only valid on a phrase
+SELECT a FROM tsq_idx WHERE b @@ 'quick'::slop(1);
+
+
+query error ::slop\(N\) is only valid on a phrase
+SELECT a FROM tsq_idx WHERE b @@ ts_any(['quick'::slop(1), 'turtle']);

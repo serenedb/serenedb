@@ -41,13 +41,21 @@ std::ostream& operator<<(std::ostream& os, const std::pair<T1, T2>& p) {
 #include "iresearch/analysis/analyzer.hpp"
 #include "iresearch/analysis/delimited_tokenizer.hpp"
 #include "iresearch/analysis/tokenizers.hpp"
+#include "iresearch/formats/posting/score_bound_writer.hpp"
+#include "iresearch/index/norm.hpp"
 #include "iresearch/index/table_filter_iterator.hpp"
 #include "iresearch/parser/parser.hpp"
 #include "iresearch/search/bm25.hpp"
 #include "iresearch/search/boolean_filter.hpp"
+#include "iresearch/search/dfi.hpp"
 #include "iresearch/search/doc_collector.hpp"
 #include "iresearch/search/filter_optimizer.hpp"
+#include "iresearch/search/indri_dirichlet.hpp"
+#include "iresearch/search/lm_dirichlet.hpp"
+#include "iresearch/search/lm_jelinek_mercer.hpp"
+#include "iresearch/search/raw_tf.hpp"
 #include "iresearch/search/scorer.hpp"
+#include "iresearch/search/scorer_options.hpp"
 #include "iresearch/search/terms_filter.hpp"
 #include "iresearch/search/tfidf.hpp"
 #include "iresearch/types.hpp"
@@ -137,13 +145,14 @@ uint64_t ExecuteTopKFiltered(const irs::DirectoryReader& reader,
     SDB_ASSERT(col_reader != nullptr);
     irs::DocIterator::ptr it =
       irs::memory::make_managed<sdb::connector::TableFilterDocIterator>(
-        query->Execute({.score_prune = score_prune}, stats), *col_reader,
+        query->Execute({.prune_scorer = score_prune ? &scorer : nullptr},
+                       stats),
+        *col_reader,
         std::span<const sdb::connector::TableFilterDocIterator::FilterSpec>{
           &spec, 1},
         ctx, filter_states);
 
     auto score_func = it->PrepareScore({
-      .scorer = &scorer,
       .segment = &segment,
       .fetcher = &fetcher,
     });
@@ -421,6 +430,150 @@ TEST_P(ScorePruneScoringTestCase, TfidfPrunedVsBaseline) {
   ComparePrunedVsBaseline(reader, *filter, scorer, 10);
 }
 
+// Scorers beyond bm25/tfidf that persist score bounds. Each is monotone in the
+// quantity its bound stores, so the pruned top-K has to match the unpruned one.
+TEST_P(ScorePruneScoringTestCase, LmJelinekMercerPrunedVsBaseline) {
+  auto scorer = irs::LMJelinekMercer{0.7f};
+  auto reader = CreateLargeIndex(scorer, 10);
+  auto filter = ParseQuery("topic:database");
+  ASSERT_NE(nullptr, filter);
+  ComparePrunedVsBaseline(reader, *filter, scorer, 10);
+}
+
+TEST_P(ScorePruneScoringTestCase, LmDirichletPrunedVsBaseline) {
+  auto scorer = irs::LMDirichlet{2000.f};
+  auto reader = CreateLargeIndex(scorer, 10);
+  auto filter = ParseQuery("topic:database");
+  ASSERT_NE(nullptr, filter);
+  ComparePrunedVsBaseline(reader, *filter, scorer, 10);
+}
+
+TEST_P(ScorePruneScoringTestCase, DfiPrunedVsBaseline) {
+  auto scorer = irs::DFI{irs::DFIMeasure::Standardized};
+  auto reader = CreateLargeIndex(scorer, 10);
+  auto filter = ParseQuery("topic:database");
+  ASSERT_NE(nullptr, filter);
+  ComparePrunedVsBaseline(reader, *filter, scorer, 10);
+}
+
+TEST_P(ScorePruneScoringTestCase, RawTfPrunedVsBaseline) {
+  auto scorer = irs::RawTF{};
+  auto reader = CreateLargeIndex(scorer, 10);
+  auto filter = ParseQuery("topic:database");
+  ASSERT_NE(nullptr, filter);
+  ComparePrunedVsBaseline(reader, *filter, scorer, 10);
+}
+
+// Matching the baseline is only meaningful if pruning actually skipped
+// something, so each of these must also reach fewer documents than the run
+// that cannot skip.
+TEST_P(ScorePruneScoringTestCase, PruningIsTakenForBoundedScorers) {
+  auto reached = [&](const irs::DirectoryReader& reader,
+                     const irs::Filter& filter, const irs::Scorer& scorer,
+                     bool prune) {
+    constexpr size_t k = 10;
+    std::vector<irs::ScoreDoc> hits(k);
+    return prune ? irs::ExecuteTopK(reader, filter, scorer, k, true,
+                                    std::span{hits})
+                 : irs::ExecuteTopKWithCount(reader, filter, scorer, k,
+                                             std::span{hits});
+  };
+
+  auto check = [&](const irs::Scorer& scorer, std::string_view name) {
+    SCOPED_TRACE(name);
+    auto reader = CreateLargeIndex(scorer, 10);
+    auto filter = ParseQuery("topic:database");
+    ASSERT_NE(nullptr, filter);
+    EXPECT_LT(reached(reader, *filter, scorer, true),
+              reached(reader, *filter, scorer, false));
+  };
+
+  check(irs::LMJelinekMercer{0.7f}, "lm_jelinek_mercer");
+  check(irs::LMDirichlet{2000.f}, "lm_dirichlet");
+  check(irs::DFI{irs::DFIMeasure::Standardized}, "dfi");
+  check(irs::RawTF{}, "raw_tf");
+}
+
+// indri_dirichlet has the same monotonicity as lm_dirichlet but no floor at
+// zero, and it scores negative whenever tf < mu * P(t|C). Pruning drops rows in
+// that regime, so it must claim no bound and build no writer -- restoring them
+// needs a fix for negative scores first.
+TEST_P(ScorePruneScoringTestCase, IndriDirichletClaimsNoBounds) {
+  const irs::IndriDirichlet scorer{2000.f};
+  EXPECT_EQ(nullptr, scorer.PrepareScoreBoundWriter(4));
+  EXPECT_EQ(nullptr, scorer.PrepareScoreBoundSource());
+
+  auto reader = CreateLargeIndex(scorer, 10);
+  auto filter = ParseQuery("topic:database");
+  ASSERT_NE(nullptr, filter);
+  ComparePrunedVsBaseline(reader, *filter, scorer, 10);
+}
+
+// The bound type is what gates pruning, so pin the classification each scorer
+// reports and that the ones claiming a bound can build the writer and source
+// that back it.
+TEST(score_prune_bound_type_test, reported_bound_types) {
+  // One persisted options set per bound type, probed through Compatible: that
+  // is what actually gates pruning. bm25(1.2, 0.75) also stands in for a
+  // parameterised MinNorm writer, which only an equal-b bm25 may read.
+  const irs::ScorerOptions max_freq{irs::RawTF::Options{}};
+  const irs::ScorerOptions div_norm{irs::LMJelinekMercer::Options{}};
+  const irs::ScorerOptions min_norm{irs::LMDirichlet::Options{}};
+  const irs::ScorerOptions min_norm_b{
+    irs::BM25::Options{.k1 = 1.2f, .b = 0.75f}};
+  const irs::ScorerOptions none{irs::IndriDirichlet::Options{}};
+
+  // `param_free` is false for a scorer whose argmax is parameterised, which is
+  // only ever bm25 under MinNorm: it may read no parameter-free pair, and no
+  // parameter-free scorer may read its pair.
+  auto check = [&](const irs::Scorer& scorer,
+                   irs::Scorer::ScoreBoundType expected,
+                   bool param_free = true) {
+    using BT = irs::Scorer::ScoreBoundType;
+    EXPECT_EQ(expected == BT::MaxFreq && param_free,
+              scorer.Compatible(max_freq));
+    EXPECT_EQ(expected == BT::DivNorm && param_free,
+              scorer.Compatible(div_norm));
+    EXPECT_EQ(expected == BT::MinNorm && param_free,
+              scorer.Compatible(min_norm));
+    EXPECT_FALSE(scorer.Compatible(none));
+    if (expected == irs::Scorer::ScoreBoundType::None) {
+      EXPECT_EQ(nullptr, scorer.PrepareScoreBoundWriter(4));
+      EXPECT_EQ(nullptr, scorer.PrepareScoreBoundSource());
+    } else {
+      EXPECT_NE(nullptr, scorer.PrepareScoreBoundWriter(4));
+      EXPECT_NE(nullptr, scorer.PrepareScoreBoundSource());
+    }
+  };
+
+  using BoundType = irs::Scorer::ScoreBoundType;
+  check(irs::RawTF{}, BoundType::MaxFreq);
+  check(irs::LMJelinekMercer{0.7f}, BoundType::DivNorm);
+  check(irs::LMDirichlet{2000.f}, BoundType::MinNorm);
+  check(irs::DFI{irs::DFIMeasure::Standardized}, BoundType::MinNorm);
+  check(irs::DFI{irs::DFIMeasure::Saturated}, BoundType::MinNorm);
+  check(irs::DFI{irs::DFIMeasure::ChiSquared}, BoundType::MinNorm);
+  check(irs::IndriDirichlet{2000.f}, BoundType::None);
+  check(irs::TFIDF{true}, BoundType::DivNorm);
+  check(irs::TFIDF{false}, BoundType::MaxFreq);
+  check(irs::BM25{1.2f, 0.75f}, BoundType::MinNorm, /*param_free=*/false);
+  check(irs::BM25{1.2f, 0.f}, BoundType::MaxFreq);
+  check(irs::BM25{1.2f, 1.f}, BoundType::DivNorm);
+  check(irs::BM25{0.f, 0.75f}, BoundType::None);
+
+  // A MinNorm pair written for bm25(b=0.75) is its argmax, not anyone else's.
+  EXPECT_TRUE((irs::BM25{2.0f, 0.75f}.Compatible(min_norm_b)));
+  EXPECT_FALSE((irs::BM25{1.2f, 0.5f}.Compatible(min_norm_b)));
+  EXPECT_FALSE((irs::LMDirichlet{2000.f}.Compatible(min_norm_b)));
+  EXPECT_FALSE(
+    (irs::DFI{irs::DFIMeasure::Standardized}.Compatible(min_norm_b)));
+
+  // kScoreBoundAvgDL and kScoreBoundBM25 both report MinNorm but pick a
+  // different argmax, so the avg_dl mode has to agree as well.
+  EXPECT_FALSE((irs::BM25{1.2f, 0.75f, false, /*approximate=*/false}.Compatible(
+    min_norm_b)));
+}
+
 // Pruning has to do something, not merely be harmless: the pruned run reaches
 // fewer documents than the one that cannot skip. Which iterator serves it is
 // not visible from here -- the load test watches that, through the documents
@@ -685,3 +838,144 @@ INSTANTIATE_TEST_SUITE_P(ScorePruneScoringTest, ScorePruneScoringTestCase,
                          ScorePruneScoringTestCase::to_string);
 
 }  // namespace
+
+// The property every score bound rests on: the (freq, norm) pair a block stores
+// must score at least as high as every document in that block. If it scores
+// lower, `IsLessThanUpperBound` skips blocks that still hold qualifying rows
+// and they vanish from the results. The end-to-end oracles observe that
+// indirectly; this drives the producer and the scorer directly, over pairs
+// chosen to stress the encoding -- notably documents whose length is below the
+// block's maximum frequency, where the stored norm gets clamped up to the
+// frequency because it is written as a delta above it.
+namespace {
+
+struct BoundAttrs final : irs::AttributeProvider {
+  irs::Attribute* GetMutable(irs::TypeInfo::type_id id) noexcept final {
+    if (irs::Type<irs::FreqBlockAttr>::id() == id) {
+      return &freq_block;
+    }
+    if (irs::Type<irs::Norm>::id() == id) {
+      return &norm;
+    }
+    return nullptr;
+  }
+
+  uint32_t freq{};
+  irs::FreqBlockAttr freq_block{.value = &freq};
+  irs::Norm norm;
+};
+
+struct NoNorms final : irs::NormProvider {
+  irs::NormReader::ptr norms(irs::field_id) const final { return nullptr; }
+};
+
+struct Pair {
+  uint32_t tf;
+  uint32_t dl;
+};
+
+// One block's worth of documents, mixing very short postings with high
+// frequencies so that min(dl) lands below max(tf).
+constexpr Pair kBlock[]{{1, 1},   {30, 31},  {1, 201}, {12, 15},
+                        {2, 2},   {25, 126}, {1, 4},   {7, 9},
+                        {40, 40}, {3, 300},  {18, 20}, {5, 5}};
+
+template<typename Scorer>
+irs::bstring MakeStats(const Scorer& scorer) {
+  irs::FieldCollector field;
+  field.docs_with_field = 4096;
+  field.total_term_freq = 65536;
+  irs::TermCollector term;
+  term.docs_with_term = 512;
+  term.total_term_freq = 2048;
+
+  irs::bstring stats(scorer.stats_size(), 0);
+  scorer.collect(stats.data(), &field, &term);
+  return stats;
+}
+
+template<typename Scorer>
+irs::score_t ScoreAt(const Scorer& scorer, const irs::byte_type* stats,
+                     BoundAttrs& attrs, uint32_t tf, uint32_t dl) {
+  attrs.freq = tf;
+  attrs.norm.value = dl;
+  const NoNorms segment;
+  auto fn = scorer.PrepareScorer({.segment = segment,
+                                  .field = {},
+                                  .doc_attrs = attrs,
+                                  .fetcher = nullptr,
+                                  .stats = stats,
+                                  .boost = irs::kNoBoost});
+  irs::score_t value{};
+  fn.Score(&value, 1);
+  return value;
+}
+
+// Drive the producer exactly as ScoreBoundWriterImpl does: fold every document
+// of the block into one entry.
+template<uint32_t Tag>
+typename irs::FreqNormProducer<Tag>::Entry FoldBlock() {
+  irs::FreqNormProducer<Tag> producer;
+  typename irs::FreqNormProducer<Tag>::Entry bound{};
+  for (const auto& [tf, dl] : kBlock) {
+    typename irs::FreqNormProducer<Tag>::Entry doc{};
+    doc.freq = tf;
+    if constexpr (requires { doc.norm = dl; }) {
+      doc.norm = dl;
+    }
+    producer.Produce(doc, bound);
+  }
+  return bound;
+}
+
+template<uint32_t Tag, typename Scorer>
+void AssertBoundDominates(const Scorer& scorer, std::string_view name) {
+  SCOPED_TRACE(name);
+  const auto stats = MakeStats(scorer);
+  BoundAttrs attrs;
+
+  const auto bound = FoldBlock<Tag>();
+  const uint32_t bound_dl = [&] {
+    if constexpr (requires { static_cast<uint32_t>(bound.norm); }) {
+      return static_cast<uint32_t>(bound.norm);
+    } else {
+      return uint32_t{1};
+    }
+  }();
+
+  const auto bound_score =
+    ScoreAt(scorer, stats.c_str(), attrs, bound.freq, bound_dl);
+  auto lowest = std::numeric_limits<irs::score_t>::max();
+  auto highest = std::numeric_limits<irs::score_t>::lowest();
+  for (const auto& [tf, dl] : kBlock) {
+    const auto doc_score = ScoreAt(scorer, stats.c_str(), attrs, tf, dl);
+    lowest = std::min(lowest, doc_score);
+    highest = std::max(highest, doc_score);
+    EXPECT_GE(bound_score, doc_score)
+      << "bound (tf=" << bound.freq << ", dl=" << bound_dl
+      << ") scores below document (tf=" << tf << ", dl=" << dl << ")";
+  }
+  // Guard the guard: a block whose documents all score alike would satisfy the
+  // comparison above no matter what the producer chose.
+  EXPECT_LT(lowest, highest);
+}
+
+}  // namespace
+
+TEST(score_bound_dominance_test, bound_scores_at_least_every_document) {
+  AssertBoundDominates<irs::kScoreBoundMaxFreq>(irs::RawTF{}, "raw_tf");
+  AssertBoundDominates<irs::kScoreBoundDivNorm>(irs::LMJelinekMercer{0.7f},
+                                                "lm_jelinek_mercer");
+  AssertBoundDominates<irs::kScoreBoundMinNorm>(irs::LMDirichlet{2000.f},
+                                                "lm_dirichlet");
+  AssertBoundDominates<irs::kScoreBoundMinNorm>(
+    irs::DFI{irs::DFIMeasure::Standardized}, "dfi_standardized");
+  AssertBoundDominates<irs::kScoreBoundMinNorm>(
+    irs::DFI{irs::DFIMeasure::Saturated}, "dfi_saturated");
+  AssertBoundDominates<irs::kScoreBoundMinNorm>(
+    irs::DFI{irs::DFIMeasure::ChiSquared}, "dfi_chi_squared");
+  AssertBoundDominates<irs::kScoreBoundDivNorm>(irs::TFIDF{true},
+                                                "tfidf_with_norms");
+  AssertBoundDominates<irs::kScoreBoundMaxFreq>(irs::TFIDF{false},
+                                                "tfidf_plain");
+}

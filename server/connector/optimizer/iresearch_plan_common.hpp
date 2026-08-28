@@ -94,7 +94,7 @@ bool TryClaimIResearchConjunct(
   irs::And& and_root, const duckdb::unique_ptr<duckdb::Expression>& conjunct,
   const connector::ColumnGetter& getter,
   const connector::ExpressionGetter& expr_getter,
-  duckdb::ClientContext& context);
+  duckdb::ClientContext& context, connector::FilterScorers* scorers = nullptr);
 
 inline connector::SearchColumnInfo MakeSearchColumnInfo(
   irs::field_id field, const catalog::InvertedIndexEntryInfo* info,

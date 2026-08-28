@@ -42,6 +42,7 @@
 #include <duckdb/planner/expression/bound_function_expression.hpp>
 #include <duckdb/planner/expression_binder/constant_binder.hpp>
 #include <duckdb/planner/expression_iterator.hpp>
+#include <iresearch/search/unscored.hpp>
 
 #include "basics/assert.h"
 #include "connector/functions/search.h"
@@ -64,7 +65,8 @@ bool IsTSQueryFamilyTypeName(std::string_view name) {
   return absl::EqualsIgnoreCase(name, kTSQueryTypeName) ||
          absl::EqualsIgnoreCase(name, kTokenizerTypeName) ||
          absl::EqualsIgnoreCase(name, kBoostTypeName) ||
-         absl::EqualsIgnoreCase(name, kSlopTypeName);
+         absl::EqualsIgnoreCase(name, kSlopTypeName) ||
+         absl::EqualsIgnoreCase(name, kScoreTypeName);
 }
 
 bool IsNumericTypeId(duckdb::LogicalTypeId id) {
@@ -253,6 +255,8 @@ std::string RenderTokenized(std::string operand, std::string_view tokenizer) {
                       duckdb::Value(std::string{tokenizer}).ToSQLString(), ")");
 }
 
+}  // namespace
+
 std::string RenderTSQueryPartsSQL(const TSQueryParts& parts) {
   std::string out;
   if (IsStructuredText(parts.text)) {
@@ -263,11 +267,40 @@ std::string RenderTSQueryPartsSQL(const TSQueryParts& parts) {
   if (!parts.tokenizer.empty()) {
     out = RenderTokenized(std::move(out), parts.tokenizer);
   }
+  if (parts.slop != 0) {
+    absl::StrAppend(&out, "::slop(", parts.slop, ")");
+  }
   if (parts.boost != 1.0f) {
     out = RenderBoosted(std::move(out), static_cast<double>(parts.boost));
   }
+  if (parts.merge != TSQueryMerge::Default) {
+    absl::StrAppend(
+      &out, "::merge(",
+      duckdb::Value(std::string{magic_enum::enum_name(parts.merge)})
+        .ToSQLString(),
+      ")");
+  }
+  if (!parts.scorer.empty()) {
+    absl::StrAppend(&out, "::score(",
+                    parts.scorer == irs::Unscored::type_name()
+                      ? std::string{"NULL"}
+                      : duckdb::Value(parts.scorer).ToSQLString(),
+                    ")");
+  }
   return out;
 }
+
+namespace {}  // namespace
+
+std::string RenderTSQueryValueText(const TSQueryParts& parts) {
+  if (parts.tokenizer.empty() && parts.boost == 1.0f && parts.slop == 0 &&
+      parts.scorer.empty() && parts.merge == TSQueryMerge::Default) {
+    return parts.text;
+  }
+  return RenderTSQueryPartsSQL(parts);
+}
+
+namespace {
 
 std::string RenderTSQueryValueConstant(const duckdb::Value& value) {
   auto parts = TryGetTSQueryParts(value);
@@ -342,6 +375,27 @@ std::optional<std::string> RenderCast(duckdb::ClientContext& context,
       return std::nullopt;
     }
     return absl::StrCat(std::move(*child), "::slop(", *slop, ")");
+  }
+  if (const auto merge = TryGetMergeModifier(target)) {
+    auto child = RenderTSQueryExpression(context, cast.Child());
+    if (!child) {
+      return std::nullopt;
+    }
+    return absl::StrCat(
+      std::move(*child), "::merge(",
+      duckdb::Value(std::string{magic_enum::enum_name(*merge)}).ToSQLString(),
+      ")");
+  }
+  if (const auto scorer = TryGetScoreModifier(target)) {
+    auto child = RenderTSQueryExpression(context, cast.Child());
+    if (!child) {
+      return std::nullopt;
+    }
+    return absl::StrCat(std::move(*child), "::score(",
+                        *scorer == irs::Unscored::type_name()
+                          ? std::string{"NULL"}
+                          : duckdb::Value(*scorer).ToSQLString(),
+                        ")");
   }
   if (IsTSQueryStructType(target)) {
     auto child = RenderTSQueryExpression(context, cast.Child());
@@ -545,30 +599,58 @@ std::optional<TSQueryParts> TryGetTSQueryParts(const duckdb::Value& value) {
   if (!children[kTSQueryBoostChild].IsNull()) {
     parts.boost = children[kTSQueryBoostChild].GetValue<float>();
   }
+  if (children.size() > kTSQuerySlopChild &&
+      !children[kTSQuerySlopChild].IsNull()) {
+    parts.slop = children[kTSQuerySlopChild].GetValue<int64_t>();
+  }
+  if (children.size() > kTSQueryScorerChild &&
+      !children[kTSQueryScorerChild].IsNull()) {
+    parts.scorer = duckdb::StringValue::Get(children[kTSQueryScorerChild]);
+  }
+  if (children.size() > kTSQueryMergeChild &&
+      !children[kTSQueryMergeChild].IsNull()) {
+    parts.merge = static_cast<TSQueryMerge>(
+      children[kTSQueryMergeChild].GetValue<uint8_t>());
+  }
+  return parts;
+}
+
+TSQueryParts TSQueryPartsForType(const duckdb::LogicalType& type,
+                                 std::string_view text) {
+  TSQueryParts parts;
+  parts.text = std::string{text};
+  parts.tokenizer = std::string{TryGetTokenizerModifier(type)};
+  if (const auto boost = TryGetBoostModifier(type)) {
+    parts.boost = static_cast<float>(*boost);
+  }
+  if (const auto slop = TryGetSlopModifier(type)) {
+    parts.slop = *slop;
+  }
+  if (auto scorer = TryGetScoreModifier(type)) {
+    parts.scorer = std::move(*scorer);
+  }
+  if (const auto merge = TryGetMergeModifier(type)) {
+    parts.merge = *merge;
+  }
   return parts;
 }
 
 duckdb::Value MakeTSQueryValue(const duckdb::LogicalType& type,
                                std::string_view text) {
   SDB_ASSERT(IsTSQueryStructType(type));
+  const auto parts = TSQueryPartsForType(type, text);
   duckdb::vector<duckdb::Value> children;
-  children.reserve(3);
-  children.emplace_back(std::string{text});
-  children.emplace_back(std::string{});
-  children.emplace_back(duckdb::Value::FLOAT(1.0f));
+  children.reserve(6);
+  children.emplace_back(parts.text);
+  children.emplace_back(parts.tokenizer);
+  children.emplace_back(duckdb::Value::FLOAT(parts.boost));
+  children.emplace_back(duckdb::Value::BIGINT(parts.slop));
+  children.emplace_back(parts.scorer.empty()
+                          ? duckdb::Value{duckdb::LogicalType::VARCHAR}
+                          : duckdb::Value{parts.scorer});
+  children.emplace_back(
+    duckdb::Value::UTINYINT(static_cast<uint8_t>(parts.merge)));
   return duckdb::Value::STRUCT(type, std::move(children));
-}
-
-std::string RenderTSQuery(std::string_view text, std::string_view tokenizer,
-                          float boost) {
-  if (tokenizer.empty() && boost == 1.0f) {
-    return std::string{text};
-  }
-  return RenderTSQueryPartsSQL(TSQueryParts{
-    .text = std::string{text},
-    .tokenizer = std::string{tokenizer},
-    .boost = boost,
-  });
 }
 
 std::optional<duckdb::Value> TryFoldTSQueryCall(

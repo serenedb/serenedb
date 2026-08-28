@@ -461,7 +461,7 @@ DocIterator::ptr PostingsReaderImpl<FormatTraits>::PruningIterator(
         [&]<bool Root>(const PostingCookie& cookie) {
           auto it = memory::make_managed<
             SinglePruningIterator<FormatTraits, Root, Pos, Offs, InputType>>();
-          it->Prepare(cookie, _doc_in.get());
+          it->Prepare(cookie, _doc_in.get(), options.scorer);
           return it;
         };
 
@@ -534,12 +534,14 @@ DocIterator::ptr PostingsReaderImpl<FormatTraits>::Iterator(
             if (_doc_in->GetType() == DataInput::Type::BytesViewInput) {
               auto it = memory::make_managed<PostingIteratorImpl<
                 IteratorTraits, FieldTraits, HasScoreBounds, BytesViewInput>>();
-              it->Prepare(cookie, _doc_in.get(), _pos_in.get(), _pay_in.get());
+              it->Prepare(cookie, _doc_in.get(), _pos_in.get(), _pay_in.get(),
+                          options.scorer);
               return it;
             } else {
               auto it = memory::make_managed<PostingIteratorImpl<
                 IteratorTraits, FieldTraits, HasScoreBounds, IndexInput>>();
-              it->Prepare(cookie, _doc_in.get(), _pos_in.get(), _pay_in.get());
+              it->Prepare(cookie, _doc_in.get(), _pos_in.get(), _pay_in.get(),
+                          options.scorer);
               return it;
             }
           });

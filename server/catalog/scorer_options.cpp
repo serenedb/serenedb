@@ -20,7 +20,7 @@
 
 #include "catalog/scorer_options.h"
 
-#include <absl/strings/ascii.h>
+#include <absl/algorithm/container.h>
 #include <absl/strings/str_cat.h>
 #include <absl/strings/str_join.h>
 
@@ -51,36 +51,6 @@ const duckdb::Value* TryGetConstantValue(const duckdb::Expression& expr) {
 }
 
 }  // namespace
-
-std::string ScorerOptions::ToString() const {
-  return std::visit(
-    [&]<typename P>(const P& p) -> std::string {
-      if constexpr (std::is_same_v<P, Bm25>) {
-        return absl::StrCat("bm25(k1=", p.k1, ", b=", p.b, ")");
-      } else if constexpr (std::is_same_v<P, Tfidf>) {
-        return absl::StrCat(
-          "tfidf(with_norms=", p.with_norms ? "true" : "false", ")");
-      } else if constexpr (std::is_same_v<P, LmJm>) {
-        return absl::StrCat("lm_jm(lambda=", p.lambda, ")");
-      } else if constexpr (std::is_same_v<P, LmDirichlet>) {
-        return absl::StrCat("lm_dirichlet(mu=", p.mu, ")");
-      } else if constexpr (std::is_same_v<P, IndriDirichlet>) {
-        return absl::StrCat("indri_dirichlet(mu=", p.mu, ")");
-      } else if constexpr (std::is_same_v<P, Dfi>) {
-        return absl::StrCat("dfi(measure=", magic_enum::enum_name(p.measure),
-                            ")");
-      } else if constexpr (std::is_same_v<P, RawBoost>) {
-        return "raw_boost()";
-      } else if constexpr (std::is_same_v<P, RawTf>) {
-        return "raw_tf()";
-      } else if constexpr (std::is_same_v<P, RawDL>) {
-        return "raw_dl()";
-      } else if constexpr (std::is_same_v<P, Idf>) {
-        return "idf()";
-      }
-    },
-    params);
-}
 
 std::unique_ptr<irs::Scorer> MakeScorer(const ScorerOptions& spec) {
   return std::visit(
@@ -194,6 +164,21 @@ std::optional<ScorerOptions> ExtractScorerFromBound(
     scorer.params = S::RawDL{};
   } else if (name == S::Idf::Owner::type_name()) {
     scorer.params = S::Idf{};
+  } else if (name == S::Constant::Owner::type_name()) {
+    S::Constant p;
+    if (func.GetChildren().size() == 2) {
+      auto* vv = TryGetConstantValue(*func.GetChildren()[1]);
+      if (!vv) {
+        return std::nullopt;
+      }
+      p.value = static_cast<float>(vv->GetValue<double>());
+      if (!std::isfinite(p.value)) {
+        THROW_SQL_ERROR(
+          ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+          ERR_MSG("constant value must be finite, got ", p.value));
+      }
+    }
+    scorer.params = p;
   } else {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
@@ -205,22 +190,20 @@ std::optional<ScorerOptions> ExtractScorerFromBound(
 }
 
 ScorerOptions ParseScorerExpression(duckdb::ClientContext& context,
-                                    std::string input) {
+                                    std::string input, std::string_view what) {
   using namespace duckdb;
   auto exprs = Parser::ParseExpressionList(input);
   if (exprs.size() != 1) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_SYNTAX_ERROR),
-      ERR_MSG("'optimize_top_k' must be a single scorer expression, got ",
+      ERR_MSG("'", what, "' must be a single scorer expression, got ",
               exprs.size(), " in '", input, "'"));
   }
-
-  auto fn_expr = std::move(exprs[0]);
+  unique_ptr<ParsedExpression> fn_expr = std::move(exprs[0]);
   if (fn_expr->GetExpressionType() != ExpressionType::FUNCTION) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-      ERR_MSG("'optimize_top_k' expects a scorer function call, got '", input,
-              "'"),
+      ERR_MSG("'", what, "' expects a scorer function call, got '", input, "'"),
       ERR_HINT("Use e.g. 'tfidf()' or 'bm25(1.2, 0.75)'"));
   }
 
@@ -243,8 +226,7 @@ ScorerOptions ParseScorerExpression(duckdb::ClientContext& context,
       bound->GetExpressionClass() != ExpressionClass::BOUND_FUNCTION) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_SYNTAX_ERROR),
-      ERR_MSG("'optimize_top_k' did not bind to a scorer function: '", input,
-              "'"));
+      ERR_MSG("'", what, "' did not bind to a scorer function: '", input, "'"));
   }
 
   auto& bound_fn = bound->Cast<BoundFunctionExpression>();
@@ -260,7 +242,7 @@ ScorerOptions ParseScorerExpression(duckdb::ClientContext& context,
   if (!extracted) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-      ERR_MSG("'optimize_top_k' scorer args must be constants: '", input, "'"));
+      ERR_MSG("'", what, "' scorer args must be constants: '", input, "'"));
   }
   return std::move(*extracted);
 }

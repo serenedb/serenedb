@@ -74,6 +74,8 @@ class IndriDirichlet final : public irs::ScorerBase<IndriDirichlet, LMStats> {
 
   bool equals(const Scorer& other) const noexcept final;
 
+  std::string ToString() const final;
+
   score_t mu() const noexcept { return _mu; }
 
  private:

@@ -501,7 +501,6 @@ class BlockDisjunction : public DocIterator {
   ScoreFunction PrepareScore(const PrepareScoreContext& ctx) final {
     if constexpr (kHasScore) {
       const PrepareScoreContext sub{
-        .scorer = ctx.scorer,
         .segment = ctx.segment,
         .fetcher = &_fetcher,
       };

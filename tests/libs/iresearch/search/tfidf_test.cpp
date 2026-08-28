@@ -167,7 +167,6 @@ void TfidfTestCase::TestQueryNorms() {
     fetcher.Clear();
     auto docs = prepared_filter.Execute(0);
     auto score = docs->PrepareScore({
-      .scorer = &scorer,
       .segment = &segment,
       .fetcher = &fetcher,
     });
@@ -219,7 +218,6 @@ void TfidfTestCase::TestQueryNorms() {
     fetcher.Clear();
     auto docs = prepared_filter.Execute(0);
     auto score = docs->PrepareScore({
-      .scorer = &scorer,
       .segment = &segment,
       .fetcher = &fetcher,
     });
@@ -387,7 +385,6 @@ TEST_P(TfidfTestCase, test_phrase) {
     fetcher.Clear();
     auto docs = prepared_filter.Execute(0);
     auto score = docs->PrepareScore({
-      .scorer = &scorer,
       .segment = &segment,
       .fetcher = &fetcher,
     });
@@ -454,7 +451,6 @@ TEST_P(TfidfTestCase, test_phrase) {
     fetcher.Clear();
     auto docs = prepared_filter.Execute(0);
     auto score = docs->PrepareScore({
-      .scorer = &scorer,
       .segment = &segment,
       .fetcher = &fetcher,
     });
@@ -536,7 +532,6 @@ TEST_P(TfidfTestCase, test_query) {
     fetcher.Clear();
     auto docs = prepared_filter.Execute(0);
     auto score = docs->PrepareScore({
-      .scorer = &scorer,
       .segment = &segment,
       .fetcher = &fetcher,
     });
@@ -647,7 +642,6 @@ TEST_P(TfidfTestCase, test_query) {
       fetcher.Clear();
       auto docs = prepared_filter.Execute(i);
       auto score = docs->PrepareScore({
-        .scorer = &scorer,
         .segment = &segment,
         .fetcher = &fetcher,
       });
@@ -771,7 +765,6 @@ TEST_P(TfidfTestCase, test_query) {
       fetcher.Clear();
       auto docs = prepared_filter.Execute(i);
       auto score = docs->PrepareScore({
-        .scorer = &scorer,
         .segment = &segment,
         .fetcher = &fetcher,
       });
@@ -886,7 +879,6 @@ TEST_P(TfidfTestCase, test_query) {
       fetcher.Clear();
       auto docs = prepared_filter.Execute(i);
       auto score = docs->PrepareScore({
-        .scorer = &scorer,
         .segment = &segment,
         .fetcher = &fetcher,
       });
@@ -938,7 +930,6 @@ TEST_P(TfidfTestCase, test_query) {
     fetcher.Clear();
     auto docs = prepared_filter.Execute(0);
     auto score = docs->PrepareScore({
-      .scorer = &scorer,
       .segment = &segment,
       .fetcher = &fetcher,
     });
@@ -988,7 +979,6 @@ TEST_P(TfidfTestCase, test_query) {
     fetcher.Clear();
     auto docs = prepared_filter.Execute(0);
     auto score = docs->PrepareScore({
-      .scorer = &scorer,
       .segment = &segment,
       .fetcher = &fetcher,
     });
@@ -1036,7 +1026,6 @@ TEST_P(TfidfTestCase, test_query) {
     fetcher.Clear();
     auto docs = prepared_filter.Execute(0);
     auto score = docs->PrepareScore({
-      .scorer = &scorer,
       .segment = &segment,
       .fetcher = &fetcher,
     });
@@ -1084,7 +1073,6 @@ TEST_P(TfidfTestCase, test_query) {
     fetcher.Clear();
     auto docs = prepared_filter.Execute(0);
     auto score = docs->PrepareScore({
-      .scorer = &scorer,
       .segment = &segment,
       .fetcher = &fetcher,
     });
@@ -1134,7 +1122,6 @@ TEST_P(TfidfTestCase, test_query) {
     fetcher.Clear();
     auto docs = prepared_filter.Execute(0);
     auto score = docs->PrepareScore({
-      .scorer = &scorer,
       .segment = &segment,
       .fetcher = &fetcher,
     });
@@ -1167,13 +1154,12 @@ TEST_P(TfidfTestCase, test_query) {
     irs::tests::BlobPointReader values{segment, *column};
 
     irs::All filter;
-    filter.boost(1.5f);
+    filter.SetBoost(1.5f);
 
     tests::PreparedFilter prepared_filter{filter, reader, &scorer, counter};
     fetcher.Clear();
     auto docs = prepared_filter.Execute(0);
     auto score = docs->PrepareScore({
-      .scorer = &scorer,
       .segment = &segment,
       .fetcher = &fetcher,
     });
@@ -1201,13 +1187,12 @@ TEST_P(TfidfTestCase, test_query) {
     irs::tests::BlobPointReader values{segment, *column};
 
     irs::All filter;
-    filter.boost(0.f);
+    filter.SetBoost(0.f);
 
     tests::PreparedFilter prepared_filter{filter, reader, &scorer, counter};
     fetcher.Clear();
     auto docs = prepared_filter.Execute(0);
     auto score = docs->PrepareScore({
-      .scorer = &scorer,
       .segment = &segment,
       .fetcher = &fetcher,
     });
@@ -1302,7 +1287,6 @@ TEST_P(TfidfTestCase, test_order) {
     fetcher.Clear();
     auto docs = prepared.Execute(0);
     auto score = docs->PrepareScore({
-      .scorer = &scorer,
       .segment = &segment,
       .fetcher = &fetcher,
     });

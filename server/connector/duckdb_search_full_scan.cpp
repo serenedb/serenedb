@@ -1244,9 +1244,22 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> IResearchScanInitGlobal(
     if (state->scorer_obj) {
       state->collectors.resize(state->MaxThreads());
     }
+    // A knn query scores from the distance itself: VectorSimilarityScorer
+    // collects nothing and its stats are zero bytes, so the prepare phase would
+    // only ever hand back a buffer carrying the scorer. Build that here and
+    // keep vector scans off the prepare barrier -- they stop early on LIMIT,
+    // and a worker parked waiting on a segment the abandoned pipeline will
+    // never finish is never returned to the scheduler.
+    if (state->scorer_obj && ss.vector_scorer && !ss.text_scorer) {
+      state->stats.emplace(
+        irs::StatsBuffer::Storage{{irs::IResourceManager::gNoop}},
+        state->scorer_obj.get());
+    }
   }
 
   if (state->mode == ScanMode::TopK) {
+    state->prune_scorer = ResolvePruneScorer(bind_data.inverted_index.get(),
+                                             state->scorer_obj.get());
     if (state->score_static_floor >
         std::numeric_limits<irs::score_t>::lowest()) {
       // Static score floor (Lucene min_score): the collectors start at the
@@ -1285,10 +1298,11 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> IResearchScanInitGlobal(
          duckdb::ExpressionType::COMPARE_GREATERTHANOREQUALTO);
     const bool static_bound =
       state->score_static_floor > std::numeric_limits<irs::score_t>::lowest();
-    state->score_prune_streaming =
-      !topk_disabled && ss.text_scorer && state->ScanScore() &&
-      (dynamic_bound || static_bound) &&
-      ScorePruneEnabled(bind_data.inverted_index.get(), ss.text_scorer);
+    if (!topk_disabled && ss.text_scorer && state->ScanScore() &&
+        (dynamic_bound || static_bound)) {
+      state->prune_scorer = ResolvePruneScorer(bind_data.inverted_index.get(),
+                                               state->scorer_obj.get());
+    }
   }
 
   if (ss.scan_order &&
@@ -1386,6 +1400,21 @@ void PreparePhase(duckdb::ClientContext& ctx, IResearchScanGlobalState& g,
     }
   }
   g.prepare_finished.WaitForNotification();
+}
+
+void EnsurePreparePhase(duckdb::ClientContext& context,
+                        IResearchScanGlobalState& gstate,
+                        SegDocBufferedScanLocalState& l) {
+  if (l.prepared) {
+    return;
+  }
+  // Vector scans carry their StatsBuffer from init and must not enter the
+  // prepare barrier.
+  if (gstate.scorer_obj && gstate.total_segments != 0 &&
+      !gstate.vector_scorer) {
+    PreparePhase(context, gstate, l);
+  }
+  l.prepared = true;
 }
 
 void WriteChunkOffsets(std::vector<FieldEntry>& offsets_entries,
@@ -1682,12 +1711,7 @@ void IResearchScanFunction(duckdb::ClientContext& context,
     }
     case ScanMode::TopK: {
       auto& l = data.local_state->Cast<TopKScanLocalState>();
-      if (!l.prepared) {
-        if (gstate.total_segments != 0 && !gstate.vector_scorer) {
-          PreparePhase(context, gstate, l);
-        }
-        l.prepared = true;
-      }
+      EnsurePreparePhase(context, gstate, l);
       RunTopKScan(context, gstate, l, out);
       break;
     }
@@ -1698,13 +1722,7 @@ void IResearchScanFunction(duckdb::ClientContext& context,
     }
     case ScanMode::Stream: {
       auto& l = data.local_state->Cast<StreamScanLocalState>();
-      if (!l.prepared) {
-        if (gstate.scorer_obj && gstate.total_segments != 0 &&
-            !gstate.vector_scorer) {
-          PreparePhase(context, gstate, l);
-        }
-        l.prepared = true;
-      }
+      EnsurePreparePhase(context, gstate, l);
       RunStreamingScan(context, gstate, l, out);
       break;
     }
@@ -1901,17 +1919,14 @@ void CollectSegmentTopK(TopKScanLocalState& s, const irs::SubReader& seg,
   const irs::StatsBuffer& stats =
     g.stats ? *g.stats : irs::StatsBuffer::Empty();
 
-  const bool score_prune =
-    ScorePruneEnabled(search.inverted_index.get(), search.text_scorer);
   irs::DocIterator::ptr it = seg.mask(seg_query.Execute(
-    {.score_prune = score_prune,
-     .top_k_collect = search.vector_scorer.has_value() && cls.active.empty()},
+    {.top_k_collect = search.vector_scorer.has_value() && cls.active.empty(),
+     .prune_scorer = g.prune_scorer},
     stats));
   // Filter the collected docs by the covered `.col` values, so top-k is
   // selected over survivors (codec Filter + zonemap in the wrapper).
   it = MaybeWrapColFilter(std::move(it), seg, cls.active, g, s.filter_states);
   auto score_func = it->PrepareScore({
-    .scorer = g.scorer_obj.get(),
     .segment = &seg,
     .fetcher = &s.score_fetcher,
   });
@@ -2007,7 +2022,7 @@ void StreamScanLocalState::StartSegment(duckdb::ClientContext& /*ctx*/,
   // below-threshold blocks are skipped (PushHits seeds the threshold from the
   // boundary before each emit).
   streaming_doc =
-    seg.mask(seg_query.Execute({.score_prune = g.score_prune_streaming},
+    seg.mask(seg_query.Execute({.prune_scorer = g.prune_scorer},
                                g.stats ? *g.stats : irs::StatsBuffer::Empty()));
   if (g.needs_lookup && !PkColumnFor(*g.reader, seg_idx).second) {
     THROW_SQL_ERROR(
@@ -2018,7 +2033,6 @@ void StreamScanLocalState::StartSegment(duckdb::ClientContext& /*ctx*/,
   if (g.ScanScore()) {
     score_fetcher.Clear();
     streaming_score_function = streaming_doc->PrepareScore({
-      .scorer = g.scorer_obj.get(),
       .segment = &seg,
       .fetcher = &score_fetcher,
     });
@@ -2121,7 +2135,7 @@ void StreamScanLocalState::PushHits(IResearchScanGlobalState& g) {
       return;
     }
     if (g.ScanScore()) {
-      if (g.score_prune_streaming) {
+      if (g.prune_scorer) {
         // Seed the prune threshold from the static score floor and the dynamic
         // TOP_N boundary's current value; blocks that cannot beat it are
         // skipped this window.

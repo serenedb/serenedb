@@ -108,7 +108,7 @@ struct ParserContext {
   // What the query spells is not what the index holds: the analyzer stands
   // between them, here as everywhere else. A word it splits is asked for the
   // way Lucene asks -- any of its parts, under the default operator.
-  irs::FilterWithBoost& AddTerm(std::string_view value) {
+  irs::Filter& AddTerm(std::string_view value) {
     const auto text = Unescape(value);
     tokenizer->reset(irs::ViewCast<char>(irs::bytes_view{text}));
     auto token = irs::get<irs::TermAttr>(*tokenizer);
@@ -184,12 +184,12 @@ struct ParserContext {
     offs_max = static_cast<size_t>(max);
   }
 
-  void SetSlop(irs::FilterWithBoost* f, int slop) {
+  void SetSlop(irs::Filter* f, int slop) {
     sdb::basics::downCast<irs::ByPhrase>(*f).mutable_options()->set_slop(
       static_cast<irs::PosAttr::value_t>(slop));
   }
 
-  void SetMinMatch(irs::FilterWithBoost* f, int count) {
+  void SetMinMatch(irs::Filter* f, int count) {
     sdb::basics::downCast<irs::MixedBooleanFilter>(*f)
       .GetOptional()
       .min_match_count(static_cast<size_t>(count));
@@ -480,8 +480,7 @@ struct ParserContext {
   // term already built, and a fuzzy term is a different filter -- so the term
   // is taken back out and asked for again as the one it should have been. A
   // phrase only needs its slop set.
-  irs::FilterWithBoost& ApplyFuzzy(irs::FilterWithBoost* built, bool has_value,
-                                   float value) {
+  irs::Filter& ApplyFuzzy(irs::Filter* built, bool has_value, float value) {
     if (built->type() == irs::Type<irs::ByPhrase>::id()) {
       if (has_value) {
         SetSlop(built, static_cast<int>(value));
@@ -494,14 +493,14 @@ struct ParserContext {
     }
     auto& term = sdb::basics::downCast<irs::ByTerm>(*built);
     auto text = term.options().term;
-    const auto boost = term.Boost();
+    const auto boost = term.GetBoost();
 
     auto& optional = current_root->GetOptional();
     optional.PopBack();
 
     auto& f = has_value ? FuzzyFromSimilarity(std::move(text), value)
                         : AddFuzzyTerm(std::move(text), 2);
-    f.boost(boost);
+    f.SetBoost(boost);
     return f;
   }
 
@@ -541,7 +540,7 @@ struct ParserContext {
 
   // A field with any value: Lucene's `field:*`. Nothing here answers it, so
   // it is read and refused rather than quietly meaning something else.
-  irs::FilterWithBoost& AddFieldExists() {
+  irs::Filter& AddFieldExists() {
     THROW_SQL_ERROR(
       ERR_MSG("field existence queries (`field:*`) are not supported"));
   }
@@ -573,7 +572,7 @@ struct ParserContext {
   }
 
   // One of them is enough.
-  irs::FilterWithBoost& EndFnAny() {
+  irs::Filter& EndFnAny() {
     RequireTerms("fn:or");
     auto& f = current_root->GetOptional().add<irs::MixedBooleanFilter>();
     for (const auto term : fn_terms) {
@@ -583,7 +582,7 @@ struct ParserContext {
   }
 
   // All of them, wherever they lie.
-  irs::FilterWithBoost& EndFnAll() {
+  irs::Filter& EndFnAll() {
     RequireTerms("fn:unordered");
     auto& f = current_root->GetOptional().add<irs::MixedBooleanFilter>();
     for (const auto term : fn_terms) {
@@ -592,7 +591,7 @@ struct ParserContext {
     return f;
   }
 
-  irs::FilterWithBoost& EndFnAtLeast(int count) {
+  irs::Filter& EndFnAtLeast(int count) {
     RequireTerms("fn:atLeast");
     auto& f = current_root->GetOptional().add<irs::MixedBooleanFilter>();
     for (const auto term : fn_terms) {
@@ -604,7 +603,7 @@ struct ParserContext {
 
   // In this order, however far apart: a phrase whose parts may sit anywhere
   // after the one before them.
-  irs::FilterWithBoost& EndFnOrdered() {
+  irs::Filter& EndFnOrdered() {
     RequireTerms("fn:ordered");
     return FnPhrase(1, kAnyGap);
   }
@@ -612,13 +611,13 @@ struct ParserContext {
   // `maxgaps` bounds the words between, `maxwidth` the span end to end. Over
   // one pair either is a distance; over more they bound a total across the
   // whole match, and a phrase says only how far each part sits from the last.
-  irs::FilterWithBoost& EndFnMaxGaps(int gaps) {
+  irs::Filter& EndFnMaxGaps(int gaps) {
     RequireTerms("fn:maxgaps");
     RequirePair("fn:maxgaps");
     return FnPhrase(1, static_cast<size_t>(gaps) + 1);
   }
 
-  irs::FilterWithBoost& EndFnMaxWidth(int width) {
+  irs::Filter& EndFnMaxWidth(int width) {
     RequireTerms("fn:maxwidth");
     RequirePair("fn:maxwidth");
     if (width < 2) {

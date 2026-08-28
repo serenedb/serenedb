@@ -57,9 +57,18 @@ struct ExecutionContext {
   IResourceManager& memory = IResourceManager::gNoop;
   const AttributeProvider* ctx = nullptr;
   const DocumentMask* pending_docs_mask = nullptr;
-  bool score_prune = false;
   bool top_k_collect = false;
+  // The scorer the index's persisted score bounds were validated against, or
+  // null when nothing may prune. A node prunes only if it scores with that
+  // same scorer: an overridden subtree scores with another one, and the bounds
+  // do not bound it.
+  const Scorer* prune_scorer = nullptr;
 };
+
+inline bool MayScorePrune(const ExecutionContext& ctx,
+                          const StatsBuffer& stats) noexcept {
+  return ctx.prune_scorer && stats.GetScorer() == ctx.prune_scorer;
+}
 
 inline IndexFeatures GetFeatures(const Scorer* scorer) noexcept {
   return scorer ? scorer->GetIndexFeatures() : IndexFeatures::None;
@@ -100,9 +109,20 @@ class Filter {
   virtual QueryBuilder::ptr PrepareSegment(const SubReader& segment,
                                            const PrepareContext& ctx) const = 0;
 
-  // Allocate the statistics collector this filter expects in PrepareSegment.
-  // The default collects nothing.
-  virtual PrepareCollector::ptr MakeCollector(const Scorer* scorer) const;
+  const Scorer* GetScorer() const noexcept { return _scorer; }
+
+  void SetScorer(const Scorer* scorer) noexcept { _scorer = scorer; }
+
+  score_t GetBoost() const noexcept { return _boost; }
+
+  void SetBoost(score_t boost) noexcept { _boost = boost; }
+
+  // A node's own scorer wins for its whole subtree. Resolving it here, behind a
+  // non-virtual entry point, is what keeps every filter kind and every caller
+  // from having to remember: MakeCollectorImpl only ever sees the winner.
+  PrepareCollector::ptr MakeCollector(const Scorer* scorer) const {
+    return MakeCollectorImpl(scorer && _scorer ? _scorer : scorer);
+  }
 
   virtual TypeInfo::type_id type() const noexcept = 0;
 
@@ -113,30 +133,25 @@ class Filter {
   virtual TermIterator::ptr CompileTermIterator(const TermReader& reader) const;
 
   // kludge for optimization in And::prepare
-  virtual score_t BoostImpl() const noexcept { return kNoBoost; }
-
   static Filter::ptr empty();
 
  protected:
+  // Allocate the statistics collector this filter expects in PrepareSegment.
+  // The default collects nothing. Only ever called through MakeCollector, so
+  // `scorer` is already the one that won for this node.
+  virtual PrepareCollector::ptr MakeCollectorImpl(const Scorer* scorer) const;
+
   virtual bool equals(const Filter& rhs) const noexcept {
     return type() == rhs.type();
   }
-};
-
-class FilterWithBoost : public Filter {
- public:
-  score_t Boost() const noexcept { return _boost; }
-
-  void boost(score_t boost) noexcept { _boost = boost; }
 
  private:
-  score_t BoostImpl() const noexcept final { return Boost(); }
-
+  const Scorer* _scorer = nullptr;
   score_t _boost = kNoBoost;
 };
 
 template<typename Type>
-class FilterWithType : public FilterWithBoost {
+class FilterWithType : public Filter {
  public:
   using FilterType = Type;
 

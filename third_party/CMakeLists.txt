@@ -706,6 +706,18 @@ sdb_update_module(${GIT_EXECUTABLE} "azure-sdk-for-cpp" ${CMAKE_CURRENT_SOURCE_D
 add_subdirectory(azure-cmake)
 
 ################################################################################
+## GEOS
+################################################################################
+
+set(BUILD_GEOSOP OFF CACHE BOOL "" FORCE)
+set(BUILD_ASTYLE OFF CACHE BOOL "" FORCE)
+set(BUILD_DOCUMENTATION OFF CACHE BOOL "" FORCE)
+set(BUILD_BENCHMARKS FALSE CACHE BOOL "" FORCE)
+set(GEOS_BUILD_DEVELOPER OFF CACHE BOOL "" FORCE)
+sdb_update_module(${GIT_EXECUTABLE} "geos" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
+add_subdirectory(geos)
+
+################################################################################
 ## duckdb
 ################################################################################
 
@@ -737,8 +749,16 @@ set(DUCKDB_SKIP_INSTALL TRUE CACHE BOOL "" FORCE)
 set(LATEST_STORAGE FALSE CACHE BOOL "" FORCE)
 # Suppress the per-extension "vcpkg.json present but VCPKG_BUILD not set" warning.
 set(VCPKG_BUILD ON CACHE BOOL "" FORCE)
+# duckdb_spatial: GEOS only. PROJ would add ST_Transform + the *_Spheroid
+# functions at the cost of vendoring sqlite3 and a 51MB generated proj_db.c;
+# GDAL would add ST_Read/ST_Read_Meta/ST_Drivers and drag in expat. Neither is
+# vendored, so both modules are compiled out.
+set(SPATIAL_USE_PROJ FALSE CACHE BOOL "" FORCE)
+set(SPATIAL_USE_GDAL FALSE CACHE BOOL "" FORCE)
+set(SPATIAL_USE_NETWORK FALSE CACHE BOOL "" FORCE)
+set(SPATIAL_USE_GEOS TRUE CACHE BOOL "" FORCE)
 set(BUILD_EXTENSIONS
-    "core_functions;parquet;tpch;tpcds;json;httpfs;avro;iceberg;postgres_scanner;autocomplete;icu;inet;azure"
+    "core_functions;parquet;tpch;tpcds;json;httpfs;avro;iceberg;postgres_scanner;autocomplete;icu;inet;azure;spatial"
     CACHE STRING
     ""
     FORCE
@@ -760,6 +780,7 @@ sdb_update_module(${GIT_EXECUTABLE} "duckdb_avro" ${CMAKE_CURRENT_SOURCE_DIR} "R
 sdb_update_module(${GIT_EXECUTABLE} "duckdb_iceberg" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
 sdb_update_module(${GIT_EXECUTABLE} "duckdb_postgres" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
 sdb_update_module(${GIT_EXECUTABLE} "duckdb_inet" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
+sdb_update_module(${GIT_EXECUTABLE} "duckdb_spatial" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
 sdb_update_module(${GIT_EXECUTABLE} "database-connector" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
 
 # duckdb's in-tree extensions resolve their includes from directory scope (not from duckdb_static's
@@ -799,6 +820,7 @@ target_link_libraries(
         autocomplete_extension
         icu_extension
         inet_extension
+        spatial_extension
         # SIMD string-encoding routines (base64 + UTF-8/UTF-16/Latin-1). This
         # one PUBLIC edge propagates the simdutf include to duckdb core and to
         # every static extension (they each link duckdb_static).

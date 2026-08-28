@@ -32,6 +32,7 @@
 * [aws-checksums](https://github.com/awslabs/aws-checksums)
 * [aws-crt-cpp](https://github.com/awslabs/aws-crt-cpp)
 * [aws-sdk-cpp](https://github.com/aws/aws-sdk-cpp)
+* [ryu](https://github.com/ulfjack/ryu) (Apache 2.0 or Boost 1.0, vendored in `geos/src/deps/ryu`)
 
 ### [Boost Software License, Version 1.0](http://www.boost.org/LICENSE_1_0.txt)
 
@@ -51,6 +52,9 @@
 * [duckdb-avro](https://github.com/duckdb/duckdb-avro)
 * [duckdb-azure](https://github.com/duckdb/duckdb-azure)
 * [duckdb-iceberg](https://github.com/duckdb/duckdb-iceberg)
+* [duckdb-spatial](https://github.com/duckdb/duckdb-spatial)
+* [protozero](https://github.com/mapbox/protozero) (BSD-2-Clause, vendored in `duckdb_spatial/src/third_party/protozero`)
+* [shapelib](https://github.com/OSGeo/shapelib) (vendored in `duckdb_spatial/src/third_party/shapelib`)
 * [duckdb-postgres](https://github.com/duckdb/postgres_scanner)
 * [database-connector](https://github.com/duckdb/database-connector)
 * [Azure SDK for C++](https://github.com/Azure/azure-sdk-for-cpp)
@@ -73,6 +77,13 @@
 * [snappy](https://github.com/google/snappy)
 * [snowball](https://github.com/snowballstem/snowball)
 * [zstd](https://github.com/facebook/zstd) (BSD + GPLv2 dual license)
+
+### [LGPL 2.1](https://www.gnu.org/licenses/old-licenses/lgpl-2.1.html)
+
+* [GEOS](https://libgeos.org) (statically linked by the spatial extension;
+  see `geos/COPYING`. LGPL 2.1 section 6 requires that a recipient of a
+  binary can relink it against their own GEOS -- satisfied by this
+  repository and the pinned `serenedb/geos` submodule being public.)
 
 ### Other licenses
 

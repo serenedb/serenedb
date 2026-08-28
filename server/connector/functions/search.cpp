@@ -284,6 +284,10 @@ void RegisterGeoFunctions(duckdb::ExtensionLoader& loader) {
     duckdb::ScalarFunctionSet set{duckdb::Identifier{name}};
     for (const auto& a : geo_arg_types) {
       for (const auto& b : geo_arg_types) {
+        if (a.id() == duckdb::LogicalTypeId::GEOMETRY &&
+            b.id() == duckdb::LogicalTypeId::GEOMETRY) {
+          continue;
+        }
         set.AddFunction(duckdb::ScalarFunction(
           {a, b}, duckdb::LogicalType::BOOLEAN, SearchStubFn));
       }

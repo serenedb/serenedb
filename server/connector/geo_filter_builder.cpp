@@ -135,7 +135,10 @@ void ParseGeoConstant(const duckdb::Value& value,
       return;
     }
     case duckdb::LogicalTypeId::GEOMETRY: {
-      sdb::catalog::ValidateGeometryCRS84(value.type(), "GEOMETRY constant");
+      if (duckdb::GeoType::HasCRS(value.type())) {
+        sdb::catalog::ValidateGeometryCRS84(value.type(),
+                                           "GEOMETRY constant");
+      }
       const auto& wkb_str = duckdb::StringValue::Get(value);
       if (!sdb::geo::ParseShapeWKB(wkb_str, shape)) {
         THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
@@ -341,7 +344,7 @@ void FromGeoInRange(irs::BooleanFilter& filter, const FilterContext& ctx,
 // pick different GeoFilterType values.
 // ---------------------------------------------------------------------------
 
-void FromGeoFilter(irs::BooleanFilter& filter, const FilterContext& ctx,
+bool FromGeoFilter(irs::BooleanFilter& filter, const FilterContext& ctx,
                    const duckdb::BoundFunctionExpression& func) {
   if (func.GetChildren().size() != 2) {
     THROW_SQL_ERROR(
@@ -359,10 +362,7 @@ void FromGeoFilter(irs::BooleanFilter& filter, const FilterContext& ctx,
     column_info =
       FindColumnInfoForExpr(ctx, PeelSameTypeIdCast(*func.GetChildren()[1]));
     if (!column_info) {
-      THROW_SQL_ERROR(
-        ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-        ERR_MSG(func.Function().GetName().GetIdentifierName(),
-                ": one argument must be an indexed column reference"));
+      return false;
     }
     field_idx = 1;
     shape_idx = 0;
@@ -371,21 +371,15 @@ void FromGeoFilter(irs::BooleanFilter& filter, const FilterContext& ctx,
   const auto* shape_val =
     TryGetConstant(PeelSameTypeIdCast(*func.GetChildren()[shape_idx]));
   if (!shape_val) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                    ERR_MSG(func.Function().GetName().GetIdentifierName(),
-                            ": shape argument must be a constant"));
+    return false;
   }
 
   if (column_info->logical_type.id() != duckdb::LogicalTypeId::VARCHAR &&
       column_info->logical_type.id() != duckdb::LogicalTypeId::GEOMETRY) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                    ERR_MSG(func.Function().GetName().GetIdentifierName(),
-                            ": field must be JSON (GeoJSON) or GEOMETRY"));
+    return false;
   }
   if (!column_info->tokenizer.analyzer) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                    ERR_MSG(func.Function().GetName().GetIdentifierName(),
-                            ": field has no analyzer attached"));
+    return false;
   }
 
   auto& geo_filter = AddMaybeNegated<irs::GeoFilter>(filter, ctx, *column_info);
@@ -410,6 +404,7 @@ void FromGeoFilter(irs::BooleanFilter& filter, const FilterContext& ctx,
     options->type = field_idx == 0 ? irs::GeoFilterType::IsContained
                                    : irs::GeoFilterType::Contains;
   }
+  return true;
 }
 
 }  // namespace
@@ -514,8 +509,7 @@ bool TryDispatchGeoFunction(irs::BooleanFilter& filter,
     return true;
   }
   if (name == kGeoIntersects || name == kGeoContains) {
-    FromGeoFilter(filter, ctx, func);
-    return true;
+    return FromGeoFilter(filter, ctx, func);
   }
   return false;
 }

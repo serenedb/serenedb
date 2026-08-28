@@ -23,11 +23,15 @@ statement ok
 INSTALL httpfs FROM community;
 
 
-statement error
+statement ok
 LOAD 'spatial';
+
+
+statement error
+LOAD 'vss';
 ----
 db error: ERROR: LOAD is not supported by SereneDB: extensions are compiled into the server binary and cannot be loaded at runtime.
-If you need the "spatial" extension, please open an issue at https://github.com/serenedb/serenedb/issues/887.
+If you need the "vss" extension, please open an issue at https://github.com/serenedb/serenedb/issues/887.
 
 
 statement error

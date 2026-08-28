@@ -221,3 +221,11 @@
 	path = third_party/libxml2
 	url = https://github.com/serenedb/libxml2.git
 	shallow = true
+[submodule "third_party/geos"]
+	path = third_party/geos
+	url = https://github.com/serenedb/geos.git
+	shallow = true
+[submodule "third_party/duckdb_spatial"]
+	path = third_party/duckdb_spatial
+	url = https://github.com/serenedb/duckdb-spatial.git
+	shallow = true

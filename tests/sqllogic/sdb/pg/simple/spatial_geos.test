@@ -1,0 +1,65 @@
+# Pins the *shape* of the compiled-in spatial extension: GEOS only, with the
+# PROJ and GDAL modules compiled out (SPATIAL_USE_PROJ/GDAL=FALSE in
+# third_party/CMakeLists.txt).
+#
+# Spatial's own behaviour is covered by its vendored suite
+# (tests/duckdb/run.sh --suite spatial), so nothing here re-tests GEOS
+# semantics. What that suite cannot cover is exactly this file's subject:
+# the PROJ/GDAL tests are *skipped* there (tests/duckdb/config/spatial.json),
+# so without these asserts nothing would notice PROJ or GDAL being switched
+# back on, and USING RTREE is SereneDB catalog behaviour with no vendored
+# counterpart.
+#
+# The PROJ and GDAL entry points are registered as stubs that name their
+# module (see the SPATIAL_USE_PROJ / SPATIAL_USE_GDAL #else branches in
+# spatial_extension.cpp), so these asserts also pin that the diagnostic
+# stays specific -- DuckDB's own "not in the catalog, but it exists in the
+# spatial extension" path cannot tell a missing extension from a
+# partially-built one, and would claim spatial is not linked at all.
+#
+# The first query is a liveness check: it keeps the asserts below from
+# passing in a build where spatial is not linked.
+
+query
+SELECT ST_AsText(ST_Intersection('LINESTRING (0 0, 4 0)'::GEOMETRY,
+                                 'LINESTRING (2 0, 6 0)'::GEOMETRY)) AS geom;
+----
+geom
+LINESTRING (2 0, 4 0)
+
+
+# --- PROJ is compiled out: no ST_Transform, no *_Spheroid ---
+
+query error
+SELECT ST_Transform('POINT (0 0)'::GEOMETRY, 'EPSG:3857');
+----
+db error: ERROR: ST_Transform requires the spatial extension's PROJ module, which is not built into this SereneDB binary (it needs the PROJ and sqlite3 libraries).
+Please open an issue at https://github.com/serenedb/serenedb/issues/887 if you need it.
+
+
+query error
+SELECT ST_Area_Spheroid('POLYGON ((0 0, 1 0, 1 1, 0 1, 0 0))'::GEOMETRY);
+----
+db error: ERROR: ST_Area_Spheroid requires the spatial extension's PROJ module, which is not built into this SereneDB binary (it needs the PROJ and sqlite3 libraries).
+Please open an issue at https://github.com/serenedb/serenedb/issues/887 if you need it.
+
+
+# --- GDAL is compiled out: no ST_Read and no replacement scans ---
+
+query error
+SELECT * FROM ST_Read('nonexistent.geojson');
+----
+db error: ERROR: ST_Read requires the spatial extension's GDAL module, which is not built into this SereneDB binary (it needs the GDAL and expat libraries).
+Please open an issue at https://github.com/serenedb/serenedb/issues/887 if you need it.
+
+
+
+# --- spatial's RTREE index type stays unreachable on SereneDB tables ---
+
+statement ok
+CREATE TABLE shapes (id INTEGER, g GEOMETRY);
+
+statement error
+CREATE INDEX shapes_rtree ON shapes USING RTREE (g);
+----
+db error: ERROR: access method "rtree" does not exist

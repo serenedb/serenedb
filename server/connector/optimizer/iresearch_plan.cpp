@@ -61,6 +61,7 @@
 #include "pg/connection_context.h"
 #include "pg/errcodes.h"
 #include "pg/sql_exception_macro.h"
+#include "query/config.h"
 
 namespace sdb::optimizer {
 
@@ -540,11 +541,11 @@ duckdb::unique_ptr<duckdb::Expression> PushdownScorerCall(
 }
 
 uint32_t ReadSearchNprobe(duckdb::ClientContext& context) {
-  return connector::ReadIntSetting(context, "sdb_ivf_search_nprobe");
+  return ReadIntSetting(context, "sdb_ivf_search_nprobe");
 }
 
 uint32_t ReadMaxSearchFanout(duckdb::ClientContext& context) {
-  return connector::ReadIntSetting(context, "sdb_ivf_max_search_fanout");
+  return ReadIntSetting(context, "sdb_ivf_max_search_fanout");
 }
 
 duckdb::unique_ptr<duckdb::Expression> PushdownDistanceCall(

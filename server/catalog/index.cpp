@@ -49,6 +49,7 @@
 #include "pg/errcodes.h"
 #include "pg/sql_exception_macro.h"
 #include "pg/sql_utils.h"
+#include "query/config.h"
 
 namespace sdb::catalog {
 namespace {
@@ -543,21 +544,15 @@ void ApplyIncludedOpclass(
 }
 
 float ReadIVFSampleFactor(duckdb::ClientContext& context) {
-  duckdb::Value v;
-  context.TryGetCurrentSetting("sdb_ivf_sample_factor", v);
-  SDB_ASSERT(!v.IsNull());
-  const auto f = v.GetValue<double>();
+  const auto f = ReadDoubleSetting(context, "sdb_ivf_sample_factor");
   SDB_ASSERT(f > 0.0 && f <= 1.0);
   return static_cast<float>(f);
 }
 
 uint32_t ReadIVFPostingSize(duckdb::ClientContext& context) {
-  duckdb::Value v;
-  context.TryGetCurrentSetting("sdb_ivf_posting_size", v);
-  SDB_ASSERT(!v.IsNull());
-  const auto n = v.GetValue<int32_t>();
+  const auto n = ReadIntSetting(context, "sdb_ivf_posting_size");
   SDB_ASSERT(n >= 1);
-  return static_cast<uint32_t>(n);
+  return n;
 }
 
 void ApplyIVFOpclass(

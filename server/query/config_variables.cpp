@@ -52,6 +52,23 @@
 
 namespace sdb {
 
+uint32_t ReadIntSetting(duckdb::ClientContext& context, std::string_view name) {
+  duckdb::Value v;
+  auto res = context.TryGetCurrentSetting(std::string{name}, v);
+  SDB_ASSERT(res);
+  SDB_ASSERT(!v.IsNull());
+  return v.GetValue<uint32_t>();
+}
+
+double ReadDoubleSetting(duckdb::ClientContext& context,
+                         std::string_view name) {
+  duckdb::Value v;
+  auto res = context.TryGetCurrentSetting(std::string{name}, v);
+  SDB_ASSERT(res);
+  SDB_ASSERT(!v.IsNull());
+  return v.GetValue<double>();
+}
+
 using duckdb::LogicalTypeId;
 
 // Defined in network/pg/hba.cpp; declared here to drive the `hba` GUC without
@@ -408,17 +425,19 @@ constexpr std::pair<std::string_view, VariableDescription>
     {
       "sdb_rerank_factor",
       {
-        LogicalTypeId::INTEGER,
+        LogicalTypeId::DOUBLE,
         "Multiplier applied to LIMIT k to size the candidate pool re-scored "
         "with exact distances for a quantized IVF vector-similarity query "
-        "(pool = sdb_rerank_factor * k). Higher values improve recall at the "
-        "cost of latency; 0 disables reranking (top-k picked by the "
-        "approximate quantized distance). Default 4. Unquantized (quant = "
-        "'none') indexes never rerank, regardless of this setting.",
-        [] { return duckdb::Value::INTEGER(4); },
+        "(pool = ceil(sdb_rerank_factor * k)). Higher values improve recall "
+        "at the cost of latency; 0 disables reranking (top-k picked by the "
+        "approximate quantized distance). Fractional values are allowed, but "
+        "a nonzero factor below 1 is rejected because the pool must cover k. "
+        "Default 4. Unquantized (quant = 'none') indexes never rerank, "
+        "regardless of this setting.",
+        [] { return duckdb::Value::DOUBLE(4); },
         [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value& value) {
-          auto n = value.GetValue<int32_t>();
-          if (n < 0) {
+          auto n = value.GetValue<double>();
+          if (n < 0.0 || (n > 0.0 && n < 1.0)) {
             THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                             ERR_MSG("invalid value for parameter "
                                     "\"sdb_rerank_factor\": \"",

@@ -335,8 +335,6 @@ inline bool IsSereneDBScan(const duckdb::LogicalGet& get) {
   return get.bind_data && get.function.bind == &SereneDBScanBind;
 }
 
-uint32_t ReadIntSetting(duckdb::ClientContext& context, std::string_view name);
-
 std::optional<duckdb::LogicalType> GeneratedPkTypeOf(
   const SereneDBScanBindData& bind);
 

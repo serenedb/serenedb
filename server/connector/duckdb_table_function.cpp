@@ -60,15 +60,6 @@
 #include "search/inverted_index_storage.h"
 
 namespace sdb::connector {
-
-uint32_t ReadIntSetting(duckdb::ClientContext& context, std::string_view name) {
-  duckdb::Value v;
-  auto res = context.TryGetCurrentSetting(std::string{name}, v);
-  SDB_ASSERT(res);
-  SDB_ASSERT(!v.IsNull());
-  return v.GetValue<uint32_t>();
-}
-
 namespace {
 
 void CopyCommon(const SereneDBScanBindData& src, SereneDBScanBindData& dst) {

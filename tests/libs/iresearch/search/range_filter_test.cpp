@@ -1107,7 +1107,7 @@ TEST(by_range_test, ctor) {
   irs::ByRange q;
   ASSERT_EQ(irs::Type<irs::ByRange>::id(), q.type());
   ASSERT_EQ(irs::ByRangeOptions{}, q.options());
-  ASSERT_EQ(irs::kNoBoost, q.Boost());
+  ASSERT_EQ(irs::kNoBoost, q.GetBoost());
 }
 
 TEST(by_range_test, equal) {
@@ -1215,7 +1215,7 @@ TEST(by_range_test, boost) {
     q.mutable_options()->range.max =
       irs::ViewCast<irs::byte_type>(std::string_view("max_term"));
     q.mutable_options()->range.max_type = irs::BoundType::Inclusive;
-    q.boost(boost);
+    q.SetBoost(boost);
 
     tests::PreparedFilter prepared{q, irs::SubReader::empty()};
     ASSERT_EQ(boost, prepared.Query(0)->Boost());

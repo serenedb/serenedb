@@ -132,6 +132,192 @@ SELECT pk FROM docs_idx ORDER BY vb <=> [0,0,1,0]::FLOAT[4] LIMIT 1;
 pk
 3
 
+# --- hybrid: one ranking built from a text score and a vector distance -------
+#
+# Both scores are ordinary projections, so combining them needs no dedicated
+# surface -- the weight is what decides which signal wins. These pin that the
+# two are available together and that the trade-off actually moves the ranking.
+#
+# 'trail' / 'gear' picks docs 1, 3 and 4. IDF puts 3 above 4 (two matched terms
+# against one); the vector puts 4 above 3 (14.1 away against 141.4). So the
+# ranking they disagree on is the interesting one.
+
+query
+SELECT pk, round(IDF(docs_idx.tableoid)::DOUBLE, 3) AS idf,
+       round((va <-> [100,0,0]::FLOAT[3])::DOUBLE, 3) AS dist
+FROM docs_idx WHERE body @@ ts_any(['trail', 'gear']) ORDER BY pk;
+----
+pk	idf	dist
+1	1.414	0
+3	1.414	141.421
+4	0.539	14.142
+
+
+# Text alone: 3 before 4.
+query
+SELECT pk FROM docs_idx WHERE body @@ ts_any(['trail', 'gear'])
+ORDER BY IDF(docs_idx.tableoid) DESC, pk;
+----
+pk
+1
+3
+4
+
+
+# The vector alone disagrees: 4 before 3.
+query
+SELECT pk FROM docs_idx WHERE body @@ ts_any(['trail', 'gear'])
+ORDER BY va <-> [100,0,0]::FLOAT[3];
+----
+pk
+1
+4
+3
+
+
+# Weighted into one score, a small weight leaves the text ranking standing.
+query
+SELECT pk, round((IDF(docs_idx.tableoid)
+                  - (va <-> [100,0,0]::FLOAT[3]) * 0.001)::DOUBLE, 3) AS hybrid
+FROM docs_idx WHERE body @@ ts_any(['trail', 'gear'])
+ORDER BY hybrid DESC, pk;
+----
+pk	hybrid
+1	1.414
+3	1.273
+4	0.525
+
+
+# Ten times the weight and the vector takes over, flipping 3 and 4. That the
+# same query answers differently on the weight alone is the whole point: the
+# two scores are on unrelated scales, and nothing here normalises them.
+query
+SELECT pk, round((IDF(docs_idx.tableoid)
+                  - (va <-> [100,0,0]::FLOAT[3]) * 0.01)::DOUBLE, 3) AS hybrid
+FROM docs_idx WHERE body @@ ts_any(['trail', 'gear'])
+ORDER BY hybrid DESC, pk;
+----
+pk	hybrid
+1	1.414
+4	0.398
+3	0
+
+
+# A per-branch override composes with it: scoring one branch by a constant
+# makes the text side contribute a flat amount, leaving the vector to order
+# what is left.
+query
+SELECT pk, round((BM25(docs_idx.tableoid)
+                  - (va <-> [100,0,0]::FLOAT[3]) * 0.01)::DOUBLE, 3) AS hybrid
+FROM docs_idx
+WHERE (body @@ ts_any(['trail', 'gear']))::score('constant(1)')::merge('max')
+ORDER BY hybrid DESC, pk;
+----
+pk	hybrid
+1	1
+4	0.859
+3	-0.414
+
+
+# The plan for the weighted form. One IRESEARCH_SCAN carries the text filter and
+# the chosen text scorer, and the vector column is read from the index rather
+# than looked up in the table -- so both signals come out of a single scan.
+query
+EXPLAIN SELECT pk, IDF(docs_idx.tableoid)
+                   - (va <-> [100,0,0]::FLOAT[3]) * 0.01 AS hybrid
+FROM docs_idx WHERE body @@ ts_any(['trail', 'gear'])
+ORDER BY hybrid DESC, pk;
+----
+QUERY PLAN
+╭─ ORDER_BY ─────────────────────────────────────────────────────╮
+│ Order By:                                                      │
+│ va <-> CAST(list_value(100, 0, 0) AS FLOAT[3])) * 0.01)) DESC, │
+│ docs_idx.pk ASC                                                │
+│ ~1 row                                                         │
+╰────────────────────────────────┬───────────────────────────────╯
+╭─ PROJECTION ───────────────────┴───────────────────────────────╮
+│ Projections: pk, hybrid                                        │
+│ ~1 row                                                         │
+╰────────────────────────────────┬───────────────────────────────╯
+╭─ IRESEARCH_SCAN ───────────────┴───────────────────────────────╮
+│ Index: docs_idx                                                │
+│ Lookup: table                                                  │
+│ Index Filter:                                                  │
+│ ╭─ Terms ─────────────────╮                                    │
+│ │ Field: body(string)     │                                    │
+│ │ Values: 'gear', 'trail' │                                    │
+│ │ Min Match: 1            │                                    │
+│ ╰─────────────────────────╯                                    │
+│ Score: idf()                                                   │
+│ Projections: pk (l), va (i), sdb_inverted_index_score          │
+│ ~1 row                                                         │
+╰────────────────────────────────────────────────────────────────╯
+
+
+# Ordering by the vector alone, for contrast: the text side is a filter and
+# nothing asks for a text score.
+query
+EXPLAIN SELECT pk FROM docs_idx WHERE body @@ ts_any(['trail', 'gear'])
+ORDER BY va <-> [100,0,0]::FLOAT[3];
+----
+QUERY PLAN
+╭─ ORDER_BY ─────────────────────────────╮
+│ Order By: #1 ASC                       │
+│ ~1 row                                 │
+╰────────────────────┬───────────────────╯
+╭─ IRESEARCH_SCAN ───┴───────────────────╮
+│ Index: docs_idx                        │
+│ Lookup: table                          │
+│ Index Filter:                          │
+│ ╭─ Terms ─────────────────╮            │
+│ │ Field: body(string)     │            │
+│ │ Values: 'gear', 'trail' │            │
+│ │ Min Match: 1            │            │
+│ ╰─────────────────────────╯            │
+│ Score: l2_distance(va, FLOAT[3])       │
+│ Projections: pk,                       │
+│              sdb_inverted_index_score  │
+│ ~1 row                                 │
+╰────────────────────────────────────────╯
+
+
+# And with the text side pinned to a constant, which is how "rank the text
+# matches by vector alone" reads in a plan.
+query
+EXPLAIN SELECT pk, BM25(docs_idx.tableoid)
+                   - (va <-> [100,0,0]::FLOAT[3]) * 0.01 AS hybrid
+FROM docs_idx
+WHERE (body @@ ts_any(['trail', 'gear']))::score('constant(1)')::merge('max')
+ORDER BY hybrid DESC, pk;
+----
+QUERY PLAN
+╭─ ORDER_BY ─────────────────────────────────────────────────────╮
+│ Order By:                                                      │
+│ va <-> CAST(list_value(100, 0, 0) AS FLOAT[3])) * 0.01)) DESC, │
+│ docs_idx.pk ASC                                                │
+│ ~1 row                                                         │
+╰────────────────────────────────┬───────────────────────────────╯
+╭─ PROJECTION ───────────────────┴───────────────────────────────╮
+│ Projections: pk, hybrid                                        │
+│ ~1 row                                                         │
+╰────────────────────────────────┬───────────────────────────────╯
+╭─ IRESEARCH_SCAN ───────────────┴───────────────────────────────╮
+│ Index: docs_idx                                                │
+│ Lookup: table                                                  │
+│ Index Filter:                                                  │
+│ ╭─ Terms ──────────────────╮                                   │
+│ │ Field: body(string)      │                                   │
+│ │ Values: 'gear', 'trail'  │                                   │
+│ │ Min Match: 1             │                                   │
+│ │ Merge: max               │                                   │
+│ │ Score: constant(value=1) │                                   │
+│ ╰──────────────────────────╯                                   │
+│ Score: bm25(k1=1.2, b=0.75)                                    │
+│ Projections: pk (l), va (i), sdb_inverted_index_score          │
+│ ~1 row                                                         │
+╰────────────────────────────────────────────────────────────────╯
+
+
 # --- hybrid: text filter + vector ordering -----------------------------------
 
 query

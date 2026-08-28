@@ -123,7 +123,7 @@ class TermFilterTestCase : public tests::FilterTestCaseBase {
 
     // create filter
     irs::ByTerm filter = MakeFilter(kNameId, "A");
-    filter.boost(0.f);
+    filter.SetBoost(0.f);
 
     // create order
 
@@ -137,7 +137,6 @@ class TermFilterTestCase : public tests::FilterTestCaseBase {
       auto docs = prep.Execute(0);
 
       auto score = docs->PrepareScore({
-        .scorer = &scorer,
         .segment = &*(rdr.begin()),
       });
 
@@ -159,12 +158,11 @@ class TermFilterTestCase : public tests::FilterTestCaseBase {
     // with boost
     {
       const irs::score_t value = 5;
-      filter.boost(value);
+      filter.SetBoost(value);
 
       tests::PreparedFilter prep{filter, rdr, &scorer, counter};
       auto docs = prep.Execute(0);
       auto score = docs->PrepareScore({
-        .scorer = &scorer,
         .segment = &*(rdr.begin()),
       });
 
@@ -517,7 +515,6 @@ class TermFilterTestCase : public tests::FilterTestCaseBase {
       auto docs = prep.Execute(0);
 
       auto score = docs->PrepareScore({
-        .scorer = &scorer,
         .segment = &*(rdr.begin()),
       });
 
@@ -697,7 +694,7 @@ TEST(by_term_test, ctor) {
   ASSERT_EQ(irs::Type<irs::ByTerm>::id(), q.type());
   ASSERT_EQ(irs::ByTermOptions{}, q.options());
   ASSERT_EQ(irs::field_limits::invalid(), q.field_id());
-  ASSERT_EQ(irs::kNoBoost, q.Boost());
+  ASSERT_EQ(irs::kNoBoost, q.GetBoost());
 }
 
 TEST(by_term_test, equal) {
@@ -728,7 +725,7 @@ TEST(by_term_test, boost) {
   {
     irs::score_t boost = 1.5f;
     irs::ByTerm q = MakeFilter(kField, "term");
-    q.boost(boost);
+    q.SetBoost(boost);
 
     tests::PreparedFilter prepared{q, irs::SubReader::empty(), nullptr,
                                    counter};

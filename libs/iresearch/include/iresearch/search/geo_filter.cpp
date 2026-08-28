@@ -93,9 +93,8 @@ class GeoIterator : public DocIterator {
  public:
   GeoIterator(DocIterator::ptr&& approx, const ColumnReader& stored_field,
               const ColReader& col_reader, Parser& parser, Acceptor& acceptor,
-              FieldProperties field, const byte_type* query_stats,
-              score_t boost)
-    : _stats{query_stats},
+              FieldProperties field, ScoreSource score, score_t boost)
+    : _score{score},
       _boost{boost},
       _field{field},
       _approx{std::move(approx)},
@@ -112,13 +111,13 @@ class GeoIterator : public DocIterator {
   }
 
   ScoreFunction PrepareScore(const PrepareScoreContext& ctx) final {
-    SDB_ASSERT(ctx.scorer);
-    return ctx.scorer->PrepareScorer({
+    SDB_ASSERT(_score.scorer);
+    return _score.scorer->PrepareScorer({
       .segment = *ctx.segment,
       .field = _field,
       .doc_attrs = *this,
       .fetcher = ctx.fetcher,
-      .stats = _stats,
+      .stats = _score.stats,
       .boost = _boost,
     });
   }
@@ -179,7 +178,7 @@ class GeoIterator : public DocIterator {
 
   using Attributes = std::tuple<CostAttr>;
 
-  const byte_type* _stats = nullptr;
+  ScoreSource _score;
   score_t _boost = {};
   FieldProperties _field;
 
@@ -196,8 +195,8 @@ DocIterator::ptr MakeIterator(typename Disjunction::Adapters&& itrs,
                               const ColumnReader& stored_field,
                               const ColReader& col_reader,
                               const SubReader& reader, const TermReader& field,
-                              const byte_type* query_stats, score_t boost,
-                              Parser& parser, Acceptor& acceptor) {
+                              ScoreSource score, score_t boost, Parser& parser,
+                              Acceptor& acceptor) {
   if (itrs.empty()) [[unlikely]] {
     return DocIterator::empty();
   }
@@ -206,8 +205,7 @@ DocIterator::ptr MakeIterator(typename Disjunction::Adapters&& itrs,
     // TODO(mbkkt) by_terms? LazyBitsetIterator faster than disjunction
     MakeDisjunction<Disjunction>(
       {}, static_cast<irs::doc_id_t>(reader.docs_count()), std::move(itrs)),
-    stored_field, col_reader, parser, acceptor, field.meta(), query_stats,
-    boost);
+    stored_field, col_reader, parser, acceptor, field.meta(), score, boost);
 }
 
 struct GeoState {
@@ -249,7 +247,8 @@ class GeoQuery : public QueryBuilder {
     itrs.reserve(_state.states.size());
 
     for (auto& entry : _state.states) {
-      auto it = field->Iterator(IndexFeatures::None, {.cookie = &entry});
+      auto it =
+        field->Iterator(GetFeatures(stats.GetScorer()), {.cookie = &entry});
       if (!it || doc_limits::eof(it->value())) [[unlikely]] {
         continue;
       }
@@ -257,8 +256,8 @@ class GeoQuery : public QueryBuilder {
     }
 
     return MakeIterator(std::move(itrs), *_state.stored_field, *col_reader,
-                        segment, *_state.reader, stats.GetStats().data(),
-                        Boost(), _parser, _acceptor);
+                        segment, *_state.reader, stats.Source(), Boost(),
+                        _parser, _acceptor);
   }
 
   void Visit(PreparedStateVisitor&, score_t) const final {}
@@ -867,7 +866,7 @@ QueryBuilder::ptr GeoFilter::PrepareSegment(const SubReader& segment,
   auto state =
     PrepareState(segment, ctx, geo_terms, field_id(), options.store_field_id);
 
-  const auto boost = ctx.boost * this->Boost();
+  const auto boost = ctx.boost * this->GetBoost();
 
   switch (options.type) {
     case GeoFilterType::Intersects:
@@ -893,7 +892,7 @@ QueryBuilder::ptr GeoFilter::PrepareSegment(const SubReader& segment,
   return QueryBuilder::Empty();
 }
 
-PrepareCollector::ptr GeoFilter::MakeCollector(const Scorer* scorer) const {
+PrepareCollector::ptr GeoFilter::MakeCollectorImpl(const Scorer* scorer) const {
   return GeoCollector(scorer);
 }
 
@@ -904,7 +903,7 @@ QueryBuilder::ptr GeoDistanceFilter::PrepareSegment(
   const auto lower_bound = BoundType::Unbounded != range.min_type;
   const auto upper_bound = BoundType::Unbounded != range.max_type;
   auto sub_ctx = ctx;
-  sub_ctx.Boost(Boost());
+  sub_ctx.Boost(GetBoost());
 
   if (!lower_bound && !upper_bound) {
     return MatchAll(segment, sub_ctx);
@@ -917,7 +916,7 @@ QueryBuilder::ptr GeoDistanceFilter::PrepareSegment(
   }
 }
 
-PrepareCollector::ptr GeoDistanceFilter::MakeCollector(
+PrepareCollector::ptr GeoDistanceFilter::MakeCollectorImpl(
   const Scorer* scorer) const {
   const auto& options = this->options();
   const auto& range = options.range;

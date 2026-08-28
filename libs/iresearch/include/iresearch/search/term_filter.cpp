@@ -98,7 +98,7 @@ QueryBuilder::ptr ByTerm::PrepareSegment(const SubReader& segment,
                                          ctx.boost);
 }
 
-PrepareCollector::ptr ByTerm::MakeCollector(const Scorer* scorer) const {
+PrepareCollector::ptr ByTerm::MakeCollectorImpl(const Scorer* scorer) const {
   return std::make_unique<ByTermsCollector>(scorer, 1);
 }
 

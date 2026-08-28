@@ -56,7 +56,7 @@ ScoreAdapters MakeScoreAdapters(const ExecutionContext& outer,
   ScoreAdapters itrs;
   itrs.reserve(size);
   ExecutionContext ctx{outer};
-  ctx.score_prune = false;
+  ctx.prune_scorer = nullptr;
   for (size_t index = 0; begin != end; ++begin, ++index) {
     auto docs = ExecuteChild(ctx, stats, *begin, index);
 
@@ -99,8 +99,8 @@ DocIterator::ptr MakeDisjunction(const ExecutionContext& ctx,
     [&]<ScoreMergeType MergeType> {
       using Disjunction = DisjunctionIterator<ScoreAdapter, MergeType>;
       return MakeDisjunction<Disjunction>(
-        ctx.score_prune, static_cast<doc_id_t>(docs_count), std::move(itrs),
-        std::forward<Args>(args)...);
+        MayScorePrune(ctx, stats), static_cast<doc_id_t>(docs_count),
+        std::move(itrs), std::forward<Args>(args)...);
     });
 }
 
@@ -127,7 +127,7 @@ DocIterator::ptr MakeConjunction(const ExecutionContext& ctx,
   }
 
   return MakeConjunction(scorer ? merge_type : ScoreMergeType::Noop,
-                         ctx.score_prune, docs_count, std::move(itrs),
+                         MayScorePrune(ctx, stats), docs_count, std::move(itrs),
                          std::forward<Args>(args)...);
 }
 
@@ -143,7 +143,7 @@ DocIterator::ptr ExclusionQuery::Execute(const ExecutionContext& old,
     old, has_children ? stats.Child(0) : StatsBuffer::Empty());
 
   ExecutionContext ctx{old};
-  ctx.score_prune = false;
+  ctx.prune_scorer = nullptr;
 
   ScoreAdapters excl_itrs;
   excl_itrs.reserve(_excludes.size());
@@ -289,7 +289,7 @@ DocIterator::ptr MinMatchQuery::Execute(const ExecutionContext& ctx,
       // FIXME(gnusi): use FAST version
       using Disjunction = MinMatchIterator<ScoreAdapter, MergeType>;
       return MakeWeakDisjunction<Disjunction>(
-        ctx.score_prune, static_cast<doc_id_t>(_segment.docs_count()),
+        MayScorePrune(ctx, stats), static_cast<doc_id_t>(_segment.docs_count()),
         std::move(itrs), min_match_count);
     });
 }
@@ -298,7 +298,7 @@ DocIterator::ptr BoostQuery::Execute(const ExecutionContext& old,
                                      const StatsBuffer& stats) const {
   ExecutionContext ctx{old};
   // TODO(mbkkt) enable back?
-  ctx.score_prune = false;
+  ctx.prune_scorer = nullptr;
 
   const bool has_children = stats.ChildCount() != 0;
   const auto* scorer = stats.GetScorer();

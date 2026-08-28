@@ -69,7 +69,7 @@ bool NotSimplifyRule::Apply(Filter::ptr& slot, const OptimizeContext& /*ctx*/) {
   auto* inner = &slot;
   while ((*inner)->type() == Type<Not>::id()) {
     auto& node = sdb::basics::downCast<Not>(**inner);
-    SDB_ASSERT(node.Boost() == kNoBoost);
+    SDB_ASSERT(node.GetBoost() == kNoBoost);
     if (!node.mutable_filter()) {
       return false;
     }
@@ -101,7 +101,7 @@ bool NotLowerRule::Apply(Filter::ptr& slot, const OptimizeContext& /*ctx*/) {
   if (auto& inner = node.mutable_filter(); inner) {
     exclusion->exclude(std::move(inner));
   }
-  exclusion->boost(node.Boost());
+  exclusion->SetBoost(node.GetBoost());
   slot = std::move(exclusion);
   return true;
 }
@@ -113,10 +113,10 @@ bool ExclusionRule::Apply(Filter::ptr& slot, const OptimizeContext& ctx) {
     return false;
   }
   if (!incl) {
-    slot = AllDocsProvider::Default(node.Boost());
+    slot = AllDocsProvider::Default(node.GetBoost());
     return true;
   }
-  if (!TryFoldBoost(*incl, node.Boost(), ctx.scored)) {
+  if (!TryFoldBoost(*incl, node.GetBoost(), ctx.scored)) {
     return false;
   }
   slot = std::move(incl);
@@ -145,7 +145,7 @@ bool ExclusionDoubleNegationRule::Apply(Filter::ptr& slot,
     return false;
   }
   if (!negated) {
-    if (!TryFoldBoost(**inner, node.Boost(), ctx.scored)) {
+    if (!TryFoldBoost(**inner, node.GetBoost(), ctx.scored)) {
       return false;
     }
     slot = std::move(*inner);
@@ -153,7 +153,7 @@ bool ExclusionDoubleNegationRule::Apply(Filter::ptr& slot,
   }
   auto exclusion = std::make_unique<Exclusion>();
   exclusion->exclude(std::move(*inner));
-  exclusion->boost(node.Boost());
+  exclusion->SetBoost(node.GetBoost());
   slot = std::move(exclusion);
   return true;
 }

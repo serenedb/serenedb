@@ -152,7 +152,7 @@ TEST(WildcardNgramFilterTest, ctor) {
   EXPECT_EQ(irs::Type<irs::ByWildcardNgram>::id(), q.type());
   EXPECT_EQ(irs::ByWildcardNgramOptions{}, q.options());
   EXPECT_EQ(irs::field_limits::invalid(), q.field_id());
-  EXPECT_EQ(irs::kNoBoost, q.Boost());
+  EXPECT_EQ(irs::kNoBoost, q.GetBoost());
 }
 
 TEST(WildcardNgramFilterTest, equal) {

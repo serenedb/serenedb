@@ -56,6 +56,19 @@ using duckdb::ExplainNode;
 using sdb::basics::downCast;
 using sdb::catalog::term_dict::Kind;
 
+void AddMergeAttribute(ExplainNode& node, ScoreMergeType merge) {
+  switch (merge) {
+    case ScoreMergeType::Max:
+      node.attributes["Merge"] = "max";
+      break;
+    case ScoreMergeType::Noop:
+      node.attributes["Merge"] = "noop";
+      break;
+    case ScoreMergeType::Sum:
+      break;
+  }
+}
+
 // Prints a binary term byte-by-byte, escaping non-printable chars.
 template<typename Term>
 std::string TermToString(Term term) {
@@ -317,8 +330,16 @@ struct FilterPrinter {
   }
 
   ExplainNode Build(const Filter& filter) const {
+    auto node = BuildImpl(filter);
+    if (const auto* scorer = filter.GetScorer()) {
+      node.attributes["Score"] = scorer->ToString();
+    }
+    return node;
+  }
+
+  ExplainNode BuildImpl(const Filter& filter) const {
     auto node = BuildNode(filter);
-    if (const auto boost = filter.BoostImpl(); boost != kNoBoost) {
+    if (const auto boost = filter.GetBoost(); boost != kNoBoost) {
       node.attributes["Boost"] = absl::StrCat(boost);
     }
     return node;
@@ -331,6 +352,7 @@ struct FilterPrinter {
     }
     if (type == Type<And>::id()) {
       ExplainNode node{"And"};
+      AddMergeAttribute(node, downCast<const And>(filter).merge_type());
       for (const auto& sub : downCast<const And>(filter)) {
         node.children.push_back(Build(*sub));
       }
@@ -342,6 +364,7 @@ struct FilterPrinter {
       if (f.min_match_count() != 1) {
         node.attributes["Min Match"] = absl::StrCat(f.min_match_count());
       }
+      AddMergeAttribute(node, f.merge_type());
       for (const auto& sub : f) {
         node.children.push_back(Build(*sub));
       }
@@ -392,6 +415,7 @@ struct FilterPrinter {
       node.attributes["Field"] = FieldName(f.field_id());
       node.attributes["Values"] = TermsList(f, FieldKind(f.field_id()));
       node.attributes["Min Match"] = absl::StrCat(f.options().min_match);
+      AddMergeAttribute(node, f.options().merge_type);
       return node;
     }
     if (type == Type<ByRange>::id()) {

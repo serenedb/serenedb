@@ -98,7 +98,7 @@ bool WildcardSimplifyRule::Apply(Filter::ptr& slot,
       auto filter = std::make_unique<ByTerm>();
       *filter->mutable_field_id() = node.field_id();
       filter->mutable_options()->term = term;
-      filter->boost(node.Boost());
+      filter->SetBoost(node.GetBoost());
       return filter;
     },
     [&](bytes_view term) -> Filter::ptr {
@@ -107,7 +107,7 @@ bool WildcardSimplifyRule::Apply(Filter::ptr& slot,
       filter->mutable_options()->term = term;
       filter->mutable_options()->scored_terms_limit =
         node.options().scored_terms_limit;
-      filter->boost(node.Boost());
+      filter->SetBoost(node.GetBoost());
       return filter;
     },
     [](bytes_view) -> Filter::ptr { return nullptr; });
@@ -128,7 +128,7 @@ bool RegexpSimplifyRule::Apply(Filter::ptr& slot,
       auto filter = std::make_unique<ByTerm>();
       *filter->mutable_field_id() = node.field_id();
       filter->mutable_options()->term = term;
-      filter->boost(node.Boost());
+      filter->SetBoost(node.GetBoost());
       return filter;
     },
     [&](bytes_view prefix) -> Filter::ptr {
@@ -137,7 +137,7 @@ bool RegexpSimplifyRule::Apply(Filter::ptr& slot,
       filter->mutable_options()->term = prefix;
       filter->mutable_options()->scored_terms_limit =
         node.options().scored_terms_limit;
-      filter->boost(node.Boost());
+      filter->SetBoost(node.GetBoost());
       return filter;
     },
     [](bytes_view) -> Filter::ptr { return nullptr; });
@@ -161,7 +161,7 @@ bool EditDistanceSimplifyRule::Apply(Filter::ptr& slot,
   target.reserve(opts.prefix.size() + opts.term.size());
   target += opts.prefix;
   target += opts.term;
-  filter->boost(node.Boost());
+  filter->SetBoost(node.GetBoost());
   slot = std::move(filter);
   return true;
 }
@@ -179,7 +179,7 @@ bool PhraseSimplifyRule::Apply(Filter::ptr& slot, const OptimizeContext&) {
   *term->mutable_field_id() = phrase.field_id();
   *term->mutable_options() =
     std::move(std::get<ByTermOptions>(phrase.mutable_options()->begin()->part));
-  term->boost(phrase.Boost());
+  term->SetBoost(phrase.GetBoost());
   slot = std::move(term);
   return true;
 }
@@ -205,7 +205,7 @@ bool NGramSimilarityLowerRule::Apply(Filter::ptr& slot,
     for (const auto& ngram : ngrams) {
       options->terms.emplace(ngram, kNoBoost);
     }
-    by_terms->boost(node.Boost());
+    by_terms->SetBoost(node.GetBoost());
     slot = std::move(by_terms);
     return true;
   }
@@ -217,7 +217,7 @@ bool NGramSimilarityLowerRule::Apply(Filter::ptr& slot,
     for (const auto& ngram : ngrams) {
       options->push_back(ByTermOptions{ngram});
     }
-    by_phrase->boost(node.Boost());
+    by_phrase->SetBoost(node.GetBoost());
     slot = std::move(by_phrase);
     return true;
   }
@@ -240,15 +240,15 @@ void LowerNode(Filter::ptr& slot) {
   if (type == Type<ByWildcard>::id()) {
     auto& node = sdb::basics::downCast<ByWildcard>(*slot);
     slot = LowerWildcard(node.field_id(), node.options().term,
-                         node.options().scored_terms_limit, node.Boost());
+                         node.options().scored_terms_limit, node.GetBoost());
   } else if (type == Type<ByRegexp>::id()) {
     auto& node = sdb::basics::downCast<ByRegexp>(*slot);
     slot = LowerRegexp(node.field_id(), node.options().pattern,
                        node.options().syntax, node.options().scored_terms_limit,
-                       node.Boost());
+                       node.GetBoost());
   } else if (type == Type<ByEditDistance>::id()) {
     auto& node = sdb::basics::downCast<ByEditDistance>(*slot);
-    slot = LowerLevenshtein(node.field_id(), node.options(), node.Boost());
+    slot = LowerLevenshtein(node.field_id(), node.options(), node.GetBoost());
   }
 }
 

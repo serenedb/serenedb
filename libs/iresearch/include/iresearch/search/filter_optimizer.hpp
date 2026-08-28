@@ -63,7 +63,17 @@ void TraverseFilter(Filter::ptr& root, Visit&& visit) {
   while (!stack.empty()) {
     auto& frame = stack.back();
     if (frame.children_visited) {
+      // A visitor may replace the node outright -- lowering a wildcard to an
+      // automaton, fusing terms into a ByTerms. Its scorer applies to the whole
+      // subtree, so the replacement inherits it unless it brought one of its
+      // own; otherwise a `::score` on a rewritten node would be dropped. Only
+      // replacement is mechanical like this: a rule that *absorbs* a sibling
+      // has to decide for itself whether the scorers agree.
+      const auto* scorer = (**frame.slot).GetScorer();
       visit(*frame.slot);
+      if (scorer && *frame.slot && !(**frame.slot).GetScorer()) {
+        (**frame.slot).SetScorer(scorer);
+      }
       stack.pop_back();
       continue;
     }

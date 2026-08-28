@@ -24,6 +24,7 @@
 #include <utility>
 
 #include "basics/memory.hpp"
+#include "iresearch/search/collectors.hpp"
 #include "iresearch/search/vector_filter_util.hpp"
 #include "iresearch/search/vector_similarity_query.hpp"
 
@@ -41,7 +42,12 @@ QueryBuilder::ptr ByVectorSimilarity::PrepareSegment(
 
   return memory::make_tracked<KnnVectorQuery>(
     ctx.memory, segment, std::move(state), std::span<const float>{opts.query},
-    opts.metric, ctx.boost * Boost(), std::move(inner));
+    opts.metric, ctx.boost * GetBoost(), std::move(inner));
+}
+
+PrepareCollector::ptr ByVectorSimilarity::MakeCollectorImpl(
+  const Scorer* scorer) const {
+  return std::make_unique<AllCollector>(scorer);
 }
 
 }  // namespace irs

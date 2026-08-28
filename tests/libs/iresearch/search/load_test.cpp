@@ -822,7 +822,6 @@ class TermScoreOracle {
         continue;
       }
       t.score = t.it->PrepareScore({
-        .scorer = &scorer,
         .segment = &segment,
         .fetcher = &t.fetcher,
       });
@@ -1008,7 +1007,6 @@ TEST_F(LoadTest, DisjunctionScoreAccuracy) {
 
         irs::ColumnArgsFetcher fetcher;
         auto score_func = it->PrepareScore({
-          .scorer = &scorer,
           .segment = &segment,
           .fetcher = &fetcher,
         });
@@ -1039,7 +1037,6 @@ TEST_F(LoadTest, DisjunctionScoreAccuracy) {
         irs::ColumnArgsFetcher fetcher;
         auto it = prepared.Execute(i);
         auto score_func = it->PrepareScore({
-          .scorer = &scorer,
           .segment = &segment,
           .fetcher = &fetcher,
         });

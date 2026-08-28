@@ -67,3 +67,22 @@ FROM (SELECT TFIDF(wc_score_idx.tableoid) AS score
 ----
 distinct_scores	total_matches
 1	3
+
+# A per-node ::score(...) override is rejected here by name. Every other leaf
+# kind resolves its scorer from the node it was collected for, but this one
+# returns Constant(kNoBoost) and ignores the context entirely, so an override
+# would be accepted and then do nothing.
+query error ::score\(\.\.\.\) cannot apply to a wildcard n-gram match
+SELECT id FROM wc_score_idx WHERE (body @@ ts_like('%analy%'))::score('raw_tf()')
+
+# The constant is unchanged when the override sits on a group around it: the
+# override reaches the branch, and the branch still ignores it. Asserting the
+# distinct count rather than a value keeps this about the contract.
+query
+SELECT COUNT(DISTINCT score) AS distinct_scores, COUNT(*) AS total_matches
+FROM (SELECT BM25(wc_score_idx.tableoid) AS score
+      FROM wc_score_idx
+      WHERE (body @@ ts_like('%analy%') OR body @@ 'nothing')::score(NULL)) t
+----
+distinct_scores	total_matches
+1	3

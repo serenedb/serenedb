@@ -40,6 +40,10 @@ class RawTF final : public irs::ScorerBase<RawTF, void> {
     bool operator==(const Options&) const = default;
   };
 
+  static ScoreBoundType BoundTypeOf(const Options&) noexcept {
+    return ScoreBoundType::MaxFreq;
+  }
+
   static std::unique_ptr<RawTF> Make(const Options& /*opts*/) {
     return std::make_unique<RawTF>();
   }
@@ -49,6 +53,12 @@ class RawTF final : public irs::ScorerBase<RawTF, void> {
   IndexFeatures GetIndexFeatures() const noexcept final {
     return IndexFeatures::Freq;
   }
+
+  ScoreBoundWriter::ptr PrepareScoreBoundWriter(size_t max_levels) const final;
+
+  ScoreBoundSource::ptr PrepareScoreBoundSource() const final;
+
+  bool Compatible(const ScorerOptions& persisted) const noexcept final;
 
   ScoreFunction PrepareScorer(const ScoreContext& ctx) const final;
 };

@@ -73,7 +73,7 @@ void FromNgram(irs::BooleanFilter& filter, const FilterContext& ctx,
 
   auto& ngram =
     AddMaybeNegated<irs::ByNGramSimilarity>(filter, ctx, column_info);
-  ngram.boost(ctx.boost);
+  ngram.SetBoost(ctx.boost);
   *ngram.mutable_field_id() =
     PickPerKindFieldId(column_info, duckdb::LogicalTypeId::VARCHAR);
   ngram.mutable_options()->threshold = threshold;

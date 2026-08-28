@@ -143,7 +143,6 @@ std::map<irs::doc_id_t, irs::score_t> IdfIndexTest::Score(
   irs::ColumnArgsFetcher fetcher;
   auto docs = prepared.Execute(0);
   auto score = docs->PrepareScore({
-    .scorer = impl.get(),
     .segment = &segment,
     .fetcher = &fetcher,
   });

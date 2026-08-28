@@ -1499,7 +1499,7 @@ struct InetTextCore {
 
 std::string RenderTsqueryRow(const duckdb::RecursiveUnifiedVectorFormat& vdata,
                              duckdb::idx_t row) {
-  const auto read_string = [&](duckdb::idx_t child) -> std::string_view {
+  const auto read_string = [&](duckdb::idx_t child) -> std::string {
     const auto& unified = vdata.children[child].unified;
     const auto idx = unified.sel->get_index(row);
     if (!unified.validity.RowIsValid(idx)) {
@@ -1507,18 +1507,31 @@ std::string RenderTsqueryRow(const duckdb::RecursiveUnifiedVectorFormat& vdata,
     }
     const auto& raw =
       duckdb::UnifiedVectorFormat::GetData<duckdb::string_t>(unified)[idx];
-    return {raw.GetData(), raw.GetSize()};
+    return std::string{raw.GetData(), raw.GetSize()};
   };
+  connector::TSQueryParts parts;
+  parts.text = read_string(connector::kTSQueryTextChild);
+  parts.tokenizer = read_string(connector::kTSQueryTokenizerChild);
+  parts.scorer = read_string(connector::kTSQueryScorerChild);
   const auto& boost_child =
     vdata.children[connector::kTSQueryBoostChild].unified;
-  float boost = 1.0f;
   if (const auto idx = boost_child.sel->get_index(row);
       boost_child.validity.RowIsValid(idx)) {
-    boost = duckdb::UnifiedVectorFormat::GetData<float>(boost_child)[idx];
+    parts.boost = duckdb::UnifiedVectorFormat::GetData<float>(boost_child)[idx];
   }
-  return connector::RenderTSQuery(
-    read_string(connector::kTSQueryTextChild),
-    read_string(connector::kTSQueryTokenizerChild), boost);
+  const auto& slop_child = vdata.children[connector::kTSQuerySlopChild].unified;
+  if (const auto idx = slop_child.sel->get_index(row);
+      slop_child.validity.RowIsValid(idx)) {
+    parts.slop = duckdb::UnifiedVectorFormat::GetData<int64_t>(slop_child)[idx];
+  }
+  const auto& merge_child =
+    vdata.children[connector::kTSQueryMergeChild].unified;
+  if (const auto idx = merge_child.sel->get_index(row);
+      merge_child.validity.RowIsValid(idx)) {
+    parts.merge = static_cast<connector::TSQueryMerge>(
+      duckdb::UnifiedVectorFormat::GetData<uint8_t>(merge_child)[idx]);
+  }
+  return connector::RenderTSQueryValueText(parts);
 }
 
 template<WrapContext InContainer>

@@ -247,7 +247,6 @@ EmitResult Executor::ExecuteEmitScoredDocs(std::string_view query,
     }
     auto docs = query->Execute({}, stats);
     auto score_func = docs->PrepareScore({
-      .scorer = _scorer_ptr,
       .segment = &segment,
       .fetcher = &fetcher,
     });

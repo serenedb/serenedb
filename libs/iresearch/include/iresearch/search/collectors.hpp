@@ -24,7 +24,9 @@
 
 #include <absl/functional/function_ref.h>
 
+#include <algorithm>
 #include <memory>
+#include <ranges>
 #include <span>
 #include <vector>
 
@@ -69,7 +71,9 @@ class StatsBuffer {
 
   StatsBuffer() noexcept : _stats{{IResourceManager::gNoop}} {}
   StatsBuffer(Storage&& stats, const Scorer* scorer)
-    : _stats{std::move(stats)}, _scorer{scorer} {}
+    : _stats{std::move(stats)}, _scorer{scorer} {
+    SDB_ASSERT(_scorer || _stats.empty());
+  }
 
   static const StatsBuffer& Empty() noexcept {
     static const StatsBuffer kEmpty;
@@ -77,11 +81,16 @@ class StatsBuffer {
   }
 
   bool HasScorer() const noexcept { return _scorer != nullptr; }
-  bytes_view GetStats() const noexcept {
-    return _stats.empty() ? bytes_view{} : bytes_view{_stats.front()};
-  }
-  const Storage& GetAllStats() const noexcept { return _stats; }
   const Scorer* GetScorer() const noexcept { return _scorer; }
+  const Storage& GetAllStats() const noexcept { return _stats; }
+
+  const byte_type* Stats(size_t i = 0) const noexcept {
+    return i < _stats.size() ? _stats[i].c_str() : nullptr;
+  }
+
+  ScoreSource Source(size_t i = 0) const noexcept {
+    return {_scorer, Stats(i)};
+  }
 
   void AddChild(StatsBuffer&& child) {
     _children.emplace_back(std::move(child));

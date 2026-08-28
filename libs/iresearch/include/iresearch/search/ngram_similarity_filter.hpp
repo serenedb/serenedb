@@ -58,10 +58,10 @@ class ByNGramSimilarity : public FilterWithField<ByNGramSimilarityOptions> {
   QueryBuilder::ptr PrepareSegment(const SubReader& segment,
                                    const PrepareContext& ctx) const final {
     return PrepareSegment(segment, ctx, field_id(), options().ngrams,
-                          options().threshold, Boost());
+                          options().threshold, GetBoost());
   }
 
-  PrepareCollector::ptr MakeCollector(const Scorer* scorer) const final;
+  PrepareCollector::ptr MakeCollectorImpl(const Scorer* scorer) const final;
 };
 
 }  // namespace irs

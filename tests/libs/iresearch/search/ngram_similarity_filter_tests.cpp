@@ -91,7 +91,7 @@ TEST(ngram_similarity_base_test, ctor) {
   irs::ByNGramSimilarity q;
   ASSERT_EQ(irs::Type<irs::ByNGramSimilarity>::id(), q.type());
   ASSERT_EQ(irs::ByNGramSimilarityOptions{}, q.options());
-  ASSERT_EQ(irs::kNoBoost, q.Boost());
+  ASSERT_EQ(irs::kNoBoost, q.GetBoost());
   ASSERT_EQ(irs::field_limits::invalid(), q.field_id());
 
   static_assert((irs::IndexFeatures::Freq | irs::IndexFeatures::Pos) ==
@@ -195,7 +195,7 @@ TEST_P(NGramSimilarityFilterTestCase, boost) {
     // no terms, return empty query
     {
       irs::ByNGramSimilarity q;
-      q.boost(boost);
+      q.SetBoost(boost);
 
       tests::PreparedFilter prepared{*tests::Optimized(std::move(q)), segment,
                                      nullptr, counter};
@@ -208,7 +208,7 @@ TEST_P(NGramSimilarityFilterTestCase, boost) {
     // simple disjunction
     {
       irs::ByNGramSimilarity q = MakeFilter(kFieldFieldId, {"1", "2"}, 0.5f);
-      q.boost(boost);
+      q.SetBoost(boost);
 
       tests::PreparedFilter prepared{*tests::Optimized(std::move(q)), segment,
                                      nullptr, counter};
@@ -222,7 +222,7 @@ TEST_P(NGramSimilarityFilterTestCase, boost) {
     {
       irs::ByNGramSimilarity q =
         MakeFilter(kFieldFieldId, {"1", "2", "3", "4"}, 0.5f);
-      q.boost(boost);
+      q.SetBoost(boost);
 
       tests::PreparedFilter prepared{*tests::Optimized(std::move(q)), segment,
                                      nullptr, counter};
@@ -258,7 +258,6 @@ TEST_P(NGramSimilarityFilterTestCase, check_matcher_1) {
     for (size_t i = 0; const auto& sub : rdr) {
       auto docs = prepared.Execute(i);
       auto score_function = docs->PrepareScore({
-        .scorer = &sort,
         .segment = &sub,
       });
       auto* frequency = irs::get<irs::FreqBlockAttr>(*docs);
@@ -306,7 +305,6 @@ TEST_P(NGramSimilarityFilterTestCase, check_matcher_2) {
     for (size_t i = 0; const auto& sub : rdr) {
       auto docs = prepared.Execute(i);
       auto score_function = docs->PrepareScore({
-        .scorer = &sort,
         .segment = &sub,
       });
       auto* frequency = irs::get<irs::FreqBlockAttr>(*docs);
@@ -354,7 +352,6 @@ TEST_P(NGramSimilarityFilterTestCase, check_matcher_3) {
     for (size_t i = 0; const auto& sub : rdr) {
       auto docs = prepared.Execute(i);
       auto score_function = docs->PrepareScore({
-        .scorer = &sort,
         .segment = &sub,
       });
       auto* frequency = irs::get<irs::FreqBlockAttr>(*docs);
@@ -401,7 +398,6 @@ TEST_P(NGramSimilarityFilterTestCase, check_matcher_4) {
     for (size_t i = 0; const auto& sub : rdr) {
       auto docs = prepared.Execute(i);
       auto score_function = docs->PrepareScore({
-        .scorer = &sort,
         .segment = &sub,
       });
       auto* frequency = irs::get<irs::FreqBlockAttr>(*docs);
@@ -451,7 +447,6 @@ TEST_P(NGramSimilarityFilterTestCase, check_matcher_5) {
     for (size_t i = 0; const auto& sub : rdr) {
       auto docs = prepared.Execute(i);
       auto score_function = docs->PrepareScore({
-        .scorer = &sort,
         .segment = &sub,
       });
       auto* frequency = irs::get<irs::FreqBlockAttr>(*docs);
@@ -497,7 +492,6 @@ TEST_P(NGramSimilarityFilterTestCase, check_matcher_6) {
     for (size_t i = 0; const auto& sub : rdr) {
       auto docs = prepared.Execute(i);
       auto score_function = docs->PrepareScore({
-        .scorer = &sort,
         .segment = &sub,
       });
       auto* frequency = irs::get<irs::FreqBlockAttr>(*docs);
@@ -546,7 +540,6 @@ TEST_P(NGramSimilarityFilterTestCase, check_matcher_7) {
     for (size_t i = 0; const auto& sub : rdr) {
       auto docs = prepared.Execute(i);
       auto score_function = docs->PrepareScore({
-        .scorer = &sort,
         .segment = &sub,
       });
       auto* frequency = irs::get<irs::FreqBlockAttr>(*docs);
@@ -594,7 +587,6 @@ TEST_P(NGramSimilarityFilterTestCase, check_matcher_8) {
     for (size_t i = 0; const auto& sub : rdr) {
       auto docs = prepared.Execute(i);
       auto score_function = docs->PrepareScore({
-        .scorer = &sort,
         .segment = &sub,
       });
       auto* frequency = irs::get<irs::FreqBlockAttr>(*docs);
@@ -644,7 +636,6 @@ TEST_P(NGramSimilarityFilterTestCase, check_matcher_9) {
     for (size_t i = 0; const auto& sub : rdr) {
       auto docs = prepared.Execute(i);
       auto score_function = docs->PrepareScore({
-        .scorer = &sort,
         .segment = &sub,
       });
       auto* frequency = irs::get<irs::FreqBlockAttr>(*docs);
@@ -690,7 +681,6 @@ TEST_P(NGramSimilarityFilterTestCase, check_matcher_10) {
     for (size_t i = 0; const auto& sub : rdr) {
       auto docs = prepared.Execute(i);
       auto score_function = docs->PrepareScore({
-        .scorer = &sort,
         .segment = &sub,
       });
       auto* frequency = irs::get<irs::FreqBlockAttr>(*docs);

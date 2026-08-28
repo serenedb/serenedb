@@ -20,6 +20,8 @@
 
 #include "dfi.hpp"
 
+#include <absl/strings/str_cat.h>
+
 #include <cmath>
 #include <string_view>
 
@@ -30,6 +32,7 @@
 #include "iresearch/analysis/token_attributes.hpp"
 #include "iresearch/error/error.hpp"
 #include "iresearch/formats/formats.hpp"
+#include "iresearch/formats/posting/score_bound_writer.hpp"
 #include "iresearch/index/field_meta.hpp"
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/index/norm.hpp"
@@ -37,6 +40,7 @@
 #include "iresearch/search/column_collector.hpp"
 #include "iresearch/search/score_function.hpp"
 #include "iresearch/search/scorer.hpp"
+#include "iresearch/search/scorer_options.hpp"
 #include "iresearch/store/data_output.hpp"
 #include "iresearch/utils/string.hpp"
 
@@ -218,12 +222,41 @@ ScoreFunction DFI::PrepareScorer(const ScoreContext& ctx) const {
   return ScoreFunction::Default();  // unreachable
 }
 
+std::string DFI::ToString() const {
+  const auto* measure = [&]() -> const char* {
+    switch (_measure) {
+      case DFIMeasure::Standardized:
+        return "standardized";
+      case DFIMeasure::Saturated:
+        return "saturated";
+      case DFIMeasure::ChiSquared:
+        return "chi_squared";
+    }
+    return "?";
+  }();
+  return absl::StrCat("dfi(measure=", measure, ")");
+}
+
 bool DFI::equals(const Scorer& other) const noexcept {
   if (!Scorer::equals(other)) {
     return false;
   }
   const auto& p = sdb::basics::downCast<DFI>(other);
   return p._measure == _measure;
+}
+
+ScoreBoundWriter::ptr DFI::PrepareScoreBoundWriter(size_t max_levels) const {
+  return std::make_unique<FreqNormWriter<kScoreBoundMinNorm>>(max_levels);
+}
+
+ScoreBoundSource::ptr DFI::PrepareScoreBoundSource() const {
+  return std::make_unique<FreqNormSource<kScoreBoundFreq | kScoreBoundNorm>>();
+}
+
+bool DFI::Compatible(const ScorerOptions& persisted) const noexcept {
+  // A MinNorm bm25 writes its own b's argmax, not the plain min-norm pair.
+  return irs::BoundTypeOf(persisted) == BoundTypeOf(Options{}) &&
+         !std::get_if<ScorerOptions::Bm25>(&persisted.params);
 }
 
 }  // namespace irs

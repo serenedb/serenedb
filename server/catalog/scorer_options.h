@@ -43,6 +43,7 @@ std::optional<ScorerOptions> ExtractScorerFromBound(
   const duckdb::BoundFunctionExpression& func, std::string_view name);
 
 ScorerOptions ParseScorerExpression(duckdb::ClientContext& context,
-                                    std::string input);
+                                    std::string input,
+                                    std::string_view what = "optimize_top_k");
 
 }  // namespace sdb::catalog

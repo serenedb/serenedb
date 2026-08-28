@@ -37,6 +37,9 @@ inline constexpr std::string_view kModifierTSQueryTypeName = "TSQUERY_MODIFIER";
 // tokenize / boost. Only meaningful on a phrase; rejected elsewhere.
 inline constexpr std::string_view kSlopTypeName = "slop";
 
+inline constexpr std::string_view kScoreTypeName = "score";
+inline constexpr std::string_view kMergeTypeName = "merge";
+
 // TSQUERY leaf constructors (unprefixed). Produce a TSQUERY value;
 // stubs throw at runtime -- the filter builder claims them at bind.
 inline constexpr std::string_view kTSQPhrase = "ts_phrase";

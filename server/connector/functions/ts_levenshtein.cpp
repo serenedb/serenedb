@@ -111,7 +111,7 @@ void FromLevenshtein(irs::BooleanFilter& filter, const FilterContext& ctx,
 
   auto& edit_filter =
     AddMaybeNegated<irs::ByEditDistance>(filter, ctx, column_info);
-  edit_filter.boost(ctx.boost);
+  edit_filter.SetBoost(ctx.boost);
   *edit_filter.mutable_field_id() =
     PickPerKindFieldId(column_info, duckdb::LogicalTypeId::VARCHAR);
   FillByEditDistanceOptions(

@@ -59,7 +59,7 @@ class MixedBooleanFilter final : public FilterWithType<MixedBooleanFilter>,
   QueryBuilder::ptr PrepareSegment(const SubReader& segment,
                                    const PrepareContext& ctx) const final;
 
-  PrepareCollector::ptr MakeCollector(const Scorer* scorer) const final;
+  PrepareCollector::ptr MakeCollectorImpl(const Scorer* scorer) const final;
 
   std::span<Filter::ptr> GetChildren() final { return _filters; }
 

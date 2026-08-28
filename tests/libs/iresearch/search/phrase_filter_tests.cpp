@@ -5557,7 +5557,6 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
     auto docs_seek = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
     auto score = it->PrepareScore({
-      .scorer = &sort,
       .segment = &*sub,
     });
 
@@ -5623,7 +5622,6 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
     auto docs_seek = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
     auto score = docs->PrepareScore({
-      .scorer = &sort,
       .segment = &*sub,
     });
 
@@ -6104,7 +6102,6 @@ TEST_P(PhraseFilterTestCase, interval_several_terms) {
     tests::PreparedFilter disj_prepared{disjunction, rdr, &freq_score};
     auto disj_docs = disj_prepared.Execute(0);
     auto disj_score = disj_docs->PrepareScore({
-      .scorer = &freq_score,
       .segment = &*sub,
     });
     irs::score_t score_val;
@@ -6218,7 +6215,7 @@ TEST_P(PhraseFilterTestCase, interval_several_terms) {
       ASSERT_FALSE(irs::doc_limits::valid(docs->value()));
       auto docs_seek = prepared.Execute(0);
       ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
-      auto score = docs->PrepareScore({.scorer = &scorer, .segment = &*sub});
+      auto score = docs->PrepareScore({.segment = &*sub});
 
       ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
       docs->FetchScoreArgs(0);
@@ -6573,7 +6570,6 @@ TEST_P(PhraseFilterTestCase, interval_several_terms) {
     tests::PreparedFilter disj_prepared{disjunction, rdr, &freq_score};
     auto disj_docs = disj_prepared.Execute(0);
     auto disj_score = disj_docs->PrepareScore({
-      .scorer = &freq_score,
       .segment = &*sub,
     });
     irs::score_t score_val;
@@ -6684,7 +6680,6 @@ TEST_P(PhraseFilterTestCase, interval_several_terms) {
     tests::PreparedFilter disj_prepared{disjunction, rdr, &freq_score};
     auto disj_docs = disj_prepared.Execute(0);
     auto disj_score = disj_docs->PrepareScore({
-      .scorer = &freq_score,
       .segment = &*sub,
     });
     irs::score_t score_val;
@@ -6795,7 +6790,6 @@ TEST_P(PhraseFilterTestCase, interval_several_terms) {
     tests::PreparedFilter disj_prepared{disjunction, rdr, &freq_score};
     auto disj_docs = disj_prepared.Execute(0);
     auto disj_score = disj_docs->PrepareScore({
-      .scorer = &freq_score,
       .segment = &*sub,
     });
     irs::score_t score_val;
@@ -6853,7 +6847,7 @@ TEST(by_phrase_test, ctor) {
   ASSERT_EQ(irs::Type<irs::ByPhrase>::id(), q.type());
   ASSERT_EQ(irs::field_limits::invalid(), q.field_id());
   ASSERT_EQ(irs::ByPhraseOptions{}, q.options());
-  ASSERT_EQ(irs::kNoBoost, q.Boost());
+  ASSERT_EQ(irs::kNoBoost, q.GetBoost());
 
   static_assert((irs::IndexFeatures::Freq | irs::IndexFeatures::Pos) ==
                 irs::FixedPhraseQuery::kRequiredFeatures);
@@ -6903,7 +6897,7 @@ TEST(by_phrase_test, boost) {
     {
       irs::ByPhrase q;
       *q.mutable_field_id() = 1;
-      q.boost(boost);
+      q.SetBoost(boost);
 
       tests::PreparedFilter prepared{q, irs::SubReader::empty()};
       ASSERT_EQ(irs::kNoBoost, prepared.Query(0)->Boost());
@@ -6915,7 +6909,7 @@ TEST(by_phrase_test, boost) {
       *q.mutable_field_id() = 1;
       q.mutable_options()->push_back<irs::ByTermOptions>().term =
         irs::ViewCast<irs::byte_type>(std::string_view("quick"));
-      q.boost(boost);
+      q.SetBoost(boost);
 
       tests::PreparedFilter prepared{q, irs::SubReader::empty(), nullptr,
                                      counter};
@@ -6933,7 +6927,7 @@ TEST(by_phrase_test, boost) {
         irs::ViewCast<irs::byte_type>(std::string_view("quick"));
       q.mutable_options()->push_back<irs::ByTermOptions>().term =
         irs::ViewCast<irs::byte_type>(std::string_view("brown"));
-      q.boost(boost);
+      q.SetBoost(boost);
 
       tests::PreparedFilter prepared{q, irs::SubReader::empty()};
       ASSERT_EQ(irs::kNoBoost, prepared.Query(0)->Boost());
@@ -6951,7 +6945,7 @@ TEST(by_phrase_test, boost) {
       auto& lt = q.mutable_options()->push_back<irs::ByEditDistanceOptions>();
       lt.max_distance = 1;
       lt.term = irs::ViewCast<irs::byte_type>(std::string_view("brwn"));
-      q.boost(boost);
+      q.SetBoost(boost);
       auto& st = q.mutable_options()->push_back<irs::ByTermsOptions>();
       st.terms.emplace(irs::ViewCast<irs::byte_type>(std::string_view("fox")));
       st.terms.emplace(irs::ViewCast<irs::byte_type>(std::string_view("dob")));

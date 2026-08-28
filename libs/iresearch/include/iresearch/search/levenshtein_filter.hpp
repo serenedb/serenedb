@@ -161,7 +161,7 @@ class LevenshteinAutomatonFilter final
   QueryBuilder::ptr PrepareSegment(const SubReader& segment,
                                    const PrepareContext& ctx) const final;
 
-  PrepareCollector::ptr MakeCollector(const Scorer* scorer) const final;
+  PrepareCollector::ptr MakeCollectorImpl(const Scorer* scorer) const final;
 
   TermPredicate::ptr CompileTermPredicate() const final;
 

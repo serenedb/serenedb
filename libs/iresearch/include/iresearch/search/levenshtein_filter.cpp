@@ -224,10 +224,10 @@ field_visitor LevenshteinAutomatonFilter::visitor(
 
 QueryBuilder::ptr LevenshteinAutomatonFilter::PrepareSegment(
   const SubReader& segment, const PrepareContext& ctx) const {
-  return PrepareSegment(segment, ctx, field_id(), options(), Boost());
+  return PrepareSegment(segment, ctx, field_id(), options(), GetBoost());
 }
 
-PrepareCollector::ptr LevenshteinAutomatonFilter::MakeCollector(
+PrepareCollector::ptr LevenshteinAutomatonFilter::MakeCollectorImpl(
   const Scorer* scorer) const {
   return std::make_unique<ByTermsCollector>(scorer, 1);
 }
@@ -257,7 +257,7 @@ Filter::ptr LowerLevenshtein(irs::field_id id,
       target.reserve(opts.prefix.size() + opts.term.size());
       target += opts.prefix;
       target += opts.term;
-      filter->boost(boost);
+      filter->SetBoost(boost);
       return filter;
     },
     [&](const ParametricDescription& d, const bytes_view prefix,
@@ -269,7 +269,7 @@ Filter::ptr LowerLevenshtein(irs::field_id id,
       auto filter = std::make_unique<LevenshteinAutomatonFilter>();
       *filter->mutable_field_id() = id;
       *filter->mutable_options() = std::move(lowered);
-      filter->boost(boost);
+      filter->SetBoost(boost);
       return filter;
     });
 }

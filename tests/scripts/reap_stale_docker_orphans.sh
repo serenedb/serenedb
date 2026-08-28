@@ -16,14 +16,12 @@
 #   1. Compose-managed stacks (tests / serenedb-single / their network +
 #      volumes) whose project label matches our 4-char PREFIX shape and
 #      have no live `docker compose ... -p <prj>` owner.
-#   2. Standalone test deps (MinIO / iceberg-rest / Ollama / ClickHouse /
-#      postgres / Azurite) spawned by tests/sqllogic/run.sh via the mounted
-#      docker socket -- they are NOT compose-owned, so `compose down
-#      --remove-orphans` doesn't see them. Removed when non-Up
-#      (Exited/Created/Dead) OR Up but older than the live-run cutoff (6h is
-#      well beyond any real test wall time; concurrent runs finish in
-#      minutes). Keep this list in step with run.sh's launch_* helpers: a
-#      service missing from it is never swept and leaks forever.
+#   2. Standalone test deps (MinIO / iceberg-rest / Ollama) spawned by
+#      tests/sqllogic/run.sh via the mounted docker socket -- they are
+#      NOT compose-owned, so `compose down --remove-orphans` doesn't see
+#      them. Removed when non-Up (Exited/Created/Dead) OR Up but older
+#      than the live-run cutoff (6h is well beyond any real test wall
+#      time; concurrent runs finish in minutes).
 #   3. Test-network leftovers from either pass that have no remaining
 #      attached containers.
 
@@ -63,10 +61,10 @@ reap_stale_docker_orphans() {
 
 	# Pass 2: standalone test deps spawned with mounted docker socket from
 	# inside the tests container. Names follow:
-	#   <4char>-serenedb-test-(minio|iceberg-rest|ollama|clickhouse|postgres|azurite)-<pid>
+	#   <4char>-serenedb-test-(minio|iceberg-rest|ollama)-<pid>
 	local cutoff=$(($(date +%s) - REAP_STALE_AGE_HOURS * 3600))
-	local name status created_raw created_ts
-	while IFS=$'\t' read -r name status; do
+	local name status created_ts
+	while IFS=$'\t' read -r name status created_ts; do
 		[[ -z "$name" ]] && continue
 		# Non-Up containers are unambiguous orphans -- standalone deps are
 		# never restarted between runs.
@@ -77,33 +75,19 @@ reap_stale_docker_orphans() {
 			docker rm -fv "$name" >/dev/null 2>&1 || true
 			continue
 		fi
-		# Up but older than the cutoff: SIGKILL escapee. `{{.Created}}` is UTC
-		# RFC3339 ("2026-08-26T21:17:36.927393608Z"); trimming the fractional
-		# seconds and the Z leaves "2026-08-26 21:17:36", which `date -d` reads
-		# everywhere -- where it rejects the full RFC3339 outside GNU, and rejects
-		# `docker ps --format {{.CreatedAt}}` ("2026-08-26 23:17:36 +0200 CEST")
-		# everywhere. TZ=UTC is required, not cosmetic: the trimmed string carries
-		# no zone, so without it a UTC instant is read as local time and the
-		# container measures hours older than it is.
-		created_raw=$(docker inspect -f '{{.Created}}' "$name" 2>/dev/null)
-		created_raw=${created_raw%%.*}
-		created_raw=${created_raw%Z}
-		# The emptiness guard is load-bearing: `date -d ""` does not fail, it
-		# returns TODAY AT MIDNIGHT -- stale under any cutoff for most of the day.
-		# This sweep used to read an unparsed timestamp as 1970 and force-remove
-		# every live container it matched; an age we cannot establish now means
-		# KEEP, since leaving an orphan for the next sweep is far cheaper than
-		# deleting a concurrent run's container.
-		# TODO(Dronplane): MacOS date has no -d, so this will make no cleanup.
-		created_ts=""
-		[[ -n "$created_raw" ]] &&
-			created_ts=$(TZ=UTC date -d "${created_raw/T/ }" +%s 2>/dev/null)
-		if [[ "$created_ts" =~ ^[0-9]+$ ]] && ((created_ts < cutoff)); then
+		# Up but older than the cutoff: SIGKILL escapee.
+		if [[ -n "$created_ts" && "$created_ts" -lt "$cutoff" ]]; then
 			docker rm -fv "$name" >/dev/null 2>&1 || true
 		fi
 	done < <(docker ps -a \
-		--format '{{.Names}}{{"\t"}}{{.Status}}' 2>/dev/null |
-		grep -E '^[a-z0-9]{4}-serenedb-test-(minio|iceberg-rest|ollama|clickhouse|postgres|azurite)-[0-9]+\b')
+		--format '{{.Names}}{{"\t"}}{{.Status}}{{"\t"}}{{.CreatedAt}}' 2>/dev/null |
+		grep -E '^[a-z0-9]{4}-serenedb-test-(minio|iceberg-rest|ollama)-[0-9]+\b' |
+		awk -F'\t' 'BEGIN{OFS="\t"} {
+			cmd="date -d \""$3"\" +%s 2>/dev/null"
+			cmd | getline ts
+			close(cmd)
+			print $1, $2, (ts == "" ? 0 : ts)
+		}')
 
 	# Pass 3: test-networks left dangling. The compose down in pass 1 removes
 	# its own; standalone-spawned networks (sqllogic local-network mode)

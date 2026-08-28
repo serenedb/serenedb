@@ -39,7 +39,6 @@
 #include "basics/system-compiler.h"
 #include "catalog/identifiers/object_id.h"
 #include "catalog/inverted_index.h"
-#include "catalog/scorer_options.h"
 #include "catalog/table.h"
 #include "catalog/view.h"
 #include "connector/view_fast_path.h"
@@ -135,8 +134,11 @@ enum class TsDictTermUses : uint8_t {
 
 ENABLE_BITMASK_ENUM(TsDictTermUses);
 
-bool ScorePruneEnabled(const catalog::InvertedIndex* index,
-                       const std::optional<catalog::ScorerOptions>& scorer);
+// The scorer `index`'s persisted per-block bounds may be pruned against, or
+// null when they cannot be: no index, no query scorer, no bounds, or bounds a
+// different scorer wrote.
+const irs::Scorer* ResolvePruneScorer(const catalog::InvertedIndex* index,
+                                      const irs::Scorer* scorer);
 
 enum class ScanEntryKind : uint8_t {
   BaseTable,
@@ -166,6 +168,7 @@ struct SereneDBScanBindData : public duckdb::FunctionData {
   // filter, scorer, offsets, ts-dict requests). Every scan bound through this
   // table function is a search scan, so `snapshot` is always set.
   std::shared_ptr<irs::Filter> stored_filter;
+  std::vector<std::shared_ptr<irs::Scorer>> filter_scorers;
   search::InvertedIndexSnapshotPtr snapshot;
 
   std::optional<catalog::ScorerOptions> text_scorer;

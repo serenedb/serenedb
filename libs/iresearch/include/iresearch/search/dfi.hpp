@@ -68,6 +68,10 @@ class DFI final : public irs::ScorerBase<DFI, DFIStats> {
     bool operator==(const Options&) const = default;
   };
 
+  static ScoreBoundType BoundTypeOf(const Options&) noexcept {
+    return ScoreBoundType::MinNorm;
+  }
+
   static std::unique_ptr<DFI> Make(const Options& opts) {
     if (opts.measure > DFIMeasure::ChiSquared) {
       THROW_SQL_ERROR(ERR_MSG("dfi: invalid measure"));
@@ -84,9 +88,17 @@ class DFI final : public irs::ScorerBase<DFI, DFIStats> {
     return IndexFeatures::Freq | IndexFeatures::Norm;
   }
 
+  ScoreBoundWriter::ptr PrepareScoreBoundWriter(size_t max_levels) const final;
+
+  ScoreBoundSource::ptr PrepareScoreBoundSource() const final;
+
+  bool Compatible(const ScorerOptions& persisted) const noexcept final;
+
   ScoreFunction PrepareScorer(const ScoreContext& ctx) const final;
 
   bool equals(const Scorer& other) const noexcept final;
+
+  std::string ToString() const final;
 
   DFIMeasure measure() const noexcept { return _measure; }
 

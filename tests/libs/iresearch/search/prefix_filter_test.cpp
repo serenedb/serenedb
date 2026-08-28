@@ -270,7 +270,7 @@ TEST(by_prefix_test, ctor) {
   ASSERT_EQ(irs::Type<irs::ByPrefix>::id(), q.type());
   ASSERT_EQ(irs::ByPrefixOptions{}, q.options());
   ASSERT_EQ(irs::field_limits::invalid(), q.field_id());
-  ASSERT_EQ(irs::kNoBoost, q.Boost());
+  ASSERT_EQ(irs::kNoBoost, q.GetBoost());
 }
 
 TEST(by_prefix_test, equal) {
@@ -313,7 +313,7 @@ TEST(by_prefix_test, boost) {
   {
     irs::score_t boost = 1.5f;
     irs::ByPrefix q = MakeFilter(kField, "term");
-    q.boost(boost);
+    q.SetBoost(boost);
 
     tests::PreparedFilter prepared{q, irs::SubReader::empty(), nullptr,
                                    counter};

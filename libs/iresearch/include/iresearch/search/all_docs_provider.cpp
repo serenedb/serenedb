@@ -28,7 +28,7 @@ namespace irs {
 
 AllDocsProvider::Ptr AllDocsProvider::Default(score_t boost) {
   auto filter = std::make_unique<All>();
-  filter->boost(boost);
+  filter->SetBoost(boost);
   return filter;
 }
 

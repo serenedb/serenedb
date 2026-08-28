@@ -54,7 +54,7 @@ void AssertTerm(const irs::Filter& f, irs::field_id field,
   EXPECT_EQ(field, term.field_id());
   EXPECT_EQ(value, irs::ViewCast<char>(irs::bytes_view{term.options().term}));
   if (boost > 0.0f) {
-    EXPECT_FLOAT_EQ(boost, term.Boost());
+    EXPECT_FLOAT_EQ(boost, term.GetBoost());
   }
 }
 
@@ -63,7 +63,7 @@ void AssertPhrase(const irs::Filter& f, irs::field_id field, float boost = 0.0f,
   const auto& phrase = sdb::basics::downCast<irs::ByPhrase>(f);
   EXPECT_EQ(field, phrase.field_id());
   if (boost > 0.0f) {
-    EXPECT_FLOAT_EQ(boost, phrase.Boost());
+    EXPECT_FLOAT_EQ(boost, phrase.GetBoost());
   }
   EXPECT_EQ(slop, phrase.options().slop());
 }
@@ -74,7 +74,7 @@ void AssertPrefix(const irs::Filter& f, irs::field_id field,
   EXPECT_EQ(field, prefix.field_id());
   EXPECT_EQ(value, irs::ViewCast<char>(irs::bytes_view{prefix.options().term}));
   if (boost > 0.0f) {
-    EXPECT_FLOAT_EQ(boost, prefix.Boost());
+    EXPECT_FLOAT_EQ(boost, prefix.GetBoost());
   }
 }
 
@@ -84,7 +84,7 @@ void AssertWildcard(const irs::Filter& f, irs::field_id field,
   EXPECT_EQ(field, wc.field_id());
   EXPECT_EQ(value, irs::ViewCast<char>(irs::bytes_view{wc.options().term}));
   if (boost > 0.0f) {
-    EXPECT_FLOAT_EQ(boost, wc.Boost());
+    EXPECT_FLOAT_EQ(boost, wc.GetBoost());
   }
 }
 
@@ -95,7 +95,7 @@ void AssertFuzzy(const irs::Filter& f, irs::field_id field,
   EXPECT_EQ(value, irs::ViewCast<char>(irs::bytes_view{fuzzy.options().term}));
   EXPECT_EQ(distance, fuzzy.options().max_distance);
   if (boost > 0.0f) {
-    EXPECT_FLOAT_EQ(boost, fuzzy.Boost());
+    EXPECT_FLOAT_EQ(boost, fuzzy.GetBoost());
   }
 }
 
@@ -116,7 +116,7 @@ void AssertRange(const irs::Filter& f, irs::field_id field,
               irs::ViewCast<char>(irs::bytes_view{range.options().range.max}));
   }
   if (boost > 0.0f) {
-    EXPECT_FLOAT_EQ(boost, range.Boost());
+    EXPECT_FLOAT_EQ(boost, range.GetBoost());
   }
 }
 
@@ -560,7 +560,7 @@ TEST_F(LuceneParserTest, BoostedGroup) {
   ASSERT_EQ(1, OptionalRoot().size());
   const auto& group =
     sdb::basics::downCast<irs::MixedBooleanFilter>(OptionalRoot()[0]);
-  EXPECT_FLOAT_EQ(2.5f, group.Boost());
+  EXPECT_FLOAT_EQ(2.5f, group.GetBoost());
   ASSERT_TRUE(group.GetRequired().empty());
   const auto& sub_or = group.GetOptional();
   ASSERT_EQ(2, sub_or.size());
@@ -1749,7 +1749,7 @@ TEST_F(LuceneParserTest, ComplexMultiFieldNested) {
 
   const auto& g2 =
     sdb::basics::downCast<irs::MixedBooleanFilter>(RequiredRoot()[1]);
-  EXPECT_FLOAT_EQ(2.0f, g2.Boost());
+  EXPECT_FLOAT_EQ(2.0f, g2.GetBoost());
   ASSERT_EQ(2, g2.GetOptional().size());
   AssertTerm(g2.GetOptional()[0], kFieldId, "foo");
   AssertTerm(g2.GetOptional()[1], kFieldId, "bar");

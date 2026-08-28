@@ -32,12 +32,12 @@
 namespace irs {
 
 // Filter returning all documents
-class All : public FilterWithBoost {
+class All : public Filter {
  public:
   QueryBuilder::ptr PrepareSegment(const SubReader& segment,
                                    const PrepareContext& ctx) const final;
 
-  PrepareCollector::ptr MakeCollector(const Scorer* scorer) const final;
+  PrepareCollector::ptr MakeCollectorImpl(const Scorer* scorer) const final;
 
   TypeInfo::type_id type() const noexcept final { return irs::Type<All>::id(); }
 

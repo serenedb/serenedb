@@ -52,7 +52,7 @@ void FromLike(irs::BooleanFilter& parent, const FilterContext& ctx,
   if (column_info.tokenizer.analyzer->type() ==
       irs::Type<irs::analysis::WildcardAnalyzer>::id()) {
     auto& wf = AddMaybeNegated<irs::ByWildcardNgram>(parent, ctx, column_info);
-    wf.boost(ctx.boost);
+    wf.SetBoost(ctx.boost);
     *wf.mutable_field_id() =
       PickPerKindFieldId(column_info, duckdb::LogicalTypeId::VARCHAR);
     auto* opts = wf.mutable_options();

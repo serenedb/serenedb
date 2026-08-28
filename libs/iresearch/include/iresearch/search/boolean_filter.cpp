@@ -78,20 +78,20 @@ BooleanQuery::queries_t PrepareChildren(std::span<const Filter::ptr> filters,
 
 }  // namespace
 
-PrepareCollector::ptr And::MakeCollector(const Scorer* scorer) const {
+PrepareCollector::ptr And::MakeCollectorImpl(const Scorer* scorer) const {
   return MakeCompoundCollector(_filters, scorer);
 }
 
 QueryBuilder::ptr And::PrepareSegment(const SubReader& segment,
                                       const PrepareContext& ctx) const {
   SDB_ASSERT(_filters.size() > 1);
-  const auto composite_boost = ctx.boost * Boost();
+  const auto composite_boost = ctx.boost * GetBoost();
   auto queries = PrepareChildren(_filters, segment, ctx, composite_boost);
   return memory::make_tracked<AndQuery>(ctx.memory, segment, std::move(queries),
                                         merge_type(), composite_boost);
 }
 
-PrepareCollector::ptr Or::MakeCollector(const Scorer* scorer) const {
+PrepareCollector::ptr Or::MakeCollectorImpl(const Scorer* scorer) const {
   return MakeCompoundCollector(_filters, scorer);
 }
 
@@ -99,7 +99,7 @@ QueryBuilder::ptr Or::PrepareSegment(const SubReader& segment,
                                      const PrepareContext& ctx) const {
   SDB_ASSERT(_filters.size() > 1);
   SDB_ASSERT(_min_match_count != 0);
-  const auto composite_boost = ctx.boost * Boost();
+  const auto composite_boost = ctx.boost * GetBoost();
   auto queries = PrepareChildren(_filters, segment, ctx, composite_boost);
   if (_min_match_count <= 1) {
     return memory::make_tracked<OrQuery>(
@@ -114,7 +114,7 @@ QueryBuilder::ptr Or::PrepareSegment(const SubReader& segment,
                                              composite_boost, _min_match_count);
 }
 
-PrepareCollector::ptr Exclusion::MakeCollector(const Scorer* scorer) const {
+PrepareCollector::ptr Exclusion::MakeCollectorImpl(const Scorer* scorer) const {
   auto compound = std::make_unique<CompoundCollector>(scorer);
   const auto& include = GetInclude();
   compound->Add(include ? include->MakeCollector(scorer)
@@ -132,7 +132,7 @@ QueryBuilder::ptr Exclusion::PrepareSegment(const SubReader& segment,
                      ? &sdb::basics::downCast<CompoundCollector>(*ctx.collector)
                      : nullptr;
 
-  const auto child_boost = ctx.boost * Boost();
+  const auto child_boost = ctx.boost * GetBoost();
 
   PrepareContext incl_ctx = ctx;
   incl_ctx.boost = child_boost;
@@ -179,7 +179,7 @@ QueryBuilder::ptr Not::PrepareSegment(const SubReader&,
   return QueryBuilder::Empty();
 }
 
-PrepareCollector::ptr Not::MakeCollector(const Scorer*) const {
+PrepareCollector::ptr Not::MakeCollectorImpl(const Scorer*) const {
   SDB_UNREACHABLE();
   return std::make_unique<NoopCollector>();
 }

@@ -276,7 +276,7 @@ QueryBuilder::ptr ProxyFilter::PrepareSegment(const SubReader& segment,
                                           *it->second);
 }
 
-PrepareCollector::ptr ProxyFilter::MakeCollector(
+PrepareCollector::ptr ProxyFilter::MakeCollectorImpl(
   const Scorer* /*scorer*/) const {
   return std::make_unique<NoopCollector>();
 }

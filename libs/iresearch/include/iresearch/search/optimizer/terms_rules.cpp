@@ -70,7 +70,7 @@ bool ByTermsMinMatchZeroRule::Apply(Filter::ptr& slot,
     return true;
   }
   auto terms = std::make_unique<ByTerms>();
-  terms->boost(node.Boost());
+  terms->SetBoost(node.GetBoost());
   *terms->mutable_field_id() = node.field_id();
   *terms->mutable_options() = node.options();
   terms->mutable_options()->min_match = 1;
@@ -105,7 +105,7 @@ bool ByTermsDegenerateRule::Apply(Filter::ptr& slot,
   auto by_term = std::make_unique<ByTerm>();
   *by_term->mutable_field_id() = node.field_id();
   by_term->mutable_options()->term = term.term;
-  by_term->boost(node.Boost() * term.boost);
+  by_term->SetBoost(node.GetBoost() * term.boost);
   slot = std::move(by_term);
   return true;
 }
@@ -127,7 +127,7 @@ bool ByNGramSimilaritySimplifyRule::Apply(Filter::ptr& slot,
     for (const auto& ngram_term : opts.ngrams) {
       terms_opts.terms.emplace(ngram_term, kNoBoost);
     }
-    term->boost(ngram.Boost());
+    term->SetBoost(ngram.GetBoost());
     slot = std::move(term);
     return true;
   }

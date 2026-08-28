@@ -12,6 +12,7 @@ add_executable(
     ${CMAKE_CURRENT_SOURCE_DIR}/tests_main.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/index_lifecycle_test.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/duckdb_search_filter_builder_test.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/ts_query_codec_test.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/duckdb_search_sink_writer_test.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/search_db_wal_test.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/pg_progress_registry_test.cpp

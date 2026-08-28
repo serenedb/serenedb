@@ -45,6 +45,7 @@ struct PrefixEntry {
   const Filter* node;
   field_id field;
   bytes_view term;
+  const Scorer* scorer;
 };
 
 bool LevenshteinPrefixFusionRule::Apply(Filter::ptr& slot,
@@ -60,7 +61,7 @@ bool LevenshteinPrefixFusionRule::Apply(Filter::ptr& slot,
         continue;
       }
       prefixes.emplace_back(children[i].get(), prefix.field_id(),
-                            prefix.options().term);
+                            prefix.options().term, children[i]->GetScorer());
     }
   }
   if (prefixes.empty()) {
@@ -84,7 +85,11 @@ bool LevenshteinPrefixFusionRule::Apply(Filter::ptr& slot,
 
     const PrefixEntry* best = nullptr;
     for (const auto& entry : prefixes) {
+      // Absorbing the prefix drops whatever it contributed to the score, so
+      // the two nodes have to be scored by the same scorer for that to be a
+      // no-op.
       if (entry.field != filter.field_id() ||
+          entry.scorer != child->GetScorer() ||
           !bytes_view{target}.starts_with(entry.term)) {
         continue;
       }

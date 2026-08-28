@@ -205,7 +205,7 @@ g	cp	cr	c
 
 # Swapped arguments are a different input list, so each gets its own table.
 query
-SELECT round(covar_pop(DISTINCT x, y), 12) AS xy, round(covar_pop(DISTINCT y, x), 12) AS yx FROM agg_pair;
+SELECT covar_pop(DISTINCT x, y) AS xy, covar_pop(DISTINCT y, x) AS yx FROM agg_pair;
 ----
 xy	yx
 16.25	16.25

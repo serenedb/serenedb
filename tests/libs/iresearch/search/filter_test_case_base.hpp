@@ -60,8 +60,8 @@ struct DocBlockAttr : public irs::Attribute {
 
 class DocIteratorWrapper : public irs::DocIterator {
  public:
-  explicit DocIteratorWrapper(irs::DocIterator::ptr it)
-    : _it(std::move(it)), _docs(irs::kScoreBlock) {
+  DocIteratorWrapper(irs::DocIterator::ptr it, irs::ScoreSource score)
+    : _it(std::move(it)), _docs(irs::kScoreBlock), _score(score) {
     SDB_ASSERT(_it);
     _doc = _it->value();
   }
@@ -82,11 +82,11 @@ class DocIteratorWrapper : public irs::DocIterator {
   }
 
   irs::ScoreFunction PrepareScore(const irs::PrepareScoreContext& ctx) {
-    SDB_ASSERT(ctx.scorer);
-    return ctx.scorer->PrepareScorer({
+    return _score.scorer->PrepareScorer({
       .segment = *ctx.segment,
       .field = {},
       .doc_attrs = *this,
+      .stats = _score.stats,
     });
   }
 
@@ -96,6 +96,7 @@ class DocIteratorWrapper : public irs::DocIterator {
   irs::DocIterator::ptr _it;
   std::vector<irs::doc_id_t> _docs;
   DocBlockAttr _doc_block_attr{.value = _docs.data()};
+  irs::ScoreSource _score;
 };
 
 class QueryWrapper : public irs::QueryBuilder {
@@ -106,7 +107,7 @@ class QueryWrapper : public irs::QueryBuilder {
   irs::DocIterator::ptr Execute(const irs::ExecutionContext& ctx,
                                 const irs::StatsBuffer& stats) const final {
     return irs::memory::make_managed<DocIteratorWrapper>(
-      _query->Execute(ctx, stats));
+      _query->Execute(ctx, stats), stats.Source());
   }
 
   void Visit(irs::PreparedStateVisitor& visitor,
@@ -120,7 +121,7 @@ class QueryWrapper : public irs::QueryBuilder {
   irs::QueryBuilder::ptr _query;
 };
 
-class FilterWrapper : public irs::FilterWithBoost {
+class FilterWrapper : public irs::Filter {
  public:
   explicit FilterWrapper(const irs::Filter& filter) : _filter(filter) {}
 
@@ -134,7 +135,7 @@ class FilterWrapper : public irs::FilterWithBoost {
                                                    std::move(query));
   }
 
-  irs::PrepareCollector::ptr MakeCollector(
+  irs::PrepareCollector::ptr MakeCollectorImpl(
     const irs::Scorer* scorer) const final {
     return _filter.MakeCollector(scorer);
   }
@@ -382,7 +383,7 @@ class PreparedFilter {
       {
         .memory = _exec->memory,
         .ctx = _exec->ctx,
-        .score_prune = score_prune,
+        .prune_scorer = score_prune ? _scorer : nullptr,
       },
       *_stats);
   }

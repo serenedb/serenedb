@@ -218,7 +218,6 @@ std::map<irs::doc_id_t, irs::score_t> RunQuery(irs::IndexReader& index,
   irs::ColumnArgsFetcher fetcher;
   auto docs = prepared.Execute(0);
   auto score = docs->PrepareScore({
-    .scorer = &scorer,
     .segment = &segment,
     .fetcher = &fetcher,
   });

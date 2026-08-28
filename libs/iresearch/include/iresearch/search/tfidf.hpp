@@ -46,6 +46,10 @@ class TFIDF final : public irs::ScorerBase<TFIDF, TFIDFStats> {
     bool operator==(const Options&) const = default;
   };
 
+  static ScoreBoundType BoundTypeOf(const Options& opts) noexcept {
+    return opts.with_norms ? ScoreBoundType::DivNorm : ScoreBoundType::MaxFreq;
+  }
+
   static std::unique_ptr<TFIDF> Make(const Options& opts) {
     return std::make_unique<TFIDF>(opts.with_norms, opts.boost_as_score);
   }
@@ -71,9 +75,11 @@ class TFIDF final : public irs::ScorerBase<TFIDF, TFIDFStats> {
 
   ScoreBoundSource::ptr PrepareScoreBoundSource() const final;
 
-  ScoreBoundType GetScoreBoundType() const noexcept final;
+  bool Compatible(const ScorerOptions& persisted) const noexcept final;
 
   bool equals(const Scorer& other) const noexcept final;
+
+  std::string ToString() const final;
 
   bool normalize() const noexcept { return _normalize; }
 

@@ -142,21 +142,18 @@ void FilterTestCaseBase::GetQueryResult(const PreparedFilter& prepared,
                                         ScoredDocs& result, Costs& result_costs,
                                         std::string_view source_location) {
   SCOPED_TRACE(source_location);
-  const auto* scorer = prepared.Scorer();
   result_costs.reserve(rdr.size());
 
   for (size_t i = 0; const auto& sub : rdr) {
     auto random_docs = prepared.Execute(i);
     ASSERT_NE(nullptr, random_docs);
     auto random_score = random_docs->PrepareScore({
-      .scorer = scorer,
       .segment = &sub,
     });
     auto sequential_docs = prepared.Execute(i);
     ASSERT_NE(nullptr, sequential_docs);
 
     auto score = sequential_docs->PrepareScore({
-      .scorer = scorer,
       .segment = &sub,
     });
 
@@ -165,7 +162,6 @@ void FilterTestCaseBase::GetQueryResult(const PreparedFilter& prepared,
     while (!irs::doc_limits::eof(sequential_docs->advance())) {
       auto stateless_random_docs = prepared.Execute(i);
       auto stateless_random_score = stateless_random_docs->PrepareScore({
-        .scorer = scorer,
         .segment = &sub,
       });
 
@@ -271,7 +267,6 @@ void FilterTestCaseBase::CheckQuery(const irs::Filter& filter,
 
     auto random_score = scorer == nullptr ? irs::ScoreFunction{}
                                           : random_docs->PrepareScore({
-                                              .scorer = scorer,
                                               .segment = &sub,
                                             });
 
@@ -347,7 +342,6 @@ void FilterTestCaseBase::MakeResult(const irs::Filter& filter,
     irs::ScoreFunction score;
     if (score_must_be_present) {
       score = docs->PrepareScore({
-        .scorer = scorer,
         .segment = &sub,
         .fetcher = &fetcher,
       });

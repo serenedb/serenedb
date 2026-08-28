@@ -23,6 +23,7 @@
 #include "tfidf.hpp"
 
 #include <absl/container/inlined_vector.h>
+#include <absl/strings/str_cat.h>
 
 #include <cmath>
 #include <cstddef>
@@ -41,6 +42,7 @@
 #include "iresearch/search/column_collector.hpp"
 #include "iresearch/search/score_function.hpp"
 #include "iresearch/search/scorer.hpp"
+#include "iresearch/search/scorer_options.hpp"
 
 namespace irs {
 namespace {
@@ -208,11 +210,12 @@ ScoreBoundSource::ptr TFIDF::PrepareScoreBoundSource() const {
   return std::make_unique<FreqNormSource<kScoreBoundFreq>>();
 }
 
-Scorer::ScoreBoundType TFIDF::GetScoreBoundType() const noexcept {
-  if (_normalize) {
-    return ScoreBoundType::DivNorm;
-  }
-  return ScoreBoundType::MaxFreq;
+bool TFIDF::Compatible(const ScorerOptions& persisted) const noexcept {
+  return irs::BoundTypeOf(persisted) == BoundTypeOf({.with_norms = _normalize});
+}
+
+std::string TFIDF::ToString() const {
+  return absl::StrCat("tfidf(with_norms=", _normalize ? "true" : "false", ")");
 }
 
 bool TFIDF::equals(const Scorer& other) const noexcept {

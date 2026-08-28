@@ -105,15 +105,13 @@ statement ok
 DETACH ch;
 
 
-# Secret-based ATTACH path. Secret names are process-global (one DuckDB instance
-# per serened, shared by every session and database), so this one is suffixed
-# with the per-test database to stay unique across concurrent files and runs.
+# Secret-based ATTACH path.
 statement ok
-CREATE SECRET chsecret_${__DATABASE__} (TYPE clickhouse, host '${CHHOST}', port '${CHPORT}', user 'default');
+CREATE SECRET chsecret (TYPE clickhouse, host '${CHHOST}', port '${CHPORT}', user 'default');
 
 
 statement ok
-ATTACH '' AS ch2 (TYPE clickhouse, SECRET chsecret_${__DATABASE__});
+ATTACH '' AS ch2 (TYPE clickhouse, SECRET chsecret);
 
 
 query
@@ -132,4 +130,4 @@ DETACH ch2;
 
 
 statement ok
-DROP SECRET chsecret_${__DATABASE__};
+DROP SECRET chsecret;

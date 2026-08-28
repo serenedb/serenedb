@@ -22,6 +22,8 @@
 
 #pragma once
 
+#include <absl/strings/str_cat.h>
+
 #include <limits>
 #include <optional>
 
@@ -38,6 +40,7 @@ struct IndexReader;
 class MemoryIndexOutput;
 class IndexOutput;
 struct SubReader;
+struct ScorerOptions;
 struct NormProvider;
 struct TermReader;
 class ColumnArgsFetcher;
@@ -92,6 +95,11 @@ struct ScoreBoundWriter {
   virtual byte_type SizeRoot(size_t level) = 0;
 };
 
+struct ScoreSource {
+  const Scorer* scorer = nullptr;
+  const byte_type* stats = nullptr;
+};
+
 struct ScoreContext {
   const NormProvider& segment;
   const FieldProperties& field;
@@ -130,20 +138,20 @@ struct Scorer {
     MinNorm = 3,
   };
 
-  virtual ScoreBoundType GetScoreBoundType() const noexcept {
-    return ScoreBoundType::None;
+  // Can this scorer read per-block bounds that `persisted` wrote?
+  virtual bool Compatible(const ScorerOptions& /*persisted*/) const noexcept {
+    return false;
   }
-
-  // 0 -- not compatible
-  // x -- degree of compatibility
-  // 255 -- compatible, same types
-  static uint8_t compatible(ScoreBoundType lhs, ScoreBoundType rhs) noexcept;
 
   // Number of bytes required to store stats (already aligned).
   virtual size_t stats_size() const = 0;
 
   virtual bool equals(const Scorer& other) const noexcept {
     return type() == other.type();
+  }
+
+  virtual std::string ToString() const {
+    return absl::StrCat(type()().name(), "()");
   }
 
   virtual TypeInfo::type_id type() const noexcept = 0;

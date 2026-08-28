@@ -564,7 +564,7 @@ void SetGranularTerm(ByGranularRangeOptions::terms& boundary,
 QueryBuilder::ptr ByGranularRange::PrepareSegment(
   const SubReader& segment, const PrepareContext& ctx) const {
   auto sub_ctx = ctx;
-  sub_ctx.boost *= Boost();
+  sub_ctx.boost *= GetBoost();
   return PrepareSegment(segment, sub_ctx, field_id(), options());
 }
 
@@ -603,7 +603,7 @@ QueryBuilder::ptr ByGranularRange::PrepareSegment(const SubReader& segment,
   return query;
 }
 
-PrepareCollector::ptr ByGranularRange::MakeCollector(
+PrepareCollector::ptr ByGranularRange::MakeCollectorImpl(
   const Scorer* scorer) const {
   if (Classify(options()) == RangeKind::Term) {
     return std::make_unique<ByTermsCollector>(scorer, 1);

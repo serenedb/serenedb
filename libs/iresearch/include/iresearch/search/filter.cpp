@@ -51,7 +51,8 @@ QueryBuilder::ptr QueryBuilder::Empty() {
   return memory::to_managed<QueryBuilder>(gEmptyQuery);
 }
 
-PrepareCollector::ptr Filter::MakeCollector(const Scorer* /*scorer*/) const {
+PrepareCollector::ptr Filter::MakeCollectorImpl(
+  const Scorer* /*scorer*/) const {
   return std::make_unique<NoopCollector>();
 }
 

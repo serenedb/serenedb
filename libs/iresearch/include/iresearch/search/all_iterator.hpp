@@ -32,7 +32,7 @@ namespace irs {
 
 class AllIterator : public DocIterator {
  public:
-  AllIterator(uint32_t docs_count, const byte_type* stats, score_t boost);
+  AllIterator(uint32_t docs_count, ScoreSource score, score_t boost);
 
   ScoreFunction PrepareScore(const PrepareScoreContext& ctx) final;
 
@@ -98,7 +98,7 @@ class AllIterator : public DocIterator {
   using Attributes = std::tuple<CostAttr>;
 
   score_t _boost = {};
-  const byte_type* _stats = nullptr;
+  ScoreSource _score;
 
   doc_id_t _max_doc;  // largest valid doc_id
   Attributes _attrs;

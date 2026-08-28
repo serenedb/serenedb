@@ -28,6 +28,7 @@
 
 #include <algorithm>
 #include <optional>
+#include <ranges>
 #include <span>
 #include <string>
 #include <type_traits>
@@ -209,7 +210,7 @@ bool CanSplice(const T& parent, const Filter& child) noexcept {
     return false;
   }
   const auto& inner = sdb::basics::downCast<T>(child);
-  if (inner.empty() || inner.Boost() != kNoBoost ||
+  if (inner.empty() || inner.GetBoost() != kNoBoost ||
       inner.merge_type() != parent.merge_type()) {
     return false;
   }
@@ -276,7 +277,7 @@ std::pair<size_t, score_t> CountAllDocs(const T& node) {
   for (const auto& child : node) {
     if (IsAllDocs(*child)) {
       ++count;
-      MergeBoost(boost, child->BoostImpl(), node.merge_type());
+      MergeBoost(boost, child->GetBoost(), node.merge_type());
     }
   }
   return {count, boost};
@@ -363,7 +364,7 @@ bool AndExclusionCoalesceRule::Apply(Filter::ptr& slot,
   for (auto& exclude : excludes) {
     exclusion->exclude(std::move(exclude));
   }
-  exclusion->boost(node.Boost());
+  exclusion->SetBoost(node.GetBoost());
   slot = std::move(exclusion);
   return true;
 }
@@ -403,7 +404,7 @@ bool AndAllFoldRule::Apply(Filter::ptr& slot, const OptimizeContext& ctx) {
     return false;
   }
   if (all_count == node.size()) {
-    slot = node.MakeAllDocsFilter(node.Boost() * all_boost);
+    slot = node.MakeAllDocsFilter(node.GetBoost() * all_boost);
     return true;
   }
   if (!ctx.scored && node.size() - all_count == 1) {
@@ -411,8 +412,11 @@ bool AndAllFoldRule::Apply(Filter::ptr& slot, const OptimizeContext& ctx) {
     const auto it = absl::c_find_if(
       children, [](const auto& child) { return !IsAllDocs(*child); });
     SDB_ASSERT(it != children.end());
-    if (auto* boostable = dynamic_cast<FilterWithBoost*>(it->get())) {
-      boostable->boost(boostable->Boost() + all_boost);
+    // Every filter carries a boost now, but ProxyFilter applies none of its
+    // own, so folding one into it would drop it -- the same reason
+    // TryFoldBoost refuses. Leave those to the all-docs path below.
+    if ((**it).type() != Type<ProxyFilter>::id()) {
+      (**it).SetBoost((**it).GetBoost() + all_boost);
       EraseAllDocs(node);
       return true;
     }
@@ -435,7 +439,7 @@ bool OrAllFoldRule::Apply(Filter::ptr& slot, const OptimizeContext& ctx) {
   }
   if (min_match <= all_count) {
     if (!ctx.scored || all_count == node.size()) {
-      slot = node.MakeAllDocsFilter(node.Boost() * all_boost);
+      slot = node.MakeAllDocsFilter(node.GetBoost() * all_boost);
       return true;
     }
   }
@@ -448,7 +452,7 @@ bool OrAllFoldRule::Apply(Filter::ptr& slot, const OptimizeContext& ctx) {
   const size_t new_min_match = std::max(min_match - (all_count - 1), 1UL);
   auto replacement = MakeBoolean<Or>(std::move(children), node.merge_type());
   replacement->min_match_count(new_min_match);
-  replacement->boost(node.Boost());
+  replacement->SetBoost(node.GetBoost());
   slot = std::move(replacement);
   return true;
 }
@@ -463,7 +467,7 @@ bool SingleChildRule::Apply(Filter::ptr& slot, const OptimizeContext& ctx) {
     return false;
   }
   auto& front = node.mutable_filters().front();
-  if (!TryFoldBoost(*front, node.Boost(), ctx.scored)) {
+  if (!TryFoldBoost(*front, node.GetBoost(), ctx.scored)) {
     return false;
   }
   auto child = std::move(front);
@@ -482,46 +486,102 @@ bool ByTermsRule::Apply(Filter::ptr& slot, const OptimizeContext& /*ctx*/) {
   if (!is_and && min_match == 0) {
     return false;
   }
-  if (node[0].type() != Type<ByTerm>::id()) {
-    return false;
-  }
-  const auto field = sdb::basics::downCast<ByTerm>(node[0]).field_id();
-  const bool same_field = absl::c_all_of(node, [&](const auto& child) {
-    return child->type() == Type<ByTerm>::id() &&
-           sdb::basics::downCast<ByTerm>(*child).field_id() == field;
-  });
-  if (!same_field) {
-    return false;
-  }
-  ByTermsOptions options;
-  options.merge_type = node.merge_type();
-  bool has_duplicates = false;
-  for (const auto& child : node) {
-    auto& term_filter = sdb::basics::downCast<ByTerm>(*child);
-    auto it =
-      options.terms.emplace(term_filter.options().term, term_filter.Boost());
-    if (!it.second) {
-      MergeBoost(const_cast<score_t&>(it.first->boost), term_filter.Boost(),
-                 node.merge_type());
-      has_duplicates = true;
+  const bool partial_ok = is_and || min_match == 1;
+
+  struct Group {
+    const Scorer* scorer;
+    field_id field;
+    std::vector<size_t> members;
+  };
+  std::vector<Group> groups;
+  bool has_ungrouped = false;
+  for (size_t i = 0; i < node.size(); ++i) {
+    auto& child = node[i];
+    if (child.type() != Type<ByTerm>::id()) {
+      has_ungrouped = true;
+      continue;
+    }
+    const auto field = sdb::basics::downCast<ByTerm>(child).field_id();
+    auto group = absl::c_find_if(groups, [&](const Group& candidate) {
+      return candidate.scorer == child.GetScorer() && candidate.field == field;
+    });
+    if (group == groups.end()) {
+      groups.push_back(
+        {.scorer = child.GetScorer(), .field = field, .members = {i}});
+    } else {
+      group->members.push_back(i);
     }
   }
-  if (has_duplicates && !is_and && min_match != 1) {
+  const bool whole_node = !has_ungrouped && groups.size() == 1;
+  if (!whole_node && !partial_ok) {
     return false;
   }
-  options.min_match = is_and ? options.terms.size() : min_match;
-  auto by_terms = std::make_unique<ByTerms>();
-  *by_terms->mutable_field_id() = field;
-  *by_terms->mutable_options() = std::move(options);
-  by_terms->boost(node.Boost());
-  slot = std::move(by_terms);
+
+  const auto fuse = [&](const Group& group) -> std::unique_ptr<ByTerms> {
+    ByTermsOptions options;
+    options.merge_type = node.merge_type();
+    bool has_duplicates = false;
+    for (const auto i : group.members) {
+      auto& member = node[i];
+      auto& term_filter = sdb::basics::downCast<ByTerm>(member);
+      auto it =
+        options.terms.emplace(term_filter.options().term, member.GetBoost());
+      if (!it.second) {
+        MergeBoost(const_cast<score_t&>(it.first->boost), member.GetBoost(),
+                   node.merge_type());
+        has_duplicates = true;
+      }
+    }
+    if (has_duplicates && !is_and && min_match != 1) {
+      return nullptr;
+    }
+    options.min_match = is_and ? options.terms.size() : min_match;
+    auto by_terms = std::make_unique<ByTerms>();
+    *by_terms->mutable_field_id() = group.field;
+    *by_terms->mutable_options() = std::move(options);
+    return by_terms;
+  };
+
+  if (whole_node) {
+    auto by_terms = fuse(groups.front());
+    if (!by_terms) {
+      return false;
+    }
+    by_terms->SetBoost(node.GetBoost());
+    by_terms->SetScorer(groups.front().scorer);
+    slot = std::move(by_terms);
+    return true;
+  }
+
+  auto& children = node.mutable_filters();
+  bool changed = false;
+  for (const auto& group : groups) {
+    if (group.members.size() < 2) {
+      continue;
+    }
+    auto by_terms = fuse(group);
+    if (!by_terms) {
+      continue;
+    }
+    by_terms->SetScorer(group.scorer);
+    children[group.members.front()] = std::move(by_terms);
+    for (const auto i : group.members | std::views::drop(1)) {
+      children[i] = nullptr;
+    }
+    changed = true;
+  }
+  if (!changed) {
+    return false;
+  }
+  std::erase(children, nullptr);
   return true;
 }
 
 std::optional<OrAcceptorFusionRule::AcceptorInfo> OrAcceptorFusionRule::InfoOf(
   const Filter& child) {
   const auto info = [](const auto& filter, size_t scored_terms_limit) {
-    return AcceptorInfo{filter.field_id(), filter.Boost(), scored_terms_limit};
+    return AcceptorInfo{filter.field_id(), filter.GetBoost(),
+                        scored_terms_limit};
   };
   const auto type = child.type();
   if (type == Type<ByTerm>::id()) {
@@ -668,7 +728,7 @@ bool OrAcceptorFusionRule::Apply(Filter::ptr& slot,
   *fused->mutable_field_id() = head->field;
   *fused->mutable_options() =
     AutomatonOptions{std::move(dfa), pattern, scored_terms_limit};
-  fused->boost(ctx.scored ? node.Boost() * head->boost : node.Boost());
+  fused->SetBoost(ctx.scored ? node.GetBoost() * head->boost : node.GetBoost());
   slot = std::move(fused);
   return true;
 }
@@ -810,7 +870,7 @@ bool OrAllRequiredRule::Apply(Filter::ptr& slot,
   }
   auto& children = node.mutable_filters();
   auto replacement = MakeBoolean<And>(std::move(children), node.merge_type());
-  replacement->boost(node.Boost());
+  replacement->SetBoost(node.GetBoost());
   slot = std::move(replacement);
   return true;
 }

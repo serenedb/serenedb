@@ -70,7 +70,6 @@ inline uint64_t ExecuteTopKWithCount(const DirectoryReader& reader,
     auto it = query->Execute({}, stats);
 
     auto score_func = it->PrepareScore({
-      .scorer = &scorer,
       .segment = &segment,
       .fetcher = &fetcher,
     });
@@ -111,10 +110,10 @@ inline uint64_t ExecuteTopK(const DirectoryReader& reader, const Filter& filter,
       continue;
     }
 
-    auto it = query->Execute({.score_prune = score_prune}, stats);
+    auto it =
+      query->Execute({.prune_scorer = score_prune ? &scorer : nullptr}, stats);
 
     auto score_func = it->PrepareScore({
-      .scorer = &scorer,
       .segment = &segment,
       .fetcher = &fetcher,
     });

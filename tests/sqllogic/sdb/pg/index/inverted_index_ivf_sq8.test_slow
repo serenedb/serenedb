@@ -56,7 +56,7 @@ statement ok
 VACUUM (REFRESH_TABLE) vecs;
 
 statement ok
-SET sdb_nprobe TO 512;
+SET sdb_ivf_search_nprobe TO 512;
 
 # pure kNN -> quantized SQ8 path
 query
@@ -69,7 +69,7 @@ t
 
 # filtered kNN -> exact raw reranker; needs a wider probe to keep recall up
 statement ok
-SET sdb_nprobe TO 2048;
+SET sdb_ivf_search_nprobe TO 2048;
 
 query
 WITH
@@ -80,7 +80,7 @@ SELECT COUNT(*)::FLOAT / 512 > 0.9 FROM correct_l2_filtered WHERE id IN (SELECT 
 t
 
 statement ok
-SET sdb_nprobe TO 512;
+SET sdb_ivf_search_nprobe TO 512;
 
 # ---------------------------------------------------------------------------
 # SQ8 + InnerProduct recall
@@ -101,4 +101,4 @@ SELECT COUNT(*)::FLOAT / 512 > 0.9 FROM correct_ip WHERE id IN (SELECT id FROM r
 t
 
 statement ok
-RESET sdb_nprobe;
+RESET sdb_ivf_search_nprobe;

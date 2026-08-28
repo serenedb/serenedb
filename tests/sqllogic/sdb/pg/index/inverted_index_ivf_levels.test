@@ -14,7 +14,7 @@ control substitution on
 # ============================================================================
 
 statement ok
-SET sdb_nprobe = 100000;
+SET sdb_ivf_search_nprobe = 100000;
 
 # ---- multi-level tree: posting_size=2, 10000 points (L=5000 > cap 1024) ------
 statement ok
@@ -183,4 +183,4 @@ count
 2000
 
 statement ok
-RESET sdb_nprobe;
+RESET sdb_ivf_search_nprobe;

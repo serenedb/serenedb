@@ -323,7 +323,7 @@ constexpr std::pair<std::string_view, VariableDescription>
       },
     },
     {
-      "sdb_nprobe",
+      "sdb_ivf_search_nprobe",
       {
         LogicalTypeId::INTEGER,
         "Number of IVF cluster lists scanned per vector-similarity query. "
@@ -334,7 +334,7 @@ constexpr std::pair<std::string_view, VariableDescription>
           if (n < 1) {
             THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                             ERR_MSG("invalid value for parameter "
-                                    "\"sdb_nprobe\": \"",
+                                    "\"sdb_ivf_search_nprobe\": \"",
                                     value.ToString(), "\""));
           }
         },
@@ -346,10 +346,14 @@ constexpr std::pair<std::string_view, VariableDescription>
         LogicalTypeId::INTEGER,
         "Maximum number of IVF centroid-tree children expanded per node while "
         "descending to the probed clusters. Decouples the descent width from "
-        "sdb_nprobe: lower values cut centroid work on deep (multi-level) "
-        "trees at some recall cost. The width applies per node and so compounds "
-        "over the tree's levels; it is raised when smaller than the width whose "
-        "compounded value reaches sdb_nprobe, so the descent can always supply "
+        "sdb_ivf_search_nprobe: lower values cut centroid work on deep "
+        "(multi-level) "
+        "trees at some recall cost. The width applies per node and so "
+        "compounds "
+        "over the tree's levels; it is raised when smaller than the width "
+        "whose "
+        "compounded value reaches sdb_ivf_search_nprobe, so the descent can "
+        "always supply "
         "the requested number of clusters. Default 16.",
         [] { return duckdb::Value::INTEGER(16); },
         [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value& value) {

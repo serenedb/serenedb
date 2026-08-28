@@ -29,7 +29,7 @@ statement ok
 VACUUM (REFRESH_TABLE) wal_pano_t;
 
 statement ok
-SET sdb_nprobe = 1000;
+SET sdb_ivf_search_nprobe = 1000;
 
 query
 SELECT pk FROM wal_pano_idx
@@ -64,7 +64,7 @@ VACUUM (REFRESH_TABLE) wal_pano_t;
 
 connection pano_after
 statement ok
-SET sdb_nprobe = 1000;
+SET sdb_ivf_search_nprobe = 1000;
 
 connection pano_after
 query

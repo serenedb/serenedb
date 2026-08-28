@@ -538,8 +538,8 @@ duckdb::unique_ptr<duckdb::Expression> PushdownScorerCall(
   return ref;
 }
 
-uint32_t ReadNprobe(duckdb::ClientContext& context) {
-  return connector::ReadIntSetting(context, "sdb_nprobe");
+uint32_t ReadSearchNprobe(duckdb::ClientContext& context) {
+  return connector::ReadIntSetting(context, "sdb_ivf_search_nprobe");
 }
 
 uint32_t ReadMaxSearchFanout(duckdb::ClientContext& context) {
@@ -616,7 +616,7 @@ duckdb::unique_ptr<duckdb::Expression> PushdownDistanceCall(
       .centroids_id = ann_info->centroids_id,
       .postings_id = ann_info->postings_id,
       .quant = ann_info->quant.kind,
-      .nprobe = ReadNprobe(context),
+      .nprobe = ReadSearchNprobe(context),
       .max_search_fanout = ReadMaxSearchFanout(context),
     };
     ss.score_order = info.order;

@@ -2,8 +2,8 @@ control substitution on
 
 # ============================================================================
 # sdb_ivf_max_search_fanout bounds how many children of each centroid-tree node
-# the search descends into, decoupling the descent width from sdb_nprobe. It is
-# raised to sdb_nprobe when smaller, because on a shallow tree one expanded node
+# the search descends into, decoupling the descent width from sdb_ivf_search_nprobe. It is
+# raised to sdb_ivf_search_nprobe when smaller, because on a shallow tree one expanded node
 # yields one leaf candidate, so a smaller width would silently cap the probe
 # count.
 #
@@ -64,7 +64,7 @@ VACUUM (REFRESH_TABLE) fan;
 # to land in the right neighbourhood instead. Which side of a boundary a given
 # point sits on moves with the k-means layout, which differs across builds.
 statement ok
-SET sdb_nprobe = 1;
+SET sdb_ivf_search_nprobe = 1;
 
 statement ok
 SET sdb_ivf_max_search_fanout = 1;
@@ -115,7 +115,7 @@ statement ok
 RESET sdb_ivf_max_search_fanout;
 
 statement ok
-SET sdb_nprobe = 100000;
+SET sdb_ivf_search_nprobe = 100000;
 
 query
 SELECT pk FROM (SELECT pk
@@ -165,4 +165,4 @@ statement ok
 RESET sdb_ivf_posting_size;
 
 statement ok
-RESET sdb_nprobe;
+RESET sdb_ivf_search_nprobe;

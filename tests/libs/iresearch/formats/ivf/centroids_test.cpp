@@ -671,7 +671,8 @@ TEST(centroids_builder_test, multilevel_search_recall_matches_bruteforce) {
   std::vector<uint32_t> leaf_ids;
   std::vector<float> leaf_cens;
   tree.Search(std::span<const float>{data.data(), d}, in,
-              static_cast<uint32_t>(n), leaf_ids, &leaf_cens, kDefaultMaxFanout);
+              static_cast<uint32_t>(n), leaf_ids, &leaf_cens,
+              kDefaultMaxFanout);
   const size_t n_leaves = leaf_ids.size();
   ASSERT_GT(n_leaves, 1u);
   ASSERT_EQ(leaf_cens.size(), n_leaves * d);
@@ -700,7 +701,8 @@ TEST(centroids_builder_test, multilevel_search_recall_matches_bruteforce) {
     std::partial_sort(scored.begin(), scored.begin() + k, scored.end());
 
     std::vector<uint32_t> got;
-    tree.Search(std::span<const float>{q, d}, in, nprobe, got, nullptr, kDefaultMaxFanout);
+    tree.Search(std::span<const float>{q, d}, in, nprobe, got, nullptr,
+                kDefaultMaxFanout);
     for (uint32_t t = 0; t < k; ++t) {
       if (std::find(got.begin(), got.end(), scored[t].second) != got.end()) {
         ++hit;
@@ -856,9 +858,9 @@ std::vector<CentroidsNode> MakeGreedyTrapTree(uint32_t d) {
 
 // max_search_fanout caps the children expanded per node, so it decides whether
 // the descent can escape a wrong greedy turn. On MakeGreedyTrapTree with
-// nprobe=1: fanout 1 follows the root's best child and lands on leaf 1.5 (global
-// id 9), while fanout 2 expands both root subtrees and finds the true nearest,
-// leaf 5.0 (global id 10).
+// nprobe=1: fanout 1 follows the root's best child and lands on leaf 1.5
+// (global id 9), while fanout 2 expands both root subtrees and finds the true
+// nearest, leaf 5.0 (global id 10).
 TEST(centroids_node_test, fanout_caps_children_per_node) {
   SimpleMemoryAccounter memory;
   MemoryFile file{memory};
@@ -895,10 +897,10 @@ TEST(centroids_node_test, fanout_caps_children_per_node) {
 }
 
 // The width is floored at the root-level-th root of nprobe, not at nprobe: it
-// applies per node and compounds over _root.level expansion steps, so w^level is
-// what has to reach nprobe. On a 3-layer tree that is sqrt(nprobe); on a 2-layer
-// tree the single expansion step makes it nprobe itself, which is the shape where
-// one expanded node yields one leaf candidate.
+// applies per node and compounds over _root.level expansion steps, so w^level
+// is what has to reach nprobe. On a 3-layer tree that is sqrt(nprobe); on a
+// 2-layer tree the single expansion step makes it nprobe itself, which is the
+// shape where one expanded node yields one leaf candidate.
 TEST(centroids_node_test, fanout_floored_at_root_of_nprobe) {
   SimpleMemoryAccounter memory;
   MemoryFile file{memory};
@@ -926,8 +928,7 @@ TEST(centroids_node_test, fanout_floored_at_root_of_nprobe) {
   EXPECT_EQ(tree.EffectiveFanout(1, 1), 1u);
   // An explicit width wider than the floor wins.
   EXPECT_EQ(tree.EffectiveFanout(100, 64), 64u);
-  EXPECT_EQ(tree.EffectiveFanout(4, kDefaultMaxFanout),
-            kDefaultMaxFanout);
+  EXPECT_EQ(tree.EffectiveFanout(4, kDefaultMaxFanout), kDefaultMaxFanout);
 
   const std::vector<float> q{4.9f};
   std::vector<uint32_t> floored;
@@ -977,11 +978,12 @@ TEST(centroids_node_test, two_layer_tree_floors_at_nprobe) {
   EXPECT_EQ(tree.EffectiveFanout(2, 1), 2u);
 }
 
-// Raising the fanout expands a superset of nodes at every layer, so the explored
-// leaf set can only grow and recall against brute force can only rise. This is
-// the property that makes an increase in the shipped default safe by
-// construction. Once the fanout reaches the build-side max_fanout every retained
-// node expands all of its children, so the descent is exhaustive and exact.
+// Raising the fanout expands a superset of nodes at every layer, so the
+// explored leaf set can only grow and recall against brute force can only rise.
+// This is the property that makes an increase in the shipped default safe by
+// construction. Once the fanout reaches the build-side max_fanout every
+// retained node expands all of its children, so the descent is exhaustive and
+// exact.
 TEST(centroids_builder_test, wider_fanout_does_not_lower_recall) {
   constexpr uint32_t d = 8;
   constexpr size_t kMaxBuildFanout = 4;

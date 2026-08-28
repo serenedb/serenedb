@@ -14,7 +14,7 @@ hash-threshold 100
 
 # Exhaustive search: probe every cluster so kNN can't miss a true neighbour.
 statement ok
-SET sdb_nprobe = 1000
+SET sdb_ivf_search_nprobe = 1000
 
 # ===========================================================================
 # 1. L2 + RaBitQ (8 bits), single cluster (nlist=1): exercises the batched
@@ -342,7 +342,7 @@ count
 5
 
 statement ok
-RESET sdb_nprobe
+RESET sdb_ivf_search_nprobe
 
 # ===========================================================================
 # 7. Default rabitq_bits (1-bit, sign-only quantization): coarser, so use a
@@ -350,7 +350,7 @@ RESET sdb_nprobe
 # ===========================================================================
 
 statement ok
-SET sdb_nprobe = 1000
+SET sdb_ivf_search_nprobe = 1000
 
 statement ok
 CREATE TABLE rabitq_default (pk INTEGER PRIMARY KEY, emb FLOAT[8])
@@ -376,7 +376,7 @@ pk
 1
 
 statement ok
-RESET sdb_nprobe
+RESET sdb_ivf_search_nprobe
 
 # ===========================================================================
 # 8. Option guards: rabitq_bits range and only-valid-with-quant='rabitq'.
@@ -417,7 +417,7 @@ db error: ERROR: Column 'emb': ivf option 'rabitq_bits' is only valid with quant
 # ===========================================================================
 
 statement ok
-SET sdb_nprobe = 1000
+SET sdb_ivf_search_nprobe = 1000
 
 query
 SELECT pk FROM rabitq_l2_idx
@@ -443,4 +443,4 @@ count
 3
 
 statement ok
-RESET sdb_nprobe
+RESET sdb_ivf_search_nprobe

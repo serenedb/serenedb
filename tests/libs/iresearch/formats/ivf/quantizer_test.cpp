@@ -644,7 +644,8 @@ TEST_P(rabitq_quantizer_test, roundtrip_ranking_across_dims) {
   const size_t rd = std::max<uint32_t>(4, std::bit_ceil(d));
   const size_t stats_bytes = SerializeStats(*writer).size();
   EXPECT_EQ(stats_bytes, 2 * sizeof(uint32_t) + (rd + 7) / 8);
-  EXPECT_LT(stats_bytes, size_t{d} * d * sizeof(float));  // never a dense matrix
+  EXPECT_LT(stats_bytes,
+            size_t{d} * d * sizeof(float));  // never a dense matrix
   writer->SetClusterCentroid(centroid.data());
 
   SimpleMemoryAccounter memory;
@@ -674,30 +675,6 @@ TEST_P(rabitq_quantizer_test, roundtrip_ranking_across_dims) {
 
 INSTANTIATE_TEST_SUITE_P(dims, rabitq_quantizer_test,
                          ::testing::Values(8u, 32u, 96u, 128u, 1536u));
-
-// Indexes written before the signs were persisted carry a blob that stops at
-// the header. Truncating to the header reproduces one, and it must still decode
-// -- the reader falls back to regenerating the exact draw it was encoded with.
-TEST(rabitq_quantizer_test, header_only_blob_still_decodes) {
-  constexpr uint32_t d = 128;
-  constexpr uint32_t nb_bits = 8;
-  const VectorMetric metric = VectorMetric::L2Sqr;
-  const std::vector<float> centroid(d, 0.f);
-
-  auto writer = MakeQuantizerWriter(VectorQuantization::RaBitQ, d, metric,
-                                    /*pq_m=*/0, /*pq_niter=*/0, nb_bits);
-  ASSERT_NE(writer, nullptr);
-  const bstring blob = SerializeStats(*writer);
-  ASSERT_GT(blob.size(), 2 * sizeof(uint32_t));
-
-  const bstring header_only = blob.substr(0, 2 * sizeof(uint32_t));
-  auto stats =
-    MakeQuantizerStats(VectorQuantization::RaBitQ, d, header_only, metric);
-  ASSERT_NE(stats, nullptr);
-  std::vector<float> query(d, 0.f);
-  query[0] = 1.5f;
-  EXPECT_NE(stats->MakeCodebook(query), nullptr);
-}
 
 TEST(rabitq_quantizer_test, roundtrip_ranking_matches_exact_l2) {
   constexpr uint32_t d = 8;

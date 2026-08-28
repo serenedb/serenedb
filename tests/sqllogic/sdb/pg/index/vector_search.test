@@ -1264,7 +1264,7 @@ count
 
 # IVF kNN only scans nprobe clusters, so an exhaustive scan needs nprobe >= nlist.
 statement ok
-SET sdb_nprobe = 1000;
+SET sdb_ivf_search_nprobe = 1000;
 
 
 query
@@ -1275,7 +1275,7 @@ count
 
 
 statement ok
-RESET sdb_nprobe;
+RESET sdb_ivf_search_nprobe;
 
 
 query
@@ -1297,7 +1297,7 @@ id
 
 
 statement ok
-SET sdb_nprobe = 256;
+SET sdb_ivf_search_nprobe = 256;
 
 
 query
@@ -1310,7 +1310,7 @@ id
 
 
 statement ok
-RESET sdb_nprobe;
+RESET sdb_ivf_search_nprobe;
 
 
 statement ok

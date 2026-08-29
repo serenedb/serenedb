@@ -1114,8 +1114,9 @@ TEST_F(LoadTest, DisjunctionScoreAccuracy) {
   }
 }
 
-// Asking for the documents to be printed must not change which ones they are:
-// `_print` is a way of looking, not a different query.
+// Asking for a report must not change which documents there are: a report is a
+// way of looking, not a different query. Printing stays off here -- it is a
+// line per matching document, thousands of them over the query set.
 TEST_F(LoadTest, ReportIsOnlyAWayOfLooking) {
   ASSERT_NE(nullptr, gExecutor);
 
@@ -1125,7 +1126,7 @@ TEST_F(LoadTest, ReportIsOnlyAWayOfLooking) {
     const auto docs = gExecutor->ExecuteEmitDocs(query, {});
     const auto docs_hash = gExecutor->ExecuteEmitDocs(query, {.hash = true});
     const auto docs_both =
-      gExecutor->ExecuteEmitDocs(query, {.hash = true, .print = true});
+      gExecutor->ExecuteEmitDocs(query, {.hash = true, .print = false});
     EXPECT_EQ(docs.count, docs_hash.count);
     EXPECT_EQ(docs.count, docs_both.count);
     EXPECT_EQ(docs_hash.hash, docs_both.hash);
@@ -1135,7 +1136,7 @@ TEST_F(LoadTest, ReportIsOnlyAWayOfLooking) {
     const auto scored_hash =
       gExecutor->ExecuteEmitScoredDocs(query, {.hash = true});
     const auto scored_both =
-      gExecutor->ExecuteEmitScoredDocs(query, {.hash = true, .print = true});
+      gExecutor->ExecuteEmitScoredDocs(query, {.hash = true, .print = false});
     EXPECT_EQ(scored.count, scored_hash.count);
     EXPECT_EQ(scored.count, scored_both.count);
     EXPECT_EQ(scored_hash.hash, scored_both.hash);

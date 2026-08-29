@@ -1,8 +1,16 @@
-# Commit-on-flush makes backfill batches durable and visible DURING an online
-# inverted CREATE INDEX: pause_create_index_between_batches parks each sink
-# thread right after its first cut-and-commit, so sdb_metrics must already
-# report committed segments while the build is parked. Requires
-# SDB_FAULT_INJECTION, like the rest of the recovery suite.
+# Commit-on-flush cuts and commits backfill batches DURING an online inverted
+# CREATE INDEX rather than flushing once at the end:
+# pause_create_index_between_batches parks each sink thread right after its
+# first cut-and-commit, and the finished index carries the several segments
+# those cuts produced.
+#
+# The segment count is read after the build commits, not while it is parked:
+# an uncommitted index belongs to the building transaction and PG 18 shows it
+# to no other session, so sdb_metrics -- which resolves per-index rows through
+# the reader's catalog snapshot -- has no row for it to report on. What the
+# parked window can still be observed by is the live progress view, which is
+# what gates the assertions below. Requires SDB_FAULT_INJECTION, like the rest
+# of the recovery suite.
 
 
 statement ok
@@ -26,14 +34,15 @@ statement async ok
 CREATE INDEX oci_park_idx ON oci_park USING inverted(label) WITH (segment_docs_max = 1000, compaction_interval = 3600000);
 
 
-# The first committed batch becomes visible (via the 1s background refresh)
-# while the build is still parked between batches.
+# The build has parked between batches, which is the window the fault exists
+# to hold open.
 connection default
 query ok retry 40 backoff 250ms
-SELECT value::bigint >= 1 AS committed FROM sdb_metrics WHERE metric = 'num_segments' AND relation_id = (SELECT oid FROM pg_class WHERE relname = 'oci_park_idx');
+SELECT count(*) FROM pg_stat_progress_create_index
+WHERE relid = 'oci_park'::regclass;
 ----
-committed
-t
+count
+1
 
 
 statement ok
@@ -48,6 +57,18 @@ SELECT count(*) FROM oci_park_idx;
 ----
 count
 50000
+
+
+# Several committed segments, not one: each parked batch had already been cut
+# and committed before the next one started. A single end-of-build flush would
+# leave exactly one, and compaction is disabled for the run.
+query
+SELECT value::bigint > 1 AS rotated FROM sdb_metrics
+WHERE metric = 'num_segments'
+  AND relation_id = (SELECT oid FROM pg_class WHERE relname = 'oci_park_idx');
+----
+rotated
+t
 
 
 statement ok

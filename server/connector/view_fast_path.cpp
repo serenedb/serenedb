@@ -48,10 +48,7 @@
 #include <ranges>
 
 #include "basics/system-compiler.h"
-#include "catalog/store/store.h"
-#include "catalog/table.h"
-#include "catalog/view.h"
-#include "connector/duckdb_table_entry.h"
+#include "catalog/entry/duckdb_table_entry.h"
 #include "connector/pg_logical_types.h"
 #include "pg/errcodes.h"
 #include "pg/sql_exception_macro.h"
@@ -284,9 +281,9 @@ std::vector<std::string> KeyColumnsFromOptions(
 }
 
 std::optional<ViewFastPath> ResolveViewFastPath(
-  duckdb::ClientContext& context, const catalog::PgSqlView& view,
+  duckdb::ClientContext& context, const duckdb::CreateViewInfo& view,
   std::span<const std::string> key_columns) {
-  const auto& info = view.GetInfo();
+  const auto& info = view;
   if (!info.query) {
     return std::nullopt;
   }
@@ -394,26 +391,36 @@ std::optional<ViewFastPath> ResolveViewFastPath(
       return out;
     }
     if (cat_type == "serenedb") {
-      const auto* sdb_entry = dynamic_cast<const SereneDBTableEntry*>(&entry);
+      const auto* sdb_entry =
+        dynamic_cast<const catalog::SereneDBTableEntry*>(&entry);
       if (!sdb_entry) {
         return std::nullopt;
       }
-      auto sdb_table = sdb_entry->GetSereneDBTable();
-      if (!sdb_table) {
-        return std::nullopt;
-      }
-      // The table's rows live in the hidden store table; views over it ride
-      // the same rowid-keyed machinery as views over attached databases.
+      // Views over a serenedb table ride the same rowid-keyed machinery as
+      // views over an attached database.
       ViewFastPath out;
-      out.catalog_ref =
-        CatalogTableRef{.catalog = std::string{catalog::kStoreDatabaseName},
-                        .schema = "main",
-                        .table = catalog::StoreTableName(
-                          entry.ParentCatalog().GetName().GetIdentifierName(),
-                          entry.ParentSchema().name.GetIdentifierName(),
-                          entry.name.GetIdentifierName())};
+      out.catalog_ref = CatalogTableRef{
+        .catalog = entry.ParentCatalog().GetName().GetIdentifierName(),
+        .schema = entry.ParentSchema().name.GetIdentifierName(),
+        .table = entry.name.GetIdentifierName()};
       out.pk_spec = catalog::PkSpec::DuckDBRowId;
       out.supports_filters = true;
+      // Only the check that every projected name is one of the relation's
+      // columns: a name that belongs to none is not this fast path's to serve.
+      const auto& sdb_columns = sdb_entry->GetColumns();
+      const auto has_column = [&](std::string_view name) {
+        for (const auto& col : sdb_columns.Logical()) {
+          if (absl::EqualsIgnoreCase(col.Name().GetIdentifierName(), name)) {
+            return true;
+          }
+        }
+        return false;
+      };
+      for (const auto& name : projection_columns) {
+        if (!has_column(name)) {
+          return std::nullopt;
+        }
+      }
       out.projection_columns = std::move(projection_columns);
       return out;
     }

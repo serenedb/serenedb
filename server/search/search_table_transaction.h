@@ -85,8 +85,6 @@ class SearchTableTransaction {
     return it->second;
   }
 
-  LocalTableChanges& Changes() noexcept { return _changes; }
-
   bool Empty() const noexcept { return _writes.empty(); }
 
   void RegisterFlush() noexcept;

@@ -262,10 +262,10 @@ struct FilterPrinter {
   const FieldKindResolver& kind_of;
 
   std::string FieldName(field_id fid) const {
-    return name_of(sdb::catalog::Column::Id{fid});
+    return name_of(sdb::catalog::ColumnId{fid});
   }
   Kind FieldKind(field_id fid) const {
-    return kind_of(sdb::catalog::Column::Id{fid});
+    return kind_of(sdb::catalog::ColumnId{fid});
   }
 
   std::string PhraseParts(const ByPhrase& filter) const {
@@ -555,11 +555,11 @@ struct FilterPrinter {
   }
 };
 
-std::string IdentityField(sdb::catalog::Column::Id id) {
+std::string IdentityField(sdb::catalog::ColumnId id) {
   return absl::StrCat(static_cast<irs::field_id>(id));
 }
 
-Kind UnknownKind(sdb::catalog::Column::Id) { return Kind::Unsupported; }
+Kind UnknownKind(sdb::catalog::ColumnId) { return Kind::Unsupported; }
 
 }  // namespace
 

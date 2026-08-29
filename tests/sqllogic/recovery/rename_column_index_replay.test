@@ -1,0 +1,117 @@
+control substitution on
+
+# A store index records its keys as the CREATE INDEX spelled them, and RENAME
+# COLUMN does not rewrite that text. Live it does not matter -- the index is
+# already bound -- but an index replayed out of the data WAL comes back unbound,
+# and the first ALTER after it re-binds the key expressions by name against a
+# table whose column has since been renamed: "Table t<id> does not have a column
+# named b", raised at boot, which fails the open outright.
+#
+# Deliberately no CHECKPOINT: the WAL is what has to replay for this to be
+# exercised at all.
+
+
+statement ok
+CREATE TABLE rci (a INTEGER, b TEXT, c INTEGER);
+
+
+statement ok
+CREATE INDEX rci_b ON rci (b);
+
+
+statement ok
+CREATE INDEX rci_bc ON rci (b, c);
+
+
+statement ok
+CREATE INDEX rci_expr ON rci ((lower(b)));
+
+
+statement ok
+INSERT INTO rci VALUES (1, 'X', 10), (2, 'Y', 20);
+
+
+statement ok
+ALTER TABLE rci RENAME COLUMN b TO bb;
+
+
+# Any later reshape of the table re-binds the indexes. Adding and dropping a
+# column is the smallest pair that does it without touching an indexed column.
+statement ok
+ALTER TABLE rci ADD COLUMN tmp INTEGER;
+
+
+statement ok
+ALTER TABLE rci DROP COLUMN tmp;
+
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+statement error connection closed
+SELECT 1;
+
+
+connection after_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT 1 AS one;
+----
+one
+1
+
+
+connection after_crash
+query
+SELECT a, bb, c FROM rci ORDER BY a;
+----
+a	bb	c
+1	X	10
+2	Y	20
+
+
+# The indexes came back over the renamed column rather than over nothing.
+connection after_crash
+query
+SELECT a FROM rci WHERE bb = 'Y';
+----
+a
+2
+
+
+connection after_crash
+query
+SELECT a FROM rci WHERE lower(bb) = 'x';
+----
+a
+1
+
+
+connection after_crash
+query
+SELECT indexname FROM pg_indexes WHERE tablename = 'rci' ORDER BY indexname;
+----
+indexname
+rci_b
+rci_bc
+rci_expr
+
+
+# And they still track writes, which an index bound against a stale name could
+# not do.
+connection after_crash
+statement ok
+INSERT INTO rci VALUES (3, 'Z', 30);
+
+
+connection after_crash
+query
+SELECT a FROM rci WHERE bb = 'Z';
+----
+a
+3
+
+
+connection after_crash
+statement ok
+DROP TABLE rci;

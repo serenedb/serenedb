@@ -1,12 +1,12 @@
 control substitution on
 control max-async-connections 5
 
-# Crash mid CREATE INVERTED INDEX, after the build but before the tombstone is
-# removed. The index lives in the catalog under its dropped (tombstoned) name
-# and its iresearch storage is attached to the immutable InvertedIndex catalog
-# object. On restart the half-created index must be dropped (boot drop-task:
-# storage re-opened at bind, then directory removal) and the table must stay
-# usable and re-indexable. Pins the CREATE-INDEX crash-recovery seam.
+# Crash mid CREATE INVERTED INDEX: the build is finished and its iresearch
+# storage is on disk, but the statement's transaction -- and so the catalog
+# record -- never committed. On restart the half-created index must be dropped
+# (boot drop-task: storage re-opened at bind, then directory removal) and the
+# table must stay usable and re-indexable. Pins the CREATE-INDEX crash-recovery
+# seam.
 
 statement ok
 CREATE TEXT SEARCH DICTIONARY cc_dict(
@@ -26,7 +26,7 @@ statement ok
 INSERT INTO cc_t VALUES (1, 'alpha bravo charlie'), (2, 'delta echo foxtrot');
 
 statement ok
-SET sdb_faults = 'crash_before_remove_tombstone';
+SET sdb_faults = 'crash_before_catalog_commit';
 
 statement error connection closed
 CREATE INDEX cc_idx ON cc_t USING inverted(a, b cc_dict);

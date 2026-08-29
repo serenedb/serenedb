@@ -29,6 +29,7 @@
 #include <duckdb/logging/log_manager.hpp>
 #include <duckdb/logging/logger.hpp>
 #include <duckdb/logging/logging.hpp>
+#include <duckdb/main/database_manager.hpp>
 
 #include "basics/assert.h"
 #include "basics/log.h"
@@ -109,6 +110,13 @@ void DuckDBEngine::Initialize(DBConfigMutator mutator) {
   }
 
   log::SetLogger(&manager.GlobalLogger());
+}
+
+void DuckDBEngine::CloseDatabases() {
+  if (!_db) {
+    return;
+  }
+  duckdb::DatabaseManager::Get(*_db->instance).ResetDatabases();
 }
 
 void DuckDBEngine::Shutdown() {

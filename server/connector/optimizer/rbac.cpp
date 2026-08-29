@@ -31,20 +31,21 @@
 #include <utility>
 #include <vector>
 
+#include "auth/role_closure.h"
 #include "basics/containers/flat_hash_map.h"
 #include "basics/containers/flat_hash_set.h"
-#include "basics/down_cast.h"
 #include "basics/static_strings.h"
-#include "catalog/catalog.h"
+#include "catalog/ddl/catalog.h"
+#include "catalog/entry.h"
+#include "catalog/entry/duckdb_index_scan_entry.h"
+#include "catalog/entry/duckdb_object_entry.h"
+#include "catalog/entry/duckdb_system_table_entry.h"
+#include "catalog/entry/duckdb_table_entry.h"
+#include "catalog/entry/duckdb_view_entry.h"
 #include "catalog/foreign_server.h"
-#include "catalog/object.h"
-#include "catalog/store/store.h"
-#include "catalog/table.h"
+#include "catalog/log/store.h"
+#include "catalog/read/duckdb_catalog_sets.h"
 #include "connector/duckdb_client_state.h"
-#include "connector/duckdb_index_scan_entry.h"
-#include "connector/duckdb_system_table_entry.h"
-#include "connector/duckdb_table_entry.h"
-#include "connector/duckdb_view_entry.h"
 #include "pg/connection_context.h"
 #include "pg/errcodes.h"
 #include "pg/sql_exception_macro.h"
@@ -79,52 +80,120 @@ bool IsSystemSchema(const duckdb::CatalogEntry& entry) {
          schema == StaticStrings::kInformationSchema;
 }
 
-const catalog::Object* SereneDBRelation(const duckdb::CatalogEntry* entry) {
+// What a bound relation entry contributes to an access check: the owner and ACL
+// it carries, the per-column grants it answers with where the check goes
+// per-column, and the definition behind it for the name an error reports and
+// the kind the check branches on.
+//
+// A relation the check governs but that has no ACL of its own -- an index --
+// answers with the permissions of the relation it hangs off, which is postgres'
+// rule, and with that relation's column grants for the same reason.
+struct Governed {
+  // The identity the check reports and branches on, spelled out rather than
+  // reached through the definition: every kind's entry carries its own.
+  duckdb::CatalogType type = duckdb::CatalogType::INVALID;
+  ObjectId id;
+  std::string_view name;
+  const catalog::Permissions* perm = nullptr;
+  // The entry a column check reads: its ColumnList spells the columns the
+  // plan's indices name, and the relation's per-column grants hang off the
+  // same ids. Not the entry the requirement points at -- a DML scans the store
+  // table, whose columns carry no identity -- but the facade it was matched
+  // to.
+  const duckdb::TableCatalogEntry* relation = nullptr;
+  const catalog::ColumnAcls* acls = nullptr;
+
+  explicit operator bool() const noexcept { return perm != nullptr; }
+};
+
+Governed SereneDBRelation(const duckdb::CatalogEntry* entry,
+                          duckdb::ClientContext& context) {
   if (const auto* facade =
-        dynamic_cast<const connector::SereneDBTableEntry*>(entry)) {
-    return facade->GetSereneDBTable().get();
+        dynamic_cast<const catalog::SereneDBTableEntry*>(entry)) {
+    return {duckdb::CatalogType::TABLE_ENTRY,
+            ObjectId{facade->oid},
+            facade->name.GetIdentifierName(),
+            &facade->permissions,
+            facade,
+            &facade->GetColumnAcls()};
   }
   if (const auto* view =
-        dynamic_cast<const connector::SereneDBViewEntry*>(entry)) {
-    return view->GetSereneDBView().get();
+        dynamic_cast<const catalog::SereneDBViewEntry*>(entry)) {
+    return {duckdb::CatalogType::VIEW_ENTRY,
+            ObjectId{view->oid},
+            view->name.GetIdentifierName(),
+            &view->permissions,
+            nullptr,
+            nullptr};
   }
   if (const auto* index =
-        dynamic_cast<const connector::SereneDBIndexScanEntry*>(entry)) {
-    return index->GetIndexedRelation();
+        dynamic_cast<const catalog::SereneDBIndexScanEntry*>(entry)) {
+    // Reading an index is gated on the relation it is built on, so that is
+    // what a denial names -- resolved live by the id the wrapper holds: an
+    // index has no ACL of its own, and a regrant or rename of the relation
+    // does not rewrite the wrapper. The columns stay the wrapper's, which is
+    // the ColumnList the plan's indices name.
+    auto governed = SereneDBRelation(
+      catalog::LookupEntryIn(
+        &context, const_cast<duckdb::Catalog&>(index->ParentCatalog()),
+        index->GetIndexedRelationId())
+        .get(),
+      context);
+    governed.relation = index;
+    return governed;
   }
   if (const auto* system =
-        dynamic_cast<const connector::SystemTableEntry*>(entry)) {
-    return &system->GetSystemObject();
+        dynamic_cast<const catalog::SystemTableEntry*>(entry)) {
+    return {duckdb::CatalogType::TABLE_ENTRY,
+            catalog::IdOf(*system),
+            system->name.GetIdentifierName(),
+            &system->permissions,
+            system,
+            nullptr};
   }
-  return nullptr;
+  return {};
 }
 
-bool IsStoreEntry(const duckdb::CatalogEntry& entry) {
-  return entry.ParentCatalog().GetName().GetIdentifierName() ==
-         catalog::kStoreDatabaseName;
+// The grants of the columns the plan named, in the entry's own column order.
+// `logical` indexes that order, and the ColumnList it indexes already leaves
+// out the hidden generated primary key -- so a plan can never name it and no
+// filtering is owed here. An empty `logical` means "every column", which is the
+// bare-read case CanAnyColumn answers.
+std::vector<catalog::AclView> SelectedColumnAcls(
+  const Governed& governed, const duckdb::unordered_set<uint64_t>& logical) {
+  const auto* acls_by_column = governed.acls;
+  const auto& columns = governed.relation->GetColumns();
+  std::vector<catalog::AclView> acls;
+  acls.reserve(logical.empty() ? columns.LogicalColumnCount() : logical.size());
+  uint64_t i = 0;
+  for (const auto& column : columns.Logical()) {
+    if (logical.empty() || logical.contains(i)) {
+      acls.push_back(
+        catalog::ColumnAclOf(acls_by_column, ObjectId{column.CatalogOid()}));
+    }
+    ++i;
+  }
+  return acls;
 }
 
-void RequireColumns(const auth::RoleClosure& closure,
-                    const catalog::Table& table, catalog::AclMode need,
+void RequireColumns(const auth::RoleClosure& closure, const Governed& governed,
+                    catalog::AclMode need,
                     const duckdb::unordered_set<uint64_t>& logical) {
+  const auto acls = SelectedColumnAcls(governed, logical);
   const bool ok = logical.empty()
-                    ? closure.CanAnyColumn(table, need)
-                    : closure.CanColumns(
-                        table, need, [&](uint64_t i, const catalog::Column&) {
-                          return logical.contains(i);
-                        });
+                    ? closure.CanAnyColumn(*governed.perm, need, acls)
+                    : closure.CanColumns(*governed.perm, need, acls);
   if (ok) {
     return;
   }
   THROW_SQL_ERROR(ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
-                  ERR_MSG("permission denied for table ", table.GetName()));
+                  ERR_MSG("permission denied for table ", governed.name));
 }
 
-ObjectId EffectiveRole(ObjectId caller, const duckdb::CatalogEntry* who) {
-  if (const auto* view = SereneDBRelation(who)) {
-    return view->GetOwner();
-  }
-  return caller;
+ObjectId EffectiveRole(ObjectId caller, const duckdb::CatalogEntry* who,
+                       duckdb::ClientContext& context) {
+  const auto view = SereneDBRelation(who, context);
+  return view ? ObjectId{view.perm->owner} : caller;
 }
 
 using AccessRequirements = duckdb::vector<duckdb::AccessRequirement>;
@@ -134,9 +203,8 @@ using AccessRequirements = duckdb::vector<duckdb::AccessRequirement>;
 // by IS_REMOTE before any lookup; a remote one with no server object is a raw
 // ATTACH and ungoverned. The resolve is instance-wide on purpose -- the
 // attachment is too, so a session in another database must not slip past -- and
-// it walks every database, hence the dedup per alias.
-void RequireForeignServerUsage(const catalog::Snapshot& snapshot,
-                               ObjectId caller,
+// it walks every attached catalog's set, hence the dedup per alias.
+void RequireForeignServerUsage(duckdb::ClientContext& context, ObjectId caller,
                                const AccessRequirements& reqs) {
   containers::FlatHashSet<std::string_view> checked;
   for (const auto& req : reqs) {
@@ -151,13 +219,15 @@ void RequireForeignServerUsage(const catalog::Snapshot& snapshot,
     if (!checked.insert(catalog).second) {
       continue;
     }
-    const auto server = snapshot.GetForeignServer(catalog);
-    if (!server) {
+    const auto* server = catalog::FindForeignServerAnywhere(&context, catalog);
+    if (server == nullptr) {
       continue;
     }
-    const auto& closure = snapshot.ClosureFor(caller);
-    if (!closure.Owns(*server) &&
-        !closure.Can(*server, catalog::AclMode::Usage)) {
+    const auto& perm = server->permissions;
+    const auto closure = auth::ClosureFor(&context, caller);
+    if (!closure->Owns(ObjectId{perm.owner}) &&
+        !closure->Can(duckdb::CatalogType::FOREIGN_SERVER_ENTRY, perm,
+                      catalog::AclMode::Usage)) {
       THROW_SQL_ERROR(
         ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
         ERR_MSG("permission denied for foreign server ", server->GetName()));
@@ -165,70 +235,27 @@ void RequireForeignServerUsage(const catalog::Snapshot& snapshot,
   }
 }
 
-// The store-side name of a table facade, composed exactly as the store composes
-// it. Never the reverse: a store name is not split back into its parts.
-std::string StoreNameOf(const duckdb::CatalogEntry& facade) {
-  return catalog::StoreTableName(
-    facade.ParentCatalog().GetName().GetIdentifierName(),
-    facade.ParentSchema().name.GetIdentifierName(),
-    facade.name.GetIdentifierName());
-}
-
 // The catalog object each requirement grants against, indexed like `reqs`.
-//
-// A DML plan scans the store-side table, whose entry is a plain DuckTableEntry
-// that SereneDBRelation cannot resolve -- so it lands here with no object and
-// its privileges would go unchecked. Every such orphan is matched to the table
-// facade bound alongside it, whose store name it carries verbatim.
-std::vector<const catalog::Object*> CollectRelations(
-  const AccessRequirements& reqs) {
-  std::vector<const catalog::Object*> objects(reqs.size(), nullptr);
-  std::vector<size_t> facades;
-  std::vector<size_t> orphans;
+std::vector<Governed> CollectRelations(const AccessRequirements& reqs,
+                                       duckdb::ClientContext& context) {
+  std::vector<Governed> objects(reqs.size());
   for (size_t i = 0; i < reqs.size(); ++i) {
-    const auto* entry = reqs[i].table;
-    if (!entry) {
-      continue;
-    }
-    objects[i] = SereneDBRelation(entry);
-    if (!objects[i]) {
-      if (IsStoreEntry(*entry)) {
-        orphans.push_back(i);
-      }
-    } else if (dynamic_cast<const connector::SereneDBTableEntry*>(entry)) {
-      facades.push_back(i);
-    }
-  }
-  // Statements that touch no store table -- everything but DML -- stop here,
-  // having composed no names.
-  if (orphans.empty()) {
-    return objects;
-  }
-  containers::FlatHashMap<std::string, const catalog::Object*> by_store_name;
-  by_store_name.reserve(facades.size());
-  for (const size_t i : facades) {
-    by_store_name.emplace(StoreNameOf(*reqs[i].table), objects[i]);
-  }
-  for (const size_t i : orphans) {
-    const auto it = by_store_name.find(reqs[i].table->name.GetIdentifierName());
-    if (it != by_store_name.end()) {
-      objects[i] = it->second;
+    if (const auto* entry = reqs[i].table) {
+      objects[i] = SereneDBRelation(entry, context);
     }
   }
   return objects;
 }
 
 containers::FlatHashSet<uint64_t> CollectWriteTargets(
-  const AccessRequirements& reqs,
-  const std::vector<const catalog::Object*>& objects) {
+  const AccessRequirements& reqs, const std::vector<Governed>& objects) {
   containers::FlatHashSet<uint64_t> targets;
   for (size_t i = 0; i < reqs.size(); ++i) {
-    const catalog::Object* obj = objects[i];
-    if (obj && obj->GetType() == catalog::ObjectType::Table &&
+    if (objects[i].type == duckdb::CatalogType::TABLE_ENTRY &&
         Has(reqs[i].verb,
             duckdb::AccessVerb::INSERT | duckdb::AccessVerb::UPDATE |
               duckdb::AccessVerb::DELETE | duckdb::AccessVerb::TRUNCATE)) {
-      targets.insert(obj->GetId().id());
+      targets.insert(objects[i].id.id());
     }
   }
   return targets;
@@ -241,32 +268,38 @@ void CollectAndEnforce(duckdb::ClientContext& context, duckdb::Binder& binder) {
     return;
   }
   auto& ctx = state->GetConnectionContext();
-  const auto snapshot = ctx.CatalogSnapshot();
+  // The data store's own index builds are the engine's work, not a role's.
+  if (ctx.IsStorageConnection()) {
+    return;
+  }
   const auto caller = ctx.GetRoleId();
 
   const auto& properties = binder.GetStatementProperties();
   const auto& reqs = properties.access_requirements;
 
-  RequireForeignServerUsage(*snapshot, caller, reqs);
+  RequireForeignServerUsage(ctx.GetClientContext(), caller, reqs);
 
-  const auto objects = CollectRelations(reqs);
+  const auto objects = CollectRelations(reqs, ctx.GetClientContext());
   const auto write_targets = CollectWriteTargets(reqs, objects);
 
   for (size_t i = 0; i < reqs.size(); ++i) {
     const auto& req = reqs[i];
-    const catalog::Object* obj = objects[i];
-
-    if (!obj) {
+    const auto& governed = objects[i];
+    if (!governed) {
       continue;
     }
+    const auto& perm = *governed.perm;
+    const auto type = governed.type;
 
-    const ObjectId role = EffectiveRole(caller, req.who);
-    const auto& closure = snapshot->ClosureFor(role);
+    const ObjectId role =
+      EffectiveRole(caller, req.who, ctx.GetClientContext());
+    const auto closure_ptr = auth::ClosureFor(&ctx.GetClientContext(), role);
+    const auto& closure = *closure_ptr;
 
     // System relations (and views) are read-only from the caller's side: a
     // single SELECT check on the object's ACL, no columns or DML.
     if (req.table && IsSystemSchema(*req.table)) {
-      if (!closure.Can(*obj, catalog::AclMode::Select)) {
+      if (!closure.Can(type, perm, catalog::AclMode::Select)) {
         const char* kind =
           req.table->type == duckdb::CatalogType::VIEW_ENTRY ? "view" : "table";
         THROW_SQL_ERROR(ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
@@ -276,36 +309,34 @@ void CollectAndEnforce(duckdb::ClientContext& context, duckdb::Binder& binder) {
       continue;
     }
 
-    if (obj->GetType() == catalog::ObjectType::View) {
-      if (!closure.Can(*obj, catalog::AclMode::Select)) {
+    if (type == duckdb::CatalogType::VIEW_ENTRY) {
+      if (!closure.Can(type, perm, catalog::AclMode::Select)) {
         THROW_SQL_ERROR(ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
-                        ERR_MSG("permission denied for view ", obj->GetName()));
+                        ERR_MSG("permission denied for view ", governed.name));
       }
       continue;
     }
 
-    const auto& t = basics::downCast<catalog::Table>(*obj);
-
     const auto del = AsAclMode(req.verb) &
                      (catalog::AclMode::Delete | catalog::AclMode::Truncate);
-    if (del != catalog::AclMode::NoRights && !closure.Can(t, del)) {
+    if (del != catalog::AclMode::NoRights && !closure.Can(type, perm, del)) {
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
-                      ERR_MSG("permission denied for table ", t.GetName()));
+                      ERR_MSG("permission denied for table ", governed.name));
     }
     if (Has(req.verb, duckdb::AccessVerb::SELECT)) {
       // A DML's own-target scan reads no column, so needs no SELECT (PG);
       // count(*) also has an empty read set but is not a write target.
       const bool bare_dml_scan =
-        req.read.empty() && write_targets.contains(t.GetId().id());
+        req.read.empty() && write_targets.contains(governed.id.id());
       if (!bare_dml_scan) {
-        RequireColumns(closure, t, catalog::AclMode::Select, req.read);
+        RequireColumns(closure, objects[i], catalog::AclMode::Select, req.read);
       }
     }
     if (Has(req.verb, duckdb::AccessVerb::UPDATE)) {
-      RequireColumns(closure, t, catalog::AclMode::Update, req.write);
+      RequireColumns(closure, objects[i], catalog::AclMode::Update, req.write);
     }
     if (Has(req.verb, duckdb::AccessVerb::INSERT)) {
-      RequireColumns(closure, t, catalog::AclMode::Insert, req.write);
+      RequireColumns(closure, objects[i], catalog::AclMode::Insert, req.write);
     }
   }
 }

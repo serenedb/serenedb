@@ -21,62 +21,108 @@
 
 #include "catalog/role.h"
 
+#include <absl/algorithm/container.h>
 #include <absl/strings/str_cat.h>
 
 #include <algorithm>
+#include <duckdb/parser/keyword_helper.hpp>
 #include <map>
 #include <ranges>
 #include <string_view>
 
 #include "auth/acl.h"
 #include "basics/serializer.h"
+#include "basics/simdjson_sink.h"
 #include "basics/static_strings.h"
+#include "catalog/entry.h"
 #include "catalog/identifiers/object_id.h"
-#include "catalog/object.h"
 #include "catalog/persistence/role.h"
 
 namespace sdb::catalog {
 
-Role::Role(persistence::RoleData data)
-  : catalog::Object{Permissions{},
-                    {},
-                    data.id,
-                    std::move(data.name),
-                    ObjectType::Role},
-    _options{static_cast<RoleOption>(data.options)},
+Role::Role(ObjectId id, persistence::RoleData data)
+  : _options{static_cast<RoleOption>(data.options)},
     _member_of{std::move(data.member_of)},
     _conn_limit{data.conn_limit},
     _valid_until{std::move(data.valid_until)},
     _config{std::move(data.config)},
     _default_acls{std::move(data.default_acls)},
-    _password_verifier{std::move(data.password_verifier)} {
-  if (_name == StaticStrings::kDefaultUser) {
+    _password{std::move(data.password)} {
+  SetId(id);
+  SetRoleName(data.name);
+  if (data.name == StaticStrings::kDefaultUser) {
     _options |= RoleOption::Superuser;
   }
 }
 
-void catalog::Role::Serialize(duckdb::Serializer& sink) const {
-  basics::WriteTuple(sink, persistence::RoleData{
-                             .id = GetId(),
-                             .name = std::string{GetName()},
-                             .options = static_cast<uint32_t>(_options),
-                             .member_of = _member_of,
-                             .conn_limit = _conn_limit,
-                             .valid_until = _valid_until,
-                             .config = _config,
-                             .default_acls = _default_acls,
-                             .password_verifier = _password_verifier,
-                           });
+persistence::RoleData Role::ToData() const {
+  return persistence::RoleData{
+    .name = std::string{GetName()},
+    .options = static_cast<uint32_t>(_options),
+    .member_of = _member_of,
+    .conn_limit = _conn_limit,
+    .valid_until = _valid_until,
+    .config = _config,
+    .default_acls = _default_acls,
+    .password = _password,
+  };
 }
 
-std::shared_ptr<Role> Role::Deserialize(duckdb::Deserializer& src,
-                                        ReadContext) {
-  persistence::RoleData data;
-  basics::ReadTuple(src, data);
-  return std::make_shared<catalog::Role>(std::move(data));
+std::string Role::ToString() const {
+  std::string out = absl::StrCat(
+    "CREATE ROLE ",
+    duckdb::KeywordHelper::WriteOptionallyQuoted(std::string{GetName()}));
+  if ((_options & RoleOption::Login) != RoleOption{}) {
+    absl::StrAppend(&out, " LOGIN");
+  }
+  if ((_options & RoleOption::Superuser) != RoleOption{}) {
+    absl::StrAppend(&out, " SUPERUSER");
+  }
+  if (_conn_limit >= 0) {
+    absl::StrAppend(&out, " CONNECTION LIMIT ", _conn_limit);
+  }
+  return absl::StrCat(out, ";");
 }
 
-void catalog::Role::AddMembership(const Membership& edge) {
+void Role::SerializePayload(duckdb::Serializer& sink) const {
+  sink.WritePropertyWithDefault<duckdb::Identifier>(200, "name",
+                                                    duckdb::Identifier{_name});
+  sink.WritePropertyWithDefault(201, "options",
+                                static_cast<uint32_t>(_options));
+  sink.WritePropertyWithDefault(202, "conn_limit", _conn_limit);
+  sink.WritePropertyWithDefault(203, "valid_until", _valid_until);
+  sink.WritePropertyWithDefault(204, "password", _password);
+  // Session config, membership edges and default ACLs are std::vector of our
+  // own types: the basics framework is the only serializer they have, so they
+  // ride inside one property.
+  sink.OnPropertyBegin(205, "grants");
+  basics::WriteTuple(sink, std::tie(_config, _member_of, _default_acls));
+  sink.OnPropertyEnd();
+  // The role's own identity, so the record states everything the object is
+  // built from: duckdb's base carries the same one on the record around it, but
+  // reads it back after the payload is already a finished object.
+  sink.WritePropertyWithDefault<uint64_t>(206, "sdb_id", _id.id());
+}
+
+duckdb::unique_ptr<duckdb::CreateInfo> Role::Deserialize(
+  duckdb::Deserializer& src) {
+  auto role = std::make_shared<Role>();
+  role->_name = src.ReadPropertyWithDefault<duckdb::Identifier>(200, "name")
+                  .GetIdentifierName();
+  role->_options = static_cast<RoleOption>(
+    src.ReadPropertyWithDefault<uint32_t>(201, "options"));
+  src.ReadPropertyWithDefault(202, "conn_limit", role->_conn_limit);
+  src.ReadPropertyWithDefault(203, "valid_until", role->_valid_until);
+  src.ReadPropertyWithDefault(204, "password", role->_password);
+  src.OnPropertyBegin(205, "grants");
+  auto refs = std::tie(role->_config, role->_member_of, role->_default_acls);
+  basics::ReadTuple(src, refs);
+  src.OnPropertyEnd();
+  role->_id = ObjectId{src.ReadPropertyWithDefault<uint64_t>(206, "sdb_id")};
+  return duckdb::make_uniq<CreateRoleInfo>(std::move(role));
+}
+
+void Role::AddMembership(const Membership& edge) {
   if (edge.role == GetId()) {
     return;
   }
@@ -88,7 +134,7 @@ void catalog::Role::AddMembership(const Membership& edge) {
   }
 }
 
-void catalog::Role::RemoveMembership(ObjectId role) {
+void Role::RemoveMembership(ObjectId role) {
   if (auto it = std::ranges::find(_member_of, role, &Membership::role);
       it != _member_of.end()) {
     _member_of.erase(it);
@@ -103,7 +149,7 @@ std::string_view ConfigKey(std::string_view entry) {
 
 }  // namespace
 
-void catalog::Role::SetConfig(std::string_view guc, std::string_view value) {
+void Role::SetConfig(std::string_view guc, std::string_view value) {
   auto entry = absl::StrCat(guc, "=", value);
   auto it = std::ranges::find_if(
     _config, [&](const std::string& e) { return ConfigKey(e) == guc; });
@@ -114,14 +160,14 @@ void catalog::Role::SetConfig(std::string_view guc, std::string_view value) {
   }
 }
 
-void catalog::Role::ResetConfig(std::string_view guc) {
+void Role::ResetConfig(std::string_view guc) {
   std::erase_if(_config,
                 [&](const std::string& e) { return ConfigKey(e) == guc; });
 }
 
-void catalog::Role::ChangeDefaultAcl(ObjectId schema, char objtype,
-                                     ObjectType type,
-                                     absl::FunctionRef<void(Acl&)> mutate) {
+void Role::ChangeDefaultAcl(ObjectId schema, char objtype,
+                            duckdb::CatalogType type,
+                            absl::FunctionRef<void(Acl&)> mutate) {
   const auto matches = [&](const DefaultAcl& d) {
     return d.schema == schema && d.objtype == objtype;
   };
@@ -134,27 +180,44 @@ void catalog::Role::ChangeDefaultAcl(ObjectId schema, char objtype,
     it->acl = auth::AclDefault(type, GetId());
   }
   mutate(it->acl);
-  const bool only_owner =
-    std::ranges::all_of(it->acl, [id = GetId()](const AclItem& item) {
-      return item.grantee == id && item.grantor == id;
+  const auto seed = auth::AclDefault(type, GetId());
+  const auto is_default =
+    it->acl.size() == seed.size() &&
+    absl::c_all_of(seed, [&](const AclItem& def) {
+      return absl::c_any_of(it->acl, [&](const AclItem& item) {
+        return item.grantee == def.grantee && item.grantor == def.grantor &&
+               item.privs == def.privs && item.grant_option == def.grant_option;
+      });
     });
-  if (only_owner) {
+  if (is_default) {
     _default_acls.erase(it);
   }
 }
 
-std::shared_ptr<Object> Role::Clone() const {
-  return std::make_shared<Role>(persistence::RoleData{
-    .id = GetId(),
-    .name = std::string{GetName()},
-    .options = static_cast<uint32_t>(_options),
-    .member_of = _member_of,
-    .conn_limit = _conn_limit,
-    .valid_until = _valid_until,
-    .config = _config,
-    .default_acls = _default_acls,
-    .password_verifier = _password_verifier,
-  });
+duckdb::unique_ptr<Role> Role::Clone() const {
+  return duckdb::make_uniq<Role>(GetId(), ToData());
 }
+
+CreateRoleInfo::CreateRoleInfo(std::shared_ptr<const Role> role)
+  : duckdb::CreateInfo{duckdb::CatalogType::ROLE_ENTRY},
+    _role{std::move(role)} {
+  oid = _role->GetId().id();
+  SetName(duckdb::Identifier{std::string{_role->GetName()}});
+}
+
+duckdb::unique_ptr<duckdb::CreateInfo> CreateRoleInfo::Copy() const {
+  // The role itself is shared: every version of it that a copy of this record
+  // reaches is the same object.
+  auto result = duckdb::make_uniq<CreateRoleInfo>(_role);
+  CopyProperties(*result);
+  return std::move(result);
+}
+
+void CreateRoleInfo::Serialize(duckdb::Serializer& sink) const {
+  duckdb::CreateInfo::Serialize(sink);
+  _role->SerializePayload(sink);
+}
+
+std::string CreateRoleInfo::ToString() const { return _role->ToString(); }
 
 }  // namespace sdb::catalog

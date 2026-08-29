@@ -23,7 +23,6 @@
 #include <absl/algorithm/container.h>
 #include <absl/strings/str_cat.h>
 
-#include <duckdb/catalog/catalog.hpp>
 #include <duckdb/common/file_system.hpp>
 #include <duckdb/common/multi_file/multi_file_reader.hpp>
 #include <duckdb/common/multi_file/multi_file_states.hpp>
@@ -35,11 +34,6 @@
 
 #include "basics/assert.h"
 #include "basics/serializer.h"
-#include "catalog/catalog.h"
-#include "catalog/pk_spec.h"
-#include "catalog/rest/catalog_entry/table/iceberg_table_entry.hpp"
-#include "catalog/rest/iceberg_catalog.hpp"
-#include "catalog/view.h"
 #include "core/deletes/iceberg_deletion_vector.hpp"
 #include "core/deletes/iceberg_positional_delete.hpp"
 #include "core/metadata/iceberg_table_metadata.hpp"
@@ -52,7 +46,15 @@ namespace sdb::search {
 void FileManifest::Serialize(irs::bstring& out) const {
   duckdb::MemoryStream stream;
   duckdb::BinarySerializer serializer{stream};
-  basics::WriteTuple(serializer, *this);
+  if (version != 0) {
+    // Iceberg persists as the version alone: the pin is the identity, and
+    // the id baseline is not reconstructible across restarts anyway (delta
+    // re-stamps make ids path-dependent) -- a moved pin after a restart
+    // takes the rebuild road.
+    basics::WriteTuple(serializer, FileManifest{.version = version});
+  } else {
+    basics::WriteTuple(serializer, *this);
+  }
   out.append(stream.GetData(), stream.GetPosition());
 }
 
@@ -263,67 +265,6 @@ bool SnapshotIsAncestor(const duckdb::IcebergMultiFileList& list,
   return false;
 }
 
-std::optional<Source> ResolveSource(
-  duckdb::ClientContext& context, const catalog::Snapshot& snapshot,
-  const catalog::Index& index, const catalog::InvertedIndexOptions& options) {
-  Source src;
-  const auto view =
-    snapshot.GetObject<catalog::PgSqlView>(index.GetRelationId());
-  if (!view) {
-    return std::nullopt;
-  }
-  auto fp = ResolveViewFastPath(context, *view, options.key_columns);
-  if (!fp) {
-    return std::nullopt;
-  }
-  switch (fp->pk_spec) {
-    case catalog::PkSpec::FileRowNumber:
-    case catalog::PkSpec::FileIndexPlusRowNumber:
-    case catalog::PkSpec::FileOffset:
-    case catalog::PkSpec::FileIndexPlusOffset:
-      break;
-    case catalog::PkSpec::DuckDBRowId:
-    case catalog::PkSpec::FileIndexPlusDuckDBRowId:
-    case catalog::PkSpec::ExternalPostgresCtid:
-    case catalog::PkSpec::ExternalColumnKey:
-      return std::nullopt;
-  }
-  if (fp->catalog_ref) {
-    auto entry = duckdb::Catalog::GetEntry<duckdb::TableCatalogEntry>(
-      context,
-      duckdb::QualifiedName(duckdb::Identifier{fp->catalog_ref->catalog},
-                            duckdb::Identifier{fp->catalog_ref->schema},
-                            duckdb::Identifier{fp->catalog_ref->table}),
-      duckdb::OnEntryNotFound::RETURN_NULL);
-    auto* iceberg_entry = dynamic_cast<duckdb::IcebergTableEntry*>(entry.get());
-    if (!iceberg_entry) {
-      return std::nullopt;
-    }
-    auto& ic_catalog =
-      iceberg_entry->ParentCatalog().Cast<duckdb::IcebergCatalog>();
-    if (ic_catalog.attach_options.max_table_staleness_micros.IsValid()) {
-      iceberg_entry->table_info.RefreshFromCatalog(context);
-    }
-  }
-  src.fast_path = std::move(*fp);
-  src.bind = BindFastPathSource(context, src.fast_path);
-  if (!src.bind) {
-    return std::nullopt;
-  }
-  auto& mfbd = src.bind->Cast<duckdb::MultiFileBindData>();
-  if (!mfbd.file_list) {
-    return std::nullopt;
-  }
-  src.list = mfbd.file_list.get();
-  src.iceberg_list = dynamic_cast<duckdb::IcebergMultiFileList*>(src.list);
-  if (src.iceberg_list) {
-    if (const auto& info = src.iceberg_list->GetSnapshot(); info.snapshot) {
-      src.version = info.snapshot->snapshot_id;
-    }
-  }
-  return src;
-}
-
 namespace {
 
 // The stored snapshot's sequence number, resolved from the CURRENT table
@@ -360,7 +301,7 @@ bool IcebergObserve::TryMask(size_t listing_idx,
   if (!pinned_new && !eq_new) {
     return false;
   }
-  DeleteMask mask{entry.file_id};
+  DeleteMask mask{.file_id = entry.file_id};
   if (pinned_new && !ExtractMaskRows(listing_idx, mask)) {
     return false;
   }

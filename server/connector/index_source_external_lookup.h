@@ -41,7 +41,7 @@ class ExternalLookupIndexSource final : public ViewIndexSourceBase {
     duckdb::ClientContext& context, ViewFastPath fast_path,
     std::span<const duckdb::idx_t> projected_columns,
     std::span<const duckdb::LogicalType> projected_types,
-    std::span<const catalog::Column::Id> bind_column_ids);
+    std::span<const catalog::ColumnId> bind_column_ids);
 
   duckdb::idx_t Materialize(duckdb::ClientContext& context, duckdb::Vector& pk,
                             duckdb::idx_t count,

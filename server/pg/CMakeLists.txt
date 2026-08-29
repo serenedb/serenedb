@@ -25,7 +25,10 @@ target_sources(
         pg_catalog/pg_opclass.cpp
         pg_catalog/pg_proc.cpp
         pg_catalog/pg_rewrite.cpp
+        pg_catalog/pg_sequence.cpp
+        pg_catalog/pg_shdepend.cpp
         pg_catalog/pg_tablespace.cpp
+        pg_catalog/pg_trigger.cpp
         pg_catalog/pg_ts_dict.cpp
         pg_catalog/sdb_progress.cpp
         pg_catalog/pg_type.cpp

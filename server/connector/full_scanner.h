@@ -46,8 +46,6 @@ class FullScanner {
   FullScanner(const FullScanner&) = delete;
   FullScanner& operator=(const FullScanner&) = delete;
 
-  bool HasAny() const noexcept { return !_bound.empty() || !_filters.Empty(); }
-
   // The exclusive end row this scanner has advanced to (max start_row + count
   // over Scan calls). The column cursors only move forward, so a Scan below
   // this row is invalid -- the caller rebuilds the scanner instead (see

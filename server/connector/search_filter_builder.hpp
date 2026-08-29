@@ -36,7 +36,7 @@
 namespace sdb::connector {
 
 // `field_id` is the unified iresearch field id: both a plain indexed column's
-// id (`catalog::Column::Id`) and an indexed expression's id come from
+// id (`catalog::ColumnId`) and an indexed expression's id come from
 // `catalog::NextId()` / `NextNIds()` (single global tick allocator), so a
 // single uint64 fits both. Disambiguate via catalog lookup when the kind
 // matters; the writer/printer paths don't need to.

@@ -21,10 +21,12 @@
 #include <gtest/gtest.h>
 
 #include "basics/duckdb_engine.h"
+#include "catalog/entry.h"
 
 int main(int argc, char** argv) {
   ::testing::InitGoogleTest(&argc, argv);
   sdb::DuckDBEngine::Instance().Initialize();
+  sdb::catalog::RegisterForeignCreateInfoDeserializer();
   const int rc = RUN_ALL_TESTS();
   sdb::DuckDBEngine::Instance().Shutdown();
   return rc;

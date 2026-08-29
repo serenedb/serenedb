@@ -349,10 +349,11 @@ count	max
 3000	3000
 
 
-# Critical: post-crash inserts must NOT collide with persisted ids. Each
-# table's auto-created Sequence had its counter folded into the persisted
-# Sequences CF via Merge ops; recovery loads them via Sequence::ReadInternal
-# (override _live from disk). Each next id == previous_max + 1.
+# Critical: post-crash inserts must NOT collide with persisted ids. Each table's
+# auto-created sequence persists a horizon that runs a log-ahead (32 values,
+# PG's SEQ_LOG_VALS) past the last id handed out, and a crash burns whatever is
+# left of it -- so each next id lands above the table's previous max rather than
+# exactly one past it.
 
 connection after_crash
 statement count 1
@@ -366,7 +367,7 @@ SELECT id FROM iceberg_partition_reviews
   WHERE partition_strategy = 'partition_by_random_strategy';
 ----
 id
-4
+36
 
 
 connection after_crash
@@ -381,7 +382,7 @@ SELECT id FROM iceberg_manifest_audits
   WHERE manifest_path = 's3://lake/iceberg/m/post_crash_001';
 ----
 id
-8
+40
 
 
 connection after_crash
@@ -396,7 +397,7 @@ SELECT id FROM solid_ironic_love_notes
   WHERE note = 'signals_dont_replace_thinking';
 ----
 id
-5
+37
 
 
 connection after_crash
@@ -411,7 +412,7 @@ SELECT id FROM mop_interview_rounds
   WHERE round_topic = 'final_round_with_cto';
 ----
 id
-5
+37
 
 
 connection after_crash
@@ -426,7 +427,7 @@ SELECT id FROM mop_recruiter_pings
   WHERE recruiter = 'mop_galina_offer_letter_attached';
 ----
 id
-7
+39
 
 
 # Bulk insert post-recovery on the multi-chunk table.
@@ -442,7 +443,7 @@ query
 SELECT count(*), max(id) FROM clickclack_iceberg_jira_tickets;
 ----
 count	max
-5500	5500
+5500	5532
 
 
 # Drop everything cleanly.

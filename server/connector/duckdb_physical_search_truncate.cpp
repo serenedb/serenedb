@@ -24,8 +24,6 @@
 #include <duckdb/common/types/data_chunk.hpp>
 #include <memory>
 
-#include "catalog/identifiers/object_id.h"
-#include "catalog/table.h"
 #include "connector/duckdb_client_state.h"
 #include "pg/connection_context.h"
 #include "query/transaction.h"
@@ -34,19 +32,18 @@
 namespace sdb::connector {
 
 SereneDBSearchTruncate::SereneDBSearchTruncate(
-  duckdb::PhysicalPlan& plan, std::shared_ptr<catalog::Table> table,
+  duckdb::PhysicalPlan& plan, std::shared_ptr<search::SearchTable> data,
   duckdb::idx_t estimated_cardinality)
   : duckdb::PhysicalOperator(plan, duckdb::PhysicalOperatorType::EXTENSION,
                              {duckdb::LogicalType::BIGINT},
                              estimated_cardinality),
-    _table(std::move(table)) {}
+    _data(std::move(data)) {}
 
 duckdb::SourceResultType SereneDBSearchTruncate::GetDataInternal(
   duckdb::ExecutionContext& context, duckdb::DataChunk& /*chunk*/,
   duckdb::OperatorSourceInput& /*input*/) const {
   auto& conn_ctx = GetSereneDBContext(context.client);
-  const auto& search = _table->GetData();
-  conn_ctx.SearchTxn().AddSearchTruncate(search);
+  conn_ctx.SearchTxn().AddSearchTruncate(_data);
   return duckdb::SourceResultType::FINISHED;
 }
 

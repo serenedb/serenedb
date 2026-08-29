@@ -74,8 +74,7 @@ catalog::MaterializedData SystemTableSnapshot<SqlSizing>::GetTableData() {
   constexpr auto kNumRows = std::size(kRows);
   auto result = CreateColumns<SqlSizing>(kNumRows);
   for (size_t row = 0; row < kNumRows; ++row) {
-    WriteData(result, kRows[row].data, kRows[row].nulls, row,
-              *_config.CatalogSnapshot());
+    WriteData(result, kRows[row].data, kRows[row].nulls, row, Roles());
   }
   return {std::move(result), kNumRows};
 }

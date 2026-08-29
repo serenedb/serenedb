@@ -13,8 +13,13 @@ iceberg_next_snapshot
 1
 
 
-statement error (?i)cannot drop sequence .*iceberg_snapshot_seq.*
+statement error
 DROP SEQUENCE iceberg_snapshot_seq;
+----
+db error: ERROR: Cannot drop entry "iceberg_snapshot_seq" because there are entries that depend on it.
+macro function "iceberg_next_snapshot" depends on sequence "iceberg_snapshot_seq".
+Use DROP...CASCADE to drop all dependents.
+
 
 
 statement ok
@@ -40,8 +45,13 @@ clickclack_outer_plan
 12
 
 
-statement error (?i)cannot drop function .*clickclack_inner_plan.* because other objects depend on it
+statement error
 DROP FUNCTION clickclack_inner_plan(INT);
+----
+db error: ERROR: Cannot drop entry "clickclack_inner_plan" because there are entries that depend on it.
+macro function "clickclack_outer_plan" depends on macro function "clickclack_inner_plan".
+Use DROP...CASCADE to drop all dependents.
+
 
 
 statement ok
@@ -75,12 +85,23 @@ iceberg_unmarshal_v3
 111
 
 
-statement error (?i)cannot drop function .*iceberg_unmarshal_v1.* because other objects depend on it
+statement error
 DROP FUNCTION iceberg_unmarshal_v1(INT);
+----
+db error: ERROR: Cannot drop entry "iceberg_unmarshal_v1" because there are entries that depend on it.
+macro function "iceberg_unmarshal_v2" depends on macro function "iceberg_unmarshal_v1".
+macro function "iceberg_unmarshal_v3" depends on macro function "iceberg_unmarshal_v2".
+Use DROP...CASCADE to drop all dependents.
 
 
-statement error (?i)cannot drop function .*iceberg_unmarshal_v2.* because other objects depend on it
+
+statement error
 DROP FUNCTION iceberg_unmarshal_v2(INT);
+----
+db error: ERROR: Cannot drop entry "iceberg_unmarshal_v2" because there are entries that depend on it.
+macro function "iceberg_unmarshal_v3" depends on macro function "iceberg_unmarshal_v2".
+Use DROP...CASCADE to drop all dependents.
+
 
 
 statement ok
@@ -143,8 +164,14 @@ statement ok
 CREATE VIEW mop_listings_feed AS SELECT mop_use_listing() AS n FROM mop_listings;
 
 
-statement error (?i)cannot drop sequence .*mop_listing_seq.*
+statement error
 DROP SEQUENCE mop_listing_seq;
+----
+db error: ERROR: Cannot drop entry "mop_listing_seq" because there are entries that depend on it.
+macro function "mop_use_listing" depends on sequence "mop_listing_seq".
+view "mop_listings_feed" depends on sequence "mop_listing_seq".
+Use DROP...CASCADE to drop all dependents.
+
 
 
 statement ok
@@ -197,8 +224,13 @@ id	tag
 
 # Plain DROP FUNCTION must be refused -- ml_paper_runs.id's DEFAULT
 # references it.
-statement error (?i)cannot drop function .*ml_paper_default_id.* because other objects depend on it
+statement error
 DROP FUNCTION ml_paper_default_id();
+----
+db error: ERROR: Cannot drop entry "ml_paper_default_id" because there are entries that depend on it.
+table "ml_paper_runs" depends on macro function "ml_paper_default_id".
+Use DROP...CASCADE to drop all dependents.
+
 
 
 # CASCADE clears the DEFAULT on the column without dropping the table.

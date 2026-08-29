@@ -124,13 +124,14 @@ class SereneDBClientState final : public duckdb::ClientContextState {
   pg::ProgressIoType pending_copy_io = pg::ProgressIoType::None;
   ObjectId pending_copy_relid;
 
-  // Transaction-scoped compensation for work staged on a side transaction
-  // (CTAS): registered when the side transaction starts, run in
+  // Transaction-scoped compensation for a statement that has already written
+  // its catalog record (CTAS): registered when the load starts, run in
   // TransactionPreRollback while the MetaTransaction is alive, cleared by the
   // owner right before its commit point. Never runs from a destructor -- a
   // sink state outlives the statement (it dies with the cached plan), so a
   // destructor-time MetaTransaction reference is a use-after-free.
-  std::function<void(duckdb::MetaTransaction&)> transaction_abort_cleanup;
+  std::function<void(duckdb::MetaTransaction&, duckdb::ClientContext&)>
+    transaction_abort_cleanup;
 
  private:
   std::shared_ptr<ConnectionContext> _connection_ctx;
@@ -138,6 +139,12 @@ class SereneDBClientState final : public duckdb::ClientContextState {
 
 // Helper to get the ConnectionContext from a DuckDB ClientContext.
 ConnectionContext* GetSereneDBContextPtr(duckdb::ClientContext& context);
+
+// Whether `context` belongs to the data store's own connection -- the one that
+// issues the index builds an ART over existing rows needs a physical plan for.
+// Those statements must reach duckdb's native catalog paths rather than the
+// serenedb mutators that emitted them.
+bool IsStorageStatement(duckdb::ClientContext& context);
 ConnectionContext& GetSereneDBContext(duckdb::ClientContext& context);
 
 }  // namespace sdb::connector

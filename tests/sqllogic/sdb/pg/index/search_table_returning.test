@@ -1,0 +1,153 @@
+# RETURNING on a search-backed table. The write operators used to be sources of
+# their own affected-row count only, so the count landed in the first column of
+# the RETURNING row -- an INSERT reported a = 1 -- and an UPDATE or DELETE, whose
+# projection is not one BIGINT, failed the reference outright:
+#   Vector::Reference used on vector of different type (source INTEGER
+#   referenced BIGINT)
+# The rows now come off the chunk each operator already has: the resolved new row
+# for INSERT and UPDATE, the scanned row for DELETE.
+#
+# A search table's writes reach a later statement only once the index refreshes,
+# so every read-back below refreshes first.
+
+
+statement ok
+CREATE TABLE ret_gen(a INT, b TEXT) WITH (storage = 'search');
+
+
+# Generated-PK table: the synthetic key is not a column of the relation and must
+# not appear in RETURNING *.
+query
+INSERT INTO ret_gen VALUES (1, 'x'), (2, 'y') RETURNING *;
+----
+a	b
+1	x
+2	y
+
+
+query
+INSERT INTO ret_gen VALUES (3, 'q') RETURNING b, a;
+----
+b	a
+q	3
+
+
+query
+INSERT INTO ret_gen VALUES (4, 'w') RETURNING a + 100 AS bumped;
+----
+bumped
+104
+
+
+statement ok
+VACUUM (REFRESH_TABLE) ret_gen;
+
+
+query
+UPDATE ret_gen SET b = 'z' WHERE a = 1 RETURNING *;
+----
+a	b
+1	z
+
+
+query
+DELETE FROM ret_gen WHERE a = 2 RETURNING *;
+----
+a	b
+2	y
+
+
+query
+DELETE FROM ret_gen WHERE a = 3 RETURNING a * 2 AS twice, b;
+----
+twice	b
+6	q
+
+
+statement ok
+VACUUM (REFRESH_TABLE) ret_gen;
+
+
+query
+SELECT a, b FROM ret_gen ORDER BY a;
+----
+a	b
+1	z
+4	w
+
+
+statement ok
+DROP TABLE ret_gen;
+
+
+# Declared-PK table: row identity is the key columns rather than the synthetic
+# one, and the same projections have to come back.
+statement ok
+CREATE TABLE ret_pk(a INT PRIMARY KEY, b TEXT) WITH (storage = 'search');
+
+
+query
+INSERT INTO ret_pk VALUES (10, 'j'), (11, 'k') RETURNING *;
+----
+a	b
+10	j
+11	k
+
+
+statement ok
+VACUUM (REFRESH_TABLE) ret_pk;
+
+
+query
+UPDATE ret_pk SET b = b || '!' WHERE a >= 10 RETURNING *;
+----
+a	b
+10	j!
+11	k!
+
+
+statement ok
+VACUUM (REFRESH_TABLE) ret_pk;
+
+
+query
+DELETE FROM ret_pk WHERE a = 11 RETURNING *;
+----
+a	b
+11	k!
+
+
+statement ok
+VACUUM (REFRESH_TABLE) ret_pk;
+
+
+query
+SELECT a, b FROM ret_pk ORDER BY a;
+----
+a	b
+10	j!
+
+
+# No RETURNING: the operators still report the affected-row count.
+statement count 1
+INSERT INTO ret_pk VALUES (12, 'm');
+
+
+statement ok
+VACUUM (REFRESH_TABLE) ret_pk;
+
+
+statement count 1
+UPDATE ret_pk SET b = 'n' WHERE a = 12;
+
+
+statement ok
+VACUUM (REFRESH_TABLE) ret_pk;
+
+
+statement count 1
+DELETE FROM ret_pk WHERE a = 12;
+
+
+statement ok
+DROP TABLE ret_pk;

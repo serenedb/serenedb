@@ -41,4 +41,7 @@ struct PgSequence {
 };
 // NOLINTEND
 
+template<>
+catalog::MaterializedData SystemTableSnapshot<PgSequence>::GetTableData();
+
 }  // namespace sdb::pg

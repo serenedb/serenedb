@@ -45,7 +45,8 @@ NULL
 statement error
 COMMENT ON COLUMN cmt_t.nope IS 'x';
 ----
-db error: ERROR: column "nope" of relation "cmt_t" does not exist
+db error: ERROR: Table "cmt_t" does not have a column with name "nope"
+<slt:ignore>
 
 
 # the table comment survives an unrelated ALTER

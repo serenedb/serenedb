@@ -1,8 +1,11 @@
-# Facade tables keep their row data -- and their index structures -- in the
-# hidden store database (__sdb_store), not in the facade catalog. Each index
-# (secondary or inverted) has exactly one matching store-side index there.
-# Creating, dropping, failing to create, and dropping the table must all leave
-# __sdb_store with no orphan store-side index or table.
+# An index -- secondary or inverted -- is a relation of its own and the rows it
+# covers belong to the table it hangs off. Creating one, dropping one, failing
+# to create one, and dropping the table must all leave nothing behind: no index
+# naming a relation that is gone, and no index the relation namespace does not
+# know about.
+#
+# The probes ask for hidden objects because an index does not enumerate as a
+# user relation.
 
 # --- secondary index ---
 statement ok
@@ -18,10 +21,11 @@ CREATE INDEX sic_sec_idx ON sic_sec (a);
 
 
 query
-SELECT count(*) AS n FROM duckdb_indexes(include_hidden := true) WHERE database_name = '__sdb_store' AND table_name LIKE '%.sic_sec';
+SELECT schema_name, index_name, is_unique FROM duckdb_indexes(include_hidden := true)
+WHERE table_name = 'sic_sec';
 ----
-n
-1
+schema_name	index_name	is_unique
+public	sic_sec_idx	f
 
 
 statement ok
@@ -29,7 +33,8 @@ DROP INDEX sic_sec_idx;
 
 
 query
-SELECT count(*) AS n FROM duckdb_indexes(include_hidden := true) WHERE database_name = '__sdb_store' AND table_name LIKE '%.sic_sec';
+SELECT count(*) AS n FROM duckdb_indexes(include_hidden := true)
+WHERE table_name = 'sic_sec';
 ----
 n
 0
@@ -52,11 +57,16 @@ statement ok
 CREATE INDEX sic_inv_idx ON sic_inv USING inverted (txt sic_kw);
 
 
+# An inverted index has no ART of its own -- it is injected into the table's
+# live index list -- but it is a relation like any other index.
 query
-SELECT count(*) AS n FROM duckdb_indexes(include_hidden := true) WHERE database_name = '__sdb_store' AND table_name LIKE '%.sic_inv';
+SELECT
+  (SELECT count(*) FROM pg_class WHERE relname = 'sic_inv_idx' AND relkind = 'i') AS relation,
+  (SELECT count(*) FROM duckdb_indexes(include_hidden := true)
+   WHERE table_name = 'sic_inv') AS listed;
 ----
-n
-1
+relation	listed
+1	1
 
 
 statement ok
@@ -64,13 +74,16 @@ DROP INDEX sic_inv_idx;
 
 
 query
-SELECT count(*) AS n FROM duckdb_indexes(include_hidden := true) WHERE database_name = '__sdb_store' AND table_name LIKE '%.sic_inv';
+SELECT
+  (SELECT count(*) FROM pg_class WHERE relname = 'sic_inv_idx' AND relkind = 'i') AS relation,
+  (SELECT count(*) FROM duckdb_indexes(include_hidden := true)
+   WHERE table_name = 'sic_inv') AS listed;
 ----
-n
-0
+relation	listed
+0	0
 
 
-# --- a failed CREATE UNIQUE INDEX leaves no orphan store index ---
+# --- a failed CREATE UNIQUE INDEX leaves nothing behind ---
 statement ok
 CREATE TABLE sic_dup (a INT);
 
@@ -84,13 +97,14 @@ CREATE UNIQUE INDEX sic_dup_idx ON sic_dup (a);
 
 
 query
-SELECT count(*) AS n FROM duckdb_indexes(include_hidden := true) WHERE database_name = '__sdb_store' AND table_name LIKE '%.sic_dup';
+SELECT count(*) AS n FROM duckdb_indexes(include_hidden := true)
+WHERE table_name = 'sic_dup';
 ----
 n
 0
 
 
-# --- DROP TABLE removes the store table and every index on it ---
+# --- DROP TABLE removes the table and every index on it ---
 statement ok
 CREATE INDEX sic_inv_idx2 ON sic_inv USING inverted (txt sic_kw);
 
@@ -100,14 +114,16 @@ DROP TABLE sic_inv;
 
 
 query
-SELECT count(*) AS n FROM duckdb_tables(include_hidden := true) WHERE database_name = '__sdb_store' AND table_name LIKE '%.sic_inv';
+SELECT count(*) AS n FROM duckdb_indexes(include_hidden := true)
+WHERE table_name NOT IN (SELECT relname FROM pg_class WHERE relkind = 'r');
 ----
 n
 0
 
 
 query
-SELECT count(*) AS n FROM duckdb_indexes(include_hidden := true) WHERE database_name = '__sdb_store' AND table_name LIKE '%.sic_inv';
+SELECT count(*) AS n FROM duckdb_indexes(include_hidden := true)
+WHERE index_name NOT IN (SELECT relname FROM pg_class WHERE relkind = 'i');
 ----
 n
 0

@@ -33,7 +33,7 @@ SELECT 1;
 
 # The reloaded dependency graph still blocks RESTRICT.
 connection after_crash
-statement error (?i)cannot drop table .*clickclack_recov_t.* because other objects depend on it
+statement error (?i)cannot drop entry .*clickclack_recov_t.* because there are entries that depend on it
 DROP TABLE clickclack_recov_t;
 
 

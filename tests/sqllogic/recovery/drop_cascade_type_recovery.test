@@ -49,7 +49,7 @@ SELECT 1;
 
 # Type still in use by all three -- RESTRICT blocked.
 connection after_crash
-statement error (?i)cannot drop type .*iceberg.* because other objects depend on it
+statement error (?i)cannot drop entry .*iceberg.* because there are entries that depend on it
 DROP TYPE iceberg;
 
 

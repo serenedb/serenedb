@@ -20,52 +20,47 @@
 
 #include "pg/pg_catalog/pg_attrdef.h"
 
+#include <deque>
+#include <string>
 #include <vector>
 
-#include "catalog/catalog.h"
-#include "catalog/column_expr.h"
+#include "catalog/ddl/catalog.h"
+#include "catalog/entry/duckdb_schema_entry.h"
+#include "catalog/entry/duckdb_table_entry.h"
+#include "catalog/read/duckdb_catalog_sets.h"
 
 namespace sdb::pg {
-namespace {
-
-constexpr uint64_t kNullMask = MaskFromNulls({
-  GetIndex(&PgAttrdef::adbin),
-});
-
-}  // namespace
 
 template<>
 catalog::MaterializedData SystemTableSnapshot<PgAttrdef>::GetTableData() {
-  auto catalog = _config.CatalogSnapshot();
-
   std::vector<PgAttrdef> values;
-  for (const auto& schema : catalog->GetSchemas(GetDatabaseId())) {
-    for (const auto& table :
-         catalog->GetTables(GetDatabaseId(), schema->GetName())) {
-      for (const auto& col : table->Columns()) {
-        if (col.GetId() == catalog::Column::kGeneratedPKId) {
+  // The rendered expressions the rows point at. A deque, because a row holds a
+  // view into one and a vector would move them as it grows.
+  std::deque<std::string> adbin_storage;
+  catalog::VisitTableEntries(
+    _config.GetClientContext(), GetDatabaseId(),
+    [&](const catalog::SereneDBSchemaEntry&,
+        const catalog::SereneDBTableEntry& table) {
+      for (const auto& col : table.GetColumns().Logical()) {
+        // A generation expression lives here too, as postgres records it.
+        if (!col.HasDefaultValue() && !col.Generated()) {
           continue;
         }
-        if (!(col.expr && col.expr->HasExpr())) {
-          continue;
-        }
-        auto pos = table->ColumnPosById(col.GetId());
-        if (pos == table->Columns().size()) {
-          continue;
-        }
+        adbin_storage.push_back(col.Generated()
+                                  ? col.GeneratedExpression().ToString()
+                                  : col.DefaultValue().ToString());
         values.push_back(PgAttrdef{
-          Oid{col.GetId().id()},
-          Oid{table->GetId().id()},
-          static_cast<int16_t>(pos + 1),
-          {},
+          Oid{col.CatalogOid()},
+          Oid{catalog::IdOf(table).id()},
+          static_cast<int16_t>(col.Logical().index + 1),
+          adbin_storage.back(),
         });
       }
-    }
-  }
+    });
 
   auto result = CreateColumns<PgAttrdef>(values.size());
   for (size_t row = 0; row < values.size(); ++row) {
-    WriteData(result, values[row], kNullMask, row, *catalog);
+    WriteData(result, values[row], /*null_mask=*/0, row, Roles());
   }
   return {std::move(result), values.size()};
 }

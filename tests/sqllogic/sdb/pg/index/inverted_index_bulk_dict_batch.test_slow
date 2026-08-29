@@ -1,0 +1,101 @@
+# A batch handed to an external index outlives the loop that scanned it: workers
+# tokenize it after the producer has moved on to the next batch. So the batch may
+# not borrow anything that loop reuses. A dict-compressed VARCHAR segment scans
+# into a DICTIONARY_VECTOR sharing the scan state's selection vector, which the
+# next scan unpacks over in place -- and dictionary slot 0 is the reserved NULL
+# entry, so a clobbered index reads as NULL and the row is indexed with no terms
+# at all. It stays in the table, keeps its other fields' terms, and silently
+# stops matching any text query.
+#
+# 250k rows in ONE transaction: enough that later segments dict-compress (the
+# encoding only kicks in deep into a load) and enough batches that a retained one
+# is still being read when the next is scanned. Pre-fix this lost 32 rows in two
+# runs of 16; 200k lost 3. The assertion is the invariant -- every row the table
+# has, the index finds -- so it stays meaningful if the compression heuristics
+# move and this stops reproducing the exact encoding.
+
+hash-threshold 100
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY bdb_en(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'none',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true
+);
+
+
+statement ok
+CREATE TABLE bdb (id INT, body VARCHAR);
+
+
+statement ok
+CREATE INDEX bdb_i ON bdb USING inverted(id, body bdb_en);
+
+
+# Unique-but-shared-prefix strings: dict/FSST friendly, and every row carries the
+# same 'bravo' term so one query covers the whole table.
+statement ok
+INSERT INTO bdb SELECT g, 'row ' || g || ' bravo' FROM generate_series(1, 250000) g;
+
+
+statement ok
+VACUUM (REFRESH_TABLE) bdb;
+
+
+query
+SELECT count(*) AS n FROM bdb;
+----
+n
+250000
+
+
+# Every row is findable by term. Pre-fix: 249968.
+query
+SELECT count(*) AS n FROM bdb_i
+WHERE body @@ ts_all(ts_tokenize(ARRAY['bravo'], 'bdb_en'));
+----
+n
+250000
+
+
+# Same, for a second term in the same field -- a clobbered row loses the whole
+# field, not one term.
+query
+SELECT count(*) AS n FROM bdb_i
+WHERE body @@ ts_all(ts_tokenize(ARRAY['row'], 'bdb_en'));
+----
+n
+250000
+
+
+# Name the rows the index cannot find, so a regression reports which ones.
+query
+SELECT id FROM bdb
+WHERE id NOT IN (
+    SELECT id FROM bdb_i
+    WHERE body @@ ts_all(ts_tokenize(ARRAY['bravo'], 'bdb_en'))
+)
+ORDER BY id;
+----
+id
+
+
+# The doc surviving with its other fields is what made this silent: the numeric
+# term stayed intact while the text terms vanished. Assert both agree.
+query
+SELECT count(*) AS n FROM bdb_i WHERE id = 245905;
+----
+n
+1
+
+
+query
+SELECT count(*) AS n FROM bdb_i
+WHERE id = 245905 AND body @@ ts_all(ts_tokenize(ARRAY['bravo'], 'bdb_en'));
+----
+n
+1

@@ -1,26 +1,32 @@
 target_sources(
     sereneserver
     PRIVATE
-        column_expr.cpp
         database.cpp
-        drop_task.cpp
         role.cpp
         schema.cpp
-        databases.cpp
-        catalog.cpp
-        object.cpp
-        table_options.cpp
-        search_analyzer_impl.cpp
+        ddl/catalog.cpp
+        ddl/cluster.cpp
+        ddl/indexes.cpp
+        ddl/references.cpp
+        ddl/tables.cpp
+        ddl/duckdb_catalog.cpp
+        read/duckdb_catalog_sets.cpp
+        read/duckdb_dependency.cpp
+        log/duckdb_global_catalog.cpp
+        entry/duckdb_index_entry.cpp
+        entry/duckdb_index_scan_entry.cpp
+        entry/duckdb_schema_entry.cpp
+        entry/duckdb_system_table_entry.cpp
+        entry/duckdb_table_entry.cpp
+        entry.cpp
         table.cpp
         index.cpp
-        view.cpp
         sequence.cpp
-        function.cpp
-        user_type.cpp
-        secondary_index.cpp
         inverted_index.cpp
         scorer_options.cpp
-        store/store.cpp
+        log/data_store.cpp
+        log/store.cpp
+        log/store_op.cpp
         tokenizer.cpp
         foreign_server.cpp
 )

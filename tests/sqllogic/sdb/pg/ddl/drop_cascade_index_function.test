@@ -63,8 +63,13 @@ id
 
 
 # DROP FUNCTION RESTRICT is blocked because the index references it.
-statement error (?i)cannot drop function .*babsky_double.* because other objects depend on it
+statement error
 DROP FUNCTION babsky_double(INT);
+----
+db error: ERROR: Cannot drop entry "babsky_double" because there are entries that depend on it.
+index "kostya_idx" depends on macro function "babsky_double".
+Use DROP...CASCADE to drop all dependents.
+
 
 
 query

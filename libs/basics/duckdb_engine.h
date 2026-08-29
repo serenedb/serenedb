@@ -34,6 +34,13 @@ class DuckDBEngine {
 
   void Initialize(DBConfigMutator mutator = &NoopMutator);
 
+  // Checkpoints and closes every attached database, ahead of Shutdown. The
+  // shutdown checkpoint runs index barriers, and those read the catalog -- so
+  // it has to happen while the catalog is still up, and the catalog has to go
+  // down before the engine that owns the allocator its objects were built
+  // from. Nothing between the two, and the logger stays alive for both.
+  void CloseDatabases();
+
   void Shutdown();
 
   duckdb::DatabaseInstance& instance();

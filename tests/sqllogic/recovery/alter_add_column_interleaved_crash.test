@@ -1,0 +1,83 @@
+control substitution on
+
+# A reshaping ALTER interleaved with the appends around it, across a crash.
+#
+# The rows of a serenedb table are a duckdb DataTable held by the table's own
+# entry, so a reshape of them is recorded in that database's WAL as the alter it
+# is -- between the appends that came before it and the ones that came after.
+# Replay has to take those three records in order: rebuild the rows at the shape
+# the create described, append the first batch into that shape, reshape, then
+# append the second. Getting any of it out of order loses rows, loses the column
+# or refuses to open the database.
+#
+# Nothing else covers this. The suites that alter a table do not crash, and the
+# ones that crash do not alter.
+
+statement ok
+CREATE TABLE aic_t (a INTEGER);
+
+
+statement ok
+INSERT INTO aic_t SELECT i FROM generate_series(1, 1000) t(i);
+
+
+statement ok
+ALTER TABLE aic_t ADD COLUMN b INTEGER DEFAULT 7;
+
+
+statement ok
+INSERT INTO aic_t SELECT i, 1000 FROM generate_series(1, 1000) t(i);
+
+
+# The shape and the sums, before the crash. b is 7 for the thousand rows the
+# ALTER backfilled and 1000 for the thousand appended after it.
+query
+SELECT count(*), sum(a), sum(b) FROM aic_t;
+----
+count	sum	sum
+2000	1001000	1007000
+
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+statement error connection closed
+SELECT 1;
+
+
+# --- restart ---
+
+connection after_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT count(*), sum(a), sum(b) FROM aic_t;
+----
+count	sum	sum
+2000	1001000	1007000
+
+
+# The column the ALTER added is the definition's, and it survived as one: a
+# reshape replayed onto rows whose entry already lists the column would add it
+# twice, and a reshape skipped would leave the rows a column short.
+connection after_crash
+query
+SELECT count(*) FROM information_schema.columns WHERE table_name = 'aic_t';
+----
+count
+2
+
+
+# The rows the ALTER did not reach keep the default it wrote, and the ones
+# appended after it keep what they were given.
+connection after_crash
+query
+SELECT b, count(*) FROM aic_t GROUP BY b ORDER BY b;
+----
+b	count
+7	1000
+1000	1000
+
+
+connection after_crash
+statement ok
+DROP TABLE aic_t;

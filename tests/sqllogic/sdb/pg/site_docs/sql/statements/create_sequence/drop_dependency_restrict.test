@@ -14,6 +14,6 @@ CREATE TABLE tbl (
 statement error
 DROP SEQUENCE id_sequence;
 ----
-db error: ERROR: cannot drop sequence id_sequence because other objects depend on it
-DETAIL: table tbl depends on sequence id_sequence
-HINT: Use DROP ... CASCADE to drop the dependent objects too, or DROP TABLE on the owning table.
+db error: ERROR: Cannot drop entry "id_sequence" because there are entries that depend on it.
+table "tbl" depends on sequence "id_sequence".
+Use DROP...CASCADE to drop all dependents.

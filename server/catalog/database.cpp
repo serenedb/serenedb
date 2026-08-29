@@ -20,30 +20,49 @@
 
 #include "catalog/database.h"
 
+#include <absl/strings/str_cat.h>
+
 #include <duckdb/common/serializer/deserializer.hpp>
 #include <duckdb/common/serializer/serializer.hpp>
-
-#include "basics/serializer.h"
+#include <duckdb/parser/keyword_helper.hpp>
+#include <string>
 
 namespace sdb::catalog {
 
-Database::Database(Permissions perm, ObjectId id, std::string_view name)
-  : Object{std::move(perm), {}, id, name, ObjectType::Database} {}
-
-std::shared_ptr<Database> Database::Deserialize(duckdb::Deserializer& src,
-                                                ReadContext ctx) {
-  DatabaseOptions data;
-  basics::ReadTuple(src, data);
-  return std::make_shared<Database>(std::move(data.perm), ctx.id, data.name);
+CreateDatabaseInfo::CreateDatabaseInfo(ObjectId id, std::string_view name,
+                                       ObjectId public_schema_id)
+  : duckdb::CreateInfo{duckdb::CatalogType::DATABASE_ENTRY},
+    _public_schema_id{public_schema_id} {
+  SetId(id);
+  SetName(duckdb::Identifier{std::string{name}});
 }
 
-void Database::Serialize(duckdb::Serializer& sink) const {
-  basics::WriteTuple(sink,
-                     DatabaseOptions{std::string{GetName()}, GetPermissions()});
+std::string CreateDatabaseInfo::ToString() const {
+  return absl::StrCat(
+    "CREATE DATABASE ",
+    duckdb::KeywordHelper::WriteOptionallyQuoted(std::string{GetName()}), ";");
 }
 
-std::shared_ptr<Object> Database::Clone() const {
-  return std::make_shared<Database>(*this);
+void CreateDatabaseInfo::Serialize(duckdb::Serializer& sink) const {
+  duckdb::CreateInfo::Serialize(sink);
+  sink.WritePropertyWithDefault<duckdb::Identifier>(200, "name",
+                                                    qualified_name.Name());
+  sink.WritePropertyWithDefault<uint64_t>(201, "public_schema_id",
+                                          _public_schema_id.id());
+}
+
+duckdb::unique_ptr<duckdb::CreateInfo> CreateDatabaseInfo::Deserialize(
+  duckdb::Deserializer& src) {
+  auto result = duckdb::make_uniq<CreateDatabaseInfo>();
+  result->SetName(src.ReadPropertyWithDefault<duckdb::Identifier>(200, "name"));
+  result->_public_schema_id =
+    ObjectId{src.ReadPropertyWithDefault<uint64_t>(201, "public_schema_id")};
+  return std::move(result);
+}
+
+duckdb::unique_ptr<duckdb::CreateInfo> CreateDatabaseInfo::Copy() const {
+  return duckdb::make_uniq<CreateDatabaseInfo>(GetId(), GetName(),
+                                               _public_schema_id);
 }
 
 }  // namespace sdb::catalog

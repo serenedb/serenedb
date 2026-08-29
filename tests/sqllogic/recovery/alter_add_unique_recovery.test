@@ -1,0 +1,72 @@
+control substitution on
+
+# ALTER TABLE ... ADD UNIQUE builds an index over the existing rows, the same
+# way ADD PRIMARY KEY does. Both the index data and the enforcement have to
+# survive a crash: the ALTER's WAL record carries the index it built, and replay
+# rebuilds it rather than leaving a constraint that rejects nothing.
+
+
+statement ok
+CREATE TABLE au (a INTEGER, b INTEGER);
+
+
+statement count 2
+INSERT INTO au VALUES (1, 10), (2, 20);
+
+
+statement ok
+ALTER TABLE au ADD CONSTRAINT au_a_key UNIQUE (a);
+
+
+statement error
+INSERT INTO au VALUES (1, 30);
+
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+statement error connection closed
+SELECT 1;
+
+
+# --- restart ---
+
+connection after_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT a FROM au ORDER BY a;
+----
+a
+1
+2
+
+
+connection after_crash
+query
+SELECT indexname AS c FROM pg_indexes
+WHERE schemaname = 'public' AND tablename = 'au' ORDER BY 1;
+----
+c
+au_a_key
+
+
+# The rows written before the crash are in the rebuilt index, so a duplicate of
+# either of them is still refused.
+connection after_crash
+statement error
+INSERT INTO au VALUES (1, 40);
+
+
+connection after_crash
+statement error
+INSERT INTO au VALUES (2, 40);
+
+
+connection after_crash
+statement count 1
+INSERT INTO au VALUES (3, 40);
+
+
+connection after_crash
+statement ok
+DROP TABLE au;

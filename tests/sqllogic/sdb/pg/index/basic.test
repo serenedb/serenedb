@@ -30,9 +30,9 @@ db error: ERROR: Unknown built-in opclass 'test_english' on 'r' (known: included
 statement error
 DROP TEXT SEARCH DICTIONARY test_english;
 ----
-db error: ERROR: cannot drop text search dictionary test_english because other objects depend on it
-DETAIL: index index_t depends on text search dictionary test_english
-HINT: Use DROP ... CASCADE to drop the dependent objects too.
+db error: ERROR: Cannot drop entry "test_english" because there are entries that depend on it.
+index "index_t" depends on tokenizer "test_english".
+Use DROP...CASCADE to drop all dependents.
 
 
 statement ok
@@ -157,7 +157,7 @@ CREATE INDEX test_index ON test USING inverted (i);
 statement error
 CREATE INDEX test_index ON test USING inverted (i);
 ----
-db error: ERROR: Index with name "test_index" already exists!
+db error: ERROR: relation "test_index" already exists
 
 
 statement ok

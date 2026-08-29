@@ -23,6 +23,7 @@
 
 #include <absl/functional/function_ref.h>
 
+#include <duckdb/parser/parsed_data/create_info.hpp>
 #include <limits>
 #include <set>
 #include <span>
@@ -30,8 +31,8 @@
 #include <vector>
 
 #include "basics/bit_utils.hpp"
+#include "catalog/entry.h"
 #include "catalog/identifiers/object_id.h"
-#include "catalog/object.h"
 
 namespace sdb::catalog {
 
@@ -69,15 +70,30 @@ namespace persistence {
 struct RoleData;
 }
 
-class Role final : public catalog::Object {
+// One role, as the catalog holds it. Roles are cluster-wide and duckdb has no
+// counterpart, so CatalogType gained ROLE_ENTRY: this is what a mutator fills
+// in, what the catalog log records, and what SereneDBRoleEntry is.
+class Role final {
  public:
-  explicit Role(persistence::RoleData data);
+  Role() = default;
+  Role(ObjectId id, persistence::RoleData data);
 
-  void Serialize(duckdb::Serializer& sink) const final;
-  std::shared_ptr<Object> Clone() const final;
+  persistence::RoleData ToData() const;
+  // The role's own fields and none of CreateInfo's: a role carries no schema,
+  // conflict mode or SQL text, and the catalog log reads it back through
+  // Deserialize below rather than through CreateInfo's type switch.
+  void SerializePayload(duckdb::Serializer& sink) const;
+  std::string ToString() const;
+  duckdb::unique_ptr<Role> Clone() const;
 
-  static std::shared_ptr<Role> Deserialize(duckdb::Deserializer& src,
-                                           ReadContext ctx);
+  static duckdb::unique_ptr<duckdb::CreateInfo> Deserialize(
+    duckdb::Deserializer& src);
+
+  ObjectId GetId() const noexcept { return _id; }
+  void SetId(ObjectId id) noexcept { _id = id; }
+
+  std::string_view GetName() const noexcept { return _name; }
+  void SetRoleName(std::string_view name) { _name = name; }
 
   RoleOption Options() const noexcept { return _options; }
   bool Has(RoleOption o) const noexcept {
@@ -89,7 +105,6 @@ class Role final : public catalog::Object {
 
   static constexpr int32_t kNoConnLimit = -1;
   int32_t ConnLimit() const noexcept { return _conn_limit; }
-  bool HasConnLimit() const noexcept { return _conn_limit != kNoConnLimit; }
   void SetConnLimit(int32_t limit) noexcept { _conn_limit = limit; }
 
   static constexpr int64_t kNoValidUntil = std::numeric_limits<int64_t>::min();
@@ -105,7 +120,7 @@ class Role final : public catalog::Object {
   std::span<const DefaultAcl> DefaultAcls() const noexcept {
     return _default_acls;
   }
-  void ChangeDefaultAcl(ObjectId schema, char objtype, ObjectType type,
+  void ChangeDefaultAcl(ObjectId schema, char objtype, duckdb::CatalogType type,
                         absl::FunctionRef<void(Acl&)> mutate);
 
   std::span<const Membership> MemberOf() const noexcept { return _member_of; }
@@ -113,12 +128,8 @@ class Role final : public catalog::Object {
   void AddMembership(const Membership& edge);
   void RemoveMembership(ObjectId role);
 
-  std::string_view PasswordVerifier() const noexcept {
-    return _password_verifier;
-  }
-  void SetPasswordVerifier(std::string verifier) {
-    _password_verifier = std::move(verifier);
-  }
+  std::string_view Password() const noexcept { return _password; }
+  void SetPassword(std::string password) { _password = std::move(password); }
 
  private:
   RoleOption _options = RoleOption::None;
@@ -127,7 +138,25 @@ class Role final : public catalog::Object {
   int64_t _valid_until = kNoValidUntil;
   std::vector<std::string> _config;
   std::vector<DefaultAcl> _default_acls;
-  std::string _password_verifier;
+  std::string _password;
+  std::string _name;
+  ObjectId _id;
+};
+
+// A role on its way into the catalog or into the log, which is the only place
+// this shape is used: the entry holds the role itself.
+class CreateRoleInfo final : public duckdb::CreateInfo {
+ public:
+  explicit CreateRoleInfo(std::shared_ptr<const Role> role);
+
+  const std::shared_ptr<const Role>& GetRole() const noexcept { return _role; }
+
+  duckdb::unique_ptr<duckdb::CreateInfo> Copy() const final;
+  void Serialize(duckdb::Serializer& sink) const final;
+  std::string ToString() const final;
+
+ private:
+  std::shared_ptr<const Role> _role;
 };
 
 }  // namespace sdb::catalog

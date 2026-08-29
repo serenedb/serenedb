@@ -18,28 +18,43 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include "iresearch/search/vector_radius_filter.hpp"
+#pragma once
 
-#include <limits>
 #include <span>
-#include <utility>
 
-#include "basics/assert.h"
-#include "basics/memory.hpp"
-#include "iresearch/search/vector_filter_util.hpp"
-#include "iresearch/search/vector_similarity_query.hpp"
+#include "iresearch/index/column_info.hpp"
+#include "iresearch/types.hpp"
 
 namespace irs {
 
-QueryBuilder::ptr ByRadius::PrepareSegment(const SubReader& segment,
-                                           const PrepareContext& ctx) const {
-  const auto& opts = options();
-  const auto* ann = segment.Ann(opts.centroids_id);
-  SDB_ASSERT(ann && ann->SupportsRange());
-  auto sub_ctx = ctx;
-  sub_ctx.Boost(Boost());
-  return ann->PrepareRange(segment, sub_ctx, opts, opts.radius, opts.inclusive,
-                           0);
-}
+class ColumnReader;
+class IdxWriter;
+class ReadContext;
+struct MergeSource;
+
+class AnnWriter {
+ public:
+  virtual ~AnnWriter() = default;
+
+  void SetIdxWriter(IdxWriter& idx) noexcept { _idx = &idx; }
+
+  virtual AnnKind Kind() const noexcept = 0;
+
+  virtual field_id ColumnId() const noexcept = 0;
+
+  virtual bool Empty() const noexcept = 0;
+
+  // Segments this build merges, in output order; empty for a flush. Lets a
+  // backend seed itself from what the sources already computed instead of
+  // rebuilding from scratch. The span outlives Compute.
+  virtual void SetMergeSources(std::span<const MergeSource>) noexcept {}
+
+  virtual void Compute(const ColumnReader& col, ReadContext& ctx) = 0;
+
+  virtual void Flush() = 0;
+
+ protected:
+  IdxWriter* _idx = nullptr;
+};
 
 }  // namespace irs

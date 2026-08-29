@@ -29,6 +29,8 @@
 #include <vector>
 
 #include "basics/containers/flat_hash_map.h"
+#include "basics/down_cast.h"
+#include "iresearch/formats/ann_writer.hpp"
 #include "iresearch/formats/column/read_context.hpp"
 #include "iresearch/formats/formats.hpp"
 #include "iresearch/formats/ivf/centroids.hpp"
@@ -66,13 +68,13 @@ class QuantizerWriter;
 
 class IvfBuilder {
  public:
-  explicit IvfBuilder(IvfInfo info) : _info{std::move(info)} {}
+  explicit IvfBuilder(AnnInfo info) : _info{std::move(info)} {}
 
   BuiltIvf Compute(const ColumnReader& vector_column, ReadContext& ctx,
                    QuantizerWriter* qw) const;
 
  private:
-  IvfInfo _info;
+  AnnInfo _info;
 };
 
 class IvfTermReader final : public BasicTermReader, public TermPayloadWriter {
@@ -126,22 +128,23 @@ class IvfTermReader final : public BasicTermReader, public TermPayloadWriter {
   mutable std::unique_ptr<IvfTermIterator> _it;
 };
 
-class IvfWriter {
+class IvfWriter final : public AnnWriter {
  public:
-  explicit IvfWriter(IvfInfo info);
+  explicit IvfWriter(AnnInfo info);
 
-  ~IvfWriter();
+  ~IvfWriter() final;
 
-  void SetIdxWriter(IdxWriter& idx) noexcept { _idx = &idx; }
+  AnnKind Kind() const noexcept final { return AnnKind::Ivf; }
 
-  void Compute(const ColumnReader& col, ReadContext& ctx);
+  field_id ColumnId() const noexcept final { return _info.centroids_id; }
 
-  void FlushTree();
+  bool Empty() const noexcept final { return !_built; }
 
-  field_id ColumnId() const noexcept { return _info.centroids_id; }
+  void Compute(const ColumnReader& col, ReadContext& ctx) final;
+
+  void Flush() final;
+
   VectorMetric Metric() const noexcept { return _info.metric; }
-
-  bool Empty() const noexcept { return !_built; }
 
   const BasicTermReader* ClusterReader(ReadContext& ctx,
                                        const ColReader& col_reader);
@@ -153,15 +156,14 @@ class IvfWriter {
     BuiltIvf data;
   };
 
-  IvfInfo _info;
-  IdxWriter* _idx = nullptr;
+  AnnInfo _info;
   Result _result;
   bool _built = false;
   std::unique_ptr<IvfTermReader> _reader;
 };
 
 inline std::vector<const BasicTermReader*> PrepareIvfClusterReaders(
-  std::span<const std::unique_ptr<IvfWriter>> writers, ColReader* col_reader,
+  std::span<const std::unique_ptr<AnnWriter>> writers, ColReader* col_reader,
   std::optional<ReadContext>& ctx) {
   std::vector<const BasicTermReader*> out;
   if (col_reader == nullptr || writers.empty()) {
@@ -173,7 +175,11 @@ inline std::vector<const BasicTermReader*> PrepareIvfClusterReaders(
     if (!w) {
       continue;
     }
-    if (const auto* r = w->ClusterReader(ctx.value(), *col_reader)) {
+    if (w->Kind() != AnnKind::Ivf) {
+      continue;
+    }
+    auto& ivf = sdb::basics::downCast<IvfWriter>(*w);
+    if (const auto* r = ivf.ClusterReader(ctx.value(), *col_reader)) {
       out.push_back(r);
     }
   }

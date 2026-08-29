@@ -1,0 +1,138 @@
+control substitution on
+
+# ============================================================================
+# HNSW merge reuse and link healing.
+#
+# A merge adopts the largest source segment's graph rather than rebuilding: its
+# links are remapped to the merged row ids and links to deleted rows are
+# dropped, then every node that lost one is re-linked, and the remaining
+# segments are inserted as a delta.
+#
+# Healing must walk the DONOR graph *through* the deleted nodes to find the
+# survivors behind them. Searching the merged graph instead cannot work: the
+# deleted nodes are not in it, so the survivors they used to bridge to are
+# unreachable. On this collinear dataset the diversity heuristic keeps only the
+# two nearest neighbours per node, so the graph is a chain and every unhealed
+# deletion severs it -- a query then stalls at the break and answers with a
+# contiguous run of the wrong rows. Points on a line also make every exact
+# answer unique, so these results are pinned rather than sampled.
+# ============================================================================
+
+statement ok
+CREATE TABLE hnsw_m (pk INTEGER PRIMARY KEY, emb FLOAT[8]);
+
+
+statement ok
+CREATE INDEX hnsw_m_idx ON hnsw_m
+  USING inverted(pk, emb hnsw (metric = 'l2', quant = 'none'));
+
+
+statement ok
+INSERT INTO hnsw_m SELECT i, [i::FLOAT, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8]
+  FROM range(2000) t(i);
+
+
+statement ok
+VACUUM (REFRESH_TABLE) hnsw_m;
+
+
+statement ok
+INSERT INTO hnsw_m SELECT i, [i::FLOAT, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8]
+  FROM range(2000, 3000) t(i);
+
+
+statement ok
+VACUUM (REFRESH_TABLE) hnsw_m;
+
+
+# Deletes ~14% of the donor, under the 0.3 missing-ratio gate, so the merge
+# reuses its graph instead of falling back to a full rebuild.
+statement ok
+DELETE FROM hnsw_m WHERE pk % 7 = 0;
+
+
+statement ok
+VACUUM (REFRESH_TABLE) hnsw_m;
+
+
+statement ok
+VACUUM (COMPACT_TABLE) hnsw_m;
+
+
+query
+SELECT count(*) FROM hnsw_m_idx;
+----
+count
+2571
+
+
+# Rows carried over from the donor segment.
+query
+SELECT pk FROM hnsw_m_idx
+  ORDER BY emb <-> [250.4, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 5;
+----
+pk
+250
+251
+249
+248
+253
+
+
+query
+SELECT pk FROM hnsw_m_idx
+  ORDER BY emb <-> [1000.4, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 5;
+----
+pk
+1000
+999
+1002
+998
+1003
+
+
+# Query sitting on a deleted row (1750 = 7 * 250): its neighbours must have
+# been re-linked across the hole.
+query
+SELECT pk FROM hnsw_m_idx
+  ORDER BY emb <-> [1750.4, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 5;
+----
+pk
+1751
+1749
+1752
+1748
+1753
+
+
+# Rows inserted as the delta, from the smaller segment.
+query
+SELECT pk FROM hnsw_m_idx
+  ORDER BY emb <-> [2500.4, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 5;
+----
+pk
+2500
+2501
+2502
+2498
+2503
+
+
+# Straddles the donor/delta boundary in merged row order.
+query
+SELECT pk FROM hnsw_m_idx
+  ORDER BY emb <-> [1999.4, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 5;
+----
+pk
+1999
+2000
+1998
+2001
+1997
+
+
+query
+SELECT count(*) FROM hnsw_m_idx WHERE pk % 7 = 0;
+----
+count
+0

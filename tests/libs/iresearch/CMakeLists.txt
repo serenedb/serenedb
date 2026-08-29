@@ -24,6 +24,7 @@ set(iresearch-tests_sources
     ./formats/column/test_cs_helpers.cpp
     ./formats/columnstore2_test.cpp
     ./formats/posting_alloc_test.cpp
+    ./formats/hnsw/hnsw_test.cpp
     ./formats/ivf/quantizer_test.cpp
     ./formats/ivf/centroids_test.cpp
     ./formats/sparse_bitmap_test.cpp

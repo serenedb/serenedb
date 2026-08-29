@@ -23,12 +23,17 @@
 #include <cstring>
 #include <duckdb/common/allocator.hpp>
 #include <duckdb/common/vector/array_vector.hpp>
+#include <limits>
 #include <span>
+#include <utility>
 #include <vector>
 
 #include "basics/assert.h"
+#include "basics/memory.hpp"
 #include "basics/misc.hpp"
 #include "iresearch/formats/column/read_context.hpp"
+#include "iresearch/search/vector_filter_util.hpp"
+#include "iresearch/search/vector_similarity_query.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
 namespace irs {
@@ -76,6 +81,38 @@ const float* IvfVectorReader::ReadDocBatch(doc_id_t first, size_t count) {
   _reader->Scan(_scan, out, static_cast<duckdb::idx_t>(count));
   return duckdb::FlatVector::GetData<float>(
     duckdb::ArrayVector::GetChildMutable(out));
+}
+
+QueryBuilder::ptr IvfIndex::PrepareKnn(const SubReader& segment,
+                                       const PrepareContext& ctx,
+                                       const VectorFilterOptions& opts,
+                                       uint32_t effort) const {
+  VectorState state{ctx.memory};
+  QueryBuilder::ptr inner;
+  if (!PrepareVectorState(_tree, segment, ctx, opts, effort, state, inner)) {
+    return QueryBuilder::Empty();
+  }
+
+  return memory::make_tracked<KnnVectorQuery>(
+    ctx.memory, segment, std::move(state), std::span<const float>{opts.query},
+    opts.metric, ctx.boost, std::move(inner));
+}
+
+QueryBuilder::ptr IvfIndex::PrepareRange(const SubReader& segment,
+                                         const PrepareContext& ctx,
+                                         const VectorFilterOptions& opts,
+                                         float radius, bool inclusive,
+                                         uint32_t /*effort*/) const {
+  VectorState state{ctx.memory};
+  QueryBuilder::ptr inner;
+  if (!PrepareVectorState(_tree, segment, ctx, opts,
+                          std::numeric_limits<uint32_t>::max(), state, inner)) {
+    return QueryBuilder::Empty();
+  }
+
+  return memory::make_tracked<RangeVectorQuery>(
+    ctx.memory, segment, std::move(state), std::span<const float>{opts.query},
+    opts.metric, radius, inclusive, ctx.boost, std::move(inner));
 }
 
 }  // namespace irs

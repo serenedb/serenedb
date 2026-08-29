@@ -22,50 +22,46 @@
 
 #include <cstdint>
 #include <memory>
-#include <string>
-#include <string_view>
+#include <span>
 #include <vector>
 
-#include "iresearch/formats/index/idx_reader.hpp"  // TermDictMeta, kIdxFormat*
-#include "iresearch/index/column_info.hpp"
-#include "iresearch/types.hpp"
+#include "iresearch/formats/ann_writer.hpp"
+#include "iresearch/formats/hnsw/hnsw_graph.hpp"
+#include "iresearch/formats/ivf/quantizer.hpp"
 
-namespace duckdb {
-
-class DatabaseInstance;
-
-}  // namespace duckdb
 namespace irs {
 
-class Directory;
-class IndexOutput;
+class ColumnReader;
+class ReadContext;
 
-class IdxWriter final {
+class HnswWriter final : public AnnWriter {
  public:
-  IdxWriter(Directory& dir, std::string_view segment_name,
-            duckdb::DatabaseInstance& db);
-  ~IdxWriter();
+  explicit HnswWriter(AnnInfo info);
+  ~HnswWriter() final;
 
-  IdxWriter(const IdxWriter&) = delete;
-  IdxWriter& operator=(const IdxWriter&) = delete;
+  AnnKind Kind() const noexcept final { return AnnKind::Hnsw; }
 
-  IndexOutput& BlocksOut();
+  field_id ColumnId() const noexcept final { return _info.centroids_id; }
 
-  void AddIvf(field_id id, IvfCentroidMeta meta);
+  bool Empty() const noexcept final { return _graph.Empty(); }
 
-  void AddHnsw(field_id id, HnswMeta meta);
+  void SetMergeSources(std::span<const MergeSource> sources) noexcept final {
+    _merge_sources = sources;
+  }
 
-  void AddTermDictEntry(field_id id, TermDictMeta meta);
+  void Compute(const ColumnReader& col, ReadContext& ctx) final;
 
-  void Commit();
-  void Rollback() noexcept;
+  void Flush() final;
 
  private:
-  void EnsureOut();
-  bool Empty() const noexcept;
-
-  struct Impl;
-  std::unique_ptr<Impl> _impl;
+  AnnInfo _info;
+  std::span<const MergeSource> _merge_sources;
+  HnswGraph _graph;
+  std::vector<float> _vectors;
+  std::unique_ptr<QuantizerWriter> _qw;
+  uint32_t _d = 0;
+  uint32_t _record_size = 0;
+  uint64_t _rows = 0;
 };
 
 }  // namespace irs

@@ -61,6 +61,7 @@ inline constexpr ObjectId kUnionArray{kMinSystem.id() + 105};
 
 // OpClasses
 inline constexpr ObjectId kPgOpclassIvf{kMinSystem.id() + 200};
+inline constexpr ObjectId kPgOpclassHnsw{kMinSystem.id() + 202};
 inline constexpr ObjectId kPgOpclassIncluded{kMinSystem.id() + 201};
 
 // Access methods

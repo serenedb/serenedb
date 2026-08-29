@@ -37,7 +37,7 @@
 namespace irs {
 
 class Directory;
-class CentroidsTree;
+struct AnnIndex;
 struct IResourceManager;
 
 struct TermDictMeta {
@@ -58,6 +58,11 @@ struct IvfCentroidMeta {
   uint64_t stats_byte_size = 0;
 };
 
+struct HnswMeta {
+  uint64_t offset = 0;
+  uint64_t byte_size = 0;
+};
+
 inline constexpr std::string_view kIdxFormatExt = "idx";
 inline constexpr std::string_view kIdxFormatName = "iresearch_index";
 inline constexpr int32_t kIdxFormatVersion = 1;
@@ -65,6 +70,7 @@ inline constexpr int32_t kIdxFormatVersion = 1;
 enum class IdxSlotKind : uint8_t {
   TermDict = 0,
   Ivf = 1,
+  Hnsw = 2,
 };
 
 class IdxReader final {
@@ -75,8 +81,8 @@ class IdxReader final {
   IdxReader(const IdxReader&) = delete;
   IdxReader& operator=(const IdxReader&) = delete;
 
-  bool HasIvf(field_id id) const noexcept;
-  const CentroidsTree* Ivf(field_id id) const noexcept;
+  bool HasAnn(field_id id) const noexcept;
+  const AnnIndex* Ann(field_id id) const noexcept;
 
   std::span<const std::pair<field_id, TermDictMeta>> TermDicts() const noexcept;
 

@@ -38,7 +38,8 @@
 
 namespace sdb::catalog::persistence {
 
-struct IVFColumnConfig {
+struct AnnColumnConfig {
+  irs::AnnKind kind = irs::AnnKind::Ivf;
   int d = 0;
   irs::VectorMetric metric = irs::VectorMetric::L2Sqr;
   irs::VectorQuantization quant = irs::VectorQuantization::None;
@@ -46,6 +47,8 @@ struct IVFColumnConfig {
   uint32_t rabitq_bits = 0;
   float sample_factor = 0;
   uint32_t posting_size = 0;
+  uint32_t m = 0;
+  uint32_t ef_construction = 0;
   bool compression = true;
 };
 
@@ -60,7 +63,7 @@ struct EntryConfigSerialized {
   duckdb::CompressionType compression =
     duckdb::CompressionType::COMPRESSION_AUTO;
   search::Features features;
-  std::optional<IVFColumnConfig> ivf_config;
+  std::optional<AnnColumnConfig> ann_config;
   irs::field_id synthetic_column = irs::field_limits::invalid();
   irs::field_id null_field_id = irs::field_limits::invalid();
   irs::field_id bool_field_id = irs::field_limits::invalid();

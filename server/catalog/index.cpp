@@ -57,6 +57,8 @@ constexpr std::string_view kMetricField = "metric";
 constexpr std::string_view kQuantField = "quant";
 constexpr std::string_view kPqMField = "pq_m";
 constexpr std::string_view kRaBitQBitsField = "rabitq_bits";
+constexpr std::string_view kMField = "m";
+constexpr std::string_view kEfConstructionField = "ef_construction";
 
 constexpr std::string_view kL2Metric = "l2";
 constexpr std::string_view kL1Metric = "l1";
@@ -107,9 +109,10 @@ bool GetIndexBoolOption(std::string_view index_kind,
                               duckdb::LogicalTypeId::BOOLEAN, "a boolean");
 }
 
-constexpr std::array<std::string_view, 2> kKnownOpclassTypes{
+constexpr std::array<std::string_view, 3> kKnownOpclassTypes{
   kIncludedKind,
   kIVFKind,
+  kHNSWKind,
 };
 constexpr std::string_view kCompressionField = "compression";
 constexpr std::string_view kHyperLogLogField = "hyperloglog";
@@ -306,7 +309,7 @@ irs::VectorQuantization ParseIVFQuant(std::string_view column_name,
 
 void ApplyIVFOptions(std::string_view column_name,
                      const duckdb::case_insensitive_map_t<duckdb::Value>& opts,
-                     IVFColumnConfig& cfg) {
+                     AnnColumnConfig& cfg) {
   bool metric_set = false;
   bool quant_set = false;
   for (const auto& [key, raw_val] : opts) {
@@ -413,7 +416,8 @@ void ApplyIVFOptions(std::string_view column_name,
 }
 
 bool IsTokenizerOpclass(const CreateIndexColumn& c) {
-  if (c.IsBuiltin(kIVFKind) || c.IsBuiltin(kIncludedKind)) {
+  if (c.IsBuiltin(kIVFKind) || c.IsBuiltin(kHNSWKind) ||
+      c.IsBuiltin(kIncludedKind)) {
     return false;
   }
   return true;
@@ -427,7 +431,7 @@ void ValidateInvertedIndexColumns(
                          : c.GetCatalogColumn().type;
     const auto label = c.name;
 
-    if (c.IsBuiltin(kIVFKind)) {
+    if (c.IsBuiltin(kIVFKind) || c.IsBuiltin(kHNSWKind)) {
       ivf::Validate(label, type);
       continue;
     }
@@ -542,6 +546,90 @@ void ApplyIncludedOpclass(
   }
 }
 
+std::string DescribeHNSWOptions() {
+  return "metric (string: l2|l1|cosine|ip, REQUIRED), "
+         "quant (string: none|sq8|sq4, default sq8, none for l1), "
+         "m (int >= 2, default 32), "
+         "ef_construction (int >= 1, default 200, must be >= m), "
+         "compression (bool, default true)";
+}
+
+void ApplyHNSWOptions(std::string_view column_name,
+                      const duckdb::case_insensitive_map_t<duckdb::Value>& opts,
+                      AnnColumnConfig& cfg) {
+  bool metric_set = false;
+  bool quant_set = false;
+  for (const auto& [key, raw_val] : opts) {
+    if (key == kMetricField) {
+      auto str = GetIndexStringOption(kHNSWKind, column_name, key, raw_val);
+      cfg.metric = ParseIVFMetric(column_name, str);
+      metric_set = true;
+    } else if (key == kQuantField) {
+      auto str = GetIndexStringOption(kHNSWKind, column_name, key, raw_val);
+      cfg.quant = ParseIVFQuant(column_name, str);
+      quant_set = true;
+    } else if (key == kMField) {
+      cfg.m = ParsePositiveUintOption(kHNSWKind, column_name, key, raw_val);
+    } else if (key == kEfConstructionField) {
+      cfg.ef_construction =
+        ParsePositiveUintOption(kHNSWKind, column_name, key, raw_val);
+    } else if (key == kCompressionField) {
+      cfg.compression =
+        GetIndexBoolOption(kHNSWKind, column_name, key, raw_val);
+    } else {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+        ERR_MSG("Column '", column_name, "': unknown hnsw option '", key,
+                "'. Accepted options: ", DescribeHNSWOptions()));
+    }
+  }
+  if (!metric_set) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+      ERR_MSG("Column '", column_name, "': hnsw opclass requires the '",
+              kMetricField, "' option (one of: ", kL2Metric, ", ", kL1Metric,
+              ", ", kCosineMetric, ", ", kIPMetric,
+              "). Example: hnsw (metric = 'l2')"));
+  }
+  if (cfg.m == 0) {
+    cfg.m = 32;
+  }
+  if (cfg.ef_construction == 0) {
+    cfg.ef_construction = 200;
+  }
+  if (cfg.m < 2) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                    ERR_MSG("Column '", column_name,
+                            "': hnsw option 'm' must be at least 2, "
+                            "got ",
+                            cfg.m));
+  }
+  if (cfg.ef_construction < cfg.m) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+      ERR_MSG("Column '", column_name, "': hnsw option 'ef_construction' (",
+              cfg.ef_construction, ") must be >= 'm' (", cfg.m, ")"));
+  }
+  if (!quant_set && (cfg.metric == irs::VectorMetric::L2Sqr ||
+                     cfg.metric == irs::VectorMetric::InnerProduct ||
+                     cfg.metric == irs::VectorMetric::Cosine)) {
+    cfg.quant = irs::VectorQuantization::SQ8;
+  }
+  if (cfg.quant == irs::VectorQuantization::PQ ||
+      cfg.quant == irs::VectorQuantization::RaBitQ) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+                    ERR_MSG("Column '", column_name,
+                            "': hnsw supports only quant = ", kNoneQuant, ", ",
+                            kSQ8Quant, " or ", kSQ4Quant));
+  }
+  if (cfg.quant != irs::VectorQuantization::None &&
+      cfg.metric == irs::VectorMetric::L1) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+                    ERR_MSG("Column '", column_name, "': hnsw with metric = '",
+                            kL1Metric, "' supports only quant = ", kNoneQuant));
+  }
+}
+
 float ReadIVFSampleFactor(duckdb::ClientContext& context) {
   duckdb::Value v;
   context.TryGetCurrentSetting("sdb_ivf_sample_factor", v);
@@ -569,13 +657,34 @@ void ApplyIVFOpclass(
   SDB_ASSERT(value_type.id() == duckdb::LogicalTypeId::ARRAY);
   SDB_ASSERT(duckdb::ArrayType::GetChildType(value_type).id() ==
              duckdb::LogicalTypeId::FLOAT);
-  IVFColumnConfig cfg{
+  AnnColumnConfig cfg{
+    .kind = irs::AnnKind::Ivf,
     .d = static_cast<int>(duckdb::ArrayType::GetSize(value_type)),
   };
   ApplyIVFOptions(owner_label, *opts, cfg);
   cfg.sample_factor = ReadIVFSampleFactor(context);
   cfg.posting_size = ReadIVFPostingSize(context);
-  entry.ivf_config = cfg;
+  entry.ann_config = cfg;
+  entry.compression = cfg.compression
+                        ? duckdb::CompressionType::COMPRESSION_AUTO
+                        : duckdb::CompressionType::COMPRESSION_UNCOMPRESSED;
+  entry.store_values = true;
+}
+
+void ApplyHNSWOpclass(
+  std::string_view owner_label, const duckdb::LogicalType& value_type,
+  const std::optional<duckdb::case_insensitive_map_t<duckdb::Value>>& opts,
+  InvertedIndexEntryInfo& entry) {
+  SDB_ASSERT(opts);
+  SDB_ASSERT(value_type.id() == duckdb::LogicalTypeId::ARRAY);
+  SDB_ASSERT(duckdb::ArrayType::GetChildType(value_type).id() ==
+             duckdb::LogicalTypeId::FLOAT);
+  AnnColumnConfig cfg{
+    .kind = irs::AnnKind::Hnsw,
+    .d = static_cast<int>(duckdb::ArrayType::GetSize(value_type)),
+  };
+  ApplyHNSWOptions(owner_label, *opts, cfg);
+  entry.ann_config = cfg;
   entry.compression = cfg.compression
                         ? duckdb::CompressionType::COMPRESSION_AUTO
                         : duckdb::CompressionType::COMPRESSION_UNCOMPRESSED;
@@ -677,6 +786,10 @@ void ApplyOpclassToEntry(duckdb::ClientContext& context,
     ApplyIVFOpclass(context, owner_label, value_type, c.opclass_options, entry);
     return;
   }
+  if (c.IsBuiltin(kHNSWKind)) {
+    ApplyHNSWOpclass(owner_label, value_type, c.opclass_options, entry);
+    return;
+  }
   if (c.IsBuiltin(kIncludedKind)) {
     ApplyIncludedOpclass(context, owner_label, value_type, c.opclass_options,
                          entry);
@@ -686,7 +799,8 @@ void ApplyOpclassToEntry(duckdb::ClientContext& context,
 
   auto dict = LookupTokenizer(snapshot, database_id, schema_name, c.opclass);
   if (!dict) {
-    if (c.opclass == kIVFKind || c.opclass == kIncludedKind) {
+    if (c.opclass == kIVFKind || c.opclass == kHNSWKind ||
+        c.opclass == kIncludedKind) {
       ThrowUnknownBuiltinOpclass(c.opclass, owner_label, schema_name);
     }
     ThrowUnknownOpclassError(c.opclass, owner_label, schema_name);

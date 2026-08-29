@@ -32,23 +32,13 @@
 #include "iresearch/formats/ivf/quantizer.hpp"
 #include "iresearch/formats/posting_meta.hpp"
 #include "iresearch/index/index_reader.hpp"
+#include "iresearch/search/ann_index.hpp"
 #include "iresearch/search/filter.hpp"
 #include "iresearch/search/states/vector_state.hpp"
 #include "iresearch/utils/string.hpp"
 #include "iresearch/utils/vector.hpp"
 
 namespace irs {
-
-struct VectorFilterOptions {
-  std::vector<float> query;
-  field_id centroids_id = field_limits::invalid();
-  field_id postings_id = field_limits::invalid();
-  VectorMetric metric = VectorMetric::L2Sqr;
-  VectorQuantization quant = VectorQuantization::None;
-  std::shared_ptr<const Filter> inner;
-
-  bool operator==(const VectorFilterOptions& rhs) const noexcept = default;
-};
 
 inline bool SeekClusterTerm(auto& terms, uint32_t cluster_id,
                             std::span<byte_type, kCentroidTermWidth> term_buf) {
@@ -74,21 +64,9 @@ inline std::shared_ptr<const QuantizerCodebook> ReadQuantizerCodebook(
   return quant_stats ? quant_stats->MakeCodebook(query) : nullptr;
 }
 
-inline bool PrepareInnerFilter(const std::shared_ptr<const Filter>& inner,
+inline bool PrepareVectorState(const CentroidsTree& ivf,
                                const SubReader& segment,
                                const PrepareContext& ctx,
-                               QueryBuilder::ptr& out) {
-  if (!inner) {
-    return true;
-  }
-  auto inner_ctx = ctx;
-  inner_ctx.collector = nullptr;
-  out = inner->PrepareSegment(segment, inner_ctx);
-  return out != nullptr;
-}
-
-inline bool PrepareVectorState(const SubReader& segment,
-                               const PrepareContext& ctx, field_id column_id,
                                const VectorFilterOptions& opts, uint32_t nprobe,
                                VectorState& state,
                                QueryBuilder::ptr& inner_query) {
@@ -99,17 +77,16 @@ inline bool PrepareVectorState(const SubReader& segment,
   }
 
   const auto* postings = segment.field(opts.postings_id);
-  const auto* ivf = segment.Ivf(opts.centroids_id);
-  if (!postings || !ivf || ivf->Empty() || opts.query.size() != ivf->Dim()) {
+  if (!postings || ivf.Empty() || opts.query.size() != ivf.Dim()) {
     return false;
   }
 
-  auto idx_in = segment.ReopenIvf();
+  auto idx_in = segment.ReopenAnn();
   if (!idx_in) {
     return false;
   }
 
-  const auto d = static_cast<uint32_t>(ivf->Dim());
+  const auto d = static_cast<uint32_t>(ivf.Dim());
 
   std::vector<float> normalized_query;
   std::span<const float> query = opts.query;
@@ -122,7 +99,7 @@ inline bool PrepareVectorState(const SubReader& segment,
   }
 
   auto codebook =
-    ReadQuantizerCodebook(*ivf, *idx_in, opts.quant, d, opts.metric, query);
+    ReadQuantizerCodebook(ivf, *idx_in, opts.quant, d, opts.metric, query);
   if (!codebook) {
     return false;
   }
@@ -130,8 +107,8 @@ inline bool PrepareVectorState(const SubReader& segment,
 
   std::vector<uint32_t> fine_ids;
   std::vector<float> probed_centroids;
-  ivf->Search(query, *idx_in, nprobe, fine_ids,
-              needs_centroids ? &probed_centroids : nullptr);
+  ivf.Search(query, *idx_in, nprobe, fine_ids,
+             needs_centroids ? &probed_centroids : nullptr);
   if (fine_ids.empty()) {
     return false;
   }
@@ -142,7 +119,7 @@ inline bool PrepareVectorState(const SubReader& segment,
   }
 
   state.reader = postings;
-  state.vector_column = segment.Column(column_id);
+  state.vector_column = segment.Column(opts.centroids_id);
   state.quant = opts.quant;
   state.d = d;
   state.codebook = std::move(codebook);

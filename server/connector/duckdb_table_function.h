@@ -247,6 +247,13 @@ struct SereneDBScanBindData : public duckdb::FunctionData {
     return entry_kind == ScanEntryKind::SearchTable;
   }
 
+  // True when this scan scores through an HNSW ANN index. HNSW is ANN-only:
+  // it has no postings to intersect and does not filter during traversal, so
+  // any predicate must keep the index out of the plan entirely -- a claimed
+  // conjunct would be silently dropped, and a pushed pre-filter would prune an
+  // already-localized candidate set down to nothing.
+  bool IsHnswScored() const noexcept;
+
   template<typename T>
   T& As() & {
     return basics::downCast<T>(*this);

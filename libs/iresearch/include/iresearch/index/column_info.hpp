@@ -82,7 +82,12 @@ inline constexpr VectorMetric EffectiveQuantMetric(
   return metric == VectorMetric::Cosine ? VectorMetric::InnerProduct : metric;
 }
 
-struct IvfInfo {
+enum class AnnKind : uint8_t {
+  Ivf = 0,
+  Hnsw,
+};
+
+struct AnnInfo {
   struct Quantizer {
     VectorQuantization kind = VectorQuantization::None;
     uint32_t pq_m = 0;
@@ -90,6 +95,8 @@ struct IvfInfo {
 
     friend bool operator==(const Quantizer&, const Quantizer&) = default;
   };
+
+  AnnKind kind = AnnKind::Ivf;
 
   field_id centroids_id = field_limits::invalid();
   field_id postings_id = field_limits::invalid();
@@ -104,14 +111,17 @@ struct IvfInfo {
 
   uint32_t posting_size = 0;
 
-  friend bool operator==(const IvfInfo&, const IvfInfo&) = default;
+  uint32_t m = 0;
+  uint32_t ef_construction = 0;
+
+  friend bool operator==(const AnnInfo&, const AnnInfo&) = default;
 };
 
 struct ColumnOptions {
   bool skip_validity = false;
   duckdb::CompressionType compression =
     duckdb::CompressionType::COMPRESSION_AUTO;
-  std::optional<IvfInfo> ivf_info;
+  std::optional<AnnInfo> ann_info;
   bool hyperloglog = false;
 };
 

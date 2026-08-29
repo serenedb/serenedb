@@ -400,7 +400,7 @@ void IvfWriter::Compute(const ColumnReader& col, ReadContext& ctx) {
   _built = true;
 }
 
-void IvfWriter::FlushTree() {
+void IvfWriter::Flush() {
   if (!_built) {
     return;
   }
@@ -431,7 +431,7 @@ const BasicTermReader* IvfWriter::ClusterReader(ReadContext& ctx,
   return _reader.get();
 }
 
-IvfWriter::IvfWriter(IvfInfo info) : _info{std::move(info)} {}
+IvfWriter::IvfWriter(AnnInfo info) : _info{std::move(info)} {}
 
 IvfWriter::~IvfWriter() = default;
 

@@ -401,6 +401,14 @@ static std::string ColumnNameFor(const SereneDBScanBindData& bind,
   return absl::StrCat("col", col_id);
 }
 
+bool SereneDBScanBindData::IsHnswScored() const noexcept {
+  if (!vector_scorer || !inverted_index) {
+    return false;
+  }
+  const auto info = inverted_index->GetAnnInfo(vector_scorer->field_id);
+  return info && info->kind == irs::AnnKind::Hnsw;
+}
+
 irs::Filter::ptr MakeVectorFilter(const VectorScorerOptions& vs,
                                   std::shared_ptr<const irs::Filter> inner,
                                   float radius) {

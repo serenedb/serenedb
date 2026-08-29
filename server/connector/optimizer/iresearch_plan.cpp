@@ -590,7 +590,7 @@ duckdb::unique_ptr<duckdb::Expression> PushdownDistanceCall(
   if (!irs::field_limits::valid(call_field_id)) {
     return nullptr;
   }
-  auto ann_info = index->GetIvfInfo(call_field_id);
+  auto ann_info = index->GetAnnInfo(call_field_id);
   if (!ann_info || ann_info->metric != info.metric) {
     return nullptr;
   }
@@ -1089,7 +1089,7 @@ void IResearchPushdownComplexFilter(
     return;
   }
   TryClaimAnnRange(filters, get, bind_data, context);
-  if (filters.empty()) {
+  if (filters.empty() || ss.IsHnswScored()) {
     return;
   }
   TryClaimSearchFilter(filters, get, bind_data, *bind_data.inverted_index,

@@ -68,7 +68,7 @@ EntryConfigSerialized PackConfig(const InvertedIndexEntryInfo& entry) {
     .hyperloglog = entry.hyperloglog,
     .compression = entry.compression,
     .features = entry.features,
-    .ivf_config = entry.ivf_config,
+    .ann_config = entry.ann_config,
     .synthetic_column = entry.synthetic_column,
     .null_field_id = entry.null_field_id,
     .bool_field_id = entry.bool_field_id,
@@ -108,7 +108,7 @@ std::shared_ptr<InvertedIndex> UnpackEntries(InvertedIndexData data,
                                 .indexed_term_dict = cfg.indexed_term_dict,
                                 .hyperloglog = cfg.hyperloglog,
                                 .compression = cfg.compression,
-                                .ivf_config = std::move(cfg.ivf_config),
+                                .ann_config = std::move(cfg.ann_config),
                                 .null_field_id = cfg.null_field_id,
                                 .bool_field_id = cfg.bool_field_id,
                                 .numeric_field_id = cfg.numeric_field_id,
@@ -400,14 +400,15 @@ irs::field_id InvertedIndex::FindFieldIdBySerialized(
   return it->second;
 }
 
-std::optional<irs::IvfInfo> InvertedIndex::GetIvfInfo(
+std::optional<irs::AnnInfo> InvertedIndex::GetAnnInfo(
   irs::field_id field_id) const {
   const auto* entry = FindEntry(field_id);
-  if (!entry || !entry->ivf_config) {
+  if (!entry || !entry->ann_config) {
     return std::nullopt;
   }
-  const auto& cfg = *entry->ivf_config;
-  return irs::IvfInfo{
+  const auto& cfg = *entry->ann_config;
+  return irs::AnnInfo{
+    .kind = cfg.kind,
     .centroids_id = field_id,
     .postings_id = field_id,
     .d = cfg.d,
@@ -415,6 +416,8 @@ std::optional<irs::IvfInfo> InvertedIndex::GetIvfInfo(
     .quant = {.kind = cfg.quant, .pq_m = cfg.pq_m, .nb_bits = cfg.rabitq_bits},
     .sample_factor = cfg.sample_factor,
     .posting_size = cfg.posting_size,
+    .m = cfg.m,
+    .ef_construction = cfg.ef_construction,
   };
 }
 
@@ -422,7 +425,7 @@ irs::ColumnOptions InvertedIndex::GetColumnOptions(irs::field_id id) const {
   if (const auto* entry = FindEntry(id)) {
     return {
       .compression = entry->compression,
-      .ivf_info = GetIvfInfo(id),
+      .ann_info = GetAnnInfo(id),
       .hyperloglog = entry->hyperloglog,
     };
   }

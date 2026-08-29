@@ -1,0 +1,76 @@
+control substitution on
+
+# ============================================================================
+# HNSW DDL surface: accepted options, defaults and rejections.
+#
+# quant defaults to sq8 (none for l1, whose kernel has no quantized form).
+# pq and rabitq are rejected because both encode residuals against a cluster
+# centroid, and a graph has no clusters to provide one. l1 with the implicit
+# quant default is accepted: the default resolves to none for that metric.
+# ============================================================================
+
+
+statement ok
+CREATE TABLE hnsw_ddl (pk INTEGER PRIMARY KEY, emb FLOAT[4]);
+
+
+statement error
+CREATE INDEX hnsw_ddl_no_metric ON hnsw_ddl USING inverted(pk, emb hnsw ());
+----
+db error: ERROR: Column 'emb': hnsw opclass requires the 'metric' option (one of: l2, l1, cosine, ip). Example: hnsw (metric = 'l2')
+
+
+statement error
+CREATE INDEX hnsw_ddl_pq ON hnsw_ddl
+  USING inverted(pk, emb hnsw (metric = 'l2', quant = 'pq'));
+----
+db error: ERROR: Column 'emb': hnsw supports only quant = none, sq8 or sq4
+
+
+statement error
+CREATE INDEX hnsw_ddl_rabitq ON hnsw_ddl
+  USING inverted(pk, emb hnsw (metric = 'l2', quant = 'rabitq'));
+----
+db error: ERROR: Column 'emb': hnsw supports only quant = none, sq8 or sq4
+
+
+statement error
+CREATE INDEX hnsw_ddl_l1_sq8 ON hnsw_ddl
+  USING inverted(pk, emb hnsw (metric = 'l1', quant = 'sq8'));
+----
+db error: ERROR: Column 'emb': hnsw with metric = 'l1' supports only quant = none
+
+
+statement error
+CREATE INDEX hnsw_ddl_m1 ON hnsw_ddl
+  USING inverted(pk, emb hnsw (metric = 'l2', m = 1));
+----
+db error: ERROR: Column 'emb': hnsw option 'm' must be at least 2, got 1
+
+
+statement error
+CREATE INDEX hnsw_ddl_ef ON hnsw_ddl
+  USING inverted(pk, emb hnsw (metric = 'l2', m = 32, ef_construction = 8));
+----
+db error: ERROR: Column 'emb': hnsw option 'ef_construction' (8) must be >= 'm' (32)
+
+
+statement error
+CREATE INDEX hnsw_ddl_bogus ON hnsw_ddl
+  USING inverted(pk, emb hnsw (metric = 'l2', bogus = 1));
+----
+db error: ERROR: Column 'emb': unknown hnsw option 'bogus'. Accepted options: metric (string: l2|l1|cosine|ip, REQUIRED), quant (string: none|sq8|sq4, default sq8, none for l1), m (int >= 2, default 32), ef_construction (int >= 1, default 200, must be >= m), compression (bool, default true)
+
+
+statement ok
+CREATE INDEX hnsw_ddl_l1 ON hnsw_ddl USING inverted(pk, emb hnsw (metric = 'l1'));
+
+
+statement ok
+DROP INDEX hnsw_ddl_l1;
+
+
+statement ok
+CREATE INDEX hnsw_ddl_ok ON hnsw_ddl
+  USING inverted(pk, emb hnsw (metric = 'cosine', quant = 'sq4', m = 8,
+                               ef_construction = 64));

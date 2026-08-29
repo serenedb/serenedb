@@ -129,8 +129,8 @@ void Validate(std::string_view label, const duckdb::LogicalType& type);
 
 }  // namespace ivf
 
+using persistence::AnnColumnConfig;
 using persistence::ExpressionKey;
-using persistence::IVFColumnConfig;
 
 struct InvertedIndexEntryInfo {
   ObjectId text_dictionary = ObjectId::none();
@@ -141,22 +141,28 @@ struct InvertedIndexEntryInfo {
   bool hyperloglog = false;
   duckdb::CompressionType compression =
     duckdb::CompressionType::COMPRESSION_AUTO;
-  std::optional<IVFColumnConfig> ivf_config;
+  std::optional<AnnColumnConfig> ann_config;
 
   irs::field_id null_field_id = irs::field_limits::invalid();
   irs::field_id bool_field_id = irs::field_limits::invalid();
   irs::field_id numeric_field_id = irs::field_limits::invalid();
 
-  bool IsIVF() const noexcept { return ivf_config.has_value(); }
+  bool IsAnn() const noexcept { return ann_config.has_value(); }
+  bool IsIVF() const noexcept {
+    return ann_config && ann_config->kind == irs::AnnKind::Ivf;
+  }
+  bool IsHNSW() const noexcept {
+    return ann_config && ann_config->kind == irs::AnnKind::Hnsw;
+  }
   bool HasTextDictionary() const noexcept { return text_dictionary.isSet(); }
   bool HasJsonLeafFields() const noexcept {
     return irs::field_limits::valid(numeric_field_id) &&
            irs::field_limits::valid(bool_field_id);
   }
   bool IsTermDict() const noexcept {
-    return !IsIVF() && (indexed_term_dict || HasTextDictionary());
+    return !IsAnn() && (indexed_term_dict || HasTextDictionary());
   }
-  bool IsStored() const noexcept { return store_values || IsIVF(); }
+  bool IsStored() const noexcept { return store_values || IsAnn(); }
 };
 
 struct ColumnTokenizer {
@@ -250,7 +256,7 @@ class InvertedIndex final : public Index, public irs::IndexFieldOptions {
   irs::field_id FindFieldIdBySerialized(
     std::string_view serialized_expr) const noexcept;
 
-  std::optional<irs::IvfInfo> GetIvfInfo(irs::field_id field_id) const;
+  std::optional<irs::AnnInfo> GetAnnInfo(irs::field_id field_id) const;
 
   const InvertedIndexOptions& GetOptions() const noexcept { return _options; }
 

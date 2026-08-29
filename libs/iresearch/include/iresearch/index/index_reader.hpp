@@ -38,6 +38,7 @@ namespace irs {
 struct SubReader;
 
 class ColumnReader;
+struct AnnIndex;
 class ReadContext;
 class ColReader;
 struct SegmentMeta;
@@ -163,8 +164,8 @@ struct SubReader : public IndexReader, public NormProvider {
   virtual const ColumnReader* Column(field_id /*field*/) const {
     return nullptr;
   }
-  virtual const CentroidsTree* Ivf(field_id /*field*/) const { return nullptr; }
-  virtual IndexInput::ptr ReopenIvf() const { return nullptr; }
+  virtual const AnnIndex* Ann(field_id /*field*/) const { return nullptr; }
+  virtual IndexInput::ptr ReopenAnn() const { return nullptr; }
 };
 
 template<typename Visitor, typename FilterVisitor>

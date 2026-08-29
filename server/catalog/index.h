@@ -39,6 +39,7 @@ namespace catalog {
 
 inline constexpr std::string_view kIncludedKind = "included";
 inline constexpr std::string_view kIVFKind = "ivf";
+inline constexpr std::string_view kHNSWKind = "hnsw";
 
 class SecondaryIndex;
 class InvertedIndex;

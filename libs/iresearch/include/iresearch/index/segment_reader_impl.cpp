@@ -291,14 +291,14 @@ const ColumnReader* SegmentReaderImpl::Column(field_id field) const {
   return _data->col_reader->Column(field);
 }
 
-const CentroidsTree* SegmentReaderImpl::Ivf(field_id field) const {
+const AnnIndex* SegmentReaderImpl::Ann(field_id field) const {
   if (!_data || !_data->idx_reader) {
     return nullptr;
   }
-  return _data->idx_reader->Ivf(field);
+  return _data->idx_reader->Ann(field);
 }
 
-IndexInput::ptr SegmentReaderImpl::ReopenIvf() const {
+IndexInput::ptr SegmentReaderImpl::ReopenAnn() const {
   if (!_data || !_data->idx_reader) {
     return nullptr;
   }

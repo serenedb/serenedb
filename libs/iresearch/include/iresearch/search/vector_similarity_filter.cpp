@@ -32,16 +32,13 @@ namespace irs {
 QueryBuilder::ptr ByVectorSimilarity::PrepareSegment(
   const SubReader& segment, const PrepareContext& ctx) const {
   const auto& opts = options();
-  VectorState state{ctx.memory};
-  QueryBuilder::ptr inner;
-  if (!PrepareVectorState(segment, ctx, field_id(), opts, opts.nprobe, state,
-                          inner)) {
+  const auto* ann = segment.Ann(opts.centroids_id);
+  if (!ann) {
     return QueryBuilder::Empty();
   }
-
-  return memory::make_tracked<KnnVectorQuery>(
-    ctx.memory, segment, std::move(state), std::span<const float>{opts.query},
-    opts.metric, ctx.boost * Boost(), std::move(inner));
+  auto sub_ctx = ctx;
+  sub_ctx.Boost(Boost());
+  return ann->PrepareKnn(segment, sub_ctx, opts, opts.nprobe);
 }
 
 }  // namespace irs

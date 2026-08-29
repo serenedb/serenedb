@@ -54,7 +54,7 @@ constexpr score_t kScoreTol = 1e-6f;
 score_t ScoreTol(score_t want) { return kScoreTol * (1.f + std::fabs(want)); }
 
 // The writer emits a u64 length prefix ahead of the blob, exactly as
-// IvfWriter::FlushTree stores it; strip it to get what MakeQuantizerStats sees.
+// IvfWriter::Flush stores it; strip it to get what MakeQuantizerStats sees.
 bstring SerializeStats(const QuantizerWriter& writer) {
   bstring framed;
   BytesOutput out{framed};

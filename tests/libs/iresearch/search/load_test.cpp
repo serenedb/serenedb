@@ -24,12 +24,16 @@
 #include <absl/strings/str_join.h>
 #include <absl/strings/str_replace.h>
 #include <absl/strings/str_split.h>
+#include <fcntl.h>
 #include <simdjson.h>
+#include <unistd.h>
 #include <zlib.h>
 
 #include <bit>
+#include <cstdio>
 #include <fstream>
 #include <functional>
+#include <memory>
 #include <span>
 #include <string>
 #include <vector>
@@ -1119,6 +1123,12 @@ TEST_F(LoadTest, DisjunctionScoreAccuracy) {
 // line per matching document, thousands of them over the query set.
 TEST_F(LoadTest, ReportIsOnlyAWayOfLooking) {
   ASSERT_NE(nullptr, gExecutor);
+
+  // Every hit printed, over this corpus, is tens of millions of lines in a CI
+  // log. These assertions are about the documents, never the text.
+  static std::FILE* const kNullSink = std::fopen("/dev/null", "w");
+  ASSERT_NE(nullptr, kNullSink);
+  gExecutor->SetPrintSink(kNullSink);
 
   for (auto query : kQueries) {
     SCOPED_TRACE(query);

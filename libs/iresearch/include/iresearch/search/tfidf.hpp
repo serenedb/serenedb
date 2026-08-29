@@ -81,6 +81,10 @@ class TFIDF final : public irs::ScorerBase<TFIDF, TFIDFStats> {
 
   std::string ToString() const final;
 
+  Options GetOptions() const noexcept {
+    return {.with_norms = _normalize, .boost_as_score = _boost_as_score};
+  }
+
   bool normalize() const noexcept { return _normalize; }
 
   bool use_boost_as_score() const noexcept { return _boost_as_score; }

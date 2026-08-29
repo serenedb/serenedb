@@ -365,9 +365,11 @@ ScoreFunction BM25::PrepareScorer(const ScoreContext& ctx) const {
 
 ScoreBoundWriter::ptr BM25::PrepareScoreBoundWriter(size_t max_levels) const {
   if (IsBM1()) {
+    SDB_ASSERT(BoundTypeOf(GetOptions()) == ScoreBoundType::None);
     return {};
   }
   if (IsBM15()) {
+    SDB_ASSERT(BoundTypeOf(GetOptions()) == ScoreBoundType::MaxFreq);
     return std::make_unique<FreqNormWriter<kScoreBoundMaxFreq>>(max_levels);
   }
   if (IsBM11()) {
@@ -380,8 +382,10 @@ ScoreBoundWriter::ptr BM25::PrepareScoreBoundWriter(size_t max_levels) const {
     // x / (k * ((1 - b) / dl + b / avg_dl) + x)
     // b == 1
     // x / (k / avg_dl + x)
+    SDB_ASSERT(BoundTypeOf(GetOptions()) == ScoreBoundType::DivNorm);
     return std::make_unique<FreqNormWriter<kScoreBoundDivNorm>>(max_levels);
   }
+  SDB_ASSERT(BoundTypeOf(GetOptions()) == ScoreBoundType::MinNorm);
   if (_approximate) {
     // It's not precise if we have more than 1 segment.
     // But search is distributed and we don't compute cluster wide avg_dl,
@@ -396,16 +400,19 @@ ScoreBoundWriter::ptr BM25::PrepareScoreBoundWriter(size_t max_levels) const {
 
 ScoreBoundSource::ptr BM25::PrepareScoreBoundSource() const {
   if (IsBM1()) {
+    SDB_ASSERT(BoundTypeOf(GetOptions()) == ScoreBoundType::None);
     return {};
   }
   if (IsBM15()) {
+    SDB_ASSERT(BoundTypeOf(GetOptions()) == ScoreBoundType::MaxFreq);
     return std::make_unique<FreqNormSource<kScoreBoundFreq>>();
   }
+  SDB_ASSERT(BoundTypeOf(GetOptions()) != ScoreBoundType::None);
   return std::make_unique<FreqNormSource<kScoreBoundFreq | kScoreBoundNorm>>();
 }
 
 bool BM25::Compatible(const ScorerOptions& persisted) const noexcept {
-  const auto type = BoundTypeOf({.k1 = _k, .b = _b});
+  const auto type = BoundTypeOf(GetOptions());
   if (type == ScoreBoundType::None || type != irs::BoundTypeOf(persisted)) {
     return false;
   }

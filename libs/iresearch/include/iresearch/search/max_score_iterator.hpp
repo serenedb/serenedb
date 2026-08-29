@@ -573,7 +573,7 @@ class MaxScoreIterator : public DocIterator {
   uint32_t _num_outer_windows = 0;
   doc_id_t _min_window_size = 1;
   ColumnArgsFetcher _fetcher;
-  score_t _next_threshold = std::numeric_limits<score_t>::min();
+  score_t _next_threshold = std::numeric_limits<score_t>::lowest();
   Attributes _attrs;
 };
 

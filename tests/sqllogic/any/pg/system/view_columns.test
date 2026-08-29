@@ -1,0 +1,123 @@
+# Views must report their columns in pg_attribute.
+#
+# pg_attribute is the source information_schema.columns is built from, so a
+# view with no attribute rows is invisible to every client that introspects
+# columns the standard way: dbt's adapter.get_columns_in_relation returns an
+# empty list, breaking dbt_utils.star and model contracts, and dbt docs
+# generate silently drops view models from catalog.json.
+
+statement ok
+CREATE TABLE viewcol_base(a INTEGER, b TEXT);
+
+statement ok
+CREATE VIEW viewcol_plain AS SELECT a, b FROM viewcol_base;
+
+statement ok
+CREATE VIEW viewcol_renamed(x, y) AS SELECT a, b FROM viewcol_base;
+
+statement ok
+CREATE VIEW viewcol_expr AS SELECT a + 1 AS computed, upper(b) AS shouted FROM viewcol_base;
+
+
+# The three probes from the bug report, which all returned 0 for a view.
+query
+SELECT 'attributes' AS probe, count(*) AS n
+FROM pg_attribute
+WHERE attrelid = (SELECT oid FROM pg_class WHERE relname = 'viewcol_plain') AND attnum > 0
+UNION ALL
+SELECT 'columns', count(*)
+FROM information_schema.columns
+WHERE table_schema = 'public' AND table_name = 'viewcol_plain'
+UNION ALL
+SELECT 'relnatts', relnatts::bigint
+FROM pg_class WHERE relname = 'viewcol_plain'
+ORDER BY probe;
+----
+probe	n
+attributes	2
+columns	2
+relnatts	2
+
+
+query
+SELECT attnum, attname, format_type(atttypid, atttypmod) AS type
+FROM pg_attribute
+WHERE attrelid = (SELECT oid FROM pg_class WHERE relname = 'viewcol_plain') AND attnum > 0
+ORDER BY attnum;
+----
+attnum	attname	type
+1	a	integer
+2	b	text
+
+
+# A view column is nullable, local, and not inherited.
+query
+SELECT attname, attnotnull, attislocal, attinhcount
+FROM pg_attribute
+WHERE attrelid = (SELECT oid FROM pg_class WHERE relname = 'viewcol_plain') AND attnum > 0
+ORDER BY attnum;
+----
+attname	attnotnull	attislocal	attinhcount
+a	f	t	0
+b	f	t	0
+
+
+# A column list on CREATE VIEW renames the columns: attname must report the
+# view's own names, not the names of the underlying query.
+query
+SELECT attnum, attname, format_type(atttypid, atttypmod) AS type
+FROM pg_attribute
+WHERE attrelid = (SELECT oid FROM pg_class WHERE relname = 'viewcol_renamed') AND attnum > 0
+ORDER BY attnum;
+----
+attnum	attname	type
+1	x	integer
+2	y	text
+
+
+query
+SELECT ordinal_position, column_name
+FROM information_schema.columns
+WHERE table_schema = 'public' AND table_name = 'viewcol_renamed'
+ORDER BY ordinal_position;
+----
+ordinal_position	column_name
+1	x
+2	y
+
+
+# Expression columns take their name and type from the select list.
+query
+SELECT attnum, attname, format_type(atttypid, atttypmod) AS type
+FROM pg_attribute
+WHERE attrelid = (SELECT oid FROM pg_class WHERE relname = 'viewcol_expr') AND attnum > 0
+ORDER BY attnum;
+----
+attnum	attname	type
+1	computed	integer
+2	shouted	text
+
+
+query
+SELECT relname, relkind, relnatts
+FROM pg_class
+WHERE relname IN ('viewcol_plain', 'viewcol_renamed', 'viewcol_expr')
+ORDER BY relname;
+----
+relname	relkind	relnatts
+viewcol_expr	v	2
+viewcol_plain	v	2
+viewcol_renamed	v	2
+
+
+statement ok
+DROP VIEW viewcol_expr;
+
+statement ok
+DROP VIEW viewcol_renamed;
+
+statement ok
+DROP VIEW viewcol_plain;
+
+statement ok
+DROP TABLE viewcol_base;

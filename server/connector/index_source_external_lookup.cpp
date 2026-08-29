@@ -68,7 +68,7 @@ ExternalLookupIndexSource::ExternalLookupIndexSource(
   duckdb::ClientContext& context, ViewFastPath fast_path,
   std::span<const duckdb::idx_t> projected_columns,
   std::span<const duckdb::LogicalType> projected_types,
-  std::span<const catalog::Column::Id> bind_column_ids)
+  std::span<const catalog::ColumnId> bind_column_ids)
   : ViewIndexSourceBase{std::move(fast_path)} {
   SDB_ASSERT(_fast_path.catalog_ref);
   const auto& ref = *_fast_path.catalog_ref;

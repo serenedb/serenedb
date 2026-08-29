@@ -25,18 +25,23 @@
 
 #include <duckdb/catalog/catalog_search_path.hpp>
 #include <duckdb/execution/operator/helper/physical_set.hpp>
+#include <duckdb/main/attached_database.hpp>
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/main/client_data.hpp>
 #include <duckdb/main/config.hpp>
 #include <duckdb/main/database_manager.hpp>
 #include <duckdb/main/settings.hpp>
 #include <duckdb/main/valid_checker.hpp>
+#include <duckdb/transaction/duck_transaction.hpp>
 #include <duckdb/transaction/meta_transaction.hpp>
 #include <magic_enum/magic_enum.hpp>
 #include <optional>
 
 #include "basics/assert.h"
-#include "catalog/catalog.h"
+#include "catalog/ddl/catalog.h"
+#include "catalog/log/store.h"
+#include "connector/duckdb_client_state.h"
+#include "pg/connection_context.h"
 #include "pg/sql_exception_macro.h"
 
 namespace sdb {
@@ -100,13 +105,6 @@ IsolationLevel Config::GetIsolationLevel() const {
   return _client_ctx.transaction.GetIsolationLevel();
 }
 
-bool Config::GetStrictDDL() const {
-  duckdb::Value value;
-  auto ok = _client_ctx.TryGetCurrentSetting("sdb_strict_ddl", value);
-  SDB_ASSERT(ok && !value.IsNull());
-  return duckdb::BooleanValue::Get(value);
-}
-
 std::optional<std::string> Config::Get(std::string_view key) const {
   duckdb::Value value;
   if (_client_ctx.TryGetCurrentSetting(std::string{key}, value)) {
@@ -115,13 +113,35 @@ std::optional<std::string> Config::Get(std::string_view key) const {
   return std::nullopt;
 }
 
-std::shared_ptr<const catalog::Snapshot> Config::AcquireCatalogSnapshot() {
-  if (_snapshot) {
-    return _snapshot;
+void Config::RefreshCatalogEpoch() noexcept try {
+  // duckdb's own version of the catalog this session reads: the catalog is
+  // versioned with the data it belongs to, so there is nothing else to ask.
+  //
+  // Read off the transaction this session already has for that database, never
+  // by starting one: a transaction captures its snapshot when it starts, and
+  // REPEATABLE READ takes that snapshot at the first statement that reads data
+  // -- not at BEGIN, and not because a plan wanted to know a version. With no
+  // transaction there is nothing to sample and nothing bound against it either.
+  if (!_client_ctx.transaction.HasActiveTransaction()) {
+    return;
   }
-  _snapshot = catalog::GetCatalog().GetCatalogSnapshot();
-  SDB_ASSERT(_snapshot);
-  return _snapshot;
+  auto database =
+    duckdb::DatabaseManager::Get(_client_ctx)
+      .GetDatabase(_client_ctx,
+                   duckdb::DatabaseManager::GetDefaultDatabase(_client_ctx));
+  if (!database) {
+    return;
+  }
+  auto transaction =
+    duckdb::MetaTransaction::Get(_client_ctx).TryGetTransaction(*database);
+  if (!transaction) {
+    return;
+  }
+  _catalog_epoch = transaction->Cast<duckdb::DuckTransaction>().catalog_version;
+} catch (const std::exception&) {
+  // Teardown, or a session whose database is gone: the epoch it last saw is as
+  // good as it gets, and a plan bound against it re-binds on the next statement
+  // that has a transaction to check it through.
 }
 
 void Config::OnSet(std::string_view name, bool is_local,

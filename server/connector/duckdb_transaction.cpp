@@ -20,50 +20,59 @@
 
 #include "connector/duckdb_transaction.h"
 
-#include <duckdb/main/attached_database.hpp>
-#include <duckdb/main/database_manager.hpp>
-#include <duckdb/transaction/transaction_manager.hpp>
+#include <absl/cleanup/cleanup.h>
 
-#include "catalog/store/store.h"
-#include "connector/duckdb_client_state.h"
-#include "pg/connection_context.h"
+#include <duckdb/main/attached_database.hpp>
+#include <duckdb/main/client_context.hpp>
+#include <duckdb/main/database_manager.hpp>
+#include <duckdb/transaction/transaction.hpp>
+
+#include "catalog/log/duckdb_global_catalog.h"
+#include "catalog/log/store.h"
 
 namespace sdb::connector {
 
-SereneDBTransaction::SereneDBTransaction(duckdb::TransactionManager& manager,
-                                         duckdb::ClientContext& context)
-  : duckdb::Transaction(manager, context) {}
-
 SereneDBTransactionManager::SereneDBTransactionManager(
   duckdb::AttachedDatabase& db)
-  : duckdb::TransactionManager(db) {}
+  : duckdb::DuckTransactionManager(db) {}
 
-duckdb::Transaction& SereneDBTransactionManager::StartTransaction(
-  duckdb::ClientContext& context) {
-  duckdb::lock_guard<duckdb::mutex> lock(_lock);
-  auto txn = duckdb::make_uniq<SereneDBTransaction>(*this, context);
-  auto& ref = *txn;
-  _transactions.push_back(std::move(txn));
-  return ref;
+void SereneDBTransactionManager::Checkpoint(duckdb::ClientContext& context,
+                                            bool force) {
+  // The rows are in this attachment, so the user's CHECKPOINT reaches them
+  // directly. The statement issuing it already has a transaction here -- it is
+  // the database it runs in -- and duckdb refuses a FORCE with one open. That
+  // refusal guards against waiting on oneself, which a read-only transaction
+  // cannot cause, so drop the force rather than the checkpoint.
+  const bool self_force =
+    force && !duckdb::Transaction::TryGet(context, db).get();
+  duckdb::DuckTransactionManager::Checkpoint(context, self_force);
 }
 
 duckdb::ErrorData SereneDBTransactionManager::CommitTransaction(
   duckdb::ClientContext& context, duckdb::Transaction& transaction) {
-  return {};
+  const bool wrote = !transaction.IsReadOnly();
+  // A run that wrote a record holds the cluster WAL until it ends, so it has to
+  // end however the commit leaves: an exception escaping duckdb's commit would
+  // otherwise leave the WAL taken by a thread that is already gone.
+  bool committed = false;
+  const absl::Cleanup end_run = [&] {
+    catalog::EndCommittingCatalogRun(committed);
+    if (wrote) {
+      catalog::EndCommittingWrites(context, committed);
+    }
+  };
+  auto error =
+    duckdb::DuckTransactionManager::CommitTransaction(context, transaction);
+  committed = !error.HasError();
+  return error;
 }
 
 void SereneDBTransactionManager::RollbackTransaction(
-  duckdb::Transaction& transaction) {}
-
-void SereneDBTransactionManager::Checkpoint(duckdb::ClientContext& context,
-                                            bool force) {
-  // serenedb tables are backed by native DuckDB tables in the hidden store
-  // database. Forward the user's CHECKPOINT to the store so its WAL is flushed
-  // and deleted rows are vacuumed/compacted -- the user never names the store.
-  auto store = duckdb::DatabaseManager::Get(context).GetDatabase(
-    context, duckdb::Identifier{catalog::kStoreDatabaseName});
-  if (store) {
-    store->GetTransactionManager().Checkpoint(context, force);
+  duckdb::Transaction& transaction) {
+  const auto context = transaction.context.lock();
+  duckdb::DuckTransactionManager::RollbackTransaction(transaction);
+  if (context) {
+    catalog::EndCommittingWrites(*context, /*committed=*/false);
   }
 }
 

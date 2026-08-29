@@ -1,0 +1,163 @@
+# ROLLBACK of DROP INDEX: a KNOWN GAP, pinned as it behaves today rather than
+# as it ought to behave.
+#
+# DROP INDEX has two halves and only one of them is transactional. The catalog
+# entry is dropped through CatalogSet::DropEntry, which is MVCC, so a ROLLBACK
+# brings it back. The physical half is taken off the relation's TableIndexList
+# straight away by DataStore::ExecuteDropStoreIndex -- deliberately, because
+# "UNIQUE enforcement must stop when DROP INDEX commits, not when the artifact
+# half runs" -- and that list is not MVCC state, so nothing puts it back.
+#
+# duckdb cannot compensate this the way it compensates a rolled-back CREATE
+# INDEX (index_rollback.test): the version being rolled back is a
+# DELETED_ENTRY, so DuckIndexEntry::Rollback is never called on it, and the
+# transactional replacement (CommitDrop) is reached only for a duck_managed
+# entry, which a SereneDB index is not.
+#
+# The result is a relation that the catalog says has a UNIQUE index over it and
+# that accepts duplicates. The INSERT marked KNOWN GAP below is the one
+# assertion here that pins broken behaviour: when the gap is closed it must
+# start failing, and the fix is to change that one case to
+# `statement error (?i)duplicate key`, NOT to delete this file.
+
+
+statement ok
+CREATE TABLE ixdg_t (id INTEGER, rank INTEGER);
+
+
+statement ok
+INSERT INTO ixdg_t VALUES (1, 10), (2, 20);
+
+
+statement ok
+CREATE UNIQUE INDEX ixdg_rank_idx ON ixdg_t (rank);
+
+
+# The index enforces before the transaction, so the checks after it mean
+# something.
+statement error (?i)duplicate key
+INSERT INTO ixdg_t VALUES (3, 10);
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+DROP INDEX ixdg_rank_idx;
+
+
+statement ok
+ROLLBACK;
+
+
+# The catalog half of the drop is MVCC state, so the entry came back.
+query
+SELECT count(*) AS n FROM pg_class WHERE relname = 'ixdg_rank_idx';
+----
+n
+1
+
+
+# KNOWN GAP: the physical half did not. Nothing enforces the key any more, so a
+# duplicate lands under an index the catalog still calls UNIQUE.
+statement ok
+INSERT INTO ixdg_t VALUES (3, 10);
+
+
+query
+SELECT count(*) AS n FROM ixdg_t WHERE rank = 10;
+----
+n
+2
+
+
+# The relation itself is unharmed -- reads and writes still work, and the
+# planner does not trip over the index entry that has no index behind it.
+statement ok
+INSERT INTO ixdg_t VALUES (4, 40);
+
+
+query
+SELECT id FROM ixdg_t WHERE rank = 40;
+----
+id
+4
+
+
+query
+SELECT count(*) AS n FROM ixdg_t;
+----
+n
+4
+
+
+# The entry that came back is a real entry: it can be dropped again, and that
+# drop commits.
+statement ok
+DROP INDEX ixdg_rank_idx;
+
+
+query
+SELECT count(*) AS n FROM pg_class WHERE relname = 'ixdg_rank_idx';
+----
+n
+0
+
+
+# The committed control, on a fresh relation: a DROP INDEX that commits takes
+# both halves, so the key stops being enforced -- the same observable end state
+# as the rolled-back drop above, which is precisely why the gap is invisible
+# without the count(*) on pg_class.
+statement ok
+CREATE TABLE ixdg_ok (id INTEGER, rank INTEGER);
+
+
+statement ok
+CREATE UNIQUE INDEX ixdg_ok_idx ON ixdg_ok (rank);
+
+
+statement ok
+INSERT INTO ixdg_ok VALUES (1, 10);
+
+
+statement error (?i)duplicate key
+INSERT INTO ixdg_ok VALUES (2, 10);
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+DROP INDEX ixdg_ok_idx;
+
+
+statement ok
+COMMIT;
+
+
+query
+SELECT count(*) AS n FROM pg_class WHERE relname = 'ixdg_ok_idx';
+----
+n
+0
+
+
+statement ok
+INSERT INTO ixdg_ok VALUES (2, 10);
+
+
+query
+SELECT count(*) AS n FROM ixdg_ok WHERE rank = 10;
+----
+n
+2
+
+
+statement ok
+DROP TABLE ixdg_t;
+
+
+statement ok
+DROP TABLE ixdg_ok;

@@ -1,0 +1,233 @@
+control substitution on
+
+# The data file holds a serenedb table's rows and its identifier, and nothing
+# else about it: the definition is rebuilt from the catalog log at boot. So the
+# two sides can disagree about which tables and indexes exist, and each way has
+# to come out right.
+#
+#   - a table the catalog no longer has, because it was dropped after the
+#     checkpoint: its rows are read past and left behind;
+#   - an index the catalog has and the file does not, because it was built after
+#     the checkpoint: it comes back with the WAL rather than being attached
+#     empty;
+#   - constraints, whose indexes are tied to the rows by catalog id and not by
+#     the order the definition happens to list them in.
+#
+# The crash is only a way to get a restart.
+
+
+statement ok
+CREATE TABLE cmd_parent (id INTEGER PRIMARY KEY, code INTEGER UNIQUE, note TEXT);
+
+
+statement ok
+CREATE TABLE cmd_child (id INTEGER PRIMARY KEY, parent INTEGER REFERENCES cmd_parent (id));
+
+
+statement ok
+CREATE TABLE cmd_doomed (a INTEGER, b TEXT);
+
+
+statement ok
+CREATE TABLE cmd_late (id INTEGER PRIMARY KEY, tag TEXT);
+
+
+statement ok
+INSERT INTO cmd_parent VALUES (1, 10, 'a'), (2, 20, 'b');
+
+
+statement ok
+INSERT INTO cmd_child VALUES (100, 1), (200, 2);
+
+
+statement ok
+INSERT INTO cmd_doomed SELECT i, 'v' || i FROM generate_series(1, 300) t(i);
+
+
+statement ok
+INSERT INTO cmd_late VALUES (1, 'one'), (2, 'two');
+
+
+statement ok
+CHECKPOINT;
+
+
+# Everything below happens after the checkpoint, so the file and the catalog
+# disagree about it until the WAL replays.
+statement ok
+DROP TABLE cmd_doomed;
+
+
+statement ok
+CREATE INDEX cmd_late_idx ON cmd_child (parent);
+
+
+statement ok
+ALTER TABLE cmd_late ADD CONSTRAINT cmd_late_tag_key UNIQUE (tag);
+
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+statement error connection closed
+SELECT 1;
+
+
+connection after_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT 1 AS one;
+----
+one
+1
+
+
+connection after_crash
+query
+SELECT id, code, note FROM cmd_parent ORDER BY id;
+----
+id	code	note
+1	10	a
+2	20	b
+
+
+connection after_crash
+query
+SELECT id, parent FROM cmd_child ORDER BY id;
+----
+id	parent
+100	1
+200	2
+
+
+# The dropped table stayed dropped, and its rows did not come back under it.
+connection after_crash
+query
+SELECT count(*) AS n FROM pg_class WHERE relname = 'cmd_doomed';
+----
+n
+0
+
+
+# Each constraint found the index data that belongs to it: the primary key, the
+# unique declared with the table, and the unique added after the checkpoint.
+connection after_crash
+statement error
+INSERT INTO cmd_parent VALUES (1, 30, 'c');
+----
+db error: ERROR: Duplicate key "id: 1" violates primary key constraint.
+
+
+connection after_crash
+statement error
+INSERT INTO cmd_parent VALUES (3, 10, 'c');
+----
+db error: ERROR: Duplicate key "code: 10" violates unique constraint.
+
+
+# The constraint added after the checkpoint has no index in the file. The boot
+# has to open the database anyway and hand the rows back; the constraint itself
+# comes from the catalog.
+connection after_crash
+query
+SELECT id, tag FROM cmd_late ORDER BY id;
+----
+id	tag
+1	one
+2	two
+
+
+connection after_crash
+query
+SELECT conname FROM pg_constraint c JOIN pg_class r ON r.oid = c.conrelid
+WHERE r.relname = 'cmd_late' AND c.contype = 'u';
+----
+conname
+cmd_late_tag_key
+
+
+# The foreign key survives in both directions.
+connection after_crash
+statement error
+INSERT INTO cmd_child VALUES (300, 999);
+----
+db error: ERROR: Violates foreign key constraint because key "id: 999" does not exist in the referenced table
+
+
+connection after_crash
+statement error
+DELETE FROM cmd_parent WHERE id = 1;
+----
+db error: ERROR: Violates foreign key constraint because key "parent: 1" is still referenced by a foreign key in a different table. If this is an unexpected constraint violation, please refer to our foreign key limitations in the documentation
+
+
+# The index built after the checkpoint is back, and it holds the rows that were
+# already there when it was built.
+connection after_crash
+query
+SELECT indexname FROM pg_indexes WHERE tablename = 'cmd_child' ORDER BY 1;
+----
+indexname
+cmd_child_pkey
+cmd_late_idx
+
+
+connection after_crash
+query
+SELECT id FROM cmd_child WHERE parent = 2;
+----
+id
+200
+
+
+# A second round trip over what the boot rebuilt.
+connection after_crash
+statement ok
+INSERT INTO cmd_child VALUES (300, 1);
+
+
+connection after_crash
+statement ok
+CHECKPOINT;
+
+
+connection after_crash
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+connection after_crash
+statement error connection closed
+SELECT 1;
+
+
+connection after_crash2
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT count(*) AS n FROM cmd_child;
+----
+n
+3
+
+
+connection after_crash2
+query
+SELECT id FROM cmd_child WHERE parent = 1 ORDER BY id;
+----
+id
+100
+300
+
+
+connection after_crash2
+statement ok
+DROP TABLE cmd_child;
+
+
+connection after_crash2
+statement ok
+DROP TABLE cmd_parent;
+
+
+connection after_crash2
+statement ok
+DROP TABLE cmd_late;

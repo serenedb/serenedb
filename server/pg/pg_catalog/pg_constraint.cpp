@@ -21,8 +21,17 @@
 #include "pg/pg_catalog/pg_constraint.h"
 
 #include <deque>
+#include <duckdb/parser/constraints/list.hpp>
+#include <span>
+#include <string_view>
+#include <utility>
 
-#include "catalog/catalog.h"
+#include "basics/containers/flat_hash_map.h"
+#include "catalog/ddl/catalog.h"
+#include "catalog/entry/duckdb_schema_entry.h"
+#include "catalog/entry/duckdb_table_entry.h"
+#include "catalog/read/duckdb_catalog_sets.h"
+#include "catalog/schema.h"
 #include "pg/pg_catalog/fwd.h"
 
 namespace sdb::pg {
@@ -42,6 +51,9 @@ constexpr uint64_t kNullMask = MaskFromNulls({
 // clear its NULL bit for them.
 constexpr uint64_t kFkNullMask =
   kNullMask & ~(uint64_t{1} << GetIndex(&PgConstraint::confkey));
+// CHECK rows carry the deparsed body in conbin.
+constexpr uint64_t kCheckNullMask =
+  kNullMask & ~(uint64_t{1} << GetIndex(&PgConstraint::conbin));
 // FKs carry no stored ObjectId; synthesize a constraint OID. Bit 61 keeps it
 // clear of raw ObjectIds and the bit-62 synthetic PK index OIDs.
 
@@ -49,82 +61,73 @@ constexpr uint64_t kFkNullMask =
 
 template<>
 catalog::MaterializedData SystemTableSnapshot<PgConstraint>::GetTableData() {
-  auto catalog = _config.CatalogSnapshot();
-
   std::vector<PgConstraint> values;
   std::deque<std::string> conname_storage;
+  std::deque<std::string> conbin_storage;
   std::vector<std::vector<int16_t>> conkey_storage;
   std::vector<std::vector<int16_t>> confkey_storage;
 
-  for (const auto& schema : catalog->GetSchemas(GetDatabaseId())) {
-    for (const auto& table :
-         catalog->GetTables(GetDatabaseId(), schema->GetName())) {
-      auto& pk_columns = table->PKColumns();
-      auto& columns = table->Columns();
+  auto& context = _config.GetClientContext();
 
-      // Primary key constraint
-      if (!pk_columns.empty()) {
-        std::vector<int16_t> conkey;
-        conkey.reserve(pk_columns.size());
-        for (auto pk_id : pk_columns) {
-          const auto pos = table->ColumnPosById(pk_id);
-          if (pos < columns.size()) {
-            conkey.push_back(static_cast<int16_t>(pos + 1));
-          }
-        }
+  // A foreign key reports the oid of the relation it references and the index
+  // backing that relation's key, so every table is collected up front. By the
+  // id the constraint carries and not by the qualified name it also carries:
+  // the name is only what it was when the definition was written, and a rename
+  // since has moved it.
+  containers::FlatHashMap<ObjectId, const catalog::SereneDBTableEntry*>
+    tables_by_id;
+  catalog::VisitTableEntries(context, GetDatabaseId(),
+                             [&](const catalog::SereneDBSchemaEntry&,
+                                 const catalog::SereneDBTableEntry& table) {
+                               tables_by_id.emplace(catalog::IdOf(table),
+                                                    &table);
+                             });
 
-        conname_storage.push_back(table->PKName().empty()
-                                    ? std::string{table->GetName()} + "_pkey"
-                                    : std::string{table->PKName()});
-        conkey_storage.push_back(std::move(conkey));
-        values.push_back({
-          .oid = table->PKConstraintId().id(),
-          .conname = conname_storage.back(),
-          .connamespace = schema->GetId().id(),
-          .contype = PgConstraint::Contype::PrimaryKey,
-          .condeferrable = false,
-          .condeferred = false,
-          .conenforced = true,
-          .convalidated = true,
-          .conrelid = table->GetId().id(),
-          .contypid = 0,
-          .conindid = table->PKIndexId().id(),
-          .conparentid = 0,
-          .confrelid = 0,
-          .confupdtype = PgConstraint::Confchgtype::NoAction,
-          .confdeltype = PgConstraint::Confchgtype::NoAction,
-          .confmatchtype = PgConstraint::Confmatchtype::Simple,
-          .conislocal = true,
-          .coninhcount = 0,
-          .connoinherit = false,
-          .conperiod = false,
-          .conkey = conkey_storage.back(),
-        });
+  // The index enforcing the key a foreign key points at: its primary key,
+  // which is the only key a foreign key may reference.
+  const auto referenced_index =
+    [](const catalog::SereneDBTableEntry& referenced) -> Oid {
+    for (const auto& constraint : referenced.GetConstraints()) {
+      if (constraint->type != duckdb::ConstraintType::UNIQUE) {
+        continue;
       }
+      const auto& unique = constraint->Cast<duckdb::UniqueConstraint>();
+      if (unique.IsPrimaryKey()) {
+        return unique.host_index_id;
+      }
+    }
+    return 0;
+  };
 
-      // Check constraints
-      for (const auto& check : table->CheckConstraints()) {
-        conname_storage.emplace_back(check.GetName());
-        // PostgreSQL exposes a NOT NULL constraint as contype 'n' with the
-        // column in conkey, even though serenedb stores it as an
-        // OPERATOR_IS_NOT_NULL check.
-        auto not_null_col = check.IsNotNull(table->Columns());
-        conkey_storage.emplace_back();
-        if (not_null_col) {
-          conkey_storage.back().push_back(
-            static_cast<int16_t>(*not_null_col + 1));
-        }
-        values.push_back({
-          .oid = check.GetId().id(),
-          .conname = conname_storage.back(),
-          .connamespace = schema->GetId().id(),
-          .contype = not_null_col ? PgConstraint::Contype::NotNull
-                                  : PgConstraint::Contype::Check,
+  // A key's columns are positions in the entry's own column list, which is
+  // what attnum counts.
+  const auto attnums = [](std::span<const duckdb::PhysicalIndex> keys) {
+    std::vector<int16_t> out;
+    out.reserve(keys.size());
+    for (const auto key : keys) {
+      out.push_back(static_cast<int16_t>(key.index + 1));
+    }
+    return out;
+  };
+
+  catalog::VisitTableEntries(
+    context, GetDatabaseId(),
+    [&](const catalog::SereneDBSchemaEntry& schema,
+        const catalog::SereneDBTableEntry& table) {
+      const auto relid = catalog::IdOf(table).id();
+      const auto namespace_id = catalog::IdOf(schema).id();
+      const auto base = [&](PgConstraint::Contype contype, Oid oid,
+                            std::string_view name) {
+        return PgConstraint{
+          .oid = oid,
+          .conname = name,
+          .connamespace = namespace_id,
+          .contype = contype,
           .condeferrable = false,
           .condeferred = false,
           .conenforced = true,
           .convalidated = true,
-          .conrelid = table->GetId().id(),
+          .conrelid = relid,
           .contypid = 0,
           .conindid = 0,
           .conparentid = 0,
@@ -136,128 +139,81 @@ catalog::MaterializedData SystemTableSnapshot<PgConstraint>::GetTableData() {
           .coninhcount = 0,
           .connoinherit = false,
           .conperiod = false,
-          .conkey = conkey_storage.back(),
-        });
-      }
+        };
+      };
 
-      // Foreign key constraints (contype 'f'). A native duckdb table surfaces
-      // these in pg_constraint; the facade must too.
-      const auto& fks = table->ForeignKeys();
-      for (size_t fk_idx = 0; fk_idx < fks.size(); ++fk_idx) {
-        const auto& fk = fks[fk_idx];
-        // referenced_table unset == self-referencing -> this table.
-        auto ref_obj = catalog->GetObject<catalog::Table>(fk.referenced_table);
-        const catalog::Table& ref = ref_obj ? *ref_obj : *table;
-
-        std::vector<int16_t> conkey;
-        conkey.reserve(fk.columns.size());
-        std::string first_col;
-        for (auto col_id : fk.columns) {
-          const auto pos = table->ColumnPosById(col_id);
-          if (pos < columns.size()) {
-            conkey.push_back(static_cast<int16_t>(pos + 1));
-            if (first_col.empty()) {
-              first_col = std::string{columns[pos].GetName()};
-            }
-          }
+      for (const auto& constraint : table.GetConstraints()) {
+        if (constraint->type == duckdb::ConstraintType::INVALID) {
+          continue;
         }
-        std::vector<int16_t> confkey;
-        confkey.reserve(fk.referenced_columns.size());
-        for (auto col_id : fk.referenced_columns) {
-          const auto pos = ref.ColumnPosById(col_id);
-          if (pos < ref.Columns().size()) {
-            confkey.push_back(static_cast<int16_t>(pos + 1));
-          }
+        // One row per foreign key, on the table that states it, as postgres
+        // has it -- the referenced table's reciprocal entry is not a row.
+        if (constraint->type == duckdb::ConstraintType::FOREIGN_KEY &&
+            !catalog::StatesForeignKey(
+              constraint->Cast<duckdb::ForeignKeyConstraint>())) {
+          continue;
         }
-
-        conname_storage.push_back(fk.name.empty()
-                                    ? std::string{table->GetName()} + "_" +
-                                        first_col + "_fkey"
-                                    : fk.name);
-        conkey_storage.push_back(std::move(conkey));
-        confkey_storage.push_back(std::move(confkey));
-        values.push_back({
-          .oid = fk.id.id(),
-          .conname = conname_storage.back(),
-          .connamespace = schema->GetId().id(),
-          .contype = PgConstraint::Contype::ForeignKey,
-          .condeferrable = false,
-          .condeferred = false,
-          .conenforced = true,
-          .convalidated = true,
-          .conrelid = table->GetId().id(),
-          .contypid = 0,
-          // PG points conindid at the index backing the referenced key.
-          .conindid = ref.PKIndexId().id(),
-          .conparentid = 0,
-          .confrelid = ref.GetId().id(),
-          .confupdtype = PgConstraint::Confchgtype::NoAction,
-          .confdeltype = PgConstraint::Confchgtype::NoAction,
-          .confmatchtype = PgConstraint::Confmatchtype::Simple,
-          .conislocal = true,
-          .coninhcount = 0,
-          .connoinherit = false,
-          .conperiod = false,
-          .conkey = conkey_storage.back(),
-          .confkey = confkey_storage.back(),
-        });
-      }
-
-      // Unique constraints (contype 'u'). Non-PK UNIQUE; a native duckdb table
-      // surfaces these in pg_constraint, so the facade must too.
-      const auto& uniques = table->UniqueConstraints();
-      for (size_t uq_idx = 0; uq_idx < uniques.size(); ++uq_idx) {
-        const auto& uq = uniques[uq_idx];
-        std::vector<int16_t> conkey;
-        conkey.reserve(uq.columns.size());
-        std::string first_col;
-        for (auto col_id : uq.columns) {
-          const auto pos = table->ColumnPosById(col_id);
-          if (pos < columns.size()) {
-            conkey.push_back(static_cast<int16_t>(pos + 1));
-            if (first_col.empty()) {
-              first_col = std::string{columns[pos].GetName()};
-            }
-          }
+        conname_storage.emplace_back(constraint->constraint_name);
+        auto row = base(PgConstraint::Contype::Check, constraint->oid,
+                        conname_storage.back());
+        if (constraint->type == duckdb::ConstraintType::CHECK) {
+          conbin_storage.push_back(
+            constraint->Cast<duckdb::CheckConstraint>().expression->ToString());
+          row.conbin = conbin_storage.back();
         }
-        conname_storage.push_back(uq.name.empty()
-                                    ? std::string{table->GetName()} + "_" +
-                                        first_col + "_key"
-                                    : uq.name);
-        conkey_storage.push_back(std::move(conkey));
-        values.push_back({
-          .oid = uniques[uq_idx].id.id(),
-          .conname = conname_storage.back(),
-          .connamespace = schema->GetId().id(),
-          .contype = PgConstraint::Contype::Unique,
-          .condeferrable = false,
-          .condeferred = false,
-          .conenforced = true,
-          .convalidated = true,
-          .conrelid = table->GetId().id(),
-          .contypid = 0,
-          .conindid = uniques[uq_idx].index_id.id(),
-          .conparentid = 0,
-          .confrelid = 0,
-          .confupdtype = PgConstraint::Confchgtype::NoAction,
-          .confdeltype = PgConstraint::Confchgtype::NoAction,
-          .confmatchtype = PgConstraint::Confmatchtype::Simple,
-          .conislocal = true,
-          .coninhcount = 0,
-          .connoinherit = false,
-          .conperiod = false,
-          .conkey = conkey_storage.back(),
-        });
+        switch (constraint->type) {
+          case duckdb::ConstraintType::UNIQUE: {
+            const auto& unique = constraint->Cast<duckdb::UniqueConstraint>();
+            row.contype = unique.IsPrimaryKey()
+                            ? PgConstraint::Contype::PrimaryKey
+                            : PgConstraint::Contype::Unique;
+            row.conindid = unique.host_index_id;
+            conkey_storage.push_back(
+              catalog::KeyConstraintAttnums(table, unique));
+            break;
+          }
+          case duckdb::ConstraintType::NOT_NULL: {
+            // PostgreSQL exposes NOT NULL as contype 'n' with the column in
+            // conkey.
+            row.contype = PgConstraint::Contype::NotNull;
+            conkey_storage.push_back({static_cast<int16_t>(
+              constraint->Cast<duckdb::NotNullConstraint>().index.index + 1)});
+            break;
+          }
+          case duckdb::ConstraintType::FOREIGN_KEY: {
+            const auto& fk = constraint->Cast<duckdb::ForeignKeyConstraint>();
+            const auto referenced =
+              tables_by_id.find(ObjectId{fk.host_referenced_id});
+            const auto& target =
+              referenced == tables_by_id.end() ? table : *referenced->second;
+            row.contype = PgConstraint::Contype::ForeignKey;
+            row.conindid = referenced_index(target);
+            row.confrelid = catalog::IdOf(target).id();
+            conkey_storage.push_back(attnums(fk.info.fk_keys));
+            confkey_storage.push_back(attnums(fk.info.pk_keys));
+            row.confkey = confkey_storage.back();
+            break;
+          }
+          default:
+            conkey_storage.emplace_back();
+            break;
+        }
+        row.conkey = conkey_storage.back();
+        values.push_back(std::move(row));
       }
-    }
-  }
+    });
 
   auto result = CreateColumns<PgConstraint>(values.size());
 
   for (size_t row = 0; row < values.size(); ++row) {
-    // FK rows carry confkey and so need its NULL bit cleared.
-    const auto mask = values[row].confkey.empty() ? kNullMask : kFkNullMask;
-    WriteData(result, values[row], mask, row, *_config.GetCatalogSnapshot());
+    // FK rows carry confkey and CHECK rows conbin, so each clears its own bit.
+    auto mask = kNullMask;
+    if (!values[row].confkey.empty()) {
+      mask = kFkNullMask;
+    } else if (values[row].contype == PgConstraint::Contype::Check) {
+      mask = kCheckNullMask;
+    }
+    WriteData(result, values[row], mask, row, Roles());
   }
 
   return {std::move(result), values.size()};

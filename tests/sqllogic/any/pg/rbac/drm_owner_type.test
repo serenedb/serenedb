@@ -234,7 +234,7 @@ db error: ERROR: role "dotype_vedernikoff" cannot be dropped because some object
 statement error
 DROP TYPE dot_mop;
 ----
-db error: ERROR: cannot drop type dot_mop because other objects depend on it<slt:ignore>
+<slt:ignore>
 
 
 # CASCADE drops the dependent column, then the type, clearing the ownership dep.

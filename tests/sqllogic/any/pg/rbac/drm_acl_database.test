@@ -9,6 +9,12 @@
 # supported by serenedb.
 #
 # Lore: vedernikoff is the grantee.
+#
+# Every statement here writes one object -- the `postgres` database entry --
+# and that object is shared with every other test file in the suite, which the
+# runner executes in parallel. A second writer on one catalog object is refused
+# with a retryable 40001, so the writes here retry; the reads do not, because
+# nothing below asserts the whole datacl, only this file's own grantee.
 
 
 # ---- Idempotent setup: tear down every fixture first. ----
@@ -25,7 +31,7 @@ CREATE ROLE dadb_vedernikoff;
 # Case 1: TEMP grantee is pinned; REVOKE clears it.
 # =====================================================================
 
-statement ok
+statement ok retry 20 backoff 50ms
 GRANT TEMP ON DATABASE postgres TO dadb_vedernikoff;
 
 
@@ -35,7 +41,7 @@ DROP ROLE dadb_vedernikoff;
 db error: ERROR: role "dadb_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
 
 
-statement ok
+statement ok retry 20 backoff 50ms
 REVOKE TEMP ON DATABASE postgres FROM dadb_vedernikoff;
 
 
@@ -51,7 +57,7 @@ statement ok
 CREATE ROLE dadb_vedernikoff;
 
 
-statement ok
+statement ok retry 20 backoff 50ms
 GRANT TEMPORARY ON DATABASE postgres TO dadb_vedernikoff;
 
 
@@ -61,7 +67,7 @@ DROP ROLE dadb_vedernikoff;
 db error: ERROR: role "dadb_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
 
 
-statement ok
+statement ok retry 20 backoff 50ms
 REVOKE TEMPORARY ON DATABASE postgres FROM dadb_vedernikoff;
 
 
@@ -77,7 +83,7 @@ statement ok
 CREATE ROLE dadb_vedernikoff;
 
 
-statement ok
+statement ok retry 20 backoff 50ms
 GRANT CREATE ON DATABASE postgres TO dadb_vedernikoff;
 
 
@@ -87,7 +93,7 @@ DROP ROLE dadb_vedernikoff;
 db error: ERROR: role "dadb_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
 
 
-statement ok
+statement ok retry 20 backoff 50ms
 REVOKE CREATE ON DATABASE postgres FROM dadb_vedernikoff;
 
 
@@ -104,7 +110,7 @@ statement ok
 CREATE ROLE dadb_vedernikoff;
 
 
-statement ok
+statement ok retry 20 backoff 50ms
 GRANT CONNECT, TEMP, CREATE ON DATABASE postgres TO dadb_vedernikoff;
 
 
@@ -114,7 +120,7 @@ DROP ROLE dadb_vedernikoff;
 db error: ERROR: role "dadb_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
 
 
-statement ok
+statement ok retry 20 backoff 50ms
 REVOKE CONNECT ON DATABASE postgres FROM dadb_vedernikoff;
 
 
@@ -124,7 +130,7 @@ DROP ROLE dadb_vedernikoff;
 db error: ERROR: role "dadb_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
 
 
-statement ok
+statement ok retry 20 backoff 50ms
 REVOKE TEMP ON DATABASE postgres FROM dadb_vedernikoff;
 
 
@@ -134,7 +140,7 @@ DROP ROLE dadb_vedernikoff;
 db error: ERROR: role "dadb_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
 
 
-statement ok
+statement ok retry 20 backoff 50ms
 REVOKE CREATE ON DATABASE postgres FROM dadb_vedernikoff;
 
 
@@ -151,7 +157,7 @@ statement ok
 CREATE ROLE dadb_vedernikoff;
 
 
-statement ok
+statement ok retry 20 backoff 50ms
 GRANT CONNECT, TEMP, CREATE ON DATABASE postgres TO dadb_vedernikoff;
 
 
@@ -161,7 +167,7 @@ DROP ROLE dadb_vedernikoff;
 db error: ERROR: role "dadb_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
 
 
-statement ok
+statement ok retry 20 backoff 50ms
 REVOKE ALL ON DATABASE postgres FROM dadb_vedernikoff;
 
 
@@ -178,7 +184,7 @@ statement ok
 CREATE ROLE dadb_vedernikoff;
 
 
-statement ok
+statement ok retry 20 backoff 50ms
 GRANT CONNECT ON DATABASE postgres TO dadb_vedernikoff WITH GRANT OPTION;
 
 
@@ -188,7 +194,7 @@ DROP ROLE dadb_vedernikoff;
 db error: ERROR: role "dadb_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
 
 
-statement ok
+statement ok retry 20 backoff 50ms
 REVOKE GRANT OPTION FOR CONNECT ON DATABASE postgres FROM dadb_vedernikoff;
 
 
@@ -198,7 +204,7 @@ DROP ROLE dadb_vedernikoff;
 db error: ERROR: role "dadb_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
 
 
-statement ok
+statement ok retry 20 backoff 50ms
 REVOKE CONNECT ON DATABASE postgres FROM dadb_vedernikoff;
 
 

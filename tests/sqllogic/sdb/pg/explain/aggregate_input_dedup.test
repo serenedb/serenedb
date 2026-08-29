@@ -204,6 +204,8 @@ g	cp	cr	c
 
 
 # Swapped arguments are a different input list, so each gets its own table.
+# Rounded because the two orders sum the same values in a different sequence, and
+# floating-point addition does not associate.
 query
 SELECT round(covar_pop(DISTINCT x, y), 12) AS xy, round(covar_pop(DISTINCT y, x), 12) AS yx FROM agg_pair;
 ----

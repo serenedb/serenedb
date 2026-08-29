@@ -20,28 +20,18 @@
 
 #pragma once
 
-#include "catalog/object.h"
-#include "catalog/persistence/schema.h"
+#include <duckdb/parser/parsed_data/create_schema_info.hpp>
+#include <string_view>
 
-namespace duckdb {
+#include "catalog/identifiers/object_id.h"
 
-class Serializer;
-class Deserializer;
-
-}  // namespace duckdb
 namespace sdb::catalog {
 
-using persistence::SchemaOptions;
-
-class Schema : public Object {
- public:
-  Schema(Permissions perm, ObjectId database_id, ObjectId id,
-         std::string_view name);
-
-  static std::shared_ptr<Schema> Deserialize(duckdb::Deserializer& src,
-                                             ReadContext ctx);
-  void Serialize(duckdb::Serializer& sink) const final;
-  std::shared_ptr<Object> Clone() const final;
-};
+// A schema is duckdb's own CreateSchemaInfo -- nothing left for a subclass to
+// hold; owner and ACL live on the entry. A new version of a schema entry (a
+// rename, an owner change) carries the CatalogSets of its contents over, so
+// nothing under it is rebuilt.
+duckdb::unique_ptr<duckdb::CreateSchemaInfo> MakeSchemaInfo(
+  ObjectId id, ObjectId database_id, std::string_view name);
 
 }  // namespace sdb::catalog

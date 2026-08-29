@@ -1,0 +1,440 @@
+control substitution on
+
+# ----------------------------------------------------------------------
+# The catalog is transactional, and it stays transactional across a
+# restart.
+#
+# A SereneDB object is a CatalogEntry in a CatalogSet: a DDL statement
+# makes the next version of the entry, and the transaction that made it
+# is what publishes it. So every property below is CatalogSet MVCC's,
+# not something the catalog arranges for itself -- and the log is written
+# from the commit, which is why each case is asserted twice: once in
+# memory, and once against a serened that read the log back.
+#
+# What a rollback leaves behind is the interesting half. Nothing may
+# reach the log for a transaction that did not commit, so an aborted DDL
+# has to be absent after the restart as well as before it.
+#
+# Hosted under recovery/ because it needs a serened of its own to crash.
+# ----------------------------------------------------------------------
+
+statement ok
+CREATE SCHEMA ctx_cascade
+
+
+# ----------------------------------------------------------------------
+# A rolled-back CREATE leaves nothing -- no entry, and no record.
+# ----------------------------------------------------------------------
+
+statement ok
+BEGIN
+
+
+statement ok
+CREATE TABLE ctx_rolled (a INT)
+
+
+statement ok
+INSERT INTO ctx_rolled VALUES (1)
+
+
+statement ok
+ROLLBACK
+
+
+statement error
+SELECT * FROM ctx_rolled
+----
+db error: ERROR: Table with name ctx_rolled does not exist!<slt:ignore>
+
+
+# ----------------------------------------------------------------------
+# A rolled-back DROP leaves the table exactly as it was.
+# ----------------------------------------------------------------------
+
+statement ok
+CREATE TABLE ctx_kept (a INT)
+
+
+statement ok
+INSERT INTO ctx_kept VALUES (7)
+
+
+statement ok
+BEGIN
+
+
+statement ok
+DROP TABLE ctx_kept
+
+
+statement ok
+ROLLBACK
+
+
+query
+SELECT a FROM ctx_kept
+----
+a
+7
+
+
+# ----------------------------------------------------------------------
+# DDL and DML in one transaction: the entry and the rows it holds are the
+# same commit, so neither can survive without the other.
+# ----------------------------------------------------------------------
+
+statement ok
+BEGIN
+
+
+statement ok
+CREATE TABLE ctx_both (a INT, b TEXT DEFAULT 'd')
+
+
+statement ok
+INSERT INTO ctx_both (a) VALUES (1), (2)
+
+
+statement ok
+COMMIT
+
+
+query
+SELECT a, b FROM ctx_both ORDER BY a
+----
+a b
+1 d
+2 d
+
+
+# ----------------------------------------------------------------------
+# The same name dropped and created again inside one transaction. What
+# commits is the last version, and the rows of the first one go with the
+# entry that held them.
+# ----------------------------------------------------------------------
+
+statement ok
+CREATE TABLE ctx_again (a INT)
+
+
+statement ok
+INSERT INTO ctx_again VALUES (1)
+
+
+statement ok
+BEGIN
+
+
+statement ok
+DROP TABLE ctx_again
+
+
+statement ok
+CREATE TABLE ctx_again (b TEXT)
+
+
+statement ok
+INSERT INTO ctx_again VALUES ('second')
+
+
+statement ok
+COMMIT
+
+
+query
+SELECT b FROM ctx_again
+----
+b
+second
+
+
+# ----------------------------------------------------------------------
+# CASCADE removes the dependents in the same commit. Each one is its own
+# tombstone, so each writes its own record.
+# ----------------------------------------------------------------------
+
+statement ok
+CREATE TABLE ctx_cascade.t (a INT)
+
+
+statement ok
+INSERT INTO ctx_cascade.t VALUES (3)
+
+
+statement ok
+CREATE VIEW ctx_cascade.v AS SELECT a FROM ctx_cascade.t
+
+
+statement ok
+CREATE SEQUENCE ctx_cascade.s
+
+
+statement ok
+DROP SCHEMA ctx_cascade CASCADE
+
+
+statement error
+SELECT * FROM ctx_cascade.v
+----
+db error: ERROR: <slt:ignore>ctx_cascade<slt:ignore>
+
+
+# ----------------------------------------------------------------------
+# An ALTER is the next version of the table: what it added is there, and
+# the rows that were already in it kept their values.
+# ----------------------------------------------------------------------
+
+statement ok
+CREATE TABLE ctx_altered (a INT)
+
+
+statement ok
+INSERT INTO ctx_altered VALUES (4)
+
+
+statement ok
+ALTER TABLE ctx_altered ADD COLUMN z TEXT DEFAULT 'z'
+
+
+statement ok
+COMMENT ON TABLE ctx_altered IS 'altered'
+
+
+query
+SELECT a, z FROM ctx_altered
+----
+a z
+4 z
+
+
+# ----------------------------------------------------------------------
+# A counter is state beside the definition, so it has to come back where
+# it was left rather than at the start value.
+# ----------------------------------------------------------------------
+
+statement ok
+CREATE SEQUENCE ctx_seq START 5
+
+
+query
+SELECT nextval('ctx_seq') AS v
+----
+v
+5
+
+
+query
+SELECT nextval('ctx_seq') AS v
+----
+v
+6
+
+
+# ----------------------------------------------------------------------
+# ALTER SCHEMA ... RENAME TO moves the name and nothing else. The schema
+# keeps its id and its contents' sets, so its tables are still found --
+# by name, and by the oid every by-id reader resolves through.
+# ----------------------------------------------------------------------
+
+statement ok
+CREATE SCHEMA ctx_from
+
+
+statement ok
+CREATE TABLE ctx_from.t (a INT)
+
+
+statement ok
+INSERT INTO ctx_from.t VALUES (9)
+
+
+statement ok
+ALTER SCHEMA ctx_from RENAME TO ctx_to
+
+
+query
+SELECT a FROM ctx_to.t
+----
+a
+9
+
+
+query
+SELECT pg_relation_size('ctx_to.t') >= 0 AS by_oid
+----
+by_oid
+t
+
+
+# A rename is a version of the entry like any other, so it rolls back.
+statement ok
+BEGIN
+
+
+statement ok
+ALTER SCHEMA ctx_to RENAME TO ctx_undone
+
+
+statement ok
+ROLLBACK
+
+
+query
+SELECT count(*) AS n FROM pg_namespace WHERE nspname = 'ctx_undone'
+----
+n
+0
+
+
+# ----------------------------------------------------------------------
+# CREATE SCHEMA ... AUTHORIZATION gives the schema to another role; the
+# bare form names it after that role.
+# ----------------------------------------------------------------------
+
+statement ok
+CREATE ROLE ctx_owner
+
+
+statement ok
+CREATE SCHEMA ctx_owned AUTHORIZATION ctx_owner
+
+
+statement ok
+CREATE SCHEMA AUTHORIZATION ctx_owner
+
+
+statement error
+CREATE SCHEMA ctx_nobody AUTHORIZATION ctx_missing
+----
+db error: ERROR: role "ctx_missing" does not exist
+
+
+# ----------------------------------------------------------------------
+# Crash. Nothing below has been checkpointed, so every assertion that
+# follows is answered out of the catalog log.
+# ----------------------------------------------------------------------
+
+statement ok
+SET sdb_faults = 'crash_on_packet'
+
+
+statement error connection closed
+SELECT 1;
+
+
+# --- restart ---
+
+connection after_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT 1 AS ready
+----
+ready
+1
+
+
+# The rolled-back create never reached the log either.
+connection after_crash
+statement error
+SELECT * FROM ctx_rolled
+----
+db error: ERROR: Table with name ctx_rolled does not exist!<slt:ignore>
+
+
+connection after_crash
+query
+SELECT a FROM ctx_kept
+----
+a
+7
+
+
+connection after_crash
+query
+SELECT a, b FROM ctx_both ORDER BY a
+----
+a b
+1 d
+2 d
+
+
+connection after_crash
+query
+SELECT b FROM ctx_again
+----
+b
+second
+
+
+connection after_crash
+statement error
+SELECT * FROM ctx_cascade.v
+----
+db error: ERROR: <slt:ignore>ctx_cascade<slt:ignore>
+
+
+connection after_crash
+query
+SELECT a, z FROM ctx_altered
+----
+a z
+4 z
+
+
+connection after_crash
+query
+SELECT obj_description('ctx_altered'::regclass) AS c
+----
+c
+altered
+
+
+# The counter resumes; it does not restart at 5. Where it resumes is the next
+# durable block rather than the next value -- the horizon is written ahead, so
+# a crash spends what it had reserved.
+connection after_crash
+query
+SELECT nextval('ctx_seq') > 6 AS resumed
+----
+resumed
+t
+
+
+# The renamed schema came back renamed, and its table came back with the
+# rows the data file holds under the name it was written under.
+connection after_crash
+query
+SELECT a FROM ctx_to.t
+----
+a
+9
+
+
+connection after_crash
+statement ok
+INSERT INTO ctx_to.t VALUES (10)
+
+
+connection after_crash
+query
+SELECT count(*) AS n FROM ctx_to.t
+----
+n
+2
+
+
+connection after_crash
+query
+SELECT count(*) AS n FROM pg_namespace WHERE nspname IN ('ctx_from', 'ctx_undone')
+----
+n
+0
+
+
+connection after_crash
+query
+SELECT nspname, pg_get_userbyid(nspowner) AS owner FROM pg_namespace WHERE nspname IN ('ctx_owned', 'ctx_owner') ORDER BY 1
+----
+nspname owner
+ctx_owned ctx_owner
+ctx_owner ctx_owner

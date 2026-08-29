@@ -33,12 +33,11 @@
 #include "basics/assert.h"
 #include "basics/containers/flat_hash_map.h"
 #include "basics/containers/flat_hash_set.h"
+#include "basics/containers/node_hash_map.h"
 #include "basics/serializer.h"
 #include "basics/static_strings.h"
 #include "basics/system-compiler.h"
-#include "catalog/function.h"
 #include "catalog/identifiers/object_id.h"
-#include "catalog/view.h"
 #include "pg/information_schema/sql_features.h"
 #include "pg/information_schema/sql_implementation_info.h"
 #include "pg/information_schema/sql_parts.h"
@@ -233,14 +232,12 @@ const VirtualTable* GetTableFromSchema(std::string_view name,
   return it == schema.end() ? nullptr : *it;
 }
 
-containers::FlatHashMap<std::string, std::shared_ptr<PgSqlFunction>>
-  gPgCatalogFunctions;
-containers::FlatHashMap<std::string, std::shared_ptr<PgSqlFunction>>
-  gInfoSchemaFunctions;
-containers::FlatHashMap<std::string, std::shared_ptr<PgSqlView>>
-  gPgCatalogViews;
-containers::FlatHashMap<std::string, std::shared_ptr<PgSqlView>>
-  gInfoSchemaViews;
+// Node-based: the value is a definition plus a whole permission set, which is
+// past what a flat map wants to move, and these are built once at startup.
+containers::NodeHashMap<std::string, StaticFunction> gPgCatalogFunctions;
+containers::NodeHashMap<std::string, StaticFunction> gInfoSchemaFunctions;
+containers::NodeHashMap<std::string, StaticView> gPgCatalogViews;
+containers::NodeHashMap<std::string, StaticView> gInfoSchemaViews;
 
 }  // namespace
 
@@ -273,15 +270,14 @@ void VisitSystemTables(
   }
 }
 
-void VisitSystemViews(
-  absl::FunctionRef<void(const catalog::PgSqlView&, Oid)> visitor) {
+void VisitSystemViews(absl::FunctionRef<void(const StaticView&, Oid)> visitor) {
   for (const auto& [name, view] : gPgCatalogViews) {
-    SDB_ASSERT(view);
-    visitor(*view, id::kPgCatalogSchema.id());
+    SDB_ASSERT(view.first);
+    visitor(view, id::kPgCatalogSchema.id());
   }
   for (const auto& [name, view] : gInfoSchemaViews) {
-    SDB_ASSERT(view);
-    visitor(*view, id::kPgInformationSchema.id());
+    SDB_ASSERT(view.first);
+    visitor(view, id::kPgInformationSchema.id());
   }
 }
 
@@ -292,17 +288,16 @@ void VisitPgCatalogTables(
   }
 }
 
-void VisitPgCatalogViews(
-  absl::FunctionRef<void(const catalog::PgSqlView&)> visitor) {
+void VisitPgCatalogViews(absl::FunctionRef<void(const StaticView&)> visitor) {
   for (const auto& [_, view] : gPgCatalogViews) {
-    visitor(*view);
+    visitor(view);
   }
 }
 
 void VisitPgCatalogFunctions(
-  absl::FunctionRef<void(const catalog::PgSqlFunction&)> visitor) {
+  absl::FunctionRef<void(const StaticFunction&)> visitor) {
   for (const auto& [_, f] : gPgCatalogFunctions) {
-    visitor(*f);
+    visitor(f);
   }
 }
 
@@ -313,52 +308,43 @@ void VisitInfoSchemaTables(
   }
 }
 
-void VisitInfoSchemaViews(
-  absl::FunctionRef<void(const catalog::PgSqlView&)> visitor) {
+void VisitInfoSchemaViews(absl::FunctionRef<void(const StaticView&)> visitor) {
   for (const auto& [_, view] : gInfoSchemaViews) {
-    visitor(*view);
+    visitor(view);
   }
 }
 
 void VisitInfoSchemaFunctions(
-  absl::FunctionRef<void(const catalog::PgSqlFunction&)> visitor) {
+  absl::FunctionRef<void(const StaticFunction&)> visitor) {
   for (const auto& [_, f] : gInfoSchemaFunctions) {
-    visitor(*f);
+    visitor(f);
   }
 }
 
-std::shared_ptr<catalog::PgSqlFunction> GetInfoSchemaFunction(
-  std::string_view name) {
+StaticFunction GetInfoSchemaFunction(std::string_view name) {
   auto it = gInfoSchemaFunctions.find(name);
-  return it != gInfoSchemaFunctions.end() ? it->second : nullptr;
+  return it != gInfoSchemaFunctions.end() ? it->second : StaticFunction{};
 }
 
-std::shared_ptr<catalog::PgSqlFunction> GetPgCatalogFunction(
-  std::string_view name) {
-#ifndef SDB_GTEST
-#endif
+StaticFunction GetPgCatalogFunction(std::string_view name) {
   auto it = gPgCatalogFunctions.find(name);
-  return it != gPgCatalogFunctions.end() ? it->second : nullptr;
+  return it != gPgCatalogFunctions.end() ? it->second : StaticFunction{};
 }
 
-std::shared_ptr<PgSqlView> GetInfoSchemaView(std::string_view name) {
+StaticView GetInfoSchemaView(std::string_view name) {
   auto it = gInfoSchemaViews.find(name);
-  if (it == gInfoSchemaViews.end()) {
-    return nullptr;
-  }
-  return it->second;
+  return it == gInfoSchemaViews.end() ? StaticView{} : it->second;
 }
 
-std::shared_ptr<PgSqlView> GetView(std::string_view name) {
+StaticView GetView(std::string_view name) {
   auto it = gPgCatalogViews.find(name);
-  if (it == gPgCatalogViews.end()) {
-    return nullptr;
-  }
-  return it->second;
+  return it == gPgCatalogViews.end() ? StaticView{} : it->second;
 }
 
 void InitSystemViews(duckdb::Parser& parser) {
+  uint64_t next_id = id::kFirstSystemView.id();
   for (const auto& view : kExternalViews) {
+    const ObjectId id{next_id++};
     auto info = duckdb::make_uniq<duckdb::CreateViewInfo>();
     info->SetSchema(duckdb::Identifier{view.schema});
     info->SetViewName(duckdb::Identifier{view.name});
@@ -379,14 +365,13 @@ void InitSystemViews(duckdb::Parser& parser) {
     if (!view.superuser_only) {
       acl.push_back(catalog::kSystemPublicSelect);
     }
-    auto entry = std::make_shared<catalog::PgSqlView>(
-      catalog::Permissions{id::kRootUser, std::move(acl)}, ObjectId{},
-      ObjectId{}, view.name, std::move(info));
-
-    auto& map = (view.schema == StaticStrings::kInformationSchema)
-                  ? gInfoSchemaViews
-                  : gPgCatalogViews;
-    map[view.name] = std::move(entry);
+    const bool info_schema = view.schema == StaticStrings::kInformationSchema;
+    catalog::SetIdentity(
+      *info, id, info_schema ? id::kPgInformationSchema : id::kPgCatalogSchema);
+    auto& map = info_schema ? gInfoSchemaViews : gPgCatalogViews;
+    map[view.name] =
+      StaticView{std::shared_ptr<const duckdb::CreateViewInfo>{info.release()},
+                 catalog::Permissions{id::kRootUser, std::move(acl)}};
   }
 }
 
@@ -421,31 +406,46 @@ static duckdb::unique_ptr<duckdb::CreateMacroInfo> ParseMacro(
 }
 
 void InitSystemFunctions(duckdb::Parser& parser) {
+  // All the overloads of one name share one info, as duckdb's macro entry does,
+  // so they are merged while still writable and published once each.
+  containers::FlatHashMap<std::string,
+                          duckdb::unique_ptr<duckdb::CreateMacroInfo>>
+    pg_catalog;
+  containers::FlatHashMap<std::string,
+                          duckdb::unique_ptr<duckdb::CreateMacroInfo>>
+    info_schema_map;
   for (const auto& macro : kExternalMacros) {
     auto info = ParseMacro(parser, macro);
 
     // DEFAULT_SCHEMA schema macros go into pg_catalog because in PG,
     // pg_catalog is always implicitly searched -- functions like current_user,
     // overlay, etc. should be findable without schema qualification.
-    auto& map = (macro.schema == StaticStrings::kInformationSchema)
-                  ? gInfoSchemaFunctions
-                  : gPgCatalogFunctions;
+    const bool info_schema = macro.schema == StaticStrings::kInformationSchema;
+    auto& map = info_schema ? info_schema_map : pg_catalog;
 
     auto it = map.find(macro.name);
-    if (it != map.end()) {
-      auto& existing = it->second->GetInfo();
-      for (auto& m : info->macros) {
-        existing.macros.push_back(std::move(m));
-      }
-      if (existing.type == duckdb::CatalogType::MACRO_ENTRY) {
-        existing.type = info->type;
-      }
-    } else {
-      map[macro.name] = std::make_shared<catalog::PgSqlFunction>(
-        catalog::Permissions{}, ObjectId{}, ObjectId{}, macro.name,
-        std::move(info));
+    if (it == map.end()) {
+      map.emplace(macro.name, std::move(info));
+      continue;
+    }
+    auto& existing = *it->second;
+    for (auto& m : info->macros) {
+      existing.macros.push_back(std::move(m));
+    }
+    if (existing.type == duckdb::CatalogType::MACRO_ENTRY) {
+      existing.type = info->type;
     }
   }
+  const auto publish = [](auto& built, ObjectId schema_id, auto& out) {
+    for (auto& [name, info] : built) {
+      catalog::SetIdentity(*info, ObjectId{}, schema_id);
+      out[name] = StaticFunction{
+        std::shared_ptr<const duckdb::CreateMacroInfo>{info.release()},
+        catalog::Permissions{}};
+    }
+  };
+  publish(pg_catalog, id::kPgCatalogSchema, gPgCatalogFunctions);
+  publish(info_schema_map, id::kPgInformationSchema, gInfoSchemaFunctions);
 }
 
 }  // namespace sdb::pg

@@ -1159,14 +1159,14 @@ struct RegtypeTextCore {
 struct RegclassTextCore {
   using Value = int64_t;
   IRS_FORCE_INLINE static void Render(SerializationContext& ctx, Value oid) {
-    EmitEscaped(ctx, RegclassOut(*ctx.snapshot, oid));
+    EmitEscaped(ctx, RegclassOut(ctx.client, oid));
   }
 };
 
 struct RegnamespaceTextCore {
   using Value = int64_t;
   IRS_FORCE_INLINE static void Render(SerializationContext& ctx, Value oid) {
-    EmitEscaped(ctx, RegnamespaceOut(*ctx.snapshot, oid));
+    EmitEscaped(ctx, RegnamespaceOut(ctx.client, oid));
   }
 };
 
@@ -2339,7 +2339,7 @@ void FillContext(const Config& config, SerializationContext& context) {
     context.time_zone.reset(
       icu::TimeZone::createTimeZone(icu::UnicodeString::fromUTF8(tz_name)));
   }
-  context.snapshot = config.CatalogSnapshot().get();
+  context.client = &config.GetClientContext();
   // types_cache stays lazy (GetSerializersCache); record results only.
   context.types_cache.reset();
 }

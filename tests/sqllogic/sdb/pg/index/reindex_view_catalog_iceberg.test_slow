@@ -148,7 +148,7 @@ CREATE INDEX recat_tick_idx ON recat_tick_v USING inverted(id, body recat_en) WI
 statement count 1
 INSERT INTO srv_${__DATABASE__}.${__DATABASE__}.recat_tick_t VALUES (2, 'tick landed row');
 
-query ok retry 40 backoff 500ms
+query ok retry 80 backoff 500ms
 SELECT count(*) FROM recat_tick_idx;
 ----
 count

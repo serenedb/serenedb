@@ -40,7 +40,6 @@
 #include "basics/lifecycle.h"
 #include "basics/log.h"
 #include "basics/metrics.h"
-#include "catalog/catalog.h"
 #include "catalog/inverted_index.h"
 #include "scheduler/background_scheduler.h"
 #include "search/inverted_index_storage.h"
@@ -100,22 +99,24 @@ irs::CompactionPolicy MakeTierPolicy(const TasksSettings& settings,
 // type (see the PinCompactionOptions overloads below).
 struct CompactionOptions {
   bool alive = false;
-  // Pins the catalog object that owns `field_options` for the whole merge.
-  std::shared_ptr<const void> keepalive;
+  // Pins the options for the whole merge.
+  std::shared_ptr<const irs::IndexFieldOptions> keepalive;
   const irs::IndexFieldOptions* field_options = nullptr;
 };
 
 CompactionOptions PinCompactionOptions(InvertedIndexStorage& idx) {
-  // A fresh catalog snapshot keeps THIS DDL view alive for the merge, so a
-  // concurrent DROP cannot dangle the index it encodes the new segment against.
-  auto snapshot = catalog::GetCatalog().GetCatalogSnapshot();
-  auto index = snapshot->GetObject<catalog::InvertedIndex>(idx.GetId());
+  // Off the committed definition of the index, cloned for this merge: the merge
+  // encodes against what it took for its whole length, and a concurrent DROP or
+  // ALTER writes a new version rather than freeing this clone.
+  auto index = catalog::FindInvertedIndex(idx.GetDatabaseId(), idx.GetId());
   if (!index) {
     return {};
   }
-  const irs::IndexFieldOptions* options = index.get();
+  const irs::IndexFieldOptions* raw = &catalog::InvertedInfo(*index);
   return {
-    .alive = true, .keepalive = std::move(index), .field_options = options};
+    .alive = true,
+    .keepalive = std::shared_ptr<const irs::IndexFieldOptions>{index, raw},
+    .field_options = raw};
 }
 
 CompactionOptions PinCompactionOptions(SearchTable& /*table*/) {
@@ -467,6 +468,7 @@ yaclib::Future<> ReindexLoop(std::weak_ptr<InvertedIndexStorage> weak) {
       if (!g_reindex_runner) {
         return LoopTick::kNeutral;
       }
+      ObjectId database_id;
       ObjectId id;
       {
         // The runner resolves the index by id through the catalog: don't pin
@@ -475,9 +477,10 @@ yaclib::Future<> ReindexLoop(std::weak_ptr<InvertedIndexStorage> weak) {
         if (!idx) {
           return LoopTick::kNeutral;
         }
+        database_id = idx->GetDatabaseId();
         id = idx->GetId();
       }
-      const auto status = g_reindex_runner(id);
+      const auto status = g_reindex_runner(database_id, id);
       if (status.ok()) {
         return LoopTick::kProgress;
       }

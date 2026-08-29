@@ -12,13 +12,6 @@ add_library(
     geo_filter_builder.cpp
     search_filter_printer.cpp
     duckdb_client_state.cpp
-    duckdb_catalog.cpp
-    duckdb_entry_cache.cpp
-    duckdb_schema_entry.cpp
-    duckdb_system_table_entry.cpp
-    duckdb_table_entry.cpp
-    duckdb_index_entry.cpp
-    duckdb_index_scan_entry.cpp
     duckdb_table_function.cpp
     duckdb_search_full_scan.cpp
     full_scanner.cpp

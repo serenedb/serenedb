@@ -33,7 +33,6 @@
 #include "basics/containers/flat_hash_map.h"
 #include "basics/containers/flat_hash_set.h"
 #include "basics/containers/node_hash_map.h"
-#include "catalog/inverted_index.h"
 #include "connector/view_fast_path.h"
 
 namespace sdb::search {
@@ -78,12 +77,6 @@ struct MultiFileColumnDefinition;
 class MultiFileList;
 
 }  // namespace duckdb
-namespace sdb::catalog {
-
-class Index;
-struct Snapshot;
-
-}  // namespace sdb::catalog
 namespace sdb::connector {
 
 struct IcebergDeleteState {
@@ -157,10 +150,6 @@ struct Source {
   duckdb::vector<duckdb::OpenFileInfo> files;
   int64_t version = 0;
 };
-
-std::optional<Source> ResolveSource(
-  duckdb::ClientContext& context, const catalog::Snapshot& snapshot,
-  const catalog::Index& index, const catalog::InvertedIndexOptions& options);
 
 class IcebergObserve {
  public:

@@ -83,7 +83,7 @@ c
 # Cascade still works after recovery: the reloaded dependency graph still knows
 # the view depends on the function (RESTRICT refuses), and CASCADE drops it.
 connection after_crash
-statement error (?i)cannot drop function .*babsky_f.* because other objects depend on it
+statement error (?i)cannot drop entry .*babsky_f.* because there are entries that depend on it
 DROP FUNCTION babsky_f(INT);
 
 

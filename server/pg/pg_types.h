@@ -26,12 +26,12 @@
 
 #include "catalog/identifiers/object_id.h"
 
+namespace duckdb {
+
+class ClientContext;
+
+}  // namespace duckdb
 namespace sdb {
-namespace catalog {
-
-struct Snapshot;
-
-}  // namespace catalog
 
 class ConnectionContext;
 
@@ -257,15 +257,15 @@ struct PgTypeInfo {
 };
 PgTypeInfo Logical2Pg(const duckdb::LogicalType& type, bool in_array = false);
 int32_t Type2Oid(const duckdb::LogicalType& type, bool in_array = false);
-duckdb::LogicalType Oid2Type(int32_t oid, const catalog::Snapshot& snapshot);
+duckdb::LogicalType Oid2Type(int32_t oid, duckdb::ClientContext& context);
 
 std::string RegtypeOut(uint64_t oid);
 uint64_t RegtypeIn(std::string_view name);
 
-std::string RegclassOut(const catalog::Snapshot& snapshot, uint64_t oid);
+std::string RegclassOut(duckdb::ClientContext* context, uint64_t oid);
 uint64_t RegclassIn(const ConnectionContext& ctx, std::string_view name);
 
-std::string RegnamespaceOut(const catalog::Snapshot& snapshot, uint64_t oid);
+std::string RegnamespaceOut(duckdb::ClientContext* context, uint64_t oid);
 uint64_t RegnamespaceIn(const ConnectionContext& ctx, std::string_view name);
 
 enum class VarFormat : int16_t;

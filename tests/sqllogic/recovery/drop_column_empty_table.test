@@ -1,0 +1,136 @@
+control substitution on
+
+# A table's rows are checkpointed under the catalog entry that owns them, and
+# the entry hands duckdb the store table's DataTable. DROP COLUMN replaces that
+# DataTable with a narrower one, so an entry published before the store op runs
+# still carries the wide one -- and the checkpoint then writes a column the
+# definition the boot rebuilds no longer has.
+#
+# Empty at drop time, the checkpoint succeeds and writes two column statistics
+# over a one-column definition: the next open fails outright with "Physical
+# column index 1 out of range", which is what the restart below proves is gone.
+# With rows it fails earlier and louder -- the scan of the dropped column throws
+# and the checkpoint is refused -- so that half is exercised after the restart.
+
+
+statement ok
+CREATE TABLE dce_empty (a INTEGER, b INTEGER);
+
+
+statement ok
+ALTER TABLE dce_empty DROP COLUMN b;
+
+
+statement ok
+INSERT INTO dce_empty VALUES (1), (2);
+
+
+# Everything the restart reads has to come out of the file, so the manifest is
+# written here rather than left to a WAL replay.
+statement ok
+CHECKPOINT;
+
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+statement error connection closed
+SELECT 1;
+
+
+connection after_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT 1 AS one;
+----
+one
+1
+
+
+connection after_crash
+query
+SELECT * FROM dce_empty ORDER BY a;
+----
+a
+1
+2
+
+
+# The dropped column is gone from the rebuilt definition, not merely hidden.
+connection after_crash
+query
+SELECT count(*) AS n FROM information_schema.columns
+WHERE table_name = 'dce_empty';
+----
+n
+1
+
+
+# The same mismatch with rows already in the table: here the checkpoint is the
+# one that throws, and the database stays invalidated for the session.
+connection after_crash
+statement ok
+CREATE TABLE dce_rows (a INTEGER, b INTEGER);
+
+
+connection after_crash
+statement ok
+INSERT INTO dce_rows VALUES (1, 10), (2, 20);
+
+
+connection after_crash
+statement ok
+ALTER TABLE dce_rows DROP COLUMN b;
+
+
+# A CHECK on the dropped column takes the same path through the cascade plan.
+connection after_crash
+statement ok
+CREATE TABLE dce_check (a INTEGER, b INTEGER CHECK (b > 0));
+
+
+connection after_crash
+statement ok
+ALTER TABLE dce_check DROP COLUMN b;
+
+
+connection after_crash
+statement ok
+INSERT INTO dce_check VALUES (7);
+
+
+connection after_crash
+statement ok
+CHECKPOINT;
+
+
+connection after_crash
+query
+SELECT * FROM dce_rows ORDER BY a;
+----
+a
+1
+2
+
+
+connection after_crash
+query
+SELECT * FROM dce_check ORDER BY a;
+----
+a
+7
+
+
+connection after_crash
+statement ok
+DROP TABLE dce_empty;
+
+
+connection after_crash
+statement ok
+DROP TABLE dce_rows;
+
+
+connection after_crash
+statement ok
+DROP TABLE dce_check;

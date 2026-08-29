@@ -35,22 +35,23 @@
 
 #include "basics/assert.h"
 #include "catalog/identifiers/object_id.h"
-#include "catalog/search_table_options.h"
+#include "catalog/persistence/search_table_options.h"
 #include "search/maintenance.h"
 #include "search/search_db_wal.h"
 
 namespace sdb::search {
 
 // Per-table iresearch columnstore store for a TableEngine::Search table -- the
-// Search-engine sibling of InvertedIndexStorage. Attached to the
-// catalog::Table via GetData()/SetData().
+// Search-engine sibling of InvertedIndexStorage. Held by the table's entry,
+// which shares it with every version of that table.
 class SearchTable : public std::enable_shared_from_this<SearchTable> {
  public:
   // `is_new` opens a fresh index; otherwise the durable one is reopened.
   // `options` carries the maintenance intervals resolved and persisted by the
   // catalog (mirrors InvertedIndexStorage).
   SearchTable(ObjectId db_id, ObjectId schema_id, ObjectId table_id,
-              bool is_new, const catalog::SearchTableOptions& options);
+              bool is_new,
+              const catalog::persistence::SearchTableOptions& options);
   ~SearchTable();
 
   SearchTable(const SearchTable&) = delete;
@@ -61,29 +62,22 @@ class SearchTable : public std::enable_shared_from_this<SearchTable> {
   // InvertedIndexStorage::Create.
   static std::shared_ptr<SearchTable> Create(
     ObjectId db_id, ObjectId schema_id, ObjectId table_id, bool is_new,
-    const catalog::SearchTableOptions& options);
+    const catalog::persistence::SearchTableOptions& options);
 
   ObjectId GetTableId() const noexcept { return _table_id; }
   auto& GetTableLock() noexcept { return _table_lock; }
-
-  void UpdateNumRows(int64_t delta) noexcept {
-    _num_rows.fetch_add(delta, std::memory_order_relaxed);
-  }
-  int64_t NumRows() const noexcept {
-    return _num_rows.load(std::memory_order_relaxed);
-  }
 
   static std::filesystem::path GetPath(ObjectId db_id, ObjectId schema_id,
                                        ObjectId table_id);
   static std::filesystem::path GetWalPath(ObjectId db_id);
   static std::filesystem::path GetChunkDir(ObjectId db_id, ObjectId table_id);
 
-  // Drop on-disk artifacts. The index dir nests under the schema, so a
-  // schema/database drop already wipes it; the WAL shard lives under the
-  // per-database WAL and always needs its own per-table drop.
-  static absl::Status DropIndexDir(ObjectId db_id, ObjectId schema_id,
-                                   ObjectId table_id);
-  static absl::Status DropWalShard(ObjectId db_id, ObjectId table_id);
+  // A drop commits while readers may still hold this table; the destructor
+  // removes the index dir and the WAL shard once the last of them lets go.
+  // Never set on shutdown or detach, where both must survive.
+  void MarkDropped() noexcept {
+    _dropped.store(true, std::memory_order_release);
+  }
 
   irs::IndexWriter::Transaction GetTransaction() noexcept {
     SDB_ASSERT(_writer);
@@ -120,13 +114,6 @@ class SearchTable : public std::enable_shared_from_this<SearchTable> {
   }
 
   uint64_t CommittedTick() const noexcept { return _last_committed_tick; }
-
-  void SyncNumRowsFromIndex() {
-    SDB_ASSERT(_writer);
-    auto reader = _writer->GetSnapshot();
-    auto live = static_cast<int64_t>(reader.live_docs_count());
-    UpdateNumRows(live - NumRows());
-  }
 
   // --- Background maintenance ---
   // Mirrors the interface InvertedIndexStorage exposes, so the shared refresh /
@@ -180,7 +167,7 @@ class SearchTable : public std::enable_shared_from_this<SearchTable> {
   ObjectId _db_id;
   ObjectId _schema_id;
   bool _is_new;
-  std::atomic<int64_t> _num_rows{0};
+  std::atomic<bool> _dropped{false};
   std::shared_mutex _table_lock;
   std::unique_ptr<irs::Directory> _dir;
   std::shared_ptr<irs::IndexWriter> _writer;

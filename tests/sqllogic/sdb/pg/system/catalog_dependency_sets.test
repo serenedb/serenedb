@@ -1,0 +1,220 @@
+# A dependency edge lives in duckdb's own DependencyManager, one DEPENDENCY_ENTRY
+# per edge per direction. Per-edge entries are what keep two unrelated creates
+# under the same referenced object from conflicting: an adjacency set would be
+# one entry that both rewrite.
+#
+# Each catalog keeps its own manager and an edge is kept by the dependent's, so
+# no single manager holds the whole graph -- a table names a role that belongs to
+# no database, and a role's dependents belong to all of them. The readers that
+# must see across attachments fan out. sdb_catalog_sets() reports an edge with no
+# schema name; entry_oid is the referenced object and the name is the dependent.
+#
+# The verb -- what a DROP of the referenced object does to the dependent -- is
+# not stored. It is re-derived from the dependent's own definition, which is
+# where it came from when the edge was written.
+
+
+statement ok
+CREATE SCHEMA cds
+
+
+statement ok
+CREATE TABLE cds.t(a INTEGER, b TEXT)
+
+
+statement ok
+CREATE VIEW cds.v AS SELECT a FROM cds.t
+
+
+# The view's edge onto the table it selects from.
+query
+SELECT count(*) AS n FROM sdb_catalog_sets()
+WHERE entry_type = 'Dependency'
+  AND entry_oid = (SELECT oid FROM pg_class WHERE relname = 't'
+                   AND relnamespace = (SELECT oid FROM pg_namespace
+                                       WHERE nspname = 'cds'))
+----
+n
+1
+
+
+# And the same edge as pg_depend projects it.
+query
+SELECT deptype FROM pg_depend
+WHERE refobjid = (SELECT oid FROM pg_class WHERE relname = 't'
+                  AND relnamespace = (SELECT oid FROM pg_namespace
+                                      WHERE nspname = 'cds'))
+  AND objid = (SELECT oid FROM pg_class WHERE relname = 'v'
+               AND relnamespace = (SELECT oid FROM pg_namespace
+                                   WHERE nspname = 'cds'))
+----
+deptype
+n
+
+
+statement error
+DROP TABLE cds.t
+----
+db error: ERROR: Cannot drop entry "t" because there are entries that depend on it.
+view "v" depends on table "t".
+Use DROP...CASCADE to drop all dependents.
+
+
+statement ok
+DROP TABLE cds.t CASCADE
+
+
+# The edge went with the objects: nothing points at an id that is gone.
+query
+SELECT count(*) AS n FROM sdb_catalog_sets()
+WHERE entry_type = 'Dependency'
+  AND entry_oid IN (SELECT oid FROM pg_class
+                    WHERE relnamespace = (SELECT oid FROM pg_namespace
+                                          WHERE nspname = 'cds'))
+----
+n
+0
+
+
+# A rolled back statement reaches no set. The edges are installed on the
+# committing transaction, at its commit and not before, exactly like the
+# definitions they belong to.
+statement ok
+BEGIN
+
+
+statement ok
+CREATE TABLE cds.r(a INTEGER)
+
+
+statement ok
+CREATE VIEW cds.rv AS SELECT a FROM cds.r
+
+
+# The transaction reads its own edges through its overlay, so RESTRICT refuses
+# here even though nothing is committed yet.
+statement error
+DROP TABLE cds.r
+----
+db error: ERROR: Cannot drop entry "r" because there are entries that depend on it.
+view "rv" depends on table "r".
+Use DROP...CASCADE to drop all dependents.
+
+
+statement ok
+ROLLBACK
+
+
+query
+SELECT count(*) AS n FROM sdb_catalog_sets()
+WHERE entry_type = 'Dependency'
+  AND entry_oid IN (SELECT oid FROM pg_class
+                    WHERE relnamespace = (SELECT oid FROM pg_namespace
+                                          WHERE nspname = 'cds'))
+----
+n
+0
+
+
+# Create, depend and cascade-drop inside one transaction: the whole walk runs
+# off the overlay's edges.
+statement ok
+BEGIN
+
+
+statement ok
+CREATE TABLE cds.k(a INTEGER)
+
+
+statement ok
+CREATE VIEW cds.kv AS SELECT a FROM cds.k
+
+
+statement ok
+CREATE INDEX cds_ki ON cds.k(a)
+
+
+statement ok
+DROP TABLE cds.k CASCADE
+
+
+statement ok
+COMMIT
+
+
+query
+SELECT count(*) AS n FROM pg_class
+WHERE relname IN ('k', 'kv', 'cds_ki')
+  AND relnamespace = (SELECT oid FROM pg_namespace WHERE nspname = 'cds')
+----
+n
+0
+
+
+statement ok
+DROP SCHEMA cds CASCADE
+
+
+# A role reference is an edge too -- the one DROP ROLE consults and the one
+# pg_shdepend projects. It is the only edge that cascades nowhere: postgres
+# does not drop a role's tables with it, it refuses the drop.
+statement ok
+CREATE ROLE cds_owner
+
+
+statement ok
+CREATE ROLE cds_grantee
+
+
+statement ok
+CREATE TABLE cds_t(a INTEGER)
+
+
+statement ok
+ALTER TABLE cds_t OWNER TO cds_owner
+
+
+statement ok
+GRANT SELECT ON cds_t TO cds_grantee
+
+
+query
+SELECT a.rolname, s.deptype FROM pg_shdepend s
+JOIN pg_authid a ON a.oid = s.refobjid
+WHERE s.objid = (SELECT oid FROM pg_class WHERE relname = 'cds_t')
+ORDER BY 1, 2
+----
+rolname	deptype
+cds_grantee	a
+cds_owner	a
+cds_owner	o
+
+
+# Two, not one: a table's generated primary-key sequence follows its owner, and
+# it is an object of its own even though pg_class does not list it.
+statement error
+DROP ROLE cds_owner
+----
+db error: ERROR: role "cds_owner" cannot be dropped because some objects depend on it
+DETAIL: 2 object(s) in database depend on role "cds_owner"
+
+
+statement ok
+DROP TABLE cds_t
+
+
+query
+SELECT count(*) AS n FROM pg_shdepend
+WHERE refobjid IN (SELECT oid FROM pg_authid
+                   WHERE rolname IN ('cds_owner', 'cds_grantee'))
+----
+n
+0
+
+
+statement ok
+DROP ROLE cds_owner
+
+
+statement ok
+DROP ROLE cds_grantee

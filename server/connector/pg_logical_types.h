@@ -119,11 +119,6 @@ inline bool IsOidLike(const duckdb::LogicalType& type) {
 
 inline constexpr std::string_view kCtidAlias = "ctid";
 
-inline bool IsCtid(const duckdb::LogicalType& type) {
-  return type.id() == duckdb::LogicalTypeId::STRUCT &&
-         type.GetAlias() == kCtidAlias;
-}
-
 #ifndef SDB_PG_LOGICAL_TYPES_NO_FACTORY
 inline duckdb::LogicalType CTID() {
   static const auto kType = [] {

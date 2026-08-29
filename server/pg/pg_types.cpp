@@ -31,8 +31,14 @@
 
 #include "basics/containers/flat_hash_map.h"
 #include "basics/down_cast.h"
-#include "catalog/catalog.h"
-#include "catalog/user_type.h"
+#include "catalog/ddl/catalog.h"
+#include "catalog/entry/duckdb_index_entry.h"
+#include "catalog/entry/duckdb_object_entry.h"
+#include "catalog/entry/duckdb_schema_entry.h"
+#include "catalog/entry/duckdb_table_entry.h"
+#include "catalog/entry/duckdb_view_entry.h"
+#include "catalog/read/duckdb_catalog_sets.h"
+#include "catalog/sequence.h"
 #include "catalog/virtual_table.h"
 #include "connector/functions/ts_query_codec.h"
 #include "connector/pg_logical_types.h"
@@ -189,10 +195,10 @@ PgTypeInfo Logical2Pg(const duckdb::LogicalType& type, bool in_array) {
         if (it != ext->properties.end()) {
           const ObjectId oid{it->second.GetValue<uint64_t>()};
           // Enum types are int4-backed (typlen 4).
-          return {
-            static_cast<int32_t>(
-              (in_array ? catalog::PgSqlType::ToArrayOid(oid) : oid).id()),
-            in_array ? static_cast<int16_t>(-1) : static_cast<int16_t>(4), -1};
+          return {static_cast<int32_t>(
+                    (in_array ? catalog::TypeArrayOid(oid) : oid).id()),
+                  in_array ? static_cast<int16_t>(-1) : static_cast<int16_t>(4),
+                  -1};
         }
       }
       return make(kText, kTextArray, -1);
@@ -210,10 +216,9 @@ PgTypeInfo Logical2Pg(const duckdb::LogicalType& type, bool in_array) {
         auto it = ext->properties.find(catalog::kPgSqlTypeOidProp);
         if (it != ext->properties.end()) {
           const ObjectId oid{it->second.GetValue<uint64_t>()};
-          return {
-            static_cast<int32_t>(
-              (in_array ? catalog::PgSqlType::ToArrayOid(oid) : oid).id()),
-            static_cast<int16_t>(-1), -1};
+          return {static_cast<int32_t>(
+                    (in_array ? catalog::TypeArrayOid(oid) : oid).id()),
+                  static_cast<int16_t>(-1), -1};
         }
       }
       return make(kRecord, kRecordArray, -1);
@@ -251,7 +256,7 @@ int32_t Type2Oid(const duckdb::LogicalType& type, bool in_array) {
   return Logical2Pg(type, in_array).oid;
 }
 
-duckdb::LogicalType Oid2Type(int32_t oid, const catalog::Snapshot& snapshot) {
+duckdb::LogicalType Oid2Type(int32_t oid, duckdb::ClientContext& context) {
   switch (oid) {
     using enum PgTypeOID;
     using duckdb::LogicalType;
@@ -296,9 +301,11 @@ duckdb::LogicalType Oid2Type(int32_t oid, const catalog::Snapshot& snapshot) {
     SDB_OID2TYPE(kVariant, LogicalType::VARIANT())
     SDB_OID2TYPE(kUnion, LogicalType::VARCHAR)
     default: {
-      if (auto obj = snapshot.GetObject(ObjectId{static_cast<uint64_t>(oid)});
-          obj && obj->GetType() == catalog::ObjectType::Type) {
-        return basics::downCast<catalog::PgSqlType>(obj)->GetLogicalType();
+      // A user-defined type is not in the snapshot -- its entry is the object
+      // -- so the oid resolves through this session's database.
+      if (auto type = catalog::FindSession<catalog::SereneDBTypeEntry>(
+            context, ObjectId{static_cast<uint64_t>(oid)})) {
+        return type->user_type;
       }
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_INTERNAL_ERROR),
                       ERR_MSG("cache lookup failed for type ", oid));
@@ -569,10 +576,13 @@ uint64_t RegtypeIn(std::string_view name) {
   return kInvalidOid;
 }
 
-std::string RegclassOut(const catalog::Snapshot& snapshot, uint64_t oid) {
-  auto object = snapshot.GetObject(ObjectId{oid});
-  if (object) {
-    return std::string{object->GetName()};
+std::string RegclassOut(duckdb::ClientContext* context, uint64_t oid) {
+  // Every relation is an entry, so one by-oid lookup answers for a table, a
+  // view, a sequence and an index alike.
+  if (context != nullptr) {
+    if (auto entry = catalog::LookupEntryById(*context, ObjectId{oid})) {
+      return std::string{entry->name.GetIdentifierName()};
+    }
   }
   std::string result;
   VisitSystemTables([&](const catalog::VirtualTable& table, Oid) {
@@ -587,14 +597,29 @@ std::string RegclassOut(const catalog::Snapshot& snapshot, uint64_t oid) {
 }
 
 uint64_t RegclassIn(const ConnectionContext& ctx, std::string_view name) {
-  auto snapshot = ctx.CatalogSnapshot();
   auto current_schema = ctx.GetCurrentSchema();
   auto object_name = ParseObjectName(name, current_schema);
-  auto relation =
-    snapshot->GetRelation(catalog::NoAccessCheck(), ctx.GetDatabaseId(),
-                          object_name.schema, object_name.relation);
-  if (relation) {
-    return relation->GetId();
+  // Every half of the relation namespace, in the order postgres resolves them.
+  auto* client = &ctx.GetClientContext();
+  if (const auto schema_id =
+        catalog::FindSchemaId(client, ctx.GetDatabaseId(), object_name.schema);
+      schema_id.isSet()) {
+    if (const auto* table = catalog::Find<catalog::SereneDBTableEntry>(
+          client, schema_id, object_name.relation)) {
+      return table->oid;
+    }
+    if (auto view = catalog::Find<catalog::SereneDBViewEntry>(
+          client, schema_id, object_name.relation)) {
+      return catalog::IdOf(*view).id();
+    }
+    if (const auto* sequence = catalog::Find<catalog::SereneDBSequenceEntry>(
+          client, schema_id, object_name.relation)) {
+      return sequence->oid;
+    }
+    if (const auto* index = catalog::Find<catalog::SereneDBIndexEntry>(
+          client, schema_id, object_name.relation)) {
+      return index->oid;
+    }
   }
   auto* system_table = GetTable(object_name.relation);
   if (system_table) {
@@ -603,16 +628,15 @@ uint64_t RegclassIn(const ConnectionContext& ctx, std::string_view name) {
   return kInvalidOid;
 }
 
-std::string RegnamespaceOut(const catalog::Snapshot& snapshot, uint64_t oid) {
+std::string RegnamespaceOut(duckdb::ClientContext* context, uint64_t oid) {
   if (oid == id::kPgCatalogSchema.id()) {
     return "pg_catalog";
   }
   if (oid == id::kPgInformationSchema.id()) {
     return "information_schema";
   }
-  auto object = snapshot.GetObject(ObjectId{oid});
-  if (object && object->GetType() == catalog::ObjectType::Schema) {
-    return std::string{object->GetName()};
+  if (const auto* schema = catalog::FindSchema(context, ObjectId{oid})) {
+    return std::string{schema->name.GetIdentifierName()};
   }
   return absl::StrCat(oid);
 }
@@ -624,10 +648,9 @@ uint64_t RegnamespaceIn(const ConnectionContext& ctx, std::string_view name) {
   if (name == "information_schema") {
     return id::kPgInformationSchema.id();
   }
-  auto snapshot = ctx.CatalogSnapshot();
-  auto schema = snapshot->GetSchema(ctx.GetDatabaseId(), name);
-  if (schema) {
-    return schema->GetId();
+  if (const auto* schema =
+        catalog::FindSchema(nullptr, ctx.GetDatabaseId(), name)) {
+    return catalog::IdOf(*schema).id();
   }
   return kInvalidOid;
 }

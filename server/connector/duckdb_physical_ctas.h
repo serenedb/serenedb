@@ -20,31 +20,25 @@
 
 #pragma once
 
-#include <duckdb/common/enums/on_create_conflict.hpp>
 #include <duckdb/execution/operator/persistent/physical_insert.hpp>
 #include <duckdb/execution/physical_operator.hpp>
 #include <string>
 
 #include "catalog/identifiers/object_id.h"
-#include "catalog/table_options.h"
 
 namespace sdb::connector {
 
-// Owner operator for CREATE TABLE AS SELECT on SereneDB tables. It wraps a
-// native duckdb::PhysicalInsert (the CTAS variant that creates and fills the
-// hidden store table) and runs the whole sink under a SECOND __sdb_store
-// transaction: minted with a committed snapshot, installed as a scoped override
-// on the user's MetaTransaction for the pipeline, and committed independently
-// in Finalize -- so the load reads committed data only and survives a user
-// ROLLBACK. The catalog entry + tombstone are written at plan time; the
-// tombstone is cleared after the data commits.
+// Progress shell for CREATE TABLE AS SELECT on SereneDB tables. The wrapped
+// native load operator does the work -- its create dispatches through
+// schema.CreateTable to the serenedb road (ids, serials, ownership,
+// OR REPLACE), and entry and rows stage and commit with the statement. This
+// operator only reports pg_stat_progress_create_table_as and carries the
+// fault points.
 class SereneDBPhysicalCTAS final : public duckdb::PhysicalOperator {
  public:
   SereneDBPhysicalCTAS(duckdb::PhysicalPlan& plan,
                        duckdb::PhysicalOperator& insert, ObjectId database_id,
-                       std::string database_name, std::string schema_name,
-                       catalog::CreateTableOptions options, ObjectId table_id,
-                       duckdb::OnCreateConflict on_conflict,
+                       std::string schema_name, std::string table_name,
                        duckdb::idx_t estimated_cardinality);
 
   duckdb::unique_ptr<duckdb::GlobalSinkState> GetGlobalSinkState(
@@ -89,17 +83,10 @@ class SereneDBPhysicalCTAS final : public duckdb::PhysicalOperator {
   // way duckdb's native CTAS picks (batch for partitionable order-preserving
   // loads).
   duckdb::PhysicalOperator& _insert;
+  // Where the load's create files the relation: progress reports its relid.
   ObjectId _database_id;
-  std::string _database_name;
   std::string _schema_name;
-  // The facade table is created at execution (once) with this pre-allocated id.
-  catalog::CreateTableOptions _options;
-  ObjectId _table_id;
-  // REPLACE_ON_CONFLICT for CREATE OR REPLACE TABLE AS: at execution the
-  // pre-existing table of this name is dropped (cascade) before the tombstoned
-  // replacement is created. Captured at plan time because PlanCreateTableAs
-  // rewrites table_info.on_conflict to ERROR_ON_CONFLICT for the store insert.
-  duckdb::OnCreateConflict _on_conflict;
+  std::string _table_name;
 };
 
 }  // namespace sdb::connector

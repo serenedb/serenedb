@@ -22,6 +22,8 @@
 
 #pragma once
 
+#include <magic_enum/magic_enum.hpp>
+
 #include "analyzer.hpp"
 #include "basics/shared.hpp"
 #include "iresearch/utils/attribute_helper.hpp"
@@ -104,3 +106,28 @@ class SegmentationTokenizer : public TypedAnalyzer<SegmentationTokenizer>,
 };
 
 }  // namespace irs::analysis
+namespace magic_enum {
+
+// The one reflection of Accept, beside the enum: every TU that reflects it
+// must see the same names, or the linker mixes the per-TU tables (ODR). The
+// names are the user surface ("alpha" accepts letters and digits); Alpha is
+// internal and hidden from parsing.
+template<>
+constexpr customize::customize_t
+customize::enum_name<irs::analysis::SegmentationTokenizer::Options::Accept>(
+  irs::analysis::SegmentationTokenizer::Options::Accept value) noexcept {
+  using Accept = irs::analysis::SegmentationTokenizer::Options::Accept;
+  switch (value) {
+    case Accept::Any:
+      return "all";
+    case Accept::Graphic:
+      return "graphic";
+    case Accept::AlphaNumeric:
+      return "alpha";
+    case Accept::Alpha:
+      return invalid_tag;
+  }
+  return invalid_tag;
+}
+
+}  // namespace magic_enum

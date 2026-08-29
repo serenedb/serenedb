@@ -1,0 +1,71 @@
+statement ok
+CREATE SCHEMA guard;
+
+
+statement ok
+CREATE FUNCTION guard.age_ok(x INT) AS x >= 18;
+
+
+statement ok
+SET search_path TO guard;
+
+
+statement ok
+CREATE TABLE guard.people (age INT CHECK (age_ok(age)));
+
+
+statement ok
+RESET search_path;
+
+
+# A same-named function in the session's path must not capture the CHECK: the
+# constraint was written in guard and resolves there, not in the reader's path.
+statement ok
+CREATE FUNCTION age_ok(x INT) AS x < 0;
+
+
+statement count 1
+INSERT INTO guard.people VALUES (21);
+
+
+statement error (?i)(check|constraint|violates)
+INSERT INTO guard.people VALUES (5);
+
+
+statement count 1
+UPDATE guard.people SET age = 42;
+
+
+statement error (?i)(check|constraint|violates)
+UPDATE guard.people SET age = 5;
+
+
+statement count 1
+DELETE FROM guard.people WHERE age = 42;
+
+
+# The constraint scan re-binds every CHECK from whatever path the reader has;
+# it has to resolve age_ok through the table's own schema. Scoped to this
+# database: the scan walks every attachment on the shared server.
+query
+SELECT count(*) FROM duckdb_constraints()
+WHERE constraint_type = 'CHECK' AND database_name = current_database();
+----
+count
+1
+
+
+statement ok
+DROP FUNCTION age_ok(INT);
+
+
+statement ok
+DROP TABLE guard.people;
+
+
+statement ok
+DROP FUNCTION guard.age_ok(INT);
+
+
+statement ok
+DROP SCHEMA guard;

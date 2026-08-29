@@ -20,9 +20,11 @@
 
 #include "pg/pg_catalog/pg_opclass.h"
 
-#include "catalog/catalog.h"
+#include "catalog/ddl/catalog.h"
+#include "catalog/entry/duckdb_object_entry.h"
 #include "catalog/identifiers/object_id.h"
 #include "catalog/index.h"
+#include "catalog/read/duckdb_catalog_sets.h"
 #include "pg/pg_catalog/fwd.h"
 #include "pg/pg_types.h"
 
@@ -30,8 +32,6 @@ namespace sdb::pg {
 
 template<>
 catalog::MaterializedData SystemTableSnapshot<PgOpclass>::GetTableData() {
-  auto catalog = _config.CatalogSnapshot();
-
   std::vector<PgOpclass> values;
 
   values.push_back({
@@ -58,27 +58,28 @@ catalog::MaterializedData SystemTableSnapshot<PgOpclass>::GetTableData() {
     .opckeytype = 0,
   });
 
-  for (const auto& schema : catalog->GetSchemas(GetDatabaseId())) {
-    for (const auto& tokenizer :
-         catalog->GetTokenizers(GetDatabaseId(), schema->GetName())) {
+  catalog::Visit<catalog::SereneDBTokenizerEntry>(
+    &_config.GetClientContext(), GetDatabaseId(),
+    [&](const catalog::SereneDBTokenizerEntry& tokenizer) {
       values.push_back({
-        .oid = tokenizer->GetId().id(),
+        .oid = tokenizer.oid,
         .opcmethod = id::kPgAmInverted.id(),
-        .opcname = tokenizer->GetName(),
-        .opcnamespace = tokenizer->GetParentId().id(),
-        .opcowner = tokenizer->GetOwner().id(),
+        // A view into the entry, which outlives the walk: Name is a
+        // string_view.
+        .opcname = tokenizer.name.GetIdentifierName(),
+        .opcnamespace = tokenizer.ParentSchema().oid,
+        .opcowner = tokenizer.permissions.owner,
         .opcfamily = 0,
         .opcintype = PgTypeOID::kText,
         .opcdefault = false,
         .opckeytype = 0,
       });
-    }
-  }
+    });
 
   static constexpr uint64_t kNullMask = 0;
   auto result = CreateColumns<PgOpclass>(values.size());
   for (size_t row = 0; row < values.size(); ++row) {
-    WriteData(result, values[row], kNullMask, row, *_config.CatalogSnapshot());
+    WriteData(result, values[row], kNullMask, row, Roles());
   }
   return {std::move(result), values.size()};
 }

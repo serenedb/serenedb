@@ -1,0 +1,150 @@
+control substitution on
+
+# A restart deserializes the store-side secondary indexes but leaves them
+# unbound until something touches them, and looking one up by name refuses to
+# hand out an unbound index. Every DDL that has to resolve the store index --
+# DROP INDEX, and the ALTER TABLE forms that cascade into it -- must therefore
+# bind first. Each case gets its own table so that no earlier statement in the
+# file has already bound the index it needs.
+
+
+statement ok
+CREATE TABLE dir_drop (a INTEGER, b INTEGER, c TEXT);
+
+
+statement ok
+INSERT INTO dir_drop VALUES (1, 10, 'x'), (2, 20, 'y');
+
+
+statement ok
+CREATE INDEX dir_drop_idx ON dir_drop (a);
+
+
+statement ok
+CREATE TABLE dir_col (a INTEGER, b INTEGER, c TEXT);
+
+
+statement ok
+INSERT INTO dir_col VALUES (1, 10, 'x'), (2, 20, 'y');
+
+
+statement ok
+CREATE INDEX dir_col_idx ON dir_col (a);
+
+
+statement ok
+CREATE TABLE dir_type (a INTEGER, b INTEGER, c TEXT);
+
+
+statement ok
+INSERT INTO dir_type VALUES (1, 10, 'x'), (2, 20, 'y');
+
+
+statement ok
+CREATE INDEX dir_type_idx ON dir_type (a);
+
+
+# Without this the restart replays the inserts, and replaying an append binds
+# the indexes on its own -- the unbound state only survives a clean baseline.
+statement ok
+CHECKPOINT;
+
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+statement error connection closed
+SELECT 1;
+
+
+# Nothing here may read the three tables before their DDL runs: a scan binds
+# the index and hides the bug.
+connection after_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT 1 AS one;
+----
+one
+1
+
+
+connection after_crash
+statement ok
+DROP INDEX dir_drop_idx;
+
+
+connection after_crash
+query
+SELECT count(*) AS n FROM pg_class WHERE relname = 'dir_drop_idx';
+----
+n
+0
+
+
+connection after_crash
+query
+SELECT a, b, c FROM dir_drop ORDER BY a;
+----
+a	b	c
+1	10	x
+2	20	y
+
+
+connection after_crash
+statement ok
+ALTER TABLE dir_col DROP COLUMN c;
+
+
+connection after_crash
+query
+SELECT a, b FROM dir_col ORDER BY a;
+----
+a	b
+1	10
+2	20
+
+
+connection after_crash
+statement ok
+ALTER TABLE dir_type ALTER COLUMN b TYPE BIGINT;
+
+
+connection after_crash
+query
+SELECT a, b FROM dir_type ORDER BY a;
+----
+a	b
+1	10
+2	20
+
+
+# The surviving indexes still answer lookups after all of that.
+connection after_crash
+query
+SELECT a FROM dir_col WHERE a = 2;
+----
+a
+2
+
+
+connection after_crash
+query
+SELECT a FROM dir_type WHERE a = 2;
+----
+a
+2
+
+
+connection after_crash
+statement ok
+DROP TABLE dir_drop;
+
+
+connection after_crash
+statement ok
+DROP TABLE dir_col;
+
+
+connection after_crash
+statement ok
+DROP TABLE dir_type;

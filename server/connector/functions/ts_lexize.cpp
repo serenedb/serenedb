@@ -33,10 +33,11 @@
 #include <iresearch/utils/string.hpp>
 #include <variant>
 
-#include "catalog/catalog.h"
+#include "catalog/ddl/catalog.h"
 #include "catalog/tokenizer.h"
 #include "connector/common.h"
 #include "connector/duckdb_client_state.h"
+#include "connector/functions/search.h"
 #include "connector/functions/ts_common.hpp"
 #include "pg/connection_context.h"
 #include "pg/errcodes.h"
@@ -46,12 +47,9 @@
 namespace sdb::connector {
 namespace {
 
-std::shared_ptr<catalog::Tokenizer> LookupTokenizerDict(
-  const catalog::Snapshot& snapshot, sdb::ObjectId db_id,
-  std::string_view current_schema, std::string_view dict_name) {
-  auto name = pg::ParseObjectName(dict_name, current_schema);
-  auto dict = snapshot.GetTokenizer(catalog::NoAccessCheck(), db_id,
-                                    name.schema, name.relation);
+catalog::TokenizerRef LookupTokenizerDict(duckdb::ClientContext& context,
+                                          std::string_view dict_name) {
+  auto dict = ResolveCatalogTokenizer(context, dict_name);
   if (!dict) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
@@ -61,23 +59,24 @@ std::shared_ptr<catalog::Tokenizer> LookupTokenizerDict(
 }
 
 catalog::Tokenizer::TokenizerWrapper AcquireTokenizer(
-  catalog::Tokenizer& dict) {
+  const catalog::Tokenizer& dict) {
   return dict.GetTokenizer();
 }
 
+// The dictionary is named per row, so this arm resolves at execution time. What
+// it carries is only what makes two bindings interchangeable: the database and
+// the schema an unqualified name resolves against.
 struct DynamicCtx {
-  std::shared_ptr<const catalog::Snapshot> snapshot;
   sdb::ObjectId db_id;
   std::string current_schema;
 
   bool operator==(const DynamicCtx& rhs) const {
-    return snapshot == rhs.snapshot && db_id == rhs.db_id &&
-           current_schema == rhs.current_schema;
+    return db_id == rhs.db_id && current_schema == rhs.current_schema;
   }
 };
 
 struct TsLexizeBindData final : public duckdb::FunctionData {
-  std::variant<DynamicCtx, std::shared_ptr<catalog::Tokenizer>> state;
+  std::variant<DynamicCtx, catalog::TokenizerRef> state;
 
   duckdb::unique_ptr<duckdb::FunctionData> Copy() const final {
     return duckdb::make_uniq<TsLexizeBindData>(*this);
@@ -95,8 +94,8 @@ duckdb::unique_ptr<duckdb::FunctionLocalState> InitTsLexizeLocalState(
   duckdb::ExpressionState& /*state*/,
   const duckdb::BoundFunctionExpression& expr,
   duckdb::FunctionData* bind_data) {
-  auto& dict = std::get<std::shared_ptr<catalog::Tokenizer>>(
-    bind_data->Cast<TsLexizeBindData>().state);
+  auto& dict =
+    std::get<catalog::TokenizerRef>(bind_data->Cast<TsLexizeBindData>().state);
   auto local = duckdb::make_uniq<TsLexizeLocalState>();
   local->wrapper = AcquireTokenizer(*dict);
   return local;
@@ -145,7 +144,8 @@ class ListTokenSink {
   duckdb::idx_t _offset = 0;
 };
 
-const TsLexizeBindData& GetBindData(duckdb::ExpressionState& state) {
+[[maybe_unused]] const TsLexizeBindData& GetBindData(
+  duckdb::ExpressionState& state) {
   return state.expr.Cast<duckdb::BoundFunctionExpression>()
     .BindInfo()
     ->Cast<TsLexizeBindData>();
@@ -235,7 +235,7 @@ void TsLexizeFunctionDynamic(duckdb::DataChunk& args,
                              duckdb::ExpressionState& state,
                              duckdb::Vector& result) {
   auto count = args.size();
-  auto& ctx = std::get<DynamicCtx>(GetBindData(state).state);
+  SDB_ASSERT(std::holds_alternative<DynamicCtx>(GetBindData(state).state));
 
   duckdb::UnifiedVectorFormat dict_format, text_format;
   args.data[0].ToUnifiedFormat(count, dict_format);
@@ -262,8 +262,7 @@ void TsLexizeFunctionDynamic(duckdb::DataChunk& args,
       continue;
     }
     auto dict =
-      LookupTokenizerDict(*ctx.snapshot, ctx.db_id, ctx.current_schema,
-                          AsView(dict_data[dict_idx]));
+      LookupTokenizerDict(state.GetContext(), AsView(dict_data[dict_idx]));
     auto tokenizer = AcquireTokenizer(*dict);
     const auto row_offset = sink.Offset();
     sink.Push(*tokenizer, AsView(text_data[text_idx]));
@@ -275,7 +274,7 @@ void TsLexizeArrayFunctionDynamic(duckdb::DataChunk& args,
                                   duckdb::ExpressionState& state,
                                   duckdb::Vector& result) {
   auto count = args.size();
-  auto& ctx = std::get<DynamicCtx>(GetBindData(state).state);
+  SDB_ASSERT(std::holds_alternative<DynamicCtx>(GetBindData(state).state));
 
   duckdb::UnifiedVectorFormat dict_format, list_format;
   args.data[0].ToUnifiedFormat(count, dict_format);
@@ -309,8 +308,7 @@ void TsLexizeArrayFunctionDynamic(duckdb::DataChunk& args,
       continue;
     }
     auto dict =
-      LookupTokenizerDict(*ctx.snapshot, ctx.db_id, ctx.current_schema,
-                          AsView(dict_data[dict_idx]));
+      LookupTokenizerDict(state.GetContext(), AsView(dict_data[dict_idx]));
     auto tokenizer = AcquireTokenizer(*dict);
     const auto row_offset = sink.Offset();
     const auto& entry = list_entries_in[list_idx];
@@ -334,7 +332,6 @@ duckdb::unique_ptr<duckdb::FunctionData> TsLexizeBind(
   auto& context = input.GetClientContext();
   auto& conn_ctx = GetSereneDBContext(context);
   DynamicCtx ctx{
-    .snapshot = conn_ctx.CatalogSnapshot(),
     .db_id = conn_ctx.GetDatabaseId(),
     .current_schema = conn_ctx.GetCurrentSchema(),
   };
@@ -344,9 +341,7 @@ duckdb::unique_ptr<duckdb::FunctionData> TsLexizeBind(
   if (args[0]->IsFoldable()) {
     auto val = duckdb::ExpressionExecutor::EvaluateScalar(context, *args[0]);
     if (!val.IsNull()) {
-      bind->state =
-        LookupTokenizerDict(*ctx.snapshot, ctx.db_id, ctx.current_schema,
-                            duckdb::StringValue::Get(val));
+      bind->state = LookupTokenizerDict(context, duckdb::StringValue::Get(val));
       auto& fn = input.GetBoundFunction();
       fn.SetFunctionCallback(ConstantFn);
       fn.SetInitStateCallback(InitTsLexizeLocalState);

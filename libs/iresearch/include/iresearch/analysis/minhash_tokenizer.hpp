@@ -88,14 +88,13 @@ class MinHashTokenizer final : public TypedAnalyzer<MinHashTokenizer>,
 
 template<typename Context>
 void SerdeWrite(Context ctx, const MinHashTokenizer::Options& o) {
-  sdb::basics::WriteTuple(ctx.io(), std::tie(o.analyzer, o.num_hashes),
-                          ctx.arg());
+  sdb::basics::WriteTupleOrObject(ctx, std::tie(o.analyzer, o.num_hashes));
 }
 
 template<typename Context>
 void SerdeRead(Context ctx, MinHashTokenizer::Options& o) {
   auto refs = std::tie(o.analyzer, o.num_hashes);
-  sdb::basics::ReadTuple(ctx.io(), refs, ctx.arg());
+  sdb::basics::ReadTupleOrObject(ctx, refs);
 }
 
 }  // namespace irs::analysis

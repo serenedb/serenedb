@@ -12,9 +12,9 @@ CREATE VIEW view1 AS
 statement error
 DROP TABLE tbl RESTRICT;
 ----
-db error: ERROR: cannot drop table tbl because other objects depend on it
-DETAIL: view view1 depends on table tbl
-HINT: Use DROP ... CASCADE to drop the dependent objects too.
+db error: ERROR: Cannot drop entry "tbl" because there are entries that depend on it.
+view "view1" depends on table "tbl".
+Use DROP...CASCADE to drop all dependents.
 
 
 query

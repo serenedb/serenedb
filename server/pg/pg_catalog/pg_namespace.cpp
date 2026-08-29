@@ -21,8 +21,10 @@
 #include "pg/pg_catalog/pg_namespace.h"
 
 #include "basics/assert.h"
-#include "catalog/catalog.h"
+#include "catalog/ddl/catalog.h"
+#include "catalog/entry/duckdb_schema_entry.h"
 #include "catalog/identifiers/object_id.h"
+#include "catalog/read/duckdb_catalog_sets.h"
 
 namespace sdb::pg {
 namespace {
@@ -34,8 +36,11 @@ constexpr uint64_t kNullMask = MaskFromNonNulls({
   GetIndex(&PgNamespace::nspacl),
 });
 
-void RetrieveObjects(ObjectId database_id, std::vector<PgNamespace>& values,
-                     const catalog::Snapshot& snapshot) {
+// The name and the ACL of every row are views into the entry the walk read
+// them off, which the rows written after it still point at: an entry version
+// stays in its set's chain for as long as a transaction can see it.
+void RetrieveObjects(duckdb::ClientContext& context, ObjectId database_id,
+                     std::vector<PgNamespace>& values) {
   values.push_back({
     .oid = id::kPgCatalogSchema.id(),
     .nspname = "pg_catalog",
@@ -46,14 +51,15 @@ void RetrieveObjects(ObjectId database_id, std::vector<PgNamespace>& values,
     .nspname = "information_schema",
     .nspowner = id::kRootUser.id(),
   });
-  for (const auto& schema : snapshot.GetSchemas(database_id)) {
-    values.push_back(PgNamespace{
-      .oid = schema->GetId().id(),
-      .nspname = schema->GetName(),
-      .nspowner = schema->GetOwner().id(),
-      .nspacl = {schema->GetAcl()},
+  catalog::VisitSchemas(
+    &context, database_id, [&](const catalog::SereneDBSchemaEntry& schema) {
+      values.push_back(PgNamespace{
+        .oid = catalog::IdOf(schema).id(),
+        .nspname = schema.name.GetIdentifierName(),
+        .nspowner = schema.permissions.owner,
+        .nspacl = {catalog::AclView{schema.permissions.acl}},
+      });
     });
-  }
 }
 
 }  // namespace
@@ -61,12 +67,11 @@ void RetrieveObjects(ObjectId database_id, std::vector<PgNamespace>& values,
 template<>
 catalog::MaterializedData SystemTableSnapshot<PgNamespace>::GetTableData() {
   std::vector<PgNamespace> values;
-  auto snapshot = _config.CatalogSnapshot();
-  RetrieveObjects(GetDatabaseId(), values, *snapshot);
+  RetrieveObjects(_config.GetClientContext(), GetDatabaseId(), values);
 
   auto result = CreateColumns<PgNamespace>(values.size());
   for (size_t row = 0; row < values.size(); ++row) {
-    WriteData(result, values[row], kNullMask, row, *_config.CatalogSnapshot());
+    WriteData(result, values[row], kNullMask, row, Roles());
   }
   return {std::move(result), values.size()};
 }

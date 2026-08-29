@@ -37,4 +37,10 @@ struct PgEnum {
 };
 // NOLINTEND
 
+// Declared here and not only defined in the .cpp: without this the primary
+// template's empty body is what gets instantiated, and the table reads back
+// with no rows at all.
+template<>
+catalog::MaterializedData SystemTableSnapshot<PgEnum>::GetTableData();
+
 }  // namespace sdb::pg

@@ -18,7 +18,10 @@ CREATE ROLE dca_vedernikoff;
 
 # DATABASE: CONNECT is a PUBLIC default, so every role already holds it; the
 # grant's observable effect is the explicit datacl entry it adds.
-statement ok
+# The `postgres` database entry is shared with every other test file the runner
+# executes in parallel, and a second writer on one catalog object is refused
+# with a retryable 40001.
+statement ok retry 20 backoff 50ms
 GRANT CONNECT ON DATABASE postgres TO dca_vedernikoff;
 
 
@@ -79,7 +82,7 @@ statement ok
 DROP FUNCTION dca_clickclack();
 
 
-statement ok
+statement ok retry 20 backoff 50ms
 REVOKE CONNECT ON DATABASE postgres FROM dca_vedernikoff;
 
 

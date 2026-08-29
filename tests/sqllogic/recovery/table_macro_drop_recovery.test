@@ -1,0 +1,43 @@
+control substitution on
+
+# A table macro lives in the TABLE_MACRO set with a wrapper in the MACRO set.
+# The replay road once keyed both the drop and the rename old-name lookup on
+# the record's own kind and fell through a default for TABLE_MACRO_ENTRY: a
+# dropped table macro replayed as never dropped, and the recreate under the
+# same name refused boot with "concurrent DDL". Renames replayed as creates
+# for the same reason, leaving the old name behind.
+
+statement ok
+CREATE FUNCTION tmd_f() RETURNS TABLE(a integer) LANGUAGE SQL AS 'SELECT 1';
+
+statement ok
+ALTER FUNCTION tmd_f RENAME TO tmd_g;
+
+statement ok
+ALTER FUNCTION tmd_g RENAME TO tmd_f;
+
+statement ok
+DROP FUNCTION tmd_f;
+
+statement ok
+CREATE FUNCTION tmd_f() RETURNS TABLE(a integer) LANGUAGE SQL AS 'SELECT 2';
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+statement error connection closed
+SELECT 1;
+
+# --- restart ---
+
+connection after_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT * FROM tmd_f();
+----
+a
+2
+
+# The renamed-away name stayed gone across the restart.
+connection after_crash
+statement error (?i)with name tmd_g does not exist
+SELECT * FROM tmd_g();

@@ -31,8 +31,10 @@ onlyif serenedb
 statement error
 DROP SCHEMA test
 ----
-db error: ERROR: cannot drop schema test because other objects depend on it
-HINT: Use DROP ... CASCADE to drop the dependent objects too.
+db error: ERROR: Cannot drop entry "test" because there are entries that depend on it.
+sequence "test_pk_seq" depends on schema "test".
+table "test" depends on schema "test".
+Use DROP...CASCADE to drop all dependents.
 
 
 query
@@ -48,8 +50,10 @@ onlyif serenedb
 statement error
 DROP SCHEMA test
 ----
-db error: ERROR: cannot drop schema test because other objects depend on it
-HINT: Use DROP ... CASCADE to drop the dependent objects too.
+db error: ERROR: Cannot drop entry "test" because there are entries that depend on it.
+sequence "test_pk_seq" depends on schema "test".
+table "test" depends on schema "test".
+Use DROP...CASCADE to drop all dependents.
 
 
 statement ok

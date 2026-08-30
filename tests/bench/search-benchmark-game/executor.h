@@ -20,6 +20,7 @@
 
 #pragma once
 
+#include <cstdio>
 #include <iresearch/analysis/analyzer.hpp>
 #include <iresearch/formats/formats.hpp>
 #include <iresearch/index/directory_reader.hpp>
@@ -90,6 +91,10 @@ class Executor {
   size_t ExecuteCount(std::string_view query);
   size_t HashResults() const;
   void PrintResults() const;
+
+  // Where `Report::print` writes. The benchmark harness reads stderr; a test
+  // that only asserts on the documents can point this at /dev/null.
+  void SetPrintSink(std::FILE* out) noexcept { _print_out = out; }
   EmitResult ExecuteEmitDocs(std::string_view query, Report report = {});
   EmitResult ExecuteEmitScoredDocs(std::string_view query, Report report = {});
 
@@ -110,6 +115,7 @@ class Executor {
   static constexpr size_t kEmitWindow = STANDARD_VECTOR_SIZE;
 
   std::vector<irs::ScoreDoc> _results;
+  std::FILE* _print_out = stderr;
   std::array<irs::doc_id_t, kEmitWindow> _emit_docs;
   std::array<irs::score_t, kEmitWindow> _emit_scores;
   size_t _result_count{0};

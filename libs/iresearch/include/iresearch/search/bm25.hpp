@@ -126,6 +126,13 @@ class BM25 final : public irs::ScorerBase<BM25, BM25Stats> {
 
   std::string ToString() const final;
 
+  Options GetOptions() const noexcept {
+    return {.k1 = _k,
+            .b = _b,
+            .boost_as_score = _boost_as_score,
+            .approximate = _approximate};
+  }
+
   score_t k() const noexcept { return _k; }
 
   score_t b() const noexcept { return _b; }

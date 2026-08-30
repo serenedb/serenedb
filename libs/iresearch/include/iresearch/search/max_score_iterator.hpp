@@ -424,6 +424,7 @@ class MaxScoreIterator : public DocIterator {
                                          doc_id_t max) {
     _num_candidates += cand_docs.size();
     const score_t threshold = std::get<ScoreThresholdAttr>(_attrs).value;
+    SDB_ASSERT(threshold > 0);
 
     const auto first_required = _first_required;
     for (auto it = _first_essential; it != _itrs_sorted.begin();) {

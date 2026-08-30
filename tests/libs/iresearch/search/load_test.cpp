@@ -673,6 +673,23 @@ class LoadTest : public TestBase {
     }
   }
 
+  void SetUp() override {
+    TestBase::SetUp();
+    _null_sink = std::fopen("/dev/null", "w");
+    ASSERT_NE(nullptr, _null_sink);
+  }
+
+  void TearDown() override {
+    if (gExecutor) {
+      gExecutor->SetPrintSink(stderr);
+    }
+    if (_null_sink) {
+      std::fclose(_null_sink);
+      _null_sink = nullptr;
+    }
+    TestBase::TearDown();
+  }
+
   void RunAndValidate(std::string_view name) {
     const auto res_dir = resource("iresearch-load") / name;
     const auto queries_path = res_dir / "queries.json";
@@ -799,6 +816,8 @@ class LoadTest : public TestBase {
   static inline Mode gMode = Mode::Validate;
   static inline bool gGzip = false;
   static inline bool gDropIndex = true;
+
+  std::FILE* _null_sink = nullptr;
 };
 
 TEST_F(LoadTest, WikiSmall) { RunAndValidate("wiki_small"); }
@@ -1126,9 +1145,7 @@ TEST_F(LoadTest, ReportIsOnlyAWayOfLooking) {
 
   // Every hit printed, over this corpus, is tens of millions of lines in a CI
   // log. These assertions are about the documents, never the text.
-  static std::FILE* const kNullSink = std::fopen("/dev/null", "w");
-  ASSERT_NE(nullptr, kNullSink);
-  gExecutor->SetPrintSink(kNullSink);
+  gExecutor->SetPrintSink(_null_sink);
 
   for (auto query : kQueries) {
     SCOPED_TRACE(query);

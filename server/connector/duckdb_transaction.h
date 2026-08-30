@@ -39,6 +39,8 @@ class SereneDBTransactionManager final : public duckdb::DuckTransactionManager {
  public:
   explicit SereneDBTransactionManager(duckdb::AttachedDatabase& db);
 
+  duckdb::Transaction& StartTransaction(duckdb::ClientContext& context) final;
+
   void Checkpoint(duckdb::ClientContext& context, bool force) final;
 
   duckdb::ErrorData CommitTransaction(duckdb::ClientContext& context,

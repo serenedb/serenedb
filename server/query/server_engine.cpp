@@ -46,6 +46,7 @@
 #include "connector/duckdb_vacuum_function.h"
 #include "connector/functions/array.h"
 #include "connector/functions/catalog_introspect.h"
+#include "connector/functions/duckdb_aliases.h"
 #include "connector/functions/embedding/embedding.h"
 #include "connector/functions/encode_key.h"
 #include "connector/functions/es.h"
@@ -337,6 +338,8 @@ void RegisterServerExtensions(duckdb::DatabaseInstance& db) {
   connector::RegisterEsFunctions(db);
 
   connector::RegisterCatalogIntrospectFunctions(db);
+
+  connector::RegisterDuckDBAliases(db);
 
   connector::RegisterVacuumFunction(db);
 

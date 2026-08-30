@@ -193,7 +193,11 @@ void RequireColumns(const auth::RoleClosure& closure, const Governed& governed,
 ObjectId EffectiveRole(ObjectId caller, const duckdb::CatalogEntry* who,
                        duckdb::ClientContext& context) {
   const auto view = SereneDBRelation(who, context);
-  return view ? ObjectId{view.perm->owner} : caller;
+  if (!view) {
+    return caller;
+  }
+  const ObjectId owner{view.perm->owner};
+  return !owner.isSet() && who->internal ? id::kRootUser : owner;
 }
 
 using AccessRequirements = duckdb::vector<duckdb::AccessRequirement>;

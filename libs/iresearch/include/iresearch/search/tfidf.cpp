@@ -197,21 +197,25 @@ ScoreBoundWriter::ptr TFIDF::PrepareScoreBoundWriter(size_t max_levels) const {
     // idf * sqrt(tf) / sqrt(dl)
     // sqrt(tf) / sqrt(dl)
     // tf / dl
+    SDB_ASSERT(BoundTypeOf(GetOptions()) == ScoreBoundType::DivNorm);
     return std::make_unique<FreqNormWriter<kScoreBoundDivNorm>>(max_levels);
   }
+  SDB_ASSERT(BoundTypeOf(GetOptions()) == ScoreBoundType::MaxFreq);
   return std::make_unique<FreqNormWriter<kScoreBoundMaxFreq>>(max_levels);
 }
 
 ScoreBoundSource::ptr TFIDF::PrepareScoreBoundSource() const {
   if (_normalize) {
+    SDB_ASSERT(BoundTypeOf(GetOptions()) == ScoreBoundType::DivNorm);
     return std::make_unique<
       FreqNormSource<kScoreBoundFreq | kScoreBoundNorm>>();
   }
+  SDB_ASSERT(BoundTypeOf(GetOptions()) == ScoreBoundType::MaxFreq);
   return std::make_unique<FreqNormSource<kScoreBoundFreq>>();
 }
 
 bool TFIDF::Compatible(const ScorerOptions& persisted) const noexcept {
-  return irs::BoundTypeOf(persisted) == BoundTypeOf({.with_norms = _normalize});
+  return irs::BoundTypeOf(persisted) == BoundTypeOf(GetOptions());
 }
 
 std::string TFIDF::ToString() const {

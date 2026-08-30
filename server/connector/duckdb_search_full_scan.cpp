@@ -979,9 +979,9 @@ void RerankHits(IResearchScanGlobalState& g, std::span<irs::ScoreDoc> hits) {
   }
 }
 
-// Current lower-bound score from the dynamic TOP_N boundary, or min() when it
-// is not yet initialized or is not a lower bound (text-only path: scores
-// are strictly positive). Seeds the streaming prune threshold; the exact
+// Current lower-bound score from the dynamic TOP_N boundary, or lowest() when
+// it is not yet initialized or is not a lower bound (no bound yet, and a score
+// of 0 is a legal hit). Seeds the streaming prune threshold; the exact
 // boundary is still enforced by the HitBatcher score filter, so an over-loose
 // threshold only skips fewer blocks (never wrong). Score pruning is strict
 // (skips `block_max <= threshold`), so a `>=` boundary steps one ulp down --
@@ -993,12 +993,13 @@ irs::score_t CurrentPruneThreshold(duckdb::DynamicFilterData& dyn) {
       (dyn.comparison_type != duckdb::ExpressionType::COMPARE_GREATERTHAN &&
        dyn.comparison_type !=
          duckdb::ExpressionType::COMPARE_GREATERTHANOREQUALTO)) {
-    return std::numeric_limits<irs::score_t>::min();
+    return std::numeric_limits<irs::score_t>::lowest();
   }
   const auto boundary = dyn.constant.GetValue<float>();
   if (dyn.comparison_type ==
       duckdb::ExpressionType::COMPARE_GREATERTHANOREQUALTO) {
-    return std::nextafter(boundary, std::numeric_limits<irs::score_t>::min());
+    return std::nextafter(boundary,
+                          std::numeric_limits<irs::score_t>::lowest());
   }
   return boundary;
 }
@@ -1705,9 +1706,6 @@ duckdb::unique_ptr<duckdb::LocalTableFunctionState> IResearchScanInitLocal(
   }
   if (gstate.mode == ScanMode::TopK) {
     auto lstate = duckdb::make_uniq<TopKScanLocalState>();
-    if (!gstate.vector_scorer) {
-      lstate->local_threshold = std::numeric_limits<irs::score_t>::min();
-    }
     lstate->hit_buf.resize(CollectorPoolSize(gstate, bd));
     lstate->hit_slice = std::span<irs::ScoreDoc>{lstate->hit_buf};
     BuildOffsetsEntries(*lstate, input, bd);

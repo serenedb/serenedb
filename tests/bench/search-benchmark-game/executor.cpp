@@ -212,7 +212,7 @@ EmitResult Executor::ExecuteEmitDocs(std::string_view query, Report report) {
       }
       if (report.print) {
         for (uint32_t i = 0; i != n; ++i) {
-          absl::FPrintF(stderr, "doc=%u\n", _emit_docs[i]);
+          absl::FPrintF(_print_out, "doc=%u\n", _emit_docs[i]);
         }
       }
       min = docs->value();
@@ -266,7 +266,7 @@ EmitResult Executor::ExecuteEmitScoredDocs(std::string_view query,
       }
       if (report.print) {
         for (uint32_t i = 0; i != n; ++i) {
-          absl::FPrintF(stderr, "doc=%u score=%.6f\n", _emit_docs[i],
+          absl::FPrintF(_print_out, "doc=%u score=%.6f\n", _emit_docs[i],
                         _emit_scores[i]);
         }
       }

@@ -1,0 +1,372 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SereneDB — adding ai_prompt</title>
+<style>
+  :root{
+    --ground:#f6f7f9; --surface:#ffffff; --ink:#141821; --muted:#5a6573;
+    --line:#e3e6ec; --accent:#2b5d86; --accent-soft:#e8eef5; --code-bg:#eef1f5;
+    --warn:#9a6b00;
+  }
+  *{box-sizing:border-box}
+  body{margin:0}
+  .doc-root{
+    background:var(--ground); color:var(--ink);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    font-size:16px; line-height:1.65;
+    -webkit-font-smoothing:antialiased; min-height:100vh;
+  }
+  .wrap{max-width:880px; margin:0 auto; padding:48px 24px 96px}
+
+  /* hierarchy */
+  .eyebrow{text-transform:uppercase; letter-spacing:.09em; font-size:12px; font-weight:600; color:var(--accent); margin:0 0 10px}
+  h1{font-size:clamp(28px,5vw,38px); line-height:1.12; font-weight:680; letter-spacing:-.015em; text-wrap:balance; margin:0 0 12px}
+  .lede{font-size:18px; color:var(--muted); margin:0; max-width:62ch; text-wrap:balance}
+  .meta{display:flex; flex-wrap:wrap; gap:6px 14px; margin-top:20px; font-size:13px; color:var(--muted)}
+  .meta code{background:var(--surface); border:1px solid var(--line); padding:1px 7px; border-radius:5px}
+  header.doc{padding-bottom:26px; border-bottom:2px solid var(--accent); margin-bottom:8px}
+
+  h2{font-size:22px; font-weight:680; letter-spacing:-.01em; text-wrap:balance; margin:44px 0 14px; padding-top:20px; border-top:1px solid var(--line)}
+  h2 .n{color:var(--accent); font-variant-numeric:tabular-nums; margin-right:10px}
+  h3{font-size:15px; font-weight:660; margin:24px 0 8px; letter-spacing:.01em}
+  p{margin:12px 0; max-width:68ch}
+  ul,ol{margin:12px 0; padding-left:22px; max-width:68ch}
+  li{margin:6px 0}
+  a{color:var(--accent); text-decoration:underline; text-underline-offset:2px; text-decoration-thickness:1px}
+  a:focus-visible{outline:2px solid var(--accent); outline-offset:2px; border-radius:3px}
+  .muted{color:var(--muted)}
+
+  code{font-family:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,monospace; font-size:13.5px}
+  p code,li code,td code,.meta code{background:var(--code-bg); padding:1px 6px; border-radius:5px}
+  td code{background:none; padding:0}
+  pre{background:var(--ink); color:#e8edf4; border-radius:10px; padding:16px 18px; overflow-x:auto; font-size:13px; line-height:1.55; margin:16px 0}
+  pre code{font-family:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,monospace}
+  pre .c{color:#8aa0b8}
+  pre .k{color:#9ecbff}
+
+  .callout{background:var(--accent-soft); border:1px solid #d3deec; border-left:4px solid var(--accent); border-radius:10px; padding:16px 20px; margin:20px 0; max-width:none}
+  .callout p{margin:0; max-width:none}
+  .callout strong{color:var(--accent)}
+
+  .tablewrap{overflow-x:auto; margin:18px 0; border:1px solid var(--line); border-radius:10px; background:var(--surface)}
+  table{border-collapse:collapse; width:100%; font-size:13.5px; min-width:600px; font-variant-numeric:tabular-nums}
+  th,td{text-align:left; padding:9px 12px; border-bottom:1px solid var(--line); vertical-align:top}
+  thead th{background:#eff2f6; font-weight:640; white-space:nowrap; border-bottom:1px solid var(--line)}
+  tbody tr:last-child td{border-bottom:none}
+  th:first-child,td:first-child{position:sticky; left:0; background:var(--surface)}
+  thead th:first-child{background:#eff2f6}
+  .legend{font-size:13px; color:var(--muted); margin:6px 2px 0}
+
+  .grid2{display:grid; grid-template-columns:repeat(auto-fit,minmax(230px,1fr)); gap:14px; margin:16px 0}
+  .card{border:1px solid var(--line); border-radius:10px; padding:15px 17px; background:var(--surface)}
+  .card h3{margin:0 0 6px}
+  .card p{margin:0; font-size:14px; color:var(--muted); max-width:none}
+
+  footer{margin-top:52px; padding-top:20px; border-top:1px solid var(--line); font-size:13px; color:var(--muted)}
+  footer p{max-width:none}
+</style>
+</head>
+<body>
+<div class="doc-root">
+<div class="wrap">
+
+<header class="doc">
+  <p class="eyebrow">SereneDB · Design note</p>
+  <h1>Adding <code>ai_prompt</code> to SereneDB</h1>
+  <p class="lede">A SQL scalar that sends text to an LLM and returns the reply — the text-generation sibling of the existing <code>ai_embed</code>.</p>
+  <div class="meta">
+    <span>repo <code>serenedb</code></span>
+    <span>branch <code>gnusi/term-dict</code></span>
+    <span>2026-06</span>
+    <span>status: plan, pre-implementation</span>
+  </div>
+</header>
+
+<div class="callout">
+  <p><strong>TL;DR.</strong> Add <code>ai_prompt(text, model, secret_name) → VARCHAR</code>. It reuses the same
+  <code>openai</code> <code>CREATE SECRET</code> as <code>ai_embed</code> and calls an OpenAI-compatible
+  <strong>Chat Completions</strong> endpoint (<code>POST …/chat/completions</code>), returning
+  <code>choices[0].message.content</code> as plain text. Chat Completions beat the newer Responses API and
+  the legacy Completions API because it's the one interface <em>every</em> provider implements — including
+  Ollama, which our CI uses.</p>
+</div>
+
+<h2><span class="n">1</span>What we're building</h2>
+<p>
+  SereneDB already has <code>ai_embed(text, model, secret_name) → FLOAT[]</code>, which calls an
+  OpenAI-compatible <code>/v1/embeddings</code> endpoint configured through a DuckDB secret. Unlike
+  <a href="https://duckdb.org/community_extensions/extensions/flock">flock</a> (which makes you register a
+  model first), the model name is passed inline as a string. <code>ai_prompt</code> is the
+  text-generation sibling, built the same way:
+</p>
+<pre><code><span class="c">-- one-time: point a secret at any OpenAI-compatible provider</span>
+<span class="k">CREATE SECRET</span> llm (
+  TYPE openai,
+  api_key 'sk-...',                  <span class="c">-- sent as: Authorization: Bearer sk-...</span>
+  base_url 'https://api.openai.com',  <span class="c">-- default; override per provider</span>
+  prompt_path '/v1/chat/completions'  <span class="c">-- default; override per provider</span>
+);
+
+<span class="c">-- then call it from SQL like any scalar</span>
+<span class="k">SELECT</span> ai_prompt('Summarize in one line: ' || abstract, 'gpt-5.5', 'llm')
+<span class="k">FROM</span> papers;</code></pre>
+<p>
+  Returns plain text. A <code>NULL</code> input row yields a <code>NULL</code> output row. The new secret
+  key <code>prompt_path</code> mirrors <code>ai_embed</code>'s <code>embeddings_path</code> — the secret key
+  matches the function name.
+</p>
+
+<h2><span class="n">2</span>The fork: three OpenAI text APIs</h2>
+<p>OpenAI exposes three generations of text API. Choosing one fixes <code>ai_prompt</code>'s wire format.</p>
+<div class="tablewrap">
+<table>
+  <thead><tr><th>&nbsp;</th><th>Completions <span class="muted">(legacy)</span></th><th>Chat Completions</th><th>Responses <span class="muted">(newest)</span></th></tr></thead>
+  <tbody>
+    <tr><td>Endpoint</td><td><code>/v1/completions</code></td><td><code>/v1/chat/completions</code></td><td><code>/v1/responses</code></td></tr>
+    <tr><td>Mental model</td><td>continue this text</td><td>reply to this conversation</td><td>produce output, statefully</td></tr>
+    <tr><td>Input</td><td>raw <code>prompt</code> string</td><td><code>messages:[{role,content}]</code></td><td><code>input</code> + <code>instructions</code></td></tr>
+    <tr><td>Output field</td><td><code>choices[0].text</code></td><td><code>choices[0].message.content</code></td><td><code>output_text</code></td></tr>
+    <tr><td>Roles</td><td>❌</td><td>✅</td><td>✅</td></tr>
+    <tr><td>Stateful / hosted tools</td><td>❌</td><td>❌</td><td>✅ stored, web/file search, MCP</td></tr>
+    <tr><td>Models</td><td>old only</td><td>all current</td><td>all current</td></tr>
+    <tr><td>Status</td><td>legacy</td><td>supported</td><td>recommended (OpenAI-only)</td></tr>
+  </tbody>
+</table>
+</div>
+<p>
+  <strong>Completions</strong> is frozen and needs hand-written per-model prompt templating.
+  <strong>Responses</strong> is excellent for agentic, stateful, reasoning-heavy work — but its wire format
+  differs and it's OpenAI-lineage-only (absent on Ollama, Azure, Gemini, Anthropic, …).
+  <strong>Chat Completions</strong> is the portable middle ground, and what we target.
+</p>
+
+<h2><span class="n">3</span>Why Chat Completions</h2>
+<p>
+  We surveyed 24 providers. The single-message → text shape
+  (<code>{model, messages:[{role:"user",content}]}</code> → <code>choices[0].message.content</code>) is
+  byte-identical across every provider with an OpenAI-compatible chat endpoint, so one code path reaches
+  them all. <code>base_url</code> + <code>prompt_path</code> absorb path differences;
+  <code>api_key</code> → <code>Bearer</code> covers auth everywhere except Azure-with-API-key — already a
+  limitation of <code>ai_embed</code>, so we stay consistent.
+</p>
+<div class="tablewrap">
+<table>
+  <thead><tr><th>Provider</th><th>base_url</th><th>prompt_path</th><th>Auth</th></tr></thead>
+  <tbody>
+    <tr><td>OpenAI</td><td><code>api.openai.com</code></td><td><code>/v1/chat/completions</code></td><td>Bearer</td></tr>
+    <tr><td>Azure OpenAI</td><td><code>{res}.openai.azure.com</code></td><td><code>/openai/deployments/{dep}/chat/completions?api-version=…</code></td><td>api-key / Bearer</td></tr>
+    <tr><td>Ollama <span class="muted">(our CI)</span></td><td><code>host:11434</code></td><td><code>/v1/chat/completions</code></td><td>Bearer (unused)</td></tr>
+    <tr><td>Google Gemini</td><td><code>generativelanguage.googleapis.com</code></td><td><code>/v1beta/openai/chat/completions</code></td><td>Bearer</td></tr>
+    <tr><td>Anthropic</td><td><code>api.anthropic.com</code></td><td><code>/v1/chat/completions</code></td><td>Bearer</td></tr>
+    <tr><td>Groq</td><td><code>api.groq.com</code></td><td><code>/openai/v1/chat/completions</code></td><td>Bearer</td></tr>
+    <tr><td>Together / DeepSeek / Mistral / xAI</td><td><code>api.{together.ai,deepseek.com,mistral.ai,x.ai}</code></td><td><code>/v1/chat/completions</code></td><td>Bearer</td></tr>
+    <tr><td>vLLM / OpenRouter</td><td><code>host:8000</code> / <code>openrouter.ai/api</code></td><td><code>/v1/chat/completions</code></td><td>Bearer (opt.)</td></tr>
+  </tbody>
+</table>
+</div>
+<p class="muted">Request body and response-field columns are identical for all of them — omitted here.</p>
+
+<h2><span class="n">4</span>Full capability matrix · 24 providers</h2>
+<p class="legend">✅ managed API · ⚠️ partial / preview / model-dependent / separate service · ❌ none.</p>
+
+<h3>Generative</h3>
+<div class="tablewrap">
+<table>
+  <thead><tr><th>Provider</th><th>Chat</th><th>Responses</th><th>Image-gen</th><th>Vision in</th><th>Speech→text</th><th>Text→speech</th><th>Moderation</th></tr></thead>
+  <tbody>
+    <tr><td>OpenAI</td><td>✅</td><td>✅</td><td>✅</td><td>✅</td><td>✅</td><td>✅</td><td>✅</td></tr>
+    <tr><td>Azure OpenAI</td><td>✅</td><td>⚠️</td><td>✅</td><td>✅</td><td>✅</td><td>✅</td><td>⚠️</td></tr>
+    <tr><td>Anthropic</td><td>✅</td><td>❌</td><td>❌</td><td>✅</td><td>❌</td><td>❌</td><td>❌</td></tr>
+    <tr><td>Google Gemini</td><td>✅</td><td>❌</td><td>✅</td><td>✅</td><td>✅</td><td>✅</td><td>⚠️</td></tr>
+    <tr><td>AWS Bedrock</td><td>✅</td><td>❌</td><td>✅</td><td>✅</td><td>⚠️</td><td>⚠️</td><td>✅</td></tr>
+    <tr><td>Cohere</td><td>✅</td><td>❌</td><td>❌</td><td>⚠️</td><td>⚠️</td><td>❌</td><td>❌</td></tr>
+    <tr><td>Mistral</td><td>✅</td><td>❌</td><td>❌</td><td>✅</td><td>✅</td><td>❌</td><td>✅</td></tr>
+    <tr><td>Groq</td><td>✅</td><td>✅</td><td>❌</td><td>⚠️</td><td>✅</td><td>✅</td><td>✅</td></tr>
+    <tr><td>xAI (Grok)</td><td>✅</td><td>✅</td><td>✅</td><td>✅</td><td>❌</td><td>❌</td><td>❌</td></tr>
+    <tr><td>DeepSeek</td><td>✅</td><td>❌</td><td>❌</td><td>⚠️</td><td>❌</td><td>❌</td><td>❌</td></tr>
+    <tr><td>Together</td><td>✅</td><td>❌</td><td>✅</td><td>✅</td><td>⚠️</td><td>⚠️</td><td>✅</td></tr>
+    <tr><td>Fireworks</td><td>✅</td><td>❌</td><td>✅</td><td>✅</td><td>✅</td><td>⚠️</td><td>⚠️</td></tr>
+    <tr><td>Perplexity</td><td>✅</td><td>❌</td><td>❌</td><td>⚠️</td><td>❌</td><td>❌</td><td>❌</td></tr>
+    <tr><td>OpenRouter</td><td>✅</td><td>❌</td><td>⚠️</td><td>✅</td><td>❌</td><td>❌</td><td>❌</td></tr>
+    <tr><td>Cloudflare Workers AI</td><td>✅</td><td>❌</td><td>✅</td><td>✅</td><td>✅</td><td>✅</td><td>✅</td></tr>
+    <tr><td>NVIDIA NIM</td><td>✅</td><td>❌</td><td>✅</td><td>✅</td><td>✅</td><td>✅</td><td>⚠️</td></tr>
+    <tr><td>HF Inference</td><td>✅</td><td>❌</td><td>✅</td><td>✅</td><td>✅</td><td>✅</td><td>⚠️</td></tr>
+    <tr><td>Replicate</td><td>⚠️</td><td>❌</td><td>✅</td><td>✅</td><td>✅</td><td>✅</td><td>⚠️</td></tr>
+    <tr><td>Voyage <span class="muted">(specialist)</span></td><td>❌</td><td>❌</td><td>❌</td><td>⚠️</td><td>❌</td><td>❌</td><td>❌</td></tr>
+    <tr><td>Jina <span class="muted">(specialist)</span></td><td>⚠️</td><td>❌</td><td>❌</td><td>⚠️</td><td>❌</td><td>❌</td><td>❌</td></tr>
+    <tr><td>Mixedbread / Nomic / Pinecone</td><td>❌</td><td>❌</td><td>❌</td><td>⚠️</td><td>❌</td><td>❌</td><td>❌</td></tr>
+    <tr><td>Ollama <span class="muted">(local)</span></td><td>✅</td><td>❌</td><td>❌</td><td>✅</td><td>❌</td><td>❌</td><td>⚠️</td></tr>
+    <tr><td>vLLM <span class="muted">(self-host)</span></td><td>✅</td><td>⚠️</td><td>❌</td><td>✅</td><td>✅</td><td>❌</td><td>⚠️</td></tr>
+    <tr><td>llama.cpp / LM Studio</td><td>✅</td><td>❌</td><td>❌</td><td>✅</td><td>⚠️</td><td>❌</td><td>⚠️</td></tr>
+  </tbody>
+</table>
+</div>
+
+<h3>Retrieval &amp; control</h3>
+<div class="tablewrap">
+<table>
+  <thead><tr><th>Provider</th><th>Embeddings</th><th>Rerank</th><th>Tools/func</th><th>Structured/JSON</th><th>Batch</th><th>Fine-tune</th><th>OpenAI-compat chat?</th></tr></thead>
+  <tbody>
+    <tr><td>OpenAI</td><td>✅</td><td>❌</td><td>✅</td><td>✅</td><td>✅</td><td>✅</td><td>✅ native</td></tr>
+    <tr><td>Azure OpenAI</td><td>✅</td><td>❌</td><td>✅</td><td>✅</td><td>✅</td><td>✅</td><td>✅ (api-key)</td></tr>
+    <tr><td>Anthropic</td><td>❌</td><td>❌</td><td>✅</td><td>✅</td><td>✅</td><td>❌</td><td>✅ compat</td></tr>
+    <tr><td>Google Gemini</td><td>✅</td><td>⚠️</td><td>✅</td><td>✅</td><td>✅</td><td>✅</td><td>✅</td></tr>
+    <tr><td>AWS Bedrock</td><td>✅</td><td>✅</td><td>✅</td><td>⚠️</td><td>✅</td><td>✅</td><td>❌ Converse wire</td></tr>
+    <tr><td>Cohere</td><td>✅</td><td>✅</td><td>✅</td><td>✅</td><td>⚠️</td><td>✅</td><td>⚠️ own v2</td></tr>
+    <tr><td>Mistral</td><td>✅</td><td>❌</td><td>✅</td><td>✅</td><td>✅</td><td>✅</td><td>✅</td></tr>
+    <tr><td>Groq</td><td>⚠️</td><td>❌</td><td>✅</td><td>✅</td><td>✅</td><td>❌</td><td>✅</td></tr>
+    <tr><td>xAI (Grok)</td><td>⚠️</td><td>❌</td><td>✅</td><td>✅</td><td>❌</td><td>❌</td><td>✅</td></tr>
+    <tr><td>DeepSeek</td><td>❌</td><td>❌</td><td>✅</td><td>✅</td><td>❌</td><td>❌</td><td>✅</td></tr>
+    <tr><td>Together</td><td>✅</td><td>✅</td><td>✅</td><td>✅</td><td>✅</td><td>✅</td><td>✅</td></tr>
+    <tr><td>Fireworks</td><td>✅</td><td>⚠️</td><td>✅</td><td>✅</td><td>✅</td><td>✅</td><td>✅</td></tr>
+    <tr><td>Perplexity</td><td>❌</td><td>❌</td><td>⚠️</td><td>✅</td><td>❌</td><td>❌</td><td>✅</td></tr>
+    <tr><td>OpenRouter</td><td>⚠️</td><td>❌</td><td>✅</td><td>⚠️</td><td>❌</td><td>❌</td><td>✅</td></tr>
+    <tr><td>Cloudflare Workers AI</td><td>✅</td><td>✅</td><td>⚠️</td><td>⚠️</td><td>❌</td><td>⚠️</td><td>✅</td></tr>
+    <tr><td>NVIDIA NIM</td><td>✅</td><td>✅</td><td>✅</td><td>✅</td><td>⚠️</td><td>⚠️</td><td>✅</td></tr>
+    <tr><td>HF Inference (TGI/TEI)</td><td>✅</td><td>✅</td><td>⚠️</td><td>⚠️</td><td>❌</td><td>❌</td><td>✅ (TGI)</td></tr>
+    <tr><td>Replicate</td><td>✅</td><td>⚠️</td><td>⚠️</td><td>⚠️</td><td>⚠️</td><td>✅</td><td>❌ predictions wire</td></tr>
+    <tr><td>Voyage</td><td>✅</td><td>✅</td><td>—</td><td>—</td><td>⚠️</td><td>❌</td><td>❌</td></tr>
+    <tr><td>Jina</td><td>✅</td><td>✅</td><td>—</td><td>—</td><td>❌</td><td>❌</td><td>❌</td></tr>
+    <tr><td>Mixedbread / Nomic / Pinecone</td><td>✅</td><td>✅</td><td>—</td><td>—</td><td>⚠️</td><td>❌</td><td>❌</td></tr>
+    <tr><td>Ollama</td><td>✅</td><td>❌</td><td>✅</td><td>✅</td><td>❌</td><td>❌</td><td>✅</td></tr>
+    <tr><td>vLLM</td><td>✅</td><td>✅</td><td>✅</td><td>✅</td><td>✅</td><td>❌</td><td>✅</td></tr>
+    <tr><td>llama.cpp / LM Studio</td><td>✅</td><td>⚠️</td><td>✅</td><td>✅</td><td>❌</td><td>❌</td><td>✅</td></tr>
+  </tbody>
+</table>
+</div>
+
+<h3>What the control columns mean</h3>
+<div class="grid2">
+  <div class="card"><h3>Tools / function calling</h3><p>Give the model callable functions (JSON-schema params); it replies "call <code>f(args)</code>" instead of prose. Powers agents and tool use.</p></div>
+  <div class="card"><h3>Structured / JSON output</h3><p>Constrain output to valid JSON, optionally matching a schema ("Structured Outputs" / "JSON mode"). Guarantees parseable results.</p></div>
+  <div class="card"><h3>Batch</h3><p>Submit a file of thousands of requests; processed offline (~24h) at roughly half price. For bulk, non-interactive jobs.</p></div>
+  <div class="card"><h3>Fine-tune</h3><p>Train a custom variant of a base model on your own data; get back a private model ID you call like any other.</p></div>
+</div>
+<p class="muted">
+  None of these four are exposed by <code>ai_prompt(text, model, secret)</code> — it's a single-shot
+  text→text call. Tools and Structured output could become future optional args; Batch and Fine-tune are
+  control-plane operations that don't fit a scalar SQL function.
+</p>
+
+<h2><span class="n">5</span>One wire format per capability</h2>
+<p>Each AI capability has its own de-facto wire format and parser, independent of <code>ai_prompt</code>:</p>
+<ul>
+  <li><strong>Chat → OpenAI Chat Completions</strong> — <code>messages</code> → <code>choices[0].message.content</code>. Near-universal. <em>This is <code>ai_prompt</code>.</em></li>
+  <li><strong>Embeddings → OpenAI <code>/embeddings</code></strong> — <code>input</code> → <code>data[].embedding</code>. <em>Already shipped as <code>ai_embed</code>.</em></li>
+  <li><strong>Rerank → Cohere/Jina <code>/rerank</code></strong> — <code>{query, documents, top_n}</code> → <code>results[].relevance_score</code>. A future <code>ai_rerank</code> targets this, not chat — detailed in §6. Offered by Cohere, Voyage, Jina, Together, vLLM, TEI, Pinecone, Bedrock.</li>
+  <li><strong>Image-gen / STT / TTS / Moderation</strong> — each its own OpenAI-family endpoint and parser; each a possible future <code>ai_*</code> scalar.</li>
+</ul>
+
+<h2><span class="n">6</span>Spotlight — rerank &amp; Qwen</h2>
+<p>
+  Rerank is a <em>separate</em> wire format from chat. The de-facto standard is the Cohere/Jina shape,
+  copied by Cohere, Jina, Voyage, Together, vLLM, HF&nbsp;TEI, Pinecone, Cloudflare and NVIDIA NIM:
+</p>
+<pre><code><span class="k">POST</span> .../v1/rerank      <span class="c">Authorization: Bearer &lt;key&gt;</span>
+{ "model": "...", "query": "...", "documents": ["...","..."], "top_n": 5 }
+→ { "results": [ { "index": 0, "relevance_score": 0.97 }, ... ] }</code></pre>
+<p>
+  Crucially, cross-encoder / LLM rerankers score each <em>(query, document)</em> pair independently — the
+  score is absolute relevance, not a relative ordering that needs the whole set. That makes rerank fit a
+  row scalar (below).
+</p>
+
+<h3>Qwen rerankers</h3>
+<p>
+  Qwen ships a strong open reranker line — <strong>Qwen3-Reranker</strong> (0.6B / 4B / 8B) and
+  <strong>Qwen3-VL-Reranker</strong> (multimodal). They're instruction-aware, LLM-based rerankers that
+  score from <code>yes</code>/<code>no</code> token logits. Two ways to reach them:
+</p>
+<p><strong>A · Self-host with vLLM</strong> — exposes the Cohere-compatible <code>/v1/rerank</code> above:</p>
+<pre><code>vllm serve Qwen/Qwen3-Reranker-8B --port 8888 \
+  --hf_overrides '{"architectures":["Qwen3ForSequenceClassification"],
+                   "classifier_from_token":["no","yes"],
+                   "is_original_qwen3_reranker":true}'</code></pre>
+<p class="muted">
+  The original model wants its chat template wrapped around the query/documents; the
+  <code>is_original_qwen3_reranker</code> override applies it. Also servable via HF&nbsp;TEI / Infinity.
+</p>
+<p><strong>B · Alibaba DashScope (managed)</strong> — native shape, <em>not</em> OpenAI/Cohere-compatible, and the model families even differ:</p>
+<div class="tablewrap">
+<table>
+  <thead><tr><th>Model</th><th>Path</th><th>Body</th></tr></thead>
+  <tbody>
+    <tr><td><code>qwen3-rerank</code></td><td><code>…/compatible-mode/v1/reranks</code></td><td>flat <code>query</code> + <code>documents</code></td></tr>
+    <tr><td><code>qwen3-vl-rerank</code>, <code>gte-rerank-v2</code> <span class="muted">(retiring)</span></td><td><code>…/api/v1/services/rerank/text-rerank/text-rerank</code></td><td><code>input:{query,documents}</code> + <code>parameters:{top_n}</code></td></tr>
+  </tbody>
+</table>
+</div>
+<p class="muted">Both return <code>output.results[].{index, relevance_score}</code> — note the <code>output.</code> wrapper, unlike Cohere's top-level <code>results</code>.</p>
+
+<h3>How a future <code>ai_rerank</code> would look</h3>
+<p>
+  Target the Cohere/Jina <code>/v1/rerank</code> shape (a new <code>rerank_path</code> secret key, default
+  <code>/v1/rerank</code>) — one code path that reaches Cohere, Voyage, Jina, Together, TEI, Pinecone
+  <em>and</em> self-hosted Qwen3-Reranker via vLLM, reusing the existing secret + provider plumbing. Because
+  each score is independent, it fits a row scalar:
+</p>
+<pre><code><span class="k">SELECT</span> id, body
+<span class="k">FROM</span> docs
+<span class="k">ORDER BY</span> ai_rerank('quarterly revenue drivers', body, 'qwen3-reranker', 'reranker') <span class="k">DESC</span>
+<span class="k">LIMIT</span> 10;</code></pre>
+<p class="muted">
+  Internally it batches all rows' documents into one <code>/rerank</code> call (shared query + document
+  batch) and maps <code>results[].index → relevance_score</code> back to rows — the same batching
+  <code>ai_embed</code> / <code>ai_prompt</code> already do; <code>top_n</code> falls out of
+  <code>ORDER BY … LIMIT</code>. DashScope's native shape would be a separate adapter.
+</p>
+
+<h2><span class="n">7</span>Implementation plan</h2>
+<h3>New files</h3>
+<ul>
+  <li><code>…/embedding/prompt.{h,cpp}</code> — the <code>ai_prompt</code> scalar (bind, execute, register), mirroring <code>embedding.cpp</code>.</li>
+  <li><code>…/embedding/common.{h,cpp}</code> — shared helpers extracted from <code>embedding.cpp</code> so both functions reuse them: <code>RegisterOpenAISecretType</code> (now also accepts a <code>prompt_path</code> key), <code>FoldConstArg</code>, <code>LoadProviderConfig</code>, and a shared <code>ProviderBindData</code>.</li>
+</ul>
+<h3>Modified files</h3>
+<ul>
+  <li><code>embedding/provider.{h,cpp}</code> — add <code>prompt_path</code> to <code>ProviderConfig</code>; add <code>PromptBatch</code> dispatch.</li>
+  <li><code>embedding/provider_openai.{h,cpp}</code> — default <code>prompt_path</code> = <code>/v1/chat/completions</code>; factor the HTTP POST into a shared helper (reused by embeddings); add <code>ParseCompletion</code> and <code>PromptBatchOpenAI</code> (one request per non-null row).</li>
+  <li><code>functions/CMakeLists.txt</code> — add the two new <code>.cpp</code> files.</li>
+  <li><code>server/query/server_engine.cpp</code> — call <code>RegisterPromptFunctions(db)</code> beside <code>RegisterEmbeddingFunctions(db)</code>.</li>
+  <li><code>tests/sqllogic/run.sh</code> — the Ollama harness also pulls a small chat model and exports <code>OLLAMA_CHAT_MODEL</code> (e.g. <code>qwen2.5:0.5b</code>).</li>
+</ul>
+<h3>Test</h3>
+<p>
+  New <code>tests/sqllogic/sdb/pg/simple/ai_prompt_ollama.test_slow</code> (the <code>_ollama.</code> suffix
+  auto-launches Ollama). Asserts behavior, not exact text: <code>length(ai_prompt(...)) &gt; 0</code>,
+  <code>ai_prompt(NULL, …) IS NULL</code>, plus error paths (unknown secret, NULL/non-constant model arg,
+  unreachable URL). No code comments, no gtest — consistent with <code>ai_embed</code>.
+</p>
+
+<h2><span class="n">8</span>How to verify</h2>
+<pre><code>cmake --preset lldb -DCMAKE_C_COMPILER=clang-21 -DCMAKE_CXX_COMPILER=clang++-21
+ninja -C build
+
+<span class="c"># new test (launches Ollama, pulls both models)</span>
+./tests/sqllogic/run.sh --single-port 7890 \
+  --test 'tests/sqllogic/sdb/pg/simple/ai_prompt_ollama.test_slow' --debug true
+
+<span class="c"># ai_embed must still pass (shared-helper refactor didn't regress)</span>
+./tests/sqllogic/run.sh --single-port 7890 \
+  --test 'tests/sqllogic/sdb/pg/index/vector_search_ollama.test_slow' --debug true</code></pre>
+
+<footer>
+  <p><strong>Sources.</strong>
+    <a href="https://developers.openai.com/api/reference/chat-completions/overview">OpenAI Chat Completions</a> ·
+    <a href="https://platform.openai.com/docs/guides/migrate-to-responses">Migrate to Responses</a> ·
+    <a href="https://ai.google.dev/gemini-api/docs/openai">Gemini OpenAI compat</a> ·
+    <a href="https://platform.claude.com/docs/en/api/openai-sdk">Anthropic OpenAI SDK compat</a> ·
+    <a href="https://docs.cohere.com/reference/about">Cohere API</a> ·
+    <a href="https://docs.voyageai.com/reference/reranker-api">Voyage Rerank</a> ·
+    <a href="https://jina.ai/reranker/">Jina Reranker</a> ·
+    <a href="https://aws.amazon.com/blogs/machine-learning/cohere-rerank-3-5-is-now-available-in-amazon-bedrock-through-rerank-api/">Bedrock Rerank</a>
+  </p>
+  <p>Prepared from a Claude Code planning session · SereneDB.</p>
+</footer>
+
+</div>
+</div>
+</body>
+</html>

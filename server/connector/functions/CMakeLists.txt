@@ -3,6 +3,7 @@ target_sources(
     PRIVATE
         array.cpp
         catalog_introspect.cpp
+        duckdb_aliases.cpp
         encode_key.cpp
         es.cpp
         inout.cpp

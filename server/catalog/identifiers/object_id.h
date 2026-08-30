@@ -68,6 +68,8 @@ inline constexpr ObjectId kPgOpclassIncluded{kMinSystem.id() + 201};
 // above every system table's so pg_class still orders tables first.
 inline constexpr ObjectId kFirstSystemView{kMinSystem.id() + 1000};
 
+inline constexpr ObjectId kFirstBuiltinFunction{kMinSystem.id() + 10'000};
+
 // Access methods
 inline constexpr ObjectId kPgAmInverted{kMinSystem.id() + 300};
 inline constexpr ObjectId kPgAmIresearch{kMinSystem.id() + 301};

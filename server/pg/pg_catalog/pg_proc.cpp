@@ -20,6 +20,7 @@
 
 #include "pg/pg_catalog/pg_proc.h"
 
+#include <deque>
 #include <duckdb/function/macro_function.hpp>
 #include <duckdb/parser/parsed_data/create_macro_info.hpp>
 #include <string>
@@ -32,6 +33,7 @@
 #include "catalog/read/duckdb_catalog_sets.h"
 #include "catalog/role.h"
 #include "catalog/schema.h"
+#include "pg/pg_catalog/builtin_functions.h"
 #include "pg/pg_catalog/fwd.h"
 #include "pg/pg_types.h"
 
@@ -49,6 +51,43 @@ constexpr uint64_t kNullMask = MaskFromNulls({
 });
 
 constexpr Oid kLangSql = 14;
+constexpr Oid kLangInternal = 12;
+
+bool TypeIsComplete(const duckdb::LogicalType& type) {
+  switch (type.id()) {
+    using enum duckdb::LogicalTypeId;
+    case DECIMAL:
+    case STRUCT:
+    case MAP:
+    case UNION:
+    case ENUM:
+      return static_cast<bool>(type.AuxInfo());
+    case LIST:
+      return type.AuxInfo() &&
+             TypeIsComplete(duckdb::ListType::GetChildType(type));
+    case ARRAY:
+      return type.AuxInfo() &&
+             TypeIsComplete(duckdb::ArrayType::GetChildType(type));
+    default:
+      return true;
+  }
+}
+
+Oid BuiltinArgOid(const duckdb::LogicalType& type) {
+  return TypeIsComplete(type) ? static_cast<Oid>(Type2Oid(type))
+                              : static_cast<Oid>(PgTypeOID::kUnknown);
+}
+
+PgProc::Prokind KindOf(duckdb::CatalogType type) {
+  switch (type) {
+    case duckdb::CatalogType::AGGREGATE_FUNCTION_ENTRY:
+      return PgProc::Prokind::Aggregate;
+    case duckdb::CatalogType::WINDOW_FUNCTION_ENTRY:
+      return PgProc::Prokind::Window;
+    default:
+      return PgProc::Prokind::Function;
+  }
+}
 
 }  // namespace
 
@@ -114,6 +153,48 @@ catalog::MaterializedData SystemTableSnapshot<PgProc>::GetTableData() {
   // A scalar macro and a table macro are one SereneDB kind and two duckdb
   // namespaces; VisitFunctions reads both sets.
   catalog::VisitFunctions(&_config.GetClientContext(), GetDatabaseId(), emit);
+
+  std::deque<std::string> name_storage;
+  VisitBuiltinFunctions(
+    _config.GetClientContext(), [&](const BuiltinFunction& builtin) {
+      std::vector<Oid> argtypes;
+      argtypes.reserve(builtin.parameter_types.size());
+      for (const auto& param_type : builtin.parameter_types) {
+        argtypes.push_back(BuiltinArgOid(param_type));
+      }
+      auto pronargs = static_cast<int16_t>(argtypes.size());
+      argtypes_storage.push_back(std::move(argtypes));
+      const auto& name = name_storage.emplace_back(builtin.name);
+
+      const Oid rettype = builtin.returns_set
+                            ? static_cast<Oid>(PgTypeOID::kRecord)
+                            : BuiltinArgOid(builtin.return_type);
+
+      values.push_back(PgProc{
+        .oid = builtin.oid.id(),
+        .proname = name,
+        .pronamespace = id::kPgCatalogSchema.id(),
+        .proowner = id::kRootUser.id(),
+        .prolang = kLangInternal,
+        .procost = 1.0f,
+        .prorows = builtin.returns_set ? 1000.0f : 0.0f,
+        .provariadic = 0,
+        .prosupport = 0,
+        .prokind = KindOf(builtin.kind),
+        .prosecdef = false,
+        .proleakproof = false,
+        .proisstrict = false,
+        .proretset = builtin.returns_set,
+        .provolatile = PgProc::Provolatile::Immutable,
+        .proparallel = PgProc::Proparallel::Safe,
+        .pronargs = pronargs,
+        .pronargdefaults = 0,
+        .prorettype = rettype,
+        .proargtypes = argtypes_storage.back(),
+        .prosrc = name,
+        .proacl = {},
+      });
+    });
 
   auto result = CreateColumns<PgProc>(values.size());
 

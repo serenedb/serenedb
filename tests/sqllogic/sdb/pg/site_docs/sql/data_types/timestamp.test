@@ -184,7 +184,7 @@ roc
 
 statement ok
 SELECT *
-FROM duckdb_settings()
+FROM sdb_settings()
 WHERE name = 'TimeZone';
 
 # DOCS_TEST: example_015
@@ -193,5 +193,5 @@ WHERE name = 'TimeZone';
 
 statement ok
 SELECT *
-FROM duckdb_settings()
+FROM sdb_settings()
 WHERE name = 'Calendar';

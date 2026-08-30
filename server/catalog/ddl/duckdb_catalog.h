@@ -320,6 +320,10 @@ class SereneDBCatalog final : public duckdb::DuckCatalog {
                           duckdb::CatalogEntry& entry,
                           duckdb::data_ptr_t extra_data) final;
 
+  // Taken before the catalog and set locks of the entry being committed, so the
+  // cluster-wide log lock is never acquired under them.
+  void PrepareCatalogChange(duckdb::DuckTransaction& transaction) final;
+
   // The per-database DDL surface: these live here rather than on
   // catalog::Catalog because the database they act on is this catalog.
   // The owner is `ax.role`: a dictionary has no ACL of its own, so its

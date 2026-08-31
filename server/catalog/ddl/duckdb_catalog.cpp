@@ -95,7 +95,6 @@
 #include "basics/static_strings.h"
 #include "catalog/ddl/catalog.h"
 #include "catalog/entry/duckdb_index_entry.h"
-#include "catalog/entry/duckdb_index_scan_entry.h"
 #include "catalog/entry/duckdb_object_entry.h"
 #include "catalog/entry/duckdb_schema_entry.h"
 #include "catalog/entry/duckdb_table_entry.h"
@@ -1321,42 +1320,6 @@ duckdb::PhysicalOperator& SereneDBCatalog::PlanInsert(
 duckdb::PhysicalOperator& SereneDBCatalog::PlanDelete(
   duckdb::ClientContext& context, duckdb::PhysicalPlanGenerator& planner,
   duckdb::LogicalDelete& op, duckdb::PhysicalOperator& plan) {
-  if (auto* index_entry =
-        dynamic_cast<ViewInvertedIndexScanEntry*>(&op.table)) {
-    // The remove side of a REINDEX pass: plans only on an internal connection
-    // (only driver code issues statements there); the sink removes the matched
-    // (file, row) pks on the live index. Wire sessions keep the DML-on-index
-    // error -- view indexes have no user DML surface.
-    auto* conn_ctx = connector::GetSereneDBContextPtr(context);
-    if (!conn_ctx || conn_ctx->GetSendBuffer()) {
-      THROW_SQL_ERROR(
-        ERR_CODE(ERRCODE_WRONG_OBJECT_TYPE),
-        ERR_MSG("cannot open relation \"", op.table.name.GetIdentifierName(),
-                "\""),
-        ERR_DETAIL("This operation is not supported for indexes."));
-    }
-    auto storage =
-      InvertedStorageIn(&context, index_entry->catalog, index_entry->IndexId());
-    if (!storage) {
-      ThrowConcurrentlyDropped(index_entry->IndexId());
-    }
-    // The encoding config the removes are written against, off the committed
-    // definition and pinned for the operator's lifetime.
-    auto index = FindInvertedIndex(GetDatabaseId(), index_entry->IndexId());
-    std::shared_ptr<const irs::IndexFieldOptions> field_options;
-    if (index) {
-      field_options = std::shared_ptr<const irs::IndexFieldOptions>{
-        index, &InvertedInfo(*index)};
-    }
-    // The scan's row-identity columns (file_index, row_number) are last.
-    std::vector<duckdb::idx_t> pk_indices{plan.types.size() - 2,
-                                          plan.types.size() - 1};
-    auto& index_del = planner.Make<connector::SereneDBSearchDelete>(
-      index_entry->IndexId(), std::move(storage), std::move(field_options),
-      std::move(pk_indices), std::move(op.types), op.estimated_cardinality);
-    index_del.children.push_back(plan);
-    return index_del;
-  }
   auto& table_entry = RequireBaseTable(op.table);
 
   if (table_entry.IsSearchTable()) {
@@ -2277,9 +2240,9 @@ void SereneDBCatalog::WriteCatalogChange(
       return;
   }
   // Every serenedb kind travels as the generic entry record: duckdb's per-kind
-  // create records carry neither the stable id nor the owner and ACL. The
-  // index-name wrapper is nobody's object; recording it would put the index in
-  // the log twice and replay it as two.
+  // create records carry neither the stable id nor the owner and ACL. A table
+  // entry that is not serenedb's -- another attached catalog's -- is not this
+  // log's object.
   if (version.type == TABLE_ENTRY &&
       dynamic_cast<const SereneDBTableEntry*>(&version) == nullptr) {
     return;

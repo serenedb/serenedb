@@ -1,3 +1,6 @@
+# name: tests/sqllogic/sdb/pg/index/ts_dict_deletes_matrix.test
+# group: [index]
+
 hash-threshold 100
 
 statement ok
@@ -83,7 +86,8 @@ FROM ddm_idx ORDER BY term
 ----
 QUERY PLAN
 ╭─ ORDER_BY ───────────────────────────────────────────╮
-│ Order By: ddm_idx.body)) ASC                         │
+│ Order By:                                            │
+│ unnest(ts_dict_agg(ddm_idx.body)) ASC                │
 │ ~3 rows                                              │
 ╰───────────────────────────┬──────────────────────────╯
 ╭─ PROJECTION ──────────────┴──────────────────────────╮

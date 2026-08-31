@@ -40,7 +40,6 @@
 #include <iresearch/index/index_reader.hpp>
 
 #include "catalog/ddl/duckdb_catalog.h"
-#include "catalog/entry/duckdb_index_scan_entry.h"
 #include "catalog/entry/duckdb_object_entry.h"
 #include "catalog/entry/duckdb_schema_entry.h"
 #include "catalog/read/duckdb_catalog_sets.h"
@@ -73,13 +72,6 @@ bool TableEntryColumnNotNull(const duckdb::TableCatalogEntry& table,
   return column && table.IsNotNull(column->Logical());
 }
 
-ObjectId ScanRelationId(const duckdb::TableCatalogEntry& entry) {
-  if (const auto* scan = dynamic_cast<const SereneDBIndexScanEntry*>(&entry)) {
-    return scan->GetIndexedRelationId();
-  }
-  return catalog::IdOf(entry);
-}
-
 std::vector<int16_t> KeyConstraintAttnums(
   const duckdb::TableCatalogEntry& table,
   const duckdb::UniqueConstraint& constraint) {
@@ -98,16 +90,14 @@ std::vector<int16_t> KeyConstraintAttnums(
 }
 
 SereneDBTableEntry& RequireBaseTable(duckdb::TableCatalogEntry& table) {
-  // RTTI is unavoidable here: the caller hands us a generic
-  // TableCatalogEntry that may be a SereneDBTableEntry, a
-  // SereneDBIndexScanEntry, or an entry from another attached catalog --
-  // duckdb::TableCatalogEntry doesn't expose a tag we can extend.
+  // RTTI is unavoidable here: the caller hands us a generic TableCatalogEntry
+  // that may be a SereneDBTableEntry or an entry from another attached
+  // catalog -- duckdb::TableCatalogEntry doesn't expose a tag we can extend.
   auto* base = dynamic_cast<SereneDBTableEntry*>(&table);
   if (!base) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_WRONG_OBJECT_TYPE),
-      ERR_MSG("cannot open relation \"", table.name.GetIdentifierName(), "\""),
-      ERR_DETAIL("This operation is not supported for indexes."));
+      ERR_MSG("cannot open relation \"", table.name.GetIdentifierName(), "\""));
   }
   return *base;
 }

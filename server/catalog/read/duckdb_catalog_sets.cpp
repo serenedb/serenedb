@@ -40,7 +40,6 @@
 #include "catalog/ddl/catalog.h"
 #include "catalog/ddl/duckdb_catalog.h"
 #include "catalog/entry/duckdb_index_entry.h"
-#include "catalog/entry/duckdb_index_scan_entry.h"
 #include "catalog/entry/duckdb_object_entry.h"
 #include "catalog/entry/duckdb_schema_entry.h"
 #include "catalog/entry/duckdb_table_entry.h"
@@ -286,16 +285,11 @@ duckdb::unique_ptr<duckdb::StandardEntry> MakeEntry(
         catalog, schema, name, /*internal=*/false,
         basics::downCast<const duckdb::CreateMacroInfo>(info), perm);
       break;
-    case INDEX_ENTRY: {
-      // Both slots are built from the same record, and an inverted index is
-      // shared across them rather than copied into each.
-      const auto& index =
-        basics::downCast<const catalog::CreateIndexInfo>(info);
-      built = slot == INDEX_ENTRY
-                ? SereneDBIndexEntry::Make(catalog, schema, index, context)
-                : MakeIndexScanEntry(catalog, schema, name, index, context);
+    case INDEX_ENTRY:
+      built = SereneDBIndexEntry::Make(
+        catalog, schema, basics::downCast<const catalog::CreateIndexInfo>(info),
+        context);
       break;
-    }
     case SEQUENCE_ENTRY:
       built = SereneDBSequenceEntry::Make(
         catalog, schema,
@@ -404,37 +398,22 @@ duckdb::optional_ptr<duckdb::CatalogEntry> PlaceEntry(
   const auto on_conflict = old_name.empty()
                              ? duckdb::OnCreateConflict::IGNORE_ON_CONFLICT
                              : duckdb::OnCreateConflict::REPLACE_ON_CONFLICT;
-  duckdb::LogicalDependencyList deps;
-  // The primary entry lands first, so its by-id filing precedes the wrapper's
-  // and a by-id lookup answers with it.
-  duckdb::optional_ptr<duckdb::CatalogEntry> primary;
-  for (const auto slot : EntrySlots(type)) {
-    auto entry =
-      MakeEntry(*at.catalog, *at.schema, info, perm, slot, context, superseded);
-    if (!entry) {
-      continue;
-    }
-    if (!primary) {
-      // The wrapper carries the primary entry's edges: it is the same object.
-      deps = EntryDependencies(info);
-    }
-    auto placed = at.schema->AddEntryInternal(
-      *at.transaction, std::move(entry), on_conflict, deps,
-      old_name.empty() ? nullptr : &from);
-    if (!placed) {
-      ThrowConcurrentDdlOn(noun, name.GetIdentifierName());
-    }
-    if (!primary) {
-      primary = placed;
-    }
-  }
-  if (!primary) {
+  auto entry = MakeEntry(*at.catalog, *at.schema, info, perm, EntrySlot(type),
+                         context, superseded);
+  if (!entry) {
     return nullptr;
+  }
+  const auto deps = EntryDependencies(info);
+  auto placed =
+    at.schema->AddEntryInternal(*at.transaction, std::move(entry), on_conflict,
+                                deps, old_name.empty() ? nullptr : &from);
+  if (!placed) {
+    ThrowConcurrentDdlOn(noun, name.GetIdentifierName());
   }
   if (context != nullptr) {
     PinClusterGlobalReadView(*context);
   }
-  return primary;
+  return placed;
 } catch (const duckdb::TransactionException&) {
   ThrowConcurrentDdl();
 }
@@ -455,9 +434,8 @@ void DropSchemaObject(duckdb::ClientContext* context, duckdb::CatalogType type,
   if (!at) {
     return;
   }
-  for (const auto slot : EntrySlots(type)) {
-    at.Set(slot).DropEntry(*at.transaction, duckdb::Identifier{name}, cascade);
-  }
+  at.Set(EntrySlot(type))
+    .DropEntry(*at.transaction, duckdb::Identifier{name}, cascade);
   if (context != nullptr) {
     PinClusterGlobalReadView(*context);
   }
@@ -498,15 +476,12 @@ duckdb::CatalogEntry* FindEntryOfKind(duckdb::ClientContext* context,
   } else {
     object = LookupInSchema(context, parent_id, type, name);
   }
-  // The relation namespace puts tables, views, sequences and the index-name
-  // wrappers in one set, so a name can be held by something else -- and the
-  // wrapper is nobody's object.
+  // The relation namespace puts tables, views and sequences in one set, so a
+  // name can be held by something else.
   if (object == nullptr || KindOf(object->type) != KindOf(type)) {
     return nullptr;
   }
-  return dynamic_cast<SereneDBIndexScanEntry*>(object.get()) == nullptr
-           ? object.get()
-           : nullptr;
+  return object.get();
 }
 
 // The entry of `parent_id`.`name` an ALTER is about to rewrite, refused the way
@@ -1072,12 +1047,11 @@ RelationTarget FindRelationTarget(duckdb::ClientContext* context,
   if (!schema_id.isSet()) {
     return {nullptr, duckdb::CatalogType::INVALID};
   }
-  // Tables, views, sequences and the index-name wrappers are one set, so one
-  // lookup answers for all of them; the wrapper is nobody's object, and the
-  // index entry it stands for is in the set of its own kind.
+  // Tables, views and sequences are one set; an index shares their namespace
+  // but lives in the set of its own kind.
   auto object =
     LookupInSchema(context, schema_id, duckdb::CatalogType::TABLE_ENTRY, name);
-  if (object && !dynamic_cast<SereneDBIndexScanEntry*>(object.get())) {
+  if (object) {
     return {object.get(), KindOf(object->type)};
   }
   auto index =
@@ -1782,8 +1756,8 @@ void VisitTableEntries(
   VisitCatalogSetEntries(
     context, database, duckdb::CatalogType::TABLE_ENTRY,
     [&](const SereneDBSchemaEntry& schema, duckdb::CatalogEntry& object_entry) {
-      // Views and the index-name-as-table wrappers share this set; neither is
-      // a SereneDBTableEntry, so the cast is the filter.
+      // Views and sequences share this set; neither is a SereneDBTableEntry,
+      // so the cast is the filter.
       if (const auto* table =
             dynamic_cast<const SereneDBTableEntry*>(&object_entry)) {
         visitor(schema, *table);

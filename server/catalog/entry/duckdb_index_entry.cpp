@@ -32,8 +32,11 @@
 #include "catalog/entry/duckdb_schema_entry.h"
 #include "catalog/entry/duckdb_table_entry.h"
 #include "catalog/entry/duckdb_view_entry.h"
+#include "catalog/log/store.h"
 #include "catalog/read/duckdb_catalog_sets.h"
 #include "catalog/table.h"
+#include "pg/errcodes.h"
+#include "pg/sql_exception_macro.h"
 
 namespace sdb::catalog {
 
@@ -124,6 +127,35 @@ void SereneDBIndexEntry::Rollback(duckdb::CatalogEntry& prev_entry) {
   catalog::DropIndexArtifacts(
     nullptr, ParentSchema().Cast<SereneDBSchemaEntry>().GetDatabaseId(),
     record->Cast<catalog::CreateIndexInfo>(), _inverted_data);
+}
+
+duckdb::unique_ptr<duckdb::CatalogEntry> SereneDBIndexEntry::AlterEntry(
+  duckdb::ClientContext& context, duckdb::AlterInfo& info) {
+  // The grammar shares one RENAME alter across the relation kinds, so an index
+  // rename arrives as an ALTER TABLE -- the same conversion sequences make.
+  if (info.type != duckdb::AlterType::ALTER_TABLE ||
+      info.Cast<duckdb::AlterTableInfo>().alter_table_type !=
+        duckdb::AlterTableType::RENAME_TABLE) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+                    ERR_MSG("only RENAME is supported for ALTER INDEX"));
+  }
+  const auto new_name =
+    info.Cast<duckdb::RenameTableInfo>().new_table_name.GetIdentifierName();
+  const auto record = GetInfo();
+  const auto& index = record->Cast<catalog::CreateIndexInfo>();
+  auto& schema = ParentSchema().Cast<SereneDBSchemaEntry>();
+  if (const auto* relation = catalog::Find<SereneDBTableEntry>(
+        &context, index.GetSchemaId(), _relation_id)) {
+    if (MakeStoreIndexInfo(*relation->Definition(), index)) {
+      StoreRenameIndex(&context, schema.GetDatabaseId(), _relation_id,
+                       index.GetName(), new_name);
+    }
+  }
+  const auto renamed = RenamedIndexRecord(index, new_name);
+  auto built = Make(ParentCatalog(), schema,
+                    renamed->Cast<catalog::CreateIndexInfo>(), &context);
+  built->permissions = permissions;
+  return built;
 }
 
 duckdb::unique_ptr<duckdb::CatalogEntry> SereneDBIndexEntry::Make(

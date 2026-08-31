@@ -1,3 +1,6 @@
+# name: tests/sqllogic/sdb/pg/index/basic.test
+# group: [index]
+
 control substitution on
 
 statement ok
@@ -383,8 +386,7 @@ db error: ERROR: Can only delete from base table
 statement error
 DELETE FROM view_idx WHERE b = 'hello';
 ----
-db error: ERROR: cannot open relation "view_idx"
-DETAIL: This operation is not supported for indexes.
+db error: ERROR: Can only delete from base table
 
 
 statement error
@@ -412,34 +414,33 @@ CREATE INDEX idx_dml_idx ON idx_dml_test USING inverted(b);
 statement error
 INSERT INTO idx_dml_idx VALUES (1, 'hello');
 ----
-db error: ERROR: Could not convert string 'hello' to INT32
+db error: ERROR: Table with name idx_dml_idx does not exist!
+Did you mean "idx_dml_test"?
 
 
 statement error
 UPDATE idx_dml_idx SET b = 'world' WHERE a = 1;
 ----
-db error: ERROR: cannot open relation "idx_dml_idx"
-DETAIL: This operation is not supported for indexes.
+db error: ERROR: Can only update base table
 
 
 statement error
 DELETE FROM idx_dml_idx WHERE a = 1;
 ----
-db error: ERROR: cannot open relation "idx_dml_idx"
-DETAIL: This operation is not supported for indexes.
+db error: ERROR: Can only delete from base table
 
 
 statement error
 COPY idx_dml_idx FROM '${__TEST_DIR__}/nonexistent.parquet' (FORMAT PARQUET);
 ----
-db error: ERROR: No files found that match the pattern "<slt:ignore>/nonexistent.parquet"
+db error: ERROR: Table with name idx_dml_idx does not exist!
+Did you mean "idx_dml_test"?
 
 
 statement error
 CREATE INDEX idx_dml_idx2 ON idx_dml_idx USING inverted(b);
 ----
-db error: ERROR: cannot open relation "idx_dml_idx"
-DETAIL: This operation is not supported for indexes.
+db error: ERROR: cannot create index on relation "idx_dml_idx": it is an index
 
 
 statement ok

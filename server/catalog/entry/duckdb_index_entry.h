@@ -110,6 +110,13 @@ class SereneDBIndexEntry final : public duckdb::DuckIndexEntry {
   // relation the rows belong to, and for an inverted index the object itself.
   duckdb::unique_ptr<duckdb::CreateInfo> GetInfo() const final;
 
+  // The version a RENAME produces, for CatalogSet::AlterEntry to chain -- the
+  // one alter an index takes this way (options mutate the live object, a
+  // comment rebuilds through its own road). Also files the store's rename op:
+  // the store mirrors the display name.
+  duckdb::unique_ptr<duckdb::CatalogEntry> AlterEntry(
+    duckdb::ClientContext& context, duckdb::AlterInfo& info) final;
+
   // The rollback of the CREATE this version was: the base detaches the built
   // index from the live list, and the iresearch directory -- which no
   // committed version owns -- goes with it. A rolled-back alter or reindex

@@ -188,22 +188,6 @@ duckdb::optional_ptr<duckdb::CatalogEntry> CreateIndexImpl(
   return placed;
 }
 
-void RenameIndex(duckdb::ClientContext* context, const CreateIndexInfo& index,
-                 std::string_view new_name) {
-  catalog::Catalog::MutationScope mutation{catalog::GetCatalog()};
-  const auto schema_id = index.GetSchemaId();
-  auto renamed = RenamedIndexRecord(index, new_name);
-  const auto db_id = catalog::SchemaDatabaseId(context, schema_id);
-  const auto* entry = catalog::Find<SereneDBTableEntry>(context, schema_id,
-                                                        index.GetRelationId());
-  const auto table = entry ? entry->Definition() : nullptr;
-  if (table && MakeStoreIndexInfo(*table, index)) {
-    catalog::StoreRenameIndex(context, db_id, index.GetRelationId(),
-                              index.GetName(), new_name);
-  }
-  catalog::PutEntry(context, index.GetName(), std::move(renamed));
-}
-
 void DropIndexLocked(duckdb::ClientContext* context, ObjectId database_id,
                      const CreateIndexInfo& index,
                      std::shared_ptr<search::InvertedIndexStorage> storage,

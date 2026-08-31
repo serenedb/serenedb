@@ -1,3 +1,6 @@
+# name: tests/sqllogic/recovery/catalog_entry_oid.test
+# group: [recovery]
+
 control substitution on
 
 # duckdb's `oid` on a serenedb catalog entry is the object's stable serenedb id,
@@ -70,7 +73,6 @@ Schema	ceo	t
 Sequence	before_pk_seq	t
 Sequence	sq	t
 Table	before	t
-Table	ceo_i	t
 Table	t	t
 View	v	t
 

@@ -1,3 +1,6 @@
+# name: tests/sqllogic/sdb/pg/index/ts_dict_array_agg.test
+# group: [index]
+
 hash-threshold 100
 
 statement ok
@@ -333,20 +336,21 @@ query
 EXPLAIN SELECT unnest(array_agg(DISTINCT cat)) AS t FROM aa_idx ORDER BY t
 ----
 QUERY PLAN
-╭─ ORDER_BY ───────────────────────────────╮
-│ Order By: aa_idx.cat)) ASC               │
-│ ~3 rows                                  │
-╰─────────────────────┬────────────────────╯
-╭─ HASH_GROUP_BY ─────┴────────────────────╮
-│ Groups: #0                               │
-│ ~3 rows                                  │
-╰─────────────────────┬────────────────────╯
-╭─ IRESEARCH_SCAN ────┴────────────────────╮
-│ Index: aa_idx                            │
-│ TsDict: cat                              │
-│ Projections: sdb_inverted_index_term$cat │
-│ ~6 rows                                  │
-╰──────────────────────────────────────────╯
+╭─ ORDER_BY ─────────────────────────────────╮
+│ Order By:                                  │
+│ unnest(array_agg(DISTINCT aa_idx.cat)) ASC │
+│ ~3 rows                                    │
+╰──────────────────────┬─────────────────────╯
+╭─ HASH_GROUP_BY ──────┴─────────────────────╮
+│ Groups: #0                                 │
+│ ~3 rows                                    │
+╰──────────────────────┬─────────────────────╯
+╭─ IRESEARCH_SCAN ─────┴─────────────────────╮
+│ Index: aa_idx                              │
+│ TsDict: cat                                │
+│ Projections: sdb_inverted_index_term$cat   │
+│ ~6 rows                                    │
+╰────────────────────────────────────────────╯
 
 query
 SELECT unnest(array_agg(DISTINCT cat)) AS t FROM aa_idx ORDER BY t
@@ -362,7 +366,8 @@ EXPLAIN SELECT unnest(ts_dict_agg(cat)) AS t FROM aa_idx ORDER BY t
 ----
 QUERY PLAN
 ╭─ ORDER_BY ───────────────────────────────╮
-│ Order By: aa_idx.cat)) ASC               │
+│ Order By:                                │
+│ unnest(ts_dict_agg(aa_idx.cat)) ASC      │
 │ ~3 rows                                  │
 ╰─────────────────────┬────────────────────╯
 ╭─ HASH_GROUP_BY ─────┴────────────────────╮

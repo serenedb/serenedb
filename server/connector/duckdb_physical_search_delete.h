@@ -22,21 +22,10 @@
 
 #include <duckdb.hpp>
 #include <duckdb/execution/physical_operator.hpp>
-#include <memory>
 #include <vector>
 
 #include "connector/search_table_dispatch.h"
 
-namespace irs {
-
-class IndexFieldOptions;
-
-}  // namespace irs
-namespace sdb::search {
-
-class InvertedIndexStorage;
-
-}  // namespace sdb::search
 namespace sdb::connector {
 
 // DELETE on a TableEngine::Search table. Single-threaded like the RocksDB
@@ -55,27 +44,12 @@ class SereneDBSearchDelete final : public duckdb::PhysicalOperator {
                        std::vector<duckdb::idx_t> column_map,
                        duckdb::idx_t estimated_cardinality);
 
-  // The remove side of a REINDEX pass: DELETE FROM <index>. Removes go into
-  // the index's own writer on domain ticks, and no search-table WAL is
-  // written -- a died pass relaunches from the manifest-version mismatch.
-  SereneDBSearchDelete(
-    duckdb::PhysicalPlan& plan, ObjectId index_id,
-    std::shared_ptr<search::InvertedIndexStorage> storage,
-    std::shared_ptr<const irs::IndexFieldOptions> field_options,
-    std::vector<duckdb::idx_t> pk_col_indices,
-    duckdb::vector<duckdb::LogicalType> types,
-    duckdb::idx_t estimated_cardinality);
-
   bool IsSink() const final { return true; }
   duckdb::unique_ptr<duckdb::GlobalSinkState> GetGlobalSinkState(
     duckdb::ClientContext& context) const final;
   duckdb::SinkResultType Sink(duckdb::ExecutionContext& context,
                               duckdb::DataChunk& chunk,
                               duckdb::OperatorSinkInput& input) const final;
-  duckdb::SinkFinalizeType Finalize(
-    duckdb::Pipeline& pipeline, duckdb::Event& event,
-    duckdb::ClientContext& context,
-    duckdb::OperatorSinkFinalizeInput& input) const final;
 
   bool IsSource() const final { return true; }
   duckdb::unique_ptr<duckdb::GlobalSourceState> GetGlobalSourceState(
@@ -85,21 +59,12 @@ class SereneDBSearchDelete final : public duckdb::PhysicalOperator {
     duckdb::OperatorSourceInput& input) const final;
 
  private:
-  // The index road: DELETE FROM <index>, reachable only from a REINDEX pass.
-  bool IsReindexDelete() const noexcept { return !!_index_storage; }
-
-  template<typename GlobalState>
-  duckdb::SinkResultType SinkImpl(duckdb::DataChunk& chunk,
-                                  GlobalState& gstate) const;
-
   SearchWriteTarget _target;
   // Positions in the input chunk of the PK columns (explicit PK), or the single
   // generated-PK rowid column (no-PK tables). Same layout PlanDelete computes.
   std::vector<duckdb::idx_t> _pk_col_indices;
   // Empty unless the statement has a RETURNING clause.
   std::vector<duckdb::idx_t> _column_map;
-  std::shared_ptr<search::InvertedIndexStorage> _index_storage;
-  std::shared_ptr<const irs::IndexFieldOptions> _field_options;
 };
 
 }  // namespace sdb::connector

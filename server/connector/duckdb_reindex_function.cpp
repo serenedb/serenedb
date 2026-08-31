@@ -45,10 +45,8 @@
 #include <duckdb/parser/parsed_data/create_index_info.hpp>
 #include <duckdb/parser/parsed_data/create_view_info.hpp>
 #include <duckdb/parser/parser.hpp>
-#include <duckdb/parser/query_node/delete_query_node.hpp>
 #include <duckdb/parser/query_node/select_node.hpp>
 #include <duckdb/parser/statement/create_statement.hpp>
-#include <duckdb/parser/statement/delete_statement.hpp>
 #include <duckdb/parser/statement/select_statement.hpp>
 #include <duckdb/parser/tableref/basetableref.hpp>
 #include <duckdb/parser/tableref/column_data_ref.hpp>
@@ -82,6 +80,7 @@
 #include "connector/duckdb_physical_create_index.h"
 #include "connector/file_manifest.h"
 #include "connector/search_remove_filter.hpp"
+#include "connector/search_sink_writer.hpp"
 #include "connector/view_fast_path.h"
 #include "core/deletes/iceberg_equality_delete.hpp"
 #include "pg/connection_context.h"
@@ -260,24 +259,67 @@ class PassConnection {
   std::shared_ptr<ConnectionContext> _ctx;
 };
 
-// The condition runs as a real `DELETE FROM <index> WHERE ...` plan: the
-// index's own scan evaluates the rows, the sink removes the matched
-// (file, row) pks. False = the query cannot run (rescan is the fallback).
+// The condition runs as `SELECT file_index, row_number FROM <index> WHERE
+// ...` over the index's own scan; the matched pks are removed on the storage's
+// writer and committed as their own transaction, like the other remove roads.
+// False = the query cannot run (rescan is the fallback).
 bool RunPkScanRemoves(duckdb::ClientContext& context,
                       ConnectionContext& conn_ctx, const ReindexTarget& target,
+                      search::InvertedIndexStorage& storage,
                       duckdb::unique_ptr<duckdb::ParsedExpression> condition) {
   // Statement object, no SQL text: values travel verbatim.
-  auto statement = duckdb::make_uniq<duckdb::DeleteStatement>();
+  auto statement = duckdb::make_uniq<duckdb::SelectStatement>();
+  auto node = duckdb::make_uniq<duckdb::SelectNode>();
+  node->select_list.push_back(duckdb::make_uniq<duckdb::ColumnRefExpression>(
+    duckdb::Identifier{"file_index"}));
+  node->select_list.push_back(duckdb::make_uniq<duckdb::ColumnRefExpression>(
+    duckdb::Identifier{"row_number"}));
   auto table = duckdb::make_uniq<duckdb::BaseTableRef>();
   table->SetQualifiedName(duckdb::Identifier{target.database},
                           duckdb::Identifier{target.schema},
                           duckdb::Identifier{target.name});
-  statement->node->table = std::move(table);
-  statement->node->condition = std::move(condition);
-  // PlanDelete admits the index target only on an internal connection.
+  node->from_table = std::move(table);
+  node->where_clause = std::move(condition);
+  statement->node = std::move(node);
   PassConnection pass{context, conn_ctx, target};
   auto result = pass.Query(std::move(statement));
-  return !result->HasError();
+  if (result->HasError()) {
+    return false;
+  }
+  auto trx = storage.GetTransaction();
+  trx.SetFieldOptions(std::shared_ptr<const irs::IndexFieldOptions>{
+    target.index, &catalog::InvertedInfo(*target.index)});
+  // The removal term is the (file_index, row_number) pk, encoded exactly as
+  // the build wrote it.
+  const std::vector<catalog::duckdb_primary_key::PKColumn> pk_columns{
+    {.input_col_idx = 0, .type = duckdb::LogicalType::UBIGINT},
+    {.input_col_idx = 1, .type = duckdb::LogicalType::BIGINT}};
+  std::string pk;
+  while (auto chunk = result->Fetch()) {
+    const auto num_rows = chunk->size();
+    if (num_rows == 0) {
+      continue;
+    }
+    SearchSinkDeleteBaseImpl remover{trx};
+    remover.InitImpl(num_rows);
+    std::vector<duckdb::UnifiedVectorFormat> pk_formats;
+    catalog::duckdb_primary_key::PreparePKFormats(*chunk, pk_columns,
+                                                  pk_formats);
+    for (duckdb::idx_t row = 0; row < num_rows; ++row) {
+      pk.clear();
+      catalog::duckdb_primary_key::Create(pk_formats, pk_columns, row, pk);
+      remover.DeleteRowImpl(pk);
+    }
+    remover.FinishImpl();
+  }
+  trx.RegisterFlush();
+  if (!trx.Commit(
+        search::TickDomain::Instance().Advance(trx.GetQueries() + 1))) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INTERNAL_ERROR),
+                    ERR_MSG("REINDEX of \"", target.name,
+                            "\": failed to commit the equality removes"));
+  }
+  return true;
 }
 
 // Delete kind 3 -- equality deletes (iceberg): covered files group by
@@ -574,6 +616,7 @@ duckdb::unique_ptr<duckdb::ParsedExpression> BuildFileScope(
 bool RunEqualityRemoves(duckdb::ClientContext& context,
                         ConnectionContext& conn_ctx,
                         const ReindexTarget& target, const Source& src,
+                        search::InvertedIndexStorage& storage,
                         IcebergObserve& observe) {
   observe.EnsureDeletesProcessed();
   const auto& view_info = *target.view_info;
@@ -599,7 +642,7 @@ bool RunEqualityRemoves(duckdb::ClientContext& context,
     return true;
   }
   return RunPkScanRemoves(
-    context, conn_ctx, target,
+    context, conn_ctx, target, storage,
     CombineExprs(duckdb::ExpressionType::CONJUNCTION_OR, std::move(branches)));
 }
 
@@ -749,7 +792,7 @@ void RunDelta(duckdb::ClientContext& context, ConnectionContext& conn_ctx,
     // Kind 3 first: a group with no road demotes its covered files into
     // kind 1's input.
     if (!observe.eq_covered.empty() &&
-        !RunEqualityRemoves(context, conn_ctx, target, src, observe)) {
+        !RunEqualityRemoves(context, conn_ctx, target, src, storage, observe)) {
       DemoteEqCoveredToRescan(src, files, observe);
     }
   }

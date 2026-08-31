@@ -1,3 +1,6 @@
+# name: tests/sqllogic/sdb/pg/index/ts_dict_deletes.test
+# group: [index]
+
 hash-threshold 100
 
 statement ok
@@ -66,7 +69,8 @@ FROM dd_idx ORDER BY term
 ----
 QUERY PLAN
 ╭─ ORDER_BY ──────────────────────────────────────────╮
-│ Order By: dd_idx.cat)) ASC                          │
+│ Order By:                                           │
+│ unnest(ts_dict_agg(dd_idx.cat)) ASC                 │
 │ ~1 row                                              │
 ╰──────────────────────────┬──────────────────────────╯
 ╭─ PROJECTION ─────────────┴──────────────────────────╮

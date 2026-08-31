@@ -676,28 +676,19 @@ duckdb::unique_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::AlteredEntry(
     new SereneDBSchemaEntry{catalog, info, sets, id, std::move(perm)}};
 }
 
-std::span<const duckdb::CatalogType> EntrySlots(duckdb::CatalogType type) {
+duckdb::CatalogType EntrySlot(duckdb::CatalogType type) {
   using enum duckdb::CatalogType;
-  static constexpr std::array kRelation{TABLE_ENTRY};
-  static constexpr std::array kType{TYPE_ENTRY};
-  static constexpr std::array kSequence{SEQUENCE_ENTRY};
-  static constexpr std::array kTokenizer{TOKENIZER_ENTRY};
-  static constexpr std::array kFunction{MACRO_ENTRY};
-  static constexpr std::array kIndex{INDEX_ENTRY, TABLE_ENTRY};
   switch (type) {
     case MACRO_ENTRY:
     case TABLE_MACRO_ENTRY:
-      return kFunction;
+      return MACRO_ENTRY;
     case TYPE_ENTRY:
-      return kType;
     case TOKENIZER_ENTRY:
-      return kTokenizer;
     case SEQUENCE_ENTRY:
-      return kSequence;
     case INDEX_ENTRY:
-      return kIndex;
+      return type;
     default:
-      return kRelation;
+      return TABLE_ENTRY;
   }
 }
 
@@ -1734,7 +1725,8 @@ void SereneDBSchemaEntry::Alter(duckdb::CatalogTransaction transaction,
         if (FindRelation(ax.context, alter_schema_id, new_name)) {
           catalog::ThrowDuplicateName(catalog::NameKind::Relation, new_name);
         }
-        catalog::RenameIndex(ax.context, *index, new_name);
+        catalog::ApplyEntryAlter(ax, duckdb::CatalogType::INDEX_ENTRY,
+                                 alter_schema_id, table_name, info);
         return;
       }
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_WRONG_OBJECT_TYPE),

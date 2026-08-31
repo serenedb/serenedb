@@ -71,6 +71,7 @@
 #include "basics/system-compiler.h"
 #include "comparison_op.hpp"
 #include "connector/common.h"
+#include "connector/term_dict.h"
 #include "functions/search.h"
 #include "functions/string.h"
 #include "functions/ts_common.hpp"
@@ -423,7 +424,7 @@ void CollectNullableMarkers(const FilterContext& ctx,
     });
 }
 
-catalog::Tokenizer::TokenizerWrapper ResolveTokenizerOrThrow(
+catalog::TokenizerCatalogEntry::TokenizerWrapper ResolveTokenizerOrThrow(
   const FilterContext& ctx, std::string_view name) {
   auto wrapper = AcquireTokenizer(ctx.client_context, name);
   if (!wrapper) {
@@ -1712,7 +1713,7 @@ const duckdb::BoundColumnRefExpression* TryGetColumnRef(
 }
 
 bool IsNumericTypeId(duckdb::LogicalTypeId id) {
-  return catalog::term_dict::IsNumeric(catalog::term_dict::Classify(id));
+  return term_dict::IsNumeric(term_dict::Classify(id));
 }
 
 struct UnwrappedField {
@@ -1768,8 +1769,7 @@ const SearchColumnInfo* FindColumnInfoForExpr(const FilterContext& ctx,
     }
   }
 
-  if (!catalog::term_dict::IsSupported(
-        catalog::term_dict::Classify(info->logical_type.id()))) {
+  if (!term_dict::IsSupported(term_dict::Classify(info->logical_type.id()))) {
     return nullptr;
   }
   info->field_id = PickPerKindFieldId(*info, info->logical_type.id());
@@ -1783,7 +1783,7 @@ const SearchColumnInfo* FindColumnInfoForExpr(const FilterContext& ctx,
 }
 
 bool IsFilterableType(duckdb::LogicalTypeId type_id) {
-  return catalog::term_dict::IsSupported(catalog::term_dict::Classify(type_id));
+  return term_dict::IsSupported(term_dict::Classify(type_id));
 }
 
 void ValidateFilterType(duckdb::LogicalTypeId type_id) {
@@ -1798,11 +1798,11 @@ void ValidateFilterType(duckdb::LogicalTypeId type_id) {
 void ResetNumericStream(irs::NumericTokenizer& stream,
                         duckdb::LogicalTypeId type_id,
                         const duckdb::Value& value) {
-  switch (catalog::term_dict::Classify(type_id)) {
-    case catalog::term_dict::Kind::NumericI32:
+  switch (term_dict::Classify(type_id)) {
+    case term_dict::Kind::NumericI32:
       stream.reset(value.GetValue<int32_t>());
       break;
-    case catalog::term_dict::Kind::NumericI64:
+    case term_dict::Kind::NumericI64:
       if (type_id == duckdb::LogicalTypeId::TIME_TZ) {
         stream.reset(TimeTzIndexTerm(value.GetValueUnsafe<int64_t>()));
       } else if (value.type().InternalType() == duckdb::PhysicalType::INT64) {
@@ -1813,10 +1813,10 @@ void ResetNumericStream(irs::NumericTokenizer& stream,
         stream.reset(value.GetValue<int64_t>());
       }
       break;
-    case catalog::term_dict::Kind::NumericF32:
+    case term_dict::Kind::NumericF32:
       stream.reset(value.GetValue<float>());
       break;
-    case catalog::term_dict::Kind::NumericF64:
+    case term_dict::Kind::NumericF64:
       stream.reset(value.GetValue<double>());
       break;
     default:
@@ -1825,7 +1825,7 @@ void ResetNumericStream(irs::NumericTokenizer& stream,
 }
 
 bool IsRangeNumericValueType(duckdb::LogicalTypeId id) {
-  return catalog::term_dict::IsNumeric(catalog::term_dict::Classify(id)) ||
+  return term_dict::IsNumeric(term_dict::Classify(id)) ||
          id == duckdb::LogicalTypeId::DECIMAL;
 }
 

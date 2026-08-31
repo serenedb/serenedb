@@ -22,6 +22,8 @@
 
 #include <cstdint>
 #include <duckdb/catalog/catalog_entry.hpp>
+#include <duckdb/catalog/catalog_entry/duck_table_entry.hpp>
+#include <duckdb/catalog/catalog_entry/view_catalog_entry.hpp>
 #include <duckdb/common/enums/catalog_type.hpp>
 #include <duckdb/common/enums/statement_type.hpp>
 #include <duckdb/main/client_context.hpp>
@@ -35,16 +37,9 @@
 #include "basics/containers/flat_hash_map.h"
 #include "basics/containers/flat_hash_set.h"
 #include "basics/static_strings.h"
-#include "catalog/ddl/catalog.h"
-#include "catalog/entry.h"
-#include "catalog/entry/duckdb_index_scan_entry.h"
-#include "catalog/entry/duckdb_object_entry.h"
-#include "catalog/entry/duckdb_system_table_entry.h"
-#include "catalog/entry/duckdb_table_entry.h"
-#include "catalog/entry/duckdb_view_entry.h"
-#include "catalog/foreign_server.h"
-#include "catalog/log/store.h"
-#include "catalog/read/duckdb_catalog_sets.h"
+#include "catalog1/catalog.h"
+#include "catalog1/entry/foreign_server.h"
+#include "catalog1/permissions.h"
 #include "connector/duckdb_client_state.h"
 #include "pg/connection_context.h"
 #include "pg/errcodes.h"
@@ -92,7 +87,7 @@ struct Governed {
   // The identity the check reports and branches on, spelled out rather than
   // reached through the definition: every kind's entry carries its own.
   duckdb::CatalogType type = duckdb::CatalogType::INVALID;
-  ObjectId id;
+  duckdb::idx_t id;
   std::string_view name;
   const catalog::Permissions* perm = nullptr;
   // The entry a column check reads: its ColumnList spells the columns the
@@ -109,18 +104,17 @@ struct Governed {
 Governed SereneDBRelation(const duckdb::CatalogEntry* entry,
                           duckdb::ClientContext& context) {
   if (const auto* facade =
-        dynamic_cast<const catalog::SereneDBTableEntry*>(entry)) {
+        dynamic_cast<const duckdb::TableCatalogEntry*>(entry)) {
     return {duckdb::CatalogType::TABLE_ENTRY,
-            ObjectId{facade->oid},
+            facade->oid,
             facade->name.GetIdentifierName(),
             &facade->permissions,
             facade,
             &facade->GetColumnAcls()};
   }
-  if (const auto* view =
-        dynamic_cast<const catalog::SereneDBViewEntry*>(entry)) {
+  if (const auto* view = dynamic_cast<const duckdb::ViewCatalogEntry*>(entry)) {
     return {duckdb::CatalogType::VIEW_ENTRY,
-            ObjectId{view->oid},
+            view->oid,
             view->name.GetIdentifierName(),
             &view->permissions,
             nullptr,
@@ -145,7 +139,7 @@ Governed SereneDBRelation(const duckdb::CatalogEntry* entry,
   if (const auto* system =
         dynamic_cast<const catalog::SystemTableEntry*>(entry)) {
     return {duckdb::CatalogType::TABLE_ENTRY,
-            catalog::IdOf(*system),
+            (*system).oid,
             system->name.GetIdentifierName(),
             &system->permissions,
             system,
@@ -168,8 +162,7 @@ std::vector<catalog::AclView> SelectedColumnAcls(
   uint64_t i = 0;
   for (const auto& column : columns.Logical()) {
     if (logical.empty() || logical.contains(i)) {
-      acls.push_back(
-        catalog::ColumnAclOf(acls_by_column, ObjectId{column.CatalogOid()}));
+      acls.push_back(catalog::ColumnAclOf(acls_by_column, column.CatalogOid()));
     }
     ++i;
   }
@@ -190,10 +183,11 @@ void RequireColumns(const auth::RoleClosure& closure, const Governed& governed,
                   ERR_MSG("permission denied for table ", governed.name));
 }
 
-ObjectId EffectiveRole(ObjectId caller, const duckdb::CatalogEntry* who,
-                       duckdb::ClientContext& context) {
+duckdb::idx_t EffectiveRole(duckdb::idx_t caller,
+                            const duckdb::CatalogEntry* who,
+                            duckdb::ClientContext& context) {
   const auto view = SereneDBRelation(who, context);
-  return view ? ObjectId{view.perm->owner} : caller;
+  return view ? view.perm->owner : caller;
 }
 
 using AccessRequirements = duckdb::vector<duckdb::AccessRequirement>;
@@ -204,7 +198,8 @@ using AccessRequirements = duckdb::vector<duckdb::AccessRequirement>;
 // ATTACH and ungoverned. The resolve is instance-wide on purpose -- the
 // attachment is too, so a session in another database must not slip past -- and
 // it walks every attached catalog's set, hence the dedup per alias.
-void RequireForeignServerUsage(duckdb::ClientContext& context, ObjectId caller,
+void RequireForeignServerUsage(duckdb::ClientContext& context,
+                               duckdb::idx_t caller,
                                const AccessRequirements& reqs) {
   containers::FlatHashSet<std::string_view> checked;
   for (const auto& req : reqs) {
@@ -225,7 +220,7 @@ void RequireForeignServerUsage(duckdb::ClientContext& context, ObjectId caller,
     }
     const auto& perm = server->permissions;
     const auto closure = auth::ClosureFor(&context, caller);
-    if (!closure->Owns(ObjectId{perm.owner}) &&
+    if (!closure->Owns(perm.owner) &&
         !closure->Can(duckdb::CatalogType::FOREIGN_SERVER_ENTRY, perm,
                       catalog::AclMode::Usage)) {
       THROW_SQL_ERROR(
@@ -291,7 +286,7 @@ void CollectAndEnforce(duckdb::ClientContext& context, duckdb::Binder& binder) {
     const auto& perm = *governed.perm;
     const auto type = governed.type;
 
-    const ObjectId role =
+    const duckdb::idx_t role =
       EffectiveRole(caller, req.who, ctx.GetClientContext());
     const auto closure_ptr = auth::ClosureFor(&ctx.GetClientContext(), role);
     const auto& closure = *closure_ptr;

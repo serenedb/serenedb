@@ -25,6 +25,7 @@
 
 #include <atomic>
 #include <cstdint>
+#include <duckdb/common/typedefs.hpp>
 #include <filesystem>
 #include <memory>
 #include <span>
@@ -34,7 +35,6 @@
 
 #include "basics/containers/flat_hash_map.h"
 #include "basics/zstd_context.hpp"
-#include "catalog/identifiers/object_id.h"
 
 namespace duckdb {
 
@@ -125,26 +125,26 @@ class SearchDbWal {
 
   // One transaction's contribution for a single search shard
   struct ShardSection {
-    ObjectId table_id;
+    duckdb::idx_t table_id;
     std::span<const Op> ops;
   };
 
   using ReplayCallback =
-    absl::AnyInvocable<void(uint64_t tick, ObjectId table_id, uint64_t pk_base,
-                            duckdb::DataChunk& chunk) const>;
+    absl::AnyInvocable<void(uint64_t tick, duckdb::idx_t table_id,
+                            uint64_t pk_base, duckdb::DataChunk& chunk) const>;
 
   // Invoked once per DELETE op, in manifest order, with the encoded PK byte
   // strings to remove (views into the record buffer, valid for the call only).
   using DeleteReplayCallback =
-    absl::AnyInvocable<void(uint64_t tick, ObjectId table_id,
+    absl::AnyInvocable<void(uint64_t tick, duckdb::idx_t table_id,
                             std::span<const std::string_view> pks) const>;
 
   using TruncateReplayCallback =
-    absl::AnyInvocable<void(uint64_t tick, ObjectId table_id) const>;
+    absl::AnyInvocable<void(uint64_t tick, duckdb::idx_t table_id) const>;
 
-  using ShardExistsFn = absl::AnyInvocable<bool(ObjectId table_id) const>;
+  using ShardExistsFn = absl::AnyInvocable<bool(duckdb::idx_t table_id) const>;
   using ShardCommittedFn =
-    absl::AnyInvocable<uint64_t(ObjectId table_id) const>;
+    absl::AnyInvocable<uint64_t(duckdb::idx_t table_id) const>;
 
   // Default central-segment seal threshold (16MB as common standart like
   // postgres or duckdb)
@@ -161,11 +161,11 @@ class SearchDbWal {
     return _tick.load(std::memory_order_relaxed);
   }
 
-  void RegisterShard(ObjectId table_id, uint64_t committed_tick);
-  void OnShardCommit(ObjectId table_id, uint64_t committed_tick);
-  void DeregisterShard(ObjectId table_id);
+  void RegisterShard(duckdb::idx_t table_id, uint64_t committed_tick);
+  void OnShardCommit(duckdb::idx_t table_id, uint64_t committed_tick);
+  void DeregisterShard(duckdb::idx_t table_id);
 
-  ChunkWriter NewChunkWriter(ObjectId table_id);
+  ChunkWriter NewChunkWriter(duckdb::idx_t table_id);
   // Reserves `tick_span` consecutive ticks under the append lock and writes one
   // record at the top of that band; returns the record tick (== base +
   // tick_span). Once the record is fsynced, marks every REFERENCE op's chunks

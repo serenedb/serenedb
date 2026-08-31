@@ -21,15 +21,12 @@
 #include "pg/pg_catalog/pg_trigger.h"
 
 #include <deque>
+#include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/trigger_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_transaction.hpp>
 #include <string>
 #include <vector>
 
-#include "catalog/entry/duckdb_schema_entry.h"
-#include "catalog/entry/duckdb_table_entry.h"
-#include "catalog/read/duckdb_catalog_sets.h"
-#include "catalog/schema.h"
 #include "pg/pg_catalog/fwd.h"
 #include "pg/system_catalog.h"
 
@@ -90,7 +87,7 @@ int16_t TriggerType(const duckdb::TriggerCatalogEntry& trigger) {
 // a name the relation does not list, which is what postgres writes for a key
 // that is not a plain column.
 std::vector<int16_t> UpdateOfAttnums(const duckdb::TriggerCatalogEntry& trigger,
-                                     const catalog::SereneDBTableEntry& table) {
+                                     const duckdb::TableCatalogEntry& table) {
   std::vector<int16_t> attrs;
   attrs.reserve(trigger.columns.size());
   const auto& columns = table.GetColumns();
@@ -106,7 +103,7 @@ std::vector<int16_t> UpdateOfAttnums(const duckdb::TriggerCatalogEntry& trigger,
 }  // namespace
 
 template<>
-catalog::MaterializedData SystemTableSnapshot<PgTrigger>::GetTableData() {
+MaterializedData SystemTableSnapshot<PgTrigger>::GetTableData() {
   std::vector<PgTrigger> values;
   std::deque<std::string> name_storage;
   std::deque<std::vector<int16_t>> tgattr_storage;
@@ -115,19 +112,9 @@ catalog::MaterializedData SystemTableSnapshot<PgTrigger>::GetTableData() {
 
   // The entry itself, not the info: a trigger set hangs off the entry, and
   // reading it needs a transaction against the catalog holding it.
-  catalog::VisitCatalogSetEntries(
-    context, GetDatabaseId(), duckdb::CatalogType::TABLE_ENTRY,
-    [&](const catalog::SereneDBSchemaEntry&,
-        duckdb::CatalogEntry& object_entry) {
-      // Views and the index-name-as-table wrappers share this set; neither is a
-      // SereneDBTableEntry, so the cast is the filter.
-      auto* table_ptr =
-        dynamic_cast<catalog::SereneDBTableEntry*>(&object_entry);
-      if (table_ptr == nullptr) {
-        return;
-      }
-      auto& table = *table_ptr;
-      const auto relid = catalog::IdOf(table).id();
+  VisitEntries<duckdb::TableCatalogEntry>(
+    &context, GetDatabase(), [&](duckdb::TableCatalogEntry& table) {
+      const auto relid = table.oid;
       table.ScanTriggers(
         duckdb::CatalogTransaction(table.ParentCatalog(), context),
         [&](duckdb::CatalogEntry& entry) {

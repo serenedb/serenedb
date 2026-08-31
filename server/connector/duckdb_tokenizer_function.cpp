@@ -46,12 +46,8 @@
 
 #include "basics/assert.h"
 #include "basics/static_strings.h"
-#include "catalog/ddl/catalog.h"
-#include "catalog/ddl/duckdb_catalog.h"
-#include "catalog/entry/duckdb_object_entry.h"
-#include "catalog/log/data_store.h"
-#include "catalog/read/duckdb_catalog_sets.h"
-#include "catalog/tokenizer.h"
+#include "catalog1/catalog.h"
+#include "catalog1/entry/tokenizer.h"
 #include "connector/duckdb_client_state.h"
 #include "pg/commands/create_tsdictionary.h"
 #include "pg/connection_context.h"
@@ -107,18 +103,12 @@ void DropTSDictionaryPragma(duckdb::ClientContext& context,
 
   auto name = pg::ParseObjectName(dict_name, StaticStrings::kPublic);
 
-  catalog::JoinStoreTransaction(&context);
-  catalog::Catalog::MutationScope mutation{catalog::GetCatalog()};
-  const auto database_id =
-    catalog::FindDatabaseId(&context, conn_ctx.GetDatabase());
-  const auto schema_id =
-    database_id.isSet()
-      ? catalog::FindSchemaId(&context, database_id, name.schema)
-      : ObjectId{};
-  if (!DropEntryObject(catalog::ActingAs(context),
-                       duckdb::CatalogType::TOKENIZER_ENTRY, database_id,
-                       schema_id, name.relation,
-                       /*cascade=*/false, missing_ok)) {
+  if (!catalog::DropEntryObject(
+        context, duckdb::CatalogType::TOKENIZER_ENTRY,
+        duckdb::QualifiedName{duckdb::Identifier{conn_ctx.GetDatabase()},
+                              duckdb::Identifier{name.schema},
+                              duckdb::Identifier{name.relation}},
+        /*cascade=*/false, missing_ok)) {
     conn_ctx.AddNotice(
       SQL_ERROR_DATA(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
                      ERR_MSG("text search dictionary \"", name.relation,

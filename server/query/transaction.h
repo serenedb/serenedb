@@ -25,7 +25,7 @@
 #include <yaclib/async/future.hpp>
 
 #include "basics/containers/flat_hash_map.h"
-#include "catalog/ddl/catalog.h"
+#include "catalog1/catalog.h"
 #include "query/config.h"
 #include "search/inverted_index_storage.h"
 #include "search/search_table_transaction.h"
@@ -102,7 +102,7 @@ class Transaction : public Config {
   // The storage is handed in rather than read off the definition: an open
   // directory is the object's, not something a version of it describes.
   search::InvertedIndexSnapshotPtr EnsureSearchSnapshot(
-    ObjectId index_id,
+    duckdb::idx_t index_id,
     const std::shared_ptr<search::InvertedIndexStorage>& storage);
 
   // Lazily-created search-table (TableEngine::Search) transaction state +
@@ -126,13 +126,14 @@ class Transaction : public Config {
   // segments staged so far belong to it, and a session built in its place would
   // leave them to no commit at all.
   std::shared_ptr<connector::InvertedFeedSession> InvertedFeed(
-    ObjectId index_id) const {
+    duckdb::idx_t index_id) const {
     const auto it = _search_feeds.find(index_id);
     return it == _search_feeds.end() ? nullptr : it->second;
   }
 
   void EngageInvertedFeed(
-    ObjectId index_id, std::shared_ptr<connector::InvertedFeedSession> feed) {
+    duckdb::idx_t index_id,
+    std::shared_ptr<connector::InvertedFeedSession> feed) {
     auto& slot = _search_feeds[index_id];
     // One session per index per commit. A second, different session for the
     // same id would displace the first with its segments already registered
@@ -156,10 +157,10 @@ class Transaction : public Config {
   // the transaction only has to drive prepare/commit/abort. Shared with the
   // bound index rather than borrowed: DROP INDEX destroys the index without
   // waiting for a commit that has already engaged its feed.
-  containers::FlatHashMap<ObjectId,
+  containers::FlatHashMap<duckdb::idx_t,
                           std::shared_ptr<connector::InvertedFeedSession>>
     _search_feeds;
-  containers::FlatHashMap<ObjectId, search::InvertedIndexSnapshotPtr>
+  containers::FlatHashMap<duckdb::idx_t, search::InvertedIndexSnapshotPtr>
     _search_snapshots;
   // All search-table (TableEngine::Search) state + WAL commit logic. Engaged
   // lazily via SearchTxn(); reset in Destroy. Separate from the feeds above:

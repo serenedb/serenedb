@@ -41,7 +41,6 @@ class SereneDBSearchInsert final : public duckdb::PhysicalOperator {
   // CTAS mode: create the target table from `info` in GetGlobalSinkState.
   SereneDBSearchInsert(duckdb::PhysicalPlan& plan,
                        duckdb::unique_ptr<duckdb::BoundCreateTableInfo> info,
-                       duckdb::SchemaCatalogEntry& schema,
                        duckdb::idx_t estimated_cardinality);
 
   bool IsSink() const final { return true; }
@@ -74,8 +73,8 @@ class SereneDBSearchInsert final : public duckdb::PhysicalOperator {
   SearchWriteTarget _target;
 
   // CTAS mode only -- mutually exclusive with _target; null in insert mode.
+  // It carries the target schema, so nothing has to resolve one.
   duckdb::unique_ptr<duckdb::BoundCreateTableInfo> _ctas_info;
-  duckdb::SchemaCatalogEntry* _ctas_schema = nullptr;
 
   bool _return_chunk = false;
 };

@@ -24,8 +24,6 @@
 #include <duckdb/storage/storage_extension.hpp>
 #include <string_view>
 
-#include "catalog/fwd.h"
-
 namespace sdb::connector {
 
 class SereneDBStorageExtension : public duckdb::StorageExtension {
@@ -38,7 +36,7 @@ class SereneDBStorageExtension : public duckdb::StorageExtension {
 // each database record, so everything the log says afterwards lands in a real
 // CatalogSet -- and opens the storage only once the catalog is whole, which is
 // what lets the WAL replay into inverted indexes that are already there.
-void AttachDatabaseCatalog(ObjectId id, std::string_view name);
+void AttachDatabaseCatalog(duckdb::idx_t id, std::string_view name);
 
 // Takes such an attachment back out without dropping anything, which a DETACH
 // would: boot read the database's drop record after having attached it, and

@@ -24,7 +24,6 @@
 #include <duckdb/main/client_context_state.hpp>
 #include <memory>
 
-#include "catalog/identifiers/object_id.h"
 #include "pg/progress_registry.h"
 
 namespace sdb {
@@ -122,7 +121,7 @@ class SereneDBClientState final : public duckdb::ClientContextState {
   // reset and clears them.
   pg::ProgressCommand pending_copy_command = pg::ProgressCommand::None;
   pg::ProgressIoType pending_copy_io = pg::ProgressIoType::None;
-  ObjectId pending_copy_relid;
+  duckdb::idx_t pending_copy_relid;
 
   // Transaction-scoped compensation for a statement that has already written
   // its catalog record (CTAS): registered when the load starts, run in

@@ -21,41 +21,38 @@
 #include "pg/pg_catalog/pg_sequence.h"
 
 #include <cstdint>
+#include <duckdb/catalog/catalog_entry/sequence_catalog_entry.hpp>
 #include <vector>
 
 #include "auth/role_closure.h"
-#include "catalog/entry/duckdb_object_entry.h"
-#include "catalog/read/duckdb_catalog_sets.h"
-#include "catalog/sequence.h"
+#include "catalog1/lookup.h"
 #include "pg/pg_types.h"
 
 namespace sdb::pg {
 namespace {
 
-// The options are unsigned everywhere below the catalog -- nextval wants the
-// bounds and the increment as one lattice -- while postgres reports them as
-// int8, which is also the only sequence type serenedb creates.
-int64_t Signed(uint64_t value) noexcept { return static_cast<int64_t>(value); }
+// duckdb hands out one value at a time, so there is no cache to report;
+// postgres writes 1 for an uncached sequence, which is every sequence here.
+constexpr int64_t kNoSequenceCache = 1;
 
 }  // namespace
 
 template<>
-catalog::MaterializedData SystemTableSnapshot<PgSequence>::GetTableData() {
+MaterializedData SystemTableSnapshot<PgSequence>::GetTableData() {
   auto& context = _config.GetClientContext();
   std::vector<PgSequence> values;
-  catalog::Visit<catalog::SereneDBSequenceEntry>(
-    &context, GetDatabaseId(),
-    [&](const catalog::SereneDBSequenceEntry& sequence) {
-      const auto& options = sequence.Options();
+  VisitEntries<duckdb::SequenceCatalogEntry>(
+    &context, GetDatabase(), [&](const duckdb::SequenceCatalogEntry& sequence) {
+      const auto data = sequence.GetData();
       values.push_back(PgSequence{
         .seqrelid = Oid{sequence.oid},
         .seqtypid = Oid{static_cast<uint64_t>(PgTypeOID::kInt8)},
-        .seqstart = Signed(options.start_value),
-        .seqincrement = Signed(options.increment),
-        .seqmax = Signed(options.max_value),
-        .seqmin = Signed(options.min_value),
-        .seqcache = Signed(options.cache),
-        .seqcycle = options.cycle,
+        .seqstart = data.start_value,
+        .seqincrement = data.increment,
+        .seqmax = data.max_value,
+        .seqmin = data.min_value,
+        .seqcache = kNoSequenceCache,
+        .seqcycle = data.cycle,
       });
     });
 

@@ -32,22 +32,23 @@
 
 #include "basics/containers/flat_hash_map.h"
 #include "basics/containers/flat_hash_set.h"
-#include "catalog/fwd.h"
-#include "catalog/inverted_index.h"
+#include "catalog1/entry/inverted_index.h"
+#include "connector/column_id.h"
 #include "connector/duckdb_table_function.h"
 #include "connector/search_filter_builder.hpp"
+#include "search/inverted_index.h"
 
 namespace sdb::optimizer {
 
 std::optional<duckdb::TableIndex> SingleReferencedTableIndex(
   const duckdb::Expression& expr);
 
-catalog::ColumnId ResolveColumnId(
+connector::ColumnId ResolveColumnId(
   duckdb::ColumnBinding binding,
   const connector::SereneDBScanBindData& bind_data,
   const duckdb::LogicalGet& get);
 
-std::vector<catalog::ColumnId> BuildProjectedColumnIds(
+std::vector<connector::ColumnId> BuildProjectedColumnIds(
   const duckdb::LogicalGet& get,
   const connector::SereneDBScanBindData& bind_data);
 
@@ -86,7 +87,7 @@ duckdb::ColumnBinding ExposeGetColumnAt(duckdb::LogicalOperator& root,
 
 duckdb::idx_t AppendVirtualGetColumn(connector::SereneDBScanBindData& bind_data,
                                      duckdb::LogicalGet& get,
-                                     catalog::ColumnId virtual_id,
+                                     connector::ColumnId virtual_id,
                                      const duckdb::LogicalType& col_type,
                                      std::string_view col_name);
 
@@ -97,8 +98,8 @@ bool TryClaimIResearchConjunct(
   duckdb::ClientContext& context, connector::FilterScorers* scorers = nullptr);
 
 inline connector::SearchColumnInfo MakeSearchColumnInfo(
-  irs::field_id field, const catalog::InvertedIndexEntryInfo* info,
-  duckdb::LogicalType type, catalog::ColumnTokenizer tokenizer) {
+  irs::field_id field, const search::InvertedIndexEntryInfo* info,
+  duckdb::LogicalType type, search::ColumnTokenizer tokenizer) {
   return {
     .field_id = field,
     .null_field_id = info ? info->null_field_id : irs::field_limits::invalid(),
@@ -119,7 +120,7 @@ struct SearchGetters {
 
 bool WithSearchGetters(duckdb::LogicalGet& get,
                        connector::SereneDBScanBindData& bind_data,
-                       const catalog::InvertedIndex& index,
+                       const search::InvertedIndex& index,
                        duckdb::ClientContext& context,
                        absl::FunctionRef<bool(const SearchGetters&)> fn);
 

@@ -20,12 +20,12 @@
 
 #pragma once
 
+#include <duckdb/catalog/catalog_entry.hpp>
 #include <duckdb/common/enums/catalog_type.hpp>
 #include <string_view>
 
 #include "basics/assert.h"
-#include "catalog/entry.h"
-
+#include "catalog1/permissions.h"
 namespace sdb::pg {
 
 // Pair of (schema, name) parsed out of a qualified PG object name.

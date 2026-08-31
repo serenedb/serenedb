@@ -35,7 +35,7 @@
 #include <iresearch/utils/bytes_utils.hpp>
 
 #include "basics/duckdb_engine.h"
-#include "catalog/table_options.h"
+#include "connector/column_id.h"
 #include "connector/common.h"
 #include "connector/search_remove_filter.hpp"
 #include "connector/search_sink_writer.hpp"
@@ -46,10 +46,7 @@ namespace {
 using namespace sdb;
 using namespace connector;
 
-// `catalog::ColumnId` implicit-converts to `BaseType` (uint64_t), which is
-// the same underlying type as `irs::field_id`, so no `static_cast` is needed
-// at call sites that pass column ids to sink writers / `segment.field()`.
-constexpr irs::field_id kPKFieldId = catalog::kGeneratedPKId.id();
+constexpr irs::field_id kPKFieldId = connector::kGeneratedPKId;
 
 // Process-wide DuckDB instance, owned by sdb::DuckDBEngine. tests_main
 // brings it up before RUN_ALL_TESTS and tears it down before main returns,
@@ -129,7 +126,7 @@ duckdb::Vector MakeSqlNullVector(duckdb::idx_t count) {
 
 class DuckDBSearchSinkWriterTest : public ::testing::Test {
  public:
-  static catalog::ColumnTokenizer AnalyzerProvider(irs::field_id) {
+  static search::ColumnTokenizer AnalyzerProvider(irs::field_id) {
     static catalog::Tokenizer gStringTokenizer(
       ObjectId{12345}, {},
       irs::analysis::TokenizerConfig{.config =
@@ -163,9 +160,9 @@ class DuckDBSearchSinkWriterTest : public ::testing::Test {
 
 TEST_F(DuckDBSearchSinkWriterTest, InsertDeleteMultipleColumns) {
   auto trx = _data_writer->GetBatch();
-  const std::vector<catalog::ColumnId> col_id{
-    catalog::ColumnId{1}, catalog::ColumnId{2}, catalog::ColumnId{3},
-    catalog::ColumnId{4}, catalog::ColumnId{5}};
+  const std::vector<connector::ColumnId> col_id{
+    connector::ColumnId{1}, connector::ColumnId{2}, connector::ColumnId{3},
+    connector::ColumnId{4}, connector::ColumnId{5}};
   DuckDBSearchSinkInsertWriter sink{trx, AnalyzerProvider, col_id};
 
   const std::vector<std::string_view> pk{
@@ -271,15 +268,15 @@ TEST_F(DuckDBSearchSinkWriterTest, InsertDeleteMultipleColumns) {
       irs::column_internal::GatherRows(*pk_column, pk_state, rows, out, 0);
       return duckdb::FlatVector::GetData<int64_t>(out)[0];
     };
-    auto int32_terms = segment.field(catalog::ColumnId{1});
+    auto int32_terms = segment.field(connector::ColumnId{1});
     ASSERT_NE(nullptr, int32_terms);
-    auto varchar_terms = segment.field(catalog::ColumnId{2});
+    auto varchar_terms = segment.field(connector::ColumnId{2});
     ASSERT_NE(nullptr, varchar_terms);
-    auto bool_terms = segment.field(catalog::ColumnId{3});
+    auto bool_terms = segment.field(connector::ColumnId{3});
     ASSERT_NE(nullptr, bool_terms);
-    auto real_terms = segment.field(catalog::ColumnId{4});
+    auto real_terms = segment.field(connector::ColumnId{4});
     ASSERT_NE(nullptr, real_terms);
-    auto big_terms = segment.field(catalog::ColumnId{5});
+    auto big_terms = segment.field(connector::ColumnId{5});
     ASSERT_NE(nullptr, big_terms);
 
     irs::NumericTokenizer num_stream;
@@ -381,8 +378,8 @@ TEST_F(DuckDBSearchSinkWriterTest, InsertDeleteMultipleColumns) {
 TEST_F(DuckDBSearchSinkWriterTest, InsertNullsColumns) {
   auto trx = _data_writer->GetBatch();
 
-  const std::vector<catalog::ColumnId> col_id{catalog::ColumnId{1},
-                                              catalog::ColumnId{2}};
+  const std::vector<connector::ColumnId> col_id{connector::ColumnId{1},
+                                                connector::ColumnId{2}};
   const std::vector<std::string_view> pk{
     {"pk1", 3}, {"pk2", 3}, {"pk3", 3}, {"pk4", 3}};
 
@@ -395,14 +392,14 @@ TEST_F(DuckDBSearchSinkWriterTest, InsertNullsColumns) {
   // fallback where null_field_id collapses onto the value field.
   constexpr irs::field_id kVarcharNullsFieldId = 100;
   constexpr irs::field_id kUnknownNullsFieldId = 101;
-  catalog::InvertedIndexEntryInfo varchar_entry;
+  search::InvertedIndexEntryInfo varchar_entry;
   varchar_entry.null_field_id = kVarcharNullsFieldId;
-  catalog::InvertedIndexEntryInfo unknown_entry;
+  search::InvertedIndexEntryInfo unknown_entry;
   unknown_entry.null_field_id = kUnknownNullsFieldId;
   EntryInfoProvider entry_provider =
     [varchar_field = col_id[0], unknown_field = col_id[1], &varchar_entry,
      &unknown_entry](
-      irs::field_id id) -> const catalog::InvertedIndexEntryInfo* {
+      irs::field_id id) -> const search::InvertedIndexEntryInfo* {
     if (id == varchar_field) {
       return &varchar_entry;
     }
@@ -464,7 +461,7 @@ TEST_F(DuckDBSearchSinkWriterTest, InsertNullsColumns) {
     }
     return irs::doc_limits::invalid();
   };
-  auto varchar_terms = segment.field(catalog::ColumnId{1});
+  auto varchar_terms = segment.field(connector::ColumnId{1});
   ASSERT_NE(nullptr, varchar_terms);
   auto varchar_nulls = segment.field(kVarcharNullsFieldId);
   ASSERT_NE(nullptr, varchar_nulls);
@@ -474,8 +471,8 @@ TEST_F(DuckDBSearchSinkWriterTest, InsertNullsColumns) {
   auto unknown_terms = segment.field(kUnknownNullsFieldId);
   ASSERT_NE(nullptr, unknown_terms);
   // SQLNULL kind: no value-side terms, only the null marker. The value-side
-  // catalog::ColumnId{2} slot is never created.
-  ASSERT_EQ(nullptr, segment.field(catalog::ColumnId{2}));
+  // connector::ColumnId{2} slot is never created.
+  ASSERT_EQ(nullptr, segment.field(connector::ColumnId{2}));
 
   // Row 1   foo, NULL
   {
@@ -574,7 +571,7 @@ TEST_F(DuckDBSearchSinkWriterTest, InsertNullsColumns) {
 // the same thing; under the Vector-native API the bytes just go through).
 TEST_F(DuckDBSearchSinkWriterTest, InsertStringPrefix) {
   auto trx = _data_writer->GetBatch();
-  const catalog::ColumnId col_id{1};
+  const connector::ColumnId col_id{1};
   DuckDBSearchSinkInsertWriter sink{trx, AnalyzerProvider, {col_id}};
 
   const std::vector<std::string_view> pk{{"pk1", 3}};
@@ -607,7 +604,7 @@ TEST_F(DuckDBSearchSinkWriterTest, InsertStringPrefix) {
     return duckdb::FlatVector::GetData<int64_t>(out)[0];
   };
 
-  auto varchar_terms = segment.field(catalog::ColumnId{1});
+  auto varchar_terms = segment.field(connector::ColumnId{1});
   ASSERT_NE(nullptr, varchar_terms);
   auto varchar_terms_itr = varchar_terms->iterator();
   ASSERT_NE(nullptr, varchar_terms_itr);
@@ -634,14 +631,14 @@ void InsertOneVarcharRow(irs::IndexWriter& writer, std::string_view pk,
   auto trx = writer.GetBatch();
   DuckDBSearchSinkInsertWriter sink{
     trx, DuckDBSearchSinkWriterTest::AnalyzerProvider,
-    std::array<catalog::ColumnId, 1>{catalog::ColumnId{1}}};
+    std::array<connector::ColumnId, 1>{connector::ColumnId{1}}};
   const std::vector<std::string_view> rk{pk};
   auto pk_vec =
     MakeNumericVector<int64_t>(duckdb::LogicalType::BIGINT, {PkIdOf(pk)});
   sink.Init(1, PkChunk{.keys = rk, .column = &pk_vec});
   auto vec = MakeVarcharVector({value});
   sink.SwitchColumn(
-    ColumnDescriptor{catalog::ColumnId{1}, duckdb::LogicalType::VARCHAR}, vec,
+    ColumnDescriptor{connector::ColumnId{1}, duckdb::LogicalType::VARCHAR}, vec,
     1);
   sink.Finish();
   ASSERT_TRUE(trx.Commit());
@@ -653,14 +650,14 @@ void InsertTwoVarcharRows(irs::IndexWriter& writer, std::string_view pk_a,
   auto trx = writer.GetBatch();
   DuckDBSearchSinkInsertWriter sink{
     trx, DuckDBSearchSinkWriterTest::AnalyzerProvider,
-    std::array<catalog::ColumnId, 1>{catalog::ColumnId{1}}};
+    std::array<connector::ColumnId, 1>{connector::ColumnId{1}}};
   const std::vector<std::string_view> rk{pk_a, pk_b};
   auto pk_vec = MakeNumericVector<int64_t>(duckdb::LogicalType::BIGINT,
                                            {PkIdOf(pk_a), PkIdOf(pk_b)});
   sink.Init(2, PkChunk{.keys = rk, .column = &pk_vec});
   auto vec = MakeVarcharVector({value_a, value_b});
   sink.SwitchColumn(
-    ColumnDescriptor{catalog::ColumnId{1}, duckdb::LogicalType::VARCHAR}, vec,
+    ColumnDescriptor{connector::ColumnId{1}, duckdb::LogicalType::VARCHAR}, vec,
     2);
   sink.Finish();
   ASSERT_TRUE(trx.Commit());
@@ -710,7 +707,7 @@ TEST_F(DuckDBSearchSinkWriterTest, InsertDeleteInsertWithExisting) {
       irs::column_internal::GatherRows(*pk_column, pk_state, rows, out, 0);
       return duckdb::FlatVector::GetData<int64_t>(out)[0];
     };
-    auto varchar_terms = segment.field(catalog::ColumnId{1});
+    auto varchar_terms = segment.field(connector::ColumnId{1});
     ASSERT_NE(nullptr, varchar_terms);
     auto itr = varchar_terms->iterator();
     ASSERT_TRUE(
@@ -723,7 +720,7 @@ TEST_F(DuckDBSearchSinkWriterTest, InsertDeleteInsertWithExisting) {
   // check deleted
   {
     auto& segment = reader[1];
-    auto varchar_terms = segment.field(catalog::ColumnId{1});
+    auto varchar_terms = segment.field(connector::ColumnId{1});
     ASSERT_NE(nullptr, varchar_terms);
 
     auto itr = varchar_terms->iterator();
@@ -734,7 +731,7 @@ TEST_F(DuckDBSearchSinkWriterTest, InsertDeleteInsertWithExisting) {
   }
   {
     auto& segment = reader[0];
-    auto varchar_terms = segment.field(catalog::ColumnId{1});
+    auto varchar_terms = segment.field(connector::ColumnId{1});
     ASSERT_NE(nullptr, varchar_terms);
 
     auto itr = varchar_terms->iterator();
@@ -775,7 +772,7 @@ TEST_F(DuckDBSearchSinkWriterTest, InsertDeleteInsertOnePending) {
       irs::column_internal::GatherRows(*pk_column, pk_state, rows, out, 0);
       return duckdb::FlatVector::GetData<int64_t>(out)[0];
     };
-    auto varchar_terms = segment.field(catalog::ColumnId{1});
+    auto varchar_terms = segment.field(connector::ColumnId{1});
     ASSERT_NE(nullptr, varchar_terms);
     auto itr = varchar_terms->iterator();
     ASSERT_TRUE(
@@ -788,7 +785,7 @@ TEST_F(DuckDBSearchSinkWriterTest, InsertDeleteInsertOnePending) {
   // check deleted
   {
     auto& segment = reader[0];
-    auto varchar_terms = segment.field(catalog::ColumnId{1});
+    auto varchar_terms = segment.field(connector::ColumnId{1});
     ASSERT_NE(nullptr, varchar_terms);
     {
       auto itr = varchar_terms->iterator();
@@ -848,7 +845,7 @@ TEST_F(DuckDBSearchSinkWriterTest, InsertDeleteInsertOnePendingWithFlush) {
         irs::column_internal::GatherRows(*pk_column, pk_state, rows, out, 0);
         return duckdb::FlatVector::GetData<int64_t>(out)[0];
       };
-      auto varchar_terms = segment.field(catalog::ColumnId{1});
+      auto varchar_terms = segment.field(connector::ColumnId{1});
       ASSERT_NE(nullptr, varchar_terms);
       auto itr = varchar_terms->iterator();
       ASSERT_TRUE(itr->seek(
@@ -861,7 +858,7 @@ TEST_F(DuckDBSearchSinkWriterTest, InsertDeleteInsertOnePendingWithFlush) {
     // check deleted
     {
       auto& segment = reader[0];
-      auto varchar_terms = segment.field(catalog::ColumnId{1});
+      auto varchar_terms = segment.field(connector::ColumnId{1});
       ASSERT_NE(nullptr, varchar_terms);
       {
         auto itr = varchar_terms->iterator();
@@ -873,7 +870,7 @@ TEST_F(DuckDBSearchSinkWriterTest, InsertDeleteInsertOnePendingWithFlush) {
     }
     {
       auto& segment = reader[1];
-      auto varchar_terms = segment.field(catalog::ColumnId{1});
+      auto varchar_terms = segment.field(connector::ColumnId{1});
       ASSERT_NE(nullptr, varchar_terms);
       {
         auto itr = varchar_terms->iterator();
@@ -917,7 +914,7 @@ TEST_F(DuckDBSearchSinkWriterTest, DeleteNotMissedWithExisting) {
       irs::column_internal::GatherRows(*pk_column, pk_state, rows, out, 0);
       return duckdb::FlatVector::GetData<int64_t>(out)[0];
     };
-    auto varchar_terms = segment.field(catalog::ColumnId{1});
+    auto varchar_terms = segment.field(connector::ColumnId{1});
     ASSERT_NE(nullptr, varchar_terms);
     auto itr = varchar_terms->iterator();
     ASSERT_TRUE(
@@ -930,7 +927,7 @@ TEST_F(DuckDBSearchSinkWriterTest, DeleteNotMissedWithExisting) {
   // check deleted
   {
     auto& segment = reader[0];
-    auto varchar_terms = segment.field(catalog::ColumnId{1});
+    auto varchar_terms = segment.field(connector::ColumnId{1});
     ASSERT_NE(nullptr, varchar_terms);
 
     auto itr = varchar_terms->iterator();

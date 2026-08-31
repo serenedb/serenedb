@@ -25,7 +25,7 @@
 namespace sdb::pg {
 
 template<>
-catalog::MaterializedData SystemTableSnapshot<SdbProgress>::GetTableData() {
+MaterializedData SystemTableSnapshot<SdbProgress>::GetTableData() {
   auto snapshots = ProgressRegistry::Instance().GetSnapshots();
 
   // WriteData null_mask semantics: bit N = 1 means column N is NULL.

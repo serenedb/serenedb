@@ -27,6 +27,7 @@
 #include <duckdb/storage/table/scan_state.hpp>
 #include <span>
 
+#include "connector/column_id.h"
 #include "connector/index_source_view.h"
 
 namespace sdb::connector {
@@ -77,20 +78,19 @@ class ViewTableIndexSource final : public RowIdFetchIndexSource {
   ViewTableIndexSource(duckdb::ClientContext& context, ViewFastPath fast_path,
                        std::span<const duckdb::idx_t> projected_columns,
                        std::span<const duckdb::LogicalType> projected_types,
-                       std::span<const catalog::ColumnId> bind_column_ids,
+                       std::span<const ColumnId> bind_column_ids,
                        duckdb::TableFilterSet* pushed_filters = nullptr);
 };
 
-// SereneDB tables: postings carry the store-table rowid; rows are fetched
-// from the hidden store table backing the facade entry.
+// SereneDB tables: postings carry the table's rowid, so rows are fetched
+// straight from the scanned entry's own storage.
 class TableRowIdIndexSource final : public RowIdFetchIndexSource {
  public:
   TableRowIdIndexSource(duckdb::ClientContext& context,
-                        const duckdb::TableCatalogEntry& scan_entry,
-                        ObjectId relation_id,
+                        duckdb::TableCatalogEntry& table,
                         std::span<const duckdb::idx_t> projected_columns,
                         std::span<const duckdb::LogicalType> projected_types,
-                        std::span<const catalog::ColumnId> bind_column_ids,
+                        std::span<const ColumnId> bind_column_ids,
                         duckdb::TableFilterSet* pushed_filters = nullptr);
 };
 

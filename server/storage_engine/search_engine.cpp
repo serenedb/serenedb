@@ -42,9 +42,8 @@
 #include "basics/log.h"
 #include "basics/number_of_cores.h"
 #include "basics/static_strings.h"
-#include "catalog/ddl/catalog.h"
-#include "catalog/index.h"
-#include "catalog/inverted_index.h"
+#include "catalog1/catalog.h"
+#include "catalog1/entry/inverted_index.h"
 #include "pg/sql_exception_macro.h"
 #include "rest_server/database_path_feature.h"
 #include "search/inverted_index_storage.h"
@@ -120,14 +119,14 @@ template void SearchEngine::StartTasks(
 template void SearchEngine::StartTasks(const std::shared_ptr<SearchTable>&);
 
 std::filesystem::path SearchEngine::GetPersistedPath(
-  ObjectId database_id) const {
+  duckdb::idx_t database_id) const {
   std::filesystem::path path = _dir_feature.directory();
   path /= sdb::StaticStrings::kSearchRoot;
   path /= absl::StrCat(database_id);
   return path;
 }
 
-SearchDbWal& SearchEngine::GetDbWal(ObjectId database_id) {
+SearchDbWal& SearchEngine::GetDbWal(duckdb::idx_t database_id) {
   absl::MutexLock lock(&_db_wals_mu);
   auto it = _db_wals.find(database_id);
   if (it == _db_wals.end()) {

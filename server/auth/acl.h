@@ -22,38 +22,38 @@
 
 #include <absl/functional/any_invocable.h>
 
+#include <duckdb/catalog/catalog_entry.hpp>
 #include <duckdb/common/enums/catalog_type.hpp>
 #include <optional>
 #include <span>
 #include <string_view>
 
-#include "catalog/entry.h"
-
+#include "catalog1/permissions.h"
 namespace sdb::auth {
 
 // Sorted ascending; membership tested with binary_search.
-using RoleIdSpan = std::span<const ObjectId>;
+using RoleIdSpan = std::span<const duckdb::idx_t>;
 
 // Owning, because it runs inside the mutation, against the ACL of the version
 // it is about to record.
-using AclMutator = absl::AnyInvocable<void(ObjectId owner, catalog::Acl&)>;
+using AclMutator = absl::AnyInvocable<void(duckdb::idx_t owner, catalog::Acl&)>;
 
 enum class PrivMatch {
   All,
   Any,
 };
 
-catalog::Acl AclDefault(duckdb::CatalogType type, ObjectId owner);
+catalog::Acl AclDefault(duckdb::CatalogType type, duckdb::idx_t owner);
 
 catalog::Acl AclForStorage(catalog::AclView stored, duckdb::CatalogType type,
-                           ObjectId owner);
+                           duckdb::idx_t owner);
 
 std::optional<catalog::AclMode> TryParseAclKeyword(std::string_view keyword,
                                                    duckdb::CatalogType type);
 
 bool AclCheckSorted(catalog::AclView stored, duckdb::CatalogType type,
-                    ObjectId owner, RoleIdSpan roles, catalog::AclMode need,
-                    PrivMatch match);
+                    duckdb::idx_t owner, RoleIdSpan roles,
+                    catalog::AclMode need, PrivMatch match);
 
 catalog::AclMode AclGrantOptionHeld(catalog::AclView acl, RoleIdSpan roles);
 
@@ -64,7 +64,7 @@ catalog::AclMode AclPrivsHeld(catalog::AclView acl, RoleIdSpan roles);
 // Operates on an already-cloned object (the COW analogue of writing a new
 // catalog tuple).
 catalog::Permissions TransferredOwner(catalog::Permissions perm,
-                                      ObjectId new_owner);
+                                      duckdb::idx_t new_owner);
 
 // The ACL a GRANT or REVOKE leaves behind. The stored form holds only
 // non-owner grants: the owner's privileges are derived from ownership at check

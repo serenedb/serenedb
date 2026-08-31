@@ -20,6 +20,7 @@
 
 #pragma once
 
+#include <duckdb/catalog/catalog_entry/index_catalog_entry.hpp>
 #include <duckdb/execution/index/bound_index.hpp>
 #include <duckdb/execution/index/index_type.hpp>
 #include <iresearch/types.hpp>
@@ -29,7 +30,6 @@
 #include <string>
 #include <vector>
 
-#include "catalog/identifiers/object_id.h"
 #include "connector/duckdb_index_utils.h"
 #include "search/inverted_index_storage.h"
 
@@ -38,6 +38,7 @@ namespace duckdb {
 class DataTable;
 class ClientContext;
 class DuckTransaction;
+class TableCatalogEntry;
 class TableIndexList;
 class RowGroupCollection;
 struct StorageIndex;
@@ -93,7 +94,7 @@ class InvertedStoreIndex final : public duckdb::BoundIndex {
     const duckdb::vector<duckdb::column_t>& column_ids,
     const duckdb::vector<duckdb::unique_ptr<duckdb::Expression>>& exprs,
     duckdb::AttachedDatabase& db,
-    std::shared_ptr<const catalog::Index> attached_index,
+    duckdb::optional_ptr<const duckdb::IndexCatalogEntry> attached_index,
     std::shared_ptr<search::InvertedIndexStorage> attached_storage,
     std::vector<ExpressionField> expr_fields, bool has_predicate,
     std::vector<FeedColumn> ref_columns);
@@ -183,7 +184,7 @@ class InvertedStoreIndex final : public duckdb::BoundIndex {
 
   // Lets recovery pair a bound index with the storage it replays into, so each
   // index's refresh can follow its own FinishReplay instead of a global one.
-  ObjectId IndexId() const noexcept { return _index_id; }
+  duckdb::idx_t IndexId() const noexcept { return _index_id; }
 
  private:
   duckdb::ErrorData AppendImpl(duckdb::DataChunk& chunk,
@@ -205,9 +206,9 @@ class InvertedStoreIndex final : public duckdb::BoundIndex {
     const duckdb::shared_ptr<duckdb::ExternalIndexBatch>& batch);
   void ReplayDelete(duckdb::DataChunk& chunk, duckdb::Vector& row_ids);
 
-  ObjectId _index_id;
+  duckdb::idx_t _index_id;
   // The index definition this one was injected with; see the constructor.
-  std::shared_ptr<const catalog::Index> _attached_index;
+  duckdb::optional_ptr<const duckdb::IndexCatalogEntry> _attached_index;
   // The storage it was injected with, for the same reason: an online build
   // publishes its stub before the entry carrying the handle is committed, so a
   // concurrent writer's own catalog view cannot resolve it.
@@ -246,8 +247,8 @@ duckdb::unique_ptr<duckdb::BoundIndex> CreateInvertedInstance(
 // expressions are bound once, up front (like ART).
 duckdb::unique_ptr<InvertedStoreIndex> MakeInjectedInvertedIndex(
   duckdb::ClientContext& context, duckdb::DataTable& storage,
-  const duckdb::CreateTableInfo& table,
-  std::shared_ptr<const catalog::Index> inverted);
+  const duckdb::TableCatalogEntry& table,
+  duckdb::optional_ptr<const duckdb::IndexCatalogEntry> inverted);
 
 // Puts an injected index into `list`, replacing the one already registered
 // under its store name. An injected index has no duckdb catalog entry keeping

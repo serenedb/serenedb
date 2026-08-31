@@ -898,7 +898,6 @@ inline constexpr SystemMacro kExternalMacros[] = {
 
   // set_config: registered as C++ function in connector/functions/system.cpp
 
-
   {"pg_catalog", "aclexplode",
    R"((acl) AS TABLE
     SELECT

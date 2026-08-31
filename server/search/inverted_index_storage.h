@@ -35,8 +35,8 @@
 #include <mutex>
 #include <vector>
 
-#include "catalog/inverted_index.h"
 #include "connector/file_manifest.h"
+#include "search/inverted_index.h"
 #include "search/maintenance.h"
 #include "search/tick_domain.h"
 #include "storage_engine/search_engine.h"
@@ -97,7 +97,7 @@ class InvertedIndexStorage final
     // NOLINTEND
   };
 
-  InvertedIndexStorage(ObjectId db_id, const catalog::InvertedIndex& index,
+  InvertedIndexStorage(duckdb::idx_t db_id, const InvertedIndex& index,
                        bool is_new);
   ~InvertedIndexStorage();
 
@@ -108,14 +108,16 @@ class InvertedIndexStorage final
     _dropped.store(true, std::memory_order_release);
   }
 
-  static std::filesystem::path GetPath(ObjectId db_id, ObjectId schema_id,
-                                       ObjectId table_id, ObjectId index_id);
+  static std::filesystem::path GetPath(duckdb::idx_t db_id,
+                                       duckdb::idx_t schema_id,
+                                       duckdb::idx_t table_id,
+                                       duckdb::idx_t index_id);
 
   // `db_id` is passed in rather than derived from the catalog: an index
   // created inside a transaction lives in that transaction's overlay, and so
   // may the schema its database has to be walked through.
   static std::shared_ptr<InvertedIndexStorage> Create(
-    ObjectId db_id, const catalog::InvertedIndex& index, bool is_new);
+    duckdb::idx_t db_id, const InvertedIndex& index, bool is_new);
 
   auto GetTransaction() {
     SDB_ASSERT(_writer);
@@ -174,9 +176,9 @@ class InvertedIndexStorage final
   // RefreshUnsafeImpl). Synchronous; the flag is consumed by this call.
   void CheckpointRefresh();
 
-  ObjectId GetId() const noexcept { return _index_id; }
+  duckdb::idx_t GetId() const noexcept { return _index_id; }
   // The database whose attachment holds this index's catalog entry.
-  ObjectId GetDatabaseId() const noexcept { return _db_id; }
+  duckdb::idx_t GetDatabaseId() const noexcept { return _db_id; }
 
   Stats GetStats() const;
 
@@ -337,10 +339,10 @@ class InvertedIndexStorage final
                                  RefreshResult& code, bool for_checkpoint);
   absl::Status CleanupUnsafeImpl();
 
-  ObjectId _index_id;
+  duckdb::idx_t _index_id;
   // The database whose duckdb file backs the indexed table: the refresh reads
   // its checkpoint iteration to stamp the recovery cursor.
-  ObjectId _db_id;
+  duckdb::idx_t _db_id;
   std::filesystem::path _path;
   std::atomic<bool> _dropped{false};
   SearchEngine& _search;

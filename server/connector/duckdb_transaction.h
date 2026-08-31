@@ -23,8 +23,6 @@
 #include <duckdb.hpp>
 #include <duckdb/transaction/duck_transaction_manager.hpp>
 
-#include "catalog/log/duckdb_global_catalog.h"
-
 namespace sdb::connector {
 
 // DDL on a serenedb database runs on a real DuckTransaction so it gets the undo
@@ -33,8 +31,7 @@ namespace sdb::connector {
 //
 // The rows are in this attachment, so a statement writing a serenedb table
 // writes exactly one database and occupies the single-writable-db slot like any
-// duckdb table. What it may also do is state something in the catalog log,
-// which every serenedb attachment shares -- see CatalogLog() below.
+// duckdb table.
 class SereneDBTransactionManager final : public duckdb::DuckTransactionManager {
  public:
   explicit SereneDBTransactionManager(duckdb::AttachedDatabase& db);
@@ -45,18 +42,6 @@ class SereneDBTransactionManager final : public duckdb::DuckTransactionManager {
                                       duckdb::Transaction& transaction) final;
 
   void RollbackTransaction(duckdb::Transaction& transaction) final;
-
-  // This database's rows are its own, but what its catalog states is recorded
-  // in the cluster catalog log -- the same one every other serenedb attachment
-  // records into.
-  duckdb::optional_ptr<duckdb::WriteAheadLog> CatalogLog() final {
-    return catalog::ClusterCatalogWal();
-  }
-
-  // As the global manager does: the run ends with the walk that wrote it.
-  void FlushCatalogLog() final {
-    catalog::EndCommittingCatalogRun(/*committed=*/true);
-  }
 };
 
 }  // namespace sdb::connector

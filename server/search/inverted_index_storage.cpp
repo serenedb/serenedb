@@ -49,9 +49,8 @@
 #include "basics/log.h"
 #include "basics/serializer.h"
 #include "basics/system-compiler.h"
-#include "catalog/ddl/catalog.h"
-#include "catalog/log/store.h"
-#include "catalog/scorer_options.h"
+#include "catalog1/catalog.h"
+#include "catalog1/entry/inverted_index.h"
 #include "pg/sql_exception_macro.h"
 #include "query/transaction.h"
 #include "scheduler/background_scheduler.h"
@@ -118,33 +117,33 @@ WalCursor InvertedIndexStorage::CursorAtOrBelow(Tick tick) noexcept {
   return cursor;
 }
 
-std::filesystem::path InvertedIndexStorage::GetPath(ObjectId db_id,
-                                                    ObjectId schema_id,
-                                                    ObjectId table_id,
-                                                    ObjectId index_id) {
-  SDB_ASSERT(db_id.isSet());
+std::filesystem::path InvertedIndexStorage::GetPath(duckdb::idx_t db_id,
+                                                    duckdb::idx_t schema_id,
+                                                    duckdb::idx_t table_id,
+                                                    duckdb::idx_t index_id) {
+  SDB_ASSERT(db_id != 0);
   auto path = search::GetSearchEngine().GetPersistedPath(db_id);
-  if (schema_id.isSet()) {
+  if (schema_id != 0) {
     path /= absl::StrCat(schema_id);
   }
-  if (table_id.isSet()) {
-    SDB_ASSERT(schema_id.isSet());
+  if (table_id != 0) {
+    SDB_ASSERT(schema_id != 0);
     path /= absl::StrCat(table_id);
   }
-  if (index_id.isSet()) {
-    SDB_ASSERT(table_id.isSet());
+  if (index_id != 0) {
+    SDB_ASSERT(table_id != 0);
     path /= absl::StrCat(index_id);
   }
   return path;
 }
 
 std::shared_ptr<InvertedIndexStorage> InvertedIndexStorage::Create(
-  ObjectId db_id, const catalog::InvertedIndex& index, bool is_new) {
+  duckdb::idx_t db_id, const InvertedIndex& index, bool is_new) {
   return std::make_shared<InvertedIndexStorage>(db_id, index, is_new);
 }
 
-InvertedIndexStorage::InvertedIndexStorage(ObjectId db_id,
-                                           const catalog::InvertedIndex& index,
+InvertedIndexStorage::InvertedIndexStorage(duckdb::idx_t db_id,
+                                           const InvertedIndex& index,
                                            bool is_new)
   : _index_id{index.GetId()}, _db_id{db_id}, _search{GetSearchEngine()} {
   const auto& options = index.GetOptions();
@@ -160,7 +159,7 @@ InvertedIndexStorage::InvertedIndexStorage(ObjectId db_id,
 
   const auto schema_id = index.GetSchemaId();
   const auto index_id = index.GetId();
-  SDB_ASSERT(index_id.isSet());
+  SDB_ASSERT(index_id != 0);
   _path = GetPath(db_id, schema_id, index.GetRelationId(), index_id);
   const auto& path = _path;
   // TODO(mbkkt) maybe we should use create_directories result instead of
@@ -415,11 +414,11 @@ absl::Status InvertedIndexStorage::CleanupUnsafeImpl() {
     irs::directory_utils::RemoveAllUnreferenced(*_dir);
   } catch (const std::exception& e) {
     return absl::InternalError(
-      absl::StrCat("caught exception while cleaning up Search index '",
-                   GetId().id(), "': ", e.what()));
+      absl::StrCat("caught exception while cleaning up Search index '", GetId(),
+                   "': ", e.what()));
   } catch (...) {
     return absl::InternalError(absl::StrCat(
-      "caught exception while cleaning up Search index '", GetId().id(), "'"));
+      "caught exception while cleaning up Search index '", GetId(), "'"));
   }
   return absl::OkStatus();
 }
@@ -475,15 +474,15 @@ absl::Status InvertedIndexStorage::CompactUnsafeImpl(
     return absl::InvalidArgumentError(
       absl::StrCat("unset compaction policy while executing compaction policy "
                    "on Search index '",
-                   GetId().id(), "'"));
+                   GetId(), "'"));
   }
 
   try {
     const auto res = _writer->Compact(policy, field_options, nullptr, progress);
     if (res.error == irs::CompactionError::Fail) {
       return absl::InternalError(absl::StrCat(
-        "failure while executing compaction policy on Search index '",
-        GetId().id(), "'"));
+        "failure while executing compaction policy on Search index '", GetId(),
+        "'"));
     }
     if (res.error == irs::CompactionError::Busy) {
       empty_compaction = false;
@@ -495,12 +494,12 @@ absl::Status InvertedIndexStorage::CompactUnsafeImpl(
     return absl::InternalError(
       absl::StrCat("caught exception while executing compaction policy "
                    "on Search index '",
-                   GetId().id(), "': ", e.what()));
+                   GetId(), "': ", e.what()));
   } catch (...) {
     return absl::InternalError(
       absl::StrCat("caught exception while executing compaction policy "
                    "on Search index '",
-                   GetId().id(), "'"));
+                   GetId(), "'"));
   }
   return absl::OkStatus();
 }
@@ -514,14 +513,14 @@ absl::Status InvertedIndexStorage::RefreshUnsafeImpl(
     std::unique_lock refresh_lock{_refresh_mutex, std::try_to_lock};
     if (!refresh_lock.owns_lock()) {
       if (!wait) {
-        SDB_TRACE(SEARCH, "Refresh for Search index '", GetId().id(),
+        SDB_TRACE(SEARCH, "Refresh for Search index '", GetId(),
                   "' is already in progress, skipping");
 
         code = RefreshResult::InProgress;
         return absl::OkStatus();
       }
 
-      SDB_TRACE(SEARCH, "Refresh for Search index '", GetId().id(),
+      SDB_TRACE(SEARCH, "Refresh for Search index '", GetId(),
                 "' is already in progress, waiting");
 
       refresh_lock.lock();
@@ -592,7 +591,7 @@ absl::Status InvertedIndexStorage::RefreshUnsafeImpl(
     SDB_ASSERT(reader != nullptr);
     std::move(refresh_guard).Cancel();
     if (!were_changes) {
-      SDB_TRACE(SEARCH, "Refresh for Search index '", GetId().id(),
+      SDB_TRACE(SEARCH, "Refresh for Search index '", GetId(),
                 "' is no changes, tick ", before_refresh, "'");
       if (_phase != Phase::Recovering) {
         _last_durable_tick = before_refresh;
@@ -617,21 +616,21 @@ absl::Status InvertedIndexStorage::RefreshUnsafeImpl(
 
     UpdateStatsUnsafe(std::move(data));
 
-    SDB_DEBUG(SEARCH, "successful sync of Search index '", GetId().id(),
+    SDB_DEBUG(SEARCH, "successful sync of Search index '", GetId(),
               "', segments '", reader_size, "', docs count '", docs_count,
               "', live docs count '", live_docs_count,
               "', last operation tick '", _last_durable_tick, "'");
   } catch (const SqlException& e) {
     return absl::InternalError(
-      absl::StrCat("caught exception while refreshing Search index '",
-                   GetId().id(), "': ", e.message()));
+      absl::StrCat("caught exception while refreshing Search index '", GetId(),
+                   "': ", e.message()));
   } catch (const std::exception& e) {
     return absl::InternalError(
-      absl::StrCat("caught exception while refreshing Search index '",
-                   GetId().id(), "': ", e.what()));
+      absl::StrCat("caught exception while refreshing Search index '", GetId(),
+                   "': ", e.what()));
   } catch (...) {
     return absl::InternalError(absl::StrCat(
-      "caught exception while refreshing Search index '", GetId().id(), "'"));
+      "caught exception while refreshing Search index '", GetId(), "'"));
   }
   return absl::OkStatus();
 }

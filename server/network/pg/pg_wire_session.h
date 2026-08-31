@@ -73,7 +73,7 @@
 #include "basics/duckdb_engine.h"
 #include "basics/message_buffer.h"
 #include "basics/static_strings.h"
-#include "catalog/ddl/catalog.h"
+#include "catalog1/catalog.h"
 #include "connector/duckdb_client_state.h"
 #include "connector/duckdb_pg_text_copy.h"
 #include "network/cancel_registry.h"

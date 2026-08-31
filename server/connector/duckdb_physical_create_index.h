@@ -21,16 +21,17 @@
 #pragma once
 
 #include <duckdb.hpp>
+#include <duckdb/catalog/catalog_entry.hpp>
+#include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
 #include <duckdb/execution/index/index_type.hpp>
 #include <duckdb/execution/physical_operator.hpp>
 #include <duckdb/parser/parsed_data/create_index_info.hpp>
 #include <optional>
 
 #include "basics/down_cast.h"
-#include "catalog/ddl/catalog.h"
-#include "catalog/entry.h"
-#include "catalog/identifiers/object_id.h"
-#include "catalog/table.h"
+#include "catalog1/catalog.h"
+#include "catalog1/permissions.h"
+#include "connector/column_id.h"
 #include "connector/file_manifest.h"
 
 namespace sdb::catalog {
@@ -50,7 +51,10 @@ struct SereneDBCreateIndexInfo final : duckdb::CreateIndexInfo {
     where_clause = std::move(base.where_clause);
   }
 
-  ObjectId source_index;
+  // The index the pass refreshes, empty for a plain CREATE INDEX. It lives in
+  // the schema this statement is qualified with, so the name is the whole
+  // handle.
+  duckdb::Identifier source_index;
 
   std::vector<std::string> delta_files;
   // New-file ids are `delta_file_base + listing ordinal` -- the pass scans
@@ -69,7 +73,7 @@ struct SereneDBCreateIndexInfo final : duckdb::CreateIndexInfo {
     Rebuild,
   };
   ReindexPass Pass() const noexcept {
-    if (!source_index.isSet()) {
+    if (source_index.empty()) {
       return ReindexPass::None;
     }
     return delta_files.empty() ? ReindexPass::Rebuild : ReindexPass::Delta;
@@ -94,7 +98,7 @@ struct SereneDBCreateIndexInfo final : duckdb::CreateIndexInfo {
 struct IndexRelationColumn {
   std::string name;
   duckdb::LogicalType type;
-  catalog::ColumnId id;
+  ColumnId id;
 };
 
 // Physical operator for CREATE INDEX on SereneDB tables.
@@ -137,14 +141,13 @@ class SereneDBPhysicalCreateIndex final : public duckdb::PhysicalOperator {
   // unused; for an arbitrary expression we normalise + serialise
   // it via helpers into a `catalog::ExpressionData`.
   SereneDBPhysicalCreateIndex(
-    duckdb::PhysicalPlan& plan, const duckdb::CatalogEntry& relation,
+    duckdb::PhysicalPlan& plan, duckdb::CatalogEntry& relation,
     std::vector<IndexRelationColumn> columns,
-    std::vector<duckdb::LogicalIndex> pk_positions, ObjectId database_id,
+    std::vector<duckdb::LogicalIndex> pk_positions, duckdb::idx_t database_id,
     duckdb::unique_ptr<duckdb::CreateIndexInfo> info,
     std::vector<duckdb::unique_ptr<duckdb::Expression>> bound_expressions,
     duckdb::unique_ptr<duckdb::Expression> bound_where,
-    catalog::SereneDBSchemaEntry& schema_entry,
-    duckdb::idx_t estimated_cardinality);
+    duckdb::DuckSchemaEntry& schema_entry, duckdb::idx_t estimated_cardinality);
 
   bool IsSink() const final { return true; }
   bool ParallelSink() const final;
@@ -173,15 +176,16 @@ class SereneDBPhysicalCreateIndex final : public duckdb::PhysicalOperator {
 
  private:
   // Returns the `_relation` cast to a Table when it is one; nullptr for views.
-  const catalog::SereneDBTableEntry* TableOrNull() const noexcept;
+  duckdb::TableCatalogEntry* TableOrNull() const noexcept;
   bool IsDuckDBTable() const noexcept;
 
-  const duckdb::CatalogEntry& _relation;
+  // Not const: the build reads and publishes into the relation's own storage.
+  duckdb::CatalogEntry& _relation;
   std::vector<IndexRelationColumn> _columns;
   // Positions in `_columns` the row identity is built from; empty for a view
   // and for a table with no declared primary key.
   std::vector<duckdb::LogicalIndex> _pk_positions;
-  ObjectId _database_id;
+  duckdb::idx_t _database_id;
   duckdb::unique_ptr<duckdb::CreateIndexInfo> _info;
   std::vector<duckdb::unique_ptr<duckdb::Expression>> _bound_expressions;
   // Bound partial-index predicate (info->where_clause); null for full indexes.
@@ -205,7 +209,7 @@ class SereneDBPhysicalCreateIndex final : public duckdb::PhysicalOperator {
   // same fact as a base of 0.
   duckdb::optional_idx _expression_slot_base;
   bool _feeds_inverted = false;
-  catalog::SereneDBSchemaEntry& _schema_entry;
+  duckdb::DuckSchemaEntry& _schema_entry;
 };
 
 // create_plan callback registered with DuckDB's index type system.

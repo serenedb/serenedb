@@ -47,6 +47,7 @@
 #include <iresearch/utils/numeric_utils.hpp>
 
 #include "basics/down_cast.h"
+#include "connector/term_dict.h"
 #include "pg/sql_exception_macro.h"
 
 namespace irs {
@@ -54,7 +55,7 @@ namespace {
 
 using duckdb::ExplainNode;
 using sdb::basics::downCast;
-using sdb::catalog::term_dict::Kind;
+using sdb::connector::term_dict::Kind;
 
 void AddMergeAttribute(ExplainNode& node, ScoreMergeType merge) {
   switch (merge) {
@@ -112,7 +113,7 @@ std::string TermValue(bytes_view term, Kind kind) {
   if (kind == Kind::Bool) {
     return !term.empty() && term[0] ? "true" : "false";
   }
-  if (sdb::catalog::term_dict::IsNumeric(kind)) {
+  if (sdb::connector::term_dict::IsNumeric(kind)) {
     return DecodeNumericTerm(term);
   }
   return TermToString(term);
@@ -262,10 +263,10 @@ struct FilterPrinter {
   const FieldKindResolver& kind_of;
 
   std::string FieldName(field_id fid) const {
-    return name_of(sdb::catalog::ColumnId{fid});
+    return name_of(sdb::connector::ColumnId{fid});
   }
   Kind FieldKind(field_id fid) const {
-    return kind_of(sdb::catalog::ColumnId{fid});
+    return kind_of(sdb::connector::ColumnId{fid});
   }
 
   std::string PhraseParts(const ByPhrase& filter) const {
@@ -555,11 +556,11 @@ struct FilterPrinter {
   }
 };
 
-std::string IdentityField(sdb::catalog::ColumnId id) {
+std::string IdentityField(sdb::connector::ColumnId id) {
   return absl::StrCat(static_cast<irs::field_id>(id));
 }
 
-Kind UnknownKind(sdb::catalog::ColumnId) { return Kind::Unsupported; }
+Kind UnknownKind(sdb::connector::ColumnId) { return Kind::Unsupported; }
 
 }  // namespace
 

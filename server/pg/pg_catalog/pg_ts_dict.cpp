@@ -21,10 +21,8 @@
 #include "pg/pg_catalog/pg_ts_dict.h"
 
 #include "basics/assert.h"
-#include "catalog/ddl/catalog.h"
-#include "catalog/entry/duckdb_object_entry.h"
-#include "catalog/read/duckdb_catalog_sets.h"
-#include "catalog/tokenizer.h"
+#include "catalog1/entry/tokenizer.h"
+#include "catalog1/lookup.h"
 #include "pg/pg_catalog/fwd.h"
 
 namespace sdb::pg {
@@ -37,12 +35,12 @@ constexpr uint64_t kNullMask = MaskFromNulls({
 }  // namespace
 
 template<>
-catalog::MaterializedData SystemTableSnapshot<PgTsDict>::GetTableData() {
+MaterializedData SystemTableSnapshot<PgTsDict>::GetTableData() {
   std::vector<PgTsDict> values;
 
-  catalog::Visit<catalog::SereneDBTokenizerEntry>(
-    &_config.GetClientContext(), GetDatabaseId(),
-    [&](const catalog::SereneDBTokenizerEntry& tokenizer) {
+  VisitEntries<catalog::TokenizerCatalogEntry>(
+    &_config.GetClientContext(), GetDatabase(),
+    [&](const catalog::TokenizerCatalogEntry& tokenizer) {
       values.push_back({
         .oid = tokenizer.oid,
         .dictname = tokenizer.name.GetIdentifierName(),

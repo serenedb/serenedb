@@ -26,11 +26,9 @@
 
 #include "app/app_server.h"
 #include "basics/assert.h"
-#include "catalog/database.h"
-#include "catalog/ddl/catalog.h"
-#include "catalog/entry/duckdb_object_entry.h"
-#include "catalog/read/duckdb_catalog_sets.h"
-#include "catalog/role.h"
+#include "catalog1/cluster.h"
+#include "catalog1/entry/database.h"
+#include "catalog1/entry/role.h"
 #include "pg/pg_catalog/fwd.h"
 
 namespace sdb::pg {
@@ -48,15 +46,17 @@ constexpr uint64_t kNullMask = MaskFromNulls({
 }  // namespace
 
 template<>
-catalog::MaterializedData SystemTableSnapshot<PgDatabase>::GetTableData() {
+MaterializedData SystemTableSnapshot<PgDatabase>::GetTableData() {
   std::vector<PgDatabase> values;
   // The name and the ACL of every row are views into the entry the walk read
   // them off, which the rows written after it still point at: an entry version
   // stays in its set's chain for as long as a transaction can see it.
-  catalog::VisitDatabases(
-    &_config.GetClientContext(), [&](const catalog::SereneDBDatabaseEntry& db) {
+  auto& context = _config.GetClientContext();
+  auto& cluster = catalog::ClusterOf(context);
+  cluster.ScanDatabases(
+    cluster.GetCatalogTransaction(context), [&](duckdb::CatalogEntry& db) {
       values.push_back(PgDatabase{
-        .oid = catalog::IdOf(db).id(),
+        .oid = db.oid,
         .datname = db.name.GetIdentifierName(),
         .datdba = db.permissions.owner,
         .encoding = 6,  // UTF8

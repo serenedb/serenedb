@@ -41,10 +41,12 @@
 #include "basics/containers/flat_hash_set.h"
 #include "basics/containers/node_hash_map.h"
 #include "basics/primary_key.hpp"
-#include "catalog/duckdb_primary_key.h"
-#include "catalog/inverted_index.h"
+#include "catalog1/entry/inverted_index.h"
+#include "connector/column_id.h"
 #include "connector/duckdb_sink_writer_base.h"
 #include "connector/index_expression.hpp"
+#include "connector/primary_key.h"
+#include "search/inverted_index.h"
 #include "search/inverted_index_storage.h"
 #include "search/search_analyzer_impl.h"
 #include "search_remove_filter.hpp"
@@ -59,33 +61,33 @@ namespace sdb::connector {
 class SearchRemoveFilter;
 
 using TokenizerProvider =
-  absl::AnyInvocable<catalog::ColumnTokenizer(irs::field_id)>;
+  absl::AnyInvocable<search::ColumnTokenizer(irs::field_id)>;
 
 inline TokenizerProvider MakeTokenizerProvider(
-  catalog::TokenizerMap dicts, const catalog::InvertedIndex& index) {
+  search::TokenizerMap dicts, const search::InvertedIndex& index) {
   return [dicts = std::move(dicts),
-          &index](irs::field_id field_id) -> catalog::ColumnTokenizer {
+          &index](irs::field_id field_id) -> search::ColumnTokenizer {
     return index.GetTokenizer(dicts, field_id);
   };
 }
 
 using EntryInfoProvider =
-  absl::AnyInvocable<const catalog::InvertedIndexEntryInfo*(irs::field_id)>;
+  absl::AnyInvocable<const search::InvertedIndexEntryInfo*(irs::field_id)>;
 
 inline EntryInfoProvider MakeEntryInfoProvider(
-  const catalog::InvertedIndex& index) {
+  const search::InvertedIndex& index) {
   return [&index](irs::field_id field_id) { return index.FindEntry(field_id); };
 }
 
 inline EntryInfoProvider NoEntryInfoProvider() {
-  return [](irs::field_id) -> const catalog::InvertedIndexEntryInfo* {
+  return [](irs::field_id) -> const search::InvertedIndexEntryInfo* {
     return nullptr;
   };
 }
 
 inline EntryInfoProvider AllStoredEntryInfoProvider() {
-  static const catalog::InvertedIndexEntryInfo kStored = [] {
-    catalog::InvertedIndexEntryInfo e;
+  static const search::InvertedIndexEntryInfo kStored = [] {
+    search::InvertedIndexEntryInfo e;
     e.store_values = true;
     return e;
   }();
@@ -152,7 +154,7 @@ class SearchSinkInsertBaseImpl {
     }
 
     void PrepareForVerbatimStringValue();
-    void PrepareForStringValue(catalog::ColumnTokenizer&& column_analyzer);
+    void PrepareForStringValue(search::ColumnTokenizer&& column_analyzer);
     void SetStringValue(std::string_view value);
 
     void PrepareForNumericValue();
@@ -166,7 +168,7 @@ class SearchSinkInsertBaseImpl {
     void SetNullValue();
 
     search::AnalyzerImpl::CacheType::ptr analyzer;
-    catalog::Tokenizer::TokenizerWrapper string_analyzer;
+    catalog::TokenizerCatalogEntry::TokenizerWrapper string_analyzer;
     irs::field_id id{irs::field_limits::invalid()};
     irs::IndexFeatures index_features;
     irs::StoreAttr own_store;
@@ -214,8 +216,8 @@ class SearchSinkInsertBaseImpl {
     irs::field_id tokenizer_column = irs::field_limits::invalid();
 
     void InitForExpression(irs::field_id entry_field_id,
-                           const catalog::InvertedIndexEntryInfo* entry,
-                           catalog::ColumnTokenizer string_analyzer);
+                           const search::InvertedIndexEntryInfo* entry,
+                           search::ColumnTokenizer string_analyzer);
   };
 
   TokenizerProvider _tokenizer_provider;
@@ -267,7 +269,7 @@ class DuckDBSearchSinkInsertWriter final : public DuckDBSinkIndexWriter,
  public:
   DuckDBSearchSinkInsertWriter(
     irs::IndexWriter::Transaction& trx, TokenizerProvider&& tokenizer_provider,
-    std::span<const catalog::ColumnId> indexed_columns,
+    std::span<const ColumnId> indexed_columns,
     EntryInfoProvider&& entry_info_provider = NoEntryInfoProvider(),
     PkPolicy pk_policy = {})
     : SearchSinkInsertBaseImpl{trx, std::move(tokenizer_provider),
@@ -297,7 +299,7 @@ class DuckDBSearchSinkInsertWriter final : public DuckDBSinkIndexWriter,
   void Abort() final { AbortImpl(); }
 
  private:
-  containers::FlatHashSet<catalog::ColumnId> _indexed;
+  containers::FlatHashSet<ColumnId> _indexed;
 };
 
 class DuckDBSearchSinkDeleteWriter final : public DuckDBSinkIndexWriter,
@@ -326,10 +328,10 @@ inline std::unique_ptr<SearchSinkInsertBaseImpl> MakeSearchTableInsertSink(
     PkPolicy{.index_term = true, .column = catalog::PkColumnKind::None});
 }
 
-void WriteChunkToSearchSink(
-  SearchSinkInsertBaseImpl& sink, duckdb::DataChunk& chunk,
-  std::span<const catalog::ColumnId> column_ids,
-  std::span<const catalog::duckdb_primary_key::PKColumn> pk_columns,
-  bool uses_generated_pk, uint64_t pk_base);
+void WriteChunkToSearchSink(SearchSinkInsertBaseImpl& sink,
+                            duckdb::DataChunk& chunk,
+                            std::span<const ColumnId> column_ids,
+                            std::span<const primary_key::PKColumn> pk_columns,
+                            bool uses_generated_pk, uint64_t pk_base);
 
 }  // namespace sdb::connector

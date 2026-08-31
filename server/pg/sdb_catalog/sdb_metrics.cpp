@@ -21,18 +21,17 @@
 #include "sdb_metrics.h"
 
 #include <array>
+#include <duckdb/catalog/catalog.hpp>
+#include <duckdb/catalog/catalog_entry/duck_index_entry.hpp>
+#include <duckdb/main/attached_database.hpp>
 #include <duckdb/storage/storage_manager.hpp>
 #include <duckdb/storage/write_ahead_log.hpp>
 
 #include "basics/assert.h"
 #include "basics/down_cast.h"
 #include "basics/metrics.h"
-#include "catalog/ddl/catalog.h"
-#include "catalog/ddl/duckdb_catalog.h"
-#include "catalog/entry/duckdb_index_entry.h"
-#include "catalog/inverted_index.h"
-#include "catalog/log/duckdb_global_catalog.h"
-#include "catalog/read/duckdb_catalog_sets.h"
+#include "catalog1/catalog.h"
+#include "catalog1/entry/inverted_index.h"
 #include "search/inverted_index_storage.h"
 
 namespace sdb::pg {
@@ -83,7 +82,7 @@ constexpr std::array<IndexMetricDesc, 12> kIndexMetrics = {{
 }  // namespace
 
 template<>
-catalog::MaterializedData SystemTableSnapshot<SdbMetrics>::GetTableData() {
+MaterializedData SystemTableSnapshot<SdbMetrics>::GetTableData() {
   std::vector<SdbMetrics> values;
   std::vector<uint64_t> masks;
 
@@ -96,12 +95,17 @@ catalog::MaterializedData SystemTableSnapshot<SdbMetrics>::GetTableData() {
   }
 
   const auto wal_first = values.size();
-  auto wal = catalog::ClusterCatalogWal();
+  auto& storage_manager =
+    duckdb::Catalog::GetCatalog(_config.GetClientContext(),
+                                duckdb::Identifier::InvalidCatalog())
+      .GetAttached()
+      .GetStorageManager();
+  auto wal = storage_manager.GetWAL();
   values.emplace_back("catalog_wal_appended_bytes",
                       wal ? wal->GetTotalWritten() : 0,
                       "bytes appended to the catalog wal since start");
   values.emplace_back("catalog_wal_size_on_disk",
-                      wal ? wal->GetStorageManager().GetWALSize() : 0,
+                      wal ? storage_manager.GetWALSize() : 0,
                       "current catalog wal file size in bytes");
   masks.insert(masks.end(), values.size() - wal_first, kPerProcessMask);
 

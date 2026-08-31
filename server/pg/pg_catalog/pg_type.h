@@ -109,6 +109,6 @@ struct PgType {
 // NOLINTEND
 
 template<>
-catalog::MaterializedData SystemTableSnapshot<PgType>::GetTableData();
+MaterializedData SystemTableSnapshot<PgType>::GetTableData();
 
 }  // namespace sdb::pg

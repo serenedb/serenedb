@@ -30,7 +30,6 @@
 
 #include "absl/synchronization/mutex.h"
 #include "basics/containers/flat_hash_map.h"
-#include "catalog/identifiers/object_id.h"
 #include "rest_server/database_path_feature.h"
 #include "search/search_db_wal.h"
 
@@ -59,12 +58,12 @@ class SearchEngine final {
   void start();
   void stop();
 
-  std::filesystem::path GetPersistedPath(ObjectId database_id) const;
+  std::filesystem::path GetPersistedPath(duckdb::idx_t database_id) const;
 
   // The database's self-contained search WAL, lazily created on first use. ONE
   // per database, shared by all of its search shards, so a transaction touching
   // several search tables commits atomically.
-  SearchDbWal& GetDbWal(ObjectId database_id);
+  SearchDbWal& GetDbWal(duckdb::idx_t database_id);
 
   // Launch the per-target refresh + compaction loops, registering their Futures
   // so stop() can join them. Templated on the storage type
@@ -113,7 +112,7 @@ class SearchEngine final {
   DatabasePathFeature& _dir_feature;
   // Per-database central WALs (see GetDbWal). Guarded by _db_wals_mu.
   absl::Mutex _db_wals_mu;
-  containers::FlatHashMap<ObjectId, std::unique_ptr<SearchDbWal>> _db_wals;
+  containers::FlatHashMap<duckdb::idx_t, std::unique_ptr<SearchDbWal>> _db_wals;
   std::atomic<bool> _stopping{false};
   std::atomic<int> _running_compactions{0};
   // Live loop futures plus one baseline token held for the engine's lifetime:

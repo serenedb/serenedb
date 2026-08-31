@@ -21,13 +21,15 @@
 #include "connector/search_table_dispatch.h"
 
 #include <duckdb.hpp>
+#include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
 #include <duckdb/common/string_util.hpp>
 #include <duckdb/parser/expression/constant_expression.hpp>
+#include <duckdb/parser/parsed_data/create_table_info.hpp>
 #include <optional>
 #include <string>
 
 #include "basics/assert.h"
-#include "catalog/table.h"
+#include "connector/primary_key.h"
 #include "connector/with_option_resolver.h"
 #include "pg/errcodes.h"
 #include "pg/sql_exception.h"
@@ -111,9 +113,9 @@ void RejectIfSearchTable(catalog::TableEngine engine,
 }
 
 SearchWriteTarget ResolveSearchWriteTarget(
-  duckdb::ClientContext& context, const catalog::SereneDBTableEntry& entry) {
+  duckdb::ClientContext& context, const duckdb::TableCatalogEntry& entry) {
   SearchWriteTarget target;
-  target.table_id = catalog::IdOf(entry);
+  target.table_id = entry.oid;
   target.data = entry.GetSearchData();
   const auto& columns = entry.GetColumns();
   target.column_ids.reserve(columns.LogicalColumnCount());
@@ -135,10 +137,10 @@ SearchWriteTarget ResolveSearchWriteTarget(
   return target;
 }
 
-std::vector<catalog::duckdb_primary_key::PKColumn> RowIdentityPKColumns(
+std::vector<primary_key::PKColumn> RowIdentityPKColumns(
   const SearchWriteTarget& target,
   std::span<const duckdb::idx_t> chunk_positions) {
-  std::vector<catalog::duckdb_primary_key::PKColumn> out;
+  std::vector<primary_key::PKColumn> out;
   out.reserve(chunk_positions.size());
   for (size_t i = 0; i != chunk_positions.size(); ++i) {
     out.push_back({.input_col_idx = chunk_positions[i],
@@ -171,7 +173,7 @@ void ApplyStorageKind(
     with_options) {
   const auto engine = ReadStorageEngine(with_options);
   with_options.erase(std::string{catalog::kStorageOption});
-  catalog::persistence::SearchTableOptions search_options;
+  catalog::SearchTableOptions search_options;
   if (engine == catalog::TableEngine::Search) {
     const auto resolve = [&](std::string_view key) -> uint32_t {
       auto it = with_options.find(std::string{key});
@@ -188,7 +190,7 @@ void ApplyStorageKind(
   }
   // The sequence feeding the synthetic primary key is not known until the
   // create runs under the catalog mutex; the tags are rewritten there.
-  catalog::SetTableTags(info, engine, search_options, ObjectId{});
+  catalog::SetTableTags(info, engine, search_options, 0);
 }
 
 }  // namespace sdb::connector

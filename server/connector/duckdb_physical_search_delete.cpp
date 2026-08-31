@@ -29,9 +29,8 @@
 #include <type_traits>
 #include <vector>
 
-#include "catalog/duckdb_primary_key.h"
-#include "catalog/identifiers/object_id.h"
 #include "connector/duckdb_client_state.h"
+#include "connector/primary_key.h"
 #include "connector/search_sink_writer.hpp"
 #include "connector/search_table_dispatch.h"
 #include "pg/connection_context.h"
@@ -46,9 +45,9 @@ namespace sdb::connector {
 namespace {
 
 struct SearchDeleteGlobalState : duckdb::GlobalSinkState {
-  ObjectId table_id;
+  duckdb::idx_t table_id;
   query::Transaction* sdb_txn = nullptr;
-  std::vector<catalog::duckdb_primary_key::PKColumn> pk_columns;
+  std::vector<primary_key::PKColumn> pk_columns;
   duckdb::idx_t delete_count = 0;
 };
 
@@ -89,7 +88,7 @@ SereneDBSearchDelete::SereneDBSearchDelete(
     _column_map(std::move(column_map)) {}
 
 SereneDBSearchDelete::SereneDBSearchDelete(
-  duckdb::PhysicalPlan& plan, ObjectId index_id,
+  duckdb::PhysicalPlan& plan, duckdb::idx_t index_id,
   std::shared_ptr<search::InvertedIndexStorage> storage,
   std::shared_ptr<const irs::IndexFieldOptions> field_options,
   std::vector<duckdb::idx_t> pk_col_indices,
@@ -161,8 +160,7 @@ duckdb::SinkResultType SereneDBSearchDelete::SinkImpl(
   remover.InitImpl(num_rows);
 
   std::vector<duckdb::UnifiedVectorFormat> pk_formats;
-  catalog::duckdb_primary_key::PreparePKFormats(chunk, gstate.pk_columns,
-                                                pk_formats);
+  primary_key::PreparePKFormats(chunk, gstate.pk_columns, pk_formats);
 
   std::vector<std::string> wal_pks;
   if constexpr (kTable) {
@@ -171,7 +169,7 @@ duckdb::SinkResultType SereneDBSearchDelete::SinkImpl(
   std::string pk;
   for (duckdb::idx_t row = 0; row < num_rows; ++row) {
     pk.clear();
-    catalog::duckdb_primary_key::Create(pk_formats, gstate.pk_columns, row, pk);
+    primary_key::Create(pk_formats, gstate.pk_columns, row, pk);
     remover.DeleteRowImpl(pk);  // live iresearch removal
     if constexpr (kTable) {
       wal_pks.emplace_back(pk);  // WAL delete payload
@@ -208,7 +206,7 @@ duckdb::SinkFinalizeType SereneDBSearchDelete::Finalize(
     if (!gstate.trx->Commit(tick)) {
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_INTERNAL_ERROR),
                       ERR_MSG("failed to commit the removes for index with id ",
-                              _index_storage->GetId().id()));
+                              _index_storage->GetId()));
     }
     gstate.trx.reset();
   }

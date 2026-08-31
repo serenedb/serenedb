@@ -30,13 +30,15 @@
 #include <span>
 
 #include "basics/containers/flat_hash_map.h"
-#include "catalog/inverted_index.h"
-#include "catalog/table.h"
+#include "catalog1/catalog.h"
+#include "catalog1/entry/inverted_index.h"
+#include "connector/term_dict.h"
+#include "search/inverted_index.h"
 
 namespace sdb::connector {
 
 // `field_id` is the unified iresearch field id: both a plain indexed column's
-// id (`catalog::ColumnId`) and an indexed expression's id come from
+// id (`ColumnId`) and an indexed expression's id come from
 // `catalog::NextId()` / `NextNIds()` (single global tick allocator), so a
 // single uint64 fits both. Disambiguate via catalog lookup when the kind
 // matters; the writer/printer paths don't need to.
@@ -51,7 +53,7 @@ struct SearchColumnInfo {
   irs::field_id bool_field_id = irs::field_limits::invalid();
   irs::field_id numeric_field_id = irs::field_limits::invalid();
   duckdb::LogicalType logical_type;
-  catalog::ColumnTokenizer tokenizer;
+  search::ColumnTokenizer tokenizer;
   std::optional<uint32_t> levenshtein_max_terms;
 };
 
@@ -95,11 +97,11 @@ inline irs::field_id PickPerKindFieldId(const SearchColumnInfo& column_info,
   const auto pick = [&](irs::field_id per_kind) {
     return irs::field_limits::valid(per_kind) ? per_kind : column_info.field_id;
   };
-  const auto kind = catalog::term_dict::Classify(type_id);
-  if (kind == catalog::term_dict::Kind::Bool) {
+  const auto kind = term_dict::Classify(type_id);
+  if (kind == term_dict::Kind::Bool) {
     return pick(column_info.bool_field_id);
   }
-  if (catalog::term_dict::IsNumeric(kind)) {
+  if (term_dict::IsNumeric(kind)) {
     return pick(column_info.numeric_field_id);
   }
   return column_info.field_id;

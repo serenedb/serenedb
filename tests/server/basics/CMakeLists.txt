@@ -16,8 +16,6 @@ add_executable(
     json_serde_test.cpp
     json_serde_types_test.cpp
     duckdb_roundtrip_test.cpp
-    catalog_persistence_test.cpp
-    catalog_table_info_test.cpp
     network_http_test.cpp
     network_router_test.cpp
     network_listen_spec_test.cpp

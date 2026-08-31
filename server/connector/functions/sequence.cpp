@@ -20,6 +20,10 @@
 
 #include "connector/functions/sequence.h"
 
+#include <duckdb/catalog/catalog.hpp>
+#include <duckdb/catalog/catalog_entry.hpp>
+#include <duckdb/catalog/catalog_entry/schema_catalog_entry.hpp>
+#include <duckdb/catalog/catalog_entry/sequence_catalog_entry.hpp>
 #include <duckdb/catalog/entry_lookup_info.hpp>
 #include <duckdb/common/enums/on_entry_not_found.hpp>
 #include <duckdb/common/vector_operations/binary_executor.hpp>
@@ -36,12 +40,7 @@
 
 #include "auth/role_closure.h"
 #include "basics/static_strings.h"
-#include "catalog/ddl/catalog.h"
-#include "catalog/entry.h"
-#include "catalog/entry/duckdb_object_entry.h"
-#include "catalog/entry/duckdb_schema_entry.h"
-#include "catalog/read/duckdb_catalog_sets.h"
-#include "catalog/sequence.h"
+#include "catalog1/permissions.h"
 #include "connector/duckdb_client_state.h"
 #include "pg/connection_context.h"
 #include "pg/errcodes.h"
@@ -54,37 +53,44 @@ namespace {
 // Through the caller's own transaction: a nextval inside the transaction that
 // created the sequence has to find it, and one whose sequence another session
 // dropped since must not.
-const catalog::SereneDBSequenceEntry& ResolveSequence(
+const duckdb::SequenceCatalogEntry& ResolveSequence(
   duckdb::ClientContext& context, std::string_view qualified,
   catalog::AclMode need) {
   auto qname = duckdb::QualifiedName::Parse(std::string{qualified});
-  std::string_view schema_name = qname.Schema().empty()
-                                   ? StaticStrings::kPublic
-                                   : qname.Schema().GetIdentifierName();
+  const auto schema_name = qname.Schema().empty()
+                             ? duckdb::Identifier{StaticStrings::kPublic}
+                             : qname.Schema();
 
   auto& conn_ctx = GetSereneDBContext(context);
-  auto database_id = conn_ctx.GetDatabaseId();
-  auto schema = catalog::FindSchema(&context, database_id, schema_name);
+  auto& catalog = duckdb::Catalog::GetCatalog(
+    context, qname.Catalog().empty()
+               ? duckdb::Identifier{conn_ctx.GetDatabase()}
+               : qname.Catalog());
+  auto schema = catalog.GetSchema(context, schema_name,
+                                  duckdb::OnEntryNotFound::RETURN_NULL);
   if (!schema) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_SCHEMA),
-                    ERR_MSG("schema \"", schema_name, "\" does not exist"));
+                    ERR_MSG("schema \"", schema_name.GetIdentifierName(),
+                            "\" does not exist"));
   }
-  const auto* seq = catalog::Find<catalog::SereneDBSequenceEntry>(
-    &context, catalog::IdOf(*schema), qname.Name().GetIdentifierName());
-  if (seq == nullptr) {
+  auto entry =
+    schema->GetEntry(catalog.GetCatalogTransaction(context),
+                     duckdb::CatalogType::SEQUENCE_ENTRY, qname.Name());
+  if (!entry) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
                     ERR_MSG("relation \"", qualified, "\" does not exist"));
   }
+  const auto& seq = entry->Cast<duckdb::SequenceCatalogEntry>();
   if (need != catalog::AclMode::NoRights) {
     const auto role = conn_ctx.GetRoleId();
     if (!auth::ClosureFor(&context, role)
-           ->Can(duckdb::CatalogType::SEQUENCE_ENTRY, seq->permissions, need)) {
+           ->Can(duckdb::CatalogType::SEQUENCE_ENTRY, seq.permissions, need)) {
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
                       ERR_MSG("permission denied for sequence ",
-                              seq->name.GetIdentifierName()));
+                              seq.name.GetIdentifierName()));
     }
   }
-  return *seq;
+  return seq;
 }
 
 // A dependency-collecting bind (a view or macro body, with duckdb's
@@ -138,7 +144,7 @@ uint64_t GetValue(const catalog::SequenceOptions& opts, uint64_t raw) {
     ERR_MSG("setval: value out of bounds for sequence \"", qualified, "\""));
 }
 
-uint64_t Nextval(const catalog::SereneDBSequenceEntry& seq,
+uint64_t Nextval(const duckdb::SequenceCatalogEntry& seq,
                  std::string_view qualified) {
   const auto& opts = seq.Options();
   uint64_t raw = seq.Reserve(opts.increment) + opts.increment - 1;

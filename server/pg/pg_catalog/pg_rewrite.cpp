@@ -20,11 +20,10 @@
 
 #include "pg/pg_catalog/pg_rewrite.h"
 
+#include <duckdb/catalog/catalog_entry/view_catalog_entry.hpp>
 #include <vector>
 
-#include "catalog/ddl/catalog.h"
-#include "catalog/entry/duckdb_view_entry.h"
-#include "catalog/read/duckdb_catalog_sets.h"
+#include "catalog1/lookup.h"
 
 namespace sdb::pg {
 namespace {
@@ -37,10 +36,10 @@ constexpr uint64_t kNullMask = MaskFromNulls({
 }  // namespace
 
 template<>
-catalog::MaterializedData SystemTableSnapshot<PgRewrite>::GetTableData() {
+MaterializedData SystemTableSnapshot<PgRewrite>::GetTableData() {
   std::vector<PgRewrite> values;
-  catalog::Visit<catalog::SereneDBViewEntry>(
-    &_config.GetClientContext(), GetDatabaseId(),
+  VisitEntries<duckdb::ViewCatalogEntry>(
+    &_config.GetClientContext(), GetDatabase(),
     [&](const duckdb::ViewCatalogEntry& view) {
       values.push_back(PgRewrite{
         Oid{view.oid},

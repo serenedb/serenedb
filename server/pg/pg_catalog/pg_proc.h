@@ -88,6 +88,6 @@ struct PgProc {
 // NOLINTEND
 
 template<>
-catalog::MaterializedData SystemTableSnapshot<PgProc>::GetTableData();
+MaterializedData SystemTableSnapshot<PgProc>::GetTableData();
 
 }  // namespace sdb::pg

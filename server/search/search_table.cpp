@@ -47,44 +47,45 @@
 
 namespace sdb::search {
 
-std::filesystem::path SearchTable::GetPath(ObjectId db_id, ObjectId schema_id,
-                                           ObjectId table_id) {
-  SDB_ASSERT(db_id.isSet());
-  SDB_ASSERT(schema_id.isSet());
-  SDB_ASSERT(table_id.isSet());
+std::filesystem::path SearchTable::GetPath(duckdb::idx_t db_id,
+                                           duckdb::idx_t schema_id,
+                                           duckdb::idx_t table_id) {
+  SDB_ASSERT(db_id != 0);
+  SDB_ASSERT(schema_id != 0);
+  SDB_ASSERT(table_id != 0);
   // Same on-disk layout as an inverted index minus the trailing index level --
   // reuse its path generator with the index unset.
   // TODO(Dronplane): unify as generic SearchStorage with all common stuff
   return InvertedIndexStorage::GetPath(db_id, schema_id, table_id,
-                                       /*index_id=*/ObjectId{});
+                                       /*index_id=*/0);
 }
 
-std::filesystem::path SearchTable::GetWalPath(ObjectId db_id) {
-  SDB_ASSERT(db_id.isSet());
+std::filesystem::path SearchTable::GetWalPath(duckdb::idx_t db_id) {
+  SDB_ASSERT(db_id != 0);
   auto path = GetSearchEngine().GetPersistedPath(db_id);
   path /= "wal";
   return path;
 }
 
-std::filesystem::path SearchTable::GetChunkDir(ObjectId db_id,
-                                               ObjectId table_id) {
-  SDB_ASSERT(table_id.isSet());
+std::filesystem::path SearchTable::GetChunkDir(duckdb::idx_t db_id,
+                                               duckdb::idx_t table_id) {
+  SDB_ASSERT(table_id != 0);
   auto path = GetWalPath(db_id);
   path /= "chunks";
-  path /= std::to_string(table_id.id());
+  path /= std::to_string(table_id);
   return path;
 }
 
 std::shared_ptr<SearchTable> SearchTable::Create(
-  ObjectId db_id, ObjectId schema_id, ObjectId table_id, bool is_new,
-  const catalog::persistence::SearchTableOptions& options) {
+  duckdb::idx_t db_id, duckdb::idx_t schema_id, duckdb::idx_t table_id,
+  bool is_new, const catalog::SearchTableOptions& options) {
   return std::make_shared<SearchTable>(db_id, schema_id, table_id, is_new,
                                        options);
 }
 
-SearchTable::SearchTable(
-  ObjectId db_id, ObjectId schema_id, ObjectId table_id, bool is_new,
-  const catalog::persistence::SearchTableOptions& options)
+SearchTable::SearchTable(duckdb::idx_t db_id, duckdb::idx_t schema_id,
+                         duckdb::idx_t table_id, bool is_new,
+                         const catalog::SearchTableOptions& options)
   : _table_id{table_id}, _db_id{db_id}, _schema_id{schema_id}, _is_new{is_new} {
   OpenWriter();
 
@@ -123,14 +124,14 @@ void SearchTable::OpenWriter() {
     THROW_SQL_ERROR(ERR_MSG("Failed to check existence of path '",
                             path.string(),
                             "' while initializing search table for table ",
-                            GetTableId().id(), ": ", ec.message()));
+                            GetTableId(), ": ", ec.message()));
   }
   if (!path_exists) {
     std::filesystem::create_directories(path, ec);
     if (ec) {
       THROW_SQL_ERROR(ERR_MSG("Failed to create directory '", path.string(),
                               "' while initializing search table for table ",
-                              GetTableId().id(), ": ", ec.message()));
+                              GetTableId(), ": ", ec.message()));
     }
   }
 
@@ -190,7 +191,7 @@ void SearchTable::StartTasks() {
 #ifdef SDB_DEV
   const bool already = _tasks_started.exchange(true);
   SDB_ASSERT(!already, "SearchTable::StartTasks called twice for table ",
-             GetTableId().id());
+             GetTableId());
 #endif
   // Launch this table's refresh + compaction loops on the shared background
   // scheduler. Called only after recovery or CREATE/CTAS finalize, so a
@@ -228,7 +229,7 @@ ResultWithTime SearchTable::RefreshUnsafe(
     }
   } catch (const std::exception& e) {
     result = absl::InternalError(absl::StrCat(
-      "refresh failed for search table ", GetTableId().id(), ": ", e.what()));
+      "refresh failed for search table ", GetTableId(), ": ", e.what()));
   }
   const uint64_t time_ms =
     std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -245,8 +246,8 @@ ResultWithTime SearchTable::CompactUnsafe(
   empty_compaction = false;
   auto result = absl::OkStatus();
   if (!policy) {
-    result = absl::InvalidArgumentError(absl::StrCat(
-      "unset compaction policy for search table ", GetTableId().id()));
+    result = absl::InvalidArgumentError(
+      absl::StrCat("unset compaction policy for search table ", GetTableId()));
   } else {
     try {
       // iresearch serializes Compact against refresh/DML internally, so a long
@@ -254,15 +255,15 @@ ResultWithTime SearchTable::CompactUnsafe(
       const auto res =
         _writer->Compact(policy, field_options, nullptr, progress);
       if (!res) {
-        result = absl::InternalError(absl::StrCat(
-          "compaction failed for search table ", GetTableId().id()));
+        result = absl::InternalError(
+          absl::StrCat("compaction failed for search table ", GetTableId()));
       } else {
         empty_compaction = (res.size == 0);  // nothing merged -> idle round
       }
     } catch (const std::exception& e) {
       result = absl::InternalError(
-        absl::StrCat("consolidation failed for search table ",
-                     GetTableId().id(), ": ", e.what()));
+        absl::StrCat("consolidation failed for search table ", GetTableId(),
+                     ": ", e.what()));
     }
   }
   const uint64_t time_ms =
@@ -279,7 +280,7 @@ ResultWithTime SearchTable::CleanupUnsafe() {
     irs::directory_utils::RemoveAllUnreferenced(*_dir);
   } catch (const std::exception& e) {
     result = absl::InternalError(absl::StrCat(
-      "cleanup failed for search table ", GetTableId().id(), ": ", e.what()));
+      "cleanup failed for search table ", GetTableId(), ": ", e.what()));
   }
   const uint64_t time_ms =
     std::chrono::duration_cast<std::chrono::milliseconds>(

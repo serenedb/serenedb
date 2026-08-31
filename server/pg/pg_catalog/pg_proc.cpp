@@ -20,6 +20,8 @@
 
 #include "pg/pg_catalog/pg_proc.h"
 
+#include <duckdb/catalog/catalog_entry/scalar_macro_catalog_entry.hpp>
+#include <duckdb/catalog/catalog_entry/table_macro_catalog_entry.hpp>
 #include <duckdb/function/macro_function.hpp>
 #include <duckdb/parser/parsed_data/create_macro_info.hpp>
 #include <string>
@@ -27,11 +29,7 @@
 
 #include "app/app_server.h"
 #include "basics/down_cast.h"
-#include "catalog/ddl/catalog.h"
-#include "catalog/identifiers/object_id.h"
-#include "catalog/read/duckdb_catalog_sets.h"
-#include "catalog/role.h"
-#include "catalog/schema.h"
+#include "catalog1/entry/role.h"
 #include "pg/pg_catalog/fwd.h"
 #include "pg/pg_types.h"
 
@@ -53,7 +51,7 @@ constexpr Oid kLangSql = 14;
 }  // namespace
 
 template<>
-catalog::MaterializedData SystemTableSnapshot<PgProc>::GetTableData() {
+MaterializedData SystemTableSnapshot<PgProc>::GetTableData() {
   std::vector<PgProc> values;
   std::vector<std::vector<Oid>> argtypes_storage;
 
@@ -112,8 +110,10 @@ catalog::MaterializedData SystemTableSnapshot<PgProc>::GetTableData() {
     }
   };
   // A scalar macro and a table macro are one SereneDB kind and two duckdb
-  // namespaces; VisitFunctions reads both sets.
-  catalog::VisitFunctions(&_config.GetClientContext(), GetDatabaseId(), emit);
+  // sets, so both are walked.
+  auto* context = &_config.GetClientContext();
+  VisitEntries<duckdb::ScalarMacroCatalogEntry>(context, GetDatabase(), emit);
+  VisitEntries<duckdb::TableMacroCatalogEntry>(context, GetDatabase(), emit);
 
   auto result = CreateColumns<PgProc>(values.size());
 

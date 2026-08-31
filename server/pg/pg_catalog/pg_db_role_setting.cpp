@@ -22,19 +22,21 @@
 
 #include "app/app_server.h"
 #include "basics/down_cast.h"
-#include "catalog/ddl/catalog.h"
-#include "catalog/read/duckdb_catalog_sets.h"
-#include "catalog/role.h"
+#include "catalog1/cluster.h"
+#include "catalog1/entry/role.h"
 #include "pg/pg_catalog/fwd.h"
 
 namespace sdb::pg {
 
 template<>
-catalog::MaterializedData SystemTableSnapshot<PgDbRoleSetting>::GetTableData() {
+MaterializedData SystemTableSnapshot<PgDbRoleSetting>::GetTableData() {
   std::vector<PgDbRoleSetting> values;
-  catalog::VisitRoles(
-    &_config.GetClientContext(), [&](const catalog::Role& role) {
-      auto config = role.Config();
+  auto& context = _config.GetClientContext();
+  auto& cluster = catalog::ClusterOf(context);
+  cluster.ScanRoles(
+    cluster.GetCatalogTransaction(context), [&](duckdb::CatalogEntry& entry) {
+      const auto& role = entry.Cast<catalog::RoleCatalogEntry>();
+      const auto& config = role.Config();
       if (config.empty()) {
         // PG inserts a pg_db_role_setting row only when a GUC is set.
         return;
@@ -42,7 +44,7 @@ catalog::MaterializedData SystemTableSnapshot<PgDbRoleSetting>::GetTableData() {
       values.push_back(PgDbRoleSetting{
         // Role-wide (all databases) -> the pg_roles.rolconfig join.
         .setdatabase = 0,
-        .setrole = role.GetId().id(),
+        .setrole = role.oid,
         .setconfig = config,
       });
     });

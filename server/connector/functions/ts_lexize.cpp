@@ -33,8 +33,8 @@
 #include <iresearch/utils/string.hpp>
 #include <variant>
 
-#include "catalog/ddl/catalog.h"
-#include "catalog/tokenizer.h"
+#include "catalog1/catalog.h"
+#include "catalog1/entry/tokenizer.h"
 #include "connector/common.h"
 #include "connector/duckdb_client_state.h"
 #include "connector/functions/search.h"
@@ -47,8 +47,8 @@
 namespace sdb::connector {
 namespace {
 
-catalog::TokenizerRef LookupTokenizerDict(duckdb::ClientContext& context,
-                                          std::string_view dict_name) {
+duckdb::optional_ptr<const catalog::TokenizerCatalogEntry> LookupTokenizerDict(
+  duckdb::ClientContext& context, std::string_view dict_name) {
   auto dict = ResolveCatalogTokenizer(context, dict_name);
   if (!dict) {
     THROW_SQL_ERROR(
@@ -58,16 +58,16 @@ catalog::TokenizerRef LookupTokenizerDict(duckdb::ClientContext& context,
   return dict;
 }
 
-catalog::Tokenizer::TokenizerWrapper AcquireTokenizer(
-  const catalog::Tokenizer& dict) {
-  return dict.GetTokenizer();
+catalog::TokenizerCatalogEntry::TokenizerWrapper AcquireTokenizer(
+  const catalog::TokenizerCatalogEntry& dict) {
+  return dict.Acquire();
 }
 
 // The dictionary is named per row, so this arm resolves at execution time. What
 // it carries is only what makes two bindings interchangeable: the database and
 // the schema an unqualified name resolves against.
 struct DynamicCtx {
-  sdb::ObjectId db_id;
+  duckdb::idx_t db_id;
   std::string current_schema;
 
   bool operator==(const DynamicCtx& rhs) const {
@@ -76,7 +76,9 @@ struct DynamicCtx {
 };
 
 struct TsLexizeBindData final : public duckdb::FunctionData {
-  std::variant<DynamicCtx, catalog::TokenizerRef> state;
+  std::variant<DynamicCtx,
+               duckdb::optional_ptr<const catalog::TokenizerCatalogEntry>>
+    state;
 
   duckdb::unique_ptr<duckdb::FunctionData> Copy() const final {
     return duckdb::make_uniq<TsLexizeBindData>(*this);
@@ -87,7 +89,7 @@ struct TsLexizeBindData final : public duckdb::FunctionData {
 };
 
 struct TsLexizeLocalState final : public duckdb::FunctionLocalState {
-  catalog::Tokenizer::TokenizerWrapper wrapper;
+  catalog::TokenizerCatalogEntry::TokenizerWrapper wrapper;
 };
 
 duckdb::unique_ptr<duckdb::FunctionLocalState> InitTsLexizeLocalState(
@@ -95,7 +97,8 @@ duckdb::unique_ptr<duckdb::FunctionLocalState> InitTsLexizeLocalState(
   const duckdb::BoundFunctionExpression& expr,
   duckdb::FunctionData* bind_data) {
   auto& dict =
-    std::get<catalog::TokenizerRef>(bind_data->Cast<TsLexizeBindData>().state);
+    std::get<duckdb::optional_ptr<const catalog::TokenizerCatalogEntry>>(
+      bind_data->Cast<TsLexizeBindData>().state);
   auto local = duckdb::make_uniq<TsLexizeLocalState>();
   local->wrapper = AcquireTokenizer(*dict);
   return local;

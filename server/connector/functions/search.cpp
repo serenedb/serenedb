@@ -43,9 +43,8 @@
 #include <iresearch/utils/string.hpp>
 #include <iresearch/utils/utf8_utils.hpp>
 
-#include "catalog/entry/duckdb_object_entry.h"
-#include "catalog/scorer_options.h"
-#include "catalog/tokenizer.h"
+#include "catalog1/entry/inverted_index.h"
+#include "catalog1/entry/tokenizer.h"
 #include "connector/duckdb_client_state.h"
 #include "connector/functions/split_by_non_alpha.h"
 #include "connector/functions/ts_common.hpp"
@@ -296,17 +295,17 @@ void RegisterGeoFunctions(duckdb::ExtensionLoader& loader) {
 
 }  // namespace
 
-catalog::Tokenizer::TokenizerWrapper AcquireTokenizer(
+catalog::TokenizerCatalogEntry::TokenizerWrapper AcquireTokenizer(
   duckdb::ClientContext& context, std::string_view name) {
   auto dict = ResolveCatalogTokenizer(context, name);
   if (!dict) {
     return {};
   }
-  return dict->GetTokenizer();
+  return dict->Acquire();
 }
 
-catalog::TokenizerRef ResolveCatalogTokenizer(duckdb::ClientContext& context,
-                                              std::string_view name) {
+duckdb::optional_ptr<const catalog::TokenizerCatalogEntry>
+ResolveCatalogTokenizer(duckdb::ClientContext& context, std::string_view name) {
   auto state =
     context.registered_state->Get<SereneDBClientState>(kSereneDBClientStateKey);
   if (!state) [[unlikely]] {
@@ -328,7 +327,7 @@ catalog::TokenizerRef ResolveCatalogTokenizer(duckdb::ClientContext& context,
   if (!entry) {
     return nullptr;
   }
-  return entry->Cast<catalog::SereneDBTokenizerEntry>().GetTokenizer();
+  return &entry->Cast<catalog::TokenizerCatalogEntry>();
 }
 
 void RegisterSearchFunctions(duckdb::DatabaseInstance& db) {

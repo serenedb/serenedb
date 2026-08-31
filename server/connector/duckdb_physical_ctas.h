@@ -24,8 +24,6 @@
 #include <duckdb/execution/physical_operator.hpp>
 #include <string>
 
-#include "catalog/identifiers/object_id.h"
-
 namespace sdb::connector {
 
 // Progress shell for CREATE TABLE AS SELECT on SereneDB tables. The wrapped
@@ -37,8 +35,9 @@ namespace sdb::connector {
 class SereneDBPhysicalCTAS final : public duckdb::PhysicalOperator {
  public:
   SereneDBPhysicalCTAS(duckdb::PhysicalPlan& plan,
-                       duckdb::PhysicalOperator& insert, ObjectId database_id,
-                       std::string schema_name, std::string table_name,
+                       duckdb::PhysicalOperator& insert,
+                       duckdb::idx_t database_id, std::string schema_name,
+                       std::string table_name,
                        duckdb::idx_t estimated_cardinality);
 
   duckdb::unique_ptr<duckdb::GlobalSinkState> GetGlobalSinkState(
@@ -84,7 +83,7 @@ class SereneDBPhysicalCTAS final : public duckdb::PhysicalOperator {
   // loads).
   duckdb::PhysicalOperator& _insert;
   // Where the load's create files the relation: progress reports its relid.
-  ObjectId _database_id;
+  duckdb::idx_t _database_id;
   std::string _schema_name;
   std::string _table_name;
 };

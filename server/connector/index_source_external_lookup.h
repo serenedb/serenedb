@@ -29,7 +29,8 @@
 #include <string>
 #include <vector>
 
-#include "catalog/table_options.h"
+#include "catalog1/entry/search_table.h"
+#include "connector/column_id.h"
 #include "connector/index_source_view.h"
 #include "connector/view_fast_path.h"
 
@@ -41,7 +42,7 @@ class ExternalLookupIndexSource final : public ViewIndexSourceBase {
     duckdb::ClientContext& context, ViewFastPath fast_path,
     std::span<const duckdb::idx_t> projected_columns,
     std::span<const duckdb::LogicalType> projected_types,
-    std::span<const catalog::ColumnId> bind_column_ids);
+    std::span<const ColumnId> bind_column_ids);
 
   duckdb::idx_t Materialize(duckdb::ClientContext& context, duckdb::Vector& pk,
                             duckdb::idx_t count,

@@ -37,7 +37,6 @@
 #include "basics/serializer.h"
 #include "basics/static_strings.h"
 #include "basics/system-compiler.h"
-#include "catalog/identifiers/object_id.h"
 #include "pg/information_schema/sql_features.h"
 #include "pg/information_schema/sql_implementation_info.h"
 #include "pg/information_schema/sql_parts.h"
@@ -344,7 +343,7 @@ StaticView GetView(std::string_view name) {
 void InitSystemViews(duckdb::Parser& parser) {
   uint64_t next_id = id::kFirstSystemView.id();
   for (const auto& view : kExternalViews) {
-    const ObjectId id{next_id++};
+    const duckdb::idx_t id{next_id++};
     auto info = duckdb::make_uniq<duckdb::CreateViewInfo>();
     info->SetSchema(duckdb::Identifier{view.schema});
     info->SetViewName(duckdb::Identifier{view.name});
@@ -436,9 +435,9 @@ void InitSystemFunctions(duckdb::Parser& parser) {
       existing.type = info->type;
     }
   }
-  const auto publish = [](auto& built, ObjectId schema_id, auto& out) {
+  const auto publish = [](auto& built, duckdb::idx_t schema_id, auto& out) {
     for (auto& [name, info] : built) {
-      catalog::SetIdentity(*info, ObjectId{}, schema_id);
+      catalog::SetIdentity(*info, 0, schema_id);
       out[name] = StaticFunction{
         std::shared_ptr<const duckdb::CreateMacroInfo>{info.release()},
         catalog::Permissions{}};

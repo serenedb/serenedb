@@ -22,9 +22,10 @@
 
 #include <absl/algorithm/container.h>
 
+#include <duckdb/catalog/catalog_entry/duck_table_entry.hpp>
+
 #include "basics/assert.h"
-#include "catalog/entry/duckdb_table_entry.h"
-#include "catalog/inverted_index.h"
+#include "catalog1/entry/inverted_index.h"
 #include "connector/search_sink_writer.hpp"
 
 namespace sdb::connector {

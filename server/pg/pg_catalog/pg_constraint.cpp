@@ -21,17 +21,14 @@
 #include "pg/pg_catalog/pg_constraint.h"
 
 #include <deque>
+#include <duckdb/catalog/catalog_entry/schema_catalog_entry.hpp>
+#include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
 #include <duckdb/parser/constraints/list.hpp>
 #include <span>
 #include <string_view>
 #include <utility>
 
 #include "basics/containers/flat_hash_map.h"
-#include "catalog/ddl/catalog.h"
-#include "catalog/entry/duckdb_schema_entry.h"
-#include "catalog/entry/duckdb_table_entry.h"
-#include "catalog/read/duckdb_catalog_sets.h"
-#include "catalog/schema.h"
 #include "pg/pg_catalog/fwd.h"
 
 namespace sdb::pg {
@@ -54,13 +51,13 @@ constexpr uint64_t kFkNullMask =
 // CHECK rows carry the deparsed body in conbin.
 constexpr uint64_t kCheckNullMask =
   kNullMask & ~(uint64_t{1} << GetIndex(&PgConstraint::conbin));
-// FKs carry no stored ObjectId; synthesize a constraint OID. Bit 61 keeps it
-// clear of raw ObjectIds and the bit-62 synthetic PK index OIDs.
+// FKs carry no stored duckdb::idx_t; synthesize a constraint OID. Bit 61 keeps
+// it clear of raw ObjectIds and the bit-62 synthetic PK index OIDs.
 
 }  // namespace
 
 template<>
-catalog::MaterializedData SystemTableSnapshot<PgConstraint>::GetTableData() {
+MaterializedData SystemTableSnapshot<PgConstraint>::GetTableData() {
   std::vector<PgConstraint> values;
   std::deque<std::string> conname_storage;
   std::deque<std::string> conbin_storage;
@@ -74,19 +71,17 @@ catalog::MaterializedData SystemTableSnapshot<PgConstraint>::GetTableData() {
   // id the constraint carries and not by the qualified name it also carries:
   // the name is only what it was when the definition was written, and a rename
   // since has moved it.
-  containers::FlatHashMap<ObjectId, const catalog::SereneDBTableEntry*>
+  containers::FlatHashMap<duckdb::idx_t, const duckdb::TableCatalogEntry*>
     tables_by_id;
-  catalog::VisitTableEntries(context, GetDatabaseId(),
-                             [&](const catalog::SereneDBSchemaEntry&,
-                                 const catalog::SereneDBTableEntry& table) {
-                               tables_by_id.emplace(catalog::IdOf(table),
-                                                    &table);
-                             });
+  VisitEntries<duckdb::TableCatalogEntry>(
+    &context, GetDatabase(), [&](const duckdb::TableCatalogEntry& table) {
+      tables_by_id.emplace(table.oid, &table);
+    });
 
   // The index enforcing the key a foreign key points at: its primary key,
   // which is the only key a foreign key may reference.
   const auto referenced_index =
-    [](const catalog::SereneDBTableEntry& referenced) -> Oid {
+    [](const duckdb::TableCatalogEntry& referenced) -> Oid {
     for (const auto& constraint : referenced.GetConstraints()) {
       if (constraint->type != duckdb::ConstraintType::UNIQUE) {
         continue;
@@ -110,12 +105,10 @@ catalog::MaterializedData SystemTableSnapshot<PgConstraint>::GetTableData() {
     return out;
   };
 
-  catalog::VisitTableEntries(
-    context, GetDatabaseId(),
-    [&](const catalog::SereneDBSchemaEntry& schema,
-        const catalog::SereneDBTableEntry& table) {
-      const auto relid = catalog::IdOf(table).id();
-      const auto namespace_id = catalog::IdOf(schema).id();
+  VisitEntries<duckdb::TableCatalogEntry>(
+    &context, GetDatabase(), [&](const duckdb::TableCatalogEntry& table) {
+      const auto relid = table.oid;
+      const auto namespace_id = table.ParentSchema().oid;
       const auto base = [&](PgConstraint::Contype contype, Oid oid,
                             std::string_view name) {
         return PgConstraint{
@@ -182,13 +175,12 @@ catalog::MaterializedData SystemTableSnapshot<PgConstraint>::GetTableData() {
           }
           case duckdb::ConstraintType::FOREIGN_KEY: {
             const auto& fk = constraint->Cast<duckdb::ForeignKeyConstraint>();
-            const auto referenced =
-              tables_by_id.find(ObjectId{fk.host_referenced_id});
+            const auto referenced = tables_by_id.find(fk.host_referenced_id);
             const auto& target =
               referenced == tables_by_id.end() ? table : *referenced->second;
             row.contype = PgConstraint::Contype::ForeignKey;
             row.conindid = referenced_index(target);
-            row.confrelid = catalog::IdOf(target).id();
+            row.confrelid = target.oid;
             conkey_storage.push_back(attnums(fk.info.fk_keys));
             confkey_storage.push_back(attnums(fk.info.pk_keys));
             row.confkey = confkey_storage.back();

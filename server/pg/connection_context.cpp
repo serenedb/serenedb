@@ -20,13 +20,14 @@
 
 #include "pg/connection_context.h"
 
+#include <duckdb/catalog/catalog.hpp>
+#include <duckdb/catalog/catalog_transaction.hpp>
+
 #include "app/app_server.h"
 #include "auth/role_closure.h"
-#include "catalog/database.h"
-#include "catalog/ddl/catalog.h"
-#include "catalog/identifiers/object_id.h"
-#include "catalog/read/duckdb_catalog_sets.h"
-#include "catalog/role.h"
+#include "catalog1/cluster.h"
+#include "catalog1/entry/database.h"
+#include "catalog1/entry/role.h"
 #include "pg/errcodes.h"
 #include "pg/sql_exception_macro.h"
 #include "query/transaction.h"
@@ -37,18 +38,22 @@ LoginCheck RequireLoginRole(std::string_view user, std::string_view dbname,
                             const catalog::Permissions& perm) {
   // No ClientContext yet -- the connection is still being established -- so
   // this reads the committed cluster state.
-  auto role = catalog::FindRole(nullptr, user);
-  if (!role) {
+  auto& cluster = catalog::ClusterOf();
+  auto entry = cluster.LookupRole(
+    duckdb::CatalogTransaction::GetSystemTransaction(cluster.GetDatabase()),
+    duckdb::Identifier{std::string{user}});
+  if (!entry) {
     return {.error = SQL_ERROR_DATA(
               ERR_CODE(ERRCODE_INVALID_AUTHORIZATION_SPECIFICATION),
               ERR_MSG("role \"", user, "\" does not exist"))};
   }
-  if (!role->CanLogin()) {
+  const auto& role = entry->Cast<catalog::RoleCatalogEntry>();
+  if (!role.CanLogin()) {
     return {.error = SQL_ERROR_DATA(
               ERR_CODE(ERRCODE_INVALID_AUTHORIZATION_SPECIFICATION),
               ERR_MSG("role \"", user, "\" is not permitted to log in"))};
   }
-  if (!auth::ClosureFor(nullptr, role->GetId())
+  if (!auth::ClosureFor(nullptr, role.oid)
          ->Can(duckdb::CatalogType::DATABASE_ENTRY, perm,
                catalog::AclMode::Connect)) {
     return {.error = SQL_ERROR_DATA(
@@ -56,16 +61,17 @@ LoginCheck RequireLoginRole(std::string_view user, std::string_view dbname,
               ERR_MSG("permission denied for database \"", dbname, "\""),
               ERR_DETAIL("User does not have CONNECT privilege."))};
   }
-  return {.role = role->GetId(), .superuser = role->IsSuperuser()};
+  return {.role = role.oid, .superuser = role.IsSuperuser()};
 }
 
 }  // namespace sdb::pg
 namespace sdb {
 
 ConnectionContext::ConnectionContext(
-  duckdb::ClientContext& duckdb_ctx, std::string_view user, ObjectId role_id,
-  std::string_view dbname, ObjectId database_id, message::Buffer* send_buffer,
-  int32_t backend_pid, network::CancelRegistry* cancel_registry)
+  duckdb::ClientContext& duckdb_ctx, std::string_view user,
+  duckdb::idx_t role_id, std::string_view dbname, duckdb::idx_t database_id,
+  message::Buffer* send_buffer, int32_t backend_pid,
+  network::CancelRegistry* cancel_registry)
   : Transaction{duckdb_ctx},
     _user{user},
     _database_name{dbname},
@@ -79,7 +85,7 @@ ConnectionContext::ConnectionContext(
 
 namespace {
 
-std::string RoleName(const auth::RoleGraph& roles, ObjectId role,
+std::string RoleName(const auth::RoleGraph& roles, duckdb::idx_t role,
                      const std::string& fallback) {
   auto name = roles.NameOf(role);
   return name.empty() ? fallback : std::string{name};
@@ -97,10 +103,13 @@ std::string ConnectionContext::SessionUserName() const {
 }
 
 std::string ConnectionContext::GetCurrentSchema() const {
-  auto database_id = GetDatabaseId();
+  auto& context = GetClientContext();
+  auto& database =
+    duckdb::Catalog::GetCatalog(context, duckdb::Identifier{_database_name});
   auto search_path = GetSearchPath();
   auto it = absl::c_find_if(search_path, [&](const std::string& schema_name) {
-    return catalog::FindSchema(nullptr, database_id, schema_name) != nullptr;
+    return database.GetSchema(context, duckdb::Identifier{schema_name},
+                              duckdb::OnEntryNotFound::RETURN_NULL) != nullptr;
   });
 
   return it != search_path.end() ? *it : "";

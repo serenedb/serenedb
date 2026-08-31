@@ -21,21 +21,19 @@
 #include "pg/pg_catalog/pg_description.h"
 
 #include <deque>
+#include <duckdb/catalog/catalog_entry/duck_index_entry.hpp>
+#include <duckdb/catalog/catalog_entry/scalar_macro_catalog_entry.hpp>
+#include <duckdb/catalog/catalog_entry/sequence_catalog_entry.hpp>
+#include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
+#include <duckdb/catalog/catalog_entry/table_macro_catalog_entry.hpp>
+#include <duckdb/catalog/catalog_entry/type_catalog_entry.hpp>
+#include <duckdb/catalog/catalog_entry/view_catalog_entry.hpp>
 #include <duckdb/parser/parsed_data/create_view_info.hpp>
 #include <string>
 #include <vector>
 
 #include "basics/down_cast.h"
-#include "catalog/ddl/catalog.h"
-#include "catalog/entry/duckdb_index_entry.h"
-#include "catalog/entry/duckdb_object_entry.h"
-#include "catalog/entry/duckdb_schema_entry.h"
-#include "catalog/entry/duckdb_table_entry.h"
-#include "catalog/entry/duckdb_view_entry.h"
-#include "catalog/index.h"
-#include "catalog/read/duckdb_catalog_sets.h"
-#include "catalog/schema.h"
-#include "catalog/sequence.h"
+#include "catalog1/entry/inverted_index.h"
 #include "pg/pg_catalog/pg_class.h"
 #include "pg/pg_catalog/pg_proc.h"
 #include "pg/pg_catalog/pg_type.h"
@@ -55,9 +53,9 @@ std::string_view InfoComment(const duckdb::Value& value) {
 }  // namespace
 
 template<>
-catalog::MaterializedData SystemTableSnapshot<PgDescription>::GetTableData() {
+MaterializedData SystemTableSnapshot<PgDescription>::GetTableData() {
   auto& context = _config.GetClientContext();
-  const auto database_id = GetDatabaseId();
+  auto& database = GetDatabase();
 
   std::vector<PgDescription> values;
   // A row borrows its text, and a definition the scan walks is only pinned for
@@ -65,74 +63,77 @@ catalog::MaterializedData SystemTableSnapshot<PgDescription>::GetTableData() {
   // write below.
   std::deque<std::string> text;
 
-  const auto add = [&](Oid classoid, ObjectId objoid, int32_t objsubid,
+  const auto add = [&](Oid classoid, duckdb::idx_t objoid, int32_t objsubid,
                        std::string_view comment) {
     if (comment.empty()) {
       return;
     }
     text.emplace_back(comment);
     values.push_back(PgDescription{
-      .objoid = objoid.id(),
+      .objoid = objoid,
       .classoid = classoid,
       .objsubid = objsubid,
       .description = text.back(),
     });
   };
 
-  catalog::VisitCatalogSetEntries(
-    context, database_id, duckdb::CatalogType::TABLE_ENTRY,
-    [&](const catalog::SereneDBSchemaEntry&, duckdb::CatalogEntry& entry) {
-      if (const auto* table =
-            dynamic_cast<const catalog::SereneDBTableEntry*>(&entry)) {
-        const auto id = catalog::IdOf(*table);
-        add(PgClass::kId, id, 0, InfoComment(table->comment));
-        for (const auto& column : table->GetColumns().Logical()) {
-          add(PgClass::kId, id,
-              static_cast<int32_t>(column.Logical().index + 1),
-              InfoComment(column.Comment()));
+  database.ScanSchemas(context, [&](duckdb::SchemaCatalogEntry& schema_ref) {
+    schema_ref.Scan(
+      context, duckdb::CatalogType::TABLE_ENTRY,
+      [&](duckdb::CatalogEntry& entry) {
+        if (const auto* table =
+              dynamic_cast<const duckdb::TableCatalogEntry*>(&entry)) {
+          const auto id = (*table).oid;
+          add(PgClass::kId, id, 0, InfoComment(table->comment));
+          for (const auto& column : table->GetColumns().Logical()) {
+            add(PgClass::kId, id,
+                static_cast<int32_t>(column.Logical().index + 1),
+                InfoComment(column.Comment()));
+          }
+          return;
         }
-        return;
-      }
-      const auto* view_entry =
-        dynamic_cast<const catalog::SereneDBViewEntry*>(&entry);
-      if (view_entry == nullptr) {
-        return;
-      }
-      const auto view_id = ObjectId{view_entry->oid};
-      add(PgClass::kId, view_id, 0, InfoComment(view_entry->comment));
-      const auto view_columns = view_entry->GetColumnInfo();
-      if (!view_columns) {
-        return;
-      }
-      for (size_t i = 0; i < view_columns->names.size(); ++i) {
-        const auto comment = view_entry->GetColumnComment(i);
-        if (!comment.IsNull()) {
-          add(PgClass::kId, view_id, static_cast<int32_t>(i + 1),
-              InfoComment(comment));
+        auto* view_entry = dynamic_cast<duckdb::ViewCatalogEntry*>(&entry);
+        if (view_entry == nullptr) {
+          return;
         }
-      }
+        const auto view_id = view_entry->oid;
+        add(PgClass::kId, view_id, 0, InfoComment(view_entry->comment));
+        const auto view_columns = view_entry->GetColumnInfo();
+        if (!view_columns) {
+          return;
+        }
+        for (size_t i = 0; i < view_columns->names.size(); ++i) {
+          const auto comment = view_entry->GetColumnComment(i);
+          if (!comment.IsNull()) {
+            add(PgClass::kId, view_id, static_cast<int32_t>(i + 1),
+                InfoComment(comment));
+          }
+        }
+      });
+  });
+
+  VisitEntries<duckdb::DuckIndexEntry>(
+    &context, database, [&](const duckdb::DuckIndexEntry& entry) {
+      add(PgClass::kId, entry.oid, 0, InfoComment(entry.comment));
     });
 
-  catalog::Visit<catalog::SereneDBIndexEntry>(
-    &context, database_id, [&](const catalog::SereneDBIndexEntry& entry) {
-      add(PgClass::kId, ObjectId{entry.oid}, 0, InfoComment(entry.comment));
+  VisitEntries<duckdb::SequenceCatalogEntry>(
+    &context, database, [&](const duckdb::SequenceCatalogEntry& seq) {
+      add(PgClass::kId, seq.oid, 0, InfoComment(seq.comment));
     });
 
-  catalog::Visit<catalog::SereneDBSequenceEntry>(
-    &context, database_id, [&](const catalog::SereneDBSequenceEntry& seq) {
-      add(PgClass::kId, ObjectId{seq.oid}, 0, seq.Comment());
+  VisitEntries<duckdb::TypeCatalogEntry>(
+    &context, database, [&](const duckdb::TypeCatalogEntry& type) {
+      add(PgType::kId, type.oid, 0, InfoComment(type.comment));
     });
 
-  catalog::Visit<catalog::SereneDBTypeEntry>(
-    &context, database_id, [&](const duckdb::TypeCatalogEntry& type) {
-      add(PgType::kId, ObjectId{type.oid}, 0, InfoComment(type.comment));
-    });
-
-  catalog::VisitFunctions(&context, database_id,
-                          [&](const duckdb::MacroCatalogEntry& function) {
-                            add(PgProc::kId, ObjectId{function.oid}, 0,
-                                InfoComment(function.comment));
-                          });
+  const auto add_function = [&](const duckdb::MacroCatalogEntry& function) {
+    add(PgProc::kId, function.oid, 0, InfoComment(function.comment));
+  };
+  VisitEntries<duckdb::ScalarMacroCatalogEntry>(&context, database,
+                                                add_function);
+  VisitEntries<duckdb::TableMacroCatalogEntry>(&context, database,
+                                               add_function);
 
   auto result = CreateColumns<PgDescription>(values.size());
   for (size_t row = 0; row < values.size(); ++row) {

@@ -26,19 +26,20 @@
 #include <algorithm>
 #include <array>
 #include <cstring>
+#include <duckdb/catalog/catalog_entry/duck_table_entry.hpp>
+#include <duckdb/catalog/catalog_transaction.hpp>
 #include <duckdb/common/types/timestamp.hpp>
 #include <duckdb/parser/statement/create_statement.hpp>
 #include <duckdb/parser/statement/transaction_statement.hpp>
 
+#include "auth/role_closure.h"
 #include "basics/assert.h"
 #include "basics/debugging.h"
 #include "basics/lifecycle.h"
 #include "basics/metrics.h"
 #include "basics/system-compiler.h"
-#include "catalog/ddl/catalog.h"
-#include "catalog/entry/duckdb_object_entry.h"
-#include "catalog/entry/duckdb_table_entry.h"
-#include "catalog/read/duckdb_catalog_sets.h"
+#include "catalog1/cluster.h"
+#include "catalog1/entry/role.h"
 #include "network/pg/bind_decoder.h"
 #include "network/pg/copy_eod_scanner.h"
 #include "network/pg/hba.h"
@@ -155,31 +156,49 @@ inline CopyKind ClassifyCopy(duckdb::SQLStatement& statement) {
           format};
 }
 
+// The COPY target, resolved the way the binder would (explicit schema, else
+// the first search-path schema that CONTAINS it). Both callers run before the
+// statement's own transaction exists, so this reads committed state.
+inline duckdb::optional_ptr<duckdb::TableCatalogEntry> FindCopyTable(
+  ConnectionContext& conn, const duckdb::QualifiedName& qname) {
+  auto& database =
+    duckdb::Catalog::GetCatalog(DuckDBEngine::Instance().instance(),
+                                duckdb::Identifier{conn.GetDatabase()});
+  const auto transaction =
+    duckdb::CatalogTransaction::GetSystemTransaction(database.GetDatabase());
+  const auto lookup = [&](const duckdb::Identifier& schema_name)
+    -> duckdb::optional_ptr<duckdb::TableCatalogEntry> {
+    auto schema = database.GetSchema(transaction, schema_name,
+                                     duckdb::OnEntryNotFound::RETURN_NULL);
+    if (!schema) {
+      return nullptr;
+    }
+    auto entry = schema->GetEntry(transaction, duckdb::CatalogType::TABLE_ENTRY,
+                                  qname.Name());
+    return entry ? &entry->Cast<duckdb::TableCatalogEntry>() : nullptr;
+  };
+  if (!qname.Schema().empty()) {
+    return lookup(qname.Schema());
+  }
+  for (const auto& schema : conn.GetSearchPath()) {
+    if (auto table = lookup(duckdb::Identifier{schema})) {
+      return table;
+    }
+  }
+  return nullptr;
+}
+
 // relid for pg_stat_progress_copy: `COPY table TO STDOUT` reports the table
 // (explicit schema, else first search-path hit, as the binder resolves); the
 // query form reports 0 (PG semantics).
-inline ObjectId ResolveCopyTableId(ConnectionContext& conn,
-                                   const duckdb::CopyInfo& info) {
+inline duckdb::idx_t ResolveCopyTableId(ConnectionContext& conn,
+                                        const duckdb::CopyInfo& info) {
   const auto& qname = info.GetQualifiedName();
   if (qname.Name().GetIdentifierName().empty()) {
     return {};
   }
-  const auto db_id = conn.GetDatabaseId();
-  auto& context = conn.GetClientContext();
-  const auto relation = qname.Name().GetIdentifierName();
-  const catalog::SereneDBTableEntry* table = nullptr;
-  if (!qname.Schema().empty()) {
-    table = catalog::FindTableEntry(
-      &context, db_id, qname.Schema().GetIdentifierName(), relation);
-  } else {
-    for (const auto& schema : conn.GetSearchPath()) {
-      table = catalog::FindTableEntry(&context, db_id, schema, relation);
-      if (table) {
-        break;
-      }
-    }
-  }
-  return table ? catalog::IdOf(*table) : ObjectId{};
+  auto table = FindCopyTable(conn, qname);
+  return table ? table->oid : 0;
 }
 
 // Stage pg_stat_progress_copy classification for the statement about to run.
@@ -387,7 +406,10 @@ std::string_view PgWireSession<Kind>::UserName() const {
 
 template<SocketKind Kind>
 bool PgWireSession<Kind>::SetupConnection() {
-  auto database = catalog::FindDatabase(nullptr, DatabaseName());
+  auto& cluster = catalog::ClusterOf();
+  auto database = cluster.LookupDatabase(
+    duckdb::CatalogTransaction::GetSystemTransaction(cluster.GetDatabase()),
+    duckdb::Identifier{std::string{DatabaseName()}});
   if (!database) {
     WriteFatalResponse(this->_send,
                        SQL_ERROR_DATA(ERR_CODE(ERRCODE_INVALID_CATALOG_NAME),
@@ -395,7 +417,7 @@ bool PgWireSession<Kind>::SetupConnection() {
                                               "\" is not accessible")));
     return false;
   }
-  const auto database_id = catalog::IdOf(*database);
+  const auto database_id = database->oid;
 
   const std::string_view user = UserName();
   auto login =
@@ -887,15 +909,20 @@ yaclib::Task<bool> PgWireSession<Kind>::Authenticate() {
   // for every connection, regardless of whether a stored credential exists.
   const hba::MembershipFn is_member = [](std::string_view user,
                                          std::string_view group) {
-    auto user_role = catalog::FindRole(nullptr, user);
-    auto group_role = catalog::FindRole(nullptr, group);
+    auto& cluster = catalog::ClusterOf();
+    const auto transaction =
+      duckdb::CatalogTransaction::GetSystemTransaction(cluster.GetDatabase());
+    auto user_role =
+      cluster.LookupRole(transaction, duckdb::Identifier{std::string{user}});
+    auto group_role =
+      cluster.LookupRole(transaction, duckdb::Identifier{std::string{group}});
     if (!user_role || !group_role) {
       return false;  // missing_ok: unknown login role or target group
     }
     // NOSUPER: explicit (direct/indirect) membership only -- the closure is the
     // membership set and does not implicitly include a superuser's non-members.
-    const auto closure = auth::ClosureFor(nullptr, user_role->GetId());
-    return std::ranges::binary_search(closure->closure, group_role->GetId());
+    const auto closure = auth::ClosureFor(nullptr, user_role->oid);
+    return std::ranges::binary_search(closure->closure, group_role->oid);
   };
 
   hba::ClientInfo client;
@@ -1005,8 +1032,13 @@ yaclib::Task<bool> PgWireSession<Kind>::Authenticate() {
     co_return false;
   }
 
-  const auto login_role = catalog::FindRole(nullptr, UserName());
-  if (login_role && login_role->HasValidUntil() &&
+  auto& cluster = catalog::ClusterOf();
+  auto entry = cluster.LookupRole(
+    duckdb::CatalogTransaction::GetSystemTransaction(cluster.GetDatabase()),
+    duckdb::Identifier{std::string{UserName()}});
+  const auto* login_role =
+    entry ? &entry->Cast<catalog::RoleCatalogEntry>() : nullptr;
+  if (login_role != nullptr && login_role->HasValidUntil() &&
       duckdb::Timestamp::GetCurrentTimestamp().value >=
         login_role->ValidUntil()) {
     WriteFatalResponse(
@@ -1544,33 +1576,13 @@ yaclib::Task<> PgWireSession<Kind>::RunCopyFromStdin(
   _copy_route.store(true, std::memory_order_release);
   // CopyInResponse's column count: the explicit COPY column list, else the
   // target table's column count (PG sends natts + one per-column format code).
-  // No DuckDB transaction is active yet (Prepare binds below), so read the
-  // count from serenedb's catalog snapshot, not duckdb::Catalog.
   const auto& copy_info = *statement->Cast<duckdb::CopyStatement>().info;
   if (format == CopyFormat::Binary) {
     RejectBinaryCopyOptions(copy_info);
   }
   auto copy_columns = static_cast<int16_t>(copy_info.select_list.size());
   if (copy_columns == 0) {
-    const auto db_id = _connection_ctx->GetDatabaseId();
-    auto& context = _connection_ctx->GetClientContext();
-    const auto& copy_name = copy_info.GetQualifiedName();
-    const auto relation = copy_name.Name().GetIdentifierName();
-    const catalog::SereneDBTableEntry* table = nullptr;
-    if (!copy_name.Schema().empty()) {
-      table = catalog::FindTableEntry(
-        &context, db_id, copy_name.Schema().GetIdentifierName(), relation);
-    } else {
-      // Unqualified target: resolve across the search path by presence (the
-      // schema that CONTAINS the table, as the binder does) -- the current
-      // schema alone would miss a table in a later search-path schema.
-      for (const auto& schema : _connection_ctx->GetSearchPath()) {
-        table = catalog::FindTableEntry(&context, db_id, schema, relation);
-        if (table) {
-          break;
-        }
-      }
-    }
+    auto table = FindCopyTable(*_connection_ctx, copy_info.GetQualifiedName());
     if (table) {
       copy_columns =
         static_cast<int16_t>(table->GetColumns().LogicalColumnCount());

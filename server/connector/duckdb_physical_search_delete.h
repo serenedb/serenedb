@@ -59,7 +59,7 @@ class SereneDBSearchDelete final : public duckdb::PhysicalOperator {
   // the index's own writer on domain ticks, and no search-table WAL is
   // written -- a died pass relaunches from the manifest-version mismatch.
   SereneDBSearchDelete(
-    duckdb::PhysicalPlan& plan, ObjectId index_id,
+    duckdb::PhysicalPlan& plan, duckdb::idx_t index_id,
     std::shared_ptr<search::InvertedIndexStorage> storage,
     std::shared_ptr<const irs::IndexFieldOptions> field_options,
     std::vector<duckdb::idx_t> pk_col_indices,

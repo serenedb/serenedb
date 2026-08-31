@@ -20,26 +20,24 @@
 
 #include "pg/pg_catalog/pg_opclass.h"
 
-#include "catalog/ddl/catalog.h"
-#include "catalog/entry/duckdb_object_entry.h"
-#include "catalog/identifiers/object_id.h"
-#include "catalog/index.h"
-#include "catalog/read/duckdb_catalog_sets.h"
+#include "catalog1/entry/inverted_index.h"
+#include "catalog1/entry/tokenizer.h"
+#include "pg/pg_types.h"
 #include "pg/pg_catalog/fwd.h"
 #include "pg/pg_types.h"
 
 namespace sdb::pg {
 
 template<>
-catalog::MaterializedData SystemTableSnapshot<PgOpclass>::GetTableData() {
+MaterializedData SystemTableSnapshot<PgOpclass>::GetTableData() {
   std::vector<PgOpclass> values;
 
   values.push_back({
-    .oid = id::kPgOpclassIvf.id(),
-    .opcmethod = id::kPgAmInverted.id(),
+    .oid = pg::kPgOpclassIvf,
+    .opcmethod = pg::kPgAmInverted,
     .opcname = catalog::kIVFKind,
-    .opcnamespace = id::kPgCatalogSchema.id(),
-    .opcowner = id::kRootUser.id(),
+    .opcnamespace = pg::kPgCatalogSchema,
+    .opcowner = pg::kRootUser,
     .opcfamily = 0,
     .opcintype = PgTypeOID::kFloat4Array,
     .opcdefault = false,
@@ -47,23 +45,23 @@ catalog::MaterializedData SystemTableSnapshot<PgOpclass>::GetTableData() {
   });
 
   values.push_back({
-    .oid = id::kPgOpclassIncluded.id(),
-    .opcmethod = id::kPgAmInverted.id(),
+    .oid = pg::kPgOpclassIncluded,
+    .opcmethod = pg::kPgAmInverted,
     .opcname = catalog::kIncludedKind,
-    .opcnamespace = id::kPgCatalogSchema.id(),
-    .opcowner = id::kRootUser.id(),
+    .opcnamespace = pg::kPgCatalogSchema,
+    .opcowner = pg::kRootUser,
     .opcfamily = 0,
     .opcintype = PgTypeOID::kAny,
     .opcdefault = false,
     .opckeytype = 0,
   });
 
-  catalog::Visit<catalog::SereneDBTokenizerEntry>(
-    &_config.GetClientContext(), GetDatabaseId(),
-    [&](const catalog::SereneDBTokenizerEntry& tokenizer) {
+  VisitEntries<catalog::TokenizerCatalogEntry>(
+    &_config.GetClientContext(), GetDatabase(),
+    [&](const catalog::TokenizerCatalogEntry& tokenizer) {
       values.push_back({
         .oid = tokenizer.oid,
-        .opcmethod = id::kPgAmInverted.id(),
+        .opcmethod = pg::kPgAmInverted,
         // A view into the entry, which outlives the walk: Name is a
         // string_view.
         .opcname = tokenizer.name.GetIdentifierName(),

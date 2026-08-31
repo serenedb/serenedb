@@ -27,7 +27,8 @@
 #include <span>
 #include <string_view>
 
-#include "catalog/table_options.h"
+#include "catalog1/entry/search_table.h"
+#include "connector/column_id.h"
 #include "connector/index_expression.hpp"
 #include "pg/sql_exception_macro.h"
 
@@ -39,7 +40,7 @@ struct CommitOnFlush;
 namespace sdb::connector {
 
 struct ColumnDescriptor {
-  catalog::ColumnId id;
+  ColumnId id;
   duckdb::LogicalType type;
 };
 

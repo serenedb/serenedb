@@ -25,14 +25,14 @@
 #include <iresearch/search/filter.hpp>
 #include <string>
 
-#include "catalog/inverted_index.h"
-#include "catalog/table_options.h"
+#include "catalog1/entry/inverted_index.h"
+#include "connector/term_dict.h"
 
 namespace irs {
 
-using FieldNameResolver = std::function<std::string(sdb::catalog::ColumnId)>;
+using FieldNameResolver = std::function<std::string(sdb::connector::ColumnId)>;
 using FieldKindResolver =
-  std::function<sdb::catalog::term_dict::Kind(sdb::catalog::ColumnId)>;
+  std::function<sdb::connector::term_dict::Kind(sdb::connector::ColumnId)>;
 
 // Builds the structured filter tree for EXPLAIN: one node per filter with its
 // attributes (field, decoded terms/bounds, max_terms, min_match, boost, ...)

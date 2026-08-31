@@ -21,26 +21,21 @@
 #include "pg/pg_catalog/pg_attrdef.h"
 
 #include <deque>
+#include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
 #include <string>
 #include <vector>
-
-#include "catalog/ddl/catalog.h"
-#include "catalog/entry/duckdb_schema_entry.h"
-#include "catalog/entry/duckdb_table_entry.h"
-#include "catalog/read/duckdb_catalog_sets.h"
 
 namespace sdb::pg {
 
 template<>
-catalog::MaterializedData SystemTableSnapshot<PgAttrdef>::GetTableData() {
+MaterializedData SystemTableSnapshot<PgAttrdef>::GetTableData() {
   std::vector<PgAttrdef> values;
   // The rendered expressions the rows point at. A deque, because a row holds a
   // view into one and a vector would move them as it grows.
   std::deque<std::string> adbin_storage;
-  catalog::VisitTableEntries(
-    _config.GetClientContext(), GetDatabaseId(),
-    [&](const catalog::SereneDBSchemaEntry&,
-        const catalog::SereneDBTableEntry& table) {
+  VisitEntries<duckdb::TableCatalogEntry>(
+    &_config.GetClientContext(), GetDatabase(),
+    [&](const duckdb::TableCatalogEntry& table) {
       for (const auto& col : table.GetColumns().Logical()) {
         // A generation expression lives here too, as postgres records it.
         if (!col.HasDefaultValue() && !col.Generated()) {
@@ -51,7 +46,7 @@ catalog::MaterializedData SystemTableSnapshot<PgAttrdef>::GetTableData() {
                                   : col.DefaultValue().ToString());
         values.push_back(PgAttrdef{
           Oid{col.CatalogOid()},
-          Oid{catalog::IdOf(table).id()},
+          Oid{table.oid},
           static_cast<int16_t>(col.Logical().index + 1),
           adbin_storage.back(),
         });

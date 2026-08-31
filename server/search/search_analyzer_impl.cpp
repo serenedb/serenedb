@@ -20,6 +20,7 @@
 
 #include "search/search_analyzer_impl.h"
 
+#include <duckdb/catalog/catalog_entry.hpp>
 #include <duckdb/common/serializer/binary_deserializer.hpp>
 #include <duckdb/common/serializer/memory_stream.hpp>
 #include <iresearch/analysis/geo_analyzer.hpp>
@@ -32,7 +33,7 @@
 
 #include "basics/containers/flat_hash_set.h"
 #include "basics/serializer.h"
-#include "catalog/entry.h"
+#include "catalog1/permissions.h"
 #include "pg/errcodes.h"
 #include "pg/sql_exception_macro.h"
 

@@ -26,8 +26,8 @@
 #include <memory>
 #include <span>
 
-#include "catalog/table_options.h"
-
+#include "catalog1/entry/search_table.h"
+#include "connector/column_id.h"
 namespace duckdb {
 
 class ClientContext;
@@ -41,7 +41,7 @@ std::unique_ptr<IndexSource> MakeIndexSource(
   duckdb::ClientContext& context, const SereneDBScanBindData& bind_data,
   std::span<const duckdb::idx_t> projected_columns,
   std::span<const duckdb::LogicalType> projected_types,
-  std::span<const catalog::ColumnId> bind_column_ids,
+  std::span<const ColumnId> bind_column_ids,
   duckdb::TableFilterSet* pushed_filters = nullptr);
 
 }  // namespace sdb::connector

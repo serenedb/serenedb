@@ -26,6 +26,7 @@
 #include <absl/strings/str_split.h>
 
 #include <duckdb/catalog/catalog.hpp>
+#include <duckdb/catalog/catalog_entry/duck_table_entry.hpp>
 #include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/table_function_catalog_entry.hpp>
 #include <duckdb/common/multi_file/multi_file_reader.hpp>
@@ -48,7 +49,6 @@
 #include <ranges>
 
 #include "basics/system-compiler.h"
-#include "catalog/entry/duckdb_table_entry.h"
 #include "connector/pg_logical_types.h"
 #include "pg/errcodes.h"
 #include "pg/sql_exception_macro.h"
@@ -69,8 +69,8 @@ namespace {
 
 struct RegistryEntry {
   std::string_view function_name;
-  catalog::PkSpec single_pk_spec;
-  catalog::PkSpec glob_pk_spec;
+  PkSpec single_pk_spec;
+  PkSpec glob_pk_spec;
   duckdb::TableFunction (*make_lookup)();
   // Whether the reader's lookup applies pushed table filters. csv/json/text
   // only fetch rows by offset and ignore filters, so filters on their lookup
@@ -82,60 +82,60 @@ struct RegistryEntry {
 const RegistryEntry kRegistry[] = {
   {
     .function_name = "read_parquet",
-    .single_pk_spec = catalog::PkSpec::FileRowNumber,
-    .glob_pk_spec = catalog::PkSpec::FileIndexPlusRowNumber,
+    .single_pk_spec = PkSpec::FileRowNumber,
+    .glob_pk_spec = PkSpec::FileIndexPlusRowNumber,
     .make_lookup = duckdb::MakeParquetLookupTableFunction,
     .supports_filters = true,
   },
   {
     .function_name = "read_csv",
-    .single_pk_spec = catalog::PkSpec::FileOffset,
-    .glob_pk_spec = catalog::PkSpec::FileIndexPlusOffset,
+    .single_pk_spec = PkSpec::FileOffset,
+    .glob_pk_spec = PkSpec::FileIndexPlusOffset,
     .make_lookup = duckdb::MakeCSVLookupTableFunction,
   },
   {
     .function_name = "read_json",
-    .single_pk_spec = catalog::PkSpec::FileOffset,
-    .glob_pk_spec = catalog::PkSpec::FileIndexPlusOffset,
+    .single_pk_spec = PkSpec::FileOffset,
+    .glob_pk_spec = PkSpec::FileIndexPlusOffset,
     .make_lookup = duckdb::MakeJSONLookupTableFunction,
   },
   {
     .function_name = "read_ndjson",
-    .single_pk_spec = catalog::PkSpec::FileOffset,
-    .glob_pk_spec = catalog::PkSpec::FileIndexPlusOffset,
+    .single_pk_spec = PkSpec::FileOffset,
+    .glob_pk_spec = PkSpec::FileIndexPlusOffset,
     .make_lookup = duckdb::MakeJSONLookupTableFunction,
   },
   {
     .function_name = "read_json_objects",
-    .single_pk_spec = catalog::PkSpec::FileOffset,
-    .glob_pk_spec = catalog::PkSpec::FileIndexPlusOffset,
+    .single_pk_spec = PkSpec::FileOffset,
+    .glob_pk_spec = PkSpec::FileIndexPlusOffset,
     .make_lookup = duckdb::MakeJSONObjectsLookupTableFunction,
   },
   {
     .function_name = "read_ndjson_objects",
-    .single_pk_spec = catalog::PkSpec::FileOffset,
-    .glob_pk_spec = catalog::PkSpec::FileIndexPlusOffset,
+    .single_pk_spec = PkSpec::FileOffset,
+    .glob_pk_spec = PkSpec::FileIndexPlusOffset,
     .make_lookup = duckdb::MakeJSONObjectsLookupTableFunction,
   },
   // Iceberg data files are parquet; reuse the parquet lookup TF.
   {
     .function_name = "iceberg_scan",
-    .single_pk_spec = catalog::PkSpec::FileIndexPlusRowNumber,
-    .glob_pk_spec = catalog::PkSpec::FileIndexPlusRowNumber,
+    .single_pk_spec = PkSpec::FileIndexPlusRowNumber,
+    .glob_pk_spec = PkSpec::FileIndexPlusRowNumber,
     .make_lookup = duckdb::MakeParquetLookupTableFunction,
     .supports_filters = true,
   },
   // read_text emits one row per file; PK is (file_index, 0) in glob mode.
   {
     .function_name = "read_text",
-    .single_pk_spec = catalog::PkSpec::FileRowNumber,
-    .glob_pk_spec = catalog::PkSpec::FileIndexPlusRowNumber,
+    .single_pk_spec = PkSpec::FileRowNumber,
+    .glob_pk_spec = PkSpec::FileIndexPlusRowNumber,
     .make_lookup = duckdb::MakeTextLookupTableFunction,
   },
   {
     .function_name = "read_duckdb",
-    .single_pk_spec = catalog::PkSpec::DuckDBRowId,
-    .glob_pk_spec = catalog::PkSpec::FileIndexPlusDuckDBRowId,
+    .single_pk_spec = PkSpec::DuckDBRowId,
+    .glob_pk_spec = PkSpec::FileIndexPlusDuckDBRowId,
     .make_lookup = duckdb::MakeDuckDBLookupTableFunction,
     .supports_filters = true,
   },
@@ -368,7 +368,7 @@ std::optional<ViewFastPath> ResolveViewFastPath(
       out.projection_columns = std::move(projection_columns);
       out.pk_spec = registry_entry->glob_pk_spec;
       out.supports_filters = registry_entry->supports_filters;
-      out.supports_delta = catalog::IsGlobPK(out.pk_spec) && !has_limit;
+      out.supports_delta = IsGlobPK(out.pk_spec) && !has_limit;
       return out;
     }
     if (cat_type == "duckdb") {
@@ -384,7 +384,7 @@ std::optional<ViewFastPath> ResolveViewFastPath(
                         .schema = entry.ParentSchema().name.GetIdentifierName(),
                         .table = entry.name.GetIdentifierName()};
       out.projection_columns = std::move(projection_columns);
-      out.pk_spec = catalog::PkSpec::DuckDBRowId;
+      out.pk_spec = PkSpec::DuckDBRowId;
       // Attached duckdb table: materialized via DataTable::LookupScan, which
       // applies pushed filters in-scan.
       out.supports_filters = true;
@@ -392,7 +392,7 @@ std::optional<ViewFastPath> ResolveViewFastPath(
     }
     if (cat_type == "serenedb") {
       const auto* sdb_entry =
-        dynamic_cast<const catalog::SereneDBTableEntry*>(&entry);
+        dynamic_cast<const duckdb::TableCatalogEntry*>(&entry);
       if (!sdb_entry) {
         return std::nullopt;
       }
@@ -403,7 +403,7 @@ std::optional<ViewFastPath> ResolveViewFastPath(
         .catalog = entry.ParentCatalog().GetName().GetIdentifierName(),
         .schema = entry.ParentSchema().name.GetIdentifierName(),
         .table = entry.name.GetIdentifierName()};
-      out.pk_spec = catalog::PkSpec::DuckDBRowId;
+      out.pk_spec = PkSpec::DuckDBRowId;
       out.supports_filters = true;
       // Only the check that every projected name is one of the relation's
       // columns: a name that belongs to none is not this fast path's to serve.
@@ -437,7 +437,7 @@ std::optional<ViewFastPath> ResolveViewFastPath(
       .table = entry.name.GetIdentifierName()};
     // Exactly one of the branches below returns, so each may consume
     // projection_columns.
-    auto external_fast_path = [&](catalog::PkSpec spec,
+    auto external_fast_path = [&](PkSpec spec,
                                   std::vector<ExternalKeyColumn> keys = {}) {
       ViewFastPath out;
       out.catalog_ref = ext_ref;
@@ -453,14 +453,13 @@ std::optional<ViewFastPath> ResolveViewFastPath(
       if (cols.empty()) {
         return std::nullopt;
       }
-      return external_fast_path(catalog::PkSpec::ExternalColumnKey,
-                                std::move(cols));
+      return external_fast_path(PkSpec::ExternalColumnKey, std::move(cols));
     }
     if (is_postgres) {
       // Postgres: key on ctid (the duckdb rowid) -- universal, no PRIMARY KEY
       // needed, unique within the index snapshot. The lookup's `rowid IN (...)`
       // is pushed down as a `ctid IN (...)` TID scan.
-      return external_fast_path(catalog::PkSpec::ExternalPostgresCtid);
+      return external_fast_path(PkSpec::ExternalPostgresCtid);
     }
     // ClickHouse: part+offset ids die on merges, so key on the engine's PK
     // metadata -- the whole MergeTree key in order, whatever its arity and
@@ -481,8 +480,7 @@ std::optional<ViewFastPath> ResolveViewFastPath(
     if (cols.empty()) {
       return std::nullopt;
     }
-    return external_fast_path(catalog::PkSpec::ExternalColumnKey,
-                              std::move(cols));
+    return external_fast_path(PkSpec::ExternalColumnKey, std::move(cols));
   }
   if (select_node.from_table->type !=
       duckdb::TableReferenceType::TABLE_FUNCTION) {
@@ -611,7 +609,7 @@ std::optional<ViewFastPath> ResolveViewFastPath(
   out.projection_columns = std::move(projection_columns);
   out.pk_spec = out.is_glob ? entry->glob_pk_spec : entry->single_pk_spec;
   out.supports_filters = entry->supports_filters;
-  out.supports_delta = catalog::IsGlobPK(out.pk_spec) &&
+  out.supports_delta = IsGlobPK(out.pk_spec) &&
                        !out.named_params.contains("union_by_name") &&
                        !has_limit;
   return out;
@@ -619,42 +617,42 @@ std::optional<ViewFastPath> ResolveViewFastPath(
 
 duckdb::LogicalType ViewFastPath::GeneratedPkType() const {
   switch (pk_spec) {
-    case catalog::PkSpec::FileIndexPlusRowNumber:
-    case catalog::PkSpec::FileIndexPlusOffset:
-    case catalog::PkSpec::FileIndexPlusDuckDBRowId:
+    case PkSpec::FileIndexPlusRowNumber:
+    case PkSpec::FileIndexPlusOffset:
+    case PkSpec::FileIndexPlusDuckDBRowId:
       return FileIndexRowNumberStructType();
-    case catalog::PkSpec::FileRowNumber:
-    case catalog::PkSpec::FileOffset:
-    case catalog::PkSpec::DuckDBRowId:
+    case PkSpec::FileRowNumber:
+    case PkSpec::FileOffset:
+    case PkSpec::DuckDBRowId:
       return duckdb::LogicalType::BIGINT;
-    case catalog::PkSpec::ExternalPostgresCtid:
+    case PkSpec::ExternalPostgresCtid:
       return pg::CTID();
-    case catalog::PkSpec::ExternalColumnKey:
+    case PkSpec::ExternalColumnKey:
       return ExternalKeyStructType(key_columns);
   }
   SDB_UNREACHABLE();
 }
 
 std::vector<duckdb::column_t> BackfillPkVirtualColumns(const ViewFastPath& fp) {
-  if (fp.pk_spec == catalog::PkSpec::ExternalPostgresCtid) {
+  if (fp.pk_spec == PkSpec::ExternalPostgresCtid) {
     // Postgres ctid: the key is the virtual rowid, not a real column.
     return {duckdb::COLUMN_IDENTIFIER_ROW_ID};
   }
-  if (fp.pk_spec == catalog::PkSpec::ExternalColumnKey) {
+  if (fp.pk_spec == PkSpec::ExternalColumnKey) {
     // Project the key columns in resolution order: the sink packs them into one
     // struct in that order, and the re-fetch matches on it positionally.
     return fp.key_columns |
            std::views::transform(&ExternalKeyColumn::source_index) |
            std::ranges::to<std::vector>();
   }
-  if (fp.pk_spec == catalog::PkSpec::DuckDBRowId) {
+  if (fp.pk_spec == PkSpec::DuckDBRowId) {
     return {duckdb::COLUMN_IDENTIFIER_ROW_ID};
   }
-  if (fp.pk_spec == catalog::PkSpec::FileIndexPlusDuckDBRowId) {
+  if (fp.pk_spec == PkSpec::FileIndexPlusDuckDBRowId) {
     return {duckdb::MultiFileReader::COLUMN_IDENTIFIER_FILE_INDEX,
             duckdb::COLUMN_IDENTIFIER_ROW_ID};
   }
-  if (catalog::IsGlobPK(fp.pk_spec)) {
+  if (IsGlobPK(fp.pk_spec)) {
     return {duckdb::MultiFileReader::COLUMN_IDENTIFIER_FILE_INDEX,
             duckdb::MultiFileReader::COLUMN_IDENTIFIER_FILE_ROW_NUMBER};
   }

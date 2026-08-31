@@ -24,6 +24,7 @@
 #include <absl/strings/str_split.h>
 #include <unicode/locid.h>
 
+#include <duckdb/catalog/catalog_transaction.hpp>
 #include <iresearch/analysis/classification_tokenizer.hpp>
 #include <iresearch/analysis/collation_tokenizer.hpp>
 #include <iresearch/analysis/delimited_tokenizer.hpp>
@@ -61,10 +62,8 @@
 #include <vector>
 
 #include "basics/assert.h"
-#include "catalog/ddl/catalog.h"
-#include "catalog/ddl/duckdb_catalog.h"
-#include "catalog/read/duckdb_catalog_sets.h"
-#include "catalog/tokenizer.h"
+#include "catalog1/catalog.h"
+#include "catalog1/entry/tokenizer.h"
 #include "pg/connection_context.h"
 #include "pg/option_help.h"
 #include "pg/options_parser.h"
@@ -119,7 +118,8 @@ std::string_view TypeNameOf(const irs::analysis::TokenizerConfig& cfg) {
 
 class CreateTSDictionaryOptions : public OptionsParser {
  public:
-  CreateTSDictionaryOptions(duckdb::ClientContext& context, ObjectId db_id,
+  CreateTSDictionaryOptions(duckdb::ClientContext& context,
+                            duckdb::Catalog& database,
                             std::string_view current_schema,
                             const duckdb::named_parameter_map_t& named_params)
     : OptionsParser{named_params,
@@ -127,7 +127,7 @@ class CreateTSDictionaryOptions : public OptionsParser {
                     {.operation = "CREATE TEXT SEARCH DICTIONARY",
                      .help_hint = "Use WITH (HELP) to see available options"}},
       _context{context},
-      _db_id{db_id},
+      _database{&database},
       _current_schema{current_schema} {
     ParseOptions([&] {
       const auto type =
@@ -862,11 +862,12 @@ class CreateTSDictionaryOptions : public OptionsParser {
     std::string from =
       OptionsParser::EraseOptionOrDefault<tokenizer_options::kFrom>(prefix);
     auto name = ParseObjectName(from, _current_schema);
-    const auto schema_id =
-      catalog::FindSchemaId(&_context, _db_id, name.schema);
-    auto tokenizer = schema_id.isSet() ? catalog::FindTokenizer(
-                                           &_context, schema_id, name.relation)
-                                       : nullptr;
+    auto tokenizer = duckdb::Catalog::GetEntry<catalog::TokenizerCatalogEntry>(
+      _context,
+      duckdb::QualifiedName{_database->GetName(),
+                            duckdb::Identifier{name.schema},
+                            duckdb::Identifier{name.relation}},
+      duckdb::OnEntryNotFound::RETURN_NULL);
     if (!tokenizer) {
       THROW_SQL_ERROR(
         ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
@@ -892,7 +893,7 @@ class CreateTSDictionaryOptions : public OptionsParser {
   irs::analysis::TokenizerConfig _config;
   search::Features _features;
   duckdb::ClientContext& _context;
-  ObjectId _db_id;
+  duckdb::Catalog* _database;
   std::string_view _current_schema;
 };
 
@@ -901,11 +902,12 @@ class CreateTSDictionaryOptions : public OptionsParser {
 void CreateTokenizer(ConnectionContext& conn_ctx, std::string_view name,
                      std::string_view schema, bool if_not_exists,
                      const duckdb::named_parameter_map_t& options) {
-  auto db_id = conn_ctx.GetDatabaseId();
   auto current_schema = conn_ctx.GetCurrentSchema();
+  auto& database = duckdb::Catalog::GetCatalog(
+    conn_ctx.GetClientContext(), duckdb::Identifier{conn_ctx.GetDatabase()});
 
   auto [cfg, features] =
-    std::move(CreateTSDictionaryOptions{conn_ctx.GetClientContext(), db_id,
+    std::move(CreateTSDictionaryOptions{conn_ctx.GetClientContext(), database,
                                         current_schema, options})
       .Result();
 
@@ -918,13 +920,19 @@ void CreateTokenizer(ConnectionContext& conn_ctx, std::string_view name,
                     ERR_MSG("Unsupported index features are specified"));
   }
 
-  auto tokenizer = std::make_shared<catalog::CreateTokenizerInfo>(
-    ObjectId{}, ObjectId{}, name, features, std::move(cfg));
+  catalog::CreateTokenizerInfo tokenizer{duckdb::Identifier{std::string{name}},
+                                         features, std::move(cfg)};
+  tokenizer.on_conflict = if_not_exists
+                            ? duckdb::OnCreateConflict::IGNORE_ON_CONFLICT
+                            : duckdb::OnCreateConflict::ERROR_ON_CONFLICT;
 
-  auto& catalog = catalog::DatabaseCatalog(&conn_ctx.GetClientContext(), db_id);
-  catalog.CreateTokenizer(
-    catalog::ActingAs(conn_ctx.GetRoleId(), conn_ctx.GetClientContext()), db_id,
-    schema, std::move(tokenizer), if_not_exists);
+  auto& client = conn_ctx.GetClientContext();
+  auto& target = database.GetSchema(
+    client,
+    duckdb::Identifier{std::string{schema.empty() ? current_schema : schema}});
+  auto& catalog = database.Cast<catalog::SereneDBCatalog>();
+  catalog.CreateTokenizer(duckdb::CatalogTransaction{catalog, client},
+                          target.Cast<duckdb::DuckSchemaEntry>(), tokenizer);
 }
 
 }  // namespace sdb::pg

@@ -31,7 +31,6 @@
 
 #include "basics/assert.h"
 #include "basics/containers/flat_hash_map.h"
-#include "catalog/identifiers/object_id.h"
 #include "search/search_db_wal.h"
 
 namespace sdb::search {
@@ -125,6 +124,6 @@ struct LocalTableChangesEntry {
 };
 
 using LocalTableChanges =
-  containers::FlatHashMap<ObjectId, LocalTableChangesEntry>;
+  containers::FlatHashMap<duckdb::idx_t, LocalTableChangesEntry>;
 
 }  // namespace sdb::search

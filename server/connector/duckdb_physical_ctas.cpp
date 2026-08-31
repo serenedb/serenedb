@@ -21,13 +21,10 @@
 #include "connector/duckdb_physical_ctas.h"
 
 #include <atomic>
+#include <duckdb/catalog/catalog_entry/duck_table_entry.hpp>
 
 #include "basics/assert.h"
 #include "basics/debugging.h"
-#include "catalog/ddl/duckdb_catalog.h"
-#include "catalog/entry/duckdb_object_entry.h"
-#include "catalog/entry/duckdb_table_entry.h"
-#include "catalog/read/duckdb_catalog_sets.h"
 #include "connector/duckdb_client_state.h"
 #include "pg/connection_context.h"
 #include "pg/progress_registry.h"
@@ -65,7 +62,7 @@ struct CTASSourceState final : public duckdb::GlobalSourceState {
 
 SereneDBPhysicalCTAS::SereneDBPhysicalCTAS(duckdb::PhysicalPlan& plan,
                                            duckdb::PhysicalOperator& insert,
-                                           ObjectId database_id,
+                                           duckdb::idx_t database_id,
                                            std::string schema_name,
                                            std::string table_name,
                                            duckdb::idx_t estimated_cardinality)
@@ -94,11 +91,11 @@ SereneDBPhysicalCTAS::GetGlobalSinkState(duckdb::ClientContext& context) const {
   const auto schema_id =
     catalog::FindSchemaId(&context, _database_id, _schema_name);
   if (const auto* created = schema_id.isSet()
-                              ? catalog::Find<catalog::SereneDBTableEntry>(
+                              ? catalog::Find<duckdb::TableCatalogEntry>(
                                   &context, schema_id, _table_name)
                               : nullptr) {
-    pg::ProgressMetrics::Set(
-      metrics.relid, static_cast<int64_t>(catalog::IdOf(*created).id()));
+    pg::ProgressMetrics::Set(metrics.relid,
+                             static_cast<int64_t>((*created).oid.id()));
   }
   // The CTAS operator's own estimate is its single count row; the expected
   // ingest size is the source child's estimate.

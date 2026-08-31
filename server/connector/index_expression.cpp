@@ -51,6 +51,7 @@
 #include <vector>
 
 #include "basics/serialization.h"
+#include "connector/column_id.h"
 #include "connector/common.h"
 #include "pg/errcodes.h"
 #include "pg/sql_exception_macro.h"
@@ -101,9 +102,8 @@ duckdb::unique_ptr<duckdb::Expression> DeserializeBoundExpression(
 }
 
 duckdb::unique_ptr<duckdb::Expression> NormalizeBoundExpression(
-  const duckdb::Expression& expr, ObjectId table_id,
-  std::span<const catalog::ColumnId> col_index_to_id,
-  duckdb::ClientContext& context) {
+  const duckdb::Expression& expr, duckdb::idx_t table_id,
+  std::span<const ColumnId> col_index_to_id, duckdb::ClientContext& context) {
   auto copy = FoldConstantCasts(expr.Copy(), context);
   auto visit = [&](auto& self, duckdb::Expression& e) -> void {
     e.SetAlias("");
@@ -127,18 +127,17 @@ duckdb::unique_ptr<duckdb::Expression> NormalizeBoundExpression(
   return copy;
 }
 
-std::vector<catalog::ColumnId> CollectDependentColumns(
-  const duckdb::Expression& expr) {
+std::vector<ColumnId> CollectDependentColumns(const duckdb::Expression& expr) {
   constexpr size_t kReserved = 8;
-  std::vector<catalog::ColumnId> out;
+  std::vector<ColumnId> out;
   out.reserve(kReserved);
   auto visit = [&](auto& self, const duckdb::Expression& node) -> void {
     if (node.GetExpressionClass() ==
         duckdb::ExpressionClass::BOUND_COLUMN_REF) {
-      out.push_back(static_cast<catalog::ColumnId>(
-        node.Cast<duckdb::BoundColumnRefExpression>()
-          .Binding()
-          .column_index.GetIndex()));
+      out.push_back(
+        static_cast<ColumnId>(node.Cast<duckdb::BoundColumnRefExpression>()
+                                .Binding()
+                                .column_index.GetIndex()));
     }
     duckdb::ExpressionIterator::EnumerateChildren(
       node, [&](const duckdb::Expression& child) { self(self, child); });

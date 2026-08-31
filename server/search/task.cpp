@@ -40,7 +40,7 @@
 #include "basics/lifecycle.h"
 #include "basics/log.h"
 #include "basics/metrics.h"
-#include "catalog/inverted_index.h"
+#include "catalog1/entry/inverted_index.h"
 #include "scheduler/background_scheduler.h"
 #include "search/inverted_index_storage.h"
 #include "search/search_table.h"
@@ -137,11 +137,11 @@ void DoRefresh(Storage& idx, bool run_cleanup, RefreshResult& code) {
     code = RefreshResult::Undefined;
     auto [res, time_ms] = idx.RefreshUnsafe(/*wait=*/false, nullptr, code);
     if (res.ok()) {
-      SDB_TRACE(SEARCH, "successful sync of Search index '", idx.GetId().id(),
+      SDB_TRACE(SEARCH, "successful sync of Search index '", idx.GetId(),
                 "', took: ", time_ms, "ms");
     } else {
       SDB_WARN(SEARCH, "error after running for ", time_ms,
-               "ms while refreshing Search index '", idx.GetId().id(),
+               "ms while refreshing Search index '", idx.GetId(),
                "': ", res.message());
     }
   }
@@ -154,11 +154,11 @@ void DoRefresh(Storage& idx, bool run_cleanup, RefreshResult& code) {
   metrics::Scoped guard{metrics::Gauge::CleanupActive};
   auto [res, time_ms] = idx.CleanupUnsafe();
   if (res.ok()) {
-    SDB_TRACE(SEARCH, "successful cleanup of Search index '", idx.GetId().id(),
+    SDB_TRACE(SEARCH, "successful cleanup of Search index '", idx.GetId(),
               "', took: ", time_ms, "ms");
   } else {
     SDB_WARN(SEARCH, "error after running for ", time_ms,
-             "ms while cleaning up Search index '", idx.GetId().id(),
+             "ms while cleaning up Search index '", idx.GetId(),
              "': ", res.message());
   }
 }
@@ -182,11 +182,11 @@ bool DoCompaction(Storage& idx, const irs::CompactionPolicy& policy) {
   auto [res, time_ms] = idx.CompactUnsafe(
     policy, [] { return !ShouldStop(); }, empty_compaction, opts.field_options);
   if (res.ok()) {
-    SDB_TRACE(SEARCH, "successful compaction of Search index '",
-              idx.GetId().id(), "', took: ", time_ms, "ms");
+    SDB_TRACE(SEARCH, "successful compaction of Search index '", idx.GetId(),
+              "', took: ", time_ms, "ms");
   } else {
     SDB_DEBUG(SEARCH, "error after running for ", time_ms,
-              "ms while compacting Search index '", idx.GetId().id(),
+              "ms while compacting Search index '", idx.GetId(),
               "': ", res.message());
   }
   return !empty_compaction;
@@ -468,8 +468,8 @@ yaclib::Future<> ReindexLoop(std::weak_ptr<InvertedIndexStorage> weak) {
       if (!g_reindex_runner) {
         return LoopTick::kNeutral;
       }
-      ObjectId database_id;
-      ObjectId id;
+      duckdb::idx_t database_id;
+      duckdb::idx_t id;
       {
         // The runner resolves the index by id through the catalog: don't pin
         // the storage across a potentially long tick.
@@ -484,7 +484,7 @@ yaclib::Future<> ReindexLoop(std::weak_ptr<InvertedIndexStorage> weak) {
       if (status.ok()) {
         return LoopTick::kProgress;
       }
-      SDB_WARN(SEARCH, "periodic reindex of Search index '", id.id(),
+      SDB_WARN(SEARCH, "periodic reindex of Search index '", id,
                "' failed: ", status.message());
       return LoopTick::kIdle;
     });

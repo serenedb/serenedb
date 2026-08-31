@@ -38,8 +38,7 @@
 #include <optional>
 
 #include "basics/assert.h"
-#include "catalog/ddl/catalog.h"
-#include "catalog/log/store.h"
+#include "catalog1/catalog.h"
 #include "connector/duckdb_client_state.h"
 #include "pg/connection_context.h"
 #include "pg/sql_exception_macro.h"

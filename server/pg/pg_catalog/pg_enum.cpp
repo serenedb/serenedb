@@ -21,11 +21,9 @@
 #include "pg/pg_catalog/pg_enum.h"
 
 #include <deque>
+#include <duckdb/catalog/catalog_entry/type_catalog_entry.hpp>
 #include <string>
 
-#include "catalog/ddl/catalog.h"
-#include "catalog/entry/duckdb_object_entry.h"
-#include "catalog/read/duckdb_catalog_sets.h"
 #include "pg/pg_catalog/fwd.h"
 
 namespace sdb::pg {
@@ -41,17 +39,15 @@ constexpr uint64_t kNullMask = MaskFromNonNulls({
 }  // namespace
 
 template<>
-catalog::MaterializedData SystemTableSnapshot<PgEnum>::GetTableData() {
-  auto database_id = GetDatabaseId();
-
+MaterializedData SystemTableSnapshot<PgEnum>::GetTableData() {
   std::vector<PgEnum> rows;
   // The labels are owned here, not borrowed: EnumType::GetString hands back a
   // string_t by value, and a short label lives inside that temporary -- a view
   // into it reads whatever the next label reused the bytes for. A deque because
   // the rows point at these and must not move.
   std::deque<std::string> labels;
-  catalog::Visit<catalog::SereneDBTypeEntry>(
-    &_config.GetClientContext(), database_id,
+  VisitEntries<duckdb::TypeCatalogEntry>(
+    &_config.GetClientContext(), GetDatabase(),
     [&](const duckdb::TypeCatalogEntry& type) {
       if (type.user_type.id() != duckdb::LogicalTypeId::ENUM) {
         return;

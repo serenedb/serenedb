@@ -21,12 +21,13 @@
 #pragma once
 
 #include <cstdint>
+#include <duckdb/catalog/catalog_entry.hpp>
 #include <span>
 #include <string>
 #include <string_view>
 #include <vector>
 
-#include "catalog/entry.h"
+#include "catalog1/permissions.h"
 #include "pg/connection_context.h"
 namespace sdb::pg {
 

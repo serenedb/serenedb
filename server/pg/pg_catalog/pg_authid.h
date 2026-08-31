@@ -47,6 +47,6 @@ struct PgAuthid {
 // NOLINTEND
 
 template<>
-catalog::MaterializedData SystemTableSnapshot<PgAuthid>::GetTableData();
+MaterializedData SystemTableSnapshot<PgAuthid>::GetTableData();
 
 }  // namespace sdb::pg

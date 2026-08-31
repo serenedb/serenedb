@@ -26,7 +26,9 @@
 
 #include <atomic>
 #include <deque>
+#include <duckdb/catalog/catalog_entry/duck_index_entry.hpp>
 #include <duckdb/catalog/catalog_entry/duck_table_entry.hpp>
+#include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
 #include <duckdb/main/attached_database.hpp>
 #include <duckdb/main/config.hpp>
 #include <duckdb/main/connection.hpp>
@@ -53,15 +55,8 @@
 #include "basics/assert.h"
 #include "basics/log.h"
 #include "basics/primary_key.hpp"
-#include "catalog/ddl/catalog.h"
-#include "catalog/ddl/duckdb_catalog.h"
-#include "catalog/entry/duckdb_index_entry.h"
-#include "catalog/entry/duckdb_table_entry.h"
-#include "catalog/inverted_index.h"
-#include "catalog/log/data_store.h"
-#include "catalog/log/store.h"
-#include "catalog/read/duckdb_catalog_sets.h"
-#include "catalog/table.h"
+#include "catalog1/catalog.h"
+#include "catalog1/entry/inverted_index.h"
 #include "connector/duckdb_client_state.h"
 #include "connector/duckdb_index_utils.h"
 #include "connector/index_expression.hpp"
@@ -78,9 +73,10 @@ namespace {
 // no entry there carries it -- an online CREATE INDEX feeds a concurrent writer
 // before its own transaction has committed, so a miss is ordinary.
 std::shared_ptr<const catalog::Index> FindInvertedDefinition(
-  duckdb::ClientContext* context, duckdb::AttachedDatabase& db, ObjectId id) {
+  duckdb::ClientContext* context, duckdb::AttachedDatabase& db,
+  duckdb::idx_t id) {
   const auto* index =
-    catalog::FindIn<catalog::SereneDBIndexEntry>(context, db.GetCatalog(), id);
+    catalog::FindIn<duckdb::DuckIndexEntry>(context, db.GetCatalog(), id);
   return index != nullptr && index->IsInverted() ? index->DefinitionPtr()
                                                  : nullptr;
 }
@@ -89,7 +85,7 @@ std::shared_ptr<const catalog::Index> FindInvertedDefinition(
 // (table_id, column_id). Re-key them to positions in the index's column list
 // so BoundIndex::BindExpression can turn them into chunk offsets.
 duckdb::unique_ptr<duckdb::Expression> RebindColumnRefsToIndexPositions(
-  const duckdb::Expression& expr, ObjectId table_id,
+  const duckdb::Expression& expr, duckdb::idx_t table_id,
   const containers::FlatHashMap<catalog::ColumnId, duckdb::idx_t>&
     col_id_to_pos) {
   auto copy = expr.Copy();
@@ -1653,7 +1649,7 @@ duckdb::unique_ptr<InvertedStoreIndex> MakeInjectedInvertedIndex(
   pos_by_id.reserve(table.columns.LogicalColumnCount());
   duckdb::idx_t store_pos = 0;
   for (const auto& column : table.columns.Logical()) {
-    pos_by_id.emplace(ObjectId{column.CatalogOid()}, store_pos++);
+    pos_by_id.emplace(column.CatalogOid(), store_pos++);
   }
   // The feed reads each indexed column at its position in the store table, so
   // the mapping is built here, from the same lookup the expression rebinding
@@ -1679,14 +1675,14 @@ duckdb::unique_ptr<InvertedStoreIndex> MakeInjectedInvertedIndex(
   const auto& info = catalog::InvertedInfo(*inverted);
   for (const auto& key : info.ExpressionKeys()) {
     auto bound = DeserializeBoundExpression(key.data.serialized_expr, context);
-    exprs.push_back(RebindColumnRefsToIndexPositions(
-      *bound, catalog::IdOf(table), col_id_to_pos));
+    exprs.push_back(
+      RebindColumnRefsToIndexPositions(*bound, table.oid, col_id_to_pos));
     expr_fields.push_back({key.field_id, info.IsGeoJsonKey(key)});
   }
   if (const auto* data = info.Predicate()) {
     auto bound = DeserializeBoundExpression(data->serialized_expr, context);
-    exprs.push_back(RebindColumnRefsToIndexPositions(
-      *bound, catalog::IdOf(table), col_id_to_pos));
+    exprs.push_back(
+      RebindColumnRefsToIndexPositions(*bound, table.oid, col_id_to_pos));
     has_predicate = true;
   }
   // Resolved here, where the statement that publishes this object is still on
@@ -1719,7 +1715,7 @@ duckdb::unique_ptr<duckdb::BoundIndex> CreateInvertedInstance(
   const auto id_option = [&](const char* key) {
     const auto it = input.options.find(key);
     SDB_ENSURE(it != input.options.end(), "inverted index: no ", key);
-    return ObjectId{it->second.GetValue<uint64_t>()};
+    return it->second.GetValue<uint64_t>();
   };
   const auto table_id = id_option(InvertedStoreIndex::kTableIdOption);
   const auto index_id = id_option(InvertedStoreIndex::kIndexIdOption);
@@ -1729,7 +1725,7 @@ duckdb::unique_ptr<duckdb::BoundIndex> CreateInvertedInstance(
   auto inverted = FindInvertedDefinition(&input.context, input.db, index_id);
   SDB_ENSURE(entry && inverted, "inverted index: catalog objects for ",
              index_id.id(), " missing");
-  auto& table = entry->Cast<catalog::SereneDBTableEntry>();
+  auto& table = entry->Cast<duckdb::TableCatalogEntry>();
   return MakeInjectedInvertedIndex(input.context, table.GetStorage(),
                                    *table.Definition(), std::move(inverted));
 }
@@ -1742,11 +1738,11 @@ void InjectExternalIndexes(duckdb::DataTable& storage) {
   if (!catalog) {
     return;
   }
-  const ObjectId table_id{storage.GetDataTableInfo()->GetCatalogId()};
+  const duckdb::idx_t table_id{storage.GetDataTableInfo()->GetCatalogId()};
   if (!table_id.isSet()) {
     return;
   }
-  const auto* table_entry = catalog::FindIn<catalog::SereneDBTableEntry>(
+  const auto* table_entry = catalog::FindIn<duckdb::TableCatalogEntry>(
     nullptr, storage.db.GetCatalog(), table_id);
   const auto table =
     table_entry != nullptr ? table_entry->Definition() : nullptr;

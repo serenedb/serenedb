@@ -23,11 +23,10 @@
 
 #include <absl/status/status.h>
 
+#include <duckdb/common/typedefs.hpp>
 #include <functional>
 #include <memory>
 #include <yaclib/async/future.hpp>
-
-#include "catalog/identifiers/object_id.h"
 
 namespace sdb::search {
 
@@ -55,8 +54,8 @@ extern template yaclib::Future<> CompactionCoordinator(
   std::weak_ptr<SearchTable>);
 yaclib::Future<> ReindexLoop(std::weak_ptr<InvertedIndexStorage> weak);
 
-using ReindexRunner =
-  std::function<absl::Status(ObjectId database_id, ObjectId index_id)>;
+using ReindexRunner = std::function<absl::Status(duckdb::idx_t database_id,
+                                                 duckdb::idx_t index_id)>;
 void SetReindexRunner(ReindexRunner runner);
 
 }  // namespace sdb::search

@@ -24,8 +24,7 @@
 #include <duckdb/main/database.hpp>
 #include <iresearch/analysis/analyzer.hpp>
 
-#include "catalog/tokenizer.h"
-
+#include "catalog1/entry/tokenizer.h"
 namespace sdb::connector {
 
 inline constexpr std::string_view kTSQueryTypeName = "TSQUERY";
@@ -133,11 +132,11 @@ duckdb::LogicalType MakeTSQueryType();
 void SearchStubFn(duckdb::DataChunk& args, duckdb::ExpressionState& state,
                   duckdb::Vector& result);
 
-catalog::Tokenizer::TokenizerWrapper AcquireTokenizer(
+catalog::TokenizerCatalogEntry::TokenizerWrapper AcquireTokenizer(
   duckdb::ClientContext& context, std::string_view name);
 
-catalog::TokenizerRef ResolveCatalogTokenizer(duckdb::ClientContext& context,
-                                              std::string_view name);
+duckdb::optional_ptr<const catalog::TokenizerCatalogEntry>
+ResolveCatalogTokenizer(duckdb::ClientContext& context, std::string_view name);
 
 void RegisterSearchFunctions(duckdb::DatabaseInstance& db);
 

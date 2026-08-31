@@ -22,29 +22,31 @@
 
 #include "app/app_server.h"
 #include "basics/down_cast.h"
-#include "catalog/ddl/catalog.h"
-#include "catalog/read/duckdb_catalog_sets.h"
-#include "catalog/role.h"
+#include "catalog1/cluster.h"
+#include "catalog1/entry/role.h"
+#include "pg/pg_types.h"
 #include "pg/pg_catalog/fwd.h"
 
 namespace sdb::pg {
 
 template<>
-catalog::MaterializedData SystemTableSnapshot<PgDefaultAcl>::GetTableData() {
+MaterializedData SystemTableSnapshot<PgDefaultAcl>::GetTableData() {
   std::vector<PgDefaultAcl> values;
   uint64_t oid = 1;
-  catalog::VisitRoles(
-    &_config.GetClientContext(), [&](const catalog::Role& role) {
-      for (const auto& entry : role.DefaultAcls()) {
+  auto& context = _config.GetClientContext();
+  auto& cluster = catalog::ClusterOf(context);
+  cluster.ScanRoles(
+    cluster.GetCatalogTransaction(context), [&](duckdb::CatalogEntry& entry) {
+      const auto& role = entry.Cast<catalog::RoleCatalogEntry>();
+      for (const auto& acl : role.DefaultAcls()) {
         // defaclnamespace 0 == all schemas (the schema-less form).
-        const uint64_t ns = entry.schema.isSet() ? entry.schema.id() : 0;
         values.push_back(PgDefaultAcl{
           .oid = oid++,
-          .defaclrole = role.GetId().id(),
-          .defaclnamespace = ns,
+          .defaclrole = role.oid,
+          .defaclnamespace = acl.schema,
           .defaclobjtype =
-            static_cast<PgDefaultAcl::Defaclobjtype>(entry.objtype),
-          .defaclacl = {entry.acl},
+            static_cast<PgDefaultAcl::Defaclobjtype>(acl.objtype),
+          .defaclacl = {acl.acl},
         });
       }
     });

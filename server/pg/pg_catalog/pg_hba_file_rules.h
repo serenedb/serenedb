@@ -50,6 +50,6 @@ struct PgHbaFileRule {
 // NOLINTEND
 
 template<>
-catalog::MaterializedData SystemTableSnapshot<PgHbaFileRule>::GetTableData();
+MaterializedData SystemTableSnapshot<PgHbaFileRule>::GetTableData();
 
 }  // namespace sdb::pg

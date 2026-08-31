@@ -26,6 +26,7 @@
 #include <span>
 
 #include "basics/containers/flat_hash_map.h"
+#include "connector/column_id.h"
 #include "connector/file_manifest.h"
 #include "connector/index_source_view.h"
 
@@ -37,7 +38,7 @@ class ViewFileIndexSourceBase : public ViewIndexSourceBase {
                           ViewFastPath fast_path,
                           std::span<const duckdb::idx_t> projected_columns,
                           std::span<const duckdb::LogicalType> projected_types,
-                          std::span<const catalog::ColumnId> bind_column_ids,
+                          std::span<const ColumnId> bind_column_ids,
                           duckdb::TableFilterSet* pushed_filters);
 
   // Re-keys the scan's output-slot-keyed filters onto this reader's projected
@@ -60,7 +61,7 @@ class ViewFileSingleFileIndexSource final : public ViewFileIndexSourceBase {
     duckdb::ClientContext& context, ViewFastPath fast_path,
     std::span<const duckdb::idx_t> projected_columns,
     std::span<const duckdb::LogicalType> projected_types,
-    std::span<const catalog::ColumnId> bind_column_ids,
+    std::span<const ColumnId> bind_column_ids,
     duckdb::TableFilterSet* pushed_filters = nullptr);
 
   duckdb::idx_t Materialize(duckdb::ClientContext& context, duckdb::Vector& pk,
@@ -77,7 +78,7 @@ class ViewFileGlobIndexSource final : public ViewFileIndexSourceBase {
     duckdb::ClientContext& context, ViewFastPath fast_path,
     std::span<const duckdb::idx_t> projected_columns,
     std::span<const duckdb::LogicalType> projected_types,
-    std::span<const catalog::ColumnId> bind_column_ids,
+    std::span<const ColumnId> bind_column_ids,
     duckdb::TableFilterSet* pushed_filters = nullptr,
     std::shared_ptr<const search::FileManifest> file_manifest = nullptr);
 

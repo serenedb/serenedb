@@ -140,8 +140,8 @@ void SearchTableTransaction::Commit() {
       const bool committed = trx.Commit(tick);
       SDB_FATAL_IF(
         SEARCH, !committed,
-        "search-table commit: iresearch trx Commit failed for table ",
-        table_id.id(), " tick=", tick);
+        "search-table commit: iresearch trx Commit failed for table ", table_id,
+        " tick=", tick);
       tick -= trx.GetQueries() + 1;
     }
 

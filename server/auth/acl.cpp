@@ -31,6 +31,7 @@
 #include "basics/assert.h"
 #include "basics/containers/flat_hash_map.h"
 #include "basics/system-compiler.h"
+#include "pg/pg_types.h"
 
 namespace sdb::auth {
 namespace {
@@ -93,16 +94,16 @@ AclMode PublicDefaultPrivs(CatalogType type) noexcept {
   }
 }
 
-bool RolesContain(RoleIdSpan roles, ObjectId id) noexcept {
+bool RolesContain(RoleIdSpan roles, duckdb::idx_t id) noexcept {
   return std::ranges::binary_search(roles, id);
 }
 
-bool IsGranteeInRoles(ObjectId grantee, RoleIdSpan roles) {
-  return grantee == catalog::kPublicGrantee || RolesContain(roles, grantee);
+bool IsGranteeInRoles(duckdb::idx_t grantee, RoleIdSpan roles) {
+  return grantee == pg::kPublicGrantee || RolesContain(roles, grantee);
 }
 
 bool IsGranteeInRoles(const AclItem& item, RoleIdSpan roles) {
-  return IsGranteeInRoles(ObjectId{item.grantee}, roles);
+  return IsGranteeInRoles(item.grantee, roles);
 }
 
 AclMode AclModeHeld(catalog::AclView acl, RoleIdSpan roles,
@@ -118,7 +119,7 @@ AclMode AclModeHeld(catalog::AclView acl, RoleIdSpan roles,
 
 }  // namespace
 
-catalog::Acl AclDefault(CatalogType type, ObjectId owner) {
+catalog::Acl AclDefault(CatalogType type, duckdb::idx_t owner) {
   catalog::Acl acl;
   const AclMode owner_privs = ClassPrivs(type);
   if (owner_privs == AclMode::NoRights) {
@@ -133,7 +134,7 @@ catalog::Acl AclDefault(CatalogType type, ObjectId owner) {
   const AclMode public_privs = PublicDefaultPrivs(type);
   if (public_privs != AclMode::NoRights) {
     acl.push_back(AclItem{
-      .grantee = catalog::kPublicGrantee,
+      .grantee = pg::kPublicGrantee,
       .grantor = owner,
       .privs = public_privs,
     });
@@ -142,15 +143,16 @@ catalog::Acl AclDefault(CatalogType type, ObjectId owner) {
 }
 
 catalog::Acl AclForStorage(catalog::AclView stored, CatalogType type,
-                           ObjectId owner) {
+                           duckdb::idx_t owner) {
   if (stored.empty()) {
     return AclDefault(type, owner);
   }
   return catalog::Acl{stored.begin(), stored.end()};
 }
 
-bool AclCheckSorted(catalog::AclView stored, CatalogType type, ObjectId owner,
-                    RoleIdSpan roles, AclMode need, PrivMatch match) {
+bool AclCheckSorted(catalog::AclView stored, CatalogType type,
+                    duckdb::idx_t owner, RoleIdSpan roles, AclMode need,
+                    PrivMatch match) {
   SDB_ASSERT(std::ranges::is_sorted(roles),
              "AclCheckSorted requires an ascending-sorted roles span");
   if (need == AclMode::NoRights) {
@@ -195,8 +197,8 @@ AclMode AclPrivsHeld(catalog::AclView acl, RoleIdSpan roles) {
 }
 
 catalog::Permissions TransferredOwner(catalog::Permissions perm,
-                                      ObjectId new_owner) {
-  const ObjectId old_owner = ObjectId{perm.owner};
+                                      duckdb::idx_t new_owner) {
+  const duckdb::idx_t old_owner = perm.owner;
   std::erase_if(perm.acl, [&](const AclItem& item) {
     return item.grantee == old_owner && item.grantor == old_owner;
   });
@@ -211,7 +213,7 @@ catalog::Permissions TransferredOwner(catalog::Permissions perm,
 
 catalog::Permissions MutatedAcl(const catalog::Permissions& perm,
                                 CatalogType type, AclMutator& mutate) {
-  const auto owner = ObjectId{perm.owner};
+  const auto owner = perm.owner;
   auto acl = AclForStorage(perm.acl, type, owner);
   mutate(owner, acl);
   return catalog::Permissions{owner, std::move(acl), perm.column_acl};

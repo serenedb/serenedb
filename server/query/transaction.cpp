@@ -35,8 +35,7 @@
 #include "basics/debugging.h"
 #include "basics/duckdb_engine.h"
 #include "basics/log.h"
-#include "catalog/ddl/catalog.h"
-#include "catalog/log/store.h"
+#include "catalog1/catalog.h"
 #include "connector/inverted_store_index.h"
 #include "pg/sql_exception_macro.h"
 #include "search/inverted_index_storage.h"
@@ -246,7 +245,7 @@ void Transaction::Rollback() {
 }
 
 search::InvertedIndexSnapshotPtr Transaction::EnsureSearchSnapshot(
-  ObjectId index_id,
+  duckdb::idx_t index_id,
   const std::shared_ptr<search::InvertedIndexStorage>& storage) {
   auto it = _search_snapshots.find(index_id);
   if (it == _search_snapshots.end()) {

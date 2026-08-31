@@ -27,9 +27,6 @@
 #include <duckdb/main/database_manager.hpp>
 #include <duckdb/transaction/transaction.hpp>
 
-#include "catalog/log/duckdb_global_catalog.h"
-#include "catalog/log/store.h"
-
 namespace sdb::connector {
 
 SereneDBTransactionManager::SereneDBTransactionManager(
@@ -51,12 +48,10 @@ void SereneDBTransactionManager::Checkpoint(duckdb::ClientContext& context,
 duckdb::ErrorData SereneDBTransactionManager::CommitTransaction(
   duckdb::ClientContext& context, duckdb::Transaction& transaction) {
   const bool wrote = !transaction.IsReadOnly();
-  // A run that wrote a record holds the cluster WAL until it ends, so it has to
-  // end however the commit leaves: an exception escaping duckdb's commit would
-  // otherwise leave the WAL taken by a thread that is already gone.
+  // The cleanup has to run however the commit leaves: an exception escaping
+  // duckdb's commit must not strand the writes this transaction announced.
   bool committed = false;
   const absl::Cleanup end_run = [&] {
-    catalog::EndCommittingCatalogRun(committed);
     if (wrote) {
       catalog::EndCommittingWrites(context, committed);
     }

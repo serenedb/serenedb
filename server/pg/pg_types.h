@@ -24,8 +24,6 @@
 #include <expected>
 #include <magic_enum/magic_enum.hpp>
 
-#include "catalog/identifiers/object_id.h"
-
 namespace duckdb {
 
 class ClientContext;
@@ -40,6 +38,28 @@ namespace pg {
 using ParamIndex = int16_t;
 
 inline constexpr uint64_t kInvalidOid = 0;
+
+// Postgres' PUBLIC pseudo-role. It is not a role id at all: 0 is the oid no
+// pg_authid row can carry, which is what lets an acl item name "everybody".
+inline constexpr duckdb::idx_t kPublicGrantee = 0;
+
+// Fixed PostgreSQL catalog oids. These are not catalog state -- duckdb assigns
+// every entry an oid of its own -- they exist so the pg_catalog projections
+// render the numbers PostgreSQL clients expect. Boot assigns them to the
+// objects that must carry them.
+inline constexpr duckdb::idx_t kPgCatalogSchema = 11;
+inline constexpr duckdb::idx_t kPgInformationSchema = 13;
+
+inline constexpr duckdb::idx_t kRootUser = 1000000;
+
+inline constexpr duckdb::idx_t kPgAmSecondary = 1010001;
+inline constexpr duckdb::idx_t kPgAmInverted = 1010002;
+inline constexpr duckdb::idx_t kPgAmIresearch = 1010003;
+
+inline constexpr duckdb::idx_t kPgOpclassIncluded = 1020001;
+inline constexpr duckdb::idx_t kPgOpclassIvf = 1020002;
+
+inline constexpr duckdb::idx_t kFirstSystemView = 1200000;
 
 // Postgres stores date/time/timestamp from 2000-01-01
 inline constexpr int64_t kGapDays =
@@ -239,12 +259,16 @@ enum PgTypeOID : int32_t {
   kAnycompatiblemultirange = 4538,
   kPgBrinBloomSummary = 4600,
   kPgBrinMinmaxMultiSummary = 4601,
-  kVariant = id::kVariant.id(),
-  kVariantArray = id::kVariantArray.id(),
-  kTsquery = id::kTsquery.id(),
-  kTsqueryArray = id::kTsqueryArray.id(),
-  kUnion = id::kUnion.id(),
-  kUnionArray = id::kUnionArray.id(),
+  // serenedb's own types have no postgres oid to borrow. They sit in a
+  // reserved block above every builtin oid postgres assigns (<10000) and below
+  // the system-relation oids this server hands out, so neither can grow into
+  // the other.
+  kVariant = 990001,
+  kVariantArray = 990002,
+  kTsquery = 990003,
+  kTsqueryArray = 990004,
+  kUnion = 990005,
+  kUnionArray = 990006,
 };
 
 // A column's pg_type identity for RowDescription: the type OID, typlen (the

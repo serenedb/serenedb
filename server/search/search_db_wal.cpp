@@ -505,7 +505,7 @@ uint64_t SearchDbWal::AppendCommit(std::span<const ShardSection> sections,
   // Reused inline-CDC scratch across every INLINE op (Rewind keeps the buffer).
   duckdb::MemoryStream tmp;
   for (const auto& s : sections) {
-    payload.Write<uint64_t>(s.table_id.id());
+    payload.Write<uint64_t>(s.table_id);
     SDB_ASSERT(!s.ops.empty(), "shard section with no ops");
     payload.Write<uint32_t>(static_cast<uint32_t>(s.ops.size()));
     for (const auto& op : s.ops) {
@@ -540,7 +540,7 @@ uint64_t SearchDbWal::AppendCommit(std::span<const ShardSection> sections,
         for (const auto& c : op.reference_chunks) {
           const uint64_t sid = c.SegId();
           payload.Write<uint64_t>(sid);
-          auto chunk_path = ChunkDir(s.table_id.id()) / ChunkName(sid);
+          auto chunk_path = ChunkDir(s.table_id) / ChunkName(sid);
           std::error_code se;
           auto sz = std::filesystem::file_size(chunk_path, se);
           if (se) {
@@ -572,8 +572,8 @@ uint64_t SearchDbWal::AppendCommit(std::span<const ShardSection> sections,
   return tick;
 }
 
-SearchDbWal::ChunkWriter SearchDbWal::NewChunkWriter(ObjectId table_id) {
-  auto dir = ChunkDir(table_id.id());
+SearchDbWal::ChunkWriter SearchDbWal::NewChunkWriter(duckdb::idx_t table_id) {
+  auto dir = ChunkDir(table_id);
   std::error_code ec;
   std::filesystem::create_directories(dir, ec);
   SDB_ENSURE(!ec, "create chunk dir '", dir.string(), "': ", ec.message());
@@ -581,9 +581,9 @@ SearchDbWal::ChunkWriter SearchDbWal::NewChunkWriter(ObjectId table_id) {
   uint64_t seg_id;
   {
     absl::MutexLock lock(&_seg_mu);
-    auto it = _seg_ids.find(table_id.id());
+    auto it = _seg_ids.find(table_id);
     if (it == _seg_ids.end()) {
-      it = _seg_ids.emplace(table_id.id(), MaxChunkSegId(dir)).first;
+      it = _seg_ids.emplace(table_id, MaxChunkSegId(dir)).first;
     }
     seg_id = ++it->second;
   }
@@ -593,10 +593,11 @@ SearchDbWal::ChunkWriter SearchDbWal::NewChunkWriter(ObjectId table_id) {
   return ChunkWriter{PendingChunk{seg_id, std::move(path)}, std::move(writer)};
 }
 
-void SearchDbWal::RegisterShard(ObjectId table_id, uint64_t committed_tick) {
+void SearchDbWal::RegisterShard(duckdb::idx_t table_id,
+                                uint64_t committed_tick) {
   {
     absl::MutexLock lock(&_sub_mu);
-    auto& cur = _committed[table_id.id()];
+    auto& cur = _committed[table_id];
     cur = std::max(cur, committed_tick);
   }
   // Continue the tick line past every shard's durable tick: a shard's committed
@@ -607,10 +608,11 @@ void SearchDbWal::RegisterShard(ObjectId table_id, uint64_t committed_tick) {
   }
 }
 
-void SearchDbWal::OnShardCommit(ObjectId table_id, uint64_t committed_tick) {
+void SearchDbWal::OnShardCommit(duckdb::idx_t table_id,
+                                uint64_t committed_tick) {
   {
     absl::MutexLock lock(&_sub_mu);
-    auto& cur = _committed[table_id.id()];
+    auto& cur = _committed[table_id];
     cur = std::max(cur, committed_tick);
   }
   {
@@ -622,10 +624,10 @@ void SearchDbWal::OnShardCommit(ObjectId table_id, uint64_t committed_tick) {
   RunGc();
 }
 
-void SearchDbWal::DeregisterShard(ObjectId table_id) {
+void SearchDbWal::DeregisterShard(duckdb::idx_t table_id) {
   {
     absl::MutexLock lock(&_sub_mu);
-    _committed.erase(table_id.id());
+    _committed.erase(table_id);
   }
   RunGc();
 }
@@ -717,7 +719,7 @@ uint64_t SearchDbWal::Recover(const ShardExistsFn& exists_of,
       max_tick = std::max(max_tick, tick);
       VisitSectionsOps(
         c, seg_scratch, pk_scratch, [&](uint64_t table_id, const ParsedOp& op) {
-          const ObjectId tid{table_id};
+          const duckdb::idx_t tid{table_id};
           const bool live = exists_of(tid) && tick > committed_of(tid);
           switch (op.kind) {
             case kKindInline: {

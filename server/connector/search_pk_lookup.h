@@ -34,7 +34,8 @@
 #include "basics/assert.h"
 #include "basics/debugging.h"
 #include "basics/duckdb_engine.h"
-#include "catalog/table_options.h"
+#include "catalog1/entry/search_table.h"
+#include "connector/column_id.h"
 #include "pg/sql_exception_macro.h"
 
 namespace sdb::connector {
@@ -49,7 +50,7 @@ SegmentPkColumn(const irs::IndexReader& reader, size_t seg_idx) noexcept {
     return {nullptr, nullptr};
   }
   const auto* pk_col =
-    col_reader->Column(static_cast<irs::field_id>(catalog::kGeneratedPKId));
+    col_reader->Column(static_cast<irs::field_id>(kGeneratedPKId));
   if (!pk_col) {
     return {nullptr, nullptr};
   }

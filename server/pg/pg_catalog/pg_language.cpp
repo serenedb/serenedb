@@ -20,6 +20,7 @@
 
 #include "pg/pg_catalog/pg_language.h"
 
+#include "pg/pg_types.h"
 #include "pg/pg_catalog/fwd.h"
 
 namespace sdb::pg {
@@ -33,7 +34,7 @@ constexpr auto kSampleData = std::to_array<PgLanguage>({
   {
     .oid = kLangInternalOid,
     .lanname = "internal",
-    .lanowner = id::kRootUser.id(),
+    .lanowner = pg::kRootUser,
     .lanispl = false,
     .lanpltrusted = false,
     .lanplcallfoid = 0,
@@ -43,7 +44,7 @@ constexpr auto kSampleData = std::to_array<PgLanguage>({
   {
     .oid = kLangSqlOid,
     .lanname = "sql",
-    .lanowner = id::kRootUser.id(),
+    .lanowner = pg::kRootUser,
     .lanispl = false,
     .lanpltrusted = true,
     .lanplcallfoid = 0,
@@ -59,7 +60,7 @@ constexpr uint64_t kNullMask = MaskFromNulls({
 }  // namespace
 
 template<>
-catalog::MaterializedData SystemTableSnapshot<PgLanguage>::GetTableData() {
+MaterializedData SystemTableSnapshot<PgLanguage>::GetTableData() {
   auto result = CreateColumns<PgLanguage>(kSampleData.size());
   for (size_t row = 0; row < kSampleData.size(); ++row) {
     WriteData(result, kSampleData[row], kNullMask, row, Roles());

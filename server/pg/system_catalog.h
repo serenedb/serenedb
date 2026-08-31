@@ -22,13 +22,15 @@
 
 #include <absl/functional/function_ref.h>
 
+#include <duckdb/catalog/catalog_entry.hpp>
 #include <duckdb/parser/parsed_data/create_macro_info.hpp>
 #include <duckdb/parser/parsed_data/create_view_info.hpp>
 #include <duckdb/parser/parser.hpp>
 #include <string_view>
 
-#include "catalog/entry.h"
+#include "catalog1/permissions.h"
 #include "pg/pg_catalog/fwd.h"
+#include "pg/virtual_table.h"
 
 namespace sdb::pg {
 
@@ -44,25 +46,24 @@ using StaticFunction = std::pair<std::shared_ptr<const duckdb::CreateMacroInfo>,
 void InitSystemViews(duckdb::Parser& parser);
 void InitSystemFunctions(duckdb::Parser& parser);
 
-const catalog::VirtualTable* GetSystemTable(std::string_view schema,
-                                            std::string_view name);
-const catalog::VirtualTable* GetTable(std::string_view name);
+const VirtualTable* GetSystemTable(std::string_view schema,
+                                   std::string_view name);
+const VirtualTable* GetTable(std::string_view name);
 
 void VisitSystemTables(
-  absl::FunctionRef<void(const catalog::VirtualTable&, Oid)> visitor);
+  absl::FunctionRef<void(const VirtualTable&, Oid)> visitor);
 // The builtin views and functions carry the owner and ACL their entries get:
 // there is no catalog record behind them, so the two travel beside the
 // definition here exactly as they do on an entry.
 void VisitSystemViews(absl::FunctionRef<void(const StaticView&, Oid)> visitor);
 
 // Schema-specific visitors for ScanEntries
-void VisitPgCatalogTables(
-  absl::FunctionRef<void(const catalog::VirtualTable&)> visitor);
+void VisitPgCatalogTables(absl::FunctionRef<void(const VirtualTable&)> visitor);
 void VisitPgCatalogViews(absl::FunctionRef<void(const StaticView&)> visitor);
 void VisitPgCatalogFunctions(
   absl::FunctionRef<void(const StaticFunction&)> visitor);
 void VisitInfoSchemaTables(
-  absl::FunctionRef<void(const catalog::VirtualTable&)> visitor);
+  absl::FunctionRef<void(const VirtualTable&)> visitor);
 void VisitInfoSchemaViews(absl::FunctionRef<void(const StaticView&)> visitor);
 void VisitInfoSchemaFunctions(
   absl::FunctionRef<void(const StaticFunction&)> visitor);

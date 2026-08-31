@@ -57,6 +57,7 @@
 
 #include "basics/assert.h"
 #include "basics/down_cast.h"
+#include "connector/column_id.h"
 #include "connector/functions/search.h"
 #include "connector/search_filter_builder.hpp"
 #include "gtest/gtest.h"
@@ -72,8 +73,8 @@ using sdb::connector::SearchColumnInfo;
 // outside `[1, kMaxRealIdValue]` (the real-column range) and outside the
 // {PK, score, offsets} synthetics so it can never collide with anything
 // the catalog or filter machinery might allocate.
-constexpr catalog::ColumnId kTestTokenizerColumnId =
-  catalog::ColumnId{catalog::kMaxRealColumnIdValue + 4};
+constexpr connector::ColumnId kTestTokenizerColumnId =
+  connector::ColumnId{connector::kMaxRealColumnIdValue + 4};
 
 // ---------------------------------------------------------------------------
 // Plan capture: the production MakeSearchFilter runs from an OptimizerExtension
@@ -138,9 +139,9 @@ struct ColumnSpec {
   uint64_t null_field = 0;
 };
 
-using AnalyzerProvider = std::function<catalog::ColumnTokenizer(uint64_t)>;
+using AnalyzerProvider = std::function<search::ColumnTokenizer(uint64_t)>;
 
-catalog::ColumnTokenizer IdentityAnalyzerProvider(uint64_t) {
+search::ColumnTokenizer IdentityAnalyzerProvider(uint64_t) {
   static catalog::Tokenizer gStringTokenizer(
     ObjectId{12345}, {},
     irs::analysis::TokenizerConfig{.config = irs::StringTokenizer::Options{}});
@@ -150,7 +151,7 @@ catalog::ColumnTokenizer IdentityAnalyzerProvider(uint64_t) {
 }
 
 template<irs::IndexFeatures Features>
-catalog::ColumnTokenizer SegmentationAnalyzerProviderBase(uint64_t) {
+search::ColumnTokenizer SegmentationAnalyzerProviderBase(uint64_t) {
   static catalog::Tokenizer gStringTokenizer(
     ObjectId{12346}, {},
     irs::analysis::TokenizerConfig{
@@ -159,12 +160,12 @@ catalog::ColumnTokenizer SegmentationAnalyzerProviderBase(uint64_t) {
   return {.analyzer = std::move(tokenizer), .features = Features};
 }
 
-catalog::ColumnTokenizer SegmentationAnalyzerProvider(uint64_t id) {
+search::ColumnTokenizer SegmentationAnalyzerProvider(uint64_t id) {
   return SegmentationAnalyzerProviderBase<irs::IndexFeatures::Pos |
                                           irs::IndexFeatures::Freq>(id);
 }
 
-[[maybe_unused]] catalog::ColumnTokenizer NgramAnalyzerProvider(uint64_t) {
+[[maybe_unused]] search::ColumnTokenizer NgramAnalyzerProvider(uint64_t) {
   irs::analysis::NGramTokenizerBase::Options ngram_opts{
     .min_gram = 2,
     .max_gram = 2,
@@ -179,7 +180,7 @@ catalog::ColumnTokenizer SegmentationAnalyzerProvider(uint64_t id) {
           .features = irs::IndexFeatures::Pos | irs::IndexFeatures::Freq};
 }
 
-[[maybe_unused]] catalog::ColumnTokenizer WildcardAnalyzerProvider(uint64_t) {
+[[maybe_unused]] search::ColumnTokenizer WildcardAnalyzerProvider(uint64_t) {
   irs::analysis::WildcardAnalyzer::Options wildcard_opts{
     .base_analyzer = std::make_unique<irs::analysis::TokenizerConfig>(
       irs::analysis::TokenizerConfig{.config =
@@ -197,7 +198,7 @@ catalog::ColumnTokenizer SegmentationAnalyzerProvider(uint64_t id) {
   };
 }
 
-[[maybe_unused]] catalog::ColumnTokenizer GeoJsonAnalyzerProvider(uint64_t) {
+[[maybe_unused]] search::ColumnTokenizer GeoJsonAnalyzerProvider(uint64_t) {
   static catalog::Tokenizer gGeoTokenizer(
     ObjectId{12349}, {},
     irs::analysis::TokenizerConfig{

@@ -47,6 +47,6 @@ struct PgDefaultAcl {
 // NOLINTEND
 
 template<>
-catalog::MaterializedData SystemTableSnapshot<PgDefaultAcl>::GetTableData();
+MaterializedData SystemTableSnapshot<PgDefaultAcl>::GetTableData();
 
 }  // namespace sdb::pg

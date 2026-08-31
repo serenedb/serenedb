@@ -29,7 +29,6 @@
 #include <iresearch/search/geo_filter.hpp>
 
 #include "basics/assert.h"
-#include "catalog/geo_validate.h"
 #include "functions/search.h"
 #include "functions/ts_common.hpp"
 #include "functions/vector.h"

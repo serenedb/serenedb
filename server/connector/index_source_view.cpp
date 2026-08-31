@@ -28,6 +28,7 @@
 #include <numeric>
 
 #include "basics/assert.h"
+#include "connector/column_id.h"
 
 namespace sdb::connector {
 
@@ -35,7 +36,7 @@ void ViewIndexSourceBase::InitProjection(
   duckdb::ClientContext& context,
   std::span<const duckdb::idx_t> projected_columns,
   std::span<const duckdb::LogicalType> projected_types,
-  std::span<const catalog::ColumnId> bind_column_ids,
+  std::span<const ColumnId> bind_column_ids,
   absl::FunctionRef<duckdb::idx_t(std::string_view)> col_by_name,
   absl::FunctionRef<duckdb::LogicalType(duckdb::idx_t)> add_source_column) {
   _real_proj_slots.reserve(projected_columns.size());
@@ -95,7 +96,7 @@ std::span<const int64_t> ViewIndexSourceBase::SortRows(const duckdb::Vector& pk,
                                                        duckdb::idx_t count) {
   const auto* keys = duckdb::FlatVector::GetData<int64_t>(pk);
   _sort_perm.resize(count);
-  absl::c_iota(_sort_perm, duckdb::idx_t{0});
+  absl::c_iota(_sort_perm, 0);
   // Doc-id order already ascends for contiguous-insert base tables and
   // single-file views: the sortedness check skips the O(n log n) sort.
   if (std::is_sorted(keys, keys + count)) {
@@ -118,7 +119,7 @@ void ViewIndexSourceBase::SortFilesRows(const duckdb::Vector& pk,
   const auto* files = duckdb::FlatVector::GetData<uint64_t>(entries[0]);
   const auto* rows = duckdb::FlatVector::GetData<int64_t>(entries[1]);
   _sort_perm.resize(count);
-  absl::c_iota(_sort_perm, duckdb::idx_t{0});
+  absl::c_iota(_sort_perm, 0);
   // Skip the sort when (file, row) already ascends -- see SortRows.
   bool is_sorted = true;
   for (duckdb::idx_t k = 1; k < count; ++k) {

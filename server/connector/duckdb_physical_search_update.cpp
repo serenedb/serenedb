@@ -20,6 +20,7 @@
 
 #include "connector/duckdb_physical_search_update.h"
 
+#include <duckdb/catalog/catalog_entry/sequence_catalog_entry.hpp>
 #include <duckdb/common/types/column/column_data_collection.hpp>
 #include <duckdb/common/types/data_chunk.hpp>
 #include <duckdb/storage/buffer_manager.hpp>
@@ -30,10 +31,8 @@
 #include <vector>
 
 #include "basics/assert.h"
-#include "catalog/duckdb_primary_key.h"
-#include "catalog/identifiers/object_id.h"
-#include "catalog/sequence.h"
 #include "connector/duckdb_client_state.h"
+#include "connector/primary_key.h"
 #include "connector/search_sink_writer.hpp"
 #include "pg/connection_context.h"
 #include "query/transaction.h"
@@ -43,18 +42,18 @@ namespace sdb::connector {
 namespace {
 
 struct SearchUpdateGlobalState : duckdb::GlobalSinkState {
-  ObjectId table_id;
+  duckdb::idx_t table_id;
   std::shared_ptr<search::SearchTable> search_table;
   query::Transaction* sdb_txn = nullptr;
 
-  std::vector<ObjectId> column_ids;
+  std::vector<duckdb::idx_t> column_ids;
   duckdb::vector<duckdb::LogicalType> chunk_types;
-  std::vector<catalog::duckdb_primary_key::PKColumn> new_pk_columns;
+  std::vector<primary_key::PKColumn> new_pk_columns;
   std::vector<duckdb::idx_t> new_row_src;
   std::shared_ptr<catalog::SequenceCounter> generated_pk_seq;
   std::unique_ptr<SearchSinkInsertBaseImpl> insert_sink;
 
-  std::vector<catalog::duckdb_primary_key::PKColumn> old_pk_columns;
+  std::vector<primary_key::PKColumn> old_pk_columns;
 
   std::shared_lock<std::shared_mutex> table_lock;
   duckdb::idx_t update_count = 0;
@@ -134,15 +133,13 @@ duckdb::SinkResultType SereneDBSearchUpdate::Sink(
   SearchSinkDeleteBaseImpl remover{trx};
   remover.InitImpl(num_rows);
   std::vector<duckdb::UnifiedVectorFormat> old_pk_formats;
-  catalog::duckdb_primary_key::PreparePKFormats(chunk, gstate.old_pk_columns,
-                                                old_pk_formats);
+  primary_key::PreparePKFormats(chunk, gstate.old_pk_columns, old_pk_formats);
   std::vector<std::string> wal_pks;
   wal_pks.reserve(num_rows);
   std::string pk;
   for (duckdb::idx_t row = 0; row < num_rows; ++row) {
     pk.clear();
-    catalog::duckdb_primary_key::Create(old_pk_formats, gstate.old_pk_columns,
-                                        row, pk);
+    primary_key::Create(old_pk_formats, gstate.old_pk_columns, row, pk);
     remover.DeleteRowImpl(pk);
     wal_pks.emplace_back(pk);
   }

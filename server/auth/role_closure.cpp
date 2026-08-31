@@ -22,18 +22,21 @@
 
 #include <algorithm>
 #include <atomic>
+#include <duckdb/catalog/catalog_transaction.hpp>
+#include <duckdb/main/attached_database.hpp>
 #include <duckdb/main/client_context.hpp>
+#include <duckdb/transaction/transaction.hpp>
 #include <memory>
 #include <vector>
 
 #include "auth/acl.h"
-#include "catalog/read/duckdb_catalog_sets.h"
-#include "catalog/role.h"
-
+#include "catalog1/cluster.h"
+#include "catalog1/entry/role.h"
+#include "pg/pg_types.h"
 namespace sdb::auth {
 namespace {
 
-bool ColumnGrants(catalog::AclView acl, ObjectId owner, RoleIdSpan closure,
+bool ColumnGrants(catalog::AclView acl, duckdb::idx_t owner, RoleIdSpan closure,
                   catalog::AclMode need) {
   return AclCheckSorted(acl, duckdb::CatalogType::TABLE_ENTRY, owner, closure,
                         need, PrivMatch::All);
@@ -57,14 +60,14 @@ bool EdgePasses(const catalog::Membership& edge, EdgeFilter filter) {
   return false;
 }
 
-RoleIdSet ComputeClosure(const RoleGraph& graph, ObjectId role,
+RoleIdSet ComputeClosure(const RoleGraph& graph, duckdb::idx_t role,
                          EdgeFilter filter) {
   RoleIdSet out;
-  if (!role.isSet()) {
+  if (role == pg::kInvalidOid) {
     return out;
   }
   out.insert(role);
-  std::vector<ObjectId> work{role};
+  std::vector<duckdb::idx_t> work{role};
   while (!work.empty()) {
     auto cur = work.back();
     work.pop_back();
@@ -94,28 +97,53 @@ std::atomic_uint64_t gRoleGeneration{1};
 struct RoleCache {
   uint64_t generation = 0;
   std::shared_ptr<const RoleGraph> graph;
-  containers::FlatHashMap<ObjectId, std::shared_ptr<const RoleClosure>>
+  containers::FlatHashMap<duckdb::idx_t, std::shared_ptr<const RoleClosure>>
     closures;
 };
 
 std::shared_ptr<const RoleCache> gRoleCache =
   std::make_shared<const RoleCache>();
 
-std::shared_ptr<const RoleGraph> LoadRoleGraph(duckdb::ClientContext* context) {
+std::shared_ptr<const RoleGraph> BuildRoleGraph(
+  catalog::ClusterCatalog& cluster, duckdb::CatalogTransaction transaction) {
   auto graph = std::make_shared<RoleGraph>();
-  catalog::VisitRoles(context, [&](const catalog::Role& role) {
-    auto& node = graph->nodes[role.GetId()];
-    node.name = role.GetName();
+  cluster.ScanRoles(transaction, [&](duckdb::CatalogEntry& entry) {
+    const auto& role = entry.Cast<catalog::RoleCatalogEntry>();
+    auto& node = graph->nodes[role.oid];
+    node.name = role.name.GetIdentifierName();
     node.member_of.assign(role.MemberOf().begin(), role.MemberOf().end());
     node.is_superuser = role.IsSuperuser();
   });
   return graph;
 }
 
+// The caller's own read view -- only a transaction that has written a role
+// needs one, and only that caller may not publish what it builds.
+std::shared_ptr<const RoleGraph> LoadRoleGraph(duckdb::ClientContext& context) {
+  auto& cluster = catalog::ClusterOf(context);
+  return BuildRoleGraph(cluster, cluster.GetCatalogTransaction(context));
+}
+
+// Committed roles, no session: the shared cache, and login before any
+// transaction exists.
+std::shared_ptr<const RoleGraph> LoadCommittedRoleGraph() {
+  auto& cluster = catalog::ClusterOf();
+  return BuildRoleGraph(
+    cluster,
+    duckdb::CatalogTransaction::GetSystemTransaction(cluster.GetDatabase()));
+}
+
 // A transaction reads its own uncommitted roles, so it can neither use the
-// shared cache nor publish into it.
+// shared cache nor publish into it. The cluster attachment holds nothing but
+// roles and databases, so any write of its own is a reason to distrust the
+// shared graph.
 bool ReadsOwnRoles(duckdb::ClientContext* context) {
-  return context != nullptr && catalog::HasUncommittedRoles(*context);
+  if (context == nullptr) {
+    return false;
+  }
+  auto transaction = duckdb::Transaction::TryGet(
+    *context, catalog::ClusterOf(context).GetAttached());
+  return transaction != nullptr && !transaction->IsReadOnly();
 }
 
 }  // namespace
@@ -128,17 +156,17 @@ void BumpRoleGeneration() noexcept {
   gRoleGeneration.fetch_add(1, std::memory_order_relaxed);
 }
 
-RoleIdSet ComputeMembershipClosure(const RoleGraph& graph, ObjectId role) {
+RoleIdSet ComputeMembershipClosure(const RoleGraph& graph, duckdb::idx_t role) {
   return ComputeClosure(graph, role, EdgeFilter::All);
 }
 
-RoleIdSet ComputeSetRoleClosure(const RoleGraph& graph, ObjectId role) {
+RoleIdSet ComputeSetRoleClosure(const RoleGraph& graph, duckdb::idx_t role) {
   return ComputeClosure(graph, role, EdgeFilter::Set);
 }
 
-RoleClosure ComputeRoleClosure(const RoleGraph& graph, ObjectId role) {
+RoleClosure ComputeRoleClosure(const RoleGraph& graph, duckdb::idx_t role) {
   RoleClosure out;
-  if (!role.isSet()) {
+  if (role == pg::kInvalidOid) {
     return out;
   }
   // The membership set comes from the one canonical inherit-closure BFS: it
@@ -157,7 +185,7 @@ RoleClosure ComputeRoleClosure(const RoleGraph& graph, ObjectId role) {
 
 std::shared_ptr<const RoleGraph> RolesOf(duckdb::ClientContext* context) {
   if (ReadsOwnRoles(context)) {
-    return LoadRoleGraph(context);
+    return LoadRoleGraph(*context);
   }
   const auto generation = RoleGeneration();
   auto cached = std::atomic_load(&gRoleCache);
@@ -169,17 +197,17 @@ std::shared_ptr<const RoleGraph> RolesOf(duckdb::ClientContext* context) {
   // Committed, not the caller's read view: a transaction that started before a
   // CREATE ROLE committed would otherwise publish a graph without that role
   // under the current generation, and every later reader would take it.
-  fresh->graph = LoadRoleGraph(nullptr);
+  fresh->graph = LoadCommittedRoleGraph();
   auto graph = fresh->graph;
   std::atomic_store(&gRoleCache, std::shared_ptr<const RoleCache>{fresh});
   return graph;
 }
 
 std::shared_ptr<const RoleClosure> ClosureFor(duckdb::ClientContext* context,
-                                              ObjectId role) {
+                                              duckdb::idx_t role) {
   if (ReadsOwnRoles(context)) {
     return std::make_shared<const RoleClosure>(
-      ComputeRoleClosure(*LoadRoleGraph(context), role));
+      ComputeRoleClosure(*LoadRoleGraph(*context), role));
   }
   const auto generation = RoleGeneration();
   auto cached = std::atomic_load(&gRoleCache);
@@ -195,7 +223,7 @@ std::shared_ptr<const RoleClosure> ClosureFor(duckdb::ClientContext* context,
   fresh->generation = generation;
   fresh->graph = cached->generation == generation && cached->graph
                    ? cached->graph
-                   : LoadRoleGraph(nullptr);
+                   : LoadCommittedRoleGraph();
   if (cached->generation == generation) {
     fresh->closures = cached->closures;
   }
@@ -206,8 +234,9 @@ std::shared_ptr<const RoleClosure> ClosureFor(duckdb::ClientContext* context,
   return closure;
 }
 
-bool HasAdminOption(const RoleGraph& graph, ObjectId member, ObjectId target) {
-  for (ObjectId r : ComputeMembershipClosure(graph, member)) {
+bool HasAdminOption(const RoleGraph& graph, duckdb::idx_t member,
+                    duckdb::idx_t target) {
+  for (duckdb::idx_t r : ComputeMembershipClosure(graph, member)) {
     const auto* node = graph.Find(r);
     if (node == nullptr) {
       continue;
@@ -225,20 +254,20 @@ bool RoleClosure::Can(duckdb::CatalogType type,
                       const catalog::Permissions& perm,
                       catalog::AclMode need) const {
   // The owner (and a superuser, who owns everything) holds every privilege.
-  if (Owns(ObjectId{perm.owner})) {
+  if (Owns(perm.owner)) {
     return true;
   }
-  return AclCheckSorted(perm.acl, type, ObjectId{perm.owner}, closure, need,
+  return AclCheckSorted(perm.acl, type, perm.owner, closure, need,
                         PrivMatch::All);
 }
 
 bool RoleClosure::CanAny(duckdb::CatalogType type,
                          const catalog::Permissions& perm,
                          catalog::AclMode need) const {
-  if (Owns(ObjectId{perm.owner})) {
+  if (Owns(perm.owner)) {
     return true;
   }
-  return AclCheckSorted(perm.acl, type, ObjectId{perm.owner}, closure, need,
+  return AclCheckSorted(perm.acl, type, perm.owner, closure, need,
                         PrivMatch::Any);
 }
 
@@ -257,7 +286,7 @@ bool RoleClosure::CanColumns(const catalog::Permissions& perm,
     return true;
   }
   return !acls.empty() && std::ranges::all_of(acls, [&](catalog::AclView acl) {
-    return ColumnGrants(acl, ObjectId{perm.owner}, closure, need);
+    return ColumnGrants(acl, perm.owner, closure, need);
   });
 }
 
@@ -268,7 +297,7 @@ bool RoleClosure::CanAnyColumn(const catalog::Permissions& perm,
     return true;
   }
   return std::ranges::any_of(acls, [&](catalog::AclView acl) {
-    return ColumnGrants(acl, ObjectId{perm.owner}, closure, need);
+    return ColumnGrants(acl, perm.owner, closure, need);
   });
 }
 

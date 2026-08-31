@@ -46,7 +46,7 @@ target_include_directories(
 )
 
 add_subdirectory(auth)
-add_subdirectory(catalog)
+add_subdirectory(catalog1)
 add_subdirectory(connector)
 add_subdirectory(network)
 add_subdirectory(pg)

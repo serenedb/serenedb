@@ -39,12 +39,6 @@ struct DBConfig;
 
 }  // namespace duckdb
 namespace sdb {
-namespace catalog {
-
-class VirtualTable;
-class VirtualTableSnapshot;
-
-}  // namespace catalog
 
 enum class ByteaOutput : uint8_t {
   Hex,

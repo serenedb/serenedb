@@ -41,6 +41,6 @@ struct SdbMetrics {
 // NOLINTEND
 
 template<>
-catalog::MaterializedData SystemTableSnapshot<SdbMetrics>::GetTableData();
+MaterializedData SystemTableSnapshot<SdbMetrics>::GetTableData();
 
 }  // namespace sdb::pg

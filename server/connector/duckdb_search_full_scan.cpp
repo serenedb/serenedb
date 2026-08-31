@@ -25,6 +25,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <duckdb/catalog/catalog_entry/duck_table_entry.hpp>
 #include <duckdb/common/multi_file/multi_file_reader.hpp>
 #include <duckdb/common/projection_index.hpp>
 #include <duckdb/common/types/data_chunk.hpp>
@@ -74,10 +75,8 @@
 #include "basics/debugging.h"
 #include "basics/down_cast.h"
 #include "basics/system-compiler.h"
-#include "catalog/entry/duckdb_table_entry.h"
-#include "catalog/inverted_index.h"
-#include "catalog/scorer_options.h"
-#include "catalog/table_options.h"
+#include "catalog1/entry/inverted_index.h"
+#include "catalog1/entry/search_table.h"
 #include "connector/duckdb_client_state.h"
 #include "connector/duckdb_table_function.h"
 #include "connector/full_scanner.h"
@@ -85,12 +84,14 @@
 #include "connector/offsets_collector.hpp"
 #include "connector/offsets_writer.hpp"
 #include "connector/search_pk_lookup.h"
+#include "connector/term_dict.h"
 #include "connector/view_fast_path.h"
 #include "iresearch/index/hit_batcher.hpp"
 #include "iresearch/index/table_filter_iterator.hpp"
 #include "pg/connection_context.h"
 #include "pg/errcodes.h"
 #include "pg/sql_exception_macro.h"
+#include "search/inverted_index.h"
 #include "search/inverted_index_storage.h"
 
 namespace sdb::connector {
@@ -135,8 +136,7 @@ struct SegDocBufferedScanLocalState : public IResearchScanLocalState {
     if (!hit_batcher) {
       hit_batcher = std::make_unique<HitBatcher>(
         g.cs_projections,
-        g.needs_lookup ? catalog::term_dict::kPKFieldId
-                       : irs::field_limits::invalid(),
+        g.needs_lookup ? term_dict::kPKFieldId : irs::field_limits::invalid(),
         g.ScanScore());
     }
   }
@@ -316,25 +316,23 @@ namespace {
 // Scan-computed virtual index columns and their output types; the score
 // column additionally records its output slot (filters on it apply to the
 // computed score vector).
-std::optional<duckdb::LogicalType> VirtualIndexColumnType(
-  catalog::ColumnId col_id) {
-  if (col_id == catalog::kInvertedIndexScoreId ||
-      col_id == catalog::kInvertedIndexTermScoreId) {
+std::optional<duckdb::LogicalType> VirtualIndexColumnType(ColumnId col_id) {
+  if (col_id == kInvertedIndexScoreId || col_id == kInvertedIndexTermScoreId) {
     return duckdb::LogicalType::FLOAT;
   }
-  if (col_id == catalog::kInvertedIndexOffsetsId) {
+  if (col_id == kInvertedIndexOffsetsId) {
     return catalog::MakeOffsetsType();
   }
-  if (col_id == catalog::kInvertedIndexTermId) {
+  if (col_id == kInvertedIndexTermId) {
     return duckdb::LogicalType::VARCHAR;
   }
-  if (col_id == catalog::kInvertedIndexTermRawId) {
+  if (col_id == kInvertedIndexTermRawId) {
     return duckdb::LogicalType::BLOB;
   }
-  if (col_id == catalog::kInvertedIndexTermCountId) {
+  if (col_id == kInvertedIndexTermCountId) {
     return duckdb::LogicalType::INTEGER;
   }
-  if (col_id == catalog::kInvertedIndexTermFreqId) {
+  if (col_id == kInvertedIndexTermFreqId) {
     return duckdb::LogicalType::BIGINT;
   }
   return std::nullopt;
@@ -374,7 +372,7 @@ void InitScanState(IResearchScanGlobalState& state,
       state.projected_types.push_back(std::move(*pk_type));
     } else if (col_id == catalog::kColumnIdentifierTableOid) {
       state.tableoid_output_idx = proj;
-      state.tableoid_value = bind_data.RelationId().id();
+      state.tableoid_value = bind_data.RelationId();
       state.projected_columns.push_back(duckdb::DConstants::INVALID_INDEX);
       state.projected_types.push_back(duckdb::LogicalType::BIGINT);
     } else if (col_id ==
@@ -383,7 +381,7 @@ void InitScanState(IResearchScanGlobalState& state,
       const bool file_index =
         col_id == duckdb::MultiFileReader::COLUMN_IDENTIFIER_FILE_INDEX;
       const auto spec = ViewPkSpecOf(bind_data);
-      if (!spec || !catalog::IsGlobPK(*spec)) {
+      if (!spec || !IsGlobPK(*spec)) {
         THROW_SQL_ERROR(
           ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
           ERR_MSG("column \"", file_index ? "file_index" : "row_number",
@@ -403,12 +401,11 @@ void InitScanState(IResearchScanGlobalState& state,
     } else if (col_id >= duckdb::VIRTUAL_COLUMN_START) {
       SDB_ASSERT(!bind_data.IsViewBacked(),
                  "virtual PK columns are not used for view-backed scans");
-      auto cat_idx =
-        catalog::SereneDBTableEntry::VirtualToPKColumnIndex(col_id);
+      auto cat_idx = duckdb::TableCatalogEntry::VirtualToPKColumnIndex(col_id);
       SDB_ASSERT(cat_idx != duckdb::DConstants::INVALID_INDEX);
       const auto& catalog_cols = bind_data.table_entry->GetColumns();
       SDB_ASSERT(cat_idx < catalog_cols.LogicalColumnCount());
-      const catalog::ColumnId catalog_col_id{
+      const ColumnId catalog_col_id{
         catalog_cols.GetColumn(duckdb::LogicalIndex(cat_idx)).CatalogOid()};
       duckdb::idx_t bind_idx = duckdb::DConstants::INVALID_INDEX;
       for (duckdb::idx_t i = 0; i < bind_data.column_ids.size(); ++i) {
@@ -423,7 +420,7 @@ void InitScanState(IResearchScanGlobalState& state,
     } else if (col_id < num_bind_columns) {
       const auto catalog_col_id = bind_data.column_ids[col_id];
       if (const auto virtual_type = VirtualIndexColumnType(catalog_col_id)) {
-        if (catalog_col_id == catalog::kInvertedIndexScoreId) {
+        if (catalog_col_id == kInvertedIndexScoreId) {
           state.score_output_idx = proj;
         }
         state.projected_columns.push_back(duckdb::DConstants::INVALID_INDEX);
@@ -653,7 +650,7 @@ void WrapScoreRefsWithEmit(duckdb::unique_ptr<duckdb::Expression>& expr,
 void BuildTableFilter(IResearchScanGlobalState& state,
                       const SereneDBScanBindData& bind_data,
                       const duckdb::TableFilterSet& filters) {
-  const catalog::InvertedIndex* index_meta =
+  const search::InvertedIndex* index_meta =
     bind_data.IsInvertedIndexEntry() && bind_data.inverted_index
       ? &catalog::InvertedInfo(*bind_data.inverted_index)
       : nullptr;
@@ -719,7 +716,7 @@ void BuildTableFilter(IResearchScanGlobalState& state,
       continue;
     }
     const auto col_id = bind_data.column_ids[bind_index];
-    if (col_id == catalog::kInvertedIndexScoreId) {
+    if (col_id == kInvertedIndexScoreId) {
       push_score_filter(entry.Filter());
       continue;
     }
@@ -734,7 +731,7 @@ void BuildTableFilter(IResearchScanGlobalState& state,
       // or -- for a search table, where every column lives in `.col` -- any
       // column.
       auto& cf = state.col_filters.emplace_back();
-      cf.field = static_cast<irs::field_id>(col_id.id());
+      cf.field = col_id;
       cf.filter = &entry.Filter();
       cf.is_dynamic = duckdb::ExpressionFilter::ContainsInternalFunction(
         *duckdb::ExpressionFilter::GetExpressionFilter(entry.Filter(),
@@ -799,19 +796,19 @@ void ClassifyColumnstoreProjections(IResearchScanGlobalState& state,
     // IS Column::kGeneratedPKId by definition).
     state.cs_projections.emplace_back(
       ColumnstoreProjection{.output_slot = state.generated_pk_output_idx,
-                            .column_id = catalog::term_dict::kPKFieldId});
+                            .column_id = term_dict::kPKFieldId});
   }
   if (state.row_number_output_idx != duckdb::DConstants::INVALID_INDEX) {
     state.cs_projections.emplace_back(
       ColumnstoreProjection{.output_slot = state.row_number_output_idx,
-                            .column_id = catalog::term_dict::kPKFieldId,
+                            .column_id = term_dict::kPKFieldId,
                             .extract_path = {"row_number"},
                             .extract_scan_type = duckdb::LogicalType::BIGINT});
   }
   if (state.file_index_output_idx != duckdb::DConstants::INVALID_INDEX) {
     state.cs_projections.emplace_back(
       ColumnstoreProjection{.output_slot = state.file_index_output_idx,
-                            .column_id = catalog::term_dict::kPKFieldId,
+                            .column_id = term_dict::kPKFieldId,
                             .extract_path = {"file_index"},
                             .extract_scan_type = duckdb::LogicalType::UBIGINT});
   }
@@ -835,7 +832,7 @@ void ClassifyColumnstoreProjections(IResearchScanGlobalState& state,
         continue;
       }
       const auto col_id = bind_data.column_ids[bind_col];
-      ColumnstoreProjection cp{.output_slot = proj, .column_id = col_id.id()};
+      ColumnstoreProjection cp{.output_slot = proj, .column_id = col_id};
       if (proj < state.projected_column_indexes.size()) {
         const auto& column_index = state.projected_column_indexes[proj];
         if (column_index.IsPushdownExtract() && column_index.HasChildren()) {
@@ -874,7 +871,7 @@ void ClassifyColumnstoreProjections(IResearchScanGlobalState& state,
       if (!in_output(proj)) {
         continue;
       }
-      ColumnstoreProjection cp{.output_slot = proj, .column_id = col_id.id()};
+      ColumnstoreProjection cp{.output_slot = proj, .column_id = col_id};
       if (info->store_values && proj < state.projected_column_indexes.size()) {
         const auto& column_index = state.projected_column_indexes[proj];
         if (column_index.IsPushdownExtract() && column_index.HasChildren()) {
@@ -1077,7 +1074,7 @@ void SortScanOrderKeys(std::vector<ScanOrderKey>& keys,
 // RowGroupReorderer.
 void BuildSegmentScanOrder(IResearchScanGlobalState& g,
                            const SereneDBScanBindData::ScanOrder& order) {
-  const auto field = static_cast<irs::field_id>(order.column.id());
+  const auto field = order.column;
   std::vector<ScanOrderKey> keys;
   keys.reserve(g.claimable_segments);
   for (uint32_t claimed = 0; claimed < g.claimable_segments; ++claimed) {
@@ -1135,7 +1132,7 @@ void OrderSegmentScanUnits(IResearchScanGlobalState& g,
                            const irs::SubReader& seg,
                            const SereneDBScanBindData::ScanOrder& order,
                            size_t first_unit) {
-  const auto field = static_cast<irs::field_id>(order.column.id());
+  const auto field = order.column;
   const auto* col_reader = seg.GetColReader();
   const auto* reader = col_reader ? col_reader->Column(field) : nullptr;
   if (reader == nullptr) {
@@ -1227,7 +1224,8 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> IResearchScanInitGlobal(
     if (pk_kind == catalog::PkColumnKind::None) {
       THROW_SQL_ERROR(
         ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
-        ERR_MSG("inverted index \"", ss.inverted_index->GetName(),
+        ERR_MSG("inverted index \"",
+                ss.inverted_index->name.GetIdentifierName(),
                 "\" was created WITH (store_pk = 'none'), so it does not store "
                 "row PKs and hits cannot be mapped back to source rows; select "
                 "only INCLUDE'd columns, counts or scores through this index"));
@@ -1513,7 +1511,7 @@ void BuildOffsetsEntries(Lstate& lstate, duckdb::TableFunctionInitInput& input,
                                      std::numeric_limits<size_t>::max());
   size_t k = 0;
   for (size_t i = 0; i < bd.column_ids.size(); ++i) {
-    if (bd.column_ids[i] == catalog::kInvertedIndexOffsetsId) {
+    if (bd.column_ids[i] == kInvertedIndexOffsetsId) {
       ss_idx_at_bind[i] = k++;
     }
   }
@@ -1527,7 +1525,7 @@ void BuildOffsetsEntries(Lstate& lstate, duckdb::TableFunctionInitInput& input,
     if (col_id >= bd.column_ids.size()) {
       continue;
     }
-    if (bd.column_ids[col_id] == catalog::kInvertedIndexOffsetsId) {
+    if (bd.column_ids[col_id] == kInvertedIndexOffsetsId) {
       const auto ss_idx = ss_idx_at_bind[col_id];
       SDB_ASSERT(ss_idx < ss.offsets.size());
       FieldEntry entry;
@@ -1634,20 +1632,17 @@ void BuildTsDictSlots(TsDictLocalState& lstate,
   using Field = TsDictLocalState::FieldState;
 
   struct SlotKind {
-    catalog::ColumnId cat;
+    ColumnId cat;
     duckdb::idx_t Req::* req;
     duckdb::idx_t Field::* slot;
     size_t next = 0;
   };
   std::array<SlotKind, 5> kinds{{
-    {catalog::kInvertedIndexTermId, &Req::term_col_idx, &Field::term_slot},
-    {catalog::kInvertedIndexTermRawId, &Req::term_raw_col_idx,
-     &Field::term_raw_slot},
-    {catalog::kInvertedIndexTermCountId, &Req::count_col_idx,
-     &Field::count_slot},
-    {catalog::kInvertedIndexTermFreqId, &Req::freq_col_idx, &Field::freq_slot},
-    {catalog::kInvertedIndexTermScoreId, &Req::score_col_idx,
-     &Field::score_slot},
+    {kInvertedIndexTermId, &Req::term_col_idx, &Field::term_slot},
+    {kInvertedIndexTermRawId, &Req::term_raw_col_idx, &Field::term_raw_slot},
+    {kInvertedIndexTermCountId, &Req::count_col_idx, &Field::count_slot},
+    {kInvertedIndexTermFreqId, &Req::freq_col_idx, &Field::freq_slot},
+    {kInvertedIndexTermScoreId, &Req::score_col_idx, &Field::score_slot},
   }};
 
   duckdb::idx_t out_slot = 0;
@@ -1795,7 +1790,7 @@ void IResearchSetScanOrder(
     return;
   }
   const auto col_id = bd.column_ids[order_col];
-  if (col_id != catalog::kInvertedIndexScoreId) {
+  if (col_id != kInvertedIndexScoreId) {
     // ORDER BY <covered .col column> LIMIT: iterate segments best-first by the
     // column's per-file statistics (duckdb's row-group reorder, one level up).
     // Only covered columns have `.col` statistics.
@@ -2725,7 +2720,7 @@ duckdb::idx_t TsDictLocalState::EmitField(duckdb::DataChunk& output,
   auto* score_data = data.operator()<float>(field.score_slot);
 
   const bool min_only = field.term_uses == TsDictTermUses::kMin;
-  const auto field_capacity = min_only ? duckdb::idx_t{1} : capacity;
+  const auto field_capacity = min_only ? 1 : capacity;
 
   duckdb::idx_t n = 0;
   if (_cursor && field_capacity != 0) {

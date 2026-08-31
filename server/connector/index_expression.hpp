@@ -29,12 +29,11 @@
 #include <span>
 #include <string>
 
-#include "catalog/table_options.h"
+#include "connector/column_id.h"
 
 namespace sdb::connector {
 
-std::vector<catalog::ColumnId> CollectDependentColumns(
-  const duckdb::Expression& expr);
+std::vector<ColumnId> CollectDependentColumns(const duckdb::Expression& expr);
 
 std::string SerializeBoundExpression(const duckdb::Expression& expr);
 
@@ -46,8 +45,7 @@ duckdb::unique_ptr<duckdb::Expression> DeserializeBoundExpression(
 // stable catalog (table_id, col_id) instead of binder-allocated indices.
 duckdb::unique_ptr<duckdb::Expression> NormalizeBoundExpression(
   const duckdb::Expression& expr, ObjectId table_id,
-  std::span<const catalog::ColumnId> col_index_to_id,
-  duckdb::ClientContext& context);
+  std::span<const ColumnId> col_index_to_id, duckdb::ClientContext& context);
 
 void RejectJsonObjectArrayLeaves(const duckdb::Vector& result,
                                  duckdb::idx_t num_rows);

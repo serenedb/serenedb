@@ -43,6 +43,6 @@ struct PgLanguage {
 // NOLINTEND
 
 template<>
-catalog::MaterializedData SystemTableSnapshot<PgLanguage>::GetTableData();
+MaterializedData SystemTableSnapshot<PgLanguage>::GetTableData();
 
 }  // namespace sdb::pg

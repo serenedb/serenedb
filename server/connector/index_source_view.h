@@ -31,7 +31,8 @@
 #include <string_view>
 #include <vector>
 
-#include "catalog/table_options.h"
+#include "catalog1/entry/search_table.h"
+#include "connector/column_id.h"
 #include "connector/view_fast_path.h"
 
 namespace sdb::connector {
@@ -45,7 +46,7 @@ class ViewIndexSourceBase : public IndexSource {
     duckdb::ClientContext& context,
     std::span<const duckdb::idx_t> projected_columns,
     std::span<const duckdb::LogicalType> projected_types,
-    std::span<const catalog::ColumnId> bind_column_ids,
+    std::span<const ColumnId> bind_column_ids,
     absl::FunctionRef<duckdb::idx_t(std::string_view)> col_by_name,
     absl::FunctionRef<duckdb::LogicalType(duckdb::idx_t)> add_source_column);
 

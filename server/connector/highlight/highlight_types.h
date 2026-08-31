@@ -26,17 +26,17 @@
 #include <string>
 #include <utility>
 
-#include "catalog/table_options.h"
-#include "catalog/tokenizer.h"
-
+#include "catalog1/entry/search_table.h"
+#include "catalog1/entry/tokenizer.h"
+#include "connector/column_id.h"
 namespace sdb::connector::highlight {
 
 using HitRange = std::pair<uint32_t, uint32_t>;
 
 struct Field {
-  catalog::ColumnId column_id{};
+  ColumnId column_id{};
   std::string field_name;
-  catalog::Tokenizer::TokenizerWrapper* analyzer = nullptr;
+  catalog::TokenizerCatalogEntry::TokenizerWrapper* analyzer = nullptr;
   size_t limit = 0;
 };
 

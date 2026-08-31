@@ -26,6 +26,7 @@
 
 #include "basics/assert.h"
 #include "basics/containers/flat_hash_map.h"
+#include "connector/column_id.h"
 
 namespace sdb::connector {
 
@@ -33,7 +34,7 @@ ViewFileIndexSourceBase::ViewFileIndexSourceBase(
   duckdb::ClientContext& context, ViewFastPath fast_path,
   std::span<const duckdb::idx_t> projected_columns,
   std::span<const duckdb::LogicalType> projected_types,
-  std::span<const catalog::ColumnId> bind_column_ids,
+  std::span<const ColumnId> bind_column_ids,
   duckdb::TableFilterSet* pushed_filters)
   : ViewIndexSourceBase{std::move(fast_path)} {
   _bind_data = BindFastPathSource(context, _fast_path);
@@ -94,7 +95,7 @@ ViewFileSingleFileIndexSource::ViewFileSingleFileIndexSource(
   duckdb::ClientContext& context, ViewFastPath fast_path,
   std::span<const duckdb::idx_t> projected_columns,
   std::span<const duckdb::LogicalType> projected_types,
-  std::span<const catalog::ColumnId> bind_column_ids,
+  std::span<const ColumnId> bind_column_ids,
   duckdb::TableFilterSet* pushed_filters)
   : ViewFileIndexSourceBase(context, std::move(fast_path), projected_columns,
                             projected_types, bind_column_ids, pushed_filters) {
@@ -136,7 +137,7 @@ ViewFileGlobIndexSource::ViewFileGlobIndexSource(
   duckdb::ClientContext& context, ViewFastPath fast_path,
   std::span<const duckdb::idx_t> projected_columns,
   std::span<const duckdb::LogicalType> projected_types,
-  std::span<const catalog::ColumnId> bind_column_ids,
+  std::span<const ColumnId> bind_column_ids,
   duckdb::TableFilterSet* pushed_filters,
   std::shared_ptr<const search::FileManifest> file_manifest)
   : ViewFileIndexSourceBase(context, std::move(fast_path), projected_columns,

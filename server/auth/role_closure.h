@@ -23,6 +23,7 @@
 #include <absl/functional/function_ref.h>
 
 #include <algorithm>
+#include <duckdb/catalog/catalog_entry.hpp>
 #include <memory>
 #include <span>
 #include <string>
@@ -31,23 +32,16 @@
 
 #include "basics/containers/flat_hash_map.h"
 #include "basics/containers/flat_hash_set.h"
-#include "catalog/entry.h"
-#include "catalog/identifiers/object_id.h"
-#include "catalog/role.h"
-
+#include "catalog1/entry/role.h"
+#include "catalog1/permissions.h"
 namespace duckdb {
 
 class ClientContext;
 
 }  // namespace duckdb
-namespace sdb::catalog {
-
-class Role;
-
-}  // namespace sdb::catalog
 namespace sdb::auth {
 
-using RoleIdSet = containers::FlatHashSet<ObjectId>;
+using RoleIdSet = containers::FlatHashSet<duckdb::idx_t>;
 
 // The role graph, flattened out of the ROLE_ENTRY set: for each role, who it is
 // a member of and whether it is a superuser. Loaded once per generation (see
@@ -60,16 +54,16 @@ struct RoleGraph {
     bool is_superuser = false;
   };
 
-  containers::FlatHashMap<ObjectId, Node> nodes;
+  containers::FlatHashMap<duckdb::idx_t, Node> nodes;
 
-  const Node* Find(ObjectId role) const {
+  const Node* Find(duckdb::idx_t role) const {
     auto it = nodes.find(role);
     return it == nodes.end() ? nullptr : &it->second;
   }
 
   // The name of `role`, or empty when no role carries that id. Callers
   // rendering pg_catalog fall back to the raw oid.
-  std::string_view NameOf(ObjectId role) const {
+  std::string_view NameOf(duckdb::idx_t role) const {
     const auto* node = Find(role);
     return node == nullptr ? std::string_view{} : std::string_view{node->name};
   }
@@ -82,19 +76,20 @@ struct RoleGraph {
 uint64_t RoleGeneration() noexcept;
 void BumpRoleGeneration() noexcept;
 
-RoleIdSet ComputeMembershipClosure(const RoleGraph& graph, ObjectId role);
+RoleIdSet ComputeMembershipClosure(const RoleGraph& graph, duckdb::idx_t role);
 
-RoleIdSet ComputeSetRoleClosure(const RoleGraph& graph, ObjectId role);
+RoleIdSet ComputeSetRoleClosure(const RoleGraph& graph, duckdb::idx_t role);
 
 // Whether `member` (in)directly holds ADMIN OPTION on role `target`. A graph
 // query (it inspects admin_option edges, which the flattened RoleClosure does
 // not carry), so it is a free function, not a RoleClosure method.
-bool HasAdminOption(const RoleGraph& graph, ObjectId member, ObjectId target);
+bool HasAdminOption(const RoleGraph& graph, duckdb::idx_t member,
+                    duckdb::idx_t target);
 
 struct RoleClosure {
   // The set of roles this principal acts as (its own membership closure),
   // kept sorted for binary search.
-  std::vector<ObjectId> closure;
+  std::vector<duckdb::idx_t> closure;
   // A superuser bypasses every membership / ownership / privilege check. It is
   // folded into the predicates below so callers never test it by hand -- read
   // it directly only for non-authz needs (e.g. the is_superuser GUC, or the
@@ -102,14 +97,14 @@ struct RoleClosure {
   bool is_superuser = false;
 
   // Does this principal act as role `r`? (member-of-or-equals; superuser: all.)
-  bool MemberOf(ObjectId r) const {
+  bool MemberOf(duckdb::idx_t r) const {
     return is_superuser || std::ranges::binary_search(closure, r);
   }
 
   // Does this principal own an object owned by `owner`? A superuser owns
   // everything, and ownership is membership in the owning role, so this is
   // exactly MemberOf(owner).
-  bool Owns(ObjectId owner) const { return MemberOf(owner); }
+  bool Owns(duckdb::idx_t owner) const { return MemberOf(owner); }
 
   // Does this principal hold ALL of `need` on `object`? (A single-bit `need` --
   // the common case -- is simply "holds that privilege".) Owners, and
@@ -161,10 +156,10 @@ std::shared_ptr<const RoleGraph> RolesOf(duckdb::ClientContext* context);
 // generation moves. The common path -- no role DDL since the last call -- is a
 // hash lookup with no BFS behind it.
 std::shared_ptr<const RoleClosure> ClosureFor(duckdb::ClientContext* context,
-                                              ObjectId role);
+                                              duckdb::idx_t role);
 
 // The closure computed straight out of `graph`, for the callers that already
 // hold one (a mutator checking several roles under one lock).
-RoleClosure ComputeRoleClosure(const RoleGraph& graph, ObjectId role);
+RoleClosure ComputeRoleClosure(const RoleGraph& graph, duckdb::idx_t role);
 
 }  // namespace sdb::auth

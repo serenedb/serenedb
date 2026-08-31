@@ -63,6 +63,6 @@ struct SdbProgress {
 // NOLINTEND
 
 template<>
-catalog::MaterializedData SystemTableSnapshot<SdbProgress>::GetTableData();
+MaterializedData SystemTableSnapshot<SdbProgress>::GetTableData();
 
 }  // namespace sdb::pg

@@ -41,7 +41,7 @@
 #include "basics/debugging.h"
 #include "basics/serializer.h"
 #include "basics/static_strings.h"
-#include "catalog/ddl/catalog.h"
+#include "catalog1/catalog.h"
 #include "connector/duckdb_client_state.h"
 #include "pg/commands/rbac.h"
 #include "pg/connection_context.h"

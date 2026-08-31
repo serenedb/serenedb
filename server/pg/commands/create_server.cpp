@@ -30,12 +30,8 @@
 #include <vector>
 
 #include "basics/duckdb_engine.h"
-#include "catalog/ddl/catalog.h"
-#include "catalog/ddl/duckdb_catalog.h"
-#include "catalog/entry/duckdb_object_entry.h"
-#include "catalog/foreign_server.h"
-#include "catalog/log/data_store.h"
-#include "catalog/read/duckdb_catalog_sets.h"
+#include "catalog1/catalog.h"
+#include "catalog1/entry/foreign_server.h"
 #include "pg/errcodes.h"
 #include "pg/sql_exception_macro.h"
 
@@ -102,7 +98,7 @@ void CreateForeignServer(ConnectionContext& conn_ctx, std::string_view name,
   // the public nothing (auth::ClassPrivs/PublicDefaultPrivs).
   auto [option_keys, option_values] = MakeServerOptions(options);
   auto server = std::make_shared<catalog::CreateForeignServerInfo>(
-    ObjectId{}, db_id, name, std::string{fdw_name}, std::move(option_keys),
+    0, db_id, name, std::string{fdw_name}, std::move(option_keys),
     std::move(option_values));
 
   // The catalog validates everything under its mutex (privilege, supported

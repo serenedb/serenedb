@@ -27,13 +27,14 @@
 #include <string_view>
 #include <vector>
 
-#include "catalog/duckdb_primary_key.h"
-#include "catalog/table_options.h"
-
+#include "catalog1/entry/search_table.h"
+#include "connector/primary_key.h"
 namespace duckdb {
 
 class ClientContext;
 class DataChunk;
+class TableCatalogEntry;
+struct CreateTableInfo;
 
 }  // namespace duckdb
 namespace sdb::catalog {
@@ -63,26 +64,26 @@ void RejectIfSearchTable(catalog::TableEngine engine,
 // so the shard and the generated-PK counter -- shared side state, one per
 // table, never per version -- are pinned for the life of the plan.
 struct SearchWriteTarget {
-  ObjectId table_id;
+  duckdb::idx_t table_id;
   std::shared_ptr<search::SearchTable> data;
   // The counter feeding the synthetic primary key, or null when the table
   // declares one of its own.
   std::shared_ptr<catalog::SequenceCounter> generated_pk_seq;
   // The columns iresearch stores, in the entry's order: the catalog id of each
   // and the type its chunk slot carries.
-  std::vector<ObjectId> column_ids;
+  std::vector<duckdb::idx_t> column_ids;
   duckdb::vector<duckdb::LogicalType> chunk_types;
   // The declared key over those columns, empty on a generated-PK table.
-  std::vector<catalog::duckdb_primary_key::PKColumn> pk_columns;
+  std::vector<primary_key::PKColumn> pk_columns;
 };
 
 SearchWriteTarget ResolveSearchWriteTarget(
-  duckdb::ClientContext& context, const catalog::SereneDBTableEntry& entry);
+  duckdb::ClientContext& context, const duckdb::TableCatalogEntry& entry);
 
 // The row-identity slots a search DELETE/UPDATE plan projects, paired with the
 // type each key was encoded from: the declared key columns in key order, or the
 // single generated-PK rowid, which is a BIGINT.
-std::vector<catalog::duckdb_primary_key::PKColumn> RowIdentityPKColumns(
+std::vector<primary_key::PKColumn> RowIdentityPKColumns(
   const SearchWriteTarget& target,
   std::span<const duckdb::idx_t> chunk_positions);
 

@@ -56,6 +56,6 @@ struct PgRewrite {
 // NOLINTEND
 
 template<>
-catalog::MaterializedData SystemTableSnapshot<PgRewrite>::GetTableData();
+MaterializedData SystemTableSnapshot<PgRewrite>::GetTableData();
 
 }  // namespace sdb::pg

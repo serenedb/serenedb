@@ -20,7 +20,7 @@
 
 #include "pg/pg_catalog/pg_am.h"
 
-#include "catalog/identifiers/object_id.h"
+#include "pg/pg_types.h"
 #include "pg/pg_catalog/fwd.h"
 
 namespace sdb::pg {
@@ -28,19 +28,19 @@ namespace {
 
 constexpr auto kSampleData = std::to_array<PgAm>({
   {
-    .oid = id::kPgAmInverted.id(),
+    .oid = pg::kPgAmInverted,
     .amname = "inverted",
     .amhandler = 0,
     .amtype = PgAm::Amtype::Index,
   },
   {
-    .oid = id::kPgAmIresearch.id(),
+    .oid = pg::kPgAmIresearch,
     .amname = "iresearch",
     .amhandler = 0,
     .amtype = PgAm::Amtype::Table,
   },
   {
-    .oid = id::kPgAmSecondary.id(),
+    .oid = pg::kPgAmSecondary,
     .amname = "secondary",
     .amhandler = 0,
     .amtype = PgAm::Amtype::Index,
@@ -52,7 +52,7 @@ constexpr uint64_t kNullMask = 0;
 }  // namespace
 
 template<>
-catalog::MaterializedData SystemTableSnapshot<PgAm>::GetTableData() {
+MaterializedData SystemTableSnapshot<PgAm>::GetTableData() {
   auto result = CreateColumns<PgAm>(kSampleData.size());
   for (size_t row = 0; row < kSampleData.size(); ++row) {
     WriteData(result, kSampleData[row], kNullMask, row, Roles());

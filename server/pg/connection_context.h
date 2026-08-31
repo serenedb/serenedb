@@ -25,9 +25,8 @@
 #include <string_view>
 
 #include "basics/message_buffer.h"
-#include "catalog/fwd.h"
-#include "catalog/identifiers/object_id.h"
-#include "catalog/role.h"
+#include "catalog1/entry/role.h"
+#include "catalog1/permissions.h"
 #include "pg/sql_error.h"
 #include "query/transaction.h"
 
@@ -41,7 +40,7 @@ class CopyInBridge;
 // thrown) so the pg-wire path can write a fatal frame and the http path can
 // rethrow, each as it needs; test `role` (unset == failed).
 struct LoginCheck {
-  ObjectId role;
+  duckdb::idx_t role;
   bool superuser = false;
   pg::SqlErrorData error;
 };
@@ -63,8 +62,8 @@ namespace sdb {
 class ConnectionContext final : public query::Transaction {
  public:
   ConnectionContext(duckdb::ClientContext& duckdb_ctx, std::string_view user,
-                    ObjectId role_id, std::string_view dbname,
-                    ObjectId database_id, message::Buffer* send_buffer,
+                    duckdb::idx_t role_id, std::string_view dbname,
+                    duckdb::idx_t database_id, message::Buffer* send_buffer,
                     int32_t backend_pid,
                     network::CancelRegistry* cancel_registry);
 
@@ -72,16 +71,16 @@ class ConnectionContext final : public query::Transaction {
 
   const std::string& user() const { return _user; }
   const std::string& GetDatabase() const { return _database_name; }
-  ObjectId GetDatabaseId() const { return _database_id; }
+  duckdb::idx_t GetDatabaseId() const { return _database_id; }
   int32_t GetBackendPid() const { return _backend_pid; }
 
   auto* GetCancelRegistry() const { return _cancel_registry; }
 
   std::string GetCurrentSchema() const;
 
-  ObjectId GetRoleId() const { return _effective_role_id; }
-  ObjectId GetLoginRoleId() const { return _login_role_id; }
-  ObjectId GetSessionRoleId() const { return _session_role_id; }
+  duckdb::idx_t GetRoleId() const { return _effective_role_id; }
+  duckdb::idx_t GetLoginRoleId() const { return _login_role_id; }
+  duckdb::idx_t GetSessionRoleId() const { return _session_role_id; }
 
   std::string EffectiveUserName() const;
   std::string SessionUserName() const;
@@ -97,8 +96,8 @@ class ConnectionContext final : public query::Transaction {
   bool IsStorageConnection() const noexcept { return _storage_connection; }
   void MarkStorageConnection() noexcept { _storage_connection = true; }
 
-  void SetEffectiveRole(ObjectId role) { _effective_role_id = role; }
-  void SetSessionRole(ObjectId role) {
+  void SetEffectiveRole(duckdb::idx_t role) { _effective_role_id = role; }
+  void SetSessionRole(duckdb::idx_t role) {
     _session_role_id = role;
     _effective_role_id = role;
   }
@@ -158,13 +157,13 @@ class ConnectionContext final : public query::Transaction {
 
   const std::string _user;
   const std::string _database_name;
-  const ObjectId _database_id;
+  const duckdb::idx_t _database_id;
   const int32_t _backend_pid;
   network::CancelRegistry* const _cancel_registry;
   message::Buffer* const _send_buffer;
-  const ObjectId _login_role_id;
-  ObjectId _session_role_id;
-  ObjectId _effective_role_id;
+  const duckdb::idx_t _login_role_id;
+  duckdb::idx_t _session_role_id;
+  duckdb::idx_t _effective_role_id;
   bool _storage_connection = false;
   pg::CopyInBridge* _copy_in_bridge = nullptr;
   std::string* _response_sink = nullptr;

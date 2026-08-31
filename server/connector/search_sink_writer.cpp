@@ -29,8 +29,10 @@
 
 #include "basics/assert.h"
 #include "basics/down_cast.h"
-#include "catalog/table_options.h"
+#include "catalog1/entry/search_table.h"
 #include "connector/common.h"
+#include "connector/primary_key.h"
+#include "connector/term_dict.h"
 #include "pg/errcodes.h"
 #include "pg/sql_exception_macro.h"
 #include "search_remove_filter.hpp"
@@ -52,7 +54,7 @@ SearchSinkInsertBaseImpl::SearchSinkInsertBaseImpl(
     _trx{&trx},
     _pk_policy{pk_policy} {
   _pk_field.PrepareForVerbatimStringValue();
-  _pk_field.id = catalog::term_dict::kPKFieldId;
+  _pk_field.id = term_dict::kPKFieldId;
 }
 
 template<duckdb::LogicalTypeId Kind>
@@ -530,8 +532,7 @@ void SearchSinkInsertBaseImpl::SwitchFieldImpl(irs::field_id field_id,
       _field.PrepareForStringValue(resolve_tokenizer());
     } else if (child_kind == duckdb::LogicalTypeId::BOOLEAN) {
       _field.PrepareForBooleanValue();
-    } else if (catalog::term_dict::IsNumeric(
-                 catalog::term_dict::Classify(child_kind))) {
+    } else if (term_dict::IsNumeric(term_dict::Classify(child_kind))) {
       _field.PrepareForNumericValue();
     } else {
       return;
@@ -562,7 +563,7 @@ void SearchSinkInsertBaseImpl::SwitchFieldImpl(irs::field_id field_id,
       _field.PrepareForBooleanValue();
       break;
     default:
-      if (catalog::term_dict::IsNumeric(catalog::term_dict::Classify(kind))) {
+      if (term_dict::IsNumeric(term_dict::Classify(kind))) {
         _field.PrepareForNumericValue();
       } else {
         return;
@@ -590,8 +591,8 @@ void SearchSinkInsertBaseImpl::InitImpl(size_t batch_size, const PkChunk& pk,
   _per_row_blob_writers.clear();
   _pk_column_writer = nullptr;
   if (_pk_policy.column == catalog::PkColumnKind::Has && pk.column) {
-    _pk_column_writer = EnsurePerRowColumnWriter(catalog::term_dict::kPKFieldId,
-                                                 pk.column->GetType());
+    _pk_column_writer =
+      EnsurePerRowColumnWriter(term_dict::kPKFieldId, pk.column->GetType());
   }
   if (_pk_column_writer && pk.column) {
     AppendPkColumn(*pk.column, batch_size);
@@ -611,8 +612,8 @@ void SearchSinkInsertBaseImpl::InsertNullValue() {
 }
 
 void SearchSinkInsertBaseImpl::JsonExpressionFields::InitForExpression(
-  irs::field_id entry_field_id, const catalog::InvertedIndexEntryInfo* entry,
-  catalog::ColumnTokenizer string_analyzer) {
+  irs::field_id entry_field_id, const search::InvertedIndexEntryInfo* entry,
+  search::ColumnTokenizer string_analyzer) {
   SDB_ASSERT(entry);
   SDB_ASSERT(irs::field_limits::valid(entry_field_id));
   SDB_ASSERT(irs::field_limits::valid(entry->numeric_field_id));
@@ -704,7 +705,7 @@ void SearchSinkInsertBaseImpl::Field::PrepareForVerbatimStringValue() {
 }
 
 void SearchSinkInsertBaseImpl::Field::PrepareForStringValue(
-  catalog::ColumnTokenizer&& column_analyzer) {
+  search::ColumnTokenizer&& column_analyzer) {
   index_features = column_analyzer.features;
   SDB_ASSERT(column_analyzer.analyzer);
   analyzer.reset();
@@ -783,8 +784,8 @@ void SearchSinkDeleteBaseImpl::InitImpl(size_t batch_size) {
   SDB_ASSERT(batch_size > 0);
   FinishImpl();
   SDB_ASSERT(!_remove_filter);
-  _remove_filter = std::make_shared<SearchRemoveFilter>(
-    batch_size, catalog::term_dict::kPKFieldId);
+  _remove_filter =
+    std::make_shared<SearchRemoveFilter>(batch_size, term_dict::kPKFieldId);
 }
 
 void SearchSinkDeleteBaseImpl::FinishImpl() {
@@ -794,18 +795,18 @@ void SearchSinkDeleteBaseImpl::FinishImpl() {
   _remove_filter.reset();
 }
 
-void WriteChunkToSearchSink(
-  SearchSinkInsertBaseImpl& sink, duckdb::DataChunk& chunk,
-  std::span<const catalog::ColumnId> column_ids,
-  std::span<const catalog::duckdb_primary_key::PKColumn> pk_columns,
-  bool uses_generated_pk, uint64_t pk_base) {
+void WriteChunkToSearchSink(SearchSinkInsertBaseImpl& sink,
+                            duckdb::DataChunk& chunk,
+                            std::span<const ColumnId> column_ids,
+                            std::span<const primary_key::PKColumn> pk_columns,
+                            bool uses_generated_pk, uint64_t pk_base) {
   const auto num_rows = chunk.size();
 
   auto& scratch = sink.GetKeyScratch();
   auto& pk_formats = scratch.pk_formats;
   auto& row_keys = scratch.row_keys;
   auto& key_views = scratch.key_views;
-  catalog::duckdb_primary_key::PreparePKFormats(chunk, pk_columns, pk_formats);
+  primary_key::PreparePKFormats(chunk, pk_columns, pk_formats);
   row_keys.resize(num_rows);
   key_views.clear();
   key_views.reserve(num_rows);
@@ -813,9 +814,9 @@ void WriteChunkToSearchSink(
     auto& key = row_keys[row];
     key.clear();
     if (uses_generated_pk) {
-      catalog::duckdb_primary_key::AppendGenerated(key, pk_base + row);
+      primary_key::AppendGenerated(key, pk_base + row);
     } else {
-      catalog::duckdb_primary_key::Create(pk_formats, pk_columns, row, key);
+      primary_key::Create(pk_formats, pk_columns, row, key);
     }
     key_views.emplace_back(key);
   }
@@ -831,9 +832,8 @@ void WriteChunkToSearchSink(
     for (duckdb::idx_t row = 0; row < num_rows; ++row) {
       data[row] = static_cast<int64_t>(pk_base + row);
     }
-    sink.SwitchFieldImpl(
-      static_cast<irs::field_id>(catalog::kGeneratedPKId.id()),
-      duckdb::LogicalType::BIGINT, gen_pk, num_rows);
+    sink.SwitchFieldImpl(kGeneratedPKId, duckdb::LogicalType::BIGINT, gen_pk,
+                         num_rows);
   }
   sink.FinishImpl();
 }

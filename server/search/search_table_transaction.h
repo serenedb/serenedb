@@ -33,7 +33,6 @@
 
 #include "basics/containers/flat_hash_map.h"
 #include "basics/containers/node_hash_map.h"
-#include "catalog/identifiers/object_id.h"
 #include "search/search_db_wal.h"
 #include "search/search_table_changes.h"
 
@@ -74,7 +73,7 @@ class SearchTableTransaction {
 
   template<typename Factory>
   std::shared_ptr<irs::DirectoryReader> EnsureSearchTableReader(
-    ObjectId shard_id, Factory&& make_reader) {
+    duckdb::idx_t shard_id, Factory&& make_reader) {
     auto it = _readers.find(shard_id);
     if (it == _readers.end()) {
       it = _readers
@@ -101,8 +100,8 @@ class SearchTableTransaction {
   // record tick (the band top) -- the tick every shard's last trx commits at.
   uint64_t AppendCommit();
 
-  containers::NodeHashMap<ObjectId, SearchShardWrites> _writes;
-  containers::FlatHashMap<ObjectId, std::shared_ptr<irs::DirectoryReader>>
+  containers::NodeHashMap<duckdb::idx_t, SearchShardWrites> _writes;
+  containers::FlatHashMap<duckdb::idx_t, std::shared_ptr<irs::DirectoryReader>>
     _readers;
   LocalTableChanges _changes;
 };

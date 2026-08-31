@@ -34,8 +34,7 @@
 #include <shared_mutex>
 
 #include "basics/assert.h"
-#include "catalog/identifiers/object_id.h"
-#include "catalog/persistence/search_table_options.h"
+#include "catalog1/entry/search_table.h"
 #include "search/maintenance.h"
 #include "search/search_db_wal.h"
 
@@ -49,9 +48,9 @@ class SearchTable : public std::enable_shared_from_this<SearchTable> {
   // `is_new` opens a fresh index; otherwise the durable one is reopened.
   // `options` carries the maintenance intervals resolved and persisted by the
   // catalog (mirrors InvertedIndexStorage).
-  SearchTable(ObjectId db_id, ObjectId schema_id, ObjectId table_id,
-              bool is_new,
-              const catalog::persistence::SearchTableOptions& options);
+  SearchTable(duckdb::idx_t db_id, duckdb::idx_t schema_id,
+              duckdb::idx_t table_id, bool is_new,
+              const catalog::SearchTableOptions& options);
   ~SearchTable();
 
   SearchTable(const SearchTable&) = delete;
@@ -61,16 +60,18 @@ class SearchTable : public std::enable_shared_from_this<SearchTable> {
   // attached to the catalog Table via SetData. Mirror of
   // InvertedIndexStorage::Create.
   static std::shared_ptr<SearchTable> Create(
-    ObjectId db_id, ObjectId schema_id, ObjectId table_id, bool is_new,
-    const catalog::persistence::SearchTableOptions& options);
+    duckdb::idx_t db_id, duckdb::idx_t schema_id, duckdb::idx_t table_id,
+    bool is_new, const catalog::SearchTableOptions& options);
 
-  ObjectId GetTableId() const noexcept { return _table_id; }
+  duckdb::idx_t GetTableId() const noexcept { return _table_id; }
   auto& GetTableLock() noexcept { return _table_lock; }
 
-  static std::filesystem::path GetPath(ObjectId db_id, ObjectId schema_id,
-                                       ObjectId table_id);
-  static std::filesystem::path GetWalPath(ObjectId db_id);
-  static std::filesystem::path GetChunkDir(ObjectId db_id, ObjectId table_id);
+  static std::filesystem::path GetPath(duckdb::idx_t db_id,
+                                       duckdb::idx_t schema_id,
+                                       duckdb::idx_t table_id);
+  static std::filesystem::path GetWalPath(duckdb::idx_t db_id);
+  static std::filesystem::path GetChunkDir(duckdb::idx_t db_id,
+                                           duckdb::idx_t table_id);
 
   // A drop commits while readers may still hold this table; the destructor
   // removes the index dir and the WAL shard once the last of them lets go.
@@ -118,7 +119,7 @@ class SearchTable : public std::enable_shared_from_this<SearchTable> {
   // --- Background maintenance ---
   // Mirrors the interface InvertedIndexStorage exposes, so the shared refresh /
   // compaction loops (search/task.h) drive a search table too.
-  ObjectId GetId() const noexcept { return _table_id; }
+  duckdb::idx_t GetId() const noexcept { return _table_id; }
   auto& GetTasksSettings() { return _maint_settings; }
 
   // Wake the compaction loop after a refresh produced new segments.
@@ -163,9 +164,9 @@ class SearchTable : public std::enable_shared_from_this<SearchTable> {
  private:
   void OpenWriter();
 
-  ObjectId _table_id;
-  ObjectId _db_id;
-  ObjectId _schema_id;
+  duckdb::idx_t _table_id;
+  duckdb::idx_t _db_id;
+  duckdb::idx_t _schema_id;
   bool _is_new;
   std::atomic<bool> _dropped{false};
   std::shared_mutex _table_lock;

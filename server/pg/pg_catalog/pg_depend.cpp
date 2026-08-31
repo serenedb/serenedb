@@ -21,18 +21,18 @@
 #include "pg/pg_catalog/pg_depend.h"
 
 #include <duckdb/catalog/catalog_entry/dependency/dependency_entry.hpp>
+#include <duckdb/catalog/catalog_entry/duck_index_entry.hpp>
+#include <duckdb/catalog/catalog_entry/scalar_macro_catalog_entry.hpp>
+#include <duckdb/catalog/catalog_entry/sequence_catalog_entry.hpp>
+#include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
+#include <duckdb/catalog/catalog_entry/table_macro_catalog_entry.hpp>
+#include <duckdb/catalog/catalog_entry/type_catalog_entry.hpp>
+#include <duckdb/catalog/catalog_entry/view_catalog_entry.hpp>
 #include <duckdb/common/optional_ptr.hpp>
 #include <vector>
 
 #include "basics/containers/flat_hash_map.h"
-#include "catalog/ddl/catalog.h"
-#include "catalog/entry/duckdb_index_entry.h"
-#include "catalog/entry/duckdb_object_entry.h"
-#include "catalog/entry/duckdb_table_entry.h"
-#include "catalog/entry/duckdb_view_entry.h"
-#include "catalog/read/duckdb_catalog_sets.h"
-#include "catalog/read/duckdb_dependency.h"
-#include "catalog/table.h"
+#include "connector/column_id.h"
 #include "pg/pg_catalog/pg_attrdef.h"
 #include "pg/pg_catalog/pg_authid.h"
 #include "pg/pg_catalog/pg_class.h"
@@ -71,59 +71,59 @@ using duckdb::CreateTableInfo;
 // A relation, a function or a type as pg_depend names the referenced side of
 // an edge pointing at it.
 struct Referenced {
-  ObjectId id;
-  ObjectId schema_id;
-  ObjectId owner_table_id;
+  duckdb::idx_t id;
+  duckdb::idx_t schema_id;
+  duckdb::idx_t owner_table_id;
   Oid classid;
 };
 
 std::vector<PgDepend> CollectEdges(duckdb::ClientContext* context,
-                                   ObjectId db_id) {
+                                   duckdb::Catalog& database) {
   std::vector<PgDepend> edges;
-  containers::FlatHashMap<ObjectId, const catalog::SereneDBTableEntry*> tables;
-  catalog::Visit<catalog::SereneDBTableEntry>(
-    context, db_id, [&](const catalog::SereneDBTableEntry& table) {
-      tables.emplace(catalog::IdOf(table), &table);
+  containers::FlatHashMap<duckdb::idx_t, const duckdb::TableCatalogEntry*>
+    tables;
+  VisitEntries<duckdb::TableCatalogEntry>(
+    context, database, [&](const duckdb::TableCatalogEntry& table) {
+      tables.emplace(table.oid, &table);
     });
   std::vector<const duckdb::ViewCatalogEntry*> views;
-  catalog::Visit<catalog::SereneDBViewEntry>(
-    context, db_id,
+  VisitEntries<duckdb::ViewCatalogEntry>(
+    context, database,
     [&](const duckdb::ViewCatalogEntry& view) { views.push_back(&view); });
   std::vector<Referenced> functions;
-  catalog::VisitFunctions(
-    context, db_id, [&](const duckdb::MacroCatalogEntry& function) {
-      functions.push_back({ObjectId{function.oid},
-                           ObjectId{function.ParentSchema().oid}, ObjectId{},
-                           Oid{PgProc::kId}});
-    });
+  const auto add_function = [&](const duckdb::MacroCatalogEntry& function) {
+    functions.push_back(
+      {function.oid, function.ParentSchema().oid, 0, Oid{PgProc::kId}});
+  };
+  VisitEntries<duckdb::ScalarMacroCatalogEntry>(context, database,
+                                                add_function);
+  VisitEntries<duckdb::TableMacroCatalogEntry>(context, database, add_function);
   // A sequence and a user type are referenced sides of their own: a DEFAULT
   // names a sequence and a column's declared type names a type, and neither row
   // is reachable from the dependent's side of the graph.
   std::vector<Referenced> sequences;
-  catalog::Visit<catalog::SereneDBSequenceEntry>(
-    context, db_id, [&](const catalog::SereneDBSequenceEntry& sequence) {
-      sequences.push_back({ObjectId{sequence.oid},
-                           ObjectId{sequence.ParentSchema().oid},
+  VisitEntries<duckdb::SequenceCatalogEntry>(
+    context, database, [&](const duckdb::SequenceCatalogEntry& sequence) {
+      sequences.push_back({sequence.oid, sequence.ParentSchema().oid,
                            sequence.GetOwnerTableId(), Oid{PgClass::kId}});
     });
   std::vector<Referenced> types;
-  catalog::Visit<catalog::SereneDBTypeEntry>(
-    context, db_id, [&](const duckdb::TypeCatalogEntry& type) {
-      types.push_back({ObjectId{type.oid}, ObjectId{type.ParentSchema().oid},
-                       ObjectId{}, Oid{PgType::kId}});
+  VisitEntries<duckdb::TypeCatalogEntry>(
+    context, database, [&](const duckdb::TypeCatalogEntry& type) {
+      types.push_back({type.oid, type.ParentSchema().oid, 0, Oid{PgType::kId}});
     });
   auto dependents = catalog::EdgeAttachments(*context);
-  const auto attnum = [](const catalog::SereneDBTableEntry& table,
-                         ObjectId col) -> int32_t {
+  const auto attnum = [](const duckdb::TableCatalogEntry& table,
+                         duckdb::idx_t col) -> int32_t {
     const auto* column = catalog::ColumnById(table.GetColumns(), col);
     return column ? static_cast<int32_t>(column->Logical().index) + 1 : 0;
   };
-  const auto emit = [&](ObjectId dependent, int32_t dependent_sub,
-                        Oid dependent_class, ObjectId referenced,
+  const auto emit = [&](duckdb::idx_t dependent, int32_t dependent_sub,
+                        Oid dependent_class, duckdb::idx_t referenced,
                         int32_t referenced_sub, Oid referenced_class,
                         PgDepend::Deptype deptype) {
-    edges.push_back({dependent_class, Oid{dependent.id()}, dependent_sub,
-                     referenced_class, Oid{referenced.id()}, referenced_sub,
+    edges.push_back({dependent_class, Oid{dependent}, dependent_sub,
+                     referenced_class, Oid{referenced}, referenced_sub,
                      deptype});
   };
   // The graph half: one row per recorded edge, with the class of the dependent
@@ -131,7 +131,7 @@ std::vector<PgDepend> CollectEdges(duckdb::ClientContext* context,
   // back-edge are deliberately not projected -- pg_depend has no row for them
   // today; the FK rows below are synthesized from the referencing table's own
   // list instead, and role references belong to pg_shdepend.
-  const auto emit_graph = [&](ObjectId ref, Oid referenced_class) {
+  const auto emit_graph = [&](duckdb::idx_t ref, Oid referenced_class) {
     dependents.ScanDependents(
       catalog::DependencyInfo(ref),
       [&](duckdb::optional_ptr<duckdb::CatalogEntry> entry,
@@ -159,8 +159,7 @@ std::vector<PgDepend> CollectEdges(duckdb::ClientContext* context,
             // dictionary is never a referenced side here. The relation the
             // index is on is one of its edges too; postgres addresses that one
             // per covered column, which emit_indexes below does.
-            const auto* index =
-              catalog::EntryOf<catalog::SereneDBIndexEntry>(entry);
+            const auto* index = catalog::EntryOf<duckdb::DuckIndexEntry>(entry);
             if (index != nullptr && index->GetRelationId() == ref) {
               break;
             }
@@ -174,7 +173,7 @@ std::vector<PgDepend> CollectEdges(duckdb::ClientContext* context,
               break;
             }
             for (const auto& piece : edge.Dependent().pieces) {
-              const ObjectId sub{piece.sub_object};
+              const duckdb::idx_t sub{piece.sub_object};
               switch (piece.kind) {
                 case duckdb::DependencyPieceKind::COLUMN_DEFAULT:
                   emit(sub, 0, Oid{PgAttrdef::kId}, ref, 0, referenced_class,
@@ -205,13 +204,14 @@ std::vector<PgDepend> CollectEdges(duckdb::ClientContext* context,
   // The indexes over one relation, as pg_depend addresses them. Read off the
   // relation's own schema rather than out of a walk: the callers below iterate
   // what they already collected, so no set is open here.
-  const auto emit_indexes = [&](ObjectId schema_id, ObjectId ref,
-                                const catalog::SereneDBTableEntry* table,
-                                ObjectId pk_index) {
+  const auto emit_indexes = [&](duckdb::idx_t schema_id, duckdb::idx_t ref,
+                                const duckdb::TableCatalogEntry* table,
+                                duckdb::idx_t pk_index) {
     for (const auto& index :
          catalog::RelationIndexRecords(context, schema_id, ref)) {
       const auto idx = index->GetId();
-      if (idx == pk_index || index->ReferencesColumn(catalog::kGeneratedPKId)) {
+      if (idx == pk_index ||
+          index->ReferencesColumn(connector::kGeneratedPKId)) {
         continue;
       }
       bool emitted = false;
@@ -231,36 +231,35 @@ std::vector<PgDepend> CollectEdges(duckdb::ClientContext* context,
     }
   };
   for (const auto& [table_id, table] : tables) {
-    emit(table_id, 0, Oid{PgClass::kId}, catalog::ParentIdOf(*table), 0,
+    emit(table_id, 0, Oid{PgClass::kId}, (*table).ParentSchema().oid, 0,
          Oid{PgNamespace::kId}, PgDepend::Deptype::Normal);
     emit_graph(table_id, Oid{PgClass::kId});
     const auto* pk = catalog::TablePrimaryKey(table->GetConstraints());
-    emit_indexes(catalog::ParentIdOf(*table), table_id, table,
-                 pk == nullptr ? ObjectId{} : ObjectId{pk->host_index_id});
+    emit_indexes((*table).ParentSchema().oid, table_id, table,
+                 pk == nullptr ? 0 : pk->host_index_id);
     for (const auto& constraint : table->GetConstraints()) {
       if (constraint->type != duckdb::ConstraintType::FOREIGN_KEY) {
         continue;
       }
       const auto& fk = constraint->Cast<duckdb::ForeignKeyConstraint>();
-      const ObjectId referenced{fk.host_referenced_id};
+      const duckdb::idx_t referenced{fk.host_referenced_id};
       if (!catalog::StatesForeignKey(fk) || !referenced.isSet() ||
           referenced == table_id) {
         continue;
       }
       const auto ref_held = tables.find(referenced);
       for (const auto column_id : fk.host_pk_column_ids) {
-        emit(ObjectId{fk.oid}, 0, Oid{PgConstraint::kId}, referenced,
-             ref_held == tables.end()
-               ? 0
-               : attnum(*ref_held->second, ObjectId{column_id}),
-             Oid{PgClass::kId}, PgDepend::Deptype::Normal);
+        emit(
+          fk.oid, 0, Oid{PgConstraint::kId}, referenced,
+          ref_held == tables.end() ? 0 : attnum(*ref_held->second, column_id),
+          Oid{PgClass::kId}, PgDepend::Deptype::Normal);
       }
     }
     for (const auto& column : table->GetColumns().Logical()) {
       if (!column.HasDefaultValue() && !column.Generated()) {
         continue;
       }
-      const ObjectId column_id{column.CatalogOid()};
+      const duckdb::idx_t column_id{column.CatalogOid()};
       if (auto sub = attnum(*table, column_id)) {
         emit(column_id, 0, Oid{PgAttrdef::kId}, table_id, sub,
              Oid{PgClass::kId}, PgDepend::Deptype::Auto);
@@ -268,11 +267,11 @@ std::vector<PgDepend> CollectEdges(duckdb::ClientContext* context,
     }
   }
   for (const auto& view : views) {
-    const auto ref = catalog::IdOf(*view);
-    emit(ref, 0, Oid{PgClass::kId}, catalog::ParentIdOf(*view), 0,
+    const auto ref = (*view).oid;
+    emit(ref, 0, Oid{PgClass::kId}, (*view).ParentSchema().oid, 0,
          Oid{PgNamespace::kId}, PgDepend::Deptype::Normal);
     emit_graph(ref, Oid{PgClass::kId});
-    emit_indexes(catalog::ParentIdOf(*view), ref, nullptr, ObjectId{});
+    emit_indexes((*view).ParentSchema().oid, ref, nullptr, 0);
     emit(ref, 0, Oid{PgRewrite::kId}, ref, 0, Oid{PgClass::kId},
          PgDepend::Deptype::Internal);
   }
@@ -298,8 +297,8 @@ std::vector<PgDepend> CollectEdges(duckdb::ClientContext* context,
 }  // namespace
 
 template<>
-catalog::MaterializedData SystemTableSnapshot<PgDepend>::GetTableData() {
-  auto values = CollectEdges(&_config.GetClientContext(), GetDatabaseId());
+MaterializedData SystemTableSnapshot<PgDepend>::GetTableData() {
+  auto values = CollectEdges(&_config.GetClientContext(), GetDatabase());
 
   auto result = CreateColumns<PgDepend>(values.size());
   for (size_t row = 0; row < values.size(); ++row) {

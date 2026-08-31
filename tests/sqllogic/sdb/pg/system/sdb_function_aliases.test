@@ -273,6 +273,28 @@ profiling_settings	logs_parsed
 t	t
 
 
+# Macro aliases wrap their source instead of sharing its entry, so a parameter
+# reaches the source's body as a non-constant and only the positional form
+# binds. duckdb_logs_parsed's body needs log_type constant at bind time, which
+# a macro parameter is not, so no wrapper body can accept the named form -- the
+# aliases would have to restate the source's definition to do that. The source
+# itself takes log_type := either way.
+
+query
+SELECT (SELECT count(*) FROM (DESCRIBE SELECT * FROM sdb_logs_parsed('HTTP'))) > 0
+         AS alias_positional,
+       (SELECT count(*) FROM (DESCRIBE SELECT * FROM duckdb_logs_parsed(log_type := 'HTTP'))) > 0
+         AS source_named
+----
+alias_positional	source_named
+t	t
+
+statement error
+SELECT * FROM sdb_logs_parsed(log_type := 'HTTP')
+----
+db error: ERROR: Macro duckdb_logs_parsed() does not support the supplied arguments.<slt:ignore>
+
+
 # The scalar alias, both overloads.
 
 query

@@ -16,7 +16,7 @@ hash-threshold 100
 # multi-cluster tree, store_pk = 'none', and l1 staying on the legacy layout.
 
 statement ok
-SET sdb_nprobe = 1000
+SET sdb_ivf_search_nprobe = 1000
 
 # --- l2: separated points, so the distances are exact integers ---------------
 # Every vector is (i, 0, ..., 0) at d = 64, and the gate needs >= 1024 rows.

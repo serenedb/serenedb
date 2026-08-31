@@ -1,0 +1,168 @@
+control substitution on
+
+# ============================================================================
+# sdb_ivf_max_search_fanout bounds how many children of each centroid-tree node
+# the search descends into, decoupling the descent width from sdb_ivf_search_nprobe. It is
+# raised to sdb_ivf_search_nprobe when smaller, because on a shallow tree one expanded node
+# yields one leaf candidate, so a smaller width would silently cap the probe
+# count.
+#
+# This file covers the setting's surface and the end-to-end health of both the
+# narrow and the wide descent on a genuinely multi-level tree. That the width
+# changes which clusters are reached is pinned deterministically in the gtest
+# centroids_node_test.fanout_caps_children_per_node -- proving it through SQL
+# would need a crafted approximate case whose expected rows are fragile.
+# ============================================================================
+
+query
+SHOW sdb_ivf_max_search_fanout;
+----
+sdb_ivf_max_search_fanout
+16
+
+statement error
+SET sdb_ivf_max_search_fanout = 0;
+----
+db error: ERROR: invalid value for parameter "sdb_ivf_max_search_fanout": "0"
+
+
+statement error
+SET sdb_ivf_max_search_fanout = -1;
+----
+db error: ERROR: invalid value for parameter "sdb_ivf_max_search_fanout": "-1"
+
+
+# ---- multi-level tree: posting_size=2, 10000 points ------------------------
+# The row count is load-bearing, not arbitrary. The build trains on
+# sample_factor * N rows with a leaf cap of tau = max(1, sample_factor *
+# posting_size) = 1, so the root only gains a second layer once that sample
+# exceeds the build fan-out cap: 0.2 * N > 1024, i.e. N > 5120. Below that every
+# root row is an early leaf, the tree is flat, and the descent never consults the
+# fanout at all -- the queries below would then pass no matter what this setting
+# did.
+statement ok
+SET sdb_ivf_posting_size = 2;
+
+statement ok
+CREATE TABLE fan (pk INTEGER PRIMARY KEY, emb FLOAT[2]);
+
+statement ok
+CREATE INDEX fan_idx ON fan USING inverted(pk, emb ivf (metric = 'l2', quant = 'none'));
+
+statement ok
+INSERT INTO fan SELECT i, [i::FLOAT, 0.0::FLOAT]::FLOAT[2] FROM range(10000) t(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) fan;
+
+# ---- narrow descent: fanout 1 at nprobe 1 is a pure greedy walk, which this
+# exercises end to end. Only the two extremes are asserted exact: k-means on a
+# line yields contiguous clusters, so the nearest centroid at every level is the
+# outermost child and the greedy walk always reaches the leaf holding the end
+# point. An interior query is approximate wherever it falls near a cluster
+# boundary -- one probed leaf holds ~5 of the 10000 points -- so it is asserted
+# to land in the right neighbourhood instead. Which side of a boundary a given
+# point sits on moves with the k-means layout, which differs across builds.
+statement ok
+SET sdb_ivf_search_nprobe = 1;
+
+statement ok
+SET sdb_ivf_max_search_fanout = 1;
+
+query
+SELECT pk FROM fan_idx ORDER BY emb <-> [0.0, 0.0]::FLOAT[2] LIMIT 1;
+----
+pk
+0
+
+query
+SELECT pk FROM fan_idx ORDER BY emb <-> [9999.0, 0.0]::FLOAT[2] LIMIT 1;
+----
+pk
+9999
+
+query
+SELECT count(*) AS near FROM (
+  SELECT pk FROM fan_idx ORDER BY emb <-> [1234.0, 0.0]::FLOAT[2] LIMIT 1
+) t WHERE abs(t.pk - 1234) <= 32;
+----
+near
+1
+
+# ---- wide descent: a large width reaches every node, so the probed leaf is the
+# globally nearest one rather than the greedy one. That still probes a single
+# leaf at nprobe 1, so the same exact/approximate split applies.
+statement ok
+SET sdb_ivf_max_search_fanout = 100000;
+
+query
+SELECT pk FROM fan_idx ORDER BY emb <-> [9999.0, 0.0]::FLOAT[2] LIMIT 1;
+----
+pk
+9999
+
+query
+SELECT count(*) AS near FROM (
+  SELECT pk FROM fan_idx ORDER BY emb <-> [5678.0, 0.0]::FLOAT[2] LIMIT 1
+) t WHERE abs(t.pk - 5678) <= 32;
+----
+near
+1
+
+# ---- a large nprobe lifts the width past the setting, so the exhaustive-probe
+# idiom other IVF tests rely on keeps working at the default width.
+statement ok
+RESET sdb_ivf_max_search_fanout;
+
+statement ok
+SET sdb_ivf_search_nprobe = 100000;
+
+query
+SELECT pk FROM (SELECT pk
+  FROM fan_idx
+  ORDER BY emb <-> [4320.0, 0.0]::FLOAT[2]
+  LIMIT 15
+) as top_k
+ORDER BY top_k.pk;
+----
+pk
+4313
+4314
+4315
+4316
+4317
+4318
+4319
+4320
+4321
+4322
+4323
+4324
+4325
+4326
+4327
+
+
+query
+SELECT pk FROM fan_idx
+  WHERE emb <-> [1000.0, 0.0]::FLOAT[2] < 2.5
+  ORDER BY pk;
+----
+pk
+998
+999
+1000
+1001
+1002
+
+query
+SELECT count(*) FROM fan_idx;
+----
+count
+10000
+
+statement ok
+RESET sdb_ivf_posting_size;
+
+statement ok
+RESET sdb_ivf_search_nprobe;

@@ -85,7 +85,7 @@ struct CentroidsNode {
 
   template<VectorMetric Metric>
   static void Search(std::span<const float> query, IndexInput& in,
-                     uint32_t beam, bool want_centroids, size_t level,
+                     uint32_t fanout, bool want_centroids, size_t level,
                      std::span<const CentroidsNodeView> nodes,
                      size_t layer_base, size_t layer_total,
                      std::vector<Candidate>& leaves) {
@@ -117,7 +117,7 @@ struct CentroidsNode {
                             node.child_offsets[i + 1] - node.child_offsets[i]});
         }
       }
-      const auto k = std::min<size_t>(beam, scored.size());
+      const auto k = std::min<size_t>(fanout, scored.size());
       const auto mid = scored.begin() + k;
       std::ranges::nth_element(scored, mid, std::greater{}, &Scored::dist);
       std::ranges::sort(scored.begin(), mid, std::greater{}, &Scored::dist);
@@ -133,7 +133,7 @@ struct CentroidsNode {
     size_t n_total = 0;
     auto next =
       CentroidsNode::ReadLayer(in, level - 1, d, starts, sizes, bufs, n_total);
-    Search<Metric>(query, in, beam, want_centroids, level - 1, next,
+    Search<Metric>(query, in, fanout, want_centroids, level - 1, next,
                    layer_base + layer_total, n_total, leaves);
   }
 };
@@ -157,8 +157,11 @@ class CentroidsTree {
   static CentroidsTree Deserialize(IndexInput& in, uint64_t byte_size);
 
   void Search(std::span<const float> query, IndexInput& in, uint32_t nprobe,
-              std::vector<uint32_t>& out_ids,
-              std::vector<float>* out_centroids) const;
+              std::vector<uint32_t>& out_ids, std::vector<float>* out_centroids,
+              uint32_t max_search_fanout) const;
+
+  uint32_t EffectiveFanout(uint32_t nprobe,
+                           uint32_t max_search_fanout) const noexcept;
 
   size_t Dim() const noexcept { return _head.d; }
   VectorMetric Metric() const noexcept { return _head.metric; }

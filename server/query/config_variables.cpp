@@ -43,6 +43,7 @@
 #include "basics/static_strings.h"
 #include "catalog/ddl/catalog.h"
 #include "connector/duckdb_client_state.h"
+#include "iresearch/index/column_info.hpp"
 #include "pg/commands/rbac.h"
 #include "pg/connection_context.h"
 #include "pg/errcodes.h"
@@ -51,6 +52,23 @@
 #include "query/config_variable_names.h"
 
 namespace sdb {
+
+uint32_t ReadIntSetting(duckdb::ClientContext& context, std::string_view name) {
+  duckdb::Value v;
+  auto res = context.TryGetCurrentSetting(std::string{name}, v);
+  SDB_ASSERT(res);
+  SDB_ASSERT(!v.IsNull());
+  return v.GetValue<uint32_t>();
+}
+
+double ReadDoubleSetting(duckdb::ClientContext& context,
+                         std::string_view name) {
+  duckdb::Value v;
+  auto res = context.TryGetCurrentSetting(std::string{name}, v);
+  SDB_ASSERT(res);
+  SDB_ASSERT(!v.IsNull());
+  return v.GetValue<double>();
+}
 
 using duckdb::LogicalTypeId;
 
@@ -342,7 +360,7 @@ constexpr std::pair<std::string_view, VariableDescription>
     // / disabled_log_types / logging_storage / logging_mode. The previous
     // sdb_log_level extension option was dropped in favour of those.
     {
-      "sdb_nprobe",
+      "sdb_ivf_search_nprobe",
       {
         LogicalTypeId::INTEGER,
         "Number of IVF cluster lists scanned per vector-similarity query. "
@@ -353,7 +371,34 @@ constexpr std::pair<std::string_view, VariableDescription>
           if (n < 1) {
             THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                             ERR_MSG("invalid value for parameter "
-                                    "\"sdb_nprobe\": \"",
+                                    "\"sdb_ivf_search_nprobe\": \"",
+                                    value.ToString(), "\""));
+          }
+        },
+      },
+    },
+    {
+      "sdb_ivf_max_search_fanout",
+      {
+        LogicalTypeId::INTEGER,
+        "Maximum number of IVF centroid-tree children expanded per node while "
+        "descending to the probed clusters. Decouples the descent width from "
+        "sdb_ivf_search_nprobe: lower values cut centroid work on deep "
+        "(multi-level) "
+        "trees at some recall cost. The width applies per node and so "
+        "compounds "
+        "over the tree's levels; it is raised when smaller than the width "
+        "whose "
+        "compounded value reaches sdb_ivf_search_nprobe, so the descent can "
+        "always supply "
+        "the requested number of clusters. Default 16.",
+        [] { return duckdb::Value::INTEGER(16); },
+        [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value& value) {
+          auto n = value.GetValue<int32_t>();
+          if (n < 1) {
+            THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                            ERR_MSG("invalid value for parameter "
+                                    "\"sdb_ivf_max_search_fanout\": \"",
                                     value.ToString(), "\""));
           }
         },
@@ -400,17 +445,19 @@ constexpr std::pair<std::string_view, VariableDescription>
     {
       "sdb_rerank_factor",
       {
-        LogicalTypeId::INTEGER,
+        LogicalTypeId::DOUBLE,
         "Multiplier applied to LIMIT k to size the candidate pool re-scored "
         "with exact distances for a quantized IVF vector-similarity query "
-        "(pool = sdb_rerank_factor * k). Higher values improve recall at the "
-        "cost of latency; 0 disables reranking (top-k picked by the "
-        "approximate quantized distance). Default 4. Unquantized (quant = "
-        "'none') indexes never rerank, regardless of this setting.",
-        [] { return duckdb::Value::INTEGER(4); },
+        "(pool = ceil(sdb_rerank_factor * k)). Higher values improve recall "
+        "at the cost of latency; 0 disables reranking (top-k picked by the "
+        "approximate quantized distance). Fractional values are allowed, but "
+        "a nonzero factor below 1 is rejected because the pool must cover k. "
+        "Default 4. Unquantized (quant = 'none') indexes never rerank, "
+        "regardless of this setting.",
+        [] { return duckdb::Value::DOUBLE(4); },
         [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value& value) {
-          auto n = value.GetValue<int32_t>();
-          if (n < 0) {
+          auto n = value.GetValue<double>();
+          if (n < 0.0 || (n > 0.0 && n < 1.0)) {
             THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                             ERR_MSG("invalid value for parameter "
                                     "\"sdb_rerank_factor\": \"",

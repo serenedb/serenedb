@@ -80,7 +80,8 @@ table	zebrafin_vault
 # ride the same rule.
 
 query
-SELECT (SELECT count(*) FROM sdb_tables) = (SELECT count(*) FROM duckdb_tables)
+SELECT (SELECT count(*) FROM system.main.sdb_tables)
+     = (SELECT count(*) FROM system.main.duckdb_tables)
   AS aliased
 ----
 aliased
@@ -124,11 +125,11 @@ CREATE VIEW zebrafin_pub.w_owned AS SELECT id, secret FROM zebrafin_vault
 
 
 statement ok
-CREATE VIEW zebrafin_pub.w_source AS SELECT * FROM duckdb_tables
+CREATE VIEW zebrafin_pub.w_source AS SELECT * FROM system.main.duckdb_tables
 
 
 statement ok
-CREATE VIEW zebrafin_pub.w_alias AS SELECT * FROM sdb_tables
+CREATE VIEW zebrafin_pub.w_alias AS SELECT * FROM system.main.sdb_tables
 
 
 statement ok

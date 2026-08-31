@@ -18,6 +18,7 @@ class Profile:
     table_cap: int = 12
     other_cap: int = 8
     cancels: int = 0
+    compaction_windows: int = 0
     parks: int = 0
     graceful_restarts: int = 0
     conflict_ceiling: float = 0.35
@@ -45,6 +46,10 @@ PROFILES = {
     ),
     "cancel": Profile(
         name="cancel", seconds=180, workers=4, quiesce_every=45.0, cancels=12,
+    ),
+    "compaction-probe": Profile(
+        name="compaction-probe", seconds=120, workers=4, quiesce_every=60.0,
+        compaction_windows=2, scenario="ddl_churn",
     ),
     "wedge-probe": Profile(
         name="wedge-probe", seconds=180, workers=4, scenario="serial_churn",

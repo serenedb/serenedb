@@ -13,6 +13,15 @@ ABORT_FAULTS = (
     faults_mod.CATALOG_APPEND_FAILS_FAULT,
 )
 
+# Forces the catalog-log rewrite from inside a DDL commit. The gate that normally
+# makes this unreachable is documented as "not load-safe today -- entries read
+# mid-commit surface null definitions", so arming it under concurrent DDL is the
+# direct probe for that window.
+COMPACTION_FAULTS = (
+    faults_mod.COMPACT_INSIDE_DDL_FAULT,
+    faults_mod.COMPACT_INSIDE_DROP_FAULT,
+)
+
 
 class ChaosResult:
     def __init__(self):
@@ -24,6 +33,7 @@ class ChaosResult:
         self.restarts_attempted = 0
         self.parks = 0
         self.cancels = 0
+        self.compaction_windows = 0
         self.faults_used = []
         self.timeline = []
 
@@ -37,6 +47,7 @@ class ChaosResult:
             "restarts_attempted": self.restarts_attempted,
             "parks": self.parks,
             "cancels": self.cancels,
+            "compaction_windows": self.compaction_windows,
             "faults_used": self.faults_used,
             "timeline": self.timeline[-40:],
         }
@@ -79,6 +90,39 @@ class Chaos:
             self.broker.disarm(name)
         except Exception:
             pass
+
+    def compaction_pressure(self, seconds=20.0):
+        name = self.rng.choice(COMPACTION_FAULTS)
+        try:
+            self.broker.arm(name)
+        except Exception as exc:
+            self._finding("chaos_arm_failed", f"{name}: {exc}")
+            return False
+        self.result.faults_used.append(name)
+        self.result.compaction_windows += 1
+        survived = True
+        try:
+            deadline = time.monotonic() + seconds
+            while time.monotonic() < deadline:
+                if not self.server.running():
+                    survived = False
+                    break
+                time.sleep(0.5)
+        finally:
+            if self.server.running():
+                try:
+                    self.broker.disarm(name)
+                except Exception:
+                    pass
+        self.result.timeline.append({
+            "fault": name,
+            "outcome": "survived" if survived else "server_died_under_compaction"})
+        if not survived:
+            self._finding(
+                "server_died_under_forced_compaction",
+                f"serened exited while {name} was armed under concurrent DDL; this is "
+                "the catalog-log rewrite window store.cpp calls not load-safe")
+        return survived
 
     def cancel_an_inflight_op(self, workers):
         inflight = [w for w in workers

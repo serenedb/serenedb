@@ -95,6 +95,7 @@ def main(argv=None):
     ap.add_argument("--restarts", type=int)
     ap.add_argument("--parks", type=int)
     ap.add_argument("--cancels", type=int)
+    ap.add_argument("--compaction-windows", type=int, dest="compaction_windows")
     ap.add_argument("--graceful-restarts", type=int, dest="graceful_restarts")
     ap.add_argument("--keep-datadir", action="store_true")
     args = ap.parse_args(argv)
@@ -103,6 +104,7 @@ def main(argv=None):
                              seconds=args.seconds, workers=args.workers,
                              restarts=args.restarts, parks=args.parks,
                              cancels=args.cancels,
+                             compaction_windows=args.compaction_windows,
                              graceful_restarts=args.graceful_restarts)
     seed = args.seed if args.seed is not None else random.SystemRandom().randrange(1 << 30)
     run_tag = base36(seed)
@@ -203,6 +205,7 @@ def main(argv=None):
     want_parks = profile.parks if chaos.available() else 0
     want_graceful = profile.graceful_restarts
     want_cancels = profile.cancels
+    want_compaction = profile.compaction_windows if chaos.available() else 0
     if profile.restarts and not chaos.available():
         print("[stress] restarts requested but fault injection is unavailable; "
               "skipping chaos")
@@ -227,11 +230,18 @@ def main(argv=None):
     park_at = schedule(want_parks, offset=profile.seconds / 8.0)
     graceful_at = schedule(want_graceful, offset=profile.seconds / 5.0)
     cancel_at = schedule(want_cancels, offset=profile.seconds / 12.0)
+    compact_at = schedule(want_compaction, offset=profile.seconds / 6.0)
     try:
         while time.monotonic() < deadline:
             if dog.verdict != ALIVE:
                 break
             time.sleep(0.2)
+            if compact_at and time.monotonic() >= compact_at[0]:
+                compact_at.pop(0)
+                print(f"[stress] chaos: forcing catalog-log compaction under load "
+                      f"({chaos.result.compaction_windows + 1}/{want_compaction})")
+                chaos.compaction_pressure()
+                continue
             if cancel_at and time.monotonic() >= cancel_at[0]:
                 cancel_at.pop(0)
                 chaos.cancel_an_inflight_op(workers)
@@ -357,7 +367,7 @@ def main(argv=None):
         "fault_injection": info.get("fault_injection"),
         "chaos": (chaos.result.as_dict()
                   if (want_crashes or want_parks or want_graceful
-                      or want_cancels) else None),
+                      or want_cancels or want_compaction) else None),
         "coverage": cov_data,
         "quarantined": quarantined,
         "quarantine_entries": [e.as_dict() for e in entries],
@@ -372,7 +382,8 @@ def main(argv=None):
     if quarantined:
         print(f"[stress] {len(quarantined)} finding(s) quarantined: "
               f"{sorted({q['quarantined_by'] for q in quarantined})}")
-    if want_crashes or want_parks or want_graceful or want_cancels:
+    if (want_crashes or want_parks or want_graceful or want_cancels
+            or want_compaction):
         cr = chaos.result
         print(f"[stress] chaos: crashes {cr.crashes_observed}/{cr.crashes_attempted} "
               f"observed, restarts_ok={cr.restarts_ok}, "

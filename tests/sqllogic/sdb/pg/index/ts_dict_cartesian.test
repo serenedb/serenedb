@@ -1,3 +1,6 @@
+# name: tests/sqllogic/sdb/pg/index/ts_dict_cartesian.test
+# group: [index]
+
 hash-threshold 100
 
 statement ok
@@ -52,7 +55,9 @@ EXPLAIN SELECT unnest(ts_dict_agg(body)) AS term, unnest(ts_dict_count(body)) AS
 ----
 QUERY PLAN
 ╭─ ORDER_BY ───────────────────────────────────────────╮
-│ Order By: cart_idx.body)) ASC, cart_idx.body)) ASC   │
+│ Order By:                                            │
+│ unnest(ts_dict_agg(cart_idx.body)) ASC,              │
+│ unnest(ts_dict_count(cart_idx.body)) ASC             │
 │ ~1,536 rows                                          │
 ╰───────────────────────────┬──────────────────────────╯
 ╭─ PROJECTION ──────────────┴──────────────────────────╮
@@ -110,7 +115,9 @@ EXPLAIN SELECT unnest(ts_dict_agg(body)) AS term, unnest(ts_dict_count(body)) AS
 ----
 QUERY PLAN
 ╭─ ORDER_BY ───────────────────────────────────────────╮
-│ Order By: cart_idx.body)) ASC, cart_idx.body)) ASC   │
+│ Order By:                                            │
+│ unnest(ts_dict_agg(cart_idx.body)) ASC,              │
+│ unnest(ts_dict_count(cart_idx.body)) ASC             │
 │ ~307 rows                                            │
 ╰───────────────────────────┬──────────────────────────╯
 ╭─ PROJECTION ──────────────┴──────────────────────────╮
@@ -150,7 +157,9 @@ EXPLAIN SELECT unnest(ts_dict_agg(body)) AS term, unnest(ts_dict_count(body)) AS
 ----
 QUERY PLAN
 ╭─ ORDER_BY ───────────────────────────────────────────╮
-│ Order By: cart_idx.body)) ASC, cart_idx.body)) ASC   │
+│ Order By:                                            │
+│ unnest(ts_dict_agg(cart_idx.body)) ASC,              │
+│ unnest(ts_dict_count(cart_idx.body)) ASC             │
 │ ~307 rows                                            │
 ╰───────────────────────────┬──────────────────────────╯
 ╭─ PROJECTION ──────────────┴──────────────────────────╮
@@ -195,7 +204,9 @@ EXPLAIN SELECT unnest(ts_dict_agg(body)) AS term, unnest(ts_dict_count(body)) AS
 ----
 QUERY PLAN
 ╭─ ORDER_BY ───────────────────────────────────────────╮
-│ Order By: cart_idx.body)) ASC, cart_idx.body)) ASC   │
+│ Order By:                                            │
+│ unnest(ts_dict_agg(cart_idx.body)) ASC,              │
+│ unnest(ts_dict_count(cart_idx.body)) ASC             │
 │ ~1,536 rows                                          │
 ╰───────────────────────────┬──────────────────────────╯
 ╭─ PROJECTION ──────────────┴──────────────────────────╮
@@ -241,7 +252,9 @@ EXPLAIN SELECT unnest(ts_dict_agg(body)) AS term, unnest(ts_dict_count(body)) AS
 ----
 QUERY PLAN
 ╭─ ORDER_BY ───────────────────────────────────────────╮
-│ Order By: cart_idx.body)) ASC, cart_idx.body)) ASC   │
+│ Order By:                                            │
+│ unnest(ts_dict_agg(cart_idx.body)) ASC,              │
+│ unnest(ts_dict_count(cart_idx.body)) ASC             │
 │ ~307 rows                                            │
 ╰───────────────────────────┬──────────────────────────╯
 ╭─ PROJECTION ──────────────┴──────────────────────────╮
@@ -287,7 +300,9 @@ EXPLAIN SELECT unnest(ts_dict_agg(body)) AS term, unnest(ts_dict_count(body)) AS
 ----
 QUERY PLAN
 ╭─ ORDER_BY ───────────────────────────────────────────╮
-│ Order By: cart_idx.body)) ASC, cart_idx.body)) ASC   │
+│ Order By:                                            │
+│ unnest(ts_dict_agg(cart_idx.body)) ASC,              │
+│ unnest(ts_dict_count(cart_idx.body)) ASC             │
 │ ~307 rows                                            │
 ╰───────────────────────────┬──────────────────────────╯
 ╭─ PROJECTION ──────────────┴──────────────────────────╮
@@ -330,7 +345,9 @@ EXPLAIN SELECT unnest(ts_dict_agg(body)) AS term, unnest(ts_dict_count(body)) AS
 ----
 QUERY PLAN
 ╭─ ORDER_BY ───────────────────────────────────────────╮
-│ Order By: cart_idx.body)) ASC, cart_idx.body)) ASC   │
+│ Order By:                                            │
+│ unnest(ts_dict_agg(cart_idx.body)) ASC,              │
+│ unnest(ts_dict_count(cart_idx.body)) ASC             │
 │ ~307 rows                                            │
 ╰───────────────────────────┬──────────────────────────╯
 ╭─ PROJECTION ──────────────┴──────────────────────────╮
@@ -376,7 +393,9 @@ EXPLAIN SELECT unnest(ts_dict_agg(body)) AS term, unnest(ts_dict_count(body)) AS
 ----
 QUERY PLAN
 ╭─ ORDER_BY ───────────────────────────────────────────╮
-│ Order By: cart_idx.body)) ASC, cart_idx.body)) ASC   │
+│ Order By:                                            │
+│ unnest(ts_dict_agg(cart_idx.body)) ASC,              │
+│ unnest(ts_dict_count(cart_idx.body)) ASC             │
 │ ~307 rows                                            │
 ╰───────────────────────────┬──────────────────────────╯
 ╭─ PROJECTION ──────────────┴──────────────────────────╮
@@ -417,7 +436,9 @@ EXPLAIN SELECT unnest(ts_dict_agg(body)) AS term, unnest(ts_dict_count(body)) AS
 ----
 QUERY PLAN
 ╭─ ORDER_BY ───────────────────────────────────────────╮
-│ Order By: cart_idx.body)) ASC, cart_idx.body)) ASC   │
+│ Order By:                                            │
+│ unnest(ts_dict_agg(cart_idx.body)) ASC,              │
+│ unnest(ts_dict_count(cart_idx.body)) ASC             │
 │ ~307 rows                                            │
 ╰───────────────────────────┬──────────────────────────╯
 ╭─ PROJECTION ──────────────┴──────────────────────────╮
@@ -458,7 +479,9 @@ EXPLAIN SELECT unnest(ts_dict_agg(body)) AS term, unnest(ts_dict_count(body)) AS
 ----
 QUERY PLAN
 ╭─ ORDER_BY ───────────────────────────────────────────╮
-│ Order By: cart_idx.body)) ASC, cart_idx.body)) ASC   │
+│ Order By:                                            │
+│ unnest(ts_dict_agg(cart_idx.body)) ASC,              │
+│ unnest(ts_dict_count(cart_idx.body)) ASC             │
 │ ~1,536 rows                                          │
 ╰───────────────────────────┬──────────────────────────╯
 ╭─ PROJECTION ──────────────┴──────────────────────────╮
@@ -498,7 +521,9 @@ EXPLAIN SELECT unnest(ts_dict_agg(body)) AS term, unnest(ts_dict_count(body)) AS
 ----
 QUERY PLAN
 ╭─ ORDER_BY ───────────────────────────────────────────╮
-│ Order By: cart_idx.body)) ASC, cart_idx.body)) ASC   │
+│ Order By:                                            │
+│ unnest(ts_dict_agg(cart_idx.body)) ASC,              │
+│ unnest(ts_dict_count(cart_idx.body)) ASC             │
 │ ~1,536 rows                                          │
 ╰───────────────────────────┬──────────────────────────╯
 ╭─ PROJECTION ──────────────┴──────────────────────────╮
@@ -543,7 +568,9 @@ EXPLAIN SELECT unnest(ts_dict_agg(body)) AS term, unnest(ts_dict_count(body)) AS
 ----
 QUERY PLAN
 ╭─ ORDER_BY ───────────────────────────────────────────╮
-│ Order By: cart_idx.body)) ASC, cart_idx.body)) ASC   │
+│ Order By:                                            │
+│ unnest(ts_dict_agg(cart_idx.body)) ASC,              │
+│ unnest(ts_dict_count(cart_idx.body)) ASC             │
 │ ~307 rows                                            │
 ╰───────────────────────────┬──────────────────────────╯
 ╭─ PROJECTION ──────────────┴──────────────────────────╮
@@ -588,7 +615,9 @@ EXPLAIN SELECT unnest(ts_dict_agg(body)) AS term, unnest(ts_dict_count(body)) AS
 ----
 QUERY PLAN
 ╭─ ORDER_BY ───────────────────────────────────────────╮
-│ Order By: cart_idx.body)) ASC, cart_idx.body)) ASC   │
+│ Order By:                                            │
+│ unnest(ts_dict_agg(cart_idx.body)) ASC,              │
+│ unnest(ts_dict_count(cart_idx.body)) ASC             │
 │ ~307 rows                                            │
 ╰───────────────────────────┬──────────────────────────╯
 ╭─ PROJECTION ──────────────┴──────────────────────────╮

@@ -1383,12 +1383,13 @@ query
 EXPLAIN SELECT * FROM babsky_from_idx_val_idx;
 ----
 QUERY PLAN
-╭─ SEQ_SCAN ─────────────────────╮
-│ Table: babsky_from_idx_val_idx │
-│ Type: Sequential Scan          │
-│ Projections: pid, val, tag     │
-│ ~3 rows                        │
-╰────────────────────────────────╯
+╭─ SEQ_SCAN ─────────────╮
+│ Table: babsky_from_idx │
+│ Type: Sequential Scan  │
+│ Projections: pid, val, │
+│              tag       │
+│ ~3 rows                │
+╰────────────────────────╯
 
 statement ok
 DROP TABLE babsky_from_idx;

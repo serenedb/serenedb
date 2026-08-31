@@ -213,14 +213,6 @@ std::shared_ptr<const Index> CreateInvertedIndex(
   InvertedIndexOptions options, ExpressionData predicate,
   CreateIndexOperationOptions operation_options);
 
-// ALTER INDEX ... RENAME TO, once the caller has resolved the index and its
-// checks. An index occupies two slots -- its entry and the relation-namespace
-// scan wrapper -- so the move is one placement of one renamed record
-// (PlaceEntry with the old name), which also files the store op the replay
-// re-applies.
-void RenameIndex(duckdb::ClientContext* context, const CreateIndexInfo& index,
-                 std::string_view new_name);
-
 // ALTER TABLE ... DROP COLUMN.
 void DropTableColumn(const AccessContext& ax, ObjectId database_id,
                      const duckdb::CreateTableInfo& table,

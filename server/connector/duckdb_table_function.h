@@ -22,6 +22,7 @@
 
 #include <cmath>
 #include <duckdb.hpp>
+#include <duckdb/function/replacement_scan.hpp>
 #include <duckdb/function/table_function.hpp>
 #include <duckdb/planner/operator/logical_get.hpp>
 #include <duckdb/storage/table/row_group_reorderer.hpp>
@@ -156,6 +157,11 @@ struct SereneDBScanBindData : public duckdb::FunctionData {
   std::vector<catalog::ColumnId> column_ids;
   std::vector<duckdb::LogicalType> column_types;
   duckdb::optional_ptr<duckdb::TableCatalogEntry> table_entry;
+  // Set when the scan binds with no catalog entry of its own (an index scanned
+  // by name resolves through the replacement scan): what the entry would have
+  // answered. Absent, the answers are read off `table_entry`.
+  std::optional<duckdb::virtual_column_map_t> virtual_columns;
+  std::optional<duckdb::vector<duckdb::column_t>> row_id_columns;
   ScanEntryKind entry_kind = ScanEntryKind::BaseTable;
 
   std::shared_ptr<const catalog::Index> inverted_index;
@@ -348,5 +354,14 @@ std::optional<catalog::PkSpec> ViewPkSpecOf(const SereneDBScanBindData& bind);
 duckdb::TableFunction CreateIResearchScanFunction();
 
 void RegisterIResearchScanFunction(duckdb::DatabaseInstance& db);
+
+// The replacement scan serving `SELECT ... FROM index_name`: an index's name
+// is a relation in postgres, but it keeps no scannable catalog entry of its
+// own. Resolves like a table would -- stated qualifiers, else the search
+// path -- to the iresearch scan for an inverted index and to the relation
+// itself for a plain one; null for anything that is not an index.
+duckdb::unique_ptr<duckdb::TableRef> IndexScanReplacement(
+  duckdb::ClientContext& context, duckdb::ReplacementScanInput& input,
+  duckdb::optional_ptr<duckdb::ReplacementScanData> data);
 
 }  // namespace sdb::connector

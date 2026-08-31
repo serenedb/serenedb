@@ -1,3 +1,6 @@
+# name: tests/sqllogic/sdb/pg/system/catalog_entry_identity.test
+# group: [system]
+
 # A duckdb CatalogEntry for a serenedb object carries the object's stable id and
 # its owner + ACL. The id is duckdb's `oid` as well, so pg_class.oid and
 # duckdb's own introspection are one number rather than two that happen to
@@ -41,7 +44,6 @@ ORDER BY 1, 2
 entry_type	name
 Index	cei_i
 Sequence	sq
-Table	cei_i
 Table	t
 View	v
 
@@ -56,7 +58,6 @@ WHERE t.schema_name = 'cei'
 ORDER BY 1
 ----
 table_name	same
-cei_i	t
 t	t
 
 

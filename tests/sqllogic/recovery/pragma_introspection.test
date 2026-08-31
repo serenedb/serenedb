@@ -1,7 +1,10 @@
+# name: tests/sqllogic/recovery/pragma_introspection.test
+# group: [recovery]
+
 # duckdb introspection works for every SereneDB relation kind: transactional
-# (facade) tables, search tables, inverted-index and secondary-index
-# FROM-index entries, and views -- via the table-function, PRAGMA, and CALL
-# spellings of pragma_table_info / pragma_storage_info / pragma_database_size.
+# (facade) tables, search tables, and views -- via the table-function, PRAGMA,
+# and CALL spellings of pragma_table_info / pragma_storage_info /
+# pragma_database_size. An index is not a relation here, exactly as in duckdb.
 
 statement ok
 CREATE TABLE pin_txn (i INTEGER PRIMARY KEY, s VARCHAR USING COMPRESSION zstd, j INTEGER);
@@ -50,23 +53,19 @@ cid	name	type	notnull	dflt_value	pk
 4	maybe	INTEGER	f	NULL	f
 
 
-# FROM-index entries expose the indexed table's columns.
-query
+# An index is not a relation here, exactly as in duckdb.
+statement error
 SELECT * FROM pragma_table_info('pin_inv');
 ----
-cid	name	type	notnull	dflt_value	pk
-0	i	INTEGER	t	NULL	t
-1	s	VARCHAR	f	NULL	f
-2	j	INTEGER	f	NULL	f
+db error: ERROR: Table with name pin_inv does not exist!
+Did you mean "pin_view"?
 
 
-query
+statement error
 SELECT * FROM pragma_table_info('pin_sec');
 ----
-cid	name	type	notnull	dflt_value	pk
-0	i	INTEGER	t	NULL	t
-1	s	VARCHAR	f	NULL	f
-2	j	INTEGER	f	NULL	f
+db error: ERROR: Table with name pin_sec does not exist!
+Did you mean "pin_search"?
 
 
 query
@@ -146,38 +145,13 @@ row_group_id	column_name	column_id	column_path	segment_type	count
 0	rowid	NULL	[rowid]	BIGINT	2
 
 
-# --- pragma_storage_info: FROM-index entries -------------------------------
+# --- pragma_storage_info: index names are not relations --------------------
 
-# The INCLUDE column is stored in the inverted index's column store, next to
-# the encoded-primary-key column that carries row identity (no physical
-# column backs it, so it surfaces under the row-identity virtual column --
-# named after the PK column -- with a NULL column_id).
-statement ok
-VACUUM (REFRESH_TABLE) pin_txn;
-
-query
-SELECT row_group_id, column_name, column_id, column_path, segment_type, count, persistent FROM pragma_storage_info('pin_inc') ORDER BY column_path;
+statement error
+SELECT count(*) FROM pragma_storage_info('pin_inv');
 ----
-row_group_id	column_name	column_id	column_path	segment_type	count	persistent
-0	j	2	[2]	INTEGER	5000	t
-0	i	NULL	[i]	BIGINT	5000	t
-
-
-# A plain inverted index stores values only for the encoded primary key.
-query
-SELECT row_group_id, column_name, column_id, column_path, segment_type, count, persistent FROM pragma_storage_info('pin_inv');
-----
-row_group_id	column_name	column_id	column_path	segment_type	count	persistent
-0	i	NULL	[i]	BIGINT	5000	t
-
-
-# A secondary index is a native ART on the store table; it has no column
-# storage of its own, so it reports no segments.
-query
-SELECT count(*) FROM pragma_storage_info('pin_sec');
-----
-count
-0
+db error: ERROR: Table with name pin_inv does not exist!
+Did you mean "pin_view"?
 
 
 # Views have no storage.

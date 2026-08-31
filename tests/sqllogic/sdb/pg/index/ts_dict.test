@@ -1,3 +1,6 @@
+# name: tests/sqllogic/sdb/pg/index/ts_dict.test
+# group: [index]
+
 hash-threshold 100
 
 statement ok
@@ -198,23 +201,24 @@ query
 EXPLAIN SELECT unnest(ts_dict_agg(body)) AS term, unnest(ts_dict_score(body)) AS score FROM td_idx ORDER BY score
 ----
 QUERY PLAN
-╭─ ORDER_BY ──────────────────────────╮
-│ Order By: td_idx.body)) ASC         │
-│ ~3 rows                             │
-╰──────────────────┬──────────────────╯
-╭─ HASH_GROUP_BY ──┴──────────────────╮
-│ Groups: #0                          │
-│ Aggregates: max(#1)                 │
-│ ~3 rows                             │
-╰──────────────────┬──────────────────╯
-╭─ IRESEARCH_SCAN ─┴──────────────────╮
-│ Index: td_idx                       │
-│ TsDict: body                        │
-│ Projections:                        │
-│ sdb_inverted_index_term$body,       │
-│ sdb_inverted_index_term_score$body  │
-│ ~7 rows                             │
-╰─────────────────────────────────────╯
+╭─ ORDER_BY ─────────────────────────────╮
+│ Order By:                              │
+│ unnest(ts_dict_score(td_idx.body)) ASC │
+│ ~3 rows                                │
+╰────────────────────┬───────────────────╯
+╭─ HASH_GROUP_BY ────┴───────────────────╮
+│ Groups: #0                             │
+│ Aggregates: max(#1)                    │
+│ ~3 rows                                │
+╰────────────────────┬───────────────────╯
+╭─ IRESEARCH_SCAN ───┴───────────────────╮
+│ Index: td_idx                          │
+│ TsDict: body                           │
+│ Projections:                           │
+│ sdb_inverted_index_term$body,          │
+│ sdb_inverted_index_term_score$body     │
+│ ~7 rows                                │
+╰────────────────────────────────────────╯
 
 
 # ts_dict_agg over a base table (not the index relation) has no inverted index

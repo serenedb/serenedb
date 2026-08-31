@@ -231,7 +231,7 @@ class SereneDBTableEntry : public duckdb::DuckTableEntry {
 
 // Virtual columns / rowid columns / storage info of a relation, computed from
 // the entry's own column list and constraints. Shared between a table's entry
-// and the index-name-as-table wrappers, which advertise the same shape.
+// and the scans of its indexes by name, which advertise the same shape.
 duckdb::vector<duckdb::column_t> BuildRowIdColumns(
   const duckdb::TableCatalogEntry& table,
   const std::vector<size_t>& indexed_col_indices);
@@ -259,11 +259,6 @@ const duckdb::ColumnDefinition* TableEntryColumn(
 // it does not list, including the synthetic ones a scan produces.
 bool TableEntryColumnNotNull(const duckdb::TableCatalogEntry& table,
                              ObjectId column_id);
-
-// The relation a scan of `entry` reads: a table entry is its own relation,
-// while an index-as-table wrapper answers with the id of the relation its
-// index hangs off.
-ObjectId ScanRelationId(const duckdb::TableCatalogEntry& entry);
 
 // The key columns of a PRIMARY KEY or UNIQUE constraint as attnums, in key
 // order. The constraint spells its key either as one logical index or as a

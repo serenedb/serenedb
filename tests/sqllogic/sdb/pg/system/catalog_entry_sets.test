@@ -1,3 +1,6 @@
+# name: tests/sqllogic/sdb/pg/system/catalog_entry_sets.test
+# group: [system]
+
 # A serenedb schema, table, view, sequence, index, function and type are duckdb
 # CatalogEntry objects in a CatalogSet. sdb_catalog_sets() is the direct view of
 # that: what is in it is what the binder resolves, because the snapshot
@@ -6,9 +9,9 @@
 # The schema is the entry that owns the sets the rest live in, so it reports
 # itself under its own name.
 #
-# An index appears twice, as the projection also produced it twice: an Index
-# entry for DROP INDEX and duckdb_indexes(), and a Table entry for the
-# `SELECT * FROM <index>` scan, whose name is in the relation namespace.
+# An index is one Index entry, as in duckdb; `SELECT * FROM <index>` resolves
+# through a replacement scan rather than an entry of its own, and the name
+# still claims its slot in the relation namespace.
 #
 # The set is keyed by the exact name, not by duckdb's case-insensitive
 # identifier comparison: serenedb folds an unquoted identifier at parse time and
@@ -35,7 +38,6 @@ entry_type	name
 Index	ces_i
 Schema	ces
 Sequence	t_id_seq
-Table	ces_i
 Table	t
 
 

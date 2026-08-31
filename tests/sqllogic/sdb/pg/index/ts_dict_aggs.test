@@ -1,3 +1,6 @@
+# name: tests/sqllogic/sdb/pg/index/ts_dict_aggs.test
+# group: [index]
+
 hash-threshold 100
 
 statement ok
@@ -44,7 +47,8 @@ EXPLAIN SELECT unnest(ts_dict_agg(body)) AS term, unnest(ts_dict_raw_agg(body)):
 ----
 QUERY PLAN
 ╭─ ORDER_BY ───────────────────────────────────────────╮
-│ Order By: agg_idx.body)) ASC                         │
+│ Order By:                                            │
+│ unnest(ts_dict_agg(agg_idx.body)) ASC                │
 │ ~1,152 rows                                          │
 ╰───────────────────────────┬──────────────────────────╯
 ╭─ PROJECTION ──────────────┴──────────────────────────╮
@@ -154,7 +158,8 @@ EXPLAIN SELECT unnest(ts_dict_agg(body)) AS term, unnest(ts_dict_raw_agg(body)):
 ----
 QUERY PLAN
 ╭─ ORDER_BY ───────────────────────────────────────────╮
-│ Order By: agg_idx.body)) ASC                         │
+│ Order By:                                            │
+│ unnest(ts_dict_agg(agg_idx.body)) ASC                │
 │ ~230 rows                                            │
 ╰───────────────────────────┬──────────────────────────╯
 ╭─ PROJECTION ──────────────┴──────────────────────────╮
@@ -280,7 +285,8 @@ EXPLAIN SELECT unnest(ts_dict_agg(body)) AS term, unnest(ts_dict_raw_agg(body)):
 ----
 QUERY PLAN
 ╭─ ORDER_BY ───────────────────────────────────────────╮
-│ Order By: agg_idx.body)) ASC                         │
+│ Order By:                                            │
+│ unnest(ts_dict_agg(agg_idx.body)) ASC                │
 │ ~230 rows                                            │
 ╰───────────────────────────┬──────────────────────────╯
 ╭─ PROJECTION ──────────────┴──────────────────────────╮
@@ -413,7 +419,8 @@ EXPLAIN SELECT unnest(ts_dict_agg(body)) AS term, unnest(ts_dict_raw_agg(body)):
 ----
 QUERY PLAN
 ╭─ ORDER_BY ───────────────────────────────────────────╮
-│ Order By: agg_idx.body)) ASC                         │
+│ Order By:                                            │
+│ unnest(ts_dict_agg(agg_idx.body)) ASC                │
 │ ~230 rows                                            │
 ╰───────────────────────────┬──────────────────────────╯
 ╭─ PROJECTION ──────────────┴──────────────────────────╮
@@ -545,7 +552,8 @@ EXPLAIN SELECT unnest(ts_dict_agg(body)) AS term, unnest(ts_dict_raw_agg(body)):
 ----
 QUERY PLAN
 ╭─ ORDER_BY ───────────────────────────────────────────╮
-│ Order By: agg_idx.body)) ASC                         │
+│ Order By:                                            │
+│ unnest(ts_dict_agg(agg_idx.body)) ASC                │
 │ ~230 rows                                            │
 ╰───────────────────────────┬──────────────────────────╯
 ╭─ PROJECTION ──────────────┴──────────────────────────╮
@@ -674,7 +682,8 @@ EXPLAIN SELECT unnest(ts_dict_agg(body)) AS term, unnest(ts_dict_raw_agg(body)):
 ----
 QUERY PLAN
 ╭─ ORDER_BY ───────────────────────────────────────────╮
-│ Order By: agg_idx.body)) ASC                         │
+│ Order By:                                            │
+│ unnest(ts_dict_agg(agg_idx.body)) ASC                │
 │ ~230 rows                                            │
 ╰───────────────────────────┬──────────────────────────╯
 ╭─ PROJECTION ──────────────┴──────────────────────────╮
@@ -801,7 +810,8 @@ EXPLAIN SELECT unnest(ts_dict_agg(body)) AS term, unnest(ts_dict_raw_agg(body)):
 ----
 QUERY PLAN
 ╭─ ORDER_BY ───────────────────────────────────────────╮
-│ Order By: agg_idx.body)) ASC                         │
+│ Order By:                                            │
+│ unnest(ts_dict_agg(agg_idx.body)) ASC                │
 │ ~1,152 rows                                          │
 ╰───────────────────────────┬──────────────────────────╯
 ╭─ PROJECTION ──────────────┴──────────────────────────╮
@@ -927,7 +937,8 @@ EXPLAIN SELECT unnest(ts_dict_agg(body)) AS term, unnest(ts_dict_raw_agg(body)):
 ----
 QUERY PLAN
 ╭─ ORDER_BY ───────────────────────────────────────────╮
-│ Order By: agg_idx.body)) ASC                         │
+│ Order By:                                            │
+│ unnest(ts_dict_agg(agg_idx.body)) ASC                │
 │ ~1,152 rows                                          │
 ╰───────────────────────────┬──────────────────────────╯
 ╭─ PROJECTION ──────────────┴──────────────────────────╮
@@ -1060,7 +1071,8 @@ EXPLAIN SELECT unnest(ts_dict_agg(body)) AS term, unnest(ts_dict_raw_agg(body)):
 ----
 QUERY PLAN
 ╭─ ORDER_BY ───────────────────────────────────────────╮
-│ Order By: agg_idx.body)) ASC                         │
+│ Order By:                                            │
+│ unnest(ts_dict_agg(agg_idx.body)) ASC                │
 │ ~230 rows                                            │
 ╰───────────────────────────┬──────────────────────────╯
 ╭─ PROJECTION ──────────────┴──────────────────────────╮
@@ -1195,7 +1207,8 @@ EXPLAIN SELECT unnest(ts_dict_agg(body)) AS term, unnest(ts_dict_raw_agg(body)):
 ----
 QUERY PLAN
 ╭─ ORDER_BY ───────────────────────────────────────────╮
-│ Order By: agg_idx.body)) ASC                         │
+│ Order By:                                            │
+│ unnest(ts_dict_agg(agg_idx.body)) ASC                │
 │ ~230 rows                                            │
 ╰───────────────────────────┬──────────────────────────╯
 ╭─ PROJECTION ──────────────┴──────────────────────────╮

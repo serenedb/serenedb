@@ -37,7 +37,6 @@
 #include "basics/static_strings.h"
 #include "catalog/ddl/catalog.h"
 #include "catalog/entry.h"
-#include "catalog/entry/duckdb_index_scan_entry.h"
 #include "catalog/entry/duckdb_object_entry.h"
 #include "catalog/entry/duckdb_system_table_entry.h"
 #include "catalog/entry/duckdb_table_entry.h"
@@ -84,10 +83,6 @@ bool IsSystemSchema(const duckdb::CatalogEntry& entry) {
 // it carries, the per-column grants it answers with where the check goes
 // per-column, and the definition behind it for the name an error reports and
 // the kind the check branches on.
-//
-// A relation the check governs but that has no ACL of its own -- an index --
-// answers with the permissions of the relation it hangs off, which is postgres'
-// rule, and with that relation's column grants for the same reason.
 struct Governed {
   // The identity the check reports and branches on, spelled out rather than
   // reached through the definition: every kind's entry carries its own.
@@ -125,22 +120,6 @@ Governed SereneDBRelation(const duckdb::CatalogEntry* entry,
             &view->permissions,
             nullptr,
             nullptr};
-  }
-  if (const auto* index =
-        dynamic_cast<const catalog::SereneDBIndexScanEntry*>(entry)) {
-    // Reading an index is gated on the relation it is built on, so that is
-    // what a denial names -- resolved live by the id the wrapper holds: an
-    // index has no ACL of its own, and a regrant or rename of the relation
-    // does not rewrite the wrapper. The columns stay the wrapper's, which is
-    // the ColumnList the plan's indices name.
-    auto governed = SereneDBRelation(
-      catalog::LookupEntryIn(
-        &context, const_cast<duckdb::Catalog&>(index->ParentCatalog()),
-        index->GetIndexedRelationId())
-        .get(),
-      context);
-    governed.relation = index;
-    return governed;
   }
   if (const auto* system =
         dynamic_cast<const catalog::SystemTableEntry*>(entry)) {

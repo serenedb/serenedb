@@ -14,7 +14,6 @@ target_sources(
         read/duckdb_dependency.cpp
         log/duckdb_global_catalog.cpp
         entry/duckdb_index_entry.cpp
-        entry/duckdb_index_scan_entry.cpp
         entry/duckdb_schema_entry.cpp
         entry/duckdb_system_table_entry.cpp
         entry/duckdb_table_entry.cpp

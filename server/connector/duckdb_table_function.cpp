@@ -23,12 +23,25 @@
 #include <absl/algorithm/container.h>
 #include <absl/strings/str_join.h>
 
+#include <duckdb/catalog/catalog_search_path.hpp>
 #include <duckdb/common/multi_file/multi_file_reader.hpp>
 #include <duckdb/common/types/data_chunk.hpp>
 #include <duckdb/common/types/variant.hpp>
+#include <duckdb/function/replacement_scan.hpp>
 #include <duckdb/function/table_function.hpp>
+#include <duckdb/main/client_data.hpp>
+#include <duckdb/main/database_manager.hpp>
 #include <duckdb/main/extension/extension_loader.hpp>
 #include <duckdb/optimizer/column_lifetime_analyzer.hpp>
+#include <duckdb/parser/expression/constant_expression.hpp>
+#include <duckdb/parser/expression/function_expression.hpp>
+#include <duckdb/parser/expression/star_expression.hpp>
+#include <duckdb/parser/query_node/select_node.hpp>
+#include <duckdb/parser/statement/select_statement.hpp>
+#include <duckdb/parser/tableref/basetableref.hpp>
+#include <duckdb/parser/tableref/subqueryref.hpp>
+#include <duckdb/parser/tableref/table_function_ref.hpp>
+#include <duckdb/planner/binder.hpp>
 #include <duckdb/planner/expression/bound_columnref_expression.hpp>
 #include <duckdb/planner/expression/bound_conjunction_expression.hpp>
 #include <duckdb/planner/expression/bound_constant_expression.hpp>
@@ -47,14 +60,19 @@
 #include <iresearch/search/vector_similarity_filter.hpp>
 
 #include "catalog/ddl/catalog.h"
-#include "catalog/entry/duckdb_index_scan_entry.h"
+#include "catalog/ddl/duckdb_catalog.h"
+#include "catalog/entry/duckdb_index_entry.h"
 #include "catalog/entry/duckdb_table_entry.h"
+#include "catalog/entry/duckdb_view_entry.h"
 #include "catalog/inverted_index.h"
+#include "catalog/read/duckdb_catalog_sets.h"
 #include "connector/duckdb_client_state.h"
 #include "connector/duckdb_search_full_scan.hpp"
 #include "connector/functions/vector.h"
 #include "connector/optimizer/iresearch_plan.h"
 #include "connector/search_filter_printer.hpp"
+#include "connector/view_fast_path.h"
+#include "pg/connection_context.h"
 #include "pg/errcodes.h"
 #include "pg/sql_exception_macro.h"
 #include "search/inverted_index_storage.h"
@@ -80,6 +98,8 @@ void CopyCommon(const SereneDBScanBindData& src, SereneDBScanBindData& dst) {
   dst.column_ids = src.column_ids;
   dst.column_types = src.column_types;
   dst.table_entry = src.table_entry;
+  dst.virtual_columns = src.virtual_columns;
+  dst.row_id_columns = src.row_id_columns;
   dst.entry_kind = src.entry_kind;
   dst.inverted_index = src.inverted_index;
   dst.stored_filter = src.stored_filter;
@@ -176,7 +196,7 @@ duckdb::unique_ptr<duckdb::NodeStatistics> TableScanBindData::Cardinality(
 }
 
 ObjectId TableScanBindData::RelationId() const {
-  return catalog::ScanRelationId(*table_entry);
+  return catalog::IdOf(*table_entry);
 }
 
 bool SereneDBScanBindData::IsColumnNotNull(catalog::ColumnId col_id) const {
@@ -279,7 +299,9 @@ static duckdb::BindInfo SereneDBGetBindInfo(
   const duckdb::optional_ptr<duckdb::FunctionData> bind_data) {
   auto& data =
     const_cast<SereneDBScanBindData&>(bind_data->Cast<SereneDBScanBindData>());
-  if (data.table_entry) {
+  // An index scan reads the relation but is not the relation: claiming the
+  // entry here would let DML bind against the index's name.
+  if (data.table_entry && data.entry_kind != ScanEntryKind::InvertedIndex) {
     return duckdb::BindInfo(*data.table_entry);
   }
   return duckdb::BindInfo(duckdb::ScanType::TABLE);
@@ -289,9 +311,198 @@ duckdb::unique_ptr<duckdb::FunctionData> SereneDBScanBind(
   duckdb::ClientContext& context, duckdb::TableFunctionBindInput& input,
   duckdb::vector<duckdb::LogicalType>& return_types,
   duckdb::vector<duckdb::string>& names) {
-  THROW_SQL_ERROR(
-    ERR_CODE(ERRCODE_INTERNAL_ERROR),
-    ERR_MSG("SereneDBScanBind: should be provided via GetScanFunction"));
+  // An inverted index scanned by name: the replacement scan resolved the name
+  // to an index and re-states it here, so this bind sees the same catalog view
+  // as the statement. Every other road binds through its catalog entry and
+  // never calls this.
+  if (input.inputs.size() != 3) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INTERNAL_ERROR),
+                    ERR_MSG("iresearch_scan scans an index by name"));
+  }
+  const auto database = input.inputs[0].GetValue<duckdb::string>();
+  const auto schema = input.inputs[1].GetValue<duckdb::string>();
+  const auto index_name = input.inputs[2].GetValue<duckdb::string>();
+  const auto database_id = catalog::FindDatabaseId(&context, database);
+  const auto schema_id = catalog::FindSchemaId(&context, database_id, schema);
+  const auto* index = schema_id.isSet()
+                        ? catalog::Find<catalog::SereneDBIndexEntry>(
+                            &context, schema_id, index_name)
+                        : nullptr;
+  if (!index) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_TABLE),
+                    ERR_MSG("relation \"", index_name, "\" does not exist"));
+  }
+  SDB_ASSERT(index->IsInverted());
+  auto& duck_catalog = const_cast<duckdb::Catalog&>(index->ParentCatalog());
+  const auto index_id = catalog::IdOf(*index);
+  auto snapshot = GetSereneDBContext(context).EnsureSearchSnapshot(
+    index_id, catalog::InvertedStorageIn(duck_catalog, index_id));
+
+  auto relation =
+    catalog::LookupEntryIn(&context, duck_catalog, index->GetRelationId());
+  if (input.binder && relation) {
+    // Reading an index is gated on the relation it is built on -- an index has
+    // no ACL of its own. No column ref binds against this entry, so the check
+    // is the bare-read one.
+    input.binder
+      ->RecordAccess(input.binder->GenerateTableIndex().index, *relation)
+      .verb |= duckdb::AccessVerb::SELECT;
+  }
+  if (auto* view = dynamic_cast<catalog::SereneDBViewEntry*>(relation.get())) {
+    const auto view_columns = view->GetColumnInfo();
+    if (!view_columns) {
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_TABLE),
+                      ERR_MSG("relation \"", index_name, "\" does not exist"));
+    }
+    // The index only captures post-WHERE/ORDER/LIMIT rows; we must not
+    // stream the reader directly.
+    auto data = duckdb::make_uniq<ViewScanBindData>();
+    data->view_id = ObjectId{view->oid};
+    data->view_name = view->name.GetIdentifierName();
+    const auto& vinfo = *view_columns;
+    for (size_t i = 0; i < vinfo.names.size(); ++i) {
+      data->column_ids.push_back(static_cast<catalog::ColumnId>(i));
+      data->column_types.push_back(vinfo.types[i]);
+      data->column_names.emplace_back(vinfo.names[i].GetIdentifierName());
+      names.push_back(vinfo.names[i].GetIdentifierName());
+      return_types.push_back(vinfo.types[i]);
+    }
+    data->entry_kind = ScanEntryKind::InvertedIndex;
+    data->inverted_index =
+      catalog::InvertedDefinitionIn(&context, duck_catalog, index_id);
+    const auto& options =
+      catalog::InvertedInfo(*data->inverted_index).GetOptions();
+    auto view_definition =
+      duckdb::unique_ptr_cast<duckdb::CreateInfo, duckdb::CreateViewInfo>(
+        view->GetInfo());
+    data->fast_path =
+      ResolveViewFastPath(context, *view_definition, options.key_columns);
+    if (data->fast_path) {
+      data->lookup_label = FormatLookupLabel(*data->fast_path);
+      data->lookup_supports_filters = data->fast_path->supports_filters;
+    } else {
+      data->lookup_label = "view";
+    }
+    data->row_id_columns = duckdb::vector<duckdb::column_t>{
+      duckdb::MultiFileReader::COLUMN_IDENTIFIER_FILE_INDEX,
+      catalog::kColumnIdentifierPkRowNumber};
+    duckdb::virtual_column_map_t virtuals;
+    virtuals.emplace(
+      catalog::kColumnIdentifierTableOid,
+      duckdb::TableColumn{"tableoid", duckdb::LogicalType::BIGINT});
+    virtuals.emplace(duckdb::COLUMN_IDENTIFIER_EMPTY,
+                     duckdb::TableColumn{"", duckdb::LogicalType::BOOLEAN});
+    if (options.pk_column == catalog::PkColumnKind::Has) {
+      // The pk halves as flat, fixed-type columns: what the internal roads
+      // bind. The scan itself rejects them on an index that does not key rows
+      // by (file, row).
+      virtuals.emplace(
+        duckdb::MultiFileReader::COLUMN_IDENTIFIER_FILE_INDEX,
+        duckdb::TableColumn{"file_index", duckdb::LogicalType::UBIGINT});
+      virtuals.emplace(
+        catalog::kColumnIdentifierPkRowNumber,
+        duckdb::TableColumn{"row_number", duckdb::LogicalType::BIGINT});
+    }
+    data->virtual_columns = std::move(virtuals);
+    data->snapshot = std::move(snapshot);
+    return data;
+  }
+
+  auto* table = dynamic_cast<catalog::SereneDBTableEntry*>(relation.get());
+  if (!table) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_TABLE),
+                    ERR_MSG("relation \"", index_name, "\" does not exist"));
+  }
+  auto data = duckdb::make_uniq<TableScanBindData>();
+  for (const auto& col : table->GetColumns().Logical()) {
+    data->column_ids.emplace_back(col.CatalogOid());
+    data->column_types.push_back(col.Type());
+    names.push_back(col.Name().GetIdentifierName());
+    return_types.push_back(col.Type());
+  }
+  data->table_entry = table;
+  data->entry_kind = ScanEntryKind::InvertedIndex;
+  data->inverted_index =
+    catalog::InvertedDefinitionIn(&context, duck_catalog, index_id);
+  // The relation's own answers serve its native scan; this scan reads the
+  // index, which identifies rows by the indexed pk halves.
+  const auto& indexed =
+    duck_catalog.Cast<catalog::SereneDBCatalog>().IndexedColumns(
+      index->GetRelationId());
+  data->row_id_columns = catalog::BuildRowIdColumns(*table, indexed);
+  data->virtual_columns = catalog::BuildVirtualColumns(*table, indexed);
+  data->lookup_label = "table";
+  data->snapshot = std::move(snapshot);
+  return data;
+}
+
+duckdb::unique_ptr<duckdb::TableRef> IndexScanReplacement(
+  duckdb::ClientContext& context, duckdb::ReplacementScanInput& input,
+  duckdb::optional_ptr<duckdb::ReplacementScanData> /*data*/) {
+  // An index's name is a relation in postgres, so a scan of it resolves the
+  // way a table would: the stated qualifiers, else the search path. Anything
+  // that is not an index stays unresolved and keeps the binder's own error.
+  std::vector<duckdb::CatalogSearchEntry> candidates;
+  if (!input.schema_name.empty()) {
+    candidates.emplace_back(duckdb::Identifier{input.catalog_name},
+                            duckdb::Identifier{input.schema_name});
+  } else {
+    candidates = duckdb::ClientData::Get(context).catalog_search_path->Get();
+  }
+  for (const auto& candidate : candidates) {
+    const auto catalog_name =
+      candidate.GetCatalog().GetIdentifierName().empty()
+        ? duckdb::DatabaseManager::GetDefaultDatabase(context)
+            .GetIdentifierName()
+        : candidate.GetCatalog().GetIdentifierName();
+    if (!input.catalog_name.empty() && catalog_name != input.catalog_name) {
+      continue;
+    }
+    const auto database_id = catalog::FindDatabaseId(&context, catalog_name);
+    if (!database_id.isSet()) {
+      continue;
+    }
+    const auto schema_id = catalog::FindSchemaId(
+      &context, database_id, candidate.GetSchema().GetIdentifierName());
+    if (!schema_id.isSet()) {
+      continue;
+    }
+    const auto* index = catalog::Find<catalog::SereneDBIndexEntry>(
+      &context, schema_id, input.table_name);
+    if (!index) {
+      continue;
+    }
+    if (!index->IsInverted()) {
+      // Scanning a plain index by name reads the relation: the index itself
+      // is a native ART over its rows. A subquery rather than a bare
+      // redirect, so DML against the index's name stays refused; the alias
+      // keeps the name the user asked for.
+      auto table = duckdb::make_uniq<duckdb::BaseTableRef>();
+      table->SetQualifiedName(duckdb::Identifier{catalog_name},
+                              index->ParentSchema().name,
+                              index->GetTableName());
+      auto node = duckdb::make_uniq<duckdb::SelectNode>();
+      node->select_list.push_back(duckdb::make_uniq<duckdb::StarExpression>());
+      node->from_table = std::move(table);
+      auto select = duckdb::make_uniq<duckdb::SelectStatement>();
+      select->node = std::move(node);
+      return duckdb::make_uniq<duckdb::SubqueryRef>(
+        std::move(select), duckdb::Identifier{input.table_name});
+    }
+    duckdb::vector<duckdb::unique_ptr<duckdb::ParsedExpression>> args;
+    args.push_back(duckdb::make_uniq<duckdb::ConstantExpression>(
+      duckdb::Value(catalog_name)));
+    args.push_back(duckdb::make_uniq<duckdb::ConstantExpression>(
+      duckdb::Value(candidate.GetSchema().GetIdentifierName())));
+    args.push_back(duckdb::make_uniq<duckdb::ConstantExpression>(
+      duckdb::Value(input.table_name)));
+    auto ref = duckdb::make_uniq<duckdb::TableFunctionRef>();
+    ref->function = duckdb::make_uniq<duckdb::FunctionExpression>(
+      "iresearch_scan", std::move(args));
+    ref->alias = duckdb::Identifier{input.table_name};
+    return std::move(ref);
+  }
+  return nullptr;
 }
 
 static duckdb::unique_ptr<duckdb::NodeStatistics> SereneDBScanCardinality(
@@ -328,7 +539,9 @@ static duckdb::virtual_column_map_t SereneDBScanGetVirtualColumns(
     return result;
   }
   auto& bind = bind_p->Cast<SereneDBScanBindData>();
-  if (bind.table_entry) {
+  if (bind.virtual_columns) {
+    result = *bind.virtual_columns;
+  } else if (bind.table_entry) {
     result = bind.table_entry->GetVirtualColumns();
   }
   return result;
@@ -341,7 +554,9 @@ static duckdb::vector<duckdb::column_t> SereneDBScanGetRowIdColumns(
     return result;
   }
   auto& bind = bind_p->Cast<SereneDBScanBindData>();
-  if (bind.table_entry) {
+  if (bind.row_id_columns) {
+    result = *bind.row_id_columns;
+  } else if (bind.table_entry) {
     result = bind.table_entry->GetRowIdColumns();
   }
   return result;
@@ -799,7 +1014,9 @@ SereneDBScanToValue(duckdb::TableFunctionToStringInput& input) {
     return result;
   }
   auto& bind = input.bind_data->Cast<SereneDBScanBindData>();
-  if (bind.table_entry) {
+  if (bind.entry_kind == ScanEntryKind::InvertedIndex && bind.inverted_index) {
+    result.insert("Index", std::string{bind.inverted_index->GetName()});
+  } else if (bind.table_entry) {
     const char* kind =
       bind.entry_kind == ScanEntryKind::BaseTable ? "Table" : "Index";
     result.insert(kind,
@@ -1250,7 +1467,13 @@ duckdb::TableFunction CreateIResearchScanFunction() {
 
 void RegisterIResearchScanFunction(duckdb::DatabaseInstance& db) {
   duckdb::ExtensionLoader loader(db, "serenedb");
-  loader.RegisterFunction(CreateIResearchScanFunction());
+  auto function = CreateIResearchScanFunction();
+  // The by-name form the replacement scan plans: (database, schema, index).
+  // The entry roads hand their bind data over directly and never state these.
+  function.arguments = {duckdb::LogicalType::VARCHAR,
+                        duckdb::LogicalType::VARCHAR,
+                        duckdb::LogicalType::VARCHAR};
+  loader.RegisterFunction(std::move(function));
 }
 
 }  // namespace sdb::connector

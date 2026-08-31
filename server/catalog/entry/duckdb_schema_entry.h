@@ -118,11 +118,10 @@ class SereneDBSchemaEntry final : public duckdb::DuckSchemaEntry {
   bool _static_content;
 };
 
-// Both function kinds share one set, as postgres has one function namespace;
-// an index is in two sets at once, its own and the relation-namespace wrapper
-// behind SELECT * FROM <idx>. The kind's own slot comes first: the walk that
-// builds a wrapper reads the set the primary entry has just landed in.
-std::span<const duckdb::CatalogType> EntrySlots(duckdb::CatalogType type);
+// The set an entry of `type` files under: both function kinds share one set,
+// as postgres has one function namespace, and the relation kinds share the
+// relation-namespace set.
+duckdb::CatalogType EntrySlot(duckdb::CatalogType type);
 
 // Whether serenedb put `entry` in the catalog, rather than duckdb owning it
 // outright: only a serenedb entry carries a stable id, an owner and an ACL.

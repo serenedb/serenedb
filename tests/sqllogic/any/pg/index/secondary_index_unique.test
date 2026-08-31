@@ -1968,17 +1968,13 @@ query
 EXPLAIN SELECT pid, code, name FROM vedernikoff_uniq_idx_scan_code_idx WHERE code = 20;
 ----
 QUERY PLAN
-╭─ PROJECTION ──────────────────────────────╮
-│ Projections: pid, code, name              │
-│ ~2 rows                                   │
-╰─────────────────────┬─────────────────────╯
-╭─ SEQ_SCAN ──────────┴─────────────────────╮
-│ Table: vedernikoff_uniq_idx_scan_code_idx │
-│ Type: Sequential Scan                     │
-│ Projections: code, pid, name              │
-│ Column Filter: code = 20                  │
-│ ~2 rows                                   │
-╰───────────────────────────────────────────╯
+╭─ SEQ_SCAN ───────────────────────╮
+│ Table: vedernikoff_uniq_idx_scan │
+│ Type: Sequential Scan            │
+│ Projections: pid, code, name     │
+│ Column Filter: code = 20         │
+│ ~2 rows                          │
+╰──────────────────────────────────╯
 
 onlyif serenedb
 query

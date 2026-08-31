@@ -291,6 +291,9 @@ void ConfigureServerDBConfig(duckdb::DBConfig& config) {
   // connector/duckdb_client_state.cpp), which is what keeps `threads -
   // external_threads` from ever resolving to zero internal workers.
   config.SetOptionByName("external_threads", duckdb::Value::UBIGINT(0));
+  // `SELECT ... FROM index_name`: an index is a relation in postgres, but it
+  // keeps no scannable catalog entry -- the name resolves here instead.
+  config.replacement_scans.emplace_back(connector::IndexScanReplacement);
   // PostgreSQL's COPY ... TO writes no CSV header unless HEADER is given;
   // DuckDB's writer defaults it on.
   config.SetOptionByName("copy_csv_header_default",

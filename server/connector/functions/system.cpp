@@ -55,7 +55,6 @@
 #include "catalog/ddl/catalog.h"
 #include "catalog/ddl/duckdb_catalog.h"
 #include "catalog/entry/duckdb_index_entry.h"
-#include "catalog/entry/duckdb_index_scan_entry.h"
 #include "catalog/entry/duckdb_object_entry.h"
 #include "catalog/entry/duckdb_schema_entry.h"
 #include "catalog/entry/duckdb_system_table_entry.h"
@@ -765,11 +764,7 @@ const catalog::Permissions* RelationPermissions(
       entry->type != duckdb::CatalogType::VIEW_ENTRY) {
     return nullptr;
   }
-  // The index-as-table wrapper shares the relation namespace and duckdb's
-  // TABLE_ENTRY with it, but postgres gives an index no ACL of its own.
-  return dynamic_cast<const catalog::SereneDBIndexScanEntry*>(entry)
-           ? nullptr
-           : &entry->permissions;
+  return &entry->permissions;
 }
 
 std::optional<ObjectId> ResolveRoleOrPublic(duckdb::ClientContext* context,

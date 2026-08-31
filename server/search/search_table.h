@@ -54,9 +54,11 @@ class SearchTable;
 
 // The text dictionaries every inverted index declared on `shard` names,
 // unioned: each index allocates its own field ids, so the union is
-// collision-free.
+// collision-free. Read out of the shard's own database catalog rather than the
+// session's, so WAL replay -- which has no SereneDB session state -- can pass a
+// null context.
 catalog::TokenizerMap ResolveShardTokenizers(const SearchTable& shard,
-                                             duckdb::ClientContext& context);
+                                             duckdb::ClientContext* context);
 
 // Per-table iresearch columnstore store for a TableEngine::Search table -- the
 // Search-engine sibling of InvertedIndexStorage. Held by the table's entry,
@@ -85,6 +87,7 @@ class SearchTable : public std::enable_shared_from_this<SearchTable> {
 
   ObjectId GetTableId() const noexcept { return _table_id; }
   ObjectId GetSchemaId() const noexcept { return _schema_id; }
+  ObjectId GetDbId() const noexcept { return _db_id; }
 
   // The merged per-field index config: PRIMARY KEY columns (term-indexed +
   // still stored, so PK predicates push down) unioned with every declared

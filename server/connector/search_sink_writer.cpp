@@ -837,7 +837,7 @@ std::unique_ptr<SearchSinkInsertBaseImpl> MakeSearchTableInsertSink(
                          std::make_move_iterator(exprs.begin()),
                          std::make_move_iterator(exprs.end()));
   }
-  auto dicts = search::ResolveShardTokenizers(shard, context);
+  auto dicts = search::ResolveShardTokenizers(shard, &context);
   // Norm-featured fields must get the merged encoding config or the writer
   // asserts.
   trx.SetFieldOptions(shard.GetFieldOptions());

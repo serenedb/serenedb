@@ -43,6 +43,7 @@
 #include "basics/duckdb_engine.h"
 #include "basics/lifecycle.h"
 #include "basics/log.h"
+#include "catalog/ddl/duckdb_catalog.h"
 #include "catalog/entry.h"
 #include "catalog/index.h"
 #include "catalog/inverted_index.h"
@@ -221,12 +222,16 @@ std::shared_ptr<const irs::IndexFieldOptions> SearchTable::GetFieldOptions()
 }
 
 catalog::TokenizerMap ResolveShardTokenizers(const SearchTable& shard,
-                                             duckdb::ClientContext& context) {
+                                             duckdb::ClientContext* context) {
   catalog::TokenizerMap dicts;
+  // Deliberately not the session overload of ResolveTokenizers: that resolves
+  // the database off the connection's SereneDB state, which WAL replay's bare
+  // duckdb::Connection does not have. The shard knows its own database.
+  auto& db_catalog = catalog::DatabaseCatalog(context, shard.GetDbId());
   for (const auto& index : catalog::RelationInvertedIndexes(
-         &context, shard.GetSchemaId(), shard.GetTableId())) {
-    for (auto& [id, dict] : catalog::ResolveTokenizers(context, *index)) {
-      dicts.try_emplace(id, std::move(dict));
+         context, shard.GetSchemaId(), shard.GetTableId())) {
+    for (const auto id : catalog::InvertedInfo(*index).GetTokenizers()) {
+      dicts.try_emplace(id, catalog::FindTokenizerIn(context, db_catalog, id));
     }
   }
   return dicts;
@@ -239,7 +244,7 @@ catalog::ColumnTokenizer SearchTable::GetTokenizer(
   if (it == config->end()) {
     return {};  // not a merged-config field: the default string tokenizer
   }
-  return catalog::TokenizerForEntry(ResolveShardTokenizers(*this, context),
+  return catalog::TokenizerForEntry(ResolveShardTokenizers(*this, &context),
                                     it->second);
 }
 

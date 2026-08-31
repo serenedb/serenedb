@@ -51,6 +51,10 @@ class LMJelinekMercer final : public irs::ScorerBase<LMJelinekMercer, LMStats> {
     bool operator==(const Options&) const = default;
   };
 
+  static ScoreBoundType BoundTypeOf(const Options&) noexcept {
+    return ScoreBoundType::DivNorm;
+  }
+
   static std::unique_ptr<LMJelinekMercer> Make(const Options& opts) {
     if (!(opts.lambda > 0.f) || opts.lambda > 1.f) {
       THROW_SQL_ERROR(ERR_MSG("lm_jelinek_mercer: lambda must be in (0, 1]"));
@@ -68,9 +72,17 @@ class LMJelinekMercer final : public irs::ScorerBase<LMJelinekMercer, LMStats> {
     return IndexFeatures::Freq | IndexFeatures::Norm;
   }
 
+  ScoreBoundWriter::ptr PrepareScoreBoundWriter(size_t max_levels) const final;
+
+  ScoreBoundSource::ptr PrepareScoreBoundSource() const final;
+
+  bool Compatible(const ScorerOptions& persisted) const noexcept final;
+
   ScoreFunction PrepareScorer(const ScoreContext& ctx) const final;
 
   bool equals(const Scorer& other) const noexcept final;
+
+  std::string ToString() const final;
 
   score_t lambda() const noexcept { return _lambda; }
 

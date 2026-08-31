@@ -1,0 +1,660 @@
+# A catalog mutation and a concurrent DROP of its target.
+#
+# The entry a statement writes goes into its CatalogSet on that statement's own
+# transaction, so whichever session writes the object first holds it, and the
+# other one is refused there and then with 40001. We do not take PostgreSQL's
+# ACCESS EXCLUSIVE lock, so the two cannot be ordered after the fact; 40001 is
+# the class PG 18 raises when a snapshot-isolated transaction's target moved
+# under it, and the class a client already knows to retry.
+#
+# Both directions are here. In the first family the open transaction mutates
+# first and the DROP is what loses. In the second the DROP commits first,
+# against a transaction whose read view was pinned before it, and the mutation
+# is what loses -- which is the direction that used to reach the install past
+# the point of no return.
+#
+# Either way the server stays up, the loser's transaction aborts, and the
+# connection takes new work straight after.
+
+# --- ALTER TABLE ... RENAME ---
+
+statement ok
+CREATE TABLE ccd_rename(a INTEGER, b TEXT);
+
+
+connection s1
+statement ok
+BEGIN;
+
+
+connection s1
+statement ok
+ALTER TABLE ccd_rename RENAME TO ccd_rename_x;
+
+
+connection s2
+statement error
+DROP TABLE ccd_rename;
+----
+db error: ERROR: could not serialize access due to concurrent DDL on the same object
+
+
+# The refused drop left its connection usable.
+connection s2
+query
+SELECT 1 AS ok;
+----
+ok
+1
+
+
+connection s1
+statement ok
+COMMIT;
+
+
+connection s1
+query
+SELECT relname FROM pg_class
+WHERE relname IN ('ccd_rename', 'ccd_rename_x');
+----
+relname
+ccd_rename_x
+
+
+statement ok
+DROP TABLE ccd_rename_x;
+
+
+# --- COMMENT ON TABLE ---
+
+statement ok
+CREATE TABLE ccd_comment(a INTEGER, b TEXT);
+
+
+connection s1
+statement ok
+BEGIN;
+
+
+connection s1
+statement ok
+COMMENT ON TABLE ccd_comment IS 'kept';
+
+
+connection s2
+statement error
+DROP TABLE ccd_comment;
+----
+db error: ERROR: could not serialize access due to concurrent DDL on the same object
+
+
+connection s1
+statement ok
+COMMIT;
+
+
+query
+SELECT comment FROM duckdb_tables() WHERE table_name = 'ccd_comment';
+----
+comment
+kept
+
+
+statement ok
+DROP TABLE ccd_comment;
+
+
+# --- COMMENT ON COLUMN ---
+
+statement ok
+CREATE TABLE ccd_colcomment(a INTEGER, b TEXT);
+
+
+connection s1
+statement ok
+BEGIN;
+
+
+connection s1
+statement ok
+COMMENT ON COLUMN ccd_colcomment.a IS 'kept';
+
+
+connection s2
+statement error
+DROP TABLE ccd_colcomment;
+----
+db error: ERROR: could not serialize access due to concurrent DDL on the same object
+
+
+connection s1
+statement ok
+ROLLBACK;
+
+
+# The holder rolled back, so the object is free and the drop now succeeds.
+connection s2
+statement ok
+DROP TABLE ccd_colcomment;
+
+
+# --- ALTER TABLE ... RENAME COLUMN ---
+#
+# The table entry owns its rows, so reshaping them is a write of that entry and
+# not of anything underneath it. The concurrent DROP is refused where every
+# other second writer is.
+
+statement ok
+CREATE TABLE ccd_renamecol(a INTEGER, b TEXT);
+
+
+connection s1
+statement ok
+BEGIN;
+
+
+connection s1
+statement ok
+ALTER TABLE ccd_renamecol RENAME COLUMN b TO b2;
+
+
+connection s2
+statement error
+DROP TABLE ccd_renamecol;
+----
+db error: ERROR: could not serialize access due to concurrent DDL on the same object
+
+
+connection s1
+statement ok
+COMMIT;
+
+
+statement ok
+DROP TABLE ccd_renamecol;
+
+
+# --- CREATE INDEX: the new index holds the relation it hangs off ---
+
+statement ok
+CREATE TABLE ccd_index(a INTEGER, b TEXT);
+
+
+connection s1
+statement ok
+BEGIN;
+
+
+connection s1
+statement ok
+CREATE INDEX ccd_index_i ON ccd_index(a);
+
+
+connection s2
+statement error
+DROP TABLE ccd_index;
+----
+db error: ERROR: could not serialize access due to concurrent DDL on the same object
+
+
+connection s1
+statement ok
+COMMIT;
+
+
+connection s1
+query
+SELECT relname FROM pg_class
+WHERE relname IN ('ccd_index', 'ccd_index_i') ORDER BY 1;
+----
+relname
+ccd_index
+ccd_index_i
+
+
+statement ok
+DROP TABLE ccd_index;
+
+
+# --- ALTER INDEX ... SET ---
+
+statement ok
+CREATE TABLE ccd_altidx(a INTEGER, b TEXT);
+
+
+statement ok
+CREATE INDEX ccd_altidx_i ON ccd_altidx USING inverted(b);
+
+
+connection s1
+statement ok
+BEGIN;
+
+
+connection s1
+statement ok
+ALTER INDEX ccd_altidx_i SET (segment_docs_max = 200);
+
+
+connection s2
+statement error
+DROP TABLE ccd_altidx CASCADE;
+----
+db error: ERROR: could not serialize access due to concurrent DDL on the same object
+
+
+connection s1
+statement ok
+COMMIT;
+
+
+statement ok
+DROP TABLE ccd_altidx CASCADE;
+
+
+# --- GRANT ---
+
+statement ok
+CREATE ROLE ccd_grantee;
+
+
+statement ok
+CREATE TABLE ccd_grant(a INTEGER, b TEXT);
+
+
+connection s1
+statement ok
+BEGIN;
+
+
+connection s1
+statement ok
+GRANT SELECT ON ccd_grant TO ccd_grantee;
+
+
+connection s2
+statement error
+DROP TABLE ccd_grant;
+----
+db error: ERROR: could not serialize access due to concurrent DDL on the same object
+
+
+connection s1
+statement ok
+COMMIT;
+
+
+query
+SELECT array_to_string(relacl, '|') AS acl
+FROM pg_class WHERE relname = 'ccd_grant';
+----
+acl
+postgres=arwdDxtm/postgres|ccd_grantee=r/postgres
+
+
+statement ok
+DROP TABLE ccd_grant;
+
+
+# --- ALTER TABLE ... OWNER TO ---
+
+statement ok
+CREATE TABLE ccd_owner(a INTEGER, b TEXT);
+
+
+connection s1
+statement ok
+BEGIN;
+
+
+connection s1
+statement ok
+ALTER TABLE ccd_owner OWNER TO ccd_grantee;
+
+
+connection s2
+statement error
+DROP TABLE ccd_owner;
+----
+db error: ERROR: could not serialize access due to concurrent DDL on the same object
+
+
+connection s1
+statement ok
+COMMIT;
+
+
+statement ok
+DROP TABLE ccd_owner;
+
+
+# --- ALTER ROLE ---
+
+statement ok
+CREATE ROLE ccd_victim;
+
+
+connection s1
+statement ok
+BEGIN;
+
+
+connection s1
+statement ok
+ALTER ROLE ccd_victim NOSUPERUSER;
+
+
+connection s2
+statement error
+DROP ROLE ccd_victim;
+----
+db error: ERROR: could not serialize access due to concurrent DDL on the same object
+
+
+connection s1
+statement ok
+COMMIT;
+
+
+statement ok
+DROP ROLE ccd_victim;
+
+
+# --- DROP VIEW against the same view's cascade: both wanted it gone ---
+#
+# Wanting the same outcome is no excuse: the first drop holds the entry and the
+# cascade that would have removed it a second time is refused like any other
+# second writer.
+
+statement ok
+CREATE TABLE ccd_dropview(a INTEGER, b TEXT);
+
+
+statement ok
+CREATE VIEW ccd_dropview_v AS SELECT * FROM ccd_dropview;
+
+
+connection s1
+statement ok
+BEGIN;
+
+
+connection s1
+statement ok
+DROP VIEW ccd_dropview_v;
+
+
+connection s2
+statement error
+DROP TABLE ccd_dropview CASCADE;
+----
+db error: ERROR: could not serialize access due to concurrent DDL on the same object
+
+
+connection s1
+statement ok
+COMMIT;
+
+
+connection s2
+statement ok
+DROP TABLE ccd_dropview CASCADE;
+
+
+query
+SELECT count(*) AS n FROM pg_class
+WHERE relname IN ('ccd_dropview', 'ccd_dropview_v');
+----
+n
+0
+
+
+# --- the other direction: the drop commits first ---
+#
+# A transaction pins its catalog read view at its first write. A drop that
+# commits after that point is invisible to it, so it resolves the target
+# happily and the entry write is what discovers the loss.
+
+statement ok
+CREATE TABLE ccd_pin(a INTEGER);
+
+
+statement ok
+CREATE TABLE ccd_late(a INTEGER, b TEXT);
+
+
+connection s3
+statement ok
+BEGIN;
+
+
+connection s3
+statement ok
+COMMENT ON TABLE ccd_pin IS 'pins the read view';
+
+
+connection s4
+statement ok
+DROP TABLE ccd_late;
+
+
+connection s3
+statement error
+COMMENT ON TABLE ccd_late IS 'doomed';
+----
+db error: ERROR: could not serialize access due to concurrent DDL on the same object
+
+
+connection s3
+statement error
+SELECT 1;
+----
+db error: ERROR: current transaction is aborted, commands ignored until end of transaction block
+
+
+connection s3
+statement ok
+ROLLBACK;
+
+
+# The rollback leaves the connection usable and the drop is the only outcome.
+connection s3
+query
+SELECT count(*) AS n FROM pg_class
+WHERE relname IN ('ccd_late', 'ccd_pin');
+----
+n
+1
+
+
+statement ok
+DROP TABLE ccd_pin;
+
+
+# --- the same direction for a role ---
+#
+# Roles live in their own attachment, which starts its transaction the first
+# time a statement touches it -- after the drop, here. duckdb's own conflict
+# check cannot see the loss from that read view, so the install refuses the
+# resurrection itself and names the object.
+
+statement ok
+CREATE TABLE ccd_rolepin(a INTEGER);
+
+
+statement ok
+CREATE ROLE ccd_gone;
+
+
+connection s5
+statement ok
+BEGIN;
+
+
+connection s5
+statement ok
+COMMENT ON TABLE ccd_rolepin IS 'pins the read view';
+
+
+connection s6
+statement ok
+DROP ROLE ccd_gone;
+
+
+connection s5
+statement error
+ALTER ROLE ccd_gone NOSUPERUSER;
+----
+db error: ERROR: could not serialize access due to concurrent delete of "ccd_gone"
+
+
+connection s5
+statement ok
+ROLLBACK;
+
+
+connection s5
+query
+SELECT count(*) AS n FROM pg_authid WHERE rolname = 'ccd_gone';
+----
+n
+0
+
+
+# --- the same direction for an index build ---
+#
+# The build reaches the rows before the entry does, so the refusal is duckdb's
+# own, from the operator that built the index. Same direction, same retry.
+
+statement ok
+CREATE TABLE ccd_idxlate(a INTEGER, b TEXT);
+
+
+connection s7
+statement ok
+BEGIN;
+
+
+connection s7
+statement ok
+COMMENT ON TABLE ccd_rolepin IS 'pins the read view again';
+
+
+connection s8
+statement ok
+DROP TABLE ccd_idxlate;
+
+
+connection s7
+statement error
+CREATE INDEX ccd_idxlate_i ON ccd_idxlate(a);
+----
+db error: ERROR: Transaction conflict: cannot add an index to a table that has been altered or dropped
+
+
+connection s7
+statement ok
+ROLLBACK;
+
+
+statement ok
+DROP TABLE ccd_rolepin;
+
+
+# --- a drop that is already committed when the statement resolves ---
+#
+# The transaction still sees the table it read, so the binder resolves it; the
+# rename re-resolves the name against what is committed and finds nothing.
+# Renaming a version nothing holds any more would resurrect it, so the answer
+# is the one the statement asked about: the name is gone.
+
+statement ok
+CREATE TABLE ccd_plain(a INTEGER);
+
+
+connection s9
+statement ok
+BEGIN;
+
+
+connection s9
+query
+SELECT count(*) AS n FROM ccd_plain;
+----
+n
+0
+
+
+connection s10
+statement ok
+DROP TABLE ccd_plain;
+
+
+connection s9
+statement error
+ALTER TABLE ccd_plain RENAME TO ccd_plain_x;
+----
+db error: ERROR: could not serialize access due to concurrent DDL on the same object
+
+
+connection s9
+statement ok
+ROLLBACK;
+
+
+# --- control: the same shapes commit when nobody drops the target ---
+
+statement ok
+CREATE TABLE ccd_control(a INTEGER, b TEXT);
+
+
+connection s1
+statement ok
+BEGIN;
+
+
+connection s1
+statement ok
+ALTER TABLE ccd_control RENAME TO ccd_control_x;
+
+
+connection s1
+statement ok
+COMMENT ON TABLE ccd_control_x IS 'kept';
+
+
+connection s1
+statement ok
+GRANT SELECT ON ccd_control_x TO ccd_grantee;
+
+
+connection s2
+statement ok
+CREATE TABLE ccd_unrelated(a INTEGER);
+
+
+connection s2
+statement ok
+DROP TABLE ccd_unrelated;
+
+
+connection s1
+statement ok
+COMMIT;
+
+
+connection s1
+query
+SELECT count(*) AS n FROM pg_class WHERE relname = 'ccd_control_x';
+----
+n
+1
+
+
+statement ok
+DROP TABLE ccd_control_x;
+
+
+statement ok
+DROP ROLE ccd_grantee;

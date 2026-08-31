@@ -1,0 +1,298 @@
+# A serenedb schema, table, view, sequence, index, function and type are duckdb
+# CatalogEntry objects in a CatalogSet. sdb_catalog_sets() is the direct view of
+# that: what is in it is what the binder resolves, because the snapshot
+# projection is refused for every one of those kinds.
+#
+# The schema is the entry that owns the sets the rest live in, so it reports
+# itself under its own name.
+#
+# An index appears twice, as the projection also produced it twice: an Index
+# entry for DROP INDEX and duckdb_indexes(), and a Table entry for the
+# `SELECT * FROM <index>` scan, whose name is in the relation namespace.
+#
+# The set is keyed by the exact name, not by duckdb's case-insensitive
+# identifier comparison: serenedb folds an unquoted identifier at parse time and
+# then matches exactly, as postgres does, so "Foo" and "foo" are two relations.
+
+
+statement ok
+CREATE SCHEMA ces
+
+
+statement ok
+CREATE TABLE ces.t(id SERIAL PRIMARY KEY, txt TEXT)
+
+
+statement ok
+CREATE INDEX ces_i ON ces.t(txt)
+
+
+query
+SELECT entry_type, name FROM sdb_catalog_sets()
+WHERE schema_name = 'ces' ORDER BY 1, 2
+----
+entry_type	name
+Index	ces_i
+Schema	ces
+Sequence	t_id_seq
+Table	ces_i
+Table	t
+
+
+# An index drop reshapes the table's entry as well: the facade advertises a
+# virtual column per indexed column, so the two move together.
+statement ok
+DROP INDEX ces.ces_i
+
+
+query
+SELECT entry_type, name FROM sdb_catalog_sets()
+WHERE schema_name = 'ces' ORDER BY 1, 2
+----
+entry_type	name
+Schema	ces
+Sequence	t_id_seq
+Table	t
+
+
+# A rename frees the old name in the set before the new one is claimed.
+statement ok
+ALTER TABLE ces.t RENAME TO t2
+
+
+query
+SELECT entry_type, name FROM sdb_catalog_sets()
+WHERE schema_name = 'ces' AND entry_type = 'Table'
+----
+entry_type	name
+Table	t2
+
+
+# The entry is written by the statement that creates it, on that statement's own
+# transaction, so the set holds it before the commit -- and holds it for that
+# transaction alone. Rolling back takes it out again: what a rolled back
+# statement left behind is a version nobody else ever saw.
+statement ok
+BEGIN
+
+
+statement ok
+CREATE TABLE ces.rolled(a INTEGER)
+
+
+query
+SELECT entry_type, name FROM sdb_catalog_sets()
+WHERE schema_name = 'ces' AND name = 'rolled'
+----
+entry_type	name
+Table	rolled
+
+
+connection ces_other
+query
+SELECT count(*) AS n FROM sdb_catalog_sets()
+WHERE schema_name = 'ces' AND name = 'rolled'
+----
+n
+0
+
+
+statement ok
+ROLLBACK
+
+
+query
+SELECT count(*) AS n FROM sdb_catalog_sets()
+WHERE schema_name = 'ces' AND name = 'rolled'
+----
+n
+0
+
+
+# Two relations differing only in case coexist, which duckdb's case-insensitive
+# identifier keying would have collapsed into one entry.
+statement ok
+CREATE TABLE ces."CaseA"(x INTEGER)
+
+
+statement ok
+CREATE TABLE ces."casea"(y INTEGER)
+
+
+query
+SELECT name FROM sdb_catalog_sets()
+WHERE schema_name = 'ces' AND entry_type = 'Table' ORDER BY name
+----
+name
+CaseA
+casea
+t2
+
+
+query
+SELECT count(*) AS n FROM ces."CaseA"
+----
+n
+0
+
+
+# A view, a function and a type are entries too. The view shares the relation
+# namespace with tables, as it does in postgres and in DuckSchemaEntry.
+statement ok
+CREATE VIEW ces.v AS SELECT x FROM ces."CaseA"
+
+
+statement ok
+CREATE FUNCTION ces.fn(a INTEGER) RETURNS INTEGER LANGUAGE sql AS 'SELECT a + 1'
+
+
+statement ok
+CREATE TYPE ces.mood AS ENUM ('sad', 'ok')
+
+
+query
+SELECT entry_type, name FROM sdb_catalog_sets()
+WHERE schema_name = 'ces'
+  AND entry_type NOT IN ('Table', 'Index', 'Sequence', 'Schema')
+ORDER BY 1, 2
+----
+entry_type	name
+Macro Function	fn
+Type	mood
+View	v
+
+
+# A tokenizer has no upstream counterpart, so CatalogType gained
+# TOKENIZER_ENTRY rather than the object borrowing a kind whose machinery would
+# then mishandle it.
+statement ok
+CREATE TEXT SEARCH DICTIONARY ces.tok (template = 'text', locale = 'en_US.UTF-8')
+
+
+query
+SELECT entry_type, name FROM sdb_catalog_sets()
+WHERE schema_name = 'ces' AND entry_type = 'Tokenizer'
+----
+entry_type	name
+Tokenizer	tok
+
+
+query
+SELECT ts_lexize('ces.tok', 'Hello World') AS lexemes
+----
+lexemes
+{Hello,World}
+
+
+statement ok
+DROP TEXT SEARCH DICTIONARY ces.tok
+
+
+query
+SELECT count(*) AS n FROM sdb_catalog_sets()
+WHERE schema_name = 'ces' AND entry_type = 'Tokenizer'
+----
+n
+0
+
+
+statement ok
+ALTER VIEW ces.v RENAME TO v2
+
+
+query
+SELECT name FROM sdb_catalog_sets()
+WHERE schema_name = 'ces' AND entry_type = 'View'
+----
+name
+v2
+
+
+statement ok
+DROP VIEW ces.v2
+
+
+statement ok
+DROP FUNCTION ces.fn
+
+
+statement ok
+DROP TYPE ces.mood
+
+
+query
+SELECT count(*) AS n FROM sdb_catalog_sets()
+WHERE schema_name = 'ces'
+  AND entry_type NOT IN ('Table', 'Index', 'Sequence', 'Schema')
+----
+n
+0
+
+
+statement ok
+DROP SCHEMA ces CASCADE
+
+
+# The schema entry goes with it, and the sets of everything it held went with
+# the entry that owned them.
+query
+SELECT count(*) AS n FROM sdb_catalog_sets() WHERE schema_name = 'ces'
+----
+n
+0
+
+
+# Roles and databases are the two cluster-global kinds. Their sets are on the
+# storage-less __sdb_global attachment rather than on any one database, so they
+# report with no schema name and are the same rows in every database.
+statement ok
+CREATE ROLE ces_role
+
+
+statement ok
+CREATE DATABASE ces_db
+
+
+query
+SELECT entry_type, name FROM sdb_catalog_sets()
+WHERE name IN ('ces_role', 'ces_db') ORDER BY 1, 2
+----
+entry_type	name
+Database	ces_db
+Role	ces_role
+
+
+# The entry oid is the serenedb id, as it is for every other kind: pg_authid.oid
+# and pg_database.oid are the same numbers.
+query
+SELECT count(*) AS n FROM sdb_catalog_sets() s
+JOIN pg_authid a ON a.oid = s.entry_oid AND a.rolname = s.name
+WHERE s.entry_type = 'Role' AND s.name = 'ces_role'
+----
+n
+1
+
+
+query
+SELECT count(*) AS n FROM sdb_catalog_sets() s
+JOIN pg_database d ON d.oid = s.entry_oid AND d.datname = s.name
+WHERE s.entry_type = 'Database' AND s.name = 'ces_db'
+----
+n
+1
+
+
+statement ok
+DROP DATABASE ces_db
+
+
+statement ok
+DROP ROLE ces_role
+
+
+query
+SELECT count(*) AS n FROM sdb_catalog_sets()
+WHERE name IN ('ces_role', 'ces_db')
+----
+n
+0

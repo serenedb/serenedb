@@ -235,7 +235,7 @@ ByTerm MakeTermFilter(irs::field_id field, bytes_view term) {
 
 }  // namespace
 
-PrepareCollector::ptr ByWildcardNgram::MakeCollector(
+PrepareCollector::ptr ByWildcardNgram::MakeCollectorImpl(
   const Scorer* scorer) const {
   const auto& opts = options();
   switch (ClassifyKind(opts)) {
@@ -273,7 +273,7 @@ QueryBuilder::ptr ByWildcardNgram::PrepareSegment(
   const SubReader& segment, const PrepareContext& ctx) const {
   const auto& opts = options();
   auto sub_ctx = ctx;
-  sub_ctx.Boost(Boost());
+  sub_ctx.Boost(GetBoost());
 
   const auto wrap = [&](QueryBuilder::ptr&& approx) -> QueryBuilder::ptr {
     if (!approx || approx == QueryBuilder::Empty()) {

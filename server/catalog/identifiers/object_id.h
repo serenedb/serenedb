@@ -45,7 +45,6 @@ inline constexpr ObjectId kRootUser{kMinSystem};
 // Database IDs
 inline constexpr ObjectId kInstance{kMinSystem.id() + 4};
 inline constexpr ObjectId kSystemDB{kMinSystem.id() + 2};
-inline constexpr ObjectId kTombstoneDatabase{kMinSystem.id() + 1};
 
 // Schema IDs
 inline constexpr ObjectId kPgCatalogSchema{11};
@@ -62,6 +61,14 @@ inline constexpr ObjectId kUnionArray{kMinSystem.id() + 105};
 // OpClasses
 inline constexpr ObjectId kPgOpclassIvf{kMinSystem.id() + 200};
 inline constexpr ObjectId kPgOpclassIncluded{kMinSystem.id() + 201};
+
+// The generated pg_catalog / information_schema views, numbered in the order
+// kExternalViews declares them. A relation with no oid cannot be joined against
+// pg_depend or pg_attribute and cannot be cast to regclass, so they get one --
+// above every system table's so pg_class still orders tables first.
+inline constexpr ObjectId kFirstSystemView{kMinSystem.id() + 1000};
+
+inline constexpr ObjectId kFirstBuiltinFunction{kMinSystem.id() + 10'000};
 
 // Access methods
 inline constexpr ObjectId kPgAmInverted{kMinSystem.id() + 300};

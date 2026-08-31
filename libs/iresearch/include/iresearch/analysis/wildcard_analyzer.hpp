@@ -79,14 +79,13 @@ class WildcardAnalyzer final : public TypedAnalyzer<WildcardAnalyzer>,
 
 template<typename Context>
 void SerdeWrite(Context ctx, const WildcardAnalyzer::Options& o) {
-  sdb::basics::WriteTuple(ctx.io(), std::tie(o.base_analyzer, o.ngram_size),
-                          ctx.arg());
+  sdb::basics::WriteTupleOrObject(ctx, std::tie(o.base_analyzer, o.ngram_size));
 }
 
 template<typename Context>
 void SerdeRead(Context ctx, WildcardAnalyzer::Options& o) {
   auto refs = std::tie(o.base_analyzer, o.ngram_size);
-  sdb::basics::ReadTuple(ctx.io(), refs, ctx.arg());
+  sdb::basics::ReadTupleOrObject(ctx, refs);
 }
 
 }  // namespace irs::analysis

@@ -40,10 +40,12 @@
 #include "basics/containers/node_hash_map.h"
 #include "basics/duckdb_engine.h"
 #include "basics/log.h"
-#include "catalog/catalog.h"
+#include "catalog/ddl/catalog.h"
+#include "catalog/duckdb_primary_key.h"
+#include "catalog/entry/duckdb_object_entry.h"
+#include "catalog/entry/duckdb_table_entry.h"
 #include "catalog/identifiers/object_id.h"
-#include "catalog/table.h"
-#include "catalog/table_options.h"
+#include "catalog/read/duckdb_catalog_sets.h"
 #include "connector/search_sink_writer.hpp"
 #include "search/search_db_wal.h"
 #include "search/search_table.h"
@@ -56,8 +58,6 @@ void RunSearchTableRecovery(bool skip_wal_recovery) {
     return;
   }
   auto begin = std::chrono::steady_clock::now();
-  auto snapshot = catalog::GetCatalog().GetCatalogSnapshot();
-  SDB_ASSERT(snapshot);
   auto& engine = GetSearchEngine();
 
   // A dedicated connection whose ClientContext drives indexed-expression
@@ -73,7 +73,9 @@ void RunSearchTableRecovery(bool skip_wal_recovery) {
   struct ShardInfo {
     std::shared_ptr<SearchTable> shard;  // keeps the table store alive
     SearchTable* search = nullptr;
-    std::vector<catalog::Column::Id> column_ids;
+    std::vector<catalog::ColumnId> column_ids;
+    std::vector<catalog::duckdb_primary_key::PKColumn> pk_columns;
+    bool uses_generated_pk = false;
   };
   // Per-shard replay context: one open iresearch trx accumulated across all of
   // the shard's records, with an insert sink and a delete sink that share it.
@@ -96,27 +98,30 @@ void RunSearchTableRecovery(bool skip_wal_recovery) {
   };
 
   size_t recovered_shards = 0;
-  for (const auto& database : snapshot->GetDatabases()) {
-    const ObjectId db_id = database->GetId();
+  std::vector<ObjectId> database_ids;
+  catalog::VisitDatabases(nullptr,
+                          [&](const catalog::SereneDBDatabaseEntry& db) {
+                            database_ids.push_back(catalog::IdOf(db));
+                          });
+  for (const ObjectId db_id : database_ids) {
     containers::NodeHashMap<ObjectId, ShardInfo> shards;
-    for (const auto& schema : snapshot->GetSchemas(db_id)) {
-      for (const auto& table : snapshot->GetTables(db_id, schema->GetName())) {
-        if (table->GetEngine() != catalog::TableEngine::Search) {
-          continue;  // Transactional table: no Search-engine store to recover.
+    catalog::Visit<catalog::SereneDBTableEntry>(
+      nullptr, db_id, [&](const catalog::SereneDBTableEntry& entry) {
+        if (!entry.IsSearchTable()) {
+          return;  // Transactional table: no Search-engine store to recover.
         }
-        auto search = table->GetData();  // asserts the store is bound
+        auto search = entry.GetSearchData();  // the store is bound by now
         ShardInfo info;
         info.search = search.get();
         info.shard = std::move(search);
-        for (const auto& col : table->Columns()) {
-          if (col.GetId() == catalog::Column::kGeneratedPKId) {
-            continue;
-          }
-          info.column_ids.push_back(col.GetId());
+        for (const auto& col : entry.GetColumns().Logical()) {
+          info.column_ids.emplace_back(col.CatalogOid());
         }
-        shards.emplace(table->GetId(), std::move(info));
-      }
-    }
+        info.pk_columns =
+          catalog::duckdb_primary_key::BuildPKColumns(*entry.Definition());
+        info.uses_generated_pk = info.pk_columns.empty();
+        shards.emplace(ObjectId{entry.oid}, std::move(info));
+      });
     if (shards.empty()) {
       continue;
     }
@@ -141,7 +146,7 @@ void RunSearchTableRecovery(bool skip_wal_recovery) {
 
       if (!ctx.insert_sink) {
         ctx.insert_sink = connector::MakeSearchTableInsertSink(
-          ctx.trx, *info.shard, snapshot, expr_context);
+          ctx.trx, *info.shard, expr_context);
         ctx.delete_sink =
           std::make_unique<connector::SearchSinkDeleteBaseImpl>(ctx.trx);
       }
@@ -151,9 +156,9 @@ void RunSearchTableRecovery(bool skip_wal_recovery) {
                       duckdb::DataChunk& chunk) {
       auto& info = shards.at(table_id);
       auto& ctx = ensure_ctx(table_id);
-      connector::WriteChunkToSearchSink(*ctx.insert_sink, chunk,
-                                        info.column_ids, pk_base, table_id,
-                                        expr_context);
+      connector::WriteChunkToSearchSink(
+        *ctx.insert_sink, chunk, info.column_ids, info.pk_columns,
+        info.uses_generated_pk, pk_base, table_id, expr_context);
       ctx.max_tick = std::max(ctx.max_tick, tick);
     };
     // Each DELETE op replays as one removal batch on the shared trx; feeding it
@@ -258,18 +263,19 @@ void RunSearchTableRecovery(bool skip_wal_recovery) {
 }
 
 void StartSearchTableMaintenance() {
-  auto snapshot = catalog::GetCatalog().GetCatalogSnapshot();
-  SDB_ASSERT(snapshot);
-  for (const auto& database : snapshot->GetDatabases()) {
-    const ObjectId db_id = database->GetId();
-    for (const auto& schema : snapshot->GetSchemas(db_id)) {
-      for (const auto& table : snapshot->GetTables(db_id, schema->GetName())) {
-        if (table->GetEngine() != catalog::TableEngine::Search) {
-          continue;
+  std::vector<ObjectId> walk_ids;
+  catalog::VisitDatabases(nullptr,
+                          [&](const catalog::SereneDBDatabaseEntry& db) {
+                            walk_ids.push_back(catalog::IdOf(db));
+                          });
+  for (const auto walk_id : walk_ids) {
+    catalog::Visit<catalog::SereneDBTableEntry>(
+      nullptr, walk_id, [&](const catalog::SereneDBTableEntry& table) {
+        if (!table.IsSearchTable()) {
+          return;
         }
-        table->GetData()->StartTasks();  // GetData asserts the store is bound
-      }
-    }
+        table.GetSearchData()->StartTasks();
+      });
   }
 }
 

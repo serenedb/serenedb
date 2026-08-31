@@ -882,6 +882,40 @@ id	has_score
 2	t
 
 
+# --- per-node ::score(...) on a geo predicate ---
+# A geo leaf now resolves its scorer from the node it was collected for, so an
+# override reaches it. Geo exposes no term frequency, so the overrides that mean
+# anything there are the frequency-independent ones; constant(K) has an exact
+# value to assert. Same match set as the large_poly case above.
+
+query
+SELECT id, round(BM25(geo_idx.tableoid)::DOUBLE, 4) AS score FROM geo_idx
+WHERE (ST_Intersects(geo, '{"type":"Polygon","coordinates":[[[37.610,55.700],[37.620,55.700],[37.620,55.710],[37.610,55.710],[37.610,55.700]]]}'))::score('constant(9)')
+ORDER BY id
+----
+id	score
+1	9
+2	9
+3	9
+6	9
+7	9
+
+
+# ::score(NULL) takes the geo leg out of the ranking while it still constrains
+# the candidate set: the text leg is the only thing left scoring.
+
+query
+SELECT id, round(BM25(places_idx.tableoid)::DOUBLE, 4) > 0 AS text_scored
+FROM places_idx
+WHERE body @@ 'cafe'
+  AND (ST_Intersects(geo, '{"type":"Polygon","coordinates":[[[37.610,55.700],[37.620,55.700],[37.620,55.710],[37.610,55.710],[37.610,55.700]]]}'))::score(NULL)
+ORDER BY id
+----
+id	text_scored
+1	t
+2	t
+
+
 # --- TSQUERY `^` boost composed with geo AND ---
 # `'blue'::TSQUERY ^ 1000.0 || 'red'`: blue leg is boosted 1000x, red leg
 # is the baseline. Combined with cluster geo: blue cluster rows {1, 3, 4}

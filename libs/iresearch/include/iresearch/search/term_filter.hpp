@@ -55,7 +55,7 @@ class ByTerm : public FilterWithField<ByTermOptions> {
   QueryBuilder::ptr PrepareSegment(const SubReader& segment,
                                    const PrepareContext& ctx) const final {
     auto sub_ctx = ctx;
-    sub_ctx.boost *= Boost();
+    sub_ctx.boost *= GetBoost();
     return PrepareSegment(segment, sub_ctx, field_id(), options().term);
   }
   static QueryBuilder::ptr PrepareSegment(const SubReader& segment,
@@ -63,7 +63,7 @@ class ByTerm : public FilterWithField<ByTermOptions> {
                                           const irs::field_id field,
                                           const bytes_view term);
 
-  PrepareCollector::ptr MakeCollector(const Scorer* scorer) const final;
+  PrepareCollector::ptr MakeCollectorImpl(const Scorer* scorer) const final;
 
   TermPredicate::ptr CompileTermPredicate() const final;
 

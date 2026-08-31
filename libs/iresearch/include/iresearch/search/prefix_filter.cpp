@@ -64,7 +64,7 @@ class ByPrefixIterator : public WrappedTermIterator {
 QueryBuilder::ptr ByPrefix::PrepareSegment(const SubReader& segment,
                                            const PrepareContext& ctx) const {
   auto sub_ctx = ctx;
-  sub_ctx.boost *= Boost();
+  sub_ctx.boost *= GetBoost();
   return PrepareSegment(segment, sub_ctx, field_id(), options().term);
 }
 
@@ -97,7 +97,7 @@ QueryBuilder::ptr ByPrefix::PrepareSegment(const SubReader& segment,
   return query;
 }
 
-PrepareCollector::ptr ByPrefix::MakeCollector(const Scorer* scorer) const {
+PrepareCollector::ptr ByPrefix::MakeCollectorImpl(const Scorer* scorer) const {
   return std::make_unique<LimitedTermsCollector>(scorer,
                                                  options().scored_terms_limit);
 }

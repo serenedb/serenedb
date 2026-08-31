@@ -39,15 +39,12 @@ id	body
 1	pudge goes mid
 3	pudge plays again
 
-# The PK column is queryable by name; a single-file view stores the scalar
-# row number.
-query
-SELECT generated_pk, id FROM spk_idx ORDER BY id;
+# The flat pk halves are glob-only; a single-file view stores a scalar pk.
+statement error
+SELECT file_index, row_number, id FROM spk_idx ORDER BY id;
 ----
-generated_pk	id
-0	1
-1	2
-2	3
+db error: ERROR: column "file_index" is only served by glob-backed inverted indexes
+
 
 statement ok
 CREATE INDEX spk_np ON spk_v USING inverted(body store_pk_en, id included()) WITH (store_pk = false);
@@ -124,9 +121,10 @@ id	body
 10	pudge goes mid
 20	pudge plays again
 
-# Glob PK struct halves are addressable by name.
+# The pk projects only through the flat halves -- there is no generated_pk
+# column on a view index.
 query
-SELECT (generated_pk).file_index, (generated_pk).row_number, id FROM spk_glob_idx ORDER BY id;
+SELECT file_index, row_number, id FROM spk_glob_idx ORDER BY id;
 ----
 file_index	row_number	id
 0	0	10
@@ -166,7 +164,7 @@ statement ok
 CREATE INDEX spk_glob_cc_idx ON spk_glob_cc_v USING inverted(id, body store_pk_en);
 
 query
-SELECT (generated_pk).file_index, (generated_pk).row_number, id FROM spk_glob_cc_idx ORDER BY id;
+SELECT file_index, row_number, id FROM spk_glob_cc_idx ORDER BY id;
 ----
 file_index	row_number	id
 0	0	10

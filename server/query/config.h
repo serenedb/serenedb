@@ -30,7 +30,6 @@
 
 #include "basics/assert.h"
 #include "basics/containers/node_hash_map.h"
-#include "catalog/types.h"
 #include "pg/sql_exception_macro.h"
 
 namespace duckdb {
@@ -42,7 +41,6 @@ struct DBConfig;
 namespace sdb {
 namespace catalog {
 
-struct Snapshot;
 class VirtualTable;
 class VirtualTableSnapshot;
 
@@ -95,37 +93,20 @@ class Config {
   ByteaOutput GetByteaOutput() const;
   std::string GetTimeZone() const;
   IsolationLevel GetIsolationLevel() const;
-  bool GetStrictDDL() const;
   bool IsExplicitTransaction() const;
 
-  void DropCatalogSnapshot() { _snapshot.reset(); }
-
-  // Installs the snapshot a prepared statement was bound against, so its plan
-  // executes against the same catalog view that pinned its bound entries.
-  void SetCatalogSnapshot(std::shared_ptr<const catalog::Snapshot> snapshot) {
-    _snapshot = std::move(snapshot);
-  }
-
-  // Acquires the statement's catalog snapshot. Called only at statement
-  // boundaries on the connection thread (OnStatementBegin, the wire message
-  // handlers that bind or serialize before a query lifecycle starts); all
-  // other code reads via CatalogSnapshot().
-  std::shared_ptr<const catalog::Snapshot> AcquireCatalogSnapshot();
-
-  // Read-only access to the snapshot acquired for the current statement.
-  // Never acquires: a lazy first-acquire from an executor worker would race
-  // the connection thread. The check stays in release builds -- a scope hole
-  // must surface as an error, not a null dereference.
-  const std::shared_ptr<const catalog::Snapshot>& CatalogSnapshot() const {
-    SDB_ENSURE(_snapshot,
-               "no catalog snapshot acquired for the current statement");
-    return _snapshot;
-  }
-
-  std::shared_ptr<const catalog::Snapshot> GetCatalogSnapshot() const {
-    SDB_ASSERT(_snapshot);
-    return _snapshot;
-  }
+  // The catalog identity a plan is cached against (duckdb's
+  // PreparedStatementData::RequireRebind asks the catalog itself). It is
+  // duckdb's own version of this session's catalog: it moves when a catalog
+  // change commits, this session's or another's.
+  //
+  // Sampled at each statement boundary rather than read live: duckdb records
+  // the identity of every catalog a statement read and asserts that a second
+  // read inside the same statement agrees, so the number a statement sees has
+  // to be fixed for its duration. Resampling at the end is what lets the next
+  // Bind -- which runs between statements -- see the DDL just performed.
+  uint64_t CatalogEpoch() const noexcept { return _catalog_epoch; }
+  void RefreshCatalogEpoch() noexcept;
 
   // Returns the current value of a setting, or std::nullopt if not found.
   std::optional<std::string> Get(std::string_view key) const;
@@ -165,6 +146,8 @@ class Config {
   void SetInternal(std::string_view key, std::string value);
   void RestoreValue(std::string_view key, duckdb::Value value) noexcept;
 
+  uint64_t _catalog_epoch = 0;
+
   // Bumped on every tracked setting change; see SettingsVersion().
   uint64_t _settings_version = 0;
 
@@ -175,7 +158,6 @@ class Config {
   // hold string_views that outlive the caller.
   // TODO: use FlatHashMap, there're now problems with ASAN build
   containers::NodeHashMap<std::string, TxnVariable> _transaction;
-  std::shared_ptr<const catalog::Snapshot> _snapshot;
   duckdb::ClientContext& _client_ctx;
 };
 

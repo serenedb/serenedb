@@ -38,12 +38,20 @@ CREATE ROLE ddp_clickclack;
 
 
 # ===========================================================================
-# Part 1 -- role as GRANTEE of a global (no FOR ROLE) default-priv entry.
-# The entry is owned by the current superuser; ddp_vedernikoff is the grantee.
+# Part 1 -- role as GRANTEE of a default-priv entry; ddp_vedernikoff is the
+# grantee, ddp_clickclack the FOR ROLE owner.
+#
+# Every entry in this file is owned through FOR ROLE: without it the entry is
+# the current role's, which on a shared server is the one superuser role every
+# concurrently running file also writes -- same-object DDL, a correct 40001
+# for one of them (the trap and this fix are the ones
+# cat_acl_columns_schema_defacl_type.test documents). The no-FOR-ROLE
+# current-role road itself is covered per-test by adp_current_role.test under
+# SET ROLE.
 # ===========================================================================
 
 statement ok
-ALTER DEFAULT PRIVILEGES GRANT SELECT ON TABLES TO ddp_vedernikoff;
+ALTER DEFAULT PRIVILEGES FOR ROLE ddp_clickclack GRANT SELECT ON TABLES TO ddp_vedernikoff;
 
 
 # The grantee is now referenced by a pg_default_acl row -> DROP refused.
@@ -55,7 +63,7 @@ db error: ERROR: role "ddp_vedernikoff" cannot be dropped because some objects d
 
 # Revoke the default privilege -> dependency gone -> drop succeeds.
 statement ok
-ALTER DEFAULT PRIVILEGES REVOKE SELECT ON TABLES FROM ddp_vedernikoff;
+ALTER DEFAULT PRIVILEGES FOR ROLE ddp_clickclack REVOKE SELECT ON TABLES FROM ddp_vedernikoff;
 
 
 statement ok
@@ -72,23 +80,23 @@ CREATE ROLE ddp_vedernikoff;
 # ===========================================================================
 
 statement ok
-ALTER DEFAULT PRIVILEGES GRANT SELECT ON TABLES TO ddp_vedernikoff;
+ALTER DEFAULT PRIVILEGES FOR ROLE ddp_clickclack GRANT SELECT ON TABLES TO ddp_vedernikoff;
 
 
 statement ok
-ALTER DEFAULT PRIVILEGES GRANT USAGE ON SEQUENCES TO ddp_vedernikoff;
+ALTER DEFAULT PRIVILEGES FOR ROLE ddp_clickclack GRANT USAGE ON SEQUENCES TO ddp_vedernikoff;
 
 
 statement ok
-ALTER DEFAULT PRIVILEGES GRANT EXECUTE ON FUNCTIONS TO ddp_vedernikoff;
+ALTER DEFAULT PRIVILEGES FOR ROLE ddp_clickclack GRANT EXECUTE ON FUNCTIONS TO ddp_vedernikoff;
 
 
 statement ok
-ALTER DEFAULT PRIVILEGES GRANT USAGE ON TYPES TO ddp_vedernikoff;
+ALTER DEFAULT PRIVILEGES FOR ROLE ddp_clickclack GRANT USAGE ON TYPES TO ddp_vedernikoff;
 
 
 statement ok
-ALTER DEFAULT PRIVILEGES GRANT USAGE ON SCHEMAS TO ddp_vedernikoff;
+ALTER DEFAULT PRIVILEGES FOR ROLE ddp_clickclack GRANT USAGE ON SCHEMAS TO ddp_vedernikoff;
 
 
 # Any one of the five entries is enough to refuse the drop.
@@ -100,19 +108,19 @@ db error: ERROR: role "ddp_vedernikoff" cannot be dropped because some objects d
 
 # Revoke four of five: still one entry left -> still refused.
 statement ok
-ALTER DEFAULT PRIVILEGES REVOKE SELECT ON TABLES FROM ddp_vedernikoff;
+ALTER DEFAULT PRIVILEGES FOR ROLE ddp_clickclack REVOKE SELECT ON TABLES FROM ddp_vedernikoff;
 
 
 statement ok
-ALTER DEFAULT PRIVILEGES REVOKE USAGE ON SEQUENCES FROM ddp_vedernikoff;
+ALTER DEFAULT PRIVILEGES FOR ROLE ddp_clickclack REVOKE USAGE ON SEQUENCES FROM ddp_vedernikoff;
 
 
 statement ok
-ALTER DEFAULT PRIVILEGES REVOKE EXECUTE ON FUNCTIONS FROM ddp_vedernikoff;
+ALTER DEFAULT PRIVILEGES FOR ROLE ddp_clickclack REVOKE EXECUTE ON FUNCTIONS FROM ddp_vedernikoff;
 
 
 statement ok
-ALTER DEFAULT PRIVILEGES REVOKE USAGE ON TYPES FROM ddp_vedernikoff;
+ALTER DEFAULT PRIVILEGES FOR ROLE ddp_clickclack REVOKE USAGE ON TYPES FROM ddp_vedernikoff;
 
 
 statement error
@@ -123,7 +131,7 @@ db error: ERROR: role "ddp_vedernikoff" cannot be dropped because some objects d
 
 # Revoke the last (SCHEMAS) -> no entries reference the grantee -> drop ok.
 statement ok
-ALTER DEFAULT PRIVILEGES REVOKE USAGE ON SCHEMAS FROM ddp_vedernikoff;
+ALTER DEFAULT PRIVILEGES FOR ROLE ddp_clickclack REVOKE USAGE ON SCHEMAS FROM ddp_vedernikoff;
 
 
 statement ok
@@ -211,7 +219,7 @@ CREATE SCHEMA ddp_mop;
 
 
 statement ok
-ALTER DEFAULT PRIVILEGES IN SCHEMA ddp_mop GRANT SELECT ON TABLES TO ddp_vedernikoff;
+ALTER DEFAULT PRIVILEGES FOR ROLE ddp_clickclack IN SCHEMA ddp_mop GRANT SELECT ON TABLES TO ddp_vedernikoff;
 
 
 # While the schema-scoped entry exists, the grantee cannot be dropped.
@@ -223,7 +231,7 @@ db error: ERROR: role "ddp_vedernikoff" cannot be dropped because some objects d
 
 # Revoke the scoped entry -> grantee dependency gone.
 statement ok
-ALTER DEFAULT PRIVILEGES IN SCHEMA ddp_mop REVOKE SELECT ON TABLES FROM ddp_vedernikoff;
+ALTER DEFAULT PRIVILEGES FOR ROLE ddp_clickclack IN SCHEMA ddp_mop REVOKE SELECT ON TABLES FROM ddp_vedernikoff;
 
 
 statement ok

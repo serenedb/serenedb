@@ -20,13 +20,16 @@
 
 #include "pg/pg_catalog/pg_database.h"
 
+#include <deque>
 #include <string>
 #include <vector>
 
 #include "app/app_server.h"
 #include "basics/assert.h"
-#include "catalog/catalog.h"
 #include "catalog/database.h"
+#include "catalog/ddl/catalog.h"
+#include "catalog/entry/duckdb_object_entry.h"
+#include "catalog/read/duckdb_catalog_sets.h"
 #include "catalog/role.h"
 #include "pg/pg_catalog/fwd.h"
 
@@ -46,36 +49,38 @@ constexpr uint64_t kNullMask = MaskFromNulls({
 
 template<>
 catalog::MaterializedData SystemTableSnapshot<PgDatabase>::GetTableData() {
-  auto catalog = _config.CatalogSnapshot();
-
   std::vector<PgDatabase> values;
-  for (const auto& db : catalog->GetDatabases()) {
-    values.push_back(PgDatabase{
-      .oid = db->GetId().id(),
-      .datname = db->GetName(),
-      .datdba = db->GetOwner().id(),
-      .encoding = 6,  // UTF8
-      .datlocprovider = PgDatabase::Datlocprovider::Libc,
-      .datistemplate = false,
-      .datallowconn = true,
-      .dathasloginevt = false,
-      .datconnlimit = -1,
-      .datfrozenxid = 0,
-      .datminmxid = 0,
-      // pg_default; always 1663 (no CREATE TABLESPACE) and must be a real
-      // pg_tablespace oid -- \l inner-joins pg_tablespace and would otherwise
-      // drop the row. TODO: derive from a real tablespace once CREATE
-      // TABLESPACE exists.
-      .dattablespace = 1663,
-      .datcollate = "C.UTF-8",
-      .datctype = "C.UTF-8",
-      .datacl = {db->GetAcl()},
+  // The name and the ACL of every row are views into the entry the walk read
+  // them off, which the rows written after it still point at: an entry version
+  // stays in its set's chain for as long as a transaction can see it.
+  catalog::VisitDatabases(
+    &_config.GetClientContext(), [&](const catalog::SereneDBDatabaseEntry& db) {
+      values.push_back(PgDatabase{
+        .oid = catalog::IdOf(db).id(),
+        .datname = db.name.GetIdentifierName(),
+        .datdba = db.permissions.owner,
+        .encoding = 6,  // UTF8
+        .datlocprovider = PgDatabase::Datlocprovider::Libc,
+        .datistemplate = false,
+        .datallowconn = true,
+        .dathasloginevt = false,
+        .datconnlimit = -1,
+        .datfrozenxid = 0,
+        .datminmxid = 0,
+        // pg_default; always 1663 (no CREATE TABLESPACE) and must be a real
+        // pg_tablespace oid -- \l inner-joins pg_tablespace and would otherwise
+        // drop the row. TODO: derive from a real tablespace once CREATE
+        // TABLESPACE exists.
+        .dattablespace = 1663,
+        .datcollate = "C.UTF-8",
+        .datctype = "C.UTF-8",
+        .datacl = {catalog::AclView{db.permissions.acl}},
+      });
     });
-  }
 
   auto result = CreateColumns<PgDatabase>(values.size());
   for (size_t row = 0; row < values.size(); ++row) {
-    WriteData(result, values[row], kNullMask, row, *_config.CatalogSnapshot());
+    WriteData(result, values[row], kNullMask, row, Roles());
   }
   return {std::move(result), values.size()};
 }

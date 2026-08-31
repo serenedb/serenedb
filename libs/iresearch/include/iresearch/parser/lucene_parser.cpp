@@ -1448,13 +1448,13 @@ yyreduce:
 
   case 22: /* boosted_expr: modified_term CARET threshold  */
 #line 139 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
-                                    { (yyvsp[-2].filter)->boost((yyvsp[0].fnum)); (yyval.filter) = (yyvsp[-2].filter); }
+                                    { (yyvsp[-2].filter)->SetBoost((yyvsp[0].fnum)); (yyval.filter) = (yyvsp[-2].filter); }
 #line 1452 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
     break;
 
   case 23: /* boosted_expr: modified_term CARET threshold FUZZY  */
 #line 143 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
-                                    { (yyvsp[-3].filter)->boost((yyvsp[-1].fnum));
+                                    { (yyvsp[-3].filter)->SetBoost((yyvsp[-1].fnum));
                                       (yyval.filter) = &ctx.ApplyFuzzy((yyvsp[-3].filter), (yyvsp[0].fuzzy).has_value,
                                                            (yyvsp[0].fuzzy).value); }
 #line 1460 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"

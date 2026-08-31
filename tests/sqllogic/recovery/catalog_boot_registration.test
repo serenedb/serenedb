@@ -1,0 +1,147 @@
+control substitution on
+
+# Boot registers every catalog object into one snapshot that nobody else can
+# reach yet, so it edits that snapshot, its dependency nodes and its name maps
+# in place instead of cloning them per object. Cloning made startup quadratic:
+# 30k tables took minutes because each registration copied the whole object set,
+# the owner role's dependency node and the schema's name map.
+#
+# In-place editing is only sound while boot owns the snapshot, and every kind of
+# object goes through the same path, so this registers one of each -- plus the
+# cross-object edges (index -> relation, sequence -> owner table, view -> table,
+# role grants) that the dependency nodes carry -- and checks that all of it
+# resolves by name after a restart.
+
+statement ok
+CREATE SCHEMA bootreg;
+
+statement ok
+CREATE TABLE bootreg.t(id SERIAL PRIMARY KEY, a TEXT, b INTEGER);
+
+statement ok
+INSERT INTO bootreg.t(a, b) SELECT 'row ' || g, g FROM generate_series(1, 100) g;
+
+statement ok
+CREATE INDEX bootreg_b ON bootreg.t(b);
+
+statement ok
+CREATE VIEW bootreg.v AS SELECT id, a FROM bootreg.t WHERE b > 50;
+
+statement ok
+CREATE SEQUENCE bootreg.sq START 7;
+
+statement ok
+SELECT nextval('bootreg.sq');
+
+statement ok
+CREATE TYPE bootreg.mood AS ENUM ('ok', 'meh');
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY bootreg.dict(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'none',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true
+);
+
+statement ok
+CREATE INDEX bootreg_inv ON bootreg.t USING inverted(id, a bootreg.dict);
+
+statement ok
+CREATE ROLE bootreg_role;
+
+statement ok
+GRANT SELECT ON bootreg.t TO bootreg_role;
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+statement error connection closed
+SELECT 1;
+
+
+connection after_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT count(*) FROM bootreg.t;
+----
+count
+100
+
+# Name resolution for every kind, which is what the in-place name maps serve.
+connection after_crash
+query
+SELECT count(*) FROM bootreg.v;
+----
+count
+50
+
+connection after_crash
+query
+SELECT nextval('bootreg.sq') > 1 AS advanced;
+----
+advanced
+t
+
+connection after_crash
+query
+SELECT count(*) FROM pg_type WHERE typname = 'mood';
+----
+count
+1
+
+connection after_crash
+query
+SELECT count(*) FROM pg_roles WHERE rolname = 'bootreg_role';
+----
+count
+1
+
+connection after_crash
+statement ok
+VACUUM (REFRESH_TABLE) bootreg.t;
+
+connection after_crash
+query
+SELECT count(*) FROM bootreg.bootreg_inv WHERE a @@ ts_like('row');
+----
+count
+100
+
+# The dependency edges survived: dropping the table without CASCADE must still
+# be refused because the view and the indexes hang off it.
+connection after_crash
+statement error
+DROP TABLE bootreg.t;
+----
+db error: ERROR: Cannot drop entry "t" because there are entries that depend on it.
+view "v" depends on table "t".
+Use DROP...CASCADE to drop all dependents.
+
+
+# Post-boot DDL goes back to cloning the snapshot, so a mutation now must not
+# disturb what boot registered.
+connection after_crash
+statement ok
+CREATE TABLE bootreg.t2(x INTEGER);
+
+connection after_crash
+statement ok
+INSERT INTO bootreg.t2 VALUES (1);
+
+connection after_crash
+query
+SELECT (SELECT count(*) FROM bootreg.t) AS t_rows, (SELECT count(*) FROM bootreg.t2) AS t2_rows;
+----
+t_rows	t2_rows
+100	1
+
+connection after_crash
+statement ok
+DROP SCHEMA bootreg CASCADE;
+
+connection after_crash
+statement ok
+DROP ROLE bootreg_role;

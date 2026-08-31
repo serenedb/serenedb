@@ -187,15 +187,15 @@ void RenameRolePragma(duckdb::ClientContext& context,
                  ArgStr(params, 1, "new_name"));
 }
 
-std::optional<catalog::ObjectType> BulkObjTypeOf(std::string_view word) {
+std::optional<duckdb::CatalogType> BulkObjTypeOf(std::string_view word) {
   if (word == "ALL_TABLES_IN_SCHEMA") {
-    return catalog::ObjectType::Table;
+    return duckdb::CatalogType::TABLE_ENTRY;
   }
   if (word == "ALL_SEQUENCES_IN_SCHEMA") {
-    return catalog::ObjectType::Sequence;
+    return duckdb::CatalogType::SEQUENCE_ENTRY;
   }
   if (word == "ALL_FUNCTIONS_IN_SCHEMA") {
-    return catalog::ObjectType::Function;
+    return duckdb::CatalogType::MACRO_ENTRY;
   }
   return std::nullopt;
 }
@@ -217,8 +217,8 @@ void GrantTablePragma(duckdb::ClientContext& context,
     return;
   }
   auto type = pg::FromPgObjectTypeName(objtype);
-  if (type == catalog::ObjectType::Invalid) {
-    type = catalog::ObjectType::Table;
+  if (type == duckdb::CatalogType::INVALID) {
+    type = duckdb::CatalogType::TABLE_ENTRY;
   }
   pg::GrantObject(conn_ctx, type, privileges, ArgStr(params, 1, "name"),
                   ArgStr(params, 2, "grantee"), ArgBool(params, 3, "revoke"),

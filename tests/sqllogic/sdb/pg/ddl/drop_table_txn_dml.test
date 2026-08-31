@@ -1,0 +1,76 @@
+# DML followed by DROP TABLE in one transaction. The transaction's own
+# uncommitted appends go with the drop -- left behind, the commit flushed
+# them into storage the drop had already retired, wedged the rollback and
+# left the table refusing every later insert.
+
+statement ok
+CREATE TABLE dtx (a INTEGER);
+
+statement ok
+INSERT INTO dtx VALUES (1);
+
+statement ok
+BEGIN;
+
+statement ok
+INSERT INTO dtx VALUES (2);
+
+statement ok
+DROP TABLE dtx;
+
+statement ok
+COMMIT;
+
+statement error
+SELECT count(*) FROM dtx;
+----
+db error: ERROR: Table with name dtx does not exist!
+<slt:ignore>
+
+
+# The name is free again, and nothing of the dropped rows resurfaces.
+statement ok
+CREATE TABLE dtx (a INTEGER);
+
+query
+SELECT count(*) FROM dtx;
+----
+count
+0
+
+statement ok
+INSERT INTO dtx VALUES (10);
+
+
+# The same shape rolled back: the table stays with its prior rows, and the
+# transaction's own insert goes with the rollback.
+statement ok
+BEGIN;
+
+statement ok
+INSERT INTO dtx VALUES (11);
+
+statement ok
+DROP TABLE dtx;
+
+statement ok
+ROLLBACK;
+
+query
+SELECT a FROM dtx ORDER BY a;
+----
+a
+10
+
+statement ok
+INSERT INTO dtx VALUES (12);
+
+query
+SELECT a FROM dtx ORDER BY a;
+----
+a
+10
+12
+
+statement ok
+DROP TABLE dtx;

@@ -54,9 +54,8 @@ nextval
 100
 
 
-# crash_on_drop returns Result{} BEFORE DropTask::Schedule runs (see
-# LocalCatalog::DropTable, post-WriteTombstone / post-UnregisterObject).
-# Tombstone is durable; on-disk owned-sequence definitions are not cleaned.
+# crash_on_drop aborts once the drop's records are durable, before the
+# artifact half runs.
 statement ok
 SET sdb_faults = 'crash_on_drop';
 
@@ -79,8 +78,7 @@ statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
 SELECT 1;
 
 
-# The tombstoned table is gone post-recovery (the rescheduled DropTask
-# finished cleanup that the pre-crash run never got to).
+# The tombstoned table is gone post-recovery.
 connection after_orphan_seq_1
 query
 SELECT COUNT(*) FROM pg_class WHERE relname = 'icebergs_only';
@@ -122,13 +120,14 @@ count
 2
 
 
-# Standalone sequence kept its counter (continues at 105, not 100, not 1).
+# Standalone sequence kept its counter: it resumes past the burnt log-ahead
+# (32 values of INCREMENT 5 beyond the last one handed out), not at 100 or 1.
 connection after_orphan_seq_1
 query
 SELECT nextval('clickclack.kostya_iceberg_review_id');
 ----
 nextval
-105
+265
 
 
 # Re-create the dropped table under the same name. If the orphan owned

@@ -1,0 +1,130 @@
+control substitution on
+
+# duckdb's `oid` on a serenedb catalog entry is the object's stable serenedb id,
+# so pg_class.oid and duckdb_tables().table_oid are one number. Nothing writes
+# it down twice: every entry is built from the object, including the ones boot
+# builds off the catalog log, so the identity survives a restart by
+# construction. This asserts that it does -- the ids recorded before the crash
+# are the ids the entries carry after it.
+#
+# A GRANT and an OWNER TO in between go through CatalogSet::AlterEntry, which
+# keeps the oid: an altered entry is the same logical object.
+
+statement ok
+CREATE SCHEMA ceo;
+
+statement ok
+CREATE TABLE ceo.t(id INTEGER PRIMARY KEY, txt TEXT);
+
+statement ok
+CREATE INDEX ceo_i ON ceo.t(txt);
+
+statement ok
+CREATE VIEW ceo.v AS SELECT txt FROM ceo.t;
+
+statement ok
+CREATE SEQUENCE ceo.sq;
+
+statement ok
+CREATE ROLE ceo_owner;
+
+statement ok
+GRANT SELECT ON ceo.t TO ceo_owner;
+
+statement ok
+ALTER TABLE ceo.t OWNER TO ceo_owner;
+
+# The ids as they stand now, kept in a table so the comparison after the restart
+# is against what was actually recorded rather than a literal. The snapshot
+# includes this table and its own generated sequence: a CTAS reads through its
+# own transaction, so what it created a moment ago is in the answer.
+statement ok
+CREATE TABLE ceo.before AS
+SELECT entry_type, name, entry_oid FROM sdb_catalog_sets() WHERE schema_name = 'ceo';
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+statement error connection closed
+SELECT 1;
+
+
+connection after_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT count(*) FROM ceo.t;
+----
+count
+0
+
+connection after_crash
+query
+SELECT b.entry_type, b.name, (b.entry_oid = s.entry_oid) AS same_oid
+FROM ceo.before b
+JOIN sdb_catalog_sets() s
+  ON s.schema_name = 'ceo' AND s.entry_type = b.entry_type AND s.name = b.name
+ORDER BY 1, 2;
+----
+entry_type	name	same_oid
+Index	ceo_i	t
+Schema	ceo	t
+Sequence	before_pk_seq	t
+Sequence	sq	t
+Table	before	t
+Table	ceo_i	t
+Table	t	t
+View	v	t
+
+# pg_class renders the same number the entry carries.
+connection after_crash
+query
+SELECT count(*) AS mismatched
+FROM sdb_catalog_sets() s
+JOIN pg_namespace n ON n.nspname = 'ceo'
+JOIN pg_class c ON c.relname = s.name AND c.relnamespace = n.oid
+WHERE s.schema_name = 'ceo' AND s.entry_oid <> c.oid;
+----
+mismatched
+0
+
+# The owner and the grant the alters recorded came back with the entry.
+connection after_crash
+query
+SELECT pg_get_userbyid(c.relowner) AS owner,
+       array_to_string(c.relacl, '|') AS acl
+FROM pg_class c
+JOIN pg_namespace n ON n.oid = c.relnamespace AND n.nspname = 'ceo'
+WHERE c.relname = 't';
+----
+owner	acl
+ceo_owner	ceo_owner=r/ceo_owner
+
+# What the restart must also carry is the allocator, not just the ids it
+# already handed out: the log records how far duckdb's oid counter had been
+# spent, ahead of the counter itself, so a crash cannot leave the next boot
+# reissuing an id something on disk is already named after.
+connection after_crash
+statement ok
+CREATE TABLE ceo.after(id INTEGER PRIMARY KEY);
+
+connection after_crash
+statement ok
+CREATE INDEX ceo_i2 ON ceo.after(id);
+
+connection after_crash
+query
+SELECT count(*) AS reissued
+FROM ceo.before b
+JOIN sdb_catalog_sets() s ON s.entry_oid = b.entry_oid
+WHERE s.schema_name = 'ceo' AND s.name IN ('after', 'ceo_i2');
+----
+reissued
+0
+
+connection after_crash
+query
+SELECT min(s.entry_oid) > max(b.entry_oid) AS above_everything_before
+FROM sdb_catalog_sets() s, ceo.before b
+WHERE s.schema_name = 'ceo' AND s.name IN ('after', 'ceo_i2');
+----
+above_everything_before
+t

@@ -1,0 +1,315 @@
+# Every duckdb_* metadata surface is also reachable under an sdb_* name:
+# 31 table functions, the 9 default views that shadow them, the 2 default table
+# macros and the duckdb_format_sql scalar. Aliases share the source's catalog
+# entry, so named parameters, overloads and pushdown flags come along for free.
+
+statement ok
+DROP VIEW IF EXISTS al_v
+
+statement ok
+DROP TABLE IF EXISTS al_t
+
+statement ok
+DROP SEQUENCE IF EXISTS al_seq
+
+statement ok
+CREATE TABLE al_t (id INT PRIMARY KEY, name TEXT, CHECK (id >= 0))
+
+statement ok
+CREATE VIEW al_v AS SELECT id FROM al_t
+
+statement ok
+CREATE INDEX al_idx ON al_t (id)
+
+statement ok
+CREATE SEQUENCE al_seq START 5
+
+
+# Drift guard: a fork rebase that adds a duckdb_* table function without an
+# alias fails here. alias_of is set on the copy, so the map is self-describing.
+
+query
+SELECT count(*) AS unaliased
+FROM duckdb_functions() src
+WHERE src.database_name = 'system' AND src.schema_name = 'main'
+  AND src.function_type = 'table' AND src.function_name LIKE 'duckdb\_%'
+  AND NOT EXISTS (
+    SELECT 1 FROM duckdb_functions() a WHERE a.alias_of = src.function_name)
+----
+unaliased
+0
+
+query
+SELECT count(DISTINCT function_name) AS aliases
+FROM duckdb_functions()
+WHERE alias_of IS NOT NULL AND function_name LIKE 'sdb\_%'
+----
+aliases
+32
+
+
+# The alias returns the source's rows, not a re-stated shape. Scoped to this
+# file's own objects: the suite runs many files against one server, so a
+# whole-catalog comparison races their DDL.
+
+query
+SELECT
+  (SELECT count(*) FROM sdb_tables() WHERE table_name LIKE 'al%')
+    = (SELECT count(*) FROM duckdb_tables() WHERE table_name LIKE 'al%') AS tables,
+  (SELECT count(*) FROM sdb_columns() WHERE table_name LIKE 'al%')
+    = (SELECT count(*) FROM duckdb_columns() WHERE table_name LIKE 'al%') AS columns,
+  (SELECT count(*) FROM sdb_constraints() WHERE table_name LIKE 'al%')
+    = (SELECT count(*) FROM duckdb_constraints() WHERE table_name LIKE 'al%') AS constraints,
+  (SELECT count(*) FROM sdb_indexes() WHERE table_name LIKE 'al%')
+    = (SELECT count(*) FROM duckdb_indexes() WHERE table_name LIKE 'al%') AS indexes,
+  (SELECT count(*) FROM sdb_sequences() WHERE sequence_name LIKE 'al%')
+    = (SELECT count(*) FROM duckdb_sequences() WHERE sequence_name LIKE 'al%') AS sequences,
+  (SELECT count(*) FROM sdb_types() WHERE type_name = 'BIGINT')
+    = (SELECT count(*) FROM duckdb_types() WHERE type_name = 'BIGINT') AS types,
+  (SELECT count(*) FROM sdb_views() WHERE view_name LIKE 'al%')
+    = (SELECT count(*) FROM duckdb_views() WHERE view_name LIKE 'al%') AS views,
+  (SELECT count(*) FROM sdb_schemas() WHERE schema_name = 'main')
+    = (SELECT count(*) FROM duckdb_schemas() WHERE schema_name = 'main') AS schemas,
+  (SELECT count(*) FROM sdb_tables() WHERE table_name LIKE 'al%') > 0 AS not_vacuous
+----
+tables	columns	constraints	indexes	sequences	types	views	schemas	not_vacuous
+t	t	t	t	t	t	t	t	t
+
+
+# The 9 names that exist as BOTH a table function and a default view keep that
+# duality. The view filters internal objects; the function does not.
+
+query
+SELECT
+  (SELECT count(*) FROM sdb_tables WHERE table_name LIKE 'al%')
+    = (SELECT count(*) FROM duckdb_tables WHERE table_name LIKE 'al%') AS tables,
+  (SELECT count(*) FROM sdb_columns WHERE table_name LIKE 'al%')
+    = (SELECT count(*) FROM duckdb_columns WHERE table_name LIKE 'al%') AS columns,
+  (SELECT count(*) FROM sdb_constraints WHERE table_name LIKE 'al%')
+    = (SELECT count(*) FROM duckdb_constraints WHERE table_name LIKE 'al%') AS constraints,
+  (SELECT count(*) FROM sdb_databases WHERE database_name = current_database())
+    = (SELECT count(*) FROM duckdb_databases WHERE database_name = current_database()) AS databases,
+  (SELECT count(*) FROM sdb_indexes WHERE table_name LIKE 'al%')
+    = (SELECT count(*) FROM duckdb_indexes WHERE table_name LIKE 'al%') AS indexes,
+  (SELECT count(*) FROM sdb_schemas WHERE schema_name = 'main')
+    = (SELECT count(*) FROM duckdb_schemas WHERE schema_name = 'main') AS schemas,
+  (SELECT count(*) FROM sdb_types WHERE type_name = 'BIGINT')
+    = (SELECT count(*) FROM duckdb_types WHERE type_name = 'BIGINT') AS types,
+  (SELECT count(*) FROM sdb_views WHERE view_name LIKE 'al%')
+    = (SELECT count(*) FROM duckdb_views WHERE view_name LIKE 'al%') AS views,
+  (SELECT count(*) FROM sdb_tables WHERE table_name LIKE 'al%') > 0 AS not_vacuous
+----
+tables	columns	constraints	databases	indexes	schemas	types	views	not_vacuous
+t	t	t	t	t	t	t	t	t
+
+query
+SELECT (SELECT count(*) FROM sdb_columns) < (SELECT count(*) FROM sdb_columns())
+  AS view_filters_internal
+----
+view_filters_internal
+t
+
+
+# Row-exact parity, not just matching counts. The alias views select from the
+# duckdb_* view itself, so they inherit its filter rather than restating it;
+# this pins that. Both directions, in one statement, scoped to this file's
+# objects so concurrent DDL from other files cannot move either side.
+
+query
+SELECT
+  (SELECT count(*) FROM (
+     (SELECT * FROM sdb_tables WHERE table_name LIKE 'al%'
+      EXCEPT ALL SELECT * FROM duckdb_tables WHERE table_name LIKE 'al%')
+     UNION ALL
+     (SELECT * FROM duckdb_tables WHERE table_name LIKE 'al%'
+      EXCEPT ALL SELECT * FROM sdb_tables WHERE table_name LIKE 'al%')) z) AS tables,
+  (SELECT count(*) FROM (
+     (SELECT * FROM sdb_views WHERE view_name LIKE 'al%'
+      EXCEPT ALL SELECT * FROM duckdb_views WHERE view_name LIKE 'al%')
+     UNION ALL
+     (SELECT * FROM duckdb_views WHERE view_name LIKE 'al%'
+      EXCEPT ALL SELECT * FROM sdb_views WHERE view_name LIKE 'al%')) z) AS views,
+  (SELECT count(*) FROM (
+     (SELECT * FROM sdb_indexes WHERE table_name LIKE 'al%'
+      EXCEPT ALL SELECT * FROM duckdb_indexes WHERE table_name LIKE 'al%')
+     UNION ALL
+     (SELECT * FROM duckdb_indexes WHERE table_name LIKE 'al%'
+      EXCEPT ALL SELECT * FROM sdb_indexes WHERE table_name LIKE 'al%')) z) AS indexes,
+  (SELECT count(*) FROM (
+     (SELECT * FROM sdb_constraints WHERE table_name LIKE 'al%'
+      EXCEPT ALL SELECT * FROM duckdb_constraints WHERE table_name LIKE 'al%')
+     UNION ALL
+     (SELECT * FROM duckdb_constraints WHERE table_name LIKE 'al%'
+      EXCEPT ALL SELECT * FROM sdb_constraints WHERE table_name LIKE 'al%')) z) AS constraints
+----
+tables	views	indexes	constraints
+0	0	0	0
+
+
+# The alias bodies name the source fully qualified (system.main.duckdb_*), so a
+# same-named relation in the caller's search path cannot be substituted for it.
+# An unqualified body made all nine hijackable by any role able to create a TEMP
+# table, and poisoned the view's cached column info process-wide.
+
+statement ok
+CREATE TEMP TABLE duckdb_tables (pwned INTEGER)
+
+statement ok
+INSERT INTO duckdb_tables VALUES (42)
+
+query
+SELECT (SELECT count(*) FROM system.main.sdb_tables WHERE table_name LIKE 'al%')
+     = (SELECT count(*) FROM system.main.duckdb_tables WHERE table_name LIKE 'al%')
+   AND (SELECT count(*) FROM system.main.sdb_tables WHERE table_name LIKE 'al%') > 0
+   AS not_hijacked
+----
+not_hijacked
+t
+
+# The shadowing relation still wins the unqualified name for BOTH -- that is
+# ordinary search-path resolution and applies to the original too -- but the
+# alias's body is unaffected either way.
+
+query
+SELECT pwned AS shadowed_source FROM main.duckdb_tables
+----
+shadowed_source
+42
+
+query
+SELECT (SELECT column_count FROM duckdb_views()
+          WHERE view_name = 'sdb_tables' AND schema_name = 'main')
+     = (SELECT column_count FROM duckdb_views()
+          WHERE view_name = 'duckdb_tables' AND schema_name = 'main') AS cols_match
+----
+cols_match
+t
+
+statement ok
+DROP TABLE duckdb_tables
+
+
+# The table macros qualify their source the same way, so a same-named user
+# macro cannot be substituted for it either.
+
+statement ok
+CREATE MACRO public.duckdb_profiling_settings() AS TABLE SELECT 99 AS pwned
+
+query
+SELECT (SELECT count(*) FROM system.main.sdb_profiling_settings())
+     = (SELECT count(*) FROM system.main.duckdb_profiling_settings())
+  AS macro_not_hijacked
+----
+macro_not_hijacked
+t
+
+statement ok
+DROP MACRO TABLE duckdb_profiling_settings
+
+
+# Named parameters ride along with the copied function set. include_hidden is
+# deliberately not exercised here: it enumerates hidden attached databases,
+# which other files in the suite attach and detach concurrently, and the engine
+# throws on non-UTF8 attach paths regardless of which spelling asks for them.
+
+# duckdb_logs carries a bind_replace hook; both shapes must survive the copy.
+
+statement ok
+SET enable_logging = true
+
+statement ok
+SET logging_storage = 'memory'
+
+query
+SELECT
+  (SELECT count(*) FROM ((DESCRIBE SELECT * FROM sdb_logs())
+     EXCEPT ALL (DESCRIBE SELECT * FROM duckdb_logs()))) AS logs,
+  (SELECT count(*) FROM ((DESCRIBE SELECT * FROM sdb_logs(denormalized_table := true))
+     EXCEPT ALL (DESCRIBE SELECT * FROM duckdb_logs(denormalized_table := true)))) AS denormalized,
+  (SELECT count(*) FROM ((DESCRIBE SELECT * FROM sdb_log_contexts())
+     EXCEPT ALL (DESCRIBE SELECT * FROM duckdb_log_contexts()))) AS contexts
+----
+logs	denormalized	contexts
+0	0	0
+
+
+# The one alias taking a positional argument.
+
+query
+SELECT count(*) AS shape_differs FROM (
+  (DESCRIBE SELECT * FROM sdb_table_sample('al_t'))
+  EXCEPT ALL
+  (DESCRIBE SELECT * FROM duckdb_table_sample('al_t')))
+----
+shape_differs
+0
+
+
+# The two default table macros.
+
+query
+SELECT
+  (SELECT count(*) FROM sdb_profiling_settings())
+    = (SELECT count(*) FROM duckdb_profiling_settings()) AS profiling_settings,
+  (SELECT count(*) FROM ((DESCRIBE SELECT * FROM sdb_logs_parsed('QueryLog'))
+     EXCEPT ALL (DESCRIBE SELECT * FROM duckdb_logs_parsed('QueryLog')))) = 0
+    AS logs_parsed
+----
+profiling_settings	logs_parsed
+t	t
+
+
+# The scalar alias, both overloads.
+
+query
+SELECT sdb_format_sql('select 1') AS one,
+       sdb_format_sql('select 1', MAP {'keyword_case': 'lower'}) AS two
+----
+one	two
+SELECT 1	select 1
+
+
+# CALL and schema-qualified spellings resolve the same entry.
+
+query
+SELECT count(*) > 0 AS ok FROM main.sdb_keywords()
+----
+ok
+t
+
+query
+SELECT (SELECT count(*) FROM main.sdb_tables) = (SELECT count(*) FROM sdb_tables)
+  AS ok
+----
+ok
+t
+
+statement ok
+CALL sdb_optimizers()
+
+
+# Aliases are internal catalog entries, exactly like the duckdb_* originals, so
+# they stay out of the filtered views.
+
+query
+SELECT count(*) AS leaked FROM duckdb_views WHERE view_name LIKE 'sdb\_%'
+----
+leaked
+0
+
+query
+SELECT count(*) AS aliased_views
+FROM duckdb_views() WHERE view_name LIKE 'sdb\_%'
+----
+aliased_views
+9
+
+
+statement ok
+DROP VIEW IF EXISTS al_v
+
+statement ok
+DROP TABLE IF EXISTS al_t
+
+statement ok
+DROP SEQUENCE IF EXISTS al_seq

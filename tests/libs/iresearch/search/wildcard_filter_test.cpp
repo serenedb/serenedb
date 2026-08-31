@@ -94,7 +94,7 @@ TEST(by_wildcard_test, ctor) {
   ASSERT_EQ(irs::Type<irs::ByWildcard>::id(), q.type());
   ASSERT_EQ(irs::ByWildcardOptions{}, q.options());
   ASSERT_EQ(irs::field_limits::invalid(), q.field_id());
-  ASSERT_EQ(irs::kNoBoost, q.Boost());
+  ASSERT_EQ(irs::kNoBoost, q.GetBoost());
 }
 
 TEST(by_wildcard_test, equal) {

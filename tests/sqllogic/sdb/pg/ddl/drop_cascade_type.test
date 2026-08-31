@@ -23,8 +23,13 @@ statement ok
 CREATE VIEW clickclack_v_cast AS SELECT CAST(s AS clickclack_flavor) AS f FROM clickclack_strs;
 
 
-statement error (?i)cannot drop type .*clickclack_flavor.* because other objects depend on it
+statement error
 DROP TYPE clickclack_flavor;
+----
+db error: ERROR: Cannot drop entry "clickclack_flavor" because there are entries that depend on it.
+view "clickclack_v_cast" depends on type "clickclack_flavor".
+Use DROP...CASCADE to drop all dependents.
+
 
 
 statement ok
@@ -49,8 +54,13 @@ statement ok
 CREATE FUNCTION babsky_fn_cast(x TEXT) AS CAST(x AS babsky_kind);
 
 
-statement error (?i)cannot drop type .*babsky_kind.* because other objects depend on it
+statement error
 DROP TYPE babsky_kind;
+----
+db error: ERROR: Cannot drop entry "babsky_kind" because there are entries that depend on it.
+macro function "babsky_fn_cast" depends on type "babsky_kind".
+Use DROP...CASCADE to drop all dependents.
+
 
 
 statement ok
@@ -71,8 +81,13 @@ statement ok
 CREATE FUNCTION kostya_fn_param(x kostya_param) AS x;
 
 
-statement error (?i)cannot drop type .*kostya_param.* because other objects depend on it
+statement error
 DROP TYPE kostya_param;
+----
+db error: ERROR: Cannot drop entry "kostya_param" because there are entries that depend on it.
+macro function "kostya_fn_param" depends on type "kostya_param".
+Use DROP...CASCADE to drop all dependents.
+
 
 
 statement ok
@@ -89,8 +104,13 @@ statement ok
 CREATE FUNCTION deadinside_fn_ret() RETURNS deadinside_ret AS 'r'::deadinside_ret;
 
 
-statement error (?i)cannot drop type .*deadinside_ret.* because other objects depend on it
+statement error
 DROP TYPE deadinside_ret;
+----
+db error: ERROR: Cannot drop entry "deadinside_ret" because there are entries that depend on it.
+macro function "deadinside_fn_ret" depends on type "deadinside_ret".
+Use DROP...CASCADE to drop all dependents.
+
 
 
 statement ok
@@ -115,8 +135,13 @@ statement ok
 CREATE TABLE iceberg_t_check (s TEXT, CHECK (CAST(s AS iceberg_check) IS NOT NULL));
 
 
-statement error (?i)cannot drop type .*iceberg_check.* because other objects depend on it
+statement error
 DROP TYPE iceberg_check;
+----
+db error: ERROR: Cannot drop entry "iceberg_check" because there are entries that depend on it.
+table "iceberg_t_check" depends on type "iceberg_check".
+Use DROP...CASCADE to drop all dependents.
+
 
 
 statement ok
@@ -142,8 +167,13 @@ statement ok
 CREATE TABLE mop_t_def (x TEXT DEFAULT CAST('d' AS mop_def)::TEXT);
 
 
-statement error (?i)cannot drop type .*mop_def.* because other objects depend on it
+statement error
 DROP TYPE mop_def;
+----
+db error: ERROR: Cannot drop entry "mop_def" because there are entries that depend on it.
+table "mop_t_def" depends on type "mop_def".
+Use DROP...CASCADE to drop all dependents.
+
 
 
 statement ok
@@ -167,8 +197,13 @@ statement ok
 CREATE TABLE saga_t_arr (xs saga_box[]);
 
 
-statement error (?i)cannot drop type .*saga_box.* because other objects depend on it
+statement error
 DROP TYPE saga_box;
+----
+db error: ERROR: Cannot drop entry "saga_box" because there are entries that depend on it.
+table "saga_t_arr" depends on type "saga_box".
+Use DROP...CASCADE to drop all dependents.
+
 
 
 statement ok
@@ -188,8 +223,13 @@ statement ok
 CREATE TABLE saga_t_struct (s STRUCT(a INT, b saga_box));
 
 
-statement error (?i)cannot drop type .*saga_box.* because other objects depend on it
+statement error
 DROP TYPE saga_box;
+----
+db error: ERROR: Cannot drop entry "saga_box" because there are entries that depend on it.
+table "saga_t_struct" depends on type "saga_box".
+Use DROP...CASCADE to drop all dependents.
+
 
 
 statement ok
@@ -219,8 +259,13 @@ CREATE FUNCTION manifest.useflav(s TEXT) AS CAST(s AS jira_ticket.flav);
 
 
 # RESTRICT blocked because the function in sb depends on the type in sa.
-statement error (?i)cannot drop type .*flav.* because other objects depend on it
+statement error
 DROP TYPE jira_ticket.flav;
+----
+db error: ERROR: Cannot drop entry "flav" because there are entries that depend on it.
+macro function "useflav" depends on type "flav".
+Use DROP...CASCADE to drop all dependents.
+
 
 
 # CASCADE drops the type and the dependent function in the other schema.
@@ -292,7 +337,6 @@ CREATE TABLE shred_check_t (
 statement error
 DROP TYPE shred_check_kind;
 ----
-db error: ERROR: cannot drop type shred_check_kind because other objects depend on it
 <slt:ignore>
 
 
@@ -328,7 +372,6 @@ CREATE TABLE shred_pair_t (
 statement error
 DROP TYPE shred_pair_kind;
 ----
-db error: ERROR: cannot drop type shred_pair_kind because other objects depend on it
 <slt:ignore>
 
 
@@ -362,7 +405,6 @@ CREATE TABLE shred_def_t (x TEXT DEFAULT CAST(CAST('p' AS shred_def_kind)::VARIA
 statement error
 DROP TYPE shred_def_kind;
 ----
-db error: ERROR: cannot drop type shred_def_kind because other objects depend on it
 <slt:ignore>
 
 
@@ -391,7 +433,6 @@ CREATE VIEW shred_view_v AS SELECT CAST(s AS shred_view_kind)::VARIANT AS f FROM
 statement error
 DROP TYPE shred_view_kind;
 ----
-db error: ERROR: cannot drop type shred_view_kind because other objects depend on it
 <slt:ignore>
 
 
@@ -423,7 +464,6 @@ CREATE FUNCTION shred_fn_use(x TEXT) AS CAST(x AS shred_fn_kind)::VARIANT;
 statement error
 DROP TYPE shred_fn_kind;
 ----
-db error: ERROR: cannot drop type shred_fn_kind because other objects depend on it
 <slt:ignore>
 
 

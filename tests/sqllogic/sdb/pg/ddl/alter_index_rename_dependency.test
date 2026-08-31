@@ -1,0 +1,46 @@
+statement ok
+CREATE TABLE ridx_events(qps INTEGER);
+
+
+statement ok
+CREATE FUNCTION ridx_step(x INT) AS x + 1;
+
+
+statement ok
+CREATE INDEX ridx_by_step ON ridx_events(ridx_step(qps));
+
+
+statement error
+DROP FUNCTION ridx_step(INT);
+----
+db error: ERROR: Cannot drop entry "ridx_step" because there are entries that depend on it.
+index "ridx_by_step" depends on macro function "ridx_step".
+Use DROP...CASCADE to drop all dependents.
+
+
+
+statement ok
+ALTER INDEX ridx_by_step RENAME TO ridx_by_step_renamed;
+
+
+# The rename rebuilt the index definition; the edges its expression resolved
+# to must survive the rebuild, or the drop below would orphan the index.
+statement error
+DROP FUNCTION ridx_step(INT);
+----
+db error: ERROR: Cannot drop entry "ridx_step" because there are entries that depend on it.
+index "ridx_by_step_renamed" depends on macro function "ridx_step".
+Use DROP...CASCADE to drop all dependents.
+
+
+
+statement ok
+DROP INDEX ridx_by_step_renamed;
+
+
+statement ok
+DROP FUNCTION ridx_step(INT);
+
+
+statement ok
+DROP TABLE ridx_events;

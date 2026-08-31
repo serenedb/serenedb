@@ -47,7 +47,6 @@ target_include_directories(
 add_subdirectory(auth)
 add_subdirectory(catalog)
 add_subdirectory(connector)
-add_subdirectory(database)
 add_subdirectory(network)
 add_subdirectory(pg)
 add_subdirectory(query)

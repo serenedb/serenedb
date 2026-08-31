@@ -127,3 +127,76 @@ DROP TABLE s1.t;
 connection after_rename_func
 statement ok
 DROP SCHEMA s1;
+
+
+# A committed rename, replayed, and then another alter on top of it. The rows
+# come back at the shape the file describes and every replayed record walks
+# that shape forward -- a rename produces no rows of its own, so a replay that
+# read the shape back off the rows would lose it, and the DROP below would name
+# a column the shape does not have.
+connection after_rename_func
+statement ok
+CREATE SCHEMA s2;
+
+connection after_rename_func
+statement ok
+CREATE TABLE s2.r(a INTEGER, c INTEGER);
+
+connection after_rename_func
+statement ok
+INSERT INTO s2.r VALUES (1, 1);
+
+connection after_rename_func
+statement ok
+ALTER TABLE s2.r RENAME COLUMN c TO cc;
+
+connection after_rename_func
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+connection after_rename_func
+statement error connection closed
+SELECT 1;
+
+
+connection after_replayed_rename
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT a, cc FROM s2.r;
+----
+a	cc
+1	1
+
+connection after_replayed_rename
+statement ok
+ALTER TABLE s2.r DROP COLUMN cc;
+
+connection after_replayed_rename
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+connection after_replayed_rename
+statement error connection closed
+SELECT 1;
+
+
+connection after_replayed_drop
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT * FROM s2.r;
+----
+a
+1
+
+connection after_replayed_drop
+statement ok
+INSERT INTO s2.r VALUES (2);
+
+connection after_replayed_drop
+query
+SELECT count(*) AS n FROM s2.r;
+----
+n
+2
+
+connection after_replayed_drop
+statement ok
+DROP SCHEMA s2 CASCADE;

@@ -103,7 +103,7 @@ void FromCompound(irs::BooleanFilter& parent, const FilterContext& ctx,
   }
 
   auto& and_filter = AddMaybeNegated<irs::And>(parent, ctx, column_info);
-  and_filter.boost(ctx.boost);
+  and_filter.SetBoost(ctx.boost);
 
   auto inner_ctx = ctx;
   inner_ctx.negated = false;

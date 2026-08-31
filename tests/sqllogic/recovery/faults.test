@@ -62,3 +62,83 @@ SHOW sdb_faults
 ----
 sdb_faults
 (empty)
+
+
+# ---------------------------------------------------------------------------
+# `sdb_faults` is superuser-only. The registry behind it is process-global, so
+# an armed point fires in every session: before the gate, a bare LOGIN role
+# with no privileges could arm 'crash_on_packet' and take the server down for
+# everyone. PG's rule for developer knobs that can damage the backend
+# (zero_damaged_pages, allow_system_table_mods, debug_discard_caches) is
+# PGC_SUSET -- readable by all, settable only by a superuser -- and that is the
+# shape here: 42501, and nothing armed.
+# ---------------------------------------------------------------------------
+
+statement ok
+DROP ROLE IF EXISTS flt_lowly;
+
+
+statement ok
+CREATE ROLE flt_lowly LOGIN PASSWORD 'flt_pw';
+
+
+connection c_lowly user=flt_lowly password=flt_pw
+statement error
+SET sdb_faults = 'crash_on_packet';
+----
+db error: ERROR: permission denied to set parameter "sdb_faults"<slt:ignore>
+
+
+# The server is still here, and the denied SET armed nothing.
+connection c_lowly user=flt_lowly password=flt_pw
+query
+SHOW sdb_faults
+----
+sdb_faults
+(empty)
+
+
+# A superuser still arms points.
+connection default
+statement ok
+SET sdb_faults = 'flt_a';
+
+
+# The unprivileged session's own value is at the default, so this RESET is a
+# no-op that never reaches the registry.
+connection c_lowly user=flt_lowly password=flt_pw
+statement ok
+RESET sdb_faults;
+
+
+# Proof it stayed a no-op: the SET reports the whole global registry, and
+# 'flt_a' is still in it.
+connection default
+statement ok
+SET sdb_faults = 'flt_b';
+
+
+connection default
+query
+SHOW sdb_faults
+----
+sdb_faults
+flt_a,flt_b
+
+
+connection default
+statement ok
+RESET sdb_faults;
+
+
+connection default
+query
+SHOW sdb_faults
+----
+sdb_faults
+(empty)
+
+
+connection default
+statement ok
+DROP ROLE flt_lowly;

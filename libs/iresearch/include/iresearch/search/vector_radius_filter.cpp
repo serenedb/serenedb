@@ -25,6 +25,7 @@
 #include <utility>
 
 #include "basics/memory.hpp"
+#include "iresearch/search/collectors.hpp"
 #include "iresearch/search/vector_filter_util.hpp"
 #include "iresearch/search/vector_similarity_query.hpp"
 
@@ -42,8 +43,12 @@ QueryBuilder::ptr ByRadius::PrepareSegment(const SubReader& segment,
 
   return memory::make_tracked<RangeVectorQuery>(
     ctx.memory, segment, std::move(state), std::span<const float>{opts.query},
-    opts.metric, opts.radius, opts.inclusive, ctx.boost * Boost(),
+    opts.metric, opts.radius, opts.inclusive, ctx.boost * GetBoost(),
     std::move(inner));
+}
+
+PrepareCollector::ptr ByRadius::MakeCollectorImpl(const Scorer* scorer) const {
+  return std::make_unique<AllCollector>(scorer);
 }
 
 }  // namespace irs

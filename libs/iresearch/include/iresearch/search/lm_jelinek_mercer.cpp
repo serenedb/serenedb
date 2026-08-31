@@ -20,6 +20,8 @@
 
 #include "lm_jelinek_mercer.hpp"
 
+#include <absl/strings/str_cat.h>
+
 #include <cmath>
 
 #include "basics/down_cast.h"
@@ -27,6 +29,7 @@
 #include "basics/misc.hpp"
 #include "basics/shared.hpp"
 #include "iresearch/analysis/token_attributes.hpp"
+#include "iresearch/formats/posting/score_bound_writer.hpp"
 #include "iresearch/index/field_meta.hpp"
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/index/norm.hpp"
@@ -34,6 +37,7 @@
 #include "iresearch/search/column_collector.hpp"
 #include "iresearch/search/score_function.hpp"
 #include "iresearch/search/scorer.hpp"
+#include "iresearch/search/scorer_options.hpp"
 
 namespace irs {
 namespace {
@@ -185,12 +189,30 @@ ScoreFunction LMJelinekMercer::PrepareScorer(const ScoreContext& ctx) const {
   });
 }
 
+std::string LMJelinekMercer::ToString() const {
+  return absl::StrCat("lm_jm(lambda=", _lambda, ")");
+}
+
 bool LMJelinekMercer::equals(const Scorer& other) const noexcept {
   if (!Scorer::equals(other)) {
     return false;
   }
   const auto& p = sdb::basics::downCast<LMJelinekMercer>(other);
   return p._lambda == _lambda;
+}
+
+ScoreBoundWriter::ptr LMJelinekMercer::PrepareScoreBoundWriter(
+  size_t max_levels) const {
+  return std::make_unique<FreqNormWriter<kScoreBoundDivNorm>>(max_levels);
+}
+
+ScoreBoundSource::ptr LMJelinekMercer::PrepareScoreBoundSource() const {
+  return std::make_unique<FreqNormSource<kScoreBoundFreq | kScoreBoundNorm>>();
+}
+
+bool LMJelinekMercer::Compatible(
+  const ScorerOptions& persisted) const noexcept {
+  return irs::BoundTypeOf(persisted) == BoundTypeOf(Options{});
 }
 
 }  // namespace irs

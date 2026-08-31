@@ -48,4 +48,7 @@ struct PgShdepend {
 };
 // NOLINTEND
 
+template<>
+catalog::MaterializedData SystemTableSnapshot<PgShdepend>::GetTableData();
+
 }  // namespace sdb::pg

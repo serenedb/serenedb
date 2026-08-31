@@ -22,6 +22,18 @@ DROP ROLE IF EXISTS mop_committee;
 
 
 statement ok
+DROP ROLE IF EXISTS clickclack_admin;
+
+
+# The superuser-target gates below are exercised on a per-test SUPERUSER role
+# rather than on postgres itself: postgres' role entry is the one cluster-wide
+# object every concurrently running file shares, and touching it invites a
+# correct 40001 against whichever file is writing it. The gate is the same.
+statement ok
+CREATE ROLE clickclack_admin SUPERUSER;
+
+
+statement ok
 CREATE TABLE clickclack_vault (id int, secret text);
 
 
@@ -52,23 +64,23 @@ db error: ERROR: permission denied to create role<slt:ignore>
 
 connection c_intern user=vedernikoff_intern password=vedernikoff_intern_pw
 statement error
-DROP ROLE postgres;
+DROP ROLE clickclack_admin;
 ----
 db error: ERROR: permission denied to drop role<slt:ignore>
 
 
 connection c_intern user=vedernikoff_intern password=vedernikoff_intern_pw
 statement error
-ALTER ROLE postgres LOGIN;
+ALTER ROLE clickclack_admin LOGIN;
 ----
 db error: ERROR: permission denied to alter role<slt:ignore>
 
 
 connection c_intern user=vedernikoff_intern password=vedernikoff_intern_pw
 statement error
-GRANT postgres TO vedernikoff_intern;
+GRANT clickclack_admin TO vedernikoff_intern;
 ----
-db error: ERROR: permission denied to grant role "postgres"<slt:ignore>
+db error: ERROR: permission denied to grant role "clickclack_admin"<slt:ignore>
 
 
 # ---- GRANT/REVOKE on an unowned table must refuse (no self-service grants) ----
@@ -281,3 +293,7 @@ DROP ROLE vedernikoff_intern;
 
 statement ok
 DROP ROLE mop_committee;
+
+
+statement ok
+DROP ROLE clickclack_admin;

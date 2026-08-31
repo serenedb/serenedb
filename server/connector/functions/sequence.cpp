@@ -20,19 +20,27 @@
 
 #include "connector/functions/sequence.h"
 
+#include <duckdb/catalog/entry_lookup_info.hpp>
+#include <duckdb/common/enums/on_entry_not_found.hpp>
 #include <duckdb/common/vector_operations/binary_executor.hpp>
 #include <duckdb/common/vector_operations/ternary_executor.hpp>
+#include <duckdb/execution/expression_executor.hpp>
 #include <duckdb/function/scalar_function.hpp>
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/main/extension/extension_loader.hpp>
 #include <duckdb/parser/qualified_name.hpp>
+#include <duckdb/planner/binder.hpp>
 #include <memory>
 #include <string>
 #include <string_view>
 
+#include "auth/role_closure.h"
 #include "basics/static_strings.h"
-#include "catalog/catalog.h"
-#include "catalog/object.h"
+#include "catalog/ddl/catalog.h"
+#include "catalog/entry.h"
+#include "catalog/entry/duckdb_object_entry.h"
+#include "catalog/entry/duckdb_schema_entry.h"
+#include "catalog/read/duckdb_catalog_sets.h"
 #include "catalog/sequence.h"
 #include "connector/duckdb_client_state.h"
 #include "pg/connection_context.h"
@@ -43,7 +51,10 @@
 namespace sdb::connector {
 namespace {
 
-std::shared_ptr<catalog::Sequence> ResolveSequence(
+// Through the caller's own transaction: a nextval inside the transaction that
+// created the sequence has to find it, and one whose sequence another session
+// dropped since must not.
+const catalog::SereneDBSequenceEntry& ResolveSequence(
   duckdb::ClientContext& context, std::string_view qualified,
   catalog::AclMode need) {
   auto qname = duckdb::QualifiedName::Parse(std::string{qualified});
@@ -52,21 +63,57 @@ std::shared_ptr<catalog::Sequence> ResolveSequence(
                                    : qname.Schema().GetIdentifierName();
 
   auto& conn_ctx = GetSereneDBContext(context);
-  auto snapshot = conn_ctx.CatalogSnapshot();
   auto database_id = conn_ctx.GetDatabaseId();
-  auto schema = snapshot->GetSchema(database_id, schema_name);
+  auto schema = catalog::FindSchema(&context, database_id, schema_name);
   if (!schema) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_SCHEMA),
                     ERR_MSG("schema \"", schema_name, "\" does not exist"));
   }
-  auto seq =
-    snapshot->GetSequence(catalog::RequireAccess(context, need), database_id,
-                          schema->GetId(), qname.Name().GetIdentifierName());
-  if (!seq) {
+  const auto* seq = catalog::Find<catalog::SereneDBSequenceEntry>(
+    &context, catalog::IdOf(*schema), qname.Name().GetIdentifierName());
+  if (seq == nullptr) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
                     ERR_MSG("relation \"", qualified, "\" does not exist"));
   }
-  return seq;
+  if (need != catalog::AclMode::NoRights) {
+    const auto role = conn_ctx.GetRoleId();
+    if (!auth::ClosureFor(&context, role)
+           ->Can(duckdb::CatalogType::SEQUENCE_ENTRY, seq->permissions, need)) {
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
+                      ERR_MSG("permission denied for sequence ",
+                              seq->name.GetIdentifierName()));
+    }
+  }
+  return *seq;
+}
+
+// A dependency-collecting bind (a view or macro body, with duckdb's
+// enable_*_dependencies on) records whatever the body looks up through the
+// binder's retriever -- so the sequence a constant argument names is looked up
+// here, purely for that record. Execution keeps resolving the name itself: a
+// miss is not an error yet, it is reported at the call, as it always was.
+duckdb::unique_ptr<duckdb::FunctionData> BindSequenceReference(
+  duckdb::BindScalarFunctionInput& input) {
+  auto& arguments = input.GetArguments();
+  if (arguments.empty() || !arguments[0]->IsFoldable() || !input.HasBinder()) {
+    return nullptr;
+  }
+  auto& binder = input.GetBinder();
+  const auto name =
+    duckdb::ExpressionExecutor::EvaluateScalar(binder.context, *arguments[0]);
+  if (name.IsNull()) {
+    return nullptr;
+  }
+  auto qname = duckdb::QualifiedName::Parse(duckdb::StringValue::Get(name));
+  const auto schema = qname.Schema().empty()
+                        ? duckdb::Identifier{StaticStrings::kPublic}
+                        : qname.Schema();
+  const duckdb::EntryLookupInfo lookup{
+    duckdb::CatalogType::SEQUENCE_ENTRY,
+    duckdb::QualifiedName{qname.Catalog(), schema, qname.Name()}};
+  binder.EntryRetriever().GetEntry(lookup,
+                                   duckdb::OnEntryNotFound::RETURN_NULL);
+  return nullptr;
 }
 
 uint64_t GetValue(const catalog::SequenceOptions& opts, uint64_t raw) {
@@ -91,7 +138,8 @@ uint64_t GetValue(const catalog::SequenceOptions& opts, uint64_t raw) {
     ERR_MSG("setval: value out of bounds for sequence \"", qualified, "\""));
 }
 
-uint64_t Nextval(catalog::Sequence& seq, std::string_view qualified) {
+uint64_t Nextval(const catalog::SereneDBSequenceEntry& seq,
+                 std::string_view qualified) {
   const auto& opts = seq.Options();
   uint64_t raw = seq.Reserve(opts.increment) + opts.increment - 1;
   if (!opts.cycle && raw > opts.max_value) [[unlikely]] {
@@ -102,27 +150,28 @@ uint64_t Nextval(catalog::Sequence& seq, std::string_view qualified) {
 
 uint64_t Nextval(duckdb::ClientContext& context, std::string_view qualified) {
   return Nextval(
-    *ResolveSequence(context, qualified,
-                     catalog::AclMode::Usage | catalog::AclMode::Update),
+    ResolveSequence(context, qualified,
+                    catalog::AclMode::Usage | catalog::AclMode::Update),
     qualified);
 }
 
 uint64_t Currval(duckdb::ClientContext& context, std::string_view qualified) {
-  auto seq = ResolveSequence(
+  const auto& seq = ResolveSequence(
     context, qualified, catalog::AclMode::Usage | catalog::AclMode::Select);
-  uint64_t raw = seq->Read();
-  if (raw == seq->Options().Seed()) [[unlikely]] {
+  uint64_t raw = seq.Read();
+  if (raw == seq.Options().Seed()) [[unlikely]] {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
                     ERR_MSG("currval of sequence \"", qualified,
                             "\" is not yet defined in this session"));
   }
-  return GetValue(seq->Options(), raw);
+  return GetValue(seq.Options(), raw);
 }
 
 uint64_t Setval(duckdb::ClientContext& context, std::string_view qualified,
                 uint64_t value, bool is_called) {
-  auto seq = ResolveSequence(context, qualified, catalog::AclMode::Update);
-  const auto& opts = seq->Options();
+  const auto& seq =
+    ResolveSequence(context, qualified, catalog::AclMode::Update);
+  const auto& opts = seq.Options();
   if (value < opts.min_value || value > opts.max_value) {
     ThrowSetvalOutOfBounds(qualified);
   }
@@ -134,7 +183,7 @@ uint64_t Setval(duckdb::ClientContext& context, std::string_view qualified,
     opts.min_value +
     ((value - opts.min_value) / opts.increment) * opts.increment;
   uint64_t to_persist = is_called ? snapped : snapped - opts.increment;
-  seq->Write(to_persist);
+  seq.Write(to_persist);
   return value;
 }
 
@@ -150,12 +199,12 @@ void NextvalFunction(duckdb::DataChunk& args, duckdb::ExpressionState& state,
     auto* name_data =
       duckdb::ConstantVector::GetData<duckdb::string_t>(args.data[0]);
     std::string_view qualified{name_data->GetData(), name_data->GetSize()};
-    auto seq = ResolveSequence(
+    const auto& seq = ResolveSequence(
       context, qualified, catalog::AclMode::Usage | catalog::AclMode::Update);
-    const auto& opts = seq->Options();
+    const auto& opts = seq.Options();
     uint64_t batch_span = static_cast<uint64_t>(num_rows) * opts.increment;
 
-    uint64_t base = seq->Reserve(batch_span);
+    uint64_t base = seq.Reserve(batch_span);
     uint64_t r0 = base + opts.increment - 1;  // raw of row 0
 
     if (!opts.cycle && base + batch_span - 1 > opts.max_value) [[unlikely]] {
@@ -246,6 +295,7 @@ void RegisterSequenceFunctions(duckdb::DatabaseInstance& db) {
       NextvalFunction,
     };
     func.SetVolatile();
+    func.SetBindCallback(BindSequenceReference);
     loader.RegisterFunction(func);
   }
   {
@@ -256,6 +306,7 @@ void RegisterSequenceFunctions(duckdb::DatabaseInstance& db) {
       CurrvalFunction,
     };
     func.SetVolatile();
+    func.SetBindCallback(BindSequenceReference);
     loader.RegisterFunction(func);
   }
   {
@@ -266,6 +317,7 @@ void RegisterSequenceFunctions(duckdb::DatabaseInstance& db) {
       Setval2Function,
     };
     func.SetVolatile();
+    func.SetBindCallback(BindSequenceReference);
     loader.RegisterFunction(func);
   }
   {
@@ -277,6 +329,7 @@ void RegisterSequenceFunctions(duckdb::DatabaseInstance& db) {
       Setval3Function,
     };
     func.SetVolatile();
+    func.SetBindCallback(BindSequenceReference);
     loader.RegisterFunction(func);
   }
 }

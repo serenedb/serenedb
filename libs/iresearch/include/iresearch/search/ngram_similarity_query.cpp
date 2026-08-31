@@ -467,11 +467,11 @@ class NGramSimilarityDocIterator : public DocIterator {
 
   NGramSimilarityDocIterator(doc_id_t docs_count, CostAdapters&& itrs,
                              size_t total_terms_count, size_t min_match_count,
-                             const FieldProperties& field,
-                             const byte_type* stats, score_t boost)
+                             const FieldProperties& field, ScoreSource score,
+                             score_t boost)
     : NGramSimilarityDocIterator{docs_count, std::move(itrs), total_terms_count,
-                                 min_match_count, stats != nullptr} {
-    _stats = stats;
+                                 min_match_count, score.scorer != nullptr} {
+    _score = score;
     _field = field;
     _boost = boost;
   }
@@ -488,17 +488,17 @@ class NGramSimilarityDocIterator : public DocIterator {
   }
 
   ScoreFunction PrepareScore(const PrepareScoreContext& ctx) final {
+    SDB_ASSERT(_score.scorer);
     _collected_boosts.value = std::allocator<score_t>{}.allocate(kScoreBlock);
 
     _collected_freqs.value = std::allocator<uint32_t>{}.allocate(kScoreBlock);
 
-    SDB_ASSERT(ctx.scorer);
-    return ctx.scorer->PrepareScorer({
+    return _score.scorer->PrepareScorer({
       .segment = *ctx.segment,
       .field = _field,
       .doc_attrs = *this,
       .fetcher = ctx.fetcher,
-      .stats = _stats,
+      .stats = _score.stats,
       .boost = _boost,
     });
   }
@@ -560,7 +560,7 @@ class NGramSimilarityDocIterator : public DocIterator {
   IRS_DOC_ITERATOR_DEFAULTS
 
  private:
-  const byte_type* _stats{};
+  ScoreSource _score;
   score_t _boost{1.0f};
   FieldProperties _field;
 
@@ -617,7 +617,7 @@ DocIterator::ptr NGramSimilarityQuery::Execute(const ExecutionContext& ctx,
     return DocIterator::empty();
   }
 
-  const auto stat = stats.GetStats();
+  const auto score_src = stats.Source();
   // TODO(mbkkt) itrs.size() == 1: return itrs_[0], but needs to add score
   // optimization for single ngram case
   const auto docs_count = static_cast<doc_id_t>(segment.docs_count());
@@ -625,14 +625,14 @@ DocIterator::ptr NGramSimilarityQuery::Execute(const ExecutionContext& ctx,
     return memory::make_managed<NGramSimilarityDocIterator<
       NGramApprox<true>, SerialPositionsChecker<Dummy>>>(
       docs_count, std::move(itrs), _state.terms.size(), _min_match_count,
-      _state.reader->meta(), scorer ? stat.data() : nullptr, _boost);
+      _state.reader->meta(), score_src, _boost);
   }
   // TODO(mbkkt) min_match_count_ == 1: disjunction for approx,
   // optimization for low threshold case
   return memory::make_managed<NGramSimilarityDocIterator<
     NGramApprox<false>, SerialPositionsChecker<Dummy>>>(
     docs_count, std::move(itrs), _state.terms.size(), _min_match_count,
-    _state.reader->meta(), scorer ? stat.data() : nullptr, _boost);
+    _state.reader->meta(), score_src, _boost);
 }
 
 DocIterator::ptr NGramSimilarityQuery::ExecuteWithOffsets() const {

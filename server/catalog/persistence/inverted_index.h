@@ -33,8 +33,8 @@
 
 #include "basics/containers/node_hash_map.h"
 #include "catalog/persistence/index.h"
-#include "catalog/search_analyzer_impl.h"
 #include "catalog/table_options.h"
+#include "search/search_analyzer_impl.h"
 
 namespace sdb::catalog::persistence {
 
@@ -79,12 +79,12 @@ struct ExpressionKey {
 // transactional index `field_id == column` (identity); for a Search-table index
 // the field_id is a distinct allocation.
 struct ColumnKey {
-  Column::Id column = Column::kInvalidId;
+  ColumnId column = kInvalidColumnId;
   irs::field_id field_id = irs::field_limits::invalid();
 };
 
-// Persisted inverted-index catalog tuple, templated on the `columns` element:
-// a transactional index serializes bare `Column::Id`s (byte-identical to the
+// Persisted inverted-index payload, templated on the `columns` element: a
+// transactional index serializes bare `ColumnId`s (byte-identical to the
 // pre-search-table format, so old datadirs load unchanged); a Search-table
 // index serializes `ColumnKey`s carrying each column's allocated term field_id.
 template<typename ColumnEntry>
@@ -103,7 +103,7 @@ struct InvertedIndexDataT {
   std::string comment;
 };
 
-using InvertedIndexData = InvertedIndexDataT<Column::Id>;
+using InvertedIndexData = InvertedIndexDataT<ColumnId>;
 using SearchInvertedIndexData = InvertedIndexDataT<ColumnKey>;
 
 }  // namespace sdb::catalog::persistence

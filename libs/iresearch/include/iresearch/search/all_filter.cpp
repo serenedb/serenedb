@@ -35,7 +35,7 @@ class AllQuery : public QueryBuilder {
   DocIterator::ptr Execute(const ExecutionContext&,
                            const StatsBuffer& stats) const final {
     return memory::make_managed<AllIterator>(_segment.docs_count(),
-                                             stats.GetStats().data(), _boost);
+                                             stats.Source(), _boost);
   }
 
   void Visit(PreparedStateVisitor&, score_t) const final {}
@@ -53,10 +53,10 @@ QueryBuilder::ptr MakeAllQuery(const SubReader& segment,
 
 QueryBuilder::ptr All::PrepareSegment(const SubReader& segment,
                                       const PrepareContext& ctx) const {
-  return MakeAllQuery(segment, ctx, Boost());
+  return MakeAllQuery(segment, ctx, GetBoost());
 }
 
-PrepareCollector::ptr All::MakeCollector(const Scorer* scorer) const {
+PrepareCollector::ptr All::MakeCollectorImpl(const Scorer* scorer) const {
   return std::make_unique<AllCollector>(scorer);
 }
 

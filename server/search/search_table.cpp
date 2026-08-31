@@ -41,12 +41,14 @@
 
 #include "basics/down_cast.h"
 #include "basics/duckdb_engine.h"
+#include "basics/lifecycle.h"
 #include "basics/log.h"
-#include "catalog/catalog.h"
+#include "catalog/entry.h"
 #include "catalog/index.h"
 #include "catalog/inverted_index.h"
-#include "database/ticks.h"
+#include "catalog/read/duckdb_catalog_sets.h"
 #include "pg/sql_exception_macro.h"
+#include "scheduler/background_scheduler.h"
 #include "search/inverted_index_storage.h"
 #include "search/task.h"
 #include "storage_engine/search_engine.h"
@@ -72,30 +74,10 @@ std::filesystem::path SearchTable::GetWalPath(ObjectId db_id) {
   return path;
 }
 
-absl::Status SearchTable::DropIndexDir(ObjectId db_id, ObjectId schema_id,
-                                       ObjectId table_id) {
-  auto path = GetPath(db_id, schema_id, table_id);
-  std::error_code ec;
-  std::filesystem::remove_all(path, ec);
-  if (ec) {
-    return absl::InternalError(
-      absl::StrCat("Failed to remove search table directory '", path.string(),
-                   "': ", ec.message()));
-  }
-  return absl::OkStatus();
-}
-
-absl::Status SearchTable::DropWalShard(ObjectId db_id, ObjectId table_id) {
-  // No WAL-side files to remove -- the data lives in the index directory, which
-  // DropIndexDir handles. Only the frozen tick still pins the log's GC floor.
-  GetSearchEngine().GetDbWal(db_id).DeregisterShard(table_id);
-  return absl::OkStatus();
-}
-
 std::shared_ptr<SearchTable> SearchTable::Create(
   ObjectId db_id, ObjectId schema_id, ObjectId table_id, bool is_new,
-  const catalog::SearchTableOptions& options,
-  std::vector<catalog::Column::Id> pk_columns) {
+  const catalog::persistence::SearchTableOptions& options,
+  std::vector<catalog::ColumnId> pk_columns) {
   return std::make_shared<SearchTable>(db_id, schema_id, table_id, is_new,
                                        options, std::move(pk_columns));
 }
@@ -108,7 +90,7 @@ namespace {
 // off: the value is stored under the column id, not this term field.
 void BuildPkInto(catalog::InvertedIndex::Entries& entries,
                  SearchTable::TermsByColumn& terms,
-                 const std::vector<catalog::Column::Id>& pk_columns) {
+                 const std::vector<catalog::ColumnId>& pk_columns) {
   for (auto id : pk_columns) {
     catalog::InvertedIndexEntryInfo info;
     info.store_values = false;
@@ -196,10 +178,10 @@ std::shared_ptr<const irs::IndexFieldOptions> MakeFieldOptions(
 
 }  // namespace
 
-SearchTable::SearchTable(ObjectId db_id, ObjectId schema_id, ObjectId table_id,
-                         bool is_new,
-                         const catalog::SearchTableOptions& options,
-                         std::vector<catalog::Column::Id> pk_columns)
+SearchTable::SearchTable(
+  ObjectId db_id, ObjectId schema_id, ObjectId table_id, bool is_new,
+  const catalog::persistence::SearchTableOptions& options,
+  std::vector<catalog::ColumnId> pk_columns)
   : _table_id{table_id},
     _db_id{db_id},
     _schema_id{schema_id},
@@ -238,15 +220,27 @@ std::shared_ptr<const irs::IndexFieldOptions> SearchTable::GetFieldOptions()
   return _field_options;
 }
 
+catalog::TokenizerMap ResolveShardTokenizers(const SearchTable& shard,
+                                             duckdb::ClientContext& context) {
+  catalog::TokenizerMap dicts;
+  for (const auto& index : catalog::RelationInvertedIndexes(
+         &context, shard.GetSchemaId(), shard.GetTableId())) {
+    for (auto& [id, dict] : catalog::ResolveTokenizers(context, *index)) {
+      dicts.try_emplace(id, std::move(dict));
+    }
+  }
+  return dicts;
+}
+
 catalog::ColumnTokenizer SearchTable::GetTokenizer(
-  const std::shared_ptr<const catalog::Snapshot>& snapshot,
-  irs::field_id field_id) const {
+  duckdb::ClientContext& context, irs::field_id field_id) const {
   auto config = GetIndexConfig();
   auto it = config->find(field_id);
   if (it == config->end()) {
-    return catalog::DefaultColumnTokenizer();
+    return {};  // not a merged-config field: the default string tokenizer
   }
-  return catalog::TokenizerForEntry(snapshot, it->second);
+  return catalog::TokenizerForEntry(ResolveShardTokenizers(*this, context),
+                                    it->second);
 }
 
 void SearchTable::MergeIndexConfig(const catalog::InvertedIndex& index) {
@@ -260,16 +254,13 @@ void SearchTable::MergeIndexConfig(const catalog::InvertedIndex& index) {
   _field_options = MakeFieldOptions(_entries);
 }
 
-void SearchTable::RebuildIndexConfig(const catalog::Snapshot& snapshot) {
+void SearchTable::RebuildIndexConfig(duckdb::ClientContext* context) {
   catalog::InvertedIndex::Entries entries;
   TermsByColumn terms;
   BuildPkInto(entries, terms, _pk_columns);
-  for (const auto& index : snapshot.GetIndexesByRelation(_table_id)) {
-    if (index->GetType() != catalog::ObjectType::InvertedIndex) {
-      continue;
-    }
-    MergeIndexInto(entries, terms,
-                   basics::downCast<const catalog::InvertedIndex>(*index));
+  for (const auto& index :
+       catalog::RelationInvertedIndexes(context, _schema_id, _table_id)) {
+    MergeIndexInto(entries, terms, catalog::InvertedInfo(*index));
   }
   auto next_entries =
     std::make_shared<const catalog::InvertedIndex::Entries>(std::move(entries));
@@ -283,6 +274,20 @@ void SearchTable::RebuildIndexConfig(const catalog::Snapshot& snapshot) {
 SearchTable::~SearchTable() {
   _writer.reset();
   _dir.reset();
+  if (!_dropped.load(std::memory_order_acquire)) {
+    return;
+  }
+  // Shutdown may already have torn the pool down; the removal then waits for
+  // boot's orphan sweep, exactly like a crash between the commit and here.
+  if (lifecycle::IsStopping() || BackgroundScheduler::instance().IsStopping()) {
+    return;
+  }
+  GetSearchEngine().GetDbWal(_db_id).DeregisterShard(_table_id);
+  BackgroundScheduler::instance()
+    .Run([index_dir = GetPath(_db_id, _schema_id, _table_id)] {
+      RemoveDroppedStorageDir(index_dir, 2);
+    })
+    .Detach();
 }
 
 void SearchTable::OpenWriter() {
@@ -350,11 +355,11 @@ void SearchTable::OpenWriter() {
     // ids, so a dropped index's ids -- still occupying slots in this SHARED
     // store -- could be re-issued to a new index and collide at merge. Scan
     // BOTH term-dict field ids AND columnstore ids (one shared allocation
-    // pool). Skip reserved system fields (> kMaxRealIdValue): they are not
-    // drawn from NextId, so flooring to them would exhaust the allocator.
+    // pool). Skip reserved system fields (> kMaxRealColumnIdValue): they are
+    // not drawn from NextId, so flooring to them would exhaust the allocator.
     const auto floor_from = [](irs::field_id id) {
-      if (id <= catalog::Column::kMaxRealIdValue) {
-        UpdateTickServer(id);
+      if (id <= catalog::kMaxRealColumnIdValue) {
+        catalog::RestoreId(id);
       }
     };
     for (const auto& segment : reader) {

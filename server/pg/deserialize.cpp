@@ -58,15 +58,31 @@
 namespace sdb::pg {
 
 void VectorSink::Tsquery(std::string_view text) {
+  const auto parts = connector::TSQueryPartsForType(vec.GetType(), text);
   auto& entries = duckdb::StructVector::GetEntries(vec);
   auto& text_vec = entries[connector::kTSQueryTextChild];
   duckdb::FlatVector::GetDataMutable<duckdb::string_t>(text_vec)[row] =
-    duckdb::StringVector::AddString(text_vec, text.data(), text.size());
+    duckdb::StringVector::AddString(text_vec, parts.text.data(),
+                                    parts.text.size());
   auto& tok_vec = entries[connector::kTSQueryTokenizerChild];
   duckdb::FlatVector::GetDataMutable<duckdb::string_t>(tok_vec)[row] =
-    duckdb::StringVector::AddString(tok_vec, "", 0);
+    duckdb::StringVector::AddString(tok_vec, parts.tokenizer.data(),
+                                    parts.tokenizer.size());
   auto& boost_vec = entries[connector::kTSQueryBoostChild];
-  duckdb::FlatVector::GetDataMutable<float>(boost_vec)[row] = 1.0f;
+  duckdb::FlatVector::GetDataMutable<float>(boost_vec)[row] = parts.boost;
+  auto& slop_vec = entries[connector::kTSQuerySlopChild];
+  duckdb::FlatVector::GetDataMutable<int64_t>(slop_vec)[row] = parts.slop;
+  auto& scorer_vec = entries[connector::kTSQueryScorerChild];
+  if (parts.scorer.empty()) {
+    duckdb::FlatVector::SetNull(scorer_vec, row, true);
+  } else {
+    duckdb::FlatVector::GetDataMutable<duckdb::string_t>(scorer_vec)[row] =
+      duckdb::StringVector::AddString(scorer_vec, parts.scorer.data(),
+                                      parts.scorer.size());
+  }
+  auto& merge_vec = entries[connector::kTSQueryMergeChild];
+  duckdb::FlatVector::GetDataMutable<uint8_t>(merge_vec)[row] =
+    static_cast<uint8_t>(parts.merge);
 }
 
 void ValueSink::Tsquery(std::string_view text) {

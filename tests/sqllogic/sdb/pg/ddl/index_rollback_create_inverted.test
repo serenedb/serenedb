@@ -1,0 +1,158 @@
+# ROLLBACK of CREATE INDEX ... USING inverted.
+#
+# Kept apart from the other index-rollback files because it is the one index
+# rollback with two compensators that have to agree. The backfill registers a
+# transaction_abort_cleanup on the session state (see
+# SereneDBPhysicalCreateIndex) which drops the uncommitted index's store half
+# and its iresearch directory; duckdb's undo walk then calls
+# DuckIndexEntry::Rollback on the version that created the entry, which takes
+# the index off the relation's TableIndexList. Before the catalog split only the
+# first of those existed, and it only ran when a client state was present.
+#
+# What is pinned: nothing of the index survives, the relation is unharmed, and
+# the name is free -- both the catalog name and the physical half behind it,
+# which is what a second CREATE under the same name actually proves.
+
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY ixci_dict(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'none',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true
+);
+
+
+statement ok
+CREATE TABLE ixci_t(id INTEGER PRIMARY KEY, body TEXT, tag TEXT);
+
+
+statement ok
+INSERT INTO ixci_t VALUES (1, 'alpha bravo', 'red'), (2, 'charlie delta', 'green');
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+CREATE INDEX ixci_idx ON ixci_t USING inverted(id, body ixci_dict);
+
+
+statement ok
+ROLLBACK;
+
+
+query
+SELECT count(*) AS n FROM pg_class WHERE relname = 'ixci_idx';
+----
+n
+0
+
+
+statement error
+SELECT id FROM ixci_idx;
+----
+db error: ERROR: Table with name ixci_idx does not exist!<slt:ignore>
+
+
+# The relation is unharmed: it still reads, and it still takes writes.
+statement ok
+INSERT INTO ixci_t VALUES (3, 'echo foxtrot', 'blue');
+
+
+query
+SELECT count(*) AS n FROM ixci_t;
+----
+n
+3
+
+
+# The name is free, and so is the storage behind it: the index builds, backfills
+# every row including the one written after the rollback, and serves searches.
+statement ok
+CREATE INDEX ixci_idx ON ixci_t USING inverted(id, body ixci_dict);
+
+
+statement ok
+VACUUM (REFRESH_TABLE) ixci_t;
+
+
+query
+SELECT count(*) AS n FROM ixci_idx;
+----
+n
+3
+
+
+query
+SELECT id FROM ixci_idx WHERE body @@ ts_phrase('alpha');
+----
+id
+1
+
+
+query
+SELECT id FROM ixci_idx WHERE body @@ ts_phrase('echo');
+----
+id
+3
+
+
+# And it keeps up with DML.
+statement ok
+INSERT INTO ixci_t VALUES (4, 'golf hotel', 'white');
+
+
+statement ok
+VACUUM (REFRESH_TABLE) ixci_t;
+
+
+query
+SELECT id FROM ixci_idx WHERE body @@ ts_phrase('golf');
+----
+id
+4
+
+
+# The committed control: a CREATE INDEX in a transaction block that commits is
+# a normal index.
+statement ok
+BEGIN;
+
+
+statement ok
+CREATE INDEX ixci_second ON ixci_t USING inverted(id, tag ixci_dict);
+
+
+statement ok
+COMMIT;
+
+
+statement ok
+VACUUM (REFRESH_TABLE) ixci_t;
+
+
+query
+SELECT count(*) AS n FROM pg_class WHERE relname = 'ixci_second';
+----
+n
+1
+
+
+query
+SELECT count(*) AS n FROM ixci_second;
+----
+n
+4
+
+
+statement ok
+DROP TABLE ixci_t;
+
+
+statement ok
+DROP TEXT SEARCH DICTIONARY ixci_dict;

@@ -199,18 +199,10 @@ t
 
 # --- pragma_database_size ---------------------------------------------------
 
-# One row per attached database, including the internal store database. The
-# current database's size covers the shared store plus this database's search
-# data, so it is non-zero here.
+# One row per attached database. A database's rows live in its own file, so its
+# size covers its own tables plus its search data and is non-zero here.
 query
 SELECT count(*) FROM pragma_database_size() WHERE database_name = current_database();
-----
-count
-1
-
-
-query
-SELECT count(*) FROM pragma_database_size() WHERE database_name = '__sdb_store';
 ----
 count
 1

@@ -951,10 +951,53 @@ inline constexpr SystemMacro kExternalMacros[] = {
   {"pg_catalog", "pg_get_indexdef", "(oid, col, pretty_bool) AS CAST(NULL AS TEXT)"},
   {"pg_catalog", "pg_get_triggerdef", "(oid) AS CAST(NULL AS TEXT)"},
   {"pg_catalog", "pg_get_triggerdef", "(oid, pretty_bool) AS CAST(NULL AS TEXT)"},
-  {"pg_catalog", "pg_get_constraintdef", "(oid) AS CAST(NULL AS TEXT)"},
-  {"pg_catalog", "pg_get_constraintdef", "(oid, pretty_bool) AS CAST(NULL AS TEXT)"},
-  {"pg_catalog", "pg_get_expr", "(node_text, rel_oid) AS CAST(NULL AS TEXT)"},
-  {"pg_catalog", "pg_get_expr", "(node_text, rel_oid, pretty_bool) AS CAST(NULL AS TEXT)"},
+  // Rebuilt from the catalog row rather than deparsed from a stored node
+  // tree: the key columns are positions, so each one is resolved through
+  // pg_attribute of the relation the constraint (or, for the referenced half
+  // of a foreign key, confrelid) belongs to.
+  {"pg_catalog", "pg_get_constraintdef",
+   R"((cd_oid) AS (
+    SELECT CASE cd_c.contype
+      WHEN 'c' THEN 'CHECK (' || cd_c.conbin || ')'
+      WHEN 'n' THEN 'NOT NULL ' || (
+        SELECT string_agg(cd_a.attname, ', ' ORDER BY cd_k.ordinality)
+          FROM unnest(cd_c.conkey) WITH ORDINALITY AS cd_k(attnum, ordinality)
+          JOIN pg_catalog.pg_attribute cd_a
+            ON cd_a.attrelid = cd_c.conrelid AND cd_a.attnum = cd_k.attnum)
+      WHEN 'p' THEN 'PRIMARY KEY (' || (
+        SELECT string_agg(cd_a.attname, ', ' ORDER BY cd_k.ordinality)
+          FROM unnest(cd_c.conkey) WITH ORDINALITY AS cd_k(attnum, ordinality)
+          JOIN pg_catalog.pg_attribute cd_a
+            ON cd_a.attrelid = cd_c.conrelid AND cd_a.attnum = cd_k.attnum)
+        || ')'
+      WHEN 'u' THEN 'UNIQUE (' || (
+        SELECT string_agg(cd_a.attname, ', ' ORDER BY cd_k.ordinality)
+          FROM unnest(cd_c.conkey) WITH ORDINALITY AS cd_k(attnum, ordinality)
+          JOIN pg_catalog.pg_attribute cd_a
+            ON cd_a.attrelid = cd_c.conrelid AND cd_a.attnum = cd_k.attnum)
+        || ')'
+      WHEN 'f' THEN 'FOREIGN KEY (' || (
+        SELECT string_agg(cd_a.attname, ', ' ORDER BY cd_k.ordinality)
+          FROM unnest(cd_c.conkey) WITH ORDINALITY AS cd_k(attnum, ordinality)
+          JOIN pg_catalog.pg_attribute cd_a
+            ON cd_a.attrelid = cd_c.conrelid AND cd_a.attnum = cd_k.attnum)
+        || ') REFERENCES ' || (
+        SELECT cd_r.relname FROM pg_catalog.pg_class cd_r
+          WHERE cd_r.oid = cd_c.confrelid) || '(' || (
+        SELECT string_agg(cd_a.attname, ', ' ORDER BY cd_k.ordinality)
+          FROM unnest(cd_c.confkey) WITH ORDINALITY AS cd_k(attnum, ordinality)
+          JOIN pg_catalog.pg_attribute cd_a
+            ON cd_a.attrelid = cd_c.confrelid AND cd_a.attnum = cd_k.attnum)
+        || ')'
+    END
+    FROM pg_catalog.pg_constraint cd_c WHERE cd_c.oid = cd_oid))"},
+  {"pg_catalog", "pg_get_constraintdef",
+   "(cd_oid, pretty_bool) AS pg_catalog.pg_get_constraintdef(cd_oid)"},
+  // adbin / conbin already hold the deparsed expression rather than a node
+  // tree, so deparsing it is handing it back.
+  {"pg_catalog", "pg_get_expr", "(node_text, rel_oid) AS CAST(node_text AS TEXT)"},
+  {"pg_catalog", "pg_get_expr",
+   "(node_text, rel_oid, pretty_bool) AS CAST(node_text AS TEXT)"},
   // pg_get_userbyid(oid): role name for a role oid, or PG's
   {"pg_catalog", "pg_get_userbyid",
    R"((role_oid) AS COALESCE(
@@ -989,10 +1032,22 @@ inline constexpr SystemMacro kExternalMacros[] = {
   // mode), so both are constant false. pgAdmin calls these on every connect.
   {"pg_catalog", "pg_is_in_recovery", "() AS false"},
   {"pg_catalog", "pg_is_wal_replay_paused", "() AS false"},
-  {"pg_catalog", "obj_description", "(oid, catalog) AS CAST(NULL AS TEXT)"},
-  {"pg_catalog", "obj_description", "(oid) AS CAST(NULL AS TEXT)"},
+  // COMMENT ON is projected by pg_description; these read it the way PG's own
+  // definitions do. The two-argument form names the system catalog the object
+  // is filed under, resolved through pg_class rather than hardcoded.
+  {"pg_catalog", "obj_description",
+   "(oid, catalog) AS (SELECT d.description FROM pg_catalog.pg_description d "
+   "WHERE d.objoid = oid AND d.objsubid = 0 AND d.classoid = "
+   "(SELECT c.oid FROM pg_catalog.pg_class c WHERE c.relname = catalog AND "
+   "c.relnamespace = (SELECT n.oid FROM pg_catalog.pg_namespace n WHERE "
+   "n.nspname = 'pg_catalog')))"},
+  {"pg_catalog", "obj_description",
+   "(oid) AS (SELECT d.description FROM pg_catalog.pg_description d WHERE "
+   "d.objoid = oid AND d.objsubid = 0)"},
   {"pg_catalog", "shobj_description", "(oid, catalog) AS CAST(NULL AS TEXT)"},
-  {"pg_catalog", "col_description", "(oid, col) AS CAST(NULL AS TEXT)"},
+  {"pg_catalog", "col_description",
+   "(oid, col) AS (SELECT d.description FROM pg_catalog.pg_description d "
+   "WHERE d.objoid = oid AND d.objsubid = col)"},
   {"pg_catalog", "pg_function_is_visible",
    "(function_oid) AS ((SELECT n.nspname FROM pg_catalog.pg_namespace n WHERE n.oid = "
    "(SELECT pronamespace FROM pg_catalog.pg_proc WHERE oid = function_oid)) = "

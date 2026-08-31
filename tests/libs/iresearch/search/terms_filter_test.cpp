@@ -76,7 +76,7 @@ TEST(by_terms_test, ctor) {
   ASSERT_EQ(irs::Type<irs::ByTerms>::id(), q.type());
   ASSERT_EQ(irs::ByTermsOptions{}, q.options());
   ASSERT_EQ(irs::field_limits::invalid(), q.field_id());
-  ASSERT_EQ(irs::kNoBoost, q.Boost());
+  ASSERT_EQ(irs::kNoBoost, q.GetBoost());
 }
 
 TEST(by_terms_test, equal) {
@@ -122,7 +122,7 @@ TEST_P(TermsFilterTestCase, boost) {
     irs::score_t boost = 1.5f;
 
     irs::ByTerms q = MakeFilter(kFieldId, {{"bar", 0.5f}, {"baz", 0.25f}});
-    q.boost(boost);
+    q.SetBoost(boost);
 
     tests::PreparedFilter prepared{q, irs::SubReader::empty(), nullptr,
                                    counter};
@@ -145,7 +145,7 @@ TEST_P(TermsFilterTestCase, boost) {
 
     irs::ByTerms q =
       MakeFilter(kDuplicatedId, {{"abcd", 0.5f}, {"vczc", 0.25f}});
-    q.boost(boost);
+    q.SetBoost(boost);
 
     tests::PreparedFilter prepared{q, *rdr, nullptr, counter};
     ASSERT_EQ(boost, prepared.Query(0)->Boost());

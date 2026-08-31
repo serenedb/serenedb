@@ -172,13 +172,13 @@ class PostingIteratorBase : public DocIterator {
   }
 
   ScoreFunction PrepareScore(const PrepareScoreContext& ctx) final {
-    SDB_ASSERT(ctx.scorer);
-    return ctx.scorer->PrepareScorer({
+    SDB_ASSERT(_score.scorer);
+    return _score.scorer->PrepareScorer({
       .segment = *ctx.segment,
       .field = _field,
       .doc_attrs = *this,
       .fetcher = ctx.fetcher,
-      .stats = _stats,
+      .stats = _score.stats,
       .boost = _boost,
     });
   }
@@ -202,9 +202,10 @@ class PostingIteratorBase : public DocIterator {
     }
   }
 
-  IRS_FORCE_INLINE void Init(const PostingCookie& cookie) noexcept {
+  IRS_FORCE_INLINE void Init(const PostingCookie& cookie,
+                             const Scorer* scorer) noexcept {
     _field = cookie.field;
-    _stats = cookie.stats;
+    _score = {scorer, cookie.stats};
     _boost = cookie.boost;
   }
 
@@ -230,7 +231,7 @@ class PostingIteratorBase : public DocIterator {
                     [[maybe_unused]] FillBlockMatchContext match);
 
   FieldProperties _field;
-  const byte_type* _stats = nullptr;
+  ScoreSource _score;
   score_t _boost = kNoBoost;
 
   ABSL_CACHELINE_ALIGNED uint32_t _enc_buf[doc_limits::kBlockSize];
@@ -512,7 +513,7 @@ class PostingIteratorImpl : public PostingIteratorBase<IteratorTraits> {
 
   void Prepare(const PostingCookie& meta, const IndexInput* doc_in,
                const IndexInput* pos_in, const IndexInput* pay_in,
-               bool score_prune = false);
+               const Scorer* scorer, bool score_prune = false);
 
   std::pair<doc_id_t, bool> FillBlock(const doc_id_t min, const doc_id_t max,
                                       uint64_t* IRS_RESTRICT const doc_mask,
@@ -642,8 +643,9 @@ void PostingIteratorImpl<IteratorTraits, FieldTraits, HasScoreBounds,
                                              const IndexInput* doc_in,
                                              const IndexInput* pos_in,
                                              const IndexInput* pay_in,
+                                             const Scorer* scorer,
                                              bool score_prune) {
-  this->Init(meta);
+  this->Init(meta, scorer);
 
   const auto& term_state = *meta.cookie;
   std::get<CostAttr>(this->_attrs).reset(term_state.docs_count);

@@ -20,27 +20,45 @@
 
 #pragma once
 
-#include "catalog/object.h"
-#include "catalog/persistence/database.h"
+#include <duckdb/parser/parsed_data/create_info.hpp>
+#include <memory>
+#include <string>
+#include <string_view>
 
-namespace duckdb {
+#include "catalog/identifiers/object_id.h"
 
-class Serializer;
-class Deserializer;
-
-}  // namespace duckdb
 namespace sdb::catalog {
 
-using persistence::DatabaseOptions;
-
-class Database final : public Object {
+class CreateDatabaseInfo final : public duckdb::CreateInfo {
  public:
-  Database(Permissions perm, ObjectId id, std::string_view name);
+  CreateDatabaseInfo()
+    : duckdb::CreateInfo{duckdb::CatalogType::DATABASE_ENTRY} {}
+  CreateDatabaseInfo(ObjectId id, std::string_view name,
+                     ObjectId public_schema_id);
 
-  static std::shared_ptr<Database> Deserialize(duckdb::Deserializer& src,
-                                               ReadContext ctx);
   void Serialize(duckdb::Serializer& sink) const final;
-  std::shared_ptr<Object> Clone() const final;
+  std::string ToString() const final;
+  duckdb::unique_ptr<duckdb::CreateInfo> Copy() const final;
+
+  static duckdb::unique_ptr<duckdb::CreateInfo> Deserialize(
+    duckdb::Deserializer& src);
+
+  ObjectId GetId() const noexcept { return ObjectId{oid}; }
+  void SetId(ObjectId id) noexcept { oid = id.id(); }
+
+  std::string_view GetName() const noexcept {
+    return GetQualifiedName().Name().GetIdentifierName();
+  }
+
+  // The id of the schema every database has from the moment it exists. The
+  // schema itself is not a record: it is made when the catalog is opened, the
+  // way duckdb makes its own default schema -- but its id is what pg_namespace
+  // reports, so the database states it and every boot agrees.
+  ObjectId PublicSchemaId() const noexcept { return _public_schema_id; }
+  void SetPublicSchemaId(ObjectId id) noexcept { _public_schema_id = id; }
+
+ private:
+  ObjectId _public_schema_id;
 };
 
 }  // namespace sdb::catalog

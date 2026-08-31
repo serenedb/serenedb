@@ -20,6 +20,8 @@
 
 #include "indri_dirichlet.hpp"
 
+#include <absl/strings/str_cat.h>
+
 #include <cmath>
 
 #include "basics/down_cast.h"
@@ -175,6 +177,10 @@ ScoreFunction IndriDirichlet::PrepareScorer(const ScoreContext& ctx) const {
     return ScoreFunction::Make<IndriScore<HasBoost>>(ctx.boost, _mu, *stats,
                                                      freq, norm, filter_boost);
   });
+}
+
+std::string IndriDirichlet::ToString() const {
+  return absl::StrCat("indri_dirichlet(mu=", _mu, ")");
 }
 
 bool IndriDirichlet::equals(const Scorer& other) const noexcept {

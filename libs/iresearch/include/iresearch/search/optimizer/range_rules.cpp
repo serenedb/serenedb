@@ -99,7 +99,7 @@ score_t MergedBoost(ScoreMergeType merge_type, score_t lo,
 template<typename Range>
 Filter::ptr MergeRangeBounds(const Range& lo, const Range& hi,
                              ScoreMergeType merge_type) {
-  const score_t boost = MergedBoost(merge_type, lo.Boost(), hi.Boost());
+  const score_t boost = MergedBoost(merge_type, lo.GetBoost(), hi.GetBoost());
   if (RangeBound(lo, true) > RangeBound(hi, false)) {
     return std::make_unique<Empty>();
   }
@@ -109,7 +109,7 @@ Filter::ptr MergeRangeBounds(const Range& lo, const Range& hi,
       auto by_term = std::make_unique<ByTerm>();
       *by_term->mutable_field_id() = lo.field_id();
       by_term->mutable_options()->term = RangeBound(lo, true);
-      by_term->boost(boost);
+      by_term->SetBoost(boost);
       return by_term;
     }
     return std::make_unique<Empty>();
@@ -120,7 +120,7 @@ Filter::ptr MergeRangeBounds(const Range& lo, const Range& hi,
   options = lo.options();
   options.range.max = hi.options().range.max;
   options.range.max_type = hi.options().range.max_type;
-  merged->boost(boost);
+  merged->SetBoost(boost);
   return merged;
 }
 
@@ -148,10 +148,17 @@ bool MergeComplementaryRanges(And& node, const OptimizeContext& ctx) {
       if (!IsMaxOnly(hi) || hi.field_id() != lo.field_id()) {
         continue;
       }
+      // The merged range is scored once, so two halves scored by different
+      // scorers cannot be folded together.
+      if (children[i]->GetScorer() != children[j]->GetScorer()) {
+        continue;
+      }
       if (ctx.HasAnalyzer(lo.field_id())) {
         continue;
       }
+      const auto* scorer = children[i]->GetScorer();
       children[i] = MergeRangeBounds(lo, hi, node.merge_type());
+      children[i]->SetScorer(scorer);
       consumed[j] = true;
       changed = true;
       break;
@@ -192,7 +199,7 @@ bool RangeDegenerateRule::Apply(Filter::ptr& slot,
     auto by_term = std::make_unique<ByTerm>();
     *by_term->mutable_field_id() = node.field_id();
     by_term->mutable_options()->term = rng.min;
-    by_term->boost(node.Boost());
+    by_term->SetBoost(node.GetBoost());
     slot = std::move(by_term);
     return true;
   }
@@ -219,7 +226,7 @@ bool GranularRangeDegenerateRule::Apply(Filter::ptr& slot,
     auto by_term = std::make_unique<ByTerm>();
     *by_term->mutable_field_id() = node.field_id();
     by_term->mutable_options()->term = rng.min.front();
-    by_term->boost(node.Boost());
+    by_term->SetBoost(node.GetBoost());
     slot = std::move(by_term);
     return true;
   }

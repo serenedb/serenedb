@@ -37,6 +37,9 @@ inline constexpr std::string_view kModifierTSQueryTypeName = "TSQUERY_MODIFIER";
 // tokenize / boost. Only meaningful on a phrase; rejected elsewhere.
 inline constexpr std::string_view kSlopTypeName = "slop";
 
+inline constexpr std::string_view kScoreTypeName = "score";
+inline constexpr std::string_view kMergeTypeName = "merge";
+
 // TSQUERY leaf constructors (unprefixed). Produce a TSQUERY value;
 // stubs throw at runtime -- the filter builder claims them at bind.
 inline constexpr std::string_view kTSQPhrase = "ts_phrase";
@@ -133,8 +136,8 @@ void SearchStubFn(duckdb::DataChunk& args, duckdb::ExpressionState& state,
 catalog::Tokenizer::TokenizerWrapper AcquireTokenizer(
   duckdb::ClientContext& context, std::string_view name);
 
-std::shared_ptr<catalog::Tokenizer> ResolveCatalogTokenizer(
-  duckdb::ClientContext& context, std::string_view name);
+catalog::TokenizerRef ResolveCatalogTokenizer(duckdb::ClientContext& context,
+                                              std::string_view name);
 
 void RegisterSearchFunctions(duckdb::DatabaseInstance& db);
 

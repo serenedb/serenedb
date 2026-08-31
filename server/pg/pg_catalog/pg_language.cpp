@@ -62,8 +62,7 @@ template<>
 catalog::MaterializedData SystemTableSnapshot<PgLanguage>::GetTableData() {
   auto result = CreateColumns<PgLanguage>(kSampleData.size());
   for (size_t row = 0; row < kSampleData.size(); ++row) {
-    WriteData(result, kSampleData[row], kNullMask, row,
-              *_config.CatalogSnapshot());
+    WriteData(result, kSampleData[row], kNullMask, row, Roles());
   }
   return {std::move(result), kSampleData.size()};
 }

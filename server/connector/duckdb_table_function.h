@@ -39,9 +39,7 @@
 #include "basics/system-compiler.h"
 #include "catalog/identifiers/object_id.h"
 #include "catalog/inverted_index.h"
-#include "catalog/scorer_options.h"
 #include "catalog/table.h"
-#include "catalog/view.h"
 #include "connector/view_fast_path.h"
 
 namespace irs {
@@ -135,19 +133,19 @@ enum class TsDictTermUses : uint8_t {
 
 ENABLE_BITMASK_ENUM(TsDictTermUses);
 
-bool ScorePruneEnabled(const catalog::InvertedIndex* index,
-                       const std::optional<catalog::ScorerOptions>& scorer);
+// The scorer `index`'s persisted per-block bounds may be pruned against, or
+// null when they cannot be: no index, no query scorer, no bounds, or bounds a
+// different scorer wrote.
+const irs::Scorer* ResolvePruneScorer(const catalog::InvertedIndex* index,
+                                      const irs::Scorer* scorer);
 
 enum class ScanEntryKind : uint8_t {
   BaseTable,
   InvertedIndex,
-  SecondaryIndex,
   // A TableEngine::Search table: its iresearch store IS the table, so every
   // column is covered in `.col` and there is no separate lookup source.
   SearchTable,
 };
-
-constexpr catalog::Column::Id kInvalidColumnId = catalog::Column::kInvalidId;
 
 struct SereneDBScanBindData : public duckdb::FunctionData {
   enum class Kind : uint8_t {
@@ -155,17 +153,18 @@ struct SereneDBScanBindData : public duckdb::FunctionData {
     View,
   };
 
-  std::vector<catalog::Column::Id> column_ids;
+  std::vector<catalog::ColumnId> column_ids;
   std::vector<duckdb::LogicalType> column_types;
   duckdb::optional_ptr<duckdb::TableCatalogEntry> table_entry;
   ScanEntryKind entry_kind = ScanEntryKind::BaseTable;
 
-  std::shared_ptr<const catalog::InvertedIndex> inverted_index;
+  std::shared_ptr<const catalog::Index> inverted_index;
 
   // The iresearch snapshot plus the query's search configuration (stored
   // filter, scorer, offsets, ts-dict requests). Every scan bound through this
   // table function is a search scan, so `snapshot` is always set.
   std::shared_ptr<irs::Filter> stored_filter;
+  std::vector<std::shared_ptr<irs::Scorer>> filter_scorers;
   search::InvertedIndexSnapshotPtr snapshot;
 
   std::optional<catalog::ScorerOptions> text_scorer;
@@ -184,7 +183,7 @@ struct SereneDBScanBindData : public duckdb::FunctionData {
   // are iterated best-first by the column's per-file statistics, the
   // whole-file analogue of duckdb's RowGroupReorderer.
   struct ScanOrder {
-    catalog::Column::Id column;
+    catalog::ColumnId column;
     duckdb::OrderType order_type;
     duckdb::OrderByNullType null_order;
     duckdb::OrderByStatistics order_by;
@@ -195,8 +194,8 @@ struct SereneDBScanBindData : public duckdb::FunctionData {
   struct OffsetsRequest {
     // The field whose stored offsets the scan reads: the allocated term field
     // for a Search-table plain column, the column id otherwise.
-    catalog::Column::Id column_id;
-    catalog::Column::Id display_id = catalog::Column::kInvalidId;
+    catalog::ColumnId column_id;
+    catalog::ColumnId display_id = catalog::kInvalidColumnId;
     size_t limit = std::numeric_limits<size_t>::max();
     duckdb::idx_t get_col_idx = 0;
     OffsetsBindData* bind = nullptr;
@@ -271,20 +270,20 @@ struct SereneDBScanBindData : public duckdb::FunctionData {
 
   virtual std::string_view RelationName() const = 0;
 
-  virtual catalog::Column::Id ColumnIdByName(std::string_view name) const = 0;
+  virtual catalog::ColumnId ColumnIdByName(std::string_view name) const = 0;
 
-  virtual std::string_view ColumnNameById(catalog::Column::Id col_id) const = 0;
+  virtual std::string_view ColumnNameById(catalog::ColumnId col_id) const = 0;
 
   virtual duckdb::LogicalType ColumnTypeById(
-    catalog::Column::Id col_id) const = 0;
+    catalog::ColumnId col_id) const = 0;
 
-  std::string DisplayColumnName(catalog::Column::Id col_id) const;
+  std::string DisplayColumnName(catalog::ColumnId col_id) const;
 
   using ColumnVisitor =
-    std::function<void(catalog::Column::Id, const duckdb::LogicalType&)>;
+    std::function<void(catalog::ColumnId, const duckdb::LogicalType&)>;
   virtual void IterateColumns(const ColumnVisitor& cb) const = 0;
 
-  bool IsColumnNotNull(catalog::Column::Id col_id) const;
+  bool IsColumnNotNull(catalog::ColumnId col_id) const;
 
  protected:
   explicit SereneDBScanBindData(Kind k) : _kind{k} {}
@@ -293,9 +292,10 @@ struct SereneDBScanBindData : public duckdb::FunctionData {
   Kind _kind;
 };
 
+// A scan of a relation's own rows -- the base table, its inverted index read
+// by name, or a search table. Everything about the columns is read off
+// `table_entry`, which lists them with the same ids the postings carry.
 struct TableScanBindData final : public SereneDBScanBindData {
-  std::shared_ptr<catalog::Table> table;
-
   TableScanBindData() : SereneDBScanBindData(Kind::Table) {}
 
   duckdb::unique_ptr<duckdb::FunctionData> Copy() const final;
@@ -305,14 +305,19 @@ struct TableScanBindData final : public SereneDBScanBindData {
     duckdb::ClientContext& context) const final;
   ObjectId RelationId() const final;
   std::string_view RelationName() const final;
-  catalog::Column::Id ColumnIdByName(std::string_view name) const final;
-  std::string_view ColumnNameById(catalog::Column::Id col_id) const final;
-  duckdb::LogicalType ColumnTypeById(catalog::Column::Id col_id) const final;
+  catalog::ColumnId ColumnIdByName(std::string_view name) const final;
+  std::string_view ColumnNameById(catalog::ColumnId col_id) const final;
+  duckdb::LogicalType ColumnTypeById(catalog::ColumnId col_id) const final;
   void IterateColumns(const ColumnVisitor& cb) const final;
 };
 
 struct ViewScanBindData final : public SereneDBScanBindData {
-  std::shared_ptr<const catalog::PgSqlView> view;
+  // The view the scan projects, as the scan reads it: its identity, its name
+  // and its column names, which is everything the accessors below answer. The
+  // types are the column_types above. The definition stays on the entry.
+  ObjectId view_id;
+  std::string view_name;
+  std::vector<std::string> column_names;
   std::optional<ViewFastPath> fast_path;
 
   ViewScanBindData() : SereneDBScanBindData(Kind::View) {}
@@ -324,9 +329,9 @@ struct ViewScanBindData final : public SereneDBScanBindData {
     duckdb::ClientContext& context) const final;
   ObjectId RelationId() const final;
   std::string_view RelationName() const final;
-  catalog::Column::Id ColumnIdByName(std::string_view name) const final;
-  std::string_view ColumnNameById(catalog::Column::Id col_id) const final;
-  duckdb::LogicalType ColumnTypeById(catalog::Column::Id col_id) const final;
+  catalog::ColumnId ColumnIdByName(std::string_view name) const final;
+  std::string_view ColumnNameById(catalog::ColumnId col_id) const final;
+  duckdb::LogicalType ColumnTypeById(catalog::ColumnId col_id) const final;
   void IterateColumns(const ColumnVisitor& cb) const final;
 };
 
@@ -345,6 +350,8 @@ uint32_t ReadBoundedIntSetting(duckdb::ClientContext& context,
 
 std::optional<duckdb::LogicalType> GeneratedPkTypeOf(
   const SereneDBScanBindData& bind);
+
+std::optional<catalog::PkSpec> ViewPkSpecOf(const SereneDBScanBindData& bind);
 
 duckdb::TableFunction CreateIResearchScanFunction();
 

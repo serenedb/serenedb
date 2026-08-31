@@ -1,0 +1,154 @@
+control substitution on
+
+# A serenedb table's rows are checkpointed under the catalog entry that owns
+# them: the record is that entry's identifier plus the data, and the data file
+# holds no definition for it at all. The boot rebuilds the definition from the
+# catalog log and hands it the rows; getting that wrong would either refuse the
+# file or hand back an empty table.
+#
+# The crash is only a way to get a restart -- everything is checkpointed first,
+# so what is read back comes out of the file and not out of a WAL replay.
+
+
+statement ok
+CREATE TABLE cdm_plain (a INTEGER, b TEXT);
+
+
+statement ok
+INSERT INTO cdm_plain SELECT i, 'v' || i FROM generate_series(1, 500) t(i);
+
+
+statement ok
+CREATE INDEX cdm_plain_idx ON cdm_plain (a);
+
+
+statement ok
+CREATE TABLE cdm_pk (id INTEGER PRIMARY KEY, note TEXT);
+
+
+statement ok
+INSERT INTO cdm_pk VALUES (1, 'x'), (2, 'y');
+
+
+# No row store, so no manifest record -- and the boot must not wait for one.
+statement ok
+CREATE TABLE cdm_search (id INTEGER, txt TEXT) WITH (storage='search');
+
+
+statement ok
+INSERT INTO cdm_search VALUES (1, 'hello world'), (2, 'goodbye');
+
+
+statement ok
+CREATE VIEW cdm_view AS SELECT a, b FROM cdm_plain WHERE a < 3;
+
+
+statement ok
+CHECKPOINT;
+
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+statement error connection closed
+SELECT 1;
+
+
+connection after_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT 1 AS one;
+----
+one
+1
+
+
+connection after_crash
+query
+SELECT count(*) AS n, sum(a) AS s FROM cdm_plain;
+----
+n	s
+500	125250
+
+
+connection after_crash
+query
+SELECT a, b FROM cdm_plain WHERE a = 250;
+----
+a	b
+250	v250
+
+
+connection after_crash
+query
+SELECT a, b FROM cdm_view ORDER BY a;
+----
+a	b
+1	v1
+2	v2
+
+
+connection after_crash
+query
+SELECT id, note FROM cdm_pk ORDER BY id;
+----
+id	note
+1	x
+2	y
+
+
+# The primary key's ART came back with the rows, not empty.
+connection after_crash
+statement error
+INSERT INTO cdm_pk VALUES (1, 'dup');
+----
+db error: ERROR: Duplicate key "id: 1" violates primary key constraint.
+
+
+connection after_crash
+query
+SELECT id, txt FROM cdm_search ORDER BY id;
+----
+id	txt
+1	hello world
+2	goodbye
+
+
+# A second checkpoint over the restored tables writes the manifest again from
+# the entries the boot rebuilt, which is what makes the round trip repeatable.
+connection after_crash
+statement ok
+INSERT INTO cdm_plain VALUES (501, 'v501');
+
+
+connection after_crash
+statement ok
+CHECKPOINT;
+
+
+connection after_crash
+query
+SELECT count(*) AS n FROM cdm_plain;
+----
+n
+501
+
+
+connection after_crash
+statement ok
+DROP VIEW cdm_view;
+
+
+connection after_crash
+statement ok
+DROP TABLE cdm_plain;
+
+
+connection after_crash
+statement ok
+DROP TABLE cdm_pk;
+
+
+connection after_crash
+statement ok
+DROP TABLE cdm_search;

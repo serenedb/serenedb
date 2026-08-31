@@ -33,7 +33,10 @@ struct PgAttrdef {
   Oid oid;
   Oid adrelid;
   int16_t adnum;
-  PgNodeTree adbin;
+  // PG's pg_node_tree, carried as the deparsed expression: nothing here reads
+  // a node tree, and every caller reaches it through pg_get_expr, whose whole
+  // job is to hand back exactly this text.
+  Text adbin;
 };
 // NOLINTEND
 

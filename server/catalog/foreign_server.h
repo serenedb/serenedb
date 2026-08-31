@@ -21,13 +21,15 @@
 #pragma once
 
 #include <cstdint>
+#include <duckdb/parser/parsed_data/create_info.hpp>
 #include <memory>
 #include <span>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
-#include "catalog/object.h"
+#include "catalog/entry.h"
 
 namespace duckdb {
 
@@ -39,18 +41,35 @@ class Connection;
 }  // namespace duckdb
 namespace sdb::catalog {
 
-class ForeignServer : public Object {
+// One foreign server, in the form a catalog entry is built from. duckdb has a
+// FOREIGN_SERVER_ENTRY but no CreateInfo under it, so this is one of ours.
+// Owner and ACL live on the entry: duckdb's CreateInfo has nowhere to put them.
+class CreateForeignServerInfo final : public duckdb::CreateInfo {
  public:
-  static std::shared_ptr<ForeignServer> Deserialize(duckdb::Deserializer& src,
-                                                    ReadContext ctx);
+  CreateForeignServerInfo()
+    : duckdb::CreateInfo{duckdb::CatalogType::FOREIGN_SERVER_ENTRY} {}
+  CreateForeignServerInfo(ObjectId id, ObjectId database_id,
+                          std::string_view name, std::string fdw_name,
+                          std::vector<std::string> option_keys,
+                          std::vector<std::string> option_values);
 
   void Serialize(duckdb::Serializer& sink) const final;
-  std::shared_ptr<Object> Clone() const final;
+  std::string ToString() const final;
+  duckdb::unique_ptr<duckdb::CreateInfo> Copy() const final;
 
-  ForeignServer(Permissions perm, ObjectId schema_id, ObjectId id,
-                std::string_view name, std::string fdw_name,
-                std::vector<std::string> option_keys,
-                std::vector<std::string> option_values);
+  static duckdb::unique_ptr<duckdb::CreateInfo> Deserialize(
+    duckdb::Deserializer& src);
+
+  ObjectId GetId() const noexcept { return ObjectId{oid}; }
+  void SetId(ObjectId id) noexcept { oid = id.id(); }
+
+  ObjectId GetDatabaseId() const noexcept { return ObjectId{parent_oid}; }
+  void SetDatabaseId(ObjectId id) noexcept { parent_oid = id.id(); }
+  ObjectId GetParentId() const noexcept { return GetDatabaseId(); }
+
+  std::string_view GetName() const noexcept {
+    return GetQualifiedName().Name().GetIdentifierName();
+  }
 
   std::string_view GetFdwName() const noexcept { return _fdw_name; }
 
@@ -71,11 +90,9 @@ class ForeignServer : public Object {
 };
 
 // Identity of the foreign-server attachment currently holding `server_name`, or
-// 0 when no foreign-server attachment holds it. The catalog row and the
-// instance-global DuckDB attachment are separate state, so a detach names the
-// attachment it means to remove: capture the id before changing the row, and a
-// concurrent same-named CREATE's newer attachment can never be torn down by an
-// older DROP's detach.
+// 0 when no foreign-server attachment holds it. Capture the id before changing
+// the catalog row: a detach names the attachment it means to remove, so an
+// older DROP can never tear down a concurrent same-named CREATE's attachment.
 uint64_t ForeignServerAttachmentId(std::string_view server_name);
 
 // A foreign server whose attachment outlived its catalog row, with the identity
@@ -91,8 +108,7 @@ bool IsSupportedFdw(std::string_view fdw_name);
 // The supported FDW names, comma-separated -- for error hints.
 std::string SupportedFdwList();
 
-// The outcome of RunForeignServerAttach: the FDW is not one we implement, the
-// attach succeeded, or the connector rejected it (Failed carries the message).
+// Outcome of RunForeignServerAttach; Failed carries the connector's message.
 struct ForeignServerAttachResult {
   enum class Status : uint8_t {
     Unsupported,
@@ -108,21 +124,15 @@ struct ForeignServerAttachResult {
 // Registers the transient secret, runs the ATTACH on `conn`, drops the secret,
 // and reports the outcome. Credentials come from the server's OPTIONS; the
 // attach alias is the server name.
-ForeignServerAttachResult RunForeignServerAttach(duckdb::Connection& conn,
-                                                 const ForeignServer& server);
+ForeignServerAttachResult RunForeignServerAttach(
+  duckdb::Connection& conn, const CreateForeignServerInfo& server);
 
-// Best-effort DETACH of a server's live (instance-global) DuckDB attachment,
-// on a fresh engine connection. Used by DROP SERVER and by the DROP SCHEMA /
-// DROP DATABASE cascade sweeps -- the generic drop plan removes catalog state
-// only, never the attachment. The attachment may legitimately be absent (boot
-// replay skips a down remote), so errors are swallowed.
-// Detaches `server_name` only while `attachment_id` still holds that alias, so
-// it can neither destroy a newer attachment nor a same-named serenedb database.
-// A zero id means nothing was attached when the caller looked, and is a no-op.
+// Best-effort DETACH of a server's live attachment (drop plans remove catalog
+// state only, never the attachment); errors are swallowed -- boot replay may
+// have skipped a down remote. Detaches only while `attachment_id` still holds
+// the alias, so it can destroy neither a newer attachment nor a same-named
+// serenedb database; a zero id is a no-op.
 void DetachForeignServerAttachment(std::string_view server_name,
                                    uint64_t attachment_id);
-
-// Quote an SQL identifier with double quotes, doubling any embedded quote.
-std::string QuoteSqlIdentifier(std::string_view name);
 
 }  // namespace sdb::catalog

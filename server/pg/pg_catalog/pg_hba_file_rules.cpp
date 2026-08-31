@@ -59,10 +59,9 @@ catalog::MaterializedData SystemTableSnapshot<PgHbaFileRule>::GetTableData() {
     });
   }
 
-  auto catalog = _config.CatalogSnapshot();
   auto result = CreateColumns<PgHbaFileRule>(values.size());
   for (size_t row = 0; row < values.size(); ++row) {
-    WriteData(result, values[row], /*null_mask=*/0, row, *catalog);
+    WriteData(result, values[row], /*null_mask=*/0, row, Roles());
   }
   return {std::move(result), values.size()};
 }

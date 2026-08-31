@@ -21,42 +21,42 @@
 #pragma once
 
 #include <duckdb.hpp>
-#include <duckdb/transaction/transaction.hpp>
-#include <duckdb/transaction/transaction_manager.hpp>
+#include <duckdb/transaction/duck_transaction_manager.hpp>
 
-namespace sdb {
-
-class ConnectionContext;
-}
+#include "catalog/log/duckdb_global_catalog.h"
 
 namespace sdb::connector {
 
-class SereneDBTransaction final : public duckdb::Transaction {
+// DDL on a serenedb database runs on a real DuckTransaction so it gets the undo
+// buffer, commit-id stamping and rollback that CatalogSet mutations require --
+// they call DuckTransactionManager::Get(), which throws for a foreign manager.
+//
+// The rows are in this attachment, so a statement writing a serenedb table
+// writes exactly one database and occupies the single-writable-db slot like any
+// duckdb table. What it may also do is state something in the catalog log,
+// which every serenedb attachment shares -- see CatalogLog() below.
+class SereneDBTransactionManager final : public duckdb::DuckTransactionManager {
  public:
-  SereneDBTransaction(duckdb::TransactionManager& manager,
-                      duckdb::ClientContext& context);
-
-  void SetConnectionContext(ConnectionContext* ctx) { _connection_ctx = ctx; }
-  ConnectionContext* GetConnectionContext() const { return _connection_ctx; }
-
- private:
-  ConnectionContext* _connection_ctx = nullptr;
-};
-
-class SereneDBTransactionManager final : public duckdb::TransactionManager {
- public:
-  bool ForwardWrites() const final { return true; }
   explicit SereneDBTransactionManager(duckdb::AttachedDatabase& db);
 
-  duckdb::Transaction& StartTransaction(duckdb::ClientContext& context) final;
-  duckdb::ErrorData CommitTransaction(duckdb::ClientContext& context,
-                                      duckdb::Transaction& transaction) final;
-  void RollbackTransaction(duckdb::Transaction& transaction) final;
   void Checkpoint(duckdb::ClientContext& context, bool force) final;
 
- private:
-  duckdb::mutex _lock;
-  std::vector<duckdb::unique_ptr<SereneDBTransaction>> _transactions;
+  duckdb::ErrorData CommitTransaction(duckdb::ClientContext& context,
+                                      duckdb::Transaction& transaction) final;
+
+  void RollbackTransaction(duckdb::Transaction& transaction) final;
+
+  // This database's rows are its own, but what its catalog states is recorded
+  // in the cluster catalog log -- the same one every other serenedb attachment
+  // records into.
+  duckdb::optional_ptr<duckdb::WriteAheadLog> CatalogLog() final {
+    return catalog::ClusterCatalogWal();
+  }
+
+  // As the global manager does: the run ends with the walk that wrote it.
+  void FlushCatalogLog() final {
+    catalog::EndCommittingCatalogRun(/*committed=*/true);
+  }
 };
 
 }  // namespace sdb::connector

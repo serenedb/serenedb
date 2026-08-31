@@ -63,8 +63,8 @@
 #include "pg/connection_context.h"
 #include "pg/errcodes.h"
 #include "pg/sql_exception_macro.h"
-#include "search/search_table.h"
 #include "query/config.h"
+#include "search/search_table.h"
 
 namespace sdb::optimizer {
 

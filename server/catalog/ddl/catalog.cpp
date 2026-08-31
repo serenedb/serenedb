@@ -253,9 +253,16 @@ void OpenBootStorage() {
         }
       });
     for (const auto* table : tables) {
+      // The declared key columns are term-indexed under their own ids, so the
+      // shard needs them to build its merged config.
+      std::vector<ColumnId> pk_columns;
+      const auto& columns = table->GetColumns();
+      for (const auto index : table->GetPKColumnIndexes()) {
+        pk_columns.emplace_back(columns.GetColumn(index).CatalogOid());
+      }
       table->SetSearchData(search::SearchTable::Create(
         database_id, ObjectId{table->ParentSchema().oid}, ObjectId{table->oid},
-        /*is_new=*/false, table->SearchOptions()));
+        /*is_new=*/false, table->SearchOptions(), std::move(pk_columns)));
     }
     // The sequences: replay read each definition mid-log, where the counter
     // records after it had not been folded in yet.
@@ -267,8 +274,17 @@ void OpenBootStorage() {
     // through GetData(), so the segments have to be open by then.
     for (const auto* index :
          catalog::DatabaseInvertedIndexes(nullptr, database_id)) {
+      const auto& inverted = InvertedInfo(index->Definition());
+      // A Search-table index shares the table's own store: it stays
+      // storage-less and folds its columns into the shard's merged config.
+      const auto* relation = catalog::FindIn<SereneDBTableEntry>(
+        nullptr, database_id, index->GetRelationId());
+      if (relation != nullptr && relation->IsSearchTable()) {
+        relation->GetSearchData()->MergeIndexConfig(inverted);
+        continue;
+      }
       index->SetInvertedData(search::InvertedIndexStorage::Create(
-        database_id, InvertedInfo(index->Definition()), /*is_new=*/false));
+        database_id, inverted, /*is_new=*/false));
     }
   }
 }

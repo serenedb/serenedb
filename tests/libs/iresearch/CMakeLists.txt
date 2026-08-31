@@ -36,6 +36,7 @@ set(iresearch-tests_sources
     ./index/doc_generator.cpp
     ./index/assert_format.cpp
     ./index/buffered_column_test.cpp
+    ./index/index_adopt_tests.cpp
     ./index/index_column_tests.cpp
     ./index/index_meta_tests.cpp
     ./index/index_profile_tests.cpp

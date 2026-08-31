@@ -70,7 +70,8 @@ void WriteTableTags(TableTags& tags, TableEngine engine,
   // is the one writer of all four keys and it must be idempotent.
   for (const auto& key :
        {kStorageOption, kRefreshIntervalSetting, kCompactionIntervalSetting,
-        kCleanupIntervalStepSetting, kGeneratedPkSeqTag}) {
+        kCleanupIntervalStepSetting, kSegmentMemoryMaxSetting,
+        kGeneratedPkSeqTag}) {
     if (const auto it = tags.find(std::string{key}); it != tags.end()) {
       tags.erase(it);
     }
@@ -89,6 +90,8 @@ void WriteTableTags(TableTags& tags, TableEngine engine,
                 absl::StrCat(search_options.compaction_interval_ms));
     tags.insert(std::string{kCleanupIntervalStepSetting},
                 absl::StrCat(search_options.cleanup_interval_step));
+    tags.insert(std::string{kSegmentMemoryMaxSetting},
+                absl::StrCat(search_options.segment_memory_max));
   }
   if (generated_pk_seq_id.isSet()) {
     tags.insert(std::string{kGeneratedPkSeqTag},
@@ -110,6 +113,7 @@ persistence::SearchTableOptions ReadSearchOptionTags(
       TagUint<uint32_t>(tags, kCompactionIntervalSetting),
     .cleanup_interval_step =
       TagUint<uint32_t>(tags, kCleanupIntervalStepSetting),
+    .segment_memory_max = TagUint<uint64_t>(tags, kSegmentMemoryMaxSetting),
   };
 }
 

@@ -201,18 +201,19 @@ a	b
 9	nine
 
 
-# All access methods rejected (including USING inverted -- iresearch on
-# top of iresearch makes no sense).
+# A non-inverted index is rejected outright (only inverted is supported on a
+# search table). An inverted index is supported, but only on an empty table --
+# indexing existing rows is not yet implemented -- and search_dml has rows.
 statement error
 CREATE INDEX search_dml_idx ON search_dml (b);
 ----
-db error: ERROR: CREATE INDEX on a search-backed table is not yet supported
+db error: ERROR: only inverted indexes are supported on a search-backed table
 
 
 statement error
 CREATE INDEX search_dml_inv_idx ON search_dml USING inverted (b);
 ----
-db error: ERROR: CREATE INDEX on a search-backed table is not yet supported
+db error: ERROR: CREATE INDEX on a non-empty search-backed table is not yet supported (indexing existing rows)
 
 
 # Search tables have a fixed iresearch schema: structural ALTERs are rejected.
@@ -920,3 +921,67 @@ DROP TABLE search_setvar;
 
 statement ok
 RESET compaction_interval;
+
+
+# segment_memory_max: the shared iresearch segment-writer memory budget in bytes
+# -- the same knob (and validation) as an inverted index's
+# WITH (segment_memory_max = ...). A search table stores its columns + index in
+# one iresearch store, so it honors the same setting.
+statement ok
+CREATE TABLE search_seg (a INTEGER PRIMARY KEY, b TEXT)
+  WITH (storage = 'search', segment_memory_max = 16777216);
+
+statement ok
+INSERT INTO search_seg VALUES (1, 'red'), (2, 'green');
+
+statement ok
+VACUUM (REFRESH_TABLE) search_seg;
+
+query
+SELECT COUNT(*) FROM search_seg;
+----
+count
+2
+
+statement ok
+DROP TABLE search_seg;
+
+
+# 0 means "unlimited" and is disallowed, matching the inverted-index knob.
+statement error
+CREATE TABLE search_seg_zero (a INTEGER PRIMARY KEY)
+  WITH (storage = 'search', segment_memory_max = 0);
+----
+db error: ERROR: invalid value for parameter "segment_memory_max": "0"
+
+
+# A non-integer literal is rejected through the same validator.
+statement error
+CREATE TABLE search_seg_bad (a INTEGER PRIMARY KEY)
+  WITH (storage = 'search', segment_memory_max = 'x');
+----
+db error: ERROR: invalid value for parameter "segment_memory_max": "x"
+
+
+# segment_memory_max is search/inverted-scoped, so it is rejected on a plain
+# transactional table (as the interval options are).
+statement error
+CREATE TABLE txn_seg (a INTEGER PRIMARY KEY)
+  WITH (storage = 'transactional', segment_memory_max = 16777216);
+----
+db error: ERROR: unrecognized parameter "segment_memory_max"
+
+
+# The shared config variable governs the default when no WITH override is given.
+statement ok
+SET segment_memory_max = 8388608;
+
+statement ok
+CREATE TABLE search_seg_setvar (a INTEGER PRIMARY KEY, b TEXT)
+  WITH (storage = 'search');
+
+statement ok
+DROP TABLE search_seg_setvar;
+
+statement ok
+RESET segment_memory_max;

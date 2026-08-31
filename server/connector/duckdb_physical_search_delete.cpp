@@ -22,6 +22,7 @@
 
 #include <duckdb/common/types/column/column_data_collection.hpp>
 #include <duckdb/common/types/data_chunk.hpp>
+#include <duckdb/common/vector/struct_vector.hpp>
 #include <memory>
 #include <optional>
 #include <shared_mutex>
@@ -168,6 +169,7 @@ duckdb::SinkResultType SereneDBSearchDelete::SinkImpl(
   if constexpr (kTable) {
     wal_pks.reserve(num_rows);
   }
+
   std::string pk;
   for (duckdb::idx_t row = 0; row < num_rows; ++row) {
     pk.clear();

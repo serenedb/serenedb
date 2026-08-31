@@ -1,0 +1,92 @@
+# Field-id stability across a restart. A search table's iresearch store is
+# SHARED by all its indexes; the id allocator (gCurrentTick / NextId) is
+# in-memory and re-derived at boot only from LIVE catalog ids. A dropped index's
+# field ids -- gone from the catalog but still occupying their numeric slots in
+# the shared store while the table's rows stay live -- must NOT be re-issued to a
+# new index. SearchTable::OpenWriter floors the allocator from the store's own
+# field ids at boot (skipping the reserved system fields), so after a restart new
+# ids sit above everything the store already holds. This exercises that path:
+# drop an index (its field lingers), crash + restart, then keep allocating.
+
+control substitution on
+
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+CREATE TEXT SEARCH DICTIONARY db(
+    template = 'text', locale = 'en_US.UTF-8', case = 'lower',
+    stemming = false, accent = false, frequency = true, position = true);
+
+statement ok
+CREATE TABLE t(id BIGINT PRIMARY KEY, body TEXT)
+  WITH (storage = 'search', compaction_interval = 0);
+
+statement ok
+CREATE INDEX ia ON t USING inverted (body);
+
+# ib is created last, so it holds the highest allocated field id.
+statement ok
+CREATE INDEX ib ON t USING inverted (body db);
+
+statement ok
+INSERT INTO t VALUES (1, 'foo'), (2, 'bar');
+
+statement ok
+VACUUM (REFRESH_TABLE) t;
+
+# Drop the highest-id index. Its field id is gone from the catalog but its
+# postings linger in the shared store (the rows stay live).
+statement ok
+DROP INDEX ib;
+
+statement ok
+RESET sdb_faults;
+
+# Crash after the WAL commit so the instance restarts (row 3 replays too).
+statement ok
+SET sdb_faults = 'crash_after_search_wal_commit';
+
+statement error connection closed
+INSERT INTO t VALUES (3, 'baz');
+
+# --- restart ---
+connection after_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT indexname FROM pg_indexes WHERE tablename = 't' ORDER BY indexname;
+----
+indexname
+ia
+t_pkey
+
+# The surviving index still works, including the WAL-replayed row.
+connection after_crash
+query
+SELECT id FROM ia WHERE body @@ 'baz';
+----
+id
+3
+
+# Allocate a NEW index after the restart. Its field id is floored above the
+# dropped index's lingering store ids, so it neither re-issues ib's slot nor
+# lands in the reserved system range -- it just works.
+connection after_crash
+statement ok
+CREATE TABLE t2(id BIGINT PRIMARY KEY, body TEXT)
+  WITH (storage = 'search', compaction_interval = 0);
+
+connection after_crash
+statement ok
+CREATE INDEX i2 ON t2 USING inverted (body db);
+
+connection after_crash
+statement ok
+INSERT INTO t2 VALUES (10, 'hello'), (11, 'world');
+
+connection after_crash
+statement ok
+VACUUM (REFRESH_TABLE) t2;
+
+connection after_crash
+query
+SELECT id FROM i2 WHERE body @@ 'hello';
+----
+id
+10

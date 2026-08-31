@@ -170,6 +170,11 @@ struct IndexWriterOptions : public SegmentOptions {
   // corruption from multiple index_writers
   bool lock_repository = true;
 
+  // Remove files not referenced by the committed meta at Make(). false == keep
+  // them until a host WAL has replayed and adopted them, and floor the segment
+  // counter above every id in the directory so none is overwritten.
+  bool cleanup_on_open = true;
+
   // Enables the typed .col on segments allocated by this writer.
   // Lifetime of `*db` must extend until IndexWriter shutdown.
   duckdb::DatabaseInstance* db = nullptr;
@@ -204,6 +209,8 @@ struct CommitOnFlush {
 class IndexWriter : private util::Noncopyable {
  public:
   struct SegmentContext;
+  // Defined below, but named by Transaction::FlushAndFsync above it.
+  struct FlushedSegment;
 
  private:
   struct FlushContext;
@@ -382,7 +389,9 @@ class IndexWriter : private util::Noncopyable {
   class Transaction : private util::Noncopyable {
    public:
     Transaction() = default;
-    explicit Transaction(IndexWriter& writer) noexcept : _writer{&writer} {}
+    explicit Transaction(IndexWriter& writer,
+                         bool exclusive_segment = false) noexcept
+      : _writer{&writer}, _exclusive_segment{exclusive_segment} {}
 
     Transaction(Transaction&& other) = default;
     Transaction& operator=(Transaction&& other) = default;
@@ -476,6 +485,13 @@ class IndexWriter : private util::Noncopyable {
       return Commit();
     }
 
+    // Serialize the active segment and fsync every segment this transaction
+    // flushed, without committing; returns their metadata, valid until commit
+    // or abort. Throws IoError if the fsync fails. Requires an exclusive
+    // segment (see GetBatch), and marks durability of the whole transaction --
+    // call it once, with nothing added afterwards.
+    std::span<const FlushedSegment> FlushAndFsync();
+
     bool FlushAndCommit(uint64_t last_tick) noexcept {
       try {
         Flush();
@@ -562,6 +578,10 @@ class IndexWriter : private util::Noncopyable {
     // We can use active_.Segment()->queries_.size() for same purpose
     uint64_t _queries{0};
     std::shared_ptr<const IndexFieldOptions> _field_options;
+    std::function<uint64_t(uint64_t)> _tick_source;
+    // Never resume a pooled segment holding another transaction's documents;
+    // see GetBatch.
+    bool _exclusive_segment{false};
   };
   static_assert(std::is_nothrow_move_constructible_v<Transaction>);
   static_assert(std::is_nothrow_move_assignable_v<Transaction>);
@@ -569,7 +589,13 @@ class IndexWriter : private util::Noncopyable {
   // Returns a context allowing index modification operations
   // All document insertions will be applied to the same segment on a
   // best effort basis, e.g. a flush_all() will cause a segment switch
-  Transaction GetBatch() noexcept { return Transaction{*this}; }
+  // `exclusive_segment` starts from an empty segment instead of resuming a
+  // pooled one, so every segment flushed holds only this transaction's
+  // documents -- required to record them in a host WAL. Costs the pooled reuse
+  // that bakes many small transactions into one segment, so it suits bulk only.
+  Transaction GetBatch(bool exclusive_segment = false) noexcept {
+    return Transaction{*this, exclusive_segment};
+  }
 
   using ptr = std::shared_ptr<IndexWriter>;
 
@@ -618,6 +644,11 @@ class IndexWriter : private util::Noncopyable {
                            const IndexFieldOptions* field_options = nullptr,
                            Format::ptr codec = nullptr,
                            const MergeWriter::FlushProgress& progress = {});
+
+  // Adopts a segment whose files already exist in this writer's directory --
+  // Import without the data copy.
+  bool AdoptSegment(std::string_view meta_file, const Format::ptr& codec,
+                    uint64_t tick);
 
   // Imports index from the specified index reader into new segment
   // Reader the index reader to import.
@@ -771,6 +802,8 @@ class IndexWriter : private util::Noncopyable {
     DocsMask docs_mask;
     DocumentMask document_mask;
     bool was_flush = false;
+    // A meta file matching this segment is already on disk
+    bool meta_on_disk = false;
 
    private:
     // starting doc_id that should be added to docs_mask
@@ -1020,7 +1053,9 @@ class IndexWriter : private util::Noncopyable {
 
   // Return a usable segment or a nullptr segment if retry is required
   // (e.g. no free segments available)
-  ActiveSegmentContext GetSegmentContext();
+  // `exclusive` skips the pending free-list, so the caller gets a segment with
+  // no other transaction's documents in it (see GetBatch).
+  ActiveSegmentContext GetSegmentContext(bool exclusive = false);
 
   // Return options for SegmentWriter. `field_options` (nullable, merge path)
   // overrides the construction-time fallback for a single compaction.

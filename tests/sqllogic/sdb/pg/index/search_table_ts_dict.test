@@ -1,0 +1,65 @@
+# ts_dict aggregates over a search-table index. ts_dict_agg/count/freq/min/max
+# read the index's term dictionary through a direct index scan. On a search
+# table a plain column's terms live under the index's own allocated field (not
+# the column id), so the ts_dict planner must read from that field -- otherwise
+# it reads the empty column id and returns nothing. Commit-time only, so rows
+# are observed after VACUUM (REFRESH_TABLE).
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY d1(
+    template = 'text', locale = 'en_US.UTF-8', case = 'lower',
+    stemming = false, accent = false, frequency = true, position = true
+);
+
+statement ok
+CREATE TABLE t (id BIGINT PRIMARY KEY, an TEXT, tag TEXT)
+  WITH (storage='search', compaction_interval=0);
+
+# One index covering an analyzer column and a keyword column.
+statement ok
+CREATE INDEX i_an ON t USING inverted (an d1, tag);
+
+statement ok
+INSERT INTO t VALUES
+  (1, 'quick brown fox', 'red'),
+  (2, 'lazy fox', 'red'),
+  (3, 'quick dog', 'blue');
+
+statement ok
+VACUUM (REFRESH_TABLE) t;
+
+# The analyzer column's tokenized terms.
+query
+SELECT list_sort(ts_dict_agg(an)) AS terms FROM i_an;
+----
+terms
+{brown,dog,fox,lazy,quick}
+
+# The keyword column's whole-value terms.
+query
+SELECT list_sort(ts_dict_agg(tag)) AS terms FROM i_an;
+----
+terms
+{blue,red}
+
+# Per-term document counts.
+query
+SELECT list_sort(ts_dict_count(an)) AS counts FROM i_an;
+----
+counts
+{1,1,1,2,2}
+
+# Min / max term.
+query
+SELECT ts_dict_min(an) AS lo, ts_dict_max(an) AS hi FROM i_an;
+----
+lo	hi
+brown	quick
+
+# Faceted: the dictionary restricted to documents matching a predicate (docs 1
+# and 3 contain 'quick').
+query
+SELECT list_sort(ts_dict_agg(an)) AS terms FROM i_an WHERE an @@ 'quick';
+----
+terms
+{brown,dog,fox,quick}

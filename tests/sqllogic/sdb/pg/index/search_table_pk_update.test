@@ -1,0 +1,117 @@
+# User-PK search table DML through the synthetic-rowid path: a declared PRIMARY
+# KEY is enforced as a (future) unique index, but row identity is always the
+# internal generated PK, so UPDATE/DELETE address rows by that synthetic handle.
+# Covers UPDATE of a non-PK column, UPDATE of the PK column itself (stable
+# identity, no composite-key rewrite), DELETE, and delete-then-reinsert of the
+# same PK. Search tables are commit-time-only, so each mutation is observed
+# after VACUUM (REFRESH_TABLE).
+
+statement ok
+CREATE TABLE pt (pk BIGINT PRIMARY KEY, x BIGINT, s TEXT)
+  WITH (storage='search', compaction_interval=0);
+
+
+statement ok
+INSERT INTO pt VALUES (1, 10, 'a'), (2, 20, 'b'), (3, 30, 'c'), (4, 40, 'd');
+
+
+statement ok
+VACUUM (REFRESH_TABLE) pt;
+
+
+query
+SELECT pk, x, s FROM pt ORDER BY pk;
+----
+pk	x	s
+1	10	a
+2	20	b
+3	30	c
+4	40	d
+
+
+# UPDATE a non-PK column: identity (pk) unchanged.
+statement ok
+UPDATE pt SET x = 200 WHERE pk = 2;
+
+
+statement ok
+VACUUM (REFRESH_TABLE) pt;
+
+
+query
+SELECT pk, x, s FROM pt ORDER BY pk;
+----
+pk	x	s
+1	10	a
+2	200	b
+3	30	c
+4	40	d
+
+
+# UPDATE the PK column itself (3 -> 33): the synthetic rowid keeps identity, the
+# other columns carry over, and the new PK value is visible.
+statement ok
+UPDATE pt SET pk = 33 WHERE pk = 3;
+
+
+statement ok
+VACUUM (REFRESH_TABLE) pt;
+
+
+query
+SELECT pk, x, s FROM pt ORDER BY pk;
+----
+pk	x	s
+1	10	a
+2	200	b
+4	40	d
+33	30	c
+
+
+query
+SELECT pk, x, s FROM pt WHERE pk = 33;
+----
+pk	x	s
+33	30	c
+
+
+# DELETE by PK.
+statement ok
+DELETE FROM pt WHERE pk = 1;
+
+
+statement ok
+VACUUM (REFRESH_TABLE) pt;
+
+
+query
+SELECT count(*) AS c FROM pt;
+----
+c
+3
+
+
+# Re-insert the deleted PK with new values: resolves to a single live row.
+statement ok
+INSERT INTO pt VALUES (1, 111, 'z');
+
+
+statement ok
+VACUUM (REFRESH_TABLE) pt;
+
+
+query
+SELECT pk, x, s FROM pt ORDER BY pk;
+----
+pk	x	s
+1	111	z
+2	200	b
+4	40	d
+33	30	c
+
+
+query
+SELECT pk, x, s FROM pt WHERE pk = 1;
+----
+pk	x	s
+1	111	z

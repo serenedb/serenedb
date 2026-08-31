@@ -1513,8 +1513,12 @@ duckdb::unique_ptr<duckdb::LogicalOperator> SereneDBCatalog::BindCreateIndex(
       return duckdb::Catalog::BindCreateIndex(binder, stmt, target,
                                               std::move(plan));
     }
-    connector::RejectIfSearchTable(RequireBaseTable(table).GetEngine(),
-                                   "CREATE INDEX");
+    // A Search table takes an inverted index over its own store, so this is a
+    // narrower gate than RejectIfSearchTable: only the kind and the
+    // index-existing-rows limit.
+    connector::ValidateSearchTableCreateIndex(
+      RequireBaseTable(table),
+      stmt.info->Cast<duckdb::CreateIndexInfo>().index_type);
     // A plain index is duckdb's ART in full -- bind, plan, build -- whatever
     // serenedb calls the kind; SereneDBSchemaEntry::CreateIndex files the
     // record when the build lands. Only an inverted index needs the bind below.
@@ -1928,8 +1932,13 @@ duckdb::unique_ptr<duckdb::LogicalOperator> SereneDBCatalog::BindCreateIndex(
       for (auto pos : projection) {
         get.types.push_back(rel_columns[pos].second);
       }
-      get.AddColumnId(duckdb::COLUMN_IDENTIFIER_ROW_ID);
-      get.types.push_back(duckdb::LogicalType::ROW_TYPE);
+      // A Search-table index is storage-less and never backfilled here (the
+      // table has to be empty), so it needs no base rowid to bridge doc-id
+      // spaces.
+      if (!sdb_entry->IsSearchTable()) {
+        get.AddColumnId(duckdb::COLUMN_IDENTIFIER_ROW_ID);
+        get.types.push_back(duckdb::LogicalType::ROW_TYPE);
+      }
     }
     SDB_ASSERT(get.bind_data,
                "base-table LogicalGet missing SereneDB bind_data");

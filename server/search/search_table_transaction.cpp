@@ -59,10 +59,10 @@ void SearchTableTransaction::AddParallelSearchTransaction(
   w.transactions.push_back(std::move(trx));
 }
 
-void SearchTableTransaction::AddReferences(
+void SearchTableTransaction::AddSegments(
   const std::shared_ptr<SearchTable>& shard,
-  std::vector<SearchDbWal::PendingChunk>&& chunks) {
-  _changes[shard->GetTableId()].AppendReference(std::move(chunks));
+  std::vector<SearchDbWal::SegmentRef>&& segments) {
+  _changes[shard->GetTableId()].AppendSegments(std::move(segments));
 }
 
 void SearchTableTransaction::AddInlineInsertChunk(
@@ -176,30 +176,29 @@ uint64_t SearchTableTransaction::AppendCommit() {
 
     for (auto& op : cit->second.ops) {
       if (op.IsTruncate()) {
-        ops.push_back(SearchDbWal::Op{nullptr, {}, {}, {}, /*truncate=*/true});
+        ops.push_back(SearchDbWal::Op{.truncate = true});
         break;
       }
       if (op.IsDelete()) {
         ops.push_back(SearchDbWal::Op{
-          nullptr, {}, {}, std::span<const std::string>{op.delete_pks}});
+          .delete_pks = std::span<const std::string>{op.delete_pks}});
         continue;
       }
       if (op.collection && op.collection->Count() > 0) {
         ops.push_back(SearchDbWal::Op{
-          op.collection.get(),
-          op.pk_segments
-            ? std::span<const SearchDbWal::InlinePk>{*op.pk_segments}
-            : std::span<const SearchDbWal::InlinePk>{},
-          {},
-          {}});
+          .inline_data = op.collection.get(),
+          .inline_pks =
+            op.pk_segments
+              ? std::span<const SearchDbWal::InlinePk>{*op.pk_segments}
+              : std::span<const SearchDbWal::InlinePk>{}});
       }
-      if (!op.chunks.empty()) {
+      if (!op.segments.empty()) {
         ops.push_back(SearchDbWal::Op{
-          nullptr, {}, std::span<SearchDbWal::PendingChunk>{op.chunks}, {}});
+          .segments = std::span<const SearchDbWal::SegmentRef>{op.segments}});
       }
     }
     SDB_ASSERT(!ops.empty(),
-               "search-table commit with neither chunk files nor inline rows");
+               "search-table commit with neither segments nor inline rows");
 
     SearchDbWal::ShardSection section;
     section.table_id = table_id;

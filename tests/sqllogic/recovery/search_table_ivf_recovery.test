@@ -1,0 +1,77 @@
+# An IVF (vector ANN) index on a search table survives a crash + WAL replay. The
+# IVF is columnstore-attached and built from the stored vectors; the recovery
+# re-index path must hand the writer the same field options (so the IVF attaches)
+# and re-index the WAL-replayed rows through it. After restart an ANN query --
+# pushed into the scan (IVF-accelerated), not brute-forced -- returns the
+# replayed row, proving its vector was rebuilt into the IVF.
+
+control substitution on
+
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+CREATE TABLE v(id BIGINT PRIMARY KEY, vec FLOAT[3])
+  WITH (storage = 'search', compaction_interval = 0);
+
+statement ok
+CREATE INDEX v_idx ON v USING inverted (vec ivf(metric='l2'));
+
+statement ok
+RESET sdb_faults;
+
+# --- Fixture: a published baseline, durable on disk. ---
+statement ok
+INSERT INTO v VALUES
+  (1, array_value(1::FLOAT, 2::FLOAT, 3::FLOAT)),
+  (2, array_value(10::FLOAT, 10::FLOAT, 10::FLOAT));
+
+statement ok
+VACUUM (REFRESH_TABLE) v;
+
+# Crash AFTER the WAL commit: (3,[0,0,0]) is fsynced into the WAL but never
+# refresh-published; recovery must rebuild it into the IVF.
+statement ok
+SET sdb_faults = 'crash_after_search_wal_commit';
+
+statement error connection closed
+INSERT INTO v VALUES (3, array_value(0::FLOAT, 0::FLOAT, 0::FLOAT));
+
+# --- restart ---
+connection after_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT indexname FROM pg_indexes WHERE tablename = 'v' ORDER BY indexname;
+----
+indexname
+v_idx
+v_pkey
+
+# The ANN query is pushed into the scan (IVF-accelerated) and returns the two
+# nearest to [1,2,3]: the baseline row 1 ([1,2,3]) and the WAL-replayed row 3
+# ([0,0,0]) -- so row 3's vector was rebuilt into the IVF.
+connection after_crash
+query
+SELECT id FROM v_idx
+ORDER BY vec <-> array_value(1::FLOAT, 2::FLOAT, 3::FLOAT) LIMIT 2;
+----
+id
+1
+3
+
+connection after_crash
+query
+EXPLAIN SELECT id FROM v_idx
+ORDER BY vec <-> array_value(1::FLOAT, 2::FLOAT, 3::FLOAT) LIMIT 2;
+----
+QUERY PLAN
+╭─ TOP_N ────────────────────────────────╮
+│ Top: 2                                 │
+│ Order By: #1 ASC                       │
+│ ~2 rows                                │
+╰────────────────────┬───────────────────╯
+╭─ IRESEARCH_SCAN ───┴───────────────────╮
+│ Index: v_idx                           │
+│ Lookup: search                         │
+│ Score: l2_distance(vec, FLOAT[3])      │
+│ Top: 2                                 │
+│ Projections: id,                       │
+│              sdb_inverted_index_score  │
+│ ~3 rows                                │
+╰────────────────────────────────────────╯

@@ -96,6 +96,10 @@ std::vector<catalog::duckdb_primary_key::PKColumn> RowIdentityPKColumns(
 void BuildReturnedRow(duckdb::DataChunk& out, duckdb::DataChunk& chunk,
                       std::span<const duckdb::idx_t> column_map);
 
+// v1 does not index existing rows, hence the empty-table requirement.
+void ValidateSearchTableCreateIndex(const catalog::SereneDBTableEntry& entry,
+                                    std::string_view index_type);
+
 catalog::TableEngine ReadStorageEngine(
   const duckdb::case_insensitive_map_t<
     duckdb::unique_ptr<duckdb::ParsedExpression>>& with_options);

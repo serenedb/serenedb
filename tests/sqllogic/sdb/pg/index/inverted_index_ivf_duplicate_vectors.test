@@ -15,7 +15,7 @@ control substitution on
 # ============================================================================
 
 statement ok
-SET sdb_nprobe = 100000;
+SET sdb_ivf_search_nprobe = 100000;
 
 statement ok
 SET sdb_ivf_posting_size = 2;
@@ -136,4 +136,4 @@ statement ok
 RESET sdb_ivf_posting_size;
 
 statement ok
-RESET sdb_nprobe;
+RESET sdb_ivf_search_nprobe;

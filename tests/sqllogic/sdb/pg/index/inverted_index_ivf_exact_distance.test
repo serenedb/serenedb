@@ -12,7 +12,7 @@ hash-threshold 100
 # one. Vectors are chosen so every true distance is an exact integer.
 
 statement ok
-SET sdb_nprobe = 1000
+SET sdb_ivf_search_nprobe = 1000
 
 # --- L2 + sq8: exact distances across TopK, Stream, and no-limit paths --------
 
@@ -160,4 +160,4 @@ pk	d
 2	1
 
 statement ok
-RESET sdb_nprobe
+RESET sdb_ivf_search_nprobe

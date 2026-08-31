@@ -91,7 +91,8 @@ inline bool PrepareVectorState(const SubReader& segment,
                                const PrepareContext& ctx, field_id column_id,
                                const VectorFilterOptions& opts, uint32_t nprobe,
                                VectorState& state,
-                               QueryBuilder::ptr& inner_query) {
+                               QueryBuilder::ptr& inner_query,
+                               uint32_t max_search_fanout = 1) {
   if (opts.query.empty() || nprobe == 0 ||
       !field_limits::valid(opts.centroids_id) ||
       !field_limits::valid(opts.postings_id)) {
@@ -131,7 +132,7 @@ inline bool PrepareVectorState(const SubReader& segment,
   std::vector<uint32_t> fine_ids;
   std::vector<float> probed_centroids;
   ivf->Search(query, *idx_in, nprobe, fine_ids,
-              needs_centroids ? &probed_centroids : nullptr);
+              needs_centroids ? &probed_centroids : nullptr, max_search_fanout);
   if (fine_ids.empty()) {
     return false;
   }

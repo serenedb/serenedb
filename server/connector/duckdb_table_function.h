@@ -93,6 +93,7 @@ struct VectorScorerOptions {
   irs::field_id postings_id = irs::field_limits::invalid();
   irs::VectorQuantization quant = irs::VectorQuantization::None;
   uint32_t nprobe = 1;
+  uint32_t max_search_fanout = 16;
   float radius = std::numeric_limits<float>::max();
   bool radius_inclusive = false;
 
@@ -335,10 +336,6 @@ duckdb::unique_ptr<duckdb::FunctionData> SereneDBScanBind(
 inline bool IsSereneDBScan(const duckdb::LogicalGet& get) {
   return get.bind_data && get.function.bind == &SereneDBScanBind;
 }
-
-uint32_t ReadBoundedIntSetting(duckdb::ClientContext& context,
-                               std::string_view name, int32_t min_inclusive,
-                               uint32_t default_value);
 
 std::optional<duckdb::LogicalType> GeneratedPkTypeOf(
   const SereneDBScanBindData& bind);

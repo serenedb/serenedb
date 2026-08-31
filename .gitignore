@@ -45,6 +45,12 @@ package-lock.json
 /sqllogic-tests.log
 /recovery-tests.log
 
+# Catalog stress suite: a run's own artifacts go to /out/stress (covered above).
+# These two are what a human collects out of a run to hand around -- an evidence
+# bundle and a write-up. Kept local; the findings belong in the PR or the issue.
+/catalog_stress_evidence/
+/catalog_stress_findings.md
+
 # C harness compiled binary
 tests/drivers/c/harness
 

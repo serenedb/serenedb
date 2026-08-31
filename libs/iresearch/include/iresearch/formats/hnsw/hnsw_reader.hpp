@@ -46,6 +46,7 @@ struct HnswData {
   HnswGraph graph;
   std::vector<float> vectors;
   bstring codes;
+  std::vector<float> centroid;
   std::shared_ptr<const QuantizerStats> stats;
 };
 
@@ -85,7 +86,6 @@ class HnswIndex final : public AnnIndex {
   const HnswHeader& Header() const noexcept { return _header; }
 
  private:
-
   HnswHeader _header;
   HnswMeta _meta;
   mutable std::once_flag _once;

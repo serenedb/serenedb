@@ -27,15 +27,15 @@
 #include <duckdb/common/vector/array_vector.hpp>
 
 #include "basics/assert.h"
-#include "basics/misc.hpp"
 #include "basics/down_cast.h"
+#include "basics/misc.hpp"
 #include "iresearch/formats/column/column_reader.hpp"
 #include "iresearch/formats/column/merge.hpp"
 #include "iresearch/formats/column/read_context.hpp"
 #include "iresearch/formats/hnsw/hnsw_reader.hpp"
-#include "iresearch/index/index_reader.hpp"
 #include "iresearch/formats/index/idx_reader.hpp"
 #include "iresearch/formats/index/idx_writer.hpp"
+#include "iresearch/index/index_reader.hpp"
 #include "iresearch/store/data_output.hpp"
 #include "iresearch/utils/vector.hpp"
 
@@ -75,7 +75,8 @@ struct HnswRawDist {
     return s;
   }
 
-  void Batch(std::span<const uint32_t> ids, score_t* out) const noexcept {
+  void Batch(std::span<const uint32_t> ids, score_t* out,
+             score_t /*threshold*/ = 0.f) const noexcept {
     BatchFrom(q, ids, out);
   }
 
@@ -124,9 +125,8 @@ MergeDonor PickMergeDonor(std::span<const MergeSource> sources, field_id column,
     if (header.d != d || header.metric != metric || header.rows == 0) {
       continue;
     }
-    const double missing =
-      1.0 - static_cast<double>(src.alive_count) /
-              static_cast<double>(header.rows);
+    const double missing = 1.0 - static_cast<double>(src.alive_count) /
+                                   static_cast<double>(header.rows);
     if (missing > kHnswMaxMissingRatio) {
       continue;
     }
@@ -212,8 +212,8 @@ void HealNode(HnswGraph& graph, const HnswGraph& src_graph,
   HnswSelectNeighbors(dist, pool, static_cast<uint32_t>(links.size()),
                       scratch.selected);
   for (size_t i = 0; i < links.size(); ++i) {
-    links[i] = i < scratch.selected.size() ? scratch.selected[i]
-                                           : kHnswInvalidNode;
+    links[i] =
+      i < scratch.selected.size() ? scratch.selected[i] : kHnswInvalidNode;
   }
   for (const auto peer : scratch.selected) {
     HnswLinkReverse(graph, dist, peer, node, level, scratch);
@@ -257,8 +257,8 @@ bool BuildGraphFromMerge(HnswGraph& graph, const float* base, uint32_t d,
   graph.Reset(rows, m);
   uint64_t rng = seed;
   for (size_t r = 0; r < src_rows; ++r) {
-    if (remap[r] != kHnswInvalidNode && src_graph.LevelOf(
-                                          static_cast<uint32_t>(r)) != 0) {
+    if (remap[r] != kHnswInvalidNode &&
+        src_graph.LevelOf(static_cast<uint32_t>(r)) != 0) {
       graph.SetLevel(remap[r], src_graph.LevelOf(static_cast<uint32_t>(r)));
     }
   }
@@ -391,13 +391,13 @@ void HnswWriter::Compute(const ColumnReader& col, ReadContext& ctx) {
   ColumnReader::VectorScratch scratch{col.Type()};
   auto scan = col.InitScan(ctx);
   for (uint64_t done = 0; done < _rows;) {
-    const auto take =
-      static_cast<duckdb::idx_t>(std::min<uint64_t>(STANDARD_VECTOR_SIZE, _rows - done));
+    const auto take = static_cast<duckdb::idx_t>(
+      std::min<uint64_t>(STANDARD_VECTOR_SIZE, _rows - done));
     auto& batch = scratch.Reset();
     col.Scan(scan, batch, take);
     const auto& mask = duckdb::FlatVector::Validity(batch);
-    const auto* src = duckdb::FlatVector::GetData<float>(
-      duckdb::ArrayVector::GetChild(batch));
+    const auto* src =
+      duckdb::FlatVector::GetData<float>(duckdb::ArrayVector::GetChild(batch));
     std::memcpy(_vectors.data() + static_cast<size_t>(done) * _d, src,
                 static_cast<size_t>(take) * _d * sizeof(float));
     for (duckdb::idx_t i = 0; i < take; ++i) {
@@ -435,9 +435,26 @@ void HnswWriter::Compute(const ColumnReader& col, ReadContext& ctx) {
   }
   _qw = MakeQuantizerWriter(_info.quant.kind, _d,
                             EffectiveQuantMetric(_info.metric),
-                            _info.quant.pq_m, 0, _info.quant.nb_bits);
+                            _info.quant.pq_m, 0, _info.quant.nb_bits,
+                            /*row_major=*/true);
   SDB_ASSERT(_qw);
   _qw->Train(_vectors.data(), _rows);
+  if (QuantizerNeedsCentroid(_info.quant.kind)) {
+    _centroid.assign(_d, 0.f);
+    for (size_t i = 0; i < _rows; ++i) {
+      const float* row = _vectors.data() + i * size_t{_d};
+      for (uint32_t j = 0; j < _d; ++j) {
+        _centroid[j] += row[j];
+      }
+    }
+    if (_rows != 0) {
+      const float inv = 1.f / static_cast<float>(_rows);
+      for (uint32_t j = 0; j < _d; ++j) {
+        _centroid[j] *= inv;
+      }
+    }
+    _qw->SetClusterCentroid(_centroid.data());
+  }
   _record_size = _qw->BlockSetting().record_size;
 }
 
@@ -460,6 +477,10 @@ void HnswWriter::Flush() {
   _graph.Serialize(out);
   if (_qw) {
     _qw->Serialize(out);
+    if (!_centroid.empty()) {
+      out.WriteData(reinterpret_cast<const byte_type*>(_centroid.data()),
+                    _centroid.size() * sizeof(float));
+    }
     _qw->Encode(out, _vectors.data(), _rows);
     _qw->Finish(out);
   } else {
@@ -467,8 +488,9 @@ void HnswWriter::Flush() {
                   _vectors.size() * sizeof(float));
   }
 
-  _idx->AddHnsw(_info.centroids_id,
-                HnswMeta{.offset = offset, .byte_size = out.Position() - offset});
+  _idx->AddHnsw(
+    _info.centroids_id,
+    HnswMeta{.offset = offset, .byte_size = out.Position() - offset});
 
   _vectors.clear();
   _vectors.shrink_to_fit();

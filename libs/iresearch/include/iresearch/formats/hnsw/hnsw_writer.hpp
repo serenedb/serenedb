@@ -59,6 +59,7 @@ class HnswWriter final : public AnnWriter {
   HnswGraph _graph;
   std::vector<float> _vectors;
   std::unique_ptr<QuantizerWriter> _qw;
+  std::vector<float> _centroid;
   uint32_t _d = 0;
   uint32_t _record_size = 0;
   uint64_t _rows = 0;

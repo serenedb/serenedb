@@ -97,18 +97,20 @@ class QuantizerStats : public std::enable_shared_from_this<QuantizerStats> {
 };
 
 constexpr bool QuantizerNeedsCentroid(VectorQuantization quant) noexcept {
-  return quant == VectorQuantization::PQ || quant == VectorQuantization::RaBitQ;
+  return quant == VectorQuantization::PQ ||
+         quant == VectorQuantization::RaBitQ ||
+         quant == VectorQuantization::TQ || quant == VectorQuantization::TQMse;
 }
 
 bool PanoramaApplies(VectorMetric metric, uint32_t d) noexcept;
 
 std::unique_ptr<QuantizerWriter> MakeQuantizerWriter(
   VectorQuantization quant, uint32_t d, VectorMetric metric, uint32_t pq_m,
-  uint32_t pq_niter, uint32_t nb_bits);
+  uint32_t pq_niter, uint32_t nb_bits, bool row_major = false);
 
 std::shared_ptr<const QuantizerStats> MakeQuantizerStats(
   VectorQuantization quant, uint32_t d, std::span<const byte_type> stats,
-  VectorMetric metric);
+  VectorMetric metric, bool row_major = false);
 
 std::unique_ptr<QuantizerReader> MakeQuantizerReader(
   const std::shared_ptr<const QuantizerCodebook>& codebook);

@@ -40,6 +40,7 @@
 #include <cstdint>
 #include <cstring>
 #include <limits>
+#include <numbers>
 #include <optional>
 #include <vector>
 
@@ -82,7 +83,7 @@ constexpr size_t kPcaTrainRows = 4096;
 
 size_t FastScanNsq(size_t m) noexcept { return m + (m & 1); }
 
-constexpr int64_t kRaBitQRotationSeed = 0x5a17b17c5eed5eedULL;
+constexpr int64_t kIvfRotationSeed = 0x5a17b17c5eed5eedULL;
 
 uint32_t RotatedDim(uint32_t d) noexcept {
   return std::max<uint32_t>(kFastScanBits, std::bit_ceil(d));
@@ -152,6 +153,55 @@ struct RaBitQStatsHeader {
 
 constexpr uint8_t kRaBitQQueryBits = 8;
 constexpr bool kRaBitQCentered = false;
+
+constexpr uint8_t kTurboQuantQjlFwht = 0;
+constexpr uint8_t kTurboQuantLayout = 0;
+constexpr uint32_t kTurboQuantLutChunk = 256;
+
+struct TurboQuantStatsHeader {
+  uint8_t layout;
+  uint8_t nb_bits;
+  uint8_t full;
+  uint8_t qjl_type;
+  uint32_t d;
+  uint64_t seed;
+};
+
+static_assert(sizeof(TurboQuantStatsHeader) == 16);
+static_assert(std::has_unique_object_representations_v<TurboQuantStatsHeader>);
+
+std::optional<faiss::ScalarQuantizer::QuantizerType> FaissTurboQuantType(
+  bool full, uint32_t nb_bits) noexcept {
+  using QT = faiss::ScalarQuantizer::QuantizerType;
+  if (full) {
+    switch (nb_bits) {
+      case 2:
+        return QT::QT_2bit_tq;
+      case 3:
+        return QT::QT_3bit_tq;
+      case 5:
+        return QT::QT_5bit_tq;
+      default:
+        return std::nullopt;
+    }
+  }
+  switch (nb_bits) {
+    case 1:
+      return QT::QT_1bit_tqmse;
+    case 2:
+      return QT::QT_2bit_tqmse;
+    case 4:
+      return QT::QT_4bit_tqmse;
+    default:
+      return std::nullopt;
+  }
+}
+
+void TrainTurboQuant(faiss::ScalarQuantizer& sq, uint64_t seed) {
+  sq.turboq_refine.seed = seed;
+  sq.turboq_refine.qjl_type = kTurboQuantQjlFwht;
+  sq.train(0, nullptr);
+}
 
 struct PanoramaStatsHeader {
   uint32_t n_levels;
@@ -657,6 +707,702 @@ std::shared_ptr<const QuantizerCodebook> ScalarQuantizerStats<M>::MakeCodebook(
     this, query);
 }
 
+float TurboQuantNorm(const float* v, uint32_t d) {
+  return std::max(
+    std::sqrt(vector::L2Space<float, float, float>::Norm(
+      reinterpret_cast<const byte_type*>(v), static_cast<uint16_t>(d))),
+    std::numeric_limits<float>::epsilon());
+}
+
+struct TurboQuantLayout {
+  uint32_t d = 0;
+  uint32_t rd = 0;
+  uint32_t mse_bits = 0;
+  uint32_t dims_per_nibble = 0;
+  uint32_t m1 = 0;
+  uint32_t nsq1 = 0;
+  uint32_t m2 = 0;
+  uint32_t nsq2 = 0;
+  uint32_t code1_bytes = 0;
+  uint32_t code2_bytes = 0;
+  uint32_t group1_bytes = 0;
+  uint32_t group2_bytes = 0;
+  uint32_t record_size = 0;
+  bool full = false;
+  bool l2 = false;
+  bool row_major = false;
+
+  uint32_t RowCode2Offset() const noexcept { return code1_bytes; }
+  uint32_t RowNormOffset() const noexcept { return code1_bytes + code2_bytes; }
+  uint32_t RowGammaOffset() const noexcept {
+    return RowNormOffset() + sizeof(float);
+  }
+  uint32_t RowXNorm2Offset() const noexcept {
+    return RowGammaOffset() + (full ? sizeof(float) : 0);
+  }
+
+  uint32_t NormOffset() const noexcept { return group1_bytes + group2_bytes; }
+  uint32_t GammaOffset() const noexcept {
+    return NormOffset() + kFastScanBbs * sizeof(float);
+  }
+  uint32_t XNorm2Offset() const noexcept {
+    return GammaOffset() + (full ? kFastScanBbs * sizeof(float) : 0);
+  }
+  uint32_t GroupBytes() const noexcept { return kFastScanBbs * record_size; }
+};
+
+TurboQuantLayout MakeTurboQuantLayout(uint32_t d, bool full, uint32_t nb_bits,
+                                      bool l2, bool row_major) noexcept {
+  TurboQuantLayout l;
+  l.d = d;
+  l.rd = RotatedDim(d);
+  l.full = full;
+  l.l2 = l2;
+  l.row_major = row_major;
+  l.mse_bits = full ? nb_bits - 1 : nb_bits;
+  l.dims_per_nibble = static_cast<uint32_t>(kFastScanBits) / l.mse_bits;
+  l.m1 = l.rd / l.dims_per_nibble;
+  l.nsq1 = static_cast<uint32_t>(FastScanNsq(l.m1));
+  l.code1_bytes = (l.m1 + 1) / 2;
+  l.group1_bytes = static_cast<uint32_t>(kFastScanBbs) * l.nsq1 / 2;
+  if (full) {
+    l.m2 = l.rd / static_cast<uint32_t>(kFastScanBits);
+    l.nsq2 = static_cast<uint32_t>(FastScanNsq(l.m2));
+    l.code2_bytes = (l.m2 + 1) / 2;
+    l.group2_bytes = static_cast<uint32_t>(kFastScanBbs) * l.nsq2 / 2;
+  }
+  const uint32_t floats = 1 + (full ? 1 : 0) + (l2 ? 1 : 0);
+  l.record_size =
+    l.nsq1 / 2 + l.nsq2 / 2 + floats * static_cast<uint32_t>(sizeof(float));
+  return l;
+}
+
+struct TurboQuantChunk {
+  uint32_t m;
+  uint32_t nsq;
+  uint32_t code_off;
+  uint32_t lut_off;
+};
+
+std::vector<TurboQuantChunk> MakeTurboQuantChunks(uint32_t m) {
+  std::vector<TurboQuantChunk> out;
+  uint32_t code_off = 0;
+  uint32_t lut_off = 0;
+  for (uint32_t off = 0; off < m; off += kTurboQuantLutChunk) {
+    TurboQuantChunk c;
+    c.m = std::min<uint32_t>(kTurboQuantLutChunk, m - off);
+    c.nsq = static_cast<uint32_t>(FastScanNsq(c.m));
+    c.code_off = code_off;
+    c.lut_off = lut_off;
+    code_off += static_cast<uint32_t>(kFastScanBbs) * c.nsq / 2;
+    lut_off += c.nsq * static_cast<uint32_t>(kFastScanKsub);
+    out.push_back(c);
+  }
+  return out;
+}
+
+void SetNibble(uint8_t* code, uint32_t sq, uint8_t nib) noexcept {
+  uint8_t& dst = code[sq >> 1];
+  dst = static_cast<uint8_t>((sq & 1) != 0 ? dst | (nib << 4) : dst | nib);
+}
+
+void TurboQuantProject(const std::vector<float>& fwht_signs, const float* in,
+                       float* out, uint32_t rd) noexcept {
+  for (uint32_t j = 0; j < rd; ++j) {
+    out[j] = in[j] * fwht_signs[j];
+  }
+  Fwht(out, rd);
+}
+
+template<VectorMetric M>
+class TurboQuantizerWriter final : public QuantizerWriter {
+ public:
+  TurboQuantizerWriter(uint32_t d, bool full, uint32_t nb_bits,
+                       faiss::ScalarQuantizer::QuantizerType qtype,
+                       bool row_major)
+    : _lay{MakeTurboQuantLayout(d, full, nb_bits, M == VectorMetric::L2Sqr,
+                                row_major)},
+      _nb_bits{nb_bits},
+      _sq{_lay.rd, qtype},
+      _sqrt_rd{std::sqrt(static_cast<float>(_lay.rd))} {
+    static_assert(M == VectorMetric::L2Sqr || M == VectorMetric::InnerProduct);
+    TrainTurboQuant(_sq, kIvfRotationSeed);
+    GenerateSigns(_lay.rd, kIvfRotationSeed, _signs);
+    _centroids = _sq.trained.data();
+    _boundaries = _sq.trained.data() + (size_t{1} << _lay.mse_bits);
+    _rot.resize(_lay.rd);
+    _res.resize(_lay.rd);
+    _code1.assign(kFastScanBbs * size_t{_lay.code1_bytes}, 0);
+    _packed1.resize(_lay.group1_bytes);
+    if (_lay.full) {
+      _proj.resize(_lay.rd);
+      _code2.assign(kFastScanBbs * size_t{_lay.code2_bytes}, 0);
+      _packed2.resize(_lay.group2_bytes);
+    }
+  }
+
+  size_t TrainSamples(size_t /*rows*/) const noexcept final { return 0; }
+
+  void Train(const float* /*vecs*/, size_t /*n*/) final {}
+
+  void SetClusterCentroid(const float* centroid) final {
+    _centroid.resize(_lay.rd);
+    RotateInto(_signs.data(), centroid, _centroid.data(), _lay.d, _lay.rd);
+  }
+
+  PayloadBlockSetting BlockSetting() const noexcept final {
+    return {.group_size = _lay.row_major ? 1U : uint32_t{kFastScanBbs},
+            .record_size = _lay.record_size};
+  }
+
+  void Encode(IndexOutput& out, const float* vecs, size_t n) final {
+    SDB_ASSERT(_centroid.size() == _lay.rd);
+    for (size_t i = 0; i < n; ++i) {
+      if (_lay.row_major) {
+        WriteRecord(out, vecs + i * size_t{_lay.d});
+        continue;
+      }
+      EncodeOne(vecs + i * size_t{_lay.d}, _lane);
+      if (++_lane == kFastScanBbs) {
+        WriteGroup(out, kFastScanBbs);
+      }
+    }
+  }
+
+  void Finish(IndexOutput& out) final {
+    if (!_lay.row_major && _lane != 0) {
+      WriteGroup(out, _lane);
+    }
+  }
+
+  uint32_t PendingLanes() const noexcept final {
+    return _lay.row_major ? 0U : static_cast<uint32_t>(_lane);
+  }
+
+  void Serialize(DataOutput& out) const final {
+    out.WriteU64(sizeof(TurboQuantStatsHeader));
+    WritePod(out, TurboQuantStatsHeader{
+                    .layout = kTurboQuantLayout,
+                    .nb_bits = static_cast<uint8_t>(_nb_bits),
+                    .full = static_cast<uint8_t>(_lay.full ? 1 : 0),
+                    .qjl_type = kTurboQuantQjlFwht,
+                    .d = _lay.d,
+                    .seed = kIvfRotationSeed});
+  }
+
+  VectorQuantization Kind() const noexcept final {
+    return _lay.full ? VectorQuantization::TQ : VectorQuantization::TQMse;
+  }
+
+ private:
+  void EncodeOne(const float* vec, size_t lane) {
+    RotateInto(_signs.data(), vec, _rot.data(), _lay.d, _lay.rd);
+    for (uint32_t j = 0; j < _lay.rd; ++j) {
+      _res[j] = _rot[j] - _centroid[j];
+    }
+    const float norm = TurboQuantNorm(_res.data(), _lay.rd);
+    _norms[lane] = norm;
+    if constexpr (M == VectorMetric::L2Sqr) {
+      _xnorm2[lane] = vector::L2Space<float, float, float>::Norm(
+        reinterpret_cast<const byte_type*>(vec), static_cast<uint16_t>(_lay.d));
+    }
+    const float scale = _sqrt_rd / norm;
+    for (uint32_t j = 0; j < _lay.rd; ++j) {
+      _res[j] *= scale;
+    }
+
+    const uint32_t k = 1U << _lay.mse_bits;
+    const auto mask = static_cast<uint8_t>(k - 1);
+    const float inv_sqrt_rd = 1.f / _sqrt_rd;
+    uint8_t* code = _code1.data() + lane * size_t{_lay.code1_bytes};
+    for (uint32_t mi = 0; mi < _lay.m1; ++mi) {
+      uint8_t nib = 0;
+      for (uint32_t t = 0; t < _lay.dims_per_nibble; ++t) {
+        const uint32_t j = mi * _lay.dims_per_nibble + t;
+        const auto idx = static_cast<uint8_t>(
+          std::upper_bound(_boundaries, _boundaries + (k - 1), _res[j]) -
+          _boundaries);
+        nib = static_cast<uint8_t>(nib | ((idx & mask) << (t * _lay.mse_bits)));
+        if (_lay.full) {
+          _res[j] = (_res[j] - _centroids[idx]) * inv_sqrt_rd;
+        }
+      }
+      SetNibble(code, mi, nib);
+    }
+    if (!_lay.full) {
+      return;
+    }
+
+    _gammas[lane] = std::sqrt(vector::L2Space<float, float, float>::Norm(
+      reinterpret_cast<const byte_type*>(_res.data()),
+      static_cast<uint16_t>(_lay.rd)));
+    TurboQuantProject(_sq.turboq_refine.fwht_signs, _res.data(), _proj.data(),
+                      _lay.rd);
+    uint8_t* qjl = _code2.data() + lane * size_t{_lay.code2_bytes};
+    for (uint32_t mi = 0; mi < _lay.m2; ++mi) {
+      uint8_t nib = 0;
+      for (uint32_t t = 0; t < kFastScanBits; ++t) {
+        if (_proj[mi * kFastScanBits + t] > 0.f) {
+          nib = static_cast<uint8_t>(nib | (1U << t));
+        }
+      }
+      SetNibble(qjl, mi, nib);
+    }
+  }
+
+  void WriteRecord(IndexOutput& out, const float* vec) {
+    std::fill_n(_code1.begin(), _lay.code1_bytes, uint8_t{0});
+    if (_lay.full) {
+      std::fill_n(_code2.begin(), _lay.code2_bytes, uint8_t{0});
+    }
+    EncodeOne(vec, 0);
+    out.WriteData(_code1.data(), _lay.code1_bytes);
+    if (_lay.full) {
+      out.WriteData(_code2.data(), _lay.code2_bytes);
+    }
+    out.WriteData(reinterpret_cast<const byte_type*>(&_norms[0]),
+                  sizeof(float));
+    if (_lay.full) {
+      out.WriteData(reinterpret_cast<const byte_type*>(&_gammas[0]),
+                    sizeof(float));
+    }
+    if constexpr (M == VectorMetric::L2Sqr) {
+      out.WriteData(reinterpret_cast<const byte_type*>(&_xnorm2[0]),
+                    sizeof(float));
+    }
+  }
+
+  void WriteFloats(IndexOutput& out, std::array<float, kFastScanBbs>& v,
+                   size_t count) {
+    std::fill_n(v.data() + count, kFastScanBbs - count, 0.f);
+    out.WriteData(reinterpret_cast<const byte_type*>(v.data()),
+                  kFastScanBbs * sizeof(float));
+  }
+
+  void WriteGroup(IndexOutput& out, size_t count) {
+    faiss::pq4_pack_codes(_code1.data(), count, _lay.m1, kFastScanBbs,
+                          kFastScanBbs, _lay.nsq1, _packed1.data(),
+                          _lay.code1_bytes);
+    out.WriteData(_packed1.data(), _packed1.size());
+    if (_lay.full) {
+      faiss::pq4_pack_codes(_code2.data(), count, _lay.m2, kFastScanBbs,
+                            kFastScanBbs, _lay.nsq2, _packed2.data(),
+                            _lay.code2_bytes);
+      out.WriteData(_packed2.data(), _packed2.size());
+    }
+    WriteFloats(out, _norms, count);
+    if (_lay.full) {
+      WriteFloats(out, _gammas, count);
+    }
+    if constexpr (M == VectorMetric::L2Sqr) {
+      WriteFloats(out, _xnorm2, count);
+    }
+    std::fill(_code1.begin(), _code1.end(), 0);
+    std::fill(_code2.begin(), _code2.end(), 0);
+    _lane = 0;
+  }
+
+  TurboQuantLayout _lay;
+  uint32_t _nb_bits;
+  faiss::ScalarQuantizer _sq;
+  float _sqrt_rd;
+  const float* _centroids = nullptr;
+  const float* _boundaries = nullptr;
+  size_t _lane = 0;
+  std::vector<float> _signs;
+  std::vector<float> _centroid;
+  std::vector<float> _rot;
+  std::vector<float> _res;
+  std::vector<float> _proj;
+  std::vector<uint8_t> _code1;
+  std::vector<uint8_t> _code2;
+  std::vector<uint8_t> _packed1;
+  std::vector<uint8_t> _packed2;
+  std::array<float, kFastScanBbs> _norms{};
+  std::array<float, kFastScanBbs> _gammas{};
+  [[no_unique_address]] utils::Need<M == VectorMetric::L2Sqr,
+                                    std::array<float, kFastScanBbs>> _xnorm2;
+};
+
+template<VectorMetric M>
+class TurboQuantizerStats final : public QuantizerStats {
+ public:
+  TurboQuantizerStats(uint32_t d, bool full, std::span<const byte_type> stats,
+                      bool row_major)
+    : _full{full} {
+    static_assert(M == VectorMetric::L2Sqr || M == VectorMetric::InnerProduct);
+    const auto hdr = ReadPodHeader<TurboQuantStatsHeader>(stats);
+    const auto qtype = FaissTurboQuantType(full, hdr.nb_bits);
+    if (stats.size() < sizeof(TurboQuantStatsHeader) || hdr.d != d ||
+        hdr.layout != kTurboQuantLayout || hdr.qjl_type != kTurboQuantQjlFwht ||
+        (hdr.full != 0) != full || !qtype) {
+      return;
+    }
+    _lay = MakeTurboQuantLayout(d, full, hdr.nb_bits, M == VectorMetric::L2Sqr,
+                                row_major);
+    _sq = std::make_unique<faiss::ScalarQuantizer>(_lay.rd, *qtype);
+    TrainTurboQuant(*_sq, hdr.seed);
+    GenerateSigns(_lay.rd, kIvfRotationSeed, _signs);
+    _valid = true;
+  }
+
+  VectorQuantization Kind() const noexcept final {
+    return _full ? VectorQuantization::TQ : VectorQuantization::TQMse;
+  }
+
+  std::shared_ptr<const QuantizerCodebook> MakeCodebook(
+    std::span<const float> query) const final;
+
+  bool Valid() const noexcept { return _valid; }
+  const TurboQuantLayout& Layout() const noexcept { return _lay; }
+  const float* Centroids() const noexcept { return _sq->trained.data(); }
+  const std::vector<float>& Signs() const noexcept { return _signs; }
+  const std::vector<float>& FwhtSigns() const noexcept {
+    return _sq->turboq_refine.fwht_signs;
+  }
+
+ private:
+  TurboQuantLayout _lay;
+  bool _full;
+  bool _valid = false;
+  std::unique_ptr<faiss::ScalarQuantizer> _sq;
+  std::vector<float> _signs;
+};
+
+template<VectorMetric M>
+class TurboQuantizerCodebook final : public QuantizerCodebook {
+ public:
+  TurboQuantizerCodebook(std::shared_ptr<const TurboQuantizerStats<M>> stats,
+                         std::span<const float> query)
+    : _stats{std::move(stats)}, _query(query.begin(), query.end()) {
+    SDB_ASSERT(_stats->Valid());
+    const TurboQuantLayout& lay = _stats->Layout();
+    _rot_query.resize(lay.rd);
+    RotateInto(_stats->Signs().data(), _query.data(), _rot_query.data(), lay.d,
+               lay.rd);
+    if constexpr (M == VectorMetric::L2Sqr) {
+      _query_norm2 = vector::L2Space<float, float, float>::Norm(
+        reinterpret_cast<const byte_type*>(_query.data()),
+        static_cast<uint16_t>(lay.d));
+    }
+    BuildMseLut();
+    if (lay.full) {
+      BuildQjlLut();
+    }
+  }
+
+  std::unique_ptr<QuantizerReader> MakeReader() const final;
+
+  const TurboQuantizerStats<M>& Stats() const noexcept { return *_stats; }
+  std::span<const float> Query() const noexcept { return _query; }
+  const std::vector<TurboQuantChunk>& Chunks1() const noexcept {
+    return _chunks1;
+  }
+  const std::vector<TurboQuantChunk>& Chunks2() const noexcept {
+    return _chunks2;
+  }
+  const uint8_t* Lut1() const noexcept { return _lut1.data(); }
+  const uint8_t* Lut2() const noexcept { return _lut2.data(); }
+  const std::vector<float>& A1() const noexcept { return _a1; }
+  const std::vector<float>& B1() const noexcept { return _b1; }
+  const std::vector<float>& A2() const noexcept { return _a2; }
+  const std::vector<float>& B2() const noexcept { return _b2; }
+  float QjlErrorCoeff() const noexcept { return _qjl_error_coeff; }
+  float QjlSum() const noexcept { return _qjl_sum; }
+  float MseSlack() const noexcept { return _mse_slack; }
+  float QueryNorm2() const noexcept { return _query_norm2; }
+
+ private:
+  void QuantizeChunks(const std::vector<float>& lut,
+                      const std::vector<TurboQuantChunk>& chunks,
+                      faiss::AlignedTable<uint8_t>& packed,
+                      std::vector<float>& a, std::vector<float>& b) {
+    size_t total = 0;
+    for (const auto& c : chunks) {
+      total += size_t{c.nsq} * kFastScanKsub;
+    }
+    packed.resize(total);
+    a.resize(chunks.size());
+    b.resize(chunks.size());
+    std::vector<uint8_t> lutq;
+    size_t moff = 0;
+    for (size_t i = 0; i < chunks.size(); ++i) {
+      const TurboQuantChunk& c = chunks[i];
+      lutq.assign(size_t{c.nsq} * kFastScanKsub, 0);
+      faiss::quantize_lut::quantize_LUT_and_bias(
+        1, c.m, kFastScanKsub, false, lut.data() + moff * kFastScanKsub,
+        nullptr, lutq.data(), c.nsq, nullptr, &a[i], &b[i]);
+      if (!std::isfinite(a[i]) || a[i] <= 0.f) {
+        a[i] = 1.f;
+        b[i] = 0.f;
+        std::fill(lutq.begin(), lutq.end(), 0);
+      }
+      faiss::pq4_pack_LUT(1, static_cast<int>(c.nsq), lutq.data(),
+                          packed.data() + c.lut_off);
+      moff += c.m;
+    }
+  }
+
+  void BuildMseLut() {
+    const TurboQuantLayout& lay = _stats->Layout();
+    const float* cent = _stats->Centroids();
+    const auto mask = static_cast<uint32_t>((1U << lay.mse_bits) - 1);
+    std::vector<float> lut(size_t{lay.m1} * kFastScanKsub);
+    for (uint32_t mi = 0; mi < lay.m1; ++mi) {
+      const uint32_t base = mi * lay.dims_per_nibble;
+      for (uint32_t code = 0; code < kFastScanKsub; ++code) {
+        float s = 0.f;
+        for (uint32_t t = 0; t < lay.dims_per_nibble; ++t) {
+          const uint32_t idx = (code >> (t * lay.mse_bits)) & mask;
+          s += _rot_query[base + t] * cent[idx];
+        }
+        lut[size_t{mi} * kFastScanKsub + code] = s;
+      }
+    }
+    _chunks1 = MakeTurboQuantChunks(lay.m1);
+    QuantizeChunks(lut, _chunks1, _lut1, _a1, _b1);
+    float slack = 0.f;
+    for (size_t i = 0; i < _chunks1.size(); ++i) {
+      slack += static_cast<float>(_chunks1[i].m) * 0.5f / _a1[i];
+    }
+    _mse_slack = slack / std::sqrt(static_cast<float>(lay.rd));
+  }
+
+  void BuildQjlLut() {
+    const TurboQuantLayout& lay = _stats->Layout();
+    std::vector<float> qproj(lay.rd);
+    TurboQuantProject(_stats->FwhtSigns(), _rot_query.data(), qproj.data(),
+                      lay.rd);
+    const float inv_sqrt_rd = 1.f / std::sqrt(static_cast<float>(lay.rd));
+    float l1 = 0.f;
+    _qjl_sum = 0.f;
+    for (uint32_t j = 0; j < lay.rd; ++j) {
+      qproj[j] *= inv_sqrt_rd;
+      _qjl_sum += qproj[j];
+      l1 += std::fabs(qproj[j]);
+    }
+    _qjl_error_coeff = std::sqrt(std::numbers::pi_v<float> / 2.f) /
+                       static_cast<float>(lay.rd) * l1;
+    std::vector<float> lut(size_t{lay.m2} * kFastScanKsub);
+    for (uint32_t mi = 0; mi < lay.m2; ++mi) {
+      const uint32_t base = mi * static_cast<uint32_t>(kFastScanBits);
+      for (uint32_t code = 0; code < kFastScanKsub; ++code) {
+        float s = 0.f;
+        for (uint32_t t = 0; t < kFastScanBits; ++t) {
+          if (((code >> t) & 1U) != 0) {
+            s += qproj[base + t];
+          }
+        }
+        lut[size_t{mi} * kFastScanKsub + code] = s;
+      }
+    }
+    _chunks2 = MakeTurboQuantChunks(lay.m2);
+    QuantizeChunks(lut, _chunks2, _lut2, _a2, _b2);
+  }
+
+  std::shared_ptr<const TurboQuantizerStats<M>> _stats;
+  std::vector<float> _query;
+  std::vector<float> _rot_query;
+  std::vector<TurboQuantChunk> _chunks1;
+  std::vector<TurboQuantChunk> _chunks2;
+  faiss::AlignedTable<uint8_t> _lut1;
+  faiss::AlignedTable<uint8_t> _lut2;
+  std::vector<float> _a1;
+  std::vector<float> _b1;
+  std::vector<float> _a2;
+  std::vector<float> _b2;
+  float _qjl_error_coeff = 0.f;
+  float _qjl_sum = 0.f;
+  float _mse_slack = 0.f;
+  [[no_unique_address]] utils::Need<M == VectorMetric::L2Sqr, float>
+    _query_norm2;
+};
+
+template<VectorMetric M>
+class TurboQuantizerReader final : public QuantizerReader {
+ public:
+  explicit TurboQuantizerReader(
+    std::shared_ptr<const TurboQuantizerCodebook<M>> cb)
+    : _cb{std::move(cb)},
+      _lay{_cb->Stats().Layout()},
+      _inv_sqrt_rd{1.f / std::sqrt(static_cast<float>(_lay.rd))},
+      _qjl_coeff{std::sqrt(std::numbers::pi_v<float> / 2.f) /
+                 static_cast<float>(_lay.rd)} {}
+
+  PayloadBlockSetting BlockSetting() const noexcept final {
+    return {.group_size = _lay.row_major ? 1U : uint32_t{kFastScanBbs},
+            .record_size = _lay.record_size};
+  }
+
+  void StartCluster(const float* centroid) final {
+    SDB_ASSERT(centroid != nullptr);
+    const std::span<const float> query = _cb->Query();
+    _qc = ComputeDistance<VectorMetric::InnerProduct>(
+      query.data(), centroid, static_cast<uint16_t>(query.size()));
+  }
+
+  void ComputeBlock(std::span<const byte_type> block, score_t threshold,
+                    score_t* out) final {
+    if (_lay.row_major) {
+      SDB_ASSERT(block.size() % _lay.record_size == 0);
+      size_t left = block.size() / _lay.record_size;
+      const byte_type* rec = block.data();
+      while (left != 0) {
+        const size_t take = std::min<size_t>(left, kFastScanBbs);
+        ScoreRecords(rec, take, threshold, out);
+        rec += take * size_t{_lay.record_size};
+        out += take;
+        left -= take;
+      }
+      return;
+    }
+    const size_t group_bytes = _lay.GroupBytes();
+    SDB_ASSERT(block.size() % group_bytes == 0);
+    for (size_t off = 0; off < block.size();
+         off += group_bytes, out += kFastScanBbs) {
+      ScoreGroup(block.data() + off, threshold, out);
+    }
+  }
+
+ private:
+  void Accumulate(const byte_type* codes, const uint8_t* lut,
+                  const std::vector<TurboQuantChunk>& chunks,
+                  const std::vector<float>& a, const std::vector<float>& b) {
+    _sum.fill(0.f);
+    for (size_t k = 0; k < chunks.size(); ++k) {
+      const TurboQuantChunk& c = chunks[k];
+      faiss::accumulate_to_mem(1, kFastScanBbs, static_cast<int>(c.nsq),
+                               codes + c.code_off, lut + c.lut_off,
+                               _accu.data());
+      const float inv_a = 1.f / a[k];
+      const float bias = b[k];
+      for (size_t i = 0; i < kFastScanBbs; ++i) {
+        _sum[i] += static_cast<float>(_accu[i]) * inv_a + bias;
+      }
+    }
+  }
+
+  score_t ScoreFrom(float ip, size_t lane, const float* xnorm2) const noexcept {
+    if constexpr (M == VectorMetric::L2Sqr) {
+      return -(_cb->QueryNorm2() + xnorm2[lane] - 2.f * (ip + _qc));
+    } else {
+      return ip + _qc;
+    }
+  }
+
+  void ScoreLanes(const byte_type* c1, const byte_type* c2, const float* norms,
+                  const float* gammas, const float* xnorm2, size_t count,
+                  score_t threshold, score_t* out) {
+    Accumulate(c1, _cb->Lut1(), _cb->Chunks1(), _cb->A1(), _cb->B1());
+    for (size_t i = 0; i < count; ++i) {
+      _ip[i] = norms[i] * _sum[i] * _inv_sqrt_rd;
+    }
+    if (!_lay.full) {
+      for (size_t i = 0; i < count; ++i) {
+        out[i] = ScoreFrom(_ip[i], i, xnorm2);
+      }
+      return;
+    }
+
+    const float err = _cb->QjlErrorCoeff();
+    const float slack = _cb->MseSlack();
+    bool refine = false;
+    for (size_t i = 0; i < count; ++i) {
+      const float bound = norms[i] * (err * gammas[i] + slack);
+      if (ScoreFrom(_ip[i] + bound, i, xnorm2) > threshold) {
+        refine = true;
+        break;
+      }
+    }
+    if (!refine) {
+      for (size_t i = 0; i < count; ++i) {
+        out[i] = ScoreFrom(_ip[i], i, xnorm2);
+      }
+      return;
+    }
+
+    Accumulate(c2, _cb->Lut2(), _cb->Chunks2(), _cb->A2(), _cb->B2());
+    const float qjl_sum = _cb->QjlSum();
+    for (size_t i = 0; i < count; ++i) {
+      const float ip =
+        _ip[i] + norms[i] * _qjl_coeff * gammas[i] * (2.f * _sum[i] - qjl_sum);
+      out[i] = ScoreFrom(ip, i, xnorm2);
+    }
+  }
+
+  void ScoreGroup(const byte_type* codes, score_t threshold, score_t* out) {
+    const auto* norms =
+      reinterpret_cast<const float*>(codes + _lay.NormOffset());
+    const float* xnorm2 = nullptr;
+    if constexpr (M == VectorMetric::L2Sqr) {
+      xnorm2 = reinterpret_cast<const float*>(codes + _lay.XNorm2Offset());
+    }
+    const auto* gammas =
+      _lay.full ? reinterpret_cast<const float*>(codes + _lay.GammaOffset())
+                : nullptr;
+    ScoreLanes(codes, codes + _lay.group1_bytes, norms, gammas, xnorm2,
+               kFastScanBbs, threshold, out);
+  }
+
+  void ScoreRecords(const byte_type* rec, size_t count, score_t threshold,
+                    score_t* out) {
+    const size_t stride = _lay.record_size;
+    _packed1.resize(_lay.group1_bytes);
+    faiss::pq4_pack_codes(rec, count, _lay.m1, kFastScanBbs, kFastScanBbs,
+                          _lay.nsq1, _packed1.data(), stride);
+    if (_lay.full) {
+      _packed2.resize(_lay.group2_bytes);
+      faiss::pq4_pack_codes(rec + _lay.RowCode2Offset(), count, _lay.m2,
+                            kFastScanBbs, kFastScanBbs, _lay.nsq2,
+                            _packed2.data(), stride);
+    }
+    for (size_t i = 0; i < count; ++i) {
+      const byte_type* r = rec + i * stride;
+      std::memcpy(&_rm_norms[i], r + _lay.RowNormOffset(), sizeof(float));
+      if (_lay.full) {
+        std::memcpy(&_rm_gammas[i], r + _lay.RowGammaOffset(), sizeof(float));
+      }
+      if constexpr (M == VectorMetric::L2Sqr) {
+        std::memcpy(&_rm_xnorm2[i], r + _lay.RowXNorm2Offset(), sizeof(float));
+      }
+    }
+    const float* xnorm2 = nullptr;
+    if constexpr (M == VectorMetric::L2Sqr) {
+      xnorm2 = _rm_xnorm2.data();
+    }
+    ScoreLanes(_packed1.data(), _packed2.data(), _rm_norms.data(),
+               _lay.full ? _rm_gammas.data() : nullptr, xnorm2, count,
+               threshold, out);
+  }
+
+  std::shared_ptr<const TurboQuantizerCodebook<M>> _cb;
+  TurboQuantLayout _lay;
+  float _inv_sqrt_rd;
+  float _qjl_coeff;
+  float _qc = 0.f;
+  std::vector<uint8_t> _packed1;
+  std::vector<uint8_t> _packed2;
+  std::array<float, kFastScanBbs> _rm_norms{};
+  std::array<float, kFastScanBbs> _rm_gammas{};
+  [[no_unique_address]] utils::Need<M == VectorMetric::L2Sqr,
+                                    std::array<float, kFastScanBbs>> _rm_xnorm2;
+  std::array<uint16_t, kFastScanBbs> _accu{};
+  std::array<float, kFastScanBbs> _sum{};
+  std::array<float, kFastScanBbs> _ip{};
+};
+
+template<VectorMetric M>
+std::unique_ptr<QuantizerReader> TurboQuantizerCodebook<M>::MakeReader() const {
+  return MakeReaderT<TurboQuantizerCodebook<M>, TurboQuantizerReader<M>>(this);
+}
+
+template<VectorMetric M>
+std::shared_ptr<const QuantizerCodebook> TurboQuantizerStats<M>::MakeCodebook(
+  std::span<const float> query) const {
+  return MakeCodebookT<TurboQuantizerStats<M>, TurboQuantizerCodebook<M>>(
+    this, query);
+}
+
 template<VectorMetric M>
 class ProductQuantizerWriter final : public QuantizerWriter {
  public:
@@ -977,7 +1723,7 @@ class RaBitQuantizerWriter final : public QuantizerWriter {
       _ex_code_size{(static_cast<size_t>(_rd) * _ex_bits + 7) / 8},
       _sign_stride{FastScanNsq(_rd / kFastScanBits) / 2},
       _inv_rd_sqrt{1.f / std::sqrt(static_cast<float>(_rd))} {
-    GenerateSigns(_rd, kRaBitQRotationSeed, _signs);
+    GenerateSigns(_rd, kIvfRotationSeed, _signs);
     _rotated.resize(_rd);
     _residual.resize(_rd);
     _packed.resize(kFastScanBbs * _sign_stride);
@@ -1117,7 +1863,7 @@ class RaBitQuantizerStats final : public QuantizerStats {
       _d = d;
       _rd = RotatedDim(d);
       _nb_bits = hdr.nb_bits;
-      GenerateSigns(_rd, kRaBitQRotationSeed, _signs);
+      GenerateSigns(_rd, kIvfRotationSeed, _signs);
       _valid = true;
     }
   }
@@ -1414,7 +2160,7 @@ bool PanoramaApplies(VectorMetric metric, uint32_t d) noexcept {
 
 std::unique_ptr<QuantizerWriter> MakeQuantizerWriter(
   VectorQuantization quant, uint32_t d, VectorMetric metric, uint32_t pq_m,
-  uint32_t pq_niter, uint32_t nb_bits) {
+  uint32_t pq_niter, uint32_t nb_bits, bool row_major) {
   switch (quant) {
     case VectorQuantization::None:
       return std::make_unique<PanoramaQuantizerWriter>(d, metric);
@@ -1424,6 +2170,14 @@ std::unique_ptr<QuantizerWriter> MakeQuantizerWriter(
     case VectorQuantization::PQ:
       return MakeWriterWithMetric<ProductQuantizerWriter>(metric, d, pq_m,
                                                           pq_niter);
+    case VectorQuantization::TQ:
+    case VectorQuantization::TQMse: {
+      const bool full = quant == VectorQuantization::TQ;
+      const auto qtype = FaissTurboQuantType(full, nb_bits);
+      SDB_ASSERT(qtype);
+      return MakeWriterWithMetric<TurboQuantizerWriter>(
+        metric, d, full, nb_bits, *qtype, row_major);
+    }
     case VectorQuantization::RaBitQ:
       return MakeWriterWithMetric<RaBitQuantizerWriter>(metric, d, nb_bits);
   }
@@ -1432,7 +2186,7 @@ std::unique_ptr<QuantizerWriter> MakeQuantizerWriter(
 
 std::shared_ptr<const QuantizerStats> MakeQuantizerStats(
   VectorQuantization quant, uint32_t d, std::span<const byte_type> stats,
-  VectorMetric metric) {
+  VectorMetric metric, bool row_major) {
   switch (quant) {
     case VectorQuantization::None:
       return MakePanoramaStats(metric, d, stats);
@@ -1441,6 +2195,10 @@ std::shared_ptr<const QuantizerStats> MakeQuantizerStats(
       return MakeStatsWithMetric<ScalarQuantizerStats>(metric, d, quant, stats);
     case VectorQuantization::PQ:
       return MakeStatsWithMetric<ProductQuantizerStats>(metric, d, stats);
+    case VectorQuantization::TQ:
+    case VectorQuantization::TQMse:
+      return MakeStatsWithMetric<TurboQuantizerStats>(
+        metric, d, quant == VectorQuantization::TQ, stats, row_major);
     case VectorQuantization::RaBitQ:
       return MakeStatsWithMetric<RaBitQuantizerStats>(metric, d, stats);
   }

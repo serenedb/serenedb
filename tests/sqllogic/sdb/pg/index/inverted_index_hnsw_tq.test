@@ -1,0 +1,168 @@
+control substitution on
+
+# ============================================================================
+# HNSW with TurboQuant codes (quant = 'tq' / 'tqmse').
+#
+# TurboQuant encodes the residual against a single global centroid -- the
+# dataset mean -- because HNSW has no clusters, and its codes are stored
+# row-major so the reader packs them into 32-lane fast-scan blocks per visited
+# node.
+#
+# The fixture is one-hot: point i lives on axis i % 8 with magnitude
+# 10 * (1 + i / 8), so neighbours are separated by a whole axis or a whole
+# magnitude step. A collinear fixture would not work here -- at 2 MSE bits the
+# estimate error exceeds the gap between adjacent points on a line, the same
+# reason inverted_index_hnsw_small.test pins quant = 'none'.
+# ============================================================================
+
+statement ok
+CREATE TABLE hnsw_tq (pk INTEGER PRIMARY KEY, emb FLOAT[8]);
+
+statement ok
+CREATE INDEX hnsw_tq_idx ON hnsw_tq
+  USING inverted(pk, emb hnsw (metric = 'l2', quant = 'tq'));
+
+statement ok
+INSERT INTO hnsw_tq SELECT i,
+  list_transform(range(8),
+                 x -> CASE WHEN x = i % 8 THEN (10.0 * (1 + i / 8))::FLOAT
+                           ELSE 0.0::FLOAT END)::FLOAT[8]
+  FROM range(64) t(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) hnsw_tq;
+
+query
+SELECT pk FROM hnsw_tq_idx
+  ORDER BY emb <-> [0, 0, 0, 60, 0, 0, 0, 0]::FLOAT[8] LIMIT 3;
+----
+pk
+43
+35
+51
+
+query
+SELECT pk FROM hnsw_tq_idx
+  ORDER BY emb <-> [80, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 3;
+----
+pk
+56
+48
+40
+
+query
+SELECT count(*) FROM hnsw_tq_idx;
+----
+count
+64
+
+
+# tqmse has no QJL refinement stage; nb_bits is given explicitly.
+
+statement ok
+CREATE TABLE hnsw_tqmse (pk INTEGER PRIMARY KEY, emb FLOAT[8]);
+
+statement ok
+CREATE INDEX hnsw_tqmse_idx ON hnsw_tqmse
+  USING inverted(pk, emb hnsw (metric = 'l2', quant = 'tqmse', nb_bits = 4));
+
+statement ok
+INSERT INTO hnsw_tqmse SELECT i,
+  list_transform(range(8),
+                 x -> CASE WHEN x = i % 8 THEN (10.0 * (1 + i / 8))::FLOAT
+                           ELSE 0.0::FLOAT END)::FLOAT[8]
+  FROM range(64) t(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) hnsw_tqmse;
+
+query
+SELECT pk FROM hnsw_tqmse_idx
+  ORDER BY emb <-> [0, 0, 0, 60, 0, 0, 0, 0]::FLOAT[8] LIMIT 1;
+----
+pk
+43
+
+query
+SELECT count(*) FROM hnsw_tqmse_idx;
+----
+count
+64
+
+
+# cosine is supported for both TurboQuant variants.
+
+statement ok
+CREATE TABLE hnsw_tq_cos (pk INTEGER PRIMARY KEY, emb FLOAT[4]);
+
+statement ok
+CREATE INDEX hnsw_tq_cos_idx ON hnsw_tq_cos
+  USING inverted(pk, emb hnsw (metric = 'cosine', quant = 'tq', nb_bits = 5));
+
+statement ok
+INSERT INTO hnsw_tq_cos VALUES
+  (1, [1, 0, 0, 0]::FLOAT[4]),
+  (2, [0, 1, 0, 0]::FLOAT[4]),
+  (3, [0, 0, 1, 0]::FLOAT[4]),
+  (4, [0, 0, 0, 1]::FLOAT[4]);
+
+statement ok
+VACUUM (REFRESH_TABLE) hnsw_tq_cos;
+
+query
+SELECT count(*) FROM hnsw_tq_cos_idx;
+----
+count
+4
+
+
+# DML: TurboQuant is data-oblivious, so a re-refresh re-encodes correctly.
+
+statement ok
+DELETE FROM hnsw_tq WHERE pk = 43;
+
+statement ok
+VACUUM (REFRESH_TABLE) hnsw_tq;
+
+query
+SELECT pk FROM hnsw_tq_idx
+  ORDER BY emb <-> [0, 0, 0, 60, 0, 0, 0, 0]::FLOAT[8] LIMIT 1;
+----
+pk
+35
+
+query
+SELECT count(*) FROM hnsw_tq_idx;
+----
+count
+63
+
+
+# Negative cases: bit rates, and nb_bits on a quantizer that has none.
+
+statement error
+CREATE INDEX bad_a ON hnsw_tq
+  USING inverted(pk, emb hnsw (metric = 'l2', quant = 'tq', nb_bits = 4));
+----
+db error: ERROR: Column 'emb': hnsw option 'nb_bits' must be one of: 2 3 5 for quant 'tq'
+
+
+statement error
+CREATE INDEX bad_b ON hnsw_tq
+  USING inverted(pk, emb hnsw (metric = 'l2', quant = 'tqmse', nb_bits = 3));
+----
+db error: ERROR: Column 'emb': hnsw option 'nb_bits' must be one of: 1 2 4 for quant 'tqmse'
+
+
+statement error
+CREATE INDEX bad_c ON hnsw_tq
+  USING inverted(pk, emb hnsw (metric = 'l2', quant = 'sq8', nb_bits = 2));
+----
+db error: ERROR: Column 'emb': hnsw option 'nb_bits' is only valid with quant 'tq' or 'tqmse'
+
+
+statement error
+CREATE INDEX bad_d ON hnsw_tq
+  USING inverted(pk, emb hnsw (metric = 'l1', quant = 'tq'));
+----
+db error: ERROR: Column 'emb': hnsw with metric = 'l1' supports only quant = none

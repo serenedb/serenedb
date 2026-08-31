@@ -34,7 +34,8 @@ namespace irs {
 class DataOutput;
 class IndexInput;
 
-inline constexpr uint32_t kHnswInvalidNode = std::numeric_limits<uint32_t>::max();
+inline constexpr uint32_t kHnswInvalidNode =
+  std::numeric_limits<uint32_t>::max();
 inline constexpr uint32_t kHnswDefaultM = 32;
 inline constexpr uint32_t kHnswDefaultEfConstruction = 200;
 inline constexpr uint32_t kHnswDefaultEfSearch = 64;
@@ -164,6 +165,9 @@ void HnswBatchL2Sqr(const float* q, const float* base, uint32_t d,
 void HnswBatchIp(const float* q, const float* base, uint32_t d,
                  std::span<const uint32_t> ids, score_t* out) noexcept;
 
+inline constexpr score_t kHnswNoThreshold =
+  std::numeric_limits<score_t>::lowest();
+
 template<typename Dist>
 void HnswSearchLevel(const HnswGraph& graph, Dist& dist, uint32_t level,
                      uint32_t ef, HnswSearchScratch& s) {
@@ -198,7 +202,8 @@ void HnswSearchLevel(const HnswGraph& graph, Dist& dist, uint32_t level,
     }
 
     s.scores.resize(s.batch.size());
-    dist.Batch(s.batch, s.scores.data());
+    dist.Batch(s.batch, s.scores.data(),
+               nearest.size() >= ef ? nearest.front().score : kHnswNoThreshold);
 
     for (size_t i = 0; i < s.batch.size(); ++i) {
       const HnswCandidate cand{s.scores[i], s.batch[i]};
@@ -236,7 +241,7 @@ HnswCandidate HnswGreedyDescent(const HnswGraph& graph, Dist& dist,
         break;
       }
       s.scores.resize(s.batch.size());
-      dist.Batch(s.batch, s.scores.data());
+      dist.Batch(s.batch, s.scores.data(), cur.score);
       for (size_t i = 0; i < s.batch.size(); ++i) {
         if (s.scores[i] > cur.score) {
           cur = {s.scores[i], s.batch[i]};
@@ -351,9 +356,10 @@ void HnswInsert(HnswGraph& graph, uint32_t node, Dist& dist,
     HnswSearchLevel(graph, dist, level, ef_construction, s.search);
 
     auto& found = s.search.nearest;
-    std::ranges::sort(found, [](const HnswCandidate& l, const HnswCandidate& r) {
-      return l.score > r.score;
-    });
+    std::ranges::sort(found,
+                      [](const HnswCandidate& l, const HnswCandidate& r) {
+                        return l.score > r.score;
+                      });
 
     const uint32_t width = level == 0 ? graph.M0() : graph.M();
     HnswSelectNeighbors(dist, found, width, s.selected);
@@ -450,7 +456,7 @@ void HnswSearchRadius(const HnswGraph& graph, Dist& dist, score_t threshold,
     }
 
     s.scores.resize(s.batch.size());
-    dist.Batch(s.batch, s.scores.data());
+    dist.Batch(s.batch, s.scores.data(), kHnswNoThreshold);
     for (size_t i = 0; i < s.batch.size(); ++i) {
       if (s.scores[i] < threshold) {
         continue;

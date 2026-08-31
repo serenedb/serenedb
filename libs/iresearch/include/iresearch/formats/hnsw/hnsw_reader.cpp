@@ -38,9 +38,6 @@
 namespace irs {
 namespace {
 
-inline constexpr score_t kHnswNoThreshold =
-  std::numeric_limits<score_t>::lowest();
-
 template<VectorMetric M>
 struct HnswQueryDist {
   const float* base;
@@ -51,7 +48,8 @@ struct HnswQueryDist {
     return base + static_cast<size_t>(id) * d;
   }
 
-  void Batch(std::span<const uint32_t> ids, score_t* out) const noexcept {
+  void Batch(std::span<const uint32_t> ids, score_t* out,
+             score_t /*threshold*/ = 0.f) const noexcept {
     if constexpr (EffectiveQuantMetric(M) == VectorMetric::L2Sqr) {
       HnswBatchL2Sqr(q, base, d, ids, out);
     } else if constexpr (EffectiveQuantMetric(M) ==
@@ -92,12 +90,13 @@ struct HnswCodeDist {
     return out;
   }
 
-  void Batch(std::span<const uint32_t> ids, score_t* out) {
+  void Batch(std::span<const uint32_t> ids, score_t* out,
+             score_t threshold = kHnswNoThreshold) {
     gather.resize(ids.size() * static_cast<size_t>(record_size));
     for (size_t i = 0; i < ids.size(); ++i) {
       std::memcpy(gather.data() + i * record_size, Row(ids[i]), record_size);
     }
-    qr->ComputeBlock(gather, kHnswNoThreshold, out);
+    qr->ComputeBlock(gather, threshold, out);
   }
 
   void Prefetch(uint32_t id) const noexcept {
@@ -118,7 +117,8 @@ void WithHnswDist(const HnswData& data, std::span<const float> query,
     if (!reader) {
       return;
     }
-    reader->StartCluster(nullptr);
+    reader->StartCluster(data.centroid.empty() ? nullptr
+                                               : data.centroid.data());
     HnswCodeDist dist{.codes = data.codes.data(),
                       .record_size = record_size,
                       .qr = reader.get()};
@@ -208,15 +208,15 @@ std::vector<ScoreDoc> CollectHits(std::span<const HnswCandidate> found,
     }
     hits.push_back({.score = c.score, .doc = doc});
   }
-  std::ranges::sort(hits, [](const ScoreDoc& l, const ScoreDoc& r) {
-    return l.doc < r.doc;
-  });
+  std::ranges::sort(
+    hits, [](const ScoreDoc& l, const ScoreDoc& r) { return l.doc < r.doc; });
   return hits;
 }
 
 class HnswVectorQuery : public QueryBuilder {
  public:
-  HnswVectorQuery(const SubReader& segment, std::shared_ptr<const HnswData> data,
+  HnswVectorQuery(const SubReader& segment,
+                  std::shared_ptr<const HnswData> data,
                   std::vector<float> query, VectorMetric metric, uint32_t d,
                   uint32_t record_size, uint32_t ef, score_t boost)
     : QueryBuilder{segment},
@@ -304,7 +304,7 @@ class HnswRangeQuery : public QueryBuilder {
 };
 
 std::vector<float> NormalizedQuery(const VectorFilterOptions& opts,
-                                  uint32_t d) {
+                                   uint32_t d) {
   std::vector<float> q{opts.query.begin(), opts.query.end()};
   if (opts.metric == VectorMetric::Cosine) {
     std::vector<float> normalized(q.size());
@@ -330,7 +330,8 @@ HnswHeader HnswIndex::ReadHeader(IndexInput& in) {
   return h;
 }
 
-std::shared_ptr<const HnswData> HnswIndex::Load(const SubReader& segment) const {
+std::shared_ptr<const HnswData> HnswIndex::Load(
+  const SubReader& segment) const {
   std::call_once(_once, [&] {
     auto in = segment.ReopenAnn();
     if (!in) {
@@ -353,11 +354,16 @@ std::shared_ptr<const HnswData> HnswIndex::Load(const SubReader& segment) const 
       if (stats_size != 0) {
         in->ReadData(stats.data(), stats_size);
       }
-      data->stats =
-        MakeQuantizerStats(_header.quant, _header.d, stats,
-                           EffectiveQuantMetric(_header.metric));
+      data->stats = MakeQuantizerStats(_header.quant, _header.d, stats,
+                                       EffectiveQuantMetric(_header.metric),
+                                       /*row_major=*/true);
       if (!data->stats) {
         return;
+      }
+      if (QuantizerNeedsCentroid(_header.quant)) {
+        data->centroid.resize(_header.d);
+        in->ReadData(reinterpret_cast<byte_type*>(data->centroid.data()),
+                     data->centroid.size() * sizeof(float));
       }
       data->codes.resize(static_cast<size_t>(_header.rows) *
                          _header.record_size);

@@ -99,6 +99,20 @@ def create_table(names, serial=False):
               key=key_of(TABLE, name), rows_added=rows)
 
 
+def slow_ctas(names, scan_rows=2000000000):
+    name = names.fresh("t")
+    token = names.token()
+    row = names.token()
+    # Same column shape as every other table the generator makes, so the DML ops
+    # can target it; the cost is in the scan, not the result, which is one row.
+    return Op("slow_ctas", [
+        f"CREATE TABLE {name} AS SELECT count(*)::INT AS id, 0 AS v, "
+        f"'{row}' AS label FROM generate_series(1, {scan_rows}) g",
+        f"COMMENT ON TABLE {name} IS '{token}'",
+    ], creates=[(key_of(TABLE, name), token)], token=token,
+        key=key_of(TABLE, name), rows_added=[row])
+
+
 def drop_table(key):
     name = key[1]
     return Op("drop_table", [f"DROP TABLE {name} CASCADE"], drops=[key],

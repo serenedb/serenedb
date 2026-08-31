@@ -15,6 +15,9 @@ class Profile:
     freeze_sample_gap_s: float = 4.0
     faults_enabled: bool = False
     restarts: int = 0
+    table_cap: int = 12
+    other_cap: int = 8
+    cancels: int = 0
     parks: int = 0
     graceful_restarts: int = 0
     conflict_ceiling: float = 0.35
@@ -34,6 +37,14 @@ PROFILES = {
     "soak-tsan": Profile(
         name="soak-tsan", seconds=900, workers=4, quiesce_every=90.0,
         op_deadline_s=120.0, probe_timeout_s=30.0, faults_enabled=True,
+    ),
+    "scale": Profile(
+        name="scale", seconds=600, workers=4, quiesce_every=120.0,
+        table_cap=2500, other_cap=400, op_deadline_s=180.0,
+        probe_timeout_s=60.0,
+    ),
+    "cancel": Profile(
+        name="cancel", seconds=180, workers=4, quiesce_every=45.0, cancels=12,
     ),
     "wedge-probe": Profile(
         name="wedge-probe", seconds=180, workers=4, scenario="serial_churn",

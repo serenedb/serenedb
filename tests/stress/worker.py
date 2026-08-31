@@ -13,7 +13,7 @@ from rng import derive
 
 class WorkerStatus:
     __slots__ = ("worker_id", "op_kind", "started_at", "committed", "retries",
-                 "stalled", "finished", "cancel_sent")
+                 "stalled", "finished", "cancel_sent", "cancel_pending")
 
     def __init__(self, worker_id):
         self.worker_id = worker_id
@@ -24,6 +24,7 @@ class WorkerStatus:
         self.stalled = False
         self.finished = False
         self.cancel_sent = 0
+        self.cancel_pending = False
 
 
 class Worker(threading.Thread):
@@ -43,7 +44,8 @@ class Worker(threading.Thread):
         self.findings_lock = findings_lock
         self.model = Model()
         self.names = NameGen(run_tag, worker_id)
-        self.state = scenarios.WorkerState(self.names)
+        self.state = scenarios.WorkerState(
+            self.names, table_cap=profile.table_cap, other_cap=profile.other_cap)
         self.pick = scenarios.resolve(profile.scenario)
         self.rng = derive(seed, worker_id)
         self.status = WorkerStatus(worker_id)
@@ -69,6 +71,7 @@ class Worker(threading.Thread):
         if conn is None:
             return False
         try:
+            self.status.cancel_pending = True
             conn.cancel_safe(timeout=5)
             self.status.cancel_sent += 1
             return True
@@ -181,7 +184,7 @@ class Worker(threading.Thread):
                     msg, op.kind, scope,
                     self.broker.armed() if self.broker else (),
                     dead_connection=dead,
-                    cancel_requested=self.status.cancel_sent > 0,
+                    cancel_requested=self.status.cancel_pending,
                     planned_downtime=bool(self.planned_downtime
                                           and self.planned_downtime.is_set()),
                 )
@@ -213,6 +216,7 @@ class Worker(threading.Thread):
                     continue
                 break
 
+            self.status.cancel_pending = False
             self._apply(op, outcome)
             if outcome is Outcome.COMMITTED:
                 self.state.note_created(op)

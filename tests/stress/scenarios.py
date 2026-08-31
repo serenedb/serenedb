@@ -140,6 +140,15 @@ def pick_ddl_dml_race(rng, st):
     return _build(rng, st, rng.weighted(choices))
 
 
+def pick_cancel_bait(rng, st):
+    choices = [("slow_ctas", 6), ("catalog_read", 2)]
+    if len(st.tables) < st.table_cap:
+        choices.append(("create_table", 4))
+    if st.tables:
+        choices.extend([("drop_table", 6), ("dml_insert", 3), ("read", 2)])
+    return _build(rng, st, rng.weighted(choices))
+
+
 def pick_name_reuse(rng, st):
     slot = rng.below(4)
     name = st.names.pool("rt", slot)
@@ -203,6 +212,8 @@ def pick_dependency_churn(rng, st):
 
 def _build(rng, st, what):
     n = st.names
+    if what == "slow_ctas":
+        return ops.slow_ctas(n)
     if what == "create_table":
         return ops.create_table(n, serial=False)
     if what == "create_table_serial":
@@ -252,6 +263,7 @@ SCENARIOS = {
     "tables_only": pick_tables_only,
     "name_reuse": pick_name_reuse,
     "shared_arena": pick_shared_arena,
+    "cancel_bait": pick_cancel_bait,
 }
 
 

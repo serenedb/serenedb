@@ -23,6 +23,7 @@ class ChaosResult:
         self.aborts_injected = 0
         self.restarts_attempted = 0
         self.parks = 0
+        self.cancels = 0
         self.faults_used = []
         self.timeline = []
 
@@ -35,6 +36,7 @@ class ChaosResult:
             "aborts_injected": self.aborts_injected,
             "restarts_attempted": self.restarts_attempted,
             "parks": self.parks,
+            "cancels": self.cancels,
             "faults_used": self.faults_used,
             "timeline": self.timeline[-40:],
         }
@@ -77,6 +79,31 @@ class Chaos:
             self.broker.disarm(name)
         except Exception:
             pass
+
+    def cancel_an_inflight_op(self, workers):
+        inflight = [w for w in workers
+                    if w.status.started_at is not None and not w.status.finished]
+        # Prefer something actually slow enough to still be running: at a few
+        # thousand ops a second an ordinary statement finishes before the cancel
+        # request reaches the server, and the axis goes untested.
+        slow = [w for w in inflight if (w.status.op_kind or "").startswith("slow_")]
+        candidates = slow or inflight
+        if not candidates:
+            self.result.timeline.append({"fault": None, "outcome": "nothing_in_flight"})
+            return False
+        target = self.rng.choice(candidates)
+        kind = target.status.op_kind
+        ok = target.cancel_current()
+        self.result.cancels += 1
+        self.result.timeline.append({
+            "fault": None, "outcome": "cancelled" if ok else "cancel_failed",
+            "op_kind": kind, "worker": target.worker_id})
+        if not ok:
+            self._finding(
+                "cancel_request_failed",
+                f"cancel_safe() failed against worker {target.worker_id} "
+                f"running {kind}")
+        return ok
 
     def park_and_probe(self, progress_of, seconds=8.0):
         name = faults_mod.PAUSE_CREATE_INDEX_MID_BUILD_FAULT

@@ -94,6 +94,7 @@ def main(argv=None):
     ap.add_argument("--junit")
     ap.add_argument("--restarts", type=int)
     ap.add_argument("--parks", type=int)
+    ap.add_argument("--cancels", type=int)
     ap.add_argument("--graceful-restarts", type=int, dest="graceful_restarts")
     ap.add_argument("--keep-datadir", action="store_true")
     args = ap.parse_args(argv)
@@ -101,6 +102,7 @@ def main(argv=None):
     profile = config.resolve(args.profile, scenario=args.scenario,
                              seconds=args.seconds, workers=args.workers,
                              restarts=args.restarts, parks=args.parks,
+                             cancels=args.cancels,
                              graceful_restarts=args.graceful_restarts)
     seed = args.seed if args.seed is not None else random.SystemRandom().randrange(1 << 30)
     run_tag = base36(seed)
@@ -200,6 +202,7 @@ def main(argv=None):
     want_crashes = profile.restarts if chaos.available() else 0
     want_parks = profile.parks if chaos.available() else 0
     want_graceful = profile.graceful_restarts
+    want_cancels = profile.cancels
     if profile.restarts and not chaos.available():
         print("[stress] restarts requested but fault injection is unavailable; "
               "skipping chaos")
@@ -223,11 +226,16 @@ def main(argv=None):
     crash_at = schedule(want_crashes)
     park_at = schedule(want_parks, offset=profile.seconds / 8.0)
     graceful_at = schedule(want_graceful, offset=profile.seconds / 5.0)
+    cancel_at = schedule(want_cancels, offset=profile.seconds / 12.0)
     try:
         while time.monotonic() < deadline:
             if dog.verdict != ALIVE:
                 break
             time.sleep(0.2)
+            if cancel_at and time.monotonic() >= cancel_at[0]:
+                cancel_at.pop(0)
+                chaos.cancel_an_inflight_op(workers)
+                continue
             if park_at and time.monotonic() >= park_at[0]:
                 park_at.pop(0)
                 chaos.result.parks += 1
@@ -348,7 +356,8 @@ def main(argv=None):
         "build_config": info.get("server_version"),
         "fault_injection": info.get("fault_injection"),
         "chaos": (chaos.result.as_dict()
-                  if (want_crashes or want_parks or want_graceful) else None),
+                  if (want_crashes or want_parks or want_graceful
+                      or want_cancels) else None),
         "coverage": cov_data,
         "quarantined": quarantined,
         "quarantine_entries": [e.as_dict() for e in entries],
@@ -363,11 +372,12 @@ def main(argv=None):
     if quarantined:
         print(f"[stress] {len(quarantined)} finding(s) quarantined: "
               f"{sorted({q['quarantined_by'] for q in quarantined})}")
-    if want_crashes or want_parks or want_graceful:
+    if want_crashes or want_parks or want_graceful or want_cancels:
         cr = chaos.result
         print(f"[stress] chaos: crashes {cr.crashes_observed}/{cr.crashes_attempted} "
               f"observed, restarts_ok={cr.restarts_ok}, "
-              f"generations={server.generation}, "
+              f"generations={server.generation}, parks={cr.parks}, "
+              f"cancels={cr.cancels}, "
               f"findings_after_crash={len(post_crash)}, faults={sorted(set(cr.faults_used))}")
 
     with findings_lock:

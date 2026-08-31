@@ -23,7 +23,7 @@
 namespace sdb::search {
 
 // Replays each database's search WAL into its shards' iresearch writers, then
-// commits and resyncs num_rows.
+// commits.
 void RunSearchTableRecovery(bool skip_wal_recovery);
 
 // Starts background maintenance (commit/consolidation/GC) for every search

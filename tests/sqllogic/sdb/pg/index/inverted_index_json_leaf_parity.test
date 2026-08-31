@@ -1,0 +1,118 @@
+# A JSON expression key must reject object/array leaves the same way whichever
+# path indexes the row, and a row that gets rejected must not take the index
+# down with it.
+#
+# Two bugs met here. The build path stopped rejecting: it evaluates its
+# expressions in the pipeline (SereneDBCreateIndexPlan) rather than through
+# IndexExpressions::Execute, and the leaf check lived only in the latter -- so
+# CREATE INDEX over an object-valued leaf silently indexed garbage while an
+# INSERT of the very same value errored. And the per-index feed shared one
+# duckdb::TaskExecutor for the life of the bound index; a TaskExecutor never
+# clears its error state, so once any chunk threw, every later commit's slices
+# bailed out of tokenizing and rethrew the first transaction's stale error --
+# the index stopped accepting writes until restart.
+
+statement ok
+CREATE TABLE jlp(id INTEGER, doc JSON);
+
+statement ok
+CREATE INDEX jlp_idx ON jlp USING inverted(id, (doc->'nested'));
+
+statement ok
+INSERT INTO jlp SELECT g, ('{"nested": ' || g || '}')::JSON FROM generate_series(1, 300) g;
+
+statement ok
+VACUUM (REFRESH_TABLE) jlp;
+
+query
+SELECT count(*) FROM jlp_idx;
+----
+count
+300
+
+
+# An object leaf is refused at commit.
+statement error
+INSERT INTO jlp VALUES (9991, '{"nested":{"a":1}}'::json);
+----
+db error: ERROR: Failed to commit: JSON expression indexed by an inverted index must point to a primitive (string/number/boolean/null) leaf; got an object or array
+
+
+# The refused transaction rolled back whole -- no partial rows in the table.
+query
+SELECT count(*) FROM jlp;
+----
+count
+300
+
+
+# The fix point: the next, unrelated transaction must still be able to write.
+# Before the fix this failed with the rejected transaction's stale error.
+statement ok
+INSERT INTO jlp SELECT g, ('{"nested": ' || g || '}')::JSON FROM generate_series(301, 600) g;
+
+statement ok
+VACUUM (REFRESH_TABLE) jlp;
+
+query
+SELECT count(*) FROM jlp_idx;
+----
+count
+600
+
+# ... and the index still answers, rather than being left poisoned.
+query
+SELECT count(*) FROM jlp_idx WHERE (doc->'nested') @@ ts_like('42');
+----
+count
+1
+
+# A later object leaf is still refused -- the recovery above did not make the
+# check permissive.
+statement error
+INSERT INTO jlp VALUES (9992, '{"nested":[1,2]}'::json);
+----
+db error: ERROR: Failed to commit: JSON expression indexed by an inverted index must point to a primitive (string/number/boolean/null) leaf; got an object or array
+
+
+# The build path has to refuse what the insert path refuses. Rows first, so the
+# backfill is what sees the object leaf.
+statement ok
+CREATE TABLE jlp_build(id INTEGER, doc JSON);
+
+statement ok
+INSERT INTO jlp_build VALUES (1, '{"nested":{"a":1}}'::json);
+
+statement error
+CREATE INDEX jlp_build_idx ON jlp_build USING inverted(id, (doc->'nested'));
+----
+db error: ERROR: JSON expression indexed by an inverted index must point to a primitive (string/number/boolean/null) leaf; got an object or array
+
+
+# Control: a primitive leaf still builds and indexes on the same path.
+statement ok
+CREATE TABLE jlp_ok(id INTEGER, doc JSON);
+
+statement ok
+INSERT INTO jlp_ok SELECT g, ('{"nested": ' || g || '}')::JSON FROM generate_series(1, 50) g;
+
+statement ok
+CREATE INDEX jlp_ok_idx ON jlp_ok USING inverted(id, (doc->'nested'));
+
+statement ok
+VACUUM (REFRESH_TABLE) jlp_ok;
+
+query
+SELECT count(*) FROM jlp_ok_idx;
+----
+count
+50
+
+statement ok
+DROP TABLE jlp;
+
+statement ok
+DROP TABLE jlp_build;
+
+statement ok
+DROP TABLE jlp_ok;

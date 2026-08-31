@@ -85,16 +85,15 @@ template<typename T>
 struct IsArray<Array<T>> : std::true_type {};
 
 }  // namespace sdb::pg
-namespace sdb::catalog {
+namespace duckdb {
 
 struct AclItem;
-struct Snapshot;
 
-}  // namespace sdb::catalog
+}  // namespace duckdb
 namespace sdb::pg {
 
 struct AclColumn {
-  std::span<const catalog::AclItem> items;
+  std::span<const duckdb::AclItem> items;
 };
 
 template<typename T>

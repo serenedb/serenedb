@@ -20,6 +20,7 @@
 
 #include "catalog/index.h"
 
+#include <absl/algorithm/container.h>
 #include <absl/strings/ascii.h>
 #include <absl/strings/str_cat.h>
 #include <absl/strings/str_join.h>
@@ -30,6 +31,9 @@
 #include <duckdb/common/types/geometry_crs.hpp>
 #include <duckdb/function/compression_function.hpp>
 #include <duckdb/main/config.hpp>
+#include <duckdb/parser/expression/columnref_expression.hpp>
+#include <duckdb/parser/parsed_expression_iterator.hpp>
+#include <duckdb/parser/parser.hpp>
 #include <iresearch/analysis/geo_analyzer.hpp>
 #include <iresearch/analysis/token_attributes.hpp>
 #include <iresearch/types.hpp>
@@ -37,14 +41,18 @@
 #include <limits>
 #include <string>
 
+#include "basics/containers/flat_hash_map.h"
 #include "basics/containers/flat_hash_set.h"
 #include "basics/down_cast.h"
+#include "basics/log.h"
 #include "basics/serializer.h"
-#include "catalog/catalog.h"
+#include "catalog/ddl/catalog.h"
+#include "catalog/entry.h"
+#include "catalog/entry/duckdb_index_entry.h"
 #include "catalog/geo_validate.h"
 #include "catalog/inverted_index.h"
-#include "catalog/object.h"
-#include "catalog/secondary_index.h"
+#include "catalog/log/store.h"
+#include "catalog/read/duckdb_catalog_sets.h"
 #include "catalog/tokenizer.h"
 #include "pg/errcodes.h"
 #include "pg/sql_exception_macro.h"
@@ -52,6 +60,190 @@
 #include "query/config.h"
 
 namespace sdb::catalog {
+namespace {
+
+// The property ids an index record adds to duckdb's own. 300 up, so a duckdb
+// version that starts using the 200s for CreateIndexInfo cannot collide.
+constexpr duckdb::field_id_t kRelationIdField = 300;
+constexpr duckdb::field_id_t kInvertedField = 301;
+constexpr duckdb::field_id_t kPayloadField = 302;
+constexpr duckdb::field_id_t kIdField = 303;
+constexpr duckdb::field_id_t kSchemaIdField = 304;
+constexpr duckdb::field_id_t kKeyColumnsField = 305;
+constexpr duckdb::field_id_t kReferencedColumnsField = 306;
+
+duckdb::vector<uint64_t> RawIds(const std::vector<ColumnId>& ids) {
+  duckdb::vector<uint64_t> out;
+  out.reserve(ids.size());
+  for (const auto id : ids) {
+    out.push_back(id.id());
+  }
+  return out;
+}
+
+std::vector<ColumnId> ColumnIds(const duckdb::vector<uint64_t>& raw) {
+  std::vector<ColumnId> out;
+  out.reserve(raw.size());
+  for (const auto id : raw) {
+    out.emplace_back(id);
+  }
+  return out;
+}
+
+duckdb::vector<duckdb::unique_ptr<duckdb::ParsedExpression>> CopyKeys(
+  const duckdb::vector<duckdb::unique_ptr<duckdb::ParsedExpression>>& keys) {
+  duckdb::vector<duckdb::unique_ptr<duckdb::ParsedExpression>> out;
+  out.reserve(keys.size());
+  for (const auto& key : keys) {
+    out.push_back(key->Copy());
+  }
+  return out;
+}
+
+}  // namespace
+
+CreateIndexInfo::CreateIndexInfo(
+  ObjectId schema_id, ObjectId id, ObjectId relation_id, std::string_view name,
+  bool unique, std::vector<ColumnId> key_columns,
+  std::vector<ColumnId> referenced_columns,
+  duckdb::vector<duckdb::unique_ptr<duckdb::ParsedExpression>> keys)
+  : _key_columns{std::move(key_columns)},
+    _referenced_columns{std::move(referenced_columns)},
+    _relation_id{relation_id} {
+  // An unset id means "allocate one": CREATE INDEX names the index before it
+  // has an id to give it.
+  oid = (id != id::kInvalid ? id : NextId()).id();
+  parent_oid = schema_id.id();
+  RestoreId(oid);
+  SetIndexName(duckdb::Identifier{name});
+  index_type = std::string{kSecondaryIndexType};
+  constraint_type = unique ? duckdb::IndexConstraintType::UNIQUE
+                           : duckdb::IndexConstraintType::NONE;
+  parsed_expressions = std::move(keys);
+}
+
+CreateIndexInfo::CreateIndexInfo(std::shared_ptr<const Index> index)
+  : _index{std::move(index)}, _relation_id{_index->GetRelationId()} {
+  // duckdb's own half, so upstream machinery -- duckdb_indexes(), the entry's
+  // ToSQL, pg_class.reloptions -- reads the same facts the payload carries and
+  // nothing builds them a second time.
+  oid = _index->GetId().id();
+  parent_oid = _index->GetSchemaId().id();
+  SetIndexName(duckdb::Identifier{_index->GetName()});
+  index_type = std::string{kInvertedIndexType};
+  // An inverted index enforces nothing: UNIQUE is the ART's alone.
+  constraint_type = duckdb::IndexConstraintType::NONE;
+  if (!_index->Comment().empty()) {
+    comment = duckdb::Value(std::string{_index->Comment()});
+  }
+}
+
+const std::vector<ColumnId>& CreateIndexInfo::GetColumns() const noexcept {
+  return _index ? _index->GetColumns() : _key_columns;
+}
+
+const std::vector<ColumnId>& CreateIndexInfo::GetReferencedColumns()
+  const noexcept {
+  return _index ? _index->GetReferencedColumns() : _referenced_columns;
+}
+
+bool CreateIndexInfo::ReferencesColumn(ColumnId id) const noexcept {
+  if (_index) {
+    return _index->ReferencesColumn(id);
+  }
+  return absl::c_linear_search(_referenced_columns, id);
+}
+
+duckdb::unique_ptr<duckdb::CreateInfo> CreateIndexInfo::Copy() const {
+  // An inverted index is shared: every version of it that a copy of this record
+  // reaches is the same object. A plain ART is duckdb's own fields, which the
+  // base copies.
+  auto result =
+    _index ? duckdb::make_uniq<CreateIndexInfo>(_index)
+           : duckdb::make_uniq<CreateIndexInfo>(
+               GetSchemaId(), GetId(), _relation_id, GetName(), IsUnique(),
+               _key_columns, _referenced_columns, CopyKeys(parsed_expressions));
+  CopyProperties(*result);
+  result->table = table;
+  result->names = names;
+  result->column_ids = column_ids;
+  result->scan_types = scan_types;
+  result->options = options;
+  return std::move(result);
+}
+
+void CreateIndexInfo::Serialize(duckdb::Serializer& sink) const {
+  // duckdb's own record first: the identity, the owner's edges, the comment and
+  // -- for a plain ART -- the keys, which are the whole definition.
+  duckdb::CreateIndexInfo::Serialize(sink);
+  sink.WriteProperty<uint64_t>(kRelationIdField, "sdb_relation_id",
+                               _relation_id.id());
+  sink.WriteProperty<bool>(kInvertedField, "sdb_inverted", IsInverted());
+  if (_index) {
+    duckdb::MemoryStream stream;
+    duckdb::BinarySerializer out{stream};
+    _index->SerializePayload(out);
+    sink.WriteProperty<std::string>(
+      kPayloadField, "sdb_payload",
+      std::string{reinterpret_cast<const char*>(stream.GetData()),
+                  stream.GetPosition()});
+  }
+  // The index's own identity, so the record states everything the object is
+  // built from: duckdb's base carries the same two on the record around it, but
+  // reads them back after the payload is already a finished object.
+  sink.WriteProperty<uint64_t>(kIdField, "sdb_id", GetId().id());
+  sink.WriteProperty<uint64_t>(kSchemaIdField, "sdb_schema_id",
+                               GetSchemaId().id());
+  if (!_index) {
+    // The ids a plain ART is filed under: duckdb builds the index from the key
+    // expressions beside them, and the catalog answers by id.
+    sink.WriteProperty<duckdb::vector<uint64_t>>(
+      kKeyColumnsField, "sdb_key_columns", RawIds(_key_columns));
+    sink.WriteProperty<duckdb::vector<uint64_t>>(kReferencedColumnsField,
+                                                 "sdb_referenced_columns",
+                                                 RawIds(_referenced_columns));
+  }
+}
+
+duckdb::unique_ptr<duckdb::CreateInfo> DeserializeIndexInfo(
+  duckdb::Deserializer& src) {
+  // duckdb's own half, which for a plain ART is the whole definition.
+  auto duck = duckdb::CreateIndexInfo::Deserialize(src);
+  auto& keys = duck->Cast<duckdb::CreateIndexInfo>();
+  const ObjectId relation_id{
+    src.ReadProperty<uint64_t>(kRelationIdField, "sdb_relation_id")};
+  const auto inverted = src.ReadProperty<bool>(kInvertedField, "sdb_inverted");
+  std::string payload;
+  if (inverted) {
+    payload = src.ReadProperty<std::string>(kPayloadField, "sdb_payload");
+  }
+  const ObjectId id{src.ReadProperty<uint64_t>(kIdField, "sdb_id")};
+  const ObjectId schema_id{
+    src.ReadProperty<uint64_t>(kSchemaIdField, "sdb_schema_id")};
+  if (!inverted) {
+    auto key_columns = ColumnIds(src.ReadProperty<duckdb::vector<uint64_t>>(
+      kKeyColumnsField, "sdb_key_columns"));
+    auto referenced_columns =
+      ColumnIds(src.ReadProperty<duckdb::vector<uint64_t>>(
+        kReferencedColumnsField, "sdb_referenced_columns"));
+    auto result = duckdb::make_uniq<CreateIndexInfo>(
+      schema_id, id, relation_id, keys.GetIndexName().GetIdentifierName(),
+      keys.constraint_type == duckdb::IndexConstraintType::UNIQUE,
+      std::move(key_columns), std::move(referenced_columns),
+      std::move(keys.parsed_expressions));
+    result->table = keys.table;
+    result->names = std::move(keys.names);
+    result->column_ids = std::move(keys.column_ids);
+    result->scan_types = std::move(keys.scan_types);
+    result->options = std::move(keys.options);
+    return std::move(result);
+  }
+  duckdb::MemoryStream stream{
+    reinterpret_cast<duckdb::data_ptr_t>(payload.data()), payload.size()};
+  duckdb::BinaryDeserializer in{stream};
+  return duckdb::make_uniq<CreateIndexInfo>(std::shared_ptr<const Index>{
+    InvertedIndex::Deserialize(in, schema_id, id, relation_id)});
+}
 namespace {
 
 constexpr std::string_view kMetricField = "metric";
@@ -141,19 +333,10 @@ duckdb::CompressionType ParseCompressionName(std::string_view column_name,
                                              std::string_view name) {
   std::string n{name};
   absl::AsciiStrToLower(&n);
-  // Excluded on purpose:
-  //   `dictionary` / `fsst` -- storage_version VERSION_NUMBER_UPPER
-  //     disables them upstream (replaced by `dict_fsst`); init_analyze
-  //     returns nullptr at runtime so accepting the name here would
-  //     defer the failure to the async commit path.
-  //   `chimp` / `patas` -- DuckDB throws InternalException at
-  //     init_compression for both ("has been deprecated, can no longer
-  //     be used to compress data"). Same async-error issue as the pair
-  //     above.
-  //   `constant` -- internal-only codec selected by the analyzer when a
-  //     row group is all-equal; CompressionFunction has init_analyze ==
-  //     nullptr, so the validation gate below would reject it anyway.
-  //     Kept out of kMap so the parse error is up front.
+  // Excluded on purpose: dictionary/fsst (disabled upstream by
+  // storage_version, replaced by dict_fsst), chimp/patas (deprecated, throw at
+  // init_compression) and constant (internal-only, analyzer-selected) --
+  // accepting the name would defer the failure to the async commit path.
   static constexpr std::pair<std::string_view, duckdb::CompressionType> kMap[] =
     {
       {"auto", duckdb::CompressionType::COMPRESSION_AUTO},
@@ -425,7 +608,7 @@ void ValidateInvertedIndexColumns(
   for (const auto& c : indexed_columns) {
     const auto& type = c.IsIndexedExpression()
                          ? c.GetIndexedExpression().return_type
-                         : c.GetCatalogColumn().type;
+                         : c.GetColumn().type;
     const auto label = c.name;
 
     if (c.IsBuiltin(kIVFKind)) {
@@ -577,10 +760,9 @@ void ApplyIVFOpclass(
   entry.store_values = true;
 }
 
-std::shared_ptr<Tokenizer> LookupTokenizer(const Snapshot& snapshot,
-                                           ObjectId database_id,
-                                           std::string_view schema_name,
-                                           std::string_view opclass) {
+TokenizerRef LookupTokenizer(duckdb::ClientContext& context,
+                             ObjectId database_id, std::string_view schema_name,
+                             std::string_view opclass) {
   if (opclass.empty()) {
     return nullptr;
   }
@@ -588,36 +770,11 @@ std::shared_ptr<Tokenizer> LookupTokenizer(const Snapshot& snapshot,
   if (object_name.schema != schema_name) {
     return nullptr;
   }
-  return snapshot.GetTokenizer(NoAccessCheck(), database_id, object_name.schema,
-                               object_name.relation);
-}
-
-[[noreturn]] void ThrowUnknownBuiltinOpclass(std::string_view opclass,
-                                             std::string_view owner_label,
-                                             std::string_view schema_name) {
-  THROW_SQL_ERROR(
-    ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
-    ERR_MSG("Unknown opclass '", opclass, "' on column '", owner_label,
-            "': no text dictionary by that name in schema '", schema_name, "'"),
-    ERR_HINT("'", opclass, "' is a built-in opclass; use the options form '",
-             opclass, " (...)'"));
-}
-
-[[noreturn]] void ThrowUnknownOpclassError(std::string_view opclass,
-                                           std::string_view owner_label,
-                                           std::string_view schema_name) {
-  auto object_name = pg::ParseObjectName(opclass, schema_name);
-  if (object_name.schema != schema_name) {
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
-      ERR_MSG(
-        "Accessing text dictionary from different schema is not supported"));
-  }
-  THROW_SQL_ERROR(
-    ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
-    ERR_MSG("Unknown opclass '", opclass, "' on column '", owner_label,
-            "': no text dictionary by that name in schema '", schema_name,
-            "'"));
+  const auto schema_id =
+    catalog::FindSchemaId(&context, database_id, object_name.schema);
+  return schema_id.isSet()
+           ? catalog::FindTokenizer(&context, schema_id, object_name.relation)
+           : nullptr;
 }
 
 bool IsGeoSourceAnalyzer(const irs::analysis::Analyzer& analyzer) {
@@ -662,8 +819,7 @@ void ApplyOpclassToEntry(duckdb::ClientContext& context,
                          const CreateIndexColumn& c,
                          std::string_view owner_label,
                          const duckdb::LogicalType& value_type,
-                         const Snapshot& snapshot, ObjectId database_id,
-                         std::string_view schema_name,
+                         ObjectId database_id, std::string_view schema_name,
                          InvertedIndexEntryInfo& entry) {
   if (c.opclass.empty()) {
     return;
@@ -679,12 +835,30 @@ void ApplyOpclassToEntry(duckdb::ClientContext& context,
     return;
   }
 
-  auto dict = LookupTokenizer(snapshot, database_id, schema_name, c.opclass);
+  auto dict = LookupTokenizer(context, database_id, schema_name, c.opclass);
   if (!dict) {
     if (c.opclass == kIVFKind || c.opclass == kIncludedKind) {
-      ThrowUnknownBuiltinOpclass(c.opclass, owner_label, schema_name);
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
+        ERR_MSG("Unknown opclass '", c.opclass, "' on column '", owner_label,
+                "': no text dictionary by that name in schema '", schema_name,
+                "'"),
+        ERR_HINT("'", c.opclass,
+                 "' is a built-in opclass; use the options "
+                 "form '",
+                 c.opclass, " (...)'"));
     }
-    ThrowUnknownOpclassError(c.opclass, owner_label, schema_name);
+    if (pg::ParseObjectName(c.opclass, schema_name).schema != schema_name) {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+        ERR_MSG(
+          "Accessing text dictionary from different schema is not supported"));
+    }
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
+      ERR_MSG("Unknown opclass '", c.opclass, "' on column '", owner_label,
+              "': no text dictionary by that name in schema '", schema_name,
+              "'"));
   }
   auto analyzer = dict->GetTokenizer();
   ValidateTokenizerVsColumn(owner_label, value_type, *analyzer);
@@ -698,38 +872,17 @@ void ApplyOpclassToEntry(duckdb::ClientContext& context,
 
 }  // namespace
 
-std::shared_ptr<SecondaryIndex> CreateSecondaryIndex(
-  ObjectId database_id, ObjectId schema_id, ObjectId id, ObjectId relation_id,
-  std::string name, std::vector<catalog::CreateIndexColumn> columns,
-  bool unique) {
-  std::vector<Column::Id> key_columns;
-  std::vector<ExpressionData> key_expressions;
-  key_columns.reserve(columns.size());
-  for (const auto& c : columns) {
-    if (c.IsIndexedExpression()) {
-      key_columns.push_back(Column::kInvalidId);  // expression-key slot
-      key_expressions.push_back(c.GetIndexedExpression());
-    } else {
-      key_columns.push_back(c.GetCatalogColumn().GetId());
-    }
-  }
-  return std::make_shared<SecondaryIndex>(
-    database_id, schema_id, id, relation_id, std::move(name),
-    std::move(key_columns), std::move(key_expressions), unique);
-}
-
-std::shared_ptr<InvertedIndex> CreateInvertedIndex(
+duckdb::unique_ptr<Index> NewInvertedIndex(
   duckdb::ClientContext& context, ObjectId database_id,
   std::string_view schema_name, ObjectId schema_id, ObjectId id,
   ObjectId relation_id, std::string name,
-  std::vector<catalog::CreateIndexColumn> columns,
-  const std::shared_ptr<const Snapshot>& snapshot, InvertedIndexOptions options,
+  std::vector<catalog::CreateIndexColumn> columns, InvertedIndexOptions options,
   ExpressionData predicate) {
   SDB_ASSERT(options.row_group_size != 0);
   ValidateInvertedIndexColumns(columns);
 
   InvertedIndex::Entries entries;
-  std::vector<Column::Id> key_columns;
+  std::vector<ColumnId> key_columns;
   std::vector<ExpressionKey> expression_keys;
   key_columns.reserve(columns.size());
   const uint64_t expressions_cnt = std::ranges::count_if(
@@ -741,7 +894,7 @@ std::shared_ptr<InvertedIndex> CreateInvertedIndex(
   if (expressions_cnt > 1) {
     tokenized_exprs.reserve(expressions_cnt);
   }
-  containers::FlatHashSet<Column::Id> tokenized_cols;
+  containers::FlatHashSet<ColumnId> tokenized_cols;
   for (const auto& c : columns) {
     if (c.IsIndexedExpression()) {
       const auto& expr_data = c.GetIndexedExpression();
@@ -759,25 +912,24 @@ std::shared_ptr<InvertedIndex> CreateInvertedIndex(
       const auto field_id = next_expr_field_id++;
       InvertedIndexEntryInfo expr_info;
       ApplyOpclassToEntry(context, c, expr_data.pretty_printed,
-                          expr_data.return_type, *snapshot, database_id,
-                          schema_name, expr_info);
+                          expr_data.return_type, database_id, schema_name,
+                          expr_info);
       entries.emplace(field_id, std::move(expr_info));
       expression_keys.emplace_back(expr_data, field_id);
       continue;
     }
-    const auto col_field_id =
-      static_cast<irs::field_id>(c.GetCatalogColumn().GetId());
+    const auto col_field_id = static_cast<irs::field_id>(c.GetColumn().id);
     auto [col_it, col_inserted] =
       entries.try_emplace(col_field_id, InvertedIndexEntryInfo{});
     auto& index_col = col_it->second;
     if (col_inserted) {
-      key_columns.push_back(c.GetCatalogColumn().GetId());
+      key_columns.push_back(c.GetColumn().id);
     }
     if (!c.IsBuiltin(kIncludedKind) && !c.IsBuiltin(kIVFKind)) {
       index_col.indexed_term_dict = true;
     }
     if (IsTokenizerOpclass(c) &&
-        !tokenized_cols.insert(c.GetCatalogColumn().GetId()).second) {
+        !tokenized_cols.insert(c.GetColumn().id).second) {
       THROW_SQL_ERROR(
         ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
         ERR_MSG(
@@ -786,38 +938,175 @@ std::shared_ptr<InvertedIndex> CreateInvertedIndex(
           "stores a single tokenizer per indexed column. Stack `included(...)` "
           "on the same column instead, or remove the duplicate."));
     }
-    ApplyOpclassToEntry(context, c, c.name, c.GetCatalogColumn().type,
-                        *snapshot, database_id, schema_name, index_col);
+    ApplyOpclassToEntry(context, c, c.name, c.GetColumn().type, database_id,
+                        schema_name, index_col);
   }
   for (auto& [_, entry] : entries) {
     EnsureId(entry.null_field_id);
   }
-  return std::make_shared<InvertedIndex>(
-    database_id, schema_id, id, relation_id, std::move(name),
-    std::move(key_columns), std::move(expression_keys), std::move(entries),
-    std::move(options), std::move(predicate));
+  return duckdb::make_uniq<InvertedIndex>(
+    schema_id, id, relation_id, name, std::string{}, std::move(key_columns),
+    std::move(expression_keys), std::move(entries), std::move(options),
+    std::move(predicate));
 }
 
-Index::Index(ObjectId database_id, ObjectId schema_id, ObjectId id,
-             ObjectId relation_id, std::string name, DerivedColumnIds derived,
-             ObjectType type)
-  : Object{Permissions{}, schema_id, id, std::move(name), type},
-    _database_id{database_id},
-    _relation_id{relation_id},
-    _columns{std::move(derived.columns)},
+std::shared_ptr<const Index> FindInvertedIndex(ObjectId database_id,
+                                               ObjectId id) {
+  auto database = TryStoreDatabase(database_id);
+  if (!database) {
+    return nullptr;
+  }
+  const auto* index =
+    catalog::FindIn<SereneDBIndexEntry>(nullptr, database->GetCatalog(), id);
+  return index != nullptr && index->IsInverted() ? index->DefinitionPtr()
+                                                 : nullptr;
+}
+
+namespace {
+
+// One field of an index changed, through the payload every version round-trips:
+// the one form that carries the rest of them.
+template<typename Mutate>
+std::shared_ptr<const Index> RebuiltWith(const Index& index, Mutate mutate) {
+  auto data = InvertedInfo(index).ToData();
+  mutate(data);
+  return InvertedIndex::FromData(index.GetSchemaId(), index.GetId(),
+                                 index.GetRelationId(), std::move(data));
+}
+
+}  // namespace
+
+std::vector<duckdb::unique_ptr<CreateIndexInfo>> RelationIndexVersions(
+  std::span<const duckdb::unique_ptr<CreateIndexInfo>> indexes,
+  const duckdb::CreateTableInfo& before, const duckdb::CreateTableInfo& after) {
+  containers::FlatHashMap<std::string, std::string> renames;
+  for (const auto& column : before.columns.Logical()) {
+    const auto* now = catalog::ColumnById(after, ObjectId{column.CatalogOid()});
+    if (now != nullptr &&
+        now->Name().GetIdentifierName() != column.Name().GetIdentifierName()) {
+      renames.emplace(column.Name().GetIdentifierName(),
+                      now->Name().GetIdentifierName());
+    }
+  }
+  std::vector<duckdb::unique_ptr<CreateIndexInfo>> versions;
+  versions.reserve(indexes.size());
+  for (const auto& index : indexes) {
+    auto next = duckdb::unique_ptr_cast<duckdb::CreateInfo, CreateIndexInfo>(
+      index->Copy());
+    if (!renames.empty() && !index->IsInverted()) {
+      // duckdb's own key expressions name the table's columns, so a rename
+      // rewrites the leaves the way duckdb rewrites the store's own copy
+      // (DuckTableEntry::RenameColumn); the ids the index is filed under do
+      // not move.
+      for (auto& key : next->parsed_expressions) {
+        duckdb::ParsedExpressionIterator::VisitExpressionMutable<
+          duckdb::ColumnRefExpression>(
+          *key, [&](duckdb::ColumnRefExpression& colref) {
+            if (colref.ColumnNames().empty()) {
+              return;
+            }
+            const auto it =
+              renames.find(colref.ColumnNames().back().GetIdentifierName());
+            if (it != renames.end()) {
+              colref.ColumnNamesMutable().back() =
+                duckdb::Identifier{it->second};
+            }
+          });
+      }
+    }
+    versions.push_back(std::move(next));
+  }
+  return versions;
+}
+
+// Rename and ALTER INDEX SET rewrite the index: it is const and shared, and it
+// is what a catalog entry holds. The storage holder carries over -- it is the
+// same index behind the same directory.
+std::shared_ptr<const Index> RenamedIndex(const Index& index,
+                                          std::string_view name) {
+  return RebuiltWith(index, [&](auto& data) { data.name = name; });
+}
+
+std::shared_ptr<const Index> RecommentedIndex(const Index& index,
+                                              std::string_view comment) {
+  return RebuiltWith(index, [&](auto& data) { data.comment = comment; });
+}
+
+std::shared_ptr<const Index> ReoptionedIndex(const Index& index,
+                                             InvertedIndexOptions options) {
+  return RebuiltWith(index,
+                     [&](auto& data) { data.options = std::move(options); });
+}
+
+// A new version of the record: what the superseded one carries beside the
+// definition -- the edges, the conflict mode, the relation it names -- comes
+// over with it.
+duckdb::unique_ptr<duckdb::CreateInfo> Reissued(
+  const CreateIndexInfo& index, duckdb::unique_ptr<CreateIndexInfo> next) {
+  index.CopyProperties(*next);
+  next->table = index.table;
+  return std::move(next);
+}
+
+duckdb::unique_ptr<duckdb::CreateInfo> RenamedIndexRecord(
+  const CreateIndexInfo& index, std::string_view name) {
+  if (index.IsInverted()) {
+    auto next = Reissued(index, duckdb::make_uniq<CreateIndexInfo>(
+                                  RenamedIndex(*index.GetIndex(), name)));
+    next->Cast<CreateIndexInfo>().SetIndexName(duckdb::Identifier{name});
+    return next;
+  }
+  auto next = index.Copy();
+  next->Cast<CreateIndexInfo>().SetIndexName(duckdb::Identifier{name});
+  return next;
+}
+
+duckdb::unique_ptr<duckdb::CreateInfo> ReoptionedIndexRecord(
+  const CreateIndexInfo& index, InvertedIndexOptions options) {
+  return Reissued(index, duckdb::make_uniq<CreateIndexInfo>(ReoptionedIndex(
+                           *index.GetIndex(), std::move(options))));
+}
+
+duckdb::unique_ptr<duckdb::CreateInfo> RecommentedIndexRecord(
+  const CreateIndexInfo& index, std::string_view comment) {
+  if (index.IsInverted()) {
+    auto next =
+      Reissued(index, duckdb::make_uniq<CreateIndexInfo>(
+                        RecommentedIndex(*index.GetIndex(), comment)));
+    next->comment =
+      comment.empty() ? duckdb::Value() : duckdb::Value(std::string{comment});
+    return next;
+  }
+  auto next = index.Copy();
+  next->comment =
+    comment.empty() ? duckdb::Value() : duckdb::Value(std::string{comment});
+  return next;
+}
+
+Index::Index(ObjectId schema_id, ObjectId id, ObjectId relation_id,
+             std::string_view name, std::string comment,
+             DerivedColumnIds derived)
+  : _columns{std::move(derived.columns)},
     _referenced_columns{std::move(derived.referenced_columns)},
-    _referenced_columns_set{std::move(derived.referenced_columns_set)} {
-  SDB_ASSERT(GetId().isSet());
+    _referenced_columns_set{std::move(derived.referenced_columns_set)},
+    _name{name},
+    _comment{std::move(comment)},
+    // An unset id means "allocate one": CREATE INDEX names the index before it
+    // has an id to give it.
+    _id{id != id::kInvalid ? id : NextId()},
+    _schema_id{schema_id},
+    _relation_id{relation_id} {
+  RestoreId(_id.id());
 }
 
-std::pair<std::vector<Column::Id>, containers::FlatHashSet<Column::Id>>
-Index::DedupColumns(std::span<const Column::Id> columns) {
-  std::vector<Column::Id> ids;
+std::pair<std::vector<ColumnId>, containers::FlatHashSet<ColumnId>>
+Index::DedupColumns(std::span<const ColumnId> columns) {
+  std::vector<ColumnId> ids;
   ids.reserve(columns.size());
-  containers::FlatHashSet<Column::Id> seen;
+  containers::FlatHashSet<ColumnId> seen;
   seen.reserve(columns.size());
   for (auto column : columns) {
-    if (column == Column::kInvalidId) {
+    if (column == kInvalidColumnId) {
       continue;  // expression-slot sentinel
     }
     if (seen.insert(column).second) {

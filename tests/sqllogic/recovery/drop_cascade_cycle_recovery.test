@@ -46,12 +46,12 @@ SELECT 1;
 
 # Both halves of the cycle survived; RESTRICT is blocked from either side.
 connection after_crash
-statement error (?i)cannot drop function .*babsky_fn.* because other objects depend on it
+statement error (?i)cannot drop entry .*babsky_fn.* because there are entries that depend on it
 DROP FUNCTION babsky_fn;
 
 
 connection after_crash
-statement error (?i)cannot drop (table|relation|view) .*clickclack_v.* because other objects depend on it
+statement error (?i)cannot drop entry .*clickclack_v.* because there are entries that depend on it
 DROP VIEW clickclack_v;
 
 

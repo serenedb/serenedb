@@ -1,9 +1,14 @@
 # Notes for AI agents
 
-Read `CONTRIBUTING.md` -- it covers build, tests, branches, commits, PRs, and
-C++ style. This file only flags traps that aren't in there.
+## Rules
 
-Don't write comments until explictly asked.
+- You don't allowed to write any comments until you explictly asked to write them.
+If you noticed outdated comment or make some comment outdated, just remove it until explicitly asked to keep it.
+
+- Don't use python/sed for normal code editing/reading, only for real scripting changes
+
+- Read `CONTRIBUTING.md` -- it covers build, tests, branches, commits, PRs, and
+C++ style. This file only flags traps that aren't in there.
 
 ## Before writing tests
 

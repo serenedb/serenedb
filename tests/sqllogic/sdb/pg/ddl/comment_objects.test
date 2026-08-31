@@ -64,7 +64,7 @@ bv	view col note
 statement error
 COMMENT ON COLUMN cob_v.nope IS 'x';
 ----
-db error: ERROR: column "nope" of relation "cob_v" does not exist
+db error: ERROR: View "cob_v" does not have a column with name "nope"
 
 
 # COMMENT ON VIEW rejects non-views.

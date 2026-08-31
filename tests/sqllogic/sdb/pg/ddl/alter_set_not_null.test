@@ -39,7 +39,9 @@ statement ok
 DROP TABLE pudge;
 
 
-# SET NOT NULL fails if the column already contains nulls.
+# SET NOT NULL fails if the column already contains nulls, and says so the way
+# the same violation is reported for an INSERT -- the rows are checked by the
+# store, but the error is the statement's own.
 statement ok
 CREATE TABLE invoker(a integer, b integer);
 
@@ -48,6 +50,28 @@ INSERT INTO invoker VALUES (1, NULL);
 
 statement error
 ALTER TABLE invoker ALTER COLUMN b SET NOT NULL;
+----
+db error: ERROR: NOT NULL constraint failed: invoker.b
+
+
+# The column is named as the catalog has it, not as the rows were written: a
+# rename moves no rows, so the physical column list still says "b".
+statement ok
+ALTER TABLE invoker RENAME COLUMN b TO renamed;
+
+statement error
+ALTER TABLE invoker ALTER COLUMN renamed SET NOT NULL;
+----
+db error: ERROR: NOT NULL constraint failed: invoker.renamed
+
+
+# ADD CONSTRAINT over rows that violate it reports the constraint as written,
+# not the bound expression it is checked with.
+statement error
+ALTER TABLE invoker ADD CONSTRAINT ck CHECK (a > 99);
+----
+db error: ERROR: CHECK constraint failed on table invoker with expression CHECK((a > 99))
+
 
 statement ok
 DROP TABLE invoker;
@@ -60,13 +84,17 @@ CREATE TABLE tinker(a integer);
 statement error
 ALTER TABLE tinker ALTER COLUMN nope SET NOT NULL;
 ----
-db error: ERROR: column "nope" of relation "tinker" does not exist
+db error: ERROR: Table "tinker" does not have a column with name "nope"
+
+Did you mean: "a"
 
 
 statement error
 ALTER TABLE tinker ALTER COLUMN nope DROP NOT NULL;
 ----
-db error: ERROR: column "nope" of relation "tinker" does not exist
+db error: ERROR: Table "tinker" does not have a column with name "nope"
+
+Did you mean: "a"
 
 
 statement ok

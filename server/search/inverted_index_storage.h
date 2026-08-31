@@ -36,9 +36,9 @@
 #include <vector>
 
 #include "catalog/inverted_index.h"
-#include "catalog/types.h"
 #include "connector/file_manifest.h"
 #include "search/maintenance.h"
+#include "search/tick_domain.h"
 #include "storage_engine/search_engine.h"
 
 namespace sdb::query {
@@ -67,7 +67,14 @@ struct WalCursor {
   uint64_t offset = 0;
 };
 
-// Physical representation of a search index (catalog::InvertedIndex). Owns the
+// Removes a dropped storage's directory tree, then up to `parent_levels`
+// ancestors that emptied out with it -- a still-populated ancestor stops the
+// walk. A failed removal is only logged: boot's orphan sweep reclaims whatever
+// is left, because a dropped object's ids are never reissued.
+void RemoveDroppedStorageDir(const std::filesystem::path& path,
+                             size_t parent_levels);
+
+// Physical representation of a search index (InvertedIndex). Owns the
 // iresearch writer/reader and all mutable index state; lives in the
 // SearchEngine registry keyed by index_id, not in the catalog snapshot.
 class InvertedIndexStorage final
@@ -90,14 +97,25 @@ class InvertedIndexStorage final
     // NOLINTEND
   };
 
-  InvertedIndexStorage(ObjectId id, const catalog::InvertedIndex& index,
+  InvertedIndexStorage(ObjectId db_id, const catalog::InvertedIndex& index,
                        bool is_new);
+  ~InvertedIndexStorage();
+
+  // A drop commits while readers may still hold this storage; the destructor
+  // removes the directory once the last of them lets go. Never set on
+  // shutdown or detach, where the directory must survive.
+  void MarkDropped() noexcept {
+    _dropped.store(true, std::memory_order_release);
+  }
 
   static std::filesystem::path GetPath(ObjectId db_id, ObjectId schema_id,
                                        ObjectId table_id, ObjectId index_id);
 
+  // `db_id` is passed in rather than derived from the catalog: an index
+  // created inside a transaction lives in that transaction's overlay, and so
+  // may the schema its database has to be walked through.
   static std::shared_ptr<InvertedIndexStorage> Create(
-    ObjectId id, const catalog::InvertedIndex& index, bool is_new);
+    ObjectId db_id, const catalog::InvertedIndex& index, bool is_new);
 
   auto GetTransaction() {
     SDB_ASSERT(_writer);
@@ -133,7 +151,7 @@ class InvertedIndexStorage final
   }
 
   // `field_options` (nullable) is the per-merge per-column encoding config: the
-  // compaction task hands the InvertedIndex from its own DDL snapshot so the
+  // compaction task hands the info from its own DDL view so the
   // merge encodes against that view, never the live catalog. It pins for the
   // whole synchronous merge, so non-owning.
   ResultWithTime CompactUnsafe(const irs::CompactionPolicy& policy,
@@ -157,6 +175,8 @@ class InvertedIndexStorage final
   void CheckpointRefresh();
 
   ObjectId GetId() const noexcept { return _index_id; }
+  // The database whose attachment holds this index's catalog entry.
+  ObjectId GetDatabaseId() const noexcept { return _db_id; }
 
   Stats GetStats() const;
 
@@ -277,6 +297,12 @@ class InvertedIndexStorage final
     _phase = Phase::Recovering;
   }
 
+  // Highest tick the recovery replay has both retired and covered with a
+  // cursor point; a Recovering-phase refresh commits at most this tick.
+  void SetRecoveryFrontierTick(Tick tick) noexcept {
+    _recovery_frontier_tick.store(tick, std::memory_order_release);
+  }
+
  private:
   class MovingAverageMs {
    public:
@@ -312,6 +338,11 @@ class InvertedIndexStorage final
   absl::Status CleanupUnsafeImpl();
 
   ObjectId _index_id;
+  // The database whose duckdb file backs the indexed table: the refresh reads
+  // its checkpoint iteration to stamp the recovery cursor.
+  ObjectId _db_id;
+  std::filesystem::path _path;
+  std::atomic<bool> _dropped{false};
   SearchEngine& _search;
   // Accessed via std::atomic_load/std::atomic_store (libc++ lacks
   // std::atomic<std::shared_ptr>).
@@ -359,6 +390,7 @@ class InvertedIndexStorage final
   MovingAverageMs _avg_cleanup_time_ms;
   MovingAverageMs _avg_consolidation_time_ms;
   Phase _phase{Phase::Creating};
+  std::atomic<Tick> _recovery_frontier_tick{0};
 
   irs::IResourceManager* _writers_memory{&irs::IResourceManager::gNoop};
   irs::IResourceManager* _readers_memory{&irs::IResourceManager::gNoop};

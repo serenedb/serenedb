@@ -26,6 +26,7 @@ int main(int argc, char** argv) {
   ::testing::InitGoogleTest(&argc, argv);
   sdb::DuckDBEngine::Instance().Initialize();
   const int rc = RUN_ALL_TESTS();
+  sdb::DuckDBEngine::Instance().CloseDatabases();
   sdb::DuckDBEngine::Instance().Shutdown();
   return rc;
 }

@@ -1,0 +1,308 @@
+# ROLLBACK of index DDL, secondary (ART) indexes.
+#
+# Every index statement here makes a new version of an index entry, and
+# duckdb's undo walk calls DuckIndexEntry::Rollback on each version it undoes.
+# That hook takes the index off the relation's TableIndexList -- and the
+# relation's index list is where the ART actually lives, so removing the wrong
+# entry silently unindexes a live table: the catalog still names the index, but
+# nothing enforces it. A UNIQUE index is used throughout for exactly that
+# reason: refusing a duplicate is the only assertion that proves the physical
+# half is still attached, which is why the checks below are INSERTs rather than
+# catalog queries.
+#
+# None of this was reachable before the catalog split: SereneDBIndexEntry did
+# not derive from DuckIndexEntry, so no rolled-back index version was
+# compensated at all. Deriving from it also inherits the hook's blast radius --
+# stock DuckIndexEntry::Rollback removed unconditionally, ignoring which
+# version it was undoing, so a rolled-back COMMENT ON INDEX dropped the table's
+# ART. This fork re-versions index entries far more often than upstream (RENAME
+# INDEX, COMMENT ON INDEX, ALTER INVERTED options, and ALTER COLUMN TYPE
+# re-putting every index of the relation), so each non-creating version that
+# can be rolled back gets a case below.
+#
+# The inverted-index versions of these cases are in
+# inverted_index_rollback_alters.test; rolled-back DROP INDEX is not
+# compensated and is pinned as a known gap in index_rollback_drop_gap.test.
+
+
+statement ok
+CREATE TABLE ixrb_t (id INTEGER, rank INTEGER, label TEXT);
+
+
+statement ok
+INSERT INTO ixrb_t VALUES (1, 10, 'alpha'), (2, 20, 'bravo');
+
+
+# ---------------------------------------------------------------------------
+# Rolled-back CREATE INDEX. The one case duckdb's hook is supposed to
+# compensate: the version being undone is the one that created the index, so
+# the ART has to come off the relation with it.
+# ---------------------------------------------------------------------------
+
+statement ok
+BEGIN;
+
+
+statement ok
+CREATE UNIQUE INDEX ixrb_rank_idx ON ixrb_t (rank);
+
+
+statement ok
+ROLLBACK;
+
+
+query
+SELECT count(*) AS n FROM pg_class WHERE relname = 'ixrb_rank_idx';
+----
+n
+0
+
+
+# The relation is untouched: it still reads, and it still takes writes.
+statement ok
+INSERT INTO ixrb_t VALUES (3, 30, 'charlie');
+
+
+query
+SELECT label FROM ixrb_t WHERE rank = 30;
+----
+label
+charlie
+
+
+query
+SELECT count(*) AS n FROM ixrb_t;
+----
+n
+3
+
+
+# The name is free again, and the index it builds enforces from the start.
+statement ok
+CREATE UNIQUE INDEX ixrb_rank_idx ON ixrb_t (rank);
+
+
+query
+SELECT count(*) AS n FROM pg_class WHERE relname = 'ixrb_rank_idx';
+----
+n
+1
+
+
+statement error (?i)duplicate key
+INSERT INTO ixrb_t VALUES (4, 30, 'delta');
+
+
+# ---------------------------------------------------------------------------
+# Rolled-back COMMENT ON INDEX. The version being undone did NOT create the
+# index, so nothing may come off the relation. This is the case stock
+# DuckIndexEntry::Rollback got wrong.
+# ---------------------------------------------------------------------------
+
+statement ok
+COMMENT ON INDEX ixrb_rank_idx IS 'kept';
+
+
+query
+SELECT comment FROM duckdb_indexes() WHERE index_name = 'ixrb_rank_idx';
+----
+comment
+kept
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+COMMENT ON INDEX ixrb_rank_idx IS 'rolled back';
+
+
+statement ok
+ROLLBACK;
+
+
+query
+SELECT comment FROM duckdb_indexes() WHERE index_name = 'ixrb_rank_idx';
+----
+comment
+kept
+
+
+# The ART is still on the relation: the key is still enforced.
+statement error (?i)duplicate key
+INSERT INTO ixrb_t VALUES (5, 30, 'echo');
+
+
+# ... and a non-conflicting row still lands and is still found.
+statement ok
+INSERT INTO ixrb_t VALUES (5, 50, 'echo');
+
+
+query
+SELECT label FROM ixrb_t WHERE rank = 50;
+----
+label
+echo
+
+
+# A committed comment is the control: the ALTER really is a new version, so the
+# rollback above proved something.
+statement ok
+COMMENT ON INDEX ixrb_rank_idx IS 'committed';
+
+
+query
+SELECT comment FROM duckdb_indexes() WHERE index_name = 'ixrb_rank_idx';
+----
+comment
+committed
+
+
+statement error (?i)duplicate key
+INSERT INTO ixrb_t VALUES (6, 50, 'foxtrot');
+
+
+# ---------------------------------------------------------------------------
+# Rolled-back ALTER INDEX ... RENAME TO. Another non-creating version, and the
+# one that renames the ART on the relation's list as well as the entry.
+# ---------------------------------------------------------------------------
+
+statement ok
+BEGIN;
+
+
+statement ok
+ALTER INDEX ixrb_rank_idx RENAME TO ixrb_rank_renamed;
+
+
+statement ok
+ROLLBACK;
+
+
+query
+SELECT count(*) AS n FROM pg_class
+WHERE relname IN ('ixrb_rank_idx', 'ixrb_rank_renamed');
+----
+n
+1
+
+
+query
+SELECT relname FROM pg_class WHERE relname LIKE 'ixrb_rank%';
+----
+relname
+ixrb_rank_idx
+
+
+statement error (?i)duplicate key
+INSERT INTO ixrb_t VALUES (7, 50, 'golf');
+
+
+statement ok
+DROP TABLE ixrb_t;
+
+
+# ---------------------------------------------------------------------------
+# Rolled-back ALTER TABLE ... ALTER COLUMN TYPE on a relation that carries
+# indexes. This road re-puts EVERY index of the relation, so a rollback of it
+# undoes one index version per index -- none of them creating ones. The type
+# change itself is on a column no index covers (a covered one is refused; see
+# alter_table_inverted_index.test).
+# ---------------------------------------------------------------------------
+
+statement ok
+CREATE TABLE ixrb_at (id INTEGER, rank INTEGER, score INTEGER, label TEXT);
+
+
+statement ok
+INSERT INTO ixrb_at VALUES (1, 10, 100, 'alpha'), (2, 20, 200, 'bravo');
+
+
+statement ok
+CREATE UNIQUE INDEX ixrb_at_rank_idx ON ixrb_at (rank);
+
+
+statement ok
+CREATE INDEX ixrb_at_label_idx ON ixrb_at (label);
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+ALTER TABLE ixrb_at ALTER COLUMN score TYPE BIGINT;
+
+
+statement ok
+ROLLBACK;
+
+
+# The column kept its type ...
+query
+SELECT format_type(a.atttypid, a.atttypmod) AS data_type
+FROM pg_attribute a
+WHERE a.attrelid = (SELECT oid FROM pg_class WHERE relname = 'ixrb_at')
+  AND a.attname = 'score';
+----
+data_type
+integer
+
+
+# ... the rows kept their values ...
+query
+SELECT count(*) AS n FROM ixrb_at WHERE score IN (100, 200);
+----
+n
+2
+
+
+# ... both index entries are still there ...
+query
+SELECT relname FROM pg_class
+WHERE relname IN ('ixrb_at_rank_idx', 'ixrb_at_label_idx')
+ORDER BY relname;
+----
+relname
+ixrb_at_label_idx
+ixrb_at_rank_idx
+
+
+# ... and the UNIQUE one is still physically attached.
+statement error (?i)duplicate key
+INSERT INTO ixrb_at VALUES (3, 10, 300, 'charlie');
+
+
+statement ok
+INSERT INTO ixrb_at VALUES (3, 30, 300, 'charlie');
+
+
+query
+SELECT score FROM ixrb_at WHERE label = 'charlie';
+----
+score
+300
+
+
+# The committed control: the same statement, kept this time.
+statement ok
+ALTER TABLE ixrb_at ALTER COLUMN score TYPE BIGINT;
+
+
+query
+SELECT format_type(a.atttypid, a.atttypmod) AS data_type
+FROM pg_attribute a
+WHERE a.attrelid = (SELECT oid FROM pg_class WHERE relname = 'ixrb_at')
+  AND a.attname = 'score';
+----
+data_type
+bigint
+
+
+statement error (?i)duplicate key
+INSERT INTO ixrb_at VALUES (4, 30, 400, 'delta');
+
+
+statement ok
+DROP TABLE ixrb_at;

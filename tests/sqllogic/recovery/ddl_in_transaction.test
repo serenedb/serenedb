@@ -1,14 +1,23 @@
 # ----------------------------------------------------------------------
-# DDL inside explicit transaction blocks.
+# DDL inside explicit transaction blocks, PostgreSQL 18 semantics: a
+# transaction's catalog changes are visible to that transaction and to nobody
+# else until it commits, and a ROLLBACK leaves no trace of them.
 #
-# Default: DDL is statement-committed -- it survives ROLLBACK (a NOTICE is
-# emitted), while DML in the same transaction rolls back normally.
-# With sdb_strict_ddl enabled, DDL inside a transaction block fails with
-# SQLSTATE 25001 instead.
+# Both relation shapes are asserted, because they used to fail differently
+# under the old statement-committed DDL: a rolled-back facade table left a
+# pg_class row naming a store table that had rolled back with the statement
+# (`Table with name t<id> does not exist!` on any read), while a rolled-back
+# search table left a readable, empty one -- it owns its storage and has no
+# store table to be missing.
 #
-# Hosted under recovery/ because the SET GLOBAL case below mutates a global
-# setting; each test here runs against its own serened instance, so other
-# parallel test sessions can't inherit it.
+# Hosted under recovery/ because the cross-session assertions below need a
+# server nobody else is creating objects on; that harness runs each file
+# against its own serened instance.
+# ----------------------------------------------------------------------
+
+
+# ----------------------------------------------------------------------
+# Facade table: ROLLBACK
 # ----------------------------------------------------------------------
 
 statement ok
@@ -19,106 +28,290 @@ statement ok
 CREATE TABLE ddl_txn_t1(id INTEGER PRIMARY KEY, v INTEGER);
 
 
-# DDL is statement-committed, so the new table is immediately visible to later
-# statements in the same block. The INSERT is plain DML and is undone by the
-# ROLLBACK below.
-statement ok
-INSERT INTO ddl_txn_t1 VALUES (1, 10);
-
-
-statement ok
-ROLLBACK;
-
-
-# The CREATE survived the rollback.
-query
-SELECT count(*) FROM ddl_txn_t1;
-----
-count
-0
-
-
+# The transaction sees its own DDL.
 statement ok
 INSERT INTO ddl_txn_t1 VALUES (1, 10);
 
 
 query
-SELECT count(*) FROM ddl_txn_t1;
+SELECT count(*) AS n FROM ddl_txn_t1;
 ----
-count
+n
+1
+
+
+query
+SELECT count(*) AS n FROM pg_class WHERE relname = 'ddl_txn_t1';
+----
+n
 1
 
 
 statement ok
-SET sdb_strict_ddl = true;
-
-
-statement ok
-BEGIN;
-
-
-statement error
-CREATE TABLE ddl_txn_t2(id INTEGER);
-----
-db error: ERROR: DDL statements are not supported inside a transaction block: DDL commits immediately and cannot be rolled back (sdb_strict_ddl is enabled)
-
-
-statement ok
 ROLLBACK;
 
 
-statement error
-SELECT count(*) FROM ddl_txn_t2;
+# Nothing survived: no relation, no rows, and no pg_class row.
+query
+SELECT count(*) AS n FROM pg_class WHERE relname = 'ddl_txn_t1';
 ----
-db error: ERROR: Table with name ddl_txn_t2 does not exist!
+n
+0
+
+
+statement error
+SELECT count(*) FROM ddl_txn_t1;
+----
+db error: ERROR: Table with name ddl_txn_t1 does not exist!
 <slt:ignore>
 
 
-# DROP is DDL too.
+# ----------------------------------------------------------------------
+# Facade table: COMMIT
+# ----------------------------------------------------------------------
+
 statement ok
 BEGIN;
 
 
-statement error
-DROP TABLE ddl_txn_t1;
+statement ok
+CREATE TABLE ddl_txn_t2(id INTEGER PRIMARY KEY, v INTEGER);
+
+
+statement ok
+INSERT INTO ddl_txn_t2 VALUES (1, 10);
+
+
+statement ok
+COMMIT;
+
+
+query
+SELECT id, v FROM ddl_txn_t2;
 ----
-db error: ERROR: DDL statements are not supported inside a transaction block: DDL commits immediately and cannot be rolled back (sdb_strict_ddl is enabled)
+id	v
+1	10
+
+
+# ----------------------------------------------------------------------
+# Search table: ROLLBACK. The shape that used to leave a readable, empty
+# table behind rather than an unusable one.
+# ----------------------------------------------------------------------
+
+statement ok
+BEGIN;
+
+
+statement ok
+CREATE TABLE ddl_txn_s1(id INTEGER, body TEXT) WITH (storage = 'search');
+
+
+statement ok
+INSERT INTO ddl_txn_s1 VALUES (1, 'hello');
+
+
+query
+SELECT count(*) AS n FROM pg_class WHERE relname = 'ddl_txn_s1';
+----
+n
+1
 
 
 statement ok
 ROLLBACK;
 
 
-# Autocommit DDL is unaffected by strict mode.
-statement ok
-CREATE TABLE ddl_txn_t3(id INTEGER);
+query
+SELECT count(*) AS n FROM pg_class WHERE relname = 'ddl_txn_s1';
+----
+n
+0
 
 
-statement ok
-SET sdb_strict_ddl = false;
+statement error
+SELECT count(*) FROM ddl_txn_s1;
+----
+db error: ERROR: Table with name ddl_txn_s1 does not exist!
+<slt:ignore>
 
 
-# GLOBAL scope: a fresh connection inherits strictness.
-statement ok
-SET GLOBAL sdb_strict_ddl = true;
+# ----------------------------------------------------------------------
+# Search table: COMMIT
+# ----------------------------------------------------------------------
 
-
-connection strict_global
 statement ok
 BEGIN;
 
 
-connection strict_global
-statement error
+statement ok
+CREATE TABLE ddl_txn_s2(id INTEGER, body TEXT) WITH (storage = 'search');
+
+
+statement ok
+INSERT INTO ddl_txn_s2 VALUES (1, 'hello');
+
+
+statement ok
+COMMIT;
+
+
+# The search leg is eventually consistent, so the definition is what this
+# asserts; the rows are covered by the search suites.
+query
+SELECT count(*) AS n FROM pg_class WHERE relname = 'ddl_txn_s2';
+----
+n
+1
+
+
+# ----------------------------------------------------------------------
+# An owned sequence created with its table resolves inside the transaction.
+# ----------------------------------------------------------------------
+
+statement ok
+BEGIN;
+
+
+statement ok
+CREATE TABLE ddl_txn_t3(id SERIAL, v TEXT);
+
+
+statement ok
+INSERT INTO ddl_txn_t3(v) VALUES ('a'), ('b');
+
+
+statement ok
+COMMIT;
+
+
+query
+SELECT id, v FROM ddl_txn_t3 ORDER BY id;
+----
+id	v
+1	a
+2	b
+
+
+# ----------------------------------------------------------------------
+# Create and cascade-drop inside one transaction: the dependency edge of an
+# object this transaction created is its own to see.
+# ----------------------------------------------------------------------
+
+statement ok
+BEGIN;
+
+
+statement ok
 CREATE TABLE ddl_txn_t4(id INTEGER);
+
+
+statement ok
+CREATE VIEW ddl_txn_v4 AS SELECT id FROM ddl_txn_t4;
+
+
+statement ok
+DROP TABLE ddl_txn_t4 CASCADE;
+
+
+statement ok
+COMMIT;
+
+
+query
+SELECT count(*) AS n
+FROM pg_class WHERE relname IN ('ddl_txn_t4', 'ddl_txn_v4');
 ----
-db error: ERROR: DDL statements are not supported inside a transaction block: DDL commits immediately and cannot be rolled back (sdb_strict_ddl is enabled)
+n
+0
 
 
-connection strict_global
+# ----------------------------------------------------------------------
+# Nobody else sees an uncommitted CREATE.
+# ----------------------------------------------------------------------
+
+statement ok
+BEGIN;
+
+
+statement ok
+CREATE TABLE ddl_txn_vis(id INTEGER);
+
+
+statement ok
+INSERT INTO ddl_txn_vis VALUES (1);
+
+
+connection observer
+query
+SELECT count(*) AS n FROM pg_class WHERE relname = 'ddl_txn_vis';
+----
+n
+0
+
+
+connection observer
+statement error
+SELECT count(*) FROM ddl_txn_vis;
+----
+db error: ERROR: Table with name ddl_txn_vis does not exist!
+<slt:ignore>
+
+
+statement ok
+COMMIT;
+
+
+connection observer
+query
+SELECT count(*) AS n FROM ddl_txn_vis;
+----
+n
+1
+
+
+# ----------------------------------------------------------------------
+# Nobody else sees an uncommitted DROP, and ROLLBACK undoes it.
+# ----------------------------------------------------------------------
+
+statement ok
+CREATE TABLE ddl_txn_drp(id INTEGER);
+
+
+statement ok
+INSERT INTO ddl_txn_drp VALUES (1);
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+DROP TABLE ddl_txn_drp;
+
+
+# Gone for this transaction ...
+statement error
+SELECT count(*) FROM ddl_txn_drp;
+----
+db error: ERROR: Table with name ddl_txn_drp does not exist!
+<slt:ignore>
+
+
+# ... and untouched for everybody else.
+connection observer
+query
+SELECT count(*) AS n FROM ddl_txn_drp;
+----
+n
+1
+
+
 statement ok
 ROLLBACK;
 
 
-statement ok
-SET GLOBAL sdb_strict_ddl = false;
+query
+SELECT count(*) AS n FROM ddl_txn_drp;
+----
+n
+1

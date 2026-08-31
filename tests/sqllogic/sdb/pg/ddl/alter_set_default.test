@@ -56,7 +56,9 @@ a	b
 statement error
 ALTER TABLE pudge ALTER COLUMN nope SET DEFAULT 1;
 ----
-db error: ERROR: column "nope" of relation "pudge" does not exist
+db error: ERROR: Table "pudge" does not have a column with name "nope"
+
+Did you mean: "a", "b"
 
 
 statement ok
@@ -72,7 +74,7 @@ CREATE TABLE invoker(a INTEGER, g INTEGER GENERATED ALWAYS AS (a * 2) STORED);
 statement error
 ALTER TABLE invoker ALTER COLUMN g SET DEFAULT 5;
 ----
-db error: ERROR: cannot set a default on generated column "g"
+db error: ERROR: Cannot SET DEFAULT for generated column "g"
 
 
 statement ok

@@ -98,7 +98,7 @@ catalog::MaterializedData SystemTableSnapshot<SdbSettings>::GetTableData() {
 
   auto result = CreateColumns<SdbSettings>(values.size());
   for (size_t row = 0; row < values.size(); ++row) {
-    WriteData(result, values[row], kNullMask, row, *_config.CatalogSnapshot());
+    WriteData(result, values[row], kNullMask, row, Roles());
   }
   return {std::move(result), values.size()};
 }

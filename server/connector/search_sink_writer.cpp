@@ -46,12 +46,10 @@ using StreamPool = irs::UnboundedObjectPool<search::AnalyzerImpl::Builder>;
 
 SearchSinkInsertBaseImpl::SearchSinkInsertBaseImpl(
   irs::IndexWriter::Transaction& trx, TokenizerProvider&& tokenizer_provider,
-  EntryInfoProvider&& entry_info_provider,
-  std::vector<IndexedExpression>&& indexed_exprs, PkPolicy pk_policy)
+  EntryInfoProvider&& entry_info_provider, PkPolicy pk_policy)
   : _tokenizer_provider{std::move(tokenizer_provider)},
     _entry_info_provider{std::move(entry_info_provider)},
-    _indexed_expressions{std::move(indexed_exprs)},
-    _trx{trx},
+    _trx{&trx},
     _pk_policy{pk_policy} {
   _pk_field.PrepareForVerbatimStringValue();
   _pk_field.id = catalog::term_dict::kPKFieldId;
@@ -579,12 +577,12 @@ void SearchSinkInsertBaseImpl::SwitchFieldImpl(irs::field_id field_id,
 }
 
 void SearchSinkInsertBaseImpl::InitImpl(size_t batch_size, const PkChunk& pk,
-                                        bool* commit_on_flush) {
+                                        irs::CommitOnFlush* commit_on_flush) {
   SDB_ASSERT(batch_size > 0);
   if (_document) {
     _document.reset();
   }
-  _document.emplace(_trx.Insert(false, batch_size, commit_on_flush));
+  _document.emplace(_trx->Insert(false, batch_size, commit_on_flush));
   // Insert may flush the segment mid-transaction (a pooled segment with
   // mismatched options, a full segment): cached column writers then point
   // at the flushed segment while the terms land in the fresh one.
@@ -774,7 +772,7 @@ void SearchSinkInsertBaseImpl::Field::SetNullValue() {
 
 SearchSinkDeleteBaseImpl::SearchSinkDeleteBaseImpl(
   irs::IndexWriter::Transaction& trx)
-  : _trx{trx} {}
+  : _trx{&trx} {}
 
 void SearchSinkDeleteBaseImpl::DeleteRowImpl(std::string_view row_key) {
   SDB_ASSERT(_remove_filter);
@@ -791,15 +789,15 @@ void SearchSinkDeleteBaseImpl::InitImpl(size_t batch_size) {
 
 void SearchSinkDeleteBaseImpl::FinishImpl() {
   if (_remove_filter && !_remove_filter->Empty()) {
-    _trx.Remove(std::move(_remove_filter));
+    _trx->Remove(std::move(_remove_filter));
   }
   _remove_filter.reset();
 }
 
 void WriteChunkToSearchSink(
   SearchSinkInsertBaseImpl& sink, duckdb::DataChunk& chunk,
-  std::span<const catalog::Column::Id> column_ids,
-  std::span<const duckdb_primary_key::PKColumn> pk_columns,
+  std::span<const catalog::ColumnId> column_ids,
+  std::span<const catalog::duckdb_primary_key::PKColumn> pk_columns,
   bool uses_generated_pk, uint64_t pk_base) {
   const auto num_rows = chunk.size();
 
@@ -807,7 +805,7 @@ void WriteChunkToSearchSink(
   auto& pk_formats = scratch.pk_formats;
   auto& row_keys = scratch.row_keys;
   auto& key_views = scratch.key_views;
-  duckdb_primary_key::PreparePKFormats(chunk, pk_columns, pk_formats);
+  catalog::duckdb_primary_key::PreparePKFormats(chunk, pk_columns, pk_formats);
   row_keys.resize(num_rows);
   key_views.clear();
   key_views.reserve(num_rows);
@@ -815,9 +813,9 @@ void WriteChunkToSearchSink(
     auto& key = row_keys[row];
     key.clear();
     if (uses_generated_pk) {
-      duckdb_primary_key::AppendGenerated(key, pk_base + row);
+      catalog::duckdb_primary_key::AppendGenerated(key, pk_base + row);
     } else {
-      duckdb_primary_key::Create(pk_formats, pk_columns, row, key);
+      catalog::duckdb_primary_key::Create(pk_formats, pk_columns, row, key);
     }
     key_views.emplace_back(key);
   }
@@ -834,7 +832,7 @@ void WriteChunkToSearchSink(
       data[row] = static_cast<int64_t>(pk_base + row);
     }
     sink.SwitchFieldImpl(
-      static_cast<irs::field_id>(catalog::Column::kGeneratedPKId.id()),
+      static_cast<irs::field_id>(catalog::kGeneratedPKId.id()),
       duckdb::LogicalType::BIGINT, gen_pk, num_rows);
   }
   sink.FinishImpl();

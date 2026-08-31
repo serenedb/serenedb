@@ -75,29 +75,29 @@ std::optional<duckdb::TableIndex> SingleReferencedTableIndex(
   return *bindings.begin();
 }
 
-catalog::Column::Id ResolveColumnId(
+catalog::ColumnId ResolveColumnId(
   duckdb::ColumnBinding binding,
   const connector::SereneDBScanBindData& bind_data,
   const duckdb::LogicalGet& get) {
   if (binding.table_index != get.table_index) {
-    return catalog::Column::kInvalidId;
+    return catalog::kInvalidColumnId;
   }
   const auto col_idx = binding.column_index.GetIndex();
   const auto& column_ids = get.GetColumnIds();
   if (col_idx >= column_ids.size() || !column_ids[col_idx].HasPrimaryIndex()) {
-    return catalog::Column::kInvalidId;
+    return catalog::kInvalidColumnId;
   }
   const auto phys = column_ids[col_idx].GetPrimaryIndex();
   if (phys >= bind_data.column_ids.size()) {
-    return catalog::Column::kInvalidId;
+    return catalog::kInvalidColumnId;
   }
   return bind_data.column_ids[phys];
 }
 
-std::vector<catalog::Column::Id> BuildProjectedColumnIds(
+std::vector<catalog::ColumnId> BuildProjectedColumnIds(
   const duckdb::LogicalGet& get,
   const connector::SereneDBScanBindData& bind_data) {
-  std::vector<catalog::Column::Id> projected_ids(get.GetColumnIds().size());
+  std::vector<catalog::ColumnId> projected_ids(get.GetColumnIds().size());
   for (duckdb::idx_t i = 0; i < projected_ids.size(); ++i) {
     projected_ids[i] = ResolveColumnId(
       {get.table_index, duckdb::ProjectionIndex{i}}, bind_data, get);
@@ -114,7 +114,7 @@ irs::field_id ResolveAnnTargetFieldId(
       col_arg.GetExpressionClass() == duckdb::ExpressionClass::BOUND_REF) {
     if (const auto id =
           bind_data.ColumnIdByName(col_arg.GetName().GetIdentifierName());
-        id != catalog::Column::kInvalidId) {
+        id != catalog::kInvalidColumnId) {
       return id;
     }
   }
@@ -248,7 +248,7 @@ duckdb::ColumnBinding ExposeGetColumnAt(duckdb::LogicalOperator& root,
 
 duckdb::idx_t AppendVirtualGetColumn(connector::SereneDBScanBindData& bind_data,
                                      duckdb::LogicalGet& get,
-                                     catalog::Column::Id virtual_id,
+                                     catalog::ColumnId virtual_id,
                                      const duckdb::LogicalType& col_type,
                                      std::string_view col_name) {
   const auto bind_idx = bind_data.column_ids.size();
@@ -293,22 +293,22 @@ bool TryClaimIResearchConjunct(
 bool WithSearchGetters(duckdb::LogicalGet& get,
                        connector::SereneDBScanBindData& bind_data,
                        const catalog::InvertedIndex& index,
-                       const std::shared_ptr<const catalog::Snapshot>& snapshot,
                        duckdb::ClientContext& context,
                        absl::FunctionRef<bool(const SearchGetters&)> fn) {
+  // Resolved once for the whole claim: every column of this scan reads its
+  // dictionary out of this map instead of the catalog.
+  const auto dicts = catalog::ResolveTokenizers(context, index);
   const auto projected_ids = BuildProjectedColumnIds(get, bind_data);
   const auto table_index = get.table_index;
   const auto relation_id = index.GetRelationId();
-  const auto* table =
-    bind_data.GetKind() == connector::SereneDBScanBindData::Kind::Table
-      ? bind_data.As<connector::TableScanBindData>().table.get()
-      : nullptr;
+  const bool table_backed =
+    bind_data.GetKind() == connector::SereneDBScanBindData::Kind::Table;
 
   containers::FlatHashSet<irs::field_id> analyzed_fields;
   containers::FlatHashMap<irs::field_id, irs::field_id> null_markers;
-  containers::FlatHashMap<catalog::Column::Id, bool> not_null_cache;
+  containers::FlatHashMap<catalog::ColumnId, bool> not_null_cache;
 
-  const auto column_not_null = [&](catalog::Column::Id col_id) {
+  const auto column_not_null = [&](catalog::ColumnId col_id) {
     const auto [it, inserted] = not_null_cache.try_emplace(col_id, false);
     if (inserted) {
       it->second = bind_data.IsColumnNotNull(col_id);
@@ -320,9 +320,9 @@ bool WithSearchGetters(duckdb::LogicalGet& get,
                              const catalog::InvertedIndexEntryInfo* info,
                              duckdb::LogicalType type, bool column) {
     auto column_info = MakeSearchColumnInfo(
-      field_id, info, std::move(type), index.GetTokenizer(snapshot, field_id));
-    if (column && table &&
-        column_not_null(static_cast<catalog::Column::Id>(field_id))) {
+      field_id, info, std::move(type), index.GetTokenizer(dicts, field_id));
+    if (column && table_backed &&
+        column_not_null(static_cast<catalog::ColumnId>(field_id))) {
       column_info.null_field_id = irs::field_limits::invalid();
     }
     if (irs::field_limits::valid(column_info.null_field_id)) {
@@ -339,7 +339,7 @@ bool WithSearchGetters(duckdb::LogicalGet& get,
     [&](const duckdb::BoundColumnRefExpression& ref)
     -> std::optional<connector::SearchColumnInfo> {
     const auto col_id = ResolveColumnId(ref.Binding(), bind_data, get);
-    if (col_id == catalog::Column::kInvalidId) {
+    if (col_id == catalog::kInvalidColumnId) {
       return std::nullopt;
     }
     const auto* info = index.FindColumnInfo(col_id);
@@ -422,7 +422,7 @@ irs::field_id ResolveAnnTargetFieldId(
     const auto& ref = col_arg.Cast<duckdb::BoundColumnRefExpression>();
     if (ref.Binding().table_index == get.table_index) {
       if (const auto id = ResolveColumnId(ref.Binding(), bind_data, get);
-          id != catalog::Column::kInvalidId) {
+          id != catalog::kInvalidColumnId) {
         return id;
       }
     }
@@ -442,14 +442,13 @@ duckdb::idx_t AppendScoreColumn(connector::SereneDBScanBindData& bind_data,
   const auto& col_ids = get.GetColumnIds();
   for (duckdb::idx_t j = 0; j < col_ids.size(); ++j) {
     if (ResolveColumnId({get.table_index, duckdb::ProjectionIndex{j}},
-                        bind_data,
-                        get) == catalog::Column::kInvertedIndexScoreId) {
+                        bind_data, get) == catalog::kInvertedIndexScoreId) {
       return j;
     }
   }
-  return AppendVirtualGetColumn(
-    bind_data, get, catalog::Column::kInvertedIndexScoreId,
-    duckdb::LogicalType::FLOAT, catalog::Column::kScoreName);
+  return AppendVirtualGetColumn(bind_data, get, catalog::kInvertedIndexScoreId,
+                                duckdb::LogicalType::FLOAT,
+                                catalog::kScoreName);
 }
 
 duckdb::unique_ptr<duckdb::Expression> MakeScoreRefExpression(
@@ -457,10 +456,10 @@ duckdb::unique_ptr<duckdb::Expression> MakeScoreRefExpression(
   duckdb::TableIndex anchor_ti) {
   const auto idx = AppendScoreColumn(*found.bind_data, *found.get);
   const auto binding =
-    ExposeGetColumnAt(root, anchor_ti, *found.get, idx,
-                      catalog::Column::kScoreName, duckdb::LogicalType::FLOAT);
+    ExposeGetColumnAt(root, anchor_ti, *found.get, idx, catalog::kScoreName,
+                      duckdb::LogicalType::FLOAT);
   return duckdb::make_uniq<duckdb::BoundColumnRefExpression>(
-    duckdb::Identifier{catalog::Column::kScoreName}, duckdb::LogicalType::FLOAT,
+    duckdb::Identifier{catalog::kScoreName}, duckdb::LogicalType::FLOAT,
     binding);
 }
 
@@ -479,7 +478,7 @@ bool IsScorerFunctionName(std::string_view name) {
 
 bool ScanColumnIsScore(const FoundScanColumn& sc) {
   return ResolveColumnId(sc.binding, *sc.found.bind_data, *sc.found.get) ==
-         catalog::Column::kInvertedIndexScoreId;
+         catalog::kInvertedIndexScoreId;
 }
 
 bool BindingResolvesToScoreColumn(const duckdb::BoundColumnRefExpression& ref,
@@ -590,13 +589,13 @@ duckdb::unique_ptr<duckdb::Expression> PushdownDistanceCall(
     return nullptr;
   }
 
-  const auto& index = found->bind_data->inverted_index;
+  const auto& index = catalog::InvertedInfo(*found->bind_data->inverted_index);
   const auto call_field_id = ResolveAnnTargetFieldId(
-    *col_arg, *found->get, *found->bind_data, *index, context);
+    *col_arg, *found->get, *found->bind_data, index, context);
   if (!irs::field_limits::valid(call_field_id)) {
     return nullptr;
   }
-  auto ann_info = index->GetIvfInfo(call_field_id);
+  auto ann_info = index.GetIvfInfo(call_field_id);
   if (!ann_info || ann_info->metric != info.metric) {
     return nullptr;
   }
@@ -701,14 +700,14 @@ duckdb::unique_ptr<duckdb::Expression> PushdownOffsetsCall(
 
   const auto target_col_id =
     ResolveColumnId(resolved->binding, *found.bind_data, *found.get);
-  if (target_col_id == catalog::Column::kInvalidId) {
+  if (target_col_id == catalog::kInvalidColumnId) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
       ERR_MSG("ts_offsets(): column '", col_name(), "' not found in table"));
   }
 
-  const auto* col_info =
-    found.bind_data->inverted_index->FindColumnInfo(target_col_id);
+  const auto* col_info = catalog::InvertedInfo(*found.bind_data->inverted_index)
+                           .FindColumnInfo(target_col_id);
   if (!col_info) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
@@ -749,12 +748,12 @@ duckdb::unique_ptr<duckdb::Expression> PushdownOffsetsCall(
     get_col_idx = existing->get_col_idx;
   }
 
-  const auto col_type = catalog::Column::MakeOffsetsType();
-  const auto offsets_col_name = catalog::Column::MakeOffsetsName(target_col_id);
+  const auto col_type = catalog::MakeOffsetsType();
+  const auto offsets_col_name = catalog::MakeOffsetsName(target_col_id);
   if (get_col_idx == duckdb::DConstants::INVALID_INDEX) {
-    get_col_idx = AppendVirtualGetColumn(
-      *found.bind_data, *found.get, catalog::Column::kInvertedIndexOffsetsId,
-      col_type, offsets_col_name);
+    get_col_idx = AppendVirtualGetColumn(*found.bind_data, *found.get,
+                                         catalog::kInvertedIndexOffsetsId,
+                                         col_type, offsets_col_name);
     search_scan.offsets.push_back(
       {.column_id = target_col_id, .limit = limit, .get_col_idx = get_col_idx});
   }
@@ -962,7 +961,7 @@ bool TryClaimAnnRange(
     // other side is the bound.
     const auto is_score = [&](const std::optional<duckdb::ColumnBinding>& b) {
       return b && ResolveColumnId(*b, bind_data, get) ==
-                    catalog::Column::kInvertedIndexScoreId;
+                    catalog::kInvertedIndexScoreId;
     };
     bool negated = false;
     bool score_on_left = true;
@@ -1023,12 +1022,9 @@ bool TryClaimAnnRange(
 bool TryClaimSearchFilter(
   duckdb::vector<duckdb::unique_ptr<duckdb::Expression>>& filters,
   duckdb::LogicalGet& get, connector::SereneDBScanBindData& bind_data,
-  const catalog::InvertedIndex& index,
-  std::shared_ptr<const catalog::Snapshot> snapshot,
-  duckdb::ClientContext& context) {
+  const catalog::InvertedIndex& index, duckdb::ClientContext& context) {
   return WithSearchGetters(
-    get, bind_data, index, snapshot, context,
-    [&](const SearchGetters& getters) {
+    get, bind_data, index, context, [&](const SearchGetters& getters) {
       auto& [getter, expr_getter, analyzed_fields, null_markers] = getters;
       auto& scan = bind_data;
 
@@ -1081,7 +1077,6 @@ void IResearchPushdownComplexFilter(
   if (filters.empty() || !bind_data_ptr) {
     return;
   }
-  auto& conn_ctx = connector::GetSereneDBContext(context);
   auto& bind_data = bind_data_ptr->Cast<connector::SereneDBScanBindData>();
   auto& ss = bind_data;
   // A search table's iresearch store IS the table: there is no index-side
@@ -1090,8 +1085,9 @@ void IResearchPushdownComplexFilter(
     return;
   }
   if (ss.TsDictMode()) {
-    ClaimTsDictFilter(filters, get, bind_data, ss, *bind_data.inverted_index,
-                      conn_ctx.CatalogSnapshot(), context);
+    ClaimTsDictFilter(filters, get, bind_data, ss,
+                      catalog::InvertedInfo(*bind_data.inverted_index),
+                      context);
     return;
   }
   if (ss.stored_filter) {
@@ -1101,8 +1097,9 @@ void IResearchPushdownComplexFilter(
   if (filters.empty()) {
     return;
   }
-  TryClaimSearchFilter(filters, get, bind_data, *bind_data.inverted_index,
-                       conn_ctx.CatalogSnapshot(), context);
+  TryClaimSearchFilter(filters, get, bind_data,
+                       catalog::InvertedInfo(*bind_data.inverted_index),
+                       context);
 }
 
 void RegisterIResearchPlanOptimizer(duckdb::DatabaseInstance& db) {

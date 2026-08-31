@@ -54,7 +54,7 @@ inline uint64_t ExecuteTopKWithCount(const DirectoryReader& reader,
   }
   const auto stats = prepare_collector->Finish(IResourceManager::gNoop);
 
-  score_t score_threshold = std::numeric_limits<score_t>::min();
+  score_t score_threshold = std::numeric_limits<score_t>::lowest();
   LoserScoreCollector collector{score_threshold, hits};
   ColumnArgsFetcher fetcher;
   uint32_t seg_idx = 0;
@@ -97,7 +97,7 @@ inline uint64_t ExecuteTopK(const DirectoryReader& reader, const Filter& filter,
   }
   const auto stats = prepare_collector->Finish(IResourceManager::gNoop);
 
-  score_t score_threshold = std::numeric_limits<score_t>::min();
+  score_t score_threshold = std::numeric_limits<score_t>::lowest();
   LoserScoreCollector collector{score_threshold, hits};
   ColumnArgsFetcher fetcher;
   uint32_t seg_idx = 0;

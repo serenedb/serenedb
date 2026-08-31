@@ -185,24 +185,28 @@ export SDB_SKIP_SQLLOGIC_BUILD=1
 # Start a fresh serened instance (restart loop + empty datadir) and wait for
 # the port to accept connections. Each test gets its own, so one test's crash
 # cannot cascade into the next. Writes to: $log_file, tracks pid in $pid_var,
-# tracks datadir in $dir_var.
+# tracks datadir in $dir_var. The locals below are deliberately not named `pid`
+# / `datadir`: the caller passes those very names in $pid_var / $dir_var, and a
+# local of the same name here shadows the caller's, so `printf -v` writes this
+# frame's copy and the caller keeps an empty string -- no per-test kill, no
+# per-test rm, and no datadir for a test to look at.
 start_fresh_serened() {
 	local worker_id=$1 port=$2 log_file=$3 pid_var=$4 dir_var=$5
 
-	local datadir
-	datadir=$(mktemp -d "${TMPDIR:-/tmp}/recovery-worker-${worker_id}-XXXXXX")
-	printf -v "$dir_var" '%s' "$datadir"
+	local fresh_datadir
+	fresh_datadir=$(mktemp -d "${TMPDIR:-/tmp}/recovery-worker-${worker_id}-XXXXXX")
+	printf -v "$dir_var" '%s' "$fresh_datadir"
 
-	PORT=$port "$SCRIPT_DIR/run_serened_loop.sh" "$datadir" >"$log_file" 2>&1 &
-	local pid=$!
-	printf -v "$pid_var" '%s' "$pid"
+	PORT=$port "$SCRIPT_DIR/run_serened_loop.sh" "$fresh_datadir" >"$log_file" 2>&1 &
+	local loop_pid=$!
+	printf -v "$pid_var" '%s' "$loop_pid"
 
 	local start_ts
 	start_ts=$(date +%s.%N)
 	local attempt
 	for ((attempt = 0; attempt < 60; attempt++)); do
-		if ! kill -0 "$pid" 2>/dev/null; then
-			echo "  ERROR: worker $worker_id loop (pid $pid) died before port was up"
+		if ! kill -0 "$loop_pid" 2>/dev/null; then
+			echo "  ERROR: worker $worker_id loop (pid $loop_pid) died before port was up"
 			return 1
 		fi
 		# The kernel-assigned port can be grabbed by another worker between our
@@ -346,7 +350,10 @@ run_worker() {
 			run_port=$test_port
 		fi
 
-		SDB_SQLLOGIC_QUIET=1 ./run.sh \
+		# Exported for the tests that assert on what the server left on disk
+		# (a retained WAL after a shutdown that should have checkpointed).
+		# `control substitution on` expands $SDB_DATADIR in the SQL.
+		SDB_DATADIR="$datadir" SDB_SQLLOGIC_QUIET=1 ./run.sh \
 			--host "$host" \
 			--single-port "$run_port" \
 			--test "$test_file" \

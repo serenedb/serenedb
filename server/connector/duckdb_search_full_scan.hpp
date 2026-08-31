@@ -105,6 +105,9 @@ struct IResearchScanGlobalState : public duckdb::GlobalTableFunctionState {
   duckdb::idx_t tableoid_output_idx = duckdb::DConstants::INVALID_INDEX;
   int64_t tableoid_value = 0;
   duckdb::idx_t generated_pk_output_idx = duckdb::DConstants::INVALID_INDEX;
+  // The pk halves as flat columns (glob-backed view indexes only).
+  duckdb::idx_t file_index_output_idx = duckdb::DConstants::INVALID_INDEX;
+  duckdb::idx_t row_number_output_idx = duckdb::DConstants::INVALID_INDEX;
   // Any real (non-virtual) column is scanned / any output column emits values
   // (the empty virtual column does not): !has_output_column means the scan
   // only reports row counts (count(*) shapes).

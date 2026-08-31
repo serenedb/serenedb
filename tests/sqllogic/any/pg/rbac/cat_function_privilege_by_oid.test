@@ -1,0 +1,68 @@
+# has_function_privilege takes a pg_proc.oid as well as a name, and answers the
+# same for both forms of function -- one returning a scalar and one returning a
+# table. The oid form is a different lookup: it goes by identity rather than by
+# name, so a set-returning function filed under the wrong slot answers NULL for
+# the oid while the name form still reads t.
+#
+# Lore: fedorov writes the scalar, vedernikoff the set-returning one.
+
+statement ok
+DROP FUNCTION IF EXISTS fpo_fedorov(int);
+
+
+statement ok
+DROP FUNCTION IF EXISTS fpo_vedernikoff();
+
+
+statement ok
+CREATE FUNCTION fpo_fedorov(x int) RETURNS int LANGUAGE sql AS 'SELECT $1 + 1';
+
+
+statement ok
+CREATE FUNCTION fpo_vedernikoff() RETURNS TABLE(score int) LANGUAGE sql
+AS 'SELECT 42';
+
+
+# Both forms of both functions agree, and none of the four is NULL.
+query
+SELECT p.proname,
+       has_function_privilege(p.oid, 'EXECUTE') AS by_oid
+FROM pg_proc p
+JOIN pg_namespace n ON n.oid = p.pronamespace
+WHERE n.nspname = 'public'
+  AND p.proname IN ('fpo_fedorov', 'fpo_vedernikoff')
+ORDER BY p.proname;
+----
+proname by_oid
+fpo_fedorov t
+fpo_vedernikoff t
+
+
+query
+SELECT has_function_privilege('fpo_fedorov(int)', 'EXECUTE') AS scalar_by_name,
+       has_function_privilege('fpo_vedernikoff()', 'EXECUTE') AS table_by_name;
+----
+scalar_by_name table_by_name
+t t
+
+
+# The set-returning function's oid is its own, not the scalar's.
+query
+SELECT count(DISTINCT p.oid) AS distinct_oids
+FROM pg_proc p
+JOIN pg_namespace n ON n.oid = p.pronamespace
+WHERE n.nspname = 'public'
+  AND p.proname IN ('fpo_fedorov', 'fpo_vedernikoff');
+----
+distinct_oids
+2
+
+
+# ---- cleanup ----
+
+statement ok
+DROP FUNCTION fpo_fedorov(int);
+
+
+statement ok
+DROP FUNCTION fpo_vedernikoff();

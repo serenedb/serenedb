@@ -1,0 +1,472 @@
+statement ok
+CREATE TABLE mop_listings (id INT, v TEXT);
+
+
+statement count 1
+INSERT INTO mop_listings VALUES (1, 'a');
+
+
+statement ok
+CREATE VIEW v_mop_chain1 AS SELECT id, v FROM mop_listings;
+
+
+statement ok
+CREATE VIEW v_mop_chain2 AS SELECT id FROM v_mop_chain1;
+
+
+statement ok
+CREATE VIEW v_mop_chain3 AS SELECT id FROM v_mop_chain2;
+
+
+statement ok
+CREATE VIEW v_mop_chain4 AS SELECT id FROM v_mop_chain3;
+
+
+statement ok
+CREATE VIEW v_mop_chain5 AS SELECT id FROM v_mop_chain4;
+
+
+statement error
+DROP TABLE mop_listings;
+----
+db error: ERROR: Cannot drop entry "mop_listings" because there are entries that depend on it.
+view "v_mop_chain1" depends on table "mop_listings".
+view "v_mop_chain2" depends on view "v_mop_chain1".
+view "v_mop_chain3" depends on view "v_mop_chain2".
+view "v_mop_chain4" depends on view "v_mop_chain3".
+view "v_mop_chain5" depends on view "v_mop_chain4".
+Use DROP...CASCADE to drop all dependents.
+
+
+
+statement error
+DROP VIEW v_mop_chain1;
+----
+db error: ERROR: Cannot drop entry "v_mop_chain1" because there are entries that depend on it.
+view "v_mop_chain2" depends on view "v_mop_chain1".
+view "v_mop_chain3" depends on view "v_mop_chain2".
+view "v_mop_chain4" depends on view "v_mop_chain3".
+view "v_mop_chain5" depends on view "v_mop_chain4".
+Use DROP...CASCADE to drop all dependents.
+
+
+
+statement error
+DROP VIEW v_mop_chain2;
+----
+db error: ERROR: Cannot drop entry "v_mop_chain2" because there are entries that depend on it.
+view "v_mop_chain3" depends on view "v_mop_chain2".
+view "v_mop_chain4" depends on view "v_mop_chain3".
+view "v_mop_chain5" depends on view "v_mop_chain4".
+Use DROP...CASCADE to drop all dependents.
+
+
+
+statement error
+DROP VIEW v_mop_chain3;
+----
+db error: ERROR: Cannot drop entry "v_mop_chain3" because there are entries that depend on it.
+view "v_mop_chain4" depends on view "v_mop_chain3".
+view "v_mop_chain5" depends on view "v_mop_chain4".
+Use DROP...CASCADE to drop all dependents.
+
+
+
+statement error
+DROP VIEW v_mop_chain4;
+----
+db error: ERROR: Cannot drop entry "v_mop_chain4" because there are entries that depend on it.
+view "v_mop_chain5" depends on view "v_mop_chain4".
+Use DROP...CASCADE to drop all dependents.
+
+
+
+statement ok
+DROP VIEW v_mop_chain5;
+
+
+statement ok
+DROP VIEW v_mop_chain1 CASCADE;
+
+
+statement error (?i)(table|relation|view).*v_mop_chain1.*does not exist
+SELECT * FROM v_mop_chain1;
+
+
+statement error (?i)(table|relation|view).*v_mop_chain4.*does not exist
+SELECT * FROM v_mop_chain4;
+
+
+query
+SELECT count(*) FROM mop_listings;
+----
+count
+1
+
+
+statement ok
+DROP TABLE mop_listings;
+
+
+statement ok
+CREATE TABLE mop_applications (id INT, v TEXT);
+
+
+statement count 3
+INSERT INTO mop_applications VALUES (1, 'a'), (2, 'b'), (3, 'c');
+
+
+statement ok
+CREATE VIEW v_mop_diamond1 AS SELECT id FROM mop_applications;
+
+
+statement ok
+CREATE VIEW v_mop_diamond2 AS SELECT v FROM mop_applications;
+
+
+statement ok
+CREATE VIEW v_mop_diamond3 AS SELECT v_mop_diamond1.id, v_mop_diamond2.v FROM v_mop_diamond1 JOIN v_mop_diamond2 ON true;
+
+
+statement error
+DROP TABLE mop_applications;
+----
+db error: ERROR: Cannot drop entry "mop_applications" because there are entries that depend on it.
+view "v_mop_diamond1" depends on table "mop_applications".
+view "v_mop_diamond2" depends on table "mop_applications".
+view "v_mop_diamond3" depends on view "v_mop_diamond1".
+Use DROP...CASCADE to drop all dependents.
+
+
+
+statement error
+DROP VIEW v_mop_diamond1;
+----
+db error: ERROR: Cannot drop entry "v_mop_diamond1" because there are entries that depend on it.
+view "v_mop_diamond3" depends on view "v_mop_diamond1".
+Use DROP...CASCADE to drop all dependents.
+
+
+
+statement error
+DROP VIEW v_mop_diamond2;
+----
+db error: ERROR: Cannot drop entry "v_mop_diamond2" because there are entries that depend on it.
+view "v_mop_diamond3" depends on view "v_mop_diamond2".
+Use DROP...CASCADE to drop all dependents.
+
+
+
+statement ok
+DROP VIEW v_mop_diamond3;
+
+
+statement ok
+DROP VIEW v_mop_diamond1;
+
+
+statement error
+DROP TABLE mop_applications;
+----
+db error: ERROR: Cannot drop entry "mop_applications" because there are entries that depend on it.
+view "v_mop_diamond2" depends on table "mop_applications".
+Use DROP...CASCADE to drop all dependents.
+
+
+
+statement ok
+DROP TABLE mop_applications CASCADE;
+
+
+statement error (?i)(table|relation|view).*v_mop_diamond2.*does not exist
+SELECT * FROM v_mop_diamond2;
+
+
+statement ok
+CREATE TABLE mop_applications (id INT, v TEXT);
+
+
+statement count 2
+INSERT INTO mop_applications VALUES (1, 'a'), (2, 'b');
+
+
+statement ok
+CREATE VIEW v_mop_diamond1 AS SELECT id FROM mop_applications;
+
+
+statement ok
+CREATE VIEW v_mop_diamond2 AS SELECT v FROM mop_applications;
+
+
+statement ok
+CREATE VIEW v_mop_diamond3 AS SELECT v_mop_diamond1.id, v_mop_diamond2.v FROM v_mop_diamond1 JOIN v_mop_diamond2 ON true;
+
+
+statement ok
+DROP TABLE mop_applications CASCADE;
+
+
+statement error (?i)(table|relation|view).*v_mop_diamond1.*does not exist
+SELECT * FROM v_mop_diamond1;
+
+
+statement error (?i)(table|relation|view).*v_mop_diamond2.*does not exist
+SELECT * FROM v_mop_diamond2;
+
+
+statement error (?i)(table|relation|view).*v_mop_diamond3.*does not exist
+SELECT * FROM v_mop_diamond3;
+
+
+statement ok
+CREATE TABLE mop_recruiter_calls (id INT, x INT, y INT, z INT);
+
+
+statement count 2
+INSERT INTO mop_recruiter_calls VALUES (1, 10, 20, 30), (2, 11, 21, 31);
+
+
+statement ok
+CREATE VIEW v_mop_fan_x AS SELECT id, x FROM mop_recruiter_calls;
+
+
+statement ok
+CREATE VIEW v_mop_fan_y AS SELECT id, y FROM mop_recruiter_calls;
+
+
+statement ok
+CREATE VIEW v_mop_fan_z AS SELECT id, z FROM mop_recruiter_calls;
+
+
+statement ok
+CREATE VIEW v_mop_fan_top AS
+  SELECT v_mop_fan_x.id, x, y, z FROM v_mop_fan_x
+    JOIN v_mop_fan_y USING (id)
+    JOIN v_mop_fan_z USING (id);
+
+
+query
+SELECT count(*) FROM v_mop_fan_top;
+----
+count
+2
+
+
+statement error
+DROP TABLE mop_recruiter_calls;
+----
+db error: ERROR: Cannot drop entry "mop_recruiter_calls" because there are entries that depend on it.
+view "v_mop_fan_top" depends on table "mop_recruiter_calls".
+view "v_mop_fan_x" depends on table "mop_recruiter_calls".
+view "v_mop_fan_y" depends on table "mop_recruiter_calls".
+view "v_mop_fan_z" depends on table "mop_recruiter_calls".
+Use DROP...CASCADE to drop all dependents.
+
+
+
+statement ok
+DROP TABLE mop_recruiter_calls CASCADE;
+
+
+statement error (?i)(table|relation|view).*v_mop_fan_x.*does not exist
+SELECT * FROM v_mop_fan_x;
+
+
+statement error (?i)(table|relation|view).*v_mop_fan_y.*does not exist
+SELECT * FROM v_mop_fan_y;
+
+
+statement error (?i)(table|relation|view).*v_mop_fan_z.*does not exist
+SELECT * FROM v_mop_fan_z;
+
+
+statement error (?i)(table|relation|view).*v_mop_fan_top.*does not exist
+SELECT * FROM v_mop_fan_top;
+
+
+statement ok
+CREATE SEQUENCE mop_app_id_seq;
+
+
+statement ok
+CREATE TABLE mop_apps_t (id INT, v TEXT);
+
+
+statement count 1
+INSERT INTO mop_apps_t VALUES (1, 'a');
+
+
+statement ok
+CREATE TABLE mop_apps_log (
+  c BIGINT DEFAULT nextval('public.mop_app_id_seq'),
+  payload TEXT
+);
+
+
+statement ok
+CREATE VIEW v_mop_pipeline AS SELECT id, v, nextval('public.mop_app_id_seq') AS n FROM mop_apps_t;
+
+
+statement ok
+CREATE VIEW v_mop_summary AS SELECT id, v, n FROM v_mop_pipeline;
+
+
+statement error
+DROP SEQUENCE mop_app_id_seq;
+----
+db error: ERROR: Cannot drop entry "mop_app_id_seq" because there are entries that depend on it.
+table "mop_apps_log" depends on sequence "mop_app_id_seq".
+view "v_mop_pipeline" depends on sequence "mop_app_id_seq".
+view "v_mop_summary" depends on view "v_mop_pipeline".
+Use DROP...CASCADE to drop all dependents.
+
+
+
+statement error
+DROP TABLE mop_apps_t;
+----
+db error: ERROR: Cannot drop entry "mop_apps_t" because there are entries that depend on it.
+view "v_mop_pipeline" depends on table "mop_apps_t".
+view "v_mop_summary" depends on view "v_mop_pipeline".
+Use DROP...CASCADE to drop all dependents.
+
+
+
+statement error
+DROP VIEW v_mop_pipeline;
+----
+db error: ERROR: Cannot drop entry "v_mop_pipeline" because there are entries that depend on it.
+view "v_mop_summary" depends on view "v_mop_pipeline".
+Use DROP...CASCADE to drop all dependents.
+
+
+
+statement ok
+DROP SEQUENCE mop_app_id_seq CASCADE;
+
+
+query
+SELECT payload FROM mop_apps_log;
+----
+payload
+
+
+statement error (?i)(table|relation|view).*v_mop_pipeline.*does not exist
+SELECT * FROM v_mop_pipeline;
+
+
+statement error (?i)(table|relation|view).*v_mop_summary.*does not exist
+SELECT * FROM v_mop_summary;
+
+
+statement ok
+DROP TABLE mop_apps_t;
+
+
+statement ok
+DROP TABLE mop_apps_log;
+
+
+statement ok
+CREATE SCHEMA mop_sx;
+
+
+statement ok
+CREATE SCHEMA mop_sy;
+
+
+statement ok
+CREATE TABLE mop_sx.mop_inputs_t (id INT);
+
+
+statement count 1
+INSERT INTO mop_sx.mop_inputs_t VALUES (1);
+
+
+statement ok
+CREATE VIEW mop_sy.v_mop_f1 AS SELECT id FROM mop_sx.mop_inputs_t;
+
+
+statement ok
+CREATE VIEW mop_sy.v_mop_f2 AS SELECT id FROM mop_sy.v_mop_f1;
+
+
+statement error
+DROP TABLE mop_sx.mop_inputs_t;
+----
+db error: ERROR: Cannot drop entry "mop_inputs_t" because there are entries that depend on it.
+view "v_mop_f1" depends on table "mop_inputs_t".
+view "v_mop_f2" depends on view "v_mop_f1".
+Use DROP...CASCADE to drop all dependents.
+
+
+
+statement ok
+DROP TABLE mop_sx.mop_inputs_t CASCADE;
+
+
+statement error (?i)(table|relation|view).*v_mop_f1.*does not exist
+SELECT * FROM mop_sy.v_mop_f1;
+
+
+statement error (?i)(table|relation|view).*v_mop_f2.*does not exist
+SELECT * FROM mop_sy.v_mop_f2;
+
+
+query
+SELECT count(*) FROM pg_namespace WHERE nspname='mop_sy';
+----
+count
+1
+
+
+statement ok
+DROP SCHEMA mop_sx CASCADE;
+
+
+statement ok
+DROP SCHEMA mop_sy CASCADE;
+
+
+statement ok
+CREATE TABLE mop_rebuild_t (id INT);
+
+
+statement ok
+CREATE VIEW v_mop_rebuild1 AS SELECT id FROM mop_rebuild_t;
+
+
+statement ok
+CREATE VIEW v_mop_rebuild2 AS SELECT id FROM v_mop_rebuild1;
+
+
+statement ok
+CREATE VIEW v_mop_rebuild3 AS SELECT id FROM v_mop_rebuild2;
+
+
+statement ok
+DROP TABLE mop_rebuild_t CASCADE;
+
+
+statement ok
+CREATE TABLE mop_rebuild_t (id INT);
+
+
+statement ok
+CREATE VIEW v_mop_rebuild1 AS SELECT id FROM mop_rebuild_t;
+
+
+statement ok
+CREATE VIEW v_mop_rebuild2 AS SELECT id FROM v_mop_rebuild1;
+
+
+statement ok
+CREATE VIEW v_mop_rebuild3 AS SELECT id FROM v_mop_rebuild2;
+
+
+statement ok
+DROP VIEW v_mop_rebuild3;
+
+
+statement ok
+DROP TABLE mop_rebuild_t CASCADE;

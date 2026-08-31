@@ -1,0 +1,233 @@
+# Triggers on serenedb relations. The rows of a Transactional table are a duckdb
+# store table, and duckdb resolves a bound scan's table from the scan itself --
+# which is the store table, not the relation the user named. A trigger hangs off
+# the relation, so every step here (CREATE, the DML that fires it, DROP, and the
+# catalog projection) has to reach the named entry: creating it against the
+# store table put it in a schema the user cannot address, made DROP TRIGGER
+# report it missing, and left duckdb_triggers() empty.
+#
+# Search-backed tables take triggers too. Trigger expansion reads the affected
+# rows through RETURNING, which the search write operators now project, so both
+# granularities fire -- the row trigger reads OLD off the deleted row and the
+# statement trigger leaves the affected-row count alone. A search table's writes
+# only become visible to a later statement once the index refreshes, so the DML
+# below refreshes before reading back.
+
+
+statement ok
+CREATE TABLE trg_t(a INT, b TEXT);
+
+
+statement ok
+CREATE TABLE trg_audit(tag TEXT, a INT);
+
+
+statement ok
+CREATE TRIGGER trg_del AFTER DELETE ON trg_t FOR EACH ROW
+  INSERT INTO trg_audit VALUES ('row_delete', OLD.a);
+
+
+statement ok
+CREATE TRIGGER trg_ins AFTER INSERT ON trg_t FOR EACH STATEMENT
+  INSERT INTO trg_audit VALUES ('stmt_insert', 0);
+
+
+statement ok
+CREATE TRIGGER trg_upd AFTER UPDATE ON trg_t FOR EACH STATEMENT
+  INSERT INTO trg_audit VALUES ('stmt_update', 0);
+
+
+# The projection names the relation and its own schema, not the store table.
+query
+SELECT schema_name, trigger_name, table_name, action_timing,
+       event_manipulation, for_each
+  FROM duckdb_triggers() WHERE table_name = 'trg_t' ORDER BY trigger_name;
+----
+schema_name	trigger_name	table_name	action_timing	event_manipulation	for_each
+public	trg_del	trg_t	AFTER	DELETE	ROW
+public	trg_ins	trg_t	AFTER	INSERT	STATEMENT
+public	trg_upd	trg_t	AFTER	UPDATE	STATEMENT
+
+
+# A statement trigger must not disturb the statement's own affected-row count.
+statement count 2
+INSERT INTO trg_t VALUES (1, 'x'), (2, 'y');
+
+
+statement count 1
+UPDATE trg_t SET b = 'z' WHERE a = 1;
+
+
+statement count 1
+DELETE FROM trg_t WHERE a = 1;
+
+
+query
+SELECT tag, a FROM trg_audit ORDER BY tag, a;
+----
+tag	a
+row_delete	1
+stmt_insert	0
+stmt_update	0
+
+
+# The trigger set is shared by every version of the relation, so a reshape that
+# replaces the entry has to carry it. Both an ADD COLUMN and a retype rebuild.
+statement ok
+ALTER TABLE trg_t ADD COLUMN c INT;
+
+
+statement ok
+ALTER TABLE trg_t ALTER COLUMN b TYPE VARCHAR;
+
+
+statement ok
+DELETE FROM trg_audit;
+
+
+statement count 1
+DELETE FROM trg_t WHERE a = 2;
+
+
+query
+SELECT tag, a FROM trg_audit ORDER BY tag;
+----
+tag	a
+row_delete	2
+
+
+# DROP TRIGGER resolves the relation by name; it used to look at an entry that
+# never held the trigger and report every one of them missing.
+statement ok
+DROP TRIGGER trg_upd ON trg_t;
+
+
+query
+SELECT trigger_name FROM duckdb_triggers() WHERE table_name = 'trg_t'
+  ORDER BY trigger_name;
+----
+trigger_name
+trg_del
+trg_ins
+
+
+statement ok
+DROP TRIGGER IF EXISTS trg_upd ON trg_t;
+
+
+statement error
+DROP TRIGGER trg_upd ON trg_t;
+----
+db error: ERROR: Trigger with name "trg_upd" does not exist on table "trg_t"
+
+
+# Upstream duckdb limits, reported through the relation's own name.
+statement error
+CREATE TRIGGER trg_before BEFORE DELETE ON trg_t FOR EACH ROW
+  INSERT INTO trg_audit VALUES ('before', OLD.a);
+----
+db error: ERROR: BEFORE FOR EACH ROW triggers are not yet supported
+
+
+statement error
+CREATE TRIGGER trg_uprow AFTER UPDATE ON trg_t FOR EACH ROW
+  INSERT INTO trg_audit VALUES ('uprow', OLD.a);
+----
+db error: ERROR: UPDATE FOR EACH ROW triggers are not yet supported
+
+
+statement error
+CREATE TRIGGER trg_norow AFTER DELETE ON trg_t FOR EACH ROW
+  INSERT INTO trg_audit VALUES ('norow', 0);
+----
+db error: ERROR: FOR EACH ROW trigger "trg_norow" on table "trg_t" must reference at least one NEW or OLD column in the trigger body (use FOR EACH STATEMENT if row data is not needed)
+
+
+# Search-backed tables: both granularities, reached through RETURNING.
+statement ok
+CREATE TABLE trg_s(a INT, b TEXT) WITH (storage = 'search');
+
+
+statement ok
+CREATE TRIGGER trg_srow AFTER DELETE ON trg_s FOR EACH ROW
+  INSERT INTO trg_audit VALUES ('srow', OLD.a);
+
+
+statement ok
+CREATE TRIGGER trg_sstmt AFTER INSERT ON trg_s FOR EACH STATEMENT
+  INSERT INTO trg_audit VALUES ('sstmt', 0);
+
+
+query
+SELECT trigger_name, for_each FROM duckdb_triggers()
+  WHERE table_name = 'trg_s' ORDER BY trigger_name;
+----
+trigger_name	for_each
+trg_srow	ROW
+trg_sstmt	STATEMENT
+
+
+statement ok
+DELETE FROM trg_audit;
+
+
+# The statement trigger must not disturb the affected-row count.
+statement count 2
+INSERT INTO trg_s VALUES (1, 'x'), (2, 'y');
+
+
+statement ok
+VACUUM (REFRESH_TABLE) trg_s;
+
+
+statement count 1
+DELETE FROM trg_s WHERE a = 1;
+
+
+statement ok
+VACUUM (REFRESH_TABLE) trg_s;
+
+
+query
+SELECT tag, a FROM trg_audit ORDER BY tag, a;
+----
+tag	a
+srow	1
+sstmt	0
+
+
+query
+SELECT a, b FROM trg_s ORDER BY a;
+----
+a	b
+2	y
+
+
+statement ok
+DROP TRIGGER trg_srow ON trg_s;
+
+
+# A relation that owns no trigger by that name reports it missing rather than
+# failing the cast that used to reach past the entry.
+statement ok
+DROP TRIGGER IF EXISTS trg_srow ON trg_s;
+
+
+statement ok
+DROP TABLE trg_s;
+
+
+# Dropping the relation takes its triggers with it.
+statement ok
+DROP TABLE trg_t;
+
+
+query
+SELECT count(*) FROM duckdb_triggers() WHERE table_name = 'trg_t';
+----
+count
+0
+
+
+statement ok
+DROP TABLE trg_audit;

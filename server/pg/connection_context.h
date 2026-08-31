@@ -27,7 +27,7 @@
 #include "basics/message_buffer.h"
 #include "catalog/fwd.h"
 #include "catalog/identifiers/object_id.h"
-#include "pg/copy_messages_queue.h"
+#include "catalog/role.h"
 #include "pg/sql_error.h"
 #include "query/transaction.h"
 
@@ -35,22 +35,22 @@ namespace sdb::pg {
 
 class CopyInBridge;
 
-// Outcome of the connect-time login gate. On success `role` is the resolved
-// login role (and `error` is default -- errcode 0); on failure `role` is null
-// and `error` carries the FATAL-worthy SqlErrorData. Returned (not thrown) so
-// the pg-wire path can write a fatal frame and the http path can rethrow, each
-// as it needs; test `role` (null == failed).
+// Outcome of the connect-time login gate. On success `role` is the id of the
+// resolved login role and `error` is default (errcode 0); on failure `role` is
+// unset and `error` carries the FATAL-worthy SqlErrorData. Returned (not
+// thrown) so the pg-wire path can write a fatal frame and the http path can
+// rethrow, each as it needs; test `role` (unset == failed).
 struct LoginCheck {
-  std::shared_ptr<catalog::Role> role;
+  ObjectId role;
+  bool superuser = false;
   pg::SqlErrorData error;
 };
 
 // The connect-time login gate shared by the pg-wire and http sessions:
 // role exists -> may log in -> holds CONNECT on the target database
 // (superuser bypasses, as in PG's InitPostgres).
-LoginCheck RequireLoginRole(const catalog::Snapshot& snapshot,
-                            std::string_view user,
-                            const catalog::Database& database);
+LoginCheck RequireLoginRole(std::string_view user, std::string_view dbname,
+                            const catalog::Permissions& perm);
 
 }  // namespace sdb::pg
 namespace sdb::network {
@@ -64,10 +64,8 @@ class ConnectionContext final : public query::Transaction {
  public:
   ConnectionContext(duckdb::ClientContext& duckdb_ctx, std::string_view user,
                     ObjectId role_id, std::string_view dbname,
-                    ObjectId database_id,
-                    std::shared_ptr<catalog::Database> database,
-                    message::Buffer* send_buffer,
-                    pg::CopyMessagesQueue* copy_queue, int32_t backend_pid,
+                    ObjectId database_id, message::Buffer* send_buffer,
+                    int32_t backend_pid,
                     network::CancelRegistry* cancel_registry);
 
   ~ConnectionContext() final { SDB_ASSERT(!HasNotices()); }
@@ -80,8 +78,6 @@ class ConnectionContext final : public query::Transaction {
   auto* GetCancelRegistry() const { return _cancel_registry; }
 
   std::string GetCurrentSchema() const;
-  std::string GetCurrentSchemaFromSnapshot(
-    std::shared_ptr<const catalog::Snapshot> snapshot) const;
 
   ObjectId GetRoleId() const { return _effective_role_id; }
   ObjectId GetLoginRoleId() const { return _login_role_id; }
@@ -94,6 +90,13 @@ class ConnectionContext final : public query::Transaction {
   // moves the session role (and resets the effective role to it); the resets
   // restore the login role. Whether SHOW role reports 'none' vs a name is
   // carried by the `role` GUC's own value, not tracked here.
+  // A connection that speaks storage rather than catalog: the data store's own,
+  // which issues the index builds an ART over existing rows needs a physical
+  // plan for. Its statements must reach duckdb's native catalog paths, not the
+  // serenedb mutators that emitted them.
+  bool IsStorageConnection() const noexcept { return _storage_connection; }
+  void MarkStorageConnection() noexcept { _storage_connection = true; }
+
   void SetEffectiveRole(ObjectId role) { _effective_role_id = role; }
   void SetSessionRole(ObjectId role) {
     _session_role_id = role;
@@ -104,11 +107,12 @@ class ConnectionContext final : public query::Transaction {
     _effective_role_id = _login_role_id;
   }
 
-  const auto& GetDatabasePtr() const { return _database; }
+  // Set when this transaction writes a role, cleared when it ends. Its own
+  // uncommitted version is the one it has to read, so while this holds it
+  // neither uses nor fills the shared role-closure cache.
+  bool wrote_roles = false;
 
   auto* GetSendBuffer() const { return _send_buffer; }
-
-  auto* GetCopyQueue() const { return _copy_queue; }
 
   auto* GetCopyInBridge() const { return _copy_in_bridge; }
   void SetCopyInBridge(pg::CopyInBridge* bridge) { _copy_in_bridge = bridge; }
@@ -157,12 +161,11 @@ class ConnectionContext final : public query::Transaction {
   const ObjectId _database_id;
   const int32_t _backend_pid;
   network::CancelRegistry* const _cancel_registry;
-  std::shared_ptr<catalog::Database> _database;
   message::Buffer* const _send_buffer;
-  pg::CopyMessagesQueue* const _copy_queue;
   const ObjectId _login_role_id;
   ObjectId _session_role_id;
   ObjectId _effective_role_id;
+  bool _storage_connection = false;
   pg::CopyInBridge* _copy_in_bridge = nullptr;
   std::string* _response_sink = nullptr;
   std::atomic<NoticeNode*> _notices{nullptr};

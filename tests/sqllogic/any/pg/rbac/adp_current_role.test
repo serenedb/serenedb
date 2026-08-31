@@ -1,0 +1,99 @@
+# ALTER DEFAULT PRIVILEGES without FOR ROLE writes the *current* role's entry,
+# not the session's login user: PostgreSQL uses GetUserId(), which SET ROLE
+# moves. So after SET ROLE r the row lands on r, with r as its own grantor, and
+# the session user's own entry is untouched.
+#
+# Fixture prefix: adp_ (alter_default_privileges).
+
+
+statement ok
+DROP ROLE IF EXISTS adp_vedernikoff;
+
+
+statement ok
+DROP ROLE IF EXISTS adp_clickclack;
+
+
+statement ok
+CREATE ROLE adp_clickclack;
+
+
+statement ok
+CREATE ROLE adp_vedernikoff;
+
+
+statement ok
+SET ROLE adp_clickclack;
+
+
+query
+SELECT current_role = 'adp_clickclack' AS is_current,
+       session_user = 'adp_clickclack' AS is_session;
+----
+is_current	is_session
+t	f
+
+
+statement ok
+ALTER DEFAULT PRIVILEGES GRANT SELECT ON TABLES TO adp_vedernikoff;
+
+
+statement ok
+RESET ROLE;
+
+
+# The row is the current role's, and the grantor is that same role.
+query
+SELECT e
+FROM pg_default_acl d
+JOIN pg_roles r ON r.oid = d.defaclrole,
+     LATERAL unnest(d.defaclacl::text[]) AS e
+WHERE r.rolname = 'adp_clickclack' AND d.defaclobjtype = 'r'
+  AND e LIKE 'adp_vedernikoff=%';
+----
+e
+adp_vedernikoff=r/adp_clickclack
+
+
+# ... and the session user's own entry never saw the grant.
+query
+SELECT count(*)
+FROM pg_default_acl d
+JOIN pg_roles r ON r.oid = d.defaclrole,
+     LATERAL unnest(d.defaclacl::text[]) AS e
+WHERE r.rolname = session_user AND e LIKE 'adp_vedernikoff=%';
+----
+count
+0
+
+
+# Revoking under the same role clears it again.
+statement ok
+SET ROLE adp_clickclack;
+
+
+statement ok
+ALTER DEFAULT PRIVILEGES REVOKE SELECT ON TABLES FROM adp_vedernikoff;
+
+
+statement ok
+RESET ROLE;
+
+
+query
+SELECT count(*)
+FROM pg_default_acl d
+JOIN pg_roles r ON r.oid = d.defaclrole,
+     LATERAL unnest(d.defaclacl::text[]) AS e
+WHERE r.rolname = 'adp_clickclack' AND e LIKE 'adp_vedernikoff=%';
+----
+count
+0
+
+
+statement ok
+DROP ROLE adp_vedernikoff;
+
+
+statement ok
+DROP ROLE adp_clickclack;

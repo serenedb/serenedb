@@ -424,6 +424,7 @@ class MaxScoreIterator : public DocIterator {
                                          doc_id_t max) {
     _num_candidates += cand_docs.size();
     const score_t threshold = std::get<ScoreThresholdAttr>(_attrs).value;
+    SDB_ASSERT(threshold > 0);
 
     const auto first_required = _first_required;
     for (auto it = _first_essential; it != _itrs_sorted.begin();) {
@@ -573,7 +574,7 @@ class MaxScoreIterator : public DocIterator {
   uint32_t _num_outer_windows = 0;
   doc_id_t _min_window_size = 1;
   ColumnArgsFetcher _fetcher;
-  score_t _next_threshold = std::numeric_limits<score_t>::min();
+  score_t _next_threshold = std::numeric_limits<score_t>::lowest();
   Attributes _attrs;
 };
 

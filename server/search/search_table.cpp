@@ -37,8 +37,10 @@
 #include <system_error>
 
 #include "basics/duckdb_engine.h"
+#include "basics/lifecycle.h"
 #include "basics/log.h"
 #include "pg/sql_exception_macro.h"
+#include "scheduler/background_scheduler.h"
 #include "search/inverted_index_storage.h"
 #include "search/task.h"
 #include "storage_engine/search_engine.h"
@@ -73,42 +75,16 @@ std::filesystem::path SearchTable::GetChunkDir(ObjectId db_id,
   return path;
 }
 
-absl::Status SearchTable::DropIndexDir(ObjectId db_id, ObjectId schema_id,
-                                       ObjectId table_id) {
-  auto path = GetPath(db_id, schema_id, table_id);
-  std::error_code ec;
-  std::filesystem::remove_all(path, ec);
-  if (ec) {
-    return absl::InternalError(
-      absl::StrCat("Failed to remove search table directory '", path.string(),
-                   "': ", ec.message()));
-  }
-  return absl::OkStatus();
-}
-
-absl::Status SearchTable::DropWalShard(ObjectId db_id, ObjectId table_id) {
-  auto chunk_dir = GetChunkDir(db_id, table_id);
-  std::error_code ec;
-  std::filesystem::remove_all(chunk_dir, ec);
-  if (ec) {
-    return absl::InternalError(
-      absl::StrCat("Failed to remove search table chunk directory '",
-                   chunk_dir.string(), "': ", ec.message()));
-  }
-  GetSearchEngine().GetDbWal(db_id).DeregisterShard(table_id);
-  return absl::OkStatus();
-}
-
 std::shared_ptr<SearchTable> SearchTable::Create(
   ObjectId db_id, ObjectId schema_id, ObjectId table_id, bool is_new,
-  const catalog::SearchTableOptions& options) {
+  const catalog::persistence::SearchTableOptions& options) {
   return std::make_shared<SearchTable>(db_id, schema_id, table_id, is_new,
                                        options);
 }
 
-SearchTable::SearchTable(ObjectId db_id, ObjectId schema_id, ObjectId table_id,
-                         bool is_new,
-                         const catalog::SearchTableOptions& options)
+SearchTable::SearchTable(
+  ObjectId db_id, ObjectId schema_id, ObjectId table_id, bool is_new,
+  const catalog::persistence::SearchTableOptions& options)
   : _table_id{table_id}, _db_id{db_id}, _schema_id{schema_id}, _is_new{is_new} {
   OpenWriter();
 
@@ -120,6 +96,22 @@ SearchTable::SearchTable(ObjectId db_id, ObjectId schema_id, ObjectId table_id,
 SearchTable::~SearchTable() {
   _writer.reset();
   _dir.reset();
+  if (!_dropped.load(std::memory_order_acquire)) {
+    return;
+  }
+  // Shutdown may already have torn the pool down; the removal then waits for
+  // boot's orphan sweep, exactly like a crash between the commit and here.
+  if (lifecycle::IsStopping() || BackgroundScheduler::instance().IsStopping()) {
+    return;
+  }
+  GetSearchEngine().GetDbWal(_db_id).DeregisterShard(_table_id);
+  BackgroundScheduler::instance()
+    .Run([chunk_dir = GetChunkDir(_db_id, _table_id),
+          index_dir = GetPath(_db_id, _schema_id, _table_id)] {
+      RemoveDroppedStorageDir(chunk_dir, 2);
+      RemoveDroppedStorageDir(index_dir, 2);
+    })
+    .Detach();
 }
 
 void SearchTable::OpenWriter() {

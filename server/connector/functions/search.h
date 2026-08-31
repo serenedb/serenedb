@@ -136,8 +136,8 @@ void SearchStubFn(duckdb::DataChunk& args, duckdb::ExpressionState& state,
 catalog::Tokenizer::TokenizerWrapper AcquireTokenizer(
   duckdb::ClientContext& context, std::string_view name);
 
-std::shared_ptr<catalog::Tokenizer> ResolveCatalogTokenizer(
-  duckdb::ClientContext& context, std::string_view name);
+catalog::TokenizerRef ResolveCatalogTokenizer(duckdb::ClientContext& context,
+                                              std::string_view name);
 
 void RegisterSearchFunctions(duckdb::DatabaseInstance& db);
 

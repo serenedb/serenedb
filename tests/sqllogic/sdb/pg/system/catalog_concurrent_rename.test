@@ -1,0 +1,194 @@
+# Two transactions writing one relation.
+#
+# The entry a statement writes goes into its CatalogSet on that statement's own
+# transaction, so the first writer holds the object until it ends and the
+# second is refused there and then. That is duckdb's answer for its own
+# catalog, and it is ours because it is the same mechanism.
+#
+# It used to merge instead: two mutations touching different fields of one
+# object both landed, because each re-resolved the object by id and re-applied
+# its own field. That was never duckdb's behaviour and never PostgreSQL's -- PG
+# gets both to land by blocking on an ACCESS EXCLUSIVE lock so the two never
+# overlap at all -- and it needed a second catalog mechanism beside duckdb's to
+# exist. 40001 is retryable, and the retry is what makes both changes land.
+
+
+statement ok
+CREATE TABLE ccr_t(a INTEGER)
+
+
+connection s1
+statement ok
+BEGIN
+
+
+connection s1
+statement ok
+ALTER TABLE ccr_t RENAME TO ccr_t1
+
+
+connection s2
+statement error
+ALTER TABLE ccr_t RENAME TO ccr_t2
+----
+db error: ERROR: could not serialize access due to concurrent DDL on the same object
+
+
+# The refusal ended the statement, not the connection.
+connection s2
+query
+SELECT 1 AS ok
+----
+ok
+1
+
+
+connection s1
+statement ok
+COMMIT
+
+
+connection s1
+query
+SELECT relname FROM pg_class WHERE relname LIKE 'ccr_t%' ORDER BY 1
+----
+relname
+ccr_t1
+
+
+# The holder is gone, so the retry succeeds -- and it renames the relation the
+# statement now names, not one it never asked about.
+connection s2
+statement ok
+ALTER TABLE ccr_t1 RENAME TO ccr_t2
+
+
+query
+SELECT relname FROM pg_class WHERE relname LIKE 'ccr_t%' ORDER BY 1
+----
+relname
+ccr_t2
+
+
+# Unrelated objects never conflict.
+
+statement ok
+CREATE TABLE ccr_a(a INTEGER)
+
+
+statement ok
+CREATE TABLE ccr_b(a INTEGER)
+
+
+connection s3
+statement ok
+BEGIN
+
+
+connection s3
+statement ok
+ALTER TABLE ccr_a RENAME TO ccr_a1
+
+
+connection s4
+statement ok
+ALTER TABLE ccr_b RENAME TO ccr_b1
+
+
+connection s3
+statement ok
+COMMIT
+
+
+query
+SELECT relname FROM pg_class WHERE relname LIKE 'ccr_%1' ORDER BY 1
+----
+relname
+ccr_a1
+ccr_b1
+
+
+# A GRANT and an OWNER TO on one table are two writers like any other pair: the
+# second is refused while the first is pending, and lands on retry.
+
+statement ok
+CREATE ROLE ccr_grantee
+
+
+statement ok
+CREATE ROLE ccr_owner
+
+
+statement ok
+CREATE TABLE ccr_m(a INTEGER)
+
+
+connection s5
+statement ok
+BEGIN
+
+
+connection s5
+statement ok
+GRANT SELECT ON ccr_m TO ccr_grantee
+
+
+connection s6
+statement error
+ALTER TABLE ccr_m OWNER TO ccr_owner
+----
+db error: ERROR: could not serialize access due to concurrent DDL on the same object
+
+
+connection s5
+statement ok
+COMMIT
+
+
+# The grant is the only one of the two that landed.
+query
+SELECT pg_get_userbyid(relowner) AS owner,
+       array_to_string(relacl, '|') AS acl
+FROM pg_class WHERE relname = 'ccr_m'
+----
+owner	acl
+postgres	postgres=arwdDxtm/postgres|ccr_grantee=r/postgres
+
+
+connection s6
+statement ok
+ALTER TABLE ccr_m OWNER TO ccr_owner
+
+
+# Retried, both are in: the transfer carries the grant to the new owner.
+query
+SELECT pg_get_userbyid(relowner) AS owner,
+       array_to_string(relacl, '|') AS acl
+FROM pg_class WHERE relname = 'ccr_m'
+----
+owner	acl
+ccr_owner	ccr_grantee=r/ccr_owner
+
+
+statement ok
+DROP TABLE ccr_t2
+
+
+statement ok
+DROP TABLE ccr_a1
+
+
+statement ok
+DROP TABLE ccr_b1
+
+
+statement ok
+DROP TABLE ccr_m
+
+
+statement ok
+DROP ROLE ccr_grantee
+
+
+statement ok
+DROP ROLE ccr_owner

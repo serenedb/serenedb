@@ -1,0 +1,138 @@
+control substitution on
+
+# An indexed expression is resolved on the query side by looking its serialized
+# bytes up in the catalog index (InvertedIndex::FindFieldIdBySerialized), unlike
+# a plain column key which resolves by column id. That lookup map -- and the
+# field/entry maps beside it -- alias the index object's own storage, so a clone
+# that does not rebuild them leaves every view and pointer aimed at the source
+# object. While the source is alive the comparison still happens to succeed; a
+# restart frees it, and afterwards `@@` on the expression reported "requires an
+# inverted-indexed column on one side" while the plain-column index kept
+# working.
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY xr_dict(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'none',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true
+);
+
+statement ok
+CREATE TABLE xr_base(id INTEGER, body TEXT, keep BOOLEAN);
+
+statement ok
+INSERT INTO xr_base SELECT g, 'aa ' || g || ' bravo', (g % 3 = 0) FROM generate_series(1, 9) g;
+
+statement ok
+CREATE INDEX xr_expr ON xr_base USING inverted(id, (upper(body)) xr_dict);
+
+statement ok
+CREATE INDEX xr_part ON xr_base USING inverted(id, (upper(body)) xr_dict) WHERE keep;
+
+# Control: a plain-column key resolves by column id, so it never depended on
+# the aliased map and must keep working either way.
+statement ok
+CREATE INDEX xr_plain ON xr_base USING inverted(id, body xr_dict);
+
+statement ok
+VACUUM (REFRESH_TABLE) xr_base;
+
+query
+SELECT count(*) FROM xr_expr WHERE upper(body) @@ ts_like('BRAVO');
+----
+count
+9
+
+query
+SELECT count(*) FROM xr_expr WHERE upper(body) @@ ts_all(ts_tokenize(ARRAY['BRAVO'], 'xr_dict'));
+----
+count
+9
+
+query
+SELECT count(*) FROM xr_part WHERE upper(body) @@ ts_like('BRAVO');
+----
+count
+3
+
+query
+SELECT count(*) FROM xr_plain WHERE body @@ ts_like('bravo');
+----
+count
+9
+
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+statement error connection closed
+SELECT 1;
+
+
+# --- restart ---
+
+# Wait for the server to come back up, on the assertion that matters: the
+# expression key has to resolve against the index rebuilt from the catalog.
+connection after_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT count(*) FROM xr_expr WHERE upper(body) @@ ts_like('BRAVO');
+----
+count
+9
+
+connection after_crash
+query
+SELECT count(*) FROM xr_expr WHERE upper(body) @@ ts_all(ts_tokenize(ARRAY['BRAVO'], 'xr_dict'));
+----
+count
+9
+
+connection after_crash
+query
+SELECT count(*) FROM xr_part WHERE upper(body) @@ ts_like('BRAVO');
+----
+count
+3
+
+connection after_crash
+query
+SELECT count(*) FROM xr_plain WHERE body @@ ts_like('bravo');
+----
+count
+9
+
+# The write side binds the same expressions: rows appended after recovery have
+# to reach the expression field too, not just the plain-column one.
+connection after_crash
+statement ok
+INSERT INTO xr_base SELECT g, 'aa ' || g || ' bravo', (g % 3 = 0) FROM generate_series(10, 18) g;
+
+connection after_crash
+statement ok
+VACUUM (REFRESH_TABLE) xr_base;
+
+connection after_crash
+query
+SELECT count(*) FROM xr_expr WHERE upper(body) @@ ts_like('BRAVO');
+----
+count
+18
+
+connection after_crash
+query
+SELECT count(*) FROM xr_part WHERE upper(body) @@ ts_like('BRAVO');
+----
+count
+6
+
+connection after_crash
+statement ok
+DROP TABLE xr_base;
+
+connection after_crash
+statement ok
+DROP TEXT SEARCH DICTIONARY xr_dict;

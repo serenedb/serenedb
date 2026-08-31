@@ -45,14 +45,16 @@
 #include "basics/assert.h"
 #include "basics/down_cast.h"
 #include "basics/duckdb_engine.h"
+#include "basics/lifecycle.h"
 #include "basics/log.h"
 #include "basics/serializer.h"
 #include "basics/system-compiler.h"
-#include "catalog/catalog.h"
+#include "catalog/ddl/catalog.h"
+#include "catalog/log/store.h"
 #include "catalog/scorer_options.h"
-#include "catalog/store/store.h"
 #include "pg/sql_exception_macro.h"
 #include "query/transaction.h"
+#include "scheduler/background_scheduler.h"
 #include "search/tick_domain.h"
 #include "search/wal_recovery.h"
 #include "storage_engine/search_engine.h"
@@ -137,14 +139,14 @@ std::filesystem::path InvertedIndexStorage::GetPath(ObjectId db_id,
 }
 
 std::shared_ptr<InvertedIndexStorage> InvertedIndexStorage::Create(
-  ObjectId id, const catalog::InvertedIndex& index, bool is_new) {
-  return std::make_shared<InvertedIndexStorage>(id, index, is_new);
+  ObjectId db_id, const catalog::InvertedIndex& index, bool is_new) {
+  return std::make_shared<InvertedIndexStorage>(db_id, index, is_new);
 }
 
-InvertedIndexStorage::InvertedIndexStorage(ObjectId id,
+InvertedIndexStorage::InvertedIndexStorage(ObjectId db_id,
                                            const catalog::InvertedIndex& index,
                                            bool is_new)
-  : _index_id{index.GetId()}, _search{GetSearchEngine()} {
+  : _index_id{index.GetId()}, _db_id{db_id}, _search{GetSearchEngine()} {
   const auto& options = index.GetOptions();
   _tasks_settings.refresh_interval_msec = options.refresh_interval_ms;
   _tasks_settings.compaction_interval_msec = options.compaction_interval_ms;
@@ -156,13 +158,11 @@ InvertedIndexStorage::InvertedIndexStorage(ObjectId id,
   _tasks_settings.compaction_floor_segment_bytes =
     options.compaction_floor_segment_bytes;
 
-  const auto schema_id = index.GetParentId();
-  const auto db_id =
-    catalog::GetCatalog().GetCatalogSnapshot()->GetDatabaseId(index);
+  const auto schema_id = index.GetSchemaId();
   const auto index_id = index.GetId();
   SDB_ASSERT(index_id.isSet());
-  std::filesystem::path path =
-    GetPath(db_id, schema_id, index.GetRelationId(), index_id);
+  _path = GetPath(db_id, schema_id, index.GetRelationId(), index_id);
+  const auto& path = _path;
   // TODO(mbkkt) maybe we should use create_directories result instead of
   // exists?
   std::error_code ec;
@@ -293,6 +293,40 @@ InvertedIndexStorage::InvertedIndexStorage(ObjectId id,
   }
   StoreInvertedIndexSnapshot(std::make_shared<InvertedIndexSnapshot>(
     std::move(reader), std::move(file_manifest)));
+}
+
+void RemoveDroppedStorageDir(const std::filesystem::path& path,
+                             size_t parent_levels) {
+  std::error_code ec;
+  std::filesystem::remove_all(path, ec);
+  if (ec) {
+    SDB_WARN(GENERAL, "could not remove dropped storage '", path.string(),
+             "': ", ec.message());
+    return;
+  }
+  auto parent = path;
+  for (size_t level = 0; level < parent_levels; ++level) {
+    parent = parent.parent_path();
+    if (!std::filesystem::remove(parent, ec) || ec) {
+      return;
+    }
+  }
+}
+
+InvertedIndexStorage::~InvertedIndexStorage() {
+  _writer.reset();
+  _dir.reset();
+  if (!_dropped.load(std::memory_order_acquire)) {
+    return;
+  }
+  // Shutdown may already have torn the pool down; the removal then waits for
+  // boot's orphan sweep, exactly like a crash between the commit and here.
+  if (lifecycle::IsStopping() || BackgroundScheduler::instance().IsStopping()) {
+    return;
+  }
+  BackgroundScheduler::instance()
+    .Run([path = _path] { RemoveDroppedStorageDir(path, 3); })
+    .Detach();
 }
 
 void InvertedIndexStorage::StartTasks() {
@@ -521,9 +555,7 @@ absl::Status InvertedIndexStorage::RefreshUnsafeImpl(
       _stamp_cursor_from_flush = false;
     };
     if (for_checkpoint) {
-      if (auto store =
-            duckdb::DatabaseManager::Get(DuckDBEngine::Instance().instance())
-              .GetDatabase(duckdb::Identifier{catalog::kStoreDatabaseName})) {
+      if (auto store = catalog::TryStoreDatabase(_db_id)) {
         const auto next_gen = store->GetStorageManager()
                                 .GetBlockManager()
                                 .GetCheckpointIteration() +
@@ -538,8 +570,14 @@ absl::Status InvertedIndexStorage::RefreshUnsafeImpl(
     const auto refresh_tick = [&] {
       switch (_phase) {
         case Phase::Creating:
-        case Phase::Recovering:
           return irs::writer_limits::kMaxTick;
+        case Phase::Recovering:
+          // Replay retires eagerly but only the committed frontier may become
+          // durable: the cursor payload covers exactly the ticks below it.
+          // Before any frontier exists this commits nothing.
+          return std::max(
+            _recovery_frontier_tick.load(std::memory_order_acquire),
+            irs::writer_limits::kMinTick + 1);
         case Phase::Active:
           return before_refresh;
       }

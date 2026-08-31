@@ -47,12 +47,10 @@
 
 #include "basics/duckdb_engine.h"
 #include "basics/serializer.h"
-#include "catalog/persistence/foreign_server.h"
+#include "basics/simdjson_sink.h"
 
 namespace sdb::catalog {
 namespace {
-
-using persistence::ForeignServerData;
 
 constexpr std::string_view kClickHouseStorage = "clickhouse";
 constexpr std::string_view kPostgresStorage = "postgres";
@@ -133,7 +131,7 @@ std::pair<std::string_view, duckdb::Value> CanonicalOption(
   return {key, duckdb::Value(value)};
 }
 
-std::string MakeForeignServerSecretName(const ForeignServer& server) {
+std::string MakeForeignServerSecretName(const CreateForeignServerInfo& server) {
   const std::string_view alias = server.GetName();
   std::string out = "__sdb_fdw_secret_";
   out.reserve(out.size() + alias.size() + 24);
@@ -175,20 +173,28 @@ std::string SupportedFdwList() {
                        });
 }
 
+namespace {
+
 std::string QuoteSqlIdentifier(std::string_view name) {
   return duckdb::KeywordHelper::WriteQuoted(name, '"');
 }
 
-ForeignServer::ForeignServer(Permissions perm, ObjectId schema_id, ObjectId id,
-                             std::string_view name, std::string fdw_name,
-                             std::vector<std::string> option_keys,
-                             std::vector<std::string> option_values)
-  : Object{std::move(perm), schema_id, id, name, ObjectType::ForeignServer},
+}  // namespace
+
+CreateForeignServerInfo::CreateForeignServerInfo(
+  ObjectId id, ObjectId database_id, std::string_view name,
+  std::string fdw_name, std::vector<std::string> option_keys,
+  std::vector<std::string> option_values)
+  : duckdb::CreateInfo{duckdb::CatalogType::FOREIGN_SERVER_ENTRY},
     _fdw_name{std::move(fdw_name)},
     _option_keys{std::move(option_keys)},
-    _option_values{std::move(option_values)} {}
+    _option_values{std::move(option_values)} {
+  SetId(id);
+  SetDatabaseId(database_id);
+  SetName(duckdb::Identifier{std::string{name}});
+}
 
-std::vector<std::string> ForeignServer::GetStringOptions() const {
+std::vector<std::string> CreateForeignServerInfo::GetStringOptions() const {
   std::vector<std::string> out;
   out.reserve(_option_keys.size());
   for (size_t i = 0; i < _option_keys.size(); ++i) {
@@ -197,38 +203,57 @@ std::vector<std::string> ForeignServer::GetStringOptions() const {
   return out;
 }
 
-std::shared_ptr<ForeignServer> ForeignServer::Deserialize(
-  duckdb::Deserializer& src, ReadContext ctx) {
-  ForeignServerData data;
-  basics::ReadTuple(src, data);
-
-  return std::make_shared<ForeignServer>(
-    std::move(data.perm), ctx.database_id, ctx.id, data.name,
-    std::move(data.fdw_name), std::move(data.option_keys),
-    std::move(data.option_values));
+duckdb::unique_ptr<duckdb::CreateInfo> CreateForeignServerInfo::Deserialize(
+  duckdb::Deserializer& src) {
+  auto result = duckdb::make_uniq<CreateForeignServerInfo>();
+  result->SetName(src.ReadPropertyWithDefault<duckdb::Identifier>(200, "name"));
+  src.ReadPropertyWithDefault(201, "fdw_name", result->_fdw_name);
+  src.OnPropertyBegin(202, "options");
+  auto refs = std::tie(result->_option_keys, result->_option_values);
+  basics::ReadTuple(src, refs);
+  src.OnPropertyEnd();
+  return std::move(result);
 }
 
-void ForeignServer::Serialize(duckdb::Serializer& sink) const {
-  ForeignServerData data{
-    .perm = GetPermissions(),
-    .name = std::string{GetName()},
-    .fdw_name = _fdw_name,
-    .option_keys = _option_keys,
-    .option_values = _option_values,
-  };
-  basics::WriteTuple(sink, data);
+std::string CreateForeignServerInfo::ToString() const {
+  std::string out = absl::StrCat(
+    "CREATE SERVER ",
+    duckdb::KeywordHelper::WriteOptionallyQuoted(std::string{GetName()}),
+    " FOREIGN DATA WRAPPER ",
+    duckdb::KeywordHelper::WriteOptionallyQuoted(_fdw_name));
+  if (!_option_keys.empty()) {
+    absl::StrAppend(&out, " OPTIONS (");
+    for (size_t i = 0; i < _option_keys.size(); ++i) {
+      absl::StrAppend(
+        &out, i != 0 ? ", " : "", _option_keys[i], " ",
+        duckdb::KeywordHelper::WriteQuoted(_option_values[i], '\''));
+    }
+    absl::StrAppend(&out, ")");
+  }
+  return absl::StrCat(out, ";");
 }
 
-std::shared_ptr<Object> ForeignServer::Clone() const {
-  duckdb::MemoryStream stream;
-  return DeserializeObject<ForeignServer>(
-    SerializeObject(*this, stream),
-    {.id = GetId(), .database_id = GetParentId()});
+void CreateForeignServerInfo::Serialize(duckdb::Serializer& sink) const {
+  duckdb::CreateInfo::Serialize(sink);
+  sink.WritePropertyWithDefault<duckdb::Identifier>(200, "name",
+                                                    qualified_name.Name());
+  sink.WritePropertyWithDefault(201, "fdw_name", _fdw_name);
+  // Option lists are std::vector, not duckdb's; the basics framework is what
+  // writes them, so they ride inside one property.
+  sink.OnPropertyBegin(202, "options");
+  basics::WriteTuple(sink, std::tie(_option_keys, _option_values));
+  sink.OnPropertyEnd();
 }
 
-static std::string PrepareForeignServerAttach(duckdb::ClientContext& context,
-                                              std::string_view secret_name,
-                                              const ForeignServer& server) {
+duckdb::unique_ptr<duckdb::CreateInfo> CreateForeignServerInfo::Copy() const {
+  return duckdb::make_uniq<CreateForeignServerInfo>(
+    GetId(), GetDatabaseId(), GetName(), _fdw_name, _option_keys,
+    _option_values);
+}
+
+static std::string PrepareForeignServerAttach(
+  duckdb::ClientContext& context, std::string_view secret_name,
+  const CreateForeignServerInfo& server) {
   const auto storage = StorageTypeForFdw(server.GetFdwName());
   if (storage.empty()) {
     return {};
@@ -284,8 +309,8 @@ static std::string PrepareForeignServerAttach(duckdb::ClientContext& context,
                       " (TYPE ", storage, ", SECRET ", secret_name, ")");
 }
 
-ForeignServerAttachResult RunForeignServerAttach(duckdb::Connection& conn,
-                                                 const ForeignServer& server) {
+ForeignServerAttachResult RunForeignServerAttach(
+  duckdb::Connection& conn, const CreateForeignServerInfo& server) {
   const auto secret = MakeForeignServerSecretName(server);
   auto sql = PrepareForeignServerAttach(*conn.context, secret, server);
   if (sql.empty()) {

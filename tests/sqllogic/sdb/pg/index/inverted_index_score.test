@@ -1535,6 +1535,120 @@ DROP TABLE prefix_docs;
 
 
 # ============================================================================
+# sdb_scored_terms_limit -- how many terms a multi-term filter scores.
+# Terms past the cap still match, they just contribute nothing to the
+# score, so the cap never moves the result set -- top-k included.
+# ============================================================================
+
+statement ok
+CREATE TABLE stl_docs (id INTEGER PRIMARY KEY, body VARCHAR);
+
+
+statement ok
+CREATE INDEX stl_idx ON stl_docs USING inverted(id, body en)
+  WITH (compaction_interval = 0);
+
+
+statement ok
+INSERT INTO stl_docs VALUES
+    (1, 'cat cat dog'), (2, 'cat'), (3, 'cat bird'),
+    (4, 'car'), (5, 'cap'), (6, 'zebra');
+
+
+statement ok
+VACUUM (REFRESH_TABLE) stl_docs;
+
+
+# Every expanded term is scored under the default cap.
+query
+SELECT id, BM25(stl_idx.tableoid) > 0 AS scored FROM stl_idx
+WHERE body @@ ts_like('ca%') ORDER BY id;
+----
+id	scored
+1	t
+2	t
+3	t
+4	t
+5	t
+
+
+statement ok
+SET sdb_scored_terms_limit = 0;
+
+
+# 0 turns scored-term collection off entirely: every hit scores 0 and
+# every hit is still a hit.
+query
+SELECT id, BM25(stl_idx.tableoid) AS score FROM stl_idx
+WHERE body @@ ts_like('ca%') ORDER BY id;
+----
+id	score
+1	0
+2	0
+3	0
+4	0
+5	0
+
+
+# ... and the in-scan top-k returns the same rows rather than dropping
+# the whole all-zero result set.
+query
+SELECT id, score FROM (
+  SELECT id, BM25(stl_idx.tableoid) AS score FROM stl_idx
+  WHERE body @@ ts_like('ca%')
+  ORDER BY BM25(stl_idx.tableoid) DESC LIMIT 10
+) t ORDER BY id;
+----
+id	score
+1	0
+2	0
+3	0
+4	0
+5	0
+
+
+statement ok
+SET sdb_scored_terms_limit = 1;
+
+
+# A cap below the expansion scores the widest term only ('cat', 3 docs);
+# documents reached solely through the unscored terms keep their place.
+query
+SELECT id, score > 0 AS scored FROM (
+  SELECT id, BM25(stl_idx.tableoid) AS score FROM stl_idx
+  WHERE body @@ ts_like('ca%')
+  ORDER BY BM25(stl_idx.tableoid) DESC LIMIT 10
+) t ORDER BY id;
+----
+id	scored
+1	t
+2	t
+3	t
+4	f
+5	f
+
+
+# A top-k narrower than the match set still fills k from them.
+query
+SELECT count(*) FROM (
+  SELECT id, BM25(stl_idx.tableoid) AS score FROM stl_idx
+  WHERE body @@ ts_like('ca%')
+  ORDER BY BM25(stl_idx.tableoid) DESC LIMIT 4
+) t;
+----
+count
+4
+
+
+statement ok
+RESET sdb_scored_terms_limit;
+
+
+statement ok
+DROP TABLE stl_docs;
+
+
+# ============================================================================
 # idf() -- scores by the inverse document frequency of the matched term
 # alone. No term frequency, no length norm, and no index features, so it
 # also scores columns indexed without a dictionary.

@@ -76,6 +76,12 @@ void AppendScalarValue(std::string& key, const duckdb::UnifiedVectorFormat& fmt,
       absl::big_endian::Store64(key.data() + base, val);
       key[base] = static_cast<uint8_t>(key[base]) ^ 0x80;
     } break;
+    case duckdb::LogicalTypeId::UBIGINT: {
+      auto val = duckdb::UnifiedVectorFormat::GetData<uint64_t>(fmt)[idx];
+      auto base = key.size();
+      basics::StrAppend(key, sizeof(uint64_t));
+      absl::big_endian::Store64(key.data() + base, val);
+    } break;
     case duckdb::LogicalTypeId::TIMESTAMP:
     case duckdb::LogicalTypeId::TIMESTAMP_TZ:
     case duckdb::LogicalTypeId::TIMESTAMP_NS:

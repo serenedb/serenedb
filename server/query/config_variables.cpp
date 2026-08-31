@@ -35,12 +35,13 @@
 #include <limits>
 #include <magic_enum/magic_enum.hpp>
 #include <string>
+#include <string_view>
 
 #include "auth/role_closure.h"
 #include "basics/debugging.h"
 #include "basics/serializer.h"
 #include "basics/static_strings.h"
-#include "catalog/catalog.h"
+#include "catalog/ddl/catalog.h"
 #include "connector/duckdb_client_state.h"
 #include "iresearch/index/column_info.hpp"
 #include "pg/commands/rbac.h"
@@ -119,16 +120,38 @@ void NoOverwrite(duckdb::ClientContext& ctx, duckdb::SetScope,
       "\" is accepted for compatibility but is not enforced by serened")));
 }
 
-void RequireHbaSuperuser(duckdb::ClientContext& ctx) {
-  auto& conn = connector::GetSereneDBContext(ctx);
-  if (!conn.CatalogSnapshot()->ClosureFor(conn.GetRoleId()).is_superuser) {
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
-      ERR_MSG("permission denied to set parameter \"hba\""),
-      ERR_DETAIL("Only roles with the SUPERUSER attribute may change the "
-                 "host-based authentication ruleset."));
+// PG's rule for a GUC whose effect reaches past the session that set it is
+// PGC_SUSET: still readable by everyone, settable only by a superuser, 42501
+// otherwise. Every developer knob that can damage or kill the backend is in
+// that class -- zero_damaged_pages, ignore_checksum_failure,
+// allow_system_table_mods, debug_discard_caches, wal_consistency_checking.
+void RequireSuperuser(duckdb::ClientContext& ctx, std::string_view name,
+                      std::string_view detail) {
+  // No connection context means an internal connection (boot, background
+  // work): the server acting on its own behalf, with no role to check.
+  auto* conn = connector::GetSereneDBContextPtr(ctx);
+  if (!conn || auth::ClosureFor(&ctx, conn->GetRoleId())->is_superuser) {
+    return;
   }
+  THROW_SQL_ERROR(ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
+                  ERR_MSG("permission denied to set parameter \"", name, "\""),
+                  ERR_DETAIL(detail));
 }
+
+void RequireHbaSuperuser(duckdb::ClientContext& ctx) {
+  RequireSuperuser(ctx, "hba",
+                   "Only roles with the SUPERUSER attribute may change the "
+                   "host-based authentication ruleset.");
+}
+
+#ifdef SDB_FAULT_INJECTION
+void RequireFaultSuperuser(duckdb::ClientContext& ctx) {
+  RequireSuperuser(ctx, "sdb_faults",
+                   "Only roles with the SUPERUSER attribute may arm failure "
+                   "points: the registry is process-global, so a fault armed "
+                   "by one session fires in all of them.");
+}
+#endif
 
 // The `role` / `session_authorization` GUCs are thin shims over the identity
 // switches in pg/commands/rbac (which own the catalog/authz logic, next to
@@ -276,9 +299,11 @@ constexpr std::pair<std::string_view, VariableDescription>
         LogicalTypeId::VARCHAR,
         "Fault injection control. SET sdb_faults = 'name' to add a failure "
         "point, SET sdb_faults = '-name' to remove one, RESET sdb_faults to "
-        "clear all.",
+        "clear all. Superuser only: the failure-point registry is "
+        "process-global, so an armed point fires for every session.",
         [] { return duckdb::Value{""}; },
-        [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value& value) {
+        [](duckdb::ClientContext& ctx, duckdb::SetScope, duckdb::Value& value) {
+          RequireFaultSuperuser(ctx);
           auto s = value.ToString();
           if (s.starts_with('-')) {
             if (!RemoveFailurePointDebugging(std::string_view{s}.substr(1))) {
@@ -294,13 +319,17 @@ constexpr std::pair<std::string_view, VariableDescription>
           auto points = GetFailurePointsDebugging();
           value = duckdb::Value(absl::StrJoin(points, ","));
         },
-        [](duckdb::ClientContext&, duckdb::SetScope) {
+        [](duckdb::ClientContext& ctx, duckdb::SetScope) {
+          RequireFaultSuperuser(ctx);
           ClearFailurePointsDebugging();
         },
-        // SESSION scope: fault points are a test-only hook, not persistent
-        // config. GLOBAL would block `SET sdb_faults` inside transactions,
-        // but recovery tests need to arm a fault inside an uncommitted txn
-        // before triggering the crash.
+        // SESSION scope, though the registry behind it is process-global: it
+        // is the only scope that works. GLOBAL is refused inside a
+        // transaction, and every crash-recovery test arms its fault inside an
+        // uncommitted txn; LOCAL would promise a rollback the registry cannot
+        // give. PG's PGC_SUSET developer knobs are declared the same way --
+        // session-scoped and superuser-gated -- and the gate is what makes the
+        // mismatch safe: only a superuser can reach the global registry.
         duckdb::SetScope::SESSION,
       },
     },
@@ -330,15 +359,6 @@ constexpr std::pair<std::string_view, VariableDescription>
     // built-in settings: logging_level / enable_logging / enabled_log_types
     // / disabled_log_types / logging_storage / logging_mode. The previous
     // sdb_log_level extension option was dropped in favour of those.
-    {
-      "sdb_strict_ddl",
-      {
-        LogicalTypeId::BOOLEAN,
-        "When enabled, DDL inside a transaction block fails instead of "
-        "committing immediately (DDL is not transactional).",
-        [] { return duckdb::Value::BOOLEAN(false); },
-      },
-    },
     {
       "sdb_ivf_search_nprobe",
       {
@@ -589,6 +609,17 @@ constexpr std::pair<std::string_view, VariableDescription>
         "Document count at which an inverted-index segment writer rolls over "
         "to a new on-disk segment. Per-index WITH (segment_docs_max = ...) "
         "overrides. 0 = unlimited (memory limit governs).",
+        [] { return duckdb::Value::UINTEGER(0); },
+        [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value&) {},
+      },
+    },
+    {
+      kRecoveryReplayDepthSetting,
+      {
+        LogicalTypeId::UINTEGER,
+        "Maximum WAL chunks in flight per inverted index during recovery "
+        "replay (the prefetch window; bounds replay memory). 0 = auto "
+        "(4 x cpu threads).",
         [] { return duckdb::Value::UINTEGER(0); },
         [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value&) {},
       },

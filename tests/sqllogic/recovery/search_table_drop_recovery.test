@@ -1,12 +1,10 @@
 control substitution on
 
 
-# Reboot recovery of DROP TABLE on a search-backed table. The drop is
-# tombstoned synchronously, then the process crashes before the async
-# SearchTableDrop runs (crash_on_drop). Recovery must rebuild the drop task --
-# now a SearchTableDrop carrying db_id -- and complete it: remove the iresearch
-# artifacts and the table's catalog rows, including its auto-PK sequence. A
-# sibling search table must survive untouched.
+# Reboot recovery of DROP TABLE on a search-backed table. The drop's records
+# are durable, then the process crashes before the artifact half runs
+# (crash_on_drop). Boot's orphan sweep must remove the iresearch artifacts the
+# crash left behind. A sibling search table must survive untouched.
 
 statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
 CREATE TABLE s_drop (a INTEGER, b TEXT) WITH (storage = 'search');

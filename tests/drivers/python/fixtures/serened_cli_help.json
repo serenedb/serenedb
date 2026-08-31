@@ -200,6 +200,16 @@
           "categoryLabel": "Server"
         },
         {
+          "name": "recovery_replay_depth",
+          "flag": "--recovery_replay_depth",
+          "type": "",
+          "defaultValue": "0",
+          "description": "Maximum WAL chunks in flight per inverted index during recovery replay (the prefetch window; bounds replay memory). 0 = auto (4 x cpu threads).",
+          "source": "server",
+          "category": "server",
+          "categoryLabel": "Server"
+        },
+        {
           "name": "server_directory",
           "flag": "--server_directory",
           "type": "",
@@ -304,6 +314,22 @@
           "source": "log",
           "category": "log",
           "categoryLabel": "Logging"
+        }
+      ]
+    },
+    {
+      "id": "server/catalog/ddl/catalog.cpp",
+      "label": "server/catalog/ddl/catalog.cpp",
+      "flags": [
+        {
+          "name": "missing_database",
+          "flag": "--missing_database",
+          "type": "",
+          "defaultValue": "refuse",
+          "description": "What boot does with a database whose data file is missing or will not open: 'refuse' (default) stops the server, 'skip' leaves it unattached, 'drop' removes it from the catalog.",
+          "source": "server/catalog/ddl/catalog.cpp",
+          "category": "server/catalog/ddl/catalog.cpp",
+          "categoryLabel": "server/catalog/ddl/catalog.cpp"
         }
       ]
     }

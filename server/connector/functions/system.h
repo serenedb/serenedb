@@ -21,7 +21,25 @@
 #pragma once
 
 #include <duckdb/main/database.hpp>
+#include <duckdb/storage/database_size.hpp>
+#include <string_view>
 
+#include "catalog/identifiers/object_id.h"
+
+namespace duckdb {
+
+class ClientContext;
+
+}  // namespace duckdb
+namespace sdb::catalog {
+
+// The size the size functions report for one database, populated from the
+// store file's blocks, the search tables' segments and the inverted indexes.
+duckdb::DatabaseSize DatabaseStorageSize(duckdb::ClientContext& context,
+                                         ObjectId database_id,
+                                         std::string_view only_schema);
+
+}  // namespace sdb::catalog
 namespace sdb::connector {
 
 void RegisterPgSystemFunctions(duckdb::DatabaseInstance& db);

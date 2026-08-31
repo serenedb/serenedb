@@ -77,18 +77,16 @@ duckdb::Value ExtractUint(std::string_view option_key,
   }
 }
 
-constexpr std::string_view kStorageKey = "storage";
-
 }  // namespace
 
 catalog::TableEngine ReadStorageEngine(
   const duckdb::case_insensitive_map_t<
     duckdb::unique_ptr<duckdb::ParsedExpression>>& with_options) {
-  auto it = with_options.find(std::string{kStorageKey});
+  auto it = with_options.find(std::string{catalog::kStorageOption});
   if (it == with_options.end() || !it->second) {
     return catalog::TableEngine::Transactional;
   }
-  auto value = ExtractString(kStorageKey, *it->second);
+  auto value = ExtractString(catalog::kStorageOption, *it->second);
   SDB_ASSERT(value);
   auto lower = duckdb::StringUtil::Lower(*value);
   if (lower == "transactional") {
@@ -99,44 +97,98 @@ catalog::TableEngine ReadStorageEngine(
   }
   THROW_SQL_ERROR(
     ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-    ERR_MSG("WITH option \"", kStorageKey,
+    ERR_MSG("WITH option \"", catalog::kStorageOption,
             "\" must be 'transactional' or 'search', got \"", *value, "\""));
 }
 
-void RejectIfSearchTable(const catalog::Table& table,
+void RejectIfSearchTable(catalog::TableEngine engine,
                          std::string_view operation) {
-  if (table.GetEngine() == catalog::TableEngine::Search) {
+  if (engine == catalog::TableEngine::Search) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
       ERR_MSG(operation, " on a search-backed table is not yet supported"));
   }
 }
 
+SearchWriteTarget ResolveSearchWriteTarget(
+  duckdb::ClientContext& context, const catalog::SereneDBTableEntry& entry) {
+  SearchWriteTarget target;
+  target.table_id = catalog::IdOf(entry);
+  target.data = entry.GetSearchData();
+  const auto& columns = entry.GetColumns();
+  target.column_ids.reserve(columns.LogicalColumnCount());
+  target.chunk_types.reserve(columns.LogicalColumnCount());
+  for (const auto& column : columns.Logical()) {
+    target.column_ids.emplace_back(column.CatalogOid());
+    target.chunk_types.push_back(column.Type());
+  }
+  const auto pk_indexes = entry.GetPKColumnIndexes();
+  target.pk_columns.reserve(pk_indexes.size());
+  for (const auto index : pk_indexes) {
+    target.pk_columns.push_back(
+      {.input_col_idx = index.index, .type = columns.GetColumn(index).Type()});
+  }
+  if (pk_indexes.empty()) {
+    target.generated_pk_seq = entry.GetGeneratedPkSequence(context);
+    SDB_ASSERT(target.generated_pk_seq);
+  }
+  return target;
+}
+
+std::vector<catalog::duckdb_primary_key::PKColumn> RowIdentityPKColumns(
+  const SearchWriteTarget& target,
+  std::span<const duckdb::idx_t> chunk_positions) {
+  std::vector<catalog::duckdb_primary_key::PKColumn> out;
+  out.reserve(chunk_positions.size());
+  for (size_t i = 0; i != chunk_positions.size(); ++i) {
+    out.push_back({.input_col_idx = chunk_positions[i],
+                   .type = i < target.pk_columns.size()
+                             ? target.pk_columns[i].type
+                             : duckdb::LogicalType::BIGINT});
+  }
+  return out;
+}
+
+void BuildReturnedRow(duckdb::DataChunk& out, duckdb::DataChunk& chunk,
+                      std::span<const duckdb::idx_t> column_map) {
+  const auto rows = chunk.size();
+  for (duckdb::idx_t i = 0; i < out.ColumnCount(); ++i) {
+    const auto from =
+      i < column_map.size() ? column_map[i] : duckdb::DConstants::INVALID_INDEX;
+    if (from == duckdb::DConstants::INVALID_INDEX) {
+      out.data[i].Reference(duckdb::Value(out.data[i].GetType()),
+                            duckdb::count_t(rows));
+    } else {
+      out.data[i].Reference(chunk.data[from]);
+    }
+  }
+  out.SetCardinality(rows);
+}
+
 void ApplyStorageKind(
-  duckdb::ClientContext& context, catalog::CreateTableOptions& options,
+  duckdb::ClientContext& context, duckdb::CreateTableInfo& info,
   duckdb::case_insensitive_map_t<duckdb::unique_ptr<duckdb::ParsedExpression>>&
     with_options) {
-  options.engine = ReadStorageEngine(with_options);
-  with_options.erase(std::string{kStorageKey});
-  if (options.engine != catalog::TableEngine::Search) {
-    // Interval WITH options are search-only; leave any other keys in place so
-    // the caller's unrecognized-parameter check still rejects them.
-    return;
+  const auto engine = ReadStorageEngine(with_options);
+  with_options.erase(std::string{catalog::kStorageOption});
+  catalog::persistence::SearchTableOptions search_options;
+  if (engine == catalog::TableEngine::Search) {
+    const auto resolve = [&](std::string_view key) -> uint32_t {
+      auto it = with_options.find(std::string{key});
+      if (it != with_options.end() && it->second) {
+        auto value = ExtractUint(key, *it->second);
+        with_options.erase(std::string{key});
+        return ResolveUintWithOption(context, key, &value);
+      }
+      return ResolveUintWithOption(context, key, /*with_value=*/nullptr);
+    };
+    search_options.refresh_interval_ms = resolve(kRefreshIntervalSetting);
+    search_options.compaction_interval_ms = resolve(kCompactionIntervalSetting);
+    search_options.cleanup_interval_step = resolve(kCleanupIntervalStepSetting);
   }
-  auto resolve = [&](std::string_view key) -> uint32_t {
-    auto it = with_options.find(std::string{key});
-    if (it != with_options.end() && it->second) {
-      auto value = ExtractUint(key, *it->second);
-      with_options.erase(std::string{key});
-      return ResolveUintWithOption(context, key, &value);
-    }
-    return ResolveUintWithOption(context, key, /*with_value=*/nullptr);
-  };
-  options.search_options.refresh_interval_ms = resolve(kRefreshIntervalSetting);
-  options.search_options.compaction_interval_ms =
-    resolve(kCompactionIntervalSetting);
-  options.search_options.cleanup_interval_step =
-    resolve(kCleanupIntervalStepSetting);
+  // The sequence feeding the synthetic primary key is not known until the
+  // create runs under the catalog mutex; the tags are rewritten there.
+  catalog::SetTableTags(info, engine, search_options, ObjectId{});
 }
 
 }  // namespace sdb::connector

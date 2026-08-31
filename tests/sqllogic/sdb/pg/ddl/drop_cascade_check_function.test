@@ -14,8 +14,13 @@ statement error (?i)(check|constraint|violates)
 INSERT INTO iceberg_snapshots VALUES (-1);
 
 
-statement error (?i)cannot drop function .*iceberg_is_valid_snapshot_id.* because other objects depend on it
+statement error
 DROP FUNCTION iceberg_is_valid_snapshot_id(INT);
+----
+db error: ERROR: Cannot drop entry "iceberg_is_valid_snapshot_id" because there are entries that depend on it.
+table "iceberg_snapshots" depends on macro function "iceberg_is_valid_snapshot_id".
+Use DROP...CASCADE to drop all dependents.
+
 
 
 statement ok
@@ -71,8 +76,13 @@ statement error (?i)(check|constraint|violates)
 INSERT INTO clickclack_query_logs VALUES (200);
 
 
-statement error (?i)cannot drop function .*clickclack_nonzero_qps.* because other objects depend on it
+statement error
 DROP FUNCTION clickclack_nonzero_qps(INT);
+----
+db error: ERROR: Cannot drop entry "clickclack_nonzero_qps" because there are entries that depend on it.
+table "clickclack_query_logs" depends on macro function "clickclack_nonzero_qps".
+Use DROP...CASCADE to drop all dependents.
+
 
 
 statement ok
@@ -127,8 +137,13 @@ statement count 1
 INSERT INTO mop_applications VALUES (1);
 
 
-statement error (?i)cannot drop sequence .*mop_application_seq.*
+statement error
 DROP SEQUENCE mop_application_seq;
+----
+db error: ERROR: Cannot drop entry "mop_application_seq" because there are entries that depend on it.
+table "mop_applications" depends on sequence "mop_application_seq".
+Use DROP...CASCADE to drop all dependents.
+
 
 
 statement ok
@@ -190,8 +205,14 @@ statement ok
 CREATE VIEW ml_papers_view AS SELECT ml_dbl_weights(id) AS d FROM ml_papers;
 
 
-statement error (?i)cannot drop function .*ml_dbl_weights.*
+statement error
 DROP FUNCTION ml_dbl_weights(INT);
+----
+db error: ERROR: Cannot drop entry "ml_dbl_weights" because there are entries that depend on it.
+table "ml_papers" depends on macro function "ml_dbl_weights".
+view "ml_papers_view" depends on table "ml_papers".
+Use DROP...CASCADE to drop all dependents.
+
 
 
 statement ok

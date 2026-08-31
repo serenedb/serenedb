@@ -20,31 +20,38 @@
 
 #include "catalog/tokenizer.h"
 
+#include <absl/strings/str_cat.h>
+
 #include <cstdint>
+#include <duckdb/common/enums/catalog_type.hpp>
 #include <duckdb/common/serializer/deserializer.hpp>
-#include <duckdb/common/serializer/memory_stream.hpp>
 #include <duckdb/common/serializer/serializer.hpp>
+#include <duckdb/parser/keyword_helper.hpp>
 #include <iresearch/analysis/analyzer.hpp>
-#include <iresearch/analysis/text_tokenizer.hpp>
-#include <iresearch/analysis/tokenizer.hpp>
 #include <iresearch/analysis/tokenizer_config.hpp>
-#include <string>
 #include <utility>
 
 #include "basics/assert.h"
 #include "basics/serializer.h"
-#include "catalog/persistence/tokenizer.h"
-#include "catalog/search_analyzer_impl.h"
-#include "pg/sql_exception_macro.h"
+#include "basics/simdjson_sink.h"
 
 namespace sdb::catalog {
-namespace {
 
-using persistence::TokenizerData;
+namespace {}  // namespace
 
-}  // namespace
+CreateTokenizerInfo::CreateTokenizerInfo(ObjectId id, ObjectId schema_id,
+                                         std::string_view name,
+                                         search::Features features,
+                                         irs::analysis::TokenizerConfig config)
+  : duckdb::CreateInfo{duckdb::CatalogType::TOKENIZER_ENTRY},
+    _config{std::move(config)},
+    _features{features} {
+  SetId(id);
+  SetSchemaId(schema_id);
+  SetName(duckdb::Identifier{std::string{name}});
+}
 
-Tokenizer::TokenizerWrapper Tokenizer::GetTokenizer() {
+Tokenizer::TokenizerWrapper Tokenizer::GetTokenizer() const {
   absl::MutexLock lock{&_m};
   if (_pool.empty()) {
     auto analyzer = CreateAnalyzer();
@@ -56,7 +63,8 @@ Tokenizer::TokenizerWrapper Tokenizer::GetTokenizer() {
   return TokenizerWrapper{analyzer.release(), Deleter{this}};
 }
 
-void Tokenizer::PushTokenizer(irs::analysis::Analyzer::ptr analyzer) noexcept {
+void Tokenizer::PushTokenizer(
+  irs::analysis::Analyzer::ptr analyzer) const noexcept {
   SDB_ASSERT(analyzer);
   absl::MutexLock lock{&_m};
   _pool.push_back(std::move(analyzer));
@@ -66,38 +74,42 @@ irs::analysis::Analyzer::ptr Tokenizer::CreateAnalyzer() const {
   return irs::analysis::CreateAnalyzer(irs::analysis::Clone(_config));
 }
 
-Tokenizer::Tokenizer(Permissions perm, ObjectId schema_id, ObjectId id,
-                     std::string_view name, search::Features features,
-                     irs::analysis::TokenizerConfig config)
-  : Object{std::move(perm), schema_id, id, name, ObjectType::Tokenizer},
-    _config{std::move(config)},
-    _features{features} {}
-
-std::shared_ptr<Tokenizer> Tokenizer::Deserialize(duckdb::Deserializer& src,
-                                                  ReadContext ctx) {
-  TokenizerData data;
-  basics::ReadTuple(src, data);
-
-  return std::make_shared<Tokenizer>(std::move(data.perm), ctx.schema_id,
-                                     ctx.id, data.name, data.features,
-                                     std::move(data.config));
+duckdb::unique_ptr<duckdb::CreateInfo> CreateTokenizerInfo::Deserialize(
+  duckdb::Deserializer& src) {
+  auto result = duckdb::make_uniq<CreateTokenizerInfo>();
+  result->SetName(src.ReadPropertyWithDefault<duckdb::Identifier>(200, "name"));
+  // Analyzer config and feature set are iresearch types: the basics framework
+  // is the only serializer they have, so they ride inside one property.
+  src.OnPropertyBegin(202, "analyzer");
+  auto refs = std::tie(result->_config, result->_features);
+  basics::ReadTuple(src, refs);
+  src.OnPropertyEnd();
+  return std::move(result);
 }
 
-void Tokenizer::Serialize(duckdb::Serializer& sink) const {
-  TokenizerData data{
-    .name = std::string{GetName()},
-    .config = irs::analysis::Clone(_config),
-    .features = _features,
-    .perm = GetPermissions(),
-  };
-  basics::WriteTuple(sink, data);
+void CreateTokenizerInfo::WriteJson(basics::JsonSink& sink) const {
+  sink.OnObjectBegin();
+  sink.OnPropertyBegin("config");
+  basics::WriteObject(sink, _config);
+  sink.OnSeparator();
+  sink.OnPropertyBegin("features");
+  basics::WriteObject(sink, _features);
+  sink.OnObjectEnd();
 }
 
-std::shared_ptr<Object> Tokenizer::Clone() const {
-  duckdb::MemoryStream stream;
-  return DeserializeObject<Tokenizer>(
-    SerializeObject(*this, stream),
-    {.id = GetId(), .schema_id = GetParentId()});
+void CreateTokenizerInfo::Serialize(duckdb::Serializer& sink) const {
+  duckdb::CreateInfo::Serialize(sink);
+  sink.WritePropertyWithDefault<duckdb::Identifier>(200, "name",
+                                                    qualified_name.Name());
+  sink.OnPropertyBegin(202, "analyzer");
+  basics::WriteTuple(sink, std::tie(_config, _features));
+  sink.OnPropertyEnd();
+}
+
+duckdb::unique_ptr<duckdb::CreateInfo> CreateTokenizerInfo::Copy() const {
+  return duckdb::make_uniq<CreateTokenizerInfo>(GetId(), GetSchemaId(),
+                                                GetName(), _features,
+                                                irs::analysis::Clone(_config));
 }
 
 }  // namespace sdb::catalog

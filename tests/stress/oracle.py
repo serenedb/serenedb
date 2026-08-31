@@ -44,7 +44,7 @@ def check_ghosts(models, snap):
     for source, table in (("pg_class", snap.pg_objects),
                           ("sdb_catalog_sets", snap.set_objects)):
         for key in table:
-            if key in known:
+            if key in known or not snap.is_generated(key[1]):
                 continue
             findings.append({
                 "kind": "ghost_entry",
@@ -59,6 +59,8 @@ def check_ghosts(models, snap):
 def check_pg_vs_sets(snap):
     findings = []
     for key, oid in snap.set_objects.items():
+        if not snap.is_generated(key[1]):
+            continue
         if key not in snap.pg_objects:
             findings.append({
                 "kind": "entry_not_in_pg_class",
@@ -74,6 +76,8 @@ def check_pg_vs_sets(snap):
                 "candidates": None, "observed": oid,
             })
     for key, oid in snap.pg_objects.items():
+        if not snap.is_generated(key[1]):
+            continue
         if key not in snap.set_objects:
             findings.append({
                 "kind": "pg_class_not_in_entry_port",

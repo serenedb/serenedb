@@ -3,6 +3,28 @@ import enum
 ABSENT = None
 
 
+class Present:
+    __slots__ = ("token", "rows")
+
+    def __init__(self, token, rows=frozenset()):
+        self.token = token
+        self.rows = frozenset(rows)
+
+    def with_rows(self, rows):
+        return Present(self.token, rows)
+
+    def __eq__(self, other):
+        return (isinstance(other, Present) and other.token == self.token
+                and other.rows == self.rows)
+
+    def __hash__(self):
+        return hash((self.token, self.rows))
+
+    def __repr__(self):
+        n = len(self.rows)
+        return f"Present({self.token}, {n} row{'' if n == 1 else 's'})"
+
+
 class Outcome(enum.Enum):
     COMMITTED = "committed"
     REFUSED_CONFLICT = "refused_conflict"
@@ -42,9 +64,11 @@ class Finding:
             "key": list(self.key) if isinstance(self.key, tuple) else self.key,
             "detail": self.detail,
             "candidates": sorted(
-                ("ABSENT" if c is ABSENT else c) for c in (self.candidates or ())
+                repr(c) if c is not ABSENT else "ABSENT"
+                for c in (self.candidates or ())
             ) or None,
-            "observed": "ABSENT" if self.observed is ABSENT else self.observed,
+            "observed": ("ABSENT" if self.observed is ABSENT
+                         else repr(self.observed)),
         }
 
     def __repr__(self):
@@ -110,8 +134,40 @@ class Model:
             )
         self._owned[key] = nxt
 
-    def apply_create(self, key, token, outcome):
-        self.apply(key, token, outcome)
+    def apply_create(self, key, token, outcome, rows=frozenset()):
+        self.apply(key, Present(token, rows), outcome)
+
+    def rows_of(self, key):
+        cands = self._owned.get(key)
+        if cands is None or len(cands) != 1:
+            return None
+        only = next(iter(cands))
+        return only.rows if isinstance(only, Present) else None
+
+    def apply_rows(self, key, added=(), removed=(), outcome=None):
+        if key in self._shared or key not in self._owned:
+            return
+        before = self._owned[key]
+        nxt = set()
+        for state in before:
+            if not isinstance(state, Present):
+                nxt.add(state)
+                continue
+            rows = set(state.rows)
+            rows.difference_update(removed)
+            rows.update(added)
+            after = state.with_rows(rows)
+            if outcome is not None and outcome.applied:
+                nxt.add(after)
+            elif outcome is not None and outcome.ambiguous:
+                nxt.add(state)
+                nxt.add(after)
+            else:
+                nxt.add(state)
+        if len(nxt) > MAX_CANDIDATES:
+            raise ModelError(
+                f"candidate set for {key} grew to {len(nxt)}; quiesce more often")
+        self._owned[key] = frozenset(nxt)
 
     def apply_drop(self, key, outcome):
         self.apply(key, ABSENT, outcome)
@@ -133,9 +189,15 @@ class Model:
                 continue
             if len(cands) == 1:
                 only = next(iter(cands))
-                kind = ("missing" if only is not ABSENT and seen is ABSENT
-                        else "unexpected_present" if only is ABSENT
-                        else "wrong_content")
+                if only is not ABSENT and seen is ABSENT:
+                    kind = "missing"
+                elif only is ABSENT:
+                    kind = "unexpected_present"
+                elif (isinstance(only, Present) and isinstance(seen, Present)
+                      and only.token == seen.token and only.rows != seen.rows):
+                    kind = "wrong_rows"
+                else:
+                    kind = "wrong_content"
                 findings.append(Finding(
                     f"model_disagreement_{kind}", key,
                     "observed state is not the single modelled state",
@@ -158,4 +220,12 @@ class Model:
                 only = next(iter(cands))
                 if only is not ABSENT:
                     out[key] = only
+        return out
+
+    def row_bearing_keys(self):
+        out = {}
+        for key, cands in self._owned.items():
+            states = [c for c in cands if isinstance(c, Present)]
+            if states:
+                out[key] = states
         return out

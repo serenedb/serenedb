@@ -35,6 +35,8 @@ class Snapshot:
         self.all_oids = set()
         self.epoch = None
         self.orphan_files = []
+        self.row_tokens = {}
+        self.catalog_wal_bytes = None
         self.errors = []
 
     def is_generated(self, name):
@@ -47,7 +49,30 @@ def _rows(conn, sql, params=None):
         return cur.fetchall()
 
 
-def take(conn, run_tag, datadir=None):
+def read_row_tokens(conn, keys):
+    out = {}
+    for key in keys:
+        if key[0] != ops.TABLE:
+            continue
+        try:
+            with conn.cursor() as cur:
+                cur.execute(f"SELECT label FROM {key[1]}")
+                out[key] = frozenset(
+                    r[0] for r in cur.fetchall() if r[0] is not None)
+        except Exception:
+            continue
+    return out
+
+
+def catalog_wal_size(datadir):
+    path = os.path.join(datadir, "engine_catalog", "catalog.wal")
+    try:
+        return os.path.getsize(path)
+    except OSError:
+        return None
+
+
+def take(conn, run_tag, datadir=None, row_keys=()):
     snap = Snapshot(run_tag)
     like = f"s{run_tag}\\_%"
 
@@ -92,8 +117,13 @@ def take(conn, run_tag, datadir=None):
     except Exception as exc:
         snap.errors.append(f"sdb_deferred_catalog failed: {exc}")
 
+    wanted = [k for k in row_keys if k in snap.pg_objects]
+    if wanted:
+        snap.row_tokens = read_row_tokens(conn, wanted)
+
     if datadir:
         snap.orphan_files = scan_datadir(datadir, snap.all_oids)
+        snap.catalog_wal_bytes = catalog_wal_size(datadir)
     return snap
 
 

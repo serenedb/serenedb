@@ -12,12 +12,14 @@ class WorkerState:
         self.indexes = []
         self.serial = set()
         self.parent = {}
+        self.rows = {}
 
     def note_created(self, op):
         for key, _token in op.creates:
             kind = key[0]
             if kind == ops.TABLE:
                 self.tables.append(key)
+                self.rows[key] = set(op.rows_added)
                 if op.kind == "create_table_serial":
                     self.serial.add(key)
             elif kind == ops.SEQUENCE:
@@ -31,6 +33,19 @@ class WorkerState:
                 if op.needs:
                     self.parent[key] = op.needs[0]
 
+    def note_rows(self, op):
+        if op.key is None or op.key[0] != ops.TABLE:
+            return
+        bucket = self.rows.get(op.key)
+        if bucket is None:
+            return
+        bucket.difference_update(op.rows_removed)
+        bucket.update(op.rows_added)
+
+    def a_row_of(self, rng, table_key):
+        bucket = sorted(self.rows.get(table_key) or ())
+        return rng.choice(bucket) if bucket else None
+
     def note_dropped(self, op):
         for key in list(op.drops) + list(op.cascade):
             for bucket in (self.tables, self.sequences, self.views, self.indexes):
@@ -38,6 +53,7 @@ class WorkerState:
                     bucket.remove(key)
             self.serial.discard(key)
             self.parent.pop(key, None)
+            self.rows.pop(key, None)
 
     def dependents_of(self, table_key):
         return [k for k, parent in self.parent.items() if parent == table_key]
@@ -165,7 +181,11 @@ def _build(rng, st, what):
     if what == "dml_update":
         return ops.dml_update(rng.choice(st.tables))
     if what == "dml_delete":
-        return ops.dml_delete(rng.choice(st.tables))
+        key = rng.choice(st.tables)
+        label = st.a_row_of(rng, key)
+        if label is None:
+            return ops.read_table(key)
+        return ops.dml_delete(key, label)
     if what == "read":
         return ops.read_table(rng.choice(st.tables))
     if what == "catalog_read":

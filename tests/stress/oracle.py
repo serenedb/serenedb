@@ -1,6 +1,6 @@
 import ops
 import snapshot as snap_mod
-from model import ABSENT
+from model import ABSENT, Present
 
 
 class OidRegistry:
@@ -27,7 +27,9 @@ def check_models(models, snap):
     observed = {}
     for key, oid in snap.pg_objects.items():
         token = snap.pg_tokens.get(key)
-        observed[key] = token if token is not None else snap_mod.NO_TOKEN
+        token = token if token is not None else snap_mod.NO_TOKEN
+        rows = snap.row_tokens.get(key, frozenset())
+        observed[key] = Present(token, rows)
     findings = []
     for model in models:
         for f in model.collapse(observed):

@@ -190,3 +190,35 @@ def test_engine_derived_names_are_out_of_scope():
         "implicit *_pkey indexes are in pg_class but not in sdb_catalog_sets(); "
         "only generator-shaped names may be asserted on"
     )
+
+
+def test_mutant_rows_lost_behind_the_models_back():
+    from model import Present
+    m = Model()
+    m.declare_owned(T1)
+    m.apply_create(T1, "tok1", Outcome.COMMITTED, rows={"r1", "r2", "r3"})
+    s = snap(pg={T1: 100}, sets={T1: 100}, tokens={T1: "tok1"})
+    s.row_tokens = {T1: frozenset({"r1", "r2"})}
+    got = kinds(run([m], s))
+    assert "model_disagreement_wrong_rows" in got, (
+        "a definition that survived a crash while its rows did not is the "
+        "post-flush-window assertion; it must not pass as healthy"
+    )
+
+
+def test_mutant_rows_gained_behind_the_models_back():
+    m = Model()
+    m.declare_owned(T1)
+    m.apply_create(T1, "tok1", Outcome.COMMITTED, rows={"r1"})
+    s = snap(pg={T1: 100}, sets={T1: 100}, tokens={T1: "tok1"})
+    s.row_tokens = {T1: frozenset({"r1", "r_ghost"})}
+    assert "model_disagreement_wrong_rows" in kinds(run([m], s))
+
+
+def test_matching_rows_are_not_a_finding():
+    m = Model()
+    m.declare_owned(T1)
+    m.apply_create(T1, "tok1", Outcome.COMMITTED, rows={"r1", "r2"})
+    s = snap(pg={T1: 100}, sets={T1: 100}, tokens={T1: "tok1"})
+    s.row_tokens = {T1: frozenset({"r1", "r2"})}
+    assert run([m], s) == []

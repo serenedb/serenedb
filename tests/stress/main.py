@@ -18,10 +18,12 @@ import psycopg
 import capture
 import chaos as chaos_mod
 import config
+import coverage as coverage_mod
 import faults as faults_mod
 import journal as journal_mod
 import junit
 import oracle
+import quarantine as quarantine_mod
 import quiesce
 import snapshot as snapshot_mod
 from serened import Serened
@@ -191,6 +193,9 @@ def main(argv=None):
     dog.start()
 
     quiesces = 0
+    windows = []
+    last_committed = 0
+    last_mark = time.monotonic()
     deadline = time.monotonic() + profile.seconds
     next_quiesce = time.monotonic() + profile.quiesce_every
     crash_at = []
@@ -211,6 +216,11 @@ def main(argv=None):
                 continue
             if time.monotonic() >= next_quiesce:
                 quiesces += 1
+                now_committed = sum(w.status.committed for w in workers)
+                now = time.monotonic()
+                windows.append((now_committed - last_committed, now - last_mark))
+                last_committed = now_committed
+                last_mark = now
                 new = run_oracle(workers, pause_event, dsn, run_tag,
                                  server.datadir, oid_registry, f"quiesce{quiesces}",
                                  abort_if=lambda: dog.verdict != ALIVE)
@@ -240,7 +250,19 @@ def main(argv=None):
                     "detail": f"{type(exc).__name__}: {exc}"[:300],
                     "candidates": None, "observed": None})
 
+    total_committed = sum(w.status.committed for w in workers)
+    windows.append((max(total_committed - last_committed, 0),
+                    max(time.monotonic() - last_mark, 0.0)))
+    attempted = set()
+    for w in workers:
+        attempted |= set(w.op_kinds)
+    cov_data, cov_findings = coverage_mod.report(
+        profile.scenario, attempted, windows, defined,
+        chaos.result.faults_used if want_crashes else (),
+        total_committed, quiesces)
+
     with findings_lock:
+        findings.extend(cov_findings)
         findings.extend(capture.scan_server_log(server))
         if verdict == WEDGED:
             findings.append({
@@ -251,6 +273,19 @@ def main(argv=None):
             findings.append({
                 "kind": "server_exited", "key": None, "detail": dog.detail,
                 "candidates": None, "observed": dog.wedged_at})
+
+    try:
+        entries = quarantine_mod.load()
+    except quarantine_mod.QuarantineError as exc:
+        entries = []
+        with findings_lock:
+            findings.append({"kind": "quarantine_unreadable", "key": None,
+                             "detail": str(exc)[:300], "candidates": None,
+                             "observed": None})
+    with findings_lock:
+        kept, quarantined = quarantine_mod.apply(
+            list(findings), entries, profile.scenario, profile.workers)
+        findings[:] = kept
 
     elapsed = time.time() - t_start
     committed = sum(w.status.committed for w in workers)
@@ -274,6 +309,9 @@ def main(argv=None):
         "build_config": info.get("server_version"),
         "fault_injection": info.get("fault_injection"),
         "chaos": chaos.result.as_dict() if want_crashes else None,
+        "coverage": cov_data,
+        "quarantined": quarantined,
+        "quarantine_entries": [e.as_dict() for e in entries],
         "server_generations": server.generation,
         "findings_after_injected_crash": len(post_crash),
     }
@@ -281,6 +319,10 @@ def main(argv=None):
     print(f"[stress] committed={committed} retries={retries} quiesces={quiesces} "
           f"verdict={verdict} findings={len(findings)} elapsed={elapsed:.1f}s")
     print(f"[stress] labels={labels}")
+    print(coverage_mod.render(cov_data))
+    if quarantined:
+        print(f"[stress] {len(quarantined)} finding(s) quarantined: "
+              f"{sorted({q['quarantined_by'] for q in quarantined})}")
     if want_crashes:
         cr = chaos.result
         print(f"[stress] chaos: crashes {cr.crashes_observed}/{cr.crashes_attempted} "
@@ -339,9 +381,13 @@ def run_oracle(workers, pause_event, dsn, run_tag, datadir, oid_registry, label,
                 "detail": f"{label}: workers still in flight after 120s: {stuck}",
                 "candidates": None, "observed": None}]
         models = [w.model for w in workers]
+        row_keys = set()
+        for m in models:
+            row_keys |= set(m.row_bearing_keys())
         with psycopg.connect(dsn) as conn:
             conn.autocommit = True
-            snap = snapshot_mod.take(conn, run_tag, datadir=datadir)
+            snap = snapshot_mod.take(conn, run_tag, datadir=datadir,
+                                     row_keys=row_keys)
             return oracle.run_all(models, snap, conn, oid_registry)
     finally:
         quiesce.resume(pause_event)

@@ -46,6 +46,7 @@ class Worker(threading.Thread):
         self.rng = derive(seed, worker_id)
         self.status = WorkerStatus(worker_id)
         self.labels = {}
+        self.op_kinds = {}
         self.conn = None
         self._conn_lock = threading.Lock()
 
@@ -93,10 +94,14 @@ class Worker(threading.Thread):
 
     def _apply(self, op, outcome):
         for key, token in op.creates:
-            self.model.apply_create(key, token, outcome)
+            self.model.apply_create(key, token, outcome, rows=op.rows_added)
         for key in list(op.drops) + list(op.cascade):
             if self.model.is_owned(key):
                 self.model.apply_drop(key, outcome)
+        if not op.creates and op.key is not None \
+                and (op.rows_added or op.rows_removed):
+            self.model.apply_rows(op.key, added=op.rows_added,
+                                  removed=op.rows_removed, outcome=outcome)
 
     def _execute(self, op):
         self.status.op_kind = op.kind
@@ -150,6 +155,7 @@ class Worker(threading.Thread):
             if self.stop_event.is_set():
                 break
             op = self.pick(self.rng, self.state)
+            self.op_kinds[op.kind] = self.op_kinds.get(op.kind, 0) + 1
             self._declare(op)
             attempts = 0
             while True:
@@ -195,6 +201,7 @@ class Worker(threading.Thread):
             self._apply(op, outcome)
             if outcome is Outcome.COMMITTED:
                 self.state.note_created(op)
+                self.state.note_rows(op)
                 self.state.note_dropped(op)
                 self.status.committed += 1
             if outcome is Outcome.UNKNOWN_CRASH:

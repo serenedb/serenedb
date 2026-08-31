@@ -6,10 +6,11 @@ INDEX = "index"
 
 class Op:
     __slots__ = ("kind", "statements", "creates", "drops", "scope", "token",
-                 "key", "needs", "cascade")
+                 "key", "needs", "cascade", "rows_added", "rows_removed")
 
     def __init__(self, kind, statements, creates=(), drops=(), scope="private",
-                 token=None, key=None, needs=(), cascade=()):
+                 token=None, key=None, needs=(), cascade=(), rows_added=(),
+                 rows_removed=()):
         self.kind = kind
         self.statements = list(statements)
         self.creates = list(creates)
@@ -19,6 +20,8 @@ class Op:
         self.key = key
         self.needs = list(needs)
         self.cascade = list(cascade)
+        self.rows_added = list(rows_added)
+        self.rows_removed = list(rows_removed)
 
     def as_record(self):
         return {
@@ -27,6 +30,8 @@ class Op:
             "key": list(self.key) if self.key else None,
             "token": self.token,
             "sql": self.statements[0][:120] if self.statements else "",
+            "rows_added": self.rows_added or None,
+            "rows_removed": self.rows_removed or None,
         }
 
 
@@ -56,11 +61,14 @@ def create_table(names, serial=False):
         f"CREATE TABLE {name}({col}, v INT CHECK (v >= 0), label TEXT)",
         f"COMMENT ON TABLE {name} IS '{token}'",
     ]
+    rows = []
     if serial:
-        stmts.append(f"INSERT INTO {name}(v, label) VALUES (1, '{token}'), (2, '{token}')")
+        rows = [names.token(), names.token()]
+        vals = ", ".join(f"(1, '{r}')" for r in rows)
+        stmts.append(f"INSERT INTO {name}(v, label) VALUES {vals}")
     return Op("create_table_serial" if serial else "create_table", stmts,
               creates=[(key_of(TABLE, name), token)], token=token,
-              key=key_of(TABLE, name))
+              key=key_of(TABLE, name), rows_added=rows)
 
 
 def drop_table(key):
@@ -126,17 +134,19 @@ def dml_insert(names, table_key, has_serial):
     else:
         sql = (f"INSERT INTO {table_key[1]}(id, v, label) "
                f"SELECT COALESCE(max(id), 0) + 1, 7, '{label}' FROM {table_key[1]}")
-    return Op("dml_insert", [sql], key=table_key)
+    return Op("dml_insert", [sql], key=table_key, rows_added=[label])
 
 
 def dml_update(table_key):
-    return Op("dml_update", [f"UPDATE {table_key[1]} SET v = v + 1 WHERE v < 100"],
+    return Op("dml_update",
+              [f"UPDATE {table_key[1]} SET v = v + 1 WHERE v < 100"],
               key=table_key)
 
 
-def dml_delete(table_key):
-    return Op("dml_delete", [f"DELETE FROM {table_key[1]} WHERE v > 100"],
-              key=table_key)
+def dml_delete(table_key, label):
+    return Op("dml_delete",
+              [f"DELETE FROM {table_key[1]} WHERE label = '{label}'"],
+              key=table_key, rows_removed=[label])
 
 
 def read_table(table_key):

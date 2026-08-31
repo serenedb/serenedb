@@ -71,6 +71,11 @@ constexpr duckdb::field_id_t kIdField = 303;
 constexpr duckdb::field_id_t kSchemaIdField = 304;
 constexpr duckdb::field_id_t kKeyColumnsField = 305;
 constexpr duckdb::field_id_t kReferencedColumnsField = 306;
+// Whether the inverted payload's columns carry their own term field_ids (a
+// Search-table index). Written only when true, so a transactional record keeps
+// exactly the bytes it had before search tables existed. Read before the
+// payload, since it selects the payload's layout.
+constexpr duckdb::field_id_t kColumnTermFieldsField = 307;
 
 duckdb::vector<uint64_t> RawIds(const std::vector<ColumnId>& ids) {
   duckdb::vector<uint64_t> out;
@@ -179,6 +184,12 @@ void CreateIndexInfo::Serialize(duckdb::Serializer& sink) const {
   sink.WriteProperty<uint64_t>(kRelationIdField, "sdb_relation_id",
                                _relation_id.id());
   sink.WriteProperty<bool>(kInvertedField, "sdb_inverted", IsInverted());
+  const bool column_term_fields =
+    _index != nullptr && IsInverted() &&
+    InvertedInfo(*_index).HasAllocatedTermFields();
+  sink.WritePropertyWithDefault<bool>(kColumnTermFieldsField,
+                                      "sdb_column_term_fields",
+                                      column_term_fields, false);
   if (_index) {
     duckdb::MemoryStream stream;
     duckdb::BinarySerializer out{stream};
@@ -213,6 +224,8 @@ duckdb::unique_ptr<duckdb::CreateInfo> DeserializeIndexInfo(
   const ObjectId relation_id{
     src.ReadProperty<uint64_t>(kRelationIdField, "sdb_relation_id")};
   const auto inverted = src.ReadProperty<bool>(kInvertedField, "sdb_inverted");
+  const auto column_term_fields = src.ReadPropertyWithExplicitDefault<bool>(
+    kColumnTermFieldsField, "sdb_column_term_fields", false);
   std::string payload;
   if (inverted) {
     payload = src.ReadProperty<std::string>(kPayloadField, "sdb_payload");
@@ -241,8 +254,9 @@ duckdb::unique_ptr<duckdb::CreateInfo> DeserializeIndexInfo(
   duckdb::MemoryStream stream{
     reinterpret_cast<duckdb::data_ptr_t>(payload.data()), payload.size()};
   duckdb::BinaryDeserializer in{stream};
-  return duckdb::make_uniq<CreateIndexInfo>(std::shared_ptr<const Index>{
-    InvertedIndex::Deserialize(in, schema_id, id, relation_id)});
+  return duckdb::make_uniq<CreateIndexInfo>(
+    std::shared_ptr<const Index>{InvertedIndex::Deserialize(
+      in, schema_id, id, relation_id, column_term_fields)});
 }
 namespace {
 
@@ -877,13 +891,17 @@ duckdb::unique_ptr<Index> NewInvertedIndex(
   std::string_view schema_name, ObjectId schema_id, ObjectId id,
   ObjectId relation_id, std::string name,
   std::vector<catalog::CreateIndexColumn> columns, InvertedIndexOptions options,
-  ExpressionData predicate) {
+  ExpressionData predicate, bool search_engine) {
   SDB_ASSERT(options.row_group_size != 0);
   ValidateInvertedIndexColumns(columns);
 
   InvertedIndex::Entries entries;
   std::vector<ColumnId> key_columns;
   std::vector<ExpressionKey> expression_keys;
+  // Search-table indexes allocate a distinct term field_id per column (so two
+  // indexes on one column don't collide in the shared store); empty for a
+  // transactional index (field_id == column id).
+  containers::FlatHashMap<ColumnId, irs::field_id> col_to_term_field;
   key_columns.reserve(columns.size());
   const uint64_t expressions_cnt = std::ranges::count_if(
     columns, [](const auto& c) { return c.IsIndexedExpression(); });
@@ -918,12 +936,27 @@ duckdb::unique_ptr<Index> NewInvertedIndex(
       expression_keys.emplace_back(expr_data, field_id);
       continue;
     }
-    const auto col_field_id = static_cast<irs::field_id>(c.GetColumn().id);
+    const auto column = c.GetColumn().id;
+    irs::field_id col_field_id;
+    if (search_engine && !c.IsBuiltin(kIVFKind)) {
+      // Reuse the field when the column is mentioned again in the same index
+      // (e.g. `col dict, col included(...)`).
+      auto [m_it, m_new] =
+        col_to_term_field.try_emplace(column, irs::field_limits::invalid());
+      if (m_new) {
+        m_it->second = static_cast<irs::field_id>(NextId());
+      }
+      col_field_id = m_it->second;
+    } else {
+      // IVF stays at the column id so it attaches to the stored vector value;
+      // transactional indexes too.
+      col_field_id = static_cast<irs::field_id>(column);
+    }
     auto [col_it, col_inserted] =
       entries.try_emplace(col_field_id, InvertedIndexEntryInfo{});
     auto& index_col = col_it->second;
     if (col_inserted) {
-      key_columns.push_back(c.GetColumn().id);
+      key_columns.push_back(column);
     }
     if (!c.IsBuiltin(kIncludedKind) && !c.IsBuiltin(kIVFKind)) {
       index_col.indexed_term_dict = true;
@@ -947,7 +980,7 @@ duckdb::unique_ptr<Index> NewInvertedIndex(
   return duckdb::make_uniq<InvertedIndex>(
     schema_id, id, relation_id, name, std::string{}, std::move(key_columns),
     std::move(expression_keys), std::move(entries), std::move(options),
-    std::move(predicate));
+    std::move(predicate), std::move(col_to_term_field));
 }
 
 std::shared_ptr<const Index> FindInvertedIndex(ObjectId database_id,
@@ -968,10 +1001,15 @@ namespace {
 // the one form that carries the rest of them.
 template<typename Mutate>
 std::shared_ptr<const Index> RebuiltWith(const Index& index, Mutate mutate) {
-  auto data = InvertedInfo(index).ToData();
+  const auto& inverted = InvertedInfo(index);
+  auto data = inverted.ToData();
   mutate(data);
+  // ToData() drops the term-field allocations (the narrow layout has no room),
+  // so carry them over explicitly or a Search-table index would lose them on
+  // every ALTER that rebuilds it.
   return InvertedIndex::FromData(index.GetSchemaId(), index.GetId(),
-                                 index.GetRelationId(), std::move(data));
+                                 index.GetRelationId(), std::move(data),
+                                 inverted.TermFieldsByColumn());
 }
 
 }  // namespace

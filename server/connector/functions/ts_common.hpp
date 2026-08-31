@@ -42,11 +42,7 @@
 #include "connector/functions/ts_query_codec.h"
 #include "connector/search_filter_builder.hpp"
 
-namespace sdb::catalog {
-
-struct Snapshot;
-
-}  // namespace sdb::catalog
+namespace sdb::catalog {}  // namespace sdb::catalog
 namespace sdb::connector {
 
 struct FilterContext {

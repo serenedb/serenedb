@@ -797,7 +797,7 @@ void ClassifyColumnstoreProjections(IResearchScanGlobalState& state,
   if (state.generated_pk_output_idx != duckdb::DConstants::INVALID_INDEX) {
     // The rowid materializes from the pk column like any stored column, on
     // search tables and view-backed indexes alike (term_dict::kPKFieldId
-    // IS Column::kGeneratedPKId by definition).
+    // IS kGeneratedPKId by definition).
     state.cs_projections.emplace_back(
       ColumnstoreProjection{.output_slot = state.generated_pk_output_idx,
                             .column_id = catalog::term_dict::kPKFieldId});

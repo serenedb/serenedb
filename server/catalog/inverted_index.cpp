@@ -42,15 +42,20 @@
 #include "search/inverted_index_storage.h"
 
 namespace sdb::catalog {
+
+ColumnTokenizer DefaultColumnTokenizer() {
+  auto analyzer = std::make_unique<irs::StringTokenizer>();
+  return ColumnTokenizer{.analyzer = Tokenizer::TokenizerWrapper{
+                           analyzer.release(), Tokenizer::Deleter{nullptr}}};
+}
+
 namespace {
 
 ColumnTokenizer BuildColumnTokenizer(const TokenizerMap& dicts,
                                      ObjectId text_dictionary,
                                      search::Features features) {
   if (!text_dictionary.isSet()) {
-    auto analyzer = std::make_unique<irs::StringTokenizer>();
-    return ColumnTokenizer{.analyzer = Tokenizer::TokenizerWrapper{
-                             analyzer.release(), Tokenizer::Deleter{nullptr}}};
+    return DefaultColumnTokenizer();
   }
   const auto it = dicts.find(text_dictionary);
   if (it == dicts.end() || !it->second) {
@@ -60,8 +65,11 @@ ColumnTokenizer BuildColumnTokenizer(const TokenizerMap& dicts,
                          .features = features.GetIndexFeatures()};
 }
 
+using persistence::ColumnKey;
 using persistence::EntryConfigSerialized;
 using persistence::InvertedIndexData;
+using persistence::InvertedIndexDataT;
+using persistence::SearchInvertedIndexData;
 
 EntryConfigSerialized PackConfig(const InvertedIndexEntryInfo& entry) {
   return EntryConfigSerialized{
@@ -79,17 +87,17 @@ EntryConfigSerialized PackConfig(const InvertedIndexEntryInfo& entry) {
   };
 }
 
-InvertedIndexData PackEntries(std::string_view name,
-                              const std::vector<ColumnId>& columns,
-                              const std::vector<ExpressionKey>& expression_keys,
-                              const InvertedIndex::Entries& entries,
-                              const InvertedIndexOptions& options,
-                              const ExpressionData& predicate) {
-  InvertedIndexData data;
+template<typename ColumnEntry>
+InvertedIndexDataT<ColumnEntry> PackEntries(
+  std::string_view name, std::vector<ColumnEntry> columns,
+  const std::vector<ExpressionKey>& expression_keys,
+  const InvertedIndex::Entries& entries, const InvertedIndexOptions& options,
+  const ExpressionData& predicate) {
+  InvertedIndexDataT<ColumnEntry> data;
   data.name = std::string{name};
   data.options = options;
   data.predicate = predicate;
-  data.columns.assign(columns.begin(), columns.end());
+  data.columns = std::move(columns);
   data.expression_keys.assign(expression_keys.begin(), expression_keys.end());
   data.entries.reserve(entries.size());
   for (const auto& [field_id, entry] : entries) {
@@ -98,12 +106,11 @@ InvertedIndexData PackEntries(std::string_view name,
   return data;
 }
 
-}  // namespace
-
-duckdb::unique_ptr<InvertedIndex> InvertedIndex::FromData(
+template<typename ColumnEntry>
+duckdb::unique_ptr<InvertedIndex> UnpackEntries(
   ObjectId schema_id, ObjectId id, ObjectId relation_id,
-  persistence::InvertedIndexData data) {
-  Entries entries;
+  InvertedIndexDataT<ColumnEntry> data) {
+  InvertedIndex::Entries entries;
   entries.reserve(data.entries.size());
   for (auto& [field_id, cfg] : data.entries) {
     entries.emplace(field_id, InvertedIndexEntryInfo{
@@ -120,18 +127,63 @@ duckdb::unique_ptr<InvertedIndex> InvertedIndex::FromData(
                                 .numeric_field_id = cfg.numeric_field_id,
                               });
   }
+  // The Search layout carries a ColumnKey per column (its allocated term
+  // field_id); the transactional layout is bare column ids (empty map).
+  constexpr bool kSearch = std::is_same_v<ColumnEntry, persistence::ColumnKey>;
+  std::vector<ColumnId> columns;
+  containers::FlatHashMap<ColumnId, irs::field_id> col_to_term_field;
+  columns.reserve(data.columns.size());
+  if constexpr (kSearch) {
+    for (const auto& ck : data.columns) {
+      columns.push_back(ck.column);
+      col_to_term_field.emplace(ck.column, ck.field_id);
+    }
+  } else {
+    for (const auto col : data.columns) {
+      columns.push_back(col);
+    }
+  }
   return duckdb::make_uniq<InvertedIndex>(
     schema_id, id, relation_id, data.name, std::move(data.comment),
-    std::move(data.columns), std::move(data.expression_keys),
-    std::move(entries), std::move(data.options), std::move(data.predicate));
+    std::move(columns), std::move(data.expression_keys), std::move(entries),
+    std::move(data.options), std::move(data.predicate),
+    std::move(col_to_term_field));
+}
+
+}  // namespace
+
+duckdb::unique_ptr<InvertedIndex> InvertedIndex::FromData(
+  ObjectId schema_id, ObjectId id, ObjectId relation_id,
+  persistence::InvertedIndexData data,
+  containers::FlatHashMap<ColumnId, irs::field_id> col_to_term_field) {
+  auto index = UnpackEntries(schema_id, id, relation_id, std::move(data));
+  index->_col_to_term_field = std::move(col_to_term_field);
+  return index;
 }
 
 duckdb::unique_ptr<InvertedIndex> InvertedIndex::Deserialize(
   duckdb::Deserializer& src, ObjectId schema_id, ObjectId id,
-  ObjectId relation_id) {
-  InvertedIndexData data;
+  ObjectId relation_id, bool column_term_fields) {
+  if (column_term_fields) {
+    persistence::SearchInvertedIndexData data;
+    basics::ReadTuple(src, data);
+    return UnpackEntries(schema_id, id, relation_id, std::move(data));
+  }
+  persistence::InvertedIndexData data;
   basics::ReadTuple(src, data);
-  return FromData(schema_id, id, relation_id, std::move(data));
+  return UnpackEntries(schema_id, id, relation_id, std::move(data));
+}
+
+persistence::SearchInvertedIndexData InvertedIndex::ToSearchData() const {
+  std::vector<persistence::ColumnKey> column_keys;
+  column_keys.reserve(GetColumns().size());
+  for (const auto col : GetColumns()) {
+    column_keys.push_back({.column = col, .field_id = TermFieldForColumn(col)});
+  }
+  auto data = PackEntries(GetName(), std::move(column_keys), _expression_keys,
+                          _entries, _options, _predicate);
+  data.comment = Comment();
+  return data;
 }
 
 persistence::InvertedIndexData InvertedIndex::ToData() const {
@@ -146,6 +198,10 @@ void InvertedIndex::WriteJson(basics::JsonSink& sink) const {
 }
 
 void InvertedIndex::SerializePayload(duckdb::Serializer& sink) const {
+  if (HasAllocatedTermFields()) {
+    basics::WriteTuple(sink, ToSearchData());
+    return;
+  }
   basics::WriteTuple(sink, ToData());
 }
 
@@ -177,6 +233,11 @@ void InvertedIndex::BuildSerializedExprIndex() {
 void InvertedIndex::RestoreEntryIds() {
   for (const auto& key : _expression_keys) {
     RestoreId(key.field_id);
+  }
+  // Per-column allocated term field_ids (Search-table indexes): floor the
+  // allocator so a future NextId() can't re-issue one to a different field.
+  for (const auto& kv : _col_to_term_field) {
+    RestoreId(kv.second);
   }
   for (const auto& [field_id, entry] : _entries) {
     for (const auto id : {entry.synthetic_column, entry.null_field_id,
@@ -210,9 +271,9 @@ const ExpressionData* InvertedIndex::ExpressionByFieldId(
 
 const InvertedIndexEntryInfo* InvertedIndex::FindColumnInfo(
   catalog::ColumnId column_id) const noexcept {
-  const auto field_id = static_cast<irs::field_id>(column_id);
-  // An expression key's allocated field_id never equals a column id, so a hit
-  // here means `field_id` is genuinely a plain-column key.
+  const auto field_id = TermFieldForColumn(column_id);
+  // An expression key's allocated field_id never equals a plain column's term
+  // field, so a hit here means `field_id` is genuinely a plain-column key.
   if (ExpressionByFieldId(field_id)) {
     return nullptr;
   }
@@ -381,6 +442,17 @@ void InvertedIndex::BuildFieldLookupIndex() {
   insert(term_dict::kPKFieldId, nullptr, term_dict::kPKFieldId);
 }
 
+ColumnTokenizer TokenizerForEntry(const TokenizerMap& dicts,
+                                  const InvertedIndexEntryInfo& entry) {
+  auto tokenizer =
+    BuildColumnTokenizer(dicts, entry.text_dictionary, entry.features);
+  if (!entry.features.HasFeatures(irs::IndexFeatures::Norm) &&
+      irs::field_limits::valid(entry.synthetic_column)) {
+    tokenizer.tokenizer_column = entry.synthetic_column;
+  }
+  return tokenizer;
+}
+
 ColumnTokenizer InvertedIndex::GetTokenizer(const TokenizerMap& dicts,
                                             irs::field_id field_id) const {
   const auto* entry = FindEntry(field_id);
@@ -388,13 +460,7 @@ ColumnTokenizer InvertedIndex::GetTokenizer(const TokenizerMap& dicts,
     THROW_SQL_ERROR(
       ERR_MSG("Field id ", field_id, " not found in the index definition"));
   }
-  auto tokenizer =
-    BuildColumnTokenizer(dicts, entry->text_dictionary, entry->features);
-  if (!entry->features.HasFeatures(irs::IndexFeatures::Norm) &&
-      irs::field_limits::valid(entry->synthetic_column)) {
-    tokenizer.tokenizer_column = entry->synthetic_column;
-  }
-  return tokenizer;
+  return TokenizerForEntry(dicts, *entry);
 }
 
 bool InvertedIndex::IsKeywordField(duckdb::ClientContext& context,
@@ -423,13 +489,12 @@ irs::field_id InvertedIndex::FindFieldIdBySerialized(
   return it->second;
 }
 
-std::optional<irs::IvfInfo> InvertedIndex::GetIvfInfo(
-  irs::field_id field_id) const {
-  const auto* entry = FindEntry(field_id);
-  if (!entry || !entry->ivf_config) {
+std::optional<irs::IvfInfo> IvfInfoForEntry(
+  irs::field_id field_id, const InvertedIndexEntryInfo& entry) {
+  if (!entry.ivf_config) {
     return std::nullopt;
   }
-  const auto& cfg = *entry->ivf_config;
+  const auto& cfg = *entry.ivf_config;
   return irs::IvfInfo{
     .centroids_id = field_id,
     .postings_id = field_id,
@@ -439,6 +504,15 @@ std::optional<irs::IvfInfo> InvertedIndex::GetIvfInfo(
     .sample_factor = cfg.sample_factor,
     .posting_size = cfg.posting_size,
   };
+}
+
+std::optional<irs::IvfInfo> InvertedIndex::GetIvfInfo(
+  irs::field_id field_id) const {
+  const auto* entry = FindEntry(field_id);
+  if (!entry) {
+    return std::nullopt;
+  }
+  return IvfInfoForEntry(field_id, *entry);
 }
 
 irs::ColumnOptions InvertedIndex::GetColumnOptions(irs::field_id id) const {

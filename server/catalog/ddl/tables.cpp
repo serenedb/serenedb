@@ -36,6 +36,7 @@
 #include "basics/debugging.h"
 #include "catalog/ddl/catalog.h"
 #include "catalog/ddl/duckdb_catalog.h"
+#include "catalog/duckdb_primary_key.h"
 #include "catalog/entry.h"
 #include "catalog/entry/duckdb_object_entry.h"
 #include "catalog/entry/duckdb_table_entry.h"
@@ -201,9 +202,18 @@ const SereneDBTableEntry* CreateTable(
   // of a search table live in, and the counter the insert path reserves from.
   std::shared_ptr<search::SearchTable> search_data;
   if (catalog::ReadTableEngineTag(table->tags) == TableEngine::Search) {
+    // The declared key columns are term-indexed under their own ids, so the
+    // shard needs them to build its merged config.
+    std::vector<ColumnId> pk_columns;
+    for (const auto& pk : catalog::duckdb_primary_key::BuildPKColumns(*table)) {
+      pk_columns.emplace_back(
+        table->columns.GetColumn(duckdb::LogicalIndex{pk.input_col_idx})
+          .CatalogOid());
+    }
     search_data = search::SearchTable::Create(
       database_id, *schema_id, table_id,
-      /*is_new=*/true, catalog::ReadSearchOptionTags(table->tags));
+      /*is_new=*/true, catalog::ReadSearchOptionTags(table->tags),
+      std::move(pk_columns));
   }
 
   // Checked before anything is placed. Two generated sequences can collide with

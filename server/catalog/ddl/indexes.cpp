@@ -43,6 +43,7 @@
 #include "pg/sql_exception_macro.h"
 #include "pg/sql_utils.h"
 #include "search/inverted_index_storage.h"
+#include "search/search_table.h"
 
 namespace sdb::catalog {
 namespace {
@@ -84,13 +85,17 @@ std::shared_ptr<const Index> CreateInvertedIndex(
   InvertedIndexOptions options, ExpressionData predicate,
   CreateIndexOperationOptions operation_options) {
   SDB_ASSERT(ax.context == &context);
+  // On a Search table each column gets a term field of its own, so several
+  // indexes on one column keep independent posting lists in the shared store.
+  const auto* table = dynamic_cast<const SereneDBTableEntry*>(&relation);
+  const bool search_engine = table != nullptr && table->IsSearchTable();
   const auto created = CreateIndexOnRelation(
     ax, relation, name, columns, operation_options, [&](ObjectId schema_id) {
       return duckdb::make_uniq<CreateIndexInfo>(
         std::shared_ptr<const Index>{NewInvertedIndex(
           context, database_id, schema, schema_id, ObjectId{0},
           catalog::IdOf(relation), std::move(name), std::move(columns),
-          std::move(options), std::move(predicate))});
+          std::move(options), std::move(predicate), search_engine)});
     });
   return created ? created->GetIndex() : nullptr;
 }
@@ -134,12 +139,19 @@ duckdb::optional_ptr<duckdb::CatalogEntry> CreateIndexImpl(
   // Opened from the definition, which is all it takes, and handed to the entry
   // placed below -- the build (GetGlobalSinkState) and every reader after it
   // take the handle from there.
-  auto storage = index.IsInverted()
+  const auto* entry = catalog::Find<SereneDBTableEntry>(context, schema_id,
+                                                        index.GetRelationId());
+  // A Search-table index shares the table's own store, so it stays
+  // storage-less (GetInvertedData() == null) and folds its columns into the
+  // shard's merged config.
+  const bool search_backed = entry != nullptr && entry->IsSearchTable();
+  auto storage = index.IsInverted() && !search_backed
                    ? search::InvertedIndexStorage::Create(
                        db_id, InvertedInfo(*index.GetIndex()), /*is_new=*/true)
                    : nullptr;
-  const auto* entry = catalog::Find<SereneDBTableEntry>(context, schema_id,
-                                                        index.GetRelationId());
+  if (index.IsInverted() && search_backed) {
+    entry->GetSearchData()->MergeIndexConfig(InvertedInfo(*index.GetIndex()));
+  }
   auto table = entry != nullptr ? entry->Definition() : nullptr;
   // Only an inverted index has a store half to publish from here: a plain ART
   // is built by the statement itself, and rebuilt by the replay and reshape
@@ -224,6 +236,16 @@ void DropIndexArtifacts(duckdb::ClientContext* context, ObjectId database_id,
       // removes it.
       if (storage) {
         storage->MarkDropped();
+        return;
+      }
+      // A Search-table index owns no directory: what it leaves behind is its
+      // share of the shard's merged config, rebuilt here from the indexes that
+      // survived the commit (a dropped index's columns may still be covered by
+      // the PK or another index).
+      const auto* relation =
+        catalog::FindIn<SereneDBTableEntry>(nullptr, database_id, relation_id);
+      if (relation != nullptr && relation->IsSearchTable()) {
+        relation->GetSearchData()->RebuildIndexConfig(nullptr);
         return;
       }
       // A failed build's compensating drop can arrive before the directory was

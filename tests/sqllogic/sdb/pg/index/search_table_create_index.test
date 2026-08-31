@@ -1,0 +1,160 @@
+# CREATE INDEX on search tables (v1: empty-table only, storage-less inverted
+# index). A search-table index carries no separate iresearch store -- it folds
+# its columns into the table's own store, giving each (index, column) its own
+# term field carrying that index's declared analyzer. Predicates push down only
+# through a direct index scan (SELECT ... FROM <idx>), matching a transactional
+# inverted index: the bare table scan pushes down PRIMARY KEY predicates and
+# falls back to a columnstore Column Filter for any other column, and a bare @@
+# on a non-PK column errors. A direct index scan (SELECT * FROM <idx>) still
+# returns every column off the columnstore. The index is a real catalog object
+# (shows in pg_indexes, DROPs, survives restart). v1 rejects CREATE INDEX on a
+# non-empty table and non-inverted types. Search tables are commit-time-only, so
+# rows are observed after VACUUM (REFRESH_TABLE).
+
+statement ok
+CREATE TABLE t (id BIGINT PRIMARY KEY, tag TEXT, body TEXT)
+  WITH (storage='search', compaction_interval=0);
+
+# CREATE INDEX on an empty search table succeeds (metadata-only, no backfill).
+statement ok
+CREATE INDEX t_tag_idx ON t USING inverted (tag);
+
+# A non-inverted index type is rejected.
+statement error
+CREATE INDEX t_bad_idx ON t (tag);
+----
+db error: ERROR: only inverted indexes are supported on a search-backed table
+
+
+# The index is a real catalog object.
+query
+SELECT indexname FROM pg_indexes WHERE tablename = 't' ORDER BY indexname;
+----
+indexname
+t_pkey
+t_tag_idx
+
+statement ok
+INSERT INTO t VALUES
+  (1, 'red', 'the quick brown fox'),
+  (2, 'blue', 'lazy dog jumps'),
+  (3, 'red', 'fox runs fast');
+
+statement ok
+VACUUM (REFRESH_TABLE) t;
+
+# CREATE INDEX on a now-non-empty search table is rejected.
+statement error
+CREATE INDEX t_body_idx ON t USING inverted (body);
+----
+db error: ERROR: CREATE INDEX on a non-empty search-backed table is not yet supported (indexing existing rows)
+
+
+# Bare table: a non-PK predicate is not pushed down to a term filter -- it falls
+# back to a columnstore Column Filter (correct results, no term lookup). This
+# matches a transactional inverted index, which is reachable only via its own
+# index scan.
+query
+SELECT id, tag FROM t WHERE tag = 'red' ORDER BY id;
+----
+id	tag
+1	red
+3	red
+
+query
+EXPLAIN SELECT id FROM t WHERE tag = 'red';
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ───────────╮
+│ Index: t                   │
+│ Lookup: search             │
+│ Projections: id            │
+│ Column Filter: tag = 'red' │
+│ ~1 row                     │
+╰────────────────────────────╯
+
+# A direct index scan pushes the predicate down through the index's own term
+# field.
+query
+SELECT id, tag FROM t_tag_idx WHERE tag = 'red' ORDER BY id;
+----
+id	tag
+1	red
+3	red
+
+query
+SELECT id FROM t_tag_idx WHERE tag IN ('red', 'blue') ORDER BY id;
+----
+id
+1
+2
+3
+
+# A direct index scan is served off the table store: every column, all rows.
+query
+SELECT * FROM t_tag_idx ORDER BY id;
+----
+id	tag	body
+1	red	the quick brown fox
+2	blue	lazy dog jumps
+3	red	fox runs fast
+
+query
+SELECT count(*) FROM t_tag_idx;
+----
+count
+3
+
+# DROP INDEX removes it.
+statement ok
+DROP INDEX t_tag_idx;
+
+query
+SELECT indexname FROM pg_indexes WHERE tablename = 't' ORDER BY indexname;
+----
+indexname
+t_pkey
+
+# --- Analyzer / full-text column ---
+# A text-analyzer inverted index tokenizes the column, so @@ matches individual
+# terms -- via the index scan. Declared before any rows so the empty-table gate
+# is satisfied.
+statement ok
+CREATE TEXT SEARCH DICTIONARY doc_en(
+    template = 'text', locale = 'en_US.UTF-8', case = 'none',
+    stemming = false, accent = false, frequency = true, position = true
+);
+
+statement ok
+CREATE TABLE doc (id BIGINT PRIMARY KEY, body TEXT)
+  WITH (storage='search', compaction_interval=0);
+
+statement ok
+CREATE INDEX doc_body_idx ON doc USING inverted (body doc_en);
+
+statement ok
+INSERT INTO doc VALUES
+  (1, 'the quick brown fox'),
+  (2, 'lazy dog jumps'),
+  (3, 'fox runs fast');
+
+statement ok
+VACUUM (REFRESH_TABLE) doc;
+
+# A bare @@ on a non-PK column errors (matches transactional): the term filter is
+# reachable only through the index scan.
+statement error
+SELECT id FROM doc WHERE body @@ 'fox';
+----
+db error: ERROR: @@ requires an inverted-indexed column on one side
+HINT: Use: <indexed_col> @@ <tsquery_expr>. CREATE INDEX ... USING inverted(<col>) if missing.
+
+
+# Full-text via the index: 'fox' matches the two rows that contain the tokenized
+# term.
+query
+SELECT id, body FROM doc_body_idx WHERE body @@ 'fox' ORDER BY id;
+----
+id	body
+1	the quick brown fox
+3	fox runs fast

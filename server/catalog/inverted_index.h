@@ -159,6 +159,11 @@ struct InvertedIndexEntryInfo {
   bool IsStored() const noexcept { return store_values || IsIVF(); }
 };
 
+// The IVF descriptor for an entry with an ivf_config (nullopt otherwise), keyed
+// off `field_id` (its centroids/postings ids).
+std::optional<irs::IvfInfo> IvfInfoForEntry(
+  irs::field_id field_id, const InvertedIndexEntryInfo& entry);
+
 // The text-search dictionaries an index's entries name, resolved once. The
 // definitions are catalog entries now, so a per-field lookup on a flush path
 // would be a catalog read per column per chunk; the tokenize paths take this
@@ -185,6 +190,13 @@ struct ColumnTokenizer {
   irs::field_id tokenizer_column = irs::field_limits::invalid();
 };
 
+// The analyzer + features for one entry: its text dictionary (the default
+// string tokenizer when absent) plus its synthetic tokenizer column.
+// Entry-level rather than index-level, for a config merged across several
+// indexes.
+ColumnTokenizer TokenizerForEntry(const TokenizerMap& dicts,
+                                  const InvertedIndexEntryInfo& entry);
+
 // One inverted index, in the form a catalog entry is built from -- and also an
 // irs::IndexFieldOptions: the definition IS the per-column physical-encoding
 // config the iresearch writer consults at flush/merge, handed over from the
@@ -196,16 +208,21 @@ class InvertedIndex final : public Index, public irs::IndexFieldOptions {
   using Entries =
     containers::NodeHashMap<irs::field_id, InvertedIndexEntryInfo>;
 
-  // `columns` are the de-duped plain-column keys (field_id = column id);
-  // `expression_keys` carry each expression's payload + allocated field_id;
-  // `entries` is the per-field config. `predicate` is the partial-index
-  // predicate (empty serialized_expr = full index); its dependent columns join
-  // the referenced set so the store mirror declares them for DML.
-  InvertedIndex(ObjectId schema_id, ObjectId id, ObjectId relation_id,
-                std::string_view name, std::string comment,
-                std::vector<ColumnId> columns,
-                std::vector<ExpressionKey> expression_keys, Entries entries,
-                InvertedIndexOptions options, ExpressionData predicate)
+  // `columns` are the de-duped plain-column keys; `expression_keys` carry each
+  // expression's payload + allocated field_id; `entries` is the per-field
+  // config keyed by field_id. `predicate` is the partial-index predicate (empty
+  // serialized_expr = full index); its dependent columns join the referenced
+  // set so the store mirror declares them for DML. `col_to_term_field` is empty
+  // for a transactional index (field_id == column id) and populated for a
+  // Search-table one, so several indexes on one column get distinct term fields
+  // in the shared store; it is restored from the table's tag, not this index's
+  // payload.
+  InvertedIndex(
+    ObjectId schema_id, ObjectId id, ObjectId relation_id,
+    std::string_view name, std::string comment, std::vector<ColumnId> columns,
+    std::vector<ExpressionKey> expression_keys, Entries entries,
+    InvertedIndexOptions options, ExpressionData predicate,
+    containers::FlatHashMap<ColumnId, irs::field_id> col_to_term_field = {})
     : Index{schema_id,
             id,
             relation_id,
@@ -219,6 +236,7 @@ class InvertedIndex final : public Index, public irs::IndexFieldOptions {
                       predicate.dependent_columns)},
       _entries{std::move(entries)},
       _expression_keys{std::move(expression_keys)},
+      _col_to_term_field{std::move(col_to_term_field)},
       _options{std::move(options)},
       _predicate{std::move(predicate)} {
     row_group_size = _options.row_group_size;
@@ -229,18 +247,66 @@ class InvertedIndex final : public Index, public irs::IndexFieldOptions {
   InvertedIndex(const InvertedIndex&) = delete;
   InvertedIndex& operator=(const InvertedIndex&) = delete;
 
+  // Whether any column carries a term field_id of its own, i.e. whether the
+  // payload needs the wider layout. Empty means every column's field_id is its
+  // column id, which the narrow layout already says.
+  bool HasAllocatedTermFields() const noexcept {
+    return !_col_to_term_field.empty();
+  }
+
+  // The allocations themselves, for a rebuild that must carry them across (see
+  // RebuiltWith): the payload's narrow layout has no room for them.
+  const containers::FlatHashMap<ColumnId, irs::field_id>& TermFieldsByColumn()
+    const noexcept {
+    return _col_to_term_field;
+  }
+
   persistence::InvertedIndexData ToData() const;
+  // The wider layout: every column paired with its allocated term field_id.
+  persistence::SearchInvertedIndexData ToSearchData() const;
   void SerializePayload(duckdb::Serializer& sink) const final;
   void WriteJson(basics::JsonSink& sink) const final;
 
+  // `column_term_fields` says which layout the payload holds -- it cannot be
+  // derived here, since the map it would come from is what is being read. It
+  // rides the record as its own property, so a narrow payload is unchanged.
   static duckdb::unique_ptr<InvertedIndex> Deserialize(
     duckdb::Deserializer& src, ObjectId schema_id, ObjectId id,
-    ObjectId relation_id);
+    ObjectId relation_id, bool column_term_fields = false);
   // From the persisted payload, which stores the per-field config in its packed
-  // form -- boot replay and Copy() both come through here.
+  // form -- boot replay and Copy() both come through here. The term-field map
+  // is passed through rather than taken from `data`, so a rebuild (ALTER) does
+  // not drop a Search-table index's allocations.
   static duckdb::unique_ptr<InvertedIndex> FromData(
     ObjectId schema_id, ObjectId id, ObjectId relation_id,
-    persistence::InvertedIndexData data);
+    persistence::InvertedIndexData data,
+    containers::FlatHashMap<ColumnId, irs::field_id> col_to_term_field = {});
+
+  // The allocated term field_id for a plain column.
+  irs::field_id TermFieldForColumn(ColumnId column) const noexcept {
+    if (auto it = _col_to_term_field.find(column);
+        it != _col_to_term_field.end()) {
+      return it->second;
+    }
+    return static_cast<irs::field_id>(column);
+  }
+
+  // The plain column a Search-table allocated term field belongs to; call only
+  // with such a field (asserted).
+  ColumnId ColumnForTermField(irs::field_id field_id) const noexcept {
+    for (const auto& [column, term_field] : _col_to_term_field) {
+      if (term_field == field_id) {
+        SDB_ASSERT(ReferencesColumn(column),
+                   "ColumnForTermField: term field maps to a non-indexed "
+                   "column ",
+                   column);
+        return column;
+      }
+    }
+    SDB_ASSERT(false,
+               "ColumnForTermField: not an allocated term field: ", field_id);
+    return kInvalidColumnId;
+  }
 
   const InvertedIndexEntryInfo* FindEntry(irs::field_id id) const noexcept;
   // Convenience: returns the entry only if it is a plain column (not an
@@ -322,6 +388,8 @@ class InvertedIndex final : public Index, public irs::IndexFieldOptions {
 
   Entries _entries;
   std::vector<ExpressionKey> _expression_keys;
+  // Per-column allocated term field_id (Search-table indexes only).
+  containers::FlatHashMap<ColumnId, irs::field_id> _col_to_term_field;
   // Bridge: field_id -> the owning expression key's payload (nullptr-absent for
   // column keys). Pointers are stable (into the immutable _expression_keys).
   containers::FlatHashMap<irs::field_id, const ExpressionData*>

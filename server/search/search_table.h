@@ -32,14 +32,33 @@
 #include <memory>
 #include <mutex>
 #include <shared_mutex>
+#include <vector>
 
 #include "basics/assert.h"
+#include "basics/containers/flat_hash_map.h"
+#include "catalog/column_id.h"
 #include "catalog/identifiers/object_id.h"
+#include "catalog/inverted_index.h"
 #include "catalog/persistence/search_table_options.h"
 #include "search/maintenance.h"
 #include "search/search_db_wal.h"
 
+namespace duckdb {
+
+class ClientContext;
+
+}  // namespace duckdb
 namespace sdb::search {
+
+class SearchTable;
+
+// The text dictionaries every inverted index declared on `shard` names,
+// unioned: each index allocates its own field ids, so the union is
+// collision-free. Read out of the shard's own database catalog rather than the
+// session's, so WAL replay -- which has no SereneDB session state -- can pass a
+// null context.
+catalog::TokenizerMap ResolveShardTokenizers(const SearchTable& shard,
+                                             duckdb::ClientContext* context);
 
 // Per-table iresearch columnstore store for a TableEngine::Search table -- the
 // Search-engine sibling of InvertedIndexStorage. Held by the table's entry,
@@ -51,7 +70,8 @@ class SearchTable : public std::enable_shared_from_this<SearchTable> {
   // catalog (mirrors InvertedIndexStorage).
   SearchTable(ObjectId db_id, ObjectId schema_id, ObjectId table_id,
               bool is_new,
-              const catalog::persistence::SearchTableOptions& options);
+              const catalog::persistence::SearchTableOptions& options,
+              std::vector<catalog::ColumnId> pk_columns);
   ~SearchTable();
 
   SearchTable(const SearchTable&) = delete;
@@ -62,15 +82,59 @@ class SearchTable : public std::enable_shared_from_this<SearchTable> {
   // InvertedIndexStorage::Create.
   static std::shared_ptr<SearchTable> Create(
     ObjectId db_id, ObjectId schema_id, ObjectId table_id, bool is_new,
-    const catalog::persistence::SearchTableOptions& options);
+    const catalog::persistence::SearchTableOptions& options,
+    std::vector<catalog::ColumnId> pk_columns);
 
   ObjectId GetTableId() const noexcept { return _table_id; }
+  ObjectId GetSchemaId() const noexcept { return _schema_id; }
+  ObjectId GetDbId() const noexcept { return _db_id; }
+
+  // The merged per-field index config: PRIMARY KEY columns (term-indexed +
+  // still stored, so PK predicates push down) unioned with every declared
+  // inverted index's entries. Returned by shared_ptr so a caller can hold one
+  // immutable snapshot across a whole op while the config is RCU-swapped.
+  std::shared_ptr<const catalog::InvertedIndex::Entries> GetIndexConfig()
+    const noexcept;
+
+  // Per-column list of term field_ids the write path emits under. A search
+  // table stores each column value once (keyed by column id) but term-indexes
+  // it once per declared index (each index's own field_id) plus the PK's term
+  // at the column id, so several indexes on one column keep independent
+  // analyzers.
+  using TermsByColumn =
+    containers::FlatHashMap<catalog::ColumnId, std::vector<irs::field_id>>;
+  std::shared_ptr<const TermsByColumn> GetTermsByColumn() const noexcept;
+
+  // The per-field iresearch encoding config (norms/compression/row-group) the
+  // writer asks for at flush + merge, resolved against the merged config;
+  // without it a norm-featured field trips a writer assert. Must stay
+  // pointer-stable within a config generation -- the segment-reuse gate is
+  // pointer identity.
+  std::shared_ptr<const irs::IndexFieldOptions> GetFieldOptions()
+    const noexcept;
+
+  // Resolve the analyzer/features for `field_id` from the current config; PK
+  // and keyword columns fall back to the default string tokenizer. Reads the
+  // dictionaries through `context`, so this is a plan-path call, not a flush
+  // one (see catalog::ResolveTokenizers).
+  catalog::ColumnTokenizer GetTokenizer(duckdb::ClientContext& context,
+                                        irs::field_id field_id) const;
+
+  // Fold one inverted index's entries into the merged config, incrementally
+  // (no snapshot needed).
+  void MergeIndexConfig(const catalog::InvertedIndex& index);
+
+  // Rebuild the merged config from scratch: PK columns + every inverted index
+  // the relation still has. Needed for DROP INDEX -- a dropped index's columns
+  // may still be covered by the PK or another index. Pass a null context to
+  // read committed state, which is what a post-commit drop action wants.
+  void RebuildIndexConfig(duckdb::ClientContext* context);
+
   auto& GetTableLock() noexcept { return _table_lock; }
 
   static std::filesystem::path GetPath(ObjectId db_id, ObjectId schema_id,
                                        ObjectId table_id);
   static std::filesystem::path GetWalPath(ObjectId db_id);
-  static std::filesystem::path GetChunkDir(ObjectId db_id, ObjectId table_id);
 
   // A drop commits while readers may still hold this table; the destructor
   // removes the index dir and the WAL shard once the last of them lets go.
@@ -79,10 +143,28 @@ class SearchTable : public std::enable_shared_from_this<SearchTable> {
     _dropped.store(true, std::memory_order_release);
   }
 
-  irs::IndexWriter::Transaction GetTransaction() noexcept {
+  // `exclusive_segment` is required of a writer that will record its flushed
+  // segments in the WAL -- see irs::IndexWriter::GetBatch.
+  irs::IndexWriter::Transaction GetTransaction(
+    bool exclusive_segment = false) noexcept {
     SDB_ASSERT(_writer);
-    return _writer->GetBatch();
+    return _writer->GetBatch(exclusive_segment);
   }
+
+  // Re-attach a segment this shard already flushed + fsynced, named by its meta
+  // file. `tick` must be in the adopting transaction's space -- it orders the
+  // segment against that transaction's removals. False == cannot be reopened.
+  bool AdoptSegment(std::string_view meta_file, std::string_view codec_name,
+                    uint64_t tick) {
+    SDB_ASSERT(_writer);
+    return _writer->AdoptSegment(meta_file, irs::formats::Get(codec_name),
+                                 tick);
+  }
+
+  // Called once this shard's WAL has been replayed, to reclaim what the replay
+  // did not adopt (the writer was opened with cleanup suppressed). Promptness
+  // only: the refresh loop's periodic cleanup would get there a tick later.
+  void FinishRecovery() { CleanupUnsafe(); }
 
   irs::DirectoryReader GetDirectoryReader() noexcept {
     SDB_ASSERT(_writer);
@@ -106,11 +188,6 @@ class SearchTable : public std::enable_shared_from_this<SearchTable> {
   SearchDbWal& Wal() noexcept {
     SDB_ASSERT(_wal);
     return *_wal;
-  }
-
-  SearchDbWal::ChunkWriter NewChunkWriter() {
-    SDB_ASSERT(_wal);
-    return _wal->NewChunkWriter(GetTableId());
   }
 
   uint64_t CommittedTick() const noexcept { return _last_committed_tick; }
@@ -168,7 +245,18 @@ class SearchTable : public std::enable_shared_from_this<SearchTable> {
   ObjectId _schema_id;
   bool _is_new;
   std::atomic<bool> _dropped{false};
-  std::shared_mutex _table_lock;
+  std::vector<catalog::ColumnId> _pk_columns;
+  uint64_t _segment_memory_max;
+  std::atomic<int64_t> _num_rows{0};
+  mutable std::shared_mutex _table_lock;
+  // Merged per-field index config (PK + declared inverted indexes), RCU-swapped
+  // under _table_lock so readers holding an old snapshot keep valid entry
+  // pointers. Never null after construction.
+  std::shared_ptr<const catalog::InvertedIndex::Entries> _entries;
+  // Column -> its term field_ids, RCU-swapped together with _entries.
+  std::shared_ptr<const TermsByColumn> _terms_by_column;
+  // Writer encoding config over the merged _entries, RCU-swapped with them.
+  std::shared_ptr<const irs::IndexFieldOptions> _field_options;
   std::unique_ptr<irs::Directory> _dir;
   std::shared_ptr<irs::IndexWriter> _writer;
   // Borrowed from the search engine (set in OpenWriter). Outlives this object.

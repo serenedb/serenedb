@@ -253,7 +253,7 @@ duckdb::unique_ptr<Index> NewInvertedIndex(
   std::string_view schema_name, ObjectId schema_id, ObjectId id,
   ObjectId relation_id, std::string name,
   std::vector<catalog::CreateIndexColumn> columns, InvertedIndexOptions options,
-  ExpressionData predicate);
+  ExpressionData predicate, bool search_engine);
 
 // The inverted index `id` names in `database_id`, off the entries that hold it.
 // For the background paths, which have no statement to read through and no

@@ -1,0 +1,59 @@
+# An indexed-expression inverted index on a search table survives a crash + WAL
+# replay. The WAL stores raw columns, not the computed expression, so the
+# recovery re-index path must RE-EVALUATE the expression for replayed rows (via a
+# dedicated connection's context). After restart a predicate on the expression
+# matches the replayed row -- proving its expression term was recomputed, not
+# lost.
+
+control substitution on
+
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+CREATE TABLE num(id BIGINT PRIMARY KEY, a INT, b INT)
+  WITH (storage = 'search', compaction_interval = 0);
+
+statement ok
+CREATE INDEX num_idx ON num USING inverted ((a + b));
+
+statement ok
+RESET sdb_faults;
+
+# --- Fixture: a published baseline, durable on disk. ---
+statement ok
+INSERT INTO num VALUES (1, 10, 20), (2, 5, 5);
+
+statement ok
+VACUUM (REFRESH_TABLE) num;
+
+# Crash AFTER the WAL commit: (3, 100, 1) is fsynced into the WAL but never
+# refresh-published; recovery must recompute a+b=101 for it.
+statement ok
+SET sdb_faults = 'crash_after_search_wal_commit';
+
+statement error connection closed
+INSERT INTO num VALUES (3, 100, 1);
+
+# --- restart ---
+connection after_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT indexname FROM pg_indexes WHERE tablename = 'num' ORDER BY indexname;
+----
+indexname
+num_idx
+num_pkey
+
+# The published baseline row still matches its expression term.
+connection after_crash
+query
+SELECT id FROM num_idx WHERE a + b = 30;
+----
+id
+1
+
+# The WAL-replayed row matches a+b=101 through the index -- so its expression was
+# re-evaluated during replay (the raw columns alone would not answer this).
+connection after_crash
+query
+SELECT id FROM num_idx WHERE a + b = 101;
+----
+id
+3

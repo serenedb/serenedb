@@ -436,6 +436,10 @@ auto MakeFieldNameResolver(const SereneDBScanBindData& bind_data,
           base = expr->pretty_printed;
         }
         if (base.empty()) {
+          base = std::string{
+            bind_data.ColumnNameById(index.ColumnForTermField(fid))};
+        }
+        if (base.empty()) {
           base = absl::StrCat("col", fid);
         }
         if (expr) {
@@ -621,7 +625,7 @@ void SereneDBScanBindData::AppendSummary(
   if (EmitOffsets()) {
     auto cols =
       absl::StrJoin(offsets | std::views::transform([&](const auto& off) {
-                      return bind.DisplayColumnName(off.column_id);
+                      return bind.DisplayColumnName(off.display_id);
                     }),
                     ", ");
     out.insert("Offsets", std::move(cols));

@@ -1,0 +1,86 @@
+# Two inverted indexes on ONE search-table column survive a crash + WAL replay
+# with their term fields independent. The indexes are storage-less (their terms
+# share the table's iresearch store, each under its own allocated field), so
+# recovery must rebuild the merged config -- both fields -- at boot and re-index
+# the WAL-replayed rows through both. A stemming index and a non-stemming index
+# on the same column give a decisive check: after restart the stem 'run' matches
+# through the stemming index but not the plain one, and the replayed row appears
+# in both, proving each index's field was rebuilt separately.
+
+control substitution on
+
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+CREATE TEXT SEARCH DICTIONARY stem_en(
+    template = 'text', locale = 'en_US.UTF-8', case = 'lower',
+    stemming = true, accent = false, frequency = true, position = true);
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY plain_en(
+    template = 'text', locale = 'en_US.UTF-8', case = 'lower',
+    stemming = false, accent = false, frequency = true, position = true);
+
+statement ok
+CREATE TABLE m(id BIGINT PRIMARY KEY, body TEXT)
+  WITH (storage = 'search', compaction_interval = 0);
+
+statement ok
+CREATE INDEX m_stem ON m USING inverted (body stem_en);
+
+statement ok
+CREATE INDEX m_plain ON m USING inverted (body plain_en);
+
+statement ok
+RESET sdb_faults;
+
+# --- Fixture: a published baseline, durable on disk. ---
+statement ok
+INSERT INTO m VALUES (1, 'running'), (2, 'walking');
+
+statement ok
+VACUUM (REFRESH_TABLE) m;
+
+# Crash AFTER the WAL commit: (3,'running fast') is fsynced into the WAL but never
+# refresh-published, so it exists ONLY in the WAL; recovery must rebuild it into
+# both indexes' fields.
+statement ok
+SET sdb_faults = 'crash_after_search_wal_commit';
+
+statement error connection closed
+INSERT INTO m VALUES (3, 'running fast');
+
+# --- restart ---
+connection after_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT indexname FROM pg_indexes WHERE tablename = 'm' ORDER BY indexname;
+----
+indexname
+m_pkey
+m_plain
+m_stem
+
+# The stemming index reduces 'running' -> 'run', so 'run' matches the baseline
+# and the WAL-replayed row -- both rebuilt into m_stem's field.
+connection after_crash
+query
+SELECT id FROM m_stem WHERE body @@ 'run' ORDER BY id;
+----
+id
+1
+3
+
+# The non-stemming index keeps 'running' verbatim in ITS field: 'run' matches
+# nothing (its field was rebuilt separately, not sharing m_stem's postings)...
+connection after_crash
+query
+SELECT id FROM m_plain WHERE body @@ 'run' ORDER BY id;
+----
+id
+
+# ...and 'running' matches both rows through it.
+connection after_crash
+query
+SELECT id FROM m_plain WHERE body @@ 'running' ORDER BY id;
+----
+id
+1
+3

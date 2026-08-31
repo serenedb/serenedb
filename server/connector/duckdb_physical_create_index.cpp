@@ -319,10 +319,10 @@ const catalog::SereneDBTableEntry* SereneDBPhysicalCreateIndex::TableOrNull()
 }
 
 bool SereneDBPhysicalCreateIndex::IsDuckDBTable() const noexcept {
+  // A Search table has no duckdb store table: the build scans its own iresearch
+  // store instead, so this is false rather than an assert.
   const auto* table = TableOrNull();
-  SDB_ASSERT(table == nullptr ||
-             table->GetEngine() == catalog::TableEngine::Transactional);
-  return table != nullptr;
+  return table != nullptr && !table->IsSearchTable();
 }
 
 duckdb::unique_ptr<duckdb::GlobalSinkState>

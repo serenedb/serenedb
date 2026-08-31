@@ -1,0 +1,59 @@
+# BM25 scoring on a search table. A norm-featured inverted index needs the
+# writer to be handed per-field encoding options (the norm column), which a
+# search table now supplies from its merged config. Before that, inserting into
+# a norm-featured search index aborted the writer ("Norm-featured field requires
+# per-field index options"). Scores are read through the index scan; length
+# normalization (the norm column) makes a shorter matching document rank higher.
+# Commit-time-only, so rows are observed after VACUUM (REFRESH_TABLE).
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY norm_en(
+    template = 'text', locale = 'en_US.UTF-8', case = 'lower',
+    stemming = false, accent = false, frequency = true, position = true,
+    norm = true
+);
+
+statement ok
+CREATE TABLE nb (id BIGINT PRIMARY KEY, body TEXT)
+  WITH (storage='search', compaction_interval=0);
+
+statement ok
+CREATE INDEX nb_idx ON nb USING inverted (body norm_en);
+
+# Insert into a norm-featured search index (this crashed before field options
+# were wired) and publish.
+statement ok
+INSERT INTO nb VALUES
+  (1, 'the quick brown fox'),
+  (2, 'fox runs fast'),
+  (3, 'the lazy dog');
+
+statement ok
+VACUUM (REFRESH_TABLE) nb;
+
+# The term matches the two documents that contain 'fox'.
+query
+SELECT id FROM nb_idx WHERE body @@ 'fox' ORDER BY id;
+----
+id
+1
+2
+
+# Every match gets a positive BM25 score (the norm column was written).
+query
+SELECT id, BM25(nb_idx.tableoid) > 0 AS has_score
+FROM nb_idx WHERE body @@ 'fox' ORDER BY id;
+----
+id	has_score
+1	t
+2	t
+
+# Length normalization: row 2 ('fox runs fast', 3 terms) outranks row 1
+# ('the quick brown fox', 4 terms) for the same term frequency -- which only
+# happens if the norm column is present.
+query
+SELECT id FROM nb_idx WHERE body @@ 'fox' ORDER BY BM25(nb_idx.tableoid) DESC, id;
+----
+id
+2
+1

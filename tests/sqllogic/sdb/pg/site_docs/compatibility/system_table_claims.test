@@ -95,19 +95,13 @@ INSERT INTO stc_parent VALUES (1, 'a')
 statement ok
 INSERT INTO stc_child VALUES (1, 1, 5, 'n', 'ok')
 
-# sys_tables: pg_aggregate (🟢)
-query
-SELECT count(*) > 0 AS populated FROM pg_catalog."pg_aggregate";
-----
-populated
-t
+# sys_tables: pg_aggregate (🟡)
+statement ok
+SELECT * FROM pg_catalog."pg_aggregate" LIMIT 0;
 
-# sys_tables: pg_am (🟢)
-query
-SELECT count(*) > 0 AS populated FROM pg_catalog."pg_am";
-----
-populated
-t
+# sys_tables: pg_am (🟡)
+statement ok
+SELECT * FROM pg_catalog."pg_am" LIMIT 0;
 
 # sys_tables: pg_amop (🟡)
 statement ok
@@ -117,12 +111,9 @@ SELECT * FROM pg_catalog."pg_amop" LIMIT 0;
 statement ok
 SELECT * FROM pg_catalog."pg_amproc" LIMIT 0;
 
-# sys_tables: pg_attrdef (🟢)
-query
-SELECT count(*) > 0 AS populated FROM pg_catalog."pg_attrdef";
-----
-populated
-t
+# sys_tables: pg_attrdef (🟡)
+statement ok
+SELECT * FROM pg_catalog."pg_attrdef" LIMIT 0;
 
 # sys_tables: pg_attribute (🟢)
 query
@@ -131,19 +122,13 @@ SELECT count(*) > 0 AS populated FROM pg_catalog."pg_attribute";
 populated
 t
 
-# sys_tables: pg_authid (🟢)
-query
-SELECT count(*) > 0 AS populated FROM pg_catalog."pg_authid";
-----
-populated
-t
+# sys_tables: pg_authid (🟡)
+statement ok
+SELECT * FROM pg_catalog."pg_authid" LIMIT 0;
 
-# sys_tables: pg_auth_members (🟢)
-query
-SELECT count(*) > 0 AS populated FROM pg_catalog."pg_auth_members";
-----
-populated
-t
+# sys_tables: pg_auth_members (🟡)
+statement ok
+SELECT * FROM pg_catalog."pg_auth_members" LIMIT 0;
 
 # sys_tables: pg_cast (🟡)
 statement ok
@@ -171,12 +156,9 @@ t
 statement ok
 SELECT * FROM pg_catalog."pg_conversion" LIMIT 0;
 
-# sys_tables: pg_database (🟢)
-query
-SELECT count(*) > 0 AS populated FROM pg_catalog."pg_database";
-----
-populated
-t
+# sys_tables: pg_database (🟡)
+statement ok
+SELECT * FROM pg_catalog."pg_database" LIMIT 0;
 
 # sys_tables: pg_db_role_setting (🟡)
 statement ok
@@ -186,26 +168,17 @@ SELECT * FROM pg_catalog."pg_db_role_setting" LIMIT 0;
 statement ok
 SELECT * FROM pg_catalog."pg_default_acl" LIMIT 0;
 
-# sys_tables: pg_depend (🟢)
-query
-SELECT count(*) > 0 AS populated FROM pg_catalog."pg_depend";
-----
-populated
-t
+# sys_tables: pg_depend (🟡)
+statement ok
+SELECT * FROM pg_catalog."pg_depend" LIMIT 0;
 
-# sys_tables: pg_description (🟢)
-query
-SELECT count(*) > 0 AS populated FROM pg_catalog."pg_description";
-----
-populated
-t
+# sys_tables: pg_description (🟡)
+statement ok
+SELECT * FROM pg_catalog."pg_description" LIMIT 0;
 
-# sys_tables: pg_enum (🟢)
-query
-SELECT count(*) > 0 AS populated FROM pg_catalog."pg_enum";
-----
-populated
-t
+# sys_tables: pg_enum (🟡)
+statement ok
+SELECT * FROM pg_catalog."pg_enum" LIMIT 0;
 
 # sys_tables: pg_event_trigger (🟡)
 statement ok
@@ -227,12 +200,9 @@ SELECT * FROM pg_catalog."pg_foreign_server" LIMIT 0;
 statement ok
 SELECT * FROM pg_catalog."pg_foreign_table" LIMIT 0;
 
-# sys_tables: pg_index (🟢)
-query
-SELECT count(*) > 0 AS populated FROM pg_catalog."pg_index";
-----
-populated
-t
+# sys_tables: pg_index (🟡)
+statement ok
+SELECT * FROM pg_catalog."pg_index" LIMIT 0;
 
 # sys_tables: pg_inherits (🟡)
 statement ok
@@ -242,12 +212,9 @@ SELECT * FROM pg_catalog."pg_inherits" LIMIT 0;
 statement ok
 SELECT * FROM pg_catalog."pg_init_privs" LIMIT 0;
 
-# sys_tables: pg_language (🟢)
-query
-SELECT count(*) > 0 AS populated FROM pg_catalog."pg_language";
-----
-populated
-t
+# sys_tables: pg_language (🟡)
+statement ok
+SELECT * FROM pg_catalog."pg_language" LIMIT 0;
 
 # sys_tables: pg_largeobject (🟡)
 statement ok
@@ -264,12 +231,9 @@ SELECT count(*) > 0 AS populated FROM pg_catalog."pg_namespace";
 populated
 t
 
-# sys_tables: pg_opclass (🟢)
-query
-SELECT count(*) > 0 AS populated FROM pg_catalog."pg_opclass";
-----
-populated
-t
+# sys_tables: pg_opclass (🟡)
+statement ok
+SELECT * FROM pg_catalog."pg_opclass" LIMIT 0;
 
 # sys_tables: pg_operator (🟡)
 statement ok
@@ -291,12 +255,9 @@ SELECT * FROM pg_catalog."pg_partitioned_table" LIMIT 0;
 statement ok
 SELECT * FROM pg_catalog."pg_policy" LIMIT 0;
 
-# sys_tables: pg_proc (🟢)
-query
-SELECT count(*) > 0 AS populated FROM pg_catalog."pg_proc";
-----
-populated
-t
+# sys_tables: pg_proc (🟡)
+statement ok
+SELECT * FROM pg_catalog."pg_proc" LIMIT 0;
 
 # sys_tables: pg_publication (🟡)
 statement ok
@@ -318,30 +279,21 @@ SELECT * FROM pg_catalog."pg_range" LIMIT 0;
 statement ok
 SELECT * FROM pg_catalog."pg_replication_origin" LIMIT 0;
 
-# sys_tables: pg_rewrite (🟢)
-query
-SELECT count(*) > 0 AS populated FROM pg_catalog."pg_rewrite";
-----
-populated
-t
+# sys_tables: pg_rewrite (🟡)
+statement ok
+SELECT * FROM pg_catalog."pg_rewrite" LIMIT 0;
 
 # sys_tables: pg_seclabel (🟡)
 statement ok
 SELECT * FROM pg_catalog."pg_seclabel" LIMIT 0;
 
-# sys_tables: pg_sequence (🟢)
-query
-SELECT count(*) > 0 AS populated FROM pg_catalog."pg_sequence";
-----
-populated
-t
+# sys_tables: pg_sequence (🟡)
+statement ok
+SELECT * FROM pg_catalog."pg_sequence" LIMIT 0;
 
-# sys_tables: pg_shdepend (🟢)
-query
-SELECT count(*) > 0 AS populated FROM pg_catalog."pg_shdepend";
-----
-populated
-t
+# sys_tables: pg_shdepend (🟡)
+statement ok
+SELECT * FROM pg_catalog."pg_shdepend" LIMIT 0;
 
 # sys_tables: pg_shdescription (🟡)
 statement ok
@@ -371,23 +323,17 @@ SELECT * FROM pg_catalog."pg_subscription" LIMIT 0;
 statement ok
 SELECT * FROM pg_catalog."pg_subscription_rel" LIMIT 0;
 
-# sys_tables: pg_tablespace (🟢)
-query
-SELECT count(*) > 0 AS populated FROM pg_catalog."pg_tablespace";
-----
-populated
-t
+# sys_tables: pg_tablespace (🟡)
+statement ok
+SELECT * FROM pg_catalog."pg_tablespace" LIMIT 0;
 
 # sys_tables: pg_transform (🟡)
 statement ok
 SELECT * FROM pg_catalog."pg_transform" LIMIT 0;
 
-# sys_tables: pg_trigger (🟢)
-query
-SELECT count(*) > 0 AS populated FROM pg_catalog."pg_trigger";
-----
-populated
-t
+# sys_tables: pg_trigger (🟡)
+statement ok
+SELECT * FROM pg_catalog."pg_trigger" LIMIT 0;
 
 # sys_tables: pg_ts_config (🟡)
 statement ok
@@ -444,19 +390,13 @@ SELECT * FROM pg_catalog."pg_cursors" LIMIT 0;
 statement ok
 SELECT * FROM pg_catalog."pg_file_settings" LIMIT 0;
 
-# sys_views: pg_group (🟢)
-query
-SELECT count(*) > 0 AS populated FROM pg_catalog."pg_group";
-----
-populated
-t
+# sys_views: pg_group (🟡)
+statement ok
+SELECT * FROM pg_catalog."pg_group" LIMIT 0;
 
-# sys_views: pg_hba_file_rules (🟢)
-query
-SELECT count(*) > 0 AS populated FROM pg_catalog."pg_hba_file_rules";
-----
-populated
-t
+# sys_views: pg_hba_file_rules (🟡)
+statement ok
+SELECT * FROM pg_catalog."pg_hba_file_rules" LIMIT 0;
 
 # sys_views: pg_ident_file_mappings (🟡)
 statement ok
@@ -501,12 +441,9 @@ SELECT * FROM pg_catalog."pg_replication_origin_status" LIMIT 0;
 statement ok
 SELECT * FROM pg_catalog."pg_replication_slots" LIMIT 0;
 
-# sys_views: pg_roles (🟢)
-query
-SELECT count(*) > 0 AS populated FROM pg_catalog."pg_roles";
-----
-populated
-t
+# sys_views: pg_roles (🟡)
+statement ok
+SELECT * FROM pg_catalog."pg_roles" LIMIT 0;
 
 # sys_views: pg_rules (🟡)
 statement ok
@@ -516,12 +453,9 @@ SELECT * FROM pg_catalog."pg_rules" LIMIT 0;
 statement ok
 SELECT * FROM pg_catalog."pg_seclabels" LIMIT 0;
 
-# sys_views: pg_sequences (🟢)
-query
-SELECT count(*) > 0 AS populated FROM pg_catalog."pg_sequences";
-----
-populated
-t
+# sys_views: pg_sequences (🟡)
+statement ok
+SELECT * FROM pg_catalog."pg_sequences" LIMIT 0;
 
 # sys_views: pg_settings (🟢)
 query
@@ -530,12 +464,9 @@ SELECT count(*) > 0 AS populated FROM pg_catalog."pg_settings";
 populated
 t
 
-# sys_views: pg_shadow (🟢)
-query
-SELECT count(*) > 0 AS populated FROM pg_catalog."pg_shadow";
-----
-populated
-t
+# sys_views: pg_shadow (🟡)
+statement ok
+SELECT * FROM pg_catalog."pg_shadow" LIMIT 0;
 
 # sys_views: pg_shmem_allocations (🟡)
 statement ok
@@ -568,12 +499,9 @@ SELECT * FROM pg_catalog."pg_timezone_abbrevs" LIMIT 0;
 statement ok
 SELECT * FROM pg_catalog."pg_timezone_names" LIMIT 0;
 
-# sys_views: pg_user (🟢)
-query
-SELECT count(*) > 0 AS populated FROM pg_catalog."pg_user";
-----
-populated
-t
+# sys_views: pg_user (🟡)
+statement ok
+SELECT * FROM pg_catalog."pg_user" LIMIT 0;
 
 # sys_views: pg_user_mappings (🟡)
 statement ok
@@ -586,34 +514,25 @@ SELECT count(*) > 0 AS populated FROM pg_catalog."pg_views";
 populated
 t
 
-# sys_infoschema: information_schema_catalog_name (🟢)
-query
-SELECT count(*) > 0 AS populated FROM information_schema."information_schema_catalog_name";
-----
-populated
-t
+# sys_infoschema: information_schema_catalog_name (🟡)
+statement ok
+SELECT * FROM information_schema."information_schema_catalog_name" LIMIT 0;
 
 # sys_infoschema: administrable_role_authorizations (🟡)
 statement ok
 SELECT * FROM information_schema."administrable_role_authorizations" LIMIT 0;
 
-# sys_infoschema: applicable_roles (🟢)
-query
-SELECT count(*) > 0 AS populated FROM information_schema."applicable_roles";
-----
-populated
-t
+# sys_infoschema: applicable_roles (🟡)
+statement ok
+SELECT * FROM information_schema."applicable_roles" LIMIT 0;
 
 # sys_infoschema: attributes (🟡)
 statement ok
 SELECT * FROM information_schema."attributes" LIMIT 0;
 
-# sys_infoschema: character_sets (🟢)
-query
-SELECT count(*) > 0 AS populated FROM information_schema."character_sets";
-----
-populated
-t
+# sys_infoschema: character_sets (🟡)
+statement ok
+SELECT * FROM information_schema."character_sets" LIMIT 0;
 
 # sys_infoschema: check_constraint_routine_usage (🟡)
 statement ok
@@ -692,33 +611,21 @@ t
 statement ok
 SELECT * FROM information_schema."domain_constraints" LIMIT 0;
 
-# sys_infoschema: domain_udt_usage (🟢)
-query
-SELECT count(*) > 0 AS populated FROM information_schema."domain_udt_usage";
-----
-populated
-t
+# sys_infoschema: domain_udt_usage (🟡)
+statement ok
+SELECT * FROM information_schema."domain_udt_usage" LIMIT 0;
 
-# sys_infoschema: domains (🟢)
-query
-SELECT count(*) > 0 AS populated FROM information_schema."domains";
-----
-populated
-t
+# sys_infoschema: domains (🟡)
+statement ok
+SELECT * FROM information_schema."domains" LIMIT 0;
 
-# sys_infoschema: element_types (🟢)
-query
-SELECT count(*) > 0 AS populated FROM information_schema."element_types";
-----
-populated
-t
+# sys_infoschema: element_types (🟡)
+statement ok
+SELECT * FROM information_schema."element_types" LIMIT 0;
 
-# sys_infoschema: enabled_roles (🟢)
-query
-SELECT count(*) > 0 AS populated FROM information_schema."enabled_roles";
-----
-populated
-t
+# sys_infoschema: enabled_roles (🟡)
+statement ok
+SELECT * FROM information_schema."enabled_roles" LIMIT 0;
 
 # sys_infoschema: foreign_data_wrapper_options (🟡)
 statement ok
@@ -751,19 +658,13 @@ SELECT count(*) > 0 AS populated FROM information_schema."key_column_usage";
 populated
 t
 
-# sys_infoschema: parameters (🟢)
-query
-SELECT count(*) > 0 AS populated FROM information_schema."parameters";
-----
-populated
-t
+# sys_infoschema: parameters (🟡)
+statement ok
+SELECT * FROM information_schema."parameters" LIMIT 0;
 
-# sys_infoschema: referential_constraints (🟢)
-query
-SELECT count(*) > 0 AS populated FROM information_schema."referential_constraints";
-----
-populated
-t
+# sys_infoschema: referential_constraints (🟡)
+statement ok
+SELECT * FROM information_schema."referential_constraints" LIMIT 0;
 
 # sys_infoschema: role_column_grants (🟢)
 query
@@ -772,12 +673,9 @@ SELECT count(*) > 0 AS populated FROM information_schema."role_column_grants";
 populated
 t
 
-# sys_infoschema: role_routine_grants (🟢)
-query
-SELECT count(*) > 0 AS populated FROM information_schema."role_routine_grants";
-----
-populated
-t
+# sys_infoschema: role_routine_grants (🟡)
+statement ok
+SELECT * FROM information_schema."role_routine_grants" LIMIT 0;
 
 # sys_infoschema: role_table_grants (🟢)
 query
@@ -790,23 +688,17 @@ t
 statement ok
 SELECT * FROM information_schema."role_udt_grants" LIMIT 0;
 
-# sys_infoschema: role_usage_grants (🟢)
-query
-SELECT count(*) > 0 AS populated FROM information_schema."role_usage_grants";
-----
-populated
-t
+# sys_infoschema: role_usage_grants (🟡)
+statement ok
+SELECT * FROM information_schema."role_usage_grants" LIMIT 0;
 
 # sys_infoschema: routine_column_usage (🟡)
 statement ok
 SELECT * FROM information_schema."routine_column_usage" LIMIT 0;
 
-# sys_infoschema: routine_privileges (🟢)
-query
-SELECT count(*) > 0 AS populated FROM information_schema."routine_privileges";
-----
-populated
-t
+# sys_infoschema: routine_privileges (🟡)
+statement ok
+SELECT * FROM information_schema."routine_privileges" LIMIT 0;
 
 # sys_infoschema: routine_routine_usage (🟡)
 statement ok
@@ -820,12 +712,9 @@ SELECT * FROM information_schema."routine_sequence_usage" LIMIT 0;
 statement ok
 SELECT * FROM information_schema."routine_table_usage" LIMIT 0;
 
-# sys_infoschema: routines (🟢)
-query
-SELECT count(*) > 0 AS populated FROM information_schema."routines";
-----
-populated
-t
+# sys_infoschema: routines (🟡)
+statement ok
+SELECT * FROM information_schema."routines" LIMIT 0;
 
 # sys_infoschema: schemata (🟢)
 query
@@ -834,37 +723,25 @@ SELECT count(*) > 0 AS populated FROM information_schema."schemata";
 populated
 t
 
-# sys_infoschema: sequences (🟢)
-query
-SELECT count(*) > 0 AS populated FROM information_schema."sequences";
-----
-populated
-t
+# sys_infoschema: sequences (🟡)
+statement ok
+SELECT * FROM information_schema."sequences" LIMIT 0;
 
 # sys_infoschema: sql_features (🟡)
 statement ok
 SELECT * FROM information_schema."sql_features" LIMIT 0;
 
-# sys_infoschema: sql_implementation_info (🟢)
-query
-SELECT count(*) > 0 AS populated FROM information_schema."sql_implementation_info";
-----
-populated
-t
+# sys_infoschema: sql_implementation_info (🟡)
+statement ok
+SELECT * FROM information_schema."sql_implementation_info" LIMIT 0;
 
-# sys_infoschema: sql_parts (🟢)
-query
-SELECT count(*) > 0 AS populated FROM information_schema."sql_parts";
-----
-populated
-t
+# sys_infoschema: sql_parts (🟡)
+statement ok
+SELECT * FROM information_schema."sql_parts" LIMIT 0;
 
-# sys_infoschema: sql_sizing (🟢)
-query
-SELECT count(*) > 0 AS populated FROM information_schema."sql_sizing";
-----
-populated
-t
+# sys_infoschema: sql_sizing (🟡)
+statement ok
+SELECT * FROM information_schema."sql_sizing" LIMIT 0;
 
 # sys_infoschema: table_constraints (🟢)
 query
@@ -895,23 +772,17 @@ SELECT * FROM information_schema."transforms" LIMIT 0;
 statement ok
 SELECT * FROM information_schema."triggered_update_columns" LIMIT 0;
 
-# sys_infoschema: triggers (🟢)
-query
-SELECT count(*) > 0 AS populated FROM information_schema."triggers";
-----
-populated
-t
+# sys_infoschema: triggers (🟡)
+statement ok
+SELECT * FROM information_schema."triggers" LIMIT 0;
 
 # sys_infoschema: udt_privileges (🟡)
 statement ok
 SELECT * FROM information_schema."udt_privileges" LIMIT 0;
 
-# sys_infoschema: usage_privileges (🟢)
-query
-SELECT count(*) > 0 AS populated FROM information_schema."usage_privileges";
-----
-populated
-t
+# sys_infoschema: usage_privileges (🟡)
+statement ok
+SELECT * FROM information_schema."usage_privileges" LIMIT 0;
 
 # sys_infoschema: user_defined_types (🟡)
 statement ok
@@ -933,12 +804,9 @@ SELECT * FROM information_schema."view_column_usage" LIMIT 0;
 statement ok
 SELECT * FROM information_schema."view_routine_usage" LIMIT 0;
 
-# sys_infoschema: view_table_usage (🟢)
-query
-SELECT count(*) > 0 AS populated FROM information_schema."view_table_usage";
-----
-populated
-t
+# sys_infoschema: view_table_usage (🟡)
+statement ok
+SELECT * FROM information_schema."view_table_usage" LIMIT 0;
 
 # sys_infoschema: views (🟢)
 query

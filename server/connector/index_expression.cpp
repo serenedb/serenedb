@@ -189,4 +189,59 @@ void RejectJsonObjectArrayLeaves(const duckdb::Vector& result,
   }
 }
 
+namespace {
+
+// A resolver seeded with the chunk's own bindings, so a persisted expression's
+// catalog-stable column refs become chunk offsets.
+class ChunkBindingResolver final : public duckdb::ColumnBindingResolver {
+ public:
+  ChunkBindingResolver(duckdb::vector<duckdb::ColumnBinding> b,
+                       duckdb::vector<duckdb::LogicalType> t) {
+    bindings = std::move(b);
+    types = std::move(t);
+  }
+  void Resolve(duckdb::unique_ptr<duckdb::Expression>& expr) {
+    VisitExpression(&expr);
+  }
+};
+
+}  // namespace
+
+duckdb::Vector EvaluateExprOverChunk(
+  const duckdb::Expression& bound_expr, duckdb::DataChunk& chunk,
+  ObjectId table_id, std::span<const catalog::ColumnId> slot_to_col_id,
+  duckdb::ClientContext& context, bool is_geojson) {
+  auto resolved =
+    ResolveBoundColumnRefsForChunk(bound_expr, chunk, table_id, slot_to_col_id);
+  const auto num_rows = chunk.size();
+  duckdb::Vector result(resolved->GetReturnType(), num_rows);
+  duckdb::ExpressionExecutor executor(context, *resolved);
+  executor.ExecuteExpression(chunk, result);
+  if (!is_geojson) {
+    RejectJsonObjectArrayLeaves(result, num_rows);
+  }
+  return result;
+}
+
+duckdb::unique_ptr<duckdb::Expression> ResolveBoundColumnRefsForChunk(
+  const duckdb::Expression& expr, const duckdb::DataChunk& chunk,
+  ObjectId table_id, std::span<const catalog::ColumnId> slot_to_col_id) {
+  duckdb::vector<duckdb::ColumnBinding> bindings;
+  duckdb::vector<duckdb::LogicalType> types;
+  SDB_ASSERT(chunk.ColumnCount() >= slot_to_col_id.size());
+  const auto count = slot_to_col_id.size();
+  bindings.reserve(count);
+  types.reserve(count);
+  for (duckdb::idx_t slot = 0; slot < count; ++slot) {
+    bindings.emplace_back(duckdb::TableIndex(table_id.id()),
+                          duckdb::ProjectionIndex(
+                            static_cast<duckdb::idx_t>(slot_to_col_id[slot])));
+    types.push_back(chunk.data[slot].GetType());
+  }
+  ChunkBindingResolver resolver(std::move(bindings), std::move(types));
+  auto copy = expr.Copy();
+  resolver.Resolve(copy);
+  return copy;
+}
+
 }  // namespace sdb::connector

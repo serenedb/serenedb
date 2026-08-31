@@ -128,7 +128,19 @@ void InitInvertedIndexes() {
     };
     std::vector<RecoveringIndex> indexes;
     for (const auto* index : catalog::DatabaseInvertedIndexes(nullptr, db_id)) {
-      indexes.push_back({index->GetInvertedData(), index->GetRelationId()});
+      auto inv_storage = index->GetInvertedData();
+      if (!inv_storage) {
+        // The only storage-less inverted index is one on a Search table: its
+        // terms live in the table's own store, so there is no separate delta
+        // to bind or recover here.
+        SDB_ASSERT([&] {
+          const auto* relation = catalog::FindIn<catalog::SereneDBTableEntry>(
+            nullptr, db_id, index->GetRelationId());
+          return relation != nullptr && relation->IsSearchTable();
+        }());
+        continue;
+      }
+      indexes.push_back({std::move(inv_storage), index->GetRelationId()});
     }
     for (auto& [inv_storage, relation_id] : indexes) {
       SDB_ASSERT(inv_storage);

@@ -1,0 +1,27 @@
+# ThreadSanitizer suppressions for tests/stress ONLY.
+#
+# This is resources/suppressions/tsan.txt with the #930 catalog block removed, so
+# the lock-order inversions across the catalog's locks are REPORTED here instead of
+# silenced. That block is the open workstream tsan.txt itself describes as "NOT
+# proven harmless ... Suppressed, NOT fixed", and with it loaded a stress run over
+# concurrent DDL reports nothing at all -- measured, not assumed.
+#
+# Keep in sync with tsan.txt for everything that is genuinely upstream or genuinely
+# a false positive. The whole point of this file is that the catalog entries are
+# absent; do not copy them back.
+
+# alloc in signal handler stack trace here:
+signal:sdb::app::AppServer::wait
+
+# Because we call Begin() SwitchFlushContext() Commit()
+deadlock:SwitchFlushContext
+deadlock:irs::IndexWriter::Finish
+
+# Upstream, in duckdb's own parallel scan of a tuple-data collection: several
+# threads reach TupleDataAllocator through TupleDataCollection::FetchChunk and
+# write the chunk state without holding the pin state's lock for it.
+race:duckdb::TupleDataAllocator::InitializeChunkStateInternal
+
+# Upstream, in the httpfs extension: parallel range requests on one handle each
+# call AddHandleHeaders, which mutates the handle's shared HTTPFSParams.
+race:duckdb::AddHandleHeaders

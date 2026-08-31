@@ -65,15 +65,16 @@ namespace {
 // version that starts using the 200s for CreateIndexInfo cannot collide.
 constexpr duckdb::field_id_t kRelationIdField = 300;
 constexpr duckdb::field_id_t kInvertedField = 301;
-// Whether the inverted payload's columns carry their own term field_ids (a
-// Search-table index). Written only when true, so a transactional record keeps
-// exactly the bytes it had before search tables existed.
-constexpr duckdb::field_id_t kColumnTermFieldsField = 306;
 constexpr duckdb::field_id_t kPayloadField = 302;
 constexpr duckdb::field_id_t kIdField = 303;
 constexpr duckdb::field_id_t kSchemaIdField = 304;
 constexpr duckdb::field_id_t kKeyColumnsField = 305;
 constexpr duckdb::field_id_t kReferencedColumnsField = 306;
+// Whether the inverted payload's columns carry their own term field_ids (a
+// Search-table index). Written only when true, so a transactional record keeps
+// exactly the bytes it had before search tables existed. Read before the
+// payload, since it selects the payload's layout.
+constexpr duckdb::field_id_t kColumnTermFieldsField = 307;
 
 duckdb::vector<uint64_t> RawIds(const std::vector<ColumnId>& ids) {
   duckdb::vector<uint64_t> out;

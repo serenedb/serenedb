@@ -93,12 +93,15 @@ def main(argv=None):
     ap.add_argument("--outdir", default=os.path.join(REPO, "out", "stress"))
     ap.add_argument("--junit")
     ap.add_argument("--restarts", type=int)
+    ap.add_argument("--parks", type=int)
+    ap.add_argument("--graceful-restarts", type=int, dest="graceful_restarts")
     ap.add_argument("--keep-datadir", action="store_true")
     args = ap.parse_args(argv)
 
     profile = config.resolve(args.profile, scenario=args.scenario,
                              seconds=args.seconds, workers=args.workers,
-                             restarts=args.restarts)
+                             restarts=args.restarts, parks=args.parks,
+                             graceful_restarts=args.graceful_restarts)
     seed = args.seed if args.seed is not None else random.SystemRandom().randrange(1 << 30)
     run_tag = base36(seed)
     outdir = pathlib.Path(args.outdir)
@@ -149,6 +152,7 @@ def main(argv=None):
     findings_lock = threading.Lock()
     stop_event = threading.Event()
     pause_event = threading.Event()
+    planned_downtime = threading.Event()
 
     defined = faults_mod.source_defined_faults(REPO) if info["fault_injection"] else {}
     broker = faults_mod.FaultBroker(
@@ -162,7 +166,7 @@ def main(argv=None):
 
     workers = [
         Worker(i, dsn, profile, run_tag, seed, jrnl, broker, stop_event,
-               pause_event, findings, findings_lock)
+               pause_event, findings, findings_lock, planned_downtime)
         for i in range(profile.workers)
     ]
     dog = Watchdog(dsn, profile, workers, server, stop_event)
@@ -171,9 +175,15 @@ def main(argv=None):
     post_crash = []
 
     def after_recovery(fault_name):
+        # Oracle first: it is what collapses each ambiguous key onto the state
+        # reality settled on. Resyncing before that would throw away every key
+        # the crash left ambiguous, even the ones that survived.
         found = run_oracle(workers, pause_event, dsn, run_tag, server.datadir,
                            oid_registry, f"after-crash:{fault_name}",
                            abort_if=lambda: dog.verdict != ALIVE)
+        resynced = [w.state.resync_from(w.model) for w in workers]
+        print(f"[stress] resynced worker state after {fault_name}: "
+              f"{resynced} live keys per worker")
         for f in found:
             f["after_injected_crash"] = fault_name
         post_crash.extend(found)
@@ -182,8 +192,14 @@ def main(argv=None):
 
     chaos = chaos_mod.Chaos(server, broker, dog, profile,
                             __import__("rng").derive(seed, 9999),
-                            findings, findings_lock, on_recovered=after_recovery)
+                            findings, findings_lock, on_recovered=after_recovery,
+                            planned_downtime=planned_downtime)
+    def committed_now():
+        return sum(w.status.committed for w in workers)
+
     want_crashes = profile.restarts if chaos.available() else 0
+    want_parks = profile.parks if chaos.available() else 0
+    want_graceful = profile.graceful_restarts
     if profile.restarts and not chaos.available():
         print("[stress] restarts requested but fault injection is unavailable; "
               "skipping chaos")
@@ -198,15 +214,33 @@ def main(argv=None):
     last_mark = time.monotonic()
     deadline = time.monotonic() + profile.seconds
     next_quiesce = time.monotonic() + profile.quiesce_every
-    crash_at = []
-    if want_crashes:
-        step = profile.seconds / (want_crashes + 1.0)
-        crash_at = [time.monotonic() + step * (i + 1) for i in range(want_crashes)]
+    def schedule(n, offset=0.0):
+        if not n:
+            return []
+        step = profile.seconds / (n + 1.0)
+        return [time.monotonic() + step * (i + 1) + offset for i in range(n)]
+
+    crash_at = schedule(want_crashes)
+    park_at = schedule(want_parks, offset=profile.seconds / 8.0)
+    graceful_at = schedule(want_graceful, offset=profile.seconds / 5.0)
     try:
         while time.monotonic() < deadline:
             if dog.verdict != ALIVE:
                 break
             time.sleep(0.2)
+            if park_at and time.monotonic() >= park_at[0]:
+                park_at.pop(0)
+                chaos.result.parks += 1
+                print(f"[stress] chaos: parking an index build "
+                      f"({chaos.result.parks}/{want_parks})")
+                chaos.park_and_probe(committed_now)
+                continue
+            if graceful_at and time.monotonic() >= graceful_at[0]:
+                graceful_at.pop(0)
+                print("[stress] chaos: graceful SIGTERM restart")
+                chaos.graceful_restart()
+                next_quiesce = time.monotonic() + profile.quiesce_every
+                continue
             if crash_at and time.monotonic() >= crash_at[0]:
                 crash_at.pop(0)
                 print(f"[stress] chaos: injecting a catalog-window crash "
@@ -256,10 +290,15 @@ def main(argv=None):
     attempted = set()
     for w in workers:
         attempted |= set(w.op_kinds)
+    labels_now = {}
+    for w in workers:
+        for k, v in w.labels.items():
+            labels_now[k] = labels_now.get(k, 0) + v
     cov_data, cov_findings = coverage_mod.report(
         profile.scenario, attempted, windows, defined,
-        chaos.result.faults_used if want_crashes else (),
-        total_committed, quiesces)
+        chaos.result.faults_used, total_committed, quiesces,
+        labels=labels_now,
+        conflict_ceiling=config.conflict_ceiling_for(profile, profile.scenario))
 
     with findings_lock:
         findings.extend(cov_findings)
@@ -308,7 +347,8 @@ def main(argv=None):
         "labels": labels, "elapsed_s": round(elapsed, 1),
         "build_config": info.get("server_version"),
         "fault_injection": info.get("fault_injection"),
-        "chaos": chaos.result.as_dict() if want_crashes else None,
+        "chaos": (chaos.result.as_dict()
+                  if (want_crashes or want_parks or want_graceful) else None),
         "coverage": cov_data,
         "quarantined": quarantined,
         "quarantine_entries": [e.as_dict() for e in entries],
@@ -323,7 +363,7 @@ def main(argv=None):
     if quarantined:
         print(f"[stress] {len(quarantined)} finding(s) quarantined: "
               f"{sorted({q['quarantined_by'] for q in quarantined})}")
-    if want_crashes:
+    if want_crashes or want_parks or want_graceful:
         cr = chaos.result
         print(f"[stress] chaos: crashes {cr.crashes_observed}/{cr.crashes_attempted} "
               f"observed, restarts_ok={cr.restarts_ok}, "

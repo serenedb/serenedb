@@ -66,6 +66,7 @@ class Classification:
 EXPECTED_LABELS = frozenset({
     "ok",
     "injected_crash",
+    "planned_restart",
     "concurrent_ddl_conflict",
     "engine_transaction_conflict",
     "object_in_use",
@@ -107,13 +108,16 @@ def has_crash_fault(faults_armed):
 
 
 def classify(sqlstate, message="", op_kind="", key_scope="private",
-             faults_armed=(), dead_connection=False, cancel_requested=False):
+             faults_armed=(), dead_connection=False, cancel_requested=False,
+             planned_downtime=False):
     msg = message or ""
     shared = key_scope == "shared"
 
     if dead_connection:
         if has_crash_fault(faults_armed):
             return _expected("injected_crash")
+        if planned_downtime:
+            return _expected("planned_restart")
         return _finding("unexpected_connection_loss")
 
     if sqlstate is None:

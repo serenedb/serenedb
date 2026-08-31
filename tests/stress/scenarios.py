@@ -18,18 +18,22 @@ class WorkerState:
         for key, _token in op.creates:
             kind = key[0]
             if kind == ops.TABLE:
-                self.tables.append(key)
+                if key not in self.tables:
+                    self.tables.append(key)
                 self.rows[key] = set(op.rows_added)
                 if op.kind == "create_table_serial":
                     self.serial.add(key)
             elif kind == ops.SEQUENCE:
-                self.sequences.append(key)
+                if key not in self.sequences:
+                    self.sequences.append(key)
             elif kind == ops.VIEW:
-                self.views.append(key)
+                if key not in self.views:
+                    self.views.append(key)
                 if op.needs:
                     self.parent[key] = op.needs[0]
             elif kind == ops.INDEX:
-                self.indexes.append(key)
+                if key not in self.indexes:
+                    self.indexes.append(key)
                 if op.needs:
                     self.parent[key] = op.needs[0]
 
@@ -54,6 +58,22 @@ class WorkerState:
             self.serial.discard(key)
             self.parent.pop(key, None)
             self.rows.pop(key, None)
+
+    def resync_from(self, model):
+        present = model.expected_present()
+        self.tables = [k for k in present if k[0] == ops.TABLE]
+        self.sequences = [k for k in present if k[0] == ops.SEQUENCE]
+        self.views = [k for k in present if k[0] == ops.VIEW]
+        self.indexes = [k for k in present if k[0] == ops.INDEX]
+        live = set(present)
+        self.serial = {k for k in self.serial if k in live}
+        self.parent = {k: v for k, v in self.parent.items()
+                       if k in live and v in live}
+        self.rows = {}
+        for key, state in present.items():
+            if key[0] == ops.TABLE:
+                self.rows[key] = set(getattr(state, "rows", ()) or ())
+        return len(live)
 
     def dependents_of(self, table_key):
         return [k for k, parent in self.parent.items() if parent == table_key]
@@ -118,6 +138,37 @@ def pick_ddl_dml_race(rng, st):
         choices.append(("drop_index", 4))
     choices.append(("catalog_read", 2))
     return _build(rng, st, rng.weighted(choices))
+
+
+def pick_name_reuse(rng, st):
+    slot = rng.below(4)
+    name = st.names.pool("rt", slot)
+    key = ops.key_of(ops.TABLE, name)
+    live = key in st.tables
+    if live and rng.fraction() < 0.55:
+        return ops.drop_table_named(name)
+    if not live:
+        return ops.create_table_named(st.names, name,
+                                      serial=rng.fraction() < 0.4)
+    if st.tables:
+        return _reuse_side(rng, st)
+    return ops.catalog_read()
+
+
+def _reuse_side(rng, st):
+    key = rng.choice(st.tables)
+    if rng.fraction() < 0.6:
+        return ops.dml_insert(st.names, key, st.has_serial(key))
+    return ops.read_table(key)
+
+
+def pick_shared_arena(rng, st):
+    slot = rng.below(st.names.arena_size)
+    name = st.names.shared("sh", slot)
+    key = ops.key_of(ops.TABLE, name)
+    if rng.fraction() < 0.5:
+        return ops.create_table_named(st.names, name, scope="shared")
+    return ops.drop_table_named(name, scope="shared")
 
 
 def pick_tables_only(rng, st):
@@ -199,6 +250,8 @@ SCENARIOS = {
     "serial_churn": pick_serial_churn,
     "dependency_churn": pick_dependency_churn,
     "tables_only": pick_tables_only,
+    "name_reuse": pick_name_reuse,
+    "shared_arena": pick_shared_arena,
 }
 
 

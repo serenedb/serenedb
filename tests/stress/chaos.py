@@ -21,6 +21,8 @@ class ChaosResult:
         self.restarts_ok = 0
         self.restart_failures = []
         self.aborts_injected = 0
+        self.restarts_attempted = 0
+        self.parks = 0
         self.faults_used = []
         self.timeline = []
 
@@ -31,6 +33,8 @@ class ChaosResult:
             "restarts_ok": self.restarts_ok,
             "restart_failures": self.restart_failures,
             "aborts_injected": self.aborts_injected,
+            "restarts_attempted": self.restarts_attempted,
+            "parks": self.parks,
             "faults_used": self.faults_used,
             "timeline": self.timeline[-40:],
         }
@@ -38,7 +42,7 @@ class ChaosResult:
 
 class Chaos:
     def __init__(self, server, broker, watchdog, profile, rng, findings, findings_lock,
-                 on_recovered=None):
+                 on_recovered=None, planned_downtime=None):
         self.server = server
         self.broker = broker
         self.watchdog = watchdog
@@ -47,6 +51,7 @@ class Chaos:
         self.findings = findings
         self.findings_lock = findings_lock
         self.on_recovered = on_recovered
+        self.planned_downtime = planned_downtime or threading.Event()
         self.result = ChaosResult()
         self._lock = threading.Lock()
 
@@ -73,11 +78,87 @@ class Chaos:
         except Exception:
             pass
 
+    def park_and_probe(self, progress_of, seconds=8.0):
+        name = faults_mod.PAUSE_CREATE_INDEX_MID_BUILD_FAULT
+        before = progress_of()
+        try:
+            self.broker.arm(name)
+        except Exception as exc:
+            self._finding("chaos_arm_failed", f"{name}: {exc}")
+            return False
+        self.result.faults_used.append(name)
+        alive_during = True
+        try:
+            time.sleep(seconds / 2.0)
+            alive_during = self.watchdog.probe_once()
+            time.sleep(seconds / 2.0)
+            during = progress_of()
+        finally:
+            try:
+                self.broker.disarm(name)
+            except Exception:
+                pass
+        gained = during - before
+        self.result.timeline.append({
+            "fault": name, "outcome": "parked",
+            "committed_while_parked": gained, "alive_while_parked": alive_during})
+        if not alive_during:
+            self._finding(
+                "no_liveness_while_a_build_was_parked",
+                f"a fresh connection could not run SELECT 1 while {name} was armed; "
+                "a parked index build must not take the server with it")
+            return False
+        if gained == 0:
+            self._finding(
+                "no_progress_while_a_build_was_parked",
+                f"no worker committed anything during {seconds:.0f}s with {name} "
+                "armed; a parked build must not block unrelated work")
+            return False
+        return True
+
+    def graceful_restart(self, timeout=120.0):
+        with self._lock:
+            t0 = time.monotonic()
+            self.watchdog.expect_death.set()
+            self.planned_downtime.set()
+            self.result.restarts_attempted = getattr(
+                self.result, "restarts_attempted", 0) + 1
+            rc = self.server.graceful_stop(timeout=timeout)
+            if rc is None:
+                self.watchdog.expect_death.clear()
+                self._finding(
+                    "graceful_shutdown_did_not_finish",
+                    f"SIGTERM did not bring serened down within {timeout:.0f}s; the "
+                    "shutdown checkpoint path is stuck")
+                return False
+            self.broker.forget_all()
+            try:
+                self.server.start()
+                self.result.restarts_ok += 1
+                self.result.timeline.append({
+                    "fault": None, "outcome": "graceful_restart",
+                    "exit_code": rc, "generation": self.server.generation,
+                    "after_s": round(time.monotonic() - t0, 1)})
+                ok = True
+            except Exception as exc:
+                self.result.restart_failures.append(f"graceful: {exc}"[:300])
+                self._finding(
+                    "restart_after_graceful_shutdown_failed",
+                    f"serened did not come back after a clean SIGTERM: {exc}"[:300])
+                ok = False
+            finally:
+                self.watchdog.expect_death.clear()
+            if ok and self.on_recovered is not None:
+                self.on_recovered("graceful_restart")
+            self.planned_downtime.clear()
+            return ok
+
     def crash_and_restart(self, timeout=90.0):
         with self._lock:
             name = self.rng.choice(CATALOG_WINDOW_FAULTS)
             t0 = time.monotonic()
             self.watchdog.expect_death.set()
+            self.planned_downtime.set()
             self.result.crashes_attempted += 1
             self.result.faults_used.append(name)
             try:
@@ -101,6 +182,7 @@ class Chaos:
                 except Exception:
                     pass
                 self.watchdog.expect_death.clear()
+                self.planned_downtime.clear()
                 # A crash fault that never fires means the commit path was never
                 # reached. The ordinary reason is that the server is already
                 # wedged, and expect_death has been masking the watchdog's own
@@ -145,4 +227,5 @@ class Chaos:
 
             if ok and self.on_recovered is not None:
                 self.on_recovered(name)
+            self.planned_downtime.clear()
             return ok

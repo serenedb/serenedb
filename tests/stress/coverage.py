@@ -21,7 +21,7 @@ def reachable_op_kinds(scenario, iterations=PROBE_ITERATIONS, seed=1):
 
 
 def report(scenario, attempted_kinds, windows, faults_available, faults_used,
-           committed, quiesces):
+           committed, quiesces, labels=None, conflict_ceiling=None):
     reachable = reachable_op_kinds(scenario)
     never = sorted(reachable - set(attempted_kinds))
     unexpected = sorted(set(attempted_kinds) - reachable)
@@ -53,6 +53,14 @@ def report(scenario, attempted_kinds, windows, faults_available, faults_used,
         "faults_used": sorted(set(faults_used or ())),
     }
 
+    labels = labels or {}
+    attempts = sum(labels.values())
+    conflicts = sum(v for k, v in labels.items()
+                    if k in ("concurrent_ddl_conflict", "engine_transaction_conflict"))
+    conflict_rate = (conflicts / attempts) if attempts else 0.0
+    data["conflict_rate"] = round(conflict_rate, 4)
+    data["conflict_ceiling"] = conflict_ceiling
+
     findings = []
     if never:
         findings.append({
@@ -81,6 +89,18 @@ def report(scenario, attempted_kinds, windows, faults_available, faults_used,
                       f"across windows of at least {MIN_WINDOW_SECONDS}s.",
             "candidates": None, "observed": round(last_rate, 1),
         })
+    if conflict_ceiling is not None and attempts >= 200 \
+            and conflict_rate > conflict_ceiling:
+        findings.append({
+            "kind": "conflict_rate_above_ceiling",
+            "key": None,
+            "detail": f"{conflict_rate:.1%} of ops were refused as conflicts, over "
+                      f"the {conflict_ceiling:.0%} ceiling for '{scenario}'. Most "
+                      f"concurrent DDL turning into a conflict is the likeliest way "
+                      f"the optimistic catalog degrades, and it would otherwise show "
+                      f"up only as a number nobody diffs.",
+            "candidates": None, "observed": round(conflict_rate, 4),
+        })
     return data, findings
 
 
@@ -96,6 +116,9 @@ def render(data):
                  f"/{len(data['op_kinds_reachable'])} reachable attempted")
     if data["op_kinds_never_attempted"]:
         lines.append(f"  NEVER attempted     {data['op_kinds_never_attempted']}")
+    if data.get("conflict_ceiling") is not None:
+        lines.append(f"  conflict rate       {data['conflict_rate']:.1%} "
+                     f"(ceiling {data['conflict_ceiling']:.0%})")
     lines.append(f"  fault points        {len(data['faults_used'])} used of "
                  f"{data['faults_available']} defined in the tree")
     if data["faults_used"]:

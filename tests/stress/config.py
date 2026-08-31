@@ -15,6 +15,9 @@ class Profile:
     freeze_sample_gap_s: float = 4.0
     faults_enabled: bool = False
     restarts: int = 0
+    parks: int = 0
+    graceful_restarts: int = 0
+    conflict_ceiling: float = 0.35
     max_retries: int = 5
     livelock_retry_limit: int = 20
     datadir_root: str = "/dev/shm"
@@ -26,7 +29,7 @@ PROFILES = {
     ),
     "soak": Profile(
         name="soak", seconds=900, workers=8, quiesce_every=60.0,
-        faults_enabled=True, restarts=3,
+        faults_enabled=True, restarts=3, parks=2, graceful_restarts=1,
     ),
     "soak-tsan": Profile(
         name="soak-tsan", seconds=900, workers=4, quiesce_every=90.0,
@@ -37,6 +40,16 @@ PROFILES = {
         quiesce_every=60.0,
     ),
 }
+
+
+SCENARIO_CONFLICT_CEILING = {
+    "shared_arena": 0.97,
+    "name_reuse": 0.60,
+}
+
+
+def conflict_ceiling_for(profile, scenario):
+    return SCENARIO_CONFLICT_CEILING.get(scenario, profile.conflict_ceiling)
 
 
 def resolve(name, **overrides):

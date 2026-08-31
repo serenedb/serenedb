@@ -129,3 +129,18 @@ def test_serialization_failure_is_an_operational_error_subclass():
         "worker._execute must not classify a connection loss by exception class; "
         "40001 arrives as an OperationalError subclass"
     )
+
+
+def test_a_connection_loss_during_a_planned_restart_is_expected():
+    c = classify(None, dead_connection=True, faults_armed=(), planned_downtime=True)
+    assert c.verdict is Verdict.EXPECTED
+    assert c.label == "planned_restart"
+
+
+def test_planned_downtime_does_not_excuse_an_ordinary_error():
+    c = classify("53200", "out of memory", planned_downtime=True)
+    assert c.verdict is Verdict.FINDING
+    assert c.label == "unclassified", (
+        "a planned restart window must excuse a dropped connection, not every "
+        "error that happens to arrive during it"
+    )

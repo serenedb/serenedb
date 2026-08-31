@@ -153,6 +153,12 @@ class Serened:
         if self.running():
             os.kill(self.proc.pid, sig)
 
+    def graceful_stop(self, timeout=90):
+        if not self.running():
+            return self.last_exit
+        self.signal(signal.SIGTERM)
+        return self.wait_exit(timeout=timeout)
+
     def abort(self):
         self.signal(signal.SIGABRT)
         return self.wait_exit(timeout=60)

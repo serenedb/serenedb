@@ -28,7 +28,8 @@ class WorkerStatus:
 
 class Worker(threading.Thread):
     def __init__(self, worker_id, dsn, profile, run_tag, seed, journal, broker,
-                 stop_event, pause_event, findings, findings_lock):
+                 stop_event, pause_event, findings, findings_lock,
+                 planned_downtime=None):
         super().__init__(daemon=True, name=f"stress-w{worker_id}")
         self.worker_id = worker_id
         self.dsn = dsn
@@ -37,6 +38,7 @@ class Worker(threading.Thread):
         self.broker = broker
         self.stop_event = stop_event
         self.pause_event = pause_event
+        self.planned_downtime = planned_downtime
         self.findings = findings
         self.findings_lock = findings_lock
         self.model = Model()
@@ -80,13 +82,24 @@ class Worker(threading.Thread):
             self.conn = conn
 
     def _declare(self, op):
+        shared = op.scope == "shared"
         for key, _token in op.creates:
-            if not self.model.is_owned(key):
+            if self.model.is_owned(key) or self.model.is_shared(key):
+                continue
+            if shared:
+                self.model.declare_shared(key)
+            else:
                 self.model.declare_owned(key)
+        for key in list(op.drops) + list(op.cascade):
+            if shared and not self.model.is_owned(key) \
+                    and not self.model.is_shared(key):
+                self.model.declare_shared(key)
 
     def _scope_for(self, key):
         if key is None:
             return "private"
+        if self.model.is_shared(key):
+            return "shared"
         cands = self.model.candidates(key)
         if cands is not None and len(cands) > 1:
             return "shared"
@@ -169,6 +182,8 @@ class Worker(threading.Thread):
                     self.broker.armed() if self.broker else (),
                     dead_connection=dead,
                     cancel_requested=self.status.cancel_sent > 0,
+                    planned_downtime=bool(self.planned_downtime
+                                          and self.planned_downtime.is_set()),
                 )
                 self._bump(cls.label)
                 if cls.is_finding:

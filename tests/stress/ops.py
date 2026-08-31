@@ -36,8 +36,10 @@ class Op:
 
 
 class NameGen:
-    def __init__(self, run_tag, worker):
+    def __init__(self, run_tag, worker, arena=8):
+        self.run_tag = run_tag
         self.prefix = f"s{run_tag}_w{worker}"
+        self.arena_size = arena
         self._n = 0
 
     def fresh(self, what):
@@ -48,9 +50,35 @@ class NameGen:
         self._n += 1
         return f"{self.prefix}_tok{self._n}"
 
+    def pool(self, what, slot):
+        return f"{self.prefix}_{what}{slot}"
+
+    def shared(self, what, slot):
+        return f"s{self.run_tag}_w0_{what}{9000 + slot}"
+
 
 def key_of(kind, name):
     return (kind, name)
+
+
+def create_table_named(names, name, serial=False, scope="private"):
+    token = names.token()
+    col = "id SERIAL PRIMARY KEY" if serial else "id INT PRIMARY KEY"
+    guard = "IF NOT EXISTS " if scope == "shared" else ""
+    stmts = [
+        f"CREATE TABLE {guard}{name}({col}, v INT CHECK (v >= 0), label TEXT)",
+        f"COMMENT ON TABLE {name} IS '{token}'",
+    ]
+    return Op("recreate_table" if scope == "private" else "create_table_shared",
+              stmts, creates=[(key_of(TABLE, name), token)], token=token,
+              key=key_of(TABLE, name), scope=scope)
+
+
+def drop_table_named(name, scope="private"):
+    guard = "IF EXISTS " if scope == "shared" else ""
+    return Op("drop_table_shared" if scope == "shared" else "drop_table_reuse",
+              [f"DROP TABLE {guard}{name} CASCADE"],
+              drops=[key_of(TABLE, name)], key=key_of(TABLE, name), scope=scope)
 
 
 def create_table(names, serial=False):

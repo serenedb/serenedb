@@ -188,3 +188,30 @@ def test_present_equality_and_hashing_are_value_based():
     assert Present("t", {"a"}) != Present("t", {"b"})
     assert Present("t", {"a"}) != Present("u", {"a"})
     assert len({Present("t", {"a"}), Present("t", {"a"})}) == 1
+
+
+def test_resync_keeps_only_unambiguously_present_keys():
+    import sys
+    sys.path.insert(0, __import__("os").path.dirname(__file__))
+    import ops
+    import scenarios
+    from ops import NameGen
+
+    st = scenarios.WorkerState(NameGen("ab", 0))
+    m = Model()
+    live = ops.key_of(ops.TABLE, "sab_w0_t1")
+    gone = ops.key_of(ops.TABLE, "sab_w0_t2")
+    unsure = ops.key_of(ops.TABLE, "sab_w0_t3")
+    for k in (live, gone, unsure):
+        m.declare_owned(k)
+    m.apply_create(live, "tok1", Outcome.COMMITTED, rows={"r1"})
+    m.apply_create(gone, "tok2", Outcome.COMMITTED)
+    m.apply_drop(gone, Outcome.COMMITTED)
+    m.apply_create(unsure, "tok3", Outcome.UNKNOWN_CRASH)
+    st.tables = [live, gone, unsure]
+    st.rows = {live: {"stale"}, gone: set(), unsure: set()}
+
+    kept = st.resync_from(m)
+    assert st.tables == [live], "a dropped or ambiguous key must not stay targetable"
+    assert kept == 1
+    assert st.rows[live] == {"r1"}, "rows come back from the model, not the stale set"

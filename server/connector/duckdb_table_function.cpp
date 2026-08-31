@@ -60,20 +60,6 @@
 #include "search/inverted_index_storage.h"
 
 namespace sdb::connector {
-
-uint32_t ReadBoundedIntSetting(duckdb::ClientContext& context,
-                               std::string_view name, int32_t min_inclusive,
-                               uint32_t default_value) {
-  duckdb::Value v;
-  if (context.TryGetCurrentSetting(std::string{name}, v) && !v.IsNull()) {
-    const auto n = v.GetValue<int32_t>();
-    if (n >= min_inclusive) {
-      return static_cast<uint32_t>(n);
-    }
-  }
-  return default_value;
-}
-
 namespace {
 
 void CopyCommon(const SereneDBScanBindData& src, SereneDBScanBindData& dst) {
@@ -408,6 +394,7 @@ irs::Filter::ptr MakeVectorFilter(const VectorScorerOptions& vs,
   o->metric = vs.metric;
   o->quant = vs.quant;
   o->nprobe = vs.nprobe;
+  o->max_search_fanout = vs.max_search_fanout;
   o->inner = std::move(inner);
   return f;
 }

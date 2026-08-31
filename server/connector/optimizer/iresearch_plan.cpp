@@ -64,6 +64,7 @@
 #include "pg/errcodes.h"
 #include "pg/sql_exception_macro.h"
 #include "search/search_table.h"
+#include "query/config.h"
 
 namespace sdb::optimizer {
 
@@ -543,8 +544,12 @@ duckdb::unique_ptr<duckdb::Expression> PushdownScorerCall(
   return ref;
 }
 
-uint32_t ReadNprobe(duckdb::ClientContext& context) {
-  return connector::ReadBoundedIntSetting(context, "sdb_nprobe", 1, 1);
+uint32_t ReadSearchNprobe(duckdb::ClientContext& context) {
+  return ReadIntSetting(context, "sdb_ivf_search_nprobe");
+}
+
+uint32_t ReadMaxSearchFanout(duckdb::ClientContext& context) {
+  return ReadIntSetting(context, "sdb_ivf_max_search_fanout");
 }
 
 duckdb::unique_ptr<duckdb::Expression> PushdownDistanceCall(
@@ -617,7 +622,8 @@ duckdb::unique_ptr<duckdb::Expression> PushdownDistanceCall(
       .centroids_id = ann_info->centroids_id,
       .postings_id = ann_info->postings_id,
       .quant = ann_info->quant.kind,
-      .nprobe = ReadNprobe(context),
+      .nprobe = ReadSearchNprobe(context),
+      .max_search_fanout = ReadMaxSearchFanout(context),
     };
     ss.score_order = info.order;
   } else {

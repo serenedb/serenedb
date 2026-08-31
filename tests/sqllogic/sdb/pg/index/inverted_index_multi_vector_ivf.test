@@ -38,7 +38,7 @@ VACUUM (REFRESH_TABLE) mv;
 
 # Exhaustive scan so the tiny-table kNN is exact (nprobe >= nlist).
 statement ok
-SET sdb_nprobe = 256;
+SET sdb_ivf_search_nprobe = 256;
 
 # --- both columns reach the ANN scan with the right per-column metric/dims ----
 
@@ -224,7 +224,7 @@ count
 8
 
 statement ok
-RESET sdb_nprobe;
+RESET sdb_ivf_search_nprobe;
 
 # --- teardown ---------------------------------------------------------------
 

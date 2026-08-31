@@ -33,6 +33,7 @@ struct ByVectorSimilarityOptions : VectorFilterOptions {
   using FilterType = ByVectorSimilarity;
 
   uint32_t nprobe = 1;
+  uint32_t max_search_fanout = 16;
 
   bool operator==(const ByVectorSimilarityOptions& rhs) const noexcept =
     default;

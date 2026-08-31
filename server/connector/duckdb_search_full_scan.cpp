@@ -91,6 +91,7 @@
 #include "pg/connection_context.h"
 #include "pg/errcodes.h"
 #include "pg/sql_exception_macro.h"
+#include "query/config.h"
 #include "search/inverted_index_storage.h"
 
 namespace sdb::connector {
@@ -948,8 +949,8 @@ const irs::Filter& MatchAllFilter() {
   return kInstance;
 }
 
-uint32_t ReadRerankFactor(duckdb::ClientContext& context) {
-  return ReadBoundedIntSetting(context, "sdb_rerank_factor", 0, 4);
+double ReadRerankFactor(duckdb::ClientContext& context) {
+  return ReadDoubleSetting(context, "sdb_rerank_factor");
 }
 
 size_t CollectorPoolSize(const IResearchScanGlobalState& g,
@@ -1315,8 +1316,10 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> IResearchScanInitGlobal(
     if (ss.vector_scorer &&
         (ss.vector_scorer->quant != irs::VectorQuantization::None ||
          state->has_lookup_filter)) {
+      const auto k = static_cast<double>(*ss.score_top_k);
+      const double pool = std::ceil(ReadRerankFactor(context) * k);
       state->topk.rerank_pool =
-        ReadRerankFactor(context) * static_cast<uint32_t>(*ss.score_top_k);
+        pool == 0 ? 0 : static_cast<uint32_t>(std::max(pool, k));
     }
   } else if (state->mode == ScanMode::Stream) {
     // Streaming text-score pruning: a pushed dynamic TOP_N score boundary

@@ -35,7 +35,7 @@ statement ok
 CREATE INDEX jv_json_ivf ON jv_json USING inverted(emb ivf (metric = 'l2'))
 
 statement ok
-SET sdb_nprobe TO 512
+SET sdb_ivf_search_nprobe TO 512
 
 query
 SELECT count(*) FROM jv_json_ivf;

@@ -60,11 +60,11 @@ t	t	t	t	t
 # duckdb_tables / duckdb_views / duckdb_indexes: two nesting levels resolve.
 
 query
-SELECT (SELECT count(*) FROM sqlite_master) = (SELECT count(*) FROM sqlite_schema)
-  AS chained
+SELECT (SELECT count(*) FROM sqlite_master WHERE name = 'zebrafin_vault') AS master,
+       (SELECT count(*) FROM sqlite_schema WHERE name = 'zebrafin_vault') AS schema_
 ----
-chained
-t
+master	schema_
+1	1
 
 
 # The rows are the real catalog, not an empty stand-in.
@@ -80,11 +80,13 @@ table	zebrafin_vault
 # ride the same rule.
 
 query
-SELECT (SELECT count(*) FROM sdb_tables) = (SELECT count(*) FROM duckdb_tables)
-  AS aliased
+SELECT (SELECT count(*) FROM system.main.sdb_tables
+          WHERE table_name = 'zebrafin_vault') AS alias_rows,
+       (SELECT count(*) FROM system.main.duckdb_tables
+          WHERE table_name = 'zebrafin_vault') AS source_rows
 ----
-aliased
-t
+alias_rows	source_rows
+1	1
 
 
 # ---- none of it became readable by an unprivileged role ----
@@ -124,11 +126,13 @@ CREATE VIEW zebrafin_pub.w_owned AS SELECT id, secret FROM zebrafin_vault
 
 
 statement ok
-CREATE VIEW zebrafin_pub.w_source AS SELECT * FROM duckdb_tables
+CREATE VIEW zebrafin_pub.w_source AS
+SELECT * FROM system.main.duckdb_tables WHERE table_name = 'zebrafin_vault'
 
 
 statement ok
-CREATE VIEW zebrafin_pub.w_alias AS SELECT * FROM sdb_tables
+CREATE VIEW zebrafin_pub.w_alias AS
+SELECT * FROM system.main.sdb_tables WHERE table_name = 'zebrafin_vault'
 
 
 statement ok
@@ -168,12 +172,12 @@ visible
 connection c_clerk user=zebrafin_clerk password=zebrafin_clerk_pw
 query
 SELECT
-  (SELECT count(*) FROM zebrafin_pub.w_source)
-    = (SELECT count(*) FROM zebrafin_pub.w_alias) AS substitutable,
+  (SELECT count(*) FROM zebrafin_pub.w_source) AS source_rows,
+  (SELECT count(*) FROM zebrafin_pub.w_alias) AS alias_rows,
   (SELECT count(*) >= 0 FROM zebrafin_pub.w_sqlite) AS sqlite_wrapper
 ----
-substitutable	sqlite_wrapper
-t	t
+source_rows	alias_rows	sqlite_wrapper
+1	1	t
 
 
 # ---- no escalation: an unprivileged definer view is still its owner's ----

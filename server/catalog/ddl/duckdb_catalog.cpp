@@ -1368,19 +1368,11 @@ duckdb::PhysicalOperator& SereneDBCatalog::PlanDelete(
         table_entry.GetSearchData(), op.estimated_cardinality);
     }
 
-    // A Search table has no separate inverted indexes, so its scan appends only
-    // the PK virtuals (BuildRowIdColumns): [real..., pk_0..pk_{n-1}] for
-    // explicit-PK tables, or [real..., generated_pk] for generated-PK ones.
-    const auto num_pk = table_entry.GetPKColumnIndexes().size();
+    // A Search table's row identity is always the synthetic rowid, which
+    // BuildRowIdColumns appends last: [real..., key/indexed virtuals...,
+    // generated_pk].
     const auto child_cols = plan.types.size();
-    std::vector<duckdb::idx_t> pk_indices;
-    if (num_pk == 0) {
-      pk_indices.push_back(child_cols - 1);  // generated-PK slot is last
-    } else {
-      for (size_t i = 0; i < num_pk; ++i) {
-        pk_indices.push_back(child_cols - num_pk + i);
-      }
-    }
+    std::vector<duckdb::idx_t> pk_indices{child_cols - 1};
     // RETURNING: the binder already widened the scan to every column the clause
     // can name, and op.return_columns says which slot each of them arrived in.
     std::vector<duckdb::idx_t> column_map;
@@ -1405,10 +1397,12 @@ duckdb::PhysicalOperator& SereneDBCatalog::PlanUpdate(
 
   if (table_entry.IsSearchTable()) {
     // Wrap `plan` with a PhysicalProjection that resolves VALUE_DEFAULT and
-    // passes every projected new-row column through, plus the PK virtuals, so
-    // SereneDBSearchUpdate sees [resolved new-row vals, pk_virtuals].
-    const auto num_pk = table_entry.GetPKColumnIndexes().size();
-    const auto num_virtual = num_pk == 0 ? 1 : num_pk;
+    // passes every projected new-row column through, plus the rowid virtuals,
+    // so SereneDBSearchUpdate sees [resolved new-row vals, rowid virtuals].
+    // The count comes from the entry rather than the key: a Search table's
+    // rowid set is [key..., indexed..., generated_pk], and only its last
+    // element is the row identity.
+    const auto num_virtual = table_entry.GetRowIdColumns().size();
     const auto child_cols = plan.types.size();
 
     const auto num_updates = op.expressions.size();
@@ -1430,7 +1424,7 @@ duckdb::PhysicalOperator& SereneDBCatalog::PlanUpdate(
       }
     }
 
-    // Passthrough virtual columns (PKs / generated PK).
+    // Passthrough virtual columns (key / indexed / generated PK).
     auto virt_start = child_cols - num_virtual;
     for (duckdb::idx_t i = virt_start; i < child_cols; ++i) {
       proj_types.push_back(plan.types[i]);
@@ -1442,16 +1436,8 @@ duckdb::PhysicalOperator& SereneDBCatalog::PlanUpdate(
       std::move(proj_types), std::move(proj_exprs), op.estimated_cardinality);
     proj.children.push_back(plan);
 
-    std::vector<duckdb::idx_t> pk_indices;
-    if (num_pk == 0) {
-      // generated PK is the single virtual, after the SET vals.
-      pk_indices.push_back(num_updates + num_virtual - 1);
-    } else {
-      pk_indices.reserve(num_pk);
-      for (size_t i = 0; i < num_pk; ++i) {
-        pk_indices.push_back(num_updates + i);
-      }
-    }
+    // The generated PK is the last virtual, after the SET vals.
+    std::vector<duckdb::idx_t> pk_indices{num_updates + num_virtual - 1};
 
     auto& search_upd = planner.Make<connector::SereneDBSearchUpdate>(
       connector::ResolveSearchWriteTarget(context, table_entry),

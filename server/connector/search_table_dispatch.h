@@ -27,7 +27,6 @@
 #include <string_view>
 #include <vector>
 
-#include "catalog/duckdb_primary_key.h"
 #include "catalog/table_options.h"
 
 namespace duckdb {
@@ -39,6 +38,7 @@ class DataChunk;
 namespace sdb::catalog {
 
 class SequenceCounter;
+class SereneDBTableEntry;
 
 }  // namespace sdb::catalog
 namespace sdb::search {
@@ -65,26 +65,18 @@ void RejectIfSearchTable(catalog::TableEngine engine,
 struct SearchWriteTarget {
   ObjectId table_id;
   std::shared_ptr<search::SearchTable> data;
-  // The counter feeding the synthetic primary key, or null when the table
-  // declares one of its own.
+  // The counter feeding the synthetic rowid every row is identified by. Always
+  // set: a declared PRIMARY KEY is only an index on a search table, never the
+  // row identity.
   std::shared_ptr<catalog::SequenceCounter> generated_pk_seq;
   // The columns iresearch stores, in the entry's order: the catalog id of each
   // and the type its chunk slot carries.
   std::vector<ObjectId> column_ids;
   duckdb::vector<duckdb::LogicalType> chunk_types;
-  // The declared key over those columns, empty on a generated-PK table.
-  std::vector<catalog::duckdb_primary_key::PKColumn> pk_columns;
 };
 
 SearchWriteTarget ResolveSearchWriteTarget(
   duckdb::ClientContext& context, const catalog::SereneDBTableEntry& entry);
-
-// The row-identity slots a search DELETE/UPDATE plan projects, paired with the
-// type each key was encoded from: the declared key columns in key order, or the
-// single generated-PK rowid, which is a BIGINT.
-std::vector<catalog::duckdb_primary_key::PKColumn> RowIdentityPKColumns(
-  const SearchWriteTarget& target,
-  std::span<const duckdb::idx_t> chunk_positions);
 
 // One RETURNING row of a search DELETE or UPDATE, assembled out of the chunk
 // the child produced. `column_map` is indexed by the relation's own column

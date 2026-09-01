@@ -232,18 +232,23 @@ class SereneDBTableEntry : public duckdb::DuckTableEntry {
 // Virtual columns / rowid columns / storage info of a relation, computed from
 // the entry's own column list and constraints. Shared between a table's entry
 // and the index-name-as-table wrappers, which advertise the same shape.
+// `search_engine` says the relation is Search-backed, whose row identity is the
+// synthetic rowid whatever key it declares; the wrappers cannot derive it from
+// the entry, so their factory passes it down.
 duckdb::vector<duckdb::column_t> BuildRowIdColumns(
   const duckdb::TableCatalogEntry& table,
-  const std::vector<size_t>& indexed_col_indices);
+  const std::vector<size_t>& indexed_col_indices, bool search_engine);
 duckdb::virtual_column_map_t BuildVirtualColumns(
   const duckdb::TableCatalogEntry& table,
-  const std::vector<size_t>& indexed_col_indices);
+  const std::vector<size_t>& indexed_col_indices, bool search_engine);
 duckdb::TableStorageInfo BuildStorageInfo(
   const duckdb::TableCatalogEntry& table);
 
-// The virtual column a row of `table` is identified by: its first primary key
-// column, or the synthetic generated PK when it declares none.
-duckdb::column_t RowIdentityColumnId(const duckdb::TableCatalogEntry& table);
+// The virtual column a row of `table` is identified by: the synthetic generated
+// PK on a Search table or one declaring no key, else its first primary key
+// column.
+duckdb::column_t RowIdentityColumnId(const duckdb::TableCatalogEntry& table,
+                                     bool search_engine);
 
 // pg_attribute.attnum of the column `column_id` names -- its 1-based position
 // in the entry's own column list. Zero when the entry lists no such column,

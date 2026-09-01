@@ -69,9 +69,9 @@ void SearchTableTransaction::AddInlineInsertChunk(
   const std::shared_ptr<SearchTable>& shard,
   duckdb::BufferManager& buffer_manager,
   const duckdb::vector<duckdb::LogicalType>& types, duckdb::DataChunk& chunk,
-  bool uses_generated_pk, uint64_t pk_base) {
+  uint64_t pk_base) {
   _changes[shard->GetTableId()].AppendInsertChunk(buffer_manager, types, chunk,
-                                                  uses_generated_pk, pk_base);
+                                                  pk_base);
 }
 
 irs::IndexWriter::Transaction&

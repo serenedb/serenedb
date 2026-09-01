@@ -105,6 +105,10 @@ s
 statement ok
 VACUUM (REFRESH_TABLE) pin_search;
 
+# The trailing `rowid` column is the synthetic row identity: a search table
+# always stores one, even though pin_search declares a PRIMARY KEY -- a declared
+# key is only an index there, never the row identity.
+
 query
 SELECT row_group_id, column_name, column_id, column_path, segment_type, start, count, persistent, block_id FROM pragma_storage_info('pin_search') ORDER BY column_id, column_path;
 ----
@@ -117,6 +121,7 @@ row_group_id	column_name	column_id	column_path	segment_type	start	count	persiste
 0	info	3	[3, 2]	VARCHAR	0	2000	t	-1
 0	maybe	4	[4, 0]	VALIDITY	0	2000	t	-1
 0	maybe	4	[4]	INTEGER	0	2000	t	-1
+0	rowid	NULL	[rowid]	BIGINT	0	2000	t	-1
 
 
 # Stats and block offsets are populated for synthesized rows.

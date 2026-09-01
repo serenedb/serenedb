@@ -28,6 +28,7 @@
 #include <string>
 
 #include "basics/assert.h"
+#include "catalog/entry/duckdb_table_entry.h"
 #include "catalog/table.h"
 #include "connector/inverted_index_options_util.h"
 #include "connector/with_option_resolver.h"
@@ -160,31 +161,9 @@ SearchWriteTarget ResolveSearchWriteTarget(
     target.column_ids.emplace_back(column.CatalogOid());
     target.chunk_types.push_back(column.Type());
   }
-  const auto pk_indexes = entry.GetPKColumnIndexes();
-  target.pk_columns.reserve(pk_indexes.size());
-  for (const auto index : pk_indexes) {
-    target.pk_columns.push_back(
-      {.input_col_idx = index.index, .type = columns.GetColumn(index).Type()});
-  }
-  if (pk_indexes.empty()) {
-    target.generated_pk_seq = entry.GetGeneratedPkSequence(context);
-    SDB_ASSERT(target.generated_pk_seq);
-  }
+  target.generated_pk_seq = entry.GetGeneratedPkSequence(context);
+  SDB_ASSERT(target.generated_pk_seq);
   return target;
-}
-
-std::vector<catalog::duckdb_primary_key::PKColumn> RowIdentityPKColumns(
-  const SearchWriteTarget& target,
-  std::span<const duckdb::idx_t> chunk_positions) {
-  std::vector<catalog::duckdb_primary_key::PKColumn> out;
-  out.reserve(chunk_positions.size());
-  for (size_t i = 0; i != chunk_positions.size(); ++i) {
-    out.push_back({.input_col_idx = chunk_positions[i],
-                   .type = i < target.pk_columns.size()
-                             ? target.pk_columns[i].type
-                             : duckdb::LogicalType::BIGINT});
-  }
-  return out;
 }
 
 void BuildReturnedRow(duckdb::DataChunk& out, duckdb::DataChunk& chunk,

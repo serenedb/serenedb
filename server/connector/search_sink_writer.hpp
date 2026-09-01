@@ -190,7 +190,6 @@ class SearchSinkInsertBaseImpl {
   }
 
   struct KeyScratch {
-    std::vector<duckdb::UnifiedVectorFormat> pk_formats;
     std::vector<std::string> row_keys;
     std::vector<std::string_view> key_views;
   };
@@ -394,11 +393,12 @@ std::unique_ptr<SearchSinkInsertBaseImpl> MakeSearchTableInsertSink(
   irs::IndexWriter::Transaction& trx, const search::SearchTable& shard,
   duckdb::ClientContext& context);
 
-void WriteChunkToSearchSink(
-  SearchSinkInsertBaseImpl& sink, duckdb::DataChunk& chunk,
-  std::span<const catalog::ColumnId> column_ids,
-  std::span<const catalog::duckdb_primary_key::PKColumn> pk_columns,
-  bool uses_generated_pk, uint64_t pk_base, ObjectId table_id,
-  duckdb::ClientContext& context);
+// Rows are keyed by the synthetic rowid `pk_base + row`: it is the PK term and
+// is also stored under kGeneratedPKId so a scan can materialise it.
+void WriteChunkToSearchSink(SearchSinkInsertBaseImpl& sink,
+                            duckdb::DataChunk& chunk,
+                            std::span<const catalog::ColumnId> column_ids,
+                            uint64_t pk_base, ObjectId table_id,
+                            duckdb::ClientContext& context);
 
 }  // namespace sdb::connector

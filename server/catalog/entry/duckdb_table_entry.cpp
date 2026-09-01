@@ -371,7 +371,8 @@ duckdb::virtual_column_map_t SereneDBTableEntry::GetVirtualColumns() const {
   // them. Transactional tables use the store table's native rowid.
   if (IsSearchTable()) {
     return BuildVirtualColumns(
-      *this, catalog.Cast<SereneDBCatalog>().IndexedColumns(ObjectId{oid}));
+      *this, catalog.Cast<SereneDBCatalog>().IndexedColumns(ObjectId{oid}),
+      /*search_engine=*/true);
   }
   auto cols = duckdb::TableCatalogEntry::GetVirtualColumns();
   cols.insert({kColumnIdentifierTableOid,
@@ -382,14 +383,15 @@ duckdb::virtual_column_map_t SereneDBTableEntry::GetVirtualColumns() const {
 duckdb::vector<duckdb::column_t> SereneDBTableEntry::GetRowIdColumns() const {
   if (IsSearchTable()) {
     return BuildRowIdColumns(
-      *this, catalog.Cast<SereneDBCatalog>().IndexedColumns(ObjectId{oid}));
+      *this, catalog.Cast<SereneDBCatalog>().IndexedColumns(ObjectId{oid}),
+      /*search_engine=*/true);
   }
   return duckdb::TableCatalogEntry::GetRowIdColumns();
 }
 
 duckdb::vector<duckdb::column_t> BuildRowIdColumns(
   const duckdb::TableCatalogEntry& table,
-  const std::vector<size_t>& indexed_col_indices) {
+  const std::vector<size_t>& indexed_col_indices, bool search_engine) {
   duckdb::vector<duckdb::column_t> result;
   const auto pk_columns = TableEntryPKColumns(table);
 
@@ -407,7 +409,8 @@ duckdb::vector<duckdb::column_t> BuildRowIdColumns(
     }
   }
 
-  if (pk_columns.empty()) {
+  // Last, so the DML planners can address it as the final virtual slot.
+  if (pk_columns.empty() || search_engine) {
     result.push_back(kColumnIdentifierGeneratedPk);
   }
   return result;
@@ -415,7 +418,7 @@ duckdb::vector<duckdb::column_t> BuildRowIdColumns(
 
 duckdb::virtual_column_map_t BuildVirtualColumns(
   const duckdb::TableCatalogEntry& table,
-  const std::vector<size_t>& indexed_col_indices) {
+  const std::vector<size_t>& indexed_col_indices, bool search_engine) {
   duckdb::virtual_column_map_t result;
   const auto pk_columns = TableEntryPKColumns(table);
   const auto& columns = table.GetColumns();
@@ -445,7 +448,7 @@ duckdb::virtual_column_map_t BuildVirtualColumns(
   result.insert({duckdb::COLUMN_IDENTIFIER_EMPTY,
                  duckdb::TableColumn("", duckdb::LogicalType::BOOLEAN)});
 
-  if (pk_columns.empty()) {
+  if (pk_columns.empty() || search_engine) {
     result.insert(
       {kColumnIdentifierGeneratedPk,
        duckdb::TableColumn("rowid", duckdb::LogicalType::ROW_TYPE)});
@@ -609,14 +612,15 @@ SereneDBTableEntry::SearchSegmentInfoBindings() const {
   for (const auto& col : GetColumns().Physical()) {
     bindings.push_back({col.Physical().index, col.CatalogOid()});
   }
-  bindings.push_back(
-    {RowIdentityColumnId(*this), catalog::kGeneratedPKId.id()});
+  bindings.push_back({RowIdentityColumnId(*this, IsSearchTable()),
+                      catalog::kGeneratedPKId.id()});
   return bindings;
 }
 
-duckdb::column_t RowIdentityColumnId(const duckdb::TableCatalogEntry& table) {
+duckdb::column_t RowIdentityColumnId(const duckdb::TableCatalogEntry& table,
+                                     bool search_engine) {
   const auto pk_columns = TableEntryPKColumns(table);
-  if (!pk_columns.empty()) {
+  if (!search_engine && !pk_columns.empty()) {
     return duckdb::VIRTUAL_COLUMN_START + pk_columns.front().index;
   }
   return kColumnIdentifierGeneratedPk;

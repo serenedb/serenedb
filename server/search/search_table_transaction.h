@@ -66,8 +66,7 @@ class SearchTableTransaction {
   void AddInlineInsertChunk(const std::shared_ptr<SearchTable>& shard,
                             duckdb::BufferManager& buffer_manager,
                             const duckdb::vector<duckdb::LogicalType>& types,
-                            duckdb::DataChunk& chunk, bool uses_generated_pk,
-                            uint64_t pk_base);
+                            duckdb::DataChunk& chunk, uint64_t pk_base);
 
   void AddSearchDeletes(const std::shared_ptr<SearchTable>& shard,
                         std::span<const std::string> pks);

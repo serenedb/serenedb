@@ -128,7 +128,8 @@ SereneDBSearchDelete::GetGlobalSinkState(duckdb::ClientContext& context) const {
   state->search_table = _target.data;
   state->table_lock = std::shared_lock{state->search_table->GetTableLock()};
 
-  state->pk_columns = RowIdentityPKColumns(_target, _pk_col_indices);
+  SDB_ASSERT(_pk_col_indices.size() == 1,
+             "a search table is identified by one synthetic rowid slot");
 
   state->sdb_txn = &conn_ctx;
   if (!_column_map.empty()) {
@@ -154,16 +155,23 @@ duckdb::SinkResultType SereneDBSearchDelete::SinkImpl(
   }
   constexpr bool kTable = std::is_same_v<GlobalState, SearchTableDeleteState>;
 
-  // The removal term is the bare PK, encoded exactly as the insert wrote it
-  // (Create -> key_encoding::AppendScalarValue). For a no-PK table the rowid
-  // column holds the
-  // generated PK (materialised by the scan), so the same encoding matches.
+  // A search table's removal key is the row's synthetic rowid, read from the
+  // single slot the scan materialised and encoded exactly as the insert wrote
+  // it. A view-backed reindex delete instead keys on its (file_index, row)
+  // pair, which `pk_columns` describes.
   SearchSinkDeleteBaseImpl remover{gstate.Trx()};
   remover.InitImpl(num_rows);
 
   std::vector<duckdb::UnifiedVectorFormat> pk_formats;
-  catalog::duckdb_primary_key::PreparePKFormats(chunk, gstate.pk_columns,
-                                                pk_formats);
+  duckdb::UnifiedVectorFormat rowid;
+  const int64_t* rowid_data = nullptr;
+  if constexpr (kTable) {
+    chunk.data[_pk_col_indices[0]].ToUnifiedFormat(num_rows, rowid);
+    rowid_data = duckdb::UnifiedVectorFormat::GetData<int64_t>(rowid);
+  } else {
+    catalog::duckdb_primary_key::PreparePKFormats(chunk, gstate.pk_columns,
+                                                  pk_formats);
+  }
 
   std::vector<std::string> wal_pks;
   if constexpr (kTable) {
@@ -173,7 +181,13 @@ duckdb::SinkResultType SereneDBSearchDelete::SinkImpl(
   std::string pk;
   for (duckdb::idx_t row = 0; row < num_rows; ++row) {
     pk.clear();
-    catalog::duckdb_primary_key::Create(pk_formats, gstate.pk_columns, row, pk);
+    if constexpr (kTable) {
+      catalog::duckdb_primary_key::AppendGenerated(
+        pk, static_cast<uint64_t>(rowid_data[rowid.sel->get_index(row)]));
+    } else {
+      catalog::duckdb_primary_key::Create(pk_formats, gstate.pk_columns, row,
+                                          pk);
+    }
     remover.DeleteRowImpl(pk);  // live iresearch removal
     if constexpr (kTable) {
       wal_pks.emplace_back(pk);  // WAL delete payload

@@ -67,8 +67,9 @@ InvertedIndexScanEntry::InvertedIndexScanEntry(
 TableInvertedIndexScanEntry::TableInvertedIndexScanEntry(
   duckdb::Catalog& catalog, duckdb::SchemaCatalogEntry& schema,
   duckdb::CreateTableInfo& info, ObjectId relation_id,
-  const catalog::Index& inverted_index)
-  : InvertedIndexScanEntry(catalog, schema, info, inverted_index) {
+  const catalog::Index& inverted_index, bool search_engine)
+  : InvertedIndexScanEntry(catalog, schema, info, inverted_index),
+    _search_engine{search_engine} {
   _relation_id = relation_id;
 }
 
@@ -146,19 +147,21 @@ TableInvertedIndexScanEntry::SegmentInfoBindings() const {
 }
 
 duckdb::column_t TableInvertedIndexScanEntry::RowIdentityColumnId() const {
-  return catalog::RowIdentityColumnId(*this);
+  return catalog::RowIdentityColumnId(*this, _search_engine);
 }
 
 duckdb::vector<duckdb::column_t> TableInvertedIndexScanEntry::GetRowIdColumns()
   const {
   return catalog::BuildRowIdColumns(
-    *this, catalog.Cast<SereneDBCatalog>().IndexedColumns(_relation_id));
+    *this, catalog.Cast<SereneDBCatalog>().IndexedColumns(_relation_id),
+    _search_engine);
 }
 
 duckdb::virtual_column_map_t TableInvertedIndexScanEntry::GetVirtualColumns()
   const {
   return catalog::BuildVirtualColumns(
-    *this, catalog.Cast<SereneDBCatalog>().IndexedColumns(_relation_id));
+    *this, catalog.Cast<SereneDBCatalog>().IndexedColumns(_relation_id),
+    _search_engine);
 }
 
 ViewInvertedIndexScanEntry::ViewInvertedIndexScanEntry(
@@ -335,7 +338,8 @@ duckdb::unique_ptr<duckdb::CatalogEntry> MakeIndexScanEntry(
 
   if (record.IsInverted()) {
     return duckdb::make_uniq<TableInvertedIndexScanEntry>(
-      catalog, schema, *info, relation_id, *record.GetIndex());
+      catalog, schema, *info, relation_id, *record.GetIndex(),
+      table_entry->IsSearchTable());
   }
 
   return duckdb::make_uniq<TableSecondaryIndexScanEntry>(catalog, schema, *info,

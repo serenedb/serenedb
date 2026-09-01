@@ -182,8 +182,11 @@ const SereneDBTableEntry* CreateTable(
 
   // Tables without an explicit PK get an auto-PK owned sequence, whose id the
   // definition holds directly so the insert path does not have to look for it.
+  // A Search table always gets one: its row identity is the synthetic rowid
+  // regardless of any declared key, which is only an index there.
   ObjectId generated_pk_seq_id;
-  if (TablePrimaryKey(info->constraints) == nullptr) {
+  if (TablePrimaryKey(info->constraints) == nullptr ||
+      catalog::ReadTableEngineTag(info->tags) == TableEngine::Search) {
     SequenceOptions opts;
     opts.name = pick_unique_name(absl::StrCat(name, "_pk_seq"));
     opts.cache = 65536;

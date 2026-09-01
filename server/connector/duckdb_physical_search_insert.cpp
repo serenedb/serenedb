@@ -65,7 +65,6 @@ struct SearchInsertGlobalState : duckdb::GlobalSinkState {
   query::Transaction* sdb_txn = nullptr;
   std::vector<catalog::ColumnId> column_ids;
   duckdb::vector<duckdb::LogicalType> chunk_types;
-  std::vector<catalog::duckdb_primary_key::PKColumn> pk_columns;
   std::shared_ptr<catalog::SequenceCounter> generated_pk_seq;
   std::shared_lock<std::shared_mutex> table_lock;
 
@@ -128,12 +127,8 @@ SearchWriteTarget CtasWriteTarget(duckdb::ClientContext& context,
     target.column_ids.emplace_back(col.CatalogOid());
     target.chunk_types.push_back(col.Type());
   }
-  target.pk_columns =
-    catalog::duckdb_primary_key::BuildPKColumns(*entry.Definition());
-  if (target.pk_columns.empty()) {
-    target.generated_pk_seq = entry.GetGeneratedPkSequence(context);
-    SDB_ASSERT(target.generated_pk_seq);
-  }
+  target.generated_pk_seq = entry.GetGeneratedPkSequence(context);
+  SDB_ASSERT(target.generated_pk_seq);
   return target;
 }
 
@@ -249,7 +244,6 @@ SereneDBSearchInsert::GetGlobalSinkState(duckdb::ClientContext& context) const {
   state->generated_pk_seq = target.generated_pk_seq;
   state->column_ids = target.column_ids;
   state->chunk_types = target.chunk_types;
-  state->pk_columns = target.pk_columns;
 
   state->sdb_txn = &conn_ctx;
   if (_return_chunk) {
@@ -306,11 +300,8 @@ duckdb::SinkResultType SereneDBSearchInsert::Sink(
       MakeSearchTableInsertSink(trx, *gstate.search_table, context.client);
   }
 
-  const bool uses_generated_pk = gstate.generated_pk_seq != nullptr;
-  const uint64_t pk_base =
-    uses_generated_pk ? gstate.generated_pk_seq->Reserve(num_rows) : 0;
-  WriteChunkToSearchSink(*lstate->sink, chunk, gstate.column_ids,
-                         gstate.pk_columns, uses_generated_pk, pk_base,
+  const uint64_t pk_base = gstate.generated_pk_seq->Reserve(num_rows);
+  WriteChunkToSearchSink(*lstate->sink, chunk, gstate.column_ids, pk_base,
                          gstate.table_id, context.client);
   if (lstate->returned) {
     // The chunk is the whole row in table-column order -- the defaults and the
@@ -325,7 +316,7 @@ duckdb::SinkResultType SereneDBSearchInsert::Sink(
     gstate.sdb_txn->SearchTxn().AddInlineInsertChunk(
       gstate.search_table,
       duckdb::BufferManager::GetBufferManager(context.client),
-      gstate.chunk_types, chunk, uses_generated_pk, pk_base);
+      gstate.chunk_types, chunk, pk_base);
   }
   lstate->insert_count += num_rows;
   return duckdb::SinkResultType::NEED_MORE_INPUT;

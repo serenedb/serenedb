@@ -52,18 +52,15 @@ struct LocalTableChangesEntry {
   std::vector<Op> ops;
 
   // Coalesce a single-threaded INSERT chunk into the current insert run (a new
-  // run is started only if the last op is a DELETE). `pk_base` is recorded per
-  // chunk only for generated-PK shards.
+  // run is started only if the last op is a DELETE). `pk_base` is the rowid the
+  // chunk's rows were keyed from, recorded per chunk so replay reproduces them.
   void AppendInsertChunk(duckdb::BufferManager& bm,
                          const duckdb::vector<duckdb::LogicalType>& types,
-                         duckdb::DataChunk& chunk, bool uses_generated_pk,
-                         uint64_t pk_base) {
+                         duckdb::DataChunk& chunk, uint64_t pk_base) {
     auto& op = CurrentInsertRun();
     if (op.collection == nullptr) {
       op.collection = std::make_unique<duckdb::ColumnDataCollection>(bm, types);
-      if (uses_generated_pk) {
-        op.pk_segments = std::make_unique<std::vector<SearchDbWal::InlinePk>>();
-      }
+      op.pk_segments = std::make_unique<std::vector<SearchDbWal::InlinePk>>();
     }
     op.collection->Append(chunk);
     if (op.pk_segments != nullptr) {

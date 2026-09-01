@@ -848,30 +848,23 @@ std::unique_ptr<SearchSinkInsertBaseImpl> MakeSearchTableInsertSink(
     std::move(indexed_exprs), shard.GetTermsByColumn());
 }
 
-void WriteChunkToSearchSink(
-  SearchSinkInsertBaseImpl& sink, duckdb::DataChunk& chunk,
-  std::span<const catalog::ColumnId> column_ids,
-  std::span<const catalog::duckdb_primary_key::PKColumn> pk_columns,
-  bool uses_generated_pk, uint64_t pk_base, ObjectId table_id,
-  duckdb::ClientContext& context) {
+void WriteChunkToSearchSink(SearchSinkInsertBaseImpl& sink,
+                            duckdb::DataChunk& chunk,
+                            std::span<const catalog::ColumnId> column_ids,
+                            uint64_t pk_base, ObjectId table_id,
+                            duckdb::ClientContext& context) {
   const auto num_rows = chunk.size();
 
   auto& scratch = sink.GetKeyScratch();
-  auto& pk_formats = scratch.pk_formats;
   auto& row_keys = scratch.row_keys;
   auto& key_views = scratch.key_views;
-  catalog::duckdb_primary_key::PreparePKFormats(chunk, pk_columns, pk_formats);
   row_keys.resize(num_rows);
   key_views.clear();
   key_views.reserve(num_rows);
   for (duckdb::idx_t row = 0; row < num_rows; ++row) {
     auto& key = row_keys[row];
     key.clear();
-    if (uses_generated_pk) {
-      catalog::duckdb_primary_key::AppendGenerated(key, pk_base + row);
-    } else {
-      catalog::duckdb_primary_key::Create(pk_formats, pk_columns, row, key);
-    }
+    catalog::duckdb_primary_key::AppendGenerated(key, pk_base + row);
     key_views.emplace_back(key);
   }
 
@@ -890,14 +883,12 @@ void WriteChunkToSearchSink(
   for (size_t col = 0; col < column_ids.size(); ++col) {
     write_column(column_ids[col], chunk.data[col].GetType(), chunk.data[col]);
   }
-  if (uses_generated_pk) {
-    duckdb::Vector gen_pk(duckdb::LogicalType::BIGINT, num_rows);
-    auto* data = duckdb::FlatVector::GetDataMutable<int64_t>(gen_pk);
-    for (duckdb::idx_t row = 0; row < num_rows; ++row) {
-      data[row] = static_cast<int64_t>(pk_base + row);
-    }
-    write_column(catalog::kGeneratedPKId, duckdb::LogicalType::BIGINT, gen_pk);
+  duckdb::Vector gen_pk(duckdb::LogicalType::BIGINT, num_rows);
+  auto* data = duckdb::FlatVector::GetDataMutable<int64_t>(gen_pk);
+  for (duckdb::idx_t row = 0; row < num_rows; ++row) {
+    data[row] = static_cast<int64_t>(pk_base + row);
   }
+  write_column(catalog::kGeneratedPKId, duckdb::LogicalType::BIGINT, gen_pk);
   for (const auto& indexed_expr : sink.IndexedExpressionImpl()) {
     SDB_ASSERT(indexed_expr.normalized_expr);
     auto result =

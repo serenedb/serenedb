@@ -1,24 +1,21 @@
-# Pins the *shape* of the compiled-in spatial extension: GEOS only, with the
-# PROJ and GDAL modules compiled out (SPATIAL_USE_PROJ/GDAL=FALSE in
+# Pins the *shape* of the compiled-in spatial extension: all three optional
+# modules are built -- GEOS, PROJ and GDAL (SPATIAL_USE_GEOS / _PROJ / _GDAL in
 # third_party/CMakeLists.txt).
 #
-# Spatial's own behaviour is covered by its vendored suite
-# (tests/duckdb/run.sh --suite spatial), so nothing here re-tests GEOS
-# semantics. What that suite cannot cover is exactly this file's subject:
-# the PROJ/GDAL tests are *skipped* there (tests/duckdb/config/spatial.json),
-# so without these asserts nothing would notice PROJ or GDAL being switched
-# back on, and USING RTREE is SereneDB catalog behaviour with no vendored
-# counterpart.
+# One liveness assert per module, so a module silently dropping out of the build
+# fails here rather than surfacing at the call site as a confusing "not in the
+# catalog, but it exists in the spatial extension" error.
 #
-# The PROJ and GDAL entry points are registered as stubs that name their
-# module (see the SPATIAL_USE_PROJ / SPATIAL_USE_GDAL #else branches in
-# spatial_extension.cpp), so these asserts also pin that the diagnostic
-# stays specific -- DuckDB's own "not in the catalog, but it exists in the
-# spatial extension" path cannot tell a missing extension from a
-# partially-built one, and would claim spatial is not linked at all.
+# GDAL is built with GDAL_BUILD_OPTIONAL_DRIVERS=OFF plus an explicit driver
+# allowlist, so the driver list is pinned too -- adding or removing a driver
+# should show up as a diff here rather than silently.
 #
-# The first query is a liveness check: it keeps the asserts below from
-# passing in a build where spatial is not linked.
+# The RTREE index is compiled out (SPATIAL_USE_RTREE=OFF) because SereneDB
+# indexes geometry through `USING inverted` instead, so this file pins that its
+# whole surface -- access method, pragmas, scan function -- is absent, not merely
+# rejected. The FlatRTree that accelerates spatial joins is unrelated and stays.
+
+# --- GEOS ---
 
 query
 SELECT ST_AsText(ST_Intersection('LINESTRING (0 0, 4 0)'::GEOMETRY,
@@ -28,30 +25,39 @@ geom
 LINESTRING (2 0, 4 0)
 
 
-# --- PROJ is compiled out: no ST_Transform, no *_Spheroid ---
+# --- PROJ ---
+
+query
+SELECT DuckDB_Proj_Version() AS v;
+----
+v
+9.3.1
+
+query
+SELECT ST_AsText(ST_Transform('POINT (1 1)'::GEOMETRY,
+                              'EPSG:4326', 'EPSG:3857')) AS geom;
+----
+geom
+POINT (111319.49079327357 111325.1428663851)
+
+
+# --- GDAL: the driver allowlist ---
+
+query
+SELECT string_agg(short_name, ', ' ORDER BY short_name) AS drivers
+FROM ST_Drivers();
+----
+drivers
+CSV, ESRIJSON, FlatGeobuf, GeoJSON, GeoJSONSeq, OGR_VRT, TopoJSON
+
+
+# ST_Read reaches GDAL rather than a stub: a missing file must produce GDAL's
+# own open error.
 
 query error
-SELECT ST_Transform('POINT (0 0)'::GEOMETRY, 'EPSG:3857');
+SELECT count(*) FROM ST_Read('/nonexistent.geojson');
 ----
-db error: ERROR: ST_Transform requires the spatial extension's PROJ module, which is not built into this SereneDB binary (it needs the PROJ and sqlite3 libraries).
-Please open an issue at https://github.com/serenedb/serenedb/issues/887 if you need it.
-
-
-query error
-SELECT ST_Area_Spheroid('POLYGON ((0 0, 1 0, 1 1, 0 1, 0 0))'::GEOMETRY);
-----
-db error: ERROR: ST_Area_Spheroid requires the spatial extension's PROJ module, which is not built into this SereneDB binary (it needs the PROJ and sqlite3 libraries).
-Please open an issue at https://github.com/serenedb/serenedb/issues/887 if you need it.
-
-
-# --- GDAL is compiled out: no ST_Read and no replacement scans ---
-
-query error
-SELECT * FROM ST_Read('nonexistent.geojson');
-----
-db error: ERROR: ST_Read requires the spatial extension's GDAL module, which is not built into this SereneDB binary (it needs the GDAL and expat libraries).
-Please open an issue at https://github.com/serenedb/serenedb/issues/887 if you need it.
-
+db error: ERROR: Could not open GDAL dataset at: /nonexistent.geojson<slt:ignore>
 
 
 # --- spatial's RTREE index type stays unreachable on SereneDB tables ---
@@ -63,3 +69,30 @@ statement error
 CREATE INDEX shapes_rtree ON shapes USING RTREE (g);
 ----
 db error: ERROR: access method "rtree" does not exist
+
+
+# Nothing rtree-shaped is registered at all -- not the pragmas, not the scan
+# function. A build that turned the index back on would answer these instead of
+# erroring, so they are the guard that SPATIAL_USE_RTREE is still off.
+
+query
+SELECT count(*) AS v FROM duckdb_functions() WHERE function_name ILIKE '%rtree%';
+----
+v
+0
+
+
+statement error
+SELECT * FROM rtree_index_dump('shapes_rtree');
+----
+db error: ERROR: Table Function with name "rtree_index_dump" is not in the catalog<slt:ignore>
+
+
+statement error
+SELECT * FROM pragma_rtree_index_info('shapes_rtree');
+----
+db error: ERROR: Table Function with name "pragma_rtree_index_info" is not in the catalog<slt:ignore>
+
+
+statement ok
+DROP TABLE shapes;

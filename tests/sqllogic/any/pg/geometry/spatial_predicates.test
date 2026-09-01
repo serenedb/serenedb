@@ -1,0 +1,118 @@
+# PostGIS-compatible spatial predicates, verified to return identical results on
+# SereneDB (duckdb-spatial + GEOS) and reference PostgreSQL + PostGIS 3.6.
+# Boolean results carry no formatting divergence, so they are portable.
+
+query
+SELECT ST_Intersects('POINT(1 1)'::geometry, 'POLYGON((0 0,4 0,4 4,0 4,0 0))'::geometry) AS v;
+----
+v
+t
+
+query
+SELECT ST_Contains('POLYGON((0 0,4 0,4 4,0 4,0 0))'::geometry, 'POINT(1 1)'::geometry) AS v;
+----
+v
+t
+
+query
+SELECT ST_Within('POINT(1 1)'::geometry, 'POLYGON((0 0,4 0,4 4,0 4,0 0))'::geometry) AS v;
+----
+v
+t
+
+query
+SELECT ST_Covers('POLYGON((0 0,4 0,4 4,0 4,0 0))'::geometry, 'POINT(1 1)'::geometry) AS v;
+----
+v
+t
+
+query
+SELECT ST_CoveredBy('POINT(1 1)'::geometry, 'POLYGON((0 0,4 0,4 4,0 4,0 0))'::geometry) AS v;
+----
+v
+t
+
+query
+SELECT ST_ContainsProperly('POLYGON((0 0,4 0,4 4,0 4,0 0))'::geometry, 'POINT(1 1)'::geometry) AS v;
+----
+v
+t
+
+query
+SELECT ST_Disjoint('POINT(1 1)'::geometry, 'POLYGON((2 2,6 2,6 6,2 6,2 2))'::geometry) AS v;
+----
+v
+t
+
+query
+SELECT ST_Equals('POLYGON((0 0,4 0,4 4,0 4,0 0))'::geometry, 'POLYGON((0 0,4 0,4 4,0 4,0 0))'::geometry) AS v;
+----
+v
+t
+
+query
+SELECT ST_Touches('POINT(0 0)'::geometry, 'POLYGON((0 0,4 0,4 4,0 4,0 0))'::geometry) AS v;
+----
+v
+t
+
+query
+SELECT ST_Crosses('LINESTRING(0 4,4 0)'::geometry, 'LINESTRING(0 0,2 2,4 4)'::geometry) AS v;
+----
+v
+t
+
+query
+SELECT ST_Overlaps('POLYGON((0 0,4 0,4 4,0 4,0 0))'::geometry, 'POLYGON((2 2,6 2,6 6,2 6,2 2))'::geometry) AS v;
+----
+v
+t
+
+query
+SELECT ST_DWithin('POINT(0 0)'::geometry, 'POINT(1 1)'::geometry, 2) AS v;
+----
+v
+t
+
+query
+SELECT ST_IsValid('POLYGON((0 0,4 0,4 4,0 4,0 0))'::geometry) AS v;
+----
+v
+t
+
+query
+SELECT ST_IsEmpty('POLYGON((0 0,4 0,4 4,0 4,0 0))'::geometry) AS v;
+----
+v
+f
+
+query
+SELECT ST_IsClosed('LINESTRING(0 0,2 2,4 4)'::geometry) AS v;
+----
+v
+f
+
+query
+SELECT ST_IsRing('LINESTRING(0 0,4 0,4 4,0 0)'::geometry) AS v;
+----
+v
+t
+
+query
+SELECT ST_IsSimple('LINESTRING(0 0,2 2,4 4)'::geometry) AS v;
+----
+v
+t
+
+query
+SELECT ST_HasZ('POINT Z(1 2 3)'::geometry) AS v;
+----
+v
+t
+
+query
+SELECT ST_HasM('POINT ZM(1 2 3 4)'::geometry) AS v;
+----
+v
+t
+

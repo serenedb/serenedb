@@ -64,6 +64,10 @@
 * [fmt](https://github.com/fmtlib/fmt)
 * [jansson](https://github.com/akheron/jansson)
 * [CRoaring](https://github.com/RoaringBitmap/CRoaring)
+* [libexpat](https://github.com/libexpat/libexpat) (vendored for GDAL, which reaches it only from the XML-based drivers -- GML, KML, OSM -- that our driver allowlist leaves off. `GDAL_USE_EXPAT` is therefore OFF and the submodule is not built or linked; the entry is here because the submodule is registered.)
+* [PROJ](https://github.com/OSGeo/PROJ) (see `proj/COPYING`; used by the spatial extension for `ST_Transform`, the `*_Spheroid` functions and CRS lookup)
+* [nlohmann/json](https://github.com/nlohmann/json) (3.9.x, vendored in `proj/include/proj/internal/vendor/nlohmann`)
+* [GDAL/OGR](https://github.com/OSGeo/gdal) (MIT-style; `gdal/LICENSE.TXT` is the aggregate notice and also covers the internal copies GDAL builds when a system library is absent)
 
 ### [BSD 2-clauses](https://opensource.org/licenses/bsd-license.php)
 
@@ -104,6 +108,9 @@
 * [minizip-ng](https://github.com/zlib-ng/minizip-ng/blob/develop/LICENSE)
 * [PostgreSQL](https://github.com/postgres/postgres), [PostgreSQL License](https://www.postgresql.org/about/licence/) (libpq, statically linked by the postgres_scanner extension)
 * [wyhash](https://github.com/wangyi-fudan/wyhash), Unlicense (vendored in `libs/basics/wyhash.h`)
+* [SQLite](https://www.sqlite.org), [public domain](https://www.sqlite.org/copyright.html) (the 3.53.4 amalgamation, reached through PROJ's embedded `proj.db` and GDAL's SQLite/GPKG drivers). The submodule tracks
+  [ClickHouse/sqlite-amalgamation](https://github.com/ClickHouse/sqlite-amalgamation), a mirror of the amalgamation published by sqlite.org; its `LICENSE` file is BSD-3-Clause and
+  covers only the CMake packaging inherited from `azadkuh/sqlite-amalgamation`, not SQLite itself. We do not use that CMake -- see `third_party/sqlite3-cmake`.
 
 ## Programs
 

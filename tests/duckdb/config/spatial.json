@@ -1,43 +1,58 @@
 {
-  "description": "SereneDB test-config for the vendored duckdb_spatial test suite. Every entry is a consequence of SereneDB building spatial against GEOS only, with the PROJ and GDAL modules compiled out -- see tests/duckdb/README.md.",
+  "description": "SereneDB test-config for the vendored duckdb_spatial test suite. GEOS, PROJ and GDAL are all built; GDAL uses GDAL_BUILD_OPTIONAL_DRIVERS=OFF with an explicit driver allowlist, so tests needing a driver outside that list are expected to fail -- see tests/duckdb/README.md.",
   "skip_tests": [
-    {
-      "reason": "The GDAL module is compiled out (SPATIAL_USE_GDAL=OFF in third_party/CMakeLists.txt): GDAL is the heaviest of spatial's dependencies and the only reason expat and a second sqlite3 would have to be vendored, while it provides just four SQL entry points -- ST_Read, ST_Read_Meta, ST_Drivers and COPY ... (FORMAT GDAL) -- plus the replacement scans that let 'SELECT * FROM x.geojson' work. Nothing outside src/spatial/modules/gdal/ depends on it. Ingest is expected to go through DuckDB's own csv/json/parquet readers plus ST_GeomFromText / ST_GeomFromWKB / ST_GeomFromGeoJSON instead. These files call ST_Read, ST_Read_Meta, ST_Drivers or the GDAL COPY format directly, so nothing in them is reachable.",
-      "paths": [
-        "test/sql/gdal/gdal_axis_order.test",
-        "test/sql/gdal/gdal_filter_pushdown.test",
-        "test/sql/gdal/gdal_read.test",
-        "test/sql/gdal/gdal_shapefile.test",
-        "test/sql/gdal/gdal_vsi.test",
-        "test/sql/gdal/st_read_gdb.test",
-        "test/sql/gdal/st_read_gpkg_fid.test",
-        "test/sql/gdal/st_read_order.test",
-        "test/sql/gdal/st_read_xlsx.test",
-        "test/sql/gdal/st_write_basic.test",
-        "test/sql/gdal/st_write_types.test"
-      ]
-    },
-    {
-      "reason": "Same GDAL removal, reached indirectly. The shapefile and MVT modules themselves are built (their dependencies -- shapelib and protozero -- are vendored inside spatial's own src/third_party/), and ST_ReadSHP, ST_TileEnvelope and the ST_AsMVT aggregate all work. These three files fail only in their fixture or verification step: test_shapefile_read builds its .shp input with COPY ... (FORMAT GDAL, DRIVER 'ESRI Shapefile'), and the two st_asmvt files check the bytes they produced by reading them back with st_read_meta.",
-      "paths": [
-        "test/sql/shapefile/test_shapefile_read.test",
-        "test/sql/mvt/st_asmvt.test",
-        "test/sql/mvt/st_asmvt_linestring.test"
-      ]
-    },
-    {
-      "reason": "The PROJ module is compiled out (SPATIAL_USE_PROJ=OFF): it would require vendoring sqlite3 and nlohmann-json, and it embeds the whole PROJ CRS database as a 51 MB generated proj_db.c read through a sqlite memvfs. It provides ST_Transform, the five *_Spheroid functions, the two PROJ version functions, and a COORDINATE_SYSTEM_ENTRY default generator that resolves EPSG:xxxx / OGC:xxxx names. Note that leaving that generator out is deliberate as well as cheap: server/catalog/geo_validate.h identifies a column's CRS by comparing crs.GetIdentifier() against the literals 'OGC:CRS84' / 'EPSG:4326' / '4326', so a generator that normalised identifiers would be a live regression risk for the inverted geo index. GEOMETRY('OGC:CRS84') keeps resolving through core DuckDB's CoordinateReferenceSystem::TryParseAuthCode, and spatial's own bind-time CRS mismatch checking is PROJ-free and still active.",
-      "paths": [
-        "test/sql/proj.test",
-        "test/sql/st_area_spheroid.test",
-        "test/sql/st_spheroid.test",
-        "test/sql/crs/crs_propagation.test"
-      ]
-    },
     {
       "reason": "Geometry zonemap pruning is disabled. spatial's GeometryPredicatePruneCallback reads per-child statistics through FunctionStatisticsPruneInput, using input.function.GetChildren() and input.ChildStats(idx); SereneDB's DuckDB predates that and its FunctionStatisticsPruneInput carries only bind_data and a single stats reference. TryGetGeometryPredicateOperands in src/spatial/util/geometry_predicate_stats.hpp is therefore stubbed to return false, which degrades the callback to NO_PRUNING_POSSIBLE -- correct results, no zonemap elimination. This file asserts that a predicate against a constant outside the column's extent collapses the plan to EMPTY_RESULT; it gets a real scan instead. Restoring it means either forward-porting the richer prune input into the vendored DuckDB or waiting for a DuckDB bump that carries it.",
       "paths": [
         "test/sql/geometry/st_predicate_filter_pushdown.test"
+      ]
+    },
+    {
+      "reason": "Needs a GDAL driver outside our allowlist. GDAL is built with GDAL_BUILD_OPTIONAL_DRIVERS=OFF and OGR_BUILD_OPTIONAL_DRIVERS=OFF plus an explicit set (GeoJSON, GeoJSONSeq, ESRIJSON, TopoJSON, CSV, FlatGeobuf, OGR_VRT), which keeps the GDAL build tractable -- 1853 source files -- and avoids vendoring further libraries. These files need drivers we deliberately excluded: Shapefile (also disabled because GDAL's internal shapelib target collides with duckdb_spatial's own vendored shapelib, which already backs ST_ReadSHP), OpenFileGDB, XLSX, and the GDAL COPY/write path. st_write_basic and gdal_axis_order each have one passing assertion before the driver-dependent one.",
+      "paths": [
+        "test/sql/gdal/gdal_axis_order.test",
+        "test/sql/gdal/gdal_shapefile.test",
+        "test/sql/gdal/st_read_gdb.test",
+        "test/sql/gdal/st_read_xlsx.test",
+        "test/sql/gdal/st_write_basic.test",
+        "test/sql/shapefile/test_shapefile_read.test"
+      ]
+    },
+    {
+      "reason": "The persistent RTREE index is not built (SPATIAL_USE_RTREE=OFF). SereneDB indexes geometry through `USING inverted` (iresearch/S2), so spatial's index type, its CREATE INDEX plan, its rtree_index_* pragmas and its scan-pushdown optimizer pass are compiled out rather than merely rejected by the CREATE INDEX access-method whitelist. Every file in test/sql/index/ exercises that index, so the whole directory is skipped. The in-memory FlatRTree that accelerates spatial joins is a separate per-query structure, is still built, and its tests (test/sql/join/) still run.",
+      "paths": [
+        "test/sql/index/rtree_basic.test",
+        "test/sql/index/rtree_basic_data.test_slow",
+        "test/sql/index/rtree_basic_points.test",
+        "test/sql/index/rtree_block_reclaim.test_slow",
+        "test/sql/index/rtree_conflict.test",
+        "test/sql/index/rtree_crud.test",
+        "test/sql/index/rtree_crud_noreinsert.test",
+        "test/sql/index/rtree_dump.test",
+        "test/sql/index/rtree_empty.test",
+        "test/sql/index/rtree_filter_prune.test",
+        "test/sql/index/rtree_filter_pullup.test",
+        "test/sql/index/rtree_filter_pullup_2.test",
+        "test/sql/index/rtree_insert.test_slow",
+        "test/sql/index/rtree_insert_empty.test",
+        "test/sql/index/rtree_limits.test",
+        "test/sql/index/rtree_multi.test",
+        "test/sql/index/rtree_multiple_index.test",
+        "test/sql/index/rtree_persistence.test_slow",
+        "test/sql/index/rtree_persistence_load.test",
+        "test/sql/index/rtree_persistence_wal.test",
+        "test/sql/index/rtree_projection.test",
+        "test/sql/index/rtree_pushdown.test",
+        "test/sql/index/rtree_single.test",
+        "test/sql/index/rtree_transaction.test"
+      ]
+    },
+    {
+      "reason": "Needs a GDAL driver that requires GDAL_USE_SQLITE3, which is off. sqlite3 is vendored only for PROJ's embedded proj.db, and GeoPackage's spatial index is a SQLite R*Tree virtual table we do not compile in, so the sqlite, gpkg and mvt drivers are all disabled. st_read_gpkg_fid reads a GeoPackage. The two ST_AsMVT files still exercise the writer -- spatial's MVT module is protozero-based and unaffected -- but verify it by reading the tile back through GDAL's MVT driver; st_asmvtgeom and st_tileenvelope do not read back and still run.",
+      "paths": [
+        "test/sql/gdal/st_read_gpkg_fid.test",
+        "test/sql/mvt/st_asmvt.test",
+        "test/sql/mvt/st_asmvt_linestring.test"
       ]
     }
   ]

@@ -9,6 +9,12 @@ set(CMAKE_CXX_FLAGS
 include(ExternalProject)
 include(UpdateModule)
 
+# PROJ does set(CMAKE_C_STANDARD 99 CACHE ...) without FORCE, so with no prior
+# cache entry it wins globally and drops every C target to -std=gnu99, which
+# breaks OpenSSL ("bad implementation" in internal/refcount.h -- no atomics).
+# Claim the entry before any add_subdirectory so PROJ's set() is a no-op.
+set(CMAKE_C_STANDARD 17 CACHE STRING "" FORCE)
+
 sdb_update_module(${GIT_EXECUTABLE} "sqllogictest-rs" ${CMAKE_SOURCE_DIR}/third_party "README.md")
 
 ################################################################################
@@ -706,6 +712,71 @@ sdb_update_module(${GIT_EXECUTABLE} "azure-sdk-for-cpp" ${CMAKE_CURRENT_SOURCE_D
 add_subdirectory(azure-cmake)
 
 ################################################################################
+## sqlite3 (amalgamation; SQLITE_USE_URI is required by spatial's proj memvfs)
+################################################################################
+
+sdb_update_module(${GIT_EXECUTABLE} "sqlite3" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
+add_subdirectory(sqlite3-cmake)
+
+# Only PROJ consumes these, and only the all-caps spellings.
+set(SQLITE3_FOUND ON CACHE BOOL "" FORCE)
+set(SQLITE3_INCLUDE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/sqlite3" CACHE PATH "" FORCE)
+set(SQLITE3_LIBRARY _sqlite3 CACHE STRING "" FORCE)
+set(SQLITE3_VERSION "3.53.4" CACHE STRING "" FORCE)
+
+################################################################################
+## expat (libexpat nests the cmake project one level down)
+################################################################################
+
+# Only GDAL's XML drivers (GML, KML, OSM) use expat, and none is in the
+# allowlist below, so the subdirectory is skipped. Flip ON to build them.
+set(GDAL_USE_EXPAT OFF CACHE BOOL "" FORCE)
+
+if(GDAL_USE_EXPAT)
+    foreach(flag BUILD_TOOLS BUILD_EXAMPLES BUILD_TESTS BUILD_DOCS BUILD_FUZZERS
+                 SHARED_LIBS ENABLE_INSTALL)
+        set(EXPAT_${flag} OFF CACHE BOOL "" FORCE)
+    endforeach()
+    sdb_update_module(${GIT_EXECUTABLE} "expat" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
+    add_subdirectory(expat/expat)
+
+    # expat's probes run at outer scope (extensions on) but it compiles with
+    # -std=c99, so they select backends glibc then hides (getentropy, O_CLOEXEC).
+    set_target_properties(expat PROPERTIES C_EXTENSIONS ON)
+
+    if(NOT TARGET EXPAT::EXPAT)
+        add_library(EXPAT::EXPAT ALIAS expat)
+    endif()
+    set(EXPAT_FOUND ON CACHE BOOL "" FORCE)
+    set(EXPAT_INCLUDE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/expat/expat/lib" CACHE PATH "" FORCE)
+    set(EXPAT_INCLUDE_DIRS "${CMAKE_CURRENT_SOURCE_DIR}/expat/expat/lib" CACHE STRING "" FORCE)
+    set(EXPAT_LIBRARY expat CACHE STRING "" FORCE)
+    set(EXPAT_LIBRARIES expat CACHE STRING "" FORCE)
+endif()
+
+################################################################################
+## PROJ -- pinned to 9.3.1: PROJ validates proj.db's layout at runtime, and
+## spatial's embedded proj_db.c is DATABASE.LAYOUT.VERSION 1.2 / PROJ 9.1.1.
+################################################################################
+
+set(NLOHMANN_JSON_ORIGIN "internal" CACHE STRING "" FORCE)
+set(EXE_SQLITE3 "$<TARGET_FILE:sqlite3_shell>" CACHE FILEPATH "" FORCE)
+set(BUILD_APPS OFF CACHE BOOL "" FORCE)
+set(BUILD_TESTING OFF CACHE BOOL "" FORCE)
+set(ENABLE_TIFF OFF CACHE BOOL "" FORCE)
+set(ENABLE_CURL OFF CACHE BOOL "" FORCE)
+set(BUILD_PROJSYNC OFF CACHE BOOL "" FORCE)
+set(PROJ_TESTS OFF CACHE BOOL "" FORCE)
+set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
+# spatial links its own proj_db.c, so PROJ's data/ target is not needed.
+set(PROJ_DATA_SUBDIR "" CACHE STRING "" FORCE)
+sdb_update_module(${GIT_EXECUTABLE} "proj" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
+# PROJ's Ccache.cmake declares cmake_minimum_required(3.4), which CMake rejects.
+set(CMAKE_POLICY_VERSION_MINIMUM 3.5)
+add_subdirectory(proj)
+unset(CMAKE_POLICY_VERSION_MINIMUM)
+
+################################################################################
 ## GEOS
 ################################################################################
 
@@ -716,6 +787,64 @@ set(BUILD_BENCHMARKS FALSE CACHE BOOL "" FORCE)
 set(GEOS_BUILD_DEVELOPER OFF CACHE BOOL "" FORCE)
 sdb_update_module(${GIT_EXECUTABLE} "geos" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
 add_subdirectory(geos)
+
+################################################################################
+## GDAL -- core drivers only, then opt back in per driver.
+## GDAL_USE_EXTERNAL_LIBS=OFF defaults every GDAL_USE_<lib> off, so no system
+## package is reachable and only the bundled copies need naming.
+################################################################################
+
+foreach(flag GDAL_BUILD_OPTIONAL_DRIVERS OGR_BUILD_OPTIONAL_DRIVERS BUILD_DOCS
+             BUILD_PYTHON_BINDINGS BUILD_JAVA_BINDINGS BUILD_CSHARP_BINDINGS
+             GDAL_ENABLE_PLUGINS GDAL_USE_EXTERNAL_LIBS)
+    set(${flag} OFF CACHE BOOL "" FORCE)
+endforeach()
+
+# Vector drivers worth having, all dependency-free or satisfied by what we vendor.
+set(OGR_ENABLE_DRIVER_GEOJSON ON CACHE BOOL "" FORCE)
+set(OGR_ENABLE_DRIVER_CSV ON CACHE BOOL "" FORCE)
+# Core driver, so it needs disabling by name: its internal shapelib target
+# collides with spatial's own vendored copy, which already backs ST_ReadSHP.
+set(OGR_ENABLE_DRIVER_SHAPE OFF CACHE BOOL "" FORCE)
+set(OGR_ENABLE_DRIVER_FLATGEOBUF ON CACHE BOOL "" FORCE)
+set(OGR_ENABLE_DRIVER_MEM ON CACHE BOOL "" FORCE)
+set(OGR_ENABLE_DRIVER_VRT ON CACHE BOOL "" FORCE)
+# All three need GDAL_USE_SQLITE3, which is off: sqlite3 is vendored only for
+# PROJ's proj.db, and GeoPackage would also need SQLite's R*Tree module.
+set(OGR_ENABLE_DRIVER_MVT OFF CACHE BOOL "" FORCE)
+set(OGR_ENABLE_DRIVER_GPKG OFF CACHE BOOL "" FORCE)
+set(OGR_ENABLE_DRIVER_SQLITE OFF CACHE BOOL "" FORCE)
+
+# PROJ is the only library GDAL takes from outside; its Find*.cmake modules do
+# not accept pre-seeded cache vars for in-tree targets, so bundle the rest.
+set(GDAL_USE_ZLIB_INTERNAL ON CACHE BOOL "" FORCE)
+set(GDAL_USE_JSONC_INTERNAL ON CACHE BOOL "" FORCE)
+set(GDAL_USE_LIBCSF_INTERNAL ON CACHE BOOL "" FORCE)
+# spatial only ever opens GDAL_OF_VECTOR, so the raster side is dead weight.
+# GDAL force-enables GTiff and the raster VRT even with optional drivers off
+# (frmts/CMakeLists.txt:41,55), and GTiff drags in libtiff/geotiff/jpeg/LERC.
+# *_INTERNAL defaults are ON, so each bundled copy needs naming.
+foreach(flag GDAL_ENABLE_DRIVER_GTIFF GDAL_ENABLE_DRIVER_VRT
+             GDAL_USE_TIFF_INTERNAL GDAL_USE_GEOTIFF_INTERNAL GDAL_USE_PNG_INTERNAL
+             GDAL_USE_GIF_INTERNAL GDAL_USE_JPEG_INTERNAL GDAL_USE_LERC_INTERNAL
+             GDAL_USE_QHULL_INTERNAL GDAL_USE_OPENCAD_INTERNAL
+             GDAL_USE_SHAPELIB_INTERNAL)
+    set(${flag} OFF CACHE BOOL "" FORCE)
+endforeach()
+
+# GDAL's FindPROJ.cmake needs PROJ_LIBRARY + PROJ_INCLUDE_DIR, and PROJ is
+# built in-tree with no installed copy to find.
+set(PROJ_INCLUDE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/proj/src" CACHE PATH "" FORCE)
+set(PROJ_LIBRARY "${CMAKE_CURRENT_BINARY_DIR}/proj/lib/libproj.a" CACHE FILEPATH "" FORCE)
+set(PROJ_FOUND ON CACHE BOOL "" FORCE)
+set(PROJ_VERSION_STRING "9.3.1" CACHE STRING "" FORCE)
+
+sdb_update_module(${GIT_EXECUTABLE} "gdal" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
+add_subdirectory(gdal)
+
+if(NOT TARGET GDAL::GDAL)
+    add_library(GDAL::GDAL ALIAS GDAL)
+endif()
 
 ################################################################################
 ## duckdb
@@ -749,14 +878,11 @@ set(DUCKDB_SKIP_INSTALL TRUE CACHE BOOL "" FORCE)
 set(LATEST_STORAGE FALSE CACHE BOOL "" FORCE)
 # Suppress the per-extension "vcpkg.json present but VCPKG_BUILD not set" warning.
 set(VCPKG_BUILD ON CACHE BOOL "" FORCE)
-# duckdb_spatial: GEOS only. PROJ would add ST_Transform + the *_Spheroid
-# functions at the cost of vendoring sqlite3 and a 51MB generated proj_db.c;
-# GDAL would add ST_Read/ST_Read_Meta/ST_Drivers and drag in expat. Neither is
-# vendored, so both modules are compiled out.
-set(SPATIAL_USE_PROJ FALSE CACHE BOOL "" FORCE)
-set(SPATIAL_USE_GDAL FALSE CACHE BOOL "" FORCE)
+set(SPATIAL_USE_PROJ TRUE CACHE BOOL "" FORCE)
+set(SPATIAL_USE_GDAL TRUE CACHE BOOL "" FORCE)
 set(SPATIAL_USE_NETWORK FALSE CACHE BOOL "" FORCE)
 set(SPATIAL_USE_GEOS TRUE CACHE BOOL "" FORCE)
+set(SPATIAL_USE_RTREE FALSE CACHE BOOL "" FORCE)
 set(BUILD_EXTENSIONS
     "core_functions;parquet;tpch;tpcds;json;httpfs;avro;iceberg;postgres_scanner;autocomplete;icu;inet;azure;spatial"
     CACHE STRING

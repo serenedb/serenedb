@@ -548,32 +548,32 @@ id
 
 
 # --- Error: GEOMETRY constant with non-CRS84 CRS ---
-# Both source (the literal) and target (the function signature) have CRS;
-# DuckDB's geo cast checks `Equals` and rejects the cast at bind time with
-# a BinderException -- this never reaches the filter builder. We use
-# OGC:CRS83, which is the only other CRS DuckDB knows out of the box;
-# arbitrary EPSG codes (EPSG:3857 etc.) are rejected even earlier with
-# "unrecognized coordinate system" unless an extension is loaded.
+# The spatial extension owns the GEOMETRY/GEOMETRY overloads of these
+# predicates, and its bind-time CRS propagation rejects a mismatch between
+# the column's CRS and the constant's -- this never reaches the filter
+# builder. We use OGC:CRS83, which is the only other CRS DuckDB knows out
+# of the box; arbitrary EPSG codes (EPSG:3857 etc.) are rejected even
+# earlier with "unrecognized coordinate system".
 
 statement error
 SELECT id FROM geo_data_g_idx
 WHERE ST_Intersects(geo, 'POINT(0 0)'::GEOMETRY('OGC:CRS83'))
 ----
-db error: ERROR: Cannot cast GEOMETRY with CRS 'OGC:CRS83' to GEOMETRY with different CRS 'OGC:CRS84'<slt:ignore>
+db error: ERROR: Cannot call function 'ST_Intersects' with geometries of different coordinate reference systems (CRS).<slt:ignore>
 
 
 statement error
 SELECT id FROM geo_data_g_idx
 WHERE ST_Contains(geo, 'POINT(0 0)'::GEOMETRY('OGC:CRS83'))
 ----
-db error: ERROR: Cannot cast GEOMETRY with CRS 'OGC:CRS83' to GEOMETRY with different CRS 'OGC:CRS84'<slt:ignore>
+db error: ERROR: Cannot call function 'ST_Contains' with geometries of different coordinate reference systems (CRS).<slt:ignore>
 
 
 statement error
 SELECT id FROM geo_data_g_idx
 WHERE ST_Contains('POLYGON((0 0, 1 0, 1 1, 0 1, 0 0))'::GEOMETRY('OGC:CRS83'), geo)
 ----
-db error: ERROR: Cannot cast GEOMETRY with CRS 'OGC:CRS83' to GEOMETRY with different CRS 'OGC:CRS84'<slt:ignore>
+db error: ERROR: Cannot call function 'ST_Contains' with geometries of different coordinate reference systems (CRS).<slt:ignore>
 
 
 # --- Error: GEOMETRY constant with Z / M dimensions ---

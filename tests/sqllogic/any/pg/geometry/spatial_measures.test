@@ -1,0 +1,131 @@
+# PostGIS-compatible measurement and numeric-accessor functions, verified identical
+# on SereneDB and reference PostgreSQL + PostGIS 3.6. ST_Azimuth and
+# ST_LineLocatePoint are scaled to integers because NUMERIC trailing-zero
+# rendering differs between the two backends even when the value agrees.
+
+query
+SELECT ST_Area('POLYGON((0 0,4 0,4 4,0 4,0 0))'::geometry) AS v;
+----
+v
+16
+
+query
+SELECT ST_Length('LINESTRING(0 0,2 2,4 4)'::geometry) AS v;
+----
+v
+5.656854249492381
+
+query
+SELECT ST_Perimeter('POLYGON((0 0,4 0,4 4,0 4,0 0))'::geometry) AS v;
+----
+v
+16
+
+query
+SELECT ST_Distance('POINT(0 0)'::geometry, 'POINT(3 4)'::geometry) AS v;
+----
+v
+5
+
+query
+SELECT (ST_Azimuth('POINT(0 0)'::geometry, 'POINT(1 1)'::geometry) * 1000000)::bigint AS v;
+----
+v
+785398
+
+query
+SELECT ST_X('POINT(30 10)'::geometry) AS v;
+----
+v
+30
+
+query
+SELECT ST_Y('POINT(30 10)'::geometry) AS v;
+----
+v
+10
+
+query
+SELECT ST_Z('POINT Z(1 2 3)'::geometry) AS v;
+----
+v
+3
+
+query
+SELECT ST_M('POINT ZM(1 2 3 4)'::geometry) AS v;
+----
+v
+4
+
+query
+SELECT ST_XMin('POLYGON((0 0,4 0,4 4,0 4,0 0))'::geometry) AS v;
+----
+v
+0
+
+query
+SELECT ST_XMax('POLYGON((0 0,4 0,4 4,0 4,0 0))'::geometry) AS v;
+----
+v
+4
+
+query
+SELECT ST_YMin('POLYGON((0 0,4 0,4 4,0 4,0 0))'::geometry) AS v;
+----
+v
+0
+
+query
+SELECT ST_YMax('POLYGON((0 0,4 0,4 4,0 4,0 0))'::geometry) AS v;
+----
+v
+4
+
+query
+SELECT ST_ZMin('POINT Z(1 2 3)'::geometry) AS v;
+----
+v
+3
+
+query
+SELECT ST_ZMax('POINT Z(1 2 3)'::geometry) AS v;
+----
+v
+3
+
+query
+SELECT ST_Dimension('LINESTRING(0 0,2 2,4 4)'::geometry) AS v;
+----
+v
+1
+
+query
+SELECT ST_NPoints('LINESTRING(0 0,2 2,4 4)'::geometry) AS v;
+----
+v
+3
+
+query
+SELECT ST_NumPoints('LINESTRING(0 0,2 2,4 4)'::geometry) AS v;
+----
+v
+3
+
+query
+SELECT ST_NumGeometries('MULTIPOLYGON(((0 0,2 0,2 2,0 2,0 0)),((3 3,5 3,5 5,3 5,3 3)))'::geometry) AS v;
+----
+v
+2
+
+query
+SELECT ST_NumInteriorRings('POLYGON((0 0,10 0,10 10,0 10,0 0),(2 2,4 2,4 4,2 4,2 2))'::geometry) AS v;
+----
+v
+1
+
+query
+SELECT (ST_LineLocatePoint('LINESTRING(0 0,2 2,4 4)'::geometry, 'POINT(1 1)'::geometry) * 1000000)::bigint AS v;
+----
+v
+250000
+

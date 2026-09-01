@@ -1,0 +1,491 @@
+# duckdb-spatial functions that are NOT portable to PostGIS, so they cannot live
+# in any/pg/geometry/. Three reasons appear here:
+#
+#   * DuckDB-only names or semantics -- ST_Hilbert, ST_QuadKey, ST_Extent_Approx,
+#     ST_NGeometries/ST_NInteriorRings (aliases PostGIS lacks), the *_GEOS
+#     suffixed variants, and the POINT_2D/LINESTRING_2D/POLYGON_2D/BOX_2D
+#     struct types with their casts.
+#   * Text output whose formatting diverges -- ST_AsText spacing, and
+#     ST_GeometryType returning POINT where PostGIS returns ST_Point.
+#   * Encodings with no PostGIS equivalent in this build -- GeoJSON, HEXWKB,
+#     SVG and MVT.
+#
+# The PROJ and GDAL entry points are deliberately absent from this build and are
+# covered by spatial_geos.test instead.
+
+# --- scalar functions ---
+
+query
+SELECT ST_GeometryType('POINT(1 1)'::GEOMETRY)::TEXT AS v;
+----
+v
+POINT
+
+query
+SELECT ST_AsGeoJSON('POINT(1 1)'::GEOMETRY) AS v;
+----
+v
+{"type":"Point","coordinates":[1.0,1.0]}
+
+query
+SELECT ST_AsHEXWKB('POINT(1 1)'::GEOMETRY) AS v;
+----
+v
+0101000000000000000000F03F000000000000F03F
+
+query
+SELECT ST_AsSVG('POINT(1 1)'::GEOMETRY, false, 15) AS v;
+----
+v
+cx="1" cy="-1"
+
+query
+SELECT ST_AsText(ST_GeomFromHEXWKB(ST_AsHEXWKB('POINT(1 1)'::GEOMETRY))) AS v;
+----
+v
+POINT (1 1)
+
+query
+SELECT ST_AsText(ST_GeomFromHEXEWKB(ST_AsHEXWKB('POINT(1 1)'::GEOMETRY))) AS v;
+----
+v
+POINT (1 1)
+
+query
+SELECT ST_NGeometries('MULTIPOLYGON(((0 0,2 0,2 2,0 2,0 0)),((3 3,5 3,5 5,3 5,3 3)))'::GEOMETRY) AS v;
+----
+v
+2
+
+query
+SELECT ST_NInteriorRings('POLYGON((0 0,10 0,10 10,0 10,0 0),(2 2,4 2,4 4,2 4,2 2))'::GEOMETRY) AS v;
+----
+v
+1
+
+query
+SELECT ST_ZMFlag('POINT ZM(1 2 3 4)'::GEOMETRY) AS v;
+----
+v
+3
+
+query
+SELECT ST_MMin('POINT ZM(1 2 3 4)'::GEOMETRY) AS v;
+----
+v
+4
+
+query
+SELECT ST_MMax('POINT ZM(1 2 3 4)'::GEOMETRY) AS v;
+----
+v
+4
+
+query
+SELECT ST_Hilbert('POINT(1 1)'::GEOMETRY, {'min_x': 0.0, 'min_y': 0.0, 'max_x': 4.0, 'max_y': 4.0}::BOX_2D) > 0 AS v;
+----
+v
+t
+
+query
+SELECT ST_QuadKey(1.0, 2.0, 10) AS v;
+----
+v
+1222222030
+
+query
+SELECT ST_AsText(ST_TileEnvelope(0, 0, 0)) AS v;
+----
+v
+POLYGON ((-20037508.342789244 -20037508.342789244, -20037508.342789244 20037508.342789244, 20037508.342789244 20037508.342789244, 20037508.342789244 -20037508.342789244, -20037508.342789244 -20037508.342789244))
+
+query
+SELECT ST_Extent('POLYGON((0 0,4 0,4 4,0 4,0 0))'::GEOMETRY)::TEXT AS v;
+----
+v
+BOX(0 0, 4 4)
+
+query
+SELECT ST_Extent_Approx('POLYGON((0 0,4 0,4 4,0 4,0 0))'::GEOMETRY) IS NOT NULL AS v;
+----
+v
+t
+
+query
+SELECT ST_AsText(ST_Expand('POINT(1 1)'::GEOMETRY, 1)) AS v;
+----
+v
+POLYGON ((0 0, 0 2, 2 2, 2 0, 0 0))
+
+query
+SELECT ST_MakeBox2D('POINT(0 0)'::GEOMETRY, 'POINT(1 1)'::GEOMETRY)::TEXT AS v;
+----
+v
+BOX(0 0, 1 1)
+
+query
+SELECT ST_AsText(ST_Force3DZ('POINT(1 1)'::GEOMETRY, 7)) AS v;
+----
+v
+POINT Z (1 1 7)
+
+query
+SELECT ST_AsText(ST_Force3DM('POINT(1 1)'::GEOMETRY, 8)) AS v;
+----
+v
+POINT M (1 1 8)
+
+query
+SELECT ST_AsText(ST_Force4D('POINT(1 1)'::GEOMETRY, 7, 8)) AS v;
+----
+v
+POINT ZM (1 1 7 8)
+
+query
+SELECT ST_AsText(ST_LocateAlong('LINESTRING M(0 0 0,4 0 10)'::GEOMETRY, 5)) AS v;
+----
+v
+POINT M (2 0 5)
+
+query
+SELECT ST_AsText(ST_LocateBetween('LINESTRING M(0 0 0,4 0 10)'::GEOMETRY, 0, 5)) AS v;
+----
+v
+LINESTRING M (0 0 0, 2 0 5)
+
+query
+SELECT ST_InterpolatePoint('LINESTRING M(0 0 0,4 0 10)'::GEOMETRY, 'POINT(0 0)'::GEOMETRY) AS v;
+----
+v
+0
+
+query
+SELECT ST_AsText(ST_LineInterpolatePoints('LINESTRING(0 0,4 0)'::GEOMETRY, 0.5, true)) AS v;
+----
+v
+MULTIPOINT (2 0, 4 0)
+
+query
+SELECT ST_AsText(ST_Affine('POINT(1 1)'::GEOMETRY, 1, 0, 0, 1, 1, 1)) AS v;
+----
+v
+POINT (2 2)
+
+query
+SELECT ST_AsText(ST_RotateX('POINT Z(1 2 3)'::GEOMETRY, 0)) AS v;
+----
+v
+POINT Z (1 2 3)
+
+query
+SELECT ST_AsText(ST_RotateY('POINT Z(1 2 3)'::GEOMETRY, 0)) AS v;
+----
+v
+POINT Z (1 2 3)
+
+query
+SELECT ST_AsText(ST_RotateZ('POINT(1 1)'::GEOMETRY, 0)) AS v;
+----
+v
+POINT (1 1)
+
+query
+SELECT ST_Distance_GEOS('POINT(0 0)'::GEOMETRY, 'POINT(3 4)'::GEOMETRY) AS v;
+----
+v
+5
+
+query
+SELECT ST_DWithin_GEOS('POINT(0 0)'::GEOMETRY, 'POINT(1 1)'::GEOMETRY, 2) AS v;
+----
+v
+t
+
+query
+SELECT ST_Distance_Sphere('POINT(0 0)'::GEOMETRY, 'POINT(1 1)'::GEOMETRY) > 150000 AS v;
+----
+v
+t
+
+query
+SELECT ST_WithinProperly('POINT(1 1)'::GEOMETRY, 'POLYGON((0 0,4 0,4 4,0 4,0 0))'::GEOMETRY) AS v;
+----
+v
+t
+
+query
+SELECT ST_AsText(ST_BuildArea('LINESTRING(0 0,4 0,4 4,0 4,0 0)'::GEOMETRY)) AS v;
+----
+v
+POLYGON ((0 0, 0 4, 4 4, 4 0, 0 0))
+
+query
+SELECT ST_Area(ST_MinimumRotatedRectangle('MULTIPOINT(0 0,4 0,4 4,0 4,2 2)'::GEOMETRY)) AS v;
+----
+v
+16
+
+query
+SELECT ST_GeometryType(ST_VoronoiDiagram('MULTIPOINT(0 0,4 0,4 4,0 4,2 2)'::GEOMETRY))::TEXT AS v;
+----
+v
+GEOMETRYCOLLECTION
+
+query
+SELECT ST_AsText(ST_Points('LINESTRING(0 0,2 2,4 4)'::GEOMETRY)) AS v;
+----
+v
+MULTIPOINT (0 0, 2 2, 4 4)
+
+query
+SELECT len(ST_Dump('MULTIPOLYGON(((0 0,2 0,2 2,0 2,0 0)),((3 3,5 3,5 5,3 5,3 3)))'::GEOMETRY)) AS v;
+----
+v
+2
+
+query
+SELECT ST_GeometryType(ST_CoverageUnion(['POLYGON((0 0,4 0,4 4,0 4,0 0))'::GEOMETRY]))::TEXT AS v;
+----
+v
+POLYGON
+
+query
+SELECT ST_CoverageClean(['POLYGON((0 0,4 0,4 4,0 4,0 0))'::GEOMETRY]) IS NOT NULL AS v;
+----
+v
+t
+
+query
+SELECT ST_CoverageInvalidEdges(['POLYGON((0 0,4 0,4 4,0 4,0 0))'::GEOMETRY], 0.0) IS NOT NULL AS v;
+----
+v
+f
+
+query
+SELECT ST_Point2D(1, 2)::TEXT AS v;
+----
+v
+POINT (1 2)
+
+query
+SELECT ST_Point3D(1, 2, 3)::TEXT AS v;
+----
+v
+POINT Z (1 2 3)
+
+query
+SELECT ST_Point4D(1, 2, 3, 4)::TEXT AS v;
+----
+v
+POINT ZM (1 2 3 4)
+
+query
+SELECT ST_Point2DFromWKB(ST_AsWKB('POINT(1 1)'::GEOMETRY))::TEXT AS v;
+----
+v
+POINT (1 1)
+
+query
+SELECT ST_LineString2DFromWKB(ST_AsWKB('LINESTRING(0 0,2 2,4 4)'::GEOMETRY))::TEXT AS v;
+----
+v
+LINESTRING (0 0, 2 2, 4 4)
+
+query
+SELECT ST_Polygon2DFromWKB(ST_AsWKB('POLYGON((0 0,4 0,4 4,0 4,0 0))'::GEOMETRY))::TEXT AS v;
+----
+v
+POLYGON ((0 0, 4 0, 4 4, 0 4, 0 0))
+
+query
+SELECT ST_AsText(ST_AsMVTGeom('POINT(1 1)'::GEOMETRY, {'min_x': 0.0, 'min_y': 0.0, 'max_x': 4.0, 'max_y': 4.0}::BOX_2D)) AS v;
+----
+v
+POINT (1024 3072)
+
+# --- aggregates ---
+
+query
+SELECT ST_Extent_Agg(g)::TEXT AS v FROM (VALUES ('POLYGON((0 0,4 0,4 4,0 4,0 0))'::GEOMETRY), ('POINT(1 1)'::GEOMETRY)) t(g);
+----
+v
+POLYGON ((0 0, 0 4, 4 4, 4 0, 0 0))
+
+query
+SELECT ST_AsText(ST_Envelope_Agg(g)) AS v FROM (VALUES ('POLYGON((0 0,4 0,4 4,0 4,0 0))'::GEOMETRY), ('POINT(1 1)'::GEOMETRY)) t(g);
+----
+v
+POLYGON ((0 0, 0 4, 4 4, 4 0, 0 0))
+
+query
+SELECT ST_Area(ST_Union_Agg(g)) AS v FROM (VALUES ('POLYGON((0 0,4 0,4 4,0 4,0 0))'::GEOMETRY), ('POLYGON((0 0,4 0,4 4,0 4,0 0))'::GEOMETRY)) t(g);
+----
+v
+16
+
+query
+SELECT ST_Area(ST_MemUnion_Agg(g)) AS v FROM (VALUES ('POLYGON((0 0,4 0,4 4,0 4,0 0))'::GEOMETRY), ('POLYGON((0 0,4 0,4 4,0 4,0 0))'::GEOMETRY)) t(g);
+----
+v
+16
+
+query
+SELECT ST_Area(ST_Intersection_Agg(g)) AS v FROM (VALUES ('POLYGON((0 0,4 0,4 4,0 4,0 0))'::GEOMETRY), ('POLYGON((0 0,4 0,4 4,0 4,0 0))'::GEOMETRY)) t(g);
+----
+v
+16
+
+query
+SELECT ST_GeometryType(ST_CoverageUnion_Agg(g))::TEXT AS v FROM (VALUES ('POLYGON((0 0,4 0,4 4,0 4,0 0))'::GEOMETRY)) t(g);
+----
+v
+POLYGON
+
+query
+SELECT ST_CoverageInvalidEdges_Agg(g, 0.0) IS NOT NULL AS v FROM (VALUES ('POLYGON((0 0,4 0,4 4,0 4,0 0))'::GEOMETRY)) t(g);
+----
+v
+f
+
+query
+SELECT ST_CoverageSimplify_Agg(g, 0.1) IS NOT NULL AS v FROM (VALUES ('POLYGON((0 0,4 0,4 4,0 4,0 0))'::GEOMETRY)) t(g);
+----
+v
+t
+
+query
+SELECT octet_length(ST_AsMVT({'geom': g})) > 0 AS v FROM (VALUES ('POINT(1 1)'::GEOMETRY)) t(g);
+----
+v
+t
+
+# --- table functions ---
+
+query
+SELECT count(*) AS v FROM ST_GeneratePoints({'min_x': 0.0, 'min_y': 0.0, 'max_x': 10.0, 'max_y': 10.0}::BOX_2D, 5, 42);
+----
+v
+5
+
+# --- PROJ module (vendored PROJ 9.3.1 + sqlite3 amalgamation) ---
+
+query
+SELECT ST_AsText(ST_Transform('POINT(1 1)'::GEOMETRY,'EPSG:4326','EPSG:3857')) AS v;
+----
+v
+POINT (111319.49079327357 111325.1428663851)
+
+query
+SELECT round(ST_Area_Spheroid('POLYGON((0 0,1 0,1 1,0 1,0 0))'::GEOMETRY))::BIGINT AS v;
+----
+v
+12308778361
+
+query
+SELECT round(ST_Perimeter_Spheroid('POLYGON((0 0,1 0,1 1,0 1,0 0))'::GEOMETRY))::BIGINT AS v;
+----
+v
+443771
+
+query
+SELECT round(ST_Length_Spheroid('LINESTRING(0 0,1 1)'::GEOMETRY))::BIGINT AS v;
+----
+v
+156900
+
+query
+SELECT round(ST_Distance_Spheroid('POINT(0 0)'::GEOMETRY,'POINT(1 1)'::GEOMETRY))::BIGINT AS v;
+----
+v
+156900
+
+query
+SELECT ST_DWithin_Spheroid('POINT(0 0)'::GEOMETRY,'POINT(1 1)'::GEOMETRY,200000) AS v;
+----
+v
+t
+
+query
+SELECT DuckDB_Proj_Version() AS v;
+----
+v
+9.3.1
+
+query
+SELECT DuckDB_PROJ_Compiled_Version() AS v;
+----
+v
+Rel. 9.3.1, December 1st, 2023
+
+# --- GDAL module: ST_Read / ST_Read_Meta over a real GeoJSON fixture ---
+#
+# GDAL is built with GDAL_BUILD_OPTIONAL_DRIVERS=OFF, so only the allowlisted
+# drivers exist (pinned in spatial_geos.test). GeoJSON is one of them.
+
+control substitution on
+
+query
+SELECT count(*) AS v FROM ST_Read('${RESOURCES}/tests/spatial/points.geojson');
+----
+v
+3
+
+query
+SELECT name, ST_AsText(geom) AS wkt
+FROM ST_Read('${RESOURCES}/tests/spatial/points.geojson')
+ORDER BY name;
+----
+name	wkt
+alpha	POINT (1 2)
+beta	POINT (3 4)
+gamma	POINT (5 6)
+
+query
+SELECT count(*) AS v
+FROM ST_Read_Meta('${RESOURCES}/tests/spatial/points.geojson');
+----
+v
+1
+
+query
+SELECT round(sum(n))::BIGINT AS v
+FROM ST_Read('${RESOURCES}/tests/spatial/points.geojson');
+----
+v
+6
+
+# An existing file that no enabled driver can open must report an error, not
+# return an empty result. Upstream skipped it via a try/catch that never fired
+# (GDALDataset::Open returns nullptr instead of throwing), so this dereferenced
+# null and killed the server. The message is GDAL's own, so only the failure is
+# pinned here -- it embeds an absolute path.
+
+query error
+SELECT * FROM ST_Read_Meta('${RESOURCES}/tests/spatial/not-spatial.txt');
+
+query error
+SELECT * FROM ST_Read('${RESOURCES}/tests/spatial/not-spatial.txt');
+
+# A path that matches nothing is the same error every other reader gives
+# (read_csv, read_parquet). Upstream globbed with FileGlobOptions::ALLOW_EMPTY,
+# which made ST_Read_Meta the one reader that answered a typo with zero rows.
+
+query error
+SELECT * FROM ST_Read_Meta('/nonexistent-sdb-spatial.geojson');
+----
+db error: ERROR: No files found that match the pattern "/nonexistent-sdb-spatial.geojson"
+
+
+query error
+SELECT * FROM ST_Read_Meta('/nonexistent-sdb-spatial-dir/*.geojson');
+----
+db error: ERROR: No files found that match the pattern "/nonexistent-sdb-spatial-dir/*.geojson"
+
+
+# A glob that does match still reads, so the stricter option did not break globbing.
+
+query
+SELECT count(*) AS v FROM ST_Read_Meta('${RESOURCES}/tests/spatial/*.geojson');
+----
+v
+1

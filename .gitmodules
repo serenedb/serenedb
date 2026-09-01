@@ -221,3 +221,27 @@
 	path = third_party/libxml2
 	url = https://github.com/serenedb/libxml2.git
 	shallow = true
+[submodule "third_party/geos"]
+	path = third_party/geos
+	url = https://github.com/serenedb/geos.git
+	shallow = true
+[submodule "third_party/duckdb_spatial"]
+	path = third_party/duckdb_spatial
+	url = https://github.com/serenedb/duckdb-spatial.git
+	shallow = true
+[submodule "third_party/sqlite3"]
+	path = third_party/sqlite3
+	url = https://github.com/ClickHouse/sqlite-amalgamation.git
+	shallow = true
+[submodule "third_party/expat"]
+	path = third_party/expat
+	url = https://github.com/libexpat/libexpat.git
+	shallow = true
+[submodule "third_party/proj"]
+	path = third_party/proj
+	url = https://github.com/OSGeo/PROJ.git
+	shallow = true
+[submodule "third_party/gdal"]
+	path = third_party/gdal
+	url = https://github.com/serenedb/gdal.git
+	shallow = true

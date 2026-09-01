@@ -32,6 +32,7 @@
 * [aws-checksums](https://github.com/awslabs/aws-checksums)
 * [aws-crt-cpp](https://github.com/awslabs/aws-crt-cpp)
 * [aws-sdk-cpp](https://github.com/aws/aws-sdk-cpp)
+* [ryu](https://github.com/ulfjack/ryu) (Apache 2.0 or Boost 1.0, vendored in `geos/src/deps/ryu`)
 
 ### [Boost Software License, Version 1.0](http://www.boost.org/LICENSE_1_0.txt)
 
@@ -51,6 +52,9 @@
 * [duckdb-avro](https://github.com/duckdb/duckdb-avro)
 * [duckdb-azure](https://github.com/duckdb/duckdb-azure)
 * [duckdb-iceberg](https://github.com/duckdb/duckdb-iceberg)
+* [duckdb-spatial](https://github.com/duckdb/duckdb-spatial)
+* [protozero](https://github.com/mapbox/protozero) (BSD-2-Clause, vendored in `duckdb_spatial/src/third_party/protozero`)
+* [shapelib](https://github.com/OSGeo/shapelib) (vendored in `duckdb_spatial/src/third_party/shapelib`)
 * [duckdb-postgres](https://github.com/duckdb/postgres_scanner)
 * [database-connector](https://github.com/duckdb/database-connector)
 * [Azure SDK for C++](https://github.com/Azure/azure-sdk-for-cpp)
@@ -60,6 +64,10 @@
 * [fmt](https://github.com/fmtlib/fmt)
 * [jansson](https://github.com/akheron/jansson)
 * [CRoaring](https://github.com/RoaringBitmap/CRoaring)
+* [libexpat](https://github.com/libexpat/libexpat) (vendored for GDAL, which reaches it only from the XML-based drivers -- GML, KML, OSM -- that our driver allowlist leaves off. `GDAL_USE_EXPAT` is therefore OFF and the submodule is not built or linked; the entry is here because the submodule is registered.)
+* [PROJ](https://github.com/OSGeo/PROJ) (see `proj/COPYING`; used by the spatial extension for `ST_Transform`, the `*_Spheroid` functions and CRS lookup)
+* [nlohmann/json](https://github.com/nlohmann/json) (3.9.x, vendored in `proj/include/proj/internal/vendor/nlohmann`)
+* [GDAL/OGR](https://github.com/OSGeo/gdal) (MIT-style; `gdal/LICENSE.TXT` is the aggregate notice and also covers the internal copies GDAL builds when a system library is absent)
 
 ### [BSD 2-clauses](https://opensource.org/licenses/bsd-license.php)
 
@@ -73,6 +81,13 @@
 * [snappy](https://github.com/google/snappy)
 * [snowball](https://github.com/snowballstem/snowball)
 * [zstd](https://github.com/facebook/zstd) (BSD + GPLv2 dual license)
+
+### [LGPL 2.1](https://www.gnu.org/licenses/old-licenses/lgpl-2.1.html)
+
+* [GEOS](https://libgeos.org) (statically linked by the spatial extension;
+  see `geos/COPYING`. LGPL 2.1 section 6 requires that a recipient of a
+  binary can relink it against their own GEOS -- satisfied by this
+  repository and the pinned `serenedb/geos` submodule being public.)
 
 ### Other licenses
 
@@ -93,6 +108,9 @@
 * [minizip-ng](https://github.com/zlib-ng/minizip-ng/blob/develop/LICENSE)
 * [PostgreSQL](https://github.com/postgres/postgres), [PostgreSQL License](https://www.postgresql.org/about/licence/) (libpq, statically linked by the postgres_scanner extension)
 * [wyhash](https://github.com/wangyi-fudan/wyhash), Unlicense (vendored in `libs/basics/wyhash.h`)
+* [SQLite](https://www.sqlite.org), [public domain](https://www.sqlite.org/copyright.html) (the 3.53.4 amalgamation, reached through PROJ's embedded `proj.db` and GDAL's SQLite/GPKG drivers). The submodule tracks
+  [ClickHouse/sqlite-amalgamation](https://github.com/ClickHouse/sqlite-amalgamation), a mirror of the amalgamation published by sqlite.org; its `LICENSE` file is BSD-3-Clause and
+  covers only the CMake packaging inherited from `azadkuh/sqlite-amalgamation`, not SQLite itself. We do not use that CMake -- see `third_party/sqlite3-cmake`.
 
 ## Programs
 

@@ -1,0 +1,98 @@
+# Pins the *shape* of the compiled-in spatial extension: all three optional
+# modules are built -- GEOS, PROJ and GDAL (SPATIAL_USE_GEOS / _PROJ / _GDAL in
+# third_party/CMakeLists.txt).
+#
+# One liveness assert per module, so a module silently dropping out of the build
+# fails here rather than surfacing at the call site as a confusing "not in the
+# catalog, but it exists in the spatial extension" error.
+#
+# GDAL is built with GDAL_BUILD_OPTIONAL_DRIVERS=OFF plus an explicit driver
+# allowlist, so the driver list is pinned too -- adding or removing a driver
+# should show up as a diff here rather than silently.
+#
+# The RTREE index is compiled out (SPATIAL_USE_RTREE=OFF) because SereneDB
+# indexes geometry through `USING inverted` instead, so this file pins that its
+# whole surface -- access method, pragmas, scan function -- is absent, not merely
+# rejected. The FlatRTree that accelerates spatial joins is unrelated and stays.
+
+# --- GEOS ---
+
+query
+SELECT ST_AsText(ST_Intersection('LINESTRING (0 0, 4 0)'::GEOMETRY,
+                                 'LINESTRING (2 0, 6 0)'::GEOMETRY)) AS geom;
+----
+geom
+LINESTRING (2 0, 4 0)
+
+
+# --- PROJ ---
+
+query
+SELECT DuckDB_Proj_Version() AS v;
+----
+v
+9.3.1
+
+query
+SELECT ST_AsText(ST_Transform('POINT (1 1)'::GEOMETRY,
+                              'EPSG:4326', 'EPSG:3857')) AS geom;
+----
+geom
+POINT (111319.49079327357 111325.1428663851)
+
+
+# --- GDAL: the driver allowlist ---
+
+query
+SELECT string_agg(short_name, ', ' ORDER BY short_name) AS drivers
+FROM ST_Drivers();
+----
+drivers
+CSV, ESRIJSON, FlatGeobuf, GeoJSON, GeoJSONSeq, OGR_VRT, TopoJSON
+
+
+# ST_Read reaches GDAL rather than a stub: a missing file must produce GDAL's
+# own open error.
+
+query error
+SELECT count(*) FROM ST_Read('/nonexistent.geojson');
+----
+db error: ERROR: Could not open GDAL dataset at: /nonexistent.geojson<slt:ignore>
+
+
+# --- spatial's RTREE index type stays unreachable on SereneDB tables ---
+
+statement ok
+CREATE TABLE shapes (id INTEGER, g GEOMETRY);
+
+statement error
+CREATE INDEX shapes_rtree ON shapes USING RTREE (g);
+----
+db error: ERROR: access method "rtree" does not exist
+
+
+# Nothing rtree-shaped is registered at all -- not the pragmas, not the scan
+# function. A build that turned the index back on would answer these instead of
+# erroring, so they are the guard that SPATIAL_USE_RTREE is still off.
+
+query
+SELECT count(*) AS v FROM duckdb_functions() WHERE function_name ILIKE '%rtree%';
+----
+v
+0
+
+
+statement error
+SELECT * FROM rtree_index_dump('shapes_rtree');
+----
+db error: ERROR: Table Function with name "rtree_index_dump" is not in the catalog<slt:ignore>
+
+
+statement error
+SELECT * FROM pragma_rtree_index_info('shapes_rtree');
+----
+db error: ERROR: Table Function with name "pragma_rtree_index_info" is not in the catalog<slt:ignore>
+
+
+statement ok
+DROP TABLE shapes;

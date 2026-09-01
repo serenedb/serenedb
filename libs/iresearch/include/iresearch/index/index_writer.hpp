@@ -32,6 +32,7 @@
 #include <optional>
 #include <string_view>
 #include <yaclib/algo/wait_group.hpp>
+#include <yaclib/async/future.hpp>
 
 #include "basics/async_utils.hpp"
 #include "basics/noncopyable.hpp"
@@ -594,6 +595,13 @@ class IndexWriter : private util::Noncopyable {
                            const IndexFieldOptions* field_options = nullptr,
                            Format::ptr codec = nullptr,
                            const MergeWriter::FlushProgress& progress = {});
+
+  // Compact, driven by the caller's executor. A null `env` never suspends, so
+  // the returned Future is ready on return and Compact() just drains it.
+  auto CompactAsync(const CompactionPolicy& policy,
+                    const IndexFieldOptions* field_options, Format::ptr codec,
+                    const MergeWriter::FlushProgress& progress,
+                    const AnnBuildEnv* env) -> yaclib::Future<CompactionResult>;
 
   // Imports index from the specified index reader into new segment
   // Reader the index reader to import.

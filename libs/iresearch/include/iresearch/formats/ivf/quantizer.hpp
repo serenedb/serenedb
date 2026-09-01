@@ -24,6 +24,7 @@
 #include <limits>
 #include <memory>
 #include <span>
+#include <vector>
 
 #include "iresearch/index/column_info.hpp"
 #include "iresearch/types.hpp"
@@ -60,6 +61,11 @@ class QuantizerWriter {
 
   virtual void Encode(IndexOutput& out, const float* vecs, size_t n) = 0;
 
+  virtual bool EncodeInto(byte_type* /*dst*/, const float* /*vecs*/,
+                          size_t /*n*/) {
+    return false;
+  }
+
   virtual void Finish(IndexOutput& out) = 0;
 
   virtual uint32_t PendingLanes() const noexcept { return 0; }
@@ -76,6 +82,22 @@ class QuantizerReader {
   virtual void StartCluster(const float* centroid) = 0;
   virtual void ComputeBlock(std::span<const byte_type> block, score_t threshold,
                             score_t* out) = 0;
+
+  virtual void ComputeGathered(const byte_type* base, uint32_t record_size,
+                               std::span<const uint32_t> ids, score_t threshold,
+                               score_t* out);
+
+  virtual bool Decode(const byte_type* /*code*/, float* /*out*/) const {
+    return false;
+  }
+
+  // Re-keys an existing reader in place. The scalar reader keeps the pointer
+  // rather than copying, so `query` must stay alive and unmodified for as long
+  // as this reader is scored -- two readers must not share one buffer.
+  virtual bool SetQuery(std::span<const float> /*query*/) { return false; }
+
+ private:
+  std::vector<byte_type> _gather;
 };
 
 class QuantizerCodebook

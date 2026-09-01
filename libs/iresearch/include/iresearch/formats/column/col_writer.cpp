@@ -20,6 +20,9 @@
 
 #include "iresearch/formats/column/col_writer.hpp"
 
+#include <yaclib/coro/await.hpp>
+#include <yaclib/coro/future.hpp>
+
 #include <absl/strings/str_cat.h>
 
 #include <cstring>
@@ -246,19 +249,24 @@ void ColWriter::Commit(uint64_t target_row) {
   serializer.End();
   _out->WriteU64(footer_offset);
   format_utils::WriteFooter(*_out);
-  if (!_ann_writers.empty()) {
-    _out->Flush();
-    ColReader reader{*_dir, _segment_name, *_db};
-    for (auto& entry : _ann_writers) {
-      const auto* col = reader.Column(entry->column_id);
-      if (!col) {
-        continue;
-      }
-      entry->writer->Compute(*col, reader.Ctx());
-    }
-  }
   _out.reset();
+  _ann_ready = !_ann_writers.empty();
   _committed = true;
+}
+
+auto ColWriter::ComputeAnn(const AnnBuildEnv* env) -> yaclib::Future<> {
+  if (!_ann_ready) {
+    co_return {};
+  }
+  ColReader reader{*_dir, _segment_name, *_db};
+  for (auto& entry : _ann_writers) {
+    const auto* col = reader.Column(entry->column_id);
+    if (!col) {
+      continue;
+    }
+    co_await entry->writer->Compute(*col, reader.Ctx(), env);
+  }
+  co_return {};
 }
 
 }  // namespace irs

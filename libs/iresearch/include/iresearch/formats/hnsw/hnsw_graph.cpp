@@ -155,7 +155,7 @@ uint32_t HnswRandomLevel(uint64_t& rng_state, uint32_t m) noexcept {
     static_cast<double>(rng_state >> 11) / static_cast<double>(1ULL << 53);
   const double factor = 1.0 / std::log(static_cast<double>(std::max(m, 2U)));
   const double sample = -std::log(u > 0.0 ? u : 1e-12) * factor;
-  return static_cast<uint32_t>(sample) + 1;
+  return std::min(static_cast<uint32_t>(sample) + 1, kHnswMaxLevel);
 }
 
 }  // namespace irs

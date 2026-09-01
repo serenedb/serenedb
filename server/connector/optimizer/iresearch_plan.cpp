@@ -542,6 +542,10 @@ uint32_t ReadNprobe(duckdb::ClientContext& context) {
   return connector::ReadBoundedIntSetting(context, "sdb_nprobe", 1, 1);
 }
 
+uint32_t ReadHnswEfSearch(duckdb::ClientContext& context) {
+  return connector::ReadBoundedIntSetting(context, "sdb_hnsw_ef_search", 0, 0);
+}
+
 duckdb::unique_ptr<duckdb::Expression> PushdownDistanceCall(
   duckdb::BoundFunctionExpression& func, const connector::AnnFunctionInfo& info,
   duckdb::LogicalOperator& root, duckdb::ClientContext& context) {
@@ -613,6 +617,7 @@ duckdb::unique_ptr<duckdb::Expression> PushdownDistanceCall(
       .postings_id = ann_info->postings_id,
       .quant = ann_info->quant.kind,
       .nprobe = ReadNprobe(context),
+      .ef_search = ReadHnswEfSearch(context),
     };
     ss.score_order = info.order;
   } else {

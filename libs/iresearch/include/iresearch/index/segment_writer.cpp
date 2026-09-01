@@ -31,6 +31,7 @@
 #include "iresearch/formats/column/col_reader.hpp"
 #include "iresearch/formats/column/col_writer.hpp"
 #include "iresearch/formats/column/norm_writer.hpp"
+#include "iresearch/utils/async.hpp"
 #include "iresearch/formats/column/read_context.hpp"
 #include "iresearch/formats/index/idx_reader.hpp"
 #include "iresearch/formats/index/idx_writer.hpp"
@@ -165,6 +166,7 @@ void SegmentWriter::FlushFields(FlushState& state,
   if (_col_writer) {
     _col_writer->SetIdxWriter(idx);
     _col_writer->Commit(buffered_docs());
+    GetReady(_col_writer->ComputeAnn(/*env=*/nullptr));
     ann_writers = _col_writer->TakeAnnWriters();
     _col_writer.reset();
   }

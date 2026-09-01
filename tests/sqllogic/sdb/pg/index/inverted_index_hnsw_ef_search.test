@@ -1,0 +1,164 @@
+control substitution on
+
+# ============================================================================
+# sdb_hnsw_ef_search is HNSW's own search-time beam width.
+#
+# Before it existed, ef came from sdb_nprobe -- an IVF-named knob -- through
+# max(nprobe, 64), so ef was pinned at 64 for anyone not tuning and could never
+# be driven below it. 0 keeps exactly that derivation; any other value is used
+# verbatim, which is what makes the low-latency end of the recall/latency curve
+# reachable at all.
+#
+# The beam is also the result ceiling: HnswSearchTopK keeps at most ef
+# candidates, so an ef below the LIMIT returns fewer rows than asked for. That
+# is the deterministic signal this file pins -- on a linear dataset the graph
+# finds the exact neighbour at any ef, so row *count* is what distinguishes the
+# beam widths, not row identity.
+#
+# quant = 'none' is pinned so the graph traverses raw f32: with a quantizer the
+# scan layer over-fetches sdb_rerank_factor * k and rescores, which would mask
+# what the graph itself returned.
+# ============================================================================
+
+statement ok
+CREATE TABLE hnsw_ef (pk INTEGER PRIMARY KEY, emb FLOAT[8]);
+
+statement ok
+CREATE INDEX hnsw_ef_idx ON hnsw_ef
+  USING inverted(pk, emb hnsw (metric = 'l2', quant = 'none', m = 4,
+                               ef_construction = 8));
+
+statement ok
+INSERT INTO hnsw_ef SELECT i,
+  [i::FLOAT, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] FROM range(2000) t(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) hnsw_ef;
+
+
+query
+SHOW sdb_hnsw_ef_search;
+----
+sdb_hnsw_ef_search
+0
+
+
+# A wide beam ranks exactly. 1500.4 is off-lattice so no two neighbours tie.
+statement ok
+SET sdb_hnsw_ef_search = 512;
+
+query
+SELECT pk FROM hnsw_ef_idx
+  ORDER BY emb <-> [1500.4, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 3;
+----
+pk
+1500
+1501
+1499
+
+
+# Below the old floor of 64 the value is honoured verbatim, and the beam caps
+# the result at min(ef, LIMIT).
+statement ok
+SET sdb_hnsw_ef_search = 1;
+
+query
+SELECT pk FROM hnsw_ef_idx
+  ORDER BY emb <-> [1500.4, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 5;
+----
+pk
+1500
+
+
+statement ok
+SET sdb_hnsw_ef_search = 3;
+
+query
+SELECT pk FROM hnsw_ef_idx
+  ORDER BY emb <-> [1500.4, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 5;
+----
+pk
+1500
+1501
+1499
+
+
+# 0 restores the legacy derivation, so sdb_nprobe drives ef again and the old
+# floor of 64 applies -- five rows come back where ef = 3 returned three.
+statement ok
+SET sdb_hnsw_ef_search = 0;
+
+statement ok
+SET sdb_nprobe = 3;
+
+query
+SELECT count(*) FROM (
+  SELECT pk FROM hnsw_ef_idx
+    ORDER BY emb <-> [1500.4, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 5);
+----
+count
+5
+
+
+statement error
+SET sdb_hnsw_ef_search = -1;
+----
+db error: ERROR: invalid value for parameter "sdb_hnsw_ef_search": "-1"
+
+
+# ============================================================================
+# On a quantized index the beam is floored at the rerank pool.
+#
+# The scan over-fetches sdb_rerank_factor * k candidates and rescores them
+# against the stored raw vectors, but the graph can only ever hand back `ef` of
+# them -- so an ef below the pool starved the rescore and it did nothing. The
+# floor makes the requested pool actually materialize, which is what qdrant's
+# `ef = max(ef, oversampled_top)` does. quant = 'none' never reranks, so the
+# section above is unaffected.
+# ============================================================================
+
+statement ok
+CREATE TABLE hnsw_efq (pk INTEGER PRIMARY KEY, emb FLOAT[8]);
+
+statement ok
+CREATE INDEX hnsw_efq_idx ON hnsw_efq
+  USING inverted(pk, emb hnsw (metric = 'l2', quant = 'sq8', m = 4,
+                               ef_construction = 8));
+
+statement ok
+INSERT INTO hnsw_efq SELECT i,
+  [i::FLOAT, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] FROM range(2000) t(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) hnsw_efq;
+
+statement ok
+SET sdb_rerank_factor = 4;
+
+
+# ef = 1 would cap the result at one row on an unquantized index. Here the pool
+# floor (4 * 5) lifts the beam, so the full LIMIT comes back.
+statement ok
+SET sdb_hnsw_ef_search = 1;
+
+query
+SELECT count(*) FROM (
+  SELECT pk FROM hnsw_efq_idx
+    ORDER BY emb <-> [1500.4, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 5);
+----
+count
+5
+
+
+# With reranking off there is no pool to floor the beam against, so ef = 1
+# caps the result again.
+statement ok
+SET sdb_rerank_factor = 0;
+
+query
+SELECT count(*) FROM (
+  SELECT pk FROM hnsw_efq_idx
+    ORDER BY emb <-> [1500.4, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 5);
+----
+count
+1

@@ -55,6 +55,12 @@
 
 ABSL_DECLARE_FLAG(uint64_t, background_threads);
 
+ABSL_FLAG(uint64_t, background_merges, 0,
+          "Maximum ANN merges running at once. Each holds its own output "
+          "vectors, so this bounds merge memory; helpers within one merge "
+          "share that allocation and are budgeted separately. 0 derives it "
+          "from --background_threads.");
+
 namespace sdb::search {
 namespace {
 
@@ -84,6 +90,15 @@ int SearchEngine::MaxConcurrentCompactions() noexcept {
   // cleanup, and drop are light and interleave on the single spare thread.
   return std::max<int>(
     1, static_cast<int>(absl::GetFlag(FLAGS_background_threads)) - 1);
+}
+
+int SearchEngine::MaxConcurrentMerges() noexcept {
+  const auto configured = absl::GetFlag(FLAGS_background_merges);
+  if (configured == 0) {
+    return MaxConcurrentCompactions();
+  }
+  return std::clamp<int>(static_cast<int>(configured), 1,
+                         MaxConcurrentCompactions());
 }
 
 void SearchEngine::start() {

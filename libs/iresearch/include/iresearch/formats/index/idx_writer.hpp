@@ -51,6 +51,8 @@ class IdxWriter final {
 
   IndexOutput& BlocksOut();
 
+  Directory& dir() const noexcept;
+
   void AddIvf(field_id id, IvfCentroidMeta meta);
 
   void AddHnsw(field_id id, HnswMeta meta);

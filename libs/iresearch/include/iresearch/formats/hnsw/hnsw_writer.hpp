@@ -27,6 +27,8 @@
 
 #include "iresearch/formats/ann_writer.hpp"
 #include "iresearch/formats/hnsw/hnsw_graph.hpp"
+#include <string>
+
 #include "iresearch/formats/ivf/quantizer.hpp"
 
 namespace irs {
@@ -49,7 +51,8 @@ class HnswWriter final : public AnnWriter {
     _merge_sources = sources;
   }
 
-  void Compute(const ColumnReader& col, ReadContext& ctx) final;
+  auto Compute(const ColumnReader& col, ReadContext& ctx,
+               const AnnBuildEnv* env) -> yaclib::Future<> final;
 
   void Flush() final;
 
@@ -58,6 +61,8 @@ class HnswWriter final : public AnnWriter {
   std::span<const MergeSource> _merge_sources;
   HnswGraph _graph;
   std::vector<float> _vectors;
+  bstring _codes;
+  bstring _stats_blob;
   std::unique_ptr<QuantizerWriter> _qw;
   std::vector<float> _centroid;
   uint32_t _d = 0;

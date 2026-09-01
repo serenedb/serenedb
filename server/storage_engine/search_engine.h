@@ -52,6 +52,7 @@ class SearchEngine final {
   // cores/2)). background_threads is auto-floored above this with headroom for
   // refresh + cleanup + drop bursts (see background_scheduler.cpp).
   static int MaxConcurrentCompactions() noexcept;
+  static int MaxConcurrentMerges() noexcept;
 
   SearchEngine();
   ~SearchEngine();
@@ -87,7 +88,7 @@ class SearchEngine final {
   // Reserve / release one of the MaxConcurrentCompactions() slots. A fan-out
   // sub-task holds a slot only while CompactUnsafe runs.
   bool TryAcquireCompaction() noexcept {
-    const int cap = MaxConcurrentCompactions();
+    const int cap = MaxConcurrentMerges();
     auto cur = _running_compactions.load(std::memory_order_relaxed);
     while (cur < cap) {
       if (_running_compactions.compare_exchange_weak(
@@ -105,8 +106,38 @@ class SearchEngine final {
   // Free global slots right now. The coordinator throttles merge size when this
   // is low (occupancy backpressure) so the pool always drains.
   int FreeCompactionSlots() const noexcept {
-    const int cur = _running_compactions.load(std::memory_order_acquire);
+    const int cur = _running_compactions.load(std::memory_order_acquire) +
+                    _running_helpers.load(std::memory_order_acquire);
     return std::max(0, MaxConcurrentCompactions() - cur);
+  }
+
+  // Extra merge-CPU permits for the parallel phase of one merge, drawn from a
+  // budget separate from the merge slots: helpers share their merge's output
+  // allocation, so they cost CPU but not memory, while each concurrent merge
+  // holds its own. Never blocks: when the budget is exhausted this grants 0
+  // and the caller stays serial. Held only for the parallel phase, never for
+  // the whole merge.
+  int TryAcquireMergeHelpers(int want) noexcept {
+    const int merges = _running_compactions.load(std::memory_order_acquire);
+    const int cap = MaxConcurrentCompactions() - merges;
+    auto cur = _running_helpers.load(std::memory_order_relaxed);
+    while (want > 0) {
+      const int grant = std::min(want, cap - cur);
+      if (grant <= 0) {
+        return 0;
+      }
+      if (_running_helpers.compare_exchange_weak(cur, cur + grant,
+                                                 std::memory_order_acq_rel,
+                                                 std::memory_order_relaxed)) {
+        return grant;
+      }
+    }
+    return 0;
+  }
+  void ReleaseMergeHelpers(int n) noexcept {
+    if (n > 0) {
+      _running_helpers.fetch_sub(n, std::memory_order_release);
+    }
   }
 
  private:
@@ -116,6 +147,7 @@ class SearchEngine final {
   containers::FlatHashMap<ObjectId, std::unique_ptr<SearchDbWal>> _db_wals;
   std::atomic<bool> _stopping{false};
   std::atomic<int> _running_compactions{0};
+  std::atomic<int> _running_helpers{0};
   // Live loop futures plus one baseline token held for the engine's lifetime:
   // loops come and go with CREATE/DROP, and a transient zero would complete the
   // group for good. stop() Done()s the token, then Waits.

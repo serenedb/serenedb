@@ -26,6 +26,7 @@
 #include <string>
 #include <string_view>
 #include <vector>
+#include <yaclib/async/future.hpp>
 
 #include "basics/assert.h"
 #include "basics/containers/flat_hash_map.h"
@@ -43,6 +44,7 @@ namespace irs {
 
 class AnnWriter;
 class IdxWriter;
+struct AnnBuildEnv;
 
 class ColWriter final {
  public:
@@ -78,6 +80,11 @@ class ColWriter final {
 
   void Commit(uint64_t target_row);
 
+  // Builds every attached ANN index from the committed column bytes. Split
+  // from Commit so the caller can drive the build on its own executor; must
+  // run after Commit and before TakeAnnWriters.
+  auto ComputeAnn(const AnnBuildEnv* env) -> yaclib::Future<>;
+
   void Rollback() noexcept;
 
   WriteContext& WriteCtx() const noexcept { return *_write_ctx; }
@@ -111,6 +118,7 @@ class ColWriter final {
   std::vector<std::unique_ptr<AnnEntry>> _ann_writers;
   sdb::containers::FlatHashMap<field_id, AnnEntry*> _ann_by_id;
   bool _committed = false;
+  bool _ann_ready = false;
 };
 
 }  // namespace irs

@@ -435,6 +435,8 @@ irs::Filter::ptr MakeVectorFilter(const VectorScorerOptions& vs,
   o->metric = vs.metric;
   o->quant = vs.quant;
   o->nprobe = vs.nprobe;
+  o->ef_search = vs.ef_search;
+  o->min_ef = vs.min_ef;
   o->inner = std::move(inner);
   return f;
 }

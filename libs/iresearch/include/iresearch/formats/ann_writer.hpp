@@ -21,7 +21,9 @@
 #pragma once
 
 #include <span>
+#include <yaclib/async/future.hpp>
 
+#include "iresearch/formats/ann_build_env.hpp"
 #include "iresearch/index/column_info.hpp"
 #include "iresearch/types.hpp"
 
@@ -49,7 +51,8 @@ class AnnWriter {
   // rebuilding from scratch. The span outlives Compute.
   virtual void SetMergeSources(std::span<const MergeSource>) noexcept {}
 
-  virtual void Compute(const ColumnReader& col, ReadContext& ctx) = 0;
+  virtual auto Compute(const ColumnReader& col, ReadContext& ctx,
+                       const AnnBuildEnv* env) -> yaclib::Future<> = 0;
 
   virtual void Flush() = 0;
 

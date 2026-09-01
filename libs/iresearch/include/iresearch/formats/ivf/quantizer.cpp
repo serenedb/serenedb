@@ -558,6 +558,11 @@ class ScalarQuantizerWriter final : public QuantizerWriter {
     }
   }
 
+  bool EncodeInto(byte_type* dst, const float* vecs, size_t n) final {
+    _sq.compute_codes(vecs, dst, n);
+    return true;
+  }
+
   void Finish(IndexOutput& /*out*/) final {}
 
   void Serialize(DataOutput& out) const final {
@@ -659,6 +664,41 @@ class ScalarQuantizerReader final : public QuantizerReader {
         out[i] = -out[i];
       }
     }
+  }
+
+  void ComputeGathered(const byte_type* base, uint32_t record_size,
+                       std::span<const uint32_t> ids, score_t /*threshold*/,
+                       score_t* out) final {
+    SDB_ASSERT(_dc);
+    const auto row = [&](size_t j) {
+      return base + static_cast<size_t>(ids[j]) * record_size;
+    };
+    const size_t n = ids.size();
+    size_t i = 0;
+    for (; i + 4 <= n; i += 4) {
+      _dc->distance_to_code_batch_4(row(i), row(i + 1), row(i + 2), row(i + 3),
+                                    out[i], out[i + 1], out[i + 2], out[i + 3]);
+    }
+    for (; i < n; ++i) {
+      out[i] = _dc->distance_to_code(row(i));
+    }
+    if constexpr (M == VectorMetric::L2Sqr) {
+      for (i = 0; i < n; ++i) {
+        out[i] = -out[i];
+      }
+    }
+  }
+
+  bool Decode(const byte_type* code, float* out) const final {
+    _cb->Sq().decode(code, out, 1);
+    return true;
+  }
+
+  bool SetQuery(std::span<const float> query) final {
+    SDB_ASSERT(_dc);
+    SDB_ASSERT(query.size() == _cb->Sq().d);
+    _dc->set_query(query.data());
+    return true;
   }
 
  private:
@@ -806,6 +846,23 @@ void SetNibble(uint8_t* code, uint32_t sq, uint8_t nib) noexcept {
   dst = static_cast<uint8_t>((sq & 1) != 0 ? dst | (nib << 4) : dst | nib);
 }
 
+uint8_t GetNibble(const uint8_t* code, uint32_t sq) noexcept {
+  const uint8_t byte = code[sq >> 1];
+  return static_cast<uint8_t>((sq & 1) != 0 ? byte >> 4 : byte & 0x0F);
+}
+
+// Inverse of RotateInto: H/sqrt(rd) is an involution, so applying it again
+// recovers S*x, and the sign diagonal is its own inverse.
+void RotateBack(const float* signs, const float* in, float* out, uint32_t d,
+                uint32_t rotated_d, std::vector<float>& scratch) {
+  scratch.assign(in, in + rotated_d);
+  Fwht(scratch.data(), rotated_d);
+  const float scale = 1.f / std::sqrt(static_cast<float>(rotated_d));
+  for (uint32_t i = 0; i < d; ++i) {
+    out[i] = scratch[i] * scale * signs[i];
+  }
+}
+
 void TurboQuantProject(const std::vector<float>& fwht_signs, const float* in,
                        float* out, uint32_t rd) noexcept {
   for (uint32_t j = 0; j < rd; ++j) {
@@ -867,6 +924,18 @@ class TurboQuantizerWriter final : public QuantizerWriter {
         WriteGroup(out, kFastScanBbs);
       }
     }
+  }
+
+  bool EncodeInto(byte_type* dst, const float* vecs, size_t n) final {
+    if (!_lay.row_major) {
+      return false;
+    }
+    SDB_ASSERT(_centroid.size() == _lay.rd);
+    for (size_t i = 0; i < n; ++i) {
+      PackRecord(dst + i * size_t{_lay.record_size},
+                 vecs + i * size_t{_lay.d});
+    }
+    return true;
   }
 
   void Finish(IndexOutput& out) final {
@@ -950,26 +1019,30 @@ class TurboQuantizerWriter final : public QuantizerWriter {
     }
   }
 
-  void WriteRecord(IndexOutput& out, const float* vec) {
+  void PackRecord(byte_type* dst, const float* vec) {
     std::fill_n(_code1.begin(), _lay.code1_bytes, uint8_t{0});
     if (_lay.full) {
       std::fill_n(_code2.begin(), _lay.code2_bytes, uint8_t{0});
     }
     EncodeOne(vec, 0);
-    out.WriteData(_code1.data(), _lay.code1_bytes);
+    std::memcpy(dst, _code1.data(), _lay.code1_bytes);
     if (_lay.full) {
-      out.WriteData(_code2.data(), _lay.code2_bytes);
+      std::memcpy(dst + _lay.RowCode2Offset(), _code2.data(),
+                  _lay.code2_bytes);
     }
-    out.WriteData(reinterpret_cast<const byte_type*>(&_norms[0]),
-                  sizeof(float));
+    std::memcpy(dst + _lay.RowNormOffset(), &_norms[0], sizeof(float));
     if (_lay.full) {
-      out.WriteData(reinterpret_cast<const byte_type*>(&_gammas[0]),
-                    sizeof(float));
+      std::memcpy(dst + _lay.RowGammaOffset(), &_gammas[0], sizeof(float));
     }
     if constexpr (M == VectorMetric::L2Sqr) {
-      out.WriteData(reinterpret_cast<const byte_type*>(&_xnorm2[0]),
-                    sizeof(float));
+      std::memcpy(dst + _lay.RowXNorm2Offset(), &_xnorm2[0], sizeof(float));
     }
+  }
+
+  void WriteRecord(IndexOutput& out, const float* vec) {
+    _record.resize(_lay.record_size);
+    PackRecord(_record.data(), vec);
+    out.WriteData(_record.data(), _lay.record_size);
   }
 
   void WriteFloats(IndexOutput& out, std::array<float, kFastScanBbs>& v,
@@ -1018,6 +1091,7 @@ class TurboQuantizerWriter final : public QuantizerWriter {
   std::vector<uint8_t> _code2;
   std::vector<uint8_t> _packed1;
   std::vector<uint8_t> _packed2;
+  std::vector<uint8_t> _record;
   std::array<float, kFastScanBbs> _norms{};
   std::array<float, kFastScanBbs> _gammas{};
   [[no_unique_address]] utils::Need<M == VectorMetric::L2Sqr,
@@ -1074,9 +1148,15 @@ class TurboQuantizerCodebook final : public QuantizerCodebook {
  public:
   TurboQuantizerCodebook(std::shared_ptr<const TurboQuantizerStats<M>> stats,
                          std::span<const float> query)
-    : _stats{std::move(stats)}, _query(query.begin(), query.end()) {
+    : _stats{std::move(stats)} {
     SDB_ASSERT(_stats->Valid());
+    Rekey(query);
+  }
+
+  void Rekey(std::span<const float> query) {
     const TurboQuantLayout& lay = _stats->Layout();
+    SDB_ASSERT(query.size() == lay.d);
+    _query.assign(query.begin(), query.end());
     _rot_query.resize(lay.rd);
     RotateInto(_stats->Signs().data(), _query.data(), _rot_query.data(), lay.d,
                lay.rd);
@@ -1094,6 +1174,10 @@ class TurboQuantizerCodebook final : public QuantizerCodebook {
   std::unique_ptr<QuantizerReader> MakeReader() const final;
 
   const TurboQuantizerStats<M>& Stats() const noexcept { return *_stats; }
+  const std::shared_ptr<const TurboQuantizerStats<M>>& StatsPtr()
+    const noexcept {
+    return _stats;
+  }
   std::span<const float> Query() const noexcept { return _query; }
   const std::vector<TurboQuantChunk>& Chunks1() const noexcept {
     return _chunks1;
@@ -1224,6 +1308,7 @@ class TurboQuantizerReader final : public QuantizerReader {
   explicit TurboQuantizerReader(
     std::shared_ptr<const TurboQuantizerCodebook<M>> cb)
     : _cb{std::move(cb)},
+      _cur{_cb.get()},
       _lay{_cb->Stats().Layout()},
       _inv_sqrt_rd{1.f / std::sqrt(static_cast<float>(_lay.rd))},
       _qjl_coeff{std::sqrt(std::numbers::pi_v<float> / 2.f) /
@@ -1236,9 +1321,27 @@ class TurboQuantizerReader final : public QuantizerReader {
 
   void StartCluster(const float* centroid) final {
     SDB_ASSERT(centroid != nullptr);
-    const std::span<const float> query = _cb->Query();
-    _qc = ComputeDistance<VectorMetric::InnerProduct>(
-      query.data(), centroid, static_cast<uint16_t>(query.size()));
+    _cluster = centroid;
+    _cluster_rot.clear();
+    RefreshClusterCorrection();
+  }
+
+  void ComputeGathered(const byte_type* base, uint32_t record_size,
+                       std::span<const uint32_t> ids, score_t threshold,
+                       score_t* out) final {
+    if (!_lay.row_major) {
+      QuantizerReader::ComputeGathered(base, record_size, ids, threshold, out);
+      return;
+    }
+    for (size_t off = 0; off < ids.size(); off += kFastScanBbs) {
+      const size_t take = std::min<size_t>(ids.size() - off, kFastScanBbs);
+      const auto sub = ids.subspan(off, take);
+      ScoreRows(
+        [base, record_size, sub](size_t k) {
+          return base + static_cast<size_t>(sub[k]) * record_size;
+        },
+        take, threshold, out + off);
+    }
   }
 
   void ComputeBlock(std::span<const byte_type> block, score_t threshold,
@@ -1264,7 +1367,58 @@ class TurboQuantizerReader final : public QuantizerReader {
     }
   }
 
+  // Reconstructs from the MSE stage only; the QJL refinement a `full` layout
+  // carries is a residual in a projected space and is not inverted here.
+  bool Decode(const byte_type* code, float* out) const final {
+    if (!_lay.row_major || _cluster == nullptr) {
+      return false;
+    }
+    const auto& stats = _cb->Stats();
+    const float* cent = stats.Centroids();
+    const auto mask = static_cast<uint32_t>((1U << _lay.mse_bits) - 1);
+    _scale_scratch.resize(_lay.rd);
+    for (uint32_t mi = 0; mi < _lay.m1; ++mi) {
+      const uint8_t nib = GetNibble(code, mi);
+      for (uint32_t t = 0; t < _lay.dims_per_nibble; ++t) {
+        const uint32_t idx = (nib >> (t * _lay.mse_bits)) & mask;
+        _scale_scratch[mi * _lay.dims_per_nibble + t] = cent[idx];
+      }
+    }
+    float norm = 0.f;
+    std::memcpy(&norm, code + _lay.RowNormOffset(), sizeof(float));
+    EnsureRotatedCluster();
+    const float scale = norm / std::sqrt(static_cast<float>(_lay.rd));
+    for (uint32_t j = 0; j < _lay.rd; ++j) {
+      _scale_scratch[j] = _scale_scratch[j] * scale + _cluster_rot[j];
+    }
+    RotateBack(stats.Signs().data(), _scale_scratch.data(), out, _lay.d,
+               _lay.rd, _fwht_scratch);
+    return true;
+  }
+
+  bool SetQuery(std::span<const float> query) final {
+    SDB_ASSERT(query.size() == _lay.d);
+    if (!_own) {
+      _own = std::make_unique<TurboQuantizerCodebook<M>>(_cb->StatsPtr(),
+                                                         query);
+      _cur = _own.get();
+    } else {
+      _own->Rekey(query);
+    }
+    RefreshClusterCorrection();
+    return true;
+  }
+
  private:
+  void EnsureRotatedCluster() const {
+    if (!_cluster_rot.empty()) {
+      return;
+    }
+    _cluster_rot.resize(_lay.rd);
+    RotateInto(_cb->Stats().Signs().data(), _cluster, _cluster_rot.data(),
+               _lay.d, _lay.rd);
+  }
+
   void Accumulate(const byte_type* codes, const uint8_t* lut,
                   const std::vector<TurboQuantChunk>& chunks,
                   const std::vector<float>& a, const std::vector<float>& b) {
@@ -1284,7 +1438,7 @@ class TurboQuantizerReader final : public QuantizerReader {
 
   score_t ScoreFrom(float ip, size_t lane, const float* xnorm2) const noexcept {
     if constexpr (M == VectorMetric::L2Sqr) {
-      return -(_cb->QueryNorm2() + xnorm2[lane] - 2.f * (ip + _qc));
+      return -(_cur->QueryNorm2() + xnorm2[lane] - 2.f * (ip + _qc));
     } else {
       return ip + _qc;
     }
@@ -1293,7 +1447,7 @@ class TurboQuantizerReader final : public QuantizerReader {
   void ScoreLanes(const byte_type* c1, const byte_type* c2, const float* norms,
                   const float* gammas, const float* xnorm2, size_t count,
                   score_t threshold, score_t* out) {
-    Accumulate(c1, _cb->Lut1(), _cb->Chunks1(), _cb->A1(), _cb->B1());
+    Accumulate(c1, _cur->Lut1(), _cur->Chunks1(), _cur->A1(), _cur->B1());
     for (size_t i = 0; i < count; ++i) {
       _ip[i] = norms[i] * _sum[i] * _inv_sqrt_rd;
     }
@@ -1304,8 +1458,8 @@ class TurboQuantizerReader final : public QuantizerReader {
       return;
     }
 
-    const float err = _cb->QjlErrorCoeff();
-    const float slack = _cb->MseSlack();
+    const float err = _cur->QjlErrorCoeff();
+    const float slack = _cur->MseSlack();
     bool refine = false;
     for (size_t i = 0; i < count; ++i) {
       const float bound = norms[i] * (err * gammas[i] + slack);
@@ -1321,8 +1475,8 @@ class TurboQuantizerReader final : public QuantizerReader {
       return;
     }
 
-    Accumulate(c2, _cb->Lut2(), _cb->Chunks2(), _cb->A2(), _cb->B2());
-    const float qjl_sum = _cb->QjlSum();
+    Accumulate(c2, _cur->Lut2(), _cur->Chunks2(), _cur->A2(), _cur->B2());
+    const float qjl_sum = _cur->QjlSum();
     for (size_t i = 0; i < count; ++i) {
       const float ip =
         _ip[i] + norms[i] * _qjl_coeff * gammas[i] * (2.f * _sum[i] - qjl_sum);
@@ -1344,20 +1498,40 @@ class TurboQuantizerReader final : public QuantizerReader {
                kFastScanBbs, threshold, out);
   }
 
-  void ScoreRecords(const byte_type* rec, size_t count, score_t threshold,
-                    score_t* out) {
-    const size_t stride = _lay.record_size;
+  template<typename Row>
+  static void PackRows(Row row, size_t count, size_t code_off, size_t nsq,
+                       uint8_t* blocks) {
+    static_assert(std::endian::native == std::endian::little);
+    SDB_ASSERT(count <= kFastScanBbs);
+    static constexpr uint8_t kPerm[16] = {0, 8, 1, 9, 2, 10, 3, 11,
+                                          4, 12, 5, 13, 6, 14, 7, 15};
+    std::memset(blocks, 0, kFastScanBbs * nsq / 2);
+    uint8_t* dst = blocks;
+    for (size_t sq = 0; sq < nsq; sq += 2) {
+      std::array<uint8_t, kFastScanBbs> c{};
+      for (size_t k = 0; k < count; ++k) {
+        c[k] = row(k)[code_off + sq / 2];
+      }
+      for (size_t j = 0; j < 16; ++j) {
+        const uint8_t lo = c[kPerm[j]];
+        const uint8_t hi = c[kPerm[j] + 16];
+        dst[j] = static_cast<uint8_t>((lo & 15) | ((hi & 15) << 4));
+        dst[j + 16] = static_cast<uint8_t>((lo >> 4) | ((hi >> 4) << 4));
+      }
+      dst += kFastScanBbs;
+    }
+  }
+
+  template<typename Row>
+  void ScoreRows(Row row, size_t count, score_t threshold, score_t* out) {
     _packed1.resize(_lay.group1_bytes);
-    faiss::pq4_pack_codes(rec, count, _lay.m1, kFastScanBbs, kFastScanBbs,
-                          _lay.nsq1, _packed1.data(), stride);
+    PackRows(row, count, 0, _lay.nsq1, _packed1.data());
     if (_lay.full) {
       _packed2.resize(_lay.group2_bytes);
-      faiss::pq4_pack_codes(rec + _lay.RowCode2Offset(), count, _lay.m2,
-                            kFastScanBbs, kFastScanBbs, _lay.nsq2,
-                            _packed2.data(), stride);
+      PackRows(row, count, _lay.RowCode2Offset(), _lay.nsq2, _packed2.data());
     }
     for (size_t i = 0; i < count; ++i) {
-      const byte_type* r = rec + i * stride;
+      const byte_type* r = row(i);
       std::memcpy(&_rm_norms[i], r + _lay.RowNormOffset(), sizeof(float));
       if (_lay.full) {
         std::memcpy(&_rm_gammas[i], r + _lay.RowGammaOffset(), sizeof(float));
@@ -1375,7 +1549,29 @@ class TurboQuantizerReader final : public QuantizerReader {
                threshold, out);
   }
 
+  void ScoreRecords(const byte_type* rec, size_t count, score_t threshold,
+                    score_t* out) {
+    const size_t stride = _lay.record_size;
+    ScoreRows([rec, stride](size_t k) { return rec + k * stride; }, count,
+              threshold, out);
+  }
+
+  void RefreshClusterCorrection() noexcept {
+    if (_cluster == nullptr) {
+      return;
+    }
+    const std::span<const float> query = _cur->Query();
+    _qc = ComputeDistance<VectorMetric::InnerProduct>(
+      query.data(), _cluster, static_cast<uint16_t>(query.size()));
+  }
+
   std::shared_ptr<const TurboQuantizerCodebook<M>> _cb;
+  const TurboQuantizerCodebook<M>* _cur;
+  std::unique_ptr<TurboQuantizerCodebook<M>> _own;
+  const float* _cluster = nullptr;
+  mutable std::vector<float> _cluster_rot;
+  mutable std::vector<float> _scale_scratch;
+  mutable std::vector<float> _fwht_scratch;
   TurboQuantLayout _lay;
   float _inv_sqrt_rd;
   float _qjl_coeff;
@@ -2203,6 +2399,18 @@ std::shared_ptr<const QuantizerStats> MakeQuantizerStats(
       return MakeStatsWithMetric<RaBitQuantizerStats>(metric, d, stats);
   }
   return nullptr;
+}
+
+void QuantizerReader::ComputeGathered(const byte_type* base,
+                                      uint32_t record_size,
+                                      std::span<const uint32_t> ids,
+                                      score_t threshold, score_t* out) {
+  _gather.resize(ids.size() * static_cast<size_t>(record_size));
+  for (size_t i = 0; i < ids.size(); ++i) {
+    std::memcpy(_gather.data() + i * record_size,
+                base + static_cast<size_t>(ids[i]) * record_size, record_size);
+  }
+  ComputeBlock(_gather, threshold, out);
 }
 
 std::unique_ptr<QuantizerReader> MakeQuantizerReader(

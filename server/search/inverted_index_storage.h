@@ -141,6 +141,15 @@ class InvertedIndexStorage final
                                bool& empty_compaction,
                                const irs::IndexFieldOptions* field_options);
 
+  // CompactUnsafe driven by the caller's executor. A null `env` never suspends,
+  // so the returned Future is ready on return.
+  auto CompactUnsafeAsync(const irs::CompactionPolicy& policy,
+                          const irs::MergeWriter::FlushProgress& progress,
+                          bool& empty_compaction,
+                          const irs::IndexFieldOptions* field_options,
+                          const irs::AnnBuildEnv* env)
+    -> yaclib::Future<ResultWithTime>;
+
   ResultWithTime RefreshUnsafe(bool wait,
                                const irs::ProgressReportCallback& progress,
                                RefreshResult& code,
@@ -302,10 +311,12 @@ class InvertedIndexStorage final
     std::atomic<uint64_t> _time_num{0};
   };
 
-  absl::Status CompactUnsafeImpl(
-    const irs::CompactionPolicy& policy,
-    const irs::MergeWriter::FlushProgress& progress, bool& empty_compaction,
-    const irs::IndexFieldOptions* field_options);
+  auto CompactUnsafeImpl(const irs::CompactionPolicy& policy,
+                         const irs::MergeWriter::FlushProgress& progress,
+                         bool& empty_compaction,
+                         const irs::IndexFieldOptions* field_options,
+                         const irs::AnnBuildEnv* env)
+    -> yaclib::Future<absl::Status>;
   absl::Status RefreshUnsafeImpl(bool wait,
                                  const irs::ProgressReportCallback& progress,
                                  RefreshResult& code, bool for_checkpoint);

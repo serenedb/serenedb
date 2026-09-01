@@ -31,6 +31,7 @@
 #include <iresearch/utils/index_utils.hpp>
 #include <memory>
 #include <vector>
+#include <yaclib/async/make.hpp>
 #include <yaclib/async/run.hpp>
 #include <yaclib/coro/await.hpp>
 #include <yaclib/coro/future.hpp>
@@ -89,8 +90,8 @@ irs::CompactionPolicy MakeTierPolicy(const TasksSettings& settings,
   tier.max_segments_bytes = settings.compaction_max_segments_bytes;
   tier.floor_segment_bytes = settings.compaction_floor_segment_bytes;
   if (small) {
-    tier.max_segments_bytes =
-      std::min(tier.max_segments_bytes, size_t{512} << 20);
+    tier.max_segments_bytes = std::max(2 * tier.floor_segment_bytes,
+                                       tier.max_segments_bytes / 2);
   }
   return irs::index_utils::MakePolicy(tier);
 }
@@ -162,8 +163,14 @@ void DoRefresh(Storage& idx, bool run_cleanup, RefreshResult& code) {
   }
 }
 
+// Owns the merge's compaction slot: the slot is acquired by the fan-out and
+// released here, so it must outlive every suspension the merge goes through.
+// Parameters are by value -- a coroutine keeps only the reference for reference
+// parameters, and every caller's frame is gone by the first resume.
 template<class Storage>
-bool DoCompaction(Storage& idx, const irs::CompactionPolicy& policy) {
+auto DoCompaction(std::shared_ptr<Storage> idx, irs::CompactionPolicy policy,
+                  SearchEngine& engine) -> yaclib::Future<bool> {
+  absl::Cleanup release_slot = [&engine] { engine.ReleaseCompaction(); };
   SDB_IF_FAILURE("SearchCompactionTask::lockInvertedIndexStorage") {
     THROW_SQL_ERROR(ERR_MSG("intentional debug error"));
   }
@@ -172,23 +179,39 @@ bool DoCompaction(Storage& idx, const irs::CompactionPolicy& policy) {
   }
   // Pin the merge's field options for its whole lifetime (storage-specific, see
   // PinCompactionOptions). A target found already dropped has nothing to merge.
-  auto opts = PinCompactionOptions(idx);
+  auto opts = PinCompactionOptions(*idx);
   if (!opts.alive) {
-    return false;
+    co_return false;
   }
   metrics::Scoped guard{metrics::Gauge::CompactionActive};
+
+  // Named locals: AnnBuildEnv holds FunctionRefs into them, and the env has to
+  // stay valid across every suspension inside the merge.
+  auto acquire = [&engine](uint32_t want) -> uint32_t {
+    return static_cast<uint32_t>(
+      engine.TryAcquireMergeHelpers(static_cast<int>(want)));
+  };
+  auto release = [&engine](uint32_t n) {
+    engine.ReleaseMergeHelpers(static_cast<int>(n));
+  };
+  const auto progress = [] { return !ShouldStop(); };
+  const irs::AnnBuildEnv env{
+    .executor = &BackgroundScheduler::instance().executor(),
+    .acquire = acquire,
+    .release = release};
+
   bool empty_compaction = false;
-  auto [res, time_ms] = idx.CompactUnsafe(
-    policy, [] { return !ShouldStop(); }, empty_compaction, opts.field_options);
+  auto [res, time_ms] = co_await idx->CompactUnsafeAsync(
+    policy, progress, empty_compaction, opts.field_options, &env);
   if (res.ok()) {
     SDB_TRACE(SEARCH, "successful compaction of Search index '",
-              idx.GetId().id(), "', took: ", time_ms, "ms");
+              idx->GetId().id(), "', took: ", time_ms, "ms");
   } else {
     SDB_DEBUG(SEARCH, "error after running for ", time_ms,
-              "ms while compacting Search index '", idx.GetId().id(),
+              "ms while compacting Search index '", idx->GetId().id(),
               "': ", res.message());
   }
-  return !empty_compaction;
+  co_return !empty_compaction;
 }
 
 // Fan out one CompactUnsafe per currently-free global slot. Each merge is
@@ -205,18 +228,22 @@ std::vector<yaclib::FutureOn<bool>> LaunchCompactionFanout(
   std::vector<yaclib::FutureOn<bool>> runs;
   while (!ShouldStop() && engine.TryAcquireCompaction()) {
     const bool small = engine.FreeCompactionSlots() == 0;
-    runs.push_back(s.Run([&, weak, small] {
-      absl::Cleanup release = [&] { engine.ReleaseCompaction(); };
+    // Plain lambda, not a coroutine: yaclib destroys the functor once Call()
+    // returns, which for a lambda coroutine is its first suspension. The
+    // callee copies what it needs into its own frame instead.
+    runs.push_back(s.Run([&engine, weak, small]() -> yaclib::Future<bool> {
       if (ShouldStop()) {
-        return false;
+        engine.ReleaseCompaction();
+        return yaclib::MakeFuture(false);
       }
       auto idx = weak.lock();
       if (!idx) {
-        return false;
+        engine.ReleaseCompaction();
+        return yaclib::MakeFuture(false);
       }
       SDB_IF_FAILURE("slow_search_task") { absl::SleepFor(absl::Seconds(5)); }
-      const auto policy = MakeTierPolicy(idx->GetTasksSettings(), small);
-      return DoCompaction(*idx, policy);
+      auto policy = MakeTierPolicy(idx->GetTasksSettings(), small);
+      return DoCompaction(std::move(idx), std::move(policy), engine);
     }));
   }
   return runs;

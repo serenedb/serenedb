@@ -26,12 +26,18 @@
 #include <duckdb/function/pragma_function.hpp>
 #include <duckdb/main/connection.hpp>
 #include <duckdb/main/database.hpp>
+#include <iresearch/formats/ann_build_env.hpp>
+#include <iresearch/utils/async.hpp>
 #include <iresearch/utils/index_utils.hpp>
 
 #include "basics/assert.h"
 #include "basics/debugging.h"
 #include "basics/down_cast.h"
+#include <absl/cleanup/cleanup.h>
+
 #include "catalog/catalog.h"
+#include "scheduler/background_scheduler.h"
+#include "storage_engine/search_engine.h"
 #include "catalog/store/store.h"
 #include "catalog/table_options.h"
 #include "connector/duckdb_client_state.h"
@@ -234,13 +240,33 @@ void CompactInvertedStorage(search::InvertedIndexStorage& inverted,
     }
     return !context.IsInterrupted();
   };
+  auto& engine = search::GetSearchEngine();
+  const bool slot = engine.TryAcquireCompaction();
+  absl::Cleanup release_slot = [&engine, slot] {
+    if (slot) {
+      engine.ReleaseCompaction();
+    }
+  };
+  auto acquire = [&engine](uint32_t want) -> uint32_t {
+    return static_cast<uint32_t>(
+      engine.TryAcquireMergeHelpers(static_cast<int>(want)));
+  };
+  auto release = [&engine](uint32_t n) {
+    engine.ReleaseMergeHelpers(static_cast<int>(n));
+  };
+  const irs::AnnBuildEnv env{
+    .executor = &BackgroundScheduler::instance().executor(),
+    .acquire = acquire,
+    .release = release};
+  const irs::AnnBuildEnv* env_ptr = slot ? &env : nullptr;
+
   inverted.Refresh();
   for (size_t pass = 0; pass < 8; ++pass) {
     bool empty_compaction = false;
     // The merge encodes against this VACUUM statement's snapshot index, kept
     // alive by the caller's catalog snapshot for the whole call.
-    const auto [res, _] =
-      inverted.CompactUnsafe(kPolicy, tick, empty_compaction, &index);
+    const auto [res, _] = irs::GetBlocking(inverted.CompactUnsafeAsync(
+      kPolicy, tick, empty_compaction, &index, env_ptr));
     if (!res.ok()) {
       THROW_SQL_ERROR(
         ERR_CODE(ERRCODE_INTERNAL_ERROR),

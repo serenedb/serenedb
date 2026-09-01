@@ -193,3 +193,67 @@ SELECT count(*) FROM hnsw_rq_idx
 ----
 count
 4
+
+
+# ============================================================================
+# Strict vs inclusive at an exact boundary.
+#
+# Distances from [11, 0, 0] are pk1=1, pk4=3, pk6=3, pk2=11, pk5=31, pk3=89, so
+# a radius of 3 or 11 lands exactly on a row. IVF honours the operator; HNSW
+# used to accept `>= radius` whatever was written, making `<` and `<=` return
+# the same rows.
+# ============================================================================
+
+query
+SELECT pk FROM hnsw_r_idx
+  WHERE emb <-> [11, 0, 0]::FLOAT[3] < 3 ORDER BY pk;
+----
+pk
+1
+
+
+query
+SELECT pk FROM hnsw_r_idx
+  WHERE emb <-> [11, 0, 0]::FLOAT[3] <= 3 ORDER BY pk;
+----
+pk
+1
+4
+6
+
+
+query
+SELECT pk FROM hnsw_r_idx
+  WHERE emb <-> [11, 0, 0]::FLOAT[3] < 11 ORDER BY pk;
+----
+pk
+1
+4
+6
+
+
+query
+SELECT pk FROM hnsw_r_idx
+  WHERE emb <-> [11, 0, 0]::FLOAT[3] <= 11 ORDER BY pk;
+----
+pk
+1
+2
+4
+6
+
+
+query
+SELECT count(*) FROM hnsw_r_idx
+  WHERE emb <-> [11, 0, 0]::FLOAT[3] < 3;
+----
+count
+1
+
+
+query
+SELECT count(*) FROM hnsw_r_idx
+  WHERE emb <-> [11, 0, 0]::FLOAT[3] <= 3;
+----
+count
+3

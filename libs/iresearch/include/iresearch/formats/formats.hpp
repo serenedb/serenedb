@@ -128,6 +128,7 @@ struct BasicTermReader : public AttributeProvider {
 struct IteratorFieldOptions {
   bool score_prune = false;
   bool has_score_bounds = false;
+  const Scorer* scorer = nullptr;
 };
 
 struct PostingCookie {
@@ -221,12 +222,12 @@ struct TermReader : public AttributeProvider {
 
   virtual DocIterator::ptr Iterator(
     IndexFeatures features, std::span<const PostingCookie> cookies,
-    bool score_prune = false, size_t min_match = 1,
+    IteratorFieldOptions options = {}, size_t min_match = 1,
     ScoreMergeType type = ScoreMergeType::Noop) const = 0;
 
   DocIterator::ptr Iterator(IndexFeatures features, const PostingCookie& cookie,
-                            bool score_prune = false) const {
-    return Iterator(features, {&cookie, 1}, score_prune);
+                            IteratorFieldOptions options = {}) const {
+    return Iterator(features, {&cookie, 1}, options);
   }
 
   virtual std::unique_ptr<IndexInput> ReopenPayload() const { return nullptr; }

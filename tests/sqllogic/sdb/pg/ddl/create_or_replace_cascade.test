@@ -105,8 +105,13 @@ c
 103
 
 
-statement error (?i)cannot drop function .*babsky.* because other objects depend on it
+statement error
 DROP FUNCTION babsky(INT);
+----
+db error: ERROR: Cannot drop entry "babsky" because there are entries that depend on it.
+view "v_babsky" depends on macro function "babsky".
+Use DROP...CASCADE to drop all dependents.
+
 
 
 statement ok
@@ -171,8 +176,13 @@ CREATE FUNCTION saga(x TEXT) AS CAST(x AS iceberg);
 
 
 # A is referenced, B is not -- DROP A blocked, DROP B succeeds.
-statement error (?i)cannot drop type .*iceberg.* because other objects depend on it
+statement error
 DROP TYPE iceberg;
+----
+db error: ERROR: Cannot drop entry "iceberg" because there are entries that depend on it.
+macro function "saga" depends on type "iceberg".
+Use DROP...CASCADE to drop all dependents.
+
 
 
 # Replace to reference B instead of A. The old A edge must be torn down.
@@ -185,8 +195,13 @@ statement ok
 DROP TYPE iceberg;
 
 
-statement error (?i)cannot drop type .*mop.* because other objects depend on it
+statement error
 DROP TYPE mop;
+----
+db error: ERROR: Cannot drop entry "mop" because there are entries that depend on it.
+macro function "saga" depends on type "mop".
+Use DROP...CASCADE to drop all dependents.
+
 
 
 statement ok
@@ -218,8 +233,13 @@ statement ok
 CREATE VIEW audit AS SELECT jira_ticket(n) AS c FROM dashboard;
 
 
-statement error (?i)cannot drop function .*jira_ticket.* because other objects depend on it
+statement error
 DROP FUNCTION jira_ticket(INT);
+----
+db error: ERROR: Cannot drop entry "jira_ticket" because there are entries that depend on it.
+view "audit" depends on macro function "jira_ticket".
+Use DROP...CASCADE to drop all dependents.
+
 
 
 # Replace to use g2 instead. The g1 edge must be torn down.
@@ -232,8 +252,13 @@ statement ok
 DROP FUNCTION jira_ticket(INT);
 
 
-statement error (?i)cannot drop function .*manifest.* because other objects depend on it
+statement error
 DROP FUNCTION manifest(INT);
+----
+db error: ERROR: Cannot drop entry "manifest" because there are entries that depend on it.
+view "audit" depends on macro function "manifest".
+Use DROP...CASCADE to drop all dependents.
+
 
 
 statement ok

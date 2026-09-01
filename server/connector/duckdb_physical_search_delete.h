@@ -25,30 +25,46 @@
 #include <memory>
 #include <vector>
 
-#include "catalog/table.h"
+#include "connector/search_table_dispatch.h"
 
-namespace sdb::catalog {
+namespace irs {
 
-class InvertedIndex;
+class IndexFieldOptions;
 
-}  // namespace sdb::catalog
+}  // namespace irs
+namespace sdb::search {
+
+class InvertedIndexStorage;
+
+}  // namespace sdb::search
 namespace sdb::connector {
 
-// DELETE on a TableEngine::Search table, or on a view-backed index for the
-// refresh's equality-delete scan road. Serial like duckdb's own delete
-// sink; each chunk applies LIVE through the same remover DML uses -- table
-// road: into the shard's serial iresearch trx plus the WAL delete payload;
-// index road: into the index's transaction registered with the connection
-// (EnsureIndexTransaction). Neither road commits here: the connection's
-// commit machinery does, with its usual ticks.
+// DELETE on a TableEngine::Search table. Single-threaded like the RocksDB
+// delete operator (no ParallelSink / local sink state): each row's PK is
+// encoded and (1) handed to the shard's serial iresearch trx as a removal and
+// (2) recorded on the transaction as the WAL delete payload.
 class SereneDBSearchDelete final : public duckdb::PhysicalOperator {
  public:
-  // Exactly one of `table` / `index` is set.
-  SereneDBSearchDelete(duckdb::PhysicalPlan& plan,
-                       std::shared_ptr<catalog::Table> table,
-                       std::shared_ptr<const catalog::InvertedIndex> index,
+  // `types` and `column_map` are RETURNING: the row the operator hands back and
+  // where in the child's chunk each of its columns arrived. An empty
+  // `column_map` is no RETURNING -- the operator then reports the row count and
+  // `types` is one BIGINT.
+  SereneDBSearchDelete(duckdb::PhysicalPlan& plan, SearchWriteTarget target,
                        std::vector<duckdb::idx_t> pk_col_indices,
+                       duckdb::vector<duckdb::LogicalType> types,
+                       std::vector<duckdb::idx_t> column_map,
                        duckdb::idx_t estimated_cardinality);
+
+  // The remove side of a REINDEX pass: DELETE FROM <index>. Removes go into
+  // the index's own writer on domain ticks, and no search-table WAL is
+  // written -- a died pass relaunches from the manifest-version mismatch.
+  SereneDBSearchDelete(
+    duckdb::PhysicalPlan& plan, ObjectId index_id,
+    std::shared_ptr<search::InvertedIndexStorage> storage,
+    std::shared_ptr<const irs::IndexFieldOptions> field_options,
+    std::vector<duckdb::idx_t> pk_col_indices,
+    duckdb::vector<duckdb::LogicalType> types,
+    duckdb::idx_t estimated_cardinality);
 
   bool IsSink() const final { return true; }
   duckdb::unique_ptr<duckdb::GlobalSinkState> GetGlobalSinkState(
@@ -56,6 +72,10 @@ class SereneDBSearchDelete final : public duckdb::PhysicalOperator {
   duckdb::SinkResultType Sink(duckdb::ExecutionContext& context,
                               duckdb::DataChunk& chunk,
                               duckdb::OperatorSinkInput& input) const final;
+  duckdb::SinkFinalizeType Finalize(
+    duckdb::Pipeline& pipeline, duckdb::Event& event,
+    duckdb::ClientContext& context,
+    duckdb::OperatorSinkFinalizeInput& input) const final;
 
   bool IsSource() const final { return true; }
   duckdb::unique_ptr<duckdb::GlobalSourceState> GetGlobalSourceState(
@@ -65,11 +85,21 @@ class SereneDBSearchDelete final : public duckdb::PhysicalOperator {
     duckdb::OperatorSourceInput& input) const final;
 
  private:
-  std::shared_ptr<catalog::Table> _table;
-  std::shared_ptr<const catalog::InvertedIndex> _index;
+  // The index road: DELETE FROM <index>, reachable only from a REINDEX pass.
+  bool IsReindexDelete() const noexcept { return !!_index_storage; }
+
+  template<typename GlobalState>
+  duckdb::SinkResultType SinkImpl(duckdb::DataChunk& chunk,
+                                  GlobalState& gstate) const;
+
+  SearchWriteTarget _target;
   // Positions in the input chunk of the PK columns (explicit PK), or the single
   // generated-PK rowid column (no-PK tables). Same layout PlanDelete computes.
   std::vector<duckdb::idx_t> _pk_col_indices;
+  // Empty unless the statement has a RETURNING clause.
+  std::vector<duckdb::idx_t> _column_map;
+  std::shared_ptr<search::InvertedIndexStorage> _index_storage;
+  std::shared_ptr<const irs::IndexFieldOptions> _field_options;
 };
 
 }  // namespace sdb::connector

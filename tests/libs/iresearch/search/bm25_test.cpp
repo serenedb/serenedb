@@ -170,7 +170,6 @@ void Bm25TestCase::TestQueryNorms() {
 
     auto docs = prepared_filter.Execute(0);
     auto score = docs->PrepareScore({
-      .scorer = &scorer,
       .segment = &segment,
       .fetcher = &fetcher,
     });
@@ -221,7 +220,6 @@ void Bm25TestCase::TestQueryNorms() {
 
     auto docs = prepared_filter.Execute(0);
     auto score = docs->PrepareScore({
-      .scorer = &scorer,
       .segment = &segment,
     });
 
@@ -350,7 +348,6 @@ TEST_P(Bm25TestCase, test_bm1_idf_only) {
     fetcher.Clear();
     auto docs = prepared_filter.Execute(0);
     auto score = docs->PrepareScore({
-      .scorer = impl.get(),
       .segment = &segment,
       .fetcher = &fetcher,
     });
@@ -507,7 +504,6 @@ TEST_P(Bm25TestCase, test_phrase) {
 
     auto docs = prepared_filter.Execute(0);
     auto score = docs->PrepareScore({
-      .scorer = impl.get(),
       .segment = &segment,
     });
 
@@ -572,7 +568,6 @@ TEST_P(Bm25TestCase, test_phrase) {
 
     auto docs = prepared_filter.Execute(0);
     auto score = docs->PrepareScore({
-      .scorer = impl.get(),
       .segment = &segment,
     });
 
@@ -651,7 +646,6 @@ TEST_P(Bm25TestCase, test_query) {
     fetcher.Clear();
     auto docs = prepared_filter.Execute(0);
     auto score = docs->PrepareScore({
-      .scorer = &scorer,
       .segment = &segment,
     });
 
@@ -762,7 +756,6 @@ TEST_P(Bm25TestCase, test_query) {
       irs::tests::BlobPointReader values{segment, *column};
       auto docs = prepared_filter.Execute(i);
       auto score = docs->PrepareScore({
-        .scorer = &scorer,
         .segment = &segment,
         .fetcher = &fetcher,
       });
@@ -886,7 +879,6 @@ TEST_P(Bm25TestCase, test_query) {
       irs::tests::BlobPointReader values{segment, *column};
       auto docs = prepared_filter.Execute(i);
       auto score = docs->PrepareScore({
-        .scorer = &scorer,
         .segment = &segment,
         .fetcher = &fetcher,
       });
@@ -1001,7 +993,6 @@ TEST_P(Bm25TestCase, test_query) {
       irs::tests::BlobPointReader values{segment, *column};
       auto docs = prepared_filter.Execute(i);
       auto score = docs->PrepareScore({
-        .scorer = &scorer,
         .segment = &segment,
         .fetcher = &fetcher,
       });
@@ -1052,7 +1043,6 @@ TEST_P(Bm25TestCase, test_query) {
     fetcher.Clear();
     auto docs = prepared_filter.Execute(0);
     auto score = docs->PrepareScore({
-      .scorer = &scorer,
       .segment = &segment,
     });
 
@@ -1102,7 +1092,6 @@ TEST_P(Bm25TestCase, test_query) {
     fetcher.Clear();
     auto docs = prepared_filter.Execute(0);
     auto score = docs->PrepareScore({
-      .scorer = &scorer,
       .segment = &segment,
     });
 
@@ -1150,7 +1139,6 @@ TEST_P(Bm25TestCase, test_query) {
     fetcher.Clear();
     auto docs = prepared_filter.Execute(0);
     auto score = docs->PrepareScore({
-      .scorer = &scorer,
       .segment = &segment,
     });
 
@@ -1198,7 +1186,6 @@ TEST_P(Bm25TestCase, test_query) {
     fetcher.Clear();
     auto docs = prepared_filter.Execute(0);
     auto score = docs->PrepareScore({
-      .scorer = &scorer,
       .segment = &segment,
       .fetcher = &fetcher,
     });
@@ -1248,7 +1235,6 @@ TEST_P(Bm25TestCase, test_query) {
     fetcher.Clear();
     auto docs = prepared_filter.Execute(0);
     auto score = docs->PrepareScore({
-      .scorer = &scorer,
       .segment = &segment,
     });
 
@@ -1281,13 +1267,12 @@ TEST_P(Bm25TestCase, test_query) {
     irs::tests::BlobPointReader values{segment, *column};
 
     irs::All filter;
-    filter.boost(1.5f);
+    filter.SetBoost(1.5f);
 
     tests::PreparedFilter prepared_filter{filter, reader, &scorer, counter};
     fetcher.Clear();
     auto docs = prepared_filter.Execute(0);
     auto score = docs->PrepareScore({
-      .scorer = &scorer,
       .segment = &segment,
     });
 
@@ -1312,13 +1297,12 @@ TEST_P(Bm25TestCase, test_query) {
     irs::tests::BlobPointReader values{segment, *column};
 
     irs::All filter;
-    filter.boost(0.f);
+    filter.SetBoost(0.f);
 
     tests::PreparedFilter prepared_filter{filter, reader, &scorer, counter};
     fetcher.Clear();
     auto docs = prepared_filter.Execute(0);
     auto score = docs->PrepareScore({
-      .scorer = &scorer,
       .segment = &segment,
     });
 
@@ -1439,12 +1423,11 @@ TEST_P(Bm25TestCase, test_order) {
         constexpr std::array kExpected{0, 1, 5, 7};
 
         irs::BytesViewInput in;
-        query.boost(boost);
+        query.SetBoost(boost);
         tests::PreparedFilter prepared{query, reader, &sort, counter};
         fetcher.Clear();
         auto docs = prepared.Execute(0);
         auto score = docs->PrepareScore({
-          .scorer = &sort,
           .segment = &segment,
           .fetcher = &fetcher,
         });

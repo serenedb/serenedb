@@ -100,7 +100,7 @@ class ByGranularRange : public FilterWithField<ByGranularRangeOptions> {
                                           const irs::field_id field,
                                           const options_type& options);
 
-  PrepareCollector::ptr MakeCollector(const Scorer* scorer) const final;
+  PrepareCollector::ptr MakeCollectorImpl(const Scorer* scorer) const final;
 };
 
 }  // namespace irs

@@ -13,7 +13,7 @@ control substitution on
 # ============================================================================
 
 statement ok
-SET sdb_nprobe = 1;
+SET sdb_ivf_search_nprobe = 1;
 
 statement ok
 CREATE TABLE small_l2 (pk INTEGER PRIMARY KEY, emb FLOAT[8]);
@@ -66,4 +66,4 @@ pk
 150
 
 statement ok
-RESET sdb_nprobe;
+RESET sdb_ivf_search_nprobe;

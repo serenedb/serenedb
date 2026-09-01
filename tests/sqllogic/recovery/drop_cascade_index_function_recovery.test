@@ -56,7 +56,7 @@ id
 
 # The reloaded dependency graph still blocks RESTRICT.
 connection after_crash
-statement error (?i)cannot drop function .*babsky.* because other objects depend on it
+statement error (?i)cannot drop entry .*babsky.* because there are entries that depend on it
 DROP FUNCTION babsky(INT);
 
 

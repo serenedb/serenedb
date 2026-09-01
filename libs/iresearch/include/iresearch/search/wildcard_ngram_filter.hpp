@@ -82,7 +82,7 @@ class ByWildcardNgram final : public FilterWithField<ByWildcardNgramOptions> {
   QueryBuilder::ptr PrepareSegment(const SubReader& segment,
                                    const PrepareContext& ctx) const final;
 
-  PrepareCollector::ptr MakeCollector(const Scorer* scorer) const final;
+  PrepareCollector::ptr MakeCollectorImpl(const Scorer* scorer) const final;
 };
 
 }  // namespace irs

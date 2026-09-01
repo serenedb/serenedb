@@ -117,7 +117,7 @@ INSERT INTO correct_text_hybrid2 SELECT id FROM vecs_text WHERE body = 'red fox'
 
 
 statement ok
-SET sdb_nprobe TO 512;
+SET sdb_ivf_search_nprobe TO 512;
 
 
 
@@ -166,7 +166,7 @@ t
 
 
 statement ok
-SET sdb_nprobe TO 2048;
+SET sdb_ivf_search_nprobe TO 2048;
 
 
 query
@@ -200,7 +200,7 @@ t
 
 
 statement ok
-SET sdb_nprobe TO 512;
+SET sdb_ivf_search_nprobe TO 512;
 
 
 statement ok
@@ -219,7 +219,7 @@ USING inverted(id, body en, emb ivf (metric = 'l2'));
 
 
 statement ok
-SET sdb_nprobe TO 4096;
+SET sdb_ivf_search_nprobe TO 4096;
 
 
 query
@@ -277,4 +277,4 @@ t
 
 
 statement ok
-SET sdb_nprobe TO 512;
+SET sdb_ivf_search_nprobe TO 512;

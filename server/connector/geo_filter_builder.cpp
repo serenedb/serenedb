@@ -214,7 +214,7 @@ std::pair<irs::GeoDistanceFilter*, double> PrepareGeoDistanceFilter(
 
   auto& geo_filter =
     AddMaybeNegated<irs::GeoDistanceFilter>(parent, ctx, *column_info);
-  geo_filter.boost(ctx.boost);
+  geo_filter.SetBoost(ctx.boost);
   *geo_filter.mutable_field_id() = column_info->field_id;
 
   auto* options = geo_filter.mutable_options();
@@ -314,7 +314,7 @@ void FromGeoInRange(irs::BooleanFilter& filter, const FilterContext& ctx,
 
   auto& geo_filter =
     AddMaybeNegated<irs::GeoDistanceFilter>(filter, ctx, *column_info);
-  geo_filter.boost(ctx.boost);
+  geo_filter.SetBoost(ctx.boost);
   *geo_filter.mutable_field_id() = column_info->field_id;
 
   auto* options = geo_filter.mutable_options();
@@ -383,7 +383,7 @@ bool FromGeoFilter(irs::BooleanFilter& filter, const FilterContext& ctx,
   }
 
   auto& geo_filter = AddMaybeNegated<irs::GeoFilter>(filter, ctx, *column_info);
-  geo_filter.boost(ctx.boost);
+  geo_filter.SetBoost(ctx.boost);
   *geo_filter.mutable_field_id() = column_info->field_id;
 
   auto* options = geo_filter.mutable_options();

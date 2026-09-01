@@ -4,8 +4,8 @@
 # production for them (and DuckDB has no savepoint executor), so they fail with
 # a clean syntax error rather than crashing.
 #
-# BEGIN ... READ ONLY is enforced through the store: writes are rejected, reads
-# are allowed.
+# BEGIN ... READ ONLY is enforced by the database the rows live in: writes are
+# rejected, reads are allowed. The refusal names the user's own database.
 
 
 # --- SAVEPOINT family is unsupported (clean syntax error) ---
@@ -45,7 +45,7 @@ BEGIN READ ONLY;
 statement error
 INSERT INTO txro VALUES (2, 20);
 ----
-db error: ERROR: Cannot write to database "__sdb_store" - transaction is launched in read-only mode
+db error: ERROR: Cannot write to database "<slt:ignore>" - transaction is launched in read-only mode
 
 
 statement ok
@@ -77,3 +77,64 @@ n
 
 statement ok
 DROP TABLE txro;
+
+
+# --- a transaction sees the DDL it issued after its own uncommitted DML ---
+#
+# Uncommitted DML pins the catalog view for the rest of the transaction, so a
+# CREATE TABLE issued after it has to release that pin: the statement has
+# already changed the catalog for every session, and holding the pin would hide
+# the change from the only session that cannot ignore it.
+
+statement ok
+CREATE TABLE txddl_a(id INTEGER);
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+INSERT INTO txddl_a VALUES (1);
+
+
+statement ok
+CREATE TABLE txddl_b(id INTEGER);
+
+
+query
+SELECT count(*) AS n FROM txddl_b;
+----
+n
+0
+
+
+statement ok
+INSERT INTO txddl_b VALUES (2);
+
+
+# the pin's own job still holds: the transaction reads its uncommitted rows
+query
+SELECT count(*) AS n FROM txddl_a;
+----
+n
+1
+
+
+statement ok
+COMMIT;
+
+
+query
+SELECT id FROM txddl_b;
+----
+id
+2
+
+
+statement ok
+DROP TABLE txddl_a;
+
+
+statement ok
+DROP TABLE txddl_b;

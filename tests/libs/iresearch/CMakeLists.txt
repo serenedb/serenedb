@@ -36,6 +36,7 @@ set(iresearch-tests_sources
     ./index/doc_generator.cpp
     ./index/assert_format.cpp
     ./index/buffered_column_test.cpp
+    ./index/index_adopt_tests.cpp
     ./index/index_column_tests.cpp
     ./index/index_meta_tests.cpp
     ./index/index_profile_tests.cpp
@@ -65,6 +66,9 @@ set(iresearch-tests_sources
     ./search/score_prune_norm_merge_test.cpp
     ./search/bm25_test.cpp
     ./search/idf_test.cpp
+    ./search/per_node_scorer_test.cpp
+    ./search/optimizer_scorer_test.cpp
+    ./search/scorer_to_string_test.cpp
     ./search/raw_tf_test.cpp
     ./search/lm_test.cpp
     ./search/indri_dirichlet_test.cpp

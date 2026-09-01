@@ -115,15 +115,13 @@ DocIterator::ptr FixedPhraseQuery::Execute(const ExecutionContext& ctx,
         static_cast<doc_id_t>(rdr.docs_count()), std::move(itrs),
         std::move(positions), this->slop, std::move(expected_steps));
     }
-    const auto& all_stats = stats.GetAllStats();
-    const auto* stats_data =
-      all_stats.empty() ? nullptr : all_stats.back().c_str();
+    const auto score_src = stats.Source();
     using SlopIterator =
       PhraseIterator<Conjunction<Adapter>, SlopPhraseFrequency<false, true>>;
     return memory::make_managed<SlopIterator>(
       static_cast<doc_id_t>(rdr.docs_count()), std::move(itrs),
       std::move(positions), this->slop, std::move(expected_steps),
-      phrase_state->reader->meta(), stats_data, boost);
+      phrase_state->reader->meta(), score_src, boost);
   }
   if (!scorer) {
     return ResolveBool(
@@ -136,18 +134,18 @@ DocIterator::ptr FixedPhraseQuery::Execute(const ExecutionContext& ctx,
           std::move(positions));
       });
   }
-  const auto& all_stats = stats.GetAllStats();
-  const auto* stats_data =
-    all_stats.empty() ? nullptr : all_stats.back().c_str();
+  const auto score_src = stats.Source();
   return ResolveBool(has_intervals, [&]<bool HasIntervals> -> DocIterator::ptr {
-    return ResolveBool(ctx.score_prune, [&]<bool Prune> -> DocIterator::ptr {
-      using FixedPhraseIterator =
-        PhraseIterator<Conjunction<Adapter>,
-                       FixedPhraseFrequency<false, true, HasIntervals>, Prune>;
-      return memory::make_managed<FixedPhraseIterator>(
-        static_cast<doc_id_t>(rdr.docs_count()), std::move(itrs),
-        std::move(positions), phrase_state->reader->meta(), stats_data, boost);
-    });
+    return ResolveBool(
+      MayScorePrune(ctx, stats), [&]<bool Prune> -> DocIterator::ptr {
+        using FixedPhraseIterator =
+          PhraseIterator<Conjunction<Adapter>,
+                         FixedPhraseFrequency<false, true, HasIntervals>,
+                         Prune>;
+        return memory::make_managed<FixedPhraseIterator>(
+          static_cast<doc_id_t>(rdr.docs_count()), std::move(itrs),
+          std::move(positions), phrase_state->reader->meta(), score_src, boost);
+      });
   });
 }
 
@@ -370,16 +368,14 @@ DocIterator::ptr VariadicPhraseQuery::Execute(const ExecutionContext& ctx,
         static_cast<doc_id_t>(rdr.docs_count()), std::move(conj_itrs),
         std::move(positions), this->slop, std::move(expected_steps));
     }
-    const auto& all_stats = stats.GetAllStats();
-    const auto* stats_data =
-      all_stats.empty() ? nullptr : all_stats.back().c_str();
+    const auto score_src = stats.Source();
     using SlopIterator =
       PhraseIterator<Conjunction<ScoreAdapter>,
                      SlopVariadicPhraseFrequency<VariadicPhraseAdapter, true>>;
     return memory::make_managed<SlopIterator>(
       static_cast<doc_id_t>(rdr.docs_count()), std::move(conj_itrs),
       std::move(positions), this->slop, std::move(expected_steps),
-      phrase_state->reader->meta(), stats_data, boost);
+      phrase_state->reader->meta(), score_src, boost);
   }
 
   if (!scorer) {
@@ -392,9 +388,7 @@ DocIterator::ptr VariadicPhraseQuery::Execute(const ExecutionContext& ctx,
       });
   }
 
-  const auto& all_stats = stats.GetAllStats();
-  const auto* stats_data =
-    all_stats.empty() ? nullptr : all_stats.back().c_str();
+  const auto score_src = stats.Source();
 
   if (phrase_state->volatile_boost) {
     return ResolveBool(
@@ -402,15 +396,14 @@ DocIterator::ptr VariadicPhraseQuery::Execute(const ExecutionContext& ctx,
         return memory::make_managed<
           VariadicPhraseIterator<Adapter, true, true, HasIntervals>>(
           static_cast<doc_id_t>(rdr.docs_count()), std::move(conj_itrs),
-          std::move(positions), phrase_state->reader->meta(), stats_data,
-          boost);
+          std::move(positions), phrase_state->reader->meta(), score_src, boost);
       });
   }
   return ResolveBool(has_intervals, [&]<bool HasIntervals> -> DocIterator::ptr {
     return memory::make_managed<
       VariadicPhraseIterator<Adapter, false, true, HasIntervals>>(
       static_cast<doc_id_t>(rdr.docs_count()), std::move(conj_itrs),
-      std::move(positions), phrase_state->reader->meta(), stats_data, boost);
+      std::move(positions), phrase_state->reader->meta(), score_src, boost);
   });
 }
 

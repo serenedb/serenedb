@@ -44,8 +44,8 @@ DocIterator::ptr TermQuery::Execute(const ExecutionContext& ctx,
 
   if (!stats.HasScorer() && segment.docs_count() == _state.cookie.docs_count)
     [[unlikely]] {
-    return memory::make_managed<AllIterator>(segment.docs_count(), nullptr,
-                                             kNoBoost);
+    return memory::make_managed<AllIterator>(segment.docs_count(),
+                                             irs::ScoreSource{}, kNoBoost);
   }
 
   const auto* reader = _state.reader;
@@ -53,14 +53,15 @@ DocIterator::ptr TermQuery::Execute(const ExecutionContext& ctx,
   DocIterator::ptr docs;
 
   const auto features = GetFeatures(stats.GetScorer());
-  auto it = reader->Iterator(features,
-                             {
-                               .cookie = &_state.cookie,
-                               .stats = stats.GetStats().data(),
-                               .boost = _boost,
-                               .field = reader->meta(),
-                             },
-                             ctx.score_prune && stats.HasScorer());
+  auto it = reader->Iterator(
+    features,
+    {
+      .cookie = &_state.cookie,
+      .stats = stats.Stats(),
+      .boost = _boost,
+      .field = reader->meta(),
+    },
+    {.score_prune = MayScorePrune(ctx, stats), .scorer = stats.GetScorer()});
   if (!it) {
     return DocIterator::empty();
   }

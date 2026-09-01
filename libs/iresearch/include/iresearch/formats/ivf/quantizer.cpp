@@ -20,6 +20,8 @@
 
 #include "iresearch/formats/ivf/quantizer.hpp"
 
+#include <absl/random/distributions.h>
+#include <absl/random/random.h>
 #include <faiss/MetricType.h>
 #include <faiss/impl/Panorama.h>
 #include <faiss/impl/ProductQuantizer.h>
@@ -41,6 +43,7 @@
 #include <cstring>
 #include <limits>
 #include <optional>
+#include <random>
 #include <vector>
 
 #include "basics/assert.h"
@@ -88,12 +91,41 @@ uint32_t RotatedDim(uint32_t d) noexcept {
   return std::max<uint32_t>(kFastScanBits, std::bit_ceil(d));
 }
 
+constexpr size_t SignBytes(uint32_t rotated_d) noexcept {
+  return (static_cast<size_t>(rotated_d) + 7) / 8;
+}
+
 void GenerateSigns(uint32_t rotated_d, int64_t seed,
                    std::vector<float>& signs) {
   signs.resize(rotated_d);
-  faiss::float_randn(signs.data(), signs.size(), seed);
-  for (uint32_t i = 0; i < rotated_d; ++i) {
-    signs[i] = signs[i] < 0.f ? -1.f : 1.f;
+  absl::InsecureBitGen rng{std::seed_seq{static_cast<uint32_t>(seed),
+                                         static_cast<uint32_t>(seed >> 32)}};
+  for (uint32_t i = 0; i < rotated_d;) {
+    auto num = absl::Uniform<size_t>(rng);
+    for (size_t b = 0; b < sizeof(num) * 8 && i < rotated_d; ++b) {
+      signs[i] = 1.f - 2.f * ((num >> b) & 1);
+      i++;
+    }
+  }
+}
+
+std::vector<byte_type> PackSigns(const std::vector<float>& signs) {
+  std::vector<byte_type> out(SignBytes(static_cast<uint32_t>(signs.size())), 0);
+  for (size_t i = 0; i < signs.size(); ++i) {
+    if (signs[i] > 0.f) {
+      out[i / 8] = static_cast<byte_type>(out[i / 8] | (1U << (i % 8)));
+    }
+  }
+  return out;
+}
+
+void LoadSigns(std::span<const byte_type> stats, size_t offset, uint32_t rd,
+               std::vector<float>& signs) {
+  SDB_ASSERT(stats.size() >= offset + SignBytes(rd));
+  const byte_type* p = stats.data() + offset;
+  signs.resize(rd);
+  for (uint32_t i = 0; i < rd; ++i) {
+    signs[i] = ((p[i / 8] >> (i % 8)) & 1U) != 0 ? 1.f : -1.f;
   }
 }
 
@@ -535,9 +567,8 @@ class ScalarQuantizerStats final : public QuantizerStats {
     : _sq{d, FaissScalarType(quant)}, _quant{quant} {
     _sq.trained.assign(2 * static_cast<size_t>(d), 0.f);
     const size_t want = _sq.trained.size() * sizeof(float);
-    if (stats.size() >= want) {
-      std::memcpy(_sq.trained.data(), stats.data(), want);
-    }
+    SDB_ASSERT(stats.size() >= want);
+    std::memcpy(_sq.trained.data(), stats.data(), want);
   }
 
   VectorQuantization Kind() const noexcept final { return _quant; }
@@ -807,22 +838,19 @@ class ProductQuantizerStats final : public QuantizerStats {
   ProductQuantizerStats(uint32_t d, std::span<const byte_type> stats) {
     static_assert(M == VectorMetric::L2Sqr || M == VectorMetric::InnerProduct);
     const PqStatsHeader hdr = ReadPodHeader<PqStatsHeader>(stats);
-    if (hdr.m != 0 && d % hdr.m == 0 && hdr.ksub != 0) {
-      _pq.d = d;
-      _pq.M = hdr.m;
-      _pq.nbits = kPqNbits;
-      _pq.set_derived_values();
-      const size_t want = _pq.centroids.size() * sizeof(float);
-      if (hdr.ksub == static_cast<uint32_t>(_pq.ksub) &&
-          stats.size() >= sizeof(PqStatsHeader) + want) {
-        std::memcpy(_pq.centroids.data(), stats.data() + sizeof(PqStatsHeader),
-                    want);
-        _valid = true;
-      }
-    }
+    SDB_ASSERT(hdr.m != 0);
+    SDB_ASSERT(d % hdr.m == 0);
+    SDB_ASSERT(hdr.ksub != 0);
+    _pq.d = d;
+    _pq.M = hdr.m;
+    _pq.nbits = kPqNbits;
+    _pq.set_derived_values();
+    const size_t want = _pq.centroids.size() * sizeof(float);
+    SDB_ASSERT(hdr.ksub == static_cast<uint32_t>(_pq.ksub));
+    SDB_ASSERT(stats.size() >= sizeof(PqStatsHeader) + want);
+    std::memcpy(_pq.centroids.data(), stats.data() + sizeof(PqStatsHeader),
+                want);
   }
-
-  bool Valid() const noexcept { return _valid; }
 
   VectorQuantization Kind() const noexcept final {
     return VectorQuantization::PQ;
@@ -835,7 +863,6 @@ class ProductQuantizerStats final : public QuantizerStats {
 
  private:
   faiss::ProductQuantizer _pq;
-  bool _valid = false;
 };
 
 template<VectorMetric M>
@@ -1023,8 +1050,10 @@ class RaBitQuantizerWriter final : public QuantizerWriter {
   }
 
   void Serialize(DataOutput& out) const final {
-    out.WriteU64(sizeof(RaBitQStatsHeader));
+    const auto packed = PackSigns(_signs);
+    out.WriteU64(sizeof(RaBitQStatsHeader) + packed.size());
     WritePod(out, RaBitQStatsHeader{_nb_bits, _d});
+    out.WriteData(packed.data(), packed.size());
   }
 
   VectorQuantization Kind() const noexcept final {
@@ -1112,17 +1141,16 @@ class RaBitQuantizerStats final : public QuantizerStats {
  public:
   RaBitQuantizerStats(uint32_t d, std::span<const byte_type> stats) {
     const RaBitQStatsHeader hdr = ReadPodHeader<RaBitQStatsHeader>(stats);
-    if (hdr.nb_bits >= kRaBitQMinBits && hdr.nb_bits <= kRaBitQMaxBits &&
-        hdr.d == d && stats.size() >= sizeof(RaBitQStatsHeader)) {
-      _d = d;
-      _rd = RotatedDim(d);
-      _nb_bits = hdr.nb_bits;
-      GenerateSigns(_rd, kRaBitQRotationSeed, _signs);
-      _valid = true;
-    }
+    SDB_ASSERT(hdr.nb_bits >= kRaBitQMinBits);
+    SDB_ASSERT(hdr.nb_bits <= kRaBitQMaxBits);
+    SDB_ASSERT(hdr.d == d);
+    SDB_ASSERT(stats.size() >=
+               sizeof(RaBitQStatsHeader) + SignBytes(RotatedDim(d)));
+    _d = d;
+    _rd = RotatedDim(d);
+    _nb_bits = hdr.nb_bits;
+    LoadSigns(stats, sizeof(RaBitQStatsHeader), _rd, _signs);
   }
-
-  bool Valid() const noexcept { return _valid; }
   uint32_t NbBits() const noexcept { return _nb_bits; }
 
   VectorQuantization Kind() const noexcept final {
@@ -1141,7 +1169,6 @@ class RaBitQuantizerStats final : public QuantizerStats {
   uint32_t _rd = 0;
   uint32_t _nb_bits = 0;
   std::vector<float> _signs;
-  bool _valid = false;
 };
 
 template<VectorMetric M>

@@ -105,6 +105,9 @@ struct IResearchScanGlobalState : public duckdb::GlobalTableFunctionState {
   duckdb::idx_t tableoid_output_idx = duckdb::DConstants::INVALID_INDEX;
   int64_t tableoid_value = 0;
   duckdb::idx_t generated_pk_output_idx = duckdb::DConstants::INVALID_INDEX;
+  // The pk halves as flat columns (glob-backed view indexes only).
+  duckdb::idx_t file_index_output_idx = duckdb::DConstants::INVALID_INDEX;
+  duckdb::idx_t row_number_output_idx = duckdb::DConstants::INVALID_INDEX;
   // Any real (non-virtual) column is scanned / any output column emits values
   // (the empty virtual column does not): !has_output_column means the scan
   // only reports row counts (count(*) shapes).
@@ -169,14 +172,18 @@ struct IResearchScanGlobalState : public duckdb::GlobalTableFunctionState {
   // score filters (`score > c`, Lucene min_score-style): it seeds the pruning
   // threshold and the top-k collectors so below-bound blocks are skipped from
   // the first window; the pushed filter still enforces the exact bound
-  // (lowest() = no bound). When `score_prune_streaming` (Stream mode with a
-  // prune-capable text scorer and one of those bounds), the streaming
-  // DocIterator runs with score pruning and its ScoreThresholdAttr is seeded
-  // from the bound before each emit -- the HitBatcher score filter still
-  // enforces the exact boundary on the docs that are produced.
+  // (lowest() = no bound).
   duckdb::shared_ptr<duckdb::DynamicFilterData> score_dynamic_filter;
   float score_static_floor = std::numeric_limits<float>::lowest();
-  bool score_prune_streaming = false;
+
+  // The scorer per-block bounds may be pruned against, or null when this scan
+  // must not prune. Set once per scan mode: TopK needs only a scorer the
+  // index's bounds were written for, while Stream additionally needs a pushed
+  // lower bound -- a dynamic TOP_N boundary or a static score floor -- since
+  // only a lower bound can seed block-max skipping. Its ScoreThresholdAttr is
+  // seeded from that bound before each emit; the HitBatcher score filter still
+  // enforces the exact boundary on the docs that are produced.
+  const irs::Scorer* prune_scorer = nullptr;
 
   // --- The search predicate (`@@` / vector query) and scoring machinery.
   // `owned_filter` backs `filter` for vector/match-all queries; the prepare

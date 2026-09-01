@@ -1,0 +1,53 @@
+# A dropped key stops enforcing. The definition lost the constraint but the
+# ART behind it stayed in the index list and kept refusing duplicates.
+
+statement ok
+CREATE TABLE dcrk (a INTEGER, b INTEGER);
+
+statement ok
+ALTER TABLE dcrk ADD CONSTRAINT dcrk_b_key UNIQUE (b);
+
+statement ok
+INSERT INTO dcrk VALUES (1, 10);
+
+statement error
+INSERT INTO dcrk VALUES (2, 10);
+
+
+statement ok
+ALTER TABLE dcrk DROP CONSTRAINT dcrk_b_key;
+
+statement ok
+INSERT INTO dcrk VALUES (2, 10);
+
+query
+SELECT count(*) FROM dcrk;
+----
+count
+2
+
+
+# The same for a primary key created with the table.
+statement ok
+CREATE TABLE dcrk_pk (a INTEGER PRIMARY KEY, b INTEGER);
+
+statement ok
+INSERT INTO dcrk_pk VALUES (1, 5);
+
+statement ok
+ALTER TABLE dcrk_pk DROP CONSTRAINT dcrk_pk_pkey;
+
+statement ok
+INSERT INTO dcrk_pk VALUES (1, 6);
+
+query
+SELECT count(*) FROM dcrk_pk;
+----
+count
+2
+
+statement ok
+DROP TABLE dcrk;
+
+statement ok
+DROP TABLE dcrk_pk;

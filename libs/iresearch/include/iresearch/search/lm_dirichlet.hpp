@@ -53,6 +53,10 @@ class LMDirichlet final : public irs::ScorerBase<LMDirichlet, LMStats> {
     bool operator==(const Options&) const = default;
   };
 
+  static ScoreBoundType BoundTypeOf(const Options&) noexcept {
+    return ScoreBoundType::MinNorm;
+  }
+
   static std::unique_ptr<LMDirichlet> Make(const Options& opts) {
     if (opts.mu < 0.f || !std::isfinite(opts.mu)) {
       THROW_SQL_ERROR(
@@ -70,9 +74,17 @@ class LMDirichlet final : public irs::ScorerBase<LMDirichlet, LMStats> {
     return IndexFeatures::Freq | IndexFeatures::Norm;
   }
 
+  ScoreBoundWriter::ptr PrepareScoreBoundWriter(size_t max_levels) const final;
+
+  ScoreBoundSource::ptr PrepareScoreBoundSource() const final;
+
+  bool Compatible(const ScorerOptions& persisted) const noexcept final;
+
   ScoreFunction PrepareScorer(const ScoreContext& ctx) const final;
 
   bool equals(const Scorer& other) const noexcept final;
+
+  std::string ToString() const final;
 
   score_t mu() const noexcept { return _mu; }
 

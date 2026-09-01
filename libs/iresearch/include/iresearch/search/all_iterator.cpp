@@ -28,20 +28,19 @@
 
 namespace irs {
 
-AllIterator::AllIterator(uint32_t docs_count, const byte_type* stats,
-                         score_t boost)
-  : _boost{boost}, _stats{stats}, _max_doc{doc_limits::min() + docs_count - 1} {
+AllIterator::AllIterator(uint32_t docs_count, ScoreSource score, score_t boost)
+  : _boost{boost}, _score{score}, _max_doc{doc_limits::min() + docs_count - 1} {
   std::get<CostAttr>(_attrs).reset(_max_doc);
 }
 
 ScoreFunction AllIterator::PrepareScore(const PrepareScoreContext& ctx) {
-  SDB_ASSERT(ctx.scorer);
-  return ctx.scorer->PrepareScorer({
+  SDB_ASSERT(_score.scorer);
+  return _score.scorer->PrepareScorer({
     .segment = *ctx.segment,
     .field = {},
     .doc_attrs = *this,
     .fetcher = ctx.fetcher,
-    .stats = _stats,
+    .stats = _score.stats,
     .boost = _boost,
   });
 }

@@ -54,7 +54,7 @@ inline uint64_t ExecuteTopKWithCount(const DirectoryReader& reader,
   }
   const auto stats = prepare_collector->Finish(IResourceManager::gNoop);
 
-  score_t score_threshold = std::numeric_limits<score_t>::min();
+  score_t score_threshold = std::numeric_limits<score_t>::lowest();
   LoserScoreCollector collector{score_threshold, hits};
   ColumnArgsFetcher fetcher;
   uint32_t seg_idx = 0;
@@ -70,7 +70,6 @@ inline uint64_t ExecuteTopKWithCount(const DirectoryReader& reader,
     auto it = query->Execute({}, stats);
 
     auto score_func = it->PrepareScore({
-      .scorer = &scorer,
       .segment = &segment,
       .fetcher = &fetcher,
     });
@@ -98,7 +97,7 @@ inline uint64_t ExecuteTopK(const DirectoryReader& reader, const Filter& filter,
   }
   const auto stats = prepare_collector->Finish(IResourceManager::gNoop);
 
-  score_t score_threshold = std::numeric_limits<score_t>::min();
+  score_t score_threshold = std::numeric_limits<score_t>::lowest();
   LoserScoreCollector collector{score_threshold, hits};
   ColumnArgsFetcher fetcher;
   uint32_t seg_idx = 0;
@@ -111,10 +110,10 @@ inline uint64_t ExecuteTopK(const DirectoryReader& reader, const Filter& filter,
       continue;
     }
 
-    auto it = query->Execute({.score_prune = score_prune}, stats);
+    auto it =
+      query->Execute({.prune_scorer = score_prune ? &scorer : nullptr}, stats);
 
     auto score_func = it->PrepareScore({
-      .scorer = &scorer,
       .segment = &segment,
       .fetcher = &fetcher,
     });

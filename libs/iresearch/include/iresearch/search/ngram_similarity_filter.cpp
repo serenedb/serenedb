@@ -102,7 +102,7 @@ QueryBuilder::ptr ByNGramSimilarity::PrepareSegment(
     ctx.memory, segment, min_match_count, std::move(state), ctx.boost * boost);
 }
 
-PrepareCollector::ptr ByNGramSimilarity::MakeCollector(
+PrepareCollector::ptr ByNGramSimilarity::MakeCollectorImpl(
   const Scorer* scorer) const {
   const auto& ngrams = options().ngrams;
   const auto terms_count = ngrams.size();

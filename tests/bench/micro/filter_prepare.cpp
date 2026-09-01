@@ -174,7 +174,7 @@ class FilterPrepareFixtureT : public FilterPrepareFixture {
     auto filter = std::make_unique<Filter>();
     Configure(*filter);
     if constexpr (Boosted) {
-      filter->boost(kBoostValue);
+      filter->SetBoost(kBoostValue);
     }
     _filter = std::move(filter);
     irs::Optimize(_filter, {.scored = Scored});

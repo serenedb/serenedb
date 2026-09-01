@@ -58,12 +58,24 @@ statement count 1
 INSERT INTO clickclack_ops.query_plans VALUES (1, 'x');
 
 
-statement error (?i)cannot drop schema .*clickclack_ops.* because other objects depend on it
+statement error
 DROP SCHEMA clickclack_ops;
+----
+db error: ERROR: Cannot drop entry "clickclack_ops" because there are entries that depend on it.
+sequence "query_plans_pk_seq" depends on schema "clickclack_ops".
+table "query_plans" depends on schema "clickclack_ops".
+Use DROP...CASCADE to drop all dependents.
 
 
-statement error (?i)cannot drop schema .*clickclack_ops.* because other objects depend on it
+
+statement error
 DROP SCHEMA clickclack_ops RESTRICT;
+----
+db error: ERROR: Cannot drop entry "clickclack_ops" because there are entries that depend on it.
+sequence "query_plans_pk_seq" depends on schema "clickclack_ops".
+table "query_plans" depends on schema "clickclack_ops".
+Use DROP...CASCADE to drop all dependents.
+
 
 
 query
@@ -116,8 +128,18 @@ statement count 1
 INSERT INTO iceberg_warehouse.partitions VALUES (10, 'p');
 
 
-statement error (?i)cannot drop schema .*iceberg_warehouse.* because other objects depend on it
+statement error
 DROP SCHEMA iceberg_warehouse RESTRICT;
+----
+db error: ERROR: Cannot drop entry "iceberg_warehouse" because there are entries that depend on it.
+index "iceberg_manifests_v_idx" depends on schema "iceberg_warehouse".
+sequence "partitions_pk_seq" depends on schema "iceberg_warehouse".
+sequence "snapshot_seq" depends on schema "iceberg_warehouse".
+table "manifests" depends on schema "iceberg_warehouse".
+table "partitions" depends on schema "iceberg_warehouse".
+view "audit_view" depends on schema "iceberg_warehouse".
+Use DROP...CASCADE to drop all dependents.
+
 
 
 statement ok
@@ -162,8 +184,16 @@ statement count 1
 INSERT INTO clickclack_team.dashboard (payload) VALUES ('first');
 
 
-statement error (?i)cannot drop schema .*clickclack_team.* because other objects depend on it
+statement error
 DROP SCHEMA clickclack_team RESTRICT;
+----
+db error: ERROR: Cannot drop entry "clickclack_team" because there are entries that depend on it.
+sequence "dashboard_pk_seq" depends on schema "clickclack_team".
+sequence "query_log_id_seq" depends on schema "clickclack_team".
+table "dashboard" depends on schema "clickclack_team".
+table "query_log" depends on schema "clickclack_team".
+Use DROP...CASCADE to drop all dependents.
+
 
 
 statement ok

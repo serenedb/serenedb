@@ -34,7 +34,6 @@ target_link_libraries(
         serene_connector
         llhttp
         duckdb_static
-        zstd::zstd # search-table WAL chunk-file compression (search_db_wal.cpp)
 )
 
 target_include_directories(
@@ -48,7 +47,6 @@ target_include_directories(
 add_subdirectory(auth)
 add_subdirectory(catalog)
 add_subdirectory(connector)
-add_subdirectory(database)
 add_subdirectory(network)
 add_subdirectory(pg)
 add_subdirectory(query)

@@ -407,7 +407,8 @@ irs::DocIterator::ptr Format15TestCase::GetPruningIterator(
   const bool field_has_freq =
     irs::IndexFeatures::None != (field_features & irs::IndexFeatures::Freq);
   EXPECT_EQ((field_features & features), features);
-  irs::IteratorFieldOptions options{.has_score_bounds = field_has_freq};
+  irs::IteratorFieldOptions options{.has_score_bounds = field_has_freq,
+                                    .scorer = &scorer};
   if (iterator_has_freq) {
     options.score_prune = true;
   }
@@ -451,8 +452,7 @@ void Format15TestCase::AssertBackwardsNext(irs::PostingsReader& reader,
 
     auto score_function =
       irs::get<irs::FreqBlockAttr>(*actual)
-        ? actual->PrepareScore(
-            {.scorer = &scorer, .segment = &irs::SubReader::empty()})
+        ? actual->PrepareScore({.segment = &irs::SubReader::empty()})
         : irs::ScoreFunction::Constant(
             std::numeric_limits<irs::score_t>::max());
     AssertPruningIterator(actual, features, threshold);
@@ -524,8 +524,7 @@ void Format15TestCase::AssertDocsRandom(irs::PostingsReader& reader,
 
   auto score_function =
     irs::get<irs::FreqBlockAttr>(*actual)
-      ? actual->PrepareScore(
-          {.scorer = &scorer, .segment = &irs::SubReader::empty()})
+      ? actual->PrepareScore({.segment = &irs::SubReader::empty()})
       : irs::ScoreFunction::Constant(std::numeric_limits<irs::score_t>::max());
   AssertPruningIterator(actual, features, threshold);
 
@@ -605,8 +604,7 @@ void Format15TestCase::AssertDocsSeq(irs::PostingsReader& reader,
 
   auto score_function =
     irs::get<irs::FreqBlockAttr>(*actual)
-      ? actual->PrepareScore(
-          {.scorer = &scorer, .segment = &irs::SubReader::empty()})
+      ? actual->PrepareScore({.segment = &irs::SubReader::empty()})
       : irs::ScoreFunction::Constant(std::numeric_limits<irs::score_t>::max());
 
   AssertPruningIterator(actual, features, threshold);

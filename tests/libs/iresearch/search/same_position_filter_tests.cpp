@@ -467,7 +467,7 @@ TEST(by_same_position_test, ctor) {
   irs::BySamePosition q;
   ASSERT_EQ(irs::Type<irs::BySamePosition>::id(), q.type());
   ASSERT_EQ(irs::BySamePositionOptions{}, q.options());
-  ASSERT_EQ(irs::kNoBoost, q.Boost());
+  ASSERT_EQ(irs::kNoBoost, q.GetBoost());
 
   static_assert((irs::IndexFeatures::Freq | irs::IndexFeatures::Pos) ==
                 irs::BySamePosition::kRequiredFeatures);
@@ -515,7 +515,7 @@ TEST(by_same_position_test, boost) {
     // no terms, return empty query
     {
       irs::BySamePosition q;
-      q.boost(boost);
+      q.SetBoost(boost);
 
       tests::PreparedFilter prepared{q, irs::SubReader::empty()};
       ASSERT_EQ(irs::kNoBoost, prepared.Query(0)->Boost());
@@ -526,7 +526,7 @@ TEST(by_same_position_test, boost) {
       irs::BySamePosition q;
       q.mutable_options()->terms.emplace_back(
         kFieldId, irs::ViewCast<irs::byte_type>(std::string_view("quick")));
-      q.boost(boost);
+      q.SetBoost(boost);
 
       tests::PreparedFilter prepared{q, irs::SubReader::empty()};
       ASSERT_EQ(irs::kNoBoost, prepared.Query(0)->Boost());
@@ -539,7 +539,7 @@ TEST(by_same_position_test, boost) {
         kFieldId, irs::ViewCast<irs::byte_type>(std::string_view("quick")));
       q.mutable_options()->terms.emplace_back(
         kFieldId, irs::ViewCast<irs::byte_type>(std::string_view("brown")));
-      q.boost(boost);
+      q.SetBoost(boost);
 
       tests::PreparedFilter prepared{q, irs::SubReader::empty()};
       ASSERT_EQ(irs::kNoBoost, prepared.Query(0)->Boost());

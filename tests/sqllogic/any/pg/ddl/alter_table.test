@@ -10,10 +10,8 @@ ALTER TABLE rubick DROP CONSTRAINT rubick_pos;
 statement ok
 INSERT INTO rubick VALUES (-1, 0);
 
-statement error
+statement error (?i)constraint "rubick_pos" of (table|relation) "rubick" does not exist
 ALTER TABLE rubick DROP CONSTRAINT rubick_pos;
-----
-db error: ERROR: constraint "rubick_pos" of relation "rubick" does not exist
 
 
 statement ok

@@ -1264,7 +1264,7 @@ count
 
 # IVF kNN only scans nprobe clusters, so an exhaustive scan needs nprobe >= nlist.
 statement ok
-SET sdb_nprobe = 1000;
+SET sdb_ivf_search_nprobe = 1000;
 
 
 query
@@ -1275,7 +1275,7 @@ count
 
 
 statement ok
-RESET sdb_nprobe;
+RESET sdb_ivf_search_nprobe;
 
 
 query
@@ -1297,7 +1297,7 @@ id
 
 
 statement ok
-SET sdb_nprobe = 256;
+SET sdb_ivf_search_nprobe = 256;
 
 
 query
@@ -1310,7 +1310,7 @@ id
 
 
 statement ok
-RESET sdb_nprobe;
+RESET sdb_ivf_search_nprobe;
 
 
 statement ok
@@ -1363,3 +1363,92 @@ SELECT id FROM merge_idx ORDER BY emb <-> [0, 0, 0]::FLOAT[3] LIMIT 2;
 id
 7
 5
+
+
+# A vector query carries its StatsBuffer from init and stays off the prepare
+# barrier, so a multi-segment knn must still order correctly across segments.
+# Four segments with distinct distances make the answer fully ordered.
+
+statement ok
+CREATE TABLE prep_bar (id INT, emb FLOAT[3]);
+
+
+statement ok
+CREATE INDEX prep_bar_idx ON prep_bar USING inverted(id, emb)
+  WITH (refresh_interval = 0, compaction_interval = 0);
+
+
+statement count 3
+INSERT INTO prep_bar VALUES (1, [1,0,0]::FLOAT[3]), (2, [2,0,0]::FLOAT[3]), (3, [3,0,0]::FLOAT[3]);
+
+
+statement ok
+VACUUM (REFRESH_TABLE) prep_bar;
+
+
+statement count 3
+INSERT INTO prep_bar VALUES (4, [4,0,0]::FLOAT[3]), (5, [5,0,0]::FLOAT[3]), (6, [6,0,0]::FLOAT[3]);
+
+
+statement ok
+VACUUM (REFRESH_TABLE) prep_bar;
+
+
+statement count 3
+INSERT INTO prep_bar VALUES (7, [7,0,0]::FLOAT[3]), (8, [8,0,0]::FLOAT[3]), (9, [9,0,0]::FLOAT[3]);
+
+
+statement ok
+VACUUM (REFRESH_TABLE) prep_bar;
+
+
+statement count 3
+INSERT INTO prep_bar VALUES (10, [10,0,0]::FLOAT[3]), (11, [11,0,0]::FLOAT[3]), (12, [12,0,0]::FLOAT[3]);
+
+
+statement ok
+VACUUM (REFRESH_TABLE) prep_bar;
+
+
+query
+SELECT id FROM prep_bar_idx ORDER BY emb <-> [0.0, 0.0, 0.0]::FLOAT[3] LIMIT 4;
+----
+id
+1
+2
+3
+4
+
+
+query
+SELECT id FROM prep_bar_idx ORDER BY emb <-> [0.0, 0.0, 0.0]::FLOAT[3] LIMIT 4;
+----
+id
+1
+2
+3
+4
+
+
+query
+SELECT id FROM prep_bar_idx ORDER BY emb <-> [12.0, 0.0, 0.0]::FLOAT[3] LIMIT 4;
+----
+id
+12
+11
+10
+9
+
+
+query
+SELECT id FROM prep_bar_idx ORDER BY emb <-> [6.4, 0.0, 0.0]::FLOAT[3] LIMIT 4;
+----
+id
+6
+7
+5
+8
+
+
+statement ok
+DROP TABLE prep_bar;

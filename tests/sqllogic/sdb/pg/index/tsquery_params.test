@@ -614,8 +614,145 @@ DEALLOCATE tqp_mix;
 statement ok
 DEALLOCATE tqp_match;
 
+# ----------------------------------------------------------------------
+# Modifiers on a parameter. `$1::score(...)` names the modifier type, so the
+# parameter *is* that type and no cast is left behind -- the modifier has to
+# be folded in when the parameter's value is materialised, or it is lost
+# before the claim can read it.
+# ----------------------------------------------------------------------
+
+statement ok
+PREPARE tqp_score AS
+    SELECT a, round(bm25(tableoid)::DOUBLE, 4) AS score FROM tqp_idx
+    WHERE b @@ $1::score('constant(42)') ORDER BY a;
+
+query
+EXECUTE tqp_score('quick');
+----
+a	score
+1	42
+4	42
+5	42
+
+
+# Re-executing rebinds with a different value and keeps the modifier.
+query
+EXECUTE tqp_score('lazy');
+----
+a	score
+2	42
+
+
+# The scorer text travels in the modifier and is parsed exactly once, where the
+# filter is built -- so a malformed scorer surfaces at EXECUTE, not at PREPARE.
+# PREPARE only records the statement. Pinned here because the alternative
+# (validating at bind too) costs a second parse of the same string on every
+# query, and the deferral is the deliberate trade.
+statement ok
+PREPARE tqp_bad_scorer AS
+    SELECT a FROM tqp_idx WHERE b @@ $1::score('42') ORDER BY a;
+
+
+statement error scorer function call
+EXECUTE tqp_bad_scorer('quick');
+
+
+statement ok
+DEALLOCATE tqp_bad_scorer;
+
+
+# A well-formed call naming no known scorer behaves the same way.
+statement ok
+PREPARE tqp_unknown_scorer AS
+    SELECT a FROM tqp_idx WHERE b @@ $1::score('nosuchscorer()') ORDER BY a;
+
+
+statement error
+EXECUTE tqp_unknown_scorer('quick');
+
+
+statement ok
+DEALLOCATE tqp_unknown_scorer;
+
+
+statement ok
+PREPARE tqp_unscored AS
+    SELECT a, round(bm25(tableoid)::DOUBLE, 4) AS score FROM tqp_idx
+    WHERE b @@ $1::score(NULL) ORDER BY a;
+
+query
+EXECUTE tqp_unscored('quick');
+----
+a	score
+1	0
+4	0
+5	0
+
+
+# A boost on a parameter travels the same road.
+statement ok
+PREPARE tqp_boosted AS
+    SELECT a, round(bm25(tableoid)::DOUBLE, 4) AS score FROM tqp_idx
+    WHERE b @@ $1::boost(5.0) ORDER BY a;
+
+query
+EXECUTE tqp_boosted('quick');
+----
+a	score
+1	2.3079
+4	2.3079
+5	2.3079
+
+
+# And a parameter carrying a modifier as one element of a list: doc 4 matches
+# both elements, so it collects the constant plus the other element's score.
+statement ok
+PREPARE tqp_list AS
+    SELECT a, round(bm25(tableoid)::DOUBLE, 4) AS score FROM tqp_idx
+    WHERE b @@ ts_any([$1::score('constant(42)'), 'dog']) ORDER BY a;
+
+query
+EXECUTE tqp_list('quick');
+----
+a	score
+1	42
+2	0.897
+4	42.897
+5	42
+
+
 statement ok
 DROP TABLE tqp;
 
 statement ok
 DROP TEXT SEARCH DICTIONARY tqp_english;
+
+
+# A tsquery value reaches the client two ways -- the pgwire row serializer for a
+# tsquery-typed column, and the TSQUERY -> VARCHAR cast -- and both must render
+# the same six fields. The row serializer used to read five of them, silently
+# dropping ::merge, so the same value printed differently depending on how it
+# was returned.
+
+query
+SELECT ('fox'::tsquery)::merge('max') AS wire,
+       ('fox'::tsquery)::merge('max')::VARCHAR AS cast;
+----
+wire	cast
+'fox'::merge('max')	'fox'::merge('max')
+
+
+query
+SELECT ('fox'::tsquery)::slop(3)::merge('sum') AS wire,
+       ('fox'::tsquery)::slop(3)::merge('sum')::VARCHAR AS cast;
+----
+wire	cast
+'fox'::slop(3)::merge('sum')	'fox'::slop(3)::merge('sum')
+
+
+# An unmodified value still renders as its bare text, in both paths.
+query
+SELECT 'fox'::tsquery AS wire, 'fox'::tsquery::VARCHAR AS cast;
+----
+wire	cast
+fox	fox

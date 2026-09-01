@@ -179,7 +179,7 @@ CommandTag BuildCommandTagImpl(duckdb::StatementType stmt_type,
         if (create_stmt.info) {
           // CREATE TABLE AS / SELECT INTO complete as "SELECT n" in PG, not
           // "CREATE TABLE n" (createas.c uses CMDTAG_SELECT). DuckDB models
-          // CTAS as a CreateTableInfo carrying a non-null query; the
+          // CTAS as a duckdb::CreateTableInfo carrying a non-null query; the
           // CHANGED_ROWS count it returns is the rows produced, matching PG's
           // es_processed.
           if (create_stmt.info->type == duckdb::CatalogType::TABLE_ENTRY &&

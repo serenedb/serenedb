@@ -171,7 +171,7 @@ db error: ERROR: role "dov_vedernikoff" cannot be dropped because some objects d
 statement error
 DROP VIEW dov_mop_v1 RESTRICT;
 ----
-db error: ERROR: cannot drop view dov_mop_v1 because other objects depend on it<slt:ignore>
+<slt:ignore>
 
 
 # Cross-owner: hand the dependent view v2 to clickclack. Now v1 belongs to

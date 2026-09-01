@@ -10,7 +10,7 @@ hash-threshold 100
 # supports metric l2, ip, and cosine; pq_m must divide the dimension.
 
 statement ok
-SET sdb_nprobe = 1000
+SET sdb_ivf_search_nprobe = 1000
 
 # ===========================================================================
 # 1. L2 + PQ (d=8, pq_m=4 -> dsub=2): far-separated landmarks among filler.
@@ -112,7 +112,7 @@ pk
 2001
 
 statement ok
-RESET sdb_nprobe
+RESET sdb_ivf_search_nprobe
 
 # ===========================================================================
 # 3. Guards: pq requires metric l2/ip/cosine; pq_m must divide the dimension.
@@ -140,7 +140,7 @@ db error: ERROR: Column 'emb': ivf option 'pq_m' (3) must divide the vector dime
 # ===========================================================================
 
 statement ok
-SET sdb_nprobe = 1000
+SET sdb_ivf_search_nprobe = 1000
 
 statement ok
 CREATE TABLE pq_cos (pk INTEGER PRIMARY KEY, emb FLOAT[8])
@@ -199,7 +199,7 @@ count
 100
 
 statement ok
-RESET sdb_nprobe
+RESET sdb_ivf_search_nprobe
 
 # ===========================================================================
 # 5. Unlimited range query: PQ decodes against its cluster centroid, so this
@@ -209,7 +209,7 @@ RESET sdb_nprobe
 # ===========================================================================
 
 statement ok
-SET sdb_nprobe = 1000
+SET sdb_ivf_search_nprobe = 1000
 
 query
 SELECT pk FROM pq_l2_idx
@@ -234,4 +234,4 @@ count
 302
 
 statement ok
-RESET sdb_nprobe
+RESET sdb_ivf_search_nprobe

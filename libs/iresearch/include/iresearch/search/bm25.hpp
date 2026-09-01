@@ -74,6 +74,19 @@ class BM25 final : public irs::ScorerBase<BM25, BM25Stats> {
     bool operator==(const Options&) const = default;
   };
 
+  static ScoreBoundType BoundTypeOf(const Options& opts) noexcept {
+    if (opts.k1 == 0.f) {
+      return ScoreBoundType::None;
+    }
+    if (opts.b == 0.f) {
+      return ScoreBoundType::MaxFreq;
+    }
+    if (opts.b == 1.f) {
+      return ScoreBoundType::DivNorm;
+    }
+    return ScoreBoundType::MinNorm;
+  }
+
   static std::unique_ptr<BM25> Make(const Options& opts) {
     return std::make_unique<BM25>(opts.k1, opts.b, opts.boost_as_score,
                                   opts.approximate);
@@ -107,9 +120,18 @@ class BM25 final : public irs::ScorerBase<BM25, BM25Stats> {
 
   ScoreBoundSource::ptr PrepareScoreBoundSource() const final;
 
-  ScoreBoundType GetScoreBoundType() const noexcept final;
+  bool Compatible(const ScorerOptions& persisted) const noexcept final;
 
   bool equals(const Scorer& other) const noexcept final;
+
+  std::string ToString() const final;
+
+  Options GetOptions() const noexcept {
+    return {.k1 = _k,
+            .b = _b,
+            .boost_as_score = _boost_as_score,
+            .approximate = _approximate};
+  }
 
   score_t k() const noexcept { return _k; }
 

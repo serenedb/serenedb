@@ -55,6 +55,7 @@
 #include <iresearch/search/scorer.hpp>
 #include <iresearch/search/term_filter.hpp>
 #include <iresearch/search/terms_filter.hpp>
+#include <iresearch/search/unscored.hpp>
 #include <iresearch/search/wildcard_filter.hpp>
 #include <iresearch/search/wildcard_ngram_filter.hpp>
 #include <iresearch/types.hpp>
@@ -290,6 +291,19 @@ std::optional<double> TryGetBoostModifier(const duckdb::LogicalType& type) {
 
 // Slop modifier is an INTEGER (stored as BIGINT by the bind callback),
 // so it never aliases the DOUBLE boost or VARCHAR tokenizer modifier.
+std::optional<TSQueryMerge> TryGetMergeModifier(
+  const duckdb::LogicalType& type) {
+  if (!IsTSQueryStructType(type) || !type.HasExtensionInfo()) {
+    return {};
+  }
+  const auto& mods = type.GetExtensionInfo()->modifiers;
+  if (mods.empty() || mods[0].value.IsNull() ||
+      mods[0].value.type().id() != duckdb::LogicalTypeId::UTINYINT) {
+    return {};
+  }
+  return static_cast<TSQueryMerge>(mods[0].value.GetValue<uint8_t>());
+}
+
 std::optional<int64_t> TryGetSlopModifier(const duckdb::LogicalType& type) {
   if (!IsTSQueryStructType(type) || !type.HasExtensionInfo()) {
     return {};
@@ -301,6 +315,20 @@ std::optional<int64_t> TryGetSlopModifier(const duckdb::LogicalType& type) {
     return {};
   }
   return mods[0].value.GetValue<int64_t>();
+}
+
+std::optional<std::string> TryGetScoreModifier(
+  const duckdb::LogicalType& type) {
+  if (!IsTSQueryStructType(type) || !type.HasExtensionInfo()) {
+    return {};
+  }
+  const auto* ext = type.GetExtensionInfo().get();
+  const auto& mods = ext->modifiers;
+  if (mods.empty() || mods[0].value.IsNull() ||
+      mods[0].value.type().id() != duckdb::LogicalTypeId::BLOB) {
+    return {};
+  }
+  return std::string{duckdb::StringValue::Get(mods[0].value)};
 }
 
 namespace {
@@ -335,7 +363,9 @@ const duckdb::Expression& UnwrapBoostBoolCoercion(
   if (cast.GetReturnType().id() != duckdb::LogicalTypeId::BOOLEAN) {
     return expr;
   }
-  if (!TryGetBoostModifier(cast.Child().GetReturnType())) {
+  if (!TryGetBoostModifier(cast.Child().GetReturnType()) &&
+      !TryGetScoreModifier(cast.Child().GetReturnType()) &&
+      !TryGetMergeModifier(cast.Child().GetReturnType())) {
     return expr;
   }
   return cast.Child();
@@ -555,7 +585,7 @@ absl::Status MakeGroup(irs::BooleanFilter& parent, const FilterContext& ctx,
     group_root = &AddFilter<Filter>(parent);
     sub_ctx.negated = false;
   }
-  group_root->boost(ctx.boost);
+  group_root->SetBoost(ctx.boost);
   for (const auto& child : conj.GetChildren()) {
     if (auto s = FromExpression(*group_root, sub_ctx, *child); !s.ok()) {
       return s;
@@ -583,7 +613,7 @@ absl::Status FromIsNull(irs::BooleanFilter& filter, const FilterContext& ctx,
   }
   auto& term_filter =
     ctx.negated ? Negate<irs::ByTerm>(filter) : AddFilter<irs::ByTerm>(filter);
-  term_filter.boost(ctx.boost);
+  term_filter.SetBoost(ctx.boost);
   FillNullMarker(term_filter, column_info->null_field_id);
   return absl::OkStatus();
 }
@@ -636,7 +666,7 @@ absl::Status FromBinaryEq(irs::BooleanFilter& filter, const FilterContext& ctx,
                         ? NegateScoped<irs::ByTerm>(filter, *column_info)
                         : AddFilter<irs::ByTerm>(filter);
 
-  term_filter.boost(ctx.boost);
+  term_filter.SetBoost(ctx.boost);
   return SetupTermFilter(term_filter, *column_info, *const_val);
 }
 
@@ -692,7 +722,7 @@ absl::Status FromComparison(irs::BooleanFilter& filter,
   auto setup_base_filter = [&](auto& range_filter) -> decltype(auto) {
     *range_filter.mutable_field_id() =
       PickPerKindFieldId(*column_info, type_id);
-    range_filter.boost(ctx.boost);
+    range_filter.SetBoost(ctx.boost);
     switch (op) {
       case ComparisonOp::Lt:
         range_filter.mutable_options()->range.max_type =
@@ -774,7 +804,7 @@ absl::Status FromBetween(irs::BooleanFilter& filter, const FilterContext& ctx,
   auto& group = ctx.negated
                   ? static_cast<irs::BooleanFilter&>(AddFilter<irs::Or>(filter))
                   : AddFilter<irs::And>(filter);
-  group.boost(ctx.boost);
+  group.SetBoost(ctx.boost);
 
   FilterContext sub_ctx = ctx;
   sub_ctx.negated = false;
@@ -843,7 +873,7 @@ absl::Status FromIn(irs::BooleanFilter& filter, const FilterContext& ctx,
   }
 
   auto& terms_filter = AddMaybeNegated<irs::ByTerms>(filter, ctx, *column_info);
-  terms_filter.boost(ctx.boost);
+  terms_filter.SetBoost(ctx.boost);
   *terms_filter.mutable_field_id() = PickPerKindFieldId(*column_info, type_id);
   auto& opts = *terms_filter.mutable_options();
 
@@ -1136,7 +1166,7 @@ void FromTSQueryConjunction(irs::BooleanFilter& parent,
   } else {
     group = &AddMaybeNegated<irs::Or>(parent, ctx, column_info);
   }
-  group->boost(ctx.boost);
+  group->SetBoost(ctx.boost);
   auto sub_ctx = ctx;
   sub_ctx.boost = irs::kNoBoost;
   sub_ctx.negated = false;
@@ -1262,6 +1292,181 @@ bool TryDispatchSqlBoostCast(irs::BooleanFilter& filter,
 // `(...)::tokenize('<name>')` -- 'keyword' bypasses tokenisation;
 // any other name resolves via the catalog. Returns false if `peeled`
 // carries no tokenize modifier.
+const irs::Scorer* ResolveScoreOverride(const FilterContext& ctx,
+                                        std::string_view expr) {
+  if (expr.empty() || expr == irs::Unscored::type_name()) {
+    return &irs::Unscored::Instance();
+  }
+  if (!ctx.scorer_sink) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+      ERR_MSG("::score(...) is not supported in this context"),
+      ERR_HINT("Use ::score(...) inside a WHERE predicate on an inverted "
+               "index."));
+  }
+  auto owned = catalog::MakeScorer(catalog::ParseScorerExpression(
+    ctx.client_context, std::string{expr}, "::score"));
+  if (!owned) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                    ERR_MSG("::score(...) is not a known scorer"));
+  }
+  auto& sink = *ctx.scorer_sink;
+  if (auto known = absl::c_find_if(
+        sink, [&](const auto& entry) { return entry->equals(*owned); });
+      known != sink.end()) {
+    return known->get();
+  }
+  const auto* scorer = owned.get();
+  sink.emplace_back(std::move(owned));
+  return scorer;
+}
+
+void RejectUnscorableOverride(const irs::Filter& filter) {
+  const auto type = filter.type();
+  if (type == irs::Type<irs::Not>::id()) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+      ERR_MSG("::score(...) cannot apply to a negated predicate"),
+      ERR_HINT("A negated branch is collected with no scorer, so it "
+               "contributes no score to override. Put ::score(...) on the "
+               "positive predicate, or on the AND / OR group around it."));
+  }
+  if (type == irs::Type<irs::ByWildcardNgram>::id()) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+      ERR_MSG("::score(...) cannot apply to a wildcard n-gram match"),
+      ERR_HINT("That match scores a constant by construction. Put "
+               "::score(...) on the AND / OR group around it to score the "
+               "rest of the query."));
+  }
+}
+
+void ApplyMerge(irs::BooleanFilter& parent, size_t before, TSQueryMerge merge) {
+  if (merge == TSQueryMerge::Default) {
+    return;
+  }
+  auto& children = parent.mutable_filters();
+  const auto added = children.size() - before;
+  irs::BooleanFilter* group = nullptr;
+  if (added == 1) {
+    auto* child = children[before].get();
+    if (child && (child->type() == irs::Type<irs::Or>::id() ||
+                  child->type() == irs::Type<irs::And>::id())) {
+      group = &sdb::basics::downCast<irs::BooleanFilter>(*child);
+    }
+  }
+  if (!group) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+                    ERR_MSG("::merge(...) applies to a boolean group"),
+                    ERR_HINT("Write it on an AND / OR of predicates, e.g. "
+                             "(a @@ 'x' OR a @@ 'y')::merge('max')."));
+  }
+  group->merge_type(merge == TSQueryMerge::Max ? irs::ScoreMergeType::Max
+                                               : irs::ScoreMergeType::Sum);
+}
+
+// Claims the nodes `[before, parent.size())` that the inner build produced for
+// the scorer, so the override is state on the node rather than a field no
+// optimizer rule knows to carry.
+void ApplyScoreOverride(irs::BooleanFilter& parent, size_t before,
+                        const irs::Scorer* scorer) {
+  auto& children = parent.mutable_filters();
+  for (size_t i = before; i < children.size(); ++i) {
+    SDB_ASSERT(children[i]);
+    RejectUnscorableOverride(*children[i]);
+    // A nested ::score already claimed this node, and the inner one wins for
+    // its own subtree.
+    if (!children[i]->GetScorer()) {
+      children[i]->SetScorer(scorer);
+    }
+  }
+}
+
+bool TryDispatchScoreCast(irs::BooleanFilter& parent, const FilterContext& ctx,
+                          const SearchColumnInfo& column_info,
+                          const duckdb::Expression& peeled) {
+  if (peeled.GetExpressionClass() != duckdb::ExpressionClass::BOUND_CAST) {
+    return false;
+  }
+  const auto& cast_expr = peeled.Cast<duckdb::BoundCastExpression>();
+  auto expr = TryGetScoreModifier(cast_expr.GetReturnType());
+  if (!expr) {
+    return false;
+  }
+  const auto* scorer = ResolveScoreOverride(ctx, *expr);
+  const size_t before = parent.size();
+  BuildTSQuery(parent, ctx, column_info, cast_expr.Child());
+  ApplyScoreOverride(parent, before, scorer);
+  return true;
+}
+
+bool TryDispatchMergeCast(irs::BooleanFilter& parent, const FilterContext& ctx,
+                          const SearchColumnInfo& column_info,
+                          const duckdb::Expression& peeled) {
+  if (peeled.GetExpressionClass() != duckdb::ExpressionClass::BOUND_CAST) {
+    return false;
+  }
+  const auto& cast_expr = peeled.Cast<duckdb::BoundCastExpression>();
+  const auto merge = TryGetMergeModifier(cast_expr.GetReturnType());
+  if (!merge) {
+    return false;
+  }
+  const size_t before = parent.size();
+  BuildTSQuery(parent, ctx, column_info, cast_expr.Child());
+  ApplyMerge(parent, before, *merge);
+  return true;
+}
+
+bool TryDispatchSqlScoreCast(irs::BooleanFilter& filter,
+                             const FilterContext& ctx,
+                             const duckdb::Expression& peeled) {
+  if (peeled.GetExpressionClass() != duckdb::ExpressionClass::BOUND_CAST) {
+    return false;
+  }
+  const auto& cast_expr = peeled.Cast<duckdb::BoundCastExpression>();
+  auto expr = TryGetScoreModifier(cast_expr.GetReturnType());
+  if (!expr) {
+    return false;
+  }
+  const auto* scorer = ResolveScoreOverride(ctx, *expr);
+  const size_t before = filter.size();
+  if (auto s = FromExpression(filter, ctx, cast_expr.Child()); !s.ok()) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+      ERR_MSG("::score(...) used on a predicate the inverted index could not "
+              "claim: ",
+              s.message()),
+      ERR_HINT("score is only meaningful inside an inverted-index match. "
+               "Move it into an `@@` match or remove it."));
+  }
+  ApplyScoreOverride(filter, before, scorer);
+  return true;
+}
+
+bool TryDispatchSqlMergeCast(irs::BooleanFilter& filter,
+                             const FilterContext& ctx,
+                             const duckdb::Expression& peeled) {
+  if (peeled.GetExpressionClass() != duckdb::ExpressionClass::BOUND_CAST) {
+    return false;
+  }
+  const auto& cast_expr = peeled.Cast<duckdb::BoundCastExpression>();
+  const auto merge = TryGetMergeModifier(cast_expr.GetReturnType());
+  if (!merge) {
+    return false;
+  }
+  const size_t before = filter.size();
+  if (auto s = FromExpression(filter, ctx, cast_expr.Child()); !s.ok()) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+      ERR_MSG("::merge used on a predicate the inverted index could not "
+              "claim: ",
+              s.message()),
+      ERR_HINT("merge is only meaningful on an inverted-index boolean group."));
+  }
+  ApplyMerge(filter, before, *merge);
+  return true;
+}
+
 bool TryDispatchTokenizeCast(irs::BooleanFilter& parent,
                              const FilterContext& ctx,
                              const SearchColumnInfo& column_info,
@@ -1416,6 +1621,13 @@ absl::Status FromExpression(irs::BooleanFilter& filter,
   // Peel the TSQUERY_MODIFIER -> BOOLEAN coercion that the WHERE-binder
   // inserts around `(predicate)::boost(K)` at the predicate root.
   if (TryDispatchSqlBoostCast(filter, ctx, UnwrapBoostBoolCoercion(expr))) {
+    return absl::OkStatus();
+  }
+  if (TryDispatchSqlMergeCast(filter, ctx, UnwrapBoostBoolCoercion(expr))) {
+    return absl::OkStatus();
+  }
+
+  if (TryDispatchSqlScoreCast(filter, ctx, UnwrapBoostBoolCoercion(expr))) {
     return absl::OkStatus();
   }
   if (duckdb::BoundComparisonExpression::IsComparison(expr)) {
@@ -1644,7 +1856,8 @@ const duckdb::Expression& UnwrapTSQueryCast(const duckdb::Expression& expr) {
     const auto& source = cast.Child().GetReturnType();
     // Modifier-bearing casts must be preserved so the walker sees them.
     if (!TryGetTokenizerModifier(target).empty() ||
-        TryGetBoostModifier(target) || TryGetSlopModifier(target)) {
+        TryGetBoostModifier(target) || TryGetSlopModifier(target) ||
+        TryGetScoreModifier(target) || TryGetMergeModifier(target)) {
       break;
     }
     // Peel transit casts between string-ish types and the TSQUERY
@@ -1833,15 +2046,35 @@ void BuildTSQueryValue(irs::BooleanFilter& parent, const FilterContext& ctx,
                      /*require_all=*/false);
     }
   };
-  auto boosted = ctx.WithBoost(parts->boost);
+  if (parts->slop != 0 && ctx.slop != 0) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                    ERR_MSG("::slop specified more than once"),
+                    ERR_HINT("Apply ::slop(N) at most once per phrase."));
+  }
+  if (parts->slop > std::numeric_limits<irs::PosAttr::value_t>::max()) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                    ERR_MSG("::slop too large: ", parts->slop));
+  }
+  const auto boosted =
+    parts->slop != 0
+      ? ctx.WithBoost(parts->boost)
+          .WithSlop(static_cast<irs::PosAttr::value_t>(parts->slop))
+      : ctx.WithBoost(parts->boost);
+  const size_t before = parent.size();
+  const auto* scorer =
+    parts->scorer.empty() ? nullptr : ResolveScoreOverride(ctx, parts->scorer);
   if (parts->tokenizer.empty()) {
-    return emit(boosted);
+    emit(boosted);
+  } else if (parts->tokenizer == irs::StringTokenizer::type_name()) {
+    emit(boosted.WithTokenizer(boosted.identity));
+  } else {
+    auto wrapper = ResolveTokenizerOrThrow(ctx, parts->tokenizer);
+    emit(boosted.WithTokenizer(*wrapper));
   }
-  if (parts->tokenizer == irs::StringTokenizer::type_name()) {
-    return emit(boosted.WithTokenizer(boosted.identity));
+  if (scorer) {
+    ApplyScoreOverride(parent, before, scorer);
   }
-  auto wrapper = ResolveTokenizerOrThrow(ctx, parts->tokenizer);
-  emit(boosted.WithTokenizer(*wrapper));
+  ApplyMerge(parent, before, parts->merge);
 }
 
 }  // namespace
@@ -1888,6 +2121,14 @@ void BuildTSQuery(irs::BooleanFilter& parent, const FilterContext& ctx,
   }
 
   if (TryDispatchSlopCast(parent, ctx, column_info, unwrapped)) {
+    return;
+  }
+
+  if (TryDispatchScoreCast(parent, ctx, column_info, unwrapped)) {
+    return;
+  }
+
+  if (TryDispatchMergeCast(parent, ctx, column_info, unwrapped)) {
     return;
   }
 
@@ -2018,7 +2259,7 @@ absl::Status MakeSearchFilter(
   irs::And& root,
   std::span<const duckdb::unique_ptr<duckdb::Expression>> conjuncts,
   const ColumnGetter& column_getter, duckdb::ClientContext& context,
-  const ExpressionGetter& expr_getter) {
+  const ExpressionGetter& expr_getter, FilterScorers* scorers) {
   irs::StringTokenizer identity;
   duckdb::column_binding_map_t<SearchColumnInfo> column_cache;
   containers::NodeHashMap<irs::field_id, SearchColumnInfo> expr_cache;
@@ -2047,6 +2288,7 @@ absl::Status MakeSearchFilter(
     .client_context = context,
     .scored_terms_limit = scored_terms_limit,
     .levenshtein_max_terms = levenshtein_max_terms,
+    .scorer_sink = scorers,
   };
 
   for (const auto& expr : conjuncts) {

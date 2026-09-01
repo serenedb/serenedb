@@ -26,9 +26,13 @@
 #include <duckdb/common/vector/struct_vector.hpp>
 #include <iresearch/analysis/geo_analyzer.hpp>
 #include <iresearch/analysis/tokenizers.hpp>
+#include <iterator>
 
 #include "basics/assert.h"
 #include "basics/down_cast.h"
+#include "basics/primary_key.hpp"
+#include "catalog/ddl/catalog.h"
+#include "catalog/read/duckdb_catalog_sets.h"
 #include "catalog/table_options.h"
 #include "connector/common.h"
 #include "pg/errcodes.h"
@@ -46,13 +50,15 @@ using StreamPool = irs::UnboundedObjectPool<search::AnalyzerImpl::Builder>;
 
 SearchSinkInsertBaseImpl::SearchSinkInsertBaseImpl(
   irs::IndexWriter::Transaction& trx, TokenizerProvider&& tokenizer_provider,
-  EntryInfoProvider&& entry_info_provider,
-  std::vector<IndexedExpression>&& indexed_exprs, PkPolicy pk_policy)
+  EntryInfoProvider&& entry_info_provider, PkPolicy pk_policy,
+  std::vector<IndexedExpression>&& indexed_exprs,
+  std::shared_ptr<const search::SearchTable::TermsByColumn> terms_by_column)
   : _tokenizer_provider{std::move(tokenizer_provider)},
     _entry_info_provider{std::move(entry_info_provider)},
+    _trx{&trx},
+    _pk_policy{pk_policy},
     _indexed_expressions{std::move(indexed_exprs)},
-    _trx{trx},
-    _pk_policy{pk_policy} {
+    _terms_by_column{std::move(terms_by_column)} {
   _pk_field.PrepareForVerbatimStringValue();
   _pk_field.id = catalog::term_dict::kPKFieldId;
 }
@@ -470,6 +476,27 @@ void SearchSinkInsertBaseImpl::WriteJsonBatch(const duckdb::Vector& vec,
   }
 }
 
+void SearchSinkInsertBaseImpl::AppendValueColumn(
+  irs::field_id field_id, const duckdb::LogicalType& type,
+  const duckdb::Vector& vec, duckdb::idx_t count) {
+  AppendToColumn(field_id, type, vec, count);
+}
+
+std::span<const irs::field_id> SearchSinkInsertBaseImpl::TermFieldsForColumn(
+  catalog::ColumnId col_id) const noexcept {
+  if (!_terms_by_column) {
+    return {};
+  }
+  auto it = _terms_by_column->find(col_id);
+  if (it == _terms_by_column->end()) {
+    return {};
+  }
+  return it->second;
+}
+
+// Emits term postings for one field; stores the value inline only when the
+// field's config entry has store_values. Plain-column term fields keep it off
+// so the value is not stored once per index; indexed expressions keep it on.
 void SearchSinkInsertBaseImpl::SwitchFieldImpl(irs::field_id field_id,
                                                const duckdb::LogicalType& type,
                                                const duckdb::Vector& vec,
@@ -579,12 +606,12 @@ void SearchSinkInsertBaseImpl::SwitchFieldImpl(irs::field_id field_id,
 }
 
 void SearchSinkInsertBaseImpl::InitImpl(size_t batch_size, const PkChunk& pk,
-                                        bool* commit_on_flush) {
+                                        irs::CommitOnFlush* commit_on_flush) {
   SDB_ASSERT(batch_size > 0);
   if (_document) {
     _document.reset();
   }
-  _document.emplace(_trx.Insert(false, batch_size, commit_on_flush));
+  _document.emplace(_trx->Insert(false, batch_size, commit_on_flush));
   // Insert may flush the segment mid-transaction (a pooled segment with
   // mismatched options, a full segment): cached column writers then point
   // at the flushed segment while the terms land in the fresh one.
@@ -774,7 +801,7 @@ void SearchSinkInsertBaseImpl::Field::SetNullValue() {
 
 SearchSinkDeleteBaseImpl::SearchSinkDeleteBaseImpl(
   irs::IndexWriter::Transaction& trx)
-  : _trx{trx} {}
+  : _trx{&trx} {}
 
 void SearchSinkDeleteBaseImpl::DeleteRowImpl(std::string_view row_key) {
   SDB_ASSERT(_remove_filter);
@@ -791,23 +818,49 @@ void SearchSinkDeleteBaseImpl::InitImpl(size_t batch_size) {
 
 void SearchSinkDeleteBaseImpl::FinishImpl() {
   if (_remove_filter && !_remove_filter->Empty()) {
-    _trx.Remove(std::move(_remove_filter));
+    _trx->Remove(std::move(_remove_filter));
   }
   _remove_filter.reset();
 }
 
+std::unique_ptr<SearchSinkInsertBaseImpl> MakeSearchTableInsertSink(
+  irs::IndexWriter::Transaction& trx, const search::SearchTable& shard,
+  duckdb::ClientContext& context) {
+  auto config = shard.GetIndexConfig();
+  // Each index keeps its own allocated field ids, so unioning every declared
+  // index's indexed expressions and text dictionaries is collision-free.
+  std::vector<IndexedExpression> indexed_exprs;
+  for (const auto& index : catalog::RelationInvertedIndexes(
+         &context, shard.GetSchemaId(), shard.GetTableId())) {
+    auto exprs = MakeIndexedExpressions(catalog::InvertedInfo(*index), context);
+    indexed_exprs.insert(indexed_exprs.end(),
+                         std::make_move_iterator(exprs.begin()),
+                         std::make_move_iterator(exprs.end()));
+  }
+  auto dicts = search::ResolveShardTokenizers(shard, &context);
+  // Norm-featured fields must get the merged encoding config or the writer
+  // asserts.
+  trx.SetFieldOptions(shard.GetFieldOptions());
+  return std::make_unique<SearchSinkInsertBaseImpl>(
+    trx, MakeConfigTokenizerProvider(config, std::move(dicts)),
+    MakeConfigEntryInfoProvider(std::move(config)),
+    PkPolicy{.index_term = true, .column = catalog::PkColumnKind::None},
+    std::move(indexed_exprs), shard.GetTermsByColumn());
+}
+
 void WriteChunkToSearchSink(
   SearchSinkInsertBaseImpl& sink, duckdb::DataChunk& chunk,
-  std::span<const catalog::Column::Id> column_ids,
-  std::span<const duckdb_primary_key::PKColumn> pk_columns,
-  bool uses_generated_pk, uint64_t pk_base) {
+  std::span<const catalog::ColumnId> column_ids,
+  std::span<const catalog::duckdb_primary_key::PKColumn> pk_columns,
+  bool uses_generated_pk, uint64_t pk_base, ObjectId table_id,
+  duckdb::ClientContext& context) {
   const auto num_rows = chunk.size();
 
   auto& scratch = sink.GetKeyScratch();
   auto& pk_formats = scratch.pk_formats;
   auto& row_keys = scratch.row_keys;
   auto& key_views = scratch.key_views;
-  duckdb_primary_key::PreparePKFormats(chunk, pk_columns, pk_formats);
+  catalog::duckdb_primary_key::PreparePKFormats(chunk, pk_columns, pk_formats);
   row_keys.resize(num_rows);
   key_views.clear();
   key_views.reserve(num_rows);
@@ -815,17 +868,27 @@ void WriteChunkToSearchSink(
     auto& key = row_keys[row];
     key.clear();
     if (uses_generated_pk) {
-      duckdb_primary_key::AppendGenerated(key, pk_base + row);
+      catalog::duckdb_primary_key::AppendGenerated(key, pk_base + row);
     } else {
-      duckdb_primary_key::Create(pk_formats, pk_columns, row, key);
+      catalog::duckdb_primary_key::Create(pk_formats, pk_columns, row, key);
     }
     key_views.emplace_back(key);
   }
 
   sink.InitImpl(num_rows, PkChunk{.keys = key_views});
+  // The value goes under the column id; the terms go under whatever term fields
+  // the declaring indexes allocated for that column.
+  auto write_column = [&](catalog::ColumnId col_id,
+                          const duckdb::LogicalType& type,
+                          const duckdb::Vector& vec) {
+    sink.AppendValueColumn(static_cast<irs::field_id>(col_id), type, vec,
+                           num_rows);
+    for (const auto term_field : sink.TermFieldsForColumn(col_id)) {
+      sink.SwitchFieldImpl(term_field, type, vec, num_rows);
+    }
+  };
   for (size_t col = 0; col < column_ids.size(); ++col) {
-    sink.SwitchFieldImpl(static_cast<irs::field_id>(column_ids[col]),
-                         chunk.data[col].GetType(), chunk.data[col], num_rows);
+    write_column(column_ids[col], chunk.data[col].GetType(), chunk.data[col]);
   }
   if (uses_generated_pk) {
     duckdb::Vector gen_pk(duckdb::LogicalType::BIGINT, num_rows);
@@ -833,9 +896,15 @@ void WriteChunkToSearchSink(
     for (duckdb::idx_t row = 0; row < num_rows; ++row) {
       data[row] = static_cast<int64_t>(pk_base + row);
     }
-    sink.SwitchFieldImpl(
-      static_cast<irs::field_id>(catalog::Column::kGeneratedPKId.id()),
-      duckdb::LogicalType::BIGINT, gen_pk, num_rows);
+    write_column(catalog::kGeneratedPKId, duckdb::LogicalType::BIGINT, gen_pk);
+  }
+  for (const auto& indexed_expr : sink.IndexedExpressionImpl()) {
+    SDB_ASSERT(indexed_expr.normalized_expr);
+    auto result =
+      EvaluateExprOverChunk(*indexed_expr.normalized_expr, chunk, table_id,
+                            column_ids, context, indexed_expr.is_geojson);
+    sink.SwitchFieldImpl(indexed_expr.field_id, result.GetType(), result,
+                         num_rows);
   }
   sink.FinishImpl();
 }

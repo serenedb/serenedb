@@ -32,6 +32,7 @@
 #include "iresearch/search/bm25.hpp"
 #include "iresearch/search/boolean_filter.hpp"
 #include "iresearch/search/boolean_query.hpp"
+#include "iresearch/search/collectors.hpp"
 #include "iresearch/search/column_collector.hpp"
 #include "iresearch/search/conjunction.hpp"
 #include "iresearch/search/exclusion.hpp"
@@ -142,12 +143,12 @@ class BasicDocIterator : public irs::DocIterator {
 
   // Owning ctor: copies the doc list so callers can hand us a temp range
   // (`{1, 5, 10}` etc.) without lifetime worries.
-  BasicDocIterator(DocidsT docs, const irs::byte_type* stats = nullptr,
+  BasicDocIterator(DocidsT docs, irs::ScoreSource score = {},
                    irs::score_t boost = irs::kNoBoost)
     : _docs(std::move(docs)),
       _first(_docs.begin()),
       _last(_docs.end()),
-      _stats(stats),
+      _score(score),
       _boost{boost} {
     _est.reset(std::distance(_first, _last));
     _attrs[irs::Type<irs::CostAttr>::id()] = &_est;
@@ -158,21 +159,20 @@ class BasicDocIterator : public irs::DocIterator {
   // call sites that pass `docs.begin()/end()` still compile.
   BasicDocIterator(const DocidsT::const_iterator& first,
                    const DocidsT::const_iterator& last,
-                   const irs::byte_type* stats = nullptr,
+                   irs::ScoreSource score = {},
                    irs::score_t boost = irs::kNoBoost)
-    : _first(first), _last(last), _stats(stats), _boost{boost} {
+    : _first(first), _last(last), _score(score), _boost{boost} {
     _est.reset(std::distance(_first, _last));
     _attrs[irs::Type<irs::CostAttr>::id()] = &_est;
   }
 
   irs::ScoreFunction PrepareScore(const irs::PrepareScoreContext& ctx) final {
-    SDB_ASSERT(ctx.scorer);
-    return ctx.scorer->PrepareScorer({
+    return _score.scorer->PrepareScorer({
       .segment = *ctx.segment,
       .field = {},
       .doc_attrs = *this,
       .fetcher = ctx.fetcher,
-      .stats = _stats,
+      .stats = _score.stats,
       .boost = _boost,
     });
   }
@@ -215,7 +215,7 @@ class BasicDocIterator : public irs::DocIterator {
   DocidsT _docs;
   DocidsT::const_iterator _first;
   DocidsT::const_iterator _last;
-  const irs::byte_type* _stats;
+  irs::ScoreSource _score;
   irs::score_t _boost;
 };
 
@@ -232,7 +232,8 @@ std::vector<irs::doc_id_t> UnionAll(
 
 template<typename DocIteratorImpl>
 std::vector<DocIteratorImpl> ExecuteAll(
-  std::span<const std::vector<irs::doc_id_t>> docs) {
+  std::span<const std::vector<irs::doc_id_t>> docs,
+  irs::ScoreSource score = {}) {
   std::vector<DocIteratorImpl> itrs;
   itrs.reserve(docs.size());
   for (const auto& doc : docs) {
@@ -240,7 +241,7 @@ std::vector<DocIteratorImpl> ExecuteAll(
     // dangling iterators into the caller's `docs` range. Callers used to
     // need a named local for `docs`; this lifts that constraint.
     itrs.emplace_back(irs::memory::make_managed<detail::BasicDocIterator>(
-      detail::BasicDocIterator::DocidsT{doc}));
+      detail::BasicDocIterator::DocidsT{doc}, score));
   }
 
   return itrs;
@@ -251,17 +252,17 @@ struct SeekDoc {
   irs::doc_id_t expected;
 };
 
-struct Boosted : public irs::FilterWithBoost {
+struct Boosted : public irs::Filter {
   struct Prepared : irs::QueryBuilder {
     explicit Prepared(const irs::SubReader& segment,
                       const BasicDocIterator::DocidsT& docs, irs::score_t boost)
       : QueryBuilder{segment}, docs{docs}, _boost{boost} {}
 
     irs::DocIterator::ptr Execute(const irs::ExecutionContext&,
-                                  const irs::StatsBuffer&) const final {
+                                  const irs::StatsBuffer& buf) const final {
       Boosted::gExecuteCount++;
       return irs::memory::make_managed<BasicDocIterator>(
-        docs.begin(), docs.end(), stats.c_str(), Boost());
+        docs.begin(), docs.end(), buf.Source(), Boost());
     }
 
     void Visit(irs::PreparedStateVisitor&, irs::score_t) const final {
@@ -271,7 +272,6 @@ struct Boosted : public irs::FilterWithBoost {
     irs::score_t Boost() const noexcept final { return _boost; }
 
     BasicDocIterator::DocidsT docs;
-    irs::bstring stats;
 
    private:
     irs::score_t _boost;
@@ -280,7 +280,12 @@ struct Boosted : public irs::FilterWithBoost {
   irs::QueryBuilder::ptr PrepareSegment(
     const irs::SubReader& segment, const irs::PrepareContext& ctx) const final {
     return irs::memory::make_managed<Boosted::Prepared>(segment, docs,
-                                                        ctx.boost * Boost());
+                                                        ctx.boost * GetBoost());
+  }
+
+  irs::PrepareCollector::ptr MakeCollectorImpl(
+    const irs::Scorer* scorer) const final {
+    return std::make_unique<irs::AllCollector>(scorer);
   }
 
   irs::TypeInfo::type_id type() const noexcept final {
@@ -311,41 +316,41 @@ TEST(boolean_query_boost, hierarchy) {
     tests::sort::Boost sort;
 
     irs::And root;
-    root.boost(value);
+    root.SetBoost(value);
     {
       auto& sub = root.add<irs::Or>();
-      sub.boost(value);
+      sub.SetBoost(value);
       {
         auto& node = sub.add<detail::Boosted>();
         node.docs = {1, 2};
-        node.boost(value);
+        node.SetBoost(value);
       }
       {
         auto& node = sub.add<detail::Boosted>();
         node.docs = {1, 2, 3};
-        node.boost(value);
+        node.SetBoost(value);
       }
     }
 
     {
       auto& sub = root.add<irs::Or>();
-      sub.boost(value);
+      sub.SetBoost(value);
       {
         auto& node = sub.add<detail::Boosted>();
         node.docs = {1, 2};
-        node.boost(value);
+        node.SetBoost(value);
       }
       {
         auto& node = sub.add<detail::Boosted>();
         node.docs = {1, 2, 3};
-        node.boost(value);
+        node.SetBoost(value);
       }
     }
 
     {
       auto& sub = root.add<detail::Boosted>();
       sub.docs = {1, 2};
-      sub.boost(value);
+      sub.SetBoost(value);
     }
 
     tests::PreparedFilter prep{root, irs::SubReader::empty(), &sort};
@@ -353,7 +358,6 @@ TEST(boolean_query_boost, hierarchy) {
     auto docs = prep.Execute(0);
 
     const auto& scr = docs->PrepareScore({
-      .scorer = &sort,
       .segment = &irs::SubReader::empty(),
       .fetcher = nullptr,
     });
@@ -386,19 +390,19 @@ TEST(boolean_query_boost, hierarchy) {
     tests::sort::Boost sort;
 
     irs::And root;
-    root.boost(value);
+    root.SetBoost(value);
     {
       auto& sub = root.add<irs::Or>();
-      sub.boost(value);
+      sub.SetBoost(value);
       {
         auto& node = sub.add<detail::Boosted>();
         node.docs = {1, 2};
-        node.boost(value);
+        node.SetBoost(value);
       }
       {
         auto& node = sub.add<detail::Boosted>();
         node.docs = {1, 3};
-        node.boost(value);
+        node.SetBoost(value);
       }
       {
         auto& node = sub.add<detail::Boosted>();
@@ -411,17 +415,17 @@ TEST(boolean_query_boost, hierarchy) {
       {
         auto& node = sub.add<detail::Boosted>();
         node.docs = {1, 2};
-        node.boost(value);
+        node.SetBoost(value);
       }
       {
         auto& node = sub.add<detail::Boosted>();
         node.docs = {1, 2, 3};
-        node.boost(value);
+        node.SetBoost(value);
       }
       {
         auto& node = sub.add<detail::Boosted>();
         node.docs = {1};
-        node.boost(value);
+        node.SetBoost(value);
       }
     }
 
@@ -435,7 +439,6 @@ TEST(boolean_query_boost, hierarchy) {
     auto docs = prep.Execute(0);
 
     const auto& scr = docs->PrepareScore({
-      .scorer = &sort,
       .segment = &irs::SubReader::empty(),
     });
     ASSERT_FALSE(scr.IsDefault());
@@ -478,10 +481,10 @@ TEST(boolean_query_boost, hierarchy) {
     tests::sort::Boost sort;
 
     irs::Or root;
-    root.boost(value);
+    root.SetBoost(value);
     {
       auto& sub = root.add<irs::And>();
-      sub.boost(value);
+      sub.SetBoost(value);
       {
         auto& node = sub.add<detail::Boosted>();
         node.docs = {1, 2};
@@ -489,7 +492,7 @@ TEST(boolean_query_boost, hierarchy) {
       {
         auto& node = sub.add<detail::Boosted>();
         node.docs = {1, 3};
-        node.boost(value);
+        node.SetBoost(value);
       }
       {
         auto& node = sub.add<detail::Boosted>();
@@ -502,17 +505,17 @@ TEST(boolean_query_boost, hierarchy) {
       {
         auto& node = sub.add<detail::Boosted>();
         node.docs = {1, 2};
-        node.boost(value);
+        node.SetBoost(value);
       }
       {
         auto& node = sub.add<detail::Boosted>();
         node.docs = {1, 2, 3};
-        node.boost(value);
+        node.SetBoost(value);
       }
       {
         auto& node = sub.add<detail::Boosted>();
         node.docs = {1};
-        node.boost(value);
+        node.SetBoost(value);
       }
     }
 
@@ -526,7 +529,6 @@ TEST(boolean_query_boost, hierarchy) {
     auto docs = prep.Execute(0);
 
     const auto& scr = docs->PrepareScore({
-      .scorer = &sort,
       .segment = &irs::SubReader::empty(),
     });
     ASSERT_FALSE(scr.IsDefault());
@@ -570,7 +572,7 @@ TEST(boolean_query_boost, and_filter) {
     {
       auto& node = root.add<detail::Boosted>();
       node.docs = {1};
-      node.boost(value);
+      node.SetBoost(value);
     }
 
     auto opt = tests::Optimized(std::move(root), &sort);
@@ -579,7 +581,6 @@ TEST(boolean_query_boost, and_filter) {
     auto docs = prep.Execute(0);
 
     const auto& scr = docs->PrepareScore({
-      .scorer = &sort,
       .segment = &irs::SubReader::empty(),
     });
     ASSERT_FALSE(scr.IsDefault());
@@ -600,9 +601,9 @@ TEST(boolean_query_boost, and_filter) {
     {
       auto& node = root.add<detail::Boosted>();
       node.docs = {1};
-      node.boost(value);
+      node.SetBoost(value);
     }
-    root.boost(value);
+    root.SetBoost(value);
 
     auto opt = tests::Optimized(std::move(root), &sort);
     tests::PreparedFilter prep{*opt, irs::SubReader::empty(), &sort};
@@ -610,7 +611,6 @@ TEST(boolean_query_boost, and_filter) {
     auto docs = prep.Execute(0);
 
     const auto& scr = docs->PrepareScore({
-      .scorer = &sort,
       .segment = &irs::SubReader::empty(),
     });
     ASSERT_FALSE(scr.IsDefault());
@@ -631,14 +631,14 @@ TEST(boolean_query_boost, and_filter) {
     {
       auto& node = root.add<detail::Boosted>();
       node.docs = {1};
-      node.boost(value);
+      node.SetBoost(value);
     }
     {
       auto& node = root.add<detail::Boosted>();
       node.docs = {1, 2};
-      node.boost(value);
+      node.SetBoost(value);
     }
-    root.boost(value);
+    root.SetBoost(value);
 
     tests::PreparedFilter prep{root, irs::SubReader::empty(), &sort};
 
@@ -647,7 +647,6 @@ TEST(boolean_query_boost, and_filter) {
     /* the first hit should be scored as value*value + value*value since it
      * exists in both results */
     const auto& scr = docs->PrepareScore({
-      .scorer = &sort,
       .segment = &irs::SubReader::empty(),
     });
     ASSERT_FALSE(scr.IsDefault());
@@ -666,16 +665,16 @@ TEST(boolean_query_boost, and_filter) {
     tests::sort::Boost sort;
 
     irs::And root;
-    root.boost(value);
+    root.SetBoost(value);
     {
       auto& node = root.add<detail::Boosted>();
       node.docs = {1};
-      node.boost(value);
+      node.SetBoost(value);
     }
     {
       auto& node = root.add<detail::Boosted>();
       node.docs = {1, 2};
-      node.boost(value);
+      node.SetBoost(value);
     }
     {
       auto& node = root.add<detail::Boosted>();
@@ -684,14 +683,13 @@ TEST(boolean_query_boost, and_filter) {
     {
       auto& node = root.add<detail::Boosted>();
       node.docs = {1, 2};
-      node.boost(value);
+      node.SetBoost(value);
     }
 
     tests::PreparedFilter prep{root, irs::SubReader::empty(), &sort};
     auto docs = prep.Execute(0);
 
     const auto& scr = docs->PrepareScore({
-      .scorer = &sort,
       .segment = &irs::SubReader::empty(),
     });
     ASSERT_FALSE(scr.IsDefault());
@@ -713,29 +711,28 @@ TEST(boolean_query_boost, and_filter) {
     {
       auto& node = root.add<detail::Boosted>();
       node.docs = {1};
-      node.boost(value);
+      node.SetBoost(value);
     }
     {
       auto& node = root.add<detail::Boosted>();
       node.docs = {1, 2};
-      node.boost(value);
+      node.SetBoost(value);
     }
     {
       auto& node = root.add<detail::Boosted>();
       node.docs = {1, 2};
-      node.boost(0.f);
+      node.SetBoost(0.f);
     }
     {
       auto& node = root.add<detail::Boosted>();
       node.docs = {1, 2};
-      node.boost(value);
+      node.SetBoost(value);
     }
 
     tests::PreparedFilter prep{root, irs::SubReader::empty(), &sort};
     auto docs = prep.Execute(0);
 
     const auto& scr = docs->PrepareScore({
-      .scorer = &sort,
       .segment = &irs::SubReader::empty(),
     });
     ASSERT_FALSE(scr.IsDefault());
@@ -755,29 +752,28 @@ TEST(boolean_query_boost, and_filter) {
     {
       auto& node = root.add<detail::Boosted>();
       node.docs = {1};
-      node.boost(0.f);
+      node.SetBoost(0.f);
     }
     {
       auto& node = root.add<detail::Boosted>();
       node.docs = {1, 2};
-      node.boost(0.f);
+      node.SetBoost(0.f);
     }
     {
       auto& node = root.add<detail::Boosted>();
       node.docs = {1, 2};
-      node.boost(0.f);
+      node.SetBoost(0.f);
     }
     {
       auto& node = root.add<detail::Boosted>();
       node.docs = {1, 2};
-      node.boost(0.f);
+      node.SetBoost(0.f);
     }
 
     tests::PreparedFilter prep{root, irs::SubReader::empty(), &sort};
     auto docs = prep.Execute(0);
 
     const auto& scr = docs->PrepareScore({
-      .scorer = &sort,
       .segment = &irs::SubReader::empty(),
     });
     ASSERT_FALSE(scr.IsDefault());
@@ -802,14 +798,13 @@ TEST(boolean_query_boost, or_filter) {
       auto& node = root.add<detail::Boosted>();
       node.docs = {1};
     }
-    root.boost(value);
+    root.SetBoost(value);
 
     auto opt = tests::Optimized(std::move(root), &sort);
     tests::PreparedFilter prep{*opt, irs::SubReader::empty(), &sort};
     auto docs = prep.Execute(0);
 
     const auto& scr = docs->PrepareScore({
-      .scorer = &sort,
       .segment = &irs::SubReader::empty(),
     });
     ASSERT_FALSE(scr.IsDefault());
@@ -830,9 +825,9 @@ TEST(boolean_query_boost, or_filter) {
     {
       auto& node = root.add<detail::Boosted>();
       node.docs = {1};
-      node.boost(value);
+      node.SetBoost(value);
     }
-    root.boost(value);
+    root.SetBoost(value);
 
     auto opt = tests::Optimized(std::move(root), &sort);
     tests::PreparedFilter prep{*opt, irs::SubReader::empty(), &sort};
@@ -840,7 +835,6 @@ TEST(boolean_query_boost, or_filter) {
     auto docs = prep.Execute(0);
 
     const auto& scr = docs->PrepareScore({
-      .scorer = &sort,
       .segment = &irs::SubReader::empty(),
     });
     ASSERT_FALSE(scr.IsDefault());
@@ -861,20 +855,19 @@ TEST(boolean_query_boost, or_filter) {
     {
       auto& node = root.add<detail::Boosted>();
       node.docs = {1};
-      node.boost(value);
+      node.SetBoost(value);
     }
     {
       auto& node = root.add<detail::Boosted>();
       node.docs = {1, 2};
-      node.boost(value);
+      node.SetBoost(value);
     }
-    root.boost(value);
+    root.SetBoost(value);
 
     tests::PreparedFilter prep{root, irs::SubReader::empty(), &sort};
     auto docs = prep.Execute(0);
 
     const auto& scr = docs->PrepareScore({
-      .scorer = &sort,
       .segment = &irs::SubReader::empty(),
     });
     ASSERT_FALSE(scr.IsDefault());
@@ -907,17 +900,17 @@ TEST(boolean_query_boost, or_filter) {
     tests::sort::Boost sort;
 
     irs::Or root;
-    root.boost(value);
+    root.SetBoost(value);
 
     {
       auto& node = root.add<detail::Boosted>();
       node.docs = {1};
-      node.boost(value);
+      node.SetBoost(value);
     }
     {
       auto& node = root.add<detail::Boosted>();
       node.docs = {1, 2};
-      node.boost(value);
+      node.SetBoost(value);
     }
     {
       auto& node = root.add<detail::Boosted>();
@@ -926,14 +919,13 @@ TEST(boolean_query_boost, or_filter) {
     {
       auto& node = root.add<detail::Boosted>();
       node.docs = {1, 2};
-      node.boost(value);
+      node.SetBoost(value);
     }
 
     tests::PreparedFilter prep{root, irs::SubReader::empty(), &sort};
     auto docs = prep.Execute(0);
 
     const auto& scr = docs->PrepareScore({
-      .scorer = &sort,
       .segment = &irs::SubReader::empty(),
     });
     ASSERT_FALSE(scr.IsDefault());
@@ -968,29 +960,28 @@ TEST(boolean_query_boost, or_filter) {
     {
       auto& node = root.add<detail::Boosted>();
       node.docs = {1};
-      node.boost(value);
+      node.SetBoost(value);
     }
     {
       auto& node = root.add<detail::Boosted>();
       node.docs = {1, 2};
-      node.boost(value);
+      node.SetBoost(value);
     }
     {
       auto& node = root.add<detail::Boosted>();
       node.docs = {1, 2};
-      node.boost(0.f);
+      node.SetBoost(0.f);
     }
     {
       auto& node = root.add<detail::Boosted>();
       node.docs = {1, 2};
-      node.boost(value);
+      node.SetBoost(value);
     }
 
     tests::PreparedFilter prep{root, irs::SubReader::empty(), &sort};
     auto docs = prep.Execute(0);
 
     const auto& scr = docs->PrepareScore({
-      .scorer = &sort,
       .segment = &irs::SubReader::empty(),
     });
     ASSERT_FALSE(scr.IsDefault());
@@ -1022,29 +1013,28 @@ TEST(boolean_query_boost, or_filter) {
     {
       auto& node = root.add<detail::Boosted>();
       node.docs = {1};
-      node.boost(0.f);
+      node.SetBoost(0.f);
     }
     {
       auto& node = root.add<detail::Boosted>();
       node.docs = {1, 2};
-      node.boost(0.f);
+      node.SetBoost(0.f);
     }
     {
       auto& node = root.add<detail::Boosted>();
       node.docs = {1, 2};
-      node.boost(0.f);
+      node.SetBoost(0.f);
     }
     {
       auto& node = root.add<detail::Boosted>();
       node.docs = {1, 2};
-      node.boost(0.f);
+      node.SetBoost(0.f);
     }
 
     tests::PreparedFilter prep{root, irs::SubReader::empty(), &sort};
     auto docs = prep.Execute(0);
 
     const auto& scr = docs->PrepareScore({
-      .scorer = &sort,
       .segment = &irs::SubReader::empty(),
     });
     ASSERT_FALSE(scr.IsDefault());
@@ -1088,7 +1078,7 @@ struct SegmentReaderMock final : irs::SubReader {
   irs::SegmentInfo _meta;
 };
 
-struct Unestimated : public irs::FilterWithBoost {
+struct Unestimated : public irs::Filter {
   struct DocIteratorImpl : irs::DocIterator {
     irs::Attribute* GetMutable(irs::TypeInfo::type_id) noexcept final {
       return nullptr;
@@ -1127,7 +1117,7 @@ struct Unestimated : public irs::FilterWithBoost {
   }
 };
 
-struct Estimated : public irs::FilterWithBoost {
+struct Estimated : public irs::Filter {
   struct DocIteratorImpl : irs::DocIterator {
     DocIteratorImpl(irs::CostAttr::Type est, bool* evaluated) {
       cost.reset([est, evaluated]() noexcept {
@@ -1747,9 +1737,9 @@ TEST(basic_disjunction_test, scored_seek_next) {
 
       return irs::memory::make_managed<Disjunction>(
         irs::ScoreAdapter(irs::memory::make_managed<detail::BasicDocIterator>(
-          first.begin(), first.end(), empty_stats)),
+          first.begin(), first.end(), irs::ScoreSource{&sort, empty_stats})),
         irs::ScoreAdapter(irs::memory::make_managed<detail::BasicDocIterator>(
-          last.begin(), last.end(), empty_stats)),
+          last.begin(), last.end(), irs::ScoreSource{&sort, empty_stats})),
         irs::doc_limits::eof());
     }();
 
@@ -1779,6 +1769,7 @@ TEST(basic_disjunction_test, scored_seek_next) {
 
   // disjunction with order, aggregate scores
   {
+    detail::CompoundSort sort{{1, 2}};
     std::vector<irs::doc_id_t> first{1, 2, 5, 7, 9, 11, 45};
     std::vector<irs::doc_id_t> last{1, 5, 6};
 
@@ -1788,20 +1779,17 @@ TEST(basic_disjunction_test, scored_seek_next) {
 
       return irs::memory::make_managed<Disjunction>(
         Adapter(irs::memory::make_managed<detail::BasicDocIterator>(
-          first.begin(), first.end(), empty_stats)),
+          first.begin(), first.end(), irs::ScoreSource{&sort, empty_stats})),
         Adapter(irs::memory::make_managed<detail::BasicDocIterator>(
-          last.begin(), last.end(), empty_stats)),
+          last.begin(), last.end(), irs::ScoreSource{&sort, empty_stats})),
         1U);
     }();
 
     auto& it = *it_ptr;
 
-    detail::CompoundSort sort{{1, 2}};
-
     // score
 
     auto score = it.PrepareScore({
-      .scorer = &sort,
       .segment = &irs::SubReader::empty(),
     });
 
@@ -1842,6 +1830,7 @@ TEST(basic_disjunction_test, scored_seek_next) {
 
   // disjunction with order, max score
   {
+    detail::CompoundSort sort{{1, 2}};
     std::vector<irs::doc_id_t> first{1, 2, 5, 7, 9, 11, 45};
     std::vector<irs::doc_id_t> last{1, 5, 6};
 
@@ -1851,20 +1840,17 @@ TEST(basic_disjunction_test, scored_seek_next) {
 
       return irs::memory::make_managed<Disjunction>(
         Adapter(irs::memory::make_managed<detail::BasicDocIterator>(
-          first.begin(), first.end(), empty_stats)),
+          first.begin(), first.end(), irs::ScoreSource{&sort, empty_stats})),
         Adapter(irs::memory::make_managed<detail::BasicDocIterator>(
-          last.begin(), last.end(), empty_stats)),
+          last.begin(), last.end(), irs::ScoreSource{&sort, empty_stats})),
         1U);  // custom cost
     }();
 
     auto& it = *it_ptr;
 
-    detail::CompoundSort sort{{1, 2}};
-
     // score
 
     auto score = it.PrepareScore({
-      .scorer = &sort,
       .segment = &irs::SubReader::empty(),
     });
 
@@ -1905,6 +1891,7 @@ TEST(basic_disjunction_test, scored_seek_next) {
 
   // disjunction with order, iterators without order, aggregation
   {
+    detail::CompoundSort sort{{1, 2}};
     std::vector<irs::doc_id_t> first{1, 2, 5, 7, 9, 11, 45};
     std::vector<irs::doc_id_t> last{1, 5, 6};
 
@@ -1914,20 +1901,17 @@ TEST(basic_disjunction_test, scored_seek_next) {
 
       return irs::memory::make_managed<Disjunction>(
         Adapter(irs::memory::make_managed<detail::BasicDocIterator>(
-          first.begin(), first.end(), empty_stats)),
+          first.begin(), first.end(), irs::ScoreSource{&sort, empty_stats})),
         Adapter(irs::memory::make_managed<detail::BasicDocIterator>(
-          last.begin(), last.end(), empty_stats)),
+          last.begin(), last.end(), irs::ScoreSource{&sort, empty_stats})),
         irs::doc_limits::eof());
     }();
 
     auto& it = *it_ptr;
 
-    detail::CompoundSort sort{{1, 2}};
-
     // score
 
     auto score = it.PrepareScore({
-      .scorer = &sort,
       .segment = &irs::SubReader::empty(),
     });
 
@@ -1969,6 +1953,7 @@ TEST(basic_disjunction_test, scored_seek_next) {
 
   // disjunction with order, iterators without order, max
   {
+    detail::CompoundSort sort{{1, 2}};
     std::vector<irs::doc_id_t> first{1, 2, 5, 7, 9, 11, 45};
     std::vector<irs::doc_id_t> last{1, 5, 6};
 
@@ -1978,20 +1963,17 @@ TEST(basic_disjunction_test, scored_seek_next) {
 
       return irs::memory::make_managed<Disjunction>(
         Adapter(irs::memory::make_managed<detail::BasicDocIterator>(
-          first.begin(), first.end(), empty_stats)),
+          first.begin(), first.end(), irs::ScoreSource{&sort, empty_stats})),
         Adapter(irs::memory::make_managed<detail::BasicDocIterator>(
-          last.begin(), last.end(), empty_stats)),
+          last.begin(), last.end(), irs::ScoreSource{&sort, empty_stats})),
         irs::doc_limits::eof());
     }();
 
     auto& it = *it_ptr;
 
-    detail::CompoundSort sort{{1, 2}};
-
     // score
 
     auto score = it.PrepareScore({
-      .scorer = &sort,
       .segment = &irs::SubReader::empty(),
     });
 
@@ -2043,9 +2025,9 @@ TEST(basic_disjunction_test, scored_seek_next) {
 
       return irs::memory::make_managed<Disjunction>(
         Adapter(irs::memory::make_managed<detail::BasicDocIterator>(
-          first.begin(), first.end(), empty_stats)),
+          first.begin(), first.end(), irs::ScoreSource{&sort, empty_stats})),
         Adapter(irs::memory::make_managed<detail::BasicDocIterator>(
-          last.begin(), last.end(), empty_stats)),
+          last.begin(), last.end(), irs::ScoreSource{&sort, empty_stats})),
         irs::doc_limits::eof());
     }();
 
@@ -2054,7 +2036,6 @@ TEST(basic_disjunction_test, scored_seek_next) {
     // score
 
     auto score = it.PrepareScore({
-      .scorer = &sort,
       .segment = &irs::SubReader::empty(),
     });
 
@@ -2106,9 +2087,9 @@ TEST(basic_disjunction_test, scored_seek_next) {
 
       return irs::memory::make_managed<Disjunction>(
         Adapter(irs::memory::make_managed<detail::BasicDocIterator>(
-          first.begin(), first.end(), empty_stats)),
+          first.begin(), first.end(), irs::ScoreSource{&sort, empty_stats})),
         Adapter(irs::memory::make_managed<detail::BasicDocIterator>(
-          last.begin(), last.end(), empty_stats)),
+          last.begin(), last.end(), irs::ScoreSource{&sort, empty_stats})),
         irs::doc_limits::eof());
     }();
 
@@ -2117,7 +2098,6 @@ TEST(basic_disjunction_test, scored_seek_next) {
     // score
 
     auto score = it.PrepareScore({
-      .scorer = &sort,
       .segment = &irs::SubReader::empty(),
     });
 
@@ -2169,9 +2149,9 @@ TEST(basic_disjunction_test, scored_seek_next) {
 
       return irs::memory::make_managed<Disjunction>(
         Adapter(irs::memory::make_managed<detail::BasicDocIterator>(
-          first.begin(), first.end(), empty_stats)),
+          first.begin(), first.end(), irs::ScoreSource{&sort, empty_stats})),
         Adapter(irs::memory::make_managed<detail::BasicDocIterator>(
-          last.begin(), last.end(), empty_stats)),
+          last.begin(), last.end(), irs::ScoreSource{&sort, empty_stats})),
         irs::doc_limits::eof());
     }();
 
@@ -2180,7 +2160,6 @@ TEST(basic_disjunction_test, scored_seek_next) {
     // score
 
     auto score = it.PrepareScore({
-      .scorer = &sort,
       .segment = &irs::SubReader::empty(),
     });
 
@@ -2232,9 +2211,9 @@ TEST(basic_disjunction_test, scored_seek_next) {
 
       return irs::memory::make_managed<Disjunction>(
         Adapter(irs::memory::make_managed<detail::BasicDocIterator>(
-          first.begin(), first.end(), empty_stats)),
+          first.begin(), first.end(), irs::ScoreSource{&sort, empty_stats})),
         Adapter(irs::memory::make_managed<detail::BasicDocIterator>(
-          last.begin(), last.end(), empty_stats)),
+          last.begin(), last.end(), irs::ScoreSource{&sort, empty_stats})),
         irs::doc_limits::eof());
     }();
 
@@ -2243,7 +2222,6 @@ TEST(basic_disjunction_test, scored_seek_next) {
     // score
 
     auto score = it.PrepareScore({
-      .scorer = &sort,
       .segment = &irs::SubReader::empty(),
     });
 
@@ -2876,7 +2854,6 @@ TEST(small_disjunction_test, scored_seek_next) {
 
     // score
     auto score = it.PrepareScore({
-      .scorer = &sort,
       .segment = &irs::SubReader::empty(),
     });
     ASSERT_TRUE(score.IsDefault());
@@ -2937,7 +2914,6 @@ TEST(small_disjunction_test, scored_seek_next) {
 
     // score
     auto score = it.PrepareScore({
-      .scorer = &sort,
       .segment = &irs::SubReader::empty(),
     });
     ASSERT_TRUE(score.IsDefault());
@@ -2998,7 +2974,6 @@ TEST(small_disjunction_test, scored_seek_next) {
 
     // score
     auto score = it.PrepareScore({
-      .scorer = &sort,
       .segment = &irs::SubReader::empty(),
     });
     ASSERT_TRUE(score.IsDefault());
@@ -3065,7 +3040,6 @@ TEST(small_disjunction_test, scored_seek_next) {
 
     // score
     auto score = it.PrepareScore({
-      .scorer = &sort,
       .segment = &irs::SubReader::empty(),
     });
     ASSERT_TRUE(score.IsDefault());
@@ -3126,7 +3100,6 @@ TEST(small_disjunction_test, scored_seek_next) {
 
     // score
     auto score = it.PrepareScore({
-      .scorer = &sort,
       .segment = &irs::SubReader::empty(),
     });
 
@@ -3194,7 +3167,6 @@ TEST(small_disjunction_test, scored_seek_next) {
 
     // score
     auto score = it.PrepareScore({
-      .scorer = &sort,
       .segment = &irs::SubReader::empty(),
     });
     ASSERT_TRUE(score.IsDefault());
@@ -3274,14 +3246,14 @@ TEST(block_disjunction_test, check_attributes) {
       irs::ScoreAdapter, irs::ScoreMergeType::Sum,
       irs::BlockDisjunctionTraits<irs::MatchType::Match, false, 1>>;
 
-    Disjunction it(detail::ExecuteAll<irs::ScoreAdapter>(docs), 1,
-                   irs::CostAttr::Type{});
+    Disjunction it(detail::ExecuteAll<irs::ScoreAdapter>(
+                     docs, irs::ScoreSource{&sort, nullptr}),
+                   1, irs::CostAttr::Type{});
     ASSERT_FALSE(irs::doc_limits::eof(it.value()));
     auto* cost = irs::get<irs::CostAttr>(it);
     ASSERT_NE(nullptr, cost);
     ASSERT_EQ(0, cost->estimate());
     auto score = it.PrepareScore({
-      .scorer = &sort,
       .segment = &irs::SubReader::empty(),
     });
     ASSERT_FALSE(score.IsDefault());
@@ -3298,14 +3270,14 @@ TEST(block_disjunction_test, check_attributes) {
       irs::ScoreAdapter, irs::ScoreMergeType::Sum,
       irs::BlockDisjunctionTraits<irs::MatchType::Match, false, 1>>;
 
-    Disjunction it(detail::ExecuteAll<irs::ScoreAdapter>(docs), 1,
-                   irs::CostAttr::Type{});
+    Disjunction it(detail::ExecuteAll<irs::ScoreAdapter>(
+                     docs, irs::ScoreSource{&sort, nullptr}),
+                   1, irs::CostAttr::Type{});
     ASSERT_FALSE(irs::doc_limits::eof(it.value()));
     auto* cost = irs::get<irs::CostAttr>(it);
     ASSERT_NE(nullptr, cost);
     ASSERT_EQ(0, cost->estimate());
     auto score = it.PrepareScore({
-      .scorer = &sort,
       .segment = &irs::SubReader::empty(),
     });
     ASSERT_FALSE(score.IsDefault());
@@ -4055,7 +4027,6 @@ TEST(block_disjunction_test, next_scored) {
 
       // score, no order set
       auto score = it.PrepareScore({
-        .scorer = &sort,
         .segment = &irs::SubReader::empty(),
       });
       ASSERT_TRUE(score.IsDefault());
@@ -4099,7 +4070,8 @@ TEST(block_disjunction_test, next_scored) {
             irs::BlockDisjunctionTraits<irs::MatchType::Match, false, 1>>;
           using Adapter = irs::ScoreAdapter;
 
-          auto res = detail::ExecuteAll<Adapter>(docs);
+          auto res =
+            detail::ExecuteAll<Adapter>(docs, irs::ScoreSource{&sort, nullptr});
 
           return irs::memory::make_managed<Disjunction>(
             std::move(res), size_t{1}, irs::CostAttr::Type{1});  // custom cost
@@ -4113,7 +4085,6 @@ TEST(block_disjunction_test, next_scored) {
 
       // score is set
       auto score = it.PrepareScore({
-        .scorer = &sort,
         .segment = &irs::SubReader::empty(),
       });
       ASSERT_FALSE(score.IsDefault());
@@ -4160,7 +4131,8 @@ TEST(block_disjunction_test, next_scored) {
             irs::BlockDisjunctionTraits<irs::MatchType::Match, false, 1>>;
           using Adapter = irs::ScoreAdapter;
 
-          auto res = detail::ExecuteAll<Adapter>(docs);
+          auto res =
+            detail::ExecuteAll<Adapter>(docs, irs::ScoreSource{&sort, nullptr});
 
           return irs::memory::make_managed<Disjunction>(
             std::move(res), size_t{1}, irs::CostAttr::Type{2});  // custom cost
@@ -4174,7 +4146,6 @@ TEST(block_disjunction_test, next_scored) {
 
       // score is set
       auto score = it.PrepareScore({
-        .scorer = &sort,
         .segment = &irs::SubReader::empty(),
       });
       ASSERT_FALSE(score.IsDefault());
@@ -4221,7 +4192,8 @@ TEST(block_disjunction_test, next_scored) {
             irs::BlockDisjunctionTraits<irs::MatchType::Match, false, 1>>;
           using Adapter = irs::ScoreAdapter;
 
-          auto res = detail::ExecuteAll<Adapter>(docs);
+          auto res =
+            detail::ExecuteAll<Adapter>(docs, irs::ScoreSource{&sort, nullptr});
 
           return irs::memory::make_managed<Disjunction>(
             std::move(res), size_t{1}, irs::CostAttr::Type{2});  // custom cost
@@ -4235,7 +4207,6 @@ TEST(block_disjunction_test, next_scored) {
 
       // score, no order set
       auto score = it.PrepareScore({
-        .scorer = &sort,
         .segment = &irs::SubReader::empty(),
       });
       ASSERT_TRUE(score.IsDefault());
@@ -4279,7 +4250,8 @@ TEST(block_disjunction_test, next_scored) {
             irs::BlockDisjunctionTraits<irs::MatchType::Match, false, 1>>;
           using Adapter = irs::ScoreAdapter;
 
-          auto res = detail::ExecuteAll<Adapter>(docs);
+          auto res =
+            detail::ExecuteAll<Adapter>(docs, irs::ScoreSource{&sort, nullptr});
 
           return irs::memory::make_managed<Disjunction>(
             std::move(res), size_t{1}, irs::CostAttr::Type{2});  // custom cost
@@ -4293,7 +4265,6 @@ TEST(block_disjunction_test, next_scored) {
 
       // score is set
       auto score = it.PrepareScore({
-        .scorer = &sort,
         .segment = &irs::SubReader::empty(),
       });
       ASSERT_FALSE(score.IsDefault());
@@ -4352,7 +4323,8 @@ TEST(block_disjunction_test, next_scored) {
             irs::BlockDisjunctionTraits<irs::MatchType::Match, false, 1>>;
           using Adapter = irs::ScoreAdapter;
 
-          auto res = detail::ExecuteAll<Adapter>(docs);
+          auto res =
+            detail::ExecuteAll<Adapter>(docs, irs::ScoreSource{&sort, nullptr});
 
           return irs::memory::make_managed<Disjunction>(
             std::move(res), size_t{1}, irs::CostAttr::Type{2});  // custom cost
@@ -4366,7 +4338,6 @@ TEST(block_disjunction_test, next_scored) {
 
       // score is set
       auto score = it.PrepareScore({
-        .scorer = &sort,
         .segment = &irs::SubReader::empty(),
       });
       ASSERT_FALSE(score.IsDefault());
@@ -4425,7 +4396,8 @@ TEST(block_disjunction_test, next_scored) {
             irs::BlockDisjunctionTraits<irs::MatchType::Match, false, 1>>;
           using Adapter = irs::ScoreAdapter;
 
-          auto res = detail::ExecuteAll<Adapter>(docs);
+          auto res =
+            detail::ExecuteAll<Adapter>(docs, irs::ScoreSource{&sort, nullptr});
 
           return irs::memory::make_managed<Disjunction>(
             std::move(res), size_t{1}, irs::CostAttr::Type{2});  // custom cost
@@ -4439,7 +4411,6 @@ TEST(block_disjunction_test, next_scored) {
 
       // score is set
       auto score = it.PrepareScore({
-        .scorer = &sort,
         .segment = &irs::SubReader::empty(),
       });
       ASSERT_FALSE(score.IsDefault());
@@ -4486,7 +4457,8 @@ TEST(block_disjunction_test, next_scored) {
             irs::BlockDisjunctionTraits<irs::MatchType::Match, false, 1>>;
           using Adapter = irs::ScoreAdapter;
 
-          auto res = detail::ExecuteAll<Adapter>(docs);
+          auto res =
+            detail::ExecuteAll<Adapter>(docs, irs::ScoreSource{&sort, nullptr});
 
           return irs::memory::make_managed<Disjunction>(
             std::move(res), size_t{1}, irs::CostAttr::Type{2});  // custom cost
@@ -4500,7 +4472,6 @@ TEST(block_disjunction_test, next_scored) {
 
       // score is set
       auto score = it.PrepareScore({
-        .scorer = &sort,
         .segment = &irs::SubReader::empty(),
       });
       ASSERT_FALSE(score.IsDefault());
@@ -4542,7 +4513,8 @@ TEST(block_disjunction_test, next_scored) {
             irs::BlockDisjunctionTraits<irs::MatchType::Match, false, 1>>;
           using Adapter = irs::ScoreAdapter;
 
-          auto res = detail::ExecuteAll<Adapter>(docs);
+          auto res =
+            detail::ExecuteAll<Adapter>(docs, irs::ScoreSource{&sort, nullptr});
 
           return irs::memory::make_managed<Disjunction>(
             std::move(res), size_t{1}, irs::CostAttr::Type{2});  // custom cost
@@ -4556,7 +4528,6 @@ TEST(block_disjunction_test, next_scored) {
 
       // score is set
       auto score = it.PrepareScore({
-        .scorer = &sort,
         .segment = &irs::SubReader::empty(),
       });
       ASSERT_FALSE(score.IsDefault());
@@ -4596,7 +4567,8 @@ TEST(block_disjunction_test, next_scored) {
             irs::BlockDisjunctionTraits<irs::MatchType::Match, false, 1>>;
           using Adapter = irs::ScoreAdapter;
 
-          auto res = detail::ExecuteAll<Adapter>(docs);
+          auto res =
+            detail::ExecuteAll<Adapter>(docs, irs::ScoreSource{&sort, nullptr});
 
           return irs::memory::make_managed<Disjunction>(
             std::move(res), size_t{1}, irs::CostAttr::Type{2});  // custom cost
@@ -4610,7 +4582,6 @@ TEST(block_disjunction_test, next_scored) {
 
       // score is set
       auto score = it.PrepareScore({
-        .scorer = &sort,
         .segment = &irs::SubReader::empty(),
       });
       ASSERT_FALSE(score.IsDefault());
@@ -4649,7 +4620,8 @@ TEST(block_disjunction_test, next_scored) {
             irs::BlockDisjunctionTraits<irs::MatchType::Match, false, 1>>;
           using Adapter = irs::ScoreAdapter;
 
-          auto res = detail::ExecuteAll<Adapter>(docs);
+          auto res =
+            detail::ExecuteAll<Adapter>(docs, irs::ScoreSource{&sort, nullptr});
 
           return irs::memory::make_managed<Disjunction>(std::move(res),
                                                         irs::doc_limits::eof());
@@ -4663,7 +4635,6 @@ TEST(block_disjunction_test, next_scored) {
 
       // score is set
       auto score = it.PrepareScore({
-        .scorer = &sort,
         .segment = &irs::SubReader::empty(),
       });
       ASSERT_FALSE(score.IsDefault());
@@ -4687,7 +4658,6 @@ TEST(block_disjunction_test, next_scored) {
     detail::CompoundSort sort{{4, 5}};
 
     auto score = it.PrepareScore({
-      .scorer = &sort,
       .segment = &irs::SubReader::empty(),
     });
     ASSERT_TRUE(score.IsDefault());
@@ -4721,7 +4691,8 @@ TEST(block_disjunction_test, next_scored) {
             irs::BlockDisjunctionTraits<irs::MatchType::Match, false, 1>>;
           using Adapter = irs::ScoreAdapter;
 
-          auto res = detail::ExecuteAll<Adapter>(docs);
+          auto res =
+            detail::ExecuteAll<Adapter>(docs, irs::ScoreSource{&sort, nullptr});
 
           return irs::memory::make_managed<Disjunction>(
             std::move(res), size_t{1}, irs::CostAttr::Type{3});  // custom cost
@@ -4735,7 +4706,6 @@ TEST(block_disjunction_test, next_scored) {
 
       // score is set
       auto score = it.PrepareScore({
-        .scorer = &sort,
         .segment = &irs::SubReader::empty(),
       });
       ASSERT_FALSE(score.IsDefault());
@@ -4781,7 +4751,8 @@ TEST(block_disjunction_test, next_scored) {
             irs::BlockDisjunctionTraits<irs::MatchType::Match, false, 1>>;
           using Adapter = irs::ScoreAdapter;
 
-          auto res = detail::ExecuteAll<Adapter>(docs);
+          auto res =
+            detail::ExecuteAll<Adapter>(docs, irs::ScoreSource{&sort, nullptr});
 
           return irs::memory::make_managed<Disjunction>(
             std::move(res), size_t{1}, irs::CostAttr::Type{3});  // custom cost
@@ -4795,7 +4766,6 @@ TEST(block_disjunction_test, next_scored) {
 
       // score is set
       auto score = it.PrepareScore({
-        .scorer = &sort,
         .segment = &irs::SubReader::empty(),
       });
       ASSERT_FALSE(score.IsDefault());
@@ -4837,7 +4807,8 @@ TEST(block_disjunction_test, next_scored) {
             irs::BlockDisjunctionTraits<irs::MatchType::Match, false, 1>>;
           using Adapter = irs::ScoreAdapter;
 
-          auto res = detail::ExecuteAll<Adapter>(docs);
+          auto res =
+            detail::ExecuteAll<Adapter>(docs, irs::ScoreSource{&sort, nullptr});
 
           return irs::memory::make_managed<Disjunction>(
             std::move(res), size_t{1}, irs::CostAttr::Type{3});  // custom cost
@@ -4851,7 +4822,6 @@ TEST(block_disjunction_test, next_scored) {
 
       // score is set
       auto score = it.PrepareScore({
-        .scorer = &sort,
         .segment = &irs::SubReader::empty(),
       });
       ASSERT_FALSE(score.IsDefault());
@@ -4892,7 +4862,8 @@ TEST(block_disjunction_test, next_scored) {
             irs::BlockDisjunctionTraits<irs::MatchType::Match, false, 1>>;
           using Adapter = irs::ScoreAdapter;
 
-          auto res = detail::ExecuteAll<Adapter>(docs);
+          auto res =
+            detail::ExecuteAll<Adapter>(docs, irs::ScoreSource{&sort, nullptr});
 
           return irs::memory::make_managed<Disjunction>(
             std::move(res), size_t{1}, irs::CostAttr::Type{3});  // custom cost
@@ -4906,7 +4877,6 @@ TEST(block_disjunction_test, next_scored) {
 
       // score is set
       auto score = it.PrepareScore({
-        .scorer = &sort,
         .segment = &irs::SubReader::empty(),
       });
       ASSERT_FALSE(score.IsDefault());
@@ -4946,7 +4916,8 @@ TEST(block_disjunction_test, next_scored) {
           irs::BlockDisjunctionTraits<irs::MatchType::Match, false, 1>>;
         using Adapter = irs::ScoreAdapter;
 
-        auto res = detail::ExecuteAll<Adapter>(docs);
+        auto res =
+          detail::ExecuteAll<Adapter>(docs, irs::ScoreSource{&sort, nullptr});
 
         return irs::memory::make_managed<Disjunction>(
           std::move(res), size_t{1}, irs::CostAttr::Type{3});  // custom cost
@@ -4960,7 +4931,6 @@ TEST(block_disjunction_test, next_scored) {
 
     // score is set
     auto score = it.PrepareScore({
-      .scorer = &sort,
       .segment = &irs::SubReader::empty(),
     });
     ASSERT_FALSE(score.IsDefault());
@@ -4995,7 +4965,8 @@ TEST(block_disjunction_test, next_scored_two_blocks) {
             irs::BlockDisjunctionTraits<irs::MatchType::Match, false, 2>>;
           using Adapter = irs::ScoreAdapter;
 
-          auto res = detail::ExecuteAll<Adapter>(docs);
+          auto res =
+            detail::ExecuteAll<Adapter>(docs, irs::ScoreSource{&sort, nullptr});
 
           return irs::memory::make_managed<Disjunction>(std::move(res),
                                                         size_t{1},
@@ -5010,7 +4981,6 @@ TEST(block_disjunction_test, next_scored_two_blocks) {
 
       // score, no order set
       auto score = it.PrepareScore({
-        .scorer = &sort,
         .segment = &irs::SubReader::empty(),
       });
       ASSERT_TRUE(score.IsDefault());
@@ -5054,7 +5024,8 @@ TEST(block_disjunction_test, next_scored_two_blocks) {
             irs::BlockDisjunctionTraits<irs::MatchType::Match, false, 2>>;
           using Adapter = irs::ScoreAdapter;
 
-          auto res = detail::ExecuteAll<Adapter>(docs);
+          auto res =
+            detail::ExecuteAll<Adapter>(docs, irs::ScoreSource{&sort, nullptr});
 
           return irs::memory::make_managed<Disjunction>(
             std::move(res), size_t{1}, irs::CostAttr::Type{1});  // custom cost
@@ -5068,7 +5039,6 @@ TEST(block_disjunction_test, next_scored_two_blocks) {
 
       // score is set
       auto score = it.PrepareScore({
-        .scorer = &sort,
         .segment = &irs::SubReader::empty(),
       });
       ASSERT_FALSE(score.IsDefault());
@@ -5113,7 +5083,8 @@ TEST(block_disjunction_test, next_scored_two_blocks) {
             irs::BlockDisjunctionTraits<irs::MatchType::Match, false, 2>>;
           using Adapter = irs::ScoreAdapter;
 
-          auto res = detail::ExecuteAll<Adapter>(docs);
+          auto res =
+            detail::ExecuteAll<Adapter>(docs, irs::ScoreSource{&sort, nullptr});
 
           return irs::memory::make_managed<Disjunction>(
             std::move(res), size_t{1}, irs::CostAttr::Type{2});  // custom cost
@@ -5127,7 +5098,6 @@ TEST(block_disjunction_test, next_scored_two_blocks) {
 
       // score is set
       auto score = it.PrepareScore({
-        .scorer = &sort,
         .segment = &irs::SubReader::empty(),
       });
       ASSERT_FALSE(score.IsDefault());
@@ -5172,7 +5142,8 @@ TEST(block_disjunction_test, next_scored_two_blocks) {
             irs::BlockDisjunctionTraits<irs::MatchType::Match, false, 2>>;
           using Adapter = irs::ScoreAdapter;
 
-          auto res = detail::ExecuteAll<Adapter>(docs);
+          auto res =
+            detail::ExecuteAll<Adapter>(docs, irs::ScoreSource{&sort, nullptr});
 
           return irs::memory::make_managed<Disjunction>(
             std::move(res), size_t{1}, irs::CostAttr::Type{2});  // custom cost
@@ -5186,7 +5157,6 @@ TEST(block_disjunction_test, next_scored_two_blocks) {
 
       // score, no order set
       auto score = it.PrepareScore({
-        .scorer = &sort,
         .segment = &irs::SubReader::empty(),
       });
       ASSERT_TRUE(score.IsDefault());
@@ -5231,7 +5201,8 @@ TEST(block_disjunction_test, next_scored_two_blocks) {
             irs::BlockDisjunctionTraits<irs::MatchType::Match, false, 2>>;
           using Adapter = irs::ScoreAdapter;
 
-          auto res = detail::ExecuteAll<Adapter>(docs);
+          auto res =
+            detail::ExecuteAll<Adapter>(docs, irs::ScoreSource{&sort, nullptr});
 
           return irs::memory::make_managed<Disjunction>(
             std::move(res), size_t{1}, irs::CostAttr::Type{2});  // custom cost
@@ -5245,7 +5216,6 @@ TEST(block_disjunction_test, next_scored_two_blocks) {
 
       // score is set
       auto score = it.PrepareScore({
-        .scorer = &sort,
         .segment = &irs::SubReader::empty(),
       });
       ASSERT_FALSE(score.IsDefault());
@@ -5305,7 +5275,8 @@ TEST(block_disjunction_test, next_scored_two_blocks) {
             irs::BlockDisjunctionTraits<irs::MatchType::Match, false, 2>>;
           using Adapter = irs::ScoreAdapter;
 
-          auto res = detail::ExecuteAll<Adapter>(docs);
+          auto res =
+            detail::ExecuteAll<Adapter>(docs, irs::ScoreSource{&sort, nullptr});
 
           return irs::memory::make_managed<Disjunction>(
             std::move(res), size_t{1}, irs::CostAttr::Type{2});  // custom cost
@@ -5319,7 +5290,6 @@ TEST(block_disjunction_test, next_scored_two_blocks) {
 
       // score is set
       auto score = it.PrepareScore({
-        .scorer = &sort,
         .segment = &irs::SubReader::empty(),
       });
       ASSERT_FALSE(score.IsDefault());
@@ -5379,7 +5349,8 @@ TEST(block_disjunction_test, next_scored_two_blocks) {
             irs::BlockDisjunctionTraits<irs::MatchType::Match, false, 2>>;
           using Adapter = irs::ScoreAdapter;
 
-          auto res = detail::ExecuteAll<Adapter>(docs);
+          auto res =
+            detail::ExecuteAll<Adapter>(docs, irs::ScoreSource{&sort, nullptr});
 
           return irs::memory::make_managed<Disjunction>(
             std::move(res), size_t{1}, irs::CostAttr::Type{2});  // custom cost
@@ -5393,7 +5364,6 @@ TEST(block_disjunction_test, next_scored_two_blocks) {
 
       // score is set
       auto score = it.PrepareScore({
-        .scorer = &sort,
         .segment = &irs::SubReader::empty(),
       });
       ASSERT_FALSE(score.IsDefault());
@@ -5441,7 +5411,8 @@ TEST(block_disjunction_test, next_scored_two_blocks) {
             irs::BlockDisjunctionTraits<irs::MatchType::Match, false, 2>>;
           using Adapter = irs::ScoreAdapter;
 
-          auto res = detail::ExecuteAll<Adapter>(docs);
+          auto res =
+            detail::ExecuteAll<Adapter>(docs, irs::ScoreSource{&sort, nullptr});
 
           return irs::memory::make_managed<Disjunction>(
             std::move(res), size_t{1}, irs::CostAttr::Type{2});  // custom cost
@@ -5455,7 +5426,6 @@ TEST(block_disjunction_test, next_scored_two_blocks) {
 
       // score is set
       auto score = it.PrepareScore({
-        .scorer = &sort,
         .segment = &irs::SubReader::empty(),
       });
       ASSERT_FALSE(score.IsDefault());
@@ -5496,7 +5466,8 @@ TEST(block_disjunction_test, next_scored_two_blocks) {
             irs::BlockDisjunctionTraits<irs::MatchType::Match, false, 2>>;
           using Adapter = irs::ScoreAdapter;
 
-          auto res = detail::ExecuteAll<Adapter>(docs);
+          auto res =
+            detail::ExecuteAll<Adapter>(docs, irs::ScoreSource{&sort, nullptr});
 
           return irs::memory::make_managed<Disjunction>(
             std::move(res), size_t{1}, irs::CostAttr::Type{2});  // custom cost
@@ -5510,7 +5481,6 @@ TEST(block_disjunction_test, next_scored_two_blocks) {
 
       // score is set
       auto score = it.PrepareScore({
-        .scorer = &sort,
         .segment = &irs::SubReader::empty(),
       });
       ASSERT_FALSE(score.IsDefault());
@@ -5549,7 +5519,8 @@ TEST(block_disjunction_test, next_scored_two_blocks) {
             irs::BlockDisjunctionTraits<irs::MatchType::Match, false, 2>>;
           using Adapter = irs::ScoreAdapter;
 
-          auto res = detail::ExecuteAll<Adapter>(docs);
+          auto res =
+            detail::ExecuteAll<Adapter>(docs, irs::ScoreSource{&sort, nullptr});
 
           return irs::memory::make_managed<Disjunction>(
             std::move(res), size_t{1}, irs::CostAttr::Type{2});  // custom cost
@@ -5563,7 +5534,6 @@ TEST(block_disjunction_test, next_scored_two_blocks) {
 
       // score is set
       auto score = it.PrepareScore({
-        .scorer = &sort,
         .segment = &irs::SubReader::empty(),
       });
       ASSERT_FALSE(score.IsDefault());
@@ -5603,7 +5573,8 @@ TEST(block_disjunction_test, next_scored_two_blocks) {
             irs::BlockDisjunctionTraits<irs::MatchType::Match, false, 2>>;
           using Adapter = irs::ScoreAdapter;
 
-          auto res = detail::ExecuteAll<Adapter>(docs);
+          auto res =
+            detail::ExecuteAll<Adapter>(docs, irs::ScoreSource{&sort, nullptr});
 
           return irs::memory::make_managed<Disjunction>(std::move(res),
                                                         irs::doc_limits::eof());
@@ -5617,7 +5588,6 @@ TEST(block_disjunction_test, next_scored_two_blocks) {
 
       // score is set
       auto score = it.PrepareScore({
-        .scorer = &sort,
         .segment = &irs::SubReader::empty(),
       });
       ASSERT_FALSE(score.IsDefault());
@@ -5653,7 +5623,6 @@ TEST(block_disjunction_test, next_scored_two_blocks) {
     detail::CompoundSort sort{{4, 5}};
 
     auto score = it.PrepareScore({
-      .scorer = &sort,
       .segment = &irs::SubReader::empty(),
     });
     ASSERT_TRUE(score.IsDefault());
@@ -5687,7 +5656,8 @@ TEST(block_disjunction_test, next_scored_two_blocks) {
             irs::BlockDisjunctionTraits<irs::MatchType::Match, false, 2>>;
           using Adapter = irs::ScoreAdapter;
 
-          auto res = detail::ExecuteAll<Adapter>(docs);
+          auto res =
+            detail::ExecuteAll<Adapter>(docs, irs::ScoreSource{&sort, nullptr});
 
           return irs::memory::make_managed<Disjunction>(
             std::move(res), size_t{1}, irs::CostAttr::Type{3});  // custom cost
@@ -5701,7 +5671,6 @@ TEST(block_disjunction_test, next_scored_two_blocks) {
 
       // score is set
       auto score = it.PrepareScore({
-        .scorer = &sort,
         .segment = &irs::SubReader::empty(),
       });
       ASSERT_FALSE(score.IsDefault());
@@ -5747,7 +5716,8 @@ TEST(block_disjunction_test, next_scored_two_blocks) {
             irs::BlockDisjunctionTraits<irs::MatchType::Match, false, 2>>;
           using Adapter = irs::ScoreAdapter;
 
-          auto res = detail::ExecuteAll<Adapter>(docs);
+          auto res =
+            detail::ExecuteAll<Adapter>(docs, irs::ScoreSource{&sort, nullptr});
 
           return irs::memory::make_managed<Disjunction>(
             std::move(res), size_t{1}, irs::CostAttr::Type{3});  // custom cost
@@ -5761,7 +5731,6 @@ TEST(block_disjunction_test, next_scored_two_blocks) {
 
       // score is set
       auto score = it.PrepareScore({
-        .scorer = &sort,
         .segment = &irs::SubReader::empty(),
       });
       ASSERT_FALSE(score.IsDefault());
@@ -5803,7 +5772,8 @@ TEST(block_disjunction_test, next_scored_two_blocks) {
             irs::BlockDisjunctionTraits<irs::MatchType::Match, false, 2>>;
           using Adapter = irs::ScoreAdapter;
 
-          auto res = detail::ExecuteAll<Adapter>(docs);
+          auto res =
+            detail::ExecuteAll<Adapter>(docs, irs::ScoreSource{&sort, nullptr});
 
           return irs::memory::make_managed<Disjunction>(
             std::move(res), size_t{1}, irs::CostAttr::Type{3});  // custom cost
@@ -5817,7 +5787,6 @@ TEST(block_disjunction_test, next_scored_two_blocks) {
 
       // score is set
       auto score = it.PrepareScore({
-        .scorer = &sort,
         .segment = &irs::SubReader::empty(),
       });
       ASSERT_FALSE(score.IsDefault());
@@ -5858,7 +5827,8 @@ TEST(block_disjunction_test, next_scored_two_blocks) {
             irs::BlockDisjunctionTraits<irs::MatchType::Match, false, 2>>;
           using Adapter = irs::ScoreAdapter;
 
-          auto res = detail::ExecuteAll<Adapter>(docs);
+          auto res =
+            detail::ExecuteAll<Adapter>(docs, irs::ScoreSource{&sort, nullptr});
 
           return irs::memory::make_managed<Disjunction>(
             std::move(res), size_t{1}, irs::CostAttr::Type{3});  // custom cost
@@ -5872,7 +5842,6 @@ TEST(block_disjunction_test, next_scored_two_blocks) {
 
       // score is set
       auto score = it.PrepareScore({
-        .scorer = &sort,
         .segment = &irs::SubReader::empty(),
       });
       ASSERT_FALSE(score.IsDefault());
@@ -5912,7 +5881,8 @@ TEST(block_disjunction_test, next_scored_two_blocks) {
           irs::BlockDisjunctionTraits<irs::MatchType::Match, false, 2>>;
         using Adapter = irs::ScoreAdapter;
 
-        auto res = detail::ExecuteAll<Adapter>(docs);
+        auto res =
+          detail::ExecuteAll<Adapter>(docs, irs::ScoreSource{&sort, nullptr});
 
         return irs::memory::make_managed<Disjunction>(
           std::move(res), size_t{1}, irs::CostAttr::Type{3});  // custom cost
@@ -5926,7 +5896,6 @@ TEST(block_disjunction_test, next_scored_two_blocks) {
 
     // score is set
     auto score = it.PrepareScore({
-      .scorer = &sort,
       .segment = &irs::SubReader::empty(),
     });
     ASSERT_FALSE(score.IsDefault());
@@ -8062,9 +8031,10 @@ TEST(block_disjunction_test, lazy_seek_scored_match_single_sub) {
   const std::vector<std::vector<irs::doc_id_t>> docs{{1, 5, 10, 17, 30}};
   detail::CompoundSort sort{{7}};
   LSScoredDisjunction<irs::MatchType::Match> it(
-    detail::ExecuteAll<irs::ScoreAdapter>(docs), irs::doc_limits::eof());
+    detail::ExecuteAll<irs::ScoreAdapter>(docs,
+                                          irs::ScoreSource{&sort, nullptr}),
+    irs::doc_limits::eof());
   auto score = it.PrepareScore({
-    .scorer = &sort,
     .segment = &irs::SubReader::empty(),
   });
   ASSERT_FALSE(score.IsDefault());
@@ -8080,9 +8050,10 @@ TEST(block_disjunction_test, lazy_seek_scored_match_two_subs_sum) {
   const std::vector<std::vector<irs::doc_id_t>> docs{{1, 5, 10}, {2, 10, 30}};
   detail::CompoundSort sort{{3, 4}};
   LSScoredDisjunction<irs::MatchType::Match> it(
-    detail::ExecuteAll<irs::ScoreAdapter>(docs), irs::doc_limits::eof());
+    detail::ExecuteAll<irs::ScoreAdapter>(docs,
+                                          irs::ScoreSource{&sort, nullptr}),
+    irs::doc_limits::eof());
   auto score = it.PrepareScore({
-    .scorer = &sort,
     .segment = &irs::SubReader::empty(),
   });
   ASSERT_FALSE(score.IsDefault());
@@ -8097,9 +8068,10 @@ TEST(block_disjunction_test, lazy_seek_scored_match_miss_clears_score) {
   const std::vector<std::vector<irs::doc_id_t>> docs{{1, 5, 10}, {3, 10, 20}};
   detail::CompoundSort sort{{2, 5}};
   LSScoredDisjunction<irs::MatchType::Match> it(
-    detail::ExecuteAll<irs::ScoreAdapter>(docs), irs::doc_limits::eof());
+    detail::ExecuteAll<irs::ScoreAdapter>(docs,
+                                          irs::ScoreSource{&sort, nullptr}),
+    irs::doc_limits::eof());
   auto score = it.PrepareScore({
-    .scorer = &sort,
     .segment = &irs::SubReader::empty(),
   });
   ASSERT_FALSE(score.IsDefault());
@@ -8125,10 +8097,10 @@ TEST(block_disjunction_test, lazy_seek_scored_min_match_threshold_passed) {
   };
   detail::CompoundSort sort{{1, 2, 4}};
   LSScoredDisjunction<irs::MatchType::MinMatch> it(
-    detail::ExecuteAll<irs::ScoreAdapter>(docs), size_t{2},
-    irs::doc_limits::eof());
+    detail::ExecuteAll<irs::ScoreAdapter>(docs,
+                                          irs::ScoreSource{&sort, nullptr}),
+    size_t{2}, irs::doc_limits::eof());
   auto score = it.PrepareScore({
-    .scorer = &sort,
     .segment = &irs::SubReader::empty(),
   });
   ASSERT_FALSE(score.IsDefault());
@@ -8150,10 +8122,10 @@ TEST(block_disjunction_test, lazy_seek_scored_min_match_partial_subs) {
   };
   detail::CompoundSort sort{{1, 2, 4}};
   LSScoredDisjunction<irs::MatchType::MinMatch> it(
-    detail::ExecuteAll<irs::ScoreAdapter>(docs), size_t{2},
-    irs::doc_limits::eof());
+    detail::ExecuteAll<irs::ScoreAdapter>(docs,
+                                          irs::ScoreSource{&sort, nullptr}),
+    size_t{2}, irs::doc_limits::eof());
   auto score = it.PrepareScore({
-    .scorer = &sort,
     .segment = &irs::SubReader::empty(),
   });
   ASSERT_FALSE(score.IsDefault());
@@ -8174,10 +8146,10 @@ TEST(block_disjunction_test, lazy_seek_scored_min_match_fast) {
   using DisjFast = irs::BlockDisjunction<
     irs::ScoreAdapter, irs::ScoreMergeType::Sum,
     irs::BlockDisjunctionTraits<irs::MatchType::MinMatchFast, false, 1>>;
-  DisjFast it(detail::ExecuteAll<irs::ScoreAdapter>(docs), size_t{2},
-              irs::doc_limits::eof());
+  DisjFast it(detail::ExecuteAll<irs::ScoreAdapter>(
+                docs, irs::ScoreSource{&sort, nullptr}),
+              size_t{2}, irs::doc_limits::eof());
   auto score = it.PrepareScore({
-    .scorer = &sort,
     .segment = &irs::SubReader::empty(),
   });
   ASSERT_FALSE(score.IsDefault());
@@ -8254,7 +8226,8 @@ TEST(block_disjunction_test, seek_scored_no_readahead) {
           irs::BlockDisjunctionTraits<irs::MatchType::Match, false, 1>>;
         using Adapter = irs::ScoreAdapter;
 
-        auto res = detail::ExecuteAll<Adapter>(docs);
+        auto res =
+          detail::ExecuteAll<Adapter>(docs, irs::ScoreSource{&sort, nullptr});
 
         return irs::memory::make_managed<Disjunction>(
           std::move(res), size_t{1}, irs::CostAttr::Type{2});  // custom cost
@@ -8268,7 +8241,6 @@ TEST(block_disjunction_test, seek_scored_no_readahead) {
 
     // no order set
     auto score = it.PrepareScore({
-      .scorer = &sort,
       .segment = &irs::SubReader::empty(),
     });
     ASSERT_TRUE(score.IsDefault());
@@ -8315,7 +8287,8 @@ TEST(block_disjunction_test, seek_scored_no_readahead) {
           irs::BlockDisjunctionTraits<irs::MatchType::Match, false, 1>>;
         using Adapter = irs::ScoreAdapter;
 
-        auto res = detail::ExecuteAll<Adapter>(docs);
+        auto res =
+          detail::ExecuteAll<Adapter>(docs, irs::ScoreSource{&sort, nullptr});
 
         return irs::memory::make_managed<Disjunction>(
           std::move(res), size_t{1}, irs::CostAttr::Type{2});  // custom cost
@@ -8328,7 +8301,6 @@ TEST(block_disjunction_test, seek_scored_no_readahead) {
     auto& it = dynamic_cast<ExpectedType&>(*it_ptr);
 
     auto score = it.PrepareScore({
-      .scorer = &sort,
       .segment = &irs::SubReader::empty(),
     });
     ASSERT_FALSE(score.IsDefault());
@@ -8388,7 +8360,8 @@ TEST(block_disjunction_test, seek_scored_no_readahead) {
           irs::BlockDisjunctionTraits<irs::MatchType::Match, false, 1>>;
         using Adapter = irs::ScoreAdapter;
 
-        auto res = detail::ExecuteAll<Adapter>(docs);
+        auto res =
+          detail::ExecuteAll<Adapter>(docs, irs::ScoreSource{&sort, nullptr});
 
         return irs::memory::make_managed<Disjunction>(
           std::move(res), size_t{1}, irs::CostAttr::Type{2});  // custom cost
@@ -8401,7 +8374,6 @@ TEST(block_disjunction_test, seek_scored_no_readahead) {
     auto& it = dynamic_cast<ExpectedType&>(*it_ptr);
 
     auto score = it.PrepareScore({
-      .scorer = &sort,
       .segment = &irs::SubReader::empty(),
     });
     ASSERT_FALSE(score.IsDefault());
@@ -8451,7 +8423,8 @@ TEST(block_disjunction_test, seek_scored_no_readahead) {
           irs::BlockDisjunctionTraits<irs::MatchType::Match, false, 1>>;
         using Adapter = irs::ScoreAdapter;
 
-        auto res = detail::ExecuteAll<Adapter>(docs);
+        auto res =
+          detail::ExecuteAll<Adapter>(docs, irs::ScoreSource{&sort, nullptr});
         return irs::memory::make_managed<Disjunction>(
           std::move(res), size_t{1}, irs::CostAttr::Type{2});  // custom cost
       });
@@ -8463,7 +8436,6 @@ TEST(block_disjunction_test, seek_scored_no_readahead) {
     auto& it = dynamic_cast<ExpectedType&>(*it_ptr);
 
     auto score = it.PrepareScore({
-      .scorer = &sort,
       .segment = &irs::SubReader::empty(),
     });
     ASSERT_FALSE(score.IsDefault());
@@ -8505,7 +8477,8 @@ TEST(block_disjunction_test, seek_scored_no_readahead) {
           irs::BlockDisjunctionTraits<irs::MatchType::Match, false, 1>>;
         using Adapter = irs::ScoreAdapter;
 
-        auto res = detail::ExecuteAll<Adapter>(docs);
+        auto res =
+          detail::ExecuteAll<Adapter>(docs, irs::ScoreSource{&sort, nullptr});
 
         return irs::memory::make_managed<Disjunction>(
           std::move(res), size_t{1}, irs::CostAttr::Type{2});  // custom cost
@@ -8519,7 +8492,6 @@ TEST(block_disjunction_test, seek_scored_no_readahead) {
     auto& it = dynamic_cast<ExpectedType&>(*it_ptr);
 
     auto score = it.PrepareScore({
-      .scorer = &sort,
       .segment = &irs::SubReader::empty(),
     });
     ASSERT_FALSE(score.IsDefault());
@@ -8565,7 +8537,8 @@ TEST(block_disjunction_test, seek_scored_no_readahead) {
           irs::BlockDisjunctionTraits<irs::MatchType::Match, false, 1>>;
         using Adapter = irs::ScoreAdapter;
 
-        auto res = detail::ExecuteAll<Adapter>(docs);
+        auto res =
+          detail::ExecuteAll<Adapter>(docs, irs::ScoreSource{&sort, nullptr});
 
         return irs::memory::make_managed<Disjunction>(
           std::move(res), size_t{1}, irs::CostAttr::Type{2});  // custom cost
@@ -8578,7 +8551,6 @@ TEST(block_disjunction_test, seek_scored_no_readahead) {
     auto& it = dynamic_cast<ExpectedType&>(*it_ptr);
 
     auto score = it.PrepareScore({
-      .scorer = &sort,
       .segment = &irs::SubReader::empty(),
     });
     ASSERT_FALSE(score.IsDefault());
@@ -8623,7 +8595,8 @@ TEST(block_disjunction_test, seek_scored_no_readahead) {
           irs::BlockDisjunctionTraits<irs::MatchType::Match, false, 1>>;
         using Adapter = irs::ScoreAdapter;
 
-        auto res = detail::ExecuteAll<Adapter>(docs);
+        auto res =
+          detail::ExecuteAll<Adapter>(docs, irs::ScoreSource{&sort, nullptr});
 
         return irs::memory::make_managed<Disjunction>(
           std::move(res), size_t{1}, irs::CostAttr::Type{2});  // custom cost
@@ -8636,7 +8609,6 @@ TEST(block_disjunction_test, seek_scored_no_readahead) {
     auto& it = dynamic_cast<ExpectedType&>(*it_ptr);
 
     auto score = it.PrepareScore({
-      .scorer = &sort,
       .segment = &irs::SubReader::empty(),
     });
     ASSERT_FALSE(score.IsDefault());
@@ -8686,7 +8658,8 @@ TEST(block_disjunction_test, seek_scored_no_readahead) {
           irs::BlockDisjunctionTraits<irs::MatchType::Match, false, 1>>;
         using Adapter = irs::ScoreAdapter;
 
-        auto res = detail::ExecuteAll<Adapter>(docs);
+        auto res =
+          detail::ExecuteAll<Adapter>(docs, irs::ScoreSource{&sort, nullptr});
 
         return irs::memory::make_managed<Disjunction>(
           std::move(res), size_t{1}, irs::CostAttr::Type{2});  // custom cost
@@ -8699,7 +8672,6 @@ TEST(block_disjunction_test, seek_scored_no_readahead) {
     auto& it = dynamic_cast<ExpectedType&>(*it_ptr);
 
     auto score = it.PrepareScore({
-      .scorer = &sort,
       .segment = &irs::SubReader::empty(),
     });
     ASSERT_FALSE(score.IsDefault());
@@ -8752,7 +8724,8 @@ TEST(block_disjunction_test, seek_scored_no_readahead) {
           irs::BlockDisjunctionTraits<irs::MatchType::Match, false, 1>>;
         using Adapter = irs::ScoreAdapter;
 
-        auto res = detail::ExecuteAll<Adapter>(docs);
+        auto res =
+          detail::ExecuteAll<Adapter>(docs, irs::ScoreSource{&sort, nullptr});
 
         return irs::memory::make_managed<Disjunction>(
           std::move(res), size_t{1}, irs::CostAttr::Type{2});  // custom cost
@@ -8765,7 +8738,6 @@ TEST(block_disjunction_test, seek_scored_no_readahead) {
     auto& it = dynamic_cast<ExpectedType&>(*it_ptr);
 
     auto score = it.PrepareScore({
-      .scorer = &sort,
       .segment = &irs::SubReader::empty(),
     });
     ASSERT_FALSE(score.IsDefault());
@@ -8809,7 +8781,8 @@ TEST(block_disjunction_test, seek_scored_no_readahead) {
           irs::BlockDisjunctionTraits<irs::MatchType::Match, false, 1>>;
         using Adapter = irs::ScoreAdapter;
 
-        auto res = detail::ExecuteAll<Adapter>(docs);
+        auto res =
+          detail::ExecuteAll<Adapter>(docs, irs::ScoreSource{&sort, nullptr});
 
         return irs::memory::make_managed<Disjunction>(
           std::move(res), size_t{1}, irs::CostAttr::Type{2});  // custom cost
@@ -8822,7 +8795,6 @@ TEST(block_disjunction_test, seek_scored_no_readahead) {
     auto& it = dynamic_cast<ExpectedType&>(*it_ptr);
 
     auto score = it.PrepareScore({
-      .scorer = &sort,
       .segment = &irs::SubReader::empty(),
     });
     ASSERT_FALSE(score.IsDefault());
@@ -8870,7 +8842,8 @@ TEST(block_disjunction_test, seek_scored_no_readahead) {
           irs::BlockDisjunctionTraits<irs::MatchType::Match, false, 1>>;
         using Adapter = irs::ScoreAdapter;
 
-        auto res = detail::ExecuteAll<Adapter>(docs);
+        auto res =
+          detail::ExecuteAll<Adapter>(docs, irs::ScoreSource{&sort, nullptr});
 
         return irs::memory::make_managed<Disjunction>(
           std::move(res), size_t{1}, irs::CostAttr::Type{2});  // custom cost
@@ -8883,7 +8856,6 @@ TEST(block_disjunction_test, seek_scored_no_readahead) {
     auto& it = dynamic_cast<ExpectedType&>(*it_ptr);
 
     auto score = it.PrepareScore({
-      .scorer = &sort,
       .segment = &irs::SubReader::empty(),
     });
     ASSERT_FALSE(score.IsDefault());
@@ -9002,7 +8974,8 @@ TEST(block_disjunction_test, seek_scored_readahead) {
           irs::BlockDisjunctionTraits<irs::MatchType::Match, true, 1>>;
         using Adapter = irs::ScoreAdapter;
 
-        auto res = detail::ExecuteAll<Adapter>(docs);
+        auto res =
+          detail::ExecuteAll<Adapter>(docs, irs::ScoreSource{&sort, nullptr});
 
         return irs::memory::make_managed<Disjunction>(
           std::move(res), size_t{1}, irs::CostAttr::Type{2});  // custom cost
@@ -9016,7 +8989,6 @@ TEST(block_disjunction_test, seek_scored_readahead) {
 
     // no order set
     auto score = it.PrepareScore({
-      .scorer = &sort,
       .segment = &irs::SubReader::empty(),
     });
     ASSERT_TRUE(score.IsDefault());
@@ -9063,7 +9035,8 @@ TEST(block_disjunction_test, seek_scored_readahead) {
           irs::BlockDisjunctionTraits<irs::MatchType::Match, true, 1>>;
         using Adapter = irs::ScoreAdapter;
 
-        auto res = detail::ExecuteAll<Adapter>(docs);
+        auto res =
+          detail::ExecuteAll<Adapter>(docs, irs::ScoreSource{&sort, nullptr});
 
         return irs::memory::make_managed<Disjunction>(
           std::move(res), size_t{1}, irs::CostAttr::Type{2});  // custom cost
@@ -9076,7 +9049,6 @@ TEST(block_disjunction_test, seek_scored_readahead) {
     auto& it = dynamic_cast<ExpectedType&>(*it_ptr);
 
     auto score = it.PrepareScore({
-      .scorer = &sort,
       .segment = &irs::SubReader::empty(),
     });
     ASSERT_FALSE(score.IsDefault());
@@ -9136,7 +9108,8 @@ TEST(block_disjunction_test, seek_scored_readahead) {
           irs::BlockDisjunctionTraits<irs::MatchType::Match, true, 1>>;
         using Adapter = irs::ScoreAdapter;
 
-        auto res = detail::ExecuteAll<Adapter>(docs);
+        auto res =
+          detail::ExecuteAll<Adapter>(docs, irs::ScoreSource{&sort, nullptr});
 
         return irs::memory::make_managed<Disjunction>(
           std::move(res), size_t{1}, irs::CostAttr::Type{2});  // custom cost
@@ -9149,7 +9122,6 @@ TEST(block_disjunction_test, seek_scored_readahead) {
     auto& it = dynamic_cast<ExpectedType&>(*it_ptr);
 
     auto score = it.PrepareScore({
-      .scorer = &sort,
       .segment = &irs::SubReader::empty(),
     });
     ASSERT_FALSE(score.IsDefault());
@@ -9199,7 +9171,8 @@ TEST(block_disjunction_test, seek_scored_readahead) {
           irs::BlockDisjunctionTraits<irs::MatchType::Match, true, 1>>;
         using Adapter = irs::ScoreAdapter;
 
-        auto res = detail::ExecuteAll<Adapter>(docs);
+        auto res =
+          detail::ExecuteAll<Adapter>(docs, irs::ScoreSource{&sort, nullptr});
 
         return irs::memory::make_managed<Disjunction>(
           std::move(res), size_t{1}, irs::CostAttr::Type{2});  // custom cost
@@ -9212,7 +9185,6 @@ TEST(block_disjunction_test, seek_scored_readahead) {
     auto& it = dynamic_cast<ExpectedType&>(*it_ptr);
 
     auto score = it.PrepareScore({
-      .scorer = &sort,
       .segment = &irs::SubReader::empty(),
     });
     ASSERT_FALSE(score.IsDefault());
@@ -9253,7 +9225,8 @@ TEST(block_disjunction_test, seek_scored_readahead) {
           irs::BlockDisjunctionTraits<irs::MatchType::Match, true, 1>>;
         using Adapter = irs::ScoreAdapter;
 
-        auto res = detail::ExecuteAll<Adapter>(docs);
+        auto res =
+          detail::ExecuteAll<Adapter>(docs, irs::ScoreSource{&sort, nullptr});
 
         return irs::memory::make_managed<Disjunction>(
           std::move(res), size_t{1}, irs::CostAttr::Type{2});  // custom cost
@@ -9266,7 +9239,6 @@ TEST(block_disjunction_test, seek_scored_readahead) {
     auto& it = dynamic_cast<ExpectedType&>(*it_ptr);
 
     auto score = it.PrepareScore({
-      .scorer = &sort,
       .segment = &irs::SubReader::empty(),
     });
     ASSERT_FALSE(score.IsDefault());
@@ -9312,7 +9284,8 @@ TEST(block_disjunction_test, seek_scored_readahead) {
           irs::BlockDisjunctionTraits<irs::MatchType::Match, true, 1>>;
         using Adapter = irs::ScoreAdapter;
 
-        auto res = detail::ExecuteAll<Adapter>(docs);
+        auto res =
+          detail::ExecuteAll<Adapter>(docs, irs::ScoreSource{&sort, nullptr});
 
         return irs::memory::make_managed<Disjunction>(
           std::move(res), size_t{1}, irs::CostAttr::Type{2});  // custom cost
@@ -9325,7 +9298,6 @@ TEST(block_disjunction_test, seek_scored_readahead) {
     auto& it = dynamic_cast<ExpectedType&>(*it_ptr);
 
     auto score = it.PrepareScore({
-      .scorer = &sort,
       .segment = &irs::SubReader::empty(),
     });
     ASSERT_FALSE(score.IsDefault());
@@ -9368,7 +9340,8 @@ TEST(block_disjunction_test, seek_scored_readahead) {
           irs::BlockDisjunctionTraits<irs::MatchType::Match, true, 1>>;
         using Adapter = irs::ScoreAdapter;
 
-        auto res = detail::ExecuteAll<Adapter>(docs);
+        auto res =
+          detail::ExecuteAll<Adapter>(docs, irs::ScoreSource{&sort, nullptr});
 
         return irs::memory::make_managed<Disjunction>(
           std::move(res), size_t{1}, irs::CostAttr::Type{2});  // custom cost
@@ -9381,7 +9354,6 @@ TEST(block_disjunction_test, seek_scored_readahead) {
     auto& it = dynamic_cast<ExpectedType&>(*it_ptr);
 
     auto score = it.PrepareScore({
-      .scorer = &sort,
       .segment = &irs::SubReader::empty(),
     });
     ASSERT_FALSE(score.IsDefault());
@@ -9431,7 +9403,8 @@ TEST(block_disjunction_test, seek_scored_readahead) {
           irs::BlockDisjunctionTraits<irs::MatchType::Match, true, 1>>;
         using Adapter = irs::ScoreAdapter;
 
-        auto res = detail::ExecuteAll<Adapter>(docs);
+        auto res =
+          detail::ExecuteAll<Adapter>(docs, irs::ScoreSource{&sort, nullptr});
 
         return irs::memory::make_managed<Disjunction>(
           std::move(res), size_t{1}, irs::CostAttr::Type{2});  // custom cost
@@ -9444,7 +9417,6 @@ TEST(block_disjunction_test, seek_scored_readahead) {
     auto& it = dynamic_cast<ExpectedType&>(*it_ptr);
 
     auto score = it.PrepareScore({
-      .scorer = &sort,
       .segment = &irs::SubReader::empty(),
     });
     ASSERT_FALSE(score.IsDefault());
@@ -9497,7 +9469,8 @@ TEST(block_disjunction_test, seek_scored_readahead) {
           irs::BlockDisjunctionTraits<irs::MatchType::Match, true, 1>>;
         using Adapter = irs::ScoreAdapter;
 
-        auto res = detail::ExecuteAll<Adapter>(docs);
+        auto res =
+          detail::ExecuteAll<Adapter>(docs, irs::ScoreSource{&sort, nullptr});
 
         return irs::memory::make_managed<Disjunction>(
           std::move(res), size_t{1}, irs::CostAttr::Type{2});  // custom cost
@@ -9510,7 +9483,6 @@ TEST(block_disjunction_test, seek_scored_readahead) {
     auto& it = dynamic_cast<ExpectedType&>(*it_ptr);
 
     auto score = it.PrepareScore({
-      .scorer = &sort,
       .segment = &irs::SubReader::empty(),
     });
     ASSERT_FALSE(score.IsDefault());
@@ -9554,7 +9526,8 @@ TEST(block_disjunction_test, seek_scored_readahead) {
           irs::BlockDisjunctionTraits<irs::MatchType::Match, true, 1>>;
         using Adapter = irs::ScoreAdapter;
 
-        auto res = detail::ExecuteAll<Adapter>(docs);
+        auto res =
+          detail::ExecuteAll<Adapter>(docs, irs::ScoreSource{&sort, nullptr});
 
         return irs::memory::make_managed<Disjunction>(
           std::move(res), size_t{1}, irs::CostAttr::Type{2});  // custom cost
@@ -9567,7 +9540,6 @@ TEST(block_disjunction_test, seek_scored_readahead) {
     auto& it = dynamic_cast<ExpectedType&>(*it_ptr);
 
     auto score = it.PrepareScore({
-      .scorer = &sort,
       .segment = &irs::SubReader::empty(),
     });
     ASSERT_FALSE(score.IsDefault());
@@ -9615,7 +9587,8 @@ TEST(block_disjunction_test, seek_scored_readahead) {
           irs::BlockDisjunctionTraits<irs::MatchType::Match, true, 1>>;
         using Adapter = irs::ScoreAdapter;
 
-        auto res = detail::ExecuteAll<Adapter>(docs);
+        auto res =
+          detail::ExecuteAll<Adapter>(docs, irs::ScoreSource{&sort, nullptr});
 
         return irs::memory::make_managed<Disjunction>(
           std::move(res), size_t{1}, irs::CostAttr::Type{2});  // custom cost
@@ -9628,7 +9601,6 @@ TEST(block_disjunction_test, seek_scored_readahead) {
     auto& it = dynamic_cast<ExpectedType&>(*it_ptr);
 
     auto score = it.PrepareScore({
-      .scorer = &sort,
       .segment = &irs::SubReader::empty(),
     });
     ASSERT_FALSE(score.IsDefault());
@@ -11166,7 +11138,8 @@ TEST(block_disjunction_test, scored_seek_next_no_readahead) {
           irs::BlockDisjunctionTraits<irs::MatchType::Match, false, 1>>;
         using Adapter = irs::ScoreAdapter;
 
-        auto res = detail::ExecuteAll<Adapter>(docs);
+        auto res =
+          detail::ExecuteAll<Adapter>(docs, irs::ScoreSource{&sort, nullptr});
 
         return irs::memory::make_managed<Disjunction>(
           std::move(res), size_t{1}, irs::CostAttr::Type{1});  // custom cost
@@ -11180,7 +11153,6 @@ TEST(block_disjunction_test, scored_seek_next_no_readahead) {
 
     // score, no order set
     auto score = it.PrepareScore({
-      .scorer = &sort,
       .segment = &irs::SubReader::empty(),
     });
     ASSERT_TRUE(score.IsDefault());
@@ -11220,7 +11192,8 @@ TEST(block_disjunction_test, scored_seek_next_no_readahead) {
           irs::BlockDisjunctionTraits<irs::MatchType::Match, false, 1>>;
         using Adapter = irs::ScoreAdapter;
 
-        auto res = detail::ExecuteAll<Adapter>(docs);
+        auto res =
+          detail::ExecuteAll<Adapter>(docs, irs::ScoreSource{&sort, nullptr});
 
         return irs::memory::make_managed<Disjunction>(
           std::move(res), size_t{1}, irs::CostAttr::Type{1});  // custom cost
@@ -11234,7 +11207,6 @@ TEST(block_disjunction_test, scored_seek_next_no_readahead) {
 
     // score
     auto score = it.PrepareScore({
-      .scorer = &sort,
       .segment = &irs::SubReader::empty(),
     });
     ASSERT_FALSE(score.IsDefault());
@@ -11295,7 +11267,8 @@ TEST(block_disjunction_test, scored_seek_next_no_readahead) {
           irs::BlockDisjunctionTraits<irs::MatchType::Match, false, 1>>;
         using Adapter = irs::ScoreAdapter;
 
-        auto res = detail::ExecuteAll<Adapter>(docs);
+        auto res =
+          detail::ExecuteAll<Adapter>(docs, irs::ScoreSource{&sort, nullptr});
 
         return irs::memory::make_managed<Disjunction>(
           std::move(res), size_t{1}, irs::CostAttr::Type{1});  // custom cost
@@ -11309,7 +11282,6 @@ TEST(block_disjunction_test, scored_seek_next_no_readahead) {
 
     // score
     auto score = it.PrepareScore({
-      .scorer = &sort,
       .segment = &irs::SubReader::empty(),
     });
     ASSERT_FALSE(score.IsDefault());
@@ -11370,7 +11342,8 @@ TEST(block_disjunction_test, scored_seek_next_no_readahead) {
           irs::BlockDisjunctionTraits<irs::MatchType::Match, false, 1>>;
         using Adapter = irs::ScoreAdapter;
 
-        auto res = detail::ExecuteAll<Adapter>(docs);
+        auto res =
+          detail::ExecuteAll<Adapter>(docs, irs::ScoreSource{&sort, nullptr});
 
         return irs::memory::make_managed<Disjunction>(
           std::move(res), size_t{1}, irs::CostAttr::Type{1});  // custom cost
@@ -11384,7 +11357,6 @@ TEST(block_disjunction_test, scored_seek_next_no_readahead) {
 
     // score
     auto score = it.PrepareScore({
-      .scorer = &sort,
       .segment = &irs::SubReader::empty(),
     });
     ASSERT_FALSE(score.IsDefault());
@@ -11445,7 +11417,8 @@ TEST(block_disjunction_test, scored_seek_next_no_readahead) {
           irs::BlockDisjunctionTraits<irs::MatchType::Match, false, 1>>;
         using Adapter = irs::ScoreAdapter;
 
-        auto res = detail::ExecuteAll<Adapter>(docs);
+        auto res =
+          detail::ExecuteAll<Adapter>(docs, irs::ScoreSource{&sort, nullptr});
 
         return irs::memory::make_managed<Disjunction>(
           std::move(res), size_t{1}, irs::CostAttr::Type{1});  // custom cost
@@ -11459,7 +11432,6 @@ TEST(block_disjunction_test, scored_seek_next_no_readahead) {
 
     // score
     auto score = it.PrepareScore({
-      .scorer = &sort,
       .segment = &irs::SubReader::empty(),
     });
     ASSERT_FALSE(score.IsDefault());
@@ -11510,6 +11482,7 @@ TEST(block_disjunction_test, scored_seek_next_no_readahead) {
     docs.emplace_back(std::vector<irs::doc_id_t>{1, 5, 6, 12, 29});
     docs.emplace_back(std::vector<irs::doc_id_t>{1, 5, 6});
 
+    detail::CompoundSort sort{{}};
     auto it_ptr = irs::ResolveMergeType(
       irs::ScoreMergeType::Sum,
       [&]<irs::ScoreMergeType MergeType> mutable -> irs::DocIterator::ptr {
@@ -11518,7 +11491,8 @@ TEST(block_disjunction_test, scored_seek_next_no_readahead) {
           irs::BlockDisjunctionTraits<irs::MatchType::Match, false, 1>>;
         using Adapter = irs::ScoreAdapter;
 
-        auto res = detail::ExecuteAll<Adapter>(docs);
+        auto res =
+          detail::ExecuteAll<Adapter>(docs, irs::ScoreSource{&sort, nullptr});
 
         return irs::memory::make_managed<Disjunction>(
           std::move(res), size_t{1}, irs::CostAttr::Type{1});  // custom cost
@@ -11531,9 +11505,7 @@ TEST(block_disjunction_test, scored_seek_next_no_readahead) {
     auto& it = dynamic_cast<ExpectedType&>(*it_ptr);
 
     // score
-    detail::CompoundSort sort{{}};
     auto score = it.PrepareScore({
-      .scorer = &sort,
       .segment = &irs::SubReader::empty(),
     });
     ASSERT_TRUE(score.IsDefault());
@@ -11565,6 +11537,7 @@ TEST(block_disjunction_test, scored_seek_next_no_readahead) {
     docs.emplace_back(std::vector<irs::doc_id_t>{1, 5, 6, 12, 29});
     docs.emplace_back(std::vector<irs::doc_id_t>{1, 5, 6});
 
+    detail::CompoundSort sort{{}};
     auto it_ptr = irs::ResolveMergeType(
       irs::ScoreMergeType::Max,
       [&]<irs::ScoreMergeType MergeType> mutable -> irs::DocIterator::ptr {
@@ -11573,7 +11546,8 @@ TEST(block_disjunction_test, scored_seek_next_no_readahead) {
           irs::BlockDisjunctionTraits<irs::MatchType::Match, false, 1>>;
         using Adapter = irs::ScoreAdapter;
 
-        auto res = detail::ExecuteAll<Adapter>(docs);
+        auto res =
+          detail::ExecuteAll<Adapter>(docs, irs::ScoreSource{&sort, nullptr});
 
         return irs::memory::make_managed<Disjunction>(
           std::move(res), size_t{1}, irs::CostAttr::Type{1});  // custom cost
@@ -11585,11 +11559,8 @@ TEST(block_disjunction_test, scored_seek_next_no_readahead) {
     ASSERT_NE(nullptr, dynamic_cast<ExpectedType*>(it_ptr.get()));
     auto& it = dynamic_cast<ExpectedType&>(*it_ptr);
 
-    detail::CompoundSort sort{{}};
-
     // score
     auto score = it.PrepareScore({
-      .scorer = &sort,
       .segment = &irs::SubReader::empty(),
     });
     ASSERT_TRUE(score.IsDefault());
@@ -12152,7 +12123,6 @@ TEST(disjunction_test, seek_next) {
 
     // score, no order set
     auto score = it.PrepareScore({
-      .scorer = &sort,
       .segment = &irs::SubReader::empty(),
     });
     ASSERT_TRUE(score.IsDefault());
@@ -12203,7 +12173,6 @@ TEST(disjunction_test, scored_seek_next) {
 
     // score, no order set
     auto score = it.PrepareScore({
-      .scorer = &sort,
       .segment = &irs::SubReader::empty(),
     });
     ASSERT_TRUE(score.IsDefault());
@@ -12251,7 +12220,6 @@ TEST(disjunction_test, scored_seek_next) {
 
     // score
     auto score = it.PrepareScore({
-      .scorer = &sort,
       .segment = &irs::SubReader::empty(),
     });
     ASSERT_TRUE(score.IsDefault());
@@ -12314,7 +12282,6 @@ TEST(disjunction_test, scored_seek_next) {
 
     // score
     auto score = it.PrepareScore({
-      .scorer = &sort,
       .segment = &irs::SubReader::empty(),
     });
     ASSERT_TRUE(score.IsDefault());
@@ -12377,7 +12344,6 @@ TEST(disjunction_test, scored_seek_next) {
 
     // score
     auto score = it.PrepareScore({
-      .scorer = &sort,
       .segment = &irs::SubReader::empty(),
     });
     ASSERT_TRUE(score.IsDefault());
@@ -12446,7 +12412,6 @@ TEST(disjunction_test, scored_seek_next) {
 
     // score
     auto score = it.PrepareScore({
-      .scorer = &sort,
       .segment = &irs::SubReader::empty(),
     });
     ASSERT_TRUE(score.IsDefault());
@@ -12509,7 +12474,6 @@ TEST(disjunction_test, scored_seek_next) {
 
     // score
     auto score = it.PrepareScore({
-      .scorer = &sort,
       .segment = &irs::SubReader::empty(),
     });
     ASSERT_TRUE(score.IsDefault());
@@ -12578,7 +12542,6 @@ TEST(disjunction_test, scored_seek_next) {
 
     // score
     auto score = it.PrepareScore({
-      .scorer = &sort,
       .segment = &irs::SubReader::empty(),
     });
     ASSERT_TRUE(score.IsDefault());
@@ -13623,7 +13586,6 @@ TEST(min_match_disjunction_test, scored_seek_next) {
 
     // score, no order set
     auto score = it.PrepareScore({
-      .scorer = &sort,
       .segment = &irs::SubReader::empty(),
     });
     ASSERT_TRUE(score.IsDefault());
@@ -13670,7 +13632,6 @@ TEST(min_match_disjunction_test, scored_seek_next) {
 
     // score
     auto score = it.PrepareScore({
-      .scorer = &sort,
       .segment = &irs::SubReader::empty(),
     });
     ASSERT_TRUE(score.IsDefault());
@@ -13730,7 +13691,6 @@ TEST(min_match_disjunction_test, scored_seek_next) {
 
     // score
     auto score = it.PrepareScore({
-      .scorer = &sort,
       .segment = &irs::SubReader::empty(),
     });
     ASSERT_TRUE(score.IsDefault());
@@ -13790,7 +13750,6 @@ TEST(min_match_disjunction_test, scored_seek_next) {
 
     // score
     auto score = it.PrepareScore({
-      .scorer = &sort,
       .segment = &irs::SubReader::empty(),
     });
     ASSERT_TRUE(score.IsDefault());
@@ -13850,7 +13809,6 @@ TEST(min_match_disjunction_test, scored_seek_next) {
 
     // score
     auto score = it.PrepareScore({
-      .scorer = &sort,
       .segment = &irs::SubReader::empty(),
     });
     ASSERT_TRUE(score.IsDefault());
@@ -13910,7 +13868,6 @@ TEST(min_match_disjunction_test, scored_seek_next) {
 
     // score
     auto score = it.PrepareScore({
-      .scorer = &sort,
       .segment = &irs::SubReader::empty(),
     });
     ASSERT_TRUE(score.IsDefault());
@@ -13969,7 +13926,6 @@ TEST(min_match_disjunction_test, scored_seek_next) {
     // score
     detail::CompoundSort sort({});
     auto score = it.PrepareScore({
-      .scorer = &sort,
       .segment = &irs::SubReader::empty(),
     });
     ASSERT_TRUE(score.IsDefault());
@@ -14387,7 +14343,6 @@ TEST(conjunction_test, seek_next) {
     // score, no order set
     detail::CompoundSort sort({});
     auto score = it.PrepareScore({
-      .scorer = &sort,
       .segment = &irs::SubReader::empty(),
     });
     ASSERT_TRUE(score.IsDefault());
@@ -14422,7 +14377,8 @@ TEST(conjunction_test, scored_seek_next) {
     docs.emplace_back(std::vector<irs::doc_id_t>{1, 4, 5, 8, 14});
 
     auto it_ptr = [&] -> irs::DocIterator::ptr {
-      auto res = detail::ExecuteAll<DocIteratorImpl>(docs);
+      auto res = detail::ExecuteAll<DocIteratorImpl>(
+        docs, irs::ScoreSource{&sort, nullptr});
       return irs::MakeConjunction(irs::ScoreMergeType::Sum, {},
                                   irs::doc_limits::eof(), std::move(res));
     }();
@@ -14433,7 +14389,6 @@ TEST(conjunction_test, scored_seek_next) {
 
     // score
     auto score = it.PrepareScore({
-      .scorer = &sort,
       .segment = &irs::SubReader::empty(),
     });
     ASSERT_FALSE(score.IsDefault());
@@ -14483,7 +14438,8 @@ TEST(conjunction_test, scored_seek_next) {
     docs.emplace_back(std::vector<irs::doc_id_t>{1, 4, 5, 8, 14});
 
     auto it_ptr = [&] -> irs::DocIterator::ptr {
-      auto res = detail::ExecuteAll<DocIteratorImpl>(docs);
+      auto res = detail::ExecuteAll<DocIteratorImpl>(
+        docs, irs::ScoreSource{&sort, nullptr});
       return irs::MakeConjunction(irs::ScoreMergeType::Noop, {},
                                   irs::doc_limits::eof(), std::move(res));
     }();
@@ -14494,7 +14450,6 @@ TEST(conjunction_test, scored_seek_next) {
 
     // score, no order set
     auto score = it.PrepareScore({
-      .scorer = &sort,
       .segment = &irs::SubReader::empty(),
     });
     ASSERT_TRUE(score.IsDefault());
@@ -14528,7 +14483,8 @@ TEST(conjunction_test, scored_seek_next) {
     docs.emplace_back(std::vector<irs::doc_id_t>{1, 4, 5, 8, 14});
 
     auto it_ptr = [&] -> irs::DocIterator::ptr {
-      auto res = detail::ExecuteAll<DocIteratorImpl>(docs);
+      auto res = detail::ExecuteAll<DocIteratorImpl>(
+        docs, irs::ScoreSource{&sort, nullptr});
       return irs::MakeConjunction(irs::ScoreMergeType::Sum, {},
                                   irs::doc_limits::eof(), std::move(res));
     }();
@@ -14539,7 +14495,6 @@ TEST(conjunction_test, scored_seek_next) {
 
     // score
     auto score = it.PrepareScore({
-      .scorer = &sort,
       .segment = &irs::SubReader::empty(),
     });
     ASSERT_FALSE(score.IsDefault());
@@ -14584,7 +14539,8 @@ TEST(conjunction_test, scored_seek_next) {
     docs.emplace_back(std::vector<irs::doc_id_t>{1, 4, 5, 8, 14});
 
     auto it_ptr = [&] -> irs::DocIterator::ptr {
-      auto res = detail::ExecuteAll<DocIteratorImpl>(docs);
+      auto res = detail::ExecuteAll<DocIteratorImpl>(
+        docs, irs::ScoreSource{&sort, nullptr});
       return irs::MakeConjunction(irs::ScoreMergeType::Max, {},
                                   irs::doc_limits::eof(), std::move(res));
     }();
@@ -14595,7 +14551,6 @@ TEST(conjunction_test, scored_seek_next) {
 
     // score
     auto score = it.PrepareScore({
-      .scorer = &sort,
       .segment = &irs::SubReader::empty(),
     });
     ASSERT_FALSE(score.IsDefault());
@@ -14640,7 +14595,8 @@ TEST(conjunction_test, scored_seek_next) {
     docs.emplace_back(std::vector<irs::doc_id_t>{1, 4, 5, 8, 14});
 
     auto it_ptr = [&] -> irs::DocIterator::ptr {
-      auto res = detail::ExecuteAll<DocIteratorImpl>(docs);
+      auto res = detail::ExecuteAll<DocIteratorImpl>(
+        docs, irs::ScoreSource{&sort, nullptr});
       return irs::MakeConjunction(irs::ScoreMergeType::Sum, {},
                                   irs::doc_limits::eof(), std::move(res));
     }();
@@ -14651,7 +14607,6 @@ TEST(conjunction_test, scored_seek_next) {
 
     // score
     auto score = it.PrepareScore({
-      .scorer = &sort,
       .segment = &irs::SubReader::empty(),
     });
     ASSERT_FALSE(score.IsDefault());
@@ -14696,7 +14651,8 @@ TEST(conjunction_test, scored_seek_next) {
     docs.emplace_back(std::vector<irs::doc_id_t>{1, 4, 5, 8, 14});
 
     auto it_ptr = [&] -> irs::DocIterator::ptr {
-      auto res = detail::ExecuteAll<DocIteratorImpl>(docs);
+      auto res = detail::ExecuteAll<DocIteratorImpl>(
+        docs, irs::ScoreSource{&sort, nullptr});
       return irs::MakeConjunction(irs::ScoreMergeType::Max, {},
                                   irs::doc_limits::eof(), std::move(res));
     }();
@@ -14707,7 +14663,6 @@ TEST(conjunction_test, scored_seek_next) {
 
     // score
     auto score = it.PrepareScore({
-      .scorer = &sort,
       .segment = &irs::SubReader::empty(),
     });
     ASSERT_FALSE(score.IsDefault());
@@ -14752,7 +14707,8 @@ TEST(conjunction_test, scored_seek_next) {
     docs.emplace_back(std::vector<irs::doc_id_t>{1, 4, 5, 8, 14});
 
     auto it_ptr = [&] -> irs::DocIterator::ptr {
-      auto res = detail::ExecuteAll<DocIteratorImpl>(docs);
+      auto res = detail::ExecuteAll<DocIteratorImpl>(
+        docs, irs::ScoreSource{&sort, nullptr});
       return irs::MakeConjunction(irs::ScoreMergeType::Sum, {},
                                   irs::doc_limits::eof(), std::move(res));
     }();
@@ -14763,7 +14719,6 @@ TEST(conjunction_test, scored_seek_next) {
 
     // score
     auto score = it.PrepareScore({
-      .scorer = &sort,
       .segment = &irs::SubReader::empty(),
     });
     ASSERT_FALSE(score.IsDefault());
@@ -14808,7 +14763,8 @@ TEST(conjunction_test, scored_seek_next) {
     docs.emplace_back(std::vector<irs::doc_id_t>{1, 4, 5, 8, 14});
 
     auto it_ptr = [&] -> irs::DocIterator::ptr {
-      auto res = detail::ExecuteAll<DocIteratorImpl>(docs);
+      auto res = detail::ExecuteAll<DocIteratorImpl>(
+        docs, irs::ScoreSource{&sort, nullptr});
       return irs::MakeConjunction(irs::ScoreMergeType::Max, {},
                                   irs::doc_limits::eof(), std::move(res));
     }();
@@ -14819,7 +14775,6 @@ TEST(conjunction_test, scored_seek_next) {
 
     // score
     auto score = it.PrepareScore({
-      .scorer = &sort,
       .segment = &irs::SubReader::empty(),
     });
     ASSERT_FALSE(score.IsDefault());
@@ -14864,7 +14819,8 @@ TEST(conjunction_test, scored_seek_next) {
     docs.emplace_back(std::vector<irs::doc_id_t>{1, 4, 5, 6, 8, 12, 14, 29});
 
     auto it_ptr = [&] -> irs::DocIterator::ptr {
-      auto res = detail::ExecuteAll<DocIteratorImpl>(docs);
+      auto res = detail::ExecuteAll<DocIteratorImpl>(
+        docs, irs::ScoreSource{&sort, nullptr});
       return irs::MakeConjunction(irs::ScoreMergeType::Sum, {},
                                   irs::doc_limits::eof(), std::move(res));
     }();
@@ -14875,7 +14831,6 @@ TEST(conjunction_test, scored_seek_next) {
 
     // score
     auto score = it.PrepareScore({
-      .scorer = &sort,
       .segment = &irs::SubReader::empty(),
     });
     ASSERT_FALSE(score.IsDefault());
@@ -14920,7 +14875,8 @@ TEST(conjunction_test, scored_seek_next) {
     docs.emplace_back(std::vector<irs::doc_id_t>{1, 4, 5, 6, 8, 12, 14, 29});
 
     auto it_ptr = [&] -> irs::DocIterator::ptr {
-      auto res = detail::ExecuteAll<DocIteratorImpl>(docs);
+      auto res = detail::ExecuteAll<DocIteratorImpl>(
+        docs, irs::ScoreSource{&sort, nullptr});
       return irs::MakeConjunction(irs::ScoreMergeType::Max, {},
                                   irs::doc_limits::eof(), std::move(res));
     }();
@@ -14931,7 +14887,6 @@ TEST(conjunction_test, scored_seek_next) {
 
     // score
     auto score = it.PrepareScore({
-      .scorer = &sort,
       .segment = &irs::SubReader::empty(),
     });
     ASSERT_FALSE(score.IsDefault());
@@ -14973,8 +14928,10 @@ TEST(conjunction_test, scored_seek_next) {
     docs.emplace_back(std::vector<irs::doc_id_t>{1, 4, 5, 6, 8, 12, 14, 29});
     docs.emplace_back(std::vector<irs::doc_id_t>{1, 4, 5, 8, 14});
 
+    detail::CompoundSort sort{{}};
     auto it_ptr = [&] -> irs::DocIterator::ptr {
-      auto res = detail::ExecuteAll<DocIteratorImpl>(docs);
+      auto res = detail::ExecuteAll<DocIteratorImpl>(
+        docs, irs::ScoreSource{&sort, nullptr});
       return irs::MakeConjunction(irs::ScoreMergeType::Sum, {},
                                   irs::doc_limits::eof(), std::move(res));
     }();
@@ -14984,9 +14941,7 @@ TEST(conjunction_test, scored_seek_next) {
     auto& it = dynamic_cast<ExpectedType&>(*it_ptr);
 
     // score
-    detail::CompoundSort sort{{}};
     auto score = it.PrepareScore({
-      .scorer = &sort,
       .segment = &irs::SubReader::empty(),
     });
     ASSERT_TRUE(score.IsDefault());
@@ -15028,8 +14983,10 @@ TEST(conjunction_test, scored_seek_next) {
     docs.emplace_back(std::vector<irs::doc_id_t>{1, 4, 5, 6, 8, 12, 14, 29});
     docs.emplace_back(std::vector<irs::doc_id_t>{1, 4, 5, 8, 14});
 
+    detail::CompoundSort sort{{}};
     auto it_ptr = [&] -> irs::DocIterator::ptr {
-      auto res = detail::ExecuteAll<DocIteratorImpl>(docs);
+      auto res = detail::ExecuteAll<DocIteratorImpl>(
+        docs, irs::ScoreSource{&sort, nullptr});
       return irs::MakeConjunction(irs::ScoreMergeType::Max, {},
                                   irs::doc_limits::eof(), std::move(res));
     }();
@@ -15039,9 +14996,7 @@ TEST(conjunction_test, scored_seek_next) {
     auto& it = dynamic_cast<ExpectedType&>(*it_ptr);
 
     // score
-    detail::CompoundSort sort{{}};
     auto score = it.PrepareScore({
-      .scorer = &sort,
       .segment = &irs::SubReader::empty(),
     });
     ASSERT_TRUE(score.IsDefault());
@@ -15708,7 +15663,6 @@ TEST_P(BooleanFilterTestCase, not_standalone_sequential_ordered) {
     ASSERT_EQ(32, irs::CostAttr::extract(*filter_itr));
 
     auto score = filter_itr->PrepareScore({
-      .scorer = &sort,
       .segment = &segment,
     });
 
@@ -15793,7 +15747,6 @@ TEST_P(BooleanFilterTestCase, not_sequential_ordered) {
     ASSERT_EQ(32, irs::CostAttr::extract(*filter_itr));
 
     auto score = filter_itr->PrepareScore({
-      .scorer = &sort,
       .segment = &segment,
     });
 
@@ -16405,7 +16358,6 @@ TEST_P(BooleanFilterTestCase, mixed_ordered) {
       auto docs = prepared.Execute(i);
 
       const auto& scr = docs->PrepareScore({
-        .scorer = &tfidf_scorer,
         .segment = &irs::SubReader::empty(),
       });
 
@@ -16431,7 +16383,7 @@ TEST(Exclusion_test, ctor) {
   ASSERT_EQ(nullptr, q.GetInclude());
   ASSERT_TRUE(q.GetExcludes().empty());
   ASSERT_TRUE(q.empty());
-  ASSERT_EQ(irs::kNoBoost, q.Boost());
+  ASSERT_EQ(irs::kNoBoost, q.GetBoost());
 }
 
 TEST(Exclusion_test, equal) {
@@ -16521,7 +16473,7 @@ TEST(And_test, ctor) {
   ASSERT_EQ(irs::Type<irs::And>::id(), q.type());
   ASSERT_TRUE(q.empty());
   ASSERT_EQ(0, q.size());
-  ASSERT_EQ(irs::kNoBoost, q.Boost());
+  ASSERT_EQ(irs::kNoBoost, q.GetBoost());
 }
 
 TEST(And_test, add_clear) {
@@ -16611,7 +16563,7 @@ TEST(And_test, optimize_all_filters) {
   // single `all` filter
   {
     irs::And root;
-    root.add<irs::All>().boost(5.f);
+    root.add<irs::All>().SetBoost(5.f);
 
     tests::PreparedFilter prepared{*tests::Optimized(std::move(root)),
                                    irs::SubReader::empty()};
@@ -16624,9 +16576,9 @@ TEST(And_test, optimize_all_filters) {
   // multiple `all` filters
   {
     auto root = std::make_unique<irs::And>();
-    root->add<irs::All>().boost(5.f);
-    root->add<irs::All>().boost(2.f);
-    root->add<irs::All>().boost(3.f);
+    root->add<irs::All>().SetBoost(5.f);
+    root->add<irs::All>().SetBoost(2.f);
+    root->add<irs::All>().SetBoost(3.f);
     irs::Filter::ptr f = std::move(root);
     irs::Optimize(f);
 
@@ -16640,8 +16592,8 @@ TEST(And_test, optimize_all_filters) {
   // multiple `all` filters + term filter
   {
     auto root = std::make_unique<irs::And>();
-    root->add<irs::All>().boost(5.f);
-    root->add<irs::All>().boost(2.f);
+    root->add<irs::All>().SetBoost(5.f);
+    root->add<irs::All>().SetBoost(2.f);
     Append<irs::ByTerm>(*root, kFieldTestField, "test_term");
     irs::Filter::ptr f = std::move(root);
     irs::Optimize(f, {.scored = true});
@@ -16666,19 +16618,18 @@ TEST(And_test, not_boosted) {
     {
       auto& node = neg.include<detail::Boosted>();
       node.docs = {1};
-      node.boost(5);
+      node.SetBoost(5);
     }
     {
       auto& node = neg.exclude<detail::Boosted>();
       node.docs = {5, 6};
-      node.boost(4);
+      node.SetBoost(4);
     }
   }
   tests::PreparedFilter prep{*tests::Optimized(std::move(root), &sort),
                              irs::SubReader::empty(), &sort};
   auto docs = prep.Execute(0);
   const auto& scr = docs->PrepareScore({
-    .scorer = &sort,
     .segment = &irs::SubReader::empty(),
   });
   ASSERT_FALSE(scr.IsDefault());
@@ -16698,7 +16649,7 @@ TEST(Or_test, ctor) {
   ASSERT_TRUE(q.empty());
   ASSERT_EQ(0, q.size());
   ASSERT_EQ(1, q.min_match_count());
-  ASSERT_EQ(irs::kNoBoost, q.Boost());
+  ASSERT_EQ(irs::kNoBoost, q.GetBoost());
 }
 
 TEST(Or_test, add_clear) {
@@ -17154,14 +17105,14 @@ TEST(AndRangeMerge_test, merges_complementary_bounds) {
     *lo.mutable_field_id() = kFieldTestField;
     lo.mutable_options()->range.min = irs::bstring{B("b")};
     lo.mutable_options()->range.min_type = irs::BoundType::Inclusive;
-    lo.boost(2.f);
+    lo.SetBoost(2.f);
   }
   {
     auto& hi = root->add<irs::ByRange>();
     *hi.mutable_field_id() = kFieldTestField;
     hi.mutable_options()->range.max = irs::bstring{B("m")};
     hi.mutable_options()->range.max_type = irs::BoundType::Exclusive;
-    hi.boost(3.f);
+    hi.SetBoost(3.f);
   }
 
   irs::Filter::ptr filter = std::move(root);
@@ -17174,7 +17125,7 @@ TEST(AndRangeMerge_test, merges_complementary_bounds) {
   EXPECT_EQ(irs::BoundType::Inclusive, merged.options().range.min_type);
   EXPECT_EQ(irs::bstring{B("m")}, merged.options().range.max);
   EXPECT_EQ(irs::BoundType::Exclusive, merged.options().range.max_type);
-  EXPECT_EQ(5.f, merged.Boost());
+  EXPECT_EQ(5.f, merged.GetBoost());
 }
 
 TEST(AndRangeMerge_test, max_merge_type_takes_max_boost) {
@@ -17185,21 +17136,21 @@ TEST(AndRangeMerge_test, max_merge_type_takes_max_boost) {
     *lo.mutable_field_id() = kFieldTestField;
     lo.mutable_options()->range.min = irs::bstring{B("b")};
     lo.mutable_options()->range.min_type = irs::BoundType::Inclusive;
-    lo.boost(2.f);
+    lo.SetBoost(2.f);
   }
   {
     auto& hi = root->add<irs::ByRange>();
     *hi.mutable_field_id() = kFieldTestField;
     hi.mutable_options()->range.max = irs::bstring{B("m")};
     hi.mutable_options()->range.max_type = irs::BoundType::Inclusive;
-    hi.boost(3.f);
+    hi.SetBoost(3.f);
   }
 
   irs::Filter::ptr filter = std::move(root);
   irs::Optimize(filter);
 
   ASSERT_EQ(irs::Type<irs::ByRange>::id(), filter->type());
-  EXPECT_EQ(3.f, sdb::basics::downCast<irs::ByRange>(*filter).Boost());
+  EXPECT_EQ(3.f, sdb::basics::downCast<irs::ByRange>(*filter).GetBoost());
 }
 
 TEST(AndRangeMerge_test, noop_merge_type_drops_boost) {
@@ -17210,14 +17161,14 @@ TEST(AndRangeMerge_test, noop_merge_type_drops_boost) {
     *lo.mutable_field_id() = kFieldTestField;
     lo.mutable_options()->range.min = irs::bstring{B("b")};
     lo.mutable_options()->range.min_type = irs::BoundType::Inclusive;
-    lo.boost(2.f);
+    lo.SetBoost(2.f);
   }
   {
     auto& hi = root->add<irs::ByRange>();
     *hi.mutable_field_id() = kFieldTestField;
     hi.mutable_options()->range.max = irs::bstring{B("m")};
     hi.mutable_options()->range.max_type = irs::BoundType::Inclusive;
-    hi.boost(3.f);
+    hi.SetBoost(3.f);
   }
 
   irs::Filter::ptr filter = std::move(root);
@@ -17225,7 +17176,7 @@ TEST(AndRangeMerge_test, noop_merge_type_drops_boost) {
 
   ASSERT_EQ(irs::Type<irs::ByRange>::id(), filter->type());
   EXPECT_EQ(irs::kNoBoost,
-            sdb::basics::downCast<irs::ByRange>(*filter).Boost());
+            sdb::basics::downCast<irs::ByRange>(*filter).GetBoost());
 }
 
 TEST(AndRangeMerge_test, equal_bounds_inclusive_become_term) {
@@ -17395,7 +17346,7 @@ TEST(RangeDegenerate_test, equal_inclusive_bounds_become_term) {
   range->mutable_options()->range.min_type = irs::BoundType::Inclusive;
   range->mutable_options()->range.max = irs::bstring{B("b")};
   range->mutable_options()->range.max_type = irs::BoundType::Inclusive;
-  range->boost(2.f);
+  range->SetBoost(2.f);
 
   irs::Filter::ptr filter = std::move(range);
   irs::Optimize(filter);
@@ -17404,7 +17355,7 @@ TEST(RangeDegenerate_test, equal_inclusive_bounds_become_term) {
   const auto& term = sdb::basics::downCast<irs::ByTerm>(*filter);
   EXPECT_EQ(kFieldTestField, term.field_id());
   EXPECT_EQ(irs::bstring{B("b")}, term.options().term);
-  EXPECT_EQ(2.f, term.Boost());
+  EXPECT_EQ(2.f, term.GetBoost());
 }
 
 TEST(GranularRangeDegenerate_test, equal_inclusive_bounds_become_term) {
@@ -17527,8 +17478,8 @@ TEST(OrAcceptorFusion_test, keeps_range_children) {
 TEST(OrAcceptorFusion_test, scored_requires_uniform_boosts) {
   {
     auto root = std::make_unique<irs::Or>();
-    Append<irs::ByTerm>(*root, kFieldTestField, "kiwi").boost(2.f);
-    Append<irs::ByPrefix>(*root, kFieldTestField, "ax").boost(3.f);
+    Append<irs::ByTerm>(*root, kFieldTestField, "kiwi").SetBoost(2.f);
+    Append<irs::ByPrefix>(*root, kFieldTestField, "ax").SetBoost(3.f);
 
     irs::Filter::ptr filter = std::move(root);
     irs::Optimize(filter, {.scored = true, .fuse_seekable_acceptors = true});
@@ -17537,16 +17488,16 @@ TEST(OrAcceptorFusion_test, scored_requires_uniform_boosts) {
   }
   {
     auto root = std::make_unique<irs::Or>();
-    Append<irs::ByPrefix>(*root, kFieldTestField, "ax").boost(2.f);
-    Append<irs::ByPrefix>(*root, kFieldTestField, "ban").boost(2.f);
-    root->boost(3.f);
+    Append<irs::ByPrefix>(*root, kFieldTestField, "ax").SetBoost(2.f);
+    Append<irs::ByPrefix>(*root, kFieldTestField, "ban").SetBoost(2.f);
+    root->SetBoost(3.f);
 
     irs::Filter::ptr filter = std::move(root);
     irs::Optimize(filter, {.scored = true, .fuse_seekable_acceptors = true});
 
     const auto* fused = FusedOf(filter);
     ASSERT_NE(nullptr, fused);
-    EXPECT_EQ(6.f, fused->Boost());
+    EXPECT_EQ(6.f, fused->GetBoost());
     EXPECT_EQ(2048, fused->options().scored_terms_limit);
   }
 }
@@ -17824,9 +17775,9 @@ TEST(Or_test, optimize_all_scored) {
 TEST(Or_test, optimize_only_all_boosted) {
   tests::sort::Boost sort{};
   auto root = std::make_unique<irs::Or>();
-  root->boost(2);
-  root->add<irs::All>().boost(3);
-  root->add<irs::All>().boost(5);
+  root->SetBoost(2);
+  root->add<irs::All>().SetBoost(3);
+  root->add<irs::All>().SetBoost(5);
 
   irs::Filter::ptr f = std::move(root);
   irs::Optimize(f, {.scored = true});
@@ -17843,19 +17794,18 @@ TEST(Or_test, boosted_not) {
     auto& neg = root->add<irs::Exclusion>();
     auto& node = neg.exclude<detail::Boosted>();
     node.docs = {5, 6};
-    node.boost(4);
+    node.SetBoost(4);
   }
   {
     auto& node = root->add<detail::Boosted>();
     node.docs = {1};
-    node.boost(5);
+    node.SetBoost(5);
   }
   irs::Filter::ptr f = std::move(root);
   irs::Optimize(f, {.scored = true});
   tests::PreparedFilter prep{*f, irs::SubReader::empty(), &sort};
   auto docs = prep.Execute(0);
   const auto& scr = docs->PrepareScore({
-    .scorer = &sort,
     .segment = &irs::SubReader::empty(),
   });
   ASSERT_FALSE(scr.IsDefault());

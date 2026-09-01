@@ -21,12 +21,18 @@
 #include "sdb_metrics.h"
 
 #include <array>
+#include <duckdb/storage/storage_manager.hpp>
+#include <duckdb/storage/write_ahead_log.hpp>
 
 #include "basics/assert.h"
 #include "basics/down_cast.h"
 #include "basics/metrics.h"
-#include "catalog/catalog.h"
+#include "catalog/ddl/catalog.h"
+#include "catalog/ddl/duckdb_catalog.h"
+#include "catalog/entry/duckdb_index_entry.h"
 #include "catalog/inverted_index.h"
+#include "catalog/log/duckdb_global_catalog.h"
+#include "catalog/read/duckdb_catalog_sets.h"
 #include "search/inverted_index_storage.h"
 
 namespace sdb::pg {
@@ -89,31 +95,32 @@ catalog::MaterializedData SystemTableSnapshot<SdbMetrics>::GetTableData() {
     masks.emplace_back(kPerProcessMask);
   }
 
-  auto catalog = _config.CatalogSnapshot();
-  for (const auto& schema : catalog->GetSchemas(GetDatabaseId())) {
-    SDB_ASSERT(schema);
-    for (const auto& index_ptr :
-         catalog->GetIndexes(GetDatabaseId(), schema->GetName())) {
-      SDB_ASSERT(index_ptr);
-      if (index_ptr->GetType() != catalog::ObjectType::InvertedIndex) {
-        continue;
-      }
-      auto storage =
-        basics::downCast<const catalog::InvertedIndex>(*index_ptr).GetData();
-      SDB_ASSERT(storage);
-      const auto stats = storage->GetStats();
-      const Oid relation_id = index_ptr->GetId().id();
-      for (const auto& desc : kIndexMetrics) {
-        values.emplace_back(desc.metric, stats.*desc.field, desc.description,
-                            relation_id);
-        masks.emplace_back(kPerIndexMask);
-      }
+  const auto wal_first = values.size();
+  auto wal = catalog::ClusterCatalogWal();
+  values.emplace_back("catalog_wal_appended_bytes",
+                      wal ? wal->GetTotalWritten() : 0,
+                      "bytes appended to the catalog wal since start");
+  values.emplace_back("catalog_wal_size_on_disk",
+                      wal ? wal->GetStorageManager().GetWALSize() : 0,
+                      "current catalog wal file size in bytes");
+  masks.insert(masks.end(), values.size() - wal_first, kPerProcessMask);
+
+  for (const auto* index :
+       catalog::DatabaseInvertedIndexes(nullptr, GetDatabaseId())) {
+    auto storage = index->GetInvertedData();
+    SDB_ASSERT(storage);
+    const auto stats = storage->GetStats();
+    const Oid relation_id = index->Definition().GetId().id();
+    for (const auto& desc : kIndexMetrics) {
+      values.emplace_back(desc.metric, stats.*desc.field, desc.description,
+                          relation_id);
+      masks.emplace_back(kPerIndexMask);
     }
   }
 
   auto result = CreateColumns<SdbMetrics>(values.size());
   for (size_t row = 0; row < values.size(); ++row) {
-    WriteData(result, values[row], masks[row], row, *_config.CatalogSnapshot());
+    WriteData(result, values[row], masks[row], row, Roles());
   }
   return {std::move(result), values.size()};
 }

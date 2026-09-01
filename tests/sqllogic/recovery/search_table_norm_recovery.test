@@ -1,0 +1,70 @@
+# A norm-featured (BM25) inverted index on a search table survives a crash + WAL
+# replay. The norm column needs per-field encoding options at write time; the
+# recovery re-index path feeds the WAL-replayed rows through the same sink, so it
+# must supply those options too (else the replay aborts on the norm-featured
+# field). After restart the replayed row is matched AND scored, proving its norm
+# was rebuilt.
+
+control substitution on
+
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+CREATE TEXT SEARCH DICTIONARY norm_en(
+    template = 'text', locale = 'en_US.UTF-8', case = 'lower',
+    stemming = false, accent = false, frequency = true, position = true,
+    norm = true);
+
+statement ok
+CREATE TABLE nb(id BIGINT PRIMARY KEY, body TEXT)
+  WITH (storage = 'search', compaction_interval = 0);
+
+statement ok
+CREATE INDEX nb_idx ON nb USING inverted (body norm_en);
+
+statement ok
+RESET sdb_faults;
+
+# --- Fixture: a published baseline, durable on disk. ---
+statement ok
+INSERT INTO nb VALUES (1, 'the quick brown fox'), (2, 'the lazy dog');
+
+statement ok
+VACUUM (REFRESH_TABLE) nb;
+
+# Crash AFTER the WAL commit: (3,'fox runs fast') is fsynced into the WAL but
+# never refresh-published; recovery must re-index it through the norm-featured
+# field (which needs field options).
+statement ok
+SET sdb_faults = 'crash_after_search_wal_commit';
+
+statement error connection closed
+INSERT INTO nb VALUES (3, 'fox runs fast');
+
+# --- restart ---
+connection after_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT indexname FROM pg_indexes WHERE tablename = 'nb' ORDER BY indexname;
+----
+indexname
+nb_idx
+nb_pkey
+
+# The WAL-replayed row (3) is re-indexed into the norm-featured field: it matches
+# 'fox' alongside the published baseline row (1).
+connection after_crash
+query
+SELECT id FROM nb_idx WHERE body @@ 'fox' ORDER BY id;
+----
+id
+1
+3
+
+# Both matches carry a positive BM25 score -> the norm column was rebuilt during
+# replay, not dropped.
+connection after_crash
+query
+SELECT id, BM25(nb_idx.tableoid) > 0 AS has_score
+FROM nb_idx WHERE body @@ 'fox' ORDER BY id;
+----
+id	has_score
+1	t
+3	t

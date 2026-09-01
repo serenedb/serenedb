@@ -292,7 +292,7 @@ statement count 1
 INSERT INTO myasnig (hero) VALUES ('mop_take_home_assignment');
 
 
-statement error cannot drop sequence myasnig_id_seq because other objects depend on it
+statement error (?i)cannot drop .*myasnig_id_seq.* because .*depend on it
 DROP SEQUENCE myasnig_id_seq;
 
 

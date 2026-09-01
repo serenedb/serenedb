@@ -172,7 +172,7 @@ void FromTokenizeListInAnyAllOf(
   // Single-token short-circuit -> ByTerm.
   if (tokens.size() == 1) {
     auto& term = AddMaybeNegated<irs::ByTerm>(parent, ctx, column_info);
-    term.boost(ctx.boost);
+    term.SetBoost(ctx.boost);
     *term.mutable_field_id() =
       PickPerKindFieldId(column_info, duckdb::LogicalTypeId::VARCHAR);
     term.mutable_options()->term.assign(tokens[0]);
@@ -190,7 +190,7 @@ void FromTokenizeListInAnyAllOf(
     min_match_value = std::min<size_t>(*min_match, tokens.size());
   }
   auto& terms = AddMaybeNegated<irs::ByTerms>(parent, ctx, column_info);
-  terms.boost(ctx.boost);
+  terms.SetBoost(ctx.boost);
   *terms.mutable_field_id() =
     PickPerKindFieldId(column_info, duckdb::LogicalTypeId::VARCHAR);
   auto& opts = *terms.mutable_options();
@@ -323,7 +323,7 @@ void FromAnyAllOf(irs::BooleanFilter& parent, const FilterContext& ctx,
   } else {
     group = &AddMaybeNegated<irs::And>(parent, ctx, column_info);
   }
-  group->boost(ctx.boost);
+  group->SetBoost(ctx.boost);
   for (const auto* arg : args) {
     BuildTSQuery(*group, sub_ctx, column_info, *arg);
   }

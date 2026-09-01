@@ -125,7 +125,7 @@ TEST(by_regexp_test, ctor) {
   ASSERT_EQ(irs::Type<irs::ByRegexp>::id(), q.type());
   ASSERT_EQ(irs::ByRegexpOptions{}, q.options());
   ASSERT_FALSE(irs::field_limits::valid(q.field_id()));
-  ASSERT_EQ(irs::kNoBoost, q.Boost());
+  ASSERT_EQ(irs::kNoBoost, q.GetBoost());
 }
 
 TEST(by_regexp_test, equal) {
@@ -152,7 +152,7 @@ TEST(by_regexp_test, boost) {
   {
     irs::score_t boost = 1.5f;
     irs::ByRegexp q = MakeFilter("field", "bar.*");
-    q.boost(boost);
+    q.SetBoost(boost);
     tests::PreparedFilter prepared{*OptimizedMove(std::move(q)),
                                    irs::SubReader::empty(), nullptr, counter};
     ASSERT_EQ(boost, prepared.Query(0)->Boost());
@@ -630,7 +630,7 @@ TEST_P(RegexpFilterTestCase, by_regexp_scoring_complex_with_boost) {
   {
     irs::score_t boost = 2.5f;
     auto q = MakeFilter("prefix", ".*c.*");
-    q.boost(boost);
+    q.SetBoost(boost);
     tests::PreparedFilter prepared{*OptimizedMove(std::move(q)), rdr, nullptr,
                                    counter};
     ASSERT_NE(nullptr, prepared.Query(0));

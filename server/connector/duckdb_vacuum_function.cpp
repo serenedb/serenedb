@@ -28,11 +28,17 @@
 #include <duckdb/main/database.hpp>
 #include <iresearch/utils/index_utils.hpp>
 
+#include "auth/role_closure.h"
 #include "basics/assert.h"
 #include "basics/debugging.h"
-#include "basics/down_cast.h"
-#include "catalog/catalog.h"
-#include "catalog/store/store.h"
+#include "catalog/ddl/catalog.h"
+#include "catalog/ddl/duckdb_catalog.h"
+#include "catalog/entry/duckdb_index_entry.h"
+#include "catalog/entry/duckdb_object_entry.h"
+#include "catalog/entry/duckdb_schema_entry.h"
+#include "catalog/entry/duckdb_table_entry.h"
+#include "catalog/log/store.h"
+#include "catalog/read/duckdb_catalog_sets.h"
 #include "catalog/table_options.h"
 #include "connector/duckdb_client_state.h"
 #include "pg/connection_context.h"
@@ -149,9 +155,9 @@ struct ResolvedName {
   std::string column;
 };
 
-ResolvedName ResolveName(const VacuumBindData& bind, Scope scope,
-                         const ConnectionContext& conn_ctx,
-                         const catalog::Snapshot& snapshot) {
+ResolvedName ResolveName(duckdb::ClientContext& context,
+                         const VacuumBindData& bind, Scope scope,
+                         const ConnectionContext& conn_ctx) {
   ResolvedName out;
   switch (scope) {
     case Scope::Database: {
@@ -198,10 +204,7 @@ ResolvedName ResolveName(const VacuumBindData& bind, Scope scope,
   }
 
   if (out.database.empty()) {
-    auto db = snapshot.GetDatabase(conn_ctx.GetDatabaseId());
-    if (db) {
-      out.database = std::string{db->GetName()};
-    }
+    out.database = catalog::DatabaseName(nullptr, conn_ctx.GetDatabaseId());
   }
   if (out.schema.empty() && (scope == Scope::Table || scope == Scope::Index ||
                              scope == Scope::Column)) {
@@ -210,14 +213,13 @@ ResolvedName ResolveName(const VacuumBindData& bind, Scope scope,
   return out;
 }
 
-ObjectId LookupDatabaseId(const catalog::Snapshot& snapshot,
-                          std::string_view name) {
-  auto db = snapshot.GetDatabase(name);
-  if (!db) {
+ObjectId LookupDatabaseId(std::string_view name) {
+  const auto id = catalog::FindDatabaseId(nullptr, name);
+  if (!id.isSet()) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_DATABASE),
                     ERR_MSG("database \"", name, "\" does not exist"));
   }
-  return db->GetId();
+  return id;
 }
 
 void CompactInvertedStorage(search::InvertedIndexStorage& inverted,
@@ -237,8 +239,8 @@ void CompactInvertedStorage(search::InvertedIndexStorage& inverted,
   inverted.Refresh();
   for (size_t pass = 0; pass < 8; ++pass) {
     bool empty_compaction = false;
-    // The merge encodes against this VACUUM statement's snapshot index, kept
-    // alive by the caller's catalog snapshot for the whole call.
+    // The merge encodes against the index definition the step captured, which
+    // the step holds for the whole call.
     const auto [res, _] =
       inverted.CompactUnsafe(kPolicy, tick, empty_compaction, &index);
     if (!res.ok()) {
@@ -259,62 +261,95 @@ void CompactInvertedStorage(search::InvertedIndexStorage& inverted,
 struct InvertedStep {
   std::shared_ptr<search::InvertedIndexStorage> storage;
   std::shared_ptr<const catalog::Index> index;
-  std::shared_ptr<catalog::Table> sync_table;
+  std::shared_ptr<search::SearchTable> search_data;
 };
 
-void CollectInvertedSteps(const catalog::Snapshot& snapshot,
-                          const std::shared_ptr<catalog::Table>& table,
+// What VACUUM needs of one table, taken off its entry during the walk. Copied
+// out rather than held as a pointer because resolving a table's indexes opens
+// the schema's index set, which must not happen while the walk is holding the
+// relation set.
+struct MaintainTarget {
+  ObjectId id;
+  ObjectId schema_id;
+  std::string schema;
+  std::string name;
+  catalog::TableEngine engine;
+  std::shared_ptr<search::SearchTable> search_data;
+  catalog::Permissions perm;
+};
+
+MaintainTarget MakeMaintainTarget(std::string_view schema,
+                                  const catalog::SereneDBTableEntry& table) {
+  return {.id = catalog::IdOf(table),
+          .schema_id = catalog::ParentIdOf(table),
+          .schema = std::string{schema},
+          .name = std::string{table.name.GetIdentifierName()},
+          .engine = table.GetEngine(),
+          .search_data = table.GetSearchData(),
+          .perm = table.permissions};
+}
+
+// Every base table of `database`, or of one schema of it when `schema` is set.
+std::vector<MaintainTarget> CollectMaintainTargets(
+  duckdb::ClientContext& context, ObjectId database, std::string_view schema) {
+  std::vector<MaintainTarget> out;
+  catalog::VisitTableEntries(
+    context, database,
+    [&](const catalog::SereneDBSchemaEntry& in_schema,
+        const catalog::SereneDBTableEntry& table) {
+      if (schema.empty() || in_schema.name.GetIdentifierName() == schema) {
+        out.push_back(
+          MakeMaintainTarget(in_schema.name.GetIdentifierName(), table));
+      }
+    });
+  return out;
+}
+
+void CollectInvertedSteps(duckdb::ClientContext* context,
+                          const MaintainTarget& table,
                           std::vector<InvertedStep>& steps) {
-  for (auto& index : snapshot.GetIndexesByRelation(table->GetId())) {
-    if (!index || index->GetType() != catalog::ObjectType::InvertedIndex) {
-      continue;
-    }
-    const auto& inverted =
-      basics::downCast<const catalog::InvertedIndex>(*index);
-    if (auto storage = inverted.GetData()) {
+  const auto database_id = catalog::SchemaDatabaseId(context, table.schema_id);
+  for (auto& index :
+       catalog::RelationInvertedIndexes(context, table.schema_id, table.id)) {
+    if (auto storage =
+          catalog::InvertedStorageOf(database_id, index->GetId())) {
       steps.push_back({std::move(storage), index, nullptr});
     }
   }
   // Search tables also commit/consolidate/GC in the background; VACUUM is the
   // synchronous, on-demand path through the same maintenance ops.
-  if (table->GetEngine() == catalog::TableEngine::Search) {
-    steps.push_back({nullptr, nullptr, table});
+  if (table.engine == catalog::TableEngine::Search) {
+    steps.push_back({nullptr, nullptr, table.search_data});
   }
 }
 
-bool MayMaintain(ConnectionContext& conn_ctx, const catalog::Snapshot& snapshot,
-                 const catalog::Object& relation, std::string_view verb) {
-  if (snapshot.ClosureFor(conn_ctx.GetRoleId())
-        .Can(relation, catalog::AclMode::Maintain)) {
+bool MayMaintain(ConnectionContext& conn_ctx, const catalog::Permissions& perm,
+                 std::string_view name, std::string_view verb) {
+  if (auth::ClosureFor(&conn_ctx.GetClientContext(), conn_ctx.GetRoleId())
+        ->Can(duckdb::CatalogType::TABLE_ENTRY, perm,
+              catalog::AclMode::Maintain)) {
     return true;
   }
   conn_ctx.AddNotice(SQL_ERROR_DATA(
-    ERR_CODE(ERRCODE_WARNING), ERR_MSG("permission denied to ", verb, " \"",
-                                       relation.GetName(), "\", skipping it")));
+    ERR_CODE(ERRCODE_WARNING),
+    ERR_MSG("permission denied to ", verb, " \"", name, "\", skipping it")));
   return false;
 }
 
 void DispatchInverted(duckdb::ClientContext& context,
-                      ConnectionContext& conn_ctx,
-                      const catalog::Snapshot& snapshot, Action action,
-                      Scope scope, const ResolvedName& target,
+                      ConnectionContext& conn_ctx, Action action, Scope scope,
+                      const ResolvedName& target,
                       pg::ProgressMetrics* progress) {
   std::vector<InvertedStep> steps;
 
   const std::string_view verb =
     action == Action::Refresh ? "refresh" : "compact";
-  auto walk_schema = [&](ObjectId db_id, std::string_view schema) {
-    for (auto& table : snapshot.GetTables(db_id, schema)) {
-      if (!MayMaintain(conn_ctx, snapshot, *table, verb)) {
+  auto walk = [&](ObjectId db_id, std::string_view schema) {
+    for (const auto& table : CollectMaintainTargets(context, db_id, schema)) {
+      if (!MayMaintain(conn_ctx, table.perm, table.name, verb)) {
         continue;
       }
-      CollectInvertedSteps(snapshot, table, steps);
-    }
-  };
-
-  auto walk_database = [&](ObjectId db_id) {
-    for (auto& schema : snapshot.GetSchemas(db_id)) {
-      walk_schema(db_id, schema->GetName());
+      CollectInvertedSteps(&context, table, steps);
     }
   };
 
@@ -323,22 +358,27 @@ void DispatchInverted(duckdb::ClientContext& context,
       // No refresh/compact at column granularity.
       break;
     case Scope::Index: {
-      auto db_id = LookupDatabaseId(snapshot, target.database);
+      auto db_id = LookupDatabaseId(target.database);
       bool found = false;
-      for (auto& index : snapshot.GetIndexes(db_id, target.schema)) {
-        if (index->GetType() != catalog::ObjectType::InvertedIndex ||
+      const auto schema_id =
+        catalog::FindSchemaId(nullptr, db_id, target.schema);
+      for (const auto* entry :
+           catalog::DatabaseInvertedIndexes(nullptr, db_id)) {
+        auto index = entry->DefinitionPtr();
+        if (index->GetParentId() != schema_id ||
             index->GetName() != target.object) {
           continue;
         }
         // An index has no owner of its own; maintenance rides on its
         // relation (a table, or a view for view-backed indexes).
-        auto relation = snapshot.GetObject(index->GetRelationId());
-        if (relation && !MayMaintain(conn_ctx, snapshot, *relation, verb)) {
+        auto relation =
+          catalog::LookupEntryById(context, db_id, index->GetRelationId());
+        if (relation &&
+            !MayMaintain(conn_ctx, relation->permissions,
+                         relation->name.GetIdentifierName(), verb)) {
           return;
         }
-        const auto& inverted =
-          basics::downCast<const catalog::InvertedIndex>(*index);
-        auto storage = inverted.GetData();
+        auto storage = entry->GetInvertedData();
         if (!storage) {
           continue;
         }
@@ -353,34 +393,42 @@ void DispatchInverted(duckdb::ClientContext& context,
       }
     } break;
     case Scope::Table: {
-      auto db_id = LookupDatabaseId(snapshot, target.database);
-      auto table = snapshot.GetTable(catalog::NoAccessCheck(), db_id,
-                                     target.schema, target.object);
-      if (!table) {
+      auto db_id = LookupDatabaseId(target.database);
+      const auto* entry =
+        catalog::FindTableEntry(&context, db_id, target.schema, target.object);
+      if (entry == nullptr) {
         THROW_SQL_ERROR(
           ERR_CODE(ERRCODE_UNDEFINED_TABLE),
           ERR_MSG("relation \"", target.object, "\" does not exist"));
       }
-      if (!MayMaintain(conn_ctx, snapshot, *table, verb)) {
+      const auto table = MakeMaintainTarget(target.schema, *entry);
+      if (!MayMaintain(conn_ctx, table.perm, table.name, verb)) {
         return;
       }
-      CollectInvertedSteps(snapshot, table, steps);
+      CollectInvertedSteps(&context, table, steps);
     } break;
     case Scope::Schema: {
-      auto db_id = LookupDatabaseId(snapshot, target.database);
-      if (!snapshot.GetSchema(db_id, target.schema)) {
+      auto db_id = LookupDatabaseId(target.database);
+      if (!catalog::FindSchema(nullptr, db_id, target.schema)) {
         THROW_SQL_ERROR(
           ERR_CODE(ERRCODE_UNDEFINED_SCHEMA),
           ERR_MSG("schema \"", target.schema, "\" does not exist"));
       }
-      walk_schema(db_id, target.schema);
+      walk(db_id, target.schema);
     } break;
     case Scope::Database: {
-      walk_database(LookupDatabaseId(snapshot, target.database));
+      walk(LookupDatabaseId(target.database), {});
     } break;
     case Scope::All: {
-      for (auto& db : snapshot.GetDatabases()) {
-        walk_database(db->GetId());
+      // Ids first: a walk resolves the database it is for, and doing that from
+      // inside the visit re-enters the very set the visit holds.
+      std::vector<ObjectId> ids;
+      catalog::VisitDatabases(nullptr,
+                              [&](const catalog::SereneDBDatabaseEntry& db) {
+                                ids.push_back(catalog::IdOf(db));
+                              });
+      for (const auto id : ids) {
+        walk(id, {});
       }
       break;
     }
@@ -397,8 +445,7 @@ void DispatchInverted(duckdb::ClientContext& context,
   for (auto& step : steps) {
     context.InterruptCheck();
     if (step.index) {
-      const auto& inverted =
-        basics::downCast<const catalog::InvertedIndex>(*step.index);
+      const auto& inverted = catalog::InvertedInfo(*step.index);
       if (action == Action::Refresh) {
         irs::ProgressReportCallback report;
         if (progress) {
@@ -427,7 +474,7 @@ void DispatchInverted(duckdb::ClientContext& context,
         pg::ProgressMetrics::Add(progress->items_processed, 1);
         SDB_WAIT_ON_FAILURE("pause_vacuum_mid_walk");
       }
-    } else if (const auto& search = step.sync_table->GetData()) {
+    } else if (const auto& search = step.search_data) {
       if (action == Action::Refresh) {
         search->VacuumRefresh();  // commit pending inserts + reclaim files
       } else {
@@ -441,83 +488,72 @@ void DispatchInverted(duckdb::ClientContext& context,
 // serenedb tables in scope, by running DuckDB's `VACUUM ANALYZE` on each store
 // table. The user names serenedb tables; the hidden store is never exposed.
 void DispatchRecomputeStats(duckdb::ClientContext& context,
-                            ConnectionContext& conn_ctx,
-                            const catalog::Snapshot& snapshot, Scope scope,
+                            ConnectionContext& conn_ctx, Scope scope,
                             const ResolvedName& target,
                             pg::ProgressMetrics* progress) {
   struct AnalyzeTarget {
     std::string database;
     std::string schema;
-    std::shared_ptr<catalog::Table> table;
+    std::string table;
+    ObjectId relation;
     std::string column;
   };
   std::vector<AnalyzeTarget> targets;
-  auto add = [&](std::string_view db_name, std::string_view schema_name,
-                 std::shared_ptr<catalog::Table> table,
+  auto add = [&](std::string_view db_name, const MaintainTarget& table,
                  std::string_view column = {}) {
-    if (table->GetEngine() != catalog::TableEngine::Transactional ||
-        table->Tombstoned()) {
+    if (table.engine != catalog::TableEngine::Transactional) {
       return;
     }
-    if (!MayMaintain(conn_ctx, snapshot, *table, "analyze")) {
+    if (!MayMaintain(conn_ctx, table.perm, table.name, "analyze")) {
       return;
     }
-    targets.push_back({std::string{db_name}, std::string{schema_name},
-                       std::move(table), std::string{column}});
+    targets.push_back({std::string{db_name}, table.schema,
+                       std::string{table.name}, table.id, std::string{column}});
   };
-  auto walk_schema = [&](ObjectId db_id, std::string_view db_name,
-                         std::string_view schema) {
-    for (auto& table : snapshot.GetTables(db_id, schema)) {
-      add(db_name, schema, table);
-    }
-  };
-  auto walk_database = [&](ObjectId db_id, std::string_view db_name) {
-    for (auto& schema : snapshot.GetSchemas(db_id)) {
-      walk_schema(db_id, db_name, schema->GetName());
+  auto walk = [&](ObjectId db_id, std::string_view db_name,
+                  std::string_view schema) {
+    for (const auto& table : CollectMaintainTargets(context, db_id, schema)) {
+      add(db_name, table);
     }
   };
 
   switch (scope) {
-    case Scope::Table: {
-      auto db_id = LookupDatabaseId(snapshot, target.database);
-      auto table = snapshot.GetTable(catalog::NoAccessCheck(), db_id,
-                                     target.schema, target.object);
-      if (!table) {
+    case Scope::Table:
+    case Scope::Column: {
+      auto db_id = LookupDatabaseId(target.database);
+      const auto* entry =
+        catalog::FindTableEntry(&context, db_id, target.schema, target.object);
+      if (entry == nullptr) {
         THROW_SQL_ERROR(
           ERR_CODE(ERRCODE_UNDEFINED_TABLE),
           ERR_MSG("relation \"", target.object, "\" does not exist"));
       }
-      add(target.database, target.schema, std::move(table));
+      add(target.database, MakeMaintainTarget(target.schema, *entry),
+          target.column);
     } break;
     case Scope::Schema: {
-      auto db_id = LookupDatabaseId(snapshot, target.database);
-      if (!snapshot.GetSchema(db_id, target.schema)) {
+      auto db_id = LookupDatabaseId(target.database);
+      if (!catalog::FindSchema(nullptr, db_id, target.schema)) {
         THROW_SQL_ERROR(
           ERR_CODE(ERRCODE_UNDEFINED_SCHEMA),
           ERR_MSG("schema \"", target.schema, "\" does not exist"));
       }
-      walk_schema(db_id, target.database, target.schema);
+      walk(db_id, target.database, target.schema);
     } break;
     case Scope::Database:
-      walk_database(LookupDatabaseId(snapshot, target.database),
-                    target.database);
+      walk(LookupDatabaseId(target.database), target.database, {});
       break;
-    case Scope::All:
-      for (auto& db : snapshot.GetDatabases()) {
-        walk_database(db->GetId(), db->GetName());
+    case Scope::All: {
+      std::vector<std::pair<ObjectId, std::string>> ids;
+      catalog::VisitDatabases(
+        nullptr, [&](const catalog::SereneDBDatabaseEntry& db) {
+          ids.emplace_back(catalog::IdOf(db), db.name.GetIdentifierName());
+        });
+      for (const auto& [id, name] : ids) {
+        walk(id, name, {});
       }
       break;
-    case Scope::Column: {
-      auto db_id = LookupDatabaseId(snapshot, target.database);
-      auto table = snapshot.GetTable(catalog::NoAccessCheck(), db_id,
-                                     target.schema, target.object);
-      if (!table) {
-        THROW_SQL_ERROR(
-          ERR_CODE(ERRCODE_UNDEFINED_TABLE),
-          ERR_MSG("relation \"", target.object, "\" does not exist"));
-      }
-      add(target.database, target.schema, std::move(table), target.column);
-    } break;
+    }
     case Scope::Index:
       // No recompute_stats_index verb in ParseOption's table.
       break;
@@ -533,19 +569,18 @@ void DispatchRecomputeStats(duckdb::ClientContext& context,
     context.InterruptCheck();
     if (progress) {
       pg::ProgressMetrics::Set(progress->current_relid,
-                               static_cast<int64_t>(t.table->GetId().id()));
+                               static_cast<int64_t>(t.relation.id()));
     }
-    auto store_name =
-      catalog::StoreTableName(t.database, t.schema, t.table->GetName());
-    auto quoted = absl::StrReplaceAll(store_name, {{"\"", "\"\""}});
+    auto quoted = absl::StrReplaceAll(t.table, {{"\"", "\"\""}});
     std::string column_clause;
     if (!t.column.empty()) {
       column_clause = absl::StrCat(
         " (\"", absl::StrReplaceAll(t.column, {{"\"", "\"\""}}), "\")");
     }
-    auto result =
-      conn.Query(absl::StrCat("VACUUM ANALYZE \"", catalog::kStoreDatabaseName,
-                              "\".main.\"", quoted, "\"", column_clause));
+    auto result = conn.Query(absl::StrCat(
+      "VACUUM ANALYZE \"", absl::StrReplaceAll(t.database, {{"\"", "\"\""}}),
+      "\".\"", absl::StrReplaceAll(t.schema, {{"\"", "\"\""}}), "\".\"", quoted,
+      "\"", column_clause));
     if (result->HasError()) {
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_INTERNAL_ERROR),
                       ERR_MSG("recompute_stats failed: ", result->GetError()));
@@ -562,7 +597,6 @@ void VacuumExecute(duckdb::ClientContext& context,
                    duckdb::DataChunk& output) {
   auto& bind_data = input.bind_data->Cast<VacuumBindData>();
   auto& conn_ctx = GetSereneDBContext(context);
-  auto snapshot = conn_ctx.CatalogSnapshot();
 
   auto verb = ParseOption(bind_data.option);
   if (!verb) {
@@ -583,19 +617,19 @@ void VacuumExecute(duckdb::ClientContext& context,
       ERR_MSG("VACUUM (", bind_data.option, ") does not take an argument"));
   }
 
-  auto target = ResolveName(bind_data, verb->scope, conn_ctx, *snapshot);
+  auto target = ResolveName(context, bind_data, verb->scope, conn_ctx);
 
   pg::ProgressMetrics* progress = nullptr;
   if (auto client_state = context.registered_state->Get<SereneDBClientState>(
         kSereneDBClientStateKey)) {
     const auto datid = verb->scope == Scope::All
                          ? conn_ctx.GetDatabaseId()
-                         : LookupDatabaseId(*snapshot, target.database);
+                         : LookupDatabaseId(target.database);
     ObjectId relid;
     if (verb->scope == Scope::Table || verb->scope == Scope::Column) {
-      if (auto table = snapshot->GetTable(catalog::NoAccessCheck(), datid,
-                                          target.schema, target.object)) {
-        relid = table->GetId();
+      if (const auto* table = catalog::FindTableEntry(
+            &context, datid, target.schema, target.object)) {
+        relid = catalog::IdOf(*table);
       }
     }
     auto& metrics = client_state->Progress();
@@ -613,12 +647,11 @@ void VacuumExecute(duckdb::ClientContext& context,
   switch (verb->action) {
     case Action::Refresh:
     case Action::Compact:
-      DispatchInverted(context, conn_ctx, *snapshot, verb->action, verb->scope,
-                       target, progress);
+      DispatchInverted(context, conn_ctx, verb->action, verb->scope, target,
+                       progress);
       break;
     case Action::RecomputeStats:
-      DispatchRecomputeStats(context, conn_ctx, *snapshot, verb->scope, target,
-                             progress);
+      DispatchRecomputeStats(context, conn_ctx, verb->scope, target, progress);
       break;
   }
 

@@ -21,7 +21,9 @@
 #include "pg/pg_catalog/pg_db_role_setting.h"
 
 #include "app/app_server.h"
-#include "catalog/catalog.h"
+#include "basics/down_cast.h"
+#include "catalog/ddl/catalog.h"
+#include "catalog/read/duckdb_catalog_sets.h"
 #include "catalog/role.h"
 #include "pg/pg_catalog/fwd.h"
 
@@ -29,25 +31,25 @@ namespace sdb::pg {
 
 template<>
 catalog::MaterializedData SystemTableSnapshot<PgDbRoleSetting>::GetTableData() {
-  auto catalog = _config.CatalogSnapshot();
-
-  auto roles = catalog->GetRoles();
   std::vector<PgDbRoleSetting> values;
-  for (const auto& role : roles) {
-    auto config = role->Config();
-    if (config.empty()) {
-      continue;  // PG inserts a pg_db_role_setting row only when a GUC is set.
-    }
-    values.push_back(PgDbRoleSetting{
-      .setdatabase = 0,  // role-wide (all databases) -> pg_roles.rolconfig join
-      .setrole = role->GetId().id(),
-      .setconfig = config,
+  catalog::VisitRoles(
+    &_config.GetClientContext(), [&](const catalog::Role& role) {
+      auto config = role.Config();
+      if (config.empty()) {
+        // PG inserts a pg_db_role_setting row only when a GUC is set.
+        return;
+      }
+      values.push_back(PgDbRoleSetting{
+        // Role-wide (all databases) -> the pg_roles.rolconfig join.
+        .setdatabase = 0,
+        .setrole = role.GetId().id(),
+        .setconfig = config,
+      });
     });
-  }
 
   auto result = CreateColumns<PgDbRoleSetting>(values.size());
   for (size_t row = 0; row < values.size(); ++row) {
-    WriteData(result, values[row], 0, row, *_config.GetCatalogSnapshot());
+    WriteData(result, values[row], 0, row, Roles());
   }
   return {std::move(result), values.size()};
 }

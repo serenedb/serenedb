@@ -1,0 +1,385 @@
+control substitution on
+
+# ----------------------------------------------------------------------
+# Two transactions writing the same catalog object: the second one is
+# refused with 40001.
+#
+# This is DuckDB's answer for its own catalog, and it is now ours,
+# because it is the same mechanism: a SereneDB object is a CatalogEntry
+# in a CatalogSet, its entry is written by the statement that changes it,
+# and CatalogSet refuses a second writer while the first is pending.
+#
+# It used to merge instead. That merge was never DuckDB's behaviour and
+# never PostgreSQL's -- PG gets both writers to land by blocking on an
+# ACCESS EXCLUSIVE lock so they never overlap at all. Ours came out of
+# the old clone-and-replay design, where each mutation re-resolved its
+# object by id and re-applied one field to it, so two writers touching
+# different fields composed by accident. Keeping it would have meant
+# keeping a second catalog mechanism beside DuckDB's, which is the thing
+# the port exists to remove.
+#
+# 40001 is retryable and is what PG raises when a snapshot-isolated
+# transaction's target was changed under it. Drivers handle it.
+#
+# Every case pairs the in-memory outcome with the same assertion after a
+# crash: the loser must be absent from the log as well as from memory,
+# and the winner must be in both.
+#
+# Hosted under recovery/ because it needs a serened of its own to crash.
+# ----------------------------------------------------------------------
+
+statement ok
+CREATE ROLE ccso_grantee
+
+
+statement ok
+CREATE ROLE ccso_owner
+
+
+# ----------------------------------------------------------------------
+# GRANT holds the entry; a concurrent OWNER TO on the same table is
+# refused. The transaction that got there first commits whole.
+# ----------------------------------------------------------------------
+
+statement ok
+CREATE TABLE ccso_t(a INTEGER)
+
+
+connection s1
+statement ok
+BEGIN
+
+
+connection s1
+statement ok
+GRANT SELECT ON ccso_t TO ccso_grantee
+
+
+connection s2
+statement error
+ALTER TABLE ccso_t OWNER TO ccso_owner
+----
+db error: ERROR: could not serialize access due to concurrent DDL on the same object
+
+
+connection s1
+statement ok
+COMMIT
+
+
+query
+SELECT pg_get_userbyid(relowner) AS owner,
+       array_to_string(relacl, '|') AS acl
+FROM pg_class WHERE relname = 'ccso_t'
+----
+owner	acl
+postgres	postgres=arwdDxtm/postgres|ccso_grantee=r/postgres
+
+
+# Once the holder has committed the same statement succeeds: the refusal
+# is about overlap, not about the pair of statements. The retry is the
+# ordinary sequential transfer -- the old owner loses its implicit bundle
+# and the grantor of the surviving row is rewritten -- which is what
+# any/pg/rbac/xog_reown_old_owner_loses_implicit.test pins against real
+# postgres. The merge used to produce a third answer neither of them gives.
+statement ok
+ALTER TABLE ccso_t OWNER TO ccso_owner
+
+
+query
+SELECT pg_get_userbyid(relowner) AS owner,
+       array_to_string(relacl, '|') AS acl
+FROM pg_class WHERE relname = 'ccso_t'
+----
+owner	acl
+ccso_owner	ccso_grantee=r/ccso_owner
+
+
+# ----------------------------------------------------------------------
+# The mirror: OWNER TO holds the entry and the GRANT is refused.
+# ----------------------------------------------------------------------
+
+statement ok
+CREATE TABLE ccso_u(a INTEGER)
+
+
+connection s3
+statement ok
+BEGIN
+
+
+connection s3
+statement ok
+ALTER TABLE ccso_u OWNER TO ccso_owner
+
+
+connection s4
+statement error
+GRANT SELECT ON ccso_u TO ccso_grantee
+----
+db error: ERROR: could not serialize access due to concurrent DDL on the same object
+
+
+connection s3
+statement ok
+COMMIT
+
+
+query
+SELECT pg_get_userbyid(relowner) AS owner FROM pg_class
+WHERE relname = 'ccso_u'
+----
+owner
+ccso_owner
+
+
+# ----------------------------------------------------------------------
+# Not just permissions: a COMMENT holds the entry against a RENAME.
+# ----------------------------------------------------------------------
+
+statement ok
+CREATE TABLE ccso_v(a INTEGER)
+
+
+connection s5
+statement ok
+BEGIN
+
+
+connection s5
+statement ok
+COMMENT ON TABLE ccso_v IS 'kept'
+
+
+connection s6
+statement error
+ALTER TABLE ccso_v RENAME TO ccso_v2
+----
+db error: ERROR: could not serialize access due to concurrent DDL on the same object
+
+
+connection s5
+statement ok
+COMMIT
+
+
+query
+SELECT comment FROM duckdb_tables() WHERE table_name = 'ccso_v'
+----
+comment
+kept
+
+
+# A holder that rolls back releases the object, and the refused statement
+# succeeds on retry -- which is what makes 40001 the right answer.
+
+statement ok
+CREATE TABLE ccso_r(a INTEGER)
+
+
+connection s9
+statement ok
+BEGIN
+
+
+connection s9
+statement ok
+COMMENT ON TABLE ccso_r IS 'discarded'
+
+
+connection s10
+statement error
+ALTER TABLE ccso_r RENAME TO ccso_r2
+----
+db error: ERROR: could not serialize access due to concurrent DDL on the same object
+
+
+connection s9
+statement ok
+ROLLBACK
+
+
+connection s10
+statement ok
+ALTER TABLE ccso_r RENAME TO ccso_r2
+
+
+query
+SELECT comment IS NULL AS no_comment FROM duckdb_tables()
+WHERE table_name = 'ccso_r2'
+----
+no_comment
+t
+
+
+# ----------------------------------------------------------------------
+# Two RENAMEs of one table. This is the pair the old design got outright
+# wrong: both succeeded, and the second renamed the table away from a
+# name its own statement never asked about.
+# ----------------------------------------------------------------------
+
+statement ok
+CREATE TABLE ccso_n(a INTEGER)
+
+
+connection s11
+statement ok
+BEGIN
+
+
+connection s11
+statement ok
+ALTER TABLE ccso_n RENAME TO ccso_n1
+
+
+connection s12
+statement error
+ALTER TABLE ccso_n RENAME TO ccso_n2
+----
+db error: ERROR: could not serialize access due to concurrent DDL on the same object
+
+
+connection s11
+statement ok
+COMMIT
+
+
+query
+SELECT relname FROM pg_class WHERE relname LIKE 'ccso_n%' ORDER BY 1
+----
+relname
+ccso_n1
+
+
+# ----------------------------------------------------------------------
+# Unrelated objects never conflict, which is what the DDL throughput of
+# the whole suite rests on.
+# ----------------------------------------------------------------------
+
+statement ok
+CREATE TABLE ccso_a(a INTEGER)
+
+
+statement ok
+CREATE TABLE ccso_b(a INTEGER)
+
+
+connection s7
+statement ok
+BEGIN
+
+
+connection s7
+statement ok
+GRANT SELECT ON ccso_a TO ccso_grantee
+
+
+connection s8
+statement ok
+ALTER TABLE ccso_b OWNER TO ccso_owner
+
+
+connection s7
+statement ok
+COMMIT
+
+
+query
+SELECT relname, pg_get_userbyid(relowner) AS owner
+FROM pg_class WHERE relname IN ('ccso_a', 'ccso_b') ORDER BY relname
+----
+relname	owner
+ccso_a	postgres
+ccso_b	ccso_owner
+
+
+query
+SELECT array_to_string(relacl, '|') AS acl
+FROM pg_class WHERE relname = 'ccso_a'
+----
+acl
+postgres=arwdDxtm/postgres|ccso_grantee=r/postgres
+
+
+# ----------------------------------------------------------------------
+# Restart. Every outcome above is asserted again on the recovered
+# catalog: a refused statement must have left nothing in the log either.
+# ----------------------------------------------------------------------
+
+statement ok
+SET sdb_faults = 'crash_on_packet'
+
+
+statement error connection closed
+SELECT 1
+
+
+connection after_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT 1
+----
+?column?
+1
+
+
+connection after_crash
+query
+SELECT pg_get_userbyid(relowner) AS owner,
+       array_to_string(relacl, '|') AS acl
+FROM pg_class WHERE relname = 'ccso_t'
+----
+owner	acl
+ccso_owner	ccso_grantee=r/ccso_owner
+
+
+connection after_crash
+query
+SELECT pg_get_userbyid(relowner) AS owner FROM pg_class
+WHERE relname = 'ccso_u'
+----
+owner
+ccso_owner
+
+
+connection after_crash
+query
+SELECT comment FROM duckdb_tables() WHERE table_name = 'ccso_v'
+----
+comment
+kept
+
+
+connection after_crash
+query
+SELECT comment IS NULL AS no_comment FROM duckdb_tables()
+WHERE table_name = 'ccso_r2'
+----
+no_comment
+t
+
+
+connection after_crash
+query
+SELECT relname FROM pg_class WHERE relname LIKE 'ccso_n%' ORDER BY 1
+----
+relname
+ccso_n1
+
+
+connection after_crash
+query
+SELECT relname, pg_get_userbyid(relowner) AS owner
+FROM pg_class WHERE relname IN ('ccso_a', 'ccso_b') ORDER BY relname
+----
+relname	owner
+ccso_a	postgres
+ccso_b	ccso_owner
+
+
+connection after_crash
+query
+SELECT array_to_string(relacl, '|') AS acl
+FROM pg_class WHERE relname = 'ccso_a'
+----
+acl
+postgres=arwdDxtm/postgres|ccso_grantee=r/postgres

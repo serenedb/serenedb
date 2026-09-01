@@ -23,7 +23,6 @@
 #include <cmath>
 
 #include "basics/assert.h"
-#include "iresearch/analysis/token_attributes.hpp"
 #include "iresearch/search/collectors.hpp"
 #include "iresearch/search/volatile_boost_score.hpp"
 
@@ -42,16 +41,7 @@ void IDF::collect(byte_type* stats_buf, const FieldCollector* field,
 }
 
 ScoreFunction IDF::PrepareScorer(const ScoreContext& ctx) const {
-  const auto* stats = stats_cast(ctx.stats);
-  const auto value = ctx.boost * stats->value;
-
-  const auto* volatile_boost = irs::get<BoostBlockAttr>(ctx.doc_attrs);
-
-  if (!volatile_boost) {
-    return ScoreFunction::Constant(value);
-  }
-
-  return ScoreFunction::Make<VolatileBoostScore>(volatile_boost->value, value);
+  return MakeVolatileBoostScore(ctx, ctx.boost * stats_cast(ctx.stats)->value);
 }
 
 }  // namespace irs

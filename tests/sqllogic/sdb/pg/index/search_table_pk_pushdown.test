@@ -1,0 +1,278 @@
+# Search-table PRIMARY KEY term pushdown. A search table's PK columns are
+# term-indexed in the table's own iresearch store, so PK predicates (=, IN,
+# range, composite, partial-PK) push down as iresearch term filters rather than
+# a full columnstore scan. Covers BIGINT / VARCHAR / composite PKs across two
+# segments, non-PK fallback, and delete-then-reinsert. Search tables are
+# commit-time-only, so results are observed after VACUUM (REFRESH_TABLE). The
+# EXPLAIN blocks at the end pin the plan shape (PK -> no Column Filter; non-PK ->
+# a columnstore Column Filter).
+
+statement ok
+CREATE TABLE tb (pk BIGINT PRIMARY KEY, x BIGINT, s TEXT)
+  WITH (storage='search', compaction_interval=0);
+
+statement ok
+INSERT INTO tb SELECT i, i * 10, 'r' || i FROM generate_series(1, 2000) g(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) tb;
+
+statement ok
+INSERT INTO tb SELECT i, i * 10, 'r' || i FROM generate_series(2001, 4000) g(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) tb;
+
+query
+SELECT pk, x, s FROM tb WHERE pk = 3333;
+----
+pk	x	s
+3333	33330	r3333
+
+query
+SELECT pk FROM tb WHERE pk IN (1, 2000, 2001, 4000) ORDER BY pk;
+----
+pk
+1
+2000
+2001
+4000
+
+query
+SELECT count(*) AS c FROM tb WHERE pk > 3990;
+----
+c
+10
+
+query
+SELECT count(*) AS c FROM tb WHERE pk BETWEEN 100 AND 199;
+----
+c
+100
+
+# Non-PK column is not term-indexed: correct rows, but via a columnstore filter.
+query
+SELECT count(*) AS c FROM tb WHERE x = 33330;
+----
+c
+1
+
+# VARCHAR PK.
+statement ok
+CREATE TABLE tv (pk VARCHAR PRIMARY KEY, n BIGINT)
+  WITH (storage='search', compaction_interval=0);
+
+statement ok
+INSERT INTO tv SELECT 'k' || i, i FROM generate_series(1, 1500) g(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) tv;
+
+statement ok
+INSERT INTO tv SELECT 'k' || i, i FROM generate_series(1501, 3000) g(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) tv;
+
+query
+SELECT pk, n FROM tv WHERE pk = 'k2500';
+----
+pk	n
+k2500	2500
+
+query
+SELECT count(*) AS c FROM tv WHERE pk IN ('k1', 'k1500', 'k1501', 'k3000');
+----
+c
+4
+
+# Composite PK (a, b): a = i % 10, b = i (so (a, b) is unique).
+statement ok
+CREATE TABLE tc (a BIGINT, b BIGINT, s TEXT, PRIMARY KEY (a, b))
+  WITH (storage='search', compaction_interval=0);
+
+statement ok
+INSERT INTO tc SELECT i % 10, i, 's' || i FROM generate_series(1, 2000) g(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) tc;
+
+query
+SELECT a, b, s FROM tc WHERE a = 3 AND b = 123;
+----
+a	b	s
+3	123	s123
+
+# Partial PK (leading column only) returns the right rows.
+query
+SELECT count(*) AS c FROM tc WHERE a = 7;
+----
+c
+200
+
+# Delete then reinsert the same PK: resolves to the live row.
+statement ok
+DELETE FROM tb WHERE pk = 3333;
+
+statement ok
+VACUUM (REFRESH_TABLE) tb;
+
+query
+SELECT count(*) AS c FROM tb WHERE pk = 3333;
+----
+c
+0
+
+statement ok
+INSERT INTO tb VALUES (3333, 999, 'new');
+
+statement ok
+VACUUM (REFRESH_TABLE) tb;
+
+query
+SELECT pk, x, s FROM tb WHERE pk = 3333;
+----
+pk	x	s
+3333	999	new
+
+# Plan shape: a PK equality is claimed as an iresearch term filter, so the
+# IRESEARCH_SCAN carries no "Column Filter" line; a non-PK equality falls back
+# to a columnstore Column Filter.
+statement ok
+CREATE TABLE te (pk BIGINT PRIMARY KEY, x BIGINT)
+  WITH (storage='search', compaction_interval=0);
+
+statement ok
+INSERT INTO te SELECT i, i * 10 FROM generate_series(1, 10) g(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) te;
+
+query
+EXPLAIN SELECT pk, x FROM te WHERE pk = 5;
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ─╮
+│ Index: te        │
+│ Lookup: search   │
+│ Projections: pk, │
+│              x   │
+│ ~2 rows          │
+╰──────────────────╯
+
+query
+EXPLAIN SELECT pk, x FROM te WHERE x = 50;
+----
+QUERY PLAN
+╭─ PROJECTION ──────────╮
+│ Projections: pk, x    │
+│ ~1 row                │
+╰───────────┬───────────╯
+╭─ IRESEARCH_SCAN ──────╮
+│ Index: te             │
+│ Lookup: search        │
+│ Projections: x, pk    │
+│ Column Filter: x = 50 │
+│ ~1 row                │
+╰───────────────────────╯
+
+# Composite PK (a, b) with a non-PK column s. Both key columns of a full PK
+# predicate are claimed as term filters (no Column Filter); a partial predicate
+# on the leading key column is also claimed; a predicate mixing a key column
+# with a non-key column claims only the key -- the non-key stays a columnstore
+# Column Filter.
+statement ok
+CREATE TABLE tec (a BIGINT, b BIGINT, s TEXT, PRIMARY KEY (a, b))
+  WITH (storage='search', compaction_interval=0);
+
+statement ok
+INSERT INTO tec SELECT i, i * 100, 't' || i FROM generate_series(1, 10) g(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) tec;
+
+# Full composite PK: both a and b claimed -> no Column Filter.
+query
+EXPLAIN SELECT a, b, s FROM tec WHERE a = 3 AND b = 300;
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ─╮
+│ Index: tec       │
+│ Lookup: search   │
+│ Projections: a,  │
+│              b,  │
+│              s   │
+│ ~2 rows          │
+╰──────────────────╯
+
+# Partial composite PK (leading column only): claimed -> no Column Filter.
+query
+EXPLAIN SELECT a, b, s FROM tec WHERE a = 3;
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ─╮
+│ Index: tec       │
+│ Lookup: search   │
+│ Projections: a,  │
+│              b,  │
+│              s   │
+│ ~2 rows          │
+╰──────────────────╯
+
+# Mixed: key column a claimed as a term filter; non-key column s stays a
+# columnstore Column Filter (only s appears).
+query
+EXPLAIN SELECT a, b FROM tec WHERE a = 3 AND s = 't3';
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ────────╮
+│ Index: tec              │
+│ Lookup: search          │
+│ Projections: a, b       │
+│ Column Filter: s = 't3' │
+│ ~1 row                  │
+╰─────────────────────────╯
+
+# Disjunction over PK columns returns the union of matching rows.
+query
+SELECT a, b, s FROM tec WHERE a = 3 OR b = 500 ORDER BY a;
+----
+a	b	s
+3	300	t3
+5	500	t5
+
+# A disjunction claims down only when every branch is a term-indexed column, so
+# an OR over two PK columns is fully claimed (no Column Filter, no FILTER node).
+query
+EXPLAIN SELECT a, b, s FROM tec WHERE a = 3 OR b = 300;
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ─╮
+│ Index: tec       │
+│ Lookup: search   │
+│ Projections: a,  │
+│              b,  │
+│              s   │
+│ ~2 rows          │
+╰──────────────────╯
+
+# An OR mixing a key column with a non-key column cannot be split, so the whole
+# disjunction stays a FILTER over a full scan (nothing claimed).
+query
+EXPLAIN SELECT a, b, s FROM tec WHERE a = 3 OR s = 't5';
+----
+QUERY PLAN
+╭─ PROJECTION ──────────────────────╮
+│ Projections: a, b, s              │
+│ ~2 rows                           │
+╰─────────────────┬─────────────────╯
+╭─ FILTER ────────┴─────────────────╮
+│ Expression: (a = 3) OR (s = 't5') │
+│ ~2 rows                           │
+╰─────────────────┬─────────────────╯
+╭─ IRESEARCH_SCAN ┴─────────────────╮
+│ Index: tec                        │
+│ Lookup: search                    │
+│ Projections: a, s, b              │
+│ ~10 rows                          │
+╰───────────────────────────────────╯

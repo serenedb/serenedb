@@ -1,0 +1,744 @@
+control substitution on
+
+# ----------------------------------------------------------------------
+# Rolled-back DDL must not be durable, for every object kind.
+#
+# The in-memory half of a catalog mutation defers to the transaction's
+# commit, but a mutator whose WAL frame went through the context-free
+# CatalogStore::Write overload appended it inline, at statement time. So
+# `BEGIN; <DDL>; ROLLBACK;` left nothing in memory and the record behind,
+# and the object was back at the next boot.
+#
+# Every assertion here therefore spans a restart -- without one the bug is
+# invisible, which is why ddl_in_transaction.test did not catch it. Each
+# rolled-back case is paired with a committed one, so a frame that is
+# dropped rather than deferred fails just as loudly.
+#
+# Hosted under recovery/ because it needs a serened of its own to crash.
+# ----------------------------------------------------------------------
+
+
+# ----------------------------------------------------------------------
+# Creates: rolled back
+# ----------------------------------------------------------------------
+
+statement ok
+BEGIN;
+
+
+statement ok
+CREATE SCHEMA rbd_rb_s;
+
+
+statement ok
+ROLLBACK;
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+CREATE VIEW rbd_rb_v AS SELECT 1 AS a;
+
+
+statement ok
+ROLLBACK;
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+CREATE FUNCTION rbd_rb_f() RETURNS INTEGER AS 'SELECT 1' LANGUAGE SQL;
+
+
+statement ok
+ROLLBACK;
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+CREATE TYPE rbd_rb_ty AS ENUM ('a', 'b');
+
+
+statement ok
+ROLLBACK;
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+CREATE SEQUENCE rbd_rb_q;
+
+
+statement ok
+ROLLBACK;
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+CREATE ROLE rbd_rb_r;
+
+
+statement ok
+ROLLBACK;
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY rbd_rb_d (template = 'keyword');
+
+
+statement ok
+ROLLBACK;
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+CREATE DATABASE rbd_rb_db;
+
+
+statement ok
+ROLLBACK;
+
+
+# Nothing of it is in memory -- the half that already worked.
+query
+SELECT count(*) AS n FROM pg_namespace WHERE nspname = 'rbd_rb_s';
+----
+n
+0
+
+
+query
+SELECT count(*) AS n FROM pg_class WHERE relname IN ('rbd_rb_v', 'rbd_rb_q');
+----
+n
+0
+
+
+query
+SELECT count(*) AS n FROM pg_proc WHERE proname = 'rbd_rb_f';
+----
+n
+0
+
+
+query
+SELECT count(*) AS n FROM pg_type WHERE typname = 'rbd_rb_ty';
+----
+n
+0
+
+
+query
+SELECT count(*) AS n FROM pg_roles WHERE rolname = 'rbd_rb_r';
+----
+n
+0
+
+
+query
+SELECT count(*) AS n FROM pg_ts_dict WHERE dictname = 'rbd_rb_d';
+----
+n
+0
+
+
+query
+SELECT count(*) AS n FROM pg_database WHERE datname = 'rbd_rb_db';
+----
+n
+0
+
+
+# ----------------------------------------------------------------------
+# Creates: committed. The control that fails if a frame is dropped
+# instead of deferred.
+# ----------------------------------------------------------------------
+
+statement ok
+BEGIN;
+
+
+statement ok
+CREATE SCHEMA rbd_ok_s;
+
+
+statement ok
+CREATE VIEW rbd_ok_v AS SELECT 1 AS a;
+
+
+statement ok
+CREATE FUNCTION rbd_ok_f() RETURNS INTEGER AS 'SELECT 1' LANGUAGE SQL;
+
+
+statement ok
+CREATE TYPE rbd_ok_ty AS ENUM ('a', 'b');
+
+
+statement ok
+CREATE SEQUENCE rbd_ok_q;
+
+
+statement ok
+CREATE ROLE rbd_ok_r;
+
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY rbd_ok_d (template = 'keyword');
+
+
+statement ok
+CREATE DATABASE rbd_ok_db;
+
+
+statement ok
+COMMIT;
+
+
+# ----------------------------------------------------------------------
+# Reshapers. Base objects are committed first, then one transaction's
+# worth of ALTERs is rolled back and another is committed.
+# ----------------------------------------------------------------------
+
+statement ok
+CREATE TABLE rbd_keep_t (a INTEGER, b TEXT);
+
+
+statement ok
+CREATE TABLE rbd_move_t (a INTEGER, b TEXT);
+
+
+statement ok
+CREATE VIEW rbd_keep_v (va, vb) AS SELECT a, b FROM rbd_keep_t;
+
+
+statement ok
+CREATE VIEW rbd_move_v (va, vb) AS SELECT a, b FROM rbd_move_t;
+
+
+statement ok
+CREATE INDEX rbd_keep_ii ON rbd_keep_t USING inverted (b);
+
+
+statement ok
+CREATE INDEX rbd_move_ii ON rbd_move_t USING inverted (b);
+
+
+statement ok
+CREATE ROLE rbd_owner;
+
+
+statement ok
+CREATE ROLE rbd_grantee;
+
+
+statement ok
+CREATE ROLE rbd_dropme;
+
+
+statement ok
+CREATE ROLE rbd_dropkeep;
+
+
+statement ok
+COMMENT ON VIEW rbd_keep_v IS 'orig';
+
+
+statement ok
+COMMENT ON COLUMN rbd_keep_v.vb IS 'orig col';
+
+
+# Rolled back: every one of these must leave rbd_keep_* exactly as above.
+statement ok
+BEGIN;
+
+
+statement ok
+ALTER TABLE rbd_keep_t RENAME TO rbd_keep_t_renamed;
+
+
+statement ok
+ALTER TABLE rbd_keep_t_renamed OWNER TO rbd_owner;
+
+
+statement ok
+GRANT SELECT ON rbd_keep_t_renamed TO rbd_grantee;
+
+
+statement ok
+GRANT SELECT (a) ON rbd_keep_t_renamed TO rbd_grantee;
+
+
+statement ok
+COMMENT ON VIEW rbd_keep_v IS 'changed';
+
+
+statement ok
+COMMENT ON COLUMN rbd_keep_v.vb IS 'changed col';
+
+
+statement ok
+ALTER INDEX rbd_keep_ii SET (segment_docs_max = 4242);
+
+
+statement ok
+ALTER ROLE rbd_grantee CREATEDB;
+
+
+statement ok
+GRANT rbd_owner TO rbd_grantee;
+
+
+statement ok
+ALTER DEFAULT PRIVILEGES FOR ROLE rbd_grantee IN SCHEMA rbd_ok_s
+GRANT SELECT ON TABLES TO rbd_owner;
+
+
+statement ok
+DROP ROLE rbd_dropkeep;
+
+
+statement ok
+ROLLBACK;
+
+
+# Committed: the same shapes, so a deferred frame that never lands fails
+# here.
+statement ok
+BEGIN;
+
+
+statement ok
+ALTER TABLE rbd_move_t RENAME TO rbd_move_t_renamed;
+
+
+statement ok
+ALTER TABLE rbd_move_t_renamed OWNER TO rbd_owner;
+
+
+statement ok
+GRANT SELECT ON rbd_move_t_renamed TO rbd_grantee;
+
+
+statement ok
+GRANT SELECT (a) ON rbd_move_t_renamed TO rbd_grantee;
+
+
+statement ok
+COMMENT ON VIEW rbd_move_v IS 'committed';
+
+
+statement ok
+COMMENT ON COLUMN rbd_move_v.vb IS 'committed col';
+
+
+statement ok
+ALTER INDEX rbd_move_ii SET (segment_docs_max = 777);
+
+
+statement ok
+ALTER ROLE rbd_owner CREATEDB;
+
+
+statement ok
+GRANT rbd_grantee TO rbd_owner;
+
+
+statement ok
+ALTER DEFAULT PRIVILEGES FOR ROLE rbd_owner IN SCHEMA rbd_ok_s
+GRANT SELECT ON TABLES TO rbd_grantee;
+
+
+statement ok
+DROP ROLE rbd_dropme;
+
+
+statement ok
+COMMIT;
+
+
+# ----------------------------------------------------------------------
+# Destructive statements that roll back. A DROP appends its record before
+# the data work, so its frame is the one a rollback most easily leaves
+# durable.
+# ----------------------------------------------------------------------
+
+statement ok
+CREATE SCHEMA rbd_dr_s;
+
+
+statement ok
+CREATE VIEW rbd_dr_v AS SELECT 1 AS a;
+
+
+statement ok
+CREATE FUNCTION rbd_dr_f() RETURNS INTEGER AS 'SELECT 1' LANGUAGE SQL;
+
+
+statement ok
+CREATE TYPE rbd_dr_ty AS ENUM ('a');
+
+
+statement ok
+CREATE SEQUENCE rbd_dr_q;
+
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY rbd_dr_d (template = 'keyword');
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+DROP SCHEMA rbd_dr_s;
+
+
+statement ok
+DROP VIEW rbd_dr_v;
+
+
+statement ok
+DROP FUNCTION rbd_dr_f();
+
+
+statement ok
+DROP TYPE rbd_dr_ty;
+
+
+statement ok
+DROP SEQUENCE rbd_dr_q;
+
+
+statement ok
+DROP TEXT SEARCH DICTIONARY rbd_dr_d;
+
+
+statement ok
+ROLLBACK;
+
+
+# ----------------------------------------------------------------------
+# Restart. Everything above is asserted again on the recovered catalog --
+# the only place the durable half is observable.
+# ----------------------------------------------------------------------
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+statement error connection closed
+SELECT 1;
+
+
+connection after_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT 1;
+----
+?column?
+1
+
+
+connection after_crash
+query
+SELECT
+  (SELECT count(*) FROM pg_namespace WHERE nspname = 'rbd_rb_s') AS schema,
+  (SELECT count(*) FROM pg_class WHERE relname = 'rbd_rb_v') AS view,
+  (SELECT count(*) FROM pg_proc WHERE proname = 'rbd_rb_f') AS function,
+  (SELECT count(*) FROM pg_type WHERE typname = 'rbd_rb_ty') AS type,
+  (SELECT count(*) FROM pg_class WHERE relname = 'rbd_rb_q') AS sequence,
+  (SELECT count(*) FROM pg_roles WHERE rolname = 'rbd_rb_r') AS role,
+  (SELECT count(*) FROM pg_ts_dict WHERE dictname = 'rbd_rb_d') AS tokenizer,
+  (SELECT count(*) FROM pg_database WHERE datname = 'rbd_rb_db') AS database;
+----
+schema	view	function	type	sequence	role	tokenizer	database
+0	0	0	0	0	0	0	0
+
+
+connection after_crash
+query
+SELECT
+  (SELECT count(*) FROM pg_namespace WHERE nspname = 'rbd_ok_s') AS schema,
+  (SELECT count(*) FROM pg_class WHERE relname = 'rbd_ok_v') AS view,
+  (SELECT count(*) FROM pg_proc WHERE proname = 'rbd_ok_f') AS function,
+  (SELECT count(*) FROM pg_type WHERE typname = 'rbd_ok_ty') AS type,
+  (SELECT count(*) FROM pg_class WHERE relname = 'rbd_ok_q') AS sequence,
+  (SELECT count(*) FROM pg_roles WHERE rolname = 'rbd_ok_r') AS role,
+  (SELECT count(*) FROM pg_ts_dict WHERE dictname = 'rbd_ok_d') AS tokenizer,
+  (SELECT count(*) FROM pg_database WHERE datname = 'rbd_ok_db') AS database;
+----
+schema	view	function	type	sequence	role	tokenizer	database
+1	1	1	1	1	1	1	1
+
+
+# The rolled-back reshapers left nothing: the old name, the old owner, no
+# grants, the old comments, the old index option.
+connection after_crash
+query
+SELECT
+  (SELECT count(*) FROM pg_class WHERE relname = 'rbd_keep_t_renamed') AS renamed,
+  (SELECT count(*) FROM pg_class WHERE relname = 'rbd_keep_t') AS original;
+----
+renamed	original
+0	1
+
+
+connection after_crash
+query
+SELECT pg_get_userbyid(relowner) AS owner,
+       coalesce(array_to_string(relacl, '|'), '-') AS acl
+FROM pg_class WHERE relname = 'rbd_keep_t';
+----
+owner	acl
+postgres	-
+
+
+connection after_crash
+query
+SELECT coalesce(array_to_string(attacl, '|'), '-') AS colacl
+FROM pg_attribute
+WHERE attrelid = (SELECT oid FROM pg_class WHERE relname = 'rbd_keep_t')
+  AND attname = 'a';
+----
+colacl
+-
+
+
+connection after_crash
+query
+SELECT comment FROM duckdb_views() WHERE view_name = 'rbd_keep_v';
+----
+comment
+orig
+
+
+connection after_crash
+query
+SELECT comment FROM duckdb_columns()
+WHERE table_name = 'rbd_keep_v' AND column_name = 'vb';
+----
+comment
+orig col
+
+
+connection after_crash
+query
+SELECT regexp_extract(array_to_string(reloptions, ','),
+                      'segment_docs_max=[0-9]*') AS opt
+FROM pg_class WHERE relname = 'rbd_keep_ii';
+----
+opt
+segment_docs_max=0
+
+
+connection after_crash
+query
+SELECT rolcreatedb AS createdb FROM pg_roles WHERE rolname = 'rbd_grantee';
+----
+createdb
+f
+
+
+connection after_crash
+query
+SELECT count(*) AS n
+FROM pg_auth_members m JOIN pg_roles r ON r.oid = m.roleid
+WHERE r.rolname = 'rbd_owner';
+----
+n
+0
+
+
+# The rolled-back DROP ROLE left the role in place.
+connection after_crash
+query
+SELECT count(*) AS n FROM pg_roles WHERE rolname = 'rbd_dropkeep';
+----
+n
+1
+
+
+# Default privileges are role state, so a rolled-back ALTER DEFAULT
+# PRIVILEGES must leave no row and the committed one exactly one.
+connection after_crash
+query
+SELECT pg_get_userbyid(defaclrole) AS role, defaclobjtype AS objtype,
+       array_to_string(defaclacl, '|') AS acl
+FROM pg_default_acl
+WHERE pg_get_userbyid(defaclrole) IN ('rbd_owner', 'rbd_grantee')
+ORDER BY 1;
+----
+role	objtype	acl
+rbd_owner	r	rbd_owner=arwdDxtm/rbd_owner|rbd_grantee=r/rbd_owner
+
+
+# ... and the committed ones all landed.
+connection after_crash
+query
+SELECT
+  (SELECT count(*) FROM pg_class WHERE relname = 'rbd_move_t_renamed') AS renamed,
+  (SELECT count(*) FROM pg_class WHERE relname = 'rbd_move_t') AS original,
+  (SELECT count(*) FROM pg_roles WHERE rolname = 'rbd_dropme') AS dropped;
+----
+renamed	original	dropped
+1	0	0
+
+
+connection after_crash
+query
+SELECT pg_get_userbyid(relowner) AS owner,
+       coalesce(array_to_string(relacl, '|'), '-') AS acl
+FROM pg_class WHERE relname = 'rbd_move_t_renamed';
+----
+owner	acl
+rbd_owner	rbd_owner=arwdDxtm/rbd_owner|rbd_grantee=r/rbd_owner
+
+
+connection after_crash
+query
+SELECT coalesce(array_to_string(attacl, '|'), '-') AS colacl
+FROM pg_attribute
+WHERE attrelid = (SELECT oid FROM pg_class WHERE relname = 'rbd_move_t_renamed')
+  AND attname = 'a';
+----
+colacl
+rbd_grantee=r/rbd_owner
+
+
+connection after_crash
+query
+SELECT comment FROM duckdb_views() WHERE view_name = 'rbd_move_v';
+----
+comment
+committed
+
+
+connection after_crash
+query
+SELECT comment FROM duckdb_columns()
+WHERE table_name = 'rbd_move_v' AND column_name = 'vb';
+----
+comment
+committed col
+
+
+connection after_crash
+query
+SELECT regexp_extract(array_to_string(reloptions, ','),
+                      'segment_docs_max=[0-9]*') AS opt
+FROM pg_class WHERE relname = 'rbd_move_ii';
+----
+opt
+segment_docs_max=777
+
+
+connection after_crash
+query
+SELECT rolcreatedb AS createdb FROM pg_roles WHERE rolname = 'rbd_owner';
+----
+createdb
+t
+
+
+connection after_crash
+query
+SELECT count(*) AS n
+FROM pg_auth_members m JOIN pg_roles r ON r.oid = m.roleid
+WHERE r.rolname = 'rbd_grantee';
+----
+n
+1
+
+
+# The rolled-back DROPs left every object where it was.
+connection after_crash
+query
+SELECT
+  (SELECT count(*) FROM pg_namespace WHERE nspname = 'rbd_dr_s') AS schema,
+  (SELECT count(*) FROM pg_class WHERE relname = 'rbd_dr_v') AS view,
+  (SELECT count(*) FROM pg_proc WHERE proname = 'rbd_dr_f') AS function,
+  (SELECT count(*) FROM pg_type WHERE typname = 'rbd_dr_ty') AS type,
+  (SELECT count(*) FROM pg_class WHERE relname = 'rbd_dr_q') AS sequence,
+  (SELECT count(*) FROM pg_ts_dict WHERE dictname = 'rbd_dr_d') AS tokenizer;
+----
+schema	view	function	type	sequence	tokenizer
+1	1	1	1	1	1
+
+
+# ----------------------------------------------------------------------
+# A crash inside the transaction, with no ROLLBACK to undo anything: the
+# frame has to have never been appended, not merely withheld from the
+# resident maps.
+# ----------------------------------------------------------------------
+
+connection after_crash
+statement ok
+CREATE SCHEMA rbd_crash_keep;
+
+
+connection after_crash
+statement ok
+BEGIN;
+
+
+connection after_crash
+statement ok
+CREATE SCHEMA rbd_crash_s;
+
+
+connection after_crash
+statement ok
+CREATE VIEW rbd_crash_v AS SELECT 1 AS a;
+
+
+connection after_crash
+statement ok
+CREATE ROLE rbd_crash_r;
+
+
+connection after_crash
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+connection after_crash
+statement error connection closed
+SELECT 1;
+
+
+connection after_second_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT count(*) AS n FROM pg_namespace WHERE nspname = 'rbd_crash_keep';
+----
+n
+1
+
+
+connection after_second_crash
+query
+SELECT
+  (SELECT count(*) FROM pg_namespace WHERE nspname = 'rbd_crash_s') AS schema,
+  (SELECT count(*) FROM pg_class WHERE relname = 'rbd_crash_v') AS view,
+  (SELECT count(*) FROM pg_roles WHERE rolname = 'rbd_crash_r') AS role;
+----
+schema	view	role
+0	0	0

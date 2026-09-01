@@ -155,7 +155,6 @@ std::vector<Doc> ScorePruneTestCase::Collect(const irs::DirectoryReader& index,
     if (score_prune && can_prune) {
       // EXPECT_NE(std::numeric_limits<irs::score_t>::max(), score.max.tail);
       score = docs->PrepareScore({
-        .scorer = scorer,
         .segment = &segment,
         .fetcher = &fetcher,
       });

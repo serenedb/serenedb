@@ -84,6 +84,8 @@ int DuckExceptionToErrcode(duckdb::ExceptionType type) {
       return ERRCODE_DIVISION_BY_ZERO;
     case duckdb::ExceptionType::CONSTRAINT:
       return ERRCODE_INTEGRITY_CONSTRAINT_VIOLATION;
+    case duckdb::ExceptionType::DEPENDENCY:
+      return ERRCODE_DEPENDENT_OBJECTS_STILL_EXIST;
     case duckdb::ExceptionType::PERMISSION:
       return ERRCODE_INSUFFICIENT_PRIVILEGE;
     case duckdb::ExceptionType::TRANSACTION:

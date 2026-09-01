@@ -1,9 +1,3 @@
-# ANALYZE / VACUUM with a target table on a facade table. The table resolves to
-# the hidden store table (a different, qualified name), so duckdb's vacuum binder
-# must bind columns against the bound ref alias, not the store entry name --
-# otherwise it failed with 'Referenced table "postgres.public.t" not found'.
-
-
 statement ok
 CREATE TABLE pudge_analyze(a INTEGER, b INTEGER, s TEXT);
 
@@ -31,7 +25,8 @@ VACUUM pudge_analyze;
 statement error
 ANALYZE pudge_analyze (nope);
 ----
-db error: ERROR: Column with name "nope" does not exist
+db error: ERROR: Table "pudge_analyze" does not have a column named "nope"
+Candidate bindings: "a", "b", "s"
 
 
 query

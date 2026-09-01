@@ -30,7 +30,6 @@
 namespace sdb::catalog::persistence {
 
 struct RoleData {
-  ObjectId id;
   std::string name;
   uint32_t options;
   std::vector<Membership> member_of;
@@ -39,7 +38,8 @@ struct RoleData {
   // SET VAR=... params that set for every session of this role
   std::vector<std::string> config;
   std::vector<DefaultAcl> default_acls;
-  std::string password_verifier;
+  // Raw verifier; never rendered -- a role's ToString spells no password.
+  std::string password;
 };
 
 }  // namespace sdb::catalog::persistence

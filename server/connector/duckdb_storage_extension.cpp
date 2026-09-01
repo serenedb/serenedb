@@ -22,15 +22,23 @@
 
 #include <duckdb/main/attached_database.hpp>
 #include <duckdb/main/config.hpp>
+#include <duckdb/main/database_manager.hpp>
 #include <duckdb/parser/parsed_data/attach_info.hpp>
+#include <duckdb/storage/storage_manager.hpp>
 
 #include "app/app_server.h"
 #include "basics/debugging.h"
+#include "basics/duckdb_engine.h"
 #include "basics/system-compiler.h"
-#include "catalog/catalog.h"
-#include "catalog/databases.h"
+#include "catalog/ddl/catalog.h"
+#include "catalog/ddl/duckdb_catalog.h"
+#include "catalog/entry/duckdb_object_entry.h"
+#include "catalog/entry/duckdb_schema_entry.h"
 #include "catalog/foreign_server.h"
-#include "connector/duckdb_catalog.h"
+#include "catalog/log/data_store.h"
+#include "catalog/log/store.h"
+#include "catalog/read/duckdb_catalog_sets.h"
+#include "catalog/schema.h"
 #include "connector/duckdb_client_state.h"
 #include "connector/duckdb_transaction.h"
 #include "connector/optimizer/iresearch_plan.h"
@@ -50,25 +58,46 @@ duckdb::unique_ptr<duckdb::Catalog> AttachSereneDB(
   duckdb::ClientContext& context, duckdb::AttachedDatabase& db,
   const duckdb::string& name, duckdb::AttachInfo& info,
   duckdb::AttachOptions& options) {
+  // The attach carries the database's ObjectId, not a file. Resolving it to
+  // the database's own duckdb file is what gives the attachment a real
+  // SingleFileStorageManager: its own storage, its own data WAL, its own
+  // checkpoint. AttachedDatabase reads info.path after this returns.
+  const auto open = [&db, &info, &options](ObjectId database_id,
+                                           ObjectId public_schema_id,
+                                           catalog::Permissions owner) {
+    info.path = catalog::CatalogStore::DatabaseFilePath(database_id);
+    // Every serenedb on-disk format sits behind our storage version, so a
+    // duckdb-version database is unaffected by anything we change.
+    options.options.emplace("storage_version", duckdb::Value{"serenedb_v1"});
+    return duckdb::make_uniq<catalog::SereneDBCatalog>(
+      db, database_id, public_schema_id, std::move(owner));
+  };
+
   if (info.path.empty()) {
     // CREATE DATABASE: create new database in SereneDB catalog
     auto state = context.registered_state->Get<SereneDBClientState>(
       kSereneDBClientStateKey);
     const auto ax =
-      state ? catalog::ActingAs(state->GetConnectionContext().GetRoleId())
-            : catalog::NoAccessCheck();
+      state
+        ? catalog::ActingAs(state->GetConnectionContext().GetRoleId(), context)
+        : catalog::NoAccessCheck(context);
     const bool if_not_exists =
       info.on_conflict != duckdb::OnCreateConflict::ERROR_ON_CONFLICT;
-    catalog::CreateDatabase(ax, name, if_not_exists);
-    // Re-fetch snapshot to see the new database
-    auto snapshot = catalog::GetCatalog().GetCatalogSnapshot();
-    auto database = snapshot->GetDatabase(name);
-    if (!database) {
+    // The public schema's id and owner come back rather than the schema: the
+    // catalog this call is about to build is what makes it.
+    auto [public_schema_id, public_schema_owner] =
+      catalog::GetCatalog().CreateDatabase(
+        ax,
+        duckdb::make_uniq<catalog::CreateDatabaseInfo>(ObjectId{}, name,
+                                                       ObjectId{}),
+        ax.role, if_not_exists);
+    const auto database_id = catalog::FindDatabaseId(&context, name);
+    if (!database_id.isSet()) {
       THROW_SQL_ERROR(
         ERR_CODE(ERRCODE_INTERNAL_ERROR),
         ERR_MSG("database \"", name, "\" not found after creation"));
     }
-    return duckdb::make_uniq<SereneDBCatalog>(db, database->GetId());
+    return open(database_id, public_schema_id, std::move(public_schema_owner));
   }
 
   // ATTACH with path = open existing database by ObjectId
@@ -77,13 +106,13 @@ duckdb::unique_ptr<duckdb::Catalog> AttachSereneDB(
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INTERNAL_ERROR),
                     ERR_MSG("database \"", name, "\" not found"));
   }
-  auto snapshot = catalog::GetCatalog().GetCatalogSnapshot();
-  auto database = snapshot->GetDatabase(ObjectId{id});
+  auto database = catalog::FindDatabase(nullptr, ObjectId{id});
   if (!database) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INTERNAL_ERROR),
                     ERR_MSG("database \"", name, "\" not found"));
   }
-  return duckdb::make_uniq<SereneDBCatalog>(db, database->GetId());
+  return open(catalog::IdOf(*database), database->PublicSchemaId(),
+              database->permissions);
 }
 
 duckdb::unique_ptr<duckdb::TransactionManager> CreateTransactionManager(
@@ -94,28 +123,84 @@ duckdb::unique_ptr<duckdb::TransactionManager> CreateTransactionManager(
 
 }  // namespace
 
-void SereneDBCatalog::OnDetach(duckdb::ClientContext& context) {
-  auto state =
-    context.registered_state->Get<SereneDBClientState>(kSereneDBClientStateKey);
-
-  auto ax = catalog::NoAccessCheck();
-  if (state) {
-    auto& conn_ctx = state->GetConnectionContext();
-    ax = catalog::ActingAs(conn_ctx.GetRoleId());
-    conn_ctx.DropCatalogSnapshot();
+void AttachDatabaseCatalog(ObjectId id, std::string_view name) {
+  auto& manager =
+    duckdb::DatabaseManager::Get(DuckDBEngine::Instance().instance());
+  if (manager.GetDatabase(duckdb::Identifier{name})) {
+    // A later version of the same database record -- an owner or ACL change.
+    return;
   }
-
-  // The cascade removes the servers' catalog rows but not their instance-global
-  // DuckDB attachments; DropDatabase returns each one's name and the attachment
-  // identity it saw (both captured under the catalog lock) so the detach below
-  // can only remove exactly those attachments.
-  duckdb::shared_ptr<void> keep_alive = GetAttached().shared_from_this();
-  const auto detach_servers = catalog::DropDatabase(
-    ax, GetName().GetIdentifierName(), std::move(keep_alive));
-  for (const auto& server : detach_servers) {
-    catalog::DetachForeignServerAttachment(server.name, server.attachment_id);
+  auto conn = DuckDBEngine::Instance().CreateConnection();
+  auto& context = *conn->context;
+  duckdb::AttachInfo info;
+  info.name = duckdb::Identifier{name};
+  info.path = std::to_string(id.id());
+  info.options.emplace(
+    "type", duckdb::Value{std::string{catalog::kSereneDBCatalogType}});
+  duckdb::AttachOptions options{info.options, duckdb::AccessMode::READ_WRITE};
+  options.defer_storage_load = true;
+  conn->BeginTransaction();
+  try {
+    duckdb::DatabaseManager::Get(context).AttachDatabase(context, info,
+                                                         options);
+  } catch (...) {
+    conn->Rollback();
+    throw;
   }
-  SDB_IF_FAILURE("crash_on_drop") { SDB_IMMEDIATE_ABORT(); }
+  conn->Commit();
+}
+
+void DiscardDatabaseAttachment(std::string_view name) {
+  auto& manager =
+    duckdb::DatabaseManager::Get(DuckDBEngine::Instance().instance());
+  auto attached = manager.DetachInternal(duckdb::Identifier{name});
+  if (!attached) {
+    return;
+  }
+  catalog::DataStore::ForgetDatabase(
+    attached->GetCatalog().Cast<catalog::SereneDBCatalog>().GetDatabaseId());
+  // The detach takes the name out of the database manager, so nothing new
+  // reaches this database. What is already in flight holds it, and closing it
+  // under a statement takes the storage out from under an entry that statement
+  // is reading -- so the close waits for the last reference, exactly as
+  // duckdb's own DETACH does.
+  duckdb::AttachedDatabase::InvokeCloseIfLastReference(
+    attached, duckdb::DatabaseCloseAction::SKIP_CHECKPOINT);
+}
+
+void LoadDatabaseStorage(std::string_view name) {
+  auto conn = DuckDBEngine::Instance().CreateConnection();
+  auto& context = *conn->context;
+  // Inside a transaction, exactly as the ATTACH statement that would otherwise
+  // have run this: the load rebuilds the storage of every table it reads back,
+  // and reaching an attachment at all goes through the meta transaction.
+  bool repaired = false;
+  duckdb::optional_ptr<duckdb::AttachedDatabase> database;
+  conn->BeginTransaction();
+  try {
+    if (auto attached = duckdb::DatabaseManager::Get(context).GetDatabase(
+          context, duckdb::Identifier{name})) {
+      attached->InitializeStorage(context);
+      attached->FinalizeLoad(context);
+      database = attached.get();
+      repaired = attached->GetCatalog()
+                   .Cast<catalog::SereneDBCatalog>()
+                   .FinishStorageReplay(context);
+    }
+  } catch (...) {
+    conn->Rollback();
+    throw;
+  }
+  conn->Commit();
+  if (repaired) {
+    // The rows the boot moved live nowhere but memory until the file is told:
+    // the next one would read the shape this one repaired and replay the WAL of
+    // a database that has since moved on from it.
+    duckdb::CheckpointOptions options;
+    options.action = duckdb::CheckpointAction::ALWAYS_CHECKPOINT;
+    database->GetStorageManager().CreateCheckpoint(duckdb::QueryContext{},
+                                                   options);
+  }
 }
 
 SereneDBStorageExtension::SereneDBStorageExtension() {

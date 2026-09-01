@@ -191,7 +191,7 @@ class GranularRangeFilterTestCase : public tests::FilterTestCaseBase {
       q.mutable_options()->range.min_type = irs::BoundType::Inclusive;
       q.mutable_options()->range.max_type = irs::BoundType::Inclusive;
       q.mutable_options()->is_granular = false;
-      q.boost(boost);
+      q.SetBoost(boost);
 
       tests::PreparedFilter prepared{q, segment};
       ASSERT_EQ(boost, prepared.Query(0)->Boost());
@@ -1636,7 +1636,7 @@ TEST(by_granular_range_test, ctor) {
   irs::ByGranularRange q;
   ASSERT_EQ(irs::Type<irs::ByGranularRange>::id(), q.type());
   ASSERT_EQ(irs::ByGranularRangeOptions{}, q.options());
-  ASSERT_EQ(irs::kNoBoost, q.Boost());
+  ASSERT_EQ(irs::kNoBoost, q.GetBoost());
 }
 
 TEST(by_granular_range_test, equal) {
@@ -1777,7 +1777,7 @@ TEST(by_granular_range_test, boost) {
       irs::ViewCast<irs::byte_type>(std::string_view("max_term")));
     q.mutable_options()->range.min_type = irs::BoundType::Inclusive;
     q.mutable_options()->range.max_type = irs::BoundType::Inclusive;
-    q.boost(boost);
+    q.SetBoost(boost);
 
     tests::PreparedFilter prepared{q, irs::SubReader::empty()};
     ASSERT_EQ(boost, prepared.Query(0)->Boost());

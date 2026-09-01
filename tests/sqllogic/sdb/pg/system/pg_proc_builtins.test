@@ -1,0 +1,158 @@
+# pg_proc used to list only the macros a user had created in the current
+# database -- every engine-provided function was invisible, so \df, ORM
+# introspection and information_schema.routines/parameters all saw nothing.
+# It now also carries one row per overload of every built-in, and pg_aggregate
+# carries one row per aggregate overload keyed on the same oid.
+#
+# Counts are asserted against duckdb_functions() rather than pinned, so adding
+# or removing a built-in does not churn this file.
+
+statement ok
+DROP MACRO IF EXISTS ppb_macro
+
+statement ok
+CREATE MACRO ppb_macro(a) AS a + 1
+
+
+# Every engine function reaches pg_proc, and pg_proc invents nothing.
+# pg_proc is per-database like PostgreSQL's, while duckdb_functions() spans
+# every attached database, so the comparison is scoped to the two catalogs
+# pg_proc draws from.
+
+query
+SELECT
+  (SELECT count(*) FROM pg_proc)
+    = (SELECT count(*) FROM duckdb_functions()
+         WHERE database_name IN ('system', current_database()))
+    AS counts_match,
+  (SELECT count(*) FROM duckdb_functions() f
+     WHERE f.database_name IN ('system', current_database())
+       AND NOT EXISTS (SELECT 1 FROM pg_proc p WHERE p.proname = f.function_name))
+    AS missing
+----
+counts_match	missing
+t	0
+
+
+# oid is the primary key: one per overload, never reused.
+
+query
+SELECT count(DISTINCT oid) = count(*) AS oids_unique FROM pg_proc
+----
+oids_unique
+t
+
+
+# The kinds a client branches on are all represented.
+
+query
+SELECT
+  (SELECT count(*) > 0 FROM pg_proc WHERE prokind = 'a') AS has_aggregates,
+  (SELECT count(*) > 0 FROM pg_proc WHERE prokind = 'w') AS has_window,
+  (SELECT count(*) > 0 FROM pg_proc WHERE prokind = 'f') AS has_functions,
+  (SELECT count(*) > 0 FROM pg_proc WHERE proretset) AS has_set_returning
+----
+has_aggregates	has_window	has_functions	has_set_returning
+t	t	t	t
+
+
+# A table function returns a set; a scalar one does not.
+
+query
+SELECT
+  (SELECT bool_and(proretset) FROM pg_proc WHERE proname = 'duckdb_tables') AS table_fn,
+  (SELECT bool_or(proretset) FROM pg_proc WHERE proname = 'upper') AS scalar_fn
+----
+table_fn	scalar_fn
+t	f
+
+
+# Built-ins are owned by the bootstrap superuser and live in pg_catalog, so a
+# client resolving them through the search path finds them where PostgreSQL
+# puts them.
+
+query
+SELECT count(*) AS outside_pg_catalog
+FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+WHERE p.proname IN ('upper', 'lower', 'abs') AND n.nspname <> 'pg_catalog'
+----
+outside_pg_catalog
+0
+
+
+# A known signature keeps its shape: upper(text) -> text, one argument.
+
+query
+SELECT DISTINCT p.pronargs, format_type(p.prorettype, NULL) AS rettype
+FROM pg_proc p WHERE p.proname = 'upper'
+----
+pronargs	rettype
+1	text
+
+
+# proargtypes is where the recursive type-completeness guard lives: a bare
+# DECIMAL or LIST in a generic builtin signature carries no aux info and used to
+# abort the scan. Pin one known signature, and guard against the whole mapping
+# collapsing to unknown (705) -- roughly a tenth of builtins are legitimately
+# generic, so the check is a ratio, not a count.
+
+query
+SELECT
+  (SELECT DISTINCT format_type(proargtypes[1], NULL) FROM pg_proc WHERE proname = 'upper')
+    AS upper_arg1,
+  (SELECT count(*) FROM pg_proc WHERE pronargs > 0
+     AND NOT EXISTS (SELECT 1 FROM unnest(proargtypes) t WHERE t <> 705))
+   < (SELECT count(*) FROM pg_proc WHERE pronargs > 0) / 2
+    AS most_args_resolve
+----
+upper_arg1	most_args_resolve
+text	t
+
+
+# pg_aggregate is one row per aggregate overload, keyed on the pg_proc oid.
+
+query
+SELECT
+  (SELECT count(*) FROM pg_aggregate)
+    = (SELECT count(*) FROM pg_proc WHERE prokind = 'a') AS one_row_each,
+  (SELECT count(*) FROM pg_aggregate a
+     WHERE NOT EXISTS (SELECT 1 FROM pg_proc p WHERE p.oid = a.aggfnoid))
+    AS dangling,
+  (SELECT count(*) FROM pg_aggregate a
+     JOIN pg_proc p ON p.oid = a.aggfnoid WHERE p.prokind <> 'a')
+    AS wrong_kind
+----
+one_row_each	dangling	wrong_kind
+t	0	0
+
+query
+SELECT count(*) > 0 AS sum_is_an_aggregate
+FROM pg_aggregate a JOIN pg_proc p ON p.oid = a.aggfnoid
+WHERE p.proname = 'sum'
+----
+sum_is_an_aggregate
+t
+
+
+# The user-macro path that pg_proc already had must keep working alongside the
+# built-ins, and a user macro is not owned by the bootstrap superuser.
+
+query
+SELECT count(*) AS user_macro FROM pg_proc WHERE proname = 'ppb_macro'
+----
+user_macro
+1
+
+
+# The downstream views that were empty because pg_proc was.
+
+query
+SELECT
+  (SELECT count(*) > 0 FROM information_schema.routines) AS routines,
+  (SELECT count(*) > 0 FROM information_schema.parameters) AS parameters
+----
+routines	parameters
+t	t
+
+statement ok
+DROP MACRO IF EXISTS ppb_macro

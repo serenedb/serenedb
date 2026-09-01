@@ -21,7 +21,7 @@ hash-threshold 100
 # exhaustive; assertions check row identity/order only.
 
 statement ok
-SET sdb_nprobe = 1000
+SET sdb_ivf_search_nprobe = 1000
 
 statement ok
 CREATE TABLE ivf_f (pk INTEGER PRIMARY KEY, emb FLOAT[3], val INTEGER, ext INTEGER)
@@ -118,7 +118,7 @@ DROP TABLE ivf_f
 # ===========================================================================
 
 statement ok
-SET sdb_nprobe = 1000
+SET sdb_ivf_search_nprobe = 1000
 
 statement ok
 CREATE TABLE shortf (pk INTEGER PRIMARY KEY, emb FLOAT[3], ext INTEGER)
@@ -197,7 +197,7 @@ DROP TABLE shortf
 # ===========================================================================
 
 statement ok
-SET sdb_nprobe = 1000
+SET sdb_ivf_search_nprobe = 1000
 
 statement ok
 CREATE TABLE neg_f (pk INTEGER PRIMARY KEY, cat TEXT, emb FLOAT[3])

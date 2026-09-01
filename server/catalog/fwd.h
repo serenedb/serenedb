@@ -20,31 +20,39 @@
 
 #pragma once
 
+#include <duckdb/common/unique_ptr.hpp>
+#include <memory>
+
+namespace duckdb {
+
+struct CreateTableInfo;
+
+struct CreateSequenceInfo;
+
+struct CreateSchemaInfo;
+
+struct CreateTypeInfo;
+struct CreateViewInfo;
+struct CreateMacroInfo;
+
+}  // namespace duckdb
 namespace sdb::catalog {
 
-struct Snapshot;
-
-class Object;
-class PgSqlFunction;
-class Table;
-class Column;
 class Role;
-class PgSqlView;
-class Sequence;
+class CreateDatabaseInfo;
+class CreateIndexInfo;
 class Index;
 class InvertedIndex;
-class SecondaryIndex;
-class Schema;
-class Database;
-struct FunctionSignature;
-struct CreateTableOptions;
+class CreateTokenizerInfo;
+class Tokenizer;
+using TokenizerRef = std::shared_ptr<const Tokenizer>;
+class CreateForeignServerInfo;
 class VirtualTable;
 class VirtualTableSnapshot;
 
 }  // namespace sdb::catalog
 namespace sdb {
 
-class KeyGenerator;
 class ObjectId;
 
 }  // namespace sdb

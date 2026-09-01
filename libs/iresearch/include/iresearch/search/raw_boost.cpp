@@ -25,21 +25,13 @@
 #include <absl/container/inlined_vector.h>
 
 #include "basics/shared.hpp"
-#include "iresearch/analysis/token_attributes.hpp"
 #include "iresearch/index/field_meta.hpp"
 #include "iresearch/search/volatile_boost_score.hpp"
 
 namespace irs {
 
 ScoreFunction RawBoost::PrepareScorer(const ScoreContext& ctx) const {
-  const auto* volatile_boost = irs::get<BoostBlockAttr>(ctx.doc_attrs);
-
-  if (!volatile_boost) {
-    return ScoreFunction::Constant(ctx.boost);
-  }
-
-  return ScoreFunction::Make<VolatileBoostScore>(volatile_boost->value,
-                                                 ctx.boost);
+  return MakeVolatileBoostScore(ctx, ctx.boost);
 }
 
 }  // namespace irs

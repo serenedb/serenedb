@@ -306,7 +306,7 @@ irs::ByNestedFilter MakeScoredNestedFilter(
   opts.parent = std::move(parent);
   opts.merge_type = merge_type;
   opts.match = std::move(match);
-  filter.boost(boost);
+  filter.SetBoost(boost);
   return filter;
 }
 
@@ -364,7 +364,7 @@ TEST(NestedFilterTest, CheckOptions) {
 TEST(NestedFilterTest, ConstructFilter) {
   irs::ByNestedFilter filter;
   ASSERT_EQ(irs::ByNestedOptions{}, filter.options());
-  ASSERT_EQ(irs::kNoBoost, filter.Boost());
+  ASSERT_EQ(irs::kNoBoost, filter.GetBoost());
 }
 
 class NestedFilterTestCase : public tests::FilterTestCaseBase {
@@ -1271,7 +1271,7 @@ TEST_P(NestedFilterTestCase, JoinNone1) {
   opts.child = MakeByTerm(kItem, "Mouse");
   opts.parent = MakeParentProvider(kParent);
   opts.match = irs::kMatchNone;
-  filter.boost(0.5f);
+  filter.SetBoost(0.5f);
 
   CheckQuery(filter, Docs{8}, Costs{3}, reader, SOURCE_LOCATION);
 
@@ -1331,7 +1331,7 @@ TEST_P(NestedFilterTestCase, JoinNone2) {
   opts.child = std::make_unique<irs::Empty>();
   opts.parent = MakeParentProvider(kParent);
   opts.match = irs::kMatchNone;
-  filter.boost(1.f);
+  filter.SetBoost(1.f);
 
   CheckQuery(filter, Docs{6, 8, 13, 20}, Costs{4}, reader, SOURCE_LOCATION);
 
@@ -1412,7 +1412,7 @@ TEST_P(NestedFilterTestCase, JoinNone3) {
 
   MakeParentProvider(kParent);
   opts.match = irs::kMatchNone;
-  filter.boost(0.5f);
+  filter.SetBoost(0.5f);
 
   CheckQuery(tests::FilterWrapper{filter}, Docs{6, 8, 13, 20}, Costs{4}, reader,
              SOURCE_LOCATION);

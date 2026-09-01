@@ -63,7 +63,15 @@ DETACH db17;
 
 # DOCS_TEST_BODY
 
-statement ok
+# Re-attaching a just-detached file in a DIFFERENT access mode is refused while
+# the old attachment object is still alive: any in-flight statement on another
+# connection that listed all catalogs (Catalog::GetAllSchemas) pins every
+# attachment for that statement's duration, and the pinned READ_WRITE object
+# keeps the file open, so the engine correctly hands it back and refuses the
+# mode change ("already attached in READ_WRITE mode"). On a shared server the
+# doc example's claim is "can be attached read-only", not "instantly", so retry
+# until the concurrent readers drain.
+statement ok retry 40 backoff 250ms
 ATTACH '${__TEST_DIR__}/db17.db' AS db16 (READ_ONLY);
 
 statement ok
@@ -208,7 +216,8 @@ ATTACH '${__TEST_DIR__}/db18.duckdb' AS db19;
 statement ok
 DETACH db19;
 
-statement ok
+# mode change on a just-detached file: see the db16 (READ_ONLY) attach above
+statement ok retry 40 backoff 250ms
 ATTACH '${__TEST_DIR__}/db18.duckdb' AS db19 (READ_ONLY);
 
 # DOCS_TEST: example_016
@@ -244,7 +253,8 @@ ATTACH '${__TEST_DIR__}/db18b.duckdb' AS db19;
 statement ok
 DETACH db19;
 
-statement ok
+# mode change on a just-detached file: see the db16 (READ_ONLY) attach above
+statement ok retry 40 backoff 250ms
 ATTACH '${__TEST_DIR__}/db18b.duckdb' AS db19 (READ_ONLY);
 
 # DOCS_TEST: example_017

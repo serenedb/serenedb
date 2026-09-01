@@ -23,6 +23,7 @@
 #include "tfidf.hpp"
 
 #include <absl/container/inlined_vector.h>
+#include <absl/strings/str_cat.h>
 
 #include <cmath>
 #include <cstddef>
@@ -41,6 +42,7 @@
 #include "iresearch/search/column_collector.hpp"
 #include "iresearch/search/score_function.hpp"
 #include "iresearch/search/scorer.hpp"
+#include "iresearch/search/scorer_options.hpp"
 
 namespace irs {
 namespace {
@@ -195,24 +197,29 @@ ScoreBoundWriter::ptr TFIDF::PrepareScoreBoundWriter(size_t max_levels) const {
     // idf * sqrt(tf) / sqrt(dl)
     // sqrt(tf) / sqrt(dl)
     // tf / dl
+    SDB_ASSERT(BoundTypeOf(GetOptions()) == ScoreBoundType::DivNorm);
     return std::make_unique<FreqNormWriter<kScoreBoundDivNorm>>(max_levels);
   }
+  SDB_ASSERT(BoundTypeOf(GetOptions()) == ScoreBoundType::MaxFreq);
   return std::make_unique<FreqNormWriter<kScoreBoundMaxFreq>>(max_levels);
 }
 
 ScoreBoundSource::ptr TFIDF::PrepareScoreBoundSource() const {
   if (_normalize) {
+    SDB_ASSERT(BoundTypeOf(GetOptions()) == ScoreBoundType::DivNorm);
     return std::make_unique<
       FreqNormSource<kScoreBoundFreq | kScoreBoundNorm>>();
   }
+  SDB_ASSERT(BoundTypeOf(GetOptions()) == ScoreBoundType::MaxFreq);
   return std::make_unique<FreqNormSource<kScoreBoundFreq>>();
 }
 
-Scorer::ScoreBoundType TFIDF::GetScoreBoundType() const noexcept {
-  if (_normalize) {
-    return ScoreBoundType::DivNorm;
-  }
-  return ScoreBoundType::MaxFreq;
+bool TFIDF::Compatible(const ScorerOptions& persisted) const noexcept {
+  return irs::BoundTypeOf(persisted) == BoundTypeOf(GetOptions());
+}
+
+std::string TFIDF::ToString() const {
+  return absl::StrCat("tfidf(with_norms=", _normalize ? "true" : "false", ")");
 }
 
 bool TFIDF::equals(const Scorer& other) const noexcept {

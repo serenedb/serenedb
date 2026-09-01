@@ -168,10 +168,6 @@ ScoreFunction ChildToParentJoin<Matcher>::PrepareScore(
   } else if constexpr (!Matcher::kHasScore) {
     return ScoreFunction::Default();
   } else {
-    if (!ctx.scorer) {
-      return ScoreFunction::Default();
-    }
-
     auto child_ctx = ctx;
     child_ctx.fetcher = &this->_scores.fetcher;
     auto child_score = _child->PrepareScore(child_ctx);
@@ -608,7 +604,7 @@ DocIterator::ptr ByNestedQuery::Execute(const ExecutionContext& ctx,
 
   ExecutionContext child_ctx{ctx};
   // TODO(mbkkt) score pruning for nested?
-  child_ctx.score_prune = false;
+  child_ctx.prune_scorer = nullptr;
 
   auto child = _child->Execute(
     child_ctx, stats.ChildCount() != 0 ? stats.Child(0) : StatsBuffer::Empty());
@@ -647,7 +643,7 @@ DocIterator::ptr ByNestedQuery::Execute(const ExecutionContext& ctx,
     });
 }
 
-PrepareCollector::ptr ByNestedFilter::MakeCollector(
+PrepareCollector::ptr ByNestedFilter::MakeCollectorImpl(
   const Scorer* scorer) const {
   auto& [parent, child, match, merge_type] = options();
 
@@ -671,7 +667,7 @@ QueryBuilder::ptr ByNestedFilter::PrepareSegment(
   auto* compound = dynamic_cast<CompoundCollector*>(ctx.collector);
   SDB_ASSERT(ctx.collector == nullptr || compound != nullptr);
 
-  const auto sub_boost = ctx.boost * Boost();
+  const auto sub_boost = ctx.boost * GetBoost();
 
   PrepareContext child_ctx = ctx;
   child_ctx.boost = sub_boost;

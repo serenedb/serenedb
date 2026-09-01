@@ -841,4 +841,27 @@ void WriteObject(Sink& b, const U& in, const A& arg = {}) {
   impl(in);
 }
 
+// A SerdeWrite/SerdeRead whose only difference between formats is named fields
+// versus positional ones: the object form for a sink that renders objects (the
+// JSON introspection path), the tuple form for the binary catalog encoding.
+// Overload on the format where the two forms actually differ in content; use
+// these where the branch would otherwise be copy-pasted per type.
+template<typename Context, typename U>
+void WriteTupleOrObject(Context& ctx, const U& in) {
+  if constexpr (std::is_same_v<typename Context::Format, ObjectFormat>) {
+    WriteObject(ctx.io(), in, ctx.arg());
+  } else {
+    WriteTuple(ctx.io(), in, ctx.arg());
+  }
+}
+
+template<typename Context, typename U>
+void ReadTupleOrObject(Context& ctx, U& out) {
+  if constexpr (std::is_same_v<typename Context::Format, ObjectFormat>) {
+    ReadObject(ctx.io(), out, ctx.arg());
+  } else {
+    ReadTuple(ctx.io(), out, ctx.arg());
+  }
+}
+
 }  // namespace sdb::basics

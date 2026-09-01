@@ -27,10 +27,7 @@ namespace sdb::message {
 class Buffer;
 }
 
-namespace sdb::pg {
-
-class CopyMessagesQueue;
-}
+namespace sdb::pg {}
 
 namespace sdb::connector {
 

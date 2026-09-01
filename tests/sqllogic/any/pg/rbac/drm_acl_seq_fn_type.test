@@ -54,7 +54,10 @@ statement ok
 CREATE ROLE daft_vedernikoff;
 
 
-statement ok
+# The `postgres` database entry is shared with every other test file the runner
+# executes in parallel, and a second writer on one catalog object is refused
+# with a retryable 40001.
+statement ok retry 20 backoff 50ms
 GRANT CONNECT ON DATABASE postgres TO daft_vedernikoff;
 
 
@@ -65,7 +68,7 @@ DROP ROLE daft_vedernikoff;
 db error: ERROR: role "daft_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
 
 
-statement ok
+statement ok retry 20 backoff 50ms
 REVOKE CONNECT ON DATABASE postgres FROM daft_vedernikoff;
 
 
@@ -373,7 +376,10 @@ statement ok
 CREATE ROLE daft_vedernikoff;
 
 
-statement ok
+# The `postgres` database entry is shared with every other test file the runner
+# executes in parallel, and a second writer on one catalog object is refused
+# with a retryable 40001.
+statement ok retry 20 backoff 50ms
 GRANT CONNECT ON DATABASE postgres TO daft_vedernikoff;
 
 
@@ -399,7 +405,7 @@ DROP ROLE daft_vedernikoff;
 db error: ERROR: role "daft_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
 
 
-statement ok
+statement ok retry 20 backoff 50ms
 REVOKE CONNECT ON DATABASE postgres FROM daft_vedernikoff;
 
 

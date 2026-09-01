@@ -38,6 +38,11 @@ INSERT INTO fk_child VALUES (12, NULL);
 statement ok
 DROP TABLE fk_child;
 
+# Dropping the child takes the back-reference off the parent: the row that was
+# referenced a moment ago now deletes.
+statement count 1
+DELETE FROM fk_parent WHERE id = 1;
+
 statement ok
 DROP TABLE fk_parent;
 

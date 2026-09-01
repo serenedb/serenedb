@@ -36,12 +36,12 @@ namespace sdb::connector {
 struct IndexedExpression {
   duckdb::unique_ptr<duckdb::Expression> normalized_expr;
   std::string serialized;
-  std::vector<catalog::Column::Id> dependent_columns;
+  std::vector<catalog::ColumnId> dependent_columns;
   irs::field_id field_id = irs::field_limits::invalid();
   bool is_geojson = false;
 };
 
-std::vector<catalog::Column::Id> CollectDependentColumns(
+std::vector<catalog::ColumnId> CollectDependentColumns(
   const duckdb::Expression& expr);
 
 std::string SerializeBoundExpression(const duckdb::Expression& expr);
@@ -54,19 +54,25 @@ duckdb::unique_ptr<duckdb::Expression> DeserializeBoundExpression(
 // stable catalog (table_id, col_id) instead of binder-allocated indices.
 duckdb::unique_ptr<duckdb::Expression> NormalizeBoundExpression(
   const duckdb::Expression& expr, ObjectId table_id,
-  std::span<const catalog::Column::Id> col_index_to_id,
+  std::span<const catalog::ColumnId> col_index_to_id,
   duckdb::ClientContext& context);
-
-duckdb::unique_ptr<duckdb::Expression> ResolveBoundColumnRefsForChunk(
-  const duckdb::Expression& expr, const duckdb::DataChunk& chunk,
-  ObjectId table_id, std::span<const catalog::Column::Id> slot_to_col_id);
 
 void RejectJsonObjectArrayLeaves(const duckdb::Vector& result,
                                  duckdb::idx_t num_rows);
 
+// Rebinds a persisted expression's catalog-stable column refs onto `chunk`'s
+// own slots. The store-index feed rebinds to duckdb index positions instead
+// (RebindColumnRefsToIndexPositions); a search table has no BoundIndex, so its
+// chunk is keyed by catalog column id.
+duckdb::unique_ptr<duckdb::Expression> ResolveBoundColumnRefsForChunk(
+  const duckdb::Expression& expr, const duckdb::DataChunk& chunk,
+  ObjectId table_id, std::span<const catalog::ColumnId> slot_to_col_id);
+
+// Evaluate one indexed expression over `chunk` -- the same ExpressionExecutor
+// the store-index feed runs, over chunk-resolved refs.
 duckdb::Vector EvaluateExprOverChunk(
   const duckdb::Expression& bound_expr, duckdb::DataChunk& chunk,
-  ObjectId table_id, std::span<const catalog::Column::Id> slot_to_col_id,
+  ObjectId table_id, std::span<const catalog::ColumnId> slot_to_col_id,
   duckdb::ClientContext& context, bool is_geojson = false);
 
 }  // namespace sdb::connector

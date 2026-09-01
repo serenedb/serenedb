@@ -91,7 +91,7 @@ SELECT id FROM konstantin_iceberg_audit_log
   WHERE iq = 999;
 ----
 id
-505
+536
 
 
 # Another ROLLBACK gap post-recovery -- gap-on-gap.
@@ -123,8 +123,8 @@ SELECT id, iq FROM konstantin_iceberg_audit_log
 ----
 id	iq
 504	322
-505	999
-556	777
+536	999
+587	777
 
 
 connection after_crash

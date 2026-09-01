@@ -626,8 +626,7 @@ void AssertDocs(const irs::TermIterator& expected_term,
              expected_term.postings(requested_features), [&] {
                return actual_terms.Iterator(
                  requested_features,
-                 {.cookie = &actual_cookie, .field = actual_terms.meta()},
-                 false);
+                 {.cookie = &actual_cookie, .field = actual_terms.meta()}, {});
              });
 
   // FIXME(gnusi): check BitUnion

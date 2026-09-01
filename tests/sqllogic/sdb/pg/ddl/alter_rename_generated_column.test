@@ -1,0 +1,35 @@
+statement ok
+CREATE TABLE gren_metrics(qps INTEGER, qps_next INTEGER GENERATED ALWAYS AS (qps + 1) STORED);
+
+
+statement count 1
+INSERT INTO gren_metrics(qps) VALUES (1);
+
+
+statement ok
+ALTER TABLE gren_metrics RENAME COLUMN qps TO qps_base;
+
+
+# The generated column's expression follows the rename: an insert through the
+# new name still computes it, and the stored definition names the new column.
+statement count 1
+INSERT INTO gren_metrics(qps_base) VALUES (41);
+
+
+query
+SELECT qps_base, qps_next FROM gren_metrics ORDER BY qps_base;
+----
+qps_base	qps_next
+1	2
+41	42
+
+
+query
+SELECT sql FROM duckdb_tables() WHERE table_name = 'gren_metrics';
+----
+sql
+CREATE TABLE public.gren_metrics(qps_base INTEGER, qps_next INTEGER GENERATED ALWAYS AS((qps_base + 1)));
+
+
+statement ok
+DROP TABLE gren_metrics;

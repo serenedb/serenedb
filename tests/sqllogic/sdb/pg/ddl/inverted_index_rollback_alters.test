@@ -1,0 +1,274 @@
+# ROLLBACK of a metadata ALTER on an INVERTED index.
+#
+# Same hazard as index_rollback.test, on the kind that has more to lose. Every
+# statement below makes a new version of the index entry, and duckdb's undo walk
+# calls DuckIndexEntry::Rollback on each version it undoes -- a hook that takes
+# the index off the relation's TableIndexList. For an inverted index that list
+# entry is the store-side half that keeps the iresearch data in step with DML,
+# so a rollback that removes it leaves an index the catalog still names, that
+# still answers old queries, and that silently stops seeing new rows.
+#
+# This fork re-versions inverted index entries on roads upstream does not have
+# (COMMENT ON INDEX, ALTER INDEX SET of the inverted options, RENAME INDEX, and
+# ALTER COLUMN TYPE re-putting every index of the relation), and none of them
+# creates the index -- so none of them may remove anything. Each case therefore
+# rolls one back and then proves the index is still whole two ways: it still
+# serves a search, and a row written after the rollback still reaches it.
+#
+# Rolled-back CREATE INDEX is in index_rollback_create_inverted.test; rolled-back
+# DROP INDEX is a known gap, pinned in index_rollback_drop_gap.test.
+
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY ixiv_dict(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'none',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true
+);
+
+
+statement ok
+CREATE TABLE ixiv_t(id INTEGER PRIMARY KEY, body TEXT, score INTEGER);
+
+
+statement ok
+INSERT INTO ixiv_t VALUES (1, 'alpha bravo', 100), (2, 'charlie delta', 200);
+
+
+statement ok
+CREATE INDEX ixiv_idx ON ixiv_t USING inverted(id, body ixiv_dict);
+
+
+statement ok
+VACUUM (REFRESH_TABLE) ixiv_t;
+
+
+query
+SELECT id FROM ixiv_idx WHERE body @@ ts_phrase('alpha');
+----
+id
+1
+
+
+query
+SELECT count(*) AS n FROM ixiv_idx;
+----
+n
+2
+
+
+# ---------------------------------------------------------------------------
+# Rolled-back COMMENT ON INDEX.
+# ---------------------------------------------------------------------------
+
+statement ok
+COMMENT ON INDEX ixiv_idx IS 'kept';
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+COMMENT ON INDEX ixiv_idx IS 'rolled back';
+
+
+statement ok
+ROLLBACK;
+
+
+query
+SELECT comment FROM duckdb_indexes() WHERE index_name = 'ixiv_idx';
+----
+comment
+kept
+
+
+query
+SELECT id FROM ixiv_idx WHERE body @@ ts_phrase('charlie');
+----
+id
+2
+
+
+query
+SELECT count(*) AS n FROM ixiv_idx;
+----
+n
+2
+
+
+# ---------------------------------------------------------------------------
+# Rolled-back ALTER INDEX ... SET (...). The persisted options are the entry;
+# the rollback has to take the option back without taking the index with it.
+# ---------------------------------------------------------------------------
+
+statement ok
+ALTER INDEX ixiv_idx SET (segment_docs_max = 555);
+
+
+query
+SELECT regexp_extract(array_to_string(reloptions, ','),
+                      'segment_docs_max=[0-9]*') AS opt
+FROM pg_class WHERE relname = 'ixiv_idx';
+----
+opt
+segment_docs_max=555
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+ALTER INDEX ixiv_idx SET (segment_docs_max = 4242);
+
+
+statement ok
+ROLLBACK;
+
+
+query
+SELECT regexp_extract(array_to_string(reloptions, ','),
+                      'segment_docs_max=[0-9]*') AS opt
+FROM pg_class WHERE relname = 'ixiv_idx';
+----
+opt
+segment_docs_max=555
+
+
+query
+SELECT id FROM ixiv_idx WHERE body @@ ts_phrase('alpha');
+----
+id
+1
+
+
+# ---------------------------------------------------------------------------
+# Rolled-back ALTER TABLE ... ALTER COLUMN TYPE. This road re-puts every index
+# of the relation, so its rollback undoes one index version per index. The
+# column is one the index does not cover -- a covered one is refused outright.
+# ---------------------------------------------------------------------------
+
+statement ok
+BEGIN;
+
+
+statement ok
+ALTER TABLE ixiv_t ALTER COLUMN score TYPE BIGINT;
+
+
+statement ok
+ROLLBACK;
+
+
+query
+SELECT format_type(a.atttypid, a.atttypmod) AS data_type
+FROM pg_attribute a
+WHERE a.attrelid = (SELECT oid FROM pg_class WHERE relname = 'ixiv_t')
+  AND a.attname = 'score';
+----
+data_type
+integer
+
+
+query
+SELECT id FROM ixiv_idx WHERE body @@ ts_phrase('delta');
+----
+id
+2
+
+
+# The strong half: a row written AFTER the rollback still reaches the index.
+# That is the store-side index list entry doing its job, not the iresearch data
+# that was already there.
+statement ok
+INSERT INTO ixiv_t VALUES (3, 'echo foxtrot', 300);
+
+
+statement ok
+VACUUM (REFRESH_TABLE) ixiv_t;
+
+
+query
+SELECT id FROM ixiv_idx WHERE body @@ ts_phrase('echo');
+----
+id
+3
+
+
+query
+SELECT count(*) AS n FROM ixiv_idx;
+----
+n
+3
+
+
+# ---------------------------------------------------------------------------
+# Rolled-back ALTER INDEX ... RENAME TO. The entry moves back to its old name;
+# what is asserted here is the entry and the searches, not the physical name --
+# the store-side rename is applied at statement time and is not undone.
+# ---------------------------------------------------------------------------
+
+statement ok
+BEGIN;
+
+
+statement ok
+ALTER INDEX ixiv_idx RENAME TO ixiv_renamed;
+
+
+statement ok
+ROLLBACK;
+
+
+query
+SELECT count(*) AS n FROM pg_class WHERE relname = 'ixiv_renamed';
+----
+n
+0
+
+
+query
+SELECT count(*) AS n FROM pg_class WHERE relname = 'ixiv_idx';
+----
+n
+1
+
+
+query
+SELECT id FROM ixiv_idx WHERE body @@ ts_phrase('foxtrot');
+----
+id
+3
+
+
+# The committed control: the rename really is a new version of the entry.
+statement ok
+ALTER INDEX ixiv_idx RENAME TO ixiv_renamed;
+
+
+query
+SELECT count(*) AS n FROM pg_class WHERE relname = 'ixiv_idx';
+----
+n
+0
+
+
+query
+SELECT id FROM ixiv_renamed WHERE body @@ ts_phrase('alpha');
+----
+id
+1
+
+
+statement ok
+DROP TABLE ixiv_t;
+
+
+statement ok
+DROP TEXT SEARCH DICTIONARY ixiv_dict;

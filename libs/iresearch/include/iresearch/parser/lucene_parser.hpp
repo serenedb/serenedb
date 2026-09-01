@@ -137,7 +137,7 @@ union YYSTYPE
     struct { float value; StringSpan text; } flt;
     float fnum;
     struct { int min; int max; } gap;
-    irs::FilterWithBoost* filter;
+    irs::Filter* filter;
 
 #line 142 "libs/iresearch/include/iresearch/parser/lucene_parser.hpp"
 

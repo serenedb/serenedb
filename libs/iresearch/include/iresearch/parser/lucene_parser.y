@@ -63,7 +63,7 @@ void yyerror(sdb::ParserContext& ctx, const char *s);
     struct { float value; StringSpan text; } flt;
     float fnum;
     struct { int min; int max; } gap;
-    irs::FilterWithBoost* filter;
+    irs::Filter* filter;
 }
 
 %token <sv> TERM REGEX PREFIX WILDCARD STAR
@@ -136,11 +136,11 @@ field_name:
 
 boosted_expr:
     modified_term                   { $$ = $1; }
-    | modified_term CARET threshold { $1->boost($3); $$ = $1; }
+    | modified_term CARET threshold { $1->SetBoost($3); $$ = $1; }
     // Lucene takes the two suffixes in either order, and a fuzziness read
     // after a boost has to reach a term that is already built.
     | modified_term CARET threshold FUZZY
-                                    { $1->boost($3);
+                                    { $1->SetBoost($3);
                                       $$ = &ctx.ApplyFuzzy($1, $4.has_value,
                                                            $4.value); }
     ;

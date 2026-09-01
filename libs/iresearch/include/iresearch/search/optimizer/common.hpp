@@ -47,12 +47,12 @@ inline bool TryFoldBoost(Filter& survivor, score_t boost, bool scored) {
   if (boost == kNoBoost || !scored) {
     return true;
   }
-  // The only non-boost filter
+  // ProxyFilter delegates to an inner filter and applies no boost of its own,
+  // so folding one into it would drop it.
   if (survivor.type() == irs::Type<ProxyFilter>::id()) {
     return false;
   }
-  auto& boostable = sdb::basics::downCast<FilterWithBoost>(survivor);
-  boostable.boost(boostable.Boost() * boost);
+  survivor.SetBoost(survivor.GetBoost() * boost);
   return true;
 }
 

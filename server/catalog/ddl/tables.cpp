@@ -85,7 +85,6 @@ const SereneDBTableEntry* CreateTable(
   }
 
   JoinStoreTransaction(ax.context);
-  catalog::Catalog::MutationScope lock{catalog::GetCatalog()};
   auto schema_id = TryFindSchemaId(ax.context, database_id, schema);
   if (!schema_id) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_SCHEMA),
@@ -272,7 +271,6 @@ void ChangeTableOwner(const AccessContext& ax,
                       const duckdb::CreateTableInfo& table,
                       duckdb::CatalogType type, ObjectId new_owner,
                       std::string_view new_owner_name) {
-  catalog::Catalog::MutationScope lock{catalog::GetCatalog()};
   const auto table_id = catalog::IdOf(table);
   const auto schema_id = catalog::ParentIdOf(table);
   const auto* live =
@@ -321,7 +319,6 @@ bool DropTable(const AccessContext& ax, std::string_view database,
                std::string_view schema, std::string_view name, bool cascade,
                bool missing_ok) {
   JoinStoreTransaction(ax.context);
-  catalog::Catalog::MutationScope lock{catalog::GetCatalog()};
 
   const auto database_id = FindDatabaseId(ax.context, database);
   if (!database_id) {
@@ -386,11 +383,9 @@ bool DropTable(const AccessContext& ax, std::string_view database,
   SDB_IF_FAILURE("crash_on_drop") { return true; }
   SDB_IF_FAILURE("compact_inside_drop") {
     // The artifact half runs after the commit, so a compaction has to be able
-    // to run in between; the rewrite takes the catalog mutex itself.
-    catalog::DeferDropAction(ax.context, [] {
-      catalog::GetCatalog().TryExcludingMutations(
-        [] { GetCatalogStore().CompactNow(); });
-    });
+    // to run in between.
+    catalog::DeferDropAction(ax.context,
+                             [] { GetCatalogStore().CompactNow(); });
   }
   catalog::DropSearchTableArtifacts(ax.context, *table);
   return true;
@@ -417,7 +412,7 @@ void DropTableColumns(duckdb::ClientContext* context,
       return index->ReferencesColumn(col);
     });
     if (covers) {
-      DropIndexLocked(
+      DropIndexResolved(
         context, db_id, *index,
         catalog::InvertedStorageOf(context, db_id, index->GetId()),
         /*cascade=*/true);
@@ -471,9 +466,11 @@ void DropTableColumns(duckdb::ClientContext* context,
   const auto updated = altered->Definition();
   for (const auto& idx : indexes) {
     if (auto store_info = MakeStoreIndexInfo(*updated, *idx)) {
+      // A reshape re-states indexes that already exist: their committed
+      // entries carry the directory handle, so the op resolves it there.
       catalog::StoreCreateIndex(context, db_id, std::move(store_info),
                                 catalog::Clone(*updated), idx->GetRelationId(),
-                                idx->GetIndex());
+                                idx->GetIndex(), /*storage=*/nullptr);
     }
   }
 }
@@ -482,7 +479,6 @@ void DropTableColumn(const AccessContext& ax, ObjectId database_id,
                      const duckdb::CreateTableInfo& table,
                      std::string_view column, bool if_exists) {
   JoinStoreTransaction(ax.context);
-  catalog::Catalog::MutationScope lock{catalog::GetCatalog()};
   const auto table_id = catalog::IdOf(table);
   const auto* entry = catalog::Find<SereneDBTableEntry>(
     ax.context, catalog::ParentIdOf(table), table_id);

@@ -59,7 +59,6 @@ duckdb::unique_ptr<CreateIndexInfo> CreateIndexOnRelation(
                     ERR_MSG("Cannot create index without columns"));
   }
   JoinStoreTransaction(ax.context);
-  catalog::Catalog::MutationScope lock{catalog::GetCatalog()};
   const auto schema_id = catalog::ParentIdOf(relation);
   // The noun the refusal names is the relation's own kind: a view and a table
   // are both indexable and postgres says which one it refused.
@@ -149,7 +148,7 @@ duckdb::optional_ptr<duckdb::CatalogEntry> CreateIndexImpl(
   if (store_index) {
     catalog::StoreCreateIndex(context, db_id, std::move(store_index),
                               std::move(table), index.GetRelationId(),
-                              index.GetIndex());
+                              index.GetIndex(), storage);
   }
   // After the store op, so a relation another transaction has already dropped
   // is refused by the rows rather than by the set -- the store names the
@@ -176,10 +175,10 @@ duckdb::optional_ptr<duckdb::CatalogEntry> CreateIndexImpl(
   return placed;
 }
 
-void DropIndexLocked(duckdb::ClientContext* context, ObjectId database_id,
-                     const CreateIndexInfo& index,
-                     std::shared_ptr<search::InvertedIndexStorage> storage,
-                     bool cascade) {
+void DropIndexResolved(duckdb::ClientContext* context, ObjectId database_id,
+                       const CreateIndexInfo& index,
+                       std::shared_ptr<search::InvertedIndexStorage> storage,
+                       bool cascade) {
   catalog::DropIndexEntry(context, index.GetSchemaId(), index.GetName());
   // Store-side index drop is synchronous: UNIQUE enforcement must stop when
   // DROP INDEX commits, not when the artifact half runs.

@@ -543,6 +543,11 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
       SDB_ASSERT(table_obj);
       auto& store_storage = store_entry->GetStorage();
       duckdb::idx_t horizon = 0;
+      // Built ahead of the publication point: the factory resolves catalog
+      // entries, and a first touch of an attachment there starts a
+      // transaction -- which must not happen under the checkpoint lock.
+      auto injected = MakeInjectedInvertedIndex(
+        context, store_storage, *TableOrNull()->Definition(), created, storage);
       {
         // Publication point. The exclusive checkpoint lock brackets exactly
         // {rowid assignment, commit-time index feed} of every store commit
@@ -558,10 +563,8 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
         // emitted has already put its own object in the list, and two objects
         // over one storage each build a feed session, so a commit feeds the
         // rows to both and settles only the last one engaged.
-        AddInjectedInvertedIndex(
-          store_storage.GetDataTableInfo()->GetIndexes(),
-          MakeInjectedInvertedIndex(context, store_storage,
-                                    *TableOrNull()->Definition(), created));
+        AddInjectedInvertedIndex(store_storage.GetDataTableInfo()->GetIndexes(),
+                                 std::move(injected));
         horizon = store_storage.GetNextRowId();
         storage->SetDeleteLogRowidEnd(horizon);
       }

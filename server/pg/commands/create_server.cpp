@@ -48,7 +48,6 @@ bool DropForeignServerRow(ConnectionContext& conn_ctx, std::string_view name,
                           bool cascade, bool missing_ok) {
   auto& context = conn_ctx.GetClientContext();
   catalog::JoinStoreTransaction(&context);
-  catalog::Catalog::MutationScope mutation{catalog::GetCatalog()};
   const auto database_id =
     catalog::FindDatabaseId(&context, conn_ctx.GetDatabase());
   return catalog::DropEntryObject(

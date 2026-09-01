@@ -34,7 +34,7 @@ EXCLUDED_ROOTS = {
     REPO_ROOT / "build_clangd",
     REPO_ROOT / "third_party",
     REPO_ROOT / "build",
-    REPO_ROOT / "build_clangd",
+    REPO_ROOT / "build_bench",
     REPO_ROOT / "build_data",
     REPO_ROOT / ".cache",
     REPO_ROOT / ".git",

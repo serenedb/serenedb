@@ -23,6 +23,7 @@
 #include "app/app_server.h"
 #include "basics/down_cast.h"
 #include "catalog/ddl/catalog.h"
+#include "catalog/entry/duckdb_object_entry.h"
 #include "catalog/read/duckdb_catalog_sets.h"
 #include "catalog/role.h"
 #include "pg/pg_catalog/fwd.h"
@@ -33,7 +34,7 @@ template<>
 catalog::MaterializedData SystemTableSnapshot<PgDbRoleSetting>::GetTableData() {
   std::vector<PgDbRoleSetting> values;
   catalog::VisitRoles(
-    &_config.GetClientContext(), [&](const catalog::Role& role) {
+    &_config.GetClientContext(), [&](const catalog::SereneDBRoleEntry& role) {
       auto config = role.Config();
       if (config.empty()) {
         // PG inserts a pg_db_role_setting row only when a GUC is set.

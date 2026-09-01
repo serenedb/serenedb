@@ -144,7 +144,6 @@ bool DropSchemaChild(duckdb::ClientContext& context, duckdb::CatalogType type,
                      const duckdb::DropInfo& info, bool missing_ok) {
   const auto& qualified = info.GetQualifiedName();
   catalog::JoinStoreTransaction(&context);
-  catalog::Catalog::MutationScope mutation{catalog::GetCatalog()};
   const auto* database =
     FindDatabase(&context, qualified.Catalog().GetIdentifierName());
   if (!database) {
@@ -162,12 +161,11 @@ bool DropSchemaChild(duckdb::ClientContext& context, duckdb::CatalogType type,
 }
 
 // What survives a DROP of one or more overloads: a rewrite of the function
-// under the identity the owner already holds. Resolved again under the
-// mutation scope -- the surgery above ran outside it.
+// under the identity the owner already holds. Resolved again here -- the
+// surgery above ran against an earlier read.
 void InstallSurvivingOverloads(
   duckdb::ClientContext& context, ObjectId database_id, std::string_view schema,
   std::string_view name, duckdb::unique_ptr<duckdb::CreateMacroInfo> next) {
-  catalog::Catalog::MutationScope lock{catalog::GetCatalog()};
   const auto schema_id =
     catalog::TryFindSchemaId(&context, database_id, schema);
   if (!schema_id) {
@@ -649,9 +647,6 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBCatalog::CreateSchema(
   const ObjectId owner = SchemaOwner(client, info, creator);
   const auto database_id = GetDatabaseId();
 
-  // Under the catalog mutex from here: the name check and the write have to be
-  // one step, or two concurrent CREATE SCHEMAs both find the name free.
-  catalog::Catalog::MutationScope mutation{catalog::GetCatalog()};
   // PG: CREATE SCHEMA requires CREATE on the current database of the role
   // running it, whoever ends up owning the schema.
   catalog::RequireDatabaseAccess(&client, creator,
@@ -703,9 +698,6 @@ void SereneDBCatalog::RenameSchema(duckdb::CatalogTransaction transaction,
   auto perm = current->permissions;
   const auto database_id = GetDatabaseId();
   const auto ax = catalog::ActingAs(client);
-  // Under the catalog mutex from here: the name check and the write have to be
-  // one step, or two concurrent renames both find the new name free.
-  catalog::Catalog::MutationScope mutation{catalog::GetCatalog()};
   catalog::RequireOwner(&client, ax.role, perm, "schema", old_name);
   catalog::RequireDatabaseAccess(&client, ax.role,
                                  FindDatabase(&client, database_id),
@@ -750,13 +742,21 @@ void SereneDBCatalog::ScanSchemas(
   // The static schemas are generated content, not schemas of this database:
   // duckdb's own system catalog already answers for those two names, and
   // listing ours beside them would double every information_schema row.
+  // Collected first, called back after: the set's lock must not be held across
+  // a callback -- one that resolves a transaction takes locks of its own. Safe
+  // here because this road has a statement behind it, whose transaction pins
+  // every version it can see.
+  duckdb::vector<duckdb::reference<duckdb::SchemaCatalogEntry>> schemas;
   GetSchemaCatalogSet().Scan(GetCatalogTransaction(context),
                              [&](duckdb::CatalogEntry& entry) {
                                auto& schema = entry.Cast<SereneDBSchemaEntry>();
                                if (!schema.IsStatic()) {
-                                 callback(schema);
+                                 schemas.push_back(schema);
                                }
                              });
+  for (auto& schema : schemas) {
+    callback(schema.get());
+  }
 }
 
 duckdb::optional_ptr<duckdb::TableCatalogEntry>
@@ -913,7 +913,6 @@ void ApplyTableAlter(const AccessContext& ax,
                      const duckdb::CreateTableInfo& table,
                      duckdb::AlterInfo& info) {
   JoinStoreTransaction(ax.context);
-  catalog::Catalog::MutationScope lock{catalog::GetCatalog()};
   const auto* current = catalog::Find<SereneDBTableEntry>(
     ax.context, catalog::ParentIdOf(table), catalog::IdOf(table));
   if (current == nullptr) {
@@ -2247,22 +2246,19 @@ void SereneDBCatalog::WriteCatalogChange(
       dynamic_cast<const SereneDBTableEntry*>(&version) == nullptr) {
     return;
   }
-  auto wal = ScopedCatalogWal();
-  if (!wal) {
+  if (!ClusterCatalogWal()) {
     return;
   }
-  MarkCatalogDecision();
   if (dropped) {
-    MarkCatalogDrop();
-    wal->WriteDropEntry(version);
+    BufferCatalogDrop(version.GetInfo());
     return;
   }
   // Ahead of the definition it belongs to: a recipe with no definition is
   // dropped at boot, a definition with no recipe reshapes by cast.
   if (auto recipe = UndoBufferRowRecipe(old_entry, extra_data)) {
-    wal->WriteAlter(*recipe);
+    BufferCatalogRecipe(std::move(recipe));
   }
-  wal->WriteCreateEntry(version);
+  BufferCatalogCreate(version.GetInfo(), version.permissions);
 }
 
 bool SereneDBCatalog::DropSchema(const AccessContext& ax,
@@ -2270,7 +2266,6 @@ bool SereneDBCatalog::DropSchema(const AccessContext& ax,
                                  std::string_view name, bool cascade,
                                  bool missing_ok) {
   JoinStoreTransaction(ax.context);
-  catalog::Catalog::MutationScope lock{catalog::GetCatalog()};
 
   const auto database_id = FindDatabaseId(ax.context, database);
   if (!database_id) {
@@ -2320,7 +2315,6 @@ void SereneDBCatalog::ChangeColumnType(
   std::string_view column, duckdb::LogicalType new_type,
   duckdb::unique_ptr<duckdb::ParsedExpression> using_expr) {
   JoinStoreTransaction(ax.context);
-  catalog::Catalog::MutationScope lock{catalog::GetCatalog()};
   const auto table_id = catalog::IdOf(table);
   const auto schema_id = catalog::ParentIdOf(table);
   const auto* entry =
@@ -2381,7 +2375,6 @@ void SereneDBCatalog::ChangeColumnType(
 bool SereneDBCatalog::CreateTokenizer(
   const AccessContext& ax, ObjectId database_id, std::string_view schema,
   std::shared_ptr<CreateTokenizerInfo> tokenizer, bool if_not_exists) {
-  catalog::Catalog::MutationScope lock{catalog::GetCatalog()};
   auto schema_id = TryFindSchemaId(ax.context, database_id, schema);
   if (!schema_id) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_SCHEMA),
@@ -2411,7 +2404,6 @@ bool SereneDBCatalog::CreateForeignServer(
   const AccessContext& ax, ObjectId database_id,
   std::shared_ptr<CreateForeignServerInfo> info, Permissions perm,
   bool if_not_exists) {
-  catalog::Catalog::MutationScope lock{catalog::GetCatalog()};
   // Gated on CREATE on the database, same as CREATE SCHEMA -- PG gates on FDW
   // USAGE instead, but serenedb has no foreign-data-wrapper catalog object to
   // hang an ACL on.

@@ -22,7 +22,6 @@
 
 #include <absl/functional/any_invocable.h>
 #include <absl/functional/function_ref.h>
-#include <absl/synchronization/mutex.h>
 
 #include <duckdb/catalog/catalog_entry/view_catalog_entry.hpp>
 #include <duckdb/catalog/dependency_list.hpp>
@@ -59,13 +58,15 @@ class InvertedIndexStorage;
 namespace sdb::catalog {
 
 class SereneDBDatabaseEntry;
+class SereneDBRoleEntry;
 class SereneDBTableEntry;
 
-// Mutation callback: fill `updated` with the changed clone (leave it null for
-// a no-op). Signal errors by throwing (pg::SqlException for user-facing ones).
-template<typename T>
+// Mutation callback: reads the version in the catalog and fills `updated` with
+// the record the next one is built from (leave it null for a no-op). Signal
+// errors by throwing (pg::SqlException for user-facing ones).
+template<typename Entry, typename Record = Entry>
 using ChangeCallback =
-  absl::AnyInvocable<void(const T&, duckdb::unique_ptr<T>&)>;
+  absl::AnyInvocable<void(const Entry&, duckdb::unique_ptr<Record>&)>;
 
 // Raised when a catalog mutation reaches an object a concurrently committed
 // transaction has dropped. We do not take PostgreSQL's ACCESS EXCLUSIVE lock on
@@ -181,10 +182,10 @@ void DropTableColumns(duckdb::ClientContext* context,
 // One index's whole removal: the entry, the store half and the artifact half.
 // `storage` is the handle the index's entry carried, read by the caller while
 // it could still see it.
-void DropIndexLocked(duckdb::ClientContext* context, ObjectId database_id,
-                     const CreateIndexInfo& index,
-                     std::shared_ptr<search::InvertedIndexStorage> storage,
-                     bool cascade);
+void DropIndexResolved(duckdb::ClientContext* context, ObjectId database_id,
+                       const CreateIndexInfo& index,
+                       std::shared_ptr<search::InvertedIndexStorage> storage,
+                       bool cascade);
 
 // The artifact half of an inverted index's drop, deferred to the commit: the
 // storage the entry carried -- read by the caller before the set dropped it --
@@ -201,7 +202,7 @@ void DropSearchTableArtifacts(duckdb::ClientContext* context,
                               const SereneDBTableEntry& table);
 
 // Places one index record: the namespace checks, the record's edges and the
-// entry, under the caller's mutation scope. Returns the placed entry.
+// entry. Returns the placed entry.
 duckdb::optional_ptr<duckdb::CatalogEntry> CreateIndexImpl(
   duckdb::ClientContext* context, CreateIndexInfo& index,
   CreateIndexOperationOptions operation_options);
@@ -271,11 +272,12 @@ class Catalog final {
   std::pair<ObjectId, Permissions> CreateDatabase(
     const AccessContext& ax, duckdb::unique_ptr<CreateDatabaseInfo> database,
     ObjectId owner, bool if_not_exists);
-  void CreateRole(const AccessContext& ax, duckdb::unique_ptr<Role> role);
+  void CreateRole(const AccessContext& ax,
+                  duckdb::unique_ptr<CreateRoleInfo> role);
   using AclMutator = auth::AclMutator;
   void ChangeRole(const AccessContext& ax, std::string_view name,
                   std::string_view verb, bool allow_self,
-                  ChangeCallback<Role> callback);
+                  ChangeCallback<SereneDBRoleEntry, CreateRoleInfo> callback);
   void ChangeDefaultAcl(const AccessContext& ax, std::string_view role_name,
                         ObjectId schema, char objtype, duckdb::CatalogType type,
                         absl::AnyInvocable<void(Acl&)> mutate);
@@ -296,12 +298,6 @@ class Catalog final {
                 bool missing_ok);
   void FinalizeLoad();
 
-  // Runs `fn` with catalog mutations excluded, or does nothing when a mutation
-  // is already running. Compaction is the only caller: it reads the catalog and
-  // rewrites the log a commit writes both halves of, and it is opportunistic,
-  // so losing that race is a skip rather than a wait. Returns whether `fn` ran.
-  bool TryExcludingMutations(absl::FunctionRef<void()> fn);
-
   // The value a sequence's counter starts from. The definition itself is
   // recorded by the commit walk, like every other version.
   void RecordSequenceSeed(duckdb::ClientContext* context, ObjectId id,
@@ -310,29 +306,17 @@ class Catalog final {
   // Everything the DROP of an entry-is-the-object kind does once its target is
   // resolved and ownership checked: the entry out of the set its kind lives in,
   // where duckdb's dependency walk takes the cascade, plus what the kind adds
-  // (counter row, index victims). Assumes `_mutex` is held.
+  // (counter row, index victims).
   void DropResolved(duckdb::ClientContext* context, ObjectId parent_id,
                     duckdb::CatalogType type, ObjectId id,
                     std::string_view name, bool cascade);
 
-  // The lock every mutation runs under, for the DDL that lives where duckdb
-  // hands it over rather than here: a statement resolves its target, checks
-  // the privilege and writes the entry under one scope.
-  class [[nodiscard]] MutationScope {
-   public:
-    explicit MutationScope(Catalog& catalog) : _lock{&catalog._mutex} {}
-
-   private:
-    absl::MutexLock _lock;
-  };
-
  private:
   void ChangeRoleImpl(
     duckdb::ClientContext* context, ObjectId actor_id, std::string_view name,
-    absl::FunctionRef<void(duckdb::ClientContext*, const Role&)> check,
-    ChangeCallback<Role> callback);
-
-  mutable absl::Mutex _mutex;
+    absl::FunctionRef<void(duckdb::ClientContext*, const SereneDBRoleEntry&)>
+      check,
+    ChangeCallback<SereneDBRoleEntry, CreateRoleInfo> callback);
 };
 
 // Builds the single in-process catalog, loads boot state, and attaches the

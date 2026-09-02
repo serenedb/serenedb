@@ -230,3 +230,192 @@ d	v	c
 2024-03-01 00:00:00	0	1
 2024-03-01 00:00:00	1	1
 2024-03-01 00:00:00	2	1
+
+statement ok
+CREATE TABLE epochs AS SELECT TIMESTAMP '1995-06-15 12:00:00' + INTERVAL (i * 11) DAY AS ts, i AS v FROM range(0, 1000) t(i);
+
+statement ok
+INSERT INTO epochs VALUES (NULL, -1), ('2024-02-29 10:00:00', -2), ('2023-12-31 23:59:59.999999', -3), ('2000-01-01 00:00:00', -4), ('1999-12-31 23:59:59', -5), ('2001-01-01 00:00:00', -6), ('2000-02-29 00:00:00', -8);
+
+query
+EXPLAIN SELECT date_trunc('quarter', ts) AS q, count(*) AS c FROM epochs GROUP BY 1;
+----
+QUERY PLAN
+╭─ PROJECTION ────────────────────────────────────╮
+│ Projections:                                    │
+│ __internal_date_trunc_month_unbucket(#0, 3, 0), │
+│ #1                                              │
+│ ~503 rows                                       │
+╰────────────────────────┬────────────────────────╯
+╭─ PERFECT_HASH_GROUP_BY ┴────────────────────────╮
+│ Groups: #0                                      │
+│ Aggregates: count_star()                        │
+│ ~503 rows                                       │
+╰────────────────────────┬────────────────────────╯
+╭─ PROJECTION ───────────┴────────────────────────╮
+│ Projections:                                    │
+│ __internal_date_trunc_month_bucket(ts, 3, 0)    │
+│ ~1,007 rows                                     │
+╰────────────────────────┬────────────────────────╯
+╭─ SEQ_SCAN ─────────────┴────────────────────────╮
+│ Table: epochs                                   │
+│ Type: Sequential Scan                           │
+│ Projections: ts                                 │
+│ ~1,007 rows                                     │
+╰─────────────────────────────────────────────────╯
+
+query
+SELECT coalesce(date_trunc('decade', ts)::VARCHAR, 'null') AS d, count(*) AS c, min(v) AS lo, max(v) AS hi FROM epochs GROUP BY 1 ORDER BY 1;
+----
+d	c	lo	hi
+1990-01-01 00:00:00	152	-5	150
+2000-01-01 00:00:00	336	-8	483
+2010-01-01 00:00:00	332	484	815
+2020-01-01 00:00:00	186	-3	999
+null	1	-1	-1
+
+query
+SELECT coalesce(date_trunc('century', ts)::VARCHAR, 'null') AS d, count(*) AS c FROM epochs GROUP BY 1 ORDER BY 1;
+----
+d	c
+1900-01-01 00:00:00	152
+2000-01-01 00:00:00	854
+null	1
+
+query
+SELECT coalesce(date_trunc('millennium', ts)::VARCHAR, 'null') AS d, count(*) AS c FROM epochs GROUP BY 1 ORDER BY 1;
+----
+d	c
+1000-01-01 00:00:00	152
+2000-01-01 00:00:00	854
+null	1
+
+query
+SELECT date_trunc('quarter', ts)::VARCHAR AS q, count(*) AS c, min(v) AS lo FROM epochs WHERE v < -1 GROUP BY 1 ORDER BY 1;
+----
+q	c	lo
+1999-10-01 00:00:00	1	-5
+2000-01-01 00:00:00	2	-8
+2001-01-01 00:00:00	1	-6
+2023-10-01 00:00:00	1	-3
+2024-01-01 00:00:00	1	-2
+
+query
+SELECT date_trunc('month', ts)::VARCHAR AS m, count(*) AS c, min(v) AS lo FROM epochs WHERE v < -1 GROUP BY 1 ORDER BY 1;
+----
+m	c	lo
+1999-12-01 00:00:00	1	-5
+2000-01-01 00:00:00	1	-4
+2000-02-01 00:00:00	1	-8
+2001-01-01 00:00:00	1	-6
+2023-12-01 00:00:00	1	-3
+2024-02-01 00:00:00	1	-2
+
+query
+SELECT date_trunc('year', ts)::VARCHAR AS y, v % 2 AS r, count(*) AS c FROM epochs WHERE v >= 0 GROUP BY 1, 2 ORDER BY 1, 2 LIMIT 4;
+----
+y	r	c
+1995-01-01 00:00:00	0	10
+1995-01-01 00:00:00	1	9
+1996-01-01 00:00:00	0	16
+1996-01-01 00:00:00	1	17
+
+statement ok
+CREATE TABLE ad1 AS SELECT * FROM epochs;
+
+statement ok
+INSERT INTO ad1 VALUES ('0001-01-01 00:00:00', -7);
+
+query
+EXPLAIN SELECT date_trunc('month', ts) AS m, count(*) AS c FROM ad1 GROUP BY 1;
+----
+QUERY PLAN
+╭─ HASH_GROUP_BY ──────────╮
+│ Groups: #0               │
+│ Aggregates: count_star() │
+│ ~504 rows                │
+╰─────────────┬────────────╯
+╭─ PROJECTION ┴────────────╮
+│ Projections: m           │
+│ ~1,008 rows              │
+╰─────────────┬────────────╯
+╭─ SEQ_SCAN ──┴────────────╮
+│ Table: ad1               │
+│ Type: Sequential Scan    │
+│ Projections: ts          │
+│ ~1,008 rows              │
+╰──────────────────────────╯
+
+query
+SELECT coalesce(date_trunc('decade', ts)::VARCHAR, 'null') AS d, count(*) AS c FROM ad1 GROUP BY 1 ORDER BY 1;
+----
+d	c
+0001-01-01 (BC) 00:00:00	1
+1990-01-01 00:00:00	152
+2000-01-01 00:00:00	336
+2010-01-01 00:00:00	332
+2020-01-01 00:00:00	186
+null	1
+
+statement ok
+CREATE TABLE bc AS SELECT * FROM epochs;
+
+statement ok
+INSERT INTO bc VALUES ('0100-01-01 (BC) 00:00:00', -9);
+
+query
+EXPLAIN SELECT date_trunc('decade', ts) AS d, count(*) AS c FROM bc GROUP BY 1;
+----
+QUERY PLAN
+╭─ HASH_GROUP_BY ──────────╮
+│ Groups: #0               │
+│ Aggregates: count_star() │
+│ ~504 rows                │
+╰─────────────┬────────────╯
+╭─ PROJECTION ┴────────────╮
+│ Projections: d           │
+│ ~1,008 rows              │
+╰─────────────┬────────────╯
+╭─ SEQ_SCAN ──┴────────────╮
+│ Table: bc                │
+│ Type: Sequential Scan    │
+│ Projections: ts          │
+│ ~1,008 rows              │
+╰──────────────────────────╯
+
+query
+SELECT coalesce(date_trunc('decade', ts)::VARCHAR, 'null') AS d, count(*) AS c FROM bc GROUP BY 1 ORDER BY 1;
+----
+d	c
+0091-01-01 (BC) 00:00:00	1
+1990-01-01 00:00:00	152
+2000-01-01 00:00:00	336
+2010-01-01 00:00:00	332
+2020-01-01 00:00:00	186
+null	1
+
+statement ok
+SET disabled_optimizers = 'compressed_materialization';
+
+query
+SELECT coalesce(date_trunc('decade', ts)::VARCHAR, 'null') AS d, count(*) AS c, min(v) AS lo, max(v) AS hi FROM epochs GROUP BY 1 ORDER BY 1;
+----
+d	c	lo	hi
+1990-01-01 00:00:00	152	-5	150
+2000-01-01 00:00:00	336	-8	483
+2010-01-01 00:00:00	332	484	815
+2020-01-01 00:00:00	186	-3	999
+null	1	-1	-1
+
+query
+SELECT date_trunc('quarter', ts)::VARCHAR AS q, count(*) AS c, min(v) AS lo FROM epochs WHERE v < -1 GROUP BY 1 ORDER BY 1;
+----
+q	c	lo
+1999-10-01 00:00:00	1	-5
+2000-01-01 00:00:00	2	-8
+2001-01-01 00:00:00	1	-6
+2023-10-01 00:00:00	1	-3
+2024-01-01 00:00:00	1	-2
+
+statement ok
+RESET disabled_optimizers;

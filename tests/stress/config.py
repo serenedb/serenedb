@@ -19,6 +19,8 @@ class Profile:
     other_cap: int = 8
     cancels: int = 0
     compaction_windows: int = 0
+    data_domain_crashes: int = 0
+    slow_windows: int = 0
     parks: int = 0
     graceful_restarts: int = 0
     conflict_ceiling: float = 0.35
@@ -70,6 +72,14 @@ PROFILES = {
         scenario="break_everything", quiesce_every=75.0, op_deadline_s=120.0,
         faults_enabled=True, restarts=2, parks=1, graceful_restarts=1,
         cancels=6, compaction_windows=1, other_cap=6,
+    ),
+    # The data-durability half of #930, which nothing else exercises: crash inside
+    # the search commit / search WAL commit / sst sink while an inverted index is
+    # actually being written, then restart and check the rows against the catalog.
+    "iceberg-chaos": Profile(
+        name="iceberg-chaos", seconds=240, workers=3, scenario="iceberg_views",
+        quiesce_every=60.0, other_cap=6, op_deadline_s=120.0,
+        faults_enabled=True, data_domain_crashes=2, slow_windows=1, parks=1,
     ),
     "compaction-probe": Profile(
         name="compaction-probe", seconds=120, workers=4, quiesce_every=60.0,

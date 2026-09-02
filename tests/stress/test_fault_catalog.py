@@ -109,3 +109,13 @@ def test_broker_refuses_an_undefined_fault():
     broker = faults.FaultBroker(lambda: None, defined={"f_a"})
     with pytest.raises(faults.FaultUnavailable):
         broker.arm("typo_not_a_real_fault")
+
+
+def test_a_lost_arm_reply_is_not_treated_as_a_failure_to_arm():
+    import chaos as chaos_mod
+    src = __import__("pathlib").Path(chaos_mod.__file__).read_text()
+    assert "if not self.server.running():" in src, (
+        "crash_and_restart must distinguish 'the arm failed' from 'the fault fired "
+        "before the arm reply came back'; conflating them leaves the server dead "
+        "and reports an unexplained exit"
+    )

@@ -11,6 +11,7 @@ CATALOG_WINDOW_FAULTS = (
 
 ABORT_FAULTS = (
     faults_mod.CATALOG_APPEND_FAILS_FAULT,
+    faults_mod.UNABLE_TO_CREATE_FAULT,
 )
 
 # Forces the catalog-log rewrite from inside a DDL commit. The gate that normally
@@ -20,6 +21,32 @@ ABORT_FAULTS = (
 COMPACTION_FAULTS = (
     faults_mod.COMPACT_INSIDE_DDL_FAULT,
     faults_mod.COMPACT_INSIDE_DROP_FAULT,
+)
+
+# The OTHER durability domain. #930's whole premise is that the catalog decides and
+# the data follows, but every crash window exercised so far is a catalog one. These
+# fire on the search/data side and need a workload that actually writes an index.
+DATA_DOMAIN_FAULTS = (
+    faults_mod.CRASH_BEFORE_SEARCH_COMMIT_FAULT,
+    faults_mod.CRASH_AFTER_SEARCH_COMMIT_FAULT,
+    faults_mod.CRASH_BEFORE_SEARCH_WAL_COMMIT_FAULT,
+    faults_mod.CRASH_AFTER_SEARCH_WAL_COMMIT_FAULT,
+    faults_mod.CRASH_SST_SINK_AFTER_INGEST_FAULT,
+)
+
+GENERIC_CRASH_FAULTS = (
+    faults_mod.CRASH_ON_PACKET_FAULT,
+)
+
+# Not crashes: an error injector and two more parks, none of which any scenario
+# reached before.
+SLOW_FAULTS = (
+    faults_mod.SLOW_SEARCH_TASK_FAULT,
+)
+
+EXTRA_PARK_FAULTS = (
+    faults_mod.PAUSE_CTAS_MID_INGEST_FAULT,
+    faults_mod.PAUSE_VACUUM_MID_WALK_FAULT,
 )
 
 
@@ -35,6 +62,7 @@ class ChaosResult:
         self.cancels = 0
         self.compaction_windows = 0
         self.faults_not_reached = []
+        self.slow_windows = 0
         self.faults_used = []
         self.timeline = []
 
@@ -50,6 +78,7 @@ class ChaosResult:
             "cancels": self.cancels,
             "compaction_windows": self.compaction_windows,
             "faults_not_reached": self.faults_not_reached,
+            "slow_windows": self.slow_windows,
             "faults_used": self.faults_used,
             "timeline": self.timeline[-40:],
         }
@@ -92,6 +121,25 @@ class Chaos:
             self.broker.disarm(name)
         except Exception:
             pass
+
+    def slow_background(self, seconds=15.0):
+        name = self.rng.choice(SLOW_FAULTS)
+        try:
+            self.broker.arm(name)
+        except Exception as exc:
+            self._finding("chaos_arm_failed", f"{name}: {exc}")
+            return False
+        self.result.faults_used.append(name)
+        self.result.slow_windows += 1
+        try:
+            time.sleep(seconds)
+        finally:
+            try:
+                self.broker.disarm(name)
+            except Exception:
+                pass
+        self.result.timeline.append({"fault": name, "outcome": "slow_window_done"})
+        return True
 
     def compaction_pressure(self, seconds=20.0):
         name = self.rng.choice(COMPACTION_FAULTS)
@@ -233,9 +281,9 @@ class Chaos:
             self.planned_downtime.clear()
             return ok
 
-    def crash_and_restart(self, timeout=90.0):
+    def crash_and_restart(self, timeout=90.0, family=None):
         with self._lock:
-            name = self.rng.choice(CATALOG_WINDOW_FAULTS)
+            name = self.rng.choice(family or CATALOG_WINDOW_FAULTS)
             t0 = time.monotonic()
             self.watchdog.expect_death.set()
             self.planned_downtime.set()
@@ -244,9 +292,20 @@ class Chaos:
             try:
                 self.broker.arm(name)
             except Exception as exc:
-                self.watchdog.expect_death.clear()
-                self._finding("chaos_arm_failed", f"{name}: {exc}")
-                return False
+                # The fault can fire before the arming statement's own reply gets
+                # back: a concurrent worker commits, the process aborts, and the
+                # broker's connection drops mid-SET. That is the crash we asked
+                # for, not a failure to arm -- so check before giving up, or the
+                # server is left dead and reported as an unexplained exit.
+                if not self.server.running():
+                    self.result.timeline.append({
+                        "fault": name,
+                        "outcome": "fired_before_the_arm_reply_returned"})
+                else:
+                    self.watchdog.expect_death.clear()
+                    self.planned_downtime.clear()
+                    self._finding("chaos_arm_failed", f"{name}: {exc}")
+                    return False
 
             died = False
             deadline = time.monotonic() + timeout

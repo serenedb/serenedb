@@ -1,15 +1,8 @@
-# A MinHash similarity index is an expression index over minhash(); the query
-# side hashes its text the same way and matches signatures as raw keyword
-# terms through ts_tokenize(..., 'keyword').
-
-statement ok
-CREATE TEXT SEARCH DICTIONARY mh_words(
-    template = 'text',
-    locale = 'en_US.UTF-8',
-    case = 'lower',
-    stemming = false,
-    accent = false
-);
+# A MinHash similarity index is an expression index over minhash(). Indexed
+# expressions run on workers without a client context, so the tokenization
+# inside them must be context-free (no ts_lexize); the query side hashes its
+# text the same way and matches signatures as raw keyword terms through
+# ts_tokenize(..., 'keyword').
 
 statement ok
 CREATE TABLE mh_docs(id INTEGER, body TEXT);
@@ -22,7 +15,7 @@ INSERT INTO mh_docs VALUES
     (4, NULL);
 
 statement ok
-CREATE INDEX mh_idx ON mh_docs USING inverted(id, (minhash(ts_lexize('mh_words', body), 16)));
+CREATE INDEX mh_idx ON mh_docs USING inverted(id, (minhash(regexp_split_to_array(lower(body), '\W+'), 16)));
 
 statement ok
 VACUUM (REFRESH_TABLE) mh_docs;
@@ -31,9 +24,9 @@ VACUUM (REFRESH_TABLE) mh_docs;
 # --- At least two of the query's signatures must match ---
 
 query
-SELECT id FROM mh_docs
-WHERE minhash(ts_lexize('mh_words', body), 16)
-      @@ ts_any(ts_tokenize(minhash(ts_lexize('mh_words', 'quick brown'), 16), 'keyword'), 2)
+SELECT id FROM mh_idx
+WHERE minhash(regexp_split_to_array(lower(body), '\W+'), 16)
+      @@ ts_any(ts_tokenize(minhash(regexp_split_to_array(lower('Quick Brown'), '\W+'), 16), 'keyword'), 2)
 ORDER BY id;
 ----
 id
@@ -44,9 +37,9 @@ id
 # --- A single matching signature is enough with the default min_match ---
 
 query
-SELECT id FROM mh_docs
-WHERE minhash(ts_lexize('mh_words', body), 16)
-      @@ ts_any(ts_tokenize(minhash(ts_lexize('mh_words', 'fox'), 16), 'keyword'))
+SELECT id FROM mh_idx
+WHERE minhash(regexp_split_to_array(lower(body), '\W+'), 16)
+      @@ ts_any(ts_tokenize(minhash(regexp_split_to_array(lower('fox'), '\W+'), 16), 'keyword'))
 ORDER BY id;
 ----
 id
@@ -56,9 +49,9 @@ id
 # --- Every query signature must match with ts_all ---
 
 query
-SELECT id FROM mh_docs
-WHERE minhash(ts_lexize('mh_words', body), 16)
-      @@ ts_all(ts_tokenize(minhash(ts_lexize('mh_words', 'quick brown'), 16), 'keyword'))
+SELECT id FROM mh_idx
+WHERE minhash(regexp_split_to_array(lower(body), '\W+'), 16)
+      @@ ts_all(ts_tokenize(minhash(regexp_split_to_array(lower('quick brown'), '\W+'), 16), 'keyword'))
 ORDER BY id;
 ----
 id
@@ -67,9 +60,9 @@ id
 
 
 query
-SELECT id FROM mh_docs
-WHERE minhash(ts_lexize('mh_words', body), 16)
-      @@ ts_all(ts_tokenize(minhash(ts_lexize('mh_words', 'quick fox'), 16), 'keyword'))
+SELECT id FROM mh_idx
+WHERE minhash(regexp_split_to_array(lower(body), '\W+'), 16)
+      @@ ts_all(ts_tokenize(minhash(regexp_split_to_array(lower('quick fox'), '\W+'), 16), 'keyword'))
 ORDER BY id;
 ----
 id
@@ -79,40 +72,33 @@ id
 # --- Not enough shared signatures: one token from each of two documents ---
 
 query
-SELECT count(*) FROM mh_docs
-WHERE minhash(ts_lexize('mh_words', body), 16)
-      @@ ts_any(ts_tokenize(minhash(ts_lexize('mh_words', 'quick lorem'), 16), 'keyword'), 2);
+SELECT count(*) FROM mh_idx
+WHERE minhash(regexp_split_to_array(lower(body), '\W+'), 16)
+      @@ ts_any(ts_tokenize(minhash(regexp_split_to_array(lower('quick lorem'), '\W+'), 16), 'keyword'), 2);
 ----
 count
 0
 
 
-# --- min_match above the query's own signature count can never match ---
+# --- min_match above the query's own signature count is clamped: it means "all of them" ---
 
 query
-SELECT count(*) FROM mh_docs
-WHERE minhash(ts_lexize('mh_words', body), 16)
-      @@ ts_any(ts_tokenize(minhash(ts_lexize('mh_words', 'quick brown'), 16), 'keyword'), 3);
+SELECT id FROM mh_idx
+WHERE minhash(regexp_split_to_array(lower(body), '\W+'), 16)
+      @@ ts_any(ts_tokenize(minhash(regexp_split_to_array(lower('quick brown'), '\W+'), 16), 'keyword'), 3)
+ORDER BY id;
 ----
-count
-0
+id
+1
+2
 
 
-# --- Hashing the query with a different dictionary yields different signatures ---
-
-statement ok
-CREATE TEXT SEARCH DICTIONARY mh_upper(
-    template = 'text',
-    locale = 'en_US.UTF-8',
-    case = 'upper',
-    stemming = false,
-    accent = false
-);
+# --- Hashing the query differently (no lowercasing) yields different signatures ---
 
 query
-SELECT count(*) FROM mh_docs
-WHERE minhash(ts_lexize('mh_words', body), 16)
-      @@ ts_any(ts_tokenize(minhash(ts_lexize('mh_upper', 'quick brown'), 16), 'keyword'), 2);
+SELECT count(*) FROM mh_idx
+WHERE minhash(regexp_split_to_array(lower(body), '\W+'), 16)
+      @@ ts_any(ts_tokenize(minhash(regexp_split_to_array('QUICK BROWN', '\W+'), 16), 'keyword'), 2);
 ----
 count
 0
@@ -121,8 +107,8 @@ count
 # --- Plain words are not signatures: nothing matches without minhash on the query side ---
 
 query
-SELECT count(*) FROM mh_docs
-WHERE minhash(ts_lexize('mh_words', body), 16) @@ ts_any(['quick', 'brown'], 2);
+SELECT count(*) FROM mh_idx
+WHERE minhash(regexp_split_to_array(lower(body), '\W+'), 16) @@ ts_any(['quick', 'brown'], 2);
 ----
 count
 0
@@ -131,21 +117,38 @@ count
 # --- The query expression must be the indexed one: a different num_hashes is another expression ---
 
 statement error
-SELECT id FROM mh_docs
-WHERE minhash(ts_lexize('mh_words', body), 8)
-      @@ ts_any(ts_tokenize(minhash(ts_lexize('mh_words', 'quick brown'), 8), 'keyword'), 2);
+SELECT id FROM mh_idx
+WHERE minhash(regexp_split_to_array(lower(body), '\W+'), 8)
+      @@ ts_any(ts_tokenize(minhash(regexp_split_to_array(lower('quick brown'), '\W+'), 8), 'keyword'), 2);
 ----
 db error: ERROR: @@ requires an inverted-indexed column on one side
 HINT: Use: <indexed_col> @@ <tsquery_expr>. CREATE INDEX ... USING inverted(<col>) if missing.
 
 
 statement error
-SELECT id FROM mh_docs
-WHERE minhash(ts_lexize('mh_words', body), 16)
-      @@ ts_any(ts_tokenize(minhash(ts_lexize('mh_words', 'quick brown'), 16), 'keyword'), 0);
+SELECT id FROM mh_idx
+WHERE minhash(regexp_split_to_array(lower(body), '\W+'), 16)
+      @@ ts_any(ts_tokenize(minhash(regexp_split_to_array(lower('quick brown'), '\W+'), 16), 'keyword'), 0);
 ----
 db error: ERROR: ts_any min_match must be >= 1, got 0
 HINT: Example: ts_any(ts_tokenize(['quick', 'brown'])). Tokenises each list element through the column analyzer.
+
+
+# --- A dictionary needing a client context cannot be part of an indexed expression ---
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY mh_words(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'lower',
+    stemming = false,
+    accent = false
+);
+
+statement error
+CREATE INDEX mh_lexize_idx ON mh_docs USING inverted(id, (minhash(ts_lexize('mh_words', body), 16)));
+----
+db error: ERROR: Cannot use ts_lexize in this context
 
 
 # --- The index follows inserts and deletes ---
@@ -157,9 +160,9 @@ statement ok
 VACUUM (REFRESH_TABLE) mh_docs;
 
 query
-SELECT id FROM mh_docs
-WHERE minhash(ts_lexize('mh_words', body), 16)
-      @@ ts_any(ts_tokenize(minhash(ts_lexize('mh_words', 'quick brown'), 16), 'keyword'), 2)
+SELECT id FROM mh_idx
+WHERE minhash(regexp_split_to_array(lower(body), '\W+'), 16)
+      @@ ts_any(ts_tokenize(minhash(regexp_split_to_array(lower('quick brown'), '\W+'), 16), 'keyword'), 2)
 ORDER BY id;
 ----
 id
@@ -174,11 +177,68 @@ statement ok
 VACUUM (REFRESH_TABLE) mh_docs;
 
 query
-SELECT id FROM mh_docs
-WHERE minhash(ts_lexize('mh_words', body), 16)
-      @@ ts_any(ts_tokenize(minhash(ts_lexize('mh_words', 'quick brown'), 16), 'keyword'), 2)
+SELECT id FROM mh_idx
+WHERE minhash(regexp_split_to_array(lower(body), '\W+'), 16)
+      @@ ts_any(ts_tokenize(minhash(regexp_split_to_array(lower('quick brown'), '\W+'), 16), 'keyword'), 2)
 ORDER BY id;
 ----
 id
 1
+5
+
+
+# --- The same thing as a sql dictionary on the column: the query text is hashed
+# by the column's own dictionary, so no minhash() call is needed on the query
+# side. min_match counts produced signatures only in the ts_tokenize form; the
+# plain list form counts list elements. ---
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY mh_sql(
+    template = 'sql',
+    expression = 'minhash(regexp_split_to_array(lower(input), ''\W+''), 16)'
+);
+
+statement ok
+CREATE INDEX mh_sql_idx ON mh_docs USING inverted(id, body mh_sql);
+
+statement ok
+VACUUM (REFRESH_TABLE) mh_docs;
+
+query
+SELECT id FROM mh_sql_idx WHERE body @@ ts_any(ts_tokenize(['quick brown']), 2) ORDER BY id;
+----
+id
+1
+5
+
+query
+SELECT id FROM mh_sql_idx WHERE body @@ ts_any(['Quick FOX']) ORDER BY id;
+----
+id
+1
+5
+
+query
+SELECT id FROM mh_sql_idx WHERE body @@ ts_any(['fox']) ORDER BY id;
+----
+id
+1
+
+query
+SELECT count(*) FROM mh_sql_idx WHERE body @@ ts_any(ts_tokenize(['quick lorem']), 2);
+----
+count
+0
+
+statement error
+SELECT id FROM mh_sql_idx WHERE body @@ ts_any(['quick brown'], 2);
+----
+db error: ERROR: ts_any min_match (2) exceeds number of arguments (1)
+HINT: Example: ts_any(['a', 'b'], 1) (OR), ts_all(['a', 'b']) (AND).
+
+
+query
+SELECT id FROM mh_sql_idx WHERE body @@ ts_all(ts_tokenize(['quick brown cat'], 'mh_sql')) ORDER BY id;
+----
+id
 5

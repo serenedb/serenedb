@@ -119,19 +119,19 @@ statement ok
 VACUUM (REFRESH_TABLE) blob_docs;
 
 query
-SELECT pk FROM blob_docs WHERE body @@ 'ab' ORDER BY pk;
+SELECT pk FROM blob_docs_idx WHERE body @@ 'ab' ORDER BY pk;
 ----
 pk
 1
 
 query
-SELECT pk FROM blob_docs WHERE body @@ ts_tokenize(['xyz'::BLOB], 'keyword') ORDER BY pk;
+SELECT pk FROM blob_docs_idx WHERE body @@ ts_any(ts_tokenize(['xyz'::BLOB], 'keyword')) ORDER BY pk;
 ----
 pk
 3
 
 query
-SELECT count(*) FROM blob_docs WHERE body @@ 'a';
+SELECT count(*) FROM blob_docs_idx WHERE body @@ 'a';
 ----
 count
 0

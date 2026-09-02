@@ -362,6 +362,8 @@ def main(argv=None):
     with findings_lock:
         findings.extend(cov_findings)
         findings.extend(capture.scan_server_log(server))
+        san_findings, san_totals = capture.scan_sanitizer_logs()
+        findings.extend(san_findings)
         if verdict == WEDGED:
             findings.append({
                 "kind": "server_wedged", "key": None,
@@ -420,6 +422,9 @@ def main(argv=None):
     print(f"[stress] committed={committed} retries={retries} quiesces={quiesces} "
           f"verdict={verdict} findings={len(findings)} elapsed={elapsed:.1f}s")
     print(f"[stress] labels={labels}")
+    if san_totals:
+        print(f"[stress] sanitizer: {san_totals} "
+              f"(from {len(capture.sanitizer_log_paths())} log_path file(s))")
     print(coverage_mod.render(cov_data))
     if quarantined:
         print(f"[stress] {len(quarantined)} finding(s) quarantined: "
@@ -435,7 +440,8 @@ def main(argv=None):
 
     with findings_lock:
         final_findings = list(findings)
-    capture.write_artifacts(outdir, meta, final_findings, dog, server, tail)
+    capture.write_artifacts(outdir, meta, final_findings, dog, server, tail,
+                            sanitizer_totals=san_totals)
 
     if final_findings or verdict != ALIVE:
         text = journal_mod.render_repro(outdir / "summary.txt", meta,

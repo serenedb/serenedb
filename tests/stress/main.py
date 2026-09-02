@@ -267,7 +267,8 @@ def main(argv=None):
                 chaos.result.parks += 1
                 print(f"[stress] chaos: parking an index build "
                       f"({chaos.result.parks}/{want_parks})")
-                chaos.park_and_probe(committed_now)
+                chaos.park_and_probe(committed_now,
+                                     unrelated_ddl=lambda: unrelated_ddl_probe(dsn))
                 continue
             if graceful_at and time.monotonic() >= graceful_at[0]:
                 graceful_at.pop(0)
@@ -333,7 +334,9 @@ def main(argv=None):
         chaos.result.faults_used, total_committed, quiesces,
         labels=labels_now,
         conflict_ceiling=config.conflict_ceiling_for(profile, profile.scenario),
-        env=env)
+        env=env,
+        chaos_active=bool(want_crashes or want_parks or want_graceful
+                          or want_cancels or want_compaction))
 
     with findings_lock:
         findings.extend(cov_findings)
@@ -441,6 +444,19 @@ def main(argv=None):
         return 1
     print("[stress] PASS")
     return 0
+
+
+def unrelated_ddl_probe(dsn, timeout=20.0):
+    name = f"park_probe_{int(time.monotonic() * 1000) % 1000000}"
+    try:
+        with psycopg.connect(dsn, connect_timeout=10) as conn:
+            conn.autocommit = True
+            with conn.cursor() as cur:
+                cur.execute(f"CREATE TABLE {name}(a INT)")
+                cur.execute(f"DROP TABLE {name}")
+        return True
+    except Exception:
+        return False
 
 
 def run_oracle(workers, pause_event, dsn, run_tag, datadir, oid_registry, label,

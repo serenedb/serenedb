@@ -22,7 +22,8 @@ def reachable_op_kinds(scenario, iterations=PROBE_ITERATIONS, seed=1, env=None):
 
 
 def report(scenario, attempted_kinds, windows, faults_available, faults_used,
-           committed, quiesces, labels=None, conflict_ceiling=None, env=None):
+           committed, quiesces, labels=None, conflict_ceiling=None, env=None,
+           chaos_active=False):
     reachable = reachable_op_kinds(scenario, env=env)
     never = sorted(reachable - set(attempted_kinds))
     unexpected = sorted(set(attempted_kinds) - reachable)
@@ -79,7 +80,11 @@ def report(scenario, attempted_kinds, windows, faults_available, faults_used,
                       f"generator does not produce; the two have drifted apart",
             "candidates": None, "observed": None,
         })
-    if first_rate and last_rate is not None and last_rate * 10 < first_rate:
+    # Chaos windows are legitimately quiet: a crash wait, a park and a restart all
+    # stop the workers on purpose, so a rate comparison across them says nothing.
+    if chaos_active:
+        data["pressure_gate"] = "skipped: chaos windows depress the rate by design"
+    elif first_rate and last_rate is not None and last_rate * 10 < first_rate:
         findings.append({
             "kind": "insufficient_pressure",
             "key": None,

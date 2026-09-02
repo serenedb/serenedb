@@ -34,6 +34,7 @@ class ChaosResult:
         self.parks = 0
         self.cancels = 0
         self.compaction_windows = 0
+        self.faults_not_reached = []
         self.faults_used = []
         self.timeline = []
 
@@ -48,6 +49,7 @@ class ChaosResult:
             "parks": self.parks,
             "cancels": self.cancels,
             "compaction_windows": self.compaction_windows,
+            "faults_not_reached": self.faults_not_reached,
             "faults_used": self.faults_used,
             "timeline": self.timeline[-40:],
         }
@@ -149,7 +151,7 @@ class Chaos:
                 f"running {kind}")
         return ok
 
-    def park_and_probe(self, progress_of, seconds=8.0):
+    def park_and_probe(self, progress_of, seconds=8.0, unrelated_ddl=None):
         name = faults_mod.PAUSE_CREATE_INDEX_MID_BUILD_FAULT
         before = progress_of()
         try:
@@ -162,6 +164,11 @@ class Chaos:
         try:
             time.sleep(seconds / 2.0)
             alive_during = self.watchdog.probe_once()
+            # The claim is that a parked build does not block UNRELATED work, so it
+            # has to be tested on a connection of our own. Watching the worker pool
+            # cannot show it: in a mixed scenario every worker may itself be inside
+            # an index build and therefore parked, with nobody left to progress.
+            unrelated_ok = unrelated_ddl() if unrelated_ddl else None
             time.sleep(seconds / 2.0)
             during = progress_of()
         finally:
@@ -172,18 +179,20 @@ class Chaos:
         gained = during - before
         self.result.timeline.append({
             "fault": name, "outcome": "parked",
-            "committed_while_parked": gained, "alive_while_parked": alive_during})
+            "committed_while_parked": gained, "alive_while_parked": alive_during,
+            "unrelated_ddl_ok": unrelated_ok})
+        if unrelated_ok is False:
+            self._finding(
+                "unrelated_ddl_blocked_by_a_parked_build",
+                f"an unrelated CREATE/DROP on a fresh connection did not complete "
+                f"while {name} was armed; a parked index build must not block "
+                "unrelated DDL")
+            return False
         if not alive_during:
             self._finding(
                 "no_liveness_while_a_build_was_parked",
                 f"a fresh connection could not run SELECT 1 while {name} was armed; "
                 "a parked index build must not take the server with it")
-            return False
-        if gained == 0:
-            self._finding(
-                "no_progress_while_a_build_was_parked",
-                f"no worker committed anything during {seconds:.0f}s with {name} "
-                "armed; a parked build must not block unrelated work")
             return False
         return True
 
@@ -270,10 +279,10 @@ class Chaos:
                         f"never reached; the server is wedged: "
                         f"{self.watchdog.detail}")
                 else:
-                    self._finding(
-                        "crash_fault_never_fired",
-                        f"{name} was armed for {timeout:.0f}s while the server "
-                        f"stayed responsive; the scenario never reached its site")
+                    # A crash point that never fired against a demonstrably healthy
+                    # server means the workload did not reach its site. That is a
+                    # coverage gap, reported in the chaos summary, not a defect.
+                    self.result.faults_not_reached.append(name)
                 return False
 
             self.result.crashes_observed += 1

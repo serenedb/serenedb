@@ -150,6 +150,62 @@ TEST_F(DelimitedTokenizerTests, test_quote) {
                     {{"abc", 0, 3}, {"def", 4, 9}, {"ghi\"", 10, 14}});
 }
 
+TEST_F(DelimitedTokenizerTests, quotes_beyond_first_block) {
+  AssertBlockTokens(",", "aa,bb,cc,dd,ee,ff,gg,hh,ii,jj,kk,\"q,q\",zz",
+                    {{"aa", 0, 2},
+                     {"bb", 3, 5},
+                     {"cc", 6, 8},
+                     {"dd", 9, 11},
+                     {"ee", 12, 14},
+                     {"ff", 15, 17},
+                     {"gg", 18, 20},
+                     {"hh", 21, 23},
+                     {"ii", 24, 26},
+                     {"jj", 27, 29},
+                     {"kk", 30, 32},
+                     {"q,q", 33, 38},
+                     {"zz", 39, 41}});
+
+  const std::string block = "aaa,bbb,ccc,ddd,eee,fff,ggg,hhh,";
+  const std::vector<BlockToken> head{
+    {"aaa", 0, 3},   {"bbb", 4, 7},   {"ccc", 8, 11},  {"ddd", 12, 15},
+    {"eee", 16, 19}, {"fff", 20, 23}, {"ggg", 24, 27}, {"hhh", 28, 31}};
+  {
+    auto expected = head;
+    expected.push_back({"x,y", 32, 37});
+    for (uint32_t start = 38; start < 64; start += 3) {
+      expected.push_back({"zz", start, start + 2});
+    }
+    AssertBlockTokens(",", block + "\"x,y\",zz,zz,zz,zz,zz,zz,zz,zz,zz",
+                      expected);
+  }
+  {
+    auto expected = head;
+    expected.insert(expected.end(),
+                    {{"ii", 32, 34}, {"j,j", 35, 40}, {"k", 41, 42}});
+    AssertBlockTokens(",", block + "ii,\"j,j\",k", expected);
+  }
+
+  AssertBlockTokens(",", "a,b,c,d,e,f,g,h,i,j,k,l,m,n,o,\"q,q\",x",
+                    {{"a", 0, 1},
+                     {"b", 2, 3},
+                     {"c", 4, 5},
+                     {"d", 6, 7},
+                     {"e", 8, 9},
+                     {"f", 10, 11},
+                     {"g", 12, 13},
+                     {"h", 14, 15},
+                     {"i", 16, 17},
+                     {"j", 18, 19},
+                     {"k", 20, 21},
+                     {"l", 22, 23},
+                     {"m", 24, 25},
+                     {"n", 26, 27},
+                     {"o", 28, 29},
+                     {"q,q", 30, 35},
+                     {"x", 36, 37}});
+}
+
 TEST_F(DelimitedTokenizerTests, test_load) {
   // happy path -- explicit delimiter.
   {

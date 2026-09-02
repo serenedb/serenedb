@@ -23,6 +23,7 @@
 
 #include "delimited_tokenizer.hpp"
 
+#include <bit>
 #include <cstring>
 #include <optional>
 #include <string_view>
@@ -127,13 +128,9 @@ bool DelimitedTokenizer::DoFill(duckdb::string_t raw, TokenSink& sink) {
   if constexpr (M == Mode::Chars) {
     CharsFillValue<Layout>(sink, raw);
   } else if constexpr (M == Mode::Single) {
-    if (!memchr(raw.GetData(), '"', raw.GetSize())) [[likely]] {
-      FastFillValue<Layout>(sink, raw);
-    } else {
-      QuotedFillValue<Layout>(sink, raw);
-    }
+    FastFillValue<Layout>(sink, raw);
   } else {
-    QuotedFillValue<Layout>(sink, raw);
+    QuotedFillValue<Layout>(sink, raw, 0);
   }
   return true;
 }
@@ -154,11 +151,32 @@ void DelimitedTokenizer::FastFillValue(TokenSink& sink,
     tok_begin = pos + 1;
   };
 
-  classify::DrainClassified(
-    p, size, true,
-    [&](const byte_type* block)
-      IRS_FORCE_INLINE { return classify::ClassifyEqBlock(block, delim); },
-    [&](byte_type c) IRS_FORCE_INLINE { return c == delim; }, emit);
+  size_t offset = 0;
+  for (; size - offset >= classify::kClassifyBlock;
+       offset += classify::kClassifyBlock) {
+    const auto* block = p + offset;
+    auto delims = classify::ClassifyEqBlock(block, delim);
+    const auto quotes = classify::ClassifyEqBlock(block, '"');
+    if (quotes != 0) [[unlikely]] {
+      delims &= (uint32_t{1} << std::countr_zero(quotes)) - 1;
+      classify::VisitSetBits(
+        delims, [&](uint32_t bit) IRS_FORCE_INLINE { emit(offset + bit); });
+      QuotedFillValue<Layout>(sink, value, tok_begin);
+      return;
+    }
+    classify::VisitSetBits(
+      delims, [&](uint32_t bit) IRS_FORCE_INLINE { emit(offset + bit); });
+  }
+  for (; offset < size; ++offset) {
+    const auto c = p[offset];
+    if (c == '"') [[unlikely]] {
+      QuotedFillValue<Layout>(sink, value, tok_begin);
+      return;
+    }
+    if (c == delim) {
+      emit(offset);
+    }
+  }
   sink.EmitSlice<Layout>(
     p, limit,
     Offs{static_cast<uint32_t>(tok_begin), static_cast<uint32_t>(size)});
@@ -191,14 +209,15 @@ void DelimitedTokenizer::CharsFillValue(TokenSink& sink,
 
 template<TokenLayout Layout>
 void DelimitedTokenizer::QuotedFillValue(TokenSink& sink,
-                                         const duckdb::string_t& value) {
+                                         const duckdb::string_t& value,
+                                         size_t from) {
   SDB_ASSERT(!_delim.empty());
   const auto* p = reinterpret_cast<const byte_type*>(value.GetData());
   const size_t size = value.GetSize();
   const bytes_view delim{_delim};
-  const auto* cur = p;
+  const auto* cur = p + from;
   const auto* const value_end = p + size;
-  const auto* next_quote = FindQuote(p, value_end);
+  const auto* next_quote = FindQuote(cur, value_end);
   for (;;) {
     if (next_quote < cur) {
       next_quote = FindQuote(cur, value_end);

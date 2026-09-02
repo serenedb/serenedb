@@ -63,7 +63,8 @@ class DelimitedTokenizer final : public TypedTokenizer<DelimitedTokenizer>,
   template<TokenLayout Layout>
   void CharsFillValue(TokenSink& sink, const duckdb::string_t& value);
   template<TokenLayout Layout>
-  void QuotedFillValue(TokenSink& sink, const duckdb::string_t& value);
+  void QuotedFillValue(TokenSink& sink, const duckdb::string_t& value,
+                       size_t from);
 
   bstring _delim;
   Mode _mode;

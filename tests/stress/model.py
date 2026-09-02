@@ -83,6 +83,7 @@ class Model:
         self._owned = {}
         self._shared = set()
         self._ambiguous_ops = 0
+        self._incarnation = {}
 
     def declare_owned(self, key):
         if key in self._shared:
@@ -135,7 +136,12 @@ class Model:
         self._owned[key] = nxt
 
     def apply_create(self, key, token, outcome, rows=frozenset()):
+        if outcome.applied:
+            self._incarnation[key] = self._incarnation.get(key, 0) + 1
         self.apply(key, Present(token, rows), outcome)
+
+    def incarnation(self, key):
+        return self._incarnation.get(key, 0)
 
     def rows_of(self, key):
         cands = self._owned.get(key)

@@ -15,13 +15,23 @@ ENTRY_TYPE_TO_KIND = {
     "View": ops.VIEW,
     "Sequence": ops.SEQUENCE,
     "Index": ops.INDEX,
+    # Neither appears in pg_class, and neither can hold a COMMENT ON token, so
+    # sdb_catalog_sets() is the only place they are observable at all. A foreign
+    # server also carries an empty schema_name.
+    "Tokenizer": ops.TOKENIZER,
+    "Foreign Server": ops.SERVER,
+    "Database": ops.DATABASE,
 }
 
 DEPENDENCY_ENTRY_TYPE = "Dependency"
 
 
 def generated_name_re(run_tag):
-    return re.compile(rf"^s{re.escape(run_tag)}_w\d+_(?:t|q|v|i)\d+$")
+    # The kind letter must cover every family the generator makes: t table,
+    # q sequence, v view, i index, d text search dictionary, s foreign server.
+    # Engine-derived names (<table>_pkey, <table>_pk_seq) never match, which is
+    # what keeps them out of the ghost check.
+    return re.compile(rf"^s{re.escape(run_tag)}_w\d+_(?:t|q|v|i|d|s|b|a)\d+$")
 
 
 class Snapshot:
@@ -36,6 +46,7 @@ class Snapshot:
         self.epoch = None
         self.orphan_files = []
         self.row_tokens = {}
+        self.database_count = 1
         self.catalog_wal_bytes = None
         self.errors = []
 
@@ -72,7 +83,7 @@ def catalog_wal_size(datadir):
         return None
 
 
-def take(conn, run_tag, datadir=None, row_keys=()):
+def take(conn, run_tag, datadir=None, row_keys=(), scan_artifacts=False):
     snap = Snapshot(run_tag)
     like = f"s{run_tag}\\_%"
 
@@ -112,6 +123,12 @@ def take(conn, run_tag, datadir=None, row_keys=()):
         snap.set_objects.pop((ops.TABLE, name), None)
 
     try:
+        rows = _rows(conn, "SELECT count(*) FROM pg_database")
+        snap.database_count = int(rows[0][0]) if rows else 1
+    except Exception as exc:
+        snap.errors.append(f"pg_database count failed: {exc}")
+
+    try:
         rows = _rows(conn, "SELECT catalog_version FROM sdb_deferred_catalog()")
         snap.epoch = int(rows[0][0]) if rows else None
     except Exception as exc:
@@ -122,7 +139,12 @@ def take(conn, run_tag, datadir=None, row_keys=()):
         snap.row_tokens = read_row_tokens(conn, wanted)
 
     if datadir:
-        snap.orphan_files = scan_datadir(datadir, snap.all_oids)
+        # Artifact reclamation is deferred to a background pool after the commit
+        # that decided the drop, so mid-run a just-dropped index legitimately
+        # still has its directory. Boot's orphan sweep is the real contract, so
+        # this only runs where that contract applies: after a restart.
+        if scan_artifacts:
+            snap.orphan_files = scan_datadir(datadir, snap.all_oids)
         snap.catalog_wal_bytes = catalog_wal_size(datadir)
     return snap
 

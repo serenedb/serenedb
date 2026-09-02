@@ -30,7 +30,7 @@ class WorkerStatus:
 class Worker(threading.Thread):
     def __init__(self, worker_id, dsn, profile, run_tag, seed, journal, broker,
                  stop_event, pause_event, findings, findings_lock,
-                 planned_downtime=None):
+                 planned_downtime=None, env=None):
         super().__init__(daemon=True, name=f"stress-w{worker_id}")
         self.worker_id = worker_id
         self.dsn = dsn
@@ -45,7 +45,8 @@ class Worker(threading.Thread):
         self.model = Model()
         self.names = NameGen(run_tag, worker_id)
         self.state = scenarios.WorkerState(
-            self.names, table_cap=profile.table_cap, other_cap=profile.other_cap)
+            self.names, table_cap=profile.table_cap, other_cap=profile.other_cap,
+            env=env or {})
         self.pick = scenarios.resolve(profile.scenario)
         self.rng = derive(seed, worker_id)
         self.status = WorkerStatus(worker_id)
@@ -221,6 +222,7 @@ class Worker(threading.Thread):
             if outcome is Outcome.COMMITTED:
                 self.state.note_created(op)
                 self.state.note_rows(op)
+                self.state.note_attachment(op)
                 self.state.note_dropped(op)
                 self.status.committed += 1
             if outcome is Outcome.UNKNOWN_CRASH:

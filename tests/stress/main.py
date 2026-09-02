@@ -3,6 +3,7 @@ import os
 import pathlib
 import random
 import shlex
+import tempfile
 import sys
 import threading
 import time
@@ -14,6 +15,8 @@ for _p in (HERE, os.path.join(REPO, "tests", "harness", "python")):
         sys.path.insert(0, _p)
 
 import psycopg
+
+import shutil
 
 import capture
 import chaos as chaos_mod
@@ -115,6 +118,13 @@ def main(argv=None):
         print(f"[stress] serened not found at {args.binary}", file=sys.stderr)
         return 1
 
+    fixtures = config.iceberg_fixtures(REPO)
+    if profile.scenario in config.SCENARIOS_NEEDING_ICEBERG and not fixtures:
+        print("[stress] scenario needs the iceberg fixture; generate it with "
+              "scripts/ensure_iceberg_fixture.sh (needs docker) -- skipping",
+              file=sys.stderr)
+        return 0
+
     raise_open_files(16384)
     reaped = reap_orphans(ORPHAN_PATTERNS)
 
@@ -147,6 +157,7 @@ def main(argv=None):
 
     dsn = server.dsn()
     info = preflight(dsn)
+    print(f"[stress] iceberg_fixtures={len(fixtures)}")
     print(f"[stress] port={server.port} fault_injection={info['fault_injection']} "
           f"psycopg={info['psycopg']} libpq={info['libpq']} "
           f"catalog_sets_rows={info['catalog_sets_rows']}")
@@ -168,9 +179,13 @@ def main(argv=None):
         except Exception as exc:
             print(f"[stress] warning: could not reset fault points: {exc}")
 
+    attach_root = tempfile.mkdtemp(prefix="sdbstress-att-",
+                                   dir=profile.datadir_root)
+    env = {"iceberg_fixtures": fixtures, "host": "127.0.0.1",
+           "port": server.port, "attach_root": attach_root}
     workers = [
         Worker(i, dsn, profile, run_tag, seed, jrnl, broker, stop_event,
-               pause_event, findings, findings_lock, planned_downtime)
+               pause_event, findings, findings_lock, planned_downtime, env)
         for i in range(profile.workers)
     ]
     dog = Watchdog(dsn, profile, workers, server, stop_event)
@@ -184,7 +199,8 @@ def main(argv=None):
         # the crash left ambiguous, even the ones that survived.
         found = run_oracle(workers, pause_event, dsn, run_tag, server.datadir,
                            oid_registry, f"after-crash:{fault_name}",
-                           abort_if=lambda: dog.verdict != ALIVE)
+                           abort_if=lambda: dog.verdict != ALIVE,
+                           scan_artifacts=True)
         resynced = [w.state.resync_from(w.model) for w in workers]
         print(f"[stress] resynced worker state after {fault_name}: "
               f"{resynced} live keys per worker")
@@ -316,7 +332,8 @@ def main(argv=None):
         profile.scenario, attempted, windows, defined,
         chaos.result.faults_used, total_committed, quiesces,
         labels=labels_now,
-        conflict_ceiling=config.conflict_ceiling_for(profile, profile.scenario))
+        conflict_ceiling=config.conflict_ceiling_for(profile, profile.scenario),
+        env=env)
 
     with findings_lock:
         findings.extend(cov_findings)
@@ -417,6 +434,7 @@ def main(argv=None):
     except Exception:
         pass
     server.stop(keep_datadir=True)
+    shutil.rmtree(attach_root, ignore_errors=True)
 
     if final_findings or verdict != ALIVE:
         print(f"[stress] FAIL verdict={verdict} findings={len(final_findings)}")
@@ -426,7 +444,7 @@ def main(argv=None):
 
 
 def run_oracle(workers, pause_event, dsn, run_tag, datadir, oid_registry, label,
-               abort_if=None):
+               abort_if=None, scan_artifacts=False):
     drained, stuck = quiesce.drain(workers, pause_event, timeout=120.0,
                                    abort_if=abort_if)
     try:
@@ -448,7 +466,8 @@ def run_oracle(workers, pause_event, dsn, run_tag, datadir, oid_registry, label,
         with psycopg.connect(dsn) as conn:
             conn.autocommit = True
             snap = snapshot_mod.take(conn, run_tag, datadir=datadir,
-                                     row_keys=row_keys)
+                                     row_keys=row_keys,
+                                     scan_artifacts=scan_artifacts)
             return oracle.run_all(models, snap, conn, oid_registry)
     finally:
         quiesce.resume(pause_event)

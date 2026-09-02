@@ -2,6 +2,16 @@ TABLE = "table"
 SEQUENCE = "sequence"
 VIEW = "view"
 INDEX = "index"
+TOKENIZER = "tokenizer"
+SERVER = "server"
+DATABASE = "database"
+ATTACHMENT = "attachment"
+
+# Kinds that cannot carry a COMMENT ON token, verified: COMMENT ON TEXT SEARCH
+# DICTIONARY and COMMENT ON SERVER are both 42601, and pg_shdescription is empty.
+# Their identity is proven by oid instead, which the oracle checks per incarnation.
+# COMMENT ON DATABASE is 0A000, so a database has no token channel either.
+OID_IDENTITY_KINDS = frozenset({TOKENIZER, SERVER, DATABASE})
 
 
 class Op:
@@ -193,6 +203,141 @@ def dml_delete(table_key, label):
 
 def read_table(table_key):
     return Op("read", [f"SELECT count(*) FROM {table_key[1]}"], key=table_key)
+
+
+def create_tokenizer(names):
+    name = names.fresh("d")
+    return Op("create_tokenizer", [
+        f"CREATE TEXT SEARCH DICTIONARY {name}("
+        f"template = 'text', locale = 'en_US.UTF-8', case = 'lower', "
+        f"stemming = false, accent = false)",
+    ], creates=[(key_of(TOKENIZER, name), None)], key=key_of(TOKENIZER, name))
+
+
+def drop_tokenizer(key):
+    return Op("drop_tokenizer", [f"DROP TEXT SEARCH DICTIONARY {key[1]}"],
+              drops=[key], key=key)
+
+
+def create_iceberg_view(names, fixture_path):
+    name = names.fresh("v")
+    token = names.token()
+    return Op("create_iceberg_view", [
+        f"CREATE VIEW {name} AS SELECT * FROM iceberg_scan("
+        f"'{fixture_path}', allow_moved_paths=true)",
+        f"COMMENT ON VIEW {name} IS '{token}'",
+    ], creates=[(key_of(VIEW, name), token)], token=token,
+        key=key_of(VIEW, name))
+
+
+def create_inverted_index(names, target_key, dict_key=None):
+    name = names.fresh("i")
+    token = names.token()
+    cols = "body" if target_key[0] == VIEW else "label"
+    spec = f"{cols} {dict_key[1]}" if dict_key else cols
+    return Op("create_inverted_index", [
+        f"CREATE INDEX {name} ON {target_key[1]} USING inverted({spec})",
+        f"COMMENT ON INDEX {name} IS '{token}'",
+    ], creates=[(key_of(INDEX, name), token)], token=token,
+        key=key_of(INDEX, name), needs=[target_key] + ([dict_key] if dict_key else []))
+
+
+def search_index(index_key):
+    # A search predicate only lowers when the INDEX relation is the FROM target;
+    # querying the base table raises 0A000. Verified.
+    return Op("search_index",
+              [f"SELECT count(*) FROM {index_key[1]} WHERE body @@ 'alpha'"],
+              key=index_key)
+
+
+def reindex_index(index_key):
+    return Op("reindex_index", [f"REINDEX INDEX {index_key[1]}"], key=index_key)
+
+
+def vacuum_refresh_index(index_key):
+    return Op("vacuum_refresh_index",
+              [f"VACUUM (REFRESH_INDEX) {index_key[1]}"], key=index_key)
+
+
+def create_foreign_server(names, host, port):
+    name = names.fresh("s")
+    return Op("create_foreign_server", [
+        f"CREATE SERVER {name} FOREIGN DATA WRAPPER postgres_fdw "
+        f"OPTIONS (host '{host}', port '{port}', dbname 'postgres', "
+        f"user 'postgres')",
+    ], creates=[(key_of(SERVER, name), None)], key=key_of(SERVER, name))
+
+
+def drop_foreign_server(key, scope="private"):
+    guard = "IF EXISTS " if scope == "shared" else ""
+    return Op("drop_foreign_server", [f"DROP SERVER {guard}{key[1]}"],
+              drops=[key], key=key, scope=scope)
+
+
+def create_database(names, scope="private"):
+    name = names.fresh("b")
+    guard = "IF NOT EXISTS " if scope == "shared" else ""
+    return Op("create_database", [f"CREATE DATABASE {guard}{name}"],
+              creates=[(key_of(DATABASE, name), None)],
+              key=key_of(DATABASE, name), scope=scope)
+
+
+def create_database_named(name, scope="shared"):
+    return Op("create_database_shared", [f"CREATE DATABASE IF NOT EXISTS {name}"],
+              creates=[(key_of(DATABASE, name), None)],
+              key=key_of(DATABASE, name), scope=scope)
+
+
+def drop_database(key, scope="private"):
+    guard = "IF EXISTS " if scope == "shared" else ""
+    return Op("drop_database", [f"DROP DATABASE {guard}{key[1]}"],
+              drops=[key], key=key, scope=scope)
+
+
+def cross_db_create_table(names, db_key, scope="shared"):
+    name = names.fresh("t")
+    return Op("cross_db_create_table", [
+        f"CREATE TABLE IF NOT EXISTS {db_key[1]}.public.{name}(a INT)",
+    ], key=db_key, scope=scope, needs=[db_key])
+
+
+def cross_db_read(db_key, scope="shared"):
+    return Op("cross_db_read",
+              [f"SELECT count(*) FROM {db_key[1]}.information_schema.tables"],
+              key=db_key, scope=scope)
+
+
+def attach_duckdb(names, root, scope="shared"):
+    name = names.fresh("a")
+    path = f"{root}/{name}.duckdb"
+    return Op("attach_duckdb", [f"ATTACH IF NOT EXISTS '{path}' AS {name}"],
+              key=key_of(ATTACHMENT, name), scope=scope)
+
+
+def detach_duckdb(key, scope="shared"):
+    return Op("detach_duckdb", [f"DETACH IF EXISTS {key[1]}"],
+              key=key, scope=scope)
+
+
+def attachment_write(key, scope="shared"):
+    return Op("attachment_write",
+              [f"CREATE TABLE IF NOT EXISTS {key[1]}.main.t(a INT)"],
+              key=key, scope=scope)
+
+
+def server_in_use(key, scope="shared"):
+    # Reads the catalog rows for a server that another worker may be dropping
+    # underneath this statement.
+    return Op("server_in_use", [
+        f"SELECT count(*) FROM pg_foreign_server WHERE srvname = '{key[1]}'",
+    ], key=key, scope=scope)
+
+
+def create_foreign_server_named(name, host, port, scope="shared"):
+    return Op("create_foreign_server_shared", [
+        f"CREATE SERVER IF NOT EXISTS {name} FOREIGN DATA WRAPPER postgres_fdw "
+        f"OPTIONS (host '{host}', port '{port}', dbname 'postgres', user 'postgres')",
+    ], creates=[(key_of(SERVER, name), None)], key=key_of(SERVER, name), scope=scope)
 
 
 def catalog_read():

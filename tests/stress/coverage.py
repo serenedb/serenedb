@@ -6,9 +6,9 @@ PROBE_ITERATIONS = 20000
 MIN_WINDOW_SECONDS = 5.0
 
 
-def reachable_op_kinds(scenario, iterations=PROBE_ITERATIONS, seed=1):
+def reachable_op_kinds(scenario, iterations=PROBE_ITERATIONS, seed=1, env=None):
     pick = scenarios_mod.resolve(scenario)
-    state = scenarios_mod.WorkerState(ops_mod.NameGen("probe", 0))
+    state = scenarios_mod.WorkerState(ops_mod.NameGen("probe", 0), env=env or {})
     stream = derive(seed, 0)
     kinds = set()
     for _ in range(iterations):
@@ -16,13 +16,14 @@ def reachable_op_kinds(scenario, iterations=PROBE_ITERATIONS, seed=1):
         kinds.add(op.kind)
         state.note_created(op)
         state.note_rows(op)
+        state.note_attachment(op)
         state.note_dropped(op)
     return kinds
 
 
 def report(scenario, attempted_kinds, windows, faults_available, faults_used,
-           committed, quiesces, labels=None, conflict_ceiling=None):
-    reachable = reachable_op_kinds(scenario)
+           committed, quiesces, labels=None, conflict_ceiling=None, env=None):
+    reachable = reachable_op_kinds(scenario, env=env)
     never = sorted(reachable - set(attempted_kinds))
     unexpected = sorted(set(attempted_kinds) - reachable)
 

@@ -222,3 +222,39 @@ def test_matching_rows_are_not_a_finding():
     s = snap(pg={T1: 100}, sets={T1: 100}, tokens={T1: "tok1"})
     s.row_tokens = {T1: frozenset({"r1", "r2"})}
     assert run([m], s) == []
+
+
+def test_dropping_a_view_must_cascade_its_inverted_index_in_the_model():
+    import ops
+    import scenarios
+    from ops import NameGen
+    from rng import derive
+
+    st = scenarios.WorkerState(NameGen("ab", 0),
+                               env={"iceberg_fixtures": ["/x/plain_v1"]})
+    view = ops.key_of(ops.VIEW, "sab_w0_v1")
+    idx = ops.key_of(ops.INDEX, "sab_w0_i1")
+    st.views = [view]
+    st.indexes = [idx]
+    st.parent = {idx: view}
+
+    op = scenarios._build(derive(1, 0), st, "drop_view")
+    assert idx in op.cascade, (
+        "DROP VIEW silently removes inverted indexes over that view; a model that "
+        "does not cascade them reports a vanished private key on every later op"
+    )
+
+
+def test_the_edge_check_is_skipped_when_the_oid_view_is_incomplete():
+    m, s = healthy()
+    s.edges = [(100, 999999)]
+    s.database_count = 1
+    assert "dangling_dependency_referenced" in kinds(run([m], s))
+
+    m2, s2 = healthy()
+    s2.edges = [(100, 999999)]
+    s2.database_count = 3
+    assert "dangling_dependency_referenced" not in kinds(run([m2], s2)), (
+        "Dependency rows are global while entry rows are per-database; with "
+        "several databases an edge into another one is not dangling"
+    )

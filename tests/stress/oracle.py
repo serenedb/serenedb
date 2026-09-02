@@ -6,6 +6,28 @@ from model import ABSENT, Present
 class OidRegistry:
     def __init__(self):
         self._seen = {}
+        self._per_incarnation = {}
+
+    def check_identity(self, models, snap):
+        findings = []
+        for model in models:
+            for key in model.owned_keys():
+                oid = snap.set_objects.get(key)
+                if oid is None:
+                    continue
+                gen = model.incarnation(key)
+                prev = self._per_incarnation.get((key, gen))
+                if prev is not None and prev != oid:
+                    findings.append({
+                        "kind": "oid_changed_within_one_incarnation",
+                        "key": list(key),
+                        "detail": f"oid moved {prev} -> {oid} without the object being "
+                                  f"dropped and recreated; for a kind with no COMMENT "
+                                  f"token this is the only identity signal there is",
+                        "candidates": None, "observed": oid,
+                    })
+                self._per_incarnation[(key, gen)] = oid
+        return findings
 
     def check(self, snap):
         findings = []
@@ -30,6 +52,12 @@ def check_models(models, snap):
         token = token if token is not None else snap_mod.NO_TOKEN
         rows = snap.row_tokens.get(key, frozenset())
         observed[key] = Present(token, rows)
+    # A tokenizer or a foreign server is invisible to pg_class and cannot carry a
+    # token, so presence is read from the entry port and content is not asserted;
+    # identity is covered by check_oid_identity instead.
+    for key in snap.set_objects:
+        if key[0] in ops.OID_IDENTITY_KINDS:
+            observed[key] = Present(None)
     findings = []
     for model in models:
         for f in model.collapse(observed):
@@ -61,7 +89,7 @@ def check_ghosts(models, snap):
 def check_pg_vs_sets(snap):
     findings = []
     for key, oid in snap.set_objects.items():
-        if not snap.is_generated(key[1]):
+        if not snap.is_generated(key[1]) or key[0] in ops.OID_IDENTITY_KINDS:
             continue
         if key not in snap.pg_objects:
             findings.append({
@@ -91,6 +119,13 @@ def check_pg_vs_sets(snap):
 
 
 def check_edges(snap):
+    # Dependency rows span every attachment, while the entry rows this snapshot
+    # collected come from the session's current database only. With more than one
+    # database in play the oid view is therefore incomplete by construction, and
+    # an edge into another database would read as dangling. Verified behaviour, so
+    # the check is skipped rather than made to lie.
+    if snap.database_count > 1:
+        return []
     findings = []
     live = snap.all_oids
     for dependent, referenced in snap.edges:
@@ -152,5 +187,6 @@ def run_all(models, snap, conn, oid_registry):
     findings += check_edges(snap)
     findings += check_orphan_files(snap)
     findings += oid_registry.check(snap)
+    findings += oid_registry.check_identity(models, snap)
     findings += check_visible_tripwire(conn)
     return findings

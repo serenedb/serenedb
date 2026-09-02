@@ -1,0 +1,188 @@
+statement ok
+CREATE TABLE events AS SELECT TIMESTAMP '2024-03-01 00:00:00' + INTERVAL (i * 37) MINUTE AS ts, i AS v FROM range(0, 2000) t(i);
+
+statement ok
+INSERT INTO events VALUES (NULL, -1), (NULL, -2);
+
+query
+EXPLAIN SELECT date_trunc('hour', ts) AS h, count(*) AS c FROM events GROUP BY 1;
+----
+QUERY PLAN
+╭─ PROJECTION ───────────────────────────────────────╮
+│ Projections:                                       │
+│ __internal_date_trunc_unbucket(#0, 3600000000, 0), │
+│ #1                                                 │
+│ ~1,001 rows                                        │
+╰──────────────────────────┬─────────────────────────╯
+╭─ PERFECT_HASH_GROUP_BY ──┴─────────────────────────╮
+│ Groups: #0                                         │
+│ Aggregates: count_star()                           │
+│ ~1,001 rows                                        │
+╰──────────────────────────┬─────────────────────────╯
+╭─ PROJECTION ─────────────┴─────────────────────────╮
+│ Projections:                                       │
+│ __internal_date_trunc_bucket(ts, 3600000000, 0)    │
+│ ~2,002 rows                                        │
+╰──────────────────────────┬─────────────────────────╯
+╭─ SEQ_SCAN ───────────────┴─────────────────────────╮
+│ Table: events                                      │
+│ Type: Sequential Scan                              │
+│ Projections: ts                                    │
+│ ~2,002 rows                                        │
+╰────────────────────────────────────────────────────╯
+
+query
+SELECT coalesce(date_trunc('hour', ts)::VARCHAR, 'null') AS h, count(*) AS c, sum(v) AS s FROM events GROUP BY 1 ORDER BY 1 LIMIT 5;
+----
+h	c	s
+2024-03-01 00:00:00	2	1
+2024-03-01 01:00:00	2	5
+2024-03-01 02:00:00	1	4
+2024-03-01 03:00:00	2	11
+2024-03-01 04:00:00	2	15
+
+query
+SELECT coalesce(date_trunc('week', ts)::VARCHAR, 'null') AS w, count(*) AS c, min(v) AS lo, max(v) AS hi FROM events GROUP BY 1 ORDER BY 1;
+----
+w	c	lo	hi
+2024-02-26 00:00:00	117	0	116
+2024-03-04 00:00:00	273	117	389
+2024-03-11 00:00:00	272	390	661
+2024-03-18 00:00:00	273	662	934
+2024-03-25 00:00:00	272	935	1206
+2024-04-01 00:00:00	272	1207	1478
+2024-04-08 00:00:00	273	1479	1751
+2024-04-15 00:00:00	248	1752	1999
+null	2	-2	-1
+
+query
+SELECT date_trunc('day', ts)::VARCHAR AS d, count(*) AS c FROM events GROUP BY 1 HAVING count(*) > 38 ORDER BY 1 LIMIT 3;
+----
+d	c
+2024-03-01 00:00:00	39
+2024-03-02 00:00:00	39
+2024-03-03 00:00:00	39
+
+query
+SELECT coalesce(date_trunc('hour', ts)::VARCHAR, 'null') AS h, v % 3 AS r, count(*) AS c FROM events GROUP BY 1, 2 ORDER BY 1, 2 LIMIT 4;
+----
+h	r	c
+2024-03-01 00:00:00	0	1
+2024-03-01 00:00:00	1	1
+2024-03-01 01:00:00	0	1
+2024-03-01 01:00:00	2	1
+
+query
+SELECT coalesce(d::VARCHAR, 'null') AS d, coalesce(r::VARCHAR, 'null') AS r, c
+FROM (SELECT date_trunc('day', ts) AS d, v % 2 AS r, count(*) AS c FROM events WHERE v < 80 GROUP BY ROLLUP (1, 2))
+ORDER BY 1, 2, 3;
+----
+d	r	c
+2024-03-01 00:00:00	0	20
+2024-03-01 00:00:00	1	19
+2024-03-01 00:00:00	null	39
+2024-03-02 00:00:00	0	19
+2024-03-02 00:00:00	1	20
+2024-03-02 00:00:00	null	39
+2024-03-03 00:00:00	0	1
+2024-03-03 00:00:00	1	1
+2024-03-03 00:00:00	null	2
+null	-1	1
+null	0	1
+null	null	2
+null	null	82
+
+statement ok
+CREATE TABLE inf_events AS SELECT * FROM events UNION ALL SELECT TIMESTAMP 'infinity', 9999 UNION ALL SELECT TIMESTAMP '-infinity', -9999;
+
+query
+EXPLAIN SELECT date_trunc('hour', ts) AS h, count(*) AS c FROM inf_events GROUP BY 1;
+----
+QUERY PLAN
+╭─ HASH_GROUP_BY ──────────╮
+│ Groups: #0               │
+│ Aggregates: count_star() │
+│ ~1,002 rows              │
+╰─────────────┬────────────╯
+╭─ PROJECTION ┴────────────╮
+│ Projections: h           │
+│ ~2,004 rows              │
+╰─────────────┬────────────╯
+╭─ SEQ_SCAN ──┴────────────╮
+│ Table: inf_events        │
+│ Type: Sequential Scan    │
+│ Projections: ts          │
+│ ~2,004 rows              │
+╰──────────────────────────╯
+
+query
+SELECT coalesce(date_trunc('hour', ts)::VARCHAR, 'null') AS h, count(*) AS c FROM inf_events GROUP BY 1 ORDER BY 1 LIMIT 3;
+----
+h	c
+-infinity	1
+2024-03-01 00:00:00	2
+2024-03-01 01:00:00	2
+
+query
+SELECT coalesce(date_trunc('month', ts)::VARCHAR, 'null') AS m, count(*) AS c FROM events GROUP BY 1 ORDER BY 1;
+----
+m	c
+2024-03-01 00:00:00	1207
+2024-04-01 00:00:00	793
+null	2
+
+query
+SELECT coalesce(date_trunc(u, ts)::VARCHAR, 'null') AS h, count(*) AS c FROM events, (VALUES ('hour')) t(u) WHERE v < 3 GROUP BY 1 ORDER BY 1;
+----
+h	c
+2024-03-01 00:00:00	2
+2024-03-01 01:00:00	1
+null	2
+
+query
+SELECT coalesce(date_trunc('day', ts::DATE)::VARCHAR, 'null') AS d, count(*) AS c FROM events WHERE v < 80 GROUP BY 1 ORDER BY 1;
+----
+d	c
+2024-03-01 00:00:00	39
+2024-03-02 00:00:00	39
+2024-03-03 00:00:00	2
+null	2
+
+query
+SELECT coalesce(date_trunc('minute', ts)::VARCHAR, 'null') AS m, count(*) AS c FROM events WHERE v < 3 GROUP BY 1 ORDER BY 1;
+----
+m	c
+2024-03-01 00:00:00	1
+2024-03-01 00:37:00	1
+2024-03-01 01:14:00	1
+null	2
+
+statement ok
+SET disabled_optimizers = 'compressed_materialization';
+
+query
+SELECT coalesce(date_trunc('hour', ts)::VARCHAR, 'null') AS h, count(*) AS c, sum(v) AS s FROM events GROUP BY 1 ORDER BY 1 LIMIT 5;
+----
+h	c	s
+2024-03-01 00:00:00	2	1
+2024-03-01 01:00:00	2	5
+2024-03-01 02:00:00	1	4
+2024-03-01 03:00:00	2	11
+2024-03-01 04:00:00	2	15
+
+query
+SELECT coalesce(date_trunc('week', ts)::VARCHAR, 'null') AS w, count(*) AS c, min(v) AS lo, max(v) AS hi FROM events GROUP BY 1 ORDER BY 1;
+----
+w	c	lo	hi
+2024-02-26 00:00:00	117	0	116
+2024-03-04 00:00:00	273	117	389
+2024-03-11 00:00:00	272	390	661
+2024-03-18 00:00:00	273	662	934
+2024-03-25 00:00:00	272	935	1206
+2024-04-01 00:00:00	272	1207	1478
+2024-04-08 00:00:00	273	1479	1751
+2024-04-15 00:00:00	248	1752	1999
+null	2	-2	-1
+
+statement ok
+RESET disabled_optimizers;

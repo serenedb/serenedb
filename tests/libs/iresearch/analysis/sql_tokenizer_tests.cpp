@@ -259,4 +259,94 @@ TEST(SqlTokenizerTest, traits_unique_by_mode) {
   }
 }
 
+TEST(SqlTokenizerTest, inputReferencedTwiceWithConstants) {
+  auto a = MakeBound("concat(input, '-', input)");
+  ASSERT_EQ(tests::AnalyzeTerms(*a, "ab"), (std::vector<std::string>{"ab-ab"}));
+  AssertColumnMatchesPerValue(*a, {"x", "yy", "", "zzz"});
+}
+
+TEST(SqlTokenizerTest, nestedCallsMatchPerValue) {
+  auto a = MakeBound("string_split(upper(trim(input)), ',')");
+  ASSERT_EQ(tests::AnalyzeTerms(*a, "  a,b ,c  "),
+            (std::vector<std::string>{"A", "B ", "C"}));
+  AssertColumnMatchesPerValue(*a, {"x,y", " q ", "", "a,,b", "  z  "});
+
+  auto b = MakeBound("concat(upper(input), '-', lower(input))");
+  ASSERT_EQ(tests::AnalyzeTerms(*b, "Ab"), (std::vector<std::string>{"AB-ab"}));
+  AssertColumnMatchesPerValue(*b, {"Ab", "", "cD"});
+}
+
+TEST(SqlTokenizerTest, nullConstantArgumentYieldsNull) {
+  auto a = MakeBound("replace(input, NULL, 'x')");
+  ASSERT_FALSE(tests::AnalyzeTerms(*a, "abc").has_value());
+  AssertColumnMatchesPerValue(*a, {"abc", "d"});
+}
+
+TEST(SqlTokenizerTest, constantArgumentsSurviveRepeatedFills) {
+  auto a = MakeBound("string_split(input, ',')");
+  for (int i = 0; i < 3; ++i) {
+    ASSERT_EQ(tests::AnalyzeTerms(*a, "a,b,c"),
+              (std::vector<std::string>{"a", "b", "c"}));
+    std::vector<std::string> values;
+    for (int j = 0; j < 2500; ++j) {
+      values.push_back(std::to_string(j) + ",x");
+    }
+    AssertColumnMatchesPerValue(*a, values);
+  }
+}
+
+TEST(SqlTokenizerTest, memoryUsageStaysBoundedAcrossFills) {
+  auto a = MakeBound("upper(input)");
+  const std::string value(64, 'a');
+  ASSERT_TRUE(tests::AnalyzeTerms(*a, value).has_value());
+  const auto after_first = a->MemoryUsage();
+  ASSERT_GT(after_first, 0u);
+  for (int i = 0; i < 1000; ++i) {
+    ASSERT_TRUE(tests::AnalyzeTerms(*a, value).has_value());
+  }
+  ASSERT_EQ(after_first, a->MemoryUsage());
+
+  const std::vector<std::string> column(3000, value);
+  FillColumn(*a, column);
+  const auto after_column = a->MemoryUsage();
+  for (int i = 0; i < 10; ++i) {
+    FillColumn(*a, column);
+  }
+  ASSERT_EQ(after_column, a->MemoryUsage());
+}
+
+TEST(SqlTokenizerTest, nullRowsInColumnAreSkipped) {
+  auto a = MakeBound("upper(input)");
+  const std::vector<std::string> values{"a", "b", "c", "d"};
+  std::vector<duckdb::string_t> vals;
+  for (const auto& v : values) {
+    vals.emplace_back(v.data(), static_cast<uint32_t>(v.size()));
+  }
+  duckdb::ValidityMask validity{static_cast<duckdb::idx_t>(vals.size())};
+  validity.SetInvalid(1);
+  validity.SetInvalid(3);
+  duckdb::UnifiedVectorFormat fmt;
+  fmt.sel = duckdb::FlatVector::IncrementalSelectionVector();
+  fmt.data = reinterpret_cast<duckdb::const_data_ptr_t>(vals.data());
+  fmt.validity = validity;
+  fmt.physical_type = duckdb::PhysicalType::VARCHAR;
+
+  std::vector<std::vector<std::string>> got(values.size());
+  const auto collect = [&](irs::TokenBatch& batch,
+                           std::span<const irs::DocRun> runs) {
+    uint32_t tok = 0;
+    for (const auto& run : runs) {
+      for (uint32_t j = 0; j < run.ntokens; ++j, ++tok) {
+        const auto& t = batch.terms[tok];
+        got[run.doc - 1].emplace_back(t.GetData(), t.GetSize());
+      }
+    }
+  };
+  tests::FnTokenSink sink{irs::TokenLayout::Terms, collect};
+  a->Fill(fmt, static_cast<uint32_t>(vals.size()), 1, sink.writer,
+          {irs::TokenLayout::Terms});
+  sink.writer.Finish();
+  ASSERT_EQ((std::vector<std::vector<std::string>>{{"A"}, {}, {"C"}, {}}), got);
+}
+
 }  // namespace

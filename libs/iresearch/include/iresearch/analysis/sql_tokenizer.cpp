@@ -20,10 +20,16 @@
 
 #include "sql_tokenizer.hpp"
 
+#include <array>
 #include <duckdb/catalog/catalog.hpp>
 #include <duckdb/common/types/data_chunk.hpp>
+#include <duckdb/common/types/vector_cache.hpp>
+#include <duckdb/common/vector/flat_vector.hpp>
 #include <duckdb/common/vector/list_vector.hpp>
+#include <duckdb/common/vector_size.hpp>
 #include <duckdb/execution/expression_executor.hpp>
+#include <duckdb/execution/expression_executor_state.hpp>
+#include <duckdb/function/scalar_function.hpp>
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/parser/column_definition.hpp>
 #include <duckdb/parser/column_list.hpp>
@@ -31,39 +37,19 @@
 #include <duckdb/parser/parsed_expression_iterator.hpp>
 #include <duckdb/parser/parser.hpp>
 #include <duckdb/planner/binder.hpp>
+#include <duckdb/planner/expression/bound_constant_expression.hpp>
+#include <duckdb/planner/expression/bound_function_expression.hpp>
 #include <duckdb/planner/expression_binder/check_binder.hpp>
+#include <memory>
+#include <vector>
 
 #include "pg/sql_exception_macro.h"
 
 namespace irs::analysis {
 namespace {
 
-template<TokenLayout Layout>
-void EmitSqlListRow(TokenSink& sink,
-                    const duckdb::UnifiedVectorFormat& child_fmt,
-                    const duckdb::string_t* child_data,
-                    duckdb::list_entry_t entry) {
-  for (duckdb::idx_t k = 0; k < entry.length; ++k) {
-    const auto child_idx = child_fmt.sel->get_index(entry.offset + k);
-    if (child_fmt.validity.RowIsValid(child_idx)) {
-      const auto& term = child_data[child_idx];
-      sink.Emit<Layout>(term.GetData(), static_cast<uint32_t>(term.GetSize()));
-    }
-  }
-}
-
-struct SqlListChild {
-  explicit SqlListChild(duckdb::Vector& result) {
-    auto& child = duckdb::ListVector::GetEntry(result);
-    child.ToUnifiedFormat(duckdb::ListVector::GetListSize(result), fmt);
-    data = duckdb::UnifiedVectorFormat::GetData<duckdb::string_t>(fmt);
-  }
-
-  duckdb::UnifiedVectorFormat fmt;
-  const duckdb::string_t* data;
-};
-
 constexpr std::string_view kInputColumn = "input";
+constexpr uint32_t kBatch = STANDARD_VECTOR_SIZE;
 
 void ValidateParsed(duckdb::ParsedExpression& expr) {
   switch (expr.GetExpressionClass()) {
@@ -121,30 +107,191 @@ void VerifyFunctionsExist(duckdb::ClientContext& ctx,
     });
 }
 
-}  // namespace
+bool IsDirectCall(const duckdb::Expression& expr) {
+  if (expr.GetExpressionClass() != duckdb::ExpressionClass::BOUND_FUNCTION) {
+    return false;
+  }
+  const auto& call = expr.Cast<duckdb::BoundFunctionExpression>();
+  if (!call.Function().HasFunctionCallback()) {
+    return false;
+  }
+  const bool propagates_null =
+    call.Function().GetNullHandling() ==
+    duckdb::FunctionNullHandling::DEFAULT_NULL_HANDLING;
+  bool has_input = false;
+  for (const auto& child : call.GetChildren()) {
+    switch (child->GetExpressionClass()) {
+      case duckdb::ExpressionClass::BOUND_REF:
+        has_input = true;
+        break;
+      case duckdb::ExpressionClass::BOUND_CONSTANT: {
+        const auto& value =
+          child->Cast<duckdb::BoundConstantExpression>().GetValue();
+        if (propagates_null && value.IsNull()) {
+          return false;
+        }
+      } break;
+      default:
+        if (!IsDirectCall(*child)) {
+          return false;
+        }
+        has_input = true;
+        break;
+    }
+  }
+  return has_input;
+}
 
-struct SqlTokenizer::Plan {
-  duckdb::unique_ptr<duckdb::Expression> expr;
-};
+template<TokenLayout Layout>
+void EmitTerm(TokenSink& sink, const duckdb::string_t& term) {
+  sink.Emit<Layout>(term.GetData(), static_cast<uint32_t>(term.GetSize()));
+}
 
-struct SqlTokenizer::Exec {
-  explicit Exec(duckdb::ClientContext& ctx, const duckdb::Expression& expr)
-    : executor{ctx}, result{expr.GetReturnType()} {
-    executor.AddExpression(expr);
-    const duckdb::LogicalType type = duckdb::LogicalType::VARCHAR;
-    input.InitializeEmpty(std::span{&type, 1});
+struct ResultRows {
+  explicit ResultRows(const duckdb::Vector& result) {
+    result.ToUnifiedFormat(rows);
+    if (result.GetType().id() != duckdb::LogicalTypeId::LIST) {
+      terms = duckdb::UnifiedVectorFormat::GetData<duckdb::string_t>(rows);
+      return;
+    }
+    entries = duckdb::UnifiedVectorFormat::GetData<duckdb::list_entry_t>(rows);
+    duckdb::ListVector::GetChild(result).ToUnifiedFormat(elements);
+    terms = duckdb::UnifiedVectorFormat::GetData<duckdb::string_t>(elements);
   }
 
-  duckdb::ExpressionExecutor executor;
-  duckdb::DataChunk input;
-  duckdb::Vector result;
+  bool Valid(uint32_t row) const {
+    return rows.validity.RowIsValid(rows.sel->get_index(row));
+  }
+
+  template<TokenLayout Layout>
+  void Emit(uint32_t row, TokenSink& sink) const {
+    const auto idx = rows.sel->get_index(row);
+    if (!rows.validity.RowIsValid(idx)) {
+      return;
+    }
+    if (!entries) {
+      EmitTerm<Layout>(sink, terms[idx]);
+      return;
+    }
+    const auto entry = entries[idx];
+    for (duckdb::idx_t k = 0; k < entry.length; ++k) {
+      const auto element = elements.sel->get_index(entry.offset + k);
+      if (elements.validity.RowIsValid(element)) {
+        EmitTerm<Layout>(sink, terms[element]);
+      }
+    }
+  }
+
+  duckdb::UnifiedVectorFormat rows;
+  duckdb::UnifiedVectorFormat elements;
+  const duckdb::string_t* terms = nullptr;
+  const duckdb::list_entry_t* entries = nullptr;
 };
 
-SqlTokenizer::SqlTokenizer(Options opts)
-  : _expression{std::move(opts.expression)} {
+}  // namespace
+
+struct SqlTokenizer::Call {
+  struct Node;
+
+  struct Child {
+    uint32_t arg;
+    duckdb::VectorCache cache;
+    std::unique_ptr<Node> node;
+  };
+
+  struct Node {
+    Node(const duckdb::Expression& expr, duckdb::ExpressionState& node_state,
+         const duckdb::Vector& input, duckdb::Allocator& allocator) {
+      if (!IsDirectCall(expr)) {
+        const duckdb::LogicalType type = duckdb::LogicalType::VARCHAR;
+        args.InitializeEmpty(std::span{&type, 1});
+        args.data[0].Reference(input);
+        return;
+      }
+      const auto& call = expr.Cast<duckdb::BoundFunctionExpression>();
+      function = call.Function().GetFunctionCallback();
+      state = &node_state;
+      const auto& exprs = call.GetChildren();
+      duckdb::vector<duckdb::LogicalType> types;
+      types.reserve(exprs.size());
+      for (const auto& child : exprs) {
+        types.push_back(child->GetReturnType());
+      }
+      args.InitializeEmpty(types);
+      for (uint32_t i = 0; i < exprs.size(); ++i) {
+        const auto& child = *exprs[i];
+        switch (child.GetExpressionClass()) {
+          case duckdb::ExpressionClass::BOUND_REF:
+            args.data[i].Reference(input);
+            break;
+          case duckdb::ExpressionClass::BOUND_CONSTANT:
+            args.data[i].Reference(
+              child.Cast<duckdb::BoundConstantExpression>().GetValue(),
+              duckdb::count_t(1));
+            break;
+          default:
+            children.push_back(
+              {i, duckdb::VectorCache{allocator, child.GetReturnType()},
+               std::make_unique<Node>(child, *node_state.child_states[i], input,
+                                      allocator)});
+            break;
+        }
+      }
+    }
+
+    void Run(uint32_t count, duckdb::Vector& out) {
+      for (auto& child : children) {
+        auto& slot = args.data[child.arg];
+        slot.ResetFromCache(child.cache);
+        child.node->Run(count, slot);
+      }
+      args.SetChildCardinality(count);
+      function(args, *state, out);
+      duckdb::FlatVector::SetSize(out, count);
+    }
+
+    duckdb::scalar_function_t function;
+    duckdb::ExpressionState* state = nullptr;
+    duckdb::DataChunk args;
+    std::vector<Child> children;
+  };
+
+  Call(duckdb::ClientContext& ctx, const duckdb::Expression& expr)
+    : executor{ctx, expr},
+      result_cache{executor.GetAllocator(), expr.GetReturnType()},
+      result{result_cache},
+      root{expr, *executor.GetStates()[0]->root_state,
+           duckdb::Vector{duckdb::LogicalType::VARCHAR,
+                          reinterpret_cast<duckdb::data_ptr_t>(values.data()),
+                          kBatch},
+           executor.GetAllocator()} {}
+
+  void Run(uint32_t count) {
+    result.ResetFromCache(result_cache);
+    if (root.function) {
+      root.Run(count, result);
+      return;
+    }
+    root.args.SetChildCardinality(count);
+    executor.ExecuteExpression(root.args, result);
+  }
+
+  size_t MemoryUsage() const noexcept {
+    return sizeof(Call) + result.GetAllocationSize();
+  }
+
+  std::array<duckdb::string_t, kBatch> values;
+  std::array<uint32_t, kBatch> rows;
+  duckdb::ExpressionExecutor executor;
+  duckdb::VectorCache result_cache;
+  duckdb::Vector result;
+  Node root;
+};
+
+SqlTokenizer::SqlTokenizer(Options opts) {
   duckdb::vector<duckdb::unique_ptr<duckdb::ParsedExpression>> exprs;
   try {
-    exprs = duckdb::Parser::ParseExpressionList(_expression);
+    exprs = duckdb::Parser::ParseExpressionList(opts.expression);
   } catch (const std::exception& e) {
     THROW_SQL_ERROR(ERR_MSG("sql: ", e.what()));
   }
@@ -161,7 +308,7 @@ Tokenizer::ptr SqlTokenizer::Make(Options opts) {
   return std::make_unique<SqlTokenizer>(std::move(opts));
 }
 
-void SqlTokenizer::BuildPlan(duckdb::ClientContext& ctx) {
+void SqlTokenizer::BindExpression(duckdb::ClientContext& ctx) {
   VerifyFunctionsExist(ctx, *_parsed);
   auto expr = _parsed->Copy();
   auto binder = duckdb::Binder::CreateBinder(ctx);
@@ -183,151 +330,83 @@ void SqlTokenizer::BuildPlan(duckdb::ClientContext& ctx) {
     THROW_SQL_ERROR(ERR_MSG("sql: volatile expressions are not allowed"));
   }
   const auto& type = bound->GetReturnType();
-  if (type.id() == duckdb::LogicalTypeId::VARCHAR) {
-    _mode = Mode::Scalar;
-  } else if (type.id() == duckdb::LogicalTypeId::LIST &&
-             duckdb::ListType::GetChildType(type).id() ==
-               duckdb::LogicalTypeId::VARCHAR) {
-    _mode = Mode::List;
-  } else {
+  const bool list =
+    type.id() == duckdb::LogicalTypeId::LIST &&
+    duckdb::ListType::GetChildType(type).id() == duckdb::LogicalTypeId::VARCHAR;
+  if (!list && type.id() != duckdb::LogicalTypeId::VARCHAR) {
     THROW_SQL_ERROR(
       ERR_MSG("sql: expression must return VARCHAR or LIST(VARCHAR), got ",
               type.ToString()));
   }
-  auto plan = std::make_unique<Plan>();
-  plan->expr = std::move(bound);
-  _plan = std::move(plan);
+  _expr = std::move(bound);
+  _parsed.reset();
+}
+
+TokenTraits SqlTokenizer::Traits() const noexcept {
+  return {.unique = _expr != nullptr && _expr->GetReturnType().id() ==
+                                          duckdb::LogicalTypeId::VARCHAR};
 }
 
 void SqlTokenizer::Bind(duckdb::ClientContext& ctx) {
-  if (!_plan) {
+  if (!_expr) {
     if (ctx.transaction.HasActiveTransaction()) {
-      BuildPlan(ctx);
+      BindExpression(ctx);
     } else {
-      ctx.RunFunctionInTransaction([&] { BuildPlan(ctx); });
+      ctx.RunFunctionInTransaction([&] { BindExpression(ctx); });
     }
   }
-  _exec = std::make_unique<Exec>(ctx, *_plan->expr);
+  _call = std::make_unique<Call>(ctx, *_expr);
 }
 
-void SqlTokenizer::Unbind() noexcept { _exec.reset(); }
+void SqlTokenizer::Unbind() noexcept { _call.reset(); }
 
-template<TokenLayout Layout>
-void SqlTokenizer::FillSlice(std::span<const duckdb::string_t> values,
-                             std::span<const doc_id_t> docs, TokenSink& sink) {
-  const auto count = values.size();
-  duckdb::Vector in{duckdb::LogicalType::VARCHAR,
-                    reinterpret_cast<duckdb::data_ptr_t>(
-                      const_cast<duckdb::string_t*>(values.data())),
-                    count};
-  _exec->input.data[0].Reference(in);
-  _exec->input.SetCardinality(count);
-  _exec->executor.ExecuteExpression(_exec->input, _exec->result);
-
-  auto& result = _exec->result;
-  duckdb::UnifiedVectorFormat fmt;
-  result.ToUnifiedFormat(count, fmt);
-
-  if (_mode == Mode::Scalar) {
-    const auto* data =
-      duckdb::UnifiedVectorFormat::GetData<duckdb::string_t>(fmt);
-    for (size_t v = 0; v < count; ++v) {
-      const auto idx = fmt.sel->get_index(v);
-      sink.BeginValue(docs[v], 0);
-      if (fmt.validity.RowIsValid(idx)) {
-        sink.Emit<Layout>(data[idx].GetData(),
-                          static_cast<uint32_t>(data[idx].GetSize()));
-      }
-      sink.EndValue();
-    }
-    return;
-  }
-
-  const auto* entries =
-    duckdb::UnifiedVectorFormat::GetData<duckdb::list_entry_t>(fmt);
-  const SqlListChild lc{result};
-  for (size_t v = 0; v < count; ++v) {
-    sink.BeginValue(docs[v], 0);
-    const auto idx = fmt.sel->get_index(v);
-    if (fmt.validity.RowIsValid(idx)) {
-      EmitSqlListRow<Layout>(sink, lc.fmt, lc.data, entries[idx]);
-    }
-    sink.EndValue();
-  }
-}
-
-void SqlTokenizer::Fill(const duckdb::UnifiedVectorFormat& fmt, uint32_t count,
-                        doc_id_t first_doc, TokenSink& sink, FillCtx ctx) {
-  const auto layout = ctx.layout;
-  SDB_ASSERT(layout != TokenLayout::TermsPosOffs);
-  SDB_ASSERT(_exec);
-  const auto* data =
-    duckdb::UnifiedVectorFormat::GetData<duckdb::string_t>(fmt);
-  const bool plain = IsIdentitySel(fmt) && fmt.validity.CheckAllValid(count);
-  _gathered.clear();
-  _docs.clear();
-  _docs.reserve(count);
-  if (plain) {
-    for (uint32_t i = 0; i < count; ++i) {
-      _docs.push_back(first_doc + i);
-    }
-  } else {
-    _gathered.reserve(count);
-    ForEachValidRow(fmt, count, [&](uint32_t i, uint32_t idx) {
-      _gathered.push_back(data[idx]);
-      _docs.push_back(first_doc + i);
-      return true;
-    });
-  }
-  const std::span<const duckdb::string_t> values =
-    plain ? std::span<const duckdb::string_t>{data, count}
-          : std::span<const duckdb::string_t>{_gathered};
-  const std::span<const doc_id_t> doc_span{_docs};
-  ResolveLayout(layout, [&]<TokenLayout Layout>() {
-    for (size_t off = 0; off < values.size(); off += STANDARD_VECTOR_SIZE) {
-      const auto n =
-        std::min<size_t>(STANDARD_VECTOR_SIZE, values.size() - off);
-      FillSlice<Layout>(values.subspan(off, n), doc_span.subspan(off, n), sink);
-    }
-  });
-}
-
-template<TokenLayout Layout>
-bool SqlTokenizer::FillValue(duckdb::string_t raw, TokenSink& sink) {
-  SDB_ASSERT(_exec);
-  duckdb::string_t slot = raw;
-  duckdb::Vector in{duckdb::LogicalType::VARCHAR,
-                    reinterpret_cast<duckdb::data_ptr_t>(&slot), 1};
-  _exec->input.data[0].Reference(in);
-  _exec->input.SetCardinality(1);
-  _exec->executor.ExecuteExpression(_exec->input, _exec->result);
-
-  auto& result = _exec->result;
-  duckdb::UnifiedVectorFormat fmt;
-  result.ToUnifiedFormat(1, fmt);
-  const auto idx = fmt.sel->get_index(0);
-  if (!fmt.validity.RowIsValid(idx)) {
-    return false;
-  }
-
-  if (_mode == Mode::Scalar) {
-    const auto& term =
-      duckdb::UnifiedVectorFormat::GetData<duckdb::string_t>(fmt)[idx];
-    sink.Emit<Layout>(term.GetData(), static_cast<uint32_t>(term.GetSize()));
-    return true;
-  }
-
-  const auto& entry =
-    duckdb::UnifiedVectorFormat::GetData<duckdb::list_entry_t>(fmt)[idx];
-  const SqlListChild lc{result};
-  EmitSqlListRow<Layout>(sink, lc.fmt, lc.data, entry);
-  return true;
+size_t SqlTokenizer::MemoryUsage() const noexcept {
+  return _call ? _call->MemoryUsage() : 0;
 }
 
 bool SqlTokenizer::Fill(const duckdb::string_t& value, TokenSink& sink,
                         FillCtx ctx) {
-  return ResolveLayout(ctx.layout, [&]<TokenLayout Layout>() {
-    return FillValue<Layout>(value, sink);
+  SDB_ASSERT(_call);
+  auto& call = *_call;
+  call.values[0] = value;
+  call.Run(1);
+  const ResultRows rows{call.result};
+  if (!rows.Valid(0)) {
+    return false;
+  }
+  ResolveLayout(ctx.layout,
+                [&]<TokenLayout Layout>() { rows.Emit<Layout>(0, sink); });
+  return true;
+}
+
+void SqlTokenizer::Fill(const duckdb::UnifiedVectorFormat& fmt, uint32_t count,
+                        doc_id_t first_doc, TokenSink& sink, FillCtx ctx) {
+  SDB_ASSERT(ctx.layout != TokenLayout::TermsPosOffs);
+  SDB_ASSERT(_call);
+  auto& call = *_call;
+  const auto* data =
+    duckdb::UnifiedVectorFormat::GetData<duckdb::string_t>(fmt);
+  ResolveLayout(ctx.layout, [&]<TokenLayout Layout>() {
+    for (uint32_t base = 0; base < count; base += kBatch) {
+      uint32_t staged = 0;
+      ForEachValidRow(fmt, duckdb::idx_t{base}, std::min(kBatch, count - base),
+                      [&](uint32_t i, uint32_t idx) {
+                        call.values[staged] = data[idx];
+                        call.rows[staged] = base + i;
+                        ++staged;
+                        return true;
+                      });
+      if (staged == 0) {
+        continue;
+      }
+      call.Run(staged);
+      const ResultRows rows{call.result};
+      for (uint32_t v = 0; v < staged; ++v) {
+        sink.BeginValue(first_doc + call.rows[v], 0);
+        rows.Emit<Layout>(v, sink);
+        sink.EndValue();
+      }
+    }
   });
 }
 

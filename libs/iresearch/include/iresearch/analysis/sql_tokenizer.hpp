@@ -22,12 +22,12 @@
 
 #include <memory>
 #include <string>
-#include <vector>
 
 #include "tokenizer.hpp"
 
 namespace duckdb {
 
+class Expression;
 class ParsedExpression;
 
 }
@@ -50,17 +50,12 @@ class SqlTokenizer final : public Tokenizer, private util::Noncopyable {
     return irs::Type<SqlTokenizer>::id();
   }
 
-  TokenTraits Traits() const noexcept final {
-    return {.unique = _plan != nullptr && _mode == Mode::Scalar};
-  }
+  TokenTraits Traits() const noexcept final;
 
   void Bind(duckdb::ClientContext& ctx) final;
   void Unbind() noexcept final;
 
-  size_t MemoryUsage() const noexcept final {
-    return _gathered.capacity() * sizeof(duckdb::string_t) +
-           _docs.capacity() * sizeof(doc_id_t);
-  }
+  size_t MemoryUsage() const noexcept final;
 
   using Tokenizer::Fill;
 
@@ -70,30 +65,13 @@ class SqlTokenizer final : public Tokenizer, private util::Noncopyable {
             doc_id_t first_doc, TokenSink& sink, FillCtx ctx) final;
 
  private:
-  enum class Mode : uint8_t {
-    Scalar,
-    List,
-  };
+  struct Call;
 
-  struct Plan;
-  struct Exec;
+  void BindExpression(duckdb::ClientContext& ctx);
 
-  template<TokenLayout Layout>
-  bool FillValue(duckdb::string_t value, TokenSink& sink);
-
-  template<TokenLayout Layout>
-  void FillSlice(std::span<const duckdb::string_t> values,
-                 std::span<const doc_id_t> docs, TokenSink& sink);
-
-  void BuildPlan(duckdb::ClientContext& ctx);
-
-  std::string _expression;
   std::unique_ptr<duckdb::ParsedExpression> _parsed;
-  std::unique_ptr<Plan> _plan;
-  std::unique_ptr<Exec> _exec;
-  std::vector<duckdb::string_t> _gathered;
-  std::vector<doc_id_t> _docs;
-  Mode _mode = Mode::Scalar;
+  std::unique_ptr<duckdb::Expression> _expr;
+  std::unique_ptr<Call> _call;
 };
 
 }  // namespace irs::analysis

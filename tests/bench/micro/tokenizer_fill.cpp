@@ -45,6 +45,7 @@
 #include "iresearch/analysis/shingle_tokenizer.hpp"
 #include "iresearch/analysis/solr_synonyms_tokenizer.hpp"
 #include "iresearch/analysis/sparse_ngram_tokenizer.hpp"
+#include "iresearch/analysis/sql_tokenizer.hpp"
 #include "iresearch/analysis/stemming_tokenizer.hpp"
 #include "iresearch/analysis/stopwords_tokenizer.hpp"
 #include "iresearch/analysis/text_tokenizer.hpp"
@@ -841,6 +842,18 @@ Tokenizer::ptr MakeStopwords() {
 
 Tokenizer::ptr MakeDelimiter() { return DelimitedTokenizer::Make({","}); }
 
+Tokenizer::ptr MakeSqlUpper() {
+  return SqlTokenizer::Make({.expression = "upper(input)"});
+}
+
+Tokenizer::ptr MakeSqlSplit() {
+  return SqlTokenizer::Make({.expression = "string_split(input, ',')"});
+}
+
+Tokenizer::ptr MakeSqlSplitLower() {
+  return SqlTokenizer::Make({.expression = "string_split(lower(input), ',')"});
+}
+
 Tokenizer::ptr MakeUnion2() {
   std::vector<Tokenizer::ptr> subs;
   subs.push_back(MakeDelimiter());
@@ -1177,6 +1190,25 @@ Tokenizer::ptr MakePipelineSegStop() {
 Tokenizer::ptr MakePipelineT2Norm() { return MakePipelineT2RewriteImpl(false); }
 Tokenizer::ptr MakePipelineT2Stem() { return MakePipelineT2RewriteImpl(true); }
 
+Tokenizer::ptr MakePipelineT2Sql() {
+  std::vector<Tokenizer::ptr> subs;
+  subs.push_back(DelimitedTokenizer::Make({","}));
+  subs.push_back(SqlTokenizer::Make({.expression = "upper(input)"}));
+  return std::make_unique<PipelineTokenizer>(std::move(subs));
+}
+
+Tokenizer::ptr MakePipelineSqlSplitNorm() {
+  std::vector<Tokenizer::ptr> subs;
+  subs.push_back(
+    SqlTokenizer::Make({.expression = "string_split(input, ',')"}));
+  NormalizingTokenizer::Options o;
+  o.locale = icu::Locale::createFromName("en");
+  o.case_convert = Case::Lower;
+  o.accent = false;
+  subs.push_back(NormalizingTokenizer::Make(std::move(o)));
+  return std::make_unique<PipelineTokenizer>(std::move(subs));
+}
+
 Tokenizer::ptr MakeWordnetSynonyms() {
   return WordnetSynonymsTokenizer::Make(
     {.synonyms_text = WordnetSynonymsText()}, tests::Cache());
@@ -1212,6 +1244,9 @@ TOKENIZER_BENCH(stopwords, MakeStopwords, WordCorpus);
 TOKENIZER_BENCH(stopwords_en, MakeStopwordsEn, LowerWordCorpus);
 TOKENIZER_BENCH(stopwords_en_prose, MakeStopwordsEn, ProseWordCorpus);
 TOKENIZER_BENCH(delimiter, MakeDelimiter, CsvCorpus);
+TOKENIZER_BENCH(sql_upper, MakeSqlUpper, WordCorpus);
+TOKENIZER_BENCH(sql_split, MakeSqlSplit, CsvCorpus);
+TOKENIZER_BENCH(sql_split_lower, MakeSqlSplitLower, CsvCorpus);
 TOKENIZER_BENCH(minhash, MakeMinHash, CsvCorpus);
 TOKENIZER_BENCH(shingle, MakeShingle, CsvCorpus);
 TOKENIZER_BENCH(union_2, MakeUnion2, CsvCorpus);
@@ -1290,6 +1325,8 @@ BENCHMARK_CAPTURE(BM_FillColumn, pipeline_t2_ngram_long, &MakePipelineT2Ngram,
 TOKENIZER_BENCH(pipeline_t2syn, MakePipelineT2Syn, CsvCorpus);
 TOKENIZER_BENCH(pipeline_t2norm, MakePipelineT2Norm, CsvCorpus);
 TOKENIZER_BENCH(pipeline_t2stem, MakePipelineT2Stem, CsvCorpus);
+TOKENIZER_BENCH(pipeline_t2sql, MakePipelineT2Sql, CsvCorpus);
+TOKENIZER_BENCH(pipeline_sqlsplit_norm, MakePipelineSqlSplitNorm, CsvCorpus);
 TOKENIZER_BENCH(wordnet_synonyms, MakeWordnetSynonyms, SynonymCorpus);
 TOKENIZER_BENCH(wordnet_synonyms_large, MakeWordnetSynonymsLarge,
                 LargeSynonymCorpus);

@@ -128,7 +128,9 @@ class GeoPointAnalyzer final : public TypedTokenizer<GeoPointAnalyzer>,
 
   using GeoAnalyzer::PrepareBatch;
 
-  TokenTraits Traits() const noexcept final { return {}; }
+  TokenTraits Traits() const noexcept final {
+    return {.output = duckdb::LogicalTypeId::BLOB};
+  }
 
   void Unbind() noexcept final { SetWkbInput(false); }
 
@@ -187,6 +189,7 @@ class GeoJsonAnalyzer final : public TypedTokenizer<GeoJsonAnalyzer>,
 
   TokenTraits Traits() const noexcept final {
     return {
+      .output = duckdb::LogicalTypeId::BLOB,
       .store = _coding != Coding::Source,
     };
   }

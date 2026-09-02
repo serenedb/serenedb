@@ -25,6 +25,7 @@
 #include <s2/s2latlng.h>
 
 #include <bit>
+#include <cmath>
 #include <cstring>
 #include <memory>
 #include <string>
@@ -32,6 +33,7 @@
 #include "basics/down_cast.h"
 #include "geo/geo_json.h"
 #include "geo/geo_params.h"
+#include "geo/geo_terms.h"
 #include "geo/wkb.h"
 #include "iresearch/analysis/token_batch.hpp"
 #include "iresearch/search/geo_filter.hpp"
@@ -44,6 +46,33 @@ using namespace sdb::geo;
 
 namespace {
 
+IRS_FORCE_INLINE S2LatLng NormalizedLatLng(double lat_deg,
+                                           double lng_deg) noexcept {
+  const auto lat_lng = S2LatLng::FromDegrees(lat_deg, lng_deg);
+  if (std::fabs(lat_lng.lat().radians()) <= M_PI_2 &&
+      std::fabs(lat_lng.lng().radians()) <= M_PI) [[likely]] {
+    return lat_lng;
+  }
+  return lat_lng.Normalized();
+}
+
+IRS_FORCE_INLINE duckdb::string_t CellTerm(S2CellId id, bool covering,
+                                           byte_type marker) noexcept {
+  static_assert(geo::terms::kCellBytes == sizeof(uint64_t));
+  static_assert(sizeof(duckdb::string_t) == 16);
+  const uint64_t be = std::byteswap(id.id());
+  uint64_t w0;
+  uint64_t w1;
+  if (covering) {
+    w0 = 9 | (uint64_t{marker} << 32) | (be << 40);
+    w1 = be >> 24;
+  } else {
+    w0 = 8 | (be << 32);
+    w1 = be >> 32;
+  }
+  return std::bit_cast<duckdb::string_t>((__uint128_t{w1} << 64) | w0);
+}
+
 bool ParseWkbPoint(duckdb::string_t wkb, S2LatLng& out) noexcept {
   constexpr size_t kWkbPointSize = 1 + 4 + 8 + 8;
   const char* const data = wkb.GetData();
@@ -55,7 +84,7 @@ bool ParseWkbPoint(duckdb::string_t wkb, S2LatLng& out) noexcept {
   }
   const double lng = absl::little_endian::Load<double>(data + 5);
   const double lat = absl::little_endian::Load<double>(data + 13);
-  out = S2LatLng::FromDegrees(lat, lng).Normalized();
+  out = NormalizedLatLng(lat, lng);
   return true;
 }
 
@@ -82,22 +111,9 @@ GeoAnalyzer& GeoAnalyzer::Cast(Tokenizer& tokens) noexcept {
 template<TokenLayout Layout>
 void GeoAnalyzer::EmitTerms(TokenSink& sink) {
   const auto& opts = _options;
+  const auto marker = static_cast<byte_type>(opts.marker_character());
   const auto emit = [&](S2CellId id, bool covering) IRS_FORCE_INLINE {
-    const uint64_t v = id.id();
-    SDB_ASSERT(v != 0);
-    constexpr char kHexDigits[] = "0123456789abcdef";
-    const auto len = 16 - static_cast<size_t>(std::countr_zero(v) >> 2);
-    sink.Emit<Layout>(len + 1, [&](byte_type* mem) IRS_FORCE_INLINE {
-      size_t n = 0;
-      if (covering) {
-        mem[n++] = static_cast<byte_type>(opts.marker_character());
-      }
-      for (size_t j = 0; j < len; ++j) {
-        mem[n + j] =
-          static_cast<byte_type>(kHexDigits[(v >> (60 - 4 * j)) & 0xF]);
-      }
-      return static_cast<uint32_t>(n + len);
-    });
+    sink.Emit<Layout>(CellTerm(id, covering, marker));
   };
   if (!_covering.empty()) {
     SDB_ASSERT(!opts.index_contains_points_only());
@@ -283,7 +299,7 @@ bool GeoPointAnalyzer::ParsePoint(simdjson::ondemand::value json,
       return false;
     }
   }
-  point = S2LatLng::FromDegrees(lat, lng).Normalized();
+  point = NormalizedLatLng(lat, lng);
   return true;
 }
 

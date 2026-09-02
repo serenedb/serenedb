@@ -18,20 +18,29 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
+#include <s2/s2cell_union.h>
 #include <s2/s2latlng.h>
 #include <s2/s2loop.h>
 #include <s2/s2polygon.h>
+#include <s2/s2region_coverer.h>
 #include <s2/s2region_term_indexer.h>
 
+#include <bit>
+#include <cstring>
+#include <format>
 #include <memory>
+#include <random>
 #include <span>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "geo/coding.h"
+#include "geo/geo_terms.h"
 #include "gtest/gtest.h"
 #include "iresearch/analysis/geo_analyzer.hpp"
 #include "iresearch/analysis/token_sinks.hpp"
+#include "search/geo_test_helpers.hpp"
 #include "token_sink_utils.hpp"
 
 namespace {
@@ -200,7 +209,8 @@ TEST(GeoAnalyzerTests, geojson_point_terms_match_indexer_oracle) {
 
   S2RegionTermIndexer oracle{geo->options()};
   const auto point = S2LatLng::FromDegrees(1.0, 2.0).Normalized().ToPoint();
-  EXPECT_EQ(oracle.GetIndexTerms(point, {}), analysis->terms);
+  EXPECT_EQ(irs::tests::BinaryTerms(oracle.GetIndexTerms(point, {})),
+            analysis->terms);
 
   Encoder encoder;
   encoder.Ensure(30);
@@ -284,7 +294,8 @@ TEST(GeoAnalyzerTests, geojson_polygon_terms_match_region_oracle) {
   }
   S2Polygon polygon{std::make_unique<S2Loop>(vertices)};
   S2RegionTermIndexer oracle{geo->options()};
-  auto expected = oracle.GetIndexTerms(polygon, {});
+  const auto expected =
+    irs::tests::BinaryTerms(oracle.GetIndexTerms(polygon, {}));
   EXPECT_EQ(expected, analysis->terms);
 
   auto wkb_stream =
@@ -417,7 +428,8 @@ TEST(GeoPointAnalyzerTests, array_and_object_forms_match_oracle) {
 
   S2RegionTermIndexer oracle{geo->options()};
   const auto point = S2LatLng::FromDegrees(1.0, 2.0).Normalized().ToPoint();
-  EXPECT_EQ(oracle.GetIndexTerms(point, {}), via_array->terms);
+  EXPECT_EQ(irs::tests::BinaryTerms(oracle.GetIndexTerms(point, {})),
+            via_array->terms);
 
   auto object_stream = GeoPointAnalyzer::Make(
     {.latitude = {"location", "lat"}, .longitude = {"location", "lng"}});
@@ -456,6 +468,247 @@ TEST(GeoPointAnalyzerTests, rejects_invalid_input) {
     return GeoPointAnalyzer::Make({.latitude = {"lat"}, .longitude = {}});
   };
   EXPECT_ANY_THROW(mismatched());
+}
+
+namespace {
+
+struct LatLngCase {
+  double lat;
+  double lng;
+};
+
+std::vector<LatLngCase> SampleLatLngs(size_t n) {
+  std::mt19937_64 rng{7};
+  std::uniform_real_distribution<double> lat{-95.0, 95.0};
+  std::uniform_real_distribution<double> lng{-200.0, 200.0};
+  std::vector<LatLngCase> out;
+  out.reserve(n + 8);
+  for (size_t i = 0; i < n; ++i) {
+    out.push_back({lat(rng), lng(rng)});
+  }
+  for (const auto [a, b] :
+       {std::pair{0.0, 0.0}, std::pair{-0.0, -0.0}, std::pair{90.0, 180.0},
+        std::pair{-90.0, -180.0}, std::pair{90.0, -180.0},
+        std::pair{45.0, 179.9999999}, std::pair{0.0, 360.0},
+        std::pair{1e-300, -1e-300}}) {
+    out.push_back({a, b});
+  }
+  return out;
+}
+
+S2Point OraclePoint(const LatLngCase& c) {
+  return S2LatLng::FromDegrees(c.lat, c.lng).Normalized().ToPoint();
+}
+
+std::string PointStoreBytes(const S2Point& point) {
+  Encoder encoder;
+  encoder.Ensure(30);
+  sdb::geo::EncodePoint(encoder, point);
+  return std::string(encoder.base(), encoder.length());
+}
+
+}  // namespace
+
+TEST(GeoAnalyzerTests, json_point_sample_matches_oracle) {
+  const auto cases = SampleLatLngs(512);
+  for (const auto coding :
+       {GeoJsonAnalyzer::Coding::Source, GeoJsonAnalyzer::Coding::S2Point,
+        GeoJsonAnalyzer::Coding::S2LatLngF64,
+        GeoJsonAnalyzer::Coding::S2LatLngU32}) {
+    auto stream = MakeGeoJson(GeoJsonAnalyzer::Type::Point, coding);
+    auto* geo = dynamic_cast<GeoJsonAnalyzer*>(stream.get());
+    ASSERT_NE(nullptr, geo);
+    S2RegionTermIndexer oracle{geo->options()};
+    for (size_t i = 0; i < cases.size(); ++i) {
+      const auto x = std::format("{}", cases[i].lng);
+      const auto y = std::format("{}", cases[i].lat);
+      std::string json;
+      switch (i % 3) {
+        case 0:
+          json =
+            std::format(R"({{"type":"Point","coordinates":[{},{}]}})", x, y);
+          break;
+        case 1:
+          json = std::format(
+            "{{ \"type\" : \"point\" ,\n\t\"coordinates\" : [ {} , {} ] }}\n",
+            x, y);
+          break;
+        default:
+          json = std::format("[{},{}]", x, y);
+          break;
+      }
+      SCOPED_TRACE(testing::Message()
+                   << "coding=" << int(coding) << " json=" << json);
+      const auto analysis = AnalyzeGeo(*stream, json);
+      ASSERT_TRUE(analysis.has_value());
+      const auto point = OraclePoint(cases[i]);
+      EXPECT_EQ(irs::tests::BinaryTerms(oracle.GetIndexTerms(point, {})),
+                analysis->terms);
+      if (coding == GeoJsonAnalyzer::Coding::S2Point) {
+        EXPECT_EQ(PointStoreBytes(point), analysis->store);
+      }
+    }
+  }
+}
+
+TEST(GeoAnalyzerTests, rejects_malformed_points) {
+  auto stream =
+    MakeGeoJson(GeoJsonAnalyzer::Type::Point, GeoJsonAnalyzer::Coding::S2Point);
+  for (const char* bad :
+       {"[01,2]", "[1.,2]", "[.5,2]", "[+1,2]", "[1e,2]", "[NaN,2]", "[1,2",
+        "[1,2,3]", "[1]", "[1 2]", R"({"type":"Point","coordinates":[1,2])",
+        R"({"type":"Point","coordinates":[1,2,3]})",
+        R"({"type":"Point","coordinates":[1e400,2]})"}) {
+    SCOPED_TRACE(bad);
+    EXPECT_FALSE(AnalyzeGeo(*stream, bad).has_value());
+  }
+}
+
+TEST(GeoPointAnalyzerTests, json_array_sample_matches_oracle) {
+  const auto cases = SampleLatLngs(512);
+  auto stream = GeoPointAnalyzer::Make({});
+  auto* geo = dynamic_cast<GeoPointAnalyzer*>(stream.get());
+  ASSERT_NE(nullptr, geo);
+  S2RegionTermIndexer oracle{geo->options()};
+  for (size_t i = 0; i < cases.size(); ++i) {
+    const auto a = std::format("{}", cases[i].lat);
+    const auto b = std::format("{}", cases[i].lng);
+    const auto json = i % 2 == 0 ? std::format("[{},{}]", a, b)
+                                 : std::format(" [ {} ,\t{} ]\n", a, b);
+    SCOPED_TRACE(json);
+    const auto analysis = AnalyzeGeo(*stream, json);
+    ASSERT_TRUE(analysis.has_value());
+    EXPECT_EQ(
+      irs::tests::BinaryTerms(oracle.GetIndexTerms(OraclePoint(cases[i]), {})),
+      analysis->terms);
+  }
+}
+
+TEST(GeoAnalyzerTests, term_encoding_is_marker_plus_big_endian_cell) {
+  const S2CellId cell{S2LatLng::FromDegrees(1.0, 2.0).ToPoint()};
+  const auto plain = sdb::geo::terms::Term({}, cell, false, '$');
+  const auto covering = sdb::geo::terms::Term({}, cell, true, '$');
+  ASSERT_EQ(8, plain.size());
+  ASSERT_EQ(9, covering.size());
+  EXPECT_EQ('$', covering.front());
+  EXPECT_EQ(plain, covering.substr(1));
+  uint64_t be = 0;
+  std::memcpy(&be, plain.data(), sizeof be);
+  EXPECT_EQ(cell.id(), std::byteswap(be));
+  EXPECT_EQ(static_cast<unsigned char>(cell.id() >> 56),
+            static_cast<unsigned char>(plain[0]));
+  const auto prefixed = sdb::geo::terms::Term("ab", cell, true, '#');
+  EXPECT_EQ("ab#" + plain, prefixed);
+}
+
+TEST(GeoAnalyzerTests, query_terms_match_s2_oracle) {
+  const std::vector<std::pair<double, double>> ring{
+    {0.0, 0.0}, {2.0, 0.0}, {2.0, 2.0}, {0.0, 2.0}, {0.0, 0.0}};
+  std::vector<S2Point> vertices;
+  for (size_t i = 0; i + 1 < ring.size(); ++i) {
+    vertices.push_back(
+      S2LatLng::FromDegrees(ring[i].second, ring[i].first).ToPoint());
+  }
+  const S2Polygon polygon{std::make_unique<S2Loop>(vertices)};
+  const auto point = S2LatLng::FromDegrees(1.0, 2.0).ToPoint();
+
+  for (const auto& opts : {sdb::geo::GeoOptions{},
+                           sdb::geo::GeoOptions{.max_cells = 8,
+                                                .min_level = 2,
+                                                .max_level = 20,
+                                                .level_mod = 2,
+                                                .optimize_for_space = true},
+                           sdb::geo::GeoOptions{.max_cells = 30,
+                                                .min_level = 6,
+                                                .max_level = 24,
+                                                .level_mod = 3,
+                                                .optimize_for_space = false}}) {
+    for (const bool points_only : {false, true}) {
+      SCOPED_TRACE(testing::Message() << "cells=" << opts.max_cells
+                                      << " mod=" << int(opts.level_mod)
+                                      << " space=" << opts.optimize_for_space
+                                      << " points_only=" << points_only);
+      const auto options = sdb::geo::S2Options(opts, points_only);
+      S2RegionTermIndexer oracle{options};
+      S2RegionCoverer coverer{options};
+      const auto ring_union = coverer.GetCovering(polygon).Difference(
+        coverer.GetInteriorCovering(polygon));
+
+      EXPECT_EQ(irs::tests::BinaryTerms(oracle.GetQueryTerms(point, {})),
+                sdb::geo::terms::QueryTerms(options, point, {}));
+      EXPECT_EQ(irs::tests::BinaryTerms(oracle.GetQueryTerms(polygon, {})),
+                sdb::geo::terms::QueryTerms(options, polygon, {}));
+      EXPECT_EQ(irs::tests::BinaryTerms(oracle.GetQueryTerms(ring_union, {})),
+                sdb::geo::terms::QueryTerms(options, ring_union, {}));
+      EXPECT_EQ(
+        irs::tests::BinaryTerms(oracle.GetQueryTerms(point, "p:"), '$', "p:"),
+        sdb::geo::terms::QueryTerms(options, point, "p:"));
+    }
+  }
+}
+
+TEST(GeoAnalyzerTests, wkb_point_sample_matches_oracle) {
+  const auto cases = SampleLatLngs(2048);
+  auto stream =
+    MakeGeoJson(GeoJsonAnalyzer::Type::Point, GeoJsonAnalyzer::Coding::S2Point);
+  auto* geo = dynamic_cast<GeoJsonAnalyzer*>(stream.get());
+  ASSERT_NE(nullptr, geo);
+  geo->SetWkbInput(true);
+  S2RegionTermIndexer oracle{geo->options()};
+  for (const auto& c : cases) {
+    SCOPED_TRACE(testing::Message() << c.lat << "," << c.lng);
+    const auto analysis = AnalyzeGeo(*stream, PointWkb(c.lng, c.lat));
+    ASSERT_TRUE(analysis.has_value());
+    const auto point = OraclePoint(c);
+    EXPECT_EQ(irs::tests::BinaryTerms(oracle.GetIndexTerms(point, {})),
+              analysis->terms);
+    EXPECT_EQ(PointStoreBytes(point), analysis->store);
+  }
+}
+
+TEST(GeoAnalyzerTests, covering_terms_match_region_oracle_across_options) {
+  constexpr std::string_view kPolygon =
+    R"({"type":"Polygon","coordinates":[[[0.0,0.0],[2.0,0.0],[2.0,2.0],[0.0,2.0],[0.0,0.0]]]})";
+  const std::vector<std::pair<double, double>> ring{
+    {0.0, 0.0}, {2.0, 0.0}, {2.0, 2.0}, {0.0, 2.0}, {0.0, 0.0}};
+  std::vector<S2Point> vertices;
+  for (size_t i = 0; i + 1 < ring.size(); ++i) {
+    vertices.push_back(
+      S2LatLng::FromDegrees(ring[i].second, ring[i].first).ToPoint());
+  }
+  const S2Polygon region{std::make_unique<S2Loop>(vertices)};
+
+  for (const auto& opts : {sdb::geo::GeoOptions{.max_cells = 20,
+                                                .min_level = 4,
+                                                .max_level = 23,
+                                                .level_mod = 1,
+                                                .optimize_for_space = false},
+                           sdb::geo::GeoOptions{.max_cells = 8,
+                                                .min_level = 2,
+                                                .max_level = 20,
+                                                .level_mod = 2,
+                                                .optimize_for_space = true},
+                           sdb::geo::GeoOptions{.max_cells = 30,
+                                                .min_level = 6,
+                                                .max_level = 24,
+                                                .level_mod = 3,
+                                                .optimize_for_space = false}}) {
+    SCOPED_TRACE(testing::Message()
+                 << "cells=" << opts.max_cells << " mod=" << int(opts.level_mod)
+                 << " space=" << opts.optimize_for_space);
+    auto stream =
+      GeoJsonAnalyzer::Make({.options = opts,
+                             .type = GeoJsonAnalyzer::Type::Shape,
+                             .coding = GeoJsonAnalyzer::Coding::Source});
+    auto* geo = dynamic_cast<GeoJsonAnalyzer*>(stream.get());
+    ASSERT_NE(nullptr, geo);
+    const auto analysis = AnalyzeGeo(*stream, kPolygon);
+    ASSERT_TRUE(analysis.has_value());
+    ASSERT_FALSE(analysis->terms.empty());
+    S2RegionTermIndexer oracle{geo->options()};
+    EXPECT_EQ(irs::tests::BinaryTerms(oracle.GetIndexTerms(region, {})),
+              analysis->terms);
+  }
 }
 
 TEST(GeoAnalyzerTests, memory_usage_accounts_scratch) {

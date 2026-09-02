@@ -334,7 +334,7 @@ TEST(GeoPointAnalyzerTest, tokenizePointFromArray) {
     auto terms = indexer.GetIndexTerms(shape.centroid(), {});
     ASSERT_FALSE(terms.empty());
 
-    ASSERT_EQ(terms, *actual);
+    ASSERT_EQ(irs::tests::BinaryTerms(terms), *actual);
   }
 
   // tokenize point, custom options
@@ -361,7 +361,7 @@ TEST(GeoPointAnalyzerTest, tokenizePointFromArray) {
     auto terms = indexer.GetIndexTerms(shape.centroid(), {});
     ASSERT_FALSE(terms.empty());
 
-    ASSERT_EQ(terms, *actual);
+    ASSERT_EQ(irs::tests::BinaryTerms(terms), *actual);
   }
 }
 
@@ -397,7 +397,7 @@ TEST(GeoPointAnalyzerTest, tokenizePointFromObject) {
     auto terms = indexer.GetIndexTerms(shape.centroid(), {});
     ASSERT_FALSE(terms.empty());
 
-    ASSERT_EQ(terms, *actual);
+    ASSERT_EQ(irs::tests::BinaryTerms(terms), *actual);
   }
 
   // tokenize point, custom options
@@ -426,7 +426,7 @@ TEST(GeoPointAnalyzerTest, tokenizePointFromObject) {
     auto terms = indexer.GetIndexTerms(shape.centroid(), {});
     ASSERT_FALSE(terms.empty());
 
-    ASSERT_EQ(terms, *actual);
+    ASSERT_EQ(irs::tests::BinaryTerms(terms), *actual);
   }
 }
 
@@ -462,7 +462,7 @@ TEST(GeoPointAnalyzerTest, tokenizePointFromObjectComplexPath) {
     auto terms = indexer.GetIndexTerms(shape.centroid(), {});
     ASSERT_FALSE(terms.empty());
 
-    ASSERT_EQ(terms, *actual);
+    ASSERT_EQ(irs::tests::BinaryTerms(terms), *actual);
   }
 
   // tokenize point, custom options
@@ -491,7 +491,7 @@ TEST(GeoPointAnalyzerTest, tokenizePointFromObjectComplexPath) {
     auto terms = indexer.GetIndexTerms(shape.centroid(), {});
     ASSERT_FALSE(terms.empty());
 
-    ASSERT_EQ(terms, *actual);
+    ASSERT_EQ(irs::tests::BinaryTerms(terms), *actual);
   }
 }
 
@@ -654,7 +654,7 @@ TEST(GeoJsonAnalyzerSourceTest, tokenizeLatLngRect) {
     auto terms = indexer.GetIndexTerms(*shape.region(), {});
     ASSERT_FALSE(terms.empty());
 
-    ASSERT_EQ(terms, *actual);
+    ASSERT_EQ(irs::tests::BinaryTerms(terms), *actual);
   }
 
   // tokenize shape, custom options
@@ -671,7 +671,7 @@ TEST(GeoJsonAnalyzerSourceTest, tokenizeLatLngRect) {
     auto terms = indexer.GetIndexTerms(*shape.region(), {});
     ASSERT_FALSE(terms.empty());
 
-    ASSERT_EQ(terms, *actual);
+    ASSERT_EQ(irs::tests::BinaryTerms(terms), *actual);
   }
 
   // tokenize centroid
@@ -686,7 +686,7 @@ TEST(GeoJsonAnalyzerSourceTest, tokenizeLatLngRect) {
     auto terms = indexer.GetIndexTerms(shape.centroid(), {});
     ASSERT_FALSE(terms.empty());
 
-    ASSERT_EQ(terms, *actual);
+    ASSERT_EQ(irs::tests::BinaryTerms(terms), *actual);
   }
 
   // tokenize centroid, custom options
@@ -704,7 +704,7 @@ TEST(GeoJsonAnalyzerSourceTest, tokenizeLatLngRect) {
     auto terms = indexer.GetIndexTerms(shape.centroid(), {});
     ASSERT_FALSE(terms.empty());
 
-    ASSERT_EQ(terms, *actual);
+    ASSERT_EQ(irs::tests::BinaryTerms(terms), *actual);
   }
 
   // tokenize point
@@ -776,7 +776,7 @@ TEST(GeoJsonAnalyzerSourceTest, tokenizePolygon) {
     auto terms = indexer.GetIndexTerms(*shape.region(), {});
     ASSERT_FALSE(terms.empty());
 
-    ASSERT_EQ(terms, *actual);
+    ASSERT_EQ(irs::tests::BinaryTerms(terms), *actual);
   }
 
   // tokenize shape, custom options
@@ -793,7 +793,7 @@ TEST(GeoJsonAnalyzerSourceTest, tokenizePolygon) {
     auto terms = indexer.GetIndexTerms(*shape.region(), {});
     ASSERT_FALSE(terms.empty());
 
-    ASSERT_EQ(terms, *actual);
+    ASSERT_EQ(irs::tests::BinaryTerms(terms), *actual);
   }
 
   // tokenize centroid
@@ -808,7 +808,7 @@ TEST(GeoJsonAnalyzerSourceTest, tokenizePolygon) {
     auto terms = indexer.GetIndexTerms(shape.centroid(), {});
     ASSERT_FALSE(terms.empty());
 
-    ASSERT_EQ(terms, *actual);
+    ASSERT_EQ(irs::tests::BinaryTerms(terms), *actual);
   }
 
   // tokenize centroid, custom options
@@ -826,7 +826,7 @@ TEST(GeoJsonAnalyzerSourceTest, tokenizePolygon) {
     auto terms = indexer.GetIndexTerms(shape.centroid(), {});
     ASSERT_FALSE(terms.empty());
 
-    ASSERT_EQ(terms, *actual);
+    ASSERT_EQ(irs::tests::BinaryTerms(terms), *actual);
   }
 
   // tokenize point
@@ -901,7 +901,7 @@ TEST(GeoJsonAnalyzerSourceTest, tokenizeLineString) {
     ASSERT_FALSE(terms.empty());
 
     ASSERT_LE(terms.size(), actual->size());
-    ASSERT_TRUE(std::equal(terms.begin(), terms.end(), actual->begin()));
+    ASSERT_TRUE(irs::tests::StartsWithTerms(*actual, terms));
   }
 
   // tokenize shape, custom options
@@ -919,7 +919,7 @@ TEST(GeoJsonAnalyzerSourceTest, tokenizeLineString) {
     ASSERT_FALSE(terms.empty());
 
     ASSERT_LE(terms.size(), actual->size());
-    ASSERT_TRUE(std::equal(terms.begin(), terms.end(), actual->begin()));
+    ASSERT_TRUE(irs::tests::StartsWithTerms(*actual, terms));
   }
 
   // tokenize centroid
@@ -934,7 +934,7 @@ TEST(GeoJsonAnalyzerSourceTest, tokenizeLineString) {
     auto terms = indexer.GetIndexTerms(shape.centroid(), {});
     ASSERT_FALSE(terms.empty());
 
-    ASSERT_EQ(terms, *actual);
+    ASSERT_EQ(irs::tests::BinaryTerms(terms), *actual);
   }
 
   // tokenize centroid, custom options
@@ -952,7 +952,7 @@ TEST(GeoJsonAnalyzerSourceTest, tokenizeLineString) {
     auto terms = indexer.GetIndexTerms(shape.centroid(), {});
     ASSERT_FALSE(terms.empty());
 
-    ASSERT_EQ(terms, *actual);
+    ASSERT_EQ(irs::tests::BinaryTerms(terms), *actual);
   }
 
   // tokenize point
@@ -1035,7 +1035,7 @@ TEST(GeoJsonAnalyzerSourceTest, tokenizeMultiPolygon) {
     ASSERT_FALSE(terms.empty());
 
     ASSERT_LE(terms.size(), actual->size());
-    ASSERT_TRUE(std::equal(terms.begin(), terms.end(), actual->begin()));
+    ASSERT_TRUE(irs::tests::StartsWithTerms(*actual, terms));
   }
 
   // tokenize centroid
@@ -1050,7 +1050,7 @@ TEST(GeoJsonAnalyzerSourceTest, tokenizeMultiPolygon) {
     auto terms = indexer.GetIndexTerms(shape.centroid(), {});
     ASSERT_FALSE(terms.empty());
 
-    ASSERT_EQ(terms, *actual);
+    ASSERT_EQ(irs::tests::BinaryTerms(terms), *actual);
   }
 
   // tokenize point
@@ -1093,7 +1093,7 @@ TEST(GeoJsonAnalyzerSourceTest, tokenizeMultiPoint) {
     ASSERT_FALSE(terms.empty());
 
     ASSERT_LE(terms.size(), actual->size());
-    ASSERT_TRUE(std::equal(terms.begin(), terms.end(), actual->begin()));
+    ASSERT_TRUE(irs::tests::StartsWithTerms(*actual, terms));
   }
 
   // tokenize shape, custom options
@@ -1111,7 +1111,7 @@ TEST(GeoJsonAnalyzerSourceTest, tokenizeMultiPoint) {
     ASSERT_FALSE(terms.empty());
 
     ASSERT_LE(terms.size(), actual->size());
-    ASSERT_TRUE(std::equal(terms.begin(), terms.end(), actual->begin()));
+    ASSERT_TRUE(irs::tests::StartsWithTerms(*actual, terms));
   }
 
   // tokenize centroid
@@ -1126,7 +1126,7 @@ TEST(GeoJsonAnalyzerSourceTest, tokenizeMultiPoint) {
     auto terms = indexer.GetIndexTerms(shape.centroid(), {});
     ASSERT_FALSE(terms.empty());
 
-    ASSERT_EQ(terms, *actual);
+    ASSERT_EQ(irs::tests::BinaryTerms(terms), *actual);
   }
 
   // tokenize centroid, custom options
@@ -1144,7 +1144,7 @@ TEST(GeoJsonAnalyzerSourceTest, tokenizeMultiPoint) {
     auto terms = indexer.GetIndexTerms(shape.centroid(), {});
     ASSERT_FALSE(terms.empty());
 
-    ASSERT_EQ(terms, *actual);
+    ASSERT_EQ(irs::tests::BinaryTerms(terms), *actual);
   }
 
   // tokenize point
@@ -1259,7 +1259,7 @@ TEST(GeoJsonAnalyzerSourceTest, tokenizeMultiPolyLine) {
     ASSERT_FALSE(terms.empty());
 
     ASSERT_LE(terms.size(), actual->size());
-    ASSERT_TRUE(std::equal(terms.begin(), terms.end(), actual->begin()));
+    ASSERT_TRUE(irs::tests::StartsWithTerms(*actual, terms));
   }
 
   // tokenize shape, custom options
@@ -1277,7 +1277,7 @@ TEST(GeoJsonAnalyzerSourceTest, tokenizeMultiPolyLine) {
     ASSERT_FALSE(terms.empty());
 
     ASSERT_LE(terms.size(), actual->size());
-    ASSERT_TRUE(std::equal(terms.begin(), terms.end(), actual->begin()));
+    ASSERT_TRUE(irs::tests::StartsWithTerms(*actual, terms));
   }
 
   // tokenize centroid
@@ -1292,7 +1292,7 @@ TEST(GeoJsonAnalyzerSourceTest, tokenizeMultiPolyLine) {
     auto terms = indexer.GetIndexTerms(shape.centroid(), {});
     ASSERT_FALSE(terms.empty());
 
-    ASSERT_EQ(terms, *actual);
+    ASSERT_EQ(irs::tests::BinaryTerms(terms), *actual);
   }
 
   // tokenize centroid, custom options
@@ -1310,7 +1310,7 @@ TEST(GeoJsonAnalyzerSourceTest, tokenizeMultiPolyLine) {
     auto terms = indexer.GetIndexTerms(shape.centroid(), {});
     ASSERT_FALSE(terms.empty());
 
-    ASSERT_EQ(terms, *actual);
+    ASSERT_EQ(irs::tests::BinaryTerms(terms), *actual);
   }
 
   // tokenize point
@@ -1356,7 +1356,7 @@ TEST(GeoJsonAnalyzerSourceTest, tokenizePoint) {
     auto terms = indexer.GetIndexTerms(shape.centroid(), {});
     ASSERT_FALSE(terms.empty());
 
-    ASSERT_EQ(terms, *actual);
+    ASSERT_EQ(irs::tests::BinaryTerms(terms), *actual);
   }
 
   // tokenize shape, custom options
@@ -1383,7 +1383,7 @@ TEST(GeoJsonAnalyzerSourceTest, tokenizePoint) {
     auto terms = indexer.GetIndexTerms(shape.centroid(), {});
     ASSERT_FALSE(terms.empty());
 
-    ASSERT_EQ(terms, *actual);
+    ASSERT_EQ(irs::tests::BinaryTerms(terms), *actual);
   }
 
   // tokenize centroid
@@ -1408,7 +1408,7 @@ TEST(GeoJsonAnalyzerSourceTest, tokenizePoint) {
     auto terms = indexer.GetIndexTerms(shape.centroid(), {});
     ASSERT_FALSE(terms.empty());
 
-    ASSERT_EQ(terms, *actual);
+    ASSERT_EQ(irs::tests::BinaryTerms(terms), *actual);
   }
 
   // tokenize centroid, custom options
@@ -1436,7 +1436,7 @@ TEST(GeoJsonAnalyzerSourceTest, tokenizePoint) {
     auto terms = indexer.GetIndexTerms(shape.centroid(), {});
     ASSERT_FALSE(terms.empty());
 
-    ASSERT_EQ(terms, *actual);
+    ASSERT_EQ(irs::tests::BinaryTerms(terms), *actual);
   }
 
   // tokenize point
@@ -1461,7 +1461,7 @@ TEST(GeoJsonAnalyzerSourceTest, tokenizePoint) {
     auto terms = indexer.GetIndexTerms(shape.centroid(), {});
     ASSERT_FALSE(terms.empty());
 
-    ASSERT_EQ(terms, *actual);
+    ASSERT_EQ(irs::tests::BinaryTerms(terms), *actual);
   }
 
   // tokenize point, custom options
@@ -1489,7 +1489,7 @@ TEST(GeoJsonAnalyzerSourceTest, tokenizePoint) {
     auto terms = indexer.GetIndexTerms(shape.centroid(), {});
     ASSERT_FALSE(terms.empty());
 
-    ASSERT_EQ(terms, *actual);
+    ASSERT_EQ(irs::tests::BinaryTerms(terms), *actual);
   }
 }
 
@@ -1523,7 +1523,7 @@ TEST(GeoJsonAnalyzerSourceTest, tokenizePointGeoJSONArray) {
     auto terms = indexer.GetIndexTerms(shape.centroid(), {});
     ASSERT_FALSE(terms.empty());
 
-    ASSERT_EQ(terms, *actual);
+    ASSERT_EQ(irs::tests::BinaryTerms(terms), *actual);
   }
 
   // tokenize shape, custom options
@@ -1550,7 +1550,7 @@ TEST(GeoJsonAnalyzerSourceTest, tokenizePointGeoJSONArray) {
     auto terms = indexer.GetIndexTerms(shape.centroid(), {});
     ASSERT_FALSE(terms.empty());
 
-    ASSERT_EQ(terms, *actual);
+    ASSERT_EQ(irs::tests::BinaryTerms(terms), *actual);
   }
 
   // tokenize centroid
@@ -1575,7 +1575,7 @@ TEST(GeoJsonAnalyzerSourceTest, tokenizePointGeoJSONArray) {
     auto terms = indexer.GetIndexTerms(shape.centroid(), {});
     ASSERT_FALSE(terms.empty());
 
-    ASSERT_EQ(terms, *actual);
+    ASSERT_EQ(irs::tests::BinaryTerms(terms), *actual);
   }
 
   // tokenize centroid, custom options
@@ -1603,7 +1603,7 @@ TEST(GeoJsonAnalyzerSourceTest, tokenizePointGeoJSONArray) {
     auto terms = indexer.GetIndexTerms(shape.centroid(), {});
     ASSERT_FALSE(terms.empty());
 
-    ASSERT_EQ(terms, *actual);
+    ASSERT_EQ(irs::tests::BinaryTerms(terms), *actual);
   }
 
   // tokenize point
@@ -1628,7 +1628,7 @@ TEST(GeoJsonAnalyzerSourceTest, tokenizePointGeoJSONArray) {
     auto terms = indexer.GetIndexTerms(shape.centroid(), {});
     ASSERT_FALSE(terms.empty());
 
-    ASSERT_EQ(terms, *actual);
+    ASSERT_EQ(irs::tests::BinaryTerms(terms), *actual);
   }
 
   // tokenize point, custom options
@@ -1656,7 +1656,7 @@ TEST(GeoJsonAnalyzerSourceTest, tokenizePointGeoJSONArray) {
     auto terms = indexer.GetIndexTerms(shape.centroid(), {});
     ASSERT_FALSE(terms.empty());
 
-    ASSERT_EQ(terms, *actual);
+    ASSERT_EQ(irs::tests::BinaryTerms(terms), *actual);
   }
 }
 

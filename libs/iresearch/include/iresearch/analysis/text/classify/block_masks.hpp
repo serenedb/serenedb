@@ -22,6 +22,7 @@
 
 #include <simdutf.h>
 
+#include <array>
 #include <bit>
 #include <cstddef>
 #include <cstdint>
@@ -64,6 +65,17 @@ IRS_FORCE_INLINE inline uint32_t ClassifyAnyEqBlock(
   }
   return MoveMask(acc);
 }
+
+struct ByteSet {
+  IRS_FORCE_INLINE void Add(byte_type b) noexcept {
+    words[b >> 6] |= uint64_t{1} << (b & 63);
+  }
+  IRS_FORCE_INLINE bool Contains(byte_type b) const noexcept {
+    return ((words[b >> 6] >> (b & 63)) & 1) != 0;
+  }
+
+  std::array<uint64_t, 4> words{};
+};
 
 IRS_FORCE_INLINE inline bool IsAsciiShort(const char* data,
                                           size_t size) noexcept {
@@ -114,19 +126,27 @@ template<typename ClassifyBlock, typename IsDelim, typename OnDelim>
 IRS_FORCE_INLINE void DrainClassified(const byte_type* data, size_t size,
                                       bool use_blocks, ClassifyBlock classify,
                                       IsDelim is_delim, OnDelim on_delim) {
+  if (!use_blocks || size < kClassifyBlock) {
+    for (size_t offset = 0; offset < size; ++offset) {
+      if (is_delim(data[offset])) {
+        on_delim(offset);
+      }
+    }
+    return;
+  }
   size_t offset = 0;
-  if (use_blocks) {
-    for (; size - offset >= kClassifyBlock; offset += kClassifyBlock) {
-      VisitSetBits(classify(data + offset), [&](uint32_t bit) IRS_FORCE_INLINE {
-        on_delim(offset + bit);
-      });
-    }
+  for (; size - offset >= kClassifyBlock; offset += kClassifyBlock) {
+    VisitSetBits(classify(data + offset), [&](uint32_t bit) IRS_FORCE_INLINE {
+      on_delim(offset + bit);
+    });
   }
-  for (; offset < size; ++offset) {
-    if (is_delim(data[offset])) {
-      on_delim(offset);
-    }
+  if (offset == size) {
+    return;
   }
+  const size_t base = size - kClassifyBlock;
+  const uint32_t seen = (uint32_t{1} << (offset - base)) - 1;
+  VisitSetBits(classify(data + base) & ~seen,
+               [&](uint32_t bit) IRS_FORCE_INLINE { on_delim(base + bit); });
 }
 
 void BuildUtf8CpBounds(const byte_type* data, size_t size, bool valid_utf8,

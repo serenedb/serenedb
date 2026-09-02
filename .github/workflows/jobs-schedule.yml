@@ -16,7 +16,7 @@ jobs:
       LOCATION: linux-amd64
       CONFIG: coverage
       IRESEARCH: true
-      DUCKDB_SUITES: "core,avro,azure,httpfs,iceberg,inet,postgres_scanner"
+      DUCKDB_SUITES: "core,avro,azure,httpfs,iceberg,inet,markdown,postgres_scanner"
       SQLITE: true
       SQLSMITH: true
       FUZZ_QUERIES: "10000"
@@ -30,7 +30,7 @@ jobs:
       LOCATION: linux-amd64
       CONFIG: dev
       IRESEARCH: true
-      DUCKDB_SUITES: "core,avro,azure,httpfs,iceberg,inet,postgres_scanner"
+      DUCKDB_SUITES: "core,avro,azure,httpfs,iceberg,inet,markdown,postgres_scanner"
       SQLITE: true
       SQLSMITH: true
     secrets: inherit
@@ -60,7 +60,7 @@ jobs:
       # RUN_EXTRA: nightly sanitizers run the full in-scope set, not just ours + drivers.
       RUN_EXTRA: true
       IRESEARCH: true
-      DUCKDB_SUITES: "core,avro,azure,httpfs,iceberg,inet,postgres_scanner"
+      DUCKDB_SUITES: "core,avro,azure,httpfs,iceberg,inet,markdown,postgres_scanner"
       SQLITE: true
       SQLSMITH: true
       FUZZ_QUERIES: "10000"

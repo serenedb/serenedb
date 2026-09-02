@@ -1,0 +1,23 @@
+{
+  "description": "SereneDB test-config for the vendored duckdb_markdown test suite. Every entry is a known SereneDB divergence from upstream DuckDB, not a flake -- see tests/duckdb/README.md.",
+  "skip_tests": [
+    {
+      "reason": "LIKE treats backslash as the default escape character, as PostgreSQL does; upstream DuckDB has no default LIKE escape. The file's last assertion checks a backslash survives the duck_block table round trip with `... LIKE '%c:' || chr(92) || 'tmp%'`, and here that pattern's `\\t` collapses to a literal `t`, so it matches 'c:tmp' and not 'c:\\tmp'. Not a markdown bug: the round trip itself is correct (duck_blocks_to_md returns `| he said \"hi\" | c:\\tmp |`), and the same divergence is visible on any string -- `'c:\\tmp' LIKE '%c:\\tmp%'` is false and `'a_b' LIKE 'a\\_b'` is true. Only the assertion's pattern is affected; every other case in the file passes.",
+      "paths": [
+        "test/sql/markdown_json_escape.test"
+      ]
+    },
+    {
+      "reason": "Scalar functions reject named-argument labels. The file asserts `md_stats(doc(), exact := true)` binds to the two-argument overload, and its own comment calls this 'sugar, not a contract' because upstream DuckDB does not validate the label. SereneDB does, so the call fails to bind with `No function matches the given name and argument types 'md_stats(STRING_LITERAL, exact := BOOLEAN)'`. Engine-wide, not markdown-specific: `SELECT repeat('a', count := 3)` fails identically. Everything the file asserts about exact mode itself passes -- only the named-label spelling at line 52 does not.",
+      "paths": [
+        "test/sql/md_stats_exact.test"
+      ]
+    },
+    {
+      "reason": "The file reads a bare relative `README.md` and asserts on the duckdb_markdown README's own content ('DuckDB Markdown Extension' as the first heading, its section and block counts). Upstream runs it with the extension repo as the working directory; the driver here runs one unittest process from the serenedb workspace root for every suite at once, so the path resolves to serenedb's own README.md. Nothing in sqllogictest sets a per-file working directory, so the whole file is unrunnable in this layout rather than wrong.",
+      "paths": [
+        "test/sql/readme_integration.test"
+      ]
+    }
+  ]
+}

@@ -150,6 +150,19 @@ TEST_F(DelimitedTokenizerTests, test_quote) {
                     {{"abc", 0, 3}, {"def", 4, 9}, {"ghi\"", 10, 14}});
 }
 
+TEST_F(DelimitedTokenizerTests, delimiters_in_the_overlapping_tail_block) {
+  const std::string x31(31, 'x');
+  const std::string x32(32, 'x');
+  AssertBlockTokens(",", x31 + ",yyyyy", {{x31, 0, 31}, {"yyyyy", 32, 37}});
+  AssertBlockTokens(",", x32 + ",yyyy", {{x32, 0, 32}, {"yyyy", 33, 37}});
+  AssertBlockTokens(",", x32 + ",ab,cd",
+                    {{x32, 0, 32}, {"ab", 33, 35}, {"cd", 36, 38}});
+  AssertBlockTokens(",", x32 + ",\"q,r\"", {{x32, 0, 32}, {"q,r", 33, 38}});
+  AssertBlockTokens(
+    ",", x32 + ",ab,\"q,r\",c",
+    {{x32, 0, 32}, {"ab", 33, 35}, {"q,r", 36, 41}, {"c", 42, 43}});
+}
+
 TEST_F(DelimitedTokenizerTests, quotes_beyond_first_block) {
   AssertBlockTokens(",", "aa,bb,cc,dd,ee,ff,gg,hh,ii,jj,kk,\"q,q\",zz",
                     {{"aa", 0, 2},

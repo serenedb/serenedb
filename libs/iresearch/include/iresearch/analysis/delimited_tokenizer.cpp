@@ -151,30 +151,42 @@ void DelimitedTokenizer::FastFillValue(TokenSink& sink,
     tok_begin = pos + 1;
   };
 
+  const auto scan = [&](size_t base, uint32_t seen) IRS_FORCE_INLINE {
+    const auto* block = p + base;
+    auto delims = classify::ClassifyEqBlock(block, delim) & ~seen;
+    const auto quotes = classify::ClassifyEqBlock(block, '"') & ~seen;
+    if (quotes != 0) [[unlikely]] {
+      delims &= (uint32_t{1} << std::countr_zero(quotes)) - 1;
+    }
+    classify::VisitSetBits(
+      delims, [&](uint32_t bit) IRS_FORCE_INLINE { emit(base + bit); });
+    return quotes != 0;
+  };
+
   size_t offset = 0;
   for (; size - offset >= classify::kClassifyBlock;
        offset += classify::kClassifyBlock) {
-    const auto* block = p + offset;
-    auto delims = classify::ClassifyEqBlock(block, delim);
-    const auto quotes = classify::ClassifyEqBlock(block, '"');
-    if (quotes != 0) [[unlikely]] {
-      delims &= (uint32_t{1} << std::countr_zero(quotes)) - 1;
-      classify::VisitSetBits(
-        delims, [&](uint32_t bit) IRS_FORCE_INLINE { emit(offset + bit); });
+    if (scan(offset, 0)) [[unlikely]] {
       QuotedFillValue<Layout>(sink, value, tok_begin);
       return;
     }
-    classify::VisitSetBits(
-      delims, [&](uint32_t bit) IRS_FORCE_INLINE { emit(offset + bit); });
   }
-  for (; offset < size; ++offset) {
-    const auto c = p[offset];
-    if (c == '"') [[unlikely]] {
+  if (size < classify::kClassifyBlock) {
+    for (; offset < size; ++offset) {
+      const auto c = p[offset];
+      if (c == '"') [[unlikely]] {
+        QuotedFillValue<Layout>(sink, value, tok_begin);
+        return;
+      }
+      if (c == delim) {
+        emit(offset);
+      }
+    }
+  } else if (offset < size) {
+    const size_t base = size - classify::kClassifyBlock;
+    if (scan(base, (uint32_t{1} << (offset - base)) - 1)) [[unlikely]] {
       QuotedFillValue<Layout>(sink, value, tok_begin);
       return;
-    }
-    if (c == delim) {
-      emit(offset);
     }
   }
   sink.EmitSlice<Layout>(

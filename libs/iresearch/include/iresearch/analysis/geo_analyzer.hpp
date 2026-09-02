@@ -213,8 +213,9 @@ class GeoJsonAnalyzer final : public TypedTokenizer<GeoJsonAnalyzer>,
 #endif
 
  private:
-  bool ResetImpl(simdjson::ondemand::value json,
-                 sdb::geo::coding::Options options, Encoder* encoder);
+  bool SerializesShape() const noexcept {
+    return _coding != Coding::Source && _type != Type::Centroid;
+  }
 
   void StageTerms();
 

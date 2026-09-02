@@ -34,23 +34,14 @@
 
 namespace sdb::geo::terms {
 
-inline constexpr size_t kCellBytes = sizeof(uint64_t);
-
-inline void Append(std::string& out, std::string_view prefix, S2CellId id,
-                   bool covering, char marker) {
-  out.append(prefix);
+inline std::string Term(std::string_view prefix, S2CellId id, bool covering,
+                        char marker) {
+  std::string out{prefix};
   if (covering) {
     out.push_back(marker);
   }
   const uint64_t be = std::byteswap(id.id());
-  out.append(reinterpret_cast<const char*>(&be), kCellBytes);
-}
-
-inline std::string Term(std::string_view prefix, S2CellId id, bool covering,
-                        char marker) {
-  std::string out;
-  out.reserve(prefix.size() + 1 + kCellBytes);
-  Append(out, prefix, id, covering, marker);
+  out.append(reinterpret_cast<const char*>(&be), sizeof be);
   return out;
 }
 

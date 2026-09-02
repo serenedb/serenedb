@@ -58,19 +58,13 @@ IRS_FORCE_INLINE S2LatLng NormalizedLatLng(double lat_deg,
 
 IRS_FORCE_INLINE duckdb::string_t CellTerm(S2CellId id, bool covering,
                                            byte_type marker) noexcept {
-  static_assert(geo::terms::kCellBytes == sizeof(uint64_t));
   static_assert(sizeof(duckdb::string_t) == 16);
-  const uint64_t be = std::byteswap(id.id());
-  uint64_t w0;
-  uint64_t w1;
+  __uint128_t bytes = std::byteswap(id.id());
   if (covering) {
-    w0 = 9 | (uint64_t{marker} << 32) | (be << 40);
-    w1 = be >> 24;
-  } else {
-    w0 = 8 | (be << 32);
-    w1 = be >> 32;
+    bytes = (bytes << 8) | marker;
   }
-  return std::bit_cast<duckdb::string_t>((__uint128_t{w1} << 64) | w0);
+  const uint32_t size = sizeof(uint64_t) + covering;
+  return std::bit_cast<duckdb::string_t>((bytes << 32) | size);
 }
 
 bool ParseWkbPoint(duckdb::string_t wkb, S2LatLng& out) noexcept {
@@ -319,30 +313,28 @@ GeoJsonAnalyzer::GeoJsonAnalyzer(const Options& options)
 }
 
 bool GeoJsonAnalyzer::reset(simdjson::ondemand::value json) {
-  Encoder* encoder = nullptr;
-  auto coding = geo::coding::Options::Invalid;
-  if (_coding != Coding::Source) {
-    _encoder.clear();
-    encoder = &_encoder;
-    coding = _s2_coding;
+  _encoder.clear();
+  Encoder* encoder = SerializesShape() ? &_encoder : nullptr;
+  const auto coding = encoder ? _s2_coding : geo::coding::Options::Invalid;
+  const bool parsed =
+    _type == Type::Point
+      ? ParseShape<Parsing::OnlyPoint>(json, _shape, _cache, coding, encoder)
+      : ParseShape<Parsing::GeoJson>(json, _shape, _cache, coding, encoder);
+  if (!parsed) {
+    return false;
   }
-  return ResetImpl(json, coding, encoder);
+  StageTerms();
+  return true;
 }
 
 bool GeoJsonAnalyzer::resetWKB(duckdb::string_t wkb) {
   SDB_ASSERT(_coding == Coding::Source || geo::coding::IsOptionsS2(_s2_coding),
              "LatLng coding is not supported by resetWKB; "
              "use S2Point / S2PointShapeCompact / S2PointRegionCompact");
+  _encoder.clear();
   if (S2LatLng ll; ParseWkbPoint(wkb, ll)) {
-    const auto point = ll.ToPoint();
-    if (_coding != Coding::Source) {
-      _encoder.clear();
-      _encoder.Ensure(sizeof(uint8_t) + geo::coding::ToSize(_s2_coding));
-      _encoder.put8(geo::coding::ToTag(geo::coding::Type::Point, _s2_coding));
-      geo::EncodePoint(_encoder, point);
-    }
-    _centroid = point;
-    RestagePoint(point);
+    _centroid = ll.ToPoint();
+    RestagePoint(_centroid);
     return true;
   }
   if (!sdb::geo::ParseShapeWKB({wkb.GetData(), wkb.GetSize()}, _shape)) {
@@ -352,14 +344,8 @@ bool GeoJsonAnalyzer::resetWKB(duckdb::string_t wkb) {
       _shape.type() != sdb::geo::ShapeContainer::Type::S2Point) {
     return false;
   }
-  if (_coding != Coding::Source) {
-    _encoder.clear();
-    const bool without_serialization =
-      _type == Type::Centroid &&
-      _shape.type() != sdb::geo::ShapeContainer::Type::S2Point;
-    if (!without_serialization) {
-      _shape.Encode(_encoder, _s2_coding);
-    }
+  if (SerializesShape()) {
+    _shape.Encode(_encoder, _s2_coding);
   }
   StageTerms();
   return true;
@@ -385,26 +371,6 @@ void GeoJsonAnalyzer::prepare(GeoFilterOptionsBase& options) const {
   options.coding = _s2_coding;
 }
 
-bool GeoJsonAnalyzer::ResetImpl(simdjson::ondemand::value json,
-                                geo::coding::Options options,
-                                Encoder* encoder) {
-  const bool without_serialization = _type == Type::Centroid;
-  if (_type != Type::Point) {
-    if (!ParseShape<Parsing::GeoJson>(
-          json, _shape, _cache,
-          without_serialization ? geo::coding::Options::Invalid : options,
-          without_serialization ? nullptr : encoder)) {
-      return false;
-    }
-  } else if (!ParseShape<Parsing::OnlyPoint>(json, _shape, _cache, options,
-                                             encoder)) {
-    return false;
-  }
-
-  StageTerms();
-  return true;
-}
-
 void GeoJsonAnalyzer::StageTerms() {
   ClearStaged();
   _centroid = _shape.centroid();
@@ -424,9 +390,7 @@ void GeoJsonAnalyzer::Store(TokenSink& sink) {
     return;
   }
   if (_encoder.length() == 0) {
-    SDB_ASSERT(_type == Type::Centroid);
-    SDB_ASSERT(_s2_coding != geo::coding::Options::Invalid);
-    _encoder.put8(0);
+    _encoder.put8(geo::coding::ToTag(geo::coding::Type::Point, _s2_coding));
     if (geo::coding::IsOptionsS2(_s2_coding)) {
       geo::EncodePoint(_encoder, _centroid);
     } else {

@@ -1,0 +1,518 @@
+statement ok
+SET TimeZone = 'Europe/Berlin';
+
+statement ok
+CREATE TABLE lab AS SELECT TIMESTAMP '2023-11-15 00:00:00' + INTERVAL (i * 173) MINUTE AS ts, (TIMESTAMP '2023-11-15 00:00:00' + INTERVAL (i * 173) MINUTE)::TIMESTAMPTZ AS tstz, (DATE '2023-11-15' + (i % 900)::INTEGER)::DATE AS d, i AS v FROM range(0, 6000) t(i);
+
+statement ok
+INSERT INTO lab VALUES (NULL, NULL, NULL, -1);
+
+statement ok
+CREATE TABLE lab_inf AS SELECT * FROM lab;
+
+statement ok
+INSERT INTO lab_inf VALUES (TIMESTAMP 'infinity', TIMESTAMPTZ 'infinity', DATE 'infinity', -2), (TIMESTAMP '-infinity', TIMESTAMPTZ '-infinity', DATE '-infinity', -3);
+
+statement ok
+CREATE TABLE old AS SELECT TIMESTAMP '1890-01-01 00:00:00' + INTERVAL (i * 977) HOUR AS ts, (TIMESTAMP '1890-01-01 00:00:00' + INTERVAL (i * 977) HOUR)::TIMESTAMPTZ AS tstz, (DATE '1890-01-01' + (i * 37)::INTEGER)::DATE AS d, i AS v FROM range(0, 4000) t(i);
+
+statement ok
+SET disabled_optimizers = 'compressed_materialization';
+
+statement ok
+CREATE TABLE ref_lab AS
+SELECT 'ts year(ts) !! ''-Q'' !! quarter(ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT year(ts) || '-Q' || quarter(ts) AS k, count(*) AS c, sum(v) AS s FROM lab GROUP BY 1)
+UNION ALL SELECT 'ts year(ts) !! ''Q'' !! quarter(ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT year(ts) || 'Q' || quarter(ts) AS k, count(*) AS c, sum(v) AS s FROM lab GROUP BY 1)
+UNION ALL SELECT 'ts ''['' !! year(ts) !! ''-Q'' !! quarter(ts) !! '']''' AS shape, k::VARCHAR AS k, c, s FROM (SELECT '[' || year(ts) || '-Q' || quarter(ts) || ']' AS k, count(*) AS c, sum(v) AS s FROM lab GROUP BY 1)
+UNION ALL SELECT 'ts year(ts)::VARCHAR !! ''-'' !! month(ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT year(ts)::VARCHAR || '-' || month(ts) AS k, count(*) AS c, sum(v) AS s FROM lab GROUP BY 1)
+UNION ALL SELECT 'ts year(ts) !! ''/'' !! dayofyear(ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT year(ts) || '/' || dayofyear(ts) AS k, count(*) AS c, sum(v) AS s FROM lab GROUP BY 1)
+UNION ALL SELECT 'ts isoyear(ts) !! ''-W'' !! week(ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT isoyear(ts) || '-W' || week(ts) AS k, count(*) AS c, sum(v) AS s FROM lab GROUP BY 1)
+UNION ALL SELECT 'ts isoyear(ts) !! ''-W'' !! week(ts) !! ''-'' !! isodow(ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT isoyear(ts) || '-W' || week(ts) || '-' || isodow(ts) AS k, count(*) AS c, sum(v) AS s FROM lab GROUP BY 1)
+UNION ALL SELECT 'ts year(ts) !! ''-'' !! month(ts) !! ''-'' !! day(ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT year(ts) || '-' || month(ts) || '-' || day(ts) AS k, count(*) AS c, sum(v) AS s FROM lab GROUP BY 1)
+UNION ALL SELECT 'ts year(ts) !! ''-'' !! month(ts) !! ''-'' !! day(ts) !! '' '' !! hour(ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT year(ts) || '-' || month(ts) || '-' || day(ts) || ' ' || hour(ts) AS k, count(*) AS c, sum(v) AS s FROM lab GROUP BY 1)
+UNION ALL SELECT 'ts year(ts) !! ''-'' !! month(ts) !! ''-'' !! day(ts) !! '' '' !! hour(ts) !! '':'' !! minute(ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT year(ts) || '-' || month(ts) || '-' || day(ts) || ' ' || hour(ts) || ':' || minute(ts) AS k, count(*) AS c, sum(v) AS s FROM lab GROUP BY 1)
+UNION ALL SELECT 'ts monthname(ts) !! '' '' !! year(ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT monthname(ts) || ' ' || year(ts) AS k, count(*) AS c, sum(v) AS s FROM lab GROUP BY 1)
+UNION ALL SELECT 'ts year(ts) !! '' '' !! monthname(ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT year(ts) || ' ' || monthname(ts) AS k, count(*) AS c, sum(v) AS s FROM lab GROUP BY 1)
+UNION ALL SELECT 'ts dayname(ts) !! '', '' !! strftime(ts, ''%Y-%m-%d'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT dayname(ts) || ', ' || strftime(ts, '%Y-%m-%d') AS k, count(*) AS c, sum(v) AS s FROM lab GROUP BY 1)
+UNION ALL SELECT 'ts strftime(ts, ''%Y'') !! '' Q'' !! quarter(ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(ts, '%Y') || ' Q' || quarter(ts) AS k, count(*) AS c, sum(v) AS s FROM lab GROUP BY 1)
+UNION ALL SELECT 'ts strftime(ts, ''%Y-%m'') !! ''/'' !! day(ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(ts, '%Y-%m') || '/' || day(ts) AS k, count(*) AS c, sum(v) AS s FROM lab GROUP BY 1)
+UNION ALL SELECT 'ts decade(ts) !! ''s''' AS shape, k::VARCHAR AS k, c, s FROM (SELECT decade(ts) || 's' AS k, count(*) AS c, sum(v) AS s FROM lab GROUP BY 1)
+UNION ALL SELECT 'ts century(ts)::VARCHAR' AS shape, k::VARCHAR AS k, c, s FROM (SELECT century(ts)::VARCHAR AS k, count(*) AS c, sum(v) AS s FROM lab GROUP BY 1)
+UNION ALL SELECT 'ts millennium(ts) !! ''M''' AS shape, k::VARCHAR AS k, c, s FROM (SELECT millennium(ts) || 'M' AS k, count(*) AS c, sum(v) AS s FROM lab GROUP BY 1)
+UNION ALL SELECT 'ts ''FY'' !! year(ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT 'FY' || year(ts) AS k, count(*) AS c, sum(v) AS s FROM lab GROUP BY 1)
+UNION ALL SELECT 'ts date_part(''quarter'', ts) !! ''/'' !! date_part(''year'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_part('quarter', ts) || '/' || date_part('year', ts) AS k, count(*) AS c, sum(v) AS s FROM lab GROUP BY 1)
+UNION ALL SELECT 'ts datepart(''year'', ts) !! ''.'' !! datepart(''month'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT datepart('year', ts) || '.' || datepart('month', ts) AS k, count(*) AS c, sum(v) AS s FROM lab GROUP BY 1)
+UNION ALL SELECT 'ts yearweek(ts) !! ''''' AS shape, k::VARCHAR AS k, c, s FROM (SELECT yearweek(ts) || '' AS k, count(*) AS c, sum(v) AS s FROM lab GROUP BY 1)
+UNION ALL SELECT 'ts yearweek(ts)::VARCHAR' AS shape, k::VARCHAR AS k, c, s FROM (SELECT yearweek(ts)::VARCHAR AS k, count(*) AS c, sum(v) AS s FROM lab GROUP BY 1)
+UNION ALL SELECT 'ts concat(year(ts), ''-'', quarter(ts))' AS shape, k::VARCHAR AS k, c, s FROM (SELECT concat(year(ts), '-', quarter(ts)) AS k, count(*) AS c, sum(v) AS s FROM lab GROUP BY 1)
+UNION ALL SELECT 'ts concat(''y'', year(ts), ''m'', month(ts))' AS shape, k::VARCHAR AS k, c, s FROM (SELECT concat('y', year(ts), 'm', month(ts)) AS k, count(*) AS c, sum(v) AS s FROM lab GROUP BY 1)
+UNION ALL SELECT 'ts year(ts) !! quarter(ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT year(ts) || quarter(ts) AS k, count(*) AS c, sum(v) AS s FROM lab GROUP BY 1)
+UNION ALL SELECT 'ts quarter(ts) !! ''-'' !! month(ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT quarter(ts) || '-' || month(ts) AS k, count(*) AS c, sum(v) AS s FROM lab GROUP BY 1)
+UNION ALL SELECT 'ts ''Q'' !! quarter(ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT 'Q' || quarter(ts) AS k, count(*) AS c, sum(v) AS s FROM lab GROUP BY 1)
+UNION ALL SELECT 'ts year(ts) !! ''-'' !! week(ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT year(ts) || '-' || week(ts) AS k, count(*) AS c, sum(v) AS s FROM lab GROUP BY 1)
+UNION ALL SELECT 'ts isoyear(ts) !! ''-'' !! month(ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT isoyear(ts) || '-' || month(ts) AS k, count(*) AS c, sum(v) AS s FROM lab GROUP BY 1)
+UNION ALL SELECT 'ts year(ts) !! ''x'' !! monthname(ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT year(ts) || 'x' || monthname(ts) AS k, count(*) AS c, sum(v) AS s FROM lab GROUP BY 1)
+UNION ALL SELECT 'ts monthname(ts) !! year(ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT monthname(ts) || year(ts) AS k, count(*) AS c, sum(v) AS s FROM lab GROUP BY 1)
+UNION ALL SELECT 'ts year(ts) !! ''-'' !! day(ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT year(ts) || '-' || day(ts) AS k, count(*) AS c, sum(v) AS s FROM lab GROUP BY 1)
+UNION ALL SELECT 'ts year(ts) !! ''-'' !! month(ts) !! ''-'' !! dayname(ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT year(ts) || '-' || month(ts) || '-' || dayname(ts) AS k, count(*) AS c, sum(v) AS s FROM lab GROUP BY 1)
+UNION ALL SELECT 'ts year(ts) !! ''-'' !! month(ts) !! '' '' !! hour(ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT year(ts) || '-' || month(ts) || ' ' || hour(ts) AS k, count(*) AS c, sum(v) AS s FROM lab GROUP BY 1)
+UNION ALL SELECT 'ts year(ts) !! ''-'' !! dayofweek(ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT year(ts) || '-' || dayofweek(ts) AS k, count(*) AS c, sum(v) AS s FROM lab GROUP BY 1)
+UNION ALL SELECT 'ts concat(year(ts), ''-'', lpad(month(ts)::VARCHAR, 2, ''0''))' AS shape, k::VARCHAR AS k, c, s FROM (SELECT concat(year(ts), '-', lpad(month(ts)::VARCHAR, 2, '0')) AS k, count(*) AS c, sum(v) AS s FROM lab GROUP BY 1)
+UNION ALL SELECT 'ts year(ts) !! ''-'' !! month(ts) !! ''-'' !! day(ts) !! '' '' !! hour(ts) !! '':'' !! minute(ts) !! '':'' !! second(ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT year(ts) || '-' || month(ts) || '-' || day(ts) || ' ' || hour(ts) || ':' || minute(ts) || ':' || second(ts) AS k, count(*) AS c, sum(v) AS s FROM lab GROUP BY 1)
+UNION ALL SELECT 'd year(d) !! ''-Q'' !! quarter(d)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT year(d) || '-Q' || quarter(d) AS k, count(*) AS c, sum(v) AS s FROM lab GROUP BY 1)
+UNION ALL SELECT 'd year(d) !! ''Q'' !! quarter(d)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT year(d) || 'Q' || quarter(d) AS k, count(*) AS c, sum(v) AS s FROM lab GROUP BY 1)
+UNION ALL SELECT 'd ''['' !! year(d) !! ''-Q'' !! quarter(d) !! '']''' AS shape, k::VARCHAR AS k, c, s FROM (SELECT '[' || year(d) || '-Q' || quarter(d) || ']' AS k, count(*) AS c, sum(v) AS s FROM lab GROUP BY 1)
+UNION ALL SELECT 'd year(d)::VARCHAR !! ''-'' !! month(d)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT year(d)::VARCHAR || '-' || month(d) AS k, count(*) AS c, sum(v) AS s FROM lab GROUP BY 1)
+UNION ALL SELECT 'd year(d) !! ''/'' !! dayofyear(d)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT year(d) || '/' || dayofyear(d) AS k, count(*) AS c, sum(v) AS s FROM lab GROUP BY 1)
+UNION ALL SELECT 'd isoyear(d) !! ''-W'' !! week(d)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT isoyear(d) || '-W' || week(d) AS k, count(*) AS c, sum(v) AS s FROM lab GROUP BY 1)
+UNION ALL SELECT 'd isoyear(d) !! ''-W'' !! week(d) !! ''-'' !! isodow(d)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT isoyear(d) || '-W' || week(d) || '-' || isodow(d) AS k, count(*) AS c, sum(v) AS s FROM lab GROUP BY 1)
+UNION ALL SELECT 'd year(d) !! ''-'' !! month(d) !! ''-'' !! day(d)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT year(d) || '-' || month(d) || '-' || day(d) AS k, count(*) AS c, sum(v) AS s FROM lab GROUP BY 1)
+UNION ALL SELECT 'd year(d) !! ''-'' !! month(d) !! ''-'' !! day(d) !! '' '' !! hour(d)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT year(d) || '-' || month(d) || '-' || day(d) || ' ' || hour(d) AS k, count(*) AS c, sum(v) AS s FROM lab GROUP BY 1)
+UNION ALL SELECT 'd year(d) !! ''-'' !! month(d) !! ''-'' !! day(d) !! '' '' !! hour(d) !! '':'' !! minute(d)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT year(d) || '-' || month(d) || '-' || day(d) || ' ' || hour(d) || ':' || minute(d) AS k, count(*) AS c, sum(v) AS s FROM lab GROUP BY 1)
+UNION ALL SELECT 'd monthname(d) !! '' '' !! year(d)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT monthname(d) || ' ' || year(d) AS k, count(*) AS c, sum(v) AS s FROM lab GROUP BY 1)
+UNION ALL SELECT 'd year(d) !! '' '' !! monthname(d)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT year(d) || ' ' || monthname(d) AS k, count(*) AS c, sum(v) AS s FROM lab GROUP BY 1)
+UNION ALL SELECT 'd dayname(d) !! '', '' !! strftime(d, ''%Y-%m-%d'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT dayname(d) || ', ' || strftime(d, '%Y-%m-%d') AS k, count(*) AS c, sum(v) AS s FROM lab GROUP BY 1)
+UNION ALL SELECT 'd strftime(d, ''%Y'') !! '' Q'' !! quarter(d)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(d, '%Y') || ' Q' || quarter(d) AS k, count(*) AS c, sum(v) AS s FROM lab GROUP BY 1)
+UNION ALL SELECT 'd strftime(d, ''%Y-%m'') !! ''/'' !! day(d)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(d, '%Y-%m') || '/' || day(d) AS k, count(*) AS c, sum(v) AS s FROM lab GROUP BY 1)
+UNION ALL SELECT 'd decade(d) !! ''s''' AS shape, k::VARCHAR AS k, c, s FROM (SELECT decade(d) || 's' AS k, count(*) AS c, sum(v) AS s FROM lab GROUP BY 1)
+UNION ALL SELECT 'd century(d)::VARCHAR' AS shape, k::VARCHAR AS k, c, s FROM (SELECT century(d)::VARCHAR AS k, count(*) AS c, sum(v) AS s FROM lab GROUP BY 1)
+UNION ALL SELECT 'd millennium(d) !! ''M''' AS shape, k::VARCHAR AS k, c, s FROM (SELECT millennium(d) || 'M' AS k, count(*) AS c, sum(v) AS s FROM lab GROUP BY 1)
+UNION ALL SELECT 'd ''FY'' !! year(d)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT 'FY' || year(d) AS k, count(*) AS c, sum(v) AS s FROM lab GROUP BY 1)
+UNION ALL SELECT 'd date_part(''quarter'', d) !! ''/'' !! date_part(''year'', d)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_part('quarter', d) || '/' || date_part('year', d) AS k, count(*) AS c, sum(v) AS s FROM lab GROUP BY 1)
+UNION ALL SELECT 'd datepart(''year'', d) !! ''.'' !! datepart(''month'', d)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT datepart('year', d) || '.' || datepart('month', d) AS k, count(*) AS c, sum(v) AS s FROM lab GROUP BY 1)
+UNION ALL SELECT 'd yearweek(d) !! ''''' AS shape, k::VARCHAR AS k, c, s FROM (SELECT yearweek(d) || '' AS k, count(*) AS c, sum(v) AS s FROM lab GROUP BY 1)
+UNION ALL SELECT 'd yearweek(d)::VARCHAR' AS shape, k::VARCHAR AS k, c, s FROM (SELECT yearweek(d)::VARCHAR AS k, count(*) AS c, sum(v) AS s FROM lab GROUP BY 1)
+UNION ALL SELECT 'd concat(year(d), ''-'', quarter(d))' AS shape, k::VARCHAR AS k, c, s FROM (SELECT concat(year(d), '-', quarter(d)) AS k, count(*) AS c, sum(v) AS s FROM lab GROUP BY 1)
+UNION ALL SELECT 'd concat(''y'', year(d), ''m'', month(d))' AS shape, k::VARCHAR AS k, c, s FROM (SELECT concat('y', year(d), 'm', month(d)) AS k, count(*) AS c, sum(v) AS s FROM lab GROUP BY 1)
+UNION ALL SELECT 'd year(d) !! quarter(d)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT year(d) || quarter(d) AS k, count(*) AS c, sum(v) AS s FROM lab GROUP BY 1)
+UNION ALL SELECT 'd quarter(d) !! ''-'' !! month(d)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT quarter(d) || '-' || month(d) AS k, count(*) AS c, sum(v) AS s FROM lab GROUP BY 1)
+UNION ALL SELECT 'd ''Q'' !! quarter(d)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT 'Q' || quarter(d) AS k, count(*) AS c, sum(v) AS s FROM lab GROUP BY 1)
+UNION ALL SELECT 'd year(d) !! ''-'' !! week(d)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT year(d) || '-' || week(d) AS k, count(*) AS c, sum(v) AS s FROM lab GROUP BY 1)
+UNION ALL SELECT 'd isoyear(d) !! ''-'' !! month(d)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT isoyear(d) || '-' || month(d) AS k, count(*) AS c, sum(v) AS s FROM lab GROUP BY 1)
+UNION ALL SELECT 'd year(d) !! ''x'' !! monthname(d)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT year(d) || 'x' || monthname(d) AS k, count(*) AS c, sum(v) AS s FROM lab GROUP BY 1)
+UNION ALL SELECT 'd monthname(d) !! year(d)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT monthname(d) || year(d) AS k, count(*) AS c, sum(v) AS s FROM lab GROUP BY 1)
+UNION ALL SELECT 'd year(d) !! ''-'' !! day(d)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT year(d) || '-' || day(d) AS k, count(*) AS c, sum(v) AS s FROM lab GROUP BY 1)
+UNION ALL SELECT 'd year(d) !! ''-'' !! month(d) !! ''-'' !! dayname(d)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT year(d) || '-' || month(d) || '-' || dayname(d) AS k, count(*) AS c, sum(v) AS s FROM lab GROUP BY 1)
+UNION ALL SELECT 'd year(d) !! ''-'' !! month(d) !! '' '' !! hour(d)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT year(d) || '-' || month(d) || ' ' || hour(d) AS k, count(*) AS c, sum(v) AS s FROM lab GROUP BY 1)
+UNION ALL SELECT 'd year(d) !! ''-'' !! dayofweek(d)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT year(d) || '-' || dayofweek(d) AS k, count(*) AS c, sum(v) AS s FROM lab GROUP BY 1)
+UNION ALL SELECT 'd concat(year(d), ''-'', lpad(month(d)::VARCHAR, 2, ''0''))' AS shape, k::VARCHAR AS k, c, s FROM (SELECT concat(year(d), '-', lpad(month(d)::VARCHAR, 2, '0')) AS k, count(*) AS c, sum(v) AS s FROM lab GROUP BY 1)
+UNION ALL SELECT 'd year(d) !! ''-'' !! month(d) !! ''-'' !! day(d) !! '' '' !! hour(d) !! '':'' !! minute(d) !! '':'' !! second(d)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT year(d) || '-' || month(d) || '-' || day(d) || ' ' || hour(d) || ':' || minute(d) || ':' || second(d) AS k, count(*) AS c, sum(v) AS s FROM lab GROUP BY 1)
+UNION ALL SELECT 'tstz year(tstz) !! ''-Q'' !! quarter(tstz)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT year(tstz) || '-Q' || quarter(tstz) AS k, count(*) AS c, sum(v) AS s FROM lab GROUP BY 1)
+UNION ALL SELECT 'tstz year(tstz) !! ''Q'' !! quarter(tstz)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT year(tstz) || 'Q' || quarter(tstz) AS k, count(*) AS c, sum(v) AS s FROM lab GROUP BY 1)
+UNION ALL SELECT 'tstz ''['' !! year(tstz) !! ''-Q'' !! quarter(tstz) !! '']''' AS shape, k::VARCHAR AS k, c, s FROM (SELECT '[' || year(tstz) || '-Q' || quarter(tstz) || ']' AS k, count(*) AS c, sum(v) AS s FROM lab GROUP BY 1)
+UNION ALL SELECT 'tstz year(tstz)::VARCHAR !! ''-'' !! month(tstz)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT year(tstz)::VARCHAR || '-' || month(tstz) AS k, count(*) AS c, sum(v) AS s FROM lab GROUP BY 1)
+UNION ALL SELECT 'tstz year(tstz) !! ''/'' !! dayofyear(tstz)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT year(tstz) || '/' || dayofyear(tstz) AS k, count(*) AS c, sum(v) AS s FROM lab GROUP BY 1)
+UNION ALL SELECT 'tstz isoyear(tstz) !! ''-W'' !! week(tstz)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT isoyear(tstz) || '-W' || week(tstz) AS k, count(*) AS c, sum(v) AS s FROM lab GROUP BY 1)
+UNION ALL SELECT 'tstz isoyear(tstz) !! ''-W'' !! week(tstz) !! ''-'' !! isodow(tstz)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT isoyear(tstz) || '-W' || week(tstz) || '-' || isodow(tstz) AS k, count(*) AS c, sum(v) AS s FROM lab GROUP BY 1)
+UNION ALL SELECT 'tstz year(tstz) !! ''-'' !! month(tstz) !! ''-'' !! day(tstz)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT year(tstz) || '-' || month(tstz) || '-' || day(tstz) AS k, count(*) AS c, sum(v) AS s FROM lab GROUP BY 1)
+UNION ALL SELECT 'tstz year(tstz) !! ''-'' !! month(tstz) !! ''-'' !! day(tstz) !! '' '' !! hour(tstz)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT year(tstz) || '-' || month(tstz) || '-' || day(tstz) || ' ' || hour(tstz) AS k, count(*) AS c, sum(v) AS s FROM lab GROUP BY 1)
+UNION ALL SELECT 'tstz year(tstz) !! ''-'' !! month(tstz) !! ''-'' !! day(tstz) !! '' '' !! hour(tstz) !! '':'' !! minute(tstz)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT year(tstz) || '-' || month(tstz) || '-' || day(tstz) || ' ' || hour(tstz) || ':' || minute(tstz) AS k, count(*) AS c, sum(v) AS s FROM lab GROUP BY 1)
+UNION ALL SELECT 'tstz monthname(tstz) !! '' '' !! year(tstz)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT monthname(tstz) || ' ' || year(tstz) AS k, count(*) AS c, sum(v) AS s FROM lab GROUP BY 1)
+UNION ALL SELECT 'tstz year(tstz) !! '' '' !! monthname(tstz)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT year(tstz) || ' ' || monthname(tstz) AS k, count(*) AS c, sum(v) AS s FROM lab GROUP BY 1)
+UNION ALL SELECT 'tstz dayname(tstz) !! '', '' !! strftime(tstz, ''%Y-%m-%d'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT dayname(tstz) || ', ' || strftime(tstz, '%Y-%m-%d') AS k, count(*) AS c, sum(v) AS s FROM lab GROUP BY 1)
+UNION ALL SELECT 'tstz strftime(tstz, ''%Y'') !! '' Q'' !! quarter(tstz)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(tstz, '%Y') || ' Q' || quarter(tstz) AS k, count(*) AS c, sum(v) AS s FROM lab GROUP BY 1)
+UNION ALL SELECT 'tstz strftime(tstz, ''%Y-%m'') !! ''/'' !! day(tstz)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(tstz, '%Y-%m') || '/' || day(tstz) AS k, count(*) AS c, sum(v) AS s FROM lab GROUP BY 1)
+UNION ALL SELECT 'tstz decade(tstz) !! ''s''' AS shape, k::VARCHAR AS k, c, s FROM (SELECT decade(tstz) || 's' AS k, count(*) AS c, sum(v) AS s FROM lab GROUP BY 1)
+UNION ALL SELECT 'tstz century(tstz)::VARCHAR' AS shape, k::VARCHAR AS k, c, s FROM (SELECT century(tstz)::VARCHAR AS k, count(*) AS c, sum(v) AS s FROM lab GROUP BY 1)
+UNION ALL SELECT 'tstz millennium(tstz) !! ''M''' AS shape, k::VARCHAR AS k, c, s FROM (SELECT millennium(tstz) || 'M' AS k, count(*) AS c, sum(v) AS s FROM lab GROUP BY 1)
+UNION ALL SELECT 'tstz ''FY'' !! year(tstz)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT 'FY' || year(tstz) AS k, count(*) AS c, sum(v) AS s FROM lab GROUP BY 1)
+UNION ALL SELECT 'tstz date_part(''quarter'', tstz) !! ''/'' !! date_part(''year'', tstz)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_part('quarter', tstz) || '/' || date_part('year', tstz) AS k, count(*) AS c, sum(v) AS s FROM lab GROUP BY 1)
+UNION ALL SELECT 'tstz datepart(''year'', tstz) !! ''.'' !! datepart(''month'', tstz)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT datepart('year', tstz) || '.' || datepart('month', tstz) AS k, count(*) AS c, sum(v) AS s FROM lab GROUP BY 1)
+UNION ALL SELECT 'tstz yearweek(tstz) !! ''''' AS shape, k::VARCHAR AS k, c, s FROM (SELECT yearweek(tstz) || '' AS k, count(*) AS c, sum(v) AS s FROM lab GROUP BY 1)
+UNION ALL SELECT 'tstz yearweek(tstz)::VARCHAR' AS shape, k::VARCHAR AS k, c, s FROM (SELECT yearweek(tstz)::VARCHAR AS k, count(*) AS c, sum(v) AS s FROM lab GROUP BY 1)
+UNION ALL SELECT 'tstz concat(year(tstz), ''-'', quarter(tstz))' AS shape, k::VARCHAR AS k, c, s FROM (SELECT concat(year(tstz), '-', quarter(tstz)) AS k, count(*) AS c, sum(v) AS s FROM lab GROUP BY 1)
+UNION ALL SELECT 'tstz concat(''y'', year(tstz), ''m'', month(tstz))' AS shape, k::VARCHAR AS k, c, s FROM (SELECT concat('y', year(tstz), 'm', month(tstz)) AS k, count(*) AS c, sum(v) AS s FROM lab GROUP BY 1)
+UNION ALL SELECT 'tstz year(tstz) !! quarter(tstz)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT year(tstz) || quarter(tstz) AS k, count(*) AS c, sum(v) AS s FROM lab GROUP BY 1)
+UNION ALL SELECT 'tstz quarter(tstz) !! ''-'' !! month(tstz)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT quarter(tstz) || '-' || month(tstz) AS k, count(*) AS c, sum(v) AS s FROM lab GROUP BY 1)
+UNION ALL SELECT 'tstz ''Q'' !! quarter(tstz)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT 'Q' || quarter(tstz) AS k, count(*) AS c, sum(v) AS s FROM lab GROUP BY 1)
+UNION ALL SELECT 'tstz year(tstz) !! ''-'' !! week(tstz)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT year(tstz) || '-' || week(tstz) AS k, count(*) AS c, sum(v) AS s FROM lab GROUP BY 1)
+UNION ALL SELECT 'tstz isoyear(tstz) !! ''-'' !! month(tstz)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT isoyear(tstz) || '-' || month(tstz) AS k, count(*) AS c, sum(v) AS s FROM lab GROUP BY 1)
+UNION ALL SELECT 'tstz year(tstz) !! ''x'' !! monthname(tstz)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT year(tstz) || 'x' || monthname(tstz) AS k, count(*) AS c, sum(v) AS s FROM lab GROUP BY 1)
+UNION ALL SELECT 'tstz monthname(tstz) !! year(tstz)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT monthname(tstz) || year(tstz) AS k, count(*) AS c, sum(v) AS s FROM lab GROUP BY 1)
+UNION ALL SELECT 'tstz year(tstz) !! ''-'' !! day(tstz)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT year(tstz) || '-' || day(tstz) AS k, count(*) AS c, sum(v) AS s FROM lab GROUP BY 1)
+UNION ALL SELECT 'tstz year(tstz) !! ''-'' !! month(tstz) !! ''-'' !! dayname(tstz)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT year(tstz) || '-' || month(tstz) || '-' || dayname(tstz) AS k, count(*) AS c, sum(v) AS s FROM lab GROUP BY 1)
+UNION ALL SELECT 'tstz year(tstz) !! ''-'' !! month(tstz) !! '' '' !! hour(tstz)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT year(tstz) || '-' || month(tstz) || ' ' || hour(tstz) AS k, count(*) AS c, sum(v) AS s FROM lab GROUP BY 1)
+UNION ALL SELECT 'tstz year(tstz) !! ''-'' !! dayofweek(tstz)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT year(tstz) || '-' || dayofweek(tstz) AS k, count(*) AS c, sum(v) AS s FROM lab GROUP BY 1)
+UNION ALL SELECT 'tstz concat(year(tstz), ''-'', lpad(month(tstz)::VARCHAR, 2, ''0''))' AS shape, k::VARCHAR AS k, c, s FROM (SELECT concat(year(tstz), '-', lpad(month(tstz)::VARCHAR, 2, '0')) AS k, count(*) AS c, sum(v) AS s FROM lab GROUP BY 1)
+UNION ALL SELECT 'tstz year(tstz) !! ''-'' !! month(tstz) !! ''-'' !! day(tstz) !! '' '' !! hour(tstz) !! '':'' !! minute(tstz) !! '':'' !! second(tstz)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT year(tstz) || '-' || month(tstz) || '-' || day(tstz) || ' ' || hour(tstz) || ':' || minute(tstz) || ':' || second(tstz) AS k, count(*) AS c, sum(v) AS s FROM lab GROUP BY 1)
+UNION ALL SELECT 'inf ts year(ts) !! ''-Q'' !! quarter(ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT year(ts) || '-Q' || quarter(ts) AS k, count(*) AS c, sum(v) AS s FROM lab_inf GROUP BY 1)
+UNION ALL SELECT 'old ts year(ts) !! ''-Q'' !! quarter(ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT year(ts) || '-Q' || quarter(ts) AS k, count(*) AS c, sum(v) AS s FROM old GROUP BY 1)
+UNION ALL SELECT 'inf ts isoyear(ts) !! ''-W'' !! week(ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT isoyear(ts) || '-W' || week(ts) AS k, count(*) AS c, sum(v) AS s FROM lab_inf GROUP BY 1)
+UNION ALL SELECT 'old ts isoyear(ts) !! ''-W'' !! week(ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT isoyear(ts) || '-W' || week(ts) AS k, count(*) AS c, sum(v) AS s FROM old GROUP BY 1)
+UNION ALL SELECT 'inf ts monthname(ts) !! '' '' !! year(ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT monthname(ts) || ' ' || year(ts) AS k, count(*) AS c, sum(v) AS s FROM lab_inf GROUP BY 1)
+UNION ALL SELECT 'old ts monthname(ts) !! '' '' !! year(ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT monthname(ts) || ' ' || year(ts) AS k, count(*) AS c, sum(v) AS s FROM old GROUP BY 1)
+UNION ALL SELECT 'inf ts decade(ts) !! ''s''' AS shape, k::VARCHAR AS k, c, s FROM (SELECT decade(ts) || 's' AS k, count(*) AS c, sum(v) AS s FROM lab_inf GROUP BY 1)
+UNION ALL SELECT 'old ts decade(ts) !! ''s''' AS shape, k::VARCHAR AS k, c, s FROM (SELECT decade(ts) || 's' AS k, count(*) AS c, sum(v) AS s FROM old GROUP BY 1)
+UNION ALL SELECT 'inf d year(d) !! ''-Q'' !! quarter(d)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT year(d) || '-Q' || quarter(d) AS k, count(*) AS c, sum(v) AS s FROM lab_inf GROUP BY 1)
+UNION ALL SELECT 'old d year(d) !! ''-Q'' !! quarter(d)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT year(d) || '-Q' || quarter(d) AS k, count(*) AS c, sum(v) AS s FROM old GROUP BY 1)
+UNION ALL SELECT 'inf d isoyear(d) !! ''-W'' !! week(d)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT isoyear(d) || '-W' || week(d) AS k, count(*) AS c, sum(v) AS s FROM lab_inf GROUP BY 1)
+UNION ALL SELECT 'old d isoyear(d) !! ''-W'' !! week(d)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT isoyear(d) || '-W' || week(d) AS k, count(*) AS c, sum(v) AS s FROM old GROUP BY 1)
+UNION ALL SELECT 'inf d monthname(d) !! '' '' !! year(d)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT monthname(d) || ' ' || year(d) AS k, count(*) AS c, sum(v) AS s FROM lab_inf GROUP BY 1)
+UNION ALL SELECT 'old d monthname(d) !! '' '' !! year(d)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT monthname(d) || ' ' || year(d) AS k, count(*) AS c, sum(v) AS s FROM old GROUP BY 1)
+UNION ALL SELECT 'inf d decade(d) !! ''s''' AS shape, k::VARCHAR AS k, c, s FROM (SELECT decade(d) || 's' AS k, count(*) AS c, sum(v) AS s FROM lab_inf GROUP BY 1)
+UNION ALL SELECT 'old d decade(d) !! ''s''' AS shape, k::VARCHAR AS k, c, s FROM (SELECT decade(d) || 's' AS k, count(*) AS c, sum(v) AS s FROM old GROUP BY 1)
+UNION ALL SELECT 'inf tstz year(tstz) !! ''-Q'' !! quarter(tstz)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT year(tstz) || '-Q' || quarter(tstz) AS k, count(*) AS c, sum(v) AS s FROM lab_inf GROUP BY 1)
+UNION ALL SELECT 'old tstz year(tstz) !! ''-Q'' !! quarter(tstz)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT year(tstz) || '-Q' || quarter(tstz) AS k, count(*) AS c, sum(v) AS s FROM old GROUP BY 1)
+UNION ALL SELECT 'inf tstz isoyear(tstz) !! ''-W'' !! week(tstz)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT isoyear(tstz) || '-W' || week(tstz) AS k, count(*) AS c, sum(v) AS s FROM lab_inf GROUP BY 1)
+UNION ALL SELECT 'old tstz isoyear(tstz) !! ''-W'' !! week(tstz)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT isoyear(tstz) || '-W' || week(tstz) AS k, count(*) AS c, sum(v) AS s FROM old GROUP BY 1)
+UNION ALL SELECT 'inf tstz monthname(tstz) !! '' '' !! year(tstz)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT monthname(tstz) || ' ' || year(tstz) AS k, count(*) AS c, sum(v) AS s FROM lab_inf GROUP BY 1)
+UNION ALL SELECT 'old tstz monthname(tstz) !! '' '' !! year(tstz)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT monthname(tstz) || ' ' || year(tstz) AS k, count(*) AS c, sum(v) AS s FROM old GROUP BY 1)
+UNION ALL SELECT 'inf tstz decade(tstz) !! ''s''' AS shape, k::VARCHAR AS k, c, s FROM (SELECT decade(tstz) || 's' AS k, count(*) AS c, sum(v) AS s FROM lab_inf GROUP BY 1)
+UNION ALL SELECT 'old tstz decade(tstz) !! ''s''' AS shape, k::VARCHAR AS k, c, s FROM (SELECT decade(tstz) || 's' AS k, count(*) AS c, sum(v) AS s FROM old GROUP BY 1);
+
+statement ok
+RESET disabled_optimizers;
+
+statement ok
+CREATE TABLE got_lab AS
+SELECT 'ts year(ts) !! ''-Q'' !! quarter(ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT year(ts) || '-Q' || quarter(ts) AS k, count(*) AS c, sum(v) AS s FROM lab GROUP BY 1)
+UNION ALL SELECT 'ts year(ts) !! ''Q'' !! quarter(ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT year(ts) || 'Q' || quarter(ts) AS k, count(*) AS c, sum(v) AS s FROM lab GROUP BY 1)
+UNION ALL SELECT 'ts ''['' !! year(ts) !! ''-Q'' !! quarter(ts) !! '']''' AS shape, k::VARCHAR AS k, c, s FROM (SELECT '[' || year(ts) || '-Q' || quarter(ts) || ']' AS k, count(*) AS c, sum(v) AS s FROM lab GROUP BY 1)
+UNION ALL SELECT 'ts year(ts)::VARCHAR !! ''-'' !! month(ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT year(ts)::VARCHAR || '-' || month(ts) AS k, count(*) AS c, sum(v) AS s FROM lab GROUP BY 1)
+UNION ALL SELECT 'ts year(ts) !! ''/'' !! dayofyear(ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT year(ts) || '/' || dayofyear(ts) AS k, count(*) AS c, sum(v) AS s FROM lab GROUP BY 1)
+UNION ALL SELECT 'ts isoyear(ts) !! ''-W'' !! week(ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT isoyear(ts) || '-W' || week(ts) AS k, count(*) AS c, sum(v) AS s FROM lab GROUP BY 1)
+UNION ALL SELECT 'ts isoyear(ts) !! ''-W'' !! week(ts) !! ''-'' !! isodow(ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT isoyear(ts) || '-W' || week(ts) || '-' || isodow(ts) AS k, count(*) AS c, sum(v) AS s FROM lab GROUP BY 1)
+UNION ALL SELECT 'ts year(ts) !! ''-'' !! month(ts) !! ''-'' !! day(ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT year(ts) || '-' || month(ts) || '-' || day(ts) AS k, count(*) AS c, sum(v) AS s FROM lab GROUP BY 1)
+UNION ALL SELECT 'ts year(ts) !! ''-'' !! month(ts) !! ''-'' !! day(ts) !! '' '' !! hour(ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT year(ts) || '-' || month(ts) || '-' || day(ts) || ' ' || hour(ts) AS k, count(*) AS c, sum(v) AS s FROM lab GROUP BY 1)
+UNION ALL SELECT 'ts year(ts) !! ''-'' !! month(ts) !! ''-'' !! day(ts) !! '' '' !! hour(ts) !! '':'' !! minute(ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT year(ts) || '-' || month(ts) || '-' || day(ts) || ' ' || hour(ts) || ':' || minute(ts) AS k, count(*) AS c, sum(v) AS s FROM lab GROUP BY 1)
+UNION ALL SELECT 'ts monthname(ts) !! '' '' !! year(ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT monthname(ts) || ' ' || year(ts) AS k, count(*) AS c, sum(v) AS s FROM lab GROUP BY 1)
+UNION ALL SELECT 'ts year(ts) !! '' '' !! monthname(ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT year(ts) || ' ' || monthname(ts) AS k, count(*) AS c, sum(v) AS s FROM lab GROUP BY 1)
+UNION ALL SELECT 'ts dayname(ts) !! '', '' !! strftime(ts, ''%Y-%m-%d'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT dayname(ts) || ', ' || strftime(ts, '%Y-%m-%d') AS k, count(*) AS c, sum(v) AS s FROM lab GROUP BY 1)
+UNION ALL SELECT 'ts strftime(ts, ''%Y'') !! '' Q'' !! quarter(ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(ts, '%Y') || ' Q' || quarter(ts) AS k, count(*) AS c, sum(v) AS s FROM lab GROUP BY 1)
+UNION ALL SELECT 'ts strftime(ts, ''%Y-%m'') !! ''/'' !! day(ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(ts, '%Y-%m') || '/' || day(ts) AS k, count(*) AS c, sum(v) AS s FROM lab GROUP BY 1)
+UNION ALL SELECT 'ts decade(ts) !! ''s''' AS shape, k::VARCHAR AS k, c, s FROM (SELECT decade(ts) || 's' AS k, count(*) AS c, sum(v) AS s FROM lab GROUP BY 1)
+UNION ALL SELECT 'ts century(ts)::VARCHAR' AS shape, k::VARCHAR AS k, c, s FROM (SELECT century(ts)::VARCHAR AS k, count(*) AS c, sum(v) AS s FROM lab GROUP BY 1)
+UNION ALL SELECT 'ts millennium(ts) !! ''M''' AS shape, k::VARCHAR AS k, c, s FROM (SELECT millennium(ts) || 'M' AS k, count(*) AS c, sum(v) AS s FROM lab GROUP BY 1)
+UNION ALL SELECT 'ts ''FY'' !! year(ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT 'FY' || year(ts) AS k, count(*) AS c, sum(v) AS s FROM lab GROUP BY 1)
+UNION ALL SELECT 'ts date_part(''quarter'', ts) !! ''/'' !! date_part(''year'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_part('quarter', ts) || '/' || date_part('year', ts) AS k, count(*) AS c, sum(v) AS s FROM lab GROUP BY 1)
+UNION ALL SELECT 'ts datepart(''year'', ts) !! ''.'' !! datepart(''month'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT datepart('year', ts) || '.' || datepart('month', ts) AS k, count(*) AS c, sum(v) AS s FROM lab GROUP BY 1)
+UNION ALL SELECT 'ts yearweek(ts) !! ''''' AS shape, k::VARCHAR AS k, c, s FROM (SELECT yearweek(ts) || '' AS k, count(*) AS c, sum(v) AS s FROM lab GROUP BY 1)
+UNION ALL SELECT 'ts yearweek(ts)::VARCHAR' AS shape, k::VARCHAR AS k, c, s FROM (SELECT yearweek(ts)::VARCHAR AS k, count(*) AS c, sum(v) AS s FROM lab GROUP BY 1)
+UNION ALL SELECT 'ts concat(year(ts), ''-'', quarter(ts))' AS shape, k::VARCHAR AS k, c, s FROM (SELECT concat(year(ts), '-', quarter(ts)) AS k, count(*) AS c, sum(v) AS s FROM lab GROUP BY 1)
+UNION ALL SELECT 'ts concat(''y'', year(ts), ''m'', month(ts))' AS shape, k::VARCHAR AS k, c, s FROM (SELECT concat('y', year(ts), 'm', month(ts)) AS k, count(*) AS c, sum(v) AS s FROM lab GROUP BY 1)
+UNION ALL SELECT 'ts year(ts) !! quarter(ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT year(ts) || quarter(ts) AS k, count(*) AS c, sum(v) AS s FROM lab GROUP BY 1)
+UNION ALL SELECT 'ts quarter(ts) !! ''-'' !! month(ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT quarter(ts) || '-' || month(ts) AS k, count(*) AS c, sum(v) AS s FROM lab GROUP BY 1)
+UNION ALL SELECT 'ts ''Q'' !! quarter(ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT 'Q' || quarter(ts) AS k, count(*) AS c, sum(v) AS s FROM lab GROUP BY 1)
+UNION ALL SELECT 'ts year(ts) !! ''-'' !! week(ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT year(ts) || '-' || week(ts) AS k, count(*) AS c, sum(v) AS s FROM lab GROUP BY 1)
+UNION ALL SELECT 'ts isoyear(ts) !! ''-'' !! month(ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT isoyear(ts) || '-' || month(ts) AS k, count(*) AS c, sum(v) AS s FROM lab GROUP BY 1)
+UNION ALL SELECT 'ts year(ts) !! ''x'' !! monthname(ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT year(ts) || 'x' || monthname(ts) AS k, count(*) AS c, sum(v) AS s FROM lab GROUP BY 1)
+UNION ALL SELECT 'ts monthname(ts) !! year(ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT monthname(ts) || year(ts) AS k, count(*) AS c, sum(v) AS s FROM lab GROUP BY 1)
+UNION ALL SELECT 'ts year(ts) !! ''-'' !! day(ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT year(ts) || '-' || day(ts) AS k, count(*) AS c, sum(v) AS s FROM lab GROUP BY 1)
+UNION ALL SELECT 'ts year(ts) !! ''-'' !! month(ts) !! ''-'' !! dayname(ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT year(ts) || '-' || month(ts) || '-' || dayname(ts) AS k, count(*) AS c, sum(v) AS s FROM lab GROUP BY 1)
+UNION ALL SELECT 'ts year(ts) !! ''-'' !! month(ts) !! '' '' !! hour(ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT year(ts) || '-' || month(ts) || ' ' || hour(ts) AS k, count(*) AS c, sum(v) AS s FROM lab GROUP BY 1)
+UNION ALL SELECT 'ts year(ts) !! ''-'' !! dayofweek(ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT year(ts) || '-' || dayofweek(ts) AS k, count(*) AS c, sum(v) AS s FROM lab GROUP BY 1)
+UNION ALL SELECT 'ts concat(year(ts), ''-'', lpad(month(ts)::VARCHAR, 2, ''0''))' AS shape, k::VARCHAR AS k, c, s FROM (SELECT concat(year(ts), '-', lpad(month(ts)::VARCHAR, 2, '0')) AS k, count(*) AS c, sum(v) AS s FROM lab GROUP BY 1)
+UNION ALL SELECT 'ts year(ts) !! ''-'' !! month(ts) !! ''-'' !! day(ts) !! '' '' !! hour(ts) !! '':'' !! minute(ts) !! '':'' !! second(ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT year(ts) || '-' || month(ts) || '-' || day(ts) || ' ' || hour(ts) || ':' || minute(ts) || ':' || second(ts) AS k, count(*) AS c, sum(v) AS s FROM lab GROUP BY 1)
+UNION ALL SELECT 'd year(d) !! ''-Q'' !! quarter(d)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT year(d) || '-Q' || quarter(d) AS k, count(*) AS c, sum(v) AS s FROM lab GROUP BY 1)
+UNION ALL SELECT 'd year(d) !! ''Q'' !! quarter(d)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT year(d) || 'Q' || quarter(d) AS k, count(*) AS c, sum(v) AS s FROM lab GROUP BY 1)
+UNION ALL SELECT 'd ''['' !! year(d) !! ''-Q'' !! quarter(d) !! '']''' AS shape, k::VARCHAR AS k, c, s FROM (SELECT '[' || year(d) || '-Q' || quarter(d) || ']' AS k, count(*) AS c, sum(v) AS s FROM lab GROUP BY 1)
+UNION ALL SELECT 'd year(d)::VARCHAR !! ''-'' !! month(d)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT year(d)::VARCHAR || '-' || month(d) AS k, count(*) AS c, sum(v) AS s FROM lab GROUP BY 1)
+UNION ALL SELECT 'd year(d) !! ''/'' !! dayofyear(d)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT year(d) || '/' || dayofyear(d) AS k, count(*) AS c, sum(v) AS s FROM lab GROUP BY 1)
+UNION ALL SELECT 'd isoyear(d) !! ''-W'' !! week(d)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT isoyear(d) || '-W' || week(d) AS k, count(*) AS c, sum(v) AS s FROM lab GROUP BY 1)
+UNION ALL SELECT 'd isoyear(d) !! ''-W'' !! week(d) !! ''-'' !! isodow(d)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT isoyear(d) || '-W' || week(d) || '-' || isodow(d) AS k, count(*) AS c, sum(v) AS s FROM lab GROUP BY 1)
+UNION ALL SELECT 'd year(d) !! ''-'' !! month(d) !! ''-'' !! day(d)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT year(d) || '-' || month(d) || '-' || day(d) AS k, count(*) AS c, sum(v) AS s FROM lab GROUP BY 1)
+UNION ALL SELECT 'd year(d) !! ''-'' !! month(d) !! ''-'' !! day(d) !! '' '' !! hour(d)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT year(d) || '-' || month(d) || '-' || day(d) || ' ' || hour(d) AS k, count(*) AS c, sum(v) AS s FROM lab GROUP BY 1)
+UNION ALL SELECT 'd year(d) !! ''-'' !! month(d) !! ''-'' !! day(d) !! '' '' !! hour(d) !! '':'' !! minute(d)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT year(d) || '-' || month(d) || '-' || day(d) || ' ' || hour(d) || ':' || minute(d) AS k, count(*) AS c, sum(v) AS s FROM lab GROUP BY 1)
+UNION ALL SELECT 'd monthname(d) !! '' '' !! year(d)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT monthname(d) || ' ' || year(d) AS k, count(*) AS c, sum(v) AS s FROM lab GROUP BY 1)
+UNION ALL SELECT 'd year(d) !! '' '' !! monthname(d)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT year(d) || ' ' || monthname(d) AS k, count(*) AS c, sum(v) AS s FROM lab GROUP BY 1)
+UNION ALL SELECT 'd dayname(d) !! '', '' !! strftime(d, ''%Y-%m-%d'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT dayname(d) || ', ' || strftime(d, '%Y-%m-%d') AS k, count(*) AS c, sum(v) AS s FROM lab GROUP BY 1)
+UNION ALL SELECT 'd strftime(d, ''%Y'') !! '' Q'' !! quarter(d)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(d, '%Y') || ' Q' || quarter(d) AS k, count(*) AS c, sum(v) AS s FROM lab GROUP BY 1)
+UNION ALL SELECT 'd strftime(d, ''%Y-%m'') !! ''/'' !! day(d)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(d, '%Y-%m') || '/' || day(d) AS k, count(*) AS c, sum(v) AS s FROM lab GROUP BY 1)
+UNION ALL SELECT 'd decade(d) !! ''s''' AS shape, k::VARCHAR AS k, c, s FROM (SELECT decade(d) || 's' AS k, count(*) AS c, sum(v) AS s FROM lab GROUP BY 1)
+UNION ALL SELECT 'd century(d)::VARCHAR' AS shape, k::VARCHAR AS k, c, s FROM (SELECT century(d)::VARCHAR AS k, count(*) AS c, sum(v) AS s FROM lab GROUP BY 1)
+UNION ALL SELECT 'd millennium(d) !! ''M''' AS shape, k::VARCHAR AS k, c, s FROM (SELECT millennium(d) || 'M' AS k, count(*) AS c, sum(v) AS s FROM lab GROUP BY 1)
+UNION ALL SELECT 'd ''FY'' !! year(d)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT 'FY' || year(d) AS k, count(*) AS c, sum(v) AS s FROM lab GROUP BY 1)
+UNION ALL SELECT 'd date_part(''quarter'', d) !! ''/'' !! date_part(''year'', d)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_part('quarter', d) || '/' || date_part('year', d) AS k, count(*) AS c, sum(v) AS s FROM lab GROUP BY 1)
+UNION ALL SELECT 'd datepart(''year'', d) !! ''.'' !! datepart(''month'', d)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT datepart('year', d) || '.' || datepart('month', d) AS k, count(*) AS c, sum(v) AS s FROM lab GROUP BY 1)
+UNION ALL SELECT 'd yearweek(d) !! ''''' AS shape, k::VARCHAR AS k, c, s FROM (SELECT yearweek(d) || '' AS k, count(*) AS c, sum(v) AS s FROM lab GROUP BY 1)
+UNION ALL SELECT 'd yearweek(d)::VARCHAR' AS shape, k::VARCHAR AS k, c, s FROM (SELECT yearweek(d)::VARCHAR AS k, count(*) AS c, sum(v) AS s FROM lab GROUP BY 1)
+UNION ALL SELECT 'd concat(year(d), ''-'', quarter(d))' AS shape, k::VARCHAR AS k, c, s FROM (SELECT concat(year(d), '-', quarter(d)) AS k, count(*) AS c, sum(v) AS s FROM lab GROUP BY 1)
+UNION ALL SELECT 'd concat(''y'', year(d), ''m'', month(d))' AS shape, k::VARCHAR AS k, c, s FROM (SELECT concat('y', year(d), 'm', month(d)) AS k, count(*) AS c, sum(v) AS s FROM lab GROUP BY 1)
+UNION ALL SELECT 'd year(d) !! quarter(d)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT year(d) || quarter(d) AS k, count(*) AS c, sum(v) AS s FROM lab GROUP BY 1)
+UNION ALL SELECT 'd quarter(d) !! ''-'' !! month(d)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT quarter(d) || '-' || month(d) AS k, count(*) AS c, sum(v) AS s FROM lab GROUP BY 1)
+UNION ALL SELECT 'd ''Q'' !! quarter(d)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT 'Q' || quarter(d) AS k, count(*) AS c, sum(v) AS s FROM lab GROUP BY 1)
+UNION ALL SELECT 'd year(d) !! ''-'' !! week(d)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT year(d) || '-' || week(d) AS k, count(*) AS c, sum(v) AS s FROM lab GROUP BY 1)
+UNION ALL SELECT 'd isoyear(d) !! ''-'' !! month(d)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT isoyear(d) || '-' || month(d) AS k, count(*) AS c, sum(v) AS s FROM lab GROUP BY 1)
+UNION ALL SELECT 'd year(d) !! ''x'' !! monthname(d)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT year(d) || 'x' || monthname(d) AS k, count(*) AS c, sum(v) AS s FROM lab GROUP BY 1)
+UNION ALL SELECT 'd monthname(d) !! year(d)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT monthname(d) || year(d) AS k, count(*) AS c, sum(v) AS s FROM lab GROUP BY 1)
+UNION ALL SELECT 'd year(d) !! ''-'' !! day(d)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT year(d) || '-' || day(d) AS k, count(*) AS c, sum(v) AS s FROM lab GROUP BY 1)
+UNION ALL SELECT 'd year(d) !! ''-'' !! month(d) !! ''-'' !! dayname(d)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT year(d) || '-' || month(d) || '-' || dayname(d) AS k, count(*) AS c, sum(v) AS s FROM lab GROUP BY 1)
+UNION ALL SELECT 'd year(d) !! ''-'' !! month(d) !! '' '' !! hour(d)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT year(d) || '-' || month(d) || ' ' || hour(d) AS k, count(*) AS c, sum(v) AS s FROM lab GROUP BY 1)
+UNION ALL SELECT 'd year(d) !! ''-'' !! dayofweek(d)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT year(d) || '-' || dayofweek(d) AS k, count(*) AS c, sum(v) AS s FROM lab GROUP BY 1)
+UNION ALL SELECT 'd concat(year(d), ''-'', lpad(month(d)::VARCHAR, 2, ''0''))' AS shape, k::VARCHAR AS k, c, s FROM (SELECT concat(year(d), '-', lpad(month(d)::VARCHAR, 2, '0')) AS k, count(*) AS c, sum(v) AS s FROM lab GROUP BY 1)
+UNION ALL SELECT 'd year(d) !! ''-'' !! month(d) !! ''-'' !! day(d) !! '' '' !! hour(d) !! '':'' !! minute(d) !! '':'' !! second(d)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT year(d) || '-' || month(d) || '-' || day(d) || ' ' || hour(d) || ':' || minute(d) || ':' || second(d) AS k, count(*) AS c, sum(v) AS s FROM lab GROUP BY 1)
+UNION ALL SELECT 'tstz year(tstz) !! ''-Q'' !! quarter(tstz)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT year(tstz) || '-Q' || quarter(tstz) AS k, count(*) AS c, sum(v) AS s FROM lab GROUP BY 1)
+UNION ALL SELECT 'tstz year(tstz) !! ''Q'' !! quarter(tstz)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT year(tstz) || 'Q' || quarter(tstz) AS k, count(*) AS c, sum(v) AS s FROM lab GROUP BY 1)
+UNION ALL SELECT 'tstz ''['' !! year(tstz) !! ''-Q'' !! quarter(tstz) !! '']''' AS shape, k::VARCHAR AS k, c, s FROM (SELECT '[' || year(tstz) || '-Q' || quarter(tstz) || ']' AS k, count(*) AS c, sum(v) AS s FROM lab GROUP BY 1)
+UNION ALL SELECT 'tstz year(tstz)::VARCHAR !! ''-'' !! month(tstz)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT year(tstz)::VARCHAR || '-' || month(tstz) AS k, count(*) AS c, sum(v) AS s FROM lab GROUP BY 1)
+UNION ALL SELECT 'tstz year(tstz) !! ''/'' !! dayofyear(tstz)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT year(tstz) || '/' || dayofyear(tstz) AS k, count(*) AS c, sum(v) AS s FROM lab GROUP BY 1)
+UNION ALL SELECT 'tstz isoyear(tstz) !! ''-W'' !! week(tstz)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT isoyear(tstz) || '-W' || week(tstz) AS k, count(*) AS c, sum(v) AS s FROM lab GROUP BY 1)
+UNION ALL SELECT 'tstz isoyear(tstz) !! ''-W'' !! week(tstz) !! ''-'' !! isodow(tstz)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT isoyear(tstz) || '-W' || week(tstz) || '-' || isodow(tstz) AS k, count(*) AS c, sum(v) AS s FROM lab GROUP BY 1)
+UNION ALL SELECT 'tstz year(tstz) !! ''-'' !! month(tstz) !! ''-'' !! day(tstz)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT year(tstz) || '-' || month(tstz) || '-' || day(tstz) AS k, count(*) AS c, sum(v) AS s FROM lab GROUP BY 1)
+UNION ALL SELECT 'tstz year(tstz) !! ''-'' !! month(tstz) !! ''-'' !! day(tstz) !! '' '' !! hour(tstz)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT year(tstz) || '-' || month(tstz) || '-' || day(tstz) || ' ' || hour(tstz) AS k, count(*) AS c, sum(v) AS s FROM lab GROUP BY 1)
+UNION ALL SELECT 'tstz year(tstz) !! ''-'' !! month(tstz) !! ''-'' !! day(tstz) !! '' '' !! hour(tstz) !! '':'' !! minute(tstz)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT year(tstz) || '-' || month(tstz) || '-' || day(tstz) || ' ' || hour(tstz) || ':' || minute(tstz) AS k, count(*) AS c, sum(v) AS s FROM lab GROUP BY 1)
+UNION ALL SELECT 'tstz monthname(tstz) !! '' '' !! year(tstz)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT monthname(tstz) || ' ' || year(tstz) AS k, count(*) AS c, sum(v) AS s FROM lab GROUP BY 1)
+UNION ALL SELECT 'tstz year(tstz) !! '' '' !! monthname(tstz)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT year(tstz) || ' ' || monthname(tstz) AS k, count(*) AS c, sum(v) AS s FROM lab GROUP BY 1)
+UNION ALL SELECT 'tstz dayname(tstz) !! '', '' !! strftime(tstz, ''%Y-%m-%d'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT dayname(tstz) || ', ' || strftime(tstz, '%Y-%m-%d') AS k, count(*) AS c, sum(v) AS s FROM lab GROUP BY 1)
+UNION ALL SELECT 'tstz strftime(tstz, ''%Y'') !! '' Q'' !! quarter(tstz)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(tstz, '%Y') || ' Q' || quarter(tstz) AS k, count(*) AS c, sum(v) AS s FROM lab GROUP BY 1)
+UNION ALL SELECT 'tstz strftime(tstz, ''%Y-%m'') !! ''/'' !! day(tstz)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(tstz, '%Y-%m') || '/' || day(tstz) AS k, count(*) AS c, sum(v) AS s FROM lab GROUP BY 1)
+UNION ALL SELECT 'tstz decade(tstz) !! ''s''' AS shape, k::VARCHAR AS k, c, s FROM (SELECT decade(tstz) || 's' AS k, count(*) AS c, sum(v) AS s FROM lab GROUP BY 1)
+UNION ALL SELECT 'tstz century(tstz)::VARCHAR' AS shape, k::VARCHAR AS k, c, s FROM (SELECT century(tstz)::VARCHAR AS k, count(*) AS c, sum(v) AS s FROM lab GROUP BY 1)
+UNION ALL SELECT 'tstz millennium(tstz) !! ''M''' AS shape, k::VARCHAR AS k, c, s FROM (SELECT millennium(tstz) || 'M' AS k, count(*) AS c, sum(v) AS s FROM lab GROUP BY 1)
+UNION ALL SELECT 'tstz ''FY'' !! year(tstz)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT 'FY' || year(tstz) AS k, count(*) AS c, sum(v) AS s FROM lab GROUP BY 1)
+UNION ALL SELECT 'tstz date_part(''quarter'', tstz) !! ''/'' !! date_part(''year'', tstz)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_part('quarter', tstz) || '/' || date_part('year', tstz) AS k, count(*) AS c, sum(v) AS s FROM lab GROUP BY 1)
+UNION ALL SELECT 'tstz datepart(''year'', tstz) !! ''.'' !! datepart(''month'', tstz)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT datepart('year', tstz) || '.' || datepart('month', tstz) AS k, count(*) AS c, sum(v) AS s FROM lab GROUP BY 1)
+UNION ALL SELECT 'tstz yearweek(tstz) !! ''''' AS shape, k::VARCHAR AS k, c, s FROM (SELECT yearweek(tstz) || '' AS k, count(*) AS c, sum(v) AS s FROM lab GROUP BY 1)
+UNION ALL SELECT 'tstz yearweek(tstz)::VARCHAR' AS shape, k::VARCHAR AS k, c, s FROM (SELECT yearweek(tstz)::VARCHAR AS k, count(*) AS c, sum(v) AS s FROM lab GROUP BY 1)
+UNION ALL SELECT 'tstz concat(year(tstz), ''-'', quarter(tstz))' AS shape, k::VARCHAR AS k, c, s FROM (SELECT concat(year(tstz), '-', quarter(tstz)) AS k, count(*) AS c, sum(v) AS s FROM lab GROUP BY 1)
+UNION ALL SELECT 'tstz concat(''y'', year(tstz), ''m'', month(tstz))' AS shape, k::VARCHAR AS k, c, s FROM (SELECT concat('y', year(tstz), 'm', month(tstz)) AS k, count(*) AS c, sum(v) AS s FROM lab GROUP BY 1)
+UNION ALL SELECT 'tstz year(tstz) !! quarter(tstz)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT year(tstz) || quarter(tstz) AS k, count(*) AS c, sum(v) AS s FROM lab GROUP BY 1)
+UNION ALL SELECT 'tstz quarter(tstz) !! ''-'' !! month(tstz)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT quarter(tstz) || '-' || month(tstz) AS k, count(*) AS c, sum(v) AS s FROM lab GROUP BY 1)
+UNION ALL SELECT 'tstz ''Q'' !! quarter(tstz)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT 'Q' || quarter(tstz) AS k, count(*) AS c, sum(v) AS s FROM lab GROUP BY 1)
+UNION ALL SELECT 'tstz year(tstz) !! ''-'' !! week(tstz)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT year(tstz) || '-' || week(tstz) AS k, count(*) AS c, sum(v) AS s FROM lab GROUP BY 1)
+UNION ALL SELECT 'tstz isoyear(tstz) !! ''-'' !! month(tstz)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT isoyear(tstz) || '-' || month(tstz) AS k, count(*) AS c, sum(v) AS s FROM lab GROUP BY 1)
+UNION ALL SELECT 'tstz year(tstz) !! ''x'' !! monthname(tstz)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT year(tstz) || 'x' || monthname(tstz) AS k, count(*) AS c, sum(v) AS s FROM lab GROUP BY 1)
+UNION ALL SELECT 'tstz monthname(tstz) !! year(tstz)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT monthname(tstz) || year(tstz) AS k, count(*) AS c, sum(v) AS s FROM lab GROUP BY 1)
+UNION ALL SELECT 'tstz year(tstz) !! ''-'' !! day(tstz)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT year(tstz) || '-' || day(tstz) AS k, count(*) AS c, sum(v) AS s FROM lab GROUP BY 1)
+UNION ALL SELECT 'tstz year(tstz) !! ''-'' !! month(tstz) !! ''-'' !! dayname(tstz)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT year(tstz) || '-' || month(tstz) || '-' || dayname(tstz) AS k, count(*) AS c, sum(v) AS s FROM lab GROUP BY 1)
+UNION ALL SELECT 'tstz year(tstz) !! ''-'' !! month(tstz) !! '' '' !! hour(tstz)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT year(tstz) || '-' || month(tstz) || ' ' || hour(tstz) AS k, count(*) AS c, sum(v) AS s FROM lab GROUP BY 1)
+UNION ALL SELECT 'tstz year(tstz) !! ''-'' !! dayofweek(tstz)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT year(tstz) || '-' || dayofweek(tstz) AS k, count(*) AS c, sum(v) AS s FROM lab GROUP BY 1)
+UNION ALL SELECT 'tstz concat(year(tstz), ''-'', lpad(month(tstz)::VARCHAR, 2, ''0''))' AS shape, k::VARCHAR AS k, c, s FROM (SELECT concat(year(tstz), '-', lpad(month(tstz)::VARCHAR, 2, '0')) AS k, count(*) AS c, sum(v) AS s FROM lab GROUP BY 1)
+UNION ALL SELECT 'tstz year(tstz) !! ''-'' !! month(tstz) !! ''-'' !! day(tstz) !! '' '' !! hour(tstz) !! '':'' !! minute(tstz) !! '':'' !! second(tstz)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT year(tstz) || '-' || month(tstz) || '-' || day(tstz) || ' ' || hour(tstz) || ':' || minute(tstz) || ':' || second(tstz) AS k, count(*) AS c, sum(v) AS s FROM lab GROUP BY 1)
+UNION ALL SELECT 'inf ts year(ts) !! ''-Q'' !! quarter(ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT year(ts) || '-Q' || quarter(ts) AS k, count(*) AS c, sum(v) AS s FROM lab_inf GROUP BY 1)
+UNION ALL SELECT 'old ts year(ts) !! ''-Q'' !! quarter(ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT year(ts) || '-Q' || quarter(ts) AS k, count(*) AS c, sum(v) AS s FROM old GROUP BY 1)
+UNION ALL SELECT 'inf ts isoyear(ts) !! ''-W'' !! week(ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT isoyear(ts) || '-W' || week(ts) AS k, count(*) AS c, sum(v) AS s FROM lab_inf GROUP BY 1)
+UNION ALL SELECT 'old ts isoyear(ts) !! ''-W'' !! week(ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT isoyear(ts) || '-W' || week(ts) AS k, count(*) AS c, sum(v) AS s FROM old GROUP BY 1)
+UNION ALL SELECT 'inf ts monthname(ts) !! '' '' !! year(ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT monthname(ts) || ' ' || year(ts) AS k, count(*) AS c, sum(v) AS s FROM lab_inf GROUP BY 1)
+UNION ALL SELECT 'old ts monthname(ts) !! '' '' !! year(ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT monthname(ts) || ' ' || year(ts) AS k, count(*) AS c, sum(v) AS s FROM old GROUP BY 1)
+UNION ALL SELECT 'inf ts decade(ts) !! ''s''' AS shape, k::VARCHAR AS k, c, s FROM (SELECT decade(ts) || 's' AS k, count(*) AS c, sum(v) AS s FROM lab_inf GROUP BY 1)
+UNION ALL SELECT 'old ts decade(ts) !! ''s''' AS shape, k::VARCHAR AS k, c, s FROM (SELECT decade(ts) || 's' AS k, count(*) AS c, sum(v) AS s FROM old GROUP BY 1)
+UNION ALL SELECT 'inf d year(d) !! ''-Q'' !! quarter(d)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT year(d) || '-Q' || quarter(d) AS k, count(*) AS c, sum(v) AS s FROM lab_inf GROUP BY 1)
+UNION ALL SELECT 'old d year(d) !! ''-Q'' !! quarter(d)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT year(d) || '-Q' || quarter(d) AS k, count(*) AS c, sum(v) AS s FROM old GROUP BY 1)
+UNION ALL SELECT 'inf d isoyear(d) !! ''-W'' !! week(d)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT isoyear(d) || '-W' || week(d) AS k, count(*) AS c, sum(v) AS s FROM lab_inf GROUP BY 1)
+UNION ALL SELECT 'old d isoyear(d) !! ''-W'' !! week(d)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT isoyear(d) || '-W' || week(d) AS k, count(*) AS c, sum(v) AS s FROM old GROUP BY 1)
+UNION ALL SELECT 'inf d monthname(d) !! '' '' !! year(d)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT monthname(d) || ' ' || year(d) AS k, count(*) AS c, sum(v) AS s FROM lab_inf GROUP BY 1)
+UNION ALL SELECT 'old d monthname(d) !! '' '' !! year(d)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT monthname(d) || ' ' || year(d) AS k, count(*) AS c, sum(v) AS s FROM old GROUP BY 1)
+UNION ALL SELECT 'inf d decade(d) !! ''s''' AS shape, k::VARCHAR AS k, c, s FROM (SELECT decade(d) || 's' AS k, count(*) AS c, sum(v) AS s FROM lab_inf GROUP BY 1)
+UNION ALL SELECT 'old d decade(d) !! ''s''' AS shape, k::VARCHAR AS k, c, s FROM (SELECT decade(d) || 's' AS k, count(*) AS c, sum(v) AS s FROM old GROUP BY 1)
+UNION ALL SELECT 'inf tstz year(tstz) !! ''-Q'' !! quarter(tstz)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT year(tstz) || '-Q' || quarter(tstz) AS k, count(*) AS c, sum(v) AS s FROM lab_inf GROUP BY 1)
+UNION ALL SELECT 'old tstz year(tstz) !! ''-Q'' !! quarter(tstz)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT year(tstz) || '-Q' || quarter(tstz) AS k, count(*) AS c, sum(v) AS s FROM old GROUP BY 1)
+UNION ALL SELECT 'inf tstz isoyear(tstz) !! ''-W'' !! week(tstz)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT isoyear(tstz) || '-W' || week(tstz) AS k, count(*) AS c, sum(v) AS s FROM lab_inf GROUP BY 1)
+UNION ALL SELECT 'old tstz isoyear(tstz) !! ''-W'' !! week(tstz)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT isoyear(tstz) || '-W' || week(tstz) AS k, count(*) AS c, sum(v) AS s FROM old GROUP BY 1)
+UNION ALL SELECT 'inf tstz monthname(tstz) !! '' '' !! year(tstz)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT monthname(tstz) || ' ' || year(tstz) AS k, count(*) AS c, sum(v) AS s FROM lab_inf GROUP BY 1)
+UNION ALL SELECT 'old tstz monthname(tstz) !! '' '' !! year(tstz)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT monthname(tstz) || ' ' || year(tstz) AS k, count(*) AS c, sum(v) AS s FROM old GROUP BY 1)
+UNION ALL SELECT 'inf tstz decade(tstz) !! ''s''' AS shape, k::VARCHAR AS k, c, s FROM (SELECT decade(tstz) || 's' AS k, count(*) AS c, sum(v) AS s FROM lab_inf GROUP BY 1)
+UNION ALL SELECT 'old tstz decade(tstz) !! ''s''' AS shape, k::VARCHAR AS k, c, s FROM (SELECT decade(tstz) || 's' AS k, count(*) AS c, sum(v) AS s FROM old GROUP BY 1);
+
+query
+SELECT shape, k, c, s FROM (SELECT * FROM got_lab EXCEPT ALL SELECT * FROM ref_lab) ORDER BY 1, 2;
+----
+shape	k	c	s
+
+query
+SELECT shape, k, c, s FROM (SELECT * FROM ref_lab EXCEPT ALL SELECT * FROM got_lab) ORDER BY 1, 2;
+----
+shape	k	c	s
+
+query
+SELECT count(*) AS rows, count(DISTINCT shape) AS shapes FROM got_lab;
+----
+rows	shapes
+83815	138
+
+statement ok
+SET TimeZone = 'Pacific/Kiritimati';
+
+statement ok
+SET disabled_optimizers = 'compressed_materialization';
+
+statement ok
+CREATE TABLE ref_kir AS
+SELECT 'kiritimati year(tstz) !! ''-Q'' !! quarter(tstz)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT year(tstz) || '-Q' || quarter(tstz) AS k, count(*) AS c, sum(v) AS s FROM lab GROUP BY 1)
+UNION ALL SELECT 'kiritimati year(tstz) !! ''-'' !! month(tstz) !! ''-'' !! day(tstz)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT year(tstz) || '-' || month(tstz) || '-' || day(tstz) AS k, count(*) AS c, sum(v) AS s FROM lab GROUP BY 1)
+UNION ALL SELECT 'kiritimati isoyear(tstz) !! ''-W'' !! week(tstz)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT isoyear(tstz) || '-W' || week(tstz) AS k, count(*) AS c, sum(v) AS s FROM lab GROUP BY 1)
+UNION ALL SELECT 'kiritimati year(tstz) !! ''-'' !! month(tstz) !! ''-'' !! day(tstz) !! '' '' !! hour(tstz)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT year(tstz) || '-' || month(tstz) || '-' || day(tstz) || ' ' || hour(tstz) AS k, count(*) AS c, sum(v) AS s FROM lab GROUP BY 1)
+UNION ALL SELECT 'kiritimati dayname(tstz) !! '', '' !! strftime(tstz, ''%Y-%m-%d'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT dayname(tstz) || ', ' || strftime(tstz, '%Y-%m-%d') AS k, count(*) AS c, sum(v) AS s FROM lab GROUP BY 1);
+
+statement ok
+RESET disabled_optimizers;
+
+statement ok
+CREATE TABLE got_kir AS
+SELECT 'kiritimati year(tstz) !! ''-Q'' !! quarter(tstz)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT year(tstz) || '-Q' || quarter(tstz) AS k, count(*) AS c, sum(v) AS s FROM lab GROUP BY 1)
+UNION ALL SELECT 'kiritimati year(tstz) !! ''-'' !! month(tstz) !! ''-'' !! day(tstz)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT year(tstz) || '-' || month(tstz) || '-' || day(tstz) AS k, count(*) AS c, sum(v) AS s FROM lab GROUP BY 1)
+UNION ALL SELECT 'kiritimati isoyear(tstz) !! ''-W'' !! week(tstz)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT isoyear(tstz) || '-W' || week(tstz) AS k, count(*) AS c, sum(v) AS s FROM lab GROUP BY 1)
+UNION ALL SELECT 'kiritimati year(tstz) !! ''-'' !! month(tstz) !! ''-'' !! day(tstz) !! '' '' !! hour(tstz)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT year(tstz) || '-' || month(tstz) || '-' || day(tstz) || ' ' || hour(tstz) AS k, count(*) AS c, sum(v) AS s FROM lab GROUP BY 1)
+UNION ALL SELECT 'kiritimati dayname(tstz) !! '', '' !! strftime(tstz, ''%Y-%m-%d'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT dayname(tstz) || ', ' || strftime(tstz, '%Y-%m-%d') AS k, count(*) AS c, sum(v) AS s FROM lab GROUP BY 1);
+
+query
+SELECT shape, k, c, s FROM (SELECT * FROM got_kir EXCEPT ALL SELECT * FROM ref_kir) ORDER BY 1, 2;
+----
+shape	k	c	s
+
+query
+SELECT shape, k, c, s FROM (SELECT * FROM ref_kir EXCEPT ALL SELECT * FROM got_kir) ORDER BY 1, 2;
+----
+shape	k	c	s
+
+query
+SELECT count(*) AS rows, count(DISTINCT shape) AS shapes FROM got_kir;
+----
+rows	shapes
+7562	5
+
+statement ok
+SET TimeZone = 'Europe/Berlin';
+
+query
+EXPLAIN SELECT year(tstz) || '-Q' || quarter(tstz) AS q, count(*) AS c FROM lab GROUP BY 1;
+----
+QUERY PLAN
+╭─ PROJECTION ──────────────────────────────────────╮
+│ Projections: q, #1                                │
+│ ~3,000 rows                                       │
+╰─────────────────────────┬─────────────────────────╯
+╭─ PERFECT_HASH_GROUP_BY ─┴─────────────────────────╮
+│ Groups: #0                                        │
+│ Aggregates: count_star()                          │
+│ ~3,000 rows                                       │
+╰─────────────────────────┬─────────────────────────╯
+╭─ PROJECTION ────────────┴─────────────────────────╮
+│ Projections:                                      │
+│ __internal_icu_date_trunc_bucket('quarter', tstz) │
+│ ~6,001 rows                                       │
+╰─────────────────────────┬─────────────────────────╯
+╭─ SEQ_SCAN ──────────────┴─────────────────────────╮
+│ Table: lab                                        │
+│ Type: Sequential Scan                             │
+│ Projections: tstz                                 │
+│ ~6,001 rows                                       │
+╰───────────────────────────────────────────────────╯
+
+query
+EXPLAIN SELECT year(ts) || '-' || month(ts) || '-' || day(ts) AS d, count(*) AS c FROM lab GROUP BY 1;
+----
+QUERY PLAN
+╭─ PROJECTION ─────────────────────────────────────╮
+│ Projections: d, #1                               │
+│ ~3,000 rows                                      │
+╰─────────────────────────┬────────────────────────╯
+╭─ PERFECT_HASH_GROUP_BY ─┴────────────────────────╮
+│ Groups: #0                                       │
+│ Aggregates: count_star()                         │
+│ ~3,000 rows                                      │
+╰─────────────────────────┬────────────────────────╯
+╭─ PROJECTION ────────────┴────────────────────────╮
+│ Projections:                                     │
+│ __internal_date_trunc_bucket(ts, 86400000000, 0) │
+│ ~6,001 rows                                      │
+╰─────────────────────────┬────────────────────────╯
+╭─ SEQ_SCAN ──────────────┴────────────────────────╮
+│ Table: lab                                       │
+│ Type: Sequential Scan                            │
+│ Projections: ts                                  │
+│ ~6,001 rows                                      │
+╰──────────────────────────────────────────────────╯
+
+query
+EXPLAIN SELECT isoyear(d) || '-W' || week(d) AS w, count(*) AS c FROM lab GROUP BY 1;
+----
+QUERY PLAN
+╭─ PROJECTION ────────────────────────────────────────────────────────────────────╮
+│ Projections: w, #1                                                              │
+│ ~3,000 rows                                                                     │
+╰────────────────────────────────────────┬────────────────────────────────────────╯
+╭─ PERFECT_HASH_GROUP_BY ────────────────┴────────────────────────────────────────╮
+│ Groups: #0                                                                      │
+│ Aggregates: count_star()                                                        │
+│ ~3,000 rows                                                                     │
+╰────────────────────────────────────────┬────────────────────────────────────────╯
+╭─ PROJECTION ───────────────────────────┴────────────────────────────────────────╮
+│ Projections:                                                                    │
+│ __internal_date_trunc_bucket(CAST(d AS TIMESTAMP), 604800000000, -259200000000) │
+│ ~6,001 rows                                                                     │
+╰────────────────────────────────────────┬────────────────────────────────────────╯
+╭─ SEQ_SCAN ─────────────────────────────┴────────────────────────────────────────╮
+│ Table: lab                                                                      │
+│ Type: Sequential Scan                                                           │
+│ Projections: d                                                                  │
+│ ~6,001 rows                                                                     │
+╰─────────────────────────────────────────────────────────────────────────────────╯
+
+query
+EXPLAIN SELECT monthname(ts) || ' ' || year(ts) AS m, count(*) AS c FROM lab GROUP BY 1;
+----
+QUERY PLAN
+╭─ PROJECTION ─────────────────────────────────╮
+│ Projections: m, #1                           │
+│ ~3,000 rows                                  │
+╰───────────────────────┬──────────────────────╯
+╭─ PERFECT_HASH_GROUP_BY ──────────────────────╮
+│ Groups: #0                                   │
+│ Aggregates: count_star()                     │
+│ ~3,000 rows                                  │
+╰───────────────────────┬──────────────────────╯
+╭─ PROJECTION ──────────┴──────────────────────╮
+│ Projections:                                 │
+│ __internal_date_trunc_month_bucket(ts, 1, 0) │
+│ ~6,001 rows                                  │
+╰───────────────────────┬──────────────────────╯
+╭─ SEQ_SCAN ────────────┴──────────────────────╮
+│ Table: lab                                   │
+│ Type: Sequential Scan                        │
+│ Projections: ts                              │
+│ ~6,001 rows                                  │
+╰──────────────────────────────────────────────╯
+
+query
+EXPLAIN SELECT year(ts) || quarter(ts) AS q, count(*) AS c FROM lab GROUP BY 1;
+----
+QUERY PLAN
+╭─ HASH_GROUP_BY ──────────╮
+│ Groups: #0               │
+│ Aggregates: count_star() │
+│ ~3,000 rows              │
+╰─────────────┬────────────╯
+╭─ PROJECTION ┴────────────╮
+│ Projections: q           │
+│ ~6,001 rows              │
+╰─────────────┬────────────╯
+╭─ SEQ_SCAN ──┴────────────╮
+│ Table: lab               │
+│ Type: Sequential Scan    │
+│ Projections: ts          │
+│ ~6,001 rows              │
+╰──────────────────────────╯
+
+query
+EXPLAIN SELECT 'Q' || quarter(ts) AS q, count(*) AS c FROM lab GROUP BY 1;
+----
+QUERY PLAN
+╭─ HASH_GROUP_BY ──────────╮
+│ Groups: #0               │
+│ Aggregates: count_star() │
+│ ~3,000 rows              │
+╰─────────────┬────────────╯
+╭─ PROJECTION ┴────────────╮
+│ Projections: q           │
+│ ~6,001 rows              │
+╰─────────────┬────────────╯
+╭─ SEQ_SCAN ──┴────────────╮
+│ Table: lab               │
+│ Type: Sequential Scan    │
+│ Projections: ts          │
+│ ~6,001 rows              │
+╰──────────────────────────╯
+
+query
+SELECT year(ts) || '-Q' || quarter(ts) AS q, count(*) AS c FROM lab WHERE v < 2000 GROUP BY 1 ORDER BY 1;
+----
+q	c
+2023-Q4	392
+2024-Q1	757
+2024-Q2	758
+2024-Q3	93
+NULL	1
+
+statement ok
+SET TimeZone = 'Etc/UTC';

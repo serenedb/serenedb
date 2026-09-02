@@ -25,7 +25,6 @@
 #include <unicode/ubrk.h>
 #include <unicode/uloc.h>
 #include <unicode/unistr.h>
-#include <unicode/utext.h>
 
 #include <memory>
 #include <string_view>
@@ -51,8 +50,7 @@ std::unique_ptr<icu::BreakIterator> MakeBreakIterator(
       : icu::BreakIterator::createSentenceInstance(locale, err)};
   if (!U_SUCCESS(err) || !it) {
     THROW_SQL_ERROR(
-      ERR_MSG("icu_text: failed to create a break iterator for "
-              "locale '",
+      ERR_MSG("icu_text: failed to create a break iterator for locale '",
               locale.getName(), "': ", u_errorName(err)));
   }
   return it;
@@ -75,13 +73,11 @@ class IcuTextAnalyzerImpl final : public TypedTokenizer<IcuTextAnalyzerImpl<S>>,
   explicit IcuTextAnalyzerImpl(const Options& opts)
     : _accept{opts.accept},
       _break{MakeBreakIterator(S, opts.locale)},
-      _tailored{RulesAreTailored(*_break)} {}
-
-  ~IcuTextAnalyzerImpl() final { utext_close(&_ut); }
+      _scan_ascii{!RulesAreTailored(*_break)} {}
 
   BlockTraits WantedBlockTraits() const noexcept final {
     if constexpr (S == Options::Separate::Word) {
-      return {.ascii = !_tailored};
+      return {.ascii = _scan_ascii};
     } else {
       return {.ascii = _accept != Accept::Any};
     }
@@ -105,57 +101,13 @@ class IcuTextAnalyzerImpl final : public TypedTokenizer<IcuTextAnalyzerImpl<S>>,
       segment::WordFillValue<Layout, Convert::None, A, true>(sink, raw);
       return true;
     } else {
-      return FillStaged<Layout, A, KnownAscii>(sink, raw);
+      return FillValue<Layout, A, KnownAscii>(sink, raw);
     }
   }
 
  private:
-  template<TokenLayout Layout, Accept A, bool KnownAscii, typename ToByte>
-  IRS_FORCE_INLINE void EmitBoundaries(TokenSink& sink, const char* data,
-                                       uint32_t n, ToByte to_byte) {
-    uint32_t begin = 0;
-    _break->first();
-    for (auto end = _break->next(); end != icu::BreakIterator::DONE;
-         end = _break->next()) {
-      const uint32_t stop = to_byte(end);
-      if constexpr (S == Options::Separate::Sentence) {
-        segment::EmitTrimmedSegment<Layout, Convert::None, A, KnownAscii>(
-          sink, data, n, begin, stop);
-      } else {
-        if constexpr (A == Accept::AlphaNumeric || A == Accept::Alpha) {
-          if (_break->getRuleStatus() == UWordBreak::UBRK_WORD_NONE) {
-            begin = stop;
-            continue;
-          }
-        }
-        segment::EmitAccepted<Layout, Convert::None, A, KnownAscii>(
-          sink, data, n, begin, stop);
-      }
-      begin = stop;
-    }
-  }
-
   template<TokenLayout Layout, Accept A, bool KnownAscii>
-  bool FillUtf8(TokenSink& sink, const duckdb::string_t& value) {
-    const char* data = value.GetData();
-    const uint32_t n = value.GetSize();
-    auto status = UErrorCode::U_ZERO_ERROR;
-    utext_openUTF8(&_ut, data, static_cast<int64_t>(n), &status);
-    if (!U_SUCCESS(status)) [[unlikely]] {
-      return false;
-    }
-    _break->setText(&_ut, status);
-    if (!U_SUCCESS(status)) [[unlikely]] {
-      return false;
-    }
-    EmitBoundaries<Layout, A, KnownAscii>(
-      sink, data, n,
-      [](int32_t pos) IRS_FORCE_INLINE { return static_cast<uint32_t>(pos); });
-    return true;
-  }
-
-  template<TokenLayout Layout, Accept A, bool KnownAscii>
-  bool FillStaged(TokenSink& sink, const duckdb::string_t& value) {
+  bool FillValue(TokenSink& sink, const duckdb::string_t& value) {
     const char* data = value.GetData();
     const uint32_t n = value.GetSize();
     if (n == 0) {
@@ -166,33 +118,47 @@ class IcuTextAnalyzerImpl final : public TypedTokenizer<IcuTextAnalyzerImpl<S>>,
     }
     const size_t len = simdutf::convert_utf8_to_utf16(data, n, _u16.data());
     if (len == 0) [[unlikely]] {
-      return FillUtf8<Layout, A, KnownAscii>(sink, value);
+      return false;
     }
     _text.setTo(false, _u16.data(), static_cast<int32_t>(len));
     _break->setText(_text);
+
     const auto* p = reinterpret_cast<const uint8_t*>(data);
-    uint32_t byte = 0;
+    uint32_t begin = 0;
+    uint32_t stop = 0;
     int32_t unit = 0;
-    EmitBoundaries<Layout, A, KnownAscii>(
-      sink, data, n, [&](int32_t pos) IRS_FORCE_INLINE {
-        while (unit < pos) {
-          const uint8_t lead = p[byte];
-          const uint32_t size = lead < 0x80   ? 1
-                                : lead < 0xE0 ? 2
-                                : lead < 0xF0 ? 3
-                                              : 4;
-          unit += size == 4 ? 2 : 1;
-          byte += size;
+    _break->first();
+    for (auto end = _break->next(); end != icu::BreakIterator::DONE;
+         end = _break->next()) {
+      while (unit < end) {
+        const uint8_t lead = p[stop];
+        const uint32_t size = lead < 0x80   ? 1
+                              : lead < 0xE0 ? 2
+                              : lead < 0xF0 ? 3
+                                            : 4;
+        unit += size == 4 ? 2 : 1;
+        stop += size;
+      }
+      if constexpr (S == Options::Separate::Sentence) {
+        segment::EmitTrimmedSegment<Layout, Convert::None, A, KnownAscii>(
+          sink, data, n, begin, stop);
+      } else if constexpr (A == Accept::AlphaNumeric || A == Accept::Alpha) {
+        if (_break->getRuleStatus() != UWordBreak::UBRK_WORD_NONE) {
+          segment::EmitAccepted<Layout, Convert::None, A, KnownAscii>(
+            sink, data, n, begin, stop);
         }
-        return byte;
-      });
+      } else {
+        segment::EmitAccepted<Layout, Convert::None, A, KnownAscii>(
+          sink, data, n, begin, stop);
+      }
+      begin = stop;
+    }
     return true;
   }
 
   Accept _accept;
   std::unique_ptr<icu::BreakIterator> _break;
-  bool _tailored;
-  UText _ut = UTEXT_INITIALIZER;
+  bool _scan_ascii;
   std::vector<char16_t> _u16;
   icu::UnicodeString _text;
 };

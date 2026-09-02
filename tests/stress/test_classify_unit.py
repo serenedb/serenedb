@@ -251,3 +251,21 @@ def test_22023_dispatches_on_message_not_just_code():
     assert classify(C.INVALID_PARAMETER_VALUE,
                     "invalid value for parameter \"refresh_interval\": \"-1\"",
                     key_scope="shared").verdict is Verdict.FINDING
+
+
+def test_create_server_if_not_exists_losing_a_race_follows_the_condition():
+    msg = ('could not connect foreign server "x": Binder Error: Failed to attach '
+           'database: database with name "x" already exists')
+    assert classify(C.CONNECTION_EXCEPTION, msg, key_scope="shared").label == \
+        "shared_key_duplicate"
+    assert classify(C.CONNECTION_EXCEPTION, msg, key_scope="private").verdict is \
+        Verdict.FINDING
+
+
+def test_a_real_connection_failure_is_still_a_finding():
+    c = classify(C.CONNECTION_EXCEPTION, "could not connect to host 10.0.0.1: timeout",
+                 key_scope="shared")
+    assert c.verdict is Verdict.FINDING, (
+        "only the already-exists shape is a legitimate race; an actual connection "
+        "failure must not be excused by it"
+    )

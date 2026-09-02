@@ -15,6 +15,7 @@ INTERNAL_ERROR = "XX000"
 IN_FAILED_SQL_TRANSACTION = "25P02"
 INSUFFICIENT_PRIVILEGE = "42501"
 IO_ERROR = "58030"
+CONNECTION_EXCEPTION = "08000"
 UNDEFINED_COLUMN = "42703"
 UNDEFINED_FUNCTION = "42883"
 INVALID_CATALOG_NAME = "3D000"
@@ -215,6 +216,15 @@ def classify(sqlstate, message="", op_kind="", key_scope="private",
 
     if sqlstate == WARNING:
         return _expected("warning_only")
+
+    if sqlstate == CONNECTION_EXCEPTION and "already exists" in msg:
+        # CREATE SERVER IF NOT EXISTS does not short-circuit: it still attempts the
+        # underlying ATTACH and fails with 08000 plus a binder error naming a
+        # database. Losing a same-name race is a legitimate outcome, so the verdict
+        # follows the condition; the wrong sqlstate is a defect in its own right and
+        # is reported once in the findings write-up rather than once per occurrence.
+        return _expected("shared_key_duplicate") if shared \
+            else _finding("private_key_duplicate")
 
     if sqlstate == INVALID_PARAMETER_VALUE:
         # 22023 is used for several unrelated things here. Only the shapes another

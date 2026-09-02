@@ -24,6 +24,10 @@
 #include <unicode/locid.h>
 #include <unicode/sortkey.h>
 
+#include <span>
+#include <string>
+#include <vector>
+
 #include "iresearch/analysis/collation_tokenizer.hpp"
 #include "iresearch/analysis/token_batch.hpp"
 #include "iresearch/analysis/token_sinks.hpp"
@@ -32,12 +36,11 @@
 
 namespace {
 
-inline irs::analysis::Tokenizer::ptr MakeCollation(std::string_view locale_name,
-                                                   bool force_utf8 = true) {
+inline irs::analysis::Tokenizer::ptr MakeCollation(
+  std::string_view locale_name) {
   return irs::analysis::CollationTokenizer::Make(
     irs::analysis::CollationTokenizer::Options{
       .locale = icu::Locale::createFromName(locale_name.data()),
-      .force_utf8 = force_utf8,
     });
 }
 
@@ -62,36 +65,6 @@ irs::bstring BlockTerm(irs::analysis::Tokenizer& stream,
   return out;
 }
 
-std::vector<uint8_t> Encode(uint8_t b) {
-  std::vector<uint8_t> res;
-  if (0x80 & b) {
-    res.push_back(0xc0 | (b >> 3));
-    res.push_back(0x80 | (b & 0x7));
-  } else {
-    res.push_back(b);
-  }
-  return res;
-}
-
-class CollationEncoder {
- public:
-  void Encode(irs::bytes_view src) {
-    _buffer.clear();
-    _buffer.reserve(src.size() * 2);
-    for (auto b : src) {
-      auto enc = ::Encode(b);
-      _buffer.insert(_buffer.end(), enc.begin(), enc.end());
-    }
-  }
-
-  irs::bytes_view GetByteArray() noexcept {
-    return {_buffer.data(), _buffer.size()};
-  }
-
- private:
-  std::vector<uint8_t> _buffer;
-};
-
 }  // namespace
 
 TEST(collation_token_stream_test, consts) {
@@ -103,34 +76,44 @@ TEST(collation_token_stream_test, empty_analyzer) {
   ASSERT_THROW(irs::analysis::CollationTokenizer{{}}, std::exception);
 }
 
-TEST(collation_token_stream_test, utf8_armoring_matches_reference) {
-  auto raw_stream = MakeCollation("en", /*force_utf8=*/false);
-  auto armored_stream = MakeCollation("en", /*force_utf8=*/true);
-
-  constexpr std::string_view kInputs[] = {
-    "a",
-    "quick brown foxes jump over the lazy dogs",
-    "\xD0\xBF\xD1\x80\xD0\xB8\xD0\xB2\xD0\xB5\xD1\x82 "
-    "\xD0\xBC\xD0\xB8\xD1\x80",
-    "\xE4\xBD\xA0\xE5\xA5\xBD\xE4\xB8\x96\xE7\x95\x8C",
-    "mixed ascii \xD0\xB8 \xD1\x8E\xD0\xBD\xD0\xB8\xD0\xBA\xD0\xBE\xD0\xB4",
-  };
-
-  size_t wide_seen = 0;
-  for (const auto data : kInputs) {
-    SCOPED_TRACE(data);
-    const auto raw = BlockTerm(*raw_stream, data);
-    const auto armored = BlockTerm(*armored_stream, data);
-    for (const auto b : raw) {
-      wide_seen += b >= 0x80;
-    }
-    CollationEncoder expected;
-    expected.Encode(raw);
-    ASSERT_EQ(expected.GetByteArray(), irs::bytes_view{armored});
+std::vector<irs::bstring> ColumnTerms(irs::analysis::Tokenizer& stream,
+                                      const std::vector<std::string>& values) {
+  std::vector<duckdb::string_t> vals;
+  vals.reserve(values.size());
+  for (const auto& v : values) {
+    vals.emplace_back(v.data(), static_cast<uint32_t>(v.size()));
   }
-  // The corpus must exercise the two-byte arm, or the comparison degrades
-  // to verbatim-copy coverage only.
-  ASSERT_GT(wide_seen, 0);
+  std::vector<irs::bstring> out(values.size());
+  const auto collect = [&](irs::TokenBatch& batch,
+                           std::span<const irs::DocRun> runs) {
+    uint32_t tok = 0;
+    for (const auto& run : runs) {
+      EXPECT_EQ(1, run.ntokens);
+      const auto& t = batch.terms[tok++];
+      out[run.doc - 1].assign(
+        reinterpret_cast<const irs::byte_type*>(t.GetData()), t.GetSize());
+    }
+  };
+  tests::FnTokenSink sink{irs::TokenLayout::Terms, collect};
+  tests::FillColumn(stream, vals, 1, sink.writer, sink.layout);
+  sink.writer.Finish();
+  return out;
+}
+
+TEST(collation_token_stream_test, ascii_block_matches_unicode_path) {
+  auto stream = MakeCollation("en");
+  const std::vector<std::string> ascii{"Running12", "fox", "Z z a"};
+  const std::vector<std::string> mixed{"Running12", "å b z a", "fox",
+                                       "\xD0\xBC\xD0\xB8\xD1\x80"};
+  for (const auto& values : {ascii, mixed}) {
+    const auto column = ColumnTerms(*stream, values);
+    for (size_t i = 0; i < values.size(); ++i) {
+      SCOPED_TRACE(values[i]);
+      ASSERT_EQ(BlockTerm(*stream, values[i]), column[i]);
+    }
+  }
+  ASSERT_EQ(ColumnTerms(*stream, {"Running12"})[0],
+            ColumnTerms(*stream, {"Running12", "å"})[0]);
 }
 
 TEST(collation_token_stream_test, construct_from_str) {
@@ -159,13 +142,12 @@ TEST(collation_token_stream_test, check_collation) {
   const icu::Locale icu_locale =
     icu::Locale::createFromName(kLocaleName.data());
 
-  CollationEncoder encoded_key;
   std::unique_ptr<icu::Collator> coll{
     icu::Collator::createInstance(icu_locale, err)};
   ASSERT_NE(nullptr, coll);
   ASSERT_TRUE(U_SUCCESS(err));
 
-  auto get_collation_key = [&](std::string_view data) -> irs::bytes_view {
+  auto get_collation_key = [&](std::string_view data) -> irs::bstring {
     err = UErrorCode::U_ZERO_ERROR;
     icu::CollationKey key;
     coll->getCollationKey(icu::UnicodeString::fromUTF8(icu::StringPiece{
@@ -177,8 +159,7 @@ TEST(collation_token_stream_test, check_collation) {
     const irs::byte_type* p = key.getByteArray(size);
     EXPECT_NE(nullptr, p);
     EXPECT_NE(0, size);
-    encoded_key.Encode({p, static_cast<size_t>(size - 1)});
-    return encoded_key.GetByteArray();
+    return irs::bstring{p, static_cast<size_t>(size - 1)};
   };
 
   {
@@ -213,13 +194,12 @@ TEST(collation_token_stream_test, check_collation_with_variant1) {
   const icu::Locale icu_locale =
     icu::Locale::createFromName(kLocaleName.data());
 
-  CollationEncoder encoded_key;
   std::unique_ptr<icu::Collator> coll{
     icu::Collator::createInstance(icu_locale, err)};
   ASSERT_NE(nullptr, coll);
   ASSERT_TRUE(U_SUCCESS(err));
 
-  auto get_collation_key = [&](std::string_view data) -> irs::bytes_view {
+  auto get_collation_key = [&](std::string_view data) -> irs::bstring {
     err = UErrorCode::U_ZERO_ERROR;
     icu::CollationKey key;
     coll->getCollationKey(icu::UnicodeString::fromUTF8(icu::StringPiece{
@@ -231,8 +211,7 @@ TEST(collation_token_stream_test, check_collation_with_variant1) {
     const irs::byte_type* p = key.getByteArray(size);
     EXPECT_NE(nullptr, p);
     EXPECT_NE(0, size);
-    encoded_key.Encode({p, static_cast<size_t>(size - 1)});
-    return encoded_key.GetByteArray();
+    return irs::bstring{p, static_cast<size_t>(size - 1)};
   };
 
   // locale defined as object
@@ -368,13 +347,12 @@ TEST(collation_token_stream_test, check_collation_with_variant2) {
   const icu::Locale icu_locale =
     icu::Locale::createFromName(kLocaleName.data());
 
-  CollationEncoder encoded_key;
   std::unique_ptr<icu::Collator> coll{
     icu::Collator::createInstance(icu_locale, err)};
   ASSERT_NE(nullptr, coll);
   ASSERT_TRUE(U_SUCCESS(err));
 
-  auto get_collation_key = [&](std::string_view data) -> irs::bytes_view {
+  auto get_collation_key = [&](std::string_view data) -> irs::bstring {
     err = UErrorCode::U_ZERO_ERROR;
     icu::CollationKey key;
     coll->getCollationKey(icu::UnicodeString::fromUTF8(icu::StringPiece{
@@ -386,8 +364,7 @@ TEST(collation_token_stream_test, check_collation_with_variant2) {
     const irs::byte_type* p = key.getByteArray(size);
     EXPECT_NE(nullptr, p);
     EXPECT_NE(0, size);
-    encoded_key.Encode({p, static_cast<size_t>(size - 1)});
-    return encoded_key.GetByteArray();
+    return irs::bstring{p, static_cast<size_t>(size - 1)};
   };
 
   // locale defined as object
@@ -466,13 +443,12 @@ TEST(collation_token_stream_test, check_tokens_utf8) {
 
   const auto icu_locale = icu::Locale::createFromName(kLocaleName.data());
 
-  CollationEncoder encoded_key;
   std::unique_ptr<icu::Collator> coll{
     icu::Collator::createInstance(icu_locale, err)};
   ASSERT_NE(nullptr, coll);
   ASSERT_TRUE(U_SUCCESS(err));
 
-  auto get_collation_key = [&](std::string_view data) -> irs::bytes_view {
+  auto get_collation_key = [&](std::string_view data) -> irs::bstring {
     err = UErrorCode::U_ZERO_ERROR;
     icu::CollationKey key;
     coll->getCollationKey(icu::UnicodeString::fromUTF8(icu::StringPiece{
@@ -484,8 +460,7 @@ TEST(collation_token_stream_test, check_tokens_utf8) {
     const irs::byte_type* p = key.getByteArray(size);
     EXPECT_NE(nullptr, p);
     EXPECT_NE(0, size);
-    encoded_key.Encode({p, static_cast<size_t>(size - 1)});
-    return encoded_key.GetByteArray();
+    return irs::bstring{p, static_cast<size_t>(size - 1)};
   };
 
   {
@@ -533,14 +508,13 @@ TEST(collation_token_stream_test, check_tokens) {
 
   const auto icu_locale = icu::Locale::createFromName(kLocaleName.data());
 
-  CollationEncoder encoded_key;
   std::unique_ptr<icu::Collator> coll{
     icu::Collator::createInstance(icu_locale, err)};
 
   ASSERT_NE(nullptr, coll);
   ASSERT_TRUE(U_SUCCESS(err));
 
-  auto get_collation_key = [&](std::string_view data) -> irs::bytes_view {
+  auto get_collation_key = [&](std::string_view data) -> irs::bstring {
     icu::CollationKey key;
     err = UErrorCode::U_ZERO_ERROR;
     coll->getCollationKey(icu::UnicodeString::fromUTF8(icu::StringPiece{
@@ -552,8 +526,7 @@ TEST(collation_token_stream_test, check_tokens) {
     const irs::byte_type* p = key.getByteArray(size);
     EXPECT_NE(nullptr, p);
     EXPECT_NE(0, size);
-    encoded_key.Encode({p, static_cast<size_t>(size - 1)});
-    return encoded_key.GetByteArray();
+    return irs::bstring{p, static_cast<size_t>(size - 1)};
   };
 
   {

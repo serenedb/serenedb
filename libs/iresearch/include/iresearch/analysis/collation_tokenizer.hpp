@@ -29,6 +29,7 @@
 #include <tuple>
 #include <vector>
 
+#include "basics/serializer.h"
 #include "iresearch/analysis/process_tokens.hpp"
 #include "iresearch/utils/icu_locale_serde.hpp"
 #include "tokenizer.hpp"
@@ -42,13 +43,12 @@ class CollationTokenizer final : public TypedTokenizer<CollationTokenizer>,
   struct Options {
     using Owner = CollationTokenizer;
     icu::Locale locale = irs::MakeBogusLocale();
-    bool force_utf8 = true;
   };
   static ptr Make(Options opts);
 
   static constexpr std::string_view type_name() noexcept { return "collation"; }
 
-  explicit CollationTokenizer(Options options);
+  explicit CollationTokenizer(const Options& options);
 
   TokenTraits Traits() const noexcept final {
     return {
@@ -58,13 +58,19 @@ class CollationTokenizer final : public TypedTokenizer<CollationTokenizer>,
     };
   }
 
-  std::tuple<> PrepareBatch(BlockTraits);
+  BlockTraits WantedBlockTraits() const noexcept final {
+    return {.ascii = true};
+  }
+
+  std::tuple<bool> PrepareBatch(BlockTraits traits) const noexcept {
+    return {traits.ascii};
+  }
 
   size_t MemoryUsage() const noexcept final {
     return _u16_buf.capacity() * sizeof(char16_t);
   }
 
-  template<TokenLayout Layout, typename Sink>
+  template<TokenLayout Layout, bool Ascii, typename Sink>
   bool DoFill(duckdb::string_t value, Sink& sink);
 
  private:
@@ -72,12 +78,24 @@ class CollationTokenizer final : public TypedTokenizer<CollationTokenizer>,
     void operator()(UCollator* p) const noexcept { ucol_close(p); }
   };
 
-  Options _options;
   std::unique_ptr<UCollator, CollatorDeleter> _collator;
   std::vector<char16_t> _u16_buf;
 };
 
 extern template class TypedTokenizer<CollationTokenizer>;
 extern template class TypedTokenStage<CollationTokenizer>;
+
+template<typename Context>
+void SerdeWrite(Context ctx, const CollationTokenizer::Options& o) {
+  const bool legacy_force_utf8 = true;
+  sdb::basics::WriteTupleOrObject(ctx, std::tie(o.locale, legacy_force_utf8));
+}
+
+template<typename Context>
+void SerdeRead(Context ctx, CollationTokenizer::Options& o) {
+  bool legacy_force_utf8 = true;
+  auto refs = std::tie(o.locale, legacy_force_utf8);
+  sdb::basics::ReadTupleOrObject(ctx, refs);
+}
 
 }  // namespace irs::analysis

@@ -24,6 +24,7 @@
 #include "filter_test_case_base.hpp"
 #include "formats/column/test_cs_helpers.hpp"
 #include "index/index_tests.hpp"
+#include "insert_field.hpp"
 #include "iresearch/index/index_features.hpp"
 #include "iresearch/index/norm.hpp"
 #include "iresearch/search/all_filter.hpp"
@@ -591,7 +592,8 @@ TEST_P(TfidfTestCase, test_query) {
         auto ctx = writer->GetBatch();
         {
           auto d = ctx.Insert();
-          ASSERT_TRUE(d.Insert(doc->indexed.begin(), doc->indexed.end()));
+          ASSERT_TRUE(
+            tests::InsertFields(d, doc->indexed.begin(), doc->indexed.end()));
           store_seq(d, *doc);
         }
         ctx.Commit();
@@ -609,7 +611,8 @@ TEST_P(TfidfTestCase, test_query) {
         auto ctx = writer->GetBatch();
         {
           auto d = ctx.Insert();
-          ASSERT_TRUE(d.Insert(doc->indexed.begin(), doc->indexed.end()));
+          ASSERT_TRUE(
+            tests::InsertFields(d, doc->indexed.begin(), doc->indexed.end()));
           store_seq(d, *doc);
         }
         ctx.Commit();
@@ -703,7 +706,8 @@ TEST_P(TfidfTestCase, test_query) {
         auto ctx = writer->GetBatch();
         {
           auto d = ctx.Insert();
-          ASSERT_TRUE(d.Insert(doc->indexed.begin(), doc->indexed.end()));
+          ASSERT_TRUE(
+            tests::InsertFields(d, doc->indexed.begin(), doc->indexed.end()));
           store_seq(d, *doc);
         }
         ctx.Commit();
@@ -721,7 +725,8 @@ TEST_P(TfidfTestCase, test_query) {
         auto ctx = writer->GetBatch();
         {
           auto d = ctx.Insert();
-          ASSERT_TRUE(d.Insert(doc->indexed.begin(), doc->indexed.end()));
+          ASSERT_TRUE(
+            tests::InsertFields(d, doc->indexed.begin(), doc->indexed.end()));
           store_seq(d, *doc);
         }
         ctx.Commit();
@@ -826,7 +831,8 @@ TEST_P(TfidfTestCase, test_query) {
         auto ctx = writer->GetBatch();
         {
           auto d = ctx.Insert();
-          ASSERT_TRUE(d.Insert(doc->indexed.begin(), doc->indexed.end()));
+          ASSERT_TRUE(
+            tests::InsertFields(d, doc->indexed.begin(), doc->indexed.end()));
           store_seq(d, *doc);
         }
         ctx.Commit();
@@ -844,7 +850,8 @@ TEST_P(TfidfTestCase, test_query) {
         auto ctx = writer->GetBatch();
         {
           auto d = ctx.Insert();
-          ASSERT_TRUE(d.Insert(doc->indexed.begin(), doc->indexed.end()));
+          ASSERT_TRUE(
+            tests::InsertFields(d, doc->indexed.begin(), doc->indexed.end()));
           store_seq(d, *doc);
         }
         ctx.Commit();

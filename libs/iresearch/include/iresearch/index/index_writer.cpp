@@ -841,6 +841,9 @@ void IndexWriter::Transaction::UpdateSegment(bool disable_flush,
   // Hand the per-op options to the (pooled) writer before it materializes a
   // segment; a forced flush above reset it to the fallback, so set after it.
   writer.SetFieldOptions(_field_options);
+  for (const auto& [field, terms] : _reserve_hints) {
+    writer.SeedTermsHistory(field, terms);
+  }
   segment.Prepare();
 }
 
@@ -1835,7 +1838,6 @@ SegmentWriterOptions IndexWriter::GetSegmentWriterOptions(
   // The merge passes its own view; a segment write installs its owning override
   // later via SetFieldOptions, so non-owning here.
   return {
-    .scorers_features = _score_bound_features,
     .scorer = _topk_scorer,
     .comparator = _comparator,
     .resource_manager = compaction ? *_dir.ResourceManager().compactions

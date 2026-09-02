@@ -24,8 +24,8 @@
 #include <duckdb/common/serializer/memory_stream.hpp>
 #include <duckdb/common/serializer/serializer.hpp>
 #include <duckdb/main/attached_database.hpp>
-#include <iresearch/analysis/analyzer.hpp>
-#include <iresearch/analysis/tokenizers.hpp>
+#include <iresearch/analysis/keyword_tokenizer.hpp>
+#include <iresearch/analysis/tokenizer.hpp>
 
 #include "absl/algorithm/container.h"
 #include "basics/containers/flat_hash_set.h"
@@ -43,26 +43,33 @@
 
 namespace sdb::catalog {
 
-ColumnTokenizer DefaultColumnTokenizer() {
-  auto analyzer = std::make_unique<irs::StringTokenizer>();
-  return ColumnTokenizer{.analyzer = Tokenizer::TokenizerWrapper{
-                           analyzer.release(), Tokenizer::Deleter{nullptr}}};
+ColumnTokenizer DefaultColumnTokenizer(search::Features features) {
+  auto analyzer = std::make_unique<irs::KeywordTokenizer>();
+  return ColumnTokenizer{
+    .analyzer = Tokenizer::TokenizerWrapper{analyzer.release(),
+                                            Tokenizer::Deleter{nullptr}},
+    .features = features.GetIndexFeatures(),
+    .verbatim = true};
 }
 
 namespace {
 
-ColumnTokenizer BuildColumnTokenizer(const TokenizerMap& dicts,
+ColumnTokenizer BuildColumnTokenizer(duckdb::ClientContext& ctx,
+                                     const TokenizerMap& dicts,
                                      ObjectId text_dictionary,
                                      search::Features features) {
   if (!text_dictionary.isSet()) {
-    return DefaultColumnTokenizer();
+    return DefaultColumnTokenizer(features);
   }
   const auto it = dicts.find(text_dictionary);
   if (it == dicts.end() || !it->second) {
     THROW_SQL_ERROR(ERR_MSG("Dictionary for inverted index does not exists"));
   }
-  return ColumnTokenizer{.analyzer = it->second->GetTokenizer(),
-                         .features = features.GetIndexFeatures()};
+  auto analyzer = it->second->GetTokenizer(ctx);
+  const bool verbatim = analyzer->Traits().keyword;
+  return ColumnTokenizer{.analyzer = std::move(analyzer),
+                         .features = features.GetIndexFeatures(),
+                         .verbatim = verbatim};
 }
 
 using persistence::ColumnKey;
@@ -442,10 +449,11 @@ void InvertedIndex::BuildFieldLookupIndex() {
   insert(term_dict::kPKFieldId, nullptr, term_dict::kPKFieldId);
 }
 
-ColumnTokenizer TokenizerForEntry(const TokenizerMap& dicts,
+ColumnTokenizer TokenizerForEntry(duckdb::ClientContext& ctx,
+                                  const TokenizerMap& dicts,
                                   const InvertedIndexEntryInfo& entry) {
   auto tokenizer =
-    BuildColumnTokenizer(dicts, entry.text_dictionary, entry.features);
+    BuildColumnTokenizer(ctx, dicts, entry.text_dictionary, entry.features);
   if (!entry.features.HasFeatures(irs::IndexFeatures::Norm) &&
       irs::field_limits::valid(entry.synthetic_column)) {
     tokenizer.tokenizer_column = entry.synthetic_column;
@@ -453,14 +461,15 @@ ColumnTokenizer TokenizerForEntry(const TokenizerMap& dicts,
   return tokenizer;
 }
 
-ColumnTokenizer InvertedIndex::GetTokenizer(const TokenizerMap& dicts,
+ColumnTokenizer InvertedIndex::GetTokenizer(duckdb::ClientContext& ctx,
+                                            const TokenizerMap& dicts,
                                             irs::field_id field_id) const {
   const auto* entry = FindEntry(field_id);
   if (entry == nullptr) {
     THROW_SQL_ERROR(
       ERR_MSG("Field id ", field_id, " not found in the index definition"));
   }
-  return TokenizerForEntry(dicts, *entry);
+  return TokenizerForEntry(ctx, dicts, *entry);
 }
 
 bool InvertedIndex::IsKeywordField(duckdb::ClientContext& context,
@@ -476,7 +485,7 @@ bool InvertedIndex::IsKeywordField(duckdb::ClientContext& context,
   if (!dict) {
     return false;
   }
-  return std::holds_alternative<irs::StringTokenizer::Options>(
+  return std::holds_alternative<irs::KeywordTokenizer::Options>(
     dict->Config().config);
 }
 

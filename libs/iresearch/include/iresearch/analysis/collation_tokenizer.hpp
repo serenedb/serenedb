@@ -23,18 +23,20 @@
 #pragma once
 
 #include <unicode/locid.h>
+#include <unicode/ucol.h>
 
-#include "analyzer.hpp"
-#include "iresearch/utils/attribute_helper.hpp"
+#include <memory>
+#include <tuple>
+#include <vector>
+
+#include "iresearch/analysis/process_tokens.hpp"
 #include "iresearch/utils/icu_locale_serde.hpp"
-#include "token_attributes.hpp"
+#include "tokenizer.hpp"
 
 namespace irs::analysis {
 
-// an tokenizer capable of converting UTF-8 encoded input into a sortable
-// token as per specified locale
-// expects UTF-8 encoded input
-class CollationTokenizer final : public TypedAnalyzer<CollationTokenizer>,
+class CollationTokenizer final : public TypedTokenizer<CollationTokenizer>,
+                                 public TypedTokenStage<CollationTokenizer>,
                                  private util::Noncopyable {
  public:
   struct Options {
@@ -48,28 +50,34 @@ class CollationTokenizer final : public TypedAnalyzer<CollationTokenizer>,
 
   explicit CollationTokenizer(Options options);
 
-  Attribute* GetMutable(TypeInfo::type_id type) noexcept final {
-    return irs::GetMutable(_attrs, type);
+  TokenTraits Traits() const noexcept final {
+    return {
+      .output = duckdb::LogicalTypeId::BLOB,
+      .unique = true,
+      .offsets = true,
+    };
   }
-  bool next() noexcept final {
-    const auto eof = !_term_eof;
-    _term_eof = true;
-    return eof;
+
+  std::tuple<> PrepareBatch(BlockTraits);
+
+  size_t MemoryUsage() const noexcept final {
+    return _u16_buf.capacity() * sizeof(char16_t);
   }
-  bool reset(std::string_view data) final;
+
+  template<TokenLayout Layout, typename Sink>
+  bool DoFill(duckdb::string_t value, Sink& sink);
 
  private:
-  struct StateT;
-  struct StateDeleterT {
-    void operator()(StateT*) const noexcept;
+  struct CollatorDeleter {
+    void operator()(UCollator* p) const noexcept { ucol_close(p); }
   };
 
-  // token value with evaluated quotes
-  using attributes = std::tuple<IncAttr, OffsAttr, TermAttr>;
-
-  attributes _attrs;
-  std::unique_ptr<StateT, StateDeleterT> _state;
-  bool _term_eof;
+  Options _options;
+  std::unique_ptr<UCollator, CollatorDeleter> _collator;
+  std::vector<char16_t> _u16_buf;
 };
+
+extern template class TypedTokenizer<CollationTokenizer>;
+extern template class TypedTokenStage<CollationTokenizer>;
 
 }  // namespace irs::analysis

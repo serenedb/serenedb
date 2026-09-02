@@ -24,8 +24,8 @@
 #include <string_view>
 #include <vector>
 
-#include "iresearch/analysis/analyzer.hpp"
 #include "iresearch/analysis/token_attributes.hpp"
+#include "iresearch/analysis/token_sinks.hpp"
 #include "iresearch/analysis/tokenizer.hpp"
 #include "iresearch/search/all_filter.hpp"
 #include "iresearch/search/boolean_filter.hpp"
@@ -59,7 +59,7 @@ struct ParserContext {
   irs::field_id default_field_id{irs::field_limits::invalid()};
   std::string_view default_field_name;
   irs::MixedBooleanFilter* current_root;
-  irs::analysis::Analyzer* tokenizer;
+  irs::analysis::Tokenizer* tokenizer;
   std::string error_message;
   Modifier last_mod{Modifier::None};
   bool strict_field = false;
@@ -73,7 +73,7 @@ struct ParserContext {
   size_t offs_max{0};
 
   ParserContext(irs::MixedBooleanFilter& root, irs::field_id field_id,
-                irs::analysis::Analyzer& tokenizer)
+                irs::analysis::Tokenizer& tokenizer)
     : default_field_id(field_id), current_root{&root}, tokenizer{&tokenizer} {}
 
   void AddClause(Conjunction conj) {
@@ -110,32 +110,20 @@ struct ParserContext {
   // way Lucene asks -- any of its parts, under the default operator.
   irs::Filter& AddTerm(std::string_view value) {
     const auto text = Unescape(value);
-    tokenizer->reset(irs::ViewCast<char>(irs::bytes_view{text}));
-    auto token = irs::get<irs::TermAttr>(*tokenizer);
-
-    irs::bstring first;
-    size_t count = 0;
-    irs::MixedBooleanFilter* several = nullptr;
-    while (tokenizer->next()) {
-      if (count == 0) {
-        first = token->value;
-      } else {
-        if (count == 1) {
-          several = &current_root->GetOptional().add<irs::MixedBooleanFilter>();
-          AddTermTo(several->GetOptional(), first);
-        }
-        AddTermTo(several->GetOptional(), token->value);
+    const auto tokens = Tokens(text);
+    if (tokens.size() > 1) {
+      auto& several =
+        current_root->GetOptional().add<irs::MixedBooleanFilter>();
+      for (const auto& token : tokens) {
+        AddTermTo(several.GetOptional(), token.term);
       }
-      ++count;
-    }
-    if (several != nullptr) {
-      return *several;
+      return several;
     }
     auto& f = current_root->GetOptional().add<irs::ByTerm>();
     *f.mutable_field_id() = default_field_id;
     // A word the analyzer makes nothing of -- a lone `+` -- is searched for
     // as it was written rather than as the empty term.
-    f.mutable_options()->term = count != 0 ? std::move(first) : text;
+    f.mutable_options()->term = tokens.empty() ? text : tokens.front().term;
     return f;
   }
 
@@ -198,11 +186,8 @@ struct ParserContext {
   // A word of a phrase is whatever the analyzer makes of it: one term, or
   // several, and several of them sit one after another.
   void AddPhraseTerm(std::string_view word) {
-    const auto text = Unescape(word);
-    tokenizer->reset(irs::ViewCast<char>(irs::bytes_view{text}));
-    auto token = irs::get<irs::TermAttr>(*tokenizer);
-    while (tokenizer->next()) {
-      Emplace<irs::ByTermOptions>().term = token->value;
+    for (const auto& token : Tokens(Unescape(word))) {
+      Emplace<irs::ByTermOptions>().term = token.term;
     }
   }
 
@@ -430,14 +415,19 @@ struct ParserContext {
     return out;
   }
 
+  std::vector<irs::CollectedToken> Tokens(const irs::bstring& text) {
+    irs::TokenCollector collector{irs::TokenLayout::Terms};
+    irs::AnalyzeValue(
+      *tokenizer,
+      duckdb::string_t{reinterpret_cast<const char*>(text.data()),
+                       static_cast<uint32_t>(text.size())},
+      collector);
+    return std::move(collector.tokens);
+  }
+
   irs::bstring Analyze(std::string_view word) {
-    const auto text = Unescape(word);
-    tokenizer->reset(irs::ViewCast<char>(irs::bytes_view{text}));
-    auto token = irs::get<irs::TermAttr>(*tokenizer);
-    if (tokenizer->next()) {
-      return irs::bstring{token->value};
-    }
-    return {};
+    const auto tokens = Tokens(Unescape(word));
+    return tokens.empty() ? irs::bstring{} : tokens.front().term;
   }
 
   // What a pattern, a distance or a bound is measured against: Lucene
@@ -448,13 +438,8 @@ struct ParserContext {
   // word of it.
   irs::bstring Normalize(std::string_view word) {
     auto text = Unescape(word);
-    tokenizer->reset(irs::ViewCast<char>(irs::bytes_view{text}));
-    auto token = irs::get<irs::TermAttr>(*tokenizer);
-    if (!tokenizer->next()) {
-      return text;
-    }
-    irs::bstring first{token->value};
-    return tokenizer->next() ? text : first;
+    const auto tokens = Tokens(text);
+    return tokens.size() == 1 ? tokens.front().term : text;
   }
 
   // Where a part goes: next to the one before it, or as far off as a gap

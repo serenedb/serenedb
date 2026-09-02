@@ -337,38 +337,33 @@ class IndexWriter : private util::Noncopyable {
     // in the insert batch
     void NextFieldBatch() noexcept { _doc_id = _writer.FirstBatchDocId(); }
 
+#ifdef SDB_GTEST
     // End of field batch for current document, move to next document in batch
     void NextDocument() noexcept {
       Finish();
-      _writer.ResetNorms();
       ++_doc_id;
     }
+#endif
 
     // Return current state of the object
     // Note that if the object is in an invalid state all further operations
     // will not take any effect
     explicit operator bool() const noexcept { return _writer.valid(); }
 
-    // Inserts a field into the document for inverted indexing.
-    template<typename Field>
-    bool Insert(Field&& field) const {
-      return _writer.insert(std::forward<Field>(field), _doc_id);
+    // Block ingest: whole field-major columns per call (docs carried by
+    // batch runs, streamed pairs, or the vector's row ramp -- none use
+    // _doc_id). WithField runs `func` against the resolved (or caller-held)
+    // slot under the writer's failure protocol.
+    template<typename... Args>
+    bool WithField(Args&&... args) const {
+      return _writer.WithField(std::forward<Args>(args)...);
     }
 
-    // Inserts the field denoted by `field` (must not be nullptr).
-    template<typename Field>
-    bool Insert(Field* field) const {
-      return _writer.insert(*field, _doc_id);
+    template<typename... Args>
+    bool WithTokens(Args&&... args) const {
+      return _writer.WithTokens(std::forward<Args>(args)...);
     }
 
-    // Inserts the range of fields [begin; end) for inverted indexing.
-    template<typename Iterator>
-    bool Insert(Iterator begin, Iterator end) const {
-      for (; _writer.valid() && begin != end; ++begin) {
-        Insert(*begin);
-      }
-      return _writer.valid();
-    }
 #ifdef SDB_GTEST
     SegmentWriter& Writer() noexcept { return _writer; }
 #endif
@@ -468,9 +463,22 @@ class IndexWriter : private util::Noncopyable {
       if (segment == nullptr) {
         return true;
       }
+      if (_tick_source) {
+        // Reserve one extra tick so first_tick (= last - queries) lands
+        // strictly above every previously committed tick.
+        return CommitImpl(_tick_source(_queries + 1));
+      }
       const auto first_tick =
         _writer->_tick.fetch_add(_queries, std::memory_order_relaxed);
       return CommitImpl(first_tick + _queries);
+    }
+
+    // Every commit of this transaction (including the commit-on-flush road)
+    // reserves its ticks through `source` (called with the range size,
+    // returns the LAST tick of the reserved range) fresh at commit time,
+    // instead of the writer's private counter.
+    void SetTickSource(std::function<uint64_t(uint64_t)> source) noexcept {
+      _tick_source = std::move(source);
     }
 
     // Like Commit(), but writes the active segment in the calling thread first
@@ -565,6 +573,14 @@ class IndexWriter : private util::Noncopyable {
       _field_options = std::move(options);
     }
 
+    // Expected distinct-term count for a field's dictionary, forwarded to the
+    // segment writer at each segment start. Must be ~exact-or-under (this
+    // sink's share, not the table total: a parallel operator splits rows
+    // across sinks); an empty hint list costs nothing.
+    void SetReserveHint(field_id field, uint32_t expected_terms) {
+      _reserve_hints.emplace_back(field, expected_terms);
+    }
+
    private:
     bool CommitImpl(uint64_t last_tick) noexcept;
     // refresh segment if required (guarded by FlushContext::context_mutex_)
@@ -582,6 +598,7 @@ class IndexWriter : private util::Noncopyable {
     // Never resume a pooled segment holding another transaction's documents;
     // see GetBatch.
     bool _exclusive_segment{false};
+    std::vector<std::pair<field_id, uint32_t>> _reserve_hints;
   };
   static_assert(std::is_nothrow_move_constructible_v<Transaction>);
   static_assert(std::is_nothrow_move_assignable_v<Transaction>);

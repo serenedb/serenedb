@@ -22,12 +22,16 @@
 
 #include "collation_tokenizer.hpp"
 
-#include <unicode/coll.h>
+#include <absl/algorithm/container.h>
 #include <unicode/locid.h>
+#include <unicode/ucol.h>
+#include <unicode/ustring.h>
 
-#include <string_view>
+#include <cstring>
+#include <vector>
 
-#include "collation_tokenizer_encoder.hpp"
+#include "basics/log.h"
+#include "iresearch/analysis/token_batch.hpp"
 #include "pg/sql_exception_macro.h"
 
 namespace irs::analysis {
@@ -35,109 +39,122 @@ namespace {
 
 constexpr size_t kMaxTokenSize = 1 << 15;
 
-}  // namespace
-
-struct CollationTokenizer::StateT {
-  const Options options;
-  std::unique_ptr<icu::Collator> collator;
-  byte_type term_buf[kMaxTokenSize];
-
-  explicit StateT(Options opts) : options(std::move(opts)) {}
-};
-
-void CollationTokenizer::StateDeleterT::operator()(StateT* p) const noexcept {
-  delete p;
+// We must enforce UTF-8 "valid" output.
+// By default ICU SortKey is just arbitrary bytes in range 0x00 - 0xFF
+// so in general SortKey is not valid UTF-8 sequence.
+// To achieve "validity" we split each byte in range 0x80 - 0xFF
+// in two bytes UTF-8 character. We don't care about "sanity" of this
+// UTF-8 string as SortKey was never intended to be human redable. And this
+// split still leaves the binary sorting order of modified SortKeys.
+size_t EncodeSortKey(uint8_t* dst, const uint8_t* src, size_t size) {
+  constexpr uint64_t kHighBits = UINT64_C(0x8080808080808080);
+  size_t out = 0;
+  size_t k = 0;
+  while (k < size) {
+    if (k + 8 <= size) {
+      uint64_t w;
+      std::memcpy(&w, src + k, 8);
+      if (!(w & kHighBits)) {
+        std::memcpy(dst + out, src + k, 8);
+        out += 8;
+        k += 8;
+        continue;
+      }
+    }
+    const uint8_t b = src[k++];
+    const bool wide = b >= 0x80;
+    dst[out] = wide ? static_cast<uint8_t>(0xC0 | (b >> 3)) : b;
+    dst[out + 1] = static_cast<uint8_t>(0x80 | (b & 7));
+    out += 1 + wide;
+  }
+  return out;
 }
 
-CollationTokenizer::CollationTokenizer(Options options)
-  : _state{new StateT(std::move(options))}, _term_eof{true} {}
+}  // namespace
 
-Analyzer::ptr CollationTokenizer::Make(Options opts) {
-  if (opts.locale.isBogus()) {
+CollationTokenizer::CollationTokenizer(Options options)
+  : _options{std::move(options)} {
+  if (_options.locale.isBogus()) {
     THROW_SQL_ERROR(ERR_MSG("collation: invalid locale"));
   }
-  auto err = UErrorCode::U_ZERO_ERROR;
-  std::unique_ptr<icu::Collator> collator{
-    icu::Collator::createInstance(opts.locale, err)};
-  if (!collator || !U_SUCCESS(err)) {
-    THROW_SQL_ERROR(
-      ERR_MSG("collation: failed to create collator for the locale"));
+}
+
+std::tuple<> CollationTokenizer::PrepareBatch(BlockTraits) {
+  if (!_collator) {
+    auto err = UErrorCode::U_ZERO_ERROR;
+    _collator.reset(ucol_open(_options.locale.getName(), &err));
+    if (!_collator || !U_SUCCESS(err)) {
+      THROW_SQL_ERROR(
+        ERR_MSG("collation: failed to create collator for the locale"));
+    }
   }
+  return {};
+}
+
+Tokenizer::ptr CollationTokenizer::Make(Options opts) {
   return std::make_unique<CollationTokenizer>(std::move(opts));
 }
 
-bool CollationTokenizer::reset(std::string_view data) {
-  if (!_state->collator) {
-    auto err = UErrorCode::U_ZERO_ERROR;
-    _state->collator.reset(
-      icu::Collator::createInstance(_state->options.locale, err));
-
-    if (!U_SUCCESS(err) || !_state->collator) {
-      _state->collator.reset();
-
-      return false;
-    }
-  }
-
-  if (data.size() >
-      static_cast<uint32_t>(std::numeric_limits<int32_t>::max())) {
-    return false;  // ICU UnicodeString signatures can handle at most INT32_MAX
-  }
-
-  const icu::UnicodeString icu_token = icu::UnicodeString::fromUTF8(
-    icu::StringPiece(data.data(), static_cast<int32_t>(data.size())));
-
-  byte_type raw_term_buf[kMaxTokenSize];
-  static_assert(sizeof raw_term_buf == sizeof _state->term_buf);
-
-  auto* buf = _state->options.force_utf8 ? raw_term_buf : _state->term_buf;
-  int32_t term_size =
-    _state->collator->getSortKey(icu_token, buf, kMaxTokenSize);
-
-  // https://unicode-org.github.io/icu-docs/apidoc/released/icu4c/classicu_1_1Collator.html
-  // according to ICU docs sort keys are always zero-terminated,
-  // there is no reason to store terminal zero in term dictionary
-  SDB_ASSERT(term_size > 0);
-  --term_size;
-  SDB_ASSERT(0 == buf[term_size]);
-  if (term_size > static_cast<int32_t>(kMaxTokenSize)) {
-    SDB_ERROR(
-      IRESEARCH,
-      absl::StrCat("Collated token is ", term_size,
-                   " bytes length which exceeds maximum allowed length of ",
-                   static_cast<int32_t>(sizeof raw_term_buf), " bytes"));
+template<TokenLayout Layout, typename Sink>
+bool CollationTokenizer::DoFill(duckdb::string_t raw, Sink& sink) {
+  SDB_ASSERT(_collator);
+  const size_t raw_size = raw.GetSize();
+  if (raw_size > static_cast<uint32_t>(std::numeric_limits<int32_t>::max())) {
     return false;
   }
-  auto term_buf_idx = static_cast<size_t>(term_size);
-  if (_state->options.force_utf8) {
-    // enforce valid UTF-8 string
-    SDB_ASSERT(buf == raw_term_buf);
-    term_buf_idx = 0;
-    for (decltype(term_size) i{}; i < term_size; ++i) {
-      static_assert(sizeof(raw_term_buf[i]) * (1 << CHAR_BIT) <=
-                    kRecalcMap.size());
-      const auto [offset, size] = kRecalcMap[raw_term_buf[i]];
-      if ((term_buf_idx + size) > sizeof _state->term_buf) {
-        SDB_ERROR(IRESEARCH, absl::StrCat("Collated token is more than ",
-                                          sizeof _state->term_buf,
-                                          " bytes length after encoding."));
-        return false;
-      }
-      SDB_ASSERT(size <= 2);
-      _state->term_buf[term_buf_idx++] = kBytesRecalcMap[offset];
-      if (size == 2) {
-        _state->term_buf[term_buf_idx++] = kBytesRecalcMap[offset + 1];
-      }
-    }
+
+  // utf8 -> utf16 into the reused scratch (utf16 units never exceed utf8
+  // bytes, so value.size() capacity always suffices); illegal input is
+  // substituted with U+FFFD. Bulk-convert-then-collate measures ~2x faster
+  // than streaming ucol_nextSortKeyPart over a UTF-8 UCharIterator.
+  if (_u16_buf.size() < raw_size) {
+    _u16_buf.resize(raw_size);
+  }
+  int32_t u16_len = 0;
+  auto err = UErrorCode::U_ZERO_ERROR;
+  u_strFromUTF8WithSub(_u16_buf.data(), static_cast<int32_t>(_u16_buf.size()),
+                       &u16_len, raw.GetData(), static_cast<int32_t>(raw_size),
+                       0xFFFD, nullptr, &err);
+  if (!U_SUCCESS(err)) [[unlikely]] {
+    return false;
   }
 
-  std::get<TermAttr>(_attrs).value = {_state->term_buf, term_buf_idx};
-  auto& offset = std::get<OffsAttr>(_attrs);
-  offset.start = 0;
-  offset.end = static_cast<uint32_t>(data.size());
-  _term_eof = false;
+  byte_type raw_term_buf[kMaxTokenSize];
+  const int32_t term_size =
+    ucol_getSortKey(_collator.get(),
+                    reinterpret_cast<const UChar*>(_u16_buf.data()), u16_len,
+                    raw_term_buf, kMaxTokenSize) -
+    1;
+  if (term_size < 0 || term_size >= static_cast<int32_t>(kMaxTokenSize)) {
+    SDB_ERROR(IRESEARCH,
+              absl::StrCat("Collated token exceeds maximum allowed length of ",
+                           kMaxTokenSize, " bytes"));
+    return false;
+  }
+  SDB_ASSERT(raw_term_buf[term_size] == 0);
 
+  const auto size = static_cast<size_t>(term_size);
+  if (_options.force_utf8) {
+    if (2 * size > kMaxTokenSize) [[unlikely]] {
+      const auto wide = static_cast<size_t>(absl::c_count_if(
+        std::span{raw_term_buf, size}, [](uint8_t b) { return b >= 0x80; }));
+      if (size + wide > kMaxTokenSize) {
+        SDB_ERROR(IRESEARCH,
+                  absl::StrCat("Collated token is more than ", kMaxTokenSize,
+                               " bytes length after encoding."));
+        return false;
+      }
+    }
+    sink.template Emit<Layout>(2 * size, [&](byte_type* mem) IRS_FORCE_INLINE {
+      return EncodeSortKey(mem, raw_term_buf, size);
+    });
+  } else {
+    sink.template Emit<Layout>(raw_term_buf, static_cast<uint32_t>(term_size));
+  }
   return true;
 }
+
+template class TypedTokenizer<CollationTokenizer>;
+template class TypedTokenStage<CollationTokenizer>;
 
 }  // namespace irs::analysis

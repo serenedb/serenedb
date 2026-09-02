@@ -22,7 +22,7 @@
 
 #include "geo/geo_json.h"
 #include "iresearch/analysis/geo_analyzer.hpp"
-#include "iresearch/analysis/tokenizers.hpp"
+#include "iresearch/analysis/keyword_tokenizer.hpp"
 #include "iresearch/store/store_utils.hpp"
 #include "iresearch/types.hpp"
 #include "iresearch/utils/type_limits.hpp"
@@ -33,10 +33,9 @@ struct StringField final {
   std::string_view Name() const { return field_name; }
   irs::field_id Id() const noexcept { return id; }
 
-  irs::Tokenizer& GetTokens() const {
-    stream.reset(value);
-    return stream;
-  }
+  irs::analysis::Tokenizer& GetTokens() const { return stream; }
+
+  std::string_view Value() const noexcept { return value; }
 
   bool Write(irs::DataOutput& out) const {
     irs::WriteStr(out, value);
@@ -47,7 +46,7 @@ struct StringField final {
     return irs::IndexFeatures::None;
   }
 
-  mutable irs::StringTokenizer stream;
+  mutable irs::KeywordTokenizer stream;
   std::string_view value;
   std::string_view field_name;
   irs::field_id id{irs::field_limits::invalid()};
@@ -57,12 +56,9 @@ struct GeoField final {
   std::string_view Name() const { return field_name; }
   irs::field_id Id() const noexcept { return id; }
 
-  irs::Tokenizer& GetTokens() const {
-    if (!value.empty()) {
-      static_cast<irs::analysis::GeoAnalyzer&>(*stream).reset(value);
-    }
-    return *stream.get();
-  }
+  irs::analysis::Tokenizer& GetTokens() const { return *stream; }
+
+  std::string_view Value() const noexcept { return value; }
 
   // Source coding force-includes the indexed source column, so the stored
   // value is the original GeoJSON text the filter re-parses at query time.
@@ -78,7 +74,7 @@ struct GeoField final {
     return irs::IndexFeatures::None;
   }
 
-  mutable irs::analysis::Analyzer::ptr stream{
+  mutable irs::analysis::Tokenizer::ptr stream{
     irs::analysis::GeoJsonAnalyzer::Make(
       irs::analysis::GeoJsonAnalyzer::Options{})};
   std::string_view value;

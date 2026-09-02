@@ -23,45 +23,49 @@
 
 #pragma once
 
-#include <absl/container/flat_hash_set.h>
+#include <string>
+#include <vector>
 
-#include "analyzer.hpp"
-#include "iresearch/utils/attribute_helper.hpp"
-#include "iresearch/utils/hash_utils.hpp"
-#include "token_attributes.hpp"
+#include "iresearch/analysis/process_tokens.hpp"
+#include "iresearch/analysis/stopword_set.hpp"
+#include "tokenizer.hpp"
 
+namespace duckdb {
+
+class SharedObjectCache;
+
+}  // namespace duckdb
 namespace irs::analysis {
 
 // An analyzer capable of masking the input, treated as a single token,
 // if it is present in the configured list
-class StopwordsTokenizer final : public TypedAnalyzer<StopwordsTokenizer>,
+class StopwordsTokenizer final : public TypedTokenizer<StopwordsTokenizer>,
+                                 public TypedTokenStage<StopwordsTokenizer>,
                                  private util::Noncopyable {
  public:
-  using stopwords_set = absl::flat_hash_set<std::string>;
-
   struct Options {
     using Owner = StopwordsTokenizer;
-    stopwords_set mask;
+    std::vector<std::string> mask;
+    std::string stopwords_path;
   };
-  static ptr Make(Options opts);
+  static ptr Make(Options opts, duckdb::SharedObjectCache& cache);
 
   static constexpr std::string_view type_name() noexcept { return "stopwords"; }
 
-  explicit StopwordsTokenizer(stopwords_set&& mask);
-  Attribute* GetMutable(TypeInfo::type_id type) noexcept final {
-    return irs::GetMutable(_attrs, type);
+  explicit StopwordsTokenizer(
+    duckdb::shared_ptr<const StopwordSet> stopwords) noexcept;
+  TokenTraits Traits() const noexcept final {
+    return {.unique = true, .offsets = true, .stable = true};
   }
-  bool next() final;
-  bool reset(std::string_view data) final;
+
+  template<TokenLayout Layout, typename Sink>
+  IRS_FORCE_INLINE bool DoFill(const duckdb::string_t& value, Sink& sink);
 
  private:
-  // token value with evaluated quotes
-
-  using attributes = std::tuple<IncAttr, OffsAttr, TermAttr>;
-
-  stopwords_set _stopwords;
-  attributes _attrs;
-  bool _term_eof = true;
+  duckdb::shared_ptr<const StopwordSet> _stopwords;
 };
+
+extern template class TypedTokenizer<StopwordsTokenizer>;
+extern template class TypedTokenStage<StopwordsTokenizer>;
 
 }  // namespace irs::analysis

@@ -24,6 +24,7 @@
 #include "basics/duckdb_engine.h"
 #include "filter_test_case_base.hpp"
 #include "formats/column/test_cs_helpers.hpp"
+#include "insert_field.hpp"
 #include "iresearch/index/index_features.hpp"
 #include "iresearch/index/norm.hpp"
 #include "iresearch/search/bm25.hpp"
@@ -443,7 +444,7 @@ TEST_P(PrefixFilterTestCase, by_prefix_order_multiple_terms_score) {
         auto doc = ctx.Insert();
         tests::StringField field{"name", value};
         field.id = kNameId;
-        doc.Insert(field);
+        tests::InsertField(doc, field);
       }
       ctx.Commit();
     }

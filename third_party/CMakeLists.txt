@@ -186,7 +186,7 @@ add_subdirectory(boost)
 set(BOOST_VERSION ${BOOST_VERSION} PARENT_SCOPE)
 set(BOOST_INCLUDE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/boost")
 # explicitly set since suppressing Boost search
-# needed for iresearch and boost::text
+# needed for iresearch
 set(Boost_INCLUDE_DIRS "${BOOST_INCLUDE_PATH}")
 set(Boost_INCLUDE_DIRS "${Boost_INCLUDE_DIRS}" PARENT_SCOPE)
 
@@ -339,27 +339,6 @@ target_link_libraries(
 
 # TODO(mbkkt) make it submodule
 add_subdirectory(simdcomp)
-
-################################################################################
-### frozen library
-################################################################################
-
-set(FROZEN_INCLUDE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/frozen/include)
-set(FROZEN_INCLUDE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/frozen/include PARENT_SCOPE)
-
-################################################################################
-### Boost::Text library
-################################################################################
-
-set(CXX_STD ${CMAKE_CXX_STANDARD} CACHE STRING "" FORCE)
-# TODO(mbkkt) make it submodule
-add_subdirectory(text)
-target_compile_definitions(
-    text
-    PUBLIC
-        -DBOOST_STL_INTERFACES_DISABLE_CONCEPTS=1
-        -DBOOST_STL_INTERFACES_DISABLE_DEDUCED_THIS=1
-)
 
 ################################################################################
 ### fastText library

@@ -26,16 +26,20 @@
 
 #include "basics/noncopyable.hpp"
 #include "basics/serializer.h"
-#include "iresearch/analysis/analyzer.hpp"
-#include "iresearch/analysis/token_attributes.hpp"
-#include "iresearch/utils/attribute_helper.hpp"
+#include "iresearch/analysis/tokenizer.hpp"
 #include "iresearch/utils/minhash_utils.hpp"
 
+namespace duckdb {
+
+class SharedObjectCache;
+
+}  // namespace duckdb
 namespace irs::analysis {
 
 struct TokenizerConfig;
 
-class MinHashTokenizer final : public TypedAnalyzer<MinHashTokenizer>,
+class MinHashTokenizer final : public TypedTokenizer<MinHashTokenizer>,
+                               private TokenConsumer,
                                private util::Noncopyable {
  public:
   struct Options {
@@ -43,47 +47,39 @@ class MinHashTokenizer final : public TypedAnalyzer<MinHashTokenizer>,
     std::unique_ptr<TokenizerConfig> analyzer;
     uint32_t num_hashes{1};
   };
-  static analysis::Analyzer::ptr Make(Options opts);
+  static analysis::Tokenizer::ptr Make(Options opts,
+                                       duckdb::SharedObjectCache& cache);
 
-  // Return analyzer type name.
   static constexpr std::string_view type_name() noexcept { return "minhash"; }
 
-  explicit MinHashTokenizer(analysis::Analyzer::ptr analyzer,
+  explicit MinHashTokenizer(analysis::Tokenizer::ptr analyzer,
                             uint32_t num_hashes);
 
-  // Advance stream to the next token.
-  bool next() final;
+  TokenTraits Traits() const noexcept final { return {.explicit_pos = true}; }
+  std::tuple<> PrepareBatch(BlockTraits);
 
-  // Reset stream to a specified value.
-  bool reset(std::string_view data) final;
+  template<TokenLayout Layout>
+  bool DoFill(duckdb::string_t value, TokenSink& sink);
 
-  // Return a stream attribute denoted by `id`.
-  Attribute* GetMutable(TypeInfo::type_id id) noexcept final {
-    return irs::GetMutable(_attrs, id);
+  void Bind(duckdb::ClientContext& ctx) final { _analyzer->Bind(ctx); }
+
+  void Unbind() noexcept final { _analyzer->Unbind(); }
+  size_t MemoryUsage() const noexcept final {
+    return _analyzer->MemoryUsage() + (_sub_writer ? sizeof(TokenSink) : 0);
   }
 
-  // Return number of MinHash hashes.
   uint32_t num_hashes() const noexcept { return _num_hashes; }
 
-  // Return accumulated MinHash signature.
-  const MinHash& signature() const noexcept { return _minhash; }
-
  private:
-  using attributes = std::tuple<TermAttr, IncAttr, OffsAttr>;
-  using iterator = std::vector<uint64_t>::const_iterator;
+  void Consume(TokenBatch& batch, DocRuns) final;
 
-  void ComputeSignature();
+  template<TokenLayout Layout>
+  void EmitSignature(TokenSink& sink);
 
-  analysis::Analyzer::ptr _analyzer;
+  analysis::Tokenizer::ptr _analyzer;
   uint32_t _num_hashes{1};
   MinHash _minhash;
-  attributes _attrs;
-  IncAttr _next_inc;
-  const TermAttr* _term{};
-  const OffsAttr* _offset{};
-  iterator _begin{};
-  iterator _end{};
-  std::array<char, 11> _buf{};
+  std::unique_ptr<TokenSink> _sub_writer;
 };
 
 template<typename Context>
@@ -96,5 +92,7 @@ void SerdeRead(Context ctx, MinHashTokenizer::Options& o) {
   auto refs = std::tie(o.analyzer, o.num_hashes);
   sdb::basics::ReadTupleOrObject(ctx, refs);
 }
+
+extern template class TypedTokenizer<MinHashTokenizer>;
 
 }  // namespace irs::analysis

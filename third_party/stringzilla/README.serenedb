@@ -1,0 +1,13 @@
+# StringZilla (vendored subset)
+
+Upstream: https://github.com/ashvardanian/StringZilla (Apache-2.0, see LICENSE)
+Pinned commit: 7fed3fb4201a34962cd456a4033bebc5ea09e74e (2026-08-12)
+
+Vendored subset: include/stringzilla/{types.h, utf8_runes*, utf8_norm*,
+utf8_wordbreaks*, utf8_sentences*, utf8_tokens*} only -- the UAX#15 normalization engine, its rune decode
+helpers, and the UAX#29 word-break kernels used for A/B reference. Header-only
+C; no upstream build files.
+
+Consumed by libs/iresearch analysis. Conformance is gated on our side by
+tests/libs/iresearch/analysis (UCD 17 NormalizationTest.txt), so snapshot
+bumps must keep that suite green.

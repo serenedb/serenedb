@@ -23,9 +23,11 @@
 #include <duckdb/common/serializer/binary_deserializer.hpp>
 #include <duckdb/common/serializer/memory_stream.hpp>
 #include <iresearch/analysis/geo_analyzer.hpp>
+#include <iresearch/analysis/minhash_tokenizer.hpp>
 #include <iresearch/analysis/sparse_ngram_tokenizer.hpp>
+#include <iresearch/analysis/token_attributes.hpp>
+#include <iresearch/analysis/tokenizer.hpp>
 #include <iresearch/analysis/tokenizer_config.hpp>
-#include <iresearch/analysis/tokenizers.hpp>
 #include <iresearch/analysis/union_tokenizer.hpp>
 #include <iresearch/analysis/wildcard_analyzer.hpp>
 #include <iresearch/index/norm.hpp>
@@ -95,6 +97,21 @@ void Features::Validate(std::string_view type) const {
     if (type == irs::analysis::SparseNGramTokenizer::type_name()) {
       return irs::IndexFeatures::Freq | irs::IndexFeatures::Norm;
     }
+    if (type == irs::analysis::SqlTokenizer::type_name()) {
+      // Expression results carry no source offsets.
+      return irs::IndexFeatures::Freq | irs::IndexFeatures::Pos |
+             irs::IndexFeatures::Norm;
+    }
+    if (type == irs::analysis::ShingleTokenizer::type_name()) {
+      // Shingle terms carry positions but no source offsets.
+      return irs::IndexFeatures::Freq | irs::IndexFeatures::Pos |
+             irs::IndexFeatures::Norm;
+    }
+    if (type == irs::analysis::MinHashTokenizer::type_name()) {
+      // Signatures carry no meaningful offsets.
+      return irs::IndexFeatures::Freq | irs::IndexFeatures::Pos |
+             irs::IndexFeatures::Norm;
+    }
     return irs::IndexFeatures::Freq | irs::IndexFeatures::Pos |
            irs::IndexFeatures::Norm | irs::IndexFeatures::Offs;
   }();
@@ -112,22 +129,6 @@ bool IsGeoAnalyzer(std::string_view type) noexcept {
     irs::analysis::GeoPointAnalyzer::type_name(),
   };
   return kGeoAnalyzers.contains(type);
-}
-
-AnalyzerImpl::Builder::ptr AnalyzerImpl::Builder::make(StringStreamTag) {
-  return std::make_unique<irs::StringTokenizer>();
-}
-
-AnalyzerImpl::Builder::ptr AnalyzerImpl::Builder::make(NumberStreamTag) {
-  return std::make_unique<irs::NumericTokenizer>();
-}
-
-AnalyzerImpl::Builder::ptr AnalyzerImpl::Builder::make(BoolStreamTag) {
-  return std::make_unique<irs::BooleanTokenizer>();
-}
-
-AnalyzerImpl::Builder::ptr AnalyzerImpl::Builder::make(NullStreamTag) {
-  return std::make_unique<irs::NullTokenizer>();
 }
 
 }  // namespace sdb::search

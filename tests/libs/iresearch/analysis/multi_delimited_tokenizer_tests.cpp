@@ -20,7 +20,9 @@
 
 #include "gtest/gtest.h"
 #include "iresearch/analysis/multi_delimited_tokenizer.hpp"
+#include "iresearch/analysis/token_batch.hpp"
 #include "tests_config.hpp"
+#include "token_sink_utils.hpp"
 
 using namespace irs::analysis;
 
@@ -46,6 +48,36 @@ class MultiDelimitedTokenizerTests : public ::testing::Test {
 };
 
 }  // namespace
+namespace {
+
+struct BlockTok {
+  std::string_view term;
+  uint32_t start;
+  uint32_t end;
+};
+
+void AssertBlockTokens(irs::analysis::Tokenizer& stream, std::string_view data,
+                       const std::vector<BlockTok>& expected) {
+  size_t tok = 0;
+  const auto check = [&](irs::TokenBatch& batch,
+                         std::span<const irs::DocRun> /*runs*/) {
+    ASSERT_FALSE(stream.Traits().explicit_pos);
+    for (uint32_t i = 0; i < batch.count; ++i, ++tok) {
+      SCOPED_TRACE(testing::Message() << "token=" << tok);
+      ASSERT_LT(tok, expected.size());
+      const auto& t = batch.terms[i];
+      ASSERT_EQ(expected[tok].term, std::string_view(t.GetData(), t.GetSize()));
+      ASSERT_EQ(expected[tok].start, batch.offs_start[i]);
+      ASSERT_EQ(expected[tok].end, batch.offs_end[i]);
+    }
+  };
+  tests::FnTokenSink sink{irs::TokenLayout::TermsPosOffs, check};
+  ASSERT_TRUE(stream.Fill(tests::ToStringT(data), sink.writer, {sink.layout}));
+  sink.writer.Finish();
+  ASSERT_EQ(expected.size(), tok);
+}
+
+}  // namespace
 
 TEST_F(MultiDelimitedTokenizerTests, consts) {
   static_assert("multi_delimiter" ==
@@ -55,249 +87,137 @@ TEST_F(MultiDelimitedTokenizerTests, consts) {
 TEST_F(MultiDelimitedTokenizerTests, test_delimiter) {
   auto stream = MultiDelimitedTokenizer::Make({.delimiters = {"a"_b}});
   ASSERT_EQ(irs::Type<MultiDelimitedTokenizer>::id(), stream->type());
-
-  ASSERT_TRUE(stream->reset("baccaad"));
-
-  auto* payload = irs::get<irs::PayAttr>(*stream);
-  ASSERT_EQ(nullptr, payload);
-  auto* term = irs::get<irs::TermAttr>(*stream);
-  auto* inc = irs::get<irs::IncAttr>(*stream);
-  auto* offset = irs::get<irs::OffsAttr>(*stream);
-  ASSERT_EQ(inc->value, 1);
-
-  ASSERT_TRUE(stream->next());
-  ASSERT_EQ("b", irs::ViewCast<char>(term->value));
-  ASSERT_EQ(offset->start, 0);
-  ASSERT_EQ(offset->end, 1);
-  ASSERT_TRUE(stream->next());
-  ASSERT_EQ("cc", irs::ViewCast<char>(term->value));
-  ASSERT_EQ(offset->start, 2);
-  ASSERT_EQ(offset->end, 4);
-  ASSERT_TRUE(stream->next());
-  ASSERT_EQ("d", irs::ViewCast<char>(term->value));
-  ASSERT_EQ(offset->start, 6);
-  ASSERT_EQ(offset->end, 7);
-  ASSERT_FALSE(stream->next());
+  ASSERT_TRUE(stream->Traits().stable);
+  AssertBlockTokens(*stream, "baccaad",
+                    {{"b", 0, 1}, {"cc", 2, 4}, {"d", 6, 7}});
 }
 
 TEST_F(MultiDelimitedTokenizerTests, test_delimiter_empty_match) {
   auto stream = MultiDelimitedTokenizer::Make({.delimiters = {"."_b}});
   ASSERT_EQ(irs::Type<MultiDelimitedTokenizer>::id(), stream->type());
-
-  ASSERT_TRUE(stream->reset(".."));
-
-  auto* payload = irs::get<irs::PayAttr>(*stream);
-  ASSERT_EQ(nullptr, payload);
-
-  ASSERT_FALSE(stream->next());
+  AssertBlockTokens(*stream, "..", {});
 }
 
 TEST_F(MultiDelimitedTokenizerTests, test_delimiter_3) {
   auto stream =
     MultiDelimitedTokenizer::Make({.delimiters = {";"_b, ","_b, "|"_b}});
   ASSERT_EQ(irs::Type<MultiDelimitedTokenizer>::id(), stream->type());
-
-  ASSERT_TRUE(stream->reset("a;b||c|d,ff"));
-
-  auto* payload = irs::get<irs::PayAttr>(*stream);
-  ASSERT_EQ(nullptr, payload);
-  auto* term = irs::get<irs::TermAttr>(*stream);
-  auto* offset = irs::get<irs::OffsAttr>(*stream);
-
-  ASSERT_TRUE(stream->next());
-  ASSERT_EQ("a", irs::ViewCast<char>(term->value));
-  ASSERT_EQ(offset->start, 0);
-  ASSERT_EQ(offset->end, 1);
-  ASSERT_TRUE(stream->next());
-  ASSERT_EQ("b", irs::ViewCast<char>(term->value));
-  ASSERT_EQ(offset->start, 2);
-  ASSERT_EQ(offset->end, 3);
-  ASSERT_TRUE(stream->next());
-  ASSERT_EQ("c", irs::ViewCast<char>(term->value));
-  ASSERT_EQ(offset->start, 5);
-  ASSERT_EQ(offset->end, 6);
-  ASSERT_TRUE(stream->next());
-  ASSERT_EQ("d", irs::ViewCast<char>(term->value));
-  ASSERT_EQ(offset->start, 7);
-  ASSERT_EQ(offset->end, 8);
-  ASSERT_TRUE(stream->next());
-  ASSERT_EQ("ff", irs::ViewCast<char>(term->value));
-  ASSERT_EQ(offset->start, 9);
-  ASSERT_EQ(offset->end, 11);
-  ASSERT_FALSE(stream->next());
+  AssertBlockTokens(
+    *stream, "a;b||c|d,ff",
+    {{"a", 0, 1}, {"b", 2, 3}, {"c", 5, 6}, {"d", 7, 8}, {"ff", 9, 11}});
 }
 
 TEST_F(MultiDelimitedTokenizerTests, test_delimiter_5) {
   auto stream = MultiDelimitedTokenizer::Make(
     {.delimiters = {";"_b, ","_b, "|"_b, "."_b, ":"_b}});
   ASSERT_EQ(irs::Type<MultiDelimitedTokenizer>::id(), stream->type());
-
-  ASSERT_TRUE(stream->reset("a:b||c.d,ff."));
-
-  auto* payload = irs::get<irs::PayAttr>(*stream);
-  ASSERT_EQ(nullptr, payload);
-  auto* term = irs::get<irs::TermAttr>(*stream);
-  auto* offset = irs::get<irs::OffsAttr>(*stream);
-
-  ASSERT_TRUE(stream->next());
-  ASSERT_EQ("a", irs::ViewCast<char>(term->value));
-  ASSERT_EQ(offset->start, 0);
-  ASSERT_EQ(offset->end, 1);
-  ASSERT_TRUE(stream->next());
-  ASSERT_EQ("b", irs::ViewCast<char>(term->value));
-  ASSERT_EQ(offset->start, 2);
-  ASSERT_EQ(offset->end, 3);
-  ASSERT_TRUE(stream->next());
-  ASSERT_EQ("c", irs::ViewCast<char>(term->value));
-  ASSERT_EQ(offset->start, 5);
-  ASSERT_EQ(offset->end, 6);
-  ASSERT_TRUE(stream->next());
-  ASSERT_EQ("d", irs::ViewCast<char>(term->value));
-  ASSERT_EQ(offset->start, 7);
-  ASSERT_EQ(offset->end, 8);
-  ASSERT_TRUE(stream->next());
-  ASSERT_EQ("ff", irs::ViewCast<char>(term->value));
-  ASSERT_EQ(offset->start, 9);
-  ASSERT_EQ(offset->end, 11);
-  ASSERT_FALSE(stream->next());
+  AssertBlockTokens(
+    *stream, "a:b||c.d,ff.",
+    {{"a", 0, 1}, {"b", 2, 3}, {"c", 5, 6}, {"d", 7, 8}, {"ff", 9, 11}});
 }
 
 TEST_F(MultiDelimitedTokenizerTests, test_delimiter_single_long) {
   auto stream = MultiDelimitedTokenizer::Make({.delimiters = {"foo"_b}});
   ASSERT_EQ(irs::Type<MultiDelimitedTokenizer>::id(), stream->type());
-
-  ASSERT_TRUE(stream->reset("foobarfoobazbarfoobar"));
-
-  auto* payload = irs::get<irs::PayAttr>(*stream);
-  ASSERT_EQ(nullptr, payload);
-  auto* term = irs::get<irs::TermAttr>(*stream);
-  auto* offset = irs::get<irs::OffsAttr>(*stream);
-
-  ASSERT_TRUE(stream->next());
-  ASSERT_EQ("bar", irs::ViewCast<char>(term->value));
-  ASSERT_EQ(offset->start, 3);
-  ASSERT_EQ(offset->end, 6);
-  ASSERT_TRUE(stream->next());
-  ASSERT_EQ("bazbar", irs::ViewCast<char>(term->value));
-  ASSERT_EQ(offset->start, 9);
-  ASSERT_EQ(offset->end, 15);
-  ASSERT_TRUE(stream->next());
-  ASSERT_EQ("bar", irs::ViewCast<char>(term->value));
-  ASSERT_EQ(offset->start, 18);
-  ASSERT_EQ(offset->end, 21);
-  ASSERT_FALSE(stream->next());
+  AssertBlockTokens(*stream, "foobarfoobazbarfoobar",
+                    {{"bar", 3, 6}, {"bazbar", 9, 15}, {"bar", 18, 21}});
 }
 
 TEST_F(MultiDelimitedTokenizerTests, no_delimiter) {
   auto stream = MultiDelimitedTokenizer::Make({.delimiters = {}});
   ASSERT_EQ(irs::Type<MultiDelimitedTokenizer>::id(), stream->type());
-
-  ASSERT_TRUE(stream->reset("foobar"));
-
-  auto* payload = irs::get<irs::PayAttr>(*stream);
-  ASSERT_EQ(nullptr, payload);
-  auto* term = irs::get<irs::TermAttr>(*stream);
-  auto* offset = irs::get<irs::OffsAttr>(*stream);
-
-  ASSERT_TRUE(stream->next());
-  ASSERT_EQ("foobar", irs::ViewCast<char>(term->value));
-  ASSERT_EQ(offset->start, 0);
-  ASSERT_EQ(offset->end, 6);
-  ASSERT_FALSE(stream->next());
+  AssertBlockTokens(*stream, "foobar", {{"foobar", 0, 6}});
 }
 
 TEST_F(MultiDelimitedTokenizerTests, multi_words) {
   auto stream =
     MultiDelimitedTokenizer::Make({.delimiters = {"foo"_b, "bar"_b, "baz"_b}});
   ASSERT_EQ(irs::Type<MultiDelimitedTokenizer>::id(), stream->type());
-
-  ASSERT_TRUE(stream->reset("fooxyzbarbazz"));
-
-  auto* payload = irs::get<irs::PayAttr>(*stream);
-  ASSERT_EQ(nullptr, payload);
-  auto* term = irs::get<irs::TermAttr>(*stream);
-  auto* offset = irs::get<irs::OffsAttr>(*stream);
-
-  ASSERT_TRUE(stream->next());
-  ASSERT_EQ("xyz", irs::ViewCast<char>(term->value));
-  ASSERT_EQ(offset->start, 3);
-  ASSERT_EQ(offset->end, 6);
-  ASSERT_TRUE(stream->next());
-  ASSERT_EQ("z", irs::ViewCast<char>(term->value));
-  ASSERT_EQ(offset->start, 12);
-  ASSERT_EQ(offset->end, 13);
-  ASSERT_FALSE(stream->next());
+  AssertBlockTokens(*stream, "fooxyzbarbazz", {{"xyz", 3, 6}, {"z", 12, 13}});
 }
 
 TEST_F(MultiDelimitedTokenizerTests, multi_words_2) {
   auto stream =
     MultiDelimitedTokenizer::Make({.delimiters = {"foo"_b, "bar"_b, "baz"_b}});
   ASSERT_EQ(irs::Type<MultiDelimitedTokenizer>::id(), stream->type());
-
-  ASSERT_TRUE(stream->reset("foobarbaz"));
-
-  auto* payload = irs::get<irs::PayAttr>(*stream);
-  ASSERT_EQ(nullptr, payload);
-
-  ASSERT_FALSE(stream->next());
+  AssertBlockTokens(*stream, "foobarbaz", {});
 }
 
 TEST_F(MultiDelimitedTokenizerTests, trick_matching_1) {
   auto stream =
     MultiDelimitedTokenizer::Make({.delimiters = {"foo"_b, "ffa"_b}});
   ASSERT_EQ(irs::Type<MultiDelimitedTokenizer>::id(), stream->type());
-
-  ASSERT_TRUE(stream->reset("abcffoobar"));
-
-  auto* payload = irs::get<irs::PayAttr>(*stream);
-  ASSERT_EQ(nullptr, payload);
-  auto* term = irs::get<irs::TermAttr>(*stream);
-  auto* offset = irs::get<irs::OffsAttr>(*stream);
-
-  ASSERT_TRUE(stream->next());
-  ASSERT_EQ("abcf", irs::ViewCast<char>(term->value));
-  ASSERT_EQ(offset->start, 0);
-  ASSERT_EQ(offset->end, 4);
-  ASSERT_TRUE(stream->next());
-  ASSERT_EQ("bar", irs::ViewCast<char>(term->value));
-  ASSERT_EQ(offset->start, 7);
-  ASSERT_EQ(offset->end, 10);
-  ASSERT_FALSE(stream->next());
+  AssertBlockTokens(*stream, "abcffoobar", {{"abcf", 0, 4}, {"bar", 7, 10}});
 }
 
-// A delimiter that occurs strictly inside another delimiter's path, without
-// being its prefix: walking "xab" follows real edges x, a, b of "xabc" and
-// passes over "ab", which ends at the third byte.
+TEST_F(MultiDelimitedTokenizerTests, single_long_needle_over_bm_threshold) {
+  auto stream =
+    MultiDelimitedTokenizer::Make({.delimiters = {"|====SPLIT====|"_b}});
+  ASSERT_TRUE(stream->Traits().stable);
+  AssertBlockTokens(*stream, "aa|====SPLIT====|bb",
+                    {{"aa", 0, 2}, {"bb", 17, 19}});
+  AssertBlockTokens(*stream, "|====SPLIT====||====SPLIT====|", {});
+  AssertBlockTokens(*stream, "|====SPLIT====", {{"|====SPLIT====", 0, 14}});
+}
+
+TEST_F(MultiDelimitedTokenizerTests, match_completes_across_failed_prefix) {
+  auto stream =
+    MultiDelimitedTokenizer::Make({.delimiters = {"abd"_b, "bc"_b}});
+  AssertBlockTokens(*stream, "1abc2", {{"1a", 0, 2}, {"2", 4, 5}});
+}
+
+TEST_F(MultiDelimitedTokenizerTests, match_completes_at_value_end) {
+  auto stream = MultiDelimitedTokenizer::Make({.delimiters = {"aXb"_b, "X"_b}});
+  AssertBlockTokens(*stream, "aX", {{"a", 0, 1}});
+  AssertBlockTokens(*stream, "aXb", {});
+  AssertBlockTokens(*stream, "zXz", {{"z", 0, 1}, {"z", 2, 3}});
+}
+
+TEST_F(MultiDelimitedTokenizerTests, high_byte_single_char_delimiters) {
+  auto few = MultiDelimitedTokenizer::Make({.delimiters = {"\xFF"_b, ";"_b}});
+  AssertBlockTokens(*few,
+                    "a\xFF"
+                    "b;c",
+                    {{"a", 0, 1}, {"b", 2, 3}, {"c", 4, 5}});
+  const std::string xs(40, 'x');
+  const std::string ys(40, 'y');
+  AssertBlockTokens(*few, xs + "\xFF" + ys, {{xs, 0, 40}, {ys, 41, 81}});
+
+  auto many = MultiDelimitedTokenizer::Make(
+    {.delimiters = {"\xFF"_b, "\x80"_b, "0"_b, "1"_b, "2"_b, "3"_b, "4"_b,
+                    "5"_b, "6"_b, "7"_b, "8"_b}});
+  AssertBlockTokens(*many,
+                    "a\x80"
+                    "b\xFF"
+                    "c7d",
+                    {{"a", 0, 1}, {"b", 2, 3}, {"c", 4, 5}, {"d", 6, 7}});
+}
+
+TEST_F(MultiDelimitedTokenizerTests, multi_string_matches_one_string) {
+  auto one = MultiDelimitedTokenizer::Make({.delimiters = {", "_b}});
+  auto multi =
+    MultiDelimitedTokenizer::Make({.delimiters = {", "_b, "\x01\x01"_b}});
+  constexpr std::string_view kData = "foo, bar,baz, , qux, ";
+  const auto expected = tests::AnalyzeTerms(*one, kData);
+  const auto actual = tests::AnalyzeTerms(*multi, kData);
+  ASSERT_TRUE(expected.has_value());
+  ASSERT_TRUE(actual.has_value());
+  ASSERT_EQ(*expected, *actual);
+  ASSERT_EQ((std::vector<std::string>{"foo", "bar,baz", "qux"}), *actual);
+}
+
 TEST_F(MultiDelimitedTokenizerTests, delimiter_inside_another_path) {
   auto stream =
     MultiDelimitedTokenizer::Make({.delimiters = {"ab"_b, "xabc"_b}});
 
-  ASSERT_TRUE(stream->reset("1xab2"));
-
-  auto* term = irs::get<irs::TermAttr>(*stream);
-
-  ASSERT_TRUE(stream->next());
-  ASSERT_EQ("1x", irs::ViewCast<char>(term->value));
-  ASSERT_TRUE(stream->next());
-  ASSERT_EQ("2", irs::ViewCast<char>(term->value));
-  ASSERT_FALSE(stream->next());
+  AssertBlockTokens(*stream, "1xab2", {{"1x", 0, 2}, {"2", 4, 5}});
 }
 
-// The same disagreement further from the root, and with the inner delimiter
-// reachable only after the outer one's path has been partly walked.
 TEST_F(MultiDelimitedTokenizerTests, delimiter_inside_another_path_deep) {
   auto stream =
     MultiDelimitedTokenizer::Make({.delimiters = {"cd"_b, "abcde"_b}});
 
-  ASSERT_TRUE(stream->reset("xabcdy"));
-
-  auto* term = irs::get<irs::TermAttr>(*stream);
-
-  ASSERT_TRUE(stream->next());
-  ASSERT_EQ("xab", irs::ViewCast<char>(term->value));
-  ASSERT_TRUE(stream->next());
-  ASSERT_EQ("y", irs::ViewCast<char>(term->value));
-  ASSERT_FALSE(stream->next());
+  AssertBlockTokens(*stream, "xabcdy", {{"xab", 0, 3}, {"y", 5, 6}});
 }
 
 // Two delimiters ending on the same byte: the one that started earlier wins, so
@@ -306,15 +226,7 @@ TEST_F(MultiDelimitedTokenizerTests, delimiters_ending_together_leftmost_wins) {
   auto stream =
     MultiDelimitedTokenizer::Make({.delimiters = {"bc"_b, "abc"_b}});
 
-  ASSERT_TRUE(stream->reset("1abc2"));
-
-  auto* term = irs::get<irs::TermAttr>(*stream);
-
-  ASSERT_TRUE(stream->next());
-  ASSERT_EQ("1", irs::ViewCast<char>(term->value));
-  ASSERT_TRUE(stream->next());
-  ASSERT_EQ("2", irs::ViewCast<char>(term->value));
-  ASSERT_FALSE(stream->next());
+  AssertBlockTokens(*stream, "1abc2", {{"1", 0, 1}, {"2", 4, 5}});
 }
 
 // A chain where each delimiter is a suffix of the next; the longest, which
@@ -323,15 +235,7 @@ TEST_F(MultiDelimitedTokenizerTests, delimiter_chain_of_suffixes) {
   auto stream =
     MultiDelimitedTokenizer::Make({.delimiters = {"c"_b, "bc"_b, "abc"_b}});
 
-  ASSERT_TRUE(stream->reset("zabcz"));
-
-  auto* term = irs::get<irs::TermAttr>(*stream);
-
-  ASSERT_TRUE(stream->next());
-  ASSERT_EQ("z", irs::ViewCast<char>(term->value));
-  ASSERT_TRUE(stream->next());
-  ASSERT_EQ("z", irs::ViewCast<char>(term->value));
-  ASSERT_FALSE(stream->next());
+  AssertBlockTokens(*stream, "zabcz", {{"z", 0, 1}, {"z", 4, 5}});
 }
 
 TEST_F(MultiDelimitedTokenizerTests, construct) {
@@ -339,23 +243,138 @@ TEST_F(MultiDelimitedTokenizerTests, construct) {
   {
     auto stream = MultiDelimitedTokenizer::Make({.delimiters = {"a"_b, "b"_b}});
     ASSERT_NE(nullptr, stream);
-    ASSERT_TRUE(stream->reset("aib"));
-    ASSERT_TRUE(stream->next());
-    auto* term = irs::get<irs::TermAttr>(*stream);
-    ASSERT_EQ("i", irs::ViewCast<char>(term->value));
-    ASSERT_FALSE(stream->next());
+    AssertBlockTokens(*stream, "aib", {{"i", 1, 2}});
   }
 
-  // .........................................................................
-  // The old JSON suite covered "wrong name" (registry asked for a non-existent
-  // type) and "wrong type" (`"delimiters": 1`). Both are parser-/registry-
-  // level failures with no direct-API analogue. The remaining valid construct
-  // case is the default-Options happy path -- an empty delimiters list still
-  // produces a valid (degenerate) analyzer.
-  // .........................................................................
   {
     auto stream =
       MultiDelimitedTokenizer::Make(MultiDelimitedTokenizer::Options{});
     ASSERT_NE(nullptr, stream);
+  }
+}
+
+TEST_F(MultiDelimitedTokenizerTests, native_fills_match_pull) {
+  const std::vector<std::vector<irs::bstring>> delim_sets = {
+    {},
+    {"a"_b},
+    {";"_b, ","_b},
+    {";"_b, ","_b, "|"_b, "."_b, ":"_b},
+    {"0"_b, "1"_b, "2"_b, "3"_b, "4"_b, "5"_b, "6"_b, "7"_b, "8"_b},
+    {"\xFF"_b, ";"_b},
+    {"\xFF"_b, "\x80"_b, "0"_b, "1"_b, "2"_b, "3"_b, "4"_b, "5"_b, "6"_b},
+    {"foo"_b},
+    {"foo"_b, "bar"_b, "baz"_b}};
+
+  std::string huge;
+  for (size_t i = 0; i < 1500; ++i) {
+    huge += "w" + std::to_string(i) + ";";
+  }
+  const std::vector<std::string> values = {
+    "",
+    ";;;",
+    "a;b,c|d.e:f",
+    "plain",
+    ";lead",
+    "trail;",
+    huge,
+    "foobarfoobazbar",
+    "a\xFF"
+    "b\x80"
+    "c;d",
+    std::string(100, 'q') + ";" + std::string(50, 'r')};
+
+  for (const auto& delims : delim_sets) {
+    auto pull_stream = MultiDelimitedTokenizer::Make({.delimiters = {delims}});
+    auto fill_stream = MultiDelimitedTokenizer::Make({.delimiters = {delims}});
+    for (const auto& v : values) {
+      SCOPED_TRACE(testing::Message()
+                   << "delims=" << delims.size() << " value.size=" << v.size());
+      auto pulled = tests::Analyze(*pull_stream, v);
+      ASSERT_TRUE(pulled.has_value());
+      std::vector<BlockTok> expected;
+      std::vector<std::string> storage;
+      storage.reserve(pulled->size());
+      for (auto& t : *pulled) {
+        storage.emplace_back(std::move(t.term));
+        expected.push_back({storage.back(), t.offs_start, t.offs_end});
+      }
+      AssertBlockTokens(*fill_stream, v, expected);
+    }
+  }
+}
+
+TEST_F(MultiDelimitedTokenizerTests, column_fill_matches_per_value) {
+  const std::vector<std::vector<irs::bstring>> delim_sets = {
+    {},
+    {"a"_b},
+    {";"_b, ","_b},
+    {";"_b, ","_b, "|"_b, "."_b, ":"_b},
+    {"0"_b, "1"_b, "2"_b, "3"_b, "4"_b, "5"_b, "6"_b, "7"_b, "8"_b},
+    {"foo"_b},
+    {"foo"_b, "bar"_b, "baz"_b}};
+
+  std::string huge;
+  for (size_t i = 0; i < 1500; ++i) {
+    huge += "w" + std::to_string(i) + ";";
+  }
+  const std::vector<std::string> values = {
+    "",
+    ";;;",
+    "a;b,c|d.e:f",
+    "plain",
+    ";lead",
+    "trail;",
+    huge,
+    "foobarfoobazbar",
+    std::string(100, 'q') + ";" + std::string(50, 'r')};
+
+  struct Tok {
+    std::string term;
+    uint32_t start;
+    uint32_t end;
+    bool operator==(const Tok&) const = default;
+  };
+
+  for (const auto& delims : delim_sets) {
+    auto column_stream =
+      MultiDelimitedTokenizer::Make({.delimiters = {delims}});
+    auto per_value = MultiDelimitedTokenizer::Make({.delimiters = {delims}});
+
+    std::vector<std::vector<Tok>> expected(values.size());
+    for (size_t v = 0; v < values.size(); ++v) {
+      auto tokens = tests::Analyze(*per_value, values[v]);
+      ASSERT_TRUE(tokens.has_value());
+      for (auto& t : *tokens) {
+        expected[v].push_back({std::move(t.term), t.offs_start, t.offs_end});
+      }
+    }
+
+    std::vector<duckdb::string_t> vals;
+    for (size_t i = 0; i < values.size(); ++i) {
+      vals.emplace_back(values[i].data(),
+                        static_cast<uint32_t>(values[i].size()));
+    }
+    std::vector<std::vector<Tok>> got(values.size());
+    const auto collect = [&](irs::TokenBatch& batch,
+                             std::span<const irs::DocRun> runs) {
+      uint32_t tok = 0;
+      for (const auto& run : runs) {
+        for (uint32_t j = 0; j < run.ntokens; ++j, ++tok) {
+          const auto& t = batch.terms[tok];
+          got[run.doc - 1].push_back({std::string{t.GetData(), t.GetSize()},
+                                      batch.offs_start[tok],
+                                      batch.offs_end[tok]});
+        }
+      }
+    };
+    tests::FnTokenSink sink{irs::TokenLayout::TermsPosOffs, collect};
+    tests::FillColumn(*column_stream, vals, 1, sink.writer, sink.layout);
+    sink.writer.Finish();
+
+    for (size_t v = 0; v < values.size(); ++v) {
+      SCOPED_TRACE(testing::Message()
+                   << "delims=" << delims.size() << " doc=" << v + 1);
+      ASSERT_EQ(expected[v], got[v]);
+    }
   }
 }

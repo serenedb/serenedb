@@ -653,6 +653,69 @@ ts_lexize
 {"Hello World"}
 
 
+
+# --- form = nfkc: compatibility folding (ligatures, enclosed, full-width) ---
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY norm_nfkc(
+    template = 'norm',
+    case = 'lower',
+    accent = true,
+    form = 'nfkc'
+)
+
+
+query
+SELECT ts_lexize('norm_nfkc', 'ﬁnancial ① ＦＵＬＬ 2²');
+----
+ts_lexize
+{"financial 1 full 22"}
+
+
+# --- locale is optional: omitted means locale-independent simple case
+# --- (final sigma stays plain sigma) ---
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY norm_no_locale(
+    template = 'norm',
+    case = 'lower'
+)
+
+
+query
+SELECT ts_lexize('norm_no_locale', 'ΟΔΟΣ AbC');
+----
+ts_lexize
+{"οδοσ abc"}
+
+
+# --- providing a locale opts into tailored casing (Turkish dotless i) ---
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY norm_tr(
+    template = 'norm',
+    case = 'lower',
+    locale = 'tr_TR'
+)
+
+
+query
+SELECT ts_lexize('norm_tr', 'ISPARTA');
+----
+ts_lexize
+{ısparta}
+
+
+statement error
+CREATE TEXT SEARCH DICTIONARY norm_bad_form(
+    template = 'norm',
+    form = 'nfd'
+)
+----
+db error: ERROR: invalid value in "form" parameter
+HINT: Unicode normalization form: nfc, nfkc
+
+
 # COLLATION TEMPLATE
 
 statement ok
@@ -954,6 +1017,106 @@ SELECT ts_lexize('seg_graphic_none', 'Test - ReTeSt');
 ----
 ts_lexize
 {Test,ReTeSt}
+
+
+# --- non-ascii: UAX#29 word breaks + simple case mapping (CJK per glyph,
+# --- final sigma stays plain sigma, eszett has no simple uppercase) ---
+
+query
+SELECT ts_lexize('seg_graphic_lower', 'Café MENÚ 北京 москва Ωμέγα ΟΔΟΣ 3.14');
+----
+ts_lexize
+{café,menú,北,京,москва,ωμέγα,οδοσ,3.14}
+
+
+query
+SELECT ts_lexize('seg_graphic_upper', 'straße ΟΔΟΣ');
+----
+ts_lexize
+{STRAßE,ΟΔΟΣ}
+
+
+
+# --- break = sentence: whitespace-trimmed UAX#29 sentences ---
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY seg_sentence(
+    template = 'segmentation',
+    break = 'sentence'
+)
+
+
+query
+SELECT ts_lexize('seg_sentence', 'Hello world. Second sentence! Third?');
+----
+ts_lexize
+{"Hello world.","Second sentence!",Third?}
+
+
+# --- break = sentence composes with case ---
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY seg_sentence_lower(
+    template = 'segmentation',
+    break = 'sentence',
+    case = 'lower'
+)
+
+
+query
+SELECT ts_lexize('seg_sentence_lower', 'Hello World. CAFÉ Time!');
+----
+ts_lexize
+{"hello world.","café time!"}
+
+
+# --- break = line: one token per line, CRLF is a single break ---
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY seg_line(
+    template = 'segmentation',
+    break = 'line'
+)
+
+
+query
+SELECT ts_lexize('seg_line', E'first line\r\nsecond\nthird');
+----
+ts_lexize
+{"first line",second,third}
+
+
+# --- break = paragraph: blank lines split, single newlines glue ---
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY seg_paragraph(
+    template = 'segmentation',
+    break = 'paragraph'
+)
+
+
+query
+SELECT ts_lexize('seg_paragraph', E'one\n\ntwo\n\n\nthree');
+----
+ts_lexize
+{one,two,three}
+
+
+query
+SELECT array_length(ts_lexize('seg_paragraph', E'glued\nlines\n\nnext'), 1);
+----
+array_length
+2
+
+
+statement error
+CREATE TEXT SEARCH DICTIONARY seg_bad_break(
+    template = 'segmentation',
+    break = 'word'
+)
+----
+db error: ERROR: invalid value in "break" parameter
+HINT: Token boundary detection mode: all, graphic, alpha, sentence, line, paragraph
 
 
 # STOPWORDS TOKENIZER TEMPLATE
@@ -2258,6 +2421,7 @@ Text Search Dictionary:
     inputtype (string) [default: utf8] - Input stream encoding: binary, utf8
     startmarker (string) - Prefix marker appended at n-gram boundary
     endmarker (string) - Suffix marker appended at n-gram boundary
+    mode (string) [default: all] - Mode of generation: all, only_prefix, only_suffix, only_prefix_and_suffix
   nearest_neighbors:
     modellocation (string) - Path to the ML model file
     topk (integer) [default: 1] - Number of top results to return
@@ -2281,12 +2445,18 @@ Text Search Dictionary:
   wildcard:
     ngramsize (integer) [default: 3] - N-gram size for wildcard prefix indexing (minimum 2)
   norm:
-    locale (string) - ICU locale string (e.g. en_US.UTF-8)
+    locale (string) - ICU locale for case conversion; omit for locale-independent simple case
     case (string) [default: none] - Text case conversion: none, lower, upper
     accent (boolean) [default: true] - Preserve accent marks
+    form (string) [default: nfc] - Unicode normalization form: nfc, nfkc
   segmentation:
     case (string) [default: none] - Text case conversion: none, lower, upper
-    break (string) [default: alpha] - Token boundary detection mode: all, graphic, alpha
+    break (string) [default: alpha] - Token boundary detection mode: all, graphic, alpha, sentence, line, paragraph
+  icu_text:
+    locale[required] (string) [default: none] - ICU locale string (e.g. en_US.UTF-8)
+    break (string) [default: alpha] - Token boundary detection mode: all, graphic, alpha, sentence
+  split_by_non_alpha:
+    case (string) [default: none] - Text case conversion: none, lower, upper
   pipeline:
     (no additional options)
   pattern:
@@ -2322,6 +2492,16 @@ Text Search Dictionary:
       optimizeforspace (boolean) [default: false] - Optimize S2 index for space rather than speed
   keyword:
     (no additional options)
+  sql:
+    expression[required] (string) [default: none] - DuckDB scalar expression over the pseudo-column `input` (VARCHAR), returning VARCHAR (one token per value) or LIST(VARCHAR) (token list); built-in functions only, no subqueries, no volatile functions
+  shingle:
+    mingram (integer) [default: 2] - Minimum shingle (word n-gram) size (minimum 2)
+    maxgram (integer) [default: 2] - Maximum shingle (word n-gram) size (>= mingram)
+    outputunigrams (boolean) [default: true] - Index individual tokens alongside the shingles
+    outputunigramsifnoshingles (boolean) [default: false] - Index unigrams only when the input is too short to form a shingle
+    storetokens (boolean) [default: true] - Persist the per-document token stream (verification source for phrases longer than maxgram). When false the index stores terms only
+    frequentwords (string) - Comma-separated words (typically stopwords). When non-empty, shingles of mingram stay dense while wider sizes are indexed only for spans containing one of these words (adaptive width escalation)
+    fillertoken (string) - Token standing in for positions the base analyzer removed (e.g. stopwords) in the stored token stream; never indexed as a term. Default '_'
   solr_synonyms:
     synonyms[required] (string) [default: none] - Inline Solr-format synonyms file content: one rule per line, comma-separated terms; `=>` separates LHS from RHS for one-way mappings
   wordnet_synonyms:

@@ -22,6 +22,7 @@
 
 #include "filter_test_case_base.hpp"
 #include "formats/column/test_cs_helpers.hpp"
+#include "insert_field.hpp"
 #include "iresearch/index/index_writer.hpp"
 #include "iresearch/search/boolean_filter.hpp"
 #include "iresearch/search/proxy_filter.hpp"
@@ -153,7 +154,7 @@ class ProxyFilterTestCase : public ::testing::TestWithParam<size_t> {
       for (size_t i = 0; i < GetParam(); ++i) {
         auto doc = ctx.Insert();
         auto field = std::make_shared<::tests::StringField>("foo", "bar");
-        doc.Insert(*field);
+        ::tests::InsertField(doc, *field);
       }
       ctx.Commit();
     }

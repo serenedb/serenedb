@@ -20,32 +20,46 @@
 
 #pragma once
 
+#include <duckdb/storage/shared_object_cache.hpp>
 #include <memory>
 #include <string>
 #include <string_view>
 
 #include "iresearch/utils/fasttext_utils.hpp"
+#include "pg/sql_exception_macro.h"
 
 namespace sdb::fast_text {
 
-class Model final : public fasttext::ImmutableFastText {
+class Model final : public fasttext::ImmutableFastText,
+                    public duckdb::ObjectCacheEntry {
  public:
-  explicit Model(std::string_view key) : _key{key} { loadModel(_key); }
+  static constexpr std::string_view ObjectType() {
+    return "sdb_fasttext_model";
+  }
 
-  std::string_view key() const noexcept { return _key; }
+  std::string GetObjectType() final { return std::string{ObjectType()}; }
 
- private:
-  std::string _key;
+  explicit Model(std::string_view location) {
+    loadModel(std::string{location});
+  }
+
+  duckdb::optional_idx GetEstimatedCacheMemory() const final;
 };
 
-using ModelPtr = std::shared_ptr<Model>;
-
-ModelPtr CreateModel(std::string_view key);
-
 template<typename T>
-auto CreateModel(std::string_view key) {
-  auto model = CreateModel(key);
-  return std::shared_ptr<const T>{model, model.get()};
+duckdb::shared_ptr<const T> GetOrBuildModel(duckdb::SharedObjectCache& cache,
+                                            std::string_view location) {
+  try {
+    auto model = cache.GetOrBuild<Model>(
+      location, [&] { return duckdb::make_uniq<Model>(location); });
+    const T* raw = model.get();
+    return duckdb::shared_ptr<const T>{std::move(model), raw};
+  } catch (const std::exception& e) {
+    THROW_SQL_ERROR(ERR_MSG("failed to load fasttext model from: ", location,
+                            ", error: ", e.what()));
+  } catch (...) {
+    THROW_SQL_ERROR(ERR_MSG("failed to load fasttext model from: ", location));
+  }
 }
 
 }  // namespace sdb::fast_text

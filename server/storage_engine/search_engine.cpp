@@ -27,10 +27,7 @@
 
 #include <algorithm>
 #include <duckdb/common/file_system.hpp>
-#include <iresearch/analysis/classification_tokenizer.hpp>
-#include <iresearch/analysis/fast_text_model.hpp>
-#include <iresearch/analysis/nearest_neighbors_tokenizer.hpp>
-#include <iresearch/analysis/tokenizers.hpp>
+#include <iresearch/analysis/tokenizer.hpp>
 #include <iresearch/formats/formats.hpp>
 #include <iresearch/search/filter_optimizer.hpp>
 #include <utility>
@@ -58,11 +55,6 @@ ABSL_DECLARE_FLAG(uint64_t, background_threads);
 namespace sdb::search {
 
 SearchEngine::SearchEngine() : _dir_feature{DatabasePathFeature::instance()} {
-  ::irs::analysis::ClassificationTokenizer::set_model_provider(
-    &fast_text::CreateModel<fasttext::FastText>);
-  ::irs::analysis::NearestNeighborsTokenizer::set_model_provider(
-    &fast_text::CreateModel<fasttext::ImmutableFastText>);
-
   irs::formats::Init();
   irs::InitOptimizeRules();
 

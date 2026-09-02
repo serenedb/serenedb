@@ -286,13 +286,13 @@ QUERY PLAN
 ╰───────────────────────────────────────────────────────────────────────────────╯
 
 query
-SELECT date_trunc('day', ts::TIMESTAMPTZ) AS d, count(*) AS c, sum(v) AS s FROM prec WHERE v < 120 GROUP BY 1 ORDER BY 1;
+SELECT d::VARCHAR AS d, c, s FROM (SELECT date_trunc('day', ts::TIMESTAMPTZ) AS d, count(*) AS c, sum(v) AS s FROM prec WHERE v < 120 GROUP BY 1) ORDER BY 1;
 ----
 d	c	s
-2024-12-22 10:00:00+00	39	741
-2024-12-23 10:00:00+00	39	2262
-2024-12-24 10:00:00+00	39	3783
-2024-12-25 10:00:00+00	3	354
+2024-12-23 00:00:00+14	39	741
+2024-12-24 00:00:00+14	39	2262
+2024-12-25 00:00:00+14	39	3783
+2024-12-26 00:00:00+14	3	354
 NULL	1	-1
 
 query
@@ -368,13 +368,13 @@ statement ok
 SET TimeZone = 'Pacific/Kiritimati';
 
 query
-SELECT date_trunc('day', ts::TIMESTAMPTZ) AS d, count(*) AS c, sum(v) AS s FROM prec WHERE v < 120 GROUP BY 1 ORDER BY 1;
+SELECT d::VARCHAR AS d, c, s FROM (SELECT date_trunc('day', ts::TIMESTAMPTZ) AS d, count(*) AS c, sum(v) AS s FROM prec WHERE v < 120 GROUP BY 1) ORDER BY 1;
 ----
 d	c	s
-2024-12-22 10:00:00+00	39	741
-2024-12-23 10:00:00+00	39	2262
-2024-12-24 10:00:00+00	39	3783
-2024-12-25 10:00:00+00	3	354
+2024-12-23 00:00:00+14	39	741
+2024-12-24 00:00:00+14	39	2262
+2024-12-25 00:00:00+14	39	3783
+2024-12-26 00:00:00+14	3	354
 NULL	1	-1
 
 query

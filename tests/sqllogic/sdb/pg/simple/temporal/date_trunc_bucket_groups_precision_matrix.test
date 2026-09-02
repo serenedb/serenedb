@@ -1,0 +1,354 @@
+statement ok
+SET TimeZone = 'Etc/UTC';
+
+statement ok
+CREATE TABLE prec AS SELECT ts::TIMESTAMP_NS AS ts_ns, ts::TIMESTAMP_MS AS ts_ms, ts::TIMESTAMP_S AS ts_s, ts, ts::TIMESTAMPTZ AS tstz, ts::DATE AS d, i AS v FROM (SELECT TIMESTAMP '2024-12-23 00:00:00' + INTERVAL (i * 37) MINUTE + INTERVAL (i % 7) SECOND AS ts, i FROM range(0, 1500) t(i));
+
+statement ok
+INSERT INTO prec VALUES (NULL, NULL, NULL, NULL, NULL, NULL, -1);
+
+statement ok
+CREATE TABLE nsb AS SELECT ts_ns, ts_ns::TIMESTAMP_MS AS ts_ms, ts_ns::TIMESTAMP_S AS ts_s, v FROM (SELECT TIMESTAMP_NS '2025-01-01 23:59:59.9999996' + INTERVAL (i) MICROSECOND AS ts_ns, i AS v FROM range(-3, 4) t(i) UNION ALL SELECT TIMESTAMP_NS '1969-12-31 23:59:59.9999996' + INTERVAL (i) MICROSECOND, 100 + i FROM range(-3, 4) t(i) UNION ALL SELECT TIMESTAMP_NS '2025-01-31 23:59:59.9999995' + INTERVAL (i) MICROSECOND, 200 + i FROM range(-3, 4) t(i) UNION ALL SELECT TIMESTAMP_NS '2025-01-01 00:00:00.0000004' + INTERVAL (i) MICROSECOND, 300 + i FROM range(-3, 4) t(i) UNION ALL SELECT TIMESTAMP_NS '1969-12-28 23:59:59.9999999' + INTERVAL (i) MICROSECOND, 400 + i FROM range(-3, 4) t(i) UNION ALL SELECT TIMESTAMP_NS '1970-01-01 00:00:00.0000005', 500 UNION ALL SELECT TIMESTAMP_NS '1969-12-31 23:59:59.9999985', 501 UNION ALL SELECT NULL, 502);
+
+statement ok
+SET disabled_optimizers = 'compressed_materialization';
+
+statement ok
+CREATE TABLE ref_prec AS
+SELECT 'dt second ts_ns' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_trunc('second', ts_ns) AS k, count(*) AS c, sum(v) AS s FROM prec GROUP BY 1)
+UNION ALL SELECT 'dt minute ts_ns' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_trunc('minute', ts_ns) AS k, count(*) AS c, sum(v) AS s FROM prec GROUP BY 1)
+UNION ALL SELECT 'dt hour ts_ns' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_trunc('hour', ts_ns) AS k, count(*) AS c, sum(v) AS s FROM prec GROUP BY 1)
+UNION ALL SELECT 'dt day ts_ns' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_trunc('day', ts_ns) AS k, count(*) AS c, sum(v) AS s FROM prec GROUP BY 1)
+UNION ALL SELECT 'dt week ts_ns' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_trunc('week', ts_ns) AS k, count(*) AS c, sum(v) AS s FROM prec GROUP BY 1)
+UNION ALL SELECT 'dt month ts_ns' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_trunc('month', ts_ns) AS k, count(*) AS c, sum(v) AS s FROM prec GROUP BY 1)
+UNION ALL SELECT 'dt quarter ts_ns' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_trunc('quarter', ts_ns) AS k, count(*) AS c, sum(v) AS s FROM prec GROUP BY 1)
+UNION ALL SELECT 'dt year ts_ns' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_trunc('year', ts_ns) AS k, count(*) AS c, sum(v) AS s FROM prec GROUP BY 1)
+UNION ALL SELECT 'tb 90 seconds ts_ns' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '90 seconds', ts_ns) AS k, count(*) AS c, sum(v) AS s FROM prec GROUP BY 1)
+UNION ALL SELECT 'tb 2 hours ts_ns' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '2 hours', ts_ns) AS k, count(*) AS c, sum(v) AS s FROM prec GROUP BY 1)
+UNION ALL SELECT 'tb 1 day ts_ns' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '1 day', ts_ns) AS k, count(*) AS c, sum(v) AS s FROM prec GROUP BY 1)
+UNION ALL SELECT 'tb 1 month ts_ns' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '1 month', ts_ns) AS k, count(*) AS c, sum(v) AS s FROM prec GROUP BY 1)
+UNION ALL SELECT 'mn ts_ns' AS shape, k::VARCHAR AS k, c, s FROM (SELECT monthname(ts_ns) AS k, count(*) AS c, sum(v) AS s FROM prec GROUP BY 1)
+UNION ALL SELECT 'dn ts_ns' AS shape, k::VARCHAR AS k, c, s FROM (SELECT dayname(ts_ns) AS k, count(*) AS c, sum(v) AS s FROM prec GROUP BY 1)
+UNION ALL SELECT 'ld ts_ns' AS shape, k::VARCHAR AS k, c, s FROM (SELECT last_day(ts_ns) AS k, count(*) AS c, sum(v) AS s FROM prec GROUP BY 1)
+UNION ALL SELECT 'date ts_ns' AS shape, k::VARCHAR AS k, c, s FROM (SELECT ts_ns::DATE AS k, count(*) AS c, sum(v) AS s FROM prec GROUP BY 1)
+UNION ALL SELECT 'dt second ts_ms' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_trunc('second', ts_ms) AS k, count(*) AS c, sum(v) AS s FROM prec GROUP BY 1)
+UNION ALL SELECT 'dt minute ts_ms' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_trunc('minute', ts_ms) AS k, count(*) AS c, sum(v) AS s FROM prec GROUP BY 1)
+UNION ALL SELECT 'dt hour ts_ms' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_trunc('hour', ts_ms) AS k, count(*) AS c, sum(v) AS s FROM prec GROUP BY 1)
+UNION ALL SELECT 'dt day ts_ms' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_trunc('day', ts_ms) AS k, count(*) AS c, sum(v) AS s FROM prec GROUP BY 1)
+UNION ALL SELECT 'dt week ts_ms' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_trunc('week', ts_ms) AS k, count(*) AS c, sum(v) AS s FROM prec GROUP BY 1)
+UNION ALL SELECT 'dt month ts_ms' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_trunc('month', ts_ms) AS k, count(*) AS c, sum(v) AS s FROM prec GROUP BY 1)
+UNION ALL SELECT 'dt quarter ts_ms' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_trunc('quarter', ts_ms) AS k, count(*) AS c, sum(v) AS s FROM prec GROUP BY 1)
+UNION ALL SELECT 'dt year ts_ms' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_trunc('year', ts_ms) AS k, count(*) AS c, sum(v) AS s FROM prec GROUP BY 1)
+UNION ALL SELECT 'tb 90 seconds ts_ms' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '90 seconds', ts_ms) AS k, count(*) AS c, sum(v) AS s FROM prec GROUP BY 1)
+UNION ALL SELECT 'tb 2 hours ts_ms' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '2 hours', ts_ms) AS k, count(*) AS c, sum(v) AS s FROM prec GROUP BY 1)
+UNION ALL SELECT 'tb 1 day ts_ms' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '1 day', ts_ms) AS k, count(*) AS c, sum(v) AS s FROM prec GROUP BY 1)
+UNION ALL SELECT 'tb 1 month ts_ms' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '1 month', ts_ms) AS k, count(*) AS c, sum(v) AS s FROM prec GROUP BY 1)
+UNION ALL SELECT 'mn ts_ms' AS shape, k::VARCHAR AS k, c, s FROM (SELECT monthname(ts_ms) AS k, count(*) AS c, sum(v) AS s FROM prec GROUP BY 1)
+UNION ALL SELECT 'dn ts_ms' AS shape, k::VARCHAR AS k, c, s FROM (SELECT dayname(ts_ms) AS k, count(*) AS c, sum(v) AS s FROM prec GROUP BY 1)
+UNION ALL SELECT 'ld ts_ms' AS shape, k::VARCHAR AS k, c, s FROM (SELECT last_day(ts_ms) AS k, count(*) AS c, sum(v) AS s FROM prec GROUP BY 1)
+UNION ALL SELECT 'date ts_ms' AS shape, k::VARCHAR AS k, c, s FROM (SELECT ts_ms::DATE AS k, count(*) AS c, sum(v) AS s FROM prec GROUP BY 1)
+UNION ALL SELECT 'dt second ts_s' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_trunc('second', ts_s) AS k, count(*) AS c, sum(v) AS s FROM prec GROUP BY 1)
+UNION ALL SELECT 'dt minute ts_s' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_trunc('minute', ts_s) AS k, count(*) AS c, sum(v) AS s FROM prec GROUP BY 1)
+UNION ALL SELECT 'dt hour ts_s' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_trunc('hour', ts_s) AS k, count(*) AS c, sum(v) AS s FROM prec GROUP BY 1)
+UNION ALL SELECT 'dt day ts_s' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_trunc('day', ts_s) AS k, count(*) AS c, sum(v) AS s FROM prec GROUP BY 1)
+UNION ALL SELECT 'dt week ts_s' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_trunc('week', ts_s) AS k, count(*) AS c, sum(v) AS s FROM prec GROUP BY 1)
+UNION ALL SELECT 'dt month ts_s' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_trunc('month', ts_s) AS k, count(*) AS c, sum(v) AS s FROM prec GROUP BY 1)
+UNION ALL SELECT 'dt quarter ts_s' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_trunc('quarter', ts_s) AS k, count(*) AS c, sum(v) AS s FROM prec GROUP BY 1)
+UNION ALL SELECT 'dt year ts_s' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_trunc('year', ts_s) AS k, count(*) AS c, sum(v) AS s FROM prec GROUP BY 1)
+UNION ALL SELECT 'tb 90 seconds ts_s' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '90 seconds', ts_s) AS k, count(*) AS c, sum(v) AS s FROM prec GROUP BY 1)
+UNION ALL SELECT 'tb 2 hours ts_s' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '2 hours', ts_s) AS k, count(*) AS c, sum(v) AS s FROM prec GROUP BY 1)
+UNION ALL SELECT 'tb 1 day ts_s' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '1 day', ts_s) AS k, count(*) AS c, sum(v) AS s FROM prec GROUP BY 1)
+UNION ALL SELECT 'tb 1 month ts_s' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '1 month', ts_s) AS k, count(*) AS c, sum(v) AS s FROM prec GROUP BY 1)
+UNION ALL SELECT 'mn ts_s' AS shape, k::VARCHAR AS k, c, s FROM (SELECT monthname(ts_s) AS k, count(*) AS c, sum(v) AS s FROM prec GROUP BY 1)
+UNION ALL SELECT 'dn ts_s' AS shape, k::VARCHAR AS k, c, s FROM (SELECT dayname(ts_s) AS k, count(*) AS c, sum(v) AS s FROM prec GROUP BY 1)
+UNION ALL SELECT 'ld ts_s' AS shape, k::VARCHAR AS k, c, s FROM (SELECT last_day(ts_s) AS k, count(*) AS c, sum(v) AS s FROM prec GROUP BY 1)
+UNION ALL SELECT 'date ts_s' AS shape, k::VARCHAR AS k, c, s FROM (SELECT ts_s::DATE AS k, count(*) AS c, sum(v) AS s FROM prec GROUP BY 1)
+UNION ALL SELECT 'sf %Y-%m-%d ns' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(ts_ns, '%Y-%m-%d') AS k, count(*) AS c, sum(v) AS s FROM prec GROUP BY 1)
+UNION ALL SELECT 'sf %Y-%m-%d ms' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(ts_ms, '%Y-%m-%d') AS k, count(*) AS c, sum(v) AS s FROM prec GROUP BY 1)
+UNION ALL SELECT 'sf %Y-%m-%d s' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(ts_s, '%Y-%m-%d') AS k, count(*) AS c, sum(v) AS s FROM prec GROUP BY 1)
+UNION ALL SELECT 'sf %Y-%m-%d %H ns' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(ts_ns, '%Y-%m-%d %H') AS k, count(*) AS c, sum(v) AS s FROM prec GROUP BY 1)
+UNION ALL SELECT 'sf %Y-%m-%d %H ms' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(ts_ms, '%Y-%m-%d %H') AS k, count(*) AS c, sum(v) AS s FROM prec GROUP BY 1)
+UNION ALL SELECT 'sf %Y-%m-%d %H s' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(ts_s, '%Y-%m-%d %H') AS k, count(*) AS c, sum(v) AS s FROM prec GROUP BY 1)
+UNION ALL SELECT 'sf %Y-%m-%d %H:%M ns' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(ts_ns, '%Y-%m-%d %H:%M') AS k, count(*) AS c, sum(v) AS s FROM prec GROUP BY 1)
+UNION ALL SELECT 'sf %Y-%m-%d %H:%M ms' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(ts_ms, '%Y-%m-%d %H:%M') AS k, count(*) AS c, sum(v) AS s FROM prec GROUP BY 1)
+UNION ALL SELECT 'sf %Y-%m-%d %H:%M s' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(ts_s, '%Y-%m-%d %H:%M') AS k, count(*) AS c, sum(v) AS s FROM prec GROUP BY 1)
+UNION ALL SELECT 'sf %Y-%m ns' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(ts_ns, '%Y-%m') AS k, count(*) AS c, sum(v) AS s FROM prec GROUP BY 1)
+UNION ALL SELECT 'sf %Y-%m ms' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(ts_ms, '%Y-%m') AS k, count(*) AS c, sum(v) AS s FROM prec GROUP BY 1)
+UNION ALL SELECT 'sf %Y-%m s' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(ts_s, '%Y-%m') AS k, count(*) AS c, sum(v) AS s FROM prec GROUP BY 1)
+UNION ALL SELECT 'sf %G-%V ns' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(ts_ns, '%G-%V') AS k, count(*) AS c, sum(v) AS s FROM prec GROUP BY 1)
+UNION ALL SELECT 'sf %G-%V ms' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(ts_ms, '%G-%V') AS k, count(*) AS c, sum(v) AS s FROM prec GROUP BY 1)
+UNION ALL SELECT 'sf %G-%V s' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(ts_s, '%G-%V') AS k, count(*) AS c, sum(v) AS s FROM prec GROUP BY 1)
+UNION ALL SELECT 'sf %y-%m-%d ns' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(ts_ns, '%y-%m-%d') AS k, count(*) AS c, sum(v) AS s FROM prec GROUP BY 1)
+UNION ALL SELECT 'sf %y-%m-%d ms' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(ts_ms, '%y-%m-%d') AS k, count(*) AS c, sum(v) AS s FROM prec GROUP BY 1)
+UNION ALL SELECT 'sf %y-%m-%d s' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(ts_s, '%y-%m-%d') AS k, count(*) AS c, sum(v) AS s FROM prec GROUP BY 1)
+UNION ALL SELECT 'sf %Y-%j ns' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(ts_ns, '%Y-%j') AS k, count(*) AS c, sum(v) AS s FROM prec GROUP BY 1)
+UNION ALL SELECT 'sf %Y-%j ms' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(ts_ms, '%Y-%j') AS k, count(*) AS c, sum(v) AS s FROM prec GROUP BY 1)
+UNION ALL SELECT 'sf %Y-%j s' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(ts_s, '%Y-%j') AS k, count(*) AS c, sum(v) AS s FROM prec GROUP BY 1)
+UNION ALL SELECT 'sf %Y-%m-%d %H:%M:%S.%f ns' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(ts_ns, '%Y-%m-%d %H:%M:%S.%f') AS k, count(*) AS c, sum(v) AS s FROM prec GROUP BY 1)
+UNION ALL SELECT 'sf %Y-%m-%d %H:%M:%S.%f ms' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(ts_ms, '%Y-%m-%d %H:%M:%S.%f') AS k, count(*) AS c, sum(v) AS s FROM prec GROUP BY 1)
+UNION ALL SELECT 'sf %Y-%m-%d %H:%M:%S.%f s' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(ts_s, '%Y-%m-%d %H:%M:%S.%f') AS k, count(*) AS c, sum(v) AS s FROM prec GROUP BY 1)
+UNION ALL SELECT 'sf %Y-%m-%d %H:%M:%S ns' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(ts_ns, '%Y-%m-%d %H:%M:%S') AS k, count(*) AS c, sum(v) AS s FROM prec GROUP BY 1)
+UNION ALL SELECT 'sf %Y-%m-%d %H:%M:%S ms' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(ts_ms, '%Y-%m-%d %H:%M:%S') AS k, count(*) AS c, sum(v) AS s FROM prec GROUP BY 1)
+UNION ALL SELECT 'sf %Y-%m-%d %H:%M:%S s' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(ts_s, '%Y-%m-%d %H:%M:%S') AS k, count(*) AS c, sum(v) AS s FROM prec GROUP BY 1);
+
+statement ok
+RESET disabled_optimizers;
+
+statement ok
+CREATE TABLE got_prec AS
+SELECT 'dt second ts_ns' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_trunc('second', ts_ns) AS k, count(*) AS c, sum(v) AS s FROM prec GROUP BY 1)
+UNION ALL SELECT 'dt minute ts_ns' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_trunc('minute', ts_ns) AS k, count(*) AS c, sum(v) AS s FROM prec GROUP BY 1)
+UNION ALL SELECT 'dt hour ts_ns' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_trunc('hour', ts_ns) AS k, count(*) AS c, sum(v) AS s FROM prec GROUP BY 1)
+UNION ALL SELECT 'dt day ts_ns' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_trunc('day', ts_ns) AS k, count(*) AS c, sum(v) AS s FROM prec GROUP BY 1)
+UNION ALL SELECT 'dt week ts_ns' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_trunc('week', ts_ns) AS k, count(*) AS c, sum(v) AS s FROM prec GROUP BY 1)
+UNION ALL SELECT 'dt month ts_ns' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_trunc('month', ts_ns) AS k, count(*) AS c, sum(v) AS s FROM prec GROUP BY 1)
+UNION ALL SELECT 'dt quarter ts_ns' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_trunc('quarter', ts_ns) AS k, count(*) AS c, sum(v) AS s FROM prec GROUP BY 1)
+UNION ALL SELECT 'dt year ts_ns' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_trunc('year', ts_ns) AS k, count(*) AS c, sum(v) AS s FROM prec GROUP BY 1)
+UNION ALL SELECT 'tb 90 seconds ts_ns' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '90 seconds', ts_ns) AS k, count(*) AS c, sum(v) AS s FROM prec GROUP BY 1)
+UNION ALL SELECT 'tb 2 hours ts_ns' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '2 hours', ts_ns) AS k, count(*) AS c, sum(v) AS s FROM prec GROUP BY 1)
+UNION ALL SELECT 'tb 1 day ts_ns' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '1 day', ts_ns) AS k, count(*) AS c, sum(v) AS s FROM prec GROUP BY 1)
+UNION ALL SELECT 'tb 1 month ts_ns' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '1 month', ts_ns) AS k, count(*) AS c, sum(v) AS s FROM prec GROUP BY 1)
+UNION ALL SELECT 'mn ts_ns' AS shape, k::VARCHAR AS k, c, s FROM (SELECT monthname(ts_ns) AS k, count(*) AS c, sum(v) AS s FROM prec GROUP BY 1)
+UNION ALL SELECT 'dn ts_ns' AS shape, k::VARCHAR AS k, c, s FROM (SELECT dayname(ts_ns) AS k, count(*) AS c, sum(v) AS s FROM prec GROUP BY 1)
+UNION ALL SELECT 'ld ts_ns' AS shape, k::VARCHAR AS k, c, s FROM (SELECT last_day(ts_ns) AS k, count(*) AS c, sum(v) AS s FROM prec GROUP BY 1)
+UNION ALL SELECT 'date ts_ns' AS shape, k::VARCHAR AS k, c, s FROM (SELECT ts_ns::DATE AS k, count(*) AS c, sum(v) AS s FROM prec GROUP BY 1)
+UNION ALL SELECT 'dt second ts_ms' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_trunc('second', ts_ms) AS k, count(*) AS c, sum(v) AS s FROM prec GROUP BY 1)
+UNION ALL SELECT 'dt minute ts_ms' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_trunc('minute', ts_ms) AS k, count(*) AS c, sum(v) AS s FROM prec GROUP BY 1)
+UNION ALL SELECT 'dt hour ts_ms' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_trunc('hour', ts_ms) AS k, count(*) AS c, sum(v) AS s FROM prec GROUP BY 1)
+UNION ALL SELECT 'dt day ts_ms' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_trunc('day', ts_ms) AS k, count(*) AS c, sum(v) AS s FROM prec GROUP BY 1)
+UNION ALL SELECT 'dt week ts_ms' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_trunc('week', ts_ms) AS k, count(*) AS c, sum(v) AS s FROM prec GROUP BY 1)
+UNION ALL SELECT 'dt month ts_ms' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_trunc('month', ts_ms) AS k, count(*) AS c, sum(v) AS s FROM prec GROUP BY 1)
+UNION ALL SELECT 'dt quarter ts_ms' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_trunc('quarter', ts_ms) AS k, count(*) AS c, sum(v) AS s FROM prec GROUP BY 1)
+UNION ALL SELECT 'dt year ts_ms' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_trunc('year', ts_ms) AS k, count(*) AS c, sum(v) AS s FROM prec GROUP BY 1)
+UNION ALL SELECT 'tb 90 seconds ts_ms' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '90 seconds', ts_ms) AS k, count(*) AS c, sum(v) AS s FROM prec GROUP BY 1)
+UNION ALL SELECT 'tb 2 hours ts_ms' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '2 hours', ts_ms) AS k, count(*) AS c, sum(v) AS s FROM prec GROUP BY 1)
+UNION ALL SELECT 'tb 1 day ts_ms' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '1 day', ts_ms) AS k, count(*) AS c, sum(v) AS s FROM prec GROUP BY 1)
+UNION ALL SELECT 'tb 1 month ts_ms' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '1 month', ts_ms) AS k, count(*) AS c, sum(v) AS s FROM prec GROUP BY 1)
+UNION ALL SELECT 'mn ts_ms' AS shape, k::VARCHAR AS k, c, s FROM (SELECT monthname(ts_ms) AS k, count(*) AS c, sum(v) AS s FROM prec GROUP BY 1)
+UNION ALL SELECT 'dn ts_ms' AS shape, k::VARCHAR AS k, c, s FROM (SELECT dayname(ts_ms) AS k, count(*) AS c, sum(v) AS s FROM prec GROUP BY 1)
+UNION ALL SELECT 'ld ts_ms' AS shape, k::VARCHAR AS k, c, s FROM (SELECT last_day(ts_ms) AS k, count(*) AS c, sum(v) AS s FROM prec GROUP BY 1)
+UNION ALL SELECT 'date ts_ms' AS shape, k::VARCHAR AS k, c, s FROM (SELECT ts_ms::DATE AS k, count(*) AS c, sum(v) AS s FROM prec GROUP BY 1)
+UNION ALL SELECT 'dt second ts_s' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_trunc('second', ts_s) AS k, count(*) AS c, sum(v) AS s FROM prec GROUP BY 1)
+UNION ALL SELECT 'dt minute ts_s' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_trunc('minute', ts_s) AS k, count(*) AS c, sum(v) AS s FROM prec GROUP BY 1)
+UNION ALL SELECT 'dt hour ts_s' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_trunc('hour', ts_s) AS k, count(*) AS c, sum(v) AS s FROM prec GROUP BY 1)
+UNION ALL SELECT 'dt day ts_s' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_trunc('day', ts_s) AS k, count(*) AS c, sum(v) AS s FROM prec GROUP BY 1)
+UNION ALL SELECT 'dt week ts_s' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_trunc('week', ts_s) AS k, count(*) AS c, sum(v) AS s FROM prec GROUP BY 1)
+UNION ALL SELECT 'dt month ts_s' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_trunc('month', ts_s) AS k, count(*) AS c, sum(v) AS s FROM prec GROUP BY 1)
+UNION ALL SELECT 'dt quarter ts_s' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_trunc('quarter', ts_s) AS k, count(*) AS c, sum(v) AS s FROM prec GROUP BY 1)
+UNION ALL SELECT 'dt year ts_s' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_trunc('year', ts_s) AS k, count(*) AS c, sum(v) AS s FROM prec GROUP BY 1)
+UNION ALL SELECT 'tb 90 seconds ts_s' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '90 seconds', ts_s) AS k, count(*) AS c, sum(v) AS s FROM prec GROUP BY 1)
+UNION ALL SELECT 'tb 2 hours ts_s' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '2 hours', ts_s) AS k, count(*) AS c, sum(v) AS s FROM prec GROUP BY 1)
+UNION ALL SELECT 'tb 1 day ts_s' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '1 day', ts_s) AS k, count(*) AS c, sum(v) AS s FROM prec GROUP BY 1)
+UNION ALL SELECT 'tb 1 month ts_s' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '1 month', ts_s) AS k, count(*) AS c, sum(v) AS s FROM prec GROUP BY 1)
+UNION ALL SELECT 'mn ts_s' AS shape, k::VARCHAR AS k, c, s FROM (SELECT monthname(ts_s) AS k, count(*) AS c, sum(v) AS s FROM prec GROUP BY 1)
+UNION ALL SELECT 'dn ts_s' AS shape, k::VARCHAR AS k, c, s FROM (SELECT dayname(ts_s) AS k, count(*) AS c, sum(v) AS s FROM prec GROUP BY 1)
+UNION ALL SELECT 'ld ts_s' AS shape, k::VARCHAR AS k, c, s FROM (SELECT last_day(ts_s) AS k, count(*) AS c, sum(v) AS s FROM prec GROUP BY 1)
+UNION ALL SELECT 'date ts_s' AS shape, k::VARCHAR AS k, c, s FROM (SELECT ts_s::DATE AS k, count(*) AS c, sum(v) AS s FROM prec GROUP BY 1)
+UNION ALL SELECT 'sf %Y-%m-%d ns' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(ts_ns, '%Y-%m-%d') AS k, count(*) AS c, sum(v) AS s FROM prec GROUP BY 1)
+UNION ALL SELECT 'sf %Y-%m-%d ms' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(ts_ms, '%Y-%m-%d') AS k, count(*) AS c, sum(v) AS s FROM prec GROUP BY 1)
+UNION ALL SELECT 'sf %Y-%m-%d s' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(ts_s, '%Y-%m-%d') AS k, count(*) AS c, sum(v) AS s FROM prec GROUP BY 1)
+UNION ALL SELECT 'sf %Y-%m-%d %H ns' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(ts_ns, '%Y-%m-%d %H') AS k, count(*) AS c, sum(v) AS s FROM prec GROUP BY 1)
+UNION ALL SELECT 'sf %Y-%m-%d %H ms' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(ts_ms, '%Y-%m-%d %H') AS k, count(*) AS c, sum(v) AS s FROM prec GROUP BY 1)
+UNION ALL SELECT 'sf %Y-%m-%d %H s' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(ts_s, '%Y-%m-%d %H') AS k, count(*) AS c, sum(v) AS s FROM prec GROUP BY 1)
+UNION ALL SELECT 'sf %Y-%m-%d %H:%M ns' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(ts_ns, '%Y-%m-%d %H:%M') AS k, count(*) AS c, sum(v) AS s FROM prec GROUP BY 1)
+UNION ALL SELECT 'sf %Y-%m-%d %H:%M ms' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(ts_ms, '%Y-%m-%d %H:%M') AS k, count(*) AS c, sum(v) AS s FROM prec GROUP BY 1)
+UNION ALL SELECT 'sf %Y-%m-%d %H:%M s' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(ts_s, '%Y-%m-%d %H:%M') AS k, count(*) AS c, sum(v) AS s FROM prec GROUP BY 1)
+UNION ALL SELECT 'sf %Y-%m ns' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(ts_ns, '%Y-%m') AS k, count(*) AS c, sum(v) AS s FROM prec GROUP BY 1)
+UNION ALL SELECT 'sf %Y-%m ms' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(ts_ms, '%Y-%m') AS k, count(*) AS c, sum(v) AS s FROM prec GROUP BY 1)
+UNION ALL SELECT 'sf %Y-%m s' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(ts_s, '%Y-%m') AS k, count(*) AS c, sum(v) AS s FROM prec GROUP BY 1)
+UNION ALL SELECT 'sf %G-%V ns' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(ts_ns, '%G-%V') AS k, count(*) AS c, sum(v) AS s FROM prec GROUP BY 1)
+UNION ALL SELECT 'sf %G-%V ms' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(ts_ms, '%G-%V') AS k, count(*) AS c, sum(v) AS s FROM prec GROUP BY 1)
+UNION ALL SELECT 'sf %G-%V s' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(ts_s, '%G-%V') AS k, count(*) AS c, sum(v) AS s FROM prec GROUP BY 1)
+UNION ALL SELECT 'sf %y-%m-%d ns' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(ts_ns, '%y-%m-%d') AS k, count(*) AS c, sum(v) AS s FROM prec GROUP BY 1)
+UNION ALL SELECT 'sf %y-%m-%d ms' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(ts_ms, '%y-%m-%d') AS k, count(*) AS c, sum(v) AS s FROM prec GROUP BY 1)
+UNION ALL SELECT 'sf %y-%m-%d s' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(ts_s, '%y-%m-%d') AS k, count(*) AS c, sum(v) AS s FROM prec GROUP BY 1)
+UNION ALL SELECT 'sf %Y-%j ns' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(ts_ns, '%Y-%j') AS k, count(*) AS c, sum(v) AS s FROM prec GROUP BY 1)
+UNION ALL SELECT 'sf %Y-%j ms' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(ts_ms, '%Y-%j') AS k, count(*) AS c, sum(v) AS s FROM prec GROUP BY 1)
+UNION ALL SELECT 'sf %Y-%j s' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(ts_s, '%Y-%j') AS k, count(*) AS c, sum(v) AS s FROM prec GROUP BY 1)
+UNION ALL SELECT 'sf %Y-%m-%d %H:%M:%S.%f ns' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(ts_ns, '%Y-%m-%d %H:%M:%S.%f') AS k, count(*) AS c, sum(v) AS s FROM prec GROUP BY 1)
+UNION ALL SELECT 'sf %Y-%m-%d %H:%M:%S.%f ms' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(ts_ms, '%Y-%m-%d %H:%M:%S.%f') AS k, count(*) AS c, sum(v) AS s FROM prec GROUP BY 1)
+UNION ALL SELECT 'sf %Y-%m-%d %H:%M:%S.%f s' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(ts_s, '%Y-%m-%d %H:%M:%S.%f') AS k, count(*) AS c, sum(v) AS s FROM prec GROUP BY 1)
+UNION ALL SELECT 'sf %Y-%m-%d %H:%M:%S ns' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(ts_ns, '%Y-%m-%d %H:%M:%S') AS k, count(*) AS c, sum(v) AS s FROM prec GROUP BY 1)
+UNION ALL SELECT 'sf %Y-%m-%d %H:%M:%S ms' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(ts_ms, '%Y-%m-%d %H:%M:%S') AS k, count(*) AS c, sum(v) AS s FROM prec GROUP BY 1)
+UNION ALL SELECT 'sf %Y-%m-%d %H:%M:%S s' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(ts_s, '%Y-%m-%d %H:%M:%S') AS k, count(*) AS c, sum(v) AS s FROM prec GROUP BY 1);
+
+query
+SELECT shape, k, c, s FROM (SELECT * FROM got_prec EXCEPT ALL SELECT * FROM ref_prec) ORDER BY 1, 2;
+----
+shape	k	c	s
+
+query
+SELECT shape, k, c, s FROM (SELECT * FROM ref_prec EXCEPT ALL SELECT * FROM got_prec) ORDER BY 1, 2;
+----
+shape	k	c	s
+
+query
+SELECT count(*) AS rows, count(DISTINCT shape) AS shapes FROM got_prec;
+----
+rows	shapes
+34815	75
+
+statement ok
+SET disabled_optimizers = 'compressed_materialization';
+
+statement ok
+CREATE TABLE ref_nsb AS
+SELECT 'nsb dt second ts_ns' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_trunc('second', ts_ns) AS k, count(*) AS c, sum(v) AS s FROM nsb GROUP BY 1)
+UNION ALL SELECT 'nsb dt day ts_ns' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_trunc('day', ts_ns) AS k, count(*) AS c, sum(v) AS s FROM nsb GROUP BY 1)
+UNION ALL SELECT 'nsb dt month ts_ns' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_trunc('month', ts_ns) AS k, count(*) AS c, sum(v) AS s FROM nsb GROUP BY 1)
+UNION ALL SELECT 'nsb tb day ts_ns' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '1 day', ts_ns) AS k, count(*) AS c, sum(v) AS s FROM nsb GROUP BY 1)
+UNION ALL SELECT 'nsb tb sec ts_ns' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '1 second', ts_ns) AS k, count(*) AS c, sum(v) AS s FROM nsb GROUP BY 1)
+UNION ALL SELECT 'nsb date ts_ns' AS shape, k::VARCHAR AS k, c, s FROM (SELECT ts_ns::DATE AS k, count(*) AS c, sum(v) AS s FROM nsb GROUP BY 1)
+UNION ALL SELECT 'nsb mn ts_ns' AS shape, k::VARCHAR AS k, c, s FROM (SELECT monthname(ts_ns) AS k, count(*) AS c, sum(v) AS s FROM nsb GROUP BY 1)
+UNION ALL SELECT 'nsb dn ts_ns' AS shape, k::VARCHAR AS k, c, s FROM (SELECT dayname(ts_ns) AS k, count(*) AS c, sum(v) AS s FROM nsb GROUP BY 1)
+UNION ALL SELECT 'nsb dt second ts_ms' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_trunc('second', ts_ms) AS k, count(*) AS c, sum(v) AS s FROM nsb GROUP BY 1)
+UNION ALL SELECT 'nsb dt day ts_ms' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_trunc('day', ts_ms) AS k, count(*) AS c, sum(v) AS s FROM nsb GROUP BY 1)
+UNION ALL SELECT 'nsb dt month ts_ms' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_trunc('month', ts_ms) AS k, count(*) AS c, sum(v) AS s FROM nsb GROUP BY 1)
+UNION ALL SELECT 'nsb tb day ts_ms' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '1 day', ts_ms) AS k, count(*) AS c, sum(v) AS s FROM nsb GROUP BY 1)
+UNION ALL SELECT 'nsb tb sec ts_ms' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '1 second', ts_ms) AS k, count(*) AS c, sum(v) AS s FROM nsb GROUP BY 1)
+UNION ALL SELECT 'nsb date ts_ms' AS shape, k::VARCHAR AS k, c, s FROM (SELECT ts_ms::DATE AS k, count(*) AS c, sum(v) AS s FROM nsb GROUP BY 1)
+UNION ALL SELECT 'nsb mn ts_ms' AS shape, k::VARCHAR AS k, c, s FROM (SELECT monthname(ts_ms) AS k, count(*) AS c, sum(v) AS s FROM nsb GROUP BY 1)
+UNION ALL SELECT 'nsb dn ts_ms' AS shape, k::VARCHAR AS k, c, s FROM (SELECT dayname(ts_ms) AS k, count(*) AS c, sum(v) AS s FROM nsb GROUP BY 1)
+UNION ALL SELECT 'nsb dt second ts_s' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_trunc('second', ts_s) AS k, count(*) AS c, sum(v) AS s FROM nsb GROUP BY 1)
+UNION ALL SELECT 'nsb dt day ts_s' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_trunc('day', ts_s) AS k, count(*) AS c, sum(v) AS s FROM nsb GROUP BY 1)
+UNION ALL SELECT 'nsb dt month ts_s' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_trunc('month', ts_s) AS k, count(*) AS c, sum(v) AS s FROM nsb GROUP BY 1)
+UNION ALL SELECT 'nsb tb day ts_s' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '1 day', ts_s) AS k, count(*) AS c, sum(v) AS s FROM nsb GROUP BY 1)
+UNION ALL SELECT 'nsb tb sec ts_s' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '1 second', ts_s) AS k, count(*) AS c, sum(v) AS s FROM nsb GROUP BY 1)
+UNION ALL SELECT 'nsb date ts_s' AS shape, k::VARCHAR AS k, c, s FROM (SELECT ts_s::DATE AS k, count(*) AS c, sum(v) AS s FROM nsb GROUP BY 1)
+UNION ALL SELECT 'nsb mn ts_s' AS shape, k::VARCHAR AS k, c, s FROM (SELECT monthname(ts_s) AS k, count(*) AS c, sum(v) AS s FROM nsb GROUP BY 1)
+UNION ALL SELECT 'nsb dn ts_s' AS shape, k::VARCHAR AS k, c, s FROM (SELECT dayname(ts_s) AS k, count(*) AS c, sum(v) AS s FROM nsb GROUP BY 1)
+UNION ALL SELECT 'nsb sf %Y-%m-%d' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(ts_ns, '%Y-%m-%d') AS k, count(*) AS c, sum(v) AS s FROM nsb GROUP BY 1)
+UNION ALL SELECT 'nsb sf %Y-%m-%d %H:%M:%S' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(ts_ns, '%Y-%m-%d %H:%M:%S') AS k, count(*) AS c, sum(v) AS s FROM nsb GROUP BY 1)
+UNION ALL SELECT 'nsb sf %Y-%m' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(ts_ns, '%Y-%m') AS k, count(*) AS c, sum(v) AS s FROM nsb GROUP BY 1)
+UNION ALL SELECT 'nsb sf %G-%V' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(ts_ns, '%G-%V') AS k, count(*) AS c, sum(v) AS s FROM nsb GROUP BY 1)
+UNION ALL SELECT 'nsb sf %Y-%m-%d %H:%M:%S.%f' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(ts_ns, '%Y-%m-%d %H:%M:%S.%f') AS k, count(*) AS c, sum(v) AS s FROM nsb GROUP BY 1);
+
+statement ok
+RESET disabled_optimizers;
+
+statement ok
+CREATE TABLE got_nsb AS
+SELECT 'nsb dt second ts_ns' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_trunc('second', ts_ns) AS k, count(*) AS c, sum(v) AS s FROM nsb GROUP BY 1)
+UNION ALL SELECT 'nsb dt day ts_ns' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_trunc('day', ts_ns) AS k, count(*) AS c, sum(v) AS s FROM nsb GROUP BY 1)
+UNION ALL SELECT 'nsb dt month ts_ns' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_trunc('month', ts_ns) AS k, count(*) AS c, sum(v) AS s FROM nsb GROUP BY 1)
+UNION ALL SELECT 'nsb tb day ts_ns' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '1 day', ts_ns) AS k, count(*) AS c, sum(v) AS s FROM nsb GROUP BY 1)
+UNION ALL SELECT 'nsb tb sec ts_ns' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '1 second', ts_ns) AS k, count(*) AS c, sum(v) AS s FROM nsb GROUP BY 1)
+UNION ALL SELECT 'nsb date ts_ns' AS shape, k::VARCHAR AS k, c, s FROM (SELECT ts_ns::DATE AS k, count(*) AS c, sum(v) AS s FROM nsb GROUP BY 1)
+UNION ALL SELECT 'nsb mn ts_ns' AS shape, k::VARCHAR AS k, c, s FROM (SELECT monthname(ts_ns) AS k, count(*) AS c, sum(v) AS s FROM nsb GROUP BY 1)
+UNION ALL SELECT 'nsb dn ts_ns' AS shape, k::VARCHAR AS k, c, s FROM (SELECT dayname(ts_ns) AS k, count(*) AS c, sum(v) AS s FROM nsb GROUP BY 1)
+UNION ALL SELECT 'nsb dt second ts_ms' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_trunc('second', ts_ms) AS k, count(*) AS c, sum(v) AS s FROM nsb GROUP BY 1)
+UNION ALL SELECT 'nsb dt day ts_ms' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_trunc('day', ts_ms) AS k, count(*) AS c, sum(v) AS s FROM nsb GROUP BY 1)
+UNION ALL SELECT 'nsb dt month ts_ms' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_trunc('month', ts_ms) AS k, count(*) AS c, sum(v) AS s FROM nsb GROUP BY 1)
+UNION ALL SELECT 'nsb tb day ts_ms' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '1 day', ts_ms) AS k, count(*) AS c, sum(v) AS s FROM nsb GROUP BY 1)
+UNION ALL SELECT 'nsb tb sec ts_ms' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '1 second', ts_ms) AS k, count(*) AS c, sum(v) AS s FROM nsb GROUP BY 1)
+UNION ALL SELECT 'nsb date ts_ms' AS shape, k::VARCHAR AS k, c, s FROM (SELECT ts_ms::DATE AS k, count(*) AS c, sum(v) AS s FROM nsb GROUP BY 1)
+UNION ALL SELECT 'nsb mn ts_ms' AS shape, k::VARCHAR AS k, c, s FROM (SELECT monthname(ts_ms) AS k, count(*) AS c, sum(v) AS s FROM nsb GROUP BY 1)
+UNION ALL SELECT 'nsb dn ts_ms' AS shape, k::VARCHAR AS k, c, s FROM (SELECT dayname(ts_ms) AS k, count(*) AS c, sum(v) AS s FROM nsb GROUP BY 1)
+UNION ALL SELECT 'nsb dt second ts_s' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_trunc('second', ts_s) AS k, count(*) AS c, sum(v) AS s FROM nsb GROUP BY 1)
+UNION ALL SELECT 'nsb dt day ts_s' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_trunc('day', ts_s) AS k, count(*) AS c, sum(v) AS s FROM nsb GROUP BY 1)
+UNION ALL SELECT 'nsb dt month ts_s' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_trunc('month', ts_s) AS k, count(*) AS c, sum(v) AS s FROM nsb GROUP BY 1)
+UNION ALL SELECT 'nsb tb day ts_s' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '1 day', ts_s) AS k, count(*) AS c, sum(v) AS s FROM nsb GROUP BY 1)
+UNION ALL SELECT 'nsb tb sec ts_s' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '1 second', ts_s) AS k, count(*) AS c, sum(v) AS s FROM nsb GROUP BY 1)
+UNION ALL SELECT 'nsb date ts_s' AS shape, k::VARCHAR AS k, c, s FROM (SELECT ts_s::DATE AS k, count(*) AS c, sum(v) AS s FROM nsb GROUP BY 1)
+UNION ALL SELECT 'nsb mn ts_s' AS shape, k::VARCHAR AS k, c, s FROM (SELECT monthname(ts_s) AS k, count(*) AS c, sum(v) AS s FROM nsb GROUP BY 1)
+UNION ALL SELECT 'nsb dn ts_s' AS shape, k::VARCHAR AS k, c, s FROM (SELECT dayname(ts_s) AS k, count(*) AS c, sum(v) AS s FROM nsb GROUP BY 1)
+UNION ALL SELECT 'nsb sf %Y-%m-%d' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(ts_ns, '%Y-%m-%d') AS k, count(*) AS c, sum(v) AS s FROM nsb GROUP BY 1)
+UNION ALL SELECT 'nsb sf %Y-%m-%d %H:%M:%S' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(ts_ns, '%Y-%m-%d %H:%M:%S') AS k, count(*) AS c, sum(v) AS s FROM nsb GROUP BY 1)
+UNION ALL SELECT 'nsb sf %Y-%m' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(ts_ns, '%Y-%m') AS k, count(*) AS c, sum(v) AS s FROM nsb GROUP BY 1)
+UNION ALL SELECT 'nsb sf %G-%V' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(ts_ns, '%G-%V') AS k, count(*) AS c, sum(v) AS s FROM nsb GROUP BY 1)
+UNION ALL SELECT 'nsb sf %Y-%m-%d %H:%M:%S.%f' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(ts_ns, '%Y-%m-%d %H:%M:%S.%f') AS k, count(*) AS c, sum(v) AS s FROM nsb GROUP BY 1);
+
+query
+SELECT shape, k, c, s FROM (SELECT * FROM got_nsb EXCEPT ALL SELECT * FROM ref_nsb) ORDER BY 1, 2;
+----
+shape	k	c	s
+
+query
+SELECT shape, k, c, s FROM (SELECT * FROM ref_nsb EXCEPT ALL SELECT * FROM got_nsb) ORDER BY 1, 2;
+----
+shape	k	c	s
+
+query
+SELECT count(*) AS rows, count(DISTINCT shape) AS shapes FROM got_nsb;
+----
+rows	shapes
+226	29
+
+query
+EXPLAIN SELECT date_trunc('month', ts_ms) AS m, count(*) AS c FROM prec GROUP BY 1;
+----
+QUERY PLAN
+╭─ PROJECTION ───────────────────────────────────────────────────────╮
+│ Projections:                                                       │
+│ __internal_date_trunc_month_unbucket(#0, 1, 0), #1                 │
+│ ~750 rows                                                          │
+╰──────────────────────────────────┬─────────────────────────────────╯
+╭─ PERFECT_HASH_GROUP_BY ──────────┴─────────────────────────────────╮
+│ Groups: #0                                                         │
+│ Aggregates: count_star()                                           │
+│ ~750 rows                                                          │
+╰──────────────────────────────────┬─────────────────────────────────╯
+╭─ PROJECTION ─────────────────────┴─────────────────────────────────╮
+│ Projections:                                                       │
+│ __internal_date_trunc_month_bucket(CAST(ts_ms AS TIMESTAMP), 1, 0) │
+│ ~1,501 rows                                                        │
+╰──────────────────────────────────┬─────────────────────────────────╯
+╭─ SEQ_SCAN ───────────────────────┴─────────────────────────────────╮
+│ Table: prec                                                        │
+│ Type: Sequential Scan                                              │
+│ Projections: ts_ms                                                 │
+│ ~1,501 rows                                                        │
+╰────────────────────────────────────────────────────────────────────╯
+
+query
+EXPLAIN SELECT strftime(ts_ns, '%Y-%m-%d %H') AS h, count(*) AS c FROM prec GROUP BY 1;
+----
+QUERY PLAN
+╭─ PROJECTION ──────────────────────────────────────────────────────────────────────────────────────╮
+│ Projections:                                                                                      │
+│ strftime(CAST(__internal_date_trunc_unbucket(#0, 3600000000, 0) AS TIMESTAMP_NS), '%Y-%m-%d %H'), │
+│ #1                                                                                                │
+│ ~750 rows                                                                                         │
+╰─────────────────────────────────────────────────┬─────────────────────────────────────────────────╯
+╭─ PERFECT_HASH_GROUP_BY ─────────────────────────┴─────────────────────────────────────────────────╮
+│ Groups: #0                                                                                        │
+│ Aggregates: count_star()                                                                          │
+│ ~750 rows                                                                                         │
+╰─────────────────────────────────────────────────┬─────────────────────────────────────────────────╯
+╭─ PROJECTION ────────────────────────────────────┴─────────────────────────────────────────────────╮
+│ Projections:                                                                                      │
+│ __internal_date_trunc_bucket(ts_ns, 3600000000, 0)                                                │
+│ ~1,501 rows                                                                                       │
+╰─────────────────────────────────────────────────┬─────────────────────────────────────────────────╯
+╭─ SEQ_SCAN ──────────────────────────────────────┴─────────────────────────────────────────────────╮
+│ Table: prec                                                                                       │
+│ Type: Sequential Scan                                                                             │
+│ Projections: ts_ns                                                                                │
+│ ~1,501 rows                                                                                       │
+╰───────────────────────────────────────────────────────────────────────────────────────────────────╯
+
+query
+EXPLAIN SELECT time_bucket(INTERVAL '1 day', ts_ns) AS b, count(*) AS c FROM nsb GROUP BY 1;
+----
+QUERY PLAN
+╭─ PROJECTION ───────────────────────────────────────────────────────────╮
+│ Projections:                                                           │
+│ __internal_date_trunc_unbucket(#0, 86400000000, 0), #1                 │
+│ ~19 rows                                                               │
+╰────────────────────────────────────┬───────────────────────────────────╯
+╭─ PERFECT_HASH_GROUP_BY ────────────┴───────────────────────────────────╮
+│ Groups: #0                                                             │
+│ Aggregates: count_star()                                               │
+│ ~19 rows                                                               │
+╰────────────────────────────────────┬───────────────────────────────────╯
+╭─ PROJECTION ───────────────────────┴───────────────────────────────────╮
+│ Projections:                                                           │
+│ __internal_date_trunc_bucket(CAST(ts_ns AS TIMESTAMP), 86400000000, 0) │
+│ ~38 rows                                                               │
+╰────────────────────────────────────┬───────────────────────────────────╯
+╭─ SEQ_SCAN ─────────────────────────┴───────────────────────────────────╮
+│ Table: nsb                                                             │
+│ Type: Sequential Scan                                                  │
+│ Projections: ts_ns                                                     │
+│ ~38 rows                                                               │
+╰────────────────────────────────────────────────────────────────────────╯

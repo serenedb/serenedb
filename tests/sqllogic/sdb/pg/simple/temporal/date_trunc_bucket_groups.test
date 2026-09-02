@@ -186,3 +186,47 @@ null	2	-2	-1
 
 statement ok
 RESET disabled_optimizers;
+
+query
+SELECT coalesce(m::VARCHAR, 'null') AS m, c FROM (SELECT date_trunc('month', ts) AS m, count(*) AS c FROM events GROUP BY 1) ORDER BY 1;
+----
+m	c
+2024-03-01 00:00:00	1207
+2024-04-01 00:00:00	793
+null	2
+
+query
+SELECT count(*) AS groups, sum(c) AS rows_total FROM (SELECT ts, count(*) AS c FROM events GROUP BY 1);
+----
+groups	rows_total
+2001	2002
+
+query
+SELECT coalesce(d::VARCHAR, 'null') AS d, c FROM (SELECT ts::DATE AS d, count(*) AS c FROM events WHERE v < 80 GROUP BY 1) ORDER BY 1;
+----
+d	c
+2024-03-01	39
+2024-03-02	39
+2024-03-03	2
+null	2
+
+query
+SELECT coalesce(d::VARCHAR, 'null') AS d, r, c FROM (SELECT date_trunc('day', ts) AS d, v % 2 AS r, count(*) AS c FROM events WHERE v < 80 GROUP BY 1, 2) ORDER BY 1, 2;
+----
+d	r	c
+2024-03-01 00:00:00	0	20
+2024-03-01 00:00:00	1	19
+2024-03-02 00:00:00	0	19
+2024-03-02 00:00:00	1	20
+2024-03-03 00:00:00	0	1
+2024-03-03 00:00:00	1	1
+null	-1	1
+null	0	1
+
+query
+SELECT date_trunc('day', ts)::VARCHAR AS d, v, count(*) AS c FROM events WHERE v < 80 GROUP BY 1, 2 ORDER BY 1, 2 LIMIT 3;
+----
+d	v	c
+2024-03-01 00:00:00	0	1
+2024-03-01 00:00:00	1	1
+2024-03-01 00:00:00	2	1

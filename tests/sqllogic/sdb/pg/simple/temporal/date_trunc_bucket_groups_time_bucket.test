@@ -1,0 +1,266 @@
+statement ok
+SET TimeZone = 'Etc/UTC';
+
+statement ok
+CREATE TABLE tb AS SELECT TIMESTAMP '2025-09-28 00:00:00' + INTERVAL (i * 37) MINUTE AS ts, (TIMESTAMP '2025-09-28 00:00:00' + INTERVAL (i * 37) MINUTE)::TIMESTAMPTZ AS tstz, (DATE '2025-09-28' + (i % 400)::INTEGER)::DATE AS d, i AS v FROM range(0, 1500) t(i);
+
+statement ok
+INSERT INTO tb VALUES (NULL, NULL, NULL, -1);
+
+statement ok
+SET TimeZone = 'Europe/Berlin';
+
+query
+EXPLAIN SELECT time_bucket(INTERVAL '1 hour', ts) AS b, count(*) AS c FROM tb GROUP BY 1;
+----
+QUERY PLAN
+╭─ PROJECTION ───────────────────────────────────────╮
+│ Projections:                                       │
+│ __internal_date_trunc_unbucket(#0, 3600000000, 0), │
+│ #1                                                 │
+│ ~750 rows                                          │
+╰──────────────────────────┬─────────────────────────╯
+╭─ PERFECT_HASH_GROUP_BY ──┴─────────────────────────╮
+│ Groups: #0                                         │
+│ Aggregates: count_star()                           │
+│ ~750 rows                                          │
+╰──────────────────────────┬─────────────────────────╯
+╭─ PROJECTION ─────────────┴─────────────────────────╮
+│ Projections:                                       │
+│ __internal_date_trunc_bucket(ts, 3600000000, 0)    │
+│ ~1,501 rows                                        │
+╰──────────────────────────┬─────────────────────────╯
+╭─ SEQ_SCAN ───────────────┴─────────────────────────╮
+│ Table: tb                                          │
+│ Type: Sequential Scan                              │
+│ Projections: ts                                    │
+│ ~1,501 rows                                        │
+╰────────────────────────────────────────────────────╯
+
+query
+SELECT coalesce(time_bucket(INTERVAL '7 days', ts)::VARCHAR, 'null') AS b, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1 ORDER BY 1;
+----
+b	c	s
+2025-09-22 00:00:00	39	741
+2025-09-29 00:00:00	273	47775
+2025-10-06 00:00:00	272	121720
+2025-10-13 00:00:00	273	196560
+2025-10-20 00:00:00	272	269960
+2025-10-27 00:00:00	273	345345
+2025-11-03 00:00:00	98	142149
+null	1	-1
+
+query
+SELECT coalesce(time_bucket(INTERVAL '1 month', ts)::VARCHAR, 'null') AS b, count(*) AS c FROM tb GROUP BY 1 ORDER BY 1;
+----
+b	c
+2025-09-01 00:00:00	117
+2025-10-01 00:00:00	1207
+2025-11-01 00:00:00	176
+null	1
+
+query
+SELECT time_bucket(INTERVAL '1 hour', ts, INTERVAL '15 minutes')::VARCHAR AS b, count(*) AS c FROM tb WHERE v BETWEEN 0 AND 7 GROUP BY 1 ORDER BY 1;
+----
+b	c
+2025-09-27 23:15:00	1
+2025-09-28 00:15:00	2
+2025-09-28 01:15:00	1
+2025-09-28 02:15:00	2
+2025-09-28 03:15:00	1
+2025-09-28 04:15:00	1
+
+query
+SELECT time_bucket(INTERVAL '1 day', ts, TIMESTAMP '2025-01-01 06:00:00')::VARCHAR AS b, count(*) AS c FROM tb WHERE v BETWEEN 0 AND 79 GROUP BY 1 ORDER BY 1;
+----
+b	c
+2025-09-27 06:00:00	10
+2025-09-28 06:00:00	39
+2025-09-29 06:00:00	31
+
+query
+SELECT coalesce(time_bucket(INTERVAL '2 months', ts, TIMESTAMP '2024-02-01')::VARCHAR, 'null') AS b, count(*) AS c FROM tb GROUP BY 1 ORDER BY 1;
+----
+b	c
+2025-08-01 00:00:00	117
+2025-10-01 00:00:00	1383
+null	1
+
+query
+SELECT coalesce(time_bucket(INTERVAL '1 week', d)::VARCHAR, 'null') AS b, count(*) AS c FROM tb GROUP BY 1 ORDER BY 1 LIMIT 3;
+----
+b	c
+2025-09-22	4
+2025-09-29	28
+2025-10-06	28
+
+query
+SELECT time_bucket(INTERVAL '10 days', d, DATE '2025-01-01')::VARCHAR AS b, count(*) AS c FROM tb WHERE v BETWEEN 0 AND 39 GROUP BY 1 ORDER BY 1;
+----
+b	c
+2025-09-28	10
+2025-10-08	10
+2025-10-18	10
+2025-10-28	10
+
+query
+SELECT coalesce(date_trunc('month', d)::VARCHAR, 'null') AS b, count(*) AS c FROM tb GROUP BY 1 ORDER BY 1 LIMIT 3;
+----
+b	c
+2025-09-01 00:00:00	12
+2025-10-01 00:00:00	124
+2025-11-01 00:00:00	120
+
+query
+SELECT coalesce(time_bucket(INTERVAL '1 day', tstz)::VARCHAR, 'null') AS b, count(*) AS c FROM tb GROUP BY 1 ORDER BY 1 LIMIT 3;
+----
+b	c
+2025-09-28 02:00:00+02	39
+2025-09-29 02:00:00+02	39
+2025-09-30 02:00:00+02	39
+
+query
+SELECT coalesce(time_bucket(INTERVAL '1 month', tstz)::VARCHAR, 'null') AS b, count(*) AS c FROM tb GROUP BY 1 ORDER BY 1;
+----
+b	c
+2025-09-01 02:00:00+02	117
+2025-10-01 02:00:00+02	1207
+2025-11-01 01:00:00+01	176
+null	1
+
+query
+SELECT time_bucket(INTERVAL '1 day', tstz, TIMESTAMPTZ '2025-01-01 05:00:00+00')::VARCHAR AS b, count(*) AS c FROM tb WHERE v BETWEEN 0 AND 79 GROUP BY 1 ORDER BY 1;
+----
+b	c
+2025-09-27 07:00:00+02	9
+2025-09-28 07:00:00+02	39
+2025-09-29 07:00:00+02	32
+
+query
+SELECT time_bucket(INTERVAL '1 hour', tstz, INTERVAL '30 minutes')::VARCHAR AS b, count(*) AS c FROM tb WHERE v BETWEEN 0 AND 5 GROUP BY 1 ORDER BY 1;
+----
+b	c
+2025-09-28 01:30:00+02	1
+2025-09-28 02:30:00+02	2
+2025-09-28 03:30:00+02	2
+2025-09-28 04:30:00+02	1
+
+query
+EXPLAIN SELECT time_bucket(INTERVAL '1 day', tstz, 'Europe/Berlin') AS b, count(*) AS c FROM tb GROUP BY 1;
+----
+QUERY PLAN
+╭─ HASH_GROUP_BY ──────────╮
+│ Groups: #0               │
+│ Aggregates: count_star() │
+│ ~750 rows                │
+╰─────────────┬────────────╯
+╭─ PROJECTION ┴────────────╮
+│ Projections: b           │
+│ ~1,501 rows              │
+╰─────────────┬────────────╯
+╭─ SEQ_SCAN ──┴────────────╮
+│ Table: tb                │
+│ Type: Sequential Scan    │
+│ Projections: tstz        │
+│ ~1,501 rows              │
+╰──────────────────────────╯
+
+query
+EXPLAIN SELECT tstz::DATE AS d, count(*) AS c FROM tb GROUP BY 1;
+----
+QUERY PLAN
+╭─ PROJECTION ─────────────────────────────────────────────────╮
+│ Projections:                                                 │
+│ CAST(__internal_icu_date_trunc_unbucket('day', #0) AS DATE), │
+│ #1                                                           │
+│ ~750 rows                                                    │
+╰───────────────────────────────┬──────────────────────────────╯
+╭─ PERFECT_HASH_GROUP_BY ───────┴──────────────────────────────╮
+│ Groups: #0                                                   │
+│ Aggregates: count_star()                                     │
+│ ~750 rows                                                    │
+╰───────────────────────────────┬──────────────────────────────╯
+╭─ PROJECTION ──────────────────┴──────────────────────────────╮
+│ Projections:                                                 │
+│ __internal_icu_date_trunc_bucket('day', tstz)                │
+│ ~1,501 rows                                                  │
+╰───────────────────────────────┬──────────────────────────────╯
+╭─ SEQ_SCAN ────────────────────┴──────────────────────────────╮
+│ Table: tb                                                    │
+│ Type: Sequential Scan                                        │
+│ Projections: tstz                                            │
+│ ~1,501 rows                                                  │
+╰──────────────────────────────────────────────────────────────╯
+
+query
+SELECT coalesce((tstz::DATE)::VARCHAR, 'null') AS d, count(*) AS c FROM tb WHERE tstz >= '2025-10-24 22:00:00+00' AND tstz < '2025-10-27 23:00:00+00' OR tstz IS NULL GROUP BY 1 ORDER BY 1;
+----
+d	c
+2025-10-25	39
+2025-10-26	41
+2025-10-27	38
+null	1
+
+statement ok
+SET TimeZone = 'Asia/Kolkata';
+
+query
+SELECT (tstz::DATE)::VARCHAR AS d, count(*) AS c FROM tb WHERE tstz >= '2025-10-24 22:00:00+00' AND tstz < '2025-10-27 23:00:00+00' GROUP BY 1 ORDER BY 1;
+----
+d	c
+2025-10-25	33
+2025-10-26	39
+2025-10-27	39
+2025-10-28	7
+
+statement ok
+SET TimeZone = 'America/St_Johns';
+
+query
+SELECT count(*) FILTER (WHERE TRY_CAST(tstz AS DATE) <> (tstz::TIMESTAMP)::DATE) AS bad, count(DISTINCT tstz::DATE) AS days FROM tb;
+----
+bad	days
+0	40
+
+statement ok
+SET disabled_optimizers = 'compressed_materialization';
+
+statement ok
+SET TimeZone = 'Europe/Berlin';
+
+query
+SELECT coalesce(time_bucket(INTERVAL '7 days', ts)::VARCHAR, 'null') AS b, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1 ORDER BY 1;
+----
+b	c	s
+2025-09-22 00:00:00	39	741
+2025-09-29 00:00:00	273	47775
+2025-10-06 00:00:00	272	121720
+2025-10-13 00:00:00	273	196560
+2025-10-20 00:00:00	272	269960
+2025-10-27 00:00:00	273	345345
+2025-11-03 00:00:00	98	142149
+null	1	-1
+
+query
+SELECT coalesce(time_bucket(INTERVAL '1 month', tstz)::VARCHAR, 'null') AS b, count(*) AS c FROM tb GROUP BY 1 ORDER BY 1;
+----
+b	c
+2025-09-01 02:00:00+02	117
+2025-10-01 02:00:00+02	1207
+2025-11-01 01:00:00+01	176
+null	1
+
+query
+SELECT coalesce((tstz::DATE)::VARCHAR, 'null') AS d, count(*) AS c FROM tb WHERE tstz >= '2025-10-24 22:00:00+00' AND tstz < '2025-10-27 23:00:00+00' OR tstz IS NULL GROUP BY 1 ORDER BY 1;
+----
+d	c
+2025-10-25	39
+2025-10-26	41
+2025-10-27	38
+null	1
+
+statement ok
+RESET disabled_optimizers;
+
+statement ok
+SET TimeZone = 'Etc/UTC';

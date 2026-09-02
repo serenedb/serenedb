@@ -20,7 +20,12 @@
 /// @author Andrei Lobov
 ////////////////////////////////////////////////////////////////////////////////
 
+#include <unicode/brkiter.h>
+#include <unicode/ubrk.h>
+#include <unicode/utext.h>
+
 #include <functional>
+#include <memory>
 #include <vector>
 
 #include "gtest/gtest.h"
@@ -1107,6 +1112,131 @@ TEST(IcuTextTokenizerTest, ascii_fast_path_matches_icu_for_every_accept) {
     for (const std::string_view value :
          {"Test - ReTeSt", "a, b; c!", "x-y_z 12.5 (q)"}) {
       tests::AssertAsciiMatchesUnicode(*stream, value);
+    }
+  }
+}
+
+namespace {
+
+enum class IcuMode { Word, WordAny, Sentence };
+
+std::vector<tests::AnalyzerToken> IcuOracle(const icu::Locale& locale,
+                                            IcuMode mode,
+                                            std::string_view text) {
+  auto err = UErrorCode::U_ZERO_ERROR;
+  std::unique_ptr<icu::BreakIterator> it{
+    mode == IcuMode::Sentence
+      ? icu::BreakIterator::createSentenceInstance(locale, err)
+      : icu::BreakIterator::createWordInstance(locale, err)};
+  if (!U_SUCCESS(err) || !it) {
+    ADD_FAILURE() << "break iterator: " << u_errorName(err);
+    return {};
+  }
+  UText ut = UTEXT_INITIALIZER;
+  utext_openUTF8(&ut, text.data(), static_cast<int64_t>(text.size()), &err);
+  it->setText(&ut, err);
+  std::vector<tests::AnalyzerToken> out;
+  uint32_t pos = 0;
+  for (auto start = it->first(), end = it->next();
+       end != icu::BreakIterator::DONE; start = end, end = it->next()) {
+    auto begin = static_cast<uint32_t>(start);
+    auto stop = static_cast<uint32_t>(end);
+    if (mode == IcuMode::Word &&
+        it->getRuleStatus() == UWordBreak::UBRK_WORD_NONE) {
+      continue;
+    }
+    if (mode == IcuMode::Sentence) {
+      while (begin < stop && static_cast<uint8_t>(text[begin]) <= ' ') {
+        ++begin;
+      }
+      while (stop > begin && static_cast<uint8_t>(text[stop - 1]) <= ' ') {
+        --stop;
+      }
+      if (begin == stop) {
+        continue;
+      }
+    }
+    out.push_back(
+      {std::string{text.substr(begin, stop - begin)}, ++pos, begin, stop});
+  }
+  utext_close(&ut);
+  return out;
+}
+
+IcuTextTokenizer::Options IcuOptions(const char* locale, IcuMode mode) {
+  IcuTextTokenizer::Options opts;
+  opts.locale = icu::Locale::createFromName(locale);
+  if (mode == IcuMode::Sentence) {
+    opts.separate = IcuTextTokenizer::Options::Separate::Sentence;
+  }
+  if (mode != IcuMode::Word) {
+    opts.accept = IcuTextTokenizer::Options::Accept::Any;
+  }
+  return opts;
+}
+
+}  // namespace
+
+TEST(IcuTextTokenizerTest, ascii_words_follow_the_locale_rules) {
+  constexpr std::string_view kText = "abc:def x.y a_b 12,5 kalle:s bil 3:4";
+  for (const char* locale : {"en_US", "de_DE", "sv", "fi", "en_US_POSIX"}) {
+    SCOPED_TRACE(locale);
+    auto stream = IcuTextTokenizer::Make(IcuOptions(locale, IcuMode::Word));
+    const auto tokens = tests::Analyze(*stream, kText);
+    ASSERT_TRUE(tokens.has_value());
+    ASSERT_EQ(
+      IcuOracle(icu::Locale::createFromName(locale), IcuMode::Word, kText),
+      *tokens);
+  }
+}
+
+TEST(IcuTextTokenizerTest, offsets_match_icu_across_scripts_and_modes) {
+  const std::vector<std::string_view> values = {
+    "plain ascii words, punctuation! and 42 numbers.",
+    "\xF0\x9F\x98\x80 emoji \xF0\x9D\x94\x98\xF0\x9D\x94\xAB\xF0\x9D\x94\xA6 "
+    "astral text",
+    "中文测试 mixed with English 文本 and 日本語のテキスト",
+    "ภาษาไทยทดสอบการแบ่งคำ then latin",
+    "Первое предложение. Второе предложение! Третье?",
+    "суши рамен барни макароны бубалех",
+    "  leading and trailing spaces  ",
+    "\xCF\x89\xCF\x89\xCF\x89",
+    "a",
+    ""};
+  for (const auto mode : {IcuMode::Word, IcuMode::WordAny, IcuMode::Sentence}) {
+    auto stream = IcuTextTokenizer::Make(IcuOptions("en_US", mode));
+    for (const auto value : values) {
+      SCOPED_TRACE(testing::Message()
+                   << "mode=" << static_cast<int>(mode) << " value=" << value);
+      const auto tokens = tests::Analyze(*stream, value);
+      ASSERT_TRUE(tokens.has_value());
+      EXPECT_EQ(IcuOracle(icu::Locale::createFromName("en_US"), mode, value),
+                *tokens);
+    }
+  }
+}
+
+TEST(IcuTextTokenizerTest, repeated_fills_match_fresh_instances) {
+  const std::string long_value =
+    std::string(300, 'x') + " \xCF\x89 " + std::string(200, 'y');
+  const std::vector<std::string_view> values = {"",
+                                                "a",
+                                                "中文测试",
+                                                "суши рамен барни макароны "
+                                                "бубалех",
+                                                long_value,
+                                                "x\xFFy z",
+                                                "\xF0\x9F\x98\x80 emoji",
+                                                "abc def",
+                                                "\xE2\x82",
+                                                "tail"};
+  for (const auto mode : {IcuMode::Word, IcuMode::Sentence}) {
+    auto reused = IcuTextTokenizer::Make(IcuOptions("en_US", mode));
+    for (const auto value : values) {
+      SCOPED_TRACE(testing::Message()
+                   << "mode=" << static_cast<int>(mode) << " value=" << value);
+      auto fresh = IcuTextTokenizer::Make(IcuOptions("en_US", mode));
+      EXPECT_EQ(tests::Analyze(*fresh, value), tests::Analyze(*reused, value));
     }
   }
 }

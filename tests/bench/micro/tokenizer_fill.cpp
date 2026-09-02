@@ -33,6 +33,7 @@
 #include "iresearch/analysis/collation_tokenizer.hpp"
 #include "iresearch/analysis/delimited_tokenizer.hpp"
 #include "iresearch/analysis/geo_analyzer.hpp"
+#include "iresearch/analysis/icu_text_tokenizer.hpp"
 #include "iresearch/analysis/keyword_tokenizer.hpp"
 #include "iresearch/analysis/multi_delimited_tokenizer.hpp"
 #include "iresearch/analysis/ngram_tokenizer.hpp"
@@ -89,6 +90,31 @@ const std::vector<std::string>& TextUnicodeCorpus() {
     auto out = TextCorpus();
     for (auto& v : out) {
       v += " \xCF\x89\xCF\x89\xCF\x89";
+    }
+    return out;
+  }();
+  return corpus;
+}
+
+const std::vector<std::string>& CjkCorpus() {
+  static const auto corpus = [] {
+    const char* phrases[] = {"中文测试文本分词性能",
+                             "日本語のテキストを分割する",
+                             "ภาษาไทยทดสอบการแบ่งคำ",
+                             "по вечерам ежик ходил к медвежонку",
+                             "mixed 日本語 and English 文本 tokens",
+                             "한국어 텍스트 분석 성능 측정",
+                             "Ελληνικό κείμενο για δοκιμή"};
+    std::vector<std::string> out;
+    out.reserve(kValues);
+    for (size_t i = 0; i < kValues; ++i) {
+      std::string v;
+      for (size_t w = 0; w < 6; ++w) {
+        v += phrases[(i * 5 + w * 3) % 7];
+        v += ' ';
+      }
+      v.pop_back();
+      out.push_back(std::move(v));
     }
     return out;
   }();
@@ -1032,6 +1058,17 @@ Tokenizer::ptr MakeWildcard() {
 
 Tokenizer::ptr MakeSegmentation() { return SegmentationTokenizer::Make({}); }
 
+Tokenizer::ptr MakeIcuText() {
+  return IcuTextTokenizer::Make(
+    {.locale = icu::Locale::createFromName("en_US")});
+}
+
+Tokenizer::ptr MakeIcuSentence() {
+  return IcuTextTokenizer::Make(
+    {.separate = IcuTextTokenizer::Options::Separate::Sentence,
+     .locale = icu::Locale::createFromName("en_US")});
+}
+
 Tokenizer::ptr MakeTextEn() {
   TextTokenizer::Options o;
   o.locale = icu::Locale::createFromName("en_US.UTF-8");
@@ -1290,6 +1327,11 @@ TOKENIZER_BENCH(segmentation, MakeSegmentation, TextCorpus);
 BENCHMARK_CAPTURE(BM_Fill, segmentation_unicode, &MakeSegmentation,
                   &TextUnicodeCorpus)
   ->Unit(benchmark::kMillisecond);
+TOKENIZER_BENCH(icu_text, MakeIcuText, TextCorpus);
+BENCHMARK_CAPTURE(BM_Fill, icu_text_unicode, &MakeIcuText, &TextUnicodeCorpus)
+  ->Unit(benchmark::kMillisecond);
+TOKENIZER_BENCH(icu_text_cjk, MakeIcuText, CjkCorpus);
+TOKENIZER_BENCH(icu_text_sentence, MakeIcuSentence, TextCorpus);
 TOKENIZER_BENCH(text_en, MakeTextEn, TextCorpus);
 TOKENIZER_BENCH(pipeline_text_en, MakePipelineText, TextCorpus);
 BENCHMARK_CAPTURE(BM_FillColumn, pipeline_text_en_mixed, &MakePipelineText,

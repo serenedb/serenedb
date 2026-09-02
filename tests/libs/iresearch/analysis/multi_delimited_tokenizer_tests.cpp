@@ -206,6 +206,54 @@ TEST_F(MultiDelimitedTokenizerTests, multi_string_matches_one_string) {
   ASSERT_EQ((std::vector<std::string>{"foo", "bar,baz", "qux"}), *actual);
 }
 
+TEST_F(MultiDelimitedTokenizerTests,
+       multi_string_candidates_beyond_first_block) {
+  {
+    auto stream =
+      MultiDelimitedTokenizer::Make({.delimiters = {", "_b, "; "_b}});
+    AssertBlockTokens(*stream, "aaaaaaaaaa, bbbbbbbbbb; cc,ccdd, eeee; f",
+                      {{"aaaaaaaaaa", 0, 10},
+                       {"bbbbbbbbbb", 12, 22},
+                       {"cc,ccdd", 24, 31},
+                       {"eeee", 33, 37},
+                       {"f", 39, 40}});
+  }
+  {
+    auto stream = MultiDelimitedTokenizer::Make(
+      {.delimiters = {", "_b, "; "_b, ": "_b, " - "_b, " | "_b, "\t"_b, "--"_b,
+                      "\r\n"_b}});
+    const std::string xs(32, 'x');
+    const std::string data = xs + ", a, b; c: d - e | f\tg--h\r\ni";
+    AssertBlockTokens(*stream, data,
+                      {{xs, 0, 32},
+                       {"a", 34, 35},
+                       {"b", 37, 38},
+                       {"c", 40, 41},
+                       {"d", 43, 44},
+                       {"e", 47, 48},
+                       {"f", 51, 52},
+                       {"g", 53, 54},
+                       {"h", 56, 57},
+                       {"i", 59, 60}});
+  }
+  {
+    auto stream = MultiDelimitedTokenizer::Make(
+      {.delimiters = {",,"_b, ";;"_b, "::"_b, "!!"_b, "??"_b, ".."_b, "||"_b,
+                      "&&"_b, "##"_b}});
+    AssertBlockTokens(*stream, "x,,y;;z::w!!v??u..t||s&&r##q",
+                      {{"x", 0, 1},
+                       {"y", 3, 4},
+                       {"z", 6, 7},
+                       {"w", 9, 10},
+                       {"v", 12, 13},
+                       {"u", 15, 16},
+                       {"t", 18, 19},
+                       {"s", 21, 22},
+                       {"r", 24, 25},
+                       {"q", 27, 28}});
+  }
+}
+
 TEST_F(MultiDelimitedTokenizerTests, delimiter_inside_another_path) {
   auto stream =
     MultiDelimitedTokenizer::Make({.delimiters = {"ab"_b, "xabc"_b}});

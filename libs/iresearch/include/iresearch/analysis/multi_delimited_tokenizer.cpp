@@ -22,6 +22,8 @@
 
 #include <algorithm>
 #include <array>
+#include <bit>
+#include <cstring>
 #include <functional>
 #include <string_view>
 
@@ -134,10 +136,18 @@ struct OneLongStringFinder {
 };
 
 struct MultiStringFinder {
+  static constexpr size_t kMaxBlockFirsts = 8;
+
   explicit MultiStringFinder(std::vector<bstring>&& delimiters) {
     for (auto& d : delimiters) {
       SDB_ASSERT(!d.empty());
-      first[d.front()] = true;
+      if (!first[d.front()]) {
+        first[d.front()] = true;
+        if (nfirsts < kMaxBlockFirsts) {
+          firsts[nfirsts] = d.front();
+        }
+        ++nfirsts;
+      }
       if (d.size() >= sizeof(uint32_t)) {
         uint32_t p;
         std::memcpy(&p, d.data(), sizeof p);
@@ -149,25 +159,48 @@ struct MultiStringFinder {
     }
   }
 
+  IRS_FORCE_INLINE size_t MatchAt(bytes_view tail) const {
+    for (const auto& d : short_delims) {
+      if (tail.starts_with(d)) {
+        return d.size();
+      }
+    }
+    if (!long_delims.empty()) {
+      uint32_t t4 = 0;
+      std::memcpy(&t4, tail.data(), std::min<size_t>(tail.size(), sizeof t4));
+      for (size_t j = 0; j < long_delims.size(); ++j) {
+        if (t4 == long_prefix4[j] && tail.starts_with(long_delims[j])) {
+          return long_delims[j].size();
+        }
+      }
+    }
+    return 0;
+  }
+
   auto FindNextDelim(bytes_view data) const {
-    for (size_t pos = 0; pos < data.size(); ++pos) {
-      if (!first[data[pos]]) {
+    const auto* p = data.data();
+    const size_t size = data.size();
+    size_t pos = 0;
+    if (nfirsts <= kMaxBlockFirsts) {
+      for (; size - pos >= classify::kClassifyBlock;
+           pos += classify::kClassifyBlock) {
+        auto mask =
+          classify::ClassifyAnyEqBlock(p + pos, {firsts.data(), nfirsts});
+        while (mask != 0) {
+          const size_t at = pos + std::countr_zero(mask);
+          if (const auto skip = MatchAt(data.substr(at)); skip != 0) {
+            return std::make_pair(data.begin() + at, skip);
+          }
+          mask &= mask - 1;
+        }
+      }
+    }
+    for (; pos < size; ++pos) {
+      if (!first[p[pos]]) {
         continue;
       }
-      const auto tail = data.substr(pos);
-      for (const auto& d : short_delims) {
-        if (tail.starts_with(d)) {
-          return std::make_pair(data.begin() + pos, d.size());
-        }
-      }
-      if (!long_delims.empty()) {
-        uint32_t t4 = 0;
-        std::memcpy(&t4, tail.data(), std::min<size_t>(tail.size(), sizeof t4));
-        for (size_t j = 0; j < long_delims.size(); ++j) {
-          if (t4 == long_prefix4[j] && tail.starts_with(long_delims[j])) {
-            return std::make_pair(data.begin() + pos, long_delims[j].size());
-          }
-        }
+      if (const auto skip = MatchAt(data.substr(pos)); skip != 0) {
+        return std::make_pair(data.begin() + pos, skip);
       }
     }
     return std::make_pair(data.end(), size_t{0});
@@ -177,6 +210,8 @@ struct MultiStringFinder {
   std::vector<bstring> long_delims;
   std::vector<uint32_t> long_prefix4;
   std::array<bool, 256> first{};
+  std::array<byte_type, kMaxBlockFirsts> firsts{};
+  size_t nfirsts = 0;
 };
 
 template<typename Finder>

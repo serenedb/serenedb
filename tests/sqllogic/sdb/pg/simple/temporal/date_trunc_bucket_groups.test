@@ -330,21 +330,29 @@ query
 EXPLAIN SELECT date_trunc('month', ts) AS m, count(*) AS c FROM ad1 GROUP BY 1;
 ----
 QUERY PLAN
-╭─ HASH_GROUP_BY ──────────╮
-│ Groups: #0               │
-│ Aggregates: count_star() │
-│ ~504 rows                │
-╰─────────────┬────────────╯
-╭─ PROJECTION ┴────────────╮
-│ Projections: m           │
-│ ~1,008 rows              │
-╰─────────────┬────────────╯
-╭─ SEQ_SCAN ──┴────────────╮
-│ Table: ad1               │
-│ Type: Sequential Scan    │
-│ Projections: ts          │
-│ ~1,008 rows              │
-╰──────────────────────────╯
+╭─ PROJECTION ────────────────────────────────────╮
+│ Projections:                                    │
+│ __internal_date_trunc_month_unbucket(#0, 1, 0), │
+│ #1                                              │
+│ ~504 rows                                       │
+╰────────────────────────┬────────────────────────╯
+╭─ PERFECT_HASH_GROUP_BY ┴────────────────────────╮
+│ Groups: #0                                      │
+│ Aggregates: count_star()                        │
+│ ~504 rows                                       │
+╰────────────────────────┬────────────────────────╯
+╭─ PROJECTION ───────────┴────────────────────────╮
+│ Projections:                                    │
+│ __internal_date_trunc_month_bucket(ts, 1, 0)    │
+│ ~1,008 rows                                     │
+╰────────────────────────┬────────────────────────╯
+╭─ SEQ_SCAN ─────────────┴────────────────────────╮
+│ Table: ad1                                      │
+│ Type: Sequential Scan                           │
+│ Projections: ts                                 │
+│ ~1,008 rows                                     │
+╰─────────────────────────────────────────────────╯
+
 
 query
 SELECT coalesce(date_trunc('decade', ts)::VARCHAR, 'null') AS d, count(*) AS c FROM ad1 GROUP BY 1 ORDER BY 1;

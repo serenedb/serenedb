@@ -172,6 +172,9 @@ duckdb::shared_ptr<duckdb::WriteAheadLog> gClusterWal;
 // durable by whichever flushed first, so a commit holds the log for its run.
 absl::Mutex gClusterWalMutex;
 thread_local bool gHoldsClusterWal = false;
+// Set only where the caller is known to hold no catalog lock, which is the one
+// place waiting for the log lock cannot invert an order.
+thread_local bool gOidHorizonMayWait = false;
 thread_local uint64_t gClusterWalFlushedAt = 0;
 // Whether the open run carries a catalog decision -- a version of an object, or
 // the opening of a drop -- as opposed to only what describes one. That is where
@@ -342,12 +345,31 @@ void WriteSequenceValueTo(duckdb::WriteAheadLog& wal, ObjectId sequence_id,
   wal.WriteCatalogState(bytes, stream.GetPosition());
 }
 
-bool WriteOidHorizon(uint64_t horizon) {
+bool WriteOidHorizon(uint64_t horizon) ABSL_NO_THREAD_SAFETY_ANALYSIS {
   auto wal = ClusterCatalogWal();
   if (!wal) {
     return false;
   }
-  absl::MutexLock lock{&gClusterWalMutex};
+  // An id is allocated wherever a catalog entry is built, which is under the
+  // catalog and set locks. The log lock sits outside those, so waiting for it
+  // here would close the cycle a commit walks the other way round. The run that
+  // already holds it writes straight through; anyone else takes it only if it
+  // is free, and otherwise reports a conflict the statement can be retried on.
+  if (gHoldsClusterWal) {
+    WriteOidHorizonTo(*wal, horizon);
+    wal->Flush();
+    return true;
+  }
+  if (gOidHorizonMayWait) {
+    gClusterWalMutex.Lock();
+  } else if (!gClusterWalMutex.TryLock()) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_T_R_SERIALIZATION_FAILURE),
+      ERR_MSG("catalog log: object id horizon is busy, retry the statement"));
+  }
+  const absl::Cleanup unlock = []() ABSL_NO_THREAD_SAFETY_ANALYSIS {
+    gClusterWalMutex.Unlock();
+  };
   WriteOidHorizonTo(*wal, horizon);
   wal->Flush();
   return true;
@@ -485,6 +507,12 @@ void EndCommittingCatalogRun(bool committed) ABSL_NO_THREAD_SAFETY_ANALYSIS {
     SDB_IF_FAILURE("crash_on_drop") { SDB_IMMEDIATE_ABORT(); }
   }
 }
+
+OidHorizonWaitScope::OidHorizonWaitScope() : _previous{gOidHorizonMayWait} {
+  gOidHorizonMayWait = true;
+}
+
+OidHorizonWaitScope::~OidHorizonWaitScope() { gOidHorizonMayWait = _previous; }
 
 void EndClusterCatalogWal(bool committed) ABSL_NO_THREAD_SAFETY_ANALYSIS {
   if (!gHoldsClusterWal) {

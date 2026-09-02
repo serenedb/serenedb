@@ -2246,6 +2246,11 @@ duckdb::unique_ptr<duckdb::AlterInfo> UndoBufferRowRecipe(
 
 }  // namespace
 
+void SereneDBCatalog::PrepareCatalogChange(
+  duckdb::DuckTransaction& /*transaction*/) {
+  catalog::ScopedCatalogWal();
+}
+
 void SereneDBCatalog::WriteCatalogChange(
   duckdb::DuckTransaction& /*transaction*/, duckdb::CatalogEntry& old_entry,
   duckdb::data_ptr_t extra_data) {

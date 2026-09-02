@@ -31,10 +31,30 @@
 #include "catalog/log/store.h"
 
 namespace sdb::connector {
+namespace {
+
+// One statement allocates a handful of ids; a block this size covers a long run
+// of them, so the horizon is written about as often as it was before and never
+// from under a catalog lock.
+constexpr uint64_t kOidHeadroom = 4096;
+
+}  // namespace
 
 SereneDBTransactionManager::SereneDBTransactionManager(
   duckdb::AttachedDatabase& db)
   : duckdb::DuckTransactionManager(db) {}
+
+// Object ids are handed out wherever a catalog entry is built, under the
+// catalog locks, and raising their durable horizon writes to the cluster log --
+// whose lock has to stay outside those. Raise it here instead, where this
+// transaction holds no catalog lock, so the allocations it goes on to make are
+// already covered.
+duckdb::Transaction& SereneDBTransactionManager::StartTransaction(
+  duckdb::ClientContext& context) {
+  const catalog::OidHorizonWaitScope may_wait;
+  duckdb::DatabaseManager::Get(db).EnsureOidHeadroom(kOidHeadroom);
+  return duckdb::DuckTransactionManager::StartTransaction(context);
+}
 
 void SereneDBTransactionManager::Checkpoint(duckdb::ClientContext& context,
                                             bool force) {

@@ -217,6 +217,21 @@ enum class CatalogState : uint8_t {
 // False when the log is not up to take the record -- boot's own replay-time
 // allocations -- in which case the horizon must not be treated as raised.
 bool WriteOidHorizon(uint64_t horizon);
+
+// Marks a stretch where the object id horizon may be written by waiting for the
+// cluster log lock. Only valid where no catalog lock is held: everywhere else
+// the allocator refuses rather than waits, because the log lock sits outside
+// the catalog locks and waiting for it there would invert the order.
+class OidHorizonWaitScope {
+ public:
+  OidHorizonWaitScope();
+  ~OidHorizonWaitScope();
+  OidHorizonWaitScope(const OidHorizonWaitScope&) = delete;
+  OidHorizonWaitScope& operator=(const OidHorizonWaitScope&) = delete;
+
+ private:
+  bool _previous;
+};
 // The same records into a log of the caller's own, for the rewrite that folds
 // the state back into a fresh one.
 void WriteOidHorizonTo(duckdb::WriteAheadLog& wal, uint64_t horizon);

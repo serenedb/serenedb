@@ -87,6 +87,9 @@ run_serened_core() {
 	[[ "${RUN_SQLITE:-false}" == "true" ]] && scope=all
 	run env SDB_SQLLOGIC_SCOPE="$scope" bash "${STEPS}/044-ci-in-docker-run-sqllogic-tests.bash"
 	run bash "${STEPS}/047-ci-in-docker-run-driver-tests.bash"
+	# Its own serened: the failure it looks for wedges the whole process, so a
+	# regression must not take the suites above down with it.
+	run bash "${STEPS}/050-ci-in-docker-run-catalog-deadlock-test.bash"
 }
 
 # Diff-gated heavy suite: sqlsmith fuzzing.

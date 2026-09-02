@@ -286,6 +286,68 @@ TEST_F(MultiDelimitedTokenizerTests, delimiter_chain_of_suffixes) {
   AssertBlockTokens(*stream, "zabcz", {{"z", 0, 1}, {"z", 4, 5}});
 }
 
+TEST_F(MultiDelimitedTokenizerTests,
+       multi_string_scan_continues_inside_and_across_blocks) {
+  auto stream =
+    MultiDelimitedTokenizer::Make({.delimiters = {"<br>"_b, "</p>"_b}});
+  const std::string x28(28, 'x');
+  const std::string x29(29, 'x');
+  const std::string x30(30, 'x');
+  const std::string x31(31, 'x');
+  const std::string c26 = "c" + std::string(25, 'x');
+  const std::string x30b = x30 + "<b";
+  const std::string x31i = x31 + "<i>";
+
+  AssertBlockTokens(*stream, x29 + "<br>ab</p>cd",
+                    {{x29, 0, 29}, {"ab", 33, 35}, {"cd", 39, 41}});
+  AssertBlockTokens(*stream, "a<br>b</p>" + c26,
+                    {{"a", 0, 1}, {"b", 5, 6}, {c26, 10, 36}});
+  AssertBlockTokens(*stream, x28 + "<br>abc", {{x28, 0, 28}, {"abc", 32, 35}});
+  AssertBlockTokens(*stream, x30b, {{x30b, 0, 32}});
+  AssertBlockTokens(*stream, x30 + "<br>y</p>", {{x30, 0, 30}, {"y", 34, 35}});
+  AssertBlockTokens(*stream, x31 + "<br>z", {{x31, 0, 31}, {"z", 35, 36}});
+  AssertBlockTokens(*stream, x31i + "</p>q", {{x31i, 0, 34}, {"q", 38, 39}});
+}
+
+TEST_F(MultiDelimitedTokenizerTests, multi_string_prefix_tiers_verify_exactly) {
+  auto stream = MultiDelimitedTokenizer::Make(
+    {.delimiters = {"</sect01>"_b, "</sect02>"_b, "</long05>"_b, "<meta02>"_b,
+                    "</section>"_b, "</sectio>"_b}});
+  AssertBlockTokens(
+    *stream, "a</sect01xb</sect02>c<meta02>d</sectio>e</section>f</long05>g",
+    {{"a</sect01xb", 0, 11},
+     {"c", 20, 21},
+     {"d", 29, 30},
+     {"e", 39, 40},
+     {"f", 50, 51},
+     {"g", 60, 61}});
+  AssertBlockTokens(*stream, "</sect0", {{"</sect0", 0, 7}});
+  AssertBlockTokens(*stream, "<meta02>", {});
+
+  auto tags =
+    MultiDelimitedTokenizer::Make({.delimiters = {"</b>"_b, "</i>"_b}});
+  AssertBlockTokens(*tags, "xy</b>", {{"xy", 0, 2}});
+  AssertBlockTokens(*tags, "ab</", {{"ab</", 0, 4}});
+  const std::string x30(30, 'x');
+  AssertBlockTokens(*tags, x30 + "</b>q", {{x30, 0, 30}, {"q", 34, 35}});
+  AssertBlockTokens(*tags, x30 + "</i", {{x30 + "</i", 0, 33}});
+}
+
+TEST_F(MultiDelimitedTokenizerTests,
+       many_chars_delimiters_in_the_overlapping_tail_block) {
+  auto stream =
+    MultiDelimitedTokenizer::Make({.delimiters = {","_b, ";"_b, "|"_b}});
+  const std::string x31(31, 'x');
+  const std::string x32(32, 'x');
+  AssertBlockTokens(*stream, x31 + ";yy|z",
+                    {{x31, 0, 31}, {"yy", 32, 34}, {"z", 35, 36}});
+  AssertBlockTokens(*stream, x32 + ",y", {{x32, 0, 32}, {"y", 33, 34}});
+  AssertBlockTokens(*stream, x32 + ",,", {{x32, 0, 32}});
+  auto one = MultiDelimitedTokenizer::Make({.delimiters = {","_b}});
+  AssertBlockTokens(*one, x31 + ",yy,z",
+                    {{x31, 0, 31}, {"yy", 32, 34}, {"z", 35, 36}});
+}
+
 TEST_F(MultiDelimitedTokenizerTests, construct) {
   // happy path -- two distinct delimiters.
   {

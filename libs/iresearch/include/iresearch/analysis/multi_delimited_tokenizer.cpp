@@ -33,46 +33,23 @@
 
 namespace irs::analysis {
 
-template<TokenLayout Layout, typename Finder>
-void DrainSingleCharValue(TokenSink& sink, duckdb::string_t raw,
-                          const Finder& finder) {
-  const auto* p = reinterpret_cast<const byte_type*>(raw.GetData());
-  const size_t size = raw.GetSize();
-  size_t tok_begin = 0;
-
-  const auto* const bound = p + size;
-  const auto emit = [&](size_t begin, size_t end) IRS_FORCE_INLINE {
-    if (begin == end) {
-      return;
-    }
-    sink.EmitSlice<Layout>(
-      p, bound, Offs{static_cast<uint32_t>(begin), static_cast<uint32_t>(end)});
-  };
-
-  classify::DrainClassified(
-    p, size, true,
-    [&](const byte_type* block)
-      IRS_FORCE_INLINE { return finder.ClassifyBlock(block); },
-    [&](byte_type c) IRS_FORCE_INLINE { return finder.IsDelimByte(c); },
-    [&](size_t pos) IRS_FORCE_INLINE {
-      emit(tok_begin, pos);
-      tok_begin = pos + 1;
-    });
-  emit(tok_begin, size);
-}
-
 struct NoDelimFinder {
-  auto FindNextDelim(bytes_view data) const {
-    return std::make_pair(data.end(), size_t{0});
-  }
+  template<typename OnDelim>
+  IRS_FORCE_INLINE void ForEachDelim(bytes_view, OnDelim&&) const noexcept {}
 };
 
 struct OneCharFinder {
   byte_type delim;
 
-  bool IsDelimByte(byte_type c) const { return c == delim; }
-  uint32_t ClassifyBlock(const byte_type* block) const {
-    return classify::ClassifyEqBlock(block, delim);
+  template<typename OnDelim>
+  IRS_FORCE_INLINE void ForEachDelim(bytes_view data,
+                                     OnDelim&& on_delim) const {
+    classify::DrainClassified(
+      data.data(), data.size(), true,
+      [&](const byte_type* block)
+        IRS_FORCE_INLINE { return classify::ClassifyEqBlock(block, delim); },
+      [&](byte_type c) IRS_FORCE_INLINE { return c == delim; },
+      [&](size_t pos) IRS_FORCE_INLINE { on_delim(pos, size_t{1}); });
   }
 };
 
@@ -82,7 +59,7 @@ struct ManyCharsFinder {
   explicit ManyCharsFinder(const std::vector<bstring>& delimiters) {
     for (const auto& delim : delimiters) {
       SDB_ASSERT(delim.size() == 1);
-      bytes[delim[0]] = true;
+      bytes.Add(delim[0]);
       if (ndelims < kMaxBlockDelims) {
         delims[ndelims] = delim[0];
       }
@@ -90,18 +67,19 @@ struct ManyCharsFinder {
     }
   }
 
-  auto FindNextDelim(bytes_view data) const {
-    auto next = absl::c_find_if(data, [&](auto c) { return bytes[c]; });
-    return std::make_pair(next, size_t{1});
+  template<typename OnDelim>
+  IRS_FORCE_INLINE void ForEachDelim(bytes_view data,
+                                     OnDelim&& on_delim) const {
+    classify::DrainClassified(
+      data.data(), data.size(), ndelims <= kMaxBlockDelims,
+      [&](const byte_type* block) IRS_FORCE_INLINE {
+        return classify::ClassifyAnyEqBlock(block, {delims.data(), ndelims});
+      },
+      [&](byte_type c) IRS_FORCE_INLINE { return bytes.Contains(c); },
+      [&](size_t pos) IRS_FORCE_INLINE { on_delim(pos, size_t{1}); });
   }
 
-  bool CanBlockScan() const { return ndelims <= kMaxBlockDelims; }
-  bool IsDelimByte(byte_type c) const { return bytes[c]; }
-  uint32_t ClassifyBlock(const byte_type* block) const {
-    return classify::ClassifyAnyEqBlock(block, {delims.data(), ndelims});
-  }
-
-  std::array<bool, 256> bytes{};
+  classify::ByteSet bytes;
   std::array<byte_type, kMaxBlockDelims> delims{};
   size_t ndelims = 0;
 };
@@ -113,12 +91,14 @@ struct OneStringFinder {
 
   explicit OneStringFinder(bstring&& delimiter) : delim{std::move(delimiter)} {}
 
-  auto FindNextDelim(bytes_view data) const {
-    auto next = data.end();
-    if (auto pos = data.find(delim); pos != bstring::npos) {
-      next = data.begin() + pos;
+  template<typename OnDelim>
+  IRS_FORCE_INLINE void ForEachDelim(bytes_view data,
+                                     OnDelim&& on_delim) const {
+    const bytes_view needle{delim};
+    for (size_t pos = data.find(needle); pos != bytes_view::npos;
+         pos = data.find(needle, pos + needle.size())) {
+      on_delim(pos, needle.size());
     }
-    return std::make_pair(next, delim.size());
   }
 };
 
@@ -129,87 +109,133 @@ struct OneLongStringFinder {
   explicit OneLongStringFinder(bstring&& delimiter)
     : delim{std::move(delimiter)}, searcher{delim.begin(), delim.end()} {}
 
-  auto FindNextDelim(bytes_view data) const {
-    auto next = std::search(data.begin(), data.end(), searcher);
-    return std::make_pair(next, delim.size());
+  template<typename OnDelim>
+  IRS_FORCE_INLINE void ForEachDelim(bytes_view data,
+                                     OnDelim&& on_delim) const {
+    for (auto it = std::search(data.begin(), data.end(), searcher);
+         it != data.end();
+         it = std::search(it + delim.size(), data.end(), searcher)) {
+      on_delim(static_cast<size_t>(it - data.begin()), delim.size());
+    }
   }
 };
 
+IRS_FORCE_INLINE bool BytesEqual(const byte_type* a, const byte_type* b,
+                                 size_t n) {
+  for (size_t i = 0; i < n; ++i) {
+    if (a[i] != b[i]) {
+      return false;
+    }
+  }
+  return true;
+}
+
 struct MultiStringFinder {
   static constexpr size_t kMaxBlockFirsts = 8;
+  static constexpr size_t kPrefix = sizeof(uint64_t);
 
   explicit MultiStringFinder(std::vector<bstring>&& delimiters) {
     for (auto& d : delimiters) {
       SDB_ASSERT(!d.empty());
-      if (!first[d.front()]) {
-        first[d.front()] = true;
+      if (!first.Contains(d.front())) {
+        first.Add(d.front());
         if (nfirsts < kMaxBlockFirsts) {
           firsts[nfirsts] = d.front();
         }
         ++nfirsts;
       }
-      if (d.size() >= sizeof(uint32_t)) {
-        uint32_t p;
-        std::memcpy(&p, d.data(), sizeof p);
-        long_prefix4.push_back(p);
-        long_delims.push_back(std::move(d));
-      } else {
-        short_delims.push_back(std::move(d));
-      }
+      const size_t head = std::min(d.size(), kPrefix);
+      std::array<byte_type, kPrefix> ones{};
+      std::fill_n(ones.begin(), head, byte_type{0xFF});
+      uint64_t prefix = 0;
+      uint64_t mask = 0;
+      std::memcpy(&prefix, d.data(), head);
+      std::memcpy(&mask, ones.data(), kPrefix);
+      prefixes.push_back(prefix);
+      masks.push_back(mask);
+      sizes.push_back(static_cast<uint32_t>(d.size()));
+      delims.push_back(std::move(d));
     }
   }
 
-  IRS_FORCE_INLINE size_t MatchAt(bytes_view tail) const {
-    for (const auto& d : short_delims) {
-      if (tail.starts_with(d)) {
-        return d.size();
-      }
-    }
-    if (!long_delims.empty()) {
-      uint32_t t4 = 0;
-      std::memcpy(&t4, tail.data(), std::min<size_t>(tail.size(), sizeof t4));
-      for (size_t j = 0; j < long_delims.size(); ++j) {
-        if (t4 == long_prefix4[j] && tail.starts_with(long_delims[j])) {
-          return long_delims[j].size();
+  IRS_FORCE_INLINE size_t MatchAt(const byte_type* tail, size_t n) const {
+    if (n < kPrefix) [[unlikely]] {
+      for (size_t j = 0; j < delims.size(); ++j) {
+        if (sizes[j] <= n && BytesEqual(tail, delims[j].data(), sizes[j])) {
+          return sizes[j];
         }
+      }
+      return 0;
+    }
+    uint64_t t8;
+    std::memcpy(&t8, tail, kPrefix);
+    for (size_t j = 0; j < delims.size(); ++j) {
+      if (((t8 ^ prefixes[j]) & masks[j]) != 0) {
+        continue;
+      }
+      const size_t size = sizes[j];
+      if (size <= kPrefix) {
+        return size;
+      }
+      if (size <= n && BytesEqual(tail + kPrefix, delims[j].data() + kPrefix,
+                                  size - kPrefix)) {
+        return size;
       }
     }
     return 0;
   }
 
-  auto FindNextDelim(bytes_view data) const {
+  template<typename OnDelim>
+  IRS_FORCE_INLINE void ForEachDelim(bytes_view data,
+                                     OnDelim&& on_delim) const {
     const auto* p = data.data();
     const size_t size = data.size();
     size_t pos = 0;
-    if (nfirsts <= kMaxBlockFirsts) {
-      for (; size - pos >= classify::kClassifyBlock;
-           pos += classify::kClassifyBlock) {
+    if (nfirsts <= kMaxBlockFirsts && size >= classify::kClassifyBlock) {
+      for (;;) {
+        const size_t base = std::min(pos, size - classify::kClassifyBlock);
         auto mask =
-          classify::ClassifyAnyEqBlock(p + pos, {firsts.data(), nfirsts});
+          classify::ClassifyAnyEqBlock(p + base, {firsts.data(), nfirsts}) &
+          (~uint32_t{0} << (pos - base));
+        size_t next = base + classify::kClassifyBlock;
         while (mask != 0) {
-          const size_t at = pos + std::countr_zero(mask);
-          if (const auto skip = MatchAt(data.substr(at)); skip != 0) {
-            return std::make_pair(data.begin() + at, skip);
+          const size_t at = base + std::countr_zero(mask);
+          const size_t skip = MatchAt(p + at, size - at);
+          if (skip == 0) {
+            mask &= mask - 1;
+            continue;
           }
-          mask &= mask - 1;
+          on_delim(at, skip);
+          const size_t end = at + skip;
+          if (end >= next) {
+            next = end;
+            break;
+          }
+          mask &= ~uint32_t{0} << (end - base);
         }
+        if (next >= size) {
+          return;
+        }
+        pos = next;
       }
     }
-    for (; pos < size; ++pos) {
-      if (!first[p[pos]]) {
+    while (pos < size) {
+      const size_t skip =
+        first.Contains(p[pos]) ? MatchAt(p + pos, size - pos) : 0;
+      if (skip == 0) {
+        ++pos;
         continue;
       }
-      if (const auto skip = MatchAt(data.substr(pos)); skip != 0) {
-        return std::make_pair(data.begin() + pos, skip);
-      }
+      on_delim(pos, skip);
+      pos += skip;
     }
-    return std::make_pair(data.end(), size_t{0});
   }
 
-  std::vector<bstring> short_delims;
-  std::vector<bstring> long_delims;
-  std::vector<uint32_t> long_prefix4;
-  std::array<bool, 256> first{};
+  std::vector<uint64_t> prefixes;
+  std::vector<uint64_t> masks;
+  std::vector<uint32_t> sizes;
+  std::vector<bstring> delims;
+  classify::ByteSet first;
   std::array<byte_type, kMaxBlockFirsts> firsts{};
   size_t nfirsts = 0;
 };
@@ -230,51 +256,27 @@ class MultiDelimitedTokenizerImpl final
     };
   }
 
-  static constexpr bool kFindsDelims =
-    requires(const Finder& f) { f.FindNextDelim(bytes_view{}); };
-  static constexpr bool kMayBlockScan =
-    requires(const Finder& f) { f.CanBlockScan(); };
-
   template<TokenLayout Layout>
   bool DoFill(duckdb::string_t raw, TokenSink& sink) {
-    if constexpr (!kFindsDelims) {
-      DrainSingleCharValue<Layout>(sink, raw, _finder);
-      return true;
-    } else {
-      if constexpr (kMayBlockScan) {
-        if (_finder.CanBlockScan()) {
-          DrainSingleCharValue<Layout>(sink, raw, _finder);
-          return true;
-        }
+    const auto* p = reinterpret_cast<const byte_type*>(raw.GetData());
+    const size_t size = raw.GetSize();
+    const auto* const bound = p + size;
+    size_t tok_begin = 0;
+    const auto emit = [&](size_t begin, size_t end) IRS_FORCE_INLINE {
+      if (begin == end) {
+        return;
       }
-      bytes_view data{reinterpret_cast<const byte_type*>(raw.GetData()),
-                      raw.GetSize()};
-      const byte_type* const start = data.data();
-      const byte_type* const bound = start + data.size();
-      while (data.begin() != data.end()) {
-        auto [next, skip] = _finder.FindNextDelim(data);
-
-        if (next == data.begin()) {
-          SDB_ASSERT(skip <= data.size());
-          data = bytes_view(data.data() + skip, data.size() - skip);
-          continue;
-        }
-
-        const auto size =
-          static_cast<uint32_t>(std::distance(data.begin(), next));
-        const auto off =
-          static_cast<uint32_t>(std::distance(start, data.data()));
-        sink.EmitSlice<Layout>(start, bound, Offs{off, off + size});
-
-        if (next == data.end()) {
-          data = {};
-        } else {
-          data =
-            bytes_view(&(*next) + skip, std::distance(next, data.end()) - skip);
-        }
-      }
-      return true;
-    }
+      sink.EmitSlice<Layout>(
+        p, bound,
+        Offs{static_cast<uint32_t>(begin), static_cast<uint32_t>(end)});
+    };
+    _finder.ForEachDelim(bytes_view{p, size},
+                         [&](size_t pos, size_t len) IRS_FORCE_INLINE {
+                           emit(tok_begin, pos);
+                           tok_begin = pos + len;
+                         });
+    emit(tok_begin, size);
+    return true;
   }
 
  private:

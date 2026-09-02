@@ -1,0 +1,53 @@
+statement ok
+CREATE TABLE all_days AS SELECT (DATE '1970-01-01' + range::INTEGER)::TIMESTAMP + INTERVAL '13:37:42.123456' AS ts, range::INTEGER AS d FROM range(-30000, 130000);
+
+statement ok
+INSERT INTO all_days SELECT (DATE '1970-01-01' + range::INTEGER)::TIMESTAMP + INTERVAL '05:00:00' AS ts, range::INTEGER AS d FROM range(-1085000, -30000, 997);
+
+query
+SELECT count(*) AS days, min(ts)::VARCHAR AS lo, max(ts)::VARCHAR AS hi FROM all_days;
+----
+days	lo	hi
+161059	1002-05-16 (BC) 05:00:00	2325-12-05 13:37:42.123456
+
+query
+SELECT
+  count(*) FILTER (WHERE date_trunc('month', ts) <> make_timestamp(year(ts), month(ts), 1, 0, 0, 0)) AS month_bad,
+  count(*) FILTER (WHERE date_trunc('quarter', ts) <> make_timestamp(year(ts), ((month(ts) - 1) // 3) * 3 + 1, 1, 0, 0, 0)) AS quarter_bad,
+  count(*) FILTER (WHERE date_trunc('year', ts) <> make_timestamp(year(ts), 1, 1, 0, 0, 0)) AS year_bad,
+  count(*) FILTER (WHERE date_trunc('decade', ts) <> make_timestamp(CASE WHEN year(ts) >= 0 THEN (year(ts) // 10) * 10 ELSE -((-year(ts)) // 10) * 10 END, 1, 1, 0, 0, 0)) AS decade_bad,
+  count(*) FILTER (WHERE date_trunc('century', ts) <> make_timestamp(CASE WHEN year(ts) >= 0 THEN (year(ts) // 100) * 100 ELSE -((-year(ts)) // 100) * 100 END, 1, 1, 0, 0, 0)) AS century_bad,
+  count(*) FILTER (WHERE date_trunc('millennium', ts) <> make_timestamp(CASE WHEN year(ts) >= 0 THEN (year(ts) // 1000) * 1000 ELSE -((-year(ts)) // 1000) * 1000 END, 1, 1, 0, 0, 0)) AS millennium_bad,
+  count(*) FILTER (WHERE date_trunc('week', ts) <> date_trunc('week', ts::DATE)::TIMESTAMP) AS week_bad
+FROM all_days;
+----
+month_bad	quarter_bad	year_bad	decade_bad	century_bad	millennium_bad	week_bad
+0	0	0	0	0	0	0
+
+query
+SELECT
+  count(*) FILTER (WHERE __internal_date_trunc_month_unbucket(__internal_date_trunc_month_bucket(ts, 1, 0), 1, 0) <> date_trunc('month', ts)) AS month_bad,
+  count(*) FILTER (WHERE __internal_date_trunc_month_unbucket(__internal_date_trunc_month_bucket(ts, 3, 0), 3, 0) <> date_trunc('quarter', ts)) AS quarter_bad,
+  count(*) FILTER (WHERE __internal_date_trunc_month_unbucket(__internal_date_trunc_month_bucket(ts, 12, 0), 12, 0) <> date_trunc('year', ts)) AS year_bad,
+  count(*) FILTER (WHERE __internal_date_trunc_month_unbucket(__internal_date_trunc_month_bucket(ts, 120, 0), 120, 0) <> date_trunc('decade', ts)) AS decade_bad,
+  count(*) FILTER (WHERE __internal_date_trunc_month_unbucket(__internal_date_trunc_month_bucket(ts, 1200, 0), 1200, 0) <> date_trunc('century', ts)) AS century_bad,
+  count(*) FILTER (WHERE __internal_date_trunc_month_unbucket(__internal_date_trunc_month_bucket(ts, 12000, 0), 12000, 0) <> date_trunc('millennium', ts)) AS millennium_bad,
+  count(*) FILTER (WHERE __internal_date_trunc_month_bucket(ts, 1, 0) <> year(ts) * 12 + month(ts) - 1) AS index_bad
+FROM all_days WHERE ts >= TIMESTAMP '0001-01-01';
+----
+month_bad	quarter_bad	year_bad	decade_bad	century_bad	millennium_bad	index_bad
+0	0	0	0	0	0	0
+
+query
+SELECT date_trunc('month', ts)::VARCHAR AS m, date_trunc('quarter', ts)::VARCHAR AS q, date_trunc('decade', ts)::VARCHAR AS dec, date_trunc('century', ts)::VARCHAR AS c FROM all_days WHERE d IN (-25568, -25567, 120529, 120530) ORDER BY d;
+----
+m	q	dec	c
+1899-12-01 00:00:00	1899-10-01 00:00:00	1890-01-01 00:00:00	1800-01-01 00:00:00
+1900-01-01 00:00:00	1900-01-01 00:00:00	1900-01-01 00:00:00	1900-01-01 00:00:00
+2299-12-01 00:00:00	2299-10-01 00:00:00	2290-01-01 00:00:00	2200-01-01 00:00:00
+2300-01-01 00:00:00	2300-01-01 00:00:00	2300-01-01 00:00:00	2300-01-01 00:00:00
+
+statement error
+SELECT __internal_date_trunc_month_unbucket(9223372036854775807, 1, 0);
+----
+db error: ERROR: Date and time not in timestamp range

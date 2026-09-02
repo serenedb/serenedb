@@ -6,7 +6,6 @@ set(iresearch-tests_sources
     ./analysis/nearest_neighbors_tokenizer_test.cpp
     ./analysis/ngram_tokenizer_test.cpp
     ./analysis/sparse_ngram_tokenizer_test.cpp
-    ./analysis/minhash_tokenizer_test.cpp
     ./analysis/multi_delimited_tokenizer_tests.cpp
     ./analysis/pipeline_tokenizer_tests.cpp
     ./analysis/text_pipeline_equivalence_tests.cpp

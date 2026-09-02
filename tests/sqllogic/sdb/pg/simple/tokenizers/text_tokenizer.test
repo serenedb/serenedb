@@ -86,10 +86,10 @@ statement error
 CREATE TEXT SEARCH DICTIONARY t_err8(
     template = 'text',
     locale = 'en_US.UTF-8',
-    numhashes = 5
+    ngramsize = 5
 )
 ----
-db error: ERROR: option "numhashes" is not applicable in this context
+db error: ERROR: option "ngramsize" is not applicable in this context
 HINT: Use WITH (HELP) to see available options
 
 
@@ -191,17 +191,6 @@ CREATE TEXT SEARCH DICTIONARY t_err15(
 )
 ----
 db error: ERROR: invalid value for CREATE TEXT SEARCH DICTIONARY parameter "maxgram": "three"
-
-
-statement error
-CREATE TEXT SEARCH DICTIONARY t_err16(
-    template = 'minhash',
-    tokenizer_template = 'delimiter',
-    tokenizer_delimiter = '|',
-    numhashes = 'two'
-)
-----
-db error: ERROR: invalid value for CREATE TEXT SEARCH DICTIONARY parameter "numhashes": "two"
 
 
 # --- Invalid threshold (out of range 0.0 to 1.0) ---
@@ -878,97 +867,6 @@ ts_lexize
 {abcf,bar}
 
 
-# MINHASH TEMPLATE
-
-# --- Inner delimiter analyzer, numhashes=2 ---
-
-statement ok
-CREATE TEXT SEARCH DICTIONARY t12(
-    template = 'minhash',
-    tokenizer_template = 'delimiter',
-    tokenizer_delimiter = ',',
-    numhashes = 2
-)
-
-
-query
-SELECT ts_lexize('t12', 'abaca,aba,caaa');
-----
-ts_lexize
-{ooh9OW4bsnE,gpxnmE69/UA}
-
-
-# --- numhashes=0: CREATE succeeds, ts_lexize fails ---
-statement error
-CREATE TEXT SEARCH DICTIONARY minhash_zero_hashes(
-    template = 'minhash',
-    numhashes = 0
-)
-----
-db error: ERROR: required parameter "template" was not found
-
-
-# --- Custom inner analyzer: segmentation with explicit break and case ---
-statement ok
-CREATE TEXT SEARCH DICTIONARY minhash_seg_explicit(
-    template = 'minhash',
-    numhashes = 3,
-    tokenizer_template = 'segmentation',
-    tokenizer_break = 'alpha',
-    tokenizer_case = 'lower'
-)
-
-
-query
-SELECT hex(s) AS signature
-FROM unnest(ts_lexize('minhash_seg_explicit', 'a Real(!) QuICK, BrowN FOX!')) AS s;
-----
-signature
-DCDC373E539B2B4C
-F734A8DCAC263610
-53D4048563BFE43C
-
-
-# --- A dictionary producing binary tokens returns BLOB[] when named as a constant ---
-query
-SELECT typeof(ts_lexize('minhash_seg_explicit', 'a quick fox')) AS type;
-----
-type
-BLOB[]
-
-
-# --- The per-row dictionary arm cannot retype its result, so it refuses binary tokens ---
-statement error
-SELECT ts_lexize(d, 'a quick fox') FROM (VALUES ('minhash_seg_explicit')) AS t(d);
-----
-db error: ERROR: text search dictionary "minhash_seg_explicit" produces BLOB tokens; pass the dictionary name as a constant
-
-
-
-# --- Custom inner analyzer: text tokenizer ---
-statement ok
-CREATE TEXT SEARCH DICTIONARY minhash_with_text(
-    template = 'minhash',
-    numhashes = 6,
-    tokenizer_template = 'text',
-    tokenizer_locale = 'en_US.UTF-8',
-    tokenizer_case = 'lower',
-    tokenizer_stemming = false
-)
-
-
-query
-SELECT hex(s) AS signature
-FROM unnest(ts_lexize('minhash_with_text', 'A QUICK Jumping Brownish FOX')) AS s;
-----
-signature
-DCDC373E539B2B4C
-735BC1F515E221B6
-AB01F3DCA1C5AF00
-0DDFCB60F72C149B
-8BD29FA390AB8CDB
-
-
 # SEGMENTATION TEMPLATE
 
 statement ok
@@ -1544,10 +1442,10 @@ statement error
 CREATE TEXT SEARCH DICTIONARY copy_err(
     template = 'copy_from',
     from = 't1',
-    numhashes = 2
+    ngramsize = 2
 )
 ----
-db error: ERROR: option "numhashes" is not applicable in this context
+db error: ERROR: option "ngramsize" is not applicable in this context
 HINT: Use WITH (HELP) to see available options
 
 
@@ -1601,34 +1499,19 @@ ts_lexize
 
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY copy_minhash(
-    template = 'copy_from',
-    from = 'minhash_with_text',
-    tokenizer_stopwords = '"fox"'
-)
-
-
-query
-SELECT ts_lexize('copy_minhash', 'A QUICK Jumping Brownish FOX');
-----
-ts_lexize
-{3Nw3PlObK0w,c1vB9RXiIbY,qwHz3KHFrwA,Dd/LYPcsFJs}
-
-
-statement ok
 CREATE TEXT SEARCH DICTIONARY copy_copy_pipe(
     template = 'copy_from',
     from = 'copy_pipe2',
     step4_template = 'copy_from',
-    step4_from = 'copy_minhash',
-    step4_tokenizer_stopwords = '"quick"'
+    step4_from = 'stopwords_filter',
+    step4_stopwords = '"quick"'
 )
 
 query
 SELECT ts_lexize('copy_copy_pipe', 'A|QUICK|Jumping|Brownish|FOX');
 ----
 ts_lexize
-{3Nw3PlObK0w,qwHz3KHFrwA,Dd/LYPcsFJs,i9Kfo5CrjNs}
+{a,jumping,brownish,fox}
 
 
 statement ok
@@ -1663,25 +1546,6 @@ SELECT ts_lexize('too_many_pipes', 'a|quick|Brown|FOX!');
 ----
 ts_lexize
 {QUICK,BROWN,FOX!}
-
-
-statement ok
-CREATE TEXT SEARCH DICTIONARY minhash_copy5(
-    template = 'minhash',
-    numHashes = 5,
-    tokenizer_template = 'copy_from',
-    tokenizer_from = 'too_many_pipes'
-)
-
-
-query
-SELECT hex(s) AS signature
-FROM unnest(ts_lexize('minhash_copy5', 'a|quick|Brown|FOX!')) AS s;
-----
-signature
-08BE294E04CDFEBE
-680FF97E8F4EBC1E
-5F4CDD37114591D6
 
 
 # ========================
@@ -2473,8 +2337,6 @@ Text Search Dictionary:
     delimiter[required] (string) [default: none] - Token delimiter character or string
   multi_delimiter:
     delimiters[required] (string) [default: none] - The list of delimiters(e.g., '",", "|", "!"'
-  minhash:
-    numhashes (integer) [default: 1] - Number of hash functions to use
   wildcard:
     ngramsize (integer) [default: 3] - N-gram size for wildcard prefix indexing (minimum 2)
   norm:
@@ -2526,7 +2388,7 @@ Text Search Dictionary:
   keyword:
     (no additional options)
   sql:
-    expression[required] (string) [default: none] - DuckDB scalar expression over the pseudo-column `input` (VARCHAR), returning VARCHAR (one token per value) or LIST(VARCHAR) (token list); built-in functions only, no subqueries, no volatile functions
+    expression[required] (string) [default: none] - DuckDB scalar expression over the pseudo-column `input` (VARCHAR), returning VARCHAR or BLOB (one token per value) or a list of them (token list); built-in functions only, no subqueries, no volatile functions
   shingle:
     mingram (integer) [default: 2] - Minimum shingle (word n-gram) size (minimum 2)
     maxgram (integer) [default: 2] - Maximum shingle (word n-gram) size (>= mingram)

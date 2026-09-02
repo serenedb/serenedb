@@ -1,0 +1,329 @@
+# minhash(tokens, num_hashes) -- bottom-k MinHash signature of a token list:
+# the num_hashes smallest 64-bit hashes over the distinct tokens, each emitted
+# as its 8 little-endian bytes.
+
+
+# --- Signatures are BLOBs of exactly 8 bytes ---
+
+query
+SELECT typeof(minhash(['a', 'b'], 2)) AS type;
+----
+type
+BLOB[]
+
+
+query
+SELECT DISTINCT octet_length(s) AS bytes
+FROM unnest(minhash(['a', 'b', 'c'], 3)) AS s;
+----
+bytes
+8
+
+
+# --- A single token is its own hash; the input type does not change the bytes ---
+
+query
+SELECT hex(s) AS signature FROM unnest(minhash(['a'], 1)) AS s;
+----
+signature
+DCDC373E539B2B4C
+
+
+query
+SELECT hex(s) AS signature FROM unnest(minhash(['fox'], 5)) AS s;
+----
+signature
+8BD29FA390AB8CDB
+
+
+query
+SELECT hex(s) AS signature FROM unnest(minhash(['fox'::BLOB], 1)) AS s;
+----
+signature
+8BD29FA390AB8CDB
+
+
+query
+SELECT minhash(['brown'], 1) = minhash(['brown'::BLOB], 1) AS same_bytes;
+----
+same_bytes
+t
+
+
+# --- Fewer distinct tokens than hashes: every token contributes, in input order ---
+
+query
+SELECT hex(s) AS signature
+FROM unnest(minhash(['a', 'quick', 'brown', 'fox'], 16)) AS s;
+----
+signature
+DCDC373E539B2B4C
+735BC1F515E221B6
+53D4048563BFE43C
+8BD29FA390AB8CDB
+
+
+# --- Eight tokens, four hashes: only the four smallest hashes survive ---
+
+query
+SELECT hex(s) AS signature
+FROM unnest(minhash(['quick', 'brown', 'fox', 'jumps', 'over', 'the', 'lazy', 'dog'], 4)) AS s;
+----
+signature
+ABD5594B754C1286
+F68555031EFBEF27
+53D4048563BFE43C
+63D6ADEB03DCAC09
+
+
+query
+SELECT hex(s) AS signature
+FROM unnest(minhash(['a', 'real', 'quick', 'brown', 'fox'], 3)) AS s;
+----
+signature
+DCDC373E539B2B4C
+F734A8DCAC263610
+53D4048563BFE43C
+
+
+# --- The signature is a set property: token order does not matter ---
+
+query
+SELECT list_sort(minhash(['a', 'quick', 'brown', 'fox'], 16))
+       = list_sort(minhash(['fox', 'brown', 'quick', 'a'], 16)) AS same_set;
+----
+same_set
+t
+
+
+query
+SELECT list_sort(minhash(['a', 'quick', 'brown', 'fox'], 2))
+       = list_sort(minhash(['fox', 'brown', 'quick', 'a'], 2)) AS same_bottom_two;
+----
+same_bottom_two
+t
+
+
+# --- A smaller signature is always a subset of a larger one over the same tokens ---
+
+query
+SELECT list_has_all(minhash(['a', 'quick', 'brown', 'fox'], 16),
+                    minhash(['a', 'quick', 'brown', 'fox'], 2)) AS subset;
+----
+subset
+t
+
+
+# --- Shared tokens give shared signatures: three of four overlap here ---
+
+query
+SELECT count(*) AS shared
+FROM unnest(minhash(['the', 'quick', 'brown', 'fox'], 16)) AS s
+WHERE list_contains(minhash(['the', 'quick', 'brown', 'dog'], 16), s);
+----
+shared
+3
+
+
+query
+SELECT count(*) AS shared
+FROM unnest(minhash(['the', 'quick', 'brown', 'fox'], 16)) AS s
+WHERE list_contains(minhash(['lorem', 'ipsum'], 16), s);
+----
+shared
+0
+
+
+# --- Duplicates collapse, NULL elements are skipped, the empty string is a token ---
+
+query
+SELECT array_length(minhash(['a', 'a', NULL, 'b'], 8), 1) AS n;
+----
+n
+2
+
+
+query
+SELECT array_length(minhash(['a', 'a', 'a'], 3), 1) AS n;
+----
+n
+1
+
+
+query
+SELECT array_length(minhash([''], 2), 1) AS n;
+----
+n
+1
+
+
+query
+SELECT array_length(minhash(['a', 'b', 'c', 'd'], 3), 1) AS capped,
+       array_length(minhash(['a', 'b', 'c', 'd'], 4096), 1) AS uncapped;
+----
+capped	uncapped
+3	4
+
+
+# --- Empty and NULL inputs ---
+
+query
+SELECT minhash([]::VARCHAR[], 3) AS sig;
+----
+sig
+{}
+
+
+query
+SELECT minhash([NULL, NULL]::VARCHAR[], 3) AS sig;
+----
+sig
+{}
+
+
+query
+SELECT minhash(NULL::VARCHAR[], 3) IS NULL AS is_null;
+----
+is_null
+t
+
+
+# --- Row-varying input with a constant num_hashes ---
+
+query
+SELECT array_length(minhash(t, 3), 1) AS n
+FROM (VALUES (['a']), (['a', 'b']), (['a', 'b', 'c', 'd']), (NULL::VARCHAR[])) AS v(t)
+ORDER BY n NULLS LAST;
+----
+n
+1
+2
+3
+NULL
+
+
+# --- num_hashes must be a positive constant ---
+
+statement error
+SELECT minhash(['a'], 0);
+----
+db error: ERROR: minhash: num_hashes must be >= 1, got 0
+
+
+statement error
+SELECT minhash(['a'], -3);
+----
+db error: ERROR: minhash: num_hashes must be >= 1, got -3
+
+
+statement error
+SELECT minhash(['a'], NULL::INTEGER);
+----
+db error: ERROR: minhash: num_hashes must not be NULL
+
+
+statement error
+SELECT minhash(['a'], n) FROM (VALUES (2)) AS t(n);
+----
+db error: ERROR: minhash: num_hashes must be a constant
+
+
+# --- Composes with any dictionary through ts_lexize ---
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY mh_delim(
+    template = 'delimiter',
+    delimiter = ','
+)
+
+
+query
+SELECT hex(s) AS signature
+FROM unnest(minhash(ts_lexize('mh_delim', 'abaca,aba,caaa'), 2)) AS s;
+----
+signature
+A2887D396E1BB271
+829C67984EBDFD40
+
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY mh_seg(
+    template = 'segmentation',
+    break = 'alpha',
+    case = 'lower'
+)
+
+
+query
+SELECT hex(s) AS signature
+FROM unnest(minhash(ts_lexize('mh_seg', 'a Real(!) QuICK, BrowN FOX!'), 3)) AS s;
+----
+signature
+DCDC373E539B2B4C
+F734A8DCAC263610
+53D4048563BFE43C
+
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY mh_text(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'lower',
+    stemming = false
+)
+
+
+query
+SELECT hex(s) AS signature
+FROM unnest(minhash(ts_lexize('mh_text', 'A QUICK Jumping Brownish FOX'), 6)) AS s;
+----
+signature
+DCDC373E539B2B4C
+735BC1F515E221B6
+AB01F3DCA1C5AF00
+0DDFCB60F72C149B
+8BD29FA390AB8CDB
+
+
+# --- ts_lexize on a NULL text stays NULL through minhash ---
+
+query
+SELECT minhash(ts_lexize('mh_text', NULL::VARCHAR), 4) IS NULL AS is_null;
+----
+is_null
+t
+
+
+# --- And inside a sql dictionary, which then yields BLOB tokens ---
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY mh_sql(
+    template = 'sql',
+    expression = 'minhash(string_split(lower(input), '' ''), 16)'
+)
+
+
+query
+SELECT typeof(ts_lexize('mh_sql', 'A quick brown fox')) AS type;
+----
+type
+BLOB[]
+
+
+query
+SELECT hex(s) AS signature
+FROM unnest(ts_lexize('mh_sql', 'A quick brown fox')) AS s;
+----
+signature
+DCDC373E539B2B4C
+735BC1F515E221B6
+53D4048563BFE43C
+8BD29FA390AB8CDB
+
+
+query
+SELECT ts_lexize('mh_sql', 'A quick brown fox')
+       = minhash(ts_lexize('mh_text', 'a quick brown fox'), 16) AS same_signature;
+----
+same_signature
+t

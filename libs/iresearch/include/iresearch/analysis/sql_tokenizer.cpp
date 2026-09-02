@@ -51,6 +51,12 @@ namespace {
 constexpr std::string_view kInputColumn = "input";
 constexpr uint32_t kBatch = STANDARD_VECTOR_SIZE;
 
+duckdb::LogicalTypeId ElementType(const duckdb::LogicalType& type) noexcept {
+  return type.id() == duckdb::LogicalTypeId::LIST
+           ? duckdb::ListType::GetChildType(type).id()
+           : type.id();
+}
+
 void ValidateParsed(duckdb::ParsedExpression& expr) {
   switch (expr.GetExpressionClass()) {
     case duckdb::ExpressionClass::SUBQUERY:
@@ -330,21 +336,24 @@ void SqlTokenizer::BindExpression(duckdb::ClientContext& ctx) {
     THROW_SQL_ERROR(ERR_MSG("sql: volatile expressions are not allowed"));
   }
   const auto& type = bound->GetReturnType();
-  const bool list =
-    type.id() == duckdb::LogicalTypeId::LIST &&
-    duckdb::ListType::GetChildType(type).id() == duckdb::LogicalTypeId::VARCHAR;
-  if (!list && type.id() != duckdb::LogicalTypeId::VARCHAR) {
-    THROW_SQL_ERROR(
-      ERR_MSG("sql: expression must return VARCHAR or LIST(VARCHAR), got ",
-              type.ToString()));
+  const auto element = ElementType(type);
+  if (element != duckdb::LogicalTypeId::VARCHAR &&
+      element != duckdb::LogicalTypeId::BLOB) {
+    THROW_SQL_ERROR(ERR_MSG(
+      "sql: expression must return VARCHAR, BLOB, or a list of them, got ",
+      type.ToString()));
   }
   _expr = std::move(bound);
   _parsed.reset();
 }
 
 TokenTraits SqlTokenizer::Traits() const noexcept {
-  return {.unique = _expr != nullptr && _expr->GetReturnType().id() ==
-                                          duckdb::LogicalTypeId::VARCHAR};
+  if (!_expr) {
+    return {};
+  }
+  const auto& type = _expr->GetReturnType();
+  return {.output = ElementType(type),
+          .unique = type.id() != duckdb::LogicalTypeId::LIST};
 }
 
 void SqlTokenizer::Bind(duckdb::ClientContext& ctx) {

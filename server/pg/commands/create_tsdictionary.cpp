@@ -30,7 +30,6 @@
 #include <iresearch/analysis/geo_analyzer.hpp>
 #include <iresearch/analysis/icu_text_tokenizer.hpp>
 #include <iresearch/analysis/keyword_tokenizer.hpp>
-#include <iresearch/analysis/minhash_tokenizer.hpp>
 #include <iresearch/analysis/multi_delimited_tokenizer.hpp>
 #include <iresearch/analysis/nearest_neighbors_tokenizer.hpp>
 #include <iresearch/analysis/ngram_tokenizer.hpp>
@@ -847,19 +846,6 @@ class CreateTSDictionaryOptions : public OptionsParser {
     return child;
   }
 
-  irs::analysis::MinHashTokenizer::Options BuildMinHash(
-    std::string_view prefix,
-    const irs::analysis::MinHashTokenizer::Options* parent) {
-    irs::analysis::MinHashTokenizer::Options opts;
-    opts.analyzer =
-      BuildSingleChild(prefix, parent ? parent->analyzer.get() : nullptr);
-    int parent_n = parent ? static_cast<int>(parent->num_hashes) : 1;
-    opts.num_hashes =
-      static_cast<uint32_t>(Resolve<tokenizer_options::kNumHashes>(
-        prefix, parent ? &parent_n : nullptr));
-    return opts;
-  }
-
   irs::analysis::WildcardAnalyzer::Options BuildWildcard(
     std::string_view prefix,
     const irs::analysis::WildcardAnalyzer::Options* parent) {
@@ -985,9 +971,6 @@ class CreateTSDictionaryOptions : public OptionsParser {
     } else if (type == MultiDelimitedTokenizer::type_name()) {
       out.config = BuildMultiDelimiter(
         prefix, ParentOptions<MultiDelimitedTokenizer::Options>(parent_cfg));
-    } else if (type == MinHashTokenizer::type_name()) {
-      out.config = BuildMinHash(
-        prefix, ParentOptions<MinHashTokenizer::Options>(parent_cfg));
     } else if (type == WildcardAnalyzer::type_name()) {
       out.config = BuildWildcard(
         prefix, ParentOptions<WildcardAnalyzer::Options>(parent_cfg));

@@ -213,6 +213,7 @@ TEST(SqlTokenizerTest, bindErrors) {
   expect_bind_error("no_such_function_xyz(input)");
   expect_bind_error("upper(no_such_column)");
   expect_bind_error("length(input)");
+  expect_bind_error("[length(input)]");
   expect_bind_error("random()::VARCHAR");
 }
 
@@ -257,6 +258,24 @@ TEST(SqlTokenizerTest, traits_unique_by_mode) {
     a.Bind(TestContext());
     ASSERT_FALSE(a.Traits().unique);
   }
+}
+
+TEST(SqlTokenizerTest, blobResultsDeclareBlobOutput) {
+  auto list = MakeBound("[input::BLOB]");
+  ASSERT_EQ(duckdb::LogicalTypeId::BLOB, list->Traits().output);
+  ASSERT_FALSE(list->Traits().unique);
+  ASSERT_EQ(tests::AnalyzeTerms(*list, "ab"), (std::vector<std::string>{"ab"}));
+  AssertColumnMatchesPerValue(*list, {"ab", "", "xyz"});
+
+  auto scalar = MakeBound("input::BLOB");
+  ASSERT_EQ(duckdb::LogicalTypeId::BLOB, scalar->Traits().output);
+  ASSERT_TRUE(scalar->Traits().unique);
+  ASSERT_EQ(tests::AnalyzeTerms(*scalar, "ab"),
+            (std::vector<std::string>{"ab"}));
+  AssertColumnMatchesPerValue(*scalar, {"ab", "", "xyz"});
+
+  auto text = MakeBound("upper(input)");
+  ASSERT_EQ(duckdb::LogicalTypeId::VARCHAR, text->Traits().output);
 }
 
 TEST(SqlTokenizerTest, inputReferencedTwiceWithConstants) {

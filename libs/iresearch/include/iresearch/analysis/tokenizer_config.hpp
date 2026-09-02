@@ -32,7 +32,6 @@
 #include "geo_analyzer.hpp"
 #include "icu_text_tokenizer.hpp"
 #include "iresearch/analysis/keyword_tokenizer.hpp"
-#include "minhash_tokenizer.hpp"
 #include "multi_delimited_tokenizer.hpp"
 #include "nearest_neighbors_tokenizer.hpp"
 #include "ngram_tokenizer.hpp"
@@ -72,10 +71,10 @@ struct TokenizerConfig {
                WordnetSynonymsTokenizer::Options,
                NearestNeighborsTokenizer::Options, GeoPointAnalyzer::Options,
                GeoJsonAnalyzer::Options, WildcardAnalyzer::Options,
-               MinHashTokenizer::Options, PipelineTokenizer::Options,
-               UnionTokenizer::Options, SparseNGramTokenizer::Options,
-               SplitByNonAlphaTokenizer::Options, SqlTokenizer::Options,
-               ShingleTokenizer::Options, IcuTextTokenizer::Options>
+               PipelineTokenizer::Options, UnionTokenizer::Options,
+               SparseNGramTokenizer::Options, SplitByNonAlphaTokenizer::Options,
+               SqlTokenizer::Options, ShingleTokenizer::Options,
+               IcuTextTokenizer::Options>
     config;
 };
 
@@ -119,11 +118,6 @@ inline TokenizerConfig Clone(const TokenizerConfig& cfg) {
         Options copy;
         copy.ngram_size = opts.ngram_size;
         copy.base_analyzer = detail::CloneChild(opts.base_analyzer);
-        out.config = std::move(copy);
-      } else if constexpr (std::is_same_v<Options, MinHashTokenizer::Options>) {
-        Options copy;
-        copy.num_hashes = opts.num_hashes;
-        copy.analyzer = detail::CloneChild(opts.analyzer);
         out.config = std::move(copy);
       } else if constexpr (std::is_same_v<Options, ShingleTokenizer::Options>) {
         Options copy;

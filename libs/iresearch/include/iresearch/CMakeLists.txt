@@ -69,7 +69,6 @@ set(IResearch_core_sources
     ./analysis/nearest_neighbors_tokenizer.cpp
     ./analysis/text/normalize/normalize.cpp
     ./analysis/normalizing_tokenizer.cpp
-    ./analysis/minhash_tokenizer.cpp
     ./analysis/collation_tokenizer.cpp
     ./analysis/text_tokenizer.cpp
     ./analysis/multi_delimited_tokenizer.cpp

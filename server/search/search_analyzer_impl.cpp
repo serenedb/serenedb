@@ -23,7 +23,6 @@
 #include <duckdb/common/serializer/binary_deserializer.hpp>
 #include <duckdb/common/serializer/memory_stream.hpp>
 #include <iresearch/analysis/geo_analyzer.hpp>
-#include <iresearch/analysis/minhash_tokenizer.hpp>
 #include <iresearch/analysis/sparse_ngram_tokenizer.hpp>
 #include <iresearch/analysis/token_attributes.hpp>
 #include <iresearch/analysis/tokenizer.hpp>
@@ -104,11 +103,6 @@ void Features::Validate(std::string_view type) const {
     }
     if (type == irs::analysis::ShingleTokenizer::type_name()) {
       // Shingle terms carry positions but no source offsets.
-      return irs::IndexFeatures::Freq | irs::IndexFeatures::Pos |
-             irs::IndexFeatures::Norm;
-    }
-    if (type == irs::analysis::MinHashTokenizer::type_name()) {
-      // Signatures carry no meaningful offsets.
       return irs::IndexFeatures::Freq | irs::IndexFeatures::Pos |
              irs::IndexFeatures::Norm;
     }

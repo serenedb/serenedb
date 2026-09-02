@@ -25,7 +25,6 @@
 #include <iresearch/analysis/delimited_tokenizer.hpp>
 #include <iresearch/analysis/icu_text_tokenizer.hpp>
 #include <iresearch/analysis/keyword_tokenizer.hpp>
-#include <iresearch/analysis/minhash_tokenizer.hpp>
 #include <iresearch/analysis/multi_delimited_tokenizer.hpp>
 #include <iresearch/analysis/nearest_neighbors_tokenizer.hpp>
 #include <iresearch/analysis/ngram_tokenizer.hpp>
@@ -183,11 +182,6 @@ inline constexpr OptionInfo kThreshold{
 inline constexpr OptionInfo kHex{"hex", false,
                                  "Treat stop words as hex-encoded strings"};
 
-// MinHash
-
-inline constexpr OptionInfo kNumHashes{
-  "numhashes", 1, "Number of hash functions to use", CheckPositiveInt};
-
 // Wildcard
 
 void CheckNgramSize(std::string_view option, int value);
@@ -307,8 +301,8 @@ inline constexpr OptionInfo kBufferSize{
 inline constexpr OptionInfo kSqlExpression{
   "expression", OptionInfo::RequiredTag<std::string_view>{},
   "DuckDB scalar expression over the pseudo-column `input` (VARCHAR), "
-  "returning VARCHAR (one token per value) or LIST(VARCHAR) (token list); "
-  "built-in functions only, no subqueries, no volatile functions"};
+  "returning VARCHAR or BLOB (one token per value) or a list of them (token "
+  "list); built-in functions only, no subqueries, no volatile functions"};
 
 // Synonyms (Solr / WordNet)
 
@@ -354,8 +348,6 @@ inline constexpr OptionInfo kDelimiterOptions[] = {kDelimiter};
 inline constexpr OptionInfo kMultiDelimiterOptions[] = {kDelimiters};
 
 inline constexpr OptionInfo kCopyFromOptions[] = {kFrom};
-
-inline constexpr OptionInfo kMinHashOptions[] = {kNumHashes};
 
 inline constexpr OptionInfo kWildcardOptions[] = {kNgramSize};
 
@@ -461,11 +453,6 @@ inline constexpr OptionGroup kCopyFromGroup{
   kCopyFromOptions,
   {},
 };
-inline constexpr OptionGroup kMinHashGroup{
-  irs::analysis::MinHashTokenizer::type_name(),
-  kMinHashOptions,
-  {},
-};
 inline constexpr OptionGroup kWildcardGroup{
   irs::analysis::WildcardAnalyzer::type_name(),
   kWildcardOptions,
@@ -538,35 +525,20 @@ inline constexpr OptionGroup kWordnetSynonymsGroup{
 };
 
 inline constexpr OptionGroup kTokenizerSubgroups[] = {
-  kFeaturesGroup,
-  kTextGroup,
-  kNGramGroup,
-  kNearestNeighborsGroup,
-  kStemmingGroup,
-  kStopwordsGroup,
-  kClassificationGroup,
-  kCollationGroup,
-  kDelimiterGroup,
-  kMultiDelimiterGroup,
-  kMinHashGroup,
-  kWildcardGroup,
-  kNormGroup,
-  kSegmentationGroup,
-  kIcuTextGroup,
-  kSplitByNonAlphaGroup,
-  kPipelineGroup,
-  kPatternGroup,
-  kPathHierarchyGroup,
-  kUnionGroup,
-  kCopyFromGroup,
-  kGeoPointGroup,
-  kGeoJsonGroup,
-  kKeywordGroup,
-  kSqlGroup,
-  kShingleGroup,
-  kSolrSynonymsGroup,
-  kWordnetSynonymsGroup,
-  kSparseNGramGroup,
+  kFeaturesGroup,        kTextGroup,
+  kNGramGroup,           kNearestNeighborsGroup,
+  kStemmingGroup,        kStopwordsGroup,
+  kClassificationGroup,  kCollationGroup,
+  kDelimiterGroup,       kMultiDelimiterGroup,
+  kWildcardGroup,        kNormGroup,
+  kSegmentationGroup,    kIcuTextGroup,
+  kSplitByNonAlphaGroup, kPipelineGroup,
+  kPatternGroup,         kPathHierarchyGroup,
+  kUnionGroup,           kCopyFromGroup,
+  kGeoPointGroup,        kGeoJsonGroup,
+  kKeywordGroup,         kSqlGroup,
+  kShingleGroup,         kSolrSynonymsGroup,
+  kWordnetSynonymsGroup, kSparseNGramGroup,
 };
 
 }  // namespace sdb::pg::tokenizer_options

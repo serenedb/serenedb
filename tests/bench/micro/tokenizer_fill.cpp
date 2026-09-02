@@ -34,7 +34,6 @@
 #include "iresearch/analysis/delimited_tokenizer.hpp"
 #include "iresearch/analysis/geo_analyzer.hpp"
 #include "iresearch/analysis/keyword_tokenizer.hpp"
-#include "iresearch/analysis/minhash_tokenizer.hpp"
 #include "iresearch/analysis/multi_delimited_tokenizer.hpp"
 #include "iresearch/analysis/ngram_tokenizer.hpp"
 #include "iresearch/analysis/normalizing_tokenizer.hpp"
@@ -868,14 +867,6 @@ Tokenizer::ptr MakeShingle() {
   return std::make_unique<ShingleTokenizer>(MakeDelimiter(), std::move(opts));
 }
 
-Tokenizer::ptr MakeMinHash() {
-  return std::make_unique<MinHashTokenizer>(MakeDelimiter(), 8);
-}
-
-Tokenizer::ptr MakeMinHash64() {
-  return std::make_unique<MinHashTokenizer>(MakeDelimiter(), 64);
-}
-
 Tokenizer::ptr MakeMultiDelimiterStr() {
   MultiDelimitedTokenizer::Options opts;
   opts.delimiters.emplace_back(reinterpret_cast<const byte_type*>(", "), 2);
@@ -1251,8 +1242,6 @@ TOKENIZER_BENCH(delimiter, MakeDelimiter, CsvCorpus);
 TOKENIZER_BENCH(sql_upper, MakeSqlUpper, WordCorpus);
 TOKENIZER_BENCH(sql_split, MakeSqlSplit, CsvCorpus);
 TOKENIZER_BENCH(sql_split_lower, MakeSqlSplitLower, CsvCorpus);
-TOKENIZER_BENCH(minhash, MakeMinHash, CsvCorpus);
-TOKENIZER_BENCH(minhash_64, MakeMinHash64, CsvCorpus);
 TOKENIZER_BENCH(shingle, MakeShingle, CsvCorpus);
 TOKENIZER_BENCH(union_2, MakeUnion2, CsvCorpus);
 TOKENIZER_BENCH(delimiter_mixed, MakeDelimiter, MixedCsvCorpus);

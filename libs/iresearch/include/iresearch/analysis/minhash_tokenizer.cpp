@@ -35,26 +35,6 @@ namespace {
 
 constexpr uint64_t kHashSeed = 0xdeadbeef;
 
-IRS_FORCE_INLINE void EncodeSignatureHash(uint64_t value, char* out) noexcept {
-  constexpr char kAlphabet[] =
-    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-  unsigned char b[8];
-  absl::little_endian::Store64(b, value);
-  const auto triple = [&](const unsigned char* p, char* o) {
-    const uint32_t v = (uint32_t{p[0]} << 16) | (uint32_t{p[1]} << 8) | p[2];
-    o[0] = kAlphabet[(v >> 18) & 63];
-    o[1] = kAlphabet[(v >> 12) & 63];
-    o[2] = kAlphabet[(v >> 6) & 63];
-    o[3] = kAlphabet[v & 63];
-  };
-  triple(b, out);
-  triple(b + 3, out + 4);
-  const uint32_t v = (uint32_t{b[6]} << 8) | b[7];
-  out[8] = kAlphabet[(v >> 10) & 63];
-  out[9] = kAlphabet[(v >> 4) & 63];
-  out[10] = kAlphabet[(v << 2) & 63];
-}
-
 }  // namespace
 
 Tokenizer::ptr MinHashTokenizer::Make(Options opts,
@@ -108,15 +88,10 @@ bool MinHashTokenizer::DoFill(duckdb::string_t raw, TokenSink& sink) {
 
 template<TokenLayout Layout>
 void MinHashTokenizer::EmitSignature(TokenSink& sink) {
-  constexpr uint32_t kSignatureSize = 11;
   for (const auto hash : _minhash) {
-    sink.Emit<Layout>(
-      kSignatureSize,
-      [&](byte_type* mem) IRS_FORCE_INLINE {
-        EncodeSignatureHash(hash, reinterpret_cast<char*>(mem));
-        return kSignatureSize;
-      },
-      1);
+    const auto value = absl::little_endian::FromHost(hash);
+    sink.Emit<Layout>(reinterpret_cast<const char*>(&value),
+                      static_cast<uint32_t>(sizeof value), 1);
   }
 }
 

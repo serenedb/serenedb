@@ -20,10 +20,6 @@
 /// @author Andrey Abramov
 ////////////////////////////////////////////////////////////////////////////////
 
-#include <absl/base/internal/endian.h>
-#include <simdutf.h>
-
-#include "basics/wyhash.h"
 #include "iresearch/analysis/minhash_tokenizer.hpp"
 #include "iresearch/analysis/segmentation_tokenizer.hpp"
 #include "iresearch/analysis/token_batch.hpp"
@@ -179,19 +175,23 @@ TEST(MinHashTokenizerTest, NextReset) {
     ASSERT_TRUE(tokens.has_value());
     ASSERT_EQ(4U, tokens->size());
 
-    EXPECT_EQ("q9VZS3VMEoY", (*tokens)[0].term);
+    EXPECT_EQ((std::string_view{"\xab\xd5\x59\x4b\x75\x4c\x12\x86", 8}),
+              (*tokens)[0].term);
     ASSERT_EQ(1, (*tokens)[0].pos);
     EXPECT_EQ(0, (*tokens)[0].offs_end);
 
-    EXPECT_EQ("9oVVAx777yc", (*tokens)[1].term);
+    EXPECT_EQ((std::string_view{"\xf6\x85\x55\x03\x1e\xfb\xef\x27", 8}),
+              (*tokens)[1].term);
     ASSERT_EQ(1, (*tokens)[1].pos);
     EXPECT_EQ(0, (*tokens)[1].offs_end);
 
-    EXPECT_EQ("U9QEhWO/5Dw", (*tokens)[2].term);
+    EXPECT_EQ((std::string_view{"\x53\xd4\x04\x85\x63\xbf\xe4\x3c", 8}),
+              (*tokens)[2].term);
     ASSERT_EQ(1, (*tokens)[2].pos);
     EXPECT_EQ(0, (*tokens)[2].offs_end);
 
-    EXPECT_EQ("Y9at6wPcrAk", (*tokens)[3].term);
+    EXPECT_EQ((std::string_view{"\x63\xd6\xad\xeb\x03\xdc\xac\x09", 8}),
+              (*tokens)[3].term);
     ASSERT_EQ(1, (*tokens)[3].pos);
     EXPECT_EQ(0, (*tokens)[3].offs_end);
   }
@@ -285,36 +285,5 @@ TEST(MinHashTokenizerTest, ColumnFillMatchesPull) {
     tests::FillColumn(fill_stream, values, 100, sink.writer, sink.layout);
     sink.writer.Finish();
     ASSERT_EQ(1, flushes);
-  }
-}
-
-TEST(MinHashTokenizerTest, SignatureBytesMatchSimdutf) {
-  irs::analysis::MinHashTokenizer stream{nullptr, 1};
-
-  uint64_t seed = 0x5eedf00d;
-  const auto next = [&] {
-    seed = seed * 6364136223846793005ULL + 1442695040888963407ULL;
-    return static_cast<size_t>(seed >> 33);
-  };
-  for (size_t iter = 0; iter < 256; ++iter) {
-    std::string value;
-    const size_t len = 1 + next() % 64;
-    for (size_t i = 0; i < len; ++i) {
-      value += static_cast<char>(next() % 256);
-    }
-
-    const auto tokens = tests::Analyze(stream, value);
-    ASSERT_TRUE(tokens.has_value());
-    ASSERT_EQ(1, tokens->size());
-
-    const uint64_t hash = absl::little_endian::FromHost(
-      sdb::basics::WyHash(value.data(), value.size(), 0xdeadbeef));
-    char expected[11];
-    const size_t length = simdutf::binary_to_base64(
-      reinterpret_cast<const char*>(&hash), sizeof hash, expected,
-      simdutf::base64_default_no_padding);
-    ASSERT_EQ(sizeof expected, length);
-    ASSERT_EQ((std::string_view{expected, sizeof expected}),
-              tokens->front().term);
   }
 }

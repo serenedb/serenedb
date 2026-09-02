@@ -29,11 +29,6 @@
 
 namespace irs {
 
-// Terms-only drain appending every token to the LIST(VARCHAR) vector's
-// child starting at the construction offset (growing the list as needed);
-// offset() after writer.Finish() is the new child offset and keeps
-// accumulating across values, so one sink serves a whole result vector.
-// The caller owns the final ListVector::SetListSize.
 class ListVectorSink final : public TokenConsumer {
  public:
   ListVectorSink(duckdb::Vector& list, uint64_t offset)

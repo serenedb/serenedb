@@ -63,6 +63,21 @@ catalog::Tokenizer::TokenizerWrapper AcquireTokenizer(
   return dict.GetTokenizer(ctx);
 }
 
+catalog::Tokenizer::TokenizerWrapper AcquireTextTokenizer(
+  duckdb::ClientContext& ctx, const catalog::Tokenizer& dict,
+  std::string_view dict_name) {
+  auto tokenizer = AcquireTokenizer(ctx, dict);
+  const auto output = tokenizer->Traits().output;
+  if (output != duckdb::LogicalTypeId::VARCHAR) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_DATATYPE_MISMATCH),
+      ERR_MSG("text search dictionary \"", dict_name, "\" produces ",
+              duckdb::LogicalTypeIdToString(output),
+              " tokens; pass the dictionary name as a constant"));
+  }
+  return tokenizer;
+}
+
 // The dictionary is named per row, so this arm resolves at execution time. What
 // it carries is only what makes two bindings interchangeable: the database and
 // the schema an unqualified name resolves against.
@@ -255,9 +270,9 @@ void TsLexizeFunctionDynamic(duckdb::DataChunk& args,
       list_entries[i] = {sink.Offset(), 0};
       continue;
     }
-    auto dict =
-      LookupTokenizerDict(state.GetContext(), AsView(dict_data[dict_idx]));
-    auto tokenizer = AcquireTokenizer(state.GetContext(), *dict);
+    const auto dict_name = AsView(dict_data[dict_idx]);
+    auto dict = LookupTokenizerDict(state.GetContext(), dict_name);
+    auto tokenizer = AcquireTextTokenizer(state.GetContext(), *dict, dict_name);
     const auto row_offset = sink.Offset();
     sink.Tokenize(*tokenizer, text_data[text_idx]);
     list_entries[i] = {row_offset, sink.Offset() - row_offset};
@@ -301,9 +316,9 @@ void TsLexizeArrayFunctionDynamic(duckdb::DataChunk& args,
       list_entries_out[i] = {sink.Offset(), 0};
       continue;
     }
-    auto dict =
-      LookupTokenizerDict(state.GetContext(), AsView(dict_data[dict_idx]));
-    auto tokenizer = AcquireTokenizer(state.GetContext(), *dict);
+    const auto dict_name = AsView(dict_data[dict_idx]);
+    auto dict = LookupTokenizerDict(state.GetContext(), dict_name);
+    auto tokenizer = AcquireTextTokenizer(state.GetContext(), *dict, dict_name);
     const auto row_offset = sink.Offset();
     const auto& entry = list_entries_in[list_idx];
     for (duckdb::idx_t k = 0; k < entry.length; k++) {
@@ -335,8 +350,11 @@ duckdb::unique_ptr<duckdb::FunctionData> TsLexizeBind(
   if (args[0]->IsFoldable()) {
     auto val = duckdb::ExpressionExecutor::EvaluateScalar(context, *args[0]);
     if (!val.IsNull()) {
-      bind->state = LookupTokenizerDict(context, duckdb::StringValue::Get(val));
+      auto dict = LookupTokenizerDict(context, duckdb::StringValue::Get(val));
+      const auto output = AcquireTokenizer(context, *dict)->Traits().output;
+      bind->state = std::move(dict);
       auto& fn = input.GetBoundFunction();
+      fn.SetReturnType(duckdb::LogicalType::LIST(output));
       fn.SetFunctionCallback(ConstantFn);
       fn.SetInitStateCallback(InitTsLexizeLocalState);
       return bind;

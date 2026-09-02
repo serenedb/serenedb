@@ -55,7 +55,9 @@ class MinHashTokenizer final : public TypedTokenizer<MinHashTokenizer>,
   explicit MinHashTokenizer(analysis::Tokenizer::ptr analyzer,
                             uint32_t num_hashes);
 
-  TokenTraits Traits() const noexcept final { return {.explicit_pos = true}; }
+  TokenTraits Traits() const noexcept final {
+    return {.output = duckdb::LogicalTypeId::BLOB, .explicit_pos = true};
+  }
   std::tuple<> PrepareBatch(BlockTraits);
 
   template<TokenLayout Layout>

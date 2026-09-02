@@ -920,10 +920,28 @@ CREATE TEXT SEARCH DICTIONARY minhash_seg_explicit(
 
 
 query
-SELECT ts_lexize('minhash_seg_explicit', 'a Real(!) QuICK, BrowN FOX!');
+SELECT hex(s) AS signature
+FROM unnest(ts_lexize('minhash_seg_explicit', 'a Real(!) QuICK, BrowN FOX!')) AS s;
 ----
-ts_lexize
-{3Nw3PlObK0w,9zSo3KwmNhA,U9QEhWO/5Dw}
+signature
+DCDC373E539B2B4C
+F734A8DCAC263610
+53D4048563BFE43C
+
+
+# --- A dictionary producing binary tokens returns BLOB[] when named as a constant ---
+query
+SELECT typeof(ts_lexize('minhash_seg_explicit', 'a quick fox')) AS type;
+----
+type
+BLOB[]
+
+
+# --- The per-row dictionary arm cannot retype its result, so it refuses binary tokens ---
+statement error
+SELECT ts_lexize(d, 'a quick fox') FROM (VALUES ('minhash_seg_explicit')) AS t(d);
+----
+db error: ERROR: text search dictionary "minhash_seg_explicit" produces BLOB tokens; pass the dictionary name as a constant
 
 
 
@@ -940,10 +958,15 @@ CREATE TEXT SEARCH DICTIONARY minhash_with_text(
 
 
 query
-SELECT ts_lexize('minhash_with_text', 'A QUICK Jumping Brownish FOX');
+SELECT hex(s) AS signature
+FROM unnest(ts_lexize('minhash_with_text', 'A QUICK Jumping Brownish FOX')) AS s;
 ----
-ts_lexize
-{3Nw3PlObK0w,c1vB9RXiIbY,qwHz3KHFrwA,Dd/LYPcsFJs,i9Kfo5CrjNs}
+signature
+DCDC373E539B2B4C
+735BC1F515E221B6
+AB01F3DCA1C5AF00
+0DDFCB60F72C149B
+8BD29FA390AB8CDB
 
 
 # SEGMENTATION TEMPLATE
@@ -963,6 +986,13 @@ SELECT ts_lexize('seg_graphic_lower', 'File:Constantinople(1878)-Turkish Goverme
 ----
 ts_lexize
 {file:constantinople,1878,turkish,goverment,information,brocure,1950s,istanbul,coffee,house.png}
+
+
+query
+SELECT typeof(ts_lexize('seg_graphic_lower', 'a quick fox')) AS type;
+----
+type
+VARCHAR[]
 
 
 # --- break = graphic: keeps all non-whitespace tokens, drops spaces ---
@@ -1645,10 +1675,13 @@ CREATE TEXT SEARCH DICTIONARY minhash_copy5(
 
 
 query
-SELECT ts_lexize('minhash_copy5', 'a|quick|Brown|FOX!');
+SELECT hex(s) AS signature
+FROM unnest(ts_lexize('minhash_copy5', 'a|quick|Brown|FOX!')) AS s;
 ----
-ts_lexize
-{CL4pTgTN/r4,aA/5fo9OvB4,X0zdNxFFkdY}
+signature
+08BE294E04CDFEBE
+680FF97E8F4EBC1E
+5F4CDD37114591D6
 
 
 # ========================

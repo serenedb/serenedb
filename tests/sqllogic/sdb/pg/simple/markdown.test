@@ -53,6 +53,80 @@ lang
 sql
 
 
+# md_stats(doc, exact) takes its counts from cmark's AST instead of the line
+# scanners. Covered here because md_stats_exact.test is skipped.
+
+statement ok
+CREATE TEMPORARY MACRO md_stats_doc() AS (E'# Title\nInline [a](http://a) and image ![i](http://i.png).\nRef [b][ref] and auto <http://c>.\nCode span `[x](http://x)`.\n\n```md\n[y](http://y)\n[z](http://z)\n```\n\n[ref]: http://b\n');
+
+
+# The scanner counts the image, a code span and two fenced links; cmark does not.
+
+query
+SELECT (md_stats(md_stats_doc())).link_count AS scanned,
+       (md_stats(md_stats_doc(), true)).link_count AS exact;
+----
+scanned	exact
+5	3
+
+
+# Exact mode agrees with the extractors; the scanner's surplus is the image.
+
+query
+SELECT (md_stats(md_stats_doc(), true)).link_count = len(md_extract_links(md_stats_doc())) AS links_agree,
+       (md_stats(md_stats_doc(), true)).code_block_count = len(md_extract_code_blocks(md_stats_doc())) AS blocks_agree,
+       (md_stats(md_stats_doc())).link_count - (md_stats(md_stats_doc(), true)).link_count
+         >= len(md_extract_images(md_stats_doc())) AS image_surplus;
+----
+links_agree	blocks_agree	image_surplus
+t	t	t
+
+
+# Constructs the scanners cannot see.
+
+query
+SELECT (md_stats(E'```sql\nSELECT 1')).code_block_count AS unterminated_scanned,
+       (md_stats(E'```sql\nSELECT 1', true)).code_block_count AS unterminated_exact,
+       (md_stats(E'~~~py\nx', true)).code_block_count AS tilde_exact,
+       (md_stats(E'Setext\n======\ntext', true)).heading_count AS setext_exact,
+       (md_stats(E'    indented code', true)).code_block_count AS indented_exact;
+----
+unterminated_scanned	unterminated_exact	tilde_exact	setext_exact	indented_exact
+0	1	1	1	1
+
+
+# exact only moves the structural counts.
+
+query
+SELECT (md_stats(md_stats_doc())).word_count = (md_stats(md_stats_doc(), true)).word_count
+   AND (md_stats(md_stats_doc())).char_count = (md_stats(md_stats_doc(), true)).char_count
+   AND (md_stats(md_stats_doc())).line_count = (md_stats(md_stats_doc(), true)).line_count AS text_fields_same,
+       md_stats(md_stats_doc(), false) = md_stats(md_stats_doc()) AS false_is_one_arg;
+----
+text_fields_same	false_is_one_arg
+t	t
+
+
+query
+SELECT md_stats(NULL::VARCHAR, true) IS NULL AS null_doc,
+       (md_stats('', true)).link_count AS empty_links;
+----
+null_doc	empty_links
+t	0
+
+
+# The flag is read per row.
+
+query
+SELECT f AS exact, (md_stats(md_stats_doc(), f)).link_count AS links
+FROM (VALUES (false), (true)) t(f)
+ORDER BY f;
+----
+exact	links
+f	5
+t	3
+
+
 # Every md_* overload reaches pg_catalog.pg_proc, so \df and ORM introspection
 # see the extension's functions like any other built-in.
 

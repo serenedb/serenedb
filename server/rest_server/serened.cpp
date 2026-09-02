@@ -35,6 +35,7 @@
 #include "basics/log.h"
 #include "catalog/ddl/catalog.h"
 #include "catalog/log/data_store.h"
+#include "catalog/log/duckdb_global_catalog.h"
 #include "catalog/log/store.h"
 #include "duckdb_shell.hpp"
 #include "network/pg/hba.h"
@@ -126,6 +127,10 @@ int RunServer(int argc, char** argv) {
       if (up_data) {
         stop("data", [&] { data_store.Shutdown(); });
       }
+      // Before the attachments close: the catalog log's lock lives on the
+      // global attachment's storage manager, and everything that could still
+      // append has stopped above.
+      stop("catalog log", [&] { catalog::CloseClusterCatalogWal(); });
       // The shutdown checkpoint of every attached database, taken here rather
       // than left to the DuckDB destructor in main(): an inverted index vetoes
       // it unless it can read its definition, so the catalog below must still

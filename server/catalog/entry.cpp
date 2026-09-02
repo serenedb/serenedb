@@ -41,7 +41,7 @@ duckdb::unique_ptr<duckdb::CreateInfo> DeserializeForeignCreateInfo(
   switch (type) {
     using enum duckdb::CatalogType;
     case ROLE_ENTRY:
-      return Role::Deserialize(deserializer);
+      return CreateRoleInfo::Deserialize(deserializer);
     case DATABASE_ENTRY:
       return CreateDatabaseInfo::Deserialize(deserializer);
     case TOKENIZER_ENTRY:

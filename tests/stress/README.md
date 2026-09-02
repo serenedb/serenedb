@@ -17,8 +17,40 @@ randomization, no duration bound and no per-record timeout.
 ```bash
 tests/stress/run.sh --profile smoke
 tests/stress/run.sh --profile soak --scenario ddl_churn --seconds 900
-tests/stress/run.sh --scenario serial_churn --workers 4 --seed 12345
+tests/stress/run.sh --scenario serial_churn --workers 2 --seed 12345
+tests/stress/run.sh --profile break-everything          # all of it at once
 ```
+
+### Scenarios
+
+| scenario | what it churns |
+|---|---|
+| `tables_only` | tables, views, ART indexes, DML -- no sequences, the one shape that survives longest |
+| `ddl_churn` | the broad DDL mix incl. sequences and SERIAL |
+| `ddl_dml_race` | DDL against DML on the same tables |
+| `dependency_churn` | views and indexes over tables, cascade drops |
+| `serial_churn` | `SERIAL` tables and sequences -- the fastest route to the catalog-commit wedge |
+| `name_reuse` | drop-then-recreate on fixed names: the ABA / identity test |
+| `shared_arena` | every worker on 8 shared names -- the optimistic-conflict path |
+| `cancel_bait` | slow `CREATE TABLE AS` for protocol-level cancellation to land on |
+| `iceberg_views` | text search dictionaries, views over `iceberg_scan`, inverted indexes over those views, search, `REINDEX`, `VACUUM (REFRESH_INDEX)` |
+| `foreign_servers` | `CREATE SERVER ... postgres_fdw` pointed at this serened's own port |
+| `server_race` | several workers creating, dropping and *using* the same few servers |
+| `attach_churn` | `CREATE`/`DROP DATABASE`, `ATTACH`/`DETACH` of plain duckdb files, cross-database reads and writes |
+| `break_everything` | all of the above interleaved, 30 op kinds |
+
+### Profiles
+
+`smoke`, `soak`, `soak-tsan`, `scale`, `cancel`, `iceberg`, `remote`, `attach`,
+`server-race`, `compaction-probe`, `wedge-probe`, `break-everything`.
+
+`break-everything` arms every chaos knob at once -- injected catalog-window crashes,
+a graceful `SIGTERM` restart, an index-build park, protocol cancellations and a forced
+catalog-log compaction. A clean run there is the surprising outcome.
+
+`iceberg_views` needs `resources/tests/iceberg`, which
+`scripts/ensure_iceberg_fixture.sh` generates (it wants docker). Without it the suite
+says so and skips rather than failing.
 
 `BUILD_DIR` / `SERENED` pick the binary, exactly as in `tests/network/run.sh`.
 Every flag has an `SDB_STRESS_*` environment equivalent, so CI can drive it
@@ -94,8 +126,29 @@ produce false positives:
   (`^s<tag>_w\d+_(t|q|v|i)\d+$`), so engine-derived names never trip it.
 
 Entry rows come from the session's default database only, while `Dependency` rows
-come from every attachment. One result set, two scopes -- cross-database
-invariants must therefore be assembled one connection per database.
+come from every attachment. One result set, two scopes. The consequence is concrete:
+with more than one database in play an edge into another one looks dangling, so the
+dependency-edge check is **skipped** once `pg_database` holds more than one row rather
+than made to lie. Cross-database invariants need one connection per database.
+
+Two more kinds have no token channel at all: `COMMENT ON TEXT SEARCH DICTIONARY` and
+`COMMENT ON SERVER` are `42601`, and `COMMENT ON DATABASE` is `0A000`. Those three are
+modelled for presence only, and their identity is proven by oid instead -- the oracle
+requires the oid to be stable within one incarnation, which is the same ABA test the
+token gives every other kind. A foreign server is also invisible to `pg_class` and
+carries an empty `schema_name`.
+
+`DROP VIEW` and `DROP TABLE` **silently** take every inverted index over them, with no
+`CASCADE` asked for and no warning, so the generator cascades those in its own model --
+without that, every later op against the index reports a vanished private key.
+`DROP TEXT SEARCH DICTIONARY` is the opposite: refused with `2BP01` while any index
+references it, and its `CASCADE` form is a syntax error, so a tokenizer is only
+droppable once its indexes are gone.
+
+Search-index artifact reclamation is deferred to a background pool after the deciding
+commit, so mid-run a just-dropped index legitimately still owns its directory. The
+orphan-artifact walk therefore only runs where boot's sweep is the actual contract:
+after a restart.
 
 ## Fault injection
 

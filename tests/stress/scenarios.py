@@ -18,6 +18,13 @@ class WorkerState:
         self.servers = []
         self.databases = []
         self.attachments = []
+        # break_everything mixes populations the single-purpose scenarios each
+        # assume are uniform: a ddl_churn view is SELECT id, v with no body
+        # column, an iceberg view has one, and an ART index is over label. The
+        # searchable set and the per-index column have to be tracked, or the
+        # iceberg ops target the wrong objects.
+        self.iceberg_views = []
+        self.search_col = {}
         self.uses_dict = {}
 
     def note_created(self, op):
@@ -35,6 +42,9 @@ class WorkerState:
             elif kind == ops.VIEW:
                 if key not in self.views:
                     self.views.append(key)
+                if op.kind == "create_iceberg_view" \
+                        and key not in self.iceberg_views:
+                    self.iceberg_views.append(key)
                 if op.needs:
                     self.parent[key] = op.needs[0]
             elif kind == ops.INDEX:
@@ -45,6 +55,8 @@ class WorkerState:
                 for need in op.needs[1:]:
                     if need[0] == ops.TOKENIZER:
                         self.uses_dict[key] = need
+                if op.search_column:
+                    self.search_col[key] = op.search_column
             elif kind == ops.TOKENIZER:
                 if key not in self.tokenizers:
                     self.tokenizers.append(key)
@@ -79,6 +91,9 @@ class WorkerState:
             self.parent.pop(key, None)
             self.rows.pop(key, None)
             self.uses_dict.pop(key, None)
+            self.search_col.pop(key, None)
+            if key in self.iceberg_views:
+                self.iceberg_views.remove(key)
 
     def resync_from(self, model):
         present = model.expected_present()
@@ -86,6 +101,8 @@ class WorkerState:
         self.tokenizers = [k for k in present if k[0] == ops.TOKENIZER]
         self.servers = [k for k in present if k[0] == ops.SERVER]
         self.databases = [k for k in present if k[0] == ops.DATABASE]
+        self.iceberg_views = [k for k in self.iceberg_views if k in present]
+        self.search_col = {k: v for k, v in self.search_col.items() if k in present}
         self.uses_dict = {k: v for k, v in self.uses_dict.items()
                           if k in present and v in present}
         self.sequences = [k for k in present if k[0] == ops.SEQUENCE]
@@ -106,6 +123,9 @@ class WorkerState:
             self.attachments.append(op.key)
         elif op.kind == "detach_duckdb" and op.key in self.attachments:
             self.attachments.remove(op.key)
+
+    def searchable_indexes(self):
+        return [k for k in self.indexes if k in self.search_col]
 
     def free_tokenizers(self):
         # DROP TEXT SEARCH DICTIONARY is refused with 2BP01 while any index still
@@ -186,15 +206,15 @@ def pick_iceberg_views(rng, st):
         choices.append(("create_tokenizer", 20))
     elif len(st.tokenizers) < 3:
         choices.append(("create_tokenizer", 3))
-    if fixtures and len(st.views) < st.other_cap:
+    if fixtures and len(st.iceberg_views) < st.other_cap:
         choices.append(("create_iceberg_view", 8))
-    if st.views:
-        choices.append(("drop_view", 3))
+    if st.iceberg_views:
+        choices.append(("drop_iceberg_view", 3))
         if st.tokenizers and len(st.indexes) < st.other_cap:
             choices.append(("create_inverted_index", 8))
-    if st.indexes:
+    if st.searchable_indexes():
         choices.extend([("search_index", 6), ("reindex_index", 4),
-                        ("vacuum_refresh_index", 4), ("drop_index", 4)])
+                        ("vacuum_refresh_index", 4), ("drop_search_index", 4)])
     if st.free_tokenizers():
         choices.append(("drop_tokenizer", 2))
     return _build(rng, st, rng.weighted(choices))
@@ -271,16 +291,16 @@ def pick_break_everything(rng, st):
         return pick_server_race(rng, st)
     if lane == "iceberg" and st.env.get("iceberg_fixtures"):
         return pick_iceberg_views(rng, st)
-    if lane == "maint" and st.indexes:
+    if lane == "maint" and st.searchable_indexes():
         return rng.choice([ops.vacuum_refresh_index, ops.reindex_index])(
-            rng.choice(st.indexes))
+            rng.choice(st.searchable_indexes()))
     return ops.catalog_read()
 
 
 def pick_cancel_bait(rng, st):
-    choices = [("slow_ctas", 6), ("catalog_read", 2)]
+    choices = [("catalog_read", 2)]
     if len(st.tables) < st.table_cap:
-        choices.append(("create_table", 4))
+        choices.extend([("slow_ctas", 6), ("create_table", 4)])
     if st.tables:
         choices.extend([("drop_table", 6), ("dml_insert", 3), ("read", 2)])
     return _build(rng, st, rng.weighted(choices))
@@ -402,13 +422,22 @@ def _build(rng, st, what):
         return ops.create_iceberg_view(n, rng.choice(st.env["iceberg_fixtures"]))
     if what == "create_inverted_index":
         return ops.create_inverted_index(
-            n, rng.choice(st.views), rng.choice(st.tokenizers))
+            n, rng.choice(st.iceberg_views), rng.choice(st.tokenizers),
+            column="body")
+    if what == "drop_iceberg_view":
+        key = rng.choice(st.iceberg_views)
+        op = ops.drop_view(key)
+        op.cascade = st.dependents_of(key)
+        return op
+    if what == "drop_search_index":
+        return ops.drop_index(rng.choice(st.searchable_indexes()))
     if what == "search_index":
-        return ops.search_index(rng.choice(st.indexes))
+        key = rng.choice(st.searchable_indexes())
+        return ops.search_index(key, st.search_col[key])
     if what == "reindex_index":
-        return ops.reindex_index(rng.choice(st.indexes))
+        return ops.reindex_index(rng.choice(st.searchable_indexes()))
     if what == "vacuum_refresh_index":
-        return ops.vacuum_refresh_index(rng.choice(st.indexes))
+        return ops.vacuum_refresh_index(rng.choice(st.searchable_indexes()))
     if what == "create_foreign_server":
         return ops.create_foreign_server(n, st.env.get("host", "127.0.0.1"),
                                          st.env.get("port", 5432))

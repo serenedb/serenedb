@@ -16,7 +16,8 @@ OID_IDENTITY_KINDS = frozenset({TOKENIZER, SERVER, DATABASE})
 
 class Op:
     __slots__ = ("kind", "statements", "creates", "drops", "scope", "token",
-                 "key", "needs", "cascade", "rows_added", "rows_removed")
+                 "key", "needs", "cascade", "rows_added", "rows_removed",
+                 "search_column")
 
     def __init__(self, kind, statements, creates=(), drops=(), scope="private",
                  token=None, key=None, needs=(), cascade=(), rows_added=(),
@@ -32,6 +33,7 @@ class Op:
         self.cascade = list(cascade)
         self.rows_added = list(rows_added)
         self.rows_removed = list(rows_removed)
+        self.search_column = None
 
     def as_record(self):
         return {
@@ -230,23 +232,25 @@ def create_iceberg_view(names, fixture_path):
         key=key_of(VIEW, name))
 
 
-def create_inverted_index(names, target_key, dict_key=None):
+def create_inverted_index(names, target_key, dict_key=None, column="body"):
     name = names.fresh("i")
     token = names.token()
-    cols = "body" if target_key[0] == VIEW else "label"
-    spec = f"{cols} {dict_key[1]}" if dict_key else cols
-    return Op("create_inverted_index", [
+    spec = f"{column} {dict_key[1]}" if dict_key else column
+    op = Op("create_inverted_index", [
         f"CREATE INDEX {name} ON {target_key[1]} USING inverted({spec})",
         f"COMMENT ON INDEX {name} IS '{token}'",
     ], creates=[(key_of(INDEX, name), token)], token=token,
         key=key_of(INDEX, name), needs=[target_key] + ([dict_key] if dict_key else []))
+    op.search_column = column
+    return op
 
 
-def search_index(index_key):
+def search_index(index_key, column):
     # A search predicate only lowers when the INDEX relation is the FROM target;
-    # querying the base table raises 0A000. Verified.
+    # querying the base table raises 0A000. Verified. The column has to be the one
+    # the index was actually built over, or this is a 42703 of our own making.
     return Op("search_index",
-              [f"SELECT count(*) FROM {index_key[1]} WHERE body @@ 'alpha'"],
+              [f"SELECT count(*) FROM {index_key[1]} WHERE {column} @@ 'alpha'"],
               key=index_key)
 
 

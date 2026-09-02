@@ -29,7 +29,6 @@
 #include <tuple>
 #include <vector>
 
-#include "basics/serializer.h"
 #include "iresearch/analysis/process_tokens.hpp"
 #include "iresearch/utils/icu_locale_serde.hpp"
 #include "tokenizer.hpp"
@@ -84,18 +83,5 @@ class CollationTokenizer final : public TypedTokenizer<CollationTokenizer>,
 
 extern template class TypedTokenizer<CollationTokenizer>;
 extern template class TypedTokenStage<CollationTokenizer>;
-
-template<typename Context>
-void SerdeWrite(Context ctx, const CollationTokenizer::Options& o) {
-  const bool legacy_force_utf8 = true;
-  sdb::basics::WriteTupleOrObject(ctx, std::tie(o.locale, legacy_force_utf8));
-}
-
-template<typename Context>
-void SerdeRead(Context ctx, CollationTokenizer::Options& o) {
-  bool legacy_force_utf8 = true;
-  auto refs = std::tie(o.locale, legacy_force_utf8);
-  sdb::basics::ReadTupleOrObject(ctx, refs);
-}
 
 }  // namespace irs::analysis

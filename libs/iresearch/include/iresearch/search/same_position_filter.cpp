@@ -231,10 +231,10 @@ QueryBuilder::ptr BySamePosition::PrepareSegment(
   }
 
   return memory::make_tracked<SamePositionQuery>(
-    ctx.memory, segment, std::move(term_states), ctx.boost * Boost());
+    ctx.memory, segment, std::move(term_states), ctx.boost * GetBoost());
 }
 
-PrepareCollector::ptr BySamePosition::MakeCollector(
+PrepareCollector::ptr BySamePosition::MakeCollectorImpl(
   const Scorer* scorer) const {
   return std::make_unique<ByTermsCollector>(scorer, options().terms.size());
 }

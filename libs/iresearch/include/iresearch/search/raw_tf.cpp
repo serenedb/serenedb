@@ -24,8 +24,10 @@
 #include "basics/misc.hpp"
 #include "basics/shared.hpp"
 #include "iresearch/analysis/token_attributes.hpp"
+#include "iresearch/formats/posting/score_bound_writer.hpp"
 #include "iresearch/search/score_function.hpp"
 #include "iresearch/search/scorer.hpp"
+#include "iresearch/search/scorer_options.hpp"
 
 namespace irs {
 namespace {
@@ -129,6 +131,18 @@ ScoreFunction RawTF::PrepareScorer(const ScoreContext& ctx) const {
     return ScoreFunction::Make<RawTfScore<HasBoost>>(ctx.boost, freq,
                                                      filter_boost);
   });
+}
+
+ScoreBoundWriter::ptr RawTF::PrepareScoreBoundWriter(size_t max_levels) const {
+  return std::make_unique<FreqNormWriter<kScoreBoundMaxFreq>>(max_levels);
+}
+
+ScoreBoundSource::ptr RawTF::PrepareScoreBoundSource() const {
+  return std::make_unique<FreqNormSource<kScoreBoundFreq>>();
+}
+
+bool RawTF::Compatible(const ScorerOptions& persisted) const noexcept {
+  return irs::BoundTypeOf(persisted) == BoundTypeOf(Options{});
 }
 
 }  // namespace irs

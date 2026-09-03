@@ -33,8 +33,9 @@
 #include "basics/crash_handler.h"
 #include "basics/duckdb_engine.h"
 #include "basics/log.h"
-#include "catalog/catalog.h"
-#include "catalog/store/store.h"
+#include "catalog/ddl/catalog.h"
+#include "catalog/log/data_store.h"
+#include "catalog/log/store.h"
 #include "duckdb_shell.hpp"
 #include "network/pg/hba.h"
 #include "network/server.h"
@@ -65,6 +66,7 @@ int RunServer(int argc, char** argv) {
     //    pointer; Feature::instance() works from here on.
     DatabasePathFeature db_path;
     catalog::CatalogStore store;
+    catalog::DataStore data_store;
     BackgroundScheduler background;
     search::SearchEngine search;
     Server network;
@@ -80,7 +82,7 @@ int RunServer(int argc, char** argv) {
     // afterwards still see a live SearchEngine. DuckDBEngine brackets all of
     // this from main(). The up_* flags let DOWN skip whatever never came UP
     // (start() threw).
-    bool up_store = false, up_background = false, up_catalog = false,
+    bool up_data = false, up_background = false, up_catalog = false,
          up_search = false, up_network = false;
 
     absl::Cleanup down = [&]() noexcept {
@@ -121,9 +123,15 @@ int RunServer(int argc, char** argv) {
       if (up_background) {
         stop("background", [&] { background.stop(); });
       }
-      if (up_store) {
-        stop("store", [&] { store.Shutdown(); });
+      if (up_data) {
+        stop("data", [&] { data_store.Shutdown(); });
       }
+      // The shutdown checkpoint of every attached database, taken here rather
+      // than left to the DuckDB destructor in main(): an inverted index vetoes
+      // it unless it can read its definition, so the catalog below must still
+      // be up -- and the catalog must be down before that destructor, because
+      // its objects hold allocations of the allocator it takes with it.
+      stop("storage", [&] { DuckDBEngine::Instance().CloseDatabases(); });
       if (up_catalog) {
         stop("catalog", [&] { catalog::ShutdownCatalog(); });
       }
@@ -132,9 +140,13 @@ int RunServer(int argc, char** argv) {
     CrashHandler::SetState("starting");
     store.Initialize(db_path.directory());
     network::pg::hba::SetHbaConfig(db_path.hbaConfigFile());
-    up_store = true;
     background.start();
     up_background = true;
+    // Before InitCatalog: the per-database attaches it performs replay their
+    // data WALs into inverted indexes, and the bind contexts those indexes are
+    // built with live here.
+    data_store.Initialize();
+    up_data = true;
     catalog::InitCatalog();
     up_catalog = true;
     // The io pool must be up before search.start(): the per-index refresh /
@@ -143,6 +155,10 @@ int RunServer(int argc, char** argv) {
     // busy-spin every core, starving startup so no listener ever binds.
     network.StartIoPool();
     up_network = true;
+    // Timers can be armed now. InitCatalog above already scheduled a drop per
+    // tombstone it read, and those parked in Delay() rather than spinning
+    // through their backoff against a pool that did not exist yet.
+    background.OpenDelays();
     search.start();
     up_search = true;
     // Accept connections only once the indexes are loaded and loops are

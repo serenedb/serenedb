@@ -58,8 +58,8 @@ enum class PhraseQueryKind {
 
 // A phrase with a single non-term part (prefix/wildcard/range/...) reduces to
 // that part's own filter: position matching is a no-op for one word.
-std::unique_ptr<FilterWithBoost> MakeSinglePartFilter(
-  irs::field_id field, const ByPhraseOptions& options) {
+std::unique_ptr<Filter> MakeSinglePartFilter(irs::field_id field,
+                                             const ByPhraseOptions& options) {
   const auto make = [&]<typename F, typename T>(const T& opts) {
     auto filter = std::make_unique<F>();
     *filter->mutable_field_id() = field;
@@ -67,7 +67,7 @@ std::unique_ptr<FilterWithBoost> MakeSinglePartFilter(
     return filter;
   };
   return std::visit(
-    [&]<typename T>(const T& opts) -> std::unique_ptr<FilterWithBoost> {
+    [&]<typename T>(const T& opts) -> std::unique_ptr<Filter> {
       if constexpr (std::is_same_v<T, ByTermOptions>) {
         return make.template operator()<ByTerm>(opts);
       } else if constexpr (std::is_same_v<T, ByPrefixOptions>) {
@@ -521,7 +521,7 @@ QueryBuilder::ptr VariadicPrepareSegment(const SubReader& segment,
 QueryBuilder::ptr ByPhrase::PrepareSegment(const SubReader& segment,
                                            const PrepareContext& ctx) const {
   auto sub_ctx = ctx;
-  sub_ctx.Boost(Boost());
+  sub_ctx.Boost(GetBoost());
   const auto kind = GetKind(field_id(), options());
   if (kind == PhraseQueryKind::kFixed || kind == PhraseQueryKind::kVariadic) {
     // Rejected before any per-segment work; Execute relies on this via
@@ -543,7 +543,7 @@ QueryBuilder::ptr ByPhrase::PrepareSegment(const SubReader& segment,
   return QueryBuilder::Empty();
 }
 
-PrepareCollector::ptr ByPhrase::MakeCollector(const Scorer* scorer) const {
+PrepareCollector::ptr ByPhrase::MakeCollectorImpl(const Scorer* scorer) const {
   switch (GetKind(field_id(), options())) {
     case PhraseQueryKind::kEmpty:
       return std::make_unique<NoopCollector>();

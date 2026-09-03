@@ -24,7 +24,7 @@
 #include <duckdb/common/types/vector.hpp>
 
 #include "basics/system-compiler.h"
-#include "catalog/object.h"
+#include "catalog/entry.h"
 #include "query/config.h"
 
 namespace sdb::catalog {
@@ -36,10 +36,10 @@ struct MaterializedData {
   duckdb::idx_t row_count = 0;
 };
 
-class VirtualTableSnapshot : public Object {
+class VirtualTableSnapshot {
  public:
-  std::shared_ptr<Object> Clone() const final { return nullptr; }
-  void Serialize(duckdb::Serializer&) const override {}
+  virtual ~VirtualTableSnapshot() = default;
+
   virtual duckdb::LogicalType RowType() const noexcept = 0;
 
   // Returns a reference to lazily materialized data.
@@ -51,10 +51,23 @@ class VirtualTableSnapshot : public Object {
     return *_table;
   }
 
+  // The database the projection is of, and the id and name of the table it
+  // projects. A virtual table is not a catalog definition -- it exists for the
+  // life of the statement that reads it -- so it carries only what a reader
+  // asks of it.
+  ObjectId GetDatabaseId() const noexcept { return _database_id; }
+  ObjectId GetId() const noexcept { return _id; }
+  std::string_view GetName() const noexcept { return _name; }
+
  protected:
-  using Object::Object;
+  VirtualTableSnapshot(const VirtualTable& table, ObjectId database_id,
+                       ObjectId id, std::string_view name)
+    : _table{&table}, _name{name}, _database_id{database_id}, _id{id} {}
 
   const VirtualTable* _table = nullptr;
+  std::string_view _name;
+  ObjectId _database_id;
+  ObjectId _id;
 };
 
 // non owning description of catalog table

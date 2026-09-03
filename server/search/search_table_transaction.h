@@ -54,8 +54,10 @@ class SearchTableTransaction {
     const std::shared_ptr<SearchTable>& shard,
     std::unique_ptr<irs::IndexWriter::Transaction> trx);
 
-  void AddReferences(const std::shared_ptr<SearchTable>& shard,
-                     std::vector<SearchDbWal::PendingChunk>&& chunks);
+  // The segments a bulk statement flushed + fsynced, for the WAL to reference
+  // instead of a second copy of the rows.
+  void AddSegments(const std::shared_ptr<SearchTable>& shard,
+                   std::vector<SearchDbWal::SegmentRef>&& segments);
 
   irs::IndexWriter::Transaction& EnsureSerialSearchTransaction(
     const std::shared_ptr<SearchTable>& shard,
@@ -84,8 +86,6 @@ class SearchTableTransaction {
     }
     return it->second;
   }
-
-  LocalTableChanges& Changes() noexcept { return _changes; }
 
   bool Empty() const noexcept { return _writes.empty(); }
 

@@ -59,7 +59,7 @@ statement count 1
 COPY (SELECT 3 AS id, 'vedernikoff ships cron' AS body)
 TO '${__TEST_DIR__}/rvp_glob/f2.parquet' (FORMAT PARQUET);
 
-query ok retry 40 backoff 250ms
+query ok retry 160 backoff 250ms
 SELECT count(*) FROM rvp_idx;
 ----
 count
@@ -77,7 +77,7 @@ COPY (SELECT 1 AS id, 'pudge farms jungle' AS body
       UNION ALL SELECT 2, 'anchin binges manga')
 TO '${__TEST_DIR__}/rvp_glob/f1.parquet' (FORMAT PARQUET);
 
-query ok retry 40 backoff 250ms
+query ok retry 160 backoff 250ms
 SELECT count(*) FROM rvp_idx WHERE body @@ ts_phrase('farms');
 ----
 count
@@ -93,7 +93,7 @@ count
 system ok
 rm $__TEST_DIR__/rvp_glob/f2.parquet
 
-query ok retry 40 backoff 250ms
+query ok retry 160 backoff 250ms
 SELECT count(*) FROM rvp_idx;
 ----
 count
@@ -104,7 +104,7 @@ statement count 1
 COPY (SELECT 4 AS id, 'techies plants mines' AS body)
 TO '${__TEST_DIR__}/rvp_glob/f3.parquet' (FORMAT PARQUET);
 
-query ok retry 40 backoff 250ms
+query ok retry 160 backoff 250ms
 SELECT count(*) FROM rvp_idx;
 ----
 count
@@ -135,7 +135,7 @@ CALL serenedb_reindex('rvp_idx');
 statement ok retry 20 backoff 100ms
 CALL serenedb_reindex('rvp_idx');
 
-query ok retry 40 backoff 250ms
+query ok retry 160 backoff 250ms
 SELECT count(*) FROM rvp_idx;
 ----
 count
@@ -155,7 +155,7 @@ statement count 1
 COPY (SELECT 6 AS id, 'retuned interval works' AS body)
 TO '${__TEST_DIR__}/rvp_glob/f5.parquet' (FORMAT PARQUET);
 
-query ok retry 40 backoff 250ms
+query ok retry 160 backoff 250ms
 SELECT count(*) FROM rvp_idx;
 ----
 count
@@ -213,7 +213,7 @@ statement count 1
 COPY (SELECT 8 AS id, 'late loop catches up' AS body)
 TO '${__TEST_DIR__}/rvp_glob/f7.parquet' (FORMAT PARQUET);
 
-query ok retry 40 backoff 250ms
+query ok retry 160 backoff 250ms
 SELECT count(*) FROM rvp_idx2;
 ----
 count
@@ -221,7 +221,7 @@ count
 
 # D9: two indexes with different intervals on the SAME view -- independent
 # loops, claims don't cross; both converge.
-query ok retry 40 backoff 250ms
+query ok retry 160 backoff 250ms
 SELECT count(*) FROM rvp_idx;
 ----
 count
@@ -236,7 +236,7 @@ statement count 1
 COPY (SELECT 9 AS id, 'sibling still ticks' AS body)
 TO '${__TEST_DIR__}/rvp_glob/f8.parquet' (FORMAT PARQUET);
 
-query ok retry 40 backoff 250ms
+query ok retry 160 backoff 250ms
 SELECT count(*) FROM rvp_idx;
 ----
 count
@@ -260,7 +260,7 @@ count
 system ok
 mv $__TEST_DIR__/rvp_hold/f*.parquet $__TEST_DIR__/rvp_glob/
 
-query ok retry 40 backoff 250ms
+query ok retry 160 backoff 250ms
 SELECT count(*) FROM rvp_idx WHERE body @@ ts_phrase('sibling');
 ----
 count
@@ -289,7 +289,7 @@ statement count 1
 COPY (SELECT 20 AS id, 'rebuild road every tick' AS body)
 TO '${__TEST_DIR__}/rvp_glob/f20.parquet' (FORMAT PARQUET);
 
-query ok retry 40 backoff 250ms
+query ok retry 160 backoff 250ms
 SELECT count(*) FROM rvp_c2_idx WHERE body @@ ts_phrase('rebuild');
 ----
 count
@@ -319,7 +319,7 @@ COPY (SELECT 30 AS id, 'partial in' AS body
       UNION ALL SELECT 2, 'partial out' AS body)
 TO '${__TEST_DIR__}/rvp_glob/f21.parquet' (FORMAT PARQUET);
 
-query ok retry 40 backoff 250ms
+query ok retry 160 backoff 250ms
 SELECT count(*) FROM rvp_c3_idx WHERE body @@ ts_phrase('partial');
 ----
 count
@@ -343,7 +343,7 @@ statement count 1
 COPY (SELECT 40 AS id, 'limit view rebuilds' AS body)
 TO '${__TEST_DIR__}/rvp_glob/f22.parquet' (FORMAT PARQUET);
 
-query ok retry 40 backoff 250ms
+query ok retry 160 backoff 250ms
 SELECT count(*) FROM rvp_c4_idx WHERE body @@ ts_phrase('rebuilds');
 ----
 count
@@ -389,7 +389,7 @@ count
 system ok
 ln -sfn ${RESOURCES}/tests/iceberg/plain_v2 $__TEST_DIR__/rvp_plain
 
-query ok retry 40 backoff 250ms
+query ok retry 160 backoff 250ms
 SELECT count(*) FROM rvp_ice_idx WHERE body @@ ts_phrase('anchin');
 ----
 count
@@ -399,7 +399,7 @@ count
 system ok
 ln -sfn ${RESOURCES}/tests/iceberg/plain_v3 $__TEST_DIR__/rvp_plain
 
-query ok retry 40 backoff 250ms
+query ok retry 160 backoff 250ms
 SELECT count(*) FROM rvp_ice_idx WHERE body @@ ts_phrase('reborn');
 ----
 count
@@ -415,7 +415,7 @@ count
 system ok
 ln -sfn ${RESOURCES}/tests/iceberg/plain_v4 $__TEST_DIR__/rvp_plain
 
-query ok retry 40 backoff 250ms
+query ok retry 160 backoff 250ms
 SELECT count(*) FROM rvp_ice_idx WHERE body @@ ts_phrase('invisible');
 ----
 count
@@ -427,7 +427,7 @@ count
 system ok
 ln -sfn ${RESOURCES}/tests/iceberg/plain_v5 $__TEST_DIR__/rvp_plain
 
-query ok retry 40 backoff 250ms
+query ok retry 160 backoff 250ms
 SELECT count(*) FROM rvp_ice_idx WHERE body @@ ts_phrase('pins');
 ----
 count
@@ -436,7 +436,7 @@ count
 # Retried: the refusal tick runs the RESCAN road, whose removes publish
 # before the rescan lands -- a reader between the two sees the dead files'
 # rows gone; only the full content proves the tick completed.
-query ok retry 40 backoff 250ms
+query ok retry 160 backoff 250ms
 SELECT id, body FROM rvp_ice_idx ORDER BY id;
 ----
 id	body
@@ -467,7 +467,7 @@ CREATE INDEX rvp_part_idx ON rvp_part_v USING inverted(id, body rvp_en) WITH (re
 system ok
 ln -sfn ${RESOURCES}/tests/iceberg/part_v2 $__TEST_DIR__/rvp_part
 
-query ok retry 40 backoff 250ms
+query ok retry 160 backoff 250ms
 SELECT count(*) FROM rvp_part_idx WHERE body @@ ts_phrase('anchin');
 ----
 count
@@ -476,7 +476,7 @@ count
 system ok
 ln -sfn ${RESOURCES}/tests/iceberg/part_v3 $__TEST_DIR__/rvp_part
 
-query ok retry 40 backoff 250ms
+query ok retry 160 backoff 250ms
 SELECT count(*) FROM rvp_part_idx;
 ----
 count

@@ -122,7 +122,6 @@ set(IResearch_core_sources
     ./search/all_filter.cpp
     ./search/all_iterator.cpp
     ./search/granular_range_filter.cpp
-    ./search/scorer.cpp
     ./search/score_function.cpp
     ./search/cost.cpp
     ./search/collectors.cpp
@@ -169,6 +168,7 @@ set(IResearch_core_sources
     ./search/dfi.cpp
     ./search/idf.cpp
     ./search/raw_boost.cpp
+    ./search/constant_score.cpp
     ./search/raw_tf.cpp
     ./search/raw_dl.cpp
     ./store/data_input.cpp

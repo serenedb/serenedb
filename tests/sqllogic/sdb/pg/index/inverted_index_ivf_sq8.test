@@ -14,7 +14,7 @@ hash-threshold 100
 
 # Exhaustive search: probe every cluster so kNN can't miss a true neighbour.
 statement ok
-SET sdb_nprobe = 1000
+SET sdb_ivf_search_nprobe = 1000
 
 # ===========================================================================
 # 1. L2 + SQ8, single cluster (nlist=1): exercises the batched ComputeBlock
@@ -379,7 +379,7 @@ count
 5
 
 statement ok
-RESET sdb_nprobe
+RESET sdb_ivf_search_nprobe
 
 # ===========================================================================
 # 7. Guard: SQ8 is valid with metric l2, ip, or cosine; l1 + sq8 must be
@@ -402,7 +402,7 @@ db error: ERROR: Column 'emb': ivf quantization supports only metric 'l2', 'ip',
 # ===========================================================================
 
 statement ok
-SET sdb_nprobe = 1000
+SET sdb_ivf_search_nprobe = 1000
 
 statement ok
 CREATE TABLE sq8_cos (pk INTEGER PRIMARY KEY, emb FLOAT[3])
@@ -444,7 +444,7 @@ count
 4
 
 statement ok
-RESET sdb_nprobe
+RESET sdb_ivf_search_nprobe
 
 
 # ===========================================================================
@@ -602,7 +602,7 @@ statement ok
 VACUUM (REFRESH_TABLE) sq8_del_mask
 
 statement ok
-SET sdb_nprobe = 1000
+SET sdb_ivf_search_nprobe = 1000
 
 # baseline: the two x-axis rows are the nearest to [100, 0, 0].
 query
@@ -642,7 +642,7 @@ count
 # ===========================================================================
 
 statement ok
-SET sdb_nprobe = 1000
+SET sdb_ivf_search_nprobe = 1000
 
 query
 SELECT pk FROM sq8_l2_idx

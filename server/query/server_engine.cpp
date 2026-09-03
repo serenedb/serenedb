@@ -28,8 +28,11 @@
 #include <duckdb/catalog/default/default_types.hpp>
 #include <duckdb/catalog/default/default_views.hpp>
 
+#include "basics/file_utils.h"
+#include "basics/lifecycle.h"
 #include "basics/number_of_cores.h"
-#include "catalog/store/store.h"
+#include "catalog/log/duckdb_global_catalog.h"
+#include "catalog/log/store.h"
 #include "connector/duckdb_copy_filesystem.h"
 #include "connector/duckdb_foreign_server_function.h"
 #include "connector/duckdb_pg_binary_copy.h"
@@ -42,6 +45,8 @@
 #include "connector/duckdb_tokenizer_function.h"
 #include "connector/duckdb_vacuum_function.h"
 #include "connector/functions/array.h"
+#include "connector/functions/catalog_introspect.h"
+#include "connector/functions/duckdb_aliases.h"
 #include "connector/functions/embedding/embedding.h"
 #include "connector/functions/encode_key.h"
 #include "connector/functions/es.h"
@@ -59,6 +64,7 @@
 #include "pg/system_catalog.h"
 #include "pg/system_table.h"
 #include "query/config.h"
+#include "query/config_variable_names.h"
 
 extern "C" const duckdb::DefaultType* duckdb_external_types(
   duckdb::idx_t* count) {
@@ -222,11 +228,45 @@ ABSL_FLAG(uint64_t, cpu_threads, 0,
           "auto-detect from cpu_count. The SQL-level `SET threads = N` "
           "continues to win at runtime.");
 
+ABSL_FLAG(uint32_t, recovery_replay_depth, 0,
+          "Maximum WAL chunks in flight per inverted index during recovery "
+          "replay (the prefetch window; bounds replay memory). 0 = auto "
+          "(4 x cpu threads).");
+
+ABSL_DECLARE_FLAG(std::string, server_directory);
+
 namespace sdb::server::query {
 
 void ConfigureServerDBConfig(duckdb::DBConfig& config) {
   connector::RegisterSereneDBStorage(config);
+  catalog::RegisterSereneDBGlobalStorage(config);
   connector::RegisterConfigVariables(config);
+  // Roles and the database list are the first thing that has to exist, and
+  // they belong to no database, so the cluster-global catalog is duckdb's main
+  // database rather than something attached next to a throwaway in-memory one.
+  config.options.database_type = std::string{catalog::kGlobalStorageType};
+  config.options.database_name = std::string{catalog::kGlobalDatabaseName};
+  config.options.database_hidden = true;
+  // Server-mode DuckDB state lives under the datadir, never in cwd-relative
+  // temp files or ~/.duckdb fallbacks (shell/psql subcommands return before
+  // this mutator runs and keep DuckDB defaults).
+  const auto datadir =
+    lifecycle::ResolveDataDir(absl::GetFlag(FLAGS_server_directory));
+  config.SetOptionByName(
+    "temp_directory",
+    duckdb::Value{basics::file_utils::BuildFilename(datadir, "tmp")});
+  config.SetOptionByName(
+    "secret_directory",
+    duckdb::Value{basics::file_utils::BuildFilename(datadir, "secrets")});
+  config.SetOptionByName(
+    "extension_directory",
+    duckdb::Value{basics::file_utils::BuildFilename(datadir, "extensions")});
+  // Dependency edges are built from what the binder resolved
+  // (CreateInfo::dependencies), so the collection must be on for every bind.
+  config.SetOptionByName("enable_view_dependencies",
+                         duckdb::Value::BOOLEAN(true));
+  config.SetOptionByName("enable_macro_dependencies",
+                         duckdb::Value::BOOLEAN(true));
   // DuckDB's own auto-detect uses std::thread::hardware_concurrency(), which
   // ignores cgroup CPU limits and would over-thread in a container. Pin it to
   // our cgroup-aware logical core count when unset (SET threads=N still wins at
@@ -237,6 +277,11 @@ void ConfigureServerDBConfig(duckdb::DBConfig& config) {
     absl::SetFlag(&FLAGS_cpu_threads, threads);
   }
   config.SetOptionByName("threads", duckdb::Value::UBIGINT(threads));
+  if (const auto depth = absl::GetFlag(FLAGS_recovery_replay_depth);
+      depth != 0) {
+    config.SetOptionByName(std::string{kRecoveryReplayDepthSetting},
+                           duckdb::Value::UINTEGER(depth));
+  }
   // serenedb runs every query on the internal pool (sessions are scheduled as
   // tasks; the driver is itself a pool worker), so there is no external thread
   // feeding the scheduler. Default external_threads=1 would over-count
@@ -258,7 +303,15 @@ void ConfigureServerDBConfig(duckdb::DBConfig& config) {
 }
 
 void RegisterServerExtensions(duckdb::DatabaseInstance& db) {
-  catalog::RegisterCatalogStoreFunctions(db);
+  // On the live config: the pre-construct mutator's copy does not carry
+  // plain function-pointer members into the instance.
+  duckdb::DBConfig::GetConfig(db).external_index_provider =
+    connector::InjectExternalIndexes;
+  duckdb::DBConfig::GetConfig(db).host_table_provider = catalog::HostTableEntry;
+  duckdb::DBConfig::GetConfig(db).external_range_replay =
+    connector::InvertedStoreIndex::ReplayExternalRange;
+  duckdb::DBConfig::GetConfig(db).external_local_append =
+    connector::InvertedStoreIndex::AppendLocalRange;
 
   connector::RegisterTokenizerPragma(db);
 
@@ -284,6 +337,10 @@ void RegisterServerExtensions(duckdb::DatabaseInstance& db) {
 
   connector::RegisterEsFunctions(db);
 
+  connector::RegisterCatalogIntrospectFunctions(db);
+
+  connector::RegisterDuckDBAliases(db);
+
   connector::RegisterVacuumFunction(db);
 
   connector::RegisterReindexFunction(db);
@@ -302,19 +359,15 @@ void RegisterServerExtensions(duckdb::DatabaseInstance& db) {
 
   connector::RegisterSereneDBOptimizers(db);
 
-  // Register SereneDB index types.
-  // These provide create_plan callbacks that bypass DuckDB's native
-  // PhysicalCreateIndex (which requires DuckTableEntry).
+  // The inverted index: its build plan and its store-side instance are
+  // serenedb's. A plain CREATE INDEX is duckdb's ART end to end -- the bind
+  // normalizes every non-inverted spelling to it.
   auto& index_types = db.config.GetIndexTypes();
-  for (auto& name : {"secondary", "btree", "inverted"}) {
-    duckdb::IndexType type;
-    type.name = name;
-    type.create_plan = &connector::SereneDBCreateIndexPlan;
-    if (std::string_view{name} == "inverted") {
-      connector::AttachInvertedStoreIndexCallbacks(type);
-    }
-    index_types.RegisterIndexType(type);
-  }
+  duckdb::IndexType inverted;
+  inverted.name = connector::InvertedStoreIndex::kTypeName;
+  inverted.create_plan = &connector::SereneDBCreateIndexPlan;
+  inverted.create_instance = &connector::CreateInvertedInstance;
+  index_types.RegisterIndexType(inverted);
 
   // Register filesystem for COPY FROM STDIN support.
   // Intercepts "/dev/stdin" and reads from PG CopyData messages.

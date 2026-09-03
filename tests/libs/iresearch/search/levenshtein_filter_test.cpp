@@ -117,7 +117,7 @@ TEST(by_edit_distance_test, ctor) {
   ASSERT_EQ(irs::Type<irs::ByEditDistance>::id(), q.type());
   ASSERT_EQ(irs::ByEditDistanceOptions{}, q.options());
   ASSERT_FALSE(irs::field_limits::valid(q.field_id()));
-  ASSERT_EQ(irs::kNoBoost, q.Boost());
+  ASSERT_EQ(irs::kNoBoost, q.GetBoost());
 }
 
 TEST(by_edit_distance_test, equal) {
@@ -165,7 +165,7 @@ TEST(by_edit_distance_test, boost) {
     *q.mutable_field_id() = kFieldId;
     q.mutable_options()->term =
       irs::ViewCast<irs::byte_type>(std::string_view("bar*"));
-    q.boost(boost);
+    q.SetBoost(boost);
 
     irs::Filter::ptr lowered = Lower(std::move(q));
     tests::PreparedFilter prepared{*lowered, irs::SubReader::empty(), nullptr,
@@ -584,7 +584,6 @@ TEST_P(ByEditDistanceTestCase, bm25) {
     ASSERT_NE(nullptr, docs);
 
     auto score = docs->PrepareScore({
-      .scorer = order.front().get(),
       .segment = &index[0],
     });
     ASSERT_FALSE(score.IsDefault());
@@ -634,7 +633,6 @@ TEST_P(ByEditDistanceTestCase, bm25) {
     ASSERT_NE(nullptr, docs);
 
     auto score = docs->PrepareScore({
-      .scorer = order.front().get(),
       .segment = &index[0],
     });
 
@@ -683,7 +681,6 @@ TEST_P(ByEditDistanceTestCase, bm25) {
     ASSERT_NE(nullptr, docs);
 
     auto score = docs->PrepareScore({
-      .scorer = order.front().get(),
       .segment = &index[0],
     });
 
@@ -733,7 +730,6 @@ TEST_P(ByEditDistanceTestCase, bm25) {
     ASSERT_NE(nullptr, docs);
 
     auto score = docs->PrepareScore({
-      .scorer = order.front().get(),
       .segment = &index[0],
     });
 
@@ -803,7 +799,6 @@ TEST_P(ByEditDistanceTestCase, bm25) {
     ASSERT_NE(nullptr, docs);
 
     auto score = docs->PrepareScore({
-      .scorer = order.front().get(),
       .segment = &index[0],
       .fetcher = &fetcher,
     });
@@ -875,7 +870,6 @@ TEST_P(ByEditDistanceTestCase, bm25) {
     ASSERT_NE(nullptr, docs);
 
     auto score = docs->PrepareScore({
-      .scorer = order.front().get(),
       .segment = &index[0],
       .fetcher = &fetcher,
     });

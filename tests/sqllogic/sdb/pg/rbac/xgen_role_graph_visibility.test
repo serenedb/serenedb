@@ -1,0 +1,197 @@
+# serenedb-only (needs a second session interleaved with an open role DDL):
+# the shared role graph is cached per generation and filled from a COMMITTED
+# read, so the generation may only move once the write it describes is visible.
+#
+# A statement-time bump broke that. The window: session s1 opens a transaction
+# and writes a role, the bump fires immediately, s2 asks any privilege question
+# and fills the cache from a committed read that cannot see the write yet, and
+# the fill is stamped with the already-bumped generation. s1's commit then moved
+# nothing, so the pre-write graph stayed authoritative until unrelated role DDL
+# happened to bump again.
+#
+# Three symptoms, all of them wrong answers: an acl item rendered the grantee's
+# raw oid instead of its name, pg_has_role reported a committed role as
+# non-existent, and -- the reason this is not cosmetic -- a REVOKEd membership
+# kept granting SELECT. The bump now rides the commit.
+#
+# Runner note: s2 must be a distinct connection, and it must ask its question
+# while s1's transaction is still open; that read is what fills the cache.
+
+statement ok
+DROP TABLE IF EXISTS xgen_ledger;
+
+
+statement ok
+DROP ROLE IF EXISTS xgen_reader;
+
+
+statement ok
+DROP ROLE IF EXISTS xgen_group;
+
+
+statement ok
+CREATE TABLE xgen_ledger (id int, note text);
+
+
+# --- a role created under an open transaction is known by name afterwards ---
+
+connection s1
+statement ok
+BEGIN;
+
+
+connection s1
+statement ok
+CREATE ROLE xgen_reader;
+
+
+# The fill: a committed read that predates the CREATE ROLE above.
+connection s2
+query
+SELECT count(*) AS n FROM xgen_ledger;
+----
+n
+0
+
+
+connection s1
+statement ok
+COMMIT;
+
+
+statement ok
+GRANT SELECT ON xgen_ledger TO xgen_reader;
+
+
+# The grantee renders as a name. A stale graph printed its oid here.
+connection s2
+query
+SELECT array_to_string(relacl, '|') AS acl
+FROM pg_class WHERE relname = 'xgen_ledger';
+----
+acl
+postgres=arwdDxtm/postgres|xgen_reader=r/postgres
+
+
+connection s2
+query
+SELECT pg_has_role('xgen_reader', 'xgen_reader', 'USAGE') AS self;
+----
+self
+t
+
+
+# --- a membership revoked under an open transaction stops granting ---
+
+statement ok
+CREATE ROLE xgen_group;
+
+
+statement ok
+GRANT SELECT ON xgen_ledger TO xgen_group;
+
+
+statement ok
+GRANT xgen_group TO xgen_reader;
+
+
+connection s2
+query
+SELECT has_table_privilege('xgen_reader', 'xgen_ledger', 'SELECT') AS granted;
+----
+granted
+t
+
+
+connection s1
+statement ok
+BEGIN;
+
+
+connection s1
+statement ok
+REVOKE xgen_group FROM xgen_reader;
+
+
+connection s2
+query
+SELECT count(*) AS n FROM xgen_ledger;
+----
+n
+0
+
+
+connection s1
+statement ok
+COMMIT;
+
+
+# xgen_reader still holds its own direct grant, so ask about the membership
+# itself as well as a privilege only the group carried.
+connection s2
+query
+SELECT pg_has_role('xgen_reader', 'xgen_group', 'USAGE') AS member;
+----
+member
+f
+
+
+statement ok
+REVOKE SELECT ON xgen_ledger FROM xgen_reader;
+
+
+connection s2
+query
+SELECT has_table_privilege('xgen_reader', 'xgen_ledger', 'SELECT') AS granted;
+----
+granted
+f
+
+
+# --- a rolled back role DDL leaves the graph as it was ---
+
+statement ok
+REVOKE SELECT ON xgen_ledger FROM xgen_group;
+
+
+connection s1
+statement ok
+BEGIN;
+
+
+connection s1
+statement ok
+DROP ROLE xgen_group;
+
+
+connection s2
+query
+SELECT count(*) AS n FROM xgen_ledger;
+----
+n
+0
+
+
+connection s1
+statement ok
+ROLLBACK;
+
+
+connection s2
+query
+SELECT pg_has_role('xgen_group', 'xgen_group', 'USAGE') AS alive;
+----
+alive
+t
+
+
+statement ok
+DROP TABLE xgen_ledger;
+
+
+statement ok
+DROP ROLE xgen_reader;
+
+
+statement ok
+DROP ROLE xgen_group;

@@ -78,7 +78,7 @@ query
 SELECT nextval('clickclack_iceberg_review_no');
 ----
 nextval
-8
+40
 
 
 connection after_crash
@@ -119,7 +119,7 @@ query
 SELECT id FROM konstantin_iceberg_meetings WHERE topic = 'mop_internal_referral';
 ----
 id
-3
+35
 
 
 connection after_crash
@@ -134,7 +134,7 @@ SELECT id FROM vedernikoff_iceberg_proposals
   WHERE proposal = 'extended_vacation_request_to_interview_at_mop';
 ----
 id
-4
+36
 
 
 # Auto-PK table also advances cleanly.

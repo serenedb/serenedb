@@ -86,6 +86,7 @@ class RawVectorReader {
     // MADV_WILLNEED in ReadContext::Read is pure over-fetch here.
     : _read_ctx{col_reader, /*random_access=*/true},
       _vreader{vector_column, _read_ctx},
+      _column{&vector_column},
       _d{d} {}
 
   void SetQuery(std::span<const float> query, VectorMetric metric) {
@@ -93,26 +94,51 @@ class RawVectorReader {
     _dist = ResolveScoringDistance(metric);
   }
 
-  void ComputeDistance(doc_id_t doc, score_t boost, score_t& out) {
-    ComputeDistanceRun(doc, 1, boost, std::span<score_t>{&out, 1});
-  }
-
-  void ComputeDistanceRun(doc_id_t first_doc, size_t run, score_t boost,
-                          std::span<score_t> out) {
+  void ComputeDistances(std::span<const doc_id_t> docs,
+                        std::span<score_t> out) {
     SDB_ASSERT(_dist);
-    SDB_ASSERT(out.size() >= run);
+    SDB_ASSERT(out.size() >= docs.size());
     const auto* q = reinterpret_cast<const byte_type*>(_query.data());
     const auto d = static_cast<uint16_t>(_d);
-    const float* base = _vreader.ReadDocBatch(first_doc, run);
-    for (size_t k = 0; k < run; ++k) {
-      out[k] =
-        _dist(q, reinterpret_cast<const byte_type*>(base + k * _d), d) * boost;
+    for (size_t i = 0; i < docs.size();) {
+      const size_t run = ConsecutiveRunLength(docs, i);
+      const auto* base = Read(docs[i], run);
+      for (size_t k = 0; k < run; ++k) {
+        out[i + k] = _dist(q, base + k * _d * sizeof(float), d);
+      }
+      i += run;
     }
   }
 
  private:
+  const byte_type* Read(doc_id_t first, size_t count) {
+    const auto* child = _column->Child();
+    SDB_ASSERT(child != nullptr);
+    const uint64_t elem =
+      (static_cast<uint64_t>(first) - doc_limits::min()) * _d;
+    const auto window = child->Locate(elem);
+    const auto& meta = child->DataBlocks()[window.block];
+    const size_t bytes = count * _d * sizeof(float);
+    if (meta.codec->type == duckdb::CompressionType::COMPRESSION_UNCOMPRESSED &&
+        elem + count * _d <= window.end) {
+      const uint64_t offset =
+        meta.file_offset + (elem - window.begin) * sizeof(float);
+      if (const auto* p = _read_ctx.TryReadStable(offset, bytes)) {
+        return reinterpret_cast<const byte_type*>(p);
+      }
+      _buf.resize(bytes);
+      _read_ctx.Read(offset, reinterpret_cast<duckdb::data_ptr_t>(_buf.data()),
+                     bytes);
+      return _buf.data();
+    }
+    return reinterpret_cast<const byte_type*>(
+      _vreader.ReadDocBatch(first, count));
+  }
+
   ReadContext _read_ctx;
   IvfVectorReader _vreader;
+  const ColumnReader* _column;
+  std::vector<byte_type> _buf;
   VectorDistanceFn _dist = nullptr;
   std::vector<float> _query;
   uint32_t _d;
@@ -121,8 +147,8 @@ class RawVectorReader {
 class VectorDistanceIterator : public DocIterator {
  public:
   VectorDistanceIterator(DocIterator::ptr&& src, score_t boost,
-                         CostAttr::Type estimation)
-    : _src{std::move(src)}, _boost{boost}, _cost{estimation} {
+                         CostAttr::Type estimation, ScoreSource score)
+    : _src{std::move(src)}, _boost{boost}, _score{score}, _cost{estimation} {
     SDB_ASSERT(_src);
     _boosts.value = _scores.data();
   }
@@ -130,13 +156,13 @@ class VectorDistanceIterator : public DocIterator {
   score_t Distance() const noexcept { return _cur_dist; }
 
   ScoreFunction PrepareScore(const PrepareScoreContext& ctx) final {
-    SDB_ASSERT(ctx.scorer);
-    return ctx.scorer->PrepareScorer({
+    SDB_ASSERT(_score.scorer);
+    return _score.scorer->PrepareScorer({
       .segment = *ctx.segment,
       .field = {},
       .doc_attrs = *this,
       .fetcher = ctx.fetcher,
-      .stats = nullptr,
+      .stats = _score.stats,
       .boost = _boost,
     });
   }
@@ -159,6 +185,7 @@ class VectorDistanceIterator : public DocIterator {
  protected:
   DocIterator::ptr _src;
   score_t _boost;
+  ScoreSource _score;
   CostAttr _cost;
   BoostBlockAttr _boosts;
   std::array<score_t, kScoreBlock> _scores;
@@ -170,8 +197,8 @@ class RawVectorIterator : public VectorDistanceIterator {
   RawVectorIterator(DocIterator::ptr&& src, const ColumnReader& vector_column,
                     const ColReader& col_reader, uint32_t d,
                     std::span<const float> query, VectorMetric metric,
-                    score_t boost, CostAttr::Type estimation)
-    : VectorDistanceIterator{std::move(src), boost, estimation},
+                    score_t boost, CostAttr::Type estimation, ScoreSource score)
+    : VectorDistanceIterator{std::move(src), boost, estimation, score},
       _reader{vector_column, col_reader, d} {
     _reader.SetQuery(query, metric);
   }
@@ -182,7 +209,7 @@ class RawVectorIterator : public VectorDistanceIterator {
       _cur_dist = .0f;
       return _doc = doc;
     }
-    _reader.ComputeDistance(doc, kNoBoost, _cur_dist);
+    _reader.ComputeDistances({&doc, 1}, {&_cur_dist, 1});
     return _doc = doc;
   }
 
@@ -195,7 +222,7 @@ class RawVectorIterator : public VectorDistanceIterator {
       _cur_dist = .0f;
       return _doc = doc;
     }
-    _reader.ComputeDistance(doc, kNoBoost, _cur_dist);
+    _reader.ComputeDistances({&doc, 1}, {&_cur_dist, 1});
     return _doc = doc;
   }
 
@@ -212,8 +239,8 @@ class QVectorIterator : public VectorDistanceIterator {
  public:
   QVectorIterator(DocIterator::ptr&& src, std::unique_ptr<QuantizerReader> qr,
                   VectorBlockReader&& pay, uint32_t lane0, score_t boost,
-                  CostAttr::Type estimation)
-    : VectorDistanceIterator{std::move(src), boost, estimation},
+                  CostAttr::Type estimation, ScoreSource score)
+    : VectorDistanceIterator{std::move(src), boost, estimation, score},
       _qr{std::move(qr)},
       _pay{std::move(pay)},
       _total{estimation} {
@@ -542,7 +569,7 @@ std::optional<ClusterInputs> MakeClusterIterator(const VectorState& state,
 using QVectorIterators = std::vector<memory::managed_ptr<QVectorIterator>>;
 
 bool BuildClusterIterators(const VectorState& state, score_t boost,
-                           QVectorIterators& out) {
+                           QVectorIterators& out, ScoreSource score) {
   auto pay_root = state.reader->ReopenPayload();
   if (!pay_root) {
     return false;
@@ -557,7 +584,7 @@ bool BuildClusterIterators(const VectorState& state, score_t boost,
     }
     out.emplace_back(memory::make_managed<QVectorIterator>(
       std::move(ci->postings), std::move(ci->vr), std::move(ci->pay),
-      state.pay_lanes[c], boost, state.cluster_counts[c]));
+      state.pay_lanes[c], boost, state.cluster_counts[c], score));
   }
   return true;
 }
@@ -574,7 +601,7 @@ memory::managed_ptr<VectorDistanceIterator> MakeRawReranker(
 
   auto cookies = MakeCookies(state);
   DocIterator::ptr src =
-    state.reader->Iterator(IndexFeatures::None, cookies, false,
+    state.reader->Iterator(IndexFeatures::None, cookies, {},
                            /*min_match=*/1, ScoreMergeType::Noop);
   if (!src) {
     return nullptr;
@@ -596,13 +623,14 @@ memory::managed_ptr<VectorDistanceIterator> MakeRawReranker(
   const auto d = static_cast<uint32_t>(state.vector_column->ArraySize());
   return memory::make_managed<RawVectorIterator>(
     std::move(src), *state.vector_column, *col_reader, d, query, metric, boost,
-    state.estimation);
+    state.estimation, stats.Source());
 }
 
 DocIterator::ptr WrapRawScorer(DocIterator::ptr src, const SubReader& segment,
                                const VectorState& state,
                                std::span<const float> query,
-                               VectorMetric metric, score_t boost) {
+                               VectorMetric metric, score_t boost,
+                               ScoreSource score) {
   const auto* col_reader = segment.GetColReader();
   if (!col_reader || !src || state.vector_column == nullptr) {
     return src;
@@ -610,7 +638,7 @@ DocIterator::ptr WrapRawScorer(DocIterator::ptr src, const SubReader& segment,
   const auto d = static_cast<uint32_t>(state.vector_column->ArraySize());
   return memory::make_managed<RawVectorIterator>(
     std::move(src), *state.vector_column, *col_reader, d, query, metric, boost,
-    state.estimation);
+    state.estimation, score);
 }
 
 class DisjointClusterUnion : public DocIterator {
@@ -686,20 +714,14 @@ void RerankExactDistances(const SubReader& segment,
   }
   RawVectorReader reader{vector_column, *col_reader, d};
   reader.SetQuery(query, metric);
-  std::vector<score_t> scratch;
-  size_t i = 0;
-  while (i < hits.size()) {
-    size_t run = 1;
-    while (i + run < hits.size() &&
-           hits[i + run].doc == hits[i + run - 1].doc + 1) {
-      ++run;
-    }
-    scratch.resize(run);
-    reader.ComputeDistanceRun(hits[i].doc, run, kNoBoost, scratch);
-    for (size_t k = 0; k < run; ++k) {
-      hits[i + k].score = scratch[k];
-    }
-    i += run;
+  std::vector<doc_id_t> docs(hits.size());
+  std::vector<score_t> scores(hits.size());
+  for (size_t i = 0; i < hits.size(); ++i) {
+    docs[i] = hits[i].doc;
+  }
+  reader.ComputeDistances(docs, scores);
+  for (size_t i = 0; i < hits.size(); ++i) {
+    hits[i].score = scores[i];
   }
 }
 
@@ -718,13 +740,15 @@ DocIterator::ptr KnnVectorQuery::Execute(const ExecutionContext& ctx,
 
   if (ctx.top_k_collect && !_inner && _segment.docs_mask() == nullptr) {
     QVectorIterators children;
-    if (BuildClusterIterators(_state, _boost, children) && !children.empty()) {
+    if (BuildClusterIterators(_state, _boost, children, stats.Source()) &&
+        !children.empty()) {
       return memory::make_managed<DisjointClusterUnion>(std::move(children),
                                                         docs_count, _boost);
     }
   } else {
     QVectorIterators children;
-    if (BuildClusterIterators(_state, _boost, children) && !children.empty()) {
+    if (BuildClusterIterators(_state, _boost, children, stats.Source()) &&
+        !children.empty()) {
       ScoreAdapters adapters;
       adapters.reserve(children.size());
       for (auto& qit : children) {
@@ -747,7 +771,7 @@ DocIterator::ptr KnnVectorQuery::Execute(const ExecutionContext& ctx,
       return ctx.top_k_collect || _state.quant == VectorQuantization::None
                ? std::move(v)
                : WrapRawScorer(std::move(v), _segment, _state, query, _metric,
-                               _boost);
+                               _boost, stats.Source());
     }
   }
 
@@ -770,7 +794,8 @@ DocIterator::ptr RangeVectorQuery::Execute(const ExecutionContext& ctx,
   const auto docs_count = static_cast<doc_id_t>(_segment.docs_count());
 
   QVectorIterators children;
-  if (!BuildClusterIterators(_state, _boost, children) || children.empty()) {
+  if (!BuildClusterIterators(_state, _boost, children, stats.Source()) ||
+      children.empty()) {
     return DocIterator::empty();
   }
 
@@ -805,7 +830,7 @@ DocIterator::ptr RangeVectorQuery::Execute(const ExecutionContext& ctx,
     return res;
   }
   return WrapRawScorer(std::move(res), _segment, _state, _query, _metric,
-                       _boost);
+                       _boost, stats.Source());
 }
 
 }  // namespace irs

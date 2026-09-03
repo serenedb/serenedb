@@ -261,13 +261,15 @@ a
 statement error
 ALTER TABLE pudge RENAME COLUMN nonexistent TO something;
 ----
-db error: ERROR: column "nonexistent" does not exist
+db error: ERROR: Table "pudge" does not have a column with name "nonexistent"
+
+Did you mean: "a"
 
 
 statement error
 ALTER TABLE pudge RENAME COLUMN a TO b;
 ----
-db error: ERROR: column "b" of relation "pudge" already exists
+db error: ERROR: Column with name b already exists!
 
 
 statement error
@@ -277,10 +279,8 @@ db error: ERROR: Table with name nonexistent does not exist!
 <slt:ignore>
 
 
-statement error
+statement ok
 ALTER TABLE pudge RENAME COLUMN a TO a;
-----
-db error: ERROR: column "a" of relation "pudge" already exists
 
 
 statement ok

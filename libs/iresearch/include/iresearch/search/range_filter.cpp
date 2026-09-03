@@ -92,8 +92,9 @@ class ByRangeIterator : public WrappedTermIterator {
 QueryBuilder::ptr ByRange::PrepareSegment(const SubReader& segment,
                                           const PrepareContext& ctx) const {
   auto sub_ctx = ctx;
-  sub_ctx.boost *= Boost();
-  return PrepareSegment(segment, sub_ctx, field_id(), options().range, Boost());
+  sub_ctx.boost *= GetBoost();
+  return PrepareSegment(segment, sub_ctx, field_id(), options().range,
+                        GetBoost());
 }
 
 QueryBuilder::ptr ByRange::PrepareSegment(const SubReader& segment,
@@ -141,7 +142,7 @@ QueryBuilder::ptr ByRange::PrepareSegment(const SubReader& segment,
   return query;
 }
 
-PrepareCollector::ptr ByRange::MakeCollector(const Scorer* scorer) const {
+PrepareCollector::ptr ByRange::MakeCollectorImpl(const Scorer* scorer) const {
   if (Classify(options().range) == RangeKind::Term) {
     return std::make_unique<ByTermsCollector>(scorer, 1);
   }

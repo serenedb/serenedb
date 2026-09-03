@@ -1,0 +1,498 @@
+# An object's owner and its grants survive a metadata-only ALTER.
+#
+# Owner and ACL live on CatalogEntry::permissions -- beside the definition, not
+# in it -- so every road that makes a new version of an entry has to carry them
+# over by hand. COMMENT ON and the non-table RENAMEs take the shortest such
+# road: they Copy() the entry and patch one field, and Copy() rebuilds an entry
+# from its definition alone, with no oid, no owner and no grants. Those five
+# arms therefore go through CatalogEntry::CopyPreservingIdentity, which replaced
+# four entry subclasses whose only job was that carry. Nothing pinned the carry
+# itself, so a grant could go missing on a COMMENT ON and no test would notice.
+#
+# One case per arm, each asserting three things together: the ALTER really
+# happened (otherwise a no-op would pass), the grantee's ACL element is still
+# there, and the owner is still there.
+#
+#   COMMENT ON VIEW / TYPE / MACRO      CatalogSet::AlterEntry's SET_COMMENT arm
+#   COMMENT ON COLUMN <view>.<col>      ViewCatalogEntry SET_COLUMN_COMMENT
+#   ALTER VIEW ... RENAME TO            ViewCatalogEntry RENAME_VIEW
+#   ALTER TABLE <view> ... RENAME TO    ViewCatalogEntry's ALTER_TABLE arm
+#   ALTER FUNCTION ... RENAME TO        MacroCatalogEntry rename
+#
+# COMMENT ON TABLE is the same SET_COMMENT arm, and it is asserted with a COLUMN
+# grant because a blanket carry inside CatalogSet::AlterEntry would also undo
+# AlteredEntry's deliberate erasure of a dropped column's grants -- the table
+# case is where the two behaviours meet.
+#
+# Lives in sdb/ rather than any/pg/: it reads comments back out of duckdb_*(),
+# and COMMENT ON MACRO is serenedb's spelling for a SQL function.
+#
+# Vedernikoff lore: the mop committee owns the ledger view; the grantee reads
+# it, the outsider does not.
+
+statement ok
+DROP VIEW IF EXISTS aclc_ledger_v3;
+
+
+statement ok
+DROP VIEW IF EXISTS aclc_ledger_v2;
+
+
+statement ok
+DROP VIEW IF EXISTS aclc_ledger_v;
+
+
+statement ok
+DROP TABLE IF EXISTS aclc_ledger;
+
+
+statement ok
+DROP FUNCTION IF EXISTS aclc_babsky2;
+
+
+statement ok
+DROP FUNCTION IF EXISTS aclc_babsky;
+
+
+statement ok
+DROP TYPE IF EXISTS aclc_mood CASCADE;
+
+
+statement ok
+DROP ROLE IF EXISTS aclc_grantee;
+
+
+statement ok
+DROP ROLE IF EXISTS aclc_outsider;
+
+
+statement ok
+DROP ROLE IF EXISTS aclc_mop;
+
+
+statement ok
+CREATE ROLE aclc_mop;
+
+
+statement ok
+CREATE ROLE aclc_grantee;
+
+
+statement ok
+CREATE ROLE aclc_outsider;
+
+
+# ---------------------------------------------------------------------------
+# A view, owned by a non-bootstrap role so the owner assertion means something.
+# The grant is issued after the ownership transfer, so its grantor is the owner
+# and the whole element is the owner's to lose.
+# ---------------------------------------------------------------------------
+
+statement ok
+CREATE TABLE aclc_ledger (id INTEGER, secret INTEGER);
+
+
+statement ok
+INSERT INTO aclc_ledger VALUES (1, 42);
+
+
+statement ok
+CREATE VIEW aclc_ledger_v (vid, vsecret) AS SELECT id, secret FROM aclc_ledger;
+
+
+statement ok
+ALTER VIEW aclc_ledger_v OWNER TO aclc_mop;
+
+
+statement ok
+GRANT SELECT ON aclc_ledger_v TO aclc_grantee;
+
+
+query
+SELECT pg_get_userbyid(relowner) AS owner FROM pg_class
+WHERE relname = 'aclc_ledger_v';
+----
+owner
+aclc_mop
+
+
+query
+SELECT e FROM (
+  SELECT unnest(relacl::text[]) AS e FROM pg_class WHERE relname = 'aclc_ledger_v'
+) g WHERE e LIKE 'aclc_grantee=%';
+----
+e
+aclc_grantee=r/aclc_mop
+
+
+# The outsider has nothing: the negative control for every check below.
+query
+SELECT count(*) AS n FROM (
+  SELECT unnest(relacl::text[]) AS e FROM pg_class WHERE relname = 'aclc_ledger_v'
+) g WHERE e LIKE 'aclc_outsider=%';
+----
+n
+0
+
+
+# --- COMMENT ON VIEW: SET_COMMENT ------------------------------------------
+
+statement ok
+COMMENT ON VIEW aclc_ledger_v IS 'the mop ledger';
+
+
+query
+SELECT comment FROM duckdb_views() WHERE view_name = 'aclc_ledger_v';
+----
+comment
+the mop ledger
+
+
+query
+SELECT pg_get_userbyid(relowner) AS owner FROM pg_class
+WHERE relname = 'aclc_ledger_v';
+----
+owner
+aclc_mop
+
+
+query
+SELECT e FROM (
+  SELECT unnest(relacl::text[]) AS e FROM pg_class WHERE relname = 'aclc_ledger_v'
+) g WHERE e LIKE 'aclc_grantee=%';
+----
+e
+aclc_grantee=r/aclc_mop
+
+
+# --- COMMENT ON COLUMN of a view: SET_COLUMN_COMMENT -----------------------
+
+statement ok
+COMMENT ON COLUMN aclc_ledger_v.vsecret IS 'the secret column';
+
+
+query
+SELECT comment FROM duckdb_columns()
+WHERE table_name = 'aclc_ledger_v' AND column_name = 'vsecret';
+----
+comment
+the secret column
+
+
+query
+SELECT pg_get_userbyid(relowner) AS owner FROM pg_class
+WHERE relname = 'aclc_ledger_v';
+----
+owner
+aclc_mop
+
+
+query
+SELECT e FROM (
+  SELECT unnest(relacl::text[]) AS e FROM pg_class WHERE relname = 'aclc_ledger_v'
+) g WHERE e LIKE 'aclc_grantee=%';
+----
+e
+aclc_grantee=r/aclc_mop
+
+
+# --- ALTER VIEW ... RENAME TO: RENAME_VIEW ---------------------------------
+
+statement ok
+ALTER VIEW aclc_ledger_v RENAME TO aclc_ledger_v2;
+
+
+query
+SELECT count(*) AS n FROM pg_class WHERE relname = 'aclc_ledger_v';
+----
+n
+0
+
+
+query
+SELECT pg_get_userbyid(relowner) AS owner FROM pg_class
+WHERE relname = 'aclc_ledger_v2';
+----
+owner
+aclc_mop
+
+
+query
+SELECT e FROM (
+  SELECT unnest(relacl::text[]) AS e FROM pg_class WHERE relname = 'aclc_ledger_v2'
+) g WHERE e LIKE 'aclc_grantee=%';
+----
+e
+aclc_grantee=r/aclc_mop
+
+
+# The comments came along too -- both of them ride the same Copy().
+query
+SELECT comment FROM duckdb_views() WHERE view_name = 'aclc_ledger_v2';
+----
+comment
+the mop ledger
+
+
+query
+SELECT comment FROM duckdb_columns()
+WHERE table_name = 'aclc_ledger_v2' AND column_name = 'vsecret';
+----
+comment
+the secret column
+
+
+# --- ALTER TABLE <view> ... RENAME TO: the ALTER_TABLE arm -----------------
+# PostgreSQL accepts the table spelling on a view, and it is a different arm of
+# ViewCatalogEntry::AlterEntry than ALTER VIEW is.
+
+statement ok
+ALTER TABLE aclc_ledger_v2 RENAME TO aclc_ledger_v3;
+
+
+query
+SELECT count(*) AS n FROM pg_class WHERE relname = 'aclc_ledger_v2';
+----
+n
+0
+
+
+query
+SELECT pg_get_userbyid(relowner) AS owner FROM pg_class
+WHERE relname = 'aclc_ledger_v3';
+----
+owner
+aclc_mop
+
+
+query
+SELECT e FROM (
+  SELECT unnest(relacl::text[]) AS e FROM pg_class WHERE relname = 'aclc_ledger_v3'
+) g WHERE e LIKE 'aclc_grantee=%';
+----
+e
+aclc_grantee=r/aclc_mop
+
+
+# ---------------------------------------------------------------------------
+# A function. Its ACL is pg_proc.proacl; the only privilege is X = EXECUTE.
+# The grantor is postgres -- ALTER FUNCTION ... OWNER TO is not supported, so
+# the function stays where it was created.
+# ---------------------------------------------------------------------------
+
+statement ok
+CREATE FUNCTION aclc_babsky(x int) RETURNS int LANGUAGE sql AS 'SELECT $1 + 1';
+
+
+statement ok
+GRANT EXECUTE ON FUNCTION aclc_babsky TO aclc_grantee;
+
+
+query
+SELECT e
+FROM pg_proc p, LATERAL unnest(p.proacl::text[]) AS e
+WHERE p.proname = 'aclc_babsky' AND e LIKE 'aclc_grantee=%';
+----
+e
+aclc_grantee=X/postgres
+
+
+# --- COMMENT ON MACRO: SET_COMMENT on a macro entry ------------------------
+
+statement ok
+COMMENT ON MACRO aclc_babsky IS 'the secret function';
+
+
+query
+SELECT obj_description(p.oid) AS comment
+FROM pg_proc p WHERE p.proname = 'aclc_babsky';
+----
+comment
+the secret function
+
+
+query
+SELECT e
+FROM pg_proc p, LATERAL unnest(p.proacl::text[]) AS e
+WHERE p.proname = 'aclc_babsky' AND e LIKE 'aclc_grantee=%';
+----
+e
+aclc_grantee=X/postgres
+
+
+# --- ALTER FUNCTION ... RENAME TO: the macro rename ------------------------
+
+statement ok
+ALTER FUNCTION aclc_babsky RENAME TO aclc_babsky2;
+
+
+query
+SELECT count(*) AS n FROM pg_proc WHERE proname = 'aclc_babsky';
+----
+n
+0
+
+
+query
+SELECT e
+FROM pg_proc p, LATERAL unnest(p.proacl::text[]) AS e
+WHERE p.proname = 'aclc_babsky2' AND e LIKE 'aclc_grantee=%';
+----
+e
+aclc_grantee=X/postgres
+
+
+query
+SELECT obj_description(p.oid) AS comment
+FROM pg_proc p WHERE p.proname = 'aclc_babsky2';
+----
+comment
+the secret function
+
+
+query
+SELECT count(*) AS n
+FROM pg_proc p, LATERAL unnest(p.proacl::text[]) AS e
+WHERE p.proname = 'aclc_babsky2' AND e LIKE 'aclc_outsider=%';
+----
+n
+0
+
+
+# ---------------------------------------------------------------------------
+# A type. USAGE is the only privilege, and a fresh type grants it to PUBLIC,
+# so the PUBLIC default is revoked first -- that revoke is part of the ACL the
+# COMMENT ON has to carry, which is what the outsider check below detects.
+# ---------------------------------------------------------------------------
+
+statement ok
+CREATE TYPE aclc_mood AS ENUM ('sad', 'happy');
+
+
+statement ok
+REVOKE USAGE ON TYPE aclc_mood FROM PUBLIC;
+
+
+statement ok
+GRANT USAGE ON TYPE aclc_mood TO aclc_grantee;
+
+
+query
+SELECT has_type_privilege('aclc_grantee', 'aclc_mood', 'USAGE') AS granted,
+       has_type_privilege('aclc_outsider', 'aclc_mood', 'USAGE') AS outsider;
+----
+granted	outsider
+t	f
+
+
+# --- COMMENT ON TYPE: SET_COMMENT ------------------------------------------
+
+statement ok
+COMMENT ON TYPE aclc_mood IS 'how the mop feels';
+
+
+query
+SELECT comment FROM duckdb_types() WHERE type_name = 'aclc_mood';
+----
+comment
+how the mop feels
+
+
+query
+SELECT has_type_privilege('aclc_grantee', 'aclc_mood', 'USAGE') AS granted,
+       has_type_privilege('aclc_outsider', 'aclc_mood', 'USAGE') AS outsider;
+----
+granted	outsider
+t	f
+
+
+query
+SELECT EXISTS (
+  SELECT 1 FROM pg_type t, unnest(t.typacl) AS e
+  WHERE t.typname = 'aclc_mood'
+    AND e::text LIKE 'aclc_grantee=U/%') AS has_grant;
+----
+has_grant
+t
+
+
+# ---------------------------------------------------------------------------
+# A table, whose COLUMN grants are the ones a blanket carry would get wrong.
+# COMMENT ON TABLE is the same SET_COMMENT arm the view took.
+# ---------------------------------------------------------------------------
+
+statement ok
+GRANT SELECT (secret) ON aclc_ledger TO aclc_grantee;
+
+
+query
+SELECT coalesce(array_to_string(attacl, '|'), '-') AS colacl
+FROM pg_attribute
+WHERE attrelid = (SELECT oid FROM pg_class WHERE relname = 'aclc_ledger')
+  AND attname = 'secret';
+----
+colacl
+aclc_grantee=r/postgres
+
+
+statement ok
+COMMENT ON TABLE aclc_ledger IS 'the ledger itself';
+
+
+query
+SELECT obj_description('aclc_ledger'::regclass) AS c;
+----
+c
+the ledger itself
+
+
+query
+SELECT coalesce(array_to_string(attacl, '|'), '-') AS colacl
+FROM pg_attribute
+WHERE attrelid = (SELECT oid FROM pg_class WHERE relname = 'aclc_ledger')
+  AND attname = 'secret';
+----
+colacl
+aclc_grantee=r/postgres
+
+
+# The column that was never granted still has no ACL: the carry copies the
+# grants that exist, it does not invent any.
+query
+SELECT coalesce(array_to_string(attacl, '|'), '-') AS colacl
+FROM pg_attribute
+WHERE attrelid = (SELECT oid FROM pg_class WHERE relname = 'aclc_ledger')
+  AND attname = 'id';
+----
+colacl
+-
+
+
+# ---- cleanup ----
+
+statement ok
+DROP VIEW aclc_ledger_v3;
+
+
+statement ok
+DROP TABLE aclc_ledger;
+
+
+statement ok
+DROP FUNCTION aclc_babsky2;
+
+
+statement ok
+DROP TYPE aclc_mood;
+
+
+statement ok
+DROP ROLE aclc_grantee;
+
+
+statement ok
+DROP ROLE aclc_outsider;
+
+
+statement ok
+DROP ROLE aclc_mop;

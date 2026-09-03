@@ -20,8 +20,12 @@
 
 #include "pg/pg_catalog/pg_enum.h"
 
-#include "catalog/catalog.h"
-#include "catalog/user_type.h"
+#include <deque>
+#include <string>
+
+#include "catalog/ddl/catalog.h"
+#include "catalog/entry/duckdb_object_entry.h"
+#include "catalog/read/duckdb_catalog_sets.h"
 #include "pg/pg_catalog/fwd.h"
 
 namespace sdb::pg {
@@ -38,37 +42,37 @@ constexpr uint64_t kNullMask = MaskFromNonNulls({
 
 template<>
 catalog::MaterializedData SystemTableSnapshot<PgEnum>::GetTableData() {
-  auto snapshot = _config.CatalogSnapshot();
   auto database_id = GetDatabaseId();
 
   std::vector<PgEnum> rows;
-  // Keep labels alive: enum labels come from duckdb::EnumType storage which
-  // outlives this call, but string_t::GetData() on a non-inlined label points
-  // into that storage -- we keep Name wrapping a string_view into it.
-  for (const auto& schema : snapshot->GetSchemas(database_id)) {
-    for (const auto& type :
-         snapshot->GetTypes(database_id, schema->GetName())) {
-      const auto& info = type->GetInfo();
-      if (info.type.id() != duckdb::LogicalTypeId::ENUM) {
-        continue;
+  // The labels are owned here, not borrowed: EnumType::GetString hands back a
+  // string_t by value, and a short label lives inside that temporary -- a view
+  // into it reads whatever the next label reused the bytes for. A deque because
+  // the rows point at these and must not move.
+  std::deque<std::string> labels;
+  catalog::Visit<catalog::SereneDBTypeEntry>(
+    &_config.GetClientContext(), database_id,
+    [&](const duckdb::TypeCatalogEntry& type) {
+      if (type.user_type.id() != duckdb::LogicalTypeId::ENUM) {
+        return;
       }
-      const auto type_oid = type->GetId().id();
-      const auto size = duckdb::EnumType::GetSize(info.type);
+      const auto type_oid = type.oid;
+      const auto size = duckdb::EnumType::GetSize(type.user_type);
       for (duckdb::idx_t i = 0; i < size; ++i) {
-        auto label = duckdb::EnumType::GetString(info.type, i);
+        const auto label = duckdb::EnumType::GetString(type.user_type, i);
+        labels.emplace_back(label.GetData(), label.GetSize());
         rows.push_back({
           .oid = type_oid * 10000 + i + 1,
           .enumtypid = type_oid,
           .enumsortorder = static_cast<float>(i + 1),
-          .enumlabel = std::string_view{label.GetData(), label.GetSize()},
+          .enumlabel = std::string_view{labels.back()},
         });
       }
-    }
-  }
+    });
 
   auto result = CreateColumns<PgEnum>(rows.size());
   for (size_t i = 0; i < rows.size(); ++i) {
-    WriteData(result, rows[i], kNullMask, i, *_config.GetCatalogSnapshot());
+    WriteData(result, rows[i], kNullMask, i, Roles());
   }
   return {std::move(result), rows.size()};
 }

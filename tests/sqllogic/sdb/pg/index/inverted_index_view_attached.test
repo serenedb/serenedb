@@ -99,6 +99,14 @@ id_b	body
 200	dog note two
 
 
+# The flat pk halves exist only where rows are keyed by (file, row); a
+# rowid-keyed index rejects them at scan.
+statement error
+SELECT file_index FROM v_att_idx;
+----
+db error: ERROR: column "file_index" is only served by glob-backed inverted indexes
+
+
 # Lookups run through the caller's transaction against the live attach: an
 # uncommitted DELETE already materializes as NULLs, and ROLLBACK restores
 # the row. (Index queries inside an explicit transaction require

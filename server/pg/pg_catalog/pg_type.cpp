@@ -25,9 +25,12 @@
 #include <vector>
 
 #include "basics/containers/flat_hash_set.h"
-#include "catalog/catalog.h"
+#include "basics/down_cast.h"
+#include "catalog/ddl/catalog.h"
+#include "catalog/entry/duckdb_object_entry.h"
+#include "catalog/read/duckdb_catalog_sets.h"
 #include "catalog/role.h"
-#include "catalog/user_type.h"
+#include "catalog/schema.h"
 #include "pg/pg_catalog/fwd.h"
 
 namespace sdb::pg {
@@ -1515,7 +1518,6 @@ constexpr uint64_t kNullMask = MaskFromNulls({
 
 template<>
 catalog::MaterializedData SystemTableSnapshot<PgType>::GetTableData() {
-  auto snapshot = _config.CatalogSnapshot();
   auto database_id = GetDatabaseId();
 
   std::vector<PgType> rows;
@@ -1524,14 +1526,17 @@ catalog::MaterializedData SystemTableSnapshot<PgType>::GetTableData() {
     rows.push_back(row);
   }
 
+  auto& context = _config.GetClientContext();
+  const auto visit_types =
+    [&](absl::FunctionRef<void(const duckdb::TypeCatalogEntry&)> visitor) {
+      catalog::Visit<catalog::SereneDBTypeEntry>(&context, database_id,
+                                                 visitor);
+    };
+
   containers::FlatHashSet<std::string_view> taken;
-  for (const auto& schema : snapshot->GetSchemas(database_id)) {
-    auto types = snapshot->GetTypes(database_id, schema->GetName());
-    taken.reserve(taken.size() + types.size() * 2);
-    for (const auto& type : types) {
-      taken.insert(type->GetName());
-    }
-  }
+  visit_types([&](const duckdb::TypeCatalogEntry& type) {
+    taken.insert(type.name.GetIdentifierName());
+  });
   std::deque<std::string> array_names;
   auto make_array_name = [&](std::string_view scalar) -> std::string_view {
     std::string name = "_" + std::string{scalar};
@@ -1588,74 +1593,72 @@ catalog::MaterializedData SystemTableSnapshot<PgType>::GetTableData() {
     });
   }
 
-  for (const auto& schema : snapshot->GetSchemas(database_id)) {
-    for (const auto& type :
-         snapshot->GetTypes(database_id, schema->GetName())) {
-      const auto& info = type->GetInfo();
-      const auto kind = info.type.id();
-      const bool is_enum = kind == duckdb::LogicalTypeId::ENUM;
-      const bool is_composite = kind == duckdb::LogicalTypeId::STRUCT;
+  visit_types([&](const duckdb::TypeCatalogEntry& type) {
+    const auto& perm = type.permissions;
+    const auto kind = type.user_type.id();
+    const bool is_enum = kind == duckdb::LogicalTypeId::ENUM;
+    const bool is_composite = kind == duckdb::LogicalTypeId::STRUCT;
 
-      const auto type_oid = type->GetId().id();
-      const auto namespace_oid = schema->GetId().id();
-      const auto array_oid = type->GetArrayOid().id();
-      const auto array_name = make_array_name(type->GetName());
-      const AclColumn type_acl{type->GetAcl()};
+    const std::string_view type_name = type.name.GetIdentifierName();
+    const auto type_oid = type.oid;
+    const auto namespace_oid = type.ParentSchema().oid;
+    const auto array_oid = catalog::TypeArrayOid(ObjectId{type_oid}).id();
+    const auto array_name = make_array_name(type_name);
+    const AclColumn type_acl{catalog::AclView{perm.acl}};
 
-      auto make_row = [&](bool as_array) {
-        return PgType{
-          .oid = as_array ? array_oid : type_oid,
-          .typname = as_array ? array_name : std::string_view{type->GetName()},
-          .typnamespace = namespace_oid,
-          .typowner = type->GetOwner().id(),
-          .typlen = (!as_array && is_enum) ? int16_t{4} : int16_t{-1},
-          .typbyval = !as_array && is_enum,
-          .typtype = as_array       ? PgType::Typetype::Base
-                     : is_enum      ? PgType::Typetype::Enum
-                     : is_composite ? PgType::Typetype::Composite
-                                    : PgType::Typetype::Base,
-          .typcategory = as_array       ? PgType::Typcategory::Array
-                         : is_enum      ? PgType::Typcategory::Enum
-                         : is_composite ? PgType::Typcategory::Composite
-                                        : PgType::Typcategory::UserDefined,
-          .typispreferred = false,
-          .typisdefined = true,
-          .typdelim = ',',
-          .typrelid = (!as_array && is_composite) ? type_oid : 0,
-          .typsubscript = 0,
-          .typelem = as_array ? type_oid : 0,
-          .typarray = as_array ? 0 : array_oid,
-          .typinput = 0,
-          .typoutput = 0,
-          .typreceive = 0,
-          .typsend = 0,
-          .typmodin = 0,
-          .typmodout = 0,
-          .typanalyze = 0,
-          .typalign = PgType::Typalign::Int,
-          .typstorage =
-            as_array ? PgType::Typstorage::Extended : PgType::Typstorage::Plain,
-          .typnotnull = false,
-          .typbasetype = 0,
-          .typtypmod = -1,
-          .typndims = 0,
-          .typcollation = 0,
-          .typdefaultbin = {},
-          .typdefault = {},
-          // Only the scalar type carries an ACL; the array type's typacl is
-          // NULL in PG.
-          .typacl = as_array ? AclColumn{} : type_acl,
-        };
+    auto make_row = [&](bool as_array) {
+      return PgType{
+        .oid = as_array ? array_oid : type_oid,
+        .typname = as_array ? array_name : type_name,
+        .typnamespace = namespace_oid,
+        .typowner = perm.owner,
+        .typlen = (!as_array && is_enum) ? int16_t{4} : int16_t{-1},
+        .typbyval = !as_array && is_enum,
+        .typtype = as_array       ? PgType::Typetype::Base
+                   : is_enum      ? PgType::Typetype::Enum
+                   : is_composite ? PgType::Typetype::Composite
+                                  : PgType::Typetype::Base,
+        .typcategory = as_array       ? PgType::Typcategory::Array
+                       : is_enum      ? PgType::Typcategory::Enum
+                       : is_composite ? PgType::Typcategory::Composite
+                                      : PgType::Typcategory::UserDefined,
+        .typispreferred = false,
+        .typisdefined = true,
+        .typdelim = ',',
+        .typrelid = (!as_array && is_composite) ? type_oid : 0,
+        .typsubscript = 0,
+        .typelem = as_array ? type_oid : 0,
+        .typarray = as_array ? 0 : array_oid,
+        .typinput = 0,
+        .typoutput = 0,
+        .typreceive = 0,
+        .typsend = 0,
+        .typmodin = 0,
+        .typmodout = 0,
+        .typanalyze = 0,
+        .typalign = PgType::Typalign::Int,
+        .typstorage =
+          as_array ? PgType::Typstorage::Extended : PgType::Typstorage::Plain,
+        .typnotnull = false,
+        .typbasetype = 0,
+        .typtypmod = -1,
+        .typndims = 0,
+        .typcollation = 0,
+        .typdefaultbin = {},
+        .typdefault = {},
+        // Only the scalar type carries an ACL; the array type's typacl is
+        // NULL in PG.
+        .typacl = as_array ? AclColumn{} : type_acl,
       };
+    };
 
-      rows.emplace_back(make_row(false));
-      rows.emplace_back(make_row(true));
-    }
-  }
+    rows.emplace_back(make_row(false));
+    rows.emplace_back(make_row(true));
+  });
 
   auto result = CreateColumns<PgType>(rows.size());
   for (size_t i = 0; i < rows.size(); ++i) {
-    WriteData(result, rows[i], kNullMask, i, *_config.GetCatalogSnapshot());
+    WriteData(result, rows[i], kNullMask, i, Roles());
   }
   return {std::move(result), rows.size()};
 }

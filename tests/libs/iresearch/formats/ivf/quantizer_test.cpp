@@ -19,6 +19,7 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include <algorithm>
+#include <bit>
 #include <cmath>
 #include <cstring>
 #include <functional>
@@ -622,7 +623,8 @@ class rabitq_quantizer_test : public ::testing::TestWithParam<uint32_t> {};
 
 // The FWHT rotation pads d to a power of two; verify the encode+query roundtrip
 // ranking is preserved across power-of-two AND non-power-of-two dimensions, and
-// that the stats blob no longer carries a dense rotation matrix.
+// that the stats blob carries only the header plus one sign bit per rotated
+// dimension -- not a dense rotation matrix.
 TEST_P(rabitq_quantizer_test, roundtrip_ranking_across_dims) {
   const uint32_t d = GetParam();
   constexpr uint32_t nb_bits = 8;
@@ -639,7 +641,11 @@ TEST_P(rabitq_quantizer_test, roundtrip_ranking_across_dims) {
                                     /*pq_m=*/0, /*pq_niter=*/0, nb_bits);
   ASSERT_NE(writer, nullptr);
   EXPECT_EQ(writer->Kind(), VectorQuantization::RaBitQ);
-  EXPECT_EQ(SerializeStats(*writer).size(), 2 * sizeof(uint32_t));
+  const size_t rd = std::max<uint32_t>(4, std::bit_ceil(d));
+  const size_t stats_bytes = SerializeStats(*writer).size();
+  EXPECT_EQ(stats_bytes, 2 * sizeof(uint32_t) + (rd + 7) / 8);
+  EXPECT_LT(stats_bytes,
+            size_t{d} * d * sizeof(float));  // never a dense matrix
   writer->SetClusterCentroid(centroid.data());
 
   SimpleMemoryAccounter memory;

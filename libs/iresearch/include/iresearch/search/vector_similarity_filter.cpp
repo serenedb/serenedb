@@ -20,12 +20,8 @@
 
 #include "iresearch/search/vector_similarity_filter.hpp"
 
-#include <span>
-#include <utility>
-
-#include "basics/memory.hpp"
-#include "iresearch/search/vector_filter_util.hpp"
-#include "iresearch/search/vector_similarity_query.hpp"
+#include "iresearch/search/ann_index.hpp"
+#include "iresearch/search/collectors.hpp"
 
 namespace irs {
 
@@ -37,8 +33,13 @@ QueryBuilder::ptr ByVectorSimilarity::PrepareSegment(
     return QueryBuilder::Empty();
   }
   auto sub_ctx = ctx;
-  sub_ctx.Boost(Boost());
+  sub_ctx.Boost(GetBoost());
   return ann->PrepareKnn(segment, sub_ctx, opts, opts.nprobe);
+}
+
+PrepareCollector::ptr ByVectorSimilarity::MakeCollectorImpl(
+  const Scorer* scorer) const {
+  return std::make_unique<AllCollector>(scorer);
 }
 
 }  // namespace irs

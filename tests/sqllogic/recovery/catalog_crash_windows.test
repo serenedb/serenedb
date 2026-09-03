@@ -1,0 +1,386 @@
+control substitution on
+
+# The crash windows a DDL statement has. The catalog log is what decides, and
+# the database's own commit carries the storage the decision describes.
+#
+# There are exactly two, and one of them is not a divergence:
+#
+#   - before the catalog log is flushed: nothing is durable. Replay stops at
+#     the last flush marker, so the run's bytes are not there to be read back
+#     and the statement never happened -- creates and drops alike.
+#   - after the flush and before the data commit: the catalog has decided, and
+#     the database is one run behind the log tail. Boot replays exactly the
+#     records in between, so the statement takes effect in full -- it is a
+#     delayed commit, not a lost one.
+#
+# What used to be here and cannot happen any more: "the data is committed and
+# the record that describes it is not". That was the whole class -- the
+# orphaned store table, the ADD COLUMN mismatch, the DROP COLUMN cascade, and
+# the ALTER COLUMN TYPE window this file used to call unclosable. All four were
+# the same window seen from different sides, and the definition record closed
+# it: the record is never behind the rows, only ever ahead of them, and being
+# ahead is repairable because the storage is built from the definition.
+
+# Crash before the catalog log is flushed: neither half survives.
+statement ok
+SET sdb_faults = 'crash_before_catalog_commit';
+
+statement error connection closed
+CREATE TABLE cw (a INTEGER PRIMARY KEY, b TEXT);
+
+connection after_create
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT count(*) FROM pg_class WHERE relname = 'cw';
+----
+count
+0
+
+connection after_create
+statement ok
+CREATE TABLE cw (a INTEGER PRIMARY KEY, b TEXT);
+
+connection after_create
+statement ok
+INSERT INTO cw VALUES (1, 'one'), (2, 'two');
+
+
+# The append happens in the commit, so a refused one is a commit that fails:
+# the transaction aborts with nothing durable behind it, the client gets a SQL
+# error, and the server is still there to serve the next statement.
+connection after_create
+statement ok
+SET sdb_faults = 'catalog_append_fails';
+
+connection after_create
+statement error
+CREATE TABLE cw_refused (a INTEGER);
+----
+db error: ERROR: Failed to commit: catalog log: could not append the transaction
+
+
+connection after_create
+statement ok
+SET sdb_faults = '-catalog_append_fails';
+
+connection after_create
+query
+SELECT count(*) FROM pg_class WHERE relname = 'cw_refused';
+----
+count
+0
+
+connection after_create
+query
+SELECT count(*) FROM cw;
+----
+count
+2
+
+
+# Crash after the catalog append and before the data commit, for a create. The
+# database's position is behind the log tail by that one frame; boot replays it
+# and the table is there, complete and usable.
+connection after_create
+statement ok
+SET sdb_faults = 'crash_after_catalog_before_data';
+
+connection after_create
+statement error connection closed
+CREATE TABLE cw2 (a INTEGER, b TEXT);
+
+connection after_gap_create
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT count(*) FROM pg_class WHERE relname = 'cw2';
+----
+count
+1
+
+connection after_gap_create
+statement ok
+INSERT INTO cw2 VALUES (7, 'seven');
+
+connection after_gap_create
+query
+SELECT a, b FROM cw2;
+----
+a	b
+7	seven
+
+connection after_gap_create
+statement ok
+DROP TABLE cw2;
+
+
+# The same window for ADD COLUMN: the backfill is in the record's store half,
+# so the replayed column arrives with its DEFAULT already applied to the rows
+# that were there.
+connection after_gap_create
+statement ok
+CREATE TABLE cw_wide (a INTEGER, s TEXT, note TEXT);
+
+connection after_gap_create
+statement ok
+INSERT INTO cw_wide VALUES (1, 'x', 'n1'), (2, 'yy', 'n2');
+
+connection after_gap_create
+statement ok
+SET sdb_faults = 'crash_after_catalog_before_data';
+
+connection after_gap_create
+statement error connection closed
+ALTER TABLE cw_wide ADD COLUMN b INTEGER DEFAULT 42;
+
+connection after_gap_add
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT a, s, note, b FROM cw_wide ORDER BY a;
+----
+a	s	note	b
+1	x	n1	42
+2	yy	n2	42
+
+connection after_gap_add
+statement ok
+INSERT INTO cw_wide VALUES (3, 'z', 'n3', 7);
+
+connection after_gap_add
+query
+SELECT count(*) FROM cw_wide;
+----
+count
+3
+
+
+# And for DROP COLUMN, which is the cascade shape this file used to record as a
+# permanent divergence: the definition and the rows come back one column
+# narrower, together.
+connection after_gap_add
+statement ok
+SET sdb_faults = 'crash_after_catalog_before_data';
+
+connection after_gap_add
+statement error connection closed
+ALTER TABLE cw_wide DROP COLUMN s;
+
+connection after_gap_drop_col
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT a, note, b FROM cw_wide ORDER BY a;
+----
+a	note	b
+1	n1	42
+2	n2	42
+3	n3	7
+
+connection after_gap_drop_col
+statement error
+SELECT s FROM cw_wide;
+----
+db error: ERROR: Referenced column "s" not found in FROM clause!
+Candidate bindings: "a"
+
+
+# ALTER COLUMN TYPE ... USING is the record that had to gain a field. The
+# resulting definition says the column is an INTEGER; only the USING expression
+# says how the text became one, so the replay would otherwise apply an implicit
+# cast and either fail or write different values.
+connection after_gap_drop_col
+statement ok
+CREATE TABLE cw_using (a INTEGER, s TEXT);
+
+connection after_gap_drop_col
+statement ok
+INSERT INTO cw_using VALUES (1, 'xx'), (2, 'yyy');
+
+connection after_gap_drop_col
+statement ok
+SET sdb_faults = 'crash_after_catalog_before_data';
+
+connection after_gap_drop_col
+statement error connection closed
+ALTER TABLE cw_using ALTER COLUMN s TYPE INTEGER USING length(s) * 100;
+
+connection after_gap_using
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT a, s FROM cw_using ORDER BY a;
+----
+a	s
+1	200
+2	300
+
+connection after_gap_using
+statement ok
+INSERT INTO cw_using VALUES (3, 7);
+
+connection after_gap_using
+query
+SELECT count(*) FROM cw_using;
+----
+count
+3
+
+connection after_gap_using
+statement ok
+DROP TABLE cw_using;
+
+connection after_gap_using
+statement ok
+DROP TABLE cw_wide;
+
+
+# The destructive direction. What decides a drop is the record that removes the
+# entry -- duckdb's own, written by the commit walk -- and nothing is durable
+# before the flush that ends the run. A crash ahead of it leaves the table
+# exactly as it was: no half of the statement lands, and boot has nothing to
+# reconcile.
+connection after_gap_using
+statement ok
+SET sdb_faults = 'crash_before_catalog_commit';
+
+connection after_gap_using
+statement error connection closed
+DROP TABLE cw;
+
+connection after_drop
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT count(*) FROM pg_class WHERE relname = 'cw';
+----
+count
+1
+
+# Still a table, not a shell: what it holds is what it held.
+connection after_drop
+query
+SELECT count(*) FROM cw;
+----
+count
+2
+
+# And a later drop of the same table is an ordinary one.
+connection after_drop
+statement ok
+DROP TABLE cw;
+
+
+# A reshape whose data step fails appends nothing, so the catalog is left
+# exactly as it was -- the same rule, seen without a crash. The store names the
+# offending table t<id>, so the text carries a generated id and cannot be
+# asserted exactly.
+connection after_drop
+statement ok
+CREATE TABLE aw (x INTEGER);
+
+connection after_drop
+statement ok
+INSERT INTO aw VALUES (1), (2), (500);
+
+connection after_drop
+statement error
+ALTER TABLE aw ADD CONSTRAINT aw_big CHECK (x > 100);
+
+connection after_drop
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+connection after_drop
+query error connection closed
+SELECT 1;
+
+connection after_failed_alter
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT count(*) FROM pg_constraint WHERE conname = 'aw_big';
+----
+count
+0
+
+connection after_failed_alter
+statement ok
+INSERT INTO aw VALUES (3);
+
+connection after_failed_alter
+query ok
+SELECT count(*) FROM aw;
+----
+count
+4
+
+connection after_failed_alter
+statement ok
+DROP TABLE aw;
+
+
+# A checkpoint is the catalog written out, and a transaction's entries are not
+# in the catalog until it commits -- so one running inside the window has to
+# leave the file exactly as undecided as it found it, and the commit that
+# follows still has to land.
+connection after_failed_alter
+statement ok
+SET sdb_faults = 'compact_inside_ddl';
+
+connection after_failed_alter
+statement ok
+CREATE TABLE cw_pin (a INTEGER PRIMARY KEY, b TEXT);
+
+connection after_failed_alter
+statement ok
+INSERT INTO cw_pin VALUES (1, 'one'), (2, 'two');
+
+connection after_failed_alter
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+connection after_failed_alter
+query error connection closed
+SELECT 1;
+
+connection after_compact_create
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT count(*) FROM cw_pin;
+----
+count
+2
+
+# The primary key came through the rewrite with it.
+connection after_compact_create
+statement error
+INSERT INTO cw_pin VALUES (1, 'dup');
+
+
+# The same for the long bracket that stays: a drop's async half runs well after
+# its tombstone, so a compaction in between must carry the open drop.
+connection after_compact_create
+statement ok
+CREATE TABLE cw_gone (a INTEGER);
+
+connection after_compact_create
+statement ok
+SET sdb_faults = 'compact_inside_drop';
+
+connection after_compact_create
+statement ok
+DROP TABLE cw_gone;
+
+connection after_compact_create
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+connection after_compact_create
+query error connection closed
+SELECT 1;
+
+connection after_compact_drop
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT count(*) FROM pg_class WHERE relname = 'cw_gone';
+----
+count
+0
+
+connection after_compact_drop
+statement ok
+CREATE TABLE cw_gone (a INTEGER);
+
+connection after_compact_drop
+statement ok
+DROP TABLE cw_pin;
+
+connection after_compact_drop
+statement ok
+DROP TABLE cw_gone;

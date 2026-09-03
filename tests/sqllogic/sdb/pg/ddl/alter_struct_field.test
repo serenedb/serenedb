@@ -116,13 +116,13 @@ STRUCT(v INTEGER, k INTEGER)
 
 # Errors
 
-statement error field already exists in column "s"
+statement error db error: ERROR: Duplicate field "k" \- field already exists in struct s
 ALTER TABLE t ADD COLUMN s.k INTEGER;
 
-statement error column or field of "s" does not exist in "t"
+statement error db error: ERROR: Cannot drop field "absent" \- it does not exist
 ALTER TABLE t DROP COLUMN s.absent;
 
-statement error field "id" is not a struct
+statement error db error: ERROR: Column 'id' is not a nested type, ADD COLUMN can only be used on nested types
 ALTER TABLE t ADD COLUMN id.x INTEGER;
 
 statement ok

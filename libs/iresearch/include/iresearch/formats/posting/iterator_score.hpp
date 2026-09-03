@@ -60,13 +60,14 @@ class SinglePruningIterator : public DocIterator {
     : _skip{doc_limits::kBlockSize, doc_limits::kSkipSize, true} {}
 
   ScoreFunction PrepareScore(const PrepareScoreContext& ctx) final {
-    SDB_ASSERT(ctx.scorer);
-    if (auto bound_source = ctx.scorer->PrepareScoreBoundSource()) {
-      auto bound_func = ctx.scorer->PrepareScorer({
+    SDB_ASSERT(_score.scorer);
+    const auto& scorer = *_score.scorer;
+    if (auto bound_source = scorer.PrepareScoreBoundSource()) {
+      auto bound_func = scorer.PrepareScorer({
         .segment = *ctx.segment,
         .field = _field,
         .doc_attrs = *bound_source,
-        .stats = _stats,
+        .stats = _score.stats,
         .boost = _boost,
       });
       _skip.Reader().SetScoreBoundScorer(std::move(bound_func),
@@ -76,17 +77,18 @@ class SinglePruningIterator : public DocIterator {
       PrepareSkipReader(_deferred_skip_offs, _deferred_skip_docs_count);
       _deferred_skip_offs = 0;
     }
-    return ctx.scorer->PrepareScorer({
+    return _score.scorer->PrepareScorer({
       .segment = *ctx.segment,
       .field = _field,
       .doc_attrs = *this,
       .fetcher = ctx.fetcher,
-      .stats = _stats,
+      .stats = _score.stats,
       .boost = _boost,
     });
   }
 
-  void Prepare(const PostingCookie& meta, const IndexInput* doc_in);
+  void Prepare(const PostingCookie& meta, const IndexInput* doc_in,
+               const Scorer* scorer);
 
   void SetSkipBoundsBelow(doc_id_t max) noexcept {
     _skip.Reader().SetSkipBoundsBelow(max);
@@ -147,9 +149,9 @@ class SinglePruningIterator : public DocIterator {
     _freq_block[index] = *(std::end(_freqs) - _left_in_leaf - 1);
   }
 
-  void Init(const PostingCookie& cookie) noexcept {
+  void Init(const PostingCookie& cookie, const Scorer* scorer) noexcept {
     _field = cookie.field;
-    _stats = cookie.stats;
+    _score = {scorer, cookie.stats};
     _boost = cookie.boost;
   }
 
@@ -372,7 +374,7 @@ class SinglePruningIterator : public DocIterator {
   using Attributes = AttributesImpl<IteratorTraits>;
 
   FieldProperties _field;
-  const byte_type* _stats = nullptr;
+  ScoreSource _score;
   score_t _boost = kNoBoost;
 
   ABSL_CACHELINE_ALIGNED uint32_t _enc_buf[doc_limits::kBlockSize];
@@ -900,8 +902,8 @@ doc_id_t SinglePruningIterator<IteratorTraits, Root, Pos, Offs,
 template<typename FormatTraits, bool Root, bool Pos, bool Offs,
          typename InputType>
 void SinglePruningIterator<FormatTraits, Root, Pos, Offs, InputType>::Prepare(
-  const PostingCookie& meta, const IndexInput* doc_in) {
-  Init(meta);
+  const PostingCookie& meta, const IndexInput* doc_in, const Scorer* scorer) {
+  Init(meta, scorer);
 
   // Set default bound with max score so no blocks are ever pruned
   _skip.Reader().SetScoreBoundScorer(

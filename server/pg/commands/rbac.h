@@ -26,7 +26,7 @@
 #include <string_view>
 #include <vector>
 
-#include "catalog/object.h"
+#include "catalog/entry.h"
 #include "pg/connection_context.h"
 namespace sdb::pg {
 
@@ -107,12 +107,12 @@ struct GrantObjectOptions {
   std::string granted_by;
 };
 
-void GrantObject(ConnectionContext& ctx, catalog::ObjectType type,
+void GrantObject(ConnectionContext& ctx, duckdb::CatalogType type,
                  std::span<const ParsedPriv> privileges,
                  std::string_view obj_name, std::string_view grantee,
                  bool revoke, const GrantObjectOptions& opts = {});
 
-void GrantObjectAllInSchema(ConnectionContext& ctx, catalog::ObjectType type,
+void GrantObjectAllInSchema(ConnectionContext& ctx, duckdb::CatalogType type,
                             std::span<const ParsedPriv> privileges,
                             std::string_view schema_name,
                             std::string_view grantee, bool revoke,

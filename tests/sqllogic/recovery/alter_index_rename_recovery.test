@@ -1,0 +1,252 @@
+control substitution on
+
+# ALTER INDEX ... RENAME TO is catalog-only -- store objects are named by id
+# (t<table_id>, c<column_id>, i<index_id>) -- so the rename is one put of the
+# index definition and nothing else.
+#
+# That put used to be a plain `PutObject`, which names only the parent the
+# definition is filed under. For an index that parent is its relation, so
+# replay handed SecondaryIndex/InvertedIndex::Deserialize a ReadContext whose
+# schema_id was the table id, with no database and no relation at all. Boot
+# then registered the index under a schema that does not exist and tripped
+# `(it != outer.end())` in ResolutionTable::AddObject<Relation>. Compaction
+# rewrote every index definition the same way, so a compacted file lost the
+# ancestry even with no rename in it.
+#
+# Index definitions now go out as `PutIndex`, which carries database, schema
+# and relation -- from the create, from every ALTER that rewrites the
+# definition, and from compaction.
+
+
+statement ok
+CREATE TABLE rni_t (id INTEGER, body TEXT);
+
+
+statement ok
+INSERT INTO rni_t VALUES (1, 'alpha beta'), (2, 'beta gamma');
+
+
+statement ok
+CREATE INDEX rni_ai ON rni_t(body);
+
+
+statement ok
+ALTER INDEX rni_ai RENAME TO rni_ai2;
+
+
+# Twice: the second rename replays on top of the record the first one wrote.
+statement ok
+ALTER INDEX rni_ai2 RENAME TO rni_ai3;
+
+
+# COMMENT rewrites the same definition, so it takes the same path.
+statement ok
+COMMENT ON INDEX rni_ai3 IS 'renamed twice';
+
+
+# An inverted index rebuilds through its own Deserialize, which reads the same
+# ancestry; renaming it must leave the iresearch directory (named by id) alone.
+statement ok
+CREATE TEXT SEARCH DICTIONARY rni_en(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'none',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true
+);
+
+
+statement ok
+CREATE INDEX rni_inv ON rni_t USING inverted(id, body rni_en);
+
+
+statement ok
+ALTER INDEX rni_inv RENAME TO rni_inv2;
+
+
+statement ok
+VACUUM (REFRESH_TABLE) rni_t;
+
+
+# Renaming a table takes the same catalog-only path.
+statement ok
+CREATE TABLE rni_tbl (x INTEGER);
+
+
+statement ok
+INSERT INTO rni_tbl VALUES (7);
+
+
+statement ok
+ALTER TABLE rni_tbl RENAME TO rni_tbl2;
+
+
+# Rename then drop: the dropped index must not come back under either name.
+statement ok
+CREATE INDEX rni_di ON rni_t(id);
+
+
+statement ok
+ALTER INDEX rni_di RENAME TO rni_di2;
+
+
+statement ok
+DROP INDEX rni_di2;
+
+
+# Drop then re-create under the same name: replay sees the name twice.
+statement ok
+CREATE INDEX rni_ri ON rni_t(id);
+
+
+statement ok
+DROP INDEX rni_ri;
+
+
+statement ok
+CREATE INDEX rni_ri ON rni_t(id, body);
+
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+statement error connection closed
+SELECT 1;
+
+
+# --- restart ---
+
+# Wait for the server to come back on the assertion that matters: boot has to
+# get through registering the renamed index to answer this at all.
+connection after_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT count(*) FROM rni_t;
+----
+count
+2
+
+
+# The fix point: boot rebuilt the renamed index instead of aborting, and it is
+# resident under its current name only.
+connection after_crash
+query
+SELECT relname FROM pg_class WHERE relname LIKE 'rni_ai%' ORDER BY relname;
+----
+relname
+rni_ai3
+
+
+connection after_crash
+query
+SELECT count(*) FROM rni_t WHERE body = 'beta gamma';
+----
+count
+1
+
+
+# The renamed inverted index answers under its new name, so its storage was
+# rebound to the definition boot restored.
+connection after_crash
+query
+SELECT id FROM rni_inv2 WHERE body @@ ts_phrase('beta') ORDER BY id;
+----
+id
+1
+2
+
+
+connection after_crash
+query
+SELECT count(*) FROM rni_tbl2;
+----
+count
+1
+
+
+connection after_crash
+query
+SELECT count(*) FROM pg_class WHERE relname IN ('rni_di', 'rni_di2');
+----
+count
+0
+
+
+connection after_crash
+query
+SELECT relname FROM pg_class WHERE relname = 'rni_ri';
+----
+relname
+rni_ri
+
+
+# A checkpoint rewrites the whole file from the catalog, so the rewritten index
+# records have to carry the ancestry as well. Force one, then crash into a boot
+# that reads only the rewritten file.
+connection after_crash
+statement ok
+SET sdb_faults = 'compact_inside_ddl';
+
+
+connection after_crash
+statement ok
+CREATE TABLE rni_compact (x INTEGER);
+
+
+connection after_crash
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+connection after_crash
+statement error connection closed
+SELECT 1;
+
+
+# --- restart, on the compacted file ---
+
+connection after_compact
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT relname FROM pg_class WHERE relname LIKE 'rni_ai%' ORDER BY relname;
+----
+relname
+rni_ai3
+
+
+connection after_compact
+query
+SELECT id FROM rni_inv2 WHERE body @@ ts_phrase('beta') ORDER BY id;
+----
+id
+1
+2
+
+
+connection after_compact
+query
+SELECT count(*) FROM rni_compact;
+----
+count
+0
+
+
+connection after_compact
+statement ok
+DROP TABLE rni_compact;
+
+
+connection after_compact
+statement ok
+DROP TABLE rni_tbl2;
+
+
+connection after_compact
+statement ok
+DROP TABLE rni_t;
+
+
+connection after_compact
+statement ok
+DROP TEXT SEARCH DICTIONARY rni_en;

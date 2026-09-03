@@ -64,7 +64,8 @@ struct SerializationContext {
   message::Writer* writer = nullptr;
   int8_t extra_float_digits = 0;
   ByteaOutput bytea_output;
-  const catalog::Snapshot* snapshot = nullptr;
+  // The session a regclass / regnamespace rendering resolves through.
+  duckdb::ClientContext* client = nullptr;
   std::string_view quote_seq = "\"";  // can be mixed with backslashes
   uint32_t backslash_count = 1;
   bool in_record = false;

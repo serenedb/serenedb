@@ -122,7 +122,7 @@ CREATE SCHEMA myschema;
 statement ok
 CREATE TABLE myschema.t1 (i INTEGER);
 
-statement error (?i)cannot drop schema myschema because other objects depend on it
+statement error (?i)cannot drop entry "myschema" because there are entries that depend on it
 DROP SCHEMA myschema;
 
 # DOCS_TEST: example_011

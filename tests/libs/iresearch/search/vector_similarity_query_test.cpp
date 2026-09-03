@@ -28,6 +28,7 @@
 #include "iresearch/index/iterators.hpp"
 #include "iresearch/search/cost.hpp"
 #include "iresearch/search/vector_similarity_filter.hpp"
+#include "iresearch/search/vector_similarity_query.hpp"
 #include "iresearch/store/memory_directory.hpp"
 #include "search/filter_test_case_base.hpp"
 #include "search_fields.hpp"
@@ -48,11 +49,16 @@ inline constexpr uint32_t kDim = 4;
 // lead (see the sqllogic counterpart in inverted_index_ivf_filter.test); this
 // drives the iterator directly, with no SQL planner in between.
 
-irs::IndexWriterOptions MakeWriterOptions() {
+irs::IndexWriterOptions MakeWriterOptions(
+  duckdb::CompressionType compression =
+    duckdb::CompressionType::COMPRESSION_AUTO,
+  uint32_t row_group_size = DEFAULT_ROW_GROUP_SIZE) {
   auto opts = irs::tests::DefaultWriterOptions();
-  opts.column_options = [](irs::field_id id) -> irs::ColumnOptions {
+  opts.row_group_size = row_group_size;
+  opts.column_options = [compression](irs::field_id id) -> irs::ColumnOptions {
     irs::ColumnOptions col;
     if (id == kVec) {
+      col.compression = compression;
       col.ann_info = irs::AnnInfo{
         .centroids_id = kVec,
         .postings_id = kVec,
@@ -89,12 +95,14 @@ void WriteVectorAt(irs::ColWriter& cs, irs::doc_id_t doc, float x) {
 }
 
 // Docs 1..n with emb = [doc, 0, 0, 0].
-irs::DirectoryReader BuildIndex(irs::Directory& dir, irs::doc_id_t n) {
+irs::DirectoryReader BuildIndex(
+  irs::Directory& dir, irs::doc_id_t n,
+  irs::IndexWriterOptions opts = MakeWriterOptions()) {
   constexpr auto kFormatId = "1_5simd";
   auto codec = irs::formats::Get(kFormatId);
   EXPECT_NE(nullptr, codec);
   auto writer =
-    irs::IndexWriter::Make(dir, codec, irs::kOmCreate, MakeWriterOptions());
+    irs::IndexWriter::Make(dir, codec, irs::kOmCreate, std::move(opts));
   EXPECT_NE(nullptr, writer);
 
   irs::tests::StringField name_field;
@@ -262,5 +270,50 @@ TEST_F(VectorSimilarityQueryTest, MixedAdvanceSeekMultiBlock) {
     }
   }
 }
+
+class RerankExactDistancesTest
+  : public ::testing::TestWithParam<duckdb::CompressionType> {
+ protected:
+  static constexpr uint32_t kRowGroup = 64;
+
+  void Build(irs::doc_id_t n) {
+    _reader = BuildIndex(_dir, n, MakeWriterOptions(GetParam(), kRowGroup));
+    ASSERT_NE(nullptr, _reader);
+    ASSERT_EQ(1U, _reader->size());
+    const auto* column = (*_reader)[0].Column(kVec);
+    ASSERT_NE(nullptr, column);
+    const auto* child = column->Child();
+    ASSERT_NE(nullptr, child);
+    ASSERT_LT(1U, child->DataBlocks().size());
+    for (const auto& block : child->DataBlocks()) {
+      ASSERT_EQ(GetParam(), block.codec->type);
+    }
+  }
+
+  irs::MemoryDirectory _dir;
+  irs::DirectoryReader _reader;
+};
+
+TEST_P(RerankExactDistancesTest, Rerank) {
+  Build(300);
+  const auto& segment = (*_reader)[0];
+  const std::vector<float> query(kDim, 0.f);
+  std::vector<irs::ScoreDoc> hits;
+  for (irs::doc_id_t doc :
+       {1u, 2u, 3u, 40u, 64u, 65u, 66u, 128u, 129u, 200u, 299u, 300u}) {
+    hits.push_back({.doc = doc});
+  }
+  irs::RerankExactDistances(segment, *segment.Column(kVec), kDim, query,
+                            irs::VectorMetric::L2Sqr, hits);
+  for (const auto& hit : hits) {
+    const auto x = static_cast<float>(hit.doc);
+    ASSERT_EQ(-x * x, hit.score);
+  }
+}
+
+INSTANTIATE_TEST_SUITE_P(
+  Codec, RerankExactDistancesTest,
+  ::testing::Values(duckdb::CompressionType::COMPRESSION_UNCOMPRESSED,
+                    duckdb::CompressionType::COMPRESSION_ALP));
 
 }  // namespace

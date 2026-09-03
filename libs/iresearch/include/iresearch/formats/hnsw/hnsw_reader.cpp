@@ -118,8 +118,12 @@ HnswSearchScratch& ThreadScratch() {
 
 class HnswTopKIterator : public DocIterator {
  public:
-  HnswTopKIterator(std::vector<ScoreDoc>&& hits, score_t boost)
-    : _hits{std::move(hits)}, _boost{boost}, _cost{_hits.size()} {
+  HnswTopKIterator(std::vector<ScoreDoc>&& hits, score_t boost,
+                   ScoreSource score)
+    : _hits{std::move(hits)},
+      _boost{boost},
+      _score{score},
+      _cost{_hits.size()} {
     _boosts.value = _scores.data();
   }
 
@@ -143,13 +147,13 @@ class HnswTopKIterator : public DocIterator {
   }
 
   ScoreFunction PrepareScore(const PrepareScoreContext& ctx) final {
-    SDB_ASSERT(ctx.scorer);
-    return ctx.scorer->PrepareScorer({
+    SDB_ASSERT(_score.scorer);
+    return _score.scorer->PrepareScorer({
       .segment = *ctx.segment,
       .field = {},
       .doc_attrs = *this,
       .fetcher = ctx.fetcher,
-      .stats = nullptr,
+      .stats = _score.stats,
       .boost = _boost,
     });
   }
@@ -175,6 +179,7 @@ class HnswTopKIterator : public DocIterator {
   std::vector<ScoreDoc> _hits;
   size_t _pos = 0;
   score_t _boost;
+  ScoreSource _score;
   CostAttr _cost;
   BoostBlockAttr _boosts;
   std::array<score_t, kScoreBlock> _scores;
@@ -218,7 +223,7 @@ class HnswQuery : public QueryBuilder {
       _inclusive{inclusive} {}
 
   DocIterator::ptr Execute(const ExecutionContext& ctx,
-                           const StatsBuffer& /*stats*/) const final {
+                           const StatsBuffer& stats) const final {
     auto& scratch = ThreadScratch();
     WithHnswDist(*_data, _query, _codebook, _metric, _d, _record_size,
                  [&](auto& dist) {
@@ -237,7 +242,7 @@ class HnswQuery : public QueryBuilder {
       return DocIterator::empty();
     }
     return memory::make_tracked<HnswTopKIterator>(ctx.memory, std::move(hits),
-                                                  _boost);
+                                                  _boost, stats.Source());
   }
 
   void Visit(PreparedStateVisitor&, score_t) const final {}
@@ -334,7 +339,7 @@ std::shared_ptr<const HnswData> HnswIndex::Load(
 QueryBuilder::ptr HnswIndex::PrepareKnn(const SubReader& segment,
                                         const PrepareContext& ctx,
                                         const VectorFilterOptions& opts,
-                                        uint32_t effort) const {
+                                        uint32_t /*effort*/) const {
   SDB_ASSERT(opts.query.size() == _header.d);
   if (Empty()) {
     return QueryBuilder::Empty();
@@ -346,11 +351,8 @@ QueryBuilder::ptr HnswIndex::PrepareKnn(const SubReader& segment,
   auto query = NormalizedQuery(opts, _header.d);
   auto codebook = data->stats ? data->stats->MakeCodebook(query) : nullptr;
   SDB_ASSERT(!data->stats || codebook);
-  const auto ef =
-    std::max(opts.ef_search != 0 ? opts.ef_search
-                                 : std::max(effort, kHnswDefaultEfSearch),
-             opts.min_ef);
-  SDB_ASSERT(ef != 0);
+  SDB_ASSERT(opts.ef_search != 0);
+  const auto ef = std::max(opts.ef_search, opts.min_ef);
   return memory::make_tracked<HnswQuery>(
     ctx.memory, segment, std::move(data), std::move(codebook), std::move(query),
     opts.metric, _header.d, _header.record_size, ef, kHnswNoThreshold,

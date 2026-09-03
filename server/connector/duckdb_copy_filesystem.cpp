@@ -34,7 +34,6 @@
 #include "connector/duckdb_client_state.h"
 #include "pg/connection_context.h"
 #include "pg/copy_in_bridge.h"
-#include "pg/copy_messages_queue.h"
 #include "pg/errcodes.h"
 #include "pg/protocol.h"
 #include "pg/sql_exception_macro.h"
@@ -45,26 +44,7 @@ namespace {
 constexpr std::string_view kDevStdin = "/dev/stdin";
 constexpr std::string_view kDevStdout = "/dev/stdout";
 
-// Column count is 0: we don't know it at OpenFile time, and for FORMAT
-// TEXT the field is informational -- clients assume text per column.
-void SendCopyResponse(message::Buffer& send_buffer, uint8_t msg_type) {
-  constexpr size_t kColumnCount = 0;
-  constexpr size_t kMsgSize = sizeof(uint8_t) + sizeof(int32_t) +
-                              sizeof(uint8_t) + sizeof(int16_t) +
-                              (kColumnCount * sizeof(int16_t));
-  message::Writer writer{send_buffer};
-  std::span data{writer.Alloc(kMsgSize), kMsgSize};
-  data[0] = msg_type;
-  absl::big_endian::Store32(data.data() + 1,
-                            static_cast<int32_t>(kMsgSize - 1));
-  data[5] = 0;
-  absl::big_endian::Store16(data.data() + 6,
-                            static_cast<int16_t>(kColumnCount));
-  writer.Commit(true);
-}
-
 struct ConnectionPlumbing {
-  pg::CopyMessagesQueue* queue;
   pg::CopyInBridge* bridge;
   message::Buffer* send_buffer;
   SereneDBClientState& state;
@@ -96,23 +76,19 @@ ConnectionPlumbing GetPlumbing(duckdb::FileOpener* opener,
       ERR_MSG("COPY ", path,
               " requires a PG wire connection (transport not attached)"));
   }
-  return {conn.GetCopyQueue(), conn.GetCopyInBridge(), send, *state};
+  return {conn.GetCopyInBridge(), send, *state};
 }
 
 }  // namespace
 
 // Reads the non-seekable COPY FROM STDIN wire stream SINGLE-PASS, off the
-// bridge (new server) or the message queue (old server). Every COPY format
-// opens it exactly once (csv/json sniff+scan share one buffer-manager pass), so
-// the ctor rejects an unexpected re-open -- a non-seekable stream has nothing
-// to replay.
+// bridge. Every COPY format opens it exactly once (csv/json sniff+scan share
+// one buffer-manager pass), so the ctor rejects an unexpected re-open -- a
+// non-seekable stream has nothing to replay. The session has already sent
+// CopyInResponse by the time the handle exists.
 struct CopyInFileHandle final : public duckdb::FileHandle {
-  // `bridge` (new coroutine server) and `queue` (old server) are mutually
-  // exclusive: exactly one is non-null. With the bridge, the session has
-  // already sent CopyInResponse, so the handle doesn't.
   CopyInFileHandle(duckdb::FileSystem& fs, SereneDBClientState& state,
-                   pg::CopyMessagesQueue* queue, pg::CopyInBridge* bridge,
-                   message::Buffer& send_buffer)
+                   pg::CopyInBridge& bridge)
     : duckdb::FileHandle(
         fs, std::string{kDevStdin},
         duckdb::FileOpenFlags(duckdb::FileOpenFlags::FILE_FLAGS_READ)),
@@ -129,11 +105,6 @@ struct CopyInFileHandle final : public duckdb::FileHandle {
         ERR_MSG(
           "COPY FROM STDIN: unexpected re-open of a non-seekable stream"));
     }
-    if (queue) {
-      queue->StartListening();
-      SendCopyResponse(send_buffer, PQ_MSG_COPY_IN_RESPONSE);
-      _iterator.emplace(*queue);
-    }
   }
 
   ~CopyInFileHandle() final = default;
@@ -144,10 +115,7 @@ struct CopyInFileHandle final : public duckdb::FileHandle {
     if (_state.copy_stdin_done) {
       return 0;
     }
-    auto* out = static_cast<char*>(buf);
-    const auto read = _bridge ? _bridge->Read(out, nr_bytes)
-                              : static_cast<int64_t>(_iterator->Next(
-                                  out, static_cast<uint64_t>(nr_bytes)));
+    const auto read = _bridge.Read(static_cast<char*>(buf), nr_bytes);
     if (read == 0) {
       _state.copy_stdin_done = true;
     }
@@ -156,8 +124,7 @@ struct CopyInFileHandle final : public duckdb::FileHandle {
 
  private:
   SereneDBClientState& _state;
-  pg::CopyInBridge* _bridge;
-  std::optional<pg::CopyMessagesQueueIterator> _iterator;
+  pg::CopyInBridge& _bridge;
 };
 
 // A dumb byte sink: each Write becomes one CopyData frame, nothing more. The
@@ -205,15 +172,14 @@ duckdb::unique_ptr<duckdb::FileHandle> SereneDBCopyFileSystem::OpenFile(
   duckdb::optional_ptr<duckdb::FileOpener> opener) {
   if (path == kDevStdin) {
     auto plumbing = GetPlumbing(opener.get(), path);
-    if (!plumbing.queue && !plumbing.bridge) {
+    if (!plumbing.bridge) {
       THROW_SQL_ERROR(
         ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
         ERR_MSG("COPY ", path,
                 " requires a PG wire connection (transport not attached)"));
     }
     return duckdb::make_uniq<CopyInFileHandle>(*this, plumbing.state,
-                                               plumbing.queue, plumbing.bridge,
-                                               *plumbing.send_buffer);
+                                               *plumbing.bridge);
   }
   if (path == kDevStdout) {
     auto plumbing = GetPlumbing(opener.get(), path);

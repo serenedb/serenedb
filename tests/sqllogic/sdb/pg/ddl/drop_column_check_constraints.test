@@ -1,0 +1,128 @@
+# ALTER TABLE ... DROP COLUMN takes every CHECK that names the column with it,
+# as postgres does. A CHECK left behind naming a column the table no longer
+# lists makes the table permanently un-insertable: binding the constraint is
+# part of binding the write.
+
+# --- 1. Single-column CHECK ----------------------------------------------
+
+statement ok
+CREATE TABLE dropcol_check_one (a INT, b INT CHECK (b > 0));
+
+
+statement count 1
+INSERT INTO dropcol_check_one VALUES (1, 1);
+
+
+query
+SELECT conname FROM pg_catalog.pg_constraint
+  WHERE conrelid = 'dropcol_check_one'::regclass ORDER BY conname
+----
+conname
+dropcol_check_one_b_check
+
+
+statement ok
+ALTER TABLE dropcol_check_one DROP COLUMN b;
+
+
+query
+SELECT conname FROM pg_catalog.pg_constraint
+  WHERE conrelid = 'dropcol_check_one'::regclass ORDER BY conname
+----
+conname
+
+
+statement count 1
+INSERT INTO dropcol_check_one VALUES (2);
+
+
+query
+SELECT a FROM dropcol_check_one ORDER BY a
+----
+a
+1
+2
+
+
+statement ok
+DROP TABLE dropcol_check_one;
+
+
+# --- 2. CHECK over two columns, one of them dropped -----------------------
+
+statement ok
+CREATE TABLE dropcol_check_pair (
+  a INT, b INT, CONSTRAINT dropcol_ab_ck CHECK (a + b > 0)
+);
+
+
+statement count 1
+INSERT INTO dropcol_check_pair VALUES (1, 1);
+
+
+statement ok
+ALTER TABLE dropcol_check_pair DROP COLUMN b;
+
+
+query
+SELECT conname FROM pg_catalog.pg_constraint
+  WHERE conrelid = 'dropcol_check_pair'::regclass ORDER BY conname
+----
+conname
+
+
+statement count 1
+INSERT INTO dropcol_check_pair VALUES (2);
+
+
+query
+SELECT a FROM dropcol_check_pair ORDER BY a
+----
+a
+1
+2
+
+
+statement ok
+DROP TABLE dropcol_check_pair;
+
+
+# --- 3. A CHECK over another column stays, and stays enforced -------------
+
+statement ok
+CREATE TABLE dropcol_check_kept (
+  a INT, b INT, CONSTRAINT dropcol_a_ck CHECK (a > 0)
+);
+
+
+statement ok
+ALTER TABLE dropcol_check_kept DROP COLUMN b;
+
+
+query
+SELECT conname FROM pg_catalog.pg_constraint
+  WHERE conrelid = 'dropcol_check_kept'::regclass ORDER BY conname
+----
+conname
+dropcol_a_ck
+
+
+statement count 1
+INSERT INTO dropcol_check_kept VALUES (5);
+
+
+statement error
+INSERT INTO dropcol_check_kept VALUES (-5);
+----
+db error: ERROR: CHECK constraint failed on table dropcol_check_kept with expression CHECK((a > 0))
+
+
+query
+SELECT a FROM dropcol_check_kept ORDER BY a
+----
+a
+5
+
+
+statement ok
+DROP TABLE dropcol_check_kept;

@@ -33,28 +33,28 @@
 #include "basics/containers/flat_hash_map.h"
 #include "basics/containers/flat_hash_set.h"
 #include "basics/containers/node_hash_map.h"
+#include "basics/down_cast.h"
 #include "catalog/index.h"
 #include "catalog/persistence/inverted_index.h"
 #include "catalog/scorer_options.h"
-#include "catalog/search_analyzer_impl.h"
 #include "catalog/tokenizer.h"
+#include "search/search_analyzer_impl.h"
 
-namespace duckdb {
-
-class Serializer;
-class Deserializer;
-
-}  // namespace duckdb
 namespace sdb::search {
 
 class InvertedIndexStorage;
 
 }  // namespace sdb::search
+namespace duckdb {
+
+class AttachedDatabase;
+
+}  // namespace duckdb
 namespace sdb::catalog {
 namespace term_dict {
 
 inline constexpr irs::field_id kPKFieldId =
-  static_cast<irs::field_id>(Column::kGeneratedPKId.id());
+  static_cast<irs::field_id>(kGeneratedPKId.id());
 
 enum class Kind : uint8_t {
   Unsupported,
@@ -165,79 +165,175 @@ struct InvertedIndexEntryInfo {
   bool IsStored() const noexcept { return store_values || IsAnn(); }
 };
 
+// The IVF descriptor for an entry with an ivf_config (nullopt otherwise), keyed
+// off `field_id` (its centroids/postings ids).
+std::optional<irs::IvfInfo> IvfInfoForEntry(
+  irs::field_id field_id, const InvertedIndexEntryInfo& entry);
+
+// The text-search dictionaries an index's entries name, resolved once. The
+// definitions are catalog entries now, so a per-field lookup on a flush path
+// would be a catalog read per column per chunk; the tokenize paths take this
+// instead, built where a transaction is still in scope.
+using TokenizerMap = containers::FlatHashMap<ObjectId, TokenizerRef>;
+
+// Read through `context`'s own transaction, out of the catalog of the database
+// it is connected to -- the one holding both the index and them. Never through
+// the shared by-id cache: that holds what is committed, and a reader has to
+// keep seeing the dictionary its own index version names after another session
+// has dropped both.
+TokenizerMap ResolveTokenizers(duckdb::ClientContext& context,
+                               const Index& index);
+// The same for the feed, which reaches here from WAL replay and from the tail
+// of a commit: there the attachment is at hand and a transaction may not be,
+// and the attachment may still be opening.
+TokenizerMap ResolveTokenizers(duckdb::ClientContext* context,
+                               duckdb::AttachedDatabase& db,
+                               const Index& index);
+
 struct ColumnTokenizer {
   Tokenizer::TokenizerWrapper analyzer;
   irs::IndexFeatures features = irs::IndexFeatures::None;
   irs::field_id tokenizer_column = irs::field_limits::invalid();
 };
 
-// Also an irs::IndexFieldOptions: the index IS the per-column physical-encoding
-// config the iresearch writer consults at flush/merge. A write or compaction
-// hands the writer the index from its own DDL snapshot, so the long-lived
-// writer never reaches into the live catalog. Copy-on-write means an unchanged
-// index is the same object across snapshots, so the inherited EqualOptions
-// (pointer identity) is the cheap segment-reuse check.
+// The analyzer + features for one entry: its text dictionary (the default
+// string tokenizer when absent) plus its synthetic tokenizer column.
+// Entry-level rather than index-level, for a config merged across several
+// indexes.
+ColumnTokenizer TokenizerForEntry(const TokenizerMap& dicts,
+                                  const InvertedIndexEntryInfo& entry);
+
+// One inverted index, in the form a catalog entry is built from -- and also an
+// irs::IndexFieldOptions: the definition IS the per-column physical-encoding
+// config the iresearch writer consults at flush/merge, handed over from the
+// caller's own DDL view so the long-lived writer never reaches into the live
+// catalog. The derived maps below alias this object's own storage, hence no
+// copy constructor: Copy() rebuilds a fresh one from the payload.
 class InvertedIndex final : public Index, public irs::IndexFieldOptions {
  public:
   using Entries =
     containers::NodeHashMap<irs::field_id, InvertedIndexEntryInfo>;
 
-  // `columns` are the de-duped plain-column keys (each key's field_id is its
-  // column id). `expression_keys` carry each expression's payload + its
-  // allocated field_id as one unit. `entries` is the per-field config keyed by
-  // field_id. `predicate` is the partial-index predicate (empty
+  // `columns` are the de-duped plain-column keys; `expression_keys` carry each
+  // expression's payload + allocated field_id; `entries` is the per-field
+  // config keyed by field_id. `predicate` is the partial-index predicate (empty
   // serialized_expr = full index); its dependent columns join the referenced
-  // set so the store mirror declares them and duckdb populates their chunk
-  // vectors on DML.
-  InvertedIndex(ObjectId database_id, ObjectId schema_id, ObjectId id,
-                ObjectId relation_id, std::string name,
-                std::vector<Column::Id> columns,
-                std::vector<ExpressionKey> expression_keys, Entries entries,
-                InvertedIndexOptions options, ExpressionData predicate)
-    : Index{database_id,
-            schema_id,
+  // set so the store mirror declares them for DML. `col_to_term_field` is empty
+  // for a transactional index (field_id == column id) and populated for a
+  // Search-table one, so several indexes on one column get distinct term fields
+  // in the shared store; it is restored from the table's tag, not this index's
+  // payload.
+  InvertedIndex(
+    ObjectId schema_id, ObjectId id, ObjectId relation_id,
+    std::string_view name, std::string comment, std::vector<ColumnId> columns,
+    std::vector<ExpressionKey> expression_keys, Entries entries,
+    InvertedIndexOptions options, ExpressionData predicate,
+    containers::FlatHashMap<ColumnId, irs::field_id> col_to_term_field = {})
+    : Index{schema_id,
             id,
             relation_id,
-            std::move(name),
+            name,
+            std::move(comment),
             DeriveIds(columns,
                       std::views::transform(expression_keys,
                                             [](const auto& key) -> const auto& {
                                               return key.data;
                                             }),
-                      predicate.dependent_columns),
-            ObjectType::InvertedIndex},
+                      predicate.dependent_columns)},
       _entries{std::move(entries)},
       _expression_keys{std::move(expression_keys)},
+      _col_to_term_field{std::move(col_to_term_field)},
       _options{std::move(options)},
       _predicate{std::move(predicate)} {
     row_group_size = _options.row_group_size;
-    BuildExprByFieldIdIndex();
-    BuildSerializedExprIndex();
-    BuildFieldLookupIndex();
-    BumpTickServerForEntryIds();
+    BuildDerivedIndexes();
+    RestoreEntryIds();
   }
 
-  static std::shared_ptr<InvertedIndex> Deserialize(duckdb::Deserializer& src,
-                                                    ReadContext ctx);
-  void Serialize(duckdb::Serializer& sink) const final;
-  std::shared_ptr<Object> Clone() const final;
+  InvertedIndex(const InvertedIndex&) = delete;
+  InvertedIndex& operator=(const InvertedIndex&) = delete;
+
+  // Whether any column carries a term field_id of its own, i.e. whether the
+  // payload needs the wider layout. Empty means every column's field_id is its
+  // column id, which the narrow layout already says.
+  bool HasAllocatedTermFields() const noexcept {
+    return !_col_to_term_field.empty();
+  }
+
+  // The allocations themselves, for a rebuild that must carry them across (see
+  // RebuiltWith): the payload's narrow layout has no room for them.
+  const containers::FlatHashMap<ColumnId, irs::field_id>& TermFieldsByColumn()
+    const noexcept {
+    return _col_to_term_field;
+  }
+
+  persistence::InvertedIndexData ToData() const;
+  // The wider layout: every column paired with its allocated term field_id.
+  persistence::SearchInvertedIndexData ToSearchData() const;
+  void SerializePayload(duckdb::Serializer& sink) const final;
+  void WriteJson(basics::JsonSink& sink) const final;
+
+  // `column_term_fields` says which layout the payload holds -- it cannot be
+  // derived here, since the map it would come from is what is being read. It
+  // rides the record as its own property, so a narrow payload is unchanged.
+  static duckdb::unique_ptr<InvertedIndex> Deserialize(
+    duckdb::Deserializer& src, ObjectId schema_id, ObjectId id,
+    ObjectId relation_id, bool column_term_fields = false);
+  // From the persisted payload, which stores the per-field config in its packed
+  // form -- boot replay and Copy() both come through here. The term-field map
+  // is passed through rather than taken from `data`, so a rebuild (ALTER) does
+  // not drop a Search-table index's allocations.
+  static duckdb::unique_ptr<InvertedIndex> FromData(
+    ObjectId schema_id, ObjectId id, ObjectId relation_id,
+    persistence::InvertedIndexData data,
+    containers::FlatHashMap<ColumnId, irs::field_id> col_to_term_field = {});
+
+  // The allocated term field_id for a plain column.
+  irs::field_id TermFieldForColumn(ColumnId column) const noexcept {
+    if (auto it = _col_to_term_field.find(column);
+        it != _col_to_term_field.end()) {
+      return it->second;
+    }
+    return static_cast<irs::field_id>(column);
+  }
+
+  // The plain column a Search-table allocated term field belongs to; call only
+  // with such a field (asserted).
+  ColumnId ColumnForTermField(irs::field_id field_id) const noexcept {
+    for (const auto& [column, term_field] : _col_to_term_field) {
+      if (term_field == field_id) {
+        SDB_ASSERT(ReferencesColumn(column),
+                   "ColumnForTermField: term field maps to a non-indexed "
+                   "column ",
+                   column);
+        return column;
+      }
+    }
+    SDB_ASSERT(false,
+               "ColumnForTermField: not an allocated term field: ", field_id);
+    return kInvalidColumnId;
+  }
 
   const InvertedIndexEntryInfo* FindEntry(irs::field_id id) const noexcept;
   // Convenience: returns the entry only if it is a plain column (not an
   // indexed expression). Use when the caller knows column id semantics.
   const InvertedIndexEntryInfo* FindColumnInfo(
-    catalog::Column::Id column_id) const noexcept;
+    catalog::ColumnId column_id) const noexcept;
 
   // The expression key owning `field_id`, or nullptr if `field_id` is a plain
   // column key (or unknown). Pointer is stable for the index's lifetime (into
   // the immutable _expression_keys vector).
   const ExpressionData* ExpressionByFieldId(irs::field_id id) const noexcept;
 
-  // The expression keys (payload + allocated field_id), one self-contained unit
-  // each.
   const std::vector<ExpressionKey>& ExpressionKeys() const noexcept {
     return _expression_keys;
   }
+
+  // Whether `field_id`'s expression feeds a synthetic geo column, where JSON
+  // object/array leaves are geometry rather than the error they are anywhere
+  // else. Both the DML feed and the CREATE INDEX build gate their leaf
+  // rejection on this, so it lives with the keys instead of beside each.
+  bool IsGeoJsonKey(const ExpressionKey& key) const noexcept;
 
   struct FieldLookup {
     const InvertedIndexEntryInfo* entry = nullptr;
@@ -247,10 +343,10 @@ class InvertedIndex final : public Index, public irs::IndexFieldOptions {
   static void AppendKindSuffix(std::string& out,
                                const duckdb::LogicalType& type);
 
-  ColumnTokenizer GetTokenizer(const std::shared_ptr<const Snapshot>& snapshot,
+  ColumnTokenizer GetTokenizer(const TokenizerMap& dicts,
                                irs::field_id field_id) const;
 
-  bool IsKeywordField(const Snapshot& snapshot,
+  bool IsKeywordField(duckdb::ClientContext& context,
                       irs::field_id field_id) const noexcept;
 
   irs::field_id FindFieldIdBySerialized(
@@ -259,10 +355,6 @@ class InvertedIndex final : public Index, public irs::IndexFieldOptions {
   std::optional<irs::AnnInfo> GetAnnInfo(irs::field_id field_id) const;
 
   const InvertedIndexOptions& GetOptions() const noexcept { return _options; }
-
-  void ReplaceOptions(InvertedIndexOptions options) noexcept {
-    _options = std::move(options);
-  }
 
   const ExpressionData* Predicate() const noexcept {
     return _predicate.serialized_expr.empty() ? nullptr : &_predicate;
@@ -274,17 +366,13 @@ class InvertedIndex final : public Index, public irs::IndexFieldOptions {
   irs::ColumnOptions GetColumnOptions(irs::field_id id) const final;
   irs::field_id GetNormColumnId(irs::field_id id) const final;
 
-  // Segment-reuse homogeneity gate: any two incarnations of an inverted index
-  // produce identical column encodings, so a write may always resume a segment
-  // opened by another incarnation. A DROP COLUMN that truly changes the
-  // physical layout recreates the storage (new index id -> new writer), so a
-  // single writer's pooled segments only ever see encoding-equivalent
-  // incarnations; RENAME -- the one in-place mutation -- leaves column options
-  // untouched. A serenedb writer's gate only ever compares two InvertedIndex
-  // options (the other concrete IndexFieldOptions, FunctionFieldOptions, is
-  // iresearch-test- only and never mixed onto the same writer), so equality
-  // reduces to "same type" -- which is an invariant here, asserted rather than
-  // branched on.
+  // Segment-reuse gate: any two incarnations of an inverted index encode
+  // columns identically (a layout-changing DROP COLUMN recreates the storage ->
+  // new writer; RENAME / SET COMMENT leave column options untouched), and only
+  // this concrete type ever reaches a serenedb writer, so equality reduces to
+  // "same type" -- asserted, not branched on. Deliberately NOT the inherited
+  // pointer identity: a rewritten info is a new object encoding the same
+  // columns, and pointer identity would end every open segment.
   bool EqualOptions(const irs::IndexFieldOptions& other) const noexcept final {
     SDB_ASSERT(dynamic_cast<const InvertedIndex*>(&other) != nullptr,
                "EqualOptions across IndexFieldOptions types");
@@ -297,28 +385,17 @@ class InvertedIndex final : public Index, public irs::IndexFieldOptions {
 
   containers::FlatHashSet<ObjectId> GetTokenizers() const final;
 
-  // Mutable iresearch runtime storage (writer/reader/refresh) for this index,
-  // held behind a shared_ptr on the otherwise-immutable metadata object: a COW
-  // snapshot clone shares the same storage, a row feed never clones the
-  // catalog, and a metadata mutation (Clone) carries it forward. nullptr until
-  // the index is bound to its storage (CREATE INDEX / boot recovery).
-  const std::shared_ptr<search::InvertedIndexStorage>& GetData()
-    const noexcept {
-    return _data;
-  }
-  void SetData(
-    std::shared_ptr<search::InvertedIndexStorage> data) const noexcept {
-    _data = std::move(data);
-  }
-
  private:
+  void BuildDerivedIndexes();
   void BuildExprByFieldIdIndex();
   void BuildSerializedExprIndex();
   void BuildFieldLookupIndex();
-  void BumpTickServerForEntryIds();
+  void RestoreEntryIds();
 
   Entries _entries;
   std::vector<ExpressionKey> _expression_keys;
+  // Per-column allocated term field_id (Search-table indexes only).
+  containers::FlatHashMap<ColumnId, irs::field_id> _col_to_term_field;
   // Bridge: field_id -> the owning expression key's payload (nullptr-absent for
   // column keys). Pointers are stable (into the immutable _expression_keys).
   containers::FlatHashMap<irs::field_id, const ExpressionData*>
@@ -329,7 +406,12 @@ class InvertedIndex final : public Index, public irs::IndexFieldOptions {
   containers::FlatHashMap<irs::field_id, FieldLookup> _field_lookup;
   InvertedIndexOptions _options;
   ExpressionData _predicate;
-  mutable std::shared_ptr<search::InvertedIndexStorage> _data;
 };
+
+// The inverted info behind an index, for the readers whose facts are this
+// kind's only.
+inline const InvertedIndex& InvertedInfo(const Index& index) noexcept {
+  return basics::downCast<const InvertedIndex>(index);
+}
 
 }  // namespace sdb::catalog

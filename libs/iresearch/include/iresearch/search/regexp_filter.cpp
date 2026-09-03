@@ -45,7 +45,7 @@ Filter::ptr LowerRegexp(irs::field_id id, bytes_view pattern,
       auto filter = std::make_unique<ByTerm>();
       *filter->mutable_field_id() = id;
       filter->mutable_options()->term = term;
-      filter->boost(boost);
+      filter->SetBoost(boost);
       return filter;
     },
     [&](bytes_view prefix) -> Filter::ptr {
@@ -53,7 +53,7 @@ Filter::ptr LowerRegexp(irs::field_id id, bytes_view pattern,
       *filter->mutable_field_id() = id;
       filter->mutable_options()->term = prefix;
       filter->mutable_options()->scored_terms_limit = scored_terms_limit;
-      filter->boost(boost);
+      filter->SetBoost(boost);
       return filter;
     },
     [&](bytes_view pattern) -> Filter::ptr {
@@ -62,7 +62,7 @@ Filter::ptr LowerRegexp(irs::field_id id, bytes_view pattern,
       *filter->mutable_options() =
         AutomatonOptions{FromRegexp(pattern, kDefaultMaxDfaStates, syntax),
                          pattern, scored_terms_limit};
-      filter->boost(boost);
+      filter->SetBoost(boost);
       return filter;
     });
 }
@@ -75,7 +75,7 @@ Filter::ptr CreateByRegexp(irs::field_id id, bytes_view pattern,
   filter->mutable_options()->pattern = pattern;
   filter->mutable_options()->syntax = syntax;
   filter->mutable_options()->scored_terms_limit = scored_terms_limit;
-  filter->boost(boost);
+  filter->SetBoost(boost);
   return filter;
 }
 

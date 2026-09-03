@@ -118,8 +118,11 @@ statement ok
 ALTER TABLE ddl_priv_owner_t OWNER TO postgres;
 
 # ddl_priv: ALTER ROLE
+# Altering role postgres would rewrite the one cluster-wide superuser entry
+# every concurrently running file shares (a correct 40001 when two files write
+# it at once), so the claim is asserted on this file's own role.
 statement ok
-ALTER ROLE postgres WITH LOGIN;
+ALTER ROLE ddl_priv_role1 WITH LOGIN;
 
 # ddl_priv: GRANT
 statement ok

@@ -152,13 +152,13 @@ class PipelineTokenizer final : public TypedAnalyzer<PipelineTokenizer>,
 
 template<typename Context>
 void SerdeWrite(Context ctx, const PipelineTokenizer::Options& o) {
-  sdb::basics::WriteTuple(ctx.io(), std::tie(o.children), ctx.arg());
+  sdb::basics::WriteTupleOrObject(ctx, std::tie(o.children));
 }
 
 template<typename Context>
 void SerdeRead(Context ctx, PipelineTokenizer::Options& o) {
   auto refs = std::tie(o.children);
-  sdb::basics::ReadTuple(ctx.io(), refs, ctx.arg());
+  sdb::basics::ReadTupleOrObject(ctx, refs);
 }
 
 }  // namespace irs::analysis

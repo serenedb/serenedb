@@ -27,15 +27,18 @@
 #include <optional>
 
 #include "basics/down_cast.h"
+#include "catalog/ddl/catalog.h"
+#include "catalog/entry.h"
 #include "catalog/identifiers/object_id.h"
-#include "catalog/object.h"
-#include "catalog/pk_spec.h"
 #include "catalog/table.h"
 #include "connector/file_manifest.h"
 
-namespace sdb::connector {
+namespace sdb::catalog {
 
 class SereneDBSchemaEntry;
+
+}  // namespace sdb::catalog
+namespace sdb::connector {
 
 struct SereneDBCreateIndexInfo final : duckdb::CreateIndexInfo {
   SereneDBCreateIndexInfo() = default;
@@ -56,9 +59,7 @@ struct SereneDBCreateIndexInfo final : duckdb::CreateIndexInfo {
 
   std::shared_ptr<const search::FileManifest> manifest;
 
-  std::optional<catalog::PkSpec> fast_path_pk_spec;
   duckdb::LogicalType generated_pk_type;
-  std::vector<duckdb::idx_t> kept_positions;
 
   // What this statement is, derived from the driver-written fields: a plain
   // CREATE INDEX, or one of the two REINDEX passes.
@@ -82,11 +83,18 @@ struct SereneDBCreateIndexInfo final : duckdb::CreateIndexInfo {
     result->delta_files = delta_files;
     result->delta_file_base = delta_file_base;
     result->manifest = manifest;
-    result->fast_path_pk_spec = fast_path_pk_spec;
     result->generated_pk_type = generated_pk_type;
-    result->kept_positions = kept_positions;
     return result;
   }
+};
+
+// One column of the relation a CREATE INDEX reads. A base table's list comes
+// off its entry and a view's off the view body, so the operator carries the
+// three facts both can answer with rather than either relation's own shape.
+struct IndexRelationColumn {
+  std::string name;
+  duckdb::LogicalType type;
+  catalog::ColumnId id;
 };
 
 // Physical operator for CREATE INDEX on SereneDB tables.
@@ -96,8 +104,9 @@ struct SereneDBCreateIndexInfo final : duckdb::CreateIndexInfo {
 //
 // Lifecycle:
 //   Sink:               receive data chunks, write to index storage (backfill)
-//   GetGlobalSinkState: create index in catalog with tombstone
-//   Finalize:           Refresh (inverted) + RemoveTombstone
+//   GetGlobalSinkState: create the index in the catalog (visible to this
+//                       transaction only, until it commits)
+//   Finalize:           Refresh (inverted)
 //   On error:           destructor drops the index (rollback)
 //
 // REINDEX passes (`SereneDBCreateIndexInfo::Pass()`) fill the EXISTING
@@ -108,22 +117,34 @@ struct SereneDBCreateIndexInfo final : duckdb::CreateIndexInfo {
 // relaunches.
 class SereneDBPhysicalCreateIndex final : public duckdb::PhysicalOperator {
  public:
-  // `relation` is the SereneDB-catalog object the index is built on: either
-  // a `catalog::Table` or a `catalog::PgSqlView`
-  // (foreign-source-backed). `view_columns` is the synthesised column list
-  // when `relation` is a view (Tables expose Columns() directly); ignored
-  // for tables.
+  // Set by the planner when it splices the expression projection under this
+  // operator (see SereneDBCreateIndexPlan).
+  void SetExpressionSlotBase(duckdb::idx_t base) noexcept {
+    _expression_slot_base = base;
+  }
+  bool HasProjectedExpressions() const noexcept {
+    return _expression_slot_base.IsValid();
+  }
+
+  // `relation` is the catalog entry the index is built on: either a table or a
+  // view (foreign-source-backed), which is where its id, its name and the
+  // authority over it are read from.
+  // `columns` is the relation's column list and `pk_positions` the positions
+  // in it the row identity is built from -- empty for a view and for a table
+  // that declares no key.
   // `bound_expressions` carries the IndexBinder's output (one per
   // `info->parsed_expressions`). For a bare column ref the slot is set but
   // unused; for an arbitrary expression we normalise + serialise
-  // it via helpers to emit `ExpressionSpecific`.
+  // it via helpers into a `catalog::ExpressionData`.
   SereneDBPhysicalCreateIndex(
-    duckdb::PhysicalPlan& plan, std::shared_ptr<catalog::Object> relation,
-    std::vector<catalog::Column> view_columns, ObjectId database_id,
+    duckdb::PhysicalPlan& plan, const duckdb::CatalogEntry& relation,
+    std::vector<IndexRelationColumn> columns,
+    std::vector<duckdb::LogicalIndex> pk_positions, ObjectId database_id,
     duckdb::unique_ptr<duckdb::CreateIndexInfo> info,
     std::vector<duckdb::unique_ptr<duckdb::Expression>> bound_expressions,
     duckdb::unique_ptr<duckdb::Expression> bound_where,
-    SereneDBSchemaEntry& schema_entry, duckdb::idx_t estimated_cardinality);
+    catalog::SereneDBSchemaEntry& schema_entry,
+    duckdb::idx_t estimated_cardinality);
 
   bool IsSink() const final { return true; }
   bool ParallelSink() const final;
@@ -150,22 +171,16 @@ class SereneDBPhysicalCreateIndex final : public duckdb::PhysicalOperator {
     duckdb::OperatorSourceInput& input) const final;
   bool IsSource() const final { return true; }
 
-  ObjectId DatabaseId() const noexcept { return _database_id; }
-  ObjectId TargetRelationId() const noexcept { return _relation->GetId(); }
-
  private:
-  // Returns the columns of the relation. For tables: `Table::Columns()`;
-  // for views: the `_view_columns` list synthesised from the view's bound
-  // output schema.
-  const std::vector<catalog::Column>& Columns() const noexcept;
-
   // Returns the `_relation` cast to a Table when it is one; nullptr for views.
-  catalog::Table* TableOrNull() const noexcept;
+  const catalog::SereneDBTableEntry* TableOrNull() const noexcept;
   bool IsDuckDBTable() const noexcept;
 
-  std::shared_ptr<catalog::Object> _relation;
-  // Empty when `_relation` is a Table (use Columns()); populated when view.
-  std::vector<catalog::Column> _view_columns;
+  const duckdb::CatalogEntry& _relation;
+  std::vector<IndexRelationColumn> _columns;
+  // Positions in `_columns` the row identity is built from; empty for a view
+  // and for a table with no declared primary key.
+  std::vector<duckdb::LogicalIndex> _pk_positions;
   ObjectId _database_id;
   duckdb::unique_ptr<duckdb::CreateIndexInfo> _info;
   std::vector<duckdb::unique_ptr<duckdb::Expression>> _bound_expressions;
@@ -183,14 +198,14 @@ class SereneDBPhysicalCreateIndex final : public duckdb::PhysicalOperator {
   bool IsReindexPass() const noexcept {
     return Info().Pass() != ReindexPass::None;
   }
-  bool IsDeltaPass() const noexcept {
-    return Info().Pass() == ReindexPass::Delta;
-  }
-  bool IsRebuildPass() const noexcept {
-    return Info().Pass() == ReindexPass::Rebuild;
-  }
 
-  SereneDBSchemaEntry& _schema_entry;
+  // First chunk slot holding a pipeline-computed indexed expression (0 when the
+  // index has none); the projection appends them after the scanned columns.
+  // Unset when the planner spliced no expression projection, which is not the
+  // same fact as a base of 0.
+  duckdb::optional_idx _expression_slot_base;
+  bool _feeds_inverted = false;
+  catalog::SereneDBSchemaEntry& _schema_entry;
 };
 
 // create_plan callback registered with DuckDB's index type system.

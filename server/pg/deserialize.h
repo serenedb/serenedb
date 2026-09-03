@@ -45,7 +45,6 @@ namespace sdb::pg {
 struct RecordDeserializers;
 
 struct DeserializeContext {
-  const catalog::Snapshot* snapshot = nullptr;
   std::unique_ptr<RecordDeserializers> record_cache;
   std::unique_ptr<icu::Calendar> session_calendar;
   containers::FlatHashMap<std::string, std::unique_ptr<icu::Calendar>>

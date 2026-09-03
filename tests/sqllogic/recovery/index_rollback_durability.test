@@ -1,0 +1,269 @@
+control substitution on
+
+# ----------------------------------------------------------------------
+# Rolled-back index DDL must not be durable, and the indexes it did not
+# touch must come back whole.
+#
+# ddl_rollback_durability.test covers this for every object kind that has
+# a plain catalog record. An index is the one kind that does not: its
+# create runs a physical build (an ART over the relation's rows, or an
+# iresearch directory), its drop and its metadata alters reach a list on
+# the relation that is not MVCC state, and its rolled-back versions are
+# compensated by two different mechanisms -- the backfill's
+# transaction_abort_cleanup and duckdb's DuckIndexEntry::Rollback. A
+# rolled-back CREATE INDEX therefore has three ways to leave something
+# behind: the record, the physical half, and the artifacts.
+#
+# Everything here is asserted twice, once in memory and once against a
+# serened that read the catalog log back, because only the second answers
+# whether the record was appended. Committed pairs sit beside every
+# rolled-back one, so a frame that is dropped rather than deferred fails
+# just as loudly.
+#
+# The in-memory-only halves of the same story (that a rolled-back
+# COMMENT ON INDEX leaves the ART enforcing, that a rolled-back DROP
+# INDEX does not) are in sdb/pg/ddl/index_rollback*.test.
+#
+# Hosted under recovery/ because it needs a serened of its own to crash.
+# ----------------------------------------------------------------------
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY irb_dict(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'none',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true
+);
+
+
+statement ok
+CREATE TABLE irb_t (id INTEGER PRIMARY KEY, rank INTEGER, body TEXT, note TEXT);
+
+
+statement ok
+INSERT INTO irb_t
+VALUES (1, 10, 'alpha bravo', 'note one'), (2, 20, 'charlie delta', 'note two');
+
+
+# ----------------------------------------------------------------------
+# Rolled back: one index per transaction, because each CREATE INDEX
+# registers its own abort compensation.
+# ----------------------------------------------------------------------
+
+statement ok
+BEGIN;
+
+
+statement ok
+CREATE UNIQUE INDEX irb_rb_sec ON irb_t (rank);
+
+
+statement ok
+ROLLBACK;
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+CREATE INDEX irb_rb_inv ON irb_t USING inverted(id, body irb_dict);
+
+
+statement ok
+ROLLBACK;
+
+
+# ----------------------------------------------------------------------
+# Committed: the same two shapes, kept. These are the control that fails
+# if a deferred frame never lands.
+# ----------------------------------------------------------------------
+
+statement ok
+CREATE UNIQUE INDEX irb_ok_sec ON irb_t (rank);
+
+
+statement ok
+CREATE INDEX irb_ok_inv ON irb_t USING inverted(id, body irb_dict);
+
+
+statement ok
+VACUUM (REFRESH_TABLE) irb_t;
+
+
+# ----------------------------------------------------------------------
+# A metadata alter on each of the kept indexes, rolled back. The version
+# being undone did not create the index, so the record must go back to
+# what it said before and the index itself must survive the restart.
+# ----------------------------------------------------------------------
+
+statement ok
+COMMENT ON INDEX irb_ok_sec IS 'kept';
+
+
+statement ok
+COMMENT ON INDEX irb_ok_inv IS 'kept too';
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+COMMENT ON INDEX irb_ok_sec IS 'rolled back';
+
+
+statement ok
+COMMENT ON INDEX irb_ok_inv IS 'rolled back too';
+
+
+statement ok
+ROLLBACK;
+
+
+# ----------------------------------------------------------------------
+# In memory: the half that already worked.
+# ----------------------------------------------------------------------
+
+query
+SELECT count(*) AS n FROM pg_class
+WHERE relname IN ('irb_rb_sec', 'irb_rb_inv');
+----
+n
+0
+
+
+query
+SELECT index_name FROM duckdb_indexes()
+WHERE index_name IN ('irb_ok_sec', 'irb_ok_inv', 'irb_rb_sec', 'irb_rb_inv')
+ORDER BY 1;
+----
+index_name
+irb_ok_inv
+irb_ok_sec
+
+
+# ----------------------------------------------------------------------
+# Crash. Nothing above has been checkpointed, so every assertion below is
+# answered out of the catalog log.
+# ----------------------------------------------------------------------
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+statement error connection closed
+SELECT 1;
+
+
+connection after_crash
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT 1;
+
+
+# The rolled-back creates never reached the log.
+connection after_crash
+query
+SELECT count(*) AS n FROM pg_class
+WHERE relname IN ('irb_rb_sec', 'irb_rb_inv');
+----
+n
+0
+
+
+connection after_crash
+statement error
+SELECT id FROM irb_rb_inv;
+----
+db error: ERROR: Table with name irb_rb_inv does not exist!<slt:ignore>
+
+
+# The committed ones did, with the comment the rollback left them.
+connection after_crash
+query
+SELECT index_name || ' ' || comment AS c FROM duckdb_indexes()
+WHERE index_name IN ('irb_ok_sec', 'irb_ok_inv') ORDER BY 1;
+----
+c
+irb_ok_inv kept too
+irb_ok_sec kept
+
+
+# ... and both are still the index they were, not just a name in the
+# catalog: the ART enforces and the inverted index serves.
+connection after_crash
+statement error (?i)duplicate key
+INSERT INTO irb_t VALUES (3, 10, 'echo foxtrot', 'note three');
+
+
+connection after_crash
+statement ok
+INSERT INTO irb_t VALUES (3, 30, 'echo foxtrot', 'note three');
+
+
+connection after_crash
+statement ok
+VACUUM (REFRESH_TABLE) irb_t;
+
+
+connection after_crash
+query
+SELECT id FROM irb_ok_inv WHERE body @@ ts_phrase('echo');
+----
+id
+3
+
+
+connection after_crash
+query
+SELECT id FROM irb_ok_inv WHERE body @@ ts_phrase('alpha');
+----
+id
+1
+
+
+connection after_crash
+query
+SELECT count(*) AS n FROM irb_ok_inv;
+----
+n
+3
+
+
+# The names the rolled-back creates used are free on the recovered
+# catalog too -- a leftover record or a leftover physical half would show
+# up here as a failure to build.
+connection after_crash
+statement ok
+CREATE INDEX irb_rb_sec ON irb_t (rank);
+
+
+connection after_crash
+statement ok
+CREATE INDEX irb_rb_inv ON irb_t USING inverted(id, note irb_dict);
+
+
+connection after_crash
+statement ok
+VACUUM (REFRESH_TABLE) irb_t;
+
+
+connection after_crash
+query
+SELECT count(*) AS n FROM irb_rb_inv;
+----
+n
+3
+
+
+connection after_crash
+statement ok
+DROP TABLE irb_t;
+
+
+connection after_crash
+statement ok
+DROP TEXT SEARCH DICTIONARY irb_dict;

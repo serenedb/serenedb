@@ -1,0 +1,35 @@
+# DROP TRIGGER names a table, and duckdb's DROP TRIGGER operator used to reach the
+# trigger set through an unchecked downcast to DuckTableEntry. A serenedb relation is
+# a TableCatalogEntry that is not a DuckTableEntry, so the cast was undefined behaviour
+# in release and an assertion in debug -- reachable by any user with one statement.
+# A relation that owns no trigger set has no trigger by that name, which is what both
+# spellings must report.
+
+statement ok
+CREATE TABLE dtr (a INT);
+
+
+statement ok
+DROP TRIGGER IF EXISTS nope ON dtr;
+
+
+statement error
+DROP TRIGGER nope ON dtr;
+----
+db error: ERROR: Trigger with name "nope" does not exist on table "dtr"
+
+
+# The connection is still usable, and so is the table.
+statement count 1
+INSERT INTO dtr VALUES (1);
+
+
+query
+SELECT * FROM dtr;
+----
+a
+1
+
+
+statement ok
+DROP TABLE dtr;

@@ -1,0 +1,132 @@
+control substitution on
+
+# An orderly stop has to checkpoint. The shutdown checkpoint runs every index's
+# CheckpointBarrier, and an inverted index answers that barrier by reading its
+# own definition out of the catalog -- so the catalog has to outlive it. Torn
+# down first, the barrier vetoes: the checkpoint is refused, the database is
+# invalidated, and its WAL is left behind for a replay that then happens on
+# every subsequent start, forever.
+#
+# The WAL file is the durable evidence, so that is what this asserts. Every
+# other symptom lives and dies with the process that shut down.
+
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY shc_dict(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'none',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true
+);
+
+
+statement ok
+CREATE TABLE shc_docs (id INTEGER, val TEXT);
+
+
+statement ok
+INSERT INTO shc_docs VALUES (1, 'clickclack babsky'), (2, 'deadinside kostya');
+
+
+statement ok
+CREATE INDEX shc_inv ON shc_docs USING inverted(id, val shc_dict);
+
+
+statement ok
+CREATE TABLE shc_plain (id INTEGER, note TEXT);
+
+
+statement ok
+INSERT INTO shc_plain VALUES (1, 'x'), (2, 'y');
+
+
+statement ok
+CREATE INDEX shc_plain_idx ON shc_plain (id);
+
+
+# Not a crash: the whole point is the teardown sequence a crash never runs.
+statement ok
+SET sdb_faults = 'shutdown_on_packet';
+
+
+statement error connection closed
+SELECT 1;
+
+
+connection after_shutdown
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT 1 AS one;
+----
+one
+1
+
+
+# The datadir has to resolve, or the WAL count below is zero for the wrong
+# reason: an unset $SDB_DATADIR would glob a path that matches nothing.
+connection after_shutdown
+query
+SELECT count(*) > 0 AS has_files
+FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_duckdb/*.db');
+----
+has_files
+t
+
+
+# Nothing has written since the restart, so any WAL here is one the stop failed
+# to fold into the file.
+connection after_shutdown
+query
+SELECT count(*) AS wals
+FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_duckdb/*.wal');
+----
+wals
+0
+
+
+connection after_shutdown
+query
+SELECT id, val FROM shc_docs ORDER BY id;
+----
+id	val
+1	clickclack babsky
+2	deadinside kostya
+
+
+connection after_shutdown
+query
+SELECT id FROM shc_inv WHERE val @@ ts_like('babsky') ORDER BY id;
+----
+id
+1
+
+
+connection after_shutdown
+query
+SELECT id, note FROM shc_plain ORDER BY id;
+----
+id	note
+1	x
+2	y
+
+
+connection after_shutdown
+statement ok
+DROP INDEX shc_inv;
+
+
+connection after_shutdown
+statement ok
+DROP TABLE shc_docs;
+
+
+connection after_shutdown
+statement ok
+DROP TABLE shc_plain;
+
+
+connection after_shutdown
+statement ok
+DROP TEXT SEARCH DICTIONARY shc_dict;

@@ -19,7 +19,7 @@ hash-threshold 100
 # unambiguous, and nprobe is exhaustive so every cluster is probed.
 
 statement ok
-SET sdb_nprobe = 1000
+SET sdb_ivf_search_nprobe = 1000
 
 statement ok
 SET sdb_ivf_posting_size = 5
@@ -219,7 +219,7 @@ statement ok
 RESET sdb_ivf_posting_size
 
 statement ok
-RESET sdb_nprobe
+RESET sdb_ivf_search_nprobe
 
 statement ok
 DROP TABLE sg_pq

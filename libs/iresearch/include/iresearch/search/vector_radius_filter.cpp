@@ -22,6 +22,7 @@
 
 #include "basics/assert.h"
 #include "iresearch/search/ann_index.hpp"
+#include "iresearch/search/collectors.hpp"
 
 namespace irs {
 
@@ -34,9 +35,13 @@ QueryBuilder::ptr ByRadius::PrepareSegment(const SubReader& segment,
   }
   SDB_ASSERT(ann->SupportsRange());
   auto sub_ctx = ctx;
-  sub_ctx.Boost(Boost());
+  sub_ctx.Boost(GetBoost());
   return ann->PrepareRange(segment, sub_ctx, opts, opts.radius, opts.inclusive,
                            0);
+}
+
+PrepareCollector::ptr ByRadius::MakeCollectorImpl(const Scorer* scorer) const {
+  return std::make_unique<AllCollector>(scorer);
 }
 
 }  // namespace irs

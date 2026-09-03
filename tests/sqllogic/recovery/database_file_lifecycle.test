@@ -1,0 +1,125 @@
+control substitution on
+
+# A database is a file, and its committed catalog record is the decision
+# point: the attach creates the file, the append happens at commit, and a
+# file whose id no committed record names is garbage reclaimed at boot.
+
+
+statement ok
+CREATE DATABASE dbfile_keep;
+
+
+# Rolled back: the file was created, the record never landed.
+#
+# CREATE DATABASE is the one statement whose entries do not all belong to the
+# transaction that made them: the attach happens before the entry install can
+# reach it, so the schemas it seeds -- public -- are written with a system
+# transaction and are committed the moment they are made. Nothing hides them,
+# and nothing has to: they live in the new attachment, and rolling back takes
+# the whole attachment away with them.
+statement ok
+BEGIN;
+
+
+statement ok
+CREATE DATABASE dbfile_rolled;
+
+
+# Inside the transaction the attachment is real and the database entry is in
+# the set, so the schemas seeded on it have somewhere to be.
+query
+SELECT count(*) FROM duckdb_databases() WHERE database_name = 'dbfile_rolled';
+----
+count
+1
+
+
+query
+SELECT entry_type, name FROM sdb_catalog_sets() WHERE name = 'dbfile_rolled';
+----
+entry_type	name
+Database	dbfile_rolled
+
+
+statement ok
+ROLLBACK;
+
+
+query
+SELECT count(*) FROM pg_database WHERE datname = 'dbfile_rolled';
+----
+count
+0
+
+
+# The attachment went with it, which is what makes the system-transaction
+# schemas unreachable rather than merely invisible.
+query
+SELECT count(*) FROM duckdb_databases() WHERE database_name = 'dbfile_rolled';
+----
+count
+0
+
+
+query
+SELECT count(*) FROM sdb_catalog_sets() WHERE name = 'dbfile_rolled';
+----
+count
+0
+
+
+# The name is free again: nothing of the rolled back attempt is holding it.
+statement ok
+CREATE DATABASE dbfile_rolled;
+
+
+statement ok
+DROP DATABASE dbfile_rolled;
+
+
+# Crashing after the catalog append is the other side of the same rule: the
+# record is the decision, so the database is there after the restart with the
+# file the attach created for it.
+statement ok
+SET sdb_faults = 'crash_after_catalog_before_data';
+
+
+statement error connection closed
+CREATE DATABASE dbfile_crashed;
+
+
+connection after_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT 1;
+----
+?column?
+1
+
+
+connection after_crash
+query
+SELECT datname FROM pg_database WHERE datname LIKE 'dbfile_%' ORDER BY datname;
+----
+datname
+dbfile_crashed
+dbfile_keep
+
+
+# The rolled back one did not come back with the boot either: the log never
+# carried it, so there is no record to replay and no attachment to rebuild.
+connection after_crash
+query
+SELECT count(*) FROM duckdb_databases() WHERE database_name = 'dbfile_rolled';
+----
+count
+0
+
+
+connection after_crash
+statement ok
+DROP DATABASE IF EXISTS dbfile_crashed;
+
+
+connection after_crash
+statement ok
+DROP DATABASE IF EXISTS dbfile_keep;

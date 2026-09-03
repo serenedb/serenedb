@@ -89,7 +89,8 @@ QueryBuilder::ptr IvfIndex::PrepareKnn(const SubReader& segment,
                                        uint32_t effort) const {
   VectorState state{ctx.memory};
   QueryBuilder::ptr inner;
-  if (!PrepareVectorState(_tree, segment, ctx, opts, effort, state, inner)) {
+  if (!PrepareVectorState(_tree, segment, ctx, opts, effort, state, inner,
+                          opts.max_search_fanout)) {
     return QueryBuilder::Empty();
   }
 

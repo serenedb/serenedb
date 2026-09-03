@@ -138,7 +138,6 @@ TEST_P(IndriDirichletIndexTest, scores_are_finite) {
   irs::ColumnArgsFetcher fetcher;
   auto docs = prepared.Execute(0);
   auto score = docs->PrepareScore({
-    .scorer = impl.get(),
     .segment = &segment,
     .fetcher = &fetcher,
   });

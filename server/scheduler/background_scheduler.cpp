@@ -113,10 +113,22 @@ void BackgroundScheduler::stop() {
 
 yaclib::Future<> BackgroundScheduler::Delay(clock::duration d) {
   auto [f, p] = yaclib::MakeContract<>();
+  if (d <= clock::duration::zero()) {
+    std::move(p).Set();
+    return std::move(f);
+  }
   auto* pool = Server::instance().IoPool();
-  if (pool == nullptr || d <= clock::duration::zero()) {
-    // No io workers to host the timer (no endpoints / not started / shutdown):
-    // skip the backoff rather than block a background thread.
+  if (pool == nullptr) {
+    // No io worker to host the timer. At boot the pool is still coming up, so
+    // park -- completing here would turn the caller's backoff loop into a spin
+    // (drops scheduled from tombstones run before StartIoPool). After
+    // CancelDelays the pool is gone for good and completing now is the point:
+    // it is how a loop gets to look at its stop flag.
+    absl::MutexLock lock{&_delays_mutex};
+    if (!_delays_open) {
+      _parked.push_back(std::move(p));
+      return std::move(f);
+    }
     std::move(p).Set();
     return std::move(f);
   }
@@ -127,7 +139,7 @@ yaclib::Future<> BackgroundScheduler::Delay(clock::duration d) {
   // registered one it can cancel -- an unregistered armed timer would sleep out
   // its full duration.
   absl::MutexLock lock{&_delays_mutex};
-  if (_delays_cancelled) {
+  if (IsStopping()) {
     std::move(p).Set();
     return std::move(f);
   }
@@ -145,12 +157,35 @@ yaclib::Future<> BackgroundScheduler::Delay(clock::duration d) {
   return std::move(f);
 }
 
-void BackgroundScheduler::CancelDelays() {
-  absl::flat_hash_set<std::shared_ptr<asio_ns::steady_timer>> delays;
+void BackgroundScheduler::OpenDelays() {
+  std::vector<yaclib::Promise<>> parked;
   {
     absl::MutexLock lock{&_delays_mutex};
-    _delays_cancelled = true;
+    _delays_open = true;
+    parked.swap(_parked);
+  }
+  // Outside the lock: setting a promise resumes its coroutine inline, and that
+  // continuation calls straight back into Delay.
+  for (auto& p : parked) {
+    std::move(p).Set();
+  }
+}
+
+void BackgroundScheduler::CancelDelays() {
+  absl::flat_hash_set<std::shared_ptr<asio_ns::steady_timer>> delays;
+  std::vector<yaclib::Promise<>> parked;
+  {
+    absl::MutexLock lock{&_delays_mutex};
+    _delays_cancelled.store(true, std::memory_order_release);
+    // A shutdown before OpenDelays (startup threw, or Ctrl-C during boot)
+    // still has to release the parked waiters, or their loops never resume to
+    // see the stop flag and their frames leak.
+    _delays_open = true;
     delays.swap(_delays);
+    parked.swap(_parked);
+  }
+  for (auto& p : parked) {
+    std::move(p).Set();
   }
   for (const auto& timer : delays) {
     // cancel() must be serialized with the timer's completion handler: post it

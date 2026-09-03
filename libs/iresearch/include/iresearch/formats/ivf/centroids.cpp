@@ -30,6 +30,7 @@
 #include <deque>
 #include <duckdb/common/vector/array_vector.hpp>
 #include <functional>
+#include <limits>
 #include <numeric>
 #include <random>
 #include <utility>
@@ -44,7 +45,6 @@ namespace irs {
 namespace {
 
 constexpr size_t kTrainSeed = 42;
-constexpr double kBeamOverprobe = 3.0;
 constexpr uint64_t kSampleSegmentOversample = 4;
 constexpr size_t kMaxFanout = 1024;
 constexpr size_t kTrainPointsPerLeaf = 64;
@@ -52,6 +52,18 @@ constexpr size_t kMaxTrainSample = 4ull * 1024 * 1024;
 constexpr size_t kClusterIters = 15;
 constexpr size_t kLeafClusterIters = 8;
 constexpr size_t kClusterRedos = 1;
+
+uint32_t CeilRoot(uint32_t target, uint32_t exp) noexcept {
+  if (exp <= 1 || target <= 1) {
+    return target;
+  }
+  auto w = static_cast<uint32_t>(std::ceill(
+    std::pow(static_cast<double>(target), 1.0 / static_cast<double>(exp))));
+  w = std::max<uint32_t>(w, 1);
+  SDB_ASSERT(std::pow(static_cast<double>(w), static_cast<double>(exp)) >=
+             target);
+  return w;
+}
 
 struct LayerLayout {
   size_t n_total;
@@ -166,6 +178,27 @@ struct BuildSettings {
   }
 };
 
+size_t RemoveEmptyCentroids(std::vector<float>& centroids,
+                            std::span<size_t> ids, size_t d) {
+  size_t kept = 0;
+  size_t prev = std::numeric_limits<size_t>::max();
+  for (auto& id : ids) {
+    SDB_ASSERT(prev == std::numeric_limits<size_t>::max() || id >= prev);
+    SDB_ASSERT((id + 1) * d <= centroids.size());
+    if (id != prev) {
+      prev = id;
+      if (kept != id) {
+        std::copy_n(centroids.begin() + id * d, d,
+                    centroids.begin() + kept * d);
+      }
+      ++kept;
+    }
+    id = kept - 1;
+  }
+  centroids.resize(kept * d);
+  return kept;
+}
+
 auto BuildAndSplit(std::span<float> data, size_t d, std::span<size_t> ids,
                    size_t n_clusters, VectorMetric metric, size_t niter,
                    const float* rotation) {
@@ -174,6 +207,7 @@ auto BuildAndSplit(std::span<float> data, size_t d, std::span<size_t> ids,
     static_cast<uint32_t>(d), kTrainSeed, static_cast<uint32_t>(niter),
     static_cast<uint32_t>(kClusterRedos), ClusteringAlgo::Auto, rotation);
   AssignNearestGrouped(metric, centroids, d, data, ids);
+  RemoveEmptyCentroids(centroids, ids, d);
   return centroids;
 }
 
@@ -227,25 +261,26 @@ void Build(std::vector<CentroidsBuilder::Node>& nodes, std::span<float> data,
     const size_t n_clusters = settings.Fanout(sample_size);
     auto centroids = BuildAndSplit(entry.sample, d, entry.ids, n_clusters,
                                    settings.metric, settings.niter, rot);
-    const size_t n_built = centroids.size() / d;
+    size_t n_built = centroids.size() / d;
 
-    size_t full_group = n_built;
-    ForEachGroup(entry.ids, n_built, [&](size_t g, size_t, size_t count) {
-      if (count == sample_size) {
-        full_group = g;
+    if (n_built == 1) {
+      centroids.resize(d * n_clusters);
+      const auto c = std::span{centroids}.first(d);
+      for (size_t c_id = 1; c_id < n_clusters; ++c_id) {
+        absl::c_copy(c, centroids.begin() + c_id * d);
       }
-    });
-    if (full_group != n_built) {
-      const std::vector<float> winner(centroids.begin() + full_group * d,
-                                      centroids.begin() + (full_group + 1) * d);
-      for (size_t g = 0; g < n_built; ++g) {
-        absl::c_copy(winner, centroids.begin() + g * d);
-      }
-      const size_t chunk = (sample_size + n_built - 1) / n_built;
+      auto chunk = (sample_size + n_clusters - 1) / n_clusters;
       for (size_t i = 0; i < sample_size; ++i) {
         entry.ids[i] = i / chunk;
       }
+      n_built = n_clusters;
     }
+
+#ifdef SDB_DEV
+    ForEachGroup(entry.ids, n_built, [&](size_t g, size_t, size_t count) {
+      SDB_ASSERT(count < sample_size);
+    });
+#endif
 
     if (entry.parent < nodes.size()) {
       nodes[entry.parent].children.emplace_back(nodes.size());
@@ -385,18 +420,22 @@ CentroidsTree CentroidsTree::Deserialize(IndexInput& in, uint64_t byte_size) {
   return {std::move(head), std::move(node), next_level_offset};
 }
 
+uint32_t CentroidsTree::EffectiveFanout(
+  uint32_t nprobe, uint32_t max_search_fanout) const noexcept {
+  return std::max(max_search_fanout,
+                  CeilRoot(nprobe, static_cast<uint32_t>(_root.level)));
+}
+
 void CentroidsTree::Search(std::span<const float> query, IndexInput& in,
                            uint32_t nprobe, std::vector<uint32_t>& out_ids,
-                           std::vector<float>* out_centroids) const {
+                           std::vector<float>* out_centroids,
+                           uint32_t max_search_fanout) const {
   if (_root.size == 0) {
     out_ids.push_back(0);
     return;
   }
-  auto beam = static_cast<uint32_t>(
-    std::ceil(kBeamOverprobe * std::sqrt(static_cast<double>(nprobe))));
-  if (_root.level >= 2) {
-    beam = std::max(beam, nprobe);
-  }
+  SDB_ASSERT(max_search_fanout > 0);
+  const auto fanout = EffectiveFanout(nprobe, max_search_fanout);
   if (_root.level > 0) {
     in.Seek(_next_level_offset);
   }
@@ -407,7 +446,7 @@ void CentroidsTree::Search(std::span<const float> query, IndexInput& in,
     .size = _root.size};
   std::vector<CentroidsNode::Candidate> leaves;
   irs::ResolveEnum<VectorMetric>(_head.metric, [&]<VectorMetric Metric>() {
-    CentroidsNode::Search<Metric>(query, in, beam, out_centroids != nullptr,
+    CentroidsNode::Search<Metric>(query, in, fanout, out_centroids != nullptr,
                                   _root.level, std::span{&root_view, 1}, 0,
                                   _root.size, leaves);
     const auto k = std::min<size_t>(nprobe, leaves.size());

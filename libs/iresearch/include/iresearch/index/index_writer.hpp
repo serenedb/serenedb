@@ -171,6 +171,11 @@ struct IndexWriterOptions : public SegmentOptions {
   // corruption from multiple index_writers
   bool lock_repository = true;
 
+  // Remove files not referenced by the committed meta at Make(). false == keep
+  // them until a host WAL has replayed and adopted them, and floor the segment
+  // counter above every id in the directory so none is overwritten.
+  bool cleanup_on_open = true;
+
   // Enables the typed .col on segments allocated by this writer.
   // Lifetime of `*db` must extend until IndexWriter shutdown.
   duckdb::DatabaseInstance* db = nullptr;
@@ -196,12 +201,21 @@ struct CommitInfo {
   bool reopen_reader = false;
 };
 
+// Makes a flush triggered mid-transaction commit right away, at a tick
+// reserved from `tick`; `committed` reports that it happened.
+struct CommitOnFlush {
+  std::atomic<uint64_t>& tick;
+  bool committed = false;
+};
+
 // The object is using for indexing data. Only one writer can write to
 // the same directory simultaneously.
 // Thread safe.
 class IndexWriter : private util::Noncopyable {
  public:
   struct SegmentContext;
+  // Defined below, but named by Transaction::FlushAndFsync above it.
+  struct FlushedSegment;
 
  private:
   struct FlushContext;
@@ -380,7 +394,9 @@ class IndexWriter : private util::Noncopyable {
   class Transaction : private util::Noncopyable {
    public:
     Transaction() = default;
-    explicit Transaction(IndexWriter& writer) noexcept : _writer{&writer} {}
+    explicit Transaction(IndexWriter& writer,
+                         bool exclusive_segment = false) noexcept
+      : _writer{&writer}, _exclusive_segment{exclusive_segment} {}
 
     Transaction(Transaction&& other) = default;
     Transaction& operator=(Transaction&& other) = default;
@@ -391,14 +407,14 @@ class IndexWriter : private util::Noncopyable {
     // for insertion into the index index
     // applied upon return value deallocation
     // `disable_flush` don't trigger segment flush
-    // `commit_on_flush` (nullable): non-null makes a flush triggered by this
-    // insert (everything inserted before this batch) commit immediately --
-    // a commit failure throws -- and `*commit_on_flush` is set to true
+    // `commit_on_flush` (nullable): non-null commits a flush triggered by this
+    // insert (everything inserted before this batch) immediately -- a commit
+    // failure throws.
     //
     // The changes are not visible until commit()
     // Transaction should be valid
     Document Insert(bool disable_flush = false, doc_id_t batch_size = 1,
-                    bool* commit_on_flush = nullptr) {
+                    CommitOnFlush* commit_on_flush = nullptr) {
       UpdateSegment(disable_flush, commit_on_flush);
       return {*_active.Segment(), SegmentWriter::DocContext{_queries},
               batch_size};
@@ -457,39 +473,37 @@ class IndexWriter : private util::Noncopyable {
       if (segment == nullptr) {
         return true;
       }
-      if (_tick_source) {
-        // Reserve one extra tick so first_tick (= last - queries) lands
-        // strictly above every previously committed tick.
-        return CommitImpl(_tick_source(_queries + 1));
-      }
       const auto first_tick =
         _writer->_tick.fetch_add(_queries, std::memory_order_relaxed);
       return CommitImpl(first_tick + _queries);
-    }
-
-    // Every commit of this transaction (including the commit-on-flush road)
-    // reserves its ticks through `source` (called with the range size,
-    // returns the LAST tick of the reserved range) fresh at commit time,
-    // instead of the writer's private counter.
-    void SetTickSource(std::function<uint64_t(uint64_t)> source) noexcept {
-      _tick_source = std::move(source);
     }
 
     // Like Commit(), but writes the active segment in the calling thread first
     // (parallel tail flush) instead of leaving it for the flush context to
     // drain later.
     bool FlushAndCommit() noexcept {
-      if (auto* segment = _active.Segment()) {
-        segment->Flush();
+      try {
+        Flush();
+      } catch (...) {
+        return false;
       }
       return Commit();
     }
 
-    bool FlushAndCommit(uint64_t tick) noexcept {
-      if (auto* segment = _active.Segment()) {
-        segment->Flush();
+    // Serialize the active segment and fsync every segment this transaction
+    // flushed, without committing; returns their metadata, valid until commit
+    // or abort. Throws IoError if the fsync fails. Requires an exclusive
+    // segment (see GetBatch), and marks durability of the whole transaction --
+    // call it once, with nothing added afterwards.
+    std::span<const FlushedSegment> FlushAndFsync();
+
+    bool FlushAndCommit(uint64_t last_tick) noexcept {
+      try {
+        Flush();
+      } catch (...) {
+        return false;
       }
-      return Commit(tick);
+      return Commit(last_tick);
     }
 
     bool Commit(uint64_t last_tick) noexcept {
@@ -503,12 +517,39 @@ class IndexWriter : private util::Noncopyable {
     // Reset all accumulated modifications and release resources
     void Abort() noexcept;
 
+    // Serialize the buffered documents into segment files now, so the
+    // upcoming Commit (and the writer-level commit after it) only stamps
+    // ticks and registers the segment. Lets concurrent transactions pay the
+    // flush cost in parallel instead of under the writer's commit lock.
+    void Flush() {
+      auto* segment = _active.Segment();
+      if (segment == nullptr) {
+        return;
+      }
+      try {
+        segment->Flush();
+      } catch (...) {
+        segment->Reset(true);
+        throw;
+      }
+    }
+
     bool FlushRequired() const noexcept {
       auto* segment = _active.Segment();
       if (segment == nullptr) {
         return false;
       }
       return _writer->FlushRequired(*segment->writer);
+    }
+
+    // In-memory bytes buffered by the active segment (0 when none) -- lets a
+    // caller flush on its own cadence, tighter than the writer limits.
+    size_t ActiveMemory() const noexcept {
+      auto* segment = _active.Segment();
+      if (segment == nullptr) {
+        return 0;
+      }
+      return segment->writer->memory_active();
     }
 
     bool Valid() const noexcept { return _writer != nullptr; }
@@ -534,7 +575,7 @@ class IndexWriter : private util::Noncopyable {
     // refresh segment if required (guarded by FlushContext::context_mutex_)
     // is is thread-safe to use ctx_/segment_ while holding 'flush_context_ptr'
     // since active 'flush_context' will not change and hence no reload required
-    void UpdateSegment(bool disable_flush, bool* commit_on_flush);
+    void UpdateSegment(bool disable_flush, CommitOnFlush* commit_on_flush);
 
     IndexWriter* _writer{nullptr};
     // the segment_context used for storing changes (lazy-initialized)
@@ -543,6 +584,9 @@ class IndexWriter : private util::Noncopyable {
     uint64_t _queries{0};
     std::shared_ptr<const IndexFieldOptions> _field_options;
     std::function<uint64_t(uint64_t)> _tick_source;
+    // Never resume a pooled segment holding another transaction's documents;
+    // see GetBatch.
+    bool _exclusive_segment{false};
   };
   static_assert(std::is_nothrow_move_constructible_v<Transaction>);
   static_assert(std::is_nothrow_move_assignable_v<Transaction>);
@@ -550,7 +594,13 @@ class IndexWriter : private util::Noncopyable {
   // Returns a context allowing index modification operations
   // All document insertions will be applied to the same segment on a
   // best effort basis, e.g. a flush_all() will cause a segment switch
-  Transaction GetBatch() noexcept { return Transaction{*this}; }
+  // `exclusive_segment` starts from an empty segment instead of resuming a
+  // pooled one, so every segment flushed holds only this transaction's
+  // documents -- required to record them in a host WAL. Costs the pooled reuse
+  // that bakes many small transactions into one segment, so it suits bulk only.
+  Transaction GetBatch(bool exclusive_segment = false) noexcept {
+    return Transaction{*this, exclusive_segment};
+  }
 
   using ptr = std::shared_ptr<IndexWriter>;
 
@@ -606,6 +656,11 @@ class IndexWriter : private util::Noncopyable {
                     const IndexFieldOptions* field_options, Format::ptr codec,
                     const MergeWriter::FlushProgress& progress,
                     const AnnBuildEnv* env) -> yaclib::Future<CompactionResult>;
+
+  // Adopts a segment whose files already exist in this writer's directory --
+  // Import without the data copy.
+  bool AdoptSegment(std::string_view meta_file, const Format::ptr& codec,
+                    uint64_t tick);
 
   // Imports index from the specified index reader into new segment
   // Reader the index reader to import.
@@ -759,6 +814,8 @@ class IndexWriter : private util::Noncopyable {
     DocsMask docs_mask;
     DocumentMask document_mask;
     bool was_flush = false;
+    // A meta file matching this segment is already on disk
+    bool meta_on_disk = false;
 
    private:
     // starting doc_id that should be added to docs_mask
@@ -1008,7 +1065,9 @@ class IndexWriter : private util::Noncopyable {
 
   // Return a usable segment or a nullptr segment if retry is required
   // (e.g. no free segments available)
-  ActiveSegmentContext GetSegmentContext();
+  // `exclusive` skips the pending free-list, so the caller gets a segment with
+  // no other transaction's documents in it (see GetBatch).
+  ActiveSegmentContext GetSegmentContext(bool exclusive = false);
 
   // Return options for SegmentWriter. `field_options` (nullable, merge path)
   // overrides the construction-time fallback for a single compaction.

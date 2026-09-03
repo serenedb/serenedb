@@ -65,7 +65,7 @@ QUERY PLAN
 
 
 statement ok
-SET sdb_nprobe TO 512;
+SET sdb_ivf_search_nprobe TO 512;
 
 query
 WITH
@@ -100,7 +100,7 @@ QUERY PLAN
 
 # Since filter demands larger efSearch
 statement ok
-SET sdb_nprobe TO 2048;
+SET sdb_ivf_search_nprobe TO 2048;
 
 query
 WITH
@@ -112,7 +112,7 @@ t
 
 
 statement ok
-SET sdb_nprobe TO 512;
+SET sdb_ivf_search_nprobe TO 512;
 
 # L1 recall
 
@@ -305,7 +305,7 @@ VACUUM (REFRESH_TABLE) vecs_text;
 
 # Filtered ANN needs higher efSearch to maintain recall
 statement ok
-SET sdb_nprobe TO 4096;
+SET sdb_ivf_search_nprobe TO 4096;
 
 
 # Text filter (ts_phrase) + ANN

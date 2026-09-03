@@ -1,0 +1,107 @@
+# Dropping one inverted index while the table keeps taking writes must leave the
+# surviving index complete.
+#
+# A transaction that has fed an index registers its per-index feed session in
+# query::Transaction::_search_feeds, and DROP INDEX unlinks the index from the
+# live list (TableIndexList::RemoveIndex), destroying the InvertedStoreIndex that
+# owns that session. The map held it as a raw pointer, so the drop could free a
+# session a commit was still driving -- and CommitSearch is noexcept, so there
+# was nowhere for that to surface. The session is shared with the transaction
+# now, and the drop only releases the index's share.
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY ddw_dict(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'none',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true
+);
+
+statement ok
+CREATE TABLE ddw(id INTEGER, txt TEXT);
+
+statement ok
+CREATE INDEX ddw_a ON ddw USING inverted(id, txt ddw_dict);
+
+statement ok
+CREATE INDEX ddw_b ON ddw USING inverted(id, txt ddw_dict);
+
+statement ok
+INSERT INTO ddw SELECT g, 'row ' || g || ' bravo' FROM generate_series(1, 5000) g;
+
+statement ok
+VACUUM (REFRESH_TABLE) ddw;
+
+query
+SELECT count(*) FROM ddw_a WHERE txt @@ ts_like('bravo');
+----
+count
+5000
+
+query
+SELECT count(*) FROM ddw_b WHERE txt @@ ts_like('bravo');
+----
+count
+5000
+
+
+statement ok
+DROP INDEX ddw_a;
+
+# The dropped index is gone from the catalog, and the table is still writable.
+query
+SELECT count(*) FROM pg_class WHERE relname = 'ddw_a';
+----
+count
+0
+
+statement ok
+INSERT INTO ddw SELECT g, 'row ' || g || ' bravo' FROM generate_series(5001, 10000) g;
+
+statement ok
+VACUUM (REFRESH_TABLE) ddw;
+
+# The survivor covers both the rows written before the drop and after it.
+query
+SELECT count(*) FROM ddw_b WHERE txt @@ ts_like('bravo');
+----
+count
+10000
+
+query
+SELECT count(*) FROM ddw;
+----
+count
+10000
+
+# Nothing the survivor reports is missing from the table.
+query
+SELECT count(*) FROM (
+  SELECT id FROM ddw_b WHERE txt @@ ts_like('bravo')
+  EXCEPT SELECT id FROM ddw) x;
+----
+count
+0
+
+
+# Dropping the last inverted index must also leave the table writable.
+statement ok
+DROP INDEX ddw_b;
+
+statement ok
+INSERT INTO ddw SELECT g, 'row ' || g || ' bravo' FROM generate_series(10001, 11000) g;
+
+query
+SELECT count(*) FROM ddw;
+----
+count
+11000
+
+statement ok
+DROP TABLE ddw;
+
+statement ok
+DROP TEXT SEARCH DICTIONARY ddw_dict;

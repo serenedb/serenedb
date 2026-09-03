@@ -73,7 +73,7 @@
 #include "basics/duckdb_engine.h"
 #include "basics/message_buffer.h"
 #include "basics/static_strings.h"
-#include "catalog/catalog.h"
+#include "catalog/ddl/catalog.h"
 #include "connector/duckdb_client_state.h"
 #include "connector/duckdb_pg_text_copy.h"
 #include "network/cancel_registry.h"
@@ -308,8 +308,7 @@ class PgWireSession final
   // to the socket during the drive and is fully drained before Execute.
   yaclib::Task<duckdb::unique_ptr<duckdb::QueryResult>> DriveToResult(
     duckdb::PreparedStatement& prepared, duckdb::vector<duckdb::Value>& values,
-    ClosingPending& pending, std::shared_ptr<WireSinkContext> wire,
-    std::shared_ptr<const catalog::Snapshot> bound_snapshot = nullptr);
+    ClosingPending& pending, std::shared_ptr<WireSinkContext> wire);
   yaclib::Task<> RunSimpleQuery(std::string_view query);
   yaclib::Task<> RunCopyFromStdin(
     duckdb::unique_ptr<duckdb::SQLStatement> statement);
@@ -335,6 +334,12 @@ class PgWireSession final
   // Run (and consume) a bound deferred-COPY portal at Execute.
   yaclib::Task<> RunDeferredCopy(Portal& portal);
   void HandleClose(std::string_view payload);
+  // Re-plan a cached statement whose catalog view has moved on (PG's
+  // RevalidateCachedQuery at Bind). A no-op -- one shared_ptr compare -- while
+  // the view is unchanged, which is every execution that is not racing DDL.
+  // Throws whatever a fresh Parse of the same text would throw, so a relation
+  // the session has since dropped surfaces as 42P01 instead of stale rows.
+  void RevalidatePlan(Statement& stmt);
   void DescribeStatement(Statement& stmt);
   void DescribePortal(Portal& portal);
   void WriteResolvedRowDescription(duckdb::PreparedStatement& prepared,
@@ -361,9 +366,6 @@ class PgWireSession final
   yaclib::Task<duckdb::unique_ptr<duckdb::QueryResult>> DriveStatementToResult(
     duckdb::unique_ptr<duckdb::SQLStatement> statement, ClosingPending& pending,
     std::shared_ptr<WireSinkContext> wire);
-  // Rejects (sdb_strict_ddl) or notices catalog DDL inside an explicit
-  // transaction block. Statement type is a parse-time property.
-  void NoticeDdlInTransaction(duckdb::StatementType type);
   // Builds an armed per-execution wire-sink contract (see wire_collector.h).
   std::shared_ptr<WireSinkContext> MakeWireContext(
     std::span<const sdb::pg::VarFormat> formats);

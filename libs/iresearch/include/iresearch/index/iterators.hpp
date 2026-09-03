@@ -48,7 +48,6 @@
 namespace irs {
 
 struct PrepareScoreContext {
-  const Scorer* scorer = nullptr;
   const SubReader* segment = nullptr;
   ColumnArgsFetcher* fetcher = nullptr;
 };

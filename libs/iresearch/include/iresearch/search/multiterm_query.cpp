@@ -112,7 +112,8 @@ DocIterator::ptr MultiTermQuery::Execute(const ExecutionContext& ctx,
 
   // TODO(mbkkt) fold the mask into the pruning iterator during the deletes
   // rework and drop this.
-  const bool score_prune = ctx.score_prune && _segment.docs_mask() == nullptr;
+  const bool score_prune =
+    MayScorePrune(ctx, stats) && _segment.docs_mask() == nullptr;
 
   auto* reader = _state.Reader();
   SDB_ASSERT(reader);
@@ -120,7 +121,6 @@ DocIterator::ptr MultiTermQuery::Execute(const ExecutionContext& ctx,
   // Get required features
   const auto* scorer = stats.GetScorer();
   const IndexFeatures features = GetFeatures(scorer);
-  const std::span all_stats{stats.GetAllStats()};
 
   const auto& terms = _state.Terms();
   if (terms.size() < _min_match) {
@@ -147,13 +147,13 @@ DocIterator::ptr MultiTermQuery::Execute(const ExecutionContext& ctx,
     std::vector<PostingCookie> cookies;
     cookies.reserve(scored_count);
     for (const auto& entry : terms) {
-      cookies.emplace_back(
-        &entry.cookie, scorer ? all_stats[entry.stat_offset].c_str() : nullptr,
-        entry.boost * _boost, reader->meta());
+      cookies.emplace_back(&entry.cookie, stats.Stats(entry.stat_offset),
+                           entry.boost * _boost, reader->meta());
     }
 
-    auto docs = reader->Iterator(features, cookies, score_prune, _min_match,
-                                 scorer ? _merge_type : ScoreMergeType::Noop);
+    auto docs = reader->Iterator(
+      features, cookies, {.score_prune = score_prune, .scorer = scorer},
+      _min_match, scorer ? _merge_type : ScoreMergeType::Noop);
     return docs ? std::move(docs) : DocIterator::empty();
   }
 
@@ -164,15 +164,14 @@ DocIterator::ptr MultiTermQuery::Execute(const ExecutionContext& ctx,
     if (entry.stat_offset == MultiTermState::kUnscored) {
       continue;
     }
-    auto docs = reader->Iterator(
-      features,
-      {
-        .cookie = &entry.cookie,
-        .stats = scorer ? all_stats[entry.stat_offset].c_str() : nullptr,
-        .boost = entry.boost * _boost,
-        .field = reader->meta(),
-      },
-      false);
+    auto docs = reader->Iterator(features,
+                                 {
+                                   .cookie = &entry.cookie,
+                                   .stats = stats.Stats(entry.stat_offset),
+                                   .boost = entry.boost * _boost,
+                                   .field = reader->meta(),
+                                 },
+                                 {.scorer = stats.GetScorer()});
     if (!docs) [[unlikely]] {
       continue;
     }

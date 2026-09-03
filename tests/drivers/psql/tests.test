@@ -1155,7 +1155,7 @@ skipif postgres
 > (0 rows)
 
 # serened access methods: iresearch backs tables;
-# secondary/inverted back indexes (server/catalog/object.h). PG ships
+# secondary/inverted back indexes (server/catalog/entry.h). PG ships
 # heap/btree/gin/... -- entirely different storage layer.
 skipif postgres
 \dA

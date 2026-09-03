@@ -1,0 +1,131 @@
+# Several inverted indexes on ONE search-table column. A search table has a
+# single shared iresearch store, and each (index, column) gets its own allocated
+# term field, so N indexes on a column keep N independent posting lists with
+# independent analyzers. A predicate pushes down through a direct index scan
+# (SELECT ... FROM <idx>), using that index's own term field + analyzer; a bare
+# @@ on a non-PK column errors, matching a transactional inverted index.
+# Commit-time-only, so rows are observed after VACUUM (REFRESH_TABLE).
+
+# --- Two analyzers on one column: stemming vs non-stemming ---
+statement ok
+CREATE TEXT SEARCH DICTIONARY stem_en(
+    template = 'text', locale = 'en_US.UTF-8', case = 'lower',
+    stemming = true, accent = false, frequency = true, position = true
+);
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY plain_en(
+    template = 'text', locale = 'en_US.UTF-8', case = 'lower',
+    stemming = false, accent = false, frequency = true, position = true
+);
+
+statement ok
+CREATE TABLE s (id BIGINT PRIMARY KEY, body TEXT)
+  WITH (storage='search', compaction_interval=0);
+
+statement ok
+CREATE INDEX s_stem ON s USING inverted (body stem_en);
+
+statement ok
+CREATE INDEX s_plain ON s USING inverted (body plain_en);
+
+statement ok
+INSERT INTO s VALUES (1, 'running fast'), (2, 'jumps high');
+
+statement ok
+VACUUM (REFRESH_TABLE) s;
+
+# The stemming index reduces 'running' -> 'run', so the stem 'run' matches.
+query
+SELECT id FROM s_stem WHERE body @@ 'run' ORDER BY id;
+----
+id
+1
+
+# The non-stemming index keeps 'running' verbatim, so 'run' matches nothing --
+# the two indexes carry independent posting lists over the same column.
+query
+SELECT id FROM s_plain WHERE body @@ 'run' ORDER BY id;
+----
+id
+
+# ...and the non-stemming index matches the full token.
+query
+SELECT id FROM s_plain WHERE body @@ 'running' ORDER BY id;
+----
+id
+1
+
+# Same split on the second row: stem 'jump' matches 'jumps' only under stemming.
+query
+SELECT id FROM s_stem WHERE body @@ 'jump' ORDER BY id;
+----
+id
+2
+
+query
+SELECT id FROM s_plain WHERE body @@ 'jump' ORDER BY id;
+----
+id
+
+# Dropping one index leaves the other's posting list intact and independent.
+statement ok
+DROP INDEX s_stem;
+
+query
+SELECT indexname FROM pg_indexes WHERE tablename = 's' ORDER BY indexname;
+----
+indexname
+s_pkey
+s_plain
+
+query
+SELECT id FROM s_plain WHERE body @@ 'running' ORDER BY id;
+----
+id
+1
+
+# --- Keyword + analyzer on one column ---
+# A keyword index terms the whole string; an analyzer index tokenizes it. Both
+# on `txt`, each with its own term field.
+statement ok
+CREATE TEXT SEARCH DICTIONARY tok_en(
+    template = 'text', locale = 'en_US.UTF-8', case = 'lower',
+    stemming = false, accent = false, frequency = true, position = true
+);
+
+statement ok
+CREATE TABLE k (id BIGINT PRIMARY KEY, txt TEXT)
+  WITH (storage='search', compaction_interval=0);
+
+statement ok
+CREATE INDEX k_kw ON k USING inverted (txt);
+
+statement ok
+CREATE INDEX k_an ON k USING inverted (txt tok_en);
+
+statement ok
+INSERT INTO k VALUES (1, 'hello world');
+
+statement ok
+VACUUM (REFRESH_TABLE) k;
+
+# The analyzer index tokenizes, so a single token matches.
+query
+SELECT id FROM k_an WHERE txt @@ 'hello' ORDER BY id;
+----
+id
+1
+
+# The keyword index terms the whole string, so a single token does not match...
+query
+SELECT id FROM k_kw WHERE txt @@ 'hello' ORDER BY id;
+----
+id
+
+# ...but the whole string does.
+query
+SELECT id FROM k_kw WHERE txt @@ 'hello world' ORDER BY id;
+----
+id
+1

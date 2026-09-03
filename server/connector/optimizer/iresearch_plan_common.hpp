@@ -42,12 +42,12 @@ namespace sdb::optimizer {
 std::optional<duckdb::TableIndex> SingleReferencedTableIndex(
   const duckdb::Expression& expr);
 
-catalog::Column::Id ResolveColumnId(
+catalog::ColumnId ResolveColumnId(
   duckdb::ColumnBinding binding,
   const connector::SereneDBScanBindData& bind_data,
   const duckdb::LogicalGet& get);
 
-std::vector<catalog::Column::Id> BuildProjectedColumnIds(
+std::vector<catalog::ColumnId> BuildProjectedColumnIds(
   const duckdb::LogicalGet& get,
   const connector::SereneDBScanBindData& bind_data);
 
@@ -86,7 +86,7 @@ duckdb::ColumnBinding ExposeGetColumnAt(duckdb::LogicalOperator& root,
 
 duckdb::idx_t AppendVirtualGetColumn(connector::SereneDBScanBindData& bind_data,
                                      duckdb::LogicalGet& get,
-                                     catalog::Column::Id virtual_id,
+                                     catalog::ColumnId virtual_id,
                                      const duckdb::LogicalType& col_type,
                                      std::string_view col_name);
 
@@ -94,7 +94,7 @@ bool TryClaimIResearchConjunct(
   irs::And& and_root, const duckdb::unique_ptr<duckdb::Expression>& conjunct,
   const connector::ColumnGetter& getter,
   const connector::ExpressionGetter& expr_getter,
-  duckdb::ClientContext& context);
+  duckdb::ClientContext& context, connector::FilterScorers* scorers = nullptr);
 
 inline connector::SearchColumnInfo MakeSearchColumnInfo(
   irs::field_id field, const catalog::InvertedIndexEntryInfo* info,
@@ -120,7 +120,6 @@ struct SearchGetters {
 bool WithSearchGetters(duckdb::LogicalGet& get,
                        connector::SereneDBScanBindData& bind_data,
                        const catalog::InvertedIndex& index,
-                       const std::shared_ptr<const catalog::Snapshot>& snapshot,
                        duckdb::ClientContext& context,
                        absl::FunctionRef<bool(const SearchGetters&)> fn);
 

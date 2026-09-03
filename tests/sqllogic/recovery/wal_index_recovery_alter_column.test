@@ -1,8 +1,8 @@
 control substitution on
 
 # ALTER TABLE ADD/DROP COLUMN on an indexed table is durable -- the catalog
-# change and the store-table schema change commit in one __sdb_store
-# transaction -- and the inverted index stays consistent across a crash: the
+# change and the store-table schema change commit in one transaction on the
+# database's own attachment -- and the index stays consistent across a crash: the
 # schema change persists and a post-ALTER write replays from the WAL.
 
 statement ok

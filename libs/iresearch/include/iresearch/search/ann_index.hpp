@@ -36,6 +36,7 @@ struct VectorFilterOptions {
   field_id postings_id = field_limits::invalid();
   VectorMetric metric = VectorMetric::L2Sqr;
   VectorQuantization quant = VectorQuantization::None;
+  uint32_t max_search_fanout = 16;
   uint32_t ef_search = 0;
   uint32_t min_ef = 0;
   std::shared_ptr<const Filter> inner;

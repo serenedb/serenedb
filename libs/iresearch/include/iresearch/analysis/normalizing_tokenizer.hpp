@@ -72,7 +72,8 @@ class NormalizingTokenizer final : public TypedTokenizer<NormalizingTokenizer>,
 
   size_t MemoryUsage() const noexcept final {
     return _norm_buf.capacity() + _strip_buf.capacity() +
-           static_cast<size_t>(_token.getCapacity()) * sizeof(char16_t);
+           static_cast<size_t>(_udata.getCapacity() + _token.getCapacity()) *
+             sizeof(char16_t);
   }
 
   template<TokenLayout Layout, Case C, bool Accent, bool KnownAscii,
@@ -96,6 +97,7 @@ class NormalizingTokenizer final : public TypedTokenizer<NormalizingTokenizer>,
   bool FastUnicodeEmit(const duckdb::string_t& raw, Sink& sink);
 
   Options _options;
+  icu::UnicodeString _udata;
   icu::UnicodeString _token;
   const icu::Normalizer2* _normalizer{};
   std::unique_ptr<icu::Transliterator> _transliterator;

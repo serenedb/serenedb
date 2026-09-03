@@ -37,14 +37,18 @@ namespace {
 
 template<sz_normal_form_t Form>
 void ComposeInto(std::string_view in, std::string& out) {
-  out.resize(normalize::Bound<Form>(in.size()));
-  out.resize(normalize::Compose<Form>(in, out.data()));
+  out.resize_and_overwrite(normalize::Bound<Form>(in.size()),
+                           [&](char* p, size_t) IRS_FORCE_INLINE {
+                             return normalize::Compose<Form>(in, p);
+                           });
 }
 
 template<sz_normal_form_t Form>
 void DecomposeInto(std::string_view in, std::string& out) {
-  out.resize(normalize::Bound<Form>(in.size()));
-  out.resize(normalize::Decompose<Form>(in, out.data()));
+  out.resize_and_overwrite(normalize::Bound<Form>(in.size()),
+                           [&](char* p, size_t) IRS_FORCE_INLINE {
+                             return normalize::Decompose<Form>(in, p);
+                           });
 }
 
 }  // namespace
@@ -103,13 +107,12 @@ bool NormalizingTokenizer::UnicodeEmit(const duckdb::string_t& raw,
   if constexpr (!Accent) {
     SDB_ASSERT(_transliterator);
   }
-  auto udata = icu::UnicodeString::fromUTF8(
+  _udata.setToUTF8(
     icu::StringPiece{raw.GetData(), static_cast<int32_t>(raw.GetSize())});
   normalize::NormalizeCaseStrip<C>(*_normalizer, _options.locale,
                                    Accent ? nullptr : _transliterator.get(),
-                                   udata, _token);
-  const auto& token = _token;
-  const auto cap = 3 * static_cast<size_t>(token.length());
+                                   _udata, _token);
+  const auto cap = 3 * static_cast<size_t>(_token.length());
   if (cap == 0) {
     sink.template Emit<Layout>(duckdb::string_t{});
     return true;
@@ -122,7 +125,7 @@ bool NormalizingTokenizer::UnicodeEmit(const duckdb::string_t& raw,
     auto err = UErrorCode::U_ZERO_ERROR;
     int32_t utf8_len = 0;
     u_strToUTF8(reinterpret_cast<char*>(mem), static_cast<int32_t>(cap),
-                &utf8_len, token.getBuffer(), token.length(), &err);
+                &utf8_len, _token.getBuffer(), _token.length(), &err);
     if (!U_SUCCESS(err)) [[unlikely]] {
       SDB_ASSERT(false);
       return uint32_t{0};

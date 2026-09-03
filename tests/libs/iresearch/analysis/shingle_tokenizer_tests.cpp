@@ -403,6 +403,34 @@ TEST(ShingleTokenizerTest, frequent_words_positions) {
   EXPECT_EQ(expected, EmitWithInc(analyzer, "the quick brown"));
 }
 
+TEST(ShingleTokenizerTest, frequent_words_escalation_skips_widths) {
+  ShingleTokenizer analyzer{std::make_unique<WhitespaceTokenizer>(),
+                            {
+                              .min_shingle_size = 2,
+                              .max_shingle_size = 4,
+                              .output_unigrams = false,
+                              .frequent_words = {Bytes("the")},
+                            }};
+  // "the" enters the window at width 4, so width 3 is skipped while width 4
+  // is still emitted: the selected widths are not a contiguous range.
+  const std::vector<std::string> expected{
+    "alpha",
+    Shingle({"alpha", "beta"}),
+    Shingle({"alpha", "beta", "gamma", "the"}),
+    "beta",
+    Shingle({"beta", "gamma"}),
+    Shingle({"beta", "gamma", "the"}),
+    Shingle({"beta", "gamma", "the", "delta"}),
+    "gamma",
+    Shingle({"gamma", "the"}),
+    Shingle({"gamma", "the", "delta"}),
+    "the",
+    Shingle({"the", "delta"}),
+    "delta",
+  };
+  EXPECT_EQ(expected, Emit(analyzer, "alpha beta gamma the delta"));
+}
+
 TEST(ShingleTokenizerTest, lucene_filler_gap) {
   ShingleTokenizer analyzer{std::make_unique<StopwordTokenizer>(),
                             {

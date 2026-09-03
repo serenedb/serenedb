@@ -20,8 +20,6 @@
 
 #pragma once
 
-#include <absl/container/flat_hash_set.h>
-
 #include <cstdint>
 #include <duckdb/storage/arena_allocator.hpp>
 #include <memory>
@@ -30,6 +28,7 @@
 #include <vector>
 
 #include "basics/serializer.h"
+#include "iresearch/analysis/text/dict/string_table.hpp"
 #include "iresearch/analysis/token_accumulator.hpp"
 #include "iresearch/analysis/tokenizer.hpp"
 #include "iresearch/utils/string.hpp"
@@ -90,6 +89,7 @@ class ShingleTokenizer final : public TypedTokenizer<ShingleTokenizer>,
            _freq.capacity() * sizeof(uint8_t) +
            _shingle_ends.capacity() * sizeof(uint32_t) +
            _tok_psum.capacity() * sizeof(uint32_t) + _blob.capacity() +
+           _frequent.MemoryBytes() +
            (_sub ? sizeof(AccumulatorSink) + _sub->arena.SizeInBytes() : 0);
   }
 
@@ -123,7 +123,7 @@ class ShingleTokenizer final : public TypedTokenizer<ShingleTokenizer>,
   bool _store_tokens;
   bstring _separator;
   bstring _filler;
-  absl::flat_hash_set<std::string> _frequent;
+  dict::StringSet<std::string> _frequent;
 
   std::unique_ptr<AccumulatorSink> _sub;
   std::vector<duckdb::string_t> _tok;

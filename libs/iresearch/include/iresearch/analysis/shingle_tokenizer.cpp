@@ -133,9 +133,9 @@ ShingleTokenizer::ShingleTokenizer(Tokenizer::ptr base, Options&& options)
     _filler.push_back(static_cast<byte_type>('_'));
   }
   for (const auto& word : options.frequent_words) {
-    _frequent.emplace(ViewCast<char>(bytes_view{word}));
+    _frequent.Insert(std::string{ViewCast<char>(bytes_view{word})});
   }
-  _has_frequent = !_frequent.empty();
+  _has_frequent = !_frequent.Empty();
   if (_has_frequent) {
     _output_unigrams = true;
   }
@@ -169,10 +169,7 @@ void ShingleTokenizer::BuildTokenPrefixSums(uint32_t n) {
 void ShingleTokenizer::MarkFrequent(uint32_t n) {
   _freq.resize(n);
   for (uint32_t i = 0; i < n; ++i) {
-    _freq[i] =
-      _frequent.contains(std::string_view{_tok[i].GetData(), _tok[i].GetSize()})
-        ? 1
-        : 0;
+    _freq[i] = _frequent.Contains(_tok[i]) ? 1 : 0;
   }
 }
 
@@ -201,29 +198,16 @@ void ShingleTokenizer::EmitRuns(duckdb::string_t raw, TokenSink& sink,
                       static_cast<uint32_t>(term.GetSize()), pos);
   };
 
-  const auto append = [&](byte_type* w, uint32_t i, uint32_t j) {
-    if (j != 0) {
-      std::memcpy(w, _separator.data(), _separator.size());
-      w += _separator.size();
-    }
-    const auto t = _tok[i + j];
-    const uint32_t size = t.GetSize();
-    std::memcpy(w, t.GetData(), size);
-    return w + size;
-  };
-  const auto window_len = [&](uint32_t i, uint32_t s) IRS_FORCE_INLINE {
-    return _tok_psum[i + s] - _tok_psum[i] +
-           (s - 1) * static_cast<uint32_t>(_separator.size());
+  const auto* const sep = _separator.data();
+  const auto sep_size = static_cast<uint32_t>(_separator.size());
+  const auto* const psum = _tok_psum.data();
+  const auto* const tok = _tok.data();
+  const auto window_len = [=](uint32_t i, uint32_t s) IRS_FORCE_INLINE {
+    return psum[i + s] - psum[i] + (s - 1) * sep_size;
   };
   const auto emit_shingles = [&](uint32_t i, uint32_t reach, uint32_t pos) {
-    const uint32_t total = window_len(i, reach);
-    const auto stage = [&](byte_type* mem) IRS_FORCE_INLINE {
-      byte_type* w = mem;
-      for (uint32_t j = 0; j < reach; ++j) {
-        w = append(w, i, j);
-      }
-    };
     size_t count;
+    uint32_t span;
     if constexpr (HasFrequent) {
       auto& ends = _shingle_ends;
       ends.clear();
@@ -240,18 +224,35 @@ void ShingleTokenizer::EmitRuns(duckdb::string_t raw, TokenSink& sink,
         }
       }
       count = ends.size();
+      span = count == 1 ? _min : reach;
     } else {
       count = reach - _min + 1;
+      span = reach;
     }
-    sink.EmitK<Layout>(
-      count, total, stage, [&](size_t j, byte_type*) IRS_FORCE_INLINE {
-        if constexpr (HasFrequent) {
-          return EmitKSlotPos{0, _shingle_ends[j], pos};
-        } else {
-          return EmitKSlotPos{0, window_len(i, _min + static_cast<uint32_t>(j)),
-                              pos};
-        }
-      });
+    const auto stage = [=](byte_type* mem) IRS_FORCE_INLINE {
+      const auto first = tok[i];
+      const uint32_t first_size = first.GetSize();
+      std::memcpy(mem, first.GetData(), first_size);
+      byte_type* w = mem + first_size;
+      for (uint32_t j = 1; j < span; ++j) {
+        std::memcpy(w, sep, sep_size);
+        w += sep_size;
+        const auto t = tok[i + j];
+        const uint32_t size = t.GetSize();
+        std::memcpy(w, t.GetData(), size);
+        w += size;
+      }
+    };
+    sink.EmitK<Layout>(count, window_len(i, span), stage,
+                       [&](size_t j, byte_type*) IRS_FORCE_INLINE {
+                         if constexpr (HasFrequent) {
+                           return EmitKSlotPos{0, _shingle_ends[j], pos};
+                         } else {
+                           return EmitKSlotPos{
+                             0, window_len(i, _min + static_cast<uint32_t>(j)),
+                             pos};
+                         }
+                       });
   };
 
   const bool unigrams =

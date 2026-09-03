@@ -1,0 +1,974 @@
+statement ok
+SET TimeZone = 'Europe/Berlin';
+
+statement ok
+CREATE TABLE g AS SELECT TIMESTAMP '2024-12-28 00:00:00' + INTERVAL (i * 7) MINUTE AS ts, (TIMESTAMP '2024-12-28 00:00:00' + INTERVAL (i * 7) MINUTE)::TIMESTAMPTZ AS tstz, (DATE '2024-12-28' + (i % 300)::INTEGER)::DATE AS d, (i % 1000)::DOUBLE AS price, (i % 5)::SMALLINT AS sev, i AS v FROM range(50000) t(i);
+
+statement ok
+INSERT INTO g VALUES (NULL, NULL, NULL, NULL, NULL, -1);
+
+statement ok
+SET disabled_optimizers = 'compressed_materialization';
+
+statement ok
+CREATE TABLE ref_a AS
+SELECT 'subquery date_trunc(''hour'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT date_trunc('hour', ts) AS k, v FROM g) GROUP BY k)
+UNION ALL SELECT 'cte date_trunc(''hour'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (WITH x AS (SELECT date_trunc('hour', ts) AS k, v FROM g) SELECT k, count(*) AS c, sum(v) AS s FROM x GROUP BY k)
+UNION ALL SELECT 'cte chain date_trunc(''hour'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (WITH x AS (SELECT date_trunc('hour', ts) AS k, v FROM g), y AS (SELECT * FROM x) SELECT k, count(*) AS c, sum(v) AS s FROM y GROUP BY k)
+UNION ALL SELECT 'filtered subquery date_trunc(''hour'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT date_trunc('hour', ts) AS k, v FROM g) WHERE v > 100 GROUP BY k)
+UNION ALL SELECT 'subquery filter inside date_trunc(''hour'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT date_trunc('hour', ts) AS k, v FROM g WHERE v % 3 = 0) GROUP BY k)
+UNION ALL SELECT 'multi ref date_trunc(''hour'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT date_trunc('hour', ts) AS k, v FROM g) GROUP BY k HAVING min(k) IS NOT NULL OR min(k) IS NULL)
+UNION ALL SELECT 'alias reused date_trunc(''hour'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT date_trunc('hour', ts) AS k, date_trunc('hour', ts) AS k2, v FROM g) GROUP BY k)
+UNION ALL SELECT 'select star date_trunc(''hour'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT *, date_trunc('hour', ts) AS k FROM g) GROUP BY k)
+UNION ALL SELECT 'union all date_trunc(''hour'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT date_trunc('hour', ts) AS k, v FROM g UNION ALL SELECT date_trunc('hour', ts), v FROM g) GROUP BY k)
+UNION ALL SELECT 'distinct date_trunc(''hour'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, 1 AS c, 0 AS s FROM (SELECT DISTINCT date_trunc('hour', ts) AS k FROM g))
+UNION ALL SELECT 'distinct alias date_trunc(''hour'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, 1 AS c, 0 AS s FROM (SELECT DISTINCT k FROM (SELECT date_trunc('hour', ts) AS k, v FROM g)))
+UNION ALL SELECT 'distinct filtered date_trunc(''hour'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, 1 AS c, 0 AS s FROM (SELECT DISTINCT date_trunc('hour', ts) AS k FROM g WHERE v > 100))
+UNION ALL SELECT 'distinct ordered date_trunc(''hour'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, 1 AS c, 0 AS s FROM (SELECT DISTINCT date_trunc('hour', ts) AS k FROM g ORDER BY k))
+UNION ALL SELECT 'distinct on date_trunc(''hour'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, 1 AS c, 0 AS s FROM (SELECT DISTINCT ON (date_trunc('hour', ts)) date_trunc('hour', ts) AS k FROM g ORDER BY date_trunc('hour', ts)))
+UNION ALL SELECT 'distinct with sev date_trunc(''hour'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k1::VARCHAR || '/' || k2::VARCHAR AS k, 1 AS c, 0 AS s FROM (SELECT DISTINCT date_trunc('hour', ts) AS k1, sev AS k2 FROM g))
+UNION ALL SELECT 'subquery date_trunc(''day'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT date_trunc('day', ts) AS k, v FROM g) GROUP BY k)
+UNION ALL SELECT 'cte date_trunc(''day'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (WITH x AS (SELECT date_trunc('day', ts) AS k, v FROM g) SELECT k, count(*) AS c, sum(v) AS s FROM x GROUP BY k)
+UNION ALL SELECT 'cte chain date_trunc(''day'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (WITH x AS (SELECT date_trunc('day', ts) AS k, v FROM g), y AS (SELECT * FROM x) SELECT k, count(*) AS c, sum(v) AS s FROM y GROUP BY k)
+UNION ALL SELECT 'filtered subquery date_trunc(''day'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT date_trunc('day', ts) AS k, v FROM g) WHERE v > 100 GROUP BY k)
+UNION ALL SELECT 'subquery filter inside date_trunc(''day'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT date_trunc('day', ts) AS k, v FROM g WHERE v % 3 = 0) GROUP BY k)
+UNION ALL SELECT 'multi ref date_trunc(''day'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT date_trunc('day', ts) AS k, v FROM g) GROUP BY k HAVING min(k) IS NOT NULL OR min(k) IS NULL)
+UNION ALL SELECT 'alias reused date_trunc(''day'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT date_trunc('day', ts) AS k, date_trunc('day', ts) AS k2, v FROM g) GROUP BY k)
+UNION ALL SELECT 'select star date_trunc(''day'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT *, date_trunc('day', ts) AS k FROM g) GROUP BY k)
+UNION ALL SELECT 'union all date_trunc(''day'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT date_trunc('day', ts) AS k, v FROM g UNION ALL SELECT date_trunc('day', ts), v FROM g) GROUP BY k)
+UNION ALL SELECT 'distinct date_trunc(''day'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, 1 AS c, 0 AS s FROM (SELECT DISTINCT date_trunc('day', ts) AS k FROM g))
+UNION ALL SELECT 'distinct alias date_trunc(''day'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, 1 AS c, 0 AS s FROM (SELECT DISTINCT k FROM (SELECT date_trunc('day', ts) AS k, v FROM g)))
+UNION ALL SELECT 'distinct filtered date_trunc(''day'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, 1 AS c, 0 AS s FROM (SELECT DISTINCT date_trunc('day', ts) AS k FROM g WHERE v > 100))
+UNION ALL SELECT 'distinct ordered date_trunc(''day'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, 1 AS c, 0 AS s FROM (SELECT DISTINCT date_trunc('day', ts) AS k FROM g ORDER BY k))
+UNION ALL SELECT 'distinct on date_trunc(''day'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, 1 AS c, 0 AS s FROM (SELECT DISTINCT ON (date_trunc('day', ts)) date_trunc('day', ts) AS k FROM g ORDER BY date_trunc('day', ts)))
+UNION ALL SELECT 'distinct with sev date_trunc(''day'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k1::VARCHAR || '/' || k2::VARCHAR AS k, 1 AS c, 0 AS s FROM (SELECT DISTINCT date_trunc('day', ts) AS k1, sev AS k2 FROM g))
+UNION ALL SELECT 'subquery date_trunc(''month'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT date_trunc('month', ts) AS k, v FROM g) GROUP BY k)
+UNION ALL SELECT 'cte date_trunc(''month'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (WITH x AS (SELECT date_trunc('month', ts) AS k, v FROM g) SELECT k, count(*) AS c, sum(v) AS s FROM x GROUP BY k)
+UNION ALL SELECT 'cte chain date_trunc(''month'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (WITH x AS (SELECT date_trunc('month', ts) AS k, v FROM g), y AS (SELECT * FROM x) SELECT k, count(*) AS c, sum(v) AS s FROM y GROUP BY k)
+UNION ALL SELECT 'filtered subquery date_trunc(''month'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT date_trunc('month', ts) AS k, v FROM g) WHERE v > 100 GROUP BY k)
+UNION ALL SELECT 'subquery filter inside date_trunc(''month'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT date_trunc('month', ts) AS k, v FROM g WHERE v % 3 = 0) GROUP BY k)
+UNION ALL SELECT 'multi ref date_trunc(''month'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT date_trunc('month', ts) AS k, v FROM g) GROUP BY k HAVING min(k) IS NOT NULL OR min(k) IS NULL)
+UNION ALL SELECT 'alias reused date_trunc(''month'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT date_trunc('month', ts) AS k, date_trunc('month', ts) AS k2, v FROM g) GROUP BY k)
+UNION ALL SELECT 'select star date_trunc(''month'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT *, date_trunc('month', ts) AS k FROM g) GROUP BY k)
+UNION ALL SELECT 'union all date_trunc(''month'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT date_trunc('month', ts) AS k, v FROM g UNION ALL SELECT date_trunc('month', ts), v FROM g) GROUP BY k)
+UNION ALL SELECT 'distinct date_trunc(''month'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, 1 AS c, 0 AS s FROM (SELECT DISTINCT date_trunc('month', ts) AS k FROM g))
+UNION ALL SELECT 'distinct alias date_trunc(''month'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, 1 AS c, 0 AS s FROM (SELECT DISTINCT k FROM (SELECT date_trunc('month', ts) AS k, v FROM g)))
+UNION ALL SELECT 'distinct filtered date_trunc(''month'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, 1 AS c, 0 AS s FROM (SELECT DISTINCT date_trunc('month', ts) AS k FROM g WHERE v > 100))
+UNION ALL SELECT 'distinct ordered date_trunc(''month'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, 1 AS c, 0 AS s FROM (SELECT DISTINCT date_trunc('month', ts) AS k FROM g ORDER BY k))
+UNION ALL SELECT 'distinct on date_trunc(''month'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, 1 AS c, 0 AS s FROM (SELECT DISTINCT ON (date_trunc('month', ts)) date_trunc('month', ts) AS k FROM g ORDER BY date_trunc('month', ts)))
+UNION ALL SELECT 'distinct with sev date_trunc(''month'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k1::VARCHAR || '/' || k2::VARCHAR AS k, 1 AS c, 0 AS s FROM (SELECT DISTINCT date_trunc('month', ts) AS k1, sev AS k2 FROM g))
+UNION ALL SELECT 'subquery date_trunc(''week'', ts)::DATE' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT date_trunc('week', ts)::DATE AS k, v FROM g) GROUP BY k)
+UNION ALL SELECT 'cte date_trunc(''week'', ts)::DATE' AS shape, k::VARCHAR AS k, c, s FROM (WITH x AS (SELECT date_trunc('week', ts)::DATE AS k, v FROM g) SELECT k, count(*) AS c, sum(v) AS s FROM x GROUP BY k)
+UNION ALL SELECT 'cte chain date_trunc(''week'', ts)::DATE' AS shape, k::VARCHAR AS k, c, s FROM (WITH x AS (SELECT date_trunc('week', ts)::DATE AS k, v FROM g), y AS (SELECT * FROM x) SELECT k, count(*) AS c, sum(v) AS s FROM y GROUP BY k)
+UNION ALL SELECT 'filtered subquery date_trunc(''week'', ts)::DATE' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT date_trunc('week', ts)::DATE AS k, v FROM g) WHERE v > 100 GROUP BY k)
+UNION ALL SELECT 'subquery filter inside date_trunc(''week'', ts)::DATE' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT date_trunc('week', ts)::DATE AS k, v FROM g WHERE v % 3 = 0) GROUP BY k)
+UNION ALL SELECT 'multi ref date_trunc(''week'', ts)::DATE' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT date_trunc('week', ts)::DATE AS k, v FROM g) GROUP BY k HAVING min(k) IS NOT NULL OR min(k) IS NULL)
+UNION ALL SELECT 'alias reused date_trunc(''week'', ts)::DATE' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT date_trunc('week', ts)::DATE AS k, date_trunc('week', ts)::DATE AS k2, v FROM g) GROUP BY k)
+UNION ALL SELECT 'select star date_trunc(''week'', ts)::DATE' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT *, date_trunc('week', ts)::DATE AS k FROM g) GROUP BY k)
+UNION ALL SELECT 'union all date_trunc(''week'', ts)::DATE' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT date_trunc('week', ts)::DATE AS k, v FROM g UNION ALL SELECT date_trunc('week', ts)::DATE, v FROM g) GROUP BY k)
+UNION ALL SELECT 'distinct date_trunc(''week'', ts)::DATE' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, 1 AS c, 0 AS s FROM (SELECT DISTINCT date_trunc('week', ts)::DATE AS k FROM g))
+UNION ALL SELECT 'distinct alias date_trunc(''week'', ts)::DATE' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, 1 AS c, 0 AS s FROM (SELECT DISTINCT k FROM (SELECT date_trunc('week', ts)::DATE AS k, v FROM g)))
+UNION ALL SELECT 'distinct filtered date_trunc(''week'', ts)::DATE' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, 1 AS c, 0 AS s FROM (SELECT DISTINCT date_trunc('week', ts)::DATE AS k FROM g WHERE v > 100))
+UNION ALL SELECT 'distinct ordered date_trunc(''week'', ts)::DATE' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, 1 AS c, 0 AS s FROM (SELECT DISTINCT date_trunc('week', ts)::DATE AS k FROM g ORDER BY k))
+UNION ALL SELECT 'distinct on date_trunc(''week'', ts)::DATE' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, 1 AS c, 0 AS s FROM (SELECT DISTINCT ON (date_trunc('week', ts)::DATE) date_trunc('week', ts)::DATE AS k FROM g ORDER BY date_trunc('week', ts)::DATE))
+UNION ALL SELECT 'distinct with sev date_trunc(''week'', ts)::DATE' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k1::VARCHAR || '/' || k2::VARCHAR AS k, 1 AS c, 0 AS s FROM (SELECT DISTINCT date_trunc('week', ts)::DATE AS k1, sev AS k2 FROM g))
+UNION ALL SELECT 'subquery time_bucket(INTERVAL ''15 minutes'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT time_bucket(INTERVAL '15 minutes', ts) AS k, v FROM g) GROUP BY k)
+UNION ALL SELECT 'cte time_bucket(INTERVAL ''15 minutes'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (WITH x AS (SELECT time_bucket(INTERVAL '15 minutes', ts) AS k, v FROM g) SELECT k, count(*) AS c, sum(v) AS s FROM x GROUP BY k)
+UNION ALL SELECT 'cte chain time_bucket(INTERVAL ''15 minutes'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (WITH x AS (SELECT time_bucket(INTERVAL '15 minutes', ts) AS k, v FROM g), y AS (SELECT * FROM x) SELECT k, count(*) AS c, sum(v) AS s FROM y GROUP BY k)
+UNION ALL SELECT 'filtered subquery time_bucket(INTERVAL ''15 minutes'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT time_bucket(INTERVAL '15 minutes', ts) AS k, v FROM g) WHERE v > 100 GROUP BY k)
+UNION ALL SELECT 'subquery filter inside time_bucket(INTERVAL ''15 minutes'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT time_bucket(INTERVAL '15 minutes', ts) AS k, v FROM g WHERE v % 3 = 0) GROUP BY k)
+UNION ALL SELECT 'multi ref time_bucket(INTERVAL ''15 minutes'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT time_bucket(INTERVAL '15 minutes', ts) AS k, v FROM g) GROUP BY k HAVING min(k) IS NOT NULL OR min(k) IS NULL)
+UNION ALL SELECT 'alias reused time_bucket(INTERVAL ''15 minutes'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT time_bucket(INTERVAL '15 minutes', ts) AS k, time_bucket(INTERVAL '15 minutes', ts) AS k2, v FROM g) GROUP BY k)
+UNION ALL SELECT 'select star time_bucket(INTERVAL ''15 minutes'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT *, time_bucket(INTERVAL '15 minutes', ts) AS k FROM g) GROUP BY k)
+UNION ALL SELECT 'union all time_bucket(INTERVAL ''15 minutes'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT time_bucket(INTERVAL '15 minutes', ts) AS k, v FROM g UNION ALL SELECT time_bucket(INTERVAL '15 minutes', ts), v FROM g) GROUP BY k)
+UNION ALL SELECT 'distinct time_bucket(INTERVAL ''15 minutes'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, 1 AS c, 0 AS s FROM (SELECT DISTINCT time_bucket(INTERVAL '15 minutes', ts) AS k FROM g))
+UNION ALL SELECT 'distinct alias time_bucket(INTERVAL ''15 minutes'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, 1 AS c, 0 AS s FROM (SELECT DISTINCT k FROM (SELECT time_bucket(INTERVAL '15 minutes', ts) AS k, v FROM g)))
+UNION ALL SELECT 'distinct filtered time_bucket(INTERVAL ''15 minutes'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, 1 AS c, 0 AS s FROM (SELECT DISTINCT time_bucket(INTERVAL '15 minutes', ts) AS k FROM g WHERE v > 100))
+UNION ALL SELECT 'distinct ordered time_bucket(INTERVAL ''15 minutes'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, 1 AS c, 0 AS s FROM (SELECT DISTINCT time_bucket(INTERVAL '15 minutes', ts) AS k FROM g ORDER BY k))
+UNION ALL SELECT 'distinct on time_bucket(INTERVAL ''15 minutes'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, 1 AS c, 0 AS s FROM (SELECT DISTINCT ON (time_bucket(INTERVAL '15 minutes', ts)) time_bucket(INTERVAL '15 minutes', ts) AS k FROM g ORDER BY time_bucket(INTERVAL '15 minutes', ts)))
+UNION ALL SELECT 'distinct with sev time_bucket(INTERVAL ''15 minutes'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k1::VARCHAR || '/' || k2::VARCHAR AS k, 1 AS c, 0 AS s FROM (SELECT DISTINCT time_bucket(INTERVAL '15 minutes', ts) AS k1, sev AS k2 FROM g))
+UNION ALL SELECT 'subquery strftime(ts, ''%Y-%m-%d'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT strftime(ts, '%Y-%m-%d') AS k, v FROM g) GROUP BY k)
+UNION ALL SELECT 'cte strftime(ts, ''%Y-%m-%d'')' AS shape, k::VARCHAR AS k, c, s FROM (WITH x AS (SELECT strftime(ts, '%Y-%m-%d') AS k, v FROM g) SELECT k, count(*) AS c, sum(v) AS s FROM x GROUP BY k)
+UNION ALL SELECT 'cte chain strftime(ts, ''%Y-%m-%d'')' AS shape, k::VARCHAR AS k, c, s FROM (WITH x AS (SELECT strftime(ts, '%Y-%m-%d') AS k, v FROM g), y AS (SELECT * FROM x) SELECT k, count(*) AS c, sum(v) AS s FROM y GROUP BY k)
+UNION ALL SELECT 'filtered subquery strftime(ts, ''%Y-%m-%d'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT strftime(ts, '%Y-%m-%d') AS k, v FROM g) WHERE v > 100 GROUP BY k)
+UNION ALL SELECT 'subquery filter inside strftime(ts, ''%Y-%m-%d'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT strftime(ts, '%Y-%m-%d') AS k, v FROM g WHERE v % 3 = 0) GROUP BY k)
+UNION ALL SELECT 'multi ref strftime(ts, ''%Y-%m-%d'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT strftime(ts, '%Y-%m-%d') AS k, v FROM g) GROUP BY k HAVING min(k) IS NOT NULL OR min(k) IS NULL)
+UNION ALL SELECT 'alias reused strftime(ts, ''%Y-%m-%d'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT strftime(ts, '%Y-%m-%d') AS k, strftime(ts, '%Y-%m-%d') AS k2, v FROM g) GROUP BY k)
+UNION ALL SELECT 'select star strftime(ts, ''%Y-%m-%d'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT *, strftime(ts, '%Y-%m-%d') AS k FROM g) GROUP BY k)
+UNION ALL SELECT 'union all strftime(ts, ''%Y-%m-%d'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT strftime(ts, '%Y-%m-%d') AS k, v FROM g UNION ALL SELECT strftime(ts, '%Y-%m-%d'), v FROM g) GROUP BY k)
+UNION ALL SELECT 'distinct strftime(ts, ''%Y-%m-%d'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, 1 AS c, 0 AS s FROM (SELECT DISTINCT strftime(ts, '%Y-%m-%d') AS k FROM g))
+UNION ALL SELECT 'distinct alias strftime(ts, ''%Y-%m-%d'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, 1 AS c, 0 AS s FROM (SELECT DISTINCT k FROM (SELECT strftime(ts, '%Y-%m-%d') AS k, v FROM g)))
+UNION ALL SELECT 'distinct filtered strftime(ts, ''%Y-%m-%d'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, 1 AS c, 0 AS s FROM (SELECT DISTINCT strftime(ts, '%Y-%m-%d') AS k FROM g WHERE v > 100))
+UNION ALL SELECT 'distinct ordered strftime(ts, ''%Y-%m-%d'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, 1 AS c, 0 AS s FROM (SELECT DISTINCT strftime(ts, '%Y-%m-%d') AS k FROM g ORDER BY k))
+UNION ALL SELECT 'distinct on strftime(ts, ''%Y-%m-%d'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, 1 AS c, 0 AS s FROM (SELECT DISTINCT ON (strftime(ts, '%Y-%m-%d')) strftime(ts, '%Y-%m-%d') AS k FROM g ORDER BY strftime(ts, '%Y-%m-%d')))
+UNION ALL SELECT 'distinct with sev strftime(ts, ''%Y-%m-%d'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k1::VARCHAR || '/' || k2::VARCHAR AS k, 1 AS c, 0 AS s FROM (SELECT DISTINCT strftime(ts, '%Y-%m-%d') AS k1, sev AS k2 FROM g))
+UNION ALL SELECT 'subquery strftime(ts, ''%Y-%m'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT strftime(ts, '%Y-%m') AS k, v FROM g) GROUP BY k)
+UNION ALL SELECT 'cte strftime(ts, ''%Y-%m'')' AS shape, k::VARCHAR AS k, c, s FROM (WITH x AS (SELECT strftime(ts, '%Y-%m') AS k, v FROM g) SELECT k, count(*) AS c, sum(v) AS s FROM x GROUP BY k)
+UNION ALL SELECT 'cte chain strftime(ts, ''%Y-%m'')' AS shape, k::VARCHAR AS k, c, s FROM (WITH x AS (SELECT strftime(ts, '%Y-%m') AS k, v FROM g), y AS (SELECT * FROM x) SELECT k, count(*) AS c, sum(v) AS s FROM y GROUP BY k)
+UNION ALL SELECT 'filtered subquery strftime(ts, ''%Y-%m'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT strftime(ts, '%Y-%m') AS k, v FROM g) WHERE v > 100 GROUP BY k)
+UNION ALL SELECT 'subquery filter inside strftime(ts, ''%Y-%m'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT strftime(ts, '%Y-%m') AS k, v FROM g WHERE v % 3 = 0) GROUP BY k)
+UNION ALL SELECT 'multi ref strftime(ts, ''%Y-%m'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT strftime(ts, '%Y-%m') AS k, v FROM g) GROUP BY k HAVING min(k) IS NOT NULL OR min(k) IS NULL)
+UNION ALL SELECT 'alias reused strftime(ts, ''%Y-%m'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT strftime(ts, '%Y-%m') AS k, strftime(ts, '%Y-%m') AS k2, v FROM g) GROUP BY k)
+UNION ALL SELECT 'select star strftime(ts, ''%Y-%m'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT *, strftime(ts, '%Y-%m') AS k FROM g) GROUP BY k)
+UNION ALL SELECT 'union all strftime(ts, ''%Y-%m'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT strftime(ts, '%Y-%m') AS k, v FROM g UNION ALL SELECT strftime(ts, '%Y-%m'), v FROM g) GROUP BY k)
+UNION ALL SELECT 'distinct strftime(ts, ''%Y-%m'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, 1 AS c, 0 AS s FROM (SELECT DISTINCT strftime(ts, '%Y-%m') AS k FROM g))
+UNION ALL SELECT 'distinct alias strftime(ts, ''%Y-%m'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, 1 AS c, 0 AS s FROM (SELECT DISTINCT k FROM (SELECT strftime(ts, '%Y-%m') AS k, v FROM g)))
+UNION ALL SELECT 'distinct filtered strftime(ts, ''%Y-%m'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, 1 AS c, 0 AS s FROM (SELECT DISTINCT strftime(ts, '%Y-%m') AS k FROM g WHERE v > 100))
+UNION ALL SELECT 'distinct ordered strftime(ts, ''%Y-%m'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, 1 AS c, 0 AS s FROM (SELECT DISTINCT strftime(ts, '%Y-%m') AS k FROM g ORDER BY k))
+UNION ALL SELECT 'distinct on strftime(ts, ''%Y-%m'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, 1 AS c, 0 AS s FROM (SELECT DISTINCT ON (strftime(ts, '%Y-%m')) strftime(ts, '%Y-%m') AS k FROM g ORDER BY strftime(ts, '%Y-%m')))
+UNION ALL SELECT 'distinct with sev strftime(ts, ''%Y-%m'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k1::VARCHAR || '/' || k2::VARCHAR AS k, 1 AS c, 0 AS s FROM (SELECT DISTINCT strftime(ts, '%Y-%m') AS k1, sev AS k2 FROM g))
+UNION ALL SELECT 'subquery concat(year(ts), ''-Q'', quarter(ts))' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT concat(year(ts), '-Q', quarter(ts)) AS k, v FROM g) GROUP BY k)
+UNION ALL SELECT 'cte concat(year(ts), ''-Q'', quarter(ts))' AS shape, k::VARCHAR AS k, c, s FROM (WITH x AS (SELECT concat(year(ts), '-Q', quarter(ts)) AS k, v FROM g) SELECT k, count(*) AS c, sum(v) AS s FROM x GROUP BY k)
+UNION ALL SELECT 'cte chain concat(year(ts), ''-Q'', quarter(ts))' AS shape, k::VARCHAR AS k, c, s FROM (WITH x AS (SELECT concat(year(ts), '-Q', quarter(ts)) AS k, v FROM g), y AS (SELECT * FROM x) SELECT k, count(*) AS c, sum(v) AS s FROM y GROUP BY k)
+UNION ALL SELECT 'filtered subquery concat(year(ts), ''-Q'', quarter(ts))' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT concat(year(ts), '-Q', quarter(ts)) AS k, v FROM g) WHERE v > 100 GROUP BY k)
+UNION ALL SELECT 'subquery filter inside concat(year(ts), ''-Q'', quarter(ts))' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT concat(year(ts), '-Q', quarter(ts)) AS k, v FROM g WHERE v % 3 = 0) GROUP BY k)
+UNION ALL SELECT 'multi ref concat(year(ts), ''-Q'', quarter(ts))' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT concat(year(ts), '-Q', quarter(ts)) AS k, v FROM g) GROUP BY k HAVING min(k) IS NOT NULL OR min(k) IS NULL)
+UNION ALL SELECT 'alias reused concat(year(ts), ''-Q'', quarter(ts))' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT concat(year(ts), '-Q', quarter(ts)) AS k, concat(year(ts), '-Q', quarter(ts)) AS k2, v FROM g) GROUP BY k)
+UNION ALL SELECT 'select star concat(year(ts), ''-Q'', quarter(ts))' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT *, concat(year(ts), '-Q', quarter(ts)) AS k FROM g) GROUP BY k)
+UNION ALL SELECT 'union all concat(year(ts), ''-Q'', quarter(ts))' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT concat(year(ts), '-Q', quarter(ts)) AS k, v FROM g UNION ALL SELECT concat(year(ts), '-Q', quarter(ts)), v FROM g) GROUP BY k)
+UNION ALL SELECT 'distinct concat(year(ts), ''-Q'', quarter(ts))' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, 1 AS c, 0 AS s FROM (SELECT DISTINCT concat(year(ts), '-Q', quarter(ts)) AS k FROM g))
+UNION ALL SELECT 'distinct alias concat(year(ts), ''-Q'', quarter(ts))' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, 1 AS c, 0 AS s FROM (SELECT DISTINCT k FROM (SELECT concat(year(ts), '-Q', quarter(ts)) AS k, v FROM g)))
+UNION ALL SELECT 'distinct filtered concat(year(ts), ''-Q'', quarter(ts))' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, 1 AS c, 0 AS s FROM (SELECT DISTINCT concat(year(ts), '-Q', quarter(ts)) AS k FROM g WHERE v > 100))
+UNION ALL SELECT 'distinct ordered concat(year(ts), ''-Q'', quarter(ts))' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, 1 AS c, 0 AS s FROM (SELECT DISTINCT concat(year(ts), '-Q', quarter(ts)) AS k FROM g ORDER BY k))
+UNION ALL SELECT 'distinct on concat(year(ts), ''-Q'', quarter(ts))' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, 1 AS c, 0 AS s FROM (SELECT DISTINCT ON (concat(year(ts), '-Q', quarter(ts))) concat(year(ts), '-Q', quarter(ts)) AS k FROM g ORDER BY concat(year(ts), '-Q', quarter(ts))))
+UNION ALL SELECT 'distinct with sev concat(year(ts), ''-Q'', quarter(ts))' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k1::VARCHAR || '/' || k2::VARCHAR AS k, 1 AS c, 0 AS s FROM (SELECT DISTINCT concat(year(ts), '-Q', quarter(ts)) AS k1, sev AS k2 FROM g))
+UNION ALL SELECT 'subquery date_trunc(''hour'', tstz)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT date_trunc('hour', tstz) AS k, v FROM g) GROUP BY k)
+UNION ALL SELECT 'cte date_trunc(''hour'', tstz)' AS shape, k::VARCHAR AS k, c, s FROM (WITH x AS (SELECT date_trunc('hour', tstz) AS k, v FROM g) SELECT k, count(*) AS c, sum(v) AS s FROM x GROUP BY k)
+UNION ALL SELECT 'cte chain date_trunc(''hour'', tstz)' AS shape, k::VARCHAR AS k, c, s FROM (WITH x AS (SELECT date_trunc('hour', tstz) AS k, v FROM g), y AS (SELECT * FROM x) SELECT k, count(*) AS c, sum(v) AS s FROM y GROUP BY k)
+UNION ALL SELECT 'filtered subquery date_trunc(''hour'', tstz)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT date_trunc('hour', tstz) AS k, v FROM g) WHERE v > 100 GROUP BY k)
+UNION ALL SELECT 'subquery filter inside date_trunc(''hour'', tstz)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT date_trunc('hour', tstz) AS k, v FROM g WHERE v % 3 = 0) GROUP BY k)
+UNION ALL SELECT 'multi ref date_trunc(''hour'', tstz)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT date_trunc('hour', tstz) AS k, v FROM g) GROUP BY k HAVING min(k) IS NOT NULL OR min(k) IS NULL)
+UNION ALL SELECT 'alias reused date_trunc(''hour'', tstz)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT date_trunc('hour', tstz) AS k, date_trunc('hour', tstz) AS k2, v FROM g) GROUP BY k)
+UNION ALL SELECT 'select star date_trunc(''hour'', tstz)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT *, date_trunc('hour', tstz) AS k FROM g) GROUP BY k)
+UNION ALL SELECT 'union all date_trunc(''hour'', tstz)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT date_trunc('hour', tstz) AS k, v FROM g UNION ALL SELECT date_trunc('hour', tstz), v FROM g) GROUP BY k)
+UNION ALL SELECT 'distinct date_trunc(''hour'', tstz)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, 1 AS c, 0 AS s FROM (SELECT DISTINCT date_trunc('hour', tstz) AS k FROM g))
+UNION ALL SELECT 'distinct alias date_trunc(''hour'', tstz)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, 1 AS c, 0 AS s FROM (SELECT DISTINCT k FROM (SELECT date_trunc('hour', tstz) AS k, v FROM g)))
+UNION ALL SELECT 'distinct filtered date_trunc(''hour'', tstz)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, 1 AS c, 0 AS s FROM (SELECT DISTINCT date_trunc('hour', tstz) AS k FROM g WHERE v > 100))
+UNION ALL SELECT 'distinct ordered date_trunc(''hour'', tstz)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, 1 AS c, 0 AS s FROM (SELECT DISTINCT date_trunc('hour', tstz) AS k FROM g ORDER BY k))
+UNION ALL SELECT 'distinct on date_trunc(''hour'', tstz)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, 1 AS c, 0 AS s FROM (SELECT DISTINCT ON (date_trunc('hour', tstz)) date_trunc('hour', tstz) AS k FROM g ORDER BY date_trunc('hour', tstz)))
+UNION ALL SELECT 'distinct with sev date_trunc(''hour'', tstz)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k1::VARCHAR || '/' || k2::VARCHAR AS k, 1 AS c, 0 AS s FROM (SELECT DISTINCT date_trunc('hour', tstz) AS k1, sev AS k2 FROM g))
+UNION ALL SELECT 'subquery date_trunc(''day'', tstz)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT date_trunc('day', tstz) AS k, v FROM g) GROUP BY k)
+UNION ALL SELECT 'cte date_trunc(''day'', tstz)' AS shape, k::VARCHAR AS k, c, s FROM (WITH x AS (SELECT date_trunc('day', tstz) AS k, v FROM g) SELECT k, count(*) AS c, sum(v) AS s FROM x GROUP BY k)
+UNION ALL SELECT 'cte chain date_trunc(''day'', tstz)' AS shape, k::VARCHAR AS k, c, s FROM (WITH x AS (SELECT date_trunc('day', tstz) AS k, v FROM g), y AS (SELECT * FROM x) SELECT k, count(*) AS c, sum(v) AS s FROM y GROUP BY k)
+UNION ALL SELECT 'filtered subquery date_trunc(''day'', tstz)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT date_trunc('day', tstz) AS k, v FROM g) WHERE v > 100 GROUP BY k)
+UNION ALL SELECT 'subquery filter inside date_trunc(''day'', tstz)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT date_trunc('day', tstz) AS k, v FROM g WHERE v % 3 = 0) GROUP BY k)
+UNION ALL SELECT 'multi ref date_trunc(''day'', tstz)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT date_trunc('day', tstz) AS k, v FROM g) GROUP BY k HAVING min(k) IS NOT NULL OR min(k) IS NULL)
+UNION ALL SELECT 'alias reused date_trunc(''day'', tstz)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT date_trunc('day', tstz) AS k, date_trunc('day', tstz) AS k2, v FROM g) GROUP BY k)
+UNION ALL SELECT 'select star date_trunc(''day'', tstz)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT *, date_trunc('day', tstz) AS k FROM g) GROUP BY k)
+UNION ALL SELECT 'union all date_trunc(''day'', tstz)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT date_trunc('day', tstz) AS k, v FROM g UNION ALL SELECT date_trunc('day', tstz), v FROM g) GROUP BY k)
+UNION ALL SELECT 'distinct date_trunc(''day'', tstz)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, 1 AS c, 0 AS s FROM (SELECT DISTINCT date_trunc('day', tstz) AS k FROM g))
+UNION ALL SELECT 'distinct alias date_trunc(''day'', tstz)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, 1 AS c, 0 AS s FROM (SELECT DISTINCT k FROM (SELECT date_trunc('day', tstz) AS k, v FROM g)))
+UNION ALL SELECT 'distinct filtered date_trunc(''day'', tstz)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, 1 AS c, 0 AS s FROM (SELECT DISTINCT date_trunc('day', tstz) AS k FROM g WHERE v > 100))
+UNION ALL SELECT 'distinct ordered date_trunc(''day'', tstz)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, 1 AS c, 0 AS s FROM (SELECT DISTINCT date_trunc('day', tstz) AS k FROM g ORDER BY k))
+UNION ALL SELECT 'distinct on date_trunc(''day'', tstz)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, 1 AS c, 0 AS s FROM (SELECT DISTINCT ON (date_trunc('day', tstz)) date_trunc('day', tstz) AS k FROM g ORDER BY date_trunc('day', tstz)))
+UNION ALL SELECT 'distinct with sev date_trunc(''day'', tstz)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k1::VARCHAR || '/' || k2::VARCHAR AS k, 1 AS c, 0 AS s FROM (SELECT DISTINCT date_trunc('day', tstz) AS k1, sev AS k2 FROM g))
+UNION ALL SELECT 'subquery time_bucket(INTERVAL ''1 day'', tstz, ''Asia/Tokyo'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT time_bucket(INTERVAL '1 day', tstz, 'Asia/Tokyo') AS k, v FROM g) GROUP BY k)
+UNION ALL SELECT 'cte time_bucket(INTERVAL ''1 day'', tstz, ''Asia/Tokyo'')' AS shape, k::VARCHAR AS k, c, s FROM (WITH x AS (SELECT time_bucket(INTERVAL '1 day', tstz, 'Asia/Tokyo') AS k, v FROM g) SELECT k, count(*) AS c, sum(v) AS s FROM x GROUP BY k)
+UNION ALL SELECT 'cte chain time_bucket(INTERVAL ''1 day'', tstz, ''Asia/Tokyo'')' AS shape, k::VARCHAR AS k, c, s FROM (WITH x AS (SELECT time_bucket(INTERVAL '1 day', tstz, 'Asia/Tokyo') AS k, v FROM g), y AS (SELECT * FROM x) SELECT k, count(*) AS c, sum(v) AS s FROM y GROUP BY k)
+UNION ALL SELECT 'filtered subquery time_bucket(INTERVAL ''1 day'', tstz, ''Asia/Tokyo'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT time_bucket(INTERVAL '1 day', tstz, 'Asia/Tokyo') AS k, v FROM g) WHERE v > 100 GROUP BY k)
+UNION ALL SELECT 'subquery filter inside time_bucket(INTERVAL ''1 day'', tstz, ''Asia/Tokyo'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT time_bucket(INTERVAL '1 day', tstz, 'Asia/Tokyo') AS k, v FROM g WHERE v % 3 = 0) GROUP BY k)
+UNION ALL SELECT 'multi ref time_bucket(INTERVAL ''1 day'', tstz, ''Asia/Tokyo'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT time_bucket(INTERVAL '1 day', tstz, 'Asia/Tokyo') AS k, v FROM g) GROUP BY k HAVING min(k) IS NOT NULL OR min(k) IS NULL)
+UNION ALL SELECT 'alias reused time_bucket(INTERVAL ''1 day'', tstz, ''Asia/Tokyo'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT time_bucket(INTERVAL '1 day', tstz, 'Asia/Tokyo') AS k, time_bucket(INTERVAL '1 day', tstz, 'Asia/Tokyo') AS k2, v FROM g) GROUP BY k)
+UNION ALL SELECT 'select star time_bucket(INTERVAL ''1 day'', tstz, ''Asia/Tokyo'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT *, time_bucket(INTERVAL '1 day', tstz, 'Asia/Tokyo') AS k FROM g) GROUP BY k)
+UNION ALL SELECT 'union all time_bucket(INTERVAL ''1 day'', tstz, ''Asia/Tokyo'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT time_bucket(INTERVAL '1 day', tstz, 'Asia/Tokyo') AS k, v FROM g UNION ALL SELECT time_bucket(INTERVAL '1 day', tstz, 'Asia/Tokyo'), v FROM g) GROUP BY k)
+UNION ALL SELECT 'distinct time_bucket(INTERVAL ''1 day'', tstz, ''Asia/Tokyo'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, 1 AS c, 0 AS s FROM (SELECT DISTINCT time_bucket(INTERVAL '1 day', tstz, 'Asia/Tokyo') AS k FROM g))
+UNION ALL SELECT 'distinct alias time_bucket(INTERVAL ''1 day'', tstz, ''Asia/Tokyo'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, 1 AS c, 0 AS s FROM (SELECT DISTINCT k FROM (SELECT time_bucket(INTERVAL '1 day', tstz, 'Asia/Tokyo') AS k, v FROM g)))
+UNION ALL SELECT 'distinct filtered time_bucket(INTERVAL ''1 day'', tstz, ''Asia/Tokyo'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, 1 AS c, 0 AS s FROM (SELECT DISTINCT time_bucket(INTERVAL '1 day', tstz, 'Asia/Tokyo') AS k FROM g WHERE v > 100))
+UNION ALL SELECT 'distinct ordered time_bucket(INTERVAL ''1 day'', tstz, ''Asia/Tokyo'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, 1 AS c, 0 AS s FROM (SELECT DISTINCT time_bucket(INTERVAL '1 day', tstz, 'Asia/Tokyo') AS k FROM g ORDER BY k))
+UNION ALL SELECT 'distinct on time_bucket(INTERVAL ''1 day'', tstz, ''Asia/Tokyo'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, 1 AS c, 0 AS s FROM (SELECT DISTINCT ON (time_bucket(INTERVAL '1 day', tstz, 'Asia/Tokyo')) time_bucket(INTERVAL '1 day', tstz, 'Asia/Tokyo') AS k FROM g ORDER BY time_bucket(INTERVAL '1 day', tstz, 'Asia/Tokyo')))
+UNION ALL SELECT 'distinct with sev time_bucket(INTERVAL ''1 day'', tstz, ''Asia/Tokyo'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k1::VARCHAR || '/' || k2::VARCHAR AS k, 1 AS c, 0 AS s FROM (SELECT DISTINCT time_bucket(INTERVAL '1 day', tstz, 'Asia/Tokyo') AS k1, sev AS k2 FROM g))
+UNION ALL SELECT 'subquery floor(price / 100) * 100' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT floor(price / 100) * 100 AS k, v FROM g) GROUP BY k)
+UNION ALL SELECT 'cte floor(price / 100) * 100' AS shape, k::VARCHAR AS k, c, s FROM (WITH x AS (SELECT floor(price / 100) * 100 AS k, v FROM g) SELECT k, count(*) AS c, sum(v) AS s FROM x GROUP BY k)
+UNION ALL SELECT 'cte chain floor(price / 100) * 100' AS shape, k::VARCHAR AS k, c, s FROM (WITH x AS (SELECT floor(price / 100) * 100 AS k, v FROM g), y AS (SELECT * FROM x) SELECT k, count(*) AS c, sum(v) AS s FROM y GROUP BY k)
+UNION ALL SELECT 'filtered subquery floor(price / 100) * 100' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT floor(price / 100) * 100 AS k, v FROM g) WHERE v > 100 GROUP BY k)
+UNION ALL SELECT 'subquery filter inside floor(price / 100) * 100' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT floor(price / 100) * 100 AS k, v FROM g WHERE v % 3 = 0) GROUP BY k)
+UNION ALL SELECT 'multi ref floor(price / 100) * 100' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT floor(price / 100) * 100 AS k, v FROM g) GROUP BY k HAVING min(k) IS NOT NULL OR min(k) IS NULL)
+UNION ALL SELECT 'alias reused floor(price / 100) * 100' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT floor(price / 100) * 100 AS k, floor(price / 100) * 100 AS k2, v FROM g) GROUP BY k)
+UNION ALL SELECT 'select star floor(price / 100) * 100' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT *, floor(price / 100) * 100 AS k FROM g) GROUP BY k)
+UNION ALL SELECT 'union all floor(price / 100) * 100' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT floor(price / 100) * 100 AS k, v FROM g UNION ALL SELECT floor(price / 100) * 100, v FROM g) GROUP BY k)
+UNION ALL SELECT 'distinct floor(price / 100) * 100' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, 1 AS c, 0 AS s FROM (SELECT DISTINCT floor(price / 100) * 100 AS k FROM g))
+UNION ALL SELECT 'distinct alias floor(price / 100) * 100' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, 1 AS c, 0 AS s FROM (SELECT DISTINCT k FROM (SELECT floor(price / 100) * 100 AS k, v FROM g)))
+UNION ALL SELECT 'distinct filtered floor(price / 100) * 100' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, 1 AS c, 0 AS s FROM (SELECT DISTINCT floor(price / 100) * 100 AS k FROM g WHERE v > 100))
+UNION ALL SELECT 'distinct ordered floor(price / 100) * 100' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, 1 AS c, 0 AS s FROM (SELECT DISTINCT floor(price / 100) * 100 AS k FROM g ORDER BY k))
+UNION ALL SELECT 'distinct on floor(price / 100) * 100' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, 1 AS c, 0 AS s FROM (SELECT DISTINCT ON (floor(price / 100) * 100) floor(price / 100) * 100 AS k FROM g ORDER BY floor(price / 100) * 100))
+UNION ALL SELECT 'distinct with sev floor(price / 100) * 100' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k1::VARCHAR || '/' || k2::VARCHAR AS k, 1 AS c, 0 AS s FROM (SELECT DISTINCT floor(price / 100) * 100 AS k1, sev AS k2 FROM g))
+UNION ALL SELECT 'subquery round(price / 50)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT round(price / 50) AS k, v FROM g) GROUP BY k)
+UNION ALL SELECT 'cte round(price / 50)' AS shape, k::VARCHAR AS k, c, s FROM (WITH x AS (SELECT round(price / 50) AS k, v FROM g) SELECT k, count(*) AS c, sum(v) AS s FROM x GROUP BY k)
+UNION ALL SELECT 'cte chain round(price / 50)' AS shape, k::VARCHAR AS k, c, s FROM (WITH x AS (SELECT round(price / 50) AS k, v FROM g), y AS (SELECT * FROM x) SELECT k, count(*) AS c, sum(v) AS s FROM y GROUP BY k)
+UNION ALL SELECT 'filtered subquery round(price / 50)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT round(price / 50) AS k, v FROM g) WHERE v > 100 GROUP BY k)
+UNION ALL SELECT 'subquery filter inside round(price / 50)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT round(price / 50) AS k, v FROM g WHERE v % 3 = 0) GROUP BY k)
+UNION ALL SELECT 'multi ref round(price / 50)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT round(price / 50) AS k, v FROM g) GROUP BY k HAVING min(k) IS NOT NULL OR min(k) IS NULL)
+UNION ALL SELECT 'alias reused round(price / 50)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT round(price / 50) AS k, round(price / 50) AS k2, v FROM g) GROUP BY k)
+UNION ALL SELECT 'select star round(price / 50)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT *, round(price / 50) AS k FROM g) GROUP BY k)
+UNION ALL SELECT 'union all round(price / 50)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT round(price / 50) AS k, v FROM g UNION ALL SELECT round(price / 50), v FROM g) GROUP BY k)
+UNION ALL SELECT 'distinct round(price / 50)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, 1 AS c, 0 AS s FROM (SELECT DISTINCT round(price / 50) AS k FROM g))
+UNION ALL SELECT 'distinct alias round(price / 50)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, 1 AS c, 0 AS s FROM (SELECT DISTINCT k FROM (SELECT round(price / 50) AS k, v FROM g)))
+UNION ALL SELECT 'distinct filtered round(price / 50)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, 1 AS c, 0 AS s FROM (SELECT DISTINCT round(price / 50) AS k FROM g WHERE v > 100))
+UNION ALL SELECT 'distinct ordered round(price / 50)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, 1 AS c, 0 AS s FROM (SELECT DISTINCT round(price / 50) AS k FROM g ORDER BY k))
+UNION ALL SELECT 'distinct on round(price / 50)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, 1 AS c, 0 AS s FROM (SELECT DISTINCT ON (round(price / 50)) round(price / 50) AS k FROM g ORDER BY round(price / 50)))
+UNION ALL SELECT 'distinct with sev round(price / 50)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k1::VARCHAR || '/' || k2::VARCHAR AS k, 1 AS c, 0 AS s FROM (SELECT DISTINCT round(price / 50) AS k1, sev AS k2 FROM g))
+UNION ALL SELECT 'subquery CASE WHEN price < 100 THEN ''low'' WHEN price < 500 THEN ''mid'' ELSE ''high'' END' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT CASE WHEN price < 100 THEN 'low' WHEN price < 500 THEN 'mid' ELSE 'high' END AS k, v FROM g) GROUP BY k)
+UNION ALL SELECT 'cte CASE WHEN price < 100 THEN ''low'' WHEN price < 500 THEN ''mid'' ELSE ''high'' END' AS shape, k::VARCHAR AS k, c, s FROM (WITH x AS (SELECT CASE WHEN price < 100 THEN 'low' WHEN price < 500 THEN 'mid' ELSE 'high' END AS k, v FROM g) SELECT k, count(*) AS c, sum(v) AS s FROM x GROUP BY k)
+UNION ALL SELECT 'cte chain CASE WHEN price < 100 THEN ''low'' WHEN price < 500 THEN ''mid'' ELSE ''high'' END' AS shape, k::VARCHAR AS k, c, s FROM (WITH x AS (SELECT CASE WHEN price < 100 THEN 'low' WHEN price < 500 THEN 'mid' ELSE 'high' END AS k, v FROM g), y AS (SELECT * FROM x) SELECT k, count(*) AS c, sum(v) AS s FROM y GROUP BY k)
+UNION ALL SELECT 'filtered subquery CASE WHEN price < 100 THEN ''low'' WHEN price < 500 THEN ''mid'' ELSE ''high'' END' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT CASE WHEN price < 100 THEN 'low' WHEN price < 500 THEN 'mid' ELSE 'high' END AS k, v FROM g) WHERE v > 100 GROUP BY k)
+UNION ALL SELECT 'subquery filter inside CASE WHEN price < 100 THEN ''low'' WHEN price < 500 THEN ''mid'' ELSE ''high'' END' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT CASE WHEN price < 100 THEN 'low' WHEN price < 500 THEN 'mid' ELSE 'high' END AS k, v FROM g WHERE v % 3 = 0) GROUP BY k)
+UNION ALL SELECT 'multi ref CASE WHEN price < 100 THEN ''low'' WHEN price < 500 THEN ''mid'' ELSE ''high'' END' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT CASE WHEN price < 100 THEN 'low' WHEN price < 500 THEN 'mid' ELSE 'high' END AS k, v FROM g) GROUP BY k HAVING min(k) IS NOT NULL OR min(k) IS NULL)
+UNION ALL SELECT 'alias reused CASE WHEN price < 100 THEN ''low'' WHEN price < 500 THEN ''mid'' ELSE ''high'' END' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT CASE WHEN price < 100 THEN 'low' WHEN price < 500 THEN 'mid' ELSE 'high' END AS k, CASE WHEN price < 100 THEN 'low' WHEN price < 500 THEN 'mid' ELSE 'high' END AS k2, v FROM g) GROUP BY k)
+UNION ALL SELECT 'select star CASE WHEN price < 100 THEN ''low'' WHEN price < 500 THEN ''mid'' ELSE ''high'' END' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT *, CASE WHEN price < 100 THEN 'low' WHEN price < 500 THEN 'mid' ELSE 'high' END AS k FROM g) GROUP BY k)
+UNION ALL SELECT 'union all CASE WHEN price < 100 THEN ''low'' WHEN price < 500 THEN ''mid'' ELSE ''high'' END' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT CASE WHEN price < 100 THEN 'low' WHEN price < 500 THEN 'mid' ELSE 'high' END AS k, v FROM g UNION ALL SELECT CASE WHEN price < 100 THEN 'low' WHEN price < 500 THEN 'mid' ELSE 'high' END, v FROM g) GROUP BY k)
+UNION ALL SELECT 'distinct CASE WHEN price < 100 THEN ''low'' WHEN price < 500 THEN ''mid'' ELSE ''high'' END' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, 1 AS c, 0 AS s FROM (SELECT DISTINCT CASE WHEN price < 100 THEN 'low' WHEN price < 500 THEN 'mid' ELSE 'high' END AS k FROM g))
+UNION ALL SELECT 'distinct alias CASE WHEN price < 100 THEN ''low'' WHEN price < 500 THEN ''mid'' ELSE ''high'' END' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, 1 AS c, 0 AS s FROM (SELECT DISTINCT k FROM (SELECT CASE WHEN price < 100 THEN 'low' WHEN price < 500 THEN 'mid' ELSE 'high' END AS k, v FROM g)))
+UNION ALL SELECT 'distinct filtered CASE WHEN price < 100 THEN ''low'' WHEN price < 500 THEN ''mid'' ELSE ''high'' END' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, 1 AS c, 0 AS s FROM (SELECT DISTINCT CASE WHEN price < 100 THEN 'low' WHEN price < 500 THEN 'mid' ELSE 'high' END AS k FROM g WHERE v > 100))
+UNION ALL SELECT 'distinct ordered CASE WHEN price < 100 THEN ''low'' WHEN price < 500 THEN ''mid'' ELSE ''high'' END' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, 1 AS c, 0 AS s FROM (SELECT DISTINCT CASE WHEN price < 100 THEN 'low' WHEN price < 500 THEN 'mid' ELSE 'high' END AS k FROM g ORDER BY k))
+UNION ALL SELECT 'distinct on CASE WHEN price < 100 THEN ''low'' WHEN price < 500 THEN ''mid'' ELSE ''high'' END' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, 1 AS c, 0 AS s FROM (SELECT DISTINCT ON (CASE WHEN price < 100 THEN 'low' WHEN price < 500 THEN 'mid' ELSE 'high' END) CASE WHEN price < 100 THEN 'low' WHEN price < 500 THEN 'mid' ELSE 'high' END AS k FROM g ORDER BY CASE WHEN price < 100 THEN 'low' WHEN price < 500 THEN 'mid' ELSE 'high' END))
+UNION ALL SELECT 'distinct with sev CASE WHEN price < 100 THEN ''low'' WHEN price < 500 THEN ''mid'' ELSE ''high'' END' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k1::VARCHAR || '/' || k2::VARCHAR AS k, 1 AS c, 0 AS s FROM (SELECT DISTINCT CASE WHEN price < 100 THEN 'low' WHEN price < 500 THEN 'mid' ELSE 'high' END AS k1, sev AS k2 FROM g))
+UNION ALL SELECT 'subquery epoch_ms(date_trunc(''hour'', ts))' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT epoch_ms(date_trunc('hour', ts)) AS k, v FROM g) GROUP BY k)
+UNION ALL SELECT 'cte epoch_ms(date_trunc(''hour'', ts))' AS shape, k::VARCHAR AS k, c, s FROM (WITH x AS (SELECT epoch_ms(date_trunc('hour', ts)) AS k, v FROM g) SELECT k, count(*) AS c, sum(v) AS s FROM x GROUP BY k)
+UNION ALL SELECT 'cte chain epoch_ms(date_trunc(''hour'', ts))' AS shape, k::VARCHAR AS k, c, s FROM (WITH x AS (SELECT epoch_ms(date_trunc('hour', ts)) AS k, v FROM g), y AS (SELECT * FROM x) SELECT k, count(*) AS c, sum(v) AS s FROM y GROUP BY k)
+UNION ALL SELECT 'filtered subquery epoch_ms(date_trunc(''hour'', ts))' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT epoch_ms(date_trunc('hour', ts)) AS k, v FROM g) WHERE v > 100 GROUP BY k)
+UNION ALL SELECT 'subquery filter inside epoch_ms(date_trunc(''hour'', ts))' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT epoch_ms(date_trunc('hour', ts)) AS k, v FROM g WHERE v % 3 = 0) GROUP BY k)
+UNION ALL SELECT 'multi ref epoch_ms(date_trunc(''hour'', ts))' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT epoch_ms(date_trunc('hour', ts)) AS k, v FROM g) GROUP BY k HAVING min(k) IS NOT NULL OR min(k) IS NULL)
+UNION ALL SELECT 'alias reused epoch_ms(date_trunc(''hour'', ts))' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT epoch_ms(date_trunc('hour', ts)) AS k, epoch_ms(date_trunc('hour', ts)) AS k2, v FROM g) GROUP BY k)
+UNION ALL SELECT 'select star epoch_ms(date_trunc(''hour'', ts))' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT *, epoch_ms(date_trunc('hour', ts)) AS k FROM g) GROUP BY k)
+UNION ALL SELECT 'union all epoch_ms(date_trunc(''hour'', ts))' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT epoch_ms(date_trunc('hour', ts)) AS k, v FROM g UNION ALL SELECT epoch_ms(date_trunc('hour', ts)), v FROM g) GROUP BY k)
+UNION ALL SELECT 'distinct epoch_ms(date_trunc(''hour'', ts))' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, 1 AS c, 0 AS s FROM (SELECT DISTINCT epoch_ms(date_trunc('hour', ts)) AS k FROM g))
+UNION ALL SELECT 'distinct alias epoch_ms(date_trunc(''hour'', ts))' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, 1 AS c, 0 AS s FROM (SELECT DISTINCT k FROM (SELECT epoch_ms(date_trunc('hour', ts)) AS k, v FROM g)))
+UNION ALL SELECT 'distinct filtered epoch_ms(date_trunc(''hour'', ts))' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, 1 AS c, 0 AS s FROM (SELECT DISTINCT epoch_ms(date_trunc('hour', ts)) AS k FROM g WHERE v > 100))
+UNION ALL SELECT 'distinct ordered epoch_ms(date_trunc(''hour'', ts))' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, 1 AS c, 0 AS s FROM (SELECT DISTINCT epoch_ms(date_trunc('hour', ts)) AS k FROM g ORDER BY k))
+UNION ALL SELECT 'distinct on epoch_ms(date_trunc(''hour'', ts))' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, 1 AS c, 0 AS s FROM (SELECT DISTINCT ON (epoch_ms(date_trunc('hour', ts))) epoch_ms(date_trunc('hour', ts)) AS k FROM g ORDER BY epoch_ms(date_trunc('hour', ts))))
+UNION ALL SELECT 'distinct with sev epoch_ms(date_trunc(''hour'', ts))' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k1::VARCHAR || '/' || k2::VARCHAR AS k, 1 AS c, 0 AS s FROM (SELECT DISTINCT epoch_ms(date_trunc('hour', ts)) AS k1, sev AS k2 FROM g))
+UNION ALL SELECT 'subquery to_timestamp(floor(epoch(ts) / 3600) * 3600)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT to_timestamp(floor(epoch(ts) / 3600) * 3600) AS k, v FROM g) GROUP BY k)
+UNION ALL SELECT 'cte to_timestamp(floor(epoch(ts) / 3600) * 3600)' AS shape, k::VARCHAR AS k, c, s FROM (WITH x AS (SELECT to_timestamp(floor(epoch(ts) / 3600) * 3600) AS k, v FROM g) SELECT k, count(*) AS c, sum(v) AS s FROM x GROUP BY k)
+UNION ALL SELECT 'cte chain to_timestamp(floor(epoch(ts) / 3600) * 3600)' AS shape, k::VARCHAR AS k, c, s FROM (WITH x AS (SELECT to_timestamp(floor(epoch(ts) / 3600) * 3600) AS k, v FROM g), y AS (SELECT * FROM x) SELECT k, count(*) AS c, sum(v) AS s FROM y GROUP BY k)
+UNION ALL SELECT 'filtered subquery to_timestamp(floor(epoch(ts) / 3600) * 3600)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT to_timestamp(floor(epoch(ts) / 3600) * 3600) AS k, v FROM g) WHERE v > 100 GROUP BY k)
+UNION ALL SELECT 'subquery filter inside to_timestamp(floor(epoch(ts) / 3600) * 3600)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT to_timestamp(floor(epoch(ts) / 3600) * 3600) AS k, v FROM g WHERE v % 3 = 0) GROUP BY k)
+UNION ALL SELECT 'multi ref to_timestamp(floor(epoch(ts) / 3600) * 3600)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT to_timestamp(floor(epoch(ts) / 3600) * 3600) AS k, v FROM g) GROUP BY k HAVING min(k) IS NOT NULL OR min(k) IS NULL)
+UNION ALL SELECT 'alias reused to_timestamp(floor(epoch(ts) / 3600) * 3600)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT to_timestamp(floor(epoch(ts) / 3600) * 3600) AS k, to_timestamp(floor(epoch(ts) / 3600) * 3600) AS k2, v FROM g) GROUP BY k)
+UNION ALL SELECT 'select star to_timestamp(floor(epoch(ts) / 3600) * 3600)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT *, to_timestamp(floor(epoch(ts) / 3600) * 3600) AS k FROM g) GROUP BY k)
+UNION ALL SELECT 'union all to_timestamp(floor(epoch(ts) / 3600) * 3600)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT to_timestamp(floor(epoch(ts) / 3600) * 3600) AS k, v FROM g UNION ALL SELECT to_timestamp(floor(epoch(ts) / 3600) * 3600), v FROM g) GROUP BY k)
+UNION ALL SELECT 'distinct to_timestamp(floor(epoch(ts) / 3600) * 3600)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, 1 AS c, 0 AS s FROM (SELECT DISTINCT to_timestamp(floor(epoch(ts) / 3600) * 3600) AS k FROM g))
+UNION ALL SELECT 'distinct alias to_timestamp(floor(epoch(ts) / 3600) * 3600)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, 1 AS c, 0 AS s FROM (SELECT DISTINCT k FROM (SELECT to_timestamp(floor(epoch(ts) / 3600) * 3600) AS k, v FROM g)))
+UNION ALL SELECT 'distinct filtered to_timestamp(floor(epoch(ts) / 3600) * 3600)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, 1 AS c, 0 AS s FROM (SELECT DISTINCT to_timestamp(floor(epoch(ts) / 3600) * 3600) AS k FROM g WHERE v > 100))
+UNION ALL SELECT 'distinct ordered to_timestamp(floor(epoch(ts) / 3600) * 3600)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, 1 AS c, 0 AS s FROM (SELECT DISTINCT to_timestamp(floor(epoch(ts) / 3600) * 3600) AS k FROM g ORDER BY k))
+UNION ALL SELECT 'distinct on to_timestamp(floor(epoch(ts) / 3600) * 3600)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, 1 AS c, 0 AS s FROM (SELECT DISTINCT ON (to_timestamp(floor(epoch(ts) / 3600) * 3600)) to_timestamp(floor(epoch(ts) / 3600) * 3600) AS k FROM g ORDER BY to_timestamp(floor(epoch(ts) / 3600) * 3600)))
+UNION ALL SELECT 'distinct with sev to_timestamp(floor(epoch(ts) / 3600) * 3600)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k1::VARCHAR || '/' || k2::VARCHAR AS k, 1 AS c, 0 AS s FROM (SELECT DISTINCT to_timestamp(floor(epoch(ts) / 3600) * 3600) AS k1, sev AS k2 FROM g))
+UNION ALL SELECT 'subquery date_bin(INTERVAL ''2 hours'', ts, TIMESTAMP ''2000-01-01 01:00'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT date_bin(INTERVAL '2 hours', ts, TIMESTAMP '2000-01-01 01:00') AS k, v FROM g) GROUP BY k)
+UNION ALL SELECT 'cte date_bin(INTERVAL ''2 hours'', ts, TIMESTAMP ''2000-01-01 01:00'')' AS shape, k::VARCHAR AS k, c, s FROM (WITH x AS (SELECT date_bin(INTERVAL '2 hours', ts, TIMESTAMP '2000-01-01 01:00') AS k, v FROM g) SELECT k, count(*) AS c, sum(v) AS s FROM x GROUP BY k)
+UNION ALL SELECT 'cte chain date_bin(INTERVAL ''2 hours'', ts, TIMESTAMP ''2000-01-01 01:00'')' AS shape, k::VARCHAR AS k, c, s FROM (WITH x AS (SELECT date_bin(INTERVAL '2 hours', ts, TIMESTAMP '2000-01-01 01:00') AS k, v FROM g), y AS (SELECT * FROM x) SELECT k, count(*) AS c, sum(v) AS s FROM y GROUP BY k)
+UNION ALL SELECT 'filtered subquery date_bin(INTERVAL ''2 hours'', ts, TIMESTAMP ''2000-01-01 01:00'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT date_bin(INTERVAL '2 hours', ts, TIMESTAMP '2000-01-01 01:00') AS k, v FROM g) WHERE v > 100 GROUP BY k)
+UNION ALL SELECT 'subquery filter inside date_bin(INTERVAL ''2 hours'', ts, TIMESTAMP ''2000-01-01 01:00'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT date_bin(INTERVAL '2 hours', ts, TIMESTAMP '2000-01-01 01:00') AS k, v FROM g WHERE v % 3 = 0) GROUP BY k)
+UNION ALL SELECT 'multi ref date_bin(INTERVAL ''2 hours'', ts, TIMESTAMP ''2000-01-01 01:00'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT date_bin(INTERVAL '2 hours', ts, TIMESTAMP '2000-01-01 01:00') AS k, v FROM g) GROUP BY k HAVING min(k) IS NOT NULL OR min(k) IS NULL)
+UNION ALL SELECT 'alias reused date_bin(INTERVAL ''2 hours'', ts, TIMESTAMP ''2000-01-01 01:00'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT date_bin(INTERVAL '2 hours', ts, TIMESTAMP '2000-01-01 01:00') AS k, date_bin(INTERVAL '2 hours', ts, TIMESTAMP '2000-01-01 01:00') AS k2, v FROM g) GROUP BY k)
+UNION ALL SELECT 'select star date_bin(INTERVAL ''2 hours'', ts, TIMESTAMP ''2000-01-01 01:00'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT *, date_bin(INTERVAL '2 hours', ts, TIMESTAMP '2000-01-01 01:00') AS k FROM g) GROUP BY k)
+UNION ALL SELECT 'union all date_bin(INTERVAL ''2 hours'', ts, TIMESTAMP ''2000-01-01 01:00'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT date_bin(INTERVAL '2 hours', ts, TIMESTAMP '2000-01-01 01:00') AS k, v FROM g UNION ALL SELECT date_bin(INTERVAL '2 hours', ts, TIMESTAMP '2000-01-01 01:00'), v FROM g) GROUP BY k)
+UNION ALL SELECT 'distinct date_bin(INTERVAL ''2 hours'', ts, TIMESTAMP ''2000-01-01 01:00'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, 1 AS c, 0 AS s FROM (SELECT DISTINCT date_bin(INTERVAL '2 hours', ts, TIMESTAMP '2000-01-01 01:00') AS k FROM g))
+UNION ALL SELECT 'distinct alias date_bin(INTERVAL ''2 hours'', ts, TIMESTAMP ''2000-01-01 01:00'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, 1 AS c, 0 AS s FROM (SELECT DISTINCT k FROM (SELECT date_bin(INTERVAL '2 hours', ts, TIMESTAMP '2000-01-01 01:00') AS k, v FROM g)))
+UNION ALL SELECT 'distinct filtered date_bin(INTERVAL ''2 hours'', ts, TIMESTAMP ''2000-01-01 01:00'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, 1 AS c, 0 AS s FROM (SELECT DISTINCT date_bin(INTERVAL '2 hours', ts, TIMESTAMP '2000-01-01 01:00') AS k FROM g WHERE v > 100))
+UNION ALL SELECT 'distinct ordered date_bin(INTERVAL ''2 hours'', ts, TIMESTAMP ''2000-01-01 01:00'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, 1 AS c, 0 AS s FROM (SELECT DISTINCT date_bin(INTERVAL '2 hours', ts, TIMESTAMP '2000-01-01 01:00') AS k FROM g ORDER BY k))
+UNION ALL SELECT 'distinct on date_bin(INTERVAL ''2 hours'', ts, TIMESTAMP ''2000-01-01 01:00'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, 1 AS c, 0 AS s FROM (SELECT DISTINCT ON (date_bin(INTERVAL '2 hours', ts, TIMESTAMP '2000-01-01 01:00')) date_bin(INTERVAL '2 hours', ts, TIMESTAMP '2000-01-01 01:00') AS k FROM g ORDER BY date_bin(INTERVAL '2 hours', ts, TIMESTAMP '2000-01-01 01:00')))
+UNION ALL SELECT 'distinct with sev date_bin(INTERVAL ''2 hours'', ts, TIMESTAMP ''2000-01-01 01:00'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k1::VARCHAR || '/' || k2::VARCHAR AS k, 1 AS c, 0 AS s FROM (SELECT DISTINCT date_bin(INTERVAL '2 hours', ts, TIMESTAMP '2000-01-01 01:00') AS k1, sev AS k2 FROM g))
+UNION ALL SELECT 'subquery date_trunc(''day'', d)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT date_trunc('day', d) AS k, v FROM g) GROUP BY k)
+UNION ALL SELECT 'cte date_trunc(''day'', d)' AS shape, k::VARCHAR AS k, c, s FROM (WITH x AS (SELECT date_trunc('day', d) AS k, v FROM g) SELECT k, count(*) AS c, sum(v) AS s FROM x GROUP BY k)
+UNION ALL SELECT 'cte chain date_trunc(''day'', d)' AS shape, k::VARCHAR AS k, c, s FROM (WITH x AS (SELECT date_trunc('day', d) AS k, v FROM g), y AS (SELECT * FROM x) SELECT k, count(*) AS c, sum(v) AS s FROM y GROUP BY k)
+UNION ALL SELECT 'filtered subquery date_trunc(''day'', d)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT date_trunc('day', d) AS k, v FROM g) WHERE v > 100 GROUP BY k)
+UNION ALL SELECT 'subquery filter inside date_trunc(''day'', d)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT date_trunc('day', d) AS k, v FROM g WHERE v % 3 = 0) GROUP BY k)
+UNION ALL SELECT 'multi ref date_trunc(''day'', d)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT date_trunc('day', d) AS k, v FROM g) GROUP BY k HAVING min(k) IS NOT NULL OR min(k) IS NULL)
+UNION ALL SELECT 'alias reused date_trunc(''day'', d)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT date_trunc('day', d) AS k, date_trunc('day', d) AS k2, v FROM g) GROUP BY k)
+UNION ALL SELECT 'select star date_trunc(''day'', d)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT *, date_trunc('day', d) AS k FROM g) GROUP BY k)
+UNION ALL SELECT 'union all date_trunc(''day'', d)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT date_trunc('day', d) AS k, v FROM g UNION ALL SELECT date_trunc('day', d), v FROM g) GROUP BY k)
+UNION ALL SELECT 'distinct date_trunc(''day'', d)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, 1 AS c, 0 AS s FROM (SELECT DISTINCT date_trunc('day', d) AS k FROM g))
+UNION ALL SELECT 'distinct alias date_trunc(''day'', d)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, 1 AS c, 0 AS s FROM (SELECT DISTINCT k FROM (SELECT date_trunc('day', d) AS k, v FROM g)))
+UNION ALL SELECT 'distinct filtered date_trunc(''day'', d)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, 1 AS c, 0 AS s FROM (SELECT DISTINCT date_trunc('day', d) AS k FROM g WHERE v > 100))
+UNION ALL SELECT 'distinct ordered date_trunc(''day'', d)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, 1 AS c, 0 AS s FROM (SELECT DISTINCT date_trunc('day', d) AS k FROM g ORDER BY k))
+UNION ALL SELECT 'distinct on date_trunc(''day'', d)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, 1 AS c, 0 AS s FROM (SELECT DISTINCT ON (date_trunc('day', d)) date_trunc('day', d) AS k FROM g ORDER BY date_trunc('day', d)))
+UNION ALL SELECT 'distinct with sev date_trunc(''day'', d)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k1::VARCHAR || '/' || k2::VARCHAR AS k, 1 AS c, 0 AS s FROM (SELECT DISTINCT date_trunc('day', d) AS k1, sev AS k2 FROM g))
+UNION ALL SELECT 'subquery sev' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT sev AS k, v FROM g) GROUP BY k)
+UNION ALL SELECT 'cte sev' AS shape, k::VARCHAR AS k, c, s FROM (WITH x AS (SELECT sev AS k, v FROM g) SELECT k, count(*) AS c, sum(v) AS s FROM x GROUP BY k)
+UNION ALL SELECT 'cte chain sev' AS shape, k::VARCHAR AS k, c, s FROM (WITH x AS (SELECT sev AS k, v FROM g), y AS (SELECT * FROM x) SELECT k, count(*) AS c, sum(v) AS s FROM y GROUP BY k)
+UNION ALL SELECT 'filtered subquery sev' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT sev AS k, v FROM g) WHERE v > 100 GROUP BY k)
+UNION ALL SELECT 'subquery filter inside sev' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT sev AS k, v FROM g WHERE v % 3 = 0) GROUP BY k)
+UNION ALL SELECT 'multi ref sev' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT sev AS k, v FROM g) GROUP BY k HAVING min(k) IS NOT NULL OR min(k) IS NULL)
+UNION ALL SELECT 'alias reused sev' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT sev AS k, sev AS k2, v FROM g) GROUP BY k)
+UNION ALL SELECT 'select star sev' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT *, sev AS k FROM g) GROUP BY k)
+UNION ALL SELECT 'union all sev' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT sev AS k, v FROM g UNION ALL SELECT sev, v FROM g) GROUP BY k)
+UNION ALL SELECT 'distinct sev' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, 1 AS c, 0 AS s FROM (SELECT DISTINCT sev AS k FROM g))
+UNION ALL SELECT 'distinct alias sev' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, 1 AS c, 0 AS s FROM (SELECT DISTINCT k FROM (SELECT sev AS k, v FROM g)))
+UNION ALL SELECT 'distinct filtered sev' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, 1 AS c, 0 AS s FROM (SELECT DISTINCT sev AS k FROM g WHERE v > 100))
+UNION ALL SELECT 'distinct ordered sev' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, 1 AS c, 0 AS s FROM (SELECT DISTINCT sev AS k FROM g ORDER BY k))
+UNION ALL SELECT 'distinct on sev' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, 1 AS c, 0 AS s FROM (SELECT DISTINCT ON (sev) sev AS k FROM g ORDER BY sev))
+UNION ALL SELECT 'distinct with sev sev' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k1::VARCHAR || '/' || k2::VARCHAR AS k, 1 AS c, 0 AS s FROM (SELECT DISTINCT sev AS k1, sev AS k2 FROM g))
+UNION ALL SELECT 'subquery ts' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT ts AS k, v FROM g) GROUP BY k)
+UNION ALL SELECT 'cte ts' AS shape, k::VARCHAR AS k, c, s FROM (WITH x AS (SELECT ts AS k, v FROM g) SELECT k, count(*) AS c, sum(v) AS s FROM x GROUP BY k)
+UNION ALL SELECT 'cte chain ts' AS shape, k::VARCHAR AS k, c, s FROM (WITH x AS (SELECT ts AS k, v FROM g), y AS (SELECT * FROM x) SELECT k, count(*) AS c, sum(v) AS s FROM y GROUP BY k)
+UNION ALL SELECT 'filtered subquery ts' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT ts AS k, v FROM g) WHERE v > 100 GROUP BY k)
+UNION ALL SELECT 'subquery filter inside ts' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT ts AS k, v FROM g WHERE v % 3 = 0) GROUP BY k)
+UNION ALL SELECT 'multi ref ts' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT ts AS k, v FROM g) GROUP BY k HAVING min(k) IS NOT NULL OR min(k) IS NULL)
+UNION ALL SELECT 'alias reused ts' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT ts AS k, ts AS k2, v FROM g) GROUP BY k)
+UNION ALL SELECT 'select star ts' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT *, ts AS k FROM g) GROUP BY k)
+UNION ALL SELECT 'union all ts' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT ts AS k, v FROM g UNION ALL SELECT ts, v FROM g) GROUP BY k)
+UNION ALL SELECT 'distinct ts' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, 1 AS c, 0 AS s FROM (SELECT DISTINCT ts AS k FROM g))
+UNION ALL SELECT 'distinct alias ts' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, 1 AS c, 0 AS s FROM (SELECT DISTINCT k FROM (SELECT ts AS k, v FROM g)))
+UNION ALL SELECT 'distinct filtered ts' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, 1 AS c, 0 AS s FROM (SELECT DISTINCT ts AS k FROM g WHERE v > 100))
+UNION ALL SELECT 'distinct ordered ts' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, 1 AS c, 0 AS s FROM (SELECT DISTINCT ts AS k FROM g ORDER BY k))
+UNION ALL SELECT 'distinct on ts' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, 1 AS c, 0 AS s FROM (SELECT DISTINCT ON (ts) ts AS k FROM g ORDER BY ts))
+UNION ALL SELECT 'distinct with sev ts' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k1::VARCHAR || '/' || k2::VARCHAR AS k, 1 AS c, 0 AS s FROM (SELECT DISTINCT ts AS k1, sev AS k2 FROM g))
+UNION ALL SELECT 'alias pair date_trunc(''day'', ts) + date_trunc(''hour'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k1::VARCHAR || '/' || k2::VARCHAR AS k, c, s FROM (SELECT k1, k2, count(*) AS c, sum(v) AS s FROM (SELECT date_trunc('day', ts) AS k1, date_trunc('hour', ts) AS k2, v FROM g) GROUP BY k1, k2))
+UNION ALL SELECT 'cte pair date_trunc(''day'', ts) + date_trunc(''hour'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (WITH x AS (SELECT date_trunc('day', ts) AS k1, date_trunc('hour', ts) AS k2, v FROM g) SELECT k1::VARCHAR || '/' || k2::VARCHAR AS k, c, s FROM (SELECT k1, k2, count(*) AS c, sum(v) AS s FROM x GROUP BY k1, k2))
+UNION ALL SELECT 'distinct pair date_trunc(''day'', ts) + date_trunc(''hour'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k1::VARCHAR || '/' || k2::VARCHAR AS k, 1 AS c, 0 AS s FROM (SELECT DISTINCT date_trunc('day', ts) AS k1, date_trunc('hour', ts) AS k2 FROM g))
+UNION ALL SELECT 'distinct pair alias date_trunc(''day'', ts) + date_trunc(''hour'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k1::VARCHAR || '/' || k2::VARCHAR AS k, 1 AS c, 0 AS s FROM (SELECT DISTINCT k1, k2 FROM (SELECT date_trunc('day', ts) AS k1, date_trunc('hour', ts) AS k2 FROM g)))
+UNION ALL SELECT 'pair one aliased date_trunc(''day'', ts) + date_trunc(''hour'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k1::VARCHAR || '/' || k2::VARCHAR AS k, c, s FROM (SELECT k1, date_trunc('hour', ts) AS k2, count(*) AS c, sum(v) AS s FROM (SELECT date_trunc('day', ts) AS k1, ts, tstz, v FROM g) GROUP BY 1, 2))
+UNION ALL SELECT 'alias pair date_trunc(''month'', ts) + date_trunc(''day'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k1::VARCHAR || '/' || k2::VARCHAR AS k, c, s FROM (SELECT k1, k2, count(*) AS c, sum(v) AS s FROM (SELECT date_trunc('month', ts) AS k1, date_trunc('day', ts) AS k2, v FROM g) GROUP BY k1, k2))
+UNION ALL SELECT 'cte pair date_trunc(''month'', ts) + date_trunc(''day'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (WITH x AS (SELECT date_trunc('month', ts) AS k1, date_trunc('day', ts) AS k2, v FROM g) SELECT k1::VARCHAR || '/' || k2::VARCHAR AS k, c, s FROM (SELECT k1, k2, count(*) AS c, sum(v) AS s FROM x GROUP BY k1, k2))
+UNION ALL SELECT 'distinct pair date_trunc(''month'', ts) + date_trunc(''day'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k1::VARCHAR || '/' || k2::VARCHAR AS k, 1 AS c, 0 AS s FROM (SELECT DISTINCT date_trunc('month', ts) AS k1, date_trunc('day', ts) AS k2 FROM g))
+UNION ALL SELECT 'distinct pair alias date_trunc(''month'', ts) + date_trunc(''day'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k1::VARCHAR || '/' || k2::VARCHAR AS k, 1 AS c, 0 AS s FROM (SELECT DISTINCT k1, k2 FROM (SELECT date_trunc('month', ts) AS k1, date_trunc('day', ts) AS k2 FROM g)))
+UNION ALL SELECT 'pair one aliased date_trunc(''month'', ts) + date_trunc(''day'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k1::VARCHAR || '/' || k2::VARCHAR AS k, c, s FROM (SELECT k1, date_trunc('day', ts) AS k2, count(*) AS c, sum(v) AS s FROM (SELECT date_trunc('month', ts) AS k1, ts, tstz, v FROM g) GROUP BY 1, 2))
+UNION ALL SELECT 'alias pair strftime(ts, ''%Y-%m'') + date_trunc(''day'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k1::VARCHAR || '/' || k2::VARCHAR AS k, c, s FROM (SELECT k1, k2, count(*) AS c, sum(v) AS s FROM (SELECT strftime(ts, '%Y-%m') AS k1, date_trunc('day', ts) AS k2, v FROM g) GROUP BY k1, k2))
+UNION ALL SELECT 'cte pair strftime(ts, ''%Y-%m'') + date_trunc(''day'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (WITH x AS (SELECT strftime(ts, '%Y-%m') AS k1, date_trunc('day', ts) AS k2, v FROM g) SELECT k1::VARCHAR || '/' || k2::VARCHAR AS k, c, s FROM (SELECT k1, k2, count(*) AS c, sum(v) AS s FROM x GROUP BY k1, k2))
+UNION ALL SELECT 'distinct pair strftime(ts, ''%Y-%m'') + date_trunc(''day'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k1::VARCHAR || '/' || k2::VARCHAR AS k, 1 AS c, 0 AS s FROM (SELECT DISTINCT strftime(ts, '%Y-%m') AS k1, date_trunc('day', ts) AS k2 FROM g))
+UNION ALL SELECT 'distinct pair alias strftime(ts, ''%Y-%m'') + date_trunc(''day'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k1::VARCHAR || '/' || k2::VARCHAR AS k, 1 AS c, 0 AS s FROM (SELECT DISTINCT k1, k2 FROM (SELECT strftime(ts, '%Y-%m') AS k1, date_trunc('day', ts) AS k2 FROM g)))
+UNION ALL SELECT 'pair one aliased strftime(ts, ''%Y-%m'') + date_trunc(''day'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k1::VARCHAR || '/' || k2::VARCHAR AS k, c, s FROM (SELECT k1, date_trunc('day', ts) AS k2, count(*) AS c, sum(v) AS s FROM (SELECT strftime(ts, '%Y-%m') AS k1, ts, tstz, v FROM g) GROUP BY 1, 2))
+UNION ALL SELECT 'alias pair date_trunc(''day'', tstz) + date_trunc(''hour'', tstz)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k1::VARCHAR || '/' || k2::VARCHAR AS k, c, s FROM (SELECT k1, k2, count(*) AS c, sum(v) AS s FROM (SELECT date_trunc('day', tstz) AS k1, date_trunc('hour', tstz) AS k2, v FROM g) GROUP BY k1, k2))
+UNION ALL SELECT 'cte pair date_trunc(''day'', tstz) + date_trunc(''hour'', tstz)' AS shape, k::VARCHAR AS k, c, s FROM (WITH x AS (SELECT date_trunc('day', tstz) AS k1, date_trunc('hour', tstz) AS k2, v FROM g) SELECT k1::VARCHAR || '/' || k2::VARCHAR AS k, c, s FROM (SELECT k1, k2, count(*) AS c, sum(v) AS s FROM x GROUP BY k1, k2))
+UNION ALL SELECT 'distinct pair date_trunc(''day'', tstz) + date_trunc(''hour'', tstz)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k1::VARCHAR || '/' || k2::VARCHAR AS k, 1 AS c, 0 AS s FROM (SELECT DISTINCT date_trunc('day', tstz) AS k1, date_trunc('hour', tstz) AS k2 FROM g))
+UNION ALL SELECT 'distinct pair alias date_trunc(''day'', tstz) + date_trunc(''hour'', tstz)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k1::VARCHAR || '/' || k2::VARCHAR AS k, 1 AS c, 0 AS s FROM (SELECT DISTINCT k1, k2 FROM (SELECT date_trunc('day', tstz) AS k1, date_trunc('hour', tstz) AS k2 FROM g)))
+UNION ALL SELECT 'pair one aliased date_trunc(''day'', tstz) + date_trunc(''hour'', tstz)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k1::VARCHAR || '/' || k2::VARCHAR AS k, c, s FROM (SELECT k1, date_trunc('hour', tstz) AS k2, count(*) AS c, sum(v) AS s FROM (SELECT date_trunc('day', tstz) AS k1, ts, tstz, v FROM g) GROUP BY 1, 2))
+UNION ALL SELECT 'alias pair concat(year(ts), ''-Q'', quarter(ts)) + date_trunc(''month'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k1::VARCHAR || '/' || k2::VARCHAR AS k, c, s FROM (SELECT k1, k2, count(*) AS c, sum(v) AS s FROM (SELECT concat(year(ts), '-Q', quarter(ts)) AS k1, date_trunc('month', ts) AS k2, v FROM g) GROUP BY k1, k2))
+UNION ALL SELECT 'cte pair concat(year(ts), ''-Q'', quarter(ts)) + date_trunc(''month'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (WITH x AS (SELECT concat(year(ts), '-Q', quarter(ts)) AS k1, date_trunc('month', ts) AS k2, v FROM g) SELECT k1::VARCHAR || '/' || k2::VARCHAR AS k, c, s FROM (SELECT k1, k2, count(*) AS c, sum(v) AS s FROM x GROUP BY k1, k2))
+UNION ALL SELECT 'distinct pair concat(year(ts), ''-Q'', quarter(ts)) + date_trunc(''month'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k1::VARCHAR || '/' || k2::VARCHAR AS k, 1 AS c, 0 AS s FROM (SELECT DISTINCT concat(year(ts), '-Q', quarter(ts)) AS k1, date_trunc('month', ts) AS k2 FROM g))
+UNION ALL SELECT 'distinct pair alias concat(year(ts), ''-Q'', quarter(ts)) + date_trunc(''month'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k1::VARCHAR || '/' || k2::VARCHAR AS k, 1 AS c, 0 AS s FROM (SELECT DISTINCT k1, k2 FROM (SELECT concat(year(ts), '-Q', quarter(ts)) AS k1, date_trunc('month', ts) AS k2 FROM g)))
+UNION ALL SELECT 'pair one aliased concat(year(ts), ''-Q'', quarter(ts)) + date_trunc(''month'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k1::VARCHAR || '/' || k2::VARCHAR AS k, c, s FROM (SELECT k1, date_trunc('month', ts) AS k2, count(*) AS c, sum(v) AS s FROM (SELECT concat(year(ts), '-Q', quarter(ts)) AS k1, ts, tstz, v FROM g) GROUP BY 1, 2))
+UNION ALL SELECT 'alias pair time_bucket(INTERVAL ''1 day'', ts) + time_bucket(INTERVAL ''15 minutes'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k1::VARCHAR || '/' || k2::VARCHAR AS k, c, s FROM (SELECT k1, k2, count(*) AS c, sum(v) AS s FROM (SELECT time_bucket(INTERVAL '1 day', ts) AS k1, time_bucket(INTERVAL '15 minutes', ts) AS k2, v FROM g) GROUP BY k1, k2))
+UNION ALL SELECT 'cte pair time_bucket(INTERVAL ''1 day'', ts) + time_bucket(INTERVAL ''15 minutes'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (WITH x AS (SELECT time_bucket(INTERVAL '1 day', ts) AS k1, time_bucket(INTERVAL '15 minutes', ts) AS k2, v FROM g) SELECT k1::VARCHAR || '/' || k2::VARCHAR AS k, c, s FROM (SELECT k1, k2, count(*) AS c, sum(v) AS s FROM x GROUP BY k1, k2))
+UNION ALL SELECT 'distinct pair time_bucket(INTERVAL ''1 day'', ts) + time_bucket(INTERVAL ''15 minutes'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k1::VARCHAR || '/' || k2::VARCHAR AS k, 1 AS c, 0 AS s FROM (SELECT DISTINCT time_bucket(INTERVAL '1 day', ts) AS k1, time_bucket(INTERVAL '15 minutes', ts) AS k2 FROM g))
+UNION ALL SELECT 'distinct pair alias time_bucket(INTERVAL ''1 day'', ts) + time_bucket(INTERVAL ''15 minutes'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k1::VARCHAR || '/' || k2::VARCHAR AS k, 1 AS c, 0 AS s FROM (SELECT DISTINCT k1, k2 FROM (SELECT time_bucket(INTERVAL '1 day', ts) AS k1, time_bucket(INTERVAL '15 minutes', ts) AS k2 FROM g)))
+UNION ALL SELECT 'pair one aliased time_bucket(INTERVAL ''1 day'', ts) + time_bucket(INTERVAL ''15 minutes'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k1::VARCHAR || '/' || k2::VARCHAR AS k, c, s FROM (SELECT k1, time_bucket(INTERVAL '15 minutes', ts) AS k2, count(*) AS c, sum(v) AS s FROM (SELECT time_bucket(INTERVAL '1 day', ts) AS k1, ts, tstz, v FROM g) GROUP BY 1, 2))
+UNION ALL SELECT 'alias pair date_trunc(''day'', ts)::DATE + date_trunc(''hour'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k1::VARCHAR || '/' || k2::VARCHAR AS k, c, s FROM (SELECT k1, k2, count(*) AS c, sum(v) AS s FROM (SELECT date_trunc('day', ts)::DATE AS k1, date_trunc('hour', ts) AS k2, v FROM g) GROUP BY k1, k2))
+UNION ALL SELECT 'cte pair date_trunc(''day'', ts)::DATE + date_trunc(''hour'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (WITH x AS (SELECT date_trunc('day', ts)::DATE AS k1, date_trunc('hour', ts) AS k2, v FROM g) SELECT k1::VARCHAR || '/' || k2::VARCHAR AS k, c, s FROM (SELECT k1, k2, count(*) AS c, sum(v) AS s FROM x GROUP BY k1, k2))
+UNION ALL SELECT 'distinct pair date_trunc(''day'', ts)::DATE + date_trunc(''hour'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k1::VARCHAR || '/' || k2::VARCHAR AS k, 1 AS c, 0 AS s FROM (SELECT DISTINCT date_trunc('day', ts)::DATE AS k1, date_trunc('hour', ts) AS k2 FROM g))
+UNION ALL SELECT 'distinct pair alias date_trunc(''day'', ts)::DATE + date_trunc(''hour'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k1::VARCHAR || '/' || k2::VARCHAR AS k, 1 AS c, 0 AS s FROM (SELECT DISTINCT k1, k2 FROM (SELECT date_trunc('day', ts)::DATE AS k1, date_trunc('hour', ts) AS k2 FROM g)))
+UNION ALL SELECT 'pair one aliased date_trunc(''day'', ts)::DATE + date_trunc(''hour'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k1::VARCHAR || '/' || k2::VARCHAR AS k, c, s FROM (SELECT k1, date_trunc('hour', ts) AS k2, count(*) AS c, sum(v) AS s FROM (SELECT date_trunc('day', ts)::DATE AS k1, ts, tstz, v FROM g) GROUP BY 1, 2));
+
+statement ok
+RESET disabled_optimizers;
+
+statement ok
+CREATE TABLE got_a AS
+SELECT 'subquery date_trunc(''hour'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT date_trunc('hour', ts) AS k, v FROM g) GROUP BY k)
+UNION ALL SELECT 'cte date_trunc(''hour'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (WITH x AS (SELECT date_trunc('hour', ts) AS k, v FROM g) SELECT k, count(*) AS c, sum(v) AS s FROM x GROUP BY k)
+UNION ALL SELECT 'cte chain date_trunc(''hour'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (WITH x AS (SELECT date_trunc('hour', ts) AS k, v FROM g), y AS (SELECT * FROM x) SELECT k, count(*) AS c, sum(v) AS s FROM y GROUP BY k)
+UNION ALL SELECT 'filtered subquery date_trunc(''hour'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT date_trunc('hour', ts) AS k, v FROM g) WHERE v > 100 GROUP BY k)
+UNION ALL SELECT 'subquery filter inside date_trunc(''hour'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT date_trunc('hour', ts) AS k, v FROM g WHERE v % 3 = 0) GROUP BY k)
+UNION ALL SELECT 'multi ref date_trunc(''hour'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT date_trunc('hour', ts) AS k, v FROM g) GROUP BY k HAVING min(k) IS NOT NULL OR min(k) IS NULL)
+UNION ALL SELECT 'alias reused date_trunc(''hour'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT date_trunc('hour', ts) AS k, date_trunc('hour', ts) AS k2, v FROM g) GROUP BY k)
+UNION ALL SELECT 'select star date_trunc(''hour'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT *, date_trunc('hour', ts) AS k FROM g) GROUP BY k)
+UNION ALL SELECT 'union all date_trunc(''hour'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT date_trunc('hour', ts) AS k, v FROM g UNION ALL SELECT date_trunc('hour', ts), v FROM g) GROUP BY k)
+UNION ALL SELECT 'distinct date_trunc(''hour'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, 1 AS c, 0 AS s FROM (SELECT DISTINCT date_trunc('hour', ts) AS k FROM g))
+UNION ALL SELECT 'distinct alias date_trunc(''hour'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, 1 AS c, 0 AS s FROM (SELECT DISTINCT k FROM (SELECT date_trunc('hour', ts) AS k, v FROM g)))
+UNION ALL SELECT 'distinct filtered date_trunc(''hour'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, 1 AS c, 0 AS s FROM (SELECT DISTINCT date_trunc('hour', ts) AS k FROM g WHERE v > 100))
+UNION ALL SELECT 'distinct ordered date_trunc(''hour'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, 1 AS c, 0 AS s FROM (SELECT DISTINCT date_trunc('hour', ts) AS k FROM g ORDER BY k))
+UNION ALL SELECT 'distinct on date_trunc(''hour'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, 1 AS c, 0 AS s FROM (SELECT DISTINCT ON (date_trunc('hour', ts)) date_trunc('hour', ts) AS k FROM g ORDER BY date_trunc('hour', ts)))
+UNION ALL SELECT 'distinct with sev date_trunc(''hour'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k1::VARCHAR || '/' || k2::VARCHAR AS k, 1 AS c, 0 AS s FROM (SELECT DISTINCT date_trunc('hour', ts) AS k1, sev AS k2 FROM g))
+UNION ALL SELECT 'subquery date_trunc(''day'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT date_trunc('day', ts) AS k, v FROM g) GROUP BY k)
+UNION ALL SELECT 'cte date_trunc(''day'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (WITH x AS (SELECT date_trunc('day', ts) AS k, v FROM g) SELECT k, count(*) AS c, sum(v) AS s FROM x GROUP BY k)
+UNION ALL SELECT 'cte chain date_trunc(''day'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (WITH x AS (SELECT date_trunc('day', ts) AS k, v FROM g), y AS (SELECT * FROM x) SELECT k, count(*) AS c, sum(v) AS s FROM y GROUP BY k)
+UNION ALL SELECT 'filtered subquery date_trunc(''day'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT date_trunc('day', ts) AS k, v FROM g) WHERE v > 100 GROUP BY k)
+UNION ALL SELECT 'subquery filter inside date_trunc(''day'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT date_trunc('day', ts) AS k, v FROM g WHERE v % 3 = 0) GROUP BY k)
+UNION ALL SELECT 'multi ref date_trunc(''day'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT date_trunc('day', ts) AS k, v FROM g) GROUP BY k HAVING min(k) IS NOT NULL OR min(k) IS NULL)
+UNION ALL SELECT 'alias reused date_trunc(''day'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT date_trunc('day', ts) AS k, date_trunc('day', ts) AS k2, v FROM g) GROUP BY k)
+UNION ALL SELECT 'select star date_trunc(''day'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT *, date_trunc('day', ts) AS k FROM g) GROUP BY k)
+UNION ALL SELECT 'union all date_trunc(''day'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT date_trunc('day', ts) AS k, v FROM g UNION ALL SELECT date_trunc('day', ts), v FROM g) GROUP BY k)
+UNION ALL SELECT 'distinct date_trunc(''day'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, 1 AS c, 0 AS s FROM (SELECT DISTINCT date_trunc('day', ts) AS k FROM g))
+UNION ALL SELECT 'distinct alias date_trunc(''day'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, 1 AS c, 0 AS s FROM (SELECT DISTINCT k FROM (SELECT date_trunc('day', ts) AS k, v FROM g)))
+UNION ALL SELECT 'distinct filtered date_trunc(''day'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, 1 AS c, 0 AS s FROM (SELECT DISTINCT date_trunc('day', ts) AS k FROM g WHERE v > 100))
+UNION ALL SELECT 'distinct ordered date_trunc(''day'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, 1 AS c, 0 AS s FROM (SELECT DISTINCT date_trunc('day', ts) AS k FROM g ORDER BY k))
+UNION ALL SELECT 'distinct on date_trunc(''day'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, 1 AS c, 0 AS s FROM (SELECT DISTINCT ON (date_trunc('day', ts)) date_trunc('day', ts) AS k FROM g ORDER BY date_trunc('day', ts)))
+UNION ALL SELECT 'distinct with sev date_trunc(''day'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k1::VARCHAR || '/' || k2::VARCHAR AS k, 1 AS c, 0 AS s FROM (SELECT DISTINCT date_trunc('day', ts) AS k1, sev AS k2 FROM g))
+UNION ALL SELECT 'subquery date_trunc(''month'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT date_trunc('month', ts) AS k, v FROM g) GROUP BY k)
+UNION ALL SELECT 'cte date_trunc(''month'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (WITH x AS (SELECT date_trunc('month', ts) AS k, v FROM g) SELECT k, count(*) AS c, sum(v) AS s FROM x GROUP BY k)
+UNION ALL SELECT 'cte chain date_trunc(''month'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (WITH x AS (SELECT date_trunc('month', ts) AS k, v FROM g), y AS (SELECT * FROM x) SELECT k, count(*) AS c, sum(v) AS s FROM y GROUP BY k)
+UNION ALL SELECT 'filtered subquery date_trunc(''month'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT date_trunc('month', ts) AS k, v FROM g) WHERE v > 100 GROUP BY k)
+UNION ALL SELECT 'subquery filter inside date_trunc(''month'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT date_trunc('month', ts) AS k, v FROM g WHERE v % 3 = 0) GROUP BY k)
+UNION ALL SELECT 'multi ref date_trunc(''month'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT date_trunc('month', ts) AS k, v FROM g) GROUP BY k HAVING min(k) IS NOT NULL OR min(k) IS NULL)
+UNION ALL SELECT 'alias reused date_trunc(''month'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT date_trunc('month', ts) AS k, date_trunc('month', ts) AS k2, v FROM g) GROUP BY k)
+UNION ALL SELECT 'select star date_trunc(''month'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT *, date_trunc('month', ts) AS k FROM g) GROUP BY k)
+UNION ALL SELECT 'union all date_trunc(''month'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT date_trunc('month', ts) AS k, v FROM g UNION ALL SELECT date_trunc('month', ts), v FROM g) GROUP BY k)
+UNION ALL SELECT 'distinct date_trunc(''month'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, 1 AS c, 0 AS s FROM (SELECT DISTINCT date_trunc('month', ts) AS k FROM g))
+UNION ALL SELECT 'distinct alias date_trunc(''month'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, 1 AS c, 0 AS s FROM (SELECT DISTINCT k FROM (SELECT date_trunc('month', ts) AS k, v FROM g)))
+UNION ALL SELECT 'distinct filtered date_trunc(''month'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, 1 AS c, 0 AS s FROM (SELECT DISTINCT date_trunc('month', ts) AS k FROM g WHERE v > 100))
+UNION ALL SELECT 'distinct ordered date_trunc(''month'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, 1 AS c, 0 AS s FROM (SELECT DISTINCT date_trunc('month', ts) AS k FROM g ORDER BY k))
+UNION ALL SELECT 'distinct on date_trunc(''month'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, 1 AS c, 0 AS s FROM (SELECT DISTINCT ON (date_trunc('month', ts)) date_trunc('month', ts) AS k FROM g ORDER BY date_trunc('month', ts)))
+UNION ALL SELECT 'distinct with sev date_trunc(''month'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k1::VARCHAR || '/' || k2::VARCHAR AS k, 1 AS c, 0 AS s FROM (SELECT DISTINCT date_trunc('month', ts) AS k1, sev AS k2 FROM g))
+UNION ALL SELECT 'subquery date_trunc(''week'', ts)::DATE' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT date_trunc('week', ts)::DATE AS k, v FROM g) GROUP BY k)
+UNION ALL SELECT 'cte date_trunc(''week'', ts)::DATE' AS shape, k::VARCHAR AS k, c, s FROM (WITH x AS (SELECT date_trunc('week', ts)::DATE AS k, v FROM g) SELECT k, count(*) AS c, sum(v) AS s FROM x GROUP BY k)
+UNION ALL SELECT 'cte chain date_trunc(''week'', ts)::DATE' AS shape, k::VARCHAR AS k, c, s FROM (WITH x AS (SELECT date_trunc('week', ts)::DATE AS k, v FROM g), y AS (SELECT * FROM x) SELECT k, count(*) AS c, sum(v) AS s FROM y GROUP BY k)
+UNION ALL SELECT 'filtered subquery date_trunc(''week'', ts)::DATE' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT date_trunc('week', ts)::DATE AS k, v FROM g) WHERE v > 100 GROUP BY k)
+UNION ALL SELECT 'subquery filter inside date_trunc(''week'', ts)::DATE' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT date_trunc('week', ts)::DATE AS k, v FROM g WHERE v % 3 = 0) GROUP BY k)
+UNION ALL SELECT 'multi ref date_trunc(''week'', ts)::DATE' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT date_trunc('week', ts)::DATE AS k, v FROM g) GROUP BY k HAVING min(k) IS NOT NULL OR min(k) IS NULL)
+UNION ALL SELECT 'alias reused date_trunc(''week'', ts)::DATE' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT date_trunc('week', ts)::DATE AS k, date_trunc('week', ts)::DATE AS k2, v FROM g) GROUP BY k)
+UNION ALL SELECT 'select star date_trunc(''week'', ts)::DATE' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT *, date_trunc('week', ts)::DATE AS k FROM g) GROUP BY k)
+UNION ALL SELECT 'union all date_trunc(''week'', ts)::DATE' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT date_trunc('week', ts)::DATE AS k, v FROM g UNION ALL SELECT date_trunc('week', ts)::DATE, v FROM g) GROUP BY k)
+UNION ALL SELECT 'distinct date_trunc(''week'', ts)::DATE' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, 1 AS c, 0 AS s FROM (SELECT DISTINCT date_trunc('week', ts)::DATE AS k FROM g))
+UNION ALL SELECT 'distinct alias date_trunc(''week'', ts)::DATE' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, 1 AS c, 0 AS s FROM (SELECT DISTINCT k FROM (SELECT date_trunc('week', ts)::DATE AS k, v FROM g)))
+UNION ALL SELECT 'distinct filtered date_trunc(''week'', ts)::DATE' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, 1 AS c, 0 AS s FROM (SELECT DISTINCT date_trunc('week', ts)::DATE AS k FROM g WHERE v > 100))
+UNION ALL SELECT 'distinct ordered date_trunc(''week'', ts)::DATE' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, 1 AS c, 0 AS s FROM (SELECT DISTINCT date_trunc('week', ts)::DATE AS k FROM g ORDER BY k))
+UNION ALL SELECT 'distinct on date_trunc(''week'', ts)::DATE' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, 1 AS c, 0 AS s FROM (SELECT DISTINCT ON (date_trunc('week', ts)::DATE) date_trunc('week', ts)::DATE AS k FROM g ORDER BY date_trunc('week', ts)::DATE))
+UNION ALL SELECT 'distinct with sev date_trunc(''week'', ts)::DATE' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k1::VARCHAR || '/' || k2::VARCHAR AS k, 1 AS c, 0 AS s FROM (SELECT DISTINCT date_trunc('week', ts)::DATE AS k1, sev AS k2 FROM g))
+UNION ALL SELECT 'subquery time_bucket(INTERVAL ''15 minutes'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT time_bucket(INTERVAL '15 minutes', ts) AS k, v FROM g) GROUP BY k)
+UNION ALL SELECT 'cte time_bucket(INTERVAL ''15 minutes'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (WITH x AS (SELECT time_bucket(INTERVAL '15 minutes', ts) AS k, v FROM g) SELECT k, count(*) AS c, sum(v) AS s FROM x GROUP BY k)
+UNION ALL SELECT 'cte chain time_bucket(INTERVAL ''15 minutes'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (WITH x AS (SELECT time_bucket(INTERVAL '15 minutes', ts) AS k, v FROM g), y AS (SELECT * FROM x) SELECT k, count(*) AS c, sum(v) AS s FROM y GROUP BY k)
+UNION ALL SELECT 'filtered subquery time_bucket(INTERVAL ''15 minutes'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT time_bucket(INTERVAL '15 minutes', ts) AS k, v FROM g) WHERE v > 100 GROUP BY k)
+UNION ALL SELECT 'subquery filter inside time_bucket(INTERVAL ''15 minutes'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT time_bucket(INTERVAL '15 minutes', ts) AS k, v FROM g WHERE v % 3 = 0) GROUP BY k)
+UNION ALL SELECT 'multi ref time_bucket(INTERVAL ''15 minutes'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT time_bucket(INTERVAL '15 minutes', ts) AS k, v FROM g) GROUP BY k HAVING min(k) IS NOT NULL OR min(k) IS NULL)
+UNION ALL SELECT 'alias reused time_bucket(INTERVAL ''15 minutes'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT time_bucket(INTERVAL '15 minutes', ts) AS k, time_bucket(INTERVAL '15 minutes', ts) AS k2, v FROM g) GROUP BY k)
+UNION ALL SELECT 'select star time_bucket(INTERVAL ''15 minutes'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT *, time_bucket(INTERVAL '15 minutes', ts) AS k FROM g) GROUP BY k)
+UNION ALL SELECT 'union all time_bucket(INTERVAL ''15 minutes'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT time_bucket(INTERVAL '15 minutes', ts) AS k, v FROM g UNION ALL SELECT time_bucket(INTERVAL '15 minutes', ts), v FROM g) GROUP BY k)
+UNION ALL SELECT 'distinct time_bucket(INTERVAL ''15 minutes'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, 1 AS c, 0 AS s FROM (SELECT DISTINCT time_bucket(INTERVAL '15 minutes', ts) AS k FROM g))
+UNION ALL SELECT 'distinct alias time_bucket(INTERVAL ''15 minutes'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, 1 AS c, 0 AS s FROM (SELECT DISTINCT k FROM (SELECT time_bucket(INTERVAL '15 minutes', ts) AS k, v FROM g)))
+UNION ALL SELECT 'distinct filtered time_bucket(INTERVAL ''15 minutes'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, 1 AS c, 0 AS s FROM (SELECT DISTINCT time_bucket(INTERVAL '15 minutes', ts) AS k FROM g WHERE v > 100))
+UNION ALL SELECT 'distinct ordered time_bucket(INTERVAL ''15 minutes'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, 1 AS c, 0 AS s FROM (SELECT DISTINCT time_bucket(INTERVAL '15 minutes', ts) AS k FROM g ORDER BY k))
+UNION ALL SELECT 'distinct on time_bucket(INTERVAL ''15 minutes'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, 1 AS c, 0 AS s FROM (SELECT DISTINCT ON (time_bucket(INTERVAL '15 minutes', ts)) time_bucket(INTERVAL '15 minutes', ts) AS k FROM g ORDER BY time_bucket(INTERVAL '15 minutes', ts)))
+UNION ALL SELECT 'distinct with sev time_bucket(INTERVAL ''15 minutes'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k1::VARCHAR || '/' || k2::VARCHAR AS k, 1 AS c, 0 AS s FROM (SELECT DISTINCT time_bucket(INTERVAL '15 minutes', ts) AS k1, sev AS k2 FROM g))
+UNION ALL SELECT 'subquery strftime(ts, ''%Y-%m-%d'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT strftime(ts, '%Y-%m-%d') AS k, v FROM g) GROUP BY k)
+UNION ALL SELECT 'cte strftime(ts, ''%Y-%m-%d'')' AS shape, k::VARCHAR AS k, c, s FROM (WITH x AS (SELECT strftime(ts, '%Y-%m-%d') AS k, v FROM g) SELECT k, count(*) AS c, sum(v) AS s FROM x GROUP BY k)
+UNION ALL SELECT 'cte chain strftime(ts, ''%Y-%m-%d'')' AS shape, k::VARCHAR AS k, c, s FROM (WITH x AS (SELECT strftime(ts, '%Y-%m-%d') AS k, v FROM g), y AS (SELECT * FROM x) SELECT k, count(*) AS c, sum(v) AS s FROM y GROUP BY k)
+UNION ALL SELECT 'filtered subquery strftime(ts, ''%Y-%m-%d'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT strftime(ts, '%Y-%m-%d') AS k, v FROM g) WHERE v > 100 GROUP BY k)
+UNION ALL SELECT 'subquery filter inside strftime(ts, ''%Y-%m-%d'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT strftime(ts, '%Y-%m-%d') AS k, v FROM g WHERE v % 3 = 0) GROUP BY k)
+UNION ALL SELECT 'multi ref strftime(ts, ''%Y-%m-%d'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT strftime(ts, '%Y-%m-%d') AS k, v FROM g) GROUP BY k HAVING min(k) IS NOT NULL OR min(k) IS NULL)
+UNION ALL SELECT 'alias reused strftime(ts, ''%Y-%m-%d'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT strftime(ts, '%Y-%m-%d') AS k, strftime(ts, '%Y-%m-%d') AS k2, v FROM g) GROUP BY k)
+UNION ALL SELECT 'select star strftime(ts, ''%Y-%m-%d'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT *, strftime(ts, '%Y-%m-%d') AS k FROM g) GROUP BY k)
+UNION ALL SELECT 'union all strftime(ts, ''%Y-%m-%d'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT strftime(ts, '%Y-%m-%d') AS k, v FROM g UNION ALL SELECT strftime(ts, '%Y-%m-%d'), v FROM g) GROUP BY k)
+UNION ALL SELECT 'distinct strftime(ts, ''%Y-%m-%d'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, 1 AS c, 0 AS s FROM (SELECT DISTINCT strftime(ts, '%Y-%m-%d') AS k FROM g))
+UNION ALL SELECT 'distinct alias strftime(ts, ''%Y-%m-%d'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, 1 AS c, 0 AS s FROM (SELECT DISTINCT k FROM (SELECT strftime(ts, '%Y-%m-%d') AS k, v FROM g)))
+UNION ALL SELECT 'distinct filtered strftime(ts, ''%Y-%m-%d'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, 1 AS c, 0 AS s FROM (SELECT DISTINCT strftime(ts, '%Y-%m-%d') AS k FROM g WHERE v > 100))
+UNION ALL SELECT 'distinct ordered strftime(ts, ''%Y-%m-%d'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, 1 AS c, 0 AS s FROM (SELECT DISTINCT strftime(ts, '%Y-%m-%d') AS k FROM g ORDER BY k))
+UNION ALL SELECT 'distinct on strftime(ts, ''%Y-%m-%d'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, 1 AS c, 0 AS s FROM (SELECT DISTINCT ON (strftime(ts, '%Y-%m-%d')) strftime(ts, '%Y-%m-%d') AS k FROM g ORDER BY strftime(ts, '%Y-%m-%d')))
+UNION ALL SELECT 'distinct with sev strftime(ts, ''%Y-%m-%d'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k1::VARCHAR || '/' || k2::VARCHAR AS k, 1 AS c, 0 AS s FROM (SELECT DISTINCT strftime(ts, '%Y-%m-%d') AS k1, sev AS k2 FROM g))
+UNION ALL SELECT 'subquery strftime(ts, ''%Y-%m'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT strftime(ts, '%Y-%m') AS k, v FROM g) GROUP BY k)
+UNION ALL SELECT 'cte strftime(ts, ''%Y-%m'')' AS shape, k::VARCHAR AS k, c, s FROM (WITH x AS (SELECT strftime(ts, '%Y-%m') AS k, v FROM g) SELECT k, count(*) AS c, sum(v) AS s FROM x GROUP BY k)
+UNION ALL SELECT 'cte chain strftime(ts, ''%Y-%m'')' AS shape, k::VARCHAR AS k, c, s FROM (WITH x AS (SELECT strftime(ts, '%Y-%m') AS k, v FROM g), y AS (SELECT * FROM x) SELECT k, count(*) AS c, sum(v) AS s FROM y GROUP BY k)
+UNION ALL SELECT 'filtered subquery strftime(ts, ''%Y-%m'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT strftime(ts, '%Y-%m') AS k, v FROM g) WHERE v > 100 GROUP BY k)
+UNION ALL SELECT 'subquery filter inside strftime(ts, ''%Y-%m'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT strftime(ts, '%Y-%m') AS k, v FROM g WHERE v % 3 = 0) GROUP BY k)
+UNION ALL SELECT 'multi ref strftime(ts, ''%Y-%m'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT strftime(ts, '%Y-%m') AS k, v FROM g) GROUP BY k HAVING min(k) IS NOT NULL OR min(k) IS NULL)
+UNION ALL SELECT 'alias reused strftime(ts, ''%Y-%m'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT strftime(ts, '%Y-%m') AS k, strftime(ts, '%Y-%m') AS k2, v FROM g) GROUP BY k)
+UNION ALL SELECT 'select star strftime(ts, ''%Y-%m'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT *, strftime(ts, '%Y-%m') AS k FROM g) GROUP BY k)
+UNION ALL SELECT 'union all strftime(ts, ''%Y-%m'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT strftime(ts, '%Y-%m') AS k, v FROM g UNION ALL SELECT strftime(ts, '%Y-%m'), v FROM g) GROUP BY k)
+UNION ALL SELECT 'distinct strftime(ts, ''%Y-%m'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, 1 AS c, 0 AS s FROM (SELECT DISTINCT strftime(ts, '%Y-%m') AS k FROM g))
+UNION ALL SELECT 'distinct alias strftime(ts, ''%Y-%m'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, 1 AS c, 0 AS s FROM (SELECT DISTINCT k FROM (SELECT strftime(ts, '%Y-%m') AS k, v FROM g)))
+UNION ALL SELECT 'distinct filtered strftime(ts, ''%Y-%m'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, 1 AS c, 0 AS s FROM (SELECT DISTINCT strftime(ts, '%Y-%m') AS k FROM g WHERE v > 100))
+UNION ALL SELECT 'distinct ordered strftime(ts, ''%Y-%m'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, 1 AS c, 0 AS s FROM (SELECT DISTINCT strftime(ts, '%Y-%m') AS k FROM g ORDER BY k))
+UNION ALL SELECT 'distinct on strftime(ts, ''%Y-%m'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, 1 AS c, 0 AS s FROM (SELECT DISTINCT ON (strftime(ts, '%Y-%m')) strftime(ts, '%Y-%m') AS k FROM g ORDER BY strftime(ts, '%Y-%m')))
+UNION ALL SELECT 'distinct with sev strftime(ts, ''%Y-%m'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k1::VARCHAR || '/' || k2::VARCHAR AS k, 1 AS c, 0 AS s FROM (SELECT DISTINCT strftime(ts, '%Y-%m') AS k1, sev AS k2 FROM g))
+UNION ALL SELECT 'subquery concat(year(ts), ''-Q'', quarter(ts))' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT concat(year(ts), '-Q', quarter(ts)) AS k, v FROM g) GROUP BY k)
+UNION ALL SELECT 'cte concat(year(ts), ''-Q'', quarter(ts))' AS shape, k::VARCHAR AS k, c, s FROM (WITH x AS (SELECT concat(year(ts), '-Q', quarter(ts)) AS k, v FROM g) SELECT k, count(*) AS c, sum(v) AS s FROM x GROUP BY k)
+UNION ALL SELECT 'cte chain concat(year(ts), ''-Q'', quarter(ts))' AS shape, k::VARCHAR AS k, c, s FROM (WITH x AS (SELECT concat(year(ts), '-Q', quarter(ts)) AS k, v FROM g), y AS (SELECT * FROM x) SELECT k, count(*) AS c, sum(v) AS s FROM y GROUP BY k)
+UNION ALL SELECT 'filtered subquery concat(year(ts), ''-Q'', quarter(ts))' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT concat(year(ts), '-Q', quarter(ts)) AS k, v FROM g) WHERE v > 100 GROUP BY k)
+UNION ALL SELECT 'subquery filter inside concat(year(ts), ''-Q'', quarter(ts))' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT concat(year(ts), '-Q', quarter(ts)) AS k, v FROM g WHERE v % 3 = 0) GROUP BY k)
+UNION ALL SELECT 'multi ref concat(year(ts), ''-Q'', quarter(ts))' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT concat(year(ts), '-Q', quarter(ts)) AS k, v FROM g) GROUP BY k HAVING min(k) IS NOT NULL OR min(k) IS NULL)
+UNION ALL SELECT 'alias reused concat(year(ts), ''-Q'', quarter(ts))' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT concat(year(ts), '-Q', quarter(ts)) AS k, concat(year(ts), '-Q', quarter(ts)) AS k2, v FROM g) GROUP BY k)
+UNION ALL SELECT 'select star concat(year(ts), ''-Q'', quarter(ts))' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT *, concat(year(ts), '-Q', quarter(ts)) AS k FROM g) GROUP BY k)
+UNION ALL SELECT 'union all concat(year(ts), ''-Q'', quarter(ts))' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT concat(year(ts), '-Q', quarter(ts)) AS k, v FROM g UNION ALL SELECT concat(year(ts), '-Q', quarter(ts)), v FROM g) GROUP BY k)
+UNION ALL SELECT 'distinct concat(year(ts), ''-Q'', quarter(ts))' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, 1 AS c, 0 AS s FROM (SELECT DISTINCT concat(year(ts), '-Q', quarter(ts)) AS k FROM g))
+UNION ALL SELECT 'distinct alias concat(year(ts), ''-Q'', quarter(ts))' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, 1 AS c, 0 AS s FROM (SELECT DISTINCT k FROM (SELECT concat(year(ts), '-Q', quarter(ts)) AS k, v FROM g)))
+UNION ALL SELECT 'distinct filtered concat(year(ts), ''-Q'', quarter(ts))' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, 1 AS c, 0 AS s FROM (SELECT DISTINCT concat(year(ts), '-Q', quarter(ts)) AS k FROM g WHERE v > 100))
+UNION ALL SELECT 'distinct ordered concat(year(ts), ''-Q'', quarter(ts))' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, 1 AS c, 0 AS s FROM (SELECT DISTINCT concat(year(ts), '-Q', quarter(ts)) AS k FROM g ORDER BY k))
+UNION ALL SELECT 'distinct on concat(year(ts), ''-Q'', quarter(ts))' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, 1 AS c, 0 AS s FROM (SELECT DISTINCT ON (concat(year(ts), '-Q', quarter(ts))) concat(year(ts), '-Q', quarter(ts)) AS k FROM g ORDER BY concat(year(ts), '-Q', quarter(ts))))
+UNION ALL SELECT 'distinct with sev concat(year(ts), ''-Q'', quarter(ts))' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k1::VARCHAR || '/' || k2::VARCHAR AS k, 1 AS c, 0 AS s FROM (SELECT DISTINCT concat(year(ts), '-Q', quarter(ts)) AS k1, sev AS k2 FROM g))
+UNION ALL SELECT 'subquery date_trunc(''hour'', tstz)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT date_trunc('hour', tstz) AS k, v FROM g) GROUP BY k)
+UNION ALL SELECT 'cte date_trunc(''hour'', tstz)' AS shape, k::VARCHAR AS k, c, s FROM (WITH x AS (SELECT date_trunc('hour', tstz) AS k, v FROM g) SELECT k, count(*) AS c, sum(v) AS s FROM x GROUP BY k)
+UNION ALL SELECT 'cte chain date_trunc(''hour'', tstz)' AS shape, k::VARCHAR AS k, c, s FROM (WITH x AS (SELECT date_trunc('hour', tstz) AS k, v FROM g), y AS (SELECT * FROM x) SELECT k, count(*) AS c, sum(v) AS s FROM y GROUP BY k)
+UNION ALL SELECT 'filtered subquery date_trunc(''hour'', tstz)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT date_trunc('hour', tstz) AS k, v FROM g) WHERE v > 100 GROUP BY k)
+UNION ALL SELECT 'subquery filter inside date_trunc(''hour'', tstz)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT date_trunc('hour', tstz) AS k, v FROM g WHERE v % 3 = 0) GROUP BY k)
+UNION ALL SELECT 'multi ref date_trunc(''hour'', tstz)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT date_trunc('hour', tstz) AS k, v FROM g) GROUP BY k HAVING min(k) IS NOT NULL OR min(k) IS NULL)
+UNION ALL SELECT 'alias reused date_trunc(''hour'', tstz)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT date_trunc('hour', tstz) AS k, date_trunc('hour', tstz) AS k2, v FROM g) GROUP BY k)
+UNION ALL SELECT 'select star date_trunc(''hour'', tstz)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT *, date_trunc('hour', tstz) AS k FROM g) GROUP BY k)
+UNION ALL SELECT 'union all date_trunc(''hour'', tstz)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT date_trunc('hour', tstz) AS k, v FROM g UNION ALL SELECT date_trunc('hour', tstz), v FROM g) GROUP BY k)
+UNION ALL SELECT 'distinct date_trunc(''hour'', tstz)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, 1 AS c, 0 AS s FROM (SELECT DISTINCT date_trunc('hour', tstz) AS k FROM g))
+UNION ALL SELECT 'distinct alias date_trunc(''hour'', tstz)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, 1 AS c, 0 AS s FROM (SELECT DISTINCT k FROM (SELECT date_trunc('hour', tstz) AS k, v FROM g)))
+UNION ALL SELECT 'distinct filtered date_trunc(''hour'', tstz)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, 1 AS c, 0 AS s FROM (SELECT DISTINCT date_trunc('hour', tstz) AS k FROM g WHERE v > 100))
+UNION ALL SELECT 'distinct ordered date_trunc(''hour'', tstz)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, 1 AS c, 0 AS s FROM (SELECT DISTINCT date_trunc('hour', tstz) AS k FROM g ORDER BY k))
+UNION ALL SELECT 'distinct on date_trunc(''hour'', tstz)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, 1 AS c, 0 AS s FROM (SELECT DISTINCT ON (date_trunc('hour', tstz)) date_trunc('hour', tstz) AS k FROM g ORDER BY date_trunc('hour', tstz)))
+UNION ALL SELECT 'distinct with sev date_trunc(''hour'', tstz)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k1::VARCHAR || '/' || k2::VARCHAR AS k, 1 AS c, 0 AS s FROM (SELECT DISTINCT date_trunc('hour', tstz) AS k1, sev AS k2 FROM g))
+UNION ALL SELECT 'subquery date_trunc(''day'', tstz)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT date_trunc('day', tstz) AS k, v FROM g) GROUP BY k)
+UNION ALL SELECT 'cte date_trunc(''day'', tstz)' AS shape, k::VARCHAR AS k, c, s FROM (WITH x AS (SELECT date_trunc('day', tstz) AS k, v FROM g) SELECT k, count(*) AS c, sum(v) AS s FROM x GROUP BY k)
+UNION ALL SELECT 'cte chain date_trunc(''day'', tstz)' AS shape, k::VARCHAR AS k, c, s FROM (WITH x AS (SELECT date_trunc('day', tstz) AS k, v FROM g), y AS (SELECT * FROM x) SELECT k, count(*) AS c, sum(v) AS s FROM y GROUP BY k)
+UNION ALL SELECT 'filtered subquery date_trunc(''day'', tstz)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT date_trunc('day', tstz) AS k, v FROM g) WHERE v > 100 GROUP BY k)
+UNION ALL SELECT 'subquery filter inside date_trunc(''day'', tstz)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT date_trunc('day', tstz) AS k, v FROM g WHERE v % 3 = 0) GROUP BY k)
+UNION ALL SELECT 'multi ref date_trunc(''day'', tstz)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT date_trunc('day', tstz) AS k, v FROM g) GROUP BY k HAVING min(k) IS NOT NULL OR min(k) IS NULL)
+UNION ALL SELECT 'alias reused date_trunc(''day'', tstz)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT date_trunc('day', tstz) AS k, date_trunc('day', tstz) AS k2, v FROM g) GROUP BY k)
+UNION ALL SELECT 'select star date_trunc(''day'', tstz)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT *, date_trunc('day', tstz) AS k FROM g) GROUP BY k)
+UNION ALL SELECT 'union all date_trunc(''day'', tstz)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT date_trunc('day', tstz) AS k, v FROM g UNION ALL SELECT date_trunc('day', tstz), v FROM g) GROUP BY k)
+UNION ALL SELECT 'distinct date_trunc(''day'', tstz)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, 1 AS c, 0 AS s FROM (SELECT DISTINCT date_trunc('day', tstz) AS k FROM g))
+UNION ALL SELECT 'distinct alias date_trunc(''day'', tstz)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, 1 AS c, 0 AS s FROM (SELECT DISTINCT k FROM (SELECT date_trunc('day', tstz) AS k, v FROM g)))
+UNION ALL SELECT 'distinct filtered date_trunc(''day'', tstz)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, 1 AS c, 0 AS s FROM (SELECT DISTINCT date_trunc('day', tstz) AS k FROM g WHERE v > 100))
+UNION ALL SELECT 'distinct ordered date_trunc(''day'', tstz)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, 1 AS c, 0 AS s FROM (SELECT DISTINCT date_trunc('day', tstz) AS k FROM g ORDER BY k))
+UNION ALL SELECT 'distinct on date_trunc(''day'', tstz)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, 1 AS c, 0 AS s FROM (SELECT DISTINCT ON (date_trunc('day', tstz)) date_trunc('day', tstz) AS k FROM g ORDER BY date_trunc('day', tstz)))
+UNION ALL SELECT 'distinct with sev date_trunc(''day'', tstz)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k1::VARCHAR || '/' || k2::VARCHAR AS k, 1 AS c, 0 AS s FROM (SELECT DISTINCT date_trunc('day', tstz) AS k1, sev AS k2 FROM g))
+UNION ALL SELECT 'subquery time_bucket(INTERVAL ''1 day'', tstz, ''Asia/Tokyo'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT time_bucket(INTERVAL '1 day', tstz, 'Asia/Tokyo') AS k, v FROM g) GROUP BY k)
+UNION ALL SELECT 'cte time_bucket(INTERVAL ''1 day'', tstz, ''Asia/Tokyo'')' AS shape, k::VARCHAR AS k, c, s FROM (WITH x AS (SELECT time_bucket(INTERVAL '1 day', tstz, 'Asia/Tokyo') AS k, v FROM g) SELECT k, count(*) AS c, sum(v) AS s FROM x GROUP BY k)
+UNION ALL SELECT 'cte chain time_bucket(INTERVAL ''1 day'', tstz, ''Asia/Tokyo'')' AS shape, k::VARCHAR AS k, c, s FROM (WITH x AS (SELECT time_bucket(INTERVAL '1 day', tstz, 'Asia/Tokyo') AS k, v FROM g), y AS (SELECT * FROM x) SELECT k, count(*) AS c, sum(v) AS s FROM y GROUP BY k)
+UNION ALL SELECT 'filtered subquery time_bucket(INTERVAL ''1 day'', tstz, ''Asia/Tokyo'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT time_bucket(INTERVAL '1 day', tstz, 'Asia/Tokyo') AS k, v FROM g) WHERE v > 100 GROUP BY k)
+UNION ALL SELECT 'subquery filter inside time_bucket(INTERVAL ''1 day'', tstz, ''Asia/Tokyo'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT time_bucket(INTERVAL '1 day', tstz, 'Asia/Tokyo') AS k, v FROM g WHERE v % 3 = 0) GROUP BY k)
+UNION ALL SELECT 'multi ref time_bucket(INTERVAL ''1 day'', tstz, ''Asia/Tokyo'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT time_bucket(INTERVAL '1 day', tstz, 'Asia/Tokyo') AS k, v FROM g) GROUP BY k HAVING min(k) IS NOT NULL OR min(k) IS NULL)
+UNION ALL SELECT 'alias reused time_bucket(INTERVAL ''1 day'', tstz, ''Asia/Tokyo'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT time_bucket(INTERVAL '1 day', tstz, 'Asia/Tokyo') AS k, time_bucket(INTERVAL '1 day', tstz, 'Asia/Tokyo') AS k2, v FROM g) GROUP BY k)
+UNION ALL SELECT 'select star time_bucket(INTERVAL ''1 day'', tstz, ''Asia/Tokyo'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT *, time_bucket(INTERVAL '1 day', tstz, 'Asia/Tokyo') AS k FROM g) GROUP BY k)
+UNION ALL SELECT 'union all time_bucket(INTERVAL ''1 day'', tstz, ''Asia/Tokyo'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT time_bucket(INTERVAL '1 day', tstz, 'Asia/Tokyo') AS k, v FROM g UNION ALL SELECT time_bucket(INTERVAL '1 day', tstz, 'Asia/Tokyo'), v FROM g) GROUP BY k)
+UNION ALL SELECT 'distinct time_bucket(INTERVAL ''1 day'', tstz, ''Asia/Tokyo'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, 1 AS c, 0 AS s FROM (SELECT DISTINCT time_bucket(INTERVAL '1 day', tstz, 'Asia/Tokyo') AS k FROM g))
+UNION ALL SELECT 'distinct alias time_bucket(INTERVAL ''1 day'', tstz, ''Asia/Tokyo'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, 1 AS c, 0 AS s FROM (SELECT DISTINCT k FROM (SELECT time_bucket(INTERVAL '1 day', tstz, 'Asia/Tokyo') AS k, v FROM g)))
+UNION ALL SELECT 'distinct filtered time_bucket(INTERVAL ''1 day'', tstz, ''Asia/Tokyo'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, 1 AS c, 0 AS s FROM (SELECT DISTINCT time_bucket(INTERVAL '1 day', tstz, 'Asia/Tokyo') AS k FROM g WHERE v > 100))
+UNION ALL SELECT 'distinct ordered time_bucket(INTERVAL ''1 day'', tstz, ''Asia/Tokyo'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, 1 AS c, 0 AS s FROM (SELECT DISTINCT time_bucket(INTERVAL '1 day', tstz, 'Asia/Tokyo') AS k FROM g ORDER BY k))
+UNION ALL SELECT 'distinct on time_bucket(INTERVAL ''1 day'', tstz, ''Asia/Tokyo'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, 1 AS c, 0 AS s FROM (SELECT DISTINCT ON (time_bucket(INTERVAL '1 day', tstz, 'Asia/Tokyo')) time_bucket(INTERVAL '1 day', tstz, 'Asia/Tokyo') AS k FROM g ORDER BY time_bucket(INTERVAL '1 day', tstz, 'Asia/Tokyo')))
+UNION ALL SELECT 'distinct with sev time_bucket(INTERVAL ''1 day'', tstz, ''Asia/Tokyo'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k1::VARCHAR || '/' || k2::VARCHAR AS k, 1 AS c, 0 AS s FROM (SELECT DISTINCT time_bucket(INTERVAL '1 day', tstz, 'Asia/Tokyo') AS k1, sev AS k2 FROM g))
+UNION ALL SELECT 'subquery floor(price / 100) * 100' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT floor(price / 100) * 100 AS k, v FROM g) GROUP BY k)
+UNION ALL SELECT 'cte floor(price / 100) * 100' AS shape, k::VARCHAR AS k, c, s FROM (WITH x AS (SELECT floor(price / 100) * 100 AS k, v FROM g) SELECT k, count(*) AS c, sum(v) AS s FROM x GROUP BY k)
+UNION ALL SELECT 'cte chain floor(price / 100) * 100' AS shape, k::VARCHAR AS k, c, s FROM (WITH x AS (SELECT floor(price / 100) * 100 AS k, v FROM g), y AS (SELECT * FROM x) SELECT k, count(*) AS c, sum(v) AS s FROM y GROUP BY k)
+UNION ALL SELECT 'filtered subquery floor(price / 100) * 100' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT floor(price / 100) * 100 AS k, v FROM g) WHERE v > 100 GROUP BY k)
+UNION ALL SELECT 'subquery filter inside floor(price / 100) * 100' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT floor(price / 100) * 100 AS k, v FROM g WHERE v % 3 = 0) GROUP BY k)
+UNION ALL SELECT 'multi ref floor(price / 100) * 100' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT floor(price / 100) * 100 AS k, v FROM g) GROUP BY k HAVING min(k) IS NOT NULL OR min(k) IS NULL)
+UNION ALL SELECT 'alias reused floor(price / 100) * 100' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT floor(price / 100) * 100 AS k, floor(price / 100) * 100 AS k2, v FROM g) GROUP BY k)
+UNION ALL SELECT 'select star floor(price / 100) * 100' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT *, floor(price / 100) * 100 AS k FROM g) GROUP BY k)
+UNION ALL SELECT 'union all floor(price / 100) * 100' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT floor(price / 100) * 100 AS k, v FROM g UNION ALL SELECT floor(price / 100) * 100, v FROM g) GROUP BY k)
+UNION ALL SELECT 'distinct floor(price / 100) * 100' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, 1 AS c, 0 AS s FROM (SELECT DISTINCT floor(price / 100) * 100 AS k FROM g))
+UNION ALL SELECT 'distinct alias floor(price / 100) * 100' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, 1 AS c, 0 AS s FROM (SELECT DISTINCT k FROM (SELECT floor(price / 100) * 100 AS k, v FROM g)))
+UNION ALL SELECT 'distinct filtered floor(price / 100) * 100' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, 1 AS c, 0 AS s FROM (SELECT DISTINCT floor(price / 100) * 100 AS k FROM g WHERE v > 100))
+UNION ALL SELECT 'distinct ordered floor(price / 100) * 100' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, 1 AS c, 0 AS s FROM (SELECT DISTINCT floor(price / 100) * 100 AS k FROM g ORDER BY k))
+UNION ALL SELECT 'distinct on floor(price / 100) * 100' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, 1 AS c, 0 AS s FROM (SELECT DISTINCT ON (floor(price / 100) * 100) floor(price / 100) * 100 AS k FROM g ORDER BY floor(price / 100) * 100))
+UNION ALL SELECT 'distinct with sev floor(price / 100) * 100' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k1::VARCHAR || '/' || k2::VARCHAR AS k, 1 AS c, 0 AS s FROM (SELECT DISTINCT floor(price / 100) * 100 AS k1, sev AS k2 FROM g))
+UNION ALL SELECT 'subquery round(price / 50)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT round(price / 50) AS k, v FROM g) GROUP BY k)
+UNION ALL SELECT 'cte round(price / 50)' AS shape, k::VARCHAR AS k, c, s FROM (WITH x AS (SELECT round(price / 50) AS k, v FROM g) SELECT k, count(*) AS c, sum(v) AS s FROM x GROUP BY k)
+UNION ALL SELECT 'cte chain round(price / 50)' AS shape, k::VARCHAR AS k, c, s FROM (WITH x AS (SELECT round(price / 50) AS k, v FROM g), y AS (SELECT * FROM x) SELECT k, count(*) AS c, sum(v) AS s FROM y GROUP BY k)
+UNION ALL SELECT 'filtered subquery round(price / 50)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT round(price / 50) AS k, v FROM g) WHERE v > 100 GROUP BY k)
+UNION ALL SELECT 'subquery filter inside round(price / 50)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT round(price / 50) AS k, v FROM g WHERE v % 3 = 0) GROUP BY k)
+UNION ALL SELECT 'multi ref round(price / 50)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT round(price / 50) AS k, v FROM g) GROUP BY k HAVING min(k) IS NOT NULL OR min(k) IS NULL)
+UNION ALL SELECT 'alias reused round(price / 50)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT round(price / 50) AS k, round(price / 50) AS k2, v FROM g) GROUP BY k)
+UNION ALL SELECT 'select star round(price / 50)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT *, round(price / 50) AS k FROM g) GROUP BY k)
+UNION ALL SELECT 'union all round(price / 50)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT round(price / 50) AS k, v FROM g UNION ALL SELECT round(price / 50), v FROM g) GROUP BY k)
+UNION ALL SELECT 'distinct round(price / 50)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, 1 AS c, 0 AS s FROM (SELECT DISTINCT round(price / 50) AS k FROM g))
+UNION ALL SELECT 'distinct alias round(price / 50)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, 1 AS c, 0 AS s FROM (SELECT DISTINCT k FROM (SELECT round(price / 50) AS k, v FROM g)))
+UNION ALL SELECT 'distinct filtered round(price / 50)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, 1 AS c, 0 AS s FROM (SELECT DISTINCT round(price / 50) AS k FROM g WHERE v > 100))
+UNION ALL SELECT 'distinct ordered round(price / 50)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, 1 AS c, 0 AS s FROM (SELECT DISTINCT round(price / 50) AS k FROM g ORDER BY k))
+UNION ALL SELECT 'distinct on round(price / 50)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, 1 AS c, 0 AS s FROM (SELECT DISTINCT ON (round(price / 50)) round(price / 50) AS k FROM g ORDER BY round(price / 50)))
+UNION ALL SELECT 'distinct with sev round(price / 50)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k1::VARCHAR || '/' || k2::VARCHAR AS k, 1 AS c, 0 AS s FROM (SELECT DISTINCT round(price / 50) AS k1, sev AS k2 FROM g))
+UNION ALL SELECT 'subquery CASE WHEN price < 100 THEN ''low'' WHEN price < 500 THEN ''mid'' ELSE ''high'' END' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT CASE WHEN price < 100 THEN 'low' WHEN price < 500 THEN 'mid' ELSE 'high' END AS k, v FROM g) GROUP BY k)
+UNION ALL SELECT 'cte CASE WHEN price < 100 THEN ''low'' WHEN price < 500 THEN ''mid'' ELSE ''high'' END' AS shape, k::VARCHAR AS k, c, s FROM (WITH x AS (SELECT CASE WHEN price < 100 THEN 'low' WHEN price < 500 THEN 'mid' ELSE 'high' END AS k, v FROM g) SELECT k, count(*) AS c, sum(v) AS s FROM x GROUP BY k)
+UNION ALL SELECT 'cte chain CASE WHEN price < 100 THEN ''low'' WHEN price < 500 THEN ''mid'' ELSE ''high'' END' AS shape, k::VARCHAR AS k, c, s FROM (WITH x AS (SELECT CASE WHEN price < 100 THEN 'low' WHEN price < 500 THEN 'mid' ELSE 'high' END AS k, v FROM g), y AS (SELECT * FROM x) SELECT k, count(*) AS c, sum(v) AS s FROM y GROUP BY k)
+UNION ALL SELECT 'filtered subquery CASE WHEN price < 100 THEN ''low'' WHEN price < 500 THEN ''mid'' ELSE ''high'' END' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT CASE WHEN price < 100 THEN 'low' WHEN price < 500 THEN 'mid' ELSE 'high' END AS k, v FROM g) WHERE v > 100 GROUP BY k)
+UNION ALL SELECT 'subquery filter inside CASE WHEN price < 100 THEN ''low'' WHEN price < 500 THEN ''mid'' ELSE ''high'' END' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT CASE WHEN price < 100 THEN 'low' WHEN price < 500 THEN 'mid' ELSE 'high' END AS k, v FROM g WHERE v % 3 = 0) GROUP BY k)
+UNION ALL SELECT 'multi ref CASE WHEN price < 100 THEN ''low'' WHEN price < 500 THEN ''mid'' ELSE ''high'' END' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT CASE WHEN price < 100 THEN 'low' WHEN price < 500 THEN 'mid' ELSE 'high' END AS k, v FROM g) GROUP BY k HAVING min(k) IS NOT NULL OR min(k) IS NULL)
+UNION ALL SELECT 'alias reused CASE WHEN price < 100 THEN ''low'' WHEN price < 500 THEN ''mid'' ELSE ''high'' END' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT CASE WHEN price < 100 THEN 'low' WHEN price < 500 THEN 'mid' ELSE 'high' END AS k, CASE WHEN price < 100 THEN 'low' WHEN price < 500 THEN 'mid' ELSE 'high' END AS k2, v FROM g) GROUP BY k)
+UNION ALL SELECT 'select star CASE WHEN price < 100 THEN ''low'' WHEN price < 500 THEN ''mid'' ELSE ''high'' END' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT *, CASE WHEN price < 100 THEN 'low' WHEN price < 500 THEN 'mid' ELSE 'high' END AS k FROM g) GROUP BY k)
+UNION ALL SELECT 'union all CASE WHEN price < 100 THEN ''low'' WHEN price < 500 THEN ''mid'' ELSE ''high'' END' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT CASE WHEN price < 100 THEN 'low' WHEN price < 500 THEN 'mid' ELSE 'high' END AS k, v FROM g UNION ALL SELECT CASE WHEN price < 100 THEN 'low' WHEN price < 500 THEN 'mid' ELSE 'high' END, v FROM g) GROUP BY k)
+UNION ALL SELECT 'distinct CASE WHEN price < 100 THEN ''low'' WHEN price < 500 THEN ''mid'' ELSE ''high'' END' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, 1 AS c, 0 AS s FROM (SELECT DISTINCT CASE WHEN price < 100 THEN 'low' WHEN price < 500 THEN 'mid' ELSE 'high' END AS k FROM g))
+UNION ALL SELECT 'distinct alias CASE WHEN price < 100 THEN ''low'' WHEN price < 500 THEN ''mid'' ELSE ''high'' END' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, 1 AS c, 0 AS s FROM (SELECT DISTINCT k FROM (SELECT CASE WHEN price < 100 THEN 'low' WHEN price < 500 THEN 'mid' ELSE 'high' END AS k, v FROM g)))
+UNION ALL SELECT 'distinct filtered CASE WHEN price < 100 THEN ''low'' WHEN price < 500 THEN ''mid'' ELSE ''high'' END' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, 1 AS c, 0 AS s FROM (SELECT DISTINCT CASE WHEN price < 100 THEN 'low' WHEN price < 500 THEN 'mid' ELSE 'high' END AS k FROM g WHERE v > 100))
+UNION ALL SELECT 'distinct ordered CASE WHEN price < 100 THEN ''low'' WHEN price < 500 THEN ''mid'' ELSE ''high'' END' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, 1 AS c, 0 AS s FROM (SELECT DISTINCT CASE WHEN price < 100 THEN 'low' WHEN price < 500 THEN 'mid' ELSE 'high' END AS k FROM g ORDER BY k))
+UNION ALL SELECT 'distinct on CASE WHEN price < 100 THEN ''low'' WHEN price < 500 THEN ''mid'' ELSE ''high'' END' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, 1 AS c, 0 AS s FROM (SELECT DISTINCT ON (CASE WHEN price < 100 THEN 'low' WHEN price < 500 THEN 'mid' ELSE 'high' END) CASE WHEN price < 100 THEN 'low' WHEN price < 500 THEN 'mid' ELSE 'high' END AS k FROM g ORDER BY CASE WHEN price < 100 THEN 'low' WHEN price < 500 THEN 'mid' ELSE 'high' END))
+UNION ALL SELECT 'distinct with sev CASE WHEN price < 100 THEN ''low'' WHEN price < 500 THEN ''mid'' ELSE ''high'' END' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k1::VARCHAR || '/' || k2::VARCHAR AS k, 1 AS c, 0 AS s FROM (SELECT DISTINCT CASE WHEN price < 100 THEN 'low' WHEN price < 500 THEN 'mid' ELSE 'high' END AS k1, sev AS k2 FROM g))
+UNION ALL SELECT 'subquery epoch_ms(date_trunc(''hour'', ts))' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT epoch_ms(date_trunc('hour', ts)) AS k, v FROM g) GROUP BY k)
+UNION ALL SELECT 'cte epoch_ms(date_trunc(''hour'', ts))' AS shape, k::VARCHAR AS k, c, s FROM (WITH x AS (SELECT epoch_ms(date_trunc('hour', ts)) AS k, v FROM g) SELECT k, count(*) AS c, sum(v) AS s FROM x GROUP BY k)
+UNION ALL SELECT 'cte chain epoch_ms(date_trunc(''hour'', ts))' AS shape, k::VARCHAR AS k, c, s FROM (WITH x AS (SELECT epoch_ms(date_trunc('hour', ts)) AS k, v FROM g), y AS (SELECT * FROM x) SELECT k, count(*) AS c, sum(v) AS s FROM y GROUP BY k)
+UNION ALL SELECT 'filtered subquery epoch_ms(date_trunc(''hour'', ts))' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT epoch_ms(date_trunc('hour', ts)) AS k, v FROM g) WHERE v > 100 GROUP BY k)
+UNION ALL SELECT 'subquery filter inside epoch_ms(date_trunc(''hour'', ts))' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT epoch_ms(date_trunc('hour', ts)) AS k, v FROM g WHERE v % 3 = 0) GROUP BY k)
+UNION ALL SELECT 'multi ref epoch_ms(date_trunc(''hour'', ts))' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT epoch_ms(date_trunc('hour', ts)) AS k, v FROM g) GROUP BY k HAVING min(k) IS NOT NULL OR min(k) IS NULL)
+UNION ALL SELECT 'alias reused epoch_ms(date_trunc(''hour'', ts))' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT epoch_ms(date_trunc('hour', ts)) AS k, epoch_ms(date_trunc('hour', ts)) AS k2, v FROM g) GROUP BY k)
+UNION ALL SELECT 'select star epoch_ms(date_trunc(''hour'', ts))' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT *, epoch_ms(date_trunc('hour', ts)) AS k FROM g) GROUP BY k)
+UNION ALL SELECT 'union all epoch_ms(date_trunc(''hour'', ts))' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT epoch_ms(date_trunc('hour', ts)) AS k, v FROM g UNION ALL SELECT epoch_ms(date_trunc('hour', ts)), v FROM g) GROUP BY k)
+UNION ALL SELECT 'distinct epoch_ms(date_trunc(''hour'', ts))' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, 1 AS c, 0 AS s FROM (SELECT DISTINCT epoch_ms(date_trunc('hour', ts)) AS k FROM g))
+UNION ALL SELECT 'distinct alias epoch_ms(date_trunc(''hour'', ts))' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, 1 AS c, 0 AS s FROM (SELECT DISTINCT k FROM (SELECT epoch_ms(date_trunc('hour', ts)) AS k, v FROM g)))
+UNION ALL SELECT 'distinct filtered epoch_ms(date_trunc(''hour'', ts))' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, 1 AS c, 0 AS s FROM (SELECT DISTINCT epoch_ms(date_trunc('hour', ts)) AS k FROM g WHERE v > 100))
+UNION ALL SELECT 'distinct ordered epoch_ms(date_trunc(''hour'', ts))' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, 1 AS c, 0 AS s FROM (SELECT DISTINCT epoch_ms(date_trunc('hour', ts)) AS k FROM g ORDER BY k))
+UNION ALL SELECT 'distinct on epoch_ms(date_trunc(''hour'', ts))' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, 1 AS c, 0 AS s FROM (SELECT DISTINCT ON (epoch_ms(date_trunc('hour', ts))) epoch_ms(date_trunc('hour', ts)) AS k FROM g ORDER BY epoch_ms(date_trunc('hour', ts))))
+UNION ALL SELECT 'distinct with sev epoch_ms(date_trunc(''hour'', ts))' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k1::VARCHAR || '/' || k2::VARCHAR AS k, 1 AS c, 0 AS s FROM (SELECT DISTINCT epoch_ms(date_trunc('hour', ts)) AS k1, sev AS k2 FROM g))
+UNION ALL SELECT 'subquery to_timestamp(floor(epoch(ts) / 3600) * 3600)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT to_timestamp(floor(epoch(ts) / 3600) * 3600) AS k, v FROM g) GROUP BY k)
+UNION ALL SELECT 'cte to_timestamp(floor(epoch(ts) / 3600) * 3600)' AS shape, k::VARCHAR AS k, c, s FROM (WITH x AS (SELECT to_timestamp(floor(epoch(ts) / 3600) * 3600) AS k, v FROM g) SELECT k, count(*) AS c, sum(v) AS s FROM x GROUP BY k)
+UNION ALL SELECT 'cte chain to_timestamp(floor(epoch(ts) / 3600) * 3600)' AS shape, k::VARCHAR AS k, c, s FROM (WITH x AS (SELECT to_timestamp(floor(epoch(ts) / 3600) * 3600) AS k, v FROM g), y AS (SELECT * FROM x) SELECT k, count(*) AS c, sum(v) AS s FROM y GROUP BY k)
+UNION ALL SELECT 'filtered subquery to_timestamp(floor(epoch(ts) / 3600) * 3600)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT to_timestamp(floor(epoch(ts) / 3600) * 3600) AS k, v FROM g) WHERE v > 100 GROUP BY k)
+UNION ALL SELECT 'subquery filter inside to_timestamp(floor(epoch(ts) / 3600) * 3600)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT to_timestamp(floor(epoch(ts) / 3600) * 3600) AS k, v FROM g WHERE v % 3 = 0) GROUP BY k)
+UNION ALL SELECT 'multi ref to_timestamp(floor(epoch(ts) / 3600) * 3600)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT to_timestamp(floor(epoch(ts) / 3600) * 3600) AS k, v FROM g) GROUP BY k HAVING min(k) IS NOT NULL OR min(k) IS NULL)
+UNION ALL SELECT 'alias reused to_timestamp(floor(epoch(ts) / 3600) * 3600)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT to_timestamp(floor(epoch(ts) / 3600) * 3600) AS k, to_timestamp(floor(epoch(ts) / 3600) * 3600) AS k2, v FROM g) GROUP BY k)
+UNION ALL SELECT 'select star to_timestamp(floor(epoch(ts) / 3600) * 3600)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT *, to_timestamp(floor(epoch(ts) / 3600) * 3600) AS k FROM g) GROUP BY k)
+UNION ALL SELECT 'union all to_timestamp(floor(epoch(ts) / 3600) * 3600)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT to_timestamp(floor(epoch(ts) / 3600) * 3600) AS k, v FROM g UNION ALL SELECT to_timestamp(floor(epoch(ts) / 3600) * 3600), v FROM g) GROUP BY k)
+UNION ALL SELECT 'distinct to_timestamp(floor(epoch(ts) / 3600) * 3600)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, 1 AS c, 0 AS s FROM (SELECT DISTINCT to_timestamp(floor(epoch(ts) / 3600) * 3600) AS k FROM g))
+UNION ALL SELECT 'distinct alias to_timestamp(floor(epoch(ts) / 3600) * 3600)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, 1 AS c, 0 AS s FROM (SELECT DISTINCT k FROM (SELECT to_timestamp(floor(epoch(ts) / 3600) * 3600) AS k, v FROM g)))
+UNION ALL SELECT 'distinct filtered to_timestamp(floor(epoch(ts) / 3600) * 3600)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, 1 AS c, 0 AS s FROM (SELECT DISTINCT to_timestamp(floor(epoch(ts) / 3600) * 3600) AS k FROM g WHERE v > 100))
+UNION ALL SELECT 'distinct ordered to_timestamp(floor(epoch(ts) / 3600) * 3600)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, 1 AS c, 0 AS s FROM (SELECT DISTINCT to_timestamp(floor(epoch(ts) / 3600) * 3600) AS k FROM g ORDER BY k))
+UNION ALL SELECT 'distinct on to_timestamp(floor(epoch(ts) / 3600) * 3600)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, 1 AS c, 0 AS s FROM (SELECT DISTINCT ON (to_timestamp(floor(epoch(ts) / 3600) * 3600)) to_timestamp(floor(epoch(ts) / 3600) * 3600) AS k FROM g ORDER BY to_timestamp(floor(epoch(ts) / 3600) * 3600)))
+UNION ALL SELECT 'distinct with sev to_timestamp(floor(epoch(ts) / 3600) * 3600)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k1::VARCHAR || '/' || k2::VARCHAR AS k, 1 AS c, 0 AS s FROM (SELECT DISTINCT to_timestamp(floor(epoch(ts) / 3600) * 3600) AS k1, sev AS k2 FROM g))
+UNION ALL SELECT 'subquery date_bin(INTERVAL ''2 hours'', ts, TIMESTAMP ''2000-01-01 01:00'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT date_bin(INTERVAL '2 hours', ts, TIMESTAMP '2000-01-01 01:00') AS k, v FROM g) GROUP BY k)
+UNION ALL SELECT 'cte date_bin(INTERVAL ''2 hours'', ts, TIMESTAMP ''2000-01-01 01:00'')' AS shape, k::VARCHAR AS k, c, s FROM (WITH x AS (SELECT date_bin(INTERVAL '2 hours', ts, TIMESTAMP '2000-01-01 01:00') AS k, v FROM g) SELECT k, count(*) AS c, sum(v) AS s FROM x GROUP BY k)
+UNION ALL SELECT 'cte chain date_bin(INTERVAL ''2 hours'', ts, TIMESTAMP ''2000-01-01 01:00'')' AS shape, k::VARCHAR AS k, c, s FROM (WITH x AS (SELECT date_bin(INTERVAL '2 hours', ts, TIMESTAMP '2000-01-01 01:00') AS k, v FROM g), y AS (SELECT * FROM x) SELECT k, count(*) AS c, sum(v) AS s FROM y GROUP BY k)
+UNION ALL SELECT 'filtered subquery date_bin(INTERVAL ''2 hours'', ts, TIMESTAMP ''2000-01-01 01:00'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT date_bin(INTERVAL '2 hours', ts, TIMESTAMP '2000-01-01 01:00') AS k, v FROM g) WHERE v > 100 GROUP BY k)
+UNION ALL SELECT 'subquery filter inside date_bin(INTERVAL ''2 hours'', ts, TIMESTAMP ''2000-01-01 01:00'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT date_bin(INTERVAL '2 hours', ts, TIMESTAMP '2000-01-01 01:00') AS k, v FROM g WHERE v % 3 = 0) GROUP BY k)
+UNION ALL SELECT 'multi ref date_bin(INTERVAL ''2 hours'', ts, TIMESTAMP ''2000-01-01 01:00'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT date_bin(INTERVAL '2 hours', ts, TIMESTAMP '2000-01-01 01:00') AS k, v FROM g) GROUP BY k HAVING min(k) IS NOT NULL OR min(k) IS NULL)
+UNION ALL SELECT 'alias reused date_bin(INTERVAL ''2 hours'', ts, TIMESTAMP ''2000-01-01 01:00'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT date_bin(INTERVAL '2 hours', ts, TIMESTAMP '2000-01-01 01:00') AS k, date_bin(INTERVAL '2 hours', ts, TIMESTAMP '2000-01-01 01:00') AS k2, v FROM g) GROUP BY k)
+UNION ALL SELECT 'select star date_bin(INTERVAL ''2 hours'', ts, TIMESTAMP ''2000-01-01 01:00'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT *, date_bin(INTERVAL '2 hours', ts, TIMESTAMP '2000-01-01 01:00') AS k FROM g) GROUP BY k)
+UNION ALL SELECT 'union all date_bin(INTERVAL ''2 hours'', ts, TIMESTAMP ''2000-01-01 01:00'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT date_bin(INTERVAL '2 hours', ts, TIMESTAMP '2000-01-01 01:00') AS k, v FROM g UNION ALL SELECT date_bin(INTERVAL '2 hours', ts, TIMESTAMP '2000-01-01 01:00'), v FROM g) GROUP BY k)
+UNION ALL SELECT 'distinct date_bin(INTERVAL ''2 hours'', ts, TIMESTAMP ''2000-01-01 01:00'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, 1 AS c, 0 AS s FROM (SELECT DISTINCT date_bin(INTERVAL '2 hours', ts, TIMESTAMP '2000-01-01 01:00') AS k FROM g))
+UNION ALL SELECT 'distinct alias date_bin(INTERVAL ''2 hours'', ts, TIMESTAMP ''2000-01-01 01:00'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, 1 AS c, 0 AS s FROM (SELECT DISTINCT k FROM (SELECT date_bin(INTERVAL '2 hours', ts, TIMESTAMP '2000-01-01 01:00') AS k, v FROM g)))
+UNION ALL SELECT 'distinct filtered date_bin(INTERVAL ''2 hours'', ts, TIMESTAMP ''2000-01-01 01:00'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, 1 AS c, 0 AS s FROM (SELECT DISTINCT date_bin(INTERVAL '2 hours', ts, TIMESTAMP '2000-01-01 01:00') AS k FROM g WHERE v > 100))
+UNION ALL SELECT 'distinct ordered date_bin(INTERVAL ''2 hours'', ts, TIMESTAMP ''2000-01-01 01:00'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, 1 AS c, 0 AS s FROM (SELECT DISTINCT date_bin(INTERVAL '2 hours', ts, TIMESTAMP '2000-01-01 01:00') AS k FROM g ORDER BY k))
+UNION ALL SELECT 'distinct on date_bin(INTERVAL ''2 hours'', ts, TIMESTAMP ''2000-01-01 01:00'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, 1 AS c, 0 AS s FROM (SELECT DISTINCT ON (date_bin(INTERVAL '2 hours', ts, TIMESTAMP '2000-01-01 01:00')) date_bin(INTERVAL '2 hours', ts, TIMESTAMP '2000-01-01 01:00') AS k FROM g ORDER BY date_bin(INTERVAL '2 hours', ts, TIMESTAMP '2000-01-01 01:00')))
+UNION ALL SELECT 'distinct with sev date_bin(INTERVAL ''2 hours'', ts, TIMESTAMP ''2000-01-01 01:00'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k1::VARCHAR || '/' || k2::VARCHAR AS k, 1 AS c, 0 AS s FROM (SELECT DISTINCT date_bin(INTERVAL '2 hours', ts, TIMESTAMP '2000-01-01 01:00') AS k1, sev AS k2 FROM g))
+UNION ALL SELECT 'subquery date_trunc(''day'', d)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT date_trunc('day', d) AS k, v FROM g) GROUP BY k)
+UNION ALL SELECT 'cte date_trunc(''day'', d)' AS shape, k::VARCHAR AS k, c, s FROM (WITH x AS (SELECT date_trunc('day', d) AS k, v FROM g) SELECT k, count(*) AS c, sum(v) AS s FROM x GROUP BY k)
+UNION ALL SELECT 'cte chain date_trunc(''day'', d)' AS shape, k::VARCHAR AS k, c, s FROM (WITH x AS (SELECT date_trunc('day', d) AS k, v FROM g), y AS (SELECT * FROM x) SELECT k, count(*) AS c, sum(v) AS s FROM y GROUP BY k)
+UNION ALL SELECT 'filtered subquery date_trunc(''day'', d)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT date_trunc('day', d) AS k, v FROM g) WHERE v > 100 GROUP BY k)
+UNION ALL SELECT 'subquery filter inside date_trunc(''day'', d)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT date_trunc('day', d) AS k, v FROM g WHERE v % 3 = 0) GROUP BY k)
+UNION ALL SELECT 'multi ref date_trunc(''day'', d)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT date_trunc('day', d) AS k, v FROM g) GROUP BY k HAVING min(k) IS NOT NULL OR min(k) IS NULL)
+UNION ALL SELECT 'alias reused date_trunc(''day'', d)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT date_trunc('day', d) AS k, date_trunc('day', d) AS k2, v FROM g) GROUP BY k)
+UNION ALL SELECT 'select star date_trunc(''day'', d)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT *, date_trunc('day', d) AS k FROM g) GROUP BY k)
+UNION ALL SELECT 'union all date_trunc(''day'', d)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT date_trunc('day', d) AS k, v FROM g UNION ALL SELECT date_trunc('day', d), v FROM g) GROUP BY k)
+UNION ALL SELECT 'distinct date_trunc(''day'', d)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, 1 AS c, 0 AS s FROM (SELECT DISTINCT date_trunc('day', d) AS k FROM g))
+UNION ALL SELECT 'distinct alias date_trunc(''day'', d)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, 1 AS c, 0 AS s FROM (SELECT DISTINCT k FROM (SELECT date_trunc('day', d) AS k, v FROM g)))
+UNION ALL SELECT 'distinct filtered date_trunc(''day'', d)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, 1 AS c, 0 AS s FROM (SELECT DISTINCT date_trunc('day', d) AS k FROM g WHERE v > 100))
+UNION ALL SELECT 'distinct ordered date_trunc(''day'', d)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, 1 AS c, 0 AS s FROM (SELECT DISTINCT date_trunc('day', d) AS k FROM g ORDER BY k))
+UNION ALL SELECT 'distinct on date_trunc(''day'', d)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, 1 AS c, 0 AS s FROM (SELECT DISTINCT ON (date_trunc('day', d)) date_trunc('day', d) AS k FROM g ORDER BY date_trunc('day', d)))
+UNION ALL SELECT 'distinct with sev date_trunc(''day'', d)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k1::VARCHAR || '/' || k2::VARCHAR AS k, 1 AS c, 0 AS s FROM (SELECT DISTINCT date_trunc('day', d) AS k1, sev AS k2 FROM g))
+UNION ALL SELECT 'subquery sev' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT sev AS k, v FROM g) GROUP BY k)
+UNION ALL SELECT 'cte sev' AS shape, k::VARCHAR AS k, c, s FROM (WITH x AS (SELECT sev AS k, v FROM g) SELECT k, count(*) AS c, sum(v) AS s FROM x GROUP BY k)
+UNION ALL SELECT 'cte chain sev' AS shape, k::VARCHAR AS k, c, s FROM (WITH x AS (SELECT sev AS k, v FROM g), y AS (SELECT * FROM x) SELECT k, count(*) AS c, sum(v) AS s FROM y GROUP BY k)
+UNION ALL SELECT 'filtered subquery sev' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT sev AS k, v FROM g) WHERE v > 100 GROUP BY k)
+UNION ALL SELECT 'subquery filter inside sev' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT sev AS k, v FROM g WHERE v % 3 = 0) GROUP BY k)
+UNION ALL SELECT 'multi ref sev' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT sev AS k, v FROM g) GROUP BY k HAVING min(k) IS NOT NULL OR min(k) IS NULL)
+UNION ALL SELECT 'alias reused sev' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT sev AS k, sev AS k2, v FROM g) GROUP BY k)
+UNION ALL SELECT 'select star sev' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT *, sev AS k FROM g) GROUP BY k)
+UNION ALL SELECT 'union all sev' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT sev AS k, v FROM g UNION ALL SELECT sev, v FROM g) GROUP BY k)
+UNION ALL SELECT 'distinct sev' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, 1 AS c, 0 AS s FROM (SELECT DISTINCT sev AS k FROM g))
+UNION ALL SELECT 'distinct alias sev' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, 1 AS c, 0 AS s FROM (SELECT DISTINCT k FROM (SELECT sev AS k, v FROM g)))
+UNION ALL SELECT 'distinct filtered sev' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, 1 AS c, 0 AS s FROM (SELECT DISTINCT sev AS k FROM g WHERE v > 100))
+UNION ALL SELECT 'distinct ordered sev' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, 1 AS c, 0 AS s FROM (SELECT DISTINCT sev AS k FROM g ORDER BY k))
+UNION ALL SELECT 'distinct on sev' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, 1 AS c, 0 AS s FROM (SELECT DISTINCT ON (sev) sev AS k FROM g ORDER BY sev))
+UNION ALL SELECT 'distinct with sev sev' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k1::VARCHAR || '/' || k2::VARCHAR AS k, 1 AS c, 0 AS s FROM (SELECT DISTINCT sev AS k1, sev AS k2 FROM g))
+UNION ALL SELECT 'subquery ts' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT ts AS k, v FROM g) GROUP BY k)
+UNION ALL SELECT 'cte ts' AS shape, k::VARCHAR AS k, c, s FROM (WITH x AS (SELECT ts AS k, v FROM g) SELECT k, count(*) AS c, sum(v) AS s FROM x GROUP BY k)
+UNION ALL SELECT 'cte chain ts' AS shape, k::VARCHAR AS k, c, s FROM (WITH x AS (SELECT ts AS k, v FROM g), y AS (SELECT * FROM x) SELECT k, count(*) AS c, sum(v) AS s FROM y GROUP BY k)
+UNION ALL SELECT 'filtered subquery ts' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT ts AS k, v FROM g) WHERE v > 100 GROUP BY k)
+UNION ALL SELECT 'subquery filter inside ts' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT ts AS k, v FROM g WHERE v % 3 = 0) GROUP BY k)
+UNION ALL SELECT 'multi ref ts' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT ts AS k, v FROM g) GROUP BY k HAVING min(k) IS NOT NULL OR min(k) IS NULL)
+UNION ALL SELECT 'alias reused ts' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT ts AS k, ts AS k2, v FROM g) GROUP BY k)
+UNION ALL SELECT 'select star ts' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT *, ts AS k FROM g) GROUP BY k)
+UNION ALL SELECT 'union all ts' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT ts AS k, v FROM g UNION ALL SELECT ts, v FROM g) GROUP BY k)
+UNION ALL SELECT 'distinct ts' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, 1 AS c, 0 AS s FROM (SELECT DISTINCT ts AS k FROM g))
+UNION ALL SELECT 'distinct alias ts' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, 1 AS c, 0 AS s FROM (SELECT DISTINCT k FROM (SELECT ts AS k, v FROM g)))
+UNION ALL SELECT 'distinct filtered ts' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, 1 AS c, 0 AS s FROM (SELECT DISTINCT ts AS k FROM g WHERE v > 100))
+UNION ALL SELECT 'distinct ordered ts' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, 1 AS c, 0 AS s FROM (SELECT DISTINCT ts AS k FROM g ORDER BY k))
+UNION ALL SELECT 'distinct on ts' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, 1 AS c, 0 AS s FROM (SELECT DISTINCT ON (ts) ts AS k FROM g ORDER BY ts))
+UNION ALL SELECT 'distinct with sev ts' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k1::VARCHAR || '/' || k2::VARCHAR AS k, 1 AS c, 0 AS s FROM (SELECT DISTINCT ts AS k1, sev AS k2 FROM g))
+UNION ALL SELECT 'alias pair date_trunc(''day'', ts) + date_trunc(''hour'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k1::VARCHAR || '/' || k2::VARCHAR AS k, c, s FROM (SELECT k1, k2, count(*) AS c, sum(v) AS s FROM (SELECT date_trunc('day', ts) AS k1, date_trunc('hour', ts) AS k2, v FROM g) GROUP BY k1, k2))
+UNION ALL SELECT 'cte pair date_trunc(''day'', ts) + date_trunc(''hour'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (WITH x AS (SELECT date_trunc('day', ts) AS k1, date_trunc('hour', ts) AS k2, v FROM g) SELECT k1::VARCHAR || '/' || k2::VARCHAR AS k, c, s FROM (SELECT k1, k2, count(*) AS c, sum(v) AS s FROM x GROUP BY k1, k2))
+UNION ALL SELECT 'distinct pair date_trunc(''day'', ts) + date_trunc(''hour'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k1::VARCHAR || '/' || k2::VARCHAR AS k, 1 AS c, 0 AS s FROM (SELECT DISTINCT date_trunc('day', ts) AS k1, date_trunc('hour', ts) AS k2 FROM g))
+UNION ALL SELECT 'distinct pair alias date_trunc(''day'', ts) + date_trunc(''hour'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k1::VARCHAR || '/' || k2::VARCHAR AS k, 1 AS c, 0 AS s FROM (SELECT DISTINCT k1, k2 FROM (SELECT date_trunc('day', ts) AS k1, date_trunc('hour', ts) AS k2 FROM g)))
+UNION ALL SELECT 'pair one aliased date_trunc(''day'', ts) + date_trunc(''hour'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k1::VARCHAR || '/' || k2::VARCHAR AS k, c, s FROM (SELECT k1, date_trunc('hour', ts) AS k2, count(*) AS c, sum(v) AS s FROM (SELECT date_trunc('day', ts) AS k1, ts, tstz, v FROM g) GROUP BY 1, 2))
+UNION ALL SELECT 'alias pair date_trunc(''month'', ts) + date_trunc(''day'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k1::VARCHAR || '/' || k2::VARCHAR AS k, c, s FROM (SELECT k1, k2, count(*) AS c, sum(v) AS s FROM (SELECT date_trunc('month', ts) AS k1, date_trunc('day', ts) AS k2, v FROM g) GROUP BY k1, k2))
+UNION ALL SELECT 'cte pair date_trunc(''month'', ts) + date_trunc(''day'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (WITH x AS (SELECT date_trunc('month', ts) AS k1, date_trunc('day', ts) AS k2, v FROM g) SELECT k1::VARCHAR || '/' || k2::VARCHAR AS k, c, s FROM (SELECT k1, k2, count(*) AS c, sum(v) AS s FROM x GROUP BY k1, k2))
+UNION ALL SELECT 'distinct pair date_trunc(''month'', ts) + date_trunc(''day'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k1::VARCHAR || '/' || k2::VARCHAR AS k, 1 AS c, 0 AS s FROM (SELECT DISTINCT date_trunc('month', ts) AS k1, date_trunc('day', ts) AS k2 FROM g))
+UNION ALL SELECT 'distinct pair alias date_trunc(''month'', ts) + date_trunc(''day'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k1::VARCHAR || '/' || k2::VARCHAR AS k, 1 AS c, 0 AS s FROM (SELECT DISTINCT k1, k2 FROM (SELECT date_trunc('month', ts) AS k1, date_trunc('day', ts) AS k2 FROM g)))
+UNION ALL SELECT 'pair one aliased date_trunc(''month'', ts) + date_trunc(''day'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k1::VARCHAR || '/' || k2::VARCHAR AS k, c, s FROM (SELECT k1, date_trunc('day', ts) AS k2, count(*) AS c, sum(v) AS s FROM (SELECT date_trunc('month', ts) AS k1, ts, tstz, v FROM g) GROUP BY 1, 2))
+UNION ALL SELECT 'alias pair strftime(ts, ''%Y-%m'') + date_trunc(''day'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k1::VARCHAR || '/' || k2::VARCHAR AS k, c, s FROM (SELECT k1, k2, count(*) AS c, sum(v) AS s FROM (SELECT strftime(ts, '%Y-%m') AS k1, date_trunc('day', ts) AS k2, v FROM g) GROUP BY k1, k2))
+UNION ALL SELECT 'cte pair strftime(ts, ''%Y-%m'') + date_trunc(''day'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (WITH x AS (SELECT strftime(ts, '%Y-%m') AS k1, date_trunc('day', ts) AS k2, v FROM g) SELECT k1::VARCHAR || '/' || k2::VARCHAR AS k, c, s FROM (SELECT k1, k2, count(*) AS c, sum(v) AS s FROM x GROUP BY k1, k2))
+UNION ALL SELECT 'distinct pair strftime(ts, ''%Y-%m'') + date_trunc(''day'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k1::VARCHAR || '/' || k2::VARCHAR AS k, 1 AS c, 0 AS s FROM (SELECT DISTINCT strftime(ts, '%Y-%m') AS k1, date_trunc('day', ts) AS k2 FROM g))
+UNION ALL SELECT 'distinct pair alias strftime(ts, ''%Y-%m'') + date_trunc(''day'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k1::VARCHAR || '/' || k2::VARCHAR AS k, 1 AS c, 0 AS s FROM (SELECT DISTINCT k1, k2 FROM (SELECT strftime(ts, '%Y-%m') AS k1, date_trunc('day', ts) AS k2 FROM g)))
+UNION ALL SELECT 'pair one aliased strftime(ts, ''%Y-%m'') + date_trunc(''day'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k1::VARCHAR || '/' || k2::VARCHAR AS k, c, s FROM (SELECT k1, date_trunc('day', ts) AS k2, count(*) AS c, sum(v) AS s FROM (SELECT strftime(ts, '%Y-%m') AS k1, ts, tstz, v FROM g) GROUP BY 1, 2))
+UNION ALL SELECT 'alias pair date_trunc(''day'', tstz) + date_trunc(''hour'', tstz)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k1::VARCHAR || '/' || k2::VARCHAR AS k, c, s FROM (SELECT k1, k2, count(*) AS c, sum(v) AS s FROM (SELECT date_trunc('day', tstz) AS k1, date_trunc('hour', tstz) AS k2, v FROM g) GROUP BY k1, k2))
+UNION ALL SELECT 'cte pair date_trunc(''day'', tstz) + date_trunc(''hour'', tstz)' AS shape, k::VARCHAR AS k, c, s FROM (WITH x AS (SELECT date_trunc('day', tstz) AS k1, date_trunc('hour', tstz) AS k2, v FROM g) SELECT k1::VARCHAR || '/' || k2::VARCHAR AS k, c, s FROM (SELECT k1, k2, count(*) AS c, sum(v) AS s FROM x GROUP BY k1, k2))
+UNION ALL SELECT 'distinct pair date_trunc(''day'', tstz) + date_trunc(''hour'', tstz)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k1::VARCHAR || '/' || k2::VARCHAR AS k, 1 AS c, 0 AS s FROM (SELECT DISTINCT date_trunc('day', tstz) AS k1, date_trunc('hour', tstz) AS k2 FROM g))
+UNION ALL SELECT 'distinct pair alias date_trunc(''day'', tstz) + date_trunc(''hour'', tstz)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k1::VARCHAR || '/' || k2::VARCHAR AS k, 1 AS c, 0 AS s FROM (SELECT DISTINCT k1, k2 FROM (SELECT date_trunc('day', tstz) AS k1, date_trunc('hour', tstz) AS k2 FROM g)))
+UNION ALL SELECT 'pair one aliased date_trunc(''day'', tstz) + date_trunc(''hour'', tstz)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k1::VARCHAR || '/' || k2::VARCHAR AS k, c, s FROM (SELECT k1, date_trunc('hour', tstz) AS k2, count(*) AS c, sum(v) AS s FROM (SELECT date_trunc('day', tstz) AS k1, ts, tstz, v FROM g) GROUP BY 1, 2))
+UNION ALL SELECT 'alias pair concat(year(ts), ''-Q'', quarter(ts)) + date_trunc(''month'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k1::VARCHAR || '/' || k2::VARCHAR AS k, c, s FROM (SELECT k1, k2, count(*) AS c, sum(v) AS s FROM (SELECT concat(year(ts), '-Q', quarter(ts)) AS k1, date_trunc('month', ts) AS k2, v FROM g) GROUP BY k1, k2))
+UNION ALL SELECT 'cte pair concat(year(ts), ''-Q'', quarter(ts)) + date_trunc(''month'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (WITH x AS (SELECT concat(year(ts), '-Q', quarter(ts)) AS k1, date_trunc('month', ts) AS k2, v FROM g) SELECT k1::VARCHAR || '/' || k2::VARCHAR AS k, c, s FROM (SELECT k1, k2, count(*) AS c, sum(v) AS s FROM x GROUP BY k1, k2))
+UNION ALL SELECT 'distinct pair concat(year(ts), ''-Q'', quarter(ts)) + date_trunc(''month'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k1::VARCHAR || '/' || k2::VARCHAR AS k, 1 AS c, 0 AS s FROM (SELECT DISTINCT concat(year(ts), '-Q', quarter(ts)) AS k1, date_trunc('month', ts) AS k2 FROM g))
+UNION ALL SELECT 'distinct pair alias concat(year(ts), ''-Q'', quarter(ts)) + date_trunc(''month'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k1::VARCHAR || '/' || k2::VARCHAR AS k, 1 AS c, 0 AS s FROM (SELECT DISTINCT k1, k2 FROM (SELECT concat(year(ts), '-Q', quarter(ts)) AS k1, date_trunc('month', ts) AS k2 FROM g)))
+UNION ALL SELECT 'pair one aliased concat(year(ts), ''-Q'', quarter(ts)) + date_trunc(''month'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k1::VARCHAR || '/' || k2::VARCHAR AS k, c, s FROM (SELECT k1, date_trunc('month', ts) AS k2, count(*) AS c, sum(v) AS s FROM (SELECT concat(year(ts), '-Q', quarter(ts)) AS k1, ts, tstz, v FROM g) GROUP BY 1, 2))
+UNION ALL SELECT 'alias pair time_bucket(INTERVAL ''1 day'', ts) + time_bucket(INTERVAL ''15 minutes'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k1::VARCHAR || '/' || k2::VARCHAR AS k, c, s FROM (SELECT k1, k2, count(*) AS c, sum(v) AS s FROM (SELECT time_bucket(INTERVAL '1 day', ts) AS k1, time_bucket(INTERVAL '15 minutes', ts) AS k2, v FROM g) GROUP BY k1, k2))
+UNION ALL SELECT 'cte pair time_bucket(INTERVAL ''1 day'', ts) + time_bucket(INTERVAL ''15 minutes'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (WITH x AS (SELECT time_bucket(INTERVAL '1 day', ts) AS k1, time_bucket(INTERVAL '15 minutes', ts) AS k2, v FROM g) SELECT k1::VARCHAR || '/' || k2::VARCHAR AS k, c, s FROM (SELECT k1, k2, count(*) AS c, sum(v) AS s FROM x GROUP BY k1, k2))
+UNION ALL SELECT 'distinct pair time_bucket(INTERVAL ''1 day'', ts) + time_bucket(INTERVAL ''15 minutes'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k1::VARCHAR || '/' || k2::VARCHAR AS k, 1 AS c, 0 AS s FROM (SELECT DISTINCT time_bucket(INTERVAL '1 day', ts) AS k1, time_bucket(INTERVAL '15 minutes', ts) AS k2 FROM g))
+UNION ALL SELECT 'distinct pair alias time_bucket(INTERVAL ''1 day'', ts) + time_bucket(INTERVAL ''15 minutes'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k1::VARCHAR || '/' || k2::VARCHAR AS k, 1 AS c, 0 AS s FROM (SELECT DISTINCT k1, k2 FROM (SELECT time_bucket(INTERVAL '1 day', ts) AS k1, time_bucket(INTERVAL '15 minutes', ts) AS k2 FROM g)))
+UNION ALL SELECT 'pair one aliased time_bucket(INTERVAL ''1 day'', ts) + time_bucket(INTERVAL ''15 minutes'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k1::VARCHAR || '/' || k2::VARCHAR AS k, c, s FROM (SELECT k1, time_bucket(INTERVAL '15 minutes', ts) AS k2, count(*) AS c, sum(v) AS s FROM (SELECT time_bucket(INTERVAL '1 day', ts) AS k1, ts, tstz, v FROM g) GROUP BY 1, 2))
+UNION ALL SELECT 'alias pair date_trunc(''day'', ts)::DATE + date_trunc(''hour'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k1::VARCHAR || '/' || k2::VARCHAR AS k, c, s FROM (SELECT k1, k2, count(*) AS c, sum(v) AS s FROM (SELECT date_trunc('day', ts)::DATE AS k1, date_trunc('hour', ts) AS k2, v FROM g) GROUP BY k1, k2))
+UNION ALL SELECT 'cte pair date_trunc(''day'', ts)::DATE + date_trunc(''hour'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (WITH x AS (SELECT date_trunc('day', ts)::DATE AS k1, date_trunc('hour', ts) AS k2, v FROM g) SELECT k1::VARCHAR || '/' || k2::VARCHAR AS k, c, s FROM (SELECT k1, k2, count(*) AS c, sum(v) AS s FROM x GROUP BY k1, k2))
+UNION ALL SELECT 'distinct pair date_trunc(''day'', ts)::DATE + date_trunc(''hour'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k1::VARCHAR || '/' || k2::VARCHAR AS k, 1 AS c, 0 AS s FROM (SELECT DISTINCT date_trunc('day', ts)::DATE AS k1, date_trunc('hour', ts) AS k2 FROM g))
+UNION ALL SELECT 'distinct pair alias date_trunc(''day'', ts)::DATE + date_trunc(''hour'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k1::VARCHAR || '/' || k2::VARCHAR AS k, 1 AS c, 0 AS s FROM (SELECT DISTINCT k1, k2 FROM (SELECT date_trunc('day', ts)::DATE AS k1, date_trunc('hour', ts) AS k2 FROM g)))
+UNION ALL SELECT 'pair one aliased date_trunc(''day'', ts)::DATE + date_trunc(''hour'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k1::VARCHAR || '/' || k2::VARCHAR AS k, c, s FROM (SELECT k1, date_trunc('hour', ts) AS k2, count(*) AS c, sum(v) AS s FROM (SELECT date_trunc('day', ts)::DATE AS k1, ts, tstz, v FROM g) GROUP BY 1, 2));
+
+query
+SELECT shape, k, c, s FROM (SELECT * FROM got_a EXCEPT ALL SELECT * FROM ref_a) ORDER BY 1, 2;
+----
+shape	k	c	s
+
+query
+SELECT shape, k, c, s FROM (SELECT * FROM ref_a EXCEPT ALL SELECT * FROM got_a) ORDER BY 1, 2;
+----
+shape	k	c	s
+
+query
+SELECT count(*) AS rows, count(DISTINCT shape) AS shapes FROM got_a;
+----
+rows	shapes
+1816645	335
+
+query
+EXPLAIN SELECT k, count(*) AS c FROM (SELECT date_trunc('hour', ts) AS k FROM g) GROUP BY k;
+----
+QUERY PLAN
+╭─ PROJECTION ───────────────────────────────────────╮
+│ Projections:                                       │
+│ __internal_date_trunc_unbucket(#0, 3600000000, 0), │
+│ #1                                                 │
+│ ~31,606 rows                                       │
+╰──────────────────────────┬─────────────────────────╯
+╭─ PERFECT_HASH_GROUP_BY ──┴─────────────────────────╮
+│ Groups: #0                                         │
+│ Aggregates: count_star()                           │
+│ ~31,606 rows                                       │
+╰──────────────────────────┬─────────────────────────╯
+╭─ PROJECTION ─────────────┴─────────────────────────╮
+│ Projections:                                       │
+│ __internal_date_trunc_bucket(ts, 3600000000, 0)    │
+│ ~50,001 rows                                       │
+╰──────────────────────────┬─────────────────────────╯
+╭─ SEQ_SCAN ───────────────┴─────────────────────────╮
+│ Table: g                                           │
+│ Type: Sequential Scan                              │
+│ Projections: ts                                    │
+│ ~50,001 rows                                       │
+╰────────────────────────────────────────────────────╯
+
+query
+EXPLAIN WITH x AS (SELECT date_trunc('hour', ts) AS k, v FROM g), y AS (SELECT * FROM x) SELECT k, sum(v) AS s FROM y GROUP BY k;
+----
+QUERY PLAN
+╭─ PROJECTION ───────────────────────────────────────╮
+│ Projections:                                       │
+│ __internal_date_trunc_unbucket(#0, 3600000000, 0), │
+│ #1                                                 │
+│ ~31,606 rows                                       │
+╰──────────────────────────┬─────────────────────────╯
+╭─ PERFECT_HASH_GROUP_BY ──┴─────────────────────────╮
+│ Groups: #0                                         │
+│ Aggregates: sum_no_overflow(#1)                    │
+│ ~31,606 rows                                       │
+╰──────────────────────────┬─────────────────────────╯
+╭─ PROJECTION ─────────────┴─────────────────────────╮
+│ Projections:                                       │
+│ __internal_date_trunc_bucket(ts, 3600000000, 0), v │
+│ ~50,001 rows                                       │
+╰──────────────────────────┬─────────────────────────╯
+╭─ SEQ_SCAN ───────────────┴─────────────────────────╮
+│ Table: g                                           │
+│ Type: Sequential Scan                              │
+│ Projections: ts, v                                 │
+│ ~50,001 rows                                       │
+╰────────────────────────────────────────────────────╯
+
+query
+EXPLAIN SELECT k, count(*) AS c, min(k) AS m FROM (SELECT date_trunc('hour', ts) AS k FROM g) GROUP BY k;
+----
+QUERY PLAN
+╭─ HASH_GROUP_BY ───────────╮
+│ Groups: #0                │
+│ Aggregates: count_star(), │
+│             min(#0)       │
+│ ~31,606 rows              │
+╰─────────────┬─────────────╯
+╭─ PROJECTION ┴─────────────╮
+│ Projections: k            │
+│ ~50,001 rows              │
+╰─────────────┬─────────────╯
+╭─ SEQ_SCAN ──┴─────────────╮
+│ Table: g                  │
+│ Type: Sequential Scan     │
+│ Projections: ts           │
+│ ~50,001 rows              │
+╰───────────────────────────╯
+
+query
+EXPLAIN SELECT k1, k2, count(*) AS c FROM (SELECT date_trunc('day', ts) AS k1, date_trunc('hour', ts) AS k2 FROM g) GROUP BY k1, k2;
+----
+QUERY PLAN
+╭─ PROJECTION ───────────────────────────────────────╮
+│ Projections:                                       │
+│ k1,                                                │
+│ __internal_date_trunc_unbucket(#0, 3600000000, 0), │
+│ #1                                                 │
+│ ~50,000 rows                                       │
+╰──────────────────────────┬─────────────────────────╯
+╭─ PERFECT_HASH_GROUP_BY ──┴─────────────────────────╮
+│ Groups: #0                                         │
+│ Aggregates: count_star()                           │
+│ ~50,000 rows                                       │
+╰──────────────────────────┬─────────────────────────╯
+╭─ PROJECTION ─────────────┴─────────────────────────╮
+│ Projections: #1                                    │
+│ ~50,001 rows                                       │
+╰──────────────────────────┬─────────────────────────╯
+╭─ PROJECTION ─────────────┴─────────────────────────╮
+│ Projections:                                       │
+│ NULL,                                              │
+│ __internal_date_trunc_bucket(ts, 3600000000, 0)    │
+│ ~50,001 rows                                       │
+╰──────────────────────────┬─────────────────────────╯
+╭─ SEQ_SCAN ───────────────┴─────────────────────────╮
+│ Table: g                                           │
+│ Type: Sequential Scan                              │
+│ Projections: ts                                    │
+│ ~50,001 rows                                       │
+╰────────────────────────────────────────────────────╯
+
+query
+EXPLAIN SELECT DISTINCT date_trunc('hour', ts) FROM g;
+----
+QUERY PLAN
+╭─ PROJECTION ──────────────────────────────────────╮
+│ Projections:                                      │
+│ __internal_date_trunc_unbucket(#0, 3600000000, 0) │
+│ ~50,001 rows                                      │
+╰─────────────────────────┬─────────────────────────╯
+╭─ PERFECT_HASH_GROUP_BY ─┴─────────────────────────╮
+│ Groups: #0                                        │
+│ ~50,001 rows                                      │
+╰─────────────────────────┬─────────────────────────╯
+╭─ PROJECTION ────────────┴─────────────────────────╮
+│ Projections:                                      │
+│ __internal_date_trunc_bucket(ts, 3600000000, 0)   │
+│ ~50,001 rows                                      │
+╰─────────────────────────┬─────────────────────────╯
+╭─ SEQ_SCAN ──────────────┴─────────────────────────╮
+│ Table: g                                          │
+│ Type: Sequential Scan                             │
+│ Projections: ts                                   │
+│ ~50,001 rows                                      │
+╰───────────────────────────────────────────────────╯
+
+query
+EXPLAIN SELECT DISTINCT date_trunc('day', ts), date_trunc('hour', ts) FROM g;
+----
+QUERY PLAN
+╭─ PROJECTION ──────────────────────────────────────────────────────────╮
+│ Projections:                                                          │
+│ date_trunc('day', __internal_date_trunc_unbucket(#0, 3600000000, 0)), │
+│ __internal_date_trunc_unbucket(#0, 3600000000, 0)                     │
+│ ~50,001 rows                                                          │
+╰───────────────────────────────────┬───────────────────────────────────╯
+╭─ PERFECT_HASH_GROUP_BY ───────────┴───────────────────────────────────╮
+│ Groups: #0                                                            │
+│ ~50,001 rows                                                          │
+╰───────────────────────────────────┬───────────────────────────────────╯
+╭─ PROJECTION ──────────────────────┴───────────────────────────────────╮
+│ Projections:                                                          │
+│ __internal_date_trunc_bucket(ts, 3600000000, 0)                       │
+│ ~50,001 rows                                                          │
+╰───────────────────────────────────┬───────────────────────────────────╯
+╭─ SEQ_SCAN ────────────────────────┴───────────────────────────────────╮
+│ Table: g                                                              │
+│ Type: Sequential Scan                                                 │
+│ Projections: ts                                                       │
+│ ~50,001 rows                                                          │
+╰───────────────────────────────────────────────────────────────────────╯
+
+query
+EXPLAIN SELECT DISTINCT k FROM (SELECT strftime(ts, '%Y-%m') AS k FROM g);
+----
+QUERY PLAN
+╭─ PROJECTION ──────────────────────────────────────────────────────╮
+│ Projections:                                                      │
+│ strftime(__internal_date_trunc_month_unbucket(#0, 1, 0), '%Y-%m') │
+│ ~50,001 rows                                                      │
+╰─────────────────────────────────┬─────────────────────────────────╯
+╭─ PERFECT_HASH_GROUP_BY ─────────┴─────────────────────────────────╮
+│ Groups: #0                                                        │
+│ ~50,001 rows                                                      │
+╰─────────────────────────────────┬─────────────────────────────────╯
+╭─ PROJECTION ────────────────────┴─────────────────────────────────╮
+│ Projections:                                                      │
+│ __internal_date_trunc_month_bucket(ts, 1, 0)                      │
+│ ~50,001 rows                                                      │
+╰─────────────────────────────────┬─────────────────────────────────╯
+╭─ SEQ_SCAN ──────────────────────┴─────────────────────────────────╮
+│ Table: g                                                          │
+│ Type: Sequential Scan                                             │
+│ Projections: ts                                                   │
+│ ~50,001 rows                                                      │
+╰───────────────────────────────────────────────────────────────────╯
+
+query
+EXPLAIN SELECT DISTINCT ON (date_trunc('hour', ts)) ts FROM g ORDER BY date_trunc('hour', ts);
+----
+QUERY PLAN
+╭─ ORDER_BY ───────────────────────────╮
+│ Order By: g.ts) ASC                  │
+│ ~50,001 rows                         │
+╰───────────────────┬──────────────────╯
+╭─ PROJECTION ──────┴──────────────────╮
+│ Projections: #1, #0                  │
+│ ~50,001 rows                         │
+╰───────────────────┬──────────────────╯
+╭─ HASH_GROUP_BY ───┴──────────────────╮
+│ Groups: #0                           │
+│ Aggregates: "first"(#1)              │
+│ ~50,001 rows                         │
+╰───────────────────┬──────────────────╯
+╭─ PROJECTION ──────┴──────────────────╮
+│ Projections: #1, #0                  │
+│ ~50,001 rows                         │
+╰───────────────────┬──────────────────╯
+╭─ PROJECTION ──────┴──────────────────╮
+│ Projections: ts,                     │
+│              date_trunc('hour', ts)  │
+│ ~50,001 rows                         │
+╰───────────────────┬──────────────────╯
+╭─ SEQ_SCAN ────────┴──────────────────╮
+│ Table: g                             │
+│ Type: Sequential Scan                │
+│ Projections: ts                      │
+│ ~50,001 rows                         │
+╰──────────────────────────────────────╯
+
+query
+EXPLAIN SELECT count(*) FROM (SELECT DISTINCT date_trunc('hour', tstz) FROM g);
+----
+QUERY PLAN
+╭─ UNGROUPED_AGGREGATE ──────────────────────────╮
+│ Aggregates: count_star()                       │
+│ ~1 row                                         │
+╰────────────────────────┬───────────────────────╯
+╭─ PROJECTION ───────────┴───────────────────────╮
+│ Projections:                                   │
+│ __internal_icu_date_trunc_unbucket('hour', #0) │
+│ ~50,001 rows                                   │
+╰────────────────────────┬───────────────────────╯
+╭─ PERFECT_HASH_GROUP_BY ┴───────────────────────╮
+│ Groups: #0                                     │
+│ ~50,001 rows                                   │
+╰────────────────────────┬───────────────────────╯
+╭─ PROJECTION ───────────┴───────────────────────╮
+│ Projections:                                   │
+│ __internal_icu_date_trunc_bucket('hour', tstz) │
+│ ~50,001 rows                                   │
+╰────────────────────────┬───────────────────────╯
+╭─ SEQ_SCAN ─────────────┴───────────────────────╮
+│ Table: g                                       │
+│ Type: Sequential Scan                          │
+│ Projections: tstz                              │
+│ ~50,001 rows                                   │
+╰────────────────────────────────────────────────╯
+
+query
+SELECT k::VARCHAR AS k, c FROM (SELECT k, count(*) AS c FROM (SELECT date_trunc('hour', ts) AS k, v FROM g) WHERE v BETWEEN 400 AND 430 GROUP BY k) ORDER BY 1;
+----
+k	c
+2024-12-29 22:00:00	3
+2024-12-29 23:00:00	9
+2024-12-30 00:00:00	8
+2024-12-30 01:00:00	9
+2024-12-30 02:00:00	2
+
+query
+SELECT k::VARCHAR AS k FROM (SELECT DISTINCT date_trunc('day', tstz) AS k FROM g WHERE v BETWEEN 400 AND 900) ORDER BY 1;
+----
+k
+2024-12-29 00:00:00+01
+2024-12-30 00:00:00+01
+2024-12-31 00:00:00+01
+2025-01-01 00:00:00+01
+
+statement ok
+SET TimeZone = 'Etc/UTC';

@@ -83,7 +83,6 @@ class SereneDBPhysicalCTAS final : public duckdb::PhysicalOperator {
   // loads).
   duckdb::PhysicalOperator& _insert;
   // Where the load's create files the relation: progress reports its relid.
-  duckdb::idx_t _database_id;
   std::string _schema_name;
   std::string _table_name;
 };

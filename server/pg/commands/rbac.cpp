@@ -45,7 +45,6 @@
 #include "catalog1/catalog.h"
 #include "catalog1/cluster.h"
 #include "catalog1/entry/role.h"
-#include "pg/pg_types.h"
 #include "catalog1/lookup.h"
 #include "connector/duckdb_client_state.h"
 #include "network/credentials.h"
@@ -265,7 +264,7 @@ duckdb::unique_ptr<duckdb::CreateTableInfo> ChangeColumnAcl(
                             current->GetTableName().GetIdentifierName(),
                             "\" does not exist"));
   }
-  const duckdb::idx_t column_id{definition->CatalogOid()};
+  const duckdb::idx_t column_id{definition->Oid()};
   // A grant is not a change to what the table is, so the definition is
   // republished unchanged and only the permissions beside it move.
   auto perm = entry->permissions;
@@ -346,19 +345,16 @@ void CreateRole(ConnectionContext& ctx, std::string_view name,
   if (options.inherit) {
     opts |= catalog::RoleOption::Inherit;
   }
-  auto role = duckdb::make_uniq<catalog::Role>(
-    0, catalog::persistence::RoleData{
-         .name = std::string{name},
-         .options = static_cast<uint32_t>(opts),
-         .conn_limit = conn_limit,
-         .valid_until = valid_until,
-         .password = MakePassword(options.has_password, options.password,
-                                  options.password_is_null),
-       });
+  catalog::CreateRoleInfo info;
+  info.SetName(duckdb::Identifier{std::string{name}});
+  info.options = opts;
+  info.conn_limit = conn_limit;
+  info.valid_until = valid_until;
+  info.password = MakePassword(options.has_password, options.password,
+                               options.password_is_null);
 
   catalog.CreateRole(
-    duckdb::CatalogTransaction{catalog, ctx.GetClientContext()},
-    std::move(role));
+    duckdb::CatalogTransaction{catalog, ctx.GetClientContext()}, info);
 
   for (const auto& g : options.in_roles) {
     GrantRole(ctx, g, name, /*revoke=*/false, MemberOptions{});

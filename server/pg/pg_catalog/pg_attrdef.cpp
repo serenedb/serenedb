@@ -34,7 +34,7 @@ MaterializedData SystemTableSnapshot<PgAttrdef>::GetTableData() {
   // view into one and a vector would move them as it grows.
   std::deque<std::string> adbin_storage;
   VisitEntries<duckdb::TableCatalogEntry>(
-    &_config.GetClientContext(), GetDatabase(),
+    _config.GetClientContext(), GetDatabase(),
     [&](const duckdb::TableCatalogEntry& table) {
       for (const auto& col : table.GetColumns().Logical()) {
         // A generation expression lives here too, as postgres records it.

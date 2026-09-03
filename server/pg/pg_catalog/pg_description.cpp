@@ -113,27 +113,26 @@ MaterializedData SystemTableSnapshot<PgDescription>::GetTableData() {
   });
 
   VisitEntries<duckdb::DuckIndexEntry>(
-    &context, database, [&](const duckdb::DuckIndexEntry& entry) {
+    context, database, [&](const duckdb::DuckIndexEntry& entry) {
       add(PgClass::kId, entry.oid, 0, InfoComment(entry.comment));
     });
 
   VisitEntries<duckdb::SequenceCatalogEntry>(
-    &context, database, [&](const duckdb::SequenceCatalogEntry& seq) {
+    context, database, [&](const duckdb::SequenceCatalogEntry& seq) {
       add(PgClass::kId, seq.oid, 0, InfoComment(seq.comment));
     });
 
   VisitEntries<duckdb::TypeCatalogEntry>(
-    &context, database, [&](const duckdb::TypeCatalogEntry& type) {
+    context, database, [&](const duckdb::TypeCatalogEntry& type) {
       add(PgType::kId, type.oid, 0, InfoComment(type.comment));
     });
 
   const auto add_function = [&](const duckdb::MacroCatalogEntry& function) {
     add(PgProc::kId, function.oid, 0, InfoComment(function.comment));
   };
-  VisitEntries<duckdb::ScalarMacroCatalogEntry>(&context, database,
+  VisitEntries<duckdb::ScalarMacroCatalogEntry>(context, database,
                                                 add_function);
-  VisitEntries<duckdb::TableMacroCatalogEntry>(&context, database,
-                                               add_function);
+  VisitEntries<duckdb::TableMacroCatalogEntry>(context, database, add_function);
 
   auto result = CreateColumns<PgDescription>(values.size());
   for (size_t row = 0; row < values.size(); ++row) {

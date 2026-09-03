@@ -47,7 +47,7 @@ MaterializedData SystemTableSnapshot<PgEnum>::GetTableData() {
   // the rows point at these and must not move.
   std::deque<std::string> labels;
   VisitEntries<duckdb::TypeCatalogEntry>(
-    &_config.GetClientContext(), GetDatabase(),
+    _config.GetClientContext(), GetDatabase(),
     [&](const duckdb::TypeCatalogEntry& type) {
       if (type.user_type.id() != duckdb::LogicalTypeId::ENUM) {
         return;

@@ -111,7 +111,7 @@ MaterializedData SystemTableSnapshot<PgProc>::GetTableData() {
   };
   // A scalar macro and a table macro are one SereneDB kind and two duckdb
   // sets, so both are walked.
-  auto* context = &_config.GetClientContext();
+  auto& context = _config.GetClientContext();
   VisitEntries<duckdb::ScalarMacroCatalogEntry>(context, GetDatabase(), emit);
   VisitEntries<duckdb::TableMacroCatalogEntry>(context, GetDatabase(), emit);
 

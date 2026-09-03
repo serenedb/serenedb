@@ -194,7 +194,7 @@ void RetrieveObjects(duckdb::Catalog& database, std::vector<PgClass>& values,
   std::vector<const duckdb::DuckIndexEntry*> indexes;
   containers::FlatHashSet<duckdb::idx_t> indexed_relations;
   VisitEntries<duckdb::DuckIndexEntry>(
-    &context, database, [&](const duckdb::DuckIndexEntry& entry) {
+    context, database, [&](const duckdb::DuckIndexEntry& entry) {
       if (auto host = HostTable(context, database, entry)) {
         indexed_relations.insert(host->oid);
       }
@@ -302,7 +302,7 @@ void RetrieveObjects(duckdb::Catalog& database, std::vector<PgClass>& values,
   }
 
   VisitEntries<duckdb::SequenceCatalogEntry>(
-    &context, database, [&](const duckdb::SequenceCatalogEntry& sequence) {
+    context, database, [&](const duckdb::SequenceCatalogEntry& sequence) {
       // The synthetic primary-key sequence of a table declaring none is
       // serenedb's own machinery, like the column it feeds: postgres has no
       // such relation and neither does pg_class. A SERIAL's sequence is a real
@@ -319,7 +319,7 @@ void RetrieveObjects(duckdb::Catalog& database, std::vector<PgClass>& values,
     });
 
   VisitEntries<duckdb::TypeCatalogEntry>(
-    &context, database, [&](const duckdb::TypeCatalogEntry& type) {
+    context, database, [&](const duckdb::TypeCatalogEntry& type) {
       if (type.user_type.id() != duckdb::LogicalTypeId::STRUCT) {
         return;
       }

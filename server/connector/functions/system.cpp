@@ -58,8 +58,10 @@
 #include "basics/down_cast.h"
 #include "basics/static_strings.h"
 #include "catalog1/cluster.h"
+#include "catalog1/entry/search_table.h"
 #include "catalog1/lookup.h"
 #include "connector/duckdb_client_state.h"
+#include "connector/inverted_store_lookup.h"
 #include "connector/pg_logical_types.h"
 #include "network/cancel_registry.h"
 #include "pg/connection_context.h"
@@ -82,11 +84,10 @@ struct RelationStorageSize {
 RelationStorageSize StoreTableDataSize(duckdb::ClientContext& context,
                                        const duckdb::TableCatalogEntry& table) {
   RelationStorageSize result;
-  auto rows = const_cast<duckdb::TableCatalogEntry&>(table).TryGetStorage();
-  if (!rows) {
+  if (!table.IsDuckTable()) {
     return result;
   }
-  auto& storage = *rows;
+  auto& storage = const_cast<duckdb::TableCatalogEntry&>(table).GetStorage();
   duckdb::QueryContext query_context(context);
   containers::FlatHashSet<duckdb::block_id_t> blocks;
   int64_t transient_bytes = 0;
@@ -109,11 +110,12 @@ RelationStorageSize StoreTableDataSize(duckdb::ClientContext& context,
 
 int64_t StoreTableIndexBytes(duckdb::ClientContext& context,
                              const duckdb::TableCatalogEntry& table) {
-  auto rows = const_cast<duckdb::TableCatalogEntry&>(table).TryGetStorage();
-  if (!rows) {
+  if (!table.IsDuckTable()) {
     return 0;
   }
-  auto& info = *rows->GetDataTableInfo();
+  auto& info = *const_cast<duckdb::TableCatalogEntry&>(table)
+                  .GetStorage()
+                  .GetDataTableInfo();
   info.BindIndexes(context);
   int64_t total = 0;
   for (auto& index : info.GetIndexes().Indexes()) {
@@ -127,7 +129,11 @@ int64_t StoreTableIndexBytes(duckdb::ClientContext& context,
 }
 
 int64_t SearchTableBytes(const duckdb::TableCatalogEntry& table) {
-  const auto& data = table.GetSearchData();
+  // Introspection must not open a store as a side effect: report only what
+  // is already open.
+  // Both callers gate on IsSearchTable(table.tags) first.
+  const auto data =
+    basics::downCast<catalog::SearchTableEntry>(table).Storage();
   if (!data) {
     return 0;
   }
@@ -142,35 +148,37 @@ int64_t SearchTableBytes(const duckdb::TableCatalogEntry& table) {
   return total;
 }
 
+// Every entry of one kind across the catalog's schemas, which is duckdb's own
+// two-level scan rather than anything of ours.
+void VisitEntries(duckdb::ClientContext& context, duckdb::Catalog& catalog,
+                  duckdb::CatalogType type,
+                  const std::function<void(duckdb::CatalogEntry&)>& callback) {
+  catalog.ScanSchemas(context, [&](duckdb::SchemaCatalogEntry& schema) {
+    schema.Scan(context, type, callback);
+  });
+}
+
 }  // namespace
 
 int64_t RelationDataBytes(duckdb::ClientContext& context,
                           const duckdb::TableCatalogEntry& table) {
-  return table.IsSearchTable() ? SearchTableBytes(table)
-                               : StoreTableDataSize(context, table).bytes;
+  return IsSearchTable(table.tags) ? SearchTableBytes(table)
+                                   : StoreTableDataSize(context, table).bytes;
 }
 
 int64_t IndexEntryBytes(duckdb::ClientContext& context,
                         const duckdb::DuckIndexEntry& index) {
-  if (index.IsInverted()) {
-    const auto& data = index.GetInvertedData();
-    return data ? static_cast<int64_t>(data->GetStats().indexSize) : 0;
+  if (const auto* inverted =
+        dynamic_cast<const catalog::InvertedIndexEntry*>(&index)) {
+    const auto& storage = inverted->Storage();
+    if (!storage) {
+      return 0;
+    }
+    return static_cast<int64_t>(storage->GetStats().indexSize);
   }
   // A secondary index is an ART on the store table, so its size is the
   // allocation the store table reports for it.
-  auto entry = duckdb::Catalog::GetEntry<duckdb::TableCatalogEntry>(
-    context,
-    duckdb::QualifiedName{index.ParentCatalog().GetName(),
-                          index.GetSchemaName(), index.GetTableName()},
-    duckdb::OnEntryNotFound::RETURN_NULL);
-  if (!entry) {
-    return 0;
-  }
-  auto rows = entry->TryGetStorage();
-  if (!rows) {
-    return 0;
-  }
-  auto& info = *rows->GetDataTableInfo();
+  auto& info = index.GetDataTableInfo();
   info.BindIndexes(context);
   auto bound = info.GetIndexes().Find(index.name);
   return bound ? static_cast<int64_t>(bound->GetAllocationSize()) : 0;
@@ -179,15 +187,16 @@ int64_t IndexEntryBytes(duckdb::ClientContext& context,
 int64_t TableIndexesTotalBytes(duckdb::ClientContext& context,
                                duckdb::TableCatalogEntry& table) {
   int64_t total =
-    table.IsSearchTable() ? 0 : StoreTableIndexBytes(context, table);
-  table.ParentSchema().Scan(
-    context, duckdb::CatalogType::INDEX_ENTRY,
-    [&](duckdb::CatalogEntry& entry) {
-      auto& index = entry.Cast<duckdb::DuckIndexEntry>();
-      if (index.GetTableName() == table.name && index.IsInverted()) {
-        total += IndexEntryBytes(context, index);
-      }
-    });
+    IsSearchTable(table.tags) ? 0 : StoreTableIndexBytes(context, table);
+  table.ParentSchema().Scan(context, duckdb::CatalogType::INDEX_ENTRY,
+                            [&](duckdb::CatalogEntry& entry) {
+                              auto& index =
+                                entry.Cast<duckdb::DuckIndexEntry>();
+                              if (index.GetTableName() == table.name &&
+                                  connector::IsInvertedIndex(index)) {
+                                total += IndexEntryBytes(context, index);
+                              }
+                            });
   return total;
 }
 
@@ -206,7 +215,7 @@ duckdb::DatabaseSize DatabaseStorageSize(duckdb::ClientContext& context,
   };
   int64_t bytes = 0;
   int64_t blocks = 0;
-  VisitEntries(&context, catalog, duckdb::CatalogType::TABLE_ENTRY,
+  VisitEntries(context, catalog, duckdb::CatalogType::TABLE_ENTRY,
                [&](duckdb::CatalogEntry& entry) {
                  if (!in_scope(entry)) {
                    return;
@@ -218,7 +227,7 @@ duckdb::DatabaseSize DatabaseStorageSize(duckdb::ClientContext& context,
                  if (table == nullptr) {
                    return;
                  }
-                 if (table->IsSearchTable()) {
+                 if (IsSearchTable(table->tags)) {
                    bytes += SearchTableBytes(*table);
                    return;
                  }
@@ -226,13 +235,13 @@ duckdb::DatabaseSize DatabaseStorageSize(duckdb::ClientContext& context,
                  bytes += data.bytes + StoreTableIndexBytes(context, *table);
                  blocks += data.persistent_blocks;
                });
-  VisitEntries(&context, catalog, duckdb::CatalogType::INDEX_ENTRY,
+  VisitEntries(context, catalog, duckdb::CatalogType::INDEX_ENTRY,
                [&](duckdb::CatalogEntry& entry) {
                  if (!in_scope(entry)) {
                    return;
                  }
                  auto* index = dynamic_cast<duckdb::DuckIndexEntry*>(&entry);
-                 if (index != nullptr && index->IsInverted()) {
+                 if (index != nullptr && connector::IsInvertedIndex(*index)) {
                    bytes += IndexEntryBytes(context, *index);
                  }
                });
@@ -890,8 +899,7 @@ const pg::VirtualTable* ResolveSystemRelation(ConnectionContext& conn_ctx,
 // table declares.
 catalog::Permissions SystemRelationPermissions(const pg::VirtualTable& sys) {
   return catalog::Permissions{
-    pg::kRootUser,
-    catalog::Acl{sys.GetAcl().begin(), sys.GetAcl().end()}};
+    pg::kRootUser, catalog::Acl{sys.GetAcl().begin(), sys.GetAcl().end()}};
 }
 
 bool SystemRelationHasColumn(const pg::VirtualTable& sys,
@@ -1532,7 +1540,8 @@ bool ColumnPrivHeld(duckdb::ClientContext& context, duckdb::idx_t role_id,
                     const duckdb::ColumnDefinition& column,
                     std::string_view priv) {
   const auto modes = ParsePrivCheckText(priv, duckdb::CatalogType::TABLE_ENTRY);
-  const catalog::AclView column_acl = table.GetColumnAcl(column.CatalogOid());
+  const catalog::AclView column_acl =
+    catalog::ColumnAclOf(table.permissions, column.Oid());
   const auto closure = auth::ClosureFor(&context, role_id);
   if (modes.privs != catalog::AclMode::NoRights &&
       closure->CanColumns(table.permissions, modes.privs, {&column_acl, 1})) {

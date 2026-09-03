@@ -20,8 +20,11 @@
 
 #include "catalog1/cluster.h"
 
+#include <duckdb/common/enums/database_modification_type.hpp>
 #include <duckdb/common/exception.hpp>
 #include <duckdb/main/attached_database.hpp>
+#include <duckdb/main/database_manager.hpp>
+#include <duckdb/transaction/meta_transaction.hpp>
 #include <utility>
 
 #include "basics/duckdb_engine.h"
@@ -31,10 +34,24 @@
 namespace sdb::catalog {
 namespace {
 
+// duckdb refuses a CatalogSet write unless the meta transaction names this
+// database as the one it modifies. A DDL statement's binder does that; roles
+// and databases are reached from boot and from pragmas, which have no binder.
+void DeclareModified(duckdb::CatalogTransaction transaction,
+                     duckdb::Catalog& catalog) {
+  if (!transaction.context) {
+    return;
+  }
+  duckdb::MetaTransaction::Get(transaction.GetContext())
+    .ModifyDatabase(catalog.GetAttached(),
+                    duckdb::DatabaseModificationType::CREATE_CATALOG_ENTRY);
+}
+
 template<typename Entry, typename Info>
 duckdb::optional_ptr<duckdb::CatalogEntry> CreateClusterEntry(
   duckdb::Catalog& catalog, duckdb::CatalogSet& set,
   duckdb::CatalogTransaction transaction, Info& info) {
+  DeclareModified(transaction, catalog);
   const auto& entry_name = info.GetQualifiedName().Name();
   if (info.on_conflict != duckdb::OnCreateConflict::ERROR_ON_CONFLICT) {
     const auto existing = set.GetEntry(transaction, entry_name);
@@ -112,9 +129,15 @@ ClusterCatalog& ClusterOf(duckdb::ClientContext& context) {
   return duckdb::Catalog::GetCatalog(context, name).Cast<ClusterCatalog>();
 }
 
+// Not Catalog::GetCatalog(DatabaseInstance&, name): the pin declares that
+// overload and never defines it. This is what it would have done.
 ClusterCatalog& ClusterOf(duckdb::DatabaseInstance& db) {
   const duckdb::Identifier name{ClusterCatalog::kDatabaseName};
-  return duckdb::Catalog::GetCatalog(db, name).Cast<ClusterCatalog>();
+  auto attached = duckdb::DatabaseManager::Get(db).GetDatabase(name);
+  if (!attached) {
+    throw duckdb::InternalException("the cluster catalog is not attached");
+  }
+  return attached->GetCatalog().Cast<ClusterCatalog>();
 }
 
 ClusterCatalog& ClusterOf() {

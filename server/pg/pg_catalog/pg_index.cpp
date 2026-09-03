@@ -66,7 +66,7 @@ MaterializedData SystemTableSnapshot<PgIndex>::GetTableData() {
 
   // Explicit user-created indexes
   VisitEntries<duckdb::DuckIndexEntry>(
-    &context, GetDatabase(), [&](const duckdb::DuckIndexEntry& entry) {
+    context, GetDatabase(), [&](const duckdb::DuckIndexEntry& entry) {
       // The relation the index hangs off, by the only handle the entry
       // carries: its schema and table name.
       auto host = duckdb::Catalog::GetEntry<duckdb::TableCatalogEntry>(
@@ -120,7 +120,7 @@ MaterializedData SystemTableSnapshot<PgIndex>::GetTableData() {
   // way the tables that read them expect.
   const auto emit_keys = [&](bool primary) {
     VisitEntries<duckdb::TableCatalogEntry>(
-      &context, GetDatabase(), [&](const duckdb::TableCatalogEntry& table) {
+      context, GetDatabase(), [&](const duckdb::TableCatalogEntry& table) {
         const auto& constraints = table.GetConstraints();
         for (size_t position = 0; position != constraints.size(); ++position) {
           if (constraints[position]->type != duckdb::ConstraintType::UNIQUE) {

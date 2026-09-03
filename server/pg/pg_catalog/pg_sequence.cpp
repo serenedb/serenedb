@@ -42,7 +42,7 @@ MaterializedData SystemTableSnapshot<PgSequence>::GetTableData() {
   auto& context = _config.GetClientContext();
   std::vector<PgSequence> values;
   VisitEntries<duckdb::SequenceCatalogEntry>(
-    &context, GetDatabase(), [&](const duckdb::SequenceCatalogEntry& sequence) {
+    context, GetDatabase(), [&](const duckdb::SequenceCatalogEntry& sequence) {
       const auto data = sequence.GetData();
       values.push_back(PgSequence{
         .seqrelid = Oid{sequence.oid},

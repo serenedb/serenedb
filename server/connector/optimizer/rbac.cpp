@@ -162,7 +162,7 @@ std::vector<catalog::AclView> SelectedColumnAcls(
   uint64_t i = 0;
   for (const auto& column : columns.Logical()) {
     if (logical.empty() || logical.contains(i)) {
-      acls.push_back(catalog::ColumnAclOf(acls_by_column, column.CatalogOid()));
+      acls.push_back(catalog::ColumnAclOf(acls_by_column, column.Oid()));
     }
     ++i;
   }
@@ -250,7 +250,7 @@ containers::FlatHashSet<uint64_t> CollectWriteTargets(
         Has(reqs[i].verb,
             duckdb::AccessVerb::INSERT | duckdb::AccessVerb::UPDATE |
               duckdb::AccessVerb::DELETE | duckdb::AccessVerb::TRUNCATE)) {
-      targets.insert(objects[i].id.id());
+      targets.insert(objects[i].id);
     }
   }
   return targets;
@@ -322,7 +322,7 @@ void CollectAndEnforce(duckdb::ClientContext& context, duckdb::Binder& binder) {
       // A DML's own-target scan reads no column, so needs no SELECT (PG);
       // count(*) also has an empty read set but is not a write target.
       const bool bare_dml_scan =
-        req.read.empty() && write_targets.contains(governed.id.id());
+        req.read.empty() && write_targets.contains(governed.id);
       if (!bare_dml_scan) {
         RequireColumns(closure, objects[i], catalog::AclMode::Select, req.read);
       }

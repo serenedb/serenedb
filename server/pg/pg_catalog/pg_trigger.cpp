@@ -113,7 +113,7 @@ MaterializedData SystemTableSnapshot<PgTrigger>::GetTableData() {
   // The entry itself, not the info: a trigger set hangs off the entry, and
   // reading it needs a transaction against the catalog holding it.
   VisitEntries<duckdb::TableCatalogEntry>(
-    &context, GetDatabase(), [&](duckdb::TableCatalogEntry& table) {
+    context, GetDatabase(), [&](duckdb::TableCatalogEntry& table) {
       const auto relid = table.oid;
       table.ScanTriggers(
         duckdb::CatalogTransaction(table.ParentCatalog(), context),

@@ -65,8 +65,7 @@ inline constexpr std::string_view kScoreName = "sdb_inverted_index_score";
 inline constexpr std::string_view kOffsetsPrefix =
   "sdb_inverted_index_offsets$";
 inline constexpr std::string_view kTermName = "sdb_inverted_index_term$";
-inline constexpr std::string_view kTermRawName =
-  "sdb_inverted_index_term_raw$";
+inline constexpr std::string_view kTermRawName = "sdb_inverted_index_term_raw$";
 inline constexpr std::string_view kTermFreqName =
   "sdb_inverted_index_term_freq$";
 inline constexpr std::string_view kTermCountName =

@@ -54,7 +54,6 @@ class ClusterCatalog final : public duckdb::DuckCatalog {
     duckdb::CatalogTransaction transaction, const duckdb::Identifier& name);
   void ScanRoles(duckdb::CatalogTransaction transaction,
                  const std::function<void(duckdb::CatalogEntry&)>& callback);
-
   duckdb::optional_ptr<duckdb::CatalogEntry> CreateDatabase(
     duckdb::CatalogTransaction transaction, CreateDatabaseInfo& info);
   bool DropDatabase(duckdb::CatalogTransaction transaction,
@@ -73,6 +72,5 @@ class ClusterCatalog final : public duckdb::DuckCatalog {
 ClusterCatalog& ClusterOf(duckdb::ClientContext& context);
 ClusterCatalog& ClusterOf(duckdb::DatabaseInstance& db);
 ClusterCatalog& ClusterOf();
-
 
 }  // namespace sdb::catalog

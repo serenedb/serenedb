@@ -1526,7 +1526,7 @@ MaterializedData SystemTableSnapshot<PgType>::GetTableData() {
   auto& context = _config.GetClientContext();
   const auto visit_types =
     [&](absl::FunctionRef<void(const duckdb::TypeCatalogEntry&)> visitor) {
-      VisitEntries<duckdb::TypeCatalogEntry>(&context, GetDatabase(), visitor);
+      VisitEntries<duckdb::TypeCatalogEntry>(context, GetDatabase(), visitor);
     };
 
   containers::FlatHashSet<std::string_view> taken;

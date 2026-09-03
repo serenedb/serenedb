@@ -20,7 +20,7 @@
 
 #include "pg/pg_catalog/pg_opclass.h"
 
-#include "catalog1/inverted_index.h"
+#include "catalog1/entry/inverted_index.h"
 #include "catalog1/entry/tokenizer.h"
 #include "pg/pg_catalog/fwd.h"
 #include "pg/pg_types.h"
@@ -56,7 +56,7 @@ MaterializedData SystemTableSnapshot<PgOpclass>::GetTableData() {
   });
 
   VisitEntries<catalog::TokenizerCatalogEntry>(
-    &_config.GetClientContext(), GetDatabase(),
+    _config.GetClientContext(), GetDatabase(),
     [&](const catalog::TokenizerCatalogEntry& tokenizer) {
       values.push_back({
         .oid = tokenizer.oid,

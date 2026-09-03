@@ -28,6 +28,8 @@
 #include <algorithm>
 #include <array>
 #include <duckdb/catalog/catalog_entry.hpp>
+#include <duckdb/catalog/catalog_entry/schema_catalog_entry.hpp>
+#include <duckdb/catalog/duck_catalog.hpp>
 #include <duckdb/common/types.hpp>
 #include <duckdb/common/types/data_chunk.hpp>
 #include <duckdb/common/types/vector.hpp>
@@ -111,7 +113,7 @@ inline std::string AclToPgString(
 // tables and views in a single set, so a scan of either type yields both and
 // the entry's own type is what separates them.
 template<typename T>
-void VisitEntries(duckdb::ClientContext* context, duckdb::Catalog& database,
+void VisitEntries(duckdb::ClientContext& context, duckdb::Catalog& database,
                   absl::FunctionRef<void(T&)> visitor) {
   database.ScanSchemas(context, [&](duckdb::SchemaCatalogEntry& schema_ref) {
     schema_ref.Scan(context, T::Type, [&](duckdb::CatalogEntry& entry) {

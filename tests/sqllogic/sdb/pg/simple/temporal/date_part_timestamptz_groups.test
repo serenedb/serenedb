@@ -20,29 +20,26 @@ query
 EXPLAIN SELECT year(tstz) AS y, month(tstz) AS m, count(*) AS c FROM tp GROUP BY 1, 2;
 ----
 QUERY PLAN
-╭─ PROJECTION ───────────────────────────────────────────────╮
-│ Projections:                                               │
-│ __internal_decompress_integral_bigint(#0, 2023),           │
-│ CAST(#1 AS BIGINT), #2                                     │
-│ ~750 rows                                                  │
-╰──────────────────────────────┬─────────────────────────────╯
-╭─ PERFECT_HASH_GROUP_BY ──────┴─────────────────────────────╮
-│ Groups: #0, #1                                             │
-│ Aggregates: count_star()                                   │
-│ ~750 rows                                                  │
-╰──────────────────────────────┬─────────────────────────────╯
-╭─ PROJECTION ─────────────────┴─────────────────────────────╮
-│ Projections:                                               │
-│ __internal_compress_integral_utinyint("year"(tstz), 2023), │
-│ CAST(m AS TINYINT)                                         │
-│ ~1,501 rows                                                │
-╰──────────────────────────────┬─────────────────────────────╯
-╭─ SEQ_SCAN ───────────────────┴─────────────────────────────╮
-│ Table: tp                                                  │
-│ Type: Sequential Scan                                      │
-│ Projections: tstz                                          │
-│ ~1,501 rows                                                │
-╰────────────────────────────────────────────────────────────╯
+╭─ PROJECTION ────────────────────────────────────╮
+│ Projections: y, m, #1                           │
+│ ~750 rows                                       │
+╰────────────────────────┬────────────────────────╯
+╭─ PERFECT_HASH_GROUP_BY ┴────────────────────────╮
+│ Groups: #0                                      │
+│ Aggregates: count_star()                        │
+│ ~750 rows                                       │
+╰────────────────────────┬────────────────────────╯
+╭─ PROJECTION ───────────┴────────────────────────╮
+│ Projections:                                    │
+│ __internal_icu_date_trunc_bucket('month', tstz) │
+│ ~1,501 rows                                     │
+╰────────────────────────┬────────────────────────╯
+╭─ SEQ_SCAN ─────────────┴────────────────────────╮
+│ Table: tp                                       │
+│ Type: Sequential Scan                           │
+│ Projections: tstz                               │
+│ ~1,501 rows                                     │
+╰─────────────────────────────────────────────────╯
 
 query
 EXPLAIN SELECT date_part('hour', tstz) AS h, count(*) AS c FROM tp GROUP BY 1;

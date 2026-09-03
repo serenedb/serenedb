@@ -21,11 +21,6 @@
 #include "iresearch/formats/hnsw/hnsw_writer.hpp"
 
 #include <absl/cleanup/cleanup.h>
-#include <absl/strings/str_cat.h>
-#include <fcntl.h>
-#include <sys/mman.h>
-#include <sys/stat.h>
-#include <unistd.h>
 
 #include <algorithm>
 #include <array>
@@ -52,8 +47,6 @@
 #include "iresearch/formats/index/idx_writer.hpp"
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/store/data_output.hpp"
-#include "iresearch/store/directory.hpp"
-#include "iresearch/store/fs_directory.hpp"
 #include "iresearch/utils/bytes_output.hpp"
 #include "iresearch/utils/vector.hpp"
 #include "pg/sql_exception_macro.h"
@@ -499,7 +492,11 @@ template<typename Factory>
 struct HnswInsertJob {
   HnswInsertJob(HnswGraph& graph, const Factory& factory, uint32_t ef,
                 std::span<const uint32_t> nodes, size_t workers, size_t rows)
-    : _graph{graph}, _ef{ef}, _nodes{nodes}, _scratch(workers) {
+    : _graph{graph},
+      _ef{ef},
+      _nodes{nodes},
+      _sync{workers * graph.M()},
+      _scratch{workers} {
     _dists.reserve(workers);
     for (size_t i = 0; i < workers; ++i) {
       _dists.push_back(factory.Make());
@@ -544,6 +541,48 @@ struct HnswInsertJob {
   std::vector<HnswBuildScratch> _scratch;
   std::vector<typename Factory::Dist> _dists;
 };
+
+std::vector<uint32_t> SeedGraph(HnswGraph& graph,
+                                std::span<const uint8_t> valid, uint32_t m,
+                                uint64_t seed) {
+  const auto rows = valid.size();
+  graph.Reset(rows, m);
+
+  uint64_t rng = seed;
+  for (size_t i = 0; i < rows; ++i) {
+    if (valid[i] != 0) {
+      graph.SetLevel(static_cast<uint32_t>(i), HnswRandomLevel(rng, m));
+    }
+  }
+  graph.AllocateLinks();
+
+  uint32_t entry = kHnswInvalidNode;
+  uint32_t entry_levels = 0;
+  for (size_t i = 0; i < rows; ++i) {
+    if (valid[i] == 0) {
+      continue;
+    }
+    const auto node = static_cast<uint32_t>(i);
+    if (graph.LevelOf(node) > entry_levels) {
+      entry_levels = graph.LevelOf(node);
+      entry = node;
+    }
+  }
+  if (entry == kHnswInvalidNode) {
+    return {};
+  }
+  graph.SetEntryPoint(entry);
+
+  std::vector<uint32_t> nodes;
+  nodes.reserve(rows);
+  for (size_t i = 0; i < rows; ++i) {
+    if (valid[i] == 0 || static_cast<uint32_t>(i) == entry) {
+      continue;
+    }
+    nodes.push_back(static_cast<uint32_t>(i));
+  }
+  return nodes;
+}
 
 template<typename Factory>
 auto InsertNodes(HnswGraph& graph, const Factory& factory, uint32_t ef,
@@ -598,9 +637,7 @@ auto BuildGraphFromMerge(HnswGraph& graph, const Factory& factory,
                          const MergeDonor& donor, const AnnBuildEnv* env)
   -> yaclib::Future<bool> {
   auto data = donor.index->Load(*donor.reader);
-  if (!data) {
-    co_return false;
-  }
+  SDB_ASSERT(data);
   const auto& src_graph = data->graph;
   const auto src_rows = src_graph.Size();
   const auto rows = valid.size();
@@ -716,6 +753,7 @@ auto BuildGraphFromMerge(HnswGraph& graph, const Factory& factory,
   if (delta_entry != kHnswInvalidNode) {
     dist.SetQuery(delta_entry);
     HnswInsert(graph, delta_entry, dist, ef_construction, scratch);
+    graph.SetEntryPoint(delta_entry);
   }
 
   std::vector<uint32_t> nodes;
@@ -728,7 +766,6 @@ auto BuildGraphFromMerge(HnswGraph& graph, const Factory& factory,
     nodes.push_back(static_cast<uint32_t>(i));
   }
 
-  // No warm-up: the donor's seeded and healed graph is already the warm graph.
   co_await InsertNodes(graph, factory, ef_construction, nodes, rows,
                        /*warmup=*/0, env);
   co_return true;
@@ -739,44 +776,11 @@ auto BuildGraph(HnswGraph& graph, const Factory& factory,
                 std::span<const uint8_t> valid, uint32_t m,
                 uint32_t ef_construction, uint64_t seed, const AnnBuildEnv* env)
   -> yaclib::Future<> {
-  const auto rows = valid.size();
-  graph.Reset(rows, m);
-
-  uint64_t rng = seed;
-  for (size_t i = 0; i < rows; ++i) {
-    if (valid[i] != 0) {
-      graph.SetLevel(static_cast<uint32_t>(i), HnswRandomLevel(rng, m));
-    }
-  }
-  graph.AllocateLinks();
-
-  uint32_t entry = kHnswInvalidNode;
-  uint32_t entry_levels = 0;
-  for (size_t i = 0; i < rows; ++i) {
-    if (valid[i] == 0) {
-      continue;
-    }
-    const auto node = static_cast<uint32_t>(i);
-    if (graph.LevelOf(node) > entry_levels) {
-      entry_levels = graph.LevelOf(node);
-      entry = node;
-    }
-  }
-  if (entry == kHnswInvalidNode) {
+  const auto nodes = SeedGraph(graph, valid, m, seed);
+  if (graph.Empty()) {
     co_return {};
   }
-  graph.SetEntryPoint(entry);
-
-  std::vector<uint32_t> nodes;
-  nodes.reserve(rows);
-  for (size_t i = 0; i < rows; ++i) {
-    if (valid[i] == 0 || static_cast<uint32_t>(i) == entry) {
-      continue;
-    }
-    nodes.push_back(static_cast<uint32_t>(i));
-  }
-
-  co_await InsertNodes(graph, factory, ef_construction, nodes, rows,
+  co_await InsertNodes(graph, factory, ef_construction, nodes, valid.size(),
                        std::max(kHnswSerialWarmup, ef_construction), env);
   co_return {};
 }
@@ -796,41 +800,7 @@ void BuildGraphStreamed(HnswGraph& graph, const Factory& factory,
                         const AnnBuildEnv* env, const HnswOriginals& src,
                         uint32_t d) {
   const auto rows = valid.size();
-  graph.Reset(rows, m);
-
-  uint64_t rng = seed;
-  for (size_t i = 0; i < rows; ++i) {
-    if (valid[i] != 0) {
-      graph.SetLevel(static_cast<uint32_t>(i), HnswRandomLevel(rng, m));
-    }
-  }
-  graph.AllocateLinks();
-
-  uint32_t entry = kHnswInvalidNode;
-  uint32_t entry_levels = 0;
-  for (size_t i = 0; i < rows; ++i) {
-    if (valid[i] == 0) {
-      continue;
-    }
-    const auto node = static_cast<uint32_t>(i);
-    if (graph.LevelOf(node) > entry_levels) {
-      entry_levels = graph.LevelOf(node);
-      entry = node;
-    }
-  }
-  if (entry == kHnswInvalidNode) {
-    return;
-  }
-  graph.SetEntryPoint(entry);
-
-  std::vector<uint32_t> nodes;
-  nodes.reserve(rows);
-  for (size_t i = 0; i < rows; ++i) {
-    if (valid[i] == 0 || static_cast<uint32_t>(i) == entry) {
-      continue;
-    }
-    nodes.push_back(static_cast<uint32_t>(i));
-  }
+  const auto nodes = SeedGraph(graph, valid, m, seed);
   if (nodes.empty()) {
     return;
   }
@@ -944,7 +914,8 @@ auto HnswWriter::Compute(const ColumnReader& col, ReadContext& ctx,
                          const AnnBuildEnv* env) -> yaclib::Future<> {
   _d = static_cast<uint32_t>(col.ArraySize());
   _rows = col.RowCount();
-  if (_d == 0 || _rows == 0) {
+  SDB_ASSERT(_d != 0);
+  if (_rows == 0) {
     co_return {};
   }
 
@@ -993,7 +964,8 @@ auto HnswWriter::Compute(const ColumnReader& col, ReadContext& ctx,
       });
   }
 
-  if (needs_centroid && trained_rows != 0) {
+  if (needs_centroid) {
+    SDB_ASSERT(trained_rows != 0);
     const float inv = 1.f / static_cast<float>(trained_rows);
     for (uint32_t j = 0; j < _d; ++j) {
       _centroid[j] *= inv;
@@ -1044,9 +1016,9 @@ auto HnswWriter::Compute(const ColumnReader& col, ReadContext& ctx,
 
   const auto encode_ms = ms_since(t_begin);
 
-  const auto m = _info.m != 0 ? _info.m : kHnswDefaultM;
-  const auto ef = _info.ef_construction != 0 ? _info.ef_construction
-                                             : kHnswDefaultEfConstruction;
+  const auto m = _info.m;
+  const auto ef = _info.ef_construction;
+  SDB_ASSERT(m != 0 && ef != 0);
   const auto donor =
     PickMergeDonor(_merge_sources, _info.centroids_id, _d, _info.metric, m);
   const auto t_graph = Clock::now();
@@ -1088,11 +1060,12 @@ auto HnswWriter::Compute(const ColumnReader& col, ReadContext& ctx,
     _rows, " x ", _d, " vectors");
 
   yaclib::Future<> built;
-  ResolveEnum<VectorMetric>(_info.metric, [&]<VectorMetric M>() {
-    HnswRawDistFactory<M> factory{.base = _vectors.data(), .d = _d};
-    built = BuildDispatch(_graph, factory, valid, m, ef, kHnswBuildSeed, donor,
-                          env, HnswOriginals{}, _d);
-  });
+  ResolveEnum<VectorMetric>(
+    EffectiveQuantMetric(_info.metric), [&]<VectorMetric M>() {
+      HnswRawDistFactory<M> factory{.base = _vectors.data(), .d = _d};
+      built = BuildDispatch(_graph, factory, valid, m, ef, kHnswBuildSeed,
+                            donor, env, HnswOriginals{}, _d);
+    });
   SDB_ASSERT(built.Valid());
   co_await std::move(built);
   co_return {};

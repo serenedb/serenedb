@@ -20,7 +20,6 @@
 
 #include "iresearch/formats/ivf/quantizer.hpp"
 
-#include <immintrin.h>
 #include <faiss/MetricType.h>
 #include <faiss/impl/Panorama.h>
 #include <faiss/impl/ProductQuantizer.h>
@@ -933,8 +932,7 @@ class TurboQuantizerWriter final : public QuantizerWriter {
     }
     SDB_ASSERT(_centroid.size() == _lay.rd);
     for (size_t i = 0; i < n; ++i) {
-      PackRecord(dst + i * size_t{_lay.record_size},
-                 vecs + i * size_t{_lay.d});
+      PackRecord(dst + i * size_t{_lay.record_size}, vecs + i * size_t{_lay.d});
     }
     return true;
   }
@@ -1043,8 +1041,7 @@ class TurboQuantizerWriter final : public QuantizerWriter {
     EncodeOne(vec, 0);
     std::memcpy(dst, _code1.data(), _lay.code1_bytes);
     if (_lay.full) {
-      std::memcpy(dst + _lay.RowCode2Offset(), _code2.data(),
-                  _lay.code2_bytes);
+      std::memcpy(dst + _lay.RowCode2Offset(), _code2.data(), _lay.code2_bytes);
     }
     std::memcpy(dst + _lay.RowNormOffset(), &_norms[0], sizeof(float));
     if (_lay.full) {
@@ -1210,11 +1207,6 @@ class TurboQuantizerCodebook final : public QuantizerCodebook {
   float QjlErrorCoeff() const noexcept { return _qjl_error_coeff; }
   float QjlSum() const noexcept { return _qjl_sum; }
   float MseSlack() const noexcept { return _mse_slack; }
-  bool Direct() const noexcept { return _direct; }
-  const uint8_t* DirectCentroids() const noexcept { return _cent_u8.data(); }
-  const int8_t* DirectQuery() const noexcept { return _q_i8.data(); }
-  int32_t DirectBias() const noexcept { return _direct_bias; }
-  float DirectScale() const noexcept { return _direct_scale; }
   float QueryNorm2() const noexcept { return _query_norm2; }
 
  private:
@@ -1264,7 +1256,6 @@ class TurboQuantizerCodebook final : public QuantizerCodebook {
         lut[size_t{mi} * kFastScanKsub + code] = s;
       }
     }
-    BuildDirectTables();
     _chunks1 = MakeTurboQuantChunks(lay.m1);
     QuantizeChunks(lut, _chunks1, _lut1, _a1, _b1);
     float slack = 0.f;
@@ -1272,48 +1263,6 @@ class TurboQuantizerCodebook final : public QuantizerCodebook {
       slack += static_cast<float>(_chunks1[i].m) * 0.5f / _a1[i];
     }
     _mse_slack = slack / std::sqrt(static_cast<float>(lay.rd));
-  }
-
-  void BuildDirectTables() {
-    const TurboQuantLayout& lay = _stats->Layout();
-    const float* cent = _stats->Centroids();
-    const uint32_t ksub = 1U << lay.mse_bits;
-    _direct = false;
-    if (lay.full || (lay.mse_bits != 2 && lay.mse_bits != 4)) {
-      return;
-    }
-    float cent_max = 0.f;
-    for (uint32_t v = 0; v < ksub; ++v) {
-      cent_max = std::max(cent_max, std::fabs(cent[v]));
-    }
-    float q_max = 0.f;
-    for (uint32_t j = 0; j < lay.rd; ++j) {
-      q_max = std::max(q_max, std::fabs(_rot_query[j]));
-    }
-    if (cent_max <= 0.f || q_max <= 0.f) {
-      return;
-    }
-    constexpr float kCentAbsMax = 127.f;
-    constexpr float kQueryAbsMax = 63.f;
-    const float cs = kCentAbsMax / cent_max;
-    const float qs = kQueryAbsMax / q_max;
-
-    _cent_u8.fill(0);
-    for (uint32_t v = 0; v < ksub; ++v) {
-      const auto q = static_cast<int32_t>(std::lround(cent[v] * cs));
-      _cent_u8[v] = static_cast<uint8_t>(std::clamp(q, -128, 127) + 128);
-    }
-    _q_i8.assign(lay.rd, 0);
-    int32_t q_sum = 0;
-    for (uint32_t j = 0; j < lay.rd; ++j) {
-      const auto q = static_cast<int32_t>(std::lround(_rot_query[j] * qs));
-      const auto c = std::clamp(q, -63, 63);
-      _q_i8[j] = static_cast<int8_t>(c);
-      q_sum += c;
-    }
-    _direct_bias = 128 * q_sum;
-    _direct_scale = 1.f / (cs * qs);
-    _direct = true;
   }
 
   void BuildQjlLut() {
@@ -1362,11 +1311,6 @@ class TurboQuantizerCodebook final : public QuantizerCodebook {
   float _qjl_error_coeff = 0.f;
   float _qjl_sum = 0.f;
   float _mse_slack = 0.f;
-  bool _direct = false;
-  std::array<uint8_t, 16> _cent_u8{};
-  std::vector<int8_t> _q_i8;
-  int32_t _direct_bias = 0;
-  float _direct_scale = 0.f;
   [[no_unique_address]] utils::Need<M == VectorMetric::L2Sqr, float>
     _query_norm2;
 };
@@ -1400,14 +1344,6 @@ class TurboQuantizerReader final : public QuantizerReader {
                        score_t* out) final {
     if (!_lay.row_major) {
       QuantizerReader::ComputeGathered(base, record_size, ids, threshold, out);
-      return;
-    }
-    if (_cur->Direct() && ids.size() < kFastScanBbs) {
-      ScoreRowsDirect(
-        [base, record_size, ids](size_t k) {
-          return base + static_cast<size_t>(ids[k]) * record_size;
-        },
-        ids.size(), nullptr, out);
       return;
     }
     for (size_t off = 0; off < ids.size(); off += kFastScanBbs) {
@@ -1474,8 +1410,8 @@ class TurboQuantizerReader final : public QuantizerReader {
   bool SetQuery(std::span<const float> query) final {
     SDB_ASSERT(query.size() == _lay.d);
     if (!_own) {
-      _own = std::make_unique<TurboQuantizerCodebook<M>>(_cb->StatsPtr(),
-                                                         query);
+      _own =
+        std::make_unique<TurboQuantizerCodebook<M>>(_cb->StatsPtr(), query);
       _cur = _own.get();
     } else {
       _own->Rekey(query);
@@ -1517,10 +1453,6 @@ class TurboQuantizerReader final : public QuantizerReader {
                       std::span<const uint32_t> ids, score_t* out) final {
     SDB_ASSERT(SupportsPairScores());
     SDB_ASSERT(from < terms.size());
-    // Each build worker owns its own reader, and only the one PreparePairTerms
-    // ran on has the tables. Build them on first use here rather than assuming
-    // a shared reader: getting this wrong leaves _pair_lut empty and _cc zero,
-    // which is a silently wrong score, not just a crash.
     EnsurePairState();
     const byte_type* ra = base + size_t{from} * record_size;
     const float na = LoadFloat(ra + _lay.RowNormOffset());
@@ -1701,38 +1633,11 @@ class TurboQuantizerReader final : public QuantizerReader {
                        uint8_t* blocks) {
     static_assert(std::endian::native == std::endian::little);
     SDB_ASSERT(count <= kFastScanBbs);
-    static constexpr uint8_t kPerm[16] = {0, 8, 1, 9, 2, 10, 3, 11,
+    static constexpr uint8_t kPerm[16] = {0, 8,  1, 9,  2, 10, 3, 11,
                                           4, 12, 5, 13, 6, 14, 7, 15};
     std::array<uint8_t, kFastScanBbs> c;
     std::fill(c.begin() + count, c.end(), uint8_t{0});
     uint8_t* dst = blocks;
-#if defined(__SSSE3__)
-    const __m128i perm = _mm_loadu_si128(
-      reinterpret_cast<const __m128i*>(kPerm));
-    const __m128i nib = _mm_set1_epi8(0x0F);
-    const bool half = count <= kFastScanBbs / 2;
-    for (size_t sq = 0; sq < nsq; sq += 2) {
-      for (size_t k = 0; k < count; ++k) {
-        c[k] = row(k)[code_off + sq / 2];
-      }
-      const __m128i lo = _mm_shuffle_epi8(
-        _mm_loadu_si128(reinterpret_cast<const __m128i*>(c.data())), perm);
-      __m128i out0 = _mm_and_si128(lo, nib);
-      __m128i out1 = _mm_and_si128(_mm_srli_epi16(lo, 4), nib);
-      if (!half) {
-        const __m128i hi = _mm_shuffle_epi8(
-          _mm_loadu_si128(reinterpret_cast<const __m128i*>(c.data() + 16)),
-          perm);
-        out0 = _mm_or_si128(out0,
-                            _mm_slli_epi16(_mm_and_si128(hi, nib), 4));
-        out1 = _mm_or_si128(
-          out1, _mm_slli_epi16(_mm_and_si128(_mm_srli_epi16(hi, 4), nib), 4));
-      }
-      _mm_storeu_si128(reinterpret_cast<__m128i*>(dst), out0);
-      _mm_storeu_si128(reinterpret_cast<__m128i*>(dst + 16), out1);
-      dst += kFastScanBbs;
-    }
-#else
     for (size_t sq = 0; sq < nsq; sq += 2) {
       for (size_t k = 0; k < count; ++k) {
         c[k] = row(k)[code_off + sq / 2];
@@ -1745,91 +1650,6 @@ class TurboQuantizerReader final : public QuantizerReader {
       }
       dst += kFastScanBbs;
     }
-#endif
-  }
-
-  int32_t DirectRawDot(const byte_type* code) const noexcept {
-    const auto* cb = _cur->DirectCentroids();
-    const auto* q = _cur->DirectQuery();
-    const __m128i cent = _mm_loadu_si128(
-      reinterpret_cast<const __m128i*>(cb));
-    const __m128i ones = _mm_set1_epi16(1);
-    __m128i acc = _mm_setzero_si128();
-    const auto* v0 = reinterpret_cast<const uint8_t*>(code);
-    const auto* v = v0;
-    uint32_t j = 0;
-
-    const auto step = [&](__m128i dims, uint32_t base) {
-      const __m128i c = _mm_shuffle_epi8(cent, dims);
-      const __m128i qv = _mm_loadu_si128(
-        reinterpret_cast<const __m128i*>(q + base));
-      acc = _mm_add_epi32(acc,
-                          _mm_madd_epi16(_mm_maddubs_epi16(c, qv), ones));
-    };
-
-    if (_lay.mse_bits == 4) {
-      const __m128i nib = _mm_set1_epi8(0x0F);
-      for (; j + 32 <= _lay.rd; j += 32, v += 16) {
-        const __m128i raw = _mm_loadu_si128(
-          reinterpret_cast<const __m128i*>(v));
-        const __m128i lo = _mm_and_si128(raw, nib);
-        const __m128i hi = _mm_and_si128(_mm_srli_epi16(raw, 4), nib);
-        step(_mm_unpacklo_epi8(lo, hi), j);
-        step(_mm_unpackhi_epi8(lo, hi), j + 16);
-      }
-    } else {
-      const __m128i two = _mm_set1_epi8(0x03);
-      for (; j + 64 <= _lay.rd; j += 64, v += 16) {
-        const __m128i raw = _mm_loadu_si128(
-          reinterpret_cast<const __m128i*>(v));
-        const __m128i f0 = _mm_and_si128(raw, two);
-        const __m128i f1 = _mm_and_si128(_mm_srli_epi16(raw, 2), two);
-        const __m128i f2 = _mm_and_si128(_mm_srli_epi16(raw, 4), two);
-        const __m128i f3 = _mm_and_si128(_mm_srli_epi16(raw, 6), two);
-        const __m128i a = _mm_unpacklo_epi8(f0, f1);
-        const __m128i b = _mm_unpacklo_epi8(f2, f3);
-        const __m128i c = _mm_unpackhi_epi8(f0, f1);
-        const __m128i d = _mm_unpackhi_epi8(f2, f3);
-        step(_mm_unpacklo_epi16(a, b), j);
-        step(_mm_unpackhi_epi16(a, b), j + 16);
-        step(_mm_unpacklo_epi16(c, d), j + 32);
-        step(_mm_unpackhi_epi16(c, d), j + 48);
-      }
-    }
-    const __m128i s1 = _mm_add_epi32(acc, _mm_srli_si128(acc, 8));
-    const __m128i s2 = _mm_add_epi32(s1, _mm_srli_si128(s1, 4));
-    int32_t raw = _mm_cvtsi128_si32(s2);
-    const uint32_t dpn = _lay.dims_per_nibble;
-    const auto mask = static_cast<uint32_t>((1U << _lay.mse_bits) - 1);
-    for (; j < _lay.rd; ++j) {
-      const uint32_t mi = j / dpn;
-      const uint32_t t = j % dpn;
-      const uint8_t nib = GetNibble(v0, mi);
-      const uint32_t idx = (nib >> (t * _lay.mse_bits)) & mask;
-      raw += static_cast<int32_t>(cb[idx]) * static_cast<int32_t>(q[j]);
-    }
-    return raw;
-  }
-
-  template<typename Row>
-  void ScoreRowsDirect(Row row, size_t count, const float* xnorm2_unused,
-                       score_t* out) {
-    const float scale = _cur->DirectScale();
-    const int32_t bias = _cur->DirectBias();
-    for (size_t i = 0; i < count; ++i) {
-      const byte_type* r = row(i);
-      const float sum =
-        static_cast<float>(DirectRawDot(r) - bias) * scale;
-      const float norm = LoadFloat(r + _lay.RowNormOffset());
-      const float ip = norm * sum * _inv_sqrt_rd;
-      if constexpr (M == VectorMetric::L2Sqr) {
-        const float xn = LoadFloat(r + _lay.RowXNorm2Offset());
-        out[i] = -(_cur->QueryNorm2() + xn - 2.f * (ip + _qc));
-      } else {
-        out[i] = ip + _qc;
-      }
-    }
-    (void)xnorm2_unused;
   }
 
   template<typename Row>

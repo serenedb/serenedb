@@ -178,9 +178,6 @@ void ReadContext::Read(duckdb::QueryContext context, duckdb::Block& block) {
   if (_mapping && offset % 8 == 0 &&
       offset + block.Size() <= _mapping->Size()) {
     block.Read(context, *_mapping, offset);
-    // Streaming readers want the block resident before they walk it; a point
-    // lookup does not -- it touches one row and WILLNEED would fault in the
-    // whole block behind it. See the ReadContext ctor comment.
     if (!_random_access) {
       AdviseWillNeed(*_mapping, offset, size);
     }

@@ -20,6 +20,7 @@
 
 #include "connector/duckdb_vacuum_function.h"
 
+#include <absl/cleanup/cleanup.h>
 #include <absl/strings/str_cat.h>
 #include <absl/strings/str_replace.h>
 
@@ -33,19 +34,17 @@
 #include "basics/assert.h"
 #include "basics/debugging.h"
 #include "basics/down_cast.h"
-#include <absl/cleanup/cleanup.h>
-
 #include "catalog/catalog.h"
-#include "scheduler/background_scheduler.h"
-#include "storage_engine/search_engine.h"
 #include "catalog/store/store.h"
 #include "catalog/table_options.h"
 #include "connector/duckdb_client_state.h"
 #include "pg/connection_context.h"
 #include "pg/errcodes.h"
 #include "pg/sql_exception_macro.h"
+#include "scheduler/background_scheduler.h"
 #include "search/inverted_index_storage.h"
 #include "search/search_table.h"
+#include "storage_engine/search_engine.h"
 
 namespace sdb::connector {
 namespace {
@@ -247,18 +246,7 @@ void CompactInvertedStorage(search::InvertedIndexStorage& inverted,
       engine.ReleaseCompaction();
     }
   };
-  auto acquire = [&engine](uint32_t want) -> uint32_t {
-    return static_cast<uint32_t>(
-      engine.AcquireAnnWorkers(static_cast<int>(want)));
-  };
-  auto release = [&engine](uint32_t n) {
-    engine.ReleaseAnnWorkers(static_cast<int>(n));
-  };
-  const irs::AnnBuildEnv env{
-    .executor = &BackgroundScheduler::instance().annExecutor(),
-    .acquire = acquire,
-    .release = release};
-  const irs::AnnBuildEnv* env_ptr = slot ? &env : nullptr;
+  const irs::AnnBuildEnv* env_ptr = slot ? &search::AnnBuildEnv() : nullptr;
 
   inverted.Refresh();
   for (size_t pass = 0; pass < 8; ++pass) {

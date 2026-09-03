@@ -20,14 +20,8 @@
 
 #include "iresearch/search/vector_radius_filter.hpp"
 
-#include <limits>
-#include <span>
-#include <utility>
-
 #include "basics/assert.h"
-#include "basics/memory.hpp"
-#include "iresearch/search/vector_filter_util.hpp"
-#include "iresearch/search/vector_similarity_query.hpp"
+#include "iresearch/search/ann_index.hpp"
 
 namespace irs {
 
@@ -35,7 +29,10 @@ QueryBuilder::ptr ByRadius::PrepareSegment(const SubReader& segment,
                                            const PrepareContext& ctx) const {
   const auto& opts = options();
   const auto* ann = segment.Ann(opts.centroids_id);
-  SDB_ASSERT(ann && ann->SupportsRange());
+  if (!ann) {
+    return QueryBuilder::Empty();
+  }
+  SDB_ASSERT(ann->SupportsRange());
   auto sub_ctx = ctx;
   sub_ctx.Boost(Boost());
   return ann->PrepareRange(segment, sub_ctx, opts, opts.radius, opts.inclusive,

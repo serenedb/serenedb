@@ -81,8 +81,6 @@ IdxWriter::IdxWriter(Directory& dir, std::string_view segment_name,
   _impl->filename = absl::StrCat(segment_name, ".", kIdxFormatExt);
 }
 
-Directory& IdxWriter::dir() const noexcept { return *_impl->dir; }
-
 IdxWriter::~IdxWriter() {
   if (_impl && _impl->out) {
     Rollback();

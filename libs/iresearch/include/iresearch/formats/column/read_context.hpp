@@ -41,18 +41,6 @@ class ReadContext final : public BlockManager,
                           public duckdb::ColumnStreamReader {
  public:
   explicit ReadContext(duckdb::DatabaseInstance& db) noexcept;
-  // `random_access` declares that this context will do POINT LOOKUPS rather
-  // than stream blocks. It suppresses the MADV_WILLNEED in Read(): a block is
-  // adopted from the mapping zero-copy (FileBuffer::Read), so a streaming
-  // reader wants the whole block pulled in up front, but a point lookup only
-  // ever touches the one row it asked for and WILLNEED then reads the entire
-  // block for nothing.
-  //
-  // Measured on the 247M HNSW index: ANN rerank opens a fresh row-group block
-  // per candidate (candidates are ~772K rows apart, so each lands in its own
-  // row group), and the per-block WILLNEED turned a 4 KB vector read into
-  // ~32 KB of transfer. That pinned the device at 1.31 GB/s and capped rerank
-  // at 126 q/s where the same search without rerank ran at 1597 q/s.
   explicit ReadContext(const ColReader& reader, bool random_access = false);
   ReadContext(duckdb::DatabaseInstance& db, IndexInput::ptr in);
   ~ReadContext() final;

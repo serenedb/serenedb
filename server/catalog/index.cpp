@@ -32,6 +32,7 @@
 #include <duckdb/main/config.hpp>
 #include <iresearch/analysis/geo_analyzer.hpp>
 #include <iresearch/analysis/token_attributes.hpp>
+#include <iresearch/formats/hnsw/hnsw_graph.hpp>
 #include <iresearch/types.hpp>
 #include <iresearch/utils/attribute_provider.hpp>
 #include <limits>
@@ -318,6 +319,61 @@ irs::VectorQuantization ParseIVFQuant(std::string_view column_name,
                           kTQMseQuant, " ", kNoneQuant));
 }
 
+void ValidateQuantBits(std::string_view kind, std::string_view column_name,
+                       std::string_view bits_key, AnnColumnConfig& cfg) {
+  switch (cfg.quant) {
+    case irs::VectorQuantization::RaBitQ:
+      if (cfg.rabitq_bits == 0) {
+        cfg.rabitq_bits = irs::kRaBitQMinBits;
+      }
+      if (cfg.rabitq_bits > irs::kRaBitQMaxBits) {
+        THROW_SQL_ERROR(
+          ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+          ERR_MSG("Column '", column_name, "': ", kind, " option '", bits_key,
+                  "' (", cfg.rabitq_bits, ") must be between ",
+                  irs::kRaBitQMinBits, " and ", irs::kRaBitQMaxBits,
+                  " for quant '", kRaBitQQuant, "'"));
+      }
+      break;
+    case irs::VectorQuantization::TQ:
+      if (cfg.rabitq_bits == 0) {
+        cfg.rabitq_bits = irs::kTQDefaultBits;
+      }
+      if (!irs::TQBitsValid(cfg.rabitq_bits)) {
+        THROW_SQL_ERROR(
+          ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+          ERR_MSG("Column '", column_name, "': ", kind, " option '", bits_key,
+                  "' (", cfg.rabitq_bits, ") must be one of: 2 3 5 for quant '",
+                  kTQQuant, "'"));
+      }
+      break;
+    case irs::VectorQuantization::TQMse:
+      if (cfg.rabitq_bits == 0) {
+        cfg.rabitq_bits = irs::kTQMseDefaultBits;
+      }
+      if (!irs::TQMseBitsValid(cfg.rabitq_bits)) {
+        THROW_SQL_ERROR(
+          ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+          ERR_MSG("Column '", column_name, "': ", kind, " option '", bits_key,
+                  "' (", cfg.rabitq_bits, ") must be one of: 1 2 4 for quant '",
+                  kTQMseQuant, "'"));
+      }
+      break;
+    default:
+      if (cfg.rabitq_bits != 0) {
+        THROW_SQL_ERROR(
+          ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+          ERR_MSG("Column '", column_name, "': ", kind, " option '", bits_key,
+                  "' is only valid with quant ",
+                  kind == kHNSWKind
+                    ? absl::StrCat("'", kTQQuant, "' or '", kTQMseQuant, "'")
+                    : absl::StrCat("'", kRaBitQQuant, "', '", kTQQuant,
+                                   "' or '", kTQMseQuant, "'")));
+      }
+      break;
+  }
+}
+
 void ApplyIVFOptions(std::string_view column_name,
                      const duckdb::case_insensitive_map_t<duckdb::Value>& opts,
                      AnnColumnConfig& cfg) {
@@ -418,54 +474,7 @@ void ApplyIVFOptions(std::string_view column_name,
   if (bits_key.empty()) {
     bits_key = kNbBitsField;
   }
-  switch (cfg.quant) {
-    case irs::VectorQuantization::RaBitQ:
-      if (cfg.rabitq_bits == 0) {
-        cfg.rabitq_bits = irs::kRaBitQMinBits;
-      }
-      if (cfg.rabitq_bits > irs::kRaBitQMaxBits) {
-        THROW_SQL_ERROR(
-          ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-          ERR_MSG("Column '", column_name, "': ivf option '", bits_key, "' (",
-                  cfg.rabitq_bits, ") must be between ", irs::kRaBitQMinBits,
-                  " and ", irs::kRaBitQMaxBits, " for quant '", kRaBitQQuant,
-                  "'"));
-      }
-      break;
-    case irs::VectorQuantization::TQ:
-      if (cfg.rabitq_bits == 0) {
-        cfg.rabitq_bits = irs::kTQDefaultBits;
-      }
-      if (!irs::TQBitsValid(cfg.rabitq_bits)) {
-        THROW_SQL_ERROR(
-          ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-          ERR_MSG("Column '", column_name, "': ivf option '", bits_key, "' (",
-                  cfg.rabitq_bits, ") must be one of: 2 3 5 for quant '",
-                  kTQQuant, "'"));
-      }
-      break;
-    case irs::VectorQuantization::TQMse:
-      if (cfg.rabitq_bits == 0) {
-        cfg.rabitq_bits = irs::kTQMseDefaultBits;
-      }
-      if (!irs::TQMseBitsValid(cfg.rabitq_bits)) {
-        THROW_SQL_ERROR(
-          ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-          ERR_MSG("Column '", column_name, "': ivf option '", bits_key, "' (",
-                  cfg.rabitq_bits, ") must be one of: 1 2 4 for quant '",
-                  kTQMseQuant, "'"));
-      }
-      break;
-    default:
-      if (cfg.rabitq_bits != 0) {
-        THROW_SQL_ERROR(
-          ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-          ERR_MSG("Column '", column_name, "': ivf option '", bits_key,
-                  "' is only valid with quant '", kRaBitQQuant, "', '",
-                  kTQQuant, "' or '", kTQMseQuant, "'"));
-      }
-      break;
-  }
+  ValidateQuantBits(kIVFKind, column_name, bits_key, cfg);
 }
 
 bool IsTokenizerOpclass(const CreateIndexColumn& c) {
@@ -600,13 +609,15 @@ void ApplyIncludedOpclass(
 }
 
 std::string DescribeHNSWOptions() {
-  return "metric (string: l2|l1|cosine|ip, REQUIRED), "
-         "quant (string: none|sq8|sq4|tq|tqmse, default sq8, none for l1), "
-         "nb_bits (int; one of 2|3|5 for quant='tq' with default 3, "
-         "one of 1|2|4 for quant='tqmse' with default 2), "
-         "m (int >= 2, default 32), "
-         "ef_construction (int >= 1, default 200, must be >= m), "
-         "compression (bool, default true)";
+  return absl::StrCat(
+    "metric (string: l2|l1|cosine|ip, REQUIRED), ",
+    "quant (string: none|sq8|sq4|tq|tqmse, default sq8, none for l1), ",
+    "nb_bits (int; one of 2|3|5 for quant='tq' with default ",
+    irs::kTQDefaultBits, ", one of 1|2|4 for quant='tqmse' with default ",
+    irs::kTQMseDefaultBits, "), ", "m (int >= 2, default ", irs::kHnswDefaultM,
+    "), ", "ef_construction (int >= 1, default ",
+    irs::kHnswDefaultEfConstruction, ", must be >= m), ",
+    "compression (bool, default true)");
 }
 
 void ApplyHNSWOptions(std::string_view column_name,
@@ -650,10 +661,10 @@ void ApplyHNSWOptions(std::string_view column_name,
               "). Example: hnsw (metric = 'l2')"));
   }
   if (cfg.m == 0) {
-    cfg.m = 32;
+    cfg.m = irs::kHnswDefaultM;
   }
   if (cfg.ef_construction == 0) {
-    cfg.ef_construction = 200;
+    cfg.ef_construction = irs::kHnswDefaultEfConstruction;
   }
   if (cfg.m < 2) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
@@ -687,38 +698,7 @@ void ApplyHNSWOptions(std::string_view column_name,
                     ERR_MSG("Column '", column_name, "': hnsw with metric = '",
                             kL1Metric, "' supports only quant = ", kNoneQuant));
   }
-  switch (cfg.quant) {
-    case irs::VectorQuantization::TQ:
-      if (cfg.rabitq_bits == 0) {
-        cfg.rabitq_bits = irs::kTQDefaultBits;
-      }
-      if (!irs::TQBitsValid(cfg.rabitq_bits)) {
-        THROW_SQL_ERROR(
-          ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-          ERR_MSG("Column '", column_name, "': hnsw option '", kNbBitsField,
-                  "' must be one of: 2 3 5 for quant '", kTQQuant, "'"));
-      }
-      break;
-    case irs::VectorQuantization::TQMse:
-      if (cfg.rabitq_bits == 0) {
-        cfg.rabitq_bits = irs::kTQMseDefaultBits;
-      }
-      if (!irs::TQMseBitsValid(cfg.rabitq_bits)) {
-        THROW_SQL_ERROR(
-          ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-          ERR_MSG("Column '", column_name, "': hnsw option '", kNbBitsField,
-                  "' must be one of: 1 2 4 for quant '", kTQMseQuant, "'"));
-      }
-      break;
-    default:
-      if (cfg.rabitq_bits != 0) {
-        THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                        ERR_MSG("Column '", column_name, "': hnsw option '",
-                                kNbBitsField, "' is only valid with quant '",
-                                kTQQuant, "' or '", kTQMseQuant, "'"));
-      }
-      break;
-  }
+  ValidateQuantBits(kHNSWKind, column_name, kNbBitsField, cfg);
 }
 
 float ReadIVFSampleFactor(duckdb::ClientContext& context) {

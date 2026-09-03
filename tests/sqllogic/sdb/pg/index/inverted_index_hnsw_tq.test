@@ -144,14 +144,14 @@ statement error
 CREATE INDEX bad_a ON hnsw_tq
   USING inverted(pk, emb hnsw (metric = 'l2', quant = 'tq', nb_bits = 4));
 ----
-db error: ERROR: Column 'emb': hnsw option 'nb_bits' must be one of: 2 3 5 for quant 'tq'
+db error: ERROR: Column 'emb': hnsw option 'nb_bits' (4) must be one of: 2 3 5 for quant 'tq'
 
 
 statement error
 CREATE INDEX bad_b ON hnsw_tq
   USING inverted(pk, emb hnsw (metric = 'l2', quant = 'tqmse', nb_bits = 3));
 ----
-db error: ERROR: Column 'emb': hnsw option 'nb_bits' must be one of: 1 2 4 for quant 'tqmse'
+db error: ERROR: Column 'emb': hnsw option 'nb_bits' (3) must be one of: 1 2 4 for quant 'tqmse'
 
 
 statement error

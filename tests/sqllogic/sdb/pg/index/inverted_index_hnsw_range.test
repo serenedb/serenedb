@@ -257,3 +257,49 @@ SELECT count(*) FROM hnsw_r_idx
 ----
 count
 3
+
+
+# A segment whose emb column is entirely NULL builds no graph, so the writer
+# emits no ANN footer entry and the segment has no index to prepare against.
+# The radius filter used to assert-and-dereference that null, which is a no-op
+# assert plus a segfault in release.
+statement ok
+CREATE TABLE hnsw_r_null (pk INTEGER PRIMARY KEY, emb FLOAT[3]);
+
+
+statement ok
+CREATE INDEX hnsw_r_null_idx ON hnsw_r_null
+  USING inverted(pk, emb hnsw (metric = 'l2', quant = 'none'));
+
+
+statement ok
+INSERT INTO hnsw_r_null VALUES (1, NULL), (2, NULL);
+
+
+statement ok
+VACUUM (REFRESH_TABLE) hnsw_r_null;
+
+
+statement ok
+INSERT INTO hnsw_r_null VALUES (3, [1, 0, 0]::FLOAT[3]),
+  (4, [50, 0, 0]::FLOAT[3]);
+
+
+statement ok
+VACUUM (REFRESH_TABLE) hnsw_r_null;
+
+
+query
+SELECT pk FROM hnsw_r_null_idx
+  WHERE emb <-> [1, 0, 0]::FLOAT[3] < 5 ORDER BY pk;
+----
+pk
+3
+
+
+query
+SELECT count(*) FROM hnsw_r_null_idx
+  WHERE emb <-> [1, 0, 0]::FLOAT[3] < 5;
+----
+count
+1

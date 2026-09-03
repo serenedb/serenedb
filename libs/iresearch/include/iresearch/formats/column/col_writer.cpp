@@ -20,9 +20,6 @@
 
 #include "iresearch/formats/column/col_writer.hpp"
 
-#include <yaclib/coro/await.hpp>
-#include <yaclib/coro/future.hpp>
-
 #include <absl/strings/str_cat.h>
 
 #include <cstring>
@@ -30,6 +27,8 @@
 #include <duckdb/common/vector_operations/vector_operations.hpp>
 #include <duckdb/main/database.hpp>
 #include <utility>
+#include <yaclib/coro/await.hpp>
+#include <yaclib/coro/future.hpp>
 
 #include "basics/assert.h"
 #include "basics/serialization.h"

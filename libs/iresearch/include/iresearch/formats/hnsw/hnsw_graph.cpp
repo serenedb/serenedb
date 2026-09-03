@@ -22,6 +22,7 @@
 
 #include <cmath>
 
+#include "basics/assert.h"
 #include "iresearch/store/data_input.hpp"
 #include "iresearch/store/data_output.hpp"
 
@@ -49,7 +50,8 @@ void ReadArray(IndexInput& in, std::vector<T>& v) {
 }  // namespace
 
 void HnswGraph::Reset(size_t nodes, uint32_t m) {
-  _m = m != 0 ? m : kHnswDefaultM;
+  SDB_ASSERT(m != 0);
+  _m = m;
   _m0 = 2 * _m;
   _levels.assign(nodes, 0);
   _offsets.clear();

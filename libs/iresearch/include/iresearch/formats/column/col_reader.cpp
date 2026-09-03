@@ -42,8 +42,8 @@
 namespace irs {
 namespace {
 
-IndexInput::ptr OpenColFile(const Directory& dir,
-                            std::string_view segment_name, IOAdvice advice) {
+IndexInput::ptr OpenColFile(const Directory& dir, std::string_view segment_name,
+                            IOAdvice advice) {
   const std::string filename = FileName(segment_name);
   bool exists = false;
   if (!dir.exists(exists, filename)) {

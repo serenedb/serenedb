@@ -210,20 +210,8 @@ InvertedIndexStorage::InvertedIndexStorage(ObjectId id,
   // thread, so N concurrent flushes settle at N workers rather than each
   // fanning out; a grant of 1 means this build runs serial on the thread it is
   // already on, which is still forward progress.
-  _ann_acquire = [this](uint32_t want) -> uint32_t {
-    return static_cast<uint32_t>(
-      _search.AcquireAnnWorkers(static_cast<int>(want)));
-  };
-  _ann_release = [this](uint32_t n) {
-    _search.ReleaseAnnWorkers(static_cast<int>(n));
-  };
-  _ann_build_env.emplace(
-    irs::AnnBuildEnv{.executor = &BackgroundScheduler::instance().annExecutor(),
-                     .acquire = _ann_acquire,
-                     .release = _ann_release});
-
   irs::IndexWriterOptions writer_options;
-  writer_options.ann_env = &*_ann_build_env;
+  writer_options.ann_env = &AnnBuildEnv();
   writer_options.segment_memory_max = options.segment_memory_max;
   writer_options.segment_docs_max = options.segment_docs_max;
 #ifdef SDB_DEV
@@ -479,9 +467,8 @@ auto InvertedIndexStorage::CompactUnsafeImpl(
   }
 
   try {
-    const auto res =
-      co_await _writer->CompactAsync(policy, field_options, nullptr, progress,
-                                     env);
+    const auto res = co_await _writer->CompactAsync(policy, field_options,
+                                                    nullptr, progress, env);
     if (res.error == irs::CompactionError::Fail) {
       co_return absl::InternalError(absl::StrCat(
         "failure while executing compaction policy on Search index '",

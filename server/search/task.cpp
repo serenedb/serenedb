@@ -90,8 +90,8 @@ irs::CompactionPolicy MakeTierPolicy(const TasksSettings& settings,
   tier.max_segments_bytes = settings.compaction_max_segments_bytes;
   tier.floor_segment_bytes = settings.compaction_floor_segment_bytes;
   if (small) {
-    tier.max_segments_bytes = std::max(2 * tier.floor_segment_bytes,
-                                       tier.max_segments_bytes / 2);
+    tier.max_segments_bytes =
+      std::max(2 * tier.floor_segment_bytes, tier.max_segments_bytes / 2);
   }
   return irs::index_utils::MakePolicy(tier);
 }
@@ -185,24 +185,11 @@ auto DoCompaction(std::shared_ptr<Storage> idx, irs::CompactionPolicy policy,
   }
   metrics::Scoped guard{metrics::Gauge::CompactionActive};
 
-  // Named locals: AnnBuildEnv holds FunctionRefs into them, and the env has to
-  // stay valid across every suspension inside the merge.
-  auto acquire = [&engine](uint32_t want) -> uint32_t {
-    return static_cast<uint32_t>(
-      engine.AcquireAnnWorkers(static_cast<int>(want)));
-  };
-  auto release = [&engine](uint32_t n) {
-    engine.ReleaseAnnWorkers(static_cast<int>(n));
-  };
   const auto progress = [] { return !ShouldStop(); };
-  const irs::AnnBuildEnv env{
-    .executor = &BackgroundScheduler::instance().annExecutor(),
-    .acquire = acquire,
-    .release = release};
 
   bool empty_compaction = false;
   auto [res, time_ms] = co_await idx->CompactUnsafeAsync(
-    policy, progress, empty_compaction, opts.field_options, &env);
+    policy, progress, empty_compaction, opts.field_options, &AnnBuildEnv());
   if (res.ok()) {
     SDB_TRACE(SEARCH, "successful compaction of Search index '",
               idx->GetId().id(), "', took: ", time_ms, "ms");

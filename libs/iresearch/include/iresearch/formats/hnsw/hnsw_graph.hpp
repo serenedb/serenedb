@@ -24,8 +24,8 @@
 
 #include <algorithm>
 #include <atomic>
+#include <bit>
 #include <cstdint>
-#include <deque>
 #include <limits>
 #include <mutex>
 #include <span>
@@ -179,8 +179,7 @@ void HnswComputeDistances(const float* q, const float* base, uint32_t d,
   };
 
   size_t i = 0;
-  if constexpr (kKernel == VectorMetric::L2Sqr ||
-                kKernel == VectorMetric::InnerProduct) {
+  if constexpr (M == VectorMetric::L2Sqr || M == VectorMetric::InnerProduct) {
     for (; i + 4 <= ids.size(); i += 4) {
       float d0 = 0.f;
       float d1 = 0.f;
@@ -219,7 +218,7 @@ inline constexpr score_t kHnswNoThreshold =
 
 inline auto HnswLoadLink(const uint32_t& slot) noexcept -> uint32_t {
   return std::atomic_ref<uint32_t>{const_cast<uint32_t&>(slot)}.load(
-    std::memory_order_relaxed);
+    std::memory_order_acquire);
 }
 
 inline void HnswStoreLink(uint32_t& slot, uint32_t id) noexcept {
@@ -260,7 +259,6 @@ void HnswSearchLevel(const HnswGraph& graph, Dist& dist, uint32_t level,
     if (s.batch.empty()) {
       continue;
     }
-    std::atomic_thread_fence(std::memory_order_acquire);
 
     s.scores.resize(s.batch.size());
     dist.Batch(s.batch, s.scores.data(),
@@ -306,7 +304,6 @@ HnswCandidate HnswGreedyDescent(const HnswGraph& graph, Dist& dist,
       if (s.batch.empty()) {
         break;
       }
-      std::atomic_thread_fence(std::memory_order_acquire);
       s.scores.resize(s.batch.size());
       dist.Batch(s.batch, s.scores.data(), cur.score);
       for (size_t i = 0; i < s.batch.size(); ++i) {
@@ -342,9 +339,7 @@ void HnswSelectNeighbors(Dist& dist, std::span<const HnswCandidate> sorted,
                          uint32_t limit, HnswBuildScratch& s) {
   auto& out = s.selected;
   out.clear();
-  if (sorted.empty() || limit == 0) {
-    return;
-  }
+  SDB_ASSERT(!sorted.empty() && limit != 0);
   if (dist.CheapPair()) {
     for (const auto& cand : sorted) {
       bool keep = true;
@@ -407,23 +402,27 @@ struct HnswNoSync {
 
 class HnswStripeSync {
  public:
-  HnswStripeSync() : _stripes(kStripes) {}
+  explicit HnswStripeSync(size_t stripes)
+    : _stripes(std::bit_ceil(std::clamp<size_t>(4 * stripes, 256, 4096))) {}
 
   using Guard = std::unique_lock<std::mutex>;
 
   Guard Lock(uint32_t node) noexcept {
-    return Guard{_stripes[node & (kStripes - 1)]};
+    const auto h = (node * kHnswBuildSeed) >> 32;
+    return Guard{_stripes[h & (_stripes.size() - 1)].lock};
   }
 
  private:
-  static constexpr uint32_t kStripes = 4096;
+  struct alignas(64) Stripe {
+    std::mutex lock;
+  };
 
-  std::deque<std::mutex> _stripes;
+  std::vector<Stripe> _stripes;
 };
 
-template<typename Sync, typename Dist>
+template<typename Dist, typename Sync = HnswNoSync>
 void HnswLinkReverse(HnswGraph& graph, Dist& dist, uint32_t peer, uint32_t node,
-                     uint32_t level, HnswBuildScratch& s, Sync& sync) {
+                     uint32_t level, HnswBuildScratch& s, Sync&& sync = {}) {
   auto guard = sync.Lock(peer);
   auto links = graph.Neighbors(peer, level);
   auto& ids = s.link_ids;
@@ -493,14 +492,12 @@ void HnswLinkReverse(HnswGraph& graph, Dist& dist, uint32_t peer, uint32_t node,
   }
 }
 
-template<typename Sync, typename Dist>
+template<typename Dist, typename Sync = HnswNoSync>
 void HnswInsert(HnswGraph& graph, uint32_t node, Dist& dist,
-                uint32_t ef_construction, HnswBuildScratch& s, Sync& sync) {
+                uint32_t ef_construction, HnswBuildScratch& s,
+                Sync&& sync = {}) {
   const uint32_t top = graph.LevelOf(node) - 1;
-  if (graph.Empty()) {
-    graph.SetEntryPoint(node);
-    return;
-  }
+  SDB_ASSERT(!graph.Empty());
 
   const uint32_t entry = graph.EntryPoint();
   const uint32_t entry_top = graph.LevelOf(entry) - 1;
@@ -546,24 +543,6 @@ void HnswInsert(HnswGraph& graph, uint32_t node, Dist& dist,
   for (const auto& [peer, level] : s.pending) {
     HnswLinkReverse(graph, dist, peer, node, level, s, sync);
   }
-
-  if (top > entry_top) {
-    graph.SetEntryPoint(node);
-  }
-}
-
-template<typename Dist>
-void HnswLinkReverse(HnswGraph& graph, Dist& dist, uint32_t peer, uint32_t node,
-                     uint32_t level, HnswBuildScratch& s) {
-  HnswNoSync sync;
-  HnswLinkReverse(graph, dist, peer, node, level, s, sync);
-}
-
-template<typename Dist>
-void HnswInsert(HnswGraph& graph, uint32_t node, Dist& dist,
-                uint32_t ef_construction, HnswBuildScratch& s) {
-  HnswNoSync sync;
-  HnswInsert(graph, node, dist, ef_construction, s, sync);
 }
 
 template<typename Dist>
@@ -585,10 +564,6 @@ void HnswSearchTopK(const HnswGraph& graph, Dist& dist, uint32_t ef,
   s.visited.TestAndSet(cur.node);
   s.nearest.assign(1, cur);
   HnswSearchLevel(graph, dist, 0, ef, s);
-  std::ranges::sort(s.nearest,
-                    [](const HnswCandidate& l, const HnswCandidate& r) {
-                      return l.score > r.score;
-                    });
 }
 
 template<bool Inclusive, typename Dist>
@@ -619,10 +594,16 @@ void HnswSearchRadius(const HnswGraph& graph, Dist& dist, score_t threshold,
 
   s.visited.Advance();
   s.visited.TestAndSet(cur.node);
+  found.assign(1, cur);
+  HnswSearchLevel(graph, dist, 0, kHnswDefaultEfSearch, s);
+
+  frontier.assign(found.begin(), found.end());
+  std::make_heap(frontier.begin(), frontier.end(), HnswFrontierOrder{});
   found.clear();
-  frontier.assign(1, cur);
-  if (accept(cur.score)) {
-    found.push_back(cur);
+  for (const auto& seed : frontier) {
+    if (accept(seed.score)) {
+      found.push_back(seed);
+    }
   }
 
   while (!frontier.empty() && found.size() < max_results) {
@@ -634,7 +615,9 @@ void HnswSearchRadius(const HnswGraph& graph, Dist& dist, score_t threshold,
     }
 
     s.batch.clear();
-    for (const auto id : graph.Neighbors(node.node, 0)) {
+    const auto neighbors = graph.Neighbors(node.node, 0);
+    for (size_t i = 0; i < neighbors.size(); ++i) {
+      const auto id = HnswLoadLink(neighbors[i]);
       if (id == kHnswInvalidNode) {
         break;
       }

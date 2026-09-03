@@ -23,12 +23,11 @@
 #include <cstdint>
 #include <memory>
 #include <span>
+#include <string>
 #include <vector>
 
 #include "iresearch/formats/ann_writer.hpp"
 #include "iresearch/formats/hnsw/hnsw_graph.hpp"
-#include <string>
-
 #include "iresearch/formats/ivf/quantizer.hpp"
 
 namespace irs {

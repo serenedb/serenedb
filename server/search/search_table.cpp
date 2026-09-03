@@ -30,8 +30,8 @@
 #include <iresearch/index/index_meta.hpp>
 #include <iresearch/store/directory_attributes.hpp>
 #include <iresearch/store/mmap_directory.hpp>
-#include <iresearch/utils/directory_utils.hpp>
 #include <iresearch/utils/async.hpp>
+#include <iresearch/utils/directory_utils.hpp>
 #include <iresearch/utils/index_utils.hpp>
 #include <limits>
 #include <mutex>

@@ -40,7 +40,6 @@
 #include "iresearch/index/comparer.hpp"
 #include "iresearch/index/directory_reader_impl.hpp"
 #include "iresearch/index/file_names.hpp"
-#include "iresearch/utils/async.hpp"
 #include "iresearch/index/index_features.hpp"
 #include "iresearch/index/index_meta.hpp"
 #include "iresearch/index/merge_writer.hpp"
@@ -48,6 +47,7 @@
 #include "iresearch/index/segment_reader_impl.hpp"
 #include "iresearch/index/segment_writer.hpp"
 #include "iresearch/store/directory.hpp"
+#include "iresearch/utils/async.hpp"
 #include "iresearch/utils/directory_utils.hpp"
 #include "iresearch/utils/index_utils.hpp"
 #include "iresearch/utils/type_limits.hpp"
@@ -1562,7 +1562,8 @@ auto IndexWriter::CompactAsync(const CompactionPolicy& policy,
 CompactionResult IndexWriter::Compact(
   const CompactionPolicy& policy, const IndexFieldOptions* field_options,
   Format::ptr codec, const MergeWriter::FlushProgress& progress) {
-  return GetReady(CompactAsync(policy, field_options, std::move(codec), progress,
+  return GetReady(CompactAsync(policy, field_options, std::move(codec),
+                               progress,
                                /*env=*/nullptr));
 }
 

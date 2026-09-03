@@ -93,17 +93,33 @@ int SearchEngine::MaxConcurrentCompactions() noexcept {
     1, static_cast<int>(absl::GetFlag(FLAGS_background_threads)) - 1);
 }
 
-int SearchEngine::MaxAnnBuildWorkers() noexcept {
+uint32_t SearchEngine::MaxAnnBuildWorkers() noexcept {
   // Workers, not helpers: each build's own calling thread is charged against
   // this too, so the pool (sized AnnBuildBudget() - 1) is never asked to host
   // more helpers than it has threads.
-  return std::max<int>(1,
-                       static_cast<int>(BackgroundScheduler::AnnBuildBudget()));
+  return std::max<uint32_t>(
+    1, static_cast<uint32_t>(BackgroundScheduler::AnnBuildBudget()));
 }
 
-int SearchEngine::MaxAnnWorkersPerBuild() noexcept {
-  return std::max<int>(
-    1, static_cast<int>(BackgroundScheduler::AnnBuildThreads()));
+uint32_t SearchEngine::MaxAnnWorkersPerBuild() noexcept {
+  return std::max<uint32_t>(
+    1, static_cast<uint32_t>(BackgroundScheduler::AnnBuildThreads()));
+}
+
+uint32_t AnnAcquireWorkers(uint32_t want) noexcept {
+  return GetSearchEngine().AcquireAnnWorkers(want);
+}
+
+void AnnReleaseWorkers(uint32_t n) noexcept {
+  GetSearchEngine().ReleaseAnnWorkers(n);
+}
+
+const irs::AnnBuildEnv& AnnBuildEnv() {
+  static const irs::AnnBuildEnv env{
+    .executor = &BackgroundScheduler::instance().annExecutor(),
+    .acquire = AnnAcquireWorkers,
+    .release = AnnReleaseWorkers};
+  return env;
 }
 
 int SearchEngine::MaxConcurrentMerges() noexcept {

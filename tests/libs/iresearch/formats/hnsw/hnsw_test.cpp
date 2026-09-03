@@ -18,10 +18,9 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
+#include <algorithm>
 #include <duckdb.hpp>
 #include <duckdb/common/vector/array_vector.hpp>
-
-#include <algorithm>
 #include <random>
 #include <tuple>
 #include <vector>
@@ -29,10 +28,10 @@
 #include "formats/column/test_cs_helpers.hpp"
 #include "iresearch/index/directory_reader.hpp"
 #include "iresearch/index/index_writer.hpp"
-#include "iresearch/utils/index_utils.hpp"
 #include "iresearch/search/cost.hpp"
 #include "iresearch/search/vector_similarity_filter.hpp"
 #include "iresearch/store/memory_directory.hpp"
+#include "iresearch/utils/index_utils.hpp"
 #include "search/filter_test_case_base.hpp"
 #include "tests_shared.hpp"
 
@@ -44,7 +43,8 @@ inline constexpr uint32_t kDim = 8;
 irs::IndexWriterOptions MakeWriterOptions(irs::VectorMetric metric,
                                           irs::VectorQuantization quant) {
   auto opts = irs::tests::DefaultWriterOptions();
-  opts.column_options = [metric, quant](irs::field_id id) -> irs::ColumnOptions {
+  opts.column_options = [metric,
+                         quant](irs::field_id id) -> irs::ColumnOptions {
     irs::ColumnOptions col;
     if (id == kVec) {
       col.ann_info = irs::AnnInfo{
@@ -53,7 +53,12 @@ irs::IndexWriterOptions MakeWriterOptions(irs::VectorMetric metric,
         .postings_id = kVec,
         .d = kDim,
         .metric = metric,
-        .quant = {.kind = quant},
+        .quant = {.kind = quant,
+                  .nb_bits = quant == irs::VectorQuantization::TQ
+                               ? irs::kTQDefaultBits
+                             : quant == irs::VectorQuantization::TQMse
+                               ? irs::kTQMseDefaultBits
+                               : 0},
         .m = 8,
         .ef_construction = 64,
       };
@@ -143,12 +148,11 @@ std::vector<irs::doc_id_t> BruteForceTopK(
       s = irs::ComputeDistance<M>(query.data(), vecs[i].data(),
                                   static_cast<uint16_t>(kDim));
     });
-    scored.emplace_back(s, static_cast<irs::doc_id_t>(i) +
-                             irs::doc_limits::min());
+    scored.emplace_back(s,
+                        static_cast<irs::doc_id_t>(i) + irs::doc_limits::min());
   }
-  std::ranges::sort(scored, [](const auto& l, const auto& r) {
-    return l.first > r.first;
-  });
+  std::ranges::sort(
+    scored, [](const auto& l, const auto& r) { return l.first > r.first; });
   std::vector<irs::doc_id_t> out;
   for (size_t i = 0; i < std::min(k, scored.size()); ++i) {
     out.push_back(scored[i].second);
@@ -159,8 +163,9 @@ std::vector<irs::doc_id_t> BruteForceTopK(
 std::vector<irs::doc_id_t> RunKnn(const irs::DirectoryReader& reader,
                                   irs::ByVectorSimilarity& filter) {
   ::tests::PreparedFilter prepared{
-    filter, *reader, nullptr, irs::IResourceManager::gNoop, nullptr,
-    ::tests::PreparedFilter::CollectMode::Single};
+    filter,  *reader,
+    nullptr, irs::IResourceManager::gNoop,
+    nullptr, ::tests::PreparedFilter::CollectMode::Single};
   EXPECT_EQ(1U, prepared.size());
   auto it = prepared.Execute(0);
   EXPECT_NE(nullptr, it);
@@ -186,7 +191,15 @@ class HnswIndexTest : public ::testing::TestWithParam<HnswParam> {
   }
 
   double RecallFloor() const {
-    return Quant() == irs::VectorQuantization::SQ4 ? 0.7 : 0.9;
+    switch (Quant()) {
+      case irs::VectorQuantization::TQMse:
+        return 0.5;
+      case irs::VectorQuantization::SQ4:
+      case irs::VectorQuantization::TQ:
+        return 0.7;
+      default:
+        return 0.9;
+    }
   }
 };
 
@@ -368,12 +381,12 @@ TEST_P(HnswIndexTest, QueryVectorFindsItself) {
 
 INSTANTIATE_TEST_SUITE_P(
   metrics, HnswIndexTest,
-  ::testing::Combine(::testing::Values(irs::VectorMetric::L2Sqr,
-                                       irs::VectorMetric::InnerProduct,
-                                       irs::VectorMetric::Cosine,
-                                       irs::VectorMetric::L1),
-                     ::testing::Values(irs::VectorQuantization::None,
-                                       irs::VectorQuantization::SQ8,
-                                       irs::VectorQuantization::SQ4)));
+  ::testing::Combine(
+    ::testing::Values(irs::VectorMetric::L2Sqr, irs::VectorMetric::InnerProduct,
+                      irs::VectorMetric::Cosine, irs::VectorMetric::L1),
+    ::testing::Values(irs::VectorQuantization::None,
+                      irs::VectorQuantization::SQ8,
+                      irs::VectorQuantization::SQ4, irs::VectorQuantization::TQ,
+                      irs::VectorQuantization::TQMse)));
 
 }  // namespace

@@ -28,6 +28,7 @@
 #include <duckdb/common/types/interval.hpp>
 #include <duckdb/common/types/timestamp.hpp>
 #include <duckdb/common/vector_operations/generic_executor.hpp>
+#include <duckdb/function/scalar/date_bucket_rewrite.hpp>
 #include <duckdb/function/scalar_function.hpp>
 #include <duckdb/main/extension/extension_loader.hpp>
 #include <limits>
@@ -419,12 +420,16 @@ void RegisterPgMathFunctions(duckdb::DatabaseInstance& db) {
     MakeTimestampFunction});
 
   // date_bin(stride interval, source timestamp, origin timestamp) -> timestamp
-  loader.RegisterFunction(duckdb::ScalarFunction{
-    "date_bin",
-    {duckdb::LogicalType::INTERVAL, duckdb::LogicalType::TIMESTAMP,
-     duckdb::LogicalType::TIMESTAMP},
-    duckdb::LogicalType::TIMESTAMP,
-    DateBinFunction});
+  {
+    duckdb::ScalarFunction func{
+      "date_bin",
+      {duckdb::LogicalType::INTERVAL, duckdb::LogicalType::TIMESTAMP,
+       duckdb::LogicalType::TIMESTAMP},
+      duckdb::LogicalType::TIMESTAMP,
+      DateBinFunction};
+    func.SetBucketRewriteCallback(duckdb::DateBinBucketRewrite);
+    loader.RegisterFunction(func);
+  }
 
   {
     duckdb::ScalarFunction func{

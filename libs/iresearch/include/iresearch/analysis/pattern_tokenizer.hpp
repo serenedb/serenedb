@@ -20,13 +20,12 @@
 
 #pragma once
 
-#include <array>
-#include <functional>
 #include <optional>
 #include <string>
 #include <tuple>
 #include <vector>
 
+#include "iresearch/analysis/text/delim/finders.hpp"
 #include "re2/re2.h"
 #include "tokenizer.hpp"
 
@@ -51,14 +50,18 @@ class PatternTokenizer final : public TypedTokenizer<PatternTokenizer>,
   // (DetectFastSplit), so it resolves once per chunk instead of branching
   // per value.
   enum class Mode : uint8_t {
-    ByteSet,
+    OneChar,
+    ManyChars,
     Literal,
+    LongLiteral,
     Regex,
   };
 
   auto PrepareBatch(BlockTraits) const { return std::tuple{_mode}; }
 
-  TokenTraits Traits() const noexcept final { return {.offsets = true}; }
+  TokenTraits Traits() const noexcept final {
+    return {.offsets = true, .stable = true};
+  }
 
   template<TokenLayout Layout, Mode M>
   bool DoFill(duckdb::string_t value, TokenSink& sink);
@@ -66,25 +69,15 @@ class PatternTokenizer final : public TypedTokenizer<PatternTokenizer>,
  private:
   template<TokenLayout Layout>
   void FillValue(TokenSink& sink, duckdb::string_t value);
-  template<TokenLayout Layout>
-  void FastSplitValue(TokenSink& sink, duckdb::string_t value);
-  template<TokenLayout Layout>
-  void FastLiteralSplitValue(TokenSink& sink, duckdb::string_t value);
   void DetectFastSplit(int num_groups);
-
-  bool IsDelimByte(byte_type c) const noexcept {
-    return (_delim_bitmap[c >> 6] >> (c & 63)) & 1;
-  }
+  void SetLiteral(bstring&& literal);
 
   re2::RE2 _pattern;
   int _group;
   std::vector<re2::StringPiece> _matches;
-  std::array<uint64_t, 4> _delim_bitmap{};
-  std::array<byte_type, 8> _block_delims{};
-  uint8_t _nblock = 0;
-  std::string _split_literal;
-  std::optional<std::boyer_moore_horspool_searcher<std::string::const_iterator>>
-    _literal_searcher;
+  delim::ManyCharsFinder _chars;
+  std::optional<delim::OneStringFinder> _literal;
+  std::optional<delim::OneLongStringFinder> _long_literal;
   Mode _mode = Mode::Regex;
 };
 

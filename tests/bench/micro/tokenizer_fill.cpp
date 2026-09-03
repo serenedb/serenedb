@@ -462,6 +462,98 @@ const std::vector<std::string>& ColonCorpus() {
   return corpus;
 }
 
+// Horspool's best case: a 48-byte needle whose bytes are absent from the
+// payload, so the bad-char rule skips a full needle per step while any
+// scan-every-byte filter must still touch all of it.
+const std::string& VLongNeedle() {
+  static const std::string needle =
+    "-----BEGIN~SERENEDB~RECORD~SEPARATOR~MARKER-----";
+  return needle;
+}
+
+const std::vector<std::string>& VLongSepCorpus() {
+  static const auto corpus = [] {
+    std::vector<std::string> out;
+    out.reserve(kValues);
+    for (size_t i = 0; i < kValues; ++i) {
+      std::string v;
+      for (size_t f = 0; f < 4; ++f) {
+        for (size_t w = 0; w < 24; ++w) {
+          v += "payload" + std::to_string((i + f * 7 + w * 11) % 199);
+          v += ' ';
+        }
+        v += VLongNeedle();
+      }
+      v.resize(v.size() - VLongNeedle().size());
+      out.push_back(std::move(v));
+    }
+    return out;
+  }();
+  return corpus;
+}
+
+// The block first+last filter's worst case: first and last needle bytes
+// co-occur at exactly stride n-1 everywhere, and the middles share a 30-byte
+// prefix, so every candidate survives the mask and pays a deep verify.
+const std::string& CollideNeedle() {
+  static const std::string needle =
+    "x" + std::string(30, 'a') + std::string(8, 'c') + "y";
+  return needle;
+}
+
+const std::vector<std::string>& CollideCorpus() {
+  static const auto corpus = [] {
+    const std::string decoy =
+      "x" + std::string(30, 'a') + std::string(8, 'd') + "y";
+    std::vector<std::string> out;
+    out.reserve(kValues);
+    for (size_t i = 0; i < kValues; ++i) {
+      std::string v;
+      for (size_t f = 0; f < 12; ++f) {
+        v += decoy;
+      }
+      v += CollideNeedle();
+      v += decoy;
+      out.push_back(std::move(v));
+    }
+    return out;
+  }();
+  return corpus;
+}
+
+// The realistic form of the collide shape: same-width banners in a log, only
+// one of which is the delimiter, separated by ordinary payload. Candidate
+// density (~1 per 290B) and shared-prefix length (12B) are what a framed
+// format actually produces; CollideCorpus stacks both to their maximum.
+const std::string& BannerNeedle() {
+  static const std::string needle = "===== BEGIN SECTION =====";
+  return needle;
+}
+
+const std::vector<std::string>& BannerCorpus() {
+  static const auto corpus = [] {
+    const char* decoys[] = {"===== BEGIN REQUEST =====",
+                            "===== BEGIN PAYLOAD =====",
+                            "===== FINAL SEGMENT ====="};
+    std::vector<std::string> out;
+    out.reserve(kValues);
+    for (size_t i = 0; i < kValues; ++i) {
+      std::string v;
+      for (size_t f = 0; f < 6; ++f) {
+        for (size_t w = 0; w < 24; ++w) {
+          v += "payload" + std::to_string((i + f * 7 + w * 11) % 199);
+          v += ' ';
+        }
+        v += (f % 3 == 2) ? BannerNeedle() : decoys[(i + f) % 3];
+      }
+      v.resize(v.size() - BannerNeedle().size());
+      out.push_back(std::move(v));
+    }
+    return out;
+  }();
+  return corpus;
+}
+
 const std::vector<std::string>& PathCorpus() {
   static const auto corpus = [] {
     std::vector<std::string> out;
@@ -923,6 +1015,18 @@ Tokenizer::ptr MakeMultiDelimiterStrHostile() {
   return MakeMultiDelimiterFrom({"aaaaaaaaaaaaaaab"});
 }
 
+Tokenizer::ptr MakeMultiDelimiterStrVLong() {
+  return MakeMultiDelimiterFrom({VLongNeedle().c_str()});
+}
+
+Tokenizer::ptr MakeMultiDelimiterStrCollide() {
+  return MakeMultiDelimiterFrom({CollideNeedle().c_str()});
+}
+
+Tokenizer::ptr MakeMultiDelimiterStrBanner() {
+  return MakeMultiDelimiterFrom({BannerNeedle().c_str()});
+}
+
 Tokenizer::ptr MakeMultiDelimiterStrTag() {
   return MakeMultiDelimiterFrom({"</section>"});
 }
@@ -969,6 +1073,10 @@ Tokenizer::ptr MakeMultiDelimiter() {
 
 Tokenizer::ptr MakePattern() {
   return PatternTokenizer::Make({.pattern = "\\s+", .group = -1});
+}
+
+Tokenizer::ptr MakePatternChar() {
+  return PatternTokenizer::Make({.pattern = ",", .group = -1});
 }
 
 Tokenizer::ptr MakePatternLiteral() {
@@ -1291,6 +1399,12 @@ TOKENIZER_BENCH(multi_delimiter_str_long, MakeMultiDelimiterStrLong,
                 LongSepCorpus);
 TOKENIZER_BENCH(multi_delimiter_str_hostile, MakeMultiDelimiterStrHostile,
                 HostileRunCorpus);
+TOKENIZER_BENCH(multi_delimiter_str_vlong, MakeMultiDelimiterStrVLong,
+                VLongSepCorpus);
+TOKENIZER_BENCH(multi_delimiter_str_collide, MakeMultiDelimiterStrCollide,
+                CollideCorpus);
+TOKENIZER_BENCH(multi_delimiter_str_banner, MakeMultiDelimiterStrBanner,
+                BannerCorpus);
 TOKENIZER_BENCH(multi_delimiter_str_tag, MakeMultiDelimiterStrTag,
                 MarkupCorpus);
 TOKENIZER_BENCH(multi_delimiter_tags, MakeMultiDelimiterTags, MarkupCorpus);
@@ -1299,6 +1413,10 @@ TOKENIZER_BENCH(multi_delimiter_tags_hard, MakeMultiDelimiterTagsHard,
 TOKENIZER_BENCH(multi_delimiter_mixed8, MakeMultiDelimiterMixed8,
                 MixedSepProseCorpus);
 TOKENIZER_BENCH(pattern, MakePattern, TextCorpus);
+BENCHMARK_CAPTURE(BM_Fill, pattern_char, &MakePatternChar, &CsvCorpus)
+  ->Unit(benchmark::kMillisecond);
+BENCHMARK_CAPTURE(BM_Fill, pattern_char_sparse, &MakePatternChar, &TextCorpus)
+  ->Unit(benchmark::kMillisecond);
 BENCHMARK_CAPTURE(BM_Fill, pattern_literal, &MakePatternLiteral, &ColonCorpus)
   ->Unit(benchmark::kMillisecond);
 BENCHMARK_CAPTURE(BM_Fill, pattern_literal_regex, &MakePatternLiteralRegex,

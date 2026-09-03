@@ -488,3 +488,50 @@ TEST_F(MultiDelimitedTokenizerTests, column_fill_matches_per_value) {
     }
   }
 }
+
+TEST_F(MultiDelimitedTokenizerTests, long_needle_oracle) {
+  uint64_t seed = 0x9e3779b9;
+  const auto next = [&] {
+    seed = seed * 6364136223846793005ULL + 1442695040888963407ULL;
+    return static_cast<size_t>(seed >> 33);
+  };
+  for (size_t needle_len = 9; needle_len <= 20; ++needle_len) {
+    std::string needle;
+    for (size_t i = 0; i < needle_len; ++i) {
+      needle += static_cast<char>('a' + next() % 2);
+    }
+    auto stream = MultiDelimitedTokenizer::Make(
+      {.delimiters = {
+         irs::bstring{reinterpret_cast<const irs::byte_type*>(needle.data()),
+                      needle.size()}}});
+    for (size_t iter = 0; iter < 60; ++iter) {
+      std::string v;
+      const size_t len = next() % 60;
+      for (size_t i = 0; i < len; ++i) {
+        if (next() % 5 == 0) {
+          v += needle;
+        } else {
+          v += static_cast<char>('a' + next() % 2);
+        }
+      }
+      const std::string_view vv{v};
+      std::vector<BlockTok> expected;
+      for (size_t at = 0, tok = 0;;) {
+        const size_t hit = v.find(needle, at);
+        const size_t end = hit == std::string::npos ? v.size() : hit;
+        if (end != tok) {
+          expected.push_back({vv.substr(tok, end - tok),
+                              static_cast<uint32_t>(tok),
+                              static_cast<uint32_t>(end)});
+        }
+        if (hit == std::string::npos) {
+          break;
+        }
+        at = tok = hit + needle.size();
+      }
+      SCOPED_TRACE(testing::Message() << "needle=" << needle << " iter=" << iter
+                                      << " value.size=" << v.size());
+      AssertBlockTokens(*stream, v, expected);
+    }
+  }
+}

@@ -310,6 +310,22 @@ TEST_F(PatternTokenizerTests, test_utf8_split_comma_4byte_emoji) {
                             {1, 1});
 }
 
+TEST_F(PatternTokenizerTests, test_split_utf8_literal_delimiter) {
+  std::string_view data("аба→цаба→x");
+  irs::analysis::PatternTokenizer stream("→", -1);
+
+  AssertTokenStreamContents(&stream, data, {"аба", "цаба", "x"}, {0, 9, 20},
+                            {6, 17, 21}, {1, 1, 1});
+}
+
+TEST_F(PatternTokenizerTests, test_split_long_literal_delimiter) {
+  std::string_view data("a<<<<<<<<<<b<<<<<<<<<<c");
+  irs::analysis::PatternTokenizer stream("<<<<<<<<<<", -1);
+
+  AssertTokenStreamContents(&stream, data, {"a", "b", "c"}, {0, 11, 22},
+                            {1, 12, 23}, {1, 1, 1});
+}
+
 TEST_F(PatternTokenizerTests, test_make_options) {
   // Valid: pattern only, default group -1 (split mode)
   {
@@ -512,16 +528,16 @@ TEST(PatternTokenizerFastSplit, eligibility) {
     return std::get<0>(irs::analysis::PatternTokenizer{pattern}.PrepareBatch(
       irs::BlockTraits{}));
   };
-  ASSERT_EQ(Mode::ByteSet, mode(","));
-  ASSERT_EQ(Mode::ByteSet, mode("\\s+"));
-  ASSERT_EQ(Mode::ByteSet, mode("[,;]+"));
-  ASSERT_EQ(Mode::ByteSet, mode("[a-c]"));
-  ASSERT_EQ(Mode::ByteSet, mode(" +"));
-  ASSERT_EQ(Mode::ByteSet, mode("(?:,+)+"));
+  ASSERT_EQ(Mode::OneChar, mode(","));
+  ASSERT_EQ(Mode::ManyChars, mode("\\s+"));
+  ASSERT_EQ(Mode::ManyChars, mode("[,;]+"));
+  ASSERT_EQ(Mode::ManyChars, mode("[a-c]"));
+  ASSERT_EQ(Mode::OneChar, mode(" +"));
+  ASSERT_EQ(Mode::OneChar, mode("(?:,+)+"));
   ASSERT_EQ(Mode::Literal, mode("(?:(?:ab)+)+"));
-  ASSERT_EQ(Mode::ByteSet, mode(",|;"));
-  ASSERT_EQ(Mode::ByteSet, mode("(?i)[a-c]"));
-  ASSERT_EQ(Mode::ByteSet, mode("(?i),"));
+  ASSERT_EQ(Mode::ManyChars, mode(",|;"));
+  ASSERT_EQ(Mode::ManyChars, mode("(?i)[a-c]"));
+  ASSERT_EQ(Mode::OneChar, mode("(?i),"));
   ASSERT_EQ(Mode::Literal, mode("(?i)::"));
   ASSERT_EQ(Mode::Regex, mode("(?i)a"));
   ASSERT_EQ(Mode::Regex, mode("(?i)ab"));
@@ -529,8 +545,11 @@ TEST(PatternTokenizerFastSplit, eligibility) {
   ASSERT_EQ(Mode::Literal, mode(", "));
   ASSERT_EQ(Mode::Literal, mode("--"));
   ASSERT_EQ(Mode::Literal, mode("ab"));
-  ASSERT_EQ(Mode::Regex, mode("a\xc2\xa7"
-                              "b"));
+  ASSERT_EQ(Mode::Literal, mode("a§b"));
+  ASSERT_EQ(Mode::Literal, mode("§"));
+  ASSERT_EQ(Mode::Literal, mode("§+"));
+  ASSERT_EQ(Mode::LongLiteral, mode("<<<<<<<<<<"));
+  ASSERT_EQ(Mode::Regex, mode("(?i)§"));
   ASSERT_EQ(Mode::Regex, mode(",*"));
   ASSERT_EQ(Mode::Regex, mode("(,)"));
   ASSERT_EQ(Mode::Regex, mode(":{2}"));
@@ -541,8 +560,9 @@ TEST(PatternTokenizerFastSplit, eligibility) {
 
 TEST(PatternTokenizerFastSplit, property_oracle) {
   const std::vector<std::string> patterns = {
-    ",",  "\\s+", "[,;]+", "[a-c]", " +",     ";",       "::",
-    ", ", "aa",   "--",    ",|;",   "(?i)::", "(?:,+)+", "(?:ab)+"};
+    ",",  "\\s+", "[,;]+", "[a-c]", " +",        ";",       "::",
+    ", ", "aa",   "--",    ",|;",   "(?i)::",    "(?:,+)+", "(?:ab)+",
+    "§",  "§+",   "a§b",   "→",     "<<<<<<<<<<"};
   uint64_t seed = 0xfa57;
   const auto next = [&] {
     seed = seed * 6364136223846793005ULL + 1442695040888963407ULL;
@@ -553,7 +573,10 @@ TEST(PatternTokenizerFastSplit, property_oracle) {
     for (const std::string_view v :
          {std::string_view{""}, std::string_view{","}, std::string_view{",,"},
           std::string_view{"x"}, std::string_view{",x,"},
-          std::string_view{"a b,c;d"}}) {
+          std::string_view{"a b,c;d"}, std::string_view{"аба→цаба→→x"},
+          std::string_view{"→→"}, std::string_view{"§x§§"},
+          std::string_view{"a§b§§c"},
+          std::string_view{"x<<<<<<<<<<y<<<<<<<<<<<<z"}}) {
       SCOPED_TRACE(testing::Message()
                    << "pattern=" << pattern << " value=\"" << v << "\"");
       AssertPatternFastMatchesRegex(pattern, v);

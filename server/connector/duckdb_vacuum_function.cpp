@@ -249,13 +249,13 @@ void CompactInvertedStorage(search::InvertedIndexStorage& inverted,
   };
   auto acquire = [&engine](uint32_t want) -> uint32_t {
     return static_cast<uint32_t>(
-      engine.TryAcquireMergeHelpers(static_cast<int>(want)));
+      engine.AcquireAnnWorkers(static_cast<int>(want)));
   };
   auto release = [&engine](uint32_t n) {
-    engine.ReleaseMergeHelpers(static_cast<int>(n));
+    engine.ReleaseAnnWorkers(static_cast<int>(n));
   };
   const irs::AnnBuildEnv env{
-    .executor = &BackgroundScheduler::instance().executor(),
+    .executor = &BackgroundScheduler::instance().annExecutor(),
     .acquire = acquire,
     .release = release};
   const irs::AnnBuildEnv* env_ptr = slot ? &env : nullptr;

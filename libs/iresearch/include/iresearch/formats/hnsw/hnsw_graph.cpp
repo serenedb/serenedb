@@ -20,8 +20,6 @@
 
 #include "iresearch/formats/hnsw/hnsw_graph.hpp"
 
-#include <faiss/utils/distances.h>
-
 #include <cmath>
 
 #include "iresearch/store/data_input.hpp"
@@ -37,10 +35,6 @@ void WriteArray(DataOutput& out, const std::vector<T>& v) {
     out.WriteData(reinterpret_cast<const byte_type*>(v.data()),
                   sizeof(T) * v.size());
   }
-}
-
-const float* BatchRow(const float* base, uint32_t d, uint32_t id) noexcept {
-  return base + static_cast<size_t>(id) * d;
 }
 
 template<typename T>
@@ -103,50 +97,6 @@ HnswGraph HnswGraph::Deserialize(IndexInput& in) {
   return g;
 }
 
-void HnswBatchL2Sqr(const float* q, const float* base, uint32_t d,
-                    std::span<const uint32_t> ids, score_t* out) noexcept {
-  size_t i = 0;
-  for (; i + 4 <= ids.size(); i += 4) {
-    float d0 = 0.f;
-    float d1 = 0.f;
-    float d2 = 0.f;
-    float d3 = 0.f;
-    faiss::fvec_L2sqr_batch_4(q, BatchRow(base, d, ids[i]),
-                              BatchRow(base, d, ids[i + 1]),
-                              BatchRow(base, d, ids[i + 2]),
-                              BatchRow(base, d, ids[i + 3]), d, d0, d1, d2, d3);
-    out[i] = -d0;
-    out[i + 1] = -d1;
-    out[i + 2] = -d2;
-    out[i + 3] = -d3;
-  }
-  for (; i < ids.size(); ++i) {
-    out[i] = -faiss::fvec_L2sqr(q, BatchRow(base, d, ids[i]), d);
-  }
-}
-
-void HnswBatchIp(const float* q, const float* base, uint32_t d,
-                 std::span<const uint32_t> ids, score_t* out) noexcept {
-  size_t i = 0;
-  for (; i + 4 <= ids.size(); i += 4) {
-    float d0 = 0.f;
-    float d1 = 0.f;
-    float d2 = 0.f;
-    float d3 = 0.f;
-    faiss::fvec_inner_product_batch_4(
-      q, BatchRow(base, d, ids[i]), BatchRow(base, d, ids[i + 1]),
-      BatchRow(base, d, ids[i + 2]), BatchRow(base, d, ids[i + 3]), d, d0, d1,
-      d2, d3);
-    out[i] = d0;
-    out[i + 1] = d1;
-    out[i + 2] = d2;
-    out[i + 3] = d3;
-  }
-  for (; i < ids.size(); ++i) {
-    out[i] = faiss::fvec_inner_product(q, BatchRow(base, d, ids[i]), d);
-  }
-}
-
 uint32_t HnswRandomLevel(uint64_t& rng_state, uint32_t m) noexcept {
   rng_state ^= rng_state << 13;
   rng_state ^= rng_state >> 7;
@@ -155,7 +105,8 @@ uint32_t HnswRandomLevel(uint64_t& rng_state, uint32_t m) noexcept {
     static_cast<double>(rng_state >> 11) / static_cast<double>(1ULL << 53);
   const double factor = 1.0 / std::log(static_cast<double>(std::max(m, 2U)));
   const double sample = -std::log(u > 0.0 ? u : 1e-12) * factor;
-  return std::min(static_cast<uint32_t>(sample) + 1, kHnswMaxLevel);
+  return std::min(static_cast<uint32_t>(std::lround(sample)) + 1,
+                  kHnswMaxLevel);
 }
 
 }  // namespace irs

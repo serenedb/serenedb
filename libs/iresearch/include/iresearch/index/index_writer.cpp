@@ -1272,6 +1272,7 @@ IndexWriter::ptr IndexWriter::Make(Directory& dir, Format::ptr codec,
     std::move(codec), options.segment_pool_size, SegmentOptions{options},
     options.comparator, options.meta_payload_provider, std::move(reader));
   writer->_db = options.db;
+  writer->_ann_env = options.ann_env;
   // Wrap the provider callbacks into the fallback options (tests).
   if (options.column_options || options.norm_column_id) {
     writer->_field_options = std::make_shared<const FunctionFieldOptions>(
@@ -1720,6 +1721,7 @@ SegmentWriterOptions IndexWriter::GetSegmentWriterOptions(
                                    : *_dir.ResourceManager().transactions,
     .db = _db,
     .field_options = field_options ? field_options : _field_options.get(),
+    .ann_env = compaction ? nullptr : _ann_env,
   };
 }
 

@@ -35,10 +35,43 @@ ABSL_FLAG(uint64_t, background_threads, 0,
           "Number of background worker threads (drop / cleanup / maintenance "
           "tasks; later object-store prefetch). 0 = auto-detect.");
 
+ABSL_FLAG(uint64_t, ann_build_threads, 0,
+          "Workers one ANN (HNSW/IVF) graph build may use, including the "
+          "calling thread. Drawn from a pool of its own, not from "
+          "--background_threads. 0 = auto-detect from core count.");
+
 namespace sdb {
 
+// Workers ONE ANN build may use, mirroring qdrant's thread_count_for_hnsw: the
+// graph stops getting faster well before it stops getting more threads, and
+// past ~16 concurrent writers it starts fragmenting (disconnected components).
+// This is deliberately a PER-BUILD cap and not the whole machine -- see
+// AnnBuildBudget.
+std::uint64_t BackgroundScheduler::AnnBuildThreads() noexcept {
+  const auto configured = absl::GetFlag(FLAGS_ann_build_threads);
+  if (configured != 0) {
+    return configured;
+  }
+  const auto cores = static_cast<std::uint64_t>(CountLogicalCores());
+  if (cores <= 48) {
+    return std::max<std::uint64_t>(1, std::min<std::uint64_t>(8, cores));
+  }
+  return cores <= 64 ? 12 : 16;
+}
+
+// Workers summed over every ANN build in flight. The machine, not the per-build
+// cap: two segments flushing at once should fill the box between them, which is
+// what qdrant does -- its cpu_budget is cores - 1 while each build asks for
+// only thread_count_for_hnsw(cores), so the first build cannot starve the
+// second.
+std::uint64_t BackgroundScheduler::AnnBuildBudget() noexcept {
+  return std::max<std::uint64_t>(
+    1, static_cast<std::uint64_t>(CountLogicalCores()));
+}
+
 BackgroundScheduler::BackgroundScheduler()
-  : _threads(absl::GetFlag(FLAGS_background_threads)) {
+  : _threads(absl::GetFlag(FLAGS_background_threads)),
+    _ann_threads(AnnBuildThreads()) {
   // Pool size = max(logical_cores / 4, 2): floor 2 on small boxes, scaling at
   // quarter-rate on big ones. The compaction gate (max concurrent CPU-heavy
   // merges, in SearchEngine) derives from this as pool - 1: merges may use all
@@ -49,6 +82,7 @@ BackgroundScheduler::BackgroundScheduler()
     _threads = std::max<std::uint64_t>(2, CountLogicalCores() / 4);
   }
   absl::SetFlag(&FLAGS_background_threads, _threads);
+  absl::SetFlag(&FLAGS_ann_build_threads, _ann_threads);
   gInstance = this;
 }
 
@@ -56,9 +90,20 @@ BackgroundScheduler::~BackgroundScheduler() { gInstance = nullptr; }
 
 void BackgroundScheduler::start() {
   _pool = yaclib::MakeFairThreadPool(_threads);
+  // Sized by the whole ANN budget, not one build's cap: several builds can be
+  // in flight at once and their helpers all land here. One less than the
+  // budget, because each build's own calling thread is worker 0 and runs a
+  // share itself.
+  _ann_pool = yaclib::MakeFairThreadPool(
+    std::max<std::uint64_t>(1, AnnBuildBudget() - 1));
 }
 
 void BackgroundScheduler::stop() {
+  if (_ann_pool) {
+    _ann_pool->SoftStop();
+    _ann_pool->Wait();
+    _ann_pool = nullptr;
+  }
   if (_pool) {
     _pool->SoftStop();
     _pool->Wait();

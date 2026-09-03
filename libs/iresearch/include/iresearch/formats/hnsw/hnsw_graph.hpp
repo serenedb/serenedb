@@ -20,6 +20,8 @@
 
 #pragma once
 
+#include <faiss/utils/distances.h>
+
 #include <algorithm>
 #include <atomic>
 #include <cstdint>
@@ -30,8 +32,8 @@
 #include <vector>
 
 #include "basics/assert.h"
+#include "iresearch/index/column_info.hpp"
 #include "iresearch/types.hpp"
-
 namespace irs {
 
 class DataOutput;
@@ -43,21 +45,11 @@ inline constexpr uint32_t kHnswDefaultM = 32;
 inline constexpr uint32_t kHnswDefaultEfConstruction = 200;
 inline constexpr uint32_t kHnswDefaultEfSearch = 64;
 inline constexpr uint32_t kHnswSerialWarmup = 256;
-// Below this many nodes per worker the fan-out costs more than it saves.
 inline constexpr size_t kHnswMinRowsPerWorker = 1024;
-// Upper bound only: the merge-CPU gate is the real budget, and it already
-// accounts for how many merges are running. Capping lower than the gate leaves
-// granted CPU idle whenever few merges are in flight.
-inline constexpr uint32_t kHnswMaxHelpers = 64;
-// Claim size on the shared cursor: large enough that the atomic is noise,
-// small enough that the tail is short.
+inline constexpr uint32_t kHnswMaxWorkers = 64;
 inline constexpr size_t kHnswInsertGranule = 256;
-// Rows fed to the quantizer before encoding starts. Bounded because the pass
-// maps the whole segment column, and both the centroid and a per-dimension
-// range converge well before the last row.
 inline constexpr uint64_t kHnswTrainSample = 262144;
-inline constexpr uint32_t kHnswMaxLevel =
-  std::numeric_limits<uint8_t>::max();
+inline constexpr uint32_t kHnswMaxLevel = std::numeric_limits<uint8_t>::max();
 inline constexpr uint32_t kHnswFormatVersion = 1;
 inline constexpr uint64_t kHnswBuildSeed = 0x9E3779B97F4A7C15ULL;
 
@@ -86,8 +78,8 @@ class HnswVisited {
   }
 
  private:
-  std::vector<uint32_t> _marks;
-  uint32_t _generation = 0;
+  std::vector<uint16_t> _marks;
+  uint16_t _generation = 0;
 };
 
 struct HnswCandidate {
@@ -176,30 +168,60 @@ class HnswGraph {
 
 uint32_t HnswRandomLevel(uint64_t& rng_state, uint32_t m) noexcept;
 
-// Score `ids` against `q` four rows at a time, keeping the query in registers
-// across the group and running four independent accumulator chains. Both write
-// larger-is-nearer scores, so L2Sqr is negated.
-void HnswBatchL2Sqr(const float* q, const float* base, uint32_t d,
-                    std::span<const uint32_t> ids, score_t* out) noexcept;
+template<VectorMetric M>
+void HnswComputeDistances(const float* q, const float* base, uint32_t d,
+                          std::span<const uint32_t> ids,
+                          score_t* out) noexcept {
+  constexpr auto kKernel = EffectiveQuantMetric(M);
+  constexpr float kSign = kKernel == VectorMetric::L2Sqr ? -1.f : 1.f;
+  const auto row = [base, d](uint32_t id) noexcept {
+    return base + static_cast<size_t>(id) * d;
+  };
 
-void HnswBatchIp(const float* q, const float* base, uint32_t d,
-                 std::span<const uint32_t> ids, score_t* out) noexcept;
+  size_t i = 0;
+  if constexpr (kKernel == VectorMetric::L2Sqr ||
+                kKernel == VectorMetric::InnerProduct) {
+    for (; i + 4 <= ids.size(); i += 4) {
+      float d0 = 0.f;
+      float d1 = 0.f;
+      float d2 = 0.f;
+      float d3 = 0.f;
+      if constexpr (kKernel == VectorMetric::L2Sqr) {
+        faiss::fvec_L2sqr_batch_4(q, row(ids[i]), row(ids[i + 1]),
+                                  row(ids[i + 2]), row(ids[i + 3]), d, d0, d1,
+                                  d2, d3);
+      } else {
+        faiss::fvec_inner_product_batch_4(q, row(ids[i]), row(ids[i + 1]),
+                                          row(ids[i + 2]), row(ids[i + 3]), d,
+                                          d0, d1, d2, d3);
+      }
+      out[i] = kSign * d0;
+      out[i + 1] = kSign * d1;
+      out[i + 2] = kSign * d2;
+      out[i + 3] = kSign * d3;
+    }
+  }
+
+  for (; i < ids.size(); ++i) {
+    if constexpr (kKernel == VectorMetric::L2Sqr) {
+      out[i] = kSign * faiss::fvec_L2sqr(q, row(ids[i]), d);
+    } else if constexpr (kKernel == VectorMetric::InnerProduct) {
+      out[i] = faiss::fvec_inner_product(q, row(ids[i]), d);
+    } else {
+      out[i] =
+        ComputeDistance<kKernel>(q, row(ids[i]), static_cast<uint16_t>(d));
+    }
+  }
+}
 
 inline constexpr score_t kHnswNoThreshold =
   std::numeric_limits<score_t>::lowest();
 
-// Link slots are read without a lock while a parallel build rewrites them under
-// one. A stale or replaced slot still names a real node, and a slot caught
-// mid-rewrite only truncates the scan early, so relaxed is enough for the id
-// itself -- but the reader must pair a single acquire fence with these loads
-// before following an id into that node's own rows.
 inline auto HnswLoadLink(const uint32_t& slot) noexcept -> uint32_t {
   return std::atomic_ref<uint32_t>{const_cast<uint32_t&>(slot)}.load(
     std::memory_order_relaxed);
 }
 
-// Release: a node's id becomes visible in a peer's row only after the node's
-// own rows at every level are published.
 inline void HnswStoreLink(uint32_t& slot, uint32_t id) noexcept {
   std::atomic_ref<uint32_t>{slot}.store(id, std::memory_order_release);
 }
@@ -298,10 +320,6 @@ HnswCandidate HnswGreedyDescent(const HnswGraph& graph, Dist& dist,
   return cur;
 }
 
-// A back-link owed to `peer` at `level`, queued until the inserting node has
-// written its own rows at every level. Until then the node must stay
-// unreachable: a peer that already names it could otherwise be descended
-// through into rows that are still empty.
 struct HnswPendingLink {
   uint32_t peer;
   uint32_t level;
@@ -310,7 +328,6 @@ struct HnswPendingLink {
 struct HnswBuildScratch {
   HnswSearchScratch search;
   std::vector<uint32_t> selected;
-  std::vector<uint32_t> reverse_selected;
   std::vector<HnswCandidate> peer_candidates;
   std::vector<uint32_t> link_ids;
   std::vector<score_t> peer_scores;
@@ -320,17 +337,31 @@ struct HnswBuildScratch {
   std::vector<uint32_t> select_ids;
 };
 
-// Keeps a candidate when no already-accepted neighbour sits closer to it than
-// the query does. Scored from the accepted side rather than the candidate side:
-// both compute the same pairs, but this re-keys the distance once per accepted
-// node instead of once per candidate examined, which is what a quantized Dist
-// charges for.
 template<typename Dist>
 void HnswSelectNeighbors(Dist& dist, std::span<const HnswCandidate> sorted,
                          uint32_t limit, HnswBuildScratch& s) {
   auto& out = s.selected;
   out.clear();
   if (sorted.empty() || limit == 0) {
+    return;
+  }
+  if (dist.CheapPair()) {
+    for (const auto& cand : sorted) {
+      bool keep = true;
+      for (const auto accepted : out) {
+        if (dist.Pair(cand.node, accepted) > cand.score) {
+          keep = false;
+          break;
+        }
+      }
+      if (!keep) {
+        continue;
+      }
+      out.push_back(cand.node);
+      if (out.size() >= limit) {
+        break;
+      }
+    }
     return;
   }
   auto& blocked = s.select_blocked;
@@ -369,17 +400,11 @@ void HnswSelectNeighbors(Dist& dist, std::span<const HnswCandidate> sorted,
   }
 }
 
-// Serial builds instantiate the insert path against this and pay nothing.
 struct HnswNoSync {
   struct Guard {};
   static Guard Lock(uint32_t /*node*/) noexcept { return {}; }
 };
 
-// One mutex per stripe of node ids: a lock per node would cost more than the
-// graph at 100M rows, and with a handful of writers over 4096 stripes a
-// collision is rare enough that the wider critical section is free.
-// Guards are taken one at a time and never nested, so there is no lock order
-// to violate.
 class HnswStripeSync {
  public:
   HnswStripeSync() : _stripes(kStripes) {}
@@ -396,10 +421,6 @@ class HnswStripeSync {
   std::deque<std::mutex> _stripes;
 };
 
-
-// Rewrites `peer`'s row at `level` to include `node`. The read, the heuristic
-// and the rewrite are one critical section: two writers that both observed a
-// full row would otherwise each drop the other's link.
 template<typename Sync, typename Dist>
 void HnswLinkReverse(HnswGraph& graph, Dist& dist, uint32_t peer, uint32_t node,
                      uint32_t level, HnswBuildScratch& s, Sync& sync) {
@@ -432,11 +453,23 @@ void HnswLinkReverse(HnswGraph& graph, Dist& dist, uint32_t peer, uint32_t node,
   }
 
   s.node_scores.resize(ids.size());
-  dist.PairBatch(node, ids, s.node_scores.data());
-
-  for (size_t j = 0; j < pos; ++j) {
-    if (s.node_scores[j] > score) {
-      return;
+  if (dist.CheapPair()) {
+    for (size_t j = 0; j < pos; ++j) {
+      s.node_scores[j] = dist.Pair(node, ids[j]);
+      if (s.node_scores[j] > score) {
+        return;
+      }
+    }
+    if (pos < ids.size()) {
+      dist.PairBatch(node, std::span<const uint32_t>{ids}.subspan(pos),
+                     s.node_scores.data() + pos);
+    }
+  } else {
+    dist.PairBatch(node, ids, s.node_scores.data());
+    for (size_t j = 0; j < pos; ++j) {
+      if (s.node_scores[j] > score) {
+        return;
+      }
     }
   }
 

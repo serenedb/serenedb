@@ -60,8 +60,17 @@ inline std::string FileName(std::string_view segment_name) {
 
 class ColReader final {
  public:
+  // `advice` is the madvise applied to the .col mapping, and it has to match
+  // how the caller will read it. Merging and flushing stream the whole file, so
+  // they keep SEQUENTIAL. Serving queries hits scattered rows -- ANN rerank
+  // re-scores k x rerank_factor candidates against the stored vectors -- and
+  // MADV_SEQUENTIAL doubles the readahead window, so it turned a 4 KB vector
+  // read into ~675 KB of transfer. Measured on the 247M index: 23.2 MB read per
+  // query to rescore 40 candidates needing 160 KB, a 145x amplification that
+  // pinned the device at 1.32 GB/s and capped rerank at 57 q/s.
   ColReader(const Directory& dir, std::string_view segment_name,
-            duckdb::DatabaseInstance& db);
+            duckdb::DatabaseInstance& db,
+            IOAdvice advice = IOAdvice::SEQUENTIAL);
   ~ColReader();
 
   ColReader(const ColReader&) = delete;

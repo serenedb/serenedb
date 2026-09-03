@@ -33,13 +33,13 @@
 #include <filesystem>
 #include <iresearch/index/column_info.hpp>
 #include <iresearch/index/directory_reader.hpp>
-#include <iresearch/utils/async.hpp>
 #include <iresearch/index/index_meta.hpp>
 #include <iresearch/index/index_writer.hpp>
 #include <iresearch/index/norm.hpp>
 #include <iresearch/store/directory_attributes.hpp>
 #include <iresearch/store/fs_directory.hpp>
 #include <iresearch/store/mmap_directory.hpp>
+#include <iresearch/utils/async.hpp>
 #include <memory>
 #include <system_error>
 #include <yaclib/coro/await.hpp>
@@ -56,6 +56,7 @@
 #include "catalog/store/store.h"
 #include "pg/sql_exception_macro.h"
 #include "query/transaction.h"
+#include "scheduler/background_scheduler.h"
 #include "search/tick_domain.h"
 #include "search/wal_recovery.h"
 #include "storage_engine/search_engine.h"
@@ -202,7 +203,27 @@ InvertedIndexStorage::InvertedIndexStorage(ObjectId id,
   _dir = std::make_unique<irs::MMapDirectory>(path, irs::DirectoryAttributes{},
                                               resource_manager);
 
+  // Take whatever the gate offers and never wait. CREATE INDEX is a
+  // ParallelSink: every DuckDB sink thread flushes its own tail segment, so a
+  // blocking wait here parks a foreground statement thread and serialises those
+  // flushes behind each other. The gate charges each build for its own calling
+  // thread, so N concurrent flushes settle at N workers rather than each
+  // fanning out; a grant of 1 means this build runs serial on the thread it is
+  // already on, which is still forward progress.
+  _ann_acquire = [this](uint32_t want) -> uint32_t {
+    return static_cast<uint32_t>(
+      _search.AcquireAnnWorkers(static_cast<int>(want)));
+  };
+  _ann_release = [this](uint32_t n) {
+    _search.ReleaseAnnWorkers(static_cast<int>(n));
+  };
+  _ann_build_env.emplace(
+    irs::AnnBuildEnv{.executor = &BackgroundScheduler::instance().annExecutor(),
+                     .acquire = _ann_acquire,
+                     .release = _ann_release});
+
   irs::IndexWriterOptions writer_options;
+  writer_options.ann_env = &*_ann_build_env;
   writer_options.segment_memory_max = options.segment_memory_max;
   writer_options.segment_docs_max = options.segment_docs_max;
 #ifdef SDB_DEV

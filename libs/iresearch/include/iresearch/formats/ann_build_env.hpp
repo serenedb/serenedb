@@ -27,17 +27,6 @@
 
 namespace irs {
 
-// Server-injected budget for a parallel ANN build. iresearch owns no threads:
-// `executor` is the pool that already admitted this merge, and acquire/release
-// draw extra workers from the same gate, so the build degrades to serial when
-// the pool is saturated. A null env means "build on the calling thread": the
-// build then never suspends and its Future is ready on return.
-//
-// acquire/release are consulted around the parallel phase only, never for the
-// whole merge, so helpers are not held across the column copy.
-//
-// The FunctionRef referents must outlive the merge -- bind named locals, never
-// temporaries.
 struct AnnBuildEnv {
   yaclib::IExecutor* executor = nullptr;
   absl::FunctionRef<uint32_t(uint32_t)> acquire;

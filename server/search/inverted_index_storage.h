@@ -27,12 +27,15 @@
 
 #include <atomic>
 #include <filesystem>
+#include <functional>
+#include <iresearch/formats/ann_build_env.hpp>
 #include <iresearch/index/index_writer.hpp>
 #include <iresearch/search/scorer.hpp>
 #include <limits>
 #include <map>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <vector>
 
 #include "catalog/inverted_index.h"
@@ -331,6 +334,11 @@ class InvertedIndexStorage final
   std::unique_ptr<irs::Directory> _dir;
   std::unique_ptr<irs::Scorer> _topk_scorer;
   std::shared_ptr<irs::IndexWriter> _writer;
+  // Referents for _ann_build_env's FunctionRefs: they must outlive _writer, so
+  // they are members rather than locals of the constructor that binds them.
+  std::function<uint32_t(uint32_t)> _ann_acquire;
+  std::function<void(uint32_t)> _ann_release;
+  std::optional<irs::AnnBuildEnv> _ann_build_env;
   std::atomic<bool> _reindex_in_flight{false};
   TasksSettings _tasks_settings;
   absl::Mutex _refresh_mutex;

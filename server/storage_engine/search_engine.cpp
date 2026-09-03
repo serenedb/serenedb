@@ -47,6 +47,7 @@
 #include "catalog/view.h"
 #include "pg/sql_exception_macro.h"
 #include "rest_server/database_path_feature.h"
+#include "scheduler/background_scheduler.h"
 #include "search/inverted_index_storage.h"
 #include "search/search_db_wal.h"
 #include "search/search_table_recovery.h"
@@ -90,6 +91,19 @@ int SearchEngine::MaxConcurrentCompactions() noexcept {
   // cleanup, and drop are light and interleave on the single spare thread.
   return std::max<int>(
     1, static_cast<int>(absl::GetFlag(FLAGS_background_threads)) - 1);
+}
+
+int SearchEngine::MaxAnnBuildWorkers() noexcept {
+  // Workers, not helpers: each build's own calling thread is charged against
+  // this too, so the pool (sized AnnBuildBudget() - 1) is never asked to host
+  // more helpers than it has threads.
+  return std::max<int>(1,
+                       static_cast<int>(BackgroundScheduler::AnnBuildBudget()));
+}
+
+int SearchEngine::MaxAnnWorkersPerBuild() noexcept {
+  return std::max<int>(
+    1, static_cast<int>(BackgroundScheduler::AnnBuildThreads()));
 }
 
 int SearchEngine::MaxConcurrentMerges() noexcept {

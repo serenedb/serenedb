@@ -109,7 +109,8 @@ SegmentWriter::SegmentWriter(ConstructToken, Directory& dir,
     _docs_context{{options.resource_manager}},
     _fields{options.resource_manager, options.scorers_features},
     _db{DerefDb(options.db)},
-    _fallback_field_options{options.field_options} {
+    _fallback_field_options{options.field_options},
+    _ann_env{options.ann_env} {
   _docs_mask.set = decltype(_docs_mask.set){{options.resource_manager}};
 }
 
@@ -166,7 +167,11 @@ void SegmentWriter::FlushFields(FlushState& state,
   if (_col_writer) {
     _col_writer->SetIdxWriter(idx);
     _col_writer->Commit(buffered_docs());
-    GetReady(_col_writer->ComputeAnn(/*env=*/nullptr));
+    if (_ann_env != nullptr) {
+      GetBlocking(_col_writer->ComputeAnn(_ann_env));
+    } else {
+      GetReady(_col_writer->ComputeAnn(/*env=*/nullptr));
+    }
     ann_writers = _col_writer->TakeAnnWriters();
     _col_writer.reset();
   }

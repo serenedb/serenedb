@@ -180,6 +180,8 @@ AnnWriter& ColWriter::AttachAnn(field_id column_id, AnnInfo info) {
     case AnnKind::Hnsw:
       entry->writer = std::make_unique<HnswWriter>(info);
       break;
+    default:
+      SDB_UNREACHABLE();
   }
   entry->info = std::move(info);
   auto& back = *_ann_writers.emplace_back(std::move(entry));

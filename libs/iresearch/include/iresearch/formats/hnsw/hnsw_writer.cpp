@@ -20,30 +20,30 @@
 
 #include "iresearch/formats/hnsw/hnsw_writer.hpp"
 
-#include "iresearch/utils/bytes_output.hpp"
-
+#include <absl/cleanup/cleanup.h>
+#include <absl/strings/str_cat.h>
 #include <fcntl.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
 #include <unistd.h>
-#include <absl/cleanup/cleanup.h>
-#include <absl/strings/str_cat.h>
 
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <chrono>
 #include <cstring>
 #include <duckdb/common/types/vector.hpp>
 #include <duckdb/common/vector/array_vector.hpp>
 #include <yaclib/async/run.hpp>
+#include <yaclib/async/wait.hpp>
 #include <yaclib/coro/await.hpp>
 #include <yaclib/coro/future.hpp>
 
 #include "basics/assert.h"
-#include "iresearch/store/directory.hpp"
-#include "iresearch/store/fs_directory.hpp"
 #include "basics/down_cast.h"
+#include "basics/log.h"
 #include "basics/misc.hpp"
+#include "basics/topic.h"
 #include "iresearch/formats/column/column_reader.hpp"
 #include "iresearch/formats/column/merge.hpp"
 #include "iresearch/formats/column/read_context.hpp"
@@ -52,7 +52,11 @@
 #include "iresearch/formats/index/idx_writer.hpp"
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/store/data_output.hpp"
+#include "iresearch/store/directory.hpp"
+#include "iresearch/store/fs_directory.hpp"
+#include "iresearch/utils/bytes_output.hpp"
 #include "iresearch/utils/vector.hpp"
+#include "pg/sql_exception_macro.h"
 
 namespace irs {
 namespace {
@@ -65,23 +69,15 @@ struct HnswRawDist {
 
   void SetQuery(uint32_t id) noexcept { q = Row(id); }
 
+  void SetWindow(const float*, uint32_t, uint32_t) noexcept {}
+
   const float* Row(uint32_t id) const noexcept {
     return base + static_cast<size_t>(id) * d;
   }
 
   void BatchFrom(const float* query, std::span<const uint32_t> ids,
                  score_t* out) const noexcept {
-    if constexpr (EffectiveQuantMetric(M) == VectorMetric::L2Sqr) {
-      HnswBatchL2Sqr(query, base, d, ids, out);
-    } else if constexpr (EffectiveQuantMetric(M) ==
-                         VectorMetric::InnerProduct) {
-      HnswBatchIp(query, base, d, ids, out);
-    } else {
-      for (size_t i = 0; i < ids.size(); ++i) {
-        out[i] = ComputeDistance<EffectiveQuantMetric(M)>(
-          query, Row(ids[i]), static_cast<uint16_t>(d));
-      }
-    }
+    HnswComputeDistances<M>(query, base, d, ids, out);
   }
 
   score_t One(uint32_t id) const noexcept {
@@ -109,11 +105,11 @@ struct HnswRawDist {
                  score_t* out) const noexcept {
     BatchFrom(Row(from), to, out);
   }
+
+  // No query state to build: a pair is one distance over two stored rows.
+  static constexpr bool CheapPair() noexcept { return true; }
 };
 
-// Largest merge source whose graph we can adopt wholesale, or nullptr. Only
-// the donor needs a reusable graph -- every other source's rows are inserted
-// as a delta, exactly as a fresh flush would insert them.
 struct MergeDonor {
   const HnswIndex* index = nullptr;
   const SubReader* reader = nullptr;
@@ -122,8 +118,6 @@ struct MergeDonor {
   uint64_t alive = 0;
 };
 
-// qdrant's healing_threshold: past this share of deleted rows the donor's link
-// structure has decayed enough that healing costs more than it saves.
 inline constexpr double kHnswMaxMissingRatio = 0.3;
 
 MergeDonor PickMergeDonor(std::span<const MergeSource> sources, field_id column,
@@ -172,10 +166,6 @@ struct HealScratch {
   HnswVisited walked;
 };
 
-// Re-select a node's neighbours at `level` after some were dropped. Candidates
-// are the surviving links plus the frontier found by walking the DONOR graph
-// *through* the deleted nodes -- the survivors a deleted node used to bridge to
-// are unreachable in the new graph, since it no longer contains that node.
 template<typename Dist>
 void HealNode(HnswGraph& graph, const HnswGraph& src_graph,
               std::span<const uint32_t> remap, Dist& dist, uint32_t src_node,
@@ -233,21 +223,16 @@ void HealNode(HnswGraph& graph, const HnswGraph& src_graph,
   std::ranges::sort(pool, [](const HnswCandidate& l, const HnswCandidate& r) {
     return l.score > r.score;
   });
-  HnswSelectNeighbors(dist, pool, static_cast<uint32_t>(links.size()),
-                      scratch);
+  HnswSelectNeighbors(dist, pool, static_cast<uint32_t>(links.size()), scratch);
   for (size_t i = 0; i < links.size(); ++i) {
-    HnswStoreLink(links[i], i < scratch.selected.size()
-                              ? scratch.selected[i]
-                              : kHnswInvalidNode);
+    HnswStoreLink(links[i], i < scratch.selected.size() ? scratch.selected[i]
+                                                        : kHnswInvalidNode);
   }
   for (const auto peer : scratch.selected) {
     HnswLinkReverse(graph, dist, peer, node, level, scratch);
   }
 }
 
-// Streams the column in batches, normalising in place when the metric asks for
-// it. Called twice -- once to train and once to encode -- so that the raw
-// matrix never has to be held whole.
 template<typename Fn>
 uint64_t ScanVectors(const ColumnReader& col, ReadContext& ctx, uint64_t rows,
                      uint32_t d, bool normalize, std::vector<float>& buf,
@@ -277,6 +262,98 @@ uint64_t ScanVectors(const ColumnReader& col, ReadContext& ctx, uint64_t rows,
   return rows;
 }
 
+inline constexpr uint64_t kHnswMinRowsPerEncoder = 32768;
+
+bool EncodeColumn(const ColumnReader& col, ReadContext& ctx, uint64_t rows,
+                  uint32_t d, bool normalize, QuantizerWriter& qw,
+                  byte_type* codes, uint32_t record_size,
+                  std::vector<uint8_t>& valid, const AnnBuildEnv* env) {
+  const bool can_fan_out = env != nullptr && env->executor != nullptr;
+  const auto want = can_fan_out
+                      ? static_cast<uint32_t>(std::clamp<uint64_t>(
+                          rows / kHnswMinRowsPerEncoder, 1, kHnswMaxWorkers))
+                      : 1U;
+  const uint32_t workers = want > 1 ? env->acquire(want) : 1;
+  absl::Cleanup release_workers = [&] {
+    if (want > 1) {
+      env->release(workers);
+    }
+  };
+
+  std::vector<std::unique_ptr<QuantizerWriter>> spare;
+  for (uint32_t i = 1; i < workers; ++i) {
+    auto clone = qw.CloneForEncode();
+    if (!clone) {
+      break;
+    }
+    spare.push_back(std::move(clone));
+  }
+  const size_t parts = spare.size() + 1;
+
+  std::vector<float> owned;
+  std::vector<yaclib::FutureOn<>> runs;
+  runs.reserve(spare.size());
+  ColumnReader::VectorScratch scratch{col.Type()};
+  auto scan = col.InitScan(ctx);
+  std::atomic<bool> ok{true};
+
+  for (uint64_t done = 0; done < rows;) {
+    const auto take = static_cast<duckdb::idx_t>(
+      std::min<uint64_t>(STANDARD_VECTOR_SIZE, rows - done));
+    auto& batch = scratch.Reset();
+    col.Scan(scan, batch, take);
+    const auto& mask = duckdb::FlatVector::Validity(batch);
+    auto* src =
+      duckdb::FlatVector::GetData<float>(duckdb::ArrayVector::GetChild(batch));
+    const float* vecs = src;
+    if (normalize) {
+      owned.assign(src, src + static_cast<size_t>(take) * d);
+      vecs = owned.data();
+    }
+    for (duckdb::idx_t i = 0; i < take; ++i) {
+      if (!mask.RowIsValid(i)) {
+        valid[done + i] = 0;
+      }
+    }
+
+    const size_t n = take;
+    const auto run_part = [&](size_t w) {
+      const size_t lo = n * w / parts;
+      const size_t hi = n * (w + 1) / parts;
+      if (lo >= hi) {
+        return;
+      }
+      if (normalize) {
+        for (size_t i = lo; i < hi; ++i) {
+          float* v = owned.data() + i * size_t{d};
+          vector::L2Space<float, float, float>::Normalize(
+            reinterpret_cast<const byte_type*>(v), static_cast<uint16_t>(d), v);
+        }
+      }
+      auto& writer = w == 0 ? qw : *spare[w - 1];
+      if (!writer.EncodeInto(codes + (done + lo) * size_t{record_size},
+                             vecs + lo * size_t{d}, hi - lo)) {
+        ok.store(false, std::memory_order_relaxed);
+      }
+    };
+
+    runs.clear();
+    for (size_t w = 1; w < parts; ++w) {
+      runs.push_back(
+        yaclib::Run(*env->executor, [&run_part, w] { run_part(w); }));
+    }
+    run_part(0);
+    if (!runs.empty()) {
+      yaclib::Wait(runs.begin(), runs.end());
+    }
+    if (!ok.load(std::memory_order_relaxed)) {
+      return false;
+    }
+    done += take;
+  }
+  return true;
+}
+
 template<VectorMetric M>
 struct HnswRawDistFactory {
   const float* base;
@@ -287,30 +364,40 @@ struct HnswRawDistFactory {
   Dist Make() const { return Dist{.base = base, .d = d}; }
 };
 
-// Scores stored rows against each other through their codes. The inserted
-// node's query and the pairwise `from` need different keys and interleave --
-// the heuristic re-keys between the levels of one insertion -- so each gets its
-// own reader rather than one that would clobber the other.
 struct HnswCodeBuildDist {
   const byte_type* codes = nullptr;
   uint32_t record_size = 0;
   uint32_t d = 0;
+  std::span<const float> pair_terms;
   std::shared_ptr<const QuantizerCodebook> query_book;
-  std::shared_ptr<const QuantizerCodebook> pair_book;
   std::unique_ptr<QuantizerReader> query_reader;
-  std::unique_ptr<QuantizerReader> pair_reader;
-  // Separate buffers, not one shared scratch: a scalar reader's SetQuery keeps
-  // the pointer it is handed, so re-keying the pair side would otherwise
-  // repoint the query side at the pair vector.
   std::vector<float> decoded_query;
+  bool symmetric = false;
+  std::shared_ptr<const QuantizerCodebook> pair_book;
+  std::unique_ptr<QuantizerReader> pair_reader;
   std::vector<float> decoded_pair;
   uint32_t pair_key = kHnswInvalidNode;
+  const float* window = nullptr;
+  uint32_t window_first = 0;
+  uint32_t window_count = 0;
 
   const byte_type* Row(uint32_t id) const noexcept {
     return codes + static_cast<size_t>(id) * record_size;
   }
 
+  void SetWindow(const float* base, uint32_t first, uint32_t count) noexcept {
+    window = base;
+    window_first = first;
+    window_count = count;
+  }
+
   void SetQuery(uint32_t id) {
+    if (window != nullptr && id >= window_first &&
+        id - window_first < window_count) {
+      query_reader->SetQuery(
+        {window + static_cast<size_t>(id - window_first) * d, d});
+      return;
+    }
     query_reader->Decode(Row(id), decoded_query.data());
     query_reader->SetQuery(decoded_query);
   }
@@ -330,27 +417,27 @@ struct HnswCodeBuildDist {
     __builtin_prefetch(Row(id), 0, 3);
   }
 
-  void RekeyPair(uint32_t from) {
-    if (pair_key == from) {
-      return;
-    }
-    pair_reader->Decode(Row(from), decoded_pair.data());
-    pair_reader->SetQuery(decoded_pair);
-    pair_key = from;
-  }
-
   score_t Pair(uint32_t a, uint32_t b) {
-    RekeyPair(a);
     score_t s{};
-    pair_reader->ComputeGathered(codes, record_size, {&b, 1}, kHnswNoThreshold,
-                                 &s);
+    PairBatch(a, {&b, 1}, &s);
     return s;
   }
 
   void PairBatch(uint32_t from, std::span<const uint32_t> to, score_t* out) {
-    RekeyPair(from);
+    if (symmetric) {
+      query_reader->ScorePairBatch(codes, record_size, pair_terms, from, to,
+                                   out);
+      return;
+    }
+    if (pair_key != from) {
+      pair_reader->Decode(Row(from), decoded_pair.data());
+      pair_reader->SetQuery(decoded_pair);
+      pair_key = from;
+    }
     pair_reader->ComputeGathered(codes, record_size, to, kHnswNoThreshold, out);
   }
+
+  bool CheapPair() const noexcept { return symmetric; }
 };
 
 struct HnswCodeDistFactory {
@@ -359,15 +446,23 @@ struct HnswCodeDistFactory {
   const QuantizerStats* stats;
   const float* centroid;
   uint32_t d;
+  std::span<const float> pair_terms;
 
   using Dist = HnswCodeBuildDist;
 
-  // A reader that cannot re-key from a stored code would score every candidate
-  // against a zero query, so prove it works before the graph depends on it.
   bool CanRekey() const {
     auto dist = Make();
-    const bool dec = dist.query_reader->Decode(codes, dist.decoded_query.data());
+    const bool dec =
+      dist.query_reader->Decode(codes, dist.decoded_query.data());
     return dec && dist.query_reader->SetQuery(dist.decoded_query);
+  }
+
+  bool PreparePairTerms(uint64_t rows, std::vector<float>& terms) const {
+    auto reader = MakeReader();
+    if (!reader->SupportsPairScores()) {
+      return false;
+    }
+    return reader->PreparePairTerms(codes, record_size, rows, terms);
   }
 
   Dist Make() const {
@@ -375,21 +470,31 @@ struct HnswCodeDistFactory {
     dist.codes = codes;
     dist.record_size = record_size;
     dist.d = d;
+    dist.pair_terms = pair_terms;
+    dist.symmetric = !pair_terms.empty();
     dist.decoded_query.assign(d, 0.f);
-    dist.decoded_pair.assign(d, 0.f);
     dist.query_book = stats->MakeCodebook(dist.decoded_query);
-    dist.pair_book = stats->MakeCodebook(dist.decoded_query);
     dist.query_reader = MakeQuantizerReader(dist.query_book);
-    dist.pair_reader = MakeQuantizerReader(dist.pair_book);
     dist.query_reader->StartCluster(centroid);
-    dist.pair_reader->StartCluster(centroid);
+    if (!dist.symmetric) {
+      dist.decoded_pair.assign(d, 0.f);
+      dist.pair_book = stats->MakeCodebook(dist.decoded_pair);
+      dist.pair_reader = MakeQuantizerReader(dist.pair_book);
+      dist.pair_reader->StartCluster(centroid);
+    }
     return dist;
+  }
+
+ private:
+  std::unique_ptr<QuantizerReader> MakeReader() const {
+    std::vector<float> scratch(d, 0.f);
+    auto book = stats->MakeCodebook(scratch);
+    auto reader = MakeQuantizerReader(book);
+    reader->StartCluster(centroid);
+    return reader;
   }
 };
 
-// Shared state for a parallel insert pass. Workers pull granules off one cursor
-// rather than taking a static slice: insert cost grows with the graph, so an
-// even split by count leaves the last worker running alone.
 template<typename Factory>
 struct HnswInsertJob {
   HnswInsertJob(HnswGraph& graph, const Factory& factory, uint32_t ef,
@@ -404,17 +509,26 @@ struct HnswInsertJob {
     }
   }
 
+  void SetWindow(const float* base, uint32_t first, uint32_t count) noexcept {
+    for (auto& d : _dists) {
+      d.SetWindow(base, first, count);
+    }
+  }
+
+  void Restart(std::span<const uint32_t> nodes) noexcept {
+    _nodes = nodes;
+    _cursor.store(0, std::memory_order_relaxed);
+  }
+
   void RunWorker(size_t worker) noexcept {
     auto& scratch = _scratch[worker];
     auto& dist = _dists[worker];
     for (auto begin = _cursor.fetch_add(kHnswInsertGranule);
-         begin < _nodes.size();
-         begin = _cursor.fetch_add(kHnswInsertGranule)) {
+         begin < _nodes.size(); begin = _cursor.fetch_add(kHnswInsertGranule)) {
       const auto end = std::min(begin + kHnswInsertGranule, _nodes.size());
       for (auto i = begin; i < end; ++i) {
         const auto node = _nodes[i];
-        SDB_ASSERT(_graph.LevelOf(node) <=
-                   _graph.LevelOf(_graph.EntryPoint()));
+        SDB_ASSERT(_graph.LevelOf(node) <= _graph.LevelOf(_graph.EntryPoint()));
         dist.SetQuery(node);
         HnswInsert(_graph, node, dist, _ef, scratch, _sync);
       }
@@ -424,30 +538,29 @@ struct HnswInsertJob {
  private:
   HnswGraph& _graph;
   uint32_t _ef;
-  std::span<const uint32_t> _nodes;
+  std::span<const uint32_t> _nodes;  // retargeted per window by Restart()
   HnswStripeSync _sync;
   std::atomic<size_t> _cursor{0};
   std::vector<HnswBuildScratch> _scratch;
   std::vector<typename Factory::Dist> _dists;
 };
 
-// Insert `nodes`, fanning out onto the pool when the env grants helpers. The
-// first `warmup` go in serially: until the graph has structure every writer
-// lands in the same neighbourhood and serializes on the same rows anyway.
 template<typename Factory>
 auto InsertNodes(HnswGraph& graph, const Factory& factory, uint32_t ef,
                  std::span<const uint32_t> nodes, size_t rows, uint32_t warmup,
                  const AnnBuildEnv* env) -> yaclib::Future<> {
-  const auto want = static_cast<uint32_t>(
-    std::min<size_t>(kHnswMaxHelpers, nodes.size() / kHnswMinRowsPerWorker));
-  const uint32_t helpers =
-    (env != nullptr && env->executor != nullptr && want != 0) ? env->acquire(want)
-                                                              : 0;
-  absl::Cleanup release_helpers = [&] {
-    if (helpers != 0) {
-      env->release(helpers);
+  const bool can_fan_out = env != nullptr && env->executor != nullptr;
+  const auto want =
+    can_fan_out ? static_cast<uint32_t>(std::clamp<size_t>(
+                    nodes.size() / kHnswMinRowsPerWorker, 1, kHnswMaxWorkers))
+                : 1U;
+  const uint32_t workers = want > 1 ? env->acquire(want) : 1;
+  absl::Cleanup release_workers = [&] {
+    if (want > 1) {
+      env->release(workers);
     }
   };
+  const uint32_t helpers = workers - 1;
 
   const size_t serial =
     helpers == 0 ? nodes.size() : std::min<size_t>(nodes.size(), warmup);
@@ -464,26 +577,20 @@ auto InsertNodes(HnswGraph& graph, const Factory& factory, uint32_t ef,
     co_return {};
   }
 
-  HnswInsertJob<Factory> job{graph, factory,      ef, nodes.subspan(serial),
-                             helpers + 1UL, rows};
+  HnswInsertJob<Factory> job{graph,   factory, ef, nodes.subspan(serial),
+                             workers, rows};
   std::vector<yaclib::FutureOn<>> runs;
   runs.reserve(helpers);
   for (uint32_t i = 0; i < helpers; ++i) {
-    runs.push_back(yaclib::Run(*env->executor,
-                               [&job, w = size_t{i} + 1] { job.RunWorker(w); }));
+    runs.push_back(yaclib::Run(
+      *env->executor, [&job, w = size_t{i} + 1] { job.RunWorker(w); }));
   }
   job.RunWorker(0);
   co_await yaclib::Await(runs.begin(), runs.end());
-  // A helper dropped after the pool stopped never claimed anything, so the
-  // cursor can still hold work; draining again costs nothing when it does not.
   job.RunWorker(0);
   co_return {};
 }
 
-// Seed `graph` from the donor's links (remapped to output ids, dropping links
-// to deleted rows), heal the nodes that lost neighbours, then insert every
-// remaining row. Returns false if the donor is unusable, leaving `graph` for
-// the caller to build from scratch.
 template<typename Factory>
 auto BuildGraphFromMerge(HnswGraph& graph, const Factory& factory,
                          std::span<const uint8_t> valid, uint32_t m,
@@ -581,11 +688,6 @@ auto BuildGraphFromMerge(HnswGraph& graph, const Factory& factory,
   }
   graph.SetEntryPoint(entry);
 
-  // Delta rows draw fresh levels and can out-rank every donor survivor. The
-  // highest such row is inserted before the rest so it, not they, raises the
-  // entry -- afterwards no insert can, so SetEntryPoint stays off the insert
-  // path. Pinning the donor entry instead would leave the taller delta rows
-  // with their top levels never searched.
   uint32_t delta_entry = kHnswInvalidNode;
   uint32_t delta_levels = entry_level;
   for (size_t i = 0; i < rows; ++i) {
@@ -628,15 +730,15 @@ auto BuildGraphFromMerge(HnswGraph& graph, const Factory& factory,
 
   // No warm-up: the donor's seeded and healed graph is already the warm graph.
   co_await InsertNodes(graph, factory, ef_construction, nodes, rows,
-                          /*warmup=*/0, env);
+                       /*warmup=*/0, env);
   co_return true;
 }
 
 template<typename Factory>
 auto BuildGraph(HnswGraph& graph, const Factory& factory,
                 std::span<const uint8_t> valid, uint32_t m,
-                uint32_t ef_construction, uint64_t seed,
-                const AnnBuildEnv* env) -> yaclib::Future<> {
+                uint32_t ef_construction, uint64_t seed, const AnnBuildEnv* env)
+  -> yaclib::Future<> {
   const auto rows = valid.size();
   graph.Reset(rows, m);
 
@@ -648,10 +750,6 @@ auto BuildGraph(HnswGraph& graph, const Factory& factory,
   }
   graph.AllocateLinks();
 
-  // Levels are final before any insert, so the highest-level node can be the
-  // entry from the start. No insert can then raise the entry, which keeps
-  // SetEntryPoint off the insert path entirely. Like the node that used to seed
-  // an empty graph, it is not inserted -- its links accrue from peers.
   uint32_t entry = kHnswInvalidNode;
   uint32_t entry_levels = 0;
   for (size_t i = 0; i < rows; ++i) {
@@ -679,21 +777,157 @@ auto BuildGraph(HnswGraph& graph, const Factory& factory,
   }
 
   co_await InsertNodes(graph, factory, ef_construction, nodes, rows,
-                          std::max(kHnswSerialWarmup, ef_construction), env);
+                       std::max(kHnswSerialWarmup, ef_construction), env);
   co_return {};
 }
 
-// Named coroutine rather than a coroutine lambda inside ResolveEnum: a lambda
-// coroutine captures by pointer, and the closure would be gone by the first
-// resume. The lambda below only stores the Future, which owns its own frame.
+struct HnswOriginals {
+  const ColumnReader* col = nullptr;
+  ReadContext* ctx = nullptr;
+  bool normalize = false;
+};
+
+inline constexpr uint32_t kHnswOriginalsWindow = 32768;
+
+template<typename Factory>
+void BuildGraphStreamed(HnswGraph& graph, const Factory& factory,
+                        std::span<const uint8_t> valid, uint32_t m,
+                        uint32_t ef_construction, uint64_t seed,
+                        const AnnBuildEnv* env, const HnswOriginals& src,
+                        uint32_t d) {
+  const auto rows = valid.size();
+  graph.Reset(rows, m);
+
+  uint64_t rng = seed;
+  for (size_t i = 0; i < rows; ++i) {
+    if (valid[i] != 0) {
+      graph.SetLevel(static_cast<uint32_t>(i), HnswRandomLevel(rng, m));
+    }
+  }
+  graph.AllocateLinks();
+
+  uint32_t entry = kHnswInvalidNode;
+  uint32_t entry_levels = 0;
+  for (size_t i = 0; i < rows; ++i) {
+    if (valid[i] == 0) {
+      continue;
+    }
+    const auto node = static_cast<uint32_t>(i);
+    if (graph.LevelOf(node) > entry_levels) {
+      entry_levels = graph.LevelOf(node);
+      entry = node;
+    }
+  }
+  if (entry == kHnswInvalidNode) {
+    return;
+  }
+  graph.SetEntryPoint(entry);
+
+  std::vector<uint32_t> nodes;
+  nodes.reserve(rows);
+  for (size_t i = 0; i < rows; ++i) {
+    if (valid[i] == 0 || static_cast<uint32_t>(i) == entry) {
+      continue;
+    }
+    nodes.push_back(static_cast<uint32_t>(i));
+  }
+  if (nodes.empty()) {
+    return;
+  }
+
+  const bool can_fan_out = env != nullptr && env->executor != nullptr;
+  const auto want =
+    can_fan_out ? static_cast<uint32_t>(std::clamp<size_t>(
+                    nodes.size() / kHnswMinRowsPerWorker, 1, kHnswMaxWorkers))
+                : 1U;
+  const uint32_t workers = want > 1 ? env->acquire(want) : 1;
+  absl::Cleanup release_workers = [&] {
+    if (want > 1) {
+      env->release(workers);
+    }
+  };
+
+  HnswInsertJob<Factory> job{graph, factory, ef_construction,
+                             {},    workers, rows};
+
+  std::vector<yaclib::FutureOn<>> runs;
+  auto run_span = [&](std::span<const uint32_t> span, uint32_t par) {
+    if (span.empty()) {
+      return;
+    }
+    job.Restart(span);
+    if (par <= 1) {
+      job.RunWorker(0);
+      return;
+    }
+    runs.clear();
+    runs.reserve(par - 1);
+    for (uint32_t i = 1; i < par; ++i) {
+      runs.push_back(yaclib::Run(*env->executor,
+                                 [&job, w = size_t{i}] { job.RunWorker(w); }));
+    }
+    job.RunWorker(0);
+    yaclib::Wait(runs.begin(), runs.end());
+  };
+
+  std::vector<float> window;
+  window.reserve(static_cast<size_t>(kHnswOriginalsWindow) * d);
+  std::vector<float> batch_buf;
+  size_t next = 0;
+  uint64_t warmed = 0;
+  const uint64_t warmup =
+    std::max<uint64_t>(kHnswSerialWarmup, ef_construction);
+  uint32_t win_first = 0;
+
+  auto flush_window = [&](uint32_t first, uint32_t count) {
+    job.SetWindow(window.data(), first, count);
+    const uint32_t last = first + count;
+    const size_t begin = next;
+    while (next < nodes.size() && nodes[next] < last) {
+      ++next;
+    }
+    std::span<const uint32_t> span{nodes.data() + begin, next - begin};
+    if (warmed < warmup) {
+      const auto take = std::min<size_t>(span.size(), warmup - warmed);
+      run_span(span.first(take), 1);
+      warmed += take;
+      span = span.subspan(take);
+    }
+    run_span(span, workers);
+  };
+
+  ScanVectors(*src.col, *src.ctx, rows, d, src.normalize, batch_buf,
+              [&](const float* src_rows, size_t n, uint64_t first,
+                  const duckdb::ValidityMask&) {
+                if (window.empty()) {
+                  win_first = static_cast<uint32_t>(first);
+                }
+                window.insert(window.end(), src_rows, src_rows + n * d);
+                const auto have = static_cast<uint32_t>(window.size() / d);
+                if (have >= kHnswOriginalsWindow) {
+                  flush_window(win_first, have);
+                  window.clear();
+                }
+              });
+  if (!window.empty()) {
+    flush_window(win_first, static_cast<uint32_t>(window.size() / d));
+  }
+  job.SetWindow(nullptr, 0, 0);
+}
+
 template<typename Factory>
 auto BuildDispatch(HnswGraph& graph, const Factory& factory,
                    std::span<const uint8_t> valid, uint32_t m, uint32_t ef,
                    uint64_t seed, const MergeDonor& donor,
-                   const AnnBuildEnv* env) -> yaclib::Future<> {
+                   const AnnBuildEnv* env, const HnswOriginals& src, uint32_t d)
+  -> yaclib::Future<> {
   if (donor.index != nullptr &&
       co_await BuildGraphFromMerge(graph, factory, valid, m, ef, seed, donor,
                                    env)) {
+    co_return {};
+  }
+  if (src.col != nullptr) {
+    BuildGraphStreamed(graph, factory, valid, m, ef, seed, env, src, d);
     co_return {};
   }
   co_await BuildGraph(graph, factory, valid, m, ef, seed, env);
@@ -714,6 +948,14 @@ auto HnswWriter::Compute(const ColumnReader& col, ReadContext& ctx,
     co_return {};
   }
 
+  using Clock = std::chrono::steady_clock;
+  const auto t_begin = Clock::now();
+  const auto ms_since = [](Clock::time_point from) {
+    return std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now() -
+                                                                 from)
+      .count();
+  };
+
   std::vector<uint8_t> valid(_rows, 1);
   std::vector<float> batch_buf;
   const bool normalize = _info.metric == VectorMetric::Cosine;
@@ -726,16 +968,11 @@ auto HnswWriter::Compute(const ColumnReader& col, ReadContext& ctx,
   }
   const bool train =
     _qw && _qw->TrainSamples(_rows) == QuantizerWriter::kTrainStreaming;
-  const bool needs_centroid =
-    _qw && QuantizerNeedsCentroid(_info.quant.kind);
+  const bool needs_centroid = _qw && QuantizerNeedsCentroid(_info.quant.kind);
   if (needs_centroid) {
     _centroid.assign(_d, 0.f);
   }
 
-  // The whole column is mapped, so every pass over it makes the segment
-  // resident -- 1.65 GiB per 500k rows. Training and the centroid converge long
-  // before the last row, so bound that pass and let only the encode read all of
-  // it; without this the column is faulted in twice and the cgroup pays for both.
   uint64_t trained_rows = 0;
   if (_qw) {
     const uint64_t sample = std::min<uint64_t>(_rows, kHnswTrainSample);
@@ -772,22 +1009,24 @@ auto HnswWriter::Compute(const ColumnReader& col, ReadContext& ctx,
     _vectors.resize(static_cast<size_t>(_rows) * _d);
   }
 
-  ScanVectors(col, ctx, _rows, _d, normalize, batch_buf,
-              [&](const float* rows, size_t n, uint64_t first,
-                  const duckdb::ValidityMask& mask) {
-                for (size_t i = 0; i < n; ++i) {
-                  if (!mask.RowIsValid(i)) {
-                    valid[first + i] = 0;
+  if (encoding) {
+    encoding = EncodeColumn(col, ctx, _rows, _d, normalize, *_qw, _codes.data(),
+                            _record_size, valid, env);
+  } else {
+    ScanVectors(col, ctx, _rows, _d, normalize, batch_buf,
+                [&](const float* rows, size_t n, uint64_t first,
+                    const duckdb::ValidityMask& mask) {
+                  for (size_t i = 0; i < n; ++i) {
+                    if (!mask.RowIsValid(i)) {
+                      valid[first + i] = 0;
+                    }
                   }
-                }
-                if (encoding) {
-                  encoding = _qw->EncodeInto(
-                    _codes.data() + first * _record_size, rows, n);
-                } else if (!_qw) {
-                  std::memcpy(_vectors.data() + first * _d, rows,
-                              n * _d * sizeof(float));
-                }
-              });
+                  if (!_qw) {
+                    std::memcpy(_vectors.data() + first * _d, rows,
+                                n * _d * sizeof(float));
+                  }
+                });
+  }
 
   std::shared_ptr<const QuantizerStats> stats;
   if (encoding) {
@@ -803,46 +1042,56 @@ auto HnswWriter::Compute(const ColumnReader& col, ReadContext& ctx,
     _codes.shrink_to_fit();
   }
 
+  const auto encode_ms = ms_since(t_begin);
+
   const auto m = _info.m != 0 ? _info.m : kHnswDefaultM;
   const auto ef = _info.ef_construction != 0 ? _info.ef_construction
                                              : kHnswDefaultEfConstruction;
   const auto donor =
     PickMergeDonor(_merge_sources, _info.centroids_id, _d, _info.metric, m);
+  const auto t_graph = Clock::now();
+  const absl::Cleanup log_phases = [&] {
+    SDB_INFO(IRESEARCH, "hnsw build: rows=", _rows, " d=", _d, " m=", m,
+             " ef=", ef, " sources=", _merge_sources.size(),
+             " donor_rows=", donor.alive, " encode_ms=", encode_ms,
+             " graph_ms=", ms_since(t_graph));
+  };
 
   if (stats) {
-    HnswCodeDistFactory factory{.codes = _codes.data(),
-                                .record_size = _record_size,
-                                .stats = stats.get(),
-                                .centroid =
-                                  _centroid.empty() ? nullptr
-                                                    : _centroid.data(),
-                                .d = _d};
-    if (factory.CanRekey()) {
-      co_await BuildDispatch(_graph, factory, valid, m, ef, kHnswBuildSeed,
-                             donor, env);
-      co_return {};
+    HnswCodeDistFactory factory{
+      .codes = _codes.data(),
+      .record_size = _record_size,
+      .stats = stats.get(),
+      .centroid = _centroid.empty() ? nullptr : _centroid.data(),
+      .d = _d};
+    SDB_ENSURE(factory.CanRekey(),
+               "hnsw: quantizer produced a code layout the build cannot score "
+               "(Decode/SetQuery round-trip failed) for quant kind ",
+               static_cast<uint32_t>(_info.quant.kind));
+    std::vector<float> pair_terms;
+    if (factory.PreparePairTerms(_rows, pair_terms)) {
+      factory.pair_terms = pair_terms;
     }
-    _codes.clear();
-    _codes.shrink_to_fit();
-    _stats_blob.clear();
+    const HnswOriginals originals{
+      .col = &col, .ctx = &ctx, .normalize = normalize};
+    co_await BuildDispatch(_graph, factory, valid, m, ef, kHnswBuildSeed, donor,
+                           env, originals, _d);
+    co_return {};
   }
 
-  // No usable code layout: fall back to scoring the raw vectors, which means
-  // materialising them.
-  if (_qw) {
-    _vectors.resize(static_cast<size_t>(_rows) * _d);
-    ScanVectors(col, ctx, _rows, _d, normalize, batch_buf,
-                [&](const float* rows, size_t n, uint64_t first,
-                    const duckdb::ValidityMask&) {
-                  std::memcpy(_vectors.data() + first * _d, rows,
-                              n * _d * sizeof(float));
-                });
-  }
+  SDB_ENSURE(
+    !_qw, "hnsw: quantizer kind ", static_cast<uint32_t>(_info.quant.kind),
+    " produced no per-row codes (group_size=", _qw->BlockSetting().group_size,
+    ", record_size=", _qw->BlockSetting().record_size,
+    "); refusing to fall back to a "
+    "raw-float build of ",
+    _rows, " x ", _d, " vectors");
+
   yaclib::Future<> built;
   ResolveEnum<VectorMetric>(_info.metric, [&]<VectorMetric M>() {
     HnswRawDistFactory<M> factory{.base = _vectors.data(), .d = _d};
     built = BuildDispatch(_graph, factory, valid, m, ef, kHnswBuildSeed, donor,
-                          env);
+                          env, HnswOriginals{}, _d);
   });
   SDB_ASSERT(built.Valid());
   co_await std::move(built);

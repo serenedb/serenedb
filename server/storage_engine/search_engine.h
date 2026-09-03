@@ -54,6 +54,13 @@ class SearchEngine final {
   static int MaxConcurrentCompactions() noexcept;
   static int MaxConcurrentMerges() noexcept;
 
+  // Total workers, summed over every ANN graph build in flight, that may run
+  // graph inserts at once -- each build's own calling thread included.
+  static int MaxAnnBuildWorkers() noexcept;
+
+  // Ceiling on what any ONE build may take out of that total.
+  static int MaxAnnWorkersPerBuild() noexcept;
+
   SearchEngine();
   ~SearchEngine();
 
@@ -106,37 +113,53 @@ class SearchEngine final {
   // Free global slots right now. The coordinator throttles merge size when this
   // is low (occupancy backpressure) so the pool always drains.
   int FreeCompactionSlots() const noexcept {
-    const int cur = _running_compactions.load(std::memory_order_acquire) +
-                    _running_helpers.load(std::memory_order_acquire);
+    // ANN build workers are deliberately not counted: they draw on the ANN
+    // build budget, not on merge slots, so charging them here would understate
+    // free merge capacity and throttle merge size for no reason.
+    const int cur = _running_compactions.load(std::memory_order_acquire);
     return std::max(0, MaxConcurrentCompactions() - cur);
   }
 
-  // Extra merge-CPU permits for the parallel phase of one merge, drawn from a
-  // budget separate from the merge slots: helpers share their merge's output
-  // allocation, so they cost CPU but not memory, while each concurrent merge
-  // holds its own. Never blocks: when the budget is exhausted this grants 0
-  // and the caller stays serial. Held only for the parallel phase, never for
-  // the whole merge.
-  int TryAcquireMergeHelpers(int want) noexcept {
-    const int merges = _running_compactions.load(std::memory_order_acquire);
-    const int cap = MaxConcurrentCompactions() - merges;
-    auto cur = _running_helpers.load(std::memory_order_relaxed);
-    while (want > 0) {
-      const int grant = std::min(want, cap - cur);
-      if (grant <= 0) {
-        return 0;
-      }
-      if (_running_helpers.compare_exchange_weak(cur, cur + grant,
-                                                 std::memory_order_acq_rel,
-                                                 std::memory_order_relaxed)) {
+  // Workers for the parallel phase of ONE ANN graph build, drawn from a budget
+  // of their own rather than the merge slots. Workers share their build's
+  // output allocation, so they cost CPU but not memory -- which is why this is
+  // budgeted apart from the merge gate, whose job is to bound memory.
+  //
+  // Sizing it out of MaxConcurrentCompactions() (= --background_threads - 1)
+  // was the single largest cause of the HNSW build-time gap: a foreground
+  // CREATE INDEX got cores/4 - 1 workers, where qdrant gives its builder
+  // min(8, cores).
+  //
+  // `want` is the total the build could use, ITS OWN THREAD INCLUDED, and the
+  // return is what it may run with. Never blocks, and never returns less than
+  // 1: the thread that entered the build is already running, so refusing it
+  // would buy nothing. Counting that thread is the point -- CREATE INDEX is a
+  // ParallelSink and flushes one segment per sink thread, so N concurrent
+  // builds must settle at N workers in total instead of each fanning out to
+  // the full budget and oversubscribing the machine several times over.
+  // Held only for the parallel phase, never for the whole merge.
+  int AcquireAnnWorkers(int want) noexcept {
+    const int cap = MaxAnnBuildWorkers();
+    // Two ceilings, and the per-build one is the load-bearing half. Without it
+    // the first build to arrive takes the entire budget and the next one runs
+    // on its own thread alone: measured as 16 workers against 1 for a
+    // two-segment flush, i.e. 4M inserts single-threaded. qdrant avoids this
+    // the same way -- cpu_budget is cores - 1 while each build asks for only
+    // thread_count_for_hnsw(cores), so two segments settle at 8 and 7.
+    const int ceiling = std::clamp(want, 1, MaxAnnWorkersPerBuild());
+    auto cur = _running_ann_workers.load(std::memory_order_relaxed);
+    for (;;) {
+      const int grant = std::clamp(cap - cur, 1, ceiling);
+      if (_running_ann_workers.compare_exchange_weak(
+            cur, cur + grant, std::memory_order_acq_rel,
+            std::memory_order_relaxed)) {
         return grant;
       }
     }
-    return 0;
   }
-  void ReleaseMergeHelpers(int n) noexcept {
+  void ReleaseAnnWorkers(int n) noexcept {
     if (n > 0) {
-      _running_helpers.fetch_sub(n, std::memory_order_release);
+      _running_ann_workers.fetch_sub(n, std::memory_order_release);
     }
   }
 
@@ -147,7 +170,7 @@ class SearchEngine final {
   containers::FlatHashMap<ObjectId, std::unique_ptr<SearchDbWal>> _db_wals;
   std::atomic<bool> _stopping{false};
   std::atomic<int> _running_compactions{0};
-  std::atomic<int> _running_helpers{0};
+  std::atomic<int> _running_ann_workers{0};
   // Live loop futures plus one baseline token held for the engine's lifetime:
   // loops come and go with CREATE/DROP, and a transient zero would complete the
   // group for good. stop() Done()s the token, then Waits.

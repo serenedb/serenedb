@@ -50,17 +50,7 @@ struct HnswQueryDist {
 
   void Batch(std::span<const uint32_t> ids, score_t* out,
              score_t /*threshold*/ = 0.f) const noexcept {
-    if constexpr (EffectiveQuantMetric(M) == VectorMetric::L2Sqr) {
-      HnswBatchL2Sqr(q, base, d, ids, out);
-    } else if constexpr (EffectiveQuantMetric(M) ==
-                         VectorMetric::InnerProduct) {
-      HnswBatchIp(q, base, d, ids, out);
-    } else {
-      for (size_t i = 0; i < ids.size(); ++i) {
-        out[i] = ComputeDistance<EffectiveQuantMetric(M)>(
-          q, Row(ids[i]), static_cast<uint16_t>(d));
-      }
-    }
+    HnswComputeDistances<M>(q, base, d, ids, out);
   }
 
   score_t One(uint32_t id) const noexcept {
@@ -122,6 +112,10 @@ void WithHnswDist(const HnswData& data, std::span<const float> query,
       .base = data.vectors.data(), .d = d, .q = query.data()};
     fn(dist);
   });
+}
+HnswSearchScratch& ThreadScratch() {
+  static thread_local HnswSearchScratch scratch;
+  return scratch;
 }
 
 class HnswTopKIterator : public DocIterator {
@@ -224,11 +218,10 @@ class HnswVectorQuery : public QueryBuilder {
 
   DocIterator::ptr Execute(const ExecutionContext& ctx,
                            const StatsBuffer& /*stats*/) const final {
-    HnswSearchScratch scratch;
-    WithHnswDist(*_data, _query, _codebook, _metric, _d, _record_size,
-                 [&](auto& dist) {
-                   HnswSearchTopK(_data->graph, dist, _ef, scratch);
-                 });
+    auto& scratch = ThreadScratch();
+    WithHnswDist(
+      *_data, _query, _codebook, _metric, _d, _record_size,
+      [&](auto& dist) { HnswSearchTopK(_data->graph, dist, _ef, scratch); });
 
     auto hits = CollectHits(scratch.nearest, _segment.docs_mask());
     if (hits.empty()) {
@@ -274,7 +267,7 @@ class HnswRangeQuery : public QueryBuilder {
 
   DocIterator::ptr Execute(const ExecutionContext& ctx,
                            const StatsBuffer& /*stats*/) const final {
-    HnswSearchScratch scratch;
+    auto& scratch = ThreadScratch();
     WithHnswDist(*_data, _query, _codebook, _metric, _d, _record_size,
                  [&](auto& dist) {
                    ResolveBool(_inclusive, [&]<bool Inclusive>() {
@@ -397,14 +390,13 @@ QueryBuilder::ptr HnswIndex::PrepareKnn(const SubReader& segment,
   if (data->stats && !codebook) {
     return QueryBuilder::Empty();
   }
-  const auto ef = std::max(opts.ef_search != 0
-                             ? opts.ef_search
-                             : std::max(effort, kHnswDefaultEfSearch),
-                           opts.min_ef);
+  const auto ef =
+    std::max(opts.ef_search != 0 ? opts.ef_search
+                                 : std::max(effort, kHnswDefaultEfSearch),
+             opts.min_ef);
   return memory::make_tracked<HnswVectorQuery>(
-    ctx.memory, segment, std::move(data), std::move(codebook),
-    std::move(query), opts.metric, _header.d, _header.record_size, ef,
-    ctx.boost);
+    ctx.memory, segment, std::move(data), std::move(codebook), std::move(query),
+    opts.metric, _header.d, _header.record_size, ef, ctx.boost);
 }
 
 QueryBuilder::ptr HnswIndex::PrepareRange(const SubReader& segment,
@@ -428,9 +420,9 @@ QueryBuilder::ptr HnswIndex::PrepareRange(const SubReader& segment,
                        opts.metric == VectorMetric::Cosine;
   const score_t threshold = angular ? radius : -radius;
   return memory::make_tracked<HnswRangeQuery>(
-    ctx.memory, segment, std::move(data), std::move(codebook),
-    std::move(query), opts.metric, _header.d, _header.record_size, threshold,
-    inclusive, static_cast<size_t>(_header.rows), ctx.boost);
+    ctx.memory, segment, std::move(data), std::move(codebook), std::move(query),
+    opts.metric, _header.d, _header.record_size, threshold, inclusive,
+    static_cast<size_t>(_header.rows), ctx.boost);
 }
 
 }  // namespace irs

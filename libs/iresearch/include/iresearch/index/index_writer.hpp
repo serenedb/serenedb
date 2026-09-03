@@ -183,6 +183,10 @@ struct IndexWriterOptions : public SegmentOptions {
   NormColumnIdProvider norm_column_id;
   uint32_t row_group_size = DEFAULT_ROW_GROUP_SIZE;
 
+  // Non-owning parallel-build budget handed to every segment flush. Its
+  // FunctionRef referents must outlive the writer.
+  const AnnBuildEnv* ann_env = nullptr;
+
   IndexWriterOptions() {}  // compiler requires non-default definition
 };
 
@@ -1029,6 +1033,7 @@ class IndexWriter : private util::Noncopyable {
   IndexFeatures _score_bound_features{};
   ScorerPtr _topk_scorer;
   duckdb::DatabaseInstance* _db = nullptr;
+  const AnnBuildEnv* _ann_env = nullptr;
   // Fallback options (FunctionFieldOptions wrapping the provider callbacks),
   // shared to each segment writer; null when no provider was configured.
   std::shared_ptr<const IndexFieldOptions> _field_options;

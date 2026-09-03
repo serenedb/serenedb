@@ -82,7 +82,11 @@ class RawVectorReader {
  public:
   RawVectorReader(const ColumnReader& vector_column,
                   const ColReader& col_reader, uint32_t d)
-    : _read_ctx{col_reader}, _vreader{vector_column, _read_ctx}, _d{d} {}
+    // random_access: rerank is a point lookup per candidate, so the per-block
+    // MADV_WILLNEED in ReadContext::Read is pure over-fetch here.
+    : _read_ctx{col_reader, /*random_access=*/true},
+      _vreader{vector_column, _read_ctx},
+      _d{d} {}
 
   void SetQuery(std::span<const float> query, VectorMetric metric) {
     _query.assign(query.begin(), query.end());

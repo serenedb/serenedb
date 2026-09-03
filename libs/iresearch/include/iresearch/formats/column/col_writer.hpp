@@ -80,9 +80,6 @@ class ColWriter final {
 
   void Commit(uint64_t target_row);
 
-  // Builds every attached ANN index from the committed column bytes. Split
-  // from Commit so the caller can drive the build on its own executor; must
-  // run after Commit and before TakeAnnWriters.
   auto ComputeAnn(const AnnBuildEnv* env) -> yaclib::Future<>;
 
   void Rollback() noexcept;

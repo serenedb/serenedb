@@ -158,18 +158,18 @@ bool ShingleTokenizer::DrainBase(duckdb::string_t raw) {
   return true;
 }
 
-void ShingleTokenizer::BuildTokenPrefixSums(uint32_t n) {
+template<bool HasFrequent>
+void ShingleTokenizer::BuildTables(uint32_t n) {
   _tok_psum.resize(n + 1);
   _tok_psum[0] = 0;
+  if constexpr (HasFrequent) {
+    _freq.resize(n);
+  }
   for (uint32_t k = 0; k < n; ++k) {
     _tok_psum[k + 1] = _tok_psum[k] + _tok[k].GetSize();
-  }
-}
-
-void ShingleTokenizer::MarkFrequent(uint32_t n) {
-  _freq.resize(n);
-  for (uint32_t i = 0; i < n; ++i) {
-    _freq[i] = _frequent.Contains(_tok[i]) ? 1 : 0;
+    if constexpr (HasFrequent) {
+      _freq[k] = _frequent.Contains(_tok[k]) ? 1 : 0;
+    }
   }
 }
 
@@ -243,8 +243,14 @@ void ShingleTokenizer::EmitRuns(duckdb::string_t raw, TokenSink& sink,
         w += size;
       }
     };
-    sink.EmitK<Layout>(count, window_len(i, span), stage,
-                       [&](size_t j, byte_type*) IRS_FORCE_INLINE {
+    sink.EmitK<Layout>(count + (OutputUnigrams ? 1 : 0), window_len(i, span),
+                       stage, [&](size_t j, byte_type*) IRS_FORCE_INLINE {
+                         if constexpr (OutputUnigrams) {
+                           if (j == 0) {
+                             return EmitKSlotPos{0, window_len(i, 1), pos};
+                           }
+                           --j;
+                         }
                          if constexpr (HasFrequent) {
                            return EmitKSlotPos{0, _shingle_ends[j], pos};
                          } else {
@@ -257,12 +263,13 @@ void ShingleTokenizer::EmitRuns(duckdb::string_t raw, TokenSink& sink,
 
   const bool unigrams =
     OutputUnigrams || (_output_unigrams_if_no_shingles && no_shingles);
+  // One token per position. A base that stacks alternatives at one position
+  // (posInc 0, e.g. synonyms) is not supported: the delta-0 token ends the
+  // run here, so only the last alternative shingles forward, and StoreBlob
+  // writes the stack flat, breaking its index-equals-position layout.
   uint32_t run_end = 0;
   for (uint32_t i = 0; i < n; ++i) {
     const uint32_t pos = _pos[i];
-    if (unigrams) {
-      emit_unigram(i, pos);
-    }
     if (run_end <= i) {
       run_end = i + 1;
     }
@@ -272,6 +279,9 @@ void ShingleTokenizer::EmitRuns(duckdb::string_t raw, TokenSink& sink,
     }
     const uint32_t reach = run_end - i;
     if (reach < _min) {
+      if (unigrams) {
+        emit_unigram(i, pos);
+      }
       continue;
     }
     emit_shingles(i, reach, pos);
@@ -288,10 +298,7 @@ bool ShingleTokenizer::DoFill(duckdb::string_t raw, TokenSink& sink) {
   const uint32_t n = static_cast<uint32_t>(_tok.size());
   const bool no_shingles = n < _min;
   if (!no_shingles) {
-    BuildTokenPrefixSums(n);
-  }
-  if constexpr (HasFrequent) {
-    MarkFrequent(n);
+    BuildTables<HasFrequent>(n);
   }
 
   EmitRuns<Layout, OutputUnigrams, HasFrequent>(raw, sink, n, no_shingles);

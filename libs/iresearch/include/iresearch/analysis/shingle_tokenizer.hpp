@@ -106,8 +106,8 @@ class ShingleTokenizer final : public TypedTokenizer<ShingleTokenizer>,
 
  private:
   IRS_FORCE_INLINE bool DrainBase(duckdb::string_t raw);
-  IRS_FORCE_INLINE void BuildTokenPrefixSums(uint32_t n);
-  IRS_FORCE_INLINE void MarkFrequent(uint32_t n);
+  template<bool HasFrequent>
+  IRS_FORCE_INLINE void BuildTables(uint32_t n);
   template<TokenLayout Layout, bool OutputUnigrams, bool HasFrequent>
   IRS_FORCE_INLINE void EmitRuns(duckdb::string_t raw, TokenSink& sink,
                                  uint32_t n, bool no_shingles);

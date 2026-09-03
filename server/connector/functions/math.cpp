@@ -316,6 +316,9 @@ void DateBinFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
         THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                         ERR_MSG("stride must be greater than zero"));
       }
+      if (!source.IsFinite()) {
+        return source;
+      }
 
       int64_t src_us = source.value;
       int64_t orig_us = origin.value;

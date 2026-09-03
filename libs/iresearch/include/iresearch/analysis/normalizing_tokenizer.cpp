@@ -107,8 +107,16 @@ bool NormalizingTokenizer::UnicodeEmit(const duckdb::string_t& raw,
   if constexpr (!Accent) {
     SDB_ASSERT(_transliterator);
   }
-  _udata.setToUTF8(
-    icu::StringPiece{raw.GetData(), static_cast<int32_t>(raw.GetSize())});
+  const auto size = static_cast<int32_t>(raw.GetSize());
+  if (auto* buf = _udata.getBuffer(size)) {
+    auto err = UErrorCode::U_ZERO_ERROR;
+    int32_t len = 0;
+    u_strFromUTF8WithSub(buf, size, &len, raw.GetData(), size, 0xFFFD, nullptr,
+                         &err);
+    _udata.releaseBuffer(U_SUCCESS(err) ? len : 0);
+  } else {
+    _udata.remove();
+  }
   normalize::NormalizeCaseStrip<C>(*_normalizer, _options.locale,
                                    Accent ? nullptr : _transliterator.get(),
                                    _udata, _token);

@@ -336,6 +336,8 @@ class TokenSink final : util::Noncopyable {
       const auto n = static_cast<uint32_t>(build(mem));
       SDB_ASSERT(n <= size);
       StoreTermViewPadded(&_batch.terms[i], mem, n);
+      _arena.ShrinkHead(std::max(size, kTermViewSlack) -
+                        std::max<size_t>(n, kTermViewSlack));
     }
     FillLanes<L>(i, rest...);
   }

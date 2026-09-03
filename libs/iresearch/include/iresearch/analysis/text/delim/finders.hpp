@@ -87,6 +87,47 @@ struct ManyCharsFinder {
   size_t ndelims = 0;
 };
 
+struct ByteRangesFinder {
+  static constexpr size_t kMaxBlockRanges = 8;
+
+  explicit ByteRangesFinder(const classify::ByteSet& set) : bytes{set} {
+    int prev = -2;
+    for (int b = 0; b < 256; ++b) {
+      if (!set.Contains(static_cast<byte_type>(b))) {
+        continue;
+      }
+      if (b == prev + 1) {
+        if (nranges <= kMaxBlockRanges) {
+          ++ranges[nranges - 1].span;
+        }
+      } else {
+        if (nranges < kMaxBlockRanges) {
+          ranges[nranges] = {static_cast<byte_type>(b), 0};
+        }
+        ++nranges;
+      }
+      prev = b;
+    }
+  }
+
+  template<typename OnDelim>
+  IRS_FORCE_INLINE void ForEachDelim(bytes_view data,
+                                     OnDelim&& on_delim) const {
+    classify::DrainClassified(
+      data.data(), data.size(), nranges <= kMaxBlockRanges,
+      [&](const byte_type* block) IRS_FORCE_INLINE {
+        return classify::ClassifyAnyInRangeBlock(block,
+                                                 {ranges.data(), nranges});
+      },
+      [&](byte_type c) IRS_FORCE_INLINE { return bytes.Contains(c); },
+      [&](size_t pos) IRS_FORCE_INLINE { on_delim(pos, size_t{1}); });
+  }
+
+  classify::ByteSet bytes;
+  std::array<classify::ByteRange, kMaxBlockRanges> ranges{};
+  size_t nranges = 0;
+};
+
 IRS_FORCE_INLINE inline bool BytesEqual(const byte_type* a, const byte_type* b,
                                         size_t n) {
   for (size_t i = 0; i < n; ++i) {

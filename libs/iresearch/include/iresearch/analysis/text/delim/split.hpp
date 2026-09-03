@@ -21,10 +21,12 @@
 #pragma once
 
 #include <duckdb/common/types/string_type.hpp>
+#include <utility>
 
 #include "basics/shared.hpp"
 #include "iresearch/analysis/text/delim/finders.hpp"
 #include "iresearch/analysis/token_sink.hpp"
+#include "iresearch/analysis/tokenizer.hpp"
 
 namespace irs::analysis::delim {
 
@@ -50,4 +52,32 @@ IRS_FORCE_INLINE void SplitValue(TokenSink& sink, duckdb::string_t value,
   emit(tok_begin, size);
 }
 
+template<typename Owner, typename Finder>
+class SplitTokenizer final
+  : public TypedTokenizer<SplitTokenizer<Owner, Finder>> {
+ public:
+  template<typename... Args>
+  explicit SplitTokenizer(Args&&... args)
+    : _finder{std::forward<Args>(args)...} {}
+
+  TokenTraits Traits() const noexcept final {
+    return {.offsets = true, .stable = true};
+  }
+
+  template<TokenLayout Layout>
+  bool DoFill(duckdb::string_t raw, TokenSink& sink) {
+    SplitValue<Layout>(sink, raw, _finder);
+    return true;
+  }
+
+ private:
+  [[no_unique_address]] Finder _finder;
+};
+
 }  // namespace irs::analysis::delim
+namespace irs {
+
+template<typename Owner, typename Finder>
+struct Type<analysis::delim::SplitTokenizer<Owner, Finder>> : Type<Owner> {};
+
+}  // namespace irs

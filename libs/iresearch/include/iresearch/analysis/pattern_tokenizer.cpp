@@ -25,7 +25,11 @@
 #include <re2/regexp.h>
 
 #include <algorithm>
-#include <string_view>
+#include <bit>
+#include <memory>
+#include <span>
+#include <utility>
+#include <vector>
 
 #include "iresearch/analysis/text/delim/split.hpp"
 #include "iresearch/analysis/token_batch.hpp"
@@ -33,179 +37,226 @@
 #include "pg/sql_exception_macro.h"
 
 namespace irs::analysis {
+
+class PatternRegexTokenizer;
+
+}  // namespace irs::analysis
+namespace irs {
+
+template<>
+struct Type<analysis::PatternRegexTokenizer>
+  : Type<analysis::PatternTokenizer> {};
+
+}  // namespace irs
+namespace irs::analysis {
+
+class PatternRegexTokenizer final
+  : public TypedTokenizer<PatternRegexTokenizer> {
+ public:
+  PatternRegexTokenizer(std::unique_ptr<re2::RE2>&& pattern, int group)
+    : _pattern{std::move(pattern)},
+      _group{group},
+      _matches(static_cast<size_t>(std::max(group, 0)) + 1) {}
+
+  TokenTraits Traits() const noexcept final {
+    return {.offsets = true, .stable = true};
+  }
+
+  template<TokenLayout Layout>
+  bool DoFill(duckdb::string_t value, TokenSink& sink) {
+    const char* const data_base = value.GetData();
+    const size_t data_len = value.GetSize();
+    if (data_len == 0) {
+      return true;
+    }
+    const re2::StringPiece text(data_base, data_len);
+
+    const auto emit = [&](size_t start, size_t end) {
+      sink.EmitSlice<Layout>(
+        data_base, data_base + data_len,
+        Offs{static_cast<uint32_t>(start), static_cast<uint32_t>(end)});
+    };
+
+    size_t tok_begin = 0;
+    size_t pos = 0;
+    while (pos <= data_len &&
+           _pattern->Match(text, pos, data_len, re2::RE2::UNANCHORED,
+                           _matches.data(), _matches.size())) {
+      const auto& match = _matches[0];
+      const size_t match_start = static_cast<size_t>(match.data() - data_base);
+      const size_t match_end = match_start + match.size();
+
+      if (_group >= 0) {
+        if (const auto& g = _matches[_group]; !g.empty()) {
+          const size_t start = static_cast<size_t>(g.data() - data_base);
+          emit(start, start + g.size());
+        }
+      } else if (match_start > tok_begin) {
+        emit(tok_begin, match_start);
+      }
+      tok_begin = match_end;
+      if (!match.empty()) {
+        pos = match_end;
+        continue;
+      }
+      pos = match_start + (match_start < data_len
+                             ? utf8_utils::LengthFromChar8<1>(
+                                 static_cast<byte_type>(data_base[match_start]))
+                             : 1);
+    }
+    if (_group < 0 && tok_begin < data_len) {
+      emit(tok_begin, data_len);
+    }
+    return true;
+  }
+
+ private:
+  std::unique_ptr<re2::RE2> _pattern;
+  int _group;
+  std::vector<re2::StringPiece> _matches;
+};
+
 namespace {
 
-bool AppendRune(bstring& out, re2::Rune rune, bool fold_case) {
-  if (rune < 0) {
-    return false;
+using Split = PatternTokenizer::Split;
+
+re2::RE2::Options RegexOptions(int group) {
+  re2::RE2::Options options;
+  options.set_log_errors(false);
+  options.set_never_capture(group <= 0);
+  return options;
+}
+
+Split SplitOn(bstring&& literal) {
+  if (literal.size() == 1) {
+    return delim::OneCharFinder{literal.front()};
   }
-  if (fold_case &&
-      (rune >= 128 || absl::ascii_isalpha(static_cast<unsigned char>(rune)))) {
-    return false;
+  if (literal.size() > delim::kHorspoolNeedleThreshold) {
+    return delim::OneLongStringFinder{std::move(literal)};
   }
-  byte_type buf[utf8_utils::kMaxCharSize];
-  out.append(buf, utf8_utils::FromChar32(static_cast<uint32_t>(rune), buf));
-  return true;
+  return delim::OneStringFinder{std::move(literal)};
+}
+
+Split SplitOn(const classify::ByteSet& set) {
+  size_t count = 0;
+  for (const auto word : set.words) {
+    count += static_cast<size_t>(std::popcount(word));
+  }
+  if (count == 0) {
+    return {};
+  }
+  if (count > delim::ManyCharsFinder::kMaxBlockDelims) {
+    return delim::ByteRangesFinder{set};
+  }
+  delim::ManyCharsFinder chars;
+  for (int b = 0; b < 256; ++b) {
+    if (set.Contains(static_cast<byte_type>(b))) {
+      chars.Add(static_cast<byte_type>(b));
+    }
+  }
+  if (chars.ndelims == 1) {
+    return delim::OneCharFinder{chars.delims.front()};
+  }
+  return chars;
+}
+
+Split SplitOnLiteral(std::span<const re2::Rune> runes, bool fold_case) {
+  bstring literal;
+  literal.reserve(runes.size() * utf8_utils::kMaxCharSize);
+  for (const auto rune : runes) {
+    if (fold_case && (rune >= 128 ||
+                      absl::ascii_isalpha(static_cast<unsigned char>(rune)))) {
+      return {};
+    }
+    byte_type buf[utf8_utils::kMaxCharSize];
+    literal.append(buf,
+                   utf8_utils::FromChar32(static_cast<uint32_t>(rune), buf));
+  }
+  return SplitOn(std::move(literal));
+}
+
+Split DetectSplit(const re2::RE2& pattern, int group) {
+  if (group > 0) {
+    return {};
+  }
+  auto* re = pattern.Regexp();
+  bool plus = false;
+  bool greedy = true;
+  for (; re->op() == re2::kRegexpPlus; re = re->sub()[0]) {
+    plus = true;
+    greedy = greedy && (re->parse_flags() & re2::Regexp::NonGreedy) == 0;
+  }
+  const bool fold_case = (re->parse_flags() & re2::Regexp::FoldCase) != 0;
+  if (group < 0 && re->op() == re2::kRegexpLiteral) {
+    const re2::Rune rune = re->rune();
+    return SplitOnLiteral({&rune, 1}, fold_case);
+  }
+  if (group < 0 && re->op() == re2::kRegexpLiteralString) {
+    return SplitOnLiteral({re->runes(), static_cast<size_t>(re->nrunes())},
+                          fold_case);
+  }
+  if (re->op() != re2::kRegexpCharClass || (group == 0 && !(plus && greedy))) {
+    return {};
+  }
+  auto* cc = re->cc();
+  if (cc->empty()) {
+    return {};
+  }
+  const auto last = *(cc->end() - 1);
+  if (last.hi >= 128 && (last.lo > 128 || last.hi != re2::Runemax)) {
+    return {};
+  }
+  classify::ByteSet set;
+  for (const auto& range : *cc) {
+    for (auto r = range.lo; r <= std::min(range.hi, re2::Rune{0xFF}); ++r) {
+      set.Add(static_cast<byte_type>(r));
+    }
+  }
+  if (group == 0) {
+    for (auto& word : set.words) {
+      word = ~word;
+    }
+  }
+  return SplitOn(set);
 }
 
 }  // namespace
 
-PatternTokenizer::PatternTokenizer(std::string_view pattern, int group)
-  : _pattern(pattern, re2::RE2::Quiet), _group(group) {
-  if (pattern.empty()) {
-    THROW_SQL_ERROR(ERR_MSG("pattern: empty pattern"));
+PatternTokenizer::Split PatternTokenizer::Detect(std::string_view pattern,
+                                                 int group) {
+  const re2::RE2 regex{pattern, RegexOptions(group)};
+  if (!regex.ok()) {
+    return {};
   }
-  if (!_pattern.ok()) {
-    THROW_SQL_ERROR(ERR_MSG("pattern: invalid regex: ", _pattern.error()));
-  }
-  const int num_groups = _pattern.NumberOfCapturingGroups();
-  if (_group < -1 || _group > num_groups) {
-    THROW_SQL_ERROR(ERR_MSG("pattern: group ", _group,
-                            " out of range, pattern has ", num_groups,
-                            " capturing groups"));
-  }
-  _matches.resize(static_cast<size_t>(std::max(_group, 0)) + 1);
-  DetectFastSplit(num_groups);
-}
-
-void PatternTokenizer::SetLiteral(bstring&& literal) {
-  if (literal.empty()) {
-    return;
-  }
-  if (literal.size() == 1) {
-    _chars.Add(literal.front());
-    _mode = Mode::OneChar;
-    return;
-  }
-  if (literal.size() > delim::kHorspoolNeedleThreshold) {
-    _long_literal.emplace(std::move(literal));
-    _mode = Mode::LongLiteral;
-    return;
-  }
-  _literal.emplace(std::move(literal));
-  _mode = Mode::Literal;
-}
-
-void PatternTokenizer::DetectFastSplit(int num_groups) {
-  if (_group >= 0 || num_groups != 0) {
-    return;
-  }
-  re2::Regexp* re = _pattern.Regexp();
-  if (re == nullptr) {
-    return;
-  }
-  while (re->op() == re2::kRegexpPlus && re->nsub() == 1) {
-    re = re->sub()[0];
-  }
-  const bool fold_case = (re->parse_flags() & re2::Regexp::FoldCase) != 0;
-  if (re->op() == re2::kRegexpLiteral) {
-    bstring literal;
-    if (AppendRune(literal, re->rune(), fold_case)) {
-      SetLiteral(std::move(literal));
-    }
-    return;
-  }
-  if (re->op() == re2::kRegexpLiteralString) {
-    const auto n = re->nrunes();
-    const auto* runes = re->runes();
-    bstring literal;
-    literal.reserve(static_cast<size_t>(n) * utf8_utils::kMaxCharSize);
-    for (int k = 0; k < n; ++k) {
-      if (!AppendRune(literal, runes[k], fold_case)) {
-        return;
-      }
-    }
-    SetLiteral(std::move(literal));
-    return;
-  }
-  if (re->op() != re2::kRegexpCharClass || fold_case) {
-    return;
-  }
-  auto* cc = re->cc();
-  if (cc == nullptr || cc->empty()) {
-    return;
-  }
-  for (const auto& range : *cc) {
-    if (range.hi >= 128) {
-      return;
-    }
-  }
-  for (const auto& range : *cc) {
-    for (auto r = range.lo; r <= range.hi; ++r) {
-      _chars.Add(static_cast<byte_type>(r));
-    }
-  }
-  _mode = _chars.ndelims == 1 ? Mode::OneChar : Mode::ManyChars;
+  return DetectSplit(regex, group);
 }
 
 Tokenizer::ptr PatternTokenizer::Make(Options opts) {
-  return std::make_unique<PatternTokenizer>(opts.pattern, opts.group);
-}
-
-template<TokenLayout Layout, PatternTokenizer::Mode M>
-bool PatternTokenizer::DoFill(duckdb::string_t raw, TokenSink& sink) {
-  if constexpr (M == Mode::OneChar) {
-    delim::SplitValue<Layout>(sink, raw,
-                              delim::OneCharFinder{_chars.delims.front()});
-  } else if constexpr (M == Mode::ManyChars) {
-    delim::SplitValue<Layout>(sink, raw, _chars);
-  } else if constexpr (M == Mode::Literal) {
-    delim::SplitValue<Layout>(sink, raw, *_literal);
-  } else if constexpr (M == Mode::LongLiteral) {
-    delim::SplitValue<Layout>(sink, raw, *_long_literal);
-  } else {
-    FillValue<Layout>(sink, raw);
+  if (opts.pattern.empty()) {
+    THROW_SQL_ERROR(ERR_MSG("pattern: empty pattern"));
   }
-  return true;
-}
-
-template<TokenLayout Layout>
-void PatternTokenizer::FillValue(TokenSink& sink, duckdb::string_t value) {
-  const char* const data_base = value.GetData();
-  const size_t data_len = value.GetSize();
-  if (data_len == 0) {
-    return;
+  auto regex =
+    std::make_unique<re2::RE2>(opts.pattern, RegexOptions(opts.group));
+  if (!regex->ok()) {
+    THROW_SQL_ERROR(ERR_MSG("pattern: invalid regex: ", regex->error()));
   }
-  const re2::StringPiece text(data_base, data_len);
-
-  const auto emit = [&](size_t start, size_t end) {
-    sink.EmitSlice<Layout>(
-      data_base, data_base + data_len,
-      Offs{static_cast<uint32_t>(start), static_cast<uint32_t>(end)});
-  };
-
-  size_t tok_begin = 0;
-  size_t pos = 0;
-  while (pos <= data_len &&
-         _pattern.Match(text, pos, data_len, re2::RE2::UNANCHORED,
-                        _matches.data(), _matches.size())) {
-    const auto& match = _matches[0];
-    const size_t match_start = static_cast<size_t>(match.data() - data_base);
-    const size_t match_end = match_start + match.size();
-
-    if (_group >= 0) {
-      if (const auto& g = _matches[_group]; !g.empty()) {
-        const size_t start = static_cast<size_t>(g.data() - data_base);
-        emit(start, start + g.size());
+  const int num_groups = regex->NumberOfCapturingGroups();
+  if (opts.group < -1 || opts.group > num_groups) {
+    THROW_SQL_ERROR(ERR_MSG("pattern: group ", opts.group,
+                            " out of range, pattern has ", num_groups,
+                            " capturing groups"));
+  }
+  return std::visit(
+    [&]<typename Finder>(Finder&& finder) -> Tokenizer::ptr {
+      if constexpr (std::is_same_v<Finder, std::monostate>) {
+        return std::make_unique<PatternRegexTokenizer>(std::move(regex),
+                                                       opts.group);
+      } else {
+        return std::make_unique<
+          delim::SplitTokenizer<PatternTokenizer, Finder>>(std::move(finder));
       }
-    } else if (match_start > tok_begin) {
-      emit(tok_begin, match_start);
-    }
-    tok_begin = match_end;
-    if (!match.empty()) {
-      pos = match_end;
-      continue;
-    }
-    pos = match_start + (match_start < data_len
-                           ? utf8_utils::LengthFromChar8<1>(
-                               static_cast<byte_type>(data_base[match_start]))
-                           : 1);
-  }
-  if (_group < 0 && tok_begin < data_len) {
-    emit(tok_begin, data_len);
-  }
+    },
+    DetectSplit(*regex, opts.group));
 }
-
-template class TypedTokenizer<PatternTokenizer>;
 
 }  // namespace irs::analysis

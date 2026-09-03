@@ -28,43 +28,10 @@
 #include "pg/sql_exception_macro.h"
 
 namespace irs::analysis {
-
-template<typename Finder>
-class MultiDelimitedTokenizerImpl final
-  : public TypedTokenizer<MultiDelimitedTokenizerImpl<Finder>>,
-    public MultiDelimitedTokenizer {
- public:
-  template<typename... Args>
-  explicit MultiDelimitedTokenizerImpl(Args&&... args)
-    : _finder{std::forward<Args>(args)...} {}
-
-  TokenTraits Traits() const noexcept final {
-    return {
-      .offsets = true,
-      .stable = true,
-    };
-  }
-
-  template<TokenLayout Layout>
-  bool DoFill(duckdb::string_t raw, TokenSink& sink) {
-    delim::SplitValue<Layout>(sink, raw, _finder);
-    return true;
-  }
-
- private:
-  [[no_unique_address]] Finder _finder;
-};
-
-}  // namespace irs::analysis
-namespace irs {
-
-template<typename Finder>
-struct Type<analysis::MultiDelimitedTokenizerImpl<Finder>>
-  : Type<analysis::MultiDelimitedTokenizer> {};
-
-}  // namespace irs
-namespace irs::analysis {
 namespace {
+
+template<typename Finder>
+using Impl = delim::SplitTokenizer<MultiDelimitedTokenizer, Finder>;
 
 Tokenizer::ptr MakeImpl(std::vector<bstring>&& delimiters) {
   const bool single_character_case = absl::c_all_of(
@@ -72,35 +39,29 @@ Tokenizer::ptr MakeImpl(std::vector<bstring>&& delimiters) {
   if (single_character_case) {
     switch (delimiters.size()) {
       case 0:
-        return std::make_unique<
-          MultiDelimitedTokenizerImpl<delim::NoDelimFinder>>();
+        return std::make_unique<Impl<delim::NoDelimFinder>>();
       case 1:
-        return std::make_unique<
-          MultiDelimitedTokenizerImpl<delim::OneCharFinder>>(delimiters[0][0]);
+        return std::make_unique<Impl<delim::OneCharFinder>>(delimiters[0][0]);
       default: {
         delim::ManyCharsFinder finder;
         for (const auto& d : delimiters) {
           SDB_ASSERT(d.size() == 1);
           finder.Add(d[0]);
         }
-        return std::make_unique<
-          MultiDelimitedTokenizerImpl<delim::ManyCharsFinder>>(
+        return std::make_unique<Impl<delim::ManyCharsFinder>>(
           std::move(finder));
       }
     }
   }
   if (delimiters.size() == 1) {
     if (delimiters[0].size() > delim::kHorspoolNeedleThreshold) {
-      return std::make_unique<
-        MultiDelimitedTokenizerImpl<delim::OneLongStringFinder>>(
+      return std::make_unique<Impl<delim::OneLongStringFinder>>(
         std::move(delimiters[0]));
     }
-    return std::make_unique<
-      MultiDelimitedTokenizerImpl<delim::OneStringFinder>>(
+    return std::make_unique<Impl<delim::OneStringFinder>>(
       std::move(delimiters[0]));
   }
-  return std::make_unique<
-    MultiDelimitedTokenizerImpl<delim::MultiStringFinder>>(
+  return std::make_unique<Impl<delim::MultiStringFinder>>(
     std::move(delimiters));
 }
 

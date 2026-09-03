@@ -554,6 +554,29 @@ const std::vector<std::string>& BannerCorpus() {
   return corpus;
 }
 
+const std::vector<std::string>& AccentCorpus() {
+  static const auto corpus = [] {
+    const char* vocab[] = {"café",        "naïve",   "résumé", "Ångström",
+                           "señor",       "crème",   "brûlée", "façade",
+                           "jalapeño",    "Zürich",  "über",   "piñata",
+                           "déjà",        "fiancée", "cliché", "Ærø",
+                           "smörgåsbord", "Þórr",    "œuvre",  "garçon"};
+    std::vector<std::string> out;
+    out.reserve(kValues);
+    for (size_t i = 0; i < kValues; ++i) {
+      std::string v;
+      for (size_t w = 0; w < 15; ++w) {
+        v += vocab[(i * 7 + w * 3) % 20];
+        v += ' ';
+      }
+      v.pop_back();
+      out.push_back(std::move(v));
+    }
+    return out;
+  }();
+  return corpus;
+}
+
 const std::vector<std::string>& PathCorpus() {
   static const auto corpus = [] {
     std::vector<std::string> out;
@@ -862,6 +885,15 @@ Tokenizer::ptr MakeNorm() {
   return NormalizingTokenizer::Make(std::move(opts));
 }
 
+Tokenizer::ptr MakeNormNfkcAccent() {
+  NormalizingTokenizer::Options opts;
+  opts.locale = icu::Locale::createFromName("en");
+  opts.case_convert = Case::Lower;
+  opts.accent = false;
+  opts.form = NormForm::Nfkc;
+  return NormalizingTokenizer::Make(std::move(opts));
+}
+
 Tokenizer::ptr MakeCollation() {
   CollationTokenizer::Options opts;
   opts.locale = icu::Locale::createFromName("de");
@@ -1096,6 +1128,12 @@ Tokenizer::ptr MakePatternLiteral() {
 }
 Tokenizer::ptr MakePatternLiteralRegex() {
   return PatternTokenizer::Make({.pattern = ":{2}", .group = -1});
+}
+Tokenizer::ptr MakePatternNonWord() {
+  return PatternTokenizer::Make({.pattern = "\\W+", .group = -1});
+}
+Tokenizer::ptr MakePatternWords() {
+  return PatternTokenizer::Make({.pattern = "\\S+", .group = 0});
 }
 
 Tokenizer::ptr MakePathHierarchy() { return PathHierarchyTokenizer::Make({}); }
@@ -1381,6 +1419,8 @@ Tokenizer::ptr MakeWordnetSynonymsLarge() {
 
 TOKENIZER_BENCH(keyword, MakeKeyword, WordCorpus);
 TOKENIZER_BENCH(norm, MakeNorm, WordCorpus);
+BENCHMARK_CAPTURE(BM_Fill, norm_nfkc_accent, &MakeNormNfkcAccent, &AccentCorpus)
+  ->Unit(benchmark::kMillisecond);
 BENCHMARK_CAPTURE(BM_Fill, norm_unicode, &MakeNorm, &TextUnicodeCorpus)
   ->Unit(benchmark::kMillisecond);
 TOKENIZER_BENCH(collation, MakeCollation, WordCorpus);
@@ -1434,6 +1474,10 @@ BENCHMARK_CAPTURE(BM_Fill, pattern_literal, &MakePatternLiteral, &ColonCorpus)
   ->Unit(benchmark::kMillisecond);
 BENCHMARK_CAPTURE(BM_Fill, pattern_literal_regex, &MakePatternLiteralRegex,
                   &ColonCorpus)
+  ->Unit(benchmark::kMillisecond);
+BENCHMARK_CAPTURE(BM_Fill, pattern_nonword, &MakePatternNonWord, &TextCorpus)
+  ->Unit(benchmark::kMillisecond);
+BENCHMARK_CAPTURE(BM_Fill, pattern_words, &MakePatternWords, &TextCorpus)
   ->Unit(benchmark::kMillisecond);
 TOKENIZER_BENCH(path_hierarchy, MakePathHierarchy, PathCorpus);
 TOKENIZER_BENCH(path_hierarchy_reverse, MakePathHierarchyReverse, PathCorpus);

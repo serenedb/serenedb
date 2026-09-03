@@ -159,6 +159,8 @@ struct TypedTokenStage : TokenStage {
         const auto n = static_cast<uint32_t>(build(mem));
         SDB_ASSERT(n <= size);
         *_slot = MakeTermViewPadded(mem, n);
+        _arena->ShrinkHead(std::max(size, kTermViewSlack) -
+                           std::max<size_t>(n, kTermViewSlack));
       }
       _emitted = true;
     }

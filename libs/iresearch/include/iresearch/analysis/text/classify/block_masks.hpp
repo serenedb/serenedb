@@ -66,6 +66,21 @@ IRS_FORCE_INLINE inline uint32_t ClassifyAnyEqBlock(
   return MoveMask(acc);
 }
 
+struct ByteRange {
+  byte_type lo;
+  byte_type span;
+};
+
+IRS_FORCE_INLINE inline uint32_t ClassifyAnyInRangeBlock(
+  const byte_type* block, std::span<const ByteRange> ranges) noexcept {
+  const auto b = Load(block);
+  Cmp acc{};
+  for (const auto [lo, span] : ranges) {
+    acc |= (b - lo) <= span;
+  }
+  return MoveMask(acc);
+}
+
 struct ByteSet {
   IRS_FORCE_INLINE void Add(byte_type b) noexcept {
     words[b >> 6] |= uint64_t{1} << (b & 63);

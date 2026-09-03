@@ -293,9 +293,6 @@ inline constexpr OptionInfo kReverse{
 inline constexpr OptionInfo kSkip{"skip", 0,
                                   "Number of initial tokens to skip"};
 
-inline constexpr OptionInfo kBufferSize{
-  "buffersize", 1024, "Term buffer size hint (characters per pass)"};
-
 // Sql
 
 inline constexpr OptionInfo kSqlExpression{
@@ -369,7 +366,7 @@ inline constexpr OptionInfo kEdgeNGramOptions[] = {kMinGram, kMaxGram,
 inline constexpr OptionInfo kPatternOptions[] = {kPattern, kGroup};
 
 inline constexpr OptionInfo kPathHierarchyOptions[] = {
-  kPathDelimiter, kPathReplacement, kReverse, kSkip, kBufferSize};
+  kPathDelimiter, kPathReplacement, kReverse, kSkip};
 
 inline constexpr OptionInfo kSqlOptions[] = {kSqlExpression};
 

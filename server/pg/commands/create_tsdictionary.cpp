@@ -469,12 +469,8 @@ class CreateTSDictionaryOptions : public OptionsParser {
     opts.reverse = Resolve<tokenizer_options::kReverse>(
       prefix, parent ? &parent->reverse : nullptr);
     int parent_skip = parent ? static_cast<int>(parent->skip) : 0;
-    int parent_buf = parent ? static_cast<int>(parent->buffer_size) : 1024;
     opts.skip = static_cast<size_t>(Resolve<tokenizer_options::kSkip>(
       prefix, parent ? &parent_skip : nullptr));
-    opts.buffer_size =
-      static_cast<size_t>(Resolve<tokenizer_options::kBufferSize>(
-        prefix, parent ? &parent_buf : nullptr));
     return opts;
   }
 

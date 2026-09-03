@@ -25,8 +25,7 @@
 
 #include "tokenizer.hpp"
 
-namespace irs {
-namespace analysis {
+namespace irs::analysis {
 
 class PathHierarchyTokenizer {
  public:
@@ -34,7 +33,6 @@ class PathHierarchyTokenizer {
     using Owner = PathHierarchyTokenizer;
     std::string delimiter = "/";
     std::string replacement = "/";
-    size_t buffer_size = 1024;
     size_t skip = 0;
     bool reverse = false;
   };
@@ -51,5 +49,4 @@ class PathHierarchyTokenizer {
   const Options _options;
 };
 
-}  // namespace analysis
-}  // namespace irs
+}  // namespace irs::analysis

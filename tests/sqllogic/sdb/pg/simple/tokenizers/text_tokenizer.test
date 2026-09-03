@@ -2362,7 +2362,6 @@ Text Search Dictionary:
     replacement (string) - Replacement for delimiter in tokens
     reverse (boolean) [default: false] - Use reverse tokenization for domain-like hierarchies
     skip (integer) [default: 0] - Number of initial tokens to skip
-    buffersize (integer) [default: 1024] - Term buffer size hint (characters per pass)
   union:
     (no additional options)
   copy_from:

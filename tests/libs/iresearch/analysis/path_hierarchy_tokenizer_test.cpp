@@ -27,17 +27,11 @@
 
 namespace irs::analysis {
 
-class PathHierarchyTokenizerTests : public ::testing::Test {
- public:
-  static void SetUpTestCase() {}
-};
-
 void AssertTokenStreamContents(
   analysis::Tokenizer* stream, std::string_view data,
   const std::vector<std::string_view>& expected_tokens,
   const std::vector<size_t>& expected_start_offsets,
-  const std::vector<size_t>& expected_end_offsets,
-  const std::vector<int>& expected_pos_increments = {}) {
+  const std::vector<size_t>& expected_end_offsets) {
   size_t token_idx = 0;
   const auto check = [&](irs::TokenBatch& batch,
                          std::span<const irs::DocRun> /*runs*/) {
@@ -50,9 +44,6 @@ void AssertTokenStreamContents(
                 std::string_view(t.GetData(), t.GetSize()));
       ASSERT_EQ(expected_start_offsets[token_idx], batch.offs_start[i]);
       ASSERT_EQ(expected_end_offsets[token_idx], batch.offs_end[i]);
-      if (!expected_pos_increments.empty()) {
-        ASSERT_EQ(1, expected_pos_increments[token_idx]);
-      }
     }
   };
   tests::FnTokenSink sink{irs::TokenLayout::TermsPosOffs, check};
@@ -61,13 +52,13 @@ void AssertTokenStreamContents(
   ASSERT_EQ(token_idx, expected_tokens.size());
 }
 
-TEST_F(PathHierarchyTokenizerTests, consts) {
+TEST(PathHierarchyTokenizerTests, consts) {
   static_assert("path_hierarchy" == irs::Type<PathHierarchyTokenizer>::name());
 }
 
 using Options = PathHierarchyTokenizer::Options;
 
-TEST_F(PathHierarchyTokenizerTests, stable_only_without_replacement) {
+TEST(PathHierarchyTokenizerTests, stable_only_without_replacement) {
   {
     PathHierarchyTokenizer::Options options;
     auto stream = PathHierarchyTokenizer::Make(std::move(options));
@@ -87,7 +78,7 @@ TEST_F(PathHierarchyTokenizerTests, stable_only_without_replacement) {
   }
 }
 
-TEST_F(PathHierarchyTokenizerTests, test_forward_mode) {
+TEST(PathHierarchyTokenizerTests, test_forward_mode) {
   Options options;
   options.reverse = false;
 
@@ -97,10 +88,10 @@ TEST_F(PathHierarchyTokenizerTests, test_forward_mode) {
   ASSERT_EQ(irs::Type<PathHierarchyTokenizer>::id(), stream->type());
 
   AssertTokenStreamContents(stream.get(), data, {"/a", "/a/b", "/a/b/c"},
-                            {0, 0, 0}, {2, 4, 6}, {1, 1, 1});
+                            {0, 0, 0}, {2, 4, 6});
 }
 
-TEST_F(PathHierarchyTokenizerTests, test_single_element_path) {
+TEST(PathHierarchyTokenizerTests, test_single_element_path) {
   Options options;
   options.delimiter = "/";
   options.replacement = "/";
@@ -110,10 +101,10 @@ TEST_F(PathHierarchyTokenizerTests, test_single_element_path) {
   auto stream = PathHierarchyTokenizer::Make(std::move(options));
   ASSERT_NE(nullptr, stream);
 
-  AssertTokenStreamContents(stream.get(), data, {"a"}, {0}, {1}, {1});
+  AssertTokenStreamContents(stream.get(), data, {"a"}, {0}, {1});
 }
 
-TEST_F(PathHierarchyTokenizerTests, test_custom_delimiter) {
+TEST(PathHierarchyTokenizerTests, test_custom_delimiter) {
   Options options;
   options.delimiter = "-";
   options.replacement = "-";
@@ -124,40 +115,40 @@ TEST_F(PathHierarchyTokenizerTests, test_custom_delimiter) {
   ASSERT_NE(nullptr, stream);
 
   AssertTokenStreamContents(stream.get(), data, {"a", "a-b", "a-b-c"},
-                            {0, 0, 0}, {1, 3, 5}, {1, 1, 1});
+                            {0, 0, 0}, {1, 3, 5});
 }
 
-TEST_F(PathHierarchyTokenizerTests, test_reset_multiple_times) {
+TEST(PathHierarchyTokenizerTests, test_reset_multiple_times) {
   Options options;
   options.delimiter = "/";
   auto stream = PathHierarchyTokenizer::Make(std::move(options));
   ASSERT_NE(nullptr, stream);
 
   AssertTokenStreamContents(stream.get(), "/a/b", {"/a", "/a/b"}, {0, 0},
-                            {2, 4}, {1, 1});
+                            {2, 4});
 
   AssertTokenStreamContents(stream.get(), "/xx/y1/z",
-                            {"/xx", "/xx/y1", "/xx/y1/z"}, {0, 0, 0}, {3, 6, 8},
-                            {1, 1, 1});
+                            {"/xx", "/xx/y1", "/xx/y1/z"}, {0, 0, 0},
+                            {3, 6, 8});
 }
 
-TEST_F(PathHierarchyTokenizerTests, test_empty_path) {
+TEST(PathHierarchyTokenizerTests, test_empty_path) {
   Options options;
   auto stream = PathHierarchyTokenizer::Make(std::move(options));
   ASSERT_NE(nullptr, stream);
-  AssertTokenStreamContents(stream.get(), "", {}, {}, {}, {});
+  AssertTokenStreamContents(stream.get(), "", {}, {}, {});
 }
 
-TEST_F(PathHierarchyTokenizerTests, test_path_with_trailing_delimiter) {
+TEST(PathHierarchyTokenizerTests, test_path_with_trailing_delimiter) {
   Options options;
   auto stream = PathHierarchyTokenizer::Make(std::move(options));
   ASSERT_NE(nullptr, stream);
 
   AssertTokenStreamContents(stream.get(), "/a/b/", {"/a", "/a/b", "/a/b/"},
-                            {0, 0, 0}, {2, 4, 5}, {1, 1, 1});
+                            {0, 0, 0}, {2, 4, 5});
 }
 
-TEST_F(PathHierarchyTokenizerTests, test_skip_exceeds_tokens) {
+TEST(PathHierarchyTokenizerTests, test_skip_exceeds_tokens) {
   Options options;
   options.delimiter = "/";
   options.skip = 5;
@@ -167,10 +158,10 @@ TEST_F(PathHierarchyTokenizerTests, test_skip_exceeds_tokens) {
   auto stream = PathHierarchyTokenizer::Make(std::move(options));
   ASSERT_NE(nullptr, stream);
 
-  AssertTokenStreamContents(stream.get(), data, {}, {}, {}, {});
+  AssertTokenStreamContents(stream.get(), data, {}, {}, {});
 }
 
-TEST_F(PathHierarchyTokenizerTests, test_standart_skip) {
+TEST(PathHierarchyTokenizerTests, test_standart_skip) {
   Options options;
   options.delimiter = "/";
   options.skip = 2;
@@ -181,10 +172,10 @@ TEST_F(PathHierarchyTokenizerTests, test_standart_skip) {
   ASSERT_NE(nullptr, stream);
 
   AssertTokenStreamContents(stream.get(), data, {"/c", "/c/d", "/c/d/e"},
-                            {4, 4, 4}, {6, 8, 10}, {1, 1, 1});
+                            {4, 4, 4}, {6, 8, 10});
 }
 
-TEST_F(PathHierarchyTokenizerTests, test_empty_delimiter) {
+TEST(PathHierarchyTokenizerTests, test_empty_delimiter) {
   Options options;
   options.delimiter = std::string(1, '\0');
   options.reverse = false;
@@ -193,10 +184,10 @@ TEST_F(PathHierarchyTokenizerTests, test_empty_delimiter) {
   auto stream = PathHierarchyTokenizer::Make(std::move(options));
   ASSERT_NE(nullptr, stream);
 
-  AssertTokenStreamContents(stream.get(), data, {"abc"}, {0}, {3}, {1});
+  AssertTokenStreamContents(stream.get(), data, {"abc"}, {0}, {3});
 }
 
-TEST_F(PathHierarchyTokenizerTests, test_reset_without_next) {
+TEST(PathHierarchyTokenizerTests, test_reset_without_next) {
   Options options;
   options.delimiter = "/";
 
@@ -206,10 +197,10 @@ TEST_F(PathHierarchyTokenizerTests, test_reset_without_next) {
   ASSERT_TRUE(tests::Analyze(*stream, "/a/b").has_value());
 
   AssertTokenStreamContents(stream.get(), "/x/y", {"/x", "/x/y"}, {0, 0},
-                            {2, 4}, {1, 1});
+                            {2, 4});
 }
 
-TEST_F(PathHierarchyTokenizerTests, test_utf8_characters) {
+TEST(PathHierarchyTokenizerTests, test_utf8_characters) {
   Options options;
   options.delimiter = "/";
   options.reverse = false;
@@ -220,10 +211,10 @@ TEST_F(PathHierarchyTokenizerTests, test_utf8_characters) {
 
   AssertTokenStreamContents(stream.get(), data,
                             {"/café", "/café/café", "/café/café/café"},
-                            {0, 0, 0}, {6, 12, 18}, {1, 1, 1});
+                            {0, 0, 0}, {6, 12, 18});
 }
 
-TEST_F(PathHierarchyTokenizerTests, test_forward_string_delimiter) {
+TEST(PathHierarchyTokenizerTests, test_forward_string_delimiter) {
   Options options;
   options.delimiter = "::";
   options.replacement = "::";
@@ -234,10 +225,10 @@ TEST_F(PathHierarchyTokenizerTests, test_forward_string_delimiter) {
   ASSERT_NE(nullptr, stream);
 
   AssertTokenStreamContents(stream.get(), data, {"a", "a::b", "a::b::c"},
-                            {0, 0, 0}, {1, 4, 7}, {1, 1, 1});
+                            {0, 0, 0}, {1, 4, 7});
 }
 
-TEST_F(PathHierarchyTokenizerTests, test_forward_string_delimiter_leading) {
+TEST(PathHierarchyTokenizerTests, test_forward_string_delimiter_leading) {
   Options options;
   options.delimiter = "::";
   options.replacement = "::";
@@ -248,10 +239,10 @@ TEST_F(PathHierarchyTokenizerTests, test_forward_string_delimiter_leading) {
   ASSERT_NE(nullptr, stream);
 
   AssertTokenStreamContents(stream.get(), data, {"::a", "::a::b"}, {0, 0},
-                            {3, 6}, {1, 1});
+                            {3, 6});
 }
 
-TEST_F(PathHierarchyTokenizerTests, test_forward_string_delimiter_replacement) {
+TEST(PathHierarchyTokenizerTests, test_forward_string_delimiter_replacement) {
   Options options;
   options.delimiter = "::";
   options.replacement = "|";
@@ -262,10 +253,10 @@ TEST_F(PathHierarchyTokenizerTests, test_forward_string_delimiter_replacement) {
   ASSERT_NE(nullptr, stream);
 
   AssertTokenStreamContents(stream.get(), data, {"a", "a|b", "a|b|c"},
-                            {0, 0, 0}, {1, 4, 7}, {1, 1, 1});
+                            {0, 0, 0}, {1, 4, 7});
 }
 
-TEST_F(PathHierarchyTokenizerTests, test_forward_utf8_delimiter_bytes) {
+TEST(PathHierarchyTokenizerTests, test_forward_utf8_delimiter_bytes) {
   const std::string utf1 = "\xF0\x9F\x98\x8A";
   const std::string utf2 = "\xF0\x9F\x98\x8B";
   Options options;
@@ -285,10 +276,10 @@ TEST_F(PathHierarchyTokenizerTests, test_forward_utf8_delimiter_bytes) {
     stream.get(), data,
     {std::string_view(expect1), std::string_view(expect2),
      std::string_view(expect3)},
-    {0, 0, 0}, {1, 6, 11}, {1, 1, 1});
+    {0, 0, 0}, {1, 6, 11});
 }
 
-TEST_F(PathHierarchyTokenizerTests, test_forward_with_different_replacement) {
+TEST(PathHierarchyTokenizerTests, test_forward_with_different_replacement) {
   Options options;
   options.delimiter = "/";
   options.replacement = "_";
@@ -299,10 +290,10 @@ TEST_F(PathHierarchyTokenizerTests, test_forward_with_different_replacement) {
   ASSERT_NE(nullptr, stream);
 
   AssertTokenStreamContents(stream.get(), data, {"_a", "_a_b", "_a_b_c"},
-                            {0, 0, 0}, {2, 4, 6}, {1, 1, 1});
+                            {0, 0, 0}, {2, 4, 6});
 }
 
-TEST_F(PathHierarchyTokenizerTests, test_consecutive_delimiters) {
+TEST(PathHierarchyTokenizerTests, test_consecutive_delimiters) {
   Options options;
   options.delimiter = "/";
   options.reverse = false;
@@ -314,10 +305,10 @@ TEST_F(PathHierarchyTokenizerTests, test_consecutive_delimiters) {
   AssertTokenStreamContents(
     stream.get(), data,
     {"/", "//a", "//a/", "//a//", "//a///b", "//a///b/", "//a///b//"},
-    {0, 0, 0, 0, 0, 0, 0}, {1, 3, 4, 5, 7, 8, 9}, {1, 1, 1, 1, 1, 1, 1});
+    {0, 0, 0, 0, 0, 0, 0}, {1, 3, 4, 5, 7, 8, 9});
 }
 
-TEST_F(PathHierarchyTokenizerTests, test_basic_without_leading_delimiter) {
+TEST(PathHierarchyTokenizerTests, test_basic_without_leading_delimiter) {
   Options options;
   options.delimiter = "/";
   options.reverse = false;
@@ -327,10 +318,10 @@ TEST_F(PathHierarchyTokenizerTests, test_basic_without_leading_delimiter) {
   ASSERT_NE(nullptr, stream);
 
   AssertTokenStreamContents(stream.get(), data, {"a", "a/b", "a/b/c"},
-                            {0, 0, 0}, {1, 3, 5}, {1, 1, 1});
+                            {0, 0, 0}, {1, 3, 5});
 }
 
-TEST_F(PathHierarchyTokenizerTests, test_only_delimiter) {
+TEST(PathHierarchyTokenizerTests, test_only_delimiter) {
   Options options;
   options.delimiter = "/";
   options.reverse = false;
@@ -339,10 +330,10 @@ TEST_F(PathHierarchyTokenizerTests, test_only_delimiter) {
   auto stream = PathHierarchyTokenizer::Make(std::move(options));
   ASSERT_NE(nullptr, stream);
 
-  AssertTokenStreamContents(stream.get(), data, {"/"}, {0}, {1}, {1});
+  AssertTokenStreamContents(stream.get(), data, {"/"}, {0}, {1});
 }
 
-TEST_F(PathHierarchyTokenizerTests, test_only_delimiters) {
+TEST(PathHierarchyTokenizerTests, test_only_delimiters) {
   Options options;
   options.delimiter = "/";
   options.reverse = false;
@@ -351,11 +342,10 @@ TEST_F(PathHierarchyTokenizerTests, test_only_delimiters) {
   auto stream = PathHierarchyTokenizer::Make(std::move(options));
   ASSERT_NE(nullptr, stream);
 
-  AssertTokenStreamContents(stream.get(), data, {"/", "//"}, {0, 0}, {1, 2},
-                            {1, 1});
+  AssertTokenStreamContents(stream.get(), data, {"/", "//"}, {0, 0}, {1, 2});
 }
 
-TEST_F(PathHierarchyTokenizerTests, test_delimiter_in_replacement) {
+TEST(PathHierarchyTokenizerTests, test_delimiter_in_replacement) {
   Options options;
   options.delimiter = "/";
   options.replacement = "//";
@@ -366,10 +356,10 @@ TEST_F(PathHierarchyTokenizerTests, test_delimiter_in_replacement) {
   ASSERT_NE(nullptr, stream);
 
   AssertTokenStreamContents(stream.get(), data, {"//a", "//a//b", "//a//b//c"},
-                            {0, 0, 0}, {2, 4, 6}, {1, 1, 1});
+                            {0, 0, 0}, {2, 4, 6});
 }
 
-TEST_F(PathHierarchyTokenizerTests, test_forward_basic_skip) {
+TEST(PathHierarchyTokenizerTests, test_forward_basic_skip) {
   Options options;
   options.delimiter = "/";
   options.skip = 1;
@@ -379,11 +369,10 @@ TEST_F(PathHierarchyTokenizerTests, test_forward_basic_skip) {
   auto stream = PathHierarchyTokenizer::Make(std::move(options));
   ASSERT_NE(nullptr, stream);
 
-  AssertTokenStreamContents(stream.get(), data, {"/b", "/b/c"}, {2, 2}, {4, 6},
-                            {1, 1});
+  AssertTokenStreamContents(stream.get(), data, {"/b", "/b/c"}, {2, 2}, {4, 6});
 }
 
-TEST_F(PathHierarchyTokenizerTests, test_forward_end_of_delimiter_skip) {
+TEST(PathHierarchyTokenizerTests, test_forward_end_of_delimiter_skip) {
   Options options;
   options.delimiter = "/";
   options.skip = 1;
@@ -394,10 +383,10 @@ TEST_F(PathHierarchyTokenizerTests, test_forward_end_of_delimiter_skip) {
   ASSERT_NE(nullptr, stream);
 
   AssertTokenStreamContents(stream.get(), data, {"/b", "/b/c", "/b/c/"},
-                            {2, 2, 2}, {4, 6, 7}, {1, 1, 1});
+                            {2, 2, 2}, {4, 6, 7});
 }
 
-TEST_F(PathHierarchyTokenizerTests, test_forward_start_of_char_skip) {
+TEST(PathHierarchyTokenizerTests, test_forward_start_of_char_skip) {
   Options options;
   options.delimiter = "/";
   options.skip = 1;
@@ -407,12 +396,11 @@ TEST_F(PathHierarchyTokenizerTests, test_forward_start_of_char_skip) {
   auto stream = PathHierarchyTokenizer::Make(std::move(options));
   ASSERT_NE(nullptr, stream);
 
-  AssertTokenStreamContents(stream.get(), data, {"/b", "/b/c"}, {1, 1}, {3, 5},
-                            {1, 1});
+  AssertTokenStreamContents(stream.get(), data, {"/b", "/b/c"}, {1, 1}, {3, 5});
 }
 
-TEST_F(PathHierarchyTokenizerTests,
-       test_forward_start_of_char_end_of_delimiter_skip) {
+TEST(PathHierarchyTokenizerTests,
+     test_forward_start_of_char_end_of_delimiter_skip) {
   Options options;
   options.delimiter = "/";
   options.skip = 1;
@@ -423,10 +411,10 @@ TEST_F(PathHierarchyTokenizerTests,
   ASSERT_NE(nullptr, stream);
 
   AssertTokenStreamContents(stream.get(), data, {"/b", "/b/c", "/b/c/"},
-                            {1, 1, 1}, {3, 5, 6}, {1, 1, 1});
+                            {1, 1, 1}, {3, 5, 6});
 }
 
-TEST_F(PathHierarchyTokenizerTests, test_forward_only_delimiter_skip) {
+TEST(PathHierarchyTokenizerTests, test_forward_only_delimiter_skip) {
   Options options;
   options.delimiter = "/";
   options.skip = 1;
@@ -436,10 +424,10 @@ TEST_F(PathHierarchyTokenizerTests, test_forward_only_delimiter_skip) {
   auto stream = PathHierarchyTokenizer::Make(std::move(options));
   ASSERT_NE(nullptr, stream);
 
-  AssertTokenStreamContents(stream.get(), data, {}, {}, {}, {});
+  AssertTokenStreamContents(stream.get(), data, {}, {}, {});
 }
 
-TEST_F(PathHierarchyTokenizerTests, test_forward_only_delimiters_skip) {
+TEST(PathHierarchyTokenizerTests, test_forward_only_delimiters_skip) {
   Options options;
   options.delimiter = "/";
   options.skip = 1;
@@ -449,10 +437,10 @@ TEST_F(PathHierarchyTokenizerTests, test_forward_only_delimiters_skip) {
   auto stream = PathHierarchyTokenizer::Make(std::move(options));
   ASSERT_NE(nullptr, stream);
 
-  AssertTokenStreamContents(stream.get(), data, {"/"}, {1}, {2}, {1});
+  AssertTokenStreamContents(stream.get(), data, {"/"}, {1}, {2});
 }
 
-TEST_F(PathHierarchyTokenizerTests, test_windows_path) {
+TEST(PathHierarchyTokenizerTests, test_windows_path) {
   Options options;
   options.delimiter = "\\";
   options.replacement = "\\";
@@ -464,10 +452,10 @@ TEST_F(PathHierarchyTokenizerTests, test_windows_path) {
 
   AssertTokenStreamContents(stream.get(), data,
                             {"c:", "c:\\a", "c:\\a\\b", "c:\\a\\b\\c"},
-                            {0, 0, 0, 0}, {2, 4, 6, 8}, {1, 1, 1, 1});
+                            {0, 0, 0, 0}, {2, 4, 6, 8});
 }
 
-TEST_F(PathHierarchyTokenizerTests, test_reverse_mode) {
+TEST(PathHierarchyTokenizerTests, test_reverse_mode) {
   Options options;
   options.delimiter = ".";
   options.replacement = "-";
@@ -479,10 +467,10 @@ TEST_F(PathHierarchyTokenizerTests, test_reverse_mode) {
 
   AssertTokenStreamContents(stream.get(), data,
                             {"www-example-com", "example-com", "com"},
-                            {0, 4, 12}, {15, 15, 15}, {1, 1, 1});
+                            {0, 4, 12}, {15, 15, 15});
 }
 
-TEST_F(PathHierarchyTokenizerTests, test_reverse_domain_skip) {
+TEST(PathHierarchyTokenizerTests, test_reverse_domain_skip) {
   Options options;
   options.delimiter = ".";
   options.replacement = "-";
@@ -494,10 +482,10 @@ TEST_F(PathHierarchyTokenizerTests, test_reverse_domain_skip) {
   ASSERT_NE(nullptr, stream);
 
   AssertTokenStreamContents(stream.get(), data, {"a-b-c-", "b-c-", "c-"},
-                            {0, 2, 4}, {6, 6, 6}, {1, 1, 1});
+                            {0, 2, 4}, {6, 6, 6});
 }
 
-TEST_F(PathHierarchyTokenizerTests, test_reverse_basic) {
+TEST(PathHierarchyTokenizerTests, test_reverse_basic) {
   Options options;
   options.delimiter = "/";
   options.replacement = "/";
@@ -509,10 +497,10 @@ TEST_F(PathHierarchyTokenizerTests, test_reverse_basic) {
   ASSERT_NE(nullptr, stream);
 
   AssertTokenStreamContents(stream.get(), data, {"/a/b/c", "a/b/c", "b/c", "c"},
-                            {0, 1, 3, 5}, {6, 6, 6, 6}, {1, 1, 1, 1});
+                            {0, 1, 3, 5}, {6, 6, 6, 6});
 }
 
-TEST_F(PathHierarchyTokenizerTests, test_reverse_end_of_delimiter) {
+TEST(PathHierarchyTokenizerTests, test_reverse_end_of_delimiter) {
   Options options;
   options.delimiter = "/";
   options.replacement = "/";
@@ -525,11 +513,10 @@ TEST_F(PathHierarchyTokenizerTests, test_reverse_end_of_delimiter) {
 
   AssertTokenStreamContents(stream.get(), data,
                             {"/a/b/c/", "a/b/c/", "b/c/", "c/"}, {0, 1, 3, 5},
-                            {7, 7, 7, 7}, {1, 1, 1, 1});
+                            {7, 7, 7, 7});
 }
 
-TEST_F(PathHierarchyTokenizerTests,
-       test_reverse_start_of_char_end_of_delimiter) {
+TEST(PathHierarchyTokenizerTests, test_reverse_start_of_char_end_of_delimiter) {
   Options options;
   options.delimiter = "/";
   options.replacement = "/";
@@ -541,10 +528,10 @@ TEST_F(PathHierarchyTokenizerTests,
   ASSERT_NE(nullptr, stream);
 
   AssertTokenStreamContents(stream.get(), data, {"a/b/c/", "b/c/", "c/"},
-                            {0, 2, 4}, {6, 6, 6}, {1, 1, 1});
+                            {0, 2, 4}, {6, 6, 6});
 }
 
-TEST_F(PathHierarchyTokenizerTests, test_reverse_only_delimiter) {
+TEST(PathHierarchyTokenizerTests, test_reverse_only_delimiter) {
   Options options;
   options.delimiter = "/";
   options.replacement = "/";
@@ -555,10 +542,10 @@ TEST_F(PathHierarchyTokenizerTests, test_reverse_only_delimiter) {
   auto stream = PathHierarchyTokenizer::Make(std::move(options));
   ASSERT_NE(nullptr, stream);
 
-  AssertTokenStreamContents(stream.get(), data, {"/"}, {0}, {1}, {1});
+  AssertTokenStreamContents(stream.get(), data, {"/"}, {0}, {1});
 }
 
-TEST_F(PathHierarchyTokenizerTests, test_reverse_only_delimiters) {
+TEST(PathHierarchyTokenizerTests, test_reverse_only_delimiters) {
   Options options;
   options.delimiter = "/";
   options.replacement = "/";
@@ -569,11 +556,10 @@ TEST_F(PathHierarchyTokenizerTests, test_reverse_only_delimiters) {
   auto stream = PathHierarchyTokenizer::Make(std::move(options));
   ASSERT_NE(nullptr, stream);
 
-  AssertTokenStreamContents(stream.get(), data, {"//", "/"}, {0, 1}, {2, 2},
-                            {1, 1});
+  AssertTokenStreamContents(stream.get(), data, {"//", "/"}, {0, 1}, {2, 2});
 }
 
-TEST_F(PathHierarchyTokenizerTests, test_reverse_delimiter_in_replacement) {
+TEST(PathHierarchyTokenizerTests, test_reverse_delimiter_in_replacement) {
   Options options;
   options.delimiter = "/";
   options.replacement = "//";
@@ -585,10 +571,10 @@ TEST_F(PathHierarchyTokenizerTests, test_reverse_delimiter_in_replacement) {
 
   AssertTokenStreamContents(stream.get(), data,
                             {"//a//b//c", "a//b//c", "b//c", "c"}, {0, 1, 3, 5},
-                            {6, 6, 6, 6}, {1, 1, 1, 1});
+                            {6, 6, 6, 6});
 }
 
-TEST_F(PathHierarchyTokenizerTests, test_reverse_end_of_delimiter_skip) {
+TEST(PathHierarchyTokenizerTests, test_reverse_end_of_delimiter_skip) {
   Options options;
   options.delimiter = "/";
   options.replacement = "/";
@@ -600,10 +586,10 @@ TEST_F(PathHierarchyTokenizerTests, test_reverse_end_of_delimiter_skip) {
   ASSERT_NE(nullptr, stream);
 
   AssertTokenStreamContents(stream.get(), data, {"/a/b/", "a/b/", "b/"},
-                            {0, 1, 3}, {5, 5, 5}, {1, 1, 1});
+                            {0, 1, 3}, {5, 5, 5});
 }
 
-TEST_F(PathHierarchyTokenizerTests, test_reverse_only_delimiter_skip) {
+TEST(PathHierarchyTokenizerTests, test_reverse_only_delimiter_skip) {
   Options options;
   options.delimiter = "/";
   options.replacement = "/";
@@ -614,10 +600,10 @@ TEST_F(PathHierarchyTokenizerTests, test_reverse_only_delimiter_skip) {
   auto stream = PathHierarchyTokenizer::Make(std::move(options));
   ASSERT_NE(nullptr, stream);
 
-  AssertTokenStreamContents(stream.get(), data, {}, {}, {}, {});
+  AssertTokenStreamContents(stream.get(), data, {}, {}, {});
 }
 
-TEST_F(PathHierarchyTokenizerTests, test_reverse_only_delimiters_skip) {
+TEST(PathHierarchyTokenizerTests, test_reverse_only_delimiters_skip) {
   Options options;
   options.delimiter = "/";
   options.replacement = "/";
@@ -628,10 +614,10 @@ TEST_F(PathHierarchyTokenizerTests, test_reverse_only_delimiters_skip) {
   auto stream = PathHierarchyTokenizer::Make(std::move(options));
   ASSERT_NE(nullptr, stream);
 
-  AssertTokenStreamContents(stream.get(), data, {"/"}, {0}, {1}, {1});
+  AssertTokenStreamContents(stream.get(), data, {"/"}, {0}, {1});
 }
 
-TEST_F(PathHierarchyTokenizerTests, test_start_of_char_end_of_delimiter) {
+TEST(PathHierarchyTokenizerTests, test_start_of_char_end_of_delimiter) {
   Options options;
   options.delimiter = "/";
   options.reverse = false;
@@ -641,10 +627,10 @@ TEST_F(PathHierarchyTokenizerTests, test_start_of_char_end_of_delimiter) {
   ASSERT_NE(nullptr, stream);
 
   AssertTokenStreamContents(stream.get(), data, {"a", "a/b", "a/b/c", "a/b/c/"},
-                            {0, 0, 0, 0}, {1, 3, 5, 6}, {1, 1, 1, 1});
+                            {0, 0, 0, 0}, {1, 3, 5, 6});
 }
 
-TEST_F(PathHierarchyTokenizerTests, test_tokenizer_via_analyzer_forward) {
+TEST(PathHierarchyTokenizerTests, test_tokenizer_via_analyzer_forward) {
   auto test =
     [](std::string_view data, std::vector<std::string_view> expected_tokens,
        std::vector<size_t> expected_starts, std::vector<size_t> expected_ends) {
@@ -653,7 +639,7 @@ TEST_F(PathHierarchyTokenizerTests, test_tokenizer_via_analyzer_forward) {
 
       std::vector<int> pos_increments(expected_tokens.size(), 1);
       AssertTokenStreamContents(stream.get(), data, expected_tokens,
-                                expected_starts, expected_ends, pos_increments);
+                                expected_starts, expected_ends);
     };
 
   test("a/b/c", {"a", "a/b", "a/b/c"}, {0, 0, 0}, {1, 3, 5});
@@ -663,7 +649,7 @@ TEST_F(PathHierarchyTokenizerTests, test_tokenizer_via_analyzer_forward) {
        {2, 4, 6, 7});
 }
 
-TEST_F(PathHierarchyTokenizerTests, test_reverse_start_of_char_skip) {
+TEST(PathHierarchyTokenizerTests, test_reverse_start_of_char_skip) {
   Options options;
   options.delimiter = "/";
   options.replacement = "/";
@@ -674,12 +660,11 @@ TEST_F(PathHierarchyTokenizerTests, test_reverse_start_of_char_skip) {
   auto stream = PathHierarchyTokenizer::Make(std::move(options));
   ASSERT_NE(nullptr, stream);
 
-  AssertTokenStreamContents(stream.get(), data, {"a/b/", "b/"}, {0, 2}, {4, 4},
-                            {1, 1});
+  AssertTokenStreamContents(stream.get(), data, {"a/b/", "b/"}, {0, 2}, {4, 4});
 }
 
-TEST_F(PathHierarchyTokenizerTests,
-       test_reverse_start_of_char_end_of_delimiter_skip) {
+TEST(PathHierarchyTokenizerTests,
+     test_reverse_start_of_char_end_of_delimiter_skip) {
   Options options;
   options.delimiter = "/";
   options.replacement = "/";
@@ -690,11 +675,10 @@ TEST_F(PathHierarchyTokenizerTests,
   auto stream = PathHierarchyTokenizer::Make(std::move(options));
   ASSERT_NE(nullptr, stream);
 
-  AssertTokenStreamContents(stream.get(), data, {"a/b/", "b/"}, {0, 2}, {4, 4},
-                            {1, 1});
+  AssertTokenStreamContents(stream.get(), data, {"a/b/", "b/"}, {0, 2}, {4, 4});
 }
 
-TEST_F(PathHierarchyTokenizerTests, test_reverse_skip2) {
+TEST(PathHierarchyTokenizerTests, test_reverse_skip2) {
   Options options;
   options.delimiter = "/";
   options.replacement = "/";
@@ -705,12 +689,11 @@ TEST_F(PathHierarchyTokenizerTests, test_reverse_skip2) {
   auto stream = PathHierarchyTokenizer::Make(std::move(options));
   ASSERT_NE(nullptr, stream);
 
-  AssertTokenStreamContents(stream.get(), data, {"/a/", "a/"}, {0, 1}, {3, 3},
-                            {1, 1});
+  AssertTokenStreamContents(stream.get(), data, {"/a/", "a/"}, {0, 1}, {3, 3});
 }
 
-TEST_F(PathHierarchyTokenizerTests,
-       test_reverse_with_replacement_char_collision) {
+TEST(PathHierarchyTokenizerTests,
+     test_reverse_with_replacement_char_collision) {
   PathHierarchyTokenizer::Options options;
   options.delimiter = "/";
   options.replacement = "_";
@@ -721,10 +704,10 @@ TEST_F(PathHierarchyTokenizerTests,
   ASSERT_NE(nullptr, stream);
 
   AssertTokenStreamContents(stream.get(), data, {"foo_bar_baz", "baz"}, {0, 8},
-                            {11, 11}, {1, 1});
+                            {11, 11});
 }
 
-TEST_F(PathHierarchyTokenizerTests, test_forward_offset_with_long_replacement) {
+TEST(PathHierarchyTokenizerTests, test_forward_offset_with_long_replacement) {
   PathHierarchyTokenizer::Options options;
   options.delimiter = "/";
   options.replacement = "---";
@@ -736,10 +719,10 @@ TEST_F(PathHierarchyTokenizerTests, test_forward_offset_with_long_replacement) {
   ASSERT_NE(nullptr, stream);
 
   AssertTokenStreamContents(stream.get(), data, {"---a", "---a---b"}, {0, 0},
-                            {2, 4}, {1, 1});
+                            {2, 4});
 }
 
-TEST_F(PathHierarchyTokenizerTests, test_replacement_contains_delimiter) {
+TEST(PathHierarchyTokenizerTests, test_replacement_contains_delimiter) {
   Options options;
   options.delimiter = "/";
   options.replacement = "_/_";
@@ -747,11 +730,10 @@ TEST_F(PathHierarchyTokenizerTests, test_replacement_contains_delimiter) {
   std::string_view data = "a/b";
   auto stream = PathHierarchyTokenizer::Make(std::move(options));
 
-  AssertTokenStreamContents(stream.get(), data, {"a", "a_/_b"}, {0, 0}, {1, 3},
-                            {1, 1});
+  AssertTokenStreamContents(stream.get(), data, {"a", "a_/_b"}, {0, 0}, {1, 3});
 }
 
-TEST_F(PathHierarchyTokenizerTests, test_skip_exactly_max) {
+TEST(PathHierarchyTokenizerTests, test_skip_exactly_max) {
   Options options;
   options.delimiter = "/";
   options.skip = 3;
@@ -760,10 +742,10 @@ TEST_F(PathHierarchyTokenizerTests, test_skip_exactly_max) {
   std::string_view data = "a/b/c";
   auto stream = PathHierarchyTokenizer::Make(std::move(options));
 
-  AssertTokenStreamContents(stream.get(), data, {}, {}, {}, {});
+  AssertTokenStreamContents(stream.get(), data, {}, {}, {});
 }
 
-TEST_F(PathHierarchyTokenizerTests, test_skip_more_than_max) {
+TEST(PathHierarchyTokenizerTests, test_skip_more_than_max) {
   Options options;
   options.delimiter = "/";
   options.skip = 4;
@@ -772,10 +754,10 @@ TEST_F(PathHierarchyTokenizerTests, test_skip_more_than_max) {
   std::string_view data = "a/b/c";
   auto stream = PathHierarchyTokenizer::Make(std::move(options));
 
-  AssertTokenStreamContents(stream.get(), data, {}, {}, {}, {});
+  AssertTokenStreamContents(stream.get(), data, {}, {}, {});
 }
 
-TEST_F(PathHierarchyTokenizerTests, test_reverse_consecutive_delimiters) {
+TEST(PathHierarchyTokenizerTests, test_reverse_consecutive_delimiters) {
   Options options;
   options.delimiter = "/";
   options.reverse = true;
@@ -784,10 +766,10 @@ TEST_F(PathHierarchyTokenizerTests, test_reverse_consecutive_delimiters) {
   auto stream = PathHierarchyTokenizer::Make(std::move(options));
 
   AssertTokenStreamContents(stream.get(), data, {"a//b", "/b", "b"}, {0, 2, 3},
-                            {4, 4, 4}, {1, 1, 1});
+                            {4, 4, 4});
 }
 
-TEST_F(PathHierarchyTokenizerTests, test_long_path_exceeding_buffer) {
+TEST(PathHierarchyTokenizerTests, test_long_path_exceeding_buffer) {
   Options options;
   options.delimiter = "/";
   options.replacement = "/";
@@ -811,7 +793,7 @@ TEST_F(PathHierarchyTokenizerTests, test_long_path_exceeding_buffer) {
   ASSERT_EQ(data.size(), last.offs_end);
 }
 
-TEST_F(PathHierarchyTokenizerTests, test_tokenizer_via_analyzer_reverse) {
+TEST(PathHierarchyTokenizerTests, test_tokenizer_via_analyzer_reverse) {
   auto test =
     [](std::string_view data, std::vector<std::string_view> expected_tokens,
        std::vector<size_t> expected_starts, std::vector<size_t> expected_ends) {
@@ -820,7 +802,7 @@ TEST_F(PathHierarchyTokenizerTests, test_tokenizer_via_analyzer_reverse) {
 
       std::vector<int> pos_increments(expected_tokens.size(), 1);
       AssertTokenStreamContents(stream.get(), data, expected_tokens,
-                                expected_starts, expected_ends, pos_increments);
+                                expected_starts, expected_ends);
     };
 
   test("a/b/c", {"a/b/c", "b/c", "c"}, {0, 2, 4}, {5, 5, 5});
@@ -830,7 +812,7 @@ TEST_F(PathHierarchyTokenizerTests, test_tokenizer_via_analyzer_reverse) {
        {7, 7, 7, 7});
 }
 
-TEST_F(PathHierarchyTokenizerTests, test_load_json) {
+TEST(PathHierarchyTokenizerTests, test_load_json) {
   // load JSON object with default options
   {
     std::string_view data = "/a/b/c";
@@ -838,7 +820,7 @@ TEST_F(PathHierarchyTokenizerTests, test_load_json) {
     ASSERT_NE(nullptr, stream);
 
     AssertTokenStreamContents(stream.get(), data, {"/a", "/a/b", "/a/b/c"},
-                              {0, 0, 0}, {2, 4, 6}, {1, 1, 1});
+                              {0, 0, 0}, {2, 4, 6});
   }
 
   // with custom delimiter
@@ -851,7 +833,7 @@ TEST_F(PathHierarchyTokenizerTests, test_load_json) {
     ASSERT_NE(nullptr, stream);
 
     AssertTokenStreamContents(stream.get(), data, {"a", "a.b", "a.b.c"},
-                              {0, 0, 0}, {1, 3, 5}, {1, 1, 1});
+                              {0, 0, 0}, {1, 3, 5});
   }
 
   // with reverse mode
@@ -866,11 +848,11 @@ TEST_F(PathHierarchyTokenizerTests, test_load_json) {
 
     AssertTokenStreamContents(stream.get(), data,
                               {"www.example.com", "example.com", "com"},
-                              {0, 4, 12}, {15, 15, 15}, {1, 1, 1});
+                              {0, 4, 12}, {15, 15, 15});
   }
 }
 
-TEST_F(PathHierarchyTokenizerTests, test_invalid_input) {
+TEST(PathHierarchyTokenizerTests, test_invalid_input) {
   // The legacy `test_invalid_json` test exercised JSON-parser-level
   // rejection (empty input, non-object root, non-string `delimiter`,
   // non-bool `reverse`, non-integer `skip`, and empty-string `delimiter`).
@@ -881,10 +863,10 @@ TEST_F(PathHierarchyTokenizerTests, test_invalid_input) {
   auto stream = PathHierarchyTokenizer::Make(Options{});
   ASSERT_NE(nullptr, stream);
   AssertTokenStreamContents(stream.get(), "/a/b", {"/a", "/a/b"}, {0, 0},
-                            {2, 4}, {1, 1});
+                            {2, 4});
 }
 
-TEST_F(PathHierarchyTokenizerTests, test_load_options) {
+TEST(PathHierarchyTokenizerTests, test_load_options) {
   // Ported from the original `test_load_vpack` test, which round-tripped
   // a VPack-encoded `{"delimiter":"/"}` blob through the analyzer
   // registry. With the JSON/VPack parse paths removed, the equivalent
@@ -894,11 +876,10 @@ TEST_F(PathHierarchyTokenizerTests, test_load_options) {
   auto stream = PathHierarchyTokenizer::Make(Options{.delimiter = "/"});
   ASSERT_NE(nullptr, stream);
 
-  AssertTokenStreamContents(stream.get(), data, {"/a", "/a/b"}, {0, 0}, {2, 4},
-                            {1, 1});
+  AssertTokenStreamContents(stream.get(), data, {"/a", "/a/b"}, {0, 0}, {2, 4});
 }
 
-TEST_F(PathHierarchyTokenizerTests, native_fills_match_pull) {
+TEST(PathHierarchyTokenizerTests, native_fills_match_pull) {
   using Options = PathHierarchyTokenizer::Options;
 
   std::string deep;
@@ -961,7 +942,7 @@ TEST_F(PathHierarchyTokenizerTests, native_fills_match_pull) {
   }
 }
 
-TEST_F(PathHierarchyTokenizerTests, test_forward_skip_with_replacement) {
+TEST(PathHierarchyTokenizerTests, test_forward_skip_with_replacement) {
   auto test = [](Options options, std::string_view data,
                  std::vector<std::string_view> expected_tokens,
                  std::vector<size_t> expected_starts,
@@ -970,7 +951,7 @@ TEST_F(PathHierarchyTokenizerTests, test_forward_skip_with_replacement) {
     ASSERT_NE(nullptr, stream);
     std::vector<int> pos_increments(expected_tokens.size(), 1);
     AssertTokenStreamContents(stream.get(), data, expected_tokens,
-                              expected_starts, expected_ends, pos_increments);
+                              expected_starts, expected_ends);
   };
 
   test(Options{.replacement = "_", .skip = 1}, "a/b/c/d",
@@ -983,7 +964,7 @@ TEST_F(PathHierarchyTokenizerTests, test_forward_skip_with_replacement) {
        {"_c", "_c_d", "_c_d_e"}, {4, 4, 4}, {6, 8, 10});
 }
 
-TEST_F(PathHierarchyTokenizerTests, test_forward_overlapping_delimiter) {
+TEST(PathHierarchyTokenizerTests, test_forward_overlapping_delimiter) {
   auto test = [](Options options, std::string_view data,
                  std::vector<std::string_view> expected_tokens,
                  std::vector<size_t> expected_starts,
@@ -992,7 +973,7 @@ TEST_F(PathHierarchyTokenizerTests, test_forward_overlapping_delimiter) {
     ASSERT_NE(nullptr, stream);
     std::vector<int> pos_increments(expected_tokens.size(), 1);
     AssertTokenStreamContents(stream.get(), data, expected_tokens,
-                              expected_starts, expected_ends, pos_increments);
+                              expected_starts, expected_ends);
   };
 
   test(Options{.delimiter = "aa", .replacement = "aa"}, "aaXaaa",
@@ -1005,7 +986,7 @@ TEST_F(PathHierarchyTokenizerTests, test_forward_overlapping_delimiter) {
        {"X", "X-", "X--Y"}, {0, 0, 0}, {1, 3, 6});
 }
 
-TEST_F(PathHierarchyTokenizerTests, test_reverse_overlapping_delimiter) {
+TEST(PathHierarchyTokenizerTests, test_reverse_overlapping_delimiter) {
   auto test = [](Options options, std::string_view data,
                  std::vector<std::string_view> expected_tokens,
                  std::vector<size_t> expected_starts,
@@ -1014,7 +995,7 @@ TEST_F(PathHierarchyTokenizerTests, test_reverse_overlapping_delimiter) {
     ASSERT_NE(nullptr, stream);
     std::vector<int> pos_increments(expected_tokens.size(), 1);
     AssertTokenStreamContents(stream.get(), data, expected_tokens,
-                              expected_starts, expected_ends, pos_increments);
+                              expected_starts, expected_ends);
   };
 
   test(Options{.delimiter = "aa", .replacement = "aa", .reverse = true},
@@ -1025,7 +1006,7 @@ TEST_F(PathHierarchyTokenizerTests, test_reverse_overlapping_delimiter) {
        {"--", "-"}, {0, 2}, {4, 4});
 }
 
-TEST_F(PathHierarchyTokenizerTests, test_reverse_skip_window_straddle) {
+TEST(PathHierarchyTokenizerTests, test_reverse_skip_window_straddle) {
   auto test = [](Options options, std::string_view data,
                  std::vector<std::string_view> expected_tokens,
                  std::vector<size_t> expected_starts,
@@ -1034,7 +1015,7 @@ TEST_F(PathHierarchyTokenizerTests, test_reverse_skip_window_straddle) {
     ASSERT_NE(nullptr, stream);
     std::vector<int> pos_increments(expected_tokens.size(), 1);
     AssertTokenStreamContents(stream.get(), data, expected_tokens,
-                              expected_starts, expected_ends, pos_increments);
+                              expected_starts, expected_ends);
   };
 
   test(
@@ -1045,7 +1026,7 @@ TEST_F(PathHierarchyTokenizerTests, test_reverse_skip_window_straddle) {
     "aaaa", {"-a", "a"}, {0, 2}, {3, 3});
 }
 
-TEST_F(PathHierarchyTokenizerTests, test_deep_path_with_replacement) {
+TEST(PathHierarchyTokenizerTests, test_deep_path_with_replacement) {
   std::string data;
   std::string expected;
   for (int i = 0; i < 2500; ++i) {
@@ -1084,7 +1065,7 @@ TEST_F(PathHierarchyTokenizerTests, test_deep_path_with_replacement) {
   }
 }
 
-TEST_F(PathHierarchyTokenizerTests, test_replaced_matches_view_tokens) {
+TEST(PathHierarchyTokenizerTests, test_replaced_matches_view_tokens) {
   const auto greedy_replace = [](std::string_view s, std::string_view delim,
                                  std::string_view replacement) {
     std::string out;
@@ -1153,7 +1134,7 @@ TEST_F(PathHierarchyTokenizerTests, test_replaced_matches_view_tokens) {
   }
 }
 
-TEST_F(PathHierarchyTokenizerTests, column_fill_matches_per_value) {
+TEST(PathHierarchyTokenizerTests, column_fill_matches_per_value) {
   const std::vector<std::string> values = {
     "/a/b/c",
     "a/b/c/",
@@ -1284,7 +1265,7 @@ void AssertColumnFillWaveSplit(Options options,
   }
 }
 
-TEST_F(PathHierarchyTokenizerTests, column_fill_wave_split_replaced_prefixes) {
+TEST(PathHierarchyTokenizerTests, column_fill_wave_split_replaced_prefixes) {
   {
     SCOPED_TRACE("single_char_delimiter");
     AssertColumnFillWaveSplit(Options{.delimiter = "/", .replacement = "::"},
@@ -1297,7 +1278,7 @@ TEST_F(PathHierarchyTokenizerTests, column_fill_wave_split_replaced_prefixes) {
   }
 }
 
-TEST_F(PathHierarchyTokenizerTests, column_fill_wave_split_replaced_suffixes) {
+TEST(PathHierarchyTokenizerTests, column_fill_wave_split_replaced_suffixes) {
   {
     SCOPED_TRACE("single_char_delimiter");
     AssertColumnFillWaveSplit(

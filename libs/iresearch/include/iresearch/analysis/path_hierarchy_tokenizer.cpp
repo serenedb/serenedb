@@ -23,18 +23,12 @@
 #include <cstring>
 #include <string_view>
 
-#include "iresearch/analysis/tokenizer.hpp"
 #include "pg/sql_exception_macro.h"
 
 namespace irs::analysis {
 
 PathHierarchyTokenizer::PathHierarchyTokenizer(Options&& options) noexcept
   : _options{std::move(options)} {}
-
-enum class Direction : uint8_t {
-  Forward,
-  Reverse,
-};
 
 namespace {
 
@@ -177,23 +171,16 @@ template<TokenLayout Layout, bool SingleChar>
 void EmitSuffixViews(TokenSink& sink, std::string_view value, size_t window_end,
                      std::string_view delimiter) {
   SDB_ASSERT(window_end <= value.size());
-  size_t suffix_start = 0;
-  for (;;) {
-    SDB_ASSERT(suffix_start <= window_end);
-
+  for (size_t suffix_start = 0; suffix_start < window_end;) {
     sink.EmitSlice<Layout>(value.data(), value.data() + value.size(),
                            Offs{static_cast<uint32_t>(suffix_start),
                                 static_cast<uint32_t>(window_end)});
-
     const size_t next_delim =
       FindNextDelim<SingleChar>(value, suffix_start, delimiter);
     if (next_delim == std::string_view::npos || next_delim >= window_end) {
       return;
     }
     suffix_start = next_delim + delimiter.size();
-    if (suffix_start >= window_end) {
-      return;
-    }
   }
 }
 
@@ -248,60 +235,54 @@ void EmitReplacedSuffixes(TokenSink& sink, std::string_view value,
 
 }  // namespace
 
-template<Direction D, bool SingleChar, bool NoReplacement>
+template<bool Reverse, bool SingleChar, bool NoReplacement>
 class PathHierarchyTokenizerImpl final
   : public TypedTokenizer<
-      PathHierarchyTokenizerImpl<D, SingleChar, NoReplacement>>,
+      PathHierarchyTokenizerImpl<Reverse, SingleChar, NoReplacement>>,
     public PathHierarchyTokenizer {
  public:
   explicit PathHierarchyTokenizerImpl(Options&& options) noexcept
     : PathHierarchyTokenizer(std::move(options)) {}
+
   TokenTraits Traits() const noexcept final {
     return {.offsets = true, .stable = NoReplacement};
   }
 
   template<TokenLayout Layout>
   bool DoFill(duckdb::string_t value, TokenSink& sink);
-
- private:
-  template<TokenLayout Layout>
-  IRS_FORCE_INLINE void ForwardFill(std::string_view value,
-                                    std::string_view delimiter,
-                                    TokenSink& sink);
-
-  template<TokenLayout Layout>
-  IRS_FORCE_INLINE void ReverseFill(std::string_view value,
-                                    std::string_view delimiter,
-                                    TokenSink& sink);
 };
 
-template<Direction D, bool SingleChar, bool NoReplacement>
+template<bool Reverse, bool SingleChar, bool NoReplacement>
 template<TokenLayout Layout>
-bool PathHierarchyTokenizerImpl<D, SingleChar, NoReplacement>::DoFill(
+bool PathHierarchyTokenizerImpl<Reverse, SingleChar, NoReplacement>::DoFill(
   duckdb::string_t raw, TokenSink& sink) {
   const std::string_view value{raw.GetData(), raw.GetSize()};
   if (value.empty()) {
     return true;
   }
-
   const std::string_view delimiter{_options.delimiter};
   SDB_ASSERT(!delimiter.empty());
 
-  if constexpr (D == Direction::Forward) {
-    ForwardFill<Layout>(value, delimiter, sink);
-  } else {
-    ReverseFill<Layout>(value, delimiter, sink);
+  if constexpr (Reverse) {
+    size_t window_end = value.size();
+    for (size_t i = 0; i < _options.skip; ++i) {
+      const size_t prev_delim =
+        FindPrevDelim<SingleChar>(value, window_end, delimiter);
+      if (prev_delim == std::string_view::npos) {
+        return true;
+      }
+      window_end = prev_delim + delimiter.size();
+    }
+    if constexpr (NoReplacement) {
+      EmitSuffixViews<Layout, SingleChar>(sink, value, window_end, delimiter);
+    } else {
+      EmitReplacedSuffixes<Layout, SingleChar>(sink, value, window_end,
+                                               delimiter, _options.replacement);
+    }
+    return true;
   }
-  return true;
-}
 
-template<Direction D, bool SingleChar, bool NoReplacement>
-template<TokenLayout Layout>
-IRS_FORCE_INLINE void
-PathHierarchyTokenizerImpl<D, SingleChar, NoReplacement>::ForwardFill(
-  std::string_view value, std::string_view delimiter, TokenSink& sink) {
   size_t prefix_start = 0;
-
   if (_options.skip > 0) {
     size_t scan_from = 0;
     const size_t skip_steps =
@@ -310,75 +291,51 @@ PathHierarchyTokenizerImpl<D, SingleChar, NoReplacement>::ForwardFill(
       const size_t next_delim =
         FindNextDelim<SingleChar>(value, scan_from, delimiter);
       if (next_delim == std::string_view::npos) {
-        return;
+        return true;
       }
       prefix_start = next_delim;
       scan_from = next_delim + delimiter.size();
     }
   }
-
   size_t search_from = prefix_start;
   size_t ndelims = 0;
-
   if (IsDelimAt<SingleChar>(value, search_from, delimiter)) {
     search_from += delimiter.size();
     ndelims = 1;
   }
-
   if constexpr (NoReplacement) {
     EmitPrefixViews<Layout, SingleChar>(sink, value, prefix_start, search_from,
                                         delimiter);
   } else {
-    const std::string_view replacement{_options.replacement};
-    EmitReplacedPrefixes<Layout, SingleChar>(
-      sink, value, prefix_start, search_from, ndelims, delimiter, replacement);
+    EmitReplacedPrefixes<Layout, SingleChar>(sink, value, prefix_start,
+                                             search_from, ndelims, delimiter,
+                                             _options.replacement);
   }
-}
-
-template<Direction D, bool SingleChar, bool NoReplacement>
-template<TokenLayout Layout>
-IRS_FORCE_INLINE void
-PathHierarchyTokenizerImpl<D, SingleChar, NoReplacement>::ReverseFill(
-  std::string_view value, std::string_view delimiter, TokenSink& sink) {
-  size_t window_end = value.size();
-  for (size_t skip_idx = 0; skip_idx < _options.skip; ++skip_idx) {
-    size_t prev_delim = FindPrevDelim<SingleChar>(value, window_end, delimiter);
-    if (prev_delim == std::string_view::npos) {
-      return;
-    }
-    window_end = prev_delim + delimiter.size();
-  }
-
-  if constexpr (NoReplacement) {
-    EmitSuffixViews<Layout, SingleChar>(sink, value, window_end, delimiter);
-  } else {
-    const std::string_view replacement{_options.replacement};
-    EmitReplacedSuffixes<Layout, SingleChar>(sink, value, window_end, delimiter,
-                                             replacement);
-  }
+  return true;
 }
 
 }  // namespace irs::analysis
 namespace irs {
 
-template<analysis::Direction D, bool SingleChar, bool NoReplacement>
-struct Type<analysis::PathHierarchyTokenizerImpl<D, SingleChar, NoReplacement>>
+template<bool Reverse, bool SingleChar, bool NoReplacement>
+struct Type<
+  analysis::PathHierarchyTokenizerImpl<Reverse, SingleChar, NoReplacement>>
   : Type<analysis::PathHierarchyTokenizer> {};
 
 }  // namespace irs
 namespace irs::analysis {
 namespace {
 
-template<Direction D>
+template<bool Reverse>
 Tokenizer::ptr MakePathHierarchy(PathHierarchyTokenizer::Options&& opts,
                                  bool single_char, bool no_replacement) {
   const auto pick = [&]<bool SingleChar>() -> Tokenizer::ptr {
     if (no_replacement) {
-      return std::make_unique<PathHierarchyTokenizerImpl<D, SingleChar, true>>(
-        std::move(opts));
+      return std::make_unique<
+        PathHierarchyTokenizerImpl<Reverse, SingleChar, true>>(std::move(opts));
     }
-    return std::make_unique<PathHierarchyTokenizerImpl<D, SingleChar, false>>(
-      std::move(opts));
+    return std::make_unique<
+      PathHierarchyTokenizerImpl<Reverse, SingleChar, false>>(std::move(opts));
   };
   return single_char ? pick.template operator()<true>()
                      : pick.template operator()<false>();
@@ -398,10 +355,10 @@ Tokenizer::ptr PathHierarchyTokenizer::Make(Options opts) {
   const bool single_char = (opts.delimiter.size() == 1);
   const bool no_replacement = (opts.delimiter == opts.replacement);
 
-  return opts.reverse ? MakePathHierarchy<Direction::Reverse>(
-                          std::move(opts), single_char, no_replacement)
-                      : MakePathHierarchy<Direction::Forward>(
-                          std::move(opts), single_char, no_replacement);
+  return opts.reverse ? MakePathHierarchy<true>(std::move(opts), single_char,
+                                                no_replacement)
+                      : MakePathHierarchy<false>(std::move(opts), single_char,
+                                                 no_replacement);
 }
 
 }  // namespace irs::analysis

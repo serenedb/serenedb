@@ -22,12 +22,16 @@
 
 #include <duckdb/catalog/catalog.hpp>
 #include <duckdb/catalog/catalog_entry/schema_catalog_entry.hpp>
+#include <duckdb/catalog/catalog_entry/sequence_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
 #include <duckdb/common/allocator.hpp>
 #include <duckdb/common/types/column/column_data_collection.hpp>
 #include <duckdb/common/types/data_chunk.hpp>
+#include <duckdb/execution/physical_plan_generator.hpp>
 #include <duckdb/parser/parsed_data/create_table_info.hpp>
 #include <duckdb/parser/parsed_data/drop_info.hpp>
+#include <duckdb/planner/operator/logical_insert.hpp>
+#include <duckdb/transaction/duck_transaction.hpp>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -42,6 +46,7 @@
 #include "basics/debugging.h"
 #include "basics/down_cast.h"
 #include "basics/log.h"
+#include "catalog1/catalog.h"
 #include "catalog1/entry/search_table.h"
 #include "connector/column_id.h"
 #include "connector/duckdb_client_state.h"
@@ -63,7 +68,7 @@ struct SearchInsertGlobalState : duckdb::GlobalSinkState {
   std::vector<ColumnId> column_ids;
   duckdb::vector<duckdb::LogicalType> chunk_types;
   std::vector<primary_key::PKColumn> pk_columns;
-  std::shared_ptr<catalog::SequenceCounter> generated_pk_seq;
+  duckdb::optional_ptr<duckdb::SequenceCatalogEntry> generated_pk_seq;
   std::shared_lock<std::shared_mutex> table_lock;
 
   std::mutex combine_mu;
@@ -119,31 +124,31 @@ struct SearchInsertLocalState : duckdb::LocalSinkState {
 };
 
 SearchWriteTarget CtasWriteTarget(duckdb::ClientContext& context,
-                                  const duckdb::TableCatalogEntry& entry) {
+                                  const catalog::SearchTableEntry& entry) {
   SearchWriteTarget target;
   target.table_id = entry.oid;
-  target.data = entry.GetSearchData();
+  target.data = entry.EnsureStorage();
   const auto& columns = entry.GetColumns();
   target.column_ids.reserve(columns.LogicalColumnCount());
   target.chunk_types.reserve(columns.LogicalColumnCount());
   for (const auto& col : columns.Logical()) {
-    target.column_ids.emplace_back(col.CatalogOid());
+    target.column_ids.emplace_back(col.Oid());
     target.chunk_types.push_back(col.Type());
   }
-  const auto pk_indexes = entry.GetPKColumnIndexes();
+  const auto pk_indexes = primary_key::KeyColumns(entry);
   target.pk_columns.reserve(pk_indexes.size());
   for (const auto index : pk_indexes) {
     target.pk_columns.push_back(
       {.input_col_idx = index.index, .type = columns.GetColumn(index).Type()});
   }
   if (target.pk_columns.empty()) {
-    target.generated_pk_seq = entry.GetGeneratedPkSequence(context);
+    target.generated_pk_seq = FindGeneratedPkSequence(context, entry);
     SDB_ASSERT(target.generated_pk_seq);
   }
   return target;
 }
 
-const duckdb::TableCatalogEntry* CreateCtasTable(
+const catalog::SearchTableEntry* CreateCtasTable(
   duckdb::ClientContext& context, SearchInsertGlobalState& state,
   duckdb::BoundCreateTableInfo& info) {
   auto& schema = info.schema;
@@ -166,7 +171,7 @@ const duckdb::TableCatalogEntry* CreateCtasTable(
   state.ctas_catalog = &catalog;
   state.ctas_schema_name = schema.name;
   state.ctas_table_name = table_info.GetTableName();
-  return &entry->Cast<duckdb::TableCatalogEntry>();
+  return basics::downCast<catalog::SearchTableEntry>(entry.get());
 }
 
 void FinalizeCtasIfNeeded(SearchInsertGlobalState& state) {
@@ -281,7 +286,11 @@ duckdb::SinkResultType SereneDBSearchInsert::Sink(
 
   const bool uses_generated_pk = gstate.generated_pk_seq != nullptr;
   const uint64_t pk_base =
-    uses_generated_pk ? gstate.generated_pk_seq->Reserve(num_rows) : 0;
+    uses_generated_pk ? gstate.generated_pk_seq->NextValues(
+                          duckdb::DuckTransaction::Get(
+                            context.client, gstate.generated_pk_seq->catalog),
+                          num_rows)
+                      : 0;
   WriteChunkToSearchSink(*lstate->sink, chunk, gstate.column_ids,
                          gstate.pk_columns, uses_generated_pk, pk_base);
   if (lstate->returned) {

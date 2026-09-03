@@ -45,6 +45,7 @@
 #include "connector/column_id.h"
 #include "connector/duckdb_sink_writer_base.h"
 #include "connector/index_expression.hpp"
+#include "connector/inverted_store_index.h"
 #include "connector/primary_key.h"
 #include "search/inverted_index.h"
 #include "search/inverted_index_storage.h"
@@ -64,7 +65,7 @@ using TokenizerProvider =
   absl::AnyInvocable<search::ColumnTokenizer(irs::field_id)>;
 
 inline TokenizerProvider MakeTokenizerProvider(
-  search::TokenizerMap dicts, const search::InvertedIndex& index) {
+  search::TokenizerMap dicts, const InvertedStoreIndex& index) {
   return [dicts = std::move(dicts),
           &index](irs::field_id field_id) -> search::ColumnTokenizer {
     return index.GetTokenizer(dicts, field_id);
@@ -75,8 +76,10 @@ using EntryInfoProvider =
   absl::AnyInvocable<const search::InvertedIndexEntryInfo*(irs::field_id)>;
 
 inline EntryInfoProvider MakeEntryInfoProvider(
-  const search::InvertedIndex& index) {
-  return [&index](irs::field_id field_id) { return index.FindEntry(field_id); };
+  const InvertedStoreIndex& index) {
+  return [&index](irs::field_id field_id) {
+    return index.SharedConfig()->FindEntry(field_id);
+  };
 }
 
 inline EntryInfoProvider NoEntryInfoProvider() {
@@ -93,11 +96,6 @@ inline EntryInfoProvider AllStoredEntryInfoProvider() {
   }();
   return [](irs::field_id) { return &kStored; };
 }
-
-struct PkPolicy {
-  bool index_term = true;
-  catalog::PkColumnKind column = catalog::PkColumnKind::Has;
-};
 
 class SearchSinkInsertBaseImpl {
  public:
@@ -325,7 +323,7 @@ inline std::unique_ptr<SearchSinkInsertBaseImpl> MakeSearchTableInsertSink(
   irs::IndexWriter::Transaction& trx) {
   return std::make_unique<SearchSinkInsertBaseImpl>(
     trx, TokenizerProvider{}, AllStoredEntryInfoProvider(),
-    PkPolicy{.index_term = true, .column = catalog::PkColumnKind::None});
+    PkPolicy{.index_term = true, .column = connector::PkColumnKind::None});
 }
 
 void WriteChunkToSearchSink(SearchSinkInsertBaseImpl& sink,

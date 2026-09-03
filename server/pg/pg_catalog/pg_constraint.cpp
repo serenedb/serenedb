@@ -80,7 +80,7 @@ MaterializedData SystemTableSnapshot<PgConstraint>::GetTableData() {
   containers::FlatHashMap<std::string, const duckdb::TableCatalogEntry*>
     tables_by_name;
   VisitEntries<duckdb::TableCatalogEntry>(
-    &context, GetDatabase(), [&](const duckdb::TableCatalogEntry& table) {
+    context, GetDatabase(), [&](const duckdb::TableCatalogEntry& table) {
       tables_by_name.emplace(
         absl::StrCat(table.ParentSchema().name.GetIdentifierName(), ".",
                      table.name.GetIdentifierName()),
@@ -117,7 +117,7 @@ MaterializedData SystemTableSnapshot<PgConstraint>::GetTableData() {
   };
 
   VisitEntries<duckdb::TableCatalogEntry>(
-    &context, GetDatabase(), [&](const duckdb::TableCatalogEntry& table) {
+    context, GetDatabase(), [&](const duckdb::TableCatalogEntry& table) {
       const auto relid = table.oid;
       const auto namespace_id = table.ParentSchema().oid;
       const auto base = [&](PgConstraint::Contype contype, Oid oid,

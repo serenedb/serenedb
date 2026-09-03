@@ -128,12 +128,10 @@ int64_t StoreTableIndexBytes(duckdb::ClientContext& context,
   return total;
 }
 
-int64_t SearchTableBytes(const duckdb::TableCatalogEntry& table) {
+int64_t SearchTableBytes(const catalog::SearchTableEntry& table) {
   // Introspection must not open a store as a side effect: report only what
   // is already open.
-  // Both callers gate on IsSearchTable(table.tags) first.
-  const auto data =
-    basics::downCast<catalog::SearchTableEntry>(table).Storage();
+  const auto& data = table.Storage();
   if (!data) {
     return 0;
   }
@@ -162,8 +160,9 @@ void VisitEntries(duckdb::ClientContext& context, duckdb::Catalog& catalog,
 
 int64_t RelationDataBytes(duckdb::ClientContext& context,
                           const duckdb::TableCatalogEntry& table) {
-  return IsSearchTable(table.tags) ? SearchTableBytes(table)
-                                   : StoreTableDataSize(context, table).bytes;
+  const auto* search = dynamic_cast<const catalog::SearchTableEntry*>(&table);
+  return search ? SearchTableBytes(*search)
+                : StoreTableDataSize(context, table).bytes;
 }
 
 int64_t IndexEntryBytes(duckdb::ClientContext& context,
@@ -186,8 +185,9 @@ int64_t IndexEntryBytes(duckdb::ClientContext& context,
 
 int64_t TableIndexesTotalBytes(duckdb::ClientContext& context,
                                duckdb::TableCatalogEntry& table) {
-  int64_t total =
-    IsSearchTable(table.tags) ? 0 : StoreTableIndexBytes(context, table);
+  int64_t total = dynamic_cast<const catalog::SearchTableEntry*>(&table)
+                    ? 0
+                    : StoreTableIndexBytes(context, table);
   table.ParentSchema().Scan(context, duckdb::CatalogType::INDEX_ENTRY,
                             [&](duckdb::CatalogEntry& entry) {
                               auto& index =
@@ -227,8 +227,9 @@ duckdb::DatabaseSize DatabaseStorageSize(duckdb::ClientContext& context,
                  if (table == nullptr) {
                    return;
                  }
-                 if (IsSearchTable(table->tags)) {
-                   bytes += SearchTableBytes(*table);
+                 if (const auto* search =
+                       dynamic_cast<const catalog::SearchTableEntry*>(table)) {
+                   bytes += SearchTableBytes(*search);
                    return;
                  }
                  const auto data = StoreTableDataSize(context, *table);

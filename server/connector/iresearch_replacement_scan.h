@@ -25,7 +25,6 @@ namespace duckdb {
 struct DBConfig;
 
 }  // namespace duckdb
-
 namespace sdb::connector {
 
 // `FROM <inverted index>` names no relation, which is duckdb's replacement-scan

@@ -1946,3 +1946,27 @@ TEST(ngram_token_stream_test, memory_usage_accounts_scratch) {
     tests::Analyze(stream, std::string(data.begin(), data.end())).has_value());
   EXPECT_GT(stream.MemoryUsage(), 0);
 }
+
+TEST(ngram_token_stream_test, utf8_bounds_scratch_is_reused_across_values) {
+  using NB = irs::analysis::NGramTokenizerBase;
+  const auto options = [] {
+    return NB::Options(2, 3, false, NB::InputType::UTF8, irs::bstring{},
+                       irs::bstring{});
+  };
+  irs::analysis::NGramTokenizer reused(options());
+  const std::string long_value =
+    std::string(40, 'x') + "\xC2\xA2\xC2\xA3\xC2\xA4 " + std::string(30, 'y');
+  ASSERT_TRUE(tests::Analyze(reused, long_value).has_value());
+  const auto scratch = reused.MemoryUsage();
+  EXPECT_GT(scratch, 0);
+  const std::string_view values[] = {
+    long_value, "a\xC2\xA2", "\xE2\x82",
+    "ab",       "",          "\xC2\xA2\xC2\xA3\xC2\xA4\xC2\xA5\xC2\xA6\xC2\xA7",
+    "x"};
+  for (const auto value : values) {
+    SCOPED_TRACE(value);
+    irs::analysis::NGramTokenizer fresh(options());
+    EXPECT_EQ(tests::Analyze(fresh, value), tests::Analyze(reused, value));
+  }
+  EXPECT_EQ(scratch, reused.MemoryUsage());
+}

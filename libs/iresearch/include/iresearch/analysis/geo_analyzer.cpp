@@ -56,17 +56,6 @@ IRS_FORCE_INLINE S2LatLng NormalizedLatLng(double lat_deg,
   return lat_lng.Normalized();
 }
 
-IRS_FORCE_INLINE duckdb::string_t CellTerm(S2CellId id, bool covering,
-                                           byte_type marker) noexcept {
-  static_assert(sizeof(duckdb::string_t) == 16);
-  __uint128_t bytes = std::byteswap(id.id());
-  if (covering) {
-    bytes = (bytes << 8) | marker;
-  }
-  const uint32_t size = sizeof(uint64_t) + covering;
-  return std::bit_cast<duckdb::string_t>((bytes << 32) | size);
-}
-
 bool ParseWkbPoint(duckdb::string_t wkb, S2LatLng& out) noexcept {
   constexpr size_t kWkbPointSize = 1 + 4 + 8 + 8;
   const char* const data = wkb.GetData();
@@ -107,7 +96,13 @@ void GeoAnalyzer::EmitTerms(TokenSink& sink) {
   const auto& opts = _options;
   const auto marker = static_cast<byte_type>(opts.marker_character());
   const auto emit = [&](S2CellId id, bool covering) IRS_FORCE_INLINE {
-    sink.Emit<Layout>(CellTerm(id, covering, marker));
+    const uint64_t be = std::byteswap(id.id());
+    const uint32_t prefix = covering ? 1 : 0;
+    sink.Emit<Layout>(sizeof be + prefix, [&](byte_type* mem) IRS_FORCE_INLINE {
+      mem[0] = marker;
+      std::memcpy(mem + prefix, &be, sizeof be);
+      return sizeof be + prefix;
+    });
   };
   if (!_covering.empty()) {
     SDB_ASSERT(!opts.index_contains_points_only());

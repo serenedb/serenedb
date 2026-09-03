@@ -215,7 +215,8 @@ class TokenSink final : util::Noncopyable {
     const char* vend = vbeg + value.GetSize();
     const bool in_value = data >= vbeg && data + size <= vend;
     if (in_value || size <= duckdb::string_t::INLINE_LENGTH) [[likely]] {
-      _batch.terms[i] = MakeTermView(data, size, in_value ? vend : data + size);
+      StoreTermView(&_batch.terms[i], data, size,
+                    in_value ? vend : data + size);
     } else {
       _batch.terms[i] = CopyTerm(data, size);
     }
@@ -227,7 +228,7 @@ class TokenSink final : util::Noncopyable {
                              Rest... rest) {
     const auto i = Next();
     if (size <= duckdb::string_t::INLINE_LENGTH) [[likely]] {
-      _batch.terms[i] = MakeTermView(data, size, limit);
+      StoreTermView(&_batch.terms[i], data, size, limit);
     } else {
       _batch.terms[i] = CopyTerm(data, size);
     }
@@ -334,7 +335,7 @@ class TokenSink final : util::Noncopyable {
       auto* mem = AllocateTerm(size);
       const auto n = static_cast<uint32_t>(build(mem));
       SDB_ASSERT(n <= size);
-      _batch.terms[i] = MakeTermViewPadded(mem, n);
+      StoreTermViewPadded(&_batch.terms[i], mem, n);
     }
     FillLanes<L>(i, rest...);
   }
@@ -351,8 +352,8 @@ class TokenSink final : util::Noncopyable {
       for (size_t j = 0; j < slots.size(); ++j) {
         const auto s = gen(done + j);
         const auto slot = first + static_cast<uint32_t>(j);
-        _batch.terms[slot] =
-          MakeTermView(chars + s.begin, s.end - s.begin, end);
+        StoreTermView(&_batch.terms[slot], chars + s.begin, s.end - s.begin,
+                      end);
         PutSlotLanes<L>(slot, s, Offs{s.begin, s.end});
       }
       done += slots.size();
@@ -370,9 +371,10 @@ class TokenSink final : util::Noncopyable {
       for (size_t j = 0; j < slots.size(); ++j) {
         const auto s = gen(done + j, mem);
         SDB_ASSERT(s.begin <= s.end && s.end <= size);
-        slots[j] = MakeTermViewPadded(mem + s.begin, s.end - s.begin);
-        PutSlotLanes<L>(first + static_cast<uint32_t>(j), s,
-                        Offs{0, _value_size});
+        const auto slot = first + static_cast<uint32_t>(j);
+        StoreTermViewPadded(&_batch.terms[slot], mem + s.begin,
+                            s.end - s.begin);
+        PutSlotLanes<L>(slot, s, Offs{0, _value_size});
       }
       done += slots.size();
     }

@@ -34,9 +34,13 @@ IRS_FORCE_INLINE inline uint32_t ClassifyUtf8LeadBlock(
 
 }  // namespace
 
-void BuildUtf8CpBounds(const byte_type* data, size_t size, bool valid_utf8,
-                       std::vector<uint32_t>& out) {
-  out.clear();
+size_t BuildUtf8CpBounds(const byte_type* data, size_t size, bool valid_utf8,
+                         std::vector<uint32_t>& out) {
+  if (out.size() < size + 1) {
+    out.resize(size + 1);
+  }
+  uint32_t* bounds = out.data();
+  size_t n = 0;
   if (valid_utf8) {
     DrainClassified(
       data, size, true,
@@ -44,14 +48,15 @@ void BuildUtf8CpBounds(const byte_type* data, size_t size, bool valid_utf8,
         IRS_FORCE_INLINE { return ClassifyUtf8LeadBlock(block); },
       [](byte_type c) IRS_FORCE_INLINE { return (c & 0xC0) != 0x80; },
       [&](size_t pos)
-        IRS_FORCE_INLINE { out.push_back(static_cast<uint32_t>(pos)); });
+        IRS_FORCE_INLINE { bounds[n++] = static_cast<uint32_t>(pos); });
   } else {
     const auto* end = data + size;
     for (const auto* it = data; it != end; it = utf8_utils::Next(it, end)) {
-      out.push_back(static_cast<uint32_t>(it - data));
+      bounds[n++] = static_cast<uint32_t>(it - data);
     }
   }
-  out.push_back(static_cast<uint32_t>(size));
+  bounds[n] = static_cast<uint32_t>(size);
+  return n;
 }
 
 // ASCII values are NFC-invariant and carry no nonspacing marks, so

@@ -44,12 +44,23 @@ Tokenizer::ptr NGramTokenizerBase::Make(Options opts) {
 NGramTokenizer::NGramTokenizer(Options&& options)
   : NGramTokenizerBase{std::move(options)} {}
 
-std::tuple<bool, NGramTokenizerBase::NGramMode, bool, bool>
-NGramTokenizer::PrepareBatch(BlockTraits traits) const {
-  const bool plain = PlainFill();
-  const bool fixed = _options.ngram_mode == NGramMode::All &&
-                     _options.min_gram == _options.max_gram;
-  return {plain, _options.ngram_mode, fixed,
+std::tuple<bool, NGramTokenizerBase::Kernel, bool> NGramTokenizer::PrepareBatch(
+  BlockTraits traits) const {
+  const auto kernel = [&] {
+    switch (_options.ngram_mode) {
+      case NGramMode::All:
+        return _options.min_gram == _options.max_gram ? Kernel::AllFixed
+                                                      : Kernel::AllVariable;
+      case NGramMode::Prefix:
+        return Kernel::Prefix;
+      case NGramMode::Suffix:
+        return Kernel::Suffix;
+      case NGramMode::PrefixAndSuffix:
+        return Kernel::PrefixAndSuffix;
+    }
+    return Kernel::AllVariable;
+  }();
+  return {PlainFill(), kernel,
           _options.stream_bytes_type == InputType::Binary || traits.ascii};
 }
 
@@ -233,6 +244,30 @@ IRS_FORCE_INLINE void EmitFixedGrams(const Options& options,
 }
 
 template<TokenLayout Layout, bool Identity>
+struct VariableGramSlots {
+  GramSink<Layout, Identity> grams;
+  uint32_t nsym;
+  size_t max_gram;
+  uint32_t min_sym;
+  uint32_t start;
+  uint32_t len;
+  uint32_t max_sym;
+
+  IRS_FORCE_INLINE EmitKSlotPos operator()(size_t) {
+    const EmitKSlotPos t{grams.ByteOffset(start), grams.ByteOffset(start + len),
+                         start + 1};
+    if (len == max_sym) {
+      ++start;
+      len = min_sym;
+      max_sym = static_cast<uint32_t>(std::min<size_t>(max_gram, nsym - start));
+    } else {
+      ++len;
+    }
+    return t;
+  }
+};
+
+template<TokenLayout Layout, bool Identity>
 IRS_FORCE_INLINE void EmitVariableGrams(const Options& options,
                                         const GramSink<Layout, Identity>& grams,
                                         uint32_t nsym) {
@@ -246,22 +281,14 @@ IRS_FORCE_INLINE void EmitVariableGrams(const Options& options,
   const size_t full = total > max_gram ? total - max_gram : 0;
   const size_t tail = (total - min_sym) - full;
   const size_t k = full * (max_gram - min_sym + 1) + tail * (tail + 1) / 2;
-  uint32_t start = 0;
-  uint32_t len = min_sym;
-  uint32_t max_sym =
-    static_cast<uint32_t>(std::min<size_t>(max_gram, nsym - start));
-  const auto slots = [&](size_t) IRS_FORCE_INLINE {
-    const EmitKSlotPos t{grams.ByteOffset(start), grams.ByteOffset(start + len),
-                         start + 1};
-    if (len == max_sym) {
-      ++start;
-      len = min_sym;
-      max_sym = static_cast<uint32_t>(std::min<size_t>(max_gram, nsym - start));
-    } else {
-      ++len;
-    }
-    return t;
-  };
+  VariableGramSlots<Layout, Identity> slots{
+    grams,
+    nsym,
+    max_gram,
+    min_sym,
+    0,
+    min_sym,
+    static_cast<uint32_t>(std::min<size_t>(max_gram, nsym))};
   grams.sink.template EmitK<Layout>(k, base, base + grams.data_size, slots);
 }
 
@@ -364,8 +391,8 @@ void EmitMarkedSuffixGrams(const Options& options,
 
 }  // namespace
 
-template<TokenLayout Layout, bool Plain, NGramTokenizerBase::NGramMode Mode,
-         bool Fixed, bool KnownAscii>
+template<TokenLayout Layout, bool Plain, NGramTokenizerBase::Kernel K,
+         bool KnownAscii>
 bool NGramTokenizer::DoFill(duckdb::string_t raw, TokenSink& sink) {
   constexpr bool Identity = KnownAscii;
   const auto* base = reinterpret_cast<const byte_type*>(raw.GetData());
@@ -374,18 +401,15 @@ bool NGramTokenizer::DoFill(duckdb::string_t raw, TokenSink& sink) {
     return true;
   }
   const uint32_t* bounds = nullptr;
+  uint32_t nsym = size;
   if constexpr (!Identity) {
-    classify::BuildUtf8CpBounds(
+    nsym = static_cast<uint32_t>(classify::BuildUtf8CpBounds(
       base, size,
       simdutf::validate_utf8(reinterpret_cast<const char*>(base), size),
-      _fill_bounds);
+      _fill_bounds));
     bounds = _fill_bounds.data();
   }
   const GramSink<Layout, Identity> gram_sink{sink, base, size, bounds};
-  uint32_t nsym = size;
-  if constexpr (!Identity) {
-    nsym = static_cast<uint32_t>(_fill_bounds.size() - 1);
-  }
   if (nsym == 0) {
     return true;
   }
@@ -398,26 +422,26 @@ bool NGramTokenizer::DoFill(duckdb::string_t raw, TokenSink& sink) {
     }
   }
 
-  if constexpr (Mode == NGramMode::All && Fixed) {
+  if constexpr (K == Kernel::AllFixed) {
     if constexpr (!Plain) {
       EmitMarkedPrefixGrams<Layout, Identity, true>(_options, gram_sink, nsym,
                                                     pending);
     }
     EmitFixedGrams<Layout, Identity, !Plain>(_options, gram_sink, nsym);
-  } else if constexpr (Mode == NGramMode::All && Plain) {
+  } else if constexpr (K == Kernel::AllVariable && Plain) {
     EmitVariableGrams<Layout, Identity>(_options, gram_sink, nsym);
-  } else if constexpr (Mode == NGramMode::All) {
+  } else if constexpr (K == Kernel::AllVariable) {
     EmitMarkedPrefixGrams<Layout, Identity, true>(_options, gram_sink, nsym,
                                                   pending);
     EmitMarkedVariableGrams<Layout, Identity>(_options, gram_sink, nsym);
-  } else if constexpr (Mode == NGramMode::Prefix && Plain) {
+  } else if constexpr (K == Kernel::Prefix && Plain) {
     EmitPrefixGrams<Layout, Identity>(_options, gram_sink, nsym);
-  } else if constexpr (Mode == NGramMode::Prefix) {
+  } else if constexpr (K == Kernel::Prefix) {
     EmitMarkedPrefixGrams<Layout, Identity, true>(_options, gram_sink, nsym,
                                                   pending);
-  } else if constexpr (Mode == NGramMode::Suffix && Plain) {
+  } else if constexpr (K == Kernel::Suffix && Plain) {
     EmitSuffixGrams<Layout, Identity, false>(_options, gram_sink, nsym);
-  } else if constexpr (Mode == NGramMode::Suffix) {
+  } else if constexpr (K == Kernel::Suffix) {
     EmitMarkedSuffixGrams<Layout, Identity, false>(_options, gram_sink, nsym,
                                                    pending);
   } else if constexpr (Plain) {

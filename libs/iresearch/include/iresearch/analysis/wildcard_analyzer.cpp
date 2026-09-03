@@ -133,12 +133,11 @@ void WildcardAnalyzer::EmitTermGrams(TokenSink& sink, const byte_type* term,
   const uint32_t* bounds = nullptr;
   uint32_t nsym = size;
   if constexpr (!Identity) {
-    classify::BuildUtf8CpBounds(
+    nsym = static_cast<uint32_t>(classify::BuildUtf8CpBounds(
       term, size,
       simdutf::validate_utf8(reinterpret_cast<const char*>(term) + 1, size - 2),
-      _fill_bounds);
+      _fill_bounds));
     bounds = _fill_bounds.data();
-    nsym = static_cast<uint32_t>(_fill_bounds.size() - 1);
   }
   const auto n = static_cast<uint32_t>(_ngram.min_gram());
   const auto bnd = [&](uint32_t i) -> uint32_t {

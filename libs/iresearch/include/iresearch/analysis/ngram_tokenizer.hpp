@@ -44,6 +44,14 @@ class NGramTokenizerBase : private util::Noncopyable {
     PrefixAndSuffix,
   };
 
+  enum class Kernel : uint8_t {
+    AllFixed,
+    AllVariable,
+    Prefix,
+    Suffix,
+    PrefixAndSuffix,
+  };
+
   struct Options {
     using Owner = NGramTokenizerBase;
     size_t min_gram{0};
@@ -95,15 +103,13 @@ class NGramTokenizer final : public TypedTokenizer<NGramTokenizer>,
     return {.ascii = _options.stream_bytes_type == InputType::UTF8};
   }
 
-  std::tuple<bool, NGramMode, bool, bool> PrepareBatch(
-    BlockTraits traits) const;
+  std::tuple<bool, Kernel, bool> PrepareBatch(BlockTraits traits) const;
 
   size_t MemoryUsage() const noexcept final {
     return _fill_bounds.capacity() * sizeof(uint32_t);
   }
 
-  template<TokenLayout Layout, bool Plain, NGramMode Mode, bool Fixed,
-           bool KnownAscii>
+  template<TokenLayout Layout, bool Plain, Kernel K, bool KnownAscii>
   bool DoFill(duckdb::string_t value, TokenSink& sink);
 };
 

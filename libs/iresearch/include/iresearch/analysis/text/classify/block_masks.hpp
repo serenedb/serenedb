@@ -149,7 +149,7 @@ IRS_FORCE_INLINE void DrainClassified(const byte_type* data, size_t size,
                [&](uint32_t bit) IRS_FORCE_INLINE { on_delim(base + bit); });
 }
 
-void BuildUtf8CpBounds(const byte_type* data, size_t size, bool valid_utf8,
-                       std::vector<uint32_t>& out);
+size_t BuildUtf8CpBounds(const byte_type* data, size_t size, bool valid_utf8,
+                         std::vector<uint32_t>& out);
 
 }  // namespace irs::analysis::classify

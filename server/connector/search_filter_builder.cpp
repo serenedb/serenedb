@@ -69,6 +69,7 @@
 #include "basics/containers/flat_hash_map.h"
 #include "basics/containers/node_hash_map.h"
 #include "basics/system-compiler.h"
+#include "catalog1/scorer_options.h"
 #include "comparison_op.hpp"
 #include "connector/common.h"
 #include "connector/term_dict.h"
@@ -79,6 +80,7 @@
 #include "geo_filter_builder.hpp"
 #include "pg/errcodes.h"
 #include "pg/sql_exception_macro.h"
+#include "search/search_analyzer_impl.h"
 
 namespace magic_enum {
 

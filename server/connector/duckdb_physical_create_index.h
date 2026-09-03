@@ -145,7 +145,7 @@ class SereneDBPhysicalCreateIndex final : public duckdb::PhysicalOperator {
     std::vector<IndexRelationColumn> columns,
     std::vector<duckdb::LogicalIndex> pk_positions, duckdb::idx_t database_id,
     duckdb::unique_ptr<duckdb::CreateIndexInfo> info,
-    std::vector<duckdb::unique_ptr<duckdb::Expression>> bound_expressions,
+    duckdb::vector<duckdb::unique_ptr<duckdb::Expression>> bound_expressions,
     duckdb::unique_ptr<duckdb::Expression> bound_where,
     duckdb::DuckSchemaEntry& schema_entry, duckdb::idx_t estimated_cardinality);
 
@@ -187,8 +187,7 @@ class SereneDBPhysicalCreateIndex final : public duckdb::PhysicalOperator {
   std::vector<duckdb::LogicalIndex> _pk_positions;
   duckdb::idx_t _database_id;
   duckdb::unique_ptr<duckdb::CreateIndexInfo> _info;
-  std::vector<duckdb::unique_ptr<duckdb::Expression>> _bound_expressions;
-  // Bound partial-index predicate (info->where_clause); null for full indexes.
+  duckdb::vector<duckdb::unique_ptr<duckdb::Expression>> _bound_expressions;
   duckdb::unique_ptr<duckdb::Expression> _bound_where;
   // The statement's SereneDBCreateIndexInfo view of _info: the bind
   // captures (manifest, pk spec/type) plus the optional REINDEX pass

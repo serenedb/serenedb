@@ -30,8 +30,6 @@
 
 #include "basics/assert.h"
 #include "basics/containers/flat_hash_map.h"
-#include "catalog/store/store.h"
-#include "catalog/table.h"
 #include "pg/errcodes.h"
 #include "pg/sql_exception_macro.h"
 
@@ -55,22 +53,6 @@ duckdb::TableCatalogEntry& ResolveTableEntry(duckdb::ClientContext& context,
               "\" -- the attached source table has no native storage"));
   }
   return entry;
-}
-
-duckdb::TableCatalogEntry& ResolveStoreTableEntry(
-  duckdb::ClientContext& context, const duckdb::TableCatalogEntry& scan_entry,
-  const catalog::Table& table) {
-  // The scan entry is the facade table or one of its index entries; either
-  // way it shares the table's database and schema.
-  auto store_name = catalog::StoreTableName(
-    scan_entry.ParentCatalog().GetName().GetIdentifierName(),
-    scan_entry.ParentSchema().name.GetIdentifierName(), table.GetName());
-  return duckdb::Catalog::GetEntry(
-           context, duckdb::CatalogType::TABLE_ENTRY,
-           duckdb::QualifiedName(
-             duckdb::Identifier{catalog::kStoreDatabaseName},
-             duckdb::Identifier{"main"}, duckdb::Identifier{store_name}))
-    .Cast<duckdb::TableCatalogEntry>();
 }
 
 }  // namespace
@@ -136,7 +118,7 @@ ViewTableIndexSource::ViewTableIndexSource(
   duckdb::ClientContext& context, ViewFastPath fast_path,
   std::span<const duckdb::idx_t> projected_columns,
   std::span<const duckdb::LogicalType> projected_types,
-  std::span<const catalog::Column::Id> bind_column_ids,
+  std::span<const ColumnId> bind_column_ids,
   duckdb::TableFilterSet* pushed_filters)
   : RowIdFetchIndexSource{std::move(fast_path)} {
   auto& table = ResolveTableEntry(context, _fast_path);
@@ -170,27 +152,26 @@ ViewTableIndexSource::ViewTableIndexSource(
 }
 
 TableRowIdIndexSource::TableRowIdIndexSource(
-  duckdb::ClientContext& context, const duckdb::TableCatalogEntry& scan_entry,
-  const catalog::Table& sdb_table,
+  duckdb::ClientContext& context, duckdb::TableCatalogEntry& table,
   std::span<const duckdb::idx_t> projected_columns,
   std::span<const duckdb::LogicalType> projected_types,
-  std::span<const catalog::Column::Id> bind_column_ids,
+  std::span<const ColumnId> bind_column_ids,
   duckdb::TableFilterSet* pushed_filters)
   : RowIdFetchIndexSource{ViewFastPath{}} {
-  auto& table = ResolveStoreTableEntry(context, scan_entry, sdb_table);
   SetTable(table);
   duckdb::DuckTransaction::Get(context, table.ParentCatalog());
   const auto& columns = table.GetColumns();
-  // Store physical positions follow the facade column order minus the
-  // generated PK; map catalog column ids through that order.
+  // The table is its own storage now -- there is no separate store relation to
+  // resolve -- so physical positions are the entry's own column order minus
+  // the generated PK.
   containers::FlatHashMap<duckdb::idx_t, duckdb::idx_t> id_to_pos;
-  id_to_pos.reserve(sdb_table.Columns().size());
+  id_to_pos.reserve(columns.LogicalColumnCount());
   duckdb::idx_t pos = 0;
-  for (const auto& col : sdb_table.Columns()) {
-    if (col.GetId() == catalog::Column::kGeneratedPKId) {
+  for (const auto& col : columns.Logical()) {
+    if (ColumnId{col.Oid()} == kGeneratedPKId) {
       continue;
     }
-    id_to_pos.emplace(static_cast<duckdb::idx_t>(col.GetId()), pos++);
+    id_to_pos.emplace(static_cast<duckdb::idx_t>(col.Oid()), pos++);
   }
   InitProjection(
     context, projected_columns, projected_types, bind_column_ids,

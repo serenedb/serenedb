@@ -466,17 +466,12 @@ std::optional<ViewFastPath> ResolveViewFastPath(
     // types, since composite keys are the norm there. That key is a sorting
     // prefix and not a uniqueness constraint, so duplicate keys each index
     // their own document and a re-fetch returns every row sharing a key.
-    const auto& constraints = entry.GetConstraints();
-    const auto pk = absl::c_find_if(
-      constraints, [](const duckdb::unique_ptr<duckdb::Constraint>& c) {
-        return c->type == duckdb::ConstraintType::UNIQUE &&
-               c->Cast<duckdb::UniqueConstraint>().IsPrimaryKey();
-      });
-    if (pk == constraints.end()) {
+    const auto pk = entry.GetPrimaryKey();
+    if (!pk) {
       return std::nullopt;
     }
     auto cols = FindKeyColumns(
-      entry, (*pk)->Cast<duckdb::UniqueConstraint>().GetColumnNames());
+      entry, pk->Cast<duckdb::UniqueConstraint>().GetColumnNames());
     if (cols.empty()) {
       return std::nullopt;
     }

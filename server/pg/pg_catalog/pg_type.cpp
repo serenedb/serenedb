@@ -29,8 +29,8 @@
 #include "basics/containers/flat_hash_set.h"
 #include "basics/down_cast.h"
 #include "catalog1/entry/role.h"
-#include "pg/pg_types.h"
 #include "pg/pg_catalog/fwd.h"
+#include "pg/pg_types.h"
 
 namespace sdb::pg {
 namespace {
@@ -1598,7 +1598,7 @@ MaterializedData SystemTableSnapshot<PgType>::GetTableData() {
     const std::string_view type_name = type.name.GetIdentifierName();
     const auto type_oid = type.oid;
     const auto namespace_oid = type.ParentSchema().oid;
-    const auto array_oid = catalog::TypeArrayOid(type_oid).id();
+    const auto array_oid = TypeArrayOid(type_oid);
     const auto array_name = make_array_name(type_name);
     const AclColumn type_acl{catalog::AclView{perm.acl}};
 

@@ -24,6 +24,7 @@
 #include <duckdb/common/types/column/column_data_collection.hpp>
 #include <duckdb/common/types/data_chunk.hpp>
 #include <duckdb/storage/buffer_manager.hpp>
+#include <duckdb/transaction/duck_transaction.hpp>
 #include <memory>
 #include <optional>
 #include <shared_mutex>
@@ -50,7 +51,7 @@ struct SearchUpdateGlobalState : duckdb::GlobalSinkState {
   duckdb::vector<duckdb::LogicalType> chunk_types;
   std::vector<primary_key::PKColumn> new_pk_columns;
   std::vector<duckdb::idx_t> new_row_src;
-  std::shared_ptr<catalog::SequenceCounter> generated_pk_seq;
+  duckdb::optional_ptr<duckdb::SequenceCatalogEntry> generated_pk_seq;
   std::unique_ptr<SearchSinkInsertBaseImpl> insert_sink;
 
   std::vector<primary_key::PKColumn> old_pk_columns;
@@ -158,7 +159,11 @@ duckdb::SinkResultType SereneDBSearchUpdate::Sink(
   }
   const bool uses_generated_pk = gstate.generated_pk_seq != nullptr;
   const uint64_t pk_base =
-    uses_generated_pk ? gstate.generated_pk_seq->Reserve(num_rows) : 0;
+    uses_generated_pk ? gstate.generated_pk_seq->NextValues(
+                          duckdb::DuckTransaction::Get(
+                            context.client, gstate.generated_pk_seq->catalog),
+                          num_rows)
+                      : 0;
   // TODO(Dronplane): Maybe we can re-use generated PKs from delete if PK is not
   // changed. Looks not big win now. But for future optimizations.
   WriteChunkToSearchSink(*gstate.insert_sink, new_row, gstate.column_ids,

@@ -27,6 +27,7 @@
 #include <duckdb/planner/expression/bound_function_expression.hpp>
 #include <iresearch/analysis/geo_analyzer.hpp>
 #include <iresearch/search/geo_filter.hpp>
+#include <string_view>
 
 #include "basics/assert.h"
 #include "functions/search.h"
@@ -42,6 +43,27 @@
 
 namespace sdb::connector {
 namespace {
+
+bool IsCRS84Identifier(std::string_view id) noexcept {
+  return id == "OGC:CRS84" || id == "EPSG:4326" || id == "4326";
+}
+
+void ValidateGeometryCRS84(const duckdb::LogicalType& type,
+                           std::string_view subject) {
+  if (!duckdb::GeoType::HasCRS(type)) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                    ERR_MSG(subject,
+                            ": GEOMETRY type has no CRS attached; declare it "
+                            "with ::GEOMETRY('OGC:CRS84')"));
+  }
+  const auto& crs = duckdb::GeoType::GetCRS(type);
+  if (!IsCRS84Identifier(crs.GetIdentifier())) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+      ERR_MSG(subject, ": GEOMETRY type has invalid CRS '", crs.GetIdentifier(),
+              "'; only CRS84 is supported (EPSG:4326, OGC:CRS84, 4326)"));
+  }
+}
 
 // Peels a cast that's a metadata-only reinterpret -- same LogicalTypeId on
 // both sides and non-nested -- so geo signatures pinned to
@@ -134,7 +156,7 @@ void ParseGeoConstant(const duckdb::Value& value,
       return;
     }
     case duckdb::LogicalTypeId::GEOMETRY: {
-      sdb::catalog::ValidateGeometryCRS84(value.type(), "GEOMETRY constant");
+      ValidateGeometryCRS84(value.type(), "GEOMETRY constant");
       const auto& wkb_str = duckdb::StringValue::Get(value);
       if (!sdb::geo::ParseShapeWKB(wkb_str, shape)) {
         THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),

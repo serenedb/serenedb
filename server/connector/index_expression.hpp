@@ -44,7 +44,7 @@ duckdb::unique_ptr<duckdb::Expression> DeserializeBoundExpression(
 // alias/query_location cleared, is_operator=false, column refs keyed by
 // stable catalog (table_id, col_id) instead of binder-allocated indices.
 duckdb::unique_ptr<duckdb::Expression> NormalizeBoundExpression(
-  const duckdb::Expression& expr, ObjectId table_id,
+  const duckdb::Expression& expr, duckdb::idx_t table_id,
   std::span<const ColumnId> col_index_to_id, duckdb::ClientContext& context);
 
 void RejectJsonObjectArrayLeaves(const duckdb::Vector& result,

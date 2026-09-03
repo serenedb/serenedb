@@ -36,6 +36,7 @@
 #include <mutex>
 #include <system_error>
 
+#include "basics/containers/flat_hash_map.h"
 #include "basics/duckdb_engine.h"
 #include "basics/lifecycle.h"
 #include "basics/log.h"

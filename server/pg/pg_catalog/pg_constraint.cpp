@@ -20,6 +20,8 @@
 
 #include "pg/pg_catalog/pg_constraint.h"
 
+#include <absl/strings/str_cat.h>
+
 #include <deque>
 #include <duckdb/catalog/catalog_entry/schema_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
@@ -30,6 +32,7 @@
 
 #include "basics/containers/flat_hash_map.h"
 #include "pg/pg_catalog/fwd.h"
+#include "pg/sql_utils.h"
 
 namespace sdb::pg {
 namespace {
@@ -66,29 +69,37 @@ MaterializedData SystemTableSnapshot<PgConstraint>::GetTableData() {
 
   auto& context = _config.GetClientContext();
 
-  // A foreign key reports the oid of the relation it references and the index
-  // backing that relation's key, so every table is collected up front. By the
-  // id the constraint carries and not by the qualified name it also carries:
-  // the name is only what it was when the definition was written, and a rename
-  // since has moved it.
-  containers::FlatHashMap<duckdb::idx_t, const duckdb::TableCatalogEntry*>
-    tables_by_id;
+  // A foreign key names the relation it references and the index backing that
+  // relation's key, so every table is collected up front.
+  //
+  // Keyed by qualified name, which is all a ForeignKeyConstraint carries: the
+  // name is only what it was when the definition was written, so a RENAME
+  // since has moved it and this row goes blank. Correcting that needs a
+  // durable id on the reference, which is the phase-2 identity work -- the
+  // same placeholder as every other name-keyed reference.
+  containers::FlatHashMap<std::string, const duckdb::TableCatalogEntry*>
+    tables_by_name;
   VisitEntries<duckdb::TableCatalogEntry>(
     &context, GetDatabase(), [&](const duckdb::TableCatalogEntry& table) {
-      tables_by_id.emplace(table.oid, &table);
+      tables_by_name.emplace(
+        absl::StrCat(table.ParentSchema().name.GetIdentifierName(), ".",
+                     table.name.GetIdentifierName()),
+        &table);
     });
 
   // The index enforcing the key a foreign key points at: its primary key,
   // which is the only key a foreign key may reference.
   const auto referenced_index =
     [](const duckdb::TableCatalogEntry& referenced) -> Oid {
-    for (const auto& constraint : referenced.GetConstraints()) {
-      if (constraint->type != duckdb::ConstraintType::UNIQUE) {
+    const auto& constraints = referenced.GetConstraints();
+    for (size_t position = 0; position != constraints.size(); ++position) {
+      if (constraints[position]->type != duckdb::ConstraintType::UNIQUE) {
         continue;
       }
-      const auto& unique = constraint->Cast<duckdb::UniqueConstraint>();
+      const auto& unique =
+        constraints[position]->Cast<duckdb::UniqueConstraint>();
       if (unique.IsPrimaryKey()) {
-        return unique.host_index_id;
+        return KeyIndexOid(referenced.oid, position);
       }
     }
     return 0;
@@ -135,20 +146,23 @@ MaterializedData SystemTableSnapshot<PgConstraint>::GetTableData() {
         };
       };
 
-      for (const auto& constraint : table.GetConstraints()) {
+      const auto& constraints = table.GetConstraints();
+      for (size_t position = 0; position != constraints.size(); ++position) {
+        const auto& constraint = constraints[position];
         if (constraint->type == duckdb::ConstraintType::INVALID) {
           continue;
         }
         // One row per foreign key, on the table that states it, as postgres
         // has it -- the referenced table's reciprocal entry is not a row.
         if (constraint->type == duckdb::ConstraintType::FOREIGN_KEY &&
-            !catalog::StatesForeignKey(
-              constraint->Cast<duckdb::ForeignKeyConstraint>())) {
+            constraint->Cast<duckdb::ForeignKeyConstraint>().info.type ==
+              duckdb::ForeignKeyType::FK_TYPE_PRIMARY_KEY_TABLE) {
           continue;
         }
         conname_storage.emplace_back(constraint->constraint_name);
-        auto row = base(PgConstraint::Contype::Check, constraint->oid,
-                        conname_storage.back());
+        auto row =
+          base(PgConstraint::Contype::Check, ConstraintOid(table.oid, position),
+               conname_storage.back());
         if (constraint->type == duckdb::ConstraintType::CHECK) {
           conbin_storage.push_back(
             constraint->Cast<duckdb::CheckConstraint>().expression->ToString());
@@ -160,9 +174,8 @@ MaterializedData SystemTableSnapshot<PgConstraint>::GetTableData() {
             row.contype = unique.IsPrimaryKey()
                             ? PgConstraint::Contype::PrimaryKey
                             : PgConstraint::Contype::Unique;
-            row.conindid = unique.host_index_id;
-            conkey_storage.push_back(
-              catalog::KeyConstraintAttnums(table, unique));
+            row.conindid = KeyIndexOid(relid, position);
+            conkey_storage.push_back(KeyConstraintAttnums(table, unique));
             break;
           }
           case duckdb::ConstraintType::NOT_NULL: {
@@ -175,9 +188,11 @@ MaterializedData SystemTableSnapshot<PgConstraint>::GetTableData() {
           }
           case duckdb::ConstraintType::FOREIGN_KEY: {
             const auto& fk = constraint->Cast<duckdb::ForeignKeyConstraint>();
-            const auto referenced = tables_by_id.find(fk.host_referenced_id);
+            const auto referenced = tables_by_name.find(
+              absl::StrCat(fk.info.schema.GetIdentifierName(), ".",
+                           fk.info.table.GetIdentifierName()));
             const auto& target =
-              referenced == tables_by_id.end() ? table : *referenced->second;
+              referenced == tables_by_name.end() ? table : *referenced->second;
             row.contype = PgConstraint::Contype::ForeignKey;
             row.conindid = referenced_index(target);
             row.confrelid = target.oid;

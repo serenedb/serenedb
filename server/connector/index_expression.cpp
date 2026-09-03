@@ -114,7 +114,7 @@ duckdb::unique_ptr<duckdb::Expression> NormalizeBoundExpression(
       SDB_ASSERT(idx < col_index_to_id.size());
       const auto col_id = col_index_to_id[idx];
       cref.BindingMutable() = duckdb::ColumnBinding(
-        duckdb::TableIndex(table_id.id()),
+        duckdb::TableIndex(table_id),
         duckdb::ProjectionIndex(static_cast<duckdb::idx_t>(col_id)));
     } else if (e.GetExpressionClass() ==
                duckdb::ExpressionClass::BOUND_FUNCTION) {

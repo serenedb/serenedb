@@ -21,7 +21,9 @@
 #include "connector/duckdb_physical_ctas.h"
 
 #include <atomic>
+#include <duckdb/catalog/catalog.hpp>
 #include <duckdb/catalog/catalog_entry/duck_table_entry.hpp>
+#include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
 
 #include "basics/assert.h"
 #include "basics/debugging.h"
@@ -70,7 +72,6 @@ SereneDBPhysicalCTAS::SereneDBPhysicalCTAS(duckdb::PhysicalPlan& plan,
       plan, duckdb::PhysicalOperatorType::CREATE_TABLE_AS,
       {duckdb::LogicalType::BIGINT}, estimated_cardinality),
     _insert(insert),
-    _database_id(database_id),
     _schema_name(std::move(schema_name)),
     _table_name(std::move(table_name)) {}
 
@@ -88,14 +89,13 @@ SereneDBPhysicalCTAS::GetGlobalSinkState(duckdb::ClientContext& context) const {
   auto& metrics = sdb_state->Progress();
   metrics.SetCommand(pg::ProgressCommand::CreateTableAs);
   metrics.SetPhase(pg::progress_phase::CreateTableAs::Ingesting);
-  const auto schema_id =
-    catalog::FindSchemaId(&context, _database_id, _schema_name);
-  if (const auto* created = schema_id.isSet()
-                              ? catalog::Find<duckdb::TableCatalogEntry>(
-                                  &context, schema_id, _table_name)
-                              : nullptr) {
-    pg::ProgressMetrics::Set(metrics.relid,
-                             static_cast<int64_t>((*created).oid.id()));
+  if (const auto created = duckdb::Catalog::GetEntry<duckdb::TableCatalogEntry>(
+        context,
+        duckdb::QualifiedName{duckdb::Identifier::InvalidCatalog(),
+                              duckdb::Identifier{_schema_name},
+                              duckdb::Identifier{_table_name}},
+        duckdb::OnEntryNotFound::RETURN_NULL)) {
+    pg::ProgressMetrics::Set(metrics.relid, static_cast<int64_t>(created->oid));
   }
   // The CTAS operator's own estimate is its single count row; the expected
   // ingest size is the source child's estimate.

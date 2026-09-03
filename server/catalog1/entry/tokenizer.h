@@ -56,10 +56,20 @@ class CreateTokenizerInfo final : public duckdb::CreateInfo {
   search::Features _features;
 };
 
-// The pool of built analyzers is deliberately unversioned: a reader that
-// resolved this entry keeps tokenizing with it while a later transaction
-// writes the next version, which is sound because the entry is MVCC and the
-// reader holds a pinned version.
+class AnalyzerPool final {
+ public:
+  explicit AnalyzerPool(irs::analysis::TokenizerConfig config)
+    : _config{std::move(config)} {}
+
+  irs::analysis::Analyzer::ptr Acquire();
+  void Release(irs::analysis::Analyzer::ptr analyzer) noexcept;
+
+ private:
+  irs::analysis::TokenizerConfig _config;
+  absl::Mutex _mutex;
+  std::vector<irs::analysis::Analyzer::ptr> _pool ABSL_GUARDED_BY(_mutex);
+};
+
 class TokenizerCatalogEntry final : public duckdb::StandardEntry {
  public:
   static constexpr duckdb::CatalogType Type =
@@ -67,13 +77,14 @@ class TokenizerCatalogEntry final : public duckdb::StandardEntry {
   static constexpr const char* Name = "tokenizer";
 
   // Returns a built analyzer to the pool it came from so a per-row tokenize
-  // does not rebuild one. A null owner means the analyzer was not pooled.
+  // does not rebuild one. A null pool means the analyzer was not pooled. The
+  // shared_ptr is what lets the analyzer outlive its catalog entry.
   struct Deleter {
-    const TokenizerCatalogEntry* owner{nullptr};
+    std::shared_ptr<AnalyzerPool> pool;
 
     void operator()(irs::analysis::Analyzer* analyzer) const {
-      if (owner != nullptr) {
-        owner->Release(irs::analysis::Analyzer::ptr{analyzer});
+      if (pool) {
+        pool->Release(irs::analysis::Analyzer::ptr{analyzer});
       } else {
         delete analyzer;
       }
@@ -94,21 +105,15 @@ class TokenizerCatalogEntry final : public duckdb::StandardEntry {
 
   TokenizerWrapper Acquire() const;
 
-  void Release(irs::analysis::Analyzer::ptr analyzer) const noexcept;
-
   duckdb::unique_ptr<duckdb::CatalogEntry> Copy(
     duckdb::ClientContext& context) const override;
   duckdb::unique_ptr<duckdb::CreateInfo> GetInfo() const override;
   std::string ToSQL() const override;
 
  private:
-  irs::analysis::Analyzer::ptr Build() const;
-
   irs::analysis::TokenizerConfig _config;
   search::Features _features;
-  mutable absl::Mutex _mutex;
-  mutable std::vector<irs::analysis::Analyzer::ptr> _pool
-    ABSL_GUARDED_BY(_mutex);
+  std::shared_ptr<AnalyzerPool> _pool;
 };
 
 }  // namespace sdb::catalog

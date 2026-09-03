@@ -20,12 +20,22 @@
 
 #pragma once
 
+#include <cstdint>
 #include <duckdb/catalog/catalog_entry.hpp>
+#include <duckdb/common/constants.hpp>
 #include <duckdb/common/enums/catalog_type.hpp>
 #include <string_view>
+#include <vector>
 
 #include "basics/assert.h"
 #include "catalog1/permissions.h"
+
+namespace duckdb {
+
+class TableCatalogEntry;
+class UniqueConstraint;
+
+}  // namespace duckdb
 namespace sdb::pg {
 
 // Pair of (schema, name) parsed out of a qualified PG object name.
@@ -41,12 +51,6 @@ ObjectName ParseObjectName(std::string_view name,
 // The noun an error message uses for a kind of catalog entry. "object" for the
 // kinds no statement names.
 std::string_view ToPgObjectTypeName(duckdb::CatalogType t) noexcept;
-
-// How postgres names an absent object of one kind, and the code it reports --
-// which is not always the kind the statement said: a sequence and an index
-// share the relation namespace, and an absent one is reported by that.
-[[noreturn]] void ThrowUndefinedObject(duckdb::CatalogType type,
-                                       std::string_view name);
 
 constexpr duckdb::CatalogType FromPgObjectTypeName(
   std::string_view word) noexcept {
@@ -92,5 +96,12 @@ void UnpackSqlState(T& buf, int sql_state) {
     sql_state >>= 6;
   }
 }
+
+int16_t TableEntryAttnum(const duckdb::TableCatalogEntry& table,
+                         duckdb::idx_t column_id);
+
+std::vector<int16_t> KeyConstraintAttnums(
+  const duckdb::TableCatalogEntry& table,
+  const duckdb::UniqueConstraint& constraint);
 
 }  // namespace sdb::pg

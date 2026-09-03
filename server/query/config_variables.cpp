@@ -42,6 +42,7 @@
 #include "basics/serializer.h"
 #include "basics/static_strings.h"
 #include "catalog1/catalog.h"
+#include "catalog1/entry/inverted_index.h"
 #include "connector/duckdb_client_state.h"
 #include "pg/commands/rbac.h"
 #include "pg/connection_context.h"

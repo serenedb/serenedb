@@ -40,9 +40,6 @@
 
 namespace sdb::search {
 
-// Per-table iresearch columnstore store for a TableEngine::Search table -- the
-// Search-engine sibling of InvertedIndexStorage. Held by the table's entry,
-// which shares it with every version of that table.
 class SearchTable : public std::enable_shared_from_this<SearchTable> {
  public:
   // `is_new` opens a fresh index; otherwise the durable one is reopened.
@@ -55,10 +52,6 @@ class SearchTable : public std::enable_shared_from_this<SearchTable> {
 
   SearchTable(const SearchTable&) = delete;
   SearchTable& operator=(const SearchTable&) = delete;
-
-  // Opens this table's on-disk store and binds the database WAL; the handle is
-  // attached to the catalog Table via SetData. Mirror of
-  // InvertedIndexStorage::Create.
   static std::shared_ptr<SearchTable> Create(
     duckdb::idx_t db_id, duckdb::idx_t schema_id, duckdb::idx_t table_id,
     bool is_new, const catalog::SearchTableOptions& options);

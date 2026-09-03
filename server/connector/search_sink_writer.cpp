@@ -590,7 +590,7 @@ void SearchSinkInsertBaseImpl::InitImpl(size_t batch_size, const PkChunk& pk,
   _column_writers.clear();
   _per_row_blob_writers.clear();
   _pk_column_writer = nullptr;
-  if (_pk_policy.column == catalog::PkColumnKind::Has && pk.column) {
+  if (_pk_policy.column == connector::PkColumnKind::Has && pk.column) {
     _pk_column_writer =
       EnsurePerRowColumnWriter(term_dict::kPKFieldId, pk.column->GetType());
   }

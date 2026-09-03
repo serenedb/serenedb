@@ -20,9 +20,8 @@
 
 #include "pg/pg_catalog/pg_opclass.h"
 
-#include "catalog1/entry/inverted_index.h"
+#include "catalog1/inverted_index.h"
 #include "catalog1/entry/tokenizer.h"
-#include "pg/pg_types.h"
 #include "pg/pg_catalog/fwd.h"
 #include "pg/pg_types.h"
 

@@ -20,22 +20,17 @@
 
 #pragma once
 
-#include <array>
-#include <duckdb/main/database.hpp>
-#include <string_view>
+namespace duckdb {
+
+struct DBConfig;
+
+}  // namespace duckdb
 
 namespace sdb::connector {
 
-inline constexpr std::string_view kNextval = "nextval";
-inline constexpr std::string_view kCurrval = "currval";
-inline constexpr std::string_view kSetval = "setval";
-
-inline constexpr std::array<std::string_view, 3> kSequenceFunctionNames = {
-  kNextval,
-  kCurrval,
-  kSetval,
-};
-
-void RegisterSequenceFunctions(duckdb::DatabaseInstance& db);
+// `FROM <inverted index>` names no relation, which is duckdb's replacement-scan
+// trigger: the name is looked up as an index instead and rewritten into an
+// `iresearch_scan` over it.
+void RegisterIResearchReplacementScan(duckdb::DBConfig& config);
 
 }  // namespace sdb::connector

@@ -72,7 +72,10 @@
 #include "auth/role_closure.h"
 #include "basics/assert.h"
 #include "basics/containers/flat_hash_set.h"
+#include "basics/duckdb_engine.h"
 #include "basics/log.h"
+#include "catalog/rest/iceberg_catalog.hpp"
+#include "catalog1/cluster.h"
 #include "catalog1/entry/inverted_index.h"
 #include "catalog1/entry/role.h"
 #include "catalog1/lookup.h"
@@ -80,6 +83,8 @@
 #include "connector/duckdb_client_state.h"
 #include "connector/duckdb_physical_create_index.h"
 #include "connector/file_manifest.h"
+#include "connector/inverted_store_index.h"
+#include "connector/inverted_store_lookup.h"
 #include "connector/primary_key.h"
 #include "connector/search_remove_filter.hpp"
 #include "connector/term_dict.h"
@@ -131,6 +136,9 @@ struct ReindexTarget {
   std::string schema;
   duckdb::idx_t database_id;
   duckdb::optional_ptr<const duckdb::IndexCatalogEntry> index;
+  // Resolved with the entry: every pass reads the index's configuration and
+  // its storage off it.
+  duckdb::optional_ptr<const InvertedStoreIndex> store;
   duckdb::unique_ptr<duckdb::CreateViewInfo> view_info;
   std::string relation_name;
 };
@@ -171,6 +179,11 @@ ReindexTarget ResolveTarget(duckdb::ClientContext& context,
                     ERR_MSG("index \"", name, "\" does not exist"));
   }
   target.index = &index_entry->Cast<duckdb::IndexCatalogEntry>();
+  target.store = FindInvertedStore(context, *target.index);
+  if (!target.store) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
+                    ERR_MSG("index \"", name, "\" does not exist"));
+  }
   // Views and tables share one catalog set, so the type has to be checked
   // rather than assumed from the lookup that found the entry.
   auto relation = duckdb::Catalog::GetEntry(
@@ -228,7 +241,6 @@ class PassConnection {
                duckdb::unique_ptr<SereneDBCreateIndexInfo> info,
                std::string_view what) {
     info->index_type = "inverted";
-    const auto& inverted = catalog::InvertedInfo(*target.index);
     const auto& view_info = *target.view_info;
     SDB_ASSERT(info->parsed_expressions.empty());
     for (const auto col : target.index->column_ids) {
@@ -243,11 +255,8 @@ class PassConnection {
       info->parsed_expressions.push_back(
         duckdb::make_uniq<duckdb::ColumnRefExpression>(view_info.names[col]));
     }
-    if (const auto* predicate = inverted.Predicate()) {
-      auto exprs =
-        duckdb::Parser::ParseExpressionList(predicate->pretty_printed);
-      SDB_ASSERT(exprs.size() == 1);
-      info->where_clause = std::move(exprs[0]);
+    if (const auto predicate = target.store->Predicate()) {
+      info->where_clause = predicate->Copy();
     }
     info->table = duckdb::Identifier{target.relation_name};
     info->SetSchema(duckdb::Identifier{target.schema});
@@ -878,8 +887,8 @@ ReindexOutcome RunRefresh(duckdb::ClientContext& context,
   }
   // Delta needs the view's support (recorded at fast-path resolution) and
   // pk terms (term-less indexes take the rebuild road).
-  const auto& options = catalog::InvertedInfo(*target.index).GetOptions();
-  if (src.fast_path.supports_delta && options.pk_term) {
+  if (src.fast_path.supports_delta &&
+      target.store->SharedConfig()->pk.index_term) {
     RunDelta(context, conn_ctx, target, src, files, observe, manifest, storage);
     return {ReindexAction::Delta, files.added, files.changed, files.removed,
             static_cast<int64_t>(files.scan.size()) - files.added};
@@ -894,9 +903,8 @@ ReindexOutcome RunRefresh(duckdb::ClientContext& context,
 std::optional<Source> ResolveSource(duckdb::ClientContext& context,
                                     const ReindexTarget& target) {
   Source src;
-  auto fp = ResolveViewFastPath(
-    context, *target.view_info,
-    catalog::InvertedInfo(*target.index).GetOptions().key_columns);
+  auto fp =
+    ResolveViewFastPath(context, *target.view_info, target.store->KeyColumns());
   if (!fp) {
     return std::nullopt;
   }
@@ -959,7 +967,7 @@ ReindexOutcome RunReindex(duckdb::ClientContext& context,
   auto& conn_ctx = GetSereneDBContext(context);
   const auto target =
     ResolveTarget(context, conn_ctx, name, schema_p, catalog_p);
-  const auto storage = target.index->GetInvertedData();
+  const auto storage = target.store->Storage();
   if (!storage) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
                     ERR_MSG("index \"", name, "\" does not exist"));
@@ -1144,7 +1152,11 @@ absl::Status RunReindexTick(duckdb::DatabaseInstance& db,
       }
       schema_name = schema_ident.GetIdentifierName();
       owner_id = relation->permissions.owner;
-      const auto* owner = catalog::FindRole(nullptr, owner_id);
+      auto& cluster = catalog::ClusterOf();
+      const auto owner =
+        cluster.LookupRoleById(duckdb::CatalogTransaction::GetSystemTransaction(
+                                 DuckDBEngine::Instance().instance()),
+                               owner_id);
       if (!owner) {
         // Surface it: skipping quietly would look like a healthy loop.
         return absl::NotFoundError(
@@ -1152,7 +1164,7 @@ absl::Status RunReindexTick(duckdb::DatabaseInstance& db,
                        "\" no longer exists; the periodic refresh cannot "
                        "impersonate it"));
       }
-      user = owner->GetName();
+      user = owner->name.GetIdentifierName();
     }
 
     duckdb::Connection conn{db};

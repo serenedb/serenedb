@@ -22,6 +22,9 @@
 #include <absl/strings/str_cat.h>
 #include <unicode/locid.h>
 
+#include <duckdb/catalog/catalog.hpp>
+#include <duckdb/catalog/entry_lookup_info.hpp>
+#include <duckdb/parser/parsed_data/drop_info.hpp>
 #include <iresearch/analysis/analyzer.hpp>
 #include <iresearch/analysis/classification_tokenizer.hpp>
 #include <iresearch/analysis/collation_tokenizer.hpp>
@@ -103,17 +106,31 @@ void DropTSDictionaryPragma(duckdb::ClientContext& context,
 
   auto name = pg::ParseObjectName(dict_name, StaticStrings::kPublic);
 
-  if (!catalog::DropEntryObject(
-        context, duckdb::CatalogType::TOKENIZER_ENTRY,
-        duckdb::QualifiedName{duckdb::Identifier{conn_ctx.GetDatabase()},
-                              duckdb::Identifier{name.schema},
-                              duckdb::Identifier{name.relation}},
-        /*cascade=*/false, missing_ok)) {
+  // The added kind lives in a CatalogSet on DuckSchemaEntry like every other,
+  // so duckdb's own drop reaches it and brings the dependency and versioning
+  // rules with it.
+  const duckdb::Identifier database{conn_ctx.GetDatabase()};
+  const duckdb::QualifiedName qualified{database,
+                                        duckdb::Identifier{name.schema},
+                                        duckdb::Identifier{name.relation}};
+  if (!duckdb::Catalog::GetEntry(
+        context,
+        duckdb::EntryLookupInfo{duckdb::CatalogType::TOKENIZER_ENTRY,
+                                qualified},
+        missing_ok ? duckdb::OnEntryNotFound::RETURN_NULL
+                   : duckdb::OnEntryNotFound::THROW_EXCEPTION)) {
     conn_ctx.AddNotice(
       SQL_ERROR_DATA(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
                      ERR_MSG("text search dictionary \"", name.relation,
                              "\" does not exist, skipping")));
+    return;
   }
+  duckdb::DropInfo info;
+  info.type = duckdb::CatalogType::TOKENIZER_ENTRY;
+  info.SetQualifiedName(qualified);
+  info.if_not_found = duckdb::OnEntryNotFound::RETURN_NULL;
+  info.cascade = false;
+  duckdb::Catalog::GetCatalog(context, database).DropEntry(context, info);
 }
 
 }  // namespace

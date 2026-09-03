@@ -20,8 +20,8 @@
 
 #include "pg/pg_catalog/pg_language.h"
 
-#include "pg/pg_types.h"
 #include "pg/pg_catalog/fwd.h"
+#include "pg/pg_types.h"
 
 namespace sdb::pg {
 namespace {

@@ -59,32 +59,32 @@ TokenizerCatalogEntry::TokenizerCatalogEntry(duckdb::Catalog& catalog,
   : duckdb::StandardEntry{duckdb::CatalogType::TOKENIZER_ENTRY, schema, catalog,
                           info.GetQualifiedName().Name()},
     _config{irs::analysis::Clone(info.Config())},
-    _features{info.GetFeatures()} {
+    _features{info.GetFeatures()},
+    _pool{std::make_shared<AnalyzerPool>(irs::analysis::Clone(info.Config()))} {
   comment = info.comment;
   tags = info.tags;
   dependencies = info.dependencies;
 }
 
-TokenizerCatalogEntry::TokenizerWrapper TokenizerCatalogEntry::Acquire() const {
+irs::analysis::Analyzer::ptr AnalyzerPool::Acquire() {
   const absl::MutexLock lock{&_mutex};
   if (_pool.empty()) {
-    return TokenizerWrapper{Build().release(), Deleter{this}};
+    return irs::analysis::CreateAnalyzer(irs::analysis::Clone(_config));
   }
   auto analyzer = std::move(_pool.back());
   SDB_ASSERT(analyzer);
   _pool.pop_back();
-  return TokenizerWrapper{analyzer.release(), Deleter{this}};
+  return analyzer;
 }
 
-void TokenizerCatalogEntry::Release(
-  irs::analysis::Analyzer::ptr analyzer) const noexcept {
+void AnalyzerPool::Release(irs::analysis::Analyzer::ptr analyzer) noexcept {
   SDB_ASSERT(analyzer);
   const absl::MutexLock lock{&_mutex};
   _pool.push_back(std::move(analyzer));
 }
 
-irs::analysis::Analyzer::ptr TokenizerCatalogEntry::Build() const {
-  return irs::analysis::CreateAnalyzer(irs::analysis::Clone(_config));
+TokenizerCatalogEntry::TokenizerWrapper TokenizerCatalogEntry::Acquire() const {
+  return TokenizerWrapper{_pool->Acquire().release(), Deleter{_pool}};
 }
 
 duckdb::unique_ptr<duckdb::CreateInfo> TokenizerCatalogEntry::GetInfo() const {

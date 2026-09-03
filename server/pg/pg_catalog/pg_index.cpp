@@ -30,6 +30,7 @@
 #include "basics/down_cast.h"
 #include "catalog1/entry/inverted_index.h"
 #include "pg/pg_catalog/fwd.h"
+#include "pg/sql_utils.h"
 #include "pg/system_catalog.h"
 
 namespace sdb::pg {
@@ -83,7 +84,7 @@ MaterializedData SystemTableSnapshot<PgIndex>::GetTableData() {
       // An index over a view has no attnums of its own to report.
       if (host) {
         for (auto col_id : column_ids) {
-          indkey.push_back(catalog::TableEntryAttnum(*host, col_id));
+          indkey.push_back(TableEntryAttnum(*host, col_id));
         }
       }
       const bool is_unique_index = entry.IsUnique();
@@ -120,19 +121,21 @@ MaterializedData SystemTableSnapshot<PgIndex>::GetTableData() {
   const auto emit_keys = [&](bool primary) {
     VisitEntries<duckdb::TableCatalogEntry>(
       &context, GetDatabase(), [&](const duckdb::TableCatalogEntry& table) {
-        for (const auto& constraint : table.GetConstraints()) {
-          if (constraint->type != duckdb::ConstraintType::UNIQUE) {
+        const auto& constraints = table.GetConstraints();
+        for (size_t position = 0; position != constraints.size(); ++position) {
+          if (constraints[position]->type != duckdb::ConstraintType::UNIQUE) {
             continue;
           }
-          const auto& unique = constraint->Cast<duckdb::UniqueConstraint>();
+          const auto& unique =
+            constraints[position]->Cast<duckdb::UniqueConstraint>();
           if (unique.IsPrimaryKey() != primary) {
             continue;
           }
-          auto indkey = catalog::KeyConstraintAttnums(table, unique);
+          auto indkey = KeyConstraintAttnums(table, unique);
           auto natts = static_cast<int16_t>(indkey.size());
           indkey_storage.push_back(std::move(indkey));
           values.push_back({
-            .indexrelid = unique.host_index_id,
+            .indexrelid = KeyIndexOid(table.oid, position),
             .indrelid = table.oid,
             .indnatts = natts,
             .indnkeyatts = natts,

@@ -35,6 +35,7 @@
 #include "basics/containers/flat_hash_set.h"
 #include "basics/log.h"
 #include "basics/system-compiler.h"
+#include "catalog1/catalog.h"
 #include "pg/connection_context.h"
 #include "pg/errcodes.h"
 #include "pg/sql_exception_macro.h"
@@ -69,8 +70,7 @@ SereneDBClientState& SereneDBClientState::Register(
 
   auto source = std::make_shared<pg::ProgressSource>();
   source->pid = registered._connection_ctx->GetBackendPid();
-  source->datid =
-    static_cast<int64_t>(registered._connection_ctx->GetDatabaseId().id());
+  source->datid = registered._connection_ctx->GetDatabaseId();
   source->user = registered._connection_ctx->user();
   source->database = registered._connection_ctx->GetDatabase();
   source->backend_start_us = duckdb::Timestamp::GetCurrentTimestamp().value;
@@ -212,18 +212,8 @@ void SereneDBClientState::TransactionPreCommit(
 void SereneDBClientState::TransactionPreCheckpoint(
   duckdb::AttachedDatabase& db, duckdb::ClientContext&,
   duckdb::idx_t wal_generation, duckdb::idx_t wal_end_offset) {
-  // Commit the search-index leg synchronously with the store table changes:
-  // the engine fires this on the committing thread, while it still holds the
-  // WAL lock, right after the commit's WAL flush marker is written -- so ticks
-  // are handed out in WAL-append order across connections and recovery cursors
-  // stay monotonic with WAL offsets, even though the group fsyncs (and thus
-  // acknowledgements) complete out of order. Settling here is memory-only
-  // (segment flushes happen in the background refresh); the refresh gates its
-  // durable cursor on the WAL becoming durable, so the index never persists a
-  // batch whose store bytes a crash could still lose. It precedes any in-commit
-  // checkpoint, whose force-refresh therefore never waits on an un-committed
-  // in-flight batch. Only a serenedb database carries indexed tables.
-  if (!catalog::IsStoreDatabase(db)) {
+  if (db.GetCatalog().GetCatalogType() !=
+      catalog::SereneDBCatalog::kStorageType) {
     return;
   }
   // This commit's exact WAL position, captured under the WAL lock by the
@@ -262,17 +252,7 @@ void SereneDBClientState::TransactionCommit(
     }
   }
   tls_committing_ctx = nullptr;
-  // One transaction, one run, one flush: every attachment this commit touched
-  // has written its records by now, and a commit that wrote a role and a table
-  // is as whole as one that wrote only a table. The store connection's shell
-  // transactions own no run and must not end this one.
-  if (!_connection_ctx->IsStorageConnection()) {
-    catalog::EndClusterCatalogWal(/*committed=*/true);
-  }
-  // What these cluster-wide caches hold is the committed set, and that is what
-  // has just changed -- the write itself only made it visible here. Bumping any
-  // of them earlier lets a concurrent reader publish the pre-write set under
-  // the new generation, where nothing replaces it.
+
   if (std::exchange(_connection_ctx->wrote_roles, false)) {
     auth::BumpRoleGeneration();
   }
@@ -282,10 +262,6 @@ void SereneDBClientState::TransactionCommit(
 void SereneDBClientState::TransactionRollback(
   duckdb::MetaTransaction& transaction, duckdb::ClientContext& context) {
   tls_committing_ctx = nullptr;
-  // The run stops where it started: nothing this transaction wrote is durable.
-  if (!_connection_ctx->IsStorageConnection()) {
-    catalog::EndClusterCatalogWal(/*committed=*/false);
-  }
   if (std::exchange(_connection_ctx->wrote_roles, false)) {
     auth::BumpRoleGeneration();
   }
@@ -300,7 +276,7 @@ void SereneDBClientState::QueryBegin(duckdb::ClientContext& context) {
     metrics.SetCommand(pending_copy_command);
     metrics.SetIoType(pending_copy_io);
     pg::ProgressMetrics::Set(metrics.relid,
-                             static_cast<int64_t>(pending_copy_relid.id()));
+                             static_cast<int64_t>(pending_copy_relid));
     pending_copy_command = pg::ProgressCommand::None;
     pending_copy_io = pg::ProgressIoType::None;
     pending_copy_relid = {};

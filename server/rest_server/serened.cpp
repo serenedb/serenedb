@@ -33,6 +33,7 @@
 #include "basics/crash_handler.h"
 #include "basics/duckdb_engine.h"
 #include "basics/log.h"
+#include "catalog1/boot.h"
 #include "catalog1/catalog.h"
 #include "duckdb_shell.hpp"
 #include "network/pg/hba.h"
@@ -63,8 +64,6 @@ int RunServer(int argc, char** argv) {
     //    own flags, runs validation, and sets its static gInstance
     //    pointer; Feature::instance() works from here on.
     DatabasePathFeature db_path;
-    catalog::CatalogStore store;
-    catalog::DataStore data_store;
     BackgroundScheduler background;
     search::SearchEngine search;
     Server network;
@@ -80,8 +79,8 @@ int RunServer(int argc, char** argv) {
     // afterwards still see a live SearchEngine. DuckDBEngine brackets all of
     // this from main(). The up_* flags let DOWN skip whatever never came UP
     // (start() threw).
-    bool up_data = false, up_background = false, up_catalog = false,
-         up_search = false, up_network = false;
+    bool up_background = false, up_catalog = false, up_search = false,
+         up_network = false;
 
     absl::Cleanup down = [&]() noexcept {
       CrashHandler::SetState("stopping");
@@ -121,9 +120,6 @@ int RunServer(int argc, char** argv) {
       if (up_background) {
         stop("background", [&] { background.stop(); });
       }
-      if (up_data) {
-        stop("data", [&] { data_store.Shutdown(); });
-      }
       // The shutdown checkpoint of every attached database, taken here rather
       // than left to the DuckDB destructor in main(): an inverted index vetoes
       // it unless it can read its definition, so the catalog below must still
@@ -136,16 +132,10 @@ int RunServer(int argc, char** argv) {
     };
 
     CrashHandler::SetState("starting");
-    store.Initialize(db_path.directory());
     network::pg::hba::SetHbaConfig(db_path.hbaConfigFile());
     background.start();
     up_background = true;
-    // Before InitCatalog: the per-database attaches it performs replay their
-    // data WALs into inverted indexes, and the bind contexts those indexes are
-    // built with live here.
-    data_store.Initialize();
-    up_data = true;
-    catalog::InitCatalog();
+    catalog::InitCatalog(db_path.directory());
     up_catalog = true;
     // The io pool must be up before search.start(): the per-index refresh /
     // compaction loops co_await BackgroundScheduler::Delay(), which hosts its

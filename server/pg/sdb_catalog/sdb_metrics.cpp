@@ -32,6 +32,8 @@
 #include "basics/metrics.h"
 #include "catalog1/catalog.h"
 #include "catalog1/entry/inverted_index.h"
+#include "connector/inverted_store_index.h"
+#include "connector/inverted_store_lookup.h"
 #include "search/inverted_index_storage.h"
 
 namespace sdb::pg {
@@ -109,18 +111,26 @@ MaterializedData SystemTableSnapshot<SdbMetrics>::GetTableData() {
                       "current catalog wal file size in bytes");
   masks.insert(masks.end(), values.size() - wal_first, kPerProcessMask);
 
-  for (const auto* index :
-       catalog::DatabaseInvertedIndexes(nullptr, GetDatabaseId())) {
-    auto storage = index->GetInvertedData();
-    SDB_ASSERT(storage);
-    const auto stats = storage->GetStats();
-    const Oid relation_id = index->Definition().GetId().id();
+  auto& context = _config.GetClientContext();
+  auto& catalog =
+    duckdb::Catalog::GetCatalog(context, duckdb::Identifier::InvalidCatalog());
+  const auto visit_index = [&](duckdb::CatalogEntry& entry) {
+    auto& index = entry.Cast<duckdb::DuckIndexEntry>();
+    const auto store = connector::FindInvertedStore(index);
+    if (!store || !store->Storage()) {
+      return;
+    }
+    const auto stats = store->Storage()->GetStats();
+    const auto relation_id = static_cast<Oid>(index.oid);
     for (const auto& desc : kIndexMetrics) {
       values.emplace_back(desc.metric, stats.*desc.field, desc.description,
                           relation_id);
       masks.emplace_back(kPerIndexMask);
     }
-  }
+  };
+  catalog.ScanSchemas(context, [&](duckdb::SchemaCatalogEntry& schema) {
+    schema.Scan(context, duckdb::CatalogType::INDEX_ENTRY, visit_index);
+  });
 
   auto result = CreateColumns<SdbMetrics>(values.size());
   for (size_t row = 0; row < values.size(); ++row) {

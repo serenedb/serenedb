@@ -28,6 +28,7 @@
 #include "basics/containers/flat_hash_set.h"
 #include "basics/down_cast.h"
 #include "catalog1/permissions.h"
+#include "connector/primary_key.h"
 #include "pg/pg_catalog/fwd.h"
 #include "pg/pg_types.h"
 #include "pg/system_catalog.h"
@@ -111,7 +112,7 @@ void EmitColumnsForTable(const duckdb::TableCatalogEntry& table,
         constraint->Cast<duckdb::NotNullConstraint>().index.index);
     }
   }
-  for (const auto key_column : table.GetPKColumnIndexes()) {
+  for (const auto key_column : connector::primary_key::KeyColumns(table)) {
     notnull_cols.insert(key_column.index);
   }
 
@@ -149,7 +150,7 @@ void EmitColumnsForTable(const duckdb::TableCatalogEntry& table,
       .attislocal = true,
       .attinhcount = 0,
       .attcollation = GetCollationForType(type_oid),
-      .attacl = {table.GetColumnAcl(col.CatalogOid())},
+      .attacl = {catalog::ColumnAclOf(table.permissions, col.Oid())},
     };
     values.push_back(std::move(row));
   }

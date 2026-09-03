@@ -31,12 +31,12 @@
 #include "basics/file_utils.h"
 #include "basics/lifecycle.h"
 #include "basics/number_of_cores.h"
+#include "catalog1/boot.h"
 #include "connector/duckdb_copy_filesystem.h"
 #include "connector/duckdb_foreign_server_function.h"
 #include "connector/duckdb_pg_binary_copy.h"
 #include "connector/duckdb_pg_text_copy.h"
 #include "connector/duckdb_physical_create_index.h"
-#include "connector/duckdb_rbac_function.h"
 #include "connector/duckdb_reindex_function.h"
 #include "connector/duckdb_storage_extension.h"
 #include "connector/duckdb_table_function.h"
@@ -51,11 +51,11 @@
 #include "connector/functions/json.h"
 #include "connector/functions/math.h"
 #include "connector/functions/search.h"
-#include "connector/functions/sequence.h"
 #include "connector/functions/string.h"
 #include "connector/functions/system.h"
 #include "connector/functions/vector.h"
 #include "connector/inverted_store_index.h"
+#include "connector/iresearch_replacement_scan.h"
 #include "connector/pg_logical_types.h"
 #include "pg/pg_catalog/pg_statistic.h"
 #include "pg/system_catalog.h"
@@ -236,14 +236,9 @@ namespace sdb::server::query {
 
 void ConfigureServerDBConfig(duckdb::DBConfig& config) {
   connector::RegisterSereneDBStorage(config);
-  catalog::RegisterSereneDBGlobalStorage(config);
+  catalog::RegisterClusterStorage(config);
   connector::RegisterConfigVariables(config);
-  // Roles and the database list are the first thing that has to exist, and
-  // they belong to no database, so the cluster-global catalog is duckdb's main
-  // database rather than something attached next to a throwaway in-memory one.
-  config.options.database_type = std::string{catalog::kGlobalStorageType};
-  config.options.database_name = std::string{catalog::kGlobalDatabaseName};
-  config.options.database_hidden = true;
+  connector::RegisterIResearchReplacementScan(config);
   // Server-mode DuckDB state lives under the datadir, never in cwd-relative
   // temp files or ~/.duckdb fallbacks (shell/psql subcommands return before
   // this mutator runs and keep DuckDB defaults).
@@ -300,16 +295,6 @@ void ConfigureServerDBConfig(duckdb::DBConfig& config) {
 }
 
 void RegisterServerExtensions(duckdb::DatabaseInstance& db) {
-  // On the live config: the pre-construct mutator's copy does not carry
-  // plain function-pointer members into the instance.
-  duckdb::DBConfig::GetConfig(db).external_index_provider =
-    connector::InjectExternalIndexes;
-  duckdb::DBConfig::GetConfig(db).host_table_provider = catalog::HostTableEntry;
-  duckdb::DBConfig::GetConfig(db).external_range_replay =
-    connector::InvertedStoreIndex::ReplayExternalRange;
-  duckdb::DBConfig::GetConfig(db).external_local_append =
-    connector::InvertedStoreIndex::AppendLocalRange;
-
   connector::RegisterTokenizerPragma(db);
 
   connector::RegisterForeignServerPragma(db);
@@ -320,11 +305,7 @@ void RegisterServerExtensions(duckdb::DatabaseInstance& db) {
 
   connector::RegisterPgSystemFunctions(db);
 
-  connector::RegisterSequenceFunctions(db);
-
   connector::RegisterPgInOutFunctions(db);
-
-  connector::RegisterRbacPragmas(db);
 
   connector::RegisterPgStringFunctions(db);
 
@@ -358,11 +339,8 @@ void RegisterServerExtensions(duckdb::DatabaseInstance& db) {
   // serenedb's. A plain CREATE INDEX is duckdb's ART end to end -- the bind
   // normalizes every non-inverted spelling to it.
   auto& index_types = db.config.GetIndexTypes();
-  duckdb::IndexType inverted;
-  inverted.name = connector::InvertedStoreIndex::kTypeName;
-  inverted.create_plan = &connector::SereneDBCreateIndexPlan;
-  inverted.create_instance = &connector::CreateInvertedInstance;
-  index_types.RegisterIndexType(inverted);
+  index_types.RegisterIndexType(
+    connector::InvertedStoreIndex::GetInvertedIndexType());
 
   // Register filesystem for COPY FROM STDIN support.
   // Intercepts "/dev/stdin" and reads from PG CopyData messages.

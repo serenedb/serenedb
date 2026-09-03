@@ -67,11 +67,11 @@ void Config::SetInternal(std::string_view key, std::string value) {
 }
 
 std::vector<std::string> Config::GetSearchPath() const {
-  // DuckDB stores search_path as (catalog, schema) entries and serializes
-  // them as "catalog.schema" when read as a string setting. Use the
-  // structured API so we return just the schema names.
-  const auto& entries =
-    duckdb::ClientData::Get(_client_ctx).catalog_search_path->Get();
+  // The set paths, not Get(): the latter appends duckdb's implicit entries
+  // (temp, main, system), and `main` would shadow `public` for every caller
+  // that takes the first resolvable schema.
+  const auto entries = duckdb::ClientData::Get(_client_ctx)
+                         .catalog_search_path->GetResolvedSetPaths();
   std::vector<std::string> result;
   result.reserve(entries.size());
   for (const auto& entry : entries) {

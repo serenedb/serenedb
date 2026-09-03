@@ -20,6 +20,9 @@
 
 #include "sql_utils.h"
 
+#include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
+#include <duckdb/parser/constraints/unique_constraint.hpp>
+
 #include "pg/sql_exception_macro.h"
 
 namespace sdb::pg {
@@ -55,36 +58,6 @@ std::string_view ToPgObjectTypeName(duckdb::CatalogType t) noexcept {
   }
 }
 
-void ThrowUndefinedObject(duckdb::CatalogType type, std::string_view name) {
-  switch (type) {
-    using enum duckdb::CatalogType;
-    case MACRO_ENTRY:
-    case TABLE_MACRO_ENTRY:
-      THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_FUNCTION),
-                      ERR_MSG("function \"", name, "\" does not exist"));
-    case TYPE_ENTRY:
-      THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
-                      ERR_MSG("type \"", name, "\" does not exist"));
-    case TOKENIZER_ENTRY:
-      THROW_SQL_ERROR(
-        ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
-        ERR_MSG("text search dictionary \"", name, "\" does not exist"));
-    case FOREIGN_SERVER_ENTRY:
-      THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
-                      ERR_MSG("server \"", name, "\" does not exist"));
-    case SEQUENCE_ENTRY:
-    case INDEX_ENTRY:
-      THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_TABLE),
-                      ERR_MSG("relation \"", name, "\" does not exist"));
-    case VIEW_ENTRY:
-      THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_TABLE),
-                      ERR_MSG("view \"", name, "\" does not exist"));
-    default:
-      THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_TABLE),
-                      ERR_MSG("table \"", name, "\" does not exist"));
-  }
-}
-
 ObjectName ParseObjectName(std::string_view name,
                            std::string_view default_schema) {
   const auto pos = name.find('.');
@@ -93,6 +66,35 @@ ObjectName ParseObjectName(std::string_view name,
   auto object_name =
     pos == std::string_view::npos ? name : name.substr(pos + 1);
   return {.schema = schema_name, .relation = object_name};
+}
+
+int16_t TableEntryAttnum(const duckdb::TableCatalogEntry& table,
+                         duckdb::idx_t column_id) {
+  for (const auto& column : table.GetColumns().Logical()) {
+    if (static_cast<duckdb::idx_t>(column.Oid()) == column_id) {
+      return static_cast<int16_t>(column.Logical().index + 1);
+    }
+  }
+  return 0;
+}
+
+std::vector<int16_t> KeyConstraintAttnums(
+  const duckdb::TableCatalogEntry& table,
+  const duckdb::UniqueConstraint& constraint) {
+  if (constraint.HasIndex()) {
+    return {static_cast<int16_t>(constraint.GetIndex().index + 1)};
+  }
+  const auto& columns = table.GetColumns();
+  std::vector<int16_t> out;
+  out.reserve(constraint.GetColumnNames().size());
+  for (const auto& name : constraint.GetColumnNames()) {
+    // Zero is what postgres writes for a key part this relation does not list.
+    out.push_back(
+      columns.ColumnExists(name)
+        ? static_cast<int16_t>(columns.GetColumn(name).Logical().index + 1)
+        : 0);
+  }
+  return out;
 }
 
 }  // namespace sdb::pg

@@ -32,6 +32,7 @@
 #include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/type_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/view_catalog_entry.hpp>
+#include <duckdb/catalog/dependency_manager.hpp>
 #include <duckdb/catalog/entry_lookup_info.hpp>
 #include <duckdb/storage/data_table.hpp>
 #include <string>
@@ -45,8 +46,10 @@
 #include "basics/down_cast.h"
 #include "catalog1/entry/inverted_index.h"
 #include "catalog1/entry/role.h"
-#include "pg/pg_types.h"
+#include "catalog1/entry/search_table.h"
 #include "pg/pg_catalog/fwd.h"
+#include "pg/pg_types.h"
+#include "pg/sql_utils.h"
 #include "pg/system_catalog.h"
 #include "query/config_variable_names.h"
 
@@ -204,6 +207,19 @@ void RetrieveObjects(duckdb::Catalog& database, std::vector<PgClass>& values,
   std::vector<std::pair<duckdb::idx_t, const duckdb::TableCatalogEntry*>>
     tables;
   containers::FlatHashSet<duckdb::idx_t> generated_pk_sequences;
+  if (auto dependencies = database.GetDependencyManager()) {
+    dependencies->Scan(
+      context,
+      [&](duckdb::CatalogEntry& object, duckdb::CatalogEntry& dependent,
+          const duckdb::DependencyDependentFlags& flags) {
+        if (flags.IsOwnedBy() &&
+            dependent.type == duckdb::CatalogType::SEQUENCE_ENTRY &&
+            dynamic_cast<const catalog::SearchTableEntry*>(&object) !=
+              nullptr) {
+          generated_pk_sequences.insert(dependent.oid);
+        }
+      });
+  }
 
   database.ScanSchemas(context, [&](duckdb::SchemaCatalogEntry& schema_ref) {
     schema_ref.Scan(
@@ -218,9 +234,6 @@ void RetrieveObjects(duckdb::Catalog& database, std::vector<PgClass>& values,
         if (table != nullptr) {
           relation_owners.emplace((*table).oid, table->permissions.owner);
           tables.emplace_back(schema_id, table);
-          if (table->GetGeneratedPkSeqId().isSet()) {
-            generated_pk_sequences.insert(table->GetGeneratedPkSeqId());
-          }
           auto row = MakeBaseRow(schema_id, (*table).oid,
                                  table->name.GetIdentifierName(),
                                  table->permissions.owner);
@@ -325,21 +338,23 @@ void RetrieveObjects(duckdb::Catalog& database, std::vector<PgClass>& values,
   // as for any index. Primary keys first so the rows stay grouped.
   for (const auto primary : {true, false}) {
     for (const auto& [schema_id, table] : tables) {
-      for (const auto& constraint : table->GetConstraints()) {
-        if (constraint->type != duckdb::ConstraintType::UNIQUE) {
+      const auto& constraints = table->GetConstraints();
+      for (size_t position = 0; position != constraints.size(); ++position) {
+        if (constraints[position]->type != duckdb::ConstraintType::UNIQUE) {
           continue;
         }
-        const auto& unique = constraint->Cast<duckdb::UniqueConstraint>();
+        const auto& unique =
+          constraints[position]->Cast<duckdb::UniqueConstraint>();
         if (unique.IsPrimaryKey() != primary) {
           continue;
         }
         auto& names = primary ? pk_index_names : uq_index_names;
         names.push_back(unique.constraint_name);
-        auto row = MakeBaseRow(schema_id, unique.host_index_id, names.back(),
-                               table->permissions.owner);
+        auto row = MakeBaseRow(schema_id, KeyIndexOid(table->oid, position),
+                               names.back(), table->permissions.owner);
         row.relkind = PgClass::Relkind::Index;
-        row.relnatts = static_cast<int16_t>(
-          catalog::KeyConstraintAttnums(*table, unique).size());
+        row.relnatts =
+          static_cast<int16_t>(KeyConstraintAttnums(*table, unique).size());
         values.push_back(std::move(row));
       }
     }
@@ -409,8 +424,8 @@ MaterializedData SystemTableSnapshot<PgClass>::GetTableData() {
   {
     VisitSystemViews([&](const StaticView& view, Oid schema_oid) {
       PgClass row{
-        .oid = (*view.first).oid.id(),
-        .relname = view.first->GetViewName().GetIdentifierName(),
+        .oid = view.oid,
+        .relname = view.info->GetViewName().GetIdentifierName(),
         .relnamespace = schema_oid,
         .reltype = 0,
         .reloftype = 0,

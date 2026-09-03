@@ -29,7 +29,7 @@
 #include <string>
 #include <vector>
 
-#include "catalog1/entry/search_table.h"
+#include "catalog1/search_table.h"
 #include "connector/column_id.h"
 #include "connector/index_source_view.h"
 #include "connector/view_fast_path.h"

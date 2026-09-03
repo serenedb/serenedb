@@ -1,10 +1,14 @@
 add_library(
     sereneserver_catalog1
     STATIC
+    boot.cpp
     catalog.cpp
     lookup.cpp
     cluster.cpp
+    entry/inverted_index.cpp
+    entry/search_table.cpp
     entry/tokenizer.cpp
+    scorer_options.cpp
     entry/role.cpp
     entry/foreign_server.cpp
     entry/database.cpp

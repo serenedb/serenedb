@@ -39,12 +39,15 @@
 #include "basics/assert.h"
 #include "basics/debugging.h"
 #include "catalog1/catalog.h"
+#include "catalog1/entry/inverted_index.h"
 #include "catalog1/entry/search_table.h"
-#include "pg/pg_types.h"
 #include "catalog1/lookup.h"
 #include "connector/duckdb_client_state.h"
+#include "connector/inverted_store_index.h"
+#include "connector/inverted_store_lookup.h"
 #include "pg/connection_context.h"
 #include "pg/errcodes.h"
+#include "pg/pg_types.h"
 #include "pg/sql_exception_macro.h"
 #include "search/inverted_index.h"
 #include "search/inverted_index_storage.h"
@@ -243,7 +246,7 @@ std::vector<duckdb::reference<duckdb::Catalog>> AttachedDatabases(
 }
 
 void CompactInvertedStorage(search::InvertedIndexStorage& inverted,
-                            const search::InvertedIndex& index,
+                            const irs::IndexFieldOptions& field_options,
                             duckdb::ClientContext& context,
                             pg::ProgressMetrics* progress) {
   static const auto kPolicy = irs::index_utils::MakePolicy(
@@ -262,7 +265,7 @@ void CompactInvertedStorage(search::InvertedIndexStorage& inverted,
     // The merge encodes against the index definition the step captured, which
     // the step holds for the whole call.
     const auto [res, _] =
-      inverted.CompactUnsafe(kPolicy, tick, empty_compaction, &index);
+      inverted.CompactUnsafe(kPolicy, tick, empty_compaction, &field_options);
     if (!res.ok()) {
       THROW_SQL_ERROR(
         ERR_CODE(ERRCODE_INTERNAL_ERROR),
@@ -280,7 +283,10 @@ void CompactInvertedStorage(search::InvertedIndexStorage& inverted,
 // Owning pointers: the steps run after the collection walk finished.
 struct InvertedStep {
   std::shared_ptr<search::InvertedIndexStorage> storage;
-  duckdb::optional_ptr<const duckdb::IndexCatalogEntry> index;
+  // Owned for the whole pass, not aliased into the index: a concurrent DROP
+  // INDEX destroys the bound index, and a merge that started against this
+  // encoding has to finish against it.
+  std::shared_ptr<const irs::IndexFieldOptions> field_options;
   std::shared_ptr<search::SearchTable> search_data;
 };
 
@@ -300,14 +306,20 @@ struct MaintainTarget {
   catalog::Permissions perm;
 };
 
+std::shared_ptr<search::SearchTable> MaintainStoreOf(
+  const duckdb::TableCatalogEntry& table) {
+  const auto* entry = dynamic_cast<const catalog::SearchTableEntry*>(&table);
+  return entry ? entry->EnsureStorage() : nullptr;
+}
+
 MaintainTarget MakeMaintainTarget(std::string_view schema,
-                                  const duckdb::TableCatalogEntry& table) {
+                                  duckdb::TableCatalogEntry& table) {
   return {.id = table.oid,
-          .schema_entry = &table.Schema(),
+          .schema_entry = &table.ParentSchema(),
           .schema = std::string{schema},
           .name = std::string{table.name.GetIdentifierName()},
           .engine = catalog::ReadTableEngineTag(table.tags),
-          .search_data = table.GetSearchData(),
+          .search_data = MaintainStoreOf(table),
           .perm = table.permissions};
 }
 
@@ -326,7 +338,7 @@ std::vector<MaintainTarget> CollectMaintainTargets(
                       }
                       auto& table = entry.Cast<duckdb::TableCatalogEntry>();
                       const auto in_schema =
-                        table.Schema().name.GetIdentifierName();
+                        table.ParentSchema().name.GetIdentifierName();
                       if (schema.empty() || in_schema == schema) {
                         out.push_back(MakeMaintainTarget(in_schema, table));
                       }
@@ -340,17 +352,20 @@ void CollectInvertedSteps(duckdb::ClientContext& context,
                           std::vector<InvertedStep>& steps) {
   auto schema = table.schema_entry;
   SDB_ASSERT(schema);
-  schema->Scan(context, duckdb::CatalogType::INDEX_ENTRY,
-               [&](duckdb::CatalogEntry& entry) {
-                 auto& index = entry.Cast<duckdb::IndexCatalogEntry>();
-                 if (index.index_type != "inverted" ||
-                     index.GetTableName().GetIdentifierName() != table.name) {
-                   return;
-                 }
-                 if (auto storage = index.GetInvertedData()) {
-                   steps.push_back({std::move(storage), &index, nullptr});
-                 }
-               });
+  schema->Scan(
+    context, duckdb::CatalogType::INDEX_ENTRY,
+    [&](duckdb::CatalogEntry& entry) {
+      auto& index = entry.Cast<duckdb::IndexCatalogEntry>();
+      if (!IsInvertedIndex(index) ||
+          index.GetTableName().GetIdentifierName() != table.name) {
+        return;
+      }
+      const auto* inverted =
+        dynamic_cast<const catalog::InvertedIndexEntry*>(&index);
+      if (inverted && inverted->Storage()) {
+        steps.push_back({inverted->Storage(), inverted->Config(), nullptr});
+      }
+    });
   // Search tables also commit/consolidate/GC in the background; VACUUM is the
   // synchronous, on-demand path through the same maintenance ops.
   if (table.engine == catalog::TableEngine::Search) {
@@ -403,10 +418,15 @@ void DispatchInverted(duckdb::ClientContext& context,
                                 duckdb::Identifier{target.object}}},
         duckdb::OnEntryNotFound::RETURN_NULL);
       duckdb::optional_ptr<duckdb::IndexCatalogEntry> index;
+      const catalog::InvertedIndexEntry* inverted = nullptr;
       std::shared_ptr<search::InvertedIndexStorage> storage;
       if (entry) {
         index = &entry->Cast<duckdb::IndexCatalogEntry>();
-        storage = index->GetInvertedData();
+        inverted =
+          dynamic_cast<const catalog::InvertedIndexEntry*>(index.get());
+        if (inverted) {
+          storage = inverted->Storage();
+        }
       }
       if (!storage) {
         THROW_SQL_ERROR(
@@ -427,7 +447,7 @@ void DispatchInverted(duckdb::ClientContext& context,
                                    relation->name.GetIdentifierName(), verb)) {
         return;
       }
-      steps.push_back({std::move(storage), index.get(), nullptr});
+      steps.push_back({std::move(storage), inverted->Config(), nullptr});
     } break;
     case Scope::Table: {
       auto entry = duckdb::Catalog::GetEntry(
@@ -476,15 +496,14 @@ void DispatchInverted(duckdb::ClientContext& context,
   if (progress) {
     int64_t total = 0;
     for (const auto& step : steps) {
-      total += step.index ? 1 : 0;
+      total += step.storage ? 1 : 0;
     }
     pg::ProgressMetrics::Set(progress->items_total, total);
     progress->SetPhase(pg::progress_phase::Vacuum::VacuumingIndexes);
   }
   for (auto& step : steps) {
     context.InterruptCheck();
-    if (step.index) {
-      const auto& inverted = catalog::InvertedInfo(*step.index);
+    if (step.storage) {
       if (action == Action::Refresh) {
         irs::ProgressReportCallback report;
         if (progress) {
@@ -507,7 +526,8 @@ void DispatchInverted(duckdb::ClientContext& context,
         }
         step.storage->Refresh(report);
       } else {
-        CompactInvertedStorage(*step.storage, inverted, context, progress);
+        CompactInvertedStorage(*step.storage, *step.field_options, context,
+                               progress);
       }
       if (progress) {
         pg::ProgressMetrics::Add(progress->items_processed, 1);

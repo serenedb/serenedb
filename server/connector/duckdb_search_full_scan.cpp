@@ -77,6 +77,7 @@
 #include "basics/system-compiler.h"
 #include "catalog1/entry/inverted_index.h"
 #include "catalog1/entry/search_table.h"
+#include "catalog1/scorer_options.h"
 #include "connector/duckdb_client_state.h"
 #include "connector/duckdb_table_function.h"
 #include "connector/full_scanner.h"
@@ -321,7 +322,7 @@ std::optional<duckdb::LogicalType> VirtualIndexColumnType(ColumnId col_id) {
     return duckdb::LogicalType::FLOAT;
   }
   if (col_id == kInvertedIndexOffsetsId) {
-    return catalog::MakeOffsetsType();
+    return MakeOffsetsType();
   }
   if (col_id == kInvertedIndexTermId) {
     return duckdb::LogicalType::VARCHAR;
@@ -357,7 +358,7 @@ void InitScanState(IResearchScanGlobalState& state,
   const auto num_bind_columns = bind_data.column_ids.size();
   for (auto col_id : input.column_ids) {
     const auto proj = state.projected_columns.size();
-    if (col_id == catalog::kColumnIdentifierGeneratedPk) {
+    if (col_id == kColumnIdentifierGeneratedPk) {
       // The generated PK materializes from the stored pk column like any
       // stored column, typed by the same authority that declared it.
       auto pk_type = GeneratedPkTypeOf(bind_data);
@@ -370,14 +371,14 @@ void InitScanState(IResearchScanGlobalState& state,
       state.generated_pk_output_idx = proj;
       state.projected_columns.push_back(duckdb::DConstants::INVALID_INDEX);
       state.projected_types.push_back(std::move(*pk_type));
-    } else if (col_id == catalog::kColumnIdentifierTableOid) {
+    } else if (col_id == kColumnIdentifierTableOid) {
       state.tableoid_output_idx = proj;
       state.tableoid_value = bind_data.RelationId();
       state.projected_columns.push_back(duckdb::DConstants::INVALID_INDEX);
       state.projected_types.push_back(duckdb::LogicalType::BIGINT);
     } else if (col_id ==
                  duckdb::MultiFileReader::COLUMN_IDENTIFIER_FILE_INDEX ||
-               col_id == catalog::kColumnIdentifierPkRowNumber) {
+               col_id == kColumnIdentifierPkRowNumber) {
       const bool file_index =
         col_id == duckdb::MultiFileReader::COLUMN_IDENTIFIER_FILE_INDEX;
       const auto spec = ViewPkSpecOf(bind_data);
@@ -399,24 +400,13 @@ void InitScanState(IResearchScanGlobalState& state,
       state.projected_types.push_back(duckdb::LogicalType::BOOLEAN);
       continue;
     } else if (col_id >= duckdb::VIRTUAL_COLUMN_START) {
-      SDB_ASSERT(!bind_data.IsViewBacked(),
-                 "virtual PK columns are not used for view-backed scans");
-      auto cat_idx = duckdb::TableCatalogEntry::VirtualToPKColumnIndex(col_id);
-      SDB_ASSERT(cat_idx != duckdb::DConstants::INVALID_INDEX);
-      const auto& catalog_cols = bind_data.table_entry->GetColumns();
-      SDB_ASSERT(cat_idx < catalog_cols.LogicalColumnCount());
-      const ColumnId catalog_col_id{
-        catalog_cols.GetColumn(duckdb::LogicalIndex(cat_idx)).CatalogOid()};
-      duckdb::idx_t bind_idx = duckdb::DConstants::INVALID_INDEX;
-      for (duckdb::idx_t i = 0; i < bind_data.column_ids.size(); ++i) {
-        if (bind_data.column_ids[i] == catalog_col_id) {
-          bind_idx = i;
-          break;
-        }
-      }
-      SDB_ASSERT(bind_idx != duckdb::DConstants::INVALID_INDEX);
-      state.projected_columns.push_back(bind_idx);
-      state.projected_types.push_back(bind_data.column_types[bind_idx]);
+      // Projecting a table's key columns as virtual columns needs
+      // TableCatalogEntry to publish them; the pinned duckdb's
+      // GetVirtualColumns() offers rowid alone, so nothing produces such an id.
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+        ERR_MSG("projecting virtual column ", col_id,
+                " through an inverted-index scan is not supported"));
     } else if (col_id < num_bind_columns) {
       const auto catalog_col_id = bind_data.column_ids[col_id];
       if (const auto virtual_type = VirtualIndexColumnType(catalog_col_id)) {
@@ -650,10 +640,9 @@ void WrapScoreRefsWithEmit(duckdb::unique_ptr<duckdb::Expression>& expr,
 void BuildTableFilter(IResearchScanGlobalState& state,
                       const SereneDBScanBindData& bind_data,
                       const duckdb::TableFilterSet& filters) {
-  const search::InvertedIndex* index_meta =
-    bind_data.IsInvertedIndexEntry() && bind_data.inverted_index
-      ? &catalog::InvertedInfo(*bind_data.inverted_index)
-      : nullptr;
+  // Only whether this is an inverted-index scan matters here; the
+  // configuration itself comes off the entry via bind_data.
+  const bool index_meta = bind_data.IsInvertedIndexEntry();
   // Score-column filters, applied on the computed score vector (whatever
   // HandleScoreFilter left pushed: on top-k the collector-enforced conjuncts
   // were stripped; the floor was recorded on the bind data there). The
@@ -720,12 +709,12 @@ void BuildTableFilter(IResearchScanGlobalState& state,
       push_score_filter(entry.Filter());
       continue;
     }
-    const auto* info =
-      index_meta ? index_meta->FindColumnInfo(col_id) : nullptr;
+    const auto& config = bind_data.inverted_config;
+    const auto* info = config ? config->FindColumnInfo(col_id) : nullptr;
     const bool index_stored = !index_meta || (info && info->IsStored());
     if (!index_stored) {
       state.has_lookup_filter = true;
-    } else if (index_meta != nullptr || bind_data.IsSearchTableEntry()) {
+    } else if (index_meta || bind_data.IsSearchTableEntry()) {
       // Covered columnstore column filtered in-scan (codec Filter + zonemap),
       // keyed by the columnstore field id: an INCLUDE'd inverted-index column,
       // or -- for a search table, where every column lives in `.col` -- any
@@ -864,8 +853,7 @@ void ClassifyColumnstoreProjections(IResearchScanGlobalState& state,
       continue;
     }
     const auto col_id = bind_data.column_ids[bind_col];
-    const auto* info =
-      catalog::InvertedInfo(*bind_data.inverted_index).FindColumnInfo(col_id);
+    const auto* info = bind_data.inverted_config->FindColumnInfo(col_id);
     if (info && info->IsStored()) {
       state.lookup_projected_columns[proj] = duckdb::DConstants::INVALID_INDEX;
       if (!in_output(proj)) {
@@ -1219,9 +1207,8 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> IResearchScanInitGlobal(
       std::move(state));
   }
   if (state->needs_lookup && ss.IsInvertedIndexEntry() && ss.inverted_index) {
-    const auto pk_kind =
-      catalog::InvertedInfo(*ss.inverted_index).GetOptions().pk_column;
-    if (pk_kind == catalog::PkColumnKind::None) {
+    const auto pk_kind = ss.inverted_config->pk.column;
+    if (pk_kind == connector::PkColumnKind::None) {
       THROW_SQL_ERROR(
         ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
         ERR_MSG("inverted index \"",
@@ -1230,7 +1217,7 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> IResearchScanInitGlobal(
                 "row PKs and hits cannot be mapped back to source rows; select "
                 "only INCLUDE'd columns, counts or scores through this index"));
     }
-    if (pk_kind == catalog::PkColumnKind::Unable) {
+    if (pk_kind == connector::PkColumnKind::Unable) {
       THROW_SQL_ERROR(
         ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
         ERR_MSG("materialising real columns from this view-backed inverted "
@@ -1294,11 +1281,8 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> IResearchScanInitGlobal(
   }
 
   if (state->mode == ScanMode::TopK) {
-    state->prune_scorer =
-      ResolvePruneScorer(bind_data.inverted_index
-                           ? &catalog::InvertedInfo(*bind_data.inverted_index)
-                           : nullptr,
-                         state->scorer_obj.get());
+    state->prune_scorer = ResolvePruneScorer(bind_data.inverted_store.get(),
+                                             state->scorer_obj.get());
     if (state->score_static_floor >
         std::numeric_limits<irs::score_t>::lowest()) {
       // Static score floor (Lucene min_score): the collectors start at the
@@ -1339,11 +1323,8 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> IResearchScanInitGlobal(
       state->score_static_floor > std::numeric_limits<irs::score_t>::lowest();
     if (!topk_disabled && ss.text_scorer && state->ScanScore() &&
         (dynamic_bound || static_bound)) {
-      state->prune_scorer =
-        ResolvePruneScorer(bind_data.inverted_index
-                             ? &catalog::InvertedInfo(*bind_data.inverted_index)
-                             : nullptr,
-                           state->scorer_obj.get());
+      state->prune_scorer = ResolvePruneScorer(bind_data.inverted_store.get(),
+                                               state->scorer_obj.get());
     }
   }
 
@@ -1354,11 +1335,11 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> IResearchScanInitGlobal(
 
   if (state->mode == ScanMode::ColScan) {
     // Search tables carry no inverted_index; fall back to the default unit.
-    uint64_t rg_rows = bind_data.inverted_index
-                         ? catalog::InvertedInfo(*bind_data.inverted_index)
-                             .GetOptions()
-                             .row_group_size
-                         : 0;
+    uint64_t rg_rows =
+      bind_data.inverted_index
+        ? catalog::DecodeInvertedIndexOptions(bind_data.inverted_index->options)
+            .row_group_size
+        : 0;
     if (rg_rows == 0) {
       rg_rows = DEFAULT_ROW_GROUP_SIZE;
     }
@@ -1795,9 +1776,7 @@ void IResearchSetScanOrder(
     // column's per-file statistics (duckdb's row-group reorder, one level up).
     // Only covered columns have `.col` statistics.
     const auto* info =
-      bd.inverted_index
-        ? catalog::InvertedInfo(*bd.inverted_index).FindColumnInfo(col_id)
-        : nullptr;
+      bd.inverted_config ? bd.inverted_config->FindColumnInfo(col_id) : nullptr;
     const bool stored =
       bd.IsSearchTableEntry() || (info != nullptr && info->IsStored());
     if (stored && !bd.scan_order) {

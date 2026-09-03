@@ -11,7 +11,6 @@ target_sources(
         string.cpp
         system.cpp
         search.cpp
-        sequence.cpp
         split_by_non_alpha.cpp
         ts_anyall.cpp
         ts_between.cpp

@@ -346,7 +346,76 @@ UNION ALL SELECT 'alias pair date_trunc(''day'', ts)::DATE + date_trunc(''hour''
 UNION ALL SELECT 'cte pair date_trunc(''day'', ts)::DATE + date_trunc(''hour'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (WITH x AS (SELECT date_trunc('day', ts)::DATE AS k1, date_trunc('hour', ts) AS k2, v FROM g) SELECT k1::VARCHAR || '/' || k2::VARCHAR AS k, c, s FROM (SELECT k1, k2, count(*) AS c, sum(v) AS s FROM x GROUP BY k1, k2))
 UNION ALL SELECT 'distinct pair date_trunc(''day'', ts)::DATE + date_trunc(''hour'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k1::VARCHAR || '/' || k2::VARCHAR AS k, 1 AS c, 0 AS s FROM (SELECT DISTINCT date_trunc('day', ts)::DATE AS k1, date_trunc('hour', ts) AS k2 FROM g))
 UNION ALL SELECT 'distinct pair alias date_trunc(''day'', ts)::DATE + date_trunc(''hour'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k1::VARCHAR || '/' || k2::VARCHAR AS k, 1 AS c, 0 AS s FROM (SELECT DISTINCT k1, k2 FROM (SELECT date_trunc('day', ts)::DATE AS k1, date_trunc('hour', ts) AS k2 FROM g)))
-UNION ALL SELECT 'pair one aliased date_trunc(''day'', ts)::DATE + date_trunc(''hour'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k1::VARCHAR || '/' || k2::VARCHAR AS k, c, s FROM (SELECT k1, date_trunc('hour', ts) AS k2, count(*) AS c, sum(v) AS s FROM (SELECT date_trunc('day', ts)::DATE AS k1, ts, tstz, v FROM g) GROUP BY 1, 2));
+UNION ALL SELECT 'pair one aliased date_trunc(''day'', ts)::DATE + date_trunc(''hour'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k1::VARCHAR || '/' || k2::VARCHAR AS k, c, s FROM (SELECT k1, date_trunc('hour', ts) AS k2, count(*) AS c, sum(v) AS s FROM (SELECT date_trunc('day', ts)::DATE AS k1, ts, tstz, v FROM g) GROUP BY 1, 2))
+UNION ALL SELECT 'wrapped concat date_trunc(''hour'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT b::VARCHAR || '!' AS k, v FROM (SELECT date_trunc('hour', ts) AS b, v FROM g)) GROUP BY k)
+UNION ALL SELECT 'wrapped outer date_trunc(''hour'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT b::VARCHAR || '!' AS k, count(*) AS c, sum(v) AS s FROM (SELECT date_trunc('hour', ts) AS b, v FROM g) GROUP BY 1)
+UNION ALL SELECT 'wrapped cte date_trunc(''hour'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (WITH x AS (SELECT date_trunc('hour', ts) AS b, v FROM g) SELECT concat('[', b, ']') AS k, count(*) AS c, sum(v) AS s FROM x GROUP BY 1)
+UNION ALL SELECT 'wrapped multi ref date_trunc(''hour'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT b::VARCHAR || '!' AS k, count(*) AS c, sum(v) + 0 * count(b) AS s FROM (SELECT date_trunc('hour', ts) AS b, v FROM g) GROUP BY 1)
+UNION ALL SELECT 'union all date_trunc(''hour'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT date_trunc('hour', ts) AS k, v FROM g UNION ALL SELECT date_trunc('hour', ts), v FROM g WHERE sev < 3) GROUP BY k)
+UNION ALL SELECT 'union all three date_trunc(''hour'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT date_trunc('hour', ts) AS k, v FROM g WHERE sev = 0 UNION ALL SELECT date_trunc('hour', ts), v FROM g WHERE sev = 1 UNION ALL SELECT date_trunc('hour', ts), v FROM g WHERE sev > 1) GROUP BY k)
+UNION ALL SELECT 'union all passthrough date_trunc(''hour'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT k, v FROM (SELECT date_trunc('hour', ts) AS k, v FROM g) UNION ALL SELECT k, v FROM (SELECT date_trunc('hour', ts) AS k, v FROM g WHERE v % 2 = 0)) GROUP BY k)
+UNION ALL SELECT 'union all extra column date_trunc(''hour'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT date_trunc('hour', ts) AS k, sev, v FROM g UNION ALL SELECT date_trunc('hour', ts), sev, v FROM g) GROUP BY k)
+UNION ALL SELECT 'union distinct date_trunc(''hour'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT date_trunc('hour', ts) AS k, v FROM g UNION SELECT date_trunc('hour', ts), v FROM g) GROUP BY k)
+UNION ALL SELECT 'wrapped concat date_trunc(''day'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT b::VARCHAR || '!' AS k, v FROM (SELECT date_trunc('day', ts) AS b, v FROM g)) GROUP BY k)
+UNION ALL SELECT 'wrapped outer date_trunc(''day'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT b::VARCHAR || '!' AS k, count(*) AS c, sum(v) AS s FROM (SELECT date_trunc('day', ts) AS b, v FROM g) GROUP BY 1)
+UNION ALL SELECT 'wrapped cte date_trunc(''day'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (WITH x AS (SELECT date_trunc('day', ts) AS b, v FROM g) SELECT concat('[', b, ']') AS k, count(*) AS c, sum(v) AS s FROM x GROUP BY 1)
+UNION ALL SELECT 'wrapped multi ref date_trunc(''day'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT b::VARCHAR || '!' AS k, count(*) AS c, sum(v) + 0 * count(b) AS s FROM (SELECT date_trunc('day', ts) AS b, v FROM g) GROUP BY 1)
+UNION ALL SELECT 'union all date_trunc(''day'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT date_trunc('day', ts) AS k, v FROM g UNION ALL SELECT date_trunc('day', ts), v FROM g WHERE sev < 3) GROUP BY k)
+UNION ALL SELECT 'union all three date_trunc(''day'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT date_trunc('day', ts) AS k, v FROM g WHERE sev = 0 UNION ALL SELECT date_trunc('day', ts), v FROM g WHERE sev = 1 UNION ALL SELECT date_trunc('day', ts), v FROM g WHERE sev > 1) GROUP BY k)
+UNION ALL SELECT 'union all passthrough date_trunc(''day'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT k, v FROM (SELECT date_trunc('day', ts) AS k, v FROM g) UNION ALL SELECT k, v FROM (SELECT date_trunc('day', ts) AS k, v FROM g WHERE v % 2 = 0)) GROUP BY k)
+UNION ALL SELECT 'union all extra column date_trunc(''day'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT date_trunc('day', ts) AS k, sev, v FROM g UNION ALL SELECT date_trunc('day', ts), sev, v FROM g) GROUP BY k)
+UNION ALL SELECT 'union distinct date_trunc(''day'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT date_trunc('day', ts) AS k, v FROM g UNION SELECT date_trunc('day', ts), v FROM g) GROUP BY k)
+UNION ALL SELECT 'wrapped concat strftime(ts, ''%Y-%m-%d'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT b::VARCHAR || '!' AS k, v FROM (SELECT strftime(ts, '%Y-%m-%d') AS b, v FROM g)) GROUP BY k)
+UNION ALL SELECT 'wrapped outer strftime(ts, ''%Y-%m-%d'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT b::VARCHAR || '!' AS k, count(*) AS c, sum(v) AS s FROM (SELECT strftime(ts, '%Y-%m-%d') AS b, v FROM g) GROUP BY 1)
+UNION ALL SELECT 'wrapped cte strftime(ts, ''%Y-%m-%d'')' AS shape, k::VARCHAR AS k, c, s FROM (WITH x AS (SELECT strftime(ts, '%Y-%m-%d') AS b, v FROM g) SELECT concat('[', b, ']') AS k, count(*) AS c, sum(v) AS s FROM x GROUP BY 1)
+UNION ALL SELECT 'wrapped multi ref strftime(ts, ''%Y-%m-%d'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT b::VARCHAR || '!' AS k, count(*) AS c, sum(v) + 0 * count(b) AS s FROM (SELECT strftime(ts, '%Y-%m-%d') AS b, v FROM g) GROUP BY 1)
+UNION ALL SELECT 'union all strftime(ts, ''%Y-%m-%d'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT strftime(ts, '%Y-%m-%d') AS k, v FROM g UNION ALL SELECT strftime(ts, '%Y-%m-%d'), v FROM g WHERE sev < 3) GROUP BY k)
+UNION ALL SELECT 'union all three strftime(ts, ''%Y-%m-%d'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT strftime(ts, '%Y-%m-%d') AS k, v FROM g WHERE sev = 0 UNION ALL SELECT strftime(ts, '%Y-%m-%d'), v FROM g WHERE sev = 1 UNION ALL SELECT strftime(ts, '%Y-%m-%d'), v FROM g WHERE sev > 1) GROUP BY k)
+UNION ALL SELECT 'union all passthrough strftime(ts, ''%Y-%m-%d'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT k, v FROM (SELECT strftime(ts, '%Y-%m-%d') AS k, v FROM g) UNION ALL SELECT k, v FROM (SELECT strftime(ts, '%Y-%m-%d') AS k, v FROM g WHERE v % 2 = 0)) GROUP BY k)
+UNION ALL SELECT 'union all extra column strftime(ts, ''%Y-%m-%d'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT strftime(ts, '%Y-%m-%d') AS k, sev, v FROM g UNION ALL SELECT strftime(ts, '%Y-%m-%d'), sev, v FROM g) GROUP BY k)
+UNION ALL SELECT 'union distinct strftime(ts, ''%Y-%m-%d'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT strftime(ts, '%Y-%m-%d') AS k, v FROM g UNION SELECT strftime(ts, '%Y-%m-%d'), v FROM g) GROUP BY k)
+UNION ALL SELECT 'wrapped concat date_trunc(''hour'', tstz)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT b::VARCHAR || '!' AS k, v FROM (SELECT date_trunc('hour', tstz) AS b, v FROM g)) GROUP BY k)
+UNION ALL SELECT 'wrapped outer date_trunc(''hour'', tstz)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT b::VARCHAR || '!' AS k, count(*) AS c, sum(v) AS s FROM (SELECT date_trunc('hour', tstz) AS b, v FROM g) GROUP BY 1)
+UNION ALL SELECT 'wrapped cte date_trunc(''hour'', tstz)' AS shape, k::VARCHAR AS k, c, s FROM (WITH x AS (SELECT date_trunc('hour', tstz) AS b, v FROM g) SELECT concat('[', b, ']') AS k, count(*) AS c, sum(v) AS s FROM x GROUP BY 1)
+UNION ALL SELECT 'wrapped multi ref date_trunc(''hour'', tstz)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT b::VARCHAR || '!' AS k, count(*) AS c, sum(v) + 0 * count(b) AS s FROM (SELECT date_trunc('hour', tstz) AS b, v FROM g) GROUP BY 1)
+UNION ALL SELECT 'union all date_trunc(''hour'', tstz)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT date_trunc('hour', tstz) AS k, v FROM g UNION ALL SELECT date_trunc('hour', tstz), v FROM g WHERE sev < 3) GROUP BY k)
+UNION ALL SELECT 'union all three date_trunc(''hour'', tstz)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT date_trunc('hour', tstz) AS k, v FROM g WHERE sev = 0 UNION ALL SELECT date_trunc('hour', tstz), v FROM g WHERE sev = 1 UNION ALL SELECT date_trunc('hour', tstz), v FROM g WHERE sev > 1) GROUP BY k)
+UNION ALL SELECT 'union all passthrough date_trunc(''hour'', tstz)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT k, v FROM (SELECT date_trunc('hour', tstz) AS k, v FROM g) UNION ALL SELECT k, v FROM (SELECT date_trunc('hour', tstz) AS k, v FROM g WHERE v % 2 = 0)) GROUP BY k)
+UNION ALL SELECT 'union all extra column date_trunc(''hour'', tstz)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT date_trunc('hour', tstz) AS k, sev, v FROM g UNION ALL SELECT date_trunc('hour', tstz), sev, v FROM g) GROUP BY k)
+UNION ALL SELECT 'union distinct date_trunc(''hour'', tstz)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT date_trunc('hour', tstz) AS k, v FROM g UNION SELECT date_trunc('hour', tstz), v FROM g) GROUP BY k)
+UNION ALL SELECT 'wrapped concat time_bucket(INTERVAL ''15 minutes'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT b::VARCHAR || '!' AS k, v FROM (SELECT time_bucket(INTERVAL '15 minutes', ts) AS b, v FROM g)) GROUP BY k)
+UNION ALL SELECT 'wrapped outer time_bucket(INTERVAL ''15 minutes'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT b::VARCHAR || '!' AS k, count(*) AS c, sum(v) AS s FROM (SELECT time_bucket(INTERVAL '15 minutes', ts) AS b, v FROM g) GROUP BY 1)
+UNION ALL SELECT 'wrapped cte time_bucket(INTERVAL ''15 minutes'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (WITH x AS (SELECT time_bucket(INTERVAL '15 minutes', ts) AS b, v FROM g) SELECT concat('[', b, ']') AS k, count(*) AS c, sum(v) AS s FROM x GROUP BY 1)
+UNION ALL SELECT 'wrapped multi ref time_bucket(INTERVAL ''15 minutes'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT b::VARCHAR || '!' AS k, count(*) AS c, sum(v) + 0 * count(b) AS s FROM (SELECT time_bucket(INTERVAL '15 minutes', ts) AS b, v FROM g) GROUP BY 1)
+UNION ALL SELECT 'union all time_bucket(INTERVAL ''15 minutes'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT time_bucket(INTERVAL '15 minutes', ts) AS k, v FROM g UNION ALL SELECT time_bucket(INTERVAL '15 minutes', ts), v FROM g WHERE sev < 3) GROUP BY k)
+UNION ALL SELECT 'union all three time_bucket(INTERVAL ''15 minutes'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT time_bucket(INTERVAL '15 minutes', ts) AS k, v FROM g WHERE sev = 0 UNION ALL SELECT time_bucket(INTERVAL '15 minutes', ts), v FROM g WHERE sev = 1 UNION ALL SELECT time_bucket(INTERVAL '15 minutes', ts), v FROM g WHERE sev > 1) GROUP BY k)
+UNION ALL SELECT 'union all passthrough time_bucket(INTERVAL ''15 minutes'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT k, v FROM (SELECT time_bucket(INTERVAL '15 minutes', ts) AS k, v FROM g) UNION ALL SELECT k, v FROM (SELECT time_bucket(INTERVAL '15 minutes', ts) AS k, v FROM g WHERE v % 2 = 0)) GROUP BY k)
+UNION ALL SELECT 'union all extra column time_bucket(INTERVAL ''15 minutes'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT time_bucket(INTERVAL '15 minutes', ts) AS k, sev, v FROM g UNION ALL SELECT time_bucket(INTERVAL '15 minutes', ts), sev, v FROM g) GROUP BY k)
+UNION ALL SELECT 'union distinct time_bucket(INTERVAL ''15 minutes'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT time_bucket(INTERVAL '15 minutes', ts) AS k, v FROM g UNION SELECT time_bucket(INTERVAL '15 minutes', ts), v FROM g) GROUP BY k)
+UNION ALL SELECT 'wrapped concat floor(price / 100) * 100' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT b::VARCHAR || '!' AS k, v FROM (SELECT floor(price / 100) * 100 AS b, v FROM g)) GROUP BY k)
+UNION ALL SELECT 'wrapped outer floor(price / 100) * 100' AS shape, k::VARCHAR AS k, c, s FROM (SELECT b::VARCHAR || '!' AS k, count(*) AS c, sum(v) AS s FROM (SELECT floor(price / 100) * 100 AS b, v FROM g) GROUP BY 1)
+UNION ALL SELECT 'wrapped cte floor(price / 100) * 100' AS shape, k::VARCHAR AS k, c, s FROM (WITH x AS (SELECT floor(price / 100) * 100 AS b, v FROM g) SELECT concat('[', b, ']') AS k, count(*) AS c, sum(v) AS s FROM x GROUP BY 1)
+UNION ALL SELECT 'wrapped multi ref floor(price / 100) * 100' AS shape, k::VARCHAR AS k, c, s FROM (SELECT b::VARCHAR || '!' AS k, count(*) AS c, sum(v) + 0 * count(b) AS s FROM (SELECT floor(price / 100) * 100 AS b, v FROM g) GROUP BY 1)
+UNION ALL SELECT 'union all floor(price / 100) * 100' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT floor(price / 100) * 100 AS k, v FROM g UNION ALL SELECT floor(price / 100) * 100, v FROM g WHERE sev < 3) GROUP BY k)
+UNION ALL SELECT 'union all three floor(price / 100) * 100' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT floor(price / 100) * 100 AS k, v FROM g WHERE sev = 0 UNION ALL SELECT floor(price / 100) * 100, v FROM g WHERE sev = 1 UNION ALL SELECT floor(price / 100) * 100, v FROM g WHERE sev > 1) GROUP BY k)
+UNION ALL SELECT 'union all passthrough floor(price / 100) * 100' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT k, v FROM (SELECT floor(price / 100) * 100 AS k, v FROM g) UNION ALL SELECT k, v FROM (SELECT floor(price / 100) * 100 AS k, v FROM g WHERE v % 2 = 0)) GROUP BY k)
+UNION ALL SELECT 'union all extra column floor(price / 100) * 100' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT floor(price / 100) * 100 AS k, sev, v FROM g UNION ALL SELECT floor(price / 100) * 100, sev, v FROM g) GROUP BY k)
+UNION ALL SELECT 'union distinct floor(price / 100) * 100' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT floor(price / 100) * 100 AS k, v FROM g UNION SELECT floor(price / 100) * 100, v FROM g) GROUP BY k)
+UNION ALL SELECT 'wrapped concat epoch_ms(date_trunc(''hour'', ts))' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT b::VARCHAR || '!' AS k, v FROM (SELECT epoch_ms(date_trunc('hour', ts)) AS b, v FROM g)) GROUP BY k)
+UNION ALL SELECT 'wrapped outer epoch_ms(date_trunc(''hour'', ts))' AS shape, k::VARCHAR AS k, c, s FROM (SELECT b::VARCHAR || '!' AS k, count(*) AS c, sum(v) AS s FROM (SELECT epoch_ms(date_trunc('hour', ts)) AS b, v FROM g) GROUP BY 1)
+UNION ALL SELECT 'wrapped cte epoch_ms(date_trunc(''hour'', ts))' AS shape, k::VARCHAR AS k, c, s FROM (WITH x AS (SELECT epoch_ms(date_trunc('hour', ts)) AS b, v FROM g) SELECT concat('[', b, ']') AS k, count(*) AS c, sum(v) AS s FROM x GROUP BY 1)
+UNION ALL SELECT 'wrapped multi ref epoch_ms(date_trunc(''hour'', ts))' AS shape, k::VARCHAR AS k, c, s FROM (SELECT b::VARCHAR || '!' AS k, count(*) AS c, sum(v) + 0 * count(b) AS s FROM (SELECT epoch_ms(date_trunc('hour', ts)) AS b, v FROM g) GROUP BY 1)
+UNION ALL SELECT 'union all epoch_ms(date_trunc(''hour'', ts))' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT epoch_ms(date_trunc('hour', ts)) AS k, v FROM g UNION ALL SELECT epoch_ms(date_trunc('hour', ts)), v FROM g WHERE sev < 3) GROUP BY k)
+UNION ALL SELECT 'union all three epoch_ms(date_trunc(''hour'', ts))' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT epoch_ms(date_trunc('hour', ts)) AS k, v FROM g WHERE sev = 0 UNION ALL SELECT epoch_ms(date_trunc('hour', ts)), v FROM g WHERE sev = 1 UNION ALL SELECT epoch_ms(date_trunc('hour', ts)), v FROM g WHERE sev > 1) GROUP BY k)
+UNION ALL SELECT 'union all passthrough epoch_ms(date_trunc(''hour'', ts))' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT k, v FROM (SELECT epoch_ms(date_trunc('hour', ts)) AS k, v FROM g) UNION ALL SELECT k, v FROM (SELECT epoch_ms(date_trunc('hour', ts)) AS k, v FROM g WHERE v % 2 = 0)) GROUP BY k)
+UNION ALL SELECT 'union all extra column epoch_ms(date_trunc(''hour'', ts))' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT epoch_ms(date_trunc('hour', ts)) AS k, sev, v FROM g UNION ALL SELECT epoch_ms(date_trunc('hour', ts)), sev, v FROM g) GROUP BY k)
+UNION ALL SELECT 'union distinct epoch_ms(date_trunc(''hour'', ts))' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT epoch_ms(date_trunc('hour', ts)) AS k, v FROM g UNION SELECT epoch_ms(date_trunc('hour', ts)), v FROM g) GROUP BY k)
+UNION ALL SELECT 'union all different shapes' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT date_trunc('hour', ts) AS k, v FROM g UNION ALL SELECT date_trunc('day', ts), v FROM g) GROUP BY k)
+UNION ALL SELECT 'union all shifted branch' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT date_trunc('hour', ts) AS k, v FROM g UNION ALL SELECT date_trunc('hour', ts - INTERVAL '3 hours'), v FROM g) GROUP BY k)
+UNION ALL SELECT 'union all mixed columns' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT date_trunc('hour', ts) AS k, v FROM g UNION ALL SELECT date_trunc('hour', tstz::TIMESTAMP), v FROM g) GROUP BY k)
+UNION ALL SELECT 'union all with constant branch' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT date_trunc('hour', ts) AS k, v FROM g UNION ALL SELECT TIMESTAMP '2025-01-15 10:00', 7) GROUP BY k)
+UNION ALL SELECT 'union all wrapped' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k::VARCHAR || '!' AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT date_trunc('hour', ts) AS k, v FROM g UNION ALL SELECT date_trunc('hour', ts), v FROM g) GROUP BY k))
+UNION ALL SELECT 'union all two keys' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k1::VARCHAR || '/' || k2::VARCHAR AS k, c, s FROM (SELECT k1, k2, count(*) AS c, sum(v) AS s FROM (SELECT date_trunc('day', ts) AS k1, date_trunc('hour', ts) AS k2, v FROM g UNION ALL SELECT date_trunc('day', ts), date_trunc('hour', ts), v FROM g) GROUP BY k1, k2));
 
 statement ok
 RESET disabled_optimizers;
@@ -687,7 +756,76 @@ UNION ALL SELECT 'alias pair date_trunc(''day'', ts)::DATE + date_trunc(''hour''
 UNION ALL SELECT 'cte pair date_trunc(''day'', ts)::DATE + date_trunc(''hour'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (WITH x AS (SELECT date_trunc('day', ts)::DATE AS k1, date_trunc('hour', ts) AS k2, v FROM g) SELECT k1::VARCHAR || '/' || k2::VARCHAR AS k, c, s FROM (SELECT k1, k2, count(*) AS c, sum(v) AS s FROM x GROUP BY k1, k2))
 UNION ALL SELECT 'distinct pair date_trunc(''day'', ts)::DATE + date_trunc(''hour'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k1::VARCHAR || '/' || k2::VARCHAR AS k, 1 AS c, 0 AS s FROM (SELECT DISTINCT date_trunc('day', ts)::DATE AS k1, date_trunc('hour', ts) AS k2 FROM g))
 UNION ALL SELECT 'distinct pair alias date_trunc(''day'', ts)::DATE + date_trunc(''hour'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k1::VARCHAR || '/' || k2::VARCHAR AS k, 1 AS c, 0 AS s FROM (SELECT DISTINCT k1, k2 FROM (SELECT date_trunc('day', ts)::DATE AS k1, date_trunc('hour', ts) AS k2 FROM g)))
-UNION ALL SELECT 'pair one aliased date_trunc(''day'', ts)::DATE + date_trunc(''hour'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k1::VARCHAR || '/' || k2::VARCHAR AS k, c, s FROM (SELECT k1, date_trunc('hour', ts) AS k2, count(*) AS c, sum(v) AS s FROM (SELECT date_trunc('day', ts)::DATE AS k1, ts, tstz, v FROM g) GROUP BY 1, 2));
+UNION ALL SELECT 'pair one aliased date_trunc(''day'', ts)::DATE + date_trunc(''hour'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k1::VARCHAR || '/' || k2::VARCHAR AS k, c, s FROM (SELECT k1, date_trunc('hour', ts) AS k2, count(*) AS c, sum(v) AS s FROM (SELECT date_trunc('day', ts)::DATE AS k1, ts, tstz, v FROM g) GROUP BY 1, 2))
+UNION ALL SELECT 'wrapped concat date_trunc(''hour'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT b::VARCHAR || '!' AS k, v FROM (SELECT date_trunc('hour', ts) AS b, v FROM g)) GROUP BY k)
+UNION ALL SELECT 'wrapped outer date_trunc(''hour'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT b::VARCHAR || '!' AS k, count(*) AS c, sum(v) AS s FROM (SELECT date_trunc('hour', ts) AS b, v FROM g) GROUP BY 1)
+UNION ALL SELECT 'wrapped cte date_trunc(''hour'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (WITH x AS (SELECT date_trunc('hour', ts) AS b, v FROM g) SELECT concat('[', b, ']') AS k, count(*) AS c, sum(v) AS s FROM x GROUP BY 1)
+UNION ALL SELECT 'wrapped multi ref date_trunc(''hour'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT b::VARCHAR || '!' AS k, count(*) AS c, sum(v) + 0 * count(b) AS s FROM (SELECT date_trunc('hour', ts) AS b, v FROM g) GROUP BY 1)
+UNION ALL SELECT 'union all date_trunc(''hour'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT date_trunc('hour', ts) AS k, v FROM g UNION ALL SELECT date_trunc('hour', ts), v FROM g WHERE sev < 3) GROUP BY k)
+UNION ALL SELECT 'union all three date_trunc(''hour'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT date_trunc('hour', ts) AS k, v FROM g WHERE sev = 0 UNION ALL SELECT date_trunc('hour', ts), v FROM g WHERE sev = 1 UNION ALL SELECT date_trunc('hour', ts), v FROM g WHERE sev > 1) GROUP BY k)
+UNION ALL SELECT 'union all passthrough date_trunc(''hour'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT k, v FROM (SELECT date_trunc('hour', ts) AS k, v FROM g) UNION ALL SELECT k, v FROM (SELECT date_trunc('hour', ts) AS k, v FROM g WHERE v % 2 = 0)) GROUP BY k)
+UNION ALL SELECT 'union all extra column date_trunc(''hour'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT date_trunc('hour', ts) AS k, sev, v FROM g UNION ALL SELECT date_trunc('hour', ts), sev, v FROM g) GROUP BY k)
+UNION ALL SELECT 'union distinct date_trunc(''hour'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT date_trunc('hour', ts) AS k, v FROM g UNION SELECT date_trunc('hour', ts), v FROM g) GROUP BY k)
+UNION ALL SELECT 'wrapped concat date_trunc(''day'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT b::VARCHAR || '!' AS k, v FROM (SELECT date_trunc('day', ts) AS b, v FROM g)) GROUP BY k)
+UNION ALL SELECT 'wrapped outer date_trunc(''day'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT b::VARCHAR || '!' AS k, count(*) AS c, sum(v) AS s FROM (SELECT date_trunc('day', ts) AS b, v FROM g) GROUP BY 1)
+UNION ALL SELECT 'wrapped cte date_trunc(''day'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (WITH x AS (SELECT date_trunc('day', ts) AS b, v FROM g) SELECT concat('[', b, ']') AS k, count(*) AS c, sum(v) AS s FROM x GROUP BY 1)
+UNION ALL SELECT 'wrapped multi ref date_trunc(''day'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT b::VARCHAR || '!' AS k, count(*) AS c, sum(v) + 0 * count(b) AS s FROM (SELECT date_trunc('day', ts) AS b, v FROM g) GROUP BY 1)
+UNION ALL SELECT 'union all date_trunc(''day'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT date_trunc('day', ts) AS k, v FROM g UNION ALL SELECT date_trunc('day', ts), v FROM g WHERE sev < 3) GROUP BY k)
+UNION ALL SELECT 'union all three date_trunc(''day'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT date_trunc('day', ts) AS k, v FROM g WHERE sev = 0 UNION ALL SELECT date_trunc('day', ts), v FROM g WHERE sev = 1 UNION ALL SELECT date_trunc('day', ts), v FROM g WHERE sev > 1) GROUP BY k)
+UNION ALL SELECT 'union all passthrough date_trunc(''day'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT k, v FROM (SELECT date_trunc('day', ts) AS k, v FROM g) UNION ALL SELECT k, v FROM (SELECT date_trunc('day', ts) AS k, v FROM g WHERE v % 2 = 0)) GROUP BY k)
+UNION ALL SELECT 'union all extra column date_trunc(''day'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT date_trunc('day', ts) AS k, sev, v FROM g UNION ALL SELECT date_trunc('day', ts), sev, v FROM g) GROUP BY k)
+UNION ALL SELECT 'union distinct date_trunc(''day'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT date_trunc('day', ts) AS k, v FROM g UNION SELECT date_trunc('day', ts), v FROM g) GROUP BY k)
+UNION ALL SELECT 'wrapped concat strftime(ts, ''%Y-%m-%d'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT b::VARCHAR || '!' AS k, v FROM (SELECT strftime(ts, '%Y-%m-%d') AS b, v FROM g)) GROUP BY k)
+UNION ALL SELECT 'wrapped outer strftime(ts, ''%Y-%m-%d'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT b::VARCHAR || '!' AS k, count(*) AS c, sum(v) AS s FROM (SELECT strftime(ts, '%Y-%m-%d') AS b, v FROM g) GROUP BY 1)
+UNION ALL SELECT 'wrapped cte strftime(ts, ''%Y-%m-%d'')' AS shape, k::VARCHAR AS k, c, s FROM (WITH x AS (SELECT strftime(ts, '%Y-%m-%d') AS b, v FROM g) SELECT concat('[', b, ']') AS k, count(*) AS c, sum(v) AS s FROM x GROUP BY 1)
+UNION ALL SELECT 'wrapped multi ref strftime(ts, ''%Y-%m-%d'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT b::VARCHAR || '!' AS k, count(*) AS c, sum(v) + 0 * count(b) AS s FROM (SELECT strftime(ts, '%Y-%m-%d') AS b, v FROM g) GROUP BY 1)
+UNION ALL SELECT 'union all strftime(ts, ''%Y-%m-%d'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT strftime(ts, '%Y-%m-%d') AS k, v FROM g UNION ALL SELECT strftime(ts, '%Y-%m-%d'), v FROM g WHERE sev < 3) GROUP BY k)
+UNION ALL SELECT 'union all three strftime(ts, ''%Y-%m-%d'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT strftime(ts, '%Y-%m-%d') AS k, v FROM g WHERE sev = 0 UNION ALL SELECT strftime(ts, '%Y-%m-%d'), v FROM g WHERE sev = 1 UNION ALL SELECT strftime(ts, '%Y-%m-%d'), v FROM g WHERE sev > 1) GROUP BY k)
+UNION ALL SELECT 'union all passthrough strftime(ts, ''%Y-%m-%d'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT k, v FROM (SELECT strftime(ts, '%Y-%m-%d') AS k, v FROM g) UNION ALL SELECT k, v FROM (SELECT strftime(ts, '%Y-%m-%d') AS k, v FROM g WHERE v % 2 = 0)) GROUP BY k)
+UNION ALL SELECT 'union all extra column strftime(ts, ''%Y-%m-%d'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT strftime(ts, '%Y-%m-%d') AS k, sev, v FROM g UNION ALL SELECT strftime(ts, '%Y-%m-%d'), sev, v FROM g) GROUP BY k)
+UNION ALL SELECT 'union distinct strftime(ts, ''%Y-%m-%d'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT strftime(ts, '%Y-%m-%d') AS k, v FROM g UNION SELECT strftime(ts, '%Y-%m-%d'), v FROM g) GROUP BY k)
+UNION ALL SELECT 'wrapped concat date_trunc(''hour'', tstz)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT b::VARCHAR || '!' AS k, v FROM (SELECT date_trunc('hour', tstz) AS b, v FROM g)) GROUP BY k)
+UNION ALL SELECT 'wrapped outer date_trunc(''hour'', tstz)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT b::VARCHAR || '!' AS k, count(*) AS c, sum(v) AS s FROM (SELECT date_trunc('hour', tstz) AS b, v FROM g) GROUP BY 1)
+UNION ALL SELECT 'wrapped cte date_trunc(''hour'', tstz)' AS shape, k::VARCHAR AS k, c, s FROM (WITH x AS (SELECT date_trunc('hour', tstz) AS b, v FROM g) SELECT concat('[', b, ']') AS k, count(*) AS c, sum(v) AS s FROM x GROUP BY 1)
+UNION ALL SELECT 'wrapped multi ref date_trunc(''hour'', tstz)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT b::VARCHAR || '!' AS k, count(*) AS c, sum(v) + 0 * count(b) AS s FROM (SELECT date_trunc('hour', tstz) AS b, v FROM g) GROUP BY 1)
+UNION ALL SELECT 'union all date_trunc(''hour'', tstz)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT date_trunc('hour', tstz) AS k, v FROM g UNION ALL SELECT date_trunc('hour', tstz), v FROM g WHERE sev < 3) GROUP BY k)
+UNION ALL SELECT 'union all three date_trunc(''hour'', tstz)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT date_trunc('hour', tstz) AS k, v FROM g WHERE sev = 0 UNION ALL SELECT date_trunc('hour', tstz), v FROM g WHERE sev = 1 UNION ALL SELECT date_trunc('hour', tstz), v FROM g WHERE sev > 1) GROUP BY k)
+UNION ALL SELECT 'union all passthrough date_trunc(''hour'', tstz)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT k, v FROM (SELECT date_trunc('hour', tstz) AS k, v FROM g) UNION ALL SELECT k, v FROM (SELECT date_trunc('hour', tstz) AS k, v FROM g WHERE v % 2 = 0)) GROUP BY k)
+UNION ALL SELECT 'union all extra column date_trunc(''hour'', tstz)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT date_trunc('hour', tstz) AS k, sev, v FROM g UNION ALL SELECT date_trunc('hour', tstz), sev, v FROM g) GROUP BY k)
+UNION ALL SELECT 'union distinct date_trunc(''hour'', tstz)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT date_trunc('hour', tstz) AS k, v FROM g UNION SELECT date_trunc('hour', tstz), v FROM g) GROUP BY k)
+UNION ALL SELECT 'wrapped concat time_bucket(INTERVAL ''15 minutes'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT b::VARCHAR || '!' AS k, v FROM (SELECT time_bucket(INTERVAL '15 minutes', ts) AS b, v FROM g)) GROUP BY k)
+UNION ALL SELECT 'wrapped outer time_bucket(INTERVAL ''15 minutes'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT b::VARCHAR || '!' AS k, count(*) AS c, sum(v) AS s FROM (SELECT time_bucket(INTERVAL '15 minutes', ts) AS b, v FROM g) GROUP BY 1)
+UNION ALL SELECT 'wrapped cte time_bucket(INTERVAL ''15 minutes'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (WITH x AS (SELECT time_bucket(INTERVAL '15 minutes', ts) AS b, v FROM g) SELECT concat('[', b, ']') AS k, count(*) AS c, sum(v) AS s FROM x GROUP BY 1)
+UNION ALL SELECT 'wrapped multi ref time_bucket(INTERVAL ''15 minutes'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT b::VARCHAR || '!' AS k, count(*) AS c, sum(v) + 0 * count(b) AS s FROM (SELECT time_bucket(INTERVAL '15 minutes', ts) AS b, v FROM g) GROUP BY 1)
+UNION ALL SELECT 'union all time_bucket(INTERVAL ''15 minutes'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT time_bucket(INTERVAL '15 minutes', ts) AS k, v FROM g UNION ALL SELECT time_bucket(INTERVAL '15 minutes', ts), v FROM g WHERE sev < 3) GROUP BY k)
+UNION ALL SELECT 'union all three time_bucket(INTERVAL ''15 minutes'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT time_bucket(INTERVAL '15 minutes', ts) AS k, v FROM g WHERE sev = 0 UNION ALL SELECT time_bucket(INTERVAL '15 minutes', ts), v FROM g WHERE sev = 1 UNION ALL SELECT time_bucket(INTERVAL '15 minutes', ts), v FROM g WHERE sev > 1) GROUP BY k)
+UNION ALL SELECT 'union all passthrough time_bucket(INTERVAL ''15 minutes'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT k, v FROM (SELECT time_bucket(INTERVAL '15 minutes', ts) AS k, v FROM g) UNION ALL SELECT k, v FROM (SELECT time_bucket(INTERVAL '15 minutes', ts) AS k, v FROM g WHERE v % 2 = 0)) GROUP BY k)
+UNION ALL SELECT 'union all extra column time_bucket(INTERVAL ''15 minutes'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT time_bucket(INTERVAL '15 minutes', ts) AS k, sev, v FROM g UNION ALL SELECT time_bucket(INTERVAL '15 minutes', ts), sev, v FROM g) GROUP BY k)
+UNION ALL SELECT 'union distinct time_bucket(INTERVAL ''15 minutes'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT time_bucket(INTERVAL '15 minutes', ts) AS k, v FROM g UNION SELECT time_bucket(INTERVAL '15 minutes', ts), v FROM g) GROUP BY k)
+UNION ALL SELECT 'wrapped concat floor(price / 100) * 100' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT b::VARCHAR || '!' AS k, v FROM (SELECT floor(price / 100) * 100 AS b, v FROM g)) GROUP BY k)
+UNION ALL SELECT 'wrapped outer floor(price / 100) * 100' AS shape, k::VARCHAR AS k, c, s FROM (SELECT b::VARCHAR || '!' AS k, count(*) AS c, sum(v) AS s FROM (SELECT floor(price / 100) * 100 AS b, v FROM g) GROUP BY 1)
+UNION ALL SELECT 'wrapped cte floor(price / 100) * 100' AS shape, k::VARCHAR AS k, c, s FROM (WITH x AS (SELECT floor(price / 100) * 100 AS b, v FROM g) SELECT concat('[', b, ']') AS k, count(*) AS c, sum(v) AS s FROM x GROUP BY 1)
+UNION ALL SELECT 'wrapped multi ref floor(price / 100) * 100' AS shape, k::VARCHAR AS k, c, s FROM (SELECT b::VARCHAR || '!' AS k, count(*) AS c, sum(v) + 0 * count(b) AS s FROM (SELECT floor(price / 100) * 100 AS b, v FROM g) GROUP BY 1)
+UNION ALL SELECT 'union all floor(price / 100) * 100' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT floor(price / 100) * 100 AS k, v FROM g UNION ALL SELECT floor(price / 100) * 100, v FROM g WHERE sev < 3) GROUP BY k)
+UNION ALL SELECT 'union all three floor(price / 100) * 100' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT floor(price / 100) * 100 AS k, v FROM g WHERE sev = 0 UNION ALL SELECT floor(price / 100) * 100, v FROM g WHERE sev = 1 UNION ALL SELECT floor(price / 100) * 100, v FROM g WHERE sev > 1) GROUP BY k)
+UNION ALL SELECT 'union all passthrough floor(price / 100) * 100' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT k, v FROM (SELECT floor(price / 100) * 100 AS k, v FROM g) UNION ALL SELECT k, v FROM (SELECT floor(price / 100) * 100 AS k, v FROM g WHERE v % 2 = 0)) GROUP BY k)
+UNION ALL SELECT 'union all extra column floor(price / 100) * 100' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT floor(price / 100) * 100 AS k, sev, v FROM g UNION ALL SELECT floor(price / 100) * 100, sev, v FROM g) GROUP BY k)
+UNION ALL SELECT 'union distinct floor(price / 100) * 100' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT floor(price / 100) * 100 AS k, v FROM g UNION SELECT floor(price / 100) * 100, v FROM g) GROUP BY k)
+UNION ALL SELECT 'wrapped concat epoch_ms(date_trunc(''hour'', ts))' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT b::VARCHAR || '!' AS k, v FROM (SELECT epoch_ms(date_trunc('hour', ts)) AS b, v FROM g)) GROUP BY k)
+UNION ALL SELECT 'wrapped outer epoch_ms(date_trunc(''hour'', ts))' AS shape, k::VARCHAR AS k, c, s FROM (SELECT b::VARCHAR || '!' AS k, count(*) AS c, sum(v) AS s FROM (SELECT epoch_ms(date_trunc('hour', ts)) AS b, v FROM g) GROUP BY 1)
+UNION ALL SELECT 'wrapped cte epoch_ms(date_trunc(''hour'', ts))' AS shape, k::VARCHAR AS k, c, s FROM (WITH x AS (SELECT epoch_ms(date_trunc('hour', ts)) AS b, v FROM g) SELECT concat('[', b, ']') AS k, count(*) AS c, sum(v) AS s FROM x GROUP BY 1)
+UNION ALL SELECT 'wrapped multi ref epoch_ms(date_trunc(''hour'', ts))' AS shape, k::VARCHAR AS k, c, s FROM (SELECT b::VARCHAR || '!' AS k, count(*) AS c, sum(v) + 0 * count(b) AS s FROM (SELECT epoch_ms(date_trunc('hour', ts)) AS b, v FROM g) GROUP BY 1)
+UNION ALL SELECT 'union all epoch_ms(date_trunc(''hour'', ts))' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT epoch_ms(date_trunc('hour', ts)) AS k, v FROM g UNION ALL SELECT epoch_ms(date_trunc('hour', ts)), v FROM g WHERE sev < 3) GROUP BY k)
+UNION ALL SELECT 'union all three epoch_ms(date_trunc(''hour'', ts))' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT epoch_ms(date_trunc('hour', ts)) AS k, v FROM g WHERE sev = 0 UNION ALL SELECT epoch_ms(date_trunc('hour', ts)), v FROM g WHERE sev = 1 UNION ALL SELECT epoch_ms(date_trunc('hour', ts)), v FROM g WHERE sev > 1) GROUP BY k)
+UNION ALL SELECT 'union all passthrough epoch_ms(date_trunc(''hour'', ts))' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT k, v FROM (SELECT epoch_ms(date_trunc('hour', ts)) AS k, v FROM g) UNION ALL SELECT k, v FROM (SELECT epoch_ms(date_trunc('hour', ts)) AS k, v FROM g WHERE v % 2 = 0)) GROUP BY k)
+UNION ALL SELECT 'union all extra column epoch_ms(date_trunc(''hour'', ts))' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT epoch_ms(date_trunc('hour', ts)) AS k, sev, v FROM g UNION ALL SELECT epoch_ms(date_trunc('hour', ts)), sev, v FROM g) GROUP BY k)
+UNION ALL SELECT 'union distinct epoch_ms(date_trunc(''hour'', ts))' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT epoch_ms(date_trunc('hour', ts)) AS k, v FROM g UNION SELECT epoch_ms(date_trunc('hour', ts)), v FROM g) GROUP BY k)
+UNION ALL SELECT 'union all different shapes' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT date_trunc('hour', ts) AS k, v FROM g UNION ALL SELECT date_trunc('day', ts), v FROM g) GROUP BY k)
+UNION ALL SELECT 'union all shifted branch' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT date_trunc('hour', ts) AS k, v FROM g UNION ALL SELECT date_trunc('hour', ts - INTERVAL '3 hours'), v FROM g) GROUP BY k)
+UNION ALL SELECT 'union all mixed columns' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT date_trunc('hour', ts) AS k, v FROM g UNION ALL SELECT date_trunc('hour', tstz::TIMESTAMP), v FROM g) GROUP BY k)
+UNION ALL SELECT 'union all with constant branch' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT date_trunc('hour', ts) AS k, v FROM g UNION ALL SELECT TIMESTAMP '2025-01-15 10:00', 7) GROUP BY k)
+UNION ALL SELECT 'union all wrapped' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k::VARCHAR || '!' AS k, c, s FROM (SELECT k, count(*) AS c, sum(v) AS s FROM (SELECT date_trunc('hour', ts) AS k, v FROM g UNION ALL SELECT date_trunc('hour', ts), v FROM g) GROUP BY k))
+UNION ALL SELECT 'union all two keys' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k1::VARCHAR || '/' || k2::VARCHAR AS k, c, s FROM (SELECT k1, k2, count(*) AS c, sum(v) AS s FROM (SELECT date_trunc('day', ts) AS k1, date_trunc('hour', ts) AS k2, v FROM g UNION ALL SELECT date_trunc('day', ts), date_trunc('hour', ts), v FROM g) GROUP BY k1, k2));
 
 query
 SELECT shape, k, c, s FROM (SELECT * FROM got_a EXCEPT ALL SELECT * FROM ref_a) ORDER BY 1, 2;
@@ -703,7 +841,86 @@ query
 SELECT count(*) AS rows, count(DISTINCT shape) AS shapes FROM got_a;
 ----
 rows	shapes
-1816645	335
+2223702	397
+
+query
+EXPLAIN SELECT b::VARCHAR || '!' AS k, count(*) AS c FROM (SELECT date_trunc('hour', ts) AS b, v FROM g) GROUP BY 1;
+----
+QUERY PLAN
+╭─ PROJECTION ────────────────────────────────────╮
+│ Projections: k, #1                              │
+│ ~25,000 rows                                    │
+╰────────────────────────┬────────────────────────╯
+╭─ PERFECT_HASH_GROUP_BY ┴────────────────────────╮
+│ Groups: #0                                      │
+│ Aggregates: count_star()                        │
+│ ~25,000 rows                                    │
+╰────────────────────────┬────────────────────────╯
+╭─ PROJECTION ───────────┴────────────────────────╮
+│ Projections:                                    │
+│ __internal_date_trunc_bucket(ts, 3600000000, 0) │
+│ ~50,001 rows                                    │
+╰────────────────────────┬────────────────────────╯
+╭─ SEQ_SCAN ─────────────┴────────────────────────╮
+│ Table: g                                        │
+│ Type: Sequential Scan                           │
+│ Projections: ts                                 │
+│ ~50,001 rows                                    │
+╰─────────────────────────────────────────────────╯
+
+query
+EXPLAIN SELECT k, count(*) AS c FROM (SELECT date_trunc('hour', ts) AS k, v FROM g UNION ALL SELECT date_trunc('hour', ts), v FROM g WHERE sev < 3) GROUP BY k;
+----
+QUERY PLAN
+╭─ PROJECTION ───────────────────────────────────────╮
+│ Projections:                                       │
+│ __internal_date_trunc_unbucket(#0, 3600000000, 0), │
+│ #1                                                 │
+│ ~34,940 rows                                       │
+╰──────────────────────────┬─────────────────────────╯
+╭─ PERFECT_HASH_GROUP_BY ──┴─────────────────────────╮
+│ Groups: #0                                         │
+│ Aggregates: count_star()                           │
+│ ~34,940 rows                                       │
+╰──────────────────────────┬─────────────────────────╯
+╭─ UNION ──────────────────┴─────────────────────────╮
+╰──────────────────────────┬─────────────────────────╯
+                           ├─────────────────────────────────────────────────────╮
+╭─ PROJECTION ─────────────┴─────────────────────────╮  ╭─ PROJECTION ───────────┴────────────────────────╮
+│ Projections:                                       │  │ Projections:                                    │
+│ __internal_date_trunc_bucket(ts, 3600000000, 0)    │  │ __internal_date_trunc_bucket(ts, 3600000000, 0) │
+│ ~50,001 rows                                       │  │ ~10,000 rows                                    │
+╰──────────────────────────┬─────────────────────────╯  ╰────────────────────────┬────────────────────────╯
+╭─ SEQ_SCAN ───────────────┴─────────────────────────╮  ╭─ SEQ_SCAN ─────────────┴────────────────────────╮
+│ Table: g                                           │  │ Table: g                                        │
+│ Type: Sequential Scan                              │  │ Type: Sequential Scan                           │
+│ Projections: ts                                    │  │ Projections: ts                                 │
+│ ~50,001 rows                                       │  │ Column Filter: sev < 3                          │
+╰────────────────────────────────────────────────────╯  │ ~10,000 rows                                    │
+                                                        ╰─────────────────────────────────────────────────╯
+
+query
+EXPLAIN SELECT k, count(*) AS c FROM (SELECT date_trunc('hour', ts) AS k, v FROM g UNION ALL SELECT date_trunc('day', ts), v FROM g) GROUP BY k;
+----
+QUERY PLAN
+╭─ HASH_GROUP_BY ──────────╮
+│ Groups: #0               │
+│ Aggregates: count_star() │
+│ ~43,234 rows             │
+╰─────────────┬────────────╯
+╭─ UNION ─────┴────────────╮
+╰─────────────┬────────────╯
+              ├──────────────────────────────────╮
+╭─ PROJECTION ┴────────────╮  ╭─ PROJECTION ─────┴─────────────────╮
+│ Projections: k           │  │ Projections: date_trunc('day', ts) │
+│ ~50,001 rows             │  │ ~50,001 rows                       │
+╰─────────────┬────────────╯  ╰──────────────────┬─────────────────╯
+╭─ SEQ_SCAN ──┴────────────╮  ╭─ SEQ_SCAN ───────┴─────────────────╮
+│ Table: g                 │  │ Table: g                           │
+│ Type: Sequential Scan    │  │ Type: Sequential Scan              │
+│ Projections: ts          │  │ Projections: ts                    │
+│ ~50,001 rows             │  │ ~50,001 rows                       │
+╰──────────────────────────╯  ╰────────────────────────────────────╯
 
 query
 EXPLAIN SELECT k, count(*) AS c FROM (SELECT date_trunc('hour', ts) AS k FROM g) GROUP BY k;

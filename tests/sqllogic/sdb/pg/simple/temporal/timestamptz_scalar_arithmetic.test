@@ -221,6 +221,107 @@ ts	dd	ddr	dw	dh	dmi	ds	dms	dus	dmo	dq	dy
 2036-12-31 18:59:59.999999-05	0	0	57	0	0	0	0	0	13	4	1
 
 query
+SELECT ts::VARCHAR AS ts, (ts - anchor)::VARCHAR AS sub1, (anchor - ts)::VARCHAR AS sub2, (ts - (anchor - INTERVAL '400 days 5 hours'))::VARCHAR AS sub3, age(ts, anchor)::VARCHAR AS age1, age(anchor, ts)::VARCHAR AS age2, age(ts, anchor - INTERVAL '400 days 5 hours')::VARCHAR AS age3 FROM p WHERE zone = 'America/Havana' ORDER BY ts NULLS FIRST;
+----
+ts	sub1	sub2	sub3	age1	age2	age3
+1899-12-31 18:30:24-05:29	00:00:00	00:00:00	400 days 05:00:00	00:00:00	00:00:00	1 year 1 mon 5 days 05:00:00
+2025-02-06 00:00:00-05	-31 days	31 days	369 days 05:00:00	-1 mons -3 days -01:00:00	1 mon 3 days 01:00:00	1 year 3 days 05:00:00
+2025-03-07 23:00:00-05	-1 days -01:00:00	1 day 01:00:00	399 days 04:00:00	-1 days -02:00:00	1 day 02:00:00	1 year 1 mon 5 days 04:00:00
+2025-03-08 00:00:00-05	-1 days	1 day	399 days 05:00:00	-1 days -01:00:00	1 day 01:00:00	1 year 1 mon 5 days 05:00:00
+2025-03-08 22:30:00-05	-01:30:00	01:30:00	400 days 03:30:00	-02:30:00	02:30:00	1 year 1 mon 6 days 03:30:00
+2025-03-08 23:30:00-05	-00:30:00	00:30:00	400 days 04:30:00	-01:30:00	01:30:00	1 year 1 mon 6 days 04:30:00
+2025-03-08 23:59:59-05	-00:00:01	00:00:01	400 days 04:59:59	-01:00:01	01:00:01	1 year 1 mon 6 days 04:59:59
+2025-03-08 23:59:59.999999-05	-00:00:00.000001	00:00:00.000001	400 days 04:59:59.999999	-01:00:00.000001	01:00:00.000001	1 year 1 mon 6 days 04:59:59.999999
+2025-03-09 01:00:00-04	00:00:00	00:00:00	400 days 05:00:00	00:00:00	00:00:00	1 year 1 mon 6 days 06:00:00
+2025-03-09 01:00:00.000001-04	00:00:00.000001	-00:00:00.000001	400 days 05:00:00.000001	00:00:00.000001	-00:00:00.000001	1 year 1 mon 6 days 06:00:00.000001
+2025-03-09 01:00:00.999999-04	00:00:00.999999	-00:00:00.999999	400 days 05:00:00.999999	00:00:00.999999	-00:00:00.999999	1 year 1 mon 6 days 06:00:00.999999
+2025-03-09 01:30:00-04	00:30:00	-00:30:00	400 days 05:30:00	00:30:00	-00:30:00	1 year 1 mon 6 days 06:30:00
+2025-03-09 02:30:00-04	01:30:00	-01:30:00	400 days 06:30:00	01:30:00	-01:30:00	1 year 1 mon 6 days 07:30:00
+2025-03-10 01:00:00-04	1 day	-1 days	401 days 06:00:00	1 day	-1 days	1 year 1 mon 7 days 06:00:00
+2025-03-10 02:00:00-04	1 day 01:00:00	-1 days -01:00:00	401 days 07:00:00	1 day 01:00:00	-1 days -01:00:00	1 year 1 mon 7 days 07:00:00
+2025-04-09 01:00:00-04	31 days	-31 days	431 days 06:00:00	1 mon	-1 mons	1 year 2 mons 6 days 06:00:00
+2025-10-02 01:00:00-04	-30 days -24:00:00	30 days 24:00:00	369 days 05:00:00	-30 days -23:00:00	30 days 23:00:00	1 year 4 days 05:00:00
+2025-11-01 00:00:00-04	-1 days -01:00:00	1 day 01:00:00	399 days 04:00:00	-1 days	1 day	1 year 1 mon 3 days 04:00:00
+2025-11-01 01:00:00-04	-24:00:00	24:00:00	399 days 05:00:00	-23:00:00	23:00:00	1 year 1 mon 3 days 05:00:00
+2025-11-01 23:30:00-04	-01:30:00	01:30:00	400 days 03:30:00	-00:30:00	00:30:00	1 year 1 mon 4 days 03:30:00
+2025-11-02 00:00:00-05	00:00:00	00:00:00	400 days 05:00:00	00:00:00	00:00:00	1 year 1 mon 4 days 04:00:00
+2025-11-02 00:00:00.000001-05	00:00:00.000001	-00:00:00.000001	400 days 05:00:00.000001	00:00:00.000001	-00:00:00.000001	1 year 1 mon 4 days 04:00:00.000001
+2025-11-02 00:00:00.999999-05	00:00:00.999999	-00:00:00.999999	400 days 05:00:00.999999	00:00:00.999999	-00:00:00.999999	1 year 1 mon 4 days 04:00:00.999999
+2025-11-02 00:30:00-04	-00:30:00	00:30:00	400 days 04:30:00	1 mon -29 days -23:30:00	-1 mons +29 days 23:30:00	1 year 1 mon 4 days 04:30:00
+2025-11-02 00:30:00-05	00:30:00	-00:30:00	400 days 05:30:00	00:30:00	-00:30:00	1 year 1 mon 4 days 04:30:00
+2025-11-02 00:59:59-04	-00:00:01	00:00:01	400 days 04:59:59	1 mon -29 days -23:00:01	-1 mons +29 days 23:00:01	1 year 1 mon 4 days 04:59:59
+2025-11-02 00:59:59.999999-04	-00:00:00.000001	00:00:00.000001	400 days 04:59:59.999999	1 mon -29 days -23:00:00.000001	-1 mons +29 days 23:00:00.000001	1 year 1 mon 4 days 04:59:59.999999
+2025-11-02 01:30:00-05	01:30:00	-01:30:00	400 days 06:30:00	01:30:00	-01:30:00	1 year 1 mon 4 days 05:30:00
+2025-11-03 00:00:00-05	1 day	-1 days	401 days 04:00:00	1 day	-1 days	1 year 1 mon 5 days 04:00:00
+2025-11-03 01:00:00-05	1 day 01:00:00	-1 days -01:00:00	401 days 05:00:00	1 day 01:00:00	-1 days -01:00:00	1 year 1 mon 5 days 05:00:00
+2025-12-03 00:00:00-05	31 days	-31 days	431 days 04:00:00	1 mon 1 day	-1 mons -1 days	1 year 2 mons 5 days 04:00:00
+2036-12-31 18:59:59.999999-05	00:00:00	00:00:00	400 days 05:00:00	00:00:00	00:00:00	1 year 1 mon 4 days 05:00:00
+
+query
+SELECT ts::VARCHAR AS ts, date_sub('decade', anchor - INTERVAL '4000 days', ts) AS sdec, date_diff('decade', anchor - INTERVAL '4000 days', ts) AS ddec, date_diff('century', anchor - INTERVAL '4000 days', ts) AS dcen, date_diff('millennium', ts, anchor + INTERVAL '4000 days') AS dmil, date_sub('century', ts, anchor + INTERVAL '4000 days') AS scen, strftime(ts::TIMESTAMPTZ_NS, '%Y-%m-%d %H:%M:%S.%f %z %Z') AS fns, strftime(ts::TIMESTAMPTZ_NS, '%S.%n') AS nns FROM p WHERE zone = 'America/Havana' ORDER BY ts NULLS FIRST;
+----
+ts	sdec	ddec	dcen	dmil	scen	fns	nns
+1899-12-31 18:30:24-05:29	1	1	0	0	0	1899-12-31 18:30:24.000000 -05:29:36 America/Havana	24.000000000
+2025-02-06 00:00:00-05	1	1	0	0	0	2025-02-06 00:00:00.000000 -05 America/Havana	00.000000000
+2025-03-07 23:00:00-05	1	1	0	0	0	2025-03-07 23:00:00.000000 -05 America/Havana	00.000000000
+2025-03-08 00:00:00-05	1	1	0	0	0	2025-03-08 00:00:00.000000 -05 America/Havana	00.000000000
+2025-03-08 22:30:00-05	1	1	0	0	0	2025-03-08 22:30:00.000000 -05 America/Havana	00.000000000
+2025-03-08 23:30:00-05	1	1	0	0	0	2025-03-08 23:30:00.000000 -05 America/Havana	00.000000000
+2025-03-08 23:59:59-05	1	1	0	0	0	2025-03-08 23:59:59.000000 -05 America/Havana	59.000000000
+2025-03-08 23:59:59.999999-05	1	1	0	0	0	2025-03-08 23:59:59.999999 -05 America/Havana	59.999999000
+2025-03-09 01:00:00-04	1	1	0	0	0	2025-03-09 01:00:00.000000 -04 America/Havana	00.000000000
+2025-03-09 01:00:00.000001-04	1	1	0	0	0	2025-03-09 01:00:00.000001 -04 America/Havana	00.000001000
+2025-03-09 01:00:00.999999-04	1	1	0	0	0	2025-03-09 01:00:00.999999 -04 America/Havana	00.999999000
+2025-03-09 01:30:00-04	1	1	0	0	0	2025-03-09 01:30:00.000000 -04 America/Havana	00.000000000
+2025-03-09 02:30:00-04	1	1	0	0	0	2025-03-09 02:30:00.000000 -04 America/Havana	00.000000000
+2025-03-10 01:00:00-04	1	1	0	0	0	2025-03-10 01:00:00.000000 -04 America/Havana	00.000000000
+2025-03-10 02:00:00-04	1	1	0	0	0	2025-03-10 02:00:00.000000 -04 America/Havana	00.000000000
+2025-04-09 01:00:00-04	1	1	0	0	0	2025-04-09 01:00:00.000000 -04 America/Havana	00.000000000
+2025-10-02 01:00:00-04	1	1	0	0	0	2025-10-02 01:00:00.000000 -04 America/Havana	00.000000000
+2025-11-01 00:00:00-04	1	1	0	0	0	2025-11-01 00:00:00.000000 -04 America/Havana	00.000000000
+2025-11-01 01:00:00-04	1	1	0	0	0	2025-11-01 01:00:00.000000 -04 America/Havana	00.000000000
+2025-11-01 23:30:00-04	1	1	0	0	0	2025-11-01 23:30:00.000000 -04 America/Havana	00.000000000
+2025-11-02 00:00:00-05	1	1	0	0	0	2025-11-02 00:00:00.000000 -05 America/Havana	00.000000000
+2025-11-02 00:00:00.000001-05	1	1	0	0	0	2025-11-02 00:00:00.000001 -05 America/Havana	00.000001000
+2025-11-02 00:00:00.999999-05	1	1	0	0	0	2025-11-02 00:00:00.999999 -05 America/Havana	00.999999000
+2025-11-02 00:30:00-04	1	1	0	0	0	2025-11-02 00:30:00.000000 -04 America/Havana	00.000000000
+2025-11-02 00:30:00-05	1	1	0	0	0	2025-11-02 00:30:00.000000 -05 America/Havana	00.000000000
+2025-11-02 00:59:59-04	1	1	0	0	0	2025-11-02 00:59:59.000000 -04 America/Havana	59.000000000
+2025-11-02 00:59:59.999999-04	1	1	0	0	0	2025-11-02 00:59:59.999999 -04 America/Havana	59.999999000
+2025-11-02 01:30:00-05	1	1	0	0	0	2025-11-02 01:30:00.000000 -05 America/Havana	00.000000000
+2025-11-03 00:00:00-05	1	1	0	0	0	2025-11-03 00:00:00.000000 -05 America/Havana	00.000000000
+2025-11-03 01:00:00-05	1	1	0	0	0	2025-11-03 01:00:00.000000 -05 America/Havana	00.000000000
+2025-12-03 00:00:00-05	1	1	0	0	0	2025-12-03 00:00:00.000000 -05 America/Havana	00.000000000
+2036-12-31 18:59:59.999999-05	1	1	0	0	0	2036-12-31 18:59:59.999999 -05 America/Havana	59.999999000
+
+query
+SELECT part, count(*) AS n, sum(date_diff(part, anchor - INTERVAL '400 days 5 hours', ts)) AS diff_sum, sum(date_sub(part, ts, anchor + INTERVAL '400 days 5 hours')) AS sub_sum FROM p, parts WHERE zone = 'America/Havana' GROUP BY part ORDER BY part;
+----
+part	n	diff_sum	sub_sum
+century	32	0	0
+day	32	12824	12800
+decade	32	0	0
+hour	32	307355	307354
+isoyear	32	33	32
+microsecond	32	1106495999999998	1106496000000002
+millisecond	32	1106495999996	1106495999998
+minute	32	18441596	18441596
+month	32	431	416
+quarter	32	144	128
+second	32	1106495996	1106495998
+week	32	1822	1822
+year	32	32	32
+
+query
+SELECT fmt, count(*) AS n, md5(string_agg(strftime(ts, fmt), '|' ORDER BY ts NULLS FIRST)) AS digest FROM p, fmts WHERE zone = 'America/Havana' GROUP BY fmt ORDER BY fmt;
+----
+fmt	n	digest
+%G-%V %g %y %-m/%-d %-H %-I %-M %-S %g	32	3812a356f0c208c04853af28bc66f13b
+%Y-%m-%d %H:%M:%S.%f %z %Z	32	cbf43ba06b5bf47265896a2e04b9d8b0
+%a %d %b %Y %I:%M %p %j %U %W %u %w	32	1d2ab10abf9d1d9d7b3d3326fceabfa2
+%c | %x | %X | %%	32	d399762fabab7fb5926659e83d72ce05
+
+query
 SELECT fmt, count(*) FILTER (WHERE strftime(ts, fmt) IS DISTINCT FROM CASE fmt WHEN '%Y-%m-%d %H:%M:%S.%f %z %Z' THEN strftime(ts, '%Y-%m-%d %H:%M:%S.%f %z %Z') WHEN '%a %d %b %Y %I:%M %p %j %U %W %u %w' THEN strftime(ts, '%a %d %b %Y %I:%M %p %j %U %W %u %w') WHEN '%G-%V %g %y %-m/%-d %-H %-I %-M %-S %g' THEN strftime(ts, '%G-%V %g %y %-m/%-d %-H %-I %-M %-S %g') ELSE strftime(ts, '%c | %x | %X | %%') END) AS mismatches FROM p, fmts GROUP BY fmt ORDER BY fmt;
 ----
 fmt	mismatches
@@ -468,6 +569,76 @@ NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL
 2150-06-01 14:00:00+02	0	0	57	0	0	0	0	0	14	4	1
 infinity	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL
 
+query error db error: ERROR: Cannot subtract infinite timestamps
+SELECT ts::VARCHAR AS ts, (ts - anchor)::VARCHAR AS sub1, (anchor - ts)::VARCHAR AS sub2, (ts - (anchor - INTERVAL '400 days 5 hours'))::VARCHAR AS sub3, age(ts, anchor)::VARCHAR AS age1, age(anchor, ts)::VARCHAR AS age2, age(ts, anchor - INTERVAL '400 days 5 hours')::VARCHAR AS age3 FROM p WHERE zone = 'Europe/Berlin' ORDER BY ts NULLS FIRST;
+
+query
+SELECT ts::VARCHAR AS ts, date_sub('decade', anchor - INTERVAL '4000 days', ts) AS sdec, date_diff('decade', anchor - INTERVAL '4000 days', ts) AS ddec, date_diff('century', anchor - INTERVAL '4000 days', ts) AS dcen, date_diff('millennium', ts, anchor + INTERVAL '4000 days') AS dmil, date_sub('century', ts, anchor + INTERVAL '4000 days') AS scen, strftime(ts::TIMESTAMPTZ_NS, '%Y-%m-%d %H:%M:%S.%f %z %Z') AS fns, strftime(ts::TIMESTAMPTZ_NS, '%S.%n') AS nns FROM p WHERE zone = 'Europe/Berlin' ORDER BY ts NULLS FIRST;
+----
+ts	sdec	ddec	dcen	dmil	scen	fns	nns
+NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL
+-infinity	NULL	NULL	NULL	NULL	NULL	-infinity	-infinity
+1850-06-01 12:53:28+00:53	1	2	0	0	0	1850-06-01 12:53:28.000000 +00:53:28 Europe/Berlin	28.000000000
+2025-02-27 02:00:00+01	1	1	0	0	0	2025-02-27 02:00:00.000000 +01 Europe/Berlin	00.000000000
+2025-03-29 01:00:00+01	1	1	0	0	0	2025-03-29 01:00:00.000000 +01 Europe/Berlin	00.000000000
+2025-03-29 02:00:00+01	1	1	0	0	0	2025-03-29 02:00:00.000000 +01 Europe/Berlin	00.000000000
+2025-03-30 00:30:00+01	1	1	0	0	0	2025-03-30 00:30:00.000000 +01 Europe/Berlin	00.000000000
+2025-03-30 01:30:00+01	1	1	0	0	0	2025-03-30 01:30:00.000000 +01 Europe/Berlin	00.000000000
+2025-03-30 01:59:59+01	1	1	0	0	0	2025-03-30 01:59:59.000000 +01 Europe/Berlin	59.000000000
+2025-03-30 01:59:59.999999+01	1	1	0	0	0	2025-03-30 01:59:59.999999 +01 Europe/Berlin	59.999999000
+2025-03-30 03:00:00+02	1	1	0	0	0	2025-03-30 03:00:00.000000 +02 Europe/Berlin	00.000000000
+2025-03-30 03:00:00.000001+02	1	1	0	0	0	2025-03-30 03:00:00.000001 +02 Europe/Berlin	00.000001000
+2025-03-30 03:00:00.999999+02	1	1	0	0	0	2025-03-30 03:00:00.999999 +02 Europe/Berlin	00.999999000
+2025-03-30 03:30:00+02	1	1	0	0	0	2025-03-30 03:30:00.000000 +02 Europe/Berlin	00.000000000
+2025-03-30 04:30:00+02	1	1	0	0	0	2025-03-30 04:30:00.000000 +02 Europe/Berlin	00.000000000
+2025-03-31 03:00:00+02	1	1	0	0	0	2025-03-31 03:00:00.000000 +02 Europe/Berlin	00.000000000
+2025-03-31 04:00:00+02	1	1	0	0	0	2025-03-31 04:00:00.000000 +02 Europe/Berlin	00.000000000
+2025-04-30 03:00:00+02	1	1	0	0	0	2025-04-30 03:00:00.000000 +02 Europe/Berlin	00.000000000
+2025-09-25 03:00:00+02	1	1	0	0	0	2025-09-25 03:00:00.000000 +02 Europe/Berlin	00.000000000
+2025-10-25 02:00:00+02	1	1	0	0	0	2025-10-25 02:00:00.000000 +02 Europe/Berlin	00.000000000
+2025-10-25 03:00:00+02	1	1	0	0	0	2025-10-25 03:00:00.000000 +02 Europe/Berlin	00.000000000
+2025-10-26 01:30:00+02	1	1	0	0	0	2025-10-26 01:30:00.000000 +02 Europe/Berlin	00.000000000
+2025-10-26 02:00:00+01	1	1	0	0	0	2025-10-26 02:00:00.000000 +01 Europe/Berlin	00.000000000
+2025-10-26 02:00:00.000001+01	1	1	0	0	0	2025-10-26 02:00:00.000001 +01 Europe/Berlin	00.000001000
+2025-10-26 02:00:00.999999+01	1	1	0	0	0	2025-10-26 02:00:00.999999 +01 Europe/Berlin	00.999999000
+2025-10-26 02:30:00+01	1	1	0	0	0	2025-10-26 02:30:00.000000 +01 Europe/Berlin	00.000000000
+2025-10-26 02:30:00+02	1	1	0	0	0	2025-10-26 02:30:00.000000 +02 Europe/Berlin	00.000000000
+2025-10-26 02:59:59+02	1	1	0	0	0	2025-10-26 02:59:59.000000 +02 Europe/Berlin	59.000000000
+2025-10-26 02:59:59.999999+02	1	1	0	0	0	2025-10-26 02:59:59.999999 +02 Europe/Berlin	59.999999000
+2025-10-26 03:30:00+01	1	1	0	0	0	2025-10-26 03:30:00.000000 +01 Europe/Berlin	00.000000000
+2025-10-27 02:00:00+01	1	1	0	0	0	2025-10-27 02:00:00.000000 +01 Europe/Berlin	00.000000000
+2025-10-27 03:00:00+01	1	1	0	0	0	2025-10-27 03:00:00.000000 +01 Europe/Berlin	00.000000000
+2025-11-26 02:00:00+01	1	1	0	0	0	2025-11-26 02:00:00.000000 +01 Europe/Berlin	00.000000000
+2150-06-01 14:00:00+02	1	2	0	0	0	2150-06-01 14:00:00.000000 +02 Europe/Berlin	00.000000000
+infinity	NULL	NULL	NULL	NULL	NULL	infinity	infinity
+
+query
+SELECT part, count(*) AS n, sum(date_diff(part, anchor - INTERVAL '400 days 5 hours', ts)) AS diff_sum, sum(date_sub(part, ts, anchor + INTERVAL '400 days 5 hours')) AS sub_sum FROM p, parts WHERE zone = 'Europe/Berlin' GROUP BY part ORDER BY part;
+----
+part	n	diff_sum	sub_sum
+century	35	0	0
+day	35	12830	12800
+decade	35	2	0
+hour	35	307355	307354
+isoyear	35	32	32
+microsecond	35	1106495999999998	1106496000000002
+millisecond	35	1106495999996	1106495999998
+minute	35	18441596	18441596
+month	35	418	416
+quarter	35	143	128
+second	35	1106495996	1106495998
+week	35	1822	1822
+year	35	32	32
+
+query
+SELECT fmt, count(*) AS n, md5(string_agg(strftime(ts, fmt), '|' ORDER BY ts NULLS FIRST)) AS digest FROM p, fmts WHERE zone = 'Europe/Berlin' GROUP BY fmt ORDER BY fmt;
+----
+fmt	n	digest
+%G-%V %g %y %-m/%-d %-H %-I %-M %-S %g	35	383e2b008e5d2f00abec7c80e3689d94
+%Y-%m-%d %H:%M:%S.%f %z %Z	35	0e650d34e8690eaaaebfcd7c599bbf3c
+%a %d %b %Y %I:%M %p %j %U %W %u %w	35	6621df4d363ff1466b35336a7428bc5c
+%c | %x | %X | %%	35	735f2c13979ab74d0675ed08b661543f
+
 query
 SELECT fmt, count(*) FILTER (WHERE strftime(ts, fmt) IS DISTINCT FROM CASE fmt WHEN '%Y-%m-%d %H:%M:%S.%f %z %Z' THEN strftime(ts, '%Y-%m-%d %H:%M:%S.%f %z %Z') WHEN '%a %d %b %Y %I:%M %p %j %U %W %u %w' THEN strftime(ts, '%a %d %b %Y %I:%M %p %j %U %W %u %w') WHEN '%G-%V %g %y %-m/%-d %-H %-I %-M %-S %g' THEN strftime(ts, '%G-%V %g %y %-m/%-d %-H %-I %-M %-S %g') ELSE strftime(ts, '%c | %x | %X | %%') END) AS mismatches FROM p, fmts GROUP BY fmt ORDER BY fmt;
 ----
@@ -615,6 +786,73 @@ ts	dd	ddr	dw	dh	dmi	ds	dms	dus	dmo	dq	dy
 1995-01-02 00:00:00+14	1	-1	57	24	1440	86400	86400000	86400000000	14	5	2
 1995-01-02 01:00:00+14	1	-1	57	25	1500	90000	90000000	90000000000	14	5	2
 1995-02-01 00:00:00+14	31	-31	61	744	44640	2678400	2678400000	2678400000000	15	5	2
+
+query
+SELECT ts::VARCHAR AS ts, (ts - anchor)::VARCHAR AS sub1, (anchor - ts)::VARCHAR AS sub2, (ts - (anchor - INTERVAL '400 days 5 hours'))::VARCHAR AS sub3, age(ts, anchor)::VARCHAR AS age1, age(anchor, ts)::VARCHAR AS age2, age(ts, anchor - INTERVAL '400 days 5 hours')::VARCHAR AS age3 FROM p WHERE zone = 'Pacific/Kiritimati' ORDER BY ts NULLS FIRST;
+----
+ts	sub1	sub2	sub3	age1	age2	age3
+1994-11-30 00:00:00-10	-31 days	31 days	369 days 05:00:00	-1 mons -1 days	1 mon 1 day	1 year 4 days 05:00:00
+1994-12-29 23:00:00-10	-1 days -01:00:00	1 day 01:00:00	399 days 04:00:00	-2 days -01:00:00	2 days 01:00:00	1 year 1 mon 4 days 04:00:00
+1994-12-30 00:00:00-10	-1 days	1 day	399 days 05:00:00	-2 days	2 days	1 year 1 mon 4 days 05:00:00
+1994-12-30 22:30:00-10	-01:30:00	01:30:00	400 days 03:30:00	-1 days -01:30:00	1 day 01:30:00	1 year 1 mon 5 days 03:30:00
+1994-12-30 23:30:00-10	-00:30:00	00:30:00	400 days 04:30:00	-1 days -00:30:00	1 day 00:30:00	1 year 1 mon 5 days 04:30:00
+1994-12-30 23:59:59-10	-00:00:01	00:00:01	400 days 04:59:59	-1 days -00:00:01	1 day 00:00:01	1 year 1 mon 5 days 04:59:59
+1994-12-30 23:59:59.999999-10	-00:00:00.000001	00:00:00.000001	400 days 04:59:59.999999	-1 days -00:00:00.000001	1 day 00:00:00.000001	1 year 1 mon 5 days 04:59:59.999999
+1995-01-01 00:00:00+14	00:00:00	00:00:00	400 days 05:00:00	00:00:00	00:00:00	1 year 1 mon 5 days 05:00:00
+1995-01-01 00:00:00.000001+14	00:00:00.000001	-00:00:00.000001	400 days 05:00:00.000001	00:00:00.000001	-00:00:00.000001	1 year 1 mon 5 days 05:00:00.000001
+1995-01-01 00:00:00.999999+14	00:00:00.999999	-00:00:00.999999	400 days 05:00:00.999999	00:00:00.999999	-00:00:00.999999	1 year 1 mon 5 days 05:00:00.999999
+1995-01-01 00:30:00+14	00:30:00	-00:30:00	400 days 05:30:00	00:30:00	-00:30:00	1 year 1 mon 5 days 05:30:00
+1995-01-01 01:30:00+14	01:30:00	-01:30:00	400 days 06:30:00	01:30:00	-01:30:00	1 year 1 mon 5 days 06:30:00
+1995-01-02 00:00:00+14	1 day	-1 days	401 days 05:00:00	1 day	-1 days	1 year 1 mon 6 days 05:00:00
+1995-01-02 01:00:00+14	1 day 01:00:00	-1 days -01:00:00	401 days 06:00:00	1 day 01:00:00	-1 days -01:00:00	1 year 1 mon 6 days 06:00:00
+1995-02-01 00:00:00+14	31 days	-31 days	431 days 05:00:00	1 mon	-1 mons	1 year 2 mons 5 days 05:00:00
+
+query
+SELECT ts::VARCHAR AS ts, date_sub('decade', anchor - INTERVAL '4000 days', ts) AS sdec, date_diff('decade', anchor - INTERVAL '4000 days', ts) AS ddec, date_diff('century', anchor - INTERVAL '4000 days', ts) AS dcen, date_diff('millennium', ts, anchor + INTERVAL '4000 days') AS dmil, date_sub('century', ts, anchor + INTERVAL '4000 days') AS scen, strftime(ts::TIMESTAMPTZ_NS, '%Y-%m-%d %H:%M:%S.%f %z %Z') AS fns, strftime(ts::TIMESTAMPTZ_NS, '%S.%n') AS nns FROM p WHERE zone = 'Pacific/Kiritimati' ORDER BY ts NULLS FIRST;
+----
+ts	sdec	ddec	dcen	dmil	scen	fns	nns
+1994-11-30 00:00:00-10	1	1	0	1	0	1994-11-30 00:00:00.000000 -10 Pacific/Kiritimati	00.000000000
+1994-12-29 23:00:00-10	1	1	0	1	0	1994-12-29 23:00:00.000000 -10 Pacific/Kiritimati	00.000000000
+1994-12-30 00:00:00-10	1	1	0	1	0	1994-12-30 00:00:00.000000 -10 Pacific/Kiritimati	00.000000000
+1994-12-30 22:30:00-10	1	1	0	1	0	1994-12-30 22:30:00.000000 -10 Pacific/Kiritimati	00.000000000
+1994-12-30 23:30:00-10	1	1	0	1	0	1994-12-30 23:30:00.000000 -10 Pacific/Kiritimati	00.000000000
+1994-12-30 23:59:59-10	1	1	0	1	0	1994-12-30 23:59:59.000000 -10 Pacific/Kiritimati	59.000000000
+1994-12-30 23:59:59.999999-10	1	1	0	1	0	1994-12-30 23:59:59.999999 -10 Pacific/Kiritimati	59.999999000
+1995-01-01 00:00:00+14	1	1	0	1	0	1995-01-01 00:00:00.000000 +14 Pacific/Kiritimati	00.000000000
+1995-01-01 00:00:00.000001+14	1	1	0	1	0	1995-01-01 00:00:00.000001 +14 Pacific/Kiritimati	00.000001000
+1995-01-01 00:00:00.999999+14	1	1	0	1	0	1995-01-01 00:00:00.999999 +14 Pacific/Kiritimati	00.999999000
+1995-01-01 00:30:00+14	1	1	0	1	0	1995-01-01 00:30:00.000000 +14 Pacific/Kiritimati	00.000000000
+1995-01-01 01:30:00+14	1	1	0	1	0	1995-01-01 01:30:00.000000 +14 Pacific/Kiritimati	00.000000000
+1995-01-02 00:00:00+14	1	1	0	1	0	1995-01-02 00:00:00.000000 +14 Pacific/Kiritimati	00.000000000
+1995-01-02 01:00:00+14	1	1	0	1	0	1995-01-02 01:00:00.000000 +14 Pacific/Kiritimati	00.000000000
+1995-02-01 00:00:00+14	1	1	0	1	0	1995-02-01 00:00:00.000000 +14 Pacific/Kiritimati	00.000000000
+
+query
+SELECT part, count(*) AS n, sum(date_diff(part, anchor - INTERVAL '400 days 5 hours', ts)) AS diff_sum, sum(date_sub(part, ts, anchor + INTERVAL '400 days 5 hours')) AS sub_sum FROM p, parts WHERE zone = 'Pacific/Kiritimati' GROUP BY part ORDER BY part;
+----
+part	n	diff_sum	sub_sum
+century	15	0	0
+day	15	6010	6000
+decade	15	0	0
+hour	15	144071	144072
+isoyear	15	18	15
+microsecond	15	518669999999999	518670000000001
+millisecond	15	518669999998	518669999999
+minute	15	8644498	8644498
+month	15	203	195
+quarter	15	68	60
+second	15	518669998	518669999
+week	15	854	854
+year	15	23	15
+
+query
+SELECT fmt, count(*) AS n, md5(string_agg(strftime(ts, fmt), '|' ORDER BY ts NULLS FIRST)) AS digest FROM p, fmts WHERE zone = 'Pacific/Kiritimati' GROUP BY fmt ORDER BY fmt;
+----
+fmt	n	digest
+%G-%V %g %y %-m/%-d %-H %-I %-M %-S %g	15	d960de2366d24e3af657dd1ca2afdb9d
+%Y-%m-%d %H:%M:%S.%f %z %Z	15	5da3e281a364b585fd0f9df1f58c284a
+%a %d %b %Y %I:%M %p %j %U %W %u %w	15	06ed294754561bce3f5342405b97e832
+%c | %x | %X | %%	15	19e8d8a5d399e227ebb927eb6eb7136e
 
 query
 SELECT fmt, count(*) FILTER (WHERE strftime(ts, fmt) IS DISTINCT FROM CASE fmt WHEN '%Y-%m-%d %H:%M:%S.%f %z %Z' THEN strftime(ts, '%Y-%m-%d %H:%M:%S.%f %z %Z') WHEN '%a %d %b %Y %I:%M %p %j %U %W %u %w' THEN strftime(ts, '%a %d %b %Y %I:%M %p %j %U %W %u %w') WHEN '%G-%V %g %y %-m/%-d %-H %-I %-M %-S %g' THEN strftime(ts, '%G-%V %g %y %-m/%-d %-H %-I %-M %-S %g') ELSE strftime(ts, '%c | %x | %X | %%') END) AS mismatches FROM p, fmts GROUP BY fmt ORDER BY fmt;
@@ -840,6 +1078,103 @@ ts	dd	ddr	dw	dh	dmi	ds	dms	dus	dmo	dq	dy
 2025-11-05 02:30:00+11	31	-31	61	743	44640	2678400	2678400000	2678400000000	15	5	1
 
 query
+SELECT ts::VARCHAR AS ts, (ts - anchor)::VARCHAR AS sub1, (anchor - ts)::VARCHAR AS sub2, (ts - (anchor - INTERVAL '400 days 5 hours'))::VARCHAR AS sub3, age(ts, anchor)::VARCHAR AS age1, age(anchor, ts)::VARCHAR AS age2, age(ts, anchor - INTERVAL '400 days 5 hours')::VARCHAR AS age3 FROM p WHERE zone = 'Australia/Lord_Howe' ORDER BY ts NULLS FIRST;
+----
+ts	sub1	sub2	sub3	age1	age2	age3
+2025-03-06 02:00:00+11	-30 days -24:00:00	30 days 24:00:00	369 days 05:00:00	-30 days -23:30:00	30 days 23:30:00	1 year 4 days 05:00:00
+2025-04-05 01:00:00+11	-1 days -01:00:00	1 day 01:00:00	399 days 04:00:00	-1 days -00:30:00	1 day 00:30:00	1 year 1 mon 3 days 04:00:00
+2025-04-05 02:00:00+11	-24:00:00	24:00:00	399 days 05:00:00	-23:30:00	23:30:00	1 year 1 mon 3 days 05:00:00
+2025-04-06 00:30:00+11	-01:30:00	01:30:00	400 days 03:30:00	-01:00:00	01:00:00	1 year 1 mon 4 days 03:30:00
+2025-04-06 01:30:00+10:30	00:00:00	00:00:00	400 days 05:00:00	00:00:00	00:00:00	1 year 1 mon 4 days 04:30:00
+2025-04-06 01:30:00+11	-00:30:00	00:30:00	400 days 04:30:00	00:00:00	00:00:00	1 year 1 mon 4 days 04:30:00
+2025-04-06 01:30:00.000001+10:30	00:00:00.000001	-00:00:00.000001	400 days 05:00:00.000001	00:00:00.000001	-00:00:00.000001	1 year 1 mon 4 days 04:30:00.000001
+2025-04-06 01:30:00.999999+10:30	00:00:00.999999	-00:00:00.999999	400 days 05:00:00.999999	00:00:00.999999	-00:00:00.999999	1 year 1 mon 4 days 04:30:00.999999
+2025-04-06 01:59:59+11	-00:00:01	00:00:01	400 days 04:59:59	1 mon -29 days -23:30:01	-1 mons +29 days 23:30:01	1 year 1 mon 4 days 04:59:59
+2025-04-06 01:59:59.999999+11	-00:00:00.000001	00:00:00.000001	400 days 04:59:59.999999	1 mon -29 days -23:30:00.000001	-1 mons +29 days 23:30:00.000001	1 year 1 mon 4 days 04:59:59.999999
+2025-04-06 02:00:00+10:30	00:30:00	-00:30:00	400 days 05:30:00	00:30:00	-00:30:00	1 year 1 mon 4 days 05:00:00
+2025-04-06 03:00:00+10:30	01:30:00	-01:30:00	400 days 06:30:00	01:30:00	-01:30:00	1 year 1 mon 4 days 06:00:00
+2025-04-07 01:30:00+10:30	1 day	-1 days	401 days 04:30:00	1 day	-1 days	1 year 1 mon 5 days 04:30:00
+2025-04-07 02:30:00+10:30	1 day 01:00:00	-1 days -01:00:00	401 days 05:30:00	1 day 01:00:00	-1 days -01:00:00	1 year 1 mon 5 days 05:30:00
+2025-05-07 01:30:00+10:30	31 days	-31 days	431 days 04:30:00	1 mon 1 day	-1 mons -1 days	1 year 2 mons 5 days 04:30:00
+2025-09-04 02:00:00+10:30	-31 days	31 days	369 days 05:00:00	-1 mons -1 days -00:30:00	1 mon 1 day 00:30:00	1 year 4 days 05:00:00
+2025-10-04 01:00:00+10:30	-1 days -01:00:00	1 day 01:00:00	399 days 04:00:00	-1 days -01:30:00	1 day 01:30:00	1 year 1 mon 4 days 04:00:00
+2025-10-04 02:00:00+10:30	-1 days	1 day	399 days 05:00:00	-1 days -00:30:00	1 day 00:30:00	1 year 1 mon 4 days 05:00:00
+2025-10-05 00:30:00+10:30	-01:30:00	01:30:00	400 days 03:30:00	-02:00:00	02:00:00	1 year 1 mon 5 days 03:30:00
+2025-10-05 01:30:00+10:30	-00:30:00	00:30:00	400 days 04:30:00	-01:00:00	01:00:00	1 year 1 mon 5 days 04:30:00
+2025-10-05 01:59:59+10:30	-00:00:01	00:00:01	400 days 04:59:59	-00:30:01	00:30:01	1 year 1 mon 5 days 04:59:59
+2025-10-05 01:59:59.999999+10:30	-00:00:00.000001	00:00:00.000001	400 days 04:59:59.999999	-00:30:00.000001	00:30:00.000001	1 year 1 mon 5 days 04:59:59.999999
+2025-10-05 02:30:00+11	00:00:00	00:00:00	400 days 05:00:00	00:00:00	00:00:00	1 year 1 mon 5 days 05:30:00
+2025-10-05 02:30:00.000001+11	00:00:00.000001	-00:00:00.000001	400 days 05:00:00.000001	00:00:00.000001	-00:00:00.000001	1 year 1 mon 5 days 05:30:00.000001
+2025-10-05 02:30:00.999999+11	00:00:00.999999	-00:00:00.999999	400 days 05:00:00.999999	00:00:00.999999	-00:00:00.999999	1 year 1 mon 5 days 05:30:00.999999
+2025-10-05 03:00:00+11	00:30:00	-00:30:00	400 days 05:30:00	00:30:00	-00:30:00	1 year 1 mon 5 days 06:00:00
+2025-10-05 04:00:00+11	01:30:00	-01:30:00	400 days 06:30:00	01:30:00	-01:30:00	1 year 1 mon 5 days 07:00:00
+2025-10-06 02:30:00+11	1 day	-1 days	401 days 05:30:00	1 day	-1 days	1 year 1 mon 6 days 05:30:00
+2025-10-06 03:30:00+11	1 day 01:00:00	-1 days -01:00:00	401 days 06:30:00	1 day 01:00:00	-1 days -01:00:00	1 year 1 mon 6 days 06:30:00
+2025-11-05 02:30:00+11	31 days	-31 days	431 days 05:30:00	1 mon	-1 mons	1 year 2 mons 5 days 05:30:00
+
+query
+SELECT ts::VARCHAR AS ts, date_sub('decade', anchor - INTERVAL '4000 days', ts) AS sdec, date_diff('decade', anchor - INTERVAL '4000 days', ts) AS ddec, date_diff('century', anchor - INTERVAL '4000 days', ts) AS dcen, date_diff('millennium', ts, anchor + INTERVAL '4000 days') AS dmil, date_sub('century', ts, anchor + INTERVAL '4000 days') AS scen, strftime(ts::TIMESTAMPTZ_NS, '%Y-%m-%d %H:%M:%S.%f %z %Z') AS fns, strftime(ts::TIMESTAMPTZ_NS, '%S.%n') AS nns FROM p WHERE zone = 'Australia/Lord_Howe' ORDER BY ts NULLS FIRST;
+----
+ts	sdec	ddec	dcen	dmil	scen	fns	nns
+2025-03-06 02:00:00+11	1	1	0	0	0	2025-03-06 02:00:00.000000 +11 Australia/Lord_Howe	00.000000000
+2025-04-05 01:00:00+11	1	1	0	0	0	2025-04-05 01:00:00.000000 +11 Australia/Lord_Howe	00.000000000
+2025-04-05 02:00:00+11	1	1	0	0	0	2025-04-05 02:00:00.000000 +11 Australia/Lord_Howe	00.000000000
+2025-04-06 00:30:00+11	1	1	0	0	0	2025-04-06 00:30:00.000000 +11 Australia/Lord_Howe	00.000000000
+2025-04-06 01:30:00+10:30	1	1	0	0	0	2025-04-06 01:30:00.000000 +10:30 Australia/Lord_Howe	00.000000000
+2025-04-06 01:30:00+11	1	1	0	0	0	2025-04-06 01:30:00.000000 +11 Australia/Lord_Howe	00.000000000
+2025-04-06 01:30:00.000001+10:30	1	1	0	0	0	2025-04-06 01:30:00.000001 +10:30 Australia/Lord_Howe	00.000001000
+2025-04-06 01:30:00.999999+10:30	1	1	0	0	0	2025-04-06 01:30:00.999999 +10:30 Australia/Lord_Howe	00.999999000
+2025-04-06 01:59:59+11	1	1	0	0	0	2025-04-06 01:59:59.000000 +11 Australia/Lord_Howe	59.000000000
+2025-04-06 01:59:59.999999+11	1	1	0	0	0	2025-04-06 01:59:59.999999 +11 Australia/Lord_Howe	59.999999000
+2025-04-06 02:00:00+10:30	1	1	0	0	0	2025-04-06 02:00:00.000000 +10:30 Australia/Lord_Howe	00.000000000
+2025-04-06 03:00:00+10:30	1	1	0	0	0	2025-04-06 03:00:00.000000 +10:30 Australia/Lord_Howe	00.000000000
+2025-04-07 01:30:00+10:30	1	1	0	0	0	2025-04-07 01:30:00.000000 +10:30 Australia/Lord_Howe	00.000000000
+2025-04-07 02:30:00+10:30	1	1	0	0	0	2025-04-07 02:30:00.000000 +10:30 Australia/Lord_Howe	00.000000000
+2025-05-07 01:30:00+10:30	1	1	0	0	0	2025-05-07 01:30:00.000000 +10:30 Australia/Lord_Howe	00.000000000
+2025-09-04 02:00:00+10:30	1	1	0	0	0	2025-09-04 02:00:00.000000 +10:30 Australia/Lord_Howe	00.000000000
+2025-10-04 01:00:00+10:30	1	1	0	0	0	2025-10-04 01:00:00.000000 +10:30 Australia/Lord_Howe	00.000000000
+2025-10-04 02:00:00+10:30	1	1	0	0	0	2025-10-04 02:00:00.000000 +10:30 Australia/Lord_Howe	00.000000000
+2025-10-05 00:30:00+10:30	1	1	0	0	0	2025-10-05 00:30:00.000000 +10:30 Australia/Lord_Howe	00.000000000
+2025-10-05 01:30:00+10:30	1	1	0	0	0	2025-10-05 01:30:00.000000 +10:30 Australia/Lord_Howe	00.000000000
+2025-10-05 01:59:59+10:30	1	1	0	0	0	2025-10-05 01:59:59.000000 +10:30 Australia/Lord_Howe	59.000000000
+2025-10-05 01:59:59.999999+10:30	1	1	0	0	0	2025-10-05 01:59:59.999999 +10:30 Australia/Lord_Howe	59.999999000
+2025-10-05 02:30:00+11	1	1	0	0	0	2025-10-05 02:30:00.000000 +11 Australia/Lord_Howe	00.000000000
+2025-10-05 02:30:00.000001+11	1	1	0	0	0	2025-10-05 02:30:00.000001 +11 Australia/Lord_Howe	00.000001000
+2025-10-05 02:30:00.999999+11	1	1	0	0	0	2025-10-05 02:30:00.999999 +11 Australia/Lord_Howe	00.999999000
+2025-10-05 03:00:00+11	1	1	0	0	0	2025-10-05 03:00:00.000000 +11 Australia/Lord_Howe	00.000000000
+2025-10-05 04:00:00+11	1	1	0	0	0	2025-10-05 04:00:00.000000 +11 Australia/Lord_Howe	00.000000000
+2025-10-06 02:30:00+11	1	1	0	0	0	2025-10-06 02:30:00.000000 +11 Australia/Lord_Howe	00.000000000
+2025-10-06 03:30:00+11	1	1	0	0	0	2025-10-06 03:30:00.000000 +11 Australia/Lord_Howe	00.000000000
+2025-11-05 02:30:00+11	1	1	0	0	0	2025-11-05 02:30:00.000000 +11 Australia/Lord_Howe	00.000000000
+
+query
+SELECT part, count(*) AS n, sum(date_diff(part, anchor - INTERVAL '400 days 5 hours', ts)) AS diff_sum, sum(date_sub(part, ts, anchor + INTERVAL '400 days 5 hours')) AS sub_sum FROM p, parts WHERE zone = 'Australia/Lord_Howe' GROUP BY part ORDER BY part;
+----
+part	n	diff_sum	sub_sum
+century	30	0	0
+day	30	12030	12000
+decade	30	0	0
+hour	30	288133	288144
+isoyear	30	30	30
+microsecond	30	1037339999999998	1037340000000002
+millisecond	30	1037339999996	1037339999998
+minute	30	17288996	17288996
+month	30	405	390
+quarter	30	148	120
+second	30	1037339996	1037339998
+week	30	1708	1708
+year	30	30	30
+
+query
+SELECT fmt, count(*) AS n, md5(string_agg(strftime(ts, fmt), '|' ORDER BY ts NULLS FIRST)) AS digest FROM p, fmts WHERE zone = 'Australia/Lord_Howe' GROUP BY fmt ORDER BY fmt;
+----
+fmt	n	digest
+%G-%V %g %y %-m/%-d %-H %-I %-M %-S %g	30	63bce8e98347fda3dedba99bc6afdde6
+%Y-%m-%d %H:%M:%S.%f %z %Z	30	c1d3149f5023a4b47a08dc5ca0665da4
+%a %d %b %Y %I:%M %p %j %U %W %u %w	30	69c5deac4f7367893740e8fbee649cba
+%c | %x | %X | %%	30	0dc4cfd90671164da639df34831d829b
+
+query
 SELECT fmt, count(*) FILTER (WHERE strftime(ts, fmt) IS DISTINCT FROM CASE fmt WHEN '%Y-%m-%d %H:%M:%S.%f %z %Z' THEN strftime(ts, '%Y-%m-%d %H:%M:%S.%f %z %Z') WHEN '%a %d %b %Y %I:%M %p %j %U %W %u %w' THEN strftime(ts, '%a %d %b %Y %I:%M %p %j %U %W %u %w') WHEN '%G-%V %g %y %-m/%-d %-H %-I %-M %-S %g' THEN strftime(ts, '%G-%V %g %y %-m/%-d %-H %-I %-M %-S %g') ELSE strftime(ts, '%c | %x | %X | %%') END) AS mismatches FROM p, fmts GROUP BY fmt ORDER BY fmt;
 ----
 fmt	mismatches
@@ -986,6 +1321,73 @@ ts	dd	ddr	dw	dh	dmi	ds	dms	dus	dmo	dq	dy
 1937-07-02 00:40:28+01	1	-1	57	24	1440	86400	86400000	86400000000	14	5	1
 1937-07-02 01:40:28+01	1	-1	57	25	1500	90000	90000000	90000000000	14	5	1
 1937-08-01 00:40:28+01	31	-31	61	744	44640	2678400	2678400000	2678400000000	15	5	1
+
+query
+SELECT ts::VARCHAR AS ts, (ts - anchor)::VARCHAR AS sub1, (anchor - ts)::VARCHAR AS sub2, (ts - (anchor - INTERVAL '400 days 5 hours'))::VARCHAR AS sub3, age(ts, anchor)::VARCHAR AS age1, age(anchor, ts)::VARCHAR AS age2, age(ts, anchor - INTERVAL '400 days 5 hours')::VARCHAR AS age3 FROM p WHERE zone = 'Europe/Amsterdam' ORDER BY ts NULLS FIRST;
+----
+ts	sub1	sub2	sub3	age1	age2	age3
+1937-05-31 00:40:28+01	-31 days	31 days	369 days 05:00:00	-1 mons -1 days	1 mon 1 day	1 year 4 days 05:00:00
+1937-06-29 23:40:28+01	-1 days -01:00:00	1 day 01:00:00	399 days 04:00:00	-1 days -01:00:00	1 day 01:00:00	1 year 1 mon 3 days 04:00:00
+1937-06-30 00:40:28+01	-1 days	1 day	399 days 05:00:00	-1 days	1 day	1 year 1 mon 3 days 05:00:00
+1937-06-30 23:10:28+01	-01:30:00	01:30:00	400 days 03:30:00	-01:30:00	01:30:00	1 year 1 mon 4 days 03:30:00
+1937-07-01 00:10:28+01	-00:30:00	00:30:00	400 days 04:30:00	-00:30:00	00:30:00	1 year 1 mon 5 days 04:30:00
+1937-07-01 00:40:27+01	-00:00:01	00:00:01	400 days 04:59:59	-00:00:01	00:00:01	1 year 1 mon 5 days 04:59:59
+1937-07-01 00:40:27.999999+01	-00:00:00.000001	00:00:00.000001	400 days 04:59:59.999999	-00:00:00.000001	00:00:00.000001	1 year 1 mon 5 days 04:59:59.999999
+1937-07-01 00:40:28+01	00:00:00	00:00:00	400 days 05:00:00	00:00:00	00:00:00	1 year 1 mon 5 days 05:00:00
+1937-07-01 00:40:28.000001+01	00:00:00.000001	-00:00:00.000001	400 days 05:00:00.000001	00:00:00.000001	-00:00:00.000001	1 year 1 mon 5 days 05:00:00.000001
+1937-07-01 00:40:28.999999+01	00:00:00.999999	-00:00:00.999999	400 days 05:00:00.999999	00:00:00.999999	-00:00:00.999999	1 year 1 mon 5 days 05:00:00.999999
+1937-07-01 01:10:28+01	00:30:00	-00:30:00	400 days 05:30:00	00:30:00	-00:30:00	1 year 1 mon 5 days 05:30:00
+1937-07-01 02:10:28+01	01:30:00	-01:30:00	400 days 06:30:00	01:30:00	-01:30:00	1 year 1 mon 5 days 06:30:00
+1937-07-02 00:40:28+01	1 day	-1 days	401 days 05:00:00	1 day	-1 days	1 year 1 mon 6 days 05:00:00
+1937-07-02 01:40:28+01	1 day 01:00:00	-1 days -01:00:00	401 days 06:00:00	1 day 01:00:00	-1 days -01:00:00	1 year 1 mon 6 days 06:00:00
+1937-08-01 00:40:28+01	31 days	-31 days	431 days 05:00:00	1 mon	-1 mons	1 year 2 mons 5 days 05:00:00
+
+query
+SELECT ts::VARCHAR AS ts, date_sub('decade', anchor - INTERVAL '4000 days', ts) AS sdec, date_diff('decade', anchor - INTERVAL '4000 days', ts) AS ddec, date_diff('century', anchor - INTERVAL '4000 days', ts) AS dcen, date_diff('millennium', ts, anchor + INTERVAL '4000 days') AS dmil, date_sub('century', ts, anchor + INTERVAL '4000 days') AS scen, strftime(ts::TIMESTAMPTZ_NS, '%Y-%m-%d %H:%M:%S.%f %z %Z') AS fns, strftime(ts::TIMESTAMPTZ_NS, '%S.%n') AS nns FROM p WHERE zone = 'Europe/Amsterdam' ORDER BY ts NULLS FIRST;
+----
+ts	sdec	ddec	dcen	dmil	scen	fns	nns
+1937-05-31 00:40:28+01	1	1	0	0	0	1937-05-31 00:40:28.000000 +01 Europe/Amsterdam	28.000000000
+1937-06-29 23:40:28+01	1	1	0	0	0	1937-06-29 23:40:28.000000 +01 Europe/Amsterdam	28.000000000
+1937-06-30 00:40:28+01	1	1	0	0	0	1937-06-30 00:40:28.000000 +01 Europe/Amsterdam	28.000000000
+1937-06-30 23:10:28+01	1	1	0	0	0	1937-06-30 23:10:28.000000 +01 Europe/Amsterdam	28.000000000
+1937-07-01 00:10:28+01	1	1	0	0	0	1937-07-01 00:10:28.000000 +01 Europe/Amsterdam	28.000000000
+1937-07-01 00:40:27+01	1	1	0	0	0	1937-07-01 00:40:27.000000 +01 Europe/Amsterdam	27.000000000
+1937-07-01 00:40:27.999999+01	1	1	0	0	0	1937-07-01 00:40:27.999999 +01 Europe/Amsterdam	27.999999000
+1937-07-01 00:40:28+01	1	1	0	0	0	1937-07-01 00:40:28.000000 +01 Europe/Amsterdam	28.000000000
+1937-07-01 00:40:28.000001+01	1	1	0	0	0	1937-07-01 00:40:28.000001 +01 Europe/Amsterdam	28.000001000
+1937-07-01 00:40:28.999999+01	1	1	0	0	0	1937-07-01 00:40:28.999999 +01 Europe/Amsterdam	28.999999000
+1937-07-01 01:10:28+01	1	1	0	0	0	1937-07-01 01:10:28.000000 +01 Europe/Amsterdam	28.000000000
+1937-07-01 02:10:28+01	1	1	0	0	0	1937-07-01 02:10:28.000000 +01 Europe/Amsterdam	28.000000000
+1937-07-02 00:40:28+01	1	1	0	0	0	1937-07-02 00:40:28.000000 +01 Europe/Amsterdam	28.000000000
+1937-07-02 01:40:28+01	1	1	0	0	0	1937-07-02 01:40:28.000000 +01 Europe/Amsterdam	28.000000000
+1937-08-01 00:40:28+01	1	1	0	0	0	1937-08-01 00:40:28.000000 +01 Europe/Amsterdam	28.000000000
+
+query
+SELECT part, count(*) AS n, sum(date_diff(part, anchor - INTERVAL '400 days 5 hours', ts)) AS diff_sum, sum(date_sub(part, ts, anchor + INTERVAL '400 days 5 hours')) AS sub_sum FROM p, parts WHERE zone = 'Europe/Amsterdam' GROUP BY part ORDER BY part;
+----
+part	n	diff_sum	sub_sum
+century	15	0	0
+day	15	6013	6000
+decade	15	0	0
+hour	15	144077	144072
+isoyear	15	15	15
+microsecond	15	518669999999999	518670000000001
+millisecond	15	518669999998	518669999999
+minute	15	8644500	8644498
+month	15	206	195
+quarter	15	71	60
+second	15	518669998	518669999
+week	15	854	854
+year	15	15	15
+
+query
+SELECT fmt, count(*) AS n, md5(string_agg(strftime(ts, fmt), '|' ORDER BY ts NULLS FIRST)) AS digest FROM p, fmts WHERE zone = 'Europe/Amsterdam' GROUP BY fmt ORDER BY fmt;
+----
+fmt	n	digest
+%G-%V %g %y %-m/%-d %-H %-I %-M %-S %g	15	26036f63aa5c2e59e4eb7d77e000798f
+%Y-%m-%d %H:%M:%S.%f %z %Z	15	7dbd97182fe80477f9a26b46a9776cb0
+%a %d %b %Y %I:%M %p %j %U %W %u %w	15	5ea8f1f0518a9864da603d55b609ea0b
+%c | %x | %X | %%	15	ccc2139240634162589647cfa120ce00
 
 query
 SELECT fmt, count(*) FILTER (WHERE strftime(ts, fmt) IS DISTINCT FROM CASE fmt WHEN '%Y-%m-%d %H:%M:%S.%f %z %Z' THEN strftime(ts, '%Y-%m-%d %H:%M:%S.%f %z %Z') WHEN '%a %d %b %Y %I:%M %p %j %U %W %u %w' THEN strftime(ts, '%a %d %b %Y %I:%M %p %j %U %W %u %w') WHEN '%G-%V %g %y %-m/%-d %-H %-I %-M %-S %g' THEN strftime(ts, '%G-%V %g %y %-m/%-d %-H %-I %-M %-S %g') ELSE strftime(ts, '%c | %x | %X | %%') END) AS mismatches FROM p, fmts GROUP BY fmt ORDER BY fmt;
@@ -1136,6 +1538,73 @@ ts	dd	ddr	dw	dh	dmi	ds	dms	dus	dmo	dq	dy
 1972-02-07 00:44:30+00	30	-31	61	743	44640	2678400	2678400000	2678400000000	14	5	2
 
 query
+SELECT ts::VARCHAR AS ts, (ts - anchor)::VARCHAR AS sub1, (anchor - ts)::VARCHAR AS sub2, (ts - (anchor - INTERVAL '400 days 5 hours'))::VARCHAR AS sub3, age(ts, anchor)::VARCHAR AS age1, age(anchor, ts)::VARCHAR AS age2, age(ts, anchor - INTERVAL '400 days 5 hours')::VARCHAR AS age3 FROM p WHERE zone = 'Africa/Monrovia' ORDER BY ts NULLS FIRST;
+----
+ts	sub1	sub2	sub3	age1	age2	age3
+1971-12-07 00:00:00-00:44	-31 days	31 days	369 days 05:00:00	-1 mons -00:44:30	1 mon 00:44:30	1 year 4 days 05:00:00
+1972-01-05 23:00:00-00:44	-1 days -01:00:00	1 day 01:00:00	399 days 04:00:00	-1 days -01:44:30	1 day 01:44:30	1 year 1 mon 3 days 04:00:00
+1972-01-06 00:00:00-00:44	-1 days	1 day	399 days 05:00:00	-1 days -00:44:30	1 day 00:44:30	1 year 1 mon 3 days 05:00:00
+1972-01-06 22:30:00-00:44	-01:30:00	01:30:00	400 days 03:30:00	-02:14:30	02:14:30	1 year 1 mon 4 days 03:30:00
+1972-01-06 23:30:00-00:44	-00:30:00	00:30:00	400 days 04:30:00	-01:14:30	01:14:30	1 year 1 mon 4 days 04:30:00
+1972-01-06 23:59:59-00:44	-00:00:01	00:00:01	400 days 04:59:59	-00:44:31	00:44:31	1 year 1 mon 4 days 04:59:59
+1972-01-06 23:59:59.999999-00:44	-00:00:00.000001	00:00:00.000001	400 days 04:59:59.999999	-00:44:30.000001	00:44:30.000001	1 year 1 mon 4 days 04:59:59.999999
+1972-01-07 00:44:30+00	00:00:00	00:00:00	400 days 05:00:00	00:00:00	00:00:00	1 year 1 mon 4 days 05:44:30
+1972-01-07 00:44:30.000001+00	00:00:00.000001	-00:00:00.000001	400 days 05:00:00.000001	00:00:00.000001	-00:00:00.000001	1 year 1 mon 4 days 05:44:30.000001
+1972-01-07 00:44:30.999999+00	00:00:00.999999	-00:00:00.999999	400 days 05:00:00.999999	00:00:00.999999	-00:00:00.999999	1 year 1 mon 4 days 05:44:30.999999
+1972-01-07 01:14:30+00	00:30:00	-00:30:00	400 days 05:30:00	00:30:00	-00:30:00	1 year 1 mon 4 days 06:14:30
+1972-01-07 02:14:30+00	01:30:00	-01:30:00	400 days 06:30:00	01:30:00	-01:30:00	1 year 1 mon 4 days 07:14:30
+1972-01-08 00:44:30+00	1 day	-1 days	401 days 05:44:30	1 day	-1 days	1 year 1 mon 5 days 05:44:30
+1972-01-08 01:44:30+00	1 day 01:00:00	-1 days -01:00:00	401 days 06:44:30	1 day 01:00:00	-1 days -01:00:00	1 year 1 mon 5 days 06:44:30
+1972-02-07 00:44:30+00	31 days	-31 days	431 days 05:44:30	1 mon	-1 mons	1 year 2 mons 4 days 05:44:30
+
+query
+SELECT ts::VARCHAR AS ts, date_sub('decade', anchor - INTERVAL '4000 days', ts) AS sdec, date_diff('decade', anchor - INTERVAL '4000 days', ts) AS ddec, date_diff('century', anchor - INTERVAL '4000 days', ts) AS dcen, date_diff('millennium', ts, anchor + INTERVAL '4000 days') AS dmil, date_sub('century', ts, anchor + INTERVAL '4000 days') AS scen, strftime(ts::TIMESTAMPTZ_NS, '%Y-%m-%d %H:%M:%S.%f %z %Z') AS fns, strftime(ts::TIMESTAMPTZ_NS, '%S.%n') AS nns FROM p WHERE zone = 'Africa/Monrovia' ORDER BY ts NULLS FIRST;
+----
+ts	sdec	ddec	dcen	dmil	scen	fns	nns
+1971-12-07 00:00:00-00:44	1	1	0	0	0	1971-12-07 00:00:00.000000 -00:44:30 Africa/Monrovia	00.000000000
+1972-01-05 23:00:00-00:44	1	1	0	0	0	1972-01-05 23:00:00.000000 -00:44:30 Africa/Monrovia	00.000000000
+1972-01-06 00:00:00-00:44	1	1	0	0	0	1972-01-06 00:00:00.000000 -00:44:30 Africa/Monrovia	00.000000000
+1972-01-06 22:30:00-00:44	1	1	0	0	0	1972-01-06 22:30:00.000000 -00:44:30 Africa/Monrovia	00.000000000
+1972-01-06 23:30:00-00:44	1	1	0	0	0	1972-01-06 23:30:00.000000 -00:44:30 Africa/Monrovia	00.000000000
+1972-01-06 23:59:59-00:44	1	1	0	0	0	1972-01-06 23:59:59.000000 -00:44:30 Africa/Monrovia	59.000000000
+1972-01-06 23:59:59.999999-00:44	1	1	0	0	0	1972-01-06 23:59:59.999999 -00:44:30 Africa/Monrovia	59.999999000
+1972-01-07 00:44:30+00	1	1	0	0	0	1972-01-07 00:44:30.000000 +00 Africa/Monrovia	30.000000000
+1972-01-07 00:44:30.000001+00	1	1	0	0	0	1972-01-07 00:44:30.000001 +00 Africa/Monrovia	30.000001000
+1972-01-07 00:44:30.999999+00	1	1	0	0	0	1972-01-07 00:44:30.999999 +00 Africa/Monrovia	30.999999000
+1972-01-07 01:14:30+00	1	1	0	0	0	1972-01-07 01:14:30.000000 +00 Africa/Monrovia	30.000000000
+1972-01-07 02:14:30+00	1	1	0	0	0	1972-01-07 02:14:30.000000 +00 Africa/Monrovia	30.000000000
+1972-01-08 00:44:30+00	1	1	0	0	0	1972-01-08 00:44:30.000000 +00 Africa/Monrovia	30.000000000
+1972-01-08 01:44:30+00	1	1	0	0	0	1972-01-08 01:44:30.000000 +00 Africa/Monrovia	30.000000000
+1972-02-07 00:44:30+00	1	1	0	0	0	1972-02-07 00:44:30.000000 +00 Africa/Monrovia	30.000000000
+
+query
+SELECT part, count(*) AS n, sum(date_diff(part, anchor - INTERVAL '400 days 5 hours', ts)) AS diff_sum, sum(date_sub(part, ts, anchor + INTERVAL '400 days 5 hours')) AS sub_sum FROM p, parts WHERE zone = 'Africa/Monrovia' GROUP BY part ORDER BY part;
+----
+part	n	diff_sum	sub_sum
+century	15	0	0
+day	15	6010	6000
+decade	15	0	0
+hour	15	144068	144072
+isoyear	15	29	15
+microsecond	15	518669999999999	518670000000001
+millisecond	15	518669999998	518669999999
+minute	15	8644490	8644498
+month	15	195	195
+quarter	15	74	60
+second	15	518669998	518669999
+week	15	854	854
+year	15	29	15
+
+query
+SELECT fmt, count(*) AS n, md5(string_agg(strftime(ts, fmt), '|' ORDER BY ts NULLS FIRST)) AS digest FROM p, fmts WHERE zone = 'Africa/Monrovia' GROUP BY fmt ORDER BY fmt;
+----
+fmt	n	digest
+%G-%V %g %y %-m/%-d %-H %-I %-M %-S %g	15	bea38e079d9783e95e58c092902349b3
+%Y-%m-%d %H:%M:%S.%f %z %Z	15	5062459512cc40763f4a043fdd9ce7ac
+%a %d %b %Y %I:%M %p %j %U %W %u %w	15	829c24639bc3b165875e43ed685da716
+%c | %x | %X | %%	15	a2bb8b352eeccac9f5673428848a142e
+
+query
 SELECT fmt, count(*) FILTER (WHERE strftime(ts, fmt) IS DISTINCT FROM CASE fmt WHEN '%Y-%m-%d %H:%M:%S.%f %z %Z' THEN strftime(ts, '%Y-%m-%d %H:%M:%S.%f %z %Z') WHEN '%a %d %b %Y %I:%M %p %j %U %W %u %w' THEN strftime(ts, '%a %d %b %Y %I:%M %p %j %U %W %u %w') WHEN '%G-%V %g %y %-m/%-d %-H %-I %-M %-S %g' THEN strftime(ts, '%G-%V %g %y %-m/%-d %-H %-I %-M %-S %g') ELSE strftime(ts, '%c | %x | %X | %%') END) AS mismatches FROM p, fmts GROUP BY fmt ORDER BY fmt;
 ----
 fmt	mismatches
@@ -1284,6 +1753,73 @@ ts	dd	ddr	dw	dh	dmi	ds	dms	dus	dmo	dq	dy
 2025-07-16 17:30:00+05:30	31	-31	61	744	44640	2678400	2678400000	2678400000000	14	5	1
 
 query
+SELECT ts::VARCHAR AS ts, (ts - anchor)::VARCHAR AS sub1, (anchor - ts)::VARCHAR AS sub2, (ts - (anchor - INTERVAL '400 days 5 hours'))::VARCHAR AS sub3, age(ts, anchor)::VARCHAR AS age1, age(anchor, ts)::VARCHAR AS age2, age(ts, anchor - INTERVAL '400 days 5 hours')::VARCHAR AS age3 FROM p WHERE zone = 'Asia/Kolkata' ORDER BY ts NULLS FIRST;
+----
+ts	sub1	sub2	sub3	age1	age2	age3
+2025-05-15 17:30:00+05:30	-31 days	31 days	369 days 05:00:00	-1 mons	1 mon	1 year 4 days 05:00:00
+2025-06-14 16:30:00+05:30	-1 days -01:00:00	1 day 01:00:00	399 days 04:00:00	-1 days -01:00:00	1 day 01:00:00	1 year 1 mon 3 days 04:00:00
+2025-06-14 17:30:00+05:30	-1 days	1 day	399 days 05:00:00	-1 days	1 day	1 year 1 mon 3 days 05:00:00
+2025-06-15 16:00:00+05:30	-01:30:00	01:30:00	400 days 03:30:00	-01:30:00	01:30:00	1 year 1 mon 4 days 03:30:00
+2025-06-15 17:00:00+05:30	-00:30:00	00:30:00	400 days 04:30:00	-00:30:00	00:30:00	1 year 1 mon 4 days 04:30:00
+2025-06-15 17:29:59+05:30	-00:00:01	00:00:01	400 days 04:59:59	-00:00:01	00:00:01	1 year 1 mon 4 days 04:59:59
+2025-06-15 17:29:59.999999+05:30	-00:00:00.000001	00:00:00.000001	400 days 04:59:59.999999	-00:00:00.000001	00:00:00.000001	1 year 1 mon 4 days 04:59:59.999999
+2025-06-15 17:30:00+05:30	00:00:00	00:00:00	400 days 05:00:00	00:00:00	00:00:00	1 year 1 mon 4 days 05:00:00
+2025-06-15 17:30:00.000001+05:30	00:00:00.000001	-00:00:00.000001	400 days 05:00:00.000001	00:00:00.000001	-00:00:00.000001	1 year 1 mon 4 days 05:00:00.000001
+2025-06-15 17:30:00.999999+05:30	00:00:00.999999	-00:00:00.999999	400 days 05:00:00.999999	00:00:00.999999	-00:00:00.999999	1 year 1 mon 4 days 05:00:00.999999
+2025-06-15 18:00:00+05:30	00:30:00	-00:30:00	400 days 05:30:00	00:30:00	-00:30:00	1 year 1 mon 4 days 05:30:00
+2025-06-15 19:00:00+05:30	01:30:00	-01:30:00	400 days 06:30:00	01:30:00	-01:30:00	1 year 1 mon 4 days 06:30:00
+2025-06-16 17:30:00+05:30	1 day	-1 days	401 days 05:00:00	1 day	-1 days	1 year 1 mon 5 days 05:00:00
+2025-06-16 18:30:00+05:30	1 day 01:00:00	-1 days -01:00:00	401 days 06:00:00	1 day 01:00:00	-1 days -01:00:00	1 year 1 mon 5 days 06:00:00
+2025-07-16 17:30:00+05:30	31 days	-31 days	431 days 05:00:00	1 mon 1 day	-1 mons -1 days	1 year 2 mons 5 days 05:00:00
+
+query
+SELECT ts::VARCHAR AS ts, date_sub('decade', anchor - INTERVAL '4000 days', ts) AS sdec, date_diff('decade', anchor - INTERVAL '4000 days', ts) AS ddec, date_diff('century', anchor - INTERVAL '4000 days', ts) AS dcen, date_diff('millennium', ts, anchor + INTERVAL '4000 days') AS dmil, date_sub('century', ts, anchor + INTERVAL '4000 days') AS scen, strftime(ts::TIMESTAMPTZ_NS, '%Y-%m-%d %H:%M:%S.%f %z %Z') AS fns, strftime(ts::TIMESTAMPTZ_NS, '%S.%n') AS nns FROM p WHERE zone = 'Asia/Kolkata' ORDER BY ts NULLS FIRST;
+----
+ts	sdec	ddec	dcen	dmil	scen	fns	nns
+2025-05-15 17:30:00+05:30	1	1	0	0	0	2025-05-15 17:30:00.000000 +05:30 Asia/Kolkata	00.000000000
+2025-06-14 16:30:00+05:30	1	1	0	0	0	2025-06-14 16:30:00.000000 +05:30 Asia/Kolkata	00.000000000
+2025-06-14 17:30:00+05:30	1	1	0	0	0	2025-06-14 17:30:00.000000 +05:30 Asia/Kolkata	00.000000000
+2025-06-15 16:00:00+05:30	1	1	0	0	0	2025-06-15 16:00:00.000000 +05:30 Asia/Kolkata	00.000000000
+2025-06-15 17:00:00+05:30	1	1	0	0	0	2025-06-15 17:00:00.000000 +05:30 Asia/Kolkata	00.000000000
+2025-06-15 17:29:59+05:30	1	1	0	0	0	2025-06-15 17:29:59.000000 +05:30 Asia/Kolkata	59.000000000
+2025-06-15 17:29:59.999999+05:30	1	1	0	0	0	2025-06-15 17:29:59.999999 +05:30 Asia/Kolkata	59.999999000
+2025-06-15 17:30:00+05:30	1	1	0	0	0	2025-06-15 17:30:00.000000 +05:30 Asia/Kolkata	00.000000000
+2025-06-15 17:30:00.000001+05:30	1	1	0	0	0	2025-06-15 17:30:00.000001 +05:30 Asia/Kolkata	00.000001000
+2025-06-15 17:30:00.999999+05:30	1	1	0	0	0	2025-06-15 17:30:00.999999 +05:30 Asia/Kolkata	00.999999000
+2025-06-15 18:00:00+05:30	1	1	0	0	0	2025-06-15 18:00:00.000000 +05:30 Asia/Kolkata	00.000000000
+2025-06-15 19:00:00+05:30	1	1	0	0	0	2025-06-15 19:00:00.000000 +05:30 Asia/Kolkata	00.000000000
+2025-06-16 17:30:00+05:30	1	1	0	0	0	2025-06-16 17:30:00.000000 +05:30 Asia/Kolkata	00.000000000
+2025-06-16 18:30:00+05:30	1	1	0	0	0	2025-06-16 18:30:00.000000 +05:30 Asia/Kolkata	00.000000000
+2025-07-16 17:30:00+05:30	1	1	0	0	0	2025-07-16 17:30:00.000000 +05:30 Asia/Kolkata	00.000000000
+
+query
+SELECT part, count(*) AS n, sum(date_diff(part, anchor - INTERVAL '400 days 5 hours', ts)) AS diff_sum, sum(date_sub(part, ts, anchor + INTERVAL '400 days 5 hours')) AS sub_sum FROM p, parts WHERE zone = 'Asia/Kolkata' GROUP BY part ORDER BY part;
+----
+part	n	diff_sum	sub_sum
+century	15	0	0
+day	15	6000	6000
+decade	15	0	0
+hour	15	144077	144072
+isoyear	15	15	15
+microsecond	15	518669999999999	518670000000001
+millisecond	15	518669999998	518669999999
+minute	15	8644498	8644498
+month	15	195	195
+quarter	15	61	60
+second	15	518669998	518669999
+week	15	854	854
+year	15	15	15
+
+query
+SELECT fmt, count(*) AS n, md5(string_agg(strftime(ts, fmt), '|' ORDER BY ts NULLS FIRST)) AS digest FROM p, fmts WHERE zone = 'Asia/Kolkata' GROUP BY fmt ORDER BY fmt;
+----
+fmt	n	digest
+%G-%V %g %y %-m/%-d %-H %-I %-M %-S %g	15	79b62669e7d52bcbf3a6abb4ff3b8f16
+%Y-%m-%d %H:%M:%S.%f %z %Z	15	a86c718e99069d5df67103dcbba0360d
+%a %d %b %Y %I:%M %p %j %U %W %u %w	15	0babdefa59af8e7c375e343171f84040
+%c | %x | %X | %%	15	8d66d074be19cdd6f113b85ef45eb1f6
+
+query
 SELECT fmt, count(*) FILTER (WHERE strftime(ts, fmt) IS DISTINCT FROM CASE fmt WHEN '%Y-%m-%d %H:%M:%S.%f %z %Z' THEN strftime(ts, '%Y-%m-%d %H:%M:%S.%f %z %Z') WHEN '%a %d %b %Y %I:%M %p %j %U %W %u %w' THEN strftime(ts, '%a %d %b %Y %I:%M %p %j %U %W %u %w') WHEN '%G-%V %g %y %-m/%-d %-H %-I %-M %-S %g' THEN strftime(ts, '%G-%V %g %y %-m/%-d %-H %-I %-M %-S %g') ELSE strftime(ts, '%c | %x | %X | %%') END) AS mismatches FROM p, fmts GROUP BY fmt ORDER BY fmt;
 ----
 fmt	mismatches
@@ -1430,6 +1966,73 @@ ts	dd	ddr	dw	dh	dmi	ds	dms	dus	dmo	dq	dy
 2025-06-16 12:00:00+00	1	-1	57	24	1440	86400	86400000	86400000000	13	4	1
 2025-06-16 13:00:00+00	1	-1	57	25	1500	90000	90000000	90000000000	13	4	1
 2025-07-16 12:00:00+00	31	-31	61	744	44640	2678400	2678400000	2678400000000	14	5	1
+
+query
+SELECT ts::VARCHAR AS ts, (ts - anchor)::VARCHAR AS sub1, (anchor - ts)::VARCHAR AS sub2, (ts - (anchor - INTERVAL '400 days 5 hours'))::VARCHAR AS sub3, age(ts, anchor)::VARCHAR AS age1, age(anchor, ts)::VARCHAR AS age2, age(ts, anchor - INTERVAL '400 days 5 hours')::VARCHAR AS age3 FROM p WHERE zone = 'Etc/UTC' ORDER BY ts NULLS FIRST;
+----
+ts	sub1	sub2	sub3	age1	age2	age3
+2025-05-15 12:00:00+00	-31 days	31 days	369 days 05:00:00	-1 mons	1 mon	1 year 4 days 05:00:00
+2025-06-14 11:00:00+00	-1 days -01:00:00	1 day 01:00:00	399 days 04:00:00	-1 days -01:00:00	1 day 01:00:00	1 year 1 mon 3 days 04:00:00
+2025-06-14 12:00:00+00	-1 days	1 day	399 days 05:00:00	-1 days	1 day	1 year 1 mon 3 days 05:00:00
+2025-06-15 10:30:00+00	-01:30:00	01:30:00	400 days 03:30:00	-01:30:00	01:30:00	1 year 1 mon 4 days 03:30:00
+2025-06-15 11:30:00+00	-00:30:00	00:30:00	400 days 04:30:00	-00:30:00	00:30:00	1 year 1 mon 4 days 04:30:00
+2025-06-15 11:59:59+00	-00:00:01	00:00:01	400 days 04:59:59	-00:00:01	00:00:01	1 year 1 mon 4 days 04:59:59
+2025-06-15 11:59:59.999999+00	-00:00:00.000001	00:00:00.000001	400 days 04:59:59.999999	-00:00:00.000001	00:00:00.000001	1 year 1 mon 4 days 04:59:59.999999
+2025-06-15 12:00:00+00	00:00:00	00:00:00	400 days 05:00:00	00:00:00	00:00:00	1 year 1 mon 4 days 05:00:00
+2025-06-15 12:00:00.000001+00	00:00:00.000001	-00:00:00.000001	400 days 05:00:00.000001	00:00:00.000001	-00:00:00.000001	1 year 1 mon 4 days 05:00:00.000001
+2025-06-15 12:00:00.999999+00	00:00:00.999999	-00:00:00.999999	400 days 05:00:00.999999	00:00:00.999999	-00:00:00.999999	1 year 1 mon 4 days 05:00:00.999999
+2025-06-15 12:30:00+00	00:30:00	-00:30:00	400 days 05:30:00	00:30:00	-00:30:00	1 year 1 mon 4 days 05:30:00
+2025-06-15 13:30:00+00	01:30:00	-01:30:00	400 days 06:30:00	01:30:00	-01:30:00	1 year 1 mon 4 days 06:30:00
+2025-06-16 12:00:00+00	1 day	-1 days	401 days 05:00:00	1 day	-1 days	1 year 1 mon 5 days 05:00:00
+2025-06-16 13:00:00+00	1 day 01:00:00	-1 days -01:00:00	401 days 06:00:00	1 day 01:00:00	-1 days -01:00:00	1 year 1 mon 5 days 06:00:00
+2025-07-16 12:00:00+00	31 days	-31 days	431 days 05:00:00	1 mon 1 day	-1 mons -1 days	1 year 2 mons 5 days 05:00:00
+
+query
+SELECT ts::VARCHAR AS ts, date_sub('decade', anchor - INTERVAL '4000 days', ts) AS sdec, date_diff('decade', anchor - INTERVAL '4000 days', ts) AS ddec, date_diff('century', anchor - INTERVAL '4000 days', ts) AS dcen, date_diff('millennium', ts, anchor + INTERVAL '4000 days') AS dmil, date_sub('century', ts, anchor + INTERVAL '4000 days') AS scen, strftime(ts::TIMESTAMPTZ_NS, '%Y-%m-%d %H:%M:%S.%f %z %Z') AS fns, strftime(ts::TIMESTAMPTZ_NS, '%S.%n') AS nns FROM p WHERE zone = 'Etc/UTC' ORDER BY ts NULLS FIRST;
+----
+ts	sdec	ddec	dcen	dmil	scen	fns	nns
+2025-05-15 12:00:00+00	1	1	0	0	0	2025-05-15 12:00:00.000000 +00 Etc/UTC	00.000000000
+2025-06-14 11:00:00+00	1	1	0	0	0	2025-06-14 11:00:00.000000 +00 Etc/UTC	00.000000000
+2025-06-14 12:00:00+00	1	1	0	0	0	2025-06-14 12:00:00.000000 +00 Etc/UTC	00.000000000
+2025-06-15 10:30:00+00	1	1	0	0	0	2025-06-15 10:30:00.000000 +00 Etc/UTC	00.000000000
+2025-06-15 11:30:00+00	1	1	0	0	0	2025-06-15 11:30:00.000000 +00 Etc/UTC	00.000000000
+2025-06-15 11:59:59+00	1	1	0	0	0	2025-06-15 11:59:59.000000 +00 Etc/UTC	59.000000000
+2025-06-15 11:59:59.999999+00	1	1	0	0	0	2025-06-15 11:59:59.999999 +00 Etc/UTC	59.999999000
+2025-06-15 12:00:00+00	1	1	0	0	0	2025-06-15 12:00:00.000000 +00 Etc/UTC	00.000000000
+2025-06-15 12:00:00.000001+00	1	1	0	0	0	2025-06-15 12:00:00.000001 +00 Etc/UTC	00.000001000
+2025-06-15 12:00:00.999999+00	1	1	0	0	0	2025-06-15 12:00:00.999999 +00 Etc/UTC	00.999999000
+2025-06-15 12:30:00+00	1	1	0	0	0	2025-06-15 12:30:00.000000 +00 Etc/UTC	00.000000000
+2025-06-15 13:30:00+00	1	1	0	0	0	2025-06-15 13:30:00.000000 +00 Etc/UTC	00.000000000
+2025-06-16 12:00:00+00	1	1	0	0	0	2025-06-16 12:00:00.000000 +00 Etc/UTC	00.000000000
+2025-06-16 13:00:00+00	1	1	0	0	0	2025-06-16 13:00:00.000000 +00 Etc/UTC	00.000000000
+2025-07-16 12:00:00+00	1	1	0	0	0	2025-07-16 12:00:00.000000 +00 Etc/UTC	00.000000000
+
+query
+SELECT part, count(*) AS n, sum(date_diff(part, anchor - INTERVAL '400 days 5 hours', ts)) AS diff_sum, sum(date_sub(part, ts, anchor + INTERVAL '400 days 5 hours')) AS sub_sum FROM p, parts WHERE zone = 'Etc/UTC' GROUP BY part ORDER BY part;
+----
+part	n	diff_sum	sub_sum
+century	15	0	0
+day	15	6000	6000
+decade	15	0	0
+hour	15	144071	144072
+isoyear	15	15	15
+microsecond	15	518669999999999	518670000000001
+millisecond	15	518669999998	518669999999
+minute	15	8644498	8644498
+month	15	195	195
+quarter	15	61	60
+second	15	518669998	518669999
+week	15	854	854
+year	15	15	15
+
+query
+SELECT fmt, count(*) AS n, md5(string_agg(strftime(ts, fmt), '|' ORDER BY ts NULLS FIRST)) AS digest FROM p, fmts WHERE zone = 'Etc/UTC' GROUP BY fmt ORDER BY fmt;
+----
+fmt	n	digest
+%G-%V %g %y %-m/%-d %-H %-I %-M %-S %g	15	40b5408476bdddf6f93a4e9040869613
+%Y-%m-%d %H:%M:%S.%f %z %Z	15	74975c50ab0e9c699b604d900ff91ab6
+%a %d %b %Y %I:%M %p %j %U %W %u %w	15	a2abb6f2b58c3603826bde9fa4afe178
+%c | %x | %X | %%	15	e41f97ca8f6aa0f5dc2079c706504b9b
 
 query
 SELECT fmt, count(*) FILTER (WHERE strftime(ts, fmt) IS DISTINCT FROM CASE fmt WHEN '%Y-%m-%d %H:%M:%S.%f %z %Z' THEN strftime(ts, '%Y-%m-%d %H:%M:%S.%f %z %Z') WHEN '%a %d %b %Y %I:%M %p %j %U %W %u %w' THEN strftime(ts, '%a %d %b %Y %I:%M %p %j %U %W %u %w') WHEN '%G-%V %g %y %-m/%-d %-H %-I %-M %-S %g' THEN strftime(ts, '%G-%V %g %y %-m/%-d %-H %-I %-M %-S %g') ELSE strftime(ts, '%c | %x | %X | %%') END) AS mismatches FROM p, fmts GROUP BY fmt ORDER BY fmt;
@@ -1655,6 +2258,103 @@ ts	dd	ddr	dw	dh	dmi	ds	dms	dus	dmo	dq	dy
 2025-10-08 01:00:00-03	30	-31	61	744	44640	2678400	2678400000	2678400000000	14	5	1
 
 query
+SELECT ts::VARCHAR AS ts, (ts - anchor)::VARCHAR AS sub1, (anchor - ts)::VARCHAR AS sub2, (ts - (anchor - INTERVAL '400 days 5 hours'))::VARCHAR AS sub3, age(ts, anchor)::VARCHAR AS age1, age(anchor, ts)::VARCHAR AS age2, age(ts, anchor - INTERVAL '400 days 5 hours')::VARCHAR AS age3 FROM p WHERE zone = 'America/Santiago' ORDER BY ts NULLS FIRST;
+----
+ts	sub1	sub2	sub3	age1	age2	age3
+2025-03-06 00:00:00-03	-30 days -24:00:00	30 days 24:00:00	369 days 05:00:00	-30 days -23:00:00	30 days 23:00:00	1 year 4 days 05:00:00
+2025-04-04 23:00:00-03	-1 days -01:00:00	1 day 01:00:00	399 days 04:00:00	-1 days	1 day	1 year 1 mon 3 days 04:00:00
+2025-04-05 00:00:00-03	-24:00:00	24:00:00	399 days 05:00:00	-23:00:00	23:00:00	1 year 1 mon 3 days 05:00:00
+2025-04-05 22:30:00-03	-01:30:00	01:30:00	400 days 03:30:00	-00:30:00	00:30:00	1 year 1 mon 4 days 03:30:00
+2025-04-05 23:00:00-04	00:00:00	00:00:00	400 days 05:00:00	00:00:00	00:00:00	1 year 1 mon 4 days 04:00:00
+2025-04-05 23:00:00.000001-04	00:00:00.000001	-00:00:00.000001	400 days 05:00:00.000001	00:00:00.000001	-00:00:00.000001	1 year 1 mon 4 days 04:00:00.000001
+2025-04-05 23:00:00.999999-04	00:00:00.999999	-00:00:00.999999	400 days 05:00:00.999999	00:00:00.999999	-00:00:00.999999	1 year 1 mon 4 days 04:00:00.999999
+2025-04-05 23:30:00-03	-00:30:00	00:30:00	400 days 04:30:00	1 mon -29 days -23:30:00	-1 mons +29 days 23:30:00	1 year 1 mon 4 days 04:30:00
+2025-04-05 23:30:00-04	00:30:00	-00:30:00	400 days 05:30:00	00:30:00	-00:30:00	1 year 1 mon 4 days 04:30:00
+2025-04-05 23:59:59-03	-00:00:01	00:00:01	400 days 04:59:59	1 mon -29 days -23:00:01	-1 mons +29 days 23:00:01	1 year 1 mon 4 days 04:59:59
+2025-04-05 23:59:59.999999-03	-00:00:00.000001	00:00:00.000001	400 days 04:59:59.999999	1 mon -29 days -23:00:00.000001	-1 mons +29 days 23:00:00.000001	1 year 1 mon 4 days 04:59:59.999999
+2025-04-06 00:30:00-04	01:30:00	-01:30:00	400 days 06:30:00	01:30:00	-01:30:00	1 year 1 mon 4 days 05:30:00
+2025-04-06 23:00:00-04	1 day	-1 days	401 days 04:00:00	1 day	-1 days	1 year 1 mon 5 days 04:00:00
+2025-04-07 00:00:00-04	1 day 01:00:00	-1 days -01:00:00	401 days 05:00:00	1 day 01:00:00	-1 days -01:00:00	1 year 1 mon 5 days 05:00:00
+2025-05-06 23:00:00-04	31 days	-31 days	431 days 04:00:00	1 mon 1 day	-1 mons -1 days	1 year 2 mons 5 days 04:00:00
+2025-08-07 00:00:00-04	-31 days	31 days	369 days 05:00:00	-1 mons -01:00:00	1 mon 01:00:00	1 year 4 days 05:00:00
+2025-09-05 23:00:00-04	-1 days -01:00:00	1 day 01:00:00	399 days 04:00:00	-1 days -02:00:00	1 day 02:00:00	1 year 1 mon 3 days 04:00:00
+2025-09-06 00:00:00-04	-1 days	1 day	399 days 05:00:00	-1 days -01:00:00	1 day 01:00:00	1 year 1 mon 3 days 05:00:00
+2025-09-06 22:30:00-04	-01:30:00	01:30:00	400 days 03:30:00	-02:30:00	02:30:00	1 year 1 mon 4 days 03:30:00
+2025-09-06 23:30:00-04	-00:30:00	00:30:00	400 days 04:30:00	-01:30:00	01:30:00	1 year 1 mon 4 days 04:30:00
+2025-09-06 23:59:59-04	-00:00:01	00:00:01	400 days 04:59:59	-01:00:01	01:00:01	1 year 1 mon 4 days 04:59:59
+2025-09-06 23:59:59.999999-04	-00:00:00.000001	00:00:00.000001	400 days 04:59:59.999999	-01:00:00.000001	01:00:00.000001	1 year 1 mon 4 days 04:59:59.999999
+2025-09-07 01:00:00-03	00:00:00	00:00:00	400 days 05:00:00	00:00:00	00:00:00	1 year 1 mon 4 days 06:00:00
+2025-09-07 01:00:00.000001-03	00:00:00.000001	-00:00:00.000001	400 days 05:00:00.000001	00:00:00.000001	-00:00:00.000001	1 year 1 mon 4 days 06:00:00.000001
+2025-09-07 01:00:00.999999-03	00:00:00.999999	-00:00:00.999999	400 days 05:00:00.999999	00:00:00.999999	-00:00:00.999999	1 year 1 mon 4 days 06:00:00.999999
+2025-09-07 01:30:00-03	00:30:00	-00:30:00	400 days 05:30:00	00:30:00	-00:30:00	1 year 1 mon 4 days 06:30:00
+2025-09-07 02:30:00-03	01:30:00	-01:30:00	400 days 06:30:00	01:30:00	-01:30:00	1 year 1 mon 4 days 07:30:00
+2025-09-08 01:00:00-03	1 day	-1 days	401 days 06:00:00	1 day	-1 days	1 year 1 mon 5 days 06:00:00
+2025-09-08 02:00:00-03	1 day 01:00:00	-1 days -01:00:00	401 days 07:00:00	1 day 01:00:00	-1 days -01:00:00	1 year 1 mon 5 days 07:00:00
+2025-10-08 01:00:00-03	31 days	-31 days	431 days 06:00:00	1 mon 1 day	-1 mons -1 days	1 year 2 mons 5 days 06:00:00
+
+query
+SELECT ts::VARCHAR AS ts, date_sub('decade', anchor - INTERVAL '4000 days', ts) AS sdec, date_diff('decade', anchor - INTERVAL '4000 days', ts) AS ddec, date_diff('century', anchor - INTERVAL '4000 days', ts) AS dcen, date_diff('millennium', ts, anchor + INTERVAL '4000 days') AS dmil, date_sub('century', ts, anchor + INTERVAL '4000 days') AS scen, strftime(ts::TIMESTAMPTZ_NS, '%Y-%m-%d %H:%M:%S.%f %z %Z') AS fns, strftime(ts::TIMESTAMPTZ_NS, '%S.%n') AS nns FROM p WHERE zone = 'America/Santiago' ORDER BY ts NULLS FIRST;
+----
+ts	sdec	ddec	dcen	dmil	scen	fns	nns
+2025-03-06 00:00:00-03	1	1	0	0	0	2025-03-06 00:00:00.000000 -03 America/Santiago	00.000000000
+2025-04-04 23:00:00-03	1	1	0	0	0	2025-04-04 23:00:00.000000 -03 America/Santiago	00.000000000
+2025-04-05 00:00:00-03	1	1	0	0	0	2025-04-05 00:00:00.000000 -03 America/Santiago	00.000000000
+2025-04-05 22:30:00-03	1	1	0	0	0	2025-04-05 22:30:00.000000 -03 America/Santiago	00.000000000
+2025-04-05 23:00:00-04	1	1	0	0	0	2025-04-05 23:00:00.000000 -04 America/Santiago	00.000000000
+2025-04-05 23:00:00.000001-04	1	1	0	0	0	2025-04-05 23:00:00.000001 -04 America/Santiago	00.000001000
+2025-04-05 23:00:00.999999-04	1	1	0	0	0	2025-04-05 23:00:00.999999 -04 America/Santiago	00.999999000
+2025-04-05 23:30:00-03	1	1	0	0	0	2025-04-05 23:30:00.000000 -03 America/Santiago	00.000000000
+2025-04-05 23:30:00-04	1	1	0	0	0	2025-04-05 23:30:00.000000 -04 America/Santiago	00.000000000
+2025-04-05 23:59:59-03	1	1	0	0	0	2025-04-05 23:59:59.000000 -03 America/Santiago	59.000000000
+2025-04-05 23:59:59.999999-03	1	1	0	0	0	2025-04-05 23:59:59.999999 -03 America/Santiago	59.999999000
+2025-04-06 00:30:00-04	1	1	0	0	0	2025-04-06 00:30:00.000000 -04 America/Santiago	00.000000000
+2025-04-06 23:00:00-04	1	1	0	0	0	2025-04-06 23:00:00.000000 -04 America/Santiago	00.000000000
+2025-04-07 00:00:00-04	1	1	0	0	0	2025-04-07 00:00:00.000000 -04 America/Santiago	00.000000000
+2025-05-06 23:00:00-04	1	1	0	0	0	2025-05-06 23:00:00.000000 -04 America/Santiago	00.000000000
+2025-08-07 00:00:00-04	1	1	0	0	0	2025-08-07 00:00:00.000000 -04 America/Santiago	00.000000000
+2025-09-05 23:00:00-04	1	1	0	0	0	2025-09-05 23:00:00.000000 -04 America/Santiago	00.000000000
+2025-09-06 00:00:00-04	1	1	0	0	0	2025-09-06 00:00:00.000000 -04 America/Santiago	00.000000000
+2025-09-06 22:30:00-04	1	1	0	0	0	2025-09-06 22:30:00.000000 -04 America/Santiago	00.000000000
+2025-09-06 23:30:00-04	1	1	0	0	0	2025-09-06 23:30:00.000000 -04 America/Santiago	00.000000000
+2025-09-06 23:59:59-04	1	1	0	0	0	2025-09-06 23:59:59.000000 -04 America/Santiago	59.000000000
+2025-09-06 23:59:59.999999-04	1	1	0	0	0	2025-09-06 23:59:59.999999 -04 America/Santiago	59.999999000
+2025-09-07 01:00:00-03	1	1	0	0	0	2025-09-07 01:00:00.000000 -03 America/Santiago	00.000000000
+2025-09-07 01:00:00.000001-03	1	1	0	0	0	2025-09-07 01:00:00.000001 -03 America/Santiago	00.000001000
+2025-09-07 01:00:00.999999-03	1	1	0	0	0	2025-09-07 01:00:00.999999 -03 America/Santiago	00.999999000
+2025-09-07 01:30:00-03	1	1	0	0	0	2025-09-07 01:30:00.000000 -03 America/Santiago	00.000000000
+2025-09-07 02:30:00-03	1	1	0	0	0	2025-09-07 02:30:00.000000 -03 America/Santiago	00.000000000
+2025-09-08 01:00:00-03	1	1	0	0	0	2025-09-08 01:00:00.000000 -03 America/Santiago	00.000000000
+2025-09-08 02:00:00-03	1	1	0	0	0	2025-09-08 02:00:00.000000 -03 America/Santiago	00.000000000
+2025-10-08 01:00:00-03	1	1	0	0	0	2025-10-08 01:00:00.000000 -03 America/Santiago	00.000000000
+
+query
+SELECT part, count(*) AS n, sum(date_diff(part, anchor - INTERVAL '400 days 5 hours', ts)) AS diff_sum, sum(date_sub(part, ts, anchor + INTERVAL '400 days 5 hours')) AS sub_sum FROM p, parts WHERE zone = 'America/Santiago' GROUP BY part ORDER BY part;
+----
+part	n	diff_sum	sub_sum
+century	30	0	0
+day	30	12014	12000
+decade	30	0	0
+hour	30	288145	288144
+isoyear	30	30	30
+microsecond	30	1037339999999998	1037340000000002
+millisecond	30	1037339999996	1037339999998
+minute	30	17288996	17288996
+month	30	390	390
+quarter	30	135	120
+second	30	1037339996	1037339998
+week	30	1708	1708
+year	30	30	30
+
+query
+SELECT fmt, count(*) AS n, md5(string_agg(strftime(ts, fmt), '|' ORDER BY ts NULLS FIRST)) AS digest FROM p, fmts WHERE zone = 'America/Santiago' GROUP BY fmt ORDER BY fmt;
+----
+fmt	n	digest
+%G-%V %g %y %-m/%-d %-H %-I %-M %-S %g	30	45552c9081ea336aa4723cbb26e8b065
+%Y-%m-%d %H:%M:%S.%f %z %Z	30	feca364216a4f7f68d661e433fddfc08
+%a %d %b %Y %I:%M %p %j %U %W %u %w	30	adf943ab11e0757dad177464bdb03c5e
+%c | %x | %X | %%	30	cf743abf481c9ffd05393b97e02c1b90
+
+query
 SELECT fmt, count(*) FILTER (WHERE strftime(ts, fmt) IS DISTINCT FROM CASE fmt WHEN '%Y-%m-%d %H:%M:%S.%f %z %Z' THEN strftime(ts, '%Y-%m-%d %H:%M:%S.%f %z %Z') WHEN '%a %d %b %Y %I:%M %p %j %U %W %u %w' THEN strftime(ts, '%a %d %b %Y %I:%M %p %j %U %W %u %w') WHEN '%G-%V %g %y %-m/%-d %-H %-I %-M %-S %g' THEN strftime(ts, '%G-%V %g %y %-m/%-d %-H %-I %-M %-S %g') ELSE strftime(ts, '%c | %x | %X | %%') END) AS mismatches FROM p, fmts GROUP BY fmt ORDER BY fmt;
 ----
 fmt	mismatches
@@ -1878,6 +2578,103 @@ ts	dd	ddr	dw	dh	dmi	ds	dms	dus	dmo	dq	dy
 2025-12-03 01:00:00-03:30	31	-31	61	744	44640	2678400	2678400000	2678400000000	15	5	1
 
 query
+SELECT ts::VARCHAR AS ts, (ts - anchor)::VARCHAR AS sub1, (anchor - ts)::VARCHAR AS sub2, (ts - (anchor - INTERVAL '400 days 5 hours'))::VARCHAR AS sub3, age(ts, anchor)::VARCHAR AS age1, age(anchor, ts)::VARCHAR AS age2, age(ts, anchor - INTERVAL '400 days 5 hours')::VARCHAR AS age3 FROM p WHERE zone = 'America/St_Johns' ORDER BY ts NULLS FIRST;
+----
+ts	sub1	sub2	sub3	age1	age2	age3
+2025-02-06 02:00:00-03:30	-31 days	31 days	369 days 05:00:00	-1 mons -3 days -01:00:00	1 mon 3 days 01:00:00	1 year 3 days 05:00:00
+2025-03-08 01:00:00-03:30	-1 days -01:00:00	1 day 01:00:00	399 days 04:00:00	-1 days -02:00:00	1 day 02:00:00	1 year 1 mon 5 days 04:00:00
+2025-03-08 02:00:00-03:30	-1 days	1 day	399 days 05:00:00	-1 days -01:00:00	1 day 01:00:00	1 year 1 mon 5 days 05:00:00
+2025-03-09 00:30:00-03:30	-01:30:00	01:30:00	400 days 03:30:00	-02:30:00	02:30:00	1 year 1 mon 6 days 03:30:00
+2025-03-09 01:30:00-03:30	-00:30:00	00:30:00	400 days 04:30:00	-01:30:00	01:30:00	1 year 1 mon 6 days 04:30:00
+2025-03-09 01:59:59-03:30	-00:00:01	00:00:01	400 days 04:59:59	-01:00:01	01:00:01	1 year 1 mon 6 days 04:59:59
+2025-03-09 01:59:59.999999-03:30	-00:00:00.000001	00:00:00.000001	400 days 04:59:59.999999	-01:00:00.000001	01:00:00.000001	1 year 1 mon 6 days 04:59:59.999999
+2025-03-09 03:00:00-02:30	00:00:00	00:00:00	400 days 05:00:00	00:00:00	00:00:00	1 year 1 mon 6 days 06:00:00
+2025-03-09 03:00:00.000001-02:30	00:00:00.000001	-00:00:00.000001	400 days 05:00:00.000001	00:00:00.000001	-00:00:00.000001	1 year 1 mon 6 days 06:00:00.000001
+2025-03-09 03:00:00.999999-02:30	00:00:00.999999	-00:00:00.999999	400 days 05:00:00.999999	00:00:00.999999	-00:00:00.999999	1 year 1 mon 6 days 06:00:00.999999
+2025-03-09 03:30:00-02:30	00:30:00	-00:30:00	400 days 05:30:00	00:30:00	-00:30:00	1 year 1 mon 6 days 06:30:00
+2025-03-09 04:30:00-02:30	01:30:00	-01:30:00	400 days 06:30:00	01:30:00	-01:30:00	1 year 1 mon 6 days 07:30:00
+2025-03-10 03:00:00-02:30	1 day	-1 days	401 days 06:00:00	1 day	-1 days	1 year 1 mon 7 days 06:00:00
+2025-03-10 04:00:00-02:30	1 day 01:00:00	-1 days -01:00:00	401 days 07:00:00	1 day 01:00:00	-1 days -01:00:00	1 year 1 mon 7 days 07:00:00
+2025-04-09 03:00:00-02:30	31 days	-31 days	431 days 06:00:00	1 mon	-1 mons	1 year 2 mons 6 days 06:00:00
+2025-10-02 02:00:00-02:30	-30 days -24:00:00	30 days 24:00:00	369 days 05:00:00	-30 days -23:00:00	30 days 23:00:00	1 year 4 days 05:00:00
+2025-11-01 01:00:00-02:30	-1 days -01:00:00	1 day 01:00:00	399 days 04:00:00	-1 days	1 day	1 year 1 mon 3 days 04:00:00
+2025-11-01 02:00:00-02:30	-24:00:00	24:00:00	399 days 05:00:00	-23:00:00	23:00:00	1 year 1 mon 3 days 05:00:00
+2025-11-02 00:30:00-02:30	-01:30:00	01:30:00	400 days 03:30:00	-00:30:00	00:30:00	1 year 1 mon 4 days 03:30:00
+2025-11-02 01:00:00-03:30	00:00:00	00:00:00	400 days 05:00:00	00:00:00	00:00:00	1 year 1 mon 4 days 04:00:00
+2025-11-02 01:00:00.000001-03:30	00:00:00.000001	-00:00:00.000001	400 days 05:00:00.000001	00:00:00.000001	-00:00:00.000001	1 year 1 mon 4 days 04:00:00.000001
+2025-11-02 01:00:00.999999-03:30	00:00:00.999999	-00:00:00.999999	400 days 05:00:00.999999	00:00:00.999999	-00:00:00.999999	1 year 1 mon 4 days 04:00:00.999999
+2025-11-02 01:30:00-02:30	-00:30:00	00:30:00	400 days 04:30:00	1 mon -29 days -23:30:00	-1 mons +29 days 23:30:00	1 year 1 mon 4 days 04:30:00
+2025-11-02 01:30:00-03:30	00:30:00	-00:30:00	400 days 05:30:00	00:30:00	-00:30:00	1 year 1 mon 4 days 04:30:00
+2025-11-02 01:59:59-02:30	-00:00:01	00:00:01	400 days 04:59:59	1 mon -29 days -23:00:01	-1 mons +29 days 23:00:01	1 year 1 mon 4 days 04:59:59
+2025-11-02 01:59:59.999999-02:30	-00:00:00.000001	00:00:00.000001	400 days 04:59:59.999999	1 mon -29 days -23:00:00.000001	-1 mons +29 days 23:00:00.000001	1 year 1 mon 4 days 04:59:59.999999
+2025-11-02 02:30:00-03:30	01:30:00	-01:30:00	400 days 06:30:00	01:30:00	-01:30:00	1 year 1 mon 4 days 05:30:00
+2025-11-03 01:00:00-03:30	1 day	-1 days	401 days 04:00:00	1 day	-1 days	1 year 1 mon 5 days 04:00:00
+2025-11-03 02:00:00-03:30	1 day 01:00:00	-1 days -01:00:00	401 days 05:00:00	1 day 01:00:00	-1 days -01:00:00	1 year 1 mon 5 days 05:00:00
+2025-12-03 01:00:00-03:30	31 days	-31 days	431 days 04:00:00	1 mon 1 day	-1 mons -1 days	1 year 2 mons 5 days 04:00:00
+
+query
+SELECT ts::VARCHAR AS ts, date_sub('decade', anchor - INTERVAL '4000 days', ts) AS sdec, date_diff('decade', anchor - INTERVAL '4000 days', ts) AS ddec, date_diff('century', anchor - INTERVAL '4000 days', ts) AS dcen, date_diff('millennium', ts, anchor + INTERVAL '4000 days') AS dmil, date_sub('century', ts, anchor + INTERVAL '4000 days') AS scen, strftime(ts::TIMESTAMPTZ_NS, '%Y-%m-%d %H:%M:%S.%f %z %Z') AS fns, strftime(ts::TIMESTAMPTZ_NS, '%S.%n') AS nns FROM p WHERE zone = 'America/St_Johns' ORDER BY ts NULLS FIRST;
+----
+ts	sdec	ddec	dcen	dmil	scen	fns	nns
+2025-02-06 02:00:00-03:30	1	1	0	0	0	2025-02-06 02:00:00.000000 -03:30 America/St_Johns	00.000000000
+2025-03-08 01:00:00-03:30	1	1	0	0	0	2025-03-08 01:00:00.000000 -03:30 America/St_Johns	00.000000000
+2025-03-08 02:00:00-03:30	1	1	0	0	0	2025-03-08 02:00:00.000000 -03:30 America/St_Johns	00.000000000
+2025-03-09 00:30:00-03:30	1	1	0	0	0	2025-03-09 00:30:00.000000 -03:30 America/St_Johns	00.000000000
+2025-03-09 01:30:00-03:30	1	1	0	0	0	2025-03-09 01:30:00.000000 -03:30 America/St_Johns	00.000000000
+2025-03-09 01:59:59-03:30	1	1	0	0	0	2025-03-09 01:59:59.000000 -03:30 America/St_Johns	59.000000000
+2025-03-09 01:59:59.999999-03:30	1	1	0	0	0	2025-03-09 01:59:59.999999 -03:30 America/St_Johns	59.999999000
+2025-03-09 03:00:00-02:30	1	1	0	0	0	2025-03-09 03:00:00.000000 -02:30 America/St_Johns	00.000000000
+2025-03-09 03:00:00.000001-02:30	1	1	0	0	0	2025-03-09 03:00:00.000001 -02:30 America/St_Johns	00.000001000
+2025-03-09 03:00:00.999999-02:30	1	1	0	0	0	2025-03-09 03:00:00.999999 -02:30 America/St_Johns	00.999999000
+2025-03-09 03:30:00-02:30	1	1	0	0	0	2025-03-09 03:30:00.000000 -02:30 America/St_Johns	00.000000000
+2025-03-09 04:30:00-02:30	1	1	0	0	0	2025-03-09 04:30:00.000000 -02:30 America/St_Johns	00.000000000
+2025-03-10 03:00:00-02:30	1	1	0	0	0	2025-03-10 03:00:00.000000 -02:30 America/St_Johns	00.000000000
+2025-03-10 04:00:00-02:30	1	1	0	0	0	2025-03-10 04:00:00.000000 -02:30 America/St_Johns	00.000000000
+2025-04-09 03:00:00-02:30	1	1	0	0	0	2025-04-09 03:00:00.000000 -02:30 America/St_Johns	00.000000000
+2025-10-02 02:00:00-02:30	1	1	0	0	0	2025-10-02 02:00:00.000000 -02:30 America/St_Johns	00.000000000
+2025-11-01 01:00:00-02:30	1	1	0	0	0	2025-11-01 01:00:00.000000 -02:30 America/St_Johns	00.000000000
+2025-11-01 02:00:00-02:30	1	1	0	0	0	2025-11-01 02:00:00.000000 -02:30 America/St_Johns	00.000000000
+2025-11-02 00:30:00-02:30	1	1	0	0	0	2025-11-02 00:30:00.000000 -02:30 America/St_Johns	00.000000000
+2025-11-02 01:00:00-03:30	1	1	0	0	0	2025-11-02 01:00:00.000000 -03:30 America/St_Johns	00.000000000
+2025-11-02 01:00:00.000001-03:30	1	1	0	0	0	2025-11-02 01:00:00.000001 -03:30 America/St_Johns	00.000001000
+2025-11-02 01:00:00.999999-03:30	1	1	0	0	0	2025-11-02 01:00:00.999999 -03:30 America/St_Johns	00.999999000
+2025-11-02 01:30:00-02:30	1	1	0	0	0	2025-11-02 01:30:00.000000 -02:30 America/St_Johns	00.000000000
+2025-11-02 01:30:00-03:30	1	1	0	0	0	2025-11-02 01:30:00.000000 -03:30 America/St_Johns	00.000000000
+2025-11-02 01:59:59-02:30	1	1	0	0	0	2025-11-02 01:59:59.000000 -02:30 America/St_Johns	59.000000000
+2025-11-02 01:59:59.999999-02:30	1	1	0	0	0	2025-11-02 01:59:59.999999 -02:30 America/St_Johns	59.999999000
+2025-11-02 02:30:00-03:30	1	1	0	0	0	2025-11-02 02:30:00.000000 -03:30 America/St_Johns	00.000000000
+2025-11-03 01:00:00-03:30	1	1	0	0	0	2025-11-03 01:00:00.000000 -03:30 America/St_Johns	00.000000000
+2025-11-03 02:00:00-03:30	1	1	0	0	0	2025-11-03 02:00:00.000000 -03:30 America/St_Johns	00.000000000
+2025-12-03 01:00:00-03:30	1	1	0	0	0	2025-12-03 01:00:00.000000 -03:30 America/St_Johns	00.000000000
+
+query
+SELECT part, count(*) AS n, sum(date_diff(part, anchor - INTERVAL '400 days 5 hours', ts)) AS diff_sum, sum(date_sub(part, ts, anchor + INTERVAL '400 days 5 hours')) AS sub_sum FROM p, parts WHERE zone = 'America/St_Johns' GROUP BY part ORDER BY part;
+----
+part	n	diff_sum	sub_sum
+century	30	0	0
+day	30	12030	12000
+decade	30	0	0
+hour	30	288145	288144
+isoyear	30	30	30
+microsecond	30	1037339999999998	1037340000000002
+millisecond	30	1037339999996	1037339999998
+minute	30	17288996	17288996
+month	30	405	390
+quarter	30	136	120
+second	30	1037339996	1037339998
+week	30	1708	1708
+year	30	30	30
+
+query
+SELECT fmt, count(*) AS n, md5(string_agg(strftime(ts, fmt), '|' ORDER BY ts NULLS FIRST)) AS digest FROM p, fmts WHERE zone = 'America/St_Johns' GROUP BY fmt ORDER BY fmt;
+----
+fmt	n	digest
+%G-%V %g %y %-m/%-d %-H %-I %-M %-S %g	30	4e6e64192b13662411609ce1eec4fd54
+%Y-%m-%d %H:%M:%S.%f %z %Z	30	dc8c9725448d31f3d207fee3795faf9d
+%a %d %b %Y %I:%M %p %j %U %W %u %w	30	a9b93f2aa11fa2f16e8c87261f22f031
+%c | %x | %X | %%	30	ab2117b463bc075b1ba6d85ddb8014cc
+
+query
 SELECT fmt, count(*) FILTER (WHERE strftime(ts, fmt) IS DISTINCT FROM CASE fmt WHEN '%Y-%m-%d %H:%M:%S.%f %z %Z' THEN strftime(ts, '%Y-%m-%d %H:%M:%S.%f %z %Z') WHEN '%a %d %b %Y %I:%M %p %j %U %W %u %w' THEN strftime(ts, '%a %d %b %Y %I:%M %p %j %U %W %u %w') WHEN '%G-%V %g %y %-m/%-d %-H %-I %-M %-S %g' THEN strftime(ts, '%G-%V %g %y %-m/%-d %-H %-I %-M %-S %g') ELSE strftime(ts, '%c | %x | %X | %%') END) AS mismatches FROM p, fmts GROUP BY fmt ORDER BY fmt;
 ----
 fmt	mismatches
@@ -1941,3 +2738,40 @@ statement error
 SELECT TIMESTAMPTZ '2025-01-01 00:00:00+00' + INTERVAL '9999999 years';
 ----
 db error: ERROR: ICU date overflows timestamp range
+
+
+statement error
+SELECT TIMESTAMPTZ '2025-01-01 00:00:00+00' - INTERVAL '9999999 years';
+----
+db error: ERROR: ICU date overflows timestamp range
+
+
+query
+SELECT date_diff('day', TIMESTAMPTZ '1850-06-01 12:00:00+00', TIMESTAMPTZ '2150-06-01 12:00:00+00'), date_sub('month', TIMESTAMPTZ '1850-06-01 12:00:00+00', TIMESTAMPTZ '2150-06-01 12:00:00+00'), date_diff('year', TIMESTAMPTZ '2150-06-01 12:00:00+00', TIMESTAMPTZ '1850-06-01 12:00:00+00'), strftime(TIMESTAMPTZ '1850-06-01 12:00:00+00', '%Y-%m-%d %H:%M %z'), strftime(TIMESTAMPTZ '2150-06-01 12:00:00+00', '%Y-%m-%d %H:%M %z');
+----
+date_diff	date_sub	date_diff	strftime	strftime
+109573	3600	-300	1850-06-01 12:53 +00:53:28	2150-06-01 14:00 +02
+
+query error db error: ERROR: Cannot subtract infinite timestamps
+SELECT ('infinity'::TIMESTAMPTZ - TIMESTAMPTZ '2025-01-01 00:00:00+00')::VARCHAR, age('infinity'::TIMESTAMPTZ, TIMESTAMPTZ '2025-01-01 00:00:00+00')::VARCHAR, (NULL::TIMESTAMPTZ - TIMESTAMPTZ '2025-01-01 00:00:00+00')::VARCHAR, age(NULL::TIMESTAMPTZ, TIMESTAMPTZ '2025-01-01 00:00:00+00')::VARCHAR, date_diff('decade', 'infinity'::TIMESTAMPTZ, TIMESTAMPTZ '2025-01-01 00:00:00+00'), strftime('infinity'::TIMESTAMPTZ::TIMESTAMPTZ_NS, '%Y'), strftime(NULL::TIMESTAMPTZ_NS, '%Y');
+
+query
+SELECT (TIMESTAMPTZ '1850-06-01 12:00:00+00' - TIMESTAMPTZ '2150-06-01 12:00:00+00')::VARCHAR, age(TIMESTAMPTZ '2150-06-01 12:00:00+00', TIMESTAMPTZ '1850-06-01 12:00:00+00')::VARCHAR, (TIMESTAMPTZ '2025-10-26 00:30:00.000123+00' - TIMESTAMPTZ '2025-10-24 22:00:00.000456+00')::VARCHAR, (TIMESTAMPTZ '1965-10-26 00:30:00.000123+00' - TIMESTAMPTZ '1965-10-24 22:00:00.000456+00')::VARCHAR, strftime(TIMESTAMPTZ '1965-10-26 00:30:00.000123+00'::TIMESTAMPTZ_NS, '%S.%n'), strftime(TIMESTAMPTZ '1850-06-01 12:00:00.5+00'::TIMESTAMPTZ_NS, '%Y-%m-%d %S.%n');
+----
+text	age	text	text	strftime	strftime
+-109573 days -01:06:32	300 years 01:06:32	1 day 02:29:59.999667	1 day 02:29:59.999667	00.000123000	1850-06-01 28.500000000
+
+statement ok
+SET Calendar = 'japanese';
+
+query
+SELECT strftime(TIMESTAMPTZ '2025-10-26 00:30:00+00', '%Y-%m-%d %H:%M %z'), (TIMESTAMPTZ '2025-10-26 00:30:00+00' + INTERVAL '1 day')::VARCHAR, date_diff('day', TIMESTAMPTZ '2025-10-25 00:30:00+00', TIMESTAMPTZ '2025-10-26 00:30:00+00');
+----
+strftime	text	date_diff
+2025-10-26 02:30 +02	2025-10-27 02:30:00+01	1
+
+statement ok
+RESET Calendar;
+
+statement ok
+SET TimeZone = 'Etc/UTC';

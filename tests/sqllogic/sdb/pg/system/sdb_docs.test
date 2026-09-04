@@ -1,0 +1,102 @@
+query
+SELECT count(*) > 100 FROM sdb_docs.docs;
+----
+?column?
+t
+
+query
+SELECT title FROM sdb_docs.docs WHERE path = 'sql/functions/search/scoring.md';
+----
+title
+Relevance Scoring
+
+query
+SELECT count(*) FROM sdb_docs.docs WHERE title IS NULL OR title = '' OR content IS NULL OR length(content) = 0 OR content_text IS NULL OR length(content_text) = 0;
+----
+count
+0
+
+query
+SELECT count(*) FROM sdb_docs.docs WHERE path NOT LIKE '%.md' AND path NOT LIKE '%.mdx';
+----
+count
+0
+
+query
+SELECT count(*) FROM sdb_docs.docs WHERE content LIKE '---%' OR content LIKE '%import SqlLogicTest%' OR content LIKE '%<SqlLogicTest%' OR content LIKE '%<DocCallout%' OR content LIKE '%{#%' OR content LIKE '%<!--%';
+----
+count
+0
+
+query
+SELECT length(hash), layout FROM sdb_docs.meta;
+----
+length	layout
+64	4
+
+query
+SELECT bool_or(path = 'sql/indexes/inverted/index.md') FROM sdb_docs.docs_fts WHERE content_text @@ 'inverted';
+----
+bool_or
+t
+
+query
+SELECT count(*) FROM (
+  SELECT path, BM25(docs_fts.tableoid) AS score
+  FROM sdb_docs.docs_fts
+  WHERE content_text @@ 'inverted index'
+  ORDER BY score DESC, path
+  LIMIT 5
+);
+----
+count
+5
+
+query
+SELECT count(*) > 1000, count(DISTINCT path) = (SELECT count(*) FROM sdb_docs.docs) FROM sdb_docs.sections;
+----
+?column?	?column?
+t	t
+
+query
+SELECT level, title FROM sdb_docs.sections WHERE path = 'sql/data_types/time.md';
+----
+level	title
+0	Time
+
+query
+SELECT level, breadcrumb, title FROM sdb_docs.sections WHERE path = 'sql/functions/search/scoring.md' AND title = 'Scorer Functions';
+----
+level	breadcrumb	title
+2	scorer-functions	Scorer Functions
+
+query
+SELECT count(*) FROM sdb_docs.sections WHERE title LIKE '%{#%' OR content LIKE '%<SqlLogicTest%' OR content LIKE '%<DocCallout%' OR content_text LIKE '%import SqlLogicTest%';
+----
+count
+0
+
+query
+SELECT bool_or(path = 'sql/indexes/inverted/index.md' AND title = 'Creating an inverted index') FROM (
+  SELECT path, title, BM25(sections_fts.tableoid) AS score
+  FROM sdb_docs.sections_fts
+  WHERE title @@ 'inverted index' OR content_text @@ 'inverted index'
+  ORDER BY score DESC, path, title
+  LIMIT 5
+);
+----
+bool_or
+t
+
+query
+SELECT count(*) > 0 FROM sdb_docs.sections_fts WHERE content_text @@ ts_phrase('inverted index');
+----
+?column?
+t
+
+query
+SELECT list_contains(t, 'the'), list_contains(t, 'a'), list_contains(t, 'is'), list_contains(t, 'index'), list_contains(t, 'structur')
+FROM (SELECT ts_lexize('sdb_docs.english', 'The index is a structure') AS t);
+----
+list_contains	list_contains	list_contains	list_contains	list_contains
+f	f	t	t	t

@@ -53,8 +53,8 @@ IRS_FORCE_INLINE inline duckdb::string_t CaseConvertTermAscii(
     return CaseConvertTermViewAscii<ToLower>(term);
   }
   auto* mem = arena.Allocate(std::max<size_t>(size, kTermViewSlack));
-  casing::CaseConvertAscii<ToLower>(reinterpret_cast<char*>(mem),
-                                    term.GetData(), size);
+  casing::CaseConvertAsciiTerm<ToLower>(reinterpret_cast<char*>(mem),
+                                        term.GetData(), size);
   return MakeTermViewPadded(mem, size);
 }
 

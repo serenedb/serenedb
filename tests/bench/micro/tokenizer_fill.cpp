@@ -1547,6 +1547,9 @@ BENCHMARK_CAPTURE(BM_FillColumn, pipeline_t2_ngram_long, &MakePipelineT2Ngram,
   ->Unit(benchmark::kMillisecond);
 TOKENIZER_BENCH(pipeline_t2syn, MakePipelineT2Syn, CsvCorpus);
 TOKENIZER_BENCH(pipeline_t2norm, MakePipelineT2Norm, CsvCorpus);
+BENCHMARK_CAPTURE(BM_Fill, pipeline_t2norm_long, &MakePipelineT2Norm,
+                  &LongCsvCorpus)
+  ->Unit(benchmark::kMillisecond);
 TOKENIZER_BENCH(pipeline_t2stem, MakePipelineT2Stem, CsvCorpus);
 TOKENIZER_BENCH(pipeline_t2sql, MakePipelineT2Sql, CsvCorpus);
 TOKENIZER_BENCH(pipeline_sqlsplit_norm, MakePipelineSqlSplitNorm, CsvCorpus);

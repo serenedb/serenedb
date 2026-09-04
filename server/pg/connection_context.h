@@ -106,11 +106,6 @@ class ConnectionContext final : public query::Transaction {
     _effective_role_id = _login_role_id;
   }
 
-  // Set when this transaction writes a role, cleared when it ends. Its own
-  // uncommitted version is the one it has to read, so while this holds it
-  // neither uses nor fills the shared role-closure cache.
-  bool wrote_roles = false;
-
   auto* GetSendBuffer() const { return _send_buffer; }
 
   auto* GetCopyInBridge() const { return _copy_in_bridge; }

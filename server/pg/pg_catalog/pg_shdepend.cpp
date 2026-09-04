@@ -52,7 +52,7 @@ ColumnAclsByTable CollectColumnAcls(duckdb::ClientContext& context,
                                     duckdb::Catalog& database) {
   ColumnAclsByTable out;
   VisitEntries<duckdb::TableCatalogEntry>(
-    &context, database, [&](const duckdb::TableCatalogEntry& table) {
+    context, database, [&](const duckdb::TableCatalogEntry& table) {
       if (!table.GetColumnAcls().empty()) {
         out.emplace(table.oid, &table.GetColumnAcls());
       }

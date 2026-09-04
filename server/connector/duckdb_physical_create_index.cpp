@@ -1112,9 +1112,8 @@ duckdb::PhysicalOperator& SereneDBCreateIndexPlan(
   const auto scan_column_count = input.table_scan.types.size();
 
   auto& create_index = input.planner.Make<SereneDBPhysicalCreateIndex>(
-    *relation, std::move(columns), std::move(pk_positions), database_id,
-    std::move(op.info), std::move(op.unbound_expressions),
-    std::move(bound_where), schema_entry, op.estimated_cardinality);
+    *relation, std::move(columns), database_id, std::move(op.info),
+    std::move(op.unbound_expressions), schema_entry, op.estimated_cardinality);
   if (projected_exprs.empty()) {
     create_index.children.push_back(input.table_scan);
     return create_index;

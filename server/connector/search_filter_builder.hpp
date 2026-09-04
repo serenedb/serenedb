@@ -33,7 +33,6 @@
 #include "catalog1/catalog.h"
 #include "catalog1/entry/inverted_index.h"
 #include "connector/term_dict.h"
-#include "search/inverted_index.h"
 
 namespace sdb::connector {
 

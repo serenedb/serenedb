@@ -47,7 +47,6 @@
 #include "connector/index_expression.hpp"
 #include "connector/inverted_store_index.h"
 #include "connector/primary_key.h"
-#include "search/inverted_index.h"
 #include "search/inverted_index_storage.h"
 #include "search/search_analyzer_impl.h"
 #include "search_remove_filter.hpp"

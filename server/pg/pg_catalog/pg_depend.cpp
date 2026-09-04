@@ -77,7 +77,7 @@ struct Referenced {
   Oid classid;
 };
 
-std::vector<PgDepend> CollectEdges(duckdb::ClientContext* context,
+std::vector<PgDepend> CollectEdges(duckdb::ClientContext& context,
                                    duckdb::Catalog& database) {
   std::vector<PgDepend> edges;
   containers::FlatHashMap<duckdb::idx_t, const duckdb::TableCatalogEntry*>
@@ -115,8 +115,9 @@ std::vector<PgDepend> CollectEdges(duckdb::ClientContext* context,
   auto dependents = catalog::EdgeAttachments(*context);
   const auto attnum = [](const duckdb::TableCatalogEntry& table,
                          duckdb::idx_t col) -> int32_t {
-    const auto* column = catalog::ColumnById(table.GetColumns(), col);
-    return column ? static_cast<int32_t>(column->Logical().index) + 1 : 0;
+    const auto& columns = table.GetColumns();
+    return col < columns.LogicalColumnCount() ? static_cast<int32_t>(col) + 1
+                                              : 0;
   };
   const auto emit = [&](duckdb::idx_t dependent, int32_t dependent_sub,
                         Oid dependent_class, duckdb::idx_t referenced,
@@ -243,8 +244,8 @@ std::vector<PgDepend> CollectEdges(duckdb::ClientContext* context,
       }
       const auto& fk = constraint->Cast<duckdb::ForeignKeyConstraint>();
       const duckdb::idx_t referenced{fk.host_referenced_id};
-      if (!catalog::StatesForeignKey(fk) || !referenced.isSet() ||
-          referenced == table_id) {
+      if (fk.info.type == duckdb::ForeignKeyType::FK_TYPE_PRIMARY_KEY_TABLE ||
+          !referenced.isSet() || referenced == table_id) {
         continue;
       }
       const auto ref_held = tables.find(referenced);
@@ -259,7 +260,7 @@ std::vector<PgDepend> CollectEdges(duckdb::ClientContext* context,
       if (!column.HasDefaultValue() && !column.Generated()) {
         continue;
       }
-      const duckdb::idx_t column_id{column.CatalogOid()};
+      const duckdb::idx_t column_id{column.Oid()};
       if (auto sub = attnum(*table, column_id)) {
         emit(column_id, 0, Oid{PgAttrdef::kId}, table_id, sub,
              Oid{PgClass::kId}, PgDepend::Deptype::Auto);
@@ -298,7 +299,7 @@ std::vector<PgDepend> CollectEdges(duckdb::ClientContext* context,
 
 template<>
 MaterializedData SystemTableSnapshot<PgDepend>::GetTableData() {
-  auto values = CollectEdges(&_config.GetClientContext(), GetDatabase());
+  auto values = CollectEdges(_config.GetClientContext(), GetDatabase());
 
   auto result = CreateColumns<PgDepend>(values.size());
   for (size_t row = 0; row < values.size(); ++row) {

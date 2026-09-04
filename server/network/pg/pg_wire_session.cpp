@@ -29,6 +29,8 @@
 #include <duckdb/catalog/catalog_entry/duck_table_entry.hpp>
 #include <duckdb/catalog/catalog_transaction.hpp>
 #include <duckdb/common/types/timestamp.hpp>
+#include <duckdb/main/attached_database.hpp>
+#include <duckdb/main/database_manager.hpp>
 #include <duckdb/parser/statement/create_statement.hpp>
 #include <duckdb/parser/statement/transaction_statement.hpp>
 
@@ -161,9 +163,15 @@ inline CopyKind ClassifyCopy(duckdb::SQLStatement& statement) {
 // statement's own transaction exists, so this reads committed state.
 inline duckdb::optional_ptr<duckdb::TableCatalogEntry> FindCopyTable(
   ConnectionContext& conn, const duckdb::QualifiedName& qname) {
-  auto& database =
-    duckdb::Catalog::GetCatalog(DuckDBEngine::Instance().instance(),
-                                duckdb::Identifier{conn.GetDatabase()});
+  // Not Catalog::GetCatalog(DatabaseInstance&, name): the pinned duckdb
+  // declares that overload and never defines it.
+  auto attached =
+    duckdb::DatabaseManager::Get(DuckDBEngine::Instance().instance())
+      .GetDatabase(duckdb::Identifier{conn.GetDatabase()});
+  if (!attached) {
+    return nullptr;
+  }
+  auto& database = attached->GetCatalog();
   const auto transaction =
     duckdb::CatalogTransaction::GetSystemTransaction(database.GetDatabase());
   const auto lookup = [&](const duckdb::Identifier& schema_name)

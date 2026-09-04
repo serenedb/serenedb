@@ -1068,6 +1068,13 @@ InvertedStoreIndex::EnsureInvertedFeedSession() {
   auto storage =
     catalog::InvertedStorageIn(context, db.GetCatalog(), _index_id);
   if (!storage) {
+    // The handle is the object's, not a version's, so the committed entry
+    // answers for a transaction whose snapshot predates the index: an online
+    // build injects this index before its entry commits, and a writer that
+    // began before that commits into it after.
+    storage = catalog::InvertedStorageIn(nullptr, db.GetCatalog(), _index_id);
+  }
+  if (!storage) {
     storage = _attached_storage;
   }
   SDB_ENSURE(storage, "inverted index replay: storage ", _index_id.id(),
@@ -1631,7 +1638,8 @@ std::string InvertedStoreIndex::GetConstraintViolationMessage(
 duckdb::unique_ptr<InvertedStoreIndex> MakeInjectedInvertedIndex(
   duckdb::ClientContext& context, duckdb::DataTable& storage,
   const duckdb::CreateTableInfo& table,
-  std::shared_ptr<const catalog::Index> inverted) {
+  std::shared_ptr<const catalog::Index> inverted,
+  std::shared_ptr<search::InvertedIndexStorage> attached_storage) {
   duckdb::vector<duckdb::column_t> column_ids;
   duckdb::vector<duckdb::unique_ptr<duckdb::Expression>> exprs;
   const auto& defs = storage.Columns();
@@ -1689,11 +1697,17 @@ duckdb::unique_ptr<InvertedStoreIndex> MakeInjectedInvertedIndex(
       *bound, catalog::IdOf(table), col_id_to_pos));
     has_predicate = true;
   }
-  // Resolved here, where the statement that publishes this object is still on
-  // the context: from the commit-time feed on, the writers reaching it are
-  // other transactions, which cannot see an index that has not committed yet.
-  auto attached_storage = catalog::InvertedStorageIn(
-    &context, storage.db.GetCatalog(), inverted->GetId());
+  // Resolved here when the caller holds no handle of its own: through the
+  // context first, so the statement that publishes this object sees its
+  // uncommitted entry, then the committed view.
+  if (!attached_storage) {
+    attached_storage = catalog::InvertedStorageIn(
+      &context, storage.db.GetCatalog(), inverted->GetId());
+  }
+  if (!attached_storage) {
+    attached_storage =
+      catalog::InvertedStorageIn(storage.db.GetCatalog(), inverted->GetId());
+  }
   return duckdb::make_uniq<InvertedStoreIndex>(
     std::string{inverted->GetName()}, duckdb::TableIOManager::Get(storage),
     column_ids, exprs, storage.db, std::move(inverted),
@@ -1731,7 +1745,8 @@ duckdb::unique_ptr<duckdb::BoundIndex> CreateInvertedInstance(
              index_id.id(), " missing");
   auto& table = entry->Cast<catalog::SereneDBTableEntry>();
   return MakeInjectedInvertedIndex(input.context, table.GetStorage(),
-                                   *table.Definition(), std::move(inverted));
+                                   *table.Definition(), std::move(inverted),
+                                   /*attached_storage=*/nullptr);
 }
 
 void InjectExternalIndexes(duckdb::DataTable& storage) {
@@ -1778,7 +1793,8 @@ void InjectExternalIndexes(duckdb::DataTable& storage) {
     catalog::WithStoreBindContext(
       storage.db, [&](duckdb::ClientContext& bind_ctx) {
         AddInjectedInvertedIndex(
-          list, MakeInjectedInvertedIndex(bind_ctx, storage, *table, index));
+          list, MakeInjectedInvertedIndex(bind_ctx, storage, *table, index,
+                                          /*attached_storage=*/nullptr));
       });
   }
 }

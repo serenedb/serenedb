@@ -125,22 +125,6 @@ void Catalog::RecordSequenceSeed(duckdb::ClientContext* /*context*/,
   GetCatalogStore().PutSequenceValue(id, seed);
 }
 
-// The lock is conditional and released by a guard, neither of which clang's
-// analysis can follow.
-ABSL_NO_THREAD_SAFETY_ANALYSIS bool Catalog::TryExcludingMutations(
-  absl::FunctionRef<void()> fn) {
-  // TryLock also fails when this very thread holds the mutex, which is the
-  // common case: a mutation attempts a fold on its way out.
-  if (!_mutex.TryLock()) {
-    return false;
-  }
-  const absl::Cleanup unlock = [this]() ABSL_NO_THREAD_SAFETY_ANALYSIS {
-    _mutex.Unlock();
-  };
-  fn();
-  return true;
-}
-
 void RequireDatabaseAccess(duckdb::ClientContext* context, ObjectId role,
                            const catalog::SereneDBDatabaseEntry* database,
                            AclMode need) {
@@ -214,9 +198,9 @@ void Catalog::DropResolved(duckdb::ClientContext* context, ObjectId parent_id,
     if (const auto* entry =
           catalog::Find<SereneDBIndexEntry>(context, parent_id, id)) {
       const auto index = entry->GetInfo();
-      DropIndexLocked(context, catalog::SchemaDatabaseId(context, parent_id),
-                      index->Cast<catalog::CreateIndexInfo>(),
-                      entry->GetInvertedData(), cascade);
+      DropIndexResolved(context, catalog::SchemaDatabaseId(context, parent_id),
+                        index->Cast<catalog::CreateIndexInfo>(),
+                        entry->GetInvertedData(), cascade);
       return;
     }
   }
@@ -291,10 +275,7 @@ void OpenBootStorage() {
 
 }  // namespace
 
-void Catalog::FinalizeLoad() {
-  absl::MutexLock lock{&_mutex};
-  OpenBootStorage();
-}
+void Catalog::FinalizeLoad() { OpenBootStorage(); }
 
 namespace {
 
@@ -410,10 +391,7 @@ void ReclaimOrphanSequenceCounters() {
 // walk records them: the record is written here.
 void BootstrapEntry(duckdb::unique_ptr<duckdb::CreateInfo> info,
                     const Permissions& perm) {
-  auto* wal = ScopedCatalogWal().get();
-  SDB_ENSURE(wal != nullptr, "the catalog log is not open");
-  wal->WriteCreateEntry(*info, perm);
-  EndClusterCatalogWal(/*committed=*/true);
+  WriteBootstrapEntry(*info, perm);
   ReplayCatalogRecord(std::move(info), perm, /*dropped=*/false);
 }
 
@@ -536,7 +514,8 @@ void InitCatalog() {
   EnsureSystemDatabase();
 
   bool has_roles = false;
-  catalog::VisitRoles(nullptr, [&](const Role&) { has_roles = true; });
+  catalog::VisitRoles(nullptr,
+                      [&](const SereneDBRoleEntry&) { has_roles = true; });
   if (!has_roles) {
     std::string initial_verifier;
     if (const char* pw = std::getenv("POSTGRES_PASSWORD");
@@ -551,16 +530,15 @@ void InitCatalog() {
       SDB_INFO(GENERAL, "bootstrap: initial password set for role '",
                StaticStrings::kDefaultUser, "' from POSTGRES_PASSWORD");
     }
-    auto root = duckdb::make_uniq<Role>(
+    auto root = duckdb::make_uniq<CreateRoleInfo>(
       id::kRootUser, persistence::RoleData{
                        .name = std::string{StaticStrings::kDefaultUser},
                        .options = static_cast<uint32_t>(RoleOption::All),
-                       .conn_limit = Role::kNoConnLimit,
-                       .valid_until = Role::kNoValidUntil,
+                       .conn_limit = CreateRoleInfo::kNoConnLimit,
+                       .valid_until = CreateRoleInfo::kNoValidUntil,
                        .password = {std::move(initial_verifier)},
                      });
-    BootstrapEntry(duckdb::make_uniq<CreateRoleInfo>(std::move(root)),
-                   Permissions{});
+    BootstrapEntry(std::move(root), Permissions{});
   }
 
   GetCatalog().FinalizeLoad();

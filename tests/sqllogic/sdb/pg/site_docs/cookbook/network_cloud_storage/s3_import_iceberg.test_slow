@@ -13,7 +13,7 @@ control substitution on
 # DOCS_TEST_BODY
 
 statement ok
-CREATE OR REPLACE SECRET (
+CREATE OR REPLACE SECRET s3_import_iceberg_${__DATABASE__} (
     TYPE s3,
     KEY_ID 'AKIAIOSFODNN7EXAMPLE',
     SECRET 'wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY',

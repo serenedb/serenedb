@@ -1,0 +1,798 @@
+statement ok
+SET TimeZone = 'Europe/Berlin';
+
+statement ok
+CREATE TABLE tod AS SELECT TIMESTAMP '2025-03-25 00:00:00' + INTERVAL (i * 37) MINUTE AS ts, (TIMESTAMP '2025-03-25 00:00:00' + INTERVAL (i * 37) MINUTE)::TIMESTAMPTZ AS tstz, (TIMESTAMP '2025-03-25 00:00:00' + INTERVAL (i * 37) MINUTE)::TIME AS tm, i AS v FROM range(20000) t(i);
+
+statement ok
+INSERT INTO tod VALUES (NULL, NULL, NULL, -1);
+
+statement ok
+CREATE TABLE msn AS SELECT TIMESTAMP '2025-01-01 00:00:00' + INTERVAL (i) MILLISECOND AS ts, (TIMESTAMP '2025-01-01 00:00:00' + INTERVAL (i) MILLISECOND)::TIMESTAMPTZ AS tstz, i AS v FROM range(20000) t(i);
+
+statement ok
+INSERT INTO msn VALUES (NULL, NULL, -1);
+
+statement ok
+SET TimeZone = 'Europe/Berlin';
+
+statement ok
+SET disabled_optimizers = 'compressed_materialization';
+
+statement ok
+CREATE OR REPLACE TABLE ref_tod AS
+SELECT 'tod strftime(ts, ''%H'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(ts, '%H') AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod strftime(ts, ''%H:%M'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(ts, '%H:%M') AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod strftime(ts, ''%H:%M:%S'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(ts, '%H:%M:%S') AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod strftime(ts, ''%I %p'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(ts, '%I %p') AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod strftime(ts, ''%I'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(ts, '%I') AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod strftime(tstz, ''%H'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(tstz, '%H') AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod strftime(tstz, ''%H:%M'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(tstz, '%H:%M') AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod strftime(tstz, ''hour %H of the day'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(tstz, 'hour %H of the day') AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod strftime(tstz, ''%I:%M %p'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(tstz, '%I:%M %p') AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod strftime(tstz, ''%H:%M %z'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(tstz, '%H:%M %z') AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod date_trunc(''hour'', ts)::TIME' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_trunc('hour', ts)::TIME AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod date_trunc(''minute'', ts)::TIME' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_trunc('minute', ts)::TIME AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod date_trunc(''day'', ts)::TIME' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_trunc('day', ts)::TIME AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod date_trunc(''hour'', tstz)::TIME' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_trunc('hour', tstz)::TIME AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod date_trunc(''minute'', tstz)::TIME' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_trunc('minute', tstz)::TIME AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod date_trunc(''day'', tstz)::TIME' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_trunc('day', tstz)::TIME AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod time_bucket(INTERVAL ''15 minutes'', ts)::TIME' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '15 minutes', ts)::TIME AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod time_bucket(INTERVAL ''30 minutes'', tstz)::TIME' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '30 minutes', tstz)::TIME AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod time_bucket(INTERVAL ''15 minutes'', tstz, ''America/Havana'')::TIME' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '15 minutes', tstz, 'America/Havana')::TIME AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod ts::TIME' AS shape, k::VARCHAR AS k, c, s FROM (SELECT ts::TIME AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod time_bucket(INTERVAL ''15 minutes'', tm)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '15 minutes', tm) AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod time_bucket(INTERVAL ''1 hour'', tm)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '1 hour', tm) AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod time_bucket(INTERVAL ''90 minutes'', tm)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '90 minutes', tm) AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod time_bucket(INTERVAL ''7 minutes'', tm)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '7 minutes', tm) AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod time_bucket(INTERVAL ''6 hours'', tm)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '6 hours', tm) AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'msn date_trunc(''millisecond'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_trunc('millisecond', ts) AS k, count(*) AS c, sum(v) AS s FROM msn GROUP BY 1)
+UNION ALL SELECT 'msn date_trunc(''microsecond'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_trunc('microsecond', ts) AS k, count(*) AS c, sum(v) AS s FROM msn GROUP BY 1)
+UNION ALL SELECT 'msn date_trunc(''millisecond'', tstz)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_trunc('millisecond', tstz) AS k, count(*) AS c, sum(v) AS s FROM msn GROUP BY 1)
+UNION ALL SELECT 'tod time_bucket(INTERVAL ''1 day'', tstz, ''America/Havana'', TIMESTAMPTZ ''2025-01-01 05:00:00+00'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '1 day', tstz, 'America/Havana', TIMESTAMPTZ '2025-01-01 05:00:00+00') AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod time_bucket(INTERVAL ''1 month'', tstz, ''America/Havana'', TIMESTAMPTZ ''2024-02-15 05:00:00+00'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '1 month', tstz, 'America/Havana', TIMESTAMPTZ '2024-02-15 05:00:00+00') AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod time_bucket(INTERVAL ''90 minutes'', tstz, ''Europe/Berlin'', TIMESTAMPTZ ''2025-01-01 00:07:00+00'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '90 minutes', tstz, 'Europe/Berlin', TIMESTAMPTZ '2025-01-01 00:07:00+00') AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod time_bucket(INTERVAL ''2 days'', tstz, ''Australia/Lord_Howe'', TIMESTAMPTZ ''2025-03-01 00:00:00+00'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '2 days', tstz, 'Australia/Lord_Howe', TIMESTAMPTZ '2025-03-01 00:00:00+00') AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod time_bucket(INTERVAL ''3 months'', tstz, ''Pacific/Kiritimati'', TIMESTAMPTZ ''2024-05-01 00:00:00+00'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '3 months', tstz, 'Pacific/Kiritimati', TIMESTAMPTZ '2024-05-01 00:00:00+00') AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod time_bucket(INTERVAL ''45 minutes'', tstz, ''Asia/Kathmandu'', TIMESTAMPTZ ''2025-06-01 00:00:00+00'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '45 minutes', tstz, 'Asia/Kathmandu', TIMESTAMPTZ '2025-06-01 00:00:00+00') AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+;
+
+statement ok
+SET disabled_optimizers = '';
+
+statement ok
+CREATE OR REPLACE TABLE got_tod AS
+SELECT 'tod strftime(ts, ''%H'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(ts, '%H') AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod strftime(ts, ''%H:%M'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(ts, '%H:%M') AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod strftime(ts, ''%H:%M:%S'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(ts, '%H:%M:%S') AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod strftime(ts, ''%I %p'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(ts, '%I %p') AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod strftime(ts, ''%I'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(ts, '%I') AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod strftime(tstz, ''%H'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(tstz, '%H') AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod strftime(tstz, ''%H:%M'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(tstz, '%H:%M') AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod strftime(tstz, ''hour %H of the day'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(tstz, 'hour %H of the day') AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod strftime(tstz, ''%I:%M %p'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(tstz, '%I:%M %p') AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod strftime(tstz, ''%H:%M %z'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(tstz, '%H:%M %z') AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod date_trunc(''hour'', ts)::TIME' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_trunc('hour', ts)::TIME AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod date_trunc(''minute'', ts)::TIME' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_trunc('minute', ts)::TIME AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod date_trunc(''day'', ts)::TIME' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_trunc('day', ts)::TIME AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod date_trunc(''hour'', tstz)::TIME' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_trunc('hour', tstz)::TIME AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod date_trunc(''minute'', tstz)::TIME' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_trunc('minute', tstz)::TIME AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod date_trunc(''day'', tstz)::TIME' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_trunc('day', tstz)::TIME AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod time_bucket(INTERVAL ''15 minutes'', ts)::TIME' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '15 minutes', ts)::TIME AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod time_bucket(INTERVAL ''30 minutes'', tstz)::TIME' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '30 minutes', tstz)::TIME AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod time_bucket(INTERVAL ''15 minutes'', tstz, ''America/Havana'')::TIME' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '15 minutes', tstz, 'America/Havana')::TIME AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod ts::TIME' AS shape, k::VARCHAR AS k, c, s FROM (SELECT ts::TIME AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod time_bucket(INTERVAL ''15 minutes'', tm)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '15 minutes', tm) AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod time_bucket(INTERVAL ''1 hour'', tm)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '1 hour', tm) AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod time_bucket(INTERVAL ''90 minutes'', tm)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '90 minutes', tm) AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod time_bucket(INTERVAL ''7 minutes'', tm)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '7 minutes', tm) AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod time_bucket(INTERVAL ''6 hours'', tm)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '6 hours', tm) AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'msn date_trunc(''millisecond'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_trunc('millisecond', ts) AS k, count(*) AS c, sum(v) AS s FROM msn GROUP BY 1)
+UNION ALL SELECT 'msn date_trunc(''microsecond'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_trunc('microsecond', ts) AS k, count(*) AS c, sum(v) AS s FROM msn GROUP BY 1)
+UNION ALL SELECT 'msn date_trunc(''millisecond'', tstz)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_trunc('millisecond', tstz) AS k, count(*) AS c, sum(v) AS s FROM msn GROUP BY 1)
+UNION ALL SELECT 'tod time_bucket(INTERVAL ''1 day'', tstz, ''America/Havana'', TIMESTAMPTZ ''2025-01-01 05:00:00+00'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '1 day', tstz, 'America/Havana', TIMESTAMPTZ '2025-01-01 05:00:00+00') AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod time_bucket(INTERVAL ''1 month'', tstz, ''America/Havana'', TIMESTAMPTZ ''2024-02-15 05:00:00+00'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '1 month', tstz, 'America/Havana', TIMESTAMPTZ '2024-02-15 05:00:00+00') AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod time_bucket(INTERVAL ''90 minutes'', tstz, ''Europe/Berlin'', TIMESTAMPTZ ''2025-01-01 00:07:00+00'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '90 minutes', tstz, 'Europe/Berlin', TIMESTAMPTZ '2025-01-01 00:07:00+00') AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod time_bucket(INTERVAL ''2 days'', tstz, ''Australia/Lord_Howe'', TIMESTAMPTZ ''2025-03-01 00:00:00+00'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '2 days', tstz, 'Australia/Lord_Howe', TIMESTAMPTZ '2025-03-01 00:00:00+00') AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod time_bucket(INTERVAL ''3 months'', tstz, ''Pacific/Kiritimati'', TIMESTAMPTZ ''2024-05-01 00:00:00+00'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '3 months', tstz, 'Pacific/Kiritimati', TIMESTAMPTZ '2024-05-01 00:00:00+00') AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod time_bucket(INTERVAL ''45 minutes'', tstz, ''Asia/Kathmandu'', TIMESTAMPTZ ''2025-06-01 00:00:00+00'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '45 minutes', tstz, 'Asia/Kathmandu', TIMESTAMPTZ '2025-06-01 00:00:00+00') AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+;
+
+query
+SELECT count(*) AS rows, count(DISTINCT shape) AS shapes, (SELECT count(*) FROM (SELECT * FROM ref_tod EXCEPT ALL SELECT * FROM got_tod)) AS ref_minus_got, (SELECT count(*) FROM (SELECT * FROM got_tod EXCEPT ALL SELECT * FROM ref_tod)) AS got_minus_ref FROM ref_tod;
+----
+rows	shapes	ref_minus_got	got_minus_ref
+99200	34	0	0
+
+statement ok
+SET TimeZone = 'America/Havana';
+
+statement ok
+SET disabled_optimizers = 'compressed_materialization';
+
+statement ok
+CREATE OR REPLACE TABLE ref_tod AS
+SELECT 'tod strftime(ts, ''%H'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(ts, '%H') AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod strftime(ts, ''%H:%M'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(ts, '%H:%M') AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod strftime(ts, ''%H:%M:%S'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(ts, '%H:%M:%S') AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod strftime(ts, ''%I %p'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(ts, '%I %p') AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod strftime(ts, ''%I'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(ts, '%I') AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod strftime(tstz, ''%H'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(tstz, '%H') AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod strftime(tstz, ''%H:%M'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(tstz, '%H:%M') AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod strftime(tstz, ''hour %H of the day'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(tstz, 'hour %H of the day') AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod strftime(tstz, ''%I:%M %p'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(tstz, '%I:%M %p') AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod strftime(tstz, ''%H:%M %z'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(tstz, '%H:%M %z') AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod date_trunc(''hour'', ts)::TIME' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_trunc('hour', ts)::TIME AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod date_trunc(''minute'', ts)::TIME' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_trunc('minute', ts)::TIME AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod date_trunc(''day'', ts)::TIME' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_trunc('day', ts)::TIME AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod date_trunc(''hour'', tstz)::TIME' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_trunc('hour', tstz)::TIME AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod date_trunc(''minute'', tstz)::TIME' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_trunc('minute', tstz)::TIME AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod date_trunc(''day'', tstz)::TIME' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_trunc('day', tstz)::TIME AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod time_bucket(INTERVAL ''15 minutes'', ts)::TIME' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '15 minutes', ts)::TIME AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod time_bucket(INTERVAL ''30 minutes'', tstz)::TIME' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '30 minutes', tstz)::TIME AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod time_bucket(INTERVAL ''15 minutes'', tstz, ''America/Havana'')::TIME' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '15 minutes', tstz, 'America/Havana')::TIME AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod ts::TIME' AS shape, k::VARCHAR AS k, c, s FROM (SELECT ts::TIME AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod time_bucket(INTERVAL ''15 minutes'', tm)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '15 minutes', tm) AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod time_bucket(INTERVAL ''1 hour'', tm)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '1 hour', tm) AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod time_bucket(INTERVAL ''90 minutes'', tm)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '90 minutes', tm) AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod time_bucket(INTERVAL ''7 minutes'', tm)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '7 minutes', tm) AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod time_bucket(INTERVAL ''6 hours'', tm)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '6 hours', tm) AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'msn date_trunc(''millisecond'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_trunc('millisecond', ts) AS k, count(*) AS c, sum(v) AS s FROM msn GROUP BY 1)
+UNION ALL SELECT 'msn date_trunc(''microsecond'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_trunc('microsecond', ts) AS k, count(*) AS c, sum(v) AS s FROM msn GROUP BY 1)
+UNION ALL SELECT 'msn date_trunc(''millisecond'', tstz)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_trunc('millisecond', tstz) AS k, count(*) AS c, sum(v) AS s FROM msn GROUP BY 1)
+UNION ALL SELECT 'tod time_bucket(INTERVAL ''1 day'', tstz, ''America/Havana'', TIMESTAMPTZ ''2025-01-01 05:00:00+00'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '1 day', tstz, 'America/Havana', TIMESTAMPTZ '2025-01-01 05:00:00+00') AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod time_bucket(INTERVAL ''1 month'', tstz, ''America/Havana'', TIMESTAMPTZ ''2024-02-15 05:00:00+00'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '1 month', tstz, 'America/Havana', TIMESTAMPTZ '2024-02-15 05:00:00+00') AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod time_bucket(INTERVAL ''90 minutes'', tstz, ''Europe/Berlin'', TIMESTAMPTZ ''2025-01-01 00:07:00+00'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '90 minutes', tstz, 'Europe/Berlin', TIMESTAMPTZ '2025-01-01 00:07:00+00') AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod time_bucket(INTERVAL ''2 days'', tstz, ''Australia/Lord_Howe'', TIMESTAMPTZ ''2025-03-01 00:00:00+00'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '2 days', tstz, 'Australia/Lord_Howe', TIMESTAMPTZ '2025-03-01 00:00:00+00') AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod time_bucket(INTERVAL ''3 months'', tstz, ''Pacific/Kiritimati'', TIMESTAMPTZ ''2024-05-01 00:00:00+00'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '3 months', tstz, 'Pacific/Kiritimati', TIMESTAMPTZ '2024-05-01 00:00:00+00') AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod time_bucket(INTERVAL ''45 minutes'', tstz, ''Asia/Kathmandu'', TIMESTAMPTZ ''2025-06-01 00:00:00+00'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '45 minutes', tstz, 'Asia/Kathmandu', TIMESTAMPTZ '2025-06-01 00:00:00+00') AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+;
+
+statement ok
+SET disabled_optimizers = '';
+
+statement ok
+CREATE OR REPLACE TABLE got_tod AS
+SELECT 'tod strftime(ts, ''%H'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(ts, '%H') AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod strftime(ts, ''%H:%M'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(ts, '%H:%M') AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod strftime(ts, ''%H:%M:%S'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(ts, '%H:%M:%S') AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod strftime(ts, ''%I %p'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(ts, '%I %p') AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod strftime(ts, ''%I'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(ts, '%I') AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod strftime(tstz, ''%H'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(tstz, '%H') AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod strftime(tstz, ''%H:%M'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(tstz, '%H:%M') AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod strftime(tstz, ''hour %H of the day'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(tstz, 'hour %H of the day') AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod strftime(tstz, ''%I:%M %p'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(tstz, '%I:%M %p') AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod strftime(tstz, ''%H:%M %z'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(tstz, '%H:%M %z') AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod date_trunc(''hour'', ts)::TIME' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_trunc('hour', ts)::TIME AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod date_trunc(''minute'', ts)::TIME' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_trunc('minute', ts)::TIME AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod date_trunc(''day'', ts)::TIME' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_trunc('day', ts)::TIME AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod date_trunc(''hour'', tstz)::TIME' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_trunc('hour', tstz)::TIME AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod date_trunc(''minute'', tstz)::TIME' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_trunc('minute', tstz)::TIME AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod date_trunc(''day'', tstz)::TIME' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_trunc('day', tstz)::TIME AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod time_bucket(INTERVAL ''15 minutes'', ts)::TIME' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '15 minutes', ts)::TIME AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod time_bucket(INTERVAL ''30 minutes'', tstz)::TIME' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '30 minutes', tstz)::TIME AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod time_bucket(INTERVAL ''15 minutes'', tstz, ''America/Havana'')::TIME' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '15 minutes', tstz, 'America/Havana')::TIME AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod ts::TIME' AS shape, k::VARCHAR AS k, c, s FROM (SELECT ts::TIME AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod time_bucket(INTERVAL ''15 minutes'', tm)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '15 minutes', tm) AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod time_bucket(INTERVAL ''1 hour'', tm)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '1 hour', tm) AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod time_bucket(INTERVAL ''90 minutes'', tm)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '90 minutes', tm) AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod time_bucket(INTERVAL ''7 minutes'', tm)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '7 minutes', tm) AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod time_bucket(INTERVAL ''6 hours'', tm)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '6 hours', tm) AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'msn date_trunc(''millisecond'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_trunc('millisecond', ts) AS k, count(*) AS c, sum(v) AS s FROM msn GROUP BY 1)
+UNION ALL SELECT 'msn date_trunc(''microsecond'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_trunc('microsecond', ts) AS k, count(*) AS c, sum(v) AS s FROM msn GROUP BY 1)
+UNION ALL SELECT 'msn date_trunc(''millisecond'', tstz)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_trunc('millisecond', tstz) AS k, count(*) AS c, sum(v) AS s FROM msn GROUP BY 1)
+UNION ALL SELECT 'tod time_bucket(INTERVAL ''1 day'', tstz, ''America/Havana'', TIMESTAMPTZ ''2025-01-01 05:00:00+00'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '1 day', tstz, 'America/Havana', TIMESTAMPTZ '2025-01-01 05:00:00+00') AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod time_bucket(INTERVAL ''1 month'', tstz, ''America/Havana'', TIMESTAMPTZ ''2024-02-15 05:00:00+00'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '1 month', tstz, 'America/Havana', TIMESTAMPTZ '2024-02-15 05:00:00+00') AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod time_bucket(INTERVAL ''90 minutes'', tstz, ''Europe/Berlin'', TIMESTAMPTZ ''2025-01-01 00:07:00+00'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '90 minutes', tstz, 'Europe/Berlin', TIMESTAMPTZ '2025-01-01 00:07:00+00') AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod time_bucket(INTERVAL ''2 days'', tstz, ''Australia/Lord_Howe'', TIMESTAMPTZ ''2025-03-01 00:00:00+00'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '2 days', tstz, 'Australia/Lord_Howe', TIMESTAMPTZ '2025-03-01 00:00:00+00') AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod time_bucket(INTERVAL ''3 months'', tstz, ''Pacific/Kiritimati'', TIMESTAMPTZ ''2024-05-01 00:00:00+00'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '3 months', tstz, 'Pacific/Kiritimati', TIMESTAMPTZ '2024-05-01 00:00:00+00') AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod time_bucket(INTERVAL ''45 minutes'', tstz, ''Asia/Kathmandu'', TIMESTAMPTZ ''2025-06-01 00:00:00+00'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '45 minutes', tstz, 'Asia/Kathmandu', TIMESTAMPTZ '2025-06-01 00:00:00+00') AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+;
+
+query
+SELECT count(*) AS rows, count(DISTINCT shape) AS shapes, (SELECT count(*) FROM (SELECT * FROM ref_tod EXCEPT ALL SELECT * FROM got_tod)) AS ref_minus_got, (SELECT count(*) FROM (SELECT * FROM got_tod EXCEPT ALL SELECT * FROM ref_tod)) AS got_minus_ref FROM ref_tod;
+----
+rows	shapes	ref_minus_got	got_minus_ref
+99201	34	0	0
+
+statement ok
+SET TimeZone = 'Australia/Lord_Howe';
+
+statement ok
+SET disabled_optimizers = 'compressed_materialization';
+
+statement ok
+CREATE OR REPLACE TABLE ref_tod AS
+SELECT 'tod strftime(ts, ''%H'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(ts, '%H') AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod strftime(ts, ''%H:%M'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(ts, '%H:%M') AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod strftime(ts, ''%H:%M:%S'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(ts, '%H:%M:%S') AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod strftime(ts, ''%I %p'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(ts, '%I %p') AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod strftime(ts, ''%I'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(ts, '%I') AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod strftime(tstz, ''%H'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(tstz, '%H') AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod strftime(tstz, ''%H:%M'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(tstz, '%H:%M') AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod strftime(tstz, ''hour %H of the day'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(tstz, 'hour %H of the day') AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod strftime(tstz, ''%I:%M %p'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(tstz, '%I:%M %p') AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod strftime(tstz, ''%H:%M %z'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(tstz, '%H:%M %z') AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod date_trunc(''hour'', ts)::TIME' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_trunc('hour', ts)::TIME AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod date_trunc(''minute'', ts)::TIME' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_trunc('minute', ts)::TIME AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod date_trunc(''day'', ts)::TIME' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_trunc('day', ts)::TIME AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod date_trunc(''hour'', tstz)::TIME' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_trunc('hour', tstz)::TIME AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod date_trunc(''minute'', tstz)::TIME' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_trunc('minute', tstz)::TIME AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod date_trunc(''day'', tstz)::TIME' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_trunc('day', tstz)::TIME AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod time_bucket(INTERVAL ''15 minutes'', ts)::TIME' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '15 minutes', ts)::TIME AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod time_bucket(INTERVAL ''30 minutes'', tstz)::TIME' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '30 minutes', tstz)::TIME AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod time_bucket(INTERVAL ''15 minutes'', tstz, ''America/Havana'')::TIME' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '15 minutes', tstz, 'America/Havana')::TIME AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod ts::TIME' AS shape, k::VARCHAR AS k, c, s FROM (SELECT ts::TIME AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod time_bucket(INTERVAL ''15 minutes'', tm)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '15 minutes', tm) AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod time_bucket(INTERVAL ''1 hour'', tm)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '1 hour', tm) AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod time_bucket(INTERVAL ''90 minutes'', tm)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '90 minutes', tm) AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod time_bucket(INTERVAL ''7 minutes'', tm)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '7 minutes', tm) AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod time_bucket(INTERVAL ''6 hours'', tm)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '6 hours', tm) AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'msn date_trunc(''millisecond'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_trunc('millisecond', ts) AS k, count(*) AS c, sum(v) AS s FROM msn GROUP BY 1)
+UNION ALL SELECT 'msn date_trunc(''microsecond'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_trunc('microsecond', ts) AS k, count(*) AS c, sum(v) AS s FROM msn GROUP BY 1)
+UNION ALL SELECT 'msn date_trunc(''millisecond'', tstz)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_trunc('millisecond', tstz) AS k, count(*) AS c, sum(v) AS s FROM msn GROUP BY 1)
+UNION ALL SELECT 'tod time_bucket(INTERVAL ''1 day'', tstz, ''America/Havana'', TIMESTAMPTZ ''2025-01-01 05:00:00+00'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '1 day', tstz, 'America/Havana', TIMESTAMPTZ '2025-01-01 05:00:00+00') AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod time_bucket(INTERVAL ''1 month'', tstz, ''America/Havana'', TIMESTAMPTZ ''2024-02-15 05:00:00+00'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '1 month', tstz, 'America/Havana', TIMESTAMPTZ '2024-02-15 05:00:00+00') AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod time_bucket(INTERVAL ''90 minutes'', tstz, ''Europe/Berlin'', TIMESTAMPTZ ''2025-01-01 00:07:00+00'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '90 minutes', tstz, 'Europe/Berlin', TIMESTAMPTZ '2025-01-01 00:07:00+00') AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod time_bucket(INTERVAL ''2 days'', tstz, ''Australia/Lord_Howe'', TIMESTAMPTZ ''2025-03-01 00:00:00+00'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '2 days', tstz, 'Australia/Lord_Howe', TIMESTAMPTZ '2025-03-01 00:00:00+00') AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod time_bucket(INTERVAL ''3 months'', tstz, ''Pacific/Kiritimati'', TIMESTAMPTZ ''2024-05-01 00:00:00+00'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '3 months', tstz, 'Pacific/Kiritimati', TIMESTAMPTZ '2024-05-01 00:00:00+00') AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod time_bucket(INTERVAL ''45 minutes'', tstz, ''Asia/Kathmandu'', TIMESTAMPTZ ''2025-06-01 00:00:00+00'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '45 minutes', tstz, 'Asia/Kathmandu', TIMESTAMPTZ '2025-06-01 00:00:00+00') AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+;
+
+statement ok
+SET disabled_optimizers = '';
+
+statement ok
+CREATE OR REPLACE TABLE got_tod AS
+SELECT 'tod strftime(ts, ''%H'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(ts, '%H') AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod strftime(ts, ''%H:%M'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(ts, '%H:%M') AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod strftime(ts, ''%H:%M:%S'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(ts, '%H:%M:%S') AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod strftime(ts, ''%I %p'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(ts, '%I %p') AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod strftime(ts, ''%I'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(ts, '%I') AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod strftime(tstz, ''%H'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(tstz, '%H') AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod strftime(tstz, ''%H:%M'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(tstz, '%H:%M') AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod strftime(tstz, ''hour %H of the day'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(tstz, 'hour %H of the day') AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod strftime(tstz, ''%I:%M %p'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(tstz, '%I:%M %p') AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod strftime(tstz, ''%H:%M %z'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(tstz, '%H:%M %z') AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod date_trunc(''hour'', ts)::TIME' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_trunc('hour', ts)::TIME AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod date_trunc(''minute'', ts)::TIME' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_trunc('minute', ts)::TIME AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod date_trunc(''day'', ts)::TIME' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_trunc('day', ts)::TIME AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod date_trunc(''hour'', tstz)::TIME' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_trunc('hour', tstz)::TIME AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod date_trunc(''minute'', tstz)::TIME' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_trunc('minute', tstz)::TIME AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod date_trunc(''day'', tstz)::TIME' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_trunc('day', tstz)::TIME AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod time_bucket(INTERVAL ''15 minutes'', ts)::TIME' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '15 minutes', ts)::TIME AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod time_bucket(INTERVAL ''30 minutes'', tstz)::TIME' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '30 minutes', tstz)::TIME AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod time_bucket(INTERVAL ''15 minutes'', tstz, ''America/Havana'')::TIME' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '15 minutes', tstz, 'America/Havana')::TIME AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod ts::TIME' AS shape, k::VARCHAR AS k, c, s FROM (SELECT ts::TIME AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod time_bucket(INTERVAL ''15 minutes'', tm)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '15 minutes', tm) AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod time_bucket(INTERVAL ''1 hour'', tm)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '1 hour', tm) AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod time_bucket(INTERVAL ''90 minutes'', tm)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '90 minutes', tm) AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod time_bucket(INTERVAL ''7 minutes'', tm)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '7 minutes', tm) AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod time_bucket(INTERVAL ''6 hours'', tm)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '6 hours', tm) AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'msn date_trunc(''millisecond'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_trunc('millisecond', ts) AS k, count(*) AS c, sum(v) AS s FROM msn GROUP BY 1)
+UNION ALL SELECT 'msn date_trunc(''microsecond'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_trunc('microsecond', ts) AS k, count(*) AS c, sum(v) AS s FROM msn GROUP BY 1)
+UNION ALL SELECT 'msn date_trunc(''millisecond'', tstz)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_trunc('millisecond', tstz) AS k, count(*) AS c, sum(v) AS s FROM msn GROUP BY 1)
+UNION ALL SELECT 'tod time_bucket(INTERVAL ''1 day'', tstz, ''America/Havana'', TIMESTAMPTZ ''2025-01-01 05:00:00+00'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '1 day', tstz, 'America/Havana', TIMESTAMPTZ '2025-01-01 05:00:00+00') AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod time_bucket(INTERVAL ''1 month'', tstz, ''America/Havana'', TIMESTAMPTZ ''2024-02-15 05:00:00+00'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '1 month', tstz, 'America/Havana', TIMESTAMPTZ '2024-02-15 05:00:00+00') AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod time_bucket(INTERVAL ''90 minutes'', tstz, ''Europe/Berlin'', TIMESTAMPTZ ''2025-01-01 00:07:00+00'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '90 minutes', tstz, 'Europe/Berlin', TIMESTAMPTZ '2025-01-01 00:07:00+00') AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod time_bucket(INTERVAL ''2 days'', tstz, ''Australia/Lord_Howe'', TIMESTAMPTZ ''2025-03-01 00:00:00+00'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '2 days', tstz, 'Australia/Lord_Howe', TIMESTAMPTZ '2025-03-01 00:00:00+00') AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod time_bucket(INTERVAL ''3 months'', tstz, ''Pacific/Kiritimati'', TIMESTAMPTZ ''2024-05-01 00:00:00+00'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '3 months', tstz, 'Pacific/Kiritimati', TIMESTAMPTZ '2024-05-01 00:00:00+00') AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod time_bucket(INTERVAL ''45 minutes'', tstz, ''Asia/Kathmandu'', TIMESTAMPTZ ''2025-06-01 00:00:00+00'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '45 minutes', tstz, 'Asia/Kathmandu', TIMESTAMPTZ '2025-06-01 00:00:00+00') AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+;
+
+query
+SELECT count(*) AS rows, count(DISTINCT shape) AS shapes, (SELECT count(*) FROM (SELECT * FROM ref_tod EXCEPT ALL SELECT * FROM got_tod)) AS ref_minus_got, (SELECT count(*) FROM (SELECT * FROM got_tod EXCEPT ALL SELECT * FROM ref_tod)) AS got_minus_ref FROM ref_tod;
+----
+rows	shapes	ref_minus_got	got_minus_ref
+99201	34	0	0
+
+statement ok
+SET TimeZone = 'Pacific/Chatham';
+
+statement ok
+SET disabled_optimizers = 'compressed_materialization';
+
+statement ok
+CREATE OR REPLACE TABLE ref_tod AS
+SELECT 'tod strftime(ts, ''%H'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(ts, '%H') AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod strftime(ts, ''%H:%M'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(ts, '%H:%M') AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod strftime(ts, ''%H:%M:%S'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(ts, '%H:%M:%S') AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod strftime(ts, ''%I %p'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(ts, '%I %p') AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod strftime(ts, ''%I'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(ts, '%I') AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod strftime(tstz, ''%H'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(tstz, '%H') AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod strftime(tstz, ''%H:%M'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(tstz, '%H:%M') AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod strftime(tstz, ''hour %H of the day'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(tstz, 'hour %H of the day') AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod strftime(tstz, ''%I:%M %p'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(tstz, '%I:%M %p') AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod strftime(tstz, ''%H:%M %z'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(tstz, '%H:%M %z') AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod date_trunc(''hour'', ts)::TIME' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_trunc('hour', ts)::TIME AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod date_trunc(''minute'', ts)::TIME' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_trunc('minute', ts)::TIME AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod date_trunc(''day'', ts)::TIME' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_trunc('day', ts)::TIME AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod date_trunc(''hour'', tstz)::TIME' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_trunc('hour', tstz)::TIME AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod date_trunc(''minute'', tstz)::TIME' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_trunc('minute', tstz)::TIME AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod date_trunc(''day'', tstz)::TIME' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_trunc('day', tstz)::TIME AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod time_bucket(INTERVAL ''15 minutes'', ts)::TIME' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '15 minutes', ts)::TIME AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod time_bucket(INTERVAL ''30 minutes'', tstz)::TIME' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '30 minutes', tstz)::TIME AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod time_bucket(INTERVAL ''15 minutes'', tstz, ''America/Havana'')::TIME' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '15 minutes', tstz, 'America/Havana')::TIME AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod ts::TIME' AS shape, k::VARCHAR AS k, c, s FROM (SELECT ts::TIME AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod time_bucket(INTERVAL ''15 minutes'', tm)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '15 minutes', tm) AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod time_bucket(INTERVAL ''1 hour'', tm)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '1 hour', tm) AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod time_bucket(INTERVAL ''90 minutes'', tm)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '90 minutes', tm) AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod time_bucket(INTERVAL ''7 minutes'', tm)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '7 minutes', tm) AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod time_bucket(INTERVAL ''6 hours'', tm)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '6 hours', tm) AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'msn date_trunc(''millisecond'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_trunc('millisecond', ts) AS k, count(*) AS c, sum(v) AS s FROM msn GROUP BY 1)
+UNION ALL SELECT 'msn date_trunc(''microsecond'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_trunc('microsecond', ts) AS k, count(*) AS c, sum(v) AS s FROM msn GROUP BY 1)
+UNION ALL SELECT 'msn date_trunc(''millisecond'', tstz)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_trunc('millisecond', tstz) AS k, count(*) AS c, sum(v) AS s FROM msn GROUP BY 1)
+UNION ALL SELECT 'tod time_bucket(INTERVAL ''1 day'', tstz, ''America/Havana'', TIMESTAMPTZ ''2025-01-01 05:00:00+00'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '1 day', tstz, 'America/Havana', TIMESTAMPTZ '2025-01-01 05:00:00+00') AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod time_bucket(INTERVAL ''1 month'', tstz, ''America/Havana'', TIMESTAMPTZ ''2024-02-15 05:00:00+00'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '1 month', tstz, 'America/Havana', TIMESTAMPTZ '2024-02-15 05:00:00+00') AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod time_bucket(INTERVAL ''90 minutes'', tstz, ''Europe/Berlin'', TIMESTAMPTZ ''2025-01-01 00:07:00+00'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '90 minutes', tstz, 'Europe/Berlin', TIMESTAMPTZ '2025-01-01 00:07:00+00') AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod time_bucket(INTERVAL ''2 days'', tstz, ''Australia/Lord_Howe'', TIMESTAMPTZ ''2025-03-01 00:00:00+00'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '2 days', tstz, 'Australia/Lord_Howe', TIMESTAMPTZ '2025-03-01 00:00:00+00') AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod time_bucket(INTERVAL ''3 months'', tstz, ''Pacific/Kiritimati'', TIMESTAMPTZ ''2024-05-01 00:00:00+00'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '3 months', tstz, 'Pacific/Kiritimati', TIMESTAMPTZ '2024-05-01 00:00:00+00') AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod time_bucket(INTERVAL ''45 minutes'', tstz, ''Asia/Kathmandu'', TIMESTAMPTZ ''2025-06-01 00:00:00+00'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '45 minutes', tstz, 'Asia/Kathmandu', TIMESTAMPTZ '2025-06-01 00:00:00+00') AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+;
+
+statement ok
+SET disabled_optimizers = '';
+
+statement ok
+CREATE OR REPLACE TABLE got_tod AS
+SELECT 'tod strftime(ts, ''%H'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(ts, '%H') AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod strftime(ts, ''%H:%M'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(ts, '%H:%M') AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod strftime(ts, ''%H:%M:%S'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(ts, '%H:%M:%S') AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod strftime(ts, ''%I %p'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(ts, '%I %p') AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod strftime(ts, ''%I'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(ts, '%I') AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod strftime(tstz, ''%H'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(tstz, '%H') AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod strftime(tstz, ''%H:%M'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(tstz, '%H:%M') AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod strftime(tstz, ''hour %H of the day'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(tstz, 'hour %H of the day') AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod strftime(tstz, ''%I:%M %p'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(tstz, '%I:%M %p') AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod strftime(tstz, ''%H:%M %z'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(tstz, '%H:%M %z') AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod date_trunc(''hour'', ts)::TIME' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_trunc('hour', ts)::TIME AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod date_trunc(''minute'', ts)::TIME' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_trunc('minute', ts)::TIME AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod date_trunc(''day'', ts)::TIME' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_trunc('day', ts)::TIME AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod date_trunc(''hour'', tstz)::TIME' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_trunc('hour', tstz)::TIME AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod date_trunc(''minute'', tstz)::TIME' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_trunc('minute', tstz)::TIME AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod date_trunc(''day'', tstz)::TIME' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_trunc('day', tstz)::TIME AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod time_bucket(INTERVAL ''15 minutes'', ts)::TIME' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '15 minutes', ts)::TIME AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod time_bucket(INTERVAL ''30 minutes'', tstz)::TIME' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '30 minutes', tstz)::TIME AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod time_bucket(INTERVAL ''15 minutes'', tstz, ''America/Havana'')::TIME' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '15 minutes', tstz, 'America/Havana')::TIME AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod ts::TIME' AS shape, k::VARCHAR AS k, c, s FROM (SELECT ts::TIME AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod time_bucket(INTERVAL ''15 minutes'', tm)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '15 minutes', tm) AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod time_bucket(INTERVAL ''1 hour'', tm)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '1 hour', tm) AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod time_bucket(INTERVAL ''90 minutes'', tm)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '90 minutes', tm) AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod time_bucket(INTERVAL ''7 minutes'', tm)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '7 minutes', tm) AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod time_bucket(INTERVAL ''6 hours'', tm)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '6 hours', tm) AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'msn date_trunc(''millisecond'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_trunc('millisecond', ts) AS k, count(*) AS c, sum(v) AS s FROM msn GROUP BY 1)
+UNION ALL SELECT 'msn date_trunc(''microsecond'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_trunc('microsecond', ts) AS k, count(*) AS c, sum(v) AS s FROM msn GROUP BY 1)
+UNION ALL SELECT 'msn date_trunc(''millisecond'', tstz)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_trunc('millisecond', tstz) AS k, count(*) AS c, sum(v) AS s FROM msn GROUP BY 1)
+UNION ALL SELECT 'tod time_bucket(INTERVAL ''1 day'', tstz, ''America/Havana'', TIMESTAMPTZ ''2025-01-01 05:00:00+00'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '1 day', tstz, 'America/Havana', TIMESTAMPTZ '2025-01-01 05:00:00+00') AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod time_bucket(INTERVAL ''1 month'', tstz, ''America/Havana'', TIMESTAMPTZ ''2024-02-15 05:00:00+00'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '1 month', tstz, 'America/Havana', TIMESTAMPTZ '2024-02-15 05:00:00+00') AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod time_bucket(INTERVAL ''90 minutes'', tstz, ''Europe/Berlin'', TIMESTAMPTZ ''2025-01-01 00:07:00+00'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '90 minutes', tstz, 'Europe/Berlin', TIMESTAMPTZ '2025-01-01 00:07:00+00') AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod time_bucket(INTERVAL ''2 days'', tstz, ''Australia/Lord_Howe'', TIMESTAMPTZ ''2025-03-01 00:00:00+00'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '2 days', tstz, 'Australia/Lord_Howe', TIMESTAMPTZ '2025-03-01 00:00:00+00') AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod time_bucket(INTERVAL ''3 months'', tstz, ''Pacific/Kiritimati'', TIMESTAMPTZ ''2024-05-01 00:00:00+00'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '3 months', tstz, 'Pacific/Kiritimati', TIMESTAMPTZ '2024-05-01 00:00:00+00') AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod time_bucket(INTERVAL ''45 minutes'', tstz, ''Asia/Kathmandu'', TIMESTAMPTZ ''2025-06-01 00:00:00+00'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '45 minutes', tstz, 'Asia/Kathmandu', TIMESTAMPTZ '2025-06-01 00:00:00+00') AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+;
+
+query
+SELECT count(*) AS rows, count(DISTINCT shape) AS shapes, (SELECT count(*) FROM (SELECT * FROM ref_tod EXCEPT ALL SELECT * FROM got_tod)) AS ref_minus_got, (SELECT count(*) FROM (SELECT * FROM got_tod EXCEPT ALL SELECT * FROM ref_tod)) AS got_minus_ref FROM ref_tod;
+----
+rows	shapes	ref_minus_got	got_minus_ref
+99200	34	0	0
+
+statement ok
+SET TimeZone = 'America/Santiago';
+
+statement ok
+SET disabled_optimizers = 'compressed_materialization';
+
+statement ok
+CREATE OR REPLACE TABLE ref_tod AS
+SELECT 'tod strftime(ts, ''%H'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(ts, '%H') AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod strftime(ts, ''%H:%M'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(ts, '%H:%M') AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod strftime(ts, ''%H:%M:%S'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(ts, '%H:%M:%S') AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod strftime(ts, ''%I %p'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(ts, '%I %p') AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod strftime(ts, ''%I'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(ts, '%I') AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod strftime(tstz, ''%H'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(tstz, '%H') AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod strftime(tstz, ''%H:%M'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(tstz, '%H:%M') AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod strftime(tstz, ''hour %H of the day'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(tstz, 'hour %H of the day') AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod strftime(tstz, ''%I:%M %p'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(tstz, '%I:%M %p') AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod strftime(tstz, ''%H:%M %z'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(tstz, '%H:%M %z') AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod date_trunc(''hour'', ts)::TIME' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_trunc('hour', ts)::TIME AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod date_trunc(''minute'', ts)::TIME' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_trunc('minute', ts)::TIME AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod date_trunc(''day'', ts)::TIME' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_trunc('day', ts)::TIME AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod date_trunc(''hour'', tstz)::TIME' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_trunc('hour', tstz)::TIME AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod date_trunc(''minute'', tstz)::TIME' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_trunc('minute', tstz)::TIME AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod date_trunc(''day'', tstz)::TIME' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_trunc('day', tstz)::TIME AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod time_bucket(INTERVAL ''15 minutes'', ts)::TIME' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '15 minutes', ts)::TIME AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod time_bucket(INTERVAL ''30 minutes'', tstz)::TIME' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '30 minutes', tstz)::TIME AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod time_bucket(INTERVAL ''15 minutes'', tstz, ''America/Havana'')::TIME' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '15 minutes', tstz, 'America/Havana')::TIME AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod ts::TIME' AS shape, k::VARCHAR AS k, c, s FROM (SELECT ts::TIME AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod time_bucket(INTERVAL ''15 minutes'', tm)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '15 minutes', tm) AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod time_bucket(INTERVAL ''1 hour'', tm)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '1 hour', tm) AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod time_bucket(INTERVAL ''90 minutes'', tm)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '90 minutes', tm) AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod time_bucket(INTERVAL ''7 minutes'', tm)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '7 minutes', tm) AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod time_bucket(INTERVAL ''6 hours'', tm)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '6 hours', tm) AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'msn date_trunc(''millisecond'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_trunc('millisecond', ts) AS k, count(*) AS c, sum(v) AS s FROM msn GROUP BY 1)
+UNION ALL SELECT 'msn date_trunc(''microsecond'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_trunc('microsecond', ts) AS k, count(*) AS c, sum(v) AS s FROM msn GROUP BY 1)
+UNION ALL SELECT 'msn date_trunc(''millisecond'', tstz)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_trunc('millisecond', tstz) AS k, count(*) AS c, sum(v) AS s FROM msn GROUP BY 1)
+UNION ALL SELECT 'tod time_bucket(INTERVAL ''1 day'', tstz, ''America/Havana'', TIMESTAMPTZ ''2025-01-01 05:00:00+00'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '1 day', tstz, 'America/Havana', TIMESTAMPTZ '2025-01-01 05:00:00+00') AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod time_bucket(INTERVAL ''1 month'', tstz, ''America/Havana'', TIMESTAMPTZ ''2024-02-15 05:00:00+00'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '1 month', tstz, 'America/Havana', TIMESTAMPTZ '2024-02-15 05:00:00+00') AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod time_bucket(INTERVAL ''90 minutes'', tstz, ''Europe/Berlin'', TIMESTAMPTZ ''2025-01-01 00:07:00+00'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '90 minutes', tstz, 'Europe/Berlin', TIMESTAMPTZ '2025-01-01 00:07:00+00') AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod time_bucket(INTERVAL ''2 days'', tstz, ''Australia/Lord_Howe'', TIMESTAMPTZ ''2025-03-01 00:00:00+00'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '2 days', tstz, 'Australia/Lord_Howe', TIMESTAMPTZ '2025-03-01 00:00:00+00') AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod time_bucket(INTERVAL ''3 months'', tstz, ''Pacific/Kiritimati'', TIMESTAMPTZ ''2024-05-01 00:00:00+00'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '3 months', tstz, 'Pacific/Kiritimati', TIMESTAMPTZ '2024-05-01 00:00:00+00') AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod time_bucket(INTERVAL ''45 minutes'', tstz, ''Asia/Kathmandu'', TIMESTAMPTZ ''2025-06-01 00:00:00+00'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '45 minutes', tstz, 'Asia/Kathmandu', TIMESTAMPTZ '2025-06-01 00:00:00+00') AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+;
+
+statement ok
+SET disabled_optimizers = '';
+
+statement ok
+CREATE OR REPLACE TABLE got_tod AS
+SELECT 'tod strftime(ts, ''%H'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(ts, '%H') AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod strftime(ts, ''%H:%M'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(ts, '%H:%M') AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod strftime(ts, ''%H:%M:%S'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(ts, '%H:%M:%S') AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod strftime(ts, ''%I %p'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(ts, '%I %p') AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod strftime(ts, ''%I'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(ts, '%I') AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod strftime(tstz, ''%H'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(tstz, '%H') AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod strftime(tstz, ''%H:%M'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(tstz, '%H:%M') AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod strftime(tstz, ''hour %H of the day'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(tstz, 'hour %H of the day') AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod strftime(tstz, ''%I:%M %p'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(tstz, '%I:%M %p') AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod strftime(tstz, ''%H:%M %z'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(tstz, '%H:%M %z') AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod date_trunc(''hour'', ts)::TIME' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_trunc('hour', ts)::TIME AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod date_trunc(''minute'', ts)::TIME' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_trunc('minute', ts)::TIME AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod date_trunc(''day'', ts)::TIME' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_trunc('day', ts)::TIME AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod date_trunc(''hour'', tstz)::TIME' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_trunc('hour', tstz)::TIME AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod date_trunc(''minute'', tstz)::TIME' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_trunc('minute', tstz)::TIME AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod date_trunc(''day'', tstz)::TIME' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_trunc('day', tstz)::TIME AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod time_bucket(INTERVAL ''15 minutes'', ts)::TIME' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '15 minutes', ts)::TIME AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod time_bucket(INTERVAL ''30 minutes'', tstz)::TIME' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '30 minutes', tstz)::TIME AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod time_bucket(INTERVAL ''15 minutes'', tstz, ''America/Havana'')::TIME' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '15 minutes', tstz, 'America/Havana')::TIME AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod ts::TIME' AS shape, k::VARCHAR AS k, c, s FROM (SELECT ts::TIME AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod time_bucket(INTERVAL ''15 minutes'', tm)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '15 minutes', tm) AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod time_bucket(INTERVAL ''1 hour'', tm)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '1 hour', tm) AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod time_bucket(INTERVAL ''90 minutes'', tm)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '90 minutes', tm) AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod time_bucket(INTERVAL ''7 minutes'', tm)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '7 minutes', tm) AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod time_bucket(INTERVAL ''6 hours'', tm)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '6 hours', tm) AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'msn date_trunc(''millisecond'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_trunc('millisecond', ts) AS k, count(*) AS c, sum(v) AS s FROM msn GROUP BY 1)
+UNION ALL SELECT 'msn date_trunc(''microsecond'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_trunc('microsecond', ts) AS k, count(*) AS c, sum(v) AS s FROM msn GROUP BY 1)
+UNION ALL SELECT 'msn date_trunc(''millisecond'', tstz)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_trunc('millisecond', tstz) AS k, count(*) AS c, sum(v) AS s FROM msn GROUP BY 1)
+UNION ALL SELECT 'tod time_bucket(INTERVAL ''1 day'', tstz, ''America/Havana'', TIMESTAMPTZ ''2025-01-01 05:00:00+00'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '1 day', tstz, 'America/Havana', TIMESTAMPTZ '2025-01-01 05:00:00+00') AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod time_bucket(INTERVAL ''1 month'', tstz, ''America/Havana'', TIMESTAMPTZ ''2024-02-15 05:00:00+00'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '1 month', tstz, 'America/Havana', TIMESTAMPTZ '2024-02-15 05:00:00+00') AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod time_bucket(INTERVAL ''90 minutes'', tstz, ''Europe/Berlin'', TIMESTAMPTZ ''2025-01-01 00:07:00+00'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '90 minutes', tstz, 'Europe/Berlin', TIMESTAMPTZ '2025-01-01 00:07:00+00') AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod time_bucket(INTERVAL ''2 days'', tstz, ''Australia/Lord_Howe'', TIMESTAMPTZ ''2025-03-01 00:00:00+00'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '2 days', tstz, 'Australia/Lord_Howe', TIMESTAMPTZ '2025-03-01 00:00:00+00') AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod time_bucket(INTERVAL ''3 months'', tstz, ''Pacific/Kiritimati'', TIMESTAMPTZ ''2024-05-01 00:00:00+00'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '3 months', tstz, 'Pacific/Kiritimati', TIMESTAMPTZ '2024-05-01 00:00:00+00') AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod time_bucket(INTERVAL ''45 minutes'', tstz, ''Asia/Kathmandu'', TIMESTAMPTZ ''2025-06-01 00:00:00+00'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '45 minutes', tstz, 'Asia/Kathmandu', TIMESTAMPTZ '2025-06-01 00:00:00+00') AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+;
+
+query
+SELECT count(*) AS rows, count(DISTINCT shape) AS shapes, (SELECT count(*) FROM (SELECT * FROM ref_tod EXCEPT ALL SELECT * FROM got_tod)) AS ref_minus_got, (SELECT count(*) FROM (SELECT * FROM got_tod EXCEPT ALL SELECT * FROM ref_tod)) AS got_minus_ref FROM ref_tod;
+----
+rows	shapes	ref_minus_got	got_minus_ref
+99201	34	0	0
+
+statement ok
+SET TimeZone = 'Etc/UTC';
+
+statement ok
+SET disabled_optimizers = 'compressed_materialization';
+
+statement ok
+CREATE OR REPLACE TABLE ref_tod AS
+SELECT 'tod strftime(ts, ''%H'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(ts, '%H') AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod strftime(ts, ''%H:%M'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(ts, '%H:%M') AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod strftime(ts, ''%H:%M:%S'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(ts, '%H:%M:%S') AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod strftime(ts, ''%I %p'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(ts, '%I %p') AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod strftime(ts, ''%I'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(ts, '%I') AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod strftime(tstz, ''%H'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(tstz, '%H') AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod strftime(tstz, ''%H:%M'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(tstz, '%H:%M') AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod strftime(tstz, ''hour %H of the day'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(tstz, 'hour %H of the day') AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod strftime(tstz, ''%I:%M %p'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(tstz, '%I:%M %p') AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod strftime(tstz, ''%H:%M %z'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(tstz, '%H:%M %z') AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod date_trunc(''hour'', ts)::TIME' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_trunc('hour', ts)::TIME AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod date_trunc(''minute'', ts)::TIME' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_trunc('minute', ts)::TIME AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod date_trunc(''day'', ts)::TIME' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_trunc('day', ts)::TIME AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod date_trunc(''hour'', tstz)::TIME' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_trunc('hour', tstz)::TIME AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod date_trunc(''minute'', tstz)::TIME' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_trunc('minute', tstz)::TIME AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod date_trunc(''day'', tstz)::TIME' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_trunc('day', tstz)::TIME AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod time_bucket(INTERVAL ''15 minutes'', ts)::TIME' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '15 minutes', ts)::TIME AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod time_bucket(INTERVAL ''30 minutes'', tstz)::TIME' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '30 minutes', tstz)::TIME AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod time_bucket(INTERVAL ''15 minutes'', tstz, ''America/Havana'')::TIME' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '15 minutes', tstz, 'America/Havana')::TIME AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod ts::TIME' AS shape, k::VARCHAR AS k, c, s FROM (SELECT ts::TIME AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod time_bucket(INTERVAL ''15 minutes'', tm)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '15 minutes', tm) AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod time_bucket(INTERVAL ''1 hour'', tm)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '1 hour', tm) AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod time_bucket(INTERVAL ''90 minutes'', tm)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '90 minutes', tm) AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod time_bucket(INTERVAL ''7 minutes'', tm)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '7 minutes', tm) AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod time_bucket(INTERVAL ''6 hours'', tm)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '6 hours', tm) AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'msn date_trunc(''millisecond'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_trunc('millisecond', ts) AS k, count(*) AS c, sum(v) AS s FROM msn GROUP BY 1)
+UNION ALL SELECT 'msn date_trunc(''microsecond'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_trunc('microsecond', ts) AS k, count(*) AS c, sum(v) AS s FROM msn GROUP BY 1)
+UNION ALL SELECT 'msn date_trunc(''millisecond'', tstz)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_trunc('millisecond', tstz) AS k, count(*) AS c, sum(v) AS s FROM msn GROUP BY 1)
+UNION ALL SELECT 'tod time_bucket(INTERVAL ''1 day'', tstz, ''America/Havana'', TIMESTAMPTZ ''2025-01-01 05:00:00+00'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '1 day', tstz, 'America/Havana', TIMESTAMPTZ '2025-01-01 05:00:00+00') AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod time_bucket(INTERVAL ''1 month'', tstz, ''America/Havana'', TIMESTAMPTZ ''2024-02-15 05:00:00+00'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '1 month', tstz, 'America/Havana', TIMESTAMPTZ '2024-02-15 05:00:00+00') AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod time_bucket(INTERVAL ''90 minutes'', tstz, ''Europe/Berlin'', TIMESTAMPTZ ''2025-01-01 00:07:00+00'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '90 minutes', tstz, 'Europe/Berlin', TIMESTAMPTZ '2025-01-01 00:07:00+00') AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod time_bucket(INTERVAL ''2 days'', tstz, ''Australia/Lord_Howe'', TIMESTAMPTZ ''2025-03-01 00:00:00+00'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '2 days', tstz, 'Australia/Lord_Howe', TIMESTAMPTZ '2025-03-01 00:00:00+00') AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod time_bucket(INTERVAL ''3 months'', tstz, ''Pacific/Kiritimati'', TIMESTAMPTZ ''2024-05-01 00:00:00+00'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '3 months', tstz, 'Pacific/Kiritimati', TIMESTAMPTZ '2024-05-01 00:00:00+00') AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod time_bucket(INTERVAL ''45 minutes'', tstz, ''Asia/Kathmandu'', TIMESTAMPTZ ''2025-06-01 00:00:00+00'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '45 minutes', tstz, 'Asia/Kathmandu', TIMESTAMPTZ '2025-06-01 00:00:00+00') AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+;
+
+statement ok
+SET disabled_optimizers = '';
+
+statement ok
+CREATE OR REPLACE TABLE got_tod AS
+SELECT 'tod strftime(ts, ''%H'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(ts, '%H') AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod strftime(ts, ''%H:%M'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(ts, '%H:%M') AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod strftime(ts, ''%H:%M:%S'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(ts, '%H:%M:%S') AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod strftime(ts, ''%I %p'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(ts, '%I %p') AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod strftime(ts, ''%I'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(ts, '%I') AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod strftime(tstz, ''%H'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(tstz, '%H') AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod strftime(tstz, ''%H:%M'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(tstz, '%H:%M') AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod strftime(tstz, ''hour %H of the day'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(tstz, 'hour %H of the day') AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod strftime(tstz, ''%I:%M %p'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(tstz, '%I:%M %p') AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod strftime(tstz, ''%H:%M %z'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(tstz, '%H:%M %z') AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod date_trunc(''hour'', ts)::TIME' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_trunc('hour', ts)::TIME AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod date_trunc(''minute'', ts)::TIME' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_trunc('minute', ts)::TIME AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod date_trunc(''day'', ts)::TIME' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_trunc('day', ts)::TIME AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod date_trunc(''hour'', tstz)::TIME' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_trunc('hour', tstz)::TIME AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod date_trunc(''minute'', tstz)::TIME' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_trunc('minute', tstz)::TIME AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod date_trunc(''day'', tstz)::TIME' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_trunc('day', tstz)::TIME AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod time_bucket(INTERVAL ''15 minutes'', ts)::TIME' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '15 minutes', ts)::TIME AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod time_bucket(INTERVAL ''30 minutes'', tstz)::TIME' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '30 minutes', tstz)::TIME AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod time_bucket(INTERVAL ''15 minutes'', tstz, ''America/Havana'')::TIME' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '15 minutes', tstz, 'America/Havana')::TIME AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod ts::TIME' AS shape, k::VARCHAR AS k, c, s FROM (SELECT ts::TIME AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod time_bucket(INTERVAL ''15 minutes'', tm)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '15 minutes', tm) AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod time_bucket(INTERVAL ''1 hour'', tm)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '1 hour', tm) AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod time_bucket(INTERVAL ''90 minutes'', tm)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '90 minutes', tm) AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod time_bucket(INTERVAL ''7 minutes'', tm)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '7 minutes', tm) AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod time_bucket(INTERVAL ''6 hours'', tm)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '6 hours', tm) AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'msn date_trunc(''millisecond'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_trunc('millisecond', ts) AS k, count(*) AS c, sum(v) AS s FROM msn GROUP BY 1)
+UNION ALL SELECT 'msn date_trunc(''microsecond'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_trunc('microsecond', ts) AS k, count(*) AS c, sum(v) AS s FROM msn GROUP BY 1)
+UNION ALL SELECT 'msn date_trunc(''millisecond'', tstz)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_trunc('millisecond', tstz) AS k, count(*) AS c, sum(v) AS s FROM msn GROUP BY 1)
+UNION ALL SELECT 'tod time_bucket(INTERVAL ''1 day'', tstz, ''America/Havana'', TIMESTAMPTZ ''2025-01-01 05:00:00+00'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '1 day', tstz, 'America/Havana', TIMESTAMPTZ '2025-01-01 05:00:00+00') AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod time_bucket(INTERVAL ''1 month'', tstz, ''America/Havana'', TIMESTAMPTZ ''2024-02-15 05:00:00+00'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '1 month', tstz, 'America/Havana', TIMESTAMPTZ '2024-02-15 05:00:00+00') AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod time_bucket(INTERVAL ''90 minutes'', tstz, ''Europe/Berlin'', TIMESTAMPTZ ''2025-01-01 00:07:00+00'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '90 minutes', tstz, 'Europe/Berlin', TIMESTAMPTZ '2025-01-01 00:07:00+00') AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod time_bucket(INTERVAL ''2 days'', tstz, ''Australia/Lord_Howe'', TIMESTAMPTZ ''2025-03-01 00:00:00+00'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '2 days', tstz, 'Australia/Lord_Howe', TIMESTAMPTZ '2025-03-01 00:00:00+00') AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod time_bucket(INTERVAL ''3 months'', tstz, ''Pacific/Kiritimati'', TIMESTAMPTZ ''2024-05-01 00:00:00+00'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '3 months', tstz, 'Pacific/Kiritimati', TIMESTAMPTZ '2024-05-01 00:00:00+00') AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+UNION ALL SELECT 'tod time_bucket(INTERVAL ''45 minutes'', tstz, ''Asia/Kathmandu'', TIMESTAMPTZ ''2025-06-01 00:00:00+00'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '45 minutes', tstz, 'Asia/Kathmandu', TIMESTAMPTZ '2025-06-01 00:00:00+00') AS k, count(*) AS c, sum(v) AS s FROM tod GROUP BY 1)
+;
+
+query
+SELECT count(*) AS rows, count(DISTINCT shape) AS shapes, (SELECT count(*) FROM (SELECT * FROM ref_tod EXCEPT ALL SELECT * FROM got_tod)) AS ref_minus_got, (SELECT count(*) FROM (SELECT * FROM got_tod EXCEPT ALL SELECT * FROM ref_tod)) AS got_minus_ref FROM ref_tod;
+----
+rows	shapes	ref_minus_got	got_minus_ref
+97760	34	0	0
+
+statement ok
+SET TimeZone = 'Europe/Berlin';
+
+query
+EXPLAIN SELECT strftime(tstz, '%H:%M') AS b, count(*) AS c FROM tod GROUP BY 1;
+----
+QUERY PLAN
+╭─ PROJECTION ────────────────────────────────────────────────────────╮
+│ Projections:                                                        │
+│ strftime(__internal_date_trunc_unbucket(#0, 60000000, 0), '%H:%M'), │
+│ #1                                                                  │
+│ ~10,000 rows                                                        │
+╰──────────────────────────────────┬──────────────────────────────────╯
+╭─ PERFECT_HASH_GROUP_BY ──────────┴──────────────────────────────────╮
+│ Groups: #0                                                          │
+│ Aggregates: count_star()                                            │
+│ ~10,000 rows                                                        │
+╰──────────────────────────────────┬──────────────────────────────────╯
+╭─ PROJECTION ─────────────────────┴──────────────────────────────────╮
+│ Projections:                                                        │
+│ __internal_icu_time_of_day_bucket(tstz, 60000000)                   │
+│ ~20,001 rows                                                        │
+╰──────────────────────────────────┬──────────────────────────────────╯
+╭─ SEQ_SCAN ───────────────────────┴──────────────────────────────────╮
+│ Table: tod                                                          │
+│ Type: Sequential Scan                                               │
+│ Projections: tstz                                                   │
+│ ~20,001 rows                                                        │
+╰─────────────────────────────────────────────────────────────────────╯
+
+query
+EXPLAIN SELECT strftime(ts, '%H') AS b, count(*) AS c FROM tod GROUP BY 1;
+----
+QUERY PLAN
+╭─ PROJECTION ───────────────────────────────────────────────────────╮
+│ Projections:                                                       │
+│ strftime(__internal_date_trunc_unbucket(#0, 3600000000, 0), '%H'), │
+│ #1                                                                 │
+│ ~10,000 rows                                                       │
+╰──────────────────────────────────┬─────────────────────────────────╯
+╭─ PERFECT_HASH_GROUP_BY ──────────┴─────────────────────────────────╮
+│ Groups: #0                                                         │
+│ Aggregates: count_star()                                           │
+│ ~10,000 rows                                                       │
+╰──────────────────────────────────┬─────────────────────────────────╯
+╭─ PROJECTION ─────────────────────┴─────────────────────────────────╮
+│ Projections:                                                       │
+│ __internal_time_of_day_bucket(ts, 3600000000)                      │
+│ ~20,001 rows                                                       │
+╰──────────────────────────────────┬─────────────────────────────────╯
+╭─ SEQ_SCAN ───────────────────────┴─────────────────────────────────╮
+│ Table: tod                                                         │
+│ Type: Sequential Scan                                              │
+│ Projections: ts                                                    │
+│ ~20,001 rows                                                       │
+╰────────────────────────────────────────────────────────────────────╯
+
+query
+EXPLAIN SELECT strftime(ts, '%I') AS b, count(*) AS c FROM tod GROUP BY 1;
+----
+QUERY PLAN
+╭─ HASH_GROUP_BY ──────────╮
+│ Groups: #0               │
+│ Aggregates: count_star() │
+│ ~10,000 rows             │
+╰─────────────┬────────────╯
+╭─ PROJECTION ┴────────────╮
+│ Projections: b           │
+│ ~20,001 rows             │
+╰─────────────┬────────────╯
+╭─ SEQ_SCAN ──┴────────────╮
+│ Table: tod               │
+│ Type: Sequential Scan    │
+│ Projections: ts          │
+│ ~20,001 rows             │
+╰──────────────────────────╯
+
+query
+EXPLAIN SELECT date_trunc('hour', tstz)::TIME AS b, count(*) AS c FROM tod GROUP BY 1;
+----
+QUERY PLAN
+╭─ PROJECTION ─────────────────────────────────────────────────────╮
+│ Projections:                                                     │
+│ CAST(__internal_date_trunc_unbucket(#0, 3600000000, 0) AS TIME), │
+│ #1                                                               │
+│ ~10,000 rows                                                     │
+╰─────────────────────────────────┬────────────────────────────────╯
+╭─ PERFECT_HASH_GROUP_BY ─────────┴────────────────────────────────╮
+│ Groups: #0                                                       │
+│ Aggregates: count_star()                                         │
+│ ~10,000 rows                                                     │
+╰─────────────────────────────────┬────────────────────────────────╯
+╭─ PROJECTION ────────────────────┴────────────────────────────────╮
+│ Projections:                                                     │
+│ __internal_icu_time_of_day_bucket(tstz, 3600000000)              │
+│ ~20,001 rows                                                     │
+╰─────────────────────────────────┬────────────────────────────────╯
+╭─ SEQ_SCAN ──────────────────────┴────────────────────────────────╮
+│ Table: tod                                                       │
+│ Type: Sequential Scan                                            │
+│ Projections: tstz                                                │
+│ ~20,001 rows                                                     │
+╰──────────────────────────────────────────────────────────────────╯
+
+query
+EXPLAIN SELECT time_bucket(INTERVAL '15 minutes', tm) AS b, count(*) AS c FROM tod GROUP BY 1;
+----
+QUERY PLAN
+╭─ PROJECTION ───────────────────────────────────────────╮
+│ Projections:                                           │
+│ __internal_date_trunc_unbucket_time(#0, 900000000, 0), │
+│ #1                                                     │
+│ ~10,000 rows                                           │
+╰────────────────────────────┬───────────────────────────╯
+╭─ PERFECT_HASH_GROUP_BY ────┴───────────────────────────╮
+│ Groups: #0                                             │
+│ Aggregates: count_star()                               │
+│ ~10,000 rows                                           │
+╰────────────────────────────┬───────────────────────────╯
+╭─ PROJECTION ───────────────┴───────────────────────────╮
+│ Projections:                                           │
+│ __internal_date_trunc_bucket(tm, 900000000, 0)         │
+│ ~20,001 rows                                           │
+╰────────────────────────────┬───────────────────────────╯
+╭─ SEQ_SCAN ─────────────────┴───────────────────────────╮
+│ Table: tod                                             │
+│ Type: Sequential Scan                                  │
+│ Projections: tm                                        │
+│ ~20,001 rows                                           │
+╰────────────────────────────────────────────────────────╯
+
+query
+EXPLAIN SELECT time_bucket(INTERVAL '7 minutes', tm) AS b, count(*) AS c FROM tod GROUP BY 1;
+----
+QUERY PLAN
+╭─ HASH_GROUP_BY ──────────╮
+│ Groups: #0               │
+│ Aggregates: count_star() │
+│ ~10,000 rows             │
+╰─────────────┬────────────╯
+╭─ PROJECTION ┴────────────╮
+│ Projections: b           │
+│ ~20,001 rows             │
+╰─────────────┬────────────╯
+╭─ SEQ_SCAN ──┴────────────╮
+│ Table: tod               │
+│ Type: Sequential Scan    │
+│ Projections: tm          │
+│ ~20,001 rows             │
+╰──────────────────────────╯
+
+query
+EXPLAIN SELECT date_trunc('millisecond', ts) AS b, count(*) AS c FROM msn GROUP BY 1;
+----
+QUERY PLAN
+╭─ PROJECTION ─────────────────────────────────╮
+│ Projections:                                 │
+│ __internal_date_trunc_unbucket(#0, 1000, 0), │
+│ #1                                           │
+│ ~10,000 rows                                 │
+╰───────────────────────┬──────────────────────╯
+╭─ PERFECT_HASH_GROUP_BY ──────────────────────╮
+│ Groups: #0                                   │
+│ Aggregates: count_star()                     │
+│ ~10,000 rows                                 │
+╰───────────────────────┬──────────────────────╯
+╭─ PROJECTION ──────────┴──────────────────────╮
+│ Projections:                                 │
+│ __internal_date_trunc_bucket(ts, 1000, 0)    │
+│ ~20,001 rows                                 │
+╰───────────────────────┬──────────────────────╯
+╭─ SEQ_SCAN ────────────┴──────────────────────╮
+│ Table: msn                                   │
+│ Type: Sequential Scan                        │
+│ Projections: ts                              │
+│ ~20,001 rows                                 │
+╰──────────────────────────────────────────────╯
+
+query
+EXPLAIN SELECT time_bucket(INTERVAL '1 day', tstz, 'America/Havana', TIMESTAMPTZ '2025-01-01 05:00:00+00') AS b, count(*) AS c FROM tod GROUP BY 1;
+----
+QUERY PLAN
+╭─ PROJECTION ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ Projections:                                                                                                                                                               │
+│ time_bucket('1 day'::INTERVAL, __internal_icu_date_trunc_unbucket('time_bucket_day', #0, 1, 20089), 'America/Havana', '2025-01-01 05:00:00+00'::TIMESTAMP WITH TIME ZONE), │
+│ #1                                                                                                                                                                         │
+│ ~10,000 rows                                                                                                                                                               │
+╰──────────────────────────────────────────────────────────────────────────────────────┬─────────────────────────────────────────────────────────────────────────────────────╯
+╭─ PERFECT_HASH_GROUP_BY ──────────────────────────────────────────────────────────────┴─────────────────────────────────────────────────────────────────────────────────────╮
+│ Groups: #0                                                                                                                                                                 │
+│ Aggregates: count_star()                                                                                                                                                   │
+│ ~10,000 rows                                                                                                                                                               │
+╰──────────────────────────────────────────────────────────────────────────────────────┬─────────────────────────────────────────────────────────────────────────────────────╯
+╭─ PROJECTION ─────────────────────────────────────────────────────────────────────────┴─────────────────────────────────────────────────────────────────────────────────────╮
+│ Projections:                                                                                                                                                               │
+│ __internal_icu_date_trunc_bucket('time_bucket_day', tstz, 1, 20089)                                                                                                        │
+│ ~20,001 rows                                                                                                                                                               │
+╰──────────────────────────────────────────────────────────────────────────────────────┬─────────────────────────────────────────────────────────────────────────────────────╯
+╭─ SEQ_SCAN ───────────────────────────────────────────────────────────────────────────┴─────────────────────────────────────────────────────────────────────────────────────╮
+│ Table: tod                                                                                                                                                                 │
+│ Type: Sequential Scan                                                                                                                                                      │
+│ Projections: tstz                                                                                                                                                          │
+│ ~20,001 rows                                                                                                                                                               │
+╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+
+query
+SELECT time_bucket(INTERVAL '1 day', TIMESTAMPTZ '2025-03-30 12:00:00+00', 'America/Havana', TIMESTAMPTZ '2025-01-01 05:00:00+00')::VARCHAR AS day_bucket, time_bucket(INTERVAL '1 month', TIMESTAMPTZ '2025-03-30 12:00:00+00', 'America/Havana', TIMESTAMPTZ '2024-02-15 05:00:00+00')::VARCHAR AS month_bucket, time_bucket(INTERVAL '90 minutes', TIMESTAMPTZ '2025-03-30 12:20:00+00', 'America/Havana', TIMESTAMPTZ '2025-01-01 00:07:00+00')::VARCHAR AS micros_bucket;
+----
+day_bucket	month_bucket	micros_bucket
+2025-03-30 06:00:00+02	2025-03-01 06:00:00+01	2025-03-30 14:07:00+02
+
+query
+SELECT time_bucket(INTERVAL '1 day', TIMESTAMPTZ '2025-04-06 10:00:00+00', 'Australia/Lord_Howe', TIMESTAMPTZ '2025-03-01 00:00:00+00')::VARCHAR AS lord_howe, time_bucket(INTERVAL '2 months', TIMESTAMPTZ '2025-07-15 10:00:00+00', 'Pacific/Kiritimati', TIMESTAMPTZ '2024-05-01 00:00:00+00')::VARCHAR AS kiritimati;
+----
+lord_howe	kiritimati
+2025-04-06 02:30:00+02	2025-06-30 12:00:00+02
+
+statement error db error: ERROR: Month intervals cannot have day or time component
+SELECT time_bucket(INTERVAL '1 month 3 days', tstz, 'America/Havana', TIMESTAMPTZ '2025-01-01 05:00:00+00') AS b, count(*) AS c FROM tod GROUP BY 1;
+
+statement error db error: ERROR: Period must be greater than 0
+SELECT time_bucket(INTERVAL '0 seconds', tstz, 'America/Havana', TIMESTAMPTZ '2025-01-01 05:00:00+00') AS b, count(*) AS c FROM tod GROUP BY 1;
+
+query
+SELECT count(*) AS buckets FROM (SELECT time_bucket(INTERVAL '1 day', tstz, 'America/Havana', TIMESTAMPTZ '2025-01-01 05:00:00+00') AS b FROM tod GROUP BY 1);
+----
+buckets
+516
+
+query
+SELECT strftime(TIMESTAMP '2025-03-25 13:07:42', '%H:%M') AS naive, strftime(TIMESTAMPTZ '2025-03-30 00:30:00+00', '%H:%M') AS zoned, date_trunc('hour', TIMESTAMP '2025-03-25 13:07:42')::TIME::VARCHAR AS cast_time, time_bucket(INTERVAL '15 minutes', TIME '13:07:42')::VARCHAR AS time_bucket;
+----
+naive	zoned	cast_time	time_bucket
+13:07	01:30	13:00:00	13:00:00
+
+statement ok
+SET TimeZone = 'Etc/UTC';

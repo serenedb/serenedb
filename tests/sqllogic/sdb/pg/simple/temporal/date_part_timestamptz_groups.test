@@ -1,0 +1,126 @@
+statement ok
+SET TimeZone = 'Etc/UTC';
+
+statement ok
+CREATE TABLE tp AS SELECT (TIMESTAMP '2023-11-15 00:00:00' + INTERVAL (i * 977) MINUTE)::TIMESTAMPTZ AS tstz, i AS v FROM range(0, 1500) t(i);
+
+statement ok
+INSERT INTO tp VALUES (NULL, -1);
+
+statement ok
+CREATE TABLE tp_inf AS SELECT * FROM tp;
+
+statement ok
+INSERT INTO tp_inf VALUES (TIMESTAMPTZ 'infinity', -2);
+
+statement ok
+SET TimeZone = 'Europe/Berlin';
+
+query
+EXPLAIN SELECT year(tstz) AS y, month(tstz) AS m, count(*) AS c FROM tp GROUP BY 1, 2;
+----
+QUERY PLAN
+╭─ PROJECTION ────────────────────────────────────╮
+│ Projections: y, m, #1                           │
+│ ~750 rows                                       │
+╰────────────────────────┬────────────────────────╯
+╭─ PERFECT_HASH_GROUP_BY ┴────────────────────────╮
+│ Groups: #0                                      │
+│ Aggregates: count_star()                        │
+│ ~750 rows                                       │
+╰────────────────────────┬────────────────────────╯
+╭─ PROJECTION ───────────┴────────────────────────╮
+│ Projections:                                    │
+│ __internal_icu_date_trunc_bucket('month', tstz) │
+│ ~1,501 rows                                     │
+╰────────────────────────┬────────────────────────╯
+╭─ SEQ_SCAN ─────────────┴────────────────────────╮
+│ Table: tp                                       │
+│ Type: Sequential Scan                           │
+│ Projections: tstz                               │
+│ ~1,501 rows                                     │
+╰─────────────────────────────────────────────────╯
+
+query
+EXPLAIN SELECT date_part('hour', tstz) AS h, count(*) AS c FROM tp GROUP BY 1;
+----
+QUERY PLAN
+╭─ PROJECTION ─────────────────────╮
+│ Projections: CAST(#0 AS BIGINT), │
+│              #1                  │
+│ ~750 rows                        │
+╰─────────────────┬────────────────╯
+╭─ PERFECT_HASH_GROUP_BY ──────────╮
+│ Groups: #0                       │
+│ Aggregates: count_star()         │
+│ ~750 rows                        │
+╰─────────────────┬────────────────╯
+╭─ PROJECTION ────┴────────────────╮
+│ Projections: CAST(h AS TINYINT)  │
+│ ~1,501 rows                      │
+╰─────────────────┬────────────────╯
+╭─ SEQ_SCAN ──────┴────────────────╮
+│ Table: tp                        │
+│ Type: Sequential Scan            │
+│ Projections: tstz                │
+│ ~1,501 rows                      │
+╰──────────────────────────────────╯
+
+query
+EXPLAIN SELECT year(tstz) AS y, count(*) AS c FROM tp_inf GROUP BY 1;
+----
+QUERY PLAN
+╭─ HASH_GROUP_BY ──────────╮
+│ Groups: #0               │
+│ Aggregates: count_star() │
+│ ~751 rows                │
+╰─────────────┬────────────╯
+╭─ PROJECTION ┴────────────╮
+│ Projections: y           │
+│ ~1,502 rows              │
+╰─────────────┬────────────╯
+╭─ SEQ_SCAN ──┴────────────╮
+│ Table: tp_inf            │
+│ Type: Sequential Scan    │
+│ Projections: tstz        │
+│ ~1,502 rows              │
+╰──────────────────────────╯
+
+query
+SELECT coalesce(year(tstz)::VARCHAR, 'null') AS y, coalesce(month(tstz)::VARCHAR, 'null') AS m, count(*) AS c FROM tp GROUP BY 1, 2 ORDER BY 1, 2 LIMIT 4;
+----
+y	m	c
+2023	11	24
+2023	12	46
+2024	1	45
+2024	10	46
+
+query
+SELECT coalesce(date_part('hour', tstz)::VARCHAR, 'null') AS h, count(*) AS c FROM tp GROUP BY 1 ORDER BY 1 LIMIT 3;
+----
+h	c
+0	63
+1	64
+10	64
+
+query
+SELECT coalesce(year(tstz)::VARCHAR, 'null') AS y, count(*) AS c FROM tp_inf GROUP BY 1 ORDER BY 1;
+----
+y	c
+2023	70
+2024	539
+2025	538
+2026	353
+null	2
+
+statement ok
+SET TimeZone = 'Pacific/Kiritimati';
+
+query
+SELECT min(year(tstz)) AS ylo, max(year(tstz)) AS yhi, min(hour(tstz)) AS hlo, max(hour(tstz)) AS hhi, min(timezone_hour(tstz)) AS tlo, max(timezone_hour(tstz)) AS thi, count(DISTINCT dayofweek(tstz)) AS dows FROM tp;
+----
+ylo	yhi	hlo	hhi	tlo	thi	dows
+2023	2026	0	23	14	14	7
+
+statement ok
+SET TimeZone = 'Etc/UTC';

@@ -23,6 +23,7 @@
 #include <absl/functional/function_ref.h>
 #include <unicode/timezone.h>
 
+#include <duckdb/common/shared_ptr.hpp>
 #include <duckdb/common/typedefs.hpp>
 #include <duckdb/common/types.hpp>
 #include <duckdb/common/vector/unified_vector_format.hpp>
@@ -31,6 +32,10 @@
 #include "basics/containers/node_hash_map.h"
 #include "basics/message_buffer.h"
 #include "query/config.h"
+
+namespace duckdb {
+class ZoneLUT;
+}
 
 namespace sdb::pg {
 
@@ -79,6 +84,7 @@ struct SerializationContext {
   std::string copy_null = "\\N";
   // Null means UTC (the default) and keeps the cheap ToString + "+00" path.
   std::unique_ptr<icu::TimeZone> time_zone;
+  duckdb::shared_ptr<const duckdb::ZoneLUT> zone_lut;
   std::unique_ptr<TypesSerializationCache> types_cache;
   std::vector<duckdb::RecursiveUnifiedVectorFormat> decoded;
 };

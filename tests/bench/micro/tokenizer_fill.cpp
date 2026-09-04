@@ -135,6 +135,30 @@ const std::vector<std::string>& TextMixedCorpus() {
   return corpus;
 }
 
+const std::vector<std::string>& LongTextCorpus() {
+  static const auto corpus = [] {
+    constexpr size_t kLongValues = 32;
+    constexpr size_t kLongSize = 20000;
+    const char* vocab[] = {"the",     "quick", "brown",   "fox",   "jumps",
+                           "over",    "lazy",  "dog",     "while", "seven",
+                           "wizards", "brew",  "potions", "under", "moonlight",
+                           "and",     "watch", "distant", "ships", "sail"};
+    std::vector<std::string> out;
+    out.reserve(kLongValues);
+    for (size_t i = 0; i < kLongValues; ++i) {
+      std::string v;
+      for (size_t w = 0; v.size() < kLongSize; ++w) {
+        v += vocab[(i * 7 + w * 3) % 20];
+        v += ' ';
+      }
+      v.resize(kLongSize);
+      out.push_back(std::move(v));
+    }
+    return out;
+  }();
+  return corpus;
+}
+
 const std::vector<std::string>& TextCorpus() {
   static const auto corpus = [] {
     const char* vocab[] = {"the",     "quick", "brown",   "fox",   "jumps",
@@ -1217,6 +1241,10 @@ Tokenizer::ptr MakeNgramUtf8() {
 
 Tokenizer::ptr MakeSparseNgram() { return SparseNGramTokenizer::Make({}); }
 
+Tokenizer::ptr MakeSparseNgramCovering() {
+  return SparseNGramTokenizer::Make({.covering = true});
+}
+
 Tokenizer::ptr MakeWildcard() {
   return WildcardAnalyzer::Make({}, tests::Cache());
 }
@@ -1507,6 +1535,14 @@ BENCHMARK_CAPTURE(BM_Fill, ngram_utf8_unicode, &MakeNgramUtf8,
                   &TextUnicodeCorpus)
   ->Unit(benchmark::kMillisecond);
 TOKENIZER_BENCH(sparse_ngram, MakeSparseNgram, TextCorpus);
+BENCHMARK_CAPTURE(BM_Fill, sparse_ngram_covering, &MakeSparseNgramCovering,
+                  &TextCorpus)
+  ->Unit(benchmark::kMillisecond);
+BENCHMARK_CAPTURE(BM_Fill, sparse_ngram_long, &MakeSparseNgram, &LongTextCorpus)
+  ->Unit(benchmark::kMillisecond);
+BENCHMARK_CAPTURE(BM_Fill, sparse_ngram_long_covering, &MakeSparseNgramCovering,
+                  &LongTextCorpus)
+  ->Unit(benchmark::kMillisecond);
 TOKENIZER_BENCH(wildcard, MakeWildcard, TextCorpus);
 BENCHMARK_CAPTURE(BM_Fill, wildcard_unicode, &MakeWildcard, &TextUnicodeCorpus)
   ->Unit(benchmark::kMillisecond);

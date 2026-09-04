@@ -61,25 +61,26 @@ class SparseNGramTokenizer final : public TypedTokenizer<SparseNGramTokenizer>,
 
   struct Cursor {
     bytes_view data;
-    uint64_t* pending_out{nullptr};
     size_t hash_base{0};
     size_t hash_end{0};
+    size_t pos{0};
+    size_t top{0};
     size_t head{0};
     size_t pending_size{0};
-    size_t pos{0};
   };
 
+  void EnsureScratch();
   bool Advance(Cursor& ctx);
   void FillHashes(Cursor& ctx);
-  IRS_FORCE_INLINE void StepAll(Cursor& ctx, size_t i, uint32_t hash);
-  IRS_FORCE_INLINE void StepCovering(Cursor& ctx, size_t i, uint32_t hash);
+  IRS_FORCE_INLINE void StepAll(HashAndPos* base, HashAndPos* limit,
+                                HashAndPos*& top, uint64_t*& out, size_t i,
+                                uint32_t hash) const;
+  IRS_FORCE_INLINE void StepCovering(HashAndPos* base, HashAndPos*& top,
+                                     size_t& head, uint64_t*& out, size_t i,
+                                     uint32_t hash) const;
 
-  static void Emit(Cursor& ctx, size_t begin, size_t end) noexcept {
-    *ctx.pending_out++ = begin | (end << 32);
-  }
-
-  size_t StackSize(const Cursor& ctx) const noexcept {
-    return _stack.size() - ctx.head;
+  static void Emit(uint64_t*& out, size_t begin, size_t end) noexcept {
+    *out++ = begin | (end << 32);
   }
 
   Options _options;

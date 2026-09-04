@@ -225,6 +225,126 @@ TEST(sparse_ngram_tokenizer_test, native_fills_match_pull) {
   }
 }
 
+namespace {
+
+struct RefGram {
+  uint32_t begin;
+  uint32_t end;
+  bool operator==(const RefGram&) const = default;
+};
+
+uint32_t RefHash(const std::string& s, size_t i) {
+  const uint64_t a = static_cast<uint8_t>(s[i]) * 0xc6a4a7935bd1e995ULL +
+                     static_cast<uint8_t>(s[i + 1]) * 0x228876a7198b743ULL;
+  return static_cast<uint32_t>(a + (~a >> 47));
+}
+
+std::vector<RefGram> RefSparseGrams(const std::string& s, size_t max_len,
+                                    bool covering) {
+  struct Entry {
+    uint32_t hash;
+    uint32_t pos;
+  };
+  std::vector<RefGram> out;
+  std::vector<Entry> stack;
+  size_t head = 0;
+  const auto emit = [&](size_t b, size_t e) {
+    out.push_back({static_cast<uint32_t>(b), static_cast<uint32_t>(e)});
+  };
+  const size_t positions = s.size() >= 2 ? s.size() - 1 : 0;
+  for (size_t i = 0; i < positions; ++i) {
+    const Entry p{RefHash(s, i), static_cast<uint32_t>(i)};
+    if (!covering) {
+      const size_t min_pos = i + 2 - std::min(i + 2, max_len);
+      while (!stack.empty() && p.hash > stack.back().hash) {
+        if (stack.back().pos < min_pos) {
+          stack.clear();
+          break;
+        }
+        emit(stack.back().pos, i + 2);
+        while (stack.size() > 1 &&
+               stack.back().hash == stack[stack.size() - 2].hash) {
+          stack.pop_back();
+        }
+        stack.pop_back();
+      }
+      if (!stack.empty() && stack.back().pos >= min_pos) {
+        emit(stack.back().pos, i + 2);
+      }
+      stack.push_back(p);
+      continue;
+    }
+    if (stack.size() - head > 1 && i - stack[head].pos + 3 >= max_len) {
+      emit(stack[head].pos, stack[head + 1].pos + 2);
+      ++head;
+    }
+    while (stack.size() > head && p.hash > stack.back().hash) {
+      if (stack[head].hash == stack.back().hash) {
+        emit(stack.back().pos, i + 2);
+        while (stack.size() - head > 1) {
+          const size_t last = stack.back().pos + 2;
+          stack.pop_back();
+          emit(stack.back().pos, last);
+        }
+      }
+      stack.pop_back();
+      if (head == stack.size()) {
+        stack.clear();
+        head = 0;
+      }
+    }
+    stack.push_back(p);
+  }
+  if (covering) {
+    while (stack.size() - head > 1) {
+      const size_t last = stack.back().pos + 2;
+      stack.pop_back();
+      emit(stack.back().pos, last);
+    }
+  }
+  return out;
+}
+
+std::string RandomText(size_t n, std::string_view alphabet, uint64_t seed) {
+  std::string s(n, ' ');
+  for (auto& c : s) {
+    seed = seed * 6364136223846793005ULL + 1442695040888963407ULL;
+    c = alphabet[(seed >> 40) % alphabet.size()];
+  }
+  return s;
+}
+
+}  // namespace
+
+TEST(sparse_ngram_tokenizer_test, long_inputs_match_reference) {
+  const std::vector<std::string> values = {
+    RandomText(20000, "ab", 1),
+    RandomText(20000, "abcdefgh", 2),
+    RandomText(20000, std::string_view{"\x01\x7f\x80\xff xyz09", 10}, 3),
+    std::string(9000, 'z'),
+    RandomText(300, "ab", 4) + std::string(100, 'q') + RandomText(300, "cd", 5),
+  };
+  for (const bool covering : {false, true}) {
+    for (const size_t max_len : {size_t{3}, size_t{16}, size_t{200}}) {
+      auto stream = irs::analysis::SparseNGramTokenizer::Make(
+        {.max_ngram_length = max_len, .covering = covering});
+      for (const auto& v : values) {
+        SCOPED_TRACE(testing::Message() << "covering=" << covering << " max="
+                                        << max_len << " size=" << v.size());
+        const auto tokens = tests::Analyze(*stream, v);
+        ASSERT_TRUE(tokens.has_value());
+        std::vector<RefGram> got;
+        got.reserve(tokens->size());
+        for (const auto& t : *tokens) {
+          ASSERT_EQ(v.substr(t.offs_start, t.offs_end - t.offs_start), t.term);
+          got.push_back({t.offs_start, t.offs_end});
+        }
+        ASSERT_EQ(RefSparseGrams(v, max_len, covering), got);
+      }
+    }
+  }
+}
+
 TEST(sparse_ngram_tokenizer_test, column_fill_matches_per_value) {
   auto stream = irs::analysis::SparseNGramTokenizer::Make({});
   auto per_value = irs::analysis::SparseNGramTokenizer::Make({});

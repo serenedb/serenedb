@@ -160,6 +160,118 @@ TEST(split_by_non_alpha_tokenizer_test, case_convert_pull) {
   EXPECT_EQ("WORLD", tokens[1].term);
 }
 
+TEST(split_by_non_alpha_tokenizer_test, case_convert_folds_ascii_only) {
+  auto lower =
+    SplitByNonAlphaTokenizer::Make({.case_convert = irs::Case::Lower});
+  const auto tokens = Pull(*lower, "Straße ÜBER Ab1 LongerThanTwelveXYZ");
+  ASSERT_EQ(5u, tokens.size());
+  EXPECT_EQ("stra", tokens[0].term);
+  EXPECT_EQ(0u, tokens[0].offs_start);
+  EXPECT_EQ(4u, tokens[0].offs_end);
+  EXPECT_EQ("e", tokens[1].term);
+  EXPECT_EQ(6u, tokens[1].offs_start);
+  EXPECT_EQ(7u, tokens[1].offs_end);
+  EXPECT_EQ("ber", tokens[2].term);
+  EXPECT_EQ(10u, tokens[2].offs_start);
+  EXPECT_EQ(13u, tokens[2].offs_end);
+  EXPECT_EQ("ab1", tokens[3].term);
+  EXPECT_EQ("longerthantwelvexyz", tokens[4].term);
+  EXPECT_EQ(18u, tokens[4].offs_start);
+  EXPECT_EQ(37u, tokens[4].offs_end);
+
+  auto upper =
+    SplitByNonAlphaTokenizer::Make({.case_convert = irs::Case::Upper});
+  const auto up = Pull(*upper, "Straße über");
+  ASSERT_EQ(3u, up.size());
+  EXPECT_EQ("STRA", up[0].term);
+  EXPECT_EQ("E", up[1].term);
+  EXPECT_EQ("BER", up[2].term);
+  EXPECT_EQ(10u, up[2].offs_start);
+  EXPECT_EQ(13u, up[2].offs_end);
+}
+
+TEST(split_by_non_alpha_tokenizer_test, case_convert_long_short_mix) {
+  auto lower =
+    SplitByNonAlphaTokenizer::Make({.case_convert = irs::Case::Lower});
+  const std::string long_a(40, 'A');
+  const std::string long_q(70, 'Q');
+  const std::string long_z(300, 'Z');
+  for (const std::string& v :
+       {long_a + " Xy " + long_q + " Ab" + long_z + "1 Cd",
+        std::string(61, 'M') + " Nn " + std::string(13, 'P') + " r " +
+          std::string(12, 'S') + std::string(52, 'T') + " Uv",
+        std::string(127, 'K') + " L " + std::string(128, 'W') + " x",
+        "aB " + std::string(255, 'C') + "d " + std::string(20, 'E') + " Fg",
+        std::string(13, 'H') + " " + std::string(13, 'I') + " " +
+          std::string(13, 'J')}) {
+    SCOPED_TRACE(testing::Message() << "size=" << v.size());
+    const auto runs = ReferenceRuns(v);
+    const auto lo = Pull(*lower, v);
+    ASSERT_EQ(runs.size(), lo.size());
+    for (size_t i = 0; i < runs.size(); ++i) {
+      SCOPED_TRACE(testing::Message() << "token=" << i);
+      std::string expect(v, runs[i].first, runs[i].second - runs[i].first);
+      for (auto& c : expect) {
+        c =
+          static_cast<char>(absl::ascii_tolower(static_cast<unsigned char>(c)));
+      }
+      ASSERT_EQ(expect, lo[i].term);
+      ASSERT_EQ(runs[i].first, lo[i].offs_start);
+      ASSERT_EQ(runs[i].second, lo[i].offs_end);
+    }
+  }
+}
+
+TEST(split_by_non_alpha_tokenizer_test, case_convert_oracle_all_sizes) {
+  constexpr std::string_view kAlnum = "abcxyzABCXYZ059";
+  constexpr std::string_view kSeps = " ,.-_\t\n\x80\xC3\xA9\xFF";
+  auto lower =
+    SplitByNonAlphaTokenizer::Make({.case_convert = irs::Case::Lower});
+  auto upper =
+    SplitByNonAlphaTokenizer::Make({.case_convert = irs::Case::Upper});
+  uint64_t seed = 0xf01d;
+  const auto next = [&] {
+    seed = seed * 6364136223846793005ULL + 1442695040888963407ULL;
+    return static_cast<size_t>(seed >> 33);
+  };
+  for (size_t size = 0; size <= 600; size += size < 80 ? 1 : 7) {
+    for (size_t iter = 0; iter < 12; ++iter) {
+      const size_t sep_percent = (iter * 9) % 60;
+      std::string v(size, '\0');
+      for (auto& c : v) {
+        c = next() % 100 < sep_percent ? kSeps[next() % kSeps.size()]
+                                       : kAlnum[next() % kAlnum.size()];
+      }
+      SCOPED_TRACE(testing::Message() << "size=" << size << " iter=" << iter
+                                      << " value=\"" << v << "\"");
+      const auto runs = ReferenceRuns(v);
+      const auto lo = Pull(*lower, v);
+      const auto up = Pull(*upper, v);
+      ASSERT_EQ(runs.size(), lo.size());
+      ASSERT_EQ(runs.size(), up.size());
+      for (size_t i = 0; i < runs.size(); ++i) {
+        SCOPED_TRACE(testing::Message() << "token=" << i);
+        std::string expect_lo(v, runs[i].first, runs[i].second - runs[i].first);
+        std::string expect_up = expect_lo;
+        for (auto& c : expect_lo) {
+          c = static_cast<char>(
+            absl::ascii_tolower(static_cast<unsigned char>(c)));
+        }
+        for (auto& c : expect_up) {
+          c = static_cast<char>(
+            absl::ascii_toupper(static_cast<unsigned char>(c)));
+        }
+        ASSERT_EQ(expect_lo, lo[i].term);
+        ASSERT_EQ(expect_up, up[i].term);
+        ASSERT_EQ(runs[i].first, lo[i].offs_start);
+        ASSERT_EQ(runs[i].second, lo[i].offs_end);
+        ASSERT_EQ(runs[i].first, up[i].offs_start);
+        ASSERT_EQ(runs[i].second, up[i].offs_end);
+      }
+    }
+  }
+}
+
 TEST(split_by_non_alpha_tokenizer_test, native_fill_matches_pull) {
   const std::vector<std::string> values = {
     "Hello, World! 123abc",

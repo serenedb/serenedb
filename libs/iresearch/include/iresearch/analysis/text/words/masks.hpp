@@ -58,10 +58,14 @@ IRS_FORCE_INLINE inline WordMasks ClassifyWordBlock(
           classify::MoveMask(c.digit)};
 }
 
+IRS_FORCE_INLINE inline uint32_t ClassifyAlnum(classify::Block b) noexcept {
+  const auto c = detail::WordCmpsOf(b);
+  return classify::MoveMask(c.alpha | c.digit);
+}
+
 IRS_FORCE_INLINE inline uint32_t ClassifyAlnumBlock(
   const byte_type* block) noexcept {
-  const auto c = detail::WordCmpsOf(classify::Load(block));
-  return classify::MoveMask(c.alpha | c.digit);
+  return ClassifyAlnum(classify::Load(block));
 }
 
 // WordMasks plus the mid-byte lanes the WB6/7 and WB11/12 bridges key on:

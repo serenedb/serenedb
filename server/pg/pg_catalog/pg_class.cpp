@@ -281,10 +281,10 @@ void RetrieveObjects(duckdb::Catalog& database, std::vector<PgClass>& values,
                            entry->name.GetIdentifierName(), owner->second);
     row.relkind = PgClass::Relkind::Index;
     row.relnatts = static_cast<int16_t>(entry->column_ids.size());
-    if (absl::EqualsIgnoreCase(entry->index_type, "inverted")) {
+    if (const auto* inverted =
+          dynamic_cast<const catalog::InvertedIndexEntry*>(&*entry)) {
       row.relam = pg::kPgAmInverted;
-      auto rendered = RenderInvertedIndexOptions(
-        catalog::DecodeInvertedIndexOptions(entry->options));
+      auto rendered = RenderInvertedIndexOptions(inverted->Options());
       if (!rendered.empty()) {
         const auto& strings =
           reloptions_storage.emplace_back(std::move(rendered));

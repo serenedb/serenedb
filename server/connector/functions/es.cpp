@@ -32,6 +32,7 @@
 #include <duckdb/catalog/catalog_entry/duck_index_entry.hpp>
 #include <duckdb/catalog/catalog_entry/duck_schema_entry.hpp>
 #include <duckdb/catalog/catalog_entry/duck_table_entry.hpp>
+#include <duckdb/catalog/catalog_entry/schema_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
 #include <duckdb/common/types/timestamp.hpp>
 #include <duckdb/common/types/uuid.hpp>
@@ -41,6 +42,7 @@
 #include <duckdb/parser/constraints/unique_constraint.hpp>
 #include <duckdb/parser/expression/columnref_expression.hpp>
 #include <duckdb/parser/expression/operator_expression.hpp>
+#include <duckdb/parser/parsed_data/create_index_info.hpp>
 #include <duckdb/parser/parsed_data/create_schema_info.hpp>
 #include <duckdb/parser/parsed_data/create_table_info.hpp>
 #include <duckdb/parser/parsed_data/drop_info.hpp>
@@ -286,7 +288,7 @@ uint32_t ResolveUintSetting(duckdb::ClientContext& context,
 // created in the same call and is empty, so after StartTasks the first
 // commit only seals the meta payload.
 void CreateTextIndex(duckdb::ClientContext& context, duckdb::idx_t database_id,
-                     const duckdb::TableCatalogEntry& table,
+                     duckdb::TableCatalogEntry& table,
                      std::span<const std::string_view> text_columns) {
   {
     duckdb::named_parameter_map_t options;
@@ -302,22 +304,6 @@ void CreateTextIndex(duckdb::ClientContext& context, duckdb::idx_t database_id,
                         /*if_not_exists=*/true, options);
   }
 
-  std::vector<catalog::CreateIndexColumn> idx_columns;
-  idx_columns.reserve(text_columns.size());
-  for (const auto name : text_columns) {
-    const auto& columns = table.GetColumns();
-    SDB_ASSERT(columns.ColumnExists(duckdb::Identifier{std::string{name}}));
-    const auto& column =
-      columns.GetColumn(duckdb::Identifier{std::string{name}});
-    idx_columns.push_back(catalog::CreateIndexColumn{
-      // A view into the entry's own column list, which outlives the create:
-      // the field is a string_view.
-      .name = column.Name().GetIdentifierName(),
-      .column = catalog::IndexedColumnRef{column.CatalogOid(), column.Type()},
-      .opclass = std::string{kTextTokenizer},
-    });
-  }
-
   catalog::InvertedIndexOptions options{
     .row_group_size = ResolveUintSetting(context, kRowGroupSizeSetting),
     .refresh_interval_ms = ResolveUintSetting(context, kRefreshIntervalSetting),
@@ -329,12 +315,35 @@ void CreateTextIndex(duckdb::ClientContext& context, duckdb::idx_t database_id,
 
   const auto index_name =
     absl::StrCat(table.name.GetIdentifierName(), kEsTextIndexSuffix);
-  auto created = catalog::CreateInvertedIndex(
-    context, database_id, kEsSchema, table, index_name, std::move(idx_columns),
-    std::move(options), {}, {});
-  SDB_ASSERT(created);
-  const auto storage =
-    catalog::InvertedStorageOf(&context, database_id, created->oid);
+  duckdb::CreateIndexInfo info;
+  info.SetSchema(duckdb::Identifier{kEsSchema});
+  info.SetIndexName(duckdb::Identifier{index_name});
+  info.table = table.name;
+  info.index_type = InvertedStoreIndex::kTypeName;
+  for (const auto name : text_columns) {
+    const duckdb::Identifier column{std::string{name}};
+    SDB_ASSERT(table.GetColumns().ColumnExists(column));
+    info.parsed_expressions.push_back(
+      duckdb::make_uniq<duckdb::ColumnRefExpression>(column));
+    info.column_opclasses.emplace_back(kTextTokenizer);
+    info.column_opclass_options.emplace_back(std::nullopt);
+  }
+  catalog::EncodeInvertedIndexOptions(options, info.options);
+
+  static const duckdb::vector<duckdb::unique_ptr<duckdb::Expression>>
+    kNoBoundExpressions;
+  auto& schema = table.ParentSchema();
+  auto entry = schema.CreateIndex(
+    schema.ParentCatalog().GetCatalogTransaction(context), info, table);
+  SDB_ASSERT(entry);
+  auto created = duckdb::optional_ptr<const duckdb::IndexCatalogEntry>{
+    &entry->Cast<duckdb::IndexCatalogEntry>()};
+  const auto store = PublishNewInvertedIndex(
+    context, table.Cast<duckdb::DuckTableEntry>().GetStorage(), schema,
+    database_id, table.oid, created->oid, info, kNoBoundExpressions,
+    entry->Cast<catalog::InvertedIndexEntry>());
+  SDB_ASSERT(store);
+  const auto& storage = entry->Cast<catalog::InvertedIndexEntry>().Storage();
   SDB_ASSERT(storage);
   storage->StartTasks();
   storage->Refresh();
@@ -498,8 +507,8 @@ void EsMappingExecute(duckdb::ClientContext& context,
     if (name == kIdColumn || name == kSourceColumn) {
       continue;
     }
-    const auto es_type = LogicalToEsType(
-      column.Type(), inverted_columns.contains(ColumnId{column.CatalogOid()}));
+    const auto es_type =
+      LogicalToEsType(column.Type(), inverted_columns.contains(column.Oid()));
     if (es_type.empty()) {
       continue;
     }
@@ -567,7 +576,8 @@ void EsCatIndicesExecute(duckdb::ClientContext& context,
             return;
           }
           first = false;
-          auto storage = index.GetInvertedData();
+          const auto& storage =
+            basics::downCast<catalog::InvertedIndexEntry>(index).Storage();
           if (auto snapshot =
                 storage ? storage->GetInvertedIndexSnapshot() : nullptr) {
             docs_count = snapshot->reader.live_docs_count();
@@ -1094,7 +1104,8 @@ void EsRefreshExecute(duckdb::ClientContext& context,
 
   auto refresh_table = [&](duckdb::TableCatalogEntry& table) {
     VisitInvertedIndexes(context, table, [&](duckdb::DuckIndexEntry& index) {
-      if (auto storage = index.GetInvertedData()) {
+      if (const auto& storage =
+            basics::downCast<catalog::InvertedIndexEntry>(index).Storage()) {
         storage->Refresh();
       }
     });

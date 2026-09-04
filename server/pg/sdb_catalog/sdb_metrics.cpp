@@ -33,7 +33,6 @@
 #include "catalog1/catalog.h"
 #include "catalog1/entry/inverted_index.h"
 #include "connector/inverted_store_index.h"
-#include "connector/inverted_store_lookup.h"
 #include "search/inverted_index_storage.h"
 
 namespace sdb::pg {
@@ -115,13 +114,13 @@ MaterializedData SystemTableSnapshot<SdbMetrics>::GetTableData() {
   auto& catalog =
     duckdb::Catalog::GetCatalog(context, duckdb::Identifier::InvalidCatalog());
   const auto visit_index = [&](duckdb::CatalogEntry& entry) {
-    auto& index = entry.Cast<duckdb::DuckIndexEntry>();
-    const auto store = connector::FindInvertedStore(index);
-    if (!store || !store->Storage()) {
+    const auto* index =
+      dynamic_cast<const catalog::InvertedIndexEntry*>(&entry);
+    if (!index || !index->Storage()) {
       return;
     }
-    const auto stats = store->Storage()->GetStats();
-    const auto relation_id = static_cast<Oid>(index.oid);
+    const auto stats = index->Storage()->GetStats();
+    const auto relation_id = static_cast<Oid>(index->oid);
     for (const auto& desc : kIndexMetrics) {
       values.emplace_back(desc.metric, stats.*desc.field, desc.description,
                           relation_id);

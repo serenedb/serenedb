@@ -133,20 +133,16 @@ class SereneDBPhysicalCreateIndex final : public duckdb::PhysicalOperator {
   // `relation` is the catalog entry the index is built on: either a table or a
   // view (foreign-source-backed), which is where its id, its name and the
   // authority over it are read from.
-  // `columns` is the relation's column list and `pk_positions` the positions
-  // in it the row identity is built from -- empty for a view and for a table
-  // that declares no key.
+  // `columns` is the relation's column list.
   // `bound_expressions` carries the IndexBinder's output (one per
   // `info->parsed_expressions`). For a bare column ref the slot is set but
   // unused; for an arbitrary expression we normalise + serialise
   // it via helpers into a `catalog::ExpressionData`.
   SereneDBPhysicalCreateIndex(
     duckdb::PhysicalPlan& plan, duckdb::CatalogEntry& relation,
-    std::vector<IndexRelationColumn> columns,
-    std::vector<duckdb::LogicalIndex> pk_positions, duckdb::idx_t database_id,
+    std::vector<IndexRelationColumn> columns, duckdb::idx_t database_id,
     duckdb::unique_ptr<duckdb::CreateIndexInfo> info,
     duckdb::vector<duckdb::unique_ptr<duckdb::Expression>> bound_expressions,
-    duckdb::unique_ptr<duckdb::Expression> bound_where,
     duckdb::DuckSchemaEntry& schema_entry, duckdb::idx_t estimated_cardinality);
 
   bool IsSink() const final { return true; }
@@ -182,13 +178,9 @@ class SereneDBPhysicalCreateIndex final : public duckdb::PhysicalOperator {
   // Not const: the build reads and publishes into the relation's own storage.
   duckdb::CatalogEntry& _relation;
   std::vector<IndexRelationColumn> _columns;
-  // Positions in `_columns` the row identity is built from; empty for a view
-  // and for a table with no declared primary key.
-  std::vector<duckdb::LogicalIndex> _pk_positions;
   duckdb::idx_t _database_id;
   duckdb::unique_ptr<duckdb::CreateIndexInfo> _info;
   duckdb::vector<duckdb::unique_ptr<duckdb::Expression>> _bound_expressions;
-  duckdb::unique_ptr<duckdb::Expression> _bound_where;
   // The statement's SereneDBCreateIndexInfo view of _info: the bind
   // captures (manifest, pk spec/type) plus the optional REINDEX pass
   // identity ride the statement info itself, so prepared re-executions

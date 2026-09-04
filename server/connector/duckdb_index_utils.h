@@ -29,14 +29,6 @@
 #include "connector/duckdb_sink_writer_base.h"
 namespace sdb::connector {
 
-// The chunk positions a CREATE INDEX backfill has to read: the indexed columns
-// plus the key columns the row identity is built from, sorted and deduplicated.
-// Both are already positions in the relation's column list, so nothing here
-// needs the relation itself.
-std::vector<size_t> BuildCreateIndexProjection(
-  std::span<const duckdb::LogicalIndex> pk_column_positions,
-  std::span<const duckdb::idx_t> index_column_positions);
-
 // One indexed base column of a feed chunk: its position in the chunk and the
 // (column id, type) the sink needs to tokenize it.
 struct FeedColumn {

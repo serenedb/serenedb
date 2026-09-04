@@ -95,7 +95,7 @@ void RunSearchTableRecovery(bool skip_wal_recovery) {
         info.shard = std::move(search);
         const auto& columns = entry.GetColumns();
         for (const auto& col : columns.Logical()) {
-          info.column_ids.emplace_back(col.CatalogOid());
+        info.column_ids.emplace_back(col.Oid());
         }
         for (const auto index : entry.GetPKColumnIndexes()) {
           info.pk_columns.push_back({.input_col_idx = index.index,

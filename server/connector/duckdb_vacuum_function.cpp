@@ -44,7 +44,6 @@
 #include "catalog1/lookup.h"
 #include "connector/duckdb_client_state.h"
 #include "connector/inverted_store_index.h"
-#include "connector/inverted_store_lookup.h"
 #include "pg/connection_context.h"
 #include "pg/errcodes.h"
 #include "pg/pg_types.h"

@@ -29,6 +29,13 @@
 #include "catalog1/entry/foreign_server.h"
 #include "catalog1/entry/tokenizer.h"
 
+namespace duckdb {
+
+class PhysicalPlanGenerator;
+class PhysicalOperator;
+class LogicalInsert;
+
+}  // namespace duckdb
 namespace sdb::catalog {
 
 // One serenedb database. It derives from DuckCatalog rather than Catalog
@@ -44,6 +51,24 @@ class SereneDBCatalog : public duckdb::DuckCatalog {
   std::string GetCatalogType() override { return kStorageType; }
 
   void Initialize(bool load_builtin) override;
+
+  std::string GetDefaultSchema() const override;
+
+  duckdb::unique_ptr<duckdb::IndexCatalogEntry> MakeIndexEntry(
+    duckdb::DuckSchemaEntry& schema, duckdb::CreateIndexInfo& info,
+    duckdb::TableCatalogEntry& table) override;
+
+  duckdb::unique_ptr<duckdb::TableCatalogEntry> MakeTableEntry(
+    duckdb::DuckSchemaEntry& schema,
+    duckdb::BoundCreateTableInfo& info) override;
+
+  duckdb::PhysicalOperator& PlanInsert(
+    duckdb::ClientContext& context, duckdb::PhysicalPlanGenerator& planner,
+    duckdb::LogicalInsert& op,
+    duckdb::optional_ptr<duckdb::PhysicalOperator> plan) override;
+
+  duckdb::ErrorData SupportsCreateTable(
+    duckdb::BoundCreateTableInfo& info) override;
 
   duckdb::optional_ptr<duckdb::CatalogEntry> CreateTokenizer(
     duckdb::CatalogTransaction transaction, duckdb::DuckSchemaEntry& schema,

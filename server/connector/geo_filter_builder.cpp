@@ -30,6 +30,7 @@
 #include <string_view>
 
 #include "basics/assert.h"
+#include "connector/geo_validate.h"
 #include "functions/search.h"
 #include "functions/ts_common.hpp"
 #include "functions/vector.h"
@@ -43,27 +44,6 @@
 
 namespace sdb::connector {
 namespace {
-
-bool IsCRS84Identifier(std::string_view id) noexcept {
-  return id == "OGC:CRS84" || id == "EPSG:4326" || id == "4326";
-}
-
-void ValidateGeometryCRS84(const duckdb::LogicalType& type,
-                           std::string_view subject) {
-  if (!duckdb::GeoType::HasCRS(type)) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                    ERR_MSG(subject,
-                            ": GEOMETRY type has no CRS attached; declare it "
-                            "with ::GEOMETRY('OGC:CRS84')"));
-  }
-  const auto& crs = duckdb::GeoType::GetCRS(type);
-  if (!IsCRS84Identifier(crs.GetIdentifier())) {
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-      ERR_MSG(subject, ": GEOMETRY type has invalid CRS '", crs.GetIdentifier(),
-              "'; only CRS84 is supported (EPSG:4326, OGC:CRS84, 4326)"));
-  }
-}
 
 // Peels a cast that's a metadata-only reinterpret -- same LogicalTypeId on
 // both sides and non-nested -- so geo signatures pinned to

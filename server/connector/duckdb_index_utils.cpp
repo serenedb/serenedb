@@ -30,25 +30,6 @@
 
 namespace sdb::connector {
 
-std::vector<size_t> BuildCreateIndexProjection(
-  std::span<const duckdb::LogicalIndex> pk_column_positions,
-  std::span<const duckdb::idx_t> index_column_positions) {
-  std::vector<size_t> projection;
-  projection.reserve(index_column_positions.size() +
-                     pk_column_positions.size());
-
-  for (auto pos : index_column_positions) {
-    projection.push_back(static_cast<size_t>(pos));
-  }
-  for (auto pk : pk_column_positions) {
-    projection.push_back(static_cast<size_t>(pk.index));
-  }
-  absl::c_sort(projection);
-  projection.erase(std::unique(projection.begin(), projection.end()),
-                   projection.end());
-  return projection;
-}
-
 void FeedChunk(DuckDBSinkIndexWriter& writer, duckdb::idx_t count,
                const PkChunk& pk, duckdb::DataChunk& chunk,
                std::span<const FeedColumn> columns,

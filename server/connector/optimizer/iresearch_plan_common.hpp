@@ -98,8 +98,8 @@ bool TryClaimIResearchConjunct(
   duckdb::ClientContext& context, connector::FilterScorers* scorers = nullptr);
 
 inline connector::SearchColumnInfo MakeSearchColumnInfo(
-  irs::field_id field, const search::InvertedIndexEntryInfo* info,
-  duckdb::LogicalType type, search::ColumnTokenizer tokenizer) {
+  irs::field_id field, const catalog::InvertedIndexField* info,
+  duckdb::LogicalType type, catalog::ColumnTokenizer tokenizer) {
   return {
     .field_id = field,
     .null_field_id = info ? info->null_field_id : irs::field_limits::invalid(),
@@ -120,7 +120,6 @@ struct SearchGetters {
 
 bool WithSearchGetters(duckdb::LogicalGet& get,
                        connector::SereneDBScanBindData& bind_data,
-                       const search::InvertedIndex& index,
                        duckdb::ClientContext& context,
                        absl::FunctionRef<bool(const SearchGetters&)> fn);
 

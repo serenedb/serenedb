@@ -1,0 +1,274 @@
+statement ok
+SET TimeZone = 'Etc/UTC';
+
+query
+SELECT
+  date_trunc('hour', TIMESTAMPTZ '2024-03-15 14:30:45.123456+00')::VARCHAR AS hour,
+  date_trunc('day', TIMESTAMPTZ '2024-03-15 14:30:45.123456+00')::VARCHAR AS day,
+  date_trunc('week', TIMESTAMPTZ '2024-03-15 14:30:45.123456+00')::VARCHAR AS week,
+  date_trunc('month', TIMESTAMPTZ '2024-03-15 14:30:45.123456+00')::VARCHAR AS month,
+  date_trunc('quarter', TIMESTAMPTZ '2024-05-15 14:30:45.123456+00')::VARCHAR AS quarter,
+  date_trunc('year', TIMESTAMPTZ '2024-03-15 14:30:45.123456+00')::VARCHAR AS year,
+  date_trunc('isoyear', TIMESTAMPTZ '2021-01-03 12:00:00+00')::VARCHAR AS isoyear,
+  date_trunc('decade', TIMESTAMPTZ '2024-03-15 14:30:45.123456+00')::VARCHAR AS decade;
+----
+hour	day	week	month	quarter	year	isoyear	decade
+2024-03-15 14:00:00+00	2024-03-15 00:00:00+00	2024-03-11 00:00:00+00	2024-03-01 00:00:00+00	2024-04-01 00:00:00+00	2024-01-01 00:00:00+00	2019-12-30 00:00:00+00	2020-01-01 00:00:00+00
+
+query
+SELECT
+  date_trunc('decade', TIMESTAMPTZ '0015-06-15 (BC) 12:00:00+00')::VARCHAR AS decade_bc,
+  date_trunc('year', TIMESTAMPTZ '0015-06-15 (BC) 12:00:00+00')::VARCHAR AS year_bc,
+  date_trunc('hour', TIMESTAMPTZ 'infinity')::VARCHAR AS pinf,
+  date_trunc('day', TIMESTAMPTZ '-infinity')::VARCHAR AS ninf,
+  date_trunc('month', NULL::TIMESTAMPTZ) IS NULL AS null_in;
+----
+decade_bc	year_bc	pinf	ninf	null_in
+0010-01-01 (BC) 00:00:00+00	0015-01-01 (BC) 00:00:00+00	infinity	-infinity	t
+
+
+statement ok
+SET TimeZone = 'Etc/GMT-5';
+
+query
+SELECT
+  date_trunc('hour', TIMESTAMPTZ '2024-03-15 22:30:00+00')::VARCHAR AS hour,
+  date_trunc('day', TIMESTAMPTZ '2024-03-15 22:30:00+00')::VARCHAR AS day,
+  date_trunc('month', TIMESTAMPTZ '2024-03-31 22:30:00+00')::VARCHAR AS month;
+----
+hour	day	month
+2024-03-16 03:00:00+05	2024-03-16 00:00:00+05	2024-04-01 00:00:00+05
+
+
+statement ok
+SET TimeZone = 'Europe/Berlin';
+
+query
+SELECT
+  date_trunc('hour', TIMESTAMPTZ '2024-03-31 01:30:00+00')::VARCHAR AS hour,
+  date_trunc('day', TIMESTAMPTZ '2024-03-31 01:30:00+00')::VARCHAR AS day,
+  date_trunc('week', TIMESTAMPTZ '2024-03-31 01:30:00+00')::VARCHAR AS week,
+  date_trunc('month', TIMESTAMPTZ '2024-03-31 01:30:00+00')::VARCHAR AS month;
+----
+hour	day	week	month
+2024-03-31 03:00:00+02	2024-03-31 00:00:00+01	2024-03-25 00:00:00+01	2024-03-01 00:00:00+01
+
+query
+SELECT
+  date_trunc('hour', TIMESTAMPTZ '2024-10-27 00:30:00+00')::VARCHAR AS hour_first_occurrence,
+  date_trunc('hour', TIMESTAMPTZ '2024-10-27 01:30:00+00')::VARCHAR AS hour_second_occurrence,
+  date_trunc('minute', TIMESTAMPTZ '2024-10-27 00:30:30+00')::VARCHAR AS minute_keeps_offset,
+  date_trunc('day', TIMESTAMPTZ '2024-10-27 00:30:00+00')::VARCHAR AS day_before_transition,
+  date_trunc('day', TIMESTAMPTZ '2024-10-27 12:00:00+00')::VARCHAR AS day_after_transition;
+----
+hour_first_occurrence	hour_second_occurrence	minute_keeps_offset	day_before_transition	day_after_transition
+2024-10-27 02:00:00+01	2024-10-27 02:00:00+01	2024-10-27 02:30:00+02	2024-10-27 00:00:00+02	2024-10-27 00:00:00+02
+
+query
+SELECT
+  date_trunc('day', TIMESTAMPTZ '1850-06-15 12:34:56+00')::VARCHAR AS before_1900,
+  date_trunc('hour', TIMESTAMPTZ '2350-07-04 12:34:56+00')::VARCHAR AS after_2300,
+  date_trunc('hour', TIMESTAMPTZ '1899-12-31 23:30:00+00')::VARCHAR AS at_lower_bound,
+  date_trunc('day', TIMESTAMPTZ '2299-12-31 23:30:00+00')::VARCHAR AS at_upper_bound;
+----
+before_1900	after_2300	at_lower_bound	at_upper_bound
+1850-06-15 00:00:00+00:53	2350-07-04 14:00:00+02	1900-01-01 00:00:00+01	2300-01-01 00:00:00+01
+
+query
+SELECT u, date_trunc(u, TIMESTAMPTZ '2024-10-27 00:30:00+00')::VARCHAR AS truncated
+FROM (VALUES ('day'), ('hour'), ('week')) t(u) ORDER BY u;
+----
+u	truncated
+day	2024-10-27 00:00:00+02
+hour	2024-10-27 02:00:00+01
+week	2024-10-21 00:00:00+02
+
+
+statement ok
+SET TimeZone = 'America/Sao_Paulo';
+
+query
+SELECT
+  date_trunc('year', TIMESTAMPTZ '1914-05-01 12:00:00-03')::VARCHAR AS year_start_in_gap,
+  date_trunc('decade', TIMESTAMPTZ '1914-05-01 12:00:00-03')::VARCHAR AS decade_start_in_gap,
+  date_trunc('quarter', TIMESTAMPTZ '1914-02-15 12:00:00-03')::VARCHAR AS quarter_start_in_gap,
+  date_trunc('month', TIMESTAMPTZ '1914-01-15 12:00:00-03')::VARCHAR AS month_start_in_gap;
+----
+year_start_in_gap	decade_start_in_gap	quarter_start_in_gap	month_start_in_gap
+1914-01-01 00:06:28-03	1910-01-01 00:06:28-03:06	1914-01-01 00:06:28-03	1914-01-01 00:06:28-03
+
+
+statement ok
+SET TimeZone = 'America/Havana';
+
+query
+SELECT
+  date_trunc('quarter', TIMESTAMPTZ '2024-05-15 12:00:00+00')::VARCHAR AS quarter,
+  date_trunc('day', TIMESTAMPTZ '2024-03-10 05:30:00+00')::VARCHAR AS day_starting_in_gap;
+----
+quarter	day_starting_in_gap
+2024-04-01 00:00:00-04	2024-03-10 01:00:00-04
+
+
+statement ok
+SET TimeZone = 'Asia/Kolkata';
+
+query
+SELECT
+  date_trunc('hour', TIMESTAMPTZ '2024-03-15 14:45:00+00')::VARCHAR AS hour,
+  date_trunc('day', TIMESTAMPTZ '2024-03-15 14:45:00+00')::VARCHAR AS day,
+  make_timestamptz(10000000000)::VARCHAR AS near_epoch,
+  date_trunc('hour', make_timestamptz(10000000000))::VARCHAR AS near_epoch_hour,
+  date_trunc('minute', make_timestamptz(10000000000))::VARCHAR AS near_epoch_minute;
+----
+hour	day	near_epoch	near_epoch_hour	near_epoch_minute
+2024-03-15 20:00:00+05:30	2024-03-15 00:00:00+05:30	1970-01-01 08:16:40+05:30	1970-01-01 08:00:00+05:30	1970-01-01 08:16:00+05:30
+
+
+statement ok
+SET TimeZone = 'Africa/Monrovia';
+
+query
+SELECT
+  date_trunc('minute', TIMESTAMPTZ '1970-06-15 12:00:45+00')::VARCHAR AS minute_with_second_offset,
+  date_trunc('hour', TIMESTAMPTZ '1970-06-15 12:00:45+00')::VARCHAR AS hour_with_second_offset,
+  date_trunc('minute', TIMESTAMPTZ '1980-06-15 12:00:45+00')::VARCHAR AS minute_after_1972;
+----
+minute_with_second_offset	hour_with_second_offset	minute_after_1972
+1970-06-15 11:16:00-00:44	1970-06-15 11:00:00-00:44	1980-06-15 12:00:00+00
+
+
+statement ok
+SET TimeZone = 'Pacific/Apia';
+
+query
+SELECT
+  date_trunc('day', TIMESTAMPTZ '2020-01-02 03:04:05')::VARCHAR AS day,
+  date_trunc('day', TIMESTAMPTZ '2011-12-30 09:59:59+00')::VARCHAR AS day_before_skipped_day,
+  date_trunc('day', TIMESTAMPTZ '2011-12-30 10:00:00+00')::VARCHAR AS day_after_skipped_day,
+  date_trunc('week', TIMESTAMPTZ '2011-12-30 10:00:00+00')::VARCHAR AS week_across_skipped_day,
+  date_trunc('month', TIMESTAMPTZ '2011-12-30 10:00:00+00')::VARCHAR AS month_across_skipped_day;
+----
+day	day_before_skipped_day	day_after_skipped_day	week_across_skipped_day	month_across_skipped_day
+2020-01-02 00:00:00+14	2011-12-29 00:00:00-10	2011-12-31 00:00:00+14	2011-12-26 00:00:00-10	2011-12-01 00:00:00-10
+
+
+statement ok
+SET TimeZone = 'Pacific/Kiritimati';
+
+query
+SELECT
+  date_trunc('day', TIMESTAMPTZ '2020-01-02 03:04:05')::VARCHAR AS day,
+  date_trunc('hour', TIMESTAMPTZ '2020-01-02 03:04:05')::VARCHAR AS hour,
+  date_trunc('day', TIMESTAMPTZ '1995-01-01 09:59:59+00')::VARCHAR AS day_before_skipped_day,
+  date_trunc('day', TIMESTAMPTZ '1995-01-01 10:00:00+00')::VARCHAR AS day_after_skipped_day;
+----
+day	hour	day_before_skipped_day	day_after_skipped_day
+2020-01-02 00:00:00+14	2020-01-02 03:00:00+14	1995-01-01 00:00:00+14	1995-01-02 00:00:00+14
+
+
+statement ok
+SET TimeZone = 'Pacific/Kwajalein';
+
+query
+SELECT
+  date_trunc('day', TIMESTAMPTZ '2020-01-02 03:04:05')::VARCHAR AS day,
+  date_trunc('day', TIMESTAMPTZ '1993-08-20 23:00:00+00')::VARCHAR AS day_before_date_line_move,
+  date_trunc('day', TIMESTAMPTZ '1993-08-21 00:00:00+00')::VARCHAR AS day_after_date_line_move;
+----
+day	day_before_date_line_move	day_after_date_line_move
+2020-01-02 00:00:00+12	1993-08-20 00:00:00-12	1993-08-20 00:00:00-12
+
+
+statement ok
+SET TimeZone = 'Asia/Pyongyang';
+
+query
+SELECT
+  date_trunc('day', TIMESTAMPTZ '2020-01-02 03:04:05')::VARCHAR AS day,
+  date_trunc('hour', TIMESTAMPTZ '2016-06-01 03:04:05')::VARCHAR AS hour_half_hour_era;
+----
+day	hour_half_hour_era
+2020-01-02 00:00:00+09	2016-06-01 03:00:00+08:30
+
+
+statement ok
+SET TimeZone = 'Europe/Moscow';
+
+query
+SELECT i, src::VARCHAR AS src, date_trunc('hour', src)::VARCHAR AS hour
+FROM (SELECT i, TIMESTAMPTZ '2010-03-27 22:00:00+00' + INTERVAL (15 * i) MINUTE AS src FROM range(3, 10) t(i))
+ORDER BY i;
+----
+i	src	hour
+3	2010-03-28 01:45:00+03	2010-03-28 01:00:00+03
+4	2010-03-28 03:00:00+04	2010-03-28 03:00:00+04
+5	2010-03-28 03:15:00+04	2010-03-28 03:00:00+04
+6	2010-03-28 03:30:00+04	2010-03-28 03:00:00+04
+7	2010-03-28 03:45:00+04	2010-03-28 03:00:00+04
+8	2010-03-28 04:00:00+04	2010-03-28 04:00:00+04
+9	2010-03-28 04:15:00+04	2010-03-28 04:00:00+04
+
+query
+SELECT i, src::VARCHAR AS src, date_trunc('hour', src)::VARCHAR AS hour, date_trunc('day', src)::VARCHAR AS day
+FROM (SELECT i, TIMESTAMPTZ '2010-10-30 20:00:00+00' + INTERVAL (15 * i) MINUTE AS src FROM range(6, 17) t(i))
+ORDER BY i;
+----
+i	src	hour	day
+6	2010-10-31 01:30:00+04	2010-10-31 01:00:00+04	2010-10-31 00:00:00+04
+7	2010-10-31 01:45:00+04	2010-10-31 01:00:00+04	2010-10-31 00:00:00+04
+8	2010-10-31 02:00:00+04	2010-10-31 02:00:00+03	2010-10-31 00:00:00+04
+9	2010-10-31 02:15:00+04	2010-10-31 02:00:00+03	2010-10-31 00:00:00+04
+10	2010-10-31 02:30:00+04	2010-10-31 02:00:00+03	2010-10-31 00:00:00+04
+11	2010-10-31 02:45:00+04	2010-10-31 02:00:00+03	2010-10-31 00:00:00+04
+12	2010-10-31 02:00:00+03	2010-10-31 02:00:00+03	2010-10-31 00:00:00+04
+13	2010-10-31 02:15:00+03	2010-10-31 02:00:00+03	2010-10-31 00:00:00+04
+14	2010-10-31 02:30:00+03	2010-10-31 02:00:00+03	2010-10-31 00:00:00+04
+15	2010-10-31 02:45:00+03	2010-10-31 02:00:00+03	2010-10-31 00:00:00+04
+16	2010-10-31 03:00:00+03	2010-10-31 03:00:00+03	2010-10-31 00:00:00+04
+
+
+statement ok
+SET TimeZone = 'Australia/Lord_Howe';
+
+query
+SELECT i, src::VARCHAR AS src, date_trunc('hour', src)::VARCHAR AS hour, date_trunc('minute', src)::VARCHAR AS minute
+FROM (SELECT i, TIMESTAMPTZ '2020-04-04 13:00:00+00' + INTERVAL (15 * i) MINUTE AS src FROM range(6, 12) t(i))
+ORDER BY i;
+----
+i	src	hour	minute
+6	2020-04-05 01:30:00+11	2020-04-05 01:00:00+11	2020-04-05 01:30:00+11
+7	2020-04-05 01:45:00+11	2020-04-05 01:00:00+11	2020-04-05 01:45:00+11
+8	2020-04-05 01:30:00+10:30	2020-04-05 01:00:00+11	2020-04-05 01:30:00+10:30
+9	2020-04-05 01:45:00+10:30	2020-04-05 01:00:00+11	2020-04-05 01:45:00+10:30
+10	2020-04-05 02:00:00+10:30	2020-04-05 02:00:00+10:30	2020-04-05 02:00:00+10:30
+11	2020-04-05 02:15:00+10:30	2020-04-05 02:00:00+10:30	2020-04-05 02:15:00+10:30
+
+query
+SELECT i, src::VARCHAR AS src, date_trunc('hour', src)::VARCHAR AS hour
+FROM (SELECT i, TIMESTAMPTZ '2020-10-03 13:00:00+00' + INTERVAL (15 * i) MINUTE AS src FROM range(8, 13) t(i))
+ORDER BY i;
+----
+i	src	hour
+8	2020-10-04 01:30:00+10:30	2020-10-04 01:00:00+10:30
+9	2020-10-04 01:45:00+10:30	2020-10-04 01:00:00+10:30
+10	2020-10-04 02:30:00+11	2020-10-04 02:30:00+11
+11	2020-10-04 02:45:00+11	2020-10-04 02:30:00+11
+12	2020-10-04 03:00:00+11	2020-10-04 03:00:00+11
+
+
+statement ok
+RESET TimeZone;
+
+query
+SELECT
+  date_trunc('isoyear', TIMESTAMP '2021-01-03 12:00:00')::VARCHAR AS isoyear,
+  date_trunc('week', TIMESTAMP '1969-12-28 12:00:00')::VARCHAR AS week,
+  date_trunc('hour', TIMESTAMP '1969-12-31 23:59:59.999999')::VARCHAR AS hour,
+  date_trunc('month', TIMESTAMP '2000-02-29 23:59:59')::VARCHAR AS month,
+  date_trunc('quarter', DATE '1999-12-31')::VARCHAR AS quarter,
+  date_trunc('year', TIMESTAMP '0001-06-15 (BC) 12:00:00')::VARCHAR AS year_bc,
+  date_trunc('decade', TIMESTAMP '0015-06-15 (BC) 12:00:00')::VARCHAR AS decade_bc;
+----
+isoyear	week	hour	month	quarter	year_bc	decade_bc
+2019-12-30 00:00:00	1969-12-22 00:00:00	1969-12-31 23:00:00	2000-02-01 00:00:00	1999-10-01 00:00:00	0001-01-01 (BC) 00:00:00	0011-01-01 (BC) 00:00:00

@@ -49,8 +49,10 @@
 #include "basics/log.h"
 #include "basics/serializer.h"
 #include "basics/system-compiler.h"
+#include "catalog1/boot.h"
 #include "catalog1/catalog.h"
 #include "catalog1/entry/inverted_index.h"
+#include "catalog1/scorer_options.h"
 #include "pg/sql_exception_macro.h"
 #include "query/transaction.h"
 #include "scheduler/background_scheduler.h"
@@ -138,15 +140,18 @@ std::filesystem::path InvertedIndexStorage::GetPath(duckdb::idx_t db_id,
 }
 
 std::shared_ptr<InvertedIndexStorage> InvertedIndexStorage::Create(
-  duckdb::idx_t db_id, const InvertedIndex& index, bool is_new) {
-  return std::make_shared<InvertedIndexStorage>(db_id, index, is_new);
+  duckdb::idx_t db_id, duckdb::idx_t schema_id, duckdb::idx_t table_id,
+  duckdb::idx_t index_id, const catalog::InvertedIndexOptions& options,
+  const std::optional<irs::ScorerOptions>& top_k_scorer, bool is_new) {
+  return std::make_shared<InvertedIndexStorage>(
+    db_id, schema_id, table_id, index_id, options, top_k_scorer, is_new);
 }
 
-InvertedIndexStorage::InvertedIndexStorage(duckdb::idx_t db_id,
-                                           const InvertedIndex& index,
-                                           bool is_new)
-  : _index_id{index.GetId()}, _db_id{db_id}, _search{GetSearchEngine()} {
-  const auto& options = index.GetOptions();
+InvertedIndexStorage::InvertedIndexStorage(
+  duckdb::idx_t db_id, duckdb::idx_t schema_id, duckdb::idx_t table_id,
+  duckdb::idx_t index_id, const catalog::InvertedIndexOptions& options,
+  const std::optional<irs::ScorerOptions>& top_k_scorer, bool is_new)
+  : _index_id{index_id}, _db_id{db_id}, _search{GetSearchEngine()} {
   _tasks_settings.refresh_interval_msec = options.refresh_interval_ms;
   _tasks_settings.compaction_interval_msec = options.compaction_interval_ms;
   _tasks_settings.reindex_interval_msec = options.reindex_interval_ms;
@@ -157,10 +162,8 @@ InvertedIndexStorage::InvertedIndexStorage(duckdb::idx_t db_id,
   _tasks_settings.compaction_floor_segment_bytes =
     options.compaction_floor_segment_bytes;
 
-  const auto schema_id = index.GetSchemaId();
-  const auto index_id = index.GetId();
   SDB_ASSERT(index_id != 0);
-  _path = GetPath(db_id, schema_id, index.GetRelationId(), index_id);
+  _path = GetPath(db_id, schema_id, table_id, index_id);
   const auto& path = _path;
   // TODO(mbkkt) maybe we should use create_directories result instead of
   // exists?
@@ -218,7 +221,7 @@ InvertedIndexStorage::InvertedIndexStorage(duckdb::idx_t db_id,
   // index (CompactUnsafe). The long-lived writer therefore never reaches into
   // the live catalog, so a concurrent DROP can no longer dangle it.
 
-  if (const auto& options = index.GetTopKScorer()) {
+  if (const auto& options = top_k_scorer) {
     _topk_scorer = catalog::MakeScorer(*options);
     writer_options.reader_options.scorer = _topk_scorer.get();
   }
@@ -554,7 +557,7 @@ absl::Status InvertedIndexStorage::RefreshUnsafeImpl(
       _stamp_cursor_from_flush = false;
     };
     if (for_checkpoint) {
-      if (auto store = catalog::TryStoreDatabase(_db_id)) {
+      if (auto store = catalog::FindAttachedDatabase(_db_id)) {
         const auto next_gen = store->GetStorageManager()
                                 .GetBlockManager()
                                 .GetCheckpointIteration() +

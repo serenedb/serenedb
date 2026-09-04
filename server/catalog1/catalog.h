@@ -34,6 +34,7 @@ namespace duckdb {
 class PhysicalPlanGenerator;
 class PhysicalOperator;
 class LogicalInsert;
+struct DropInfo;
 
 }  // namespace duckdb
 namespace sdb::catalog {
@@ -59,7 +60,7 @@ class SereneDBCatalog : public duckdb::DuckCatalog {
     duckdb::TableCatalogEntry& table) override;
 
   duckdb::unique_ptr<duckdb::TableCatalogEntry> MakeTableEntry(
-    duckdb::DuckSchemaEntry& schema,
+    duckdb::CatalogTransaction transaction, duckdb::DuckSchemaEntry& schema,
     duckdb::BoundCreateTableInfo& info) override;
 
   duckdb::PhysicalOperator& PlanInsert(
@@ -67,12 +68,32 @@ class SereneDBCatalog : public duckdb::DuckCatalog {
     duckdb::LogicalInsert& op,
     duckdb::optional_ptr<duckdb::PhysicalOperator> plan) override;
 
+  duckdb::PhysicalOperator& PlanDelete(duckdb::ClientContext& context,
+                                       duckdb::PhysicalPlanGenerator& planner,
+                                       duckdb::LogicalDelete& op,
+                                       duckdb::PhysicalOperator& plan) override;
+
+  duckdb::PhysicalOperator& PlanUpdate(duckdb::ClientContext& context,
+                                       duckdb::PhysicalPlanGenerator& planner,
+                                       duckdb::LogicalUpdate& op,
+                                       duckdb::PhysicalOperator& plan) override;
+
+  duckdb::unique_ptr<duckdb::LogicalOperator> BindCreateIndex(
+    duckdb::Binder& binder, duckdb::CreateStatement& stmt,
+    duckdb::CatalogEntry& table,
+    duckdb::unique_ptr<duckdb::LogicalOperator> plan) override;
+
   duckdb::ErrorData SupportsCreateTable(
     duckdb::BoundCreateTableInfo& info) override;
 
   duckdb::optional_ptr<duckdb::CatalogEntry> CreateTokenizer(
     duckdb::CatalogTransaction transaction, duckdb::DuckSchemaEntry& schema,
     CreateTokenizerInfo& info);
+
+  // DROP TEXT SEARCH DICTIONARY arrives as a pragma, and a pragma's binder
+  // never registers the database as modified, so the transaction is still
+  // read-only when the drop reaches duckdb's tombstone write.
+  void DropTokenizer(duckdb::ClientContext& context, duckdb::DropInfo& info);
 
   duckdb::optional_ptr<duckdb::CatalogEntry> CreateForeignServer(
     duckdb::CatalogTransaction transaction, CreateForeignServerInfo& info);

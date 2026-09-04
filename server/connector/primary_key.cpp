@@ -20,9 +20,21 @@
 
 #include "connector/primary_key.h"
 
+#include <duckdb/parser/constraints/unique_constraint.hpp>
+
 #include "connector/key_encoding.h"
 
 namespace sdb::connector::primary_key {
+
+std::vector<duckdb::LogicalIndex> KeyColumns(
+  const duckdb::TableCatalogEntry& entry) {
+  const auto key = entry.GetPrimaryKey();
+  if (!key) {
+    return {};
+  }
+  return key->Cast<duckdb::UniqueConstraint>().GetLogicalIndexes(
+    entry.GetColumns());
+}
 
 void PreparePKFormats(duckdb::DataChunk& chunk,
                       std::span<const PKColumn> columns,

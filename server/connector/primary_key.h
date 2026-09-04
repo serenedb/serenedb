@@ -21,6 +21,7 @@
 #pragma once
 
 #include <cstdint>
+#include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
 #include <duckdb/common/types.hpp>
 #include <duckdb/common/types/data_chunk.hpp>
 #include <duckdb/common/vector/unified_vector_format.hpp>
@@ -31,6 +32,9 @@
 #include "basics/primary_key.hpp"
 
 namespace sdb::connector::primary_key {
+
+std::vector<duckdb::LogicalIndex> KeyColumns(
+  const duckdb::TableCatalogEntry& entry);
 
 // One component of a row key: the chunk slot the value arrives in and the type
 // it is encoded from.

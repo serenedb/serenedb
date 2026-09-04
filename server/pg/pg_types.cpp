@@ -206,12 +206,11 @@ PgTypeInfo Logical2Pg(const duckdb::LogicalType& type, bool in_array) {
       // null for anonymous/derived enums not registered as a pg custom type
       // (e.g. enum_range); their value is just the string label on the wire.
       if (ext) {
-        auto it = ext->properties.find(catalog::kPgSqlTypeOidProp);
+        auto it = ext->properties.find(kPgSqlTypeOidProp);
         if (it != ext->properties.end()) {
           const duckdb::idx_t oid{it->second.GetValue<uint64_t>()};
           // Enum types are int4-backed (typlen 4).
-          return {static_cast<int32_t>(
-                    (in_array ? catalog::TypeArrayOid(oid) : oid).id()),
+          return {static_cast<int32_t>(in_array ? TypeArrayOid(oid) : oid),
                   in_array ? static_cast<int16_t>(-1) : static_cast<int16_t>(4),
                   -1};
         }
@@ -228,11 +227,10 @@ PgTypeInfo Logical2Pg(const duckdb::LogicalType& type, bool in_array) {
       auto ext = type.GetExtensionInfo();
       // null in case of anonymous record types (e.g. SELECT ROW(1, 2))
       if (ext) {
-        auto it = ext->properties.find(catalog::kPgSqlTypeOidProp);
+        auto it = ext->properties.find(kPgSqlTypeOidProp);
         if (it != ext->properties.end()) {
           const duckdb::idx_t oid{it->second.GetValue<uint64_t>()};
-          return {static_cast<int32_t>(
-                    (in_array ? catalog::TypeArrayOid(oid) : oid).id()),
+          return {static_cast<int32_t>(in_array ? TypeArrayOid(oid) : oid),
                   static_cast<int16_t>(-1), -1};
         }
       }

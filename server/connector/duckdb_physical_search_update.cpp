@@ -50,7 +50,7 @@ struct SearchUpdateGlobalState : duckdb::GlobalSinkState {
   std::vector<duckdb::idx_t> column_ids;
   duckdb::vector<duckdb::LogicalType> chunk_types;
   std::vector<primary_key::PKColumn> new_pk_columns;
-  std::vector<duckdb::idx_t> new_row_src;
+  duckdb::vector<duckdb::column_t> new_row_src;
   duckdb::optional_ptr<duckdb::SequenceCatalogEntry> generated_pk_seq;
   std::unique_ptr<SearchSinkInsertBaseImpl> insert_sink;
 
@@ -179,7 +179,7 @@ duckdb::SinkResultType SereneDBSearchUpdate::Sink(
     // already says where each of them arrived.
     duckdb::DataChunk row;
     row.InitializeEmpty(GetTypes());
-    BuildReturnedRow(row, chunk, gstate.new_row_src);
+    row.ReferenceColumns(chunk, gstate.new_row_src);
     gstate.returned->Append(row);
   }
 

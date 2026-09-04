@@ -29,6 +29,8 @@
 #include <duckdb/catalog/catalog_entry/duck_index_entry.hpp>
 #include <duckdb/catalog/catalog_entry/duck_table_entry.hpp>
 #include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
+#include <duckdb/catalog/catalog_transaction.hpp>
+#include <duckdb/execution/index/unbound_index.hpp>
 #include <duckdb/main/attached_database.hpp>
 #include <duckdb/main/config.hpp>
 #include <duckdb/main/connection.hpp>
@@ -39,14 +41,16 @@
 #include <duckdb/planner/expression_iterator.hpp>
 #include <duckdb/storage/block_manager.hpp>
 #include <duckdb/storage/data_table.hpp>
-#include <duckdb/storage/external_index_batch.hpp>
+#include <duckdb/storage/storage_info.hpp>
 #include <duckdb/storage/storage_manager.hpp>
 #include <duckdb/storage/table/append_state.hpp>
+#include <duckdb/storage/table/data_table_info.hpp>
 #include <duckdb/storage/table/row_group_collection.hpp>
 #include <duckdb/storage/table_io_manager.hpp>
 #include <duckdb/transaction/duck_transaction.hpp>
 #include <duckdb/transaction/duck_transaction_manager.hpp>
 #include <iterator>
+#include <limits>
 #include <mutex>
 #include <string>
 #include <thread>
@@ -55,12 +59,18 @@
 #include "basics/assert.h"
 #include "basics/log.h"
 #include "basics/primary_key.hpp"
-#include "catalog1/catalog.h"
 #include "catalog1/entry/inverted_index.h"
+#include "catalog1/entry/tokenizer.h"
+#include "catalog1/lookup.h"
+#include "catalog1/scorer_options.h"
+#include "connector/column_id.h"
 #include "connector/duckdb_client_state.h"
 #include "connector/duckdb_index_utils.h"
-#include "connector/index_expression.hpp"
+#include "connector/duckdb_physical_create_index.h"
+#include "connector/index_opclass.h"
 #include "connector/search_sink_writer.hpp"
+#include "connector/term_dict.h"
+#include "connector/view_fast_path.h"
 #include "pg/connection_context.h"
 #include "query/config_variable_names.h"
 #include "search/inverted_index_storage.h"
@@ -69,47 +79,258 @@
 namespace sdb::connector {
 namespace {
 
-// The inverted definition one id names in the database holding it, or null when
-// no entry there carries it -- an online CREATE INDEX feeds a concurrent writer
+// The index entry one id names in the database holding it, or null when no
+// entry there carries it -- an online CREATE INDEX feeds a concurrent writer
 // before its own transaction has committed, so a miss is ordinary.
-std::shared_ptr<const catalog::Index> FindInvertedDefinition(
+duckdb::optional_ptr<const duckdb::IndexCatalogEntry> FindIndexEntry(
   duckdb::ClientContext* context, duckdb::AttachedDatabase& db,
   duckdb::idx_t id) {
-  const auto* index =
+  const auto found =
     catalog::FindIn<duckdb::DuckIndexEntry>(context, db.GetCatalog(), id);
-  return index != nullptr && index->IsInverted() ? index->DefinitionPtr()
-                                                 : nullptr;
+  return found ? &found->Cast<duckdb::IndexCatalogEntry>() : nullptr;
 }
 
-// Persisted expressions carry catalog-stable column references
-// (table_id, column_id). Re-key them to positions in the index's column list
-// so BoundIndex::BindExpression can turn them into chunk offsets.
-duckdb::unique_ptr<duckdb::Expression> RebindColumnRefsToIndexPositions(
-  const duckdb::Expression& expr, duckdb::idx_t table_id,
-  const containers::FlatHashMap<catalog::ColumnId, duckdb::idx_t>&
-    col_id_to_pos) {
-  auto copy = expr.Copy();
-  duckdb::ExpressionIterator::VisitExpressionMutable<
-    duckdb::BoundColumnRefExpression>(
-    copy, [&](duckdb::BoundColumnRefExpression& colref,
-              duckdb::unique_ptr<duckdb::Expression>& child) {
-      const auto binding = colref.Binding();
-      SDB_ENSURE(binding.table_index.index == table_id.id(),
-                 "inverted index expression references a foreign table");
-      const auto col_id =
-        static_cast<catalog::ColumnId>(binding.column_index.GetIndex());
-      const auto it = col_id_to_pos.find(col_id);
-      SDB_ENSURE(it != col_id_to_pos.end(),
-                 "inverted index expression references column ",
-                 static_cast<uint64_t>(col_id),
-                 " that is not in the index's referenced set");
-      child = duckdb::make_uniq<duckdb::BoundColumnRefExpression>(
-        colref.GetReturnType(),
-        duckdb::ColumnBinding(binding.table_index,
-                              duckdb::ProjectionIndex(it->second)));
-    });
-  return copy;
+duckdb::idx_t IdOption(const duckdb::case_insensitive_map_t<duckdb::Value>& o,
+                       const char* key) {
+  const auto it = o.find(key);
+  if (it == o.end() || it->second.IsNull()) {
+    return 0;
+  }
+  return it->second.GetValue<uint64_t>();
 }
+
+// Field ids of the keys that are not bare columns. A bare column indexes under
+// its own column id; an expression has none, so it takes a slot from the
+// synthetic range, which no relation column can ever collide with. Stride 8
+// covers the per-kind JSON leaves and the synthetic geo column allocated with
+// it -- allocated together, so either all valid or all invalid.
+constexpr irs::field_id kExpressionFieldBase = kFirstSyntheticColumnId + 0x100;
+constexpr irs::field_id kExpressionFieldStride = 8;
+
+constexpr irs::field_id ExpressionFieldId(size_t key) noexcept {
+  return kExpressionFieldBase + key * kExpressionFieldStride;
+}
+
+// A key that is a bare column indexes under that column's own id, which
+// duckdb hands us indirectly: a BoundColumnRefExpression's column_index is a
+// position in the index's column_ids, not a table column.
+duckdb::optional_ptr<const duckdb::BoundColumnRefExpression> AsColumnRef(
+  const duckdb::Expression& expr) {
+  if (expr.GetExpressionClass() != duckdb::ExpressionClass::BOUND_COLUMN_REF) {
+    return nullptr;
+  }
+  return &expr.Cast<duckdb::BoundColumnRefExpression>();
+}
+
+duckdb::CatalogTransaction ConfigTransaction(duckdb::ClientContext* context,
+                                             duckdb::AttachedDatabase& db) {
+  return context != nullptr
+           ? db.GetCatalog().GetCatalogTransaction(*context)
+           : duckdb::CatalogTransaction::GetSystemTransaction(db.GetDatabase());
+}
+
+// The text search dictionary an opclass names, or null when the opclass is one
+// of the two built-ins or was not given at all. A bare opclass resolves
+// against the index's own schema, so a dictionary of either built-in name
+// shadows it.
+duckdb::optional_ptr<catalog::TokenizerCatalogEntry> ResolveOpclassDict(
+  duckdb::ClientContext* context, duckdb::AttachedDatabase& db,
+  duckdb::SchemaCatalogEntry& schema, std::string_view opclass) {
+  if (opclass.empty()) {
+    return nullptr;
+  }
+  auto found = schema.GetEntry(ConfigTransaction(context, db),
+                               duckdb::CatalogType::TOKENIZER_ENTRY,
+                               duckdb::Identifier{std::string{opclass}});
+  if (!found) {
+    return nullptr;
+  }
+  return &found->Cast<catalog::TokenizerCatalogEntry>();
+}
+
+}  // namespace
+
+void WritePkPolicy(PkPolicy policy,
+                   duckdb::case_insensitive_map_t<duckdb::Value>& into) {
+  into[InvertedStoreIndex::kPkTermOption] =
+    duckdb::Value::BOOLEAN(policy.index_term);
+  into[InvertedStoreIndex::kPkColumnOption] =
+    duckdb::Value::UTINYINT(static_cast<uint8_t>(policy.column));
+}
+
+PkPolicy ReadPkPolicy(
+  const duckdb::case_insensitive_map_t<duckdb::Value>& options) {
+  PkPolicy policy;
+  if (auto it = options.find(InvertedStoreIndex::kPkTermOption);
+      it != options.end()) {
+    policy.index_term = it->second.GetValue<bool>();
+  }
+  if (auto it = options.find(InvertedStoreIndex::kPkColumnOption);
+      it != options.end()) {
+    policy.column = static_cast<PkColumnKind>(it->second.GetValue<uint8_t>());
+  }
+  return policy;
+}
+
+// The dictionaries the persisted key records name, resolved against the
+// caller's transaction. Kept off the entry's config deliberately: these are
+// non-owning pointers into MVCC versions, so freezing them there would pin one
+// snapshot for every later reader.
+catalog::TokenizerMap ResolveKeyTokenizers(
+  duckdb::ClientContext& context, duckdb::AttachedDatabase& db,
+  duckdb::SchemaCatalogEntry& schema,
+  const duckdb::case_insensitive_map_t<duckdb::Value>& options) {
+  catalog::TokenizerMap dicts;
+  for (const auto& key : catalog::DecodeInvertedKeys(options)) {
+    if (key.kind != catalog::OpclassKind::Dictionary ||
+        key.dictionary.empty()) {
+      continue;
+    }
+    if (auto dict = ResolveOpclassDict(&context, db, schema, key.dictionary)) {
+      dicts.emplace(dict->name, &*dict);
+    }
+  }
+  return dicts;
+}
+
+std::optional<catalog::ScorerOptions> ParseTopKScorer(
+  duckdb::ClientContext& context,
+  const duckdb::case_insensitive_map_t<duckdb::Value>& options) {
+  const auto it = options.find("optimize_top_k");
+  if (it == options.end()) {
+    return std::nullopt;
+  }
+  return catalog::ParseScorerExpression(
+    context, it->second.DefaultCastAs(duckdb::LogicalType::VARCHAR)
+               .GetValue<std::string>());
+}
+
+catalog::TokenizerMap ResolveKeyTokenizers(
+  duckdb::ClientContext& context, const duckdb::IndexCatalogEntry& entry) {
+  auto& catalog =
+    duckdb::Catalog::GetCatalog(context, entry.ParentCatalog().GetName());
+  auto& schema = catalog.GetSchema(context, entry.ParentSchema().name);
+  return ResolveKeyTokenizers(context, catalog.GetAttached(), schema,
+                              entry.options);
+}
+
+void ResolveAndPersistInvertedKeys(
+  duckdb::ClientContext& context, duckdb::AttachedDatabase& db,
+  duckdb::SchemaCatalogEntry& schema, duckdb::CreateIndexInfo& info,
+  const duckdb::vector<duckdb::unique_ptr<duckdb::Expression>>& exprs,
+  duckdb::idx_t table_id, std::span<const ColumnId> column_ids) {
+  const size_t keys = info.parsed_expressions.size();
+  std::vector<catalog::InvertedIndexKey> records;
+  records.reserve(keys);
+  // Per field, not per key: a column listed twice -- `inverted(a, a
+  // included(...))` -- is two keys contributing to one field's config.
+  catalog::InvertedIndexFields entries;
+  containers::FlatHashSet<irs::field_id> tokenized_columns;
+  containers::FlatHashSet<std::string> tokenized_exprs;
+
+  for (size_t i = 0; i < keys; ++i) {
+    catalog::InvertedIndexKey record;
+    const auto block = ExpressionFieldId(i);
+    record.block = block;
+    const auto colref = i < exprs.size() ? AsColumnRef(*exprs[i]) : nullptr;
+    duckdb::LogicalType value_type;
+    std::string label;
+    if (colref) {
+      const auto pos = colref->Binding().column_index.GetIndex();
+      SDB_ENSURE(pos < info.column_ids.size(),
+                 "inverted index key references a column outside its own set");
+      record.field_id = static_cast<irs::field_id>(info.column_ids[pos]);
+      value_type = exprs[i]->GetReturnType();
+      label = colref->GetName().GetIdentifierName();
+    } else {
+      record.field_id = block;
+      value_type = exprs[i]->GetReturnType();
+      record.return_type = value_type.ToString();
+      record.return_type_id = static_cast<uint8_t>(value_type.id());
+      label = info.parsed_expressions[i]->ToString();
+      // Frozen here in the same normalized form a query will produce, so the
+      // match later needs nothing but the entry.
+      auto normalized =
+        NormalizeBoundExpression(*exprs[i], table_id, column_ids, context);
+      record.serialized = SerializeBoundExpression(*normalized);
+    }
+
+    KeyOpclass opclass;
+    if (i < info.column_opclasses.size()) {
+      opclass.name = info.column_opclasses[i];
+    }
+    if (i < info.column_opclass_options.size()) {
+      opclass.options = &info.column_opclass_options[i];
+    }
+
+    ValidateInvertedIndexKey(label, value_type, opclass);
+
+    // A built-in is only a built-in in the parenthesised form, so a bare name
+    // is looked up as a dictionary first and may shadow one.
+    duckdb::optional_ptr<catalog::TokenizerCatalogEntry> dict;
+    if (opclass.IsTokenizer()) {
+      dict = ResolveOpclassDict(&context, db, schema, opclass.name);
+      if (dict) {
+        record.kind = catalog::OpclassKind::Dictionary;
+        // The opclass exactly as written, which is what the resolution below
+        // looks up with -- the entry's own name has already been through
+        // Identifier folding and does not necessarily round-trip.
+        record.dictionary = std::string{opclass.name};
+        record.dictionary_oid = dict->oid;
+        record.features = dict->GetFeatures().GetIndexFeatures();
+      }
+      // One tokenizer per key. A column keys on its id; an expression has no
+      // id of its own -- each gets a fresh block -- so it keys on its text,
+      // which is what makes two spellings of the same expression collide.
+      if (colref) {
+        if (!tokenized_columns.insert(record.field_id).second) {
+          THROW_SQL_ERROR(
+            ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+            ERR_MSG("Column '", label,
+                    "' is listed more than once with a tokenizer opclass; the "
+                    "catalog stores a single tokenizer per indexed column. "
+                    "Stack `included(...)` on the same column instead, or "
+                    "remove the duplicate."));
+        }
+      } else if (!tokenized_exprs.insert(label).second) {
+        THROW_SQL_ERROR(
+          ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+          ERR_MSG("Expression '", label,
+                  "' is listed more than once with a tokenizer opclass; the "
+                  "catalog stores a single tokenizer per indexed expression. "
+                  "Stack `included(...)` on the same expression instead, or "
+                  "remove the duplicate."));
+      }
+    } else if (opclass.IsBuiltin(catalog::kIVFKind)) {
+      record.kind = catalog::OpclassKind::Ivf;
+    } else {
+      record.kind = catalog::OpclassKind::Included;
+    }
+
+    // Sub-fields are drawn from this key's own 8-wide block, so two keys
+    // merging into one field never collide -- their blocks differ.
+    auto next_sub_id = static_cast<irs::field_id>(block + 1);
+    const auto [slot, fresh] = entries.try_emplace(record.field_id);
+    auto& info_out = slot->second;
+    if (fresh) {
+      // Every field carries a null leaf; only the typed leaves are
+      // conditional on what the analyzer reads.
+      info_out.null_field_id = next_sub_id++;
+    }
+    if (opclass.IsTokenizer()) {
+      info_out.indexed_term_dict = true;
+    }
+    ApplyOpclassToEntry(context, schema.name.GetIdentifierName(), label,
+                        value_type, opclass, dict, next_sub_id, info_out);
+
+    records.push_back(std::move(record));
+  }
+
+  catalog::EncodeInvertedKeys(records, info.options);
+  catalog::EncodeInvertedEntries(entries, info.options);
+}
+
+namespace {
 
 // Per-worker evaluation of an index's expressions. The bound expressions and
 // their chunk offsets come from duckdb (BoundIndex), so this owns nothing but
@@ -117,8 +338,11 @@ duckdb::unique_ptr<duckdb::Expression> RebindColumnRefsToIndexPositions(
 // every feed worker constructs one and runs it on its own batch in parallel.
 class IndexExpressions {
  public:
-  explicit IndexExpressions(const InvertedStoreIndex& index)
-    : _fields{index.ExpressionFields()}, _has_predicate{index.HasPredicate()} {
+  IndexExpressions(duckdb::ClientContext& context,
+                   const InvertedStoreIndex& index)
+    : _executor{context},
+      _config{index.SharedConfig()},
+      _has_predicate{index.HasPredicate()} {
     const auto& exprs = index.Expressions();
     if (exprs.empty()) {
       return;
@@ -138,16 +362,22 @@ class IndexExpressions {
   void Execute(duckdb::DataChunk& chunk) {
     _results.Reset();
     _executor.Execute(chunk, _results);
-    for (size_t i = 0; i < _fields.size(); ++i) {
-      if (!_fields[i].is_geojson) {
-        RejectJsonObjectArrayLeaves(_results.data[i], chunk.size());
+    for (size_t i = 0; i < _config->keys.size(); ++i) {
+      // A whole-value analyzer is handed the object as it stands, so the
+      // leaf rule does not apply to its key.
+      const auto* entry = _config->FindEntry(_config->keys[i].field_id);
+      if (entry && entry->whole_value) {
+        continue;
       }
+      RejectJsonObjectArrayLeaves(_results.data[i], chunk.size());
     }
   }
 
   // The value vector feeding `field_ids()[i]`.
   duckdb::Vector& Value(size_t i) noexcept { return _results.data[i]; }
-  std::span<const ExpressionField> Fields() const noexcept { return _fields; }
+  std::span<const catalog::InvertedIndexKey> Fields() const noexcept {
+    return _config->keys;
+  }
 
   // The partial-index predicate's result (null when the index is not partial).
   duckdb::Vector* Predicate() noexcept {
@@ -158,7 +388,7 @@ class IndexExpressions {
  private:
   duckdb::ExpressionExecutor _executor;
   duckdb::DataChunk _results;
-  std::span<const ExpressionField> _fields;
+  std::shared_ptr<const catalog::InvertedIndexFieldOptions> _config;
   bool _has_predicate = false;
 };
 
@@ -263,6 +493,9 @@ duckdb::idx_t FeedFilteredChunk(
     sliced.reserve(fields.size());
   }
   for (size_t i = 0; i < fields.size(); ++i) {
+    if (!fields[i].feeds) {
+      continue;
+    }
     auto& raw = exprs.Value(i);
     if (!filtered) {
       values.push_back({fields[i].field_id, &raw});
@@ -304,7 +537,8 @@ struct FeedPool {
     Bundle(FeedPool& pool, irs::IndexWriter::Transaction& trx)
       : insert_writer{pool.MakeInsertWriter(trx)},
         delete_writer{std::make_unique<DuckDBSearchSinkDeleteWriter>(trx)},
-        exprs{std::make_unique<IndexExpressions>(pool.owner)} {}
+        exprs{
+          std::make_unique<IndexExpressions>(*pool.expr_context, pool.owner)} {}
 
     std::unique_ptr<DuckDBSearchSinkInsertWriter> insert_writer;
     std::unique_ptr<DuckDBSearchSinkDeleteWriter> delete_writer;
@@ -312,23 +546,16 @@ struct FeedPool {
     FeedScratch scratch;
   };
 
-  const catalog::InvertedIndex& Info() const noexcept {
-    return catalog::InvertedInfo(*index);
-  }
-
   std::unique_ptr<DuckDBSearchSinkInsertWriter> MakeInsertWriter(
     irs::IndexWriter::Transaction& trx) {
     return std::make_unique<DuckDBSearchSinkInsertWriter>(
-      trx, MakeTokenizerProvider(dicts, Info()), index->GetColumns(),
-      MakeEntryInfoProvider(Info()),
-      PkPolicy{.index_term = Info().GetOptions().pk_term,
-               .column = Info().GetOptions().pk_column});
+      trx, MakeTokenizerProvider(dicts, *config), owner.IndexedColumns(),
+      MakeEntryInfoProvider(*config), config->pk);
   }
 
   irs::IndexWriter::Transaction NewTransaction() {
     auto trx = storage->GetTransaction();
-    trx.SetFieldOptions(std::shared_ptr<const irs::IndexFieldOptions>{
-      index, &catalog::InvertedInfo(*index)});
+    trx.SetFieldOptions(config);
     return trx;
   }
 
@@ -342,12 +569,16 @@ struct FeedPool {
   // Resolved where the committing transaction was still in scope: a worker has
   // no ClientContext of its own to read a dictionary entry through.
   catalog::TokenizerMap dicts;
-  // The definition this pool's writers encode against, shared with the entry
-  // that holds it: it IS the irs::IndexFieldOptions iresearch takes, and a copy
-  // answers with rebuilt per-column options (see SereneDBIndexEntry).
-  std::shared_ptr<const catalog::Index> index;
-  std::span<const FeedColumn> ref_columns;
+  // The configuration this pool's writers encode against, held by shared
+  // ownership: it IS the irs::IndexFieldOptions iresearch takes, and an ALTER
+  // landing mid-commit swaps the index's copy without disturbing this one.
+  std::shared_ptr<const InvertedIndexFieldOptions> config;
   duckdb::DatabaseInstance& instance;
+  // duckdb has no context-free ExpressionExecutor, and a feed worker has no
+  // connection of its own -- replay runs before any exists. One transaction-
+  // less context per pool, shared by every worker's executor: it is read for
+  // its allocator and settings only, never to reach the catalog.
+  duckdb::shared_ptr<duckdb::ClientContext> expr_context;
   // The index owning this feed; workers build their executors from its
   // duckdb-bound expressions. It outlives the session.
   const InvertedStoreIndex& owner;
@@ -358,15 +589,15 @@ struct FeedPool {
 
   FeedPool(std::shared_ptr<search::InvertedIndexStorage> storage_in,
            catalog::TokenizerMap dicts_in,
-           std::shared_ptr<const catalog::Index> index_in,
+           std::shared_ptr<const InvertedIndexFieldOptions> config_in,
            duckdb::AttachedDatabase& attached_in,
            const InvertedStoreIndex& owner_in)
     : storage{std::move(storage_in)},
       dicts{std::move(dicts_in)},
-      index{std::move(index_in)},
-
-      ref_columns{owner_in.RefColumns()},
+      config{std::move(config_in)},
       instance{attached_in.GetDatabase()},
+      expr_context{duckdb::make_shared_ptr<duckdb::ClientContext>(
+        instance.shared_from_this())},
       owner{owner_in},
       executor{duckdb::TaskScheduler::GetScheduler(instance)} {}
 
@@ -410,8 +641,7 @@ struct FeedPool {
                      irs::IndexWriter::Transaction& trx,
                      duckdb::DataChunk& chunk, duckdb::Vector& rowid_vec,
                      duckdb::idx_t scanned) {
-    FeedFilteredChunk(writer, exprs, chunk, rowid_vec, scanned, ref_columns,
-                      scratch);
+    FeedFilteredChunk(writer, exprs, chunk, rowid_vec, scanned, {}, scratch);
     trx.AdvanceQueries(1);
     if (trx.ActiveMemory() >= kReplayFlushBytes) {
       trx.Flush();
@@ -484,7 +714,7 @@ struct FeedPool {
 // single call, and the range form differed only by having no body at all.
 struct InsertPayload {
   // Adopts the producer's batch whole -- rows and row ids -- without copying.
-  duckdb::shared_ptr<duckdb::ExternalIndexBatch> batch;
+  std::shared_ptr<ReplayBatch> batch;
 };
 
 struct DeletePayload {
@@ -709,7 +939,7 @@ struct ReplayQueue {
       for (auto& trx : head.trxs) {
         SDB_ENSURE(trx.Commit(tick),
                    "inverted index replay: commit failed for index ",
-                   pool.index->GetId().id());
+                   pool.owner.IndexId());
       }
       pending_cursors.emplace_back(tick, head.wal_offset);
       window.pop_front();
@@ -887,7 +1117,7 @@ struct LiveFeed {
         return;
       }
       SDB_ERROR(SEARCH, "inverted index live feed: commit failed for index '",
-                pool.index->GetId().id(), "' at tick ", last_tick,
+                pool.owner.IndexId(), "' at tick ", last_tick,
                 "; the index will be rebuilt from the store on next boot");
       if (storage) {
         storage->MarkOutOfSync();
@@ -941,10 +1171,10 @@ struct LiveFeed {
 struct InvertedFeedSession {
   InvertedFeedSession(std::shared_ptr<search::InvertedIndexStorage> storage,
                       catalog::TokenizerMap dicts,
-                      std::shared_ptr<const catalog::Index> index,
+                      std::shared_ptr<const InvertedIndexFieldOptions> config,
                       duckdb::AttachedDatabase& attached,
                       const InvertedStoreIndex& owner)
-    : pool{std::move(storage), std::move(dicts), std::move(index), attached,
+    : pool{std::move(storage), std::move(dicts), std::move(config), attached,
            owner},
       live{pool} {}
 
@@ -997,90 +1227,57 @@ void FinishInvertedFeed(InvertedFeedSession& feed, uint64_t last_tick,
 void AbortInvertedFeed(InvertedFeedSession& feed) { feed.live.Abort(); }
 
 InvertedStoreIndex::InvertedStoreIndex(
-  const std::string& name, duckdb::TableIOManager& io,
-  const duckdb::vector<duckdb::column_t>& column_ids,
-  const duckdb::vector<duckdb::unique_ptr<duckdb::Expression>>& exprs,
-  duckdb::AttachedDatabase& db,
-  std::shared_ptr<const catalog::Index> attached_index,
-  std::shared_ptr<search::InvertedIndexStorage> attached_storage,
-  std::vector<ExpressionField> expr_fields, bool has_predicate,
-  std::vector<FeedColumn> ref_columns)
-  : BoundIndex(duckdb::Identifier{name}, kTypeName,
-               duckdb::IndexConstraintType::NONE, column_ids, io, exprs, db),
-    _index_id{attached_index->GetId()},
-    _attached_index{std::move(attached_index)},
-    _attached_storage{std::move(attached_storage)},
-    _expr_fields{std::move(expr_fields)},
-    _ref_columns{std::move(ref_columns)},
-    _has_predicate{has_predicate} {}
+  duckdb::CreateIndexInput& input,
+  std::shared_ptr<search::InvertedIndexStorage> storage,
+  std::shared_ptr<const InvertedIndexFieldOptions> config,
+  catalog::TokenizerMap tokenizers,
+  std::optional<catalog::ScorerOptions> top_k_scorer)
+  : BoundIndex(input.name, kTypeName, input.constraint_type, input.column_ids,
+               input.table_io_manager, input.unbound_expressions, input.db),
+    _index_id{IdOption(input.options, kIndexIdOption)},
+    _table_id{IdOption(input.options, kTableIdOption)},
+    _storage{std::move(storage)},
+    _config{std::move(config)},
+    _tokenizers{std::move(tokenizers)},
+    _top_k_scorer{std::move(top_k_scorer)} {
+  SDB_ASSERT(_config);
+}
 
 InvertedStoreIndex::~InvertedStoreIndex() = default;
 
 std::shared_ptr<InvertedFeedSession>
 InvertedStoreIndex::EnsureInvertedFeedSession() {
-  // The definition comes from the committing transaction's own snapshot, so a
-  // commit indexes with the definition it saw and an ALTER landing mid-flight
-  // takes effect for the next transaction -- the same rule the per-append
-  // catalog lookup this pool replaced followed. Replay has no committing
+  // The configuration comes from the committing transaction's own snapshot, so
+  // a commit indexes with the entry version it saw and an ALTER landing
+  // mid-flight takes effect for the next transaction. Replay has no committing
   // context and takes the boot snapshot.
   auto* committing = CurrentCommittingContext();
   if (committing != nullptr) {
-    // A commit feeds one session per index. The definition can be republished
-    // under it -- an online build finishing, an ALTER INDEX committing -- and
+    // A commit feeds one session per index. The entry can be republished under
+    // it -- an online build finishing, an ALTER INDEX committing -- and
     // rebuilding the session then would strand the segments this commit has
     // already staged in the one it is replacing.
     if (auto engaged = committing->InvertedFeed(_index_id)) {
       return engaged;
     }
   }
-  auto* context = committing ? &committing->GetClientContext() : nullptr;
-  auto inverted = FindInvertedDefinition(context, db, _index_id);
-  // An online CREATE INDEX attaches its stub before its transaction commits,
-  // so a concurrent writer's catalog view does not name it. Feeding it the
-  // definition it was attached with is what keeps that write out of the
-  // index's blind spot; nothing durable comes of it if the build aborts.
-  if (!inverted) {
-    inverted = _attached_index;
-  }
+  // The configuration is decoded once, when the index object is built, and a
+  // reshape replaces the whole object -- so a pool that is still here was
+  // built against the shape that is still there and never needs rebuilding.
+  // ALTER INDEX ... SET applies through InvertedIndexStorage::ApplyOptions
+  // instead, which reconfigures the live writer and the maintenance loops.
   if (_feed) {
-    // The pool holds the definition its writers were built from -- tokenizers,
-    // field options, pk policy. ALTER INDEX ... SET replaces that definition,
-    // and copy-on-write makes an unchanged one the same object, so pointer
-    // identity is the whole check. Rebuilt only between commits: a session with
-    // staged segments must finish the commit it belongs to, which is also what
-    // the per-append catalog lookup this pool replaced did.
-    //
-    // The table it feeds is not part of the check: a reshape replaces this
-    // whole index object, so a pool that is still here was built against the
-    // shape that is still there.
-    if (_feed->pool.index == inverted || !_feed->live.Idle() ||
-        _feed->HasReplay()) {
-      return _feed;
-    }
-    _feed.reset();
+    return _feed;
   }
-  SDB_ENSURE(inverted, "inverted index replay: catalog objects for ",
-             _index_id.id(), " missing");
-  auto storage =
-    catalog::InvertedStorageIn(context, db.GetCatalog(), _index_id);
-  if (!storage) {
-    storage = _attached_storage;
-  }
-  SDB_ENSURE(storage, "inverted index replay: storage ", _index_id.id(),
-             " missing");
-  const search::WalCursor cursor = storage->GetRecoveryWalCursor();
+  SDB_ENSURE(_storage, "inverted index feed: storage ", _index_id, " missing");
+  const search::WalCursor cursor = _storage->GetRecoveryWalCursor();
   uint64_t durable_offset = 0;
   auto& block_manager = db.GetStorageManager().GetBlockManager();
   if (cursor.generation == block_manager.GetCheckpointIteration()) {
     durable_offset = cursor.offset;
   }
-  // Out of this database's own catalog: replay builds the feed while the
-  // attachment is still being opened, so nothing can look it up by id yet.
-  auto dicts = catalog::ResolveTokenizers(
-    committing != nullptr ? &committing->GetClientContext() : nullptr, db,
-    *inverted);
-  _feed = std::make_shared<InvertedFeedSession>(
-    std::move(storage), std::move(dicts), std::move(inverted), db, *this);
+  _feed = std::make_shared<InvertedFeedSession>(_storage, _tokenizers, _config,
+                                                db, *this);
   _feed->replay_durable_offset = durable_offset;
   _feed->replay_generation = block_manager.GetCheckpointIteration();
   return _feed;
@@ -1112,7 +1309,7 @@ duckdb::idx_t InvertedStoreIndex::ReplayCommitOffset() const {
 }
 
 void InvertedStoreIndex::ReplayAppend(
-  const duckdb::shared_ptr<duckdb::ExternalIndexBatch>& batch) {
+  const std::shared_ptr<ReplayBatch>& batch) {
   if (batch->data.size() == 0) {
     return;
   }
@@ -1166,9 +1363,8 @@ ExternalIndexes ExternalIndexesOf(duckdb::TableIndexList& index_list) {
       continue;
     }
     auto& bound = index.Cast<duckdb::BoundIndex>();
-    if (bound.IsExternal()) {
-      SDB_ASSERT(bound.GetIndexType() == InvertedStoreIndex::kTypeName);
-      indexes.push_back(&static_cast<InvertedStoreIndex&>(bound));
+    if (bound.GetIndexType() == InvertedStoreIndex::kTypeName) {
+      indexes.push_back(&bound.Cast<InvertedStoreIndex>());
     }
   }
   return indexes;
@@ -1470,8 +1666,7 @@ void InvertedStoreIndex::FinishReplay() {
     // and asking for one here would build the heavy half just to drop it.
     return;
   }
-  const auto success_offset =
-    duckdb::DuckTransactionManager::Get(db).GetReplaySuccessOffset();
+  const auto success_offset = ReplaySuccessOffset();
   session->pool.executor.WorkOnTasks();
   session->Replay().FinishRetire(success_offset);
 }
@@ -1498,23 +1693,6 @@ duckdb::ErrorData InvertedStoreIndex::Append(duckdb::IndexLock&,
   return AppendImpl(chunk, row_ids);
 }
 
-// The batch form: the producer hands over ownership, so a worker may hold it
-// past this call and retire it in WAL order. Only replay builds batches -- a
-// commit scans its own rows -- so a batch that arrives with a committing
-// context is just a chunk we have not copied, and takes the ordinary path.
-duckdb::ErrorData InvertedStoreIndex::Append(
-  duckdb::IndexLock&, const duckdb::shared_ptr<duckdb::ExternalIndexBatch>& b,
-  duckdb::IndexAppendInfo&) {
-  if (b->data.size() == 0) {
-    return {};
-  }
-  if (CurrentCommittingContext()) {
-    return AppendImpl(b->data, b->row_ids);
-  }
-  ReplayAppend(b);
-  return {};
-}
-
 duckdb::ErrorData InvertedStoreIndex::Insert(duckdb::IndexLock&,
                                              duckdb::DataChunk& chunk,
                                              duckdb::Vector& row_ids) {
@@ -1534,11 +1712,10 @@ void InvertedStoreIndex::Delete(duckdb::IndexLock&, duckdb::DataChunk& chunk,
   }
   const auto& engaged = EnsureInvertedFeedSession();
   auto& session = *engaged;
-  const auto& options = catalog::InvertedInfo(*session.pool.index).GetOptions();
-  if (!options.pk_term) {
+  if (!_config->pk.index_term) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
-      ERR_MSG("inverted index \"", session.pool.index->GetName(),
+      ERR_MSG("inverted index \"", name.GetIdentifierName(),
               "\" was created WITH (store_pk = 'none') and does not "
               "index row PKs: DELETE/UPDATE cannot maintain it; drop "
               "the index first or recreate it without store_pk = "
@@ -1594,29 +1771,19 @@ std::string InvertedStoreIndex::ToString(duckdb::IndexLock&, bool) {
 }
 
 void InvertedStoreIndex::CheckpointBarrier() {
-  auto* catalog = catalog::TryGetCatalog();
-  if (!catalog) {
-    THROW_SQL_ERROR(
-      ERR_MSG("inverted index ", _index_id.id(),
-              ": catalog is shut down, cannot verify index durability; "
-              "refusing to checkpoint (WAL retained for replay)"));
-  }
-  auto inverted = FindInvertedDefinition(nullptr, db, _index_id);
-  if (!inverted) {
+  if (!_storage) {
     return;
   }
-  auto storage =
-    catalog::InvertedStorageIn(nullptr, db.GetCatalog(), _index_id);
-  if (!storage) {
-    storage = _attached_storage;
-  }
-  if (!storage) {
-    return;
-  }
-  SDB_ENSURE(!storage->IsOutOfSync(), "inverted index ", _index_id.id(),
+  SDB_ENSURE(!_storage->IsOutOfSync(), "inverted index ", _index_id,
              " is out of sync with its store table; refusing to checkpoint "
              "(WAL retained for replay; REINDEX to clear)");
-  storage->CheckpointRefresh();
+  _storage->CheckpointRefresh();
+}
+
+// The catalog-WAL phase supplies the real bound (how far the WAL replayed
+// cleanly, so a torn tail is dropped); until then every buffered op retires.
+duckdb::idx_t InvertedStoreIndex::ReplaySuccessOffset() const {
+  return std::numeric_limits<duckdb::idx_t>::max() - 1;
 }
 
 std::string InvertedStoreIndex::GetConstraintViolationMessage(
@@ -1624,159 +1791,135 @@ std::string InvertedStoreIndex::GetConstraintViolationMessage(
   return "inverted store index constraint violation";
 }
 
-duckdb::unique_ptr<InvertedStoreIndex> MakeInjectedInvertedIndex(
-  duckdb::ClientContext& context, duckdb::DataTable& storage,
-  const duckdb::CreateTableInfo& table,
-  std::shared_ptr<const catalog::Index> inverted) {
-  duckdb::vector<duckdb::column_t> column_ids;
-  duckdb::vector<duckdb::unique_ptr<duckdb::Expression>> exprs;
-  const auto& defs = storage.Columns();
-  // Indexed columns plus indexed-expression dependencies, mirroring the
-  // referenced set so duckdb's column tracking (DROP COLUMN dependency
-  // checks) sees exactly what the index reads. An expression's column
-  // references are rewritten to positions in this list, which is what
-  // BoundIndex::BindExpression turns into chunk offsets.
-  containers::FlatHashMap<catalog::ColumnId, duckdb::idx_t> col_id_to_pos;
-  // The store table holds the table's columns in catalog order, less the
-  // generated primary key, which is an identity this side of the store and is
-  // never a row value -- so a column's position is its id's mapping, computed
-  // once for the whole width rather than looked up per referenced column.
-  //
-  // Position, not name: RENAME COLUMN hands the renamed entry the very same
-  // DataTable, whose cached column definitions go on naming the old column, so
-  // a name lookup here silently stops finding the field after a rename.
-  containers::FlatHashMap<catalog::ColumnId, duckdb::idx_t> pos_by_id;
-  pos_by_id.reserve(table.columns.LogicalColumnCount());
-  duckdb::idx_t store_pos = 0;
-  for (const auto& column : table.columns.Logical()) {
-    pos_by_id.emplace(column.CatalogOid(), store_pos++);
+duckdb::optional_ptr<const InvertedStoreIndex> FindInvertedStore(
+  duckdb::ClientContext& context, const duckdb::IndexCatalogEntry& entry) {
+  if (!IsInvertedIndex(entry)) {
+    return nullptr;
   }
-  // The feed reads each indexed column at its position in the store table, so
-  // the mapping is built here, from the same lookup the expression rebinding
-  // uses -- not re-derived from catalog column order somewhere else.
-  std::vector<FeedColumn> ref_columns;
-  ref_columns.reserve(inverted->GetReferencedColumns().size());
-  for (const auto col_id : inverted->GetReferencedColumns()) {
-    const auto it = pos_by_id.find(col_id);
-    if (it == pos_by_id.end() || it->second >= defs.size()) {
-      continue;
-    }
-    col_id_to_pos.emplace(col_id, column_ids.size());
-    column_ids.push_back(it->second);
-    ref_columns.push_back({it->second, {col_id, defs[it->second].GetType()}});
+  const auto& index_entry = entry.Cast<duckdb::DuckIndexEntry>();
+  // A view-backed index is registered in no table's index list: nothing
+  // live-feeds it, so there is no bound index to find. Its storage hangs off
+  // the catalog entry instead.
+  if (!index_entry.info || !index_entry.info->info) {
+    return nullptr;
   }
-
-  // The index's expressions go through duckdb's own index-expression path:
-  // BoundIndex binds them and builds the executor, exactly as it does for ART.
-  // The predicate rides along as the last one (it selects rows, feeds no
-  // field), so a single Execute yields every value the feed needs.
-  std::vector<ExpressionField> expr_fields;
-  bool has_predicate = false;
-  const auto& info = catalog::InvertedInfo(*inverted);
-  for (const auto& key : info.ExpressionKeys()) {
-    auto bound = DeserializeBoundExpression(key.data.serialized_expr, context);
-    exprs.push_back(
-      RebindColumnRefsToIndexPositions(*bound, table.oid, col_id_to_pos));
-    expr_fields.push_back({key.field_id, info.IsGeoJsonKey(key)});
+  auto& info = index_entry.GetDataTableInfo();
+  info.BindIndexes(context, InvertedStoreIndex::kTypeName);
+  auto bound = info.GetIndexes().Find(entry.name);
+  if (!bound || !bound->IsBound() ||
+      bound->GetIndexType() != std::string{InvertedStoreIndex::kTypeName}) {
+    return nullptr;
   }
-  if (const auto* data = info.Predicate()) {
-    auto bound = DeserializeBoundExpression(data->serialized_expr, context);
-    exprs.push_back(
-      RebindColumnRefsToIndexPositions(*bound, table.oid, col_id_to_pos));
-    has_predicate = true;
-  }
-  // Resolved here, where the statement that publishes this object is still on
-  // the context: from the commit-time feed on, the writers reaching it are
-  // other transactions, which cannot see an index that has not committed yet.
-  auto attached_storage = catalog::InvertedStorageIn(
-    &context, storage.db.GetCatalog(), inverted->GetId());
-  return duckdb::make_uniq<InvertedStoreIndex>(
-    std::string{inverted->GetName()}, duckdb::TableIOManager::Get(storage),
-    column_ids, exprs, storage.db, std::move(inverted),
-    std::move(attached_storage), std::move(expr_fields), has_predicate,
-    std::move(ref_columns));
+  return &bound->Cast<InvertedStoreIndex>();
 }
 
-void AddInjectedInvertedIndex(duckdb::TableIndexList& list,
-                              duckdb::unique_ptr<InvertedStoreIndex> index) {
-  const duckdb::Identifier name = index->GetIndexName();
-  if (auto* found = list.Find(name).get();
-      found && found->GetIndexType() == InvertedStoreIndex::kTypeName) {
-    list.RemoveIndex(name);
-  }
-  list.AddIndex(std::move(index));
-}
-
-duckdb::unique_ptr<duckdb::BoundIndex> CreateInvertedInstance(
+duckdb::unique_ptr<duckdb::BoundIndex> InvertedStoreIndex::Create(
   duckdb::CreateIndexInput& input) {
-  // Everything this needs is in the record duckdb read back: the two ids name
-  // the objects, and the objects say the rest. No injection pass and no held
+  // Everything this needs is in the record duckdb read back: the id names the
+  // entry, and the entry says the rest. No injection pass and no held
   // definition -- the registry builds the index the way it builds an ART.
-  const auto id_option = [&](const char* key) {
-    const auto it = input.options.find(key);
-    SDB_ENSURE(it != input.options.end(), "inverted index: no ", key);
-    return it->second.GetValue<uint64_t>();
-  };
-  const auto table_id = id_option(InvertedStoreIndex::kTableIdOption);
-  const auto index_id = id_option(InvertedStoreIndex::kIndexIdOption);
-  auto& catalog = input.db.GetCatalog().Cast<catalog::SereneDBCatalog>();
-  auto entry = catalog.LookupTableById(
-    catalog.GetCatalogTransaction(input.context), table_id.id());
-  auto inverted = FindInvertedDefinition(&input.context, input.db, index_id);
-  SDB_ENSURE(entry && inverted, "inverted index: catalog objects for ",
-             index_id.id(), " missing");
-  auto& table = entry->Cast<duckdb::TableCatalogEntry>();
-  return MakeInjectedInvertedIndex(input.context, table.GetStorage(),
-                                   *table.Definition(), std::move(inverted));
+  const auto index_id = IdOption(input.options, kIndexIdOption);
+  const auto entry = FindIndexEntry(&input.context, input.db, index_id);
+  SDB_ENSURE(entry, "inverted index: catalog entry for ", index_id, " missing");
+  auto config = entry->Cast<catalog::InvertedIndexEntry>().Config();
+  SDB_ENSURE(config, "inverted index entry has no configuration");
+  auto tokenizers = ResolveKeyTokenizers(input.context, input.db, entry->schema,
+                                         entry->options);
+  auto top_k_scorer = ParseTopKScorer(input.context, entry->options);
+  // A rebind (an ALTER-driven table rebuild, a re-bind after replay) must not
+  // open a second writer over the same directory, so it adopts the storage the
+  // index already registered under this name is holding.
+  std::shared_ptr<search::InvertedIndexStorage> storage;
+  auto& indexes = entry->Cast<duckdb::DuckIndexEntry>().GetDataTableInfo();
+  if (auto bound = indexes.GetIndexes().Find(input.name);
+      bound && bound->IsBound() &&
+      bound->GetIndexType() == std::string{kTypeName}) {
+    storage = bound->Cast<InvertedStoreIndex>().Storage();
+  }
+  return duckdb::make_uniq<InvertedStoreIndex>(
+    input, std::move(storage), std::move(config), std::move(tokenizers),
+    std::move(top_k_scorer));
 }
 
-void InjectExternalIndexes(duckdb::DataTable& storage) {
-  if (!catalog::IsStoreDatabase(storage.db)) {
-    return;
-  }
-  auto* catalog = catalog::TryGetCatalog();
-  if (!catalog) {
-    return;
-  }
-  const duckdb::idx_t table_id{storage.GetDataTableInfo()->GetCatalogId()};
-  if (!table_id.isSet()) {
-    return;
-  }
-  const auto* table_entry = catalog::FindIn<duckdb::TableCatalogEntry>(
-    nullptr, storage.db.GetCatalog(), table_id);
-  const auto table =
-    table_entry != nullptr ? table_entry->Definition() : nullptr;
-  if (!table) {
-    // Constructive DDL creates the physical table before the catalog append,
-    // so a fresh CREATE TABLE lands here with no definitions yet.
-    return;
-  }
-  auto& list = storage.GetDataTableInfo()->GetIndexes();
-  // Off this database's own INDEX_ENTRY sets: an attach reads them before the
-  // attachment is in the database manager, so nothing can resolve it by id yet.
-  for (const auto& index : catalog::RelationInvertedIndexesIn(
-         nullptr, storage.db.GetCatalog(), table_id)) {
-    const auto& definition = *index;
-    // ALTER TABLE ... DROP COLUMN rebuilds the store DataTable and reaches
-    // here with the column already gone but the catalog half of the batch not
-    // yet applied, so the snapshot still lists the indexes this very statement
-    // cascade-drops for covering it. Binding one against the surviving columns
-    // would bind it partially -- an expression key cannot be rebound at all --
-    // and re-register an index the batch's DropIndex op already unlinked. Only
-    // a drop in flight makes this skip; a column missing for any other reason
-    // stays the loud failure it was.
-    if (absl::c_any_of(definition.GetReferencedColumns(),
-                       catalog::DataStore::IsColumnDropInFlight)) {
-      continue;
-    }
-    // Built with a normal serenedb context, so the index knows its expressions
-    // and predicate before anything replays into it.
-    catalog::WithStoreBindContext(
-      storage.db, [&](duckdb::ClientContext& bind_ctx) {
-        AddInjectedInvertedIndex(
-          list, MakeInjectedInvertedIndex(bind_ctx, storage, *table, index));
-      });
-  }
+duckdb::IndexStorageInfo InvertedStoreIndex::SerializeToDisk(
+  duckdb::QueryContext context,
+  const duckdb::case_insensitive_map_t<duckdb::Value>& options) {
+  // The postings are in the iresearch directory, so a checkpoint has nothing
+  // to write here; the name is what lets the reload find the index again.
+  return duckdb::IndexStorageInfo{name};
+}
+
+duckdb::IndexStorageInfo InvertedStoreIndex::SerializeToWAL(
+  const duckdb::case_insensitive_map_t<duckdb::Value>& options) {
+  return duckdb::IndexStorageInfo{name};
+}
+
+duckdb::IndexType InvertedStoreIndex::GetInvertedIndexType() {
+  duckdb::IndexType type;
+  type.name = kTypeName;
+  type.create_instance = &InvertedStoreIndex::Create;
+  // duckdb's default plan is ART-shaped: it hard-casts, rejects views and
+  // finalizes against an in-memory index. See DESIGN_INVERTED_INDEX.md §5.
+  type.create_plan = &SereneDBCreateIndexPlan;
+  // Bound by name once the storage layer is up, never by the implicit
+  // "bind all indexes" pass.
+  type.defer_implicit_bind = true;
+  return type;
+}
+
+std::shared_ptr<search::InvertedIndexStorage> PublishViewInvertedIndex(
+  duckdb::ClientContext& context, duckdb::SchemaCatalogEntry& schema,
+  duckdb::idx_t database_id, duckdb::idx_t relation_id, duckdb::idx_t index_id,
+  const duckdb::CreateIndexInfo& info) {
+  auto top_k_scorer = ParseTopKScorer(context, info.options);
+  const auto options = catalog::DecodeInvertedIndexOptions(info.options);
+  auto index_storage = search::InvertedIndexStorage::Create(
+    database_id, schema.oid, relation_id, index_id, options, top_k_scorer,
+    /*is_new=*/true);
+  SDB_ENSURE(index_storage, "view index storage create returned null");
+  index_storage->ApplyOptions(options);
+  return index_storage;
+}
+
+duckdb::optional_ptr<const InvertedStoreIndex> PublishNewInvertedIndex(
+  duckdb::ClientContext& context, duckdb::DataTable& storage,
+  duckdb::SchemaCatalogEntry& schema, duckdb::idx_t database_id,
+  duckdb::idx_t table_id, duckdb::idx_t index_id, duckdb::CreateIndexInfo& info,
+  const duckdb::vector<duckdb::unique_ptr<duckdb::Expression>>& bound_exprs,
+  const catalog::InvertedIndexEntry& entry) {
+  auto& table_info = *storage.GetDataTableInfo();
+  const duckdb::Identifier name = info.GetIndexName();
+
+  // The entry decoded this from the same options; taking its object rather
+  // than decoding a second one is what keeps a single definition per index --
+  // and iresearch compares definitions by pointer identity.
+  auto config = entry.Config();
+  SDB_ENSURE(config, "inverted index entry has no configuration");
+  auto tokenizers =
+    ResolveKeyTokenizers(context, storage.db, schema, info.options);
+  auto top_k_scorer = ParseTopKScorer(context, info.options);
+
+  const auto options = catalog::DecodeInvertedIndexOptions(info.options);
+  auto index_storage = search::InvertedIndexStorage::Create(
+    database_id, schema.oid, table_id, index_id, options, top_k_scorer,
+    /*is_new=*/true);
+  // Opening the directory is half of it: the writer's segment limits and the
+  // maintenance intervals come from the WITH options, and a writer left with
+  // the defaults never gets them.
+  index_storage->ApplyOptions(options);
+
+  duckdb::CreateIndexInput input{
+    context,     duckdb::TableIOManager::Get(storage),
+    storage.db,  info.constraint_type,
+    name,        info.column_ids,
+    bound_exprs, duckdb::IndexStorageInfo{name},
+    info.options};
+  auto index = duckdb::make_uniq<InvertedStoreIndex>(
+    input, std::move(index_storage), std::move(config), std::move(tokenizers),
+    std::move(top_k_scorer));
+  auto published = index.get();
+  table_info.GetIndexes().AddIndex(std::move(index));
+  return published;
 }
 
 }  // namespace sdb::connector

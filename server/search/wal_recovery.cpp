@@ -25,8 +25,11 @@
 #include <chrono>
 #include <duckdb/catalog/catalog.hpp>
 #include <duckdb/catalog/catalog_entry/duck_table_entry.hpp>
+#include <duckdb/catalog/catalog_entry/schema_catalog_entry.hpp>
 #include <duckdb/common/types/data_chunk.hpp>
+#include <duckdb/main/attached_database.hpp>
 #include <duckdb/main/connection.hpp>
+#include <duckdb/main/database_manager.hpp>
 #include <duckdb/storage/data_table.hpp>
 #include <iresearch/index/index_writer.hpp>
 #include <limits>
@@ -40,10 +43,7 @@
 #include "basics/down_cast.h"
 #include "basics/duckdb_engine.h"
 #include "basics/log.h"
-#include "catalog/catalog.h"
-#include "catalog/identifiers/object_id.h"
-#include "catalog/store/store.h"
-#include "catalog/table.h"
+#include "catalog1/catalog.h"
 #include "connector/inverted_store_index.h"
 #include "search/inverted_index_storage.h"
 #include "search/tick_domain.h"
@@ -58,18 +58,8 @@ namespace {
 // be loaded (this runs after InitCatalog) so the index's replay path can
 // resolve them.
 void BindStoreTableIndexes(duckdb::ClientContext& context,
-                           std::string_view database_name,
-                           std::string_view schema_name,
-                           std::string_view table_name) {
-  const auto store_name =
-    catalog::StoreTableName(database_name, schema_name, table_name);
-  auto& entry = duckdb::Catalog::GetEntry(
-                  context, duckdb::CatalogType::TABLE_ENTRY,
-                  duckdb::QualifiedName(
-                    duckdb::Identifier{catalog::kStoreDatabaseName},
-                    duckdb::Identifier{"main"}, duckdb::Identifier{store_name}))
-                  .Cast<duckdb::DuckTableEntry>();
-  entry.GetStorage().GetDataTableInfo()->BindIndexes(
+                           duckdb::DuckTableEntry& table) {
+  table.GetStorage().GetDataTableInfo()->BindIndexes(
     context, connector::InvertedStoreIndex::kTypeName);
 }
 
@@ -78,67 +68,36 @@ void BindStoreTableIndexes(duckdb::ClientContext& context,
 void InitInvertedIndexes() {
   auto begin = std::chrono::steady_clock::now();
 
-  auto snapshot = catalog::GetCatalog().GetCatalogSnapshot();
-  SDB_ASSERT(snapshot);
-
   // Recovery is delta-based: duckdb's WAL replay buffered every store-table
   // insert/delete since the last checkpoint against the (unbound) inverted
   // index; binding the index now replays exactly that delta into the storage.
   // No table rebuild -- recovery cost is O(WAL), not O(table).
-  struct TableCoord {
-    std::string database_name;
-    std::string schema_name;
-    std::string table_name;
-  };
-  std::vector<TableCoord> tables_to_bind;
-  containers::FlatHashSet<ObjectId> seen_tables;
-  std::vector<std::shared_ptr<InvertedIndexStorage>> recovering_storages;
-  std::vector<std::shared_ptr<InvertedIndexStorage>> static_storages;
-
-  for (const auto& database : snapshot->GetDatabases()) {
-    for (const auto& schema : snapshot->GetSchemas(database->GetId())) {
-      for (const auto& idx :
-           snapshot->GetIndexes(database->GetId(), schema->GetName())) {
-        if (idx->GetType() != catalog::ObjectType::InvertedIndex) {
-          continue;
-        }
-        auto inv_storage =
-          basics::downCast<const catalog::InvertedIndex>(*idx).GetData();
-        SDB_ASSERT(inv_storage);
-        // Keep ordinals monotone across restarts.
-        TickDomain::Instance().SeedAtLeast(inv_storage->GetRecoveryTick());
-        inv_storage->StartTasks();
-
-        // View-backed indexes are static -- the view body doesn't change at
-        // runtime, so the persisted index is already current.
-        const auto relation = snapshot->GetObject(idx->GetRelationId());
-        const bool table_backed =
-          relation && relation->GetType() == catalog::ObjectType::Table;
-        if (!table_backed) {
-          static_storages.push_back(std::move(inv_storage));
-          continue;
-        }
-
-        inv_storage->StartRecovery();
-        recovering_storages.push_back(std::move(inv_storage));
-        const auto table_id = relation->GetId();
-        if (seen_tables.insert(table_id).second) {
-          tables_to_bind.push_back(TableCoord{
-            std::string{database->GetName()}, std::string{schema->GetName()},
-            std::string{relation->GetName()}});
-        }
-      }
+  //
+  // The storage does not exist until the bind builds the index, so unlike the
+  // catalog-entry-owned storage this replaced, the walk collects tables first
+  // and reads storages back off the bound indexes afterwards.
+  std::vector<duckdb::reference<duckdb::DuckTableEntry>> tables_to_bind;
+  auto& manager =
+    duckdb::DatabaseManager::Get(DuckDBEngine::Instance().instance());
+  for (auto& attached : manager.GetDatabases()) {
+    auto& catalog = attached->GetCatalog();
+    if (catalog.GetCatalogType() != catalog::SereneDBCatalog::kStorageType) {
+      continue;
     }
+    catalog.Cast<catalog::SereneDBCatalog>().ScanSchemas(
+      [&](duckdb::SchemaCatalogEntry& schema) {
+        schema.Scan(
+          duckdb::CatalogType::TABLE_ENTRY, [&](duckdb::CatalogEntry& entry) {
+            auto* table = dynamic_cast<duckdb::DuckTableEntry*>(&entry);
+            if (table == nullptr) {
+              return;
+            }
+            if (!table->GetStorage().GetDataTableInfo()->GetIndexes().Empty()) {
+              tables_to_bind.emplace_back(*table);
+            }
+          });
+      });
   }
-
-  irs::Finally finish_recovering = [&] noexcept {
-    for (auto& storage : static_storages) {
-      storage->FinishCreation();
-    }
-    for (auto& storage : recovering_storages) {
-      storage->FinishCreation();
-    }
-  };
 
   if (tables_to_bind.empty()) {
     return;
@@ -156,23 +115,39 @@ void InitInvertedIndexes() {
     } catch (...) {  // NOLINT(bugprone-empty-catch)
     }
   };
-  for (const auto& coord : tables_to_bind) {
-    BindStoreTableIndexes(*conn->context, coord.database_name,
-                          coord.schema_name, coord.table_name);
+  for (auto table : tables_to_bind) {
+    BindStoreTableIndexes(*conn->context, table.get());
   }
 
-  // The replay committed the delta into each storage's writer, but the
-  // storage's query snapshot is only refreshed by a background commit. Force it
-  // now so the recovered rows are searchable the instant the server accepts
-  // queries.
-  for (auto& storage : recovering_storages) {
-    storage->Refresh();
+  // Each bind built its index and opened its storage, so the storages exist
+  // only now. Seeding keeps ordinals monotone across restarts; the refresh is
+  // because the replay committed the delta into the writer but the query
+  // snapshot only advances on a background commit, and the recovered rows must
+  // be searchable the instant the server accepts queries.
+  size_t recovered = 0;
+  for (auto table : tables_to_bind) {
+    for (auto& index :
+         table.get().GetStorage().GetDataTableInfo()->GetIndexes().Indexes()) {
+      if (!index.IsBound() ||
+          index.GetIndexType() !=
+            std::string{connector::InvertedStoreIndex::kTypeName}) {
+        continue;
+      }
+      const auto& storage =
+        index.Cast<connector::InvertedStoreIndex>().Storage();
+      if (storage) {
+        TickDomain::Instance().SeedAtLeast(storage->GetRecoveryTick());
+        storage->StartTasks();
+        storage->Refresh();
+        ++recovered;
+      }
+    }
   }
 
   const auto duration =
     absl::FromChrono(std::chrono::steady_clock::now() - begin);
   SDB_INFO(SEARCH, "search index recovery: bound ", tables_to_bind.size(),
-           " table(s), ", recovering_storages.size(), " inverted index(es) in ",
+           " table(s), ", recovered, " inverted index(es) in ",
            absl::FormatDuration(duration));
 }
 

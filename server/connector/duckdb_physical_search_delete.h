@@ -52,7 +52,7 @@ class SereneDBSearchDelete final : public duckdb::PhysicalOperator {
   SereneDBSearchDelete(duckdb::PhysicalPlan& plan, SearchWriteTarget target,
                        std::vector<duckdb::idx_t> pk_col_indices,
                        duckdb::vector<duckdb::LogicalType> types,
-                       std::vector<duckdb::idx_t> column_map,
+                       duckdb::vector<duckdb::column_t> column_map,
                        duckdb::idx_t estimated_cardinality);
 
   // The remove side of a REINDEX pass: DELETE FROM <index>. Removes go into
@@ -97,7 +97,7 @@ class SereneDBSearchDelete final : public duckdb::PhysicalOperator {
   // generated-PK rowid column (no-PK tables). Same layout PlanDelete computes.
   std::vector<duckdb::idx_t> _pk_col_indices;
   // Empty unless the statement has a RETURNING clause.
-  std::vector<duckdb::idx_t> _column_map;
+  duckdb::vector<duckdb::column_t> _column_map;
   std::shared_ptr<search::InvertedIndexStorage> _index_storage;
   std::shared_ptr<const irs::IndexFieldOptions> _field_options;
 };

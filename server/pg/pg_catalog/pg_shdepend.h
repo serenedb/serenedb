@@ -27,7 +27,7 @@ namespace sdb::pg {
 // https://www.postgresql.org/docs/18/catalog-pg-shdepend.html
 // NOLINTBEGIN
 struct PgShdepend {
-  static constexpr uint64_t kId = 147;
+  static constexpr uint64_t kId = 1214;
   static constexpr std::string_view kName = "pg_shdepend";
 
   enum class Deptype : char {
@@ -47,8 +47,5 @@ struct PgShdepend {
   Deptype deptype;
 };
 // NOLINTEND
-
-template<>
-MaterializedData SystemTableSnapshot<PgShdepend>::GetTableData();
 
 }  // namespace sdb::pg

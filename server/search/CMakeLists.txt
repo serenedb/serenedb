@@ -1,7 +1,6 @@
 target_sources(
     sereneserver
     PRIVATE
-        inverted_index.cpp
         inverted_index_storage.cpp
         search_analyzer_impl.cpp
         search_db_wal.cpp

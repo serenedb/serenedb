@@ -21,6 +21,8 @@
 #pragma once
 
 #include <duckdb/common/case_insensitive_map.hpp>
+#include <duckdb/common/error_data.hpp>
+#include <duckdb/common/optional_ptr.hpp>
 #include <duckdb/parser/parsed_expression.hpp>
 #include <memory>
 #include <span>
@@ -33,80 +35,58 @@ namespace duckdb {
 
 class ClientContext;
 class DataChunk;
+class SequenceCatalogEntry;
 class TableCatalogEntry;
 struct CreateTableInfo;
 
 }  // namespace duckdb
-namespace sdb::catalog {
-
-class SequenceCounter;
-
-}  // namespace sdb::catalog
 namespace sdb::search {
 
 class SearchTable;
 
 }  // namespace sdb::search
+namespace duckdb {
+
+class DuckSchemaEntry;
+
+}  // namespace duckdb
+
 namespace sdb::connector {
 
-// Shared search-table integration helpers used across the connector catalog,
-// planner, and physical-operator files.
+// Creates the sequence backing a search table's synthetic primary key, for a
+// table that declares none of its own. Named after the table rather than found
+// through an ownership edge, which is not recordable before the table entry is
+// in the catalog.
+void EnsureGeneratedPkSequence(duckdb::CatalogTransaction transaction,
+                               duckdb::DuckSchemaEntry& schema,
+                               const catalog::SearchTableEntry& entry);
 
-// Throws ERRCODE_FEATURE_NOT_SUPPORTED when `engine` owns a table's rows the
-// operation is not wired for. Guards the DDL paths the Search engine has no
-// implementation of yet.
-void RejectIfSearchTable(catalog::TableEngine engine,
-                         std::string_view operation);
+duckdb::optional_ptr<duckdb::SequenceCatalogEntry> FindGeneratedPkSequence(
+  duckdb::ClientContext& context, const catalog::SearchTableEntry& entry);
 
-// Everything a write against a search table needs from the table's definition,
-// resolved once at plan time off the entry. The operators hold this rather than
-// the entry so nothing reaches back into the catalog while the query runs, and
-// so the shard and the generated-PK counter -- shared side state, one per
-// table, never per version -- are pinned for the life of the plan.
 struct SearchWriteTarget {
   duckdb::idx_t table_id;
   std::shared_ptr<search::SearchTable> data;
-  // The counter feeding the synthetic primary key, or null when the table
-  // declares one of its own.
-  std::shared_ptr<catalog::SequenceCounter> generated_pk_seq;
-  // The columns iresearch stores, in the entry's order: the catalog id of each
-  // and the type its chunk slot carries.
+  duckdb::optional_ptr<duckdb::SequenceCatalogEntry> generated_pk_seq;
   std::vector<duckdb::idx_t> column_ids;
   duckdb::vector<duckdb::LogicalType> chunk_types;
-  // The declared key over those columns, empty on a generated-PK table.
   std::vector<primary_key::PKColumn> pk_columns;
 };
 
 SearchWriteTarget ResolveSearchWriteTarget(
-  duckdb::ClientContext& context, const duckdb::TableCatalogEntry& entry);
+  duckdb::ClientContext& context, const catalog::SearchTableEntry& entry);
 
-// The row-identity slots a search DELETE/UPDATE plan projects, paired with the
-// type each key was encoded from: the declared key columns in key order, or the
-// single generated-PK rowid, which is a BIGINT.
 std::vector<primary_key::PKColumn> RowIdentityPKColumns(
   const SearchWriteTarget& target,
   std::span<const duckdb::idx_t> chunk_positions);
-
-// One RETURNING row of a search DELETE or UPDATE, assembled out of the chunk
-// the child produced. `column_map` is indexed by the relation's own column
-// position and holds the chunk slot that column arrived in, or
-// duckdb::DConstants::INVALID_INDEX for one the child does not carry -- the
-// virtual slots a search table has no value for, which postgres would answer
-// from the rowid it does not have. `out` is left referencing `chunk`, so it
-// must be consumed before the next chunk arrives.
-void BuildReturnedRow(duckdb::DataChunk& out, duckdb::DataChunk& chunk,
-                      std::span<const duckdb::idx_t> column_map);
 
 catalog::TableEngine ReadStorageEngine(
   const duckdb::case_insensitive_map_t<
     duckdb::unique_ptr<duckdb::ParsedExpression>>& with_options);
 
-// Consumes the serenedb-specific WITH keys -- the engine that owns the rows and
-// the search-only maintenance intervals -- into `info`'s tags, leaving whatever
-// the caller's unrecognized-parameter check still has to reject.
-void ApplyStorageKind(
-  duckdb::ClientContext& context, duckdb::CreateTableInfo& info,
-  duckdb::case_insensitive_map_t<duckdb::unique_ptr<duckdb::ParsedExpression>>&
-    with_options);
+// Consumes the storage WITH options and stamps the engine tags. `context` is
+// absent for system transactions, which have no session to read defaults from.
+void ApplyStorageKind(duckdb::optional_ptr<duckdb::ClientContext> context,
+                      duckdb::CreateTableInfo& info);
 
 }  // namespace sdb::connector

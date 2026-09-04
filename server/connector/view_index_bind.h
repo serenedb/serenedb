@@ -1,7 +1,7 @@
 ////////////////////////////////////////////////////////////////////////////////
 /// DISCLAIMER
 ///
-/// Copyright 2025 SereneDB GmbH, Berlin, Germany
+/// Copyright 2026 SereneDB GmbH, Berlin, Germany
 ///
 /// Licensed under the Apache License, Version 2.0 (the "License");
 /// you may not use this file except in compliance with the License.
@@ -20,30 +20,19 @@
 
 #pragma once
 
-#include "pg/system_table.h"
+#include <duckdb/catalog/catalog_entry/view_catalog_entry.hpp>
+#include <duckdb/parser/statement/create_statement.hpp>
+#include <duckdb/planner/binder.hpp>
+#include <duckdb/planner/logical_operator.hpp>
 
-namespace sdb::pg {
+namespace sdb::connector {
 
-// https://www.postgresql.org/docs/18/catalog-pg-default-acl.html
-// NOLINTBEGIN
-struct PgDefaultAcl {
-  static constexpr uint64_t kId = 826;
-  static constexpr std::string_view kName = "pg_default_acl";
+// CREATE INDEX over a view. duckdb hands us the bound view body, which answers
+// a query but cannot be re-scanned: a build has to read a source it can list
+// and pin, so REINDEX can revisit exactly what it indexed. That source is what
+// ResolveViewFastPath picks, and the body plan is discarded for it.
+duckdb::unique_ptr<duckdb::LogicalOperator> BindCreateIndexOnView(
+  duckdb::Binder& binder, duckdb::CreateStatement& stmt,
+  duckdb::ViewCatalogEntry& view);
 
-  enum class Defaclobjtype : char {
-    Relation = 'r',
-    Sequence = 'S',
-    Function = 'f',
-    Type = 'T',
-    Schema = 'n',
-  };
-
-  Oid oid;
-  Oid defaclrole;
-  Oid defaclnamespace;
-  Defaclobjtype defaclobjtype;
-  AclColumn defaclacl;
-};
-// NOLINTEND
-
-}  // namespace sdb::pg
+}  // namespace sdb::connector

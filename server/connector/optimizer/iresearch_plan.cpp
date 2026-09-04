@@ -293,15 +293,20 @@ bool TryClaimIResearchConjunct(
 
 bool WithSearchGetters(duckdb::LogicalGet& get,
                        connector::SereneDBScanBindData& bind_data,
-                       const search::InvertedIndex& index,
                        duckdb::ClientContext& context,
                        absl::FunctionRef<bool(const SearchGetters&)> fn) {
-  // Resolved once for the whole claim: every column of this scan reads its
-  // dictionary out of this map instead of the catalog.
-  const auto dicts = catalog::ResolveTokenizers(context, index);
+  // Resolved once for the whole claim, against this statement's transaction:
+  // every column of this scan reads its dictionary out of this map, and the
+  // acquired analyzers must not outlive it.
+  // The index lives in its table's schema, and the table entry is the
+  // non-const handle this scan already holds.
+  auto& host = *bind_data.table_entry;
+  const auto dicts = connector::ResolveKeyTokenizers(
+    context, host.ParentCatalog().GetAttached(), host.schema,
+    bind_data.inverted_index->options);
   const auto projected_ids = BuildProjectedColumnIds(get, bind_data);
   const auto table_index = get.table_index;
-  const auto relation_id = index.GetRelationId();
+  const auto relation_id = bind_data.table_entry->oid;
   const bool table_backed =
     bind_data.GetKind() == connector::SereneDBScanBindData::Kind::Table;
 
@@ -317,12 +322,16 @@ bool WithSearchGetters(duckdb::LogicalGet& get,
     return it->second;
   };
 
-  const auto make_info = [&](irs::field_id field_id,
-                             const catalog::InvertedIndexField* info,
-                             duckdb::LogicalType type, bool column) {
+  const auto make_info =
+    [&](irs::field_id field_id, const catalog::InvertedIndexField* info,
+        duckdb::LogicalType type,
+        bool column) -> std::optional<connector::SearchColumnInfo> {
     auto column_info = MakeSearchColumnInfo(
       field_id, info, std::move(type),
       bind_data.inverted_config->GetTokenizer(dicts, field_id));
+    if (!column_info.tokenizer.analyzer) {
+      return std::nullopt;
+    }
     if (column && table_backed &&
         column_not_null(static_cast<connector::ColumnId>(field_id))) {
       column_info.null_field_id = irs::field_limits::invalid();

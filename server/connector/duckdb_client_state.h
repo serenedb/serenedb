@@ -123,15 +123,6 @@ class SereneDBClientState final : public duckdb::ClientContextState {
   pg::ProgressIoType pending_copy_io = pg::ProgressIoType::None;
   duckdb::idx_t pending_copy_relid;
 
-  // Transaction-scoped compensation for a statement that has already written
-  // its catalog record (CTAS): registered when the load starts, run in
-  // TransactionPreRollback while the MetaTransaction is alive, cleared by the
-  // owner right before its commit point. Never runs from a destructor -- a
-  // sink state outlives the statement (it dies with the cached plan), so a
-  // destructor-time MetaTransaction reference is a use-after-free.
-  std::function<void(duckdb::MetaTransaction&, duckdb::ClientContext&)>
-    transaction_abort_cleanup;
-
  private:
   std::shared_ptr<ConnectionContext> _connection_ctx;
 };

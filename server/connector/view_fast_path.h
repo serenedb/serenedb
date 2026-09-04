@@ -178,6 +178,20 @@ duckdb::TableFunction MakeFastPathLookupFunction(const ViewFastPath& fp);
 duckdb::unique_ptr<duckdb::FunctionData> BindFastPathSource(
   duckdb::ClientContext& context, const ViewFastPath& fp);
 
+// The scan side of a fast path -- the reader function, its bind and the schema
+// it returns. A build reads through this; a point lookup goes through
+// MakeFastPathLookupFunction instead.
+struct FastPathScan {
+  duckdb::TableFunction function;
+  duckdb::unique_ptr<duckdb::FunctionData> bind_data;
+  duckdb::vector<duckdb::LogicalType> types;
+  duckdb::vector<duckdb::Identifier> names;
+  duckdb::virtual_column_map_t virtual_columns;
+};
+
+std::optional<FastPathScan> BindFastPathScan(duckdb::ClientContext& context,
+                                             const ViewFastPath& fp);
+
 void EnableIcebergSort(duckdb::FunctionData* bind_data) noexcept;
 
 std::string FormatLookupLabel(const ViewFastPath& fp);

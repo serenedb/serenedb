@@ -80,7 +80,8 @@ SereneDBSearchDelete::SereneDBSearchDelete(
   duckdb::PhysicalPlan& plan, SearchWriteTarget target,
   std::vector<duckdb::idx_t> pk_col_indices,
   duckdb::vector<duckdb::LogicalType> types,
-  std::vector<duckdb::idx_t> column_map, duckdb::idx_t estimated_cardinality)
+  duckdb::vector<duckdb::column_t> column_map,
+  duckdb::idx_t estimated_cardinality)
   : duckdb::PhysicalOperator(plan, duckdb::PhysicalOperatorType::EXTENSION,
                              std::move(types), estimated_cardinality),
     _target(std::move(target)),
@@ -185,7 +186,7 @@ duckdb::SinkResultType SereneDBSearchDelete::SinkImpl(
       // re-fetched.
       duckdb::DataChunk row;
       row.InitializeEmpty(GetTypes());
-      BuildReturnedRow(row, chunk, _column_map);
+      row.ReferenceColumns(chunk, _column_map);
       gstate.returned->Append(row);
     }
   }

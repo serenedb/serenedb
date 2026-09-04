@@ -199,7 +199,6 @@ class SereneDBPhysicalCreateIndex final : public duckdb::PhysicalOperator {
   // Unset when the planner spliced no expression projection, which is not the
   // same fact as a base of 0.
   duckdb::optional_idx _expression_slot_base;
-  bool _feeds_inverted = false;
   duckdb::DuckSchemaEntry& _schema_entry;
 };
 

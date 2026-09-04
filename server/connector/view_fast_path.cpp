@@ -675,8 +675,9 @@ void EnableIcebergSort(duckdb::FunctionData* bind_data) noexcept {
   }
 }
 
-duckdb::unique_ptr<duckdb::FunctionData> BindFastPathSource(
-  duckdb::ClientContext& context, const ViewFastPath& fp) {
+std::optional<FastPathScan> BindFastPathScan(duckdb::ClientContext& context,
+                                             const ViewFastPath& fp) {
+  FastPathScan scan;
   if (fp.catalog_ref) {
     auto& entry =
       duckdb::Catalog::GetEntry(
@@ -685,7 +686,6 @@ duckdb::unique_ptr<duckdb::FunctionData> BindFastPathSource(
                               duckdb::Identifier{fp.catalog_ref->schema},
                               duckdb::Identifier{fp.catalog_ref->table}))
         .Cast<duckdb::TableCatalogEntry>();
-    duckdb::unique_ptr<duckdb::FunctionData> bind_data;
     std::optional<duckdb::BoundAtClause> at_clause;
     if (fp.pinned_iceberg_snapshot_id != 0) {
       at_clause.emplace("version",
@@ -697,23 +697,28 @@ duckdb::unique_ptr<duckdb::FunctionData> BindFastPathSource(
       at_clause ? duckdb::optional_ptr<duckdb::BoundAtClause>(&*at_clause)
                 : duckdb::optional_ptr<duckdb::BoundAtClause>{},
       duckdb::QueryErrorContext{});
-    auto fn = entry.GetScanFunction(context, bind_data, lookup);
-    if (fn.get_virtual_columns && bind_data) {
-      fn.get_virtual_columns(context, bind_data.get());
+    scan.function = entry.GetScanFunction(context, scan.bind_data, lookup);
+    if (scan.function.get_virtual_columns && scan.bind_data) {
+      scan.virtual_columns =
+        scan.function.get_virtual_columns(context, scan.bind_data.get());
     }
-    if (fp.function_name == "iceberg_scan" && bind_data) {
-      EnableIcebergSort(bind_data.get());
+    if (fp.function_name == "iceberg_scan" && scan.bind_data) {
+      EnableIcebergSort(scan.bind_data.get());
     }
-    return bind_data;
+    for (const auto& column : entry.GetColumns().Logical()) {
+      scan.types.push_back(column.Type());
+      scan.names.push_back(column.Name());
+    }
+    return scan;
   }
   SDB_ASSERT(!fp.args.empty());
-  auto reader = LookupSingleStringReader(context, fp.function_name);
+  scan.function = LookupSingleStringReader(context, fp.function_name);
   duckdb::vector<duckdb::Value> inputs = fp.args;
   duckdb::named_parameter_map_t named_params;
   named_params.reserve(fp.named_params.size() + 1);
   for (auto& [k, v] : fp.named_params) {
-    auto it = reader.named_parameters.find(k);
-    if (it == reader.named_parameters.end() ||
+    auto it = scan.function.named_parameters.find(k);
+    if (it == scan.function.named_parameters.end() ||
         it->second.id() == duckdb::LogicalTypeId::ANY) {
       named_params.emplace(k, v);
       continue;
@@ -736,20 +741,30 @@ duckdb::unique_ptr<duckdb::FunctionData> BindFastPathSource(
   duckdb::vector<duckdb::LogicalType> unused_types;
   duckdb::vector<duckdb::Identifier> unused_names;
   duckdb::TableFunctionRef unused_ref;
-  duckdb::TableFunctionBindInput input(inputs, named_params, unused_types,
-                                       unused_names, reader.function_info.get(),
-                                       nullptr, reader, unused_ref);
-  duckdb::vector<duckdb::LogicalType> out_types;
+  duckdb::TableFunctionBindInput input(
+    inputs, named_params, unused_types, unused_names,
+    scan.function.function_info.get(), nullptr, scan.function, unused_ref);
   duckdb::vector<std::string> out_names;
-  auto bind_data = reader.bind(context, input, out_types, out_names);
-  if (reader.get_virtual_columns && bind_data) {
-    reader.get_virtual_columns(context, bind_data.get());
+  scan.bind_data =
+    scan.function.bind(context, input, scan.types, out_names);
+  if (scan.function.get_virtual_columns && scan.bind_data) {
+    scan.virtual_columns =
+      scan.function.get_virtual_columns(context, scan.bind_data.get());
   }
-  if (fp.function_name == "iceberg_scan" && bind_data) {
-    EnableIcebergSort(bind_data.get());
+  if (fp.function_name == "iceberg_scan" && scan.bind_data) {
+    EnableIcebergSort(scan.bind_data.get());
   }
+  scan.names.reserve(out_names.size());
+  for (auto& n : out_names) {
+    scan.names.emplace_back(std::move(n));
+  }
+  return scan;
+}
 
-  return bind_data;
+duckdb::unique_ptr<duckdb::FunctionData> BindFastPathSource(
+  duckdb::ClientContext& context, const ViewFastPath& fp) {
+  auto scan = BindFastPathScan(context, fp);
+  return scan ? std::move(scan->bind_data) : nullptr;
 }
 
 std::string FormatLookupLabel(const ViewFastPath& fp) {

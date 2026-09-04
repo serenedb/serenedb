@@ -61,6 +61,28 @@ inline constexpr duckdb::idx_t kPgOpclassIvf = 1020002;
 
 inline constexpr duckdb::idx_t kFirstSystemView = 1200000;
 
+inline constexpr uint64_t kKeyIndexOidBit = uint64_t{1} << 62;
+
+inline constexpr uint64_t KeyIndexOid(uint64_t relation_oid,
+                                      uint64_t constraint_position) {
+  return kKeyIndexOidBit | (constraint_position << 48) | relation_oid;
+}
+
+inline constexpr uint64_t kConstraintOidBit = uint64_t{1} << 61;
+
+inline constexpr uint64_t ConstraintOid(uint64_t relation_oid,
+                                        uint64_t constraint_position) {
+  return kConstraintOidBit | (constraint_position << 48) | relation_oid;
+}
+
+inline constexpr const char* kPgSqlTypeOidProp = "pg_sql_type_oid";
+
+inline constexpr uint64_t kArrayTypeOidBit = uint64_t{1} << 31;
+
+inline constexpr uint64_t TypeArrayOid(uint64_t element_oid) {
+  return element_oid | kArrayTypeOidBit;
+}
+
 // Postgres stores date/time/timestamp from 2000-01-01
 inline constexpr int64_t kGapDays =
   absl::CivilDay{2000, 1, 1} - absl::CivilDay{1970, 1, 1};

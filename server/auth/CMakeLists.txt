@@ -1,1 +1,1 @@
-target_sources(sereneserver PRIVATE acl.cpp role_closure.cpp)
+target_sources(sereneserver PRIVATE acl.cpp role_closure_stub.cpp)

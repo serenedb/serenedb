@@ -35,7 +35,7 @@ Oid CatalogClassOid(duckdb::CatalogType type);
 // https://www.postgresql.org/docs/18/catalog-pg-depend.html
 // NOLINTBEGIN
 struct PgDepend {
-  static constexpr uint64_t kId = 117;
+  static constexpr uint64_t kId = 2608;
   static constexpr std::string_view kName = "pg_depend";
 
   enum class Deptype : char {
@@ -57,8 +57,5 @@ struct PgDepend {
   Deptype deptype;
 };
 // NOLINTEND
-
-template<>
-MaterializedData SystemTableSnapshot<PgDepend>::GetTableData();
 
 }  // namespace sdb::pg

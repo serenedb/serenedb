@@ -84,6 +84,7 @@
 #include "connector/index_source_factory.h"
 #include "connector/offsets_collector.hpp"
 #include "connector/offsets_writer.hpp"
+#include "connector/primary_key.h"
 #include "connector/search_pk_lookup.h"
 #include "connector/term_dict.h"
 #include "connector/view_fast_path.h"
@@ -398,10 +399,26 @@ void InitScanState(IResearchScanGlobalState& state,
       state.projected_columns.push_back(duckdb::DConstants::INVALID_INDEX);
       state.projected_types.push_back(duckdb::LogicalType::BOOLEAN);
       continue;
+    } else if (col_id >= kColumnIdentifierPrimaryKeyBase) {
+      const auto slot = col_id - kColumnIdentifierPrimaryKeyBase;
+      const auto keys = bind_data.table_entry
+                          ? primary_key::KeyColumns(*bind_data.table_entry)
+                          : std::vector<duckdb::LogicalIndex>{};
+      if (slot >= keys.size()) {
+        THROW_SQL_ERROR(
+          ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+          ERR_MSG("projecting virtual column ", col_id,
+                  " through an inverted-index scan is not supported"));
+      }
+      const auto key_id = static_cast<ColumnId>(
+        bind_data.table_entry->GetColumns().GetColumn(keys[slot]).Oid());
+      const auto it = absl::c_find(bind_data.column_ids, key_id);
+      SDB_ASSERT(it != bind_data.column_ids.end());
+      const auto bind_idx =
+        static_cast<duckdb::idx_t>(it - bind_data.column_ids.begin());
+      state.projected_columns.push_back(bind_idx);
+      state.projected_types.push_back(bind_data.column_types[bind_idx]);
     } else if (col_id >= duckdb::VIRTUAL_COLUMN_START) {
-      // Projecting a table's key columns as virtual columns needs
-      // TableCatalogEntry to publish them; the pinned duckdb's
-      // GetVirtualColumns() offers rowid alone, so nothing produces such an id.
       THROW_SQL_ERROR(
         ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
         ERR_MSG("projecting virtual column ", col_id,

@@ -83,6 +83,11 @@ inline constexpr duckdb::column_t kColumnIdentifierGeneratedPk =
   UINT64_C(9223372036854775812);
 inline constexpr duckdb::column_t kColumnIdentifierPkRowNumber =
   UINT64_C(9223372036854775813);
+// One slot per primary-key column, in key order: what a search table answers
+// GetRowIdColumns() with, since duckdb identifies a row by virtual columns and
+// a stored key column cannot name itself.
+inline constexpr duckdb::column_t kColumnIdentifierPrimaryKeyBase =
+  UINT64_C(9223372036854775814);
 
 // Offsets come back as one flat list of start/end pairs per row, which is the
 // return type ts_offsets is registered with.

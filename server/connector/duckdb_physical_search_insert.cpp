@@ -153,18 +153,15 @@ const catalog::SearchTableEntry* CreateCtasTable(
   duckdb::BoundCreateTableInfo& info) {
   auto& schema = info.schema;
   auto& table_info = info.Base();
-  // CTAS declares no PRIMARY KEY, so the create wires up a generated one.
-  ApplyStorageKind(context, table_info, table_info.options);
-  SDB_ASSERT(catalog::ReadTableEngineTag(table_info.tags) ==
-               catalog::TableEngine::Search,
-             "SereneDBSearchInsert CTAS mode used for non-Search engine");
-
   auto& catalog = schema.ParentCatalog();
   auto entry =
     catalog.CreateTable(catalog.GetCatalogTransaction(context), schema, info);
   if (!entry) {
     return nullptr;
   }
+  SDB_ASSERT(ReadStorageEngine(table_info.options) ==
+               catalog::TableEngine::Search,
+             "SereneDBSearchInsert CTAS mode used for non-Search engine");
 
   state.ctas_mode = true;
   state.ctas_context = &context;

@@ -71,6 +71,15 @@ void HnswGraph::AllocateLinks() {
   }
   _offsets.back() = total;
   _neighbors.assign(total, kHnswInvalidNode);
+
+  _proc_offsets.resize(_levels.size() + 1);
+  uint32_t slots = 0;
+  for (size_t i = 0; i < _levels.size(); ++i) {
+    _proc_offsets[i] = slots;
+    slots += _levels[i];
+  }
+  _proc_offsets.back() = slots;
+  _processed.assign(slots, 0);
 }
 
 size_t HnswGraph::ByteSize() const noexcept {

@@ -42,11 +42,6 @@ ABSL_FLAG(uint64_t, ann_build_threads, 0,
 
 namespace sdb {
 
-// Workers ONE ANN build may use, mirroring qdrant's thread_count_for_hnsw: the
-// graph stops getting faster well before it stops getting more threads, and
-// past ~16 concurrent writers it starts fragmenting (disconnected components).
-// This is deliberately a PER-BUILD cap and not the whole machine -- see
-// AnnBuildBudget.
 std::uint64_t BackgroundScheduler::AnnBuildThreads() noexcept {
   const auto configured = absl::GetFlag(FLAGS_ann_build_threads);
   if (configured != 0) {
@@ -59,11 +54,6 @@ std::uint64_t BackgroundScheduler::AnnBuildThreads() noexcept {
   return cores <= 64 ? 12 : 16;
 }
 
-// Workers summed over every ANN build in flight. The machine, not the per-build
-// cap: two segments flushing at once should fill the box between them, which is
-// what qdrant does -- its cpu_budget is cores - 1 while each build asks for
-// only thread_count_for_hnsw(cores), so the first build cannot starve the
-// second.
 std::uint64_t BackgroundScheduler::AnnBuildBudget() noexcept {
   return std::max<std::uint64_t>(
     1, static_cast<std::uint64_t>(CountLogicalCores()));

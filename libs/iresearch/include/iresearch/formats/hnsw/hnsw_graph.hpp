@@ -121,8 +121,11 @@ class HnswGraph {
   uint32_t M() const noexcept { return _m; }
   uint32_t M0() const noexcept { return _m0; }
   uint32_t MaxLevel() const noexcept { return _max_level; }
-  uint32_t EntryPoint() const noexcept { return _entry; }
-  bool Empty() const noexcept { return _entry == kHnswInvalidNode; }
+  uint32_t EntryPoint() const noexcept {
+    return std::atomic_ref<uint32_t>{const_cast<uint32_t&>(_entry)}.load(
+      std::memory_order_acquire);
+  }
+  bool Empty() const noexcept { return EntryPoint() == kHnswInvalidNode; }
 
   uint32_t LevelOf(uint32_t node) const noexcept { return _levels[node]; }
 
@@ -133,7 +136,45 @@ class HnswGraph {
     _max_level = std::max(_max_level, level);
   }
 
-  void SetEntryPoint(uint32_t node) noexcept { _entry = node; }
+  uint32_t Processed(uint32_t node, uint32_t level) const noexcept {
+    if (_processed.empty()) {
+      return 0;
+    }
+    return _processed[_proc_offsets[node] + level];
+  }
+
+  void SetProcessed(uint32_t node, uint32_t level, uint32_t n) noexcept {
+    if (_processed.empty()) {
+      return;
+    }
+    _processed[_proc_offsets[node] + level] = static_cast<uint8_t>(n);
+  }
+
+  void SetEntryPoint(uint32_t node) noexcept {
+    std::atomic_ref<uint32_t>{_entry}.store(node, std::memory_order_release);
+  }
+
+  bool ClaimFirstEntry(uint32_t node) noexcept {
+    std::atomic_ref<uint32_t> slot{_entry};
+    uint32_t expected = kHnswInvalidNode;
+    return slot.compare_exchange_strong(expected, node,
+                                        std::memory_order_acq_rel,
+                                        std::memory_order_acquire);
+  }
+
+  void PromoteEntry(uint32_t node) noexcept {
+    std::atomic_ref<uint32_t> slot{_entry};
+    uint32_t cur = slot.load(std::memory_order_acquire);
+    for (;;) {
+      if (cur != kHnswInvalidNode && _levels[node] <= _levels[cur]) {
+        return;
+      }
+      if (slot.compare_exchange_weak(cur, node, std::memory_order_acq_rel,
+                                     std::memory_order_acquire)) {
+        return;
+      }
+    }
+  }
 
   std::span<uint32_t> Neighbors(uint32_t node, uint32_t level) noexcept {
     const auto width = level == 0 ? _m0 : _m;
@@ -158,6 +199,8 @@ class HnswGraph {
   }
 
   std::vector<uint8_t> _levels;
+  std::vector<uint32_t> _proc_offsets;
+  std::vector<uint8_t> _processed;
   std::vector<uint64_t> _offsets;
   std::vector<uint32_t> _neighbors;
   uint32_t _entry = kHnswInvalidNode;
@@ -322,6 +365,12 @@ struct HnswPendingLink {
   uint32_t level;
 };
 
+struct HnswReverseItem {
+  score_t score;
+  uint32_t node;
+  bool processed;
+};
+
 struct HnswBuildScratch {
   HnswSearchScratch search;
   std::vector<uint32_t> selected;
@@ -332,6 +381,9 @@ struct HnswBuildScratch {
   std::vector<HnswPendingLink> pending;
   std::vector<uint8_t> select_blocked;
   std::vector<uint32_t> select_ids;
+  std::vector<HnswReverseItem> rev_items;
+  std::vector<uint32_t> rev_kept;
+  std::vector<uint8_t> rev_kept_processed;
 };
 
 template<typename Dist>
@@ -442,54 +494,55 @@ void HnswLinkReverse(HnswGraph& graph, Dist& dist, uint32_t peer, uint32_t node,
     return;
   }
 
+  const uint32_t processed = graph.Processed(peer, level);
   s.peer_scores.resize(ids.size());
   dist.PairBatch(peer, ids, s.peer_scores.data());
 
-  const score_t score = dist.Pair(peer, node);
-  size_t pos = 0;
-  while (pos < ids.size() && s.peer_scores[pos] > score) {
-    ++pos;
+  auto& items = s.rev_items;
+  items.clear();
+  items.reserve(ids.size() + 1);
+  for (size_t i = 0; i < ids.size(); ++i) {
+    items.push_back({.score = s.peer_scores[i],
+                     .node = ids[i],
+                     .processed = i < processed});
   }
+  items.push_back({.score = dist.Pair(peer, node),
+                   .node = node,
+                   .processed = false});
+  std::ranges::sort(items, [](const HnswReverseItem& l,
+                              const HnswReverseItem& r) {
+    return l.score > r.score;
+  });
 
-  s.node_scores.resize(ids.size());
-  if (dist.CheapPair()) {
-    for (size_t j = 0; j < pos; ++j) {
-      s.node_scores[j] = dist.Pair(node, ids[j]);
-      if (s.node_scores[j] > score) {
-        return;
+  auto& kept = s.rev_kept;
+  auto& kept_processed = s.rev_kept_processed;
+  kept.clear();
+  kept_processed.clear();
+  for (const auto& cand : items) {
+    bool keep = true;
+    for (size_t w = 0; w < kept.size(); ++w) {
+      if (cand.processed && kept_processed[w] != 0) {
+        continue;
+      }
+      if (dist.Pair(cand.node, kept[w]) > cand.score) {
+        keep = false;
+        break;
       }
     }
-    if (pos < ids.size()) {
-      dist.PairBatch(node, std::span<const uint32_t>{ids}.subspan(pos),
-                     s.node_scores.data() + pos);
+    if (!keep) {
+      continue;
     }
-  } else {
-    dist.PairBatch(node, ids, s.node_scores.data());
-    for (size_t j = 0; j < pos; ++j) {
-      if (s.node_scores[j] > score) {
-        return;
-      }
+    kept.push_back(cand.node);
+    kept_processed.push_back(cand.processed ? uint8_t{1} : uint8_t{0});
+    if (kept.size() >= links.size()) {
+      break;
     }
-  }
-
-  auto& cur = s.peer_candidates;
-  cur.clear();
-  for (size_t i = 0; i < pos; ++i) {
-    cur.push_back({s.peer_scores[i], ids[i]});
-  }
-  cur.push_back({score, node});
-  for (size_t t = pos; t < ids.size(); ++t) {
-    if (s.node_scores[t] <= s.peer_scores[t]) {
-      cur.push_back({s.peer_scores[t], ids[t]});
-    }
-  }
-  if (cur.size() > links.size()) {
-    cur.resize(links.size());
   }
 
   for (size_t i = 0; i < links.size(); ++i) {
-    HnswStoreLink(links[i], i < cur.size() ? cur[i].node : kHnswInvalidNode);
+    HnswStoreLink(links[i], i < kept.size() ? kept[i] : kHnswInvalidNode);
   }
+  graph.SetProcessed(peer, level, static_cast<uint32_t>(kept.size()));
 }
 
 template<typename Dist, typename Sync = HnswNoSync>
@@ -497,8 +550,8 @@ void HnswInsert(HnswGraph& graph, uint32_t node, Dist& dist,
                 uint32_t ef_construction, HnswBuildScratch& s,
                 Sync&& sync = {}) {
   const uint32_t top = graph.LevelOf(node) - 1;
-  SDB_ASSERT(!graph.Empty());
 
+  SDB_ASSERT(!graph.Empty());
   const uint32_t entry = graph.EntryPoint();
   const uint32_t entry_top = graph.LevelOf(entry) - 1;
 
@@ -532,6 +585,7 @@ void HnswInsert(HnswGraph& graph, uint32_t node, Dist& dist,
         HnswStoreLink(links[i],
                       i < s.selected.size() ? s.selected[i] : kHnswInvalidNode);
       }
+      graph.SetProcessed(node, level, static_cast<uint32_t>(s.selected.size()));
     }
     for (const auto peer : s.selected) {
       s.pending.push_back({.peer = peer, .level = level});

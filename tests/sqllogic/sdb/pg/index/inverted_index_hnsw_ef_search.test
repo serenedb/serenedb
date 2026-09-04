@@ -106,17 +106,6 @@ SET sdb_hnsw_ef_search = -1;
 db error: ERROR: invalid value for parameter "sdb_hnsw_ef_search": "-1"
 
 
-# ============================================================================
-# On a quantized index the beam is floored at the rerank pool.
-#
-# The scan over-fetches sdb_rerank_factor * k candidates and rescores them
-# against the stored raw vectors, but the graph can only ever hand back `ef` of
-# them -- so an ef below the pool starved the rescore and it did nothing. The
-# floor makes the requested pool actually materialize, which is what qdrant's
-# `ef = max(ef, oversampled_top)` does. quant = 'none' never reranks, so the
-# section above is unaffected.
-# ============================================================================
-
 statement ok
 CREATE TABLE hnsw_efq (pk INTEGER PRIMARY KEY, emb FLOAT[8]);
 

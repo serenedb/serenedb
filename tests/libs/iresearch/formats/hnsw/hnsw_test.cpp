@@ -19,6 +19,7 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include <algorithm>
+#include <cmath>
 #include <duckdb.hpp>
 #include <duckdb/common/vector/array_vector.hpp>
 #include <random>
@@ -26,6 +27,7 @@
 #include <vector>
 
 #include "formats/column/test_cs_helpers.hpp"
+#include "iresearch/formats/hnsw/hnsw_graph.hpp"
 #include "iresearch/index/directory_reader.hpp"
 #include "iresearch/index/index_writer.hpp"
 #include "iresearch/search/cost.hpp"
@@ -41,10 +43,11 @@ inline constexpr irs::field_id kVec = 1;
 inline constexpr uint32_t kDim = 8;
 
 irs::IndexWriterOptions MakeWriterOptions(irs::VectorMetric metric,
-                                          irs::VectorQuantization quant) {
+                                          irs::VectorQuantization quant,
+                                          uint32_t nb_bits = 0) {
   auto opts = irs::tests::DefaultWriterOptions();
-  opts.column_options = [metric,
-                         quant](irs::field_id id) -> irs::ColumnOptions {
+  opts.column_options = [metric, quant,
+                         nb_bits](irs::field_id id) -> irs::ColumnOptions {
     irs::ColumnOptions col;
     if (id == kVec) {
       col.ann_info = irs::AnnInfo{
@@ -53,12 +56,7 @@ irs::IndexWriterOptions MakeWriterOptions(irs::VectorMetric metric,
         .postings_id = kVec,
         .d = kDim,
         .metric = metric,
-        .quant = {.kind = quant,
-                  .nb_bits = quant == irs::VectorQuantization::TQ
-                               ? irs::kTQDefaultBits
-                             : quant == irs::VectorQuantization::TQMse
-                               ? irs::kTQMseDefaultBits
-                               : 0},
+        .quant = {.kind = quant, .nb_bits = nb_bits},
         .m = 8,
         .ef_construction = 64,
       };
@@ -102,12 +100,13 @@ void WriteVectorAt(irs::ColWriter& cs, irs::doc_id_t doc,
 irs::DirectoryReader BuildIndex(irs::Directory& dir,
                                 const std::vector<std::vector<float>>& vecs,
                                 irs::VectorMetric metric,
-                                irs::VectorQuantization quant) {
+                                irs::VectorQuantization quant,
+                                uint32_t nb_bits = 0) {
   constexpr auto kFormatId = "1_5simd";
   auto codec = irs::formats::Get(kFormatId);
   EXPECT_NE(nullptr, codec);
-  auto writer = irs::IndexWriter::Make(dir, codec, irs::kOmCreate,
-                                       MakeWriterOptions(metric, quant));
+  auto writer = irs::IndexWriter::Make(
+    dir, codec, irs::kOmCreate, MakeWriterOptions(metric, quant, nb_bits));
   EXPECT_NE(nullptr, writer);
   {
     auto trx = writer->GetBatch();
@@ -176,12 +175,26 @@ std::vector<irs::doc_id_t> RunKnn(const irs::DirectoryReader& reader,
   return docs;
 }
 
-using HnswParam = std::tuple<irs::VectorMetric, irs::VectorQuantization>;
+// (quant, nb_bits, recall floor). TurboQuant needs its bit width spelled out --
+// TQ accepts 2|3|5 and TQMse 1|2|4 -- and estimates a shorter code than the
+// scalar quantizers do, so it carries its own floor.
+struct HnswQuant {
+  irs::VectorQuantization kind;
+  uint32_t nb_bits;
+  double recall_floor;
+};
+
+using HnswParam = std::tuple<irs::VectorMetric, HnswQuant>;
 
 class HnswIndexTest : public ::testing::TestWithParam<HnswParam> {
  protected:
   irs::VectorMetric Metric() const { return std::get<0>(GetParam()); }
-  irs::VectorQuantization Quant() const { return std::get<1>(GetParam()); }
+  irs::VectorQuantization Quant() const { return std::get<1>(GetParam()).kind; }
+  uint32_t NbBits() const { return std::get<1>(GetParam()).nb_bits; }
+
+  irs::IndexWriterOptions WriterOptions() const {
+    return MakeWriterOptions(Metric(), Quant(), NbBits());
+  }
 
   void SetUp() override {
     if (Quant() != irs::VectorQuantization::None &&
@@ -190,17 +203,7 @@ class HnswIndexTest : public ::testing::TestWithParam<HnswParam> {
     }
   }
 
-  double RecallFloor() const {
-    switch (Quant()) {
-      case irs::VectorQuantization::TQMse:
-        return 0.5;
-      case irs::VectorQuantization::SQ4:
-      case irs::VectorQuantization::TQ:
-        return 0.7;
-      default:
-        return 0.9;
-    }
-  }
+  double RecallFloor() const { return std::get<1>(GetParam()).recall_floor; }
 };
 
 TEST_P(HnswIndexTest, RecallAgainstBruteForce) {
@@ -210,7 +213,7 @@ TEST_P(HnswIndexTest, RecallAgainstBruteForce) {
 
   const auto vecs = MakeVectors(kRows, 7);
   irs::MemoryDirectory dir;
-  auto reader = BuildIndex(dir, vecs, metric, Quant());
+  auto reader = BuildIndex(dir, vecs, metric, Quant(), NbBits());
   ASSERT_NE(nullptr, reader);
   ASSERT_EQ(1U, reader->size());
   ASSERT_EQ(kRows, reader->docs_count());
@@ -250,7 +253,7 @@ TEST_P(HnswIndexTest, RecallAcrossManyRowBatches) {
 
   const auto vecs = MakeVectors(kRows, 21);
   irs::MemoryDirectory dir;
-  auto reader = BuildIndex(dir, vecs, metric, Quant());
+  auto reader = BuildIndex(dir, vecs, metric, Quant(), NbBits());
   ASSERT_NE(nullptr, reader);
   ASSERT_EQ(kRows, reader->docs_count());
 
@@ -288,8 +291,8 @@ TEST_P(HnswIndexTest, MergeReusesDonorGraph) {
   ASSERT_NE(nullptr, codec);
 
   irs::MemoryDirectory dir;
-  auto writer = irs::IndexWriter::Make(dir, codec, irs::kOmCreate,
-                                       MakeWriterOptions(metric, Quant()));
+  auto writer =
+    irs::IndexWriter::Make(dir, codec, irs::kOmCreate, WriterOptions());
   ASSERT_NE(nullptr, writer);
   for (const size_t bound : {kBig, kBig + kSmall}) {
     auto trx = writer->GetBatch();
@@ -311,7 +314,7 @@ TEST_P(HnswIndexTest, MergeReusesDonorGraph) {
   ASSERT_EQ(kBig + kSmall, merged->docs_count());
 
   irs::MemoryDirectory fresh_dir;
-  auto fresh = BuildIndex(fresh_dir, vecs, metric, Quant());
+  auto fresh = BuildIndex(fresh_dir, vecs, metric, Quant(), NbBits());
   ASSERT_NE(nullptr, fresh);
 
   size_t total = 0;
@@ -341,11 +344,81 @@ TEST_P(HnswIndexTest, MergeReusesDonorGraph) {
     << "merged " << recall_merged << " vs rebuilt " << recall_fresh;
 }
 
+// Eight equal segments merged at once: the shape a CREATE INDEX actually
+// produces, since it flushes one tail segment per DuckDB sink thread. Only the
+// largest is adopted, so seven eighths of the rows come back through the delta
+// insert -- the case where a merge does the most work and has the most room to
+// come out worse than a rebuild.
+TEST_P(HnswIndexTest, MergeOfManySourcesMatchesRebuild) {
+  const auto metric = Metric();
+  constexpr size_t kSegments = 8;
+  constexpr size_t kPerSegment = 250;
+  constexpr size_t kRows = kSegments * kPerSegment;
+  constexpr size_t kK = 10;
+
+  auto vecs = MakeVectors(kRows, 41);
+  auto codec = irs::formats::Get("1_5simd");
+  ASSERT_NE(nullptr, codec);
+
+  irs::MemoryDirectory dir;
+  auto writer =
+    irs::IndexWriter::Make(dir, codec, irs::kOmCreate, WriterOptions());
+  ASSERT_NE(nullptr, writer);
+  for (size_t seg = 0; seg < kSegments; ++seg) {
+    auto trx = writer->GetBatch();
+    for (size_t i = seg * kPerSegment; i < (seg + 1) * kPerSegment; ++i) {
+      auto doc = trx.Insert();
+      WriteVectorAt(*doc.GetColWriter(), doc.DocId(), vecs[i]);
+    }
+    trx.Commit();
+    writer->RefreshCommit();
+  }
+  ASSERT_EQ(kSegments, writer->GetSnapshot()->size());
+
+  ASSERT_TRUE(writer->Compact(
+    irs::index_utils::MakePolicy(irs::index_utils::CompactionCount())));
+  writer->RefreshCommit();
+  auto merged = writer->GetSnapshot();
+  ASSERT_NE(nullptr, merged);
+  ASSERT_EQ(1U, merged->size());
+  ASSERT_EQ(kRows, merged->docs_count());
+
+  irs::MemoryDirectory fresh_dir;
+  auto fresh = BuildIndex(fresh_dir, vecs, metric, Quant(), NbBits());
+  ASSERT_NE(nullptr, fresh);
+
+  size_t total = 0;
+  size_t hit_merged = 0;
+  size_t hit_fresh = 0;
+  const auto queries = MakeVectors(25, 4242);
+  for (const auto& q : queries) {
+    auto f1 = MakeKnnFilter(q, metric, Quant(), 128);
+    auto f2 = MakeKnnFilter(q, metric, Quant(), 128);
+    const auto got_merged = RunKnn(merged, f1);
+    const auto got_fresh = RunKnn(fresh, f2);
+    ASSERT_FALSE(got_merged.empty());
+    for (const auto doc : BruteForceTopK(vecs, q, metric, kK)) {
+      ++total;
+      hit_merged += std::ranges::find(got_merged, doc) != got_merged.end();
+      hit_fresh += std::ranges::find(got_fresh, doc) != got_fresh.end();
+    }
+  }
+  const double recall_merged =
+    static_cast<double>(hit_merged) / static_cast<double>(total);
+  const double recall_fresh =
+    static_cast<double>(hit_fresh) / static_cast<double>(total);
+  EXPECT_GE(recall_merged, RecallFloor())
+    << "merged recall " << recall_merged << " metric "
+    << static_cast<int>(metric) << " quant " << static_cast<int>(Quant());
+  EXPECT_GE(recall_merged, recall_fresh - 0.05)
+    << "merged " << recall_merged << " vs rebuilt " << recall_fresh;
+}
+
 TEST_P(HnswIndexTest, SerializedGraphSurvivesReopen) {
   const auto metric = Metric();
   const auto vecs = MakeVectors(200, 11);
   irs::MemoryDirectory dir;
-  auto reader = BuildIndex(dir, vecs, metric, Quant());
+  auto reader = BuildIndex(dir, vecs, metric, Quant(), NbBits());
   ASSERT_NE(nullptr, reader);
 
   auto filter = MakeKnnFilter(vecs[0], metric, Quant(), 64);
@@ -366,7 +439,7 @@ TEST_P(HnswIndexTest, QueryVectorFindsItself) {
   const auto metric = Metric();
   const auto vecs = MakeVectors(300, 13);
   irs::MemoryDirectory dir;
-  auto reader = BuildIndex(dir, vecs, metric, Quant());
+  auto reader = BuildIndex(dir, vecs, metric, Quant(), NbBits());
   ASSERT_NE(nullptr, reader);
 
   size_t found = 0;
@@ -384,9 +457,150 @@ INSTANTIATE_TEST_SUITE_P(
   ::testing::Combine(
     ::testing::Values(irs::VectorMetric::L2Sqr, irs::VectorMetric::InnerProduct,
                       irs::VectorMetric::Cosine, irs::VectorMetric::L1),
-    ::testing::Values(irs::VectorQuantization::None,
-                      irs::VectorQuantization::SQ8,
-                      irs::VectorQuantization::SQ4, irs::VectorQuantization::TQ,
-                      irs::VectorQuantization::TQMse)));
+    ::testing::Values(HnswQuant{irs::VectorQuantization::None, 0, 0.9},
+                      HnswQuant{irs::VectorQuantization::SQ8, 0, 0.9},
+                      HnswQuant{irs::VectorQuantization::SQ4, 0, 0.7},
+                      HnswQuant{irs::VectorQuantization::TQMse, 4, 0.7},
+                      HnswQuant{irs::VectorQuantization::TQMse, 2, 0.5},
+                      HnswQuant{irs::VectorQuantization::TQ, 3, 0.5})));
 
 }  // namespace
+
+namespace {
+
+struct SelectRefDist {
+  const std::vector<float>* pts;
+  uint32_t d;
+  // Selects which HnswSelectNeighbors form runs; both must agree with the
+  // reference, since a quantizer without a symmetric estimator still takes the
+  // accepted-side path in production.
+  bool cheap_pair = true;
+
+  bool CheapPair() const noexcept { return cheap_pair; }
+
+  irs::score_t Pair(uint32_t a, uint32_t b) const noexcept {
+    const float* x = pts->data() + static_cast<size_t>(a) * d;
+    const float* y = pts->data() + static_cast<size_t>(b) * d;
+    float s = 0.f;
+    for (uint32_t i = 0; i < d; ++i) {
+      const float t = x[i] - y[i];
+      s += t * t;
+    }
+    return -s;
+  }
+
+  void PairBatch(uint32_t from, std::span<const uint32_t> to,
+                 irs::score_t* out) const noexcept {
+    for (size_t i = 0; i < to.size(); ++i) {
+      out[i] = Pair(from, to[i]);
+    }
+  }
+};
+
+// The shape HnswSelectNeighbors had before it was scored from the accepted
+// side; kept here so the transposed version is pinned against it.
+std::vector<uint32_t> SelectReference(const SelectRefDist& dist,
+                                      std::span<const irs::HnswCandidate> in,
+                                      uint32_t limit) {
+  std::vector<uint32_t> out;
+  for (const auto& cand : in) {
+    if (out.size() >= limit) {
+      break;
+    }
+    bool keep = true;
+    for (const uint32_t a : out) {
+      if (dist.Pair(cand.node, a) > cand.score) {
+        keep = false;
+        break;
+      }
+    }
+    if (keep) {
+      out.push_back(cand.node);
+    }
+  }
+  return out;
+}
+
+}  // namespace
+
+// The share of nodes carrying a row above level 0 is what the greedy descent
+// navigates on, and it follows directly from how the level sample is rounded:
+// truncating (hnswlib) admits at sample >= 1 -> 1/m, rounding (qdrant, and us)
+// admits at sample >= 0.5 -> 1/sqrt(m). At m=16 that is 25% against 6.25%.
+// Pinned because the two differ by a single cast and the search-side cost of
+// getting it wrong -- 2x the ef_search for the same recall -- shows up nowhere
+// near this code.
+TEST(HnswRandomLevelTest, UpperLevelShareMatchesRoundedDraw) {
+  for (const uint32_t m : {8U, 16U, 32U}) {
+    constexpr size_t kDraws = 200000;
+    uint64_t rng = irs::kHnswBuildSeed;
+    size_t above = 0;
+    double levels = 0;
+    for (size_t i = 0; i < kDraws; ++i) {
+      const auto count = irs::HnswRandomLevel(rng, m);
+      ASSERT_GE(count, 1U);
+      above += count > 1 ? 1 : 0;
+      levels += static_cast<double>(count);
+    }
+    const double share = static_cast<double>(above) / kDraws;
+    const double want = 1.0 / std::sqrt(static_cast<double>(m));
+    EXPECT_NEAR(share, want, 0.01)
+      << "m=" << m << " share above level 0 " << share << " want ~" << want
+      << " (truncation would give " << 1.0 / m << ")";
+    // Expected rows per node feeds graph memory and insert cost.
+    const double want_levels = 1.0 + std::sqrt(static_cast<double>(m)) /
+                                       (static_cast<double>(m) - 1.0);
+    EXPECT_NEAR(levels / kDraws, want_levels, 0.02) << "m=" << m;
+  }
+}
+
+TEST(HnswSelectNeighborsTest, TransposedMatchesReference) {
+  constexpr uint32_t kD = 6;
+  constexpr size_t kNodes = 400;
+  std::mt19937 rng{20260901};
+  std::normal_distribution<float> nd{0.f, 1.f};
+  std::vector<float> pts(kNodes * kD);
+  for (float& v : pts) {
+    v = nd(rng);
+  }
+  const SelectRefDist dist{.pts = &pts, .d = kD};
+
+  irs::HnswBuildScratch scratch;
+  std::uniform_int_distribution<uint32_t> pick{
+    0, static_cast<uint32_t>(kNodes) - 1};
+
+  for (int trial = 0; trial < 200; ++trial) {
+    const size_t n = 1 + (static_cast<size_t>(rng()) % 64);
+    const uint32_t query = pick(rng);
+    std::vector<irs::HnswCandidate> cands;
+    cands.reserve(n);
+    for (size_t i = 0; i < n; ++i) {
+      const uint32_t node = pick(rng);
+      if (node == query) {
+        continue;
+      }
+      cands.push_back({dist.Pair(query, node), node});
+    }
+    std::ranges::sort(
+      cands, [](const auto& l, const auto& r) { return l.score > r.score; });
+    cands.erase(std::unique(cands.begin(), cands.end(),
+                            [](const auto& l, const auto& r) {
+                              return l.node == r.node;
+                            }),
+                cands.end());
+    if (cands.empty()) {
+      continue;
+    }
+
+    for (const uint32_t limit : {1U, 3U, 8U, 16U, 32U}) {
+      const auto want = SelectReference(dist, cands, limit);
+      for (const bool cheap : {true, false}) {
+        SelectRefDist form{.pts = &pts, .d = kD, .cheap_pair = cheap};
+        irs::HnswSelectNeighbors(form, cands, limit, scratch);
+        ASSERT_EQ(want, scratch.selected)
+          << "trial " << trial << " limit " << limit << " n " << cands.size()
+          << " cheap_pair " << cheap;
+      }
+    }
+  }
+}

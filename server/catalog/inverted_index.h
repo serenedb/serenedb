@@ -165,9 +165,9 @@ struct InvertedIndexEntryInfo {
   bool IsStored() const noexcept { return store_values || IsAnn(); }
 };
 
-// The IVF descriptor for an entry with an ivf_config (nullopt otherwise), keyed
+// The ANN descriptor for an entry with an ann_config (nullopt otherwise), keyed
 // off `field_id` (its centroids/postings ids).
-std::optional<irs::IvfInfo> IvfInfoForEntry(
+std::optional<irs::AnnInfo> AnnInfoForEntry(
   irs::field_id field_id, const InvertedIndexEntryInfo& entry);
 
 // The text-search dictionaries an index's entries name, resolved once. The

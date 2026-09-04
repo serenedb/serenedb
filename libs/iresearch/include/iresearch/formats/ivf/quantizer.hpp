@@ -57,6 +57,10 @@ class QuantizerWriter {
 
   virtual void SetClusterCentroid(const float* /*centroid*/) {}
 
+  virtual size_t RefineSamples(size_t /*rows*/) const noexcept { return 0; }
+  virtual void Refine(const float* /*vecs*/, size_t /*n*/) {}
+  virtual void RefineDone() {}
+
   virtual PayloadBlockSetting BlockSetting() const noexcept = 0;
 
   virtual void Encode(IndexOutput& out, const float* vecs, size_t n) = 0;
@@ -176,5 +180,7 @@ std::shared_ptr<const QuantizerStats> MakeQuantizerStats(
 
 std::unique_ptr<QuantizerReader> MakeQuantizerReader(
   const std::shared_ptr<const QuantizerCodebook>& codebook);
+
+void GenerateSigns(uint32_t rotated_d, int64_t seed, std::vector<float>& signs);
 
 }  // namespace irs

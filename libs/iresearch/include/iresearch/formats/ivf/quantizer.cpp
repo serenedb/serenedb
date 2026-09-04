@@ -39,6 +39,7 @@
 #include <array>
 #include <bit>
 #include <cmath>
+#include <cstdio>
 #include <cstdint>
 #include <cstring>
 #include <limits>
@@ -55,6 +56,20 @@
 #include "iresearch/utils/vector.hpp"
 
 namespace irs {
+
+void GenerateSigns(uint32_t rotated_d, int64_t seed,
+                   std::vector<float>& signs) {
+  signs.resize(rotated_d);
+  std::mt19937_64 rng{static_cast<uint64_t>(seed)};
+  for (uint32_t i = 0; i < rotated_d;) {
+    const uint64_t num = rng();
+    for (size_t b = 0; b < sizeof(num) * 8 && i < rotated_d; ++b) {
+      signs[i] = 1.f - 2.f * ((num >> b) & 1);
+      i++;
+    }
+  }
+}
+
 namespace {
 
 faiss::ScalarQuantizer::QuantizerType FaissScalarType(
@@ -96,19 +111,6 @@ constexpr size_t SignBytes(uint32_t rotated_d) noexcept {
   return (static_cast<size_t>(rotated_d) + 7) / 8;
 }
 
-void GenerateSigns(uint32_t rotated_d, int64_t seed,
-                   std::vector<float>& signs) {
-  signs.resize(rotated_d);
-  absl::InsecureBitGen rng{std::seed_seq{static_cast<uint32_t>(seed),
-                                         static_cast<uint32_t>(seed >> 32)}};
-  for (uint32_t i = 0; i < rotated_d;) {
-    auto num = absl::Uniform<size_t>(rng);
-    for (size_t b = 0; b < sizeof(num) * 8 && i < rotated_d; ++b) {
-      signs[i] = 1.f - 2.f * ((num >> b) & 1);
-      i++;
-    }
-  }
-}
 
 std::vector<byte_type> PackSigns(const std::vector<float>& signs) {
   std::vector<byte_type> out(SignBytes(static_cast<uint32_t>(signs.size())), 0);
@@ -189,6 +191,13 @@ constexpr bool kRaBitQCentered = false;
 constexpr uint8_t kTurboQuantQjlFwht = 0;
 constexpr uint8_t kTurboQuantLayout = 0;
 constexpr uint32_t kTurboQuantLutChunk = 256;
+constexpr size_t kTurboQuantRefineSample = 65536;
+constexpr size_t kTurboQuantEcQuantileRows = 8192;
+constexpr size_t kTurboQuantEcStride =
+  kTurboQuantRefineSample / kTurboQuantEcQuantileRows;
+constexpr size_t kTurboQuantEcMinRows = 32;
+constexpr bool kTurboQuantErrorCorrection = false;
+constexpr float kTurboQuantMinQuantileWidth = 1e-3f;
 
 struct TurboQuantStatsHeader {
   uint8_t layout;
@@ -938,6 +947,80 @@ class TurboQuantizerWriter final : public QuantizerWriter {
     RotateInto(_signs.data(), centroid, _centroid.data(), _lay.d, _lay.rd);
   }
 
+  size_t RefineSamples(size_t rows) const noexcept final {
+    if (!kTurboQuantErrorCorrection) {
+      return 0;
+    }
+    return _lay.full ? 0 : std::min<size_t>(rows, kTurboQuantRefineSample);
+  }
+
+  void Refine(const float* vecs, size_t n) final {
+    if (_lay.full) {
+      return;
+    }
+    _ec_samples.resize(size_t{_lay.rd} * kTurboQuantEcQuantileRows);
+    for (size_t i = 0; i < n; ++i) {
+      const bool keep = _ec_n % kTurboQuantEcStride == 0 &&
+                        _ec_kept < kTurboQuantEcQuantileRows;
+      ++_ec_n;
+      if (!keep) {
+        continue;
+      }
+      RotateInto(_signs.data(), vecs + i * size_t{_lay.d}, _rot.data(), _lay.d,
+                 _lay.rd);
+      for (uint32_t j = 0; j < _lay.rd; ++j) {
+        _res[j] = _rot[j] - (_centroid.empty() ? 0.f : _centroid[j]);
+      }
+      const float norm = TurboQuantNorm(_res.data(), _lay.rd);
+      const float rescale = _sqrt_rd / norm;
+      for (uint32_t j = 0; j < _lay.rd; ++j) {
+        _ec_samples[size_t{j} * kTurboQuantEcQuantileRows + _ec_kept] =
+          _res[j] * rescale;
+      }
+      ++_ec_kept;
+    }
+  }
+
+  void RefineDone() final {
+    FitErrorCorrection();
+    _ec_samples.clear();
+    _ec_samples.shrink_to_fit();
+  }
+
+  void FitErrorCorrection() {
+    if (_lay.full || _ec_kept < kTurboQuantEcMinRows) {
+      return;
+    }
+    const uint32_t k = 1U << _lay.mse_bits;
+    float c_outer = 0.f;
+    for (uint32_t i = 0; i < k; ++i) {
+      c_outer = std::max(c_outer, std::abs(_centroids[i]));
+    }
+    const double p_outer =
+      0.5 * std::erfc(-double{c_outer} / std::numbers::sqrt2);
+    const auto span = static_cast<double>(_ec_kept - 1);
+    const auto lo = static_cast<size_t>(std::llround((1.0 - p_outer) * span));
+    const auto hi = static_cast<size_t>(std::llround(p_outer * span));
+    if (hi <= lo) {
+      return;
+    }
+    _ec_scale.assign(_lay.rd, 1.f);
+    _ec_shift.assign(_lay.rd, 0.f);
+    for (uint32_t j = 0; j < _lay.rd; ++j) {
+      float* col = _ec_samples.data() + size_t{j} * kTurboQuantEcQuantileRows;
+      float* end = col + _ec_kept;
+      std::nth_element(col, col + lo, end);
+      const float q_lo = col[lo];
+      std::nth_element(col + lo + 1, col + hi, end);
+      const float q_hi = col[hi];
+      const float denom = q_hi - q_lo;
+      if (denom > kTurboQuantMinQuantileWidth) {
+        _ec_shift[j] = -(q_lo + q_hi) / 2.f;
+        _ec_scale[j] = 2.f * c_outer / denom;
+      }
+    }
+  }
+
   PayloadBlockSetting BlockSetting() const noexcept final {
     return {.group_size = _lay.row_major ? 1U : uint32_t{kFastScanBbs},
             .record_size = _lay.record_size};
@@ -994,7 +1077,9 @@ class TurboQuantizerWriter final : public QuantizerWriter {
   }
 
   void Serialize(DataOutput& out) const final {
-    out.WriteU64(sizeof(TurboQuantStatsHeader));
+    const uint64_t ec_bytes =
+      (_ec_scale.size() + _ec_shift.size()) * sizeof(float);
+    out.WriteU64(sizeof(TurboQuantStatsHeader) + ec_bytes);
     WritePod(out, TurboQuantStatsHeader{
                     .layout = kTurboQuantLayout,
                     .nb_bits = static_cast<uint8_t>(_nb_bits),
@@ -1002,6 +1087,12 @@ class TurboQuantizerWriter final : public QuantizerWriter {
                     .qjl_type = kTurboQuantQjlFwht,
                     .d = _lay.d,
                     .seed = kIvfRotationSeed});
+    if (ec_bytes != 0) {
+      out.WriteData(reinterpret_cast<const byte_type*>(_ec_scale.data()),
+                    _ec_scale.size() * sizeof(float));
+      out.WriteData(reinterpret_cast<const byte_type*>(_ec_shift.data()),
+                    _ec_shift.size() * sizeof(float));
+    }
   }
 
   VectorQuantization Kind() const noexcept final {
@@ -1024,11 +1115,17 @@ class TurboQuantizerWriter final : public QuantizerWriter {
     for (uint32_t j = 0; j < _lay.rd; ++j) {
       _res[j] *= scale;
     }
+    if (!_ec_scale.empty()) {
+      for (uint32_t j = 0; j < _lay.rd; ++j) {
+        _res[j] = (_res[j] + _ec_shift[j]) * _ec_scale[j];
+      }
+    }
 
     const uint32_t k = 1U << _lay.mse_bits;
     const auto mask = static_cast<uint8_t>(k - 1);
     const float inv_sqrt_rd = 1.f / _sqrt_rd;
     uint8_t* code = _code1.data() + lane * size_t{_lay.code1_bytes};
+    double cn2 = 0.0;
     for (uint32_t mi = 0; mi < _lay.m1; ++mi) {
       uint8_t nib = 0;
       for (uint32_t t = 0; t < _lay.dims_per_nibble; ++t) {
@@ -1037,6 +1134,10 @@ class TurboQuantizerWriter final : public QuantizerWriter {
           std::upper_bound(_boundaries, _boundaries + (k - 1), _res[j]) -
           _boundaries);
         nib = static_cast<uint8_t>(nib | ((idx & mask) << (t * _lay.mse_bits)));
+        const float cr = _ec_scale.empty()
+                           ? _centroids[idx]
+                           : _centroids[idx] / _ec_scale[j] - _ec_shift[j];
+        cn2 += static_cast<double>(cr) * cr;
         if (_lay.full) {
           _res[j] = (_res[j] - _centroids[idx]) * inv_sqrt_rd;
         }
@@ -1044,6 +1145,10 @@ class TurboQuantizerWriter final : public QuantizerWriter {
       SetNibble(code, mi, nib);
     }
     if (!_lay.full) {
+      const auto cn = static_cast<float>(std::sqrt(cn2));
+      if (cn > std::numeric_limits<float>::epsilon()) {
+        _norms[lane] = norm * _sqrt_rd / cn;
+      }
       return;
     }
 
@@ -1119,6 +1224,11 @@ class TurboQuantizerWriter final : public QuantizerWriter {
     _lane = 0;
   }
 
+  std::vector<float> _ec_scale;
+  std::vector<float> _ec_shift;
+  std::vector<float> _ec_samples;
+  size_t _ec_kept = 0;
+  uint64_t _ec_n = 0;
   TurboQuantLayout _lay;
   uint32_t _nb_bits;
   faiss::ScalarQuantizer _sq;
@@ -1160,7 +1270,25 @@ class TurboQuantizerStats final : public QuantizerStats {
                                 row_major);
     _sq = std::make_unique<faiss::ScalarQuantizer>(_lay.rd, *qtype);
     TrainTurboQuant(*_sq, hdr.seed);
-    GenerateSigns(_lay.rd, kIvfRotationSeed, _signs);
+    GenerateSigns(_lay.rd, static_cast<int64_t>(hdr.seed), _signs);
+    // Blobs written before the per-coordinate correction existed carry the
+    // header alone; they decode unchanged against an empty scale.
+    const size_t ec_bytes = size_t{_lay.rd} * sizeof(float);
+    if (stats.size() >= sizeof(TurboQuantStatsHeader) + 2 * ec_bytes) {
+      _ec_scale.resize(_lay.rd);
+      _ec_shift.resize(_lay.rd);
+      std::memcpy(_ec_scale.data(), stats.data() + sizeof(TurboQuantStatsHeader),
+                  ec_bytes);
+      std::memcpy(_ec_shift.data(),
+                  stats.data() + sizeof(TurboQuantStatsHeader) + ec_bytes,
+                  ec_bytes);
+    } else if (stats.size() >= sizeof(TurboQuantStatsHeader) + ec_bytes) {
+      // Scale-only blob, written before the shift term existed.
+      _ec_scale.resize(_lay.rd);
+      _ec_shift.assign(_lay.rd, 0.f);
+      std::memcpy(_ec_scale.data(), stats.data() + sizeof(TurboQuantStatsHeader),
+                  ec_bytes);
+    }
     _valid = true;
   }
 
@@ -1178,6 +1306,8 @@ class TurboQuantizerStats final : public QuantizerStats {
   const std::vector<float>& FwhtSigns() const noexcept {
     return _sq->turboq_refine.fwht_signs;
   }
+  const std::vector<float>& EcScale() const noexcept { return _ec_scale; }
+  const std::vector<float>& EcShift() const noexcept { return _ec_shift; }
 
  private:
   TurboQuantLayout _lay;
@@ -1185,6 +1315,8 @@ class TurboQuantizerStats final : public QuantizerStats {
   bool _valid = false;
   std::unique_ptr<faiss::ScalarQuantizer> _sq;
   std::vector<float> _signs;
+  std::vector<float> _ec_scale;
+  std::vector<float> _ec_shift;
 };
 
 template<VectorMetric M>
@@ -1204,6 +1336,27 @@ class TurboQuantizerCodebook final : public QuantizerCodebook {
     _rot_query.resize(lay.rd);
     RotateInto(_stats->Signs().data(), _query.data(), _rot_query.data(), lay.d,
                lay.rd);
+    // The code holds coordinate j scaled by ec[j], so the query side carries
+    // the reciprocal: sum_j (q[j]/ec[j]) * centroid[code] reconstructs the same
+    // inner product. Applied once here, so every table built below -- the MSE
+    // LUT and the int8 direct tables -- inherits it.
+    const auto& ec = _stats->EcScale();
+    _qm_block.clear();
+    if (!ec.empty()) {
+      const auto& sh = _stats->EcShift();
+      _qm_block.assign(lay.m1, 0.f);
+      for (uint32_t mi = 0; mi < lay.m1; ++mi) {
+        const uint32_t base = mi * lay.dims_per_nibble;
+        float acc = 0.f;
+        for (uint32_t t = 0; t < lay.dims_per_nibble; ++t) {
+          acc -= _rot_query[base + t] * sh[base + t];
+        }
+        _qm_block[mi] = acc;
+      }
+      for (uint32_t j = 0; j < lay.rd; ++j) {
+        _rot_query[j] /= ec[j];
+      }
+    }
     if constexpr (M == VectorMetric::L2Sqr) {
       _query_norm2 = vector::L2Space<float, float, float>::Norm(
         reinterpret_cast<const byte_type*>(_query.data()),
@@ -1284,7 +1437,8 @@ class TurboQuantizerCodebook final : public QuantizerCodebook {
           const uint32_t idx = (code >> (t * lay.mse_bits)) & mask;
           s += _rot_query[base + t] * cent[idx];
         }
-        lut[size_t{mi} * kFastScanKsub + code] = s;
+        lut[size_t{mi} * kFastScanKsub + code] =
+          _qm_block.empty() ? s : s + _qm_block[mi];
       }
     }
     _chunks1 = MakeTurboQuantChunks(lay.m1);
@@ -1331,6 +1485,7 @@ class TurboQuantizerCodebook final : public QuantizerCodebook {
   std::shared_ptr<const TurboQuantizerStats<M>> _stats;
   std::vector<float> _query;
   std::vector<float> _rot_query;
+  std::vector<float> _qm_block;
   std::vector<TurboQuantChunk> _chunks1;
   std::vector<TurboQuantChunk> _chunks2;
   faiss::AlignedTable<uint8_t> _lut1;
@@ -1426,6 +1581,12 @@ class TurboQuantizerReader final : public QuantizerReader {
         _scale_scratch[mi * _lay.dims_per_nibble + t] = cent[idx];
       }
     }
+    if (const auto& ec = stats.EcScale(); !ec.empty()) {
+      const auto& sh = stats.EcShift();
+      for (uint32_t j = 0; j < _lay.rd; ++j) {
+        _scale_scratch[j] = _scale_scratch[j] / ec[j] - sh[j];
+      }
+    }
     float norm = 0.f;
     std::memcpy(&norm, code + _lay.RowNormOffset(), sizeof(float));
     EnsureRotatedCluster();
@@ -1452,7 +1613,8 @@ class TurboQuantizerReader final : public QuantizerReader {
   }
 
   bool SupportsPairScores() const noexcept final {
-    return _lay.row_major && _cluster != nullptr;
+    return _lay.row_major && _cluster != nullptr &&
+           _cb->Stats().EcScale().empty();
   }
 
   bool PreparePairTerms(const byte_type* base, uint32_t record_size,

@@ -154,7 +154,7 @@ class MergedFieldOptions final : public irs::IndexFieldOptions {
       // An IVF entry keys the merged config by its column id (the value
       // column), not a per-index term field, so this attaches the ANN index to
       // that column.
-      .ivf_info = catalog::IvfInfoForEntry(id, entry),
+      .ann_info = catalog::AnnInfoForEntry(id, entry),
       .hyperloglog = entry.hyperloglog,
     };
   }

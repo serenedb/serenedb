@@ -973,6 +973,17 @@ auto HnswWriter::Compute(const ColumnReader& col, ReadContext& ctx,
     _qw->SetClusterCentroid(_centroid.data());
   }
 
+  if (_qw) {
+    const uint64_t refine = _qw->RefineSamples(_rows);
+    if (refine != 0) {
+      ScanVectors(col, ctx, std::min<uint64_t>(_rows, refine), _d, normalize,
+                  batch_buf,
+                  [&](const float* rows, size_t n, uint64_t,
+                      const duckdb::ValidityMask&) { _qw->Refine(rows, n); });
+      _qw->RefineDone();
+    }
+  }
+
   bool encoding = _qw && _qw->BlockSetting().group_size == 1;
   if (encoding) {
     _record_size = _qw->BlockSetting().record_size;

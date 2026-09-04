@@ -37,8 +37,11 @@ namespace sdb::pg {
 // A built-in pg_catalog / information_schema function as the static schema
 // serves it: there is no catalog entry behind these, so the definition and the
 // permissions travel together.
-using StaticView = std::pair<std::shared_ptr<const duckdb::CreateViewInfo>,
-                             catalog::Permissions>;
+struct StaticView {
+  std::shared_ptr<const duckdb::CreateViewInfo> info;
+  catalog::Permissions permissions;
+  Oid oid = 0;
+};
 using StaticFunction = std::pair<std::shared_ptr<const duckdb::CreateMacroInfo>,
                                  catalog::Permissions>;
 

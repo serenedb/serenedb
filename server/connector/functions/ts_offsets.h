@@ -32,7 +32,6 @@
 #include "catalog1/entry/search_table.h"
 #include "catalog1/entry/tokenizer.h"
 #include "connector/column_id.h"
-#include "search/inverted_index.h"
 namespace sdb::connector {
 
 std::shared_ptr<irs::Filter> BuildFilterFromTSQuery(

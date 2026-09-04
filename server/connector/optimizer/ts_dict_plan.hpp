@@ -26,7 +26,6 @@
 
 #include "catalog1/entry/inverted_index.h"
 #include "connector/duckdb_table_function.h"
-#include "search/inverted_index.h"
 
 namespace sdb::optimizer {
 

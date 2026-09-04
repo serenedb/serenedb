@@ -261,22 +261,22 @@ void VisitSystemTables(
   absl::FunctionRef<void(const VirtualTable&, Oid)> visitor) {
   for (const auto* table : kPgCatalog) {
     SDB_ASSERT(table);
-    visitor(*table, id::kPgCatalogSchema.id());
+    visitor(*table, kPgCatalogSchema);
   }
   for (const auto* table : kInformationSchema) {
     SDB_ASSERT(table);
-    visitor(*table, id::kPgInformationSchema.id());
+    visitor(*table, kPgInformationSchema);
   }
 }
 
 void VisitSystemViews(absl::FunctionRef<void(const StaticView&, Oid)> visitor) {
   for (const auto& [name, view] : gPgCatalogViews) {
-    SDB_ASSERT(view.first);
-    visitor(view, id::kPgCatalogSchema.id());
+    SDB_ASSERT(view.info);
+    visitor(view, kPgCatalogSchema);
   }
   for (const auto& [name, view] : gInfoSchemaViews) {
-    SDB_ASSERT(view.first);
-    visitor(view, id::kPgInformationSchema.id());
+    SDB_ASSERT(view.info);
+    visitor(view, kPgInformationSchema);
   }
 }
 
@@ -341,9 +341,8 @@ StaticView GetView(std::string_view name) {
 }
 
 void InitSystemViews(duckdb::Parser& parser) {
-  uint64_t next_id = id::kFirstSystemView.id();
+  uint64_t next_oid = kFirstSystemView;
   for (const auto& view : kExternalViews) {
-    const duckdb::idx_t id{next_id++};
     auto info = duckdb::make_uniq<duckdb::CreateViewInfo>();
     info->SetSchema(duckdb::Identifier{view.schema});
     info->SetViewName(duckdb::Identifier{view.name});
@@ -360,17 +359,12 @@ void InitSystemViews(duckdb::Parser& parser) {
       duckdb::unique_ptr_cast<duckdb::SQLStatement, duckdb::SelectStatement>(
         std::move(parser.statements[0]));
 
-    catalog::Acl acl;
-    if (!view.superuser_only) {
-      acl.push_back(catalog::kSystemPublicSelect);
-    }
     const bool info_schema = view.schema == StaticStrings::kInformationSchema;
-    catalog::SetIdentity(
-      *info, id, info_schema ? id::kPgInformationSchema : id::kPgCatalogSchema);
     auto& map = info_schema ? gInfoSchemaViews : gPgCatalogViews;
-    map[view.name] =
-      StaticView{std::shared_ptr<const duckdb::CreateViewInfo>{info.release()},
-                 catalog::Permissions{id::kRootUser, std::move(acl)}};
+    map[view.name] = StaticView{
+      .info = std::shared_ptr<const duckdb::CreateViewInfo>{info.release()},
+      .permissions = catalog::Permissions{.owner = kRootUser},
+      .oid = next_oid++};
   }
 }
 
@@ -435,16 +429,17 @@ void InitSystemFunctions(duckdb::Parser& parser) {
       existing.type = info->type;
     }
   }
-  const auto publish = [](auto& built, duckdb::idx_t schema_id, auto& out) {
+  const auto publish = [](auto& built, std::string_view schema, auto& out) {
     for (auto& [name, info] : built) {
-      catalog::SetIdentity(*info, 0, schema_id);
+      info->SetSchema(duckdb::Identifier{schema});
       out[name] = StaticFunction{
         std::shared_ptr<const duckdb::CreateMacroInfo>{info.release()},
         catalog::Permissions{}};
     }
   };
-  publish(pg_catalog, id::kPgCatalogSchema, gPgCatalogFunctions);
-  publish(info_schema_map, id::kPgInformationSchema, gInfoSchemaFunctions);
+  publish(pg_catalog, StaticStrings::kPgCatalogSchema, gPgCatalogFunctions);
+  publish(info_schema_map, StaticStrings::kInformationSchema,
+          gInfoSchemaFunctions);
 }
 
 }  // namespace sdb::pg

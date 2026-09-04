@@ -84,7 +84,6 @@
 #include "connector/duckdb_physical_create_index.h"
 #include "connector/file_manifest.h"
 #include "connector/inverted_store_index.h"
-#include "connector/inverted_store_lookup.h"
 #include "connector/primary_key.h"
 #include "connector/search_remove_filter.hpp"
 #include "connector/term_dict.h"
@@ -95,7 +94,6 @@
 #include "pg/sql_exception.h"
 #include "pg/sql_exception_macro.h"
 #include "planning/iceberg_multi_file_list.hpp"
-#include "search/inverted_index.h"
 #include "search/inverted_index_storage.h"
 #include "search/task.h"
 #include "search/tick_domain.h"
@@ -135,10 +133,9 @@ struct ReindexTarget {
   std::string database;
   std::string schema;
   duckdb::idx_t database_id;
-  duckdb::optional_ptr<const duckdb::IndexCatalogEntry> index;
-  // Resolved with the entry: every pass reads the index's configuration and
-  // its storage off it.
-  duckdb::optional_ptr<const InvertedStoreIndex> store;
+  // Every pass reads the index's configuration and its storage off the entry,
+  // which owns both.
+  duckdb::optional_ptr<const catalog::InvertedIndexEntry> index;
   duckdb::unique_ptr<duckdb::CreateViewInfo> view_info;
   std::string relation_name;
 };
@@ -178,12 +175,7 @@ ReindexTarget ResolveTarget(duckdb::ClientContext& context,
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
                     ERR_MSG("index \"", name, "\" does not exist"));
   }
-  target.index = &index_entry->Cast<duckdb::IndexCatalogEntry>();
-  target.store = FindInvertedStore(context, *target.index);
-  if (!target.store) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
-                    ERR_MSG("index \"", name, "\" does not exist"));
-  }
+  target.index = &index_entry->Cast<catalog::InvertedIndexEntry>();
   // Views and tables share one catalog set, so the type has to be checked
   // rather than assumed from the lookup that found the entry.
   auto relation = duckdb::Catalog::GetEntry(
@@ -255,7 +247,7 @@ class PassConnection {
       info->parsed_expressions.push_back(
         duckdb::make_uniq<duckdb::ColumnRefExpression>(view_info.names[col]));
     }
-    if (const auto predicate = target.store->Predicate()) {
+    if (const auto predicate = target.index->Config()->predicate.get()) {
       info->where_clause = predicate->Copy();
     }
     info->table = duckdb::Identifier{target.relation_name};
@@ -887,8 +879,7 @@ ReindexOutcome RunRefresh(duckdb::ClientContext& context,
   }
   // Delta needs the view's support (recorded at fast-path resolution) and
   // pk terms (term-less indexes take the rebuild road).
-  if (src.fast_path.supports_delta &&
-      target.store->SharedConfig()->pk.index_term) {
+  if (src.fast_path.supports_delta && target.index->Config()->pk.index_term) {
     RunDelta(context, conn_ctx, target, src, files, observe, manifest, storage);
     return {ReindexAction::Delta, files.added, files.changed, files.removed,
             static_cast<int64_t>(files.scan.size()) - files.added};
@@ -903,8 +894,8 @@ ReindexOutcome RunRefresh(duckdb::ClientContext& context,
 std::optional<Source> ResolveSource(duckdb::ClientContext& context,
                                     const ReindexTarget& target) {
   Source src;
-  auto fp =
-    ResolveViewFastPath(context, *target.view_info, target.store->KeyColumns());
+  auto fp = ResolveViewFastPath(context, *target.view_info,
+                                target.index->Config()->key_columns);
   if (!fp) {
     return std::nullopt;
   }
@@ -967,7 +958,7 @@ ReindexOutcome RunReindex(duckdb::ClientContext& context,
   auto& conn_ctx = GetSereneDBContext(context);
   const auto target =
     ResolveTarget(context, conn_ctx, name, schema_p, catalog_p);
-  const auto storage = target.store->Storage();
+  const auto storage = target.index->Storage();
   if (!storage) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
                     ERR_MSG("index \"", name, "\" does not exist"));
@@ -1111,9 +1102,13 @@ duckdb::shared_ptr<duckdb::AttachedDatabase> FindAttachedById(
   return nullptr;
 }
 
-// ReindexLoop tick: one REINDEX on an internal session impersonating the
-// relation OWNER (the identity a manual owner-run REINDEX has). Quiet
-// outcomes return OK -- vanished index/owner, claim lost to a manual run.
+// SDB_RBAC_DISABLED. The identity the periodic refresh runs under while
+// permission checks are inert; the root role, as a manual owner-run REINDEX
+// would be.
+constexpr const char* kReindexStubUser = "postgres";
+
+// ReindexLoop tick: one REINDEX on an internal session. Quiet outcomes return
+// OK -- vanished index, claim lost to a manual run.
 absl::Status RunReindexTick(duckdb::DatabaseInstance& db,
                             duckdb::idx_t database_id, duckdb::idx_t index_id) {
   try {
@@ -1151,20 +1146,16 @@ absl::Status RunReindexTick(duckdb::DatabaseInstance& db,
         return absl::OkStatus();
       }
       schema_name = schema_ident.GetIdentifierName();
+      // Ownership itself is real (pg_class.relowner asserts it), so the id is
+      // carried through.
       owner_id = relation->permissions.owner;
-      auto& cluster = catalog::ClusterOf();
-      const auto owner =
-        cluster.LookupRoleById(duckdb::CatalogTransaction::GetSystemTransaction(
-                                 DuckDBEngine::Instance().instance()),
-                               owner_id);
-      if (!owner) {
-        // Surface it: skipping quietly would look like a healthy loop.
-        return absl::NotFoundError(
-          absl::StrCat("owner role of \"", relation->name.GetIdentifierName(),
-                       "\" no longer exists; the periodic refresh cannot "
-                       "impersonate it"));
-      }
-      user = owner->name.GetIdentifierName();
+      // SDB_RBAC_DISABLED. This resolved the owner's role entry and ran the
+      // tick under its name. Impersonation only ever mattered for permission
+      // checks, and every check answers "allowed" until the RBAC phase -- so
+      // the name now reaches nothing but notices and the log, while a role
+      // that had gone missing failed the whole tick. Restore the lookup when
+      // enforcement lands.
+      user = kReindexStubUser;
     }
 
     duckdb::Connection conn{db};

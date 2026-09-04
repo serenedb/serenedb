@@ -48,6 +48,7 @@
 #include "connector/functions/search.h"
 #include "connector/highlight/highlight_types.h"
 #include "connector/highlight/memory_index.h"
+#include "connector/inverted_store_index.h"
 #include "connector/offsets_collector.hpp"
 #include "connector/offsets_writer.hpp"
 #include "connector/search_filter_builder.hpp"
@@ -182,10 +183,10 @@ auto& EnsureField(duckdb::ClientContext& context,
   if (bind.IsStandalone()) {
     wrapper = bind.dict_tokenizer->Acquire();
   } else {
+    const auto& entry = *bind.inverted_index;
     auto column_tokenizer =
-      catalog::InvertedInfo(*bind.inverted_index)
-        .GetTokenizer(catalog::ResolveTokenizers(context, *bind.inverted_index),
-                      static_cast<irs::field_id>(bind.column_id));
+      entry.Config()->GetTokenizer(ResolveKeyTokenizers(context, entry),
+                                   static_cast<irs::field_id>(bind.column_id));
     wrapper = std::move(column_tokenizer.analyzer);
     column_id = bind.column_id;
   }

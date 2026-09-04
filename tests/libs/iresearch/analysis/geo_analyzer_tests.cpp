@@ -87,12 +87,12 @@ irs::analysis::Tokenizer::ptr MakeGeoJson(GeoJsonAnalyzer::Type type,
   return GeoJsonAnalyzer::Make({.type = type, .coding = coding});
 }
 
-std::vector<std::string> CollectedTerms(const irs::TokenCollector& collector) {
+std::vector<std::string> CollectedTerms(
+  const irs::ValueTokens<irs::TokenLayout::TermsPos>& tokens) {
   std::vector<std::string> out;
-  out.reserve(collector.tokens.size());
-  for (const auto& t : collector.tokens) {
-    out.emplace_back(reinterpret_cast<const char*>(t.term.data()),
-                     t.term.size());
+  out.reserve(tokens.terms().size());
+  for (const auto& t : tokens.terms()) {
+    out.emplace_back(t.GetData(), t.GetSize());
   }
   return out;
 }
@@ -104,17 +104,18 @@ struct GeoAnalysis {
 
 std::optional<GeoAnalysis> AnalyzeGeo(irs::analysis::Tokenizer& tokenizer,
                                       std::string_view value) {
-  irs::TokenCollector collector{irs::TokenLayout::TermsPos};
-  if (!irs::AnalyzeValue(
+  irs::ValueAnalyzer value_analyzer;
+  irs::ValueTokens<irs::TokenLayout::TermsPos> tokens{tokenizer.Traits()};
+  if (!value_analyzer.Analyze(
         tokenizer,
         duckdb::string_t{value.data(), static_cast<uint32_t>(value.size())},
-        collector)) {
+        tokens)) {
     return std::nullopt;
   }
   GeoAnalysis out;
-  out.terms = CollectedTerms(collector);
-  out.store.assign(reinterpret_cast<const char*>(collector.store.data()),
-                   collector.store.size());
+  out.terms = CollectedTerms(tokens);
+  out.store.assign(reinterpret_cast<const char*>(tokens.store().data()),
+                   tokens.store().size());
   return out;
 }
 

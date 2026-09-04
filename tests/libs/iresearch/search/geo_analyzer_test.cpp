@@ -181,11 +181,13 @@ TEST(GeoBench, sizes) {
   auto s2_analyzer = tests::MakeAnalyzer<irs::analysis::GeoJsonAnalyzer>(opts);
 
   auto store_size = [](irs::analysis::Tokenizer& a, std::string_view json) {
-    irs::TokenCollector sink{irs::TokenLayout::Terms};
-    return a.Fill(
+    irs::ValueAnalyzer analyzer;
+    irs::ValueTokens tokens;
+    return analyzer.Analyze(
+             a,
              duckdb::string_t{json.data(), static_cast<uint32_t>(json.size())},
-             sink.writer, {sink.layout})
-             ? sink.store.size()
+             tokens)
+             ? tokens.store().size()
              : size_t{0};
   };
 

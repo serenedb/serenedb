@@ -255,13 +255,11 @@ TEST_F(NormalizingTokenizerTests, native_fills_match_pull) {
   }
 
   {
-    std::vector<irs::bstring> out;
-    irs::TermVectorSink vec_sink{out};
-    ASSERT_TRUE(
-      stream.Fill(values[0], vec_sink.writer, {irs::TokenLayout::Terms}));
-    vec_sink.writer.Finish();
-    ASSERT_EQ(1, out.size());
-    ASSERT_EQ(expected[0], out[0]);
+    irs::ValueAnalyzer analyzer;
+    irs::ValueTokens tokens;
+    ASSERT_TRUE(analyzer.Analyze(stream, values[0], tokens));
+    ASSERT_EQ(1, tokens.terms().size());
+    ASSERT_EQ(expected[0], irs::AsBytesView(tokens.terms()[0]));
   }
 
   {

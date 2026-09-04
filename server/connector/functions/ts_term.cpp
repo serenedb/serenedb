@@ -63,28 +63,29 @@ void BuildFtsTokens(irs::BooleanFilter& parent, const FilterContext& ctx,
     return;
   }
   auto& analyzer = ctx.tokenizer;
-  std::vector<irs::bstring> tokens;
-  irs::TermVectorSink sink{tokens};
-  if (!analyzer.Fill(
+  irs::ValueAnalyzer value_analyzer;
+  irs::ValueTokens tokens;
+  if (!value_analyzer.Analyze(
+        analyzer,
         duckdb::string_t{text.data(), static_cast<uint32_t>(text.size())},
-        sink.writer, {irs::TokenLayout::Terms})) {
+        tokens)) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                     ERR_MSG("Failed to analyse '", text, "'"),
                     ERR_HINT("The column's analyzer rejected the input text."));
   }
-  sink.writer.Finish();
+  const auto toks = tokens.terms();
 
-  if (tokens.empty()) {
+  if (toks.empty()) {
     AddMaybeNegated<irs::Empty>(parent, ctx, column_info);
     return;
   }
   const auto field_id =
     PickPerKindFieldId(column_info, duckdb::LogicalTypeId::VARCHAR);
-  if (tokens.size() == 1) {
+  if (toks.size() == 1) {
     auto& term = AddMaybeNegated<irs::ByTerm>(parent, ctx, column_info);
     term.SetBoost(ctx.boost);
     *term.mutable_field_id() = field_id;
-    term.mutable_options()->term.assign(tokens[0]);
+    term.mutable_options()->term.assign(irs::AsBytesView(toks[0]));
     return;
   }
   // Multi-token: ByTerms with min_match=1 (OR) or N (AND).
@@ -92,9 +93,9 @@ void BuildFtsTokens(irs::BooleanFilter& parent, const FilterContext& ctx,
   terms.SetBoost(ctx.boost);
   *terms.mutable_field_id() = field_id;
   auto& opts = *terms.mutable_options();
-  opts.min_match = require_all ? tokens.size() : 1;
-  for (auto& t : tokens) {
-    opts.terms.emplace(std::move(t));
+  opts.min_match = require_all ? toks.size() : 1;
+  for (const auto& t : toks) {
+    opts.terms.emplace(irs::AsBytesView(t));
   }
 }
 void FromTerm(irs::BooleanFilter& parent, const FilterContext& ctx,

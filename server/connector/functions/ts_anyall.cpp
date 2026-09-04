@@ -133,6 +133,8 @@ void FromTokenizeListInAnyAllOf(
                     ERR_HINT(kSyntaxHint));
   }
   std::vector<irs::bstring> tokens;
+  irs::ValueAnalyzer value_analyzer;
+  irs::ValueTokens value_tokens;
   const auto& elems = ListOrArrayChildren(*list_const);
   for (const auto& elem : elems) {
     if (elem.IsNull()) {
@@ -152,14 +154,15 @@ void FromTokenizeListInAnyAllOf(
       tokens.emplace_back(bytes.begin(), bytes.end());
       continue;
     }
-    irs::TermVectorSink sink{tokens};
-    if (!analyzer->Fill(raw, sink.writer, {irs::TokenLayout::Terms})) {
+    if (!value_analyzer.Analyze(*analyzer, raw, value_tokens)) {
       THROW_SQL_ERROR(
         ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
         ERR_MSG("Failed to analyse '", raw, "'"),
         ERR_HINT("The selected analyzer rejected this list element."));
     }
-    sink.writer.Finish();
+    for (const auto& t : value_tokens.terms()) {
+      tokens.emplace_back(irs::AsBytesView(t));
+    }
   }
 
   if (tokens.empty()) {

@@ -146,22 +146,22 @@ void FromHalfRange(irs::BooleanFilter& parent, const FilterContext& ctx,
     // bytes either way.
     auto text = duckdb::StringValue::Get(*bound_val);
     auto& analyzer = ctx.tokenizer;
-    std::vector<irs::bstring> tokens;
-    irs::TermVectorSink sink{tokens};
-    if (!analyzer.Fill(text, sink.writer, {irs::TokenLayout::Terms})) {
+    irs::ValueAnalyzer value_analyzer;
+    irs::ValueTokens tokens;
+    if (!value_analyzer.Analyze(analyzer, text, tokens)) {
       THROW_SQL_ERROR(
         ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
         ERR_MSG(label, " failed to analyse '", text, "'"),
         ERR_HINT("The column's analyzer rejected the bound value."));
     }
-    sink.writer.Finish();
-    if (tokens.empty()) {
+    const auto toks = tokens.terms();
+    if (toks.empty()) {
       // Zero tokens (e.g. all-stopword input) -> the comparison can't
       // match anything in the term dictionary.
       AddMaybeNegated<irs::Empty>(parent, ctx, column_info);
       return;
     }
-    if (tokens.size() > 1) {
+    if (toks.size() > 1) {
       THROW_SQL_ERROR(
         ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
         ERR_MSG(label,
@@ -176,10 +176,10 @@ void FromHalfRange(irs::BooleanFilter& parent, const FilterContext& ctx,
     options->scored_terms_limit = ctx.scored_terms_limit;
     auto& rng = options->range;
     if (is_lower) {
-      rng.min.assign(tokens[0]);
+      rng.min.assign(irs::AsBytesView(toks[0]));
       rng.min_type = bound_type;
     } else {
-      rng.max.assign(tokens[0]);
+      rng.max.assign(irs::AsBytesView(toks[0]));
       rng.max_type = bound_type;
     }
     return;

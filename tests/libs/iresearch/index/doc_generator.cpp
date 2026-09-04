@@ -363,14 +363,14 @@ const Document* CsvDocGenerator::next() {
     return nullptr;
   }
 
-  irs::TokenCollector collector{irs::TokenLayout::Terms};
-  if (!irs::AnalyzeValue(*_stream, _line, collector)) {
+  irs::ValueAnalyzer analyzer;
+  irs::ValueTokens tokens;
+  if (!analyzer.Analyze(*_stream, _line, tokens)) {
     return nullptr;
   }
   size_t i = 0;
-  for (const auto& tok : collector.tokens) {
-    _doc.value(i++,
-               irs::ViewCast<char, irs::byte_type>(irs::bytes_view{tok.term}));
+  for (const auto& tok : tokens.terms()) {
+    _doc.value(i++, std::string_view{tok.GetData(), tok.GetSize()});
   }
 
   return &_doc;

@@ -51,11 +51,11 @@ struct WildcardField final {
   std::string_view Value() const noexcept { return value; }
 
   bool Write(irs::DataOutput& out) const {
-    irs::TokenCollector collector{irs::TokenLayout::Terms};
-    if (analyzer->Fill(tests::ToStringT(value), collector.writer,
-                       {collector.layout}) &&
-        !collector.store.empty()) {
-      out.WriteData(collector.store.data(), collector.store.size());
+    irs::ValueAnalyzer value_analyzer;
+    irs::ValueTokens tokens;
+    if (value_analyzer.Analyze(*analyzer, tests::ToStringT(value), tokens) &&
+        !tokens.store().empty()) {
+      out.WriteData(tokens.store().data(), tokens.store().size());
     }
     return true;
   }

@@ -187,15 +187,18 @@ std::vector<std::string> Emit(irs::analysis::Tokenizer& analyzer,
 using TermInc = std::pair<std::string, uint32_t>;
 std::vector<TermInc> EmitWithInc(irs::analysis::Tokenizer& analyzer,
                                  std::string_view data) {
-  irs::TokenCollector collector{irs::TokenLayout::TermsPos};
-  EXPECT_TRUE(irs::AnalyzeValue(
+  irs::ValueAnalyzer value_analyzer;
+  irs::ValueTokens<irs::TokenLayout::TermsPos> tokens{analyzer.Traits()};
+  EXPECT_TRUE(value_analyzer.Analyze(
     analyzer, duckdb::string_t{data.data(), static_cast<uint32_t>(data.size())},
-    collector));
+    tokens));
+  const auto terms = tokens.terms();
+  const auto pos = tokens.pos();
   std::vector<TermInc> out;
   uint32_t prev = 0;
-  for (const auto& t : collector.tokens) {
-    out.emplace_back(ToString(t.term), t.pos - prev);
-    prev = t.pos;
+  for (size_t i = 0; i < terms.size(); ++i) {
+    out.emplace_back(ToString(irs::AsBytesView(terms[i])), pos[i] - prev);
+    prev = pos[i];
   }
   return out;
 }
@@ -214,11 +217,12 @@ std::vector<std::string> DecodeStore(irs::bytes_view blob) {
 
 std::vector<std::string> StoreOf(irs::analysis::Tokenizer& analyzer,
                                  std::string_view data) {
-  irs::TokenCollector collector{irs::TokenLayout::Terms};
-  EXPECT_TRUE(irs::AnalyzeValue(
+  irs::ValueAnalyzer value_analyzer;
+  irs::ValueTokens tokens;
+  EXPECT_TRUE(value_analyzer.Analyze(
     analyzer, duckdb::string_t{data.data(), static_cast<uint32_t>(data.size())},
-    collector));
-  return DecodeStore(irs::bytes_view{collector.store});
+    tokens));
+  return DecodeStore(tokens.store());
 }
 
 std::string CodecRoundTrip(std::string_view token,
@@ -690,6 +694,6 @@ TEST(ShingleTokenizerTest, memory_usage_accounts_scratch) {
   auto analyzer = MakeAnalyzer(2, 2, true);
   const auto before = analyzer.MemoryUsage();
   ASSERT_FALSE(Emit(analyzer, "quick brown fox").empty());
-  EXPECT_GE(analyzer.MemoryUsage(), sizeof(irs::AccumulatorSink));
+  EXPECT_GE(analyzer.MemoryUsage(), sizeof(irs::TokenSink));
   EXPECT_GT(analyzer.MemoryUsage(), before);
 }

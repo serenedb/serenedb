@@ -557,9 +557,9 @@ const std::string& BannerNeedle() {
 
 const std::vector<std::string>& BannerCorpus() {
   static const auto corpus = [] {
-    const char* decoys[] = {"===== BEGIN REQUEST =====",
-                            "===== BEGIN PAYLOAD =====",
-                            "===== FINAL SEGMENT ====="};
+    const char* decoys[] = {
+      "===== BEGIN REQUEST =====", "===== BEGIN PAYLOAD =====",
+      "===== FINAL SEGMENT ====="};
     std::vector<std::string> out;
     out.reserve(kValues);
     for (size_t i = 0; i < kValues; ++i) {
@@ -1475,8 +1475,10 @@ TOKENIZER_BENCH(sql_upper, MakeSqlUpper, WordCorpus);
 TOKENIZER_BENCH(sql_split, MakeSqlSplit, CsvCorpus);
 TOKENIZER_BENCH(sql_split_lower, MakeSqlSplitLower, CsvCorpus);
 TOKENIZER_BENCH(shingle, MakeShingle, CsvCorpus);
+TOKENIZER_BENCH(shingle_long, MakeShingle, LongCsvCorpus);
 TOKENIZER_BENCH(shingle_frequent, MakeShingleFrequent, TextCorpus);
 TOKENIZER_BENCH(union_2, MakeUnion2, CsvCorpus);
+TOKENIZER_BENCH(union_2_long, MakeUnion2, LongCsvCorpus);
 TOKENIZER_BENCH(delimiter_mixed, MakeDelimiter, MixedCsvCorpus);
 TOKENIZER_BENCH(multi_delimiter, MakeMultiDelimiter, CsvCorpus);
 TOKENIZER_BENCH(multi_delimiter_mixed, MakeMultiDelimiter, MixedCsvCorpus);

@@ -40,6 +40,7 @@
 #include <iresearch/search/filter_optimizer.hpp>
 #include <limits>
 #include <memory>
+#include <numeric>
 #include <span>
 #include <vector>
 
@@ -95,34 +96,36 @@ class SortingOffsetTokenizer final
 
   template<irs::TokenLayout Layout>
   bool DoFill(duckdb::string_t raw, irs::TokenSink& sink) {
-    _buf.clear();
-    // reused: a TokenCollector carries a full TokenSink (batch + arena);
-    // constructing one per value was the dominant per-row cost here
-    if (!irs::AnalyzeValue(*_inner, raw, _collector)) {
+    if (!_analyzer.Analyze(*_inner, raw, _tokens)) {
       return false;
     }
-    for (auto& tok : _collector.tokens) {
-      _buf.emplace_back(tok.offs_start, tok.offs_end, std::move(tok.term));
-    }
-    absl::c_sort(_buf);
-    for (const auto& [start, end, term] : _buf) {
-      sink.Emit<Layout>(
-        term.size(),
-        [&](irs::byte_type* mem) IRS_FORCE_INLINE {
-          std::memcpy(mem, term.data(), term.size());
-          return static_cast<uint32_t>(term.size());
-        },
-        irs::Offs{start, end});
+    const auto terms = _tokens.terms();
+    const auto starts = _tokens.offs_start();
+    const auto ends = _tokens.offs_end();
+    _order.resize(terms.size());
+    std::iota(_order.begin(), _order.end(), uint32_t{0});
+    absl::c_sort(_order, [&](uint32_t l, uint32_t r) {
+      if (starts[l] != starts[r]) {
+        return starts[l] < starts[r];
+      }
+      if (ends[l] != ends[r]) {
+        return ends[l] < ends[r];
+      }
+      return irs::AsBytesView(terms[l]) < irs::AsBytesView(terms[r]);
+    });
+    for (const auto i : _order) {
+      sink.Emit<Layout>(raw, terms[i].GetData(),
+                        static_cast<uint32_t>(terms[i].GetSize()),
+                        irs::Offs{starts[i], ends[i]});
     }
     return true;
   }
 
  private:
-  using Gram = std::tuple<uint32_t, uint32_t, irs::bstring>;
-
   catalog::Tokenizer::TokenizerWrapper _inner;
-  irs::TokenCollector _collector{irs::TokenLayout::TermsPosOffs};
-  std::vector<Gram> _buf;
+  irs::ValueAnalyzer _analyzer;
+  irs::ValueTokens<irs::TokenLayout::TermsPosOffs> _tokens{_inner->Traits()};
+  std::vector<uint32_t> _order;
 };
 
 catalog::Tokenizer::TokenizerWrapper EnsureOffsets(

@@ -27,7 +27,6 @@
 #include "iresearch/analysis/keyword_tokenizer.hpp"
 #include "iresearch/analysis/numeric_terms.hpp"
 #include "iresearch/analysis/token_attributes.hpp"
-#include "iresearch/analysis/token_list_sink.hpp"
 #include "iresearch/analysis/token_sinks.hpp"
 #include "iresearch/utils/numeric_utils.hpp"
 #include "tests_shared.hpp"
@@ -456,7 +455,39 @@ TEST(token_sink_tests, value_run_sink) {
   w.Discard();
 }
 
-TEST(token_sink_tests, term_vector_sink) {
+namespace {
+
+class SynthTermTokenizer final
+  : public irs::analysis::TypedTokenizer<SynthTermTokenizer> {
+ public:
+  static constexpr uint32_t kCount = 1500;
+
+  static std::string Term(uint32_t i) {
+    return "synthesized-long-term-" + std::to_string(i);
+  }
+
+  static constexpr std::string_view type_name() noexcept {
+    return "synth_term_tokenizer";
+  }
+
+  irs::TokenTraits Traits() const noexcept final { return {}; }
+
+  template<irs::TokenLayout Layout>
+  bool DoFill(duckdb::string_t, irs::TokenSink& sink) {
+    for (uint32_t i = 0; i < kCount; ++i) {
+      const auto term = Term(i);
+      sink.Emit<Layout>(term.size(), [&](irs::byte_type* mem) {
+        std::memcpy(mem, term.data(), term.size());
+        return static_cast<uint32_t>(term.size());
+      });
+    }
+    return true;
+  }
+};
+
+}  // namespace
+
+TEST(token_sink_tests, value_tokens) {
   irs::analysis::DelimitedTokenizer stream{","};
   std::string csv;
   for (size_t i = 0; i < 1500; ++i) {
@@ -464,45 +495,35 @@ TEST(token_sink_tests, term_vector_sink) {
   }
   csv.pop_back();
 
-  std::vector<irs::bstring> out;
-  irs::TermVectorSink sink{out};
-  ASSERT_TRUE(stream.Fill(csv, sink.writer, {irs::TokenLayout::Terms}));
-  sink.writer.Finish();
+  irs::ValueAnalyzer analyzer;
+  irs::ValueTokens tokens;
+  ASSERT_TRUE(analyzer.Analyze(stream, csv, tokens));
 
-  ASSERT_EQ(1500, out.size());
-  ASSERT_EQ(irs::ViewCast<irs::byte_type>(std::string_view{"t0"}), out[0]);
-  ASSERT_EQ(irs::ViewCast<irs::byte_type>(std::string_view{"t1499"}),
-            out[1499]);
+  const auto terms = tokens.terms();
+  ASSERT_EQ(1500, terms.size());
+  ASSERT_EQ("t0"sv, std::string_view(terms[0].GetData(), terms[0].GetSize()));
+  ASSERT_EQ("t1499"sv,
+            std::string_view(terms[1499].GetData(), terms[1499].GetSize()));
+
+  ASSERT_TRUE(analyzer.Analyze(stream, "a,b", tokens));
+  ASSERT_EQ(2, tokens.terms().size());
+  ASSERT_EQ("a"sv, std::string_view(tokens.terms()[0].GetData(),
+                                    tokens.terms()[0].GetSize()));
 }
 
-TEST(token_sink_tests, list_vector_sink) {
-  irs::analysis::DelimitedTokenizer stream{","};
-  std::string csv;
-  for (size_t i = 0; i < 1500; ++i) {
-    csv += "v" + std::to_string(i) + ",";
+TEST(token_sink_tests, value_tokens_keep_synthesized_terms) {
+  SynthTermTokenizer stream;
+  irs::ValueAnalyzer analyzer;
+  irs::ValueTokens tokens;
+  ASSERT_TRUE(analyzer.Analyze(stream, "input", tokens));
+
+  const auto terms = tokens.terms();
+  ASSERT_EQ(SynthTermTokenizer::kCount, terms.size());
+  for (uint32_t i = 0; i < SynthTermTokenizer::kCount; ++i) {
+    SCOPED_TRACE(testing::Message() << "term=" << i);
+    ASSERT_EQ(SynthTermTokenizer::Term(i),
+              std::string_view(terms[i].GetData(), terms[i].GetSize()));
   }
-  csv.pop_back();
-
-  duckdb::Vector list{duckdb::LogicalType::LIST(duckdb::LogicalType::VARCHAR),
-                      2};
-  irs::ListVectorSink sink{list, 0};
-  ASSERT_TRUE(stream.Fill(csv, sink.writer, {irs::TokenLayout::Terms}));
-  sink.writer.Finish();
-  ASSERT_EQ(1500, sink.offset());
-
-  irs::ListVectorSink sink2{list, sink.offset()};
-  ASSERT_TRUE(stream.Fill("a,b", sink2.writer, {irs::TokenLayout::Terms}));
-  sink2.writer.Finish();
-  ASSERT_EQ(1502, sink2.offset());
-
-  duckdb::ListVector::SetListSize(list, sink2.offset());
-  auto& child = duckdb::ListVector::GetEntry(list);
-  const auto* data = duckdb::FlatVector::GetData<duckdb::string_t>(child);
-  ASSERT_EQ("v0", std::string_view(data[0].GetData(), data[0].GetSize()));
-  ASSERT_EQ("v1499",
-            std::string_view(data[1499].GetData(), data[1499].GetSize()));
-  ASSERT_EQ("a", std::string_view(data[1500].GetData(), data[1500].GetSize()));
-  ASSERT_EQ("b", std::string_view(data[1501].GetData(), data[1501].GetSize()));
 }
 
 namespace {

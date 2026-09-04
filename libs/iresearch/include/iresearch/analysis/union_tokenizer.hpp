@@ -64,20 +64,20 @@ class UnionTokenizer final : public Tokenizer, private util::Noncopyable {
 
   void Bind(duckdb::ClientContext& ctx) final {
     for (auto& sub : _subs) {
-      sub.tokenizer->Bind(ctx);
+      sub->Bind(ctx);
     }
   }
 
   void Unbind() noexcept final {
     for (auto& sub : _subs) {
-      sub.tokenizer->Unbind();
+      sub->Unbind();
     }
   }
 
   size_t MemoryUsage() const noexcept final {
     size_t size = 0;
     for (const auto& sub : _subs) {
-      size += sub.tokenizer->MemoryUsage();
+      size += sub->MemoryUsage();
     }
     return size;
   }
@@ -85,7 +85,7 @@ class UnionTokenizer final : public Tokenizer, private util::Noncopyable {
   template<typename Visitor>
   bool VisitMembers(Visitor&& visitor) const {
     for (const auto& sub : _subs) {
-      const auto& stream = *sub.tokenizer;
+      const auto& stream = *sub;
       if (stream.type() == type()) {
         const auto& sub_union = sdb::basics::downCast<UnionTokenizer>(stream);
         if (!sub_union.VisitMembers(visitor)) {
@@ -99,19 +99,14 @@ class UnionTokenizer final : public Tokenizer, private util::Noncopyable {
   }
 
  private:
-  struct Sub {
-    Tokenizer::ptr tokenizer;
-    bool dense;
-  };
-
   void Prepare();
   void CollectSubs(duckdb::string_t data);
-  template<TokenLayout Layout, bool Copy>
+  template<TokenLayout Layout>
   void EmitMerged(TokenSink& sink, duckdb::string_t raw);
 
   struct SubSink;
 
-  std::vector<Sub> _subs;
+  std::vector<Tokenizer::ptr> _subs;
   std::unique_ptr<SubSink> _sub_sink;
 };
 

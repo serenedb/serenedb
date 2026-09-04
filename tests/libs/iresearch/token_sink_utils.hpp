@@ -68,7 +68,6 @@ inline std::optional<std::vector<AnalyzerToken>> Analyze(
   const auto layout =
     layout_opt.value_or(a.Traits().offsets ? irs::TokenLayout::TermsPosOffs
                                            : irs::TokenLayout::TermsPos);
-  irs::TokenCollector collector{layout};
   if (value.size() > std::numeric_limits<uint32_t>::max()) {
     return std::nullopt;
   }
@@ -76,17 +75,39 @@ inline std::optional<std::vector<AnalyzerToken>> Analyze(
     value.empty()
       ? duckdb::string_t{}
       : duckdb::string_t{value.data(), static_cast<uint32_t>(value.size())};
-  if (!irs::AnalyzeValue(a, handle, collector)) {
-    return std::nullopt;
-  }
-  std::vector<AnalyzerToken> out;
-  out.reserve(collector.tokens.size());
-  for (auto& t : collector.tokens) {
-    out.push_back(
-      {std::string{reinterpret_cast<const char*>(t.term.data()), t.term.size()},
-       t.pos, t.offs_start, t.offs_end});
-  }
-  return out;
+  return irs::ResolveLayout(
+    layout,
+    [&]<irs::TokenLayout L>() -> std::optional<std::vector<AnalyzerToken>> {
+      irs::ValueAnalyzer analyzer;
+      auto tokens = [&] {
+        if constexpr (L == irs::TokenLayout::Terms) {
+          return irs::ValueTokens<L>{};
+        } else {
+          return irs::ValueTokens<L>{a.Traits()};
+        }
+      }();
+      if (!analyzer.Analyze(a, handle, tokens)) {
+        return std::nullopt;
+      }
+      const auto terms = tokens.terms();
+      std::vector<AnalyzerToken> out;
+      out.reserve(terms.size());
+      for (size_t i = 0; i < terms.size(); ++i) {
+        AnalyzerToken tok{std::string{terms[i].GetData(), terms[i].GetSize()},
+                          0, 0, 0};
+        if constexpr (L != irs::TokenLayout::Terms) {
+          tok.pos = tokens.pos()[i];
+        }
+        if constexpr (L == irs::TokenLayout::TermsPosOffs) {
+          if (!tokens.offs_start().empty()) {
+            tok.offs_start = tokens.offs_start()[i];
+            tok.offs_end = tokens.offs_end()[i];
+          }
+        }
+        out.push_back(std::move(tok));
+      }
+      return out;
+    });
 }
 
 // Terms only, for assertions that don't care about pos/offs.

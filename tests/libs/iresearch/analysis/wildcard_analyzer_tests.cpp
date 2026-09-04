@@ -206,18 +206,17 @@ TEST(wildcard_analyzer_tests, fill_flushes_across_batches) {
 TEST(wildcard_analyzer_tests, store_survives_fill_reset) {
   auto stream = MakeWildcard(3);
   ASSERT_TRUE(stream->Traits().store);
-  irs::TokenCollector sink{irs::TokenLayout::Terms};
-  ASSERT_TRUE(stream->Fill("hello", sink.writer, {sink.layout}));
-  sink.writer.Finish();
-  const irs::bstring stored{sink.store};
+  irs::ValueAnalyzer analyzer;
+  irs::ValueTokens sink;
+  ASSERT_TRUE(analyzer.Analyze(*stream, "hello", sink));
+  const irs::bstring stored{sink.store()};
   ASSERT_FALSE(stored.empty());
 
   auto other_stream = MakeWildcard(3);
-  irs::TokenCollector other_sink{irs::TokenLayout::Terms};
-  ASSERT_TRUE(
-    other_stream->Fill("hello", other_sink.writer, {other_sink.layout}));
-  other_sink.writer.Finish();
-  ASSERT_EQ(other_sink.store, stored);
+  irs::ValueAnalyzer other_analyzer;
+  irs::ValueTokens other_sink;
+  ASSERT_TRUE(other_analyzer.Analyze(*other_stream, "hello", other_sink));
+  ASSERT_EQ(other_sink.store(), stored);
 }
 
 TEST(wildcard_analyzer_tests, column_fill_matches_per_value) {
@@ -264,27 +263,28 @@ TEST(wildcard_analyzer_tests, column_fill_matches_per_value) {
 TEST(wildcard_analyzer_tests, base_fill_failure_leaves_no_residue) {
   irs::analysis::WildcardAnalyzer stream{std::make_unique<FlakyBaseTokenizer>(),
                                          3};
-  irs::TokenCollector sink{irs::TokenLayout::Terms};
-  ASSERT_FALSE(stream.Fill("fail", sink.writer, {sink.layout}));
-  ASSERT_TRUE(sink.tokens.empty());
-  ASSERT_TRUE(sink.store.empty());
+  irs::ValueAnalyzer analyzer;
+  irs::ValueTokens sink;
+  ASSERT_FALSE(analyzer.Analyze(stream, "fail", sink));
+  ASSERT_TRUE(sink.terms().empty());
+  ASSERT_TRUE(sink.store().empty());
 
-  ASSERT_TRUE(stream.Fill("okey", sink.writer, {sink.layout}));
-  sink.writer.Finish();
+  ASSERT_TRUE(analyzer.Analyze(stream, "okey", sink));
 
   irs::analysis::WildcardAnalyzer fresh{std::make_unique<FlakyBaseTokenizer>(),
                                         3};
-  irs::TokenCollector expected{irs::TokenLayout::Terms};
-  ASSERT_TRUE(fresh.Fill("okey", expected.writer, {expected.layout}));
-  expected.writer.Finish();
+  irs::ValueAnalyzer expected_analyzer;
+  irs::ValueTokens expected;
+  ASSERT_TRUE(expected_analyzer.Analyze(fresh, "okey", expected));
 
-  ASSERT_EQ(expected.tokens.size(), sink.tokens.size());
-  for (size_t i = 0; i < expected.tokens.size(); ++i) {
+  ASSERT_EQ(expected.terms().size(), sink.terms().size());
+  for (size_t i = 0; i < expected.terms().size(); ++i) {
     SCOPED_TRACE(testing::Message() << "token=" << i);
-    ASSERT_EQ(expected.tokens[i].term, sink.tokens[i].term);
+    ASSERT_EQ(irs::AsBytesView(expected.terms()[i]),
+              irs::AsBytesView(sink.terms()[i]));
   }
-  ASSERT_FALSE(sink.store.empty());
-  ASSERT_EQ(expected.store, sink.store);
+  ASSERT_FALSE(sink.store().empty());
+  ASSERT_EQ(expected.store(), sink.store());
 }
 
 TEST(wildcard_analyzer_tests, memory_usage_accounts_scratch) {
@@ -296,11 +296,11 @@ TEST(wildcard_analyzer_tests, memory_usage_accounts_scratch) {
 TEST(wildcard_analyzer_tests, base_without_tokens_is_not_a_failure) {
   irs::analysis::WildcardAnalyzer stream{
     std::make_unique<SilentBaseTokenizer>(), 3};
-  irs::TokenCollector sink{irs::TokenLayout::Terms};
-  ASSERT_TRUE(stream.Fill("quick", sink.writer, {sink.layout}));
-  sink.writer.Finish();
-  ASSERT_TRUE(sink.tokens.empty());
-  ASSERT_TRUE(sink.store.empty());
+  irs::ValueAnalyzer analyzer;
+  irs::ValueTokens sink;
+  ASSERT_TRUE(analyzer.Analyze(stream, "quick", sink));
+  ASSERT_TRUE(sink.terms().empty());
+  ASSERT_TRUE(sink.store().empty());
 }
 
 TEST(wildcard_analyzer_tests, grams_follow_the_base_output_not_the_input) {

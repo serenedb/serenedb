@@ -29,7 +29,7 @@
 
 #include "basics/serializer.h"
 #include "iresearch/analysis/text/dict/string_table.hpp"
-#include "iresearch/analysis/token_accumulator.hpp"
+#include "iresearch/analysis/token_sinks.hpp"
 #include "iresearch/analysis/tokenizer.hpp"
 #include "iresearch/utils/string.hpp"
 
@@ -83,19 +83,16 @@ class ShingleTokenizer final : public TypedTokenizer<ShingleTokenizer>,
   void Bind(duckdb::ClientContext& ctx) final { _analyzer->Bind(ctx); }
   void Unbind() noexcept final { _analyzer->Unbind(); }
   size_t MemoryUsage() const noexcept final {
-    return _analyzer->MemoryUsage() +
-           _tok.capacity() * sizeof(duckdb::string_t) +
-           _pos.capacity() * sizeof(uint32_t) +
-           _freq.capacity() * sizeof(uint8_t) +
+    return _analyzer->MemoryUsage() + _freq.capacity() * sizeof(uint8_t) +
            _shingle_ends.capacity() * sizeof(uint32_t) +
            _tok_psum.capacity() * sizeof(uint32_t) + _blob.capacity() +
            _frequent.MemoryBytes() +
-           (_sub ? sizeof(AccumulatorSink) + _sub->arena.SizeInBytes() : 0);
+           (_sub ? sizeof(Sub) + _sub->tokens.MemoryUsage() : 0);
   }
 
   auto PrepareBatch(BlockTraits) {
     if (!_sub) {
-      _sub = std::make_unique<AccumulatorSink>();
+      _sub = std::make_unique<Sub>(_analyzer->Traits());
     }
     return std::tuple{_output_unigrams, _has_frequent, _store_tokens};
   }
@@ -125,9 +122,14 @@ class ShingleTokenizer final : public TypedTokenizer<ShingleTokenizer>,
   bstring _filler;
   dict::StringSet<std::string> _frequent;
 
-  std::unique_ptr<AccumulatorSink> _sub;
-  std::vector<duckdb::string_t> _tok;
-  std::vector<uint32_t> _pos;
+  struct Sub {
+    explicit Sub(TokenTraits producer) : tokens{producer} {}
+
+    ValueAnalyzer analyzer;
+    ValueTokens<TokenLayout::TermsPos> tokens;
+  };
+
+  std::unique_ptr<Sub> _sub;
   std::vector<uint8_t> _freq;
   std::vector<uint32_t> _shingle_ends;
   std::vector<uint32_t> _tok_psum;

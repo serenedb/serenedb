@@ -287,16 +287,21 @@ void IndexSegment::insert_indexed(const Ifield& f) {
 
   const auto doc_id = doc();
 
-  irs::TokenCollector collector{irs::TokenLayout::TermsPosOffs};
+  irs::ValueAnalyzer value_analyzer;
+  irs::ValueTokens<irs::TokenLayout::TermsPosOffs> tokens{analyzer.Traits()};
   const auto fv = f.Value();
-  irs::AnalyzeValue(
+  value_analyzer.Analyze(
     analyzer, duckdb::string_t{fv.data(), static_cast<uint32_t>(fv.size())},
-    collector);
+    tokens);
 
+  const auto terms = tokens.terms();
+  const auto positions = tokens.pos();
+  const auto offs_start = tokens.offs_start();
+  const auto offs_end = tokens.offs_end();
   uint32_t prev_pos = 0;
   uint32_t last_offs_end = 0;
-  for (const auto& tok : collector.tokens) {
-    tests::Term& trm = field.insert(irs::bytes_view{tok.term});
+  for (size_t i = 0; i < terms.size(); ++i) {
+    tests::Term& trm = field.insert(irs::AsBytesView(terms[i]));
 
     if (trm.postings.empty() ||
         std::prev(std::end(trm.postings))->id() != doc_id) {
@@ -304,21 +309,23 @@ void IndexSegment::insert_indexed(const Ifield& f) {
     }
 
     tests::Posting& pst = trm.insert(doc_id);
-    const uint32_t inc = tok.pos - prev_pos;
-    prev_pos = tok.pos;
+    const uint32_t pos = positions[i];
+    const uint32_t start = offs_start.empty() ? 0 : offs_start[i];
+    const uint32_t end = offs_end.empty() ? 0 : offs_end[i];
+    const uint32_t inc = pos - prev_pos;
+    prev_pos = pos;
     field.stats.pos += inc;
     field.stats.num_overlap += static_cast<uint32_t>(0 == inc);
     ++field.stats.len;
-    pst.insert(field.stats.pos, field.stats.offs, has_offs, tok.offs_start,
-               tok.offs_end);
+    pst.insert(field.stats.pos, field.stats.offs, has_offs, start, end);
     field.stats.max_term_freq = std::max(
       field.stats.max_term_freq,
       static_cast<decltype(field.stats.max_term_freq)>(pst.positions().size()));
 
-    last_offs_end = tok.offs_end;
+    last_offs_end = end;
   }
 
-  if (!collector.tokens.empty()) {
+  if (!terms.empty()) {
     field.docs.emplace(doc_id);
   }
 

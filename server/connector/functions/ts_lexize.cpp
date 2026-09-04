@@ -29,8 +29,9 @@
 #include <duckdb/function/scalar_function.hpp>
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/planner/expression/bound_function_expression.hpp>
-#include <iresearch/analysis/token_list_sink.hpp>
+#include <iresearch/analysis/token_sinks.hpp>
 #include <iresearch/utils/string.hpp>
+#include <span>
 #include <variant>
 
 #include "catalog/ddl/catalog.h"
@@ -118,7 +119,7 @@ duckdb::unique_ptr<duckdb::FunctionLocalState> InitTsLexizeLocalState(
 class ListTokenSink {
  public:
   explicit ListTokenSink(duckdb::Vector& result_list)
-    : _result_list(result_list), _sink(result_list, 0) {}
+    : _result_list(result_list) {}
   ~ListTokenSink() { Finalize(); }
 
   duckdb::idx_t Offset() const noexcept { return _offset; }
@@ -127,12 +128,11 @@ class ListTokenSink {
 
   void Tokenize(duckdb::string_t text) {
     SDB_ASSERT(_stream);
-    if (!_stream->Fill(text, _sink.writer, {irs::TokenLayout::Terms})) {
+    if (!_analyzer.Analyze(*_stream, text, _tokens)) {
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_INTERNAL_ERROR),
                       ERR_MSG("error while preparing tokenizer"));
     }
-    _sink.writer.Finish();
-    _offset = _sink.offset();
+    Append(_tokens.terms());
   }
 
   void Tokenize(irs::analysis::Tokenizer& tokenizer, duckdb::string_t text) {
@@ -141,6 +141,20 @@ class ListTokenSink {
   }
 
  private:
+  void Append(std::span<const duckdb::string_t> terms) {
+    auto& child = duckdb::ListVector::GetEntry(_result_list);
+    const auto needed = _offset + terms.size();
+    if (needed > duckdb::ListVector::GetListCapacity(_result_list)) {
+      duckdb::ListVector::SetListSize(_result_list, _offset);
+      duckdb::ListVector::Reserve(_result_list, needed * 2);
+    }
+    auto* data = duckdb::FlatVector::GetDataMutable<duckdb::string_t>(child);
+    for (const auto& term : terms) {
+      data[_offset++] = duckdb::StringVector::AddStringOrBlob(
+        child, term.GetData(), term.GetSize());
+    }
+  }
+
   void Finalize() noexcept {
     duckdb::ListVector::SetListSize(_result_list, _offset);
   }
@@ -148,7 +162,8 @@ class ListTokenSink {
   duckdb::Vector& _result_list;
   duckdb::idx_t _offset = 0;
   irs::analysis::Tokenizer* _stream = nullptr;
-  irs::ListVectorSink _sink;
+  irs::ValueAnalyzer _analyzer;
+  irs::ValueTokens<> _tokens;
 };
 
 [[maybe_unused]] const TsLexizeBindData& GetBindData(

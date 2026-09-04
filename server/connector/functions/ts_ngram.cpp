@@ -78,9 +78,14 @@ void FromNgram(irs::BooleanFilter& filter, const FilterContext& ctx,
     PickPerKindFieldId(column_info, duckdb::LogicalTypeId::VARCHAR);
   ngram.mutable_options()->threshold = threshold;
   auto& analyzer = ctx.tokenizer;
-  irs::TermVectorSink sink{ngram.mutable_options()->ngrams};
-  analyzer.Fill(target, sink.writer, {irs::TokenLayout::Terms});
-  sink.writer.Finish();
+  irs::ValueAnalyzer value_analyzer;
+  irs::ValueTokens tokens;
+  value_analyzer.Analyze(analyzer, target, tokens);
+  auto& ngrams = ngram.mutable_options()->ngrams;
+  ngrams.reserve(tokens.terms().size());
+  for (const auto& t : tokens.terms()) {
+    ngrams.emplace_back(irs::AsBytesView(t));
+  }
 }
 
 }  // namespace sdb::connector

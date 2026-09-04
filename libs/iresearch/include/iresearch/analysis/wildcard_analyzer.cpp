@@ -28,6 +28,7 @@
 #include "basics/log.h"
 #include "iresearch/analysis/keyword_tokenizer.hpp"
 #include "iresearch/analysis/text/classify/block_masks.hpp"
+#include "iresearch/analysis/token_sinks.hpp"
 #include "iresearch/analysis/tokenizer_config.hpp"
 #include "iresearch/utils/bytes_utils.hpp"
 #include "iresearch/utils/string.hpp"
@@ -65,7 +66,16 @@ void AppendEncodedTerm(bstring& terms, duckdb::string_t term) {
 }
 
 struct EncodeConsumer final : TokenConsumer {
+  static constexpr TokenLayout kLayout = TokenLayout::Terms;
+
   explicit EncodeConsumer(bstring& terms) noexcept : terms{&terms} {}
+
+  void Prepare(duckdb::string_t) noexcept {
+    terms->clear();
+    ascii = true;
+  }
+
+  void Discard() noexcept { terms->clear(); }
 
   void Consume(TokenBatch& batch, DocRuns) final {
     for (const auto& term : batch.Terms()) {
@@ -84,12 +94,10 @@ struct EncodeConsumer final : TokenConsumer {
 }  // namespace
 
 struct WildcardAnalyzer::SubSink {
-  explicit SubSink(bstring& terms) : consumer{terms} {
-    writer.Bind(consumer, nullptr);
-  }
+  explicit SubSink(bstring& terms) : consumer{terms} {}
 
   EncodeConsumer consumer;
-  TokenSink writer;
+  ValueAnalyzer analyzer;
 };
 
 WildcardAnalyzer::~WildcardAnalyzer() = default;
@@ -103,17 +111,12 @@ std::tuple<bool> WildcardAnalyzer::PrepareBatch(BlockTraits traits) {
 
 template<TokenLayout Layout, bool KnownAscii>
 bool WildcardAnalyzer::DoFill(duckdb::string_t raw, TokenSink& out) {
-  _terms.clear();
   auto& consumer = _sub_sink->consumer;
   consumer.track_ascii = !(KnownAscii && _base_stable);
-  consumer.ascii = true;
-  if (!_analyzer->Fill(
-        raw, _sub_sink->writer,
-        {TokenLayout::Terms, BlockTraits{.ascii = KnownAscii}})) {
-    _sub_sink->writer.Discard();
+  if (!_sub_sink->analyzer.Analyze(*_analyzer, raw, consumer,
+                                   BlockTraits{.ascii = KnownAscii})) {
     return false;
   }
-  _sub_sink->writer.Finish();
 
   if (_terms.empty()) {
     return true;

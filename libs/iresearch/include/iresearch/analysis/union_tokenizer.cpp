@@ -20,21 +20,19 @@
 
 #include "union_tokenizer.hpp"
 
+#include <algorithm>
 #include <duckdb/common/vector/flat_vector.hpp>
+#include <functional>
 
-#include "iresearch/analysis/token_accumulator.hpp"
+#include "iresearch/analysis/token_sinks.hpp"
 #include "iresearch/analysis/tokenizer_config.hpp"
 #include "pg/sql_exception_macro.h"
 
 namespace irs::analysis {
 
-UnionTokenizer::UnionTokenizer(std::vector<Tokenizer::ptr> options) {
-  _subs.reserve(options.size());
-  for (auto& p : options) {
-    SDB_ASSERT(p);
-    const bool dense = !p->Traits().explicit_pos;
-    _subs.push_back({std::move(p), dense});
-  }
+UnionTokenizer::UnionTokenizer(std::vector<Tokenizer::ptr> options)
+  : _subs{std::move(options)} {
+  SDB_ASSERT(std::ranges::none_of(_subs, std::logical_not{}));
 }
 
 Tokenizer::ptr UnionTokenizer::Make(Options opts,
@@ -50,13 +48,17 @@ Tokenizer::ptr UnionTokenizer::Make(Options opts,
   return std::make_unique<UnionTokenizer>(std::move(live_children));
 }
 
-struct UnionTokenizer::SubSink : AccumulatorSink {
+struct UnionTokenizer::SubSink {
   struct SubTokens {
-    std::vector<duckdb::string_t> terms;
-    std::vector<uint32_t> pos;
-    size_t next{0};
+    std::unique_ptr<ValueTokens<TokenLayout::TermsPos>> tokens;
+    const duckdb::string_t* terms = nullptr;
+    const uint32_t* pos = nullptr;
+    uint32_t count = 0;
+    uint32_t next = 0;
+    bool interned = false;
   };
 
+  ValueAnalyzer analyzer;
   std::vector<SubTokens> subs;
 };
 
@@ -64,32 +66,25 @@ UnionTokenizer::~UnionTokenizer() = default;
 
 void UnionTokenizer::CollectSubs(duckdb::string_t data) {
   for (size_t k = 0; k < _subs.size(); ++k) {
-    auto& acc = _sub_sink->subs[k];
-    acc.terms.clear();
-    acc.pos.clear();
-    acc.next = 0;
-    const bool dense = _subs[k].dense;
-    _sub_sink->accumulator.Bind(acc.terms, acc.pos, dense, data);
-    const TokenLayout layout =
-      dense ? TokenLayout::Terms : TokenLayout::TermsPos;
-    if (!_subs[k].tokenizer->Fill(data, _sub_sink->writer, {layout})) {
-      _sub_sink->writer.Discard();
-      acc.terms.clear();
-      acc.pos.clear();
-      continue;
-    }
-    _sub_sink->writer.Finish();
+    auto& sub = _sub_sink->subs[k];
+    sub.next = 0;
+    _sub_sink->analyzer.Analyze(*_subs[k], data, *sub.tokens);
+    sub.terms = sub.tokens->terms().data();
+    sub.pos = sub.tokens->pos().data();
+    sub.count = static_cast<uint32_t>(sub.tokens->terms().size());
+    sub.interned = sub.tokens->interned();
   }
 }
 
-template<TokenLayout Layout, bool Copy>
-void UnionTokenizer::EmitMerged(TokenSink& sink,
-                                [[maybe_unused]] duckdb::string_t raw) {
+template<TokenLayout Layout>
+void UnionTokenizer::EmitMerged(TokenSink& sink, duckdb::string_t raw) {
   auto& subs = _sub_sink->subs;
+  const auto* const vbeg = raw.GetData();
+  const auto* const vend = vbeg + raw.GetSize();
   for (;;) {
     uint32_t min_pos = std::numeric_limits<uint32_t>::max();
     for (const auto& sub : subs) {
-      if (sub.next < sub.pos.size() && sub.pos[sub.next] < min_pos) {
+      if (sub.next < sub.count && sub.pos[sub.next] < min_pos) {
         min_pos = sub.pos[sub.next];
       }
     }
@@ -97,12 +92,22 @@ void UnionTokenizer::EmitMerged(TokenSink& sink,
       return;
     }
     for (auto& sub : subs) {
-      while (sub.next < sub.pos.size() && sub.pos[sub.next] == min_pos) {
-        if constexpr (Copy) {
-          const auto term = sub.terms[sub.next];
-          sink.Emit<Layout>(raw, term.GetData(), term.GetSize(), min_pos);
-        } else {
+      if (!sub.interned) [[likely]] {
+        while (sub.next < sub.count && sub.pos[sub.next] == min_pos) {
           sink.Emit<Layout>(sub.terms[sub.next], min_pos);
+          ++sub.next;
+        }
+        continue;
+      }
+      while (sub.next < sub.count && sub.pos[sub.next] == min_pos) {
+        const auto term = sub.terms[sub.next];
+        const auto size = static_cast<uint32_t>(term.GetSize());
+        const auto* const data = term.GetData();
+        if (size <= duckdb::string_t::INLINE_LENGTH ||
+            (data >= vbeg && data + size <= vend)) {
+          sink.Emit<Layout>(term, min_pos);
+        } else {
+          sink.Emit<Layout>(raw, data, size, min_pos);
         }
         ++sub.next;
       }
@@ -111,20 +116,23 @@ void UnionTokenizer::EmitMerged(TokenSink& sink,
 }
 
 void UnionTokenizer::Prepare() {
-  if (!_sub_sink) {
-    _sub_sink.reset(new SubSink);
-    _sub_sink->subs.resize(_subs.size());
+  if (_sub_sink) {
+    return;
   }
-  _sub_sink->arena.Reset();
+  _sub_sink = std::make_unique<SubSink>();
+  _sub_sink->subs.resize(_subs.size());
+  for (size_t k = 0; k < _subs.size(); ++k) {
+    _sub_sink->subs[k].tokens =
+      std::make_unique<ValueTokens<TokenLayout::TermsPos>>(_subs[k]->Traits());
+  }
 }
 
 bool UnionTokenizer::Fill(const duckdb::string_t& value, TokenSink& sink,
                           FillCtx ctx) {
   Prepare();
   CollectSubs(value);
-  ResolveLayout(ctx.layout, [&]<TokenLayout Layout>() {
-    EmitMerged<Layout, true>(sink, value);
-  });
+  ResolveLayout(ctx.layout,
+                [&]<TokenLayout Layout>() { EmitMerged<Layout>(sink, value); });
   return true;
 }
 
@@ -138,7 +146,7 @@ void UnionTokenizer::Fill(const duckdb::UnifiedVectorFormat& fmt,
     ForEachValidRow(fmt, count, [&](uint32_t i, uint32_t idx) IRS_FORCE_INLINE {
       sink.BeginValue(first_doc + i, data[idx].GetSize());
       CollectSubs(data[idx]);
-      EmitMerged<Layout, false>(sink, {});
+      EmitMerged<Layout>(sink, data[idx]);
       sink.EndValue();
       return true;
     });

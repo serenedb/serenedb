@@ -338,17 +338,18 @@ ByWildcardNgramOptions::ByWildcardNgramOptions(
   std::string_view pattern, analysis::WildcardAnalyzer& analyzer,
   bool has_positions) {
   auto& ngram = analyzer.ngram();
-  TokenCollector collector{TokenLayout::Terms};
+  ValueAnalyzer value_analyzer;
+  ValueTokens tokens;
 
   auto make_parts_impl = [&](std::string_view v) {
-    if (!AnalyzeValue(
+    if (!value_analyzer.Analyze(
           ngram, duckdb::string_t{v.data(), static_cast<uint32_t>(v.size())},
-          collector)) {
+          tokens)) {
       return false;
     }
     ByPhraseOptions part;
-    for (auto& token : collector.tokens) {
-      part.push_back<ByTermOptions>(ByTermOptions{std::move(token.term)});
+    for (const auto& token : tokens.terms()) {
+      part.push_back<ByTermOptions>(ByTermOptions{bstring{AsBytesView(token)}});
     }
     if (part.empty()) {
       return false;

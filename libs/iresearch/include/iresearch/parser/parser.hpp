@@ -20,6 +20,7 @@
 
 #pragma once
 
+#include <span>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -60,6 +61,8 @@ struct ParserContext {
   std::string_view default_field_name;
   irs::MixedBooleanFilter* current_root;
   irs::analysis::Tokenizer* tokenizer;
+  irs::ValueAnalyzer value_analyzer;
+  irs::ValueTokens<> value_tokens;
   std::string error_message;
   Modifier last_mod{Modifier::None};
   bool strict_field = false;
@@ -115,7 +118,7 @@ struct ParserContext {
       auto& several =
         current_root->GetOptional().add<irs::MixedBooleanFilter>();
       for (const auto& token : tokens) {
-        AddTermTo(several.GetOptional(), token.term);
+        AddTermTo(several.GetOptional(), irs::AsBytesView(token));
       }
       return several;
     }
@@ -123,7 +126,8 @@ struct ParserContext {
     *f.mutable_field_id() = default_field_id;
     // A word the analyzer makes nothing of -- a lone `+` -- is searched for
     // as it was written rather than as the empty term.
-    f.mutable_options()->term = tokens.empty() ? text : tokens.front().term;
+    f.mutable_options()->term =
+      tokens.empty() ? irs::bytes_view{text} : irs::AsBytesView(tokens.front());
     return f;
   }
 
@@ -186,8 +190,9 @@ struct ParserContext {
   // A word of a phrase is whatever the analyzer makes of it: one term, or
   // several, and several of them sit one after another.
   void AddPhraseTerm(std::string_view word) {
-    for (const auto& token : Tokens(Unescape(word))) {
-      Emplace<irs::ByTermOptions>().term = token.term;
+    const auto text = Unescape(word);
+    for (const auto& token : Tokens(text)) {
+      Emplace<irs::ByTermOptions>().term = irs::AsBytesView(token);
     }
   }
 
@@ -415,19 +420,20 @@ struct ParserContext {
     return out;
   }
 
-  std::vector<irs::CollectedToken> Tokens(const irs::bstring& text) {
-    irs::TokenCollector collector{irs::TokenLayout::Terms};
-    irs::AnalyzeValue(
+  std::span<const duckdb::string_t> Tokens(const irs::bstring& text) {
+    value_analyzer.Analyze(
       *tokenizer,
       duckdb::string_t{reinterpret_cast<const char*>(text.data()),
                        static_cast<uint32_t>(text.size())},
-      collector);
-    return std::move(collector.tokens);
+      value_tokens);
+    return value_tokens.terms();
   }
 
   irs::bstring Analyze(std::string_view word) {
-    const auto tokens = Tokens(Unescape(word));
-    return tokens.empty() ? irs::bstring{} : tokens.front().term;
+    const auto text = Unescape(word);
+    const auto tokens = Tokens(text);
+    return tokens.empty() ? irs::bstring{}
+                          : irs::bstring{irs::AsBytesView(tokens.front())};
   }
 
   // What a pattern, a distance or a bound is measured against: Lucene
@@ -439,7 +445,8 @@ struct ParserContext {
   irs::bstring Normalize(std::string_view word) {
     auto text = Unescape(word);
     const auto tokens = Tokens(text);
-    return tokens.size() == 1 ? tokens.front().term : text;
+    return tokens.size() == 1 ? irs::bstring{irs::AsBytesView(tokens.front())}
+                              : text;
   }
 
   // Where a part goes: next to the one before it, or as far off as a gap

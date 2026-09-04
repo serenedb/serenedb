@@ -157,7 +157,8 @@ void FromPhrase(irs::BooleanFilter& filter, const FilterContext& ctx,
     PickPerKindFieldId(column_info, duckdb::LogicalTypeId::VARCHAR);
   auto* opts = phrase.mutable_options();
   auto& analyzer = ctx.tokenizer;
-  irs::TokenCollector collector{irs::TokenLayout::Terms};
+  irs::ValueAnalyzer value_analyzer;
+  irs::ValueTokens tokens;
 
   std::optional<PhraseGap> pending_gap;
 
@@ -174,15 +175,15 @@ void FromPhrase(irs::BooleanFilter& filter, const FilterContext& ctx,
     }
     if (const_val->type().id() == duckdb::LogicalTypeId::VARCHAR ||
         const_val->type().id() == duckdb::LogicalTypeId::BLOB) {
-      irs::AnalyzeValue(analyzer, const_val->GetValueUnsafe<duckdb::string_t>(),
-                        collector);
-      for (const auto& tok : collector.tokens) {
+      value_analyzer.Analyze(
+        analyzer, const_val->GetValueUnsafe<duckdb::string_t>(), tokens);
+      for (const auto& tok : tokens.terms()) {
         if (pending_gap) {
           opts
             ->push_back<irs::ByTermOptions>(pending_gap->min, pending_gap->max)
-            .term = tok.term;
+            .term = irs::AsBytesView(tok);
         } else {
-          opts->push_back<irs::ByTermOptions>().term = tok.term;
+          opts->push_back<irs::ByTermOptions>().term = irs::AsBytesView(tok);
         }
         pending_gap.reset();
       }
@@ -250,20 +251,21 @@ void EmitPhraseTokens(irs::ByPhraseOptions& options, const FilterContext& ctx,
                       const SearchColumnInfo& column_info,
                       std::string_view text, PhraseGap base_gap) {
   auto& analyzer = ctx.tokenizer;
-  irs::TokenCollector collector{irs::TokenLayout::Terms};
-  if (!irs::AnalyzeValue(
+  irs::ValueAnalyzer value_analyzer;
+  irs::ValueTokens tokens;
+  if (!value_analyzer.Analyze(
         analyzer,
         duckdb::string_t{text.data(), static_cast<uint32_t>(text.size())},
-        collector)) {
+        tokens)) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                     ERR_MSG("ts_phrase failed to analyse '", text, "'"),
                     ERR_HINT("The column's analyzer rejected the input text."));
   }
   bool first = true;
-  for (const auto& tok : collector.tokens) {
+  for (const auto& tok : tokens.terms()) {
     const PhraseGap g = first ? base_gap : PhraseGap{1, 1};
     auto& part = options.push_back<irs::ByTermOptions>(g.min, g.max);
-    part.term = tok.term;
+    part.term = irs::AsBytesView(tok);
     first = false;
   }
   if (first) {

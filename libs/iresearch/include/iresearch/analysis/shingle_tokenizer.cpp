@@ -143,37 +143,28 @@ ShingleTokenizer::ShingleTokenizer(Tokenizer::ptr base, Options&& options)
 }
 
 bool ShingleTokenizer::DrainBase(duckdb::string_t raw) {
-  _tok.clear();
-  _pos.clear();
-  _sub->arena.Reset();
-
-  _sub->accumulator.Bind(_tok, _pos, _producer_dense, raw);
-  if (!_analyzer->Fill(
-        raw, _sub->writer,
-        {_producer_dense ? TokenLayout::Terms : TokenLayout::TermsPos})) {
-    _sub->writer.Discard();
-    return false;
-  }
-  _sub->writer.Finish();
-  return true;
+  return _sub->analyzer.Analyze(*_analyzer, raw, _sub->tokens);
 }
 
 template<bool HasFrequent>
 void ShingleTokenizer::BuildTables(uint32_t n) {
+  const auto tok = _sub->tokens.terms();
   _tok_psum.resize(n + 1);
   _tok_psum[0] = 0;
   if constexpr (HasFrequent) {
     _freq.resize(n);
   }
   for (uint32_t k = 0; k < n; ++k) {
-    _tok_psum[k + 1] = _tok_psum[k] + _tok[k].GetSize();
+    _tok_psum[k + 1] = _tok_psum[k] + tok[k].GetSize();
     if constexpr (HasFrequent) {
-      _freq[k] = _frequent.Contains(_tok[k]) ? 1 : 0;
+      _freq[k] = _frequent.Contains(tok[k]) ? 1 : 0;
     }
   }
 }
 
 void ShingleTokenizer::StoreBlob(TokenSink& sink, uint32_t n) {
+  const auto tok = _sub->tokens.terms();
+  const auto tpos = _sub->tokens.pos();
   _blob.clear();
   const auto write_fillers = [&](uint32_t k) {
     for (; k != 0; --k) {
@@ -182,9 +173,9 @@ void ShingleTokenizer::StoreBlob(TokenSink& sink, uint32_t n) {
   };
   uint32_t prev = 0;
   for (uint32_t i = 0; i < n; ++i) {
-    write_fillers(_pos[i] > prev ? _pos[i] - prev - 1 : 0);
-    prev = _pos[i];
-    WriteToken(AsBytesView(_tok[i]), _blob);
+    write_fillers(tpos[i] > prev ? tpos[i] - prev - 1 : 0);
+    prev = tpos[i];
+    WriteToken(AsBytesView(tok[i]), _blob);
   }
   sink.Store(_blob);
 }
@@ -192,8 +183,10 @@ void ShingleTokenizer::StoreBlob(TokenSink& sink, uint32_t n) {
 template<TokenLayout Layout, bool OutputUnigrams, bool HasFrequent>
 void ShingleTokenizer::EmitRuns(duckdb::string_t raw, TokenSink& sink,
                                 uint32_t n, bool no_shingles) {
+  const auto* const tok = _sub->tokens.terms().data();
+  const auto* const tpos = _sub->tokens.pos().data();
   const auto emit_unigram = [&](uint32_t i, uint32_t pos) {
-    const auto& term = _tok[i];
+    const auto& term = tok[i];
     sink.Emit<Layout>(raw, term.GetData(),
                       static_cast<uint32_t>(term.GetSize()), pos);
   };
@@ -201,7 +194,6 @@ void ShingleTokenizer::EmitRuns(duckdb::string_t raw, TokenSink& sink,
   const auto* const sep = _separator.data();
   const auto sep_size = static_cast<uint32_t>(_separator.size());
   const auto* const psum = _tok_psum.data();
-  const auto* const tok = _tok.data();
   const auto window_len = [=](uint32_t i, uint32_t s) IRS_FORCE_INLINE {
     return psum[i + s] - psum[i] + (s - 1) * sep_size;
   };
@@ -269,12 +261,12 @@ void ShingleTokenizer::EmitRuns(duckdb::string_t raw, TokenSink& sink,
   // writes the stack flat, breaking its index-equals-position layout.
   uint32_t run_end = 0;
   for (uint32_t i = 0; i < n; ++i) {
-    const uint32_t pos = _pos[i];
+    const uint32_t pos = tpos[i];
     if (run_end <= i) {
       run_end = i + 1;
     }
     while (run_end - i < _max && run_end < n &&
-           _pos[run_end] - _pos[run_end - 1] == 1) {
+           tpos[run_end] - tpos[run_end - 1] == 1) {
       ++run_end;
     }
     const uint32_t reach = run_end - i;
@@ -295,7 +287,7 @@ bool ShingleTokenizer::DoFill(duckdb::string_t raw, TokenSink& sink) {
     return false;
   }
 
-  const uint32_t n = static_cast<uint32_t>(_tok.size());
+  const uint32_t n = static_cast<uint32_t>(_sub->tokens.terms().size());
   const bool no_shingles = n < _min;
   if (!no_shingles) {
     BuildTables<HasFrequent>(n);

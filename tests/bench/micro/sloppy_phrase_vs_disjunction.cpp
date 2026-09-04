@@ -68,6 +68,7 @@
 #include <vector>
 
 #include "basics/duckdb_engine.h"
+#include "test_resources.hpp"
 #include "utf8proc_wrapper.hpp"
 
 #ifdef SLOP_PROFILE
@@ -111,12 +112,14 @@ class FieldBase : public IField {
 class TextField final : public FieldBase {
  public:
   TextField(irs::field_id id, irs::IndexFeatures extra_features)
-    : _stream(irs::analysis::TextTokenizer::Make([] {
-        irs::analysis::TextTokenizer::Options opts;
-        opts.locale = icu::Locale::createFromName("C");
-        opts.explicit_stopwords_set = true;
-        return opts;
-      }())) {
+    : _stream(irs::analysis::TextTokenizer::Make(
+        [] {
+          irs::analysis::TextTokenizer::Options opts;
+          opts.locale = icu::Locale::createFromName("C");
+          opts.explicit_stopwords_set = true;
+          return opts;
+        }(),
+        tests::Cache())) {
     SetId(id);
     SetIndexFeatures(irs::IndexFeatures::Freq | irs::IndexFeatures::Pos |
                      irs::IndexFeatures::Offs | extra_features);

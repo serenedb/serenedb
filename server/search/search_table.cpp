@@ -244,8 +244,8 @@ catalog::ColumnTokenizer SearchTable::GetTokenizer(
   if (it == config->end()) {
     return {};  // not a merged-config field: the default string tokenizer
   }
-  return catalog::TokenizerForEntry(ResolveShardTokenizers(*this, &context),
-                                    it->second);
+  return catalog::TokenizerForEntry(
+    context, ResolveShardTokenizers(*this, &context), it->second);
 }
 
 void SearchTable::MergeIndexConfig(const catalog::InvertedIndex& index) {

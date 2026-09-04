@@ -52,28 +52,36 @@ endif()
 set(IResearch_core_sources
     ./utils/snowball_stemmer.cpp
     ./analysis/token_attributes.cpp
-    ./analysis/tokenizers.cpp
+    ./analysis/text/classify/block_masks.cpp
+    ./analysis/tokenizer_pool.cpp
+    ./analysis/text/dict/stem_cache.cpp
+    ./analysis/keyword_tokenizer.cpp
     ./analysis/stemming_tokenizer.cpp
+    ./analysis/text/dict/stopwords_loader.cpp
     ./analysis/stopwords_tokenizer.cpp
     ./analysis/ngram_tokenizer.cpp
     ./analysis/sparse_ngram_tokenizer.cpp
     ./analysis/pipeline_tokenizer.cpp
     ./analysis/union_tokenizer.cpp
     ./analysis/segmentation_tokenizer.cpp
+    ./analysis/icu_text_tokenizer.cpp
     ./analysis/classification_tokenizer.cpp
     ./analysis/nearest_neighbors_tokenizer.cpp
+    ./analysis/text/normalize/normalize.cpp
     ./analysis/normalizing_tokenizer.cpp
-    ./analysis/minhash_tokenizer.cpp
     ./analysis/collation_tokenizer.cpp
     ./analysis/text_tokenizer.cpp
     ./analysis/multi_delimited_tokenizer.cpp
     ./analysis/delimited_tokenizer.cpp
     ./analysis/path_hierarchy_tokenizer.cpp
     ./analysis/solr_synonyms_tokenizer.cpp
+    ./analysis/split_by_non_alpha_tokenizer.cpp
     ./analysis/wordnet_synonyms_tokenizer.cpp
     ./analysis/fast_text_model.cpp
     ./analysis/geo_analyzer.cpp
     ./analysis/pattern_tokenizer.cpp
+    ./analysis/shingle_tokenizer.cpp
+    ./analysis/sql_tokenizer.cpp
     ./analysis/wildcard_analyzer.cpp
     ./error/error.cpp
     ./formats/column/col_reader.cpp
@@ -100,7 +108,6 @@ set(IResearch_core_sources
     ./formats/ivf/quantizer.cpp
     ./index/directory_reader.cpp
     ./index/directory_reader_impl.cpp
-    ./index/field_data.cpp
     ./index/field_meta.cpp
     ./index/file_names.cpp
     ./index/index_writer.cpp
@@ -111,9 +118,10 @@ set(IResearch_core_sources
     ./index/hit_batcher.cpp
     ./index/table_filter_iterator.cpp
     ./index/column_extract.cpp
-    ./index/postings.cpp
     ./index/segment_reader.cpp
     ./index/segment_reader_impl.cpp
+    ./index/inverter/columnar_flush.cpp
+    ./index/inverter/fields_inverter.cpp
     ./index/segment_writer.cpp
     ./search/all_docs_provider.cpp
     ./search/all_filter.cpp
@@ -246,7 +254,6 @@ endif()
 set(IRESEARCH_EXTERNAL_INCLUDES
     ${Boost_INCLUDE_DIRS} # ensure Boost paths take precedence over other system libraries as Boost may be defined elsewhere
     ${Fasttext_INCLUDE_DIR}
-    ${FROZEN_INCLUDE_DIR}
 )
 
 include_directories(SYSTEM ${IRESEARCH_EXTERNAL_INCLUDES})
@@ -272,7 +279,17 @@ target_include_directories(
     PRIVATE ${SNOWBALL_INCLUDE_DIR}
     PRIVATE ${CMAKE_SOURCE_DIR}/third_party/duckdb/third_party/fastpforlib
     PRIVATE ${CMAKE_SOURCE_DIR}/third_party/duckdb/third_party/utf8proc/include
+    PUBLIC ${CMAKE_SOURCE_DIR}/third_party/stringzilla/include
 )
+
+if(ARCH_AMD64)
+    target_compile_definitions(
+        iresearch-static
+        PUBLIC SZ_USE_HASWELL=1 SZ_USE_SKYLAKE=1 SZ_USE_ICELAKE=1
+    )
+elseif(ARCH_AARCH64)
+    target_compile_definitions(iresearch-static PUBLIC SZ_USE_NEON=1)
+endif()
 
 # setup MSVC specific compiler flags
 if(MSVC)
@@ -291,6 +308,7 @@ target_link_libraries(
     PUBLIC absl::crc32c
     PUBLIC serene_base
     PUBLIC simdjson
+    PRIVATE simdutf
     PUBLIC iresearch-ofst
     PUBLIC ${FASTTEXT_LIBRARY_STATIC}
     PUBLIC ${SIMD_LIBRARY_STATIC}
@@ -300,7 +318,6 @@ target_link_libraries(
     PUBLIC streamvbyte
     PUBLIC duckdb_static
     PRIVATE lz4_static
-    PRIVATE text
     PRIVATE stemmer-static
 )
 

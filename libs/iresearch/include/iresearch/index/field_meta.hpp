@@ -36,12 +36,6 @@ namespace irs {
 struct FieldStats {
   // Total number of terms
   uint32_t len{};
-  // Number of overlapped terms
-  uint32_t num_overlap{};
-  // Maximum number of terms in a field
-  uint32_t max_term_freq{};
-  // Number of unique terms
-  uint32_t num_unique{};
 };
 
 struct FieldProperties {

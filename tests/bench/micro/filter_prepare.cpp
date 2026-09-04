@@ -32,8 +32,9 @@
 #include <vector>
 
 #include "basics/duckdb_engine.h"
+#include "insert_field.hpp"
+#include "iresearch/analysis/keyword_tokenizer.hpp"
 #include "iresearch/analysis/segmentation_tokenizer.hpp"
-#include "iresearch/analysis/tokenizers.hpp"
 #include "iresearch/formats/formats.hpp"
 #include "iresearch/index/directory_reader.hpp"
 #include "iresearch/index/index_features.hpp"
@@ -66,10 +67,9 @@ constexpr irs::field_id kBodyFieldId = 2;
 struct KeywordField {
   irs::field_id Id() const noexcept { return id; }
 
-  irs::Tokenizer& GetTokens() const {
-    stream.reset(value);
-    return stream;
-  }
+  irs::analysis::Tokenizer& GetTokens() const { return stream; }
+
+  std::string_view Value() const noexcept { return value; }
 
   irs::IndexFeatures GetIndexFeatures() const noexcept {
     return irs::IndexFeatures::Freq | irs::IndexFeatures::Norm;
@@ -79,16 +79,15 @@ struct KeywordField {
 
   irs::field_id id{irs::field_limits::invalid()};
   std::string_view value;
-  mutable irs::StringTokenizer stream;
+  mutable irs::KeywordTokenizer stream;
 };
 
 struct TextField {
   irs::field_id Id() const noexcept { return id; }
 
-  irs::Tokenizer& GetTokens() const {
-    tokenizer->reset(value);
-    return *tokenizer;
-  }
+  irs::analysis::Tokenizer& GetTokens() const { return *tokenizer; }
+
+  std::string_view Value() const noexcept { return value; }
 
   irs::IndexFeatures GetIndexFeatures() const noexcept {
     return irs::IndexFeatures::Freq | irs::IndexFeatures::Pos |
@@ -99,7 +98,7 @@ struct TextField {
 
   irs::field_id id{irs::field_limits::invalid()};
   std::string_view value;
-  irs::analysis::Analyzer::ptr tokenizer =
+  irs::analysis::Tokenizer::ptr tokenizer =
     irs::analysis::SegmentationTokenizer::Make({});
 };
 
@@ -223,8 +222,8 @@ void FilterPrepareFixture::BuildIndex(size_t num_segments) {
         body_field.value = kBodyPool[i % kBodyPool.size()];
 
         auto doc = trx.Insert();
-        doc.Insert(kw_field);
-        doc.Insert(body_field);
+        tests::InsertField(doc, kw_field);
+        tests::InsertField(doc, body_field);
       }
       trx.Commit();
     }

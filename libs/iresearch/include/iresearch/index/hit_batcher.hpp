@@ -126,7 +126,11 @@ class HitBatcher {
   }
 
   void CloseGroup();
-  void ScatterGroup();
+  void ScatterGroup(uint64_t anchor, duckdb::idx_t span);
+  std::pair<uint64_t, duckdb::idx_t> BuildSel(duckdb::idx_t first,
+                                              duckdb::idx_t n);
+  bool DrainCompact();
+  void FinishBatch(Batch& batch, duckdb::idx_t count);
   Batch EmitFiltered(duckdb::DataChunk& output);
   void Compact();
   float* ScoreData();

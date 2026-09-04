@@ -42,8 +42,10 @@
 #include "formats/column/test_cs_helpers.hpp"
 #include "index/doc_generator.hpp"
 #include "index/index_tests.hpp"
+#include "iresearch/analysis/token_batch.hpp"
 #include "iresearch/index/index_features.hpp"
 #include "iresearch/search/cost.hpp"
+#include "token_sink_utils.hpp"
 
 namespace {
 
@@ -56,8 +58,10 @@ constexpr std::string_view kTerm = "x";
 // `filler_count` copies of "f" (filler). Tokenizer side: tf("x") =
 // target_count. Norm side: stats.len = target_count + filler_count, so
 // dl != tf and BM25 length normalisation has signal across the corpus.
-class MixedAnalyzer : public irs::analysis::TypedAnalyzer<MixedAnalyzer> {
+class MixedAnalyzer : public irs::analysis::TypedTokenizer<MixedAnalyzer> {
  public:
+  irs::TokenTraits Traits() const noexcept final { return {}; }
+
   static constexpr std::string_view type_name() noexcept {
     return "ScorePruneNormMergeAnalyzer";
   }
@@ -70,32 +74,21 @@ class MixedAnalyzer : public irs::analysis::TypedAnalyzer<MixedAnalyzer> {
       _target_term{target_term},
       _filler_term{filler_term} {}
 
-  irs::Attribute* GetMutable(irs::TypeInfo::type_id id) noexcept final {
-    return irs::GetMutable(_attrs, id);
-  }
-
-  bool reset(std::string_view /*value*/) noexcept final {
-    _i = 0;
-    return true;
-  }
-
-  bool next() final {
-    if (_i >= _target_count + _filler_count) {
-      return false;
+  template<irs::TokenLayout Layout>
+  bool DoFill(duckdb::string_t, irs::TokenSink& sink) {
+    const size_t total = _target_count + _filler_count;
+    for (size_t i = 0; i < total; ++i) {
+      const auto t = (i < _target_count) ? _target_term : _filler_term;
+      tests::EmitCopy<Layout>(sink, irs::ViewCast<irs::byte_type>(t));
     }
-    const auto t = (_i < _target_count) ? _target_term : _filler_term;
-    std::get<irs::TermAttr>(_attrs).value = irs::ViewCast<irs::byte_type>(t);
-    ++_i;
     return true;
   }
 
  private:
-  std::tuple<irs::TermAttr, irs::IncAttr> _attrs;
   size_t _target_count;
   size_t _filler_count;
   std::string_view _target_term;
   std::string_view _filler_term;
-  size_t _i{};
 };
 
 // Back-compat alias used by older tests where tf == dl.
@@ -115,10 +108,8 @@ class NormField final : public tests::Ifield {
 
   irs::field_id Id() const final { return _id; }
   std::string_view Name() const final { return {}; }
-  irs::Tokenizer& GetTokens() const final {
-    _analyzer.reset(_value);
-    return _analyzer;
-  }
+  irs::analysis::Tokenizer& GetTokens() const final { return _analyzer; }
+  std::string_view Value() const final { return _value; }
   irs::IndexFeatures GetIndexFeatures() const noexcept final {
     return irs::IndexFeatures::Freq | irs::IndexFeatures::Norm;
   }
@@ -141,10 +132,8 @@ class IdField final : public tests::Ifield {
 
   irs::field_id Id() const final { return kId; }
   std::string_view Name() const final { return {}; }
-  irs::Tokenizer& GetTokens() const final {
-    _analyzer.reset(_value);
-    return _analyzer;
-  }
+  irs::analysis::Tokenizer& GetTokens() const final { return _analyzer; }
+  std::string_view Value() const final { return _value; }
   irs::IndexFeatures GetIndexFeatures() const noexcept final {
     return irs::IndexFeatures::None;
   }

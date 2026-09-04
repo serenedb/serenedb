@@ -24,19 +24,25 @@
 #pragma once
 
 #include <tuple>
+#include <vector>
 
 #include "basics/serializer.h"
-#include "iresearch/analysis/analyzer.hpp"
 #include "iresearch/analysis/ngram_tokenizer.hpp"
-#include "iresearch/analysis/token_attributes.hpp"
+#include "iresearch/analysis/token_batch.hpp"
+#include "iresearch/analysis/tokenizer.hpp"
 
+namespace duckdb {
+
+class SharedObjectCache;
+
+}  // namespace duckdb
 namespace irs::analysis {
 
 struct TokenizerConfig;
 
-class WildcardAnalyzer final : public TypedAnalyzer<WildcardAnalyzer>,
+class WildcardAnalyzer final : public TypedTokenizer<WildcardAnalyzer>,
                                private util::Noncopyable {
-  using Ngram = NGramTokenizer<NGramTokenizerBase::InputType::UTF8>;
+  using Ngram = NGramTokenizer;
 
  public:
   struct Options {
@@ -44,38 +50,53 @@ class WildcardAnalyzer final : public TypedAnalyzer<WildcardAnalyzer>,
     std::unique_ptr<TokenizerConfig> base_analyzer;
     size_t ngram_size = 3;
   };
-  static Analyzer::ptr Make(Options opts);
+  static Tokenizer::ptr Make(Options opts, duckdb::SharedObjectCache& cache);
 
   static constexpr std::string_view type_name() noexcept { return "wildcard"; }
 
-  explicit WildcardAnalyzer(Analyzer::ptr base_analyzer,
-                            size_t ngram_size) noexcept;
+  explicit WildcardAnalyzer(Tokenizer::ptr base_analyzer, size_t ngram_size);
+  ~WildcardAnalyzer() override;
 
-  Attribute* GetMutable(TypeInfo::type_id type) noexcept final;
+  template<TokenLayout Layout, bool KnownAscii>
+  bool DoFill(duckdb::string_t value, TokenSink& sink);
 
-  bool reset(std::string_view data) final;
+  TokenTraits Traits() const noexcept final { return {.store = true}; }
 
-  bool next() final;
-
-  auto& ngram() const noexcept {
-    SDB_ASSERT(_ngram);
-    return *_ngram;
+  BlockTraits WantedBlockTraits() const noexcept final {
+    return {.ascii = true};
   }
+
+  std::tuple<bool> PrepareBatch(BlockTraits traits);
+
+  void Bind(duckdb::ClientContext& ctx) final { _analyzer->Bind(ctx); }
+
+  void Unbind() noexcept final { _analyzer->Unbind(); }
+
+  size_t MemoryUsage() const noexcept final {
+    return _analyzer->MemoryUsage() + _terms.capacity() +
+           _fill_bounds.capacity() * sizeof(uint32_t) + _ngram.MemoryUsage() +
+           (_sub_sink ? sizeof(TokenSink) : 0);
+  }
+
+  auto& ngram() noexcept { return _ngram; }
 
  private:
-  byte_type* begin() noexcept {
-    return reinterpret_cast<byte_type*>(_terms.data());
-  }
+  template<bool Identity, TokenLayout Layout>
+  void EmitTerms(TokenSink& sink);
+  template<bool Identity, TokenLayout Layout>
+  void EmitTermGrams(TokenSink& sink, const byte_type* term, uint32_t size);
 
-  Analyzer::ptr _analyzer;
-  std::unique_ptr<Ngram> _ngram;
-  const TermAttr* _term{};
-  TermAttr* _ngram_term{};
-  StoreAttr _store;
-  std::string _terms;
-  const byte_type* _terms_begin{};
-  const byte_type* _terms_end{};
+  struct SubSink;
+
+  Tokenizer::ptr _analyzer;
+  Ngram _ngram;
+  bstring _terms;
+  std::vector<uint32_t> _fill_bounds;
+  std::unique_ptr<SubSink> _sub_sink;
+  bool _base_stable = false;
 };
+
+extern template class TypedTokenizer<WildcardAnalyzer>;
 
 template<typename Context>
 void SerdeWrite(Context ctx, const WildcardAnalyzer::Options& o) {

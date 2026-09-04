@@ -24,7 +24,7 @@
 #include "granular_range_filter.hpp"
 
 #include "iresearch/analysis/token_attributes.hpp"
-#include "iresearch/analysis/tokenizers.hpp"
+#include "iresearch/analysis/tokenizer.hpp"
 #include "iresearch/index/field_meta.hpp"
 #include "iresearch/index/index_features.hpp"
 #include "iresearch/index/index_reader.hpp"
@@ -548,18 +548,6 @@ void VisitImpl(const SubReader& segment, const TermReader& reader,
 }
 
 }  // namespace
-
-// Sequential 'granularity_level' value, cannot use 'increment' since
-// it can be 0
-void SetGranularTerm(ByGranularRangeOptions::terms& boundary,
-                     NumericTokenizer& term) {
-  boundary.clear();
-
-  for (const auto* term_attr = irs::get<TermAttr>(term); term.next();) {
-    SDB_ASSERT(term_attr);
-    boundary.emplace_back(term_attr->value);
-  }
-}
 
 QueryBuilder::ptr ByGranularRange::PrepareSegment(
   const SubReader& segment, const PrepareContext& ctx) const {

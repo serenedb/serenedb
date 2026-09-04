@@ -28,6 +28,7 @@
 #include <cmath>
 #include <cstdio>
 #include <iresearch/analysis/segmentation_tokenizer.hpp>
+#include <iresearch/analysis/token_sinks.hpp>
 #include <iresearch/index/norm.hpp>
 #include <iresearch/parser/parser.hpp>
 #include <iresearch/search/bm25.hpp>

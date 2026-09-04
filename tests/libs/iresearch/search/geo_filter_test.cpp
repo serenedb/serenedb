@@ -23,6 +23,7 @@
 #include "formats/column/test_cs_helpers.hpp"
 #include "geo/geo_json.h"
 #include "geo_test_helpers.hpp"
+#include "insert_field.hpp"
 #include "iresearch/index/directory_reader.hpp"
 #include "iresearch/index/index_writer.hpp"
 #include "iresearch/index/iterators.hpp"
@@ -294,8 +295,8 @@ TEST(GeoFilterTest, query) {
           name_field.value = doc_entry.name;
 
           auto doc = (i++ % 2 ? segment0 : segment1).Insert();
-          ASSERT_TRUE(doc.Insert(name_field));
-          ASSERT_TRUE(doc.Insert(geo_field));
+          ASSERT_TRUE(::tests::InsertField(doc, name_field));
+          ASSERT_TRUE(::tests::InsertField(doc, geo_field));
           irs::tests::StoreFieldAt(*doc.GetColWriter(), kName, doc.DocId(),
                                    name_field);
           irs::tests::StoreFieldAt(*doc.GetColWriter(), kGeo, doc.DocId(),
@@ -674,8 +675,8 @@ TEST(GeoFilterTest, checkScorer) {
           name_field.value = doc_entry.name;
 
           auto doc = (i++ % 2 ? segment0 : segment1).Insert();
-          ASSERT_TRUE(doc.Insert(name_field));
-          ASSERT_TRUE(doc.Insert(geo_field));
+          ASSERT_TRUE(::tests::InsertField(doc, name_field));
+          ASSERT_TRUE(::tests::InsertField(doc, geo_field));
           irs::tests::StoreFieldAt(*doc.GetColWriter(), kName, doc.DocId(),
                                    name_field);
           irs::tests::StoreFieldAt(*doc.GetColWriter(), kGeo, doc.DocId(),
@@ -914,8 +915,8 @@ TEST(GeoFilterTest, per_node_scorer_override) {
         geo_field.value = doc_entry.geometry;
         name_field.value = doc_entry.name;
         auto doc = segment.Insert();
-        ASSERT_TRUE(doc.Insert(name_field));
-        ASSERT_TRUE(doc.Insert(geo_field));
+        ASSERT_TRUE(::tests::InsertField(doc, name_field));
+        ASSERT_TRUE(::tests::InsertField(doc, geo_field));
         irs::tests::StoreFieldAt(*doc.GetColWriter(), kName, doc.DocId(),
                                  name_field);
         irs::tests::StoreFieldAt(*doc.GetColWriter(), kGeo, doc.DocId(),

@@ -343,7 +343,6 @@ class CompoundFieldIterator final : public BasicTermReader {
   FieldProperties properties() const noexcept final { return _props; }
   bytes_view min() const noexcept final { return _term_itr.MinTerm(); }
   bytes_view max() const noexcept final { return _term_itr.MaxTerm(); }
-  Attribute* GetMutable(TypeInfo::type_id) noexcept final { return nullptr; }
   TermOnlyIterator::ptr iterator() const final;
 
   bool Aborted() const {

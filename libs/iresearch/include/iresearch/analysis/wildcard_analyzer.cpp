@@ -23,117 +23,174 @@
 
 #include "iresearch/analysis/wildcard_analyzer.hpp"
 
-#include <iresearch/utils/attribute_provider.hpp>
+#include <simdutf.h>
 
-#include "basics/down_cast.h"
+#include "basics/log.h"
+#include "iresearch/analysis/keyword_tokenizer.hpp"
+#include "iresearch/analysis/text/classify/block_masks.hpp"
 #include "iresearch/analysis/tokenizer_config.hpp"
-#include "iresearch/analysis/tokenizers.hpp"
 #include "iresearch/utils/bytes_utils.hpp"
 #include "iresearch/utils/string.hpp"
-#include "iresearch/utils/utf8_utils.hpp"
 
 namespace irs::analysis {
-namespace {
 
-constexpr std::string_view kFill = "00000\xFF";
-
-constexpr std::string_view Fill(size_t len) noexcept {
-  return {kFill.data() + kFill.size() - len, len};
-}
-
-}  // namespace
-
-Analyzer::ptr WildcardAnalyzer::Make(Options opts) {
-  Analyzer::ptr base;
+Tokenizer::ptr WildcardAnalyzer::Make(Options opts,
+                                      duckdb::SharedObjectCache& cache) {
+  Tokenizer::ptr base;
   if (opts.base_analyzer) {
-    base = CreateAnalyzer(std::move(*opts.base_analyzer));
+    base = CreateTokenizer(std::move(*opts.base_analyzer), cache);
   }
-  // If `base_analyzer` is absent the ctor falls back to StringTokenizer.
   return std::make_unique<WildcardAnalyzer>(std::move(base), opts.ngram_size);
 }
 
-Attribute* WildcardAnalyzer::GetMutable(TypeInfo::type_id type) noexcept {
-  if (type == Type<OffsAttr>::id()) {
-    return nullptr;
+namespace {
+
+void AppendEncodedTerm(bstring& terms, duckdb::string_t term) {
+  const size_t size = term.GetSize();
+  if (size > std::numeric_limits<int32_t>::max()) {
+    SDB_WARN(IRESEARCH, "too long input for wildcard analyzer: ", size);
+    return;
   }
-  if (type == Type<StoreAttr>::id()) {
-    return &_store;
-  }
-  return _ngram->GetMutable(type);
+  const auto vlen = bytes_io<uint32_t>::vsize(static_cast<uint32_t>(size));
+  const auto idx = terms.size();
+  terms.resize_and_overwrite(
+    idx + vlen + 1 + size + 1, [&](byte_type* p, size_t n) {
+      auto* data = p + idx;
+      WriteVarint<uint32_t>(static_cast<uint32_t>(size), data);
+      *data++ = byte_type{0xFF};
+      std::memcpy(data, term.GetData(), size);
+      data[size] = byte_type{0xFF};
+      return n;
+    });
 }
 
-bool WildcardAnalyzer::reset(std::string_view data) {
-  _ngram->reset({});
-  if (!_analyzer->reset(data)) {
+struct EncodeConsumer final : TokenConsumer {
+  explicit EncodeConsumer(bstring& terms) noexcept : terms{&terms} {}
+
+  void Consume(TokenBatch& batch, DocRuns) final {
+    for (const auto& term : batch.Terms()) {
+      AppendEncodedTerm(*terms, term);
+      if (track_ascii) {
+        ascii &= classify::IsAsciiValue(term.GetData(), term.GetSize());
+      }
+    }
+  }
+
+  bstring* terms;
+  bool track_ascii = true;
+  bool ascii = true;
+};
+
+}  // namespace
+
+struct WildcardAnalyzer::SubSink {
+  explicit SubSink(bstring& terms) : consumer{terms} {
+    writer.Bind(consumer, nullptr);
+  }
+
+  EncodeConsumer consumer;
+  TokenSink writer;
+};
+
+WildcardAnalyzer::~WildcardAnalyzer() = default;
+
+std::tuple<bool> WildcardAnalyzer::PrepareBatch(BlockTraits traits) {
+  if (!_sub_sink) {
+    _sub_sink = std::make_unique<SubSink>(_terms);
+  }
+  return {traits.ascii};
+}
+
+template<TokenLayout Layout, bool KnownAscii>
+bool WildcardAnalyzer::DoFill(duckdb::string_t raw, TokenSink& out) {
+  _terms.clear();
+  auto& consumer = _sub_sink->consumer;
+  consumer.track_ascii = !(KnownAscii && _base_stable);
+  consumer.ascii = true;
+  if (!_analyzer->Fill(
+        raw, _sub_sink->writer,
+        {TokenLayout::Terms, BlockTraits{.ascii = KnownAscii}})) {
+    _sub_sink->writer.Discard();
     return false;
   }
-  _terms.clear();
-  while (_analyzer->next()) {
-    auto size = _term->value.size();
-    if (size > std::numeric_limits<int32_t>::max()) {
-      // icu doesn't support more
-      SDB_WARN(IRESEARCH, "too long input for wildcard analyzer: ", size);
-      continue;
-    }
-    auto idx = _terms.size();
-    absl::StrAppend(
-      &_terms, Fill(bytes_io<uint32_t>::vsize(static_cast<uint32_t>(size)) + 1),
-      ViewCast<char>(_term->value), Fill(1));
-    auto* data = begin() + idx;
-    WriteVarint<uint32_t>(static_cast<uint32_t>(size), data);
-  }
-  _terms_begin = begin();
-  _terms_end = _terms_begin + _terms.size();
-  _store.value = ViewCast<byte_type>(std::string_view{_terms});
-  return _terms_begin != _terms_end;
-}
+  _sub_sink->writer.Finish();
 
-bool WildcardAnalyzer::next() {
-  if (_ngram->next()) [[likely]] {
+  if (_terms.empty()) {
     return true;
   }
-  if (auto size = _ngram_term->value.size(); size > 1) {
-    auto* begin = _ngram_term->value.data();
-    auto* end = begin + size;
-    begin = utf8_utils::Next(begin, end);
-    _ngram_term->value = {begin, end};
-    if (_ngram_term->value.size() > 1) {
-      return true;
-    }
+  if (consumer.ascii) {
+    EmitTerms<true, Layout>(out);
+  } else {
+    EmitTerms<false, Layout>(out);
   }
-  if (_terms_begin == _terms_end) {
-    return false;
-  }
-  auto size = vread<uint32_t>(_terms_begin) + 2U;
-  bytes_view term{_terms_begin, size};
-  _ngram->reset(ViewCast<char>(term));
-  _terms_begin += size;
-  if (!_ngram->next()) {
-    _ngram_term->value = term;
-  }
+  out.Store(_terms);
   return true;
 }
 
-WildcardAnalyzer::WildcardAnalyzer(Analyzer::ptr base_analyzer,
-                                   size_t ngram_size) noexcept
-  : _analyzer{std::move(base_analyzer)} {
-  if (!_analyzer) {
-    _analyzer = std::make_unique<StringTokenizer>();
+template<bool Identity, TokenLayout Layout>
+void WildcardAnalyzer::EmitTermGrams(TokenSink& sink, const byte_type* term,
+                                     uint32_t size) {
+  const uint32_t* bounds = nullptr;
+  uint32_t nsym = size;
+  if constexpr (!Identity) {
+    nsym = static_cast<uint32_t>(classify::BuildUtf8CpBounds(
+      term, size,
+      simdutf::validate_utf8(reinterpret_cast<const char*>(term) + 1, size - 2),
+      _fill_bounds));
+    bounds = _fill_bounds.data();
   }
-  auto ptr = Ngram::make({
-    ngram_size,
-    ngram_size,
-    false,
-    NGramTokenizerBase::InputType::UTF8,
-    {},
-    {},
-  });
-  _ngram = decltype(_ngram){sdb::basics::downCast<Ngram>(ptr.release())};
-  SDB_ASSERT(_ngram);
-  _term = irs::get<TermAttr>(*_analyzer);
-  SDB_ASSERT(_term);
-  _ngram_term = irs::GetMutable<TermAttr>(_ngram.get());
-  SDB_ASSERT(_ngram_term);
+  const auto n = static_cast<uint32_t>(_ngram.min_gram());
+  const auto bnd = [&](uint32_t i) -> uint32_t {
+    if constexpr (Identity) {
+      return i;
+    } else {
+      return bounds[i];
+    }
+  };
+
+  uint32_t count = nsym >= n ? nsym - n + 1 : 0;
+  while (count < nsym && bnd(count) < size - 1) {
+    ++count;
+  }
+  sink.EmitK<Layout>(
+    count, size,
+    [&](byte_type* mem) IRS_FORCE_INLINE { std::memcpy(mem, term, size); },
+    [&](size_t s, byte_type*) IRS_FORCE_INLINE {
+      const auto b0 = bnd(static_cast<uint32_t>(s));
+      const auto b1 = bnd(std::min(static_cast<uint32_t>(s) + n, nsym));
+      return EmitKSlot{b0, b1};
+    });
 }
+
+template<bool Identity, TokenLayout Layout>
+void WildcardAnalyzer::EmitTerms(TokenSink& sink) {
+  const auto* it = _terms.data();
+  const auto* end = it + _terms.size();
+  while (it != end) {
+    const auto size = vread<uint32_t>(it) + 2U;
+    const auto* term = it;
+    it += size;
+    EmitTermGrams<Identity, Layout>(sink, term, size);
+  }
+}
+
+WildcardAnalyzer::WildcardAnalyzer(Tokenizer::ptr base_analyzer,
+                                   size_t ngram_size)
+  : _analyzer{std::move(base_analyzer)},
+    _ngram{NGramTokenizerBase::Options{
+      ngram_size,
+      ngram_size,
+      false,
+      NGramTokenizerBase::InputType::UTF8,
+      {},
+      {},
+    }} {
+  if (!_analyzer) {
+    _analyzer = std::make_unique<KeywordTokenizer>();
+  }
+  _base_stable = _analyzer->Traits().stable;
+}
+
+template class TypedTokenizer<WildcardAnalyzer>;
 
 }  // namespace irs::analysis

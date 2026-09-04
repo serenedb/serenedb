@@ -33,6 +33,7 @@
 #include "iresearch/search/phrase_filter.hpp"
 #include "iresearch/search/phrase_query.hpp"
 #include "iresearch/search/term_query.hpp"
+#include "test_resources.hpp"
 #include "tests_shared.hpp"
 
 namespace {
@@ -9138,29 +9139,28 @@ namespace tests {
 
 // Field whose token stream places two distinct terms ("foo" and "bar") at the
 // SAME position, via the real solr_synonyms analyzer (group "foo,bar":
-// indexing "foo" emits foo@P inc=1 and bar@P inc=0). Mirrors tests::TextField.
+// indexing "foo" emits foo@P and bar@P). Mirrors tests::TextField.
 class OverlapField : public tests::FieldBase {
  public:
   OverlapField(std::string_view name, irs::field_id field_id)
     : _stream(irs::analysis::SolrSynonymsTokenizer::Make(
         irs::analysis::SolrSynonymsTokenizer::Options{
           .synonyms_text = "foo,bar",
-        })) {
+        },
+        tests::Cache())) {
     this->Name(std::string(name));
     this->id = field_id;
     index_features = irs::IndexFeatures::Freq | irs::IndexFeatures::Pos;
   }
 
-  irs::Tokenizer& GetTokens() const final {
-    _stream->reset(_value);  // "foo" -> foo@P (inc 1), bar@P (inc 0)
-    return *_stream;
-  }
+  irs::analysis::Tokenizer& GetTokens() const final { return *_stream; }
+  std::string_view Value() const final { return _value; }
 
  private:
   bool Write(irs::DataOutput&) const final { return false; }
 
   std::string _value{"foo"};
-  irs::analysis::Analyzer::ptr _stream;
+  irs::analysis::Tokenizer::ptr _stream;
 };
 
 class OverlapDocGenerator : public tests::DocGeneratorBase {
@@ -9321,15 +9321,15 @@ TEST_P(PhraseFilterTestCase, sloppy_phrase_overlap_same_position_with_offsets) {
 
 namespace tests {
 
-// Explicit token stream over a fixed (term, increment, offsets) table;
+// Explicit token stream over a fixed (term, position, offsets) table;
 // each corpus below owns its table.
 class FixedTokensStream final
-  : public irs::analysis::TypedAnalyzer<FixedTokensStream>,
+  : public irs::analysis::TypedTokenizer<FixedTokensStream>,
     private irs::util::Noncopyable {
  public:
   struct Token {
     std::string_view term;
-    uint32_t inc;
+    uint32_t pos;
     uint32_t start;
     uint32_t end;
   };
@@ -9341,35 +9341,20 @@ class FixedTokensStream final
   explicit FixedTokensStream(std::span<const Token> tokens) noexcept
     : _tokens(tokens) {}
 
-  irs::Attribute* GetMutable(irs::TypeInfo::type_id type) noexcept final {
-    return irs::GetMutable(_attrs, type);
+  irs::TokenTraits Traits() const noexcept final {
+    return {.explicit_pos = true, .offsets = true};
   }
 
-  bool next() final {
-    if (_i >= _tokens.size()) {
-      return false;
+  template<irs::TokenLayout L>
+  bool DoFill(duckdb::string_t, irs::TokenSink& sink) {
+    for (const auto& t : _tokens) {
+      sink.Emit<L>(tests::ToStringT(t.term), t.pos, irs::Offs{t.start, t.end});
     }
-    const auto& t = _tokens[_i++];
-    std::get<irs::IncAttr>(_attrs).value = t.inc;
-    std::get<irs::TermAttr>(_attrs).value =
-      irs::ViewCast<irs::byte_type>(t.term);
-    auto& offs = std::get<irs::OffsAttr>(_attrs);
-    offs.start = t.start;
-    offs.end = t.end;
-    return true;
-  }
-
-  bool reset(std::string_view) final {
-    _i = 0;
     return true;
   }
 
  private:
-  using Attributes = std::tuple<irs::IncAttr, irs::OffsAttr, irs::TermAttr>;
-
   std::span<const Token> _tokens;
-  Attributes _attrs;
-  size_t _i{0};
 };
 
 class RepeatOverlapField : public tests::FieldBase {
@@ -9380,18 +9365,16 @@ class RepeatOverlapField : public tests::FieldBase {
     index_features = irs::IndexFeatures::Freq | irs::IndexFeatures::Pos;
   }
 
-  irs::Tokenizer& GetTokens() const final {
-    _stream.reset({});
-    return _stream;
-  }
+  irs::analysis::Tokenizer& GetTokens() const final { return _stream; }
+  std::string_view Value() const final { return {}; }
 
  private:
   bool Write(irs::DataOutput&) const final { return false; }
 
   static constexpr std::array<FixedTokensStream::Token, 3> kTokens{{
     {"foo", 1, 0, 3},
-    {"bar", 1, 4, 9},
-    {"foo", 0, 4, 9},
+    {"bar", 2, 4, 9},
+    {"foo", 2, 4, 9},
   }};
   mutable FixedTokensStream _stream{kTokens};
 };
@@ -9563,7 +9546,7 @@ TEST_P(PhraseFilterTestCase, sloppy_phrase_repeat_same_position_with_offsets) {
 
 namespace tests {
 
-// "foo" indexed under synonym foo,fooa -> foo@0 (inc 1) + fooa@0 (inc 0).
+// "foo" indexed under synonym foo,fooa -> foo@P + fooa@P.
 // A prefix slot "fo*" matches both.
 class OverlapPrefixField : public tests::FieldBase {
  public:
@@ -9571,22 +9554,21 @@ class OverlapPrefixField : public tests::FieldBase {
     : _stream(irs::analysis::SolrSynonymsTokenizer::Make(
         irs::analysis::SolrSynonymsTokenizer::Options{
           .synonyms_text = "foo,fooa",
-        })) {
+        },
+        tests::Cache())) {
     this->Name(std::string(name));
     this->id = field_id;
     index_features = irs::IndexFeatures::Freq | irs::IndexFeatures::Pos;
   }
 
-  irs::Tokenizer& GetTokens() const final {
-    _stream->reset(_value);
-    return *_stream;
-  }
+  irs::analysis::Tokenizer& GetTokens() const final { return *_stream; }
+  std::string_view Value() const final { return _value; }
 
  private:
   bool Write(irs::DataOutput&) const final { return false; }
 
   std::string _value{"foo"};
-  irs::analysis::Analyzer::ptr _stream;
+  irs::analysis::Tokenizer::ptr _stream;
 };
 
 class OverlapPrefixDocGenerator : public tests::DocGeneratorBase {
@@ -9672,7 +9654,7 @@ TEST_P(PhraseFilterTestCase, sloppy_phrase_variadic_overlap_same_position) {
 
 namespace tests {
 
-// aa@1 and cc@1 share position 1 (cc rides at increment 0); ee@2 follows.
+// aa@1 and cc@1 share position 1; ee@2 follows.
 // Offsets mimic a source text "aa cc ee".
 class VariadicOverlapField : public tests::FieldBase {
  public:
@@ -9683,18 +9665,16 @@ class VariadicOverlapField : public tests::FieldBase {
                      irs::IndexFeatures::Offs;
   }
 
-  irs::Tokenizer& GetTokens() const final {
-    _stream.reset({});
-    return _stream;
-  }
+  irs::analysis::Tokenizer& GetTokens() const final { return _stream; }
+  std::string_view Value() const final { return {}; }
 
  private:
   bool Write(irs::DataOutput&) const final { return false; }
 
   static constexpr std::array<FixedTokensStream::Token, 3> kTokens{{
     {"aa", 1, 0, 2},
-    {"cc", 0, 3, 5},
-    {"ee", 1, 6, 8},
+    {"cc", 1, 3, 5},
+    {"ee", 2, 6, 8},
   }};
   mutable FixedTokensStream _stream{kTokens};
 };

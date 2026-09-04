@@ -25,6 +25,7 @@
 
 #include "formats/column/test_cs_helpers.hpp"
 #include "index/index_tests.hpp"
+#include "insert_field.hpp"
 #include "iresearch/analysis/delimited_tokenizer.hpp"
 #include "iresearch/parser/parser.hpp"
 #include "iresearch/search/boolean_filter.hpp"
@@ -52,10 +53,9 @@ class SpaceField : public tests::FieldBase {
 
   void value(std::string_view v) { _value = v; }
 
-  irs::Tokenizer& GetTokens() const final {
-    _tokenizer->reset(_value);
-    return *_tokenizer;
-  }
+  irs::analysis::Tokenizer& GetTokens() const final { return *_tokenizer; }
+
+  std::string_view Value() const final { return _value; }
 
   bool Write(irs::DataOutput& o) const final {
     o.WriteByte(1);
@@ -148,7 +148,7 @@ class BoostQueryTestCase : public tests::IndexTestBase {
       auto batch = writer->GetBatch();
       {
         auto d = batch.Insert();
-        EXPECT_TRUE(d.Insert(f));
+        EXPECT_TRUE(tests::InsertField(d, f));
       }
       batch.Commit();
     };
@@ -291,7 +291,7 @@ TEST_P(BoostQueryTestCase, OptimizerPreservesMixedDistinct) {
     auto batch = writer->GetBatch();
     {
       auto d = batch.Insert();
-      EXPECT_TRUE(d.Insert(f));
+      EXPECT_TRUE(tests::InsertField(d, f));
     }
     batch.Commit();
   };

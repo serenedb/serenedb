@@ -34,6 +34,7 @@
 #include "iresearch/search/prefix_filter.hpp"
 #include "iresearch/search/term_filter.hpp"
 #include "iresearch/utils/levenshtein_default_pdp.hpp"
+#include "test_resources.hpp"
 #include "tests_shared.hpp"
 
 namespace {
@@ -511,12 +512,13 @@ TEST_P(ByEditDistanceTestCase, bm25) {
   opts.case_convert = irs::Case::Lower;
   opts.explicit_stopwords_set = true;
   opts.stemming = false;
-  auto analyzer = irs::analysis::TextTokenizer::Make(std::move(opts));
+  auto analyzer =
+    irs::analysis::TextTokenizer::Make(std::move(opts), tests::Cache());
   ASSERT_NE(nullptr, analyzer);
 
   struct TextField : FieldBase {
    public:
-    TextField(irs::analysis::Analyzer& analyzer, std::string value)
+    TextField(irs::analysis::Tokenizer& analyzer, std::string value)
       : _value(std::move(value)), _analyzer(&analyzer) {
       this->Name("id");
       this->id = kIdId;
@@ -526,15 +528,13 @@ TEST_P(ByEditDistanceTestCase, bm25) {
 
     bool Write(irs::DataOutput&) const noexcept final { return true; }
 
-    irs::Tokenizer& GetTokens() const final {
-      const bool res = _analyzer->reset(_value);
-      EXPECT_TRUE(res);
-      return *_analyzer;
-    }
+    irs::analysis::Tokenizer& GetTokens() const final { return *_analyzer; }
+
+    std::string_view Value() const final { return _value; }
 
    private:
     std::string _value;
-    irs::analysis::Analyzer* _analyzer;
+    irs::analysis::Tokenizer* _analyzer;
   };
 
   {

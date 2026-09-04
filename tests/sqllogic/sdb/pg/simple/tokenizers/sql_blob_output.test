@@ -1,0 +1,137 @@
+# A sql dictionary may return BLOB or BLOB[] as well as VARCHAR or VARCHAR[];
+# the element type becomes the token type, which ts_lexize reports back.
+
+
+# --- BLOB list and BLOB scalar results type the tokens as BLOB ---
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY sql_blob_list(
+    template = 'sql',
+    expression = '[input::BLOB]'
+)
+
+
+query
+SELECT typeof(ts_lexize('sql_blob_list', 'ab')) AS type;
+----
+type
+BLOB[]
+
+
+query
+SELECT hex(s) AS token FROM unnest(ts_lexize('sql_blob_list', 'ab')) AS s;
+----
+token
+6162
+
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY sql_blob_scalar(
+    template = 'sql',
+    expression = 'input::BLOB'
+)
+
+
+query
+SELECT typeof(ts_lexize('sql_blob_scalar', 'ab')) AS type;
+----
+type
+BLOB[]
+
+
+query
+SELECT hex(s) AS token FROM unnest(ts_lexize('sql_blob_scalar', 'ab')) AS s;
+----
+token
+6162
+
+
+# --- Text results keep their VARCHAR typing ---
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY sql_text(
+    template = 'sql',
+    expression = 'upper(input)'
+)
+
+
+query
+SELECT typeof(ts_lexize('sql_text', 'ab')) AS type;
+----
+type
+VARCHAR[]
+
+
+query
+SELECT ts_lexize('sql_text', 'ab');
+----
+ts_lexize
+{AB}
+
+
+# --- The per-row dictionary arm cannot retype its result, so it refuses binary tokens ---
+
+statement error
+SELECT ts_lexize(d, 'ab') FROM (VALUES ('sql_blob_list')) AS t(d);
+----
+db error: ERROR: text search dictionary "sql_blob_list" produces BLOB tokens; pass the dictionary name as a constant
+
+
+query
+SELECT ts_lexize(d, 'ab') FROM (VALUES ('sql_text')) AS t(d);
+----
+ts_lexize
+{AB}
+
+
+# --- Any other element type is rejected when the dictionary is created ---
+
+statement error
+CREATE TEXT SEARCH DICTIONARY sql_bigint(
+    template = 'sql',
+    expression = 'length(input)'
+)
+----
+db error: ERROR: sql: expression must return VARCHAR, BLOB, or a list of them, got BIGINT
+
+
+statement error
+CREATE TEXT SEARCH DICTIONARY sql_bigint_list(
+    template = 'sql',
+    expression = '[length(input)]'
+)
+----
+db error: ERROR: sql: expression must return VARCHAR, BLOB, or a list of them, got BIGINT[]
+
+
+# --- BLOB tokens index and match: the whole value is one binary term ---
+
+statement ok
+CREATE TABLE blob_docs(pk INTEGER PRIMARY KEY, body TEXT);
+
+statement ok
+INSERT INTO blob_docs VALUES (1, 'ab'), (2, 'abc'), (3, 'xyz'), (4, NULL);
+
+statement ok
+CREATE INDEX blob_docs_idx ON blob_docs USING inverted(pk, body sql_blob_list);
+
+statement ok
+VACUUM (REFRESH_TABLE) blob_docs;
+
+query
+SELECT pk FROM blob_docs_idx WHERE body @@ 'ab' ORDER BY pk;
+----
+pk
+1
+
+query
+SELECT pk FROM blob_docs_idx WHERE body @@ ts_any(ts_tokenize(['xyz'::BLOB], 'keyword')) ORDER BY pk;
+----
+pk
+3
+
+query
+SELECT count(*) FROM blob_docs_idx WHERE body @@ 'a';
+----
+count
+0

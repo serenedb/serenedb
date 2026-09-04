@@ -105,16 +105,17 @@ irs::DirectoryReader BuildIndex(
     irs::IndexWriter::Make(dir, codec, irs::kOmCreate, std::move(opts));
   EXPECT_NE(nullptr, writer);
 
-  irs::tests::StringField name_field;
-  name_field.field_name = "name";
-  name_field.id = kName;
-  name_field.value = "doc";
   {
     auto trx = writer->GetBatch();
+    const duckdb::string_t name_value{"doc", 3};
     for (irs::doc_id_t i = 0; i < n; ++i) {
       auto doc = trx.Insert();
-      EXPECT_TRUE(doc.Insert(name_field));
-      WriteVectorAt(*doc.GetColWriter(), doc.DocId(), doc.DocId());
+      const auto d = doc.DocId();
+      EXPECT_TRUE(doc.WithField(
+        kName, irs::IndexFeatures::Freq, [&](irs::FieldInverter& fld) {
+          return fld.InvertKeywords([&](auto&& emit) { emit(name_value, d); });
+        }));
+      WriteVectorAt(*doc.GetColWriter(), d, d);
     }
     trx.Commit();
   }

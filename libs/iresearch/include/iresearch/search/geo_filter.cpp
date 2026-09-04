@@ -34,6 +34,7 @@
 #include "basics/memory.hpp"
 #include "geo/geo_json.h"
 #include "geo/geo_params.h"
+#include "geo/geo_terms.h"
 #include "geo/wkb.h"
 #include "iresearch/formats/column/col_reader.hpp"
 #include "iresearch/formats/column/column_reader.hpp"
@@ -166,7 +167,7 @@ class GeoIterator : public DocIterator {
   bool Accept(doc_id_t doc) {
     // Per-doc point fetch via cached cursor: same row group as the
     // previous doc reuses its pinned ColumnSegment + ColumnFetchState.
-    // Empty span = row stored as null (analyzer didn't populate StoreAttr)
+    // Empty span = row stored as null (analyzer didn't populate the store)
     // OR analyzer wrote zero bytes -- either way nothing to match.
     const auto bytes = _cursor.FetchDoc(doc);
     if (bytes.empty()) {
@@ -652,9 +653,8 @@ QueryBuilder::ptr PrepareOpenInterval(const SubReader& segment,
     return QueryBuilder::Empty();
   }
 
-  S2RegionTermIndexer indexer(options.options);
-
-  const auto geo_terms = indexer.GetQueryTerms(bound, options.prefix);
+  const auto geo_terms =
+    sdb::geo::terms::QueryTerms(options.options, bound, options.prefix);
 
   if (geo_terms.empty()) {
     return QueryBuilder::Empty();
@@ -757,8 +757,8 @@ QueryBuilder::ptr PrepareInterval(const SubReader& segment,
     SDB_ASSERT(min_incl);
     SDB_ASSERT(max_incl);
 
-    S2RegionTermIndexer indexer(options.options);
-    const auto geo_terms = indexer.GetQueryTerms(origin, options.prefix);
+    const auto geo_terms =
+      sdb::geo::terms::QueryTerms(options.options, origin, options.prefix);
 
     if (geo_terms.empty()) {
       return QueryBuilder::Empty();
@@ -780,7 +780,6 @@ QueryBuilder::ptr PrepareInterval(const SubReader& segment,
     return QueryBuilder::Empty();
   }
 
-  S2RegionTermIndexer indexer(options.options);
   S2RegionCoverer coverer(options.options);
 
   SDB_ASSERT(!min_bound.is_empty());
@@ -792,7 +791,8 @@ QueryBuilder::ptr PrepareInterval(const SubReader& segment,
   // until cells are disjoint or fully contained, so `ring` can have cells
   // beyond options.max_level. Re-cover through GetQueryTerms so the coverer
   // enforces min/max level before GetQueryTermsForCanonicalCovering runs.
-  const auto geo_terms = indexer.GetQueryTerms(ring, options.prefix);
+  const auto geo_terms =
+    sdb::geo::terms::QueryTerms(options.options, ring, options.prefix);
 
   if (geo_terms.empty()) {
     return QueryBuilder::Empty();
@@ -849,14 +849,15 @@ QueryBuilder::ptr GeoFilter::PrepareSegment(const SubReader& segment,
 
   const auto& options = this->options();
 
-  S2RegionTermIndexer indexer{options.options};
   std::vector<std::string> geo_terms;
   const auto type = shape.type();
   if (type == ShapeContainer::Type::S2Point) {
     const auto& region = sdb::basics::downCast<S2PointRegion>(*shape.region());
-    geo_terms = indexer.GetQueryTerms(region.point(), options.prefix);
+    geo_terms = sdb::geo::terms::QueryTerms(options.options, region.point(),
+                                            options.prefix);
   } else {
-    geo_terms = indexer.GetQueryTerms(*shape.region(), {});
+    geo_terms =
+      sdb::geo::terms::QueryTerms(options.options, *shape.region(), {});
   }
 
   if (geo_terms.empty()) {

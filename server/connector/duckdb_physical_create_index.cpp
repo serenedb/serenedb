@@ -139,12 +139,12 @@ struct CreateIndexLocalState : public duckdb::LocalSinkState {
   // so anything rebuilt on the stack there is an allocation per chunk. row_keys
   // holds its strings rather than clearing the vector, which would destroy them
   // and throw away exactly the buffers the pooling is for.
-  std::vector<std::string> row_keys;
-  std::vector<std::string_view> key_views;
   std::vector<FeedColumn> columns;
   std::vector<ExpressionValue> expression_values;
   duckdb::SelectionVector backfill_sel{STANDARD_VECTOR_SIZE};
   std::unique_ptr<duckdb::Vector> pk_scratch;
+  std::vector<duckdb::string_t> key_terms;
+  std::vector<std::string> row_keys;
   size_t uncommitted_min_slot = std::numeric_limits<size_t>::max();
 
   ~CreateIndexLocalState() override {
@@ -696,8 +696,19 @@ SereneDBPhysicalCreateIndex::GetLocalSinkState(
     std::shared_ptr<const irs::IndexFieldOptions>{
       gstate.index_for_providers,
       &catalog::InvertedInfo(*gstate.index_for_providers)});
+  if (!TableOrNull()) {
+    // View-backed indexes tick on the domain for EVERYTHING (create docs,
+    // pass docs, removes, eq deletes): one clock, every commit fresh and
+    // above all prior ones. Table-backed creates keep the writer's private
+    // plateau so concurrent DML removes always apply over the backfill.
+    lstate->search_trx->SetTickSource([](uint64_t count) {
+      return search::TickDomain::Instance().Advance(count);
+    });
+  }
+
   auto tokenizer_provider = MakeTokenizerProvider(
-    catalog::ResolveTokenizers(context.client, inverted_index), inverted_index);
+    context.client, catalog::ResolveTokenizers(context.client, inverted_index),
+    inverted_index);
   auto entry_info_provider = MakeEntryInfoProvider(inverted_index);
   const auto& index_options = inverted_index.GetOptions();
   lstate->writer = std::make_unique<DuckDBSearchSinkInsertWriter>(
@@ -705,6 +716,27 @@ SereneDBPhysicalCreateIndex::GetLocalSinkState(
     gstate.index_for_providers->GetColumns(), std::move(entry_info_provider),
     PkPolicy{.index_term = index_options.pk_term,
              .column = index_options.pk_column});
+
+  if (index_options.pk_term && estimated_cardinality > 0) {
+    // Every row is one PK term, so this sink's row share is an ~exact
+    // dictionary hint. The memory cap keeps an over-estimate from exceeding
+    // the segment budget (FlushRequired counts dictionary capacity): an
+    // uncapped reserve would cut a segment after the first batch.
+    const uint64_t sinks =
+      context.pipeline
+        ? std::max<uint64_t>(context.pipeline->GetMaxThreads(), 1)
+        : 1;
+    constexpr uint64_t kDictBytesPerTerm = 40;
+    const uint64_t cap =
+      index_options.segment_memory_max / 2 / kDictBytesPerTerm;
+    const auto hint =
+      std::min<uint64_t>({estimated_cardinality / sinks, cap,
+                          std::numeric_limits<uint32_t>::max()});
+    if (hint) {
+      lstate->search_trx->SetReserveHint(catalog::term_dict::kPKFieldId,
+                                         static_cast<uint32_t>(hint));
+    }
+  }
 
   if (IsDuckDBTable()) {
     auto& slot = lstate->uncommitted_min_slot;
@@ -764,9 +796,7 @@ duckdb::SinkResultType SereneDBPhysicalCreateIndex::Sink(
   }
 
   PkChunk pk;
-  auto& row_keys = lstate->row_keys;
-  auto& key_views = lstate->key_views;
-  key_views.clear();
+  auto& key_terms = lstate->key_terms;
   if (gstate.pk_column == catalog::PkColumnKind::Has) {
     switch (gstate.pk_shape) {
       case PkShape::Single:
@@ -797,10 +827,8 @@ duckdb::SinkResultType SereneDBPhysicalCreateIndex::Sink(
     }
   }
   if (gstate.pk_term) {
-    if (row_keys.size() < num_rows) {
-      row_keys.resize(num_rows);
-    }
-    key_views.reserve(num_rows);
+    key_terms.clear();
+    key_terms.reserve(num_rows);
     switch (gstate.pk_shape) {
       case PkShape::Single: {
         auto& pk_vec = chunk.data[gstate.pk_base_col_idx];
@@ -808,15 +836,14 @@ duckdb::SinkResultType SereneDBPhysicalCreateIndex::Sink(
         pk_vec.ToUnifiedFormat(num_rows, fmt);
         auto* pks = duckdb::UnifiedVectorFormat::GetData<int64_t>(fmt);
         for (duckdb::idx_t row = 0; row < num_rows; ++row) {
-          auto& key = row_keys[row];
-          key.clear();
-          primary_key::AppendSigned(key, pks[fmt.sel->get_index(row)]);
-          key_views.emplace_back(key);
+          key_terms.push_back(catalog::duckdb_primary_key::SignedKeyTerm(
+            pks[fmt.sel->get_index(row)]));
         }
       } break;
       case PkShape::Struct: {
         // The glob (file, row) halves; pk_term is never set for external
-        // key structs.
+        // key structs. Composite keys exceed string_t's inline capacity, so
+        // the bytes stay in row_keys and key_terms view into them.
         SDB_ASSERT(gstate.generated_pk_type == FileIndexRowNumberStructType());
         const auto base = gstate.pk_base_col_idx;
         duckdb::UnifiedVectorFormat file_fmt;
@@ -825,16 +852,18 @@ duckdb::SinkResultType SereneDBPhysicalCreateIndex::Sink(
         duckdb::UnifiedVectorFormat row_fmt;
         chunk.data[base + 1].ToUnifiedFormat(num_rows, row_fmt);
         auto* rows = duckdb::UnifiedVectorFormat::GetData<int64_t>(row_fmt);
+        auto& row_keys = lstate->row_keys;
+        row_keys.clear();
+        row_keys.reserve(num_rows);
         for (duckdb::idx_t row = 0; row < num_rows; ++row) {
-          auto& key = row_keys[row];
-          key.clear();
+          auto& key = row_keys.emplace_back();
           primary_key::AppendUnsigned(key, files[file_fmt.sel->get_index(row)]);
           primary_key::AppendSigned(key, rows[row_fmt.sel->get_index(row)]);
-          key_views.emplace_back(key);
+          key_terms.emplace_back(key.data(), static_cast<uint32_t>(key.size()));
         }
       } break;
     }
-    pk.keys = key_views;
+    pk.key_terms = key_terms;
   }
 
   auto& columns = lstate->columns;

@@ -34,6 +34,14 @@
 namespace sdb::connector {
 namespace {
 
+bool IsListLike(const duckdb::LogicalType& type) noexcept {
+  return type.id() == duckdb::LogicalTypeId::LIST ||
+         type.id() == duckdb::LogicalTypeId::MAP;
+}
+
+}  // namespace
+namespace {
+
 constexpr duckdb::idx_t kDenseDensity = 32;
 constexpr duckdb::idx_t kMinDenseBatch = 64;
 
@@ -96,8 +104,7 @@ void HitBatcher::BeginSegment(
   const auto bind = [&](Column& c, const irs::ColumnReader& r) {
     c.reader = &r;
     c.out_type = r.Type();
-    c.list_like = r.Type().id() == duckdb::LogicalTypeId::LIST ||
-                  r.Type().id() == duckdb::LogicalTypeId::MAP;
+    c.list_like = IsListLike(r.Type());
     c.state = std::make_unique<irs::ColumnReader::ScanState>(r.InitScan(*_ctx));
     if (_rg_col == nullptr) {
       _rg_col = &r;
@@ -133,8 +140,7 @@ void HitBatcher::BeginSegment(
     if (c.extract) {
       c.reader = r;
       c.out_type = p.extract_scan_type;
-      c.list_like = c.out_type.id() == duckdb::LogicalTypeId::LIST ||
-                    c.out_type.id() == duckdb::LogicalTypeId::MAP;
+      c.list_like = IsListLike(c.out_type);
       c.extract_binding = std::make_unique<ExtractBinding>();
       c.extract_binding->Bind(*r, *_ctx, p.extract_path, p.extract_scan_type,
                               context);
@@ -155,13 +161,39 @@ uint64_t HitBatcher::RgEndFor(uint64_t row) const noexcept {
                   row + STANDARD_VECTOR_SIZE);
 }
 
-duckdb::idx_t HitBatcher::OpenWindow(uint64_t row) {
-  SDB_ASSERT(!Ready(), "emit the pending batch before pushing more");
+bool HitBatcher::DrainCompact() {
   if (_compact) {
     Compact();
-    if (Ready()) {
-      return 0;
-    }
+  }
+  return Ready();
+}
+
+std::pair<uint64_t, duckdb::idx_t> HitBatcher::BuildSel(duckdb::idx_t first,
+                                                        duckdb::idx_t n) {
+  const uint64_t anchor = Row(first);
+  const auto span = static_cast<duckdb::idx_t>(Row(first + n - 1) - anchor + 1);
+  _sel.Initialize(_sel_data);
+  for (duckdb::idx_t i = 0; i < n; ++i) {
+    _sel.set_index(i, Row(first + i) - anchor);
+  }
+  return {anchor, span};
+}
+
+void HitBatcher::FinishBatch(Batch& batch, duckdb::idx_t count) {
+  batch.count = count;
+  batch.docs = {_docs.data(), count};
+  if (_track_scores) {
+    batch.scores = {ScoreData(), count};
+    batch.score_vec = ScoreVector();
+  }
+  _ready = Pending::None;
+  _compact = true;
+}
+
+duckdb::idx_t HitBatcher::OpenWindow(uint64_t row) {
+  SDB_ASSERT(!Ready(), "emit the pending batch before pushing more");
+  if (DrainCompact()) {
+    return 0;
   }
   if (_len != _group &&
       (row >= _group_rg_end || _len == STANDARD_VECTOR_SIZE)) {
@@ -180,11 +212,8 @@ duckdb::idx_t HitBatcher::OpenWindow(uint64_t row) {
 
 void HitBatcher::Finalize() {
   SDB_ASSERT(!Ready(), "emit the pending batch before Finalize");
-  if (_compact) {
-    Compact();
-    if (Ready()) {
-      return;
-    }
+  if (DrainCompact()) {
+    return;
   }
   CloseGroup();
   if (_ready == Pending::None && _len != 0) {
@@ -264,7 +293,7 @@ void HitBatcher::CloseGroup() {
     }
     return;
   }
-  ScatterGroup();
+  ScatterGroup(anchor, span);
   _group = _len;
   if (_len == STANDARD_VECTOR_SIZE) {
     _ready = Pending::Scratch;
@@ -273,10 +302,8 @@ void HitBatcher::CloseGroup() {
   }
 }
 
-void HitBatcher::ScatterGroup() {
+void HitBatcher::ScatterGroup(uint64_t anchor, duckdb::idx_t span) {
   const auto hits = _len - _group;
-  const uint64_t anchor = Row(_group);
-  const auto span = static_cast<duckdb::idx_t>(Row(_len - 1) - anchor + 1);
   _sel.Initialize(_sel_data);
   for (duckdb::idx_t i = 0; i < hits; ++i) {
     _sel.set_index(i, Row(_group + i) - anchor);
@@ -350,12 +377,7 @@ HitBatcher::Batch HitBatcher::EmitFiltered(duckdb::DataChunk& output) {
   uint64_t anchor = 0;
   duckdb::idx_t span = 0;
   if (count != 0) {
-    anchor = Row(0);
-    span = static_cast<duckdb::idx_t>(Row(count - 1) - anchor + 1);
-    _sel.Initialize(_sel_data);
-    for (duckdb::idx_t i = 0; i < count; ++i) {
-      _sel.set_index(i, Row(i) - anchor);
-    }
+    std::tie(anchor, span) = BuildSel(0, count);
     // Phase 2: `.col` codec filters -- the chain narrows `_sel`; a projected
     // filter column decodes straight into its output slot (Sliced below), a
     // filter-only column into private scratch. Whole-window zonemap skips a
@@ -383,14 +405,7 @@ HitBatcher::Batch HitBatcher::EmitFiltered(duckdb::DataChunk& output) {
     }
   }
 
-  batch.count = survivors;
-  batch.docs = {_docs.data(), survivors};
-  if (_track_scores) {
-    batch.scores = {ScoreData(), survivors};
-    batch.score_vec = ScoreVector();
-  }
-  _ready = Pending::None;
-  _compact = true;
+  FinishBatch(batch, survivors);
   return batch;
 }
 
@@ -402,12 +417,7 @@ HitBatcher::Batch HitBatcher::Emit(duckdb::DataChunk& output) {
   Batch batch;
   batch.seg = _seg_idx;
   if (_ready == Pending::Dense) {
-    const uint64_t anchor = Row(0);
-    const auto span = static_cast<duckdb::idx_t>(Row(_batch - 1) - anchor + 1);
-    _sel.Initialize(_sel_data);
-    for (duckdb::idx_t i = 0; i < _batch; ++i) {
-      _sel.set_index(i, Row(i) - anchor);
-    }
+    const auto [anchor, span] = BuildSel(0, _batch);
     for (auto& c : _columns) {
       auto& out = c.is_pk ? _pk_out->Reset() : output.data[c.slot];
       MaterializeColumn(c, anchor, span, _batch, 0, out, 0, /*dense=*/true);
@@ -424,14 +434,7 @@ HitBatcher::Batch HitBatcher::Emit(duckdb::DataChunk& output) {
       }
     }
   }
-  batch.count = _batch;
-  batch.docs = {_docs.data(), _batch};
-  if (_track_scores) {
-    batch.scores = {ScoreData(), _batch};
-    batch.score_vec = ScoreVector();
-  }
-  _ready = Pending::None;
-  _compact = true;
+  FinishBatch(batch, _batch);
   return batch;
 }
 

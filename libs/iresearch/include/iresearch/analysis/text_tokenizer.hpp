@@ -25,79 +25,124 @@
 
 #pragma once
 
-#include <absl/container/flat_hash_set.h>
+#include <unicode/brkiter.h>
 #include <unicode/locid.h>
+#include <unicode/normalizer2.h>
+#include <unicode/translit.h>
+#include <unicode/unistr.h>
 
-#include "analyzer.hpp"
+#include <string>
+#include <vector>
+
 #include "basics/shared.hpp"
-#include "iresearch/utils/attribute_helper.hpp"
+#include "iresearch/analysis/stopword_set.hpp"
+#include "iresearch/analysis/text/dict/stem_cache.hpp"
 #include "iresearch/utils/icu_locale_serde.hpp"
-#include "token_attributes.hpp"
+#include "iresearch/utils/snowball_stemmer.hpp"
 #include "tokenizer.hpp"
 
 namespace irs::analysis {
 
-/// @note expects UTF-8 encoded input
-class TextTokenizer final : public TypedAnalyzer<TextTokenizer>,
+class TextTokenizer final : public TypedTokenizer<TextTokenizer>,
                             private util::Noncopyable {
  public:
-  using stopwords_t = absl::flat_hash_set<std::string>;
-
   struct Options {
     using Owner = TextTokenizer;
     icu::Locale locale = irs::MakeBogusLocale();
-    // lowercase tokens, match original implementation
     Case case_convert{Case::Lower};
-    stopwords_t explicit_stopwords;
-    // single zero char indicates 'no value set' -- empty string means a custom
-    // (empty) path was explicitly requested.
+    std::vector<std::string> explicit_stopwords;
     std::string stopwords_path = std::string(1, '\0');
     size_t min_gram{};
     size_t max_gram{};
-    // needed for mark empty explicit_stopwords as valid and prevent loading
-    // from defaults
     bool explicit_stopwords_set{};
-    bool
-      accent{};  // remove accents from letters, match original implementation
-    bool stemming{
-      true};  // try to stem if possible, match original implementation
-    // needed for mark empty min_gram as valid and prevent loading from defaults
+    bool accent{};
+    bool stemming{true};
     bool min_gram_set{};
-    // needed for mark empty max_gram as valid and prevent loading from defaults
     bool max_gram_set{};
-    bool preserve_original{};  // emit input data as a token
-    // needed for mark empty preserve_original as valid and prevent loading from
-    // defaults
+    bool preserve_original{};
     bool preserve_original_set{};
   };
-  static ptr Make(Options opts);
-
-  struct StateT;
+  static ptr Make(Options opts, duckdb::SharedObjectCache& cache);
 
   static const char* gStopwordPathEnvVariable;
 
   static constexpr std::string_view type_name() noexcept { return "text"; }
 
-  TextTokenizer(Options options, stopwords_t stopwords);
-  Attribute* GetMutable(TypeInfo::type_id type) noexcept final {
-    return irs::GetMutable(_attrs, type);
+  TextTokenizer(Options options,
+                duckdb::shared_ptr<const StopwordSet> stopwords);
+
+  TokenTraits Traits() const noexcept final {
+    return {
+      .explicit_pos = _search_ngram,
+      .offsets = true,
+    };
   }
-  bool next() final;
-  bool reset(std::string_view data) final;
+
+  BlockTraits WantedBlockTraits() const noexcept final {
+    return {.ascii = _ascii_fast};
+  }
+
+  auto PrepareBatch(BlockTraits traits) const {
+    return std::tuple{_case_convert, _search_ngram,
+                      traits.ascii && _ascii_fast};
+  }
+
+  size_t MemoryUsage() const noexcept final;
+
+  template<TokenLayout Layout, Case C, bool SearchNGram, bool KnownAscii>
+  bool DoFill(duckdb::string_t raw, TokenSink& sink);
 
  private:
-  using attributes = std::tuple<IncAttr, OffsAttr, TermAttr>;
-
-  struct StateDeleterT {
-    void operator()(StateT*) const noexcept;
+  struct Word {
+    std::string_view term;
+    uint32_t start{};
+    uint32_t end{};
   };
 
-  bool next_word();
-  bool next_ngram();
+  bool InitIcu(bool accent, bool stemming);
 
-  bstring _term_buf;  // buffer for value if value cannot be referenced directly
-  attributes _attrs;
-  std::unique_ptr<StateT, StateDeleterT> _state;
+  std::string_view Stem(std::string_view word) {
+    SDB_ASSERT(_stemmer);
+    const auto stemmed = _stem_cache.Stem(_stemmer.get(), MakeTermView(word));
+    return stemmed ? *stemmed : word;
+  }
+
+  template<Case C>
+  bool NextWord(const icu::UnicodeString& data, Word& word);
+
+  template<Case C>
+  IRS_FORCE_INLINE bool AsciiTerm(const char* src, uint32_t size,
+                                  const char* shadow_base, uint32_t begin,
+                                  std::string_view& term);
+
+  template<TokenLayout Layout, Case C, bool SearchNGram>
+  void FillValue(TokenSink& sink, const duckdb::string_t& raw,
+                 const icu::UnicodeString& data);
+  template<TokenLayout Layout, Case C, bool SearchNGram>
+  void AsciiFillValue(TokenSink& sink, duckdb::string_t raw);
+  template<TokenLayout Layout>
+  void EmitWordNGrams(TokenSink& sink, const duckdb::string_t& value,
+                      uint32_t& pos, std::string_view term,
+                      uint32_t offs_start);
+
+  icu::Locale _locale;
+  duckdb::shared_ptr<const StopwordSet> _stopwords;
+  std::unique_ptr<icu::Transliterator> _transliterator;
+  std::unique_ptr<icu::BreakIterator> _break_iterator;
+  const icu::Normalizer2* _normalizer{};
+  stemmer_ptr _stemmer;
+  dict::StemCache _stem_cache;
+  icu::UnicodeString _token;
+  std::string _term_buf;
+  std::string _shadow_buf;
+  size_t _min_gram;
+  size_t _max_gram;
+  Case _case_convert;
+  bool _search_ngram;
+  bool _preserve_original;
+  bool _ascii_fast;
 };
+
+extern template class TypedTokenizer<TextTokenizer>;
 
 }  // namespace irs::analysis

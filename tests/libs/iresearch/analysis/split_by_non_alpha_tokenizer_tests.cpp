@@ -18,8 +18,17 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
+#include <absl/strings/ascii.h>
+
+#include <cstring>
+#include <string>
+#include <string_view>
+#include <utility>
+#include <vector>
+
 #include "iresearch/analysis/split_by_non_alpha_tokenizer.hpp"
 #include "iresearch/analysis/text/words/masks.hpp"
+#include "iresearch/analysis/text/words/split_by_non_alpha.hpp"
 #include "iresearch/analysis/token_batch.hpp"
 #include "tests_shared.hpp"
 #include "token_sink_utils.hpp"
@@ -27,6 +36,35 @@
 namespace {
 
 using irs::analysis::SplitByNonAlphaTokenizer;
+using Runs = std::vector<std::pair<size_t, size_t>>;
+
+Runs ReferenceRuns(std::string_view v) {
+  Runs out;
+  size_t i = 0;
+  while (i < v.size()) {
+    while (i < v.size() &&
+           !absl::ascii_isalnum(static_cast<unsigned char>(v[i]))) {
+      ++i;
+    }
+    const size_t begin = i;
+    while (i < v.size() &&
+           absl::ascii_isalnum(static_cast<unsigned char>(v[i]))) {
+      ++i;
+    }
+    if (i != begin) {
+      out.emplace_back(begin, i);
+    }
+  }
+  return out;
+}
+
+Runs SplitRuns(std::string_view v) {
+  Runs out;
+  irs::analysis::words::SplitByNonAlpha(
+    tests::ToStringT(v),
+    [&](size_t begin, size_t end) { out.emplace_back(begin, end); });
+  return out;
+}
 
 struct Tok {
   std::string term;
@@ -212,4 +250,75 @@ TEST(split_by_non_alpha_tokenizer_test, column_fill_matches_pull) {
   tests::FillColumn(*fill_a, values, 100, sink.writer, sink.layout);
   sink.writer.Finish();
   ASSERT_EQ(1, flushes);
+}
+
+TEST(classify_block_test, LoadPaddedExact) {
+  constexpr size_t kBlock = irs::analysis::classify::kClassifyBlock;
+  irs::byte_type data[kBlock + 8];
+  for (size_t i = 0; i < sizeof data; ++i) {
+    data[i] = static_cast<irs::byte_type>(0x81 + i * 5);
+  }
+  for (size_t size = 0; size < kBlock; ++size) {
+    const auto block = irs::analysis::classify::LoadPadded(data + 3, size);
+    irs::byte_type got[kBlock];
+    std::memcpy(got, &block, sizeof got);
+    for (size_t i = 0; i < kBlock; ++i) {
+      ASSERT_EQ(i < size ? data[3 + i] : 0, got[i])
+        << "size=" << size << " i=" << i;
+    }
+  }
+}
+
+TEST(split_by_non_alpha_test, runs_block_boundaries) {
+  const auto alnum = [](size_t n) { return std::string(n, 'a'); };
+  const auto sep = [](size_t n) { return std::string(n, ' '); };
+  for (const std::string& v :
+       {std::string{},
+        alnum(1),
+        alnum(16),
+        alnum(31),
+        alnum(32),
+        alnum(33),
+        alnum(40),
+        alnum(64),
+        alnum(65),
+        sep(31),
+        sep(32),
+        sep(40),
+        alnum(31) + sep(1),
+        alnum(31) + sep(1) + alnum(1),
+        alnum(30) + sep(2) + alnum(30),
+        sep(31) + alnum(2),
+        sep(32) + alnum(1),
+        alnum(32) + sep(1) + alnum(7),
+        alnum(63) + sep(1),
+        alnum(63) + sep(1) + alnum(1),
+        sep(1) + alnum(31) + sep(1) + alnum(31) + sep(1),
+        alnum(5) + sep(27) + alnum(5) + sep(27) + alnum(5)}) {
+    SCOPED_TRACE(testing::Message() << "size=" << v.size());
+    ASSERT_EQ(ReferenceRuns(v), SplitRuns(v));
+  }
+}
+
+TEST(split_by_non_alpha_test, runs_oracle_all_sizes) {
+  constexpr std::string_view kAlnum = "abcxyzABCXYZ059";
+  constexpr std::string_view kSeps = " ,.-_\t\n\x80\xC3\xA9\xFF";
+  uint64_t seed = 0x5eed;
+  const auto next = [&] {
+    seed = seed * 6364136223846793005ULL + 1442695040888963407ULL;
+    return static_cast<size_t>(seed >> 33);
+  };
+  for (size_t size = 0; size <= 100; ++size) {
+    for (size_t iter = 0; iter < 40; ++iter) {
+      const size_t sep_percent = (iter * 7) % 100;
+      std::string v(size, '\0');
+      for (auto& c : v) {
+        c = next() % 100 < sep_percent ? kSeps[next() % kSeps.size()]
+                                       : kAlnum[next() % kAlnum.size()];
+      }
+      SCOPED_TRACE(testing::Message() << "size=" << size << " iter=" << iter
+                                      << " value=\"" << v << "\"");
+      ASSERT_EQ(ReferenceRuns(v), SplitRuns(v));
+    }
+  }
 }

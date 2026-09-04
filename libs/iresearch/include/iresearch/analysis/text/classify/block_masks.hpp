@@ -22,6 +22,7 @@
 
 #include <simdutf.h>
 
+#include <algorithm>
 #include <array>
 #include <bit>
 #include <cstddef>
@@ -30,6 +31,7 @@
 #include <span>
 #include <vector>
 
+#include "basics/assert.h"
 #include "basics/shared.hpp"
 #include "iresearch/types.hpp"
 
@@ -137,16 +139,68 @@ IRS_FORCE_INLINE void VisitSetBits(uint32_t mask, Visitor&& visit) {
   }
 }
 
+IRS_FORCE_INLINE inline Block LoadPadded(const byte_type* data,
+                                         size_t size) noexcept {
+  SDB_ASSERT(size < kClassifyBlock);
+  std::array<uint64_t, 4> words{};
+  if (size >= 16) {
+    std::memcpy(words.data(), data, 16);
+    if (size > 16) {
+      __uint128_t tail;
+      std::memcpy(&tail, data + size - 16, sizeof tail);
+      tail >>= 8 * (kClassifyBlock - size);
+      std::memcpy(words.data() + 2, &tail, sizeof tail);
+    }
+  } else if (size >= 8) {
+    std::memcpy(words.data(), data, 8);
+    if (size > 8) {
+      uint64_t tail;
+      std::memcpy(&tail, data + size - 8, sizeof tail);
+      words[1] = tail >> (8 * (16 - size));
+    }
+  } else if (size >= 4) {
+    uint32_t head;
+    uint32_t tail;
+    std::memcpy(&head, data, sizeof head);
+    std::memcpy(&tail, data + size - 4, sizeof tail);
+    words[0] = head | (uint64_t{tail} << (8 * (size - 4)));
+  } else if (size != 0) {
+    words[0] = uint64_t{data[0]} |
+               (uint64_t{data[size >> 1]} << (8 * (size >> 1))) |
+               (uint64_t{data[size - 1]} << (8 * (size - 1)));
+  }
+  return std::bit_cast<Block>(words);
+}
+
+IRS_FORCE_INLINE inline uint32_t LowBits(size_t count) noexcept {
+  SDB_ASSERT(count < kClassifyBlock);
+  return ~(~uint32_t{0} << count);
+}
+
+template<typename ClassifyBlock>
+IRS_FORCE_INLINE uint32_t ClassifyPadded(const byte_type* data, size_t size,
+                                         ClassifyBlock& classify) {
+  alignas(kClassifyBlock) byte_type block[kClassifyBlock];
+  const Block padded = LoadPadded(data, size);
+  std::memcpy(block, &padded, sizeof block);
+  return classify(block) & LowBits(size);
+}
+
 template<typename ClassifyBlock, typename IsDelim, typename OnDelim>
 IRS_FORCE_INLINE void DrainClassified(const byte_type* data, size_t size,
                                       bool use_blocks, ClassifyBlock classify,
                                       IsDelim is_delim, OnDelim on_delim) {
-  if (!use_blocks || size < kClassifyBlock) {
+  if (!use_blocks) {
     for (size_t offset = 0; offset < size; ++offset) {
       if (is_delim(data[offset])) {
         on_delim(offset);
       }
     }
+    return;
+  }
+  if (size < kClassifyBlock) {
+    VisitSetBits(ClassifyPadded(data, size, classify),
+                 [&](uint32_t bit) IRS_FORCE_INLINE { on_delim(bit); });
     return;
   }
   size_t offset = 0;
@@ -162,6 +216,73 @@ IRS_FORCE_INLINE void DrainClassified(const byte_type* data, size_t size,
   const uint32_t seen = (uint32_t{1} << (offset - base)) - 1;
   VisitSetBits(classify(data + base) & ~seen,
                [&](uint32_t bit) IRS_FORCE_INLINE { on_delim(base + bit); });
+}
+
+template<typename ClassifyBlock, typename OnRun>
+IRS_FORCE_INLINE void ForEachRun(const byte_type* data, size_t size,
+                                 ClassifyBlock classify, OnRun on_run) {
+  constexpr size_t kBlock = kClassifyBlock;
+  constexpr size_t kChunk = 2 * kBlock;
+  constexpr uint64_t kAll = ~uint64_t{0};
+  bool open = false;
+  size_t begin = 0;
+  const auto step = [&](uint64_t mask, size_t base, uint64_t carry,
+                        uint64_t next_at, uint64_t unseen) IRS_FORCE_INLINE {
+    uint64_t starts = mask & ~((mask << 1) | carry) & unseen;
+    uint64_t ends = mask & ~((mask >> 1) | next_at) & unseen;
+    if ((starts | ends) == 0) {
+      return;
+    }
+    if (open) {
+      on_run(begin, base + std::countr_zero(ends) + 1);
+      ends &= ends - 1;
+      open = false;
+    }
+    while (ends != 0) {
+      on_run(base + std::countr_zero(starts),
+             base + std::countr_zero(ends) + 1);
+      starts &= starts - 1;
+      ends &= ends - 1;
+    }
+    if (starts != 0) {
+      begin = base + std::countr_zero(starts);
+      open = true;
+    }
+  };
+  if (size < kBlock) {
+    step(ClassifyPadded(data, size, classify), 0, 0, 0, kAll);
+    return;
+  }
+  size_t base = 0;
+  uint64_t carry = 0;
+  uint32_t lo = classify(data);
+  while (base + kChunk + kBlock <= size) {
+    const uint32_t hi = classify(data + base + kBlock);
+    const uint32_t ahead = classify(data + base + kChunk);
+    step(lo | (uint64_t{hi} << kBlock), base, carry,
+         uint64_t{ahead & 1} << (kChunk - 1), kAll);
+    carry = hi >> (kBlock - 1);
+    lo = ahead;
+    base += kChunk;
+  }
+  uint64_t mask = lo;
+  size_t width = kBlock;
+  if (size - base >= kChunk) {
+    mask |= uint64_t{classify(data + base + kBlock)} << kBlock;
+    width = kChunk;
+  }
+  const size_t end = base + width;
+  if (end == size) {
+    step(mask, base, carry, 0, kAll);
+    SDB_ASSERT(!open);
+    return;
+  }
+  const size_t tail_base = size - kBlock;
+  const uint32_t tail = classify(data + tail_base);
+  const size_t shift = end - tail_base;
+  step(mask, base, carry, uint64_t{(tail >> shift) & 1} << (width - 1), kAll);
+  step(tail, tail_base, mask >> (width - 1), 0, kAll << shift);
+  SDB_ASSERT(!open);
 }
 
 size_t BuildUtf8CpBounds(const byte_type* data, size_t size, bool valid_utf8,

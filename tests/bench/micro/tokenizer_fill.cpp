@@ -45,6 +45,7 @@
 #include "iresearch/analysis/shingle_tokenizer.hpp"
 #include "iresearch/analysis/solr_synonyms_tokenizer.hpp"
 #include "iresearch/analysis/sparse_ngram_tokenizer.hpp"
+#include "iresearch/analysis/split_by_non_alpha_tokenizer.hpp"
 #include "iresearch/analysis/sql_tokenizer.hpp"
 #include "iresearch/analysis/stemming_tokenizer.hpp"
 #include "iresearch/analysis/stopwords_tokenizer.hpp"
@@ -1135,6 +1136,12 @@ Tokenizer::ptr MakePatternNonWord() {
 Tokenizer::ptr MakePatternWords() {
   return PatternTokenizer::Make({.pattern = "\\S+", .group = 0});
 }
+Tokenizer::ptr MakeSplitNonAlpha() {
+  return SplitByNonAlphaTokenizer::Make({});
+}
+Tokenizer::ptr MakeSplitNonAlphaLower() {
+  return SplitByNonAlphaTokenizer::Make({.case_convert = Case::Lower});
+}
 
 Tokenizer::ptr MakePathHierarchy() { return PathHierarchyTokenizer::Make({}); }
 
@@ -1478,6 +1485,11 @@ BENCHMARK_CAPTURE(BM_Fill, pattern_literal_regex, &MakePatternLiteralRegex,
 BENCHMARK_CAPTURE(BM_Fill, pattern_nonword, &MakePatternNonWord, &TextCorpus)
   ->Unit(benchmark::kMillisecond);
 BENCHMARK_CAPTURE(BM_Fill, pattern_words, &MakePatternWords, &TextCorpus)
+  ->Unit(benchmark::kMillisecond);
+BENCHMARK_CAPTURE(BM_Fill, split_non_alpha, &MakeSplitNonAlpha, &TextCorpus)
+  ->Unit(benchmark::kMillisecond);
+BENCHMARK_CAPTURE(BM_Fill, split_non_alpha_lower, &MakeSplitNonAlphaLower,
+                  &TextCorpus)
   ->Unit(benchmark::kMillisecond);
 TOKENIZER_BENCH(path_hierarchy, MakePathHierarchy, PathCorpus);
 TOKENIZER_BENCH(path_hierarchy_reverse, MakePathHierarchyReverse, PathCorpus);

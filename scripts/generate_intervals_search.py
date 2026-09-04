@@ -223,7 +223,7 @@ def main():
     )
     args = parser.parse_args()
     root_path = args.root
-    
+
     data = ["fox", "quick", "brown", "jumps", "second", "dog"]
     freq_eq = [0.1, 0.1, 0.1, 0.1, 0.3, 0.3]
     custom_freqs = [0.2, 0.1, 0.05, 0.1, 0.25, 0.3]
@@ -233,7 +233,7 @@ def main():
 
     inputs = [
         [
-            RepeatDataGenerator, 
+            RepeatDataGenerator,
             Config.RepeatPhraseBenchResource,
             Config.GoldenRepeatPhraseBenchResource,
             Config.DocCount,
@@ -241,7 +241,7 @@ def main():
             data,
         ],
         [
-            FreqsDataGenerator, 
+            FreqsDataGenerator,
             Config.FreqsEqualBenchResource,
             Config.GoldenFreqsEqualBenchResource,
             Config.DocCount,
@@ -249,7 +249,7 @@ def main():
             combine(data, freq_eq),
         ],
         [
-            FreqsDataGenerator, 
+            FreqsDataGenerator,
             Config.FreqsDiscreteBenchResource,
             Config.GoldenFreqsDiscreteBenchResource,
             Config.DocCount,
@@ -257,7 +257,7 @@ def main():
             combine(data, custom_freqs),
         ],
         [
-            RepeatDataGenerator, 
+            RepeatDataGenerator,
             Config.BigDataRepeatPhraseBenchResource,
             Config.GoldenBigDataRepeatPhraseBenchResource,
             Config.BigDataDocCount,
@@ -265,7 +265,7 @@ def main():
             data,
         ],
         [
-            FreqsDataGenerator, 
+            FreqsDataGenerator,
             Config.BigDataFreqsEqualBenchResource,
             Config.GoldenBigDataFreqsEqualBenchResource,
             Config.BigDataDocCount,
@@ -273,7 +273,7 @@ def main():
             combine(data, freq_eq),
         ],
         [
-            FreqsDataGenerator, 
+            FreqsDataGenerator,
             Config.BigDataFreqsDiscreteBenchResource,
             Config.GoldenBigDataFreqsDiscreteBenchResource,
             Config.BigDataDocCount,

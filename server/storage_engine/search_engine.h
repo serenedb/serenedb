@@ -25,6 +25,7 @@
 #include <atomic>
 #include <cstdint>
 #include <filesystem>
+#include <iresearch/formats/ann_build_env.hpp>
 #include <memory>
 #include <yaclib/algo/wait_group.hpp>
 
@@ -43,15 +44,20 @@ class SearchTable;
 class SearchEngine;
 SearchEngine& GetSearchEngine();
 
+uint32_t AnnAcquireWorkers(uint32_t want) noexcept;
+void AnnReleaseWorkers(uint32_t n) noexcept;
+const irs::AnnBuildEnv& AnnBuildEnv();
+
 class SearchEngine final {
  public:
   inline static SearchEngine* gInstance = nullptr;
 
-  // Process-wide cap on concurrent compactions, the only hard ceiling on
-  // in-flight merges. Cores-derived (Lucene maxThreadCount): max(1, min(4,
-  // cores/2)). background_threads is auto-floored above this with headroom for
-  // refresh + cleanup + drop bursts (see background_scheduler.cpp).
   static int MaxConcurrentCompactions() noexcept;
+  static int MaxConcurrentMerges() noexcept;
+
+  static uint32_t MaxAnnBuildWorkers() noexcept;
+
+  static uint32_t MaxAnnWorkersPerBuild() noexcept;
 
   SearchEngine();
   ~SearchEngine();
@@ -61,33 +67,21 @@ class SearchEngine final {
 
   std::filesystem::path GetPersistedPath(ObjectId database_id) const;
 
-  // The database's self-contained search WAL, lazily created on first use. ONE
-  // per database, shared by all of its search shards, so a transaction touching
-  // several search tables commits atomically.
   SearchDbWal& GetDbWal(ObjectId database_id);
 
-  // Launch the per-target refresh + compaction loops, registering their Futures
-  // so stop() can join them. Templated on the storage type
-  // (InvertedIndexStorage or SearchTable); instantiated for both in the .cpp.
   template<class Storage>
   void StartTasks(const std::shared_ptr<Storage>& storage);
 
-  // Loops poll this so they bail out of long-running cycles promptly.
   bool IsStopping() const noexcept {
     return _stopping.load(std::memory_order_acquire);
   }
 
-  // Signal the loops to stop without joining. Called before network.stop()
-  // tears down the IoPool: once the pool is gone Delay() completes instantly,
-  // so the loops must already see the stop flag to break instead of spinning.
   void RequestStop() noexcept {
     _stopping.store(true, std::memory_order_release);
   }
 
-  // Reserve / release one of the MaxConcurrentCompactions() slots. A fan-out
-  // sub-task holds a slot only while CompactUnsafe runs.
   bool TryAcquireCompaction() noexcept {
-    const int cap = MaxConcurrentCompactions();
+    const int cap = MaxConcurrentMerges();
     auto cur = _running_compactions.load(std::memory_order_relaxed);
     while (cur < cap) {
       if (_running_compactions.compare_exchange_weak(
@@ -102,23 +96,36 @@ class SearchEngine final {
     _running_compactions.fetch_sub(1, std::memory_order_release);
   }
 
-  // Free global slots right now. The coordinator throttles merge size when this
-  // is low (occupancy backpressure) so the pool always drains.
   int FreeCompactionSlots() const noexcept {
     const int cur = _running_compactions.load(std::memory_order_acquire);
     return std::max(0, MaxConcurrentCompactions() - cur);
   }
 
+  uint32_t AcquireAnnWorkers(uint32_t want) noexcept {
+    const uint32_t cap = MaxAnnBuildWorkers();
+    const uint32_t ceiling = std::clamp(want, 1U, MaxAnnWorkersPerBuild());
+    auto cur = _running_ann_workers.load(std::memory_order_relaxed);
+    for (;;) {
+      const uint32_t grant =
+        std::clamp(cur < cap ? cap - cur : 0U, 1U, ceiling);
+      if (_running_ann_workers.compare_exchange_weak(
+            cur, cur + grant, std::memory_order_acq_rel,
+            std::memory_order_relaxed)) {
+        return grant;
+      }
+    }
+  }
+  void ReleaseAnnWorkers(uint32_t n) noexcept {
+    _running_ann_workers.fetch_sub(n, std::memory_order_release);
+  }
+
  private:
   DatabasePathFeature& _dir_feature;
-  // Per-database central WALs (see GetDbWal). Guarded by _db_wals_mu.
   absl::Mutex _db_wals_mu;
   containers::FlatHashMap<ObjectId, std::unique_ptr<SearchDbWal>> _db_wals;
   std::atomic<bool> _stopping{false};
   std::atomic<int> _running_compactions{0};
-  // Live loop futures plus one baseline token held for the engine's lifetime:
-  // loops come and go with CREATE/DROP, and a transient zero would complete the
-  // group for good. stop() Done()s the token, then Waits.
+  std::atomic<uint32_t> _running_ann_workers{0};
   yaclib::WaitGroup<> _loops{1};
 };
 

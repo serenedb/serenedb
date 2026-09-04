@@ -59,7 +59,7 @@ irs::IndexWriterOptions MakeWriterOptions(
     irs::ColumnOptions col;
     if (id == kVec) {
       col.compression = compression;
-      col.ivf_info = irs::IvfInfo{
+      col.ann_info = irs::AnnInfo{
         .centroids_id = kVec,
         .postings_id = kVec,
         .d = kDim,
@@ -139,10 +139,10 @@ irs::ByVectorSimilarity MakeKnnFilter() {
 // everything PrepareSegment needs to stay on it, so the test cannot silently
 // degrade to the raw-rerank path and pass vacuously.
 void AssertQuantizedPath(const irs::SubReader& segment) {
-  const auto* ivf = segment.Ivf(kVec);
-  ASSERT_NE(nullptr, ivf);
-  ASSERT_FALSE(ivf->Empty());
-  ASSERT_TRUE(ivf->HasQuantStats());
+  const auto* ann = segment.Ann(kVec);
+  ASSERT_NE(nullptr, ann);
+  ASSERT_FALSE(ann->Empty());
+  ASSERT_TRUE(ann->HasQuantStats());
   const auto* postings = segment.field(kVec);
   ASSERT_NE(nullptr, postings);
   ASSERT_NE(irs::IndexFeatures::None,

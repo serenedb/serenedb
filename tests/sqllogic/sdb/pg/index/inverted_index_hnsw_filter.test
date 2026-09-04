@@ -1,0 +1,111 @@
+control substitution on
+
+# ============================================================================
+# HNSW is ANN-only: predicates are post-filters, never pre-filters.
+#
+# A claimed conjunct would reach the index as an `inner` filter for postings
+# intersection. HNSW has no postings and does not filter during traversal, so
+# it would ignore that filter and silently return rows violating the predicate.
+# The planner therefore never claims a conjunct for an HNSW-scored scan; the
+# predicate stays a BeforeLimit lookup filter, applied while the collector's
+# over-fetched pool is materialized, with the TOP_N above trimming to k.
+#
+# The inherited cost of post-filtering is pinned at the bottom: a predicate
+# whose qualifying rows lie outside the graph's candidate neighbourhood can
+# return fewer than k rows.
+# ============================================================================
+
+statement ok
+CREATE TABLE hnsw_f (pk INTEGER PRIMARY KEY, emb FLOAT[8], label VARCHAR);
+
+
+statement ok
+CREATE INDEX hnsw_f_idx ON hnsw_f
+  USING inverted(pk, emb hnsw (metric = 'l2', quant = 'none')) INCLUDE (label);
+
+
+statement ok
+INSERT INTO hnsw_f SELECT i, [i::FLOAT, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8],
+  CASE WHEN i % 2 = 0 THEN 'even' ELSE 'odd' END FROM range(300) t(i);
+
+
+statement ok
+VACUUM (REFRESH_TABLE) hnsw_f;
+
+
+# Unfiltered kNN keeps the pushed top-k, so the scan runs the graph search.
+query
+EXPLAIN SELECT pk FROM hnsw_f_idx
+  ORDER BY emb <-> [100.4, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 2;
+----
+QUERY PLAN
+╭─ TOP_N ────────────────────────────────╮
+│ Top: 2                                 │
+│ Order By: #1 ASC                       │
+│ ~2 rows                                │
+╰────────────────────┬───────────────────╯
+╭─ IRESEARCH_SCAN ───┴───────────────────╮
+│ Index: hnsw_f_idx                      │
+│ Lookup: table                          │
+│ Score: l2_distance(emb, FLOAT[8])      │
+│ Top: 2                                 │
+│ Projections: pk,                       │
+│              sdb_inverted_index_score  │
+│ ~300 rows                              │
+╰────────────────────────────────────────╯
+
+
+query
+SELECT pk FROM hnsw_f_idx
+  ORDER BY emb <-> [100.4, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 3;
+----
+pk
+100
+101
+99
+
+
+# The predicate is honoured. Were it claimed as a postings conjunct the graph
+# would ignore it and answer 100, 101, 99 -- the unfiltered top-3.
+query
+SELECT pk FROM hnsw_f_idx
+  WHERE label = 'even'
+  ORDER BY emb <-> [100.4, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 3;
+----
+pk
+100
+102
+98
+
+
+query
+SELECT pk FROM hnsw_f_idx
+  WHERE label = 'odd'
+  ORDER BY emb <-> [100.4, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 3;
+----
+pk
+101
+99
+103
+
+
+# Post-filtering is exact on membership: every returned row satisfies the
+# predicate, and a full-table predicate is unaffected by the pool size.
+query
+SELECT count(*) FROM hnsw_f_idx WHERE label = 'even';
+----
+count
+150
+
+
+# Inherited limitation, pinned deliberately: the qualifying rows (pk >= 250)
+# lie far outside the neighbourhood the graph walks for a query at 100.4, so
+# the over-fetched pool holds none of them and the answer is short of k. IVF
+# answers this exactly because it intersects postings; HNSW cannot, and
+# returning fewer rows is preferred over silently dropping the predicate.
+query
+SELECT pk FROM hnsw_f_idx
+  WHERE pk >= 250
+  ORDER BY emb <-> [100.4, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 2;
+----
+pk

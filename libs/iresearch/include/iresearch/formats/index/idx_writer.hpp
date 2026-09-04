@@ -53,6 +53,8 @@ class IdxWriter final {
 
   void AddIvf(field_id id, IvfCentroidMeta meta);
 
+  void AddHnsw(field_id id, HnswMeta meta);
+
   void AddTermDictEntry(field_id id, TermDictMeta meta);
 
   void Commit();

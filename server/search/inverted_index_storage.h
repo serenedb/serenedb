@@ -27,12 +27,15 @@
 
 #include <atomic>
 #include <filesystem>
+#include <functional>
+#include <iresearch/formats/ann_build_env.hpp>
 #include <iresearch/index/index_writer.hpp>
 #include <iresearch/search/scorer.hpp>
 #include <limits>
 #include <map>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <vector>
 
 #include "catalog/inverted_index.h"
@@ -157,6 +160,15 @@ class InvertedIndexStorage final
                                const irs::MergeWriter::FlushProgress& progress,
                                bool& empty_compaction,
                                const irs::IndexFieldOptions* field_options);
+
+  // CompactUnsafe driven by the caller's executor. A null `env` never suspends,
+  // so the returned Future is ready on return.
+  auto CompactUnsafeAsync(const irs::CompactionPolicy& policy,
+                          const irs::MergeWriter::FlushProgress& progress,
+                          bool& empty_compaction,
+                          const irs::IndexFieldOptions* field_options,
+                          const irs::AnnBuildEnv* env)
+    -> yaclib::Future<ResultWithTime>;
 
   ResultWithTime RefreshUnsafe(bool wait,
                                const irs::ProgressReportCallback& progress,
@@ -327,10 +339,12 @@ class InvertedIndexStorage final
     std::atomic<uint64_t> _time_num{0};
   };
 
-  absl::Status CompactUnsafeImpl(
-    const irs::CompactionPolicy& policy,
-    const irs::MergeWriter::FlushProgress& progress, bool& empty_compaction,
-    const irs::IndexFieldOptions* field_options);
+  auto CompactUnsafeImpl(const irs::CompactionPolicy& policy,
+                         const irs::MergeWriter::FlushProgress& progress,
+                         bool& empty_compaction,
+                         const irs::IndexFieldOptions* field_options,
+                         const irs::AnnBuildEnv* env)
+    -> yaclib::Future<absl::Status>;
   absl::Status RefreshUnsafeImpl(bool wait,
                                  const irs::ProgressReportCallback& progress,
                                  RefreshResult& code, bool for_checkpoint);

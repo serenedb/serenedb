@@ -1,0 +1,53 @@
+control substitution on
+
+# ============================================================================
+# Small-dataset HNSW: exact expectations on a linear dataset.
+#
+# quant = 'none' is pinned so the graph traverses raw f32 and scores are exact;
+# the default (sq8) would quantize 300 collinear points into 256 levels and tie
+# adjacent ids together. Points lie on a line, so every query has a unique
+# nearest neighbour and a fully connected graph must return it.
+# ============================================================================
+
+statement ok
+CREATE TABLE hnsw_small (pk INTEGER PRIMARY KEY, emb FLOAT[8]);
+
+statement ok
+CREATE INDEX hnsw_small_idx ON hnsw_small
+  USING inverted(pk, emb hnsw (metric = 'l2', quant = 'none'));
+
+statement ok
+INSERT INTO hnsw_small SELECT i,
+  [i::FLOAT, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] FROM range(300) t(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) hnsw_small;
+
+query
+SELECT pk FROM hnsw_small_idx
+  ORDER BY emb <-> [0, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 1;
+----
+pk
+0
+
+query
+SELECT pk FROM hnsw_small_idx
+  ORDER BY emb <-> [137, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 1;
+----
+pk
+137
+
+query
+SELECT pk FROM hnsw_small_idx
+  ORDER BY emb <-> [299, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 3;
+----
+pk
+299
+298
+297
+
+query
+SELECT count(*) FROM hnsw_small_idx;
+----
+count
+300

@@ -552,6 +552,10 @@ uint32_t ReadMaxSearchFanout(duckdb::ClientContext& context) {
   return ReadIntSetting(context, "sdb_ivf_max_search_fanout");
 }
 
+uint32_t ReadHnswEfSearch(duckdb::ClientContext& context) {
+  return ReadIntSetting(context, "sdb_hnsw_ef_search");
+}
+
 duckdb::unique_ptr<duckdb::Expression> PushdownDistanceCall(
   duckdb::BoundFunctionExpression& func, const connector::AnnFunctionInfo& info,
   duckdb::LogicalOperator& root, duckdb::ClientContext& context) {
@@ -600,7 +604,7 @@ duckdb::unique_ptr<duckdb::Expression> PushdownDistanceCall(
   if (!irs::field_limits::valid(call_field_id)) {
     return nullptr;
   }
-  auto ann_info = index.GetIvfInfo(call_field_id);
+  auto ann_info = index.GetAnnInfo(call_field_id);
   if (!ann_info || ann_info->metric != info.metric) {
     return nullptr;
   }
@@ -624,6 +628,7 @@ duckdb::unique_ptr<duckdb::Expression> PushdownDistanceCall(
       .quant = ann_info->quant.kind,
       .nprobe = ReadSearchNprobe(context),
       .max_search_fanout = ReadMaxSearchFanout(context),
+      .ef_search = ReadHnswEfSearch(context),
     };
     ss.score_order = info.order;
   } else {
@@ -1188,7 +1193,7 @@ void IResearchPushdownComplexFilter(
     return;
   }
   TryClaimAnnRange(filters, get, bind_data, context);
-  if (filters.empty()) {
+  if (filters.empty() || ss.IsHnswScored()) {
     return;
   }
   TryClaimSearchFilter(filters, get, bind_data,

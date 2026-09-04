@@ -27,11 +27,14 @@
 #include <duckdb/common/vector_operations/vector_operations.hpp>
 #include <duckdb/main/database.hpp>
 #include <utility>
+#include <yaclib/coro/await.hpp>
+#include <yaclib/coro/future.hpp>
 
 #include "basics/assert.h"
 #include "basics/serialization.h"
 #include "iresearch/error/error.hpp"
 #include "iresearch/formats/format_utils.hpp"
+#include "iresearch/formats/hnsw/hnsw_writer.hpp"
 #include "iresearch/formats/index/idx_writer.hpp"
 #include "iresearch/formats/ivf/ivf_writer.hpp"
 #include "pg/sql_exception_macro.h"
@@ -84,7 +87,7 @@ void ColWriter::EnsureOut() {
 }
 
 bool ColWriter::Empty() const noexcept {
-  return _columns.empty() && _norm_writers.empty() && _ivf_writers.empty();
+  return _columns.empty() && _norm_writers.empty() && _ann_writers.empty();
 }
 
 void ColWriter::SetFieldOptions(
@@ -129,8 +132,8 @@ ColumnWriter& ColWriter::OpenColumn(field_id id, duckdb::LogicalType type) {
   auto& cw =
     OpenColumnInternal(id, std::move(type), opts.skip_validity, row_group_size,
                        opts.compression, opts.hyperloglog);
-  if (opts.ivf_info) {
-    AttachIVF(id, *opts.ivf_info);
+  if (opts.ann_info) {
+    AttachAnn(id, *opts.ann_info);
   }
   return cw;
 }
@@ -156,38 +159,47 @@ NormColumnWriter& ColWriter::OpenNormColumn(field_id id,
   return *ptr;
 }
 
-IvfWriter& ColWriter::AttachIVF(field_id column_id, IvfInfo info) {
-  if (auto it = _ivf_by_id.find(column_id); it != _ivf_by_id.end()) {
+AnnWriter& ColWriter::AttachAnn(field_id column_id, AnnInfo info) {
+  if (auto it = _ann_by_id.find(column_id); it != _ann_by_id.end()) {
     auto& existing = *it->second;
     SDB_ASSERT(existing.info == info,
-               "ColWriter::AttachIVF: re-attach with mismatched IvfInfo on "
+               "ColWriter::AttachAnn: re-attach with mismatched AnnInfo on "
                "column ",
                column_id);
     return *existing.writer;
   }
-  SDB_ASSERT(_by_id.contains(column_id), "ColWriter::AttachIVF: column ",
+  SDB_ASSERT(_by_id.contains(column_id), "ColWriter::AttachAnn: column ",
              column_id, " must be opened first");
-  auto entry = std::make_unique<IvfEntry>();
+  auto entry = std::make_unique<AnnEntry>();
   entry->column_id = column_id;
-  entry->writer = std::make_unique<IvfWriter>(info);
+  switch (info.kind) {
+    case AnnKind::Ivf:
+      entry->writer = std::make_unique<IvfWriter>(info);
+      break;
+    case AnnKind::Hnsw:
+      entry->writer = std::make_unique<HnswWriter>(info);
+      break;
+    default:
+      SDB_UNREACHABLE();
+  }
   entry->info = std::move(info);
-  auto& back = *_ivf_writers.emplace_back(std::move(entry));
-  _ivf_by_id.emplace(column_id, &back);
+  auto& back = *_ann_writers.emplace_back(std::move(entry));
+  _ann_by_id.emplace(column_id, &back);
   return *back.writer;
 }
 
 void ColWriter::SetIdxWriter(IdxWriter& idx) noexcept {
-  for (auto& entry : _ivf_writers) {
+  for (auto& entry : _ann_writers) {
     if (entry->writer) {
       entry->writer->SetIdxWriter(idx);
     }
   }
 }
 
-std::vector<std::unique_ptr<IvfWriter>> ColWriter::TakeIvfWriters() noexcept {
-  std::vector<std::unique_ptr<IvfWriter>> out;
-  out.reserve(_ivf_writers.size());
-  for (auto& entry : _ivf_writers) {
+std::vector<std::unique_ptr<AnnWriter>> ColWriter::TakeAnnWriters() noexcept {
+  std::vector<std::unique_ptr<AnnWriter>> out;
+  out.reserve(_ann_writers.size());
+  for (auto& entry : _ann_writers) {
     if (entry->writer) {
       out.push_back(std::move(entry->writer));
     }
@@ -238,19 +250,24 @@ void ColWriter::Commit(uint64_t target_row) {
   serializer.End();
   _out->WriteU64(footer_offset);
   format_utils::WriteFooter(*_out);
-  if (!_ivf_writers.empty()) {
-    _out->Flush();
-    ColReader reader{*_dir, _segment_name, *_db};
-    for (auto& entry : _ivf_writers) {
-      const auto* col = reader.Column(entry->column_id);
-      if (!col) {
-        continue;
-      }
-      entry->writer->Compute(*col, reader.Ctx());
-    }
-  }
   _out.reset();
+  _ann_ready = !_ann_writers.empty();
   _committed = true;
+}
+
+auto ColWriter::ComputeAnn(const AnnBuildEnv* env) -> yaclib::Future<> {
+  if (!_ann_ready) {
+    co_return {};
+  }
+  ColReader reader{*_dir, _segment_name, *_db};
+  for (auto& entry : _ann_writers) {
+    const auto* col = reader.Column(entry->column_id);
+    if (!col) {
+      continue;
+    }
+    co_await entry->writer->Compute(*col, reader.Ctx(), env);
+  }
+  co_return {};
 }
 
 }  // namespace irs

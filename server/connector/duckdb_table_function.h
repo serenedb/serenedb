@@ -94,6 +94,8 @@ struct VectorScorerOptions {
   irs::VectorQuantization quant = irs::VectorQuantization::None;
   uint32_t nprobe = 1;
   uint32_t max_search_fanout = 16;
+  uint32_t ef_search = 0;
+  uint32_t min_ef = 0;
   float radius = std::numeric_limits<float>::max();
   bool radius_inclusive = false;
 
@@ -254,6 +256,13 @@ struct SereneDBScanBindData : public duckdb::FunctionData {
   bool IsSearchTableEntry() const noexcept {
     return entry_kind == ScanEntryKind::SearchTable;
   }
+
+  // True when this scan scores through an HNSW ANN index. HNSW is ANN-only:
+  // it has no postings to intersect and does not filter during traversal, so
+  // any predicate must keep the index out of the plan entirely -- a claimed
+  // conjunct would be silently dropped, and a pushed pre-filter would prune an
+  // already-localized candidate set down to nothing.
+  bool IsHnswScored() const noexcept;
 
   template<typename T>
   T& As() & {

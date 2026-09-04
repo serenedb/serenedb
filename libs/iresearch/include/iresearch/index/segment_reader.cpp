@@ -43,11 +43,11 @@ const ColumnReader* SegmentReader::Column(field_id field) const {
   return _impl->Column(field);
 }
 
-const CentroidsTree* SegmentReader::Ivf(field_id field) const {
-  return _impl->Ivf(field);
+const AnnIndex* SegmentReader::Ann(field_id field) const {
+  return _impl->Ann(field);
 }
 
-IndexInput::ptr SegmentReader::ReopenIvf() const { return _impl->ReopenIvf(); }
+IndexInput::ptr SegmentReader::ReopenAnn() const { return _impl->ReopenAnn(); }
 
 const ColReader* SegmentReader::GetColReader() const {
   return _impl ? _impl->GetColReader() : nullptr;

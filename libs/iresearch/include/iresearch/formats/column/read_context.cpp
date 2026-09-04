@@ -68,8 +68,9 @@ void AdviseWillNeed(const duckdb::MemoryMappedFile& mapping, uint64_t offset,
 ReadContext::ReadContext(duckdb::DatabaseInstance& db) noexcept
   : BlockManager{db, /*block_header_size=*/0} {}
 
-ReadContext::ReadContext(const ColReader& reader)
+ReadContext::ReadContext(const ColReader& reader, bool random_access)
   : ReadContext{reader.Database()} {
+  _random_access = random_access;
   _in = reader.ReopenIn();
   ResetMapping();
 }
@@ -177,7 +178,9 @@ void ReadContext::Read(duckdb::QueryContext context, duckdb::Block& block) {
   if (_mapping && offset % 8 == 0 &&
       offset + block.Size() <= _mapping->Size()) {
     block.Read(context, *_mapping, offset);
-    AdviseWillNeed(*_mapping, offset, size);
+    if (!_random_access) {
+      AdviseWillNeed(*_mapping, offset, size);
+    }
     return;
   }
   _in->ReadData(offset, block.InternalBuffer(), size);

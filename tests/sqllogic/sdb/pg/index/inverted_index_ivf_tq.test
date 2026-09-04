@@ -1,0 +1,292 @@
+hash-threshold 100
+
+# TurboQuant-quantized IVF vector index: ANN result correctness and
+# correctness across INSERT / DELETE / UPDATE.
+#
+# TurboQuant is data-oblivious: the scalar codebook is a fixed Lloyd-Max
+# table, so there is no training pass. Each document stores a rotated,
+# centroid-relative code in the postings .pay plus its exact residual norm,
+# scored through the quantized QVectorIterator path; a kNN with a WHERE
+# filter and any range query fall back to the exact raw reranker.
+#
+# Two families share the enum: quant='tq' spends nb_bits-1 bits on the MSE
+# stage plus one QJL bit (nb_bits one of 2|3|5, default 3), quant='tqmse'
+# spends all nb_bits on the MSE stage (one of 1|2|4, default 2). Low bit
+# counts are lossy, so the sections below use well-separated vectors so exact
+# row order is deterministic. Unlike quant='rabitq', both families support
+# metric cosine.
+
+# Exhaustive search: probe every cluster so kNN can't miss a true neighbour.
+statement ok
+SET sdb_nprobe = 1000
+
+# ===========================================================================
+# 1. L2 + tq at the default bit count, single cluster (nlist=1): exercises
+#    the batched ComputeBlock path with >4 docs in one cluster.
+# ===========================================================================
+
+statement ok
+CREATE TABLE tq_l2 (pk INTEGER PRIMARY KEY, emb FLOAT[3], label VARCHAR)
+
+statement ok
+CREATE INDEX tq_l2_idx ON tq_l2
+  USING inverted(pk, emb ivf (metric = 'l2', quant = 'tq'))
+  INCLUDE (label)
+
+statement count 6
+INSERT INTO tq_l2 VALUES
+  (1, [10, 0, 0]::FLOAT[3], 'x'),
+  (2, [0, 10, 0]::FLOAT[3], 'y'),
+  (3, [0, 0, 10]::FLOAT[3], 'z'),
+  (4, [10, 10, 0]::FLOAT[3], 'xy'),
+  (5, [10, 10, 10]::FLOAT[3], 'xyz'),
+  (6, [20, 0, 0]::FLOAT[3], 'x2')
+
+statement ok
+VACUUM (REFRESH_TABLE) tq_l2
+
+query
+SELECT pk, label FROM tq_l2_idx
+  ORDER BY emb <-> [11, 0, 0]::FLOAT[3] LIMIT 3;
+----
+pk	label
+1	x
+6	x2
+4	xy
+
+query
+SELECT pk, label FROM tq_l2_idx
+  ORDER BY emb <-> [10, 12, 1]::FLOAT[3] LIMIT 3;
+----
+pk	label
+4	xy
+5	xyz
+2	y
+
+query
+SELECT count(*) FROM tq_l2_idx;
+----
+count
+6
+
+# ===========================================================================
+# 2. L2 + tq (5 bits), multiple clusters (nlist=3): kNN merges across
+#    per-cluster QVectorIterators (disjunction). nprobe is exhaustive.
+# ===========================================================================
+
+statement ok
+CREATE TABLE tq_mc (pk INTEGER PRIMARY KEY, emb FLOAT[3])
+
+statement ok
+CREATE INDEX tq_mc_idx ON tq_mc
+  USING inverted(pk, emb ivf (metric = 'l2', quant = 'tq', nb_bits = 5))
+
+statement count 6
+INSERT INTO tq_mc VALUES
+  (1, [100, 0, 0]::FLOAT[3]),
+  (2, [101, 0, 0]::FLOAT[3]),
+  (3, [0, 100, 0]::FLOAT[3]),
+  (4, [0, 101, 0]::FLOAT[3]),
+  (5, [0, 0, 100]::FLOAT[3]),
+  (6, [0, 0, 101]::FLOAT[3])
+
+statement ok
+VACUUM (REFRESH_TABLE) tq_mc
+
+query
+SELECT pk FROM tq_mc_idx ORDER BY emb <-> [100, 0, 0]::FLOAT[3] LIMIT 2;
+----
+pk
+1
+2
+
+query
+SELECT pk FROM tq_mc_idx ORDER BY emb <-> [0, 0, 100]::FLOAT[3] LIMIT 2;
+----
+pk
+5
+6
+
+# ===========================================================================
+# 3. Inner product + tqmse (4 bits): the MSE-only family, scored without the
+#    QJL refinement stage.
+# ===========================================================================
+
+statement ok
+CREATE TABLE tq_ip (pk INTEGER PRIMARY KEY, emb FLOAT[3])
+
+statement ok
+CREATE INDEX tq_ip_idx ON tq_ip
+  USING inverted(pk, emb ivf (metric = 'ip', quant = 'tqmse', nb_bits = 4))
+
+statement count 4
+INSERT INTO tq_ip VALUES
+  (1, [10, 0, 0]::FLOAT[3]),
+  (2, [0, 10, 0]::FLOAT[3]),
+  (3, [0, 0, 10]::FLOAT[3]),
+  (4, [20, 0, 0]::FLOAT[3])
+
+statement ok
+VACUUM (REFRESH_TABLE) tq_ip
+
+query
+SELECT pk FROM tq_ip_idx ORDER BY emb <#> [1, 0, 0]::FLOAT[3] LIMIT 2;
+----
+pk
+4
+1
+
+# ===========================================================================
+# 4. Cosine + tq: the metric quant='rabitq' rejects. Vectors are stored
+#    L2-normalized and scored as inner product.
+# ===========================================================================
+
+statement ok
+CREATE TABLE tq_cos (pk INTEGER PRIMARY KEY, emb FLOAT[3])
+
+statement ok
+CREATE INDEX tq_cos_idx ON tq_cos
+  USING inverted(pk, emb ivf (metric = 'cosine', quant = 'tq'))
+
+statement count 4
+INSERT INTO tq_cos VALUES
+  (1, [10, 0, 0]::FLOAT[3]),
+  (2, [0, 10, 0]::FLOAT[3]),
+  (3, [0, 0, 10]::FLOAT[3]),
+  (4, [5, 5, 0]::FLOAT[3])
+
+statement ok
+VACUUM (REFRESH_TABLE) tq_cos
+
+query
+SELECT pk FROM tq_cos_idx ORDER BY emb <=> [9, 1, 0]::FLOAT[3] LIMIT 2;
+----
+pk
+1
+4
+
+# ===========================================================================
+# 5. rabitq_bits is accepted as an alias for nb_bits.
+# ===========================================================================
+
+statement ok
+CREATE TABLE tq_alias (pk INTEGER PRIMARY KEY, emb FLOAT[3])
+
+statement ok
+CREATE INDEX tq_alias_idx ON tq_alias
+  USING inverted(pk, emb ivf (metric = 'l2', quant = 'tqmse', rabitq_bits = 2))
+
+statement count 2
+INSERT INTO tq_alias VALUES
+  (1, [10, 0, 0]::FLOAT[3]),
+  (2, [0, 10, 0]::FLOAT[3])
+
+statement ok
+VACUUM (REFRESH_TABLE) tq_alias
+
+query
+SELECT pk FROM tq_alias_idx ORDER BY emb <-> [11, 0, 0]::FLOAT[3] LIMIT 1;
+----
+pk
+1
+
+# ===========================================================================
+# 6. DML correctness: INSERT / DELETE / UPDATE.
+# ===========================================================================
+
+statement ok
+CREATE TABLE tq_dml (pk INTEGER PRIMARY KEY, emb FLOAT[3], label VARCHAR)
+
+statement ok
+CREATE INDEX tq_dml_idx ON tq_dml
+  USING inverted(pk, emb ivf (metric = 'l2', quant = 'tq', nb_bits = 5))
+  INCLUDE (label)
+
+statement count 4
+INSERT INTO tq_dml VALUES
+  (1, [10, 0, 0]::FLOAT[3], 'a'),
+  (2, [0, 10, 0]::FLOAT[3], 'b'),
+  (3, [0, 0, 15]::FLOAT[3], 'c'),
+  (4, [20, 0, 0]::FLOAT[3], 'd')
+
+statement ok
+VACUUM (REFRESH_TABLE) tq_dml
+
+query
+SELECT pk, label FROM tq_dml_idx
+  ORDER BY emb <-> [11, 0, 0]::FLOAT[3] LIMIT 2;
+----
+pk	label
+1	a
+4	d
+
+statement count 1
+DELETE FROM tq_dml WHERE pk = 1
+
+statement ok
+VACUUM (REFRESH_TABLE) tq_dml
+
+query
+SELECT pk, label FROM tq_dml_idx
+  ORDER BY emb <-> [11, 0, 0]::FLOAT[3] LIMIT 2;
+----
+pk	label
+4	d
+2	b
+
+statement count 1
+UPDATE tq_dml SET emb = [12, 0, 0]::FLOAT[3] WHERE pk = 2
+
+statement ok
+VACUUM (REFRESH_TABLE) tq_dml
+
+query
+SELECT pk, label FROM tq_dml_idx
+  ORDER BY emb <-> [11, 0, 0]::FLOAT[3] LIMIT 2;
+----
+pk	label
+2	b
+4	d
+
+query
+SELECT count(*) FROM tq_dml_idx;
+----
+count
+3
+
+# ===========================================================================
+# 7. Option guards: per-family nb_bits sets, the alias collision, and the
+#    metric restriction shared with the other quantizers.
+# ===========================================================================
+
+statement ok
+CREATE TABLE tq_bad (pk INTEGER PRIMARY KEY, emb FLOAT[3])
+
+statement error
+CREATE INDEX tq_bad_bits ON tq_bad USING inverted(pk, emb ivf (metric = 'l2', quant = 'tq', nb_bits = 4));
+----
+db error: ERROR: Column 'emb': ivf option 'nb_bits' (4) must be one of: 2 3 5 for quant 'tq'
+
+
+statement error
+CREATE INDEX tq_bad_mse_bits ON tq_bad USING inverted(pk, emb ivf (metric = 'l2', quant = 'tqmse', nb_bits = 3));
+----
+db error: ERROR: Column 'emb': ivf option 'nb_bits' (3) must be one of: 1 2 4 for quant 'tqmse'
+
+
+statement error
+CREATE INDEX tq_bad_wrong_quant ON tq_bad USING inverted(pk, emb ivf (metric = 'l2', quant = 'sq8', nb_bits = 2));
+----
+db error: ERROR: Column 'emb': ivf option 'nb_bits' is only valid with quant 'rabitq', 'tq' or 'tqmse'
+
+
+statement error
+CREATE INDEX tq_bad_both_keys ON tq_bad USING inverted(pk, emb ivf (metric = 'l2', quant = 'tq', nb_bits = 3, rabitq_bits = 3));
+----
+db error: ERROR: Column 'emb': ivf options 'nb_bits' and 'rabitq_bits' are aliases, specify only one
+
+
+statement error
+CREATE INDEX tq_bad_l1 ON tq_bad USING inverted(pk, emb ivf (metric = 'l1', quant = 'tq'));
+----
+db error: ERROR: Column 'emb': ivf quantization supports only metric 'l2', 'ip', or 'cosine'

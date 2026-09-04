@@ -43,8 +43,14 @@ namespace {
 
 constexpr duckdb::field_id_t kFooterSlotTermDict = 100;
 constexpr duckdb::field_id_t kFooterSlotIvf = 101;
+constexpr duckdb::field_id_t kFooterSlotHnsw = 102;
 
 }  // namespace
+
+struct HnswEntry {
+  field_id id;
+  HnswMeta meta;
+};
 
 struct IvfCentroidEntry {
   field_id id;
@@ -63,6 +69,7 @@ struct IdxWriter::Impl {
   Encryption::Stream::ptr cipher;
   IndexOutput::ptr out;
   std::vector<IvfCentroidEntry> ivf_entries;
+  std::vector<HnswEntry> hnsw_entries;
   std::vector<TermDictEntry> term_dict_entries;
 };
 
@@ -117,13 +124,18 @@ void IdxWriter::AddIvf(field_id id, IvfCentroidMeta meta) {
     IvfCentroidEntry{.id = id, .meta = std::move(meta)});
 }
 
+void IdxWriter::AddHnsw(field_id id, HnswMeta meta) {
+  _impl->hnsw_entries.push_back(HnswEntry{.id = id, .meta = std::move(meta)});
+}
+
 void IdxWriter::AddTermDictEntry(field_id id, TermDictMeta meta) {
   _impl->term_dict_entries.push_back(
     TermDictEntry{.id = id, .meta = std::move(meta)});
 }
 
 bool IdxWriter::Empty() const noexcept {
-  return _impl->ivf_entries.empty() && _impl->term_dict_entries.empty();
+  return _impl->ivf_entries.empty() && _impl->hnsw_entries.empty() &&
+         _impl->term_dict_entries.empty();
 }
 
 void IdxWriter::Commit() {
@@ -169,6 +181,16 @@ void IdxWriter::Commit() {
                                     e.meta.stats_byte_size);
       });
     });
+  serializer.WriteList(
+    kFooterSlotHnsw, "hnsw", _impl->hnsw_entries.size(),
+    [&](duckdb::Serializer::List& list, duckdb::idx_t i) {
+      const auto& e = _impl->hnsw_entries[i];
+      list.WriteObject([&](duckdb::Serializer& obj) {
+        obj.WriteProperty<uint64_t>(0, "id", e.id);
+        obj.WriteProperty<uint64_t>(1, "offset", e.meta.offset);
+        obj.WriteProperty<uint64_t>(2, "byte_size", e.meta.byte_size);
+      });
+    });
   serializer.End();
 
   IndexOutput* trailer_out = _impl->out.get();
@@ -190,6 +212,7 @@ void IdxWriter::Rollback() noexcept {
   _impl->out.reset();
   _impl->cipher.reset();
   _impl->ivf_entries.clear();
+  _impl->hnsw_entries.clear();
   _impl->term_dict_entries.clear();
 }
 

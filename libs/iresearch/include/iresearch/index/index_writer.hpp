@@ -32,6 +32,7 @@
 #include <optional>
 #include <string_view>
 #include <yaclib/algo/wait_group.hpp>
+#include <yaclib/async/future.hpp>
 
 #include "basics/async_utils.hpp"
 #include "basics/noncopyable.hpp"
@@ -186,6 +187,10 @@ struct IndexWriterOptions : public SegmentOptions {
   ColumnOptionsProvider column_options;
   NormColumnIdProvider norm_column_id;
   uint32_t row_group_size = DEFAULT_ROW_GROUP_SIZE;
+
+  // Non-owning parallel-build budget handed to every segment flush. Its
+  // FunctionRef referents must outlive the writer.
+  const AnnBuildEnv* ann_env = nullptr;
 
   IndexWriterOptions() {}  // compiler requires non-default definition
 };
@@ -645,6 +650,13 @@ class IndexWriter : private util::Noncopyable {
                            Format::ptr codec = nullptr,
                            const MergeWriter::FlushProgress& progress = {});
 
+  // Compact, driven by the caller's executor. A null `env` never suspends, so
+  // the returned Future is ready on return and Compact() just drains it.
+  auto CompactAsync(const CompactionPolicy& policy,
+                    const IndexFieldOptions* field_options, Format::ptr codec,
+                    const MergeWriter::FlushProgress& progress,
+                    const AnnBuildEnv* env) -> yaclib::Future<CompactionResult>;
+
   // Adopts a segment whose files already exist in this writer's directory --
   // Import without the data copy.
   bool AdoptSegment(std::string_view meta_file, const Format::ptr& codec,
@@ -1080,6 +1092,7 @@ class IndexWriter : private util::Noncopyable {
   IndexFeatures _score_bound_features{};
   ScorerPtr _topk_scorer;
   duckdb::DatabaseInstance* _db = nullptr;
+  const AnnBuildEnv* _ann_env = nullptr;
   // Fallback options (FunctionFieldOptions wrapping the provider callbacks),
   // shared to each segment writer; null when no provider was configured.
   std::shared_ptr<const IndexFieldOptions> _field_options;

@@ -61,7 +61,8 @@ inline std::string FileName(std::string_view segment_name) {
 class ColReader final {
  public:
   ColReader(const Directory& dir, std::string_view segment_name,
-            duckdb::DatabaseInstance& db);
+            duckdb::DatabaseInstance& db,
+            IOAdvice advice = IOAdvice::SEQUENTIAL);
   ~ColReader();
 
   ColReader(const ColReader&) = delete;

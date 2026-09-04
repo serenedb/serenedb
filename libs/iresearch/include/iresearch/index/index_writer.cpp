@@ -30,6 +30,8 @@
 #include <cstdint>
 #include <shared_mutex>
 #include <type_traits>
+#include <yaclib/coro/await.hpp>
+#include <yaclib/coro/future.hpp>
 
 #include "basics/assert.h"
 #include "basics/debugging.h"
@@ -46,6 +48,7 @@
 #include "iresearch/index/segment_reader_impl.hpp"
 #include "iresearch/index/segment_writer.hpp"
 #include "iresearch/store/directory.hpp"
+#include "iresearch/utils/async.hpp"
 #include "iresearch/utils/directory_utils.hpp"
 #include "iresearch/utils/index_utils.hpp"
 #include "iresearch/utils/type_limits.hpp"
@@ -1336,6 +1339,7 @@ IndexWriter::ptr IndexWriter::Make(Directory& dir, Format::ptr codec,
     std::move(codec), options.segment_pool_size, SegmentOptions{options},
     options.comparator, options.meta_payload_provider, std::move(reader));
   writer->_db = options.db;
+  writer->_ann_env = options.ann_env;
   // Wrap the provider callbacks into the fallback options (tests).
   if (options.column_options || options.norm_column_id) {
     writer->_field_options = std::make_shared<const FunctionFieldOptions>(
@@ -1388,9 +1392,12 @@ uint64_t IndexWriter::CurrentSegmentId() const noexcept {
   return _seg_counter.load(std::memory_order_relaxed);
 }
 
-CompactionResult IndexWriter::Compact(
-  const CompactionPolicy& policy, const IndexFieldOptions* field_options,
-  Format::ptr codec, const MergeWriter::FlushProgress& progress) {
+auto IndexWriter::CompactAsync(const CompactionPolicy& policy,
+                               const IndexFieldOptions* field_options,
+                               Format::ptr codec,
+                               const MergeWriter::FlushProgress& progress,
+                               const AnnBuildEnv* env)
+  -> yaclib::Future<CompactionResult> {
   if (!codec) {
     // use default codec if not specified
     codec = _codec;
@@ -1410,7 +1417,7 @@ CompactionResult IndexWriter::Compact(
 
     if (committed_reader->size() == 0) {
       // nothing to compact
-      return {0, CompactionError::Ok};
+      co_return CompactionResult{0, CompactionError::Ok};
     }
 
     // FIXME TODO remove from 'compacting_segments_' any segments in
@@ -1419,13 +1426,13 @@ CompactionResult IndexWriter::Compact(
 
     switch (candidates.size()) {
       case 0:  // nothing to compact
-        return {0, CompactionError::Ok};
+        co_return CompactionResult{0, CompactionError::Ok};
       case 1: {
         const auto* candidate = candidates.front();
         SDB_ASSERT(candidate != nullptr);
         if (!HasRemovals(candidate->Meta())) {
           // no removals, nothing to compact
-          return {0, CompactionError::Ok};
+          co_return CompactionResult{0, CompactionError::Ok};
         }
       }
     }
@@ -1436,7 +1443,7 @@ CompactionResult IndexWriter::Compact(
       if (_compacting.segments.contains(candidate->Meta().name)) {
         // A concurrent compaction already owns this candidate; not an error,
         // the caller retries or lets the other compaction finish it.
-        return {0, CompactionError::Busy};
+        co_return CompactionResult{0, CompactionError::Busy};
       }
     }
 
@@ -1492,9 +1499,9 @@ CompactionResult IndexWriter::Compact(
   merger.Reset(candidates.begin(), candidates.end());
 
   // We do not persist segment meta since some removals may come later
-  if (!merger.Flush(compaction_segment.meta, progress)) {
+  if (!(co_await merger.Flush(compaction_segment.meta, progress, env))) {
     // Nothing to compact or compaction failure
-    return result;
+    co_return result;
   }
 
   auto opts = committed_reader->Options();
@@ -1529,7 +1536,7 @@ CompactionResult IndexWriter::Compact(
             committed_reader->Meta().index_meta.gen, "', not found segment ",
             candidate->Meta().name, " in committed state");
           result.error = CompactionError::Busy;
-          return result;
+          co_return result;
         }
       }
     }
@@ -1548,7 +1555,7 @@ CompactionResult IndexWriter::Compact(
     SDB_TRACE(IRESEARCH, "Compaction id='", run_id,
               "' successfully finished: pending");
     result.error = CompactionError::Pending;
-    return result;
+    co_return result;
   }
 
   // before new transaction was started:
@@ -1564,7 +1571,7 @@ CompactionResult IndexWriter::Compact(
                 "', found only '", count, "' out of '", candidates.size(),
                 "' candidates");
       result.error = CompactionError::Busy;
-      return result;
+      co_return result;
     }
 
     // handle removals if something changed
@@ -1580,7 +1587,7 @@ CompactionResult IndexWriter::Compact(
                   "the compaction candidates");
 
         result.error = CompactionError::Busy;
-        return result;
+        co_return result;
       }
 
       SDB_ASSERT(!docs_mask->empty());
@@ -1625,7 +1632,15 @@ CompactionResult IndexWriter::Compact(
             ", live_docs_count=", pending_segment.segment.meta.live_docs_count,
             ", size=", pending_segment.segment.meta.byte_size);
   result.error = CompactionError::Ok;
-  return result;
+  co_return result;
+}
+
+CompactionResult IndexWriter::Compact(
+  const CompactionPolicy& policy, const IndexFieldOptions* field_options,
+  Format::ptr codec, const MergeWriter::FlushProgress& progress) {
+  return GetReady(CompactAsync(policy, field_options, std::move(codec),
+                               progress,
+                               /*env=*/nullptr));
 }
 
 bool IndexWriter::AdoptSegment(std::string_view meta_file,
@@ -1709,7 +1724,7 @@ bool IndexWriter::Import(const IndexReader& reader,
                      GetSegmentWriterOptions(true, /*field_options=*/nullptr)};
   merger.Reset(reader.begin(), reader.end());
 
-  if (!merger.Flush(segment.meta, progress)) {
+  if (!GetReady(merger.Flush(segment.meta, progress, /*env=*/nullptr))) {
     return false;  // Import failure (no files created, nothing to clean up)
   }
 
@@ -1842,6 +1857,7 @@ SegmentWriterOptions IndexWriter::GetSegmentWriterOptions(
                                    : *_dir.ResourceManager().transactions,
     .db = _db,
     .field_options = field_options ? field_options : _field_options.get(),
+    .ann_env = compaction ? nullptr : _ann_env,
   };
 }
 

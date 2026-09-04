@@ -27,7 +27,7 @@ namespace sdb::pg {
 // https://www.postgresql.org/docs/18/catalog-pg-ts-config-map.html
 // NOLINTBEGIN
 struct PgTsConfigMap {
-  static constexpr uint64_t kId = 159;
+  static constexpr uint64_t kId = 3603;
   static constexpr std::string_view kName = "pg_ts_config_map";
 
   Oid mapcfg;

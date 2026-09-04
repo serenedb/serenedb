@@ -27,7 +27,7 @@ namespace sdb::pg {
 // https://www.postgresql.org/docs/18/catalog-pg-ts-dict.html
 // NOLINTBEGIN
 struct PgTsDict {
-  static constexpr uint64_t kId = 160;
+  static constexpr uint64_t kId = 3600;
   static constexpr std::string_view kName = "pg_ts_dict";
 
   Oid oid;

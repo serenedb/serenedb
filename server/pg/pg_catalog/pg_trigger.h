@@ -27,7 +27,7 @@ namespace sdb::pg {
 // https://www.postgresql.org/docs/18/catalog-pg-trigger.html
 // NOLINTBEGIN
 struct PgTrigger {
-  static constexpr uint64_t kId = 157;
+  static constexpr uint64_t kId = 2620;
   static constexpr std::string_view kName = "pg_trigger";
 
   enum class Tgenabled : char {

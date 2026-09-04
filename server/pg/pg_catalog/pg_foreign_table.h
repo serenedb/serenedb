@@ -27,7 +27,7 @@ namespace sdb::pg {
 // https://www.postgresql.org/docs/18/catalog-pg-foreign-table.html
 // NOLINTBEGIN
 struct PgForeignTable {
-  static constexpr uint64_t kId = 124;
+  static constexpr uint64_t kId = 3118;
   static constexpr std::string_view kName = "pg_foreign_table";
 
   Oid ftrelid;

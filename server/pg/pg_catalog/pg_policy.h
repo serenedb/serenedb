@@ -27,7 +27,7 @@ namespace sdb::pg {
 // https://www.postgresql.org/docs/18/catalog-pg-policy.html
 // NOLINTBEGIN
 struct PgPolicy {
-  static constexpr uint64_t kId = 137;
+  static constexpr uint64_t kId = 3256;
   static constexpr std::string_view kName = "pg_policy";
 
   enum class Polcmd : char {

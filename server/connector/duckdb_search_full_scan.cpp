@@ -92,7 +92,6 @@
 #include "pg/connection_context.h"
 #include "pg/errcodes.h"
 #include "pg/sql_exception_macro.h"
-#include "search/inverted_index.h"
 #include "search/inverted_index_storage.h"
 
 namespace sdb::connector {
@@ -1335,11 +1334,9 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> IResearchScanInitGlobal(
 
   if (state->mode == ScanMode::ColScan) {
     // Search tables carry no inverted_index; fall back to the default unit.
-    uint64_t rg_rows =
-      bind_data.inverted_index
-        ? catalog::DecodeInvertedIndexOptions(bind_data.inverted_index->options)
-            .row_group_size
-        : 0;
+    uint64_t rg_rows = bind_data.inverted_index
+                         ? bind_data.inverted_index->Options().row_group_size
+                         : 0;
     if (rg_rows == 0) {
       rg_rows = DEFAULT_ROW_GROUP_SIZE;
     }

@@ -28,7 +28,7 @@ namespace sdb::pg {
 // https://www.postgresql.org/docs/18/catalog-pg-attribute.html
 // NOLINTBEGIN
 struct PgAttribute {
-  static constexpr uint64_t kId = 106;
+  static constexpr uint64_t kId = 1249;
   static constexpr std::string_view kName = "pg_attribute";
 
   enum class Attstorage : char {

@@ -27,7 +27,7 @@ namespace sdb::pg {
 // https://www.postgresql.org/docs/18/catalog-pg-constraint.html
 // NOLINTBEGIN
 struct PgConstraint {
-  static constexpr uint64_t kId = 112;
+  static constexpr uint64_t kId = 2606;
   static constexpr std::string_view kName = "pg_constraint";
 
   enum class Contype : char {

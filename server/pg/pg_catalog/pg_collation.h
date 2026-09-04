@@ -27,7 +27,7 @@ namespace sdb::pg {
 // https://www.postgresql.org/docs/18/catalog-pg-collation.html
 // NOLINTBEGIN
 struct PgCollation {
-  static constexpr uint64_t kId = 111;
+  static constexpr uint64_t kId = 3456;
   static constexpr std::string_view kName = "pg_collation";
 
   enum class Collprovider : char {

@@ -62,35 +62,34 @@ namespace sdb::connector {
 class SearchRemoveFilter;
 
 using TokenizerProvider =
-  absl::AnyInvocable<search::ColumnTokenizer(irs::field_id)>;
+  absl::AnyInvocable<catalog::ColumnTokenizer(irs::field_id)>;
 
 inline TokenizerProvider MakeTokenizerProvider(
-  search::TokenizerMap dicts, const InvertedStoreIndex& index) {
+  catalog::TokenizerMap dicts,
+  const catalog::InvertedIndexFieldOptions& config) {
   return [dicts = std::move(dicts),
-          &index](irs::field_id field_id) -> search::ColumnTokenizer {
-    return index.GetTokenizer(dicts, field_id);
+          &config](irs::field_id field_id) -> catalog::ColumnTokenizer {
+    return config.GetTokenizer(dicts, field_id);
   };
 }
 
 using EntryInfoProvider =
-  absl::AnyInvocable<const search::InvertedIndexEntryInfo*(irs::field_id)>;
+  absl::AnyInvocable<const catalog::InvertedIndexField*(irs::field_id)>;
 
 inline EntryInfoProvider MakeEntryInfoProvider(
-  const InvertedStoreIndex& index) {
-  return [&index](irs::field_id field_id) {
-    return index.SharedConfig()->FindEntry(field_id);
-  };
+  const catalog::InvertedIndexFieldOptions& config) {
+  return
+    [&config](irs::field_id field_id) { return config.FindEntry(field_id); };
 }
 
 inline EntryInfoProvider NoEntryInfoProvider() {
-  return [](irs::field_id) -> const search::InvertedIndexEntryInfo* {
-    return nullptr;
-  };
+  return
+    [](irs::field_id) -> const catalog::InvertedIndexField* { return nullptr; };
 }
 
 inline EntryInfoProvider AllStoredEntryInfoProvider() {
-  static const search::InvertedIndexEntryInfo kStored = [] {
-    search::InvertedIndexEntryInfo e;
+  static const catalog::InvertedIndexField kStored = [] {
+    catalog::InvertedIndexField e;
     e.store_values = true;
     return e;
   }();
@@ -152,7 +151,7 @@ class SearchSinkInsertBaseImpl {
     }
 
     void PrepareForVerbatimStringValue();
-    void PrepareForStringValue(search::ColumnTokenizer&& column_analyzer);
+    void PrepareForStringValue(catalog::ColumnTokenizer&& column_analyzer);
     void SetStringValue(std::string_view value);
 
     void PrepareForNumericValue();
@@ -214,8 +213,8 @@ class SearchSinkInsertBaseImpl {
     irs::field_id tokenizer_column = irs::field_limits::invalid();
 
     void InitForExpression(irs::field_id entry_field_id,
-                           const search::InvertedIndexEntryInfo* entry,
-                           search::ColumnTokenizer string_analyzer);
+                           const catalog::InvertedIndexField* entry,
+                           catalog::ColumnTokenizer string_analyzer);
   };
 
   TokenizerProvider _tokenizer_provider;

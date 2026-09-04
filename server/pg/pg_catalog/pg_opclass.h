@@ -27,7 +27,7 @@ namespace sdb::pg {
 // https://www.postgresql.org/docs/18/catalog-pg-opclass.html
 // NOLINTBEGIN
 struct PgOpclass {
-  static constexpr uint64_t kId = 132;
+  static constexpr uint64_t kId = 2616;
   static constexpr std::string_view kName = "pg_opclass";
 
   Oid oid;

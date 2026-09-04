@@ -48,7 +48,6 @@
 #include "pg/errcodes.h"
 #include "pg/pg_types.h"
 #include "pg/sql_exception_macro.h"
-#include "search/inverted_index.h"
 #include "search/inverted_index_storage.h"
 #include "search/search_table.h"
 

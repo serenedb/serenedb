@@ -27,7 +27,7 @@ namespace sdb::pg {
 // https://www.postgresql.org/docs/18/catalog-pg-foreign-data-wrapper.html
 // NOLINTBEGIN
 struct PgForeignDataWrapper {
-  static constexpr uint64_t kId = 122;
+  static constexpr uint64_t kId = 2328;
   static constexpr std::string_view kName = "pg_foreign_data_wrapper";
 
   enum class Fdwvalidator : char {

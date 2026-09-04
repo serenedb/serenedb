@@ -27,7 +27,7 @@ namespace sdb::pg {
 // https://www.postgresql.org/docs/18/catalog-pg-enum.html
 // NOLINTBEGIN
 struct PgEnum {
-  static constexpr uint64_t kId = 119;
+  static constexpr uint64_t kId = 3501;
   static constexpr std::string_view kName = "pg_enum";
 
   Oid oid;

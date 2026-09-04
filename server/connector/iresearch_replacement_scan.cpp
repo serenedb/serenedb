@@ -29,7 +29,7 @@
 #include <duckdb/parser/expression/function_expression.hpp>
 #include <duckdb/parser/tableref/table_function_ref.hpp>
 
-#include "connector/inverted_store_lookup.h"
+#include "connector/inverted_store_index.h"
 
 namespace sdb::connector {
 namespace {

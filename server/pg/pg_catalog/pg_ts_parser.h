@@ -27,7 +27,7 @@ namespace sdb::pg {
 // https://www.postgresql.org/docs/18/catalog-pg-ts-parser.html
 // NOLINTBEGIN
 struct PgTsParser {
-  static constexpr uint64_t kId = 161;
+  static constexpr uint64_t kId = 3601;
   static constexpr std::string_view kName = "pg_ts_parser";
 
   Oid oid;

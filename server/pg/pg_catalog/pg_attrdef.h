@@ -27,7 +27,7 @@ namespace sdb::pg {
 // https://www.postgresql.org/docs/18/catalog-pg-attrdef.html
 // NOLINTBEGIN
 struct PgAttrdef {
-  static constexpr uint64_t kId = 105;
+  static constexpr uint64_t kId = 2604;
   static constexpr std::string_view kName = "pg_attrdef";
 
   Oid oid;

@@ -27,7 +27,7 @@ namespace sdb::pg {
 // https://www.postgresql.org/docs/18/catalog-pg-class.html
 // NOLINTBEGIN
 struct PgClass {
-  static constexpr uint64_t kId = 110;
+  static constexpr uint64_t kId = 1259;
   static constexpr std::string_view kName = "pg_class";
 
   enum class Relpersistence : char {

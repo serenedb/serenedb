@@ -27,7 +27,7 @@ namespace sdb::pg {
 // https://www.postgresql.org/docs/18/catalog-pg-type.html
 // NOLINTBEGIN
 struct PgType {
-  static constexpr uint64_t kId = 163;
+  static constexpr uint64_t kId = 1247;
   static constexpr std::string_view kName = "pg_type";
 
   enum class Typetype : char {

@@ -27,7 +27,7 @@ namespace sdb::pg {
 // https://www.postgresql.org/docs/18/catalog-pg-subscription-rel.html
 // NOLINTBEGIN
 struct PgSubscriptionRel {
-  static constexpr uint64_t kId = 154;
+  static constexpr uint64_t kId = 6102;
   static constexpr std::string_view kName = "pg_subscription_rel";
 
   enum class Srsubstate : char {

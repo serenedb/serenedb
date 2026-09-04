@@ -27,7 +27,7 @@ namespace sdb::pg {
 // https://www.postgresql.org/docs/18/catalog-pg-range.html
 // NOLINTBEGIN
 struct PgRange {
-  static constexpr uint64_t kId = 142;
+  static constexpr uint64_t kId = 3541;
   static constexpr std::string_view kName = "pg_range";
 
   Oid rngtypid;

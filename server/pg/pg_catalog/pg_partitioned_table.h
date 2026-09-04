@@ -27,7 +27,7 @@ namespace sdb::pg {
 // https://www.postgresql.org/docs/18/catalog-pg-partitioned-table.html
 // NOLINTBEGIN
 struct PgPartitionedTable {
-  static constexpr uint64_t kId = 136;
+  static constexpr uint64_t kId = 3350;
   static constexpr std::string_view kName = "pg_partitioned_table";
 
   enum class Partstrat : char {

@@ -27,7 +27,7 @@ namespace sdb::pg {
 // https://www.postgresql.org/docs/18/catalog-pg-proc.html
 // NOLINTBEGIN
 struct PgProc {
-  static constexpr uint64_t kId = 138;
+  static constexpr uint64_t kId = 1255;
   static constexpr std::string_view kName = "pg_proc";
 
   enum class Prokind : char {

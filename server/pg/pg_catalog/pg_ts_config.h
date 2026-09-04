@@ -27,7 +27,7 @@ namespace sdb::pg {
 // https://www.postgresql.org/docs/18/catalog-pg-ts-config.html
 // NOLINTBEGIN
 struct PgTsConfig {
-  static constexpr uint64_t kId = 158;
+  static constexpr uint64_t kId = 3602;
   static constexpr std::string_view kName = "pg_ts_config";
 
   Oid oid;

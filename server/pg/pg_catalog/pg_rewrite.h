@@ -27,7 +27,7 @@ namespace sdb::pg {
 // https://www.postgresql.org/docs/18/catalog-pg-rewrite.html
 // NOLINTBEGIN
 struct PgRewrite {
-  static constexpr uint64_t kId = 144;
+  static constexpr uint64_t kId = 2618;
   static constexpr std::string_view kName = "pg_rewrite";
 
   enum class EvType : char {

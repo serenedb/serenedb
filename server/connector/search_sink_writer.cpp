@@ -612,8 +612,8 @@ void SearchSinkInsertBaseImpl::InsertNullValue() {
 }
 
 void SearchSinkInsertBaseImpl::JsonExpressionFields::InitForExpression(
-  irs::field_id entry_field_id, const search::InvertedIndexEntryInfo* entry,
-  search::ColumnTokenizer string_analyzer) {
+  irs::field_id entry_field_id, const catalog::InvertedIndexField* entry,
+  catalog::ColumnTokenizer string_analyzer) {
   SDB_ASSERT(entry);
   SDB_ASSERT(irs::field_limits::valid(entry_field_id));
   SDB_ASSERT(irs::field_limits::valid(entry->numeric_field_id));
@@ -705,7 +705,7 @@ void SearchSinkInsertBaseImpl::Field::PrepareForVerbatimStringValue() {
 }
 
 void SearchSinkInsertBaseImpl::Field::PrepareForStringValue(
-  search::ColumnTokenizer&& column_analyzer) {
+  catalog::ColumnTokenizer&& column_analyzer) {
   index_features = column_analyzer.features;
   SDB_ASSERT(column_analyzer.analyzer);
   analyzer.reset();

@@ -218,8 +218,10 @@ class SinglePositionStrategy {
                         const Iterator& end, Iterator& it,
                         PosAttr::value_t& lead_bound) {
     if (!match) {
-      SDB_ASSERT(sought > Traits::Interval(*it).lead_offset);
-      lead_bound = sought - Traits::Interval(*it).lead_offset;
+      SDB_ASSERT(sought + Traits::Interval(*_lead_it).lead_offset >
+                 Traits::Interval(*it).lead_offset);
+      lead_bound = sought - Traits::Interval(*it).lead_offset +
+                   Traits::Interval(*_lead_it).lead_offset;
     }
     _base_position = sought;
     ++it;
@@ -229,8 +231,10 @@ class SinglePositionStrategy {
   bool AdvanceIterators(bool match, PosAttr::value_t sought, const Iterator&,
                         Iterator& it) {
     if (!match) {
-      SDB_ASSERT(sought > Traits::Interval(*it).lead_offset);
-      _lead_pos.seek(sought - Traits::Interval(*it).lead_offset);
+      SDB_ASSERT(sought + Traits::Interval(*_lead_it).lead_offset >
+                 Traits::Interval(*it).lead_offset);
+      _lead_pos.seek(sought - Traits::Interval(*it).lead_offset +
+                     Traits::Interval(*_lead_it).lead_offset);
     }
     _base_position = sought;
     ++it;
@@ -246,6 +250,7 @@ class SinglePositionStrategy {
   Iterator& _lead_it;
   PositionImpl& _lead_pos;
   PosAttr::value_t _base_position{pos_limits::eof()};
+  bool _reversed{false};
 };
 
 template<typename Iterator>

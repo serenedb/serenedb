@@ -54,23 +54,48 @@ IRS_FORCE_INLINE inline void CaseConvertAscii(char* dst, const char* src,
 }
 
 inline constexpr size_t kCaseLane = 16;
+inline constexpr size_t kCaseBulk = 512;
+
+template<bool ToLower, size_t Bytes>
+IRS_FORCE_INLINE inline void CaseConvertAsciiLanes(char* dst, const char* src,
+                                                   size_t n) noexcept {
+  using Lane = uint8_t __attribute__((vector_size(Bytes)));
+  SDB_ASSERT(n >= Bytes);
+  const auto convert = [&](size_t at) IRS_FORCE_INLINE {
+    Lane lane;
+    std::memcpy(&lane, src + at, sizeof lane);
+    lane = CaseConvertAscii<ToLower>(lane);
+    std::memcpy(dst + at, &lane, sizeof lane);
+  };
+  size_t at = 0;
+  for (; at + Bytes < n; at += Bytes) {
+    convert(at);
+  }
+  convert(n - Bytes);
+}
 
 template<bool ToLower>
 IRS_FORCE_INLINE inline void CaseConvertAsciiWide(char* dst, const char* src,
                                                   size_t n) noexcept {
-  using Lane = uint8_t __attribute__((vector_size(kCaseLane)));
-  SDB_ASSERT(n >= sizeof(Lane));
-  const auto convert = [](char* out, const char* in) IRS_FORCE_INLINE {
-    Lane lane;
-    std::memcpy(&lane, in, sizeof lane);
-    lane = CaseConvertAscii<ToLower>(lane);
-    std::memcpy(out, &lane, sizeof lane);
-  };
-  size_t at = 0;
-  for (; at + sizeof(Lane) < n; at += sizeof(Lane)) {
-    convert(dst + at, src + at);
+  CaseConvertAsciiLanes<ToLower, kCaseLane>(dst, src, n);
+}
+
+template<bool ToLower>
+IRS_NO_INLINE inline void CaseConvertAsciiTerm(char* dst, const char* src,
+                                               size_t n) noexcept {
+  if (n >= kCaseBulk) {
+    CaseConvertAscii<ToLower>(dst, src, n);
+    return;
   }
-  convert(dst + n - sizeof(Lane), src + n - sizeof(Lane));
+  if (n < kCaseLane) {
+    CaseConvertAsciiLanes<ToLower, kCaseLane / 2>(dst, src, n);
+    return;
+  }
+  if (n < 2 * kCaseLane) {
+    CaseConvertAsciiLanes<ToLower, kCaseLane>(dst, src, n);
+    return;
+  }
+  CaseConvertAsciiLanes<ToLower, 2 * kCaseLane>(dst, src, n);
 }
 
 template<bool ToLower>

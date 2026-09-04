@@ -810,6 +810,53 @@ TEST(SegmentationTokenizerAsciiFastPath, property_oracle_random_ascii) {
   }
 }
 
+TEST(SegmentationTokenizerAsciiFastPath, case_convert_all_sizes) {
+  constexpr std::string_view kWords[] = {
+    "Ab",        "cD e",          "FoO_bAr",
+    "X",         "Don'T",         "MiXeD12",
+    "  ",        "A.B.C",         "LongWordThatExceedsInline",
+    "sHoRt",     "3.14",          "Q",
+    "wxyzWXYZ0", "ThirteenChars",
+  };
+  for (const auto convert :
+       {Options::Convert::Lower, Options::Convert::Upper}) {
+    for (const auto accept :
+         {Options::Accept::AlphaNumeric, Options::Accept::Any}) {
+      Options opts{.accept = accept, .convert = convert};
+      std::string v;
+      for (size_t i = 0; v.size() <= 700; ++i) {
+        SCOPED_TRACE(testing::Message()
+                     << "accept=" << int(accept) << " convert=" << int(convert)
+                     << " size=" << v.size());
+        AssertAsciiMatchesUnicode(opts, v);
+        v += kWords[i % std::size(kWords)];
+        v += ' ';
+      }
+    }
+  }
+}
+
+TEST(SegmentationTokenizerAsciiFastPath, case_convert_sparse_long_values) {
+  constexpr std::string_view kGap =
+    "                                                                ";
+  for (const auto convert :
+       {Options::Convert::Lower, Options::Convert::Upper}) {
+    Options opts{.accept = Options::Accept::AlphaNumeric, .convert = convert};
+    for (size_t lead = 0; lead < 40; ++lead) {
+      std::string v(lead, '-');
+      for (size_t k = 0; k < 6; ++k) {
+        v += "AbC";
+        v += kGap;
+        v += "PaddedWordOverInlineLimit";
+        v += kGap.substr(0, 3 + k);
+      }
+      SCOPED_TRACE(testing::Message()
+                   << "convert=" << int(convert) << " lead=" << lead);
+      AssertAsciiMatchesUnicode(opts, v);
+    }
+  }
+}
+
 TEST(SegmentationTokenizerAsciiFastPath, non_ascii_takes_unicode_path) {
   Options opts{};
   AssertAsciiMatchesUnicode(opts, "caf\xc3\xa9 society");
@@ -1118,7 +1165,11 @@ TEST(IcuTextTokenizerTest, ascii_fast_path_matches_icu_for_every_accept) {
 
 namespace {
 
-enum class IcuMode { Word, WordAny, Sentence };
+enum class IcuMode {
+  Word,
+  WordAny,
+  Sentence,
+};
 
 std::vector<tests::AnalyzerToken> IcuOracle(const icu::Locale& locale,
                                             IcuMode mode,

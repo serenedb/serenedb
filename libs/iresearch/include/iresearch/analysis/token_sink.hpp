@@ -293,7 +293,7 @@ class TokenSink final : util::Noncopyable {
       Emit<L>(
         size,
         [&](byte_type* out) IRS_FORCE_INLINE {
-          analysis::casing::CaseConvertAscii<Lower>(
+          analysis::casing::CaseConvertAsciiTerm<Lower>(
             reinterpret_cast<char*>(out), base + offs.start, size);
           return size;
         },

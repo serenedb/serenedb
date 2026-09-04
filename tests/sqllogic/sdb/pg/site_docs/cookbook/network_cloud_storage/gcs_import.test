@@ -12,7 +12,7 @@ control substitution on
 # DOCS_TEST_BODY
 
 statement ok
-CREATE OR REPLACE SECRET (
+CREATE OR REPLACE SECRET gcs_import_${__DATABASE__} (
     TYPE gcs,
     KEY_ID 'AKIAIOSFODNN7EXAMPLE',
     SECRET 'wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY'

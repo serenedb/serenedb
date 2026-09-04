@@ -234,7 +234,7 @@ void ApplyStorageKind(
     }
   }
   // The sequence feeding the synthetic primary key is not known until the
-  // create runs under the catalog mutex; the tags are rewritten there.
+  // create runs; the tags are rewritten there.
   catalog::SetTableTags(info, engine, search_options, ObjectId{});
 }
 

@@ -67,12 +67,11 @@ struct WalCursor {
   uint64_t offset = 0;
 };
 
-// Removes a dropped storage's directory tree, then up to `parent_levels`
-// ancestors that emptied out with it -- a still-populated ancestor stops the
-// walk. A failed removal is only logged: boot's orphan sweep reclaims whatever
-// is left, because a dropped object's ids are never reissued.
-void RemoveDroppedStorageDir(const std::filesystem::path& path,
-                             size_t parent_levels);
+// Removes a dropped storage's directory tree. Only the leaf: an emptied
+// ancestor is shared with concurrent creations, and boot's orphan sweep
+// reclaims whatever is left, because a dropped object's ids are never
+// reissued. A failed removal is only logged for the same reason.
+void RemoveDroppedStorageDir(const std::filesystem::path& path);
 
 // Physical representation of a search index (InvertedIndex). Owns the
 // iresearch writer/reader and all mutable index state; lives in the

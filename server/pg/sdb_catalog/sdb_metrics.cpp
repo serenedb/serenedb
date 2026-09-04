@@ -96,12 +96,10 @@ catalog::MaterializedData SystemTableSnapshot<SdbMetrics>::GetTableData() {
   }
 
   const auto wal_first = values.size();
-  auto wal = catalog::ClusterCatalogWal();
-  values.emplace_back("catalog_wal_appended_bytes",
-                      wal ? wal->GetTotalWritten() : 0,
+  const auto wal = catalog::ClusterCatalogWalSize();
+  values.emplace_back("catalog_wal_appended_bytes", wal.appended_bytes,
                       "bytes appended to the catalog wal since start");
-  values.emplace_back("catalog_wal_size_on_disk",
-                      wal ? wal->GetStorageManager().GetWALSize() : 0,
+  values.emplace_back("catalog_wal_size_on_disk", wal.size_on_disk,
                       "current catalog wal file size in bytes");
   masks.insert(masks.end(), values.size() - wal_first, kPerProcessMask);
 

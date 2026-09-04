@@ -82,6 +82,7 @@ set(iresearch-tests_sources
     ./search/term_predicate_test.cpp
     ./search/prefix_filter_test.cpp
     ./search/range_filter_test.cpp
+    ./search/phrase_filter_bench_test.cpp
     ./search/phrase_filter_tests.cpp
     ./search/slop_phrase_gather_tests.cpp
     ./search/slop_phrase_fuzz.cpp

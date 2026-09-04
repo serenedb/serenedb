@@ -149,33 +149,9 @@ set(WITH_SANITIZER "OFF" CACHE STRING "" FORCE)
 sdb_update_module(${GIT_EXECUTABLE} "zlib-ng" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
 add_subdirectory(zlib-ng)
 
-# Create ZLIB::ZLIB alias for velox compatibility
+# For compatibility
 add_library(ZLIB::ZLIB ALIAS zlib-ng)
-
-################################################################################
-## MINIZIP-NG
-################################################################################
-
-set(MZ_COMPAT ON CACHE BOOL "" FORCE)
-set(MZ_ZLIB ON CACHE BOOL "" FORCE)
 set(ZLIB_FOUND ON CACHE BOOL "" FORCE)
-set(MZ_BZIP2 OFF CACHE BOOL "" FORCE)
-set(MZ_LZMA OFF CACHE BOOL "" FORCE)
-set(MZ_ZSTD OFF CACHE BOOL "" FORCE)
-set(MZ_PPMD OFF CACHE BOOL "" FORCE)
-set(MZ_LIBCOMP OFF CACHE BOOL "" FORCE)
-set(MZ_FETCH_LIBS OFF CACHE BOOL "" FORCE)
-set(MZ_PKCRYPT OFF CACHE BOOL "" FORCE)
-set(MZ_WZAES OFF CACHE BOOL "" FORCE)
-set(MZ_OPENSSL OFF CACHE BOOL "" FORCE)
-set(MZ_LIBBSD OFF CACHE BOOL "" FORCE)
-set(MZ_ICONV OFF CACHE BOOL "" FORCE)
-set(MZ_SANITIZER "OFF" CACHE STRING "" FORCE)
-
-sdb_update_module(${GIT_EXECUTABLE} "minizip-ng" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
-add_subdirectory(minizip-ng)
-
-target_link_libraries(minizip PUBLIC zlib-ng)
 
 ################################################################################
 ## BOOST

@@ -50,7 +50,6 @@
 #include "search/search_db_wal.h"
 #include "search/search_table_recovery.h"
 #include "search/task.h"
-#include "search/wal_recovery.h"
 
 ABSL_DECLARE_FLAG(uint64_t, background_threads);
 
@@ -81,9 +80,8 @@ int SearchEngine::MaxConcurrentCompactions() noexcept {
 }
 
 void SearchEngine::start() {
-  InitInvertedIndexes();
   // Replay each database's search-table WAL into iresearch (delta-based and
-  // unconditional, mirroring inverted-index recovery).
+  // unconditional).
   RunSearchTableRecovery(false);
   // Only now that every shard is fully replayed + committed do we start the
   // search-table background loops -- never while recovery is still rebuilding a

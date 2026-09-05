@@ -28,7 +28,6 @@
 #include <duckdb/parser/parsed_data/create_index_info.hpp>
 #include <optional>
 
-#include "basics/down_cast.h"
 #include "catalog1/catalog.h"
 #include "catalog1/permissions.h"
 #include "connector/column_id.h"
@@ -181,17 +180,14 @@ class SereneDBPhysicalCreateIndex final : public duckdb::PhysicalOperator {
   duckdb::idx_t _database_id;
   duckdb::unique_ptr<duckdb::CreateIndexInfo> _info;
   duckdb::vector<duckdb::unique_ptr<duckdb::Expression>> _bound_expressions;
-  // The statement's SereneDBCreateIndexInfo view of _info: the bind
-  // captures (manifest, pk spec/type) plus the optional REINDEX pass
-  // identity ride the statement info itself, so prepared re-executions
-  // carry them by construction. The bind hook upgrades every create to the
-  // subclass, so this never fails.
-  const SereneDBCreateIndexInfo& Info() const noexcept {
-    return basics::downCast<const SereneDBCreateIndexInfo>(*_info);
+
+  duckdb::optional_ptr<const SereneDBCreateIndexInfo> Extras() const noexcept {
+    return dynamic_cast<const SereneDBCreateIndexInfo*>(_info.get());
   }
   using ReindexPass = SereneDBCreateIndexInfo::ReindexPass;
   bool IsReindexPass() const noexcept {
-    return Info().Pass() != ReindexPass::None;
+    const auto extras = Extras();
+    return extras && extras->Pass() != ReindexPass::None;
   }
 
   // First chunk slot holding a pipeline-computed indexed expression (0 when the

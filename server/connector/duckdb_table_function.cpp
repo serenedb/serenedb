@@ -464,10 +464,10 @@ auto MakeFieldNameResolver(const SereneDBScanBindData& bind_data,
         if (base.empty()) {
           base = absl::StrCat("col", fid);
         }
-        if (expr) {
-          search::InvertedIndex::AppendKindSuffix(base, expr->return_type);
+        if (is_expr) {
+          AppendKindSuffix(base, duckdb::LogicalType{expr_type_id});
         } else if (found_type) {
-          search::InvertedIndex::AppendKindSuffix(base, column_type);
+          AppendKindSuffix(base, column_type);
         } else if (entry.HasTextDictionary()) {
           base += "(string)";
         }
@@ -626,17 +626,14 @@ void SereneDBScanBindData::AppendSummary(
     // TODO(mbkkt): prunnable/etc instead of optimized?
     // TODO(mbkkt): streaming top k also should be marked when pruning enabled
     std::string topk_val = absl::StrCat(*score_top_k);
-    const auto* index = bind.inverted_index
-                          ? &catalog::InvertedInfo(*bind.inverted_index)
-                          : nullptr;
-    const auto* pruning = ResolvePruneScorer(index, query_scorer.get());
+    const auto* pruning =
+      ResolvePruneScorer(bind.index_top_k_scorer, query_scorer.get());
     if (pruning) {
       absl::StrAppend(&topk_val, ", optimized");
     }
     out.insert("Top", std::move(topk_val));
-    if (const auto& topk = index->GetTopKScorer();
-        pruning && topk && topk != text_scorer) {
-      if (auto bounds = catalog::MakeScorer(*topk)) {
+    if (pruning && bind.index_top_k_scorer != text_scorer) {
+      if (auto bounds = catalog::MakeScorer(*bind.index_top_k_scorer)) {
         out.insert("Bounds", bounds->ToString());
       }
     }
@@ -1217,7 +1214,11 @@ duckdb::unique_ptr<duckdb::FunctionData> IResearchScanDeserialize(
 
 duckdb::TableFunction CreateIResearchScanFunction() {
   duckdb::TableFunction func{
-    "iresearch_scan",        {}, IResearchScanFunction, SereneDBScanBind,
+    "iresearch_scan",
+    {duckdb::LogicalType::VARCHAR, duckdb::LogicalType::VARCHAR,
+     duckdb::LogicalType::VARCHAR},
+    IResearchScanFunction,
+    SereneDBScanBind,
     IResearchScanInitGlobal,
   };
   func.init_local = IResearchScanInitLocal;

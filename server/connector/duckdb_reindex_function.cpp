@@ -249,7 +249,7 @@ class PassConnection {
       info->expressions.push_back(column->Copy());
       info->parsed_expressions.push_back(std::move(column));
     }
-    if (const auto predicate = target.index->Config()->predicate.get()) {
+    if (const auto predicate = target.index->where_clause.get()) {
       info->where_clause = predicate->Copy();
     }
     info->table = duckdb::Identifier{target.relation_name};
@@ -896,8 +896,9 @@ ReindexOutcome RunRefresh(duckdb::ClientContext& context,
 std::optional<Source> ResolveSource(duckdb::ClientContext& context,
                                     const ReindexTarget& target) {
   Source src;
-  auto fp = ResolveViewFastPath(context, *target.view_info,
-                                target.index->Config()->key_columns);
+  auto fp =
+    ResolveViewFastPath(context, *target.view_info,
+                        catalog::ParseKeyColumns(target.index->options));
   if (!fp) {
     return std::nullopt;
   }

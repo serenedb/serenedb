@@ -32,6 +32,7 @@ target_link_libraries(
         serene
         serene_geo
         serene_connector
+        sereneserver_catalog1
         llhttp
         duckdb_static
         zstd::zstd # search-table WAL chunk-file compression (search_db_wal.cpp)

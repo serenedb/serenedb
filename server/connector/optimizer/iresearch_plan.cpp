@@ -123,10 +123,10 @@ irs::field_id ResolveAnnTargetFieldId(
     return irs::field_limits::invalid();
   }
   auto normalized = connector::NormalizeBoundExpression(
-    col_arg, bind_data.table_entry->oid,
-    BuildProjectedColumnIds(get, bind_data), client_context);
+    col_arg, bind_data.RelationId(), BuildProjectedColumnIds(get, bind_data),
+    client_context);
   auto serialized = connector::SerializeBoundExpression(*normalized);
-  return bind_data.inverted_config->FindFieldIdBySerialized(serialized);
+  return bind_data.inverted_config->FindFieldIdByExpression(serialized);
 }
 
 std::optional<FoundScan> AsSearchScan(duckdb::LogicalOperator& op) {
@@ -293,15 +293,16 @@ bool TryClaimIResearchConjunct(
 
 bool WithSearchGetters(duckdb::LogicalGet& get,
                        connector::SereneDBScanBindData& bind_data,
-                       const search::InvertedIndex& index,
                        duckdb::ClientContext& context,
                        absl::FunctionRef<bool(const SearchGetters&)> fn) {
-  // Resolved once for the whole claim: every column of this scan reads its
-  // dictionary out of this map instead of the catalog.
-  const auto dicts = catalog::ResolveTokenizers(context, index);
+  // Resolved once for the whole claim, against this statement's transaction:
+  // every column of this scan reads its dictionary out of this map, and the
+  // acquired analyzers must not outlive it.
+  const auto dicts =
+    connector::ResolveKeyTokenizers(context, *bind_data.inverted_index);
   const auto projected_ids = BuildProjectedColumnIds(get, bind_data);
   const auto table_index = get.table_index;
-  const auto relation_id = index.GetRelationId();
+  const auto relation_id = bind_data.RelationId();
   const bool table_backed =
     bind_data.GetKind() == connector::SereneDBScanBindData::Kind::Table;
 
@@ -317,12 +318,16 @@ bool WithSearchGetters(duckdb::LogicalGet& get,
     return it->second;
   };
 
-  const auto make_info = [&](irs::field_id field_id,
-                             const catalog::InvertedIndexField* info,
-                             duckdb::LogicalType type, bool column) {
+  const auto make_info =
+    [&](irs::field_id field_id, const catalog::InvertedIndexField* info,
+        duckdb::LogicalType type,
+        bool column) -> std::optional<connector::SearchColumnInfo> {
     auto column_info = MakeSearchColumnInfo(
       field_id, info, std::move(type),
       bind_data.inverted_config->GetTokenizer(dicts, field_id));
+    if (!column_info.tokenizer.analyzer) {
+      return std::nullopt;
+    }
     if (column && table_backed &&
         column_not_null(static_cast<connector::ColumnId>(field_id))) {
       column_info.null_field_id = irs::field_limits::invalid();
@@ -364,9 +369,8 @@ bool WithSearchGetters(duckdb::LogicalGet& get,
       expr, relation_id, projected_ids, context);
     auto serialized = connector::SerializeBoundExpression(*normalized);
     const auto field_id =
-      bind_data.inverted_config->FindFieldIdBySerialized(serialized);
-    auto return_type =
-      bind_data.inverted_config->ExpressionType(context, field_id);
+      bind_data.inverted_config->FindFieldIdByExpression(serialized);
+    auto return_type = bind_data.inverted_config->ExpressionType(field_id);
     if (return_type.id() == duckdb::LogicalTypeId::INVALID) {
       return std::nullopt;
     }
@@ -435,10 +439,10 @@ irs::field_id ResolveAnnTargetFieldId(
     return irs::field_limits::invalid();
   }
   auto normalized = connector::NormalizeBoundExpression(
-    col_arg, bind_data.table_entry->oid,
-    BuildProjectedColumnIds(get, bind_data), client_context);
+    col_arg, bind_data.RelationId(), BuildProjectedColumnIds(get, bind_data),
+    client_context);
   auto serialized = connector::SerializeBoundExpression(*normalized);
-  return bind_data.inverted_config->FindFieldIdBySerialized(serialized);
+  return bind_data.inverted_config->FindFieldIdByExpression(serialized);
 }
 
 duckdb::idx_t AppendScoreColumn(connector::SereneDBScanBindData& bind_data,

@@ -59,14 +59,13 @@
 #include "catalog1/entry/search_table.h"
 #include "connector/column_id.h"
 #include "connector/duckdb_client_state.h"
+#include "connector/inverted_index_bind.h"
 #include "connector/inverted_store_index.h"
-#include "connector/with_option_resolver.h"
 #include "pg/commands/create_tsdictionary.h"
 #include "pg/connection_context.h"
 #include "pg/errcodes.h"
 #include "pg/sql_exception.h"
 #include "pg/sql_exception_macro.h"
-#include "query/config_variable_names.h"
 #include "search/inverted_index_storage.h"
 
 namespace sdb::connector {
@@ -279,11 +278,6 @@ duckdb::unique_ptr<duckdb::FunctionData> EsAcknowledgedBind(
   return data;
 }
 
-uint32_t ResolveUintSetting(duckdb::ClientContext& context,
-                            std::string_view name) {
-  return ResolveUintWithOption(context, name, /*with_value=*/nullptr);
-}
-
 // The backfill-free tail of CREATE INDEX ... USING inverted: the table was
 // created in the same call and is empty, so after StartTasks the first
 // commit only seals the meta payload.
@@ -304,15 +298,6 @@ void CreateTextIndex(duckdb::ClientContext& context, duckdb::idx_t database_id,
                         /*if_not_exists=*/true, options);
   }
 
-  catalog::InvertedIndexOptions options{
-    .row_group_size = ResolveUintSetting(context, kRowGroupSizeSetting),
-    .refresh_interval_ms = ResolveUintSetting(context, kRefreshIntervalSetting),
-    .compaction_interval_ms =
-      ResolveUintSetting(context, kCompactionIntervalSetting),
-    .cleanup_interval_step =
-      ResolveUintSetting(context, kCleanupIntervalStepSetting),
-  };
-
   const auto index_name =
     absl::StrCat(table.name.GetIdentifierName(), kEsTextIndexSuffix);
   duckdb::CreateIndexInfo info;
@@ -328,22 +313,18 @@ void CreateTextIndex(duckdb::ClientContext& context, duckdb::idx_t database_id,
     info.column_opclasses.emplace_back(kTextTokenizer);
     info.column_opclass_options.emplace_back(std::nullopt);
   }
-  catalog::EncodeInvertedIndexOptions(options, info.options);
-
   static const duckdb::vector<duckdb::unique_ptr<duckdb::Expression>>
     kNoBoundExpressions;
   auto& schema = table.ParentSchema();
   auto entry = schema.CreateIndex(
     schema.ParentCatalog().GetCatalogTransaction(context), info, table);
   SDB_ASSERT(entry);
-  auto created = duckdb::optional_ptr<const duckdb::IndexCatalogEntry>{
-    &entry->Cast<duckdb::IndexCatalogEntry>()};
-  const auto store = PublishNewInvertedIndex(
-    context, table.Cast<duckdb::DuckTableEntry>().GetStorage(), schema,
-    database_id, table.oid, created->oid, info, kNoBoundExpressions,
-    entry->Cast<catalog::InvertedIndexEntry>());
-  SDB_ASSERT(store);
-  const auto& storage = entry->Cast<catalog::InvertedIndexEntry>().Storage();
+  auto& index_entry = entry->Cast<catalog::InvertedIndexEntry>();
+  index_entry.SetConfig(BindInvertedIndexConfig(context, index_entry, table,
+                                                kNoBoundExpressions,
+                                                duckdb::LogicalType::INVALID));
+  PublishInvertedIndex(context, index_entry, table, kNoBoundExpressions);
+  const auto& storage = index_entry.Storage();
   SDB_ASSERT(storage);
   storage->StartTasks();
   storage->Refresh();

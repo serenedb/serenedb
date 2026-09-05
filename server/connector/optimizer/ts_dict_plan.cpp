@@ -965,7 +965,7 @@ bool TsDictFacetPushdown::ResolveExpressionKey(const duckdb::Expression& expr,
   auto normalized = connector::NormalizeBoundExpression(
     expr, _found.bind_data->RelationId(), *_projected_ids, _context);
   const auto serialized = connector::SerializeBoundExpression(*normalized);
-  key.field_id = _config->FindFieldIdBySerialized(serialized);
+  key.field_id = _config->FindFieldIdByExpression(serialized);
   if (!irs::field_limits::valid(key.field_id)) {
     return false;
   }

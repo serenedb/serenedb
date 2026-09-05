@@ -21,10 +21,9 @@
 #pragma once
 
 #include <cstdint>
-#include <duckdb/common/enums/compression_type.hpp>
+#include <duckdb/common/types.hpp>
 #include <iresearch/index/column_info.hpp>
 #include <iresearch/types.hpp>
-#include <optional>
 #include <string>
 #include <vector>
 
@@ -59,63 +58,24 @@ struct PkPolicy {
   PkColumnKind column = PkColumnKind::Has;
 };
 
-enum class OpclassKind : uint8_t {
-  None = 0,
-  Dictionary = 1,
-  Included = 2,
-  Ivf = 3,
-};
-
-// The `ivf` opclass, resolved at CREATE INDEX. `d` comes from the key's
-// ARRAY(FLOAT, N); the rest from the opclass options and the sdb_ivf_*
-// session settings.
-struct InvertedIndexFieldIVF {
-  int d = 0;
-  irs::VectorMetric metric = irs::VectorMetric::L2Sqr;
-  irs::VectorQuantization quant = irs::VectorQuantization::None;
-  uint32_t pq_m = 0;
-  uint32_t rabitq_bits = 0;
-  float sample_factor = 0;
-  uint32_t posting_size = 0;
-  bool compression = true;
-};
-
 struct KeyRecord {
   irs::field_id field_id = irs::field_limits::invalid();
-  irs::field_id block = irs::field_limits::invalid();
-  OpclassKind kind = OpclassKind::None;
-  std::string return_type;
-  uint8_t return_type_id = 0;
-  std::string serialized;
+  duckdb::LogicalType type;
+  std::string normalized_expression;
 };
 
 struct FieldRecord {
-  // The per-kind JSON leaves. Allocated only for a JSON key whose analyzer
-  // reads leaves rather than the whole value -- a geo analyzer consumes the
-  // GeoJSON object itself, so it gets none and HasJsonLeafFields() keeps it
-  // out of the leaf splitter.
   irs::field_id numeric_field_id = irs::field_limits::invalid();
   irs::field_id bool_field_id = irs::field_limits::invalid();
   irs::field_id null_field_id = irs::field_limits::invalid();
-  // Carries either the tokenizer's own per-row payload or the field's norms --
-  // never both, and nothing at all unless the analyzer asks for one.
   irs::field_id synthetic_column = irs::field_limits::invalid();
   search::Features features;
   bool store_values = false;
   bool indexed_term_dict = false;
-  bool hyperloglog = false;
-  // The analyzer reads the whole value rather than descending into it -- a geo
-  // analyzer parses the GeoJSON object itself. Distinct from having no JSON
-  // leaves, which is also true of a JSON key that names no opclass at all and
-  // must still be rejected for holding an object.
   bool whole_value = false;
-  duckdb::CompressionType compression =
-    duckdb::CompressionType::COMPRESSION_AUTO;
-  // Whether the named dictionary tokenizes verbatim (template='keyword').
-  // Decided at CREATE INDEX, where the analyzer is resolved, because the
-  // decoded config has no tokenizer map to resolve one with.
   bool is_keyword = false;
-  std::optional<InvertedIndexFieldIVF> ivf_config;
+  irs::ColumnOptions column_options;
+  std::string text_dictionary;
 };
 
 struct InvertedIndexData {

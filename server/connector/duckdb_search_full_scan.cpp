@@ -1351,9 +1351,10 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> IResearchScanInitGlobal(
 
   if (state->mode == ScanMode::ColScan) {
     // Search tables carry no inverted_index; fall back to the default unit.
-    uint64_t rg_rows = bind_data.inverted_index
-                         ? bind_data.inverted_index->Settings().row_group_size
-                         : 0;
+    uint64_t rg_rows =
+      bind_data.inverted_index
+        ? bind_data.inverted_index->Config()->settings.row_group_size
+        : 0;
     if (rg_rows == 0) {
       rg_rows = DEFAULT_ROW_GROUP_SIZE;
     }

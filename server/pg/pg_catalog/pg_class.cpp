@@ -284,7 +284,7 @@ void RetrieveObjects(duckdb::Catalog& database, std::vector<PgClass>& values,
     if (const auto* inverted =
           dynamic_cast<const catalog::InvertedIndexEntry*>(&*entry)) {
       row.relam = pg::kPgAmInverted;
-      auto rendered = RenderInvertedIndexSettings(inverted->Settings());
+      auto rendered = RenderInvertedIndexSettings(inverted->Config()->settings);
       if (!rendered.empty()) {
         const auto& strings =
           reloptions_storage.emplace_back(std::move(rendered));

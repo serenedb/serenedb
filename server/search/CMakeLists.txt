@@ -8,5 +8,4 @@ target_sources(
         search_table_recovery.cpp
         search_table_transaction.cpp
         task.cpp
-        wal_recovery.cpp
 )

@@ -24,12 +24,10 @@
 #include "iresearch/index/field_meta.hpp"
 #include "iresearch/index/index_features.hpp"
 #include "iresearch/search/all_filter.hpp"
-#include "iresearch/search/bitset_doc_iterator.hpp"
 #include "iresearch/search/boolean_filter.hpp"
 #include "iresearch/search/filter.hpp"
 #include "iresearch/search/granular_range_filter.hpp"
 #include "iresearch/search/nested_filter.hpp"
-#include "iresearch/search/prev_doc.hpp"
 #include "iresearch/search/range_filter.hpp"
 #include "iresearch/search/term_filter.hpp"
 #include "iresearch/utils/attribute_provider.hpp"
@@ -46,77 +44,83 @@ inline constexpr irs::field_id kDate = 5;
 inline constexpr irs::field_id kCustomer = 6;
 inline constexpr irs::field_id kChild = 99;
 
-struct ChildIterator : irs::DocIterator {
+struct ChildIterator : irs::lead::Node {
  public:
-  ChildIterator(irs::DocIterator::ptr&& it, std::set<irs::doc_id_t> parents)
+  ChildIterator(irs::lead::Node::ptr&& it, std::set<irs::doc_id_t> parents)
     : _it{std::move(it)}, _parents{std::move(parents)} {
     SDB_ASSERT(_it);
-    _doc = _it->value();
+    _doc = _it->Value();
   }
 
-  irs::Attribute* GetMutable(irs::TypeInfo::type_id id) noexcept final {
-    return _it->GetMutable(id);
-  }
-
-  irs::doc_id_t advance() final {
+  irs::doc_id_t Advance() final {
     while (true) {
-      const auto doc = _it->advance();
+      const auto doc = _it->Advance();
       if (irs::doc_limits::eof(doc) || !_parents.contains(doc)) {
         return _doc = doc;
       }
     }
   }
 
-  irs::doc_id_t seek(irs::doc_id_t target) final {
-    if (const auto doc = value(); target <= doc) [[unlikely]] {
+  irs::doc_id_t Seek(irs::doc_id_t target) final {
+    if (const auto doc = Value(); target <= doc) [[unlikely]] {
       return doc;
     }
-    const auto doc = _it->seek(target);
+    const auto doc = _it->Seek(target);
     if (irs::doc_limits::eof(doc) || !_parents.contains(doc)) {
       return _doc = doc;
     }
-    return advance();
+    return Advance();
   }
 
-  void FetchScoreArgs(uint16_t index) final { _it->FetchScoreArgs(index); }
-
-  IRS_DOC_ITERATOR_DEFAULTS
-
  private:
-  irs::DocIterator::ptr _it;
+  irs::lead::Node::ptr _it;
   std::set<irs::doc_id_t> _parents;
 };
 
-class PrevDocWrapper : public irs::DocIterator {
+class PrevDocWrapper : public irs::ParentDocs {
  public:
-  explicit PrevDocWrapper(DocIterator::ptr&& it) noexcept : _it{std::move(it)} {
+  explicit PrevDocWrapper(irs::lead::Node::ptr&& it) noexcept
+    : _it{std::move(it)} {
     SDB_ASSERT(_it);
-    _doc = _it->value();
-    _prev_doc.reset(
-      [](const void* ctx) { return *static_cast<const irs::doc_id_t*>(ctx); },
-      &_doc);
+    _doc = _it->Value();
   }
 
-  irs::Attribute* GetMutable(irs::TypeInfo::type_id id) noexcept final {
-    if (irs::Type<irs::PrevDocAttr>::id() == id) {
-      return &_prev_doc;
-    }
-    return _it->GetMutable(id);
+  irs::doc_id_t Advance() final { return _doc = _it->Advance(); }
+
+  irs::doc_id_t Seek(irs::doc_id_t target) final {
+    return _doc = _it->Seek(target);
   }
 
-  irs::doc_id_t advance() final { return _doc = _it->advance(); }
-
-  irs::doc_id_t seek(irs::doc_id_t target) final {
-    return _doc = _it->seek(target);
-  }
-
-  void FetchScoreArgs(uint16_t index) final { _it->FetchScoreArgs(index); }
-
-  IRS_DOC_ITERATOR_DEFAULTS
+  irs::doc_id_t Prev() const noexcept final { return _doc; }
 
  private:
-  DocIterator::ptr _it;
-  irs::PrevDocAttr _prev_doc;
+  irs::lead::Node::ptr _it;
+};
+
+class VectorDocs : public irs::lead::Node {
+ public:
+  explicit VectorDocs(std::vector<irs::doc_id_t>&& docs) noexcept
+    : _docs{std::move(docs)} {}
+
+  irs::doc_id_t Advance() final {
+    if (_pos >= _docs.size()) {
+      return _doc = irs::doc_limits::eof();
+    }
+    return _doc = _docs[_pos++];
+  }
+
+  irs::doc_id_t Seek(irs::doc_id_t target) final {
+    if (target <= _doc) {
+      return _doc;
+    }
+    auto it = std::lower_bound(_docs.begin() + _pos, _docs.end(), target);
+    _pos = static_cast<size_t>(it - _docs.begin());
+    return Advance();
+  }
+
+ private:
+  std::vector<irs::doc_id_t> _docs;
+  size_t _pos{0};
 };
 
 struct DocIdScorer : public irs::ScorerBase<void> {
@@ -159,30 +163,15 @@ struct DocIdScorer : public irs::ScorerBase<void> {
   }
 };
 
-// Iterator over a sorted vector of parent doc-ids that exposes
-// PrevDocAttr returning the *previous* parent (so ChildToParentJoin can
-// compute the first candidate child as `prev_parent + 1`).
-class ParentDocIterator : public irs::DocIterator {
+// Stream over a sorted vector of parent doc-ids whose `Prev` names the
+// *previous* parent (so a join can compute the first candidate child as
+// `prev_parent + 1`).
+class ParentDocIterator : public irs::ParentDocs {
  public:
   explicit ParentDocIterator(std::vector<irs::doc_id_t>&& parents)
-    : _parents{std::move(parents)},
-      _cost{static_cast<irs::CostAttr::Type>(_parents.size())} {
-    _prev_doc.reset(
-      [](const void* ctx) { return *static_cast<const irs::doc_id_t*>(ctx); },
-      &_prev);
-  }
+    : _parents{std::move(parents)} {}
 
-  irs::Attribute* GetMutable(irs::TypeInfo::type_id id) noexcept final {
-    if (irs::Type<irs::PrevDocAttr>::id() == id) {
-      return &_prev_doc;
-    }
-    if (irs::Type<irs::CostAttr>::id() == id) {
-      return &_cost;
-    }
-    return nullptr;
-  }
-
-  irs::doc_id_t advance() final {
+  irs::doc_id_t Advance() final {
     if (_pos >= _parents.size()) {
       _prev = _doc;
       return _doc = irs::doc_limits::eof();
@@ -191,7 +180,7 @@ class ParentDocIterator : public irs::DocIterator {
     return _doc = _parents[_pos++];
   }
 
-  irs::doc_id_t seek(irs::doc_id_t target) final {
+  irs::doc_id_t Seek(irs::doc_id_t target) final {
     if (target <= _doc) {
       return _doc;
     }
@@ -205,20 +194,16 @@ class ParentDocIterator : public irs::DocIterator {
     return _doc = _parents[_pos++];
   }
 
-  void FetchScoreArgs(uint16_t /*index*/) final {}
-
-  IRS_DOC_ITERATOR_DEFAULTS
+  irs::doc_id_t Prev() const noexcept final { return _prev; }
 
  private:
   std::vector<irs::doc_id_t> _parents;
   size_t _pos{0};
   irs::doc_id_t _prev{irs::doc_limits::invalid()};
-  irs::PrevDocAttr _prev_doc;
-  irs::CostAttr _cost;
 };
 
 auto MakeParentProvider(irs::field_id id) {
-  return [id](const irs::SubReader& segment) -> irs::DocIterator::ptr {
+  return [id](const irs::SubReader& segment) -> irs::ParentDocs::ptr {
     const auto* col = segment.Column(id);
     if (col == nullptr) {
       return nullptr;
@@ -229,7 +214,8 @@ auto MakeParentProvider(irs::field_id id) {
                                   parents.push_back(doc);
                                   return true;
                                 });
-    return irs::memory::make_managed<ParentDocIterator>(std::move(parents));
+    return irs::memory::make_managed<irs::ParentDocs, ParentDocIterator>(
+      std::move(parents));
   };
 }
 
@@ -267,28 +253,28 @@ auto MakeByNumericTerm(irs::field_id field, int32_t value) {
 // field == value && range_field <= upper_bound
 auto MakeByTermAndRange(irs::field_id field, std::string_view value,
                         irs::field_id range_field, int32_t upper_bound) {
-  auto root = std::make_unique<irs::And>();
+  auto root = std::make_unique<irs::BooleanFilter>();
   // field == value
-  {
-    auto& filter = root->add<irs::ByTerm>();
-    *filter.mutable_field_id() = field;
-    filter.mutable_options()->term = irs::ViewCast<irs::byte_type>(value);
-  }
+  root->Add(
+    irs::TermClause{.field = field,
+                    .term = irs::bstring{irs::ViewCast<irs::byte_type>(value)}},
+    irs::Occur::Must);
   // range_field <= upper_bound
   {
-    auto& filter = root->add<irs::ByGranularRange>();
-    *filter.mutable_field_id() = range_field;
+    auto filter = std::make_unique<irs::ByGranularRange>();
+    *filter->mutable_field_id() = range_field;
 
     irs::NumericTokenizer stream;
-    auto& range = filter.mutable_options()->range;
+    auto& range = filter->mutable_options()->range;
     stream.reset(upper_bound);
     irs::SetGranularTerm(range.max, stream);
+    root->Add(std::move(filter), irs::Occur::Must);
   }
   return root;
 }
 
 irs::ByNestedFilter MakeScoredNestedFilter(
-  irs::Filter::ptr child, irs::DocIteratorProvider parent,
+  irs::Filter::ptr child, irs::ParentProvider parent,
   irs::ScoreMergeType merge_type = irs::ScoreMergeType::Sum,
   irs::ByNestedOptions::MatchType match = irs::kMatchAny,
   irs::score_t boost = irs::kNoBoost) {
@@ -675,25 +661,25 @@ TEST_P(NestedFilterTestCase, JoinAll0) {
   auto& opts = *filter.mutable_options();
   opts.child = MakeByNumericTerm(kCount, 2);
   opts.parent = MakeParentProvider(kParent);
-  opts.match = [&](const irs::SubReader& segment) -> irs::DocIterator::ptr {
+  opts.match = [&](const irs::SubReader& segment) -> irs::lead::Node::ptr {
     const irs::All all;
     tests::PreparedFilter prepared{all, segment, nullptr, counter};
-    return irs::memory::make_managed<ChildIterator>(
+    return irs::memory::make_managed<irs::lead::Node, ChildIterator>(
       prepared.Execute(0), std::set{6U, 13U, 15U, 20U});
   };
 
   {
-    CheckQuery(filter, Docs{13, 20}, Costs{11}, reader, SOURCE_LOCATION);
+    CheckQuery(filter, Docs{13, 20}, Costs{20}, reader, SOURCE_LOCATION);
     EXPECT_EQ(counter.current, 0);
     EXPECT_GT(counter.max, 0);
     counter.Reset();
   }
 
   auto make_match = [&]() -> irs::ByNestedOptions::MatchType {
-    return [&](const irs::SubReader& segment) -> irs::DocIterator::ptr {
+    return [&](const irs::SubReader& segment) -> irs::lead::Node::ptr {
       const irs::All all;
       tests::PreparedFilter prepared{all, segment, nullptr, counter};
-      return irs::memory::make_managed<ChildIterator>(
+      return irs::memory::make_managed<irs::lead::Node, ChildIterator>(
         prepared.Execute(0), std::set{6U, 13U, 15U, 20U});
     };
   };
@@ -888,7 +874,7 @@ TEST_P(NestedFilterTestCase, JoinMin2) {
   opts.parent = MakeParentProvider(kParent);
   opts.match = irs::Match{0};  // Match all parents
 
-  CheckQuery(filter, Docs{6, 8, 13, 20}, Costs{3}, reader, SOURCE_LOCATION);
+  CheckQuery(filter, Docs{6, 8, 13, 20}, Costs{20}, reader, SOURCE_LOCATION);
 
   {
     auto filter = MakeScoredNestedFilter(
@@ -956,7 +942,7 @@ TEST_P(NestedFilterTestCase, JoinMin3) {
   opts.parent = MakeParentProvider(kParent);
   opts.match = irs::Match{0};  // Match all parents
 
-  CheckQuery(filter, Docs{6, 8, 13, 20}, Costs{4}, reader, SOURCE_LOCATION);
+  CheckQuery(filter, Docs{6, 8, 13, 20}, Costs{20}, reader, SOURCE_LOCATION);
 
   {
     auto filter = MakeScoredNestedFilter(
@@ -1145,7 +1131,7 @@ TEST_P(NestedFilterTestCase, JoinRange2) {
   opts.parent = MakeParentProvider(kParent);
   opts.match = irs::Match{0, 5};
 
-  CheckQuery(filter, Docs{6, 8, 13, 20}, Costs{11}, reader, SOURCE_LOCATION);
+  CheckQuery(filter, Docs{6, 8, 13, 20}, Costs{20}, reader, SOURCE_LOCATION);
 
   {
     auto filter = MakeScoredNestedFilter(
@@ -1213,7 +1199,7 @@ TEST_P(NestedFilterTestCase, JoinNone0) {
   opts.parent = MakeParentProvider(kParent);
   opts.match = irs::kMatchNone;
 
-  CheckQuery(filter, Docs{8}, Costs{3}, reader, SOURCE_LOCATION);
+  CheckQuery(filter, Docs{8}, Costs{20}, reader, SOURCE_LOCATION);
 
   {
     auto filter = MakeScoredNestedFilter(
@@ -1273,7 +1259,7 @@ TEST_P(NestedFilterTestCase, JoinNone1) {
   opts.match = irs::kMatchNone;
   filter.SetBoost(0.5f);
 
-  CheckQuery(filter, Docs{8}, Costs{3}, reader, SOURCE_LOCATION);
+  CheckQuery(filter, Docs{8}, Costs{20}, reader, SOURCE_LOCATION);
 
   {
     auto filter = MakeScoredNestedFilter(
@@ -1333,7 +1319,7 @@ TEST_P(NestedFilterTestCase, JoinNone2) {
   opts.match = irs::kMatchNone;
   filter.SetBoost(1.f);
 
-  CheckQuery(filter, Docs{6, 8, 13, 20}, Costs{4}, reader, SOURCE_LOCATION);
+  CheckQuery(filter, Docs{6, 8, 13, 20}, Costs{20}, reader, SOURCE_LOCATION);
 
   {
     auto filter = MakeScoredNestedFilter(
@@ -1399,33 +1385,24 @@ TEST_P(NestedFilterTestCase, JoinNone3) {
   auto& opts = *filter.mutable_options();
   opts.child = std::make_unique<irs::Empty>();
 
-  // Bitset iterator doesn't provide score, check that wrapper works correctly
-  opts.parent = [word = irs::bitset::word_t{}](
-                  const irs::SubReader&) mutable -> irs::DocIterator::ptr {
-    irs::SetBit(word, 6);
-    irs::SetBit(word, 8);
-    irs::SetBit(word, 13);
-    irs::SetBit(word, 20);
-    return irs::memory::make_managed<PrevDocWrapper>(
-      irs::memory::make_managed<irs::BitsetDocIterator>(&word, &word + 1));
+  opts.parent = [](const irs::SubReader&) -> irs::ParentDocs::ptr {
+    return irs::memory::make_managed<irs::ParentDocs, PrevDocWrapper>(
+      irs::memory::make_managed<irs::lead::Node, VectorDocs>(
+        std::vector<irs::doc_id_t>{6, 8, 13, 20}));
   };
 
   MakeParentProvider(kParent);
   opts.match = irs::kMatchNone;
   filter.SetBoost(0.5f);
 
-  CheckQuery(tests::FilterWrapper{filter}, Docs{6, 8, 13, 20}, Costs{4}, reader,
-             SOURCE_LOCATION);
+  CheckQuery(tests::FilterWrapper{filter}, Docs{6, 8, 13, 20}, Costs{20},
+             reader, SOURCE_LOCATION);
 
-  auto make_parent = []() -> irs::DocIteratorProvider {
-    return [word = irs::bitset::word_t{}](
-             const irs::SubReader&) mutable -> irs::DocIterator::ptr {
-      irs::SetBit(word, 6);
-      irs::SetBit(word, 8);
-      irs::SetBit(word, 13);
-      irs::SetBit(word, 20);
-      return irs::memory::make_managed<PrevDocWrapper>(
-        irs::memory::make_managed<irs::BitsetDocIterator>(&word, &word + 1));
+  auto make_parent = []() -> irs::ParentProvider {
+    return [](const irs::SubReader&) -> irs::ParentDocs::ptr {
+      return irs::memory::make_managed<irs::ParentDocs, PrevDocWrapper>(
+        irs::memory::make_managed<irs::lead::Node, VectorDocs>(
+          std::vector<irs::doc_id_t>{6, 8, 13, 20}));
     };
   };
 

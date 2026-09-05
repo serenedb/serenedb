@@ -8,8 +8,8 @@ hash-threshold 100
 # (`Top: k, optimized`) and wraps the pruning iterator in a
 # TableFilterDocIterator. The collector then drives the pruning iterator
 # through EmitScoredDocs over the filtered survivors:
-#   * single Term  -> SinglePruningIterator::EmitScoredDocs
-#   * ByTerms      -> MaxScoreIterator::EmitScoredDocs (disjunction)
+#   * single Term  -> PruningIterator::EmitScoredDocs
+#   * ByTerms      -> PruningIterator::EmitScoredDocs (disjunction)
 # Both must self-position from a fresh iterator (no external advance() prime).
 # ---------------------------------------------------------------------------
 
@@ -50,7 +50,7 @@ statement ok
 VACUUM (REFRESH_TABLE) wtf;
 
 
-# --- Case 1: single Term (SinglePruningIterator) + `.col` filter + top-k -----
+# --- Case 1: single Term (PruningIterator) + `.col` filter + top-k -----
 
 query
 EXPLAIN SELECT n FROM wtf_idx WHERE body @@ ts_phrase('term') AND n > 20 ORDER BY BM25(wtf_idx.tableoid) DESC LIMIT 2;
@@ -85,7 +85,7 @@ n
 40
 
 
-# --- Case 2: ByTerms disjunction (MaxScoreIterator) + `.col` filter + top-k --
+# --- Case 2: ByTerms disjunction (PruningIterator) + `.col` filter + top-k --
 
 query
 EXPLAIN SELECT n FROM wtf_idx WHERE body @@ ts_any(['term', 'rare']) AND n > 20 ORDER BY BM25(wtf_idx.tableoid) DESC LIMIT 2;
@@ -99,10 +99,11 @@ QUERY PLAN
 ╭─ IRESEARCH_SCAN ───┴───────────────────╮
 │ Index: wtf_idx                         │
 │ Index Filter:                          │
-│ ╭─ Terms ────────────────╮             │
+│ ╭─ Or ───────────────────╮             │
+│ ╰────────────┬───────────╯             │
+│ ╭─ Terms ────┴───────────╮             │
 │ │ Field: body(string)    │             │
 │ │ Values: 'rare', 'term' │             │
-│ │ Min Match: 1           │             │
 │ ╰────────────────────────╯             │
 │ Column Filter: n > 20                  │
 │ Score: bm25(k1=1.2, b=0.75)            │

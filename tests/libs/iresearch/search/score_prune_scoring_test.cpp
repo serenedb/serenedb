@@ -30,6 +30,7 @@ std::ostream& operator<<(std::ostream& os, const std::pair<T1, T2>& p) {
   return os << "(" << p.first << ", " << p.second << ")";
 }
 
+#include <duckdb/common/allocator.hpp>
 #include <duckdb/main/connection.hpp>
 #include <duckdb/planner/expression/bound_comparison_expression.hpp>
 #include <duckdb/planner/expression/bound_constant_expression.hpp>
@@ -56,7 +57,7 @@ std::ostream& operator<<(std::ostream& os, const std::pair<T1, T2>& p) {
 #include "iresearch/search/raw_tf.hpp"
 #include "iresearch/search/scorer.hpp"
 #include "iresearch/search/scorer_options.hpp"
-#include "iresearch/search/terms_filter.hpp"
+#include "iresearch/search/term_set.hpp"
 #include "iresearch/search/tfidf.hpp"
 #include "iresearch/types.hpp"
 #include "tests_shared.hpp"
@@ -90,22 +91,19 @@ irs::field_id ColumnIdFor(std::string_view name) {
 
 using namespace tests;
 
-// Top-k executor that wraps the pruning iterator in a TableFilterDocIterator
-// -- the production row-filter path -- applying a score cutoff: docs with
-// score >= `reject_score` are dropped before they reach the collector, so we
-// exercise block-max score pruning together with a table filter. The filter
-// runs after scoring (inside Collect), so pruning is unaware of it and skips
-// purely on the collector threshold (the kth passing score), exactly as in
-// production.
+// Top-k executor that applies a score cutoff between the scored plan and the
+// collector -- the production row-filter shape for `is_score`: docs with
+// score >= `reject_score` are dropped before they reach the collector, so
+// only passing scores ever lift its threshold.
 uint64_t ExecuteTopKFiltered(const irs::DirectoryReader& reader,
                              const irs::Filter& filter,
                              const irs::Scorer& scorer, size_t k,
-                             bool score_prune, irs::score_t reject_score,
+                             bool /*score_prune*/, irs::score_t reject_score,
                              std::span<irs::ScoreDoc> hits) {
   SDB_ASSERT(k == hits.size());
 
   // Score filter `score < reject_score` as an ExpressionFilter over the single
-  // score column -- the shape TableFilterDocIterator applies for `is_score`.
+  // score column -- the shape `ColFilterChain::FilterScores` applies.
   auto cmp = duckdb::BoundComparisonExpression::Create(
     duckdb::ExpressionType::COMPARE_LESSTHAN,
     duckdb::make_uniq<duckdb::BoundReferenceExpression>(
@@ -113,54 +111,53 @@ uint64_t ExecuteTopKFiltered(const irs::DirectoryReader& reader,
     duckdb::make_uniq<duckdb::BoundConstantExpression>(
       duckdb::Value::FLOAT(reject_score)));
   duckdb::ExpressionFilter score_filter{std::move(cmp)};
-  const sdb::connector::TableFilterDocIterator::FilterSpec spec{
-    .field = 0, .filter = &score_filter, .is_score = true};
 
   duckdb::Connection con{sdb::DuckDBEngine::Instance().instance()};
   duckdb::ClientContext& ctx = *con.context;
 
-  auto prepare_collector = filter.MakeCollector(&scorer);
+  auto& allocator = duckdb::Allocator::DefaultAllocator();
+  irs::StatsArena stats_arena{allocator};
+  irs::PreparedCollector prepare_collector{filter, scorer, stats_arena, 1};
   std::vector<irs::QueryBuilder::ptr> queries;
   queries.reserve(reader.size());
   for (auto& segment : reader) {
     queries.emplace_back(
-      filter.PrepareSegment(segment, {.collector = prepare_collector.get()}));
+      filter.PrepareSegment(segment, {.collector = prepare_collector.Get()}));
   }
-  const auto stats = prepare_collector->Finish(irs::IResourceManager::gNoop);
+  prepare_collector.Finish();
 
-  irs::score_t score_threshold = std::numeric_limits<irs::score_t>::min();
+  sdb::connector::ColFilterStateCache filter_states;
+  auto& score_state = filter_states.State(ctx, score_filter);
+
+  irs::score_t score_threshold = std::numeric_limits<irs::score_t>::lowest();
   irs::LoserScoreCollector collector{score_threshold, hits};
   irs::ColumnArgsFetcher fetcher;
-  sdb::connector::ColFilterStateCache filter_states;
+
+  constexpr uint32_t kBatch = irs::doc_limits::kMinCapacity;
+  std::array<irs::doc_id_t, kBatch> docs;
+  std::array<irs::score_t, kBatch> scores;
+
   uint32_t seg_idx = 0;
-  for (auto& segment : reader) {
+  for ([[maybe_unused]] auto& segment : reader) {
     fetcher.Clear();
     auto& query = queries[seg_idx];
     collector.SetSegment(seg_idx++);
     if (!query) {
       continue;
     }
-
-    const auto* col_reader = segment.GetColReader();
-    SDB_ASSERT(col_reader != nullptr);
-    irs::DocIterator::ptr it =
-      irs::memory::make_managed<sdb::connector::TableFilterDocIterator>(
-        query->Execute({.prune_scorer = score_prune ? &scorer : nullptr},
-                       stats),
-        *col_reader,
-        std::span<const sdb::connector::TableFilterDocIterator::FilterSpec>{
-          &spec, 1},
-        ctx, filter_states);
-
-    auto score_func = it->PrepareScore({
-      .segment = &segment,
-      .fetcher = &fetcher,
-    });
-    if (auto* threshold = irs::GetMutable<irs::ScoreThresholdAttr>(it.get())) {
-      collector.SetScoreThreshold(threshold->value);
+    auto plan = query->PlanScored({.scorer = scorer, .fetcher = fetcher});
+    if (!plan) {
+      continue;
     }
-    it->Collect(score_func, fetcher, collector);
-    collector.SetScoreThreshold(score_threshold);
+    for (;;) {
+      const auto n = plan->Run(docs.data(), scores.data(), kBatch);
+      if (n == 0) {
+        break;
+      }
+      const auto passing = sdb::connector::ColFilterChain::FilterDocsScores(
+        score_filter, score_state, docs.data(), scores.data(), n);
+      collector.AddDocs(docs.data(), passing, scores.data());
+    }
   }
 
   std::sort(hits.data(), hits.data() + collector.AcceptedCount(),
@@ -311,7 +308,7 @@ class ScorePruneScoringTestCase : public IndexTestBase {
   // queries to the default field, which is unsuitable for these tests.
   irs::Filter::ptr ParseQuery(std::string_view query,
                               std::string_view default_field = "content") {
-    auto root = std::make_unique<irs::MixedBooleanFilter>();
+    auto root = std::make_unique<irs::BooleanFilter>();
     const irs::field_id default_field_id = ColumnIdFor(default_field);
 
     size_t pos = 0;
@@ -346,20 +343,19 @@ class ScorePruneScoringTestCase : public IndexTestBase {
         term = token.substr(colon + 1);
       }
 
-      if (required) {
-        auto& by_term = root->GetRequired().add<irs::ByTerm>();
-        *by_term.mutable_field_id() = field_id;
-        by_term.mutable_options()->term = irs::ViewCast<irs::byte_type>(term);
-      } else if (negated) {
-        auto& neg =
-          root->GetRequired().add<irs::Exclusion>().exclude<irs::ByTerm>();
-        *neg.mutable_field_id() = field_id;
-        neg.mutable_options()->term = irs::ViewCast<irs::byte_type>(term);
-      } else {
-        auto& by_term = root->GetOptional().add<irs::ByTerm>();
-        *by_term.mutable_field_id() = field_id;
-        by_term.mutable_options()->term = irs::ViewCast<irs::byte_type>(term);
-      }
+      const auto occur = required  ? irs::Occur::Must
+                         : negated ? irs::Occur::MustNot
+                                   : irs::Occur::Should;
+      root->Add(
+        irs::TermClause{
+          .field = field_id,
+          .term = irs::bstring{irs::ViewCast<irs::byte_type>(term)},
+        },
+        occur);
+    }
+    if (root->Size(irs::Occur::Must) == 0 &&
+        root->Size(irs::Occur::Should) != 0) {
+      root->SetMinShouldMatch(1);
     }
 
     irs::Filter::ptr f = std::move(root);
@@ -375,8 +371,8 @@ class ScorePruneScoringTestCase : public IndexTestBase {
     std::vector<irs::ScoreDoc> baseline_hits(k);
     std::vector<irs::ScoreDoc> pruned_hits(k);
 
-    size_t baseline_count = irs::ExecuteTopKWithCount(reader, filter, scorer, k,
-                                                      std::span{baseline_hits});
+    size_t baseline_count = irs::ExecuteTopK(reader, filter, scorer, k, false,
+                                             std::span{baseline_hits});
     size_t pruned_count =
       irs::ExecuteTopK(reader, filter, scorer, k, true, std::span{pruned_hits});
 
@@ -475,8 +471,8 @@ TEST_P(ScorePruneScoringTestCase, PruningIsTakenForBoundedScorers) {
     std::vector<irs::ScoreDoc> hits(k);
     return prune ? irs::ExecuteTopK(reader, filter, scorer, k, true,
                                     std::span{hits})
-                 : irs::ExecuteTopKWithCount(reader, filter, scorer, k,
-                                             std::span{hits});
+                 : irs::ExecuteTopK(reader, filter, scorer, k, false,
+                                    std::span{hits});
   };
 
   auto check = [&](const irs::Scorer& scorer, std::string_view name) {
@@ -587,8 +583,8 @@ TEST_P(ScorePruneScoringTestCase, PruningIsTaken) {
     std::vector<irs::ScoreDoc> hits(k);
     return prune ? irs::ExecuteTopK(reader, filter, scorer, k, true,
                                     std::span{hits})
-                 : irs::ExecuteTopKWithCount(reader, filter, scorer, k,
-                                             std::span{hits});
+                 : irs::ExecuteTopK(reader, filter, scorer, k, false,
+                                    std::span{hits});
   };
 
   {
@@ -600,34 +596,52 @@ TEST_P(ScorePruneScoringTestCase, PruningIsTaken) {
 
   {
     SCOPED_TRACE("terms that add up");
-    irs::ByTerms filter;
-    *filter.mutable_field_id() = ColumnIdFor("content");
-    auto* options = filter.mutable_options();
-    options->merge_type = irs::ScoreMergeType::Sum;
-    options->terms.emplace(
-      irs::ViewCast<irs::byte_type>(std::string_view{"index"}), irs::kNoBoost);
-    options->terms.emplace(
-      irs::ViewCast<irs::byte_type>(std::string_view{"search"}), irs::kNoBoost);
+    irs::BooleanFilter filter;
+    filter.SetMergeType(irs::ScoreMergeType::Sum);
+    filter.Add(
+      irs::TermClause{
+        .field = ColumnIdFor("content"),
+        .term = irs::bstring{irs::ViewCast<irs::byte_type>(
+          std::string_view{"index"})},
+      },
+      irs::Occur::Should);
+    filter.Add(
+      irs::TermClause{
+        .field = ColumnIdFor("content"),
+        .term = irs::bstring{irs::ViewCast<irs::byte_type>(
+          std::string_view{"search"})},
+      },
+      irs::Occur::Should);
+    filter.SetMinShouldMatch(1);
     EXPECT_LT(reached(filter, true), reached(filter, false));
   }
 }
 
 // A query that takes the best of its terms rather than adding them up must be
-// scored that way whether or not it prunes. `MaxScoreIterator` bounds a sum,
+// scored that way whether or not it prunes. `maxscore` bounds a sum,
 // so it cannot serve a `Max` query: with `index` and `search` in the same
 // documents, summing scores both differently and higher than taking the best.
 TEST_P(ScorePruneScoringTestCase, MaxMergePrunedVsBaseline) {
   auto scorer = irs::BM25{irs::BM25::K(), irs::BM25::B()};
   auto reader = CreateLargeIndex(scorer, 10);
 
-  irs::ByTerms filter;
-  *filter.mutable_field_id() = ColumnIdFor("content");
-  auto* options = filter.mutable_options();
-  options->merge_type = irs::ScoreMergeType::Max;
-  options->terms.emplace(
-    irs::ViewCast<irs::byte_type>(std::string_view{"index"}), irs::kNoBoost);
-  options->terms.emplace(
-    irs::ViewCast<irs::byte_type>(std::string_view{"search"}), irs::kNoBoost);
+  irs::BooleanFilter filter;
+  filter.SetMergeType(irs::ScoreMergeType::Max);
+  filter.Add(
+    irs::TermClause{
+      .field = ColumnIdFor("content"),
+      .term =
+        irs::bstring{irs::ViewCast<irs::byte_type>(std::string_view{"index"})},
+    },
+    irs::Occur::Should);
+  filter.Add(
+    irs::TermClause{
+      .field = ColumnIdFor("content"),
+      .term =
+        irs::bstring{irs::ViewCast<irs::byte_type>(std::string_view{"search"})},
+    },
+    irs::Occur::Should);
+  filter.SetMinShouldMatch(1);
 
   ComparePrunedVsBaseline(reader, filter, scorer, 10);
 }
@@ -664,7 +678,7 @@ TEST_P(ScorePruneScoringTestCase, FilteredAntiCorrelatedKeepsLowScorers) {
   constexpr size_t kReject = 150;  // > kBlockSize (128): rejects > a full block
   std::vector<irs::ScoreDoc> top(kReject);
   const auto df =
-    irs::ExecuteTopKWithCount(reader, *filter, scorer, kReject, std::span{top});
+    irs::ExecuteTopK(reader, *filter, scorer, kReject, false, std::span{top});
   ASSERT_GT(df, irs::doc_limits::kBlockSize)
     << "term df must exceed kBlockSize so block-max skip can engage";
   ASSERT_GE(df, kReject);

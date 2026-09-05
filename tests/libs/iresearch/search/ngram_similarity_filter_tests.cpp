@@ -27,6 +27,7 @@
 #include "iresearch/index/field_meta.hpp"
 #include "iresearch/index/index_features.hpp"
 #include "iresearch/index/norm.hpp"
+#include "iresearch/search/all_filter.hpp"
 #include "iresearch/search/bm25.hpp"
 #include "iresearch/search/boolean_filter.hpp"
 #include "iresearch/search/ngram_similarity_filter.hpp"
@@ -70,13 +71,26 @@ class CustomNGramScorer : public sort::CustomSort {
   }
 };
 
-irs::score_t GetFilterBoost(const irs::DocIterator::ptr& doc) {
-  const auto* filter_boost = irs::get<irs::BoostBlockAttr>(*doc);
-  if (!filter_boost) {
+struct NGramAttrs {
+  const irs::FreqBlockAttr* freq = nullptr;
+  const irs::BoostBlockAttr* boost = nullptr;
+};
+
+void CaptureNGramAttrs(sort::CustomSort& scorer, NGramAttrs& attrs) {
+  scorer.prepare_scorer =
+    [&attrs](const irs::ScoreContext& ctx) -> irs::ScoreFunction {
+    attrs.freq = irs::get<irs::FreqBlockAttr>(ctx.doc_attrs);
+    attrs.boost = irs::get<irs::BoostBlockAttr>(ctx.doc_attrs);
+    return irs::ScoreFunction::Constant(0.f);
+  };
+}
+
+irs::score_t GetFilterBoost(const NGramAttrs& attrs, irs::lead::Node& doc) {
+  if (attrs.boost == nullptr) {
     return irs::kNoBoost;
   }
-  doc->FetchScoreArgs(0);
-  return filter_boost->value[0];
+  doc.FetchScoreArgs(0);
+  return attrs.boost->value[0];
 }
 
 }  // namespace
@@ -234,6 +248,36 @@ TEST_P(NGramSimilarityFilterTestCase, boost) {
   }
 }
 
+TEST_P(NGramSimilarityFilterTestCase, scored_one_ngram_present) {
+  // The query spells two ngrams and the segment holds one of them: a run of
+  // one, which is that term. Scored, so no lowering rule reaches it.
+  {
+    tests::JsonDocGenerator gen(
+      "[{ \"seq\" : 1, \"field\": [ \"1\", \"5\" ] }]",
+      &tests::GenericJsonFieldFactory);
+    add_segment(gen);
+  }
+
+  auto rdr = open_reader(irs::tests::DefaultReaderOptions());
+
+  irs::ByNGramSimilarity filter = MakeFilter(kFieldFieldId, {"1", "9"}, 0.5f);
+
+  CustomNGramScorer sort;
+  NGramAttrs attrs;
+  CaptureNGramAttrs(sort, attrs);
+  tests::PreparedFilter prepared{filter, rdr, &sort};
+  irs::ColumnArgsFetcher fetcher;
+  auto docs = prepared.ExecuteScored(0, fetcher);
+  ASSERT_NE(nullptr, docs);
+  auto score_function = docs->PrepareScore();
+  ASSERT_TRUE(!irs::doc_limits::eof(docs->Advance()));
+  docs->FetchScoreArgs(0);
+  fetcher.Fetch(docs->Value());
+  irs::score_t value = 0;
+  score_function.Score(&value, 1);
+  ASSERT_FALSE(!irs::doc_limits::eof(docs->Advance()));
+}
+
 TEST_P(NGramSimilarityFilterTestCase, check_matcher_1) {
   // sequence 1 3 4 ______ 2 -> longest is 134 not 12
   // add segment
@@ -253,25 +297,26 @@ TEST_P(NGramSimilarityFilterTestCase, check_matcher_1) {
     MakeFilter(kFieldFieldId, {"1", "2", "3", "4"}, 0.5f);
 
   CustomNGramScorer sort;
+  NGramAttrs attrs;
+  CaptureNGramAttrs(sort, attrs);
   {
     tests::PreparedFilter prepared{filter, rdr, &sort, counter};
-    for (size_t i = 0; const auto& sub : rdr) {
-      auto docs = prepared.Execute(i);
-      auto score_function = docs->PrepareScore({
-        .segment = &sub,
-      });
-      auto* frequency = irs::get<irs::FreqBlockAttr>(*docs);
-      ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
-      ASSERT_FALSE(irs::doc_limits::eof(docs->value()));
-      ASSERT_DOUBLE_EQ(0.75, GetFilterBoost(docs));
+    for (size_t i = 0; [[maybe_unused]] const auto& sub : rdr) {
+      irs::ColumnArgsFetcher fetcher;
+      auto docs = prepared.ExecuteScored(i, fetcher);
+      auto score_function = docs->PrepareScore();
+      const auto* frequency = attrs.freq;
+      ASSERT_TRUE(!irs::doc_limits::eof(docs->Advance()));
+      ASSERT_FALSE(irs::doc_limits::eof(docs->Value()));
+      ASSERT_DOUBLE_EQ(0.75, GetFilterBoost(attrs, *docs));
       const std::string_view rhs = "134";
       const std::string_view lhs = "1234";
-      ASSERT_DOUBLE_EQ(GetFilterBoost(docs),
+      ASSERT_DOUBLE_EQ(GetFilterBoost(attrs, *docs),
                        (irs::ngram_similarity<char, true>(
                          lhs.data(), lhs.size(), rhs.data(), rhs.size(), 1)));
       docs->FetchScoreArgs(0);
       ASSERT_EQ(1, frequency->value[0]);
-      ASSERT_FALSE(!irs::doc_limits::eof(docs->advance()));
+      ASSERT_FALSE(!irs::doc_limits::eof(docs->Advance()));
       ++i;
     }
   }
@@ -300,27 +345,28 @@ TEST_P(NGramSimilarityFilterTestCase, check_matcher_2) {
     MakeFilter(kFieldFieldId, {"1", "2", "3", "4"}, 0.5f);
 
   CustomNGramScorer sort;
+  NGramAttrs attrs;
+  CaptureNGramAttrs(sort, attrs);
   {
     tests::PreparedFilter prepared{filter, rdr, &sort, counter};
-    for (size_t i = 0; const auto& sub : rdr) {
-      auto docs = prepared.Execute(i);
-      auto score_function = docs->PrepareScore({
-        .segment = &sub,
-      });
-      auto* frequency = irs::get<irs::FreqBlockAttr>(*docs);
+    for (size_t i = 0; [[maybe_unused]] const auto& sub : rdr) {
+      irs::ColumnArgsFetcher fetcher;
+      auto docs = prepared.ExecuteScored(i, fetcher);
+      auto score_function = docs->PrepareScore();
+      const auto* frequency = attrs.freq;
       // ensure all iterators contain  attributes
       ASSERT_TRUE(bool(frequency));
-      ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
-      ASSERT_FALSE(irs::doc_limits::eof(docs->value()));
-      ASSERT_DOUBLE_EQ(1, GetFilterBoost(docs));
+      ASSERT_TRUE(!irs::doc_limits::eof(docs->Advance()));
+      ASSERT_FALSE(irs::doc_limits::eof(docs->Value()));
+      ASSERT_DOUBLE_EQ(1, GetFilterBoost(attrs, *docs));
       const std::string_view rhs = "11223344";
       const std::string_view lhs = "1234";
-      ASSERT_DOUBLE_EQ(GetFilterBoost(docs),
+      ASSERT_DOUBLE_EQ(GetFilterBoost(attrs, *docs),
                        (irs::ngram_similarity<char, true>(
                          lhs.data(), lhs.size(), rhs.data(), rhs.size(), 1)));
       docs->FetchScoreArgs(0);
       ASSERT_EQ(1, frequency->value[0]);
-      ASSERT_FALSE(!irs::doc_limits::eof(docs->advance()));
+      ASSERT_FALSE(!irs::doc_limits::eof(docs->Advance()));
       ++i;
     }
   }
@@ -347,27 +393,28 @@ TEST_P(NGramSimilarityFilterTestCase, check_matcher_3) {
     MakeFilter(kFieldFieldId, {"1", "2", "3", "4"}, 0.5f);
 
   CustomNGramScorer sort;
+  NGramAttrs attrs;
+  CaptureNGramAttrs(sort, attrs);
   {
     tests::PreparedFilter prepared{filter, rdr, &sort, counter};
-    for (size_t i = 0; const auto& sub : rdr) {
-      auto docs = prepared.Execute(i);
-      auto score_function = docs->PrepareScore({
-        .segment = &sub,
-      });
-      auto* frequency = irs::get<irs::FreqBlockAttr>(*docs);
+    for (size_t i = 0; [[maybe_unused]] const auto& sub : rdr) {
+      irs::ColumnArgsFetcher fetcher;
+      auto docs = prepared.ExecuteScored(i, fetcher);
+      auto score_function = docs->PrepareScore();
+      const auto* frequency = attrs.freq;
       // ensure all iterators contain  attributes
       ASSERT_TRUE(bool(frequency));
-      ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
-      ASSERT_FALSE(irs::doc_limits::eof(docs->value()));
-      ASSERT_DOUBLE_EQ(1, GetFilterBoost(docs));
+      ASSERT_TRUE(!irs::doc_limits::eof(docs->Advance()));
+      ASSERT_FALSE(irs::doc_limits::eof(docs->Value()));
+      ASSERT_DOUBLE_EQ(1, GetFilterBoost(attrs, *docs));
       const std::string_view rhs = "121134";
       const std::string_view lhs = "1234";
-      ASSERT_DOUBLE_EQ(GetFilterBoost(docs),
+      ASSERT_DOUBLE_EQ(GetFilterBoost(attrs, *docs),
                        (irs::ngram_similarity<char, true>(
                          lhs.data(), lhs.size(), rhs.data(), rhs.size(), 1)));
       docs->FetchScoreArgs(0);
       ASSERT_EQ(1, frequency->value[0]);
-      ASSERT_FALSE(!irs::doc_limits::eof(docs->advance()));
+      ASSERT_FALSE(!irs::doc_limits::eof(docs->Advance()));
       ++i;
     }
   }
@@ -393,27 +440,28 @@ TEST_P(NGramSimilarityFilterTestCase, check_matcher_4) {
   irs::ByNGramSimilarity filter = MakeFilter(kFieldFieldId, {"1", "1"}, 0.5f);
 
   CustomNGramScorer sort;
+  NGramAttrs attrs;
+  CaptureNGramAttrs(sort, attrs);
   {
     tests::PreparedFilter prepared{filter, rdr, &sort, counter};
-    for (size_t i = 0; const auto& sub : rdr) {
-      auto docs = prepared.Execute(i);
-      auto score_function = docs->PrepareScore({
-        .segment = &sub,
-      });
-      auto* frequency = irs::get<irs::FreqBlockAttr>(*docs);
+    for (size_t i = 0; [[maybe_unused]] const auto& sub : rdr) {
+      irs::ColumnArgsFetcher fetcher;
+      auto docs = prepared.ExecuteScored(i, fetcher);
+      auto score_function = docs->PrepareScore();
+      const auto* frequency = attrs.freq;
       // ensure all iterators contain  attributes
       ASSERT_TRUE(bool(frequency));
-      ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
-      ASSERT_FALSE(irs::doc_limits::eof(docs->value()));
-      ASSERT_DOUBLE_EQ(1, GetFilterBoost(docs));
+      ASSERT_TRUE(!irs::doc_limits::eof(docs->Advance()));
+      ASSERT_FALSE(irs::doc_limits::eof(docs->Value()));
+      ASSERT_DOUBLE_EQ(1, GetFilterBoost(attrs, *docs));
       const std::string_view rhs = "121111";
       const std::string_view lhs = "11";
-      ASSERT_DOUBLE_EQ(GetFilterBoost(docs),
+      ASSERT_DOUBLE_EQ(GetFilterBoost(attrs, *docs),
                        (irs::ngram_similarity<char, true>(
                          lhs.data(), lhs.size(), rhs.data(), rhs.size(), 1)));
       docs->FetchScoreArgs(0);
       ASSERT_EQ(2, frequency->value[0]);
-      ASSERT_FALSE(!irs::doc_limits::eof(docs->advance()));
+      ASSERT_FALSE(!irs::doc_limits::eof(docs->Advance()));
       ++i;
     }
   }
@@ -442,27 +490,28 @@ TEST_P(NGramSimilarityFilterTestCase, check_matcher_5) {
     MakeFilter(kFieldFieldId, {"1", "2", "1"}, 0.5f);
 
   CustomNGramScorer sort;
+  NGramAttrs attrs;
+  CaptureNGramAttrs(sort, attrs);
   {
     tests::PreparedFilter prepared{filter, rdr, &sort, counter};
-    for (size_t i = 0; const auto& sub : rdr) {
-      auto docs = prepared.Execute(i);
-      auto score_function = docs->PrepareScore({
-        .segment = &sub,
-      });
-      auto* frequency = irs::get<irs::FreqBlockAttr>(*docs);
+    for (size_t i = 0; [[maybe_unused]] const auto& sub : rdr) {
+      irs::ColumnArgsFetcher fetcher;
+      auto docs = prepared.ExecuteScored(i, fetcher);
+      auto score_function = docs->PrepareScore();
+      const auto* frequency = attrs.freq;
       // ensure all iterators contain  attributes
       ASSERT_TRUE(bool(frequency));
-      ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
-      ASSERT_FALSE(irs::doc_limits::eof(docs->value()));
-      ASSERT_DOUBLE_EQ(1, GetFilterBoost(docs));
+      ASSERT_TRUE(!irs::doc_limits::eof(docs->Advance()));
+      ASSERT_FALSE(irs::doc_limits::eof(docs->Value()));
+      ASSERT_DOUBLE_EQ(1, GetFilterBoost(attrs, *docs));
       const std::string_view rhs = "121212121212121";
       const std::string_view lhs = "121";
-      ASSERT_DOUBLE_EQ(GetFilterBoost(docs),
+      ASSERT_DOUBLE_EQ(GetFilterBoost(attrs, *docs),
                        (irs::ngram_similarity<char, true>(
                          lhs.data(), lhs.size(), rhs.data(), rhs.size(), 1)));
       docs->FetchScoreArgs(0);
       ASSERT_EQ(4, frequency->value[0]);
-      ASSERT_FALSE(!irs::doc_limits::eof(docs->advance()));
+      ASSERT_FALSE(!irs::doc_limits::eof(docs->Advance()));
       ++i;
     }
   }
@@ -487,27 +536,28 @@ TEST_P(NGramSimilarityFilterTestCase, check_matcher_6) {
   irs::ByNGramSimilarity filter = MakeFilter(kFieldFieldId, {"1", "1"}, 1.0f);
 
   CustomNGramScorer sort;
+  NGramAttrs attrs;
+  CaptureNGramAttrs(sort, attrs);
   {
     tests::PreparedFilter prepared{filter, rdr, &sort, counter};
-    for (size_t i = 0; const auto& sub : rdr) {
-      auto docs = prepared.Execute(i);
-      auto score_function = docs->PrepareScore({
-        .segment = &sub,
-      });
-      auto* frequency = irs::get<irs::FreqBlockAttr>(*docs);
+    for (size_t i = 0; [[maybe_unused]] const auto& sub : rdr) {
+      irs::ColumnArgsFetcher fetcher;
+      auto docs = prepared.ExecuteScored(i, fetcher);
+      auto score_function = docs->PrepareScore();
+      const auto* frequency = attrs.freq;
       // ensure all iterators contain  attributes
       ASSERT_TRUE(bool(frequency));
-      ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
-      ASSERT_FALSE(irs::doc_limits::eof(docs->value()));
-      ASSERT_DOUBLE_EQ(1, GetFilterBoost(docs));
+      ASSERT_TRUE(!irs::doc_limits::eof(docs->Advance()));
+      ASSERT_FALSE(irs::doc_limits::eof(docs->Value()));
+      ASSERT_DOUBLE_EQ(1, GetFilterBoost(attrs, *docs));
       const std::string_view rhs = "11";
       const std::string_view lhs = "11";
-      ASSERT_DOUBLE_EQ(GetFilterBoost(docs),
+      ASSERT_DOUBLE_EQ(GetFilterBoost(attrs, *docs),
                        (irs::ngram_similarity<char, true>(
                          lhs.data(), lhs.size(), rhs.data(), rhs.size(), 1)));
       docs->FetchScoreArgs(0);
       ASSERT_EQ(1, frequency->value[0]);
-      ASSERT_FALSE(!irs::doc_limits::eof(docs->advance()));
+      ASSERT_FALSE(!irs::doc_limits::eof(docs->Advance()));
       ++i;
     }
   }
@@ -535,27 +585,28 @@ TEST_P(NGramSimilarityFilterTestCase, check_matcher_7) {
     MakeFilter(kFieldFieldId, {"1", "2", "3", "4"}, 0.5f);
 
   CustomNGramScorer sort;
+  NGramAttrs attrs;
+  CaptureNGramAttrs(sort, attrs);
   {
     tests::PreparedFilter prepared{filter, rdr, &sort, counter};
-    for (size_t i = 0; const auto& sub : rdr) {
-      auto docs = prepared.Execute(i);
-      auto score_function = docs->PrepareScore({
-        .segment = &sub,
-      });
-      auto* frequency = irs::get<irs::FreqBlockAttr>(*docs);
+    for (size_t i = 0; [[maybe_unused]] const auto& sub : rdr) {
+      irs::ColumnArgsFetcher fetcher;
+      auto docs = prepared.ExecuteScored(i, fetcher);
+      auto score_function = docs->PrepareScore();
+      const auto* frequency = attrs.freq;
       // ensure all iterators contain  attributes
       ASSERT_TRUE(bool(frequency));
-      ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
-      ASSERT_FALSE(irs::doc_limits::eof(docs->value()));
-      ASSERT_DOUBLE_EQ(0.5, GetFilterBoost(docs));
+      ASSERT_TRUE(!irs::doc_limits::eof(docs->Advance()));
+      ASSERT_FALSE(irs::doc_limits::eof(docs->Value()));
+      ASSERT_DOUBLE_EQ(0.5, GetFilterBoost(attrs, *docs));
       const std::string_view rhs = "24241313";
       const std::string_view lhs = "1234";
-      ASSERT_DOUBLE_EQ(GetFilterBoost(docs),
+      ASSERT_DOUBLE_EQ(GetFilterBoost(attrs, *docs),
                        (irs::ngram_similarity<char, true>(
                          lhs.data(), lhs.size(), rhs.data(), rhs.size(), 1)));
       docs->FetchScoreArgs(0);
       ASSERT_EQ(2, frequency->value[0]);
-      ASSERT_FALSE(!irs::doc_limits::eof(docs->advance()));
+      ASSERT_FALSE(!irs::doc_limits::eof(docs->Advance()));
       ++i;
     }
   }
@@ -582,27 +633,28 @@ TEST_P(NGramSimilarityFilterTestCase, check_matcher_8) {
     MakeFilter(kFieldFieldId, {"1", "5", "6", "2"}, 0.5f);
 
   CustomNGramScorer sort;
+  NGramAttrs attrs;
+  CaptureNGramAttrs(sort, attrs);
   {
     tests::PreparedFilter prepared{filter, rdr, &sort, counter};
-    for (size_t i = 0; const auto& sub : rdr) {
-      auto docs = prepared.Execute(i);
-      auto score_function = docs->PrepareScore({
-        .segment = &sub,
-      });
-      auto* frequency = irs::get<irs::FreqBlockAttr>(*docs);
+    for (size_t i = 0; [[maybe_unused]] const auto& sub : rdr) {
+      irs::ColumnArgsFetcher fetcher;
+      auto docs = prepared.ExecuteScored(i, fetcher);
+      auto score_function = docs->PrepareScore();
+      const auto* frequency = attrs.freq;
       // ensure all iterators contain  attributes
       ASSERT_TRUE(bool(frequency));
-      ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
-      ASSERT_FALSE(irs::doc_limits::eof(docs->value()));
-      ASSERT_DOUBLE_EQ(0.5, GetFilterBoost(docs));
+      ASSERT_TRUE(!irs::doc_limits::eof(docs->Advance()));
+      ASSERT_FALSE(irs::doc_limits::eof(docs->Value()));
+      ASSERT_DOUBLE_EQ(0.5, GetFilterBoost(attrs, *docs));
       const std::string_view lhs = "1234";
       const std::string_view rhs = "1562";
-      ASSERT_DOUBLE_EQ(GetFilterBoost(docs),
+      ASSERT_DOUBLE_EQ(GetFilterBoost(attrs, *docs),
                        (irs::ngram_similarity<char, true>(
                          lhs.data(), lhs.size(), rhs.data(), rhs.size(), 1)));
       docs->FetchScoreArgs(0);
       ASSERT_EQ(1, frequency->value[0]);
-      ASSERT_FALSE(!irs::doc_limits::eof(docs->advance()));
+      ASSERT_FALSE(!irs::doc_limits::eof(docs->Advance()));
       ++i;
     }
   }
@@ -631,27 +683,28 @@ TEST_P(NGramSimilarityFilterTestCase, check_matcher_9) {
     MakeFilter(kFieldFieldId, {"1", "2", "3", "4", "5", "1"}, 0.5f);
 
   CustomNGramScorer sort;
+  NGramAttrs attrs;
+  CaptureNGramAttrs(sort, attrs);
   {
     tests::PreparedFilter prepared{filter, rdr, &sort, counter};
-    for (size_t i = 0; const auto& sub : rdr) {
-      auto docs = prepared.Execute(i);
-      auto score_function = docs->PrepareScore({
-        .segment = &sub,
-      });
-      auto* frequency = irs::get<irs::FreqBlockAttr>(*docs);
+    for (size_t i = 0; [[maybe_unused]] const auto& sub : rdr) {
+      irs::ColumnArgsFetcher fetcher;
+      auto docs = prepared.ExecuteScored(i, fetcher);
+      auto score_function = docs->PrepareScore();
+      const auto* frequency = attrs.freq;
       // ensure all iterators contain  attributes
       ASSERT_TRUE(bool(frequency));
-      ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
-      ASSERT_FALSE(irs::doc_limits::eof(docs->value()));
-      ASSERT_DOUBLE_EQ(1., GetFilterBoost(docs));
+      ASSERT_TRUE(!irs::doc_limits::eof(docs->Advance()));
+      ASSERT_FALSE(irs::doc_limits::eof(docs->Value()));
+      ASSERT_DOUBLE_EQ(1., GetFilterBoost(attrs, *docs));
       const std::string_view rhs = "1123451";
       const std::string_view lhs = "123451";
-      ASSERT_DOUBLE_EQ(GetFilterBoost(docs),
+      ASSERT_DOUBLE_EQ(GetFilterBoost(attrs, *docs),
                        (irs::ngram_similarity<char, true>(
                          lhs.data(), lhs.size(), rhs.data(), rhs.size(), 1)));
       docs->FetchScoreArgs(0);
       ASSERT_EQ(1, frequency->value[0]);
-      ASSERT_FALSE(!irs::doc_limits::eof(docs->advance()));
+      ASSERT_FALSE(!irs::doc_limits::eof(docs->Advance()));
       ++i;
     }
   }
@@ -676,27 +729,28 @@ TEST_P(NGramSimilarityFilterTestCase, check_matcher_10) {
   irs::ByNGramSimilarity filter = MakeFilter(kFieldFieldId, {""}, 0.5f);
 
   CustomNGramScorer sort;
+  NGramAttrs attrs;
+  CaptureNGramAttrs(sort, attrs);
   {
     tests::PreparedFilter prepared{filter, rdr, &sort, counter};
-    for (size_t i = 0; const auto& sub : rdr) {
-      auto docs = prepared.Execute(i);
-      auto score_function = docs->PrepareScore({
-        .segment = &sub,
-      });
-      auto* frequency = irs::get<irs::FreqBlockAttr>(*docs);
+    for (size_t i = 0; [[maybe_unused]] const auto& sub : rdr) {
+      irs::ColumnArgsFetcher fetcher;
+      auto docs = prepared.ExecuteScored(i, fetcher);
+      auto score_function = docs->PrepareScore();
+      const auto* frequency = attrs.freq;
       // ensure all iterators contain  attributes
       EXPECT_TRUE(bool(frequency));
-      EXPECT_TRUE(!irs::doc_limits::eof(docs->advance()));
-      EXPECT_FALSE(irs::doc_limits::eof(docs->value()));
-      EXPECT_DOUBLE_EQ(1., GetFilterBoost(docs));
+      EXPECT_TRUE(!irs::doc_limits::eof(docs->Advance()));
+      EXPECT_FALSE(irs::doc_limits::eof(docs->Value()));
+      EXPECT_DOUBLE_EQ(1., GetFilterBoost(attrs, *docs));
       const std::string_view rhs = "";
       const std::string_view lhs = "";
-      EXPECT_DOUBLE_EQ(GetFilterBoost(docs),
+      EXPECT_DOUBLE_EQ(GetFilterBoost(attrs, *docs),
                        (irs::ngram_similarity<char, true>(
                          lhs.data(), lhs.size(), rhs.data(), rhs.size(), 1)));
       docs->FetchScoreArgs(0);
       EXPECT_EQ(1, frequency->value[0]);
-      EXPECT_FALSE(!irs::doc_limits::eof(docs->advance()));
+      EXPECT_FALSE(!irs::doc_limits::eof(docs->Advance()));
       ++i;
     }
   }
@@ -724,8 +778,8 @@ TEST_P(NGramSimilarityFilterTestCase, no_match_case) {
     for (size_t i = 0, end = prepared.size(); i < end; ++i) {
       auto docs = prepared.Execute(i);
 
-      ASSERT_FALSE(!irs::doc_limits::eof(docs->advance()));
-      ASSERT_TRUE(irs::doc_limits::eof(docs->value()));
+      ASSERT_FALSE(!irs::doc_limits::eof(docs->Advance()));
+      ASSERT_TRUE(irs::doc_limits::eof(docs->Value()));
     }
   }
   EXPECT_EQ(counter.current, 0);
@@ -751,8 +805,8 @@ TEST_P(NGramSimilarityFilterTestCase, no_serial_match_case) {
     tests::PreparedFilter prepared{filter, rdr, nullptr, counter};
     for (size_t i = 0, end = prepared.size(); i < end; ++i) {
       auto docs = prepared.Execute(i);
-      ASSERT_FALSE(!irs::doc_limits::eof(docs->advance()));
-      ASSERT_TRUE(irs::doc_limits::eof(docs->value()));
+      ASSERT_FALSE(!irs::doc_limits::eof(docs->Advance()));
+      ASSERT_TRUE(irs::doc_limits::eof(docs->Value()));
     }
   }
   EXPECT_EQ(counter.current, 0);
@@ -783,9 +837,9 @@ TEST_P(NGramSimilarityFilterTestCase, one_match_case) {
     for (size_t i = 0, end = prepared.size(); i < end; ++i) {
       auto docs = prepared.Execute(i);
 
-      while (!irs::doc_limits::eof(docs->advance())) {
+      while (!irs::doc_limits::eof(docs->Advance())) {
         expected.erase(
-          std::remove(expected.begin(), expected.end(), docs->value()),
+          std::remove(expected.begin(), expected.end(), docs->Value()),
           expected.end());
         ++count;
       }
@@ -820,9 +874,9 @@ TEST_P(NGramSimilarityFilterTestCase, missed_last_test) {
     for (size_t i = 0, end = prepared.size(); i < end; ++i) {
       auto docs = prepared.Execute(i);
 
-      while (!irs::doc_limits::eof(docs->advance())) {
+      while (!irs::doc_limits::eof(docs->Advance())) {
         expected.erase(
-          std::remove(expected.begin(), expected.end(), docs->value()),
+          std::remove(expected.begin(), expected.end(), docs->Value()),
           expected.end());
         ++count;
       }
@@ -857,9 +911,9 @@ TEST_P(NGramSimilarityFilterTestCase, missed_first_test) {
     for (size_t i = 0, end = prepared.size(); i < end; ++i) {
       auto docs = prepared.Execute(i);
 
-      while (!irs::doc_limits::eof(docs->advance())) {
+      while (!irs::doc_limits::eof(docs->Advance())) {
         expected.erase(
-          std::remove(expected.begin(), expected.end(), docs->value()),
+          std::remove(expected.begin(), expected.end(), docs->Value()),
           expected.end());
         ++count;
       }
@@ -894,9 +948,9 @@ TEST_P(NGramSimilarityFilterTestCase, not_miss_match_for_tail) {
     for (size_t i = 0, end = prepared.size(); i < end; ++i) {
       auto docs = prepared.Execute(i);
 
-      while (!irs::doc_limits::eof(docs->advance())) {
+      while (!irs::doc_limits::eof(docs->Advance())) {
         expected.erase(
-          std::remove(expected.begin(), expected.end(), docs->value()),
+          std::remove(expected.begin(), expected.end(), docs->Value()),
           expected.end());
         ++count;
       }
@@ -932,9 +986,9 @@ TEST_P(NGramSimilarityFilterTestCase, missed_middle_test) {
     for (size_t i = 0, end = prepared.size(); i < end; ++i) {
       auto docs = prepared.Execute(i);
 
-      while (!irs::doc_limits::eof(docs->advance())) {
+      while (!irs::doc_limits::eof(docs->Advance())) {
         expected.erase(
-          std::remove(expected.begin(), expected.end(), docs->value()),
+          std::remove(expected.begin(), expected.end(), docs->Value()),
           expected.end());
         ++count;
       }
@@ -971,9 +1025,9 @@ TEST_P(NGramSimilarityFilterTestCase, missed_middle2_test) {
     for (size_t i = 0, end = prepared.size(); i < end; ++i) {
       auto docs = prepared.Execute(i);
 
-      while (!irs::doc_limits::eof(docs->advance())) {
+      while (!irs::doc_limits::eof(docs->Advance())) {
         expected.erase(
-          std::remove(expected.begin(), expected.end(), docs->value()),
+          std::remove(expected.begin(), expected.end(), docs->Value()),
           expected.end());
         ++count;
       }
@@ -1010,9 +1064,9 @@ TEST_P(NGramSimilarityFilterTestCase, missed_middle3_test) {
     for (size_t i = 0, end = prepared.size(); i < end; ++i) {
       auto docs = prepared.Execute(i);
 
-      while (!irs::doc_limits::eof(docs->advance())) {
+      while (!irs::doc_limits::eof(docs->Advance())) {
         expected.erase(
-          std::remove(expected.begin(), expected.end(), docs->value()),
+          std::remove(expected.begin(), expected.end(), docs->Value()),
           expected.end());
         ++count;
       }
@@ -1311,23 +1365,23 @@ TEST_P(NGramSimilarityFilterTestCase, seek_next) {
     tests::PreparedFilter prepared_filter{filter, rdr, nullptr, counter};
     for (size_t i = 0, end = prepared_filter.size(); i < end; ++i) {
       auto docs = prepared_filter.Execute(i);
-      ASSERT_EQ(irs::doc_limits::invalid(), docs->value());
-      while (!irs::doc_limits::eof(docs->advance())) {
-        ASSERT_EQ(docs->value(), *expected_it);
+      ASSERT_EQ(irs::doc_limits::invalid(), docs->Value());
+      while (!irs::doc_limits::eof(docs->Advance())) {
+        ASSERT_EQ(docs->Value(), *expected_it);
         // seek same
-        ASSERT_EQ(*expected_it, docs->seek(*expected_it));
+        ASSERT_EQ(*expected_it, docs->Seek(*expected_it));
         // seek backward
-        ASSERT_EQ(*expected_it, docs->seek((*expected_it) - 1));
+        ASSERT_EQ(*expected_it, docs->Seek((*expected_it) - 1));
         ++expected_it;
         if (expected_it != std::end(expected)) {
           // seek forward
-          ASSERT_EQ(*expected_it, docs->seek(*expected_it));
+          ASSERT_EQ(*expected_it, docs->Seek(*expected_it));
           ++expected_it;
         }
       }
-      ASSERT_EQ(irs::doc_limits::eof(), docs->value());
-      ASSERT_FALSE(!irs::doc_limits::eof(docs->advance()));
-      ASSERT_EQ(irs::doc_limits::eof(), docs->value());
+      ASSERT_EQ(irs::doc_limits::eof(), docs->Value());
+      ASSERT_FALSE(!irs::doc_limits::eof(docs->Advance()));
+      ASSERT_EQ(irs::doc_limits::eof(), docs->Value());
     }
     ASSERT_EQ(expected_it, std::end(expected));
   }
@@ -1356,11 +1410,11 @@ TEST_P(NGramSimilarityFilterTestCase, seek) {
     for (size_t i = 0, end = prepared_filter.size(); i < end; ++i) {
       while (std::end(seek_tagrets) != seek_it) {
         auto docs = prepared_filter.Execute(i);
-        ASSERT_EQ(irs::doc_limits::invalid(), docs->value());
-        auto actual_seeked = docs->seek(*seek_it);
+        ASSERT_EQ(irs::doc_limits::invalid(), docs->Value());
+        auto actual_seeked = docs->Seek(*seek_it);
         if (actual_seeked == *seek_it) {
-          ASSERT_EQ(docs->seek(*seek_it), *seek_it);
-          ASSERT_EQ(docs->seek((*seek_it) - 1), *seek_it);
+          ASSERT_EQ(docs->Seek(*seek_it), *seek_it);
+          ASSERT_EQ(docs->Seek((*seek_it) - 1), *seek_it);
           ++seek_it;
         }
         if (actual_seeked == irs::doc_limits::eof()) {
@@ -1376,13 +1430,6 @@ TEST_P(NGramSimilarityFilterTestCase, seek) {
   counter.Reset();
 }
 
-// Regression: NOT(ByNGramSimilarity) used to trip the
-// `target >= value()` assertion in PostingIteratorBase::LazySeek.
-// NGramSimilarityDocIterator's LazySeek bail-out paths returned the
-// advanced position without updating _doc, so when Not::prepare hoists
-// the ngram into the excl side of an AndQuery over All,
-// Exclusion::converge re-read a stale value() and seeded the next
-// LazySeek with a target behind some leaf's position.
 TEST_P(NGramSimilarityFilterTestCase, negation_regression) {
   {
     tests::JsonDocGenerator gen(resource("ngram_similarity.json"),
@@ -1399,8 +1446,8 @@ TEST_P(NGramSimilarityFilterTestCase, negation_regression) {
     tests::PreparedFilter prepared{filter, rdr};
     for (size_t i = 0, end = prepared.size(); i < end; ++i) {
       auto docs = prepared.Execute(i);
-      while (!irs::doc_limits::eof(docs->advance())) {
-        out.push_back(docs->value());
+      while (!irs::doc_limits::eof(docs->Advance())) {
+        out.push_back(docs->Value());
       }
     }
     return out;
@@ -1409,8 +1456,12 @@ TEST_P(NGramSimilarityFilterTestCase, negation_regression) {
   const auto ngram_hits = collect(*tests::Optimized(ngram));
   ASSERT_FALSE(ngram_hits.empty());
 
-  irs::Exclusion not_ngram;
-  not_ngram.exclude<irs::ByNGramSimilarity>() = ngram;
+  // Excluding needs something to exclude from: a node holding nothing but a
+  // negation has no include side and so matches nothing.
+  irs::BooleanFilter not_ngram;
+  not_ngram.Add(std::make_unique<irs::All>(), irs::Occur::Must);
+  not_ngram.Add(std::make_unique<irs::ByNGramSimilarity>(ngram),
+                irs::Occur::MustNot);
   auto not_ngram_opt = tests::Optimized(std::move(not_ngram));
   const auto not_hits = collect(*not_ngram_opt);
 
@@ -1420,14 +1471,12 @@ TEST_P(NGramSimilarityFilterTestCase, negation_regression) {
     EXPECT_EQ(not_hits.end(), std::find(not_hits.begin(), not_hits.end(), doc));
   }
 
-  // Drive seek() across positive hits -- mirrors the path that
-  // surfaced the crash from the SQL side via Exclusion::converge.
   tests::PreparedFilter prepared{*not_ngram_opt, rdr};
   for (size_t i = 0, end = prepared.size(); i < end; ++i) {
     auto docs = prepared.Execute(i);
     for (auto doc : ngram_hits) {
       const auto target = doc + 1;
-      const auto landed = docs->seek(target);
+      const auto landed = docs->Seek(target);
       EXPECT_GE(landed, target);
       if (irs::doc_limits::eof(landed)) {
         break;

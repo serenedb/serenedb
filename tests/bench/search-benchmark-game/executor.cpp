@@ -27,16 +27,21 @@
 #include <charconv>
 #include <cmath>
 #include <cstdio>
+#include <duckdb/common/allocator.hpp>
 #include <iresearch/analysis/segmentation_tokenizer.hpp>
 #include <iresearch/index/norm.hpp>
 #include <iresearch/parser/parser.hpp>
 #include <iresearch/search/bm25.hpp>
 #include <iresearch/search/boolean_filter.hpp>
+#include <iresearch/search/count/make.hpp>
+#include <iresearch/search/docs/make.hpp>
 #include <iresearch/search/filter_optimizer.hpp>
 #include <iresearch/search/ngram_similarity_filter.hpp>
 #include <iresearch/search/phrase_filter.hpp>
+#include <iresearch/search/scored/root.hpp>
 #include <iresearch/search/term_filter.hpp>
 #include <iresearch/store/store_utils.hpp>
+#include <stdexcept>
 #include <tuple>
 #include <vector>
 
@@ -132,9 +137,33 @@ Executor::Executor(std::string_view path, const BenchConfig& config)
       {.scorer = _scorer_ptr,
        .db = &::sdb::DuckDBEngine::Instance().instance()})} {}
 
+// A debug knob, off unless `IRESEARCH_DISABLE_SHAPES` names shapes to skip,
+// comma separated (`count`, `docs`, `scored`). What it answers is the only
+// question that matters about a shape: is its plan faster than the path it
+// replaced -- measured in one binary over one index, so nothing but the plan
+// differs.
+bool ShapeDisabled(std::string_view shape) {
+  static const std::string kDisabled = [] {
+    const auto* const value = std::getenv("IRESEARCH_DISABLE_SHAPES");
+    return value != nullptr ? std::string{value} : std::string{};
+  }();
+  std::string_view rest{kDisabled};
+  while (!rest.empty()) {
+    const auto end = rest.find(',');
+    if (rest.substr(0, end) == shape) {
+      return true;
+    }
+    if (end == std::string_view::npos) {
+      break;
+    }
+    rest.remove_prefix(end + 1);
+  }
+  return false;
+}
+
 size_t Executor::ExecuteTopK(size_t k, std::string_view query) {
   ResetResults(k);
-  auto filter = ParseFilter(query);
+  auto filter = ParseFilter(query, true);
   if (!filter) {
     _result_count = 0;
     return 0;
@@ -147,65 +176,75 @@ size_t Executor::ExecuteTopK(size_t k, std::string_view query) {
 
 size_t Executor::ExecuteTopKWithCount(size_t k, std::string_view query) {
   ResetResults(k);
-  auto filter = ParseFilter(query);
+  auto filter = ParseFilter(query, true);
   if (!filter) {
     _result_count = 0;
     return 0;
   }
-  auto count = irs::ExecuteTopKWithCount(_reader, *filter, *_scorer, k,
-                                         std::span{_results});
+  auto count =
+    irs::ExecuteTopK(_reader, *filter, *_scorer, k, false, std::span{_results});
   _result_count = std::min<size_t>(k, count);
   return count;
 }
 
 size_t Executor::ExecuteCount(std::string_view query) {
-  auto filter = ParseFilter(query);
+  auto filter = ParseFilter(query, false);
   if (!filter) {
     return 0;
   }
-  auto collector = filter->MakeCollector(nullptr);
+  // Counting does not score, so no subtree collects statistics.
   std::vector<irs::QueryBuilder::ptr> queries;
   queries.reserve(_reader.size());
   for (auto& segment : _reader) {
-    queries.emplace_back(
-      filter->PrepareSegment(segment, {.collector = collector.get()}));
+    queries.emplace_back(filter->PrepareSegment(segment, {}));
   }
-  const auto stats = collector->Finish(irs::IResourceManager::gNoop);
 
   size_t count = 0;
-  for (auto& query : queries) {
+  size_t i = 0;
+  for ([[maybe_unused]] auto& segment : _reader) {
+    auto& query = queries[i++];
     if (!query) {
       continue;
     }
-    auto docs = query->Execute({}, stats);
-    count += docs->count();
+    auto plan = ShapeDisabled("count") ? irs::count::Root::ptr{}
+                                       : irs::count::MakeRoot(*query);
+    if (!plan) {
+      throw std::runtime_error{"no count plan for this query"};
+    }
+    count += plan->Run();
   }
   return count;
 }
 
 EmitResult Executor::ExecuteEmitDocs(std::string_view query, Report report) {
-  auto filter = ParseFilter(query);
+  auto filter = ParseFilter(query, false);
   if (!filter) {
     return {};
   }
-  auto collector = filter->MakeCollector(nullptr);
+  // Emitting documents does not score, so no subtree collects statistics.
   std::vector<irs::QueryBuilder::ptr> queries;
   queries.reserve(_reader.size());
   for (auto& segment : _reader) {
-    queries.emplace_back(
-      filter->PrepareSegment(segment, {.collector = collector.get()}));
+    queries.emplace_back(filter->PrepareSegment(segment, {}));
   }
-  const auto stats = collector->Finish(irs::IResourceManager::gNoop);
 
   EmitResult result;
-  for (auto& query : queries) {
+  size_t seg = 0;
+  for ([[maybe_unused]] auto& segment : _reader) {
+    auto& query = queries[seg++];
     if (!query) {
       continue;
     }
-    auto docs = query->Execute({}, stats);
-    auto min = irs::doc_limits::min();
-    while (!irs::doc_limits::eof(min)) {
-      const auto n = docs->EmitDocs(_emit_docs.data(), min, min + kEmitWindow);
+    auto plan = ShapeDisabled("docs") ? irs::docs::Root::ptr{}
+                                      : irs::docs::MakeRoot(*query);
+    if (!plan) {
+      throw std::runtime_error{"no docs plan for this query"};
+    }
+    for (;;) {
+      const auto n = plan->Run(_emit_docs.data(), kEmitWindow);
+      if (n == 0) {
+        break;
+      }
       result.count += n;
       if (report.hash) {
         result.hash = HashBatch(result.hash, _emit_docs.data(), n);
@@ -215,7 +254,6 @@ EmitResult Executor::ExecuteEmitDocs(std::string_view query, Report report) {
           absl::FPrintF(_print_out, "doc=%u\n", _emit_docs[i]);
         }
       }
-      min = docs->value();
     }
   }
   return result;
@@ -223,44 +261,47 @@ EmitResult Executor::ExecuteEmitDocs(std::string_view query, Report report) {
 
 EmitResult Executor::ExecuteEmitScoredDocs(std::string_view query,
                                            Report report) {
-  auto filter = ParseFilter(query);
+  auto filter = ParseFilter(query, true);
   if (!filter) {
     return {};
   }
-  auto collector = filter->MakeCollector(_scorer_ptr);
+  auto& allocator = duckdb::Allocator::DefaultAllocator();
+  irs::StatsArena stats{allocator};
+  irs::PreparedCollector collector{*filter, *_scorer_ptr, stats, 1};
   std::vector<irs::QueryBuilder::ptr> queries;
   queries.reserve(_reader.size());
   for (auto& segment : _reader) {
     queries.emplace_back(
-      filter->PrepareSegment(segment, {.collector = collector.get()}));
+      filter->PrepareSegment(segment, {.collector = collector.Get()}));
   }
-  const auto stats = collector->Finish(irs::IResourceManager::gNoop);
+  collector.Finish();
 
   irs::ColumnArgsFetcher fetcher;
   EmitResult result;
   uint32_t seg_idx = 0;
-  for (auto& segment : _reader) {
+  for ([[maybe_unused]] auto& segment : _reader) {
     fetcher.Clear();
     auto& query = queries[seg_idx++];
     if (!query) {
       continue;
     }
-    auto docs = query->Execute({}, stats);
-    auto score_func = docs->PrepareScore({
-      .segment = &segment,
-      .fetcher = &fetcher,
-    });
-    auto min = irs::doc_limits::min();
-    while (!irs::doc_limits::eof(min)) {
+    auto plan = ShapeDisabled("scored")
+                  ? irs::scored::Root::ptr{}
+                  : irs::scored::MakeRoot(
+                      *query, {.scorer = *_scorer_ptr, .fetcher = fetcher});
+    if (!plan) {
+      throw std::runtime_error{"no scored plan for this query"};
+    }
+    for (;;) {
       const auto n =
-        docs->EmitScoredDocs(_emit_docs.data(), _emit_scores.data(),
-                             min + kEmitWindow, score_func, &fetcher, min);
+        plan->Run(_emit_docs.data(), _emit_scores.data(), kEmitWindow);
+      if (n == 0) {
+        break;
+      }
       result.count += n;
       if (report.hash) {
         // Pairwise, so the checksum does not depend on where the batch
-        // boundaries happen to fall: docs-then-scores per batch interleaves
-        // differently for a path that emits per window of ids and one that
-        // emits per window of results.
+        // boundaries happen to fall.
         result.hash =
           HashPairs(result.hash, _emit_docs.data(), _emit_scores.data(), n);
       }
@@ -270,7 +311,6 @@ EmitResult Executor::ExecuteEmitScoredDocs(std::string_view query,
                         _emit_scores[i]);
         }
       }
-      min = docs->value();
     }
   }
   return result;
@@ -306,18 +346,18 @@ void Executor::PrintResults() const {
   }
 }
 
-irs::Filter::ptr Executor::ParseFilter(std::string_view str) {
-  auto root = std::make_unique<irs::MixedBooleanFilter>();
+irs::Filter::ptr Executor::ParseFilter(std::string_view str, bool scored) {
+  auto root = std::make_unique<irs::BooleanFilter>();
   sdb::ParserContext context{*root, kTextFieldId, *_tokenizer};
   if (!sdb::ParseQuery(context, str)) {
     absl::FPrintF(stderr, "parse error: %s: %s\n", context.error_message, str);
     return {};
   }
-  if (root->empty()) {
+  if (!root->Valid()) {
     return {};
   }
   irs::Filter::ptr filter = std::move(root);
-  irs::Optimize(filter, {.scored = _scorer_ptr != nullptr});
+  irs::Optimize(filter, {.scored = scored});
   return filter;
 }
 

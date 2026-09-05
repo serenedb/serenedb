@@ -903,7 +903,7 @@ class TermReaderBase : public TermReader, private util::Noncopyable {
   uint64_t _terms_count{};
   uint64_t _doc_count{};
   bool _has_score_bounds{};
-  FreqAttr _freq;  // total term freq
+  FreqAttr _freq;
 };
 
 void TermReaderBase::LoadFromMeta(field_id id, const TermDictMeta& meta,
@@ -915,19 +915,20 @@ void TermReaderBase::LoadFromMeta(field_id id, const TermDictMeta& meta,
   _doc_count = meta.doc_count;
   _min_term = ReadString<bstring>(in);
   _max_term = ReadString<bstring>(in);
-  if (IndexFeatures::None != (meta.features & IndexFeatures::Freq)) {
-    // TODO(mbkkt) for what reason we store uint64_t if we read to uint32_t
-    SDB_ENSURE(meta.total_term_freq <= std::numeric_limits<uint32_t>::max(),
-               "TermReaderBase: total_term_freq ", meta.total_term_freq,
-               " exceeds uint32_t::max");
-    _freq.value = static_cast<uint32_t>(meta.total_term_freq);
-  }
+  const auto total =
+    IndexFeatures::None != (meta.features & IndexFeatures::Freq)
+      ? meta.total_term_freq
+      : meta.total_doc_freq;
+  // TODO(mbkkt) for what reason we store uint64_t if we read to uint32_t
+  SDB_ENSURE(total <= std::numeric_limits<uint32_t>::max(),
+             "TermReaderBase: total_term_freq ", total,
+             " exceeds uint32_t::max");
+  _freq.value = static_cast<uint32_t>(total);
   _has_score_bounds = meta.has_score_bounds;
 }
 
 Attribute* TermReaderBase::GetMutable(TypeInfo::type_id type) noexcept {
-  if (IndexFeatures::None != (_field.index_features & IndexFeatures::Freq) &&
-      irs::Type<FreqAttr>::id() == type) {
+  if (irs::Type<FreqAttr>::id() == type) {
     return &_freq;
   }
 
@@ -1535,15 +1536,14 @@ class TermIteratorBase : public SeekTermIterator {
     return _posting_meta;
   }
 
-  DocIterator::ptr PostingsImpl(BlockIterator* it,
-                                IndexFeatures features) const {
+  TermPostings::ptr PostingsImpl(BlockIterator* it,
+                                 IndexFeatures features) const {
     const auto& field_meta = _field->meta();
     if (it) {
       it->LoadData(field_meta, _posting_meta, *_postings);
     }
-    return _postings->Iterator(
-      field_meta.index_features, features, {.cookie = &_posting_meta},
-      IteratorFieldOptions{.has_score_bounds = _field->HasScoreBounds()});
+    return _postings->Postings(field_meta.index_features, features,
+                               _posting_meta, _field->HasScoreBounds());
   }
 
   void Copy(const byte_type* suffix, size_t prefix_size, size_t suffix_size) {
@@ -1591,7 +1591,7 @@ class TermIteratorImpl : public TermIteratorBase {
     return CookieImpl(_cur_block);
   }
 
-  DocIterator::ptr postings(IndexFeatures features) const final {
+  TermPostings::ptr postings(IndexFeatures features) const final {
     return PostingsImpl(_cur_block, features);
   }
 
@@ -1969,10 +1969,9 @@ class SingleTermLookup : public SeekTermIterator {
 
   const PostingMeta& cookie() const final { return _meta; }
 
-  DocIterator::ptr postings(IndexFeatures features) const final {
-    return _postings->Iterator(
-      _field->meta().index_features, features, {.cookie = &_meta},
-      IteratorFieldOptions{.has_score_bounds = _field->HasScoreBounds()});
+  TermPostings::ptr postings(IndexFeatures features) const final {
+    return _postings->Postings(_field->meta().index_features, features, _meta,
+                               _field->HasScoreBounds());
   }
 
   const PostingMeta& Meta() const noexcept { return _meta; }
@@ -2125,10 +2124,11 @@ class AutomatonTermIterator : public TermIteratorBase {
   bool next() final;
 
   SeekResult seek_ge(bytes_view term) final {
-    if (!irs::seek(*this, term)) {
-      return SeekResult::End;
+    while (value() < term) {
+      if (!next()) {
+        return SeekResult::End;
+      }
     }
-
     return value() == term ? SeekResult::Found : SeekResult::NotFound;
   }
 
@@ -2145,7 +2145,7 @@ class AutomatonTermIterator : public TermIteratorBase {
     return TermIteratorBase::GetMutable(type);
   }
 
-  DocIterator::ptr postings(IndexFeatures features) const final {
+  TermPostings::ptr postings(IndexFeatures features) const final {
     return PostingsImpl(_cur_block, features);
   }
 
@@ -2538,7 +2538,7 @@ class FieldReader::Impl {
       }
 
       doc_id_t d;
-      while (!doc_limits::eof(d = docs_it->advance())) {
+      while (!doc_limits::eof(d = docs_it->Advance())) {
         SDB_ASSERT(doc_limits::valid(d));
         if (!acceptor(d)) {
           break;
@@ -2585,24 +2585,14 @@ class FieldReader::Impl {
         *this, *_owner->_pr, std::move(terms_in), *_fst, matcher);
     }
 
-    DocIterator::ptr Iterator(IndexFeatures features,
-                              std::span<const PostingCookie> cookies,
-                              IteratorFieldOptions options, size_t min_match,
-                              ScoreMergeType type) const final {
-      SDB_ASSERT(_owner);
-      SDB_ASSERT(_owner->_pr);
-      SDB_ASSERT(!cookies.empty());
-      SDB_ASSERT(1 <= min_match);
-      SDB_ASSERT(min_match <= cookies.size());
-      options.has_score_bounds = HasScoreBounds();
-
-      return _owner->_pr->Iterator(meta().index_features, features, cookies,
-                                   options, min_match, type);
-    }
-
     std::unique_ptr<IndexInput> ReopenPayload() const final {
       SDB_ASSERT(_owner && _owner->_pr);
       return _owner->_pr->ReopenPayload();
+    }
+
+    PostingsHandles Handles() const noexcept final {
+      SDB_ASSERT(_owner && _owner->_pr);
+      return _owner->_pr->Handles();
     }
 
    private:

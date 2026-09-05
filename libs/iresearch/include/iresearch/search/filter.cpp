@@ -24,24 +24,21 @@
 
 #include "basics/singleton.hpp"
 #include "iresearch/index/index_reader.hpp"
+#include "iresearch/search/query_builder_impl.hpp"
 
 namespace irs {
-namespace {
 
-// Represents a query returning empty result set
-struct EmptyQueryBuilder : public QueryBuilder {
+struct EmptyQueryBuilder : public QueryBuilderImpl<EmptyQueryBuilder> {
  public:
-  EmptyQueryBuilder() noexcept : QueryBuilder{SubReader::empty()} {}
-
-  DocIterator::ptr Execute(const ExecutionContext&,
-                           const StatsBuffer&) const final {
-    return DocIterator::empty();
-  }
+  EmptyQueryBuilder() noexcept
+    : QueryBuilderImpl{SubReader::empty(), 0, QueryKind::Empty} {}
 
   void Visit(PreparedStateVisitor&, score_t) const final {}
 
   score_t Boost() const noexcept final { return kNoBoost; }
 };
+
+namespace {
 
 EmptyQueryBuilder gEmptyQuery;
 
@@ -51,9 +48,14 @@ QueryBuilder::ptr QueryBuilder::Empty() {
   return memory::to_managed<QueryBuilder>(gEmptyQuery);
 }
 
-PrepareCollector::ptr Filter::MakeCollectorImpl(
-  const Scorer* /*scorer*/) const {
-  return std::make_unique<NoopCollector>();
+bool QueryBuilder::IsEmpty(const QueryBuilder& query) noexcept {
+  SDB_ASSERT((&query == &gEmptyQuery) == (query.Kind() == QueryKind::Empty));
+  return &query == &gEmptyQuery;
+}
+
+PrepareCollector::ptr Filter::MakeCollectorImpl(const Scorer*, StatsArena&,
+                                                uint32_t) const {
+  return nullptr;
 }
 
 Filter::ptr Filter::empty() { return std::make_unique<Empty>(); }

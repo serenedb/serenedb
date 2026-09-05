@@ -839,9 +839,9 @@ QUERY PLAN
 │ ╭─ And ────────────────╮                          │
 │ ╰───────────┬──────────╯                          │
 │             ├────────────────────────╮            │
-│ ╭─ Term ────┴──────────╮  ╭─ Term ───┴──────────╮ │
+│ ╭─ Terms ───┴──────────╮  ╭─ Terms ──┴──────────╮ │
 │ │ Field: title(string) │  │ Field: body(string) │ │
-│ │ Value: fox           │  │ Value: fox          │ │
+│ │ Values: 'fox'        │  │ Values: 'fox'       │ │
 │ ╰──────────────────────╯  ╰─────────────────────╯ │
 │ Offsets: title, body                              │
 │ Projections:                                      │

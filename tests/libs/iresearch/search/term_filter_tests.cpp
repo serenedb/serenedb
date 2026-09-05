@@ -92,8 +92,8 @@ class TermFilterTestCase : public tests::FilterTestCaseBase {
       tests::PreparedFilter prepared{q, rdr, nullptr, counter};
       auto docs0 = prepared.Execute(0);
       auto docs1 = prepared.Execute(0);
-      ASSERT_TRUE(!irs::doc_limits::eof(docs0->advance()));
-      ASSERT_EQ(docs0->value(), docs1->seek(docs0->value()));
+      ASSERT_TRUE(!irs::doc_limits::eof(docs0->Advance()));
+      ASSERT_EQ(docs0->Value(), docs1->Seek(docs0->Value()));
     }
     EXPECT_EQ(counter.current, 0);
     EXPECT_GT(counter.max, 0);
@@ -134,22 +134,22 @@ class TermFilterTestCase : public tests::FilterTestCaseBase {
     // without boost
     {
       tests::PreparedFilter prep{filter, rdr, &scorer, counter};
-      auto docs = prep.Execute(0);
+      irs::ColumnArgsFetcher fetcher;
+      auto docs = prep.ExecuteScored(0, fetcher);
 
-      auto score = docs->PrepareScore({
-        .segment = &*(rdr.begin()),
-      });
+      auto score = docs->PrepareScore();
 
       // first hit
       {
-        ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
+        ASSERT_TRUE(!irs::doc_limits::eof(docs->Advance()));
         docs->FetchScoreArgs(0);
+        fetcher.Fetch(docs->Value());
         irs::score_t score_value{};
         score.Score(&score_value, 1);
         ASSERT_EQ(irs::score_t(0), score_value);
       }
 
-      ASSERT_FALSE(!irs::doc_limits::eof(docs->advance()));
+      ASSERT_FALSE(!irs::doc_limits::eof(docs->Advance()));
     }
     EXPECT_EQ(counter.current, 0);
     EXPECT_GT(counter.max, 0);
@@ -161,21 +161,21 @@ class TermFilterTestCase : public tests::FilterTestCaseBase {
       filter.SetBoost(value);
 
       tests::PreparedFilter prep{filter, rdr, &scorer, counter};
-      auto docs = prep.Execute(0);
-      auto score = docs->PrepareScore({
-        .segment = &*(rdr.begin()),
-      });
+      irs::ColumnArgsFetcher fetcher;
+      auto docs = prep.ExecuteScored(0, fetcher);
+      auto score = docs->PrepareScore();
 
       // first hit
       {
-        ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
+        ASSERT_TRUE(!irs::doc_limits::eof(docs->Advance()));
         docs->FetchScoreArgs(0);
+        fetcher.Fetch(docs->Value());
         irs::score_t score_value{};
         score.Score(&score_value, 1);
         ASSERT_EQ(irs::score_t(value), score_value);
       }
 
-      ASSERT_FALSE(!irs::doc_limits::eof(docs->advance()));
+      ASSERT_FALSE(!irs::doc_limits::eof(docs->Advance()));
     }
     EXPECT_EQ(counter.current, 0);
     EXPECT_GT(counter.max, 0);
@@ -277,8 +277,8 @@ class TermFilterTestCase : public tests::FilterTestCaseBase {
 
       for (size_t i = 0, n = rdr.size(); i < n; ++i) {
         auto docs = prepared.Execute(i);
-        for (; !irs::doc_limits::eof(docs->advance());) {
-          actual.push_back(docs->value());
+        for (; !irs::doc_limits::eof(docs->Advance());) {
+          actual.push_back(docs->Value());
         }
       }
       ASSERT_EQ(expected, actual);
@@ -303,8 +303,8 @@ class TermFilterTestCase : public tests::FilterTestCaseBase {
 
       for (size_t i = 0, n = rdr.size(); i < n; ++i) {
         auto docs = prepared.Execute(i);
-        for (; !irs::doc_limits::eof(docs->advance());) {
-          actual.push_back(docs->value());
+        for (; !irs::doc_limits::eof(docs->Advance());) {
+          actual.push_back(docs->Value());
         }
       }
       ASSERT_EQ(expected, actual);
@@ -330,8 +330,8 @@ class TermFilterTestCase : public tests::FilterTestCaseBase {
 
       for (size_t i = 0, n = rdr.size(); i < n; ++i) {
         auto docs = prepared.Execute(i);
-        for (; !irs::doc_limits::eof(docs->advance());) {
-          actual.push_back(docs->value());
+        for (; !irs::doc_limits::eof(docs->Advance());) {
+          actual.push_back(docs->Value());
         }
       }
       ASSERT_EQ(expected, actual);
@@ -357,8 +357,8 @@ class TermFilterTestCase : public tests::FilterTestCaseBase {
 
       for (size_t i = 0, n = rdr.size(); i < n; ++i) {
         auto docs = prepared.Execute(i);
-        for (; !irs::doc_limits::eof(docs->advance());) {
-          actual.push_back(docs->value());
+        for (; !irs::doc_limits::eof(docs->Advance());) {
+          actual.push_back(docs->Value());
         }
       }
       ASSERT_EQ(expected, actual);
@@ -384,8 +384,8 @@ class TermFilterTestCase : public tests::FilterTestCaseBase {
 
       for (size_t i = 0, n = rdr.size(); i < n; ++i) {
         auto docs = prepared.Execute(i);
-        for (; !irs::doc_limits::eof(docs->advance());) {
-          actual.push_back(docs->value());
+        for (; !irs::doc_limits::eof(docs->Advance());) {
+          actual.push_back(docs->Value());
         }
       }
       ASSERT_EQ(expected, actual);
@@ -411,8 +411,8 @@ class TermFilterTestCase : public tests::FilterTestCaseBase {
 
       for (size_t i = 0, n = rdr.size(); i < n; ++i) {
         auto docs = prepared.Execute(i);
-        for (; !irs::doc_limits::eof(docs->advance());) {
-          actual.push_back(docs->value());
+        for (; !irs::doc_limits::eof(docs->Advance());) {
+          actual.push_back(docs->Value());
         }
       }
       ASSERT_EQ(expected, actual);
@@ -438,8 +438,8 @@ class TermFilterTestCase : public tests::FilterTestCaseBase {
 
       for (size_t i = 0, n = rdr.size(); i < n; ++i) {
         auto docs = prepared.Execute(i);
-        for (; !irs::doc_limits::eof(docs->advance());) {
-          actual.push_back(docs->value());
+        for (; !irs::doc_limits::eof(docs->Advance());) {
+          actual.push_back(docs->Value());
         }
       }
       ASSERT_EQ(expected, actual);
@@ -465,8 +465,8 @@ class TermFilterTestCase : public tests::FilterTestCaseBase {
 
       for (size_t i = 0, n = rdr.size(); i < n; ++i) {
         auto docs = prepared.Execute(i);
-        for (; !irs::doc_limits::eof(docs->advance());) {
-          actual.push_back(docs->value());
+        for (; !irs::doc_limits::eof(docs->Advance());) {
+          actual.push_back(docs->Value());
         }
       }
       ASSERT_EQ(expected, actual);
@@ -512,18 +512,18 @@ class TermFilterTestCase : public tests::FilterTestCaseBase {
 
       std::set<irs::doc_id_t> expected{31, 32};
       tests::PreparedFilter prep{filter, rdr, &scorer, counter};
-      auto docs = prep.Execute(0);
+      irs::ColumnArgsFetcher fetcher;
+      auto docs = prep.ExecuteScored(0, fetcher);
 
-      auto score = docs->PrepareScore({
-        .segment = &*(rdr.begin()),
-      });
+      auto score = docs->PrepareScore();
 
-      while (!irs::doc_limits::eof(docs->advance())) {
+      while (!irs::doc_limits::eof(docs->Advance())) {
         docs->FetchScoreArgs(0);
+        fetcher.Fetch(docs->Value());
         irs::score_t score_value{};
         score.Score(&score_value, 1);
         IRS_IGNORE(score_value);
-        ASSERT_EQ(1, expected.erase(docs->value()));
+        ASSERT_EQ(1, expected.erase(docs->Value()));
       }
 
       ASSERT_TRUE(expected.empty());
@@ -621,8 +621,8 @@ class TermFilterTestCase : public tests::FilterTestCaseBase {
       Docs docs;
       for (size_t i = 0, n = prepared.size(); i < n; ++i) {
         auto it = prepared.Execute(i);
-        while (!irs::doc_limits::eof(it->advance())) {
-          docs.push_back(it->value());
+        while (!irs::doc_limits::eof(it->Advance())) {
+          docs.push_back(it->Value());
         }
       }
       return docs;
@@ -712,13 +712,14 @@ TEST(by_term_test, boost) {
   // no boost
   {
     irs::ByTerm q = MakeFilter(kField, "term");
+    ASSERT_EQ(irs::kNoBoost, q.GetBoost());
 
     tests::PreparedFilter prepared{q, irs::SubReader::empty(), nullptr,
                                    counter};
+    ASSERT_TRUE(irs::QueryBuilder::IsEmpty(*prepared.Query(0)));
     ASSERT_EQ(irs::kNoBoost, prepared.Query(0)->Boost());
   }
   EXPECT_EQ(counter.current, 0);
-  EXPECT_GT(counter.max, 0);
   counter.Reset();
 
   // with boost
@@ -726,13 +727,16 @@ TEST(by_term_test, boost) {
     irs::score_t boost = 1.5f;
     irs::ByTerm q = MakeFilter(kField, "term");
     q.SetBoost(boost);
+    ASSERT_EQ(boost, q.GetBoost());
 
+    // a segment without the field matches nothing, and nothing carries no
+    // boost -- so the boost is only observable where the field exists
     tests::PreparedFilter prepared{q, irs::SubReader::empty(), nullptr,
                                    counter};
-    ASSERT_EQ(boost, prepared.Query(0)->Boost());
+    ASSERT_TRUE(irs::QueryBuilder::IsEmpty(*prepared.Query(0)));
+    ASSERT_EQ(irs::kNoBoost, prepared.Query(0)->Boost());
   }
   EXPECT_EQ(counter.current, 0);
-  EXPECT_GT(counter.max, 0);
   counter.Reset();
 }
 

@@ -34,6 +34,8 @@ namespace irs {
 
 class DataInput : public duckdb::ReadStream {
  public:
+  static constexpr bool kVolatileAlways = false;
+
   enum class Type {
     Generic,
     BytesViewInput,

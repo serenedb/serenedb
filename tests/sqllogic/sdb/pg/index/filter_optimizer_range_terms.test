@@ -130,10 +130,11 @@ QUERY PLAN
 │ Index: fo_rng_idx           │
 │ Lookup: table               │
 │ Index Filter:               │
-│ ╭─ Terms ─────────────────╮ │
+│ ╭─ Or ────────────────────╮ │
+│ ╰────────────┬────────────╯ │
+│ ╭─ Terms ────┴────────────╮ │
 │ │ Field: s(string)        │ │
 │ │ Values: 'alpha', 'beta' │ │
-│ │ Min Match: 1            │ │
 │ ╰─────────────────────────╯ │
 │ Projections: id             │
 │ ~1 row                      │
@@ -150,7 +151,6 @@ QUERY PLAN
 │ ╭─ Range ───────────────╮ │
 │ │ Field: s(string)      │ │
 │ │ Range: >alpha, <gamma │ │
-│ │ Boost: 2              │ │
 │ ╰───────────────────────╯ │
 │ Projections: id           │
 │ ~1 row                    │
@@ -167,7 +167,6 @@ QUERY PLAN
 │ ╭─ Granular Range ──╮ │
 │ │ Field: n(numeric) │ │
 │ │ Range: >1, <4     │ │
-│ │ Boost: 2          │ │
 │ ╰───────────────────╯ │
 │ Projections: id       │
 │ ~1 row                │
@@ -184,7 +183,6 @@ QUERY PLAN
 │ ╭─ Term ───────────╮ │
 │ │ Field: s(string) │ │
 │ │ Value: beta      │ │
-│ │ Boost: 2         │ │
 │ ╰──────────────────╯ │
 │ Projections: id      │
 │ ~1 row               │
@@ -215,7 +213,6 @@ QUERY PLAN
 │ ╭─ Term ────────────╮ │
 │ │ Field: n(numeric) │ │
 │ │ Value: 3          │ │
-│ │ Boost: 2          │ │
 │ ╰───────────────────╯ │
 │ Projections: id       │
 │ ~1 row                │
@@ -248,14 +245,13 @@ QUERY PLAN
 │ Index: fo_rng_idx                           │
 │ Lookup: table                               │
 │ Index Filter:                               │
-│ ╭─ And ─────────────╮                       │
-│ ╰─────────┬─────────╯                       │
-│           ├──────────────────────╮          │
-│ ╭─ Granular Range ──╮  ╭─ Term ──┴────────╮ │
-│ │ Field: n(numeric) │  │ Field: s(string) │ │
-│ │ Range: >1, <4     │  │ Value: beta      │ │
-│ │ Boost: 2          │  ╰──────────────────╯ │
-│ ╰───────────────────╯                       │
+│ ╭─ And ────────────╮                        │
+│ ╰─────────┬────────╯                        │
+│           ├─────────────────────╮           │
+│ ╭─ Terms ─┴────────╮  ╭─ Granular Range ──╮ │
+│ │ Field: s(string) │  │ Field: n(numeric) │ │
+│ │ Values: 'beta'   │  │ Range: >1, <4     │ │
+│ ╰──────────────────╯  ╰───────────────────╯ │
 │ Projections: id                             │
 │ ~1 row                                      │
 ╰─────────────────────────────────────────────╯
@@ -350,8 +346,7 @@ QUERY PLAN
 │ ╭─ Range ───┴───────────╮  ╭─ Range ─┴────────╮  ╭─ Range ─┴────────╮ │
 │ │ Field: k(string)      │  │ Field: a(string) │  │ Field: a(string) │ │
 │ │ Range: >alpha, <gamma │  │ Range: <gamma    │  │ Range: >alpha    │ │
-│ │ Boost: 2              │  ╰──────────────────╯  ╰──────────────────╯ │
-│ ╰───────────────────────╯                                             │
+│ ╰───────────────────────╯  ╰──────────────────╯  ╰──────────────────╯ │
 │ Projections: id                                                       │
 │ ~1 row                                                                │
 ╰───────────────────────────────────────────────────────────────────────╯

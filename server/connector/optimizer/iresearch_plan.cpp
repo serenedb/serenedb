@@ -269,7 +269,8 @@ duckdb::idx_t AppendVirtualGetColumn(connector::SereneDBScanBindData& bind_data,
 }
 
 bool TryClaimIResearchConjunct(
-  irs::And& and_root, const duckdb::unique_ptr<duckdb::Expression>& conjunct,
+  irs::BooleanFilter& root,
+  const duckdb::unique_ptr<duckdb::Expression>& conjunct,
   const connector::ColumnGetter& getter,
   const connector::ExpressionGetter& expr_getter,
   duckdb::ClientContext& context, connector::FilterScorers* scorers) {
@@ -280,17 +281,27 @@ bool TryClaimIResearchConjunct(
   if (conjunct->HasParameter()) {
     return false;
   }
-  const auto before = and_root.size();
+  // A declined conjunct is rolled back by dropping the node it built into:
+  // a term clause is sorted into its bucket rather than appended, so there
+  // is no suffix of the root to cut back to. The flatten rule folds the node
+  // away once the whole request is claimed.
+  auto node = std::make_unique<irs::BooleanFilter>();
   std::span<const duckdb::unique_ptr<duckdb::Expression>> single{&conjunct, 1};
   const auto claimed = connector::MakeSearchFilter(
-    and_root, single, getter, context, expr_getter, scorers);
-  if (claimed.ok() && and_root.size() > before) {
-    return true;
+    *node, single, getter, context, expr_getter, scorers);
+  const bool built = absl::c_any_of(
+    irs::kAllOccur, [&](irs::Occur occur) { return node->Size(occur) != 0; });
+  if (!claimed.ok() || !built) {
+    return false;
   }
-  while (and_root.size() > before) {
-    and_root.PopBack();
+  // Nested, the wrapper hides the root's shape: one holding only negated
+  // clauses reads as a node owing itself an include side.
+  if (node->Transparent()) {
+    node->SpliceInto(root);
+  } else {
+    root.Add(std::move(node), irs::Occur::Must);
   }
-  return false;
+  return true;
 }
 
 bool WithSearchGetters(duckdb::LogicalGet& get,
@@ -1038,7 +1049,7 @@ bool ClaimSearchConjuncts(
   auto& [getter, expr_getter, analyzed_fields, null_markers] = getters;
   auto& scan = bind_data;
 
-  auto root_and = std::make_unique<irs::And>();
+  auto root_and = std::make_unique<irs::BooleanFilter>();
   bool any_claimed = false;
   for (size_t i = 0; i < filters.size();) {
     if (TryClaimIResearchConjunct(*root_and, filters[i], getter, expr_getter,
@@ -1055,6 +1066,7 @@ bool ClaimSearchConjuncts(
   }
 
   irs::Filter::ptr root = std::move(root_and);
+  connector::EnsureIncludeSides(*root);
   irs::Optimize(root, {.scored = scan.text_scorer.has_value(),
                        .analyzed_fields = std::move(analyzed_fields),
                        .null_markers = &null_markers});
@@ -1077,11 +1089,11 @@ bool TryClaimSearchFilter(
       auto& [getter, expr_getter, analyzed_fields, null_markers] = getters;
       auto& scan = bind_data;
 
-      auto root_and = std::make_unique<irs::And>();
+      auto root_node = std::make_unique<irs::BooleanFilter>();
       bool any_claimed = false;
       connector::FilterScorers filter_scorers;
       for (size_t i = 0; i < filters.size();) {
-        if (TryClaimIResearchConjunct(*root_and, filters[i], getter,
+        if (TryClaimIResearchConjunct(*root_node, filters[i], getter,
                                       expr_getter, context, &filter_scorers)) {
           any_claimed = true;
           std::swap(filters[i], filters.back());
@@ -1094,7 +1106,8 @@ bool TryClaimSearchFilter(
         return false;
       }
 
-      irs::Filter::ptr root = std::move(root_and);
+      irs::Filter::ptr root = std::move(root_node);
+      connector::EnsureIncludeSides(*root);
       irs::Optimize(root, {.scored = scan.text_scorer.has_value(),
                            .analyzed_fields = std::move(analyzed_fields),
                            .null_markers = &null_markers});

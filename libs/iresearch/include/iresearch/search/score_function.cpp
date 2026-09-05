@@ -41,9 +41,9 @@ IRS_FORCE_INLINE void ConstantScoreImpl(score_t* res, scores_size_t n,
   }
 }
 
-class ConstanScore : public ScoreOperator {
+class ConstantScore : public ScoreOperator {
  public:
-  explicit ConstanScore(score_t value) noexcept : _value{value} {}
+  explicit ConstantScore(score_t value) noexcept : _value{value} {}
 
   template<ScoreMergeType MergeType = ScoreMergeType::Noop>
   IRS_FORCE_INLINE void ScoreImpl(score_t* res,
@@ -119,7 +119,7 @@ void DefaultScore::ScorePostingBlock(score_t* res) const noexcept {
 }
 
 ScoreFunction ScoreFunction::Constant(score_t value) noexcept {
-  return ScoreFunction::Make<ConstanScore>(value);
+  return ScoreFunction::Make<ConstantScore>(value);
 }
 
 }  // namespace irs

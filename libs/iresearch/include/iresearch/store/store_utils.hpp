@@ -143,6 +143,8 @@ IRS_FORCE_INLINE T ShiftUnpack32(uint32_t in, U& out) noexcept {
 
 class BytesViewInput : public IndexInput {
  public:
+  static constexpr bool kVolatileAlways = true;
+
   BytesViewInput() = default;
   explicit BytesViewInput(bytes_view data) noexcept : _data{data} {}
 

@@ -4,19 +4,19 @@ hash-threshold 100
 # Fault-injection trip-wires for the score-prune dispatch in iresearch.
 # EXPLAIN's `, optimized` suffix is a connector-side hint; these probes prove
 # the engine actually picked a pruning-capable iterator at runtime.
-#
-# Three nested probes:
 #   irs::PruningIterator        -- any pruning dispatch fires.
-#   irs::SinglePruningIterator  -- single-cookie path (1 posting list, e.g. a
-#                                  bare term filter).
-#   irs::MaxScoreIterator       -- multi-cookie path (MaxScore across
-#                                  postings, e.g. ts_any over distinct terms).
-#
 # Lives under recovery/ because it requires SDB_FAULT_INJECTION=On; the
 # regular sqllogic suite globs `sdb/**/*.test*` and never picks up this
 # directory. Fault-free EXPLAIN + correctness coverage lives at
 # tests/sqllogic/sdb/pg/index/inverted_index_score_prune.test.
 # ---------------------------------------------------------------------------
+
+# Score pruning needs a posting longer than one block (128 docs) to have any
+# block to skip, and a parallel flush cuts one segment per thread. Pin the
+# flush to a single segment so the fixture's term length is what decides.
+statement ok
+SET threads = 1;
+
 
 statement ok
 CREATE TEXT SEARCH DICTIONARY en_prune(
@@ -47,7 +47,7 @@ INSERT INTO prune_docs SELECT i, CASE i % 5
     WHEN 3 THEN 'rabbit and fox'
     ELSE        'rare_token bird sings'
   END
-  FROM generate_series(1, 100) AS s(i);
+  FROM generate_series(1, 1000) AS s(i);
 
 
 statement ok
@@ -73,10 +73,10 @@ VACUUM (REFRESH_TABLE) plain_docs;
 
 # === Positive: shapes that should engage score pruning ===
 
-# Single term -> SinglePruningIterator path.
+# Single term -> PruningIterator path.
 
 statement ok
-SET sdb_faults = 'irs::SinglePruningIterator';
+SET sdb_faults = 'irs::PruningIterator';
 
 
 statement error db error: ERROR: intentional debug error
@@ -86,13 +86,13 @@ ORDER BY BM25(prune_docs_idx.tableoid) DESC LIMIT 3;
 
 
 statement ok
-SET sdb_faults = '-irs::SinglePruningIterator';
+SET sdb_faults = '-irs::PruningIterator';
 
 
-# Term disjunction with distinct terms -> MaxScoreIterator path.
+# Term disjunction with distinct terms -> PruningIterator path.
 
 statement ok
-SET sdb_faults = 'irs::MaxScoreIterator';
+SET sdb_faults = 'irs::PruningIterator';
 
 
 statement error db error: ERROR: intentional debug error
@@ -102,14 +102,14 @@ ORDER BY BM25(prune_docs_idx.tableoid) DESC LIMIT 3;
 
 
 statement ok
-SET sdb_faults = '-irs::MaxScoreIterator';
+SET sdb_faults = '-irs::PruningIterator';
 
 
-# Single-element ts_any collapses to ByTerm -> SinglePruningIterator path,
-# NOT MaxScoreIterator (verified by mutual exclusion).
+# Single-element ts_any collapses to ByTerm -> PruningIterator path,
+# NOT PruningIterator (verified by mutual exclusion).
 
 statement ok
-SET sdb_faults = 'irs::SinglePruningIterator';
+SET sdb_faults = 'irs::PruningIterator';
 
 
 statement error db error: ERROR: intentional debug error
@@ -119,7 +119,7 @@ ORDER BY BM25(prune_docs_idx.tableoid) DESC LIMIT 3;
 
 
 statement ok
-SET sdb_faults = '-irs::SinglePruningIterator';
+SET sdb_faults = '-irs::PruningIterator';
 
 
 # === Negative: shapes that should NOT engage score pruning ===
@@ -244,7 +244,7 @@ SELECT COUNT(*) FROM (
 ) x;
 ----
 count
-20
+200
 
 
 statement ok

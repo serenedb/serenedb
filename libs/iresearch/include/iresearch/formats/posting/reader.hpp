@@ -23,15 +23,10 @@
 #include "basics/debugging.h"
 #include "iresearch/formats/format_utils.hpp"
 #include "iresearch/formats/posting/common.hpp"
-#include "iresearch/formats/posting/iterator_doc.hpp"
-#include "iresearch/formats/posting/iterator_score.hpp"
+#include "iresearch/formats/posting/stream.hpp"
 #include "iresearch/formats/posting/writer.hpp"
 #include "iresearch/index/file_names.hpp"
-#include "iresearch/search/block_disjunction.hpp"
-#include "iresearch/search/make_disjunction.hpp"
-#include "iresearch/search/max_score_iterator.hpp"
 #include "iresearch/store/store_utils.hpp"
-#include "pg/sql_exception_macro.h"
 
 namespace irs {
 
@@ -51,35 +46,12 @@ inline void PrepareInput(std::string& str, IndexInput::ptr& in, IOAdvice advice,
 
 inline constexpr IndexFeatures kPos = IndexFeatures::Freq | IndexFeatures::Pos;
 
-template<typename PostingImpl>
-struct PruningPostingAdapter : PostingAdapter<PostingImpl> {
-  using PostingAdapter<PostingImpl>::PostingAdapter;
-
-  IRS_FORCE_INLINE doc_id_t SeekToBlock(doc_id_t doc) {
-    return this->self().ShallowSeekToBlock(doc);
-  }
-
-  IRS_FORCE_INLINE score_t GetMaxScore(doc_id_t doc) {
-    return this->self().GetMaxScore(doc);
-  }
-
-  template<typename... Args>
-  IRS_FORCE_INLINE void ForEachScoredBlock(Args&&... args) {
-    this->self().ForEachScoredBlock(std::forward<Args>(args)...);
-  }
-
-  template<typename... Args>
-  IRS_FORCE_INLINE auto ScoreCandidates(Args&&... args) {
-    return this->self().ScoreCandidates(std::forward<Args>(args)...);
-  }
-
-  void SetSkipBoundsBelow(doc_id_t max) noexcept {
-    this->self().SetSkipBoundsBelow(max);
-  }
-};
-
 class PostingsReaderBase : public PostingsReader {
  public:
+  PostingsHandles Handles() const noexcept final {
+    return {.doc = _doc_in.get(), .pos = _pos_in.get(), .pay = _pay_in.get()};
+  }
+
   uint64_t CountMappedMemory() const final {
     uint64_t bytes = 0;
     if (_doc_in != nullptr) {
@@ -220,25 +192,18 @@ class PostingsReaderImpl final : public PostingsReaderBase {
   size_t BitUnion(IndexFeatures field, TermProvider provider, uint64_t* set,
                   bool has_score_bounds) final;
 
-  DocIterator::ptr Iterator(IndexFeatures field_features,
-                            IndexFeatures required_features,
-                            std::span<const PostingCookie> metas,
-                            IteratorFieldOptions options, size_t min_match,
-                            ScoreMergeType type) const final;
+  TermPostings::ptr Postings(IndexFeatures field_features,
+                             IndexFeatures required_features,
+                             const PostingMeta& meta,
+                             bool has_score_bounds) const final;
 
  private:
-  DocIterator::ptr PruningIterator(IndexFeatures field_features,
-                                   std::span<const PostingCookie> metas,
-                                   IteratorFieldOptions options) const;
-
   template<typename FieldTraits, typename Factory>
-  static DocIterator::ptr IteratorImpl(IndexFeatures enabled,
-                                       Factory&& factory);
+  static auto IteratorImpl(IndexFeatures enabled, Factory&& factory);
 
   template<typename Factory>
-  static DocIterator::ptr IteratorImpl(IndexFeatures field_features,
-                                       IndexFeatures required_features,
-                                       Factory&& factory);
+  static auto IteratorImpl(IndexFeatures field_features,
+                           IndexFeatures required_features, Factory&& factory);
 };
 
 template<typename FieldTraits>
@@ -339,8 +304,8 @@ size_t PostingsReaderImpl<FormatTraits>::BitUnion(
 
 template<typename FormatTraits>
 template<typename FieldTraits, typename Factory>
-DocIterator::ptr PostingsReaderImpl<FormatTraits>::IteratorImpl(
-  IndexFeatures enabled, Factory&& factory) {
+auto PostingsReaderImpl<FormatTraits>::IteratorImpl(IndexFeatures enabled,
+                                                    Factory&& factory) {
   switch (ToIndex(enabled)) {
     case kPosOffs: {
       using IteratorTraits = IteratorTraits<true, true, true>;
@@ -376,7 +341,7 @@ DocIterator::ptr PostingsReaderImpl<FormatTraits>::IteratorImpl(
 
 template<typename FormatTraits>
 template<typename Factory>
-DocIterator::ptr PostingsReaderImpl<FormatTraits>::IteratorImpl(
+auto PostingsReaderImpl<FormatTraits>::IteratorImpl(
   IndexFeatures field_features, IndexFeatures required_features,
   Factory&& factory) {
   // get enabled features as the intersection
@@ -411,169 +376,25 @@ auto ResolveInputType(DataInput::Type type, auto&& f) {
   }
 }
 
-auto ResolveScoreBoundFeatures(IndexFeatures field_features, auto&& f) {
-  switch (ToIndex(field_features)) {
-    case kPosOffs:
-      return f.template operator()<true, true>();
-    case kPos:
-      return f.template operator()<true, false>();
-    default:
-      return f.template operator()<false, false>();
-  }
-}
-
-auto ResolveHasScoreBounds(bool has_score_bounds, auto&& f) {
-  if (has_score_bounds) {
-    return f.template operator()<true>();
-  } else {
-    return f.template operator()<false>();
-  }
-}
-
-auto ResolveScoreBoundType(IndexFeatures field_features, bool has_score_bounds,
-                           DataInput::Type type, auto&& f) {
-  return ResolveScoreBoundFeatures(
-    field_features, [&]<bool Pos, bool Offs> -> DocIterator::ptr {
-      return ResolveHasScoreBounds(
-        has_score_bounds, [&]<bool HasScoreBounds>() {
-          return ResolveInputType(
-            type, [&]<typename InputType> -> DocIterator::ptr {
-              return f
-                .template operator()<Pos, Offs, HasScoreBounds, InputType>();
-            });
-        });
-    });
-}
-
 template<typename FormatTraits>
-DocIterator::ptr PostingsReaderImpl<FormatTraits>::PruningIterator(
-  IndexFeatures field_features, std::span<const PostingCookie> metas,
-  IteratorFieldOptions options) const {
-  SDB_IF_FAILURE("irs::PruningIterator") {
-    THROW_SQL_ERROR(ERR_MSG("intentional debug error"));
-  }
-
-  return ResolveScoreBoundType(
-    field_features, options.has_score_bounds, _doc_in->GetType(),
-    [&]<bool Pos, bool Offs, bool HasScoreBounds, typename InputType>()
-      -> DocIterator::ptr {
-      auto make_postings_iterator =
-        [&]<bool Root>(const PostingCookie& cookie) {
-          auto it = memory::make_managed<
-            SinglePruningIterator<FormatTraits, Root, Pos, Offs, InputType>>();
-          it->Prepare(cookie, _doc_in.get(), options.scorer);
-          return it;
-        };
-
-      if (metas.size() == 1) {
-        SDB_IF_FAILURE("irs::SinglePruningIterator") {
-          THROW_SQL_ERROR(ERR_MSG("intentional debug error"));
-        }
-        return make_postings_iterator.template operator()<true>(metas[0]);
-      }
-
-      std::vector<DocIterator::ptr> iterators;
-      iterators.reserve(metas.size());
-      for (const auto& meta : metas) {
-        auto it = make_postings_iterator.template operator()<false>(meta);
-        SDB_ASSERT(it);
-        iterators.emplace_back(std::move(it));
-      }
-
-      using Iterator =
-        SinglePruningIterator<FormatTraits, false, Pos, Offs, InputType>;
-      using Adapter = PruningPostingAdapter<Iterator>;
-
-      SDB_IF_FAILURE("irs::MaxScoreIterator") {  //
-        THROW_SQL_ERROR(ERR_MSG("intentional debug error"));
-      }
-      return memory::make_managed<MaxScoreIterator<Adapter>>(
-        std::move(iterators));
-    });
-}
-
-template<typename FormatTraits>
-DocIterator::ptr PostingsReaderImpl<FormatTraits>::Iterator(
+TermPostings::ptr PostingsReaderImpl<FormatTraits>::Postings(
   IndexFeatures field_features, IndexFeatures required_features,
-  std::span<const PostingCookie> metas, IteratorFieldOptions options,
-  size_t min_match, ScoreMergeType type) const {
-  SDB_ASSERT(!metas.empty());
-  SDB_ASSERT(1 <= min_match);
-  SDB_ASSERT(min_match <= metas.size());
-
-  if (metas.size() < min_match) {
-    return {};
-  }
-
-  // Dispatch to PruningIterator when
-  // (1) the caller asked for score pruning,
-  // (2) the field has score bounds persisted,
-  // (3) the field exposes Freq,
-  // (4) the query doesn't need positional/offset data,
-  // (5) min_match is 1,
-  // (6) there is nothing to merge, or the query adds its terms up --
-  //     `MaxScoreIterator` bounds a sum, and a query that takes the best of
-  //     its terms instead (a fuzzy one) would be scored as something else
-  //     entirely. Such a query still prunes, in the weak disjunction below,
-  //     which merges the way it was asked to.
-  if (options.score_prune && options.has_score_bounds &&
-      IndexFeatures::None != (field_features & IndexFeatures::Freq) &&
-      IndexFeatures::None ==
-        (required_features & (IndexFeatures::Pos | IndexFeatures::Offs)) &&
-      min_match == 1 && (metas.size() == 1 || type == ScoreMergeType::Sum)) {
-    return PruningIterator(field_features, metas, options);
-  }
-
-  auto make_postings_iterator = [&](const PostingCookie& cookie) {
-    return IteratorImpl(
-      field_features, required_features,
-      [&]<typename IteratorTraits, typename FieldTraits> -> DocIterator::ptr {
-        return ResolveBool(
-          options.has_score_bounds,
-          [&]<bool HasScoreBounds> -> DocIterator::ptr {
-            if (_doc_in->GetType() == DataInput::Type::BytesViewInput) {
-              auto it = memory::make_managed<PostingIteratorImpl<
-                IteratorTraits, FieldTraits, HasScoreBounds, BytesViewInput>>();
-              it->Prepare(cookie, _doc_in.get(), _pos_in.get(), _pay_in.get(),
-                          options.scorer);
-              return it;
-            } else {
-              auto it = memory::make_managed<PostingIteratorImpl<
-                IteratorTraits, FieldTraits, HasScoreBounds, IndexInput>>();
-              it->Prepare(cookie, _doc_in.get(), _pos_in.get(), _pay_in.get(),
-                          options.scorer);
-              return it;
-            }
-          });
-      });
-  };
-
-  if (metas.size() == 1) {
-    return make_postings_iterator(metas[0]);
-  }
-
-  std::vector<DocIterator::ptr> iterators;
-  iterators.reserve(metas.size());
-  for (const auto& meta : metas) {
-    auto it = make_postings_iterator(meta);
-    SDB_ASSERT(it);
-    iterators.emplace_back(std::move(it));
+  const PostingMeta& meta, bool has_score_bounds) const {
+  if (meta.docs_count == 0) {
+    return TermPostings::empty();
   }
 
   return IteratorImpl(
     field_features, required_features,
-    [&]<typename IteratorTraits, typename FieldTraits> -> DocIterator::ptr {
-      using Adapter = PostingAdapter<PostingIteratorBase<IteratorTraits>>;
-      std::vector<Adapter> adapters;
-      adapters.reserve(iterators.size());
-      for (auto& it : iterators) {
-        adapters.emplace_back(std::move(it));
-      }
-      return ResolveMergeType(type, [&]<ScoreMergeType MergeType> {
-        using MinMatchIterator = MinMatchIterator<Adapter, MergeType>;
-        return MakeWeakDisjunction<MinMatchIterator>(
-          options.score_prune, _docs_count, std::move(adapters), min_match);
-      });
+    [&]<typename IteratorTraits, typename FieldTraits> -> TermPostings::ptr {
+      return ResolveInputType(
+        _doc_in->GetType(), [&]<typename InputType> -> TermPostings::ptr {
+          auto it = memory::make_managed<
+            PostingsStream<IteratorTraits, FieldTraits, InputType>>();
+          it->Prepare(meta, *_doc_in, _pos_in.get(), _pay_in.get(),
+                      has_score_bounds);
+          return it;
+        });
     });
 }
 

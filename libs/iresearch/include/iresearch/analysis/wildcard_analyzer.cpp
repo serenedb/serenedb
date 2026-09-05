@@ -120,7 +120,7 @@ WildcardAnalyzer::WildcardAnalyzer(Analyzer::ptr base_analyzer,
   if (!_analyzer) {
     _analyzer = std::make_unique<StringTokenizer>();
   }
-  auto ptr = Ngram::make({
+  auto ptr = NGram::make({
     ngram_size,
     ngram_size,
     false,
@@ -128,7 +128,7 @@ WildcardAnalyzer::WildcardAnalyzer(Analyzer::ptr base_analyzer,
     {},
     {},
   });
-  _ngram = decltype(_ngram){sdb::basics::downCast<Ngram>(ptr.release())};
+  _ngram = decltype(_ngram){sdb::basics::downCast<NGram>(ptr.release())};
   SDB_ASSERT(_ngram);
   _term = irs::get<TermAttr>(*_analyzer);
   SDB_ASSERT(_term);

@@ -69,57 +69,6 @@ bool VisitFiles(const irs::IndexMeta& meta, Visitor&& visitor) {
 }  // namespace
 namespace tests {
 
-void FormatTestCase::AssertFrequencyAndPositions(irs::DocIterator& expected,
-                                                 irs::DocIterator& actual) {
-  if (irs::doc_limits::eof(expected.value())) {
-    ASSERT_TRUE(irs::doc_limits::eof(expected.value()));
-    return;
-  }
-
-  auto* expected_freq = irs::get<irs::FreqBlockAttr>(expected);
-  auto* actual_freq = irs::get<irs::FreqBlockAttr>(actual);
-  ASSERT_EQ(!expected_freq, !actual_freq);
-
-  if (!expected_freq) {
-    return;
-  }
-
-  expected.FetchScoreArgs(0);
-  actual.FetchScoreArgs(0);
-  ASSERT_EQ(expected_freq->value[0], actual_freq->value[0]);
-
-  auto* expected_pos = irs::GetMutable<irs::PosAttr>(&expected);
-  auto* actual_pos = irs::GetMutable<irs::PosAttr>(&actual);
-  ASSERT_EQ(!expected_pos, !actual_pos);
-
-  if (!expected_pos) {
-    return;
-  }
-
-  auto* expected_offset = irs::get<irs::OffsAttr>(*expected_pos);
-  auto* actual_offset = irs::get<irs::OffsAttr>(*actual_pos);
-  ASSERT_EQ(!expected_offset, !actual_offset);
-
-  auto* expected_payload = irs::get<irs::PayAttr>(*expected_pos);
-  auto* actual_payload = irs::get<irs::PayAttr>(*actual_pos);
-  ASSERT_EQ(!expected_payload, !actual_payload);
-
-  for (; expected_pos->next();) {
-    ASSERT_TRUE(actual_pos->next());
-    ASSERT_EQ(expected_pos->value(), actual_pos->value());
-
-    if (expected_offset) {
-      ASSERT_EQ(expected_offset->start, actual_offset->start);
-      ASSERT_EQ(expected_offset->end, actual_offset->end);
-    }
-
-    if (expected_payload) {
-      ASSERT_EQ(expected_payload->value, actual_payload->value);
-    }
-  }
-  ASSERT_FALSE(actual_pos->next());
-}
-
 void FormatTestCase::AssertNoDirectoryArtifacts(
   const irs::Directory& dir, const irs::Format& codec,
   const std::unordered_set<std::string>& expect_additional /* ={} */) {
@@ -1535,7 +1484,7 @@ TEST_P(FormatTestCaseWithEncryption, open_non_ecnrypted_with_encrypted) {
 
     size_t hits = 0;
     for (auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
-         !irs::doc_limits::eof(docs_itr->advance());) {
+         !irs::doc_limits::eof(docs_itr->Advance());) {
       ++hits;
     }
     ASSERT_EQ(1, hits);

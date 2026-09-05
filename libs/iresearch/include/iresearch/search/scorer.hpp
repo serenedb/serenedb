@@ -27,6 +27,7 @@
 #include <limits>
 #include <optional>
 
+#include "basics/assert.h"
 #include "basics/math_utils.hpp"
 #include "iresearch/index/field_meta.hpp"
 #include "iresearch/index/index_features.hpp"
@@ -45,7 +46,6 @@ struct NormProvider;
 struct TermReader;
 class ColumnArgsFetcher;
 
-// Represents no boost value.
 inline constexpr score_t kNoBoost{1.f};
 
 inline IRS_FORCE_INLINE score_t TermCountToScore(uint32_t count) noexcept {
@@ -53,16 +53,6 @@ inline IRS_FORCE_INLINE score_t TermCountToScore(uint32_t count) noexcept {
 }
 
 inline constexpr uint32_t kMaxFreq = std::numeric_limits<int32_t>::max();
-
-// Caller writes value, iterator reads at block boundaries to skip
-// blocks whose max score is below the threshold.
-struct ScoreThresholdAttr final : Attribute {
-  static constexpr std::string_view type_name() noexcept {
-    return "score_threshold";
-  }
-
-  score_t value = std::numeric_limits<score_t>::lowest();
-};
 
 struct Scorer;
 struct FieldCollector;
@@ -95,11 +85,6 @@ struct ScoreBoundWriter {
   virtual byte_type SizeRoot(size_t level) = 0;
 };
 
-struct ScoreSource {
-  const Scorer* scorer = nullptr;
-  const byte_type* stats = nullptr;
-};
-
 struct ScoreContext {
   const NormProvider& segment;
   const FieldProperties& field;
@@ -109,9 +94,6 @@ struct ScoreContext {
   score_t boost = kNoBoost;
 };
 
-// Base class for all scorers.
-// Stats are meant to be trivially constructible and will be
-// zero initialized before usage.
 struct Scorer {
   using ptr = std::unique_ptr<Scorer>;
 
@@ -124,12 +106,21 @@ struct Scorer {
 
   virtual ScoreFunction PrepareScorer(const ScoreContext& ctx) const = 0;
 
-  // Create an object to be used for writing score bounds to the skip list.
-  // max_levels - max number of levels in the skip list
+  virtual bool ScoresPerDoc() const noexcept { return true; }
+
+  virtual std::optional<score_t> Constant(const ScoreContext& ctx) const {
+    if (ScoresPerDoc()) {
+      return std::nullopt;
+    }
+    return PrepareScorer(ctx).Score();
+  }
+
   virtual ScoreBoundWriter::ptr PrepareScoreBoundWriter(
     size_t max_levels) const = 0;
 
   virtual ScoreBoundSource::ptr PrepareScoreBoundSource() const = 0;
+
+  virtual bool HasScoreBounds() const noexcept { return false; }
 
   enum class ScoreBoundType : uint8_t {
     None = 0,
@@ -138,12 +129,8 @@ struct Scorer {
     MinNorm = 3,
   };
 
-  // Can this scorer read per-block bounds that `persisted` wrote?
-  virtual bool Compatible(const ScorerOptions& /*persisted*/) const noexcept {
-    return false;
-  }
+  virtual bool Compatible(const ScorerOptions&) const noexcept { return false; }
 
-  // Number of bytes required to store stats (already aligned).
   virtual size_t stats_size() const = 0;
 
   virtual bool equals(const Scorer& other) const noexcept {
@@ -159,17 +146,21 @@ struct Scorer {
 
 template<typename Visitor>
 IRS_FORCE_INLINE auto ResolveMergeType(ScoreMergeType type, Visitor&& visitor) {
-  switch (type) {
-    case ScoreMergeType::Sum:
-      return visitor.template operator()<ScoreMergeType::Sum>();
-    case ScoreMergeType::Max:
-      return visitor.template operator()<ScoreMergeType::Max>();
-    case ScoreMergeType::Noop:
-      return visitor.template operator()<ScoreMergeType::Noop>();
+  SDB_ASSERT(type != ScoreMergeType::Noop);
+  if (type == ScoreMergeType::Max) {
+    return visitor.template operator()<ScoreMergeType::Max>();
   }
+  return visitor.template operator()<ScoreMergeType::Sum>();
 }
 
-// Template score for base class for all prepared(compiled) sort entries
+inline bool ScoresPerDoc(const Scorer* scorer) noexcept {
+  return scorer != nullptr && scorer->ScoresPerDoc();
+}
+
+inline bool HasScoreBounds(const Scorer* scorer) noexcept {
+  return scorer != nullptr && scorer->HasScoreBounds();
+}
+
 template<typename Impl, typename StatsType = void>
 class ScorerBase : public Scorer {
  public:
@@ -202,7 +193,6 @@ class ScorerBase : public Scorer {
       stats_cast(const_cast<const byte_type*>(buf)));
   }
 
-  // Returns number of bytes required to store stats (already aligned).
   IRS_FORCE_INLINE size_t stats_size() const noexcept final {
     if constexpr (std::is_same_v<StatsType, void>) {
       return 0;

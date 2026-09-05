@@ -22,82 +22,31 @@
 
 #pragma once
 
+#include <algorithm>
+#include <array>
 #include <limits>
 #include <memory>
 
 #include "basics/empty.hpp"
-#include "disjunction.hpp"
 #include "iresearch/analysis/token_attributes.hpp"
 #include "iresearch/formats/posting/common.hpp"
 #include "iresearch/formats/posting/format_block_128.hpp"
 #include "iresearch/formats/posting/iterator_pos.hpp"
 #include "iresearch/index/field_meta.hpp"
 #include "iresearch/search/column_collector.hpp"
+#include "iresearch/search/common/fixed_array.hpp"
 #include "iresearch/search/score_function.hpp"
 #include "iresearch/search/scorer.hpp"
 
 namespace irs {
 
-template<typename Frequency>
-class PhrasePosition final : public PosAttr, public Frequency {
- public:
-  explicit PhrasePosition(
-    std::vector<typename Frequency::TermPosition>&& pos) noexcept
-    : Frequency{std::move(pos)} {
-    std::tie(_start, _end) = this->GetOffsets();
-  }
-
-  explicit PhrasePosition(
-    std::vector<typename Frequency::TermPosition>&& pos,
-    PosAttr::value_t max_slop,
-    std::vector<PosAttr::value_t>&& expected_steps) noexcept
-    : Frequency{std::move(pos), max_slop, std::move(expected_steps)} {
-    std::tie(_start, _end) = this->GetOffsets();
-  }
-
-  Attribute* GetMutable(TypeInfo::type_id type) noexcept final {
-    return type == irs::Type<OffsAttr>::id() ? &_offset : nullptr;
-  }
-
-  bool next() final {
-    if (!_left) {
-      // At least 1 position is always approved by the phrase,
-      // and calling next() on exhausted iterator is UB.
-      _left = 1;
-      _value = irs::pos_limits::invalid();
-      return false;
-    }
-    ++_value;
-    _offset.start = *_start;
-    _offset.end = *_end;
-    _left += this->NextPosition() - 1;
-    return true;
-  }
-
- private:
-  OffsAttr _offset;
-  const uint32_t* _start{};
-  const uint32_t* _end{};
-  uint32_t _left{1};
-};
-
-template<typename T>
-struct HasPosition : std::false_type {};
-
-template<typename T>
-struct HasPosition<PhrasePosition<T>> : std::true_type {};
-
 struct TermInterval {
   PosAttr::value_t offs_max{};
   PosAttr::value_t offs_min{};
   PosAttr::value_t lead_offset{};
-  // Per-slot term-group id: equal ids == same connectivity component of
-  // query term sets (fixed: same term; variadic: ComputeTermGroups in
-  // phrase_filter.cpp). 0 for all slots when unused (slop == 0 paths).
   uint32_t term_group{};
 };
 
-// position attribute + desired offset in the phrase
 template<bool Offs>
 using FixedTermTraits = IteratorTraitsImpl<FormatTraits128, true, true, Offs>;
 
@@ -128,12 +77,7 @@ struct TermPositionTraits {
     return pos.second;
   }
 
-  static void ResetPos(const T&) {
-    // variadic resets anyway.
-    // FIXME (Dronplane) maybe it would be possible to avoid constant
-    // resetting e.g. reset only at the beginning of VisitLead but all.
-    // Will need to have some kind of visit_all interface for disjunction.
-  }
+  static void ResetPos(const T&) {}
 };
 
 template<bool Offs>
@@ -150,42 +94,16 @@ struct TermPositionTraits<FixedTermPosition<Offs>> {
   }
 
   static void ResetPos(const T& pos) { pos.first->reset(); }
+
+  static const OffsAttr& Offsets(const T& pos) noexcept {
+    static_assert(Offs);
+    const auto* offs = irs::get<OffsAttr>(*pos.first);
+    SDB_ASSERT(offs);
+    return *offs;
+  }
 };
 
 // clang-format off
-// Phrase execution strategies.
-// Strategy in principle controls lead position movements and generates
-// positions for followers. Also strategy controls building permutations if
-// requested. But due to current design strategy does not know how to move
-// followers. So this is done outside.
-//
-// Strategy methods&invariants
-// - NotifyNextLead(const Iterator& end)
-//  Should be called each time new valid lead position is taken and new loop
-//  over followers is started. All previous state is discarded. Follower
-//  positions might be resetted to avoid skipping matches.
-//
-// - NextPosition(const Iterator& it)
-//  Calculates next position to seek for current follower (it)
-//
-// - Match(PosAttr::value_t seek, PosAttr::value_t sought, const Iterator& it)
-//   Determines if sought is a valid match given seek and it. Separated
-//   from AdvanceIterators as Match in variadic phrase is determined in separate
-//   code.
-//
-// - AdvanceIterators(bool match, PosAttr::value_t sought, const Iterator& end, Iterator& it)
-//   Sets "it" to next follower to move. Not necessary next one in phrase. Might
-//   set it = end if nothing to move. Also might adjust lead position if
-//   necessary to get next match. Returns true if it is still a match. Might
-//   return true even if initially match flag is false (e.g. strategy decided
-//   that we still can continue despite missed follower position)
-//
-// - NextPermutation(Iterator& it, const Iterator& end)
-//   Starts next permutation of current match if possible. And adjusts "it" to
-//   the next movable follower. Returns if new permutation could be started.
-//   Might set it = end and return true if permutaion could not be started and
-//   we must just continue searching for matches with next lead position(corner
-//   case).
 // clang-format on
 
 template<typename Iterator>
@@ -225,10 +143,7 @@ class SinglePositionStrategy {
     return match;
   }
 
-  consteval bool NextPermutation(Iterator&, const Iterator&) {
-    // just start next phrase search
-    return false;
-  }
+  consteval bool NextPermutation(Iterator&, const Iterator&) { return false; }
 
  private:
   Iterator& _lead_it;
@@ -253,8 +168,6 @@ class IntervalPositionStrategy {
     _base_position = _lead_pos.value();
     _interval_delta = 0;
     if (_skipped) {
-      // TODO(Dronplane) we can possibly postpone resetting all iterators until
-      // they are needed. (_need_reset as a counter?)
       for (auto reset_it = _lead_it + 1; reset_it != end; ++reset_it) {
         Traits::ResetPos(*reset_it);
       }
@@ -280,15 +193,11 @@ class IntervalPositionStrategy {
       ++it;
       if (_need_reset && it != end) {
         SDB_ASSERT(_skipped);
-        // TODO(Dronplane) we can possibly postpone resetting all iterators
-        // until they are needed. (_need_reset as a counter?)
         for (auto reset_it = it; reset_it != end; ++reset_it) {
           Traits::ResetPos(*reset_it);
         }
         _need_reset = false;
       }
-      // reset may leak here only if we are at the end and there is no iterators
-      // to reset anyway.
       SDB_ASSERT(!_need_reset || it == end);
       _base_position = sought;
       return true;
@@ -298,19 +207,15 @@ class IntervalPositionStrategy {
       return true;
     }
 
-    // Reached lead. Move it to closest reasonable position and try to re-start.
     const auto bound = _skipped ? 0 : Reach(sought, _lead_it, fail_it);
     _lead_pos.seek(std::max(bound, _lead_pos.value() + 1));
     return false;
   }
 
   bool NextPermutation(Iterator& it, const Iterator& end) {
-    // try to achieve next premutation
     SDB_ASSERT(it != _lead_it);
     const auto at_end = it == end;
     if (!at_end && !_skipped) {
-      // nothing was walked past. So this is bailout due to eof on some
-      // iterator.
       SDB_ASSERT(pos_limits::eof(Traits::Position(*it)));
       return false;
     }
@@ -319,12 +224,6 @@ class IntervalPositionStrategy {
     }
 
     it = end;
-    // If we are at the end of the phrase - that means we can't find new
-    // premutation and should return false. But if we are in the middle of
-    // building premutation and have exhausted iterator and can't find previous
-    // with valid interval we should return true here to allow overriding eof
-    // state and just start with next lead position as there could be more
-    // matches. A bit kludgy solution though.
     return !at_end;
   }
 
@@ -366,7 +265,6 @@ class IntervalPositionStrategy {
       const auto window = Window(it);
       if (current_position < window.high) {
         _need_reset = true;
-        // Force "it" to move at least one step forward.
         _interval_delta = current_position - window.low + 1;
         _skipped = true;
         return true;
@@ -414,23 +312,33 @@ class IntervalPositionStrategy {
   bool _need_reset{false};
 };
 
-template<bool Offs, bool HasFreq, bool HasIntervals>
-class FixedPhraseFrequency {
+template<typename TermPositionT, bool Offs, bool HasFreq, bool HasIntervals,
+         bool HasBoost = false, size_t N = 0>
+class PhraseFrequency {
  public:
-  using TermPosition = FixedTermPosition<Offs>;
-  using Positions = std::vector<TermPosition>;
+  using TermPosition = TermPositionT;
+  using Traits = TermPositionTraits<TermPosition>;
+  using Positions = search::RunOf<TermPosition, N>;
   using ExecutionStrategy =
     std::conditional_t<HasIntervals,
                        IntervalPositionStrategy<typename Positions::iterator>,
                        SinglePositionStrategy<typename Positions::iterator>>;
 
-  static constexpr bool kHasBoost = false;
-  static constexpr bool kHasFreq = HasFreq;
+  static_assert(!HasBoost || HasFreq);
 
-  explicit FixedPhraseFrequency(std::vector<TermPosition>&& pos) noexcept
-    : _pos{std::move(pos)} {
-    SDB_ASSERT(!_pos.empty());  // must not be empty
-    // lead offset is always 0
+  static constexpr bool kHasBoost = HasBoost;
+  static constexpr bool kHasFreq = HasFreq;
+  static constexpr bool kOffsets = Offs;
+
+  explicit PhraseFrequency(size_t size) : _pos{size} {}
+
+  TermPosition& Position(size_t i) noexcept {
+    SDB_ASSERT(i < _pos.size());
+    return _pos[i];
+  }
+
+  void Finish() {
+    SDB_ASSERT(!_pos.empty());
     SDB_ASSERT(_pos.front().second.offs_min == 0);
     SDB_ASSERT(_pos.front().second.offs_max == 0);
     if constexpr (HasIntervals) {
@@ -454,6 +362,16 @@ class FixedPhraseFrequency {
 
   uint32_t GetFreq() const noexcept { return _phrase_freq; }
 
+  score_t GetBoost() const noexcept
+    requires(HasBoost)
+  {
+    if (_phrase_freq == 0) {
+      return kNoBoost;
+    }
+    return _phrase_boost /
+           static_cast<score_t>(_pos.size() * size_t{_phrase_freq});
+  }
+
   uint32_t DocFreqBound() {
     OrderByDocFreq();
     const auto freq = _pos.front().first->DocFreq();
@@ -471,23 +389,37 @@ class FixedPhraseFrequency {
     return freq;
   }
 
- private:
-  friend class PhrasePosition<FixedPhraseFrequency>;
-
-  std::pair<const uint32_t*, const uint32_t*> GetOffsets() const noexcept {
-    auto start = irs::get<OffsAttr>(*_pos.front().first);
-    SDB_ASSERT(start);
-    auto end = irs::get<OffsAttr>(*_pos.back().first);
-    SDB_ASSERT(end);
-    return {&start->start, &end->end};
+  std::pair<uint32_t, uint32_t> Offsets() const noexcept
+    requires(Offs)
+  {
+    return {Traits::Offsets(_pos.front()).start,
+            Traits::Offsets(_pos.back()).end};
   }
 
+  bool NextAlignment()
+    requires(Offs)
+  {
+    return NextPosition() != 0;
+  }
+
+ private:
   template<bool Ordered = false>
   IRS_FORCE_INLINE uint32_t NextPosition() {
+    if constexpr (HasBoost) {
+      _phrase_boost = 0.f;
+    }
     if constexpr (HasIntervals || Offs) {
       return NextPositionGeneric<Ordered>();
     } else {
       return NextPositionOptimized<Ordered>();
+    }
+  }
+
+  IRS_FORCE_INLINE void TakeBoost() noexcept {
+    if constexpr (HasBoost) {
+      for (const auto& slot : _pos) {
+        _phrase_boost += Traits::Boost(slot);
+      }
     }
   }
 
@@ -516,7 +448,6 @@ class FixedPhraseFrequency {
         const auto sought = pos.seek(term_position);
 
         if (pos_limits::eof(sought)) {
-          // exhausted
           if constexpr (HasFreq) {
             if (!strategy.NextPermutation(it, end)) {
               return phrase_freq;
@@ -540,6 +471,7 @@ class FixedPhraseFrequency {
               break;
             }
             ++phrase_freq;
+            TakeBoost();
           }
         }
         if (!match) {
@@ -549,6 +481,7 @@ class FixedPhraseFrequency {
       if (match) {
         if constexpr (HasFreq) {
           ++phrase_freq;
+          TakeBoost();
           lead.next();
         } else {
           return 1;
@@ -608,6 +541,7 @@ class FixedPhraseFrequency {
       }
       if constexpr (HasFreq) {
         ++phrase_freq;
+        TakeBoost();
         lead.next();
         lead_pos = lead.value();
       } else {
@@ -616,629 +550,15 @@ class FixedPhraseFrequency {
     }
   }
 
-  // list of desired positions along with corresponding attributes
   Positions _pos;
-  // freqency of the phrase in a document
   uint32_t _phrase_freq = 0;
-  // most phrase occurrences one lead position can carry
+  [[no_unique_address]] utils::Need<HasBoost, score_t> _phrase_boost{};
   uint32_t _freq_scale = 1;
-  // _pos currently holds the phrase back to front
   bool _reversed = false;
 };
 
-// Adapter to use DocIterator with positions for disjunction
-struct VariadicPhraseAdapter : ScoreAdapter {
-  VariadicPhraseAdapter() = default;
-
-  explicit VariadicPhraseAdapter(DocIterator::ptr it, score_t boost) noexcept
-    : ScoreAdapter{std::move(it)}, boost{boost} {
-    position = irs::GetMutable<PosAttr>(this);
-  }
-
-  PosAttr* position{};
-  score_t boost{kNoBoost};
-};
-
-struct VariadicPhraseOffsetAdapter : VariadicPhraseAdapter {
-  VariadicPhraseOffsetAdapter() = default;
-
-  explicit VariadicPhraseOffsetAdapter(DocIterator::ptr it,
-                                       score_t boost) noexcept
-    : VariadicPhraseAdapter{std::move(it), boost} {
-    offset = position ? irs::get<OffsAttr>(*position)
-                      // TODO(gnusi) use constant
-                      : nullptr;
-  }
-
-  const OffsAttr* offset{};
-};
-
-template<typename Adapter>
-using VariadicTermPosition =
-  std::pair<CompoundDocIterator<Adapter>*, TermInterval>;
-// desired offset in the phrase
-
-// Helper for variadic phrase frequency evaluation for cases when
-// only one term may be at a single position in a phrase (e.g. synonyms)
-template<typename Adapter, bool HasBoost, bool HasFreq, bool HasIntervals>
-class VariadicPhraseFrequency {
- public:
-  using TermPosition = VariadicTermPosition<Adapter>;
-  using Positions = std::vector<TermPosition>;
-  using ExecutionSrategy =
-    std::conditional_t<HasIntervals,
-                       IntervalPositionStrategy<typename Positions::iterator>,
-                       SinglePositionStrategy<typename Positions::iterator>>;
-
-  static constexpr bool kHasBoost = HasBoost;
-  static constexpr bool kHasFreq = HasFreq;
-
-  explicit VariadicPhraseFrequency(std::vector<TermPosition>&& pos)
-    : _pos{std::move(pos)}, _phrase_size{_pos.size()} {
-    SDB_ASSERT(_phrase_size != 0);
-    if constexpr (HasBoost) {
-      _slot_boosts.resize(_phrase_size - 1);
-    }
-    // lead offset is always 0
-    SDB_ASSERT(_pos.front().second.offs_min == 0);
-    SDB_ASSERT(_pos.front().second.offs_max == 0);
-  }
-
-  // Evaluate and return frequency of the phrase
-  bool Match() {
-    if constexpr (HasBoost) {
-      _phrase_boost = 0;  // TODO(mbkkt) 0 vs 1?
-    }
-    _phrase_freq = 0;
-    _pos.front().first->visit(this, VisitLead);
-
-    if constexpr (HasBoost) {
-      if (_phrase_freq != 0) {
-        _phrase_boost /= static_cast<score_t>(_phrase_size * _phrase_freq);
-      }
-    }
-
-    return _phrase_freq != 0;
-  }
-
-  score_t GetBoost() const noexcept { return _phrase_boost; }
-  uint32_t GetFreq() const noexcept { return _phrase_freq; }
-
- private:
-  friend class PhrasePosition<VariadicPhraseFrequency>;
-
-  struct SubMatchContext {
-    PosAttr::value_t term_position{pos_limits::eof()};
-    PosAttr::value_t min_sought{pos_limits::eof()};
-    Adapter* sought_by{};
-    const uint32_t* end{};  // end match offset
-    bool match{false};
-  };
-
-  std::pair<const uint32_t*, const uint32_t*> GetOffsets() const noexcept {
-    return {&_start, &_end};
-  }
-
-  uint32_t NextPosition() {
-    // FIXME(gnusi): don't change iterator state
-    _phrase_freq = 0;
-    _pos.front().first->visit(this, VisitLead);
-    return _phrase_freq;
-  }
-
-  static bool VisitFollower(void* ctx, Adapter& it_adapter) {
-    SDB_ASSERT(ctx);
-    auto& match = *reinterpret_cast<SubMatchContext*>(ctx);
-    auto* p = it_adapter.position;
-    p->reset();
-    const auto sought = p->seek(match.term_position);
-    if (sought < match.min_sought) {
-      match.min_sought = sought;
-      match.sought_by = &it_adapter;
-    }
-    return true;
-  }
-
-  static bool VisitLead(void* ctx, Adapter& lead_adapter) {
-    SDB_ASSERT(ctx);
-    auto& self = *reinterpret_cast<VariadicPhraseFrequency*>(ctx);
-    const auto end = std::end(self._pos);
-    auto* lead = lead_adapter.position;
-    lead->next();
-    auto lead_it = std::begin(self._pos);
-    ExecutionSrategy strategy{lead_it, *lead};
-
-    SubMatchContext match;
-
-    auto increase_freq = [&] {
-      ++self._phrase_freq;
-      if constexpr (std::is_same_v<Adapter, VariadicPhraseOffsetAdapter>) {
-        SDB_ASSERT(lead_adapter.offset);
-        self._start = lead_adapter.offset->start;
-        SDB_ASSERT(match.end);
-        self._end = *match.end;
-      }
-      if constexpr (HasBoost) {
-        self._phrase_boost += lead_adapter.boost;
-        for (auto boost : self._slot_boosts) {
-          self._phrase_boost += boost;
-        }
-      }
-    };
-
-    while (!pos_limits::eof(lead->value())) {
-      strategy.NotifyNextLead(end);
-      match.match = true;
-
-      for (auto it = lead_it + 1; it != end;) {
-        match.term_position = strategy.NextPosition(it);
-
-        if (!pos_limits::valid(match.term_position)) {
-          return false;  // invalid for all
-        }
-
-        match.min_sought = pos_limits::eof();
-        match.sought_by = nullptr;
-
-        it->first->visit(&match, VisitFollower);
-
-        match.match = !pos_limits::eof(match.min_sought) &&
-                      strategy.Match(match.term_position, match.min_sought, it);
-        if (match.match) {
-          if constexpr (HasBoost) {
-            self._slot_boosts[(it - lead_it) - 1] = match.sought_by->boost;
-          }
-          if constexpr (std::is_same_v<Adapter, VariadicPhraseOffsetAdapter>) {
-            if (match.sought_by->offset) {  // FIXME(gnusi): remove condition
-              match.end = &match.sought_by->offset->end;
-            }
-          }
-        } else {
-          if (pos_limits::eof(match.min_sought)) {
-            if constexpr (HasFreq) {
-              if (!strategy.NextPermutation(it, end)) {
-                return true;
-              }
-              if (it == end) {
-                lead->next();
-              }
-              continue;
-            } else {
-              return true;
-            }
-          }
-        }
-        match.match =
-          strategy.AdvanceIterators(match.match, match.min_sought, end, it);
-        if constexpr (HasFreq) {
-          if (it == end && match.match) {
-            if (!strategy.NextPermutation(it, end)) {
-              break;
-            }
-            increase_freq();
-          }
-        }
-        if (!match.match) {
-          break;
-        }
-      }
-      if (match.match) {
-        increase_freq();
-        if constexpr (HasFreq) {
-          lead->next();
-        } else {
-          return false;
-        }
-      }
-    }
-
-    return true;
-  }
-
-  // list of desired positions along with corresponding attributes
-  Positions _pos;
-  // size of the phrase (speedup phrase boost evaluation)
-  const size_t _phrase_size;
-  uint32_t _phrase_freq = 0;         // freqency of the phrase in a document
-  score_t _phrase_boost = kNoBoost;  // boost of the phrase in a document
-  // boost of the term each follower currently stands on
-  std::vector<score_t> _slot_boosts;
-
-  // FIXME(gnusi): refactor
-  uint32_t _start{};
-  uint32_t _end{};
-};
-
-// Not used currenly. We don't have synonyms ATM. Should be updated to use
-// strategies when it would be possible to use and test this code.
-// Helper for variadic phrase frequency evaluation for cases when
-// different terms may be at the same position in a phrase (e.g.
-// synonyms)
-template<typename Adapter, bool HasBoost, bool HasFreq>
-class VariadicPhraseFrequencyOverlapped {
- public:
-  using TermPosition = VariadicTermPosition<Adapter>;
-  using Positions = std::vector<TermPosition>;
-
-  static constexpr bool kHasBoost = HasBoost;
-  static constexpr bool kHasFreq = HasFreq;
-
-  explicit VariadicPhraseFrequencyOverlapped(
-    std::vector<TermPosition>&& pos) noexcept
-    : _pos(std::move(pos)), _phrase_size(_pos.size()) {
-    SDB_ASSERT(!_pos.empty() && _phrase_size);  // must not be empty
-    SDB_ASSERT(0 == _pos.front().second);       // lead offset is always 0
-  }
-
-  bool Match() {
-    if constexpr (HasBoost) {
-      _lead_freq = 0;
-      _lead_boost = 0;    // TODO(mbkkt) 0 vs 1?
-      _phrase_boost = 0;  // TODO(mbkkt) 0 vs 1?
-    }
-
-    _phrase_freq = 0;
-    _pos.front().first->visit(this, VisitLead);
-
-    if constexpr (HasBoost) {
-      if (_lead_freq) {
-        _phrase_boost =
-          (_phrase_boost + (_lead_boost / TermCountToScore(_lead_freq))) /
-          _phrase_size;
-      }
-    }
-
-    return _phrase_freq != 0;
-  }
-
-  score_t GetBoost() const noexcept { return _phrase_boost; }
-  uint32_t GetFreq() const noexcept { return _phrase_freq; }
-
- private:
-  struct SubMatchContext {
-    PosAttr::value_t term_position = pos_limits::eof();
-    PosAttr::value_t min_sought = pos_limits::eof();
-    score_t boost = 0;  // TODO(mbkkt) 0 vs 1?
-    uint32_t freq = 0;
-  };
-
-  static bool VisitFollower(void* ctx, Adapter& it_adapter) {
-    SDB_ASSERT(ctx);
-    auto& match = *reinterpret_cast<SubMatchContext*>(ctx);
-    auto* p = it_adapter.position;
-    p->reset();
-    const auto sought = p->seek(match.term_position);
-    if (pos_limits::eof(sought)) {
-      return true;
-    } else if (sought != match.term_position) {
-      if (sought < match.min_sought) {
-        match.min_sought = sought;
-      }
-      return true;
-    }
-
-    ++match.freq;
-    if constexpr (HasBoost) {
-      match.boost += it_adapter.boost;
-    }
-
-    return true;  // continue iteration in overlapped case
-  }
-
-  static bool VisitLead(void* ctx, Adapter& lead_adapter) {
-    SDB_ASSERT(ctx);
-    auto& self = *reinterpret_cast<VariadicPhraseFrequencyOverlapped*>(ctx);
-    const auto end = std::end(self._pos);
-    auto* lead = lead_adapter.position;
-    lead->next();
-
-    SubMatchContext match;     // sub-match
-    uint32_t phrase_freq = 0;  // phrase frequency for current lead_iterator
-    // accumulated match frequency for current lead_iterator
-    uint32_t match_freq;
-    score_t phrase_boost = {};  // phrase boost for current lead_iterator
-    score_t match_boost;  // accumulated match boost for current lead_iterator
-    for (PosAttr::value_t base_position;
-         !pos_limits::eof(base_position = lead->value());) {
-      match_freq = 1;
-      if constexpr (HasBoost) {
-        match_boost = 0;  // TODO(mbkkt) 0 vs 1?
-      }
-
-      for (auto it = std::begin(self._pos) + 1; it != end; ++it) {
-        match.term_position = base_position + it->second;
-        if (!pos_limits::valid(match.term_position)) {
-          return false;  // invalid for all
-        }
-
-        match.freq = 0;
-        if constexpr (HasBoost) {
-          match.boost = 0;  // TODO(mbkkt) 0 vs 1?
-        }
-        match.min_sought = pos_limits::eof();
-
-        it->first->visit(&match, VisitFollower);
-
-        if (!match.freq) {
-          match_freq = 0;
-
-          if (!pos_limits::eof(match.min_sought)) {
-            lead->seek(match.min_sought - it->second);
-            break;
-          }
-
-          if constexpr (HasBoost) {
-            if (phrase_freq) {
-              ++self._lead_freq;
-              self._lead_boost += lead_adapter.boost;
-              self._phrase_boost += phrase_boost / phrase_freq;
-            }
-          }
-
-          return true;  // eof for all
-        }
-
-        match_freq *= match.freq;
-        if constexpr (HasBoost) {
-          match_boost += match.boost / match.freq;
-        }
-      }
-
-      if (match_freq) {
-        self._phrase_freq += match_freq;
-        if constexpr (HasFreq) {
-          ++phrase_freq;
-          if constexpr (HasBoost) {
-            phrase_boost += match_boost;
-          }
-          lead->next();
-        } else {
-          return false;
-        }
-      }
-    }
-
-    if constexpr (HasBoost) {
-      if (phrase_freq != 0) {
-        ++self._lead_freq;
-        self._lead_boost += lead_adapter.boost;
-        self._phrase_boost += phrase_boost / phrase_freq;
-      }
-    }
-
-    return true;
-  }
-  // list of desired positions along with corresponding attributes
-  std::vector<TermPosition> _pos;
-  // size of the phrase (speedup phrase boost evaluation)
-  const size_t _phrase_size;
-  uint32_t _phrase_freq = 0;  // freqency of the phrase in a document
-  // TODO(mbkkt) 0 vs 1?
-  score_t _phrase_boost = kNoBoost;  // boost of the phrase in a document
-  // TODO(mbkkt) 0 vs 1?
-  score_t _lead_boost = 0;  // boost from all matched lead iterators
-  uint32_t _lead_freq = 0;  // number of matched lead iterators
-};
-
-template<typename Conjunction, typename Frequency, bool Prune = false>
-class PhraseIterator : public DocIterator {
- public:
-  using TermPosition = typename Frequency::TermPosition;
-
-  template<typename Adapters>
-  PhraseIterator(doc_id_t docs_count, Adapters&& itrs,
-                 std::vector<TermPosition>&& pos)
-    : _approx{ScoreMergeType::Noop, docs_count,
-              [](auto itrs) {
-                absl::c_sort(itrs,
-                             [](const auto& lhs, const auto& rhs) noexcept {
-                               return CostAttr::extract(lhs, CostAttr::kMax) <
-                                      CostAttr::extract(rhs, CostAttr::kMax);
-                             });
-                return std::move(itrs);
-              }(std::forward<Adapters>(itrs))},
-      _freq{std::move(pos)} {
-    // FIXME find a better estimation
-    _cost = irs::GetMutable<CostAttr>(&_approx);
-
-    if constexpr (Frequency::kHasBoost) {
-      _collected_boosts.value = std::allocator<score_t>{}.allocate(kScoreBlock);
-    }
-    if constexpr (Frequency::kHasFreq) {
-      _collected_freqs.value = std::allocator<uint32_t>{}.allocate(kScoreBlock);
-    }
-  }
-
-  ~PhraseIterator() {
-    if constexpr (Frequency::kHasBoost) {
-      std::allocator<score_t>{}.deallocate(_collected_boosts.value,
-                                           kScoreBlock);
-    }
-    if constexpr (Frequency::kHasFreq) {
-      std::allocator<uint32_t>{}.deallocate(_collected_freqs.value,
-                                            kScoreBlock);
-    }
-  }
-
-  template<typename Adapters>
-  PhraseIterator(doc_id_t docs_count, Adapters&& itrs,
-                 std::vector<TermPosition>&& pos, const FieldProperties& field,
-                 ScoreSource score, score_t boost)
-    : PhraseIterator{docs_count, std::forward<Adapters>(itrs), std::move(pos)} {
-    _score = score;
-    _boost = boost;
-    _field = field;
-  }
-
-  template<typename Adapters>
-  PhraseIterator(doc_id_t docs_count, Adapters&& itrs,
-                 std::vector<TermPosition>&& pos, PosAttr::value_t max_slop,
-                 std::vector<PosAttr::value_t>&& expected_steps)
-    : _approx{ScoreMergeType::Noop, docs_count,
-              [](auto itrs) {
-                absl::c_sort(itrs,
-                             [](const auto& lhs, const auto& rhs) noexcept {
-                               return CostAttr::extract(lhs, CostAttr::kMax) <
-                                      CostAttr::extract(rhs, CostAttr::kMax);
-                             });
-                return std::move(itrs);
-              }(std::forward<Adapters>(itrs))},
-      _freq{std::move(pos), max_slop, std::move(expected_steps)} {
-    _cost = irs::GetMutable<CostAttr>(&_approx);
-    if constexpr (Frequency::kHasBoost) {
-      _collected_boosts.value = std::allocator<score_t>{}.allocate(kScoreBlock);
-    }
-    if constexpr (Frequency::kHasFreq) {
-      _collected_freqs.value = std::allocator<uint32_t>{}.allocate(kScoreBlock);
-    }
-  }
-
-  template<typename Adapters>
-  PhraseIterator(doc_id_t docs_count, Adapters&& itrs,
-                 std::vector<TermPosition>&& pos, PosAttr::value_t max_slop,
-                 std::vector<PosAttr::value_t>&& expected_steps,
-                 const FieldProperties& field, ScoreSource score, score_t boost)
-    : PhraseIterator{docs_count, std::forward<Adapters>(itrs), std::move(pos),
-                     max_slop, std::move(expected_steps)} {
-    _score = score;
-    _boost = boost;
-    _field = field;
-  }
-
-  ScoreFunction PrepareScore(const PrepareScoreContext& ctx) final {
-    SDB_ASSERT(_score.scorer);
-    return _score.scorer->PrepareScorer({
-      .segment = *ctx.segment,
-      .field = _field,
-      .doc_attrs = *this,
-      .fetcher = ctx.fetcher,
-      .stats = _score.stats,
-      .boost = _boost,
-    });
-  }
-
-  Attribute* GetMutable(TypeInfo::type_id type) noexcept final {
-    if (type == irs::Type<CostAttr>::id()) {
-      return _cost;
-    }
-    if constexpr (Prune) {
-      if (type == irs::Type<ScoreThresholdAttr>::id()) {
-        return &_threshold;
-      }
-    }
-    if constexpr (Frequency::kHasBoost) {
-      if (type == irs::Type<BoostBlockAttr>::id()) {
-        return &_collected_boosts;
-      }
-    }
-    if constexpr (Frequency::kHasFreq) {
-      if (type == irs::Type<FreqBlockAttr>::id()) {
-        return &_collected_freqs;
-      }
-    }
-    if constexpr (HasPosition<Frequency>::value) {
-      if (type == irs::Type<PosAttr>::id()) {
-        return &_freq;
-      }
-      return _freq.GetMutable(type);
-    } else {
-      return nullptr;
-    }
-  }
-
-  void Collect(const ScoreFunction& scorer, ColumnArgsFetcher& fetcher,
-               ScoreCollector& c) final {
-    if constexpr (Prune) {
-      auto* const freq = _collected_freqs.value;
-      ResolveScoreCollector(c, [&](auto& collector) IRS_FORCE_INLINE {
-        for (auto doc = _approx.advance(); !doc_limits::eof(doc);
-             doc = _approx.advance()) {
-          const auto bound = _freq.DocFreqBound();
-          freq[0] = bound;
-          fetcher.Fetch(doc);
-
-          auto score = scorer.Score();
-          if (score <= _threshold.value || !_freq.template Match<true>()) {
-            continue;
-          }
-          if (const auto real = _freq.GetFreq(); real != bound) {
-            SDB_ASSERT(real < bound);
-            freq[0] = real;
-            score = scorer.Score();
-          }
-          collector.Add(score, doc);
-        }
-        _doc = doc_limits::eof();
-      });
-    } else {
-      DocIterator::CollectImpl(*this, scorer, fetcher, c);
-    }
-  }
-
-  doc_id_t advance() final {
-    while (true) {
-      const auto doc = _approx.advance();
-      if (doc_limits::eof(doc) || _freq.Match()) {
-        return _doc = doc;
-      }
-    }
-  }
-
-  doc_id_t seek(doc_id_t target) final {
-    if (target <= _doc) [[unlikely]] {
-      return _doc;
-    }
-    const auto doc = _approx.seek(target);
-    if (doc_limits::eof(doc) || _freq.Match()) {
-      return _doc = doc;
-    }
-    return advance();
-  }
-
-  doc_id_t LazySeek(doc_id_t target) final {
-    if (target <= _doc) [[unlikely]] {
-      return _doc;
-    }
-    const auto doc = _approx.LazySeek(target);
-    if (target != doc) {
-      return doc;
-    }
-    if (doc_limits::eof(doc) || _freq.Match()) {
-      return _doc = doc;
-    }
-    return doc + 1;
-  }
-
-  void FetchScoreArgs(uint16_t index) final {
-    if constexpr (Frequency::kHasBoost) {
-      SDB_ASSERT(_collected_boosts.value);
-      _collected_boosts.value[index] = _freq.GetBoost();
-    }
-    if constexpr (Frequency::kHasFreq) {
-      SDB_ASSERT(_collected_freqs.value);
-      _collected_freqs.value[index] = _freq.GetFreq();
-    }
-  }
-
-  IRS_DOC_ITERATOR_FILL_BLOCK
-  IRS_DOC_ITERATOR_COUNT
-  IRS_DOC_ITERATOR_EMIT_DOCS
-  IRS_DOC_ITERATOR_EMIT_SCORED_DOCS
-
- private:
-  ScoreSource _score;
-  score_t _boost = kNoBoost;
-  FieldProperties _field;
-  [[no_unique_address]] utils::Need<Prune, ScoreThresholdAttr> _threshold;
-
-  // first approximation (conjunction over all words in a phrase)
-  Conjunction _approx;
-  Frequency _freq;
-  CostAttr* _cost = nullptr;
-  [[no_unique_address]] utils::Need<Frequency::kHasBoost, BoostBlockAttr>
-    _collected_boosts;
-  [[no_unique_address]] utils::Need<Frequency::kHasFreq, FreqBlockAttr>
-    _collected_freqs;
-};
+template<bool Offs, bool HasFreq, bool HasIntervals, size_t N = 0>
+using FixedPhraseFrequency = PhraseFrequency<FixedTermPosition<Offs>, Offs,
+                                             HasFreq, HasIntervals, false, N>;
 
 }  // namespace irs

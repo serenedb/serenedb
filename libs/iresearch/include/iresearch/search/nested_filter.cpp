@@ -22,550 +22,473 @@
 
 #include "nested_filter.hpp"
 
+#include <absl/base/optimization.h>
 #include <absl/functional/overload.h>
 
 #include <cstdint>
-#include <limits>
+#include <memory>
 #include <span>
 #include <tuple>
 #include <utility>
 #include <variant>
 
-#include "basics/empty.hpp"
-#include "iresearch/analysis/token_attributes.hpp"
-#include "iresearch/search/cost.hpp"
+#include "iresearch/search/common/node_of.hpp"
+#include "iresearch/search/common/score/make_window.hpp"
+#include "iresearch/search/count/plan.hpp"
+#include "iresearch/search/count/walk.hpp"
+#include "iresearch/search/docs/plan.hpp"
+#include "iresearch/search/docs/walk.hpp"
+#include "iresearch/search/fill/walk.hpp"
+#include "iresearch/search/lead/constant_scored.hpp"
+#include "iresearch/search/lead/impl.hpp"
 #include "iresearch/search/prepared_state_visitor.hpp"
-#include "iresearch/search/prev_doc.hpp"
+#include "iresearch/search/probe/constant_scored.hpp"
+#include "iresearch/search/probe/impl.hpp"
+#include "iresearch/search/query_builder_impl.hpp"
 #include "iresearch/search/score_function.hpp"
+#include "iresearch/search/scored/detail/walk.hpp"
 #include "iresearch/search/scorer.hpp"
-#include "iresearch/utils/attribute_helper.hpp"
+#include "iresearch/search/top/detail/walk.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
+namespace irs {
 namespace {
-
-using namespace irs;
 
 static_assert(std::variant_size_v<ByNestedOptions::MatchType> == 2);
 
 const Scorer* GetOrder(const ByNestedOptions::MatchType& match,
                        const Scorer* scorer) noexcept {
-  return std::visit(absl::Overload{[&](Match v) noexcept -> const Scorer* {
-                                     return kMatchNone == v ? nullptr : scorer;
-                                   },
-                                   [scorer](const DocIteratorProvider&) noexcept
-                                     -> const Scorer* { return scorer; }},
-                    match);
+  return std::visit(
+    absl::Overload{[&](Match v) noexcept -> const Scorer* {
+                     return kMatchNone == v ? nullptr : scorer;
+                   },
+                   [scorer](const MatchProvider&) noexcept -> const Scorer* {
+                     return scorer;
+                   }},
+    match);
 }
 
 bool IsValid(const ByNestedOptions::MatchType& match) noexcept {
   return std::visit(
     absl::Overload{[](Match v) noexcept { return v.min <= v.max; },
-                   [](const DocIteratorProvider& v) {
-                     {
-                       return nullptr != v;
-                     }
-                   }},
+                   [](const MatchProvider& v) { return nullptr != v; }},
     match);
 }
 
-class NoneMatcher;
+struct EmptyParentsNode : ParentDocs {
+  doc_id_t Advance() final { return _doc = doc_limits::eof(); }
 
-template<typename Matcher>
-class ChildToParentJoin : public DocIterator, private Matcher {
+  doc_id_t Seek(doc_id_t) final { return _doc = doc_limits::eof(); }
+
+  doc_id_t Prev() const noexcept final { return doc_limits::invalid(); }
+};
+
+struct EmptyDocsNode : lead::Node {
+  doc_id_t Advance() final { return _doc = doc_limits::eof(); }
+
+  doc_id_t Seek(doc_id_t) final { return _doc = doc_limits::eof(); }
+};
+
+lead::Node::ptr EmptyDocs() {
+  return memory::make_managed<lead::Node, EmptyDocsNode>();
+}
+
+ParentDocs::ptr EmptyParentDocs() {
+  return memory::make_managed<ParentDocs, EmptyParentsNode>();
+}
+
+class PlainChild {
  public:
-  ChildToParentJoin(DocIterator::ptr&& parent, const PrevDocAttr& prev_parent,
-                    DocIterator::ptr&& child, Matcher&& matcher) noexcept
-    : Matcher{std::move(matcher)},
-      _parent{std::move(parent)},
-      _child{std::move(child)},
-      _prev_parent{&prev_parent} {
-    SDB_ASSERT(_parent);
-    SDB_ASSERT(prev_parent);
+  explicit PlainChild(lead::Node::ptr child) noexcept
+    : _child{std::move(child)} {
     SDB_ASSERT(_child);
-    std::get<AttributePtr<CostAttr>>(_attrs) =
-      irs::GetMutable<CostAttr>(_child.get());
   }
 
-  Attribute* GetMutable(TypeInfo::type_id id) noexcept final {
-    return irs::GetMutable(_attrs, id);
+  doc_id_t Value() const noexcept { return _child->Value(); }
+
+  doc_id_t Seek(doc_id_t target) { return _child->Seek(target); }
+
+  doc_id_t Advance() { return _child->Advance(); }
+
+  void Restart() noexcept {}
+
+  void Take(doc_id_t) noexcept {}
+
+ private:
+  lead::Node::ptr _child;
+};
+
+class ScoredChild {
+ public:
+  ScoredChild(lead::Node::ptr child, std::unique_ptr<ColumnArgsFetcher> fetcher,
+              ScoreMergeType merge)
+    : _child{std::move(child)}, _fetcher{std::move(fetcher)}, _merge{merge} {
+    SDB_ASSERT(_child);
+    SDB_ASSERT(_fetcher);
+    SDB_ASSERT(_merge != ScoreMergeType::Noop);
+    _score = _child->PrepareScore();
   }
 
-  IRS_DOC_ITERATOR_DEFAULTS
+  ScoredChild(ScoredChild&&) = delete;
+  ScoredChild& operator=(ScoredChild&&) = delete;
 
-  doc_id_t advance() final {
-    const auto parent = _parent->advance();
-    return _doc = SeekInternal(parent);
+  doc_id_t Value() const noexcept { return _child->Value(); }
+
+  doc_id_t Seek(doc_id_t target) { return _child->Seek(target); }
+
+  doc_id_t Advance() { return _child->Advance(); }
+
+  void Restart() noexcept {
+    _held = 0;
+    _sum = 0;
   }
 
-  doc_id_t seek(doc_id_t target) final {
-    if (target <= _doc) [[unlikely]] {
-      return _doc;
+  void Take(doc_id_t doc) {
+    _docs[_held] = doc;
+    _child->FetchScoreArgs(_held);
+    if (++_held == kScoreBlock) {
+      Flush();
     }
-    const auto parent = _parent->seek(target);
-    return _doc = SeekInternal(parent);
   }
 
-  doc_id_t LazySeek(doc_id_t target) final {
-    if (target <= _doc) [[unlikely]] {
-      return _doc;
+  void Settle(uint32_t slot) {
+    if (_held != 0) {
+      Flush();
     }
-    const auto parent = _parent->LazySeek(target);
-    if (parent != target) {
-      return parent;
-    }
-    // TODO: optimize
-    return _doc = SeekInternal(parent);
+    SDB_ASSERT(slot < doc_limits::kBlockSize);
+    _parents[slot] = _sum;
   }
 
-  ScoreFunction PrepareScore(const PrepareScoreContext& ctx) final;
-
-  void FetchScoreArgs(uint16_t index) final {
-    if constexpr (Matcher::kHasScore) {
-      Matcher::CollectDataImpl();
-    }
+  ScoreFunction PrepareScore() {
+    return search::MakeWindowScore(_merge, _parents);
   }
 
  private:
-  friend Matcher;
-
-  using Attributes = std::tuple<AttributePtr<CostAttr>>;
-
-  // Returns min possible first child given the current parent.
-  doc_id_t FirstChildApprox() const {
-    SDB_ASSERT(!doc_limits::eof((*_prev_parent)()));
-    return (*_prev_parent)() + 1;
+  void Flush() {
+    _fetcher->Fetch(std::span<const doc_id_t>{_docs, _held});
+    _score.Score(_batch, _held);
+    irs::ResolveMergeType(_merge, [&]<ScoreMergeType Merge> {
+      for (scores_size_t i = 0; i != _held; ++i) {
+        irs::Merge<Merge>(_sum, _batch[i]);
+      }
+    });
+    _held = 0;
   }
 
-  doc_id_t SeekInternal(doc_id_t parent) {
-    if (doc_limits::eof(parent)) [[unlikely]] {
+  ABSL_CACHELINE_ALIGNED score_t _parents[doc_limits::kBlockSize]{};
+  ABSL_CACHELINE_ALIGNED score_t _batch[kScoreBlock];
+  ABSL_CACHELINE_ALIGNED doc_id_t _docs[kScoreBlock];
+  lead::Node::ptr _child;
+  std::unique_ptr<ColumnArgsFetcher> _fetcher;
+  ScoreFunction _score;
+  score_t _sum = 0;
+  scores_size_t _held = 0;
+  ScoreMergeType _merge;
+};
+
+struct NoneRule {
+  static bool Accept(auto& child, doc_id_t first, doc_id_t parent) {
+    return child.Seek(first) >= parent;
+  }
+
+  static doc_id_t Skip(auto&) noexcept { return doc_limits::invalid(); }
+
+  static void Settle(auto& child, doc_id_t, uint32_t slot) {
+    child.Settle(slot);
+  }
+};
+
+struct AnyRule {
+  static bool Accept(auto& child, doc_id_t first, doc_id_t parent) {
+    return child.Seek(first) < parent;
+  }
+
+  static doc_id_t Skip(auto& child) noexcept { return child.Value(); }
+
+  static void Settle(auto& child, doc_id_t parent, uint32_t slot) {
+    for (auto doc = child.Value(); doc < parent; doc = child.Advance()) {
+      child.Take(doc);
+    }
+    child.Settle(slot);
+  }
+};
+
+class MinRule {
+ public:
+  explicit MinRule(doc_id_t min) noexcept : _min{min} {}
+
+  bool Accept(auto& child, doc_id_t first, doc_id_t parent) const {
+    auto doc = child.Seek(first);
+    for (auto left = _min; left != 0; --left) {
+      if (doc >= parent) {
+        return false;
+      }
+      child.Take(doc);
+      doc = child.Advance();
+    }
+    return true;
+  }
+
+  doc_id_t Skip(auto& child) const noexcept {
+    return _min != 0 ? child.Value() : doc_limits::invalid();
+  }
+
+  static void Settle(auto& child, doc_id_t parent, uint32_t slot) {
+    for (auto doc = child.Value(); doc < parent; doc = child.Advance()) {
+      child.Take(doc);
+    }
+    child.Settle(slot);
+  }
+
+ private:
+  doc_id_t _min;
+};
+
+class RangeRule {
+ public:
+  explicit RangeRule(Match range) noexcept : _range{range} {
+    SDB_ASSERT(_range.min <= _range.max);
+  }
+
+  bool Accept(auto& child, doc_id_t first, doc_id_t parent) const {
+    doc_id_t count = 0;
+    for (auto doc = child.Seek(first); doc < parent; doc = child.Advance()) {
+      if (++count > _range.max) {
+        return false;
+      }
+      child.Take(doc);
+    }
+    return count >= _range.min;
+  }
+
+  doc_id_t Skip(auto& child) const noexcept {
+    return _range.min != 0 ? child.Value() : doc_limits::invalid();
+  }
+
+  static void Settle(auto& child, doc_id_t, uint32_t slot) {
+    child.Settle(slot);
+  }
+
+ private:
+  Match _range;
+};
+
+class PredRule {
+ public:
+  explicit PredRule(lead::Node::ptr pred) noexcept : _pred{std::move(pred)} {
+    SDB_ASSERT(_pred);
+  }
+
+  bool Accept(auto& child, doc_id_t first, doc_id_t parent) const {
+    auto doc = child.Seek(first);
+    if (doc >= parent || doc != _pred->Seek(first)) {
+      return false;
+    }
+    child.Take(doc);
+    while (true) {
+      const auto want = _pred->Advance();
+      if (want >= parent) {
+        return true;
+      }
+      doc = child.Advance();
+      if (doc != want) {
+        return false;
+      }
+      child.Take(doc);
+    }
+  }
+
+  static doc_id_t Skip(auto&) noexcept { return doc_limits::invalid(); }
+
+  static void Settle(auto& child, doc_id_t, uint32_t slot) {
+    child.Settle(slot);
+  }
+
+ private:
+  lead::Node::ptr _pred;
+};
+
+template<typename Child, typename Rule>
+class NestedSlots {
+ public:
+  template<typename ChildArgs>
+  NestedSlots(std::piecewise_construct_t, ParentDocs::ptr parent,
+              ChildArgs&& child, Rule rule)
+    : _child{std::make_from_tuple<Child>(std::forward<ChildArgs>(child))},
+      _rule{std::move(rule)},
+      _parent{std::move(parent)} {
+    SDB_ASSERT(_parent);
+  }
+
+  doc_id_t Seek(doc_id_t target) { return _parent->Seek(target); }
+
+  doc_id_t Probe(doc_id_t target) { return _parent->Seek(target); }
+
+  doc_id_t Next(doc_id_t) {
+    const auto skip = _rule.Skip(_child);
+    if (doc_limits::eof(skip)) {
       return doc_limits::eof();
     }
-    for (doc_id_t first_child = _child->seek(FirstChildApprox());
-         (first_child = Matcher::Accept(first_child, parent));
-         first_child = _child->seek(FirstChildApprox())) {
-      parent = _parent->seek(first_child);
-
-      if (doc_limits::eof(parent) ||
-          (parent == first_child &&
-           doc_limits::eof(_parent->advance()))) {  // Skip parent docs
-        return doc_limits::eof();
-      }
+    if (skip > _parent->Value()) {
+      return _parent->Seek(skip + 1);
     }
-    return _parent->value();
+    return _parent->Advance();
   }
 
-  DocIterator::ptr _parent;
-  DocIterator::ptr _child;
-  Attributes _attrs;
-  const PrevDocAttr* _prev_parent{};
+  bool Match(doc_id_t parent) {
+    _child.Restart();
+    return _rule.Accept(_child, _parent->Prev() + 1, parent);
+  }
+
+  void Settle(uint32_t slot) { _rule.Settle(_child, _parent->Value(), slot); }
+
+  ScoreFunction PrepareScore() { return _child.PrepareScore(); }
+
+ private:
+  Child _child;
+  [[no_unique_address]] Rule _rule;
+  ParentDocs::ptr _parent;
 };
 
-template<typename Matcher>
-ScoreFunction ChildToParentJoin<Matcher>::PrepareScore(
-  const PrepareScoreContext& ctx) {
-  if constexpr (std::is_same_v<Matcher, NoneMatcher>) {
-    return Matcher::PrepareMatcherScore();
-  } else if constexpr (!Matcher::kHasScore) {
-    return ScoreFunction::Default();
-  } else {
-    auto child_ctx = ctx;
-    child_ctx.fetcher = &this->_scores.fetcher;
-    auto child_score = _child->PrepareScore(child_ctx);
+template<typename Slots>
+class NestedScored {
+ public:
+  template<typename... Args>
+  explicit NestedScored(Args&&... args) : _slots{std::forward<Args>(args)...} {}
 
-    if (child_score.IsDefault()) {
-      return ScoreFunction::Default();
+  NestedScored(NestedScored&&) = delete;
+  NestedScored& operator=(NestedScored&&) = delete;
+
+  doc_id_t Value() const noexcept { return _doc; }
+
+  doc_id_t Advance() { return Converge(_slots.Next(_doc)); }
+
+  doc_id_t Seek(doc_id_t target) {
+    if (target <= _doc) {
+      return _doc;
     }
-
-    this->_scores.child_score = std::move(child_score);
-    return Matcher::PrepareMatcherScore();
+    return Converge(_slots.Seek(target));
   }
+
+  doc_id_t Probe(doc_id_t target) {
+    if (target <= _doc) {
+      return _doc;
+    }
+    if (target < _bound) {
+      return _bound;
+    }
+    if (const auto probe = _slots.Probe(target); probe != target) {
+      return _bound = probe;
+    }
+    if (!_slots.Match(target)) {
+      return _bound = target + 1;
+    }
+    return _doc = target;
+  }
+
+  void FetchScoreArgs(uint32_t slot) { _slots.Settle(slot); }
+
+  ScoreFunction PrepareScore() { return _slots.PrepareScore(); }
+
+ private:
+  doc_id_t Converge(doc_id_t target) {
+    while (!doc_limits::eof(target)) {
+      if (_slots.Match(target)) {
+        return _doc = target;
+      }
+      target = _slots.Next(target);
+    }
+    return _doc = target;
+  }
+
+  Slots _slots;
+  doc_id_t _doc = doc_limits::invalid();
+  doc_id_t _bound = doc_limits::min();
+};
+
+template<bool None, typename Visitor>
+auto ResolveRule(const SubReader& segment,
+                 const ByNestedOptions::MatchType& match, Visitor&& visitor) {
+  return std::visit(absl::Overload{[&](Match v) {
+                                     if constexpr (None) {
+                                       if (v == kMatchNone) {
+                                         return visitor(NoneRule{});
+                                       }
+                                     } else {
+                                       SDB_ASSERT(v != kMatchNone);
+                                     }
+                                     if (v == kMatchAny) {
+                                       return visitor(AnyRule{});
+                                     }
+                                     if (v.IsMinMatch()) {
+                                       return visitor(MinRule{v.min});
+                                     }
+                                     return visitor(RangeRule{v});
+                                   },
+                                   [&](const MatchProvider& v) {
+                                     auto pred = v(segment);
+                                     if (!pred) {
+                                       return visitor(PredRule{EmptyDocs()});
+                                     }
+                                     return visitor(PredRule{std::move(pred)});
+                                   }},
+                    match);
 }
 
-class NoneMatcher {
- public:
-  using JoinType = ChildToParentJoin<NoneMatcher>;
-
-  static constexpr bool kHasScore = false;
-
-  NoneMatcher(score_t none_boost) noexcept : _boost{none_boost} {}
-
-  constexpr doc_id_t Accept(const doc_id_t child,
-                            const doc_id_t parent) const noexcept {
-    SDB_ASSERT(!doc_limits::eof(parent));
-    return child < parent ? parent + 1 : 0;
-  }
-
-  ScoreFunction PrepareMatcherScore() const {
-    return ScoreFunction::Constant(_boost);
-  }
-
- private:
-  score_t _boost;
-};
-
-template<ScoreMergeType InnerType>
-struct NestedScore final : ScoreOperator {
-  ScoreFunction child_score;
-  ColumnArgsFetcher fetcher;
-  ABSL_CACHELINE_ALIGNED std::array<score_t, kScoreBlock> parent_scores{};
-  ABSL_CACHELINE_ALIGNED std::array<score_t, kScoreBlock> child_temp;
-  ABSL_CACHELINE_ALIGNED std::array<doc_id_t, kScoreBlock> child_docs;
-  score_t current_parent_score = 0;
-  uint16_t child_idx = 0;
-  mutable uint16_t parent_idx = 0;
-
-  void CollectChild(auto& child_it) {
-    child_docs[child_idx] = child_it.value();
-    child_it.FetchScoreArgs(child_idx++);
-    if (child_idx == kScoreBlock) {
-      FlushChildBatch();
-    }
-  }
-
-  void FinishParent() {
-    if (child_idx) {
-      FlushChildBatch();
-    }
-    parent_scores[parent_idx++] = current_parent_score;
-    current_parent_score = 0;
-  }
-
-  void DiscardParent() {
-    child_idx = 0;
-    current_parent_score = 0;
-  }
-
-  void FlushChildBatch() {
-    SDB_ASSERT(child_idx);
-    fetcher.Fetch(std::span<const doc_id_t>{child_docs.data(), child_idx});
-    child_score.Score(child_temp.data(), child_idx);
-    for (uint16_t i = 0; i < child_idx; ++i) {
-      Merge<InnerType>(current_parent_score, child_temp[i]);
-    }
-    child_idx = 0;
-  }
-
-  score_t Score() const noexcept final {
-    parent_idx = 0;
-    return parent_scores.front();
-  }
-
-  template<ScoreMergeType MergeType = ScoreMergeType::Noop>
-  IRS_FORCE_INLINE void ScoreImpl(score_t* res,
-                                  scores_size_t n) const noexcept {
-    parent_idx = 0;
-    Merge<MergeType>(res, parent_scores.data(), n);
-  }
-
-  void Score(score_t* res, scores_size_t n) const noexcept final {
-    ScoreImpl(res, n);
-  }
-  void ScoreSum(score_t* res, scores_size_t n) const noexcept final {
-    ScoreImpl<ScoreMergeType::Sum>(res, n);
-  }
-  void ScoreMax(score_t* res, scores_size_t n) const noexcept final {
-    ScoreImpl<ScoreMergeType::Max>(res, n);
-  }
-
-  void ScoreBlock(score_t* res) const noexcept final {
-    ScoreImpl(res, kScoreBlock);
-  }
-  void ScoreSumBlock(score_t* res) const noexcept final {
-    ScoreImpl<ScoreMergeType::Sum>(res, kScoreBlock);
-  }
-  void ScoreMaxBlock(score_t* res) const noexcept final {
-    ScoreImpl<ScoreMergeType::Max>(res, kScoreBlock);
-  }
-};
-
-template<ScoreMergeType MergeType>
-class MatcherBase {
- protected:
-  static constexpr auto kMergeType = MergeType;
-  static constexpr bool kHasScore = kMergeType != ScoreMergeType::Noop;
-
-  ScoreFunction PrepareMatcherScore() {
-    static_assert(kHasScore);
-    return ScoreFunction::Wrap(_scores);
-  }
-
-  void CollectChild(auto& it) {
-    if constexpr (kHasScore) {
-      _scores.CollectChild(it);
-    }
-  }
-
-  void FinishParent() {
-    if constexpr (kHasScore) {
-      _scores.FinishParent();
-    }
-  }
-
-  void DiscardParent() {
-    if constexpr (kHasScore) {
-      _scores.DiscardParent();
-    }
-  }
-
-  [[no_unique_address]] utils::Need<kHasScore, NestedScore<MergeType>> _scores;
-};
-
-template<ScoreMergeType MergeType>
-class AnyMatcher : protected MatcherBase<MergeType> {
- public:
-  using JoinType = ChildToParentJoin<AnyMatcher<MergeType>>;
-
-  constexpr doc_id_t Accept(const doc_id_t child,
-                            const doc_id_t parent) const noexcept {
-    SDB_ASSERT(!doc_limits::eof(parent));
-    return child < parent ? 0 : child;
-  }
-
-  void CollectDataImpl() {
-    if constexpr (MatcherBase<MergeType>::kHasScore) {
-      auto& self = static_cast<JoinType&>(*this);
-      auto& child = *self._child;
-      const auto parent_doc = self.value();
-
-      // TODO(mbkkt) Maybe replace with collector to optimize?
-      for (auto doc = child.value(); doc < parent_doc; doc = child.advance()) {
-        this->CollectChild(child);
-      }
-
-      this->FinishParent();
-    }
-  }
-};
-
-template<ScoreMergeType MergeType>
-class PredMatcher : protected MatcherBase<MergeType> {
- public:
-  using JoinType = ChildToParentJoin<PredMatcher<MergeType>>;
-
-  static constexpr auto kMergeType = MergeType;
-  static constexpr bool kHasScore = kMergeType != ScoreMergeType::Noop;
-
-  explicit PredMatcher(DocIterator::ptr&& pred) noexcept
-    : _pred{std::move(pred)} {
-    if (!_pred) [[unlikely]] {
-      _pred = DocIterator::empty();
-    }
-  }
-
-  doc_id_t Accept(const doc_id_t first_child, const doc_id_t parent) {
-    SDB_ASSERT(!doc_limits::eof(parent));
-
-    if (first_child > parent) {
-      return first_child;
-    }
-
-    auto& self = static_cast<JoinType&>(*this);
-
-    if (first_child != _pred->seek(self.FirstChildApprox())) {
-      return parent + 1;
-    }
-
-    auto& child = *self._child;
-
-    this->CollectChild(child);
-
-    while (true) {
-      const auto pred_doc = _pred->advance();
-      if (parent <= pred_doc) {
-        return doc_limits::invalid();
-      }
-      SDB_ASSERT(!doc_limits::eof(pred_doc));
-
-      const auto child_doc = child.advance();
-      if (pred_doc != child_doc) {
-        this->DiscardParent();
-        return parent + 1;
-      }
-      SDB_ASSERT(!doc_limits::eof(child_doc));
-
-      this->CollectChild(child);
-    }
-  }
-
-  void CollectDataImpl() { this->FinishParent(); }
-
- private:
-  DocIterator::ptr _pred;
-};
-
-template<ScoreMergeType MergeType>
-class RangeMatcher : protected MatcherBase<MergeType> {
- public:
-  using JoinType = ChildToParentJoin<RangeMatcher<MergeType>>;
-
-  static constexpr auto kMergeType = MergeType;
-  static constexpr bool kHasScore = kMergeType != ScoreMergeType::Noop;
-
-  RangeMatcher(Match match) noexcept : _match{match} {
-    // This case is handled by MinMatcher
-    SDB_ASSERT(_match != Match{0});
-  }
-
-  doc_id_t Accept(const doc_id_t first_child, const doc_id_t parent) {
-    SDB_ASSERT(!doc_limits::eof(parent));
-
-    const auto [min, max] = _match;
-    SDB_ASSERT(min <= max);
-
-    if (first_child > parent) {
-      if (min == 0) {
-        return 0;
-      }
-      return first_child;
-    }
-
-    auto& self = static_cast<JoinType&>(*this);
-    auto& child = *self._child;
-
-    // Already matched the first child
-    doc_id_t count = 1;
-
-    this->CollectChild(child);
-
-    while (child.advance() < parent) {
-      if (++count > max) {
-        this->DiscardParent();
-        return parent + 1;
-      }
-
-      this->CollectChild(child);
-    }
-
-    if (min <= count) {
-      return 0;
-    }
-
-    this->DiscardParent();
-    return parent + 1;
-  }
-
-  void CollectDataImpl() { this->FinishParent(); }
-
-  const Match& Range() const noexcept { return _match; }
-
- private:
-  const Match _match;
-};
-
-template<ScoreMergeType MergeType>
-class MinMatcher : protected MatcherBase<MergeType> {
- public:
-  using JoinType = ChildToParentJoin<MinMatcher<MergeType>>;
-
-  static constexpr auto kMergeType = MergeType;
-  static constexpr bool kHasScore = kMergeType != ScoreMergeType::Noop;
-
-  MinMatcher(doc_id_t min) noexcept : _min{min} {}
-
-  doc_id_t Accept(const doc_id_t first_child, const doc_id_t parent) {
-    SDB_ASSERT(!doc_limits::eof(parent));
-
-    if (0 == _min) {
-      return 0;
-    }
-
-    if (first_child > parent) {
-      return first_child;
-    }
-
-    doc_id_t count = _min - 1;
-
-    if (!count) {
-      return 0;
-    }
-
-    auto& self = static_cast<JoinType&>(*this);
-    auto& child = *self._child;
-
-    this->CollectChild(child);
-
-    while (child.advance() < parent) {
-      this->CollectChild(child);
-
-      if (!--count) {
-        return 0;
-      }
-    }
-
-    this->DiscardParent();
-    return parent + 1;
-  }
-
-  void CollectDataImpl() {
-    if constexpr (kHasScore) {
-      auto& self = static_cast<JoinType&>(*this);
-      auto& child = *self._child;
-      const auto parent_doc = self.value();
-
-      // TODO(mbkkt) Maybe replace with collector to optimize?
-      for (auto doc = child.value(); doc < parent_doc; doc = child.advance()) {
-        this->CollectChild(child);
-      }
-
-      this->FinishParent();
-    }
-  }
-
-  Match Range() const noexcept { return Match{_min}; }
-
- private:
-  const doc_id_t _min;
-};
-
-template<ScoreMergeType MergeType, typename Visitor>
-auto ResolveMatchType(const SubReader& segment,
-                      const ByNestedOptions::MatchType& match,
-                      score_t none_boost, Visitor&& visitor) {
-  return std::visit(
-    absl::Overload{[&](Match v) {
-                     if (v == kMatchNone) {
-                       return visitor(NoneMatcher{none_boost});
-                     } else if (v == kMatchAny) {
-                       return visitor(AnyMatcher<MergeType>{});
-                     } else if (v.IsMinMatch()) {
-                       SDB_ASSERT(doc_limits::eof(v.max));
-                       return visitor(MinMatcher<MergeType>{v.min});
-                     } else {
-                       return visitor(RangeMatcher<MergeType>{v});
-                     }
-                   },
-                   [&](const DocIteratorProvider& v) {
-                     return visitor(PredMatcher<MergeType>{v(segment)});
-                   }},
-    match);
+template<template<typename> class Impl, typename Result, typename Rule,
+         typename... Head>
+Result MakeNestedDocs(ParentDocs::ptr parent, lead::Node::ptr child, Rule rule,
+                      Head&&... head) {
+  using Slots = NestedSlots<PlainChild, Rule>;
+  using Node = search::TwoPhaseFor<Result, Slots>;
+  return memory::make_managed<Impl<Node>>(
+    std::forward<Head>(head)..., std::piecewise_construct, std::move(parent),
+    std::forward_as_tuple(std::move(child)), std::move(rule));
+}
+
+template<template<typename> class Impl, typename Result, typename Rule,
+         typename... Head>
+Result MakeNestedScored(ParentDocs::ptr parent, lead::Node::ptr child,
+                        std::unique_ptr<ColumnArgsFetcher> fetcher,
+                        ScoreMergeType merge, Rule rule, Head&&... head) {
+  using Slots = NestedSlots<ScoredChild, Rule>;
+  return memory::make_managed<Impl<NestedScored<Slots>>>(
+    std::forward<Head>(head)..., std::piecewise_construct, std::move(parent),
+    std::forward_as_tuple(std::move(child), std::move(fetcher), merge),
+    std::move(rule));
 }
 
 }  // namespace
-namespace irs {
 
-class ByNestedQuery : public QueryBuilder {
+class ByNestedQuery : public QueryBuilderImpl<ByNestedQuery> {
  public:
-  ByNestedQuery(const SubReader& segment, DocIteratorProvider parent,
+  static uint32_t EstimateOf(const SubReader& segment,
+                             const ByNestedOptions::MatchType& match,
+                             const QueryBuilder& child) noexcept {
+    const auto docs = static_cast<uint32_t>(segment.docs_count());
+    const auto* const range = std::get_if<Match>(&match);
+    if (range == nullptr || range->min == 0) {
+      return docs;
+    }
+    return std::min(docs, child.EstimateMax());
+  }
+
+  ByNestedQuery(const SubReader& segment, ParentProvider parent,
                 QueryBuilder::ptr&& child, ScoreMergeType merge_type,
-                ByNestedOptions::MatchType match, score_t none_boost) noexcept
-    : QueryBuilder{segment},
+                ByNestedOptions::MatchType match, score_t constant) noexcept
+    : QueryBuilderImpl{segment, EstimateOf(segment, match, *child),
+                       QueryKind::Other},
       _parent{std::move(parent)},
       _child{std::move(child)},
       _match{std::move(match)},
       _merge_type{merge_type},
-      _none_boost{none_boost} {
+      _constant{constant} {
     SDB_ASSERT(_parent);
     SDB_ASSERT(_child);
     SDB_ASSERT(IsValid(_match));
   }
 
-  DocIterator::ptr Execute(const ExecutionContext& ctx,
-                           const StatsBuffer& stats) const final;
-
   void Visit(PreparedStateVisitor& visitor, score_t boost) const final {
-    // TODO(mbkkt) maybe use none_boost for NoneMatcher?
-    // boost *= this->Boost();
-
     if (!visitor.Visit(*this, boost)) {
       return;
     }
@@ -576,83 +499,224 @@ class ByNestedQuery : public QueryBuilder {
 
   score_t Boost() const noexcept final { return kNoBoost; }
 
+  ParentDocs::ptr Parents() const {
+    auto parent = _parent(_segment);
+    if (!parent) {
+      return EmptyParentDocs();
+    }
+    return parent;
+  }
+
+  const QueryBuilder& Child() const noexcept { return *_child; }
+
+  const ByNestedOptions::MatchType& MatchKind() const noexcept {
+    return _match;
+  }
+
+  ScoreMergeType Merge() const noexcept { return _merge_type; }
+
+  score_t Constant() const noexcept { return IsNoneMatch() ? _constant : 0.F; }
+
+  bool ScoresChildren() const noexcept {
+    return _merge_type != ScoreMergeType::Noop && !IsNoneMatch() &&
+           !QueryBuilder::IsEmpty(*_child);
+  }
+
  private:
-  DocIteratorProvider _parent;
+  bool IsNoneMatch() const noexcept {
+    const auto* range = std::get_if<Match>(&_match);
+    return range != nullptr && *range == kMatchNone;
+  }
+
+  ParentProvider _parent;
   QueryBuilder::ptr _child;
   ByNestedOptions::MatchType _match;
   ScoreMergeType _merge_type;
-  score_t _none_boost;
+  score_t _constant;
 };
 
-DocIterator::ptr ByNestedQuery::Execute(const ExecutionContext& ctx,
-                                        const StatsBuffer& stats) const {
-  auto& rdr = _segment;
+namespace {
 
-  auto parent = _parent(rdr);
-
-  if (!parent || doc_limits::eof(parent->value())) [[unlikely]] {
-    return DocIterator::empty();
+lead::Node::ptr ChildDocs(const ByNestedQuery& query) {
+  auto child = query.Child().PlanLead({});
+  if (!child && QueryBuilder::IsEmpty(query.Child())) {
+    return EmptyDocs();
   }
-
-  const auto* prev = irs::get<PrevDocAttr>(*parent);
-
-  if (!prev || !*prev) [[unlikely]] {
-    return DocIterator::empty();
-  }
-
-  const auto* scorer = stats.GetScorer();
-
-  ExecutionContext child_ctx{ctx};
-  // TODO(mbkkt) score pruning for nested?
-  child_ctx.prune_scorer = nullptr;
-
-  auto child = _child->Execute(
-    child_ctx, stats.ChildCount() != 0 ? stats.Child(0) : StatsBuffer::Empty());
-
-  if (!child) [[unlikely]] {
-    return DocIterator::empty();
-  }
-
-  return ResolveMergeType(
-    scorer ? _merge_type : ScoreMergeType::Noop,
-    [&]<ScoreMergeType MergeType>() -> DocIterator::ptr {
-      return ResolveMatchType<MergeType>(
-        rdr, _match, _none_boost,
-        [&]<typename M>(M&& matcher) -> DocIterator::ptr {
-          if constexpr (std::is_same_v<NoneMatcher, M>) {
-            if (doc_limits::eof(child->value()) && !scorer) {
-              return std::move(parent);
-            }
-          } else if constexpr (std::is_same_v<MinMatcher<MergeType>, M> ||
-                               std::is_same_v<RangeMatcher<MergeType>, M>) {
-            // When min=0 and child has no matches, every parent matches
-            // with score 0 -- return parent directly for efficiency
-            if (Match{0} == matcher.Range() &&
-                doc_limits::eof(child->value())) {
-              return std::move(parent);
-            }
-          } else {
-            if (doc_limits::eof(child->value())) {
-              return DocIterator::empty();
-            }
-          }
-
-          return memory::make_managed<ChildToParentJoin<M>>(
-            std::move(parent), *prev, std::move(child), std::move(matcher));
-        });
-    });
+  return child;
 }
 
+template<template<typename> class Impl, typename Result, typename... Head>
+Result PlanNestedDocs(const ByNestedQuery& query, Head&&... head) {
+  auto child = ChildDocs(query);
+  if (!child) {
+    return {};
+  }
+  auto parent = query.Parents();
+  return ResolveRule<true>(query.Segment(), query.MatchKind(),
+                           [&]<typename Rule>(Rule rule) -> Result {
+                             return MakeNestedDocs<Impl, Result>(
+                               std::move(parent), std::move(child),
+                               std::move(rule), std::forward<Head>(head)...);
+                           });
+}
+
+template<template<typename> class Impl, typename Result, typename... Head>
+Result PlanNestedScored(const ByNestedQuery& query, search::ScoredCtx ctx,
+                        Head&&... head) {
+  auto fetcher = std::make_unique<ColumnArgsFetcher>();
+  ctx.fetcher = fetcher.get();
+  auto child = query.Child().PlanLead(ctx);
+  if (!child) {
+    return {};
+  }
+  auto parent = query.Parents();
+  const auto merge = query.Merge();
+  return ResolveRule<false>(query.Segment(), query.MatchKind(),
+                            [&]<typename Rule>(Rule rule) -> Result {
+                              return MakeNestedScored<Impl, Result>(
+                                std::move(parent), std::move(child),
+                                std::move(fetcher), merge, std::move(rule),
+                                std::forward<Head>(head)...);
+                            });
+}
+
+}  // namespace
+namespace count {
+
+Root::ptr Make(const ByNestedQuery& query, const Context& ctx) {
+  if (ctx.table != nullptr) {
+    auto node = lead::Make(query);
+    if (!node) {
+      return {};
+    }
+    return MakeShape<Walk, lead::Erased>(ctx, std::move(node));
+  }
+  return PlanNestedDocs<PlainWalk, Root::ptr>(query, utils::Empty{});
+}
+
+}  // namespace count
+namespace docs {
+
+Root::ptr Make(const ByNestedQuery& query, const Context& ctx) {
+  if (ctx.table != nullptr) {
+    return PlanNestedDocs<FilteredWalk, Root::ptr>(query, ctx.table);
+  }
+  return PlanNestedDocs<PlainWalk, Root::ptr>(query, utils::Empty{});
+}
+
+}  // namespace docs
+namespace lead {
+
+Node::ptr Make(const ByNestedQuery& query) {
+  return PlanNestedDocs<Impl, Node::ptr>(query);
+}
+
+Node::ptr Make(const ByNestedQuery& query, const ScoredCtx& ctx) {
+  if (query.ScoresChildren()) {
+    return PlanNestedScored<Impl, Node::ptr>(query, ctx);
+  }
+  auto node = Make(query);
+  if (!node) {
+    return {};
+  }
+  using Node = ConstantScored<Erased>;
+  return memory::make_managed<Impl<Node>>(query.Constant(), std::move(node));
+}
+
+}  // namespace lead
+namespace probe {
+
+Node::ptr Make(const ByNestedQuery& query, uint64_t) {
+  return PlanNestedDocs<Impl, Node::ptr>(query);
+}
+
+Node::ptr Make(const ByNestedQuery& query, const ScoredCtx& ctx, uint64_t) {
+  if (query.ScoresChildren()) {
+    return PlanNestedScored<Impl, Node::ptr>(query, ctx);
+  }
+  auto node = PlanNestedDocs<Impl, Node::ptr>(query);
+  if (!node) {
+    return {};
+  }
+  using Node = ConstantScored<Erased>;
+  return memory::make_managed<Impl<Node>>(query.Constant(), std::move(node));
+}
+
+}  // namespace probe
+namespace fill {
+
+Node::ptr Make(const ByNestedQuery& query) {
+  return PlanNestedDocs<ByWalkDocs, Node::ptr>(query);
+}
+
+Node::ptr Make(const ByNestedQuery& query, const ScoredCtx& ctx,
+               ScoreMergeType merge) {
+  if (query.ScoresChildren()) {
+    return PlanNestedScored<ByWalkScored, Node::ptr>(query, ctx, merge);
+  }
+  auto node = lead::Make(query);
+  if (!node) {
+    return {};
+  }
+  using Node = lead::ConstantScored<lead::Erased>;
+  return memory::make_managed<ByWalkScored<Node>>(merge, query.Constant(),
+                                                  std::move(node));
+}
+
+}  // namespace fill
+namespace scored {
+
+Root::ptr Make(const ByNestedQuery& query, const Context& ctx) {
+  if (query.ScoresChildren()) {
+    if (ctx.table != nullptr) {
+      return PlanNestedScored<FilteredWalk, Root::ptr>(query, ScoredOf(ctx),
+                                                       ctx.table, ctx.fetcher);
+    }
+    return PlanNestedScored<PlainWalk, Root::ptr>(query, ScoredOf(ctx),
+                                                  utils::Empty{}, ctx.fetcher);
+  }
+  auto node = lead::Make(query);
+  if (!node) {
+    return {};
+  }
+  return MakeShape<detail::ConstantWalk, lead::Erased>(
+    ctx, query.Constant(), lead::Erased{std::move(node)});
+}
+
+}  // namespace scored
+namespace top {
+
+Root::ptr Make(const ByNestedQuery& query, const Context& ctx) {
+  if (query.ScoresChildren()) {
+    if (ctx.table != nullptr) {
+      return PlanNestedScored<FilteredWalk, Root::ptr>(query, ScoredOf(ctx),
+                                                       ctx.table, ctx.fetcher);
+    }
+    return PlanNestedScored<PlainWalk, Root::ptr>(query, ScoredOf(ctx),
+                                                  utils::Empty{}, ctx.fetcher);
+  }
+  auto node = lead::Make(query);
+  if (!node) {
+    return {};
+  }
+  return MakeShape<detail::ConstantWalk, lead::Erased>(
+    ctx, query.Constant(), lead::Erased{std::move(node)});
+}
+
+}  // namespace top
+
 PrepareCollector::ptr ByNestedFilter::MakeCollectorImpl(
-  const Scorer* scorer) const {
+  const Scorer* scorer, StatsArena& stats, uint32_t threads) const {
   auto& [parent, child, match, merge_type] = options();
 
   if (!parent || !child || !IsValid(match)) {
-    return std::make_unique<NoopCollector>();
+    return nullptr;
   }
 
   auto compound = std::make_unique<CompoundCollector>(scorer);
-  compound->Add(child->MakeCollector(GetOrder(match, scorer)));
+  const auto* const order = GetOrder(match, scorer);
+  compound->Add(order != nullptr ? child->MakeCollector(*order, stats, threads)
+                                 : nullptr);
   return compound;
 }
 
@@ -664,14 +728,15 @@ QueryBuilder::ptr ByNestedFilter::PrepareSegment(
     return QueryBuilder::Empty();
   }
 
-  auto* compound = dynamic_cast<CompoundCollector*>(ctx.collector);
+  auto* compound =
+    ctx.collector != nullptr ? ctx.collector->AsCompound() : nullptr;
   SDB_ASSERT(ctx.collector == nullptr || compound != nullptr);
 
   const auto sub_boost = ctx.boost * GetBoost();
 
   PrepareContext child_ctx = ctx;
   child_ctx.boost = sub_boost;
-  child_ctx.collector = compound ? &compound->Child(0) : nullptr;
+  child_ctx.collector = compound ? compound->Child(0) : nullptr;
 
   auto prepared_child = child->PrepareSegment(segment, child_ctx);
 
@@ -679,9 +744,11 @@ QueryBuilder::ptr ByNestedFilter::PrepareSegment(
     return QueryBuilder::Empty();
   }
 
-  return memory::make_tracked<ByNestedQuery>(
+  auto query = memory::make_tracked<ByNestedQuery>(
     ctx.memory, segment, parent, std::move(prepared_child), merge_type, match,
-    /*none_boost*/ sub_boost);
+    sub_boost);
+  query->SetStats(ctx.Record());
+  return query;
 }
 
 }  // namespace irs

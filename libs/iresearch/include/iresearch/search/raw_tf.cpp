@@ -37,9 +37,7 @@ constexpr const T* TryGetValue(const T* value) noexcept {
   return value;
 }
 
-constexpr std::nullptr_t TryGetValue(utils::Empty /*value*/) noexcept {
-  return nullptr;
-}
+constexpr std::nullptr_t TryGetValue(utils::Empty) noexcept { return nullptr; }
 
 template<ScoreMergeType MergeType, bool HasBoost>
 IRS_FORCE_INLINE void RawTfImpl(
@@ -113,9 +111,6 @@ struct RawTfScore : public ScoreOperator {
 ScoreFunction RawTF::PrepareScorer(const ScoreContext& ctx) const {
   auto* freq = irs::get<FreqBlockAttr>(ctx.doc_attrs);
   if (!freq) {
-    // No frequency available (e.g. irs::all filter) -- score is 0
-    // per RawTFSimilarity convention; defer to the default
-    // zero scorer.
     if (0.f == ctx.boost) {
       return ScoreFunction::Default();
     }

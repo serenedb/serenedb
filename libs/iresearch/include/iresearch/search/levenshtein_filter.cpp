@@ -43,9 +43,6 @@
 namespace irs {
 namespace {
 
-////////////////////////////////////////////////////////////////////////////////
-/// @returns levenshtein similarity
-////////////////////////////////////////////////////////////////////////////////
 IRS_FORCE_INLINE score_t Similarity(uint32_t distance, uint32_t size) noexcept {
   SDB_ASSERT(size);
 
@@ -55,15 +52,11 @@ IRS_FORCE_INLINE score_t Similarity(uint32_t distance, uint32_t size) noexcept {
 }
 
 struct AggregatedStatsVisitor : util::Noncopyable {
-  AggregatedStatsVisitor(MultiTermState& state, FieldCollector* field_stat,
-                         TermCollector* term_stat) noexcept
-    : state{state}, field_stat{field_stat}, term_stat{term_stat} {}
+  AggregatedStatsVisitor(MultiTermState& state, TermCollector* term_stat,
+                         const byte_type* stats) noexcept
+    : state{state}, term_stat{term_stat}, stats{stats} {}
 
   void operator()(const SubReader&, const TermReader& field, uint32_t) const {
-    if (field_stat && !field_collected) {
-      field_stat->Collect(field);
-      field_collected = true;
-    }
     state.Prepare(&field);
   }
 
@@ -71,14 +64,13 @@ struct AggregatedStatsVisitor : util::Noncopyable {
     if (term_stat) {
       term_stat->Collect(cookie);
     }
-    state.Push(cookie, boost, 0);
+    state.Push(cookie, boost, stats);
   }
 
   MultiTermState& state;
-  FieldCollector* field_stat;
   TermCollector* term_stat;
+  const byte_type* stats;
   score_t boost{kNoBoost};
-  mutable bool field_collected{false};
 };
 
 class LevenshteinIterator : public WrappedTermIterator {
@@ -152,23 +144,23 @@ QueryBuilder::ptr PrepareLevenshteinSegment(
   const SubReader& segment, const PrepareContext& ctx, irs::field_id field,
   const automaton_table_matcher& matcher, uint32_t utf8_target_size,
   byte_type no_distance, size_t terms_limit, score_t boost) {
-  auto query = memory::make_tracked<MultiTermQuery>(
-    ctx.memory, segment, ctx.memory, ctx.boost * boost, ScoreMergeType::Max,
-    size_t{1});
-
   const auto* reader = segment.field(field);
   if (!reader) {
-    return query;
+    return QueryBuilder::Empty();
   }
 
+  auto query = memory::make_tracked<MultiTermQuery>(
+    ctx.memory, segment, ctx.memory, ctx.boost * boost, ScoreMergeType::Max);
   auto* collector = ctx.collector
                       ? &sdb::basics::downCast<ByTermsCollector>(*ctx.collector)
                       : nullptr;
+  if (collector) {
+    collector->Field(ctx.thread).Collect(*reader);
+  }
 
+  const auto stats = ctx.Record().stats;
   if (!terms_limit) {
-    AllTermsVisitor term_collector{query->State(),
-                                   collector ? &collector->Field() : nullptr,
-                                   collector ? &collector->Terms() : nullptr};
+    AllTermsVisitor term_collector{query->State(), collector, ctx.thread};
     VisitImpl(segment, *reader, no_distance, utf8_target_size, matcher,
               term_collector);
   } else {
@@ -177,15 +169,15 @@ QueryBuilder::ptr PrepareLevenshteinSegment(
               selector);
 
     AggregatedStatsVisitor aggregate_stats{
-      query->State(), collector ? &collector->Field() : nullptr,
-      collector ? &collector->Terms()[0] : nullptr};
+      query->State(), collector ? &collector->Term(ctx.thread, 0) : nullptr,
+      stats};
     selector.Visit([&aggregate_stats](TopTermState<score_t>& s) {
       aggregate_stats.boost = std::max(0.f, s.key);
       s.Visit(aggregate_stats);
     });
   }
 
-  return query;
+  return MultiTermQuery::Finish(std::move(query), ctx);
 }
 
 }  // namespace
@@ -228,8 +220,8 @@ QueryBuilder::ptr LevenshteinAutomatonFilter::PrepareSegment(
 }
 
 PrepareCollector::ptr LevenshteinAutomatonFilter::MakeCollectorImpl(
-  const Scorer* scorer) const {
-  return std::make_unique<ByTermsCollector>(scorer, 1);
+  const Scorer* scorer, StatsArena& stats, uint32_t threads) const {
+  return std::make_unique<ByTermsCollector>(scorer, 1, stats, threads);
 }
 
 LevenshteinAutomatonOptions::LevenshteinAutomatonOptions(

@@ -24,12 +24,13 @@
 #include <cstdint>
 #include <functional>
 #include <span>
+#include <tuple>
 
 #include "basics/bit_utils.hpp"
 #include "basics/shared.hpp"
 #include "iresearch/analysis/token_attributes.hpp"
 #include "iresearch/formats/posting_meta.hpp"
-#include "iresearch/search/cost.hpp"
+#include "iresearch/index/index_features.hpp"
 #include "iresearch/types.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
@@ -62,17 +63,62 @@ IRS_FORCE_INLINE void CopyState(SkipState& to, const SkipState& from) noexcept {
   }
 }
 
-template<typename FieldTraits, typename Input>
-IRS_FORCE_INLINE void ReadState(SkipState& state, Input& in) {
+// What a skip level holds beyond the document and where its block starts:
+// a position pointer when the field has positions, a payload pointer beside
+// it when the field has offsets, and a position offset closing the level.
+// Which of them are there is the field's own answer and the same for every
+// level and every term, so it is read once where the leaf is built.
+struct SkipLayout {
+  bool pos = false;
+  bool offs = false;
+};
+
+IRS_FORCE_INLINE constexpr SkipLayout ToSkipLayout(
+  IndexFeatures features) noexcept {
+  return {.pos = IndexFeatures::None != (features & IndexFeatures::Pos),
+          .offs = IndexFeatures::None != (features & IndexFeatures::Offs)};
+}
+
+IRS_FORCE_INLINE constexpr bool FeaturesHaveFreq(
+  IndexFeatures features) noexcept {
+  return IndexFeatures::None != (features & IndexFeatures::Freq);
+}
+
+// A level of a field whose positions the leaf never reads. What the field
+// wrote for the streams it does not touch is stepped over, not parsed: the
+// copy traits of every such leaf carry neither pointer out of a level, so
+// accumulating them would be writing state nothing reads back.
+template<typename Input>
+IRS_FORCE_INLINE void ReadDocState(SkipState& state, Input& in,
+                                   SkipLayout layout) {
   state.doc = in.ReadV32();
   state.doc_ptr += in.ReadV64();
-  if constexpr (FieldTraits::Position()) {
-    state.pos_ptr += in.ReadV64();
-    if constexpr (FieldTraits::Offset()) {
-      state.pay_ptr += in.ReadV64();
+  if (layout.pos) {
+    std::ignore = in.ReadV64();
+    if (layout.offs) {
+      std::ignore = in.ReadV64();
     }
-    state.pos_offset = in.ReadByte();
+    std::ignore = in.ReadByte();
   }
+}
+
+// A level of a field the leaf does read positions out of. Such a leaf is
+// built only on a field that has them, so the position pointer is not a
+// question -- `Offs` is whether this leaf decodes the payloads beside them,
+// and `has_pay` whether the field wrote a pointer to step over either way.
+template<bool Offs, typename Input>
+IRS_FORCE_INLINE void ReadPosState(SkipState& state, Input& in, bool has_pay) {
+  state.doc = in.ReadV32();
+  state.doc_ptr += in.ReadV64();
+  state.pos_ptr += in.ReadV64();
+  if (has_pay) {
+    if constexpr (Offs) {
+      state.pay_ptr += in.ReadV64();
+    } else {
+      std::ignore = in.ReadV64();
+    }
+  }
+  state.pos_offset = in.ReadByte();
 }
 
 template<typename IteratorTraits>
@@ -188,11 +234,6 @@ IRS_FORCE_INLINE It BranchlessLowerBound(It begin, const T& value,
   return begin + compare(*begin, value);
 }
 
-template<typename IteratorTraits>
-using AttributesImpl =
-  std::conditional_t<IteratorTraits::Frequency(),
-                     std::tuple<FreqBlockAttr, CostAttr>, std::tuple<CostAttr>>;
-
 template<typename FormatTraits, bool Freq, bool Pos, bool Offs>
 struct IteratorTraitsImpl : FormatTraits {
   static constexpr bool Frequency() noexcept { return Freq; }
@@ -211,82 +252,6 @@ struct IteratorTraitsImpl : FormatTraits {
     }
     return r;
   }
-};
-
-template<typename PostingImpl>
-struct PostingAdapter {
-  PostingAdapter(DocIterator::ptr it) noexcept : _it{std::move(it)} {
-    SDB_ASSERT(_it);
-    SDB_ASSERT(dynamic_cast<PostingImpl*>(_it.get()));
-  }
-
-  PostingAdapter(PostingAdapter&&) noexcept = default;
-  PostingAdapter& operator=(PostingAdapter&&) noexcept = default;
-
-  IRS_FORCE_INLINE operator DocIterator::ptr&&() && noexcept {
-    return std::move(_it);
-  }
-
-  IRS_FORCE_INLINE Attribute* GetMutable(TypeInfo::type_id type) noexcept {
-    return self().GetMutable(type);
-  }
-
-  IRS_FORCE_INLINE const doc_id_t& value() const noexcept {
-    return self().value();
-  }
-
-  IRS_FORCE_INLINE doc_id_t advance() { return self().advance(); }
-
-  IRS_FORCE_INLINE doc_id_t seek(doc_id_t target) {
-    return self().seek(target);
-  }
-
-  IRS_FORCE_INLINE doc_id_t LazySeek(doc_id_t target) {
-    return self().LazySeek(target);
-  }
-
-  IRS_FORCE_INLINE void FetchScoreArgs(uint16_t index) {
-    return self().FetchScoreArgs(index);
-  }
-
-  IRS_FORCE_INLINE ScoreFunction
-  PrepareScore(const PrepareScoreContext& ctx) const noexcept {
-    return self().PrepareScore(ctx);
-  }
-
-  IRS_FORCE_INLINE std::pair<doc_id_t, bool> FillBlock(
-    doc_id_t min, doc_id_t max, uint64_t* mask, FillBlockScoreContext score,
-    FillBlockMatchContext match) {
-    return self().FillBlock(min, max, mask, score, match);
-  }
-
-  IRS_FORCE_INLINE uint32_t count() { return self().count(); }
-
-  IRS_FORCE_INLINE void Collect(const ScoreFunction& scorer,
-                                ColumnArgsFetcher& fetcher,
-                                ScoreCollector& collector) {
-    self().Collect(scorer, fetcher, collector);
-  }
-
-  IRS_FORCE_INLINE uint32_t EmitDocs(doc_id_t* out, doc_id_t min,
-                                     doc_id_t max) {
-    return self().EmitDocs(out, min, max);
-  }
-
-  IRS_FORCE_INLINE uint32_t EmitScoredDocs(doc_id_t* out, score_t* scores,
-                                           doc_id_t max,
-                                           const ScoreFunction& scorer,
-                                           ColumnArgsFetcher* fetcher,
-                                           doc_id_t min) {
-    return self().EmitScoredDocs(out, scores, max, scorer, fetcher, min);
-  }
-
- protected:
-  IRS_FORCE_INLINE PostingImpl& self() const noexcept {
-    return static_cast<PostingImpl&>(*_it);
-  }
-
-  DocIterator::ptr _it;
 };
 
 }  // namespace irs

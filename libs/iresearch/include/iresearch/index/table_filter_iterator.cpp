@@ -22,6 +22,8 @@
 
 #include <absl/algorithm/container.h>
 
+#include <array>
+#include <bit>
 #include <duckdb/common/vector/list_vector.hpp>
 #include <duckdb/planner/expression/bound_comparison_expression.hpp>
 #include <duckdb/planner/expression/bound_conjunction_expression.hpp>
@@ -33,6 +35,7 @@
 #include <duckdb/storage/table/column_segment.hpp>
 
 #include "basics/assert.h"
+#include "iresearch/search/common/window.hpp"
 
 namespace sdb::connector {
 
@@ -242,13 +245,13 @@ duckdb::idx_t ColFilterChain::FilterDocs(irs::doc_id_t* docs,
     const uint64_t anchor = docs[i] - irs::doc_limits::min();
     const uint64_t rg_end = _cols.front().reader->RowGroupEnd(anchor);
     duckdb::idx_t j = i;
-    while (j < n && (docs[j] - irs::doc_limits::min()) < rg_end) {
+    while (j < n && (docs[j] - irs::doc_limits::min()) < rg_end &&
+           (docs[j] - irs::doc_limits::min()) - anchor < STANDARD_VECTOR_SIZE) {
       ++j;
     }
     const duckdb::idx_t run = j - i;
     const auto span = static_cast<duckdb::idx_t>(
       (docs[j - 1] - irs::doc_limits::min()) - anchor + 1);
-    SDB_ASSERT(run <= STANDARD_VECTOR_SIZE);
     _sel.Initialize(_sel_data);
     for (duckdb::idx_t k = 0; k < run; ++k) {
       _sel.set_index(k, (docs[i + k] - irs::doc_limits::min()) - anchor);
@@ -261,6 +264,124 @@ duckdb::idx_t ColFilterChain::FilterDocs(irs::doc_id_t* docs,
     i = j;
   }
   return w;
+}
+
+template<bool Keep>
+duckdb::idx_t ColFilterChain::WalkMask(irs::doc_id_t base, uint64_t* mask,
+                                       duckdb::idx_t words) {
+  SDB_ASSERT(!_cols.empty());
+  duckdb::idx_t total = 0;
+  if (!_sel_data) {
+    _sel_data =
+      duckdb::make_buffer<duckdb::SelectionData>(STANDARD_VECTOR_SIZE);
+  }
+  const auto* const reader = _cols.front().reader;
+  duckdb::idx_t w = 0;
+  uint64_t word = 0;
+  // A word is cleared as it is loaded: what a run has consumed is never read
+  // from memory again, so the load and the clear are one pass and only the
+  // survivors of a `Keep` walk are written back.
+  const auto load = [&] {
+    while (w != words) {
+      word = mask[w];
+      mask[w] = 0;
+      ++w;
+      if (word != 0) {
+        return true;
+      }
+    }
+    return false;
+  };
+  const auto bit = [&] {
+    return (w - 1) * 64 + static_cast<uint64_t>(std::countr_zero(word));
+  };
+  const auto skip = [&](uint64_t end) {
+    while (end >= w * 64) {
+      if (!load()) {
+        return false;
+      }
+    }
+    if (const auto lo = (w - 1) * 64; end > lo) {
+      word &= ~uint64_t{0} << (end - lo);
+    }
+    return word != 0 || load();
+  };
+  if (!load()) {
+    return 0;
+  }
+  for (;;) {
+    const uint64_t off = bit();
+    // The row of a bit is computed from the bit, never from a base of its
+    // own: bit zero of a whole segment's set stands for document zero, which
+    // is no row at all.
+    const uint64_t anchor = (base + off) - irs::doc_limits::min();
+    if (const auto dead = DeadUntil(anchor); dead != 0) {
+      if (!skip(dead + irs::doc_limits::min() - base)) {
+        return total;
+      }
+      continue;
+    }
+    const uint64_t limit =
+      reader->RowGroupEnd(anchor) + irs::doc_limits::min() - base;
+    _sel.Initialize(_sel_data);
+    duckdb::idx_t run = 0;
+    uint64_t last = off;
+    bool more = true;
+    for (;;) {
+      const auto b = bit();
+      if (b >= limit || b - off >= STANDARD_VECTOR_SIZE) {
+        break;
+      }
+      _sel.set_index(run, static_cast<duckdb::idx_t>(b - off));
+      ++run;
+      last = b;
+      word &= word - 1;
+      if (word == 0 && !load()) {
+        more = false;
+        break;
+      }
+    }
+    const auto span = static_cast<duckdb::idx_t>(last - off + 1);
+    const auto survivors = FilterWindow(anchor, span, _sel, run, nullptr);
+    if constexpr (Keep) {
+      for (duckdb::idx_t k = 0; k != survivors; ++k) {
+        const auto b = off + _sel.get_index(k);
+        mask[b / 64] |= uint64_t{1} << (b % 64);
+      }
+    }
+    total += survivors;
+    if (!more) {
+      return total;
+    }
+  }
+}
+
+duckdb::idx_t ColFilterChain::CountMask(irs::doc_id_t base, uint64_t* mask,
+                                        duckdb::idx_t words) {
+  // A count reaches the chain only with columns bound: nothing else can rule
+  // a document out, so an empty chain would not have been passed at all.
+  SDB_ASSERT(!_cols.empty());
+  return WalkMask<false>(base, mask, words);
+}
+
+duckdb::idx_t ColFilterChain::FilterMask(irs::doc_id_t base, uint64_t* mask,
+                                         duckdb::idx_t words) {
+  if (_cols.empty()) {
+    // Only the computed-score filter is bound, and it has already cleared its
+    // own bits; what is left is the answer.
+    duckdb::idx_t total = 0;
+    for (duckdb::idx_t w = 0; w != words; ++w) {
+      total += static_cast<duckdb::idx_t>(std::popcount(mask[w]));
+    }
+    return total;
+  }
+  return WalkMask<true>(base, mask, words);
+}
+
+void ColFilterChain::Rewind(irs::ReadContext& ctx) {
+  for (auto& f : _cols) {
+    f.scan = f.reader->InitScan(ctx);
+  }
 }
 
 uint64_t ColFilterChain::DeadUntil(uint64_t row) {
@@ -314,11 +435,43 @@ void ColFilterChain::FinishOutputs(uint64_t anchor, duckdb::idx_t span,
   }
 }
 
-duckdb::idx_t ColFilterChain::FilterScores(const duckdb::TableFilter& filter,
-                                           duckdb::TableFilterState& state,
-                                           irs::doc_id_t* docs,
-                                           irs::score_t* scores,
-                                           duckdb::idx_t n) {
+duckdb::idx_t ColFilterChain::FilterMaskScores(
+  const duckdb::TableFilter& /*filter*/, duckdb::TableFilterState& state,
+  uint64_t* mask, const irs::score_t* scores, duckdb::idx_t words) {
+  duckdb::idx_t total = 0;
+  std::array<irs::score_t, 64> vals;
+  std::array<uint8_t, 64> offs;
+  for (duckdb::idx_t w = 0; w != words; ++w) {
+    auto word = mask[w];
+    if (word == 0) {
+      continue;
+    }
+    const auto base = static_cast<uint64_t>(w) * 64;
+    duckdb::idx_t run = 0;
+    for (auto scan = word; scan != 0; scan &= scan - 1) {
+      const auto bit = static_cast<uint64_t>(std::countr_zero(scan));
+      offs[run] = static_cast<uint8_t>(bit);
+      vals[run] = scores[base + bit];
+      ++run;
+    }
+    duckdb::Vector svec{duckdb::LogicalType::FLOAT,
+                        reinterpret_cast<duckdb::data_ptr_t>(vals.data()), run};
+    duckdb::SelectionVector sel;
+    duckdb::idx_t kept = run;
+    duckdb::ColumnSegment::FilterSelection(sel, svec, state, run, kept);
+    uint64_t out = 0;
+    for (duckdb::idx_t k = 0; k != kept; ++k) {
+      out |= uint64_t{1} << offs[sel.get_index(k)];
+    }
+    mask[w] = out;
+    total += kept;
+  }
+  return total;
+}
+
+duckdb::idx_t ColFilterChain::FilterDocsScores(
+  const duckdb::TableFilter& filter, duckdb::TableFilterState& state,
+  irs::doc_id_t* docs, irs::score_t* scores, duckdb::idx_t n) {
   if (n == 0) {
     return 0;
   }
@@ -358,118 +511,6 @@ void ColFilterChain::CompactByOffsets(const duckdb::SelectionVector& sel,
     if (scores_out != nullptr) {
       scores_out[s] = scores_in[k];
     }
-  }
-}
-
-TableFilterDocIterator::TableFilterDocIterator(
-  irs::DocIterator::ptr inner, const irs::ColReader& col_reader,
-  std::span<const FilterSpec> filters, duckdb::ClientContext& context,
-  ColFilterStateCache& states)
-  : _inner{std::move(inner)}, _ctx{col_reader} {
-  for (const auto& spec : filters) {
-    if (spec.is_score) {
-      // The score is computed, not stored in `.col` -- filtered on the score
-      // vector in FilterBlock, so it takes no columnstore reader.
-      _score_filter = spec.filter;
-      _score_state = &states.State(context, *spec.filter);
-    }
-  }
-  _filters.Bind(col_reader, _ctx, filters, context, states);
-  _filters.FinishBind();
-}
-
-duckdb::idx_t TableFilterDocIterator::FilterBlock(irs::doc_id_t* docs,
-                                                  irs::score_t* scores,
-                                                  duckdb::idx_t n) {
-  if ((_filters.Empty() && _score_filter == nullptr) || n == 0) {
-    return n;
-  }
-  duckdb::idx_t out = n;
-
-  // Phase 1: the score filter is the cheap one -- a comparison on the already
-  // computed, in-memory scores, with no columnstore read. Run it first so the
-  // `.col` pass below reads only survivors and skips whole blocks whose docs
-  // were all score-rejected.
-  if (_score_filter && scores) {
-    out = ColFilterChain::FilterScores(*_score_filter, *_score_state, docs,
-                                       scores, out);
-  }
-
-  // Phase 2: `.col` filters -- per-block zonemap skip + codec filter over the
-  // (score-)survivors, compacting in place.
-  return _filters.FilterDocs(docs, scores, out);
-}
-
-uint32_t TableFilterDocIterator::count() {
-  // count() never scores, so a pushed score filter cannot be applied here --
-  // the mode decision (DecideScanMode) must route such plans to streaming.
-  SDB_ASSERT(_score_filter == nullptr);
-  // Self-positioning EmitDocs drives the walk from a running `min`; no external
-  // advance() prime (which is invalid for iterators that don't implement it).
-  uint32_t total = 0;
-  auto min = irs::doc_limits::min();
-  while (!irs::doc_limits::eof(min)) {
-    if (!_filters.Empty()) {
-      // Zonemap skip: raise the emit floor past a definitely-dead block
-      // (EmitDocs self-positions to `min`) instead of emitting and dropping
-      // it window by window.
-      const auto dead_end = _filters.DeadUntil(min - irs::doc_limits::min());
-      if (dead_end != 0) {
-        min = irs::doc_limits::min() + static_cast<irs::doc_id_t>(dead_end);
-        continue;
-      }
-    }
-    const auto max = min + STANDARD_VECTOR_SIZE;
-    const auto n = _inner->EmitDocs(_docbuf.data(), min, max);
-    total += static_cast<uint32_t>(FilterBlock(_docbuf.data(), nullptr, n));
-    _doc = min = _inner->value();  // postcondition: first doc >= max (or eof)
-  }
-  return total;
-}
-
-uint32_t TableFilterDocIterator::EmitDocs(irs::doc_id_t* out, irs::doc_id_t min,
-                                          irs::doc_id_t max) {
-  // Emit straight into the caller's buffer and compact in place: FilterBlock
-  // only ever shrinks [0, n), so no staging copy is needed.
-  const auto n = _inner->EmitDocs(out, min, max);
-  const auto survivors = FilterBlock(out, nullptr, n);
-  _doc = _inner->value();
-  return static_cast<uint32_t>(survivors);
-}
-
-uint32_t TableFilterDocIterator::EmitScoredDocs(
-  irs::doc_id_t* out, irs::score_t* scores, irs::doc_id_t max,
-  const irs::ScoreFunction& scorer, irs::ColumnArgsFetcher* fetcher,
-  irs::doc_id_t min) {
-  const auto n = _inner->EmitScoredDocs(out, scores, max, scorer, fetcher, min);
-  const auto survivors = FilterBlock(out, scores, n);
-  _doc = _inner->value();
-  return static_cast<uint32_t>(survivors);
-}
-
-void TableFilterDocIterator::Collect(const irs::ScoreFunction& scorer,
-                                     irs::ColumnArgsFetcher& fetcher,
-                                     irs::ScoreCollector& collector) {
-  // Self-positioning EmitScoredDocs drives the walk from a running `min`; no
-  // external advance() prime (invalid for non-advance() iterators).
-  auto min = irs::doc_limits::min();
-  while (!irs::doc_limits::eof(min)) {
-    if (!_filters.Empty()) {
-      // Zonemap skip: raise the emit floor past a definitely-dead block
-      // (EmitScoredDocs self-positions to `min`) instead of scoring and
-      // dropping it window by window.
-      const auto dead_end = _filters.DeadUntil(min - irs::doc_limits::min());
-      if (dead_end != 0) {
-        min = irs::doc_limits::min() + static_cast<irs::doc_id_t>(dead_end);
-        continue;
-      }
-    }
-    const auto max = min + STANDARD_VECTOR_SIZE;
-    const auto n = _inner->EmitScoredDocs(_docbuf.data(), _scorebuf.data(), max,
-                                          scorer, &fetcher, min);
-    const auto survivors = FilterBlock(_docbuf.data(), _scorebuf.data(), n);
-    collector.AddDocs(_docbuf.data(), survivors, _scorebuf.data());
-    _doc = min = _inner->value();
   }
 }
 

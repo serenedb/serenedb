@@ -447,7 +447,7 @@ class CreateTSDictionaryOptions : public OptionsParser {
     const irs::analysis::SparseNGramTokenizer::Options* parent) {
     irs::analysis::SparseNGramTokenizer::Options opts;
     int parent_len = parent ? static_cast<int>(parent->max_ngram_length) : 0;
-    opts.max_ngram_length = Resolve<tokenizer_options::kMaxNgramLength>(
+    opts.max_ngram_length = Resolve<tokenizer_options::kMaxNGramLength>(
       prefix, parent ? &parent_len : nullptr);
     opts.covering = Resolve<tokenizer_options::kCovering>(
       prefix, parent ? &parent->covering : nullptr);
@@ -756,7 +756,7 @@ class CreateTSDictionaryOptions : public OptionsParser {
       BuildSingleChild(prefix, parent ? parent->base_analyzer.get() : nullptr);
     int parent_n = parent ? static_cast<int>(parent->ngram_size) : 3;
     opts.ngram_size =
-      static_cast<size_t>(Resolve<tokenizer_options::kNgramSize>(
+      static_cast<size_t>(Resolve<tokenizer_options::kNGramSize>(
         prefix, parent ? &parent_n : nullptr));
     return opts;
   }

@@ -13,7 +13,7 @@ hash-threshold 100
 # reader; dev builds hit the stub's assert.
 #
 # All three ingredients are needed: `optimize_top_k` (no pruning iterator
-# without it), more than one term (a single term takes `SinglePruningIterator`,
+# without it), more than one term (a single term takes `PruningIterator`,
 # which does implement `advance`), and at least one deleted row.
 #
 # `MultiTermQuery::Execute` now drops pruning for a segment that has a document

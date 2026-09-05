@@ -91,7 +91,8 @@ duckdb::idx_t AppendVirtualGetColumn(connector::SereneDBScanBindData& bind_data,
                                      std::string_view col_name);
 
 bool TryClaimIResearchConjunct(
-  irs::And& and_root, const duckdb::unique_ptr<duckdb::Expression>& conjunct,
+  irs::BooleanFilter& root,
+  const duckdb::unique_ptr<duckdb::Expression>& conjunct,
   const connector::ColumnGetter& getter,
   const connector::ExpressionGetter& expr_getter,
   duckdb::ClientContext& context, connector::FilterScorers* scorers = nullptr);

@@ -105,7 +105,7 @@ struct PostingsWriter {
   virtual void Prepare(IndexOutput& out, const FlushState& state) = 0;
   virtual void BeginField(const FieldProperties& meta) = 0;
   virtual void SetTermPayloadWriter(TermPayloadWriter*) {}
-  virtual void Write(DocIterator& docs, PostingMeta& meta) = 0;
+  virtual void Write(TermPostings& docs, PostingMeta& meta) = 0;
   virtual void BeginBlock() = 0;
   virtual void Encode(BufferedOutput& out, const PostingMeta& state) = 0;
   virtual FieldStats EndField() = 0;
@@ -125,17 +125,13 @@ struct BasicTermReader : public AttributeProvider {
   virtual TermPayloadWriter* PayloadWriter() const { return nullptr; }
 };
 
-struct IteratorFieldOptions {
-  bool score_prune = false;
-  bool has_score_bounds = false;
-  const Scorer* scorer = nullptr;
-};
-
-struct PostingCookie {
-  const PostingMeta* cookie = nullptr;
-  const byte_type* stats = nullptr;
-  score_t boost = kNoBoost;
-  FieldProperties field;
+// The streams a posting list lives in. Handed to whatever decodes a term's
+// postings so it can reopen what it needs; `pos` and `pay` are null for a
+// field that stores neither.
+struct PostingsHandles {
+  const IndexInput* doc = nullptr;
+  const IndexInput* pos = nullptr;
+  const IndexInput* pay = nullptr;
 };
 
 struct PostingsReader {
@@ -145,6 +141,8 @@ struct PostingsReader {
   virtual ~PostingsReader() = default;
 
   virtual uint64_t CountMappedMemory() const = 0;
+
+  virtual PostingsHandles Handles() const noexcept = 0;
 
   // in - corresponding stream
   // features - the set of features available for segment
@@ -166,23 +164,16 @@ struct PostingsReader {
   virtual size_t BitUnion(IndexFeatures field_features, TermProvider provider,
                           uint64_t* set, bool has_score_bounds) = 0;
 
-  virtual DocIterator::ptr Iterator(IndexFeatures field_features,
-                                    IndexFeatures required_features,
-                                    std::span<const PostingCookie> metas,
-                                    IteratorFieldOptions options,
-                                    size_t min_match,
-                                    ScoreMergeType type) const = 0;
+  // One term's whole posting list as the write side reads it: front to back,
+  // with the frequency and the positions the field stores. Nothing here
+  // seeks, so no skip list is parsed. `required_features` narrows what is
+  // decoded; what the field carries beyond that is stepped over.
+  virtual TermPostings::ptr Postings(IndexFeatures field_features,
+                                     IndexFeatures required_features,
+                                     const PostingMeta& meta,
+                                     bool has_score_bounds) const = 0;
 
   virtual std::unique_ptr<IndexInput> ReopenPayload() const { return nullptr; }
-
-  DocIterator::ptr Iterator(IndexFeatures field_features,
-                            IndexFeatures required_features,
-                            const PostingCookie& meta,
-                            IteratorFieldOptions options,
-                            ScoreMergeType type = ScoreMergeType::Noop) const {
-    return Iterator(field_features, required_features, {&meta, 1}, options, 1,
-                    type);
-  }
 };
 
 struct TermReader : public AttributeProvider {
@@ -220,16 +211,6 @@ struct TermReader : public AttributeProvider {
   // This API is experimental.
   virtual size_t BitUnion(CookieProvider provider, uint64_t* bitset) const = 0;
 
-  virtual DocIterator::ptr Iterator(
-    IndexFeatures features, std::span<const PostingCookie> cookies,
-    IteratorFieldOptions options = {}, size_t min_match = 1,
-    ScoreMergeType type = ScoreMergeType::Noop) const = 0;
-
-  DocIterator::ptr Iterator(IndexFeatures features, const PostingCookie& cookie,
-                            IteratorFieldOptions options = {}) const {
-    return Iterator(features, {&cookie, 1}, options);
-  }
-
   virtual std::unique_ptr<IndexInput> ReopenPayload() const { return nullptr; }
 
   // Returns field metadata.
@@ -249,6 +230,9 @@ struct TermReader : public AttributeProvider {
 
   // Returns true if the field has per-block score bounds persisted.
   virtual bool HasScoreBounds() const = 0;
+
+  // The streams this field's postings live in.
+  virtual PostingsHandles Handles() const noexcept = 0;
 };
 
 struct SegmentMetaWriter : memory::Managed {

@@ -22,7 +22,6 @@
 
 #include "basics/assert.h"
 #include "catalog1/entry/tokenizer.h"
-#include "catalog1/lookup.h"
 #include "pg/pg_catalog/fwd.h"
 
 namespace sdb::pg {

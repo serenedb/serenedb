@@ -57,9 +57,9 @@
 #include "basics/build.h"
 #include "basics/down_cast.h"
 #include "basics/static_strings.h"
+#include "catalog1/catalog.h"
 #include "catalog1/cluster.h"
 #include "catalog1/entry/search_table.h"
-#include "catalog1/lookup.h"
 #include "connector/duckdb_client_state.h"
 #include "connector/inverted_store_index.h"
 #include "connector/pg_logical_types.h"
@@ -314,7 +314,8 @@ duckdb::optional_ptr<duckdb::Catalog> SessionCatalog(
 duckdb::optional_ptr<duckdb::CatalogEntry> FindByOid(
   duckdb::ClientContext& context, duckdb::CatalogType type, duckdb::idx_t id) {
   auto database = SessionCatalog(context);
-  return database ? catalog::FindEntryById(&context, *database, type, id)
+  return database ? database->Cast<catalog::SereneDBCatalog>().FindEntryById(
+                      &context, type, id)
                   : nullptr;
 }
 
@@ -777,8 +778,8 @@ void PgSchemaSizeOidFunction(duckdb::DataChunk& args,
 
   duckdb::UnaryExecutor::Execute<int64_t, int64_t>(
     args.data[0], result, args.size(), [&](int64_t oid) -> int64_t {
-      auto schema = catalog::FindSchemaById(&context, *database,
-                                            static_cast<duckdb::idx_t>(oid));
+      auto schema = database->Cast<catalog::SereneDBCatalog>().FindSchemaById(
+        &context, static_cast<duckdb::idx_t>(oid));
       if (!schema) {
         THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_SCHEMA),
                         ERR_MSG("schema with OID ", oid, " does not exist"));
@@ -1277,8 +1278,10 @@ bool HasObjectPrivilegeByOidImpl(duckdb::ClientContext& context,
   }
   if (type == duckdb::CatalogType::SCHEMA_ENTRY) {
     auto database = SessionCatalog(context);
-    auto schema =
-      database ? catalog::FindSchemaById(&context, *database, obj_id) : nullptr;
+    auto schema = database
+                    ? database->Cast<catalog::SereneDBCatalog>().FindSchemaById(
+                        &context, obj_id)
+                    : nullptr;
     if (!schema) {
       is_null = true;
       return false;

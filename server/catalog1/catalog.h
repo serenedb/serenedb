@@ -59,6 +59,20 @@ class SereneDBCatalog : public duckdb::DuckCatalog {
     duckdb::CatalogTransaction transaction, duckdb::DuckSchemaEntry& schema,
     duckdb::BoundCreateTableInfo& info) override;
 
+  duckdb::optional_ptr<duckdb::SchemaCatalogEntry> FindSchemaById(
+    duckdb::optional_ptr<duckdb::ClientContext> context, duckdb::idx_t id);
+
+  duckdb::optional_ptr<duckdb::CatalogEntry> FindEntryById(
+    duckdb::optional_ptr<duckdb::ClientContext> context,
+    duckdb::CatalogType type, duckdb::idx_t id);
+
+  template<typename T>
+  duckdb::optional_ptr<T> FindIn(
+    duckdb::optional_ptr<duckdb::ClientContext> context, duckdb::idx_t id) {
+    auto entry = FindEntryById(context, T::Type, id);
+    return entry ? &entry->template Cast<T>() : nullptr;
+  }
+
   duckdb::PhysicalOperator& PlanInsert(
     duckdb::ClientContext& context, duckdb::PhysicalPlanGenerator& planner,
     duckdb::LogicalInsert& op,

@@ -33,7 +33,7 @@
 
 #include "basics/containers/flat_hash_map.h"
 #include "basics/down_cast.h"
-#include "catalog1/lookup.h"
+#include "catalog1/catalog.h"
 #include "connector/duckdb_client_state.h"
 #include "connector/functions/ts_query_codec.h"
 #include "connector/pg_logical_types.h"
@@ -329,9 +329,10 @@ duckdb::LogicalType Oid2Type(int32_t oid, duckdb::ClientContext& context) {
       // A user-defined type is not in the snapshot -- its entry is the object
       // -- so the oid resolves through this session's database.
       auto database = SessionDatabase(&context);
-      if (auto type = database ? catalog::FindIn<duckdb::TypeCatalogEntry>(
-                                   &context, *database, oid)
-                               : nullptr) {
+      if (auto type = database
+                        ? database->Cast<catalog::SereneDBCatalog>()
+                            .FindIn<duckdb::TypeCatalogEntry>(&context, oid)
+                        : nullptr) {
         return type->user_type;
       }
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_INTERNAL_ERROR),
@@ -610,7 +611,8 @@ std::string RegclassOut(duckdb::ClientContext* context, uint64_t oid) {
     for (const auto type :
          {duckdb::CatalogType::TABLE_ENTRY, duckdb::CatalogType::SEQUENCE_ENTRY,
           duckdb::CatalogType::INDEX_ENTRY}) {
-      if (auto entry = catalog::FindEntryById(context, *database, type, oid)) {
+      if (auto entry = database->Cast<catalog::SereneDBCatalog>().FindEntryById(
+            context, type, oid)) {
         return std::string{entry->name.GetIdentifierName()};
       }
     }
@@ -661,7 +663,8 @@ std::string RegnamespaceOut(duckdb::ClientContext* context, uint64_t oid) {
     return "information_schema";
   }
   if (auto database = SessionDatabase(context)) {
-    if (auto schema = catalog::FindSchemaById(context, *database, oid)) {
+    if (auto schema = database->Cast<catalog::SereneDBCatalog>().FindSchemaById(
+          context, oid)) {
       return std::string{schema->name.GetIdentifierName()};
     }
   }

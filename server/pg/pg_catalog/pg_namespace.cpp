@@ -23,7 +23,6 @@
 #include <duckdb/catalog/catalog_entry/schema_catalog_entry.hpp>
 
 #include "basics/assert.h"
-#include "catalog1/lookup.h"
 #include "pg/pg_types.h"
 
 namespace sdb::pg {

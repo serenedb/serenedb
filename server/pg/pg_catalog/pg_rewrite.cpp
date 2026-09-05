@@ -23,8 +23,6 @@
 #include <duckdb/catalog/catalog_entry/view_catalog_entry.hpp>
 #include <vector>
 
-#include "catalog1/lookup.h"
-
 namespace sdb::pg {
 namespace {
 

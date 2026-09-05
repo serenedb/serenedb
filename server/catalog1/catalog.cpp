@@ -30,7 +30,6 @@
 #include <duckdb/parser/parsed_expression_iterator.hpp>
 #include <duckdb/parser/statement/create_statement.hpp>
 #include <duckdb/planner/binder.hpp>
-#include <duckdb/planner/expression/bound_reference_expression.hpp>
 #include <duckdb/planner/expression_binder/index_binder.hpp>
 #include <duckdb/planner/operator/logical_create_index.hpp>
 #include <duckdb/planner/operator/logical_delete.hpp>
@@ -60,9 +59,151 @@
 #include "pg/sql_exception_macro.h"
 
 namespace sdb::catalog {
+namespace {
+
+void DeclareModified(duckdb::CatalogTransaction transaction,
+                     duckdb::Catalog& catalog,
+                     duckdb::DatabaseModificationType type =
+                       duckdb::DatabaseModificationType::CREATE_CATALOG_ENTRY) {
+  if (!transaction.context) {
+    return;
+  }
+  duckdb::MetaTransaction::Get(transaction.GetContext())
+    .ModifyDatabase(catalog.GetAttached(), type);
+}
+
+}  // namespace
 
 SereneDBCatalog::SereneDBCatalog(duckdb::AttachedDatabase& db)
   : duckdb::DuckCatalog{db}, _foreign_servers{*this} {}
+
+duckdb::unique_ptr<duckdb::TableCatalogEntry> SereneDBCatalog::MakeTableEntry(
+  duckdb::CatalogTransaction transaction, duckdb::DuckSchemaEntry& schema,
+  duckdb::BoundCreateTableInfo& info) {
+  auto& options = info.Base().options;
+  if (connector::ReadStorageEngine(options) == TableEngine::Search) {
+    auto entry =
+      duckdb::make_uniq<SearchTableEntry>(*this, schema, info, transaction);
+    connector::EnsureGeneratedPkSequence(transaction, schema, *entry);
+    return std::move(entry);
+  }
+  options.erase(std::string{kStorageOption});
+  return duckdb::DuckCatalog::MakeTableEntry(transaction, schema, info);
+}
+
+duckdb::unique_ptr<duckdb::IndexCatalogEntry> SereneDBCatalog::MakeIndexEntry(
+  duckdb::DuckSchemaEntry& schema, duckdb::CreateIndexInfo& info,
+  duckdb::TableCatalogEntry& table) {
+  if (info.index_type == kInvertedIndexTypeName) {
+    return duckdb::make_uniq<InvertedIndexEntry>(*this, schema, info, &table);
+  }
+  return duckdb::DuckCatalog::MakeIndexEntry(schema, info, table);
+}
+
+duckdb::optional_ptr<duckdb::SchemaCatalogEntry>
+SereneDBCatalog::FindSchemaById(
+  duckdb::optional_ptr<duckdb::ClientContext> context, duckdb::idx_t id) {
+  duckdb::optional_ptr<duckdb::SchemaCatalogEntry> result;
+  const auto match = [&](duckdb::SchemaCatalogEntry& schema) {
+    if (!result && schema.oid == id) {
+      result = &schema;
+    }
+  };
+  if (context) {
+    duckdb::DuckCatalog::ScanSchemas(*context, match);
+  } else {
+    duckdb::DuckCatalog::ScanSchemas(match);
+  }
+  return result;
+}
+
+duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBCatalog::FindEntryById(
+  duckdb::optional_ptr<duckdb::ClientContext> context, duckdb::CatalogType type,
+  duckdb::idx_t id) {
+  duckdb::optional_ptr<duckdb::CatalogEntry> result;
+  const auto match = [&](duckdb::CatalogEntry& entry) {
+    if (!result && entry.oid == id) {
+      result = &entry;
+    }
+  };
+  const auto scan = [&](duckdb::SchemaCatalogEntry& schema) {
+    if (context) {
+      schema.Scan(*context, type, match);
+    } else {
+      schema.Scan(type, match);
+    }
+  };
+  if (context) {
+    duckdb::DuckCatalog::ScanSchemas(*context, scan);
+  } else {
+    duckdb::DuckCatalog::ScanSchemas(scan);
+  }
+  return result;
+}
+
+duckdb::PhysicalOperator& SereneDBCatalog::PlanInsert(
+  duckdb::ClientContext& context, duckdb::PhysicalPlanGenerator& planner,
+  duckdb::LogicalInsert& op,
+  duckdb::optional_ptr<duckdb::PhysicalOperator> plan) {
+  const auto* entry = dynamic_cast<const SearchTableEntry*>(&op.table);
+  if (entry == nullptr) {
+    return duckdb::DuckCatalog::PlanInsert(context, planner, op, plan);
+  }
+  SDB_ASSERT(plan);
+  auto& insert = planner.Make<connector::SereneDBSearchInsert>(
+    *entry, op.types, op.estimated_cardinality, op.return_chunk);
+  insert.children.push_back(*plan);
+  return insert;
+}
+
+duckdb::PhysicalOperator& SereneDBCatalog::PlanDelete(
+  duckdb::ClientContext& context, duckdb::PhysicalPlanGenerator& planner,
+  duckdb::LogicalDelete& op, duckdb::PhysicalOperator& plan) {
+  const auto* entry = dynamic_cast<const SearchTableEntry*>(&op.table);
+  if (entry == nullptr) {
+    return duckdb::DuckCatalog::PlanDelete(context, planner, op, plan);
+  }
+  auto& del = planner.Make<connector::SereneDBSearchDelete>(
+    *entry, std::move(op.expressions), op.types, op.estimated_cardinality,
+    op.return_chunk, std::move(op.return_columns));
+  del.children.push_back(plan);
+  return del;
+}
+
+duckdb::PhysicalOperator& SereneDBCatalog::PlanUpdate(
+  duckdb::ClientContext& context, duckdb::PhysicalPlanGenerator& planner,
+  duckdb::LogicalUpdate& op, duckdb::PhysicalOperator& plan) {
+  const auto* entry = dynamic_cast<const SearchTableEntry*>(&op.table);
+  if (entry == nullptr) {
+    return duckdb::DuckCatalog::PlanUpdate(context, planner, op, plan);
+  }
+  auto& update = planner.Make<connector::SereneDBSearchUpdate>(
+    *entry, op.columns, std::move(op.expressions), op.types,
+    op.estimated_cardinality, op.return_chunk);
+  update.children.push_back(plan);
+  return update;
+}
+
+duckdb::unique_ptr<duckdb::LogicalOperator> SereneDBCatalog::BindCreateIndex(
+  duckdb::Binder& binder, duckdb::CreateStatement& stmt,
+  duckdb::CatalogEntry& table,
+  duckdb::unique_ptr<duckdb::LogicalOperator> plan) {
+  if (table.type != duckdb::CatalogType::VIEW_ENTRY) {
+    return duckdb::DuckCatalog::BindCreateIndex(binder, stmt, table,
+                                                std::move(plan));
+  }
+  return connector::BindCreateIndexOnView(
+    binder, stmt, table.Cast<duckdb::ViewCatalogEntry>(), std::move(plan));
+}
+
+duckdb::ErrorData SereneDBCatalog::SupportsCreateTable(
+  duckdb::BoundCreateTableInfo&) {
+  return {};
+}
+
+std::string SereneDBCatalog::GetDefaultSchema() const {
+  return std::string{StaticStrings::kPublic};
+}
 
 void SereneDBCatalog::Initialize(bool load_builtin) {
   duckdb::DuckCatalog::Initialize(load_builtin);

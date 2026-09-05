@@ -45,7 +45,6 @@
 #include "catalog1/catalog.h"
 #include "catalog1/cluster.h"
 #include "catalog1/entry/role.h"
-#include "catalog1/lookup.h"
 #include "connector/duckdb_client_state.h"
 #include "network/credentials.h"
 #include "pg/errcodes.h"

@@ -27,18 +27,6 @@
 
 namespace irs {
 
-// Language model with Jelinek-Mercer smoothing.
-//
-// LMJelinekMercerSimilarity:
-//   score(doc, term) = boost * log(1 + ((1 - lambda) * tf / dl) /
-//                                      (lambda * P(t | C)))
-// where
-//   P(t | C) = (total_term_freq_of_term + 1) /
-//              (total_term_freq_of_field + 1)
-//
-// Parameters:
-//   lambda in (0, 1]. We recommend ~0.1 for title queries
-//   and ~0.7 for long queries.
 class LMJelinekMercer final : public irs::ScorerBase<LMJelinekMercer, LMStats> {
  public:
   static constexpr std::string_view type_name() noexcept { return "lm_jm"; }
@@ -75,6 +63,8 @@ class LMJelinekMercer final : public irs::ScorerBase<LMJelinekMercer, LMStats> {
   ScoreBoundWriter::ptr PrepareScoreBoundWriter(size_t max_levels) const final;
 
   ScoreBoundSource::ptr PrepareScoreBoundSource() const final;
+
+  bool HasScoreBounds() const noexcept final { return true; }
 
   bool Compatible(const ScorerOptions& persisted) const noexcept final;
 

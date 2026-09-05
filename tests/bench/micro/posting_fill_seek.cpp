@@ -42,9 +42,10 @@
 //
 // The four drivers are the four ways the engine consumes a posting list:
 //
-//   Advance/<shape>  one document at a time, the fallback for everything.
-//   Emit/<shape>     `EmitDocs`, the unscored single-term scan.
-//   Window/<shape>   `FillBlock`, the bitset window a conjunction intersects
+//   Advance/<shape>  `lead::Node`, one document at a time, the fallback for
+//                    everything.
+//   Emit/<shape>     `docs::Root`, the unscored single-term scan.
+//   Window/<shape>   `fill::Node`, the bitset window a conjunction intersects
 //                    in; the only driver where a whole leaf can go into the
 //                    mask without materializing its documents.
 //   Seek/<shape>     a ladder of seeks, `range(1)` blocks apart.
@@ -71,6 +72,11 @@
 #include <iresearch/index/index_features.hpp>
 #include <iresearch/index/index_writer.hpp>
 #include <iresearch/search/boolean_filter.hpp>
+#include <iresearch/search/common/window.hpp>
+#include <iresearch/search/count/make.hpp>
+#include <iresearch/search/docs/make.hpp>
+#include <iresearch/search/fill/node.hpp>
+#include <iresearch/search/lead/node.hpp>
 #include <iresearch/search/term_filter.hpp>
 #include <iresearch/store/mmap_directory.hpp>
 #include <iresearch/utils/string.hpp>
@@ -277,25 +283,27 @@ irs::Filter::ptr Term(std::string_view term) {
 }
 
 irs::Filter::ptr Both(std::string_view lhs, std::string_view rhs) {
-  auto filter = std::make_unique<irs::And>();
-  filter->add(Term(lhs));
-  filter->add(Term(rhs));
+  auto filter = std::make_unique<irs::BooleanFilter>();
+  filter->Add(Term(lhs), irs::Occur::Must);
+  filter->Add(Term(rhs), irs::Occur::Must);
   return filter;
 }
 
 // Prepared once per benchmark, outside the timed loop: what is being measured
 // is posting iteration, not filter preparation.
 struct Prepared {
-  irs::PrepareCollector::ptr collector;
   irs::QueryBuilder::ptr query;
-  irs::StatsBuffer stats;
 
   Prepared(const irs::SubReader& segment, const irs::Filter& filter)
-    : collector{filter.MakeCollector(nullptr)},
-      query{filter.PrepareSegment(segment, {.collector = collector.get()})},
-      stats{collector->Finish(irs::IResourceManager::gNoop)} {}
+    : query{filter.PrepareSegment(segment, {})} {}
 
-  irs::DocIterator::ptr Docs() const { return query->Execute({}, stats); }
+  irs::lead::Node::ptr Lead() const { return query->PlanLead({}); }
+
+  irs::docs::Root::ptr Docs() const { return irs::docs::MakeRoot(*query); }
+
+  irs::fill::Node::ptr Fill() const {
+    return query->PlanFill({}, irs::ScoreMergeType::Noop);
+  }
 };
 
 void Report(benchmark::State& state, size_t docs) {
@@ -304,51 +312,49 @@ void Report(benchmark::State& state, size_t docs) {
     static_cast<double>(docs) / static_cast<double>(state.iterations()));
 }
 
-// The window a conjunction intersects in, mirrored from `Conjunction`.
-constexpr uint32_t kMaskWords = 16;
-constexpr irs::doc_id_t kWindow = kMaskWords * 64;
-// `Window/<shape>/<words>` also runs a wider window, which is not a shape the
-// engine asks for: it is there to price the one leaf per window that straddles
-// its end, the only leaf that cannot go into the mask straight from its
-// encoding. Eight times fewer windows means eight times fewer such leaves.
-constexpr uint32_t kMaxMaskWords = 128;
+// How much a single `docs::Root::Run` is asked for, the batch a consumer of
+// the emit API hands it.
+constexpr uint32_t kCapacity = 2048;
 
 // -- drivers ------------------------------------------------------------
 
-size_t Advance(const irs::DocIterator::ptr& docs) {
+size_t Advance(const irs::lead::Node::ptr& docs) {
   size_t n = 0;
-  while (!irs::doc_limits::eof(docs->advance())) {
+  while (!irs::doc_limits::eof(docs->Advance())) {
     ++n;
   }
   return n;
 }
 
-size_t Emit(const irs::DocIterator::ptr& docs, irs::doc_id_t window = kWindow) {
-  irs::doc_id_t out[kMaxMaskWords * 64];
+size_t Emit(const irs::docs::Root::ptr& docs) {
+  irs::doc_id_t out[kCapacity];
   size_t n = 0;
-  auto doc = docs->advance();
-  while (!irs::doc_limits::eof(doc)) {
-    n += docs->EmitDocs(out, doc, doc + window);
+  for (;;) {
+    const auto count = docs->Run(out, kCapacity);
     benchmark::DoNotOptimize(out);
-    doc = docs->value();
+    if (count == 0) {
+      return n;
+    }
+    n += count;
   }
-  return n;
 }
 
-size_t Window(const irs::DocIterator::ptr& docs, uint32_t words = kMaskWords) {
-  alignas(64) uint64_t mask[kMaxMaskWords];
-  const irs::doc_id_t window = words * 64;
+size_t Window(const irs::fill::Node::ptr& docs) {
+  irs::search::Scratch mask;
   size_t n = 0;
-  auto doc = docs->advance();
-  while (!irs::doc_limits::eof(doc)) {
-    std::memset(mask, 0, words * sizeof(uint64_t));
-    const auto next = docs->FillBlock(doc, doc + window, mask, {}, {}).first;
-    for (uint32_t i = 0; i != words; ++i) {
+  irs::doc_id_t min = 0;
+  for (;;) {
+    irs::search::Clear(mask.data(), irs::search::kWindowWords);
+    const auto next =
+      docs->FillOr(min, min + irs::search::kWindowDocs, mask.data());
+    for (size_t i = 0; i != irs::search::kWindowWords; ++i) {
       n += static_cast<size_t>(std::popcount(mask[i]));
     }
-    doc = next;
+    if (irs::doc_limits::eof(next)) {
+      return n;
+    }
+    min = next;
   }
-  return n;
 }
 
 void BmAdvance(benchmark::State& state, std::string_view term) {
@@ -358,7 +364,7 @@ void BmAdvance(benchmark::State& state, std::string_view term) {
 
   size_t docs = 0;
   for (auto _ : state) {
-    docs += Advance(prepared.Docs());
+    docs += Advance(prepared.Lead());
   }
   Report(state, docs);
 }
@@ -379,11 +385,10 @@ void BmWindow(benchmark::State& state, std::string_view term) {
   const auto& index = IndexOf(static_cast<size_t>(state.range(0)));
   const auto filter = Term(term);
   const Prepared prepared{index.reader[0], *filter};
-  const auto words = static_cast<uint32_t>(state.range(1));
 
   size_t docs = 0;
   for (auto _ : state) {
-    docs += Window(prepared.Docs(), words);
+    docs += Window(prepared.Fill());
   }
   Report(state, docs);
 }
@@ -422,10 +427,10 @@ void BmSeek(benchmark::State& state, std::string_view term, double density) {
 
   size_t hits = 0;
   for (auto _ : state) {
-    auto docs = prepared.Docs();
+    auto docs = prepared.Lead();
     for (irs::doc_id_t target = irs::doc_limits::min(); target < n;
          target += kStride) {
-      if (irs::doc_limits::eof(docs->seek(target))) {
+      if (irs::doc_limits::eof(docs->Seek(target))) {
         break;
       }
       ++hits;
@@ -500,11 +505,9 @@ void BmText(benchmark::State& state, uint32_t lhs, uint32_t rhs) {
 
   size_t docs = 0;
   for (auto _ : state) {
-    auto collector = filter->MakeCollector(nullptr);
-    auto query =
-      filter->PrepareSegment(segment, {.collector = collector.get()});
-    const auto stats = collector->Finish(irs::IResourceManager::gNoop);
-    docs += query ? query->Execute({}, stats)->count() : 0;
+    auto query = filter->PrepareSegment(segment, {});
+    auto plan = query ? irs::count::MakeRoot(*query) : irs::count::Root::ptr{};
+    docs += plan ? plan->Run() : 0;
   }
   Report(state, docs);
 }
@@ -517,13 +520,6 @@ void BmText1500x4000(benchmark::State& s) { BmText(s, 1500, 4000); }
 
 void Sizes(benchmark::internal::Benchmark* b) {
   b->Arg(1'000'000)->Unit(benchmark::kMicrosecond);
-}
-
-void WindowSizes(benchmark::internal::Benchmark* b) {
-  for (int words : {int{kMaskWords}, int{kMaxMaskWords}}) {
-    b->Args({1'000'000, words});
-  }
-  b->Unit(benchmark::kMicrosecond);
 }
 
 void SeekSizes(benchmark::internal::Benchmark* b) {
@@ -551,11 +547,11 @@ BENCHMARK(BmEmitDense)->Apply(Sizes);
 BENCHMARK(BmEmitPeriod)->Apply(Sizes);
 BENCHMARK(BmEmitGen)->Apply(Sizes);
 
-BENCHMARK(BmWindowRun)->Apply(WindowSizes);
-BENCHMARK(BmWindowAlmost)->Apply(WindowSizes);
-BENCHMARK(BmWindowDense)->Apply(WindowSizes);
-BENCHMARK(BmWindowPeriod)->Apply(WindowSizes);
-BENCHMARK(BmWindowGen)->Apply(WindowSizes);
+BENCHMARK(BmWindowRun)->Apply(Sizes);
+BENCHMARK(BmWindowAlmost)->Apply(Sizes);
+BENCHMARK(BmWindowDense)->Apply(Sizes);
+BENCHMARK(BmWindowPeriod)->Apply(Sizes);
+BENCHMARK(BmWindowGen)->Apply(Sizes);
 
 BENCHMARK(BmSeekRun)->Apply(SeekSizes);
 BENCHMARK(BmSeekAlmost)->Apply(SeekSizes);

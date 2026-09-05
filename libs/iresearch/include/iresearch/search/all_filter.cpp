@@ -22,33 +22,16 @@
 
 #include "all_filter.hpp"
 
-#include "all_iterator.hpp"
 #include "iresearch/search/automaton_filter.hpp"
 
 namespace irs {
 
-class AllQuery : public QueryBuilder {
- public:
-  explicit AllQuery(const SubReader& segment, score_t boost)
-    : QueryBuilder{segment}, _boost{boost} {}
-
-  DocIterator::ptr Execute(const ExecutionContext&,
-                           const StatsBuffer& stats) const final {
-    return memory::make_managed<AllIterator>(_segment.docs_count(),
-                                             stats.Source(), _boost);
-  }
-
-  void Visit(PreparedStateVisitor&, score_t) const final {}
-
-  score_t Boost() const noexcept final { return _boost; }
-
- private:
-  score_t _boost;
-};
-
 QueryBuilder::ptr MakeAllQuery(const SubReader& segment,
                                const PrepareContext& ctx, score_t boost) {
-  return memory::make_tracked<AllQuery>(ctx.memory, segment, ctx.boost * boost);
+  auto query =
+    memory::make_tracked<AllQuery>(ctx.memory, segment, ctx.boost * boost);
+  query->SetStats(ctx.Record());
+  return query;
 }
 
 QueryBuilder::ptr All::PrepareSegment(const SubReader& segment,
@@ -56,8 +39,10 @@ QueryBuilder::ptr All::PrepareSegment(const SubReader& segment,
   return MakeAllQuery(segment, ctx, GetBoost());
 }
 
-PrepareCollector::ptr All::MakeCollectorImpl(const Scorer* scorer) const {
-  return std::make_unique<AllCollector>(scorer);
+PrepareCollector::ptr All::MakeCollectorImpl(const Scorer* scorer,
+                                             StatsArena& stats,
+                                             uint32_t) const {
+  return std::make_unique<AllCollector>(scorer, stats);
 }
 
 TermIterator::ptr All::CompileTermIterator(const TermReader& reader) const {

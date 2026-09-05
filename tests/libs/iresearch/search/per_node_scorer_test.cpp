@@ -18,6 +18,7 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
+#include <duckdb/common/allocator.hpp>
 #include <map>
 
 #include "filter_test_case_base.hpp"
@@ -34,6 +35,7 @@
 #include "iresearch/search/scorer.hpp"
 #include "iresearch/search/term_filter.hpp"
 #include "iresearch/search/unscored.hpp"
+#include "iresearch/search/wildcard_filter.hpp"
 #include "tests_shared.hpp"
 
 namespace {
@@ -79,10 +81,13 @@ std::unique_ptr<irs::ByNGramSimilarity> NGram(
   return filter;
 }
 
-void AddTerm(irs::Or& filter, std::string_view term) {
-  auto& sub = filter.add<irs::ByTerm>();
-  *sub.mutable_field_id() = kBodyId;
-  sub.mutable_options()->term = irs::ViewCast<irs::byte_type>(term);
+void AddTerm(irs::BooleanFilter& filter, std::string_view term) {
+  filter.Add(
+    irs::TermClause{
+      .field = kBodyId,
+      .term = irs::bstring{irs::ViewCast<irs::byte_type>(term)},
+    },
+    irs::Occur::Should);
 }
 
 class PerNodeScorerTest : public IndexTestBase {
@@ -123,25 +128,21 @@ std::map<irs::doc_id_t, irs::score_t> PerNodeScorerTest::Score(
   const irs::Filter& filter, const irs::Scorer& root) {
   auto index = open_reader();
   EXPECT_EQ(1, index->size());
-  auto& segment = *(index.begin());
 
   MaxMemoryCounter counter;
   tests::PreparedFilter prepared{filter, *index, &root, counter};
 
   irs::ColumnArgsFetcher fetcher;
-  auto docs = prepared.Execute(0);
-  auto score = docs->PrepareScore({
-    .segment = &segment,
-    .fetcher = &fetcher,
-  });
+  auto docs = prepared.ExecuteScored(0, fetcher);
+  auto score = docs->PrepareScore();
 
   std::map<irs::doc_id_t, irs::score_t> seen;
-  while (!irs::doc_limits::eof(docs->advance())) {
-    fetcher.Fetch(docs->value());
+  while (!irs::doc_limits::eof(docs->Advance())) {
     docs->FetchScoreArgs(0);
+    fetcher.Fetch(docs->Value());
     irs::score_t s{};
     score.Score(&s, 1);
-    seen.emplace(docs->value(), s);
+    seen.emplace(docs->Value(), s);
   }
   return seen;
 }
@@ -153,19 +154,10 @@ TEST_P(PerNodeScorerTest, branch_scorer_overrides_the_query_scorer) {
   irs::RawBoost raw_boost;
 
   {
-    irs::Or filter;
-    {
-      auto& sub = filter.add<irs::ByTerm>();
-      *sub.mutable_field_id() = kBodyId;
-      sub.mutable_options()->term =
-        irs::ViewCast<irs::byte_type>(std::string_view("fox"));
-    }
-    {
-      auto& sub = filter.add<irs::ByTerm>();
-      *sub.mutable_field_id() = kBodyId;
-      sub.mutable_options()->term =
-        irs::ViewCast<irs::byte_type>(std::string_view("cat"));
-    }
+    irs::BooleanFilter filter;
+    AddTerm(filter, "fox");
+    AddTerm(filter, "cat");
+    filter.SetMinShouldMatch(1);
 
     const auto scores = Score(filter, raw_tf);
     ASSERT_EQ(3u, scores.size());
@@ -176,14 +168,10 @@ TEST_P(PerNodeScorerTest, branch_scorer_overrides_the_query_scorer) {
   }
 
   {
-    irs::Or filter;
-    {
-      auto& sub = filter.add<irs::ByTerm>();
-      *sub.mutable_field_id() = kBodyId;
-      sub.mutable_options()->term =
-        irs::ViewCast<irs::byte_type>(std::string_view("fox"));
-    }
-    filter.add(ScoredTerm("cat", raw_boost));
+    irs::BooleanFilter filter;
+    AddTerm(filter, "fox");
+    filter.Add(ScoredTerm("cat", raw_boost), irs::Occur::Should);
+    filter.SetMinShouldMatch(1);
 
     const auto scores = Score(filter, raw_tf);
     ASSERT_EQ(3u, scores.size());
@@ -194,20 +182,26 @@ TEST_P(PerNodeScorerTest, branch_scorer_overrides_the_query_scorer) {
   }
 }
 
-TEST_P(PerNodeScorerTest, unscored_caller_keeps_a_node_override_out) {
+TEST_P(PerNodeScorerTest, an_unscored_node_keeps_the_callers_scorer_out) {
   irs::RawTF raw_tf;
   irs::RawBoost raw_boost;
 
   auto term = ScoredTerm("cat", raw_boost);
   ASSERT_EQ(&raw_boost, term->GetScorer());
 
-  auto scored = term->MakeCollector(&raw_tf);
+  auto& allocator = duckdb::Allocator::DefaultAllocator();
+  irs::StatsArena stats_arena{allocator};
+
+  // The node's own scorer wins for its whole subtree.
+  auto scored = term->MakeCollector(raw_tf, stats_arena, 1);
   ASSERT_NE(nullptr, scored);
   EXPECT_EQ(&raw_boost, scored->GetScorer());
 
-  auto unscored = term->MakeCollector(nullptr);
-  ASSERT_NE(nullptr, unscored);
-  EXPECT_EQ(nullptr, unscored->GetScorer());
+  // `Unscored` on the node is the one spelling of "this subtree does not
+  // score", so nothing is collected for it however the caller scores. A
+  // caller that does not score itself never asks in the first place.
+  auto none = ScoredTerm("cat", irs::Unscored::Instance());
+  EXPECT_EQ(nullptr, none->MakeCollector(raw_tf, stats_arena, 1));
 }
 
 TEST_P(PerNodeScorerTest, override_on_an_excluded_branch_changes_nothing) {
@@ -217,21 +211,24 @@ TEST_P(PerNodeScorerTest, override_on_an_excluded_branch_changes_nothing) {
   irs::RawBoost raw_boost;
 
   auto build = [&](bool with_override) {
-    auto root = std::make_unique<irs::And>();
-    {
-      auto& sub = root->add<irs::ByTerm>();
-      *sub.mutable_field_id() = kBodyId;
-      sub.mutable_options()->term =
-        irs::ViewCast<irs::byte_type>(std::string_view("fox"));
-    }
-    auto& negation = root->add<irs::Not>();
+    auto root = std::make_unique<irs::BooleanFilter>();
+    root->Add(
+      irs::TermClause{
+        .field = kBodyId,
+        .term =
+          irs::bstring{irs::ViewCast<irs::byte_type>(std::string_view("fox"))},
+      },
+      irs::Occur::Must);
     if (with_override) {
-      negation.mutable_filter() = ScoredTerm("cat", raw_boost);
+      root->Add(ScoredTerm("cat", raw_boost), irs::Occur::MustNot);
     } else {
-      auto& excluded = negation.filter<irs::ByTerm>();
-      *excluded.mutable_field_id() = kBodyId;
-      excluded.mutable_options()->term =
-        irs::ViewCast<irs::byte_type>(std::string_view("cat"));
+      root->Add(
+        irs::TermClause{
+          .field = kBodyId,
+          .term = irs::bstring{irs::ViewCast<irs::byte_type>(
+            std::string_view("cat"))},
+        },
+        irs::Occur::MustNot);
     }
     irs::Filter::ptr filter = std::move(root);
     irs::Optimize(filter, {.scored = true});
@@ -253,14 +250,10 @@ TEST_P(PerNodeScorerTest, unscored_branch_contributes_no_score) {
   irs::RawTF raw_tf;
   irs::Unscored unscored;
 
-  irs::Or filter;
-  {
-    auto& sub = filter.add<irs::ByTerm>();
-    *sub.mutable_field_id() = kBodyId;
-    sub.mutable_options()->term =
-      irs::ViewCast<irs::byte_type>(std::string_view("fox"));
-  }
-  filter.add(ScoredTerm("cat", unscored));
+  irs::BooleanFilter filter;
+  AddTerm(filter, "fox");
+  filter.Add(ScoredTerm("cat", unscored), irs::Occur::Should);
+  filter.SetMinShouldMatch(1);
 
   const auto scores = Score(filter, raw_tf);
   ASSERT_EQ(3u, scores.size());
@@ -277,9 +270,10 @@ TEST_P(PerNodeScorerTest, phrase_branch_scorer_overrides_the_query_scorer) {
   irs::RawBoost raw_boost;
 
   {
-    irs::Or filter;
+    irs::BooleanFilter filter;
     AddTerm(filter, "cat");
-    filter.add(Phrase({"fox"}));
+    filter.Add(Phrase({"fox"}), irs::Occur::Should);
+    filter.SetMinShouldMatch(1);
 
     const auto scores = Score(filter, raw_tf);
     ASSERT_EQ(3u, scores.size());
@@ -290,9 +284,10 @@ TEST_P(PerNodeScorerTest, phrase_branch_scorer_overrides_the_query_scorer) {
   }
 
   {
-    irs::Or filter;
+    irs::BooleanFilter filter;
     AddTerm(filter, "cat");
-    filter.add(Scored(Phrase({"fox"}), raw_boost));
+    filter.Add(Scored(Phrase({"fox"}), raw_boost), irs::Occur::Should);
+    filter.SetMinShouldMatch(1);
 
     const auto scores = Score(filter, raw_tf);
     ASSERT_EQ(3u, scores.size());
@@ -309,9 +304,10 @@ TEST_P(PerNodeScorerTest, unscored_phrase_branch_contributes_no_score) {
   irs::RawTF raw_tf;
   irs::Unscored unscored;
 
-  irs::Or filter;
+  irs::BooleanFilter filter;
   AddTerm(filter, "cat");
-  filter.add(Scored(Phrase({"fox"}), unscored));
+  filter.Add(Scored(Phrase({"fox"}), unscored), irs::Occur::Should);
+  filter.SetMinShouldMatch(1);
 
   const auto scores = Score(filter, raw_tf);
   ASSERT_EQ(3u, scores.size());
@@ -327,9 +323,10 @@ TEST_P(PerNodeScorerTest, all_branch_honours_the_override) {
   irs::RawTF raw_tf;
   irs::ConstantScore constant{42.f};
 
-  irs::Or baseline;
+  irs::BooleanFilter baseline;
   AddTerm(baseline, "fox");
-  baseline.add<irs::All>();
+  baseline.Add(std::make_unique<irs::All>(), irs::Occur::Should);
+  baseline.SetMinShouldMatch(1);
   const auto before = Score(baseline, raw_tf);
   ASSERT_EQ(3u, before.size());
   {
@@ -339,9 +336,11 @@ TEST_P(PerNodeScorerTest, all_branch_honours_the_override) {
     ASSERT_FLOAT_EQ(1.f, (it++)->second);
   }
 
-  irs::Or filter;
+  irs::BooleanFilter filter;
   AddTerm(filter, "fox");
-  filter.add(Scored(std::make_unique<irs::All>(), constant));
+  filter.Add(Scored(std::make_unique<irs::All>(), constant),
+             irs::Occur::Should);
+  filter.SetMinShouldMatch(1);
   const auto after = Score(filter, raw_tf);
 
   ASSERT_EQ(3u, after.size());
@@ -352,21 +351,57 @@ TEST_P(PerNodeScorerTest, all_branch_honours_the_override) {
   ASSERT_NE(before, after);
 }
 
+TEST_P(PerNodeScorerTest, lowered_wildcard_branch_honours_the_override) {
+  BuildFixture();
+
+  irs::RawTF raw_tf;
+  irs::Unscored unscored;
+
+  // `fo%` lowers to a prefix before any segment is touched; the node's own
+  // scorer has to survive the rewrite.
+  const auto wildcard = [] {
+    auto node = std::make_unique<irs::ByWildcard>();
+    *node->mutable_field_id() = kBodyId;
+    node->mutable_options()->term =
+      irs::ViewCast<irs::byte_type>(std::string_view{"fo%"});
+    return node;
+  };
+
+  irs::BooleanFilter baseline;
+  AddTerm(baseline, "cat");
+  baseline.Add(wildcard(), irs::Occur::Should);
+  baseline.SetMinShouldMatch(1);
+  const auto before =
+    Score(*tests::Optimized(std::move(baseline), &raw_tf), raw_tf);
+
+  irs::BooleanFilter filter;
+  AddTerm(filter, "cat");
+  filter.Add(Scored(wildcard(), unscored), irs::Occur::Should);
+  filter.SetMinShouldMatch(1);
+  const auto after =
+    Score(*tests::Optimized(std::move(filter), &raw_tf), raw_tf);
+
+  ASSERT_EQ(before.size(), after.size());
+  ASSERT_NE(before, after);
+}
+
 TEST_P(PerNodeScorerTest, ngram_branch_honours_the_override) {
   BuildFixture();
 
   irs::RawTF raw_tf;
   irs::Unscored unscored;
 
-  irs::Or baseline;
+  irs::BooleanFilter baseline;
   AddTerm(baseline, "cat");
-  baseline.add(NGram({"fox", "dog"}, 0.5f));
+  baseline.Add(NGram({"fox", "dog"}, 0.5f), irs::Occur::Should);
+  baseline.SetMinShouldMatch(1);
   const auto before = Score(baseline, raw_tf);
   ASSERT_EQ(3u, before.size());
 
-  irs::Or filter;
+  irs::BooleanFilter filter;
   AddTerm(filter, "cat");
-  filter.add(Scored(NGram({"fox", "dog"}, 0.5f), unscored));
+  filter.Add(Scored(NGram({"fox", "dog"}, 0.5f), unscored), irs::Occur::Should);
+  filter.SetMinShouldMatch(1);
   const auto after = Score(filter, raw_tf);
 
   ASSERT_EQ(3u, after.size());
@@ -383,14 +418,10 @@ TEST_P(PerNodeScorerTest, override_on_a_group_reaches_a_phrase_leaf) {
   irs::RawTF raw_tf;
   irs::Unscored unscored;
 
-  auto group = std::make_unique<irs::Or>();
-  {
-    auto& sub = group->add<irs::ByTerm>();
-    *sub.mutable_field_id() = kBodyId;
-    sub.mutable_options()->term =
-      irs::ViewCast<irs::byte_type>(std::string_view("cat"));
-  }
-  group->add(Phrase({"fox"}));
+  auto group = std::make_unique<irs::BooleanFilter>();
+  AddTerm(*group, "cat");
+  group->Add(Phrase({"fox"}), irs::Occur::Should);
+  group->SetMinShouldMatch(1);
 
   const auto overridden = Scored(std::move(group), unscored);
 

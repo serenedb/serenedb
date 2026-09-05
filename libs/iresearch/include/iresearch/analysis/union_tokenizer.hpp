@@ -22,6 +22,7 @@
 
 #include <tuple>
 
+#include "basics/down_cast.h"
 #include "basics/serializer.h"
 #include "basics/shared.hpp"
 #include "iresearch/analysis/analyzer.hpp"

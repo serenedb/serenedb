@@ -104,7 +104,7 @@ PhraseGap ParsePhraseGap(const duckdb::Value& val, std::string_view label,
 
 }  // namespace
 
-void FromPhrase(irs::BooleanFilter& filter, const FilterContext& ctx,
+void FromPhrase(BoolTarget filter, const FilterContext& ctx,
                 const SearchColumnInfo& column_info,
                 const duckdb::BoundFunctionExpression& func) {
   static constexpr std::string_view kSyntaxHint =
@@ -276,7 +276,7 @@ void EmitPhraseTokens(irs::ByPhraseOptions& options, const FilterContext& ctx,
 
 }  // namespace
 
-void BuildFtsPhrase(irs::BooleanFilter& parent, const FilterContext& ctx,
+void BuildFtsPhrase(BoolTarget parent, const FilterContext& ctx,
                     const SearchColumnInfo& column_info,
                     std::string_view text) {
   if (column_info.logical_type.id() != duckdb::LogicalTypeId::VARCHAR &&
@@ -459,7 +459,7 @@ void FlattenPhraseSeq(const duckdb::Expression& expr, PhraseSeq& seq) {
 }
 
 // Emits the flattened phrase sequence as an irs::ByPhrase under `parent`.
-void EmitPhraseSeq(irs::BooleanFilter& parent, const FilterContext& ctx,
+void EmitPhraseSeq(BoolTarget parent, const FilterContext& ctx,
                    const SearchColumnInfo& column_info, const PhraseSeq& seq) {
   static constexpr std::string_view kSyntaxHint =
     "Example: ts_phrase('hello') ## 1 ## 'world'. Gap is optional "
@@ -612,11 +612,11 @@ void EmitPhraseSeq(irs::BooleanFilter& parent, const FilterContext& ctx,
         EmitPhraseTokens(*options, ctx, column_info, phrase_text, gap);
       } break;
       case TSQueryOp::Any: {
-        // ts_any as a phrase part -> ByTermsOptions slot with the
+        // ts_any as a phrase part -> TermSetOptions slot with the
         // listed terms as alternatives at this phrase position. Only
         // `ts_any([list])` and `ts_any([list], 1)` are accepted:
         // iresearch's phrase filter ignores min_match for a
-        // ByTermsOptions slot (a single position holds at most one
+        // TermSetOptions slot (a single position holds at most one
         // token, so min_match > 1 is unsatisfiable).
         std::vector<const duckdb::Expression*> sub_args;
         std::vector<duckdb::unique_ptr<duckdb::Expression>> sub_synth;
@@ -633,7 +633,7 @@ void EmitPhraseSeq(irs::BooleanFilter& parent, const FilterContext& ctx,
             ERR_HINT("Drop the min_match argument or set it to 1."));
         }
         auto& terms_opts =
-          options->push_back<irs::ByTermsOptions>(gap.min, gap.max);
+          options->push_back<irs::TermSetOptions>(gap.min, gap.max);
         terms_opts.min_match = 1;
         for (const auto* arg : sub_args) {
           std::string term_text;
@@ -697,7 +697,7 @@ void EmitPhraseSeq(irs::BooleanFilter& parent, const FilterContext& ctx,
   }
 }
 
-void FromTSQueryPhraseSeq(irs::BooleanFilter& parent, const FilterContext& ctx,
+void FromTSQueryPhraseSeq(BoolTarget parent, const FilterContext& ctx,
                           const SearchColumnInfo& column_info,
                           const duckdb::BoundFunctionExpression& func) {
   PhraseSeq seq;

@@ -26,6 +26,7 @@
 #include <iresearch/index/directory_reader.hpp>
 #include <iresearch/index/index_writer.hpp>
 #include <iresearch/search/doc_collector.hpp>
+#include <iresearch/search/docs/root.hpp>
 #include <iresearch/search/filter.hpp>
 #include <iresearch/search/scorer.hpp>
 #include <iresearch/store/mmap_directory.hpp>
@@ -103,7 +104,7 @@ class Executor {
     return std::span{self._results.data(), self._result_count};
   }
 
-  irs::Filter::ptr ParseFilter(std::string_view str);
+  irs::Filter::ptr ParseFilter(std::string_view str, bool scored);
 
  private:
   void ResetResults(size_t k) noexcept {
@@ -117,7 +118,13 @@ class Executor {
   std::vector<irs::ScoreDoc> _results;
   std::FILE* _print_out = stderr;
   std::array<irs::doc_id_t, kEmitWindow> _emit_docs;
+#ifdef __AVX2__
+  [[maybe_unused]] irs::doc_id_t
+    _placeholder_for_bitset_materialize[irs::doc_limits::kRunSlack];
+#endif
   std::array<irs::score_t, kEmitWindow> _emit_scores;
+  [[maybe_unused]] irs::score_t
+    _placeholder_for_scores_materialize[irs::doc_limits::kRunSlack];
   size_t _result_count{0};
   irs::Scorer::ptr _scorer;
   irs::Scorer* _scorer_ptr{_scorer.get()};

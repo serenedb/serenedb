@@ -24,20 +24,37 @@
 
 #include <memory>
 
-#include "iresearch/index/iterators.hpp"
-#include "iresearch/search/filter.hpp"
+#include "iresearch/search/query_builder_impl.hpp"
 #include "iresearch/search/term_iterator.hpp"
 #include "iresearch/utils/string.hpp"
 
 namespace irs {
 
-// Filter returning all documents
+class AllQuery : public QueryBuilderImpl<AllQuery> {
+ public:
+  explicit AllQuery(const SubReader& segment, score_t boost)
+    : QueryBuilderImpl{segment, static_cast<uint32_t>(segment.docs_count()),
+                       QueryKind::All},
+      _boost{boost} {}
+
+  void Visit(PreparedStateVisitor&, score_t) const final {}
+
+  score_t Boost() const noexcept final { return _boost; }
+
+  void SetBoost(score_t value) noexcept final { _boost = value; }
+
+ private:
+  score_t _boost;
+};
+
 class All : public Filter {
  public:
   QueryBuilder::ptr PrepareSegment(const SubReader& segment,
                                    const PrepareContext& ctx) const final;
 
-  PrepareCollector::ptr MakeCollectorImpl(const Scorer* scorer) const final;
+  PrepareCollector::ptr MakeCollectorImpl(const Scorer* scorer,
+                                          StatsArena& stats,
+                                          uint32_t threads) const final;
 
   TypeInfo::type_id type() const noexcept final { return irs::Type<All>::id(); }
 

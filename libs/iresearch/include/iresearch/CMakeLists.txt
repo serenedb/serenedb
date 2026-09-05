@@ -115,48 +115,296 @@ set(IResearch_core_sources
     ./index/segment_reader.cpp
     ./index/segment_reader_impl.cpp
     ./index/segment_writer.cpp
-    ./search/all_docs_provider.cpp
     ./search/all_filter.cpp
-    ./search/all_iterator.cpp
     ./search/granular_range_filter.cpp
     ./search/score_function.cpp
-    ./search/cost.cpp
+    ./search/common/score/make_conjunction.cpp
+    ./search/common/score/make_probe.cpp
+    ./search/common/score/make_window.cpp
+    ./search/common/score/root_window.cpp
     ./search/collectors.cpp
-    ./search/bitset_doc_iterator.cpp
     ./search/filter.cpp
     ./search/term_filter.cpp
     ./search/nested_filter.cpp
-    ./search/terms_filter.cpp
+    ./search/term_set.cpp
     ./search/prefix_filter.cpp
     ./search/range_filter.cpp
     ./search/phrase_filter.cpp
-    ./search/phrase_query.cpp
-    ./search/same_position_filter.cpp
     ./search/automaton_filter.cpp
     ./search/wildcard_filter.cpp
     ./search/regexp_filter.cpp
     ./search/wildcard_ngram_filter.cpp
     ./search/levenshtein_filter.cpp
+    ./search/count/make.cpp
+    ./search/count/make_constant.cpp
+    ./search/count/make_bitset_disjunction.cpp
+    ./search/count/make_window_disjunction.cpp
+    ./search/count/make_bitset_conjunction.cpp
+    ./search/count/make_window_conjunction.cpp
+    ./search/count/make_sparse_conjunction.cpp
+    ./search/count/make_bitset_exclusion.cpp
+    ./search/count/make_window_exclusion.cpp
+    ./search/count/make_sparse_exclusion.cpp
+    ./search/count/make_subtract_conjunction.cpp
+    ./search/count/make_subtract_disjunction.cpp
+    ./search/count/make_bits_threshold.cpp
+    ./search/count/make_count_threshold.cpp
+    ./search/count/make_fixed_phrase.cpp
+    ./search/count/make_fixed_phrase_intervals.cpp
+    ./search/count/make_fixed_phrase_slop.cpp
+    ./search/count/make_variadic_phrase.cpp
+    ./search/count/make_variadic_phrase_intervals.cpp
+    ./search/count/make_variadic_phrase_slop.cpp
+    ./search/count/make_ngram.cpp
+    ./search/count/make_ngram_all.cpp
+    ./search/count/make_wildcard_ngram.cpp
+    ./search/count/make_geo_intersects.cpp
+    ./search/count/make_geo_contains.cpp
+    ./search/count/make_geo_is_contained.cpp
+    ./search/count/make_geo_distance.cpp
+    ./search/count/make_masked.cpp
+    ./search/count/make_term_counts.cpp
+    ./search/lead/make.cpp
+    ./search/lead/make_posting_docs.cpp
+    ./search/lead/make_posting_scored.cpp
+    ./search/lead/make_all_docs.cpp
+    ./search/lead/make_all_scored.cpp
+    ./search/lead/make_bitset_disjunction_docs.cpp
+    ./search/lead/make_window_disjunction_docs.cpp
+    ./search/lead/make_window_disjunction_scored.cpp
+    ./search/lead/make_bitset_conjunction_docs.cpp
+    ./search/lead/make_window_conjunction_docs.cpp
+    ./search/lead/make_sparse_conjunction_docs.cpp
+    ./search/lead/make_sparse_conjunction_scored.cpp
+    ./search/lead/make_bitset_exclusion_docs.cpp
+    ./search/lead/make_window_exclusion_docs.cpp
+    ./search/lead/make_sparse_exclusion_docs.cpp
+    ./search/lead/make_sparse_exclusion_scored.cpp
+    ./search/lead/make_bits_threshold_docs.cpp
+    ./search/lead/make_bits_threshold_scored.cpp
+    ./search/lead/make_count_threshold_docs.cpp
+    ./search/lead/make_count_threshold_scored.cpp
+    ./search/lead/make_sparse_boost_scored.cpp
+    ./search/lead/make_fixed_phrase_docs.cpp
+    ./search/lead/make_fixed_phrase_scored.cpp
+    ./search/lead/make_fixed_phrase_intervals_docs.cpp
+    ./search/lead/make_fixed_phrase_intervals_scored.cpp
+    ./search/lead/make_fixed_phrase_slop_docs.cpp
+    ./search/lead/make_fixed_phrase_slop_scored.cpp
+    ./search/lead/make_variadic_phrase_docs.cpp
+    ./search/lead/make_variadic_phrase_scored.cpp
+    ./search/lead/make_variadic_phrase_intervals_docs.cpp
+    ./search/lead/make_variadic_phrase_intervals_scored.cpp
+    ./search/lead/make_variadic_phrase_slop_docs.cpp
+    ./search/lead/make_variadic_phrase_slop_scored.cpp
+    ./search/lead/make_ngram_docs.cpp
+    ./search/lead/make_ngram_scored.cpp
+    ./search/lead/make_ngram_all_docs.cpp
+    ./search/lead/make_ngram_all_scored.cpp
+    ./search/lead/make_wildcard_ngram_docs.cpp
+    ./search/lead/make_wildcard_ngram_scored.cpp
+    ./search/lead/make_geo_intersects_docs.cpp
+    ./search/lead/make_geo_intersects_scored.cpp
+    ./search/lead/make_geo_contains_docs.cpp
+    ./search/lead/make_geo_contains_scored.cpp
+    ./search/lead/make_geo_is_contained_docs.cpp
+    ./search/lead/make_geo_is_contained_scored.cpp
+    ./search/lead/make_geo_distance_docs.cpp
+    ./search/lead/make_geo_distance_scored.cpp
+    ./search/offsets/make.cpp
+    ./search/offsets/make_posting.cpp
+    ./search/offsets/make_fixed_phrase.cpp
+    ./search/offsets/make_fixed_phrase_intervals.cpp
+    ./search/offsets/make_fixed_phrase_slop.cpp
+    ./search/offsets/make_variadic_phrase.cpp
+    ./search/offsets/make_variadic_phrase_intervals.cpp
+    ./search/offsets/make_variadic_phrase_slop.cpp
+    ./search/offsets/make_ngram.cpp
+    ./search/offsets/make_ngram_all.cpp
+    ./search/probe/make.cpp
+    ./search/probe/make_posting_docs.cpp
+    ./search/probe/make_posting_scored.cpp
+    ./search/probe/make_single_posting_scored.cpp
+    ./search/probe/make_all_docs.cpp
+    ./search/probe/make_all_scored.cpp
+    ./search/probe/make_bitset_disjunction_docs.cpp
+    ./search/probe/make_sparse_disjunction_scored.cpp
+    ./search/probe/make_sparse_conjunction_docs.cpp
+    ./search/probe/make_sparse_conjunction_scored.cpp
+    ./search/probe/make_sparse_threshold_docs.cpp
+    ./search/probe/make_sparse_threshold_scored.cpp
+    ./search/probe/make_sparse_exclusion_docs.cpp
+    ./search/probe/make_sparse_exclusion_scored.cpp
+    ./search/probe/make_sparse_boost_scored.cpp
+    ./search/probe/make_fixed_phrase_docs.cpp
+    ./search/probe/make_fixed_phrase_scored.cpp
+    ./search/probe/make_fixed_phrase_intervals_docs.cpp
+    ./search/probe/make_fixed_phrase_intervals_scored.cpp
+    ./search/probe/make_fixed_phrase_slop_docs.cpp
+    ./search/probe/make_fixed_phrase_slop_scored.cpp
+    ./search/probe/make_variadic_phrase_docs.cpp
+    ./search/probe/make_variadic_phrase_scored.cpp
+    ./search/probe/make_variadic_phrase_intervals_docs.cpp
+    ./search/probe/make_variadic_phrase_intervals_scored.cpp
+    ./search/probe/make_variadic_phrase_slop_docs.cpp
+    ./search/probe/make_variadic_phrase_slop_scored.cpp
+    ./search/probe/make_ngram_docs.cpp
+    ./search/probe/make_ngram_scored.cpp
+    ./search/probe/make_ngram_all_docs.cpp
+    ./search/probe/make_ngram_all_scored.cpp
+    ./search/probe/make_wildcard_ngram_docs.cpp
+    ./search/probe/make_wildcard_ngram_scored.cpp
+    ./search/probe/make_geo_intersects_docs.cpp
+    ./search/probe/make_geo_intersects_scored.cpp
+    ./search/probe/make_geo_contains_docs.cpp
+    ./search/probe/make_geo_contains_scored.cpp
+    ./search/probe/make_geo_is_contained_docs.cpp
+    ./search/probe/make_geo_is_contained_scored.cpp
+    ./search/probe/make_geo_distance_docs.cpp
+    ./search/probe/make_geo_distance_scored.cpp
+    ./search/fill/make.cpp
+    ./search/fill/make_posting_docs.cpp
+    ./search/fill/make_posting_scored.cpp
+    ./search/fill/make_single_posting_docs.cpp
+    ./search/fill/make_single_posting_scored.cpp
+    ./search/fill/make_all_docs.cpp
+    ./search/fill/make_all_scored.cpp
+    ./search/fill/make_bitset_disjunction_docs.cpp
+    ./search/fill/make_window_disjunction_docs.cpp
+    ./search/fill/make_window_disjunction_scored.cpp
+    ./search/fill/make_bitset_conjunction_docs.cpp
+    ./search/fill/make_window_conjunction_docs.cpp
+    ./search/fill/make_sparse_conjunction_docs.cpp
+    ./search/fill/make_sparse_conjunction_scored.cpp
+    ./search/fill/make_bitset_exclusion_docs.cpp
+    ./search/fill/make_window_exclusion_docs.cpp
+    ./search/fill/make_sparse_exclusion_docs.cpp
+    ./search/fill/make_sparse_exclusion_scored.cpp
+    ./search/fill/make_bits_threshold_docs.cpp
+    ./search/fill/make_bits_threshold_scored.cpp
+    ./search/fill/make_count_threshold_docs.cpp
+    ./search/fill/make_count_threshold_scored.cpp
+    ./search/fill/make_sparse_boost_scored.cpp
+    ./search/fill/make_fixed_phrase_docs.cpp
+    ./search/fill/make_fixed_phrase_scored.cpp
+    ./search/fill/make_fixed_phrase_intervals_docs.cpp
+    ./search/fill/make_fixed_phrase_intervals_scored.cpp
+    ./search/fill/make_fixed_phrase_slop_docs.cpp
+    ./search/fill/make_fixed_phrase_slop_scored.cpp
+    ./search/fill/make_variadic_phrase_docs.cpp
+    ./search/fill/make_variadic_phrase_scored.cpp
+    ./search/fill/make_variadic_phrase_intervals_docs.cpp
+    ./search/fill/make_variadic_phrase_intervals_scored.cpp
+    ./search/fill/make_variadic_phrase_slop_docs.cpp
+    ./search/fill/make_variadic_phrase_slop_scored.cpp
+    ./search/fill/make_ngram_docs.cpp
+    ./search/fill/make_ngram_scored.cpp
+    ./search/fill/make_ngram_all_docs.cpp
+    ./search/fill/make_ngram_all_scored.cpp
+    ./search/fill/make_wildcard_ngram_docs.cpp
+    ./search/fill/make_wildcard_ngram_scored.cpp
+    ./search/fill/make_geo_intersects_docs.cpp
+    ./search/fill/make_geo_intersects_scored.cpp
+    ./search/fill/make_geo_contains_docs.cpp
+    ./search/fill/make_geo_contains_scored.cpp
+    ./search/fill/make_geo_is_contained_docs.cpp
+    ./search/fill/make_geo_is_contained_scored.cpp
+    ./search/fill/make_geo_distance_docs.cpp
+    ./search/fill/make_geo_distance_scored.cpp
+    ./search/docs/make.cpp
+    ./search/docs/make_posting.cpp
+    ./search/docs/make_single_posting.cpp
+    ./search/docs/make_all.cpp
+    ./search/docs/make_bitset_disjunction.cpp
+    ./search/docs/make_window_disjunction.cpp
+    ./search/docs/make_bitset_conjunction.cpp
+    ./search/docs/make_window_conjunction.cpp
+    ./search/docs/make_sparse_conjunction.cpp
+    ./search/docs/make_bitset_exclusion.cpp
+    ./search/docs/make_window_exclusion.cpp
+    ./search/docs/make_sparse_exclusion.cpp
+    ./search/docs/make_bits_threshold.cpp
+    ./search/docs/make_count_threshold.cpp
+    ./search/docs/make_fixed_phrase.cpp
+    ./search/docs/make_fixed_phrase_intervals.cpp
+    ./search/docs/make_fixed_phrase_slop.cpp
+    ./search/docs/make_variadic_phrase.cpp
+    ./search/docs/make_variadic_phrase_intervals.cpp
+    ./search/docs/make_variadic_phrase_slop.cpp
+    ./search/docs/make_ngram.cpp
+    ./search/docs/make_ngram_all.cpp
+    ./search/docs/make_wildcard_ngram.cpp
+    ./search/docs/make_geo_intersects.cpp
+    ./search/docs/make_geo_contains.cpp
+    ./search/docs/make_geo_is_contained.cpp
+    ./search/docs/make_geo_distance.cpp
+    ./search/scored/make.cpp
+    ./search/scored/make_posting.cpp
+    ./search/scored/make_single_posting.cpp
+    ./search/scored/make_all.cpp
+    ./search/scored/make_window_disjunction.cpp
+    ./search/scored/make_sparse_conjunction.cpp
+    ./search/scored/make_sparse_exclusion.cpp
+    ./search/scored/make_window_exclusion.cpp
+    ./search/scored/make_bits_threshold.cpp
+    ./search/scored/make_count_threshold.cpp
+    ./search/scored/make_fixed_phrase.cpp
+    ./search/scored/make_fixed_phrase_intervals.cpp
+    ./search/scored/make_fixed_phrase_slop.cpp
+    ./search/scored/make_variadic_phrase.cpp
+    ./search/scored/make_variadic_phrase_intervals.cpp
+    ./search/scored/make_variadic_phrase_slop.cpp
+    ./search/scored/make_ngram.cpp
+    ./search/scored/make_ngram_all.cpp
+    ./search/scored/make_wildcard_ngram.cpp
+    ./search/scored/make_geo_intersects.cpp
+    ./search/scored/make_geo_contains.cpp
+    ./search/scored/make_geo_is_contained.cpp
+    ./search/scored/make_geo_distance.cpp
+    ./search/top/make.cpp
+    ./search/top/make_posting.cpp
+    ./search/top/make_single_posting.cpp
+    ./search/top/make_all.cpp
+    ./search/top/make_window_disjunction.cpp
+    ./search/top/make_sparse_conjunction.cpp
+    ./search/top/make_sparse_exclusion.cpp
+    ./search/top/make_window_exclusion.cpp
+    ./search/top/make_bits_threshold.cpp
+    ./search/top/make_count_threshold.cpp
+    ./search/top/make_fixed_phrase.cpp
+    ./search/top/make_fixed_phrase_intervals.cpp
+    ./search/top/make_fixed_phrase_slop.cpp
+    ./search/top/make_variadic_phrase.cpp
+    ./search/top/make_variadic_phrase_intervals.cpp
+    ./search/top/make_variadic_phrase_slop.cpp
+    ./search/top/make_ngram.cpp
+    ./search/top/make_ngram_all.cpp
+    ./search/top/make_wildcard_ngram.cpp
+    ./search/top/make_geo_intersects.cpp
+    ./search/top/make_geo_contains.cpp
+    ./search/top/make_geo_is_contained.cpp
+    ./search/top/make_geo_distance.cpp
+    ./search/top/make_masked.cpp
+    ./search/top/make_pruned_posting.cpp
+    ./search/top/make_fixed_phrase_pruned.cpp
+    ./search/top/make_fixed_phrase_intervals_pruned.cpp
+    ./search/top/make_max_score_disjunction.cpp
+    ./search/top/make_wand_conjunction.cpp
     ./search/multiterm_query.cpp
     ./search/term_query.cpp
     ./search/boolean_filter.cpp
     ./search/boolean_query.cpp
     ./search/filter_optimizer.cpp
     ./search/optimizer/boolean_rules.cpp
-    ./search/optimizer/negation_rules.cpp
-    ./search/optimizer/terms_rules.cpp
     ./search/optimizer/range_rules.cpp
     ./search/optimizer/lowering_rules.cpp
     ./search/optimizer/levenshtein_prefix_rules.cpp
-    ./search/mixed_boolean_filter.cpp
     ./search/ngram_similarity_filter.cpp
-    ./search/ngram_similarity_query.cpp
     ./search/vector_similarity_filter.cpp
     ./search/vector_similarity_query.cpp
     ./search/vector_similarity_scorer.cpp
     ./search/vector_radius_filter.cpp
     ./search/geo_filter.cpp
-    ./search/proxy_filter.cpp
     ./search/tfidf.cpp
     ./search/bm25.cpp
     ./search/lm_jelinek_mercer.cpp

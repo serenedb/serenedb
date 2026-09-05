@@ -63,9 +63,9 @@ QueryBuilder::ptr AutomatonFilter::PrepareSegment(
 }
 
 PrepareCollector::ptr AutomatonFilter::MakeCollectorImpl(
-  const Scorer* scorer) const {
-  return std::make_unique<LimitedTermsCollector>(scorer,
-                                                 options().scored_terms_limit);
+  const Scorer* scorer, StatsArena& stats, uint32_t threads) const {
+  return std::make_unique<LimitedTermsCollector>(
+    scorer, options().scored_terms_limit, stats, threads);
 }
 
 namespace {

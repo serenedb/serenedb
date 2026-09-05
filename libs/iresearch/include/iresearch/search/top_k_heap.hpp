@@ -45,7 +45,6 @@ class TopKHeap : private util::Noncopyable {
   bool Empty() const noexcept { return _items.empty(); }
   bool Full() const noexcept { return _items.size() >= _capacity; }
 
-  // Smallest retained element; valid only when Full().
   const auto& Min() const noexcept {
     SDB_ASSERT(_min_offset < _items.size());
     return _items[_min_offset];
@@ -70,7 +69,6 @@ class TopKHeap : private util::Noncopyable {
     }
   }
 
-  // Fold another buffer's elements into this one.
   void Merge(TopKHeap&& other) {
     for (auto& item : other._items) {
       Push(std::move(item));
@@ -88,7 +86,6 @@ class TopKHeap : private util::Noncopyable {
     other.Clear();
   }
 
-  // Trim down to the surviving top-K and return them.
   std::vector<T>& Finalize() {
     Trim();
     return _items;

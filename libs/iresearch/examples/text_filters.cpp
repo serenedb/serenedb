@@ -18,6 +18,7 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
+#include <array>
 #include <duckdb/main/database.hpp>
 #include <iostream>
 #include <iresearch/analysis/analyzer.hpp>
@@ -139,25 +140,34 @@ std::vector<std::string> RunFilter(const irs::DirectoryReader& reader,
                                    const std::vector<std::string>& names) {
   irs::Optimize(filter, {.scored = false});
 
-  auto collector = filter->MakeCollector(nullptr);
+  // Nothing here scores, so there is no collector and no statistics.
   std::vector<irs::QueryBuilder::ptr> queries;
   queries.reserve(reader.size());
   for (auto& segment : reader) {
-    queries.emplace_back(
-      filter->PrepareSegment(segment, {.collector = collector.get()}));
+    queries.emplace_back(filter->PrepareSegment(segment, {}));
   }
-  const auto stats = collector->Finish(irs::IResourceManager::gNoop);
-
   std::vector<std::string> hits;
   for (auto& query : queries) {
     if (!query) {
       continue;
     }
-    auto it = query->Execute({}, stats);
-    while (!irs::doc_limits::eof(it->advance())) {
-      const auto idx = it->value() - irs::doc_limits::min();
-      if (idx < names.size()) {
-        hits.push_back(names[idx]);
+    auto plan = query->PlanDocs();
+    if (!plan) {
+      continue;
+    }
+    // `Run` fills a whole block and its bitset path writes past the count it
+    // produced, so the buffer carries the slack and the capacity it is told
+    // about does not.
+    std::array<irs::doc_id_t,
+               irs::doc_limits::kMinCapacity + irs::doc_limits::kRunSlack>
+      docs;
+    for (uint32_t n = 0;
+         (n = plan->Run(docs.data(), irs::doc_limits::kMinCapacity)) != 0;) {
+      for (uint32_t i = 0; i != n; ++i) {
+        const auto idx = docs[i] - irs::doc_limits::min();
+        if (idx < names.size()) {
+          hits.push_back(names[idx]);
+        }
       }
     }
   }

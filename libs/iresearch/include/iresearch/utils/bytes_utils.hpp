@@ -101,31 +101,10 @@ struct bytes_io<T, sizeof(uint32_t)> {
                      byte_type>);
     T v = *in;
     ++in;
-    if (!(v & kMask)) [[likely]] {
-      return;
+    for (T i = 1; i != kMaxVSize && (v & kMask) != 0; ++i) {
+      v = *in;
+      ++in;
     }
-    vskip_tail(in);
-  }
-
-  template<typename InputIterator>
-  static void vskip_tail(InputIterator& in) {
-    T v = *in;
-    ++in;
-    if (!(v & kMask)) {
-      return;
-    }
-    v = *in;
-    ++in;
-    if (!(v & kMask)) {
-      return;
-    }
-    v = *in;
-    ++in;
-    if (!(v & kMask)) {
-      return;
-    }
-    v = *in;
-    ++in;
   }
 
   template<typename InputIterator>
@@ -236,64 +215,10 @@ struct bytes_io<T, sizeof(uint64_t)> {
                      byte_type>);
     T v = *in;
     ++in;
-    if (!(v & kMask)) [[likely]] {
-      return;
+    for (T i = 1; i != kMaxVSize && (v & kMask) != 0; ++i) {
+      v = *in;
+      ++in;
     }
-    vskip_tail(in);
-  }
-
-  template<typename InputIterator>
-  static void vskip_tail(InputIterator& in) {
-    T v = *in;
-    ++in;
-    if (!(v & kMask)) {
-      return;
-    }
-
-    v = *in;
-    ++in;
-    if (!(v & kMask)) {
-      return;
-    }
-
-    v = *in;
-    ++in;
-    if (!(v & kMask)) {
-      return;
-    }
-
-    v = *in;
-    ++in;
-    if (!(v & kMask)) {
-      return;
-    }
-
-    v = *in;
-    ++in;
-    if (!(v & kMask)) {
-      return;
-    }
-
-    v = *in;
-    ++in;
-    if (!(v & kMask)) {
-      return;
-    }
-
-    v = *in;
-    ++in;
-    if (!(v & kMask)) {
-      return;
-    }
-
-    v = *in;
-    ++in;
-    if (!(v & kMask)) {
-      return;
-    }
-
-    v = *in;
-    ++in;
   }
 
   template<typename InputIterator>

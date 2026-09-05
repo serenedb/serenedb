@@ -33,11 +33,25 @@
 #include "iresearch/formats/column/read_context.hpp"
 #include "iresearch/index/column_extract.hpp"
 #include "iresearch/index/table_filter_iterator.hpp"
+#include "iresearch/search/common/table_filter.hpp"
+#include "iresearch/utils/type_limits.hpp"
 
 namespace sdb::connector {
 
-class HitBatcher {
+class HitBatcher : public irs::search::DeadRuns {
  public:
+  irs::doc_id_t Live(irs::doc_id_t doc) final {
+    SDB_ASSERT(!_filters.Empty());
+    const auto dead = _filters.DeadUntil(doc - irs::doc_limits::min());
+    return dead == 0
+             ? doc
+             : irs::doc_limits::min() + static_cast<irs::doc_id_t>(dead);
+  }
+
+  irs::search::DeadRuns* Skipper() noexcept {
+    return _filters.Empty() ? nullptr : this;
+  }
+
   HitBatcher(std::span<const ColumnstoreProjection> projections,
              irs::field_id pk_field_id, bool track_scores);
 
@@ -51,11 +65,11 @@ class HitBatcher {
   // already classified them against the segment's whole-file statistics
   // (ClassifySegmentColFilters) -- no re-check here, and `states` is the
   // worker's filter-state cache backing them. Both empty/null on the
-  // count/top-k paths, where filtering happens in the DocIterator instead.
-  void BeginSegment(
-    uint32_t seg_idx, const irs::ColReader* col_reader,
-    duckdb::ClientContext* context, ColFilterStateCache* states = nullptr,
-    std::span<const TableFilterDocIterator::FilterSpec> filters = {});
+  // count/top-k paths, where the plan applies the filters instead.
+  void BeginSegment(uint32_t seg_idx, const irs::ColReader* col_reader,
+                    duckdb::ClientContext* context,
+                    ColFilterStateCache* states = nullptr,
+                    std::span<const ColFilterSpec> filters = {});
 
   duckdb::idx_t OpenWindow(uint64_t row);
   // Batched fill: the current window's ids/scores go to [WindowHead(), ...) /

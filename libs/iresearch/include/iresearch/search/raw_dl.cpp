@@ -38,9 +38,7 @@ constexpr const T* TryGetValue(const T* value) noexcept {
   return value;
 }
 
-constexpr std::nullptr_t TryGetValue(utils::Empty /*value*/) noexcept {
-  return nullptr;
-}
+constexpr std::nullptr_t TryGetValue(utils::Empty) noexcept { return nullptr; }
 
 template<ScoreMergeType MergeType, bool HasBoost>
 IRS_FORCE_INLINE void DocLenImpl(
@@ -126,7 +124,7 @@ ScoreFunction RawDL::PrepareScorer(const ScoreContext& ctx) const {
       ctx.fetcher->AddNorms(ctx.field.norm, ctx.segment.norms(ctx.field.norm));
   }
   if (!norm) {
-    return ScoreFunction::Default();
+    norm = kNorms.data();
   }
 
   auto* filter_boost = [&] {

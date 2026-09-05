@@ -57,8 +57,6 @@
 #include "iresearch/index/directory_reader.hpp"
 #include "iresearch/index/index_features.hpp"
 #include "iresearch/index/index_writer.hpp"
-#include "iresearch/search/bitset_doc_iterator.hpp"
-#include "iresearch/search/conjunction.hpp"
 #include "iresearch/search/prefix_filter.hpp"
 #include "iresearch/search/term_filter.hpp"
 #include "iresearch/search/term_iterator.hpp"
@@ -550,35 +548,8 @@ BENCHMARK(FusedIntersectBuild)->Arg(10'000)->Unit(benchmark::kMicrosecond);
 BENCHMARK(FusedLockstepWalk)->Apply(ApplySizes);
 BENCHMARK(FusedDriverPlusPredicate)->Apply(ApplySizes);
 
-void WhereProbeWalk(benchmark::State& state) {
-  const auto& index = IndexOf(static_cast<size_t>(state.range(0)));
-  const auto& field = FieldOf(index);
-  const auto& seg = index.reader[0];
-  const auto docs_count = seg.docs_count();
-  const size_t words =
-    irs::bitset::bits_to_words(docs_count + irs::doc_limits::min());
-  std::vector<irs::bitset::word_t> set(words, ~irs::bitset::word_t{0});
-  size_t produced = 0;
-  for (auto _ : state) {
-    auto it = field.iterator();
-    size_t n = 0;
-    while (it->next()) {
-      std::vector<irs::ScoreAdapter> itrs;
-      itrs.emplace_back(it->postings(irs::IndexFeatures::None));
-      itrs.emplace_back(irs::memory::make_managed<irs::BitsetDocIterator>(
-        set.data(), set.data() + words));
-      auto docs = irs::MakeConjunction(irs::ScoreMergeType::Noop, {},
-                                       docs_count, std::move(itrs));
-      n += !irs::doc_limits::eof(docs->advance());
-    }
-    produced += n;
-  }
-  state.SetItemsProcessed(static_cast<int64_t>(produced));
-}
-
 BENCHMARK(FullWalk)->Apply(ApplySizes);
 BENCHMARK(FullWalkPredicate)->Apply(ApplySizes);
-BENCHMARK(WhereProbeWalk)->Apply(ApplySizes);
 
 // -- compiled TermIterator wrappers vs the raw loops above ------------------
 

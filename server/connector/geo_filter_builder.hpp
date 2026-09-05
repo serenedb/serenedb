@@ -22,9 +22,9 @@
 
 #include <duckdb/planner/expression.hpp>
 #include <duckdb/planner/expression/bound_function_expression.hpp>
-#include <iresearch/search/boolean_filter.hpp>
 
 #include "comparison_op.hpp"
+#include "search_filter_builder.hpp"
 
 namespace sdb::connector {
 
@@ -38,14 +38,12 @@ const duckdb::BoundFunctionExpression* TryGetGeoDistanceCall(
   const FilterContext& ctx, const duckdb::Expression& expr);
 
 // ST_Distance_Centroid(field, centroid) = / != distance  ->  point range.
-void FromGeoDistanceBinaryEq(irs::BooleanFilter& filter,
-                             const FilterContext& ctx,
+void FromGeoDistanceBinaryEq(BoolTarget filter, const FilterContext& ctx,
                              const duckdb::BoundFunctionExpression& geo_call,
                              const duckdb::Expression& dist_expr);
 
 // ST_Distance_Centroid(field, centroid) </<=/>/>= distance  ->  one-sided.
-void FromGeoDistanceComparison(irs::BooleanFilter& filter,
-                               const FilterContext& ctx,
+void FromGeoDistanceComparison(BoolTarget filter, const FilterContext& ctx,
                                const duckdb::BoundFunctionExpression& geo_call,
                                const duckdb::Expression& dist_expr,
                                ComparisonOp op);
@@ -54,8 +52,7 @@ void FromGeoDistanceComparison(irs::BooleanFilter& filter,
 // (ST_Distance_Between / ST_Intersects / ST_Contains). Returns false
 // if `func` is not a geo function so the caller can fall through; a geo
 // function that fails to build throws.
-bool TryDispatchGeoFunction(irs::BooleanFilter& filter,
-                            const FilterContext& ctx,
+bool TryDispatchGeoFunction(BoolTarget filter, const FilterContext& ctx,
                             const duckdb::BoundFunctionExpression& func);
 
 }  // namespace sdb::connector

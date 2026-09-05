@@ -141,23 +141,19 @@ std::vector<Doc> ScorePruneTestCase::Collect(const irs::DirectoryReader& index,
                                              size_t limit) {
   tests::PreparedFilter query{filter, index, scorer};
 
-  const bool mode = score_prune;
-
   std::vector<ScoredDoc> sorted;
   sorted.reserve(limit);
 
-  for (size_t left = limit, segment_id = 0; const auto& segment : index) {
+  for (size_t left = limit, segment_id = 0;
+       [[maybe_unused]] const auto& segment : index) {
     irs::ColumnArgsFetcher fetcher;
-    auto docs = query.Execute(segment_id, mode);
+    auto docs = query.ExecuteScored(segment_id, fetcher);
     EXPECT_NE(nullptr, docs);
 
     irs::ScoreFunction score;
     if (score_prune && can_prune) {
       // EXPECT_NE(std::numeric_limits<irs::score_t>::max(), score.max.tail);
-      score = docs->PrepareScore({
-        .segment = &segment,
-        .fetcher = &fetcher,
-      });
+      score = docs->PrepareScore();
     } else {
       // EXPECT_EQ(std::numeric_limits<irs::score_t>::max(), score.max.tail);
     }
@@ -167,8 +163,8 @@ std::vector<Doc> ScorePruneTestCase::Collect(const irs::DirectoryReader& index,
       EXPECT_TRUE(std::is_heap(std::begin(sorted), std::end(sorted)));
     }
     irs::score_t score_value = 0;
-    while (!irs::doc_limits::eof(docs->advance())) {
-      auto doc = docs->value();
+    while (!irs::doc_limits::eof(docs->Advance())) {
+      auto doc = docs->Value();
       fetcher.Fetch(doc);
       docs->FetchScoreArgs(0);
       score.Score(&score_value, 1);
@@ -310,12 +306,6 @@ void ScorePruneTestCase::AssertConjunctionFilter(const irs::Scorer& scorer,
                                                  bool score_prune) {
   static const irs::field_id kFieldId = tests::FieldIdFor("name");
 
-  irs::And conjunction;
-  irs::ByTerm& filter1 = conjunction.add<irs::ByTerm>();
-  *filter1.mutable_field_id() = kFieldId;
-  irs::ByTerm& filter2 = conjunction.add<irs::ByTerm>();
-  *filter2.mutable_field_id() = kFieldId;
-
   auto reader = irs::DirectoryReader{
     dir(), codec(),
     irs::IndexReaderOptions{.scorer = &scorer,
@@ -331,10 +321,15 @@ void ScorePruneTestCase::AssertConjunctionFilter(const irs::Scorer& scorer,
     // ASSERT_EQ(can_prune, field->HasScoreBounds());
 
     auto terms = field->iterator();
+    irs::BooleanFilter conjunction;
     ASSERT_TRUE(terms->next());
-    filter1.mutable_options()->term = terms->value();
+    conjunction.Add(
+      irs::TermClause{.field = kFieldId, .term = irs::bstring{terms->value()}},
+      irs::Occur::Must);
     ASSERT_TRUE(terms->next());
-    filter2.mutable_options()->term = terms->value();
+    conjunction.Add(
+      irs::TermClause{.field = kFieldId, .term = irs::bstring{terms->value()}},
+      irs::Occur::Must);
 
     AssertResults(reader, conjunction, &scorer, score_prune, can_prune, 10);
     AssertResults(reader, conjunction, &scorer, score_prune, can_prune, 100);
@@ -345,14 +340,6 @@ void ScorePruneTestCase::AssertDisjunctionFilter(const irs::Scorer& scorer,
                                                  bool score_prune) {
   static const irs::field_id kFieldId = tests::FieldIdFor("name");
 
-  irs::Or disjunction;
-  irs::ByTerm& filter1 = disjunction.add<irs::ByTerm>();
-  *filter1.mutable_field_id() = kFieldId;
-  irs::ByTerm& filter2 = disjunction.add<irs::ByTerm>();
-  *filter2.mutable_field_id() = kFieldId;
-  irs::ByTerm& filter3 = disjunction.add<irs::ByTerm>();
-  *filter3.mutable_field_id() = kFieldId;
-
   auto reader = irs::DirectoryReader{
     dir(), codec(),
     irs::IndexReaderOptions{.scorer = &scorer,
@@ -368,12 +355,14 @@ void ScorePruneTestCase::AssertDisjunctionFilter(const irs::Scorer& scorer,
     // ASSERT_EQ(can_prune, field->HasScoreBounds());
 
     auto terms = field->iterator();
-    ASSERT_TRUE(terms->next());
-    filter1.mutable_options()->term = terms->value();
-    ASSERT_TRUE(terms->next());
-    filter2.mutable_options()->term = terms->value();
-    ASSERT_TRUE(terms->next());
-    filter3.mutable_options()->term = terms->value();
+    irs::BooleanFilter disjunction;
+    for (size_t i = 0; i != 3; ++i) {
+      ASSERT_TRUE(terms->next());
+      disjunction.Add(irs::TermClause{.field = kFieldId,
+                                      .term = irs::bstring{terms->value()}},
+                      irs::Occur::Should);
+    }
+    disjunction.SetMinShouldMatch(1);
 
     AssertResults(reader, disjunction, &scorer, score_prune, can_prune, 10);
     AssertResults(reader, disjunction, &scorer, score_prune, can_prune, 100);

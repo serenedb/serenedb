@@ -72,8 +72,12 @@ distinct_scores	total_matches
 # kind resolves its scorer from the node it was collected for, but this one
 # returns Constant(kNoBoost) and ignores the context entirely, so an override
 # would be accepted and then do nothing.
-query error ::score\(\.\.\.\) cannot apply to a wildcard n-gram match
+query error
 SELECT id FROM wc_score_idx WHERE (body @@ ts_like('%analy%'))::score('raw_tf()')
+----
+db error: ERROR: ::score('raw_tf()') cannot apply to a match that carries no term statistics
+HINT: Such a match weighs the same for every document. Use ::score('constant(N)') or ::boost(N) here, or put the scorer on an AND / OR group that also matches an analyzed column.
+
 
 # The constant is unchanged when the override sits on a group around it: the
 # override reaches the branch, and the branch still ignores it. Asserting the

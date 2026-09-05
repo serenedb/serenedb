@@ -23,7 +23,9 @@
 
 #include "filter_test_case_base.hpp"
 
+#include <algorithm>
 #include <compare>
+#include <duckdb/common/allocator.hpp>
 
 #include "iresearch/search/column_collector.hpp"
 
@@ -34,12 +36,17 @@ PreparedFilter::PreparedFilter(const irs::Filter& filter,
                                const irs::Scorer* scorer,
                                irs::IResourceManager& memory,
                                const irs::AttributeProvider* ctx,
-                               CollectMode mode,
-                               irs::IResourceManager* exec_memory)
+                               CollectMode mode, irs::IResourceManager*)
   : _scorer{scorer} {
   _queries.reserve(index.size());
 
-  if (mode == CollectMode::NoCollector) {
+  // No scorer means this fixture does not score, and a consumer that does not
+  // score builds no collector at all -- so it lands on the same path as an
+  // explicit `NoCollector`, with empty statistics.
+  const bool collects = scorer != nullptr && !irs::IsUnscored(*scorer) &&
+                        mode != CollectMode::NoCollector;
+
+  if (!collects) {
     for (const auto& sub : index) {
       _queries.emplace_back(filter.PrepareSegment(sub, {
                                                          .collector = nullptr,
@@ -47,51 +54,34 @@ PreparedFilter::PreparedFilter(const irs::Filter& filter,
                                                          .ctx = ctx,
                                                        }));
     }
-    _stats.emplace();
-  } else if (mode == CollectMode::Single) {
-    _collector = filter.MakeCollector(scorer);
-    for (const auto& sub : index) {
-      _queries.emplace_back(
-        filter.PrepareSegment(sub, {
-                                     .collector = _collector.get(),
-                                     .memory = memory,
-                                     .ctx = ctx,
-                                   }));
-    }
-    _stats.emplace(_collector->Finish(memory));
-  } else {
-    _perseg.reserve(index.size());
-    for (const auto& sub : index) {
-      auto collector = filter.MakeCollector(scorer);
-      _queries.emplace_back(
-        filter.PrepareSegment(sub, {
-                                     .collector = collector.get(),
-                                     .memory = memory,
-                                     .ctx = ctx,
-                                   }));
-      _perseg.emplace_back(std::move(collector));
-    }
-    if (_perseg.empty()) {
-      _perseg.emplace_back(filter.MakeCollector(scorer));
-    }
-    if (mode == CollectMode::MergeAll) {
-      _perseg.front()->MergeAll([this](irs::PrepareCollector::MergeSink sink) {
-        for (size_t i = 1, n = _perseg.size(); i < n; ++i) {
-          sink(*_perseg[i]);
-        }
-      });
-    } else {
-      for (size_t i = 1, n = _perseg.size(); i < n; ++i) {
-        _perseg.front()->Merge(std::move(*_perseg[i]));
-      }
-    }
-    _stats.emplace(_perseg.front()->Finish(memory));
+    return;
   }
 
-  _exec.emplace(irs::ExecutionContext{
-    .memory = exec_memory ? *exec_memory : memory,
-    .ctx = ctx,
-  });
+  const auto segments = std::max<uint32_t>(1, index.size());
+  const auto threads = [&] {
+    switch (mode) {
+      case CollectMode::Single:
+        return uint32_t{1};
+      case CollectMode::PairThreads:
+        return std::min<uint32_t>(2, segments);
+      default:
+        return segments;
+    }
+  }();
+  auto& allocator = duckdb::Allocator::DefaultAllocator();
+  _stats.emplace(allocator);
+  _collector.emplace(filter, *scorer, *_stats, threads);
+  uint32_t seg = 0;
+  for (const auto& sub : index) {
+    _queries.emplace_back(
+      filter.PrepareSegment(sub, {
+                                   .collector = _collector->Get(),
+                                   .memory = memory,
+                                   .ctx = ctx,
+                                   .thread = seg++ % threads,
+                                 }));
+  }
+  _collector->Finish();
 }
 
 void FilterTestCaseBase::GetQueryResult(const PreparedFilter& prepared,
@@ -107,33 +97,33 @@ void FilterTestCaseBase::GetQueryResult(const PreparedFilter& prepared,
     auto sequential_docs = prepared.Execute(i);
     ASSERT_NE(nullptr, sequential_docs);
 
-    result_costs.emplace_back(irs::CostAttr::extract(*sequential_docs));
+    result_costs.emplace_back(prepared.Estimate(i));
 
-    while (!irs::doc_limits::eof(sequential_docs->advance())) {
+    while (!irs::doc_limits::eof(sequential_docs->Advance())) {
       auto stateless_random_docs = prepared.Execute(i);
       ASSERT_NE(nullptr, stateless_random_docs);
-      ASSERT_EQ(sequential_docs->value(),
-                random_docs->seek(sequential_docs->value()));
-      ASSERT_EQ(sequential_docs->value(), random_docs->value());
-      ASSERT_EQ(sequential_docs->value(),
-                random_docs->seek(sequential_docs->value()));
-      ASSERT_EQ(sequential_docs->value(), random_docs->value());
-      ASSERT_EQ(sequential_docs->value(),
-                stateless_random_docs->seek(sequential_docs->value()));
-      ASSERT_EQ(sequential_docs->value(), stateless_random_docs->value());
-      ASSERT_EQ(sequential_docs->value(),
-                stateless_random_docs->seek(sequential_docs->value()));
-      ASSERT_EQ(sequential_docs->value(), stateless_random_docs->value());
+      ASSERT_EQ(sequential_docs->Value(),
+                random_docs->Seek(sequential_docs->Value()));
+      ASSERT_EQ(sequential_docs->Value(), random_docs->Value());
+      ASSERT_EQ(sequential_docs->Value(),
+                random_docs->Seek(sequential_docs->Value()));
+      ASSERT_EQ(sequential_docs->Value(), random_docs->Value());
+      ASSERT_EQ(sequential_docs->Value(),
+                stateless_random_docs->Seek(sequential_docs->Value()));
+      ASSERT_EQ(sequential_docs->Value(), stateless_random_docs->Value());
+      ASSERT_EQ(sequential_docs->Value(),
+                stateless_random_docs->Seek(sequential_docs->Value()));
+      ASSERT_EQ(sequential_docs->Value(), stateless_random_docs->Value());
 
-      result.push_back(sequential_docs->value());
+      result.push_back(sequential_docs->Value());
     }
-    ASSERT_FALSE(!irs::doc_limits::eof(sequential_docs->advance()));
-    ASSERT_FALSE(!irs::doc_limits::eof(random_docs->advance()));
-    ASSERT_TRUE(irs::doc_limits::eof(sequential_docs->value()));
+    ASSERT_FALSE(!irs::doc_limits::eof(sequential_docs->Advance()));
+    ASSERT_FALSE(!irs::doc_limits::eof(random_docs->Advance()));
+    ASSERT_TRUE(irs::doc_limits::eof(sequential_docs->Value()));
 
     // seek to eof
     ASSERT_TRUE(
-      irs::doc_limits::eof(prepared.Execute(i)->seek(irs::doc_limits::eof())));
+      irs::doc_limits::eof(prepared.Execute(i)->Seek(irs::doc_limits::eof())));
   }
 }
 
@@ -144,42 +134,43 @@ void FilterTestCaseBase::GetQueryResult(const PreparedFilter& prepared,
   SCOPED_TRACE(source_location);
   result_costs.reserve(rdr.size());
 
-  for (size_t i = 0; const auto& sub : rdr) {
-    auto random_docs = prepared.Execute(i);
+  for (size_t i = 0; [[maybe_unused]] const auto& sub : rdr) {
+    irs::ColumnArgsFetcher random_fetcher;
+    irs::ColumnArgsFetcher sequential_fetcher;
+    auto random_docs = prepared.ExecuteScored(i, random_fetcher);
     ASSERT_NE(nullptr, random_docs);
-    auto random_score = random_docs->PrepareScore({
-      .segment = &sub,
-    });
-    auto sequential_docs = prepared.Execute(i);
+    auto random_score = random_docs->PrepareScore();
+    auto sequential_docs = prepared.ExecuteScored(i, sequential_fetcher);
     ASSERT_NE(nullptr, sequential_docs);
 
-    auto score = sequential_docs->PrepareScore({
-      .segment = &sub,
-    });
+    auto score = sequential_docs->PrepareScore();
 
-    result_costs.emplace_back(irs::CostAttr::extract(*sequential_docs));
+    result_costs.emplace_back(prepared.Estimate(i));
 
-    while (!irs::doc_limits::eof(sequential_docs->advance())) {
-      auto stateless_random_docs = prepared.Execute(i);
-      auto stateless_random_score = stateless_random_docs->PrepareScore({
-        .segment = &sub,
-      });
+    while (!irs::doc_limits::eof(sequential_docs->Advance())) {
+      irs::ColumnArgsFetcher stateless_fetcher;
+      auto stateless_random_docs = prepared.ExecuteScored(i, stateless_fetcher);
+      auto stateless_random_score = stateless_random_docs->PrepareScore();
 
       ASSERT_NE(nullptr, stateless_random_docs);
-      ASSERT_EQ(sequential_docs->value(),
-                random_docs->seek(sequential_docs->value()));
-      ASSERT_EQ(sequential_docs->value(),
-                random_docs->seek(sequential_docs->value()));
-      ASSERT_EQ(sequential_docs->value(), random_docs->value());
-      ASSERT_EQ(sequential_docs->value(),
-                stateless_random_docs->seek(sequential_docs->value()));
-      ASSERT_EQ(sequential_docs->value(),
-                stateless_random_docs->seek(sequential_docs->value()));
-      ASSERT_EQ(sequential_docs->value(), stateless_random_docs->value());
+      ASSERT_EQ(sequential_docs->Value(),
+                random_docs->Seek(sequential_docs->Value()));
+      ASSERT_EQ(sequential_docs->Value(),
+                random_docs->Seek(sequential_docs->Value()));
+      ASSERT_EQ(sequential_docs->Value(), random_docs->Value());
+      ASSERT_EQ(sequential_docs->Value(),
+                stateless_random_docs->Seek(sequential_docs->Value()));
+      ASSERT_EQ(sequential_docs->Value(),
+                stateless_random_docs->Seek(sequential_docs->Value()));
+      ASSERT_EQ(sequential_docs->Value(), stateless_random_docs->Value());
 
       sequential_docs->FetchScoreArgs(0);
       stateless_random_docs->FetchScoreArgs(0);
       random_docs->FetchScoreArgs(0);
+
+      sequential_fetcher.Fetch(sequential_docs->Value());
+      stateless_fetcher.Fetch(stateless_random_docs->Value());
+      random_fetcher.Fetch(random_docs->Value());
 
       irs::score_t score_value{-1};
       score.Score(&score_value, 1);
@@ -190,16 +181,17 @@ void FilterTestCaseBase::GetQueryResult(const PreparedFilter& prepared,
       ASSERT_EQ(score_value, stateless_score_value);
       ASSERT_EQ(score_value, random_score_value);
 
-      result.emplace_back(sequential_docs->value(),
+      result.emplace_back(sequential_docs->Value(),
                           std::vector<irs::score_t>{score_value});
     }
-    ASSERT_FALSE(!irs::doc_limits::eof(sequential_docs->advance()));
-    ASSERT_FALSE(!irs::doc_limits::eof(random_docs->advance()));
-    ASSERT_TRUE(irs::doc_limits::eof(sequential_docs->value()));
+    ASSERT_FALSE(!irs::doc_limits::eof(sequential_docs->Advance()));
+    ASSERT_FALSE(!irs::doc_limits::eof(random_docs->Advance()));
+    ASSERT_TRUE(irs::doc_limits::eof(sequential_docs->Value()));
 
     // seek to eof
-    ASSERT_TRUE(
-      irs::doc_limits::eof(prepared.Execute(i)->seek(irs::doc_limits::eof())));
+    irs::ColumnArgsFetcher eof_fetcher;
+    ASSERT_TRUE(irs::doc_limits::eof(
+      prepared.ExecuteScored(i, eof_fetcher)->Seek(irs::doc_limits::eof())));
     ++i;
   }
 }
@@ -226,6 +218,7 @@ void FilterTestCaseBase::CheckQuery(const irs::Filter& filter,
   SCOPED_TRACE(source_location);
   auto* scorer = order.empty() ? nullptr : order.front().get();
   PreparedFilter prepared{filter, rdr, scorer};
+  irs::ColumnArgsFetcher fetcher;
 
   auto assert_equal_scores = [&](const std::vector<irs::score_t>& expected,
                                  auto& score) {
@@ -241,37 +234,45 @@ void FilterTestCaseBase::CheckQuery(const irs::Filter& filter,
     std::visit(
       [&it, expected = test.expected]<typename A>(A action) {
         if constexpr (std::is_same_v<A, Seek>) {
-          ASSERT_EQ(expected, it.seek(action.target));
+          ASSERT_EQ(expected, it.Seek(action.target));
         } else if constexpr (std::is_same_v<A, Next>) {
           ASSERT_EQ(!irs::doc_limits::eof(expected),
-                    !irs::doc_limits::eof(it.advance()));
+                    !irs::doc_limits::eof(it.Advance()));
         } else if constexpr (std::is_same_v<A, Skip>) {
           for (auto count = action.count; count; --count) {
-            it.advance();
+            it.Advance();
           }
         }
       },
       test.action);
-    ASSERT_EQ(test.expected, it.value());
+    ASSERT_EQ(test.expected, it.Value());
     if (!irs::doc_limits::eof(test.expected)) {
-      it.FetchScoreArgs(0);
+      if constexpr (requires { it.FetchScoreArgs(0); }) {
+        it.FetchScoreArgs(0);
+        fetcher.Fetch(it.Value());
+      }
       assert_equal_scores(test.score, score);
     }
   };
 
   auto test = std::begin(tests);
-  for (size_t i = 0; const auto& sub : rdr) {
+  for (size_t i = 0; [[maybe_unused]] const auto& sub : rdr) {
     ASSERT_NE(test, std::end(tests));
-    auto random_docs = prepared.Execute(i);
-    ASSERT_NE(nullptr, random_docs);
-
-    auto random_score = scorer == nullptr ? irs::ScoreFunction{}
-                                          : random_docs->PrepareScore({
-                                              .segment = &sub,
-                                            });
-
-    for (auto& step : *test) {
-      assert_iterator(step, *random_docs, random_score);
+    fetcher.Clear();
+    if (scorer == nullptr) {
+      auto random_docs = prepared.Execute(i);
+      ASSERT_NE(nullptr, random_docs);
+      irs::ScoreFunction random_score;
+      for (auto& step : *test) {
+        assert_iterator(step, *random_docs, random_score);
+      }
+    } else {
+      auto random_docs = prepared.ExecuteScored(i, fetcher);
+      ASSERT_NE(nullptr, random_docs);
+      auto random_score = random_docs->PrepareScore();
+      for (auto& step : *test) {
+        assert_iterator(step, *random_docs, random_score);
+      }
     }
 
     ++test;
@@ -335,27 +336,31 @@ void FilterTestCaseBase::MakeResult(const irs::Filter& filter,
     scored_result{score_less};
   irs::ColumnArgsFetcher fetcher;
 
-  for (size_t i = 0; const auto& sub : rdr) {
+  for (size_t i = 0; [[maybe_unused]] const auto& sub : rdr) {
     fetcher.Clear();
-    auto docs = prepared.Execute(i);
-
-    irs::ScoreFunction score;
-    if (score_must_be_present) {
-      score = docs->PrepareScore({
-        .segment = &sub,
-        .fetcher = &fetcher,
-      });
-    }
-
     irs::score_t score_value{};
 
-    while (!irs::doc_limits::eof(docs->advance())) {
-      docs->FetchScoreArgs(0);
-      fetcher.Fetch(docs->value());
-      score.Score(&score_value, 1);
-      scored_result.emplace(score_value, docs->value());
+    if (score_must_be_present) {
+      auto docs = prepared.ExecuteScored(i, fetcher);
+      ASSERT_NE(nullptr, docs);
+      auto score = docs->PrepareScore();
+
+      while (!irs::doc_limits::eof(docs->Advance())) {
+        docs->FetchScoreArgs(0);
+        fetcher.Fetch(docs->Value());
+        score.Score(&score_value, 1);
+        scored_result.emplace(score_value, docs->Value());
+      }
+      ASSERT_FALSE(!irs::doc_limits::eof(docs->Advance()));
+    } else {
+      auto docs = prepared.Execute(i);
+      ASSERT_NE(nullptr, docs);
+
+      while (!irs::doc_limits::eof(docs->Advance())) {
+        scored_result.emplace(score_value, docs->Value());
+      }
+      ASSERT_FALSE(!irs::doc_limits::eof(docs->Advance()));
     }
-    ASSERT_FALSE(!irs::doc_limits::eof(docs->advance()));
     ++i;
   }
 

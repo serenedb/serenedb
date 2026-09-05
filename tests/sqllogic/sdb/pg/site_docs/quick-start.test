@@ -120,8 +120,8 @@ WHERE overview @@ ts_phrase('falls in love')
 ORDER BY score DESC, title;
 ----
 title	genre	score
-The Notebook	Romance	6.768
-Titanic	Romance	6.768
+The Notebook	Romance	3.076
+Titanic	Romance	3.076
 
 # DOCS_TEST: example_006
 

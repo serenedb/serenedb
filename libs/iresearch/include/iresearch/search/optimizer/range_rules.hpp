@@ -22,6 +22,8 @@
 
 namespace irs::optimizer {
 
-void InitRangeRules();
+void InitRangeDegenerate();
+void InitGranularRangeDegenerate();
+void InitAndRangeMerge();
 
 }  // namespace irs::optimizer

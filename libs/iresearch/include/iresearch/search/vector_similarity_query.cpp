@@ -1011,7 +1011,7 @@ Node::ptr Make(const RangeVectorQuery& query, const ScoredCtx& ctx,
       return MakeVectorScored<ByWalkScored, Node::ptr, RadiusGate<Inclusive>,
                               Rescore, lead::TwoPhaseScored>(
         query, *query.State().reader, score, query.Threshold(),
-        std::move(inner), merge);
+        std::move(inner), merge, ctx.fetcher);
     });
   });
 }

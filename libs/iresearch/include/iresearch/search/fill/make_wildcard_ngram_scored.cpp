@@ -45,7 +45,7 @@ Node::ptr MakeWildcardNgramScored(const WildcardNgramQuery& query,
                                                     .fetcher = ctx.fetcher,
                                                     .boost = query.Boost()});
   using Node = lead::ConstantScored<lead::Erased>;
-  return memory::make_managed<ByWalkScored<Node>>(merge, value,
+  return memory::make_managed<ByWalkScored<Node>>(merge, ctx.fetcher, value,
                                                   std::move(node));
 }
 

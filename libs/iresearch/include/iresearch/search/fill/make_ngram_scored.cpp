@@ -41,13 +41,13 @@ Node::ptr MakeNGramScored(const NGramSimilarityQuery& query,
                        .stats = stats,
                        .fetcher = ctx.fetcher,
                        .boost = query.Boost()};
-  return search::Build<true>(query,
-                             [&]<typename Slots>(auto&&... rest) -> Node::ptr {
-                               using Node = lead::TwoPhaseScored<Slots>;
-                               return memory::make_managed<ByWalkScored<Node>>(
-                                 merge, query.Segment(), *query.State().reader,
-                                 args, std::forward<decltype(rest)>(rest)...);
-                             });
+  return search::Build<true>(
+    query, [&]<typename Slots>(auto&&... rest) -> Node::ptr {
+      using Node = lead::TwoPhaseScored<Slots>;
+      return memory::make_managed<ByWalkScored<Node>>(
+        merge, ctx.fetcher, query.Segment(), *query.State().reader, args,
+        std::forward<decltype(rest)>(rest)...);
+    });
 }
 
 }  // namespace irs::fill

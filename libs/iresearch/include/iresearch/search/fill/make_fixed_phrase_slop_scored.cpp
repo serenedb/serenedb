@@ -36,7 +36,7 @@ Node::ptr MakeFixedPhraseSlopScored(const FixedPhraseQuery& query,
   }
   return search::MakeFixedPhraseOf<search::PhraseMatch::Slop, ByWalkScored,
                                    Node::ptr, true, lead::TwoPhaseScored>(
-    query, merge, query.Segment(), *query.state.reader,
+    query, merge, ctx.fetcher, query.Segment(), *query.state.reader,
     ScoreArgs{.scorer = record.scorer,
               .stats = stats,
               .fetcher = ctx.fetcher,

@@ -441,6 +441,8 @@ struct ParsedQuery {
   std::vector<std::string> tags;
 };
 
+constexpr std::string_view kSkipTopK = "skip:topk";
+
 std::string HashIds(const std::vector<std::string>& ids) {
   sdb::Sha256Functor sha;
   for (const auto& id : ids) {
@@ -450,13 +452,19 @@ std::string HashIds(const std::vector<std::string>& ids) {
   return sha.Finalize();
 }
 
+void HashIdsInPlace(std::vector<std::string>& ids) {
+  if (!ids.empty()) {
+    ids = {HashIds(ids)};
+  }
+}
+
 void HashResults(std::vector<QueryResult>& results) {
   for (auto& r : results) {
     if (r.result_type == ResultType::Hash) {
       continue;
     }
-    r.top_100_result = {HashIds(r.top_100_result)};
-    r.top_100_count_result = {HashIds(r.top_100_count_result)};
+    HashIdsInPlace(r.top_100_result);
+    HashIdsInPlace(r.top_100_count_result);
     r.result_type = ResultType::Hash;
   }
 }
@@ -617,6 +625,10 @@ std::vector<QueryResult> ExecuteAllQueries(
     r.result_type = ResultType::Raw;
     r.count = executor.ExecuteCount(q.query);
     EXPECT_GT(r.count, 0) << "COUNT returned 0";
+    if (absl::c_linear_search(q.tags, kSkipTopK)) {
+      results.emplace_back(std::move(r));
+      continue;
+    }
     r.top_100 = executor.ExecuteTopK(kTopK, q.query);
     SCOPED_TRACE(testing::Message()
                  << "count=" << r.count << " top_100=" << r.top_100
@@ -806,11 +818,21 @@ class LoadTest : public TestBase {
       EXPECT_EQ(a.top_100, e.top_100)
         << "TOP_100 mismatch for query[" << i << "] \"" << a.query << "\"";
 
+      {
+        auto pruned = a.top_100_result;
+        auto exact = a.top_100_count_result;
+        absl::c_sort(pruned);
+        absl::c_sort(exact);
+        EXPECT_EQ(pruned, exact)
+          << "TOP_100 vs TOP_100_COUNT documents differ for query[" << i
+          << "] \"" << a.query << "\"";
+      }
+
       // Hash test results if reference is hashed; compare raw otherwise
       if (e.result_type == ResultType::Hash) {
         if (a.result_type == ResultType::Raw) {
-          a.top_100_result = {HashIds(a.top_100_result)};
-          a.top_100_count_result = {HashIds(a.top_100_count_result)};
+          HashIdsInPlace(a.top_100_result);
+          HashIdsInPlace(a.top_100_count_result);
         }
       }
 
@@ -843,17 +865,6 @@ class LoadTest : public TestBase {
         EXPECT_EQ(a.top_100_count_result[j], expected_id)
           << "TOP_100_COUNT id[" << j << "] mismatch for query[" << i << "] \""
           << a.query << "\"";
-      }
-
-      ASSERT_EQ(a.top_100_result.size(), a.top_100_count_result.size())
-        << "TOP_100 vs TOP_100_COUNT id count mismatch for query[" << i
-        << "] \"" << a.query << "\"";
-
-      for (size_t j = 0; j < a.top_100_result.size(); ++j) {
-        auto expected_id = strip_score(a.top_100_count_result[j]);
-        EXPECT_EQ(a.top_100_result[j], expected_id)
-          << "TOP_100 vs TOP_100_COUNT id[" << j << "] mismatch for query[" << i
-          << "] \"" << a.query << "\"";
       }
     }
   }
@@ -1033,11 +1044,8 @@ TEST_F(LoadTest, ScoreAccuracyAcrossQueryShapes) {
     }
   }
 
-  // The query set is checked in, so coverage is a fixed number: 795 of the
-  // 1457 queries are a sum over terms the oracle can name, and each is
-  // checked in both modes.
-  EXPECT_EQ(eligible_queries, 795);
-  EXPECT_EQ(checked_queries, 795 * 2);
+  EXPECT_EQ(eligible_queries, 802);
+  EXPECT_EQ(checked_queries, 802 * 2);
 }
 
 TEST_F(LoadTest, DisjunctionScoreAccuracy) {

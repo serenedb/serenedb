@@ -53,7 +53,7 @@ Node::ptr MakeSparseConjunctionScored(
     [&]<typename Head, typename Tail>(auto&& head, auto&& tail) -> Node::ptr {
       using Node = lead::SparseConjunctionScored<Head, Tail>;
       return memory::make_managed<ByWalkScored<Node>>(
-        merge, std::piecewise_construct, ScoreMergeType::Sum,
+        merge, ctx.fetcher, std::piecewise_construct, ScoreMergeType::Sum,
         std::forward<decltype(head)>(head), std::forward<decltype(tail)>(tail),
         absorbed);
     });

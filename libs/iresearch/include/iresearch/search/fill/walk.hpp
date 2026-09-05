@@ -21,10 +21,12 @@
 #pragma once
 
 #include <algorithm>
+#include <span>
 #include <utility>
 
 #include "basics/bit_utils.hpp"
 #include "basics/shared.hpp"
+#include "iresearch/search/column_collector.hpp"
 #include "iresearch/search/common/window.hpp"
 #include "iresearch/search/fill/impl.hpp"
 #include "iresearch/search/lead/concept.hpp"
@@ -89,9 +91,11 @@ template<typename Leaf>
 class WalkScored {
  public:
   template<typename... Args>
-  explicit WalkScored(ScoreMergeType merge, Args&&... args)
+  explicit WalkScored(ScoreMergeType merge, ColumnArgsFetcher* fetcher,
+                      Args&&... args)
     : _leaf{std::forward<Args>(args)...},
       _score{_leaf.PrepareScore()},
+      _fetcher{fetcher},
       _merge{merge} {}
 
   WalkScored(WalkScored&&) = delete;
@@ -104,15 +108,15 @@ class WalkScored {
     while (doc < max) {
       const uint32_t offset = doc - min;
       SetBit(mask[offset / search::kWindowBits], offset % search::kWindowBits);
-      _offsets[n] = offset;
+      _docs[n] = doc;
       _leaf.FetchScoreArgs(n);
       if (++n == kScoreBlock) {
-        Settle(n, scores);
+        Settle(min, n, scores);
         n = 0;
       }
       doc = _leaf.Advance();
     }
-    Settle(n, scores);
+    Settle(min, n, scores);
     return _doc = doc;
   }
 
@@ -125,22 +129,35 @@ class WalkScored {
     return doc;
   }
 
-  void Settle(scores_size_t n, score_t* IRS_RESTRICT scores) noexcept {
+  void Settle(doc_id_t min, scores_size_t n,
+              score_t* IRS_RESTRICT scores) noexcept {
     if (n == 0) {
       return;
     }
-    _score.Score(_batch, n);
+    if (n == kScoreBlock) [[likely]] {
+      if (_fetcher != nullptr) {
+        _fetcher->FetchScoreBlock(
+          std::span<const doc_id_t, kScoreBlock>{_docs, kScoreBlock});
+      }
+      _score.ScoreBlock(_scores);
+    } else {
+      if (_fetcher != nullptr) {
+        _fetcher->Fetch(std::span<const doc_id_t>{_docs, n});
+      }
+      _score.Score(_scores, n);
+    }
     irs::ResolveMergeType(_merge, [&]<ScoreMergeType Merge> {
       for (scores_size_t i = 0; i != n; ++i) {
-        irs::Merge<Merge>(scores[_offsets[i]], _batch[i]);
+        irs::Merge<Merge>(scores[_docs[i] - min], _scores[i]);
       }
     });
   }
 
-  ABSL_CACHELINE_ALIGNED score_t _batch[kScoreBlock];
-  uint32_t _offsets[kScoreBlock];
+  ABSL_CACHELINE_ALIGNED doc_id_t _docs[kScoreBlock];
+  ABSL_CACHELINE_ALIGNED score_t _scores[kScoreBlock];
   Leaf _leaf;
   ScoreFunction _score;
+  ColumnArgsFetcher* _fetcher;
   ScoreMergeType _merge;
   doc_id_t _doc = doc_limits::invalid();
 };

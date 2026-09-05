@@ -66,7 +66,7 @@ Node::ptr MakeSparseBoostScored(
           size, [&]<size_t N> -> Node::ptr {
             using Node = lead::SparseBoostScored<Head, Optional, N>;
             return memory::make_managed<ByWalkScored<Node>>(
-              merge, std::piecewise_construct, ScoreMergeType::Sum,
+              merge, ctx.fetcher, std::piecewise_construct, ScoreMergeType::Sum,
               std::forward<decltype(head)>(head), size,
               std::forward<decltype(init)>(init));
           });

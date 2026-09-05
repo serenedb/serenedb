@@ -54,7 +54,7 @@ Node::ptr Make(const GeoQuery<Parser, Acceptor>& query, const ScoredCtx& ctx,
                                        .fetcher = ctx.fetcher,
                                        .boost = query.Boost()});
   using Node = lead::ConstantScored<lead::Erased>;
-  return memory::make_managed<ByWalkScored<Node>>(merge, value,
+  return memory::make_managed<ByWalkScored<Node>>(merge, ctx.fetcher, value,
                                                   std::move(node));
 }
 

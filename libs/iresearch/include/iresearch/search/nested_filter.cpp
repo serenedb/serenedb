@@ -652,15 +652,16 @@ Node::ptr Make(const ByNestedQuery& query) {
 Node::ptr Make(const ByNestedQuery& query, const ScoredCtx& ctx,
                ScoreMergeType merge) {
   if (query.ScoresChildren()) {
-    return PlanNestedScored<ByWalkScored, Node::ptr>(query, ctx, merge);
+    return PlanNestedScored<ByWalkScored, Node::ptr>(query, ctx, merge,
+                                                     nullptr);
   }
   auto node = lead::Make(query);
   if (!node) {
     return {};
   }
   using Node = lead::ConstantScored<lead::Erased>;
-  return memory::make_managed<ByWalkScored<Node>>(merge, query.Constant(),
-                                                  std::move(node));
+  return memory::make_managed<ByWalkScored<Node>>(
+    merge, ctx.fetcher, query.Constant(), std::move(node));
 }
 
 }  // namespace fill

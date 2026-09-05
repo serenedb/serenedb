@@ -1,118 +1,4 @@
 {"query": "the", "tags": ["term"]}
-{"query": "world", "tags": ["term"]}
-{"query": "state", "tags": ["term"]}
-{"query": "history", "tags": ["term"]}
-{"query": "president", "tags": ["term"]}
-{"query": "river", "tags": ["term"]}
-{"query": "population", "tags": ["term"]}
-{"query": "university", "tags": ["term"]}
-{"query": "germany", "tags": ["term"]}
-{"query": "album", "tags": ["term"]}
-{"query": "military", "tags": ["term"]}
-{"query": "railway", "tags": ["term"]}
-{"query": "football", "tags": ["term"]}
-{"query": "island", "tags": ["term"]}
-{"query": "bridge", "tags": ["term"]}
-{"query": "election", "tags": ["term"]}
-{"query": "california", "tags": ["term"]}
-{"query": "television", "tags": ["term"]}
-{"query": "aircraft", "tags": ["term"]}
-{"query": "stadium", "tags": ["term"]}
-{"query": "village", "tags": ["term"]}
-{"query": "language", "tags": ["term"]}
-{"query": "museum", "tags": ["term"]}
-{"query": "mountain", "tags": ["term"]}
-{"query": "church", "tags": ["term"]}
-{"query": "england", "tags": ["term"]}
-{"query": "company", "tags": ["term"]}
-{"query": "battle", "tags": ["term"]}
-{"query": "season", "tags": ["term"]}
-{"query": "family", "tags": ["term"]}
-{"query": "district", "tags": ["term"]}
-{"query": "league", "tags": ["term"]}
-{"query": "france", "tags": ["term"]}
-{"query": "australia", "tags": ["term"]}
-{"query": "station", "tags": ["term"]}
-{"query": "republic", "tags": ["term"]}
-{"query": "temple", "tags": ["term"]}
-{"query": "kingdom", "tags": ["term"]}
-{"query": "empire", "tags": ["term"]}
-{"query": "century", "tags": ["term"]}
-{"query": "volcano", "tags": ["term"]}
-{"query": "symphony", "tags": ["term"]}
-{"query": "chromosome", "tags": ["term"]}
-{"query": "hurricane", "tags": ["term"]}
-{"query": "monastery", "tags": ["term"]}
-{"query": "submarine", "tags": ["term"]}
-{"query": "algorithm", "tags": ["term"]}
-{"query": "dinosaur", "tags": ["term"]}
-{"query": "mercury", "tags": ["term"]}
-{"query": "telescope", "tags": ["term"]}
-{"query": "pharaoh", "tags": ["term"]}
-{"query": "avalanche", "tags": ["term"]}
-{"query": "saxophone", "tags": ["term"]}
-{"query": "cybernetics", "tags": ["term"]}
-{"query": "zeppelin", "tags": ["term"]}
-{"query": "tectonic", "tags": ["term"]}
-{"query": "quasar", "tags": ["term"]}
-{"query": "seismograph", "tags": ["term"]}
-{"query": "fjord", "tags": ["term"]}
-{"query": "xylem", "tags": ["term"]}
-{"query": "parliament", "tags": ["term"]}
-{"query": "cathedral", "tags": ["term"]}
-{"query": "locomotive", "tags": ["term"]}
-{"query": "constellation", "tags": ["term"]}
-{"query": "peninsula", "tags": ["term"]}
-{"query": "ambassador", "tags": ["term"]}
-{"query": "archipelago", "tags": ["term"]}
-{"query": "philosopher", "tags": ["term"]}
-{"query": "earthquake", "tags": ["term"]}
-{"query": "orchestra", "tags": ["term"]}
-{"query": "infantry", "tags": ["term"]}
-{"query": "democracy", "tags": ["term"]}
-{"query": "glacier", "tags": ["term"]}
-{"query": "hemisphere", "tags": ["term"]}
-{"query": "petroleum", "tags": ["term"]}
-{"query": "archaeology", "tags": ["term"]}
-{"query": "longitude", "tags": ["term"]}
-{"query": "renaissance", "tags": ["term"]}
-{"query": "metabolism", "tags": ["term"]}
-{"query": "photosynthesis", "tags": ["term"]}
-{"query": "propaganda", "tags": ["term"]}
-{"query": "tuberculosis", "tags": ["term"]}
-{"query": "manuscript", "tags": ["term"]}
-{"query": "encryption", "tags": ["term"]}
-{"query": "supernova", "tags": ["term"]}
-{"query": "thermometer", "tags": ["term"]}
-{"query": "referendum", "tags": ["term"]}
-{"query": "linguistics", "tags": ["term"]}
-{"query": "marathon", "tags": ["term"]}
-{"query": "biography", "tags": ["term"]}
-{"query": "cemetery", "tags": ["term"]}
-{"query": "fortress", "tags": ["term"]}
-{"query": "expedition", "tags": ["term"]}
-{"query": "artillery", "tags": ["term"]}
-{"query": "plantation", "tags": ["term"]}
-{"query": "observatory", "tags": ["term"]}
-{"query": "segregation", "tags": ["term"]}
-{"query": "assassination", "tags": ["term"]}
-{"query": "reconnaissance", "tags": ["term"]}
-{"query": "sovereignty", "tags": ["term"]}
-{"query": "bibliography", "tags": ["term"]}
-{"query": "hieroglyphics", "tags": ["term"]}
-{"query": "mozambique", "tags": ["term"]}
-{"query": "czechoslovakia", "tags": ["term"]}
-{"query": "mesopotamia", "tags": ["term"]}
-{"query": "transylvania", "tags": ["term"]}
-{"query": "afghanistan", "tags": ["term"]}
-{"query": "switzerland", "tags": ["term"]}
-{"query": "anthropology", "tags": ["term"]}
-{"query": "biodiversity", "tags": ["term"]}
-{"query": "electromagnetic", "tags": ["term"]}
-{"query": "paleontology", "tags": ["term"]}
-{"query": "semiconductor", "tags": ["term"]}
-{"query": "thermonuclear", "tags": ["term"]}
-{"query": "extraterrestrial", "tags": ["term"]}
 {"query": "+griffith +observatory", "tags": ["intersection", "global", "intersection:num_tokens_2"]}
 {"query": "\"griffith observatory\"", "tags": ["phrase", "phrase:num_tokens_2"]}
 {"query": "griffith observatory", "tags": ["union", "global", "union:num_tokens_2"]}
@@ -1074,6 +960,120 @@
 {"query": "+eclipse -lunar -solar", "tags": ["negated", "global", "negated:num_tokens_3"]}
 {"query": "+springfield -illinois -missouri", "tags": ["negated", "global", "negated:num_tokens_3"]}
 {"query": "+puma -cat -shoes", "tags": ["negated", "global", "negated:num_tokens_3"]}
+{"query": "world", "tags": ["term"]}
+{"query": "state", "tags": ["term"]}
+{"query": "history", "tags": ["term"]}
+{"query": "president", "tags": ["term"]}
+{"query": "river", "tags": ["term"]}
+{"query": "population", "tags": ["term"]}
+{"query": "university", "tags": ["term"]}
+{"query": "germany", "tags": ["term"]}
+{"query": "album", "tags": ["term"]}
+{"query": "military", "tags": ["term"]}
+{"query": "railway", "tags": ["term"]}
+{"query": "football", "tags": ["term"]}
+{"query": "island", "tags": ["term"]}
+{"query": "bridge", "tags": ["term"]}
+{"query": "election", "tags": ["term"]}
+{"query": "california", "tags": ["term"]}
+{"query": "television", "tags": ["term"]}
+{"query": "aircraft", "tags": ["term"]}
+{"query": "stadium", "tags": ["term"]}
+{"query": "village", "tags": ["term"]}
+{"query": "language", "tags": ["term"]}
+{"query": "museum", "tags": ["term"]}
+{"query": "mountain", "tags": ["term"]}
+{"query": "church", "tags": ["term"]}
+{"query": "england", "tags": ["term"]}
+{"query": "company", "tags": ["term"]}
+{"query": "battle", "tags": ["term"]}
+{"query": "season", "tags": ["term"]}
+{"query": "family", "tags": ["term"]}
+{"query": "district", "tags": ["term"]}
+{"query": "league", "tags": ["term"]}
+{"query": "france", "tags": ["term"]}
+{"query": "australia", "tags": ["term"]}
+{"query": "station", "tags": ["term"]}
+{"query": "republic", "tags": ["term"]}
+{"query": "temple", "tags": ["term"]}
+{"query": "kingdom", "tags": ["term"]}
+{"query": "empire", "tags": ["term"]}
+{"query": "century", "tags": ["term"]}
+{"query": "volcano", "tags": ["term"]}
+{"query": "symphony", "tags": ["term"]}
+{"query": "chromosome", "tags": ["term"]}
+{"query": "hurricane", "tags": ["term"]}
+{"query": "monastery", "tags": ["term"]}
+{"query": "submarine", "tags": ["term"]}
+{"query": "algorithm", "tags": ["term"]}
+{"query": "dinosaur", "tags": ["term"]}
+{"query": "mercury", "tags": ["term"]}
+{"query": "telescope", "tags": ["term"]}
+{"query": "pharaoh", "tags": ["term"]}
+{"query": "avalanche", "tags": ["term"]}
+{"query": "saxophone", "tags": ["term"]}
+{"query": "cybernetics", "tags": ["term"]}
+{"query": "zeppelin", "tags": ["term"]}
+{"query": "tectonic", "tags": ["term"]}
+{"query": "quasar", "tags": ["term"]}
+{"query": "seismograph", "tags": ["term"]}
+{"query": "fjord", "tags": ["term"]}
+{"query": "xylem", "tags": ["term"]}
+{"query": "parliament", "tags": ["term"]}
+{"query": "cathedral", "tags": ["term"]}
+{"query": "locomotive", "tags": ["term"]}
+{"query": "constellation", "tags": ["term"]}
+{"query": "peninsula", "tags": ["term"]}
+{"query": "ambassador", "tags": ["term"]}
+{"query": "archipelago", "tags": ["term"]}
+{"query": "philosopher", "tags": ["term"]}
+{"query": "earthquake", "tags": ["term"]}
+{"query": "orchestra", "tags": ["term"]}
+{"query": "infantry", "tags": ["term"]}
+{"query": "democracy", "tags": ["term"]}
+{"query": "glacier", "tags": ["term"]}
+{"query": "hemisphere", "tags": ["term"]}
+{"query": "petroleum", "tags": ["term"]}
+{"query": "archaeology", "tags": ["term"]}
+{"query": "longitude", "tags": ["term"]}
+{"query": "renaissance", "tags": ["term"]}
+{"query": "metabolism", "tags": ["term"]}
+{"query": "photosynthesis", "tags": ["term"]}
+{"query": "propaganda", "tags": ["term"]}
+{"query": "tuberculosis", "tags": ["term"]}
+{"query": "manuscript", "tags": ["term"]}
+{"query": "encryption", "tags": ["term"]}
+{"query": "supernova", "tags": ["term"]}
+{"query": "thermometer", "tags": ["term"]}
+{"query": "referendum", "tags": ["term"]}
+{"query": "linguistics", "tags": ["term"]}
+{"query": "marathon", "tags": ["term"]}
+{"query": "biography", "tags": ["term"]}
+{"query": "cemetery", "tags": ["term"]}
+{"query": "fortress", "tags": ["term"]}
+{"query": "expedition", "tags": ["term"]}
+{"query": "artillery", "tags": ["term"]}
+{"query": "plantation", "tags": ["term"]}
+{"query": "observatory", "tags": ["term"]}
+{"query": "segregation", "tags": ["term"]}
+{"query": "assassination", "tags": ["term"]}
+{"query": "reconnaissance", "tags": ["term"]}
+{"query": "sovereignty", "tags": ["term"]}
+{"query": "bibliography", "tags": ["term"]}
+{"query": "hieroglyphics", "tags": ["term"]}
+{"query": "mozambique", "tags": ["term"]}
+{"query": "czechoslovakia", "tags": ["term"]}
+{"query": "mesopotamia", "tags": ["term"]}
+{"query": "transylvania", "tags": ["term"]}
+{"query": "afghanistan", "tags": ["term"]}
+{"query": "switzerland", "tags": ["term"]}
+{"query": "anthropology", "tags": ["term"]}
+{"query": "biodiversity", "tags": ["term"]}
+{"query": "electromagnetic", "tags": ["term"]}
+{"query": "paleontology", "tags": ["term"]}
+{"query": "semiconductor", "tags": ["term"]}
+{"query": "thermonuclear", "tags": ["term"]}
+{"query": "extraterrestrial", "tags": ["term"]}
 {"query": "(the world state)@2", "tags": ["minmatch", "minmatch:num_tokens_3"]}
 {"query": "(the world state history)@3", "tags": ["minmatch", "minmatch:num_tokens_>3"]}
 {"query": "(world state history)@2", "tags": ["minmatch", "minmatch:num_tokens_3"]}
@@ -1455,3 +1455,95 @@
 {"query": "+renewable +energy +policy +goals", "tags": ["intersection", "global", "intersection:num_tokens_>3"]}
 {"query": "+airport +security +screening +rules", "tags": ["intersection", "global", "intersection:num_tokens_>3"]}
 {"query": "+climate +change +impact +report", "tags": ["intersection", "global", "intersection:num_tokens_>3"]}
+{"query": "(the world) (state history)", "tags": ["shape", "shape:flatten_should"]}
+{"query": "(climate policy) (energy goals)", "tags": ["shape", "shape:flatten_should"]}
+{"query": "+(+the +world) +state", "tags": ["shape", "shape:flatten_must"]}
+{"query": "+(+climate +policy) +energy", "tags": ["shape", "shape:flatten_must"]}
+{"query": "((the world) (state history)) climate", "tags": ["shape", "shape:flatten_deep"]}
+{"query": "climate clim*", "tags": ["shape", "shape:term_plus_prefix"]}
+{"query": "energy ener*", "tags": ["shape", "shape:term_plus_prefix"]}
+{"query": "+climate +clim*", "tags": ["shape", "shape:term_plus_prefix"]}
+{"query": "world stat* histor*", "tags": ["shape", "shape:multi_prefix"]}
+{"query": "the the world", "tags": ["shape", "shape:duplicate"]}
+{"query": "+the +the +world", "tags": ["shape", "shape:duplicate"]}
+{"query": "climate climate policy policy", "tags": ["shape", "shape:duplicate"]}
+{"query": "world state -history", "tags": ["shape", "shape:union_minus"]}
+{"query": "climate energy -policy", "tags": ["shape", "shape:union_minus"]}
+{"query": "(the world) -\"griffith observatory\"", "tags": ["shape", "shape:union_minus"]}
+{"query": "+the +(world state history)@2", "tags": ["shape", "shape:must_threshold"]}
+{"query": "+climate +(policy energy goals)@2", "tags": ["shape", "shape:must_threshold"]}
+{"query": "climate -(griffith observatory)", "tags": ["shape", "shape:negated_group"]}
+{"query": "energy -(bowel obstruction)", "tags": ["shape", "shape:negated_group"]}
+{"query": "+the -griffith -observatory", "tags": ["shape", "shape:multi_exclude"]}
+{"query": "stat*", "tags": ["shape", "shape:wide_prefix"]}
+{"query": "histor*", "tags": ["shape", "shape:wide_prefix"]}
+{"query": "popu*", "tags": ["shape", "shape:wide_prefix"]}
+{"query": "rese*", "tags": ["shape", "shape:wide_prefix"]}
+{"query": "tran*", "tags": ["shape", "shape:wide_prefix"]}
+{"query": "un*", "tags": ["shape", "shape:wide_prefix"]}
+{"query": "a*", "tags": ["shape", "shape:wide_prefix"]}
+{"query": "restoratio*", "tags": ["shape", "shape:narrow_prefix"]}
+{"query": "scan*", "tags": ["shape", "shape:narrow_prefix"]}
+{"query": "obse*", "tags": ["shape", "shape:narrow_prefix"]}
+{"query": "-stat* +the", "tags": ["shape", "shape:wide_prefix"]}
+{"query": "world stat* histor* popu*", "tags": ["shape", "shape:wide_prefix"]}
+{"query": "+the +stat*", "tags": ["shape", "shape:prefix_intersection"]}
+{"query": "+the +histor*", "tags": ["shape", "shape:prefix_intersection"]}
+{"query": "+album +stat*", "tags": ["shape", "shape:prefix_intersection", "skip:topk"]}
+{"query": "+renaissance +stat*", "tags": ["shape", "shape:prefix_intersection"]}
+{"query": "+telescope +stat*", "tags": ["shape", "shape:prefix_intersection"]}
+{"query": "+volcano +histor*", "tags": ["shape", "shape:prefix_intersection"]}
+{"query": "+stat* +histor*", "tags": ["shape", "shape:prefix_intersection", "skip:topk"]}
+{"query": "+the +stat* +histor*", "tags": ["shape", "shape:prefix_intersection", "skip:topk"]}
+{"query": "+(world state) +(history president)", "tags": ["shape", "shape:nested_and_or"]}
+{"query": "+(the world) +(state history) +(president river)", "tags": ["shape", "shape:nested_and_or"]}
+{"query": "+(world state) +(history president) +(river album)", "tags": ["shape", "shape:nested_and_or"]}
+{"query": "(+world +state) (+history +president)", "tags": ["shape", "shape:nested_or_and"]}
+{"query": "(+the +world) (+state +history) (+president +river)", "tags": ["shape", "shape:nested_or_and"]}
+{"query": "+(world state) -(+history +president)", "tags": ["shape", "shape:nested_excl"]}
+{"query": "+world +state -(history president)", "tags": ["shape", "shape:nested_excl"]}
+{"query": "+(+world +state) -(+history +president)", "tags": ["shape", "shape:nested_excl"]}
+{"query": "+(world state) +(history president) -(river album)", "tags": ["shape", "shape:nested_excl"]}
+{"query": "+((world state) (history president)) -(+river +album)", "tags": ["shape", "shape:nested_excl"]}
+{"query": "((world -state) (history -president))", "tags": ["shape", "shape:nested_excl"]}
+{"query": "+((world state) -(history)) +(president river)", "tags": ["shape", "shape:nested_excl"]}
+{"query": "+((world state) (history president)) +(river president)", "tags": ["shape", "shape:nested_deep"]}
+{"query": "((+world +state) (+history +president)) (+river +album)", "tags": ["shape", "shape:nested_deep"]}
+{"query": "+((+world +state) (+history +president)) -(river)", "tags": ["shape", "shape:nested_deep"]}
+{"query": "+(the) +((world state) (history president))", "tags": ["shape", "shape:nested_deep"]}
+{"query": "+(world state history)@2 +(president river)", "tags": ["shape", "shape:nested_threshold"]}
+{"query": "+(the world) +(state history president)@2", "tags": ["shape", "shape:nested_threshold"]}
+{"query": "+(world state) +\"united states\"", "tags": ["shape", "shape:nested_positional"]}
+{"query": "+(world state) -\"united states\"", "tags": ["shape", "shape:nested_positional"]}
+{"query": "(+world +\"united states\") (+state +history)", "tags": ["shape", "shape:nested_positional"]}
+{"query": "+(world state) +(history president) -\"new york\"", "tags": ["shape", "shape:nested_positional"]}
+{"query": "+(world state) +\"united 1-2 states\"", "tags": ["shape", "shape:nested_positional"]}
+{"query": "+(world state) +\"united states\"~2", "tags": ["shape", "shape:nested_positional"]}
+{"query": "+(world state) +\"united stat*\"", "tags": ["shape", "shape:nested_positional"]}
+{"query": "+(world state) +history~1", "tags": ["shape", "shape:nested_multiterm"]}
+{"query": "+(world state) +histor*", "tags": ["shape", "shape:nested_multiterm"]}
+{"query": "((+world +\"united states\") (+state +histor*)) -(river)", "tags": ["shape", "shape:nested_multiterm"]}
+{"query": "+(world state) +fn:ngram(0.7 united states america population)", "tags": ["shape", "shape:nested_ngram"]}
+{"query": "+(world state) -fn:ngram(0.7 united states america population)", "tags": ["shape", "shape:nested_ngram"]}
+{"query": "(+world +fn:ngram(0.34 united states america)) (+state +history)", "tags": ["shape", "shape:nested_ngram"]}
+{"query": "+the -(world state history)@2", "tags": ["shape", "shape:nested_threshold"]}
+{"query": "(world state history)@2 (president river album)@2", "tags": ["shape", "shape:nested_threshold"]}
+{"query": "+the +(world state history president)@3", "tags": ["shape", "shape:nested_threshold"]}
+{"query": "+world -(+state -history)", "tags": ["shape", "shape:nested_excl"]}
+{"query": "+(world -state) +(history -president)", "tags": ["shape", "shape:nested_excl"]}
+{"query": "(world -state) (histor* -president)", "tags": ["shape", "shape:nested_excl"]}
+{"query": "+the -(world state) -\"new york\"", "tags": ["shape", "shape:nested_excl"]}
+{"query": "+(world state) +(histor* stat*)", "tags": ["shape", "shape:nested_multiterm", "skip:topk"]}
+{"query": "+histor* +stat*", "tags": ["shape", "shape:nested_multiterm", "skip:topk"]}
+{"query": "+telescope -stat*", "tags": ["shape", "shape:nested_multiterm"]}
+{"query": "+the +(a* b*)", "tags": ["shape", "shape:nested_multiterm", "skip:topk"]}
+{"query": "+(world state) +(history president) +\"united states\" -(river album)", "tags": ["shape", "shape:nested_deep"]}
+{"query": "histor* \"united states\"", "tags": ["shape", "shape:nested_mixed"]}
+{"query": "+the +(histor* \"united states\")", "tags": ["shape", "shape:nested_mixed"]}
+{"query": "+the +(histor* stat* \"united states\")", "tags": ["shape", "shape:nested_mixed"]}
+{"query": "+world +(state zzzznotaterm)", "tags": ["shape", "shape:canonical"]}
+{"query": "+world -zzzznotaterm", "tags": ["shape", "shape:canonical"]}
+{"query": "+world +wor*", "tags": ["shape", "shape:canonical", "skip:topk"]}
+{"query": "(world state)@2", "tags": ["shape", "shape:canonical"]}
+{"query": "+(world)", "tags": ["shape", "shape:canonical"]}
+{"query": "+((world))", "tags": ["shape", "shape:canonical"]}

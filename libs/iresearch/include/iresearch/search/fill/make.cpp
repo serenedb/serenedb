@@ -399,7 +399,7 @@ Node::ptr Make(const BooleanQuery& query, const ScoredCtx& ctx,
       return {};
     }
     return memory::make_managed<ByWalkScored<lead::Erased>>(
-      merge, lead::Erased{std::move(node)});
+      merge, ctx.fetcher, lead::Erased{std::move(node)});
   }
   return MakeSparseConjunctionScored(must_terms, must_filters, segment, ctx,
                                      merge, absorbed);

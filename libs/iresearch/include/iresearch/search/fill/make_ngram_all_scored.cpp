@@ -45,7 +45,7 @@ Node::ptr MakeNGramAllScored(const NGramSimilarityQuery& query,
     query, [&]<typename Slots>(auto&&... rest) -> Node::ptr {
       using Node = lead::TwoPhaseScored<Slots>;
       return memory::make_managed<ByWalkScored<Node>>(
-        merge, query.Segment(), *query.State().reader, args,
+        merge, ctx.fetcher, query.Segment(), *query.State().reader, args,
         std::forward<decltype(rest)>(rest)...);
     });
 }

@@ -652,8 +652,46 @@ ObjectId RecordParentOf(const duckdb::CatalogEntry& entry) {
   }
 }
 
+// A set scan whose callback may take locks of its own -- resolving a name,
+// opening a transaction -- which the set's lock must not be held across.
+// Releasing it is only safe while something keeps the entries alive: the
+// statement's own transaction pins every version it can see, the way duckdb's
+// own enumerations rely on. A contextless read pins nothing, so it scans under
+// the lock, where the callbacks are the engine's own and take none.
+void ScanEntries(duckdb::CatalogSet& set,
+                 duckdb::CatalogTransaction transaction, bool pinned,
+                 absl::FunctionRef<void(duckdb::CatalogEntry&)> visitor) {
+  if (!pinned) {
+    set.Scan(transaction, visitor);
+    return;
+  }
+  duckdb::vector<duckdb::reference<duckdb::CatalogEntry>> entries;
+  set.Scan(transaction,
+           [&](duckdb::CatalogEntry& entry) { entries.push_back(entry); });
+  for (auto& entry : entries) {
+    visitor(entry.get());
+  }
+}
+
 void VisitRoleEntries(duckdb::ClientContext* context,
                       absl::FunctionRef<void(SereneDBRoleEntry&)> visitor) {
+  auto roles = OpenRoleSet(context, /*for_write=*/false);
+  if (!roles) {
+    return;
+  }
+  // Under the set's lock, which the scan holds for the callback: a role is the
+  // entry's own, so a visitor reads it where the entry is still held. It must
+  // take nothing of its own -- a privilege check reaches back into this very
+  // set, and the lock is not recursive -- which is why the readers that resolve
+  // anything collect first and resolve after.
+  roles.set->Scan(roles.transaction, [&](duckdb::CatalogEntry& entry) {
+    visitor(entry.Cast<SereneDBRoleEntry>());
+  });
+}
+
+void VisitRoles(
+  duckdb::ClientContext* context,
+  absl::FunctionRef<void(const catalog::SereneDBRoleEntry&)> visitor) {
   auto roles = OpenRoleSet(context, /*for_write=*/false);
   if (!roles) {
     return;
@@ -663,29 +701,23 @@ void VisitRoleEntries(duckdb::ClientContext* context,
   });
 }
 
-void VisitRoles(duckdb::ClientContext* context,
-                absl::FunctionRef<void(const catalog::Role&)> visitor) {
-  VisitRoleEntries(context,
-                   [&](SereneDBRoleEntry& role) { visitor(role.Role()); });
-}
-
-const catalog::Role* FindRole(duckdb::ClientContext* context,
-                              std::string_view name) {
+const SereneDBRoleEntry* FindRole(duckdb::ClientContext* context,
+                                  std::string_view name) {
   auto roles = OpenRoleSet(context, /*for_write=*/false);
   if (!roles) {
     return nullptr;
   }
   auto entry = roles.set->GetEntry(roles.transaction, duckdb::Identifier{name});
-  return entry ? &entry->Cast<SereneDBRoleEntry>().Role() : nullptr;
+  return entry ? &entry->Cast<SereneDBRoleEntry>() : nullptr;
 }
 
-const catalog::Role* FindRole(duckdb::ClientContext* context, ObjectId id) {
+const SereneDBRoleEntry* FindRole(duckdb::ClientContext* context, ObjectId id) {
   auto roles = OpenRoleSet(context, /*for_write=*/false);
   if (!roles) {
     return nullptr;
   }
   auto entry = GlobalEntryById(roles, duckdb::CatalogType::ROLE_ENTRY, id);
-  return entry ? &entry->Cast<SereneDBRoleEntry>().Role() : nullptr;
+  return entry ? &entry->Cast<SereneDBRoleEntry>() : nullptr;
 }
 
 bool HasUncommittedRoles(duckdb::ClientContext& context) {
@@ -716,7 +748,8 @@ namespace {
 // The roles a role's own definition names: every grantee and grantor in its
 // default-privileges entries, and itself for each entry it owns -- postgres
 // refuses to drop either side while the entry stands.
-duckdb::LogicalDependencyList DefaultAclReferences(const catalog::Role& role) {
+duckdb::LogicalDependencyList DefaultAclReferences(
+  const catalog::CreateRoleInfo& role) {
   duckdb::LogicalDependencyList out;
   const auto add = [&](ObjectId id) {
     // PUBLIC (id 0) and an unset id name no droppable object.
@@ -738,7 +771,7 @@ duckdb::LogicalDependencyList DefaultAclReferences(const catalog::Role& role) {
 }  // namespace
 
 void PutRole(duckdb::ClientContext* context, std::string_view old_name,
-             std::shared_ptr<const catalog::Role> role) try {
+             duckdb::unique_ptr<catalog::CreateRoleInfo> role) try {
   auto roles = OpenRoleSet(context, /*for_write=*/true);
   if (!roles) {
     return;
@@ -746,7 +779,7 @@ void PutRole(duckdb::ClientContext* context, std::string_view old_name,
   const auto deps = DefaultAclReferences(*role);
   PutSetEntry(
     *roles.set, roles.transaction, old_name,
-    duckdb::make_uniq<SereneDBRoleEntry>(*roles.catalog, std::move(role)),
+    duckdb::make_uniq<SereneDBRoleEntry>(*roles.catalog, std::move(*role)),
     deps);
   BumpRolesAfterVisible(context);
 } catch (const duckdb::TransactionException&) {
@@ -786,9 +819,10 @@ void VisitDatabases(duckdb::ClientContext* context,
   if (!databases) {
     return;
   }
-  databases.set->Scan(databases.transaction, [&](duckdb::CatalogEntry& entry) {
-    visitor(entry.Cast<SereneDBDatabaseEntry>());
-  });
+  ScanEntries(*databases.set, databases.transaction, context != nullptr,
+              [&](duckdb::CatalogEntry& entry) {
+                visitor(entry.Cast<SereneDBDatabaseEntry>());
+              });
 }
 
 const SereneDBDatabaseEntry* FindDatabase(duckdb::ClientContext* context,
@@ -991,10 +1025,11 @@ void VisitTokenizersIn(duckdb::ClientContext* context, duckdb::Catalog& catalog,
       ? sdb_catalog.GetCatalogTransaction(*context)
       : sdb_catalog.CommittedRead();
   sdb_catalog.VisitSchemaEntries([&](SereneDBSchemaEntry& schema) {
-    schema.GetCatalogSet(duckdb::CatalogType::TOKENIZER_ENTRY)
-      .Scan(transaction, [&](duckdb::CatalogEntry& entry) {
-        visitor(entry.Cast<SereneDBTokenizerEntry>().GetTokenizer());
-      });
+    ScanEntries(schema.GetCatalogSet(duckdb::CatalogType::TOKENIZER_ENTRY),
+                transaction, context != nullptr,
+                [&](duckdb::CatalogEntry& entry) {
+                  visitor(entry.Cast<SereneDBTokenizerEntry>().GetTokenizer());
+                });
   });
 }
 
@@ -1051,7 +1086,8 @@ void ScanDatabase(duckdb::ClientContext* context, ObjectId database,
                              ? sdb_catalog->GetCatalogTransaction(*context)
                              : sdb_catalog->CommittedRead();
   VisitSchemas(context, database, [&](SereneDBSchemaEntry& schema) {
-    schema.GetCatalogSet(type).Scan(transaction, visitor);
+    ScanEntries(schema.GetCatalogSet(type), transaction, context != nullptr,
+                visitor);
   });
 }
 
@@ -1390,7 +1426,6 @@ void SetEntryComment(const catalog::AccessContext& ax, duckdb::CatalogType type,
 void ApplyEntryAlter(const catalog::AccessContext& ax, duckdb::CatalogType type,
                      ObjectId parent_id, std::string_view name,
                      duckdb::AlterInfo& info) try {
-  catalog::Catalog::MutationScope mutation{catalog::GetCatalog()};
   auto& entry = RequireEntryOfKind(ax.context, type, parent_id, name);
   RequireEntryOwner(ax, type, entry);
   auto& sdb_catalog = entry.ParentCatalog().Cast<SereneDBCatalog>();
@@ -1579,8 +1614,10 @@ void ReplayCatalogRecord(duckdb::unique_ptr<duckdb::CreateInfo> info,
   switch (type) {
     using enum duckdb::CatalogType;
     case ROLE_ENTRY:
-      PutRole(nullptr, old_name,
-              basics::downCast<const catalog::CreateRoleInfo>(*info).GetRole());
+      PutRole(
+        nullptr, old_name,
+        duckdb::unique_ptr_cast<duckdb::CreateInfo, catalog::CreateRoleInfo>(
+          info->Copy()));
       return;
     case DATABASE_ENTRY: {
       const auto& database =
@@ -1748,19 +1785,34 @@ std::vector<ReferencedKeyVersion> ReferencedKeyVersions(
 void VisitRelationIndexEntries(
   duckdb::ClientContext* context, SereneDBSchemaEntry& schema,
   ObjectId relation_id, absl::FunctionRef<void(SereneDBIndexEntry&)> visitor) {
-  const auto emit = [&](duckdb::CatalogEntry& entry) {
-    // The ART a serenedb index is mirrored by is storage, not a catalog object:
-    // it shares this set because duckdb builds it there, and a catalog walk has
-    // nothing to say about it.
+  // The ART a serenedb index is mirrored by is storage, not a catalog object:
+  // it shares this set because duckdb builds it there, and a catalog walk has
+  // nothing to say about it.
+  const auto match = [&](duckdb::CatalogEntry& entry) -> SereneDBIndexEntry* {
     auto* index = dynamic_cast<SereneDBIndexEntry*>(&entry);
-    if (index != nullptr && index->GetRelationId() == relation_id) {
-      visitor(*index);
-    }
+    return index != nullptr && index->GetRelationId() == relation_id ? index
+                                                                     : nullptr;
   };
-  if (context != nullptr) {
-    schema.Scan(*context, duckdb::CatalogType::INDEX_ENTRY, emit);
-  } else {
-    schema.Scan(duckdb::CatalogType::INDEX_ENTRY, emit);
+  if (context == nullptr) {
+    // Nothing pins what a contextless read sees, so the visitor runs where the
+    // entries are still held: under the set's own lock.
+    schema.Scan(duckdb::CatalogType::INDEX_ENTRY,
+                [&](duckdb::CatalogEntry& entry) {
+                  if (auto* index = match(entry)) {
+                    visitor(*index);
+                  }
+                });
+    return;
+  }
+  std::vector<SereneDBIndexEntry*> found;
+  schema.Scan(*context, duckdb::CatalogType::INDEX_ENTRY,
+              [&](duckdb::CatalogEntry& entry) {
+                if (auto* index = match(entry)) {
+                  found.push_back(index);
+                }
+              });
+  for (auto* index : found) {
+    visitor(*index);
   }
 }
 
@@ -1769,9 +1821,17 @@ void VisitCatalogSetEntries(
   absl::FunctionRef<void(const SereneDBSchemaEntry&, duckdb::CatalogEntry&)>
     visitor) {
   VisitSchemas(&context, database, [&](SereneDBSchemaEntry& schema) {
+    // Collected first, visited after: the set's lock must not be held across a
+    // visitor -- one that resolves entries or transactions takes locks of its
+    // own. Safe here because this road always has a statement behind it, whose
+    // transaction pins every version it can see.
+    duckdb::vector<duckdb::reference<duckdb::CatalogEntry>> entries;
     schema.Scan(context, set, [&](duckdb::CatalogEntry& object_entry) {
-      visitor(schema, object_entry);
+      entries.push_back(object_entry);
     });
+    for (auto& entry : entries) {
+      visitor(schema, entry.get());
+    }
   });
 }
 

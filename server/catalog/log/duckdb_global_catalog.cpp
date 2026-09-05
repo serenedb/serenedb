@@ -165,24 +165,49 @@ void RegisterSereneDBGlobalStorage(duckdb::DBConfig& config) {
                                      std::move(ext));
 }
 
-// Held rather than looked up: the commit walk writes to it after the committing
-// transaction has left the state a name lookup needs.
+// Guarded rather than owned by an attachment: the commit walk records changes
+// after the committing transaction has left the state a name lookup needs.
 duckdb::shared_ptr<duckdb::WriteAheadLog> gClusterWal;
-// One log, every database: two commits interleaving their records would be made
-// durable by whichever flushed first, so a commit holds the log for its run.
-absl::Mutex gClusterWalMutex;
-thread_local bool gHoldsClusterWal = false;
-thread_local uint64_t gClusterWalFlushedAt = 0;
-// Whether the open run carries a catalog decision -- a version of an object, or
-// the opening of a drop -- as opposed to only what describes one. That is where
-// the crash window of a statement sits.
-thread_local bool gClusterWalDecides = false;
-// Whether it opened a reclamation. The window a drop has is after the entry
-// records that decided it are durable and before the sweep has run, so that is
-// where the fault sits.
-thread_local bool gClusterWalDropped = false;
-thread_local uint64_t gClusterWalSizeBeforeRun = 0;
-thread_local uint64_t gClusterWalWrittenBeforeRun = 0;
+// The storage manager the log hangs off -- the cluster-global attachment's.
+// Set once at init, before anything runs concurrently, and outliving the log:
+// the attachment goes down after the log is closed.
+duckdb::StorageManager* gClusterWalStorage = nullptr;
+
+// One catalog record of the run a committing transaction buffers: a create
+// carries the version and its grants, a drop the identity it removes, a recipe
+// how the rows of the version after it got their shape.
+struct CatalogRunRecord {
+  duckdb::unique_ptr<duckdb::CreateInfo> info;
+  duckdb::CatalogPermissions permissions;
+  duckdb::unique_ptr<duckdb::AlterInfo> recipe;
+  bool dropped = false;
+};
+
+// The records of one committing transaction, buffered on its thread until the
+// splice that ends the run: the walk that produces them holds catalog locks,
+// and the log's lock must stay a leaf. `dropped` says the run opened a
+// reclamation -- the window a drop has is after its removal records are
+// durable and before the sweep has run, and that is where the fault sits.
+struct CatalogRun {
+  std::vector<CatalogRunRecord> records;
+  bool dropped = false;
+};
+thread_local CatalogRun gCatalogRun;
+
+// The failure the append fault models: once the log is a consensus log, an
+// append refused by a lost leadership or a partition is routine, and the
+// answer is an aborted transaction and an ordinary error -- not a fatal.
+// Fired on the run's first record, inside duckdb's commit try, so the refusal
+// reverts the commit.
+void ThrowIfCatalogAppendRefused() {
+  if (!gCatalogRun.records.empty()) {
+    return;
+  }
+  SDB_IF_FAILURE("catalog_append_fails") {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_IO_ERROR),
+                    ERR_MSG("catalog log: could not append the transaction"));
+  }
+}
 
 void InitClusterCatalogWal() {
   auto db = duckdb::DatabaseManager::Get(DuckDBEngine::Instance().instance())
@@ -190,20 +215,36 @@ void InitClusterCatalogWal() {
   SDB_ENSURE(db && db->HasStorageManager(),
              "the cluster-global attachment has no storage manager to hang the "
              "catalog log off");
+  gClusterWalStorage = &db->GetStorageManager();
   // duckdb's own replay, over serenedb's own path. A database record attaches
   // its database on the spot -- catalog only, no file -- so every record after
-  // it has a set to land in.
-  gClusterWal = duckdb::WriteAheadLog::Replay(
-    duckdb::QueryContext{}, db->GetStorageManager(),
+  // it has a set to land in. Replayed before the log is published: a replay
+  // write finding no log is what keeps it from re-recording itself.
+  auto wal = duckdb::WriteAheadLog::Replay(
+    duckdb::QueryContext{}, *gClusterWalStorage,
     basics::file_utils::BuildFilename(
       std::string{GetCatalogStore().WalDirectory()}, "catalog.wal"));
+  const auto lock = LockClusterCatalogWal();
+  gClusterWal = std::move(wal);
+}
+
+duckdb::unique_lock<duckdb::mutex> LockClusterCatalogWal() {
+  // duckdb's own WAL lock of the storage manager the log hangs off: one log,
+  // every database -- two commits interleaving their records would be made
+  // durable by whichever flushed first, so a run's records reach the file as
+  // one splice under it. The attachment is storage-less, so nothing else ever
+  // takes it, and it stays a leaf: nothing under it takes another lock or
+  // waits on another transaction. Empty before init, which is single-threaded.
+  if (!gClusterWalStorage) {
+    return {};
+  }
+  return gClusterWalStorage->GetWALLock();
 }
 
 void SereneDBGlobalCatalog::WriteCatalogChange(
   duckdb::DuckTransaction& /*transaction*/, duckdb::CatalogEntry& entry,
   duckdb::data_ptr_t /*extra_data*/) {
-  auto wal = ClusterCatalogWal();
-  if (!wal) {
+  if (!ClusterCatalogWal()) {
     return;
   }
   auto& new_entry = entry.Parent();
@@ -214,26 +255,23 @@ void SereneDBGlobalCatalog::WriteCatalogChange(
                        : new_entry)) {
     return;
   }
-  wal = ScopedCatalogWal();
-  MarkCatalogDecision();
   if (new_entry.type == duckdb::CatalogType::DELETED_ENTRY) {
-    MarkCatalogDrop();
-    wal->WriteDropEntry(entry);
+    BufferCatalogDrop(entry.GetInfo());
     return;
   }
-  wal->WriteCreateEntry(new_entry);
+  BufferCatalogCreate(new_entry.GetInfo(), new_entry.permissions);
 }
 
 namespace {
 
-absl::Mutex gRowRecipesMutex;
+// Staged beside the log they came out of, so the log's own lock guards them.
 containers::NodeHashMap<uint64_t,
                         std::vector<duckdb::unique_ptr<duckdb::AlterInfo>>>
-  gRowRecipes ABSL_GUARDED_BY(gRowRecipesMutex);
+  gRowRecipes;
 
 void StashRowRecipe(ObjectId table_id,
                     duckdb::unique_ptr<duckdb::AlterInfo> recipe) {
-  const absl::MutexLock lock{&gRowRecipesMutex};
+  const auto lock = LockClusterCatalogWal();
   gRowRecipes[table_id.id()].push_back(std::move(recipe));
 }
 
@@ -241,7 +279,7 @@ void StashRowRecipe(ObjectId table_id,
 
 std::vector<duckdb::unique_ptr<duckdb::AlterInfo>> TakeRowRecipes(
   ObjectId table_id) {
-  const absl::MutexLock lock{&gRowRecipesMutex};
+  const auto lock = LockClusterCatalogWal();
   const auto it = gRowRecipes.find(table_id.id());
   if (it == gRowRecipes.end()) {
     return {};
@@ -258,11 +296,14 @@ void SereneDBGlobalCatalog::Alter(duckdb::CatalogTransaction /*transaction*/,
 
 void CloseClusterCatalogWal() {
   {
-    const absl::MutexLock lock{&gRowRecipesMutex};
+    const auto lock = LockClusterCatalogWal();
     gRowRecipes.clear();
+    gClusterWal.reset();
   }
-  const absl::MutexLock lock{&gClusterWalMutex};
-  gClusterWal.reset();
+  // The lock lives on the global attachment's storage manager, which shutdown
+  // destroys with the attachments: once the log is closed, no later call may
+  // reach for it.
+  gClusterWalStorage = nullptr;
 }
 
 duckdb::ErrorData SereneDBGlobalTransactionManager::CommitTransaction(
@@ -276,8 +317,8 @@ duckdb::ErrorData SereneDBGlobalTransactionManager::CommitTransaction(
   const bool wrote =
     !transaction.IsReadOnly() &&
     (!has_meta || !duckdb::MetaTransaction::Get(context).ModifiedDatabase());
-  // As in SereneDBTransactionManager::CommitTransaction: the run holds the
-  // cluster WAL until it ends, so it ends however the commit leaves.
+  // As in SereneDBTransactionManager::CommitTransaction: the run ends however
+  // the commit leaves, so a commit that threw mid-walk drops its records.
   bool committed = false;
   const absl::Cleanup end_run = [&] {
     EndCommittingCatalogRun(committed);
@@ -300,27 +341,45 @@ void SereneDBGlobalTransactionManager::RollbackTransaction(
   }
 }
 
-duckdb::optional_ptr<duckdb::WriteAheadLog> ScopedCatalogWal()
-  ABSL_NO_THREAD_SAFETY_ANALYSIS {
-  auto wal = ClusterCatalogWal();
-  if (!wal) {
-    return nullptr;
+void BufferCatalogCreate(duckdb::unique_ptr<duckdb::CreateInfo> info,
+                         const duckdb::CatalogPermissions& permissions) {
+  ThrowIfCatalogAppendRefused();
+  gCatalogRun.records.push_back(
+    {std::move(info), permissions, nullptr, /*dropped=*/false});
+}
+
+void BufferCatalogDrop(duckdb::unique_ptr<duckdb::CreateInfo> info) {
+  ThrowIfCatalogAppendRefused();
+  gCatalogRun.records.push_back({std::move(info),
+                                 {},
+                                 nullptr,
+                                 /*dropped=*/true});
+  gCatalogRun.dropped = true;
+}
+
+void BufferCatalogRecipe(duckdb::unique_ptr<duckdb::AlterInfo> recipe) {
+  ThrowIfCatalogAppendRefused();
+  gCatalogRun.records.push_back({nullptr,
+                                 {},
+                                 std::move(recipe),
+                                 /*dropped=*/false});
+}
+
+void WriteBootstrapEntry(const duckdb::CreateInfo& info,
+                         const duckdb::CatalogPermissions& permissions) {
+  const auto lock = LockClusterCatalogWal();
+  SDB_ENSURE(gClusterWal, "the catalog log is not open");
+  gClusterWal->WriteCreateEntry(info, permissions);
+  gClusterWal->Flush();
+}
+
+ClusterCatalogWalSizes ClusterCatalogWalSize() {
+  const auto lock = LockClusterCatalogWal();
+  if (!gClusterWal) {
+    return {};
   }
-  if (!gHoldsClusterWal) {
-    // The failure this exists for: once the log is a consensus log, an append
-    // refused by a lost leadership or a partition is routine, and the answer is
-    // an aborted transaction and an ordinary error -- not a fatal.
-    SDB_IF_FAILURE("catalog_append_fails") {
-      THROW_SQL_ERROR(ERR_CODE(ERRCODE_IO_ERROR),
-                      ERR_MSG("catalog log: could not append the transaction"));
-    }
-    gClusterWalMutex.Lock();
-    gHoldsClusterWal = true;
-    gClusterWalSizeBeforeRun = wal->GetStorageManager().GetWALSize();
-    gClusterWalWrittenBeforeRun = wal->GetTotalWritten();
-    gClusterWalFlushedAt = gClusterWalWrittenBeforeRun;
-  }
-  return wal;
+  return {gClusterWal->GetTotalWritten(),
+          gClusterWal->GetStorageManager().GetWALSize()};
 }
 
 void WriteOidHorizonTo(duckdb::WriteAheadLog& wal, uint64_t horizon) {
@@ -343,46 +402,35 @@ void WriteSequenceValueTo(duckdb::WriteAheadLog& wal, ObjectId sequence_id,
 }
 
 bool WriteOidHorizon(uint64_t horizon) {
-  auto wal = ClusterCatalogWal();
-  if (!wal) {
+  const auto lock = LockClusterCatalogWal();
+  if (!gClusterWal) {
     return false;
   }
-  absl::MutexLock lock{&gClusterWalMutex};
-  WriteOidHorizonTo(*wal, horizon);
-  wal->Flush();
+  WriteOidHorizonTo(*gClusterWal, horizon);
+  gClusterWal->Flush();
   return true;
 }
 
 void WriteSequenceValue(ObjectId sequence_id, uint64_t value, bool max_merge) {
-  auto wal = ClusterCatalogWal();
-  if (!wal) {
+  const auto lock = LockClusterCatalogWal();
+  if (!gClusterWal) {
     return;
   }
-  absl::MutexLock lock{&gClusterWalMutex};
-  WriteSequenceValueTo(*wal, sequence_id, value, max_merge);
-  wal->Flush();
+  WriteSequenceValueTo(*gClusterWal, sequence_id, value, max_merge);
+  gClusterWal->Flush();
 }
 
 void WriteSequenceDropped(ObjectId sequence_id) {
-  auto wal = ClusterCatalogWal();
-  if (!wal) {
-    return;
-  }
   uint8_t bytes[sizeof(uint8_t) + sizeof(uint64_t)];
   duckdb::MemoryStream stream{bytes, sizeof(bytes)};
   stream.Write<uint8_t>(static_cast<uint8_t>(CatalogState::SequenceDropped));
   stream.Write<uint64_t>(sequence_id.id());
-  absl::MutexLock lock{&gClusterWalMutex};
-  wal->WriteCatalogState(bytes, stream.GetPosition());
-  wal->Flush();
-}
-
-void MarkCatalogDecision() ABSL_NO_THREAD_SAFETY_ANALYSIS {
-  gClusterWalDecides = true;
-}
-
-void MarkCatalogDrop() ABSL_NO_THREAD_SAFETY_ANALYSIS {
-  gClusterWalDropped = true;
+  const auto lock = LockClusterCatalogWal();
+  if (!gClusterWal) {
+    return;
+  }
+  gClusterWal->WriteCatalogState(bytes, stream.GetPosition());
+  gClusterWal->Flush();
 }
 
 void SereneDBGlobalCatalog::ReplayCatalogState(
@@ -407,16 +455,23 @@ void SereneDBGlobalCatalog::ReplayCatalogState(
 }
 
 void RewriteClusterCatalogWal(
+  uint64_t expected_written,
   absl::FunctionRef<void(duckdb::WriteAheadLog&)> fill) {
-  if (!gClusterWal || gHoldsClusterWal) {
-    // A commit is mid-run: rewriting the file under it would drop the records
-    // it has already written. The next append tries again.
+  // Under the log's lock for the duration: an append landing between what
+  // `fill` writes and the swap would be lost with the file it landed in.
+  // Rewrites are rare and the file is one catalog, so the appends wait.
+  //
+  // The caller read its snapshot with no mutation excluded, so a commit can
+  // land between that read and this lock -- its records in the file, its
+  // entries not in the snapshot. Its splice moved the write count past what
+  // the caller saw, which is the abandon: the next append tries again.
+  const auto lock = LockClusterCatalogWal();
+  if (!gClusterWal || gClusterWal->GetTotalWritten() != expected_written) {
     return;
   }
   const auto path = gClusterWal->GetPath();
   const auto next_path = path + ".rewrite";
   auto& storage = gClusterWal->GetStorageManager();
-  absl::MutexLock lock{&gClusterWalMutex};
   {
     duckdb::WriteAheadLog next{storage, next_path};
     fill(next);
@@ -428,80 +483,46 @@ void RewriteClusterCatalogWal(
   gClusterWal = duckdb::make_shared_ptr<duckdb::WriteAheadLog>(storage, path);
 }
 
-namespace {
-
-// Makes the run's records durable, the way duckdb ends one in a database's own
-// WAL: a WAL_FLUSH marker and a sync. Called from inside the commit, before the
-// database's own rows are flushed -- the catalog may end up ahead of the rows
-// it describes, and never behind them. A no-op unless this thread wrote a
-// record; the run stays open.
-void FlushClusterCatalogWal() ABSL_NO_THREAD_SAFETY_ANALYSIS {
-  if (!gHoldsClusterWal) {
+void EndCommittingCatalogRun(bool committed) {
+  const auto run = std::exchange(gCatalogRun, {});
+  if (!committed || run.records.empty()) {
+    // A refused commit's records are discarded before the log ever saw them:
+    // there is no half-written run to rewind, and nothing to sweep.
     return;
   }
-  auto wal = ClusterCatalogWal();
-  if (!wal || wal->GetTotalWritten() <= gClusterWalFlushedAt) {
-    return;
-  }
-  wal->Flush();
-  gClusterWalFlushedAt = wal->GetTotalWritten();
-}
-
-}  // namespace
-namespace {
-
-// Whether the flush about to happen is the one that makes this run's records
-// durable for the first time -- the crash window a statement has, as opposed to
-// the later flushes of the same run.
-bool DecidesTheRun() ABSL_NO_THREAD_SAFETY_ANALYSIS {
-  return gHoldsClusterWal && gClusterWalDecides;
-}
-
-}  // namespace
-
-void EndCommittingCatalogRun(bool committed) ABSL_NO_THREAD_SAFETY_ANALYSIS {
-  if (!committed || !DecidesTheRun()) {
-    // One transaction ends a run per attachment it wrote, and only one of them
-    // carries the decision -- so what it dropped is forgotten there, or here
-    // when the commit was refused and there is nothing to sweep.
-    if (!committed) {
-      gClusterWalDropped = false;
-    }
-    EndClusterCatalogWal(committed);
-    return;
-  }
-  // Nothing this run wrote is durable yet: replay stops at the last flush
-  // marker, so a crash here leaves no half of the statement behind.
+  // Nothing this run buffered is durable yet: a crash here leaves no half of
+  // the statement behind.
   SDB_IF_FAILURE("crash_before_catalog_commit") { SDB_IMMEDIATE_ABORT(); }
-  const bool dropped = std::exchange(gClusterWalDropped, false);
-  EndClusterCatalogWal(committed);
+  {
+    // The splice: one transaction's records reach the file contiguous, and the
+    // flush that makes them durable covers that transaction alone. Called from
+    // inside the commit, before the database's own rows are flushed -- the
+    // catalog may end up ahead of the rows it describes, and never behind
+    // them. Every record locates its own object by id, so none says which
+    // database it belongs to.
+    const auto lock = LockClusterCatalogWal();
+    if (gClusterWal) {
+      for (const auto& record : run.records) {
+        if (record.recipe) {
+          gClusterWal->WriteAlter(*record.recipe);
+        } else if (record.dropped) {
+          gClusterWal->WriteDropEntry(*record.info);
+        } else {
+          gClusterWal->WriteCreateEntry(*record.info, record.permissions);
+        }
+      }
+      gClusterWal->Flush();
+    }
+  }
   // The catalog has decided and the rows it describes have not been written
   // out: the window a crash can hit. What is durable here is the definition,
   // and boot walks the rows up to it.
   SDB_IF_FAILURE("crash_after_catalog_before_data") { SDB_IMMEDIATE_ABORT(); }
   // The same window for a drop: its removals are durable and the artifact
   // sweep has not run, so boot's reconciliation finds and removes the orphans.
-  if (dropped) {
+  if (run.dropped) {
     SDB_IF_FAILURE("crash_on_drop") { SDB_IMMEDIATE_ABORT(); }
   }
-}
-
-void EndClusterCatalogWal(bool committed) ABSL_NO_THREAD_SAFETY_ANALYSIS {
-  if (!gHoldsClusterWal) {
-    return;
-  }
-  if (auto wal = ClusterCatalogWal()) {
-    if (committed) {
-      FlushClusterCatalogWal();
-    } else if (wal->GetTotalWritten() > gClusterWalWrittenBeforeRun) {
-      // The run stops where it started, the way duckdb reverts a commit that
-      // wrote to a database's own WAL: the next one must not flush these.
-      wal->Truncate(gClusterWalSizeBeforeRun);
-    }
-  }
-  gHoldsClusterWal = false;
-  gClusterWalDecides = false;
-  gClusterWalMutex.Unlock();
 }
 
 namespace {
@@ -545,11 +566,8 @@ void EndCommittingWrites(duckdb::ClientContext& context, bool committed) {
     action();
   }
   // The whole file rewritten from the catalog the statement just changed, where
-  // the size-driven one would have happened. A rewrite takes the catalog for
-  // itself, so it runs here rather than under the commit.
-  SDB_IF_FAILURE("compact_inside_ddl") {
-    GetCatalog().TryExcludingMutations([] { GetCatalogStore().CompactNow(); });
-  }
+  // the size-driven one would have happened.
+  SDB_IF_FAILURE("compact_inside_ddl") { GetCatalogStore().CompactNow(); }
   GetCatalogStore().TryCompact();
 }
 
@@ -562,6 +580,7 @@ void SereneDBGlobalCatalog::ReplayCatalogEntry(
 }
 
 duckdb::optional_ptr<duckdb::WriteAheadLog> ClusterCatalogWal() {
+  const auto lock = LockClusterCatalogWal();
   return gClusterWal.get();
 }
 

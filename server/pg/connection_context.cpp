@@ -24,6 +24,7 @@
 #include "auth/role_closure.h"
 #include "catalog/database.h"
 #include "catalog/ddl/catalog.h"
+#include "catalog/entry/duckdb_object_entry.h"
 #include "catalog/identifiers/object_id.h"
 #include "catalog/read/duckdb_catalog_sets.h"
 #include "catalog/role.h"

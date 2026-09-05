@@ -70,6 +70,7 @@
 #include "catalog/duckdb_primary_key.h"
 #include "catalog/entry.h"
 #include "catalog/entry/duckdb_index_entry.h"
+#include "catalog/entry/duckdb_object_entry.h"
 #include "catalog/entry/duckdb_view_entry.h"
 #include "catalog/index.h"
 #include "catalog/inverted_index.h"

@@ -18504,32 +18504,8 @@
     ]
   },
   {
-    "query": "+the +(a* b*)",
-    "count": 4125185,
-    "top_100": 0,
-    "result_type": "Hash",
-    "top_100_result": [],
-    "top_100_count_result": []
-  },
-  {
-    "query": "+world +wor*",
-    "count": 634052,
-    "top_100": 0,
-    "result_type": "Hash",
-    "top_100_result": [],
-    "top_100_count_result": []
-  },
-  {
-    "query": "+(world state) +(histor* stat*)",
-    "count": 773295,
-    "top_100": 0,
-    "result_type": "Hash",
-    "top_100_result": [],
-    "top_100_count_result": []
-  },
-  {
-    "query": "+the +stat* +histor*",
-    "count": 447051,
+    "query": "+album +stat*",
+    "count": 50403,
     "top_100": 0,
     "result_type": "Hash",
     "top_100_result": [],
@@ -18544,6 +18520,22 @@
     "top_100_count_result": []
   },
   {
+    "query": "+the +stat* +histor*",
+    "count": 447051,
+    "top_100": 0,
+    "result_type": "Hash",
+    "top_100_result": [],
+    "top_100_count_result": []
+  },
+  {
+    "query": "+(world state) +(histor* stat*)",
+    "count": 773295,
+    "top_100": 0,
+    "result_type": "Hash",
+    "top_100_result": [],
+    "top_100_count_result": []
+  },
+  {
     "query": "+histor* +stat*",
     "count": 447521,
     "top_100": 0,
@@ -18552,8 +18544,16 @@
     "top_100_count_result": []
   },
   {
-    "query": "+album +stat*",
-    "count": 50403,
+    "query": "+the +(a* b*)",
+    "count": 4125185,
+    "top_100": 0,
+    "result_type": "Hash",
+    "top_100_result": [],
+    "top_100_count_result": []
+  },
+  {
+    "query": "+world +wor*",
+    "count": 634052,
     "top_100": 0,
     "result_type": "Hash",
     "top_100_result": [],

@@ -1540,10 +1540,10 @@
 {"query": "(world state)@2", "tags": ["shape", "shape:canonical"]}
 {"query": "+(world)", "tags": ["shape", "shape:canonical"]}
 {"query": "+((world))", "tags": ["shape", "shape:canonical"]}
+{"query": "+album +stat*", "tags": ["shape", "shape:prefix_intersection", "skip:topk"]}
+{"query": "+stat* +histor*", "tags": ["shape", "shape:prefix_intersection", "skip:topk"]}
+{"query": "+the +stat* +histor*", "tags": ["shape", "shape:prefix_intersection", "skip:topk"]}
+{"query": "+(world state) +(histor* stat*)", "tags": ["shape", "shape:nested_multiterm", "skip:topk"]}
+{"query": "+histor* +stat*", "tags": ["shape", "shape:nested_multiterm", "skip:topk"]}
 {"query": "+the +(a* b*)", "tags": ["shape", "shape:nested_multiterm", "skip:topk"]}
 {"query": "+world +wor*", "tags": ["shape", "shape:canonical", "skip:topk"]}
-{"query": "+(world state) +(histor* stat*)", "tags": ["shape", "shape:nested_multiterm", "skip:topk"]}
-{"query": "+the +stat* +histor*", "tags": ["shape", "shape:prefix_intersection", "skip:topk"]}
-{"query": "+stat* +histor*", "tags": ["shape", "shape:prefix_intersection", "skip:topk"]}
-{"query": "+histor* +stat*", "tags": ["shape", "shape:nested_multiterm", "skip:topk"]}
-{"query": "+album +stat*", "tags": ["shape", "shape:prefix_intersection", "skip:topk"]}

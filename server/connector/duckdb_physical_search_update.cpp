@@ -35,6 +35,7 @@
 #include "connector/duckdb_client_state.h"
 #include "connector/primary_key.h"
 #include "connector/search_sink_writer.hpp"
+#include "connector/search_table_dispatch.h"
 #include "pg/connection_context.h"
 #include "query/transaction.h"
 #include "search/search_table.h"
@@ -43,14 +44,13 @@ namespace sdb::connector {
 namespace {
 
 struct SearchUpdateGlobalState : duckdb::GlobalSinkState {
-  duckdb::idx_t table_id;
   std::shared_ptr<search::SearchTable> search_table;
   query::Transaction* sdb_txn = nullptr;
 
   std::vector<duckdb::idx_t> column_ids;
   duckdb::vector<duckdb::LogicalType> chunk_types;
   std::vector<primary_key::PKColumn> new_pk_columns;
-  std::vector<duckdb::idx_t> new_row_src;
+  duckdb::vector<duckdb::column_t> new_row_src;
   duckdb::optional_ptr<duckdb::SequenceCatalogEntry> generated_pk_seq;
   std::unique_ptr<SearchSinkInsertBaseImpl> insert_sink;
 
@@ -70,15 +70,15 @@ struct SearchUpdateSourceState : duckdb::GlobalSourceState {
 }  // namespace
 
 SereneDBSearchUpdate::SereneDBSearchUpdate(
-  duckdb::PhysicalPlan& plan, SearchWriteTarget target,
-  std::vector<duckdb::idx_t> pk_col_indices,
+  duckdb::PhysicalPlan& plan, const catalog::SearchTableEntry& table,
+  std::vector<primary_key::PKColumn> old_pk_columns,
   std::vector<duckdb::PhysicalIndex> update_columns,
   duckdb::vector<duckdb::LogicalType> types,
   duckdb::idx_t estimated_cardinality, bool return_chunk)
   : duckdb::PhysicalOperator(plan, duckdb::PhysicalOperatorType::EXTENSION,
                              std::move(types), estimated_cardinality),
-    _target(std::move(target)),
-    _pk_col_indices(std::move(pk_col_indices)),
+    _table(table),
+    _old_pk_columns(std::move(old_pk_columns)),
     _update_columns(std::move(update_columns)),
     _return_chunk(return_chunk) {}
 
@@ -87,13 +87,16 @@ SereneDBSearchUpdate::GetGlobalSinkState(duckdb::ClientContext& context) const {
   auto state = duckdb::make_uniq<SearchUpdateGlobalState>();
   auto& conn_ctx = GetSereneDBContext(context);
 
-  state->table_id = _target.table_id;
-
-  state->search_table = _target.data;
+  state->search_table = _table.EnsureStorage();
   state->table_lock = std::shared_lock{state->search_table->GetTableLock()};
 
-  state->column_ids = _target.column_ids;
-  state->chunk_types = _target.chunk_types;
+  const auto& columns = _table.GetColumns();
+  state->column_ids.reserve(columns.LogicalColumnCount());
+  state->chunk_types.reserve(columns.LogicalColumnCount());
+  for (const auto& column : columns.Logical()) {
+    state->column_ids.emplace_back(column.Oid());
+    state->chunk_types.push_back(column.Type());
+  }
 
   const auto p = state->column_ids.size();
   state->new_row_src.assign(p, 0);
@@ -108,9 +111,12 @@ SereneDBSearchUpdate::GetGlobalSinkState(duckdb::ClientContext& context) const {
     state->new_row_src[index] = i;
   }
 
-  state->new_pk_columns = _target.pk_columns;
-  state->old_pk_columns = RowIdentityPKColumns(_target, _pk_col_indices);
-  state->generated_pk_seq = _target.generated_pk_seq;
+  state->new_pk_columns = primary_key::PKColumns(_table);
+  state->old_pk_columns = _old_pk_columns;
+  if (state->new_pk_columns.empty()) {
+    state->generated_pk_seq = FindGeneratedPkSequence(context, _table);
+    SDB_ASSERT(state->generated_pk_seq);
+  }
 
   state->sdb_txn = &conn_ctx;
   if (_return_chunk) {
@@ -179,7 +185,7 @@ duckdb::SinkResultType SereneDBSearchUpdate::Sink(
     // already says where each of them arrived.
     duckdb::DataChunk row;
     row.InitializeEmpty(GetTypes());
-    BuildReturnedRow(row, chunk, gstate.new_row_src);
+    row.ReferenceColumns(chunk, gstate.new_row_src);
     gstate.returned->Append(row);
   }
 

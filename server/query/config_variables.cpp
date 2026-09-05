@@ -551,7 +551,7 @@ constexpr std::pair<std::string_view, VariableDescription>
         "overrides. Default 268435456 (256MB).",
         [] {
           return duckdb::Value::UBIGINT(
-            catalog::InvertedIndexOptions{}.segment_memory_max);
+            catalog::InvertedIndexSettings{}.segment_memory_max);
         },
         RejectZero<"segment_memory_max">,
       },
@@ -587,7 +587,7 @@ constexpr std::pair<std::string_view, VariableDescription>
         "Default 10.",
         [] {
           return duckdb::Value::UINTEGER(
-            catalog::InvertedIndexOptions{}.compaction_max_segments);
+            catalog::InvertedIndexSettings{}.compaction_max_segments);
         },
         RejectZero<"compaction_max_segments">,
       },
@@ -601,7 +601,7 @@ constexpr std::pair<std::string_view, VariableDescription>
         "overrides. Default 5368709120 (5GB).",
         [] {
           return duckdb::Value::UBIGINT(
-            catalog::InvertedIndexOptions{}.compaction_max_segments_bytes);
+            catalog::InvertedIndexSettings{}.compaction_max_segments_bytes);
         },
         RejectZero<"compaction_max_segments_bytes">,
       },
@@ -616,7 +616,7 @@ constexpr std::pair<std::string_view, VariableDescription>
         "(2MB).",
         [] {
           return duckdb::Value::UBIGINT(
-            catalog::InvertedIndexOptions{}.compaction_floor_segment_bytes);
+            catalog::InvertedIndexSettings{}.compaction_floor_segment_bytes);
         },
         RejectZero<"compaction_floor_segment_bytes">,
       },

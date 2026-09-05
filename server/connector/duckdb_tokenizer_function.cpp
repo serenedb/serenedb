@@ -130,7 +130,9 @@ void DropTSDictionaryPragma(duckdb::ClientContext& context,
   info.SetQualifiedName(qualified);
   info.if_not_found = duckdb::OnEntryNotFound::RETURN_NULL;
   info.cascade = false;
-  duckdb::Catalog::GetCatalog(context, database).DropEntry(context, info);
+  duckdb::Catalog::GetCatalog(context, database)
+    .Cast<catalog::SereneDBCatalog>()
+    .DropTokenizer(context, info);
 }
 
 }  // namespace

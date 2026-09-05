@@ -2223,7 +2223,8 @@ void PgWireSession<Kind>::DescribeStatement(Statement& stmt) {
   oids.reserve(param_count);
   for (uint16_t i = 0; i < param_count; ++i) {
     oids.push_back(
-      sdb::pg::Type2Oid(ResolveExpectedType(prepared.data->value_map, i)));
+      sdb::pg::Type2Oid(ResolveExpectedType(prepared.data->value_map, i),
+                        &_connection_ctx->GetClientContext()));
   }
   WriteParameterDescription(this->_send, oids);
 
@@ -2289,14 +2290,14 @@ void PgWireSession<Kind>::WriteResolvedRowDescription(
     }
     ClosingPending pending = PendingQueryEnsured(prepared, *params, nullptr);
     if (!pending->HasError()) {
-      WriteRowDescription(this->_send, pending->types,
-                          duckdb::StringsToIdentifiers(pending->names),
-                          formats);
+      WriteRowDescription(
+        this->_send, _connection_ctx->GetClientContext(), pending->types,
+        duckdb::StringsToIdentifiers(pending->names), formats);
       return;
     }
   }
-  WriteRowDescription(this->_send, prepared.GetTypes(), prepared.GetNames(),
-                      formats);
+  WriteRowDescription(this->_send, _connection_ctx->GetClientContext(),
+                      prepared.GetTypes(), prepared.GetNames(), formats);
 }
 
 template<SocketKind Kind>

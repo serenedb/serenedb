@@ -28,7 +28,6 @@
 #include <duckdb/catalog/catalog.hpp>
 #include <duckdb/catalog/catalog_entry/schema_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/type_catalog_entry.hpp>
-#include <duckdb/common/extension_type_info.hpp>
 #include <duckdb/common/types/time.hpp>
 #include <duckdb/common/types/timestamp.hpp>
 
@@ -64,6 +63,23 @@ duckdb::optional_ptr<duckdb::Catalog> SessionDatabase(
                                      duckdb::Identifier{conn->GetDatabase()});
 }
 
+duckdb::optional_ptr<duckdb::TypeCatalogEntry> UserTypeEntry(
+  const duckdb::LogicalType& type,
+  duckdb::optional_ptr<duckdb::ClientContext> context) {
+  if (!context || !type.HasAlias()) {
+    return nullptr;
+  }
+  auto database = SessionDatabase(context.get());
+  if (!database) {
+    return nullptr;
+  }
+  auto entry = database->GetEntry(*context, duckdb::CatalogType::TYPE_ENTRY,
+                                  duckdb::Identifier{INVALID_SCHEMA},
+                                  duckdb::Identifier{type.GetAlias()},
+                                  duckdb::OnEntryNotFound::RETURN_NULL);
+  return entry ? &entry->Cast<duckdb::TypeCatalogEntry>() : nullptr;
+}
+
 }  // namespace
 
 #define SDB_REGTYPE_OUT(oid, type_name) \
@@ -89,7 +105,9 @@ duckdb::optional_ptr<duckdb::Catalog> SessionDatabase(
   case oid##Array:                   \
     return LogicalType::LIST(type_expr);
 
-PgTypeInfo Logical2Pg(const duckdb::LogicalType& type, bool in_array) {
+PgTypeInfo Logical2Pg(const duckdb::LogicalType& type,
+                      duckdb::optional_ptr<duckdb::ClientContext> context,
+                      bool in_array) {
   // Arrays are varlena (typlen -1); a scalar carries its fixed width or -1. The
   // typmod (DECIMAL precision/scale, else -1) is the element's and survives the
   // array wrapping.
@@ -202,19 +220,14 @@ PgTypeInfo Logical2Pg(const duckdb::LogicalType& type, bool in_array) {
     case UUID:
       return make(kUuid, kUuidArray, 16);
     case ENUM: {
-      auto ext = type.GetExtensionInfo();
       // null for anonymous/derived enums not registered as a pg custom type
       // (e.g. enum_range); their value is just the string label on the wire.
-      if (ext) {
-        auto it = ext->properties.find(catalog::kPgSqlTypeOidProp);
-        if (it != ext->properties.end()) {
-          const duckdb::idx_t oid{it->second.GetValue<uint64_t>()};
-          // Enum types are int4-backed (typlen 4).
-          return {static_cast<int32_t>(
-                    (in_array ? catalog::TypeArrayOid(oid) : oid).id()),
-                  in_array ? static_cast<int16_t>(-1) : static_cast<int16_t>(4),
-                  -1};
-        }
+      if (const auto entry = UserTypeEntry(type, context)) {
+        const auto oid = entry->oid;
+        // Enum types are int4-backed (typlen 4).
+        return {static_cast<int32_t>(in_array ? TypeArrayOid(oid) : oid),
+                in_array ? static_cast<int16_t>(-1) : static_cast<int16_t>(4),
+                -1};
       }
       return make(kText, kTextArray, -1);
     }
@@ -225,16 +238,11 @@ PgTypeInfo Logical2Pg(const duckdb::LogicalType& type, bool in_array) {
       if (connector::IsTSQueryStructType(type)) {
         return make(kText, kTextArray, -1);
       }
-      auto ext = type.GetExtensionInfo();
       // null in case of anonymous record types (e.g. SELECT ROW(1, 2))
-      if (ext) {
-        auto it = ext->properties.find(catalog::kPgSqlTypeOidProp);
-        if (it != ext->properties.end()) {
-          const duckdb::idx_t oid{it->second.GetValue<uint64_t>()};
-          return {static_cast<int32_t>(
-                    (in_array ? catalog::TypeArrayOid(oid) : oid).id()),
-                  static_cast<int16_t>(-1), -1};
-        }
+      if (const auto entry = UserTypeEntry(type, context)) {
+        const auto oid = entry->oid;
+        return {static_cast<int32_t>(in_array ? TypeArrayOid(oid) : oid),
+                static_cast<int16_t>(-1), -1};
       }
       return make(kRecord, kRecordArray, -1);
     }
@@ -255,9 +263,9 @@ PgTypeInfo Logical2Pg(const duckdb::LogicalType& type, bool in_array) {
     case UBIGINT:
       return make(kNumeric, kNumericArray, -1);
     case LIST:
-      return Logical2Pg(duckdb::ListType::GetChildType(type), true);
+      return Logical2Pg(duckdb::ListType::GetChildType(type), context, true);
     case ARRAY:
-      return Logical2Pg(duckdb::ArrayType::GetChildType(type), true);
+      return Logical2Pg(duckdb::ArrayType::GetChildType(type), context, true);
     case VARIANT:
       return make(kVariant, kVariantArray, -1);
     case UNION:
@@ -267,8 +275,10 @@ PgTypeInfo Logical2Pg(const duckdb::LogicalType& type, bool in_array) {
   }
 }
 
-int32_t Type2Oid(const duckdb::LogicalType& type, bool in_array) {
-  return Logical2Pg(type, in_array).oid;
+int32_t Type2Oid(const duckdb::LogicalType& type,
+                 duckdb::optional_ptr<duckdb::ClientContext> context,
+                 bool in_array) {
+  return Logical2Pg(type, context, in_array).oid;
 }
 
 duckdb::LogicalType Oid2Type(int32_t oid, duckdb::ClientContext& context) {

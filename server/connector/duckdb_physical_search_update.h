@@ -26,7 +26,8 @@
 #include <memory>
 #include <vector>
 
-#include "connector/search_table_dispatch.h"
+#include "catalog1/entry/search_table.h"
+#include "connector/primary_key.h"
 
 namespace sdb::connector {
 
@@ -34,8 +35,9 @@ class SereneDBSearchUpdate final : public duckdb::PhysicalOperator {
  public:
   // `return_chunk` is RETURNING: the operator then hands back the rows as it
   // left them rather than their count, and `types` is the whole row.
-  SereneDBSearchUpdate(duckdb::PhysicalPlan& plan, SearchWriteTarget target,
-                       std::vector<duckdb::idx_t> pk_col_indices,
+  SereneDBSearchUpdate(duckdb::PhysicalPlan& plan,
+                       const catalog::SearchTableEntry& table,
+                       std::vector<primary_key::PKColumn> old_pk_columns,
                        std::vector<duckdb::PhysicalIndex> update_columns,
                        duckdb::vector<duckdb::LogicalType> types,
                        duckdb::idx_t estimated_cardinality, bool return_chunk);
@@ -59,8 +61,8 @@ class SereneDBSearchUpdate final : public duckdb::PhysicalOperator {
     duckdb::OperatorSourceInput& input) const final;
 
  private:
-  SearchWriteTarget _target;
-  std::vector<duckdb::idx_t> _pk_col_indices;
+  const catalog::SearchTableEntry& _table;
+  std::vector<primary_key::PKColumn> _old_pk_columns;
   std::vector<duckdb::PhysicalIndex> _update_columns;
   bool _return_chunk = false;
 };

@@ -25,7 +25,8 @@
 #include <memory>
 #include <vector>
 
-#include "connector/search_table_dispatch.h"
+#include "catalog1/entry/search_table.h"
+#include "connector/primary_key.h"
 
 namespace irs {
 
@@ -49,20 +50,21 @@ class SereneDBSearchDelete final : public duckdb::PhysicalOperator {
   // where in the child's chunk each of its columns arrived. An empty
   // `column_map` is no RETURNING -- the operator then reports the row count and
   // `types` is one BIGINT.
-  SereneDBSearchDelete(duckdb::PhysicalPlan& plan, SearchWriteTarget target,
-                       std::vector<duckdb::idx_t> pk_col_indices,
+  SereneDBSearchDelete(duckdb::PhysicalPlan& plan,
+                       const catalog::SearchTableEntry& table,
+                       std::vector<primary_key::PKColumn> pk_columns,
                        duckdb::vector<duckdb::LogicalType> types,
-                       std::vector<duckdb::idx_t> column_map,
+                       duckdb::vector<duckdb::column_t> column_map,
                        duckdb::idx_t estimated_cardinality);
 
   // The remove side of a REINDEX pass: DELETE FROM <index>. Removes go into
   // the index's own writer on domain ticks, and no search-table WAL is
   // written -- a died pass relaunches from the manifest-version mismatch.
   SereneDBSearchDelete(
-    duckdb::PhysicalPlan& plan, duckdb::idx_t index_id,
+    duckdb::PhysicalPlan& plan,
     std::shared_ptr<search::InvertedIndexStorage> storage,
     std::shared_ptr<const irs::IndexFieldOptions> field_options,
-    std::vector<duckdb::idx_t> pk_col_indices,
+    std::vector<primary_key::PKColumn> pk_columns,
     duckdb::vector<duckdb::LogicalType> types,
     duckdb::idx_t estimated_cardinality);
 
@@ -92,12 +94,12 @@ class SereneDBSearchDelete final : public duckdb::PhysicalOperator {
   duckdb::SinkResultType SinkImpl(duckdb::DataChunk& chunk,
                                   GlobalState& gstate) const;
 
-  SearchWriteTarget _target;
-  // Positions in the input chunk of the PK columns (explicit PK), or the single
-  // generated-PK rowid column (no-PK tables). Same layout PlanDelete computes.
-  std::vector<duckdb::idx_t> _pk_col_indices;
+  duckdb::optional_ptr<const catalog::SearchTableEntry> _table;
+  // The PK columns as they arrive in the input chunk (explicit PK), or the
+  // single generated-PK rowid column (no-PK tables).
+  std::vector<primary_key::PKColumn> _pk_columns;
   // Empty unless the statement has a RETURNING clause.
-  std::vector<duckdb::idx_t> _column_map;
+  duckdb::vector<duckdb::column_t> _column_map;
   std::shared_ptr<search::InvertedIndexStorage> _index_storage;
   std::shared_ptr<const irs::IndexFieldOptions> _field_options;
 };

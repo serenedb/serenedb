@@ -45,7 +45,6 @@ namespace sdb::connector {
 namespace {
 
 struct SearchDeleteGlobalState : duckdb::GlobalSinkState {
-  duckdb::idx_t table_id;
   query::Transaction* sdb_txn = nullptr;
   std::vector<primary_key::PKColumn> pk_columns;
   duckdb::idx_t delete_count = 0;
@@ -77,27 +76,27 @@ struct SearchDeleteSourceState : duckdb::GlobalSourceState {
 }  // namespace
 
 SereneDBSearchDelete::SereneDBSearchDelete(
-  duckdb::PhysicalPlan& plan, SearchWriteTarget target,
-  std::vector<duckdb::idx_t> pk_col_indices,
+  duckdb::PhysicalPlan& plan, const catalog::SearchTableEntry& table,
+  std::vector<primary_key::PKColumn> pk_columns,
   duckdb::vector<duckdb::LogicalType> types,
-  std::vector<duckdb::idx_t> column_map, duckdb::idx_t estimated_cardinality)
+  duckdb::vector<duckdb::column_t> column_map,
+  duckdb::idx_t estimated_cardinality)
   : duckdb::PhysicalOperator(plan, duckdb::PhysicalOperatorType::EXTENSION,
                              std::move(types), estimated_cardinality),
-    _target(std::move(target)),
-    _pk_col_indices(std::move(pk_col_indices)),
+    _table(&table),
+    _pk_columns(std::move(pk_columns)),
     _column_map(std::move(column_map)) {}
 
 SereneDBSearchDelete::SereneDBSearchDelete(
-  duckdb::PhysicalPlan& plan, duckdb::idx_t index_id,
+  duckdb::PhysicalPlan& plan,
   std::shared_ptr<search::InvertedIndexStorage> storage,
   std::shared_ptr<const irs::IndexFieldOptions> field_options,
-  std::vector<duckdb::idx_t> pk_col_indices,
+  std::vector<primary_key::PKColumn> pk_columns,
   duckdb::vector<duckdb::LogicalType> types,
   duckdb::idx_t estimated_cardinality)
   : duckdb::PhysicalOperator(plan, duckdb::PhysicalOperatorType::EXTENSION,
                              std::move(types), estimated_cardinality),
-    _target{.table_id = index_id},
-    _pk_col_indices(std::move(pk_col_indices)),
+    _pk_columns(std::move(pk_columns)),
     _index_storage(std::move(storage)),
     _field_options(std::move(field_options)) {}
 
@@ -113,20 +112,16 @@ SereneDBSearchDelete::GetGlobalSinkState(duckdb::ClientContext& context) const {
     state->trx = std::make_unique<irs::IndexWriter::Transaction>(
       _index_storage->GetTransaction());
     state->trx->SetFieldOptions(_field_options);
-    SDB_ASSERT(_pk_col_indices.size() == 2);
-    state->pk_columns = {{.input_col_idx = _pk_col_indices[0],
-                          .type = duckdb::LogicalType::UBIGINT},
-                         {.input_col_idx = _pk_col_indices[1],
-                          .type = duckdb::LogicalType::BIGINT}};
+    SDB_ASSERT(_pk_columns.size() == 2);
+    state->pk_columns = _pk_columns;
     return state;
   }
 
   auto state = duckdb::make_uniq<SearchTableDeleteState>();
-  state->table_id = _target.table_id;
-  state->search_table = _target.data;
+  state->search_table = _table->EnsureStorage();
   state->table_lock = std::shared_lock{state->search_table->GetTableLock()};
 
-  state->pk_columns = RowIdentityPKColumns(_target, _pk_col_indices);
+  state->pk_columns = _pk_columns;
 
   state->sdb_txn = &conn_ctx;
   if (!_column_map.empty()) {
@@ -185,7 +180,7 @@ duckdb::SinkResultType SereneDBSearchDelete::SinkImpl(
       // re-fetched.
       duckdb::DataChunk row;
       row.InitializeEmpty(GetTypes());
-      BuildReturnedRow(row, chunk, _column_map);
+      row.ReferenceColumns(chunk, _column_map);
       gstate.returned->Append(row);
     }
   }

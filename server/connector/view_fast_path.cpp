@@ -259,27 +259,6 @@ duckdb::LogicalType ExternalKeyStructType(
 
 }  // namespace
 
-std::vector<std::string> KeyColumnsFromOptions(
-  const duckdb::case_insensitive_map_t<duckdb::Value>& options) {
-  auto it = options.find("key_columns");
-  if (it == options.end()) {
-    return {};
-  }
-  // `text` borrows out of `value`, which owns the (possibly cast) characters
-  // for the rest of the scope -- no copy just to split it.
-  const auto value = it->second.DefaultCastAs(duckdb::LogicalType::VARCHAR);
-  const std::string_view text = duckdb::StringValue::Get(value);
-  std::vector<std::string> cols;
-  // SkipWhitespace drops the empty and all-whitespace parts, so what survives
-  // only needs trimming. The names outlive this scope -- they are persisted in
-  // the index options -- so cols owns them rather than viewing into `value`.
-  for (std::string_view part :
-       absl::StrSplit(text, ',', absl::SkipWhitespace())) {
-    cols.emplace_back(absl::StripAsciiWhitespace(part));
-  }
-  return cols;
-}
-
 std::optional<ViewFastPath> ResolveViewFastPath(
   duckdb::ClientContext& context, const duckdb::CreateViewInfo& view,
   std::span<const std::string> key_columns) {

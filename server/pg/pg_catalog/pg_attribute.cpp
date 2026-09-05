@@ -100,6 +100,7 @@ Oid GetCollationForType(int32_t type_oid) {
 }
 
 void EmitColumnsForTable(const duckdb::TableCatalogEntry& table,
+                         duckdb::ClientContext& context,
                          std::vector<PgAttribute>& values) {
   const auto& columns = table.GetColumns();
 
@@ -117,7 +118,7 @@ void EmitColumnsForTable(const duckdb::TableCatalogEntry& table,
   }
 
   for (const auto& col : columns.Logical()) {
-    auto type_oid = Type2Oid(col.Type());
+    auto type_oid = Type2Oid(col.Type(), &context);
     auto phys = GetPhysicalInfo(type_oid);
 
     auto generated = PgAttribute::Attgenerated::None;
@@ -157,6 +158,7 @@ void EmitColumnsForTable(const duckdb::TableCatalogEntry& table,
 }
 
 void EmitColumnsForSystemTable(const VirtualTable& table,
+                               duckdb::ClientContext& context,
                                std::vector<PgAttribute>& values) {
   auto row_type = table.RowType();
   if (row_type.id() != duckdb::LogicalTypeId::STRUCT) {
@@ -166,7 +168,7 @@ void EmitColumnsForSystemTable(const VirtualTable& table,
 
   for (size_t i = 0; i < children.size(); ++i) {
     auto& child_type = children[i].second;
-    auto type_oid = Type2Oid(child_type);
+    auto type_oid = Type2Oid(child_type, &context);
     auto phys = GetPhysicalInfo(type_oid);
 
     PgAttribute row{
@@ -200,6 +202,7 @@ void EmitColumnsForSystemTable(const VirtualTable& table,
 // synthetic relid we use is the type's own OID (matching what pg_type.typrelid
 // reports).
 void EmitColumnsForCompositeType(const duckdb::TypeCatalogEntry& type,
+                                 duckdb::ClientContext& context,
                                  std::vector<PgAttribute>& values) {
   if (type.user_type.id() != duckdb::LogicalTypeId::STRUCT) {
     return;
@@ -208,7 +211,7 @@ void EmitColumnsForCompositeType(const duckdb::TypeCatalogEntry& type,
   const auto type_oid = type.oid;
   for (size_t i = 0; i < children.size(); ++i) {
     auto& child_type = children[i].second;
-    auto type_id = Type2Oid(child_type);
+    auto type_id = Type2Oid(child_type, &context);
     auto phys = GetPhysicalInfo(type_id);
     PgAttribute row{
       .attrelid = type_oid,
@@ -245,15 +248,15 @@ MaterializedData SystemTableSnapshot<PgAttribute>::GetTableData() {
   auto& context = _config.GetClientContext();
   VisitEntries<duckdb::TableCatalogEntry>(
     context, GetDatabase(), [&](const duckdb::TableCatalogEntry& table) {
-      EmitColumnsForTable(table, values);
+      EmitColumnsForTable(table, context, values);
     });
   VisitEntries<duckdb::TypeCatalogEntry>(
     context, GetDatabase(), [&](const duckdb::TypeCatalogEntry& type) {
-      EmitColumnsForCompositeType(type, values);
+      EmitColumnsForCompositeType(type, context, values);
     });
 
   VisitSystemTables([&](const VirtualTable& table, Oid /*schema_oid*/) {
-    EmitColumnsForSystemTable(table, values);
+    EmitColumnsForSystemTable(table, context, values);
   });
 
   auto result = CreateColumns<PgAttribute>(values.size());

@@ -64,10 +64,9 @@ using TokenizerProvider =
   absl::AnyInvocable<catalog::ColumnTokenizer(irs::field_id)>;
 
 inline TokenizerProvider MakeTokenizerProvider(
-  catalog::TokenizerMap dicts,
-  const catalog::InvertedIndexFieldOptions& config) {
-  return [dicts = std::move(dicts),
-          &config](irs::field_id field_id) -> catalog::ColumnTokenizer {
+  const catalog::TokenizerMap& dicts,
+  const catalog::InvertedIndexConfig& config) {
+  return [&dicts, &config](irs::field_id field_id) -> catalog::ColumnTokenizer {
     return config.GetTokenizer(dicts, field_id);
   };
 }
@@ -76,7 +75,7 @@ using EntryInfoProvider =
   absl::AnyInvocable<const catalog::InvertedIndexField*(irs::field_id)>;
 
 inline EntryInfoProvider MakeEntryInfoProvider(
-  const catalog::InvertedIndexFieldOptions& config) {
+  const catalog::InvertedIndexConfig& config) {
   return
     [&config](irs::field_id field_id) { return config.FindEntry(field_id); };
 }

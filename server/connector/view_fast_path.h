@@ -168,11 +168,6 @@ std::optional<ViewFastPath> ResolveViewFastPath(
 
 std::vector<duckdb::column_t> BackfillPkVirtualColumns(const ViewFastPath& fp);
 
-// The parsed `key_columns` CREATE INDEX option from an options map, or {} when
-// absent.
-std::vector<std::string> KeyColumnsFromOptions(
-  const duckdb::case_insensitive_map_t<duckdb::Value>& options);
-
 duckdb::TableFunction MakeFastPathLookupFunction(const ViewFastPath& fp);
 
 duckdb::unique_ptr<duckdb::FunctionData> BindFastPathSource(

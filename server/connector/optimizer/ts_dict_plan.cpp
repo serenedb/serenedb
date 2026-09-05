@@ -759,7 +759,7 @@ class TsDictFacetPushdown {
   FoundScan _found{};
   // Read straight off the scan's bind data: the key shape is the entry's, and
   // only the two expression lookups below need the bound index.
-  const catalog::InvertedIndexFieldOptions* _config = nullptr;
+  const catalog::InvertedIndexConfig* _config = nullptr;
   std::vector<TsDictFacetKey> _keys;
   std::vector<FacetCols> _cols;
   std::vector<duckdb::LogicalType> _old_types;
@@ -963,7 +963,7 @@ bool TsDictFacetPushdown::ResolveExpressionKey(const duckdb::Expression& expr,
     _projected_ids = BuildProjectedColumnIds(*_found.get, *_found.bind_data);
   }
   auto normalized = connector::NormalizeBoundExpression(
-    expr, _found.bind_data->table_entry->oid, *_projected_ids, _context);
+    expr, _found.bind_data->RelationId(), *_projected_ids, _context);
   const auto serialized = connector::SerializeBoundExpression(*normalized);
   key.field_id = _config->FindFieldIdBySerialized(serialized);
   if (!irs::field_limits::valid(key.field_id)) {

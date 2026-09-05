@@ -137,8 +137,8 @@ PgClass MakeBaseRow(duckdb::idx_t schema_id, duckdb::idx_t oid,
 // always hold concrete values (resolved from WITH / session settings when
 // they were set), so every option is rendered; segment_docs_max=0 means
 // unlimited.
-std::vector<std::string> RenderInvertedIndexOptions(
-  const catalog::InvertedIndexOptions& options) {
+std::vector<std::string> RenderInvertedIndexSettings(
+  const catalog::InvertedIndexSettings& options) {
   std::vector<std::string> rendered;
   const auto add = [&](std::string_view name, uint64_t value) {
     rendered.push_back(absl::StrCat(name, "=", value));
@@ -284,7 +284,7 @@ void RetrieveObjects(duckdb::Catalog& database, std::vector<PgClass>& values,
     if (const auto* inverted =
           dynamic_cast<const catalog::InvertedIndexEntry*>(&*entry)) {
       row.relam = pg::kPgAmInverted;
-      auto rendered = RenderInvertedIndexOptions(inverted->Options());
+      auto rendered = RenderInvertedIndexSettings(inverted->Settings());
       if (!rendered.empty()) {
         const auto& strings =
           reloptions_storage.emplace_back(std::move(rendered));

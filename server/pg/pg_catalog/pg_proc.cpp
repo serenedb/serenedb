@@ -54,6 +54,7 @@ template<>
 MaterializedData SystemTableSnapshot<PgProc>::GetTableData() {
   std::vector<PgProc> values;
   std::vector<std::vector<Oid>> argtypes_storage;
+  auto& context = _config.GetClientContext();
 
   const auto emit = [&](const duckdb::MacroCatalogEntry& func) {
     const auto& perm = func.permissions;
@@ -67,7 +68,7 @@ MaterializedData SystemTableSnapshot<PgProc>::GetTableData() {
       // prorettype: first return type (or 0 if not specified).
       Oid rettype = 0;
       if (!macro->return_types.empty()) {
-        rettype = Type2Oid(macro->return_types[0]);
+        rettype = Type2Oid(macro->return_types[0], &context);
       }
 
       // Build argument types from macro->types (one per parameter).
@@ -77,7 +78,7 @@ MaterializedData SystemTableSnapshot<PgProc>::GetTableData() {
         if (param_type.id() == duckdb::LogicalTypeId::UNKNOWN) {
           argtypes.push_back(0);
         } else {
-          argtypes.push_back(Type2Oid(param_type));
+          argtypes.push_back(Type2Oid(param_type, &context));
         }
       }
 
@@ -111,7 +112,6 @@ MaterializedData SystemTableSnapshot<PgProc>::GetTableData() {
   };
   // A scalar macro and a table macro are one SereneDB kind and two duckdb
   // sets, so both are walked.
-  auto& context = _config.GetClientContext();
   VisitEntries<duckdb::ScalarMacroCatalogEntry>(context, GetDatabase(), emit);
   VisitEntries<duckdb::TableMacroCatalogEntry>(context, GetDatabase(), emit);
 

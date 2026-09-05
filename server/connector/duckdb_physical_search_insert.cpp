@@ -62,7 +62,6 @@ namespace sdb::connector {
 namespace {
 
 struct SearchInsertGlobalState : duckdb::GlobalSinkState {
-  duckdb::idx_t table_id;
   std::shared_ptr<search::SearchTable> search_table;
   query::Transaction* sdb_txn = nullptr;
   std::vector<ColumnId> column_ids;
@@ -123,48 +122,19 @@ struct SearchInsertLocalState : duckdb::LocalSinkState {
   std::optional<duckdb::ColumnDataCollection> returned;
 };
 
-SearchWriteTarget CtasWriteTarget(duckdb::ClientContext& context,
-                                  const catalog::SearchTableEntry& entry) {
-  SearchWriteTarget target;
-  target.table_id = entry.oid;
-  target.data = entry.EnsureStorage();
-  const auto& columns = entry.GetColumns();
-  target.column_ids.reserve(columns.LogicalColumnCount());
-  target.chunk_types.reserve(columns.LogicalColumnCount());
-  for (const auto& col : columns.Logical()) {
-    target.column_ids.emplace_back(col.Oid());
-    target.chunk_types.push_back(col.Type());
-  }
-  const auto pk_indexes = primary_key::KeyColumns(entry);
-  target.pk_columns.reserve(pk_indexes.size());
-  for (const auto index : pk_indexes) {
-    target.pk_columns.push_back(
-      {.input_col_idx = index.index, .type = columns.GetColumn(index).Type()});
-  }
-  if (target.pk_columns.empty()) {
-    target.generated_pk_seq = FindGeneratedPkSequence(context, entry);
-    SDB_ASSERT(target.generated_pk_seq);
-  }
-  return target;
-}
-
 const catalog::SearchTableEntry* CreateCtasTable(
   duckdb::ClientContext& context, SearchInsertGlobalState& state,
   duckdb::BoundCreateTableInfo& info) {
   auto& schema = info.schema;
   auto& table_info = info.Base();
-  // CTAS declares no PRIMARY KEY, so the create wires up a generated one.
-  ApplyStorageKind(context, table_info, table_info.options);
-  SDB_ASSERT(catalog::ReadTableEngineTag(table_info.tags) ==
-               catalog::TableEngine::Search,
-             "SereneDBSearchInsert CTAS mode used for non-Search engine");
-
   auto& catalog = schema.ParentCatalog();
   auto entry =
     catalog.CreateTable(catalog.GetCatalogTransaction(context), schema, info);
   if (!entry) {
     return nullptr;
   }
+  SDB_ASSERT(ReadStorageEngine(table_info.options) ==
+             catalog::TableEngine::Search);
 
   state.ctas_mode = true;
   state.ctas_context = &context;
@@ -191,12 +161,12 @@ void FinalizeCtasIfNeeded(SearchInsertGlobalState& state) {
 }  // namespace
 
 SereneDBSearchInsert::SereneDBSearchInsert(
-  duckdb::PhysicalPlan& plan, SearchWriteTarget target,
+  duckdb::PhysicalPlan& plan, const catalog::SearchTableEntry& table,
   duckdb::vector<duckdb::LogicalType> types,
   duckdb::idx_t estimated_cardinality, bool return_chunk)
   : duckdb::PhysicalOperator(plan, duckdb::PhysicalOperatorType::EXTENSION,
                              std::move(types), estimated_cardinality),
-    _target(std::move(target)),
+    _table(&table),
     _return_chunk(return_chunk) {}
 
 SereneDBSearchInsert::SereneDBSearchInsert(
@@ -213,25 +183,29 @@ SereneDBSearchInsert::GetGlobalSinkState(duckdb::ClientContext& context) const {
   auto state = duckdb::make_uniq<SearchInsertGlobalState>();
   auto& conn_ctx = GetSereneDBContext(context);
 
-  SearchWriteTarget ctas_target;
+  auto table = _table;
   if (_ctas_info) {
-    const auto* table = CreateCtasTable(context, *state, *_ctas_info);
-    if (table == nullptr) {
+    table = CreateCtasTable(context, *state, *_ctas_info);
+    if (!table) {
       return nullptr;
     }
-    ctas_target = CtasWriteTarget(context, *table);
   }
-  const auto& target = _ctas_info ? ctas_target : _target;
 
-  state->table_id = target.table_id;
-
-  state->search_table = target.data;
+  state->search_table = table->EnsureStorage();
   state->table_lock = std::shared_lock{state->search_table->GetTableLock()};
 
-  state->generated_pk_seq = target.generated_pk_seq;
-  state->column_ids = target.column_ids;
-  state->chunk_types = target.chunk_types;
-  state->pk_columns = target.pk_columns;
+  const auto& columns = table->GetColumns();
+  state->column_ids.reserve(columns.LogicalColumnCount());
+  state->chunk_types.reserve(columns.LogicalColumnCount());
+  for (const auto& column : columns.Logical()) {
+    state->column_ids.emplace_back(column.Oid());
+    state->chunk_types.push_back(column.Type());
+  }
+  state->pk_columns = primary_key::PKColumns(*table);
+  if (state->pk_columns.empty()) {
+    state->generated_pk_seq = FindGeneratedPkSequence(context, *table);
+    SDB_ASSERT(state->generated_pk_seq);
+  }
 
   state->sdb_txn = &conn_ctx;
   if (_return_chunk) {

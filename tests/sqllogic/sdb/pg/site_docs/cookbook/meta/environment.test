@@ -52,4 +52,4 @@ platform
 
 statement ok
 SELECT *
-FROM duckdb_extensions();
+FROM sdb_extensions();

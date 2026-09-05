@@ -123,7 +123,7 @@ DROP TABLE IF EXISTS mytable;
 #|
 #| CREATE TABLE MyTaBLe (x INTEGER);
 #|
-#| SELECT tbl FROM duckdb_tables();
+#| SELECT tbl FROM sdb_tables();
 
 # DOCS_TEST_BODY
 
@@ -135,7 +135,7 @@ CREATE TABLE MyTaBLe (x INTEGER);
 
 query
 SELECT DISTINCT table_name AS tbl
-FROM duckdb_tables()
+FROM sdb_tables()
 WHERE table_name = 'mytable';
 ----
 tbl

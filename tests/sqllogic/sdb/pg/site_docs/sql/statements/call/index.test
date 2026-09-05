@@ -3,7 +3,7 @@
 # DOCS_TEST_BODY
 
 statement ok
-CALL duckdb_functions();
+CALL sdb_functions();
 
 # DOCS_TEST: example_002
 
@@ -24,5 +24,5 @@ cid	name	type	notnull	dflt_value	pk
 
 statement ok
 SELECT function_name, parameters, parameter_types, return_type
-FROM duckdb_functions()
+FROM sdb_functions()
 WHERE function_name LIKE 'ST_%';

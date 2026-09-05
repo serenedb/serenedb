@@ -1,0 +1,191 @@
+control substitution on
+
+# ----------------------------------------------------------------------
+# A rolled-back DROP SEQUENCE must not erase the sequence counter.
+#
+# DROP SEQUENCE has two halves and only one of them is transactional. The
+# catalog entry is dropped through CatalogSet::DropEntry, which is MVCC, so
+# a ROLLBACK brings it back. The counter is not: CatalogStore::DropSequence
+# reaches WriteSequenceDropped, which appends a SequenceDropped record and
+# flushes it under the cluster log mutex with no transaction behind it
+# (server/catalog/log/store.cpp, server/catalog/log/duckdb_global_catalog.cpp).
+# Nothing undoes that append, so the entry comes back at the next boot and
+# its counter starts over.
+#
+# In memory the counter survives, because the live SequenceCounter object is
+# never touched. Only a restart shows it, which is why this lives here.
+#
+# The SERIAL case is the one that bites: a table nobody dropped starts
+# handing out primary keys it has already used, and the next insert fails
+# on its own unique constraint.
+#
+# The assertions marked KNOWN GAP pin broken behaviour. When the counter
+# write joins the transaction they must start failing, and the fix is to
+# change those cases to the commented expectation, NOT to delete this file.
+# ----------------------------------------------------------------------
+
+statement ok
+RESET sdb_faults;
+
+
+# ----------------------------------------------------------------------
+# A free-standing sequence. Three nextvals, then a rolled-back drop.
+# ----------------------------------------------------------------------
+
+statement ok
+CREATE SEQUENCE scar_q;
+
+
+query
+SELECT nextval('scar_q'), nextval('scar_q'), nextval('scar_q');
+----
+nextval	nextval	nextval
+1	2	3
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+DROP SEQUENCE scar_q;
+
+
+statement ok
+ROLLBACK;
+
+
+# The entry is back, and in memory so is the counter.
+query
+SELECT count(*) AS n FROM pg_class WHERE relname = 'scar_q';
+----
+n
+1
+
+
+query
+SELECT nextval('scar_q') AS v;
+----
+v
+4
+
+
+# ----------------------------------------------------------------------
+# A SERIAL column's owned sequence, same shape. The rows stay, so the ids
+# already handed out are still in the table.
+# ----------------------------------------------------------------------
+
+statement ok
+CREATE TABLE scar_t(id SERIAL PRIMARY KEY, v INT);
+
+
+statement ok
+INSERT INTO scar_t(v) VALUES (10), (20), (30);
+
+
+query
+SELECT count(*) AS n, max(id) AS top FROM scar_t;
+----
+n	top
+3	3
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+DROP TABLE scar_t;
+
+
+statement ok
+ROLLBACK;
+
+
+query
+SELECT count(*) AS n, max(id) AS top FROM scar_t;
+----
+n	top
+3	3
+
+
+# ----------------------------------------------------------------------
+# A control sequence that no transaction ever dropped. Its counter must
+# survive the same crash, which is what separates this bug from "a crash
+# loses sequence counters".
+# ----------------------------------------------------------------------
+
+statement ok
+CREATE SEQUENCE scar_ctl;
+
+
+query
+SELECT nextval('scar_ctl'), nextval('scar_ctl'), nextval('scar_ctl');
+----
+nextval	nextval	nextval
+1	2	3
+
+
+# ----------------------------------------------------------------------
+# Restart. The durable half is only observable here.
+# ----------------------------------------------------------------------
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+statement error connection closed
+SELECT 1;
+
+
+connection after_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT 1;
+----
+?column?
+1
+
+
+# The control sequence resumes past its durable horizon: the counter is
+# logged 32 values ahead, so a crash costs the tail of the reservation and
+# never the whole counter.
+connection after_crash
+query
+SELECT nextval('scar_ctl') > 3 AS resumed_ahead;
+----
+resumed_ahead
+t
+
+
+connection after_crash
+query
+SELECT count(*) AS n FROM pg_class WHERE relname = 'scar_q';
+----
+n
+1
+
+
+# KNOWN GAP: the rolled-back drop erased the counter, so it starts over.
+# Correct behaviour is `SELECT nextval('scar_q') > 4 AS resumed_ahead` -> t.
+connection after_crash
+query
+SELECT nextval('scar_q') AS v;
+----
+v
+1
+
+
+connection after_crash
+query
+SELECT count(*) AS n, max(id) AS top FROM scar_t;
+----
+n	top
+3	3
+
+
+# KNOWN GAP: the owned sequence lost its counter too, so the next insert
+# collides with a primary key the table already holds. Correct behaviour is
+# `statement ok` with a RETURNING id of 4.
+connection after_crash
+statement error (?i)duplicate key
+INSERT INTO scar_t(v) VALUES (40);

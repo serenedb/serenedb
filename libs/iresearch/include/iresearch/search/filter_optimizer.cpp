@@ -74,32 +74,9 @@ void RunPass(Filter::ptr& root, const OptimizeContext& ctx) {
   TraverseFilter(root, [&](Filter::ptr& slot) { RunRules(slot, ctx); });
 }
 
-bool RuleDisabled(std::string_view name) {
-  static const std::string kDisabled = [] {
-    const auto* const value = std::getenv("IRESEARCH_DISABLE_RULES");
-    return value != nullptr ? std::string{value} : std::string{};
-  }();
-  std::string_view rest{kDisabled};
-  while (!rest.empty()) {
-    const auto end = rest.find(',');
-    const auto entry = rest.substr(0, end);
-    if (entry == name) {
-      return true;
-    }
-    if (end == std::string_view::npos) {
-      break;
-    }
-    rest.remove_prefix(end + 1);
-  }
-  return false;
-}
-
 }  // namespace
 
 void RegisterRule(RuleDesc rule) {
-  if (RuleDisabled(rule.name)) {
-    return;
-  }
   auto& registry = OptimizationRules();
   for (const auto tid : rule.targets) {
     registry[tid].push_back(rule);

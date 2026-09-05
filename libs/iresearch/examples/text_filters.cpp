@@ -151,7 +151,7 @@ std::vector<std::string> RunFilter(const irs::DirectoryReader& reader,
     if (!query) {
       continue;
     }
-    auto plan = query->PlanDocs();
+    auto plan = query->PlanDocs({});
     if (!plan) {
       continue;
     }

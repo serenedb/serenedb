@@ -29,7 +29,7 @@
 
 namespace irs::probe {
 
-Node::ptr MakeWildcardNgramDocs(const WildcardNgramQuery& query,
+Node::ptr MakeWildcardNGramDocs(const WildcardNGramQuery& query,
                                 uint64_t interrogations) {
   SDB_ASSERT(query.Kind() != QueryKind::Empty);
   const auto& ngrams = query.NGrams();
@@ -40,7 +40,7 @@ Node::ptr MakeWildcardNgramDocs(const WildcardNgramQuery& query,
   const auto recipe = query.MakeRecipe();
 
   if (ngrams.Kind() == QueryKind::All) {
-    using Slots = WildcardNgramSlotsDocs<AllDocs>;
+    using Slots = WildcardNGramSlotsDocs<AllDocs>;
     return memory::make_managed<Impl<TwoPhaseDocs<Slots>>>(
       std::piecewise_construct, std::forward_as_tuple(query.Segment()), recipe);
   }
@@ -49,7 +49,7 @@ Node::ptr MakeWildcardNgramDocs(const WildcardNgramQuery& query,
   if (!node) {
     return {};
   }
-  using Slots = WildcardNgramSlotsDocs<Erased>;
+  using Slots = WildcardNGramSlotsDocs<Erased>;
   return memory::make_managed<Impl<TwoPhaseDocs<Slots>>>(
     std::piecewise_construct, std::forward_as_tuple(std::move(node)), recipe);
 }

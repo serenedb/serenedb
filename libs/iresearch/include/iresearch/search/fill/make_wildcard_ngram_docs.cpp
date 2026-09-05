@@ -24,9 +24,9 @@
 
 namespace irs::fill {
 
-Node::ptr MakeWildcardNgramDocs(const WildcardNgramQuery& query) {
+Node::ptr MakeWildcardNGramDocs(const WildcardNGramQuery& query) {
   SDB_ASSERT(query.Kind() != QueryKind::Empty);
-  return search::MakeWildcardNgram<ByWalkDocs, Node::ptr>(query, 0);
+  return search::MakeWildcardNGram<ByWalkDocs, Node::ptr>(query, 0);
 }
 
 }  // namespace irs::fill

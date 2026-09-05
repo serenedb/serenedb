@@ -165,17 +165,17 @@ catalog::ColumnTokenizer SegmentationAnalyzerProvider(uint64_t id) {
                                           irs::IndexFeatures::Freq>(id);
 }
 
-[[maybe_unused]] catalog::ColumnTokenizer NgramAnalyzerProvider(uint64_t) {
+[[maybe_unused]] catalog::ColumnTokenizer NGramAnalyzerProvider(uint64_t) {
   irs::analysis::NGramTokenizerBase::Options ngram_opts{
     .min_gram = 2,
     .max_gram = 2,
     .preserve_original = false,
     .stream_bytes_type = irs::analysis::NGramTokenizerBase::InputType::UTF8,
   };
-  static catalog::Tokenizer gNgramTokenizer(
+  static catalog::Tokenizer gNGramTokenizer(
     ObjectId{12347}, {},
     irs::analysis::TokenizerConfig{.config = std::move(ngram_opts)});
-  auto tokenizer = gNgramTokenizer.GetTokenizer();
+  auto tokenizer = gNGramTokenizer.GetTokenizer();
   return {.analyzer = std::move(tokenizer),
           .features = irs::IndexFeatures::Pos | irs::IndexFeatures::Freq};
 }
@@ -420,7 +420,7 @@ irs::ByRegexp& AddRegexpFilter(
 }
 
 template<typename Filter>
-irs::ByNGramSimilarity& AddNgramSimilarityFilter(
+irs::ByNGramSimilarity& AddNGramSimilarityFilter(
   Filter&& root, uint64_t column, std::vector<std::string_view> ngrams,
   float threshold = 0.7f) {
   auto& ngf = AddChild<irs::ByNGramSimilarity>(root);
@@ -546,11 +546,11 @@ irs::GeoFilter& AddGeoFilter(Filter&& root, uint64_t column,
 }
 
 template<typename Filter>
-irs::ByWildcardNgram& AddWildcardNgramFilter(Filter&& root, uint64_t column,
+irs::ByWildcardNGram& AddWildcardNGramFilter(Filter&& root, uint64_t column,
                                              std::string_view pattern,
                                              bool has_positions) {
   auto column_analyzer = WildcardAnalyzerProvider(column);
-  auto& wf = AddChild<irs::ByWildcardNgram>(root);
+  auto& wf = AddChild<irs::ByWildcardNGram>(root);
   *wf.mutable_field_id() = ExpectedFieldId(column);
   auto* opts = wf.mutable_options();
   *opts = {pattern,
@@ -2335,14 +2335,14 @@ TEST_F(SearchFilterBuilderTest, test_TermLike_EscapedPatternSegmentation) {
                columns, true, SegmentationAnalyzerProvider);
 }
 
-// Columns indexed by WildcardAnalyzer get the ngram-aware ByWildcardNgram
+// Columns indexed by WildcardAnalyzer get the ngram-aware ByWildcardNGram
 // filter (instead of ByWildcard), so the LIKE pattern is evaluated through
 // the inverted index using the analyzer's ngram tokenization.
 TEST_F(SearchFilterBuilderTest, test_TermLike_WildcardAnalyzer) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
   irs::BooleanFilter expected;
-  AddWildcardNgramFilter(expected, 1, "%foo_", true);
+  AddWildcardNGramFilter(expected, 1, "%foo_", true);
   AssertFilter(expected, "SELECT * FROM foo WHERE b LIKE '%foo_'", columns,
                true, WildcardAnalyzerProvider);
 }
@@ -2353,7 +2353,7 @@ TEST_F(SearchFilterBuilderTest, test_TermLike_WildcardAnalyzer_TSQuery) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
   irs::BooleanFilter expected;
-  AddWildcardNgramFilter(expected, 1, "%foo_", true);
+  AddWildcardNGramFilter(expected, 1, "%foo_", true);
   AssertFilter(expected, "SELECT * FROM foo WHERE b @@ (ts_like('%foo_'))",
                columns, true, WildcardAnalyzerProvider);
 }
@@ -2372,7 +2372,7 @@ TEST_F(SearchFilterBuilderTest, test_TermLike_WildcardAnalyzer_WithNot) {
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "a"}};
   irs::BooleanFilter expected;
   auto not_filter = AddNegation(expected);
-  AddWildcardNgramFilter(not_filter, 1, "%foo_", true);
+  AddWildcardNGramFilter(not_filter, 1, "%foo_", true);
   AssertFilter(expected, "SELECT * FROM foo WHERE NOT(a LIKE '%foo_')", columns,
                true, WildcardAnalyzerProvider);
 }
@@ -2467,25 +2467,25 @@ TEST_F(SearchFilterBuilderTest, test_TermEq_NotConst) {
 // no-features case verifies the analyzer-feature requirement.
 // ===========================================================================
 
-TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_NgramBasic) {
+TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_NGramBasic) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
   irs::BooleanFilter expected;
-  AddNgramSimilarityFilter(expected, 1, {"he", "el", "ll", "lo"});
+  AddNGramSimilarityFilter(expected, 1, {"he", "el", "ll", "lo"});
   AssertFilter(expected, "SELECT * FROM foo WHERE b @@ ts_ngram('hello')",
-               columns, true, NgramAnalyzerProvider);
+               columns, true, NGramAnalyzerProvider);
 }
 
-TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_NgramWithThreshold) {
+TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_NGramWithThreshold) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
   irs::BooleanFilter expected;
-  AddNgramSimilarityFilter(expected, 1, {"he", "el", "ll", "lo"}, 0.5f);
+  AddNGramSimilarityFilter(expected, 1, {"he", "el", "ll", "lo"}, 0.5f);
   AssertFilter(expected, "SELECT * FROM foo WHERE b @@ ts_ngram('hello', 0.5)",
-               columns, true, NgramAnalyzerProvider);
+               columns, true, NGramAnalyzerProvider);
 }
 
-TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_NgramNoFeatures) {
+TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_NGramNoFeatures) {
   // Default keyword analyzer doesn't have Pos+Freq features required
   // for NGRAM -- bind-time error.
   std::vector<ColumnSpec> columns{
@@ -2655,23 +2655,23 @@ TEST_F(SearchFilterBuilderTest, test_Boost_Like) {
 
 TEST_F(SearchFilterBuilderTest, test_Boost_WildcardFilter) {
   // Boost on a TSQUERY-surface LIKE against a WildcardAnalyzer column
-  // dispatches to ByWildcardNgram and threads the boost through.
+  // dispatches to ByWildcardNGram and threads the boost through.
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
   irs::BooleanFilter expected;
-  AddWildcardNgramFilter(expected, 1, "foo%", true).SetBoost(3.0f);
+  AddWildcardNGramFilter(expected, 1, "foo%", true).SetBoost(3.0f);
   AssertFilter(expected, "SELECT * FROM foo WHERE b @@ (ts_like('foo%')) ^ 3.0",
                columns, true, WildcardAnalyzerProvider);
 }
 
-TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_NgramBoost) {
+TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_NGramBoost) {
   // ts_ngram(...) ^ N -- TSQUERY-surface boost on n-gram similarity.
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
   irs::BooleanFilter expected;
-  AddNgramSimilarityFilter(expected, 1, {"fo", "oo"}).SetBoost(2.5f);
+  AddNGramSimilarityFilter(expected, 1, {"fo", "oo"}).SetBoost(2.5f);
   AssertFilter(expected, "SELECT * FROM foo WHERE b @@ ts_ngram('foo') ^ 2.5",
-               columns, true, NgramAnalyzerProvider);
+               columns, true, NGramAnalyzerProvider);
 }
 
 TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_LevenshteinBoost) {
@@ -3214,14 +3214,14 @@ TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_BoostCastLevenshtein) {
     columns, true);
 }
 
-TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_BoostCastNgram) {
+TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_BoostCastNGram) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
   irs::BooleanFilter expected;
-  AddNgramSimilarityFilter(expected, 1, {"fo", "oo"}).SetBoost(2.5f);
+  AddNGramSimilarityFilter(expected, 1, {"fo", "oo"}).SetBoost(2.5f);
   AssertFilter(expected,
                "SELECT * FROM foo WHERE b @@ ts_ngram('foo')::boost(2.5)",
-               columns, true, NgramAnalyzerProvider);
+               columns, true, NGramAnalyzerProvider);
 }
 
 TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_BoostCastLike) {
@@ -5332,24 +5332,24 @@ TEST_F(SearchFilterBuilderTest, test_PhraseMatches_WithGap_eq_AtAtTsPhrase) {
     columns, true, SegmentationAnalyzerProvider);
 }
 
-TEST_F(SearchFilterBuilderTest, test_NgramMatches_eq_AtAtTsNgram) {
+TEST_F(SearchFilterBuilderTest, test_NGramMatches_eq_AtAtTsNGram) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
   irs::BooleanFilter expected;
-  AddNgramSimilarityFilter(expected, 1, {"he", "el", "ll", "lo"});
+  AddNGramSimilarityFilter(expected, 1, {"he", "el", "ll", "lo"});
   AssertFilter(expected, "SELECT * FROM foo WHERE ngram_matches(b, 'hello')",
-               columns, true, NgramAnalyzerProvider);
+               columns, true, NGramAnalyzerProvider);
 }
 
 TEST_F(SearchFilterBuilderTest,
-       test_NgramMatches_WithThreshold_eq_AtAtTsNgram) {
+       test_NGramMatches_WithThreshold_eq_AtAtTsNGram) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
   irs::BooleanFilter expected;
-  AddNgramSimilarityFilter(expected, 1, {"he", "el", "ll", "lo"}, 0.5f);
+  AddNGramSimilarityFilter(expected, 1, {"he", "el", "ll", "lo"}, 0.5f);
   AssertFilter(expected,
                "SELECT * FROM foo WHERE ngram_matches(b, 'hello', 0.5)",
-               columns, true, NgramAnalyzerProvider);
+               columns, true, NGramAnalyzerProvider);
 }
 
 TEST_F(SearchFilterBuilderTest, test_LevenshteinMatches_eq_AtAtTsLevenshtein) {
@@ -5579,65 +5579,65 @@ TEST_F(SearchFilterBuilderTest, test_PhraseMatches_GapEndingError) {
 // ngram_matches
 // ---------------------------------------------------------------------------
 
-TEST_F(SearchFilterBuilderTest, test_NgramMatches_DefaultThreshold) {
-  // Default threshold = 0.7 (matches AddNgramSimilarityFilter default).
+TEST_F(SearchFilterBuilderTest, test_NGramMatches_DefaultThreshold) {
+  // Default threshold = 0.7 (matches AddNGramSimilarityFilter default).
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
   irs::BooleanFilter expected;
-  AddNgramSimilarityFilter(expected, 1, {"he", "el", "ll", "lo"});
+  AddNGramSimilarityFilter(expected, 1, {"he", "el", "ll", "lo"});
   AssertFilter(expected, "SELECT * FROM foo WHERE ngram_matches(b, 'hello')",
-               columns, true, NgramAnalyzerProvider);
+               columns, true, NGramAnalyzerProvider);
 }
 
-TEST_F(SearchFilterBuilderTest, test_NgramMatches_Negated) {
+TEST_F(SearchFilterBuilderTest, test_NGramMatches_Negated) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
   irs::BooleanFilter expected;
   auto not_filter = AddNegation(expected);
-  AddNgramSimilarityFilter(not_filter, 1, {"he", "el", "ll", "lo"});
+  AddNGramSimilarityFilter(not_filter, 1, {"he", "el", "ll", "lo"});
   AssertFilter(expected,
                "SELECT * FROM foo WHERE NOT ngram_matches(b, 'hello')", columns,
-               true, NgramAnalyzerProvider);
+               true, NGramAnalyzerProvider);
 }
 
-TEST_F(SearchFilterBuilderTest, test_NgramMatches_AndedWithSelf) {
+TEST_F(SearchFilterBuilderTest, test_NGramMatches_AndedWithSelf) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
   irs::BooleanFilter expected;
-  AddNgramSimilarityFilter(expected, 1, {"he", "el", "ll", "lo"});
-  AddNgramSimilarityFilter(expected, 1, {"wo", "or", "rl", "ld"}, 0.5f);
+  AddNGramSimilarityFilter(expected, 1, {"he", "el", "ll", "lo"});
+  AddNGramSimilarityFilter(expected, 1, {"wo", "or", "rl", "ld"}, 0.5f);
   AssertFilter(expected,
                "SELECT * FROM foo WHERE ngram_matches(b, 'hello') AND "
                "ngram_matches(b, 'world', 0.5)",
-               columns, true, NgramAnalyzerProvider);
+               columns, true, NGramAnalyzerProvider);
 }
 
-TEST_F(SearchFilterBuilderTest, test_NgramMatches_OredWithSelf) {
+TEST_F(SearchFilterBuilderTest, test_NGramMatches_OredWithSelf) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
   irs::BooleanFilter expected;
   auto or_filter = AddDisjunction(expected);
-  AddNgramSimilarityFilter(or_filter, 1, {"he", "el", "ll", "lo"}, 0.5f);
-  AddNgramSimilarityFilter(or_filter, 1, {"wo", "or", "rl", "ld"}, 0.5f);
+  AddNGramSimilarityFilter(or_filter, 1, {"he", "el", "ll", "lo"}, 0.5f);
+  AddNGramSimilarityFilter(or_filter, 1, {"wo", "or", "rl", "ld"}, 0.5f);
   AssertFilter(expected,
                "SELECT * FROM foo WHERE ngram_matches(b, 'hello', 0.5) OR "
                "ngram_matches(b, 'world', 0.5)",
-               columns, true, NgramAnalyzerProvider);
+               columns, true, NGramAnalyzerProvider);
 }
 
-TEST_F(SearchFilterBuilderTest, test_NgramMatches_BoostCastWraps) {
+TEST_F(SearchFilterBuilderTest, test_NGramMatches_BoostCastWraps) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
   irs::BooleanFilter expected;
-  AddNgramSimilarityFilter(expected, 1, {"he", "el", "ll", "lo"}, 0.5f)
+  AddNGramSimilarityFilter(expected, 1, {"he", "el", "ll", "lo"}, 0.5f)
     .SetBoost(3.5f);
   AssertFilter(expected,
                "SELECT * FROM foo WHERE (ngram_matches(b, 'hello', "
                "0.5))::boost(3.5)",
-               columns, true, NgramAnalyzerProvider);
+               columns, true, NGramAnalyzerProvider);
 }
 
-TEST_F(SearchFilterBuilderTest, test_NgramMatches_NoFeaturesError) {
+TEST_F(SearchFilterBuilderTest, test_NGramMatches_NoFeaturesError) {
   // Default keyword analyzer lacks Pos+Freq features required for
   // ngram. Error surfaces through the sugar rewrite.
   std::vector<ColumnSpec> columns{

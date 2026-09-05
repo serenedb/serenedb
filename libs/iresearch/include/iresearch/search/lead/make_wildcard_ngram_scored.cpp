@@ -27,9 +27,9 @@
 
 namespace irs::lead {
 
-Node::ptr MakeWildcardNgramScored(const WildcardNgramQuery& query,
+Node::ptr MakeWildcardNGramScored(const WildcardNGramQuery& query,
                                   score_t score) {
-  auto node = MakeWildcardNgramDocs(query);
+  auto node = MakeWildcardNGramDocs(query);
   if (!node) {
     return {};
   }

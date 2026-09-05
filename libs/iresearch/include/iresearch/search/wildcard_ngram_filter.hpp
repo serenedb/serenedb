@@ -46,9 +46,9 @@ class WildcardAnalyzer;
 
 }  // namespace analysis
 
-class WildcardNgramVerifier {
+class WildcardNGramVerifier {
  public:
-  WildcardNgramVerifier(std::shared_ptr<RE2> matcher,
+  WildcardNGramVerifier(std::shared_ptr<RE2> matcher,
                         const ColumnReader& stored_field,
                         const ColReader& col_reader) noexcept
     : _matcher{std::move(matcher)}, _cursor{col_reader, stored_field} {
@@ -83,9 +83,9 @@ class WildcardNgramVerifier {
   ColumnReader::BlobPointReader _cursor;
 };
 
-class WildcardNgramQuery : public QueryBuilderImpl<WildcardNgramQuery> {
+class WildcardNGramQuery : public QueryBuilderImpl<WildcardNGramQuery> {
  public:
-  WildcardNgramQuery(const SubReader& segment, std::shared_ptr<RE2> matcher,
+  WildcardNGramQuery(const SubReader& segment, std::shared_ptr<RE2> matcher,
                      QueryBuilder::ptr&& approx, field_id store_field_id,
                      score_t boost)
     : QueryBuilderImpl{segment, approx->EstimateMax(), QueryKind::Other},
@@ -102,8 +102,8 @@ class WildcardNgramQuery : public QueryBuilderImpl<WildcardNgramQuery> {
     const ColumnReader* column = nullptr;
     const ColReader* col_reader = nullptr;
 
-    WildcardNgramVerifier Make() const {
-      return WildcardNgramVerifier{matcher, *column, *col_reader};
+    WildcardNGramVerifier Make() const {
+      return WildcardNGramVerifier{matcher, *column, *col_reader};
     }
   };
 
@@ -134,10 +134,10 @@ class WildcardNgramQuery : public QueryBuilderImpl<WildcardNgramQuery> {
   score_t _boost;
 };
 
-class ByWildcardNgram;
+class ByWildcardNGram;
 
-struct ByWildcardNgramOptions {
-  using FilterType = ByWildcardNgram;
+struct ByWildcardNGramOptions {
+  using FilterType = ByWildcardNGram;
 
   std::vector<ByPhraseOptions> parts;
   bstring token;
@@ -145,7 +145,7 @@ struct ByWildcardNgramOptions {
   std::shared_ptr<RE2> matcher;
   field_id store_field_id{irs::field_limits::invalid()};
 
-  bool operator==(const ByWildcardNgramOptions& other) const noexcept {
+  bool operator==(const ByWildcardNGramOptions& other) const noexcept {
     if (parts != other.parts || token != other.token ||
         has_pos != other.has_pos || store_field_id != other.store_field_id) {
       return false;
@@ -159,17 +159,17 @@ struct ByWildcardNgramOptions {
     return matcher->pattern() == other.matcher->pattern();
   }
 
-  ByWildcardNgramOptions() noexcept = default;
-  ByWildcardNgramOptions(ByWildcardNgramOptions&&) noexcept = default;
-  ByWildcardNgramOptions& operator=(ByWildcardNgramOptions&&) noexcept =
+  ByWildcardNGramOptions() noexcept = default;
+  ByWildcardNGramOptions(ByWildcardNGramOptions&&) noexcept = default;
+  ByWildcardNGramOptions& operator=(ByWildcardNGramOptions&&) noexcept =
     default;
 
-  ByWildcardNgramOptions(std::string_view pattern,
+  ByWildcardNGramOptions(std::string_view pattern,
                          analysis::WildcardAnalyzer& analyzer,
                          bool has_positions);
 };
 
-class ByWildcardNgram final : public FilterWithField<ByWildcardNgramOptions> {
+class ByWildcardNGram final : public FilterWithField<ByWildcardNGramOptions> {
  public:
   QueryBuilder::ptr PrepareSegment(const SubReader& segment,
                                    const PrepareContext& ctx) const final;

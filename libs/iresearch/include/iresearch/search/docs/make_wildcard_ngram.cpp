@@ -24,13 +24,13 @@
 
 namespace irs::docs {
 
-Root::ptr Make(const WildcardNgramQuery& query, const Context& ctx) {
+Root::ptr Make(const WildcardNGramQuery& query, const Context& ctx) {
   SDB_ASSERT(query.Kind() != QueryKind::Empty);
   if (ctx.table != nullptr) {
-    return search::MakeWildcardNgram<FilteredWalk, Root::ptr>(query, 0,
+    return search::MakeWildcardNGram<FilteredWalk, Root::ptr>(query, 0,
                                                               ctx.table);
   }
-  return search::MakeWildcardNgram<PlainWalk, Root::ptr>(query, 0,
+  return search::MakeWildcardNGram<PlainWalk, Root::ptr>(query, 0,
                                                          utils::Empty{});
 }
 

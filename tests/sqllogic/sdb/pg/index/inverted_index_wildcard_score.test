@@ -4,7 +4,7 @@ control substitution on
 # Wildcard ngram filter scoring contract.
 #
 # `template = 'wildcard'` analyzers emit n-gram tokens for ts_like queries,
-# which route through ByWildcardNgram → WildcardQuery → WildcardIterator.
+# which route through ByWildcardNGram → WildcardQuery → WildcardIterator.
 # WildcardQuery declares Boost() = kNoBoost and visit() as no-op, so the
 # query never contributes field stats. Before this test landed, the
 # WildcardIterator delegated PrepareScore + FetchScoreArgs to the inner

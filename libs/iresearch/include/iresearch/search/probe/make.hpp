@@ -43,7 +43,7 @@ Node::ptr Make(const FixedPhraseQuery& query, uint64_t interrogations);
 Node::ptr Make(const VariadicPhraseQuery& query, uint64_t interrogations);
 Node::ptr Make(const NGramSimilarityQuery& query, uint64_t interrogations);
 Node::ptr Make(const AllQuery& query, uint64_t interrogations);
-Node::ptr Make(const WildcardNgramQuery& query, uint64_t interrogations);
+Node::ptr Make(const WildcardNGramQuery& query, uint64_t interrogations);
 Node::ptr Make(const ByNestedQuery& query, uint64_t interrogations);
 inline Node::ptr Make(const KnnVectorQuery&, uint64_t) { return {}; }
 Node::ptr Make(const RangeVectorQuery& query, uint64_t interrogations);
@@ -65,7 +65,7 @@ Node::ptr Make(const NGramSimilarityQuery& query, const ScoredCtx& ctx,
                uint64_t interrogations);
 Node::ptr Make(const AllQuery& query, const ScoredCtx& ctx,
                uint64_t interrogations);
-Node::ptr Make(const WildcardNgramQuery& query, const ScoredCtx& ctx,
+Node::ptr Make(const WildcardNGramQuery& query, const ScoredCtx& ctx,
                uint64_t interrogations);
 Node::ptr Make(const ByNestedQuery& query, const ScoredCtx& ctx,
                uint64_t interrogations);
@@ -128,7 +128,7 @@ Node::ptr MakeVariadicPhraseSlopDocs(const VariadicPhraseQuery& query);
 Node::ptr MakeNGramDocs(const NGramSimilarityQuery& query);
 Node::ptr MakeNGramAllDocs(const NGramSimilarityQuery& query);
 
-Node::ptr MakeWildcardNgramDocs(const WildcardNgramQuery& query,
+Node::ptr MakeWildcardNGramDocs(const WildcardNGramQuery& query,
                                 uint64_t interrogations);
 
 Node::ptr MakeRequiredDocs(std::span<const search::PostingClause> must,
@@ -220,7 +220,7 @@ Node::ptr MakeNGramScored(const NGramSimilarityQuery& query,
 Node::ptr MakeNGramAllScored(const NGramSimilarityQuery& query,
                              const ScoreArgs& args);
 
-Node::ptr MakeWildcardNgramScored(const WildcardNgramQuery& query,
+Node::ptr MakeWildcardNGramScored(const WildcardNGramQuery& query,
                                   score_t score, uint64_t interrogations);
 
 }  // namespace irs::probe

@@ -27,9 +27,9 @@
 
 namespace irs::probe {
 
-Node::ptr MakeWildcardNgramScored(const WildcardNgramQuery& query,
+Node::ptr MakeWildcardNGramScored(const WildcardNGramQuery& query,
                                   score_t score, uint64_t interrogations) {
-  auto approx = MakeWildcardNgramDocs(query, interrogations);
+  auto approx = MakeWildcardNGramDocs(query, interrogations);
   if (!approx) {
     return {};
   }

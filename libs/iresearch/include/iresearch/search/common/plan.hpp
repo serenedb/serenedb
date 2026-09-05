@@ -44,7 +44,7 @@ class FixedPhraseQuery;
 class VariadicPhraseQuery;
 class AllQuery;
 class NGramSimilarityQuery;
-class WildcardNgramQuery;
+class WildcardNGramQuery;
 class ByNestedQuery;
 class KnnVectorQuery;
 class RangeVectorQuery;

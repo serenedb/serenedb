@@ -79,26 +79,26 @@ std::shared_ptr<RE2> BuildLikeMatcher(std::string_view pattern) {
   return re;
 }
 
-enum class WildcardNgramKind {
+enum class WildcardNGramKind {
   Term,
   Prefix,
   Phrase,
   Conjunction,
 };
 
-WildcardNgramKind ClassifyKind(const ByWildcardNgramOptions& opts) {
+WildcardNGramKind ClassifyKind(const ByWildcardNGramOptions& opts) {
   const auto size = opts.parts.size();
   if (size == 0) {
     bytes_view token = opts.token;
     if (token.size() != 1 && token.back() == 0xFF) {
-      return WildcardNgramKind::Term;
+      return WildcardNGramKind::Term;
     }
-    return WildcardNgramKind::Prefix;
+    return WildcardNGramKind::Prefix;
   }
   if (size == 1 && opts.has_pos) {
-    return WildcardNgramKind::Phrase;
+    return WildcardNGramKind::Phrase;
   }
-  return WildcardNgramKind::Conjunction;
+  return WildcardNGramKind::Conjunction;
 }
 
 ByPhrase MakePhraseFilter(irs::field_id field, const ByPhraseOptions& part) {
@@ -117,13 +117,13 @@ ByTerm MakeTermFilter(irs::field_id field, bytes_view term) {
 
 }  // namespace
 
-PrepareCollector::ptr ByWildcardNgram::MakeCollectorImpl(const Scorer* scorer,
+PrepareCollector::ptr ByWildcardNGram::MakeCollectorImpl(const Scorer* scorer,
                                                          StatsArena& stats,
                                                          uint32_t) const {
   return std::make_unique<AllCollector>(scorer, stats);
 }
 
-QueryBuilder::ptr ByWildcardNgram::PrepareSegment(
+QueryBuilder::ptr ByWildcardNGram::PrepareSegment(
   const SubReader& segment, const PrepareContext& ctx) const {
   const auto& opts = options();
   auto sub_ctx = ctx;
@@ -143,7 +143,7 @@ QueryBuilder::ptr ByWildcardNgram::PrepareSegment(
         return QueryBuilder::Empty();
       }
     }
-    auto query = memory::make_tracked<WildcardNgramQuery>(
+    auto query = memory::make_tracked<WildcardNGramQuery>(
       ctx.memory, segment, opts.matcher, std::move(approx), opts.store_field_id,
       sub_ctx.boost);
     query->SetStats(ctx.Record());
@@ -151,10 +151,10 @@ QueryBuilder::ptr ByWildcardNgram::PrepareSegment(
   };
 
   switch (ClassifyKind(opts)) {
-    case WildcardNgramKind::Term:
+    case WildcardNGramKind::Term:
       return wrap(
         ByTerm::PrepareSegment(segment, sub_ctx, field_id(), opts.token));
-    case WildcardNgramKind::Prefix: {
+    case WildcardNGramKind::Prefix: {
       bytes_view token = opts.token;
       if (token.back() == 0xFF) {
         token = kEmptyStringView<byte_type>;
@@ -162,10 +162,10 @@ QueryBuilder::ptr ByWildcardNgram::PrepareSegment(
       return wrap(
         ByPrefix::PrepareSegment(segment, sub_ctx, field_id(), token));
     }
-    case WildcardNgramKind::Phrase:
+    case WildcardNGramKind::Phrase:
       return wrap(MakePhraseFilter(field_id(), opts.parts.front())
                     .PrepareSegment(segment, sub_ctx));
-    case WildcardNgramKind::Conjunction: {
+    case WildcardNGramKind::Conjunction: {
       BooleanBuilder builder{segment,        ctx.memory,          0,
                              sub_ctx.boost,  ScoreMergeType::Sum, nullptr,
                              ctx.needs_terms};
@@ -195,7 +195,7 @@ QueryBuilder::ptr ByWildcardNgram::PrepareSegment(
   return QueryBuilder::Empty();
 }
 
-ByWildcardNgramOptions::ByWildcardNgramOptions(
+ByWildcardNGramOptions::ByWildcardNGramOptions(
   std::string_view pattern, analysis::WildcardAnalyzer& analyzer,
   bool has_positions) {
   auto& ngram = analyzer.ngram();

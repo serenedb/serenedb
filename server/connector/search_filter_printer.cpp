@@ -152,7 +152,7 @@ std::string RangeValue(const SearchRange<T>& range, Kind kind) {
 }
 
 // Renders one phrase-part option variant. Shared between Phrase and
-// WildcardNgram filters which both hold ByPhraseOptions parts.
+// WildcardNGram filters which both hold ByPhraseOptions parts.
 struct PhrasePartVisitor : util::Noncopyable {
   auto operator()(const ByTermOptions& opts) const {
     absl::StrAppend(out, "Term:", TermToString(opts.term));
@@ -282,7 +282,7 @@ struct FilterPrinter {
     return s;
   }
 
-  std::string WildcardNgramParts(const ByWildcardNgram& filter) const {
+  std::string WildcardNGramParts(const ByWildcardNGram& filter) const {
     std::string s;
     for (const auto& phrase : filter.options().parts) {
       absl::StrAppend(&s, "<");
@@ -520,13 +520,13 @@ struct FilterPrinter {
       node.attributes["Pattern"] = TermToString(f.options().pattern);
       return node;
     }
-    if (type == Type<ByWildcardNgram>::id()) {
-      const auto& f = downCast<const ByWildcardNgram>(filter);
+    if (type == Type<ByWildcardNGram>::id()) {
+      const auto& f = downCast<const ByWildcardNGram>(filter);
       ExplainNode node{"Wildcard NGram"};
       node.attributes["Field"] = FieldName(f.field_id());
       node.attributes["Token"] = TermToString(f.options().token);
       node.attributes["Has Pos"] = f.options().has_pos ? "true" : "false";
-      node.attributes["Parts"] = WildcardNgramParts(f);
+      node.attributes["Parts"] = WildcardNGramParts(f);
       return node;
     }
     if (type == Type<Empty>::id()) {

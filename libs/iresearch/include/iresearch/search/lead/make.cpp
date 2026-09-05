@@ -245,13 +245,13 @@ Node::ptr Make(const AllQuery& query, const ScoredCtx& ctx) {
                                                   .boost = query.Boost()});
 }
 
-Node::ptr Make(const WildcardNgramQuery& query) {
-  return MakeWildcardNgramDocs(query);
+Node::ptr Make(const WildcardNGramQuery& query) {
+  return MakeWildcardNGramDocs(query);
 }
 
-Node::ptr Make(const WildcardNgramQuery& query, const ScoredCtx& ctx) {
+Node::ptr Make(const WildcardNGramQuery& query, const ScoredCtx& ctx) {
   const auto record = query.Stats(ctx);
-  return MakeWildcardNgramScored(
+  return MakeWildcardNGramScored(
     query,
     search::AllDocsScore(query.Segment(), ScoreArgs{.scorer = record.scorer,
                                                     .stats = record.stats,

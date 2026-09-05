@@ -160,13 +160,13 @@ Node::ptr Make(const AllQuery& query, const ScoredCtx& ctx,
                        query.Boost());
 }
 
-Node::ptr Make(const WildcardNgramQuery& query) {
-  return MakeWildcardNgramDocs(query);
+Node::ptr Make(const WildcardNGramQuery& query) {
+  return MakeWildcardNGramDocs(query);
 }
 
-Node::ptr Make(const WildcardNgramQuery& query, const ScoredCtx& ctx,
+Node::ptr Make(const WildcardNGramQuery& query, const ScoredCtx& ctx,
                ScoreMergeType merge) {
-  return MakeWildcardNgramScored(query, ctx, merge);
+  return MakeWildcardNGramScored(query, ctx, merge);
 }
 
 Node::ptr MakeConjunctionDocs(std::span<const search::PostingClause> terms,

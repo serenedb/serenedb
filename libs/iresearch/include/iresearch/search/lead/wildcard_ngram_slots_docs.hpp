@@ -29,12 +29,12 @@
 namespace irs::lead {
 
 template<typename NGrams>
-class WildcardNgramSlotsDocs {
+class WildcardNGramSlotsDocs {
  public:
-  using Recipe = WildcardNgramQuery::Recipe;
+  using Recipe = WildcardNGramQuery::Recipe;
 
   template<typename NGramsArgs>
-  WildcardNgramSlotsDocs(std::piecewise_construct_t, NGramsArgs&& ngrams,
+  WildcardNGramSlotsDocs(std::piecewise_construct_t, NGramsArgs&& ngrams,
                          const Recipe& recipe)
     : _ngrams{std::make_from_tuple<NGrams>(std::forward<NGramsArgs>(ngrams))},
       _pattern{recipe.Make()} {}
@@ -47,7 +47,7 @@ class WildcardNgramSlotsDocs {
 
  private:
   NGrams _ngrams;
-  WildcardNgramVerifier _pattern;
+  WildcardNGramVerifier _pattern;
 };
 
 }  // namespace irs::lead

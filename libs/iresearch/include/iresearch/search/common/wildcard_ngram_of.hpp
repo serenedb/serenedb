@@ -51,7 +51,7 @@ inline const MultiTermState& AsTerms(const QueryBuilder& query) noexcept {
 }
 
 template<template<typename> class Impl, typename Result, typename... Prefix>
-Result MakeWildcardNgram(const WildcardNgramQuery& query,
+Result MakeWildcardNGram(const WildcardNGramQuery& query,
                          uint64_t interrogations, Prefix&&... prefix) {
   constexpr bool kProbed = std::is_same_v<Result, ProbeNode::ptr>;
   SDB_ASSERT(query.Kind() != QueryKind::Empty);
@@ -63,12 +63,12 @@ Result MakeWildcardNgram(const WildcardNgramQuery& query,
   if (kind == QueryKind::All) {
     const auto& segment = query.Segment();
     if constexpr (kProbed) {
-      using Slots = probe::WildcardNgramSlotsDocs<probe::AllDocs>;
+      using Slots = probe::WildcardNGramSlotsDocs<probe::AllDocs>;
       return memory::make_managed<Impl<probe::TwoPhaseDocs<Slots>>>(
         std::forward<Prefix>(prefix)..., std::piecewise_construct,
         std::forward_as_tuple(segment), recipe);
     } else {
-      using Slots = lead::WildcardNgramSlotsDocs<lead::AllDocs>;
+      using Slots = lead::WildcardNGramSlotsDocs<lead::AllDocs>;
       return memory::make_managed<Impl<lead::TwoPhaseDocs<Slots>>>(
         std::forward<Prefix>(prefix)..., std::piecewise_construct,
         std::forward_as_tuple(segment), recipe);
@@ -81,7 +81,7 @@ Result MakeWildcardNgram(const WildcardNgramQuery& query,
       if (!node) {
         return {};
       }
-      using Slots = probe::WildcardNgramSlotsDocs<probe::Erased>;
+      using Slots = probe::WildcardNGramSlotsDocs<probe::Erased>;
       return memory::make_managed<Impl<probe::TwoPhaseDocs<Slots>>>(
         std::forward<Prefix>(prefix)..., std::piecewise_construct,
         std::forward_as_tuple(std::move(node)), recipe);
@@ -90,7 +90,7 @@ Result MakeWildcardNgram(const WildcardNgramQuery& query,
       if (!node) {
         return {};
       }
-      using Slots = lead::WildcardNgramSlotsDocs<lead::Erased>;
+      using Slots = lead::WildcardNGramSlotsDocs<lead::Erased>;
       return memory::make_managed<Impl<lead::TwoPhaseDocs<Slots>>>(
         std::forward<Prefix>(prefix)..., std::piecewise_construct,
         std::forward_as_tuple(std::move(node)), recipe);
@@ -110,11 +110,11 @@ Result MakeWildcardNgram(const WildcardNgramQuery& query,
     const auto one =
       std::forward_as_tuple(std::forward<decltype(args)>(args)...);
     if constexpr (kProbed) {
-      using Slots = probe::WildcardNgramSlotsDocs<Approx>;
+      using Slots = probe::WildcardNGramSlotsDocs<Approx>;
       return memory::make_managed<Impl<probe::TwoPhaseDocs<Slots>>>(
         std::forward<Prefix>(prefix)..., std::piecewise_construct, one, recipe);
     } else {
-      using Slots = lead::WildcardNgramSlotsDocs<Approx>;
+      using Slots = lead::WildcardNGramSlotsDocs<Approx>;
       return memory::make_managed<Impl<lead::TwoPhaseDocs<Slots>>>(
         std::forward<Prefix>(prefix)..., std::piecewise_construct, one, recipe);
     }

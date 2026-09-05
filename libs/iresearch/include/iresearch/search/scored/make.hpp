@@ -77,7 +77,7 @@ Root::ptr Make(const FixedPhraseQuery& query, const Context& ctx);
 Root::ptr Make(const VariadicPhraseQuery& query, const Context& ctx);
 Root::ptr Make(const NGramSimilarityQuery& query, const Context& ctx);
 Root::ptr Make(const AllQuery& query, const Context& ctx);
-Root::ptr Make(const WildcardNgramQuery& query, const Context& ctx);
+Root::ptr Make(const WildcardNGramQuery& query, const Context& ctx);
 Root::ptr Make(const ByNestedQuery& query, const Context& ctx);
 Root::ptr Make(const RangeVectorQuery& query, const Context& ctx);
 Root::ptr Make(const BooleanQuery& query, const Context& ctx);
@@ -144,7 +144,7 @@ Root::ptr MakeVariadicPhraseSlop(const VariadicPhraseQuery& query,
 Root::ptr MakeNGram(const NGramSimilarityQuery& query, const Context& ctx);
 Root::ptr MakeNGramAll(const NGramSimilarityQuery& query, const Context& ctx);
 
-Root::ptr MakeWildcardNgram(const WildcardNgramQuery& query,
+Root::ptr MakeWildcardNGram(const WildcardNGramQuery& query,
                             const Context& ctx);
 
 template<typename Term>

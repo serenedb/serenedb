@@ -27,10 +27,10 @@
 
 namespace irs::top {
 
-Root::ptr MakeWildcardNgram(const WildcardNgramQuery& query,
+Root::ptr MakeWildcardNGram(const WildcardNGramQuery& query,
                             const Context& ctx) {
   SDB_ASSERT(query.Kind() != QueryKind::Empty);
-  auto node = lead::MakeWildcardNgramDocs(query);
+  auto node = lead::MakeWildcardNGramDocs(query);
   if (!node) {
     return {};
   }

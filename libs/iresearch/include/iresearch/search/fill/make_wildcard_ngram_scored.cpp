@@ -31,10 +31,10 @@
 
 namespace irs::fill {
 
-Node::ptr MakeWildcardNgramScored(const WildcardNgramQuery& query,
+Node::ptr MakeWildcardNGramScored(const WildcardNGramQuery& query,
                                   const ScoredCtx& ctx, ScoreMergeType merge) {
   SDB_ASSERT(query.Kind() != QueryKind::Empty);
-  auto node = lead::MakeWildcardNgramDocs(query);
+  auto node = lead::MakeWildcardNGramDocs(query);
   if (!node) {
     return {};
   }

@@ -113,8 +113,8 @@ Node::ptr Make(const AllQuery& query, uint64_t) {
   return MakeAllDocs(query.Segment());
 }
 
-Node::ptr Make(const WildcardNgramQuery& query, uint64_t interrogations) {
-  return MakeWildcardNgramDocs(query, interrogations);
+Node::ptr Make(const WildcardNGramQuery& query, uint64_t interrogations) {
+  return MakeWildcardNGramDocs(query, interrogations);
 }
 
 Node::ptr Make(const BooleanQuery& query, uint64_t interrogations) {
@@ -218,10 +218,10 @@ Node::ptr Make(const AllQuery& query, const ScoredCtx& ctx, uint64_t) {
                                                     .boost = query.Boost()}));
 }
 
-Node::ptr Make(const WildcardNgramQuery& query, const ScoredCtx& ctx,
+Node::ptr Make(const WildcardNGramQuery& query, const ScoredCtx& ctx,
                uint64_t interrogations) {
   const auto record = query.Stats(ctx);
-  return MakeWildcardNgramScored(
+  return MakeWildcardNGramScored(
     query,
     search::AllDocsScore(query.Segment(), ScoreArgs{.scorer = record.scorer,
                                                     .stats = record.stats,

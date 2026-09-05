@@ -120,8 +120,8 @@ Root::ptr Make(const AllQuery& query, const Context& ctx) {
                  query.Boost());
 }
 
-Root::ptr Make(const WildcardNgramQuery& query, const Context& ctx) {
-  return MakeWildcardNgram(query, ctx);
+Root::ptr Make(const WildcardNGramQuery& query, const Context& ctx) {
+  return MakeWildcardNGram(query, ctx);
 }
 
 Root::ptr Make(const BooleanQuery& query, const Context& ctx) {

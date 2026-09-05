@@ -51,7 +51,7 @@ void FromLike(BoolTarget parent, const FilterContext& ctx,
 
   if (column_info.tokenizer.analyzer->type() ==
       irs::Type<irs::analysis::WildcardAnalyzer>::id()) {
-    auto& wf = AddMaybeNegated<irs::ByWildcardNgram>(parent, ctx, column_info);
+    auto& wf = AddMaybeNegated<irs::ByWildcardNGram>(parent, ctx, column_info);
     wf.SetBoost(ctx.boost);
     wf.SetScorer(&irs::DefaultConstScore());
     *wf.mutable_field_id() =

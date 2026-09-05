@@ -573,10 +573,10 @@ TEST_P(ByEditDistanceTestCase, bm25) {
     ASSERT_FALSE(score.IsDefault());
 
     constexpr std::pair<float_t, irs::doc_id_t> kExpectedDocs[]{
-      {6.21361256f, 261},
-      {9.32042027f, 272},
-      {7.76701689f, 273},
-      {6.21361256f, 289},
+      {2.8243692f, 261},
+      {4.2365546f, 272},
+      {3.5304620f, 273},
+      {2.8243692f, 289},
     };
 
     auto expected_doc = std::begin(kExpectedDocs);
@@ -621,8 +621,8 @@ TEST_P(ByEditDistanceTestCase, bm25) {
     ASSERT_FALSE(score.IsDefault());
 
     constexpr std::pair<float_t, irs::doc_id_t> kExpectedDocs[]{
-      {9.9112005f, 272},
-      {8.2593336f, 273},
+      {4.5050912f, 272},
+      {3.7542424f, 273},
     };
 
     auto expected_doc = std::begin(kExpectedDocs);
@@ -667,8 +667,8 @@ TEST_P(ByEditDistanceTestCase, bm25) {
     ASSERT_FALSE(score.IsDefault());
 
     constexpr std::pair<float_t, irs::doc_id_t> kExpectedDocs[]{
-      {9.9112005f, 272},
-      {8.2593336f, 273},
+      {4.5050912f, 272},
+      {3.7542424f, 273},
     };
 
     auto expected_doc = std::begin(kExpectedDocs);
@@ -714,11 +714,11 @@ TEST_P(ByEditDistanceTestCase, bm25) {
     ASSERT_FALSE(score.IsDefault());
 
     constexpr std::pair<float_t, irs::doc_id_t> kExpectedDocs[]{
-      {8.1443892f, 265},   {6.7869911f, 264},   {6.7869911f, 3054},
-      {6.7869911f, 3069},  {5.7922611f, 46355}, {5.7922611f, 46356},
-      {5.7922611f, 46357}, {5.4295926f, 263},   {5.4295926f, 3062},
-      {4.8268843f, 46353}, {4.8268843f, 46354}, {3.8615065f, 46350},
-      {3.8615065f, 46351}, {3.8615065f, 46352},
+      {3.7019949f, 265},   {3.0849960f, 264},   {3.0849960f, 3054},
+      {3.0849960f, 3069},  {2.6328459f, 46355}, {2.6328459f, 46356},
+      {2.6328459f, 46357}, {2.4679966f, 263},   {2.4679966f, 3062},
+      {2.1940382f, 46353}, {2.1940382f, 46354}, {1.7552302f, 46350},
+      {1.7552302f, 46351}, {1.7552302f, 46352},
     };
 
     std::vector<std::pair<float_t, irs::doc_id_t>> actual_docs;
@@ -781,9 +781,9 @@ TEST_P(ByEditDistanceTestCase, bm25) {
     ASSERT_FALSE(score.IsDefault());
 
     constexpr std::pair<float_t, irs::doc_id_t> kExpectedDocs[]{
-      {3.8292055f, 275},
-      {2.7233176f, 46376},
-      {2.7233176f, 46377},
+      {1.7405479f, 275},
+      {1.2378716f, 46376},
+      {1.2378716f, 46377},
     };
 
     std::vector<std::pair<float_t, irs::doc_id_t>> actual_docs;
@@ -849,9 +849,9 @@ TEST_P(ByEditDistanceTestCase, bm25) {
     ASSERT_FALSE(score.IsDefault());
 
     constexpr std::pair<float_t, irs::doc_id_t> kExpectedDocs[]{
-      {3.8292055f, 275},
-      {2.7233176f, 46376},
-      {2.7233176f, 46377},
+      {1.7405479f, 275},
+      {1.2378716f, 46376},
+      {1.2378716f, 46377},
     };
 
     std::vector<std::pair<float_t, irs::doc_id_t>> actual_docs;

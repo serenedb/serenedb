@@ -782,7 +782,6 @@ TEST(GeoFilterTest, checkScorer) {
     q.mutable_options()->store_field_id = kGeo;
 
     size_t collector_finish_count = 0;
-    uint64_t collector_field_docs = 0;
     size_t scorer_score_count = 0;
     size_t prepare_scorer_count = 0;
     irs::score_t prepared_boost = 0.f;
@@ -793,10 +792,8 @@ TEST(GeoFilterTest, checkScorer) {
                                 const irs::FieldCollector* field,
                                 const irs::TermCollector* term) -> void {
       ++collector_finish_count;
-      // geo filter exercises field collector but not term collector
-      ASSERT_NE(nullptr, field);
+      ASSERT_EQ(nullptr, field);
       ASSERT_EQ(nullptr, term);
-      collector_field_docs += field->docs_with_field;
     };
     sort._prepare_scorer = [&](const irs::ScoreContext& ctx) {
       EXPECT_EQ(q.GetBoost(), ctx.boost);
@@ -819,7 +816,6 @@ TEST(GeoFilterTest, checkScorer) {
 
     ASSERT_EQ(expected, execute_query(q, sort));
     ASSERT_EQ(1, collector_finish_count);
-    ASSERT_GT(collector_field_docs, 0u);  // field collector ran on segments
     ASSERT_GT(prepare_scorer_count, 0u);
     ASSERT_GT(scorer_score_count, 0u);
   }
@@ -848,7 +844,6 @@ TEST(GeoFilterTest, checkScorer) {
     q.mutable_options()->store_field_id = kGeo;
 
     size_t collector_finish_count = 0;
-    uint64_t collector_field_docs = 0;
     size_t scorer_score_count = 0;
     size_t prepare_scorer_count = 0;
     irs::score_t prepared_boost = 0.f;
@@ -859,10 +854,8 @@ TEST(GeoFilterTest, checkScorer) {
                                 const irs::FieldCollector* field,
                                 const irs::TermCollector* term) -> void {
       ++collector_finish_count;
-      // geo filter exercises field collector but not term collector
-      ASSERT_NE(nullptr, field);
+      ASSERT_EQ(nullptr, field);
       ASSERT_EQ(nullptr, term);
-      collector_field_docs += field->docs_with_field;
     };
     sort._prepare_scorer = [&](const irs::ScoreContext& ctx) {
       EXPECT_EQ(q.GetBoost(), ctx.boost);
@@ -883,7 +876,6 @@ TEST(GeoFilterTest, checkScorer) {
 
     ASSERT_EQ(expected, execute_query(q, sort));
     ASSERT_EQ(1, collector_finish_count);
-    ASSERT_GT(collector_field_docs, 0u);  // field collector ran on segments
     ASSERT_GT(prepare_scorer_count, 0u);
     ASSERT_GT(scorer_score_count, 0u);
   }

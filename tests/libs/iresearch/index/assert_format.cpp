@@ -133,6 +133,14 @@ uint64_t Field::total_freq() const {
   return value;
 }
 
+uint64_t Field::total_doc_freq() const {
+  uint64_t value = 0;
+  for (auto& term : terms) {
+    value += term.postings.size();
+  }
+  return value;
+}
+
 void Field::sort(const std::map<irs::doc_id_t, irs::doc_id_t>& docs) {
   for (auto& term : terms) {
     const_cast<tests::Term&>(term).sort(docs);
@@ -855,12 +863,12 @@ void AssertIndex(irs::IndexReader::ptr actual_index,
         irs::field_limits::valid(actual_meta.norm));
 
       auto* actual_freq = irs::get<irs::FreqAttr>(*actual_terms);
+      ASSERT_NE(nullptr, actual_freq);
       if (irs::IndexFeatures::None !=
           (expected_field->second.index_features & irs::IndexFeatures::Freq)) {
-        ASSERT_NE(nullptr, actual_freq);
         ASSERT_EQ(expected_field->second.total_freq(), actual_freq->value);
       } else {
-        ASSERT_EQ(nullptr, actual_freq);
+        ASSERT_EQ(expected_field->second.total_doc_freq(), actual_freq->value);
       }
 
       const auto field_features =

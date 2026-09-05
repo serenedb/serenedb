@@ -224,7 +224,7 @@ class IndexTestBase : public virtual TestParamBase<index_test_context> {
                        matcher);
   }
 
-  void SetUp() final {
+  void SetUp() {
     TestBase::SetUp();
 
     // set directory

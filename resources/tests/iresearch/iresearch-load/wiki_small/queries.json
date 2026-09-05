@@ -1489,12 +1489,9 @@
 {"query": "world stat* histor* popu*", "tags": ["shape", "shape:wide_prefix"]}
 {"query": "+the +stat*", "tags": ["shape", "shape:prefix_intersection"]}
 {"query": "+the +histor*", "tags": ["shape", "shape:prefix_intersection"]}
-{"query": "+album +stat*", "tags": ["shape", "shape:prefix_intersection", "skip:topk"]}
 {"query": "+renaissance +stat*", "tags": ["shape", "shape:prefix_intersection"]}
 {"query": "+telescope +stat*", "tags": ["shape", "shape:prefix_intersection"]}
 {"query": "+volcano +histor*", "tags": ["shape", "shape:prefix_intersection"]}
-{"query": "+stat* +histor*", "tags": ["shape", "shape:prefix_intersection", "skip:topk"]}
-{"query": "+the +stat* +histor*", "tags": ["shape", "shape:prefix_intersection", "skip:topk"]}
 {"query": "+(world state) +(history president)", "tags": ["shape", "shape:nested_and_or"]}
 {"query": "+(the world) +(state history) +(president river)", "tags": ["shape", "shape:nested_and_or"]}
 {"query": "+(world state) +(history president) +(river album)", "tags": ["shape", "shape:nested_and_or"]}
@@ -1533,17 +1530,20 @@
 {"query": "+(world -state) +(history -president)", "tags": ["shape", "shape:nested_excl"]}
 {"query": "(world -state) (histor* -president)", "tags": ["shape", "shape:nested_excl"]}
 {"query": "+the -(world state) -\"new york\"", "tags": ["shape", "shape:nested_excl"]}
-{"query": "+(world state) +(histor* stat*)", "tags": ["shape", "shape:nested_multiterm", "skip:topk"]}
-{"query": "+histor* +stat*", "tags": ["shape", "shape:nested_multiterm", "skip:topk"]}
 {"query": "+telescope -stat*", "tags": ["shape", "shape:nested_multiterm"]}
-{"query": "+the +(a* b*)", "tags": ["shape", "shape:nested_multiterm", "skip:topk"]}
 {"query": "+(world state) +(history president) +\"united states\" -(river album)", "tags": ["shape", "shape:nested_deep"]}
 {"query": "histor* \"united states\"", "tags": ["shape", "shape:nested_mixed"]}
 {"query": "+the +(histor* \"united states\")", "tags": ["shape", "shape:nested_mixed"]}
 {"query": "+the +(histor* stat* \"united states\")", "tags": ["shape", "shape:nested_mixed"]}
 {"query": "+world +(state zzzznotaterm)", "tags": ["shape", "shape:canonical"]}
 {"query": "+world -zzzznotaterm", "tags": ["shape", "shape:canonical"]}
-{"query": "+world +wor*", "tags": ["shape", "shape:canonical", "skip:topk"]}
 {"query": "(world state)@2", "tags": ["shape", "shape:canonical"]}
 {"query": "+(world)", "tags": ["shape", "shape:canonical"]}
 {"query": "+((world))", "tags": ["shape", "shape:canonical"]}
+{"query": "+the +(a* b*)", "tags": ["shape", "shape:nested_multiterm", "skip:topk"]}
+{"query": "+world +wor*", "tags": ["shape", "shape:canonical", "skip:topk"]}
+{"query": "+(world state) +(histor* stat*)", "tags": ["shape", "shape:nested_multiterm", "skip:topk"]}
+{"query": "+the +stat* +histor*", "tags": ["shape", "shape:prefix_intersection", "skip:topk"]}
+{"query": "+stat* +histor*", "tags": ["shape", "shape:prefix_intersection", "skip:topk"]}
+{"query": "+histor* +stat*", "tags": ["shape", "shape:nested_multiterm", "skip:topk"]}
+{"query": "+album +stat*", "tags": ["shape", "shape:prefix_intersection", "skip:topk"]}

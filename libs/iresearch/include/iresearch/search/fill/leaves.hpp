@@ -31,6 +31,7 @@
 #include "iresearch/search/common/window.hpp"
 #include "iresearch/search/fill/concept.hpp"
 #include "iresearch/search/probe/concept.hpp"
+#include "iresearch/types.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
 namespace irs::fill {
@@ -83,6 +84,26 @@ class ProbedAndNot {
         const auto doc = base + bit;
         if (_probe.Probe(doc) == doc) {
           live &= ~(uint64_t{1} << bit);
+        }
+        word = PopBit(word);
+      }
+      mask[w] = live;
+    }
+  }
+
+  void Remove(doc_id_t min, doc_id_t max, uint64_t* IRS_RESTRICT mask,
+              score_t* IRS_RESTRICT scores, score_t reset) {
+    const auto words = search::WindowWords(min, max);
+    auto base = min;
+    for (size_t w = 0; w != words; ++w, base += search::kWindowBits) {
+      auto word = mask[w];
+      auto live = word;
+      while (word != 0) {
+        const auto bit = static_cast<uint32_t>(std::countr_zero(word));
+        const auto doc = base + bit;
+        if (_probe.Probe(doc) == doc) {
+          live &= ~(uint64_t{1} << bit);
+          scores[w * search::kWindowBits + bit] = reset;
         }
         word = PopBit(word);
       }

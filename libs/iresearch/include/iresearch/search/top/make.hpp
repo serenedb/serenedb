@@ -108,6 +108,10 @@ Root::ptr MakeSparseExclusion(const BooleanQuery& query,
                               const SubReader& segment, const Context& ctx,
                               ScoreMergeType merge, score_t absorbed);
 
+Root::ptr MakeWindowExclusion(const BooleanQuery& query,
+                              const SubReader& segment, const Context& ctx,
+                              ScoreMergeType merge, score_t absorbed);
+
 Root::ptr MakeBitsThreshold(std::span<const PostingClause> terms,
                             std::span<const QueryBuilder::ptr> filters,
                             search::Terms uniformity, const SubReader& segment,
@@ -176,8 +180,9 @@ Root::ptr MakeWindowDisjunction(std::span<const Term> terms,
   const auto make = [&]<typename Set>(auto&&... args) -> Root::ptr {
     const auto leaves =
       std::forward_as_tuple(std::forward<decltype(args)>(args)...);
-    return MakeShape<WindowDisjunction, Set>(ctx, std::piecewise_construct,
-                                             leaves, merge, absorbed);
+    return MakeShape<WindowDisjunction, Set, utils::Empty>(
+      ctx, std::piecewise_construct, leaves, std::forward_as_tuple(), merge,
+      absorbed);
   };
   const search::ScoreRecipe recipe{.segment = &segment,
                                    .fetcher = &ctx.fetcher};
@@ -219,6 +224,7 @@ Root::ptr MakeMaxScoreDisjunction(std::span<const Term> terms,
                                .stats = posting.stats.stats,
                                .fetcher = &ctx.fetcher,
                                .boost = posting.boost});
+        return posting.state.cookie.docs_count;
       });
   });
 }

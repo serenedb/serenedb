@@ -139,6 +139,10 @@ Root::ptr Make(const BooleanQuery& query, const Context& ctx) {
 
   if (!query.Terms(Occur::MustNot).empty() ||
       !query.Queries(Occur::MustNot).empty()) {
+    if (auto windowed =
+          MakeWindowExclusion(query, segment, ctx, merge, absorbed)) {
+      return windowed;
+    }
     return MakeSparseExclusion(query, segment, ctx, merge, absorbed);
   }
   if (must.empty() && must_filters.empty() && !only_scores) {

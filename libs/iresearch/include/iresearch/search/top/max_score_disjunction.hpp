@@ -49,12 +49,12 @@ class MaxScoreDisjunction : public Root {
 
   template<typename Init>
   MaxScoreDisjunction(Table table, size_t size, Init&& init)
-    : _own{size, std::forward<Init>(init)},
-      _sorted{size,
-              [this](Entry& entry, size_t i) noexcept {
-                entry = Entry{.leaf = &_own[i],
-                              .cost = std::max<uint32_t>(1, _own[i].Cost())};
-              }},
+    : _entries{size,
+               [&](Entry& entry, size_t i) {
+                 entry.cost = std::max<uint32_t>(1, init(entry.leaf, i));
+               }},
+      _sorted{size, [this](Entry*& entry,
+                           size_t i) noexcept { entry = &_entries[i]; }},
       _admit{table} {}
 
   void Run(LoserScoreCollector& collector) final {
@@ -83,9 +83,9 @@ class MaxScoreDisjunction : public Root {
         window_max = next;
       }
 
-      ProcessEssential([&](Entry& entry) {
-        if (entry.leaf->Value() < window_min) {
-          entry.leaf->Seek(window_min);
+      ProcessEssential([&](Entry* entry) {
+        if (entry->leaf.Value() < window_min) {
+          entry->leaf.Seek(window_min);
         }
       });
 
@@ -104,7 +104,7 @@ class MaxScoreDisjunction : public Root {
 
  private:
   struct Entry {
-    Leaf* leaf = nullptr;
+    Leaf leaf;
     uint32_t cost = 1;
     score_t max_score = 0;
     double prefix_score_sum = 0;
@@ -122,20 +122,20 @@ class MaxScoreDisjunction : public Root {
   };
 
   IRS_FORCE_INLINE doc_id_t Top() const noexcept {
-    return _sorted[_first_essential].leaf->Value();
+    return _sorted[_first_essential]->leaf.Value();
   }
 
   IRS_FORCE_INLINE doc_id_t SecondEssentialDoc() const noexcept {
     SDB_ASSERT(_num_essential >= 2);
     const auto* const first = _sorted.data() + _first_essential;
     if (_num_essential == 2) {
-      return first[1].leaf->Value();
+      return first[1]->leaf.Value();
     }
-    return std::min(first[1].leaf->Value(), first[2].leaf->Value());
+    return std::min(first[1]->leaf.Value(), first[2]->leaf.Value());
   }
 
-  static bool Ahead(const Entry& lhs, const Entry& rhs) noexcept {
-    return lhs.leaf->Value() > rhs.leaf->Value();
+  static bool Ahead(const Entry* lhs, const Entry* rhs) noexcept {
+    return lhs->leaf.Value() > rhs->leaf.Value();
   }
 
   void UpdateHeapTop() {
@@ -154,22 +154,22 @@ class MaxScoreDisjunction : public Root {
   }
 
   void UpdateWindowScores(doc_id_t min, doc_id_t max) {
-    for (auto& entry : _sorted) {
-      if (entry.leaf->Value() >= max) {
+    for (auto& entry : _entries) {
+      if (entry.leaf.Value() >= max) {
         entry.max_score = 0;
         continue;
       }
-      if (entry.leaf->Value() < min) {
-        entry.leaf->SeekToBlock(min);
+      if (entry.leaf.Value() < min) {
+        entry.leaf.SeekToBlock(min);
       }
-      entry.max_score = entry.leaf->MaxScore(max - 1);
+      entry.max_score = entry.leaf.MaxScore(max - 1);
     }
   }
 
   bool Split(score_t score_threshold) {
-    absl::c_sort(_sorted, [](const Entry& lhs, const Entry& rhs) noexcept {
-      return static_cast<double>(lhs.max_score) / lhs.cost <
-             static_cast<double>(rhs.max_score) / rhs.cost;
+    absl::c_sort(_sorted, [](const Entry* lhs, const Entry* rhs) noexcept {
+      return static_cast<double>(lhs->max_score) / lhs->cost <
+             static_cast<double>(rhs->max_score) / rhs->cost;
     });
 
     const auto threshold = static_cast<double>(score_threshold);
@@ -179,13 +179,13 @@ class MaxScoreDisjunction : public Root {
     _next_threshold = std::numeric_limits<score_t>::max();
 
     for (size_t i = 0; i != size; ++i) {
-      const double sum = max_score_sum + _sorted[i].max_score;
+      const double sum = max_score_sum + _sorted[i]->max_score;
       if (sum < threshold) {
         max_score_sum = sum;
         if (i != _first_essential) {
           std::swap(_sorted[i], _sorted[_first_essential]);
         }
-        _sorted[_first_essential].prefix_score_sum = max_score_sum;
+        _sorted[_first_essential]->prefix_score_sum = max_score_sum;
         ++_first_essential;
       } else {
         _next_threshold = std::min(_next_threshold, static_cast<score_t>(sum));
@@ -201,17 +201,17 @@ class MaxScoreDisjunction : public Root {
 
     _first_required = _first_essential;
     if (_num_essential == 1) {
-      double required = _sorted[_first_essential].max_score;
+      double required = _sorted[_first_essential]->max_score;
       while (_first_required != 0) {
         double without = required;
         if (_first_required > 1) {
-          without += _sorted[_first_required - 2].prefix_score_sum;
+          without += _sorted[_first_required - 2]->prefix_score_sum;
         }
         if (without >= threshold) {
           break;
         }
         --_first_required;
-        required += _sorted[_first_required].max_score;
+        required += _sorted[_first_required]->max_score;
       }
     }
     return true;
@@ -220,9 +220,8 @@ class MaxScoreDisjunction : public Root {
   doc_id_t ComputeOuterWindow(doc_id_t min) {
     doc_id_t max = doc_limits::eof();
     for (size_t i = _first_essential; i != _sorted.size(); ++i) {
-      auto* const leaf = _sorted[i].leaf;
-      const doc_id_t block_max =
-        leaf->SeekToBlock(std::max(leaf->Value(), min));
+      auto& leaf = _sorted[i]->leaf;
+      const doc_id_t block_max = leaf.SeekToBlock(std::max(leaf.Value(), min));
       if (!doc_limits::eof(block_max)) {
         max = std::min(block_max + 1, max);
       }
@@ -244,8 +243,8 @@ class MaxScoreDisjunction : public Root {
   }
 
   void ProcessSingleEssential(LoserScoreCollector& collector, doc_id_t max) {
-    auto* const leaf = _sorted[_first_essential].leaf;
-    leaf->ForEachScoredBlock(
+    auto& leaf = _sorted[_first_essential]->leaf;
+    leaf.ForEachScoredBlock(
       max, [&](doc_id_t* IRS_RESTRICT docs, uint32_t len,
                score_t* IRS_RESTRICT scores) IRS_FORCE_INLINE {
         if (_has_non_essential) {
@@ -273,8 +272,8 @@ class MaxScoreDisjunction : public Root {
     }
 
     max = std::min(min + kWindow, max);
-    ProcessEssential([&](Entry& entry) IRS_FORCE_INLINE {
-      entry.leaf->Fill(min, max, _mask, _scores);
+    ProcessEssential([&](Entry* entry) IRS_FORCE_INLINE {
+      entry->leaf.Fill(min, max, _mask, _scores);
     });
 
     if (!_has_non_essential) {
@@ -328,7 +327,7 @@ class MaxScoreDisjunction : public Root {
     const score_t threshold = _collector->ScoreThreshold();
 
     for (size_t i = _first_essential; i-- != 0;) {
-      auto& entry = _sorted[i];
+      auto& entry = *_sorted[i];
       const auto score_threshold =
         threshold - static_cast<score_t>(entry.prefix_score_sum);
       if (score_threshold > 0) {
@@ -337,8 +336,8 @@ class MaxScoreDisjunction : public Root {
           return;
         }
       }
-      entry.leaf->ScoreCandidates(cand_docs, cand_scores, i >= _first_required,
-                                  max);
+      entry.leaf.ScoreCandidates(cand_docs, cand_scores, i >= _first_required,
+                                 max);
     }
   }
 
@@ -348,8 +347,8 @@ class MaxScoreDisjunction : public Root {
   ABSL_CACHELINE_ALIGNED score_t _cand_scores[kWindow];
 
   LoserScoreCollector* _collector = nullptr;
-  search::FixedArray<Leaf> _own;
-  search::FixedArray<Entry> _sorted;
+  search::FixedArray<Entry> _entries;
+  search::FixedArray<Entry*> _sorted;
   size_t _first_essential = 0;
   size_t _first_required = 0;
   size_t _num_essential = 0;

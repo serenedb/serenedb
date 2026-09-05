@@ -28,6 +28,7 @@
 #include "iresearch/search/common/optional_scored.hpp"
 #include "iresearch/search/common/scored_context.hpp"
 #include "iresearch/search/lead/impl.hpp"
+#include "iresearch/search/lead/make.hpp"
 #include "iresearch/search/lead/plan.hpp"
 #include "iresearch/search/lead/sparse_conjunction_scored.hpp"
 #include "iresearch/search/probe/impl.hpp"
@@ -44,6 +45,12 @@ Node::ptr MakeSparseConjunctionScored(
     return {};
   }
   const ScoreRecipe recipe{.segment = &segment, .fetcher = ctx.fetcher};
+  if (absorbed == 0 && terms.size() + filters.size() == 1) {
+    if (!terms.empty()) {
+      return MakePostingScored(terms.front(), segment, recipe);
+    }
+    return filters.front()->PlanLead(ctx);
+  }
   return BuildScoredConjunction<Node::ptr>(
     terms, filters, nullptr, nullptr, kNoBoost, segment, recipe,
     [&](const PostingClause& posting, const QueryBuilder* child,

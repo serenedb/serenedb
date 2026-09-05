@@ -94,9 +94,9 @@ IRS_FORCE_INLINE void ReadDocState(SkipState& state, Input& in,
   state.doc = in.ReadV32();
   state.doc_ptr += in.ReadV64();
   if (layout.pos) {
-    std::ignore = in.ReadV64();
+    in.SkipV64();
     if (layout.offs) {
-      std::ignore = in.ReadV64();
+      in.SkipV64();
     }
     std::ignore = in.ReadByte();
   }
@@ -115,7 +115,7 @@ IRS_FORCE_INLINE void ReadPosState(SkipState& state, Input& in, bool has_pay) {
     if constexpr (Offs) {
       state.pay_ptr += in.ReadV64();
     } else {
-      std::ignore = in.ReadV64();
+      in.SkipV64();
     }
   }
   state.pos_offset = in.ReadByte();

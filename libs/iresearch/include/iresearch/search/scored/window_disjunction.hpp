@@ -22,8 +22,11 @@
 
 #include <algorithm>
 #include <bit>
+#include <type_traits>
+#include <utility>
 
 #include "basics/bit_utils.hpp"
+#include "basics/empty.hpp"
 #include "iresearch/search/common/table_filter.hpp"
 #include "iresearch/search/common/window.hpp"
 #include "iresearch/search/scored/root.hpp"
@@ -32,16 +35,20 @@
 
 namespace irs::scored {
 
-template<typename Leaves, typename Table>
+template<typename Leaves, typename Excludes, typename Table>
 class WindowDisjunction : public Root {
  public:
   static constexpr size_t kNumWords = search::kWindowWords;
   static constexpr doc_id_t kWindow = search::kWindowDocs;
+  static constexpr bool kExcludes = !std::is_same_v<Excludes, utils::Empty>;
 
-  template<typename LeavesArgs>
+  template<typename LeavesArgs, typename ExcludesArgs>
   WindowDisjunction(Table table, std::piecewise_construct_t,
-                    LeavesArgs&& leaves, score_t absorbed = 0)
+                    LeavesArgs&& leaves, ExcludesArgs&& excludes,
+                    score_t absorbed = 0)
     : _leaves{std::make_from_tuple<Leaves>(std::forward<LeavesArgs>(leaves))},
+      _excludes{
+        std::make_from_tuple<Excludes>(std::forward<ExcludesArgs>(excludes))},
       _constant{absorbed},
       _table{table} {
     std::fill_n(_window, kWindow, _constant);
@@ -92,6 +99,9 @@ class WindowDisjunction : public Root {
         _min + kWindow,
         [min = _min, max = _min + kWindow, this](auto& leaf)
           IRS_FORCE_INLINE { return leaf.Fill(min, max, _mask, _window); });
+      if constexpr (kExcludes) {
+        _excludes.Remove(_min, _min + kWindow, _mask, _window, _constant);
+      }
       _word = 0;
     }
   }
@@ -100,6 +110,7 @@ class WindowDisjunction : public Root {
   ABSL_CACHELINE_ALIGNED uint64_t _mask[kNumWords]{};
   ABSL_CACHELINE_ALIGNED score_t _window[kWindow];
   Leaves _leaves;
+  [[no_unique_address]] Excludes _excludes;
   doc_id_t _min = 0;
   doc_id_t _next = 0;
   uint32_t _word = kNumWords;

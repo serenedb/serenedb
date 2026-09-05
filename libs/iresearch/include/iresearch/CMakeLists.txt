@@ -345,6 +345,7 @@ set(IResearch_core_sources
     ./search/scored/make_window_disjunction.cpp
     ./search/scored/make_sparse_conjunction.cpp
     ./search/scored/make_sparse_exclusion.cpp
+    ./search/scored/make_window_exclusion.cpp
     ./search/scored/make_bits_threshold.cpp
     ./search/scored/make_count_threshold.cpp
     ./search/scored/make_fixed_phrase.cpp
@@ -367,6 +368,7 @@ set(IResearch_core_sources
     ./search/top/make_window_disjunction.cpp
     ./search/top/make_sparse_conjunction.cpp
     ./search/top/make_sparse_exclusion.cpp
+    ./search/top/make_window_exclusion.cpp
     ./search/top/make_bits_threshold.cpp
     ./search/top/make_count_threshold.cpp
     ./search/top/make_fixed_phrase.cpp

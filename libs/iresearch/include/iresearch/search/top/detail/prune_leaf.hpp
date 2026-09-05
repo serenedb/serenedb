@@ -202,7 +202,6 @@ class PruneLeafBase {
     SDB_ASSERT(FeaturesHaveFreq(layout));
     _skip.Reader().SetLayout(ToSkipLayout(layout));
     _fetcher = args.fetcher;
-    _cost = meta.docs_count;
     _recipe = {&segment, &field, args};
     _provider.freq.value = _freqs.data;
 
@@ -371,7 +370,6 @@ class PruneLeafBase {
   doc_id_t _max_in_leaf = doc_limits::invalid();
   doc_id_t _upper_bound = doc_limits::eof();
   uint32_t _left_in_list = 0;
-  uint32_t _cost = 0;
   bool _needs_reposition = false;
 };
 

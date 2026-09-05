@@ -135,6 +135,9 @@ class FailingDirectory : public tests::DirectoryMock {
     uint32_t ReadV32() final { return _impl->ReadV32(); }
     uint64_t ReadV64() final { return _impl->ReadV64(); }
 
+    void SkipV32() final { _impl->SkipV32(); }
+    void SkipV64() final { _impl->SkipV64(); }
+
     uint64_t Position() const noexcept final { return _impl->Position(); }
     uint64_t Length() const noexcept final { return _impl->Length(); }
     bool IsEOF() const noexcept final { return _impl->IsEOF(); }

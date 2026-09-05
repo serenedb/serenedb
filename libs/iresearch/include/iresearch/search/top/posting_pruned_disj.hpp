@@ -70,8 +70,6 @@ class PostingPrunedDisj : public PruneLeafBase<InputType, false> {
     Prepare(meta, doc_in, layout, segment, field, args);
   }
 
-  uint32_t Cost() const noexcept { return Base::_cost; }
-
   doc_id_t SeekToBlock(doc_id_t target) {
     if (_skip.NumLevels() == 0) [[unlikely]] {
       return doc_limits::eof();

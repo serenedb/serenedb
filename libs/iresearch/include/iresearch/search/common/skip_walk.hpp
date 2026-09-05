@@ -119,14 +119,14 @@ class SkipWalk {
       return _levels[level].doc < target;
     }
 
-    void MoveDown(size_t level) noexcept {
+    IRS_FORCE_INLINE void MoveDown(size_t level) noexcept {
       SDB_ASSERT(_prev);
       CopyState<NoPosState>(_levels[level], *_prev);
     }
 
     void SetShape(SkipShape shape) noexcept { _shape = shape; }
 
-    void Read(size_t level, InputType& in) {
+    IRS_FORCE_INLINE void Read(size_t level, InputType& in) {
       auto& next = _levels[level];
       CopyState<NoPosState>(*_prev, next);
       ReadDocState(next, in,

@@ -344,6 +344,7 @@ set(IResearch_core_sources
     ./search/scored/make_all.cpp
     ./search/scored/make_window_disjunction.cpp
     ./search/scored/make_sparse_conjunction.cpp
+    ./search/scored/make_boosted_posting.cpp
     ./search/scored/make_sparse_exclusion.cpp
     ./search/scored/make_window_exclusion.cpp
     ./search/scored/make_bits_threshold.cpp

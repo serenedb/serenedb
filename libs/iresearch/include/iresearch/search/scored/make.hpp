@@ -104,6 +104,10 @@ Root::ptr MakeSparseConjunction(const BooleanQuery& query,
                                 const SubReader& segment, const Context& ctx,
                                 ScoreMergeType merge, score_t absorbed);
 
+Root::ptr MakeBoostedPosting(const BooleanQuery& query,
+                             const SubReader& segment, const Context& ctx,
+                             ScoreMergeType merge, score_t absorbed);
+
 Root::ptr MakeSparseExclusion(const BooleanQuery& query,
                               const SubReader& segment, const Context& ctx,
                               ScoreMergeType merge, score_t absorbed);

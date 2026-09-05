@@ -69,6 +69,10 @@ Root::ptr MakeSparseConjunction(const BooleanQuery& query,
   };
 
   if (optional && min_should_match == 0) {
+    if (auto boosted =
+          MakeBoostedPosting(query, segment, ctx, merge, absorbed)) {
+      return boosted;
+    }
     return search::BuildOptionalLeaves<Root::ptr>(
       should, should_filters, should_uniformity, nullptr, nullptr, kNoBoost,
       segment, recipe, candidates, clause,

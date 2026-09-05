@@ -683,6 +683,31 @@ sdb_update_module(${GIT_EXECUTABLE} "azure-sdk-for-cpp" ${CMAKE_CURRENT_SOURCE_D
 add_subdirectory(azure-cmake)
 
 ################################################################################
+## cmark-gfm
+################################################################################
+
+sdb_update_module(${GIT_EXECUTABLE} "cmark-gfm" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
+
+set(CMARK_TESTS OFF CACHE BOOL "" FORCE)
+set(CMARK_SHARED OFF CACHE BOOL "" FORCE)
+set(CMARK_STATIC ON CACHE BOOL "" FORCE)
+
+add_subdirectory(cmark-gfm)
+
+target_include_directories(
+    libcmark-gfm_static
+    SYSTEM
+    INTERFACE
+        ${CMAKE_CURRENT_SOURCE_DIR}/cmark-gfm/src
+        ${CMAKE_CURRENT_BINARY_DIR}/cmark-gfm/src
+)
+target_include_directories(
+    libcmark-gfm-extensions_static
+    SYSTEM
+    INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/cmark-gfm/extensions
+)
+
+################################################################################
 ## duckdb
 ################################################################################
 
@@ -725,6 +750,7 @@ set(BUILD_EXTENSIONS
 # these files after the BUILD_EXTENSIONS list is resolved.
 set(DUCKDB_EXTENSION_CONFIGS
     "${CMAKE_CURRENT_SOURCE_DIR}/duckdb_clickhouse/extension_config.cmake"
+    "${CMAKE_CURRENT_SOURCE_DIR}/duckdb_markdown/extension_config.cmake"
     CACHE STRING
     ""
     FORCE
@@ -737,6 +763,7 @@ sdb_update_module(${GIT_EXECUTABLE} "duckdb_avro" ${CMAKE_CURRENT_SOURCE_DIR} "R
 sdb_update_module(${GIT_EXECUTABLE} "duckdb_iceberg" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
 sdb_update_module(${GIT_EXECUTABLE} "duckdb_postgres" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
 sdb_update_module(${GIT_EXECUTABLE} "duckdb_inet" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
+sdb_update_module(${GIT_EXECUTABLE} "duckdb_markdown" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
 sdb_update_module(${GIT_EXECUTABLE} "database-connector" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
 
 # duckdb's in-tree extensions resolve their includes from directory scope (not from duckdb_static's
@@ -776,6 +803,7 @@ target_link_libraries(
         autocomplete_extension
         icu_extension
         inet_extension
+        markdown_extension
         # SIMD string-encoding routines (base64 + UTF-8/UTF-16/Latin-1). This
         # one PUBLIC edge propagates the simdutf include to duckdb core and to
         # every static extension (they each link duckdb_static).

@@ -48,9 +48,10 @@ declare -A SUITE_DIR=(
 	[httpfs]="$WORKSPACE/third_party/duckdb_httpfs"
 	[iceberg]="$WORKSPACE/third_party/duckdb_iceberg"
 	[inet]="$WORKSPACE/third_party/duckdb_inet"
+	[markdown]="$WORKSPACE/third_party/duckdb_markdown"
 	[postgres_scanner]="$WORKSPACE/third_party/duckdb_postgres"
 )
-SUITE_ORDER=(core avro azure httpfs iceberg inet postgres_scanner)
+SUITE_ORDER=(core avro azure httpfs iceberg inet markdown postgres_scanner)
 
 # suite name -> Catch2 name filter. Core's tests register relative to --test-dir
 # (so "test/..."), while extension tests come from LoadedExtensionTestPaths() and

@@ -37,6 +37,7 @@
 #include "catalog/log/data_store.h"
 #include "catalog/log/duckdb_global_catalog.h"
 #include "catalog/log/store.h"
+#include "docs/docs_loader.h"
 #include "duckdb_shell.hpp"
 #include "network/pg/hba.h"
 #include "network/server.h"
@@ -166,6 +167,7 @@ int RunServer(int argc, char** argv) {
     background.OpenDelays();
     search.start();
     up_search = true;
+    docs::LoadEmbeddedDocs();
     // Accept connections only once the indexes are loaded and loops are
     // running.
     network.StartListeners();

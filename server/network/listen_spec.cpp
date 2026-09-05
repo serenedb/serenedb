@@ -128,9 +128,9 @@ void ApplyParam(ListenSpec& spec, std::string_view key,
       SDB_FATAL(GENERAL, "'api' is only valid on an http endpoint '", url, "'");
     }
     for (std::string_view a : absl::StrSplit(value, ',', absl::SkipEmpty())) {
-      if (a != "es" && a != "test") {
+      if (a != "es" && a != "test" && a != "mcp") {
         SDB_FATAL(GENERAL, "unknown api '", a, "' in endpoint '", url,
-                  "' (known: es, test)");
+                  "' (known: es, test, mcp)");
       }
       spec.apis.emplace_back(a);
     }

@@ -1,0 +1,473 @@
+---
+title: Serene Docs Search
+description: Install, configure, and self-host Serene Docs Search, powered by SereneDB.
+sidebar_position: 0
+---
+
+import ConfigureDocsSearchButton from '@site/src/components/DocsSearch/ConfigureDocsSearchButton';
+
+# Serene Docs Search
+
+Serene Docs Search is a self-hosted documentation search application powered by SereneDB. It combines instant BM25 full-text search, optional vector search, and optional streamed AI answers with citations. The browser widget talks only to a small search backend; that backend pulls and indexes your Git repository, local folder, website, or S3-compatible bucket into SereneDB.
+
+<ConfigureDocsSearchButton />
+
+The configurator above opens the same setup wizard used by the Search docs widget. It keeps an unfinished draft in this browser, generates the deployment artifacts with the package's real generator, and does not change the search configuration for this documentation site.
+
+## Architecture
+
+```text
+Git / folder / website / S3  ── pulls ──────────────────┐
+                                                        ▼
+browser widget  ── HTTP /v1/search, /v1/ask ──>  search backend  ──>  SereneDB
+```
+
+The generated stack contains SereneDB and `serenedb/docs-search-backend:latest`. Depending on your choices, it also adds Ollama and/or `serenedb/docs-search-mcp:latest`. The MCP service is optional and is only for external AI agents; the widget and its Ask AI tab do not require it.
+
+## Configure and deploy
+
+1. Select a **source**: Git repository, mounted folder, live website, or S3-compatible bucket.
+2. Select file formats and parsing rules. Markdown can be indexed as a whole file or split into linkable heading sections; HTML can be scoped with CSS selectors.
+3. Choose **full-text** or **hybrid** search. Hybrid search requires an embeddings provider. AI answers and the MCP server are independent opt-ins.
+4. Choose a sync mode: Git commit checks, scheduled polling, or a webhook from CI.
+5. Select **Generate deploy files**. Download `serene-search.config.json` and copy the displayed `docker-compose.yml`.
+6. Put both files in one directory, export any API-key variables referenced by the config, and start the stack:
+
+```bash
+docker compose up -d
+```
+
+The compose generator creates a random `SERENE_SEARCH_TOKEN` for administrative setup and sync endpoints. Keep that token on the backend; public search, health, and Ask AI requests do not require it. For a local-folder source, the compose file mounts the path selected in the wizard read-only at `/data/docs`, and the downloaded config is rewritten to use that in-container path.
+
+Back in the wizard, enter the backend URL (by default `http://localhost:7700`) and generated token, select **Test connection**, then start the initial index build. After indexing finishes, the widget saves that connection in browser storage.
+
+## Install the widget
+
+### React
+
+```bash
+npm install @serenedb/docs-search-react@latest
+```
+
+```tsx
+import { SereneDocsSearch } from "@serenedb/docs-search-react";
+import "@serenedb/docs-search-react/styles.css";
+
+export function DocsSearch() {
+  return (
+    <SereneDocsSearch
+      backendUrl="https://search.example.com"
+      mcp={{
+        endpoint: "https://mcp.example.com/mcp",
+        serverName: "product-docs",
+      }}
+      navigate={(url) => router.push(url)}
+      sections={[
+        {
+          id: "docs",
+          label: "Docs",
+          match: { urls: ["https://docs.example.com/**"] },
+        },
+        {
+          id: "blog",
+          label: "Blog",
+          match: { urls: ["https://blog.example.com/**"] },
+        },
+      ]}
+    />
+  );
+}
+```
+
+Set `backendUrl` in the production widget so visitors go directly to search. Do not send the administrative token to end users. Omit `backendUrl` only for an installer UI that should expose first-run setup.
+
+### Script tag
+
+```html
+<link
+  rel="stylesheet"
+  href="https://unpkg.com/@serenedb/docs-search-embed@latest/dist/serene-docs-search.css"
+>
+<script src="https://unpkg.com/@serenedb/docs-search-embed@latest/dist/serene-docs-search.js"></script>
+<script>
+  SereneDocsSearch.init({
+    container: "#docs-search",
+    backendUrl: "https://search.example.com",
+  });
+</script>
+```
+
+The React component supports `theme`, `hotkey`, `suggestions`, `limit`, `navigate`, `transformUrl`, `sections`, `contextUrl`, `mcp`, `open`/`onOpenChange`, and a headless `useSereneDocsSearch()` hook in addition to the minimal example above. Explicit `sections` props override rules returned by the configured backend.
+
+### MCP tab
+
+The search modal includes **Search**, optional **Ask AI**, and **MCP** tabs. When **MCP** is active, a compact Codex / Claude selector appears at the right of that same tab row and the panel displays one copyable direct-HTTP CLI command at a time. Pass the public Streamable HTTP endpoint explicitly:
+
+```tsx
+<SereneDocsSearch
+  backendUrl="https://search.example.com"
+  mcp={{
+    endpoint: "https://mcp.example.com/mcp",
+    serverName: "product-docs",
+  }}
+/>
+```
+
+Choose a client, copy the single command, run it in a terminal, then reopen the client and run `/mcp`. Codex receives:
+
+```bash
+codex mcp add product-docs --url https://mcp.example.com/mcp
+```
+
+Claude receives the analogous direct HTTP command:
+
+```bash
+claude mcp add --transport http product-docs https://mcp.example.com/mcp
+```
+
+`mcp.endpoint` must be the complete public `/mcp` URL. Without it, the tab shows a concise configuration-needed state; it never derives an endpoint from `backendUrl` or offers a local package wrapper. `mcp.serverName` defaults to `serene-docs`. Pass `mcp={false}` to hide the tab. This widget prop is separate from `mcp.enabled` in `serene-search.config.json`: the latter adds the optional port-`7710` HTTP service to generated compose.
+
+This site's production integration passes `https://api.serenedb.com/mcp` with server name `serenedb-docs`, so its Codex command is:
+
+```bash
+codex mcp add serenedb-docs --url https://api.serenedb.com/mcp
+```
+
+## Generated files
+
+### `docker-compose.yml`
+
+The generated compose file always defines:
+
+- `serenedb/serenedb:latest`, with a persistent `serene-data` volume;
+- `serenedb/docs-search-backend:latest`, with the config mounted read-only at `/etc/serene/config.json`;
+- the backend port from `server.port` (default `7700`) and a generated `SERENE_SEARCH_TOKEN`.
+
+It conditionally defines:
+
+- a read-only `/data/docs` mount for a folder source;
+- `ollama/ollama:latest` and `ollama-data` when an AI provider points to `http://ollama:11434`;
+- `serenedb/docs-search-mcp:latest` on port `7710` when `mcp.enabled` is true;
+- environment-variable forwarding for provider keys written as `${ENV_VAR}`.
+
+### `serene-search.config.json`
+
+This is JSON (comments are not allowed), has schema version `1`, and is read from `/etc/serene/config.json` by default. The following reference covers every field in the current `SereneSearchConfig` type, including manual-only tuning fields that the wizard does not expose.
+
+## Config reference
+
+“Omitted” means that the generator leaves the field out. An “effective default” is supplied by the backend when the field is absent.
+
+### Top level
+
+| Field | Type | Generated/effective default | Purpose |
+|---|---|---|---|
+| `version` | literal `1` | `1` | Config schema version; required. |
+| `project` | `string` | omitted | Display name returned by the health endpoint. |
+| `source` | [`Source`](#source) | Git source selected initially | Where documents are pulled from; required. |
+| `content` | [`ContentConfig`](#content) | generated | Parsing, filtering, and result URL mapping. |
+| `search` | [`SearchTypeConfig`](#search) | `{ "type": "hybrid" }` | Retrieval and ranking. |
+| `ai` | [`AiConfig`](#ai-and-providers) | `{ "enabled": false }` | Embeddings and Ask AI providers. |
+| `sync` | [`SyncConfig`](#sync) | generated | Refresh scheduling and snapshots. |
+| `server` | [`ServerConfig`](#server-serenedb-and-mcp) | `{ "port": 7700 }` | Search backend HTTP settings. |
+| `serenedb` | [`SereneDBConfig`](#server-serenedb-and-mcp) | host `serenedb`, port `7890`, table `serene_docs_sections` | SereneDB target metadata and indexed table name. |
+| `mcp` | [`McpConfig`](#server-serenedb-and-mcp) | omitted (disabled) | Optional MCP service in generated compose. |
+
+### Source
+
+`source.type` is required and selects one of four object shapes.
+
+| Field | Type | Wizard default | Purpose |
+|---|---|---|---|
+| `source.type` | `"git" \| "folder" \| "site" \| "bucket"` | `"git"` | Source implementation. |
+| `source.url` (Git) | `string` | empty; required | HTTPS clone URL. |
+| `source.branch` | `string` | `"main"` | Branch to clone and watch. |
+| `source.commit` | `string` | omitted | Pin an exact commit. A pin prevents meaningful commit-watch updates. |
+| `source.subdir` | `string \| string[]` | omitted | Limit a Git source to directories and/or individual files. The wizard accepts a comma-separated string. |
+| `source.path` (folder) | `string` | `"./docs"` in compose; `/data/docs` in downloaded config | Backend-visible directory. The generated compose mounts it read-only. |
+| `source.url` (site) | `string` | empty; required HTTP(S) URL | Crawl start URL. |
+| `source.depth` | `number \| "all"` | `2` | Maximum link depth; `"all"` removes the limit. |
+| `source.sitemap` | `boolean` | `true` | Also seed the crawl from `sitemap.xml`. |
+| `source.uri` (bucket) | `string` | empty; required `s3://…` URI | S3 bucket and optional prefix. |
+| `source.endpoint` | `string` | omitted | Custom S3-compatible endpoint, for example R2 or MinIO. |
+| `source.region` | `string` | omitted | Bucket region. |
+
+Bucket credentials come from `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` in the backend environment. Git credentials likewise belong in the backend environment or its read-only deploy key, never in browser config.
+
+### Content
+
+| Field | Type | Generated/effective default | Purpose |
+|---|---|---|---|
+| `content.extensions` | `string[]` | `[".md", ".mdx"]` | File extensions to index. The wizard also offers `.html`, `.rst`, `.txt`, `.ipynb`, and `.pdf`. Required and non-empty. |
+| `content.exclude` | `string[]` | `["**/node_modules/**"]` | Glob patterns, or excluded paths for a site crawl. |
+| `content.markdown.mode` | `"split" \| "whole"` | `"split"` | Create one result section per heading, or one row per file. |
+| `content.markdown.depth` | integer `1..6` | omitted; effective `4` | Deepest heading level that opens a separate section. |
+| `content.html.selectors` | `string` | `"article, main"` | CSS selectors that scope HTML extraction. |
+| `content.html.tags` | `string[]` | `h1`–`h4`, `p`, `li`, `pre`, `code`, `table` | Elements that become indexed sections. |
+| `content.html.excludeSelectors` | `string` | omitted | CSS selectors removed before extraction. |
+| `content.urlMapping.baseUrl` | `string` | omitted | Public site prefix or absolute origin, for example `/docs` or `https://docs.example.com`. |
+| `content.urlMapping.stripPrefix` | `string` | omitted | Source path prefix removed before joining with `baseUrl`. |
+| `content.urlMapping.stripExtensions` | `boolean` | `true` | Map `quick-start.md` to `quick-start`. |
+| `content.urlMapping.indexFiles` | `string[]` | `["index", "README"]` | Basenames that map to their directory URL. Matching is case-insensitive. |
+| `content.urlMapping.rules` | `UrlMappingRule[]` | omitted | Ordered per-source-path mapping overrides for a corpus published on multiple sites. First `match` glob wins; omitted rule fields inherit the shared `urlMapping` values. |
+| `content.urlMapping.rules[].match` | `string` | required per rule | Glob matched against the indexed source path, for example `docs/**`. |
+| `content.urlMapping.rules[].baseUrl` | `string` | inherited | Public prefix or absolute origin for matching files. |
+| `content.urlMapping.rules[].stripPrefix` | `string` | inherited | Matching source prefix removed before joining the file path to `baseUrl`. |
+
+For website sources, pages are always parsed as HTML; the crawl URL and HTML selectors define the corpus. For file-based sources, make `baseUrl` and `stripPrefix` match the URLs your documentation site actually serves, otherwise a result may point to the source path instead of the published page. The setup widget exposes these ordered rules under **Content → Per-path public sites**, so a single exported corpus can map `blog/**` to a blog domain and the remaining `**` files to a docs domain.
+
+### Search
+
+| Field | Type | Generated/effective default | Purpose |
+|---|---|---|---|
+| `search.type` | `"fulltext" \| "hybrid"` | `"hybrid"` | BM25 only, or BM25 plus vector similarity. Hybrid requires `ai.embeddings`. |
+| `search.vectorDistanceThreshold` | `number` from `0` to `2` | omitted; no cut-off | Drop semantic candidates above a model-specific cosine distance. The source suggests about `0.45` for `nomic-embed-text` and `0.8` for `all-minilm`; calibrate on your corpus. |
+| `search.pins` | `{ match: string, url: string }[]` | omitted | Pin a URL when a case-insensitive query pattern matches; `*` is a wildcard. |
+| `search.rrf.vectorWeight` | `number` | `0.7` | Weight of the vector branch during reciprocal-rank fusion. |
+| `search.rrf.k` | `number` | `60` | RRF rank constant. |
+| `search.rrf.window` | `number` | `50` | Maximum candidates taken from each branch before fusion. |
+| `search.stemming` | `boolean` | `true` | Enable Snowball stemming. |
+| `search.synonyms` | `string` | omitted | Solr-format rules, one per line: `db, database` or `k8s => kubernetes`. Applied to indexed text and queries. |
+| `search.stopwords` | `string[]` | `["the", "a", "an", "this", "these", "those"]` | Terms removed during indexing and querying. Supplying an array replaces the built-in list. |
+| `search.sections` | `SearchSectionConfig[]` | omitted | Ordered UI result groups. First matching section owns a result; the section matching the current browser location is rendered first. |
+| `search.sections[].id` | `string` | required; unique in wizard | Stable machine-readable group key. |
+| `search.sections[].label` | `string` | required | Visible heading above the group. |
+| `search.sections[].match.urls` | `string[]` | omitted | Globs matched against the final result URL and current browser URL. |
+| `search.sections[].match.paths` | `string[]` | omitted | Globs matched against the final URL pathname and indexed source path. At least one URL or path pattern is required. |
+
+### Contextual result sections
+
+Sections affect presentation order, not retrieval scores. The widget makes a stable partition of the backend result list: relevance order is preserved inside each section, empty sections are omitted, and hits matching no configured rule appear under **Other results**. Section headings appear only when the current result set contains at least two non-empty groups; a single-section result list stays visually ungrouped. If sections are absent, the previous ungrouped built-in UI and API behavior remain unchanged.
+
+Patterns support `*` within one path segment and `**` across segments. Rules are tested in config order, so put nested or narrow paths before a broad domain rule.
+
+For separate documentation and blog origins:
+
+```json
+{
+  "search": {
+    "type": "fulltext",
+    "sections": [
+      {
+        "id": "docs",
+        "label": "Docs",
+        "match": {
+          "urls": ["https://docs.example.com/**"],
+          "paths": ["docs/**"]
+        }
+      },
+      {
+        "id": "blog",
+        "label": "Blog",
+        "match": {
+          "urls": ["https://blog.example.com/**"],
+          "paths": ["blog/**"]
+        }
+      }
+    ]
+  }
+}
+```
+
+For nested areas inside Docs, list the specific groups before the general Docs fallback:
+
+```json
+{
+  "search": {
+    "type": "fulltext",
+    "sections": [
+      {
+        "id": "installation",
+        "label": "Installation",
+        "match": {
+          "paths": ["/installation/**", "docs/installation/**"]
+        }
+      },
+      {
+        "id": "sql",
+        "label": "SQL",
+        "match": {
+          "paths": ["/sql/**", "docs/sql/**"]
+        }
+      },
+      {
+        "id": "docs",
+        "label": "Docs",
+        "match": {
+          "urls": ["https://docs.example.com/**"]
+        }
+      }
+    ]
+  }
+}
+```
+
+The setup wizard exposes the same `label`, `id`, URL-glob, and path-glob fields on its Search step. The downloaded `serene-search.config.json`, backend health response, React component, headless hook, and script-tag bundle all use this single schema.
+
+### AI and providers
+
+`ai.answers` powers the Ask AI tab. `ai.embeddings` vectorizes indexed sections and hybrid queries. They may use different providers.
+
+| Field | Type | Generated/effective default | Purpose |
+|---|---|---|---|
+| `ai.enabled` | `boolean` | `false` | Show and enable Ask AI. It does not control hybrid embeddings. |
+| `ai.answers` | `AiProvider` | omitted; added when Ask AI is enabled | Chat-completions provider for cited answers. Required when `ai.enabled` is true. |
+| `ai.embeddings` | `AiProvider` | omitted initially; required for hybrid | Embeddings provider used at index and query time. |
+| `ai.systemPrompt` | `string` | `Answer from the indexed docs only. Cite sources. If unsure, say so.` when Ask AI is enabled | System instruction for cited answers. |
+| `kind` | `"openai" \| "ollama"` | `"openai"` in the wizard | Provider protocol. `openai` means any OpenAI-compatible API. |
+| `baseUrl` | `string` | OpenAI: `https://api.openai.com/v1`; Ollama: `http://ollama:11434` | Provider API root. The Ollama default causes compose to add an Ollama container. |
+| `apiKey` | `string` | omitted | Literal secret or an exact `${ENV_VAR}` reference expanded by the backend. Prefer the latter. |
+| `model` | `string` | answers: `gpt-4o-mini`; embeddings: `text-embedding-3-small` | Model name. Ollama defaults are `llama3.2` for answers and `nomic-embed-text` for embeddings. |
+
+The backend expands strings of the exact form `${ENV_VAR}` anywhere in the JSON. The compose generator automatically forwards provider `apiKey` variables written in that form.
+
+### Sync
+
+| Field | Type | Generated/effective default | Purpose |
+|---|---|---|---|
+| `sync.mode` | `"commits" \| "poll" \| "webhook"` | Git: `"commits"`; other sources: `"poll"` | Watch a Git ref, poll the source, or wait for `POST /v1/reindex`. |
+| `sync.interval` | `string` | `"1h"` | Commit-check or polling interval. The parser accepts positive integer values ending in `s`, `m`, `h`, or `d`; the wizard offers `15m`, `1h`, `6h`, and `24h`. |
+| `sync.snapshots` | `boolean` | `true` | Hash content, skip unchanged sections, and prune deleted ones. |
+
+### Server, SereneDB, and MCP
+
+| Field | Type | Generated/effective default | Purpose |
+|---|---|---|---|
+| `server.port` | `number` | `7700` | Port written into generated compose and suggested backend URL. When changing it manually, also set the backend `PORT` environment variable to the same value. |
+| `serenedb.host` | `string` | `"serenedb"` | Declared in the config schema and emitted by the generator. The current backend reads the actual host from `SERENEDB_HOST`. |
+| `serenedb.port` | `number` | `7890` | Declared/emitted value; the current backend reads `SERENEDB_PORT`. |
+| `serenedb.database` | `string` | omitted; runtime `"postgres"` | Schema field; the current backend reads `SERENEDB_DATABASE`. |
+| `serenedb.user` | `string` | omitted; runtime `"postgres"` | Schema field; the current backend reads `SERENEDB_USER`. |
+| `serenedb.password` | `string` | omitted | Schema field; the current backend reads `SERENEDB_PASSWORD`. Keep it out of JSON. |
+| `serenedb.table` | `string` | `"serene_docs_sections"` | Base name for indexed sections and related search tables. This is the SereneDB setting currently applied from JSON. |
+| `mcp.enabled` | `boolean` | omitted/`false` | Add the optional MCP container on port `7710` to generated compose. |
+
+The backend also supports `SERENE_SEARCH_CONFIG` (default `/etc/serene/config.json`), `SERENE_SEARCH_STATE` (default `/var/lib/serene-search`), `SERENE_SEARCH_TOKEN`, `SERENEDB_POOL_MAX` (default `20`), `SERENEDB_POOL_CONNECT_TIMEOUT_MS` (default `10000`), and `SERENEDB_STATEMENT_TIMEOUT_MS` (default `30000`).
+
+## Manual config example
+
+This valid example exercises the current nested provider schema and the manual relevance controls. Replace its URLs and models for your environment.
+
+```json
+{
+  "version": 1,
+  "project": "Acme documentation",
+  "source": {
+    "type": "git",
+    "url": "https://github.com/acme/docs",
+    "branch": "main",
+    "subdir": ["docs", "blog", "guides/faq.md"]
+  },
+  "content": {
+    "extensions": [".md", ".mdx", ".html"],
+    "exclude": ["**/node_modules/**", "**/CHANGELOG.md"],
+    "markdown": {
+      "mode": "split",
+      "depth": 4
+    },
+    "html": {
+      "selectors": "article, main .content",
+      "tags": ["h1", "h2", "h3", "h4", "p", "li", "pre", "code", "table"],
+      "excludeSelectors": "nav, .badge, pre.language-plaintext"
+    },
+    "urlMapping": {
+      "stripExtensions": true,
+      "indexFiles": ["index", "README"],
+      "rules": [
+        {
+          "match": "docs/**",
+          "baseUrl": "https://docs.example.com",
+          "stripPrefix": "docs/"
+        },
+        {
+          "match": "blog/**",
+          "baseUrl": "https://blog.example.com",
+          "stripPrefix": "blog/"
+        }
+      ]
+    }
+  },
+  "search": {
+    "type": "hybrid",
+    "vectorDistanceThreshold": 0.45,
+    "pins": [
+      { "match": "install*", "url": "https://docs.example.com/quick-start" }
+    ],
+    "rrf": {
+      "vectorWeight": 0.7,
+      "k": 60,
+      "window": 50
+    },
+    "stemming": true,
+    "synonyms": "db, database\nk8s => kubernetes",
+    "stopwords": ["the", "a", "an", "this", "these", "those"],
+    "sections": [
+      {
+        "id": "docs",
+        "label": "Docs",
+        "match": {
+          "urls": ["https://docs.example.com/**"],
+          "paths": ["docs/**"]
+        }
+      },
+      {
+        "id": "blog",
+        "label": "Blog",
+        "match": {
+          "urls": ["https://blog.example.com/**"],
+          "paths": ["blog/**"]
+        }
+      }
+    ]
+  },
+  "ai": {
+    "enabled": true,
+    "answers": {
+      "kind": "openai",
+      "baseUrl": "https://api.openai.com/v1",
+      "apiKey": "${OPENAI_API_KEY}",
+      "model": "gpt-4o-mini"
+    },
+    "embeddings": {
+      "kind": "ollama",
+      "baseUrl": "http://ollama:11434",
+      "model": "nomic-embed-text"
+    },
+    "systemPrompt": "Answer from the indexed docs only. Cite sources. If unsure, say so."
+  },
+  "sync": {
+    "mode": "commits",
+    "interval": "1h",
+    "snapshots": true
+  },
+  "server": {
+    "port": 7700
+  },
+  "serenedb": {
+    "host": "serenedb",
+    "port": 7890,
+    "table": "serene_docs_sections"
+  },
+  "mcp": {
+    "enabled": true
+  }
+}
+```
+
+With the file saved next to the copied compose file:
+
+```bash
+export OPENAI_API_KEY="replace-me"
+docker compose up -d
+curl http://localhost:7700/v1/health
+```
+
+## Operations and security
+
+- `GET /v1/health`, `POST /v1/search`, `POST /v1/ask`, and section reads are public endpoints intended for the browser widget.
+- `PUT /v1/config`, `POST /v1/sync`, and `POST /v1/reindex` are administrative and use `SERENE_SEARCH_TOKEN`.
+- The backend stores a config pushed by the wizard under `SERENE_SEARCH_STATE` if no mounted config file takes precedence.
+- API keys and bucket credentials stay in backend environment variables. Never expose the admin token or provider keys in a public frontend bundle.
+- If a relevance setting changes the effective schema or analyzer, the backend rebuilds the corresponding SereneDB search structures during sync.
+
+Return to [Apps & Clients](./index.md), or continue with the [SereneDB quick start](../quick-start.md).

@@ -217,3 +217,11 @@
 	path = third_party/libxml2
 	url = https://github.com/serenedb/libxml2.git
 	shallow = true
+[submodule "third_party/duckdb_markdown"]
+	path = third_party/duckdb_markdown
+	url = https://github.com/serenedb/duckdb_markdown.git
+	shallow = true
+[submodule "third_party/cmark-gfm"]
+	path = third_party/cmark-gfm
+	url = https://github.com/serenedb/cmark-gfm.git
+	shallow = true

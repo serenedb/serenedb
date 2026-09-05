@@ -4,7 +4,7 @@
 # local clang-format-11 install is required.
 #
 # Covered submodules: duckdb, duckdb_avro, duckdb_httpfs, duckdb_iceberg,
-# duckdb_inet, duckdb_postgres, database-connector. Also covers
+# duckdb_inet, duckdb_markdown, duckdb_postgres, database-connector. Also covers
 # duckdb_clickhouse, which is IN-TREE (part of this repo, not a submodule) --
 # its changed-file discovery and status use the main repo's git.
 #
@@ -32,7 +32,7 @@ set -euo pipefail
 
 REPO_ROOT="$(git rev-parse --show-toplevel)"
 THIRD_PARTY="$REPO_ROOT/third_party"
-SUBMODULES=(duckdb duckdb_avro duckdb_inet duckdb_httpfs duckdb_iceberg duckdb_postgres database-connector)
+SUBMODULES=(duckdb duckdb_avro duckdb_inet duckdb_markdown duckdb_httpfs duckdb_iceberg duckdb_postgres database-connector)
 # In-tree directories (part of this repo, not submodules): their changed-file
 # discovery and status run against the MAIN repo, scoped to their path.
 INTREE=(duckdb_clickhouse)

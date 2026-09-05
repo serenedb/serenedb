@@ -13,6 +13,8 @@ target_sources(
         http/es/common.cpp
         http/es/dsl.cpp
         http/es/handlers.cpp
+        http/mcp/handlers.cpp
+        http/mcp/tools.cpp
         http/test/handlers.cpp
         pg/pg_frame_codec.cpp
         pg/wire_frames.cpp

@@ -68,23 +68,23 @@ truncate_sdb_logs	truncate_duckdb_logs
 
 query
 SELECT
-  (SELECT count(*) FROM sdb_tables() WHERE table_name LIKE 'al%')
-    = (SELECT count(*) FROM duckdb_tables() WHERE table_name LIKE 'al%') AS tables,
-  (SELECT count(*) FROM sdb_columns() WHERE table_name LIKE 'al%')
-    = (SELECT count(*) FROM duckdb_columns() WHERE table_name LIKE 'al%') AS columns,
-  (SELECT count(*) FROM sdb_constraints() WHERE table_name LIKE 'al%')
-    = (SELECT count(*) FROM duckdb_constraints() WHERE table_name LIKE 'al%') AS constraints,
-  (SELECT count(*) FROM sdb_indexes() WHERE table_name LIKE 'al%')
-    = (SELECT count(*) FROM duckdb_indexes() WHERE table_name LIKE 'al%') AS indexes,
-  (SELECT count(*) FROM sdb_sequences() WHERE sequence_name LIKE 'al%')
-    = (SELECT count(*) FROM duckdb_sequences() WHERE sequence_name LIKE 'al%') AS sequences,
+  (SELECT count(*) FROM sdb_tables() WHERE database_name = current_database() AND table_name LIKE 'al%')
+    = (SELECT count(*) FROM duckdb_tables() WHERE database_name = current_database() AND table_name LIKE 'al%') AS tables,
+  (SELECT count(*) FROM sdb_columns() WHERE database_name = current_database() AND table_name LIKE 'al%')
+    = (SELECT count(*) FROM duckdb_columns() WHERE database_name = current_database() AND table_name LIKE 'al%') AS columns,
+  (SELECT count(*) FROM sdb_constraints() WHERE database_name = current_database() AND table_name LIKE 'al%')
+    = (SELECT count(*) FROM duckdb_constraints() WHERE database_name = current_database() AND table_name LIKE 'al%') AS constraints,
+  (SELECT count(*) FROM sdb_indexes() WHERE database_name = current_database() AND table_name LIKE 'al%')
+    = (SELECT count(*) FROM duckdb_indexes() WHERE database_name = current_database() AND table_name LIKE 'al%') AS indexes,
+  (SELECT count(*) FROM sdb_sequences() WHERE database_name = current_database() AND sequence_name LIKE 'al%')
+    = (SELECT count(*) FROM duckdb_sequences() WHERE database_name = current_database() AND sequence_name LIKE 'al%') AS sequences,
   (SELECT count(*) FROM sdb_types() WHERE type_name = 'BIGINT')
     = (SELECT count(*) FROM duckdb_types() WHERE type_name = 'BIGINT') AS types,
-  (SELECT count(*) FROM sdb_views() WHERE view_name LIKE 'al%')
-    = (SELECT count(*) FROM duckdb_views() WHERE view_name LIKE 'al%') AS views,
+  (SELECT count(*) FROM sdb_views() WHERE database_name = current_database() AND view_name LIKE 'al%')
+    = (SELECT count(*) FROM duckdb_views() WHERE database_name = current_database() AND view_name LIKE 'al%') AS views,
   (SELECT count(*) FROM sdb_schemas() WHERE schema_name = 'main')
     = (SELECT count(*) FROM duckdb_schemas() WHERE schema_name = 'main') AS schemas,
-  (SELECT count(*) FROM sdb_tables() WHERE table_name LIKE 'al%') > 0 AS not_vacuous
+  (SELECT count(*) FROM sdb_tables() WHERE database_name = current_database() AND table_name LIKE 'al%') > 0 AS not_vacuous
 ----
 tables	columns	constraints	indexes	sequences	types	views	schemas	not_vacuous
 t	t	t	t	t	t	t	t	t
@@ -95,23 +95,23 @@ t	t	t	t	t	t	t	t	t
 
 query
 SELECT
-  (SELECT count(*) FROM sdb_tables WHERE table_name LIKE 'al%')
-    = (SELECT count(*) FROM duckdb_tables WHERE table_name LIKE 'al%') AS tables,
-  (SELECT count(*) FROM sdb_columns WHERE table_name LIKE 'al%')
-    = (SELECT count(*) FROM duckdb_columns WHERE table_name LIKE 'al%') AS columns,
-  (SELECT count(*) FROM sdb_constraints WHERE table_name LIKE 'al%')
-    = (SELECT count(*) FROM duckdb_constraints WHERE table_name LIKE 'al%') AS constraints,
+  (SELECT count(*) FROM sdb_tables WHERE database_name = current_database() AND table_name LIKE 'al%')
+    = (SELECT count(*) FROM duckdb_tables WHERE database_name = current_database() AND table_name LIKE 'al%') AS tables,
+  (SELECT count(*) FROM sdb_columns WHERE database_name = current_database() AND table_name LIKE 'al%')
+    = (SELECT count(*) FROM duckdb_columns WHERE database_name = current_database() AND table_name LIKE 'al%') AS columns,
+  (SELECT count(*) FROM sdb_constraints WHERE database_name = current_database() AND table_name LIKE 'al%')
+    = (SELECT count(*) FROM duckdb_constraints WHERE database_name = current_database() AND table_name LIKE 'al%') AS constraints,
   (SELECT count(*) FROM sdb_databases WHERE database_name = current_database())
     = (SELECT count(*) FROM duckdb_databases WHERE database_name = current_database()) AS databases,
-  (SELECT count(*) FROM sdb_indexes WHERE table_name LIKE 'al%')
-    = (SELECT count(*) FROM duckdb_indexes WHERE table_name LIKE 'al%') AS indexes,
+  (SELECT count(*) FROM sdb_indexes WHERE database_name = current_database() AND table_name LIKE 'al%')
+    = (SELECT count(*) FROM duckdb_indexes WHERE database_name = current_database() AND table_name LIKE 'al%') AS indexes,
   (SELECT count(*) FROM sdb_schemas WHERE schema_name = 'main')
     = (SELECT count(*) FROM duckdb_schemas WHERE schema_name = 'main') AS schemas,
   (SELECT count(*) FROM sdb_types WHERE type_name = 'BIGINT')
     = (SELECT count(*) FROM duckdb_types WHERE type_name = 'BIGINT') AS types,
-  (SELECT count(*) FROM sdb_views WHERE view_name LIKE 'al%')
-    = (SELECT count(*) FROM duckdb_views WHERE view_name LIKE 'al%') AS views,
-  (SELECT count(*) FROM sdb_tables WHERE table_name LIKE 'al%') > 0 AS not_vacuous
+  (SELECT count(*) FROM sdb_views WHERE database_name = current_database() AND view_name LIKE 'al%')
+    = (SELECT count(*) FROM duckdb_views WHERE database_name = current_database() AND view_name LIKE 'al%') AS views,
+  (SELECT count(*) FROM sdb_tables WHERE database_name = current_database() AND table_name LIKE 'al%') > 0 AS not_vacuous
 ----
 tables	columns	constraints	databases	indexes	schemas	types	views	not_vacuous
 t	t	t	t	t	t	t	t	t
@@ -132,29 +132,29 @@ t
 query
 SELECT
   (SELECT count(*) FROM (
-     (SELECT * FROM sdb_tables WHERE table_name LIKE 'al%'
-      EXCEPT ALL SELECT * FROM duckdb_tables WHERE table_name LIKE 'al%')
+     (SELECT * FROM sdb_tables WHERE database_name = current_database() AND table_name LIKE 'al%'
+      EXCEPT ALL SELECT * FROM duckdb_tables WHERE database_name = current_database() AND table_name LIKE 'al%')
      UNION ALL
-     (SELECT * FROM duckdb_tables WHERE table_name LIKE 'al%'
-      EXCEPT ALL SELECT * FROM sdb_tables WHERE table_name LIKE 'al%')) z) AS tables,
+     (SELECT * FROM duckdb_tables WHERE database_name = current_database() AND table_name LIKE 'al%'
+      EXCEPT ALL SELECT * FROM sdb_tables WHERE database_name = current_database() AND table_name LIKE 'al%')) z) AS tables,
   (SELECT count(*) FROM (
-     (SELECT * FROM sdb_views WHERE view_name LIKE 'al%'
-      EXCEPT ALL SELECT * FROM duckdb_views WHERE view_name LIKE 'al%')
+     (SELECT * FROM sdb_views WHERE database_name = current_database() AND view_name LIKE 'al%'
+      EXCEPT ALL SELECT * FROM duckdb_views WHERE database_name = current_database() AND view_name LIKE 'al%')
      UNION ALL
-     (SELECT * FROM duckdb_views WHERE view_name LIKE 'al%'
-      EXCEPT ALL SELECT * FROM sdb_views WHERE view_name LIKE 'al%')) z) AS views,
+     (SELECT * FROM duckdb_views WHERE database_name = current_database() AND view_name LIKE 'al%'
+      EXCEPT ALL SELECT * FROM sdb_views WHERE database_name = current_database() AND view_name LIKE 'al%')) z) AS views,
   (SELECT count(*) FROM (
-     (SELECT * FROM sdb_indexes WHERE table_name LIKE 'al%'
-      EXCEPT ALL SELECT * FROM duckdb_indexes WHERE table_name LIKE 'al%')
+     (SELECT * FROM sdb_indexes WHERE database_name = current_database() AND table_name LIKE 'al%'
+      EXCEPT ALL SELECT * FROM duckdb_indexes WHERE database_name = current_database() AND table_name LIKE 'al%')
      UNION ALL
-     (SELECT * FROM duckdb_indexes WHERE table_name LIKE 'al%'
-      EXCEPT ALL SELECT * FROM sdb_indexes WHERE table_name LIKE 'al%')) z) AS indexes,
+     (SELECT * FROM duckdb_indexes WHERE database_name = current_database() AND table_name LIKE 'al%'
+      EXCEPT ALL SELECT * FROM sdb_indexes WHERE database_name = current_database() AND table_name LIKE 'al%')) z) AS indexes,
   (SELECT count(*) FROM (
-     (SELECT * FROM sdb_constraints WHERE table_name LIKE 'al%'
-      EXCEPT ALL SELECT * FROM duckdb_constraints WHERE table_name LIKE 'al%')
+     (SELECT * EXCLUDE (constraint_index) FROM sdb_constraints WHERE database_name = current_database() AND table_name LIKE 'al%'
+      EXCEPT ALL SELECT * EXCLUDE (constraint_index) FROM duckdb_constraints WHERE database_name = current_database() AND table_name LIKE 'al%')
      UNION ALL
-     (SELECT * FROM duckdb_constraints WHERE table_name LIKE 'al%'
-      EXCEPT ALL SELECT * FROM sdb_constraints WHERE table_name LIKE 'al%')) z) AS constraints
+     (SELECT * EXCLUDE (constraint_index) FROM duckdb_constraints WHERE database_name = current_database() AND table_name LIKE 'al%'
+      EXCEPT ALL SELECT * EXCLUDE (constraint_index) FROM sdb_constraints WHERE database_name = current_database() AND table_name LIKE 'al%')) z) AS constraints
 ----
 tables	views	indexes	constraints
 0	0	0	0
@@ -172,9 +172,9 @@ statement ok
 INSERT INTO duckdb_tables VALUES (42)
 
 query
-SELECT (SELECT count(*) FROM system.main.sdb_tables WHERE table_name LIKE 'al%')
-     = (SELECT count(*) FROM system.main.duckdb_tables WHERE table_name LIKE 'al%')
-   AND (SELECT count(*) FROM system.main.sdb_tables WHERE table_name LIKE 'al%') > 0
+SELECT (SELECT count(*) FROM system.main.sdb_tables WHERE database_name = current_database() AND table_name LIKE 'al%')
+     = (SELECT count(*) FROM system.main.duckdb_tables WHERE database_name = current_database() AND table_name LIKE 'al%')
+   AND (SELECT count(*) FROM system.main.sdb_tables WHERE database_name = current_database() AND table_name LIKE 'al%') > 0
    AS not_hijacked
 ----
 not_hijacked

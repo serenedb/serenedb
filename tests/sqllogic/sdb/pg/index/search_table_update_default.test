@@ -1,0 +1,69 @@
+statement ok
+CREATE TABLE upd_default(id INTEGER PRIMARY KEY, a INTEGER DEFAULT 7, b TEXT DEFAULT 'none', c INTEGER DEFAULT 0) WITH (storage = 'search');
+
+
+statement ok
+INSERT INTO upd_default VALUES (1, 1, 'x', 10), (2, 2, 'y', 20), (3, 3, 'z', 30);
+
+
+statement ok
+VACUUM (REFRESH_TABLE) upd_default;
+
+
+statement ok
+UPDATE upd_default SET a = DEFAULT, c = 100 WHERE id = 1;
+
+
+statement ok
+UPDATE upd_default SET b = DEFAULT WHERE id = 2;
+
+
+query
+UPDATE upd_default SET a = DEFAULT, b = DEFAULT, c = DEFAULT WHERE id = 3 RETURNING id, a, b, c;
+----
+id	a	b	c
+3	7	none	0
+
+
+statement ok
+VACUUM (REFRESH_TABLE) upd_default;
+
+
+query
+SELECT id, a, b, c FROM upd_default ORDER BY id;
+----
+id	a	b	c
+1	7	x	100
+2	2	none	20
+3	7	none	0
+
+
+statement ok
+CREATE TABLE upd_default_gen(a INTEGER DEFAULT 5, b TEXT) WITH (storage = 'search');
+
+
+statement ok
+INSERT INTO upd_default_gen VALUES (1, 'p'), (2, 'q');
+
+
+statement ok
+VACUUM (REFRESH_TABLE) upd_default_gen;
+
+
+query
+UPDATE upd_default_gen SET a = DEFAULT WHERE b = 'p' RETURNING a, b;
+----
+a	b
+5	p
+
+
+statement ok
+VACUUM (REFRESH_TABLE) upd_default_gen;
+
+
+query
+SELECT a, b FROM upd_default_gen ORDER BY b;
+----
+a	b
+5	p
+2	q

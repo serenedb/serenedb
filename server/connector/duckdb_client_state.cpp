@@ -33,7 +33,6 @@
 #include "auth/role_closure.h"
 #include "basics/assert.h"
 #include "basics/containers/flat_hash_set.h"
-#include "basics/log.h"
 #include "basics/system-compiler.h"
 #include "catalog1/catalog.h"
 #include "pg/connection_context.h"
@@ -185,11 +184,16 @@ namespace {
 // TransactionPreCommit and before TransactionCommit/Rollback, with no
 // ClientContext parameter of their own.
 thread_local ConnectionContext* tls_committing_ctx = nullptr;
+thread_local duckdb::MetaTransaction* tls_committing_transaction = nullptr;
 
 }  // namespace
 
 ConnectionContext* CurrentCommittingContext() noexcept {
   return tls_committing_ctx;
+}
+
+duckdb::MetaTransaction* CurrentCommittingTransaction() noexcept {
+  return tls_committing_transaction;
 }
 
 void SereneDBClientState::TransactionPreCommit(
@@ -207,6 +211,7 @@ void SereneDBClientState::TransactionPreCommit(
   // can succeed via their normal set_local path.
   _connection_ctx->PreCommit();
   tls_committing_ctx = _connection_ctx.get();
+  tls_committing_transaction = &transaction;
 }
 
 void SereneDBClientState::TransactionPreCheckpoint(
@@ -231,13 +236,6 @@ void SereneDBClientState::TransactionPreCheckpoint(
 void SereneDBClientState::TransactionPreRollback(
   duckdb::MetaTransaction& transaction, duckdb::ClientContext& context,
   duckdb::optional_ptr<duckdb::ErrorData> error) {
-  if (auto cleanup = std::exchange(transaction_abort_cleanup, nullptr)) {
-    try {
-      cleanup(transaction, context);
-    } catch (const std::exception& e) {
-      SDB_WARN(GENERAL, "transaction abort cleanup failed: ", e.what());
-    }
-  }
   _connection_ctx->PreRollback();
 }
 
@@ -252,19 +250,14 @@ void SereneDBClientState::TransactionCommit(
     }
   }
   tls_committing_ctx = nullptr;
-
-  if (std::exchange(_connection_ctx->wrote_roles, false)) {
-    auth::BumpRoleGeneration();
-  }
+  tls_committing_transaction = nullptr;
   _connection_ctx->Commit();
 }
 
 void SereneDBClientState::TransactionRollback(
   duckdb::MetaTransaction& transaction, duckdb::ClientContext& context) {
   tls_committing_ctx = nullptr;
-  if (std::exchange(_connection_ctx->wrote_roles, false)) {
-    auth::BumpRoleGeneration();
-  }
+  tls_committing_transaction = nullptr;
   _connection_ctx->Rollback();
 }
 

@@ -84,6 +84,7 @@
 #include "connector/index_source_factory.h"
 #include "connector/offsets_collector.hpp"
 #include "connector/offsets_writer.hpp"
+#include "connector/primary_key.h"
 #include "connector/search_pk_lookup.h"
 #include "connector/term_dict.h"
 #include "connector/view_fast_path.h"
@@ -398,10 +399,26 @@ void InitScanState(IResearchScanGlobalState& state,
       state.projected_columns.push_back(duckdb::DConstants::INVALID_INDEX);
       state.projected_types.push_back(duckdb::LogicalType::BOOLEAN);
       continue;
+    } else if (col_id >= kColumnIdentifierPrimaryKeyBase) {
+      const auto slot = col_id - kColumnIdentifierPrimaryKeyBase;
+      const auto keys = bind_data.table_entry
+                          ? primary_key::KeyColumns(*bind_data.table_entry)
+                          : std::vector<duckdb::LogicalIndex>{};
+      if (slot >= keys.size()) {
+        THROW_SQL_ERROR(
+          ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+          ERR_MSG("projecting virtual column ", col_id,
+                  " through an inverted-index scan is not supported"));
+      }
+      const auto key_id = static_cast<ColumnId>(
+        bind_data.table_entry->GetColumns().GetColumn(keys[slot]).Oid());
+      const auto it = absl::c_find(bind_data.column_ids, key_id);
+      SDB_ASSERT(it != bind_data.column_ids.end());
+      const auto bind_idx =
+        static_cast<duckdb::idx_t>(it - bind_data.column_ids.begin());
+      state.projected_columns.push_back(bind_idx);
+      state.projected_types.push_back(bind_data.column_types[bind_idx]);
     } else if (col_id >= duckdb::VIRTUAL_COLUMN_START) {
-      // Projecting a table's key columns as virtual columns needs
-      // TableCatalogEntry to publish them; the pinned duckdb's
-      // GetVirtualColumns() offers rowid alone, so nothing produces such an id.
       THROW_SQL_ERROR(
         ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
         ERR_MSG("projecting virtual column ", col_id,
@@ -1207,7 +1224,7 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> IResearchScanInitGlobal(
   }
   if (state->needs_lookup && ss.IsInvertedIndexEntry() && ss.inverted_index) {
     const auto pk_kind = ss.inverted_config->pk.column;
-    if (pk_kind == connector::PkColumnKind::None) {
+    if (pk_kind == catalog::PkColumnKind::None) {
       THROW_SQL_ERROR(
         ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
         ERR_MSG("inverted index \"",
@@ -1216,7 +1233,7 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> IResearchScanInitGlobal(
                 "row PKs and hits cannot be mapped back to source rows; select "
                 "only INCLUDE'd columns, counts or scores through this index"));
     }
-    if (pk_kind == connector::PkColumnKind::Unable) {
+    if (pk_kind == catalog::PkColumnKind::Unable) {
       THROW_SQL_ERROR(
         ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
         ERR_MSG("materialising real columns from this view-backed inverted "
@@ -1280,8 +1297,8 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> IResearchScanInitGlobal(
   }
 
   if (state->mode == ScanMode::TopK) {
-    state->prune_scorer = ResolvePruneScorer(bind_data.inverted_store.get(),
-                                             state->scorer_obj.get());
+    state->prune_scorer =
+      ResolvePruneScorer(bind_data.index_top_k_scorer, state->scorer_obj.get());
     if (state->score_static_floor >
         std::numeric_limits<irs::score_t>::lowest()) {
       // Static score floor (Lucene min_score): the collectors start at the
@@ -1322,7 +1339,7 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> IResearchScanInitGlobal(
       state->score_static_floor > std::numeric_limits<irs::score_t>::lowest();
     if (!topk_disabled && ss.text_scorer && state->ScanScore() &&
         (dynamic_bound || static_bound)) {
-      state->prune_scorer = ResolvePruneScorer(bind_data.inverted_store.get(),
+      state->prune_scorer = ResolvePruneScorer(bind_data.index_top_k_scorer,
                                                state->scorer_obj.get());
     }
   }
@@ -1335,7 +1352,7 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> IResearchScanInitGlobal(
   if (state->mode == ScanMode::ColScan) {
     // Search tables carry no inverted_index; fall back to the default unit.
     uint64_t rg_rows = bind_data.inverted_index
-                         ? bind_data.inverted_index->Options().row_group_size
+                         ? bind_data.inverted_index->Settings().row_group_size
                          : 0;
     if (rg_rows == 0) {
       rg_rows = DEFAULT_ROW_GROUP_SIZE;

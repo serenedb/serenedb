@@ -244,8 +244,10 @@ class PassConnection {
                   " the index references; drop and recreate the "
                   "index"));
       }
-      info->parsed_expressions.push_back(
-        duckdb::make_uniq<duckdb::ColumnRefExpression>(view_info.names[col]));
+      auto column =
+        duckdb::make_uniq<duckdb::ColumnRefExpression>(view_info.names[col]);
+      info->expressions.push_back(column->Copy());
+      info->parsed_expressions.push_back(std::move(column));
     }
     if (const auto predicate = target.index->Config()->predicate.get()) {
       info->where_clause = predicate->Copy();
@@ -1194,8 +1196,7 @@ absl::Status RunReindexTick(duckdb::DatabaseInstance& db,
 
 void NarrowScanToDelta(duckdb::LogicalGet& leaf,
                        const SereneDBCreateIndexInfo& info,
-                       std::span<const uint64_t> vcols,
-                       uint64_t leaf_orig_size) {
+                       duckdb::ProjectionIndex file_index_slot) {
   SDB_ASSERT(leaf.bind_data);
   auto& mfbd = leaf.bind_data->Cast<duckdb::MultiFileBindData>();
   containers::FlatHashMap<std::string_view, uint64_t> id_by_path;
@@ -1225,38 +1226,25 @@ void NarrowScanToDelta(duckdb::LogicalGet& leaf,
   // First-file stats don't describe the narrowed scan; without this the
   // optimizer folds partial-index predicates from them.
   mfbd.initial_reader.reset();
-  for (size_t i = 0; i < vcols.size(); ++i) {
-    if (vcols[i] == duckdb::MultiFileReader::COLUMN_IDENTIFIER_FILE_INDEX) {
-      leaf.table_filters.PushFilter(
-        duckdb::ProjectionIndex(leaf_orig_size + i),
-        duckdb::make_uniq<duckdb::ExpressionFilter>(std::move(in_expr)));
-      return;
-    }
-  }
-  SDB_ASSERT(false);
+  leaf.table_filters.PushFilter(
+    file_index_slot,
+    duckdb::make_uniq<duckdb::ExpressionFilter>(std::move(in_expr)));
 }
 
 void AddDeltaFileBase(duckdb::Binder& binder, duckdb::LogicalProjection& proj,
-                      std::span<const uint64_t> vcols, uint64_t kept_size,
+                      duckdb::ProjectionIndex file_index_slot,
                       uint64_t delta_file_base) {
-  for (size_t i = 0; i < vcols.size(); ++i) {
-    if (vcols[i] != duckdb::MultiFileReader::COLUMN_IDENTIFIER_FILE_INDEX) {
-      continue;
-    }
-    auto& slot = proj.expressions[kept_size + i];
-    duckdb::vector<duckdb::unique_ptr<duckdb::Expression>> args;
-    args.push_back(std::move(slot));
-    args.push_back(duckdb::make_uniq<duckdb::BoundConstantExpression>(
-      duckdb::Value::UBIGINT(delta_file_base)));
-    duckdb::FunctionBinder function_binder{binder};
-    duckdb::ErrorData error;
-    slot = function_binder.BindScalarFunction(
-      duckdb::Identifier{DEFAULT_SCHEMA}, duckdb::Identifier{"+"},
-      std::move(args), error, true);
-    SDB_ASSERT(slot, error.Message());
-    return;
-  }
-  SDB_ASSERT(false);
+  auto& slot = proj.expressions[file_index_slot.GetIndex()];
+  duckdb::vector<duckdb::unique_ptr<duckdb::Expression>> args;
+  args.push_back(std::move(slot));
+  args.push_back(duckdb::make_uniq<duckdb::BoundConstantExpression>(
+    duckdb::Value::UBIGINT(delta_file_base)));
+  duckdb::FunctionBinder function_binder{binder};
+  duckdb::ErrorData error;
+  slot = function_binder.BindScalarFunction(duckdb::Identifier{DEFAULT_SCHEMA},
+                                            duckdb::Identifier{"+"},
+                                            std::move(args), error, true);
+  SDB_ASSERT(slot, error.Message());
 }
 
 void RegisterReindexFunction(duckdb::DatabaseInstance& db) {

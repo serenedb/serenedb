@@ -41,7 +41,6 @@
 #include "basics/system-compiler.h"
 #include "catalog1/entry/inverted_index.h"
 #include "connector/view_fast_path.h"
-#include "search/inverted_index.h"
 
 namespace irs {
 
@@ -51,6 +50,11 @@ class IndexReader;
 #include "connector/column_id.h"
 #include "search/inverted_index_storage.h"
 
+namespace sdb::catalog {
+
+class SearchTableEntry;
+
+}  // namespace sdb::catalog
 namespace sdb::connector {
 
 struct OffsetsBindData;
@@ -138,8 +142,9 @@ ENABLE_BITMASK_ENUM(TsDictTermUses);
 // The scorer `index`'s persisted per-block bounds may be pruned against, or
 // null when they cannot be: no index, no query scorer, no bounds, or bounds a
 // different scorer wrote.
-const irs::Scorer* ResolvePruneScorer(const search::InvertedIndex* index,
-                                      const irs::Scorer* scorer);
+const irs::Scorer* ResolvePruneScorer(
+  const std::optional<catalog::ScorerOptions>& index_top_k_scorer,
+  const irs::Scorer* scorer);
 
 enum class ScanEntryKind : uint8_t {
   BaseTable,
@@ -160,7 +165,9 @@ struct SereneDBScanBindData : public duckdb::FunctionData {
   duckdb::optional_ptr<duckdb::TableCatalogEntry> table_entry;
   ScanEntryKind entry_kind = ScanEntryKind::BaseTable;
 
-  duckdb::optional_ptr<const duckdb::IndexCatalogEntry> inverted_index;
+  duckdb::optional_ptr<const catalog::InvertedIndexEntry> inverted_index;
+  std::shared_ptr<const catalog::InvertedIndexConfig> inverted_config;
+  std::optional<catalog::ScorerOptions> index_top_k_scorer;
 
   // The iresearch snapshot plus the query's search configuration (stored
   // filter, scorer, offsets, ts-dict requests). Every scan bound through this
@@ -347,6 +354,10 @@ std::optional<duckdb::LogicalType> GeneratedPkTypeOf(
 std::optional<PkSpec> ViewPkSpecOf(const SereneDBScanBindData& bind);
 
 duckdb::TableFunction CreateIResearchScanFunction();
+
+duckdb::TableFunction BindSearchTableScan(
+  catalog::SearchTableEntry& entry,
+  duckdb::unique_ptr<duckdb::FunctionData>& bind_data);
 
 void RegisterIResearchScanFunction(duckdb::DatabaseInstance& db);
 

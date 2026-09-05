@@ -27,7 +27,6 @@
 #include <vector>
 
 #include "catalog1/entry/search_table.h"
-#include "connector/primary_key.h"
 
 namespace sdb::connector {
 
@@ -35,12 +34,12 @@ class SereneDBSearchUpdate final : public duckdb::PhysicalOperator {
  public:
   // `return_chunk` is RETURNING: the operator then hands back the rows as it
   // left them rather than their count, and `types` is the whole row.
-  SereneDBSearchUpdate(duckdb::PhysicalPlan& plan,
-                       const catalog::SearchTableEntry& table,
-                       std::vector<primary_key::PKColumn> old_pk_columns,
-                       std::vector<duckdb::PhysicalIndex> update_columns,
-                       duckdb::vector<duckdb::LogicalType> types,
-                       duckdb::idx_t estimated_cardinality, bool return_chunk);
+  SereneDBSearchUpdate(
+    duckdb::PhysicalPlan& plan, const catalog::SearchTableEntry& table,
+    duckdb::vector<duckdb::PhysicalIndex> columns,
+    duckdb::vector<duckdb::unique_ptr<duckdb::Expression>> expressions,
+    duckdb::vector<duckdb::LogicalType> types,
+    duckdb::idx_t estimated_cardinality, bool return_chunk);
 
   bool IsSink() const final { return true; }
   duckdb::unique_ptr<duckdb::GlobalSinkState> GetGlobalSinkState(
@@ -62,8 +61,8 @@ class SereneDBSearchUpdate final : public duckdb::PhysicalOperator {
 
  private:
   const catalog::SearchTableEntry& _table;
-  std::vector<primary_key::PKColumn> _old_pk_columns;
-  std::vector<duckdb::PhysicalIndex> _update_columns;
+  duckdb::vector<duckdb::PhysicalIndex> _columns;
+  duckdb::vector<duckdb::unique_ptr<duckdb::Expression>> _expressions;
   bool _return_chunk = false;
 };
 

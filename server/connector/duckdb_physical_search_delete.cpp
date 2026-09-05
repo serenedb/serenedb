@@ -22,6 +22,7 @@
 
 #include <duckdb/common/types/column/column_data_collection.hpp>
 #include <duckdb/common/types/data_chunk.hpp>
+#include <duckdb/planner/expression/bound_reference_expression.hpp>
 #include <memory>
 #include <optional>
 #include <shared_mutex>
@@ -77,15 +78,22 @@ struct SearchDeleteSourceState : duckdb::GlobalSourceState {
 
 SereneDBSearchDelete::SereneDBSearchDelete(
   duckdb::PhysicalPlan& plan, const catalog::SearchTableEntry& table,
-  std::vector<primary_key::PKColumn> pk_columns,
+  duckdb::vector<duckdb::unique_ptr<duckdb::Expression>> expressions,
   duckdb::vector<duckdb::LogicalType> types,
-  duckdb::vector<duckdb::column_t> column_map,
-  duckdb::idx_t estimated_cardinality)
+  duckdb::idx_t estimated_cardinality, bool return_chunk,
+  duckdb::vector<duckdb::idx_t> return_columns)
   : duckdb::PhysicalOperator(plan, duckdb::PhysicalOperatorType::EXTENSION,
                              std::move(types), estimated_cardinality),
     _table(&table),
-    _pk_columns(std::move(pk_columns)),
-    _column_map(std::move(column_map)) {}
+    _return_chunk(return_chunk),
+    _return_columns(std::move(return_columns)) {
+  _pk_columns.reserve(expressions.size());
+  for (const auto& expr : expressions) {
+    const auto& ref = expr->Cast<duckdb::BoundReferenceExpression>();
+    _pk_columns.push_back(
+      {.input_col_idx = ref.Index(), .type = ref.GetReturnType()});
+  }
+}
 
 SereneDBSearchDelete::SereneDBSearchDelete(
   duckdb::PhysicalPlan& plan,
@@ -124,7 +132,7 @@ SereneDBSearchDelete::GetGlobalSinkState(duckdb::ClientContext& context) const {
   state->pk_columns = _pk_columns;
 
   state->sdb_txn = &conn_ctx;
-  if (!_column_map.empty()) {
+  if (_return_chunk) {
     state->returned.emplace(context, GetTypes());
   }
   return state;
@@ -175,12 +183,19 @@ duckdb::SinkResultType SereneDBSearchDelete::SinkImpl(
   if constexpr (kTable) {
     gstate.sdb_txn->SearchTxn().AddSearchDeletes(gstate.search_table, wal_pks);
     if (gstate.returned) {
-      // The scan already projected every column the RETURNING list can name,
-      // so the rows come straight off the input chunk rather than being
-      // re-fetched.
       duckdb::DataChunk row;
       row.InitializeEmpty(GetTypes());
-      row.ReferenceColumns(chunk, _column_map);
+      const auto stored = _table->GetColumns().LogicalColumnCount();
+      SDB_ASSERT(GetTypes().size() == stored + _pk_columns.size());
+      for (duckdb::idx_t i = 0; i < stored; ++i) {
+        SDB_ASSERT(_return_columns[i] != duckdb::DConstants::INVALID_INDEX);
+        row.data[i].Reference(chunk.data[_return_columns[i]]);
+      }
+      for (size_t i = 0; i < _pk_columns.size(); ++i) {
+        row.data[stored + i].Reference(
+          chunk.data[_pk_columns[i].input_col_idx]);
+      }
+      row.SetCardinality(num_rows);
       gstate.returned->Append(row);
     }
   }

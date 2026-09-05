@@ -23,6 +23,7 @@
 #include <duckdb/catalog/catalog_entry/sequence_catalog_entry.hpp>
 #include <duckdb/common/types/column/column_data_collection.hpp>
 #include <duckdb/common/types/data_chunk.hpp>
+#include <duckdb/planner/expression/bound_reference_expression.hpp>
 #include <duckdb/storage/buffer_manager.hpp>
 #include <duckdb/transaction/duck_transaction.hpp>
 #include <memory>
@@ -71,15 +72,15 @@ struct SearchUpdateSourceState : duckdb::GlobalSourceState {
 
 SereneDBSearchUpdate::SereneDBSearchUpdate(
   duckdb::PhysicalPlan& plan, const catalog::SearchTableEntry& table,
-  std::vector<primary_key::PKColumn> old_pk_columns,
-  std::vector<duckdb::PhysicalIndex> update_columns,
+  duckdb::vector<duckdb::PhysicalIndex> columns,
+  duckdb::vector<duckdb::unique_ptr<duckdb::Expression>> expressions,
   duckdb::vector<duckdb::LogicalType> types,
   duckdb::idx_t estimated_cardinality, bool return_chunk)
   : duckdb::PhysicalOperator(plan, duckdb::PhysicalOperatorType::EXTENSION,
                              std::move(types), estimated_cardinality),
     _table(table),
-    _old_pk_columns(std::move(old_pk_columns)),
-    _update_columns(std::move(update_columns)),
+    _columns(std::move(columns)),
+    _expressions(std::move(expressions)),
     _return_chunk(return_chunk) {}
 
 duckdb::unique_ptr<duckdb::GlobalSinkState>
@@ -99,20 +100,31 @@ SereneDBSearchUpdate::GetGlobalSinkState(duckdb::ClientContext& context) const {
   }
 
   const auto p = state->column_ids.size();
-  state->new_row_src.assign(p, 0);
-  SDB_ASSERT(_update_columns.size() == p,
+  state->new_row_src.assign(p, duckdb::DConstants::INVALID_INDEX);
+  SDB_ASSERT(_columns.size() == p,
              "search UPDATE must project every non-generated-PK column");
-  // Each projected column names its own slot in the chunk the sink writes: the
-  // entry lists exactly the columns iresearch stores, in that order.
-  for (size_t i = 0; i < _update_columns.size(); ++i) {
-    const auto index = _update_columns[i].index;
+  for (size_t i = 0; i < _columns.size(); ++i) {
+    const auto index = _columns[i].index;
     SDB_ASSERT(index < p,
                "projected update column is not a stored table column");
-    state->new_row_src[index] = i;
+    SDB_ASSERT(
+      _expressions[i]->GetExpressionType() == duckdb::ExpressionType::BOUND_REF,
+      "search UPDATE expects every SET value to be projected");
+    state->new_row_src[index] =
+      _expressions[i]->Cast<duckdb::BoundReferenceExpression>().Index();
+  }
+
+  const auto row_ids = _table.GetRowIdColumns().size();
+  const auto& input_types = children[0].get().GetTypes();
+  const auto width = input_types.size();
+  SDB_ASSERT(row_ids <= width);
+  state->old_pk_columns.reserve(row_ids);
+  for (auto i = width - row_ids; i < width; ++i) {
+    state->old_pk_columns.push_back(
+      {.input_col_idx = i, .type = input_types[i]});
   }
 
   state->new_pk_columns = primary_key::PKColumns(_table);
-  state->old_pk_columns = _old_pk_columns;
   if (state->new_pk_columns.empty()) {
     state->generated_pk_seq = FindGeneratedPkSequence(context, _table);
     SDB_ASSERT(state->generated_pk_seq);
@@ -180,13 +192,7 @@ duckdb::SinkResultType SereneDBSearchUpdate::Sink(
     new_row, uses_generated_pk, pk_base);
 
   if (gstate.returned) {
-    // The new row, which is what postgres' RETURNING reports for an UPDATE. The
-    // projection under this sink carries every stored column, so new_row_src
-    // already says where each of them arrived.
-    duckdb::DataChunk row;
-    row.InitializeEmpty(GetTypes());
-    row.ReferenceColumns(chunk, gstate.new_row_src);
-    gstate.returned->Append(row);
+    gstate.returned->Append(new_row);
   }
 
   gstate.update_count += num_rows;

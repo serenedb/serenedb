@@ -20,9 +20,13 @@
 
 #pragma once
 
+#include <cstdint>
 #include <duckdb/catalog/catalog_entry/index_catalog_entry.hpp>
+#include <duckdb/catalog/catalog_transaction.hpp>
 #include <duckdb/execution/index/bound_index.hpp>
 #include <duckdb/execution/index/index_type.hpp>
+#include <duckdb/parser/parsed_expression.hpp>
+#include <iresearch/index/column_info.hpp>
 #include <iresearch/types.hpp>
 #include <memory>
 #include <optional>
@@ -44,16 +48,6 @@ class RowGroupCollection;
 struct StorageIndex;
 
 }  // namespace duckdb
-namespace sdb::catalog {
-
-class Index;
-
-}  // namespace sdb::catalog
-namespace sdb::search {
-
-class InvertedIndexStorage;
-
-}  // namespace sdb::search
 namespace sdb::connector {
 
 // Per-index parallel feed: WAL replay and the live commit window share its
@@ -76,36 +70,27 @@ struct ExpressionField {
 // catalog definition/storage linkage rides the injected ids.
 class InvertedStoreIndex final : public duckdb::BoundIndex {
  public:
-  static constexpr const char* kTypeName = "inverted";
-  // The two ids `create_instance` resolves its definitions by. An index entry
-  // carries them in its options, so building the bound index needs nothing but
-  // what duckdb hands the registry.
-  static constexpr const char* kTableIdOption = "sdb_table_id";
-  static constexpr const char* kIndexIdOption = "sdb_index_id";
+  static constexpr const char* kTypeName = catalog::kInvertedIndexTypeName;
 
-  // `attached_index`/`attached_storage` are the definition and the open
-  // directory this index was injected with. They are the fallback for a writer
-  // whose catalog view does not name the index: an online CREATE INDEX attaches
-  // its stub to the shared store table before its own transaction commits, so a
-  // concurrent DML feeding that stub can legitimately have no catalog entry to
-  // resolve either of them through.
-  InvertedStoreIndex(
-    const std::string& name, duckdb::TableIOManager& io,
-    const duckdb::vector<duckdb::column_t>& column_ids,
-    const duckdb::vector<duckdb::unique_ptr<duckdb::Expression>>& exprs,
-    duckdb::AttachedDatabase& db,
-    duckdb::optional_ptr<const duckdb::IndexCatalogEntry> attached_index,
-    std::shared_ptr<search::InvertedIndexStorage> attached_storage,
-    std::vector<ExpressionField> expr_fields, bool has_predicate,
-    std::vector<FeedColumn> ref_columns);
+  // IndexType::create_instance, as ART has it.
+  static duckdb::unique_ptr<duckdb::BoundIndex> Create(
+    duckdb::CreateIndexInput& input);
+  // IndexType registration, as ART has it. Named like ART's
+  // GetARTIndexType() for the same reason: Index::GetIndexType() is a virtual
+  // of the base returning the type NAME, so this one cannot share it.
+  static duckdb::IndexType GetInvertedIndexType();
+
+  // `storage` may be null only while a CREATE INDEX is still opening it; every
+  // feed asserts it. `config` is never null.
+  InvertedStoreIndex(duckdb::CreateIndexInput& input,
+                     duckdb::SchemaCatalogEntry& schema, duckdb::idx_t index_id,
+                     duckdb::idx_t table_id,
+                     std::shared_ptr<search::InvertedIndexStorage> storage,
+                     std::shared_ptr<const InvertedIndexConfig> config);
   ~InvertedStoreIndex() override;
 
   duckdb::ErrorData Append(duckdb::IndexLock& l, duckdb::DataChunk& chunk,
                            duckdb::Vector& row_ids) override;
-  duckdb::ErrorData Append(
-    duckdb::IndexLock& l,
-    const duckdb::shared_ptr<duckdb::ExternalIndexBatch>& batch,
-    duckdb::IndexAppendInfo& info) override;
   duckdb::ErrorData Insert(duckdb::IndexLock& l, duckdb::DataChunk& chunk,
                            duckdb::Vector& row_ids) override;
   void Delete(duckdb::IndexLock& l, duckdb::DataChunk& chunk,
@@ -132,15 +117,16 @@ class InvertedStoreIndex final : public duckdb::BoundIndex {
 
   // DBConfig::external_range_replay target: replay one merged ROW_GROUP_DATA
   // range into every inverted index of `table` with a single scan of the range
-  // over the replay transaction, partitioned across workers the replay thread
-  // help-executes -- no second scan, no copy, no side connection.
+  // over the replay transaction. Not registered yet -- the catalog-WAL phase
+  // supplies the call site.
   static void ReplayExternalRange(duckdb::ClientContext& context,
                                   duckdb::DataTable& table,
                                   duckdb::row_t row_start, duckdb::idx_t count);
 
   // DBConfig::external_local_append target: feed every inverted index of the
   // table with the rows this commit appends, scanning the local row groups once
-  // partitioned across workers. Only called when every index is external.
+  // partitioned across workers. Not registered yet -- duckdb's serial append
+  // through Append() is the standing path.
   static duckdb::ErrorData AppendLocalRange(
     duckdb::DuckTransaction& transaction, duckdb::TableIndexList& index_list,
     duckdb::RowGroupCollection& source,
@@ -190,38 +176,22 @@ class InvertedStoreIndex final : public duckdb::BoundIndex {
   duckdb::ErrorData AppendImpl(duckdb::DataChunk& chunk,
                                duckdb::Vector& row_ids);
 
-  // Replay path: a single iresearch batch held open across one
-  // ApplyBufferedReplays pass. Each buffered WAL op is streamed straight into
-  // the batch in WAL order on its own strictly-ascending sub-tick (insert ->
-  // DuckDBSearchSinkInsertWriter, delete -> a tick-bound Remove), then
-  // committed once in FinishReplay with last_tick placing every op above the
-  // durable recovery tick. Tick-bound removes give last-op-wins for free (incl.
-  // TRUNCATE
-  // + rowid reuse), so no dedup is needed. Built lazily on the first replayed
-  // operation.
   std::shared_ptr<InvertedFeedSession> EnsureInvertedFeedSession();
 
   duckdb::idx_t ReplayCommitOffset() const;
-  void ReplayAppend(
-    const duckdb::shared_ptr<duckdb::ExternalIndexBatch>& batch);
+  // How far the WAL replayed cleanly. The catalog-WAL phase supplies the real
+  // bound; until then replay retires everything it buffered.
+  duckdb::idx_t ReplaySuccessOffset() const;
+  void ReplayAppend(const std::shared_ptr<ReplayBatch>& batch);
   void ReplayDelete(duckdb::DataChunk& chunk, duckdb::Vector& row_ids);
 
-  duckdb::idx_t _index_id;
-  // The index definition this one was injected with; see the constructor.
-  duckdb::optional_ptr<const duckdb::IndexCatalogEntry> _attached_index;
-  // The storage it was injected with, for the same reason: an online build
-  // publishes its stub before the entry carrying the handle is committed, so a
-  // concurrent writer's own catalog view cannot resolve it.
-  std::shared_ptr<search::InvertedIndexStorage> _attached_storage;
-  // The iresearch field each of BoundIndex::bound_expressions feeds, in the
-  // same order. When _has_predicate is set the last bound expression is the
-  // partial-index predicate, which feeds no field -- it selects rows.
-  std::vector<ExpressionField> _expr_fields;
-  std::vector<FeedColumn> _ref_columns;
-  bool _has_predicate = false;
-  // Shared, not owned outright: a transaction that has engaged this feed
-  // holds a reference for the length of its commit, and DROP INDEX destroys
-  // the index (TableIndexList::RemoveIndex) without waiting for it.
+  duckdb::idx_t _index_id = 0;
+  duckdb::idx_t _table_id = 0;
+
+  duckdb::SchemaCatalogEntry& _schema;
+  std::shared_ptr<search::InvertedIndexStorage> _storage;
+  std::shared_ptr<const InvertedIndexConfig> _config;
+
   std::shared_ptr<InvertedFeedSession> _feed;
 };
 

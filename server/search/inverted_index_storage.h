@@ -35,8 +35,8 @@
 #include <mutex>
 #include <vector>
 
+#include "catalog1/persistence/inverted_index.h"
 #include "connector/file_manifest.h"
-#include "search/inverted_index.h"
 #include "search/maintenance.h"
 #include "search/tick_domain.h"
 #include "storage_engine/search_engine.h"
@@ -46,6 +46,11 @@ namespace sdb::query {
 class Transaction;
 
 }  // namespace sdb::query
+namespace sdb::catalog {
+
+using persistence::InvertedIndexSettings;
+
+}  // namespace sdb::catalog
 namespace sdb::search {
 
 class InvertedIndexStorage;
@@ -97,7 +102,10 @@ class InvertedIndexStorage final
     // NOLINTEND
   };
 
-  InvertedIndexStorage(duckdb::idx_t db_id, const InvertedIndex& index,
+  InvertedIndexStorage(duckdb::idx_t db_id, duckdb::idx_t schema_id,
+                       duckdb::idx_t table_id, duckdb::idx_t index_id,
+                       const catalog::InvertedIndexSettings& options,
+                       const std::optional<irs::ScorerOptions>& top_k_scorer,
                        bool is_new);
   ~InvertedIndexStorage();
 
@@ -117,7 +125,9 @@ class InvertedIndexStorage final
   // created inside a transaction lives in that transaction's overlay, and so
   // may the schema its database has to be walked through.
   static std::shared_ptr<InvertedIndexStorage> Create(
-    duckdb::idx_t db_id, const InvertedIndex& index, bool is_new);
+    duckdb::idx_t db_id, duckdb::idx_t schema_id, duckdb::idx_t table_id,
+    duckdb::idx_t index_id, const catalog::InvertedIndexSettings& options,
+    const std::optional<irs::ScorerOptions>& top_k_scorer, bool is_new);
 
   auto GetTransaction() {
     SDB_ASSERT(_writer);
@@ -251,7 +261,7 @@ class InvertedIndexStorage final
 
   void FinishCreation();
 
-  void ApplyOptions(const catalog::InvertedIndexOptions& options);
+  void ApplyOptions(const catalog::InvertedIndexSettings& options);
 
   Tick GetRecoveryTick() const noexcept { return _recovery_tick; }
 

@@ -46,16 +46,16 @@ namespace sdb::connector {
 // (2) recorded on the transaction as the WAL delete payload.
 class SereneDBSearchDelete final : public duckdb::PhysicalOperator {
  public:
-  // `types` and `column_map` are RETURNING: the row the operator hands back and
-  // where in the child's chunk each of its columns arrived. An empty
-  // `column_map` is no RETURNING -- the operator then reports the row count and
-  // `types` is one BIGINT.
-  SereneDBSearchDelete(duckdb::PhysicalPlan& plan,
-                       const catalog::SearchTableEntry& table,
-                       std::vector<primary_key::PKColumn> pk_columns,
-                       duckdb::vector<duckdb::LogicalType> types,
-                       duckdb::vector<duckdb::column_t> column_map,
-                       duckdb::idx_t estimated_cardinality);
+  // `return_chunk` is RETURNING: `types` is then the table row followed by its
+  // row-identity virtual columns, and `return_columns` maps each table column
+  // to its slot in the child's chunk. Otherwise the operator reports the row
+  // count and `types` is one BIGINT.
+  SereneDBSearchDelete(
+    duckdb::PhysicalPlan& plan, const catalog::SearchTableEntry& table,
+    duckdb::vector<duckdb::unique_ptr<duckdb::Expression>> expressions,
+    duckdb::vector<duckdb::LogicalType> types,
+    duckdb::idx_t estimated_cardinality, bool return_chunk,
+    duckdb::vector<duckdb::idx_t> return_columns);
 
   // The remove side of a REINDEX pass: DELETE FROM <index>. Removes go into
   // the index's own writer on domain ticks, and no search-table WAL is
@@ -98,8 +98,8 @@ class SereneDBSearchDelete final : public duckdb::PhysicalOperator {
   // The PK columns as they arrive in the input chunk (explicit PK), or the
   // single generated-PK rowid column (no-PK tables).
   std::vector<primary_key::PKColumn> _pk_columns;
-  // Empty unless the statement has a RETURNING clause.
-  duckdb::vector<duckdb::column_t> _column_map;
+  bool _return_chunk = false;
+  duckdb::vector<duckdb::idx_t> _return_columns;
   std::shared_ptr<search::InvertedIndexStorage> _index_storage;
   std::shared_ptr<const irs::IndexFieldOptions> _field_options;
 };

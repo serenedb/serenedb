@@ -316,7 +316,9 @@ MaintainTarget MakeMaintainTarget(std::string_view schema,
           .schema_entry = &table.ParentSchema(),
           .schema = std::string{schema},
           .name = std::string{table.name.GetIdentifierName()},
-          .engine = catalog::ReadTableEngineTag(table.tags),
+          .engine = dynamic_cast<const catalog::SearchTableEntry*>(&table)
+                      ? catalog::TableEngine::Search
+                      : catalog::TableEngine::Transactional,
           .search_data = MaintainStoreOf(table),
           .perm = table.permissions};
 }

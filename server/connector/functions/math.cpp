@@ -303,6 +303,9 @@ void DateBinFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
         THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                         ERR_MSG("stride must be greater than zero"));
       }
+      if (!source.IsFinite()) {
+        return source;
+      }
       if (stride.months != 0) {
         THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
                         ERR_MSG("timestamps cannot be binned into intervals "

@@ -76,13 +76,13 @@ QUERY PLAN
 │ Conditions: cat = cat    │
 │ ~2 rows                  │
 ╰─────────────┬────────────╯
-              ├───────────────────────────╮
-╭─ IRESEARCH_SCAN ─────────╮  ╭─ SEQ_SCAN ┴───────────╮
-│ Index: docs_idx          │  │ Table: cats           │
-│ Lookup: table            │  │ Type: Sequential Scan │
-│ Index Filter:            │  │ Projections: cat      │
-│ ╭─ Term ──────────────╮  │  │ ~2 rows               │
-│ │ Field: body(string) │  │  ╰───────────────────────╯
+              ├───────────────────────────────────────────╮
+╭─ IRESEARCH_SCAN ─────────╮  ╭─ SEQ_SCAN ────────────────┴──────────────────────────╮
+│ Index: docs_idx          │  │ Table: <slt:ignore>.public.cats │
+│ Lookup: table            │  │ Type: Sequential Scan                                │
+│ Index Filter:            │  │ Projections: cat                                     │
+│ ╭─ Term ──────────────╮  │  │ ~2 rows                                              │
+│ │ Field: body(string) │  │  ╰──────────────────────────────────────────────────────╯
 │ │ Value: fox          │  │
 │ ╰─────────────────────╯  │
 │ Column Filter: cat <= 30 │

@@ -319,39 +319,39 @@ query
 EXPLAIN CREATE INDEX donsimon_idx ON biksalen_memes USING inverted(b, c);
 ----
 QUERY PLAN
-╭─ EXTENSION ───────────╮
-╰───────────┬───────────╯
-╭─ SEQ_SCAN ┴───────────╮
-│ Table: biksalen_memes │
-│ Type: Sequential Scan │
-│ ~3 rows               │
-╰───────────────────────╯
+╭─ EXTENSION ───────────────────────────────────────────────╮
+╰─────────────────────────────┬─────────────────────────────╯
+╭─ SEQ_SCAN ──────────────────┴─────────────────────────────╮
+│ Table: <slt:ignore>.public.biksalen_memes │
+│ Type: Sequential Scan                                     │
+│ ~3 rows                                                   │
+╰───────────────────────────────────────────────────────────╯
 
 
 query
 EXPLAIN CREATE INDEX donsimon_idx ON biksalen_memes USING inverted(b, c);
 ----
 QUERY PLAN
-╭─ EXTENSION ───────────╮
-╰───────────┬───────────╯
-╭─ SEQ_SCAN ┴───────────╮
-│ Table: biksalen_memes │
-│ Type: Sequential Scan │
-│ ~3 rows               │
-╰───────────────────────╯
+╭─ EXTENSION ───────────────────────────────────────────────╮
+╰─────────────────────────────┬─────────────────────────────╯
+╭─ SEQ_SCAN ──────────────────┴─────────────────────────────╮
+│ Table: <slt:ignore>.public.biksalen_memes │
+│ Type: Sequential Scan                                     │
+│ ~3 rows                                                   │
+╰───────────────────────────────────────────────────────────╯
 
 
 query
 EXPLAIN CREATE INDEX donsimon_idx ON biksalen_memes USING inverted(b, c);
 ----
 QUERY PLAN
-╭─ EXTENSION ───────────╮
-╰───────────┬───────────╯
-╭─ SEQ_SCAN ┴───────────╮
-│ Table: biksalen_memes │
-│ Type: Sequential Scan │
-│ ~3 rows               │
-╰───────────────────────╯
+╭─ EXTENSION ───────────────────────────────────────────────╮
+╰─────────────────────────────┬─────────────────────────────╯
+╭─ SEQ_SCAN ──────────────────┴─────────────────────────────╮
+│ Table: <slt:ignore>.public.biksalen_memes │
+│ Type: Sequential Scan                                     │
+│ ~3 rows                                                   │
+╰───────────────────────────────────────────────────────────╯
 
 
 statement ok
@@ -365,14 +365,14 @@ QUERY PLAN
 ╭─ Summary ───────────╮
 │ Total Time: 0.0000s │
 ╰─────────────────────╯
-╭─ EXTENSION ───────────╮
-│ 1 row             0µs │
-╰───────────┒┎──────────╯
-╭─ TABLE_SCAN ──────────╮
-│ Table: biksalen_memes │
-│ Type: Sequential Scan │
-│ 3 rows            0µs │
-╰───────────────────────╯
+╭─ EXTENSION ───────────────────────────────────────────────╮
+│ 1 row                                                 0µs │
+╰─────────────────────────────┒┎────────────────────────────╯
+╭─ TABLE_SCAN ────────────────┚┖────────────────────────────╮
+│ Table: <slt:ignore>.public.biksalen_memes │
+│ Type: Sequential Scan                                     │
+│ 3 rows                                                0µs │
+╰───────────────────────────────────────────────────────────╯
 
 
 # EXPLAIN ANALYZE must actually create the index

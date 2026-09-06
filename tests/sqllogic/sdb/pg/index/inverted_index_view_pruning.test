@@ -253,14 +253,14 @@ query
 EXPLAIN CREATE INDEX prune_idx6 ON prune_v6 USING inverted(body);
 ----
 QUERY PLAN
-╭─ EXTENSION ───────────╮
-╰───────────┬───────────╯
-╭─ SEQ_SCAN ┴───────────╮
-│ Table: prune_base     │
-│ Type: Sequential Scan │
-│ Projections: body     │
-│ ~3 rows               │
-╰───────────────────────╯
+╭─ EXTENSION ────────────────────────────────────────────────────────╮
+╰──────────────────────────────────┬─────────────────────────────────╯
+╭─ SEQ_SCAN ───────────────────────┴─────────────────────────────────╮
+│ Table: <slt:ignore>.public.prune_base │
+│ Type: Sequential Scan                                              │
+│ Projections: body                                                  │
+│ ~3 rows                                                            │
+╰────────────────────────────────────────────────────────────────────╯
 
 statement ok
 CREATE INDEX prune_idx6 ON prune_v6 USING inverted(body);
@@ -282,14 +282,14 @@ query
 EXPLAIN CREATE INDEX prune_idx7 ON prune_v7 USING inverted(id, body);
 ----
 QUERY PLAN
-╭─ EXTENSION ───────────╮
-╰───────────┬───────────╯
-╭─ SEQ_SCAN ┴───────────╮
-│ Table: prune_base     │
-│ Type: Sequential Scan │
-│ Projections: id, body │
-│ ~3 rows               │
-╰───────────────────────╯
+╭─ EXTENSION ────────────────────────────────────────────────────────╮
+╰──────────────────────────────────┬─────────────────────────────────╯
+╭─ SEQ_SCAN ───────────────────────┴─────────────────────────────────╮
+│ Table: <slt:ignore>.public.prune_base │
+│ Type: Sequential Scan                                              │
+│ Projections: id, body                                              │
+│ ~3 rows                                                            │
+╰────────────────────────────────────────────────────────────────────╯
 
 statement ok
 CREATE INDEX prune_idx7 ON prune_v7 USING inverted(id, body);

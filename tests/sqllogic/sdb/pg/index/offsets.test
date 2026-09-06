@@ -74,24 +74,23 @@ WHERE body @@ ts_phrase('fox')
 ORDER BY id;
 ----
 QUERY PLAN
-╭─ ORDER_BY ──────────────────────────╮
-│ Order By: offsets_test_idx.id ASC   │
-│ ~1 row                              │
-╰──────────────────┬──────────────────╯
-╭─ IRESEARCH_SCAN ─┴──────────────────╮
-│ Index: offsets_test_idx             │
-│ Lookup: table                       │
-│ Index Filter:                       │
-│ ╭─ Term ──────────────╮             │
-│ │ Field: body(string) │             │
-│ │ Value: fox          │             │
-│ ╰─────────────────────╯             │
-│ Offsets: body                       │
-│ Projections:                        │
-│ id,                                 │
-│ sdb_inverted_index_offsets$<slt:ignore>
-│ ~1 row                              │
-╰─────────────────────────────────────╯
+╭─ ORDER_BY ────────────────────────╮
+│ Order By: offsets_test_idx.id ASC │
+│ ~1 row                            │
+╰─────────────────┬─────────────────╯
+╭─ IRESEARCH_SCAN ┴─────────────────╮
+│ Index: offsets_test_idx           │
+│ Lookup: table                     │
+│ Index Filter:                     │
+│ ╭─ Term ──────────────╮           │
+│ │ Field: body(string) │           │
+│ │ Value: fox          │           │
+│ ╰─────────────────────╯           │
+│ Offsets: body                     │
+│ Projections:                      │
+│ id, sdb_inverted_index_offsets$<slt:ignore>  │
+│ ~1 row                            │
+╰───────────────────────────────────╯
 
 
 query
@@ -310,43 +309,43 @@ WHERE body @@ ts_phrase('fox')
 ORDER BY id, lim;
 ----
 QUERY PLAN
-╭─ PROJECTION ────────────────────────╮
-│ Projections: #0,                    │
-│              CAST(#1 AS INTEGER),   │
-│              #2                     │
-│ ~2 rows                             │
-╰──────────────────┬──────────────────╯
-╭─ ORDER_BY ───────┴──────────────────╮
-│ Order By: id ASC, lim ASC           │
-│ ~2 rows                             │
-╰──────────────────┬──────────────────╯
-╭─ PROJECTION ─────┴──────────────────╮
-│ Projections: #0,                    │
-│              CAST(#1 AS TINYINT),   │
-│              #2                     │
-│ ~2 rows                             │
-╰──────────────────┬──────────────────╯
-╭─ UNION ──────────┴──────────────────╮
-╰──────────────────┬──────────────────╯
-                   ├────────────────────────────────────────╮
-╭─ PROJECTION ─────┴──────────────────╮  ╭─ PROJECTION ─────┴──────────────────╮
-│ Projections: id, lim, body_offs     │  │ Projections: id, 4, #1              │
-│ ~1 row                              │  │ ~1 row                              │
-╰──────────────────┬──────────────────╯  ╰──────────────────┬──────────────────╯
-╭─ IRESEARCH_SCAN ─┴──────────────────╮  ╭─ IRESEARCH_SCAN ─┴──────────────────╮
-│ Index: offsets_test_idx             │  │ Index: offsets_test_idx             │
-│ Lookup: table                       │  │ Lookup: table                       │
-│ Index Filter:                       │  │ Index Filter:                       │
-│ ╭─ Term ──────────────╮             │  │ ╭─ Term ──────────────╮             │
-│ │ Field: body(string) │             │  │ │ Field: body(string) │             │
-│ │ Value: fox          │             │  │ │ Value: fox          │             │
-│ ╰─────────────────────╯             │  │ ╰─────────────────────╯             │
-│ Offsets: body                       │  │ Offsets: body                       │
-│ Projections:                        │  │ Projections:                        │
-│ id,                                 │  │ id,                                 │
-│ sdb_inverted_index_offsets<slt:ignore>
-│ ~1 row                              │  │ ~1 row                              │
-╰─────────────────────────────────────╯  ╰─────────────────────────────────────╯
+╭─ PROJECTION ──────────────────────╮
+│ Projections: #0,                  │
+│              CAST(#1 AS INTEGER), │
+│              #2                   │
+│ ~2 rows                           │
+╰─────────────────┬─────────────────╯
+╭─ ORDER_BY ──────┴─────────────────╮
+│ Order By: id ASC, lim ASC         │
+│ ~2 rows                           │
+╰─────────────────┬─────────────────╯
+╭─ PROJECTION ────┴─────────────────╮
+│ Projections: #0,                  │
+│              CAST(#1 AS TINYINT), │
+│              #2                   │
+│ ~2 rows                           │
+╰─────────────────┬─────────────────╯
+╭─ UNION ─────────┴─────────────────╮
+╰─────────────────┬─────────────────╯
+                  ├─────────────────────────────────────╮
+╭─ PROJECTION ────┴─────────────────╮  ╭─ PROJECTION ───┴───────────────╮
+│ Projections: id, lim, body_offs   │  │ Projections: id, 4, #1         │
+│ ~1 row                            │  │ ~1 row                         │
+╰─────────────────┬─────────────────╯  ╰────────────────┬───────────────╯
+╭─ IRESEARCH_SCAN ┴─────────────────╮  ╭─ IRESEARCH_SCAN ───────────────╮
+│ Index: offsets_test_idx           │  │ Index: offsets_test_idx        │
+│ Lookup: table                     │  │ Lookup: table                  │
+│ Index Filter:                     │  │ Index Filter:                  │
+│ ╭─ Term ──────────────╮           │  │ ╭─ Term ──────────────╮        │
+│ │ Field: body(string) │           │  │ │ Field: body(string) │        │
+│ │ Value: fox          │           │  │ │ Value: fox          │        │
+│ ╰─────────────────────╯           │  │ ╰─────────────────────╯        │
+│ Offsets: body                     │  │ Offsets: body                  │
+│ Projections:                      │  │ Projections:                   │
+│ id, sdb_inverted_index_offsets$<slt:ignore>  │  │ id,                            │
+│ ~1 row                            │  │ sdb_inverted_index_offsets<slt:ignore>
+╰───────────────────────────────────╯  │ ~1 row                         │
+                                       ╰────────────────────────────────╯
 
 
 query

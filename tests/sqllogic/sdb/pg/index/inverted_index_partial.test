@@ -17,14 +17,14 @@ query
 EXPLAIN CREATE INDEX pt_live ON goshandr_subscribers USING inverted(label) WHERE live;
 ----
 QUERY PLAN
-╭─ EXTENSION ─────────────────╮
-╰──────────────┬──────────────╯
-╭─ SEQ_SCAN ───┴──────────────╮
-│ Table: goshandr_subscribers │
-│ Type: Sequential Scan       │
-│ Column Filter: live         │
-│ ~2,000 rows                 │
-╰─────────────────────────────╯
+╭─ EXTENSION ─────────────────────────────────────────────────────────────╮
+╰────────────────────────────────────┬────────────────────────────────────╯
+╭─ SEQ_SCAN ─────────────────────────┴────────────────────────────────────╮
+│ Table: <slt:ignore>.public.goshandr_subscribers │
+│ Type: Sequential Scan                                                   │
+│ Column Filter: live                                                     │
+│ ~2,000 rows                                                             │
+╰─────────────────────────────────────────────────────────────────────────╯
 
 
 # A full index scans every row -- no Column Filter in the plan.
@@ -32,13 +32,13 @@ query
 EXPLAIN CREATE INDEX pt_full ON goshandr_subscribers USING inverted(label);
 ----
 QUERY PLAN
-╭─ EXTENSION ─────────────────╮
-╰──────────────┬──────────────╯
-╭─ SEQ_SCAN ───┴──────────────╮
-│ Table: goshandr_subscribers │
-│ Type: Sequential Scan       │
-│ ~10,000 rows                │
-╰─────────────────────────────╯
+╭─ EXTENSION ─────────────────────────────────────────────────────────────╮
+╰────────────────────────────────────┬────────────────────────────────────╯
+╭─ SEQ_SCAN ─────────────────────────┴────────────────────────────────────╮
+│ Table: <slt:ignore>.public.goshandr_subscribers │
+│ Type: Sequential Scan                                                   │
+│ ~10,000 rows                                                            │
+╰─────────────────────────────────────────────────────────────────────────╯
 
 
 statement ok

@@ -845,8 +845,7 @@ QUERY PLAN
 │ ╰──────────────────────╯  ╰─────────────────────╯ │
 │ Offsets: title, body                              │
 │ Projections:                                      │
-│ title, body, id,                                  │
-│ sdb_inverted_index_offsets$<slt:ignore>
+│ title, body, id, sdb_inverted_index_offsets$<slt:ignore>
 │ sdb_inverted_index_offsets$<slt:ignore>
 │ ~1 row                                            │
 ╰───────────────────────────────────────────────────╯
@@ -1180,7 +1179,7 @@ QUERY PLAN
 │ ~2 rows                                                     │
 ╰──────────────────────────────┬──────────────────────────────╯
 ╭─ SEQ_SCAN ───────────────────┴──────────────────────────────╮
-│ Table: hl_dyn                                               │
+│ Table: <slt:ignore>.public.hl_dyn                 │
 │ Type: Sequential Scan                                       │
 │ Projections: doc                                            │
 │ ~2 rows                                                     │
@@ -1202,7 +1201,7 @@ QUERY PLAN
 │ ~2 rows                                                                        │
 ╰────────────────────────────────────────┬───────────────────────────────────────╯
 ╭─ SEQ_SCAN ─────────────────────────────┴───────────────────────────────────────╮
-│ Table: hl_dyn                                                                  │
+│ Table: <slt:ignore>.public.hl_dyn                                    │
 │ Type: Sequential Scan                                                          │
 │ Projections: doc                                                               │
 │ ~2 rows                                                                        │

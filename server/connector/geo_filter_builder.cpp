@@ -71,7 +71,7 @@ const duckdb::Expression& PeelSameTypeIdCast(const duckdb::Expression& expr) {
 // then resolves the stored field id the filter reads per doc:
 //   - StoredType::Source: the force-included source column itself (its own
 //     field id); source_is_wkb selects WKB vs GeoJSON re-parsing.
-//   - S2 codings: the analyzer's synthetic StoreAttr blob column.
+//   - S2 codings: the analyzer's synthetic store blob column.
 void SetupGeoFilter(const SearchColumnInfo& column_info,
                     irs::GeoFilterOptionsBase& options) {
   const auto& a = *column_info.tokenizer.analyzer;
@@ -79,9 +79,9 @@ void SetupGeoFilter(const SearchColumnInfo& column_info,
   if (type_id != irs::Type<irs::analysis::GeoJsonAnalyzer>::id() &&
       type_id != irs::Type<irs::analysis::GeoPointAnalyzer>::id()) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                    ERR_MSG("Analyzer for field is not a geo analyzer"));
+                    ERR_MSG("Tokenizer for field is not a geo analyzer"));
   }
-  basics::downCast<irs::analysis::GeoAnalyzer>(a).prepare(options);
+  irs::analysis::GeoAnalyzer::Cast(a).prepare(options);
   if (options.stored == irs::StoredType::Source) {
     options.store_field_id = column_info.field_id;
     options.source_is_wkb =

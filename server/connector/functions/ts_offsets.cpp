@@ -33,16 +33,20 @@
 #include <duckdb/planner/expression/bound_function_expression.hpp>
 #include <iresearch/analysis/sparse_ngram_tokenizer.hpp>
 #include <iresearch/analysis/token_attributes.hpp>
+#include <iresearch/analysis/token_batch.hpp>
+#include <iresearch/analysis/token_sinks.hpp>
 #include <iresearch/analysis/union_tokenizer.hpp>
 #include <iresearch/search/boolean_filter.hpp>
 #include <iresearch/search/filter_optimizer.hpp>
 #include <limits>
 #include <memory>
+#include <numeric>
 #include <span>
 #include <vector>
 
 #include "catalog/ddl/catalog.h"
 #include "catalog/table_options.h"
+#include "connector/common.h"
 #include "connector/duckdb_client_state.h"
 #include "connector/functions/search.h"
 #include "connector/highlight/highlight_types.h"
@@ -79,54 +83,49 @@ constexpr irs::field_id kStandaloneFieldId = catalog::kMaxRealColumnIdValue + 4;
 constexpr catalog::ColumnId kStandaloneSyntheticColumnId{kStandaloneFieldId};
 
 class SortingOffsetTokenizer final
-  : public irs::analysis::TypedAnalyzer<SortingOffsetTokenizer> {
+  : public irs::analysis::TypedTokenizer<SortingOffsetTokenizer> {
  public:
   static constexpr std::string_view type_name() noexcept {
     return "sorting_offset_tokenizer";
   }
 
-  explicit SortingOffsetTokenizer(
-    catalog::Tokenizer::TokenizerWrapper inner) noexcept
-    : _inner{std::move(inner)},
-      _term{irs::get<irs::TermAttr>(*_inner)},
-      _offs{irs::get<irs::OffsAttr>(*_inner)} {}
+  explicit SortingOffsetTokenizer(catalog::Tokenizer::TokenizerWrapper inner)
+    : _inner{std::move(inner)} {}
 
-  bool reset(std::string_view value) final {
-    _idx = 0;
-    _buf.clear();
-    if (!_term || !_offs || !_inner->reset(value)) {
+  irs::TokenTraits Traits() const noexcept final { return {.offsets = true}; }
+
+  template<irs::TokenLayout Layout>
+  bool DoFill(duckdb::string_t raw, irs::TokenSink& sink) {
+    if (!_analyzer.Analyze(*_inner, raw, _tokens)) {
       return false;
     }
-    while (_inner->next()) {
-      _buf.emplace_back(_offs->start, _offs->end, irs::bstring{_term->value});
+    const auto terms = _tokens.terms();
+    const auto starts = _tokens.offs_start();
+    const auto ends = _tokens.offs_end();
+    _order.resize(terms.size());
+    std::iota(_order.begin(), _order.end(), uint32_t{0});
+    absl::c_sort(_order, [&](uint32_t l, uint32_t r) {
+      if (starts[l] != starts[r]) {
+        return starts[l] < starts[r];
+      }
+      if (ends[l] != ends[r]) {
+        return ends[l] < ends[r];
+      }
+      return irs::AsBytesView(terms[l]) < irs::AsBytesView(terms[r]);
+    });
+    for (const auto i : _order) {
+      sink.Emit<Layout>(raw, terms[i].GetData(),
+                        static_cast<uint32_t>(terms[i].GetSize()),
+                        irs::Offs{starts[i], ends[i]});
     }
-    absl::c_sort(_buf);
     return true;
-  }
-
-  bool next() final {
-    if (_idx >= _buf.size()) {
-      return false;
-    }
-    auto& offs = std::get<irs::OffsAttr>(_attrs);
-    auto& term = std::get<irs::TermAttr>(_attrs);
-    std::tie(offs.start, offs.end, term.value) = _buf[_idx++];
-    return true;
-  }
-
-  irs::Attribute* GetMutable(irs::TypeInfo::type_id type) noexcept final {
-    return irs::GetMutable(_attrs, type);
   }
 
  private:
-  using Gram = std::tuple<uint32_t, uint32_t, irs::bstring>;
-
   catalog::Tokenizer::TokenizerWrapper _inner;
-  const irs::TermAttr* _term;
-  const irs::OffsAttr* _offs;
-  std::tuple<irs::IncAttr, irs::TermAttr, irs::OffsAttr> _attrs;
-  std::vector<Gram> _buf;
-  size_t _idx{0};
+  irs::ValueAnalyzer _analyzer;
+  irs::ValueTokens<irs::TokenLayout::TermsPosOffs> _tokens{_inner->Traits()};
+  std::vector<uint32_t> _order;
 };
 
 catalog::Tokenizer::TokenizerWrapper EnsureOffsets(
@@ -145,6 +144,9 @@ catalog::Tokenizer::TokenizerWrapper EnsureOffsets(
   return tokenizer;
 }
 
+constexpr auto kOffsetsFeatures =
+  irs::IndexFeatures::Freq | irs::IndexFeatures::Pos | irs::IndexFeatures::Offs;
+
 struct IndexField {
   void Reset(catalog::ColumnId column_id,
              catalog::Tokenizer::TokenizerWrapper analyzer) {
@@ -153,13 +155,6 @@ struct IndexField {
   }
 
   irs::field_id Id() const noexcept { return id; }
-  irs::IndexFeatures GetIndexFeatures() const noexcept {
-    return irs::IndexFeatures::Freq | irs::IndexFeatures::Pos |
-           irs::IndexFeatures::Offs;
-  }
-  irs::Tokenizer& GetTokens() const noexcept { return *tokens; }
-  bool Write(irs::DataOutput&) const noexcept { return false; }
-  void SetValue(std::string_view value) const { tokens->reset(value); }
 
   irs::field_id id{irs::field_limits::invalid()};
   catalog::Tokenizer::TokenizerWrapper tokens;
@@ -179,11 +174,12 @@ auto& EnsureField(duckdb::ClientContext& context,
   auto column_id = kStandaloneSyntheticColumnId;
   catalog::Tokenizer::TokenizerWrapper wrapper;
   if (bind.IsStandalone()) {
-    wrapper = bind.dict_tokenizer->GetTokenizer();
+    wrapper = bind.dict_tokenizer->GetTokenizer(context);
   } else {
     auto column_tokenizer =
       catalog::InvertedInfo(*bind.inverted_index)
-        .GetTokenizer(catalog::ResolveTokenizers(context, *bind.inverted_index),
+        .GetTokenizer(context,
+                      catalog::ResolveTokenizers(context, *bind.inverted_index),
                       static_cast<irs::field_id>(bind.column_id));
     wrapper = std::move(column_tokenizer.analyzer);
     column_id = bind.column_id;
@@ -196,9 +192,8 @@ auto& EnsureField(duckdb::ClientContext& context,
 }  // namespace
 
 duckdb::unique_ptr<duckdb::FunctionLocalState> InitOffsetsLocalState(
-  duckdb::ExpressionState& /*state*/,
-  const duckdb::BoundFunctionExpression& /*expr*/,
-  duckdb::FunctionData* /*bind_data*/) {
+  duckdb::ExpressionState&, const duckdb::BoundFunctionExpression&,
+  duckdb::FunctionData*) {
   return duckdb::make_uniq<OffsetsLocalState>();
 }
 
@@ -206,10 +201,6 @@ void OffsetsScalarFn(duckdb::DataChunk& args, duckdb::ExpressionState& state,
                      duckdb::Vector& result) {
   auto& expr = state.expr.Cast<duckdb::BoundFunctionExpression>();
   if (!expr.BindInfo()) {
-    // Reached when neither the iresearch_plan rule nor
-    // OffsetsStandaloneBind populated bind data (literal first arg, no
-    // surrounding search scan, unresolved dict name, etc.). Same shape
-    // as the function's pre-rewrite stub error.
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
       ERR_MSG("ts_offsets() requires an inverted index scan in the same "
@@ -242,16 +233,27 @@ void OffsetsScalarFn(duckdb::DataChunk& args, duckdb::ExpressionState& state,
   auto segment = local_state.memory_index.IndexChunk(count, [&](auto& doc) {
     const auto* data =
       duckdb::UnifiedVectorFormat::GetData<duckdb::string_t>(fmt);
-    for (duckdb::idx_t r = 0; r < count; ++r) {
-      const auto idx = fmt.sel->get_index(r);
-      if (fmt.validity.RowIsValid(idx)) {
-        const auto& s = data[idx];
-        if (s.GetSize() > 0) {
-          field.SetValue(std::string_view{s.GetData(), s.GetSize()});
-          doc.Insert(field);
-        }
-      }
-      doc.NextDocument();
+    const auto traits = field.tokens->Traits();
+    const bool ok =
+      doc.WithTokens(field.Id(), kOffsetsFeatures, nullptr,
+                     [&](irs::FieldInverter& fld, irs::TokenSink& w) {
+                       fld.Configure(traits);
+                       const auto layout = fld.Layout();
+                       irs::doc_id_t d = doc.DocId();
+                       for (duckdb::idx_t r = 0; r < count; ++r, ++d) {
+                         const auto idx = fmt.sel->get_index(r);
+                         if (!fmt.validity.RowIsValid(idx)) {
+                           continue;
+                         }
+                         const auto& s = data[idx];
+                         if (s.GetSize() > 0) {
+                           field.tokens->Fill(s, d, w, {layout});
+                         }
+                       }
+                     });
+    if (!ok) {
+      THROW_SQL_ERROR(
+        ERR_MSG("Failed to insert field into IResearch document"));
     }
   });
 
@@ -334,8 +336,8 @@ std::shared_ptr<irs::Filter> BuildFilterFromTSQuery(
   auto match_expr = duckdb::make_uniq<duckdb::BoundFunctionExpression>(
     std::move(bound_at_at), std::move(at_at_children), nullptr);
 
-  auto column_getter =
-    [column_id, dict_tokenizer](const duckdb::BoundColumnRefExpression& ref)
+  auto column_getter = [column_id, dict_tokenizer,
+                        &context](const duckdb::BoundColumnRefExpression& ref)
     -> std::optional<SearchColumnInfo> {
     if (ref.Binding().table_index != duckdb::TableIndex{kSyntheticTableIdx} ||
         ref.Binding().column_index !=
@@ -345,7 +347,7 @@ std::shared_ptr<irs::Filter> BuildFilterFromTSQuery(
     SearchColumnInfo info;
     info.field_id = static_cast<irs::field_id>(column_id);
     info.logical_type = duckdb::LogicalType::VARCHAR;
-    info.tokenizer.analyzer = dict_tokenizer->GetTokenizer();
+    info.tokenizer.analyzer = dict_tokenizer->GetTokenizer(context);
     info.tokenizer.features = irs::IndexFeatures::Freq |
                               irs::IndexFeatures::Pos |
                               irs::IndexFeatures::Offs;
@@ -356,8 +358,8 @@ std::shared_ptr<irs::Filter> BuildFilterFromTSQuery(
   duckdb::unique_ptr<duckdb::Expression> match_owner = std::move(match_expr);
   std::span<const duckdb::unique_ptr<duckdb::Expression>> conjuncts{
     &match_owner, 1};
-  if (auto s = MakeSearchFilter(*root, conjuncts, column_getter, context, {},
-                                /*scorers=*/nullptr);
+  if (auto s =
+        MakeSearchFilter(*root, conjuncts, column_getter, context, {}, nullptr);
       !s.ok()) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
                     ERR_MSG(s.message()));
@@ -391,7 +393,6 @@ duckdb::unique_ptr<duckdb::FunctionData> OffsetsStandaloneBind(
   bind->dict_tokenizer = dict;
   bind->stored_filter = BuildFilterFromTSQuery(
     context, *arguments[2], kStandaloneSyntheticColumnId, dict);
-  // Omitted arg => default cap; explicit 0 => unlimited.
   constexpr size_t kDefaultOffsetsLimit = 1 << 12;
   bind->limit = kDefaultOffsetsLimit;
   if (arguments.size() == 4) {

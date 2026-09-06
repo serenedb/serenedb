@@ -39,12 +39,12 @@ std::ostream& operator<<(std::ostream& os, const std::pair<T1, T2>& p) {
 
 #include "basics/duckdb_engine.h"
 #include "index/index_tests.hpp"
-#include "iresearch/analysis/analyzer.hpp"
 #include "iresearch/analysis/delimited_tokenizer.hpp"
-#include "iresearch/analysis/tokenizers.hpp"
+#include "iresearch/analysis/tokenizer.hpp"
 #include "iresearch/formats/posting/score_bound_writer.hpp"
 #include "iresearch/index/norm.hpp"
 #include "iresearch/index/table_filter_iterator.hpp"
+#include "iresearch/index/typed_terms.hpp"
 #include "iresearch/parser/parser.hpp"
 #include "iresearch/search/bm25.hpp"
 #include "iresearch/search/boolean_filter.hpp"
@@ -180,10 +180,8 @@ class TokenizedField final : public tests::Ifield {
 
   irs::field_id Id() const final { return _id; }
   std::string_view Name() const final { return {}; }
-  irs::Tokenizer& GetTokens() const final {
-    _tokenizer->reset(_value);
-    return *_tokenizer;
-  }
+  irs::analysis::Tokenizer& GetTokens() const final { return *_tokenizer; }
+  std::string_view Value() const final { return _value; }
   irs::IndexFeatures GetIndexFeatures() const noexcept final {
     return irs::IndexFeatures::Freq | irs::IndexFeatures::Norm;
   }
@@ -214,22 +212,19 @@ void ScorePruneFieldFactory(tests::Document& doc, const std::string& name,
     auto& field = (doc.indexed.end() - 1).as<BinaryField>();
     field.Name(name);
     field.id = ColumnIdFor(name);
-    field.value(
-      irs::ViewCast<irs::byte_type>(irs::NullTokenizer::value_null()));
+    field.value(irs::ViewCast<irs::byte_type>(irs::kNullTerm));
   } else if (JsonDocGenerator::ValueType::BOOL == data.vt && data.b) {
     doc.insert(std::make_shared<BinaryField>());
     auto& field = (doc.indexed.end() - 1).as<BinaryField>();
     field.Name(name);
     field.id = ColumnIdFor(name);
-    field.value(
-      irs::ViewCast<irs::byte_type>(irs::BooleanTokenizer::value_true()));
+    field.value(irs::ViewCast<irs::byte_type>(irs::kTrueTerm));
   } else if (JsonDocGenerator::ValueType::BOOL == data.vt && !data.b) {
     doc.insert(std::make_shared<BinaryField>());
     auto& field = (doc.indexed.end() - 1).as<BinaryField>();
     field.Name(name);
     field.id = ColumnIdFor(name);
-    field.value(
-      irs::ViewCast<irs::byte_type>(irs::BooleanTokenizer::value_true()));
+    field.value(irs::ViewCast<irs::byte_type>(irs::kTrueTerm));
   } else if (data.is_number()) {
     doc.insert(std::make_shared<DoubleField>());
     auto& field = (doc.indexed.end() - 1).as<DoubleField>();

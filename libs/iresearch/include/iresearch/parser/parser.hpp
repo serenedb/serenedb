@@ -20,12 +20,13 @@
 
 #pragma once
 
+#include <span>
 #include <string>
 #include <string_view>
 #include <vector>
 
-#include "iresearch/analysis/analyzer.hpp"
 #include "iresearch/analysis/token_attributes.hpp"
+#include "iresearch/analysis/token_sinks.hpp"
 #include "iresearch/analysis/tokenizer.hpp"
 #include "iresearch/search/all_filter.hpp"
 #include "iresearch/search/boolean_filter.hpp"
@@ -58,12 +59,13 @@ struct ParserContext {
   irs::field_id default_field_id{irs::field_limits::invalid()};
   std::string_view default_field_name;
   irs::BooleanFilter* current_root;
-  irs::analysis::Analyzer* tokenizer;
+  irs::analysis::Tokenizer* tokenizer;
+  irs::ValueAnalyzer value_analyzer;
+  irs::ValueTokens<> value_tokens;
   std::string error_message;
   Modifier last_mod{Modifier::None};
   bool strict_field = false;
 
-  // What is being built while the grammar reads its parts.
   irs::ByPhrase* phrase{nullptr};
   irs::ByNGramSimilarity* ngram{nullptr};
   std::vector<std::string_view> fn_terms;
@@ -72,7 +74,7 @@ struct ParserContext {
   size_t offs_max{0};
 
   ParserContext(irs::BooleanFilter& root, irs::field_id field_id,
-                irs::analysis::Analyzer& tokenizer)
+                irs::analysis::Tokenizer& tokenizer)
     : default_field_id(field_id), current_root{&root}, tokenizer{&tokenizer} {}
 
   // A clause is held back until the connector after it has been read, which
@@ -101,43 +103,24 @@ struct ParserContext {
     }
   }
 
-  // What the query spells is not what the index holds: the analyzer stands
-  // between them, here as everywhere else. A word it splits is asked for the
-  // way Lucene asks -- any of its parts, under the default operator.
   irs::Filter& AddTerm(std::string_view value) {
     const auto text = Unescape(value);
-    tokenizer->reset(irs::ViewCast<char>(irs::bytes_view{text}));
-    auto token = irs::get<irs::TermAttr>(*tokenizer);
-
-    irs::bstring first;
-    size_t count = 0;
-    irs::BooleanFilter* several = nullptr;
-    while (tokenizer->next()) {
-      if (count == 0) {
-        first = token->value;
-      } else {
-        if (count == 1) {
-          several = &Build<irs::BooleanFilter>();
-          AddTermTo(*several, irs::Occur::Should, first);
-        }
-        AddTermTo(*several, irs::Occur::Should, token->value);
+    const auto tokens = Tokens(text);
+    if (tokens.size() > 1) {
+      auto& several = Build<irs::BooleanFilter>();
+      for (const auto& token : tokens) {
+        AddTermTo(several, irs::Occur::Should, irs::AsBytesView(token));
       }
-      ++count;
-    }
-    if (several != nullptr) {
-      SetThreshold(*several, 1);
-      return *several;
+      SetThreshold(several, 1);
+      return several;
     }
     auto& f = Build<irs::ByTerm>();
     *f.mutable_field_id() = default_field_id;
-    // A word the analyzer makes nothing of -- a lone `+` -- is searched for
-    // as it was written rather than as the empty term.
-    f.mutable_options()->term = count != 0 ? std::move(first) : text;
+    f.mutable_options()->term =
+      tokens.empty() ? irs::bytes_view{text} : irs::AsBytesView(tokens.front());
     return f;
   }
 
-  // A pattern of its own rather than a wildcard: `.` and `*` mean what a
-  // regular expression means by them, which is not what `%` and `_` mean.
   irs::ByRegexp& AddRegex(std::string_view value) {
     auto& f = Build<irs::ByRegexp>();
     *f.mutable_field_id() = default_field_id;
@@ -181,9 +164,6 @@ struct ParserContext {
     return true;
   }
 
-  // A phrase is built part by part as the grammar reads them, so nothing
-  // takes a string apart here: what a part is, and where it sits, are
-  // answers the parser already has.
   void BeginPhrase() {
     auto& f = Build<irs::ByPhrase>();
     *f.mutable_field_id() = default_field_id;
@@ -199,8 +179,6 @@ struct ParserContext {
     return f;
   }
 
-  // How far the part after it may sit from the part before, which the parts
-  // of a phrase that says nothing leave at one.
   void SetGap(int min, int max) {
     offs_min = static_cast<size_t>(min);
     offs_max = static_cast<size_t>(max);
@@ -234,14 +212,10 @@ struct ParserContext {
     node.Add(std::move(nested), irs::Occur::Must);
   }
 
-  // A word of a phrase is whatever the analyzer makes of it: one term, or
-  // several, and several of them sit one after another.
   void AddPhraseTerm(std::string_view word) {
     const auto text = Unescape(word);
-    tokenizer->reset(irs::ViewCast<char>(irs::bytes_view{text}));
-    auto token = irs::get<irs::TermAttr>(*tokenizer);
-    while (tokenizer->next()) {
-      Emplace<irs::ByTermOptions>().term = token->value;
+    for (const auto& token : Tokens(text)) {
+      Emplace<irs::ByTermOptions>().term = irs::AsBytesView(token);
     }
   }
 
@@ -251,15 +225,12 @@ struct ParserContext {
   }
 
   void AddPhraseWildcard(std::string_view word) {
-    // Only the literal head goes through the analyzer -- it would eat the
-    // pattern characters.
     const auto wildcard = FindPattern(word);
     auto pattern = Analyze(word.substr(0, wildcard));
     pattern.append(Pattern(word.substr(wildcard)));
     Emplace<irs::ByWildcardOptions>().term = std::move(pattern);
   }
 
-  // Where a pattern begins: the first `*` or `?` a backslash did not protect.
   static size_t FindPattern(std::string_view word) noexcept {
     for (size_t i = 0; i != word.size(); ++i) {
       if (word[i] == '\\') {
@@ -278,8 +249,6 @@ struct ParserContext {
     part.with_transpositions = true;
   }
 
-  // An n-gram similarity, built the same way: the grammar hands over the
-  // threshold, then the terms.
   void BeginNGram(float threshold) {
     auto& f = Build<irs::ByNGramSimilarity>();
     *f.mutable_field_id() = default_field_id;
@@ -311,8 +280,6 @@ struct ParserContext {
   irs::ByWildcard& AddWildcard(std::string_view value) {
     auto& f = Build<irs::ByWildcard>();
     *f.mutable_field_id() = default_field_id;
-    // Only the literal head goes through the analyzer -- it would eat the
-    // pattern characters.
     const auto wildcard = FindPattern(value);
     auto pattern = Normalize(value.substr(0, wildcard));
     pattern.append(Pattern(value.substr(wildcard)));
@@ -342,11 +309,6 @@ struct ParserContext {
     return f;
   }
 
-  // Lucene spells a wildcard `*` and `?`; the filters spell it `%` and `_`,
-  // with a backslash making either literal. That is the same boundary the
-  // field name and the analyzer are resolved at, so it is crossed here --
-  // otherwise a pattern reads as a term that happens to contain a star, and
-  // matches nothing.
   static irs::bstring Pattern(std::string_view word) {
     irs::bstring out;
     out.reserve(word.size());
@@ -354,8 +316,6 @@ struct ParserContext {
       const auto c = word[i];
       switch (c) {
         case '\\':
-          // What the query escaped stays literal, and `*` and `?` need no
-          // escaping once they are no longer the pattern characters.
           if (i + 1 != word.size()) {
             const auto next = word[++i];
             if (next != '*' && next != '?') {
@@ -372,7 +332,6 @@ struct ParserContext {
           break;
         case irs::WildcardMatch::kAnyStr:
         case irs::WildcardMatch::kAnyChr:
-          // Literal here, a pattern character there.
           out += static_cast<irs::byte_type>(irs::WildcardMatch::kEscape);
           out += static_cast<irs::byte_type>(c);
           break;
@@ -383,9 +342,6 @@ struct ParserContext {
     return out;
   }
 
-  // How far apart two parts of an ordered match may sit when nothing bounds
-  // them. Large rather than unbounded: the matcher compares against it, so
-  // it only has to be past any position a document can hold.
   static constexpr size_t kAnyGap = 1U << 24U;
 
   // The clause the grammar has just finished. It stays here until a modifier
@@ -486,9 +442,6 @@ struct ParserContext {
     return EndPhrase();
   }
 
-  // What a backslash protected is the character itself, and `\uXXXX` is the
-  // character it names. Lucene's `discardEscapeChar`: the query says how to
-  // spell a term, the index holds the term itself.
   static uint32_t Hex(char c) noexcept {
     if (c >= '0' && c <= '9') {
       return static_cast<uint32_t>(c - '0');
@@ -499,7 +452,7 @@ struct ParserContext {
     if (c >= 'A' && c <= 'F') {
       return static_cast<uint32_t>(c - 'A') + 10;
     }
-    return 16;  // not a digit
+    return 16;
   }
 
   static irs::bstring Unescape(std::string_view word) {
@@ -535,36 +488,29 @@ struct ParserContext {
     return out;
   }
 
+  std::span<const duckdb::string_t> Tokens(const irs::bstring& text) {
+    value_analyzer.Analyze(
+      *tokenizer,
+      duckdb::string_t{reinterpret_cast<const char*>(text.data()),
+                       static_cast<uint32_t>(text.size())},
+      value_tokens);
+    return value_tokens.terms();
+  }
+
   irs::bstring Analyze(std::string_view word) {
     const auto text = Unescape(word);
-    tokenizer->reset(irs::ViewCast<char>(irs::bytes_view{text}));
-    auto token = irs::get<irs::TermAttr>(*tokenizer);
-    if (tokenizer->next()) {
-      return irs::bstring{token->value};
-    }
-    return {};
+    const auto tokens = Tokens(text);
+    return tokens.empty() ? irs::bstring{}
+                          : irs::bstring{irs::AsBytesView(tokens.front())};
   }
 
-  // What a pattern, a distance or a bound is measured against: Lucene
-  // normalizes that text rather than tokenizing it -- `Analyzer#normalize`.
-  // The analyzer here has no such mode, so its answer is taken where it is
-  // the whole of what it was given, and the text as written where it is not:
-  // a quoted bound holds spaces, and tokenizing would keep only the first
-  // word of it.
   irs::bstring Normalize(std::string_view word) {
     auto text = Unescape(word);
-    tokenizer->reset(irs::ViewCast<char>(irs::bytes_view{text}));
-    auto token = irs::get<irs::TermAttr>(*tokenizer);
-    if (!tokenizer->next()) {
-      return text;
-    }
-    irs::bstring first{token->value};
-    return tokenizer->next() ? text : first;
+    const auto tokens = Tokens(text);
+    return tokens.size() == 1 ? irs::bstring{irs::AsBytesView(tokens.front())}
+                              : text;
   }
 
-  // Where a part goes: next to the one before it, or as far off as a gap
-  // asked. Zero is no gap rather than a gap of zero, which is what the
-  // one-argument `push_back` means.
   template<typename Part>
   Part& Emplace() {
     SDB_ASSERT(phrase != nullptr);
@@ -638,18 +584,11 @@ struct ParserContext {
   // Every document, which is what a query that names no term at all means.
   irs::All& AddAll() { return Build<irs::All>(); }
 
-  // A field with any value: Lucene's `field:*`. Nothing here answers it, so
-  // it is read and refused rather than quietly meaning something else.
   irs::Filter& AddFieldExists() {
     THROW_SQL_ERROR(
       ERR_MSG("field existence queries (`field:*`) are not supported"));
   }
 
-  // The terms an interval function is applied to. What such a function means
-  // for a document -- which documents hold a match at all -- is a question
-  // this engine can answer even without intervals to compose; where the
-  // answer depends on where the matches lie relative to each other, it
-  // cannot, and that function is refused instead.
   void BeginFn() {
     fn_terms.clear();
     fn_other = {};
@@ -657,9 +596,6 @@ struct ParserContext {
 
   void AddFnTerm(std::string_view word) { fn_terms.emplace_back(word); }
 
-  // A source that is not a term. What such a function means for a document
-  // depends on where its matches lie, and this engine composes documents
-  // rather than positions -- so the refusal says what it was given.
   void AddFnOther(std::string_view kind) { fn_other = kind; }
 
   void RequireTerms(std::string_view name) const {
@@ -671,7 +607,6 @@ struct ParserContext {
     }
   }
 
-  // One of them is enough.
   irs::Filter& EndFnAny() {
     RequireTerms("fn:or");
     auto& f = Build<irs::BooleanFilter>();
@@ -682,7 +617,6 @@ struct ParserContext {
     return f;
   }
 
-  // All of them, wherever they lie.
   irs::Filter& EndFnAll() {
     RequireTerms("fn:unordered");
     auto& f = Build<irs::BooleanFilter>();
@@ -702,16 +636,11 @@ struct ParserContext {
     return f;
   }
 
-  // In this order, however far apart: a phrase whose parts may sit anywhere
-  // after the one before them.
   irs::Filter& EndFnOrdered() {
     RequireTerms("fn:ordered");
     return FnPhrase(1, kAnyGap);
   }
 
-  // `maxgaps` bounds the words between, `maxwidth` the span end to end. Over
-  // one pair either is a distance; over more they bound a total across the
-  // whole match, and a phrase says only how far each part sits from the last.
   irs::Filter& EndFnMaxGaps(int gaps) {
     RequireTerms("fn:maxgaps");
     RequirePair("fn:maxgaps");
@@ -727,8 +656,6 @@ struct ParserContext {
     return FnPhrase(1, static_cast<size_t>(width) - 1);
   }
 
-  // An interval function whose answer depends on where matches lie relative
-  // to one another, which needs intervals this engine does not have.
   void Unsupported(std::string_view name) {
     THROW_SQL_ERROR(ERR_MSG("`", name, "` is not supported"));
   }
@@ -738,7 +665,6 @@ struct ParserContext {
   }
 };
 
-// Returns false on a parse error; the message is in ctx.error_message.
 bool ParseQuery(ParserContext& ctx, std::string_view input);
 
 }  // namespace sdb

@@ -21,22 +21,23 @@
 #include "sparse_ngram_tokenizer.hpp"
 
 #include <algorithm>
-#include <limits>
+#include <cstring>
 
-#if defined(__x86_64__)
-#include <immintrin.h>
-#endif
+#include "basics/assert.h"
+#include "iresearch/analysis/token_batch.hpp"
 
 namespace irs::analysis {
 namespace {
 
 constexpr size_t kBatch = 8 * 1024;
+constexpr size_t kHeadSlack = 64;
 
 constexpr uint64_t kMul1 = 0xc6a4a7935bd1e995ULL;
 constexpr uint64_t kMul2 = 0x228876a7198b743ULL;
 
 inline uint32_t HashBigram(const char* begin) {
-  uint64_t a = begin[0] * kMul1 + begin[1] * kMul2;
+  const uint64_t a = static_cast<uint8_t>(begin[0]) * kMul1 +
+                     static_cast<uint8_t>(begin[1]) * kMul2;
   return a + (~a >> 47);
 }
 
@@ -49,23 +50,9 @@ void FillHashesScalar(const char* data, size_t count, uint32_t* out) {
 #if defined(__x86_64__)
 __attribute__((target("avx512f,avx512dq"))) void FillHashesAvx512(
   const char* data, size_t count, uint32_t* out) {
-  const __m512i k1 = _mm512_set1_epi64(kMul1);
-  const __m512i k2 = _mm512_set1_epi64(kMul2);
-  const __m512i ones = _mm512_set1_epi64(-1);
-  size_t j = 0;
-  for (; j + 8 <= count; j += 8) {
-    const __m512i b0 = _mm512_cvtepi8_epi64(
-      _mm_loadl_epi64(reinterpret_cast<const __m128i*>(data + j)));
-    const __m512i b1 = _mm512_cvtepi8_epi64(
-      _mm_loadl_epi64(reinterpret_cast<const __m128i*>(data + j + 1)));
-    const __m512i a =
-      _mm512_add_epi64(_mm512_mullo_epi64(b0, k1), _mm512_mullo_epi64(b1, k2));
-    const __m512i not_a = _mm512_xor_si512(a, ones);
-    const __m512i h = _mm512_add_epi64(a, _mm512_srli_epi64(not_a, 47));
-    _mm256_storeu_si256(reinterpret_cast<__m256i*>(out + j),
-                        _mm512_cvtepi64_epi32(h));
+  for (size_t j = 0; j < count; ++j) {
+    out[j] = HashBigram(data + j);
   }
-  FillHashesScalar(data + j, count - j, out + j);
 }
 #endif
 
@@ -84,7 +71,7 @@ const FillHashesFn kFillHashes = ResolveFillHashes();
 
 }  // namespace
 
-Analyzer::ptr SparseNGramTokenizer::Make(Options opts) {
+Tokenizer::ptr SparseNGramTokenizer::Make(Options opts) {
   return std::make_unique<SparseNGramTokenizer>(std::move(opts));
 }
 
@@ -93,124 +80,154 @@ SparseNGramTokenizer::SparseNGramTokenizer(Options options)
   _options.max_ngram_length = std::max<size_t>(_options.max_ngram_length, 3);
 }
 
-bool SparseNGramTokenizer::reset(std::string_view value) {
-  if (value.size() > std::numeric_limits<uint32_t>::max()) {
-    return false;
+void SparseNGramTokenizer::EnsureScratch() {
+  if (!_hashes.empty()) [[likely]] {
+    return;
   }
-  _data = ViewCast<byte_type>(value);
-  std::get<IncAttr>(_attrs).value = 1;
-  _stack.clear();
-  _head = 0;
-  _pending_size = 0;
-  _pending_idx = 0;
-  _pos = 0;
-  _hash_base = 0;
-  _hash_end = 0;
-  _finalized = !_options.covering;
-  return true;
+  _stack.resize(_options.max_ngram_length + kHeadSlack + 2);
+  _pending.resize(2 * (kBatch + _stack.size()));
+  _hashes.resize(kBatch);
 }
 
-void SparseNGramTokenizer::FillHashes() {
-  const auto* data = reinterpret_cast<const char*>(_data.data());
-  const size_t end = std::min(_data.size() - 1, _pos + kBatch);
-  _hashes.resize(end - _pos);
-  kFillHashes(data + _pos, end - _pos, _hashes.data());
-  _hash_base = _pos;
-  _hash_end = end;
+void SparseNGramTokenizer::FillHashes(Cursor& ctx) {
+  const auto* data = reinterpret_cast<const char*>(ctx.data.data());
+  const size_t end = std::min(ctx.data.size() - 1, ctx.pos + kBatch);
+  kFillHashes(data + ctx.pos, end - ctx.pos, _hashes.data());
+  ctx.hash_base = ctx.pos;
+  ctx.hash_end = end;
 }
 
-bool SparseNGramTokenizer::Advance() {
-  _pending_idx = 0;
-  const size_t pos_end = _data.size() >= 2 ? _data.size() - 1 : 0;
-  if (_pending.size() < 2 * StackSize() + kBatch) {
-    _pending.resize(2 * StackSize() + kBatch);
-  }
-  _pending_out = _pending.data();
-  while (_pending_out == _pending.data()) {
-    if (_pos < pos_end) {
-      if (_pos >= _hash_end) {
-        FillHashes();
+bool SparseNGramTokenizer::Advance(Cursor& ctx) {
+  const size_t pos_end = ctx.data.size() >= 2 ? ctx.data.size() - 1 : 0;
+  HashAndPos* const base = _stack.data();
+  HashAndPos* const limit = base + _stack.size();
+  HashAndPos* top = base + ctx.top;
+  size_t head = ctx.head;
+  uint64_t* const pending = _pending.data();
+  uint64_t* const pending_end = pending + _pending.size();
+  uint64_t* out = pending;
+  while (out == pending) {
+    if (ctx.pos < pos_end) {
+      if (ctx.pos >= ctx.hash_end) {
+        FillHashes(ctx);
       }
-      const size_t budget = (_pending.size() - 2 * StackSize()) / 3;
-      if (budget == 0) {
-        _pending.resize(_pending.size() + 2 * StackSize() + kBatch);
-        _pending_out = _pending.data();
-        continue;
-      }
-      const size_t end_i = std::min({pos_end, _hash_end, _pos + budget});
-      const uint32_t* hashes = _hashes.data() - _hash_base;
+      const uint32_t* hashes = _hashes.data() - ctx.hash_base;
+      const size_t end_i = std::min(pos_end, ctx.hash_end);
+      const size_t depth = static_cast<size_t>(top - (base + head));
+      const size_t room = static_cast<size_t>(pending_end - out);
+      SDB_ASSERT(room > depth);
+      const size_t stop_i = std::min(end_i, ctx.pos + (room - depth) / 2);
       if (_options.covering) {
-        for (size_t i = _pos; i < end_i; ++i) {
-          StepCovering(i, hashes[i]);
+        for (size_t i = ctx.pos; i < stop_i; ++i) {
+          StepCovering(base, top, head, out, i, hashes[i]);
         }
       } else {
-        for (size_t i = _pos; i < end_i; ++i) {
-          StepAll(i, hashes[i]);
+        for (size_t i = ctx.pos; i < stop_i; ++i) {
+          StepAll(base, limit, top, out, i, hashes[i]);
         }
       }
-      _pos = end_i;
-    } else if (!_finalized) {
-      _finalized = true;
-      while (StackSize() > 1) {
-        const size_t last = _stack.back().pos + 2;
-        _stack.pop_back();
-        Emit(_stack.back().pos, last);
+      SDB_ASSERT(top <= limit);
+      ctx.pos = stop_i;
+      if (stop_i < end_i) {
+        break;
+      }
+    } else if (_options.covering && top - (base + head) > 1) {
+      while (top - (base + head) > 1) {
+        const size_t last = top[-1].pos + 2;
+        --top;
+        Emit(out, top[-1].pos, last);
       }
     } else {
       break;
     }
   }
-  _pending_size = _pending_out - _pending.data();
-  return _pending_size != 0;
+  ctx.top = static_cast<size_t>(top - base);
+  ctx.head = head;
+  ctx.pending_size = static_cast<size_t>(out - pending);
+  return ctx.pending_size != 0;
 }
 
-void SparseNGramTokenizer::StepAll(size_t i, uint32_t hash) {
-  const HashAndPos p{hash, i};
+void SparseNGramTokenizer::StepAll(HashAndPos* base, HashAndPos* limit,
+                                   HashAndPos*& top, uint64_t*& out, size_t i,
+                                   uint32_t hash) const {
   const size_t min_pos = i + 2 - std::min(i + 2, _options.max_ngram_length);
-  while (!_stack.empty() && p.hash > _stack.back().hash) {
-    if (_stack.back().pos < min_pos) {
-      _stack.clear();
+  while (top != base && hash > top[-1].hash) {
+    if (top[-1].pos < min_pos) {
+      top = base;
       break;
     }
-    Emit(_stack.back().pos, i + 2);
-    while (_stack.size() > 1 &&
-           _stack.back().hash == _stack[_stack.size() - 2].hash) {
-      _stack.pop_back();
+    Emit(out, top[-1].pos, i + 2);
+    while (top - base > 1 && top[-1].hash == top[-2].hash) {
+      --top;
     }
-    _stack.pop_back();
+    --top;
   }
-  if (!_stack.empty() && _stack.back().pos >= min_pos) {
-    Emit(_stack.back().pos, i + 2);
+  if (top != base && top[-1].pos >= min_pos) {
+    Emit(out, top[-1].pos, i + 2);
   }
-  _stack.push_back(p);
+  *top++ = {hash, static_cast<uint32_t>(i)};
+  if (top == limit) [[unlikely]] {
+    HashAndPos* live = base;
+    while (live != top && live->pos < min_pos) {
+      ++live;
+    }
+    const size_t keep = static_cast<size_t>(top - live);
+    std::memmove(base, live, keep * sizeof *base);
+    top = base + keep;
+  }
 }
 
-void SparseNGramTokenizer::StepCovering(size_t i, uint32_t hash) {
-  const HashAndPos p{hash, i};
-  if (StackSize() > 1 &&
-      i - _stack[_head].pos + 3 >= _options.max_ngram_length) {
-    Emit(_stack[_head].pos, _stack[_head + 1].pos + 2);
-    if (++_head >= 64) {
-      _stack.erase(_stack.begin(), _stack.begin() + _head);
-      _head = 0;
+void SparseNGramTokenizer::StepCovering(HashAndPos* base, HashAndPos*& top,
+                                        size_t& head, uint64_t*& out, size_t i,
+                                        uint32_t hash) const {
+  HashAndPos* live = base + head;
+  if (top - live > 1 && i - live->pos + 3 >= _options.max_ngram_length) {
+    Emit(out, live->pos, live[1].pos + 2);
+    if (++head >= kHeadSlack) {
+      std::memmove(base, base + head,
+                   static_cast<size_t>(top - (base + head)) * sizeof *base);
+      top -= head;
+      head = 0;
     }
+    live = base + head;
   }
-  while (StackSize() > 0 && p.hash > _stack.back().hash) {
-    if (_stack[_head].hash == _stack.back().hash) {
-      Emit(_stack.back().pos, i + 2);
-      while (StackSize() > 1) {
-        const size_t last = _stack.back().pos + 2;
-        _stack.pop_back();
-        Emit(_stack.back().pos, last);
+  while (top != live && hash > top[-1].hash) {
+    if (live->hash == top[-1].hash) {
+      Emit(out, top[-1].pos, i + 2);
+      while (top - live > 1) {
+        const size_t last = top[-1].pos + 2;
+        --top;
+        Emit(out, top[-1].pos, last);
       }
     }
-    _stack.pop_back();
-    if (_head == _stack.size()) {
-      _stack.clear();
-      _head = 0;
+    --top;
+    if (top == live) {
+      top = base;
+      head = 0;
+      live = base;
     }
   }
-  _stack.push_back(p);
+  *top++ = {hash, static_cast<uint32_t>(i)};
 }
+
+template<TokenLayout Layout>
+bool SparseNGramTokenizer::DoFill(duckdb::string_t raw, TokenSink& sink) {
+  const size_t size = raw.GetSize();
+  EnsureScratch();
+  const uint64_t* const pending = _pending.data();
+  Cursor ctx{.data = {reinterpret_cast<const byte_type*>(raw.GetData()), size}};
+  while (Advance(ctx)) {
+    sink.EmitK<Layout>(ctx.pending_size, ctx.data.data(),
+                       ctx.data.data() + ctx.data.size(),
+                       [&](size_t j) IRS_FORCE_INLINE {
+                         const uint64_t entry = pending[j];
+                         return EmitKSlot{static_cast<uint32_t>(entry),
+                                          static_cast<uint32_t>(entry >> 32)};
+                       });
+  }
+  return true;
+}
+
+template class TypedTokenizer<SparseNGramTokenizer>;
 
 }  // namespace irs::analysis

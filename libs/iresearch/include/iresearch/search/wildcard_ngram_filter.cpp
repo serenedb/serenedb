@@ -29,6 +29,7 @@
 #include <duckdb/common/vector/flat_vector.hpp>
 
 #include "iresearch/analysis/token_attributes.hpp"
+#include "iresearch/analysis/token_sinks.hpp"
 #include "iresearch/analysis/wildcard_analyzer.hpp"
 #include "iresearch/formats/column/col_reader.hpp"
 #include "iresearch/formats/column/column_reader.hpp"
@@ -199,15 +200,18 @@ ByWildcardNGramOptions::ByWildcardNGramOptions(
   std::string_view pattern, analysis::WildcardAnalyzer& analyzer,
   bool has_positions) {
   auto& ngram = analyzer.ngram();
-  const auto* term = irs::get<TermAttr>(ngram);
+  ValueAnalyzer value_analyzer;
+  ValueTokens tokens;
 
   auto make_parts_impl = [&](std::string_view v) {
-    if (!ngram.reset(v)) {
+    if (!value_analyzer.Analyze(
+          ngram, duckdb::string_t{v.data(), static_cast<uint32_t>(v.size())},
+          tokens)) {
       return false;
     }
     ByPhraseOptions part;
-    while (ngram.next()) {
-      part.push_back<ByTermOptions>(ByTermOptions{bstring{term->value}});
+    for (const auto& token : tokens.terms()) {
+      part.push_back<ByTermOptions>(ByTermOptions{bstring{AsBytesView(token)}});
     }
     if (part.empty()) {
       return false;

@@ -27,6 +27,7 @@
 #include <algorithm>
 
 #include "basics/shared.hpp"
+#include "iresearch/utils/utf8_case_tables.hpp"
 #include "iresearch/utils/utf8_character_tables.hpp"
 
 namespace irs::utf8_utils {
@@ -66,6 +67,22 @@ constexpr uint16_t CharGeneralCategory(uint32_t c) noexcept {
 
 constexpr char CharPrimaryCategory(uint32_t c) noexcept {
   return static_cast<char>(CharGeneralCategory(c) >> 8U);
+}
+
+constexpr uint32_t CharCaseSimpleImpl(uint32_t c, const auto& table) noexcept {
+  const auto it = absl::c_lower_bound(table, CaseMap{c, 0});
+  if (it != table.end() && it->cp == c) {
+    return it->to;
+  }
+  return c;
+}
+
+constexpr uint32_t CharToLowerSimple(uint32_t c) noexcept {
+  return CharCaseSimpleImpl(c, kSimpleLowerTable);
+}
+
+constexpr uint32_t CharToUpperSimple(uint32_t c) noexcept {
+  return CharCaseSimpleImpl(c, kSimpleUpperTable);
 }
 
 }  // namespace irs::utf8_utils

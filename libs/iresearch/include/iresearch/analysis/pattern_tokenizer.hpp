@@ -20,63 +20,32 @@
 
 #pragma once
 
-#include "analyzer.hpp"
-#include "iresearch/utils/attribute_helper.hpp"
-#include "re2/re2.h"
-#include "token_attributes.hpp"
+#include <string>
+#include <string_view>
+#include <variant>
 
-namespace re2 {
-
-class RE2;
-}
+#include "iresearch/analysis/text/delim/finders.hpp"
+#include "tokenizer.hpp"
 
 namespace irs::analysis {
 
-class PatternTokenizer final : public TypedAnalyzer<PatternTokenizer>,
-                               private util::Noncopyable {
+class PatternTokenizer : private util::Noncopyable {
  public:
   struct Options {
     using Owner = PatternTokenizer;
-
-    // RE2 regular expression used for matching or splitting
-    // Must be a valid regex
     std::string pattern;
-
-    // Capture group to extract:
-    // -1 means "split mode" (emit text between matches),
-    //  0 means "whole match",
-    //  N>0 means "N-th capturing group"
+    // -1 splits on matches, 0 emits whole matches, N>0 emits the N-th group.
     int group = -1;
   };
 
+  using Split =
+    std::variant<std::monostate, delim::OneCharFinder, delim::ManyCharsFinder,
+                 delim::ByteRangesFinder, delim::OneStringFinder,
+                 delim::OneLongStringFinder>;
+
   static constexpr std::string_view type_name() noexcept { return "pattern"; }
-  static ptr Make(Options opts);
-
-  explicit PatternTokenizer(std::string_view pattern, int group = -1);
-  ~PatternTokenizer() override;
-
-  Attribute* GetMutable(TypeInfo::type_id type) noexcept final {
-    return irs::GetMutable(_attrs, type);
-  }
-
-  bool next() final;
-  bool reset(std::string_view data) final;
-
- private:
-  using attributes = std::tuple<IncAttr, OffsAttr, TermAttr>;
-
-  std::string_view _data;  // buffer to store the entire input string
-  re2::RE2 _pattern;       // compiled regex pattern
-  int _group;              // which group to extract (-1 for split)
-
-  // State for pattern matching
-  size_t _current_pos = 0;  // current position in _data
-  bool _exhausted = false;  // whether we've exhausted the input
-  int _num_groups;          // number of capturing groups in the pattern
-
-  std::vector<re2::StringPiece> _matches;  // buffer for regex matches
-
-  attributes _attrs;
+  static Tokenizer::ptr Make(Options opts);
+  static Split Detect(std::string_view pattern, int group = -1);
 };
 
 }  // namespace irs::analysis

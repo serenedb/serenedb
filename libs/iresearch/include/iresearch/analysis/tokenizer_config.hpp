@@ -25,13 +25,13 @@
 #include <utility>
 #include <variant>
 
-#include "analyzer.hpp"
 #include "basics/serializer.h"
 #include "classification_tokenizer.hpp"
 #include "collation_tokenizer.hpp"
 #include "delimited_tokenizer.hpp"
 #include "geo_analyzer.hpp"
-#include "minhash_tokenizer.hpp"
+#include "icu_text_tokenizer.hpp"
+#include "iresearch/analysis/keyword_tokenizer.hpp"
 #include "multi_delimited_tokenizer.hpp"
 #include "nearest_neighbors_tokenizer.hpp"
 #include "ngram_tokenizer.hpp"
@@ -40,20 +40,28 @@
 #include "pattern_tokenizer.hpp"
 #include "pipeline_tokenizer.hpp"
 #include "segmentation_tokenizer.hpp"
+#include "shingle_tokenizer.hpp"
 #include "solr_synonyms_tokenizer.hpp"
 #include "sparse_ngram_tokenizer.hpp"
+#include "split_by_non_alpha_tokenizer.hpp"
+#include "sql_tokenizer.hpp"
 #include "stemming_tokenizer.hpp"
 #include "stopwords_tokenizer.hpp"
 #include "text_tokenizer.hpp"
-#include "tokenizers.hpp"
+#include "tokenizer.hpp"
 #include "union_tokenizer.hpp"
 #include "wildcard_analyzer.hpp"
 #include "wordnet_synonyms_tokenizer.hpp"
 
+namespace duckdb {
+
+class SharedObjectCache;
+
+}  // namespace duckdb
 namespace irs::analysis {
 
 struct TokenizerConfig {
-  std::variant<StringTokenizer::Options, TextTokenizer::Options,
+  std::variant<KeywordTokenizer::Options, TextTokenizer::Options,
                StemmingTokenizer::Options, DelimitedTokenizer::Options,
                MultiDelimitedTokenizer::Options, PatternTokenizer::Options,
                PathHierarchyTokenizer::Options, NGramTokenizerBase::Options,
@@ -63,8 +71,10 @@ struct TokenizerConfig {
                WordnetSynonymsTokenizer::Options,
                NearestNeighborsTokenizer::Options, GeoPointAnalyzer::Options,
                GeoJsonAnalyzer::Options, WildcardAnalyzer::Options,
-               MinHashTokenizer::Options, PipelineTokenizer::Options,
-               UnionTokenizer::Options, SparseNGramTokenizer::Options>
+               PipelineTokenizer::Options, UnionTokenizer::Options,
+               SparseNGramTokenizer::Options, SplitByNonAlphaTokenizer::Options,
+               SqlTokenizer::Options, ShingleTokenizer::Options,
+               IcuTextTokenizer::Options>
     config;
 };
 
@@ -109,10 +119,18 @@ inline TokenizerConfig Clone(const TokenizerConfig& cfg) {
         copy.ngram_size = opts.ngram_size;
         copy.base_analyzer = detail::CloneChild(opts.base_analyzer);
         out.config = std::move(copy);
-      } else if constexpr (std::is_same_v<Options, MinHashTokenizer::Options>) {
+      } else if constexpr (std::is_same_v<Options, ShingleTokenizer::Options>) {
         Options copy;
-        copy.num_hashes = opts.num_hashes;
-        copy.analyzer = detail::CloneChild(opts.analyzer);
+        copy.min_shingle_size = opts.min_shingle_size;
+        copy.max_shingle_size = opts.max_shingle_size;
+        copy.output_unigrams = opts.output_unigrams;
+        copy.output_unigrams_if_no_shingles =
+          opts.output_unigrams_if_no_shingles;
+        copy.token_separator = opts.token_separator;
+        copy.filler_token = opts.filler_token;
+        copy.frequent_words = opts.frequent_words;
+        copy.store_tokens = opts.store_tokens;
+        copy.base_analyzer = detail::CloneChild(opts.base_analyzer);
         out.config = std::move(copy);
       } else {
         out.config = opts;
@@ -123,11 +141,16 @@ inline TokenizerConfig Clone(const TokenizerConfig& cfg) {
 }
 
 // Takes the config by value; callers preserving a stored config pass Clone().
-inline Analyzer::ptr CreateAnalyzer(TokenizerConfig cfg) {
+inline Tokenizer::ptr CreateTokenizer(TokenizerConfig cfg,
+                                      duckdb::SharedObjectCache& cache) {
   return std::visit(
-    [](auto&& opts) -> Analyzer::ptr {
-      using Options = std::decay_t<decltype(opts)>;
-      return Options::Owner::Make(std::move(opts));
+    [&](auto&& opts) -> Tokenizer::ptr {
+      using Owner = typename std::decay_t<decltype(opts)>::Owner;
+      if constexpr (requires { Owner::Make(std::move(opts), cache); }) {
+        return Owner::Make(std::move(opts), cache);
+      } else {
+        return Owner::Make(std::move(opts));
+      }
     },
     std::move(cfg.config));
 }

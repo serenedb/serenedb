@@ -66,7 +66,7 @@
 #include <duckdb/main/database.hpp>
 #include <filesystem>
 #include <iresearch/analysis/delimited_tokenizer.hpp>
-#include <iresearch/analysis/tokenizers.hpp>
+#include <iresearch/analysis/tokenizer.hpp>
 #include <iresearch/formats/formats.hpp>
 #include <iresearch/index/directory_reader.hpp>
 #include <iresearch/index/index_features.hpp>
@@ -88,6 +88,7 @@
 
 #include "basics/assert.h"
 #include "basics/duckdb_engine.h"
+#include "insert_field.hpp"
 
 namespace {
 
@@ -208,10 +209,9 @@ std::string MakeZipfBody(size_t i) {
 struct BodyField {
   irs::field_id Id() const noexcept { return kBodyId; }
 
-  irs::Tokenizer& GetTokens() const {
-    stream.reset(value);
-    return stream;
-  }
+  irs::analysis::Tokenizer& GetTokens() const { return stream; }
+
+  std::string_view Value() const noexcept { return value; }
 
   irs::IndexFeatures GetIndexFeatures() const noexcept {
     return irs::IndexFeatures::Freq;
@@ -262,7 +262,7 @@ const Index& IndexOf(size_t docs, bool zipf = false) {
     for (size_t i = 0; i != docs; ++i) {
       field.value = zipf ? MakeZipfBody(i) : MakeBody(i, docs);
       auto doc = trx.Insert();
-      doc.Insert(field);
+      tests::InsertField(doc, field);
     }
     trx.Commit();
   }

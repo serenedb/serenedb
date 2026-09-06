@@ -39,6 +39,7 @@
 #include "basics/memory.hpp"
 #include "basics/shared.hpp"
 #include "basics/system-compiler.h"
+#include "iresearch/error/error.hpp"
 #include "iresearch/formats/posting_meta.hpp"
 #include "iresearch/index/index_features.hpp"
 #include "iresearch/search/lead/node.hpp"
@@ -51,10 +52,11 @@ namespace irs {
 
 class PosAttr;
 
-// One term's documents as flush produces them and merge consumes them: in
+// One term's documents as a merge hands them to the postings writer: in
 // ascending order, one at a time, with what the field stores beside each of
 // them. A document stream and nothing else -- no score, no probe, no
-// two-phase check -- so it is a `lead::Node`.
+// two-phase check -- so it is a `lead::Node`. Flush hands the writer
+// `PostingRows` instead.
 struct TermPostings : lead::Node {
   using ptr = memory::managed_ptr<TermPostings>;
 
@@ -290,8 +292,103 @@ class LoserScoreCollector {
   Node _root{};
 };
 
+// One term's postings as block-contiguous columns: one row per (doc,
+// position) occurrence, docs non-decreasing, freq(doc) = run length of
+// equal doc. `pos`/`offs_*` are null when the field lacks the feature.
+struct PostingsSpan {
+  const uint32_t* docs;
+  const uint32_t* pos;
+  const uint32_t* offs_start;
+  const uint32_t* offs_end;
+  size_t count;
+};
+
+// One term's postings rows for a span-capable writer: either one
+// contiguous span, or a row range over 2-level blocked lanes (the flush
+// scatter shape), read in place -- no virtual dispatch, no copies.
+// `span.docs` selects the form.
+struct PostingRows {
+  PostingsSpan span;
+  const uint32_t* const* docs_blocks;
+  const uint32_t* const* pos_blocks;
+  const uint32_t* const* offs_start_blocks;
+  const uint32_t* const* offs_end_blocks;
+  uint64_t begin;
+  uint64_t end;
+  uint32_t block_shift;
+
+  // Walks doc runs in order: `on_doc(doc, freq)` once per doc with its
+  // complete freq (the skip protocol needs it up front), then
+  // `on_positions(pos, offs_start, offs_end, n)` for each contiguous piece
+  // of the doc's rows (one in all but the block-boundary case). The
+  // doc-only overload compiles the position emission out.
+  template<typename OnDoc>
+  void VisitRuns(OnDoc&& on_doc) const {
+    Visit<false>(on_doc, nullptr);
+  }
+
+  template<typename OnDoc, typename OnPositions>
+  void VisitRuns(OnDoc&& on_doc, OnPositions&& on_positions) const {
+    Visit<true>(on_doc, on_positions);
+  }
+
+ private:
+  template<bool WithPositions, typename OnDoc, typename OnPositions>
+  void Visit(OnDoc&& on_doc, OnPositions&& on_positions) const {
+    if (span.docs != nullptr) {
+      size_t i = 0;
+      while (i < span.count) {
+        const doc_id_t doc = span.docs[i];
+        size_t j = i + 1;
+        while (j < span.count && span.docs[j] == doc) {
+          ++j;
+        }
+        on_doc(doc, static_cast<uint32_t>(j - i));
+        if constexpr (WithPositions) {
+          on_positions(span.pos + i,
+                       span.offs_start ? span.offs_start + i : nullptr,
+                       span.offs_end ? span.offs_end + i : nullptr, j - i);
+        }
+        i = j;
+      }
+      return;
+    }
+    // blocked form, taken only by a block-crossing term: a flat row cursor
+    // makes runs cross block boundaries transparently, so the freq is
+    // complete before the doc is handed over; only position emission has
+    // to split at block edges (the lanes are not contiguous across them)
+    const uint64_t mask = (uint64_t{1} << block_shift) - 1;
+    const auto doc_at = [&](uint64_t row) {
+      return docs_blocks[row >> block_shift][row & mask];
+    };
+    for (auto row = begin; row != end;) {
+      const doc_id_t doc = doc_at(row);
+      auto run_end = row + 1;
+      while (run_end != end && doc_at(run_end) == doc) {
+        ++run_end;
+      }
+      on_doc(doc, static_cast<uint32_t>(run_end - row));
+      if constexpr (WithPositions) {
+        for (auto cur = row; cur != run_end;) {
+          const auto block = cur >> block_shift;
+          const auto off = static_cast<size_t>(cur & mask);
+          const auto stop = std::min(run_end, (block + 1) << block_shift);
+          on_positions(
+            pos_blocks[block] + off,
+            offs_start_blocks ? offs_start_blocks[block] + off : nullptr,
+            offs_end_blocks ? offs_end_blocks[block] + off : nullptr,
+            static_cast<size_t>(stop - cur));
+          cur = stop;
+        }
+      }
+      row = run_end;
+    }
+  }
+};
+
 // What a field writer reads: each term hands over its posting list whole,
-// which is what `PostingsWriter::Write` consumes. The write-side walk never
+// through the batched span pull when the reader provides one and through
+// `postings()`/`PostingsWriter::Write` otherwise. The write-side walk never
 // asks what a term's postings cost, so it owes no record -- a separate
 // contract rather than a mode of `TermIterator`.
 struct TermOnlyIterator : Iterator<bytes_view, AttributeProvider> {
@@ -300,6 +397,22 @@ struct TermOnlyIterator : Iterator<bytes_view, AttributeProvider> {
   // Return the associated posting list with the requested features.
   [[nodiscard]] virtual TermPostings::ptr postings(
     IndexFeatures features) const = 0;
+
+  // Columnar in-memory readers expose the current term's postings as
+  // in-place row views so a postings writer can consume them without
+  // per-doc iterator dispatch; file-backed and merge iterators keep
+  // `postings`.
+  // Batched term pull: fills a prefix of the parallel `terms`/`postings`
+  // arrays with consecutive terms. Returns how many terms were filled
+  // (0 = exhausted). Term views and row data stay valid until the following
+  // NextTermsWithPostings call. A reader without a batched pull is
+  // compaction-only and must never reach the flush path, so the default
+  // refuses rather than reporting an empty field.
+  virtual size_t NextTermsWithPostings(std::span<bytes_view> /*terms*/,
+                                       std::span<PostingRows> /*postings*/,
+                                       IndexFeatures /*features*/) {
+    throw IndexError{"term reader has no batched postings pull"};
+  }
 };
 
 struct TermIterator : TermOnlyIterator {

@@ -23,8 +23,9 @@
 #include <array>
 #include <duckdb/main/database.hpp>
 #include <iostream>
-#include <iresearch/analysis/analyzer.hpp>
 #include <iresearch/analysis/geo_analyzer.hpp>
+#include <iresearch/analysis/token_batch.hpp>
+#include <iresearch/analysis/tokenizer.hpp>
 #include <iresearch/formats/column/col_reader.hpp>
 #include <iresearch/formats/column/column_writer.hpp>
 #include <iresearch/formats/formats.hpp>
@@ -65,12 +66,12 @@ duckdb::DatabaseInstance& Db() {
 inline constexpr irs::field_id kGeoColumnId = 1;
 
 // A geo field that tokenizes a GeoJSON shape (text) into S2 terms. The
-// analyzer is constructed once per field instance; reset() is called per
+// analyzer is constructed once per field instance; Fill() is driven per
 // document with the shape text to index.
 struct GeoField {
   irs::field_id id{kGeoColumnId};
   std::string_view shape_text;
-  irs::analysis::Analyzer::ptr analyzer{irs::analysis::GeoJsonAnalyzer::Make(
+  irs::analysis::Tokenizer::ptr analyzer{irs::analysis::GeoJsonAnalyzer::Make(
     irs::analysis::GeoJsonAnalyzer::Options{})};
 
   irs::field_id Id() const noexcept { return id; }
@@ -79,11 +80,22 @@ struct GeoField {
     return irs::IndexFeatures::None;
   }
 
-  irs::Tokenizer& GetTokens() const {
-    static_cast<irs::analysis::GeoAnalyzer&>(*analyzer).reset(shape_text);
-    return *analyzer;
-  }
+  irs::analysis::Tokenizer& GetTokens() const { return *analyzer; }
+
+  std::string_view Value() const noexcept { return shape_text; }
 };
+
+bool InsertTokens(const irs::IndexWriter::Document& doc, const auto& field) {
+  const duckdb::string_t value{field.Value().data(),
+                               static_cast<uint32_t>(field.Value().size())};
+  const irs::doc_id_t doc_id = doc.DocId();
+  return doc.WithTokens(field.Id(), field.GetIndexFeatures(), nullptr,
+                        [&](irs::FieldInverter& fld, irs::TokenSink& w) {
+                          fld.Configure(field.GetTokens().Traits());
+                          field.GetTokens().Fill(value, doc_id, w,
+                                                 {fld.Layout()});
+                        });
+}
 
 // Append one BLOB row (the GeoJSON source text of the shape) to the cs column.
 // Source coding force-includes this column and the filter re-parses it.
@@ -182,7 +194,7 @@ irs::DirectoryReader BuildIndex(irs::Directory& dir,
 
       geo.shape_text = entry.geometry;
       auto doc = trx.Insert();
-      doc.Insert(geo);
+      InsertTokens(doc, geo);
 
       if (geo_cw == nullptr) {
         geo_cw = &doc.GetColWriter()->OpenColumn(kGeoColumnId,

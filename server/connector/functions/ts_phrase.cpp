@@ -24,6 +24,7 @@
 #include <cstdint>
 #include <duckdb/planner/expression/bound_cast_expression.hpp>
 #include <iresearch/analysis/token_attributes.hpp>
+#include <iresearch/analysis/token_sinks.hpp>
 #include <iresearch/search/phrase_filter.hpp>
 #include <iresearch/search/phrase_query.hpp>
 #include <iresearch/search/range_filter.hpp>
@@ -42,18 +43,13 @@
 namespace sdb::connector {
 namespace {
 
-// DECIMAL/DOUBLE -> BIGINT rounds even under a strict cast, so
-// integrality is enforced by an exact round-trip: 2.0 passes, 1.5
-// errors instead of silently becoming 2.
 bool TryCastExactInt64(const duckdb::Value& v, duckdb::Value& out) {
   if (v.IsNull() || !v.type().IsNumeric() ||
-      !v.DefaultTryCastAs(duckdb::LogicalType::BIGINT, out,
-                          /*error_message=*/nullptr, /*strict=*/true)) {
+      !v.DefaultTryCastAs(duckdb::LogicalType::BIGINT, out, nullptr, true)) {
     return false;
   }
   duckdb::Value back;
-  return out.DefaultTryCastAs(v.type(), back,
-                              /*error_message=*/nullptr, /*strict=*/false) &&
+  return out.DefaultTryCastAs(v.type(), back, nullptr, false) &&
          duckdb::Value::NotDistinctFrom(back, v);
 }
 
@@ -121,8 +117,6 @@ void FromPhrase(BoolTarget filter, const FilterContext& ctx,
                     ERR_HINT(kSyntaxHint));
   }
 
-  // `slop := N`: the binder appends named varargs after the positional
-  // ones and keeps the name as the child's alias.
   std::optional<int64_t> arg_slop;
   for (const auto& child : func.GetChildren()) {
     if (!absl::EqualsIgnoreCase(child->GetAlias().GetIdentifierName(),
@@ -156,7 +150,8 @@ void FromPhrase(BoolTarget filter, const FilterContext& ctx,
     PickPerKindFieldId(column_info, duckdb::LogicalTypeId::VARCHAR);
   auto* opts = phrase.mutable_options();
   auto& analyzer = ctx.tokenizer;
-  const irs::TermAttr* token = irs::get<irs::TermAttr>(analyzer);
+  irs::ValueAnalyzer value_analyzer;
+  irs::ValueTokens tokens;
 
   std::optional<PhraseGap> pending_gap;
 
@@ -173,18 +168,15 @@ void FromPhrase(BoolTarget filter, const FilterContext& ctx,
     }
     if (const_val->type().id() == duckdb::LogicalTypeId::VARCHAR ||
         const_val->type().id() == duckdb::LogicalTypeId::BLOB) {
-      auto text = duckdb::StringValue::Get(*const_val);
-      analyzer.reset(std::string_view{text});
-      while (analyzer.next()) {
+      value_analyzer.Analyze(
+        analyzer, const_val->GetValueUnsafe<duckdb::string_t>(), tokens);
+      for (const auto& tok : tokens.terms()) {
         if (pending_gap) {
-          // First token of a new text pattern: apply pending gap.
           opts
             ->push_back<irs::ByTermOptions>(pending_gap->min, pending_gap->max)
-            .term.assign(token->value);
+            .term = irs::AsBytesView(tok);
         } else {
-          // No pending gap: first term or adjacent token within same
-          // pattern.
-          opts->push_back<irs::ByTermOptions>().term.assign(token->value);
+          opts->push_back<irs::ByTermOptions>().term = irs::AsBytesView(tok);
         }
         pending_gap.reset();
       }
@@ -252,17 +244,21 @@ void EmitPhraseTokens(irs::ByPhraseOptions& options, const FilterContext& ctx,
                       const SearchColumnInfo& column_info,
                       std::string_view text, PhraseGap base_gap) {
   auto& analyzer = ctx.tokenizer;
-  if (!analyzer.reset(text)) {
+  irs::ValueAnalyzer value_analyzer;
+  irs::ValueTokens tokens;
+  if (!value_analyzer.Analyze(
+        analyzer,
+        duckdb::string_t{text.data(), static_cast<uint32_t>(text.size())},
+        tokens)) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                     ERR_MSG("ts_phrase failed to analyse '", text, "'"),
                     ERR_HINT("The column's analyzer rejected the input text."));
   }
-  const auto* token = irs::get<irs::TermAttr>(analyzer);
   bool first = true;
-  while (analyzer.next()) {
+  for (const auto& tok : tokens.terms()) {
     const PhraseGap g = first ? base_gap : PhraseGap{1, 1};
     auto& part = options.push_back<irs::ByTermOptions>(g.min, g.max);
-    part.term.assign(token->value);
+    part.term = irs::AsBytesView(tok);
     first = false;
   }
   if (first) {
@@ -340,8 +336,7 @@ PhraseGap ParseTsqueryPhraseDistance(const duckdb::Expression& expr) {
   }
   duckdb::Value out;
   if (val->IsNull() || !val->type().IsNumeric() ||
-      !val->DefaultTryCastAs(duckdb::LogicalType::BIGINT, out,
-                             /*error_message=*/nullptr, /*strict=*/true)) {
+      !val->DefaultTryCastAs(duckdb::LogicalType::BIGINT, out, nullptr, true)) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
       ERR_MSG("tsquery_phrase distance must be a non-null integer, got ",
@@ -438,7 +433,6 @@ void FlattenPhraseSeq(const duckdb::Expression& expr, PhraseSeq& seq) {
     AttachPart(seq, *func.GetChildren()[1]);
     return;
   }
-  // `##` operator: left-associative binary tree.
   SDB_ASSERT(func.Function().GetName().GetIdentifierName() ==
              kTSQueryPhraseSeq);
   SDB_ASSERT(func.GetChildren().size() == 2);
@@ -486,19 +480,8 @@ void EmitPhraseSeq(BoolTarget parent, const FilterContext& ctx,
 
   auto* options = phrase.mutable_options();
 
-  // Emit one phrase part per input, using the gap offsets. First part
-  // is always at offset 0 (iresearch normalises this internally). Each
-  // case in the switch is self-contained: it parses the part's args,
-  // pushes a phrase-part Options slot at (gap.offs_min, gap.offs_max),
-  // and breaks. The push_back overload with (offs_min, offs_max) is
-  // the interval form; we always use it (rather than the single-arg
-  // shorthand) to keep offset semantics consistent between exact and
-  // range gaps.
   for (size_t i = 0; i < seq.parts.size(); ++i) {
     const auto& part_expr_ref = UnwrapTSQueryCast(*seq.parts[i]);
-    // Per-part slop has no ES analog and the composite phrase cannot
-    // honor it; reject like the boost/tokenize part modifiers below
-    // instead of falling into the generic expression-class error.
     if (part_expr_ref.GetExpressionClass() ==
           duckdb::ExpressionClass::BOUND_CAST &&
         TryGetSlopModifier(
@@ -594,10 +577,6 @@ void EmitPhraseSeq(BoolTarget parent, const FilterContext& ctx,
             ctx.levenshtein_max_terms));
       } break;
       case TSQueryOp::Phrase: {
-        // Nested ts_phrase('x y z') -> tokenise via column analyzer and
-        // emit one term part per token. The FIRST token uses the
-        // incoming gap; subsequent tokens are strictly adjacent. Shared
-        // with BuildFtsPhrase via EmitPhraseTokens.
         if (f->GetChildren().empty() || f->GetChildren().size() > 2) {
           THROW_SQL_ERROR(
             ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
@@ -621,8 +600,7 @@ void EmitPhraseSeq(BoolTarget parent, const FilterContext& ctx,
         std::vector<const duckdb::Expression*> sub_args;
         std::vector<duckdb::unique_ptr<duckdb::Expression>> sub_synth;
         std::optional<size_t> sub_min_match;
-        ExtractAnyAllOfArgs(*f, /*is_any=*/true, sub_args, sub_synth,
-                            sub_min_match);
+        ExtractAnyAllOfArgs(*f, true, sub_args, sub_synth, sub_min_match);
         if (sub_min_match && *sub_min_match != 1) {
           THROW_SQL_ERROR(
             ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
@@ -644,18 +622,12 @@ void EmitPhraseSeq(BoolTarget parent, const FilterContext& ctx,
         }
       } break;
       case TSQueryOp::All:
-        // ts_all rejected for the same reason min_match > 1 is rejected
-        // for ts_any: a phrase position can match only one token.
         THROW_SQL_ERROR(
           ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
           ERR_MSG("## ts_all phrase part is not supported (a phrase position "
                   "can match only one token; use ts_any instead)"),
           ERR_HINT(kSyntaxHint));
       case TSQueryOp::Between: {
-        // ts_between as a phrase part -> ByRangeOptions slot. Only the
-        // VARCHAR variant is meaningful here: phrases live on the
-        // analyzed text field, so numeric / boolean ranges (which would
-        // target separate fields) make no sense at a phrase position.
         auto args = ParseRangeArgs(*f);
         if ((args.min &&
              args.min->type().id() != duckdb::LogicalTypeId::VARCHAR &&

@@ -42,7 +42,7 @@
 #include <duckdb/planner/operator/logical_get.hpp>
 #include <duckdb/planner/operator/logical_projection.hpp>
 #include <duckdb/planner/operator/logical_unnest.hpp>
-#include <iresearch/analysis/tokenizers.hpp>
+#include <iresearch/analysis/keyword_tokenizer.hpp>
 #include <iresearch/search/all_filter.hpp>
 #include <iresearch/search/automaton_filter.hpp>
 #include <iresearch/search/boolean_filter.hpp>
@@ -1859,9 +1859,9 @@ class TsDictFilterClaim {
       info->null_field_id = irs::field_limits::invalid();
     }
     if (info->tokenizer.analyzer && info->tokenizer.analyzer->type() !=
-                                      irs::Type<irs::StringTokenizer>::id()) {
+                                      irs::Type<irs::KeywordTokenizer>::id()) {
       info->tokenizer.analyzer =
-        catalog::Tokenizer::TokenizerWrapper{new irs::StringTokenizer(), {}};
+        catalog::Tokenizer::TokenizerWrapper{new irs::KeywordTokenizer(), {}};
     }
     return info;
   }
@@ -1889,8 +1889,8 @@ class TsDictFilterClaim {
     const auto field = _ss.ts_dicts[term_ref->req_index].field_id;
     auto info = MakeSearchColumnInfo(
       field, _index.FindEntry(field), duckdb::LogicalType::VARCHAR,
-      {.analyzer =
-         catalog::Tokenizer::TokenizerWrapper{new irs::StringTokenizer(), {}}});
+      {.analyzer = catalog::Tokenizer::TokenizerWrapper{
+         new irs::KeywordTokenizer(), {}}});
     info.null_field_id = irs::field_limits::invalid();
     return info;
   }

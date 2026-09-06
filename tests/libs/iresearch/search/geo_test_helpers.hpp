@@ -20,11 +20,15 @@
 
 #pragma once
 
+#include <s2/s2cell_id.h>
 #include <simdjson.h>
 
+#include <algorithm>
 #include <string>
 #include <string_view>
 #include <vector>
+
+#include "geo/geo_terms.h"
 
 namespace irs::tests {
 
@@ -86,5 +90,30 @@ class JsonDoc {
 };
 
 inline JsonDoc FromJson(std::string_view json) { return JsonDoc{json}; }
+
+inline std::vector<std::string> BinaryTerms(
+  const std::vector<std::string>& s2_terms, char marker = '$',
+  std::string_view prefix = {}) {
+  std::vector<std::string> out;
+  out.reserve(s2_terms.size());
+  for (std::string_view term : s2_terms) {
+    SDB_ASSERT(term.starts_with(prefix));
+    term.remove_prefix(prefix.size());
+    const bool covering = !term.empty() && term.front() == marker;
+    if (covering) {
+      term.remove_prefix(1);
+    }
+    out.push_back(sdb::geo::terms::Term(prefix, S2CellId::FromToken(term),
+                                        covering, marker));
+  }
+  return out;
+}
+
+inline bool StartsWithTerms(const std::vector<std::string>& actual,
+                            const std::vector<std::string>& s2_terms) {
+  const auto expected = BinaryTerms(s2_terms);
+  return expected.size() <= actual.size() &&
+         std::equal(expected.begin(), expected.end(), actual.begin());
+}
 
 }  // namespace irs::tests

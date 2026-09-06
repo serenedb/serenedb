@@ -39,7 +39,7 @@
 #include <duckdb/planner/expression/bound_constant_expression.hpp>
 #include <duckdb/planner/expression/bound_function_expression.hpp>
 #include <duckdb/planner/logical_operator_visitor.hpp>
-#include <iresearch/analysis/tokenizers.hpp>
+#include <iresearch/analysis/keyword_tokenizer.hpp>
 #include <iresearch/search/unscored.hpp>
 
 #include "connector/functions/search.h"
@@ -506,7 +506,7 @@ void RegisterTSQueryTypes(duckdb::ExtensionLoader& loader) {
       // handles it without a separate null-check path.
       auto resolved =
         v.IsNull()
-          ? duckdb::Value(std::string{irs::StringTokenizer::type_name()})
+          ? duckdb::Value(std::string{irs::KeywordTokenizer::type_name()})
           : v;
       // Return TSQUERY_MODIFIER (distinct alias from TSQUERY) so a
       // `<TSQ-typed expr>::tokenize(...)` cast doesn't get short-
@@ -828,8 +828,8 @@ void RegisterTSQueryConstructors(duckdb::ExtensionLoader& loader) {
   // BOOLEAN). The filter builder dispatches per column type: VARCHAR
   // bounds tokenise through the ambient analyzer (single-token
   // requirement) and emit irs::ByRange; numeric bounds emit
-  // irs::ByGranularRange; BOOLEAN bounds emit irs::ByRange via
-  // BooleanTokenizer. Bound vs column type mismatch is a bind-time
+  // irs::ByGranularRange; BOOLEAN bounds emit irs::ByRange over the
+  // BooleanTerm encoding. Bound vs column type mismatch is a bind-time
   // error. NULL bound is also a bind-time error -- use
   // RANGE(NULL, ..., ...) for unbounded semantics.
   //

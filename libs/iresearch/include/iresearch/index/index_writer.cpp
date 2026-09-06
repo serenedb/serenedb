@@ -1836,7 +1836,6 @@ SegmentWriterOptions IndexWriter::GetSegmentWriterOptions(
   // The merge passes its own view; a segment write installs its owning override
   // later via SetFieldOptions, so non-owning here.
   return {
-    .scorers_features = _score_bound_features,
     .scorer = _topk_scorer,
     .comparator = _comparator,
     .resource_manager = compaction ? *_dir.ResourceManager().compactions

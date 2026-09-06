@@ -25,8 +25,11 @@
 #include <cstdint>
 #include <iresearch/analysis/pattern_tokenizer.hpp>
 #include <iresearch/analysis/segmentation_tokenizer.hpp>
-#include <iresearch/analysis/split_by_non_alpha.hpp>
+#include <iresearch/analysis/split_by_non_alpha_tokenizer.hpp>
+#include <iresearch/analysis/text/words/split_by_non_alpha.hpp>
 #include <string>
+
+#include "bench_token_sink.h"
 
 namespace {
 
@@ -77,7 +80,8 @@ void RunFunction(benchmark::State& state, const std::string& data) {
   const bool to_lower = state.range(0) != 0;
   std::string lowered;
   for (auto _ : state) {
-    SplitByNonAlpha(data, [&](std::string_view token) {
+    words::SplitByNonAlpha(data, [&](size_t begin, size_t end) {
+      const std::string_view token{data.data() + begin, end - begin};
       if (to_lower) {
         lowered.resize(token.size());
         absl::ascii_internal::AsciiStrToLower(lowered.data(), token.data(),
@@ -91,16 +95,27 @@ void RunFunction(benchmark::State& state, const std::string& data) {
   SetBytes(state, data);
 }
 
+void RunSplit(benchmark::State& state, const std::string& data) {
+  SplitByNonAlphaTokenizer::Options opts;
+  opts.case_convert = state.range(0) != 0 ? irs::Case::Lower : irs::Case::None;
+  auto stream = SplitByNonAlphaTokenizer::Make(opts);
+  bench::DrainSink sink;
+  for (auto _ : state) {
+    stream->Fill(data, sink.writer, {sink.layout});
+    benchmark::DoNotOptimize(sink.Consume());
+  }
+  SetBytes(state, data);
+}
+
 void RunPattern(benchmark::State& state, const std::string& data) {
   PatternTokenizer::Options opts;
   opts.pattern = "[^A-Za-z0-9]+";
   opts.group = -1;
   auto stream = PatternTokenizer::Make(std::move(opts));
+  bench::DrainSink sink;
   for (auto _ : state) {
-    stream->reset(data);
-    while (bool has_next = stream->next()) {
-      benchmark::DoNotOptimize(has_next);
-    }
+    stream->Fill(data, sink.writer, {sink.layout});
+    benchmark::DoNotOptimize(sink.Consume());
   }
   SetBytes(state, data);
 }
@@ -111,11 +126,10 @@ void RunSegmentation(benchmark::State& state, const std::string& data) {
   opts.accept = SegmentationTokenizer::Options::Accept::AlphaNumeric;
   opts.convert = SegmentationTokenizer::Options::Convert::Lower;
   auto stream = SegmentationTokenizer::Make(std::move(opts));
+  bench::DrainSink sink;
   for (auto _ : state) {
-    stream->reset(data);
-    while (bool has_next = stream->next()) {
-      benchmark::DoNotOptimize(has_next);
-    }
+    stream->Fill(data, sink.writer, {sink.layout});
+    benchmark::DoNotOptimize(sink.Consume());
   }
   SetBytes(state, data);
 }
@@ -136,8 +150,10 @@ std::string MakeSmallInput(size_t n) {
 void BmSmallInput(benchmark::State& state) {
   const std::string data = MakeSmallInput(static_cast<size_t>(state.range(0)));
   for (auto _ : state) {
-    SplitByNonAlpha(
-      data, [](std::string_view token) { benchmark::DoNotOptimize(token); });
+    words::SplitByNonAlpha(data, [&](size_t begin, size_t end) {
+      const std::string_view token{data.data() + begin, end - begin};
+      benchmark::DoNotOptimize(token);
+    });
   }
   SetBytes(state, data);
 }
@@ -157,6 +173,9 @@ class LongTokenCorpus : public benchmark::Fixture {
 BENCHMARK_DEFINE_F(MixedCorpus, BmFunction)(benchmark::State& state) {
   RunFunction(state, data);
 }
+BENCHMARK_DEFINE_F(MixedCorpus, BmSplit)(benchmark::State& state) {
+  RunSplit(state, data);
+}
 BENCHMARK_DEFINE_F(MixedCorpus, BmPattern)(benchmark::State& state) {
   RunPattern(state, data);
 }
@@ -166,6 +185,9 @@ BENCHMARK_DEFINE_F(MixedCorpus, BmSegmentation)(benchmark::State& state) {
 BENCHMARK_DEFINE_F(LongTokenCorpus, BmFunction)(benchmark::State& state) {
   RunFunction(state, data);
 }
+BENCHMARK_DEFINE_F(LongTokenCorpus, BmSplit)(benchmark::State& state) {
+  RunSplit(state, data);
+}
 BENCHMARK_DEFINE_F(LongTokenCorpus, BmPattern)(benchmark::State& state) {
   RunPattern(state, data);
 }
@@ -174,9 +196,11 @@ BENCHMARK_DEFINE_F(LongTokenCorpus, BmSegmentation)(benchmark::State& state) {
 }
 
 BENCHMARK_REGISTER_F(MixedCorpus, BmFunction)->Arg(0)->Arg(1);
+BENCHMARK_REGISTER_F(MixedCorpus, BmSplit)->Arg(0)->Arg(1);
 BENCHMARK_REGISTER_F(MixedCorpus, BmPattern)->Arg(0);
 BENCHMARK_REGISTER_F(MixedCorpus, BmSegmentation)->Arg(1);
 BENCHMARK_REGISTER_F(LongTokenCorpus, BmFunction)->Arg(0)->Arg(1);
+BENCHMARK_REGISTER_F(LongTokenCorpus, BmSplit)->Arg(0)->Arg(1);
 BENCHMARK_REGISTER_F(LongTokenCorpus, BmPattern)->Arg(0);
 BENCHMARK_REGISTER_F(LongTokenCorpus, BmSegmentation)->Arg(1);
 

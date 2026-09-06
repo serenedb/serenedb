@@ -20,6 +20,8 @@
 
 #include "filter_test_case_base.hpp"
 #include "formats/column/test_cs_helpers.hpp"
+#include "insert_field.hpp"
+#include "iresearch/analysis/token_sinks.hpp"
 #include "iresearch/analysis/wildcard_analyzer.hpp"
 #include "iresearch/index/directory_reader.hpp"
 #include "iresearch/index/index_writer.hpp"
@@ -27,30 +29,23 @@
 #include "iresearch/store/memory_directory.hpp"
 #include "iresearch/utils/type_limits.hpp"
 #include "tests_shared.hpp"
+#include "token_sink_utils.hpp"
 
 namespace {
 
-// Field type backed by WildcardAnalyzer.
-//
-// GetTokens() calls analyzer.reset(value) which:
-//   1. Tokenizes the value via the base analyzer (StringTokenizer by default)
-//   2. Packs the resulting terms into _store.value in the format expected by
-//      WildcardIterator: [vint(size)][0xFF][term_bytes][0xFF] per term
-//
-// Write() then persists _store.value verbatim into the stored column so that
-// WildcardIterator can post-filter documents with the RE2 matcher.
 struct WildcardField final {
   irs::field_id Id() const { return id; }
 
-  irs::Tokenizer& GetTokens() const {
-    analyzer->reset(value);
-    return *analyzer;
-  }
+  irs::analysis::Tokenizer& GetTokens() const { return *analyzer; }
+
+  std::string_view Value() const noexcept { return value; }
 
   bool Write(irs::DataOutput& out) const {
-    const auto* store = irs::get<irs::StoreAttr>(*analyzer);
-    if (store && !store->value.empty()) {
-      out.WriteData(store->value.data(), store->value.size());
+    irs::ValueAnalyzer value_analyzer;
+    irs::ValueTokens tokens;
+    if (value_analyzer.Analyze(*analyzer, tests::ToStringT(value), tokens) &&
+        !tokens.store().empty()) {
+      out.WriteData(tokens.store().data(), tokens.store().size());
     }
     return true;
   }
@@ -64,13 +59,8 @@ struct WildcardField final {
   irs::field_id id{};
 };
 
-// Per-file cs column id for the analyzer's packed-terms STORE bytes.
-// In production this id comes from the catalog via
-// `InvertedIndexColumnInfo::tokenizer_column`; in tests we pick a fixed
-// constant so writer and filter agree without any name->id mapping.
 inline constexpr irs::field_id kStoreId = 1;
 
-// Stable field ids for unit tests below.
 inline constexpr irs::field_id kTextId = 2;
 inline constexpr irs::field_id kFieldId = 3;
 inline constexpr irs::field_id kOtherId = 4;
@@ -188,9 +178,6 @@ TEST(WildcardNGramFilterTest, query) {
 
   irs::MemoryDirectory dir;
 
-  // Index all documents. INDEX goes through the inverted path; STORE is
-  // now an explicit BLOB write to cs column kStoreId so WildcardIterator
-  // can post-filter via its store_field_id point cursor.
   {
     auto codec = irs::formats::Get("1_5simd");
     ASSERT_NE(nullptr, codec);
@@ -206,9 +193,7 @@ TEST(WildcardNGramFilterTest, query) {
     for (auto v : kValues) {
       field.value = v;
       auto doc = ctx.Insert();
-      ASSERT_TRUE(doc.Insert(field));
-      // Stored bytes -> cs BLOB column kStoreId; filter reads via the
-      // same id (set in MakeFilter / mutable_options()->store_field_id).
+      ASSERT_TRUE(tests::InsertField(doc, field));
       auto* cs = doc.GetColWriter();
       ASSERT_NE(nullptr, cs);
       irs::tests::StoreFieldAt(*cs, kStoreId, doc.DocId(), field);
@@ -247,45 +232,33 @@ TEST(WildcardNGramFilterTest, query) {
     return v;
   };
 
-  // "%" -- matches every document (pure wildcard, no literals).
   EXPECT_EQ(ids({0, 1, 2, 3, 4}), execute(MakeFilter(kField, "%", analyzer)));
 
-  // Pure prefix (% only at the end) -- no RE2 matcher needed.
   EXPECT_EQ(ids({0, 1}), execute(MakeFilter(kField, "foo%", analyzer)));
   EXPECT_EQ(ids({2}), execute(MakeFilter(kField, "xyz%", analyzer)));
   EXPECT_EQ(ids({3}), execute(MakeFilter(kField, "hel%", analyzer)));
 
-  // Pure suffix (% only at position 0) -- no RE2 matcher needed.
   EXPECT_EQ(ids({0}), execute(MakeFilter(kField, "%bar", analyzer)));
   EXPECT_EQ(ids({1}), execute(MakeFilter(kField, "%baz", analyzer)));
   EXPECT_EQ(ids({2}), execute(MakeFilter(kField, "%123", analyzer)));
 
-  // Exact match -- no wildcards.
   EXPECT_EQ(ids({3}), execute(MakeFilter(kField, "hello", analyzer)));
   EXPECT_EQ(ids({4}), execute(MakeFilter(kField, "world", analyzer)));
   EXPECT_EQ(ids({0}), execute(MakeFilter(kField, "foobar", analyzer)));
 
-  // Single-char wildcard "_" -- RE2 matcher is built.
   EXPECT_EQ(ids({0}), execute(MakeFilter(kField, "foo_ar", analyzer)));
   EXPECT_EQ(ids({1}), execute(MakeFilter(kField, "foo_az", analyzer)));
-  EXPECT_EQ(ids({0, 1}),
-            execute(MakeFilter(kField, "foo_a_", analyzer)));  // foobar, foobaz
+  EXPECT_EQ(ids({0, 1}), execute(MakeFilter(kField, "foo_a_", analyzer)));
   EXPECT_EQ(ids({3}), execute(MakeFilter(kField, "_ello", analyzer)));
   EXPECT_EQ(ids({4}), execute(MakeFilter(kField, "wor__", analyzer)));
 
-  // Middle "%" -- RE2 matcher is built.
   EXPECT_EQ(ids({0}), execute(MakeFilter(kField, "f%r", analyzer)));
   EXPECT_EQ(ids({1}), execute(MakeFilter(kField, "f%z", analyzer)));
 
-  // No match.
   EXPECT_EQ(ids({}), execute(MakeFilter(kField, "nope%", analyzer)));
   EXPECT_EQ(ids({}), execute(MakeFilter(kField, "%qqq%", analyzer)));
   EXPECT_EQ(ids({}), execute(MakeFilter(kField, "fo_x%", analyzer)));
 
-  // With has_positions=false the RE2 matcher is always built, even for
-  // patterns that would otherwise not need one (e.g. pure prefix).
-  EXPECT_EQ(ids({0, 1}), execute(MakeFilter(kField, "foo%", analyzer,
-                                            /*has_positions=*/false)));
-  EXPECT_EQ(ids({0}), execute(MakeFilter(kField, "foo_ar", analyzer,
-                                         /*has_positions=*/false)));
+  EXPECT_EQ(ids({0, 1}), execute(MakeFilter(kField, "foo%", analyzer, false)));
+  EXPECT_EQ(ids({0}), execute(MakeFilter(kField, "foo_ar", analyzer, false)));
 }

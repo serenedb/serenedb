@@ -21,7 +21,7 @@
 #include <absl/status/status.h>
 
 #include <duckdb/planner/expression/bound_cast_expression.hpp>
-#include <iresearch/analysis/token_attributes.hpp>
+#include <iresearch/analysis/token_sinks.hpp>
 #include <iresearch/search/term_set.hpp>
 #include <iresearch/utils/string.hpp>
 
@@ -66,32 +66,38 @@ void BuildFtsTokens(BoolTarget parent, const FilterContext& ctx,
     return;
   }
   auto& analyzer = ctx.tokenizer;
-  std::vector<irs::bstring> tokens;
-  if (!analyzer.reset(text)) {
+  irs::ValueAnalyzer value_analyzer;
+  irs::ValueTokens tokens;
+  if (!value_analyzer.Analyze(
+        analyzer,
+        duckdb::string_t{text.data(), static_cast<uint32_t>(text.size())},
+        tokens)) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                     ERR_MSG("Failed to analyse '", text, "'"),
                     ERR_HINT("The column's analyzer rejected the input text."));
   }
-  const auto* tok_attr = irs::get<irs::TermAttr>(analyzer);
-  while (analyzer.next()) {
-    tokens.emplace_back(tok_attr->value.begin(), tok_attr->value.end());
-  }
+  const auto toks = tokens.terms();
 
-  if (tokens.empty()) {
+  if (toks.empty()) {
     AddMaybeNegated<irs::Empty>(parent, ctx, column_info);
     return;
   }
   const auto field_id =
     PickPerKindFieldId(column_info, duckdb::LogicalTypeId::VARCHAR);
-  if (tokens.size() == 1) {
-    AddTerm(MaybeNegated(parent, ctx, column_info), field_id, tokens[0],
-            ctx.boost);
+  if (toks.size() == 1) {
+    AddTerm(MaybeNegated(parent, ctx, column_info), field_id,
+            irs::AsBytesView(toks[0]), ctx.boost);
     return;
   }
   // Multi-token: one term-set node, every token required (AND) or one of
   // them (OR).
-  AddTermSet(MaybeNegated(parent, ctx, column_info), field_id, tokens,
-             require_all ? tokens.size() : 1)
+  std::vector<irs::bstring> terms;
+  terms.reserve(toks.size());
+  for (const auto& t : toks) {
+    terms.emplace_back(irs::AsBytesView(t));
+  }
+  AddTermSet(MaybeNegated(parent, ctx, column_info), field_id, terms,
+             require_all ? terms.size() : 1)
     .SetBoost(ctx.boost);
 }
 void FromTerm(BoolTarget parent, const FilterContext& ctx,

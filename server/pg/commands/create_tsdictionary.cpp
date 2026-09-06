@@ -28,7 +28,8 @@
 #include <iresearch/analysis/collation_tokenizer.hpp>
 #include <iresearch/analysis/delimited_tokenizer.hpp>
 #include <iresearch/analysis/geo_analyzer.hpp>
-#include <iresearch/analysis/minhash_tokenizer.hpp>
+#include <iresearch/analysis/icu_text_tokenizer.hpp>
+#include <iresearch/analysis/keyword_tokenizer.hpp>
 #include <iresearch/analysis/multi_delimited_tokenizer.hpp>
 #include <iresearch/analysis/nearest_neighbors_tokenizer.hpp>
 #include <iresearch/analysis/ngram_tokenizer.hpp>
@@ -39,12 +40,12 @@
 #include <iresearch/analysis/segmentation_tokenizer.hpp>
 #include <iresearch/analysis/solr_synonyms_tokenizer.hpp>
 #include <iresearch/analysis/sparse_ngram_tokenizer.hpp>
+#include <iresearch/analysis/split_by_non_alpha_tokenizer.hpp>
 #include <iresearch/analysis/stemming_tokenizer.hpp>
 #include <iresearch/analysis/stopwords_tokenizer.hpp>
 #include <iresearch/analysis/text_tokenizer.hpp>
 #include <iresearch/analysis/tokenizer.hpp>
 #include <iresearch/analysis/tokenizer_config.hpp>
-#include <iresearch/analysis/tokenizers.hpp>
 #include <iresearch/analysis/union_tokenizer.hpp>
 #include <iresearch/analysis/wildcard_analyzer.hpp>
 #include <iresearch/analysis/wordnet_synonyms_tokenizer.hpp>
@@ -61,6 +62,7 @@
 #include <vector>
 
 #include "basics/assert.h"
+#include "basics/misc.hpp"
 #include "catalog/ddl/catalog.h"
 #include "catalog/ddl/duckdb_catalog.h"
 #include "catalog/read/duckdb_catalog_sets.h"
@@ -73,6 +75,42 @@
 #include "pg/tokenizer_options.h"
 #include "search/search_analyzer_impl.h"
 
+namespace magic_enum {
+
+template<>
+constexpr customize::customize_t
+customize::enum_name<irs::analysis::SegmentationTokenizer::Options::Separate>(
+  irs::analysis::SegmentationTokenizer::Options::Separate value) noexcept {
+  using Separate = irs::analysis::SegmentationTokenizer::Options::Separate;
+  switch (value) {
+    case Separate::Sentence:
+      return "sentence";
+    case Separate::Line:
+      return "line";
+    case Separate::Paragraph:
+      return "paragraph";
+    case Separate::None:
+    case Separate::Word:
+      return invalid_tag;
+  }
+  return invalid_tag;
+}
+
+template<>
+constexpr customize::customize_t
+customize::enum_name<irs::analysis::IcuTextTokenizer::Options::Separate>(
+  irs::analysis::IcuTextTokenizer::Options::Separate value) noexcept {
+  using Separate = irs::analysis::IcuTextTokenizer::Options::Separate;
+  switch (value) {
+    case Separate::Sentence:
+      return "sentence";
+    case Separate::Word:
+      return invalid_tag;
+  }
+  return invalid_tag;
+}
+
+}  // namespace magic_enum
 namespace sdb::pg {
 namespace {
 
@@ -232,9 +270,9 @@ class CreateTSDictionaryOptions : public OptionsParser {
     return *parsed;
   }
 
-  irs::StringTokenizer::Options BuildKeyword(
+  irs::KeywordTokenizer::Options BuildKeyword(
     std::string_view /*prefix*/,
-    const irs::StringTokenizer::Options* /*parent*/) {
+    const irs::KeywordTokenizer::Options* /*parent*/) {
     return {};
   }
 
@@ -255,8 +293,9 @@ class CreateTSDictionaryOptions : public OptionsParser {
       auto raw =
         OptionsParser::EraseOptionOrDefault<tokenizer_options::kStopwords>(
           prefix);
-      ParseCommaSeparated(
-        raw, [&](std::string_view w) { opts.explicit_stopwords.emplace(w); });
+      ParseCommaSeparated(raw, [&](std::string_view w) {
+        opts.explicit_stopwords.emplace_back(w);
+      });
       opts.explicit_stopwords_set = true;
     } else if (parent) {
       opts.explicit_stopwords = parent->explicit_stopwords;
@@ -332,12 +371,14 @@ class CreateTSDictionaryOptions : public OptionsParser {
     std::string_view prefix,
     const irs::analysis::NormalizingTokenizer::Options* parent) {
     irs::analysis::NormalizingTokenizer::Options opts;
-    opts.locale = ResolveLocale<tokenizer_options::kLocale>(
+    opts.locale = ResolveLocale<tokenizer_options::kNormLocale>(
       prefix, parent ? &parent->locale : nullptr);
     opts.case_convert = ResolveEnum<tokenizer_options::kCase, irs::Case>(
       prefix, parent ? &parent->case_convert : nullptr);
     opts.accent = Resolve<tokenizer_options::kAccent>(
       prefix, parent ? &parent->accent : nullptr);
+    opts.form = ResolveEnum<tokenizer_options::kForm, irs::analysis::NormForm>(
+      prefix, parent ? &parent->form : nullptr);
     return opts;
   }
 
@@ -397,6 +438,23 @@ class CreateTSDictionaryOptions : public OptionsParser {
     return opts;
   }
 
+  irs::analysis::SqlTokenizer::Options BuildSql(
+    std::string_view prefix,
+    const irs::analysis::SqlTokenizer::Options* parent) {
+    irs::analysis::SqlTokenizer::Options opts;
+    if (OptionsParser::HasOption(tokenizer_options::kSqlExpression, prefix)) {
+      opts.expression =
+        OptionsParser::EraseOptionOrDefault<tokenizer_options::kSqlExpression>(
+          prefix);
+    } else if (parent) {
+      opts.expression = parent->expression;
+    } else {
+      OptionsParser::EraseOptionOrDefault<tokenizer_options::kSqlExpression>(
+        prefix);  // throws
+    }
+    return opts;
+  }
+
   irs::analysis::PathHierarchyTokenizer::Options BuildPathHierarchy(
     std::string_view prefix,
     const irs::analysis::PathHierarchyTokenizer::Options* parent) {
@@ -411,12 +469,8 @@ class CreateTSDictionaryOptions : public OptionsParser {
     opts.reverse = Resolve<tokenizer_options::kReverse>(
       prefix, parent ? &parent->reverse : nullptr);
     int parent_skip = parent ? static_cast<int>(parent->skip) : 0;
-    int parent_buf = parent ? static_cast<int>(parent->buffer_size) : 1024;
     opts.skip = static_cast<size_t>(Resolve<tokenizer_options::kSkip>(
       prefix, parent ? &parent_skip : nullptr));
-    opts.buffer_size =
-      static_cast<size_t>(Resolve<tokenizer_options::kBufferSize>(
-        prefix, parent ? &parent_buf : nullptr));
     return opts;
   }
 
@@ -424,6 +478,7 @@ class CreateTSDictionaryOptions : public OptionsParser {
     std::string_view prefix,
     const irs::analysis::NGramTokenizerBase::Options* parent) {
     using IT = irs::analysis::NGramTokenizerBase::InputType;
+    using NM = irs::analysis::NGramTokenizerBase::NGramMode;
     irs::analysis::NGramTokenizerBase::Options opts;
     int parent_min = parent ? static_cast<int>(parent->min_gram) : 0;
     int parent_max = parent ? static_cast<int>(parent->max_gram) : 0;
@@ -439,6 +494,8 @@ class CreateTSDictionaryOptions : public OptionsParser {
       prefix, opts.start_marker, parent ? &parent->start_marker : nullptr);
     ResolveStringInto<tokenizer_options::kEndMarker>(
       prefix, opts.end_marker, parent ? &parent->end_marker : nullptr);
+    opts.ngram_mode = ResolveEnum<tokenizer_options::kMode, NM>(
+      prefix, parent ? &parent->ngram_mode : nullptr);
     return opts;
   }
 
@@ -462,15 +519,22 @@ class CreateTSDictionaryOptions : public OptionsParser {
     if (OptionsParser::HasOption(tokenizer_options::kBreak, prefix)) {
       auto raw =
         OptionsParser::EraseOptionOrDefault<tokenizer_options::kBreak>(prefix);
-      const auto parsed =
+      const auto accept =
         magic_enum::enum_cast<Opts::Accept>(raw, magic_enum::case_insensitive);
-      if (!parsed) {
+      const auto separate = magic_enum::enum_cast<Opts::Separate>(
+        raw, magic_enum::case_insensitive);
+      if (accept) {
+        opts.accept = *accept;
+      } else if (separate) {
+        opts.separate = *separate;
+        opts.accept = Opts::Accept::Any;
+      } else {
         THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                         ERR_MSG("invalid value in \"break\" parameter"),
                         ERR_HINT(tokenizer_options::kBreak.description));
       }
-      opts.accept = *parsed;
     } else if (parent) {
+      opts.separate = parent->separate;
       opts.accept = parent->accept;
     } else {
       opts.accept = Opts::Accept::AlphaNumeric;
@@ -478,6 +542,40 @@ class CreateTSDictionaryOptions : public OptionsParser {
 
     opts.convert = ResolveEnum<tokenizer_options::kCase, Opts::Convert>(
       prefix, parent ? &parent->convert : nullptr);
+    return opts;
+  }
+
+  irs::analysis::IcuTextTokenizer::Options BuildIcuText(
+    std::string_view prefix,
+    const irs::analysis::IcuTextTokenizer::Options* parent) {
+    using Opts = irs::analysis::IcuTextTokenizer::Options;
+    Opts opts;
+    opts.locale = ResolveLocale<tokenizer_options::kIcuTextLocale>(
+      prefix, parent ? &parent->locale : nullptr);
+    if (OptionsParser::HasOption(tokenizer_options::kIcuTextBreak, prefix)) {
+      auto raw =
+        OptionsParser::EraseOptionOrDefault<tokenizer_options::kIcuTextBreak>(
+          prefix);
+      const auto accept =
+        magic_enum::enum_cast<Opts::Accept>(raw, magic_enum::case_insensitive);
+      const auto separate = magic_enum::enum_cast<Opts::Separate>(
+        raw, magic_enum::case_insensitive);
+      if (accept) {
+        opts.accept = *accept;
+      } else if (separate) {
+        opts.separate = *separate;
+        opts.accept = Opts::Accept::Any;
+      } else {
+        THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                        ERR_MSG("invalid value in \"break\" parameter"),
+                        ERR_HINT(tokenizer_options::kIcuTextBreak.description));
+      }
+    } else if (parent) {
+      opts.separate = parent->separate;
+      opts.accept = parent->accept;
+    } else {
+      opts.accept = Opts::Accept::AlphaNumeric;
+    }
     return opts;
   }
 
@@ -493,7 +591,7 @@ class CreateTSDictionaryOptions : public OptionsParser {
           prefix);
       ParseCommaSeparated(raw, [&](std::string_view w) {
         if (!hex) {
-          opts.mask.emplace(w);
+          opts.mask.emplace_back(w);
           return;
         }
         std::string decoded;
@@ -501,7 +599,7 @@ class CreateTSDictionaryOptions : public OptionsParser {
           THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                           ERR_MSG("invalid hex stopword"));
         }
-        opts.mask.emplace(std::move(decoded));
+        opts.mask.emplace_back(std::move(decoded));
       });
     } else if (parent) {
       opts.mask = parent->mask;
@@ -509,6 +607,15 @@ class CreateTSDictionaryOptions : public OptionsParser {
       OptionsParser::EraseOptionOrDefault<tokenizer_options::kStopwords>(
         prefix);  // throws
     }
+    return opts;
+  }
+
+  irs::analysis::SplitByNonAlphaTokenizer::Options BuildSplitByNonAlpha(
+    std::string_view prefix,
+    const irs::analysis::SplitByNonAlphaTokenizer::Options* parent) {
+    irs::analysis::SplitByNonAlphaTokenizer::Options opts;
+    opts.case_convert = ResolveEnum<tokenizer_options::kCase, irs::Case>(
+      prefix, parent ? &parent->case_convert : nullptr);
     return opts;
   }
 
@@ -735,19 +842,6 @@ class CreateTSDictionaryOptions : public OptionsParser {
     return child;
   }
 
-  irs::analysis::MinHashTokenizer::Options BuildMinHash(
-    std::string_view prefix,
-    const irs::analysis::MinHashTokenizer::Options* parent) {
-    irs::analysis::MinHashTokenizer::Options opts;
-    opts.analyzer =
-      BuildSingleChild(prefix, parent ? parent->analyzer.get() : nullptr);
-    int parent_n = parent ? static_cast<int>(parent->num_hashes) : 1;
-    opts.num_hashes =
-      static_cast<uint32_t>(Resolve<tokenizer_options::kNumHashes>(
-        prefix, parent ? &parent_n : nullptr));
-    return opts;
-  }
-
   irs::analysis::WildcardAnalyzer::Options BuildWildcard(
     std::string_view prefix,
     const irs::analysis::WildcardAnalyzer::Options* parent) {
@@ -758,6 +852,63 @@ class CreateTSDictionaryOptions : public OptionsParser {
     opts.ngram_size =
       static_cast<size_t>(Resolve<tokenizer_options::kNGramSize>(
         prefix, parent ? &parent_n : nullptr));
+    return opts;
+  }
+
+  irs::analysis::ShingleTokenizer::Options BuildShingle(
+    std::string_view prefix,
+    const irs::analysis::ShingleTokenizer::Options* parent) {
+    irs::analysis::ShingleTokenizer::Options opts;
+    opts.base_analyzer =
+      BuildSingleChild(prefix, parent ? parent->base_analyzer.get() : nullptr);
+    int parent_min = parent ? static_cast<int>(parent->min_shingle_size) : 2;
+    opts.min_shingle_size =
+      static_cast<uint32_t>(Resolve<tokenizer_options::kMinShingleSize>(
+        prefix, parent ? &parent_min : nullptr));
+    int parent_max = parent ? static_cast<int>(parent->max_shingle_size) : 2;
+    opts.max_shingle_size =
+      static_cast<uint32_t>(Resolve<tokenizer_options::kMaxShingleSize>(
+        prefix, parent ? &parent_max : nullptr));
+    if (opts.max_shingle_size < opts.min_shingle_size) {
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                      ERR_MSG("\"maxgram\" must be >= \"mingram\""));
+    }
+    opts.output_unigrams = Resolve<tokenizer_options::kOutputUnigrams>(
+      prefix, parent ? &parent->output_unigrams : nullptr);
+    opts.output_unigrams_if_no_shingles =
+      Resolve<tokenizer_options::kOutputUnigramsIfNoShingles>(
+        prefix, parent ? &parent->output_unigrams_if_no_shingles : nullptr);
+    opts.store_tokens = Resolve<tokenizer_options::kStoreTokens>(
+      prefix, parent ? &parent->store_tokens : nullptr);
+    if (OptionsParser::HasOption(tokenizer_options::kFrequentWords, prefix)) {
+      auto raw =
+        OptionsParser::EraseOptionOrDefault<tokenizer_options::kFrequentWords>(
+          prefix);
+      ParseCommaSeparated(raw, [&](std::string_view w) {
+        opts.frequent_words.emplace_back(
+          reinterpret_cast<const irs::byte_type*>(w.data()), w.size());
+      });
+    } else if (parent) {
+      opts.frequent_words = parent->frequent_words;
+    }
+    if (!opts.store_tokens && !opts.frequent_words.empty()) {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+        ERR_MSG("\"storetokens\" = false cannot be combined with "
+                "\"frequentwords\""),
+        ERR_HINT("Without the stored token stream every shingle size must be "
+                 "dense so phrases up to maxgram stay exact."));
+    }
+    ResolveStringInto<tokenizer_options::kFillerToken>(
+      prefix, opts.filler_token, parent ? &parent->filler_token : nullptr);
+    if (opts.filler_token.find(
+          irs::analysis::ShingleTokenizer::kDefaultSeparator) !=
+        irs::bstring::npos) {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+        ERR_MSG("\"fillertoken\" must not contain the shingle separator "
+                "byte (0xFF)"));
+    }
     return opts;
   }
 
@@ -807,15 +958,15 @@ class CreateTSDictionaryOptions : public OptionsParser {
     } else if (type == CollationTokenizer::type_name()) {
       out.config = BuildCollation(
         prefix, ParentOptions<CollationTokenizer::Options>(parent_cfg));
+    } else if (type == SplitByNonAlphaTokenizer::type_name()) {
+      out.config = BuildSplitByNonAlpha(
+        prefix, ParentOptions<SplitByNonAlphaTokenizer::Options>(parent_cfg));
     } else if (type == DelimitedTokenizer::type_name()) {
       out.config = BuildDelimiter(
         prefix, ParentOptions<DelimitedTokenizer::Options>(parent_cfg));
     } else if (type == MultiDelimitedTokenizer::type_name()) {
       out.config = BuildMultiDelimiter(
         prefix, ParentOptions<MultiDelimitedTokenizer::Options>(parent_cfg));
-    } else if (type == MinHashTokenizer::type_name()) {
-      out.config = BuildMinHash(
-        prefix, ParentOptions<MinHashTokenizer::Options>(parent_cfg));
     } else if (type == WildcardAnalyzer::type_name()) {
       out.config = BuildWildcard(
         prefix, ParentOptions<WildcardAnalyzer::Options>(parent_cfg));
@@ -825,12 +976,21 @@ class CreateTSDictionaryOptions : public OptionsParser {
     } else if (type == SegmentationTokenizer::type_name()) {
       out.config = BuildSegmentation(
         prefix, ParentOptions<SegmentationTokenizer::Options>(parent_cfg));
+    } else if (type == IcuTextTokenizer::type_name()) {
+      out.config = BuildIcuText(
+        prefix, ParentOptions<IcuTextTokenizer::Options>(parent_cfg));
     } else if (type == PipelineTokenizer::type_name()) {
       out.config = BuildPipeline(
         prefix, ParentOptions<PipelineTokenizer::Options>(parent_cfg));
     } else if (type == PatternTokenizer::type_name()) {
       out.config = BuildPattern(
         prefix, ParentOptions<PatternTokenizer::Options>(parent_cfg));
+    } else if (type == SqlTokenizer::type_name()) {
+      out.config =
+        BuildSql(prefix, ParentOptions<SqlTokenizer::Options>(parent_cfg));
+    } else if (type == ShingleTokenizer::type_name()) {
+      out.config = BuildShingle(
+        prefix, ParentOptions<ShingleTokenizer::Options>(parent_cfg));
     } else if (type == PathHierarchyTokenizer::type_name()) {
       out.config = BuildPathHierarchy(
         prefix, ParentOptions<PathHierarchyTokenizer::Options>(parent_cfg));
@@ -843,9 +1003,9 @@ class CreateTSDictionaryOptions : public OptionsParser {
     } else if (type == GeoJsonAnalyzer::type_name()) {
       out.config = BuildGeoJson(
         prefix, ParentOptions<GeoJsonAnalyzer::Options>(parent_cfg));
-    } else if (type == irs::StringTokenizer::type_name()) {
+    } else if (type == irs::KeywordTokenizer::type_name()) {
       out.config = BuildKeyword(
-        prefix, ParentOptions<irs::StringTokenizer::Options>(parent_cfg));
+        prefix, ParentOptions<irs::KeywordTokenizer::Options>(parent_cfg));
     } else if (type == SolrSynonymsTokenizer::type_name()) {
       out.config = BuildSolrSynonyms(
         prefix, ParentOptions<SolrSynonymsTokenizer::Options>(parent_cfg));
@@ -909,13 +1069,28 @@ void CreateTokenizer(ConnectionContext& conn_ctx, std::string_view name,
                                         current_schema, options})
       .Result();
 
-  auto test_analyzer = irs::analysis::CreateAnalyzer(irs::analysis::Clone(cfg));
+  auto& client_ctx = conn_ctx.GetClientContext();
+  auto test_analyzer = irs::analysis::CreateTokenizer(
+    irs::analysis::Clone(cfg),
+    duckdb::DatabaseInstance::GetDatabase(client_ctx).GetSharedObjectCache());
   SDB_ASSERT(test_analyzer);
+  test_analyzer->Bind(client_ctx);
+  irs::Finally unbind = [&]() noexcept { test_analyzer->Unbind(); };
 
   if (features.HasFeatures(irs::IndexFeatures::Offs) &&
-      !irs::get<irs::OffsAttr>(*test_analyzer)) {
+      !test_analyzer->Traits().offsets) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                     ERR_MSG("Unsupported index features are specified"));
+  }
+
+  if (features.HasFeatures(irs::IndexFeatures::Norm) &&
+      test_analyzer->Traits().store) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+      ERR_MSG("the 'norm' feature cannot be combined with an analyzer that "
+              "stores a per-document blob"),
+      ERR_HINT("norm and the stored blob share one synthetic column; disable "
+               "the analyzer's token storage or drop the 'norm' feature."));
   }
 
   auto tokenizer = std::make_shared<catalog::CreateTokenizerInfo>(

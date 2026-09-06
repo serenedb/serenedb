@@ -24,12 +24,14 @@
 #pragma once
 
 #include <algorithm>
+#include <deque>
 #include <unordered_set>
 
 #include "index/index_tests.hpp"
 #include "iresearch/analysis/token_attributes.hpp"
 #include "iresearch/formats/formats.hpp"
 #include "iresearch/index/field_meta.hpp"
+#include "iresearch/index/iterators.hpp"
 #include "iresearch/search/common/posting_pos.hpp"
 #include "iresearch/search/common/resolve.hpp"
 #include "iresearch/search/lead/node.hpp"
@@ -109,6 +111,117 @@ inline SeekPostings::ptr MakeSeekPostings(const irs::PostingMeta& meta,
     });
 }
 
+// Materialized rows over a classic mock TermIterator's postings; batch
+// entries slice them as inline spans.
+class MockPostingsSpans {
+ public:
+  void Clear(irs::IndexFeatures features) {
+    _docs.clear();
+    _pos.clear();
+    _offs_start.clear();
+    _offs_end.clear();
+    _bounds.assign(1, 0);
+    _has_pos = irs::IsSubsetOf(
+      irs::IndexFeatures::Freq | irs::IndexFeatures::Pos, features);
+    _has_offs = _has_pos && irs::IsSubsetOf(irs::IndexFeatures::Offs, features);
+  }
+
+  void PushRow(irs::doc_id_t doc, uint32_t pos, const irs::OffsAttr* offs) {
+    _docs.push_back(doc);
+    _pos.push_back(pos);
+    _offs_start.push_back(offs != nullptr ? offs->start : 0);
+    _offs_end.push_back(offs != nullptr ? offs->end : 0);
+  }
+
+  void PushDoc(irs::doc_id_t doc, uint32_t freq) {
+    for (uint32_t k = 0; k < std::max(1u, freq); ++k) {
+      PushRow(doc, 0, nullptr);
+    }
+  }
+
+  void EndTerm() { _bounds.push_back(_docs.size()); }
+
+  irs::PostingsSpan SpanOf(size_t term) const noexcept {
+    const auto b = _bounds[term];
+    const auto e = _bounds[term + 1];
+    return {.docs = _docs.data() + b,
+            .pos = _has_pos ? _pos.data() + b : nullptr,
+            .offs_start = _has_offs ? _offs_start.data() + b : nullptr,
+            .offs_end = _has_offs ? _offs_end.data() + b : nullptr,
+            .count = e - b};
+  }
+
+ private:
+  std::vector<uint32_t> _docs;
+  std::vector<uint32_t> _pos;
+  std::vector<uint32_t> _offs_start;
+  std::vector<uint32_t> _offs_end;
+  std::vector<size_t> _bounds{0};
+  bool _has_pos = false;
+  bool _has_offs = false;
+};
+
+// Adapts a classic mock TermIterator to the flush writer's batched span
+// contract: each batch drains the mock's per-term postings into flat rows
+// (one row per position occurrence; freq-only docs replicate the row).
+class BatchingTermIterator final : public irs::TermOnlyIterator {
+ public:
+  explicit BatchingTermIterator(irs::TermIterator& it) : _it{&it} {}
+
+  irs::bytes_view value() const noexcept final { return _it->value(); }
+  bool next() final { return _it->next(); }
+  irs::TermPostings::ptr postings(irs::IndexFeatures features) const final {
+    return _it->postings(features);
+  }
+  irs::Attribute* GetMutable(irs::TypeInfo::type_id type) noexcept final {
+    return _it->GetMutable(type);
+  }
+
+  size_t NextTermsWithPostings(std::span<irs::bytes_view> terms,
+                               std::span<irs::PostingRows> postings,
+                               irs::IndexFeatures features) final {
+    _terms.clear();
+    _spans.Clear(features);
+    const bool has_freq = irs::IsSubsetOf(irs::IndexFeatures::Freq, features);
+    size_t n = 0;
+    while (n < std::min(terms.size(), postings.size()) && _it->next()) {
+      _terms.emplace_back(_it->value());
+      auto docs = _it->postings(features);
+      auto* pos = docs->Positions();
+      const auto* offs =
+        pos != nullptr ? irs::get<irs::OffsAttr>(*pos) : nullptr;
+      while (!irs::doc_limits::eof(docs->Advance())) {
+        const auto d = docs->Value();
+        const uint32_t freq = has_freq ? docs->GetFreq() : 1;
+        if (pos != nullptr) {
+          bool any = false;
+          while (pos->next()) {
+            any = true;
+            _spans.PushRow(d, pos->value(), offs);
+          }
+          if (!any) {
+            _spans.PushDoc(d, freq);
+          }
+        } else {
+          _spans.PushDoc(d, freq);
+        }
+      }
+      _spans.EndTerm();
+      ++n;
+    }
+    for (size_t i = 0; i < n; ++i) {
+      postings[i] = {.span = _spans.SpanOf(i)};
+      terms[i] = _terms[i];
+    }
+    return n;
+  }
+
+ private:
+  irs::TermIterator* _it;
+  MockPostingsSpans _spans;
+  std::deque<irs::bstring> _terms;
+};
+
 class MockTermReader final : public irs::BasicTermReader {
  public:
   explicit MockTermReader(irs::TermIterator& it, irs::FieldMeta meta,
@@ -119,9 +232,6 @@ class MockTermReader final : public irs::BasicTermReader {
       _max_term(max_term) {}
 
  private:
-  irs::Attribute* GetMutable(irs::TypeInfo::type_id /*type*/) noexcept final {
-    return nullptr;
-  }
   irs::TermOnlyIterator::ptr iterator() const final {
     return irs::memory::to_managed<irs::TermOnlyIterator>(_it);
   }
@@ -131,7 +241,7 @@ class MockTermReader final : public irs::BasicTermReader {
   irs::bytes_view min() const final { return _min_term; }
   irs::bytes_view max() const final { return _max_term; }
 
-  irs::TermIterator& _it;
+  mutable BatchingTermIterator _it;
   irs::FieldMeta _meta;
   irs::bytes_view _min_term;
   irs::bytes_view _max_term;

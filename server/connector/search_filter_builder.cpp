@@ -34,10 +34,11 @@
 #include <duckdb/planner/expression/bound_function_expression.hpp>
 #include <duckdb/planner/expression/bound_operator_expression.hpp>
 #include <duckdb/planner/expression_iterator.hpp>
-#include <iresearch/analysis/tokenizers.hpp>
+#include <iresearch/analysis/keyword_tokenizer.hpp>
 #include <iresearch/analysis/wildcard_analyzer.hpp>
 #include <iresearch/index/index_reader.hpp>
 #include <iresearch/index/iterators.hpp>
+#include <iresearch/index/typed_terms.hpp>
 #include <iresearch/parser/parser.hpp>
 #include <iresearch/search/all_filter.hpp>
 #include <iresearch/search/automaton_filter.hpp>
@@ -59,6 +60,7 @@
 #include <iresearch/search/wildcard_ngram_filter.hpp>
 #include <iresearch/types.hpp>
 #include <iresearch/utils/automaton_utils.hpp>
+#include <iresearch/utils/numeric_utils.hpp>
 #include <iresearch/utils/wildcard_utils.hpp>
 #include <limits>
 #include <magic_enum/magic_enum.hpp>
@@ -173,16 +175,15 @@ bool TryEncodeTerm(duckdb::LogicalTypeId type_id, const duckdb::Value& value,
     return true;
   }
   if (type_id == duckdb::LogicalTypeId::BOOLEAN) {
-    out.assign(irs::ViewCast<irs::byte_type>(
-      irs::BooleanTokenizer::value(value.GetValue<bool>())));
+    out.assign(
+      irs::ViewCast<irs::byte_type>(irs::BooleanTerm(value.GetValue<bool>())));
     return true;
   }
   if (IsNumericTypeId(type_id)) {
-    irs::NumericTokenizer stream;
-    const irs::TermAttr* token = irs::get<irs::TermAttr>(stream);
-    ResetNumericStream(stream, type_id, value);
-    stream.next();
-    out.assign(token->value);
+    WithNumericValue(type_id, value, [&](auto v) {
+      irs::byte_type buf[irs::numeric_utils::kNumericTermMaxSize];
+      out.assign(irs::numeric_utils::EncodeNumericTerm(buf, v));
+    });
     return true;
   }
   return false;
@@ -341,7 +342,7 @@ absl::Status RequireKeywordAnalyzed(const SearchColumnInfo& info,
                                     std::string_view hint) {
   if (info.logical_type.id() == duckdb::LogicalTypeId::VARCHAR &&
       info.tokenizer.analyzer->type() !=
-        irs::Type<irs::StringTokenizer>::id()) {
+        irs::Type<irs::KeywordTokenizer>::id()) {
     return absl::InvalidArgumentError(
       absl::StrCat("Field is not indexed by keyword analyzer. ", hint));
   }
@@ -378,7 +379,7 @@ void FromTSQueryMatch(BoolTarget filter, const FilterContext& ctx,
 void RejectSlopOnNonPhrase(const FilterContext& ctx);
 
 irs::bytes_view NullMarkerTerm() noexcept {
-  return irs::ViewCast<irs::byte_type>(irs::NullTokenizer::value_null());
+  return irs::ViewCast<irs::byte_type>(irs::kNullTerm);
 }
 
 }  // namespace
@@ -774,13 +775,13 @@ absl::Status FromComparison(BoolTarget filter, const FilterContext& ctx,
     range_filter.mutable_options()->scored_terms_limit = ctx.scored_terms_limit;
     setup_base_filter(range_filter)
       .assign(irs::ViewCast<irs::byte_type>(
-        irs::BooleanTokenizer::value(const_val->GetValue<bool>())));
+        irs::BooleanTerm(const_val->GetValue<bool>())));
   } else if (IsNumericTypeId(type_id)) {
     auto& range_filter = AddFilter<irs::ByGranularRange>(filter);
     range_filter.mutable_options()->scored_terms_limit = ctx.scored_terms_limit;
-    irs::NumericTokenizer stream;
-    ResetNumericStream(stream, type_id, *const_val);
-    irs::SetGranularTerm(setup_base_filter(range_filter), stream);
+    WithNumericValue(type_id, *const_val, [&](auto v) {
+      irs::SetGranularNumericTerm(setup_base_filter(range_filter), v);
+    });
   } else {
     return absl::UnimplementedError(absl::StrCat(
       "Unsupported type for range comparison: ", static_cast<int>(type_id)));
@@ -1068,11 +1069,11 @@ duckdb::unique_ptr<duckdb::BoundFunctionExpression> BuildTSLike(
 using AnalyzerPredicate = bool (*)(irs::TypeInfo::type_id);
 
 bool IsKeywordAnalyzer(irs::TypeInfo::type_id t) {
-  return t == irs::Type<irs::StringTokenizer>::id();
+  return t == irs::Type<irs::KeywordTokenizer>::id();
 }
 
 bool IsLikeCompatibleAnalyzer(irs::TypeInfo::type_id t) {
-  return t == irs::Type<irs::StringTokenizer>::id() ||
+  return t == irs::Type<irs::KeywordTokenizer>::id() ||
          t == irs::Type<irs::analysis::WildcardAnalyzer>::id();
 }
 
@@ -1531,7 +1532,7 @@ bool TryDispatchTokenizeCast(BoolTarget parent, const FilterContext& ctx,
   if (tokenizer.empty()) {
     return false;
   }
-  if (tokenizer == irs::StringTokenizer::type_name()) {
+  if (tokenizer == irs::KeywordTokenizer::type_name()) {
     if (val && !val->IsNull() &&
         val->type().id() == duckdb::LogicalTypeId::VARCHAR) {
       RejectSlopOnNonPhrase(ctx);
@@ -1837,35 +1838,6 @@ void ValidateFilterType(duckdb::LogicalTypeId type_id) {
   }
 }
 
-void ResetNumericStream(irs::NumericTokenizer& stream,
-                        duckdb::LogicalTypeId type_id,
-                        const duckdb::Value& value) {
-  switch (catalog::term_dict::Classify(type_id)) {
-    case catalog::term_dict::Kind::NumericI32:
-      stream.reset(value.GetValue<int32_t>());
-      break;
-    case catalog::term_dict::Kind::NumericI64:
-      if (type_id == duckdb::LogicalTypeId::TIME_TZ) {
-        stream.reset(TimeTzIndexTerm(value.GetValueUnsafe<int64_t>()));
-      } else if (value.type().InternalType() == duckdb::PhysicalType::INT64) {
-        // Raw value, exactly what the sink indexed; GetValue() would cast to
-        // BIGINT (unimplemented for TIME_NS / TIMESTAMPTZ_NS).
-        stream.reset(value.GetValueUnsafe<int64_t>());
-      } else {
-        stream.reset(value.GetValue<int64_t>());
-      }
-      break;
-    case catalog::term_dict::Kind::NumericF32:
-      stream.reset(value.GetValue<float>());
-      break;
-    case catalog::term_dict::Kind::NumericF64:
-      stream.reset(value.GetValue<double>());
-      break;
-    default:
-      SDB_ASSERT(false, "ResetNumericStream called with non-numeric type");
-  }
-}
-
 bool IsRangeNumericValueType(duckdb::LogicalTypeId id) {
   return catalog::term_dict::IsNumeric(catalog::term_dict::Classify(id)) ||
          id == duckdb::LogicalTypeId::DECIMAL;
@@ -2102,7 +2074,7 @@ void BuildTSQueryValue(BoolTarget parent, const FilterContext& ctx,
     parts->scorer.empty() ? nullptr : ResolveScoreOverride(ctx, parts->scorer);
   if (parts->tokenizer.empty()) {
     emit(boosted);
-  } else if (parts->tokenizer == irs::StringTokenizer::type_name()) {
+  } else if (parts->tokenizer == irs::KeywordTokenizer::type_name()) {
     emit(boosted.WithTokenizer(boosted.identity));
   } else {
     auto wrapper = ResolveTokenizerOrThrow(ctx, parts->tokenizer);
@@ -2301,7 +2273,7 @@ absl::Status MakeSearchFilter(
   std::span<const duckdb::unique_ptr<duckdb::Expression>> conjuncts,
   const ColumnGetter& column_getter, duckdb::ClientContext& context,
   const ExpressionGetter& expr_getter, FilterScorers* scorers) {
-  irs::StringTokenizer identity;
+  irs::KeywordTokenizer identity;
   duckdb::column_binding_map_t<SearchColumnInfo> column_cache;
   containers::NodeHashMap<irs::field_id, SearchColumnInfo> expr_cache;
 

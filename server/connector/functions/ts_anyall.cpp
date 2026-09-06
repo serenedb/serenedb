@@ -19,7 +19,7 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include <duckdb/planner/expression/bound_cast_expression.hpp>
-#include <iresearch/analysis/token_attributes.hpp>
+#include <iresearch/analysis/token_sinks.hpp>
 #include <iresearch/search/term_set.hpp>
 #include <iresearch/utils/string.hpp>
 
@@ -67,7 +67,6 @@ void FromTokenizeListInAnyAllOf(
 
   SDB_ASSERT(tokenize_call.GetChildren().size() >= 1 &&
              tokenize_call.GetChildren().size() <= 2);
-  // Inner list -- v1 requires a constant LIST(VARCHAR).
   const auto* list_const = TryGetConstant(*tokenize_call.GetChildren()[0]);
   if (!list_const) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
@@ -90,20 +89,13 @@ void FromTokenizeListInAnyAllOf(
               list_const->type().ToString()),
       ERR_HINT(kSyntaxHint));
   }
-  // Resolve the analyzer choice:
-  //   1-arg form               -> ambient column analyzer
-  //   2-arg with 'keyword'    -> raw bytes per element (no analysis)
-  //   2-arg with named name    -> resolve via catalog at filter-build time
   bool use_identity = false;
-  // Hold the wrapper as a stack local so its raw pointer (used by
-  // `analyzer` below) stays valid for the loop. Drops at function
-  // return -> analyzer goes back to the catalog Tokenizer's pool.
   catalog::Tokenizer::TokenizerWrapper override_wrapper;
   if (tokenize_call.GetChildren().size() == 2) {
     std::string analyzer_name;
     GetVarcharArg(*tokenize_call.GetChildren()[1], analyzer_name,
                   {"ts_tokenize analyzer name", kSyntaxHint});
-    if (analyzer_name == irs::StringTokenizer::type_name()) {
+    if (analyzer_name == irs::KeywordTokenizer::type_name()) {
       use_identity = true;
     } else {
       override_wrapper = AcquireTokenizer(ctx.client_context, analyzer_name);
@@ -114,15 +106,12 @@ void FromTokenizeListInAnyAllOf(
                   "'): tokenizer not found in catalog"),
           ERR_HINT("Create it via CREATE TEXT SEARCH DICTIONARY or use "
                    "'",
-                   irs::StringTokenizer::type_name(),
+                   irs::KeywordTokenizer::type_name(),
                    "' for raw bytes per element."));
       }
     }
   }
 
-  // Walk every element, tokenise it (or take it raw for identity), and
-  // accumulate produced tokens. Empty inputs / NULL elements are skipped
-  // -- they contribute no terms.
   auto* analyzer = override_wrapper ? override_wrapper.get() : &ctx.tokenizer;
   if (!use_identity &&
       column_info.logical_type.id() != duckdb::LogicalTypeId::VARCHAR &&
@@ -133,6 +122,8 @@ void FromTokenizeListInAnyAllOf(
                     ERR_HINT(kSyntaxHint));
   }
   std::vector<irs::bstring> tokens;
+  irs::ValueAnalyzer value_analyzer;
+  irs::ValueTokens value_tokens;
   const auto& elems = ListOrArrayChildren(*list_const);
   for (const auto& elem : elems) {
     if (elem.IsNull()) {
@@ -152,15 +143,14 @@ void FromTokenizeListInAnyAllOf(
       tokens.emplace_back(bytes.begin(), bytes.end());
       continue;
     }
-    if (!analyzer->reset(raw)) {
+    if (!value_analyzer.Analyze(*analyzer, raw, value_tokens)) {
       THROW_SQL_ERROR(
         ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
         ERR_MSG("Failed to analyse '", raw, "'"),
         ERR_HINT("The selected analyzer rejected this list element."));
     }
-    const auto* tok_attr = irs::get<irs::TermAttr>(*analyzer);
-    while (analyzer->next()) {
-      tokens.emplace_back(tok_attr->value.begin(), tok_attr->value.end());
+    for (const auto& t : value_tokens.terms()) {
+      tokens.emplace_back(irs::AsBytesView(t));
     }
   }
 
@@ -197,10 +187,6 @@ void FromTokenizeListInAnyAllOf(
 
 }  // namespace
 
-// Parses an `ts_any` / `ts_all` call into (args, synthesised, min_match).
-// `synthesised` owns BoundConstantExpression wrappers when the list was
-// constant-folded; the caller must keep it alive for the duration of `args`
-// use. `min_match` is empty for `ts_all` and for `ts_any` when not provided.
 void ExtractAnyAllOfArgs(
   const duckdb::BoundFunctionExpression& func, bool is_any,
   std::vector<const duckdb::Expression*>& args,
@@ -211,11 +197,6 @@ void ExtractAnyAllOfArgs(
   SDB_ASSERT(func.GetChildren().size() >= 1 && func.GetChildren().size() <= 2);
   SDB_ASSERT(is_any || func.GetChildren().size() == 1);
 
-  // DuckDB constant-folds `['a', 'b']` into a BOUND_CONSTANT holding a
-  // LIST/ARRAY Value rather than a `list_value`/`array_value` function
-  // call. Support both shapes (and both LIST and fixed-length ARRAY):
-  // synthesised BoundConstantExpression wrappers per child Value in the
-  // folded case, raw child expression pointers otherwise.
   const auto& list_expr = *func.GetChildren()[0];
   const auto list_type_id = list_expr.GetReturnType().id();
   if (list_type_id != duckdb::LogicalTypeId::LIST &&

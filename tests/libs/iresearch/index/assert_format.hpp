@@ -52,8 +52,9 @@ class Posting {
   Posting(Posting&& rhs) noexcept = default;
   Posting& operator=(Posting&& rhs) noexcept = default;
 
-  void insert(uint32_t pos, uint32_t offs_start,
-              const irs::AttributeProvider& attrs);
+  void insert(uint32_t pos);
+  void insert(uint32_t pos, uint32_t offs_start, bool has_offs,
+              uint32_t tok_offs_start, uint32_t tok_offs_end);
 
   bool operator<(const Posting& rhs) const { return _id < rhs._id; }
 
@@ -89,6 +90,9 @@ struct Field : public irs::FieldMeta {
   };
 
   struct FieldStats : irs::FieldStats {
+    uint32_t num_overlap{};
+    uint32_t max_term_freq{};
+    uint32_t num_unique{};
     uint32_t pos{};
     uint32_t offs{};
   };

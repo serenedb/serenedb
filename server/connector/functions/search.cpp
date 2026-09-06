@@ -39,7 +39,7 @@
 #include <duckdb/planner/expression/bound_function_expression.hpp>
 #include <duckdb/planner/logical_operator_visitor.hpp>
 #include <iresearch/analysis/token_attributes.hpp>
-#include <iresearch/analysis/tokenizers.hpp>
+#include <iresearch/analysis/tokenizer.hpp>
 #include <iresearch/utils/string.hpp>
 #include <iresearch/utils/utf8_utils.hpp>
 
@@ -47,6 +47,7 @@
 #include "catalog/scorer_options.h"
 #include "catalog/tokenizer.h"
 #include "connector/duckdb_client_state.h"
+#include "connector/functions/minhash.h"
 #include "connector/functions/split_by_non_alpha.h"
 #include "connector/functions/ts_common.hpp"
 #include "connector/functions/ts_highlight.h"
@@ -302,7 +303,7 @@ catalog::Tokenizer::TokenizerWrapper AcquireTokenizer(
   if (!dict) {
     return {};
   }
-  return dict->GetTokenizer();
+  return dict->GetTokenizer(context);
 }
 
 catalog::TokenizerRef ResolveCatalogTokenizer(duckdb::ClientContext& context,
@@ -338,6 +339,7 @@ void RegisterSearchFunctions(duckdb::DatabaseInstance& db) {
   RegisterGeoFunctions(loader);
   RegisterTsLexize(loader);
   RegisterSplitByNonAlpha(loader);
+  RegisterMinHash(loader);
   RegisterTsHighlight(loader);
   RegisterTSQueryFunctions(loader);
   RegisterTsDictFunctions(loader);

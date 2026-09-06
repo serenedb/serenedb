@@ -25,6 +25,7 @@
 
 #include "formats/column/test_cs_helpers.hpp"
 #include "index_tests.hpp"
+#include "insert_field.hpp"
 #include "iresearch/formats/formats.hpp"
 #include "iresearch/index/index_features.hpp"
 #include "iresearch/search/term_filter.hpp"
@@ -62,7 +63,7 @@ bool InsertWithName(irs::IndexWriter& writer, const tests::Document& doc) {
   auto ctx = writer.GetBatch();
   {
     auto d = ctx.Insert();
-    if (!d.Insert(doc.indexed.begin(), doc.indexed.end())) {
+    if (!tests::InsertFields(d, doc.indexed.begin(), doc.indexed.end())) {
       return false;
     }
     const auto* name =

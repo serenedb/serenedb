@@ -26,6 +26,7 @@
 #include <absl/strings/internal/resize_uninitialized.h>
 #include <absl/strings/str_cat.h>
 
+#include <bit>
 #include <iresearch/index/index_reader_options.hpp>
 #include <variant>
 
@@ -691,23 +692,37 @@ void FieldWriter::Impl::Push(bytes_view term) {
   const bytes_view last = _last_term;
   const size_t limit = std::min(last.size(), term.size());
 
-  // find common prefix
+  // find common prefix, u64 words then bytes; both loads stay inside limit
   size_t pos = 0;
+  while (pos + sizeof(uint64_t) <= limit) {
+    uint64_t a;
+    uint64_t b;
+    std::memcpy(&a, term.data() + pos, sizeof a);
+    std::memcpy(&b, last.data() + pos, sizeof b);
+    if (a != b) {
+      pos += static_cast<size_t>(std::countr_zero(a ^ b)) >> 3;
+      break;
+    }
+    pos += sizeof(uint64_t);
+  }
   while (pos < limit && term[pos] == last[pos]) {
     ++pos;
   }
 
+  size_t stack_size = _stack.size();
+  const size_t min_block_size = _min_block_size;
   for (size_t i = last.empty() ? 0 : last.size() - 1; i > pos;) {
     --i;  // should use it here as we use size_t
-    const size_t top = _stack.size() - _prefixes[i];
-    if (top > _min_block_size) {
+    const size_t top = stack_size - _prefixes[i];
+    if (top > min_block_size) {
       WriteBlocks(i + 1, top);
       _prefixes[i] -= (top - 1);
+      stack_size = _stack.size();
     }
   }
 
   _prefixes.resize(term.size());
-  std::fill(_prefixes.begin() + pos, _prefixes.end(), _stack.size());
+  std::fill(_prefixes.begin() + pos, _prefixes.end(), stack_size);
   _last_term.Assign(term, _compaction);
 }
 
@@ -740,8 +755,6 @@ void FieldWriter::Impl::prepare(const FlushState& state) {
   _last_term.Clear();
   _prefixes.assign(kDefaultSize, 0);
   _stack.clear();
-  _stats.Reset();
-  _suffix.Reset();
 
   _blocks_out = &_idx->BlocksOut();
 
@@ -764,27 +777,51 @@ void FieldWriter::Impl::write(const BasicTermReader& reader) {
   const bool freq_exists =
     IndexFeatures::None != (index_features & IndexFeatures::Freq);
 
-  auto terms = reader.iterator();
-  SDB_ASSERT(terms != nullptr);
-  while (terms->next()) {
-    auto postings = terms->postings(index_features);
-    PostingMeta meta;
-    _pw->Write(*postings, meta);
-
+  // `term_of` stays unevaluated for dropped terms: a compound (merge) term
+  // iterator computes the field's min/max as a side effect of value(), so
+  // asking for a term whose docs are all masked would poison the stored max.
+  const auto consume = [&](auto&& term_of, PostingMeta&& meta) {
     if (freq_exists) {
       sum_tfreq += meta.freq;
     }
+    if (meta.docs_count == 0) {
+      return;
+    }
+    sum_dfreq += meta.docs_count;
+    const bytes_view term = term_of();
+    Push(term);
+    // push term to the top of the stack
+    _stack.emplace_back(term, std::move(meta), _compaction);
+    ++term_count;
+  };
 
-    if (meta.docs_count != 0) {
-      sum_dfreq += meta.docs_count;
+  auto terms = reader.iterator();
+  SDB_ASSERT(terms != nullptr);
 
-      const bytes_view term = terms->value();
-      Push(term);
-
-      // push term to the top of the stack
-      _stack.emplace_back(term, std::move(meta), _compaction);
-
-      ++term_count;
+  if (_compaction) {
+    // merge readers decode postings from existing segments doc-at-a-time
+    // (remapping through the doc map), so compaction walks the classic
+    // per-term iterator surface
+    while (terms->next()) {
+      PostingMeta meta;
+      auto postings = terms->postings(index_features);
+      _pw->Write(*postings, meta);
+      consume([&] { return terms->value(); }, std::move(meta));
+    }
+  } else {
+    // flush readers hand terms and postings over as batched spans by
+    // contract (columnar fields, IVF clusters, and any future flush source)
+    constexpr size_t kTermBatch = 128;
+    bytes_view term_batch[kTermBatch];
+    PostingRows posting_batch[kTermBatch];
+    while (const size_t n = terms->NextTermsWithPostings(
+             term_batch, posting_batch, index_features)) {
+      for (size_t i = 0; i < n; ++i) {
+        PostingMeta meta;
+        SDB_ENSURE(_pw->WritePostings(posting_batch[i], meta),
+                   "flush requires a span-capable postings writer");
+        consume([&] { return term_batch[i]; }, std::move(meta));
+      }
     }
   }
 

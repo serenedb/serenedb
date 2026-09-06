@@ -37,12 +37,31 @@ void CheckFileExists(std::string_view option, std::string_view path) {
   }
 }
 
-void CheckCase(std::string_view option, std::string_view value) {
-  if (!magic_enum::enum_cast<irs::Case>(value, magic_enum::case_insensitive)) {
+namespace {
+
+template<typename Enum>
+void CheckEnumValue(std::string_view option, std::string_view value,
+                    const OptionInfo& info) {
+  if (!magic_enum::enum_cast<Enum>(value, magic_enum::case_insensitive)) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                     ERR_MSG("invalid value in \"", option, "\" parameter"),
-                    ERR_HINT(kCase.description));
+                    ERR_HINT(info.description));
   }
+}
+
+}  // namespace
+
+void CheckCase(std::string_view option, std::string_view value) {
+  CheckEnumValue<irs::Case>(option, value, kCase);
+}
+
+void CheckForm(std::string_view option, std::string_view value) {
+  CheckEnumValue<irs::analysis::NormForm>(option, value, kForm);
+}
+
+void CheckMode(std::string_view option, std::string_view value) {
+  CheckEnumValue<irs::analysis::NGramTokenizerBase::NGramMode>(option, value,
+                                                               kMode);
 }
 
 void CheckThreshold(std::string_view option, double value) {
@@ -69,6 +88,13 @@ void CheckMaxNGramLength(std::string_view option, int value) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                     ERR_MSG("\"", option, "\" must be at least 3"),
                     ERR_HINT(kMaxNGramLength.description));
+  }
+}
+
+void CheckShingleSize(std::string_view option, int value) {
+  if (value < 2 || value > 16) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                    ERR_MSG("\"", option, "\" must be between 2 and 16"));
   }
 }
 

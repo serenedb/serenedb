@@ -367,11 +367,8 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
            std::ranges::to<std::vector<catalog::ColumnId>>();
   };
 
-  const auto col_index_to_id =
-    IsDuckDBTable()
-      ? make_column_ids(
-          BuildCreateIndexProjection(_pk_positions, _info->column_ids))
-      : make_column_ids(std::views::iota(size_t{0}, columns.size()));
+  const auto col_index_to_id = make_column_ids(
+    BuildCreateIndexProjection(_pk_positions, _info->column_ids));
   const auto relation_id = catalog::IdOf(_relation);
 
   // Normalize + serialize a bound expression (index key or partial-index

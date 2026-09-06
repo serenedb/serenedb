@@ -65,13 +65,12 @@ query
 EXPLAIN SELECT id FROM t WHERE tag = 'red';
 ----
 QUERY PLAN
-╭─ IRESEARCH_SCAN ───────────╮
-│ Index: t                   │
-│ Lookup: search             │
-│ Projections: id            │
-│ Column Filter: tag = 'red' │
-│ ~1 row                     │
-╰────────────────────────────╯
+╭─ IRESEARCH_SCAN ─╮
+│ Index: t         │
+│ Lookup: search   │
+│ Projections: id  │
+│ ~1 row           │
+╰──────────────────╯
 
 # A direct index scan pushes the predicate down through the index's own term
 # field.
@@ -141,14 +140,14 @@ INSERT INTO doc VALUES
 statement ok
 VACUUM (REFRESH_TABLE) doc;
 
-# A bare @@ on a non-PK column errors (matches transactional): the term filter is
-# reachable only through the index scan.
-statement error
-SELECT id FROM doc WHERE body @@ 'fox';
+# A bare @@ on the table itself reaches the same term filter the index scan
+# uses: a search table's scan is already an index scan.
+query
+SELECT id FROM doc WHERE body @@ 'fox' ORDER BY id;
 ----
-db error: ERROR: @@ requires an inverted-indexed column on one side
-HINT: Use: <indexed_col> @@ <tsquery_expr>. CREATE INDEX ... USING inverted(<col>) if missing.
-
+id
+1
+3
 
 # Full-text via the index: 'fox' matches the two rows that contain the tokenized
 # term.

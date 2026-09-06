@@ -24,6 +24,7 @@
 #include <absl/strings/str_cat.h>
 
 #include <algorithm>
+#include <array>
 #include <duckdb/catalog/catalog_entry/aggregate_function_catalog_entry.hpp>
 #include <duckdb/function/function_binder.hpp>
 #include <duckdb/main/config.hpp>
@@ -1643,7 +1644,7 @@ bool TsDictFacetPushdown::WhereOk() {
     key_by_field[_keys[k].field_id] = k;
   }
   const bool claimable = WithSearchGetters(
-    *_found.get, *_found.bind_data, *_index, _context,
+    *_found.get, *_found.bind_data, std::array{_index}, _context,
     [&](const SearchGetters& getters) {
       auto& [getter, expr_getter, analyzed_fields, null_markers] = getters;
       size_t computed_residuals = 0;
@@ -2090,12 +2091,12 @@ void ClaimTsDictFilter(
   duckdb::LogicalGet& get, connector::SereneDBScanBindData& bind_data,
   connector::SereneDBScanBindData& ss, const catalog::InvertedIndex& index,
   duckdb::ClientContext& context) {
-  WithSearchGetters(
-    get, bind_data, index, context, [&](const SearchGetters& getters) {
-      TsDictFilterClaim{filters, get, bind_data, ss, index, context, getters}
-        .Claim();
-      return true;
-    });
+  const auto claim = [&](const SearchGetters& getters) {
+    TsDictFilterClaim{filters, get, bind_data, ss, index, context, getters}
+      .Claim();
+    return true;
+  };
+  WithSearchGetters(get, bind_data, std::array{&index}, context, claim);
 }
 
 }  // namespace sdb::optimizer

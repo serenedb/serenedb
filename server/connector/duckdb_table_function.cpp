@@ -44,6 +44,7 @@
 #include <iresearch/search/all_filter.hpp>
 #include <iresearch/search/vector_radius_filter.hpp>
 #include <iresearch/search/vector_similarity_filter.hpp>
+#include <ranges>
 
 #include "catalog/ddl/catalog.h"
 #include "catalog/entry/duckdb_index_scan_entry.h"
@@ -67,6 +68,7 @@ void CopyCommon(const SereneDBScanBindData& src, SereneDBScanBindData& dst) {
   dst.table_entry = src.table_entry;
   dst.entry_kind = src.entry_kind;
   dst.inverted_index = src.inverted_index;
+  dst.search_indexes = src.search_indexes;
   dst.stored_filter = src.stored_filter;
   dst.filter_scorers = src.filter_scorers;
   dst.snapshot = src.snapshot;
@@ -396,6 +398,17 @@ irs::Filter::ptr MakeVectorFilter(const VectorScorerOptions& vs,
   o->max_search_fanout = vs.max_search_fanout;
   o->inner = std::move(inner);
   return f;
+}
+
+std::vector<const catalog::InvertedIndex*>
+SereneDBScanBindData::InvertedIndexes() const {
+  if (inverted_index) {
+    return {&catalog::InvertedInfo(*inverted_index)};
+  }
+  return search_indexes | std::views::transform([](const auto& index) {
+           return &catalog::InvertedInfo(*index);
+         }) |
+         std::ranges::to<std::vector>();
 }
 
 namespace {

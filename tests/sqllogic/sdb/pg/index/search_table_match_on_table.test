@@ -1,0 +1,139 @@
+statement ok
+CREATE TEXT SEARCH DICTIONARY mt_en (
+    template = 'text', locale = 'en_US.UTF-8', case = 'lower',
+    stemming = false, accent = false, frequency = true, position = true, norm = true
+);
+
+statement ok
+CREATE TABLE mt_src AS SELECT (TIMESTAMP '2025-09-23' + INTERVAL (i) SECOND)::TIMESTAMPTZ_NS AS ts,
+	'svc' || (i % 3) AS svc,
+	CASE WHEN i % 2 = 0 THEN 'error in module ' || (i % 4) ELSE 'all good in module ' || (i % 4) END AS body
+FROM range(24) t(i);
+
+statement ok
+CREATE TABLE mt WITH (storage = 'search', compaction_interval = 0) AS SELECT ts, svc, body FROM mt_src WHERE false;
+
+statement ok
+CREATE INDEX mt_svc ON mt USING inverted (svc);
+
+statement ok
+CREATE INDEX mt_body ON mt USING inverted (body mt_en);
+
+statement ok
+INSERT INTO mt SELECT ts, svc, body FROM mt_src;
+
+statement ok
+VACUUM (REFRESH_TABLE) mt;
+
+statement ok
+CREATE TABLE mt_expr WITH (storage = 'search', compaction_interval = 0) AS SELECT body, ts, svc FROM mt_src WHERE false;
+
+statement ok
+CREATE INDEX mt_expr_idx ON mt_expr USING inverted ((ts_split_by_non_alpha(body, true)) mt_en);
+
+statement ok
+INSERT INTO mt_expr SELECT body, ts, svc FROM mt_src;
+
+statement ok
+VACUUM (REFRESH_TABLE) mt_expr;
+
+statement ok
+CREATE TABLE mt_bare WITH (storage = 'search', compaction_interval = 0) AS SELECT ts, svc, body FROM mt_src WHERE false;
+
+statement ok
+INSERT INTO mt_bare SELECT ts, svc, body FROM mt_src;
+
+statement ok
+VACUUM (REFRESH_TABLE) mt_bare;
+
+query
+SELECT 'table' AS via, count(*) AS errors, count(*) FILTER (WHERE svc = 'svc1') AS svc1 FROM mt WHERE body @@ ts_phrase('error')
+UNION ALL SELECT 'index', count(*), count(*) FILTER (WHERE svc = 'svc1') FROM mt_body WHERE body @@ ts_phrase('error')
+ORDER BY 1;
+----
+via	errors	svc1
+index	12	4
+table	12	4
+
+query
+SELECT 'table' AS via, count(*) AS matches FROM mt WHERE body @@ ts_phrase('module 2') AND svc = 'svc0'
+UNION ALL SELECT 'index', count(*) FROM mt_body WHERE body @@ ts_phrase('module 2') AND svc = 'svc0'
+ORDER BY 1;
+----
+via	matches
+index	2
+table	2
+
+query
+SELECT 'table' AS via, count(*) AS errors FROM mt_expr WHERE ts_split_by_non_alpha(body, true) @@ ts_phrase('error')
+UNION ALL SELECT 'index', count(*) FROM mt_expr_idx WHERE ts_split_by_non_alpha(body, true) @@ ts_phrase('error')
+ORDER BY 1;
+----
+via	errors
+index	12
+table	12
+
+query
+SELECT ts::VARCHAR AS ts, svc, body FROM mt WHERE body @@ ts_phrase('module 3') ORDER BY ts LIMIT 3;
+----
+ts	svc	body
+2025-09-23 00:00:03+00	svc0	all good in module 3
+2025-09-23 00:00:07+00	svc1	all good in module 3
+2025-09-23 00:00:11+00	svc2	all good in module 3
+
+statement ok
+CREATE TABLE mt_pk (id BIGINT PRIMARY KEY, svc TEXT NOT NULL, body TEXT, n INT) WITH (storage = 'search', compaction_interval = 0);
+
+statement ok
+CREATE INDEX mt_pk_svc ON mt_pk USING inverted (svc);
+
+statement ok
+CREATE INDEX mt_pk_body ON mt_pk USING inverted (body);
+
+statement ok
+INSERT INTO mt_pk SELECT i, 'svc' || (i % 3), CASE WHEN i % 2 = 0 THEN 'error in module ' || (i % 4) ELSE 'all good in module ' || (i % 4) END, i * 10 FROM range(24) t(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) mt_pk;
+
+query
+SELECT id, svc FROM mt_pk WHERE id = 3 AND svc = 'svc0';
+----
+id	svc
+3	svc0
+
+query
+SELECT count(*) AS c FROM mt_pk WHERE svc = 'svc0' AND n > 100;
+----
+c
+4
+
+query
+SELECT count(*) AS c FROM mt_pk WHERE svc <> 'svc0';
+----
+c
+16
+
+query
+SELECT count(*) AS c FROM mt_pk WHERE body <> 'error in module 0';
+----
+c
+18
+
+statement ok
+CREATE TABLE mt_tx (id INT, body TEXT);
+
+statement ok
+INSERT INTO mt_tx VALUES (1, 'x y'), (2, 'zzz');
+
+statement error
+SELECT count(*) FROM mt_bare WHERE body @@ ts_phrase('error');
+----
+db error: ERROR: @@ requires an inverted-indexed column on one side
+HINT: Use: <indexed_col> @@ <tsquery_expr>, or query through the index relation (FROM <index_name>). CREATE INDEX ... USING inverted(<col>) if none exists.
+
+
+statement error
+SELECT count(*) FROM mt_tx WHERE body @@ 'x';
+----
+db error: ERROR: TSQUERY expression evaluated outside an `@@` match against an inverted-indexed column.

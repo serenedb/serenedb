@@ -160,6 +160,7 @@ struct SereneDBScanBindData : public duckdb::FunctionData {
   ScanEntryKind entry_kind = ScanEntryKind::BaseTable;
 
   std::shared_ptr<const catalog::Index> inverted_index;
+  std::vector<std::shared_ptr<const catalog::Index>> search_indexes;
 
   // The iresearch snapshot plus the query's search configuration (stored
   // filter, scorer, offsets, ts-dict requests). Every scan bound through this
@@ -254,6 +255,7 @@ struct SereneDBScanBindData : public duckdb::FunctionData {
   bool IsSearchTableEntry() const noexcept {
     return entry_kind == ScanEntryKind::SearchTable;
   }
+  std::vector<const catalog::InvertedIndex*> InvertedIndexes() const;
 
   template<typename T>
   T& As() & {

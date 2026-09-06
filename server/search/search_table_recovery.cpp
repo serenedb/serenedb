@@ -26,10 +26,15 @@
 #include <algorithm>
 #include <chrono>
 #include <duckdb/catalog/catalog_entry/duck_table_entry.hpp>
+#include <duckdb/catalog/catalog_entry/schema_catalog_entry.hpp>
 #include <duckdb/common/types/data_chunk.hpp>
+#include <duckdb/main/attached_database.hpp>
+#include <duckdb/main/database_manager.hpp>
+#include <functional>
 #include <iresearch/index/index_writer.hpp>
 #include <limits>
 #include <memory>
+#include <ranges>
 #include <span>
 #include <string>
 #include <string_view>
@@ -37,8 +42,10 @@
 
 #include "basics/assert.h"
 #include "basics/containers/node_hash_map.h"
+#include "basics/duckdb_engine.h"
 #include "basics/log.h"
 #include "catalog1/catalog.h"
+#include "catalog1/entry/search_table.h"
 #include "connector/column_id.h"
 #include "connector/primary_key.h"
 #include "connector/search_sink_writer.hpp"
@@ -47,6 +54,38 @@
 #include "storage_engine/search_engine.h"
 
 namespace sdb::search {
+namespace {
+
+// The attached serenedb databases. AttachedDatabase is itself a CatalogEntry,
+// so its oid is the per-database id without anything of ours to carry it.
+auto SereneDatabases() {
+  return duckdb::DatabaseManager::Get(DuckDBEngine::Instance().instance())
+           .GetDatabases() |
+         std::views::filter([](const auto& attached) {
+           return attached->GetCatalog().GetCatalogType() ==
+                  catalog::SereneDBCatalog::kStorageType;
+         });
+}
+
+// Recovery and the maintenance start-up both run before any transaction
+// exists, so these are duckdb's context-free scans: the committed state is
+// exactly what they want.
+void ForEachSearchTable(
+  duckdb::AttachedDatabase& database,
+  const std::function<void(catalog::SearchTableEntry&)>& callback) {
+  database.GetCatalog().Cast<catalog::SereneDBCatalog>().ScanSchemas(
+    [&](duckdb::SchemaCatalogEntry& schema) {
+      schema.Scan(
+        duckdb::CatalogType::TABLE_ENTRY, [&](duckdb::CatalogEntry& entry) {
+          auto& table = entry.Cast<duckdb::TableCatalogEntry>();
+          if (auto* search = dynamic_cast<catalog::SearchTableEntry*>(&table)) {
+            callback(*search);
+          }
+        });
+    });
+}
+
+}  // namespace
 
 void RunSearchTableRecovery(bool skip_wal_recovery) {
   if (skip_wal_recovery) {
@@ -77,33 +116,28 @@ void RunSearchTableRecovery(bool skip_wal_recovery) {
   };
 
   size_t recovered_shards = 0;
-  std::vector<duckdb::idx_t> database_ids;
-  catalog::VisitDatabases(nullptr,
-                          [&](const catalog::DatabaseCatalogEntry& db) {
-                            database_ids.push_back(db.oid);
-                          });
-  for (const duckdb::idx_t db_id : database_ids) {
+  for (const auto& database : SereneDatabases()) {
+    const duckdb::idx_t db_id = database->oid;
     containers::NodeHashMap<duckdb::idx_t, ShardInfo> shards;
-    catalog::Visit<duckdb::TableCatalogEntry>(
-      nullptr, db_id, [&](const duckdb::TableCatalogEntry& entry) {
-        if (!entry.IsSearchTable()) {
-          return;  // Transactional table: no Search-engine store to recover.
-        }
-        auto search = entry.GetSearchData();  // the store is bound by now
-        ShardInfo info;
-        info.search = search.get();
-        info.shard = std::move(search);
-        const auto& columns = entry.GetColumns();
-        for (const auto& col : columns.Logical()) {
+    ForEachSearchTable(*database, [&](const catalog::SearchTableEntry& entry) {
+      auto search = entry.EnsureStorage();
+      if (!search) {
+        return;
+      }
+      ShardInfo info;
+      info.search = search.get();
+      info.shard = std::move(search);
+      const auto& columns = entry.GetColumns();
+      for (const auto& col : columns.Logical()) {
         info.column_ids.emplace_back(col.Oid());
-        }
-        for (const auto index : entry.GetPKColumnIndexes()) {
-          info.pk_columns.push_back({.input_col_idx = index.index,
-                                     .type = columns.GetColumn(index).Type()});
-        }
-        info.uses_generated_pk = info.pk_columns.empty();
-        shards.emplace(entry.oid, std::move(info));
-      });
+      }
+      for (const auto index : connector::primary_key::KeyColumns(entry)) {
+        info.pk_columns.push_back({.input_col_idx = index.index,
+                                   .type = columns.GetColumn(index).Type()});
+      }
+      info.uses_generated_pk = info.pk_columns.empty();
+      shards.emplace(entry.oid, std::move(info));
+    });
     if (shards.empty()) {
       continue;
     }
@@ -211,19 +245,10 @@ void RunSearchTableRecovery(bool skip_wal_recovery) {
 }
 
 void StartSearchTableMaintenance() {
-  std::vector<duckdb::idx_t> walk_ids;
-  catalog::VisitDatabases(nullptr,
-                          [&](const catalog::DatabaseCatalogEntry& db) {
-                            walk_ids.push_back(db.oid);
-                          });
-  for (const auto walk_id : walk_ids) {
-    catalog::Visit<duckdb::TableCatalogEntry>(
-      nullptr, walk_id, [&](const duckdb::TableCatalogEntry& table) {
-        if (!table.IsSearchTable()) {
-          return;
-        }
-        table.GetSearchData()->StartTasks();
-      });
+  for (const auto& database : SereneDatabases()) {
+    ForEachSearchTable(*database, [&](const catalog::SearchTableEntry& table) {
+      table.EnsureStorage();
+    });
   }
 }
 

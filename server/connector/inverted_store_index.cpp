@@ -25,7 +25,6 @@
 #include <duckdb/catalog/catalog_entry/duck_index_entry.hpp>
 #include <duckdb/catalog/catalog_entry/duck_table_entry.hpp>
 #include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
-#include <duckdb/catalog/catalog_transaction.hpp>
 #include <duckdb/execution/index/unbound_index.hpp>
 #include <duckdb/main/attached_database.hpp>
 #include <duckdb/main/connection.hpp>
@@ -37,8 +36,6 @@
 #include <duckdb/storage/storage_info.hpp>
 #include <duckdb/storage/table/data_table_info.hpp>
 #include <duckdb/storage/table_io_manager.hpp>
-#include <duckdb/transaction/duck_transaction.hpp>
-#include <duckdb/transaction/meta_transaction.hpp>
 #include <iterator>
 #include <mutex>
 #include <string>
@@ -710,23 +707,21 @@ void FinishInvertedFeed(InvertedFeedSession& feed, uint64_t last_tick,
 void AbortInvertedFeed(InvertedFeedSession& feed) { feed.live.Abort(); }
 
 InvertedStoreIndex::InvertedStoreIndex(
-  duckdb::CreateIndexInput& input, duckdb::SchemaCatalogEntry& schema,
-  duckdb::idx_t index_id, std::shared_ptr<search::InvertedIndexStorage> storage,
-  std::shared_ptr<const InvertedIndexConfig> config)
+  duckdb::CreateIndexInput& input, duckdb::idx_t index_id,
+  std::shared_ptr<search::InvertedIndexStorage> storage,
+  std::shared_ptr<const InvertedIndexConfig> config,
+  catalog::IndexTokenizers tokenizers)
   : BoundIndex(input.name, kTypeName, input.constraint_type, input.column_ids,
                input.table_io_manager, input.unbound_expressions, input.db),
     _index_id{index_id},
-    _schema{schema},
     _storage{std::move(storage)},
-    _config{std::move(config)} {
+    _config{std::move(config)},
+    _tokenizers{std::move(tokenizers)} {
   SDB_ASSERT(_config);
 }
 
 std::shared_ptr<InvertedFeedSession>
 InvertedStoreIndex::EnsureInvertedFeedSession() {
-  // The configuration comes from the committing transaction's own snapshot, so
-  // a commit indexes with the entry version it saw and an ALTER landing
-  // mid-flight takes effect for the next transaction.
   auto* committing = CurrentCommittingContext();
   SDB_ASSERT(committing);
   // A commit feeds one session per index. The entry can be republished under
@@ -744,16 +739,8 @@ InvertedStoreIndex::EnsureInvertedFeedSession() {
   if (!_feed) {
     SDB_ENSURE(_storage, "inverted index feed: storage ", _index_id,
                " missing");
-    auto& duck = CurrentCommittingTransaction()
-                   ->GetTransaction(db)
-                   .Cast<duckdb::DuckTransaction>();
-    _feed = std::make_shared<InvertedFeedSession>(
-      _storage,
-      catalog::IndexTokenizers{
-        duckdb::CatalogTransaction{db.GetDatabase(), duck.transaction_id,
-                                   duck.start_time},
-        _schema, *_config},
-      _config, db, *this);
+    _feed = std::make_shared<InvertedFeedSession>(_storage, _tokenizers,
+                                                  _config, db, *this);
   }
   return _feed;
 }
@@ -878,9 +865,10 @@ duckdb::unique_ptr<duckdb::BoundIndex> InvertedStoreIndex::Create(
       break;
     }
   }
+  const auto& index_entry = entry->Cast<catalog::InvertedIndexEntry>();
   return duckdb::make_uniq<InvertedStoreIndex>(
-    input, entry->schema, index_id, std::move(storage),
-    entry->Cast<catalog::InvertedIndexEntry>().Config());
+    input, index_id, std::move(storage), index_entry.Config(),
+    index_entry.ResolveTokenizers(input.context));
 }
 
 duckdb::IndexStorageInfo InvertedStoreIndex::SerializeToDisk(
@@ -924,8 +912,9 @@ std::shared_ptr<search::InvertedIndexStorage> PublishInvertedIndex(
     bound_exprs,  duckdb::IndexStorageInfo{entry.name},
     entry.options};
   data.GetDataTableInfo()->GetIndexes().AddIndex(
-    duckdb::make_uniq<InvertedStoreIndex>(input, entry.schema, entry.oid,
-                                          storage, entry.Config()));
+    duckdb::make_uniq<InvertedStoreIndex>(input, entry.oid, storage,
+                                          entry.Config(),
+                                          entry.ResolveTokenizers(context)));
   return storage;
 }
 

@@ -60,10 +60,10 @@ class InvertedStoreIndex final : public duckdb::BoundIndex {
 
   static duckdb::IndexType GetInvertedIndexType();
 
-  InvertedStoreIndex(duckdb::CreateIndexInput& input,
-                     duckdb::SchemaCatalogEntry& schema, duckdb::idx_t index_id,
+  InvertedStoreIndex(duckdb::CreateIndexInput& input, duckdb::idx_t index_id,
                      std::shared_ptr<search::InvertedIndexStorage> storage,
-                     std::shared_ptr<const InvertedIndexConfig> config);
+                     std::shared_ptr<const InvertedIndexConfig> config,
+                     catalog::IndexTokenizers tokenizers);
 
   duckdb::ErrorData Append(duckdb::IndexLock& l, duckdb::DataChunk& chunk,
                            duckdb::Vector& row_ids) override;
@@ -114,9 +114,9 @@ class InvertedStoreIndex final : public duckdb::BoundIndex {
 
   duckdb::idx_t _index_id = 0;
 
-  duckdb::SchemaCatalogEntry& _schema;
   std::shared_ptr<search::InvertedIndexStorage> _storage;
   std::shared_ptr<const InvertedIndexConfig> _config;
+  catalog::IndexTokenizers _tokenizers;
 
   std::shared_ptr<InvertedFeedSession> _feed;
 };

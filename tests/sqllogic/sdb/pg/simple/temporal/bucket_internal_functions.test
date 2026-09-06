@@ -1,0 +1,273 @@
+statement ok
+SET TimeZone = 'Etc/UTC';
+
+statement error
+SELECT __internal_date_trunc_bucket(TIMESTAMP '2025-03-09 07:41:23.456789', 0, 0);
+----
+db error: ERROR: Bucket width must be positive
+
+
+statement error
+SELECT __internal_date_trunc_bucket(TIMESTAMPTZ '2025-03-09 07:41:23.456789+00', 0, 0);
+----
+db error: ERROR: Bucket width must be positive
+
+
+statement error
+SELECT __internal_date_trunc_bucket(TIMESTAMP_NS '2025-03-09 07:41:23.456789123', 0, 0);
+----
+db error: ERROR: Bucket width must be positive
+
+
+statement error
+SELECT __internal_date_trunc_bucket(TIME '07:41:23.456789', 0, 0);
+----
+db error: ERROR: Bucket width must be positive
+
+
+statement error
+SELECT __internal_date_trunc_bucket(TIMESTAMP '2025-03-09 07:41:23.456789', -3600000000, 0);
+----
+db error: ERROR: Bucket width must be positive
+
+
+statement error
+SELECT __internal_date_trunc_month_bucket(TIMESTAMP '2025-03-09 07:41:23.456789', 0, 0);
+----
+db error: ERROR: Bucket width must be positive
+
+
+statement error
+SELECT __internal_date_trunc_month_bucket(TIMESTAMPTZ '2025-03-09 07:41:23.456789+00', -1, 0);
+----
+db error: ERROR: Bucket width must be positive
+
+
+statement error
+SELECT __internal_date_trunc_month_bucket(TIMESTAMP_NS '2025-03-09 07:41:23.456789123', 0, 0);
+----
+db error: ERROR: Bucket width must be positive
+
+
+statement error
+SELECT __internal_date_trunc_unbucket(0, 0, 0);
+----
+db error: ERROR: Bucket width must be positive
+
+
+statement error
+SELECT __internal_date_trunc_unbucket_tz(1, -1, 0);
+----
+db error: ERROR: Bucket width must be positive
+
+
+statement error
+SELECT __internal_date_trunc_month_unbucket(1, 0, 0);
+----
+db error: ERROR: Bucket width must be positive
+
+
+statement error
+SELECT __internal_date_trunc_month_unbucket_tz(1, -1, 0);
+----
+db error: ERROR: Bucket width must be positive
+
+
+statement error
+SELECT __internal_date_trunc_unbucket_time(1, 0, 0);
+----
+db error: ERROR: Bucket width must be positive
+
+
+statement error
+SELECT __internal_date_trunc_unbucket(9223372036854775807, 9223372036854775807, 0);
+----
+db error: ERROR: Bucket 9223372036854775807 of width 9223372036854775807 is out of range
+
+
+statement error
+SELECT __internal_date_trunc_unbucket(1, 9223372036854775807, 9223372036854775807);
+----
+db error: ERROR: Bucket 1 of width 9223372036854775807 is out of range
+
+
+statement error
+SELECT __internal_date_trunc_month_unbucket(9223372036854775807, 1, 0);
+----
+db error: ERROR: Date and time not in timestamp range
+
+
+statement error
+SELECT __internal_date_trunc_unbucket_time(9223372036854775807, 1, 0);
+----
+db error: ERROR: Bucket 9223372036854775807 of width 1 is not a time of day
+
+
+statement error
+SELECT __internal_date_trunc_unbucket_time(86400000000, 1, 0);
+----
+db error: ERROR: Bucket 86400000000 of width 1 is not a time of day
+
+
+statement error
+SELECT __internal_date_trunc_unbucket_time(-1, 1, 0);
+----
+db error: ERROR: Bucket -1 of width 1 is not a time of day
+
+
+statement error
+SELECT __internal_time_of_day_bucket(TIMESTAMP '2025-03-09 07:41:23.456789', 0);
+----
+db error: ERROR: Time of day bucket width must be positive
+
+
+statement error
+SELECT __internal_time_of_day_bucket(TIMESTAMP_NS '2025-03-09 07:41:23.456789123', -1);
+----
+db error: ERROR: Time of day bucket width must be positive
+
+
+statement error
+SELECT __internal_month_name(0);
+----
+db error: ERROR: Month bucket 0 outside 1..12
+
+
+statement error
+SELECT __internal_month_name(13);
+----
+db error: ERROR: Month bucket 13 outside 1..12
+
+
+statement error
+SELECT __internal_month_name(9223372036854775807);
+----
+db error: ERROR: Month bucket 9223372036854775807 outside 1..12
+
+
+statement error
+SELECT __internal_day_name(7);
+----
+db error: ERROR: Day bucket 7 outside 0..6
+
+
+statement error
+SELECT __internal_day_name(-1);
+----
+db error: ERROR: Day bucket -1 outside 0..6
+
+
+statement error
+SELECT __internal_icu_date_trunc_bucket('era', TIMESTAMPTZ '2025-03-09 07:41:23.456789+00');
+----
+db error: ERROR: Time zone bucket functions do not support this part
+
+
+statement error
+SELECT __internal_icu_date_trunc_bucket('week', TIMESTAMPTZ '2025-03-09 07:41:23.456789+00', 0, 0);
+----
+db error: ERROR: Time zone bucket width must be positive
+
+
+statement error
+SELECT __internal_icu_time_of_day_bucket(TIMESTAMPTZ '2025-03-09 07:41:23.456789+00', 0);
+----
+db error: ERROR: Time of day bucket width must be positive
+
+
+statement error
+SELECT __internal_icu_cyclic_bucket('hour', TIMESTAMPTZ '2025-03-09 07:41:23.456789+00');
+----
+db error: ERROR: Time zone cyclic buckets support month and dow
+
+
+statement error
+SELECT __internal_icu_date_trunc_unbucket('era', 0);
+----
+db error: ERROR: Time zone bucket functions do not support this part
+
+
+query
+SELECT __internal_date_trunc_bucket(TIMESTAMP '2025-03-09 07:41:23.456789', 1, -9223372036854775808) AS naive_wrap,
+	__internal_date_trunc_month_bucket(TIMESTAMP '2025-03-09 07:41:23.456789', 1, -9223372036854775808) AS month_wrap;
+----
+naive_wrap	month_wrap
+-9221630530771319019	-9223372036854751506
+
+query
+SELECT __internal_date_trunc_bucket(TIMESTAMP '2025-03-09 07:41:23.456789', 3600000000, 0) AS naive,
+	__internal_date_trunc_bucket(TIMESTAMPTZ '2025-03-09 07:41:23.456789+00', 3600000000, 0) AS zoned,
+	__internal_date_trunc_bucket(TIMESTAMP_NS '2025-03-09 07:41:23.456789123', 3600000000, 0) AS nanos,
+	__internal_date_trunc_bucket(TIME '07:41:23.456789', 3600000000, 0) AS timed,
+	__internal_date_trunc_month_bucket(TIMESTAMP '2025-03-09 07:41:23.456789', 3, 0) AS quarter,
+	__internal_time_of_day_bucket(TIMESTAMP '2025-03-09 07:41:23.456789', 3600000000) AS slot;
+----
+naive	zoned	nanos	timed	quarter	slot
+483751	483751	483751	7	8100	7
+
+query
+SELECT __internal_date_trunc_unbucket(487824, 3600000000, 0) AS naive,
+	__internal_date_trunc_unbucket_tz(487824, 3600000000, 0) AS zoned,
+	__internal_date_trunc_unbucket_time(7, 3600000000, 0) AS timed,
+	__internal_date_trunc_month_unbucket(220, 3, 0) AS quarter,
+	__internal_date_trunc_month_unbucket_tz(660, 1, 0) AS month,
+	__internal_month_name(3) AS month_name, __internal_day_name(0) AS day_name,
+	__internal_month_of_year(TIMESTAMP '2025-03-09 07:41:23.456789') AS moy, __internal_day_of_week(DATE '2025-03-09') AS dow;
+----
+naive	zoned	timed	quarter	month	month_name	day_name	moy	dow
+2025-08-26 00:00:00	2025-08-26 00:00:00+00	07:00:00	0055-01-01 00:00:00	0055-01-01 00:00:00+00	March	Sunday	3	0
+
+statement ok
+CREATE TABLE bi AS SELECT TIMESTAMP '2025-03-09 00:00:00' + INTERVAL (i * 937) SECOND AS ts,
+	(TIMESTAMPTZ '2025-03-09 00:00:00+00' + INTERVAL (i * 937) SECOND) AS tstz,
+	(TIMESTAMP_NS '2025-03-09 00:00:00' + INTERVAL (i * 937) SECOND)::TIMESTAMP_NS AS tsns,
+	(TIME '00:00:00' + INTERVAL (i * 937) SECOND) AS tm,
+	(i % 4) AS grp FROM range(400) t(i);
+
+query
+SELECT count(*) AS rows,
+	count(*) FILTER (WHERE __internal_date_trunc_unbucket(__internal_date_trunc_bucket(ts, 3600000000, 0), 3600000000, 0)
+		<> date_trunc('hour', ts)) AS naive_mismatch,
+	count(*) FILTER (WHERE __internal_date_trunc_unbucket_tz(__internal_date_trunc_bucket(tstz, 3600000000, 0), 3600000000, 0)
+		<> date_trunc('hour', tstz)) AS zoned_mismatch,
+	count(*) FILTER (WHERE __internal_date_trunc_unbucket(__internal_date_trunc_bucket(tsns, 3600000000, 0), 3600000000, 0)
+		<> date_trunc('hour', tsns)::TIMESTAMP) AS nanos_mismatch,
+	count(*) FILTER (WHERE __internal_date_trunc_unbucket_time(__internal_date_trunc_bucket(tm, 3600000000, 0), 3600000000, 0)
+		<> time_bucket(INTERVAL '1 hour', tm)) AS timed_mismatch,
+	count(*) FILTER (WHERE __internal_date_trunc_month_unbucket(__internal_date_trunc_month_bucket(ts, 1, 0), 1, 0)
+		<> date_trunc('month', ts)) AS month_mismatch
+FROM bi;
+----
+rows	naive_mismatch	zoned_mismatch	nanos_mismatch	timed_mismatch	month_mismatch
+400	0	0	0	0	0
+
+statement ok
+CREATE TABLE bw AS SELECT ts, tstz, grp, 3600000000 * (1 + grp) AS width, grp * 60000000 AS anchor FROM bi;
+
+query
+SELECT width, count(*) AS rows, count(DISTINCT __internal_date_trunc_bucket(ts, width, anchor)) AS naive,
+	count(DISTINCT __internal_date_trunc_bucket(tstz, width, anchor)) AS zoned
+FROM bw GROUP BY 1 ORDER BY 1;
+----
+width	rows	naive	zoned
+3600000000	100	100	100
+7200000000	100	52	52
+10800000000	100	35	35
+14400000000	100	26	26
+
+query
+SELECT count(*) AS rows, sum(__internal_date_trunc_bucket(ts, width, anchor)) AS total FROM bw WHERE width > 0;
+----
+rows	total
+400	100790586
+
+statement error
+SELECT sum(__internal_date_trunc_bucket(ts, width - 3600000000, anchor)) FROM bw;
+----
+db error: ERROR: Bucket width must be positive
+
+
+statement error
+SELECT sum(__internal_date_trunc_bucket(ts, CASE WHEN grp = 3 THEN 0 ELSE 3600000000 END, 0)) FROM bw;
+----
+db error: ERROR: Bucket width must be positive

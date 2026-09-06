@@ -41,13 +41,11 @@ struct CreateTableInfo;
 struct BoundCreateTableInfo;
 
 }  // namespace duckdb
-
 namespace sdb::search {
 
 class SearchTable;
 
 }  // namespace sdb::search
-
 namespace sdb::catalog {
 
 enum class TableEngine : uint8_t {

@@ -184,16 +184,11 @@ namespace {
 // TransactionPreCommit and before TransactionCommit/Rollback, with no
 // ClientContext parameter of their own.
 thread_local ConnectionContext* tls_committing_ctx = nullptr;
-thread_local duckdb::MetaTransaction* tls_committing_transaction = nullptr;
 
 }  // namespace
 
 ConnectionContext* CurrentCommittingContext() noexcept {
   return tls_committing_ctx;
-}
-
-duckdb::MetaTransaction* CurrentCommittingTransaction() noexcept {
-  return tls_committing_transaction;
 }
 
 void SereneDBClientState::TransactionPreCommit(
@@ -211,7 +206,6 @@ void SereneDBClientState::TransactionPreCommit(
   // can succeed via their normal set_local path.
   _connection_ctx->PreCommit();
   tls_committing_ctx = _connection_ctx.get();
-  tls_committing_transaction = &transaction;
 }
 
 void SereneDBClientState::TransactionPreCheckpoint(
@@ -250,14 +244,12 @@ void SereneDBClientState::TransactionCommit(
     }
   }
   tls_committing_ctx = nullptr;
-  tls_committing_transaction = nullptr;
   _connection_ctx->Commit();
 }
 
 void SereneDBClientState::TransactionRollback(
   duckdb::MetaTransaction& transaction, duckdb::ClientContext& context) {
   tls_committing_ctx = nullptr;
-  tls_committing_transaction = nullptr;
   _connection_ctx->Rollback();
 }
 

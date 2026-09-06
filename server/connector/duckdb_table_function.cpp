@@ -24,6 +24,7 @@
 #include <absl/strings/str_join.h>
 
 #include <duckdb/catalog/catalog_entry/duck_table_entry.hpp>
+#include <duckdb/catalog/catalog_entry/view_catalog_entry.hpp>
 #include <duckdb/common/multi_file/multi_file_reader.hpp>
 #include <duckdb/common/types/data_chunk.hpp>
 #include <duckdb/common/types/variant.hpp>
@@ -31,6 +32,7 @@
 #include <duckdb/main/extension/extension_loader.hpp>
 #include <duckdb/optimizer/column_lifetime_analyzer.hpp>
 #include <duckdb/parser/constraints/not_null_constraint.hpp>
+#include <duckdb/parser/parsed_data/create_view_info.hpp>
 #include <duckdb/planner/expression/bound_columnref_expression.hpp>
 #include <duckdb/planner/expression/bound_conjunction_expression.hpp>
 #include <duckdb/planner/expression/bound_constant_expression.hpp>
@@ -42,6 +44,7 @@
 #include <duckdb/storage/statistics/numeric_stats.hpp>
 #include <duckdb/storage/statistics/struct_stats.hpp>
 #include <duckdb/storage/statistics/variant_stats.hpp>
+#include <filesystem>
 #include <iresearch/analysis/token_attributes.hpp>
 #include <iresearch/search/all_filter.hpp>
 #include <iresearch/search/boolean_filter.hpp>
@@ -50,19 +53,46 @@
 
 #include "catalog1/catalog.h"
 #include "catalog1/entry/inverted_index.h"
+#include "catalog1/entry/search_table.h"
+#include "catalog1/scorer_options.h"
 #include "connector/duckdb_client_state.h"
 #include "connector/duckdb_search_full_scan.hpp"
 #include "connector/functions/vector.h"
+#include "connector/inverted_store_index.h"
 #include "connector/optimizer/iresearch_plan.h"
 #include "connector/search_filter_printer.hpp"
 #include "connector/term_dict.h"
 #include "connector/view_fast_path.h"
+#include "pg/connection_context.h"
 #include "pg/errcodes.h"
 #include "pg/sql_exception_macro.h"
-#include "search/inverted_index.h"
 #include "search/inverted_index_storage.h"
+#include "search/search_table.h"
 
 namespace sdb::connector {
+
+void AppendKindSuffix(std::string& name, const duckdb::LogicalType& type) {
+  using term_dict::Kind;
+  switch (term_dict::Classify(type.id())) {
+    case Kind::Null:
+      name += "(null)";
+      break;
+    case Kind::Bool:
+      name += "(bool)";
+      break;
+    case Kind::String:
+      name += "(string)";
+      break;
+    case Kind::NumericI32:
+    case Kind::NumericI64:
+    case Kind::NumericF32:
+    case Kind::NumericF64:
+      name += "(numeric)";
+      break;
+    case Kind::Unsupported:
+      break;
+  }
+}
 
 uint32_t ReadBoundedIntSetting(duckdb::ClientContext& context,
                                std::string_view name, int32_t min_inclusive,
@@ -85,6 +115,8 @@ void CopyCommon(const SereneDBScanBindData& src, SereneDBScanBindData& dst) {
   dst.table_entry = src.table_entry;
   dst.entry_kind = src.entry_kind;
   dst.inverted_index = src.inverted_index;
+  dst.inverted_config = src.inverted_config;
+  dst.index_top_k_scorer = src.index_top_k_scorer;
   dst.stored_filter = src.stored_filter;
   dst.filter_scorers = src.filter_scorers;
   dst.snapshot = src.snapshot;
@@ -216,7 +248,7 @@ ColumnId TableScanBindData::ColumnIdByName(std::string_view name) const {
   const auto& columns = table_entry->GetColumns();
   const duckdb::Identifier key{name};
   return columns.ColumnExists(key) ? ColumnId{columns.GetColumn(key).Oid()}
-           : kInvalidColumnId;
+                                   : kInvalidColumnId;
 }
 
 std::string_view TableScanBindData::ColumnNameById(ColumnId col_id) const {
@@ -326,9 +358,8 @@ std::optional<duckdb::LogicalType> GeneratedPkTypeOf(
 }
 
 std::optional<PkSpec> ViewPkSpecOf(const SereneDBScanBindData& bind) {
-  if (bind.IsViewBacked() && bind.inverted_index &&
-      catalog::InvertedInfo(*bind.inverted_index).GetOptions().pk_column ==
-        catalog::PkColumnKind::Has) {
+  if (bind.IsViewBacked() && bind.inverted_config &&
+      bind.inverted_config->pk.column == connector::PkColumnKind::Has) {
     if (const auto& fp = bind.As<ViewScanBindData>().fast_path) {
       return fp->pk_spec;
     }

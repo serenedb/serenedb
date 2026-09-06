@@ -345,11 +345,11 @@ TEST_P(ScoreConstantTest, every_root_answers_every_combination) {
       const auto* query = prepared.Query(0);
       ASSERT_NE(nullptr, query);
 
-      std::array<irs::doc_id_t,
-                 irs::doc_limits::kMinCapacity + irs::doc_limits::kRunSlack>
+      irs::SlackBuf<irs::doc_id_t, irs::doc_limits::kMinCapacity,
+                    irs::doc_limits::kDocsSlack>
         docs;
-      std::array<irs::score_t,
-                 irs::doc_limits::kMinCapacity + irs::doc_limits::kRunSlack>
+      irs::SlackBuf<irs::score_t, irs::doc_limits::kMinCapacity,
+                    irs::doc_limits::kScoresSlack>
         scores;
       {
         irs::ColumnArgsFetcher fetcher;

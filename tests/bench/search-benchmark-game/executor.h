@@ -117,14 +117,10 @@ class Executor {
 
   std::vector<irs::ScoreDoc> _results;
   std::FILE* _print_out = stderr;
-  std::array<irs::doc_id_t, kEmitWindow> _emit_docs;
-#ifdef __AVX2__
-  [[maybe_unused]] irs::doc_id_t
-    _placeholder_for_bitset_materialize[irs::doc_limits::kRunSlack];
-#endif
-  std::array<irs::score_t, kEmitWindow> _emit_scores;
-  [[maybe_unused]] irs::score_t
-    _placeholder_for_scores_materialize[irs::doc_limits::kRunSlack];
+  irs::SlackBuf<irs::doc_id_t, kEmitWindow, irs::doc_limits::kDocsSlack>
+    _emit_docs;
+  irs::SlackBuf<irs::score_t, kEmitWindow, irs::doc_limits::kScoresSlack>
+    _emit_scores;
   size_t _result_count{0};
   irs::Scorer::ptr _scorer;
   irs::Scorer* _scorer_ptr{_scorer.get()};

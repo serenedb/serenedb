@@ -52,7 +52,7 @@ class SparseExclusion : public Root {
   Include& Include_() noexcept { return _include; }
 
   void Run(LoserScoreCollector& collector) final {
-    ABSL_CACHELINE_ALIGNED doc_id_t docs[kFill];
+    ABSL_CACHELINE_ALIGNED doc_id_t docs[kFill + doc_limits::kDocsSlack];
     ABSL_CACHELINE_ALIGNED score_t scores[kFill];
 
     for (;;) {

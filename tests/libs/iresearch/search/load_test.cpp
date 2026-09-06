@@ -219,7 +219,7 @@ size_t CompareEmitDocs(irs::lead::Node& reference_iter, irs::docs::Root& root,
   }
 
   std::vector<irs::doc_id_t> test_docs;
-  std::vector<irs::doc_id_t> buf(capacity + irs::doc_limits::kRunSlack);
+  std::vector<irs::doc_id_t> buf(capacity + irs::doc_limits::kDocsSlack);
   for (;;) {
     const auto n = root.Run(buf.data(), capacity);
     if (n == 0) {

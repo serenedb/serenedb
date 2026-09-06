@@ -158,8 +158,8 @@ std::vector<std::string> RunFilter(const irs::DirectoryReader& reader,
     // `Run` fills a whole block and its bitset path writes past the count it
     // produced, so the buffer carries the slack and the capacity it is told
     // about does not.
-    std::array<irs::doc_id_t,
-               irs::doc_limits::kMinCapacity + irs::doc_limits::kRunSlack>
+    irs::SlackBuf<irs::doc_id_t, irs::doc_limits::kMinCapacity,
+                  irs::doc_limits::kDocsSlack>
       docs;
     for (uint32_t n = 0;
          (n = plan->Run(docs.data(), irs::doc_limits::kMinCapacity)) != 0;) {

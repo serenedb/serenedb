@@ -325,10 +325,7 @@ class PostingReader {
   const IndexInput* _doc;
   IndexInput::ptr _owned;
   Input* _in = nullptr;
-  ABSL_CACHELINE_ALIGNED doc_id_t _buf[doc_limits::kBlockSize];
-#ifdef __AVX2__
-  [[maybe_unused]] SlackBuf _slack;
-#endif
+  DocsBuf _buf;
   [[no_unique_address]] NeedEnc<Input> _enc;
 };
 

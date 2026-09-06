@@ -23,6 +23,8 @@
 
 #pragma once
 
+#include <absl/base/optimization.h>
+
 #include "iresearch/types.hpp"
 
 // TODO(mbkkt) Make constant instead of function
@@ -49,10 +51,38 @@ constexpr bool valid(doc_id_t id) noexcept { return invalid() != id; }
 inline constexpr uint32_t kBlockSize = 128;
 inline constexpr uint32_t kSkipSize = 32;
 inline constexpr uint32_t kMaxSkipLevels = 5;
-inline constexpr uint32_t kRunSlack = 8;
+#ifdef __AVX2__
+inline constexpr uint32_t kDocsSlack = 8;
+#else
+inline constexpr uint32_t kDocsSlack = 0;
+#endif
+inline constexpr uint32_t kScoresSlack = 8;
 inline constexpr uint32_t kMinCapacity = kBlockSize;
 
 }  // namespace doc_limits
+
+template<typename T, size_t Size, size_t Slack>
+class SlackBuf {
+ public:
+  static constexpr size_t size() noexcept { return Size; }
+
+  constexpr operator T*() noexcept { return _data; }
+  constexpr operator const T*() const noexcept { return _data; }
+  constexpr T* data() noexcept { return _data; }
+  constexpr const T* data() const noexcept { return _data; }
+
+  constexpr T* begin() noexcept { return _data; }
+  constexpr const T* begin() const noexcept { return _data; }
+  constexpr T* end() noexcept { return _data + Size; }
+  constexpr const T* end() const noexcept { return _data + Size; }
+
+ private:
+  ABSL_CACHELINE_ALIGNED T _data[Size + Slack];
+};
+
+using DocsBuf =
+  SlackBuf<doc_id_t, doc_limits::kBlockSize, doc_limits::kDocsSlack>;
+
 namespace field_limits {
 
 constexpr field_id invalid() noexcept {

@@ -40,10 +40,6 @@ struct GatherBuf {
   ABSL_CACHELINE_ALIGNED uint32_t data[doc_limits::kBlockSize]{};
 };
 
-struct SlackBuf {
-  doc_id_t data[doc_limits::kRunSlack];
-};
-
 template<typename InputType>
 using NeedEnc = utils::Need<!InputType::kVolatileAlways, EncBuf>;
 

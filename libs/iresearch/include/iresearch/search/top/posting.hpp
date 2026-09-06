@@ -50,7 +50,7 @@ class Posting : public Root {
   }
 
   void Run(LoserScoreCollector& collector) final {
-    ABSL_CACHELINE_ALIGNED doc_id_t docs[Block::kFill];
+    ABSL_CACHELINE_ALIGNED doc_id_t docs[Block::kFill + doc_limits::kDocsSlack];
     ABSL_CACHELINE_ALIGNED score_t scores[Block::kFill];
 
     for (;;) {

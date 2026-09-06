@@ -134,8 +134,8 @@ uint64_t ExecuteTopKFiltered(const irs::DirectoryReader& reader,
   irs::ColumnArgsFetcher fetcher;
 
   constexpr uint32_t kBatch = irs::doc_limits::kMinCapacity;
-  std::array<irs::doc_id_t, kBatch> docs;
-  std::array<irs::score_t, kBatch> scores;
+  irs::SlackBuf<irs::doc_id_t, kBatch, irs::doc_limits::kDocsSlack> docs;
+  irs::SlackBuf<irs::score_t, kBatch, irs::doc_limits::kScoresSlack> scores;
 
   uint32_t seg_idx = 0;
   for ([[maybe_unused]] auto& segment : reader) {

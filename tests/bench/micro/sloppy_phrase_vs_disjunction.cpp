@@ -1096,8 +1096,9 @@ template<typename PhraseQueryT = irs::FixedPhraseQuery, typename MakeFn>
     phrase_queries.push_back(phrase_query);
   }
 
-  static constexpr uint32_t kDocBuf = irs::doc_limits::kMinCapacity;
-  std::array<irs::doc_id_t, kDocBuf + irs::doc_limits::kRunSlack> doc_buf;
+  irs::SlackBuf<irs::doc_id_t, irs::doc_limits::kMinCapacity,
+                irs::doc_limits::kDocsSlack>
+    doc_buf;
   std::array<irs::offsets::Range, 256> range_buf;
 
   size_t docs_per_iter = 0;
@@ -1117,7 +1118,7 @@ template<typename PhraseQueryT = irs::FixedPhraseQuery, typename MakeFn>
         continue;
       }
       for (;;) {
-        const auto n = docs->Run(doc_buf.data(), kDocBuf);
+        const auto n = docs->Run(doc_buf.data(), doc_buf.size());
         if (n == 0) {
           break;
         }

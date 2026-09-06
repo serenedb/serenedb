@@ -327,7 +327,7 @@ size_t Advance(const irs::lead::Node::ptr& docs) {
 }
 
 size_t Emit(const irs::docs::Root::ptr& docs) {
-  irs::doc_id_t out[kCapacity];
+  irs::SlackBuf<irs::doc_id_t, kCapacity, irs::doc_limits::kDocsSlack> out;
   size_t n = 0;
   for (;;) {
     const auto count = docs->Run(out, kCapacity);

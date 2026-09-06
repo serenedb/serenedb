@@ -75,7 +75,7 @@ std::vector<irs::doc_id_t> Drain(irs::lead::BitsetDocs& it) {
 
 // Every document the root emits, driven the way a consumer drives it.
 std::vector<irs::doc_id_t> Emit(irs::docs::Root& root, uint32_t capacity) {
-  std::vector<irs::doc_id_t> out(capacity + irs::search::kWindowWords);
+  std::vector<irs::doc_id_t> out(capacity + irs::doc_limits::kDocsSlack);
   std::vector<irs::doc_id_t> docs;
   for (;;) {
     const auto n = root.Run(out.data(), capacity);

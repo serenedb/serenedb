@@ -208,9 +208,11 @@ class PostingLeaf {
       if (!leaf.IsBitset()) {
         return leaf.bitset;
       }
-      SDB_ASSERT(leaf.words <= sizeof(_docs) / sizeof(uint64_t));
-      std::memcpy(_docs, leaf.bitset, size_t{leaf.words} * sizeof(uint64_t));
-      return reinterpret_cast<const uint64_t*>(_docs);
+      SDB_ASSERT(leaf.words <=
+                 _docs.size() * sizeof(doc_id_t) / sizeof(uint64_t));
+      std::memcpy(_docs.begin(), leaf.bitset,
+                  size_t{leaf.words} * sizeof(uint64_t));
+      return reinterpret_cast<const uint64_t*>(_docs.begin());
     }
   }
 
@@ -483,10 +485,9 @@ class PostingLeaf {
   [[no_unique_address]] utils::Need<kEnc, EncBuf> _enc;
   [[no_unique_address]] utils::Need<Shape.freqs, FreqBuf> _freqs;
   [[no_unique_address]] utils::Need<Shape.gather, GatherBuf> _gather;
-  ABSL_CACHELINE_ALIGNED doc_id_t _docs[doc_limits::kBlockSize];
-#ifdef __AVX2__
-  [[no_unique_address]] utils::Need<Shape.slack, SlackBuf> _slack;
-#endif
+  SlackBuf<doc_id_t, doc_limits::kBlockSize,
+           Shape.slack ? doc_limits::kDocsSlack : 0>
+    _docs;
   IndexInput::ptr _in;
   doc_id_t _doc = doc_limits::invalid();
   doc_id_t _last = doc_limits::invalid();

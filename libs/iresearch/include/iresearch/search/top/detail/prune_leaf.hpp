@@ -353,10 +353,7 @@ class PruneLeafBase {
 
   EncBuf _enc;
   FreqBuf _freqs;
-  ABSL_CACHELINE_ALIGNED doc_id_t _docs[doc_limits::kBlockSize];
-#ifdef __AVX2__
-  [[maybe_unused]] SlackBuf _slack;
-#endif
+  DocsBuf _docs;
   IndexInput::ptr _in;
   ColumnArgsFetcher* _fetcher = nullptr;
   ScoreFunction _score;

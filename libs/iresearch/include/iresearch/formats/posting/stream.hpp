@@ -163,11 +163,7 @@ class PostingsStream : public TermPostings {
   ABSL_CACHELINE_ALIGNED uint32_t _enc_buf[doc_limits::kBlockSize];
   [[no_unique_address]] ABSL_CACHELINE_ALIGNED utils::Need<
     IteratorTraits::Frequency(), uint32_t[doc_limits::kBlockSize]> _freqs;
-  ABSL_CACHELINE_ALIGNED doc_id_t _docs[doc_limits::kBlockSize];
-#ifdef __AVX2__
-  [[maybe_unused]] doc_id_t
-    _placeholder_for_bitset_materialize[doc_limits::kRunSlack];
-#endif
+  DocsBuf _docs;
   IndexInput::ptr _doc_in;
   [[no_unique_address]] utils::Need<IteratorTraits::Position(), Position> _pos;
   doc_id_t _max_in_leaf = doc_limits::invalid();

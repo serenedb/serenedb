@@ -251,8 +251,9 @@ struct StreamScanLocalState : public SegDocBufferedScanLocalState {
   // What the root last handed over and how much of it the batcher has taken.
   // A root answers by capacity and the batcher stages by row-group window, so
   // the run is held here and offered a window at a time.
-  std::array<irs::doc_id_t, kPlanBatch + irs::doc_limits::kRunSlack> stage_docs;
-  std::array<irs::score_t, kPlanBatch + irs::doc_limits::kRunSlack>
+  irs::SlackBuf<irs::doc_id_t, kPlanBatch, irs::doc_limits::kDocsSlack>
+    stage_docs;
+  irs::SlackBuf<irs::score_t, kPlanBatch, irs::doc_limits::kScoresSlack>
     stage_scores;
   uint32_t stage_at = 0;
   uint32_t stage_len = 0;

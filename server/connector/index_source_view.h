@@ -21,7 +21,9 @@
 #pragma once
 
 #include <absl/functional/function_ref.h>
+#include <absl/hash/hash.h>
 #include <absl/strings/ascii.h>
+#include <absl/strings/match.h>
 
 #include <duckdb/common/types.hpp>
 #include <duckdb/common/types/data_chunk.hpp>
@@ -31,7 +33,6 @@
 #include <iresearch/index/index_source.hpp>
 #include <ranges>
 #include <span>
-#include <string>
 #include <string_view>
 #include <vector>
 
@@ -41,24 +42,47 @@
 
 namespace sdb::connector {
 
+struct CaseFoldedName {
+  std::string_view name;
+
+  template<typename H>
+  friend H AbslHashValue(H state, CaseFoldedName folded) {
+    for (const char c : folded.name) {
+      state = H::combine(std::move(state), absl::ascii_tolower(c));
+    }
+    return H::combine(std::move(state), folded.name.size());
+  }
+};
+
+struct CaseFoldedHash {
+  size_t operator()(std::string_view name) const {
+    return absl::HashOf(CaseFoldedName{name});
+  }
+};
+
+struct CaseFoldedEqual {
+  bool operator()(std::string_view lhs, std::string_view rhs) const {
+    return absl::EqualsIgnoreCase(lhs, rhs);
+  }
+};
+
 class SourceColumns {
  public:
   template<std::ranges::input_range Names, typename Proj = std::identity>
   explicit SourceColumns(const Names& names, Proj proj = {}) {
     duckdb::idx_t index = 0;
     for (const auto& candidate : names) {
-      const std::string_view name{std::invoke(proj, candidate)};
-      _exact.try_emplace(name, index);
-      _folded.try_emplace(absl::AsciiStrToLower(name), index);
-      ++index;
+      _by_name.try_emplace(std::string_view{std::invoke(proj, candidate)},
+                           index++);
     }
   }
 
   duckdb::idx_t operator()(std::string_view name) const;
 
  private:
-  containers::FlatHashMap<std::string_view, duckdb::idx_t> _exact;
-  containers::FlatHashMap<std::string, duckdb::idx_t> _folded;
+  containers::FlatHashMap<std::string_view, duckdb::idx_t, CaseFoldedHash,
+                          CaseFoldedEqual>
+    _by_name;
 };
 
 class ViewIndexSourceBase : public IndexSource {

@@ -21,10 +21,8 @@
 #pragma once
 
 #include <absl/functional/function_ref.h>
-#include <absl/hash/hash.h>
-#include <absl/strings/ascii.h>
-#include <absl/strings/match.h>
 
+#include <duckdb/common/case_insensitive_map.hpp>
 #include <duckdb/common/types.hpp>
 #include <duckdb/common/types/data_chunk.hpp>
 #include <duckdb/execution/expression_executor.hpp>
@@ -33,26 +31,14 @@
 #include <iresearch/index/index_source.hpp>
 #include <ranges>
 #include <span>
+#include <string>
 #include <string_view>
 #include <vector>
 
-#include "basics/containers/flat_hash_map.h"
 #include "catalog/table_options.h"
 #include "connector/view_fast_path.h"
 
 namespace sdb::connector {
-
-struct CaseFoldedHash {
-  size_t operator()(std::string_view name) const {
-    return absl::HashOf(absl::AsciiStrToLower(name));
-  }
-};
-
-struct CaseFoldedEqual {
-  bool operator()(std::string_view lhs, std::string_view rhs) const {
-    return absl::EqualsIgnoreCase(lhs, rhs);
-  }
-};
 
 class SourceColumns {
  public:
@@ -60,17 +46,14 @@ class SourceColumns {
   explicit SourceColumns(const Names& names, Proj proj = {}) {
     duckdb::idx_t index = 0;
     for (const auto& candidate : names) {
-      _by_name.try_emplace(std::string_view{std::invoke(proj, candidate)},
-                           index++);
+      _by_name.try_emplace(std::string{std::invoke(proj, candidate)}, index++);
     }
   }
 
   duckdb::idx_t operator()(std::string_view name) const;
 
  private:
-  containers::FlatHashMap<std::string_view, duckdb::idx_t, CaseFoldedHash,
-                          CaseFoldedEqual>
-    _by_name;
+  duckdb::case_insensitive_map_t<duckdb::idx_t> _by_name;
 };
 
 class ViewIndexSourceBase : public IndexSource {

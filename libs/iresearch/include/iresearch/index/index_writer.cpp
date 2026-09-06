@@ -199,25 +199,25 @@ void RemoveFromExistingSegment(DocumentMask& deleted_docs,
     return;
   }
 
-  auto collector = query.filter->MakeCollector(nullptr);
+  // A deletion never scores, so nothing under it collects statistics. The
+  // batch's own deletions so far are handed over: a document an earlier query
+  // of this batch removed is not alive, and the segment's mask predates it.
   auto prepared =
-    query.filter->PrepareSegment(reader, {.collector = collector.get()});
+    query.filter->PrepareSegment(reader, {.pending_docs_mask = &deleted_docs});
 
   if (!prepared) [[unlikely]] {
     return;  // skip invalid prepared filters
   }
 
-  auto itr = prepared->Execute({.pending_docs_mask = &deleted_docs},
-                               StatsBuffer::Empty());
+  auto plan = prepared->PlanLead({});
 
-  if (!itr) [[unlikely]] {
-    return;  // skip invalid iterators
+  if (!plan) [[unlikely]] {
+    return;  // skip a query kind that has no plan
   }
 
   const auto* docs_mask = reader.docs_mask();
-  while (!doc_limits::eof(itr->advance())) {
-    const auto doc_id = itr->value();
-
+  for (auto doc_id = plan->Advance(); !doc_limits::eof(doc_id);
+       doc_id = plan->Advance()) {
     // if the indexed doc_id was already masked then it should be skipped
     if (docs_mask && docs_mask->contains(doc_id)) {
       continue;  // the current modification query does not match any records
@@ -235,25 +235,25 @@ bool RemoveFromImportedSegment(DocumentMask& deleted_docs,
     return false;
   }
 
-  auto collector = query.filter->MakeCollector(nullptr);
+  // A deletion never scores, so nothing under it collects statistics. The
+  // batch's own deletions so far are handed over: a document an earlier query
+  // of this batch removed is not alive, and the segment's mask predates it.
   auto prepared =
-    query.filter->PrepareSegment(reader, {.collector = collector.get()});
+    query.filter->PrepareSegment(reader, {.pending_docs_mask = &deleted_docs});
   if (!prepared) [[unlikely]] {
     return false;  // skip invalid prepared filters
   }
 
-  auto itr = prepared->Execute({.pending_docs_mask = &deleted_docs},
-                               StatsBuffer::Empty());
-  if (!itr) [[unlikely]] {
-    return false;  // skip invalid iterators
+  auto plan = prepared->PlanLead({});
+  if (!plan) [[unlikely]] {
+    return false;  // skip a query kind that has no plan
   }
 
   bool modified = false;
-  while (!doc_limits::eof(itr->advance())) {
-    const auto doc_id = itr->value();
-
+  for (auto doc = plan->Advance(); !doc_limits::eof(doc);
+       doc = plan->Advance()) {
     // if the indexed doc_id was already masked then it should be skipped
-    if (!deleted_docs.insert(doc_id).second) {
+    if (!deleted_docs.insert(doc).second) {
       continue;  // the current modification query does not match any records
     }
 
@@ -276,24 +276,25 @@ void FlushedSegmentContext::Remove(IndexWriter::QueryContext& query) {
 
   auto& document_mask = flushed.document_mask;
 
-  auto collector = query.filter->MakeCollector(nullptr);
-  auto prepared =
-    query.filter->PrepareSegment(*reader, {.collector = collector.get()});
+  // A deletion never scores, so nothing under it collects statistics. The
+  // batch's own deletions so far are handed over: a document an earlier query
+  // of this batch removed is not alive, and the segment's mask predates it.
+  auto prepared = query.filter->PrepareSegment(
+    *reader, {.pending_docs_mask = &document_mask});
 
   if (!prepared) [[unlikely]] {
     return;  // Skip invalid prepared filters
   }
 
-  auto itr = prepared->Execute({.pending_docs_mask = &document_mask},
-                               StatsBuffer::Empty());
+  auto plan = prepared->PlanLead({});
 
-  if (!itr) [[unlikely]] {
-    return;  // Skip invalid iterators
+  if (!plan) [[unlikely]] {
+    return;  // Skip a query kind that has no plan
   }
 
   auto* flushed_docs = segment.flushed_docs.data() + flushed.GetDocsBegin();
-  while (!doc_limits::eof(itr->advance())) {
-    const auto new_doc = itr->value();
+  for (auto new_doc = plan->Advance(); !doc_limits::eof(new_doc);
+       new_doc = plan->Advance()) {
     const auto old_doc = New2Old(new_doc);
 
     const auto& doc = flushed_docs[old_doc - doc_limits::min()];
@@ -431,13 +432,13 @@ bool MapRemovals(const CandidatesMapping& candidates_mapping,
       // passed to the merge_writer
 
       // no more docs in merged reader
-      if (doc_limits::eof(merged_itr->advance())) {
-        if (!doc_limits::eof(current_itr->advance())) {
+      if (doc_limits::eof(merged_itr->Advance())) {
+        if (!doc_limits::eof(current_itr->Advance())) {
           SDB_WARN(IRESEARCH, "Failed to map removals for compacted segment '",
                    old_meta.name, "' version '", old_meta.version,
                    "' from current segment '", new_meta.name, "' version '",
                    new_meta.version, "', current segment has doc_id '",
-                   current_itr->value(),
+                   current_itr->Value(),
                    "' not present in the compacted segment");
 
           return false;  // current reader has unmerged docs
@@ -447,11 +448,11 @@ bool MapRemovals(const CandidatesMapping& candidates_mapping,
       }
 
       // mask all remaining doc_ids
-      if (doc_limits::eof(current_itr->advance())) {
+      if (doc_limits::eof(current_itr->Advance())) {
         do {
-          SDB_ASSERT(!merge_ctx.remap.IsMasked(merged_itr->value()));
-          docs_mask.insert(merge_ctx.remap.Remap(merged_itr->value()));
-        } while (!doc_limits::eof(merged_itr->advance()));
+          SDB_ASSERT(!merge_ctx.remap.IsMasked(merged_itr->Value()));
+          docs_mask.insert(merge_ctx.remap.Remap(merged_itr->Value()));
+        } while (!doc_limits::eof(merged_itr->Advance()));
 
         continue;  // continue wih next mapping
       }
@@ -459,42 +460,42 @@ bool MapRemovals(const CandidatesMapping& candidates_mapping,
       // validate that all docs in the current reader were merged, and add any
       // removed docs to the merged mask
       for (;;) {
-        while (merged_itr->value() < current_itr->value()) {
-          SDB_ASSERT(!merge_ctx.remap.IsMasked(merged_itr->value()));
-          docs_mask.insert(merge_ctx.remap.Remap(merged_itr->value()));
+        while (merged_itr->Value() < current_itr->Value()) {
+          SDB_ASSERT(!merge_ctx.remap.IsMasked(merged_itr->Value()));
+          docs_mask.insert(merge_ctx.remap.Remap(merged_itr->Value()));
 
-          if (doc_limits::eof(merged_itr->advance())) {
+          if (doc_limits::eof(merged_itr->Advance())) {
             SDB_WARN(
               IRESEARCH, "Failed to map removals for compacted segment '",
               old_meta.name, "' version '", old_meta.version,
               "' from current segment '", new_meta.name, "' version '",
               new_meta.version, "', current segment has doc_id '",
-              current_itr->value(), "' not present in the compacted segment");
+              current_itr->Value(), "' not present in the compacted segment");
 
             return false;  // current reader has unmerged docs
           }
         }
 
-        if (merged_itr->value() > current_itr->value()) {
+        if (merged_itr->Value() > current_itr->Value()) {
           SDB_WARN(IRESEARCH, "Failed to map removals for compacted segment '",
                    old_meta.name, "' version '", old_meta.version,
                    "' from current segment '", new_meta.name, "' version '",
                    new_meta.version, "', current segment has doc_id '",
-                   current_itr->value(),
+                   current_itr->Value(),
                    "' not present in the compacted segment");
 
           return false;  // current reader has unmerged docs
         }
 
         // no more docs in merged reader
-        if (doc_limits::eof(merged_itr->advance())) {
-          if (!doc_limits::eof(current_itr->advance())) {
+        if (doc_limits::eof(merged_itr->Advance())) {
+          if (!doc_limits::eof(current_itr->Advance())) {
             SDB_WARN(
               IRESEARCH, "Failed to map removals for compacted segment '",
               old_meta.name, "' version '", old_meta.version,
               "' from current segment '", new_meta.name, "' version '",
               new_meta.version, "', current segment has doc_id '",
-              current_itr->value(), "' not present in the compacted segment");
+              current_itr->Value(), "' not present in the compacted segment");
 
             return false;  // current reader has unmerged docs
           }
@@ -503,11 +504,11 @@ bool MapRemovals(const CandidatesMapping& candidates_mapping,
         }
 
         // mask all remaining doc_ids
-        if (doc_limits::eof(current_itr->advance())) {
+        if (doc_limits::eof(current_itr->Advance())) {
           do {
-            SDB_ASSERT(!merge_ctx.remap.IsMasked(merged_itr->value()));
-            docs_mask.insert(merge_ctx.remap.Remap(merged_itr->value()));
-          } while (!doc_limits::eof(merged_itr->advance()));
+            SDB_ASSERT(!merge_ctx.remap.IsMasked(merged_itr->Value()));
+            docs_mask.insert(merge_ctx.remap.Remap(merged_itr->Value()));
+          } while (!doc_limits::eof(merged_itr->Advance()));
 
           break;  // continue wih next mapping
         }

@@ -35,7 +35,7 @@ struct RawBoost final : ScorerBase<RawBoost, void> {
     bool operator==(const Options&) const = default;
   };
 
-  static std::unique_ptr<RawBoost> Make(const Options& /*opts*/) {
+  static std::unique_ptr<RawBoost> Make(const Options&) {
     return std::make_unique<RawBoost>();
   }
 
@@ -44,6 +44,8 @@ struct RawBoost final : ScorerBase<RawBoost, void> {
   IndexFeatures GetIndexFeatures() const noexcept final {
     return IndexFeatures::None;
   }
+
+  bool ScoresPerDoc() const noexcept final { return false; }
 };
 
 }  // namespace irs

@@ -90,53 +90,53 @@ COMMENT ON TABLE test_table IS NULL;
 # DOCS_TEST_BODY
 
 statement ok
-SELECT comment FROM duckdb_tables();
+SELECT comment FROM sdb_tables();
 
 # DOCS_TEST: example_011
 
 # DOCS_TEST_BODY
 
 statement ok
-SELECT comment FROM duckdb_columns();
+SELECT comment FROM sdb_columns();
 
 # DOCS_TEST: example_012
 
 # DOCS_TEST_BODY
 
 statement ok
-SELECT comment FROM duckdb_views();
+SELECT comment FROM sdb_views();
 
 # DOCS_TEST: example_013
 
 # DOCS_TEST_BODY
 
 statement ok
-SELECT comment FROM duckdb_indexes();
+SELECT comment FROM sdb_indexes();
 
 # DOCS_TEST: example_014
 
 # DOCS_TEST_BODY
 
 statement ok
-SELECT comment FROM duckdb_sequences();
+SELECT comment FROM sdb_sequences();
 
 # DOCS_TEST: example_015
 
 # DOCS_TEST_BODY
 
 statement ok
-SELECT comment FROM duckdb_types();
+SELECT comment FROM sdb_types();
 
 # DOCS_TEST: example_016
 
 # DOCS_TEST_BODY
 
 statement ok
-SELECT comment FROM duckdb_functions();
+SELECT comment FROM sdb_functions();
 
 # DOCS_TEST: example_017
 
 # DOCS_TEST_BODY
 
 statement ok
-SELECT comment FROM duckdb_functions();
+SELECT comment FROM sdb_functions();

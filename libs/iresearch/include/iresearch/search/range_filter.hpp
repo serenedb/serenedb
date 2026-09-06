@@ -108,7 +108,9 @@ class ByRange : public FilterWithField<ByRangeOptions> {
                                           const options_type::range_type& rng,
                                           score_t boost);
 
-  PrepareCollector::ptr MakeCollectorImpl(const Scorer* scorer) const final;
+  PrepareCollector::ptr MakeCollectorImpl(const Scorer* scorer,
+                                          StatsArena& stats,
+                                          uint32_t threads) const final;
 
   TermPredicate::ptr CompileTermPredicate() const final;
 

@@ -60,7 +60,7 @@ set(iresearch-tests_sources
     ./search/regexp_filter_test.cpp
     ./search/levenshtein_filter_test.cpp
     ./search/index_reader_test.cpp
-    ./search/bitset_doc_iterator_test.cpp
+    ./search/bitset_docs_test.cpp
     ./search/sort_tests.cpp
     ./search/tfidf_test.cpp
     ./search/score_prune_test.cpp
@@ -71,10 +71,10 @@ set(iresearch-tests_sources
     ./search/optimizer_scorer_test.cpp
     ./search/scorer_to_string_test.cpp
     ./search/raw_tf_test.cpp
+    ./search/score_constant_test.cpp
     ./search/lm_test.cpp
     ./search/indri_dirichlet_test.cpp
     ./search/dfi_test.cpp
-    ./search/cost_attribute_test.cpp
     ./search/boost_attribute_test.cpp
     ./search/filter_test_case_base.cpp
     ./search/boolean_filter_tests.cpp
@@ -87,10 +87,8 @@ set(iresearch-tests_sources
     ./search/phrase_filter_tests.cpp
     ./search/slop_phrase_gather_tests.cpp
     ./search/slop_phrase_fuzz.cpp
-    ./search/same_position_filter_tests.cpp
     ./search/ngram_similarity_filter_tests.cpp
     ./search/top_terms_selector_test.cpp
-    ./search/proxy_filter_test.cpp
     ./search/geo_filter_test.cpp
     ./search/geo_distance_filter_test.cpp
     ./search/geo_analyzer_test.cpp

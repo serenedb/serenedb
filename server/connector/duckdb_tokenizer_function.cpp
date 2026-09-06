@@ -108,7 +108,6 @@ void DropTSDictionaryPragma(duckdb::ClientContext& context,
   auto name = pg::ParseObjectName(dict_name, StaticStrings::kPublic);
 
   catalog::JoinStoreTransaction(&context);
-  catalog::Catalog::MutationScope mutation{catalog::GetCatalog()};
   const auto database_id =
     catalog::FindDatabaseId(&context, conn_ctx.GetDatabase());
   const auto schema_id =

@@ -233,62 +233,38 @@ class IvfTermIterator final : public TermOnlyIterator {
     return true;
   }
 
-  DocIterator::ptr postings(IndexFeatures /*features*/) const final {
+  TermPostings::ptr postings(IndexFeatures /*features*/) const final {
     const doc_id_t* p = _cluster_docs.data() + _cluster_offsets[_cur];
     const size_t len = _cluster_offsets[_cur + 1] - _cluster_offsets[_cur];
     _doc_itr.Reset({p, len});
-    return memory::to_managed<DocIterator>(_doc_itr);
+    return memory::to_managed<TermPostings>(_doc_itr);
   }
 
   Attribute* GetMutable(TypeInfo::type_id) noexcept final { return nullptr; }
 
  private:
-  class DocIter final : public DocIterator {
+  class DocIter final : public TermPostings {
    public:
     void Reset(std::span<const doc_id_t> docs) noexcept {
       _docs = docs;
       _pos = 0;
       _doc = doc_limits::invalid();
-      _notified = false;
     }
 
-    doc_id_t advance() noexcept final {
-      if (!_notified) {
-        _notified = true;
-        _change(*this);
-      }
+    doc_id_t Advance() noexcept final {
       if (_pos >= _docs.size()) {
         return _doc = doc_limits::eof();
       }
       return _doc = _docs[_pos++];
     }
 
-    doc_id_t seek(doc_id_t target) noexcept final {
-      if (doc_limits::eof(target)) {
-        return _doc = doc_limits::eof();
-      }
-      while (_doc < target) {
-        if (doc_limits::eof(advance())) {
-          break;
-        }
-      }
-      return _doc;
-    }
-
     uint32_t GetFreq() const final { return 1; }
 
-    Attribute* GetMutable(TypeInfo::type_id type) noexcept final {
-      return type == irs::Type<AttrProviderChangeAttr>::id() ? &_change
-                                                             : nullptr;
-    }
-
-    IRS_DOC_ITERATOR_DEFAULTS
+    // The provider never changes, so the one call it owes is made at once.
 
    private:
     std::span<const doc_id_t> _docs;
     size_t _pos = 0;
-    bool _notified = false;
-    AttrProviderChangeAttr _change;
   };
 
   std::span<const doc_id_t> _cluster_docs;

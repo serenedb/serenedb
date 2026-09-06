@@ -112,7 +112,7 @@ class AutomatonTermIterator : public SeekTermIterator {
 
   bytes_view value() const noexcept final { return *_value; }
 
-  DocIterator::ptr postings(IndexFeatures features) const final {
+  TermPostings::ptr postings(IndexFeatures features) const final {
     return _it->postings(features);
   }
 

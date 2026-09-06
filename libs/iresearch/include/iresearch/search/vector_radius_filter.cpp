@@ -40,8 +40,10 @@ QueryBuilder::ptr ByRadius::PrepareSegment(const SubReader& segment,
                            0);
 }
 
-PrepareCollector::ptr ByRadius::MakeCollectorImpl(const Scorer* scorer) const {
-  return std::make_unique<AllCollector>(scorer);
+PrepareCollector::ptr ByRadius::MakeCollectorImpl(const Scorer* scorer,
+                                                  StatsArena& stats,
+                                                  uint32_t) const {
+  return std::make_unique<AllCollector>(scorer, stats);
 }
 
 }  // namespace irs

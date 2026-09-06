@@ -29,6 +29,7 @@
 #include <iresearch/analysis/tokenizers.hpp>
 #include <iresearch/search/all_filter.hpp>
 #include <iresearch/search/boolean_filter.hpp>
+#include <iresearch/search/constant_score.hpp>
 #include <iresearch/search/levenshtein_filter.hpp>
 #include <iresearch/search/phrase_filter.hpp>
 #include <iresearch/search/range_filter.hpp>
@@ -115,59 +116,25 @@ struct FilterContext {
   }
 };
 
-template<typename Filter, typename Source>
-auto& AddFilter(Source& parent) {
-  if constexpr (std::is_same_v<Filter, irs::All>) {
-    static_assert(std::is_base_of_v<irs::BooleanFilter, Source>);
-    return parent.add(std::make_unique<irs::All>());
-  } else if constexpr (std::is_same_v<irs::Not, Source>) {
-    return parent.template filter<Filter>();
-  } else {
-    return parent.template add<Filter>();
-  }
+inline BoolTarget MaybeNegated(BoolTarget parent, const FilterContext& ctx,
+                               const SearchColumnInfo& info) {
+  return ctx.negated ? NegateScoped(parent, info) : parent;
 }
 
-template<typename Source>
-irs::Not& AddNot(Source& parent) {
-  return AddFilter<irs::Not>(parent.type() == irs::Type<irs::Or>::id()
-                               ? AddFilter<irs::And>(parent)
-                               : parent);
+inline const irs::Scorer* LeafScorer(const SearchColumnInfo& info) {
+  const auto type = info.logical_type.id();
+  return type == duckdb::LogicalTypeId::VARCHAR ||
+             type == duckdb::LogicalTypeId::BLOB
+           ? nullptr
+           : &irs::DefaultConstScore();
 }
 
-template<typename Filter, typename Source>
-Filter& Negate(Source& parent) {
-  return AddFilter<Filter>(AddNot(parent));
+template<typename Filter, typename... Args>
+Filter& AddMaybeNegated(BoolTarget parent, const FilterContext& ctx,
+                        const SearchColumnInfo& info, Args&&... args) {
+  return AddFilter<Filter>(MaybeNegated(parent, ctx, info),
+                           std::forward<Args>(args)...);
 }
-
-irs::ByTerm& AddNullMarkerTerm(irs::BooleanFilter& parent,
-                               irs::field_id null_field_id);
-
-// SQL three-valued logic: a NULL row satisfies no comparison, but a bare
-// irs::Not runs against ALL live docs and would readmit rows without a
-// token in the negated column. Scoped negation excludes the column's
-// null-marker docs alongside the negated set; the and_null_exclusion
-// optimizer rule prunes the branch wherever a positive same-column
-// conjunct already rejects those rows.
-template<typename Filter, typename Source>
-Filter& NegateScoped(Source& parent, const SearchColumnInfo& info) {
-  if (!irs::field_limits::valid(info.null_field_id)) {
-    return Negate<Filter>(parent);
-  }
-  auto& group = Negate<irs::Or>(parent);
-  auto& target = AddFilter<Filter>(group);
-  AddNullMarkerTerm(group, info.null_field_id);
-  return target;
-}
-
-template<typename Filter, typename Source>
-Filter& AddMaybeNegated(Source& parent, const FilterContext& ctx,
-                        const SearchColumnInfo& info) {
-  return ctx.negated ? NegateScoped<Filter>(parent, info)
-                     : AddFilter<Filter>(parent);
-}
-
-void AddNegated(irs::BooleanFilter& parent, const SearchColumnInfo& info,
-                irs::Filter::ptr target);
 
 const duckdb::Value* TryGetConstant(const duckdb::Expression& expr);
 
@@ -207,16 +174,16 @@ void ResetNumericStream(irs::NumericTokenizer& stream,
 
 // Throws THROW_SQL_ERROR on invalid arguments: ts_* syntax is only
 // reachable through the inverted index, so there is no fallback plan.
-void BuildTSQuery(irs::BooleanFilter& parent, const FilterContext& ctx,
+void BuildTSQuery(BoolTarget parent, const FilterContext& ctx,
                   const SearchColumnInfo& column_info,
                   const duckdb::Expression& expr);
 
-void BuildFtsPhrase(irs::BooleanFilter& parent, const FilterContext& ctx,
+void BuildFtsPhrase(BoolTarget parent, const FilterContext& ctx,
                     const SearchColumnInfo& column_info, std::string_view text);
-void BuildFtsTerm(irs::BooleanFilter& parent, const FilterContext& ctx,
+void BuildFtsTerm(BoolTarget parent, const FilterContext& ctx,
                   const SearchColumnInfo& column_info,
                   const duckdb::Value& value);
-void BuildFtsTokens(irs::BooleanFilter& parent, const FilterContext& ctx,
+void BuildFtsTokens(BoolTarget parent, const FilterContext& ctx,
                     const SearchColumnInfo& column_info, std::string_view text,
                     bool require_all);
 
@@ -276,7 +243,7 @@ struct PhraseSeq {
 PhraseGap ParsePhraseSeqGap(const duckdb::Expression& expr);
 void FlattenPhraseSeq(const duckdb::Expression& expr, PhraseSeq& seq);
 void AttachPart(PhraseSeq& seq, const duckdb::Expression& next);
-void EmitPhraseSeq(irs::BooleanFilter& parent, const FilterContext& ctx,
+void EmitPhraseSeq(BoolTarget parent, const FilterContext& ctx,
                    const SearchColumnInfo& column_info, const PhraseSeq& seq);
 
 enum class TSQueryOp {
@@ -285,7 +252,7 @@ enum class TSQueryOp {
   Term,
   Like,
   Prefix,
-  Ngram,
+  NGram,
   Fuzzy,
   Any,
   All,

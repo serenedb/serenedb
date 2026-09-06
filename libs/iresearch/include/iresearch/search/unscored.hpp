@@ -35,7 +35,7 @@ class Unscored final : public irs::ScorerBase<Unscored, void> {
     bool operator==(const Options&) const = default;
   };
 
-  static std::unique_ptr<Unscored> Make(const Options& /*opts*/) {
+  static std::unique_ptr<Unscored> Make(const Options&) {
     return std::make_unique<Unscored>();
   }
 
@@ -48,11 +48,17 @@ class Unscored final : public irs::ScorerBase<Unscored, void> {
     return IndexFeatures::None;
   }
 
-  ScoreFunction PrepareScorer(const ScoreContext& /*ctx*/) const final {
+  bool ScoresPerDoc() const noexcept final { return false; }
+
+  ScoreFunction PrepareScorer(const ScoreContext&) const final {
     return ScoreFunction::Default();
   }
 
   std::string ToString() const final { return "unscored"; }
 };
+
+inline bool IsUnscored(const Scorer& scorer) noexcept {
+  return scorer.type() == irs::Type<Unscored>::id();
+}
 
 }  // namespace irs

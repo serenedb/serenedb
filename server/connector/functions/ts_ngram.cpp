@@ -30,7 +30,7 @@
 
 namespace sdb::connector {
 
-void FromNgram(irs::BooleanFilter& filter, const FilterContext& ctx,
+void FromNGram(BoolTarget filter, const FilterContext& ctx,
                const SearchColumnInfo& column_info,
                const duckdb::BoundFunctionExpression& func) {
   static constexpr std::string_view kSyntaxHint =

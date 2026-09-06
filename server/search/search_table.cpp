@@ -293,7 +293,7 @@ SearchTable::~SearchTable() {
   GetSearchEngine().GetDbWal(_db_id).DeregisterShard(_table_id);
   BackgroundScheduler::instance()
     .Run([index_dir = GetPath(_db_id, _schema_id, _table_id)] {
-      RemoveDroppedStorageDir(index_dir, 2);
+      RemoveDroppedStorageDir(index_dir);
     })
     .Detach();
 }

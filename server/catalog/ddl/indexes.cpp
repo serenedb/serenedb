@@ -60,7 +60,6 @@ duckdb::unique_ptr<CreateIndexInfo> CreateIndexOnRelation(
                     ERR_MSG("Cannot create index without columns"));
   }
   JoinStoreTransaction(ax.context);
-  catalog::Catalog::MutationScope lock{catalog::GetCatalog()};
   const auto schema_id = catalog::ParentIdOf(relation);
   // The noun the refusal names is the relation's own kind: a view and a table
   // are both indexable and postgres says which one it refused.
@@ -161,7 +160,7 @@ duckdb::optional_ptr<duckdb::CatalogEntry> CreateIndexImpl(
   if (store_index) {
     catalog::StoreCreateIndex(context, db_id, std::move(store_index),
                               std::move(table), index.GetRelationId(),
-                              index.GetIndex());
+                              index.GetIndex(), storage);
   }
   // After the store op, so a relation another transaction has already dropped
   // is refused by the rows rather than by the set -- the store names the
@@ -190,7 +189,6 @@ duckdb::optional_ptr<duckdb::CatalogEntry> CreateIndexImpl(
 
 void RenameIndex(duckdb::ClientContext* context, const CreateIndexInfo& index,
                  std::string_view new_name) {
-  catalog::Catalog::MutationScope mutation{catalog::GetCatalog()};
   const auto schema_id = index.GetSchemaId();
   auto renamed = RenamedIndexRecord(index, new_name);
   const auto db_id = catalog::SchemaDatabaseId(context, schema_id);
@@ -204,10 +202,10 @@ void RenameIndex(duckdb::ClientContext* context, const CreateIndexInfo& index,
   catalog::PutEntry(context, index.GetName(), std::move(renamed));
 }
 
-void DropIndexLocked(duckdb::ClientContext* context, ObjectId database_id,
-                     const CreateIndexInfo& index,
-                     std::shared_ptr<search::InvertedIndexStorage> storage,
-                     bool cascade) {
+void DropIndexResolved(duckdb::ClientContext* context, ObjectId database_id,
+                       const CreateIndexInfo& index,
+                       std::shared_ptr<search::InvertedIndexStorage> storage,
+                       bool cascade) {
   catalog::DropIndexEntry(context, index.GetSchemaId(), index.GetName());
   // Store-side index drop is synchronous: UNIQUE enforcement must stop when
   // DROP INDEX commits, not when the artifact half runs.
@@ -250,10 +248,8 @@ void DropIndexArtifacts(duckdb::ClientContext* context, ObjectId database_id,
       }
       // A failed build's compensating drop can arrive before the directory was
       // ever bound to an entry; the one the build created is removed directly.
-      search::RemoveDroppedStorageDir(
-        search::InvertedIndexStorage::GetPath(database_id, schema_id,
-                                              relation_id, index_id),
-        3);
+      search::RemoveDroppedStorageDir(search::InvertedIndexStorage::GetPath(
+        database_id, schema_id, relation_id, index_id));
     });
 }
 

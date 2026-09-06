@@ -300,13 +300,14 @@ TEST(by_prefix_test, boost) {
   // no boost
   {
     irs::ByPrefix q = MakeFilter(kField, "term");
+    ASSERT_EQ(irs::kNoBoost, q.GetBoost());
 
     tests::PreparedFilter prepared{q, irs::SubReader::empty(), nullptr,
                                    counter};
+    ASSERT_TRUE(irs::QueryBuilder::IsEmpty(*prepared.Query(0)));
     ASSERT_EQ(irs::kNoBoost, prepared.Query(0)->Boost());
   }
   EXPECT_EQ(counter.current, 0);
-  EXPECT_GT(counter.max, 0);
   counter.Reset();
 
   // with boost
@@ -314,13 +315,16 @@ TEST(by_prefix_test, boost) {
     irs::score_t boost = 1.5f;
     irs::ByPrefix q = MakeFilter(kField, "term");
     q.SetBoost(boost);
+    ASSERT_EQ(boost, q.GetBoost());
 
+    // a segment without the field matches nothing, and nothing carries no
+    // boost -- so the boost is only observable where the field exists
     tests::PreparedFilter prepared{q, irs::SubReader::empty(), nullptr,
                                    counter};
-    ASSERT_EQ(boost, prepared.Query(0)->Boost());
+    ASSERT_TRUE(irs::QueryBuilder::IsEmpty(*prepared.Query(0)));
+    ASSERT_EQ(irs::kNoBoost, prepared.Query(0)->Boost());
   }
   EXPECT_EQ(counter.current, 0);
-  EXPECT_GT(counter.max, 0);
   counter.Reset();
 }
 
@@ -483,8 +487,8 @@ TEST_P(PrefixFilterTestCase, by_prefix_no_collector) {
     Docs docs;
     for (size_t i = 0, n = prepared.size(); i < n; ++i) {
       auto it = prepared.Execute(i);
-      while (!irs::doc_limits::eof(it->advance())) {
-        docs.push_back(it->value());
+      while (!irs::doc_limits::eof(it->Advance())) {
+        docs.push_back(it->Value());
       }
     }
     return docs;

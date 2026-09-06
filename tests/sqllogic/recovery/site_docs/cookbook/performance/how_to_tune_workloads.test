@@ -29,7 +29,7 @@ SET temp_directory = '/path/to/temp_dir.tmp/';
 # DOCS_TEST_BODY
 
 statement ok
-FROM duckdb_external_file_cache();
+FROM sdb_external_file_cache();
 
 # DOCS_TEST: example_005
 

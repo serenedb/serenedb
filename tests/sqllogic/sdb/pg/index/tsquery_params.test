@@ -221,13 +221,13 @@ query
 EXECUTE tqp_score1('lazy');
 ----
 a	s
-2	128007
+2	58185
 
 query
 EXECUTE tqp_score2('lazy');
 ----
 a	s
-2	256013
+2	116370
 
 # ----------------------------------------------------------------------
 # Parameters mixed with other conjuncts
@@ -699,9 +699,9 @@ query
 EXECUTE tqp_boosted('quick');
 ----
 a	score
-1	2.3079
-4	2.3079
-5	2.3079
+1	1.049
+4	1.049
+5	1.049
 
 
 # And a parameter carrying a modifier as one element of a list: doc 4 matches
@@ -716,8 +716,8 @@ EXECUTE tqp_list('quick');
 ----
 a	score
 1	42
-2	0.897
-4	42.897
+2	0.4077
+4	42.4077
 5	42
 
 

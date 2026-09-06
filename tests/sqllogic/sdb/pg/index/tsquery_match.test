@@ -955,7 +955,7 @@ a
 
 # ----------------------------------------------------------------------
 # ## with ANY_OF / ALL_OF phrase parts.
-# Inside `##`, ANY_OF/ALL_OF map to ByTermsOptions at a phrase position
+# Inside `##`, ANY_OF/ALL_OF map to TermSetOptions at a phrase position
 # (rather than a separate Or/And subtree). min_match is 1 (any), N (all),
 # or an explicit override on ANY_OF.
 # ----------------------------------------------------------------------

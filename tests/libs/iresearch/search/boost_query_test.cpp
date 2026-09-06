@@ -31,7 +31,6 @@
 #include "iresearch/search/column_collector.hpp"
 #include "iresearch/search/doc_collector.hpp"
 #include "iresearch/search/filter_optimizer.hpp"
-#include "iresearch/search/mixed_boolean_filter.hpp"
 #include "iresearch/search/term_filter.hpp"
 #include "iresearch/search/tfidf.hpp"
 #include "iresearch/types.hpp"
@@ -76,19 +75,19 @@ class BoostQueryTestCase : public tests::IndexTestBase {
     irs::TFIDF scorer{/*normalize=*/false};
     std::vector<irs::ScoreDoc> hits(kK);
     size_t count =
-      irs::ExecuteTopKWithCount(reader, filter, scorer, kK, std::span{hits});
+      irs::ExecuteTopK(reader, filter, scorer, kK, false, std::span{hits});
     hits.resize(std::min(count, kK));
     return hits;
   }
 
-  // Parse a Lucene query string into a MixedBooleanFilter.
+  // Parse a Lucene query string into a BooleanFilter.
   static irs::Filter::ptr ParseQuery(std::string_view query) {
     irs::analysis::DelimitedTokenizer tokenizer(" ");
-    auto root = std::make_unique<irs::MixedBooleanFilter>();
+    auto root = std::make_unique<irs::BooleanFilter>();
     sdb::ParserContext ctx{*root, kContentFieldId, tokenizer};
     EXPECT_TRUE(sdb::ParseQuery(ctx, query)) << ctx.error_message;
     irs::Filter::ptr f = std::move(root);
-    irs::Optimize(f);
+    irs::Optimize(f, {.scored = true});
     return f;
   }
 
@@ -229,7 +228,7 @@ TEST_P(BoostQueryTestCase, OptionalOnlyActsAsDisjunction) {
 // the parser path.
 TEST_P(BoostQueryTestCase, ManualRequiredOptionalConstruction) {
   auto reader = CreateIndex();
-  auto root = std::make_unique<irs::MixedBooleanFilter>();
+  auto root = std::make_unique<irs::BooleanFilter>();
 
   auto make_term = [](std::string_view value) {
     auto f = std::make_unique<irs::ByTerm>();
@@ -238,12 +237,12 @@ TEST_P(BoostQueryTestCase, ManualRequiredOptionalConstruction) {
     return f;
   };
 
-  root->GetRequired().add(make_term("open"));
-  root->GetOptional().add(make_term("source"));
-  root->GetOptional().add(make_term("software"));
+  root->Add(make_term("open"), irs::Occur::Must);
+  root->Add(make_term("source"), irs::Occur::Should);
+  root->Add(make_term("software"), irs::Occur::Should);
 
   irs::Filter::ptr filter = std::move(root);
-  irs::Optimize(filter);
+  irs::Optimize(filter, {.scored = true});
 
   auto hits = CollectAll(reader, *filter);
   ASSERT_EQ(3u, hits.size());
@@ -255,30 +254,32 @@ TEST_P(BoostQueryTestCase, ManualRequiredOptionalConstruction) {
 
 TEST_P(BoostQueryTestCase, OptimizerPreservesDuplicateDisjunction) {
   ExpectOptimizerPreservesResults("OR(open, open, source)", [] {
-    auto o = std::make_unique<irs::Or>();
-    o->add(Term("open"));
-    o->add(Term("open"));
-    o->add(Term("source"));
+    auto o = std::make_unique<irs::BooleanFilter>();
+    o->Add(Term("open"), irs::Occur::Should);
+    o->Add(Term("open"), irs::Occur::Should);
+    o->Add(Term("source"), irs::Occur::Should);
+    o->SetMinShouldMatch(1);
     return irs::Filter::ptr{std::move(o)};
   });
 }
 
 TEST_P(BoostQueryTestCase, OptimizerPreservesDuplicateConjunction) {
   ExpectOptimizerPreservesResults("AND(open, source, open)", [] {
-    auto a = std::make_unique<irs::And>();
-    a->add(Term("open"));
-    a->add(Term("source"));
-    a->add(Term("open"));
+    auto a = std::make_unique<irs::BooleanFilter>();
+    a->Add(Term("open"), irs::Occur::Must);
+    a->Add(Term("source"), irs::Occur::Must);
+    a->Add(Term("open"), irs::Occur::Must);
     return irs::Filter::ptr{std::move(a)};
   });
 }
 
 TEST_P(BoostQueryTestCase, OptimizerPreservesDistinctDisjunction) {
   ExpectOptimizerPreservesResults("OR(open, source, software)", [] {
-    auto o = std::make_unique<irs::Or>();
-    o->add(Term("open"));
-    o->add(Term("source"));
-    o->add(Term("software"));
+    auto o = std::make_unique<irs::BooleanFilter>();
+    o->Add(Term("open"), irs::Occur::Should);
+    o->Add(Term("source"), irs::Occur::Should);
+    o->Add(Term("software"), irs::Occur::Should);
+    o->SetMinShouldMatch(1);
     return irs::Filter::ptr{std::move(o)};
   });
 }
@@ -305,11 +306,11 @@ TEST_P(BoostQueryTestCase, OptimizerPreservesMixedDistinct) {
     irs::DirectoryReader(dir(), codec(), irs::tests::DefaultReaderOptions());
 
   auto build = [] {
-    auto root = std::make_unique<irs::MixedBooleanFilter>();
-    root->GetRequired().add(Term("alpha"));
-    root->GetRequired().add(Term("beta"));
-    root->GetOptional().add(Term("gamma"));
-    root->GetOptional().add(Term("delta"));
+    auto root = std::make_unique<irs::BooleanFilter>();
+    root->Add(Term("alpha"), irs::Occur::Must);
+    root->Add(Term("beta"), irs::Occur::Must);
+    root->Add(Term("gamma"), irs::Occur::Should);
+    root->Add(Term("delta"), irs::Occur::Should);
     return irs::Filter::ptr{std::move(root)};
   };
   irs::Filter::ptr raw = build();

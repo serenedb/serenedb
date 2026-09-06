@@ -38,8 +38,8 @@ QueryBuilder::ptr ByVectorSimilarity::PrepareSegment(
 }
 
 PrepareCollector::ptr ByVectorSimilarity::MakeCollectorImpl(
-  const Scorer* scorer) const {
-  return std::make_unique<AllCollector>(scorer);
+  const Scorer* scorer, StatsArena& stats, uint32_t) const {
+  return std::make_unique<AllCollector>(scorer, stats);
 }
 
 }  // namespace irs

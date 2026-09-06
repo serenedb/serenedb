@@ -24,8 +24,10 @@
 
 #include <absl/container/node_hash_map.h>
 #include <absl/functional/any_invocable.h>
+#include <absl/functional/function_ref.h>
 
 #include <functional>
+#include <limits>
 #include <span>
 
 #include "basics/down_cast.h"
@@ -35,8 +37,19 @@
 #include "iresearch/index/iterators.hpp"
 #include "iresearch/search/collectors.hpp"
 #include "iresearch/search/column_collector.hpp"
+#include "iresearch/search/common/scored_context.hpp"
+#include "iresearch/search/constant_score.hpp"
+#include "iresearch/search/count/root.hpp"
+#include "iresearch/search/docs/root.hpp"
+#include "iresearch/search/fill/node.hpp"
+#include "iresearch/search/lead/node.hpp"
+#include "iresearch/search/probe/node.hpp"
+#include "iresearch/search/score_function.hpp"
+#include "iresearch/search/scored/root.hpp"
 #include "iresearch/search/term_iterator.hpp"
 #include "iresearch/search/term_predicate.hpp"
+#include "iresearch/search/top/root.hpp"
+#include "iresearch/search/unscored.hpp"
 #include "iresearch/utils/hash_utils.hpp"
 
 namespace irs {
@@ -48,54 +61,103 @@ struct PrepareContext {
   PrepareCollector* collector = nullptr;
   IResourceManager& memory = IResourceManager::gNoop;
   const AttributeProvider* ctx = nullptr;
+  const DocumentMask* pending_docs_mask = nullptr;
   score_t boost = kNoBoost;
+  uint32_t thread = 0;
+  bool needs_terms = false;
 
   void Boost(score_t b) noexcept { boost *= b; }
+
+  bool KeepsTerms() const noexcept {
+    return collector != nullptr || needs_terms;
+  }
+
+  search::StatsRecord Record() const noexcept {
+    return collector != nullptr ? collector->Record() : search::StatsRecord{};
+  }
 };
 
-struct ExecutionContext {
-  IResourceManager& memory = IResourceManager::gNoop;
-  const AttributeProvider* ctx = nullptr;
-  const DocumentMask* pending_docs_mask = nullptr;
-  bool top_k_collect = false;
-  // The scorer the index's persisted score bounds were validated against, or
-  // null when nothing may prune. A node prunes only if it scores with that
-  // same scorer: an overridden subtree scores with another one, and the bounds
-  // do not bound it.
-  const Scorer* prune_scorer = nullptr;
+enum class QueryKind : uint32_t {
+  Other,
+  Empty,
+  All,
+  Term,
+  Terms,
+  Boolean,
 };
 
-inline bool MayScorePrune(const ExecutionContext& ctx,
-                          const StatsBuffer& stats) noexcept {
-  return ctx.prune_scorer && stats.GetScorer() == ctx.prune_scorer;
-}
-
-inline IndexFeatures GetFeatures(const Scorer* scorer) noexcept {
-  return scorer ? scorer->GetIndexFeatures() : IndexFeatures::None;
-}
-
-// Per-segment query builder
 class QueryBuilder : public memory::Managed {
  public:
   using ptr = memory::managed_ptr<const QueryBuilder>;
 
-  QueryBuilder(const SubReader& segment) noexcept : _segment{segment} {}
+  QueryBuilder(const SubReader& segment) noexcept
+    : _segment{segment},
+      _estimate_max{static_cast<uint32_t>(segment.docs_count())} {}
+
+  QueryBuilder(const SubReader& segment, uint32_t estimate,
+               QueryKind kind) noexcept
+    : _segment{segment}, _estimate_max{estimate}, _kind{kind} {
+    SDB_ASSERT(estimate <= segment.docs_count());
+  }
+
+  const SubReader& Segment() const noexcept { return _segment; }
+  QueryKind Kind() const noexcept { return _kind; }
+  uint32_t EstimateMax() const noexcept { return _estimate_max; }
+
+  void SetStats(search::StatsRecord stats) noexcept { _stats = stats; }
+
+  search::StatsRecord Stats() const noexcept { return _stats; }
+
+  search::StatsRecord Stats(const search::ScoredCtx& ctx) const noexcept {
+    return {
+      _stats.stats,
+      _stats.scorer != nullptr ? _stats.scorer : ctx.scorer,
+    };
+  }
+
+  bool Scores() const noexcept {
+    return _stats.scorer != nullptr && !IsUnscored(*_stats.scorer);
+  }
 
   ~QueryBuilder() override = default;
 
   static QueryBuilder::ptr Empty();
-  virtual DocIterator::ptr Execute(const ExecutionContext& ctx,
-                                   const StatsBuffer& stats) const = 0;
+
+  static bool IsEmpty(const QueryBuilder& query) noexcept;
 
   virtual void Visit(PreparedStateVisitor&, score_t boost) const = 0;
 
   virtual score_t Boost() const noexcept = 0;
 
+  virtual void SetBoost(score_t boost) noexcept {
+    SDB_ASSERT(boost == kNoBoost);
+  }
+
+  virtual count::Root::ptr PlanCount(const count::Context& ctx) const = 0;
+
+  virtual docs::Root::ptr PlanDocs(const docs::Context& ctx) const = 0;
+
+  virtual scored::Root::ptr PlanScored(const scored::Context& ctx) const = 0;
+
+  virtual top::Root::ptr PlanTop(const top::Context& ctx) const = 0;
+
+  virtual lead::Node::ptr PlanLead(const search::ScoredCtx& ctx) const = 0;
+
+  virtual probe::Node::ptr PlanProbe(const search::ScoredCtx& ctx,
+                                     uint64_t interrogations) const = 0;
+
+  virtual fill::Node::ptr PlanFill(const search::ScoredCtx& ctx,
+                                   ScoreMergeType merge) const = 0;
+
  protected:
   const SubReader& _segment;
+  uint32_t _estimate_max = 0;
+  QueryKind _kind = QueryKind::Other;
+
+ private:
+  search::StatsRecord _stats;
 };
 
-// Base class for all user-side filters
 class Filter {
  public:
   using ptr = std::unique_ptr<Filter>;
@@ -117,29 +179,32 @@ class Filter {
 
   void SetBoost(score_t boost) noexcept { _boost = boost; }
 
-  // A node's own scorer wins for its whole subtree. Resolving it here, behind a
-  // non-virtual entry point, is what keeps every filter kind and every caller
-  // from having to remember: MakeCollectorImpl only ever sees the winner.
-  PrepareCollector::ptr MakeCollector(const Scorer* scorer) const {
-    return MakeCollectorImpl(scorer && _scorer ? _scorer : scorer);
+  PrepareCollector::ptr MakeCollector(const Scorer& scorer, StatsArena& stats,
+                                      uint32_t threads) const {
+    SDB_ASSERT(!IsUnscored(scorer));
+    const auto* const own = ResolveScorer(_scorer, &scorer);
+    if (IsUnscored(*own)) {
+      return nullptr;
+    }
+    return MakeCollectorImpl(own, stats, threads);
   }
 
   virtual TypeInfo::type_id type() const noexcept = 0;
 
-  virtual std::span<Filter::ptr> GetChildren() { return {}; }
+  using ChildVisitor = absl::FunctionRef<void(Filter::ptr&)>;
+
+  virtual void VisitChildren(ChildVisitor) {}
 
   virtual TermPredicate::ptr CompileTermPredicate() const { return nullptr; }
 
   virtual TermIterator::ptr CompileTermIterator(const TermReader& reader) const;
 
-  // kludge for optimization in And::prepare
   static Filter::ptr empty();
 
  protected:
-  // Allocate the statistics collector this filter expects in PrepareSegment.
-  // The default collects nothing. Only ever called through MakeCollector, so
-  // `scorer` is already the one that won for this node.
-  virtual PrepareCollector::ptr MakeCollectorImpl(const Scorer* scorer) const;
+  virtual PrepareCollector::ptr MakeCollectorImpl(const Scorer* scorer,
+                                                  StatsArena& stats,
+                                                  uint32_t threads) const;
 
   virtual bool equals(const Filter& rhs) const noexcept {
     return type() == rhs.type();
@@ -148,6 +213,29 @@ class Filter {
  private:
   const Scorer* _scorer = nullptr;
   score_t _boost = kNoBoost;
+};
+
+class PreparedCollector {
+ public:
+  PreparedCollector(const Filter& filter, const Scorer& scorer,
+                    StatsArena& stats, uint32_t threads)
+    : _stats{stats}, _root{filter.MakeCollector(scorer, stats, threads)} {}
+
+  PrepareCollector* Get() const noexcept { return _root.get(); }
+
+  const Scorer* GetScorer() const noexcept {
+    return _root != nullptr ? _root->GetScorer() : nullptr;
+  }
+
+  void Finish() {
+    if (_root != nullptr) {
+      _root->Finish(_stats);
+    }
+  }
+
+ private:
+  StatsArena& _stats;
+  PrepareCollector::ptr _root;
 };
 
 template<typename Type>
@@ -160,7 +248,6 @@ class FilterWithType : public Filter {
   }
 };
 
-// Convenient base class filters with options
 template<typename Options>
 class FilterWithOptions : public FilterWithType<typename Options::FilterType> {
  public:
@@ -202,7 +289,6 @@ class FilterWithField : public FilterWithOptions<Options> {
   irs::field_id _field_id{irs::field_limits::invalid()};
 };
 
-// Filter which returns no documents
 class Empty final : public FilterWithType<Empty> {
  public:
   TermPredicate::ptr CompileTermPredicate() const final {

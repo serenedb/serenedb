@@ -48,13 +48,6 @@ class EmptyTermReader final : public irs::TermReader {
 
   size_t BitUnion(CookieProvider, uint64_t*) const noexcept final { return 0; }
 
-  DocIterator::ptr Iterator(IndexFeatures features,
-                            std::span<const PostingCookie> cookies,
-                            IteratorFieldOptions options, size_t min_match,
-                            ScoreMergeType type) const final {
-    return DocIterator::empty();
-  }
-
   const FieldMeta& meta() const noexcept final { return FieldMeta::kEmpty; }
 
   Attribute* GetMutable(TypeInfo::type_id) noexcept final { return nullptr; }
@@ -71,6 +64,8 @@ class EmptyTermReader final : public irs::TermReader {
   bytes_view max() const noexcept final { return {}; }
 
   bool HasScoreBounds() const noexcept final { return false; }
+
+  PostingsHandles Handles() const noexcept final { return {}; }
 
  private:
   uint64_t _docs_count;

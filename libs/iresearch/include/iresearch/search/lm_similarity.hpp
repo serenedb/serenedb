@@ -27,9 +27,6 @@
 
 namespace irs {
 
-// Stats persisted per (field,term) and consumed by score().
-// `collection_prob` is DefaultCollectionModel:
-//   (ttf_term + 1) / (ttf_field + 1)
 struct LMStats {
   score_t collection_prob;
 };

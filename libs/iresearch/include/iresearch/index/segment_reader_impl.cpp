@@ -38,153 +38,39 @@
 namespace irs {
 namespace {
 
-class AllIterator : public DocIterator {
+class SegmentAllDocs : public lead::Node {
  public:
-  explicit AllIterator(doc_id_t docs_count) noexcept
+  explicit SegmentAllDocs(doc_id_t docs_count) noexcept
     : _max_doc{doc_limits::min() + docs_count - 1} {}
 
-  Attribute* GetMutable(TypeInfo::type_id /*type*/) noexcept final {
-    return nullptr;
-  }
-
-  doc_id_t advance() noexcept final {
+  doc_id_t Advance() noexcept final {
     _doc = _doc < _max_doc ? _doc + 1 : doc_limits::eof();
     return _doc;
   }
 
-  doc_id_t seek(doc_id_t target) noexcept final {
+  doc_id_t Seek(doc_id_t target) noexcept final {
+    if (target <= _doc) [[unlikely]] {
+      return _doc;
+    }
     _doc = target <= _max_doc ? target : doc_limits::eof();
     return _doc;
-  }
-
-  doc_id_t LazySeek(doc_id_t target) noexcept final { return seek(target); }
-
-  void Collect(const ScoreFunction& scorer, ColumnArgsFetcher& fetcher,
-               ScoreCollector& collector) final {
-    CollectImpl(*this, scorer, fetcher, collector);
-  }
-
-  uint32_t count() noexcept final {
-    if (doc_limits::eof(_doc)) {
-      return 0;
-    }
-    const auto count = _max_doc - _doc;
-    _doc = doc_limits::eof();
-    return count;
-  }
-
-  uint32_t EmitDocs(doc_id_t* out, doc_id_t min, doc_id_t max) final {
-    return EmitDocsImpl(*this, out, min, max);
-  }
-  uint32_t EmitScoredDocs(doc_id_t* out, score_t* scores, doc_id_t max,
-                          const ScoreFunction& scorer,
-                          ColumnArgsFetcher* fetcher, doc_id_t min) final {
-    return EmitScoredDocsImpl(*this, out, scores, max, scorer, fetcher, min);
-  }
-  std::pair<doc_id_t, bool> FillBlock(doc_id_t min, doc_id_t max,
-                                      uint64_t* mask,
-                                      FillBlockScoreContext score,
-                                      FillBlockMatchContext match) final {
-    return FillBlockImpl(*this, min, max, mask, score, match);
   }
 
  private:
   const doc_id_t _max_doc;
 };
 
-class MaskDocIterator : public DocIterator {
+class SegmentLiveDocs : public lead::Node {
  public:
-  MaskDocIterator(DocIterator::ptr&& it, const DocumentMask& mask) noexcept
-    : _mask{mask}, _it{std::move(it)} {}
-
-  Attribute* GetMutable(TypeInfo::type_id type) noexcept final {
-    return _it->GetMutable(type);
-  }
-
-  doc_id_t advance() final {
-    while (true) {
-      const auto doc = _it->advance();
-      if (!_mask.contains(doc)) {
-        return _doc = doc;
-      }
-    }
-  }
-
-  doc_id_t seek(doc_id_t target) final {
-    if (target <= _doc) [[unlikely]] {
-      return _doc;
-    }
-    const auto doc = _it->seek(target);
-    if (!_mask.contains(doc)) {
-      return _doc = doc;
-    }
-    return advance();
-  }
-
-  doc_id_t LazySeek(doc_id_t target) final { return seek(target); }
-
-  uint32_t EmitDocs(doc_id_t* out, doc_id_t min, doc_id_t max) final {
-    // Delegate to the child (inherits its specialisation, e.g. posting bulk),
-    // then compact out the sparse deleted ids in place.
-    const auto raw = _it->EmitDocs(out, min, max);
-    uint32_t n = 0;
-    for (uint32_t i = 0; i < raw; ++i) {
-      if (!_mask.contains(out[i])) {
-        out[n++] = out[i];
-      }
-    }
-    // Keep value() on a live doc >= max, matching advance()'s contract.
-    auto doc = _it->value();
-    while (!doc_limits::eof(doc) && _mask.contains(doc)) {
-      doc = _it->advance();
-    }
-    _doc = doc;
-    return n;
-  }
-
-  ScoreFunction PrepareScore(const PrepareScoreContext& ctx) final {
-    return _it->PrepareScore(ctx);
-  }
-
-  void FetchScoreArgs(uint16_t index) final { _it->FetchScoreArgs(index); }
-
-  uint32_t count() final { return CountImpl(*this); }
-  void Collect(const ScoreFunction& scorer, ColumnArgsFetcher& fetcher,
-               ScoreCollector& collector) final {
-    CollectImpl(*this, scorer, fetcher, collector);
-  }
-  std::pair<doc_id_t, bool> FillBlock(doc_id_t min, doc_id_t max,
-                                      uint64_t* mask,
-                                      FillBlockScoreContext score,
-                                      FillBlockMatchContext match) final {
-    return FillBlockImpl(*this, min, max, mask, score, match);
-  }
-  uint32_t EmitScoredDocs(doc_id_t* out, score_t* scores, doc_id_t max,
-                          const ScoreFunction& scorer,
-                          ColumnArgsFetcher* fetcher, doc_id_t min) final {
-    return EmitScoredDocsImpl(*this, out, scores, max, scorer, fetcher, min);
-  }
-
- private:
-  const DocumentMask& _mask;
-  DocIterator::ptr _it;
-};
-
-class MaskedDocIterator : public DocIterator {
- public:
-  MaskedDocIterator(doc_id_t begin, doc_id_t end,
-                    const DocumentMask& docs_mask) noexcept
+  SegmentLiveDocs(doc_id_t begin, doc_id_t end,
+                  const DocumentMask& docs_mask) noexcept
     : _docs_mask{docs_mask}, _end{end}, _next{begin} {
     SDB_ASSERT(begin <= end);
     SDB_ASSERT(doc_limits::valid(begin));
     SDB_ASSERT(!doc_limits::eof(end));
   }
 
-  Attribute* GetMutable(TypeInfo::type_id /*type*/) noexcept final {
-    return nullptr;
-  }
-
-  doc_id_t advance() noexcept final {
+  doc_id_t Advance() noexcept final {
     while (_next < _end) {
       _doc = _next++;
       if (!_docs_mask.contains(_doc)) {
@@ -194,17 +80,13 @@ class MaskedDocIterator : public DocIterator {
     return _doc = doc_limits::eof();
   }
 
-  doc_id_t seek(doc_id_t target) noexcept final {
+  doc_id_t Seek(doc_id_t target) noexcept final {
     if (target <= _doc) [[unlikely]] {
       return _doc;
     }
     _next = target;
-    return advance();
+    return Advance();
   }
-
-  doc_id_t LazySeek(doc_id_t target) noexcept final { return seek(target); }
-
-  IRS_DOC_ITERATOR_DEFAULTS
 
  private:
   const DocumentMask& _docs_mask;
@@ -305,24 +187,14 @@ IndexInput::ptr SegmentReaderImpl::ReopenAnn() const {
   return _data->idx_reader->ReopenIn();
 }
 
-DocIterator::ptr SegmentReaderImpl::docs_iterator() const {
+lead::Node::ptr SegmentReaderImpl::docs_iterator() const {
   if (!_docs_mask) {
-    return memory::make_managed<AllIterator>(_info.docs_count);
+    return memory::make_managed<SegmentAllDocs>(_info.docs_count);
   }
   SDB_ASSERT(!_docs_mask->empty());
 
-  return memory::make_managed<MaskedDocIterator>(
+  return memory::make_managed<SegmentLiveDocs>(
     doc_limits::min(), doc_limits::min() + _info.docs_count, *_docs_mask);
-}
-
-DocIterator::ptr SegmentReaderImpl::mask(DocIterator::ptr&& it) const {
-  SDB_ASSERT(it);
-  if (!_docs_mask) {
-    return std::move(it);
-  }
-  SDB_ASSERT(!_docs_mask->empty());
-
-  return memory::make_managed<MaskDocIterator>(std::move(it), *_docs_mask);
 }
 
 void SegmentReaderImpl::ColumnData::Open(const Directory& dir,

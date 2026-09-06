@@ -86,47 +86,36 @@ class ProgressTracker {
   bool _valid{true};
 };
 
-class CompoundDocIterator : public DocIterator {
+class CompoundPostings : public TermPostings {
  public:
-  struct DocIteratorT {
-    DocIterator::ptr it;
+  struct PostingsT {
+    TermPostings::ptr it;
     const DocRemap* remap;
   };
-  using IteratorsT = std::vector<DocIteratorT>;
+  using IteratorsT = std::vector<PostingsT>;
 
   static constexpr auto kProgressStepDocs = size_t{1} << size_t{14};
 
-  explicit CompoundDocIterator(
-    const MergeWriter::FlushProgress& progress) noexcept
+  explicit CompoundPostings(const MergeWriter::FlushProgress& progress) noexcept
     : _progress(progress, kProgressStepDocs) {}
 
   template<typename Func>
-  bool Reset(Func&& func) {
-    if (!func(_iterators)) {
-      return false;
-    }
+  void Reset(Func&& func) {
+    func(_iterators);
     _doc = doc_limits::invalid();
     _current_itr = 0;
-    return true;
+    _refresh.reset();
   }
 
   size_t Size() const noexcept { return _iterators.size(); }
 
   bool Aborted() const noexcept { return !static_cast<bool>(_progress); }
 
-  Attribute* GetMutable(TypeInfo::type_id type) noexcept final {
-    return irs::Type<AttrProviderChangeAttr>::id() == type ? &_attribute_change
-                                                           : nullptr;
-  }
+  // Each source answers with its own positions, so every switch owes the
+  // consumer a fresh read of them.
+  void Subscribe(AttrRefresh refresh) final { _refresh = refresh; }
 
-  doc_id_t advance() final;
-
-  IRS_DOC_ITERATOR_DEFAULTS
-
-  doc_id_t seek(doc_id_t /*target*/) final {
-    SDB_ASSERT(false);
-    return _doc = doc_limits::eof();
-  }
+  doc_id_t Advance() final;
 
   uint32_t GetFreq() const final {
     SDB_ASSERT(_current_itr < _iterators.size());
@@ -135,13 +124,13 @@ class CompoundDocIterator : public DocIterator {
   }
 
  private:
-  AttrProviderChangeAttr _attribute_change;
-  std::vector<DocIteratorT> _iterators;
+  std::optional<AttrRefresh> _refresh;
+  std::vector<PostingsT> _iterators;
   size_t _current_itr{0};
   ProgressTracker _progress;
 };
 
-doc_id_t CompoundDocIterator::advance() {
+doc_id_t CompoundPostings::Advance() {
   _progress();
 
   if (Aborted()) {
@@ -159,12 +148,12 @@ doc_id_t CompoundDocIterator::advance() {
       continue;
     }
 
-    if (notify) {
-      _attribute_change(*it);
+    if (notify && _refresh) {
+      (*_refresh)(*it);
     }
 
     while (true) {
-      auto it_value = it->advance();
+      auto it_value = it->Advance();
       if (doc_limits::eof(it_value)) {
         break;
       }
@@ -214,7 +203,7 @@ class CompoundTermIterator : public TermOnlyIterator {
 
   bool next() final;
 
-  DocIterator::ptr postings(IndexFeatures features) const final;
+  TermPostings::ptr postings(IndexFeatures features) const final;
 
   bytes_view value() const noexcept final {
     if (!_has_min_term) [[unlikely]] {
@@ -241,7 +230,7 @@ class CompoundTermIterator : public TermOnlyIterator {
   std::vector<TermIteratorImpl> _term_iterators;
   mutable bstring _min_term;
   mutable bstring _max_term;
-  mutable CompoundDocIterator _doc_itr;
+  mutable CompoundPostings _doc_itr;
   mutable bool _has_min_term{false};
   ProgressTracker _progress;
 };
@@ -300,9 +289,9 @@ bool CompoundTermIterator::next() {
   return !IsNull(_current_term);
 }
 
-DocIterator::ptr CompoundTermIterator::postings(
+TermPostings::ptr CompoundTermIterator::postings(
   IndexFeatures /*features*/) const {
-  auto add_iterators = [this](CompoundDocIterator::IteratorsT& itrs) {
+  auto add_iterators = [this](CompoundPostings::IteratorsT& itrs) {
     itrs.clear();
     itrs.reserve(_term_iterator_mask.size());
     for (auto& itr_id : _term_iterator_mask) {
@@ -314,11 +303,10 @@ DocIterator::ptr CompoundTermIterator::postings(
         itrs.emplace_back(std::move(it), term_itr.remap);
       }
     }
-    return true;
   };
 
   _doc_itr.Reset(add_iterators);
-  return memory::to_managed<DocIterator>(_doc_itr);
+  return memory::to_managed<TermPostings>(_doc_itr);
 }
 
 class CompoundFieldIterator final : public BasicTermReader {
@@ -473,8 +461,8 @@ doc_id_t ComputeDocIds(DocIdMapT& doc_id_map, const SubReader& reader,
     return doc_limits::invalid();
   }
   for (auto docs_itr = reader.docs_iterator();
-       !doc_limits::eof(docs_itr->advance()); ++next_id) {
-    auto src_doc_id = docs_itr->value();
+       !doc_limits::eof(docs_itr->Advance()); ++next_id) {
+    auto src_doc_id = docs_itr->Value();
     SDB_ASSERT(src_doc_id >= doc_limits::min());
     SDB_ASSERT(src_doc_id < reader.docs_count() + doc_limits::min());
     doc_id_map[src_doc_id] = next_id;

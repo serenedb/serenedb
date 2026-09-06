@@ -221,11 +221,11 @@ void StoreAlter(duckdb::ClientContext* context, ObjectId database_id,
 void StoreCreateIndex(duckdb::ClientContext* context, ObjectId database_id,
                       duckdb::unique_ptr<duckdb::CreateIndexInfo> info,
                       duckdb::unique_ptr<duckdb::CreateTableInfo> table,
-                      ObjectId relation_id,
-                      std::shared_ptr<const Index> index) {
+                      ObjectId relation_id, std::shared_ptr<const Index> index,
+                      std::shared_ptr<search::InvertedIndexStorage> storage) {
   GetCatalogStore().ApplyStoreOp(
     context, {database_id, relation_id, std::move(info), std::move(table),
-              std::move(index)});
+              std::move(index), std::move(storage)});
 }
 
 void StoreDropIndex(duckdb::ClientContext* context, ObjectId database_id,
@@ -329,19 +329,12 @@ void CatalogStore::MaybeCompact() {
 }
 
 void CatalogStore::TryCompact() {
-  auto* catalog = TryGetCatalog();
-  if (catalog == nullptr) {
+  // Teardown can commit with the catalog already gone; a fold reads it.
+  if (TryGetCatalog() == nullptr) {
     return;
   }
-  // A rewrite reads the catalog, so it has to exclude the mutations that write
-  // it; the catalog mutex is what separates the two. Try, never wait: the
-  // caller is on a commit or an append path and every one of them attempts this
-  // again, while a mutation already holding the mutex is about to attempt it
-  // itself.
-  catalog->TryExcludingMutations([this] {
-    absl::MutexLock lock{&_mutex};
-    MaybeCompact();
-  });
+  absl::MutexLock lock{&_mutex};
+  MaybeCompact();
 }
 
 void CatalogStore::CompactNow() {
@@ -351,17 +344,16 @@ void CatalogStore::CompactNow() {
 
 namespace {
 
-// The record a checkpoint writes is the entry itself: duckdb's own create
-// record reads the definition and the permissions off it, so what this walk
-// collects is entries, in the order they have to be replayed in.
-using CheckpointEntries = std::vector<duckdb::reference<duckdb::CatalogEntry>>;
+using CheckpointEntries = std::vector<CatalogStore::CheckpointRecord>;
 
 // Sorted by the id every serenedb entry carries, which is also creation order
 // -- what makes a checkpoint reproducible from one run to the next.
 void SortById(CheckpointEntries& entries, size_t from) {
   std::sort(entries.begin() + static_cast<ptrdiff_t>(from), entries.end(),
-            [](const duckdb::CatalogEntry& lhs,
-               const duckdb::CatalogEntry& rhs) { return lhs.oid < rhs.oid; });
+            [](const CatalogStore::CheckpointRecord& lhs,
+               const CatalogStore::CheckpointRecord& rhs) {
+              return lhs.oid < rhs.oid;
+            });
 }
 
 template<typename Entry>
@@ -376,6 +368,10 @@ std::vector<Entry*> DatabaseEntriesOf(duckdb::ClientContext* context,
 }
 
 }  // namespace
+
+CatalogStore::CheckpointRecord::CheckpointRecord(
+  const duckdb::CatalogEntry& entry)
+  : oid{entry.oid}, info{entry.GetInfo()}, permissions{entry.permissions} {}
 
 CheckpointEntries CatalogStore::CheckpointEntriesOf() {
   // A checkpoint is the catalog written out, not a second way of writing it --
@@ -516,22 +512,24 @@ CheckpointEntries CatalogStore::CheckpointEntriesOf() {
 
 void CatalogStore::Compact() {
   // The catalog is where a definition lives, so the checkpoint is read out of
-  // it -- and the caller holds the catalog mutex, so no mutation can change
-  // what it reads while the rewrite runs.
+  // it -- with no mutation excluded. What the log held before the read is the
+  // marker: a commit landing during it splices first, so the rewrite sees the
+  // count moved and abandons rather than swapping the commit's records away.
+  const auto expected_written = catalog::ClusterCatalogWalSize().appended_bytes;
   const auto entries = CheckpointEntriesOf();
-  absl::MutexLock seq_lock{&_seq_mutex};
-  std::vector<uint64_t> seq_ids;
-  seq_ids.reserve(_sequences.size());
-  for (const auto& [id, value] : _sequences) {
-    seq_ids.push_back(id);
-  }
-  std::sort(seq_ids.begin(), seq_ids.end());
   catalog::RewriteClusterCatalogWal(
-    [&](duckdb::WriteAheadLog& wal) ABSL_NO_THREAD_SAFETY_ANALYSIS {
+    expected_written, [&](duckdb::WriteAheadLog& wal) {
       for (const auto& entry : entries) {
-        wal.WriteCreateEntry(entry);
+        wal.WriteCreateEntry(*entry.info, entry.permissions);
       }
       catalog::WriteOidHorizonTo(wal, IdAllocator().OidReservation());
+      // The rewrite holds the log's lock, which is also what guards the map.
+      std::vector<uint64_t> seq_ids;
+      seq_ids.reserve(_sequences.size());
+      for (const auto& [id, value] : _sequences) {
+        seq_ids.push_back(id);
+      }
+      absl::c_sort(seq_ids);
       for (const auto id : seq_ids) {
         catalog::WriteSequenceValueTo(wal, ObjectId{id}, _sequences[id],
                                       /*max_merge=*/false);
@@ -605,20 +603,19 @@ void CatalogStore::DropSequence(ObjectId sequence_id) {
 }
 
 std::vector<ObjectId> CatalogStore::SequenceIds() const {
-  absl::MutexLock lock{&_seq_mutex};
+  const auto lock = catalog::LockClusterCatalogWal();
   std::vector<ObjectId> ids;
   ids.reserve(_sequences.size());
   for (const auto& [id, value] : _sequences) {
     ids.emplace_back(id);
   }
-  std::sort(ids.begin(), ids.end(),
-            [](ObjectId lhs, ObjectId rhs) { return lhs.id() < rhs.id(); });
+  absl::c_sort(ids, [](auto l, auto r) { return l.id() < r.id(); });
   return ids;
 }
 
 std::optional<uint64_t> CatalogStore::TryGetBootSequenceValue(
   ObjectId sequence_id) const {
-  absl::MutexLock lock{&_seq_mutex};
+  const auto lock = catalog::LockClusterCatalogWal();
   const auto it = _sequences.find(sequence_id.id());
   if (it == _sequences.end()) {
     return std::nullopt;
@@ -628,7 +625,7 @@ std::optional<uint64_t> CatalogStore::TryGetBootSequenceValue(
 
 void CatalogStore::ApplySequenceValue(ObjectId sequence_id, uint64_t value,
                                       bool max_merge) {
-  absl::MutexLock seq_lock{&_seq_mutex};
+  const auto seq_lock = catalog::LockClusterCatalogWal();
   auto [it, inserted] = _sequences.try_emplace(sequence_id.id(), value);
   if (!inserted) {
     it->second = max_merge ? std::max(it->second, value) : value;
@@ -636,7 +633,7 @@ void CatalogStore::ApplySequenceValue(ObjectId sequence_id, uint64_t value,
 }
 
 void CatalogStore::ApplySequenceDropped(ObjectId sequence_id) {
-  absl::MutexLock seq_lock{&_seq_mutex};
+  const auto seq_lock = catalog::LockClusterCatalogWal();
   _sequences.erase(sequence_id.id());
 }
 

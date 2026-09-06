@@ -42,10 +42,6 @@
 	path = third_party/liburing
 	url = https://github.com/serenedb/liburing.git
 	shallow = true
-[submodule "third_party/minizip-ng"]
-	path = third_party/minizip-ng
-	url = https://github.com/serenedb/minizip-ng.git
-	shallow = true
 [submodule "third_party/lz4"]
 	path = third_party/lz4
 	url = https://github.com/serenedb/lz4.git

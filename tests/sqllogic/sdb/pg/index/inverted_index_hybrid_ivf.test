@@ -243,10 +243,11 @@ QUERY PLAN
 │ Index: docs_idx                                                │
 │ Lookup: table                                                  │
 │ Index Filter:                                                  │
-│ ╭─ Terms ─────────────────╮                                    │
+│ ╭─ Or ────────────────────╮                                    │
+│ ╰────────────┬────────────╯                                    │
+│ ╭─ Terms ────┴────────────╮                                    │
 │ │ Field: body(string)     │                                    │
 │ │ Values: 'gear', 'trail' │                                    │
-│ │ Min Match: 1            │                                    │
 │ ╰─────────────────────────╯                                    │
 │ Score: idf()                                                   │
 │ Projections: pk (l), va (i), sdb_inverted_index_score          │
@@ -269,10 +270,11 @@ QUERY PLAN
 │ Index: docs_idx                        │
 │ Lookup: table                          │
 │ Index Filter:                          │
-│ ╭─ Terms ─────────────────╮            │
+│ ╭─ Or ────────────────────╮            │
+│ ╰────────────┬────────────╯            │
+│ ╭─ Terms ────┴────────────╮            │
 │ │ Field: body(string)     │            │
 │ │ Values: 'gear', 'trail' │            │
-│ │ Min Match: 1            │            │
 │ ╰─────────────────────────╯            │
 │ Score: l2_distance(va, FLOAT[3])       │
 │ Projections: pk,                       │
@@ -305,12 +307,13 @@ QUERY PLAN
 │ Index: docs_idx                                                │
 │ Lookup: table                                                  │
 │ Index Filter:                                                  │
-│ ╭─ Terms ──────────────────╮                                   │
-│ │ Field: body(string)      │                                   │
-│ │ Values: 'gear', 'trail'  │                                   │
-│ │ Min Match: 1             │                                   │
+│ ╭─ Or ─────────────────────╮                                   │
 │ │ Merge: max               │                                   │
 │ │ Score: constant(value=1) │                                   │
+│ ╰─────────────┬────────────╯                                   │
+│ ╭─ Terms ─────┴────────────╮                                   │
+│ │ Field: body(string)      │                                   │
+│ │ Values: 'gear', 'trail'  │                                   │
 │ ╰──────────────────────────╯                                   │
 │ Score: bm25(k1=1.2, b=0.75)                                    │
 │ Projections: pk (l), va (i), sdb_inverted_index_score          │

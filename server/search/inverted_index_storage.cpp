@@ -306,21 +306,12 @@ InvertedIndexStorage::InvertedIndexStorage(ObjectId db_id,
     std::move(reader), std::move(file_manifest)));
 }
 
-void RemoveDroppedStorageDir(const std::filesystem::path& path,
-                             size_t parent_levels) {
+void RemoveDroppedStorageDir(const std::filesystem::path& path) {
   std::error_code ec;
   std::filesystem::remove_all(path, ec);
   if (ec) {
     SDB_WARN(GENERAL, "could not remove dropped storage '", path.string(),
              "': ", ec.message());
-    return;
-  }
-  auto parent = path;
-  for (size_t level = 0; level < parent_levels; ++level) {
-    parent = parent.parent_path();
-    if (!std::filesystem::remove(parent, ec) || ec) {
-      return;
-    }
   }
 }
 
@@ -336,7 +327,7 @@ InvertedIndexStorage::~InvertedIndexStorage() {
     return;
   }
   BackgroundScheduler::instance()
-    .Run([path = _path] { RemoveDroppedStorageDir(path, 3); })
+    .Run([path = _path] { RemoveDroppedStorageDir(path); })
     .Detach();
 }
 

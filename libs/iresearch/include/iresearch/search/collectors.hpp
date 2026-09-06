@@ -22,18 +22,20 @@
 
 #pragma once
 
-#include <absl/functional/function_ref.h>
+#include <absl/base/optimization.h>
 
 #include <algorithm>
 #include <memory>
-#include <ranges>
 #include <span>
 #include <vector>
 
 #include "basics/down_cast.h"
 #include "basics/shared.hpp"
 #include "iresearch/formats/posting_meta.hpp"
+#include "iresearch/search/common/fixed_array.hpp"
+#include "iresearch/search/common/score_args.hpp"
 #include "iresearch/search/scorer.hpp"
+#include "iresearch/search/stats_arena.hpp"
 
 namespace irs {
 
@@ -41,10 +43,12 @@ inline size_t GetStatsSize(const Scorer* scorer) noexcept {
   return scorer ? scorer->stats_size() : 0;
 }
 
+inline size_t StatsSlot(const Scorer* scorer) noexcept {
+  return (std::max<size_t>(GetStatsSize(scorer), 8) + 7) / 8 * 8;
+}
+
 struct FieldCollector {
   void Collect(const TermReader& field) noexcept;
-
-  static void Merge(FieldCollector& dst, const FieldCollector& src);
 
   uint64_t docs_with_field = 0;
   uint64_t total_term_freq = 0;
@@ -56,167 +60,206 @@ struct TermCollector {
     total_term_freq += meta.freq;
   }
 
-  static void Merge(TermCollector& dst, const TermCollector& src);
-
   uint64_t docs_with_term = 0;
   uint64_t total_term_freq = 0;
 };
 
-void FillStats(bstring& stats_buf, const Scorer* scorer,
-               const FieldCollector* field, const TermCollector* term);
+struct alignas(ABSL_CACHELINE_SIZE) CounterBlock {
+  static constexpr size_t kTerms =
+    (ABSL_CACHELINE_SIZE - sizeof(FieldCollector)) / sizeof(TermCollector);
 
-class StatsBuffer {
+  FieldCollector field;
+  TermCollector terms[kTerms];
+};
+
+class CounterSlots {
  public:
-  using Storage = ManagedVector<bstring>;
-
-  StatsBuffer() noexcept : _stats{{IResourceManager::gNoop}} {}
-  StatsBuffer(Storage&& stats, const Scorer* scorer)
-    : _stats{std::move(stats)}, _scorer{scorer} {
-    SDB_ASSERT(_scorer || _stats.empty());
+  CounterSlots(uint32_t threads, size_t terms)
+    : _blocks(static_cast<size_t>(threads) * BlocksPerThread(terms)),
+      _per_thread{BlocksPerThread(terms)},
+      _terms{terms},
+      _threads{threads} {
+    SDB_ASSERT(threads >= 1);
   }
 
-  static const StatsBuffer& Empty() noexcept {
-    static const StatsBuffer kEmpty;
-    return kEmpty;
+  uint32_t Threads() const noexcept { return _threads; }
+
+  FieldCollector& Field(uint32_t thread) noexcept {
+    SDB_ASSERT(thread < _threads);
+    return _blocks[static_cast<size_t>(thread) * _per_thread].field;
   }
 
-  bool HasScorer() const noexcept { return _scorer != nullptr; }
-  const Scorer* GetScorer() const noexcept { return _scorer; }
-  const Storage& GetAllStats() const noexcept { return _stats; }
-
-  const byte_type* Stats(size_t i = 0) const noexcept {
-    return i < _stats.size() ? _stats[i].c_str() : nullptr;
+  TermCollector& Term(uint32_t thread, size_t i) noexcept {
+    SDB_ASSERT(thread < _threads);
+    SDB_ASSERT(i < _terms);
+    return _blocks[static_cast<size_t>(thread) * _per_thread +
+                   i / CounterBlock::kTerms]
+      .terms[i % CounterBlock::kTerms];
   }
 
-  ScoreSource Source(size_t i = 0) const noexcept {
-    return {_scorer, Stats(i)};
+  FieldCollector TotalField() const noexcept {
+    FieldCollector out;
+    for (size_t t = 0; t != _threads; ++t) {
+      const auto& src = _blocks[t * _per_thread].field;
+      out.docs_with_field += src.docs_with_field;
+      out.total_term_freq += src.total_term_freq;
+    }
+    return out;
   }
 
-  void AddChild(StatsBuffer&& child) {
-    _children.emplace_back(std::move(child));
+  TermCollector TotalTerm(size_t i) const noexcept {
+    SDB_ASSERT(i < _terms);
+    TermCollector out;
+    for (size_t t = 0; t != _threads; ++t) {
+      const auto& src = _blocks[t * _per_thread + i / CounterBlock::kTerms]
+                          .terms[i % CounterBlock::kTerms];
+      out.docs_with_term += src.docs_with_term;
+      out.total_term_freq += src.total_term_freq;
+    }
+    return out;
   }
-  const StatsBuffer& Child(size_t i) const noexcept { return _children[i]; }
-  size_t ChildCount() const noexcept { return _children.size(); }
 
  private:
-  Storage _stats;
-  const Scorer* _scorer = nullptr;
-  std::vector<StatsBuffer> _children;
+  static size_t BlocksPerThread(size_t terms) noexcept {
+    return std::max<size_t>(
+      1, (terms + CounterBlock::kTerms - 1) / CounterBlock::kTerms);
+  }
+
+  search::FixedArray<CounterBlock> _blocks;
+  size_t _per_thread;
+  size_t _terms;
+  uint32_t _threads;
 };
+
+class CompoundCollector;
 
 class PrepareCollector {
  public:
   using ptr = std::unique_ptr<PrepareCollector>;
 
-  using MergeSink = absl::FunctionRef<void(PrepareCollector&)>;
-  using MergeVisitor = absl::FunctionRef<void(MergeSink)>;
+  explicit PrepareCollector(const Scorer* scorer) noexcept : _scorer{scorer} {}
 
   virtual ~PrepareCollector() = default;
 
-  virtual void Merge(PrepareCollector&& other) = 0;
+  virtual void Finish(StatsArena& stats) = 0;
 
-  virtual void MergeAll(MergeVisitor visit) {
-    visit([this](PrepareCollector& other) { Merge(std::move(other)); });
+  virtual CompoundCollector* AsCompound() noexcept { return nullptr; }
+
+  const Scorer* GetScorer() const noexcept { return _scorer; }
+
+  search::StatsRecord Record() const noexcept { return {_stats, _scorer}; }
+
+  void Retain(memory::managed_ptr<const memory::Managed> query) {
+    _retained.emplace_back(std::move(query));
   }
 
-  virtual StatsBuffer Finish(IResourceManager& memory) = 0;
+ protected:
+  const byte_type* _stats = nullptr;
+  const Scorer* _scorer = nullptr;
 
-  virtual const Scorer* GetScorer() const noexcept { return nullptr; }
+ private:
+  std::vector<memory::managed_ptr<const memory::Managed>> _retained;
 };
 
 class FieldPrepareCollector : public PrepareCollector {
  public:
-  explicit FieldPrepareCollector(const Scorer* scorer) noexcept
-    : _scorer{scorer} {}
+  FieldPrepareCollector(const Scorer* scorer, StatsArena& stats,
+                        uint32_t threads)
+    : FieldPrepareCollector{scorer, stats, threads, 0, true} {}
 
-  auto& Field() noexcept { return _field; }
+  FieldCollector& Field(uint32_t thread) noexcept {
+    return _counters.Field(thread);
+  }
 
-  void Merge(PrepareCollector&& other) override;
-
-  StatsBuffer Finish(IResourceManager& memory) override;
-
-  const Scorer* GetScorer() const noexcept final { return _scorer; }
+  void Finish(StatsArena& stats) override;
 
  protected:
-  FieldCollector _field;
-  const Scorer* _scorer;
+  FieldPrepareCollector(const Scorer* scorer, StatsArena& stats,
+                        uint32_t threads, size_t terms, bool own_slot)
+    : PrepareCollector{scorer}, _counters{threads, terms} {
+    if (own_slot) {
+      _stats = stats.Allocate(StatsSlot(scorer));
+    }
+  }
+
+  CounterSlots _counters;
 };
 
 class ByTermsCollector final : public FieldPrepareCollector {
  public:
-  using TermsData = absl::InlinedVector<TermCollector, 1>;
-  ByTermsCollector(const Scorer* scorer, size_t size)
-    : FieldPrepareCollector{scorer}, _terms(size) {}
+  ByTermsCollector(const Scorer* scorer, size_t size, StatsArena& stats,
+                   uint32_t threads);
 
-  auto& Terms() noexcept { return _terms; }
+  using PrepareCollector::Record;
 
-  void Merge(PrepareCollector&& other) final;
+  search::StatsRecord Record(size_t i) const noexcept {
+    SDB_ASSERT(i < _size);
+    return {_stats + i * _slot, _scorer};
+  }
 
-  StatsBuffer Finish(IResourceManager& memory) final;
+  TermCollector& Term(uint32_t thread, size_t i) noexcept {
+    return _counters.Term(thread, i);
+  }
+
+  size_t Size() const noexcept { return _size; }
+
+  void Finish(StatsArena& stats) final;
 
  private:
-  TermsData _terms;
+  size_t _size;
+  size_t _slot;
 };
 
 class PhraseCollector final : public FieldPrepareCollector {
  public:
-  PhraseCollector(const Scorer* scorer, size_t size)
-    : FieldPrepareCollector{scorer}, _parts(size) {}
+  PhraseCollector(const Scorer* scorer, size_t size, StatsArena& stats,
+                  uint32_t threads)
+    : FieldPrepareCollector{scorer, stats, threads, 0, true},
+      _size{size},
+      _parts(static_cast<size_t>(threads) * size) {}
 
-  auto& Part(size_t i) noexcept { return _parts[i]; }
-  auto Size() const noexcept { return _parts.size(); }
+  std::vector<TermCollector>& Part(uint32_t thread, size_t i) noexcept {
+    SDB_ASSERT(i < _size);
+    return _parts[thread * _size + i];
+  }
 
-  void Merge(PrepareCollector&& other) final;
+  size_t Size() const noexcept { return _size; }
 
-  StatsBuffer Finish(IResourceManager& memory) final;
+  void Finish(StatsArena& stats) final;
 
  private:
-  std::vector<std::vector<TermCollector>> _parts;
+  size_t _size;
+  search::FixedArray<std::vector<TermCollector>> _parts;
 };
 
 class AllCollector final : public PrepareCollector {
  public:
-  explicit AllCollector(const Scorer* scorer) noexcept : _scorer{scorer} {}
+  AllCollector(const Scorer* scorer, StatsArena& stats)
+    : PrepareCollector{scorer} {
+    _stats = stats.Allocate(StatsSlot(scorer));
+  }
 
-  const Scorer* GetScorer() const noexcept final { return _scorer; }
-
-  void Merge(PrepareCollector&&) final {}
-
-  StatsBuffer Finish(IResourceManager& memory) final;
-
- private:
-  const Scorer* _scorer;
-};
-
-class NoopCollector final : public PrepareCollector {
- public:
-  void Merge(PrepareCollector&&) final {}
-
-  StatsBuffer Finish(IResourceManager& memory) final;
+  void Finish(StatsArena& stats) final;
 };
 
 class CompoundCollector final : public PrepareCollector {
  public:
-  explicit CompoundCollector(const Scorer* scorer = nullptr) noexcept
-    : _scorer{scorer} {}
+  explicit CompoundCollector(const Scorer* scorer) noexcept
+    : PrepareCollector{scorer} {}
 
   void Add(PrepareCollector::ptr child) {
     _children.emplace_back(std::move(child));
   }
 
-  const Scorer* GetScorer() const noexcept override { return _scorer; }
+  CompoundCollector* AsCompound() noexcept final { return this; }
 
-  auto& Child(size_t i) noexcept { return *_children[i]; }
+  PrepareCollector* Child(size_t i) noexcept { return _children[i].get(); }
+
   auto Size() const noexcept { return _children.size(); }
 
-  void Merge(PrepareCollector&& other) final;
-
-  void MergeAll(MergeVisitor visit) final;
-
-  StatsBuffer Finish(IResourceManager& memory) final;
+  void Finish(StatsArena& stats) final;
 
  private:
-  const Scorer* _scorer = nullptr;
   std::vector<PrepareCollector::ptr> _children;
 };
 

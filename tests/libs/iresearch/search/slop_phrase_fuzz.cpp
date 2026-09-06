@@ -22,9 +22,8 @@
 // on in-memory position vectors. Each random case is checked against a
 // brute-force reference (full Cartesian product, no windows or pruning):
 // Run's freq/best_distance and early-exit, the groups-aware collector,
-// JoinPair for n == 2, and the variadic n == 2 path - MergedPosStream
-// duplicate-collapsing merge plus JoinPair over the merged streams. New
-// matcher paths go here before any timing.
+// JoinPair for n == 2, and the variadic n == 2 path over the merged,
+// duplicate-free slot lists. New matcher paths go here before any timing.
 
 #include <algorithm>
 #include <array>
@@ -178,7 +177,7 @@ std::string Show(const spm::MatchResult& r) {
 // PosAttr contract JoinPair relies on: value() invalid before first next();
 // next() past the end -> false, value() = eof; seek(t) -> first pos >= t or
 // eof; offsets valid only while positioned; reset() rewinds to before the
-// first position (MergedPosStream::Add relies on it).
+// first position.
 struct MockPos {
   std::vector<value_t> pos;
   std::vector<irs::OffsAttr> offs;  // parallel to pos
@@ -381,8 +380,8 @@ bool Check(const Case& c) {
 }
 
 // A variadic n == 2 case: each slot is a set of per-term sub position
-// lists. The engine merges each slot with duplicates collapsed
-// (MergedPosStream, mirroring gather's sort + unique). same_group models
+// lists. The engine merges each slot with duplicates collapsed. same_group
+// models
 // whether the two slots' query term sets intersect: one component
 // (enforced pair uniqueness) or two (a shared position is legal).
 struct MergedCase {
@@ -414,17 +413,8 @@ std::string Show(const MergedCase& c) {
   return s;
 }
 
-// Offsets keyed by (slot, sub, position) so the stream's
-// first-registered-sub duplicate rule is observable.
-irs::OffsAttr OffsVarFor(uint32_t slot, uint32_t sub, value_t p) {
-  irs::OffsAttr o;
-  o.start = p * 32 + slot * 8 + sub;
-  o.end = o.start + 3;
-  return o;
-}
-
-// Sorted duplicate-free union of one slot's sub lists - what gather's
-// finalize_slot materializes and what the merged stream must enumerate.
+// Sorted duplicate-free union of one slot's sub lists - what one variadic
+// slot's positions come to once its terms are merged.
 std::vector<value_t> MergedUnion(
   const std::vector<std::vector<value_t>>& subs) {
   std::vector<value_t> all;
@@ -436,84 +426,10 @@ std::vector<value_t> MergedUnion(
   return all;
 }
 
-// The offsets the stream must emit for position p: the first registered
-// sub containing p wins.
-irs::OffsAttr ExpectedMergedOffs(const MergedCase& c, uint32_t slot,
-                                 value_t p) {
-  const auto& subs = c.subs[slot];
-  for (uint32_t k = 0; k < subs.size(); ++k) {
-    if (std::find(subs[k].begin(), subs[k].end(), p) != subs[k].end()) {
-      return OffsVarFor(slot, k, p);
-    }
-  }
-  SDB_ASSERT(false);
-  return OffsVarFor(slot, 0, p);
-}
-
-using MockMergedStream = spm::MergedPosStream<true, MockPos>;
-
-// Builds one mock per sub (owned by the caller, which must keep them alive
-// for the stream's lifetime) and registers them in sub index order.
-void BindMocks(const MergedCase& c, uint32_t slot, std::vector<MockPos>& mocks,
-               MockMergedStream& stream) {
-  const auto& subs = c.subs[slot];
-  mocks.clear();
-  mocks.reserve(subs.size());
-  for (uint32_t k = 0; k < subs.size(); ++k) {
-    MockPos m;
-    m.pos = subs[k];
-    m.offs.reserve(m.pos.size());
-    for (const value_t p : m.pos) {
-      m.offs.push_back(OffsVarFor(slot, k, p));
-    }
-    mocks.push_back(std::move(m));
-  }
-  stream.Clear();
-  for (auto& m : mocks) {
-    stream.Add(&m, &m.attr);
-  }
-}
-
-// The stream must enumerate exactly the slot's duplicate-free union in
-// ascending order, with the first-registered sub's offsets on every
-// position.
-bool CheckMergedStreamEnumeration(const MergedCase& c, uint32_t slot) {
-  std::vector<MockPos> mocks;
-  MockMergedStream stream;
-  BindMocks(c, slot, mocks, stream);
-
-  const auto expected = MergedUnion(c.subs[slot]);
-  if (stream.Empty() != expected.empty()) {
-    std::printf("MISMATCH MergedPosStream.Empty (slot=%u)\n  case: %s\n", slot,
-                Show(c).c_str());
-    return false;
-  }
-
-  std::vector<value_t> got;
-  bool offs_ok = true;
-  while (stream.next()) {
-    got.push_back(stream.value());
-    const irs::OffsAttr want = ExpectedMergedOffs(c, slot, stream.value());
-    const irs::OffsAttr* have = stream.GetOffs();
-    if (have->start != want.start || have->end != want.end) {
-      offs_ok = false;
-    }
-  }
-  if (got != expected || !offs_ok) {
-    std::printf(
-      "MISMATCH MergedPosStream enumeration (slot=%u, offs_ok=%d)\n"
-      "  case: %s\n",
-      slot, static_cast<int>(offs_ok), Show(c).c_str());
-    return false;
-  }
-  return true;
-}
-
-// The variadic n == 2 path: JoinPair over two merged streams must match the
-// brute reference and Run's collector over the merged-dedup slot lists.
-// same_group mirrors the production mapping (EnforceUniqueness over the two
-// slots' group ids). Also runs the full plain battery over the merged
-// lists, which the production gather would have produced.
+// The variadic n == 2 path: the full plain battery -- Run, its collector and
+// JoinPair -- over the merged, duplicate-free slot lists the engine builds
+// from a variadic slot's terms. same_group mirrors the production mapping
+// (EnforceUniqueness over the two slots' group ids).
 bool CheckMergedJoin(const MergedCase& c) {
   const std::vector<uint32_t> groups =
     c.same_group ? std::vector<uint32_t>{0, 0} : std::vector<uint32_t>{0, 1};
@@ -522,97 +438,7 @@ bool CheckMergedJoin(const MergedCase& c) {
               .groups = groups,
               .slop = c.slop};
 
-  bool ok = Check(merged);
-
-  spm::MatchScratch scratch;
-  std::vector<spm::EnumeratedMatch> run_out;
-  const spm::MatchResult ref =
-    spm::Run(merged.slots, merged.slop, merged.expected_steps, scratch,
-             /*early_exit=*/false, groups, &run_out);
-
-  ok &= CheckMergedStreamEnumeration(c, 0);
-  ok &= CheckMergedStreamEnumeration(c, 1);
-
-  for (const bool anchor_is_slot0 : {true, false}) {
-    const uint32_t a = anchor_is_slot0 ? 0u : 1u;
-    const uint32_t p = a ^ 1u;
-
-    std::vector<MockPos> anchor_mocks;
-    std::vector<MockPos> partner_mocks;
-    MockMergedStream anchor;
-    MockMergedStream partner;
-    BindMocks(c, a, anchor_mocks, anchor);
-    BindMocks(c, p, partner_mocks, partner);
-
-    spm::PairScratch pair_scratch;
-    std::vector<spm::PairMatch> out;
-    const spm::MatchResult join = spm::JoinPair<true, true>(
-      anchor, partner, anchor.GetOffs(), partner.GetOffs(), anchor_is_slot0,
-      c.slop, c.expected, c.same_group, pair_scratch, &out);
-
-    if (join.any != ref.any || join.freq != ref.freq ||
-        (ref.any && join.best_distance != ref.best_distance)) {
-      std::printf(
-        "MISMATCH MergedJoin(full) vs Brute (anchor_slot0=%d)\n"
-        "  case: %s\n  join: %s\n  ref : %s\n",
-        static_cast<int>(anchor_is_slot0), Show(c).c_str(), Show(join).c_str(),
-        Show(ref).c_str());
-      ok = false;
-    }
-
-    if (out.size() != run_out.size()) {
-      std::printf(
-        "MISMATCH MergedJoin collector size (anchor_slot0=%d)\n"
-        "  case: %s\n  join=%zu run=%zu\n",
-        static_cast<int>(anchor_is_slot0), Show(c).c_str(), out.size(),
-        run_out.size());
-      ok = false;
-    } else {
-      for (size_t k = 0; k < out.size(); ++k) {
-        const auto& j = out[k];
-        const auto& r = run_out[k];
-        const bool tuple_eq =
-          std::tie(j.leftmost, j.rightmost, j.leftmost_slot,
-                   j.rightmost_slot) ==
-          std::tie(r.leftmost, r.rightmost, r.leftmost_slot, r.rightmost_slot);
-        const irs::OffsAttr lo =
-          ExpectedMergedOffs(c, j.leftmost_slot, j.leftmost);
-        const irs::OffsAttr ro =
-          ExpectedMergedOffs(c, j.rightmost_slot, j.rightmost);
-        const bool offs_eq =
-          j.start_offset == lo.start && j.end_offset == ro.end;
-        if (!tuple_eq || !offs_eq) {
-          std::printf(
-            "MISMATCH MergedJoin match %zu (anchor_slot0=%d)\n"
-            "  case: %s\n",
-            k, static_cast<int>(anchor_is_slot0), Show(c).c_str());
-          ok = false;
-          break;
-        }
-      }
-    }
-
-    // filter path (early-exit) on fresh streams
-    std::vector<MockPos> anchor_mocks2;
-    std::vector<MockPos> partner_mocks2;
-    MockMergedStream anchor2;
-    MockMergedStream partner2;
-    BindMocks(c, a, anchor_mocks2, anchor2);
-    BindMocks(c, p, partner_mocks2, partner2);
-
-    spm::PairScratch pair_scratch2;
-    const spm::MatchResult join_exit = spm::JoinPair<false, false>(
-      anchor2, partner2, nullptr, nullptr, anchor_is_slot0, c.slop, c.expected,
-      c.same_group, pair_scratch2, nullptr);
-    if (join_exit.any != ref.any) {
-      std::printf(
-        "MISMATCH MergedJoin(filter).any (anchor_slot0=%d)\n"
-        "  case: %s\n",
-        static_cast<int>(anchor_is_slot0), Show(c).c_str());
-      ok = false;
-    }
-  }
-  return ok;
+  return Check(merged);
 }
 
 std::vector<value_t> RandomSlot(std::mt19937_64& rng, value_t universe,
@@ -791,14 +617,14 @@ MergedCase RandomMergedCase(std::mt19937_64& rng) {
   return c;
 }
 
-// Hand-picked merged-stream shapes; the semantic reference is the merged
+// Hand-picked merged-slot shapes; the semantic reference is the merged
 // union under strict uniqueness, so correctness is pinned by CheckMergedJoin
 // itself rather than hand freq values.
 int RunMergedEdgeCases() {
   int failures = 0;
   auto check = [&](const MergedCase& c, const char* name) {
     if (!CheckMergedJoin(c)) {
-      std::printf("  (in merged edge case '%s')\n", name);
+      std::printf("  (in merged edge case '%s': %s)\n", name, Show(c).c_str());
       ++failures;
     }
   };
@@ -817,7 +643,7 @@ int RunMergedEdgeCases() {
   check({.subs = {{{{1, 4}}, {{2}}}}, .expected = 1, .slop = 1}, "single_sub");
   // Empty sub next to a live one.
   check({.subs = {{{{}, {4}}, {{5}}}}, .expected = 1, .slop = 0}, "empty_sub");
-  // All subs of a slot empty: no match, stream must report Empty.
+  // All subs of a slot empty: no match.
   check({.subs = {{{{}}, {{5}}}}, .expected = 1, .slop = 5}, "empty_slot");
   // Cross-slot same position: strict uniqueness drops the (1, 1) pair.
   check({.subs = {{{{1}}, {{1}}}}, .expected = 1, .slop = 3},

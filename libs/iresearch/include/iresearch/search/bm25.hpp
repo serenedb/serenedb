@@ -27,31 +27,9 @@
 
 namespace irs {
 
-// BM25 similarity
-// bm25(doc, term) = idf(term) * ((k + 1) * tf(doc, term)) / (k * (1 - b + b *
-// |doc|/avgDL) + tf(doc, term))
-//
-// Inverted document frequency
-// idf(term) = log(1 + (#documents with this field - #documents with this term +
-// 0.5)/(#documents with this term + 0.5))
-//
-// Term frequency
-//   Norm: tf(doc, term) = frequency(doc, term);
-//   Norm:  tf(doc, term) = sqrt(frequency(doc, term));
-//
-// Document length
-//   Norm: |doc| # of terms in a field within a document
-//   Norm:  |doc| = 1 / sqrt(# of terms in a field within a document)
-//
-// Average document length
-// avgDL = sum(field_term_count) / (#documents with this field)
-
 struct BM25Stats {
-  // precomputed idf value
   score_t idf;
-  // precomputed k*(1-b)
   score_t norm_const;
-  // precomputed k*b/avgD
   score_t norm_length;
 };
 
@@ -102,6 +80,8 @@ class BM25 final : public irs::ScorerBase<BM25, BM25Stats> {
   void collect(byte_type* stats_buf, const irs::FieldCollector* field,
                const irs::TermCollector* term) const final;
 
+  bool ScoresPerDoc() const noexcept final { return !IsBM1(); }
+
   IndexFeatures GetIndexFeatures() const noexcept final {
     if (IsBM1()) {
       return IndexFeatures::None;
@@ -119,6 +99,8 @@ class BM25 final : public irs::ScorerBase<BM25, BM25Stats> {
   ScoreBoundWriter::ptr PrepareScoreBoundWriter(size_t max_levels) const final;
 
   ScoreBoundSource::ptr PrepareScoreBoundSource() const final;
+
+  bool HasScoreBounds() const noexcept final { return !IsBM1(); }
 
   bool Compatible(const ScorerOptions& persisted) const noexcept final;
 

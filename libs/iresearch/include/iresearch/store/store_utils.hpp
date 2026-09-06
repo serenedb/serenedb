@@ -143,6 +143,8 @@ IRS_FORCE_INLINE T ShiftUnpack32(uint32_t in, U& out) noexcept {
 
 class BytesViewInput : public IndexInput {
  public:
+  static constexpr bool kVolatileAlways = true;
+
   BytesViewInput() = default;
   explicit BytesViewInput(bytes_view data) noexcept : _data{data} {}
 
@@ -185,6 +187,9 @@ class BytesViewInput : public IndexInput {
   int64_t ReadI64() noexcept final { return irs::read<uint64_t>(_pos); }
   uint32_t ReadV32() noexcept final { return irs::vread<uint32_t>(_pos); }
   uint64_t ReadV64() noexcept final { return irs::vread<uint64_t>(_pos); }
+
+  void SkipV32() noexcept final { irs::vskip<uint32_t>(_pos); }
+  void SkipV64() noexcept final { irs::vskip<uint64_t>(_pos); }
 
   IRS_FORCE_INLINE uint64_t Position() const noexcept final {
     return std::distance(_data.data(), _pos);
@@ -268,6 +273,9 @@ class RemappedBytesViewInput final : public IndexInput {
   int64_t ReadI64() noexcept final { return _input.ReadI64(); }
   uint32_t ReadV32() noexcept final { return _input.ReadV32(); }
   uint64_t ReadV64() noexcept final { return _input.ReadV64(); }
+
+  void SkipV32() noexcept final { _input.SkipV32(); }
+  void SkipV64() noexcept final { _input.SkipV64(); }
 
   uint64_t Position() const noexcept final;
   uint64_t Length() const noexcept final { return _input.Length(); }

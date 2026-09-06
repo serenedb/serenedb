@@ -80,8 +80,8 @@ class FieldData : util::Noncopyable {
 
  private:
   friend class TermIteratorImpl;
-  friend class DocIteratorImpl;
-  friend class SortingDocIteratorImpl;
+  friend class TermPostingsImpl;
+  friend class SortingTermPostingsImpl;
   friend class FieldsData;
 
   using ProcessTerm = void (FieldData::*)(Posting&, doc_id_t, const OffsAttr*);

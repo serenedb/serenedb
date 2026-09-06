@@ -514,6 +514,7 @@ duckdb::idx_t ColumnReader::GatherFilter(
   NullCheckKind null_check, duckdb::Vector& result) const {
   const uint64_t cur = ColumnReader::GatherCursor(s);
   SDB_ASSERT(anchor >= cur, "GatherFilter requires ascending rows");
+  SDB_ASSERT(span <= STANDARD_VECTOR_SIZE, "GatherFilter decodes one vector");
   if (anchor > cur) {
     ColumnReader::Skip(s, anchor - cur);
   }

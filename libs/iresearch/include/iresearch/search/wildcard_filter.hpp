@@ -63,7 +63,7 @@ auto ExecuteWildcard(bstring& buf, bytes_view term, Term&& t, Prefix&& p,
       SDB_ASSERT(!term.empty());
       const auto idx = term.find_first_of(WildcardMatch::kAnyStr);
       SDB_ASSERT(idx != bytes_view::npos);
-      term = bytes_view{term.data(), idx};  // remove trailing '%'
+      term = bytes_view{term.data(), idx};
       return p(term);
     }
     case WildcardType::Wildcard:
@@ -82,13 +82,11 @@ struct ByWildcardFilterOptions {
   }
 };
 
-// Options for wildcard filter
 struct ByWildcardOptions : ByWildcardFilterOptions {
   using FilterType = ByWildcard;
   using filter_options = ByWildcardFilterOptions;
   using ByWildcardFilterOptions::ByWildcardFilterOptions;
 
-  // The maximum number of most frequent terms to consider for scoring
   size_t scored_terms_limit{1024};
 
   bool operator==(const ByWildcardOptions& rhs) const noexcept = default;

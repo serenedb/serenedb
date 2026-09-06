@@ -119,8 +119,14 @@ inline bool PrepareVectorState(const CentroidsTree& ivf,
     return false;
   }
 
+  state.payload = postings->ReopenPayload();
+  if (!state.payload) {
+    return false;
+  }
+
   state.reader = postings;
   state.vector_column = segment.Column(opts.centroids_id);
+  state.col_reader = segment.GetColReader();
   state.quant = opts.quant;
   state.d = d;
   state.codebook = std::move(codebook);
@@ -134,12 +140,15 @@ inline bool PrepareVectorState(const CentroidsTree& ivf,
   }
 
   std::array<byte_type, kCentroidTermWidth> term_buf{};
-  CostAttr::Type estimation = 0;
+  uint64_t estimation = 0;
   for (size_t i = 0; i < fine_ids.size(); ++i) {
     if (!SeekClusterTerm(*terms, fine_ids[i], term_buf)) {
       continue;
     }
     const auto& meta = terms->cookie();
+    if (meta.docs_count == 0) {
+      continue;
+    }
     estimation += meta.docs_count;
     state.pay_starts.push_back(meta.pay_start);
     state.pay_lanes.push_back(meta.pos_offset);

@@ -52,14 +52,9 @@ constexpr const T* TryGetValue(const T* value) noexcept {
   return value;
 }
 
-constexpr std::nullptr_t TryGetValue(utils::Empty /*value*/) noexcept {
-  return nullptr;
-}
-
-// Helper functions
+constexpr std::nullptr_t TryGetValue(utils::Empty) noexcept { return nullptr; }
 
 IRS_FORCE_INLINE score_t TfIdf(uint32_t freq, score_t idf) noexcept {
-  // TODO(gnusi): do we need sqrt?
   return std::sqrt(TermCountToScore(freq)) * idf;
 }
 
@@ -137,7 +132,7 @@ struct TfIdfScore : public ScoreOperator {
   [[no_unique_address]] utils::Need<HasFilterBoost, const score_t*>
     filter_boost;
   [[no_unique_address]] utils::Need<HasNorm, const uint32_t*> norm;
-  score_t idf;  // precomputed : boost * idf
+  score_t idf;
 };
 
 }  // namespace
@@ -150,7 +145,6 @@ void TFIDF::collect(byte_type* stats_buf, const FieldCollector* field,
   auto* idf = stats_cast(stats_buf);
   idf->value += static_cast<score_t>(
     std::log1p((docs_with_field + 1.0) / (docs_with_term + 1.0)));
-  // TODO(mbkkt) SDB_ASSERT(idf.value >= 0.f);
 }
 
 ScoreFunction TFIDF::PrepareScorer(const ScoreContext& ctx) const {
@@ -161,8 +155,6 @@ ScoreFunction TFIDF::PrepareScorer(const ScoreContext& ctx) const {
       return ScoreFunction::Default();
     }
 
-    // if there is no frequency then all the
-    // scores will be the same (e.g. filter irs::all)
     return ScoreFunction::Constant(ctx.boost);
   }
 
@@ -183,8 +175,8 @@ ScoreFunction TFIDF::PrepareScorer(const ScoreContext& ctx) const {
     }
   }
 
-  return ResolveBool(norm != nullptr, [&]<bool HasNorms>() {
-    return ResolveBool(filter_boost != nullptr, [&]<bool HasBoost>() {
+  return ResolveBool(norm, [&]<bool HasNorms>() {
+    return ResolveBool(filter_boost, [&]<bool HasBoost>() {
       const auto* stats = stats_cast(ctx.stats);
       return ScoreFunction::Make<TfIdfScore<HasNorms, HasBoost>>(
         norm, ctx.boost, *stats, freq, filter_boost);
@@ -194,9 +186,6 @@ ScoreFunction TFIDF::PrepareScorer(const ScoreContext& ctx) const {
 
 ScoreBoundWriter::ptr TFIDF::PrepareScoreBoundWriter(size_t max_levels) const {
   if (_normalize) {
-    // idf * sqrt(tf) / sqrt(dl)
-    // sqrt(tf) / sqrt(dl)
-    // tf / dl
     SDB_ASSERT(BoundTypeOf(GetOptions()) == ScoreBoundType::DivNorm);
     return std::make_unique<FreqNormWriter<kScoreBoundDivNorm>>(max_levels);
   }

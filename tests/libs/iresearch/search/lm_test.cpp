@@ -205,8 +205,6 @@ namespace {
 // Helper: run a filter with the given scorer and return {doc_id -> score}.
 std::map<irs::doc_id_t, irs::score_t> RunQuery(irs::IndexReader& index,
                                                irs::Scorer& scorer) {
-  auto& segment = *(index.begin());
-
   irs::ByTerm filter;
   *filter.mutable_field_id() = kBodyFieldId;
   filter.mutable_options()->term =
@@ -216,19 +214,16 @@ std::map<irs::doc_id_t, irs::score_t> RunQuery(irs::IndexReader& index,
   tests::PreparedFilter prepared{filter, index, &scorer, counter};
 
   irs::ColumnArgsFetcher fetcher;
-  auto docs = prepared.Execute(0);
-  auto score = docs->PrepareScore({
-    .segment = &segment,
-    .fetcher = &fetcher,
-  });
+  auto docs = prepared.ExecuteScored(0, fetcher);
+  auto score = docs->PrepareScore();
 
   std::map<irs::doc_id_t, irs::score_t> seen;
-  while (!irs::doc_limits::eof(docs->advance())) {
-    fetcher.Fetch(docs->value());
+  while (!irs::doc_limits::eof(docs->Advance())) {
+    fetcher.Fetch(docs->Value());
     docs->FetchScoreArgs(0);
     irs::score_t s{};
     score.Score(&s, 1);
-    seen.emplace(docs->value(), s);
+    seen.emplace(docs->Value(), s);
   }
   return seen;
 }

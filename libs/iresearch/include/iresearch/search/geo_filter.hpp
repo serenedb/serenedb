@@ -21,6 +21,7 @@
 
 #pragma once
 
+#include <s2/s2cap.h>
 #include <s2/s2region_term_indexer.h>
 
 #include "basics/assert.h"
@@ -33,14 +34,9 @@
 namespace irs {
 
 enum class StoredType : uint8_t {
-  // The indexed source column is force-included and re-parsed at query time
-  // (JSON GeoJSON text or WKB bytes, selected by source_is_wkb).
   Source = 0,
-  // Valid ShapeContainer serialized as S2Region
   S2Region,
-  // Same as S2Region, but contains only S2Point
   S2Point,
-  // Store centroid
   S2Centroid,
 };
 
@@ -50,24 +46,15 @@ struct GeoFilterOptionsBase {
   StoredType stored{StoredType::Source};
   sdb::geo::coding::Options coding{sdb::geo::coding::Options::Invalid};
   field_id store_field_id{irs::field_limits::invalid()};
-  // For StoredType::Source: whether the force-included source column carries
-  // WKB bytes (GEOMETRY column) rather than GeoJSON text (JSON/VARCHAR).
   bool source_is_wkb{false};
-  // For StoredType::Source: the geopoint analyzer's source is not GeoJSON but
-  // a bare point -- a [lat, lng] array (both paths empty) or an object whose
-  // latitude/longitude live at these field paths. Re-parsed with the same
-  // semantics as GeoPointAnalyzer::ParsePoint.
   bool source_is_point{false};
   std::vector<std::string> point_latitude;
   std::vector<std::string> point_longitude;
 };
 
 enum class GeoFilterType : uint8_t {
-  // Shape intersects indexed data
   Intersects = 0,
-  // Shape fully contains indexed data
   Contains,
-  // Shape is fully contained within indexed data
   IsContained,
 };
 
@@ -89,7 +76,9 @@ class GeoFilter final : public FilterWithField<GeoFilterOptions> {
   QueryBuilder::ptr PrepareSegment(const SubReader& segment,
                                    const PrepareContext& ctx) const final;
 
-  PrepareCollector::ptr MakeCollectorImpl(const Scorer* scorer) const final;
+  PrepareCollector::ptr MakeCollectorImpl(const Scorer* scorer,
+                                          StatsArena& stats,
+                                          uint32_t threads) const final;
 };
 
 class GeoDistanceFilter;
@@ -111,7 +100,57 @@ class GeoDistanceFilter final
   QueryBuilder::ptr PrepareSegment(const SubReader& segment,
                                    const PrepareContext& ctx) const final;
 
-  PrepareCollector::ptr MakeCollectorImpl(const Scorer* scorer) const final;
+  PrepareCollector::ptr MakeCollectorImpl(const Scorer* scorer,
+                                          StatsArena& stats,
+                                          uint32_t threads) const final;
+};
+
+struct GeoIntersectsAcceptor {
+  const sdb::geo::ShapeContainer* filter_shape;
+
+  bool operator()(const sdb::geo::ShapeContainer& indexed_shape) const {
+    return filter_shape->intersects(indexed_shape);
+  }
+};
+
+struct GeoContainsAcceptor {
+  const sdb::geo::ShapeContainer* filter_shape;
+
+  bool operator()(const sdb::geo::ShapeContainer& indexed_shape) const {
+    return filter_shape->contains(indexed_shape);
+  }
+};
+
+struct GeoIsContainedAcceptor {
+  const sdb::geo::ShapeContainer* filter_shape;
+
+  bool operator()(const sdb::geo::ShapeContainer& indexed_shape) const {
+    return indexed_shape.contains(*filter_shape);
+  }
+};
+
+template<bool MinIncl, bool MaxIncl>
+struct GeoDistanceRangeAcceptor {
+  S2Cap min;
+  S2Cap max;
+
+  bool operator()(const sdb::geo::ShapeContainer& shape) const {
+    const auto point = shape.centroid();
+
+    return !(MinIncl ? min.InteriorContains(point) : min.Contains(point)) &&
+           (MaxIncl ? max.Contains(point) : max.InteriorContains(point));
+  }
+};
+
+template<bool Incl>
+struct GeoDistanceAcceptor {
+  S2Cap filter;
+
+  bool operator()(const sdb::geo::ShapeContainer& shape) const {
+    const auto point = shape.centroid();
+
+    return Incl ? filter.Contains(point) : filter.InteriorContains(point);
+  }
 };
 
 }  // namespace irs

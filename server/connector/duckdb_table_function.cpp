@@ -42,7 +42,6 @@
 #include <duckdb/storage/statistics/variant_stats.hpp>
 #include <iresearch/analysis/token_attributes.hpp>
 #include <iresearch/search/all_filter.hpp>
-#include <iresearch/search/boolean_filter.hpp>
 #include <iresearch/search/vector_radius_filter.hpp>
 #include <iresearch/search/vector_similarity_filter.hpp>
 
@@ -485,6 +484,22 @@ auto MakeFieldNameResolver(const SereneDBScanBindData& bind_data,
   };
 }
 
+catalog::term_dict::Kind ClassifyTerms(const duckdb::LogicalType& type) {
+  const auto* leaf = &type;
+  for (;;) {
+    switch (leaf->id()) {
+      case duckdb::LogicalTypeId::LIST:
+        leaf = &duckdb::ListType::GetChildType(*leaf);
+        continue;
+      case duckdb::LogicalTypeId::ARRAY:
+        leaf = &duckdb::ArrayType::GetChildType(*leaf);
+        continue;
+      default:
+        return catalog::term_dict::Classify(leaf->id());
+    }
+  }
+}
+
 auto MakeFieldKindResolver(const SereneDBScanBindData& bind_data,
                            const catalog::InvertedIndex& index) {
   return
@@ -500,11 +515,11 @@ auto MakeFieldKindResolver(const SereneDBScanBindData& bind_data,
         if (fid == lookup.entry_field_id) {
           const auto* expr = index.ExpressionByFieldId(fid);
           if (expr) {
-            return catalog::term_dict::Classify(expr->return_type.id());
+            return ClassifyTerms(expr->return_type);
           }
           const auto column_type = bind_data.ColumnTypeById(col_id);
           if (column_type.id() != duckdb::LogicalTypeId::INVALID) {
-            return catalog::term_dict::Classify(column_type.id());
+            return ClassifyTerms(column_type);
           }
           return Kind::String;
         }
@@ -520,7 +535,7 @@ auto MakeFieldKindResolver(const SereneDBScanBindData& bind_data,
       }
       const auto column_type = bind_data.ColumnTypeById(col_id);
       if (column_type.id() != duckdb::LogicalTypeId::INVALID) {
-        return catalog::term_dict::Classify(column_type.id());
+        return ClassifyTerms(column_type);
       }
       return Kind::Unsupported;
     };

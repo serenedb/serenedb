@@ -29,21 +29,45 @@
 namespace sdb::connector {
 namespace {
 
-bool Masked(const irs::DocumentMask* segment_mask,
-            const irs::DocumentMask* pending_mask, irs::doc_id_t doc) noexcept {
-  return (segment_mask && segment_mask->contains(doc)) ||
-         (pending_mask && pending_mask->contains(doc));
+bool Masked(const irs::DocumentMask* segment_mask, irs::doc_id_t doc) noexcept {
+  return segment_mask != nullptr && segment_mask->contains(doc);
 }
 
+// A removal is asked for a document stream and for nothing else -- the index
+// writer drives `PlanLeadDocs` and applies its own accumulating mask to what
+// comes back. So this is the one plan it has; the other nine say that this
+// query kind has none, which is what a caller that wanted a count or a score
+// would have to be told.
 template<typename Filter>
 class SearchRemoveQuery : public irs::QueryBuilder {
  public:
-  SearchRemoveQuery(const irs::SubReader& segment, const Filter& filter)
-    : irs::QueryBuilder{segment}, _filter{filter} {}
+  SearchRemoveQuery(const irs::SubReader& segment, const Filter& filter,
+                    const irs::DocumentMask* pending)
+    : irs::QueryBuilder{segment}, _filter{filter}, _pending{pending} {}
 
-  irs::DocIterator::ptr Execute(const irs::ExecutionContext& ctx,
-                                const irs::StatsBuffer&) const final {
-    return _filter.MakeIterator(_segment, ctx);
+  irs::lead::Node::ptr PlanLead(const irs::search::ScoredCtx&) const final {
+    return _filter.MakeLead(_segment, _pending);
+  }
+
+  irs::count::Root::ptr PlanCount(const irs::count::Context&) const final {
+    return {};
+  }
+  irs::docs::Root::ptr PlanDocs(const irs::docs::Context&) const final {
+    return {};
+  }
+  irs::scored::Root::ptr PlanScored(const irs::scored::Context&) const final {
+    return {};
+  }
+  irs::top::Root::ptr PlanTop(const irs::top::Context&) const final {
+    return {};
+  }
+  irs::probe::Node::ptr PlanProbe(const irs::search::ScoredCtx&,
+                                  uint64_t) const final {
+    return {};
+  }
+  irs::fill::Node::ptr PlanFill(const irs::search::ScoredCtx&,
+                                irs::ScoreMergeType) const final {
+    return {};
   }
 
   void Visit(irs::PreparedStateVisitor&, irs::score_t) const final {}
@@ -52,6 +76,7 @@ class SearchRemoveQuery : public irs::QueryBuilder {
 
  private:
   const Filter& _filter;
+  const irs::DocumentMask* _pending;
 };
 
 }  // namespace
@@ -62,22 +87,22 @@ irs::QueryBuilder::ptr SearchRemoveFilter::PrepareSegment(
     return irs::QueryBuilder::Empty();
   }
   return irs::memory::make_tracked<SearchRemoveQuery<SearchRemoveFilter>>(
-    ctx.memory, segment, *this);
+    ctx.memory, segment, *this, ctx.pending_docs_mask);
 }
 
-irs::DocIterator::ptr SearchRemoveFilter::MakeIterator(
-  const irs::SubReader& segment, const irs::ExecutionContext& ctx) const {
+irs::lead::Node::ptr SearchRemoveFilter::MakeLead(
+  const irs::SubReader& segment, const irs::DocumentMask* pending) const {
   _segment_mask = segment.docs_mask();
-  _pending_mask = ctx.pending_docs_mask;
+  _pending_mask = pending;
   _pk_field = segment.field(_pk_field_id);
   SDB_ASSERT(_pk_field);
   _pos = 0;
-  _doc = irs::doc_limits::invalid();
-  return irs::memory::to_managed<irs::DocIterator>(
-    const_cast<SearchRemoveFilter&>(*this));
+  auto& self = const_cast<SearchRemoveFilter&>(*this);
+  self._doc = irs::doc_limits::invalid();
+  return irs::memory::to_managed<irs::lead::Node>(self);
 }
 
-irs::doc_id_t SearchRemoveFilter::advance() {
+irs::doc_id_t SearchRemoveFilter::Advance() {
   while (true) {
     if (_pos == _pks.size()) [[unlikely]] {
       _doc = irs::doc_limits::eof();
@@ -111,9 +136,9 @@ irs::doc_id_t SearchRemoveFilter::advance() {
 
     auto doc = irs::doc_limits::eof();
     auto acceptor = [&](irs::doc_id_t found_doc) {
-      if ((_segment_mask && _segment_mask->contains(found_doc)) ||
-          (_pending_mask && _pending_mask->contains(found_doc))) {
-        return true;  // skip deleted
+      if (Masked(_segment_mask, found_doc) ||
+          Masked(_pending_mask, found_doc)) {
+        return true;  // skip deleted, including by this batch's earlier queries
       }
       // found alive document with this PK
       doc = found_doc;
@@ -160,33 +185,33 @@ irs::QueryBuilder::ptr SearchRemovePrefixFilter::PrepareSegment(
   // filter, and entries are not consumed across segments.
   SDB_ASSERT(!_entries.empty());
   return irs::memory::make_tracked<SearchRemoveQuery<SearchRemovePrefixFilter>>(
-    ctx.memory, segment, *this);
+    ctx.memory, segment, *this, ctx.pending_docs_mask);
 }
 
-irs::DocIterator::ptr SearchRemovePrefixFilter::MakeIterator(
-  const irs::SubReader& segment, const irs::ExecutionContext& ctx) const {
+irs::lead::Node::ptr SearchRemovePrefixFilter::MakeLead(
+  const irs::SubReader& segment, const irs::DocumentMask* pending) const {
   _segment_mask = segment.docs_mask();
-  _pending_mask = ctx.pending_docs_mask;
+  _pending_mask = pending;
   _pk_field = segment.field(_pk_field_id);
   SDB_ASSERT(_pk_field);
   _terms.reset();
   _postings.reset();
   _pos = 0;
   _resume_row = std::numeric_limits<int64_t>::min();
-  _doc = irs::doc_limits::invalid();
-  return irs::memory::to_managed<irs::DocIterator>(
-    const_cast<SearchRemovePrefixFilter&>(*this));
+  auto& self = const_cast<SearchRemovePrefixFilter&>(*this);
+  self._doc = irs::doc_limits::invalid();
+  return irs::memory::to_managed<irs::lead::Node>(self);
 }
 
-irs::doc_id_t SearchRemovePrefixFilter::advance() {
+irs::doc_id_t SearchRemovePrefixFilter::Advance() {
   while (true) {
     if (_postings) {
       while (true) {
-        const auto doc = _postings->advance();
+        const auto doc = _postings->Advance();
         if (irs::doc_limits::eof(doc)) {
           break;
         }
-        if (Masked(_segment_mask, _pending_mask, doc)) {
+        if (Masked(_segment_mask, doc) || Masked(_pending_mask, doc)) {
           continue;
         }
         return _doc = doc;

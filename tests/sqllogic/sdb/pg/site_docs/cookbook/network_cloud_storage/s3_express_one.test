@@ -24,7 +24,7 @@ db error: ERROR: Referenced column "s3express" was not found because the FROM cl
 # DOCS_TEST_BODY
 
 statement ok
-CREATE OR REPLACE SECRET (
+CREATE OR REPLACE SECRET s3_express_${__DATABASE__} (
     TYPE s3,
     KEY_ID 'AKIAIOSFODNN7EXAMPLE',
     SECRET 'wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY',

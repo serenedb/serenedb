@@ -13,7 +13,7 @@ control substitution on
 #   Phrase                 -> ts_phrase (adjacent + gap variants)
 #   Exclusion              -> AND NOT, NOT(OR)
 #   BitsetDocIterator      -> integer ts_lt/gt/between
-#   MaxScoreIterator       -> ORDER BY BM25() ... LIMIT k
+#   PruningIterator       -> ORDER BY BM25() ... LIMIT k
 
 statement ok
 CREATE TEXT SEARCH DICTIONARY lz_en (
@@ -324,7 +324,7 @@ id
 
 
 # ============================================================================
-# MaxScoreIterator / score pruning -- ORDER BY BM25(...) ... LIMIT k.
+# PruningIterator / score pruning -- ORDER BY BM25(...) ... LIMIT k.
 # Score threshold rises as top-k candidates are collected; sparse terms get
 # pruned, leaving the dense ones to drive lazy seeks.
 # ============================================================================

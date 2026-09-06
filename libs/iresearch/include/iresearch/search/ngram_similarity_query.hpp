@@ -23,36 +23,51 @@
 
 #pragma once
 
-#include "iresearch/search/filter.hpp"
+#include <algorithm>
+
+#include "iresearch/search/common/plan.hpp"
+#include "iresearch/search/estimate.hpp"
 #include "iresearch/search/prepared_state_visitor.hpp"
+#include "iresearch/search/query_builder_impl.hpp"
 #include "iresearch/search/states/ngram_state.hpp"
 
 namespace irs {
 
-// Prepared ngram similarity query implementation
-class NGramSimilarityQuery : public QueryBuilder {
+class NGramSimilarityQuery : public QueryBuilderImpl<NGramSimilarityQuery> {
  public:
-  // returns set of features required for filter
   static constexpr IndexFeatures kRequiredFeatures =
     IndexFeatures::Freq | IndexFeatures::Pos;
 
   NGramSimilarityQuery(const SubReader& segment, size_t min_match_count,
                        NGramState&& state, score_t boost = kNoBoost)
-    : QueryBuilder{segment},
+    : QueryBuilderImpl{segment},
       _min_match_count{min_match_count},
       _state{std::move(state)},
-      _boost{boost} {}
-
-  DocIterator::ptr Execute(const ExecutionContext& ctx,
-                           const StatsBuffer& stats) const final;
+      _boost{boost} {
+    SDB_ASSERT(_state.terms.size() >= _min_match_count);
+    uint64_t sum = 0;
+    for (const auto& meta : _state.terms) {
+      sum += meta.docs_count;
+    }
+    _estimate_max =
+      ClampEstimate(sum / std::max<size_t>(_min_match_count, 1), segment);
+  }
 
   void Visit(PreparedStateVisitor& visitor, score_t boost) const final {
     visitor.Visit(*this, _state, boost * _boost);
   }
 
+  size_t MinMatchCount() const noexcept { return _min_match_count; }
+
+  size_t Present() const noexcept { return _state.terms.size(); }
+
+  bool Every() const noexcept { return Present() == _min_match_count; }
+
+  const NGramState& State() const noexcept { return _state; }
+
   score_t Boost() const noexcept final { return _boost; }
 
-  DocIterator::ptr ExecuteWithOffsets() const;
+  void SetBoost(score_t value) noexcept final { _boost = value; }
 
  private:
   size_t _min_match_count;

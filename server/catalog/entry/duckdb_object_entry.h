@@ -262,26 +262,47 @@ class SereneDBForeignServerEntry final : public duckdb::InCatalogEntry {
 // counterpart, so CatalogType gained ROLE_ENTRY.
 class SereneDBRoleEntry final : public duckdb::InCatalogEntry {
  public:
-  SereneDBRoleEntry(duckdb::Catalog& catalog,
-                    std::shared_ptr<const catalog::Role> role)
+  SereneDBRoleEntry(duckdb::Catalog& catalog, catalog::CreateRoleInfo record)
     : duckdb::InCatalogEntry(duckdb::CatalogType::ROLE_ENTRY, catalog,
-                             duckdb::Identifier{std::string{role->GetName()}}),
-      _role{std::move(role)} {
-    catalog::AdoptEntryIdentity(*this, _role->GetId());
+                             duckdb::Identifier{std::string{record.GetName()}}),
+      _record{std::move(record)} {
+    catalog::AdoptEntryIdentity(*this, _record.GetId());
   }
 
-  // A role owns no other role, so the entry has no owner or ACL of its own;
-  // it carries its attributes, memberships and default privileges. Readers
-  // take names and grants straight out of it, so it has to be the entry's own
-  // storage and not a copy handed out per ask.
-  const catalog::Role& Role() const noexcept { return *_role; }
+  // A role owns no other role, so the entry has no owner or ACL of its own; the
+  // record below is everything a role is, and this entry is the role.
+  ObjectId GetId() const noexcept { return _record.GetId(); }
+  std::string_view GetName() const noexcept { return _record.GetName(); }
+  RoleOption Options() const noexcept { return _record.Options(); }
+  bool Has(RoleOption o) const noexcept { return _record.Has(o); }
+  bool IsSuperuser() const noexcept { return _record.IsSuperuser(); }
+  bool CanLogin() const noexcept { return _record.CanLogin(); }
+  int32_t ConnLimit() const noexcept { return _record.ConnLimit(); }
+  int64_t ValidUntil() const noexcept { return _record.ValidUntil(); }
+  bool HasValidUntil() const noexcept { return _record.HasValidUntil(); }
+  std::span<const std::string> Config() const noexcept {
+    return _record.Config();
+  }
+  std::span<const DefaultAcl> DefaultAcls() const noexcept {
+    return _record.DefaultAcls();
+  }
+  std::span<const Membership> MemberOf() const noexcept {
+    return _record.MemberOf();
+  }
+  std::string_view Password() const noexcept { return _record.Password(); }
+
+  // The next version's starting point: a mutator reads this one, changes what
+  // its statement says and hands the result back to be placed.
+  duckdb::unique_ptr<catalog::CreateRoleInfo> Record() const {
+    return _record.CopyRecord();
+  }
 
   duckdb::unique_ptr<duckdb::CreateInfo> GetInfo() const final {
-    return duckdb::make_uniq<catalog::CreateRoleInfo>(_role);
+    return _record.Copy();
   }
 
  private:
-  const std::shared_ptr<const catalog::Role> _role;
+  const catalog::CreateRoleInfo _record;
 };
 
 // A database. The other cluster-global kind, in the set beside the roles.

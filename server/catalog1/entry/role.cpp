@@ -24,8 +24,6 @@
 
 #include <duckdb/catalog/catalog.hpp>
 #include <duckdb/parser/keyword_helper.hpp>
-#include <duckdb/parser/parsed_data/alter_info.hpp>
-#include <duckdb/parser/parsed_data/alter_table_info.hpp>
 #include <utility>
 
 namespace sdb::catalog {
@@ -82,22 +80,6 @@ duckdb::unique_ptr<duckdb::CatalogEntry> RoleCatalogEntry::Copy(
   auto info = GetInfo();
   return duckdb::make_uniq<RoleCatalogEntry>(catalog,
                                              info->Cast<CreateRoleInfo>());
-}
-
-// ALTER ROLE produces a new version through the same CatalogSet machinery a
-// table ALTER uses, so a rolled back ALTER leaves the previous version rooted
-// and a concurrent writer gets a write-write conflict.
-duckdb::unique_ptr<duckdb::CatalogEntry> RoleCatalogEntry::AlterEntry(
-  duckdb::CatalogTransaction transaction, duckdb::AlterInfo& info) {
-  if (info.type != duckdb::AlterType::SET_COMMENT) {
-    throw duckdb::NotImplementedException(
-      "Unsupported ALTER for a role: %s",
-      duckdb::EnumUtil::ToString(info.type));
-  }
-  auto create_info = GetInfo();
-  auto& role_info = create_info->Cast<CreateRoleInfo>();
-  role_info.comment = info.Cast<duckdb::SetCommentInfo>().comment_value;
-  return duckdb::make_uniq<RoleCatalogEntry>(catalog, role_info);
 }
 
 std::string RoleCatalogEntry::ToSQL() const { return GetInfo()->ToString(); }

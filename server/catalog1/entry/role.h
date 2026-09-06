@@ -111,8 +111,6 @@ class RoleCatalogEntry final : public duckdb::InCatalogEntry {
   }
   const std::vector<std::string>& Config() const noexcept { return _config; }
 
-  duckdb::unique_ptr<duckdb::CatalogEntry> AlterEntry(
-    duckdb::CatalogTransaction transaction, duckdb::AlterInfo& info) override;
   duckdb::unique_ptr<duckdb::CatalogEntry> Copy(
     duckdb::ClientContext& context) const override;
   duckdb::unique_ptr<duckdb::CreateInfo> GetInfo() const override;

@@ -34,7 +34,7 @@
 namespace sdb::connector {
 
 duckdb::idx_t SourceColumns::operator()(std::string_view name) const {
-  if (const auto it = _by_name.find(std::string{name}); it != _by_name.end()) {
+  if (const auto it = _by_name.find(name); it != _by_name.end()) {
     return it->second;
   }
   THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_COLUMN),

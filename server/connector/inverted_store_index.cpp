@@ -21,35 +21,27 @@
 #include "connector/inverted_store_index.h"
 
 #include <absl/algorithm/container.h>
-#include <absl/cleanup/cleanup.h>
-#include <absl/container/inlined_vector.h>
 
-#include <atomic>
-#include <deque>
 #include <duckdb/catalog/catalog_entry/duck_index_entry.hpp>
 #include <duckdb/catalog/catalog_entry/duck_table_entry.hpp>
 #include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
+#include <duckdb/catalog/catalog_transaction.hpp>
+#include <duckdb/execution/index/unbound_index.hpp>
 #include <duckdb/main/attached_database.hpp>
-#include <duckdb/main/config.hpp>
 #include <duckdb/main/connection.hpp>
 #include <duckdb/main/database.hpp>
 #include <duckdb/parallel/task_executor.hpp>
 #include <duckdb/parallel/task_scheduler.hpp>
 #include <duckdb/planner/expression/bound_columnref_expression.hpp>
-#include <duckdb/planner/expression_iterator.hpp>
-#include <duckdb/storage/block_manager.hpp>
 #include <duckdb/storage/data_table.hpp>
-#include <duckdb/storage/external_index_batch.hpp>
-#include <duckdb/storage/storage_manager.hpp>
-#include <duckdb/storage/table/append_state.hpp>
-#include <duckdb/storage/table/row_group_collection.hpp>
+#include <duckdb/storage/storage_info.hpp>
+#include <duckdb/storage/table/data_table_info.hpp>
 #include <duckdb/storage/table_io_manager.hpp>
 #include <duckdb/transaction/duck_transaction.hpp>
-#include <duckdb/transaction/duck_transaction_manager.hpp>
+#include <duckdb/transaction/meta_transaction.hpp>
 #include <iterator>
 #include <mutex>
 #include <string>
-#include <thread>
 #include <vector>
 
 #include "basics/assert.h"
@@ -57,10 +49,14 @@
 #include "basics/primary_key.hpp"
 #include "catalog1/catalog.h"
 #include "catalog1/entry/inverted_index.h"
+#include "catalog1/entry/tokenizer.h"
+#include "catalog1/scorer_options.h"
 #include "connector/duckdb_client_state.h"
 #include "connector/duckdb_index_utils.h"
-#include "connector/index_expression.hpp"
+#include "connector/duckdb_physical_create_index.h"
 #include "connector/search_sink_writer.hpp"
+#include "connector/term_dict.h"
+#include "connector/view_fast_path.h"
 #include "pg/connection_context.h"
 #include "query/config_variable_names.h"
 #include "search/inverted_index_storage.h"
@@ -69,46 +65,33 @@
 namespace sdb::connector {
 namespace {
 
-// The inverted definition one id names in the database holding it, or null when
-// no entry there carries it -- an online CREATE INDEX feeds a concurrent writer
+// The index entry one id names in the database holding it, or null when no
+// entry there carries it -- an online CREATE INDEX feeds a concurrent writer
 // before its own transaction has committed, so a miss is ordinary.
-std::shared_ptr<const catalog::Index> FindInvertedDefinition(
+duckdb::optional_ptr<const duckdb::IndexCatalogEntry> FindIndexEntry(
   duckdb::ClientContext* context, duckdb::AttachedDatabase& db,
   duckdb::idx_t id) {
-  const auto* index =
-    catalog::FindIn<duckdb::DuckIndexEntry>(context, db.GetCatalog(), id);
-  return index != nullptr && index->IsInverted() ? index->DefinitionPtr()
-                                                 : nullptr;
+  const auto found = db.GetCatalog()
+                       .Cast<catalog::SereneDBCatalog>()
+                       .FindIn<duckdb::DuckIndexEntry>(context, id);
+  return found ? &found->Cast<duckdb::IndexCatalogEntry>() : nullptr;
 }
 
-// Persisted expressions carry catalog-stable column references
-// (table_id, column_id). Re-key them to positions in the index's column list
-// so BoundIndex::BindExpression can turn them into chunk offsets.
-duckdb::unique_ptr<duckdb::Expression> RebindColumnRefsToIndexPositions(
-  const duckdb::Expression& expr, duckdb::idx_t table_id,
-  const containers::FlatHashMap<catalog::ColumnId, duckdb::idx_t>&
-    col_id_to_pos) {
-  auto copy = expr.Copy();
-  duckdb::ExpressionIterator::VisitExpressionMutable<
-    duckdb::BoundColumnRefExpression>(
-    copy, [&](duckdb::BoundColumnRefExpression& colref,
-              duckdb::unique_ptr<duckdb::Expression>& child) {
-      const auto binding = colref.Binding();
-      SDB_ENSURE(binding.table_index.index == table_id.id(),
-                 "inverted index expression references a foreign table");
-      const auto col_id =
-        static_cast<catalog::ColumnId>(binding.column_index.GetIndex());
-      const auto it = col_id_to_pos.find(col_id);
-      SDB_ENSURE(it != col_id_to_pos.end(),
-                 "inverted index expression references column ",
-                 static_cast<uint64_t>(col_id),
-                 " that is not in the index's referenced set");
-      child = duckdb::make_uniq<duckdb::BoundColumnRefExpression>(
-        colref.GetReturnType(),
-        duckdb::ColumnBinding(binding.table_index,
-                              duckdb::ProjectionIndex(it->second)));
-    });
-  return copy;
+constexpr const char* kIndexIdOption = "sdb_index_id";
+
+duckdb::idx_t IdOption(const duckdb::case_insensitive_map_t<duckdb::Value>& o,
+                       const char* key) {
+  const auto it = o.find(key);
+  if (it == o.end() || it->second.IsNull()) {
+    return 0;
+  }
+  return it->second.GetValue<uint64_t>();
+}
+
+duckdb::IndexStorageInfo StorageRecord(const InvertedStoreIndex& index) {
+  duckdb::IndexStorageInfo info{index.name};
+  info.options[kIndexIdOption] = duckdb::Value::UBIGINT(index.IndexId());
+  return info;
 }
 
 // Per-worker evaluation of an index's expressions. The bound expressions and
@@ -117,9 +100,21 @@ duckdb::unique_ptr<duckdb::Expression> RebindColumnRefsToIndexPositions(
 // every feed worker constructs one and runs it on its own batch in parallel.
 class IndexExpressions {
  public:
-  explicit IndexExpressions(const InvertedStoreIndex& index)
-    : _fields{index.ExpressionFields()}, _has_predicate{index.HasPredicate()} {
-    const auto& exprs = index.Expressions();
+  IndexExpressions(
+    duckdb::ClientContext& context,
+    std::shared_ptr<const catalog::InvertedIndexConfig> config,
+    const duckdb::vector<duckdb::unique_ptr<duckdb::Expression>>& exprs)
+    : _executor{context},
+      _config{std::move(config)},
+      _has_predicate{exprs.size() > _config->keys.size()} {
+    const auto keys = std::span{_config->keys};
+    _feeds.reserve(keys.size());
+    for (size_t i = 0; i < keys.size(); ++i) {
+      _feeds.push_back(absl::c_none_of(
+        keys.first(i), [&](const catalog::InvertedIndexKey& earlier) {
+          return earlier.field_id == keys[i].field_id;
+        }));
+    }
     if (exprs.empty()) {
       return;
     }
@@ -138,16 +133,25 @@ class IndexExpressions {
   void Execute(duckdb::DataChunk& chunk) {
     _results.Reset();
     _executor.Execute(chunk, _results);
-    for (size_t i = 0; i < _fields.size(); ++i) {
-      if (!_fields[i].is_geojson) {
-        RejectJsonObjectArrayLeaves(_results.data[i], chunk.size());
+    for (size_t i = 0; i < _config->keys.size(); ++i) {
+      // A whole-value analyzer is handed the object as it stands, so the
+      // leaf rule does not apply to its key.
+      const auto* entry = _config->FindEntry(_config->keys[i].field_id);
+      if (entry && entry->whole_value) {
+        continue;
       }
+      RejectJsonObjectArrayLeaves(_results.data[i], chunk.size());
     }
   }
 
   // The value vector feeding `field_ids()[i]`.
   duckdb::Vector& Value(size_t i) noexcept { return _results.data[i]; }
-  std::span<const ExpressionField> Fields() const noexcept { return _fields; }
+  std::span<const catalog::InvertedIndexKey> Fields() const noexcept {
+    return _config->keys;
+  }
+  // False for a later key of a column listed twice: its field is written by
+  // the first one.
+  bool Feeds(size_t i) const noexcept { return _feeds[i]; }
 
   // The partial-index predicate's result (null when the index is not partial).
   duckdb::Vector* Predicate() noexcept {
@@ -158,7 +162,8 @@ class IndexExpressions {
  private:
   duckdb::ExpressionExecutor _executor;
   duckdb::DataChunk _results;
-  std::span<const ExpressionField> _fields;
+  std::shared_ptr<const catalog::InvertedIndexConfig> _config;
+  std::vector<bool> _feeds;
   bool _has_predicate = false;
 };
 
@@ -168,7 +173,6 @@ class IndexExpressions {
 struct FeedScratch {
   // Rowids of a scanned range, which run contiguously from the range's first
   // row -- generated in place rather than materialized into a side buffer.
-  duckdb::Vector scan_rowids{duckdb::LogicalType::ROW_TYPE};
   std::vector<std::string> keys;
   std::vector<std::string_view> key_views;
   std::string delete_key;
@@ -263,6 +267,9 @@ duckdb::idx_t FeedFilteredChunk(
     sliced.reserve(fields.size());
   }
   for (size_t i = 0; i < fields.size(); ++i) {
+    if (!exprs.Feeds(i)) {
+      continue;
+    }
     auto& raw = exprs.Value(i);
     if (!filtered) {
       values.push_back({fields[i].field_id, &raw});
@@ -280,22 +287,9 @@ duckdb::idx_t FeedFilteredChunk(
 
 }  // namespace
 
-// Bounds replay's prefetch window: a job counts as done once it retires.
-struct InFlight {
-  std::atomic<uint64_t> dispatched{0};
-  std::atomic<uint64_t> completed{0};
-
-  uint64_t Count() const {
-    return dispatched.load(std::memory_order_relaxed) -
-           completed.load(std::memory_order_acquire);
-  }
-};
-
-struct ReplayQueue;
-
-// The per-index worker machinery both feeds share: the task executor, the
-// pooled writer/expression kits, and the tokenize bodies. Knows nothing about
-// WAL order or commit ticks -- those belong to whoever owns the entries.
+// The per-index worker machinery: the task executor, the pooled
+// writer/expression kits, and the tokenize bodies. Knows nothing about commit
+// ticks -- those belong to whoever owns the entries.
 struct FeedPool {
   // Per-worker feed kit, pooled because neither the writers nor the executor
   // are per-chunk cheap. The bound expressions are shared and read-only; only
@@ -304,7 +298,8 @@ struct FeedPool {
     Bundle(FeedPool& pool, irs::IndexWriter::Transaction& trx)
       : insert_writer{pool.MakeInsertWriter(trx)},
         delete_writer{std::make_unique<DuckDBSearchSinkDeleteWriter>(trx)},
-        exprs{std::make_unique<IndexExpressions>(pool.owner)} {}
+        exprs{std::make_unique<IndexExpressions>(
+          *pool.expr_context, pool.config, pool.owner.Expressions())} {}
 
     std::unique_ptr<DuckDBSearchSinkInsertWriter> insert_writer;
     std::unique_ptr<DuckDBSearchSinkDeleteWriter> delete_writer;
@@ -312,42 +307,36 @@ struct FeedPool {
     FeedScratch scratch;
   };
 
-  const catalog::InvertedIndex& Info() const noexcept {
-    return catalog::InvertedInfo(*index);
-  }
-
   std::unique_ptr<DuckDBSearchSinkInsertWriter> MakeInsertWriter(
     irs::IndexWriter::Transaction& trx) {
     return std::make_unique<DuckDBSearchSinkInsertWriter>(
-      trx, MakeTokenizerProvider(dicts, Info()), index->GetColumns(),
-      MakeEntryInfoProvider(Info()),
-      PkPolicy{.index_term = Info().GetOptions().pk_term,
-               .column = Info().GetOptions().pk_column});
+      trx, [this](irs::field_id id) { return tokenizers.Acquire(id); },
+      IndexedColumnIds(*config), MakeEntryInfoProvider(*config), config->pk);
   }
 
   irs::IndexWriter::Transaction NewTransaction() {
     auto trx = storage->GetTransaction();
-    trx.SetFieldOptions(std::shared_ptr<const irs::IndexFieldOptions>{
-      index, &catalog::InvertedInfo(*index)});
+    trx.SetFieldOptions(config);
     return trx;
   }
 
-  // Flush cadence of every feed through FeedEvaluated (replay and live
-  // commits alike): keeps file writes on the workers and the serial flush
-  // residue at the final writer commit small, without ending segments (ticks
-  // are stamped later, at retirement).
-  static constexpr size_t kReplayFlushBytes = size_t{32} << 20;
+  // Flush cadence of every feed through FeedEvaluated: keeps file writes on
+  // the workers and the serial flush residue at the final writer commit small,
+  // without ending segments (ticks are stamped later, at commit).
+  static constexpr size_t kFlushBytes = size_t{32} << 20;
 
   std::shared_ptr<search::InvertedIndexStorage> storage;
-  // Resolved where the committing transaction was still in scope: a worker has
-  // no ClientContext of its own to read a dictionary entry through.
-  catalog::TokenizerMap dicts;
-  // The definition this pool's writers encode against, shared with the entry
-  // that holds it: it IS the irs::IndexFieldOptions iresearch takes, and a copy
-  // answers with rebuilt per-column options (see SereneDBIndexEntry).
-  std::shared_ptr<const catalog::Index> index;
-  std::span<const FeedColumn> ref_columns;
+  catalog::IndexTokenizers tokenizers;
+  // The configuration this pool's writers encode against, held by shared
+  // ownership: it IS the irs::IndexFieldOptions iresearch takes, and an ALTER
+  // landing mid-commit swaps the index's copy without disturbing this one.
+  std::shared_ptr<const InvertedIndexConfig> config;
   duckdb::DatabaseInstance& instance;
+  // duckdb has no context-free ExpressionExecutor, and a feed worker has no
+  // connection of its own. One transaction-less context per pool, shared by
+  // every worker's executor: it is read for its allocator and settings only,
+  // never to reach the catalog.
+  duckdb::shared_ptr<duckdb::ClientContext> expr_context;
   // The index owning this feed; workers build their executors from its
   // duckdb-bound expressions. It outlives the session.
   const InvertedStoreIndex& owner;
@@ -357,52 +346,18 @@ struct FeedPool {
   std::vector<std::unique_ptr<Bundle>> bundles;
 
   FeedPool(std::shared_ptr<search::InvertedIndexStorage> storage_in,
-           catalog::TokenizerMap dicts_in,
-           std::shared_ptr<const catalog::Index> index_in,
+           catalog::IndexTokenizers tokenizers_in,
+           std::shared_ptr<const InvertedIndexConfig> config_in,
            duckdb::AttachedDatabase& attached_in,
            const InvertedStoreIndex& owner_in)
     : storage{std::move(storage_in)},
-      dicts{std::move(dicts_in)},
-      index{std::move(index_in)},
-
-      ref_columns{owner_in.RefColumns()},
+      tokenizers{std::move(tokenizers_in)},
+      config{std::move(config_in)},
       instance{attached_in.GetDatabase()},
+      expr_context{duckdb::make_shared_ptr<duckdb::ClientContext>(
+        instance.shared_from_this())},
       owner{owner_in},
       executor{duckdb::TaskScheduler::GetScheduler(instance)} {}
-
-  // Only replay bounds a prefetch window, and only replay pays for reading the
-  // setting -- an index that never replays does not construct the queue at all.
-  static size_t ConfiguredReplayDepth(duckdb::DatabaseInstance& db) {
-    auto& config = duckdb::DBConfig::GetConfig(db);
-    duckdb::optional_ptr<const duckdb::ConfigurationOption> option;
-    const auto index = config.TryGetSettingIndex(
-      std::string{kRecoveryReplayDepthSetting}, option);
-    if (!index.IsValid()) {
-      return 0;
-    }
-    duckdb::Value value;
-    if (!config.user_settings.TryGetSetting(index.GetIndex(), value) ||
-        value.IsNull()) {
-      return 0;
-    }
-    return value.GetValue<uint32_t>();
-  }
-
-  // When the window is full, help run scheduled tasks instead of sleeping.
-  void Backpressure(const InFlight& flight, size_t depth) {
-    while (flight.Count() >= depth) {
-      if (executor.HasError()) {
-        return;
-      }
-      duckdb::shared_ptr<duckdb::Task> help;
-      if (executor.GetTask(help)) {
-        help->Execute(duckdb::TaskExecutionMode::PROCESS_ALL);
-        help.reset();
-      } else {
-        std::this_thread::yield();
-      }
-    }
-  }
 
   // The feed body every worker runs. Binds nothing and touches no context.
   void FeedEvaluated(DuckDBSearchSinkInsertWriter& writer,
@@ -410,23 +365,11 @@ struct FeedPool {
                      irs::IndexWriter::Transaction& trx,
                      duckdb::DataChunk& chunk, duckdb::Vector& rowid_vec,
                      duckdb::idx_t scanned) {
-    FeedFilteredChunk(writer, exprs, chunk, rowid_vec, scanned, ref_columns,
-                      scratch);
+    FeedFilteredChunk(writer, exprs, chunk, rowid_vec, scanned, {}, scratch);
     trx.AdvanceQueries(1);
-    if (trx.ActiveMemory() >= kReplayFlushBytes) {
+    if (trx.ActiveMemory() >= kFlushBytes) {
       trx.Flush();
     }
-  }
-
-  // A scan chunk whose rowids run contiguously from `first_row`.
-  void FeedScan(DuckDBSearchSinkInsertWriter& writer, IndexExpressions& exprs,
-                FeedScratch& scratch, irs::IndexWriter::Transaction& trx,
-                duckdb::DataChunk& chunk, int64_t first_row) {
-    const auto scanned = chunk.size();
-    duckdb::VectorOperations::GenerateSequence(scratch.scan_rowids, scanned,
-                                               first_row, 1);
-    FeedEvaluated(writer, exprs, scratch, trx, chunk, scratch.scan_rowids,
-                  scanned);
   }
 
   // Borrows a kit for the duration of a scope. The pool hands them back on
@@ -470,8 +413,7 @@ struct FeedPool {
   }
 
   // Takes the rows through an accessor rather than a span: the live path reads
-  // them straight out of duckdb's (possibly selection-vectored) rowid vector,
-  // so only replay -- which must outlive the chunk -- ever materializes them.
+  // them straight out of duckdb's (possibly selection-vectored) rowid vector.
   template<typename RowAt>
   void FeedDeletes(Bundle& bundle, size_t count, RowAt&& row_at) {
     connector::FeedDeletes(*bundle.delete_writer, bundle.scratch.delete_key,
@@ -479,76 +421,20 @@ struct FeedPool {
   }
 };
 
-// What a worker does with an entry, and what it carries. One struct per body
-// rather than a class per body: the insert and delete forms differed by a
-// single call, and the range form differed only by having no body at all.
-struct InsertPayload {
-  // Adopts the producer's batch whole -- rows and row ids -- without copying.
-  duckdb::shared_ptr<duckdb::ExternalIndexBatch> batch;
-};
-
-struct DeletePayload {
-  std::vector<int64_t> rowids;
-};
-
-using Payload = std::variant<InsertPayload, DeletePayload>;
-
+// One transaction per sub-range, filled by the slice tasks themselves and
+// committed together at the commit's tick.
 struct Entry {
- private:
-  Entry(FeedPool& pool_in, ReplayQueue* queue_in, uint64_t wal_offset_in,
-        size_t trx_count)
-    : pool{pool_in}, queue{queue_in}, wal_offset{wal_offset_in} {
-    trxs.reserve(trx_count);
-    for (size_t i = 0; i < trx_count; ++i) {
-      trxs.emplace_back(pool_in.NewTransaction());
+  Entry(FeedPool& pool, size_t subranges) {
+    trxs.reserve(subranges);
+    for (size_t i = 0; i < subranges; ++i) {
+      trxs.emplace_back(pool.NewTransaction());
     }
   }
-
- public:
-  // A worker entry: one transaction, tokenized by a RunTask from `payload`.
-  Entry(FeedPool& pool_in, ReplayQueue* queue_in, uint64_t wal_offset_in,
-        Payload payload_in)
-    : Entry{pool_in, queue_in, wal_offset_in, 1} {
-    payload = std::move(payload_in);
-  }
-
-  // A range entry: one transaction per sub-range, filled by the scan jobs
-  // themselves and committed together at this entry's tick. No payload and no
-  // queue, because no worker task ever runs it.
-  Entry(FeedPool& pool_in, uint64_t wal_offset_in, size_t subranges)
-    : Entry{pool_in, nullptr, wal_offset_in, subranges} {}
 
   Entry(const Entry&) = delete;
   Entry& operator=(const Entry&) = delete;
 
-  // Tokenizes this entry's payload into its transaction, on a worker.
-  void Feed(FeedPool::Bundle& bundle) {
-    SDB_ASSERT(payload);
-    std::visit(
-      [&](auto& p) {
-        using T = std::decay_t<decltype(p)>;
-        if constexpr (std::is_same_v<T, InsertPayload>) {
-          pool.FeedEvaluated(*bundle.insert_writer, *bundle.exprs,
-                             bundle.scratch, trxs[0], p.batch->data,
-                             p.batch->row_ids, p.batch->data.size());
-        } else {
-          static_assert(std::is_same_v<T, DeletePayload>);
-          pool.FeedDeletes(bundle, p.rowids.size(),
-                           [&](size_t i) { return p.rowids[i]; });
-        }
-      },
-      *payload);
-  }
-
-  FeedPool& pool;
-  // Where completion reports. Null for a range entry: the coordinator
-  // completes it inline, so nothing notifies.
-  ReplayQueue* queue;
-  const uint64_t wal_offset;
-  // Empty for a range entry: its transactions are filled by the scan jobs.
-  std::optional<Payload> payload;
   std::vector<irs::IndexWriter::Transaction> trxs;
-  std::atomic<bool> done{false};
 };
 
 // The committing thread owns the scan and feeds every native index inline, so a
@@ -602,160 +488,8 @@ struct SliceTask final : duckdb::BaseExecutorTask {
   const duckdb::idx_t end;
 };
 
-struct RunTask final : duckdb::BaseExecutorTask {
-  RunTask(duckdb::TaskExecutor& executor_in, Entry& entry_in)
-    : BaseExecutorTask{executor_in}, entry{entry_in} {}
-
-  // Defined below ReplayQueue, whose Retire() it calls.
-  void ExecuteTask() override;
-
-  std::string TaskType() const override { return "InvertedReplayChunk"; }
-
-  Entry& entry;
-};
-
-struct ReplayQueue {
-  explicit ReplayQueue(FeedPool& pool_in) : pool{pool_in} {
-    depth = FeedPool::ConfiguredReplayDepth(pool.instance);
-    if (depth == 0) {
-      const auto threads = static_cast<size_t>(
-        duckdb::TaskScheduler::GetScheduler(pool.instance).NumberOfThreads());
-      depth = 4 * std::max<size_t>(1, threads);
-    }
-    depth = std::clamp<size_t>(depth, 1, 1024);
-  }
-  ReplayQueue(const ReplayQueue&) = delete;
-  ReplayQueue& operator=(const ReplayQueue&) = delete;
-
-  FeedPool& pool;
-  uint64_t generation = 0;
-  uint64_t durable_offset = 0;
-
-  std::mutex retire_mu;
-  std::deque<std::unique_ptr<Entry>> window;
-  std::deque<std::pair<uint64_t, uint64_t>> pending_cursors;
-  uint64_t committed_below = 0;
-  InFlight flight;
-  size_t depth = 1;
-
-  void Dispatch(std::unique_ptr<Entry> job, uint64_t wal_offset) {
-    if (pool.executor.HasError()) {
-      return;  // FinishReplay rethrows
-    }
-    auto* raw = job.get();
-    Enqueue(std::move(job), wal_offset);
-    pool.executor.ScheduleTask(duckdb::make_uniq<RunTask>(pool.executor, *raw));
-    pool.Backpressure(flight, depth);
-  }
-
-  // Reserve a ROW_GROUP_DATA range entry in WAL order: a window slot holding
-  // one transaction per sub-range, filled by the coordinator's scan jobs (see
-  // ReplayExternalRange) and completed once they join. It retires
-  // synchronously, so it only transiently occupies the async window bound.
-  Entry* CreateRangeEntry(uint64_t wal_offset, size_t subranges) {
-    auto job = std::make_unique<Entry>(pool, wal_offset, subranges);
-    auto* raw = job.get();
-    Enqueue(std::move(job), wal_offset);
-    return raw;
-  }
-
-  // The scan jobs have joined: mark the entry done and retire in WAL order.
-  // Its disjoint sub-range segments all commit at this entry's single tick.
-  void CompleteRangeEntry(Entry& job) {
-    job.done.store(true, std::memory_order_release);
-    Retire();
-  }
-
-  void Enqueue(std::unique_ptr<Entry> job, uint64_t wal_offset) {
-    {
-      std::lock_guard lock{retire_mu};
-      // Entries replay in ascending offset order and each transaction commits
-      // before the next entry is read, so everything strictly below the entry
-      // being dispatched is committed.
-      committed_below = std::max(committed_below, wal_offset);
-      FlushCursorsLocked();
-      window.push_back(std::move(job));
-    }
-    flight.dispatched.fetch_add(1, std::memory_order_relaxed);
-  }
-
-  // Commit finished tasks strictly in dispatch order: ticks allocated here
-  // are WAL-ordered, per-segment ticks stay monotone, and the pending state
-  // is always a WAL prefix. Retirement is eager (a WAL v2/v3 entry is a
-  // checksummed whole-transaction block, so a torn tail throws before any of
-  // its chunks dispatch), but cursor points -- and with them the frontier a
-  // mid-replay refresh may commit durably -- only advance once the entry's
-  // transaction has committed.
-  void Retire() {
-    std::lock_guard lock{retire_mu};
-    while (!window.empty()) {
-      auto& head = *window.front();
-      if (!head.done.load(std::memory_order_acquire)) {
-        break;
-      }
-      // Reserve the widest transaction's query count, not one tick: a
-      // tick-bound Remove bumps _queries per row, and Commit lays a
-      // transaction's documents out below the tick it is given. Reserving less
-      // would put them on ticks already handed to earlier entries, so a
-      // multi-row delete could order at or before the inserts it must mask.
-      uint64_t queries = 0;
-      for (auto& trx : head.trxs) {
-        queries = std::max<uint64_t>(queries, trx.GetQueries());
-      }
-      const auto tick = search::TickDomain::Instance().Advance(queries + 1);
-      // A small entry commits its one transaction; a range entry commits every
-      // sub-range's transaction at this same tick (disjoint rowids, so equal
-      // ticks are fine -- a later delete still masks them at a higher tick).
-      for (auto& trx : head.trxs) {
-        SDB_ENSURE(trx.Commit(tick),
-                   "inverted index replay: commit failed for index ",
-                   pool.index->GetId().id());
-      }
-      pending_cursors.emplace_back(tick, head.wal_offset);
-      window.pop_front();
-      flight.completed.fetch_add(1, std::memory_order_release);
-    }
-    FlushCursorsLocked();
-  }
-
-  void FlushCursorsLocked() {
-    while (!pending_cursors.empty() &&
-           pending_cursors.front().second < committed_below) {
-      const auto [tick, offset] = pending_cursors.front();
-      pending_cursors.pop_front();
-      pool.storage->RecordFlushCursor(
-        tick, search::WalCursor{generation, offset + 1});
-      pool.storage->SetRecoveryFrontierTick(tick);
-    }
-  }
-
-  // End of replay: everything below the success offset committed; flush the
-  // remaining cursor points so the final refresh commits the whole feed.
-  void FinishRetire(uint64_t success_offset) {
-    Retire();
-    std::lock_guard lock{retire_mu};
-    SDB_ASSERT(window.empty());
-    committed_below = std::max(committed_below, success_offset + 1);
-    FlushCursorsLocked();
-    SDB_ASSERT(pending_cursors.empty());
-  }
-};
-
-void RunTask::ExecuteTask() {
-  auto& pool = entry.pool;
-  const FeedPool::BundleLease bundle{pool, entry.trxs[0]};
-  entry.Feed(*bundle);
-  // Deliberately not flushed here. Serializing a segment pays off when the unit
-  // is big enough to be worth a parallel write -- a replay sub-range is, a
-  // single WAL entry is not: flushing each one writes a segment per entry and
-  // measured ~2x slower than letting the refresh write them together.
-  entry.done.store(true, std::memory_order_release);
-  SDB_ASSERT(entry.queue);
-  entry.queue->Retire();
-}
-
-// The commit-window feed (persistent, reused after recovery): entries tokenize
-// in parallel into their own segments and CommitSearch commits them all at the
+// The commit-window feed: entries tokenize in parallel into their own segments
+// and CommitSearch commits them all at the
 // commit's tick. No WAL ordering to keep -- one tick covers the whole set.
 // Only touched on the committing thread and its workers; commits are
 // serialized DB-wide by the store WAL lock.
@@ -825,7 +559,6 @@ struct LiveFeed {
     // Its own executor, not the pool's: a TaskExecutor never clears its error
     // state, so a shared one would make a single failed chunk bail out every
     // later commit's slices without tokenizing and rethrow the stale error.
-    // Replay keeps the pool's, where poisoning is what should happen.
     duckdb::TaskExecutor executor{
       duckdb::TaskScheduler::GetScheduler(pool.instance)};
     for (size_t k = 0; k < slices; ++k) {
@@ -887,7 +620,7 @@ struct LiveFeed {
         return;
       }
       SDB_ERROR(SEARCH, "inverted index live feed: commit failed for index '",
-                pool.index->GetId().id(), "' at tick ", last_tick,
+                pool.owner.IndexId(), "' at tick ", last_tick,
                 "; the index will be rebuilt from the store on next boot");
       if (storage) {
         storage->MarkOutOfSync();
@@ -919,7 +652,7 @@ struct LiveFeed {
   // jobs themselves (see FeedChunkParallel) rather than by a worker task, and
   // committed with everything else at the commit tick.
   Entry* CreateRangeEntry(size_t subranges) {
-    auto job = std::make_unique<Entry>(pool, /*wal_offset=*/0, subranges);
+    auto job = std::make_unique<Entry>(pool, subranges);
     auto* raw = job.get();
     jobs.push_back(std::move(job));
     return raw;
@@ -937,15 +670,15 @@ struct LiveFeed {
   bool Idle() const noexcept { return jobs.empty() && !inline_trx; }
 };
 
-// One index's feed: the shared worker pool, plus the two things that drive it.
+// One index's feed: the shared worker pool and the live commit window.
 struct InvertedFeedSession {
   InvertedFeedSession(std::shared_ptr<search::InvertedIndexStorage> storage,
-                      catalog::TokenizerMap dicts,
-                      std::shared_ptr<const catalog::Index> index,
+                      catalog::IndexTokenizers tokenizers,
+                      std::shared_ptr<const InvertedIndexConfig> config,
                       duckdb::AttachedDatabase& attached,
                       const InvertedStoreIndex& owner)
-    : pool{std::move(storage), std::move(dicts), std::move(index), attached,
-           owner},
+    : pool{std::move(storage), std::move(tokenizers), std::move(config),
+           attached, owner},
       live{pool} {}
 
   // Any teardown path (attach failure destroying the catalog under a live
@@ -958,27 +691,7 @@ struct InvertedFeedSession {
     }
   }
 
-  // Replay's half is built on first use and never built at all for an index
-  // that only ever feeds live commits -- which is every index after boot. It
-  // is the heavy one (two deques and a mutex), and the live session would
-  // otherwise carry it for the life of the index.
-  ReplayQueue& Replay() {
-    if (!replay_slot) {
-      auto& queue = replay_slot.emplace(pool);
-      queue.durable_offset = replay_durable_offset;
-      queue.generation = replay_generation;
-    }
-    return *replay_slot;
-  }
-
   FeedPool pool;
-  // Where replay should resume, recorded cheaply at session construction so
-  // Replay() can seed the queue if it is ever built.
-  uint64_t replay_durable_offset = 0;
-  uint64_t replay_generation = 0;
-  std::optional<ReplayQueue> replay_slot;
-
-  bool HasReplay() const noexcept { return replay_slot.has_value(); }
   LiveFeed live;
 };
 
@@ -997,493 +710,58 @@ void FinishInvertedFeed(InvertedFeedSession& feed, uint64_t last_tick,
 void AbortInvertedFeed(InvertedFeedSession& feed) { feed.live.Abort(); }
 
 InvertedStoreIndex::InvertedStoreIndex(
-  const std::string& name, duckdb::TableIOManager& io,
-  const duckdb::vector<duckdb::column_t>& column_ids,
-  const duckdb::vector<duckdb::unique_ptr<duckdb::Expression>>& exprs,
-  duckdb::AttachedDatabase& db,
-  std::shared_ptr<const catalog::Index> attached_index,
-  std::shared_ptr<search::InvertedIndexStorage> attached_storage,
-  std::vector<ExpressionField> expr_fields, bool has_predicate,
-  std::vector<FeedColumn> ref_columns)
-  : BoundIndex(duckdb::Identifier{name}, kTypeName,
-               duckdb::IndexConstraintType::NONE, column_ids, io, exprs, db),
-    _index_id{attached_index->GetId()},
-    _attached_index{std::move(attached_index)},
-    _attached_storage{std::move(attached_storage)},
-    _expr_fields{std::move(expr_fields)},
-    _ref_columns{std::move(ref_columns)},
-    _has_predicate{has_predicate} {}
-
-InvertedStoreIndex::~InvertedStoreIndex() = default;
+  duckdb::CreateIndexInput& input, duckdb::SchemaCatalogEntry& schema,
+  duckdb::idx_t index_id, std::shared_ptr<search::InvertedIndexStorage> storage,
+  std::shared_ptr<const InvertedIndexConfig> config)
+  : BoundIndex(input.name, kTypeName, input.constraint_type, input.column_ids,
+               input.table_io_manager, input.unbound_expressions, input.db),
+    _index_id{index_id},
+    _schema{schema},
+    _storage{std::move(storage)},
+    _config{std::move(config)} {
+  SDB_ASSERT(_config);
+}
 
 std::shared_ptr<InvertedFeedSession>
 InvertedStoreIndex::EnsureInvertedFeedSession() {
-  // The definition comes from the committing transaction's own snapshot, so a
-  // commit indexes with the definition it saw and an ALTER landing mid-flight
-  // takes effect for the next transaction -- the same rule the per-append
-  // catalog lookup this pool replaced followed. Replay has no committing
-  // context and takes the boot snapshot.
+  // The configuration comes from the committing transaction's own snapshot, so
+  // a commit indexes with the entry version it saw and an ALTER landing
+  // mid-flight takes effect for the next transaction.
   auto* committing = CurrentCommittingContext();
-  if (committing != nullptr) {
-    // A commit feeds one session per index. The definition can be republished
-    // under it -- an online build finishing, an ALTER INDEX committing -- and
-    // rebuilding the session then would strand the segments this commit has
-    // already staged in the one it is replacing.
-    if (auto engaged = committing->InvertedFeed(_index_id)) {
-      return engaged;
-    }
+  SDB_ASSERT(committing);
+  // A commit feeds one session per index. The entry can be republished under
+  // it -- an online build finishing, an ALTER INDEX committing -- and
+  // rebuilding the session then would strand the segments this commit has
+  // already staged in the one it is replacing.
+  if (auto engaged = committing->InvertedFeed(_index_id)) {
+    return engaged;
   }
-  auto* context = committing ? &committing->GetClientContext() : nullptr;
-  auto inverted = FindInvertedDefinition(context, db, _index_id);
-  // An online CREATE INDEX attaches its stub before its transaction commits,
-  // so a concurrent writer's catalog view does not name it. Feeding it the
-  // definition it was attached with is what keeps that write out of the
-  // index's blind spot; nothing durable comes of it if the build aborts.
-  if (!inverted) {
-    inverted = _attached_index;
-  }
-  if (_feed) {
-    // The pool holds the definition its writers were built from -- tokenizers,
-    // field options, pk policy. ALTER INDEX ... SET replaces that definition,
-    // and copy-on-write makes an unchanged one the same object, so pointer
-    // identity is the whole check. Rebuilt only between commits: a session with
-    // staged segments must finish the commit it belongs to, which is also what
-    // the per-append catalog lookup this pool replaced did.
-    //
-    // The table it feeds is not part of the check: a reshape replaces this
-    // whole index object, so a pool that is still here was built against the
-    // shape that is still there.
-    if (_feed->pool.index == inverted || !_feed->live.Idle() ||
-        _feed->HasReplay()) {
-      return _feed;
-    }
-    _feed.reset();
-  }
-  SDB_ENSURE(inverted, "inverted index replay: catalog objects for ",
-             _index_id.id(), " missing");
-  auto storage =
-    catalog::InvertedStorageIn(context, db.GetCatalog(), _index_id);
-  if (!storage) {
-    storage = _attached_storage;
-  }
-  SDB_ENSURE(storage, "inverted index replay: storage ", _index_id.id(),
-             " missing");
-  const search::WalCursor cursor = storage->GetRecoveryWalCursor();
-  uint64_t durable_offset = 0;
-  auto& block_manager = db.GetStorageManager().GetBlockManager();
-  if (cursor.generation == block_manager.GetCheckpointIteration()) {
-    durable_offset = cursor.offset;
-  }
-  // Out of this database's own catalog: replay builds the feed while the
-  // attachment is still being opened, so nothing can look it up by id yet.
-  auto dicts = catalog::ResolveTokenizers(
-    committing != nullptr ? &committing->GetClientContext() : nullptr, db,
-    *inverted);
-  _feed = std::make_shared<InvertedFeedSession>(
-    std::move(storage), std::move(dicts), std::move(inverted), db, *this);
-  _feed->replay_durable_offset = durable_offset;
-  _feed->replay_generation = block_manager.GetCheckpointIteration();
-  return _feed;
-}
-
-namespace {
-
-std::vector<int64_t> ExtractRowIds(duckdb::Vector& row_ids,
-                                   duckdb::idx_t count) {
-  duckdb::UnifiedVectorFormat fmt;
-  row_ids.ToUnifiedFormat(count, fmt);
-  const auto* rows = duckdb::UnifiedVectorFormat::GetData<duckdb::row_t>(fmt);
-  std::vector<int64_t> out;
-  out.reserve(count);
-  for (duckdb::idx_t i = 0; i < count; ++i) {
-    out.push_back(static_cast<int64_t>(rows[fmt.sel->get_index(i)]));
-  }
-  return out;
-}
-
-}  // namespace
-
-// The store-WAL byte offset of the entry currently replaying (stamped by the
-// replayer per WAL entry). Operations strictly below the storage's durable
-// cursor are already in the segments and are skipped; the op exactly at the
-// cursor is the first un-durable one and is streamed. 0 = unknown, don't skip.
-duckdb::idx_t InvertedStoreIndex::ReplayCommitOffset() const {
-  return duckdb::DuckTransactionManager::Get(db).GetReplayCommitOffset();
-}
-
-void InvertedStoreIndex::ReplayAppend(
-  const duckdb::shared_ptr<duckdb::ExternalIndexBatch>& batch) {
-  if (batch->data.size() == 0) {
-    return;
-  }
-  auto& session = *EnsureInvertedFeedSession();
-  const auto commit_offset = ReplayCommitOffset();
-  if (commit_offset != 0 && commit_offset < session.Replay().durable_offset) {
-    return;
-  }
-  session.Replay().Dispatch(
-    std::make_unique<Entry>(session.pool, &session.Replay(), commit_offset,
-                            InsertPayload{.batch = batch}),
-    commit_offset);
-}
-
-void InvertedStoreIndex::ReplayDelete(duckdb::DataChunk& chunk,
-                                      duckdb::Vector& row_ids) {
-  const auto count = chunk.size();
-  if (count == 0) {
-    return;
-  }
-  auto& session = *EnsureInvertedFeedSession();
-  const auto commit_offset = ReplayCommitOffset();
-  if (commit_offset != 0 && commit_offset < session.Replay().durable_offset) {
-    return;
-  }
-  session.Replay().Dispatch(
-    std::make_unique<Entry>(
-      session.pool, &session.Replay(), commit_offset,
-      DeletePayload{.rowids = ExtractRowIds(row_ids, count)}),
-    commit_offset);
-}
-
-namespace {
-
-// One index taking part in a range replay, and the WAL-ordered entry holding
-// its per-sub-range transactions.
-struct Participant {
-  InvertedFeedSession* session;
-  Entry* job;
-};
-
-// Every external index on a store table is an InvertedStoreIndex. Inlined: this
-// runs per commit and per replay range, and one inverted index is the common
-// case.
-using ExternalIndexes = absl::InlinedVector<InvertedStoreIndex*, 2>;
-
-ExternalIndexes ExternalIndexesOf(duckdb::TableIndexList& index_list) {
-  ExternalIndexes indexes;
-  for (auto& index : index_list.Indexes()) {
-    if (!index.IsBound()) {
-      continue;
-    }
-    auto& bound = index.Cast<duckdb::BoundIndex>();
-    if (bound.IsExternal()) {
-      SDB_ASSERT(bound.GetIndexType() == InvertedStoreIndex::kTypeName);
-      indexes.push_back(&static_cast<InvertedStoreIndex&>(bound));
-    }
-  }
-  return indexes;
-}
-
-ExternalIndexes ExternalIndexesOf(duckdb::DataTable& table) {
-  return ExternalIndexesOf(table.GetDataTableInfo()->GetIndexes());
-}
-
-// Split the range so several workers decompress it in parallel (one scan feeds
-// every index). Sub-range size is the dial between two costs: every sub-range
-// is a transaction, and concurrent transactions are distinct segments, so a
-// small sub-range buys parallelism now and pays for it at every later refresh.
-// Total time is flat across 4k..32k rows; segment count is not (a 5x100k load
-// leaves 24 segments at 4k and 6 at 16k), so it is sized for the segments.
-size_t SubrangeCount(duckdb::TaskScheduler& scheduler, duckdb::idx_t count) {
-  constexpr duckdb::idx_t kRowsPerSubrange = 16384;
-  const auto threads = std::max<size_t>(1, scheduler.NumberOfThreads());
-  const auto subranges = std::max<duckdb::idx_t>(1, count / kRowsPerSubrange);
-  return std::min<size_t>(subranges, threads);
-}
-
-// Scans one slice once and feeds it into every index's slot-`k` transaction,
-// borrowing each index's pooled writer/expression kit rather than building one:
-// constructing a tokenizer provider and an ExpressionExecutor per slice is the
-// whole cost of a small append.
-template<typename Scanner>
-void FeedRange(std::vector<Participant>& parts, size_t slot,
-               const Scanner& scan, duckdb::idx_t scan_begin, int64_t row_begin,
-               duckdb::idx_t length, bool flush) {
-  // deque: a lease is immovable, so the container has to build in place.
-  std::deque<FeedPool::BundleLease> bundles;
-  for (auto& part : parts) {
-    bundles.emplace_back(part.session->pool, part.job->trxs[slot]);
-  }
-  int64_t row = row_begin;
-  scan(scan_begin, length, [&](duckdb::DataChunk& chunk) {
-    for (size_t p = 0; p < parts.size(); ++p) {
-      parts[p].session->pool.FeedScan(*bundles[p]->insert_writer,
-                                      *bundles[p]->exprs, bundles[p]->scratch,
-                                      parts[p].job->trxs[slot], chunk, row);
-    }
-    row += static_cast<int64_t>(chunk.size());
-  });
-  if (flush) {
-    // Recovery refreshes as soon as replay ends, so serialize this sub-range's
-    // segment here: otherwise every segment is written one at a time under the
-    // writer's commit lock, which is the whole cost of a cheap-tokenizer
-    // replay.
-    for (auto& part : parts) {
-      part.job->trxs[slot].Flush();
-    }
-  }
-}
-
-// Scans one slice once and feeds it into every index's slot-`k` transaction in
-// place. `scan` produces table-layout chunks for a row range and is the only
-// difference between recovery (a committed table range) and a commit (the local
-// row groups being appended): either way the chunk never leaves the callback,
-// so it can borrow whatever the scan lends it.
-template<typename Scanner>
-struct ScanTask final : duckdb::BaseExecutorTask {
-  ScanTask(duckdb::TaskExecutor& executor_in,
-           std::vector<Participant>& parts_in, size_t slot_in,
-           const Scanner& scan_in, duckdb::idx_t scan_begin_in,
-           int64_t row_begin_in, duckdb::idx_t length_in, bool flush_in)
-    : BaseExecutorTask{executor_in},
-      parts{parts_in},
-      slot{slot_in},
-      scan{scan_in},
-      scan_begin{scan_begin_in},
-      row_begin{row_begin_in},
-      length{length_in},
-      flush{flush_in} {}
-
-  void ExecuteTask() override {
-    FeedRange(parts, slot, scan, scan_begin, row_begin, length, flush);
-  }
-
-  std::string TaskType() const override { return "InvertedRangeScan"; }
-
-  std::vector<Participant>& parts;
-  const size_t slot;
-  const Scanner& scan;
-  const duckdb::idx_t scan_begin;
-  const int64_t row_begin;
-  const duckdb::idx_t length;
-  const bool flush;
-};
-
-// Sub-ranges are vector-aligned so each scan starts on a vector boundary and
-// its row ids stay exact.
-template<typename Scanner>
-void RunRangeScans(duckdb::TaskScheduler& scheduler,
-                   std::vector<Participant>& parts, size_t subranges,
-                   duckdb::idx_t scan_start, duckdb::row_t row_start,
-                   duckdb::idx_t count, const Scanner& scan, bool flush) {
-  if (subranges == 1) {
-    // A small append pays nothing for the machinery: no task, no executor.
-    FeedRange(parts, 0, scan, scan_start, row_start, count, flush);
-    return;
-  }
-  duckdb::TaskExecutor executor{scheduler};
-  for (size_t k = 0; k < subranges; ++k) {
-    auto sub_begin = (k * count) / subranges;
-    auto sub_end = ((k + 1) * count) / subranges;
-    sub_begin -= sub_begin % STANDARD_VECTOR_SIZE;
-    if (k + 1 != subranges) {
-      sub_end -= sub_end % STANDARD_VECTOR_SIZE;
-    }
-    if (sub_end <= sub_begin) {
-      continue;
-    }
-    executor.ScheduleTask(duckdb::make_uniq<ScanTask<Scanner>>(
-      executor, parts, k, scan, scan_start + sub_begin,
-      row_start + static_cast<int64_t>(sub_begin), sub_end - sub_begin, flush));
-  }
-  executor.WorkOnTasks();
-}
-
-// The body both range feeds share: size the partition, let every index
-// contribute the entry it wants, then scan each sub-range once and feed it into
-// all of them in place. `make_entry` is where the two differ -- a live commit
-// stages into the commit window, a replay stages into a WAL-ordered entry and
-// may decline an index already durable past the offset. Returns the
-// participants, for the caller that has to close them.
-template<typename MakeEntry, typename Scanner>
-std::vector<Participant> RunRangeFeed(duckdb::TaskScheduler& scheduler,
-                                      const ExternalIndexes& indexes,
-                                      duckdb::idx_t scan_start,
-                                      duckdb::row_t row_start,
-                                      duckdb::idx_t count, const Scanner& scan,
-                                      bool flush, MakeEntry&& make_entry) {
-  const auto subranges = SubrangeCount(scheduler, count);
-  std::vector<Participant> parts;
-  parts.reserve(indexes.size());
-  for (auto* inverted : indexes) {
-    if (auto part = make_entry(*inverted, subranges)) {
-      parts.push_back(*part);
-    }
-  }
-  if (!parts.empty()) {
-    RunRangeScans(scheduler, parts, subranges, scan_start, row_start, count,
-                  scan, flush);
-  }
-  return parts;
-}
-
-// Scans [begin, begin + length) of the row groups a commit is about to append,
-// in table layout, with a scan state of its own -- so nothing it borrows
-// outlives the callback and no row is scanned twice.
-template<typename Fn>
-void ScanLocalRange(duckdb::DuckTransaction& transaction,
-                    duckdb::RowGroupCollection& source,
-                    const duckdb::vector<duckdb::StorageIndex>& columns,
-                    const duckdb::vector<duckdb::LogicalType>& scan_types,
-                    duckdb::idx_t begin, duckdb::idx_t length, Fn&& fn) {
-  const auto& table_types = source.GetTypes();
-  duckdb::TableScanState state;
-  state.Initialize(columns, nullptr);
-  source.InitializeScanWithOffset(duckdb::QueryContext(), state.local_state,
-                                  columns, begin, begin + length);
-
-  duckdb::DataChunk scanned;
-  scanned.Initialize(source.GetAllocator(), scan_types);
-  // The feed reads columns at their table positions; the scan produces them in
-  // `columns` order, so hand it a table-shaped view referencing the scan chunk.
-  duckdb::DataChunk view;
-  view.InitializeEmpty(table_types);
-  for (duckdb::idx_t produced = 0; produced < length;) {
-    scanned.Reset();
-    state.local_state.Scan(transaction, scanned);
-    if (scanned.size() == 0) {
-      break;
-    }
-    if (produced + scanned.size() > length) {
-      scanned.SetCardinality(length - produced);
-    }
-    for (duckdb::idx_t i = 0; i < columns.size(); ++i) {
-      view.data[columns[i].GetPrimaryIndex()].Reference(scanned.data[i]);
-    }
-    view.SetCardinality(scanned.size());
-    fn(view);
-    produced += scanned.size();
-  }
-}
-
-}  // namespace
-
-// DBConfig::external_local_append target: feed every inverted index of a store
-// table with the rows a commit is about to append. Same shape as
-// ReplayExternalRange -- partition the range, one scan per worker, feed in
-// place
-// -- so a chunk is never handed to a thread that did not scan it and nothing is
-// copied or scanned twice. Runs on the committing thread inside the storage
-// commit; the transactions it fills commit at CommitSearch's tick.
-duckdb::ErrorData InvertedStoreIndex::AppendLocalRange(
-  duckdb::DuckTransaction& transaction, duckdb::TableIndexList& index_list,
-  duckdb::RowGroupCollection& source,
-  const duckdb::vector<duckdb::StorageIndex>& mapped_column_ids,
-  duckdb::row_t row_start) {
-  const auto count = source.GetTotalRows();
-  if (count == 0) {
-    return {};
-  }
-  auto* conn = CurrentCommittingContext();
-  SDB_ENSURE(conn, "inverted index append: no committing context");
-
-  auto& scheduler =
-    duckdb::TaskScheduler::GetScheduler(source.GetAttached().GetDatabase());
-  const auto indexes = ExternalIndexesOf(index_list);
-  if (indexes.empty()) {
-    return {};
-  }
-
-  const auto& table_types = source.GetTypes();
-  duckdb::vector<duckdb::LogicalType> scan_types;
-  scan_types.reserve(mapped_column_ids.size());
-  for (const auto& id : mapped_column_ids) {
-    scan_types.push_back(table_types[id.GetPrimaryIndex()]);
-  }
-  const auto scan = [&transaction, &source, &mapped_column_ids, &scan_types](
-                      duckdb::idx_t begin, duckdb::idx_t length, auto&& fn) {
-    ScanLocalRange(transaction, source, mapped_column_ids, scan_types, begin,
-                   length, fn);
-  };
-  // Uncommitted row groups carry transaction-local row ids, which start at
-  // MAX_ROW_ID; the final ids the index keys on start at `row_start`.
-  const auto scan_start = static_cast<duckdb::idx_t>(duckdb::MAX_ROW_ID);
-  try {
-    RunRangeFeed(
-      scheduler, indexes, scan_start, row_start, count, scan, /*flush=*/false,
-      [&](InvertedStoreIndex& inverted,
-          size_t subranges) -> std::optional<Participant> {
-        const auto& engaged = inverted.EnsureInvertedFeedSession();
-        conn->EngageInvertedFeed(inverted._index_id, engaged);
-        auto& session = *engaged;
-        return Participant{&session, session.live.CreateRangeEntry(subranges)};
-      });
-  } catch (const std::exception& e) {
-    return duckdb::ErrorData{e};
-  }
-  return {};
-}
-
-void InvertedStoreIndex::ReplayExternalRange(duckdb::ClientContext& context,
-                                             duckdb::DataTable& table,
-                                             duckdb::row_t row_start,
-                                             duckdb::idx_t count) {
-  if (count == 0) {
-    return;
-  }
-  const auto indexes = ExternalIndexesOf(table);
-  if (indexes.empty()) {
-    return;
-  }
-
-  auto& db = table.db;
-  auto& transaction = duckdb::DuckTransaction::Get(context, db);
-  auto& scheduler = duckdb::TaskScheduler::GetScheduler(db.GetDatabase());
-  const auto wal_offset =
-    duckdb::DuckTransactionManager::Get(db).GetReplayCommitOffset();
-
-  // duckdb's scan takes a std::function, so this one boundary keeps it.
-  const auto scan = [&table, &transaction](duckdb::idx_t begin,
-                                           duckdb::idx_t length, auto&& fn) {
-    table.ScanTableSegment(transaction, begin, length, fn);
-  };
-  // One WAL-ordered entry per index not already durable past this offset. The
-  // lambda is here rather than in the shared body because it reaches this
-  // class's private session accessor.
-  const auto parts = RunRangeFeed(
-    scheduler, indexes, static_cast<duckdb::idx_t>(row_start), row_start, count,
-    scan, /*flush=*/true,
-    [&](InvertedStoreIndex& inverted,
-        size_t subranges) -> std::optional<Participant> {
-      auto& session = *inverted.EnsureInvertedFeedSession();
-      if (wal_offset != 0 && wal_offset < session.Replay().durable_offset) {
-        return std::nullopt;
-      }
-      return Participant{
-        &session, session.Replay().CreateRangeEntry(wal_offset, subranges)};
-    });
-  for (auto& part : parts) {
-    part.session->Replay().CompleteRangeEntry(*part.job);
-  }
-}
-
-void InvertedStoreIndex::FinishReplay() {
+  // The configuration is decoded once, when the index object is built, and a
+  // reshape replaces the whole object -- so a pool that is still here was
+  // built against the config that is still there and never needs rebuilding.
+  // ALTER INDEX ... SET applies through InvertedIndexStorage::ApplyOptions
+  // instead, which reconfigures the live writer and the maintenance loops.
   if (!_feed) {
-    return;
+    SDB_ENSURE(_storage, "inverted index feed: storage ", _index_id,
+               " missing");
+    auto& duck = CurrentCommittingTransaction()
+                   ->GetTransaction(db)
+                   .Cast<duckdb::DuckTransaction>();
+    _feed = std::make_shared<InvertedFeedSession>(
+      _storage,
+      catalog::IndexTokenizers{
+        duckdb::CatalogTransaction{db.GetDatabase(), duck.transaction_id,
+                                   duck.start_time},
+        _schema, *_config},
+      _config, db, *this);
   }
-  // Hand the session over: whatever replayed is finished here, and ordinary
-  // commits rebuild it. Taking it first means an exception cannot leave a
-  // half-retired session behind on the index.
-  const auto session = std::move(_feed);
-  if (!session->HasReplay()) {
-    // Nothing ever replayed into this index, so there is no queue to retire --
-    // and asking for one here would build the heavy half just to drop it.
-    return;
-  }
-  const auto success_offset =
-    duckdb::DuckTransactionManager::Get(db).GetReplaySuccessOffset();
-  session->pool.executor.WorkOnTasks();
-  session->Replay().FinishRetire(success_offset);
+  return _feed;
 }
 
 duckdb::ErrorData InvertedStoreIndex::AppendImpl(duckdb::DataChunk& chunk,
                                                  duckdb::Vector& row_ids) {
-  // Reached only when the producer had no batch to hand over: this chunk is a
-  // buffer it recycles, so a worker must not reference it. Feed on this thread,
-  // through the same pooled writer/expression kit the workers use.
   auto* conn = CurrentCommittingContext();
-  SDB_ENSURE(conn, "inverted index append: no committing context");
-  if (chunk.size() == 0) {
+  if (conn == nullptr || chunk.size() == 0) {
     return {};
   }
   const auto& engaged = EnsureInvertedFeedSession();
@@ -1496,23 +774,6 @@ duckdb::ErrorData InvertedStoreIndex::Append(duckdb::IndexLock&,
                                              duckdb::DataChunk& chunk,
                                              duckdb::Vector& row_ids) {
   return AppendImpl(chunk, row_ids);
-}
-
-// The batch form: the producer hands over ownership, so a worker may hold it
-// past this call and retire it in WAL order. Only replay builds batches -- a
-// commit scans its own rows -- so a batch that arrives with a committing
-// context is just a chunk we have not copied, and takes the ordinary path.
-duckdb::ErrorData InvertedStoreIndex::Append(
-  duckdb::IndexLock&, const duckdb::shared_ptr<duckdb::ExternalIndexBatch>& b,
-  duckdb::IndexAppendInfo&) {
-  if (b->data.size() == 0) {
-    return {};
-  }
-  if (CurrentCommittingContext()) {
-    return AppendImpl(b->data, b->row_ids);
-  }
-  ReplayAppend(b);
-  return {};
 }
 
 duckdb::ErrorData InvertedStoreIndex::Insert(duckdb::IndexLock&,
@@ -1529,16 +790,14 @@ void InvertedStoreIndex::Delete(duckdb::IndexLock&, duckdb::DataChunk& chunk,
   }
   auto* conn = CurrentCommittingContext();
   if (!conn) {
-    ReplayDelete(chunk, row_ids);
     return;
   }
   const auto& engaged = EnsureInvertedFeedSession();
   auto& session = *engaged;
-  const auto& options = catalog::InvertedInfo(*session.pool.index).GetOptions();
-  if (!options.pk_term) {
+  if (!_config->pk.index_term) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
-      ERR_MSG("inverted index \"", session.pool.index->GetName(),
+      ERR_MSG("inverted index \"", name.GetIdentifierName(),
               "\" was created WITH (store_pk = 'none') and does not "
               "index row PKs: DELETE/UPDATE cannot maintain it; drop "
               "the index first or recreate it without store_pk = "
@@ -1593,190 +852,81 @@ std::string InvertedStoreIndex::ToString(duckdb::IndexLock&, bool) {
   return "inverted store index";
 }
 
-void InvertedStoreIndex::CheckpointBarrier() {
-  auto* catalog = catalog::TryGetCatalog();
-  if (!catalog) {
-    THROW_SQL_ERROR(
-      ERR_MSG("inverted index ", _index_id.id(),
-              ": catalog is shut down, cannot verify index durability; "
-              "refusing to checkpoint (WAL retained for replay)"));
-  }
-  auto inverted = FindInvertedDefinition(nullptr, db, _index_id);
-  if (!inverted) {
-    return;
-  }
-  auto storage =
-    catalog::InvertedStorageIn(nullptr, db.GetCatalog(), _index_id);
-  if (!storage) {
-    storage = _attached_storage;
-  }
-  if (!storage) {
-    return;
-  }
-  SDB_ENSURE(!storage->IsOutOfSync(), "inverted index ", _index_id.id(),
-             " is out of sync with its store table; refusing to checkpoint "
-             "(WAL retained for replay; REINDEX to clear)");
-  storage->CheckpointRefresh();
-}
-
 std::string InvertedStoreIndex::GetConstraintViolationMessage(
   duckdb::VerifyExistenceType, idx_t, duckdb::DataChunk&) {
   return "inverted store index constraint violation";
 }
 
-duckdb::unique_ptr<InvertedStoreIndex> MakeInjectedInvertedIndex(
-  duckdb::ClientContext& context, duckdb::DataTable& storage,
-  const duckdb::CreateTableInfo& table,
-  std::shared_ptr<const catalog::Index> inverted) {
-  duckdb::vector<duckdb::column_t> column_ids;
-  duckdb::vector<duckdb::unique_ptr<duckdb::Expression>> exprs;
-  const auto& defs = storage.Columns();
-  // Indexed columns plus indexed-expression dependencies, mirroring the
-  // referenced set so duckdb's column tracking (DROP COLUMN dependency
-  // checks) sees exactly what the index reads. An expression's column
-  // references are rewritten to positions in this list, which is what
-  // BoundIndex::BindExpression turns into chunk offsets.
-  containers::FlatHashMap<catalog::ColumnId, duckdb::idx_t> col_id_to_pos;
-  // The store table holds the table's columns in catalog order, less the
-  // generated primary key, which is an identity this side of the store and is
-  // never a row value -- so a column's position is its id's mapping, computed
-  // once for the whole width rather than looked up per referenced column.
-  //
-  // Position, not name: RENAME COLUMN hands the renamed entry the very same
-  // DataTable, whose cached column definitions go on naming the old column, so
-  // a name lookup here silently stops finding the field after a rename.
-  containers::FlatHashMap<catalog::ColumnId, duckdb::idx_t> pos_by_id;
-  pos_by_id.reserve(table.columns.LogicalColumnCount());
-  duckdb::idx_t store_pos = 0;
-  for (const auto& column : table.columns.Logical()) {
-    pos_by_id.emplace(column.CatalogOid(), store_pos++);
-  }
-  // The feed reads each indexed column at its position in the store table, so
-  // the mapping is built here, from the same lookup the expression rebinding
-  // uses -- not re-derived from catalog column order somewhere else.
-  std::vector<FeedColumn> ref_columns;
-  ref_columns.reserve(inverted->GetReferencedColumns().size());
-  for (const auto col_id : inverted->GetReferencedColumns()) {
-    const auto it = pos_by_id.find(col_id);
-    if (it == pos_by_id.end() || it->second >= defs.size()) {
-      continue;
-    }
-    col_id_to_pos.emplace(col_id, column_ids.size());
-    column_ids.push_back(it->second);
-    ref_columns.push_back({it->second, {col_id, defs[it->second].GetType()}});
-  }
-
-  // The index's expressions go through duckdb's own index-expression path:
-  // BoundIndex binds them and builds the executor, exactly as it does for ART.
-  // The predicate rides along as the last one (it selects rows, feeds no
-  // field), so a single Execute yields every value the feed needs.
-  std::vector<ExpressionField> expr_fields;
-  bool has_predicate = false;
-  const auto& info = catalog::InvertedInfo(*inverted);
-  for (const auto& key : info.ExpressionKeys()) {
-    auto bound = DeserializeBoundExpression(key.data.serialized_expr, context);
-    exprs.push_back(
-      RebindColumnRefsToIndexPositions(*bound, table.oid, col_id_to_pos));
-    expr_fields.push_back({key.field_id, info.IsGeoJsonKey(key)});
-  }
-  if (const auto* data = info.Predicate()) {
-    auto bound = DeserializeBoundExpression(data->serialized_expr, context);
-    exprs.push_back(
-      RebindColumnRefsToIndexPositions(*bound, table.oid, col_id_to_pos));
-    has_predicate = true;
-  }
-  // Resolved here, where the statement that publishes this object is still on
-  // the context: from the commit-time feed on, the writers reaching it are
-  // other transactions, which cannot see an index that has not committed yet.
-  auto attached_storage = catalog::InvertedStorageIn(
-    &context, storage.db.GetCatalog(), inverted->GetId());
-  return duckdb::make_uniq<InvertedStoreIndex>(
-    std::string{inverted->GetName()}, duckdb::TableIOManager::Get(storage),
-    column_ids, exprs, storage.db, std::move(inverted),
-    std::move(attached_storage), std::move(expr_fields), has_predicate,
-    std::move(ref_columns));
-}
-
-void AddInjectedInvertedIndex(duckdb::TableIndexList& list,
-                              duckdb::unique_ptr<InvertedStoreIndex> index) {
-  const duckdb::Identifier name = index->GetIndexName();
-  if (auto* found = list.Find(name).get();
-      found && found->GetIndexType() == InvertedStoreIndex::kTypeName) {
-    list.RemoveIndex(name);
-  }
-  list.AddIndex(std::move(index));
-}
-
-duckdb::unique_ptr<duckdb::BoundIndex> CreateInvertedInstance(
+duckdb::unique_ptr<duckdb::BoundIndex> InvertedStoreIndex::Create(
   duckdb::CreateIndexInput& input) {
-  // Everything this needs is in the record duckdb read back: the two ids name
-  // the objects, and the objects say the rest. No injection pass and no held
+  // Everything this needs is in the record duckdb read back: the id names the
+  // entry, and the entry says the rest. No injection pass and no held
   // definition -- the registry builds the index the way it builds an ART.
-  const auto id_option = [&](const char* key) {
-    const auto it = input.options.find(key);
-    SDB_ENSURE(it != input.options.end(), "inverted index: no ", key);
-    return it->second.GetValue<uint64_t>();
-  };
-  const auto table_id = id_option(InvertedStoreIndex::kTableIdOption);
-  const auto index_id = id_option(InvertedStoreIndex::kIndexIdOption);
-  auto& catalog = input.db.GetCatalog().Cast<catalog::SereneDBCatalog>();
-  auto entry = catalog.LookupTableById(
-    catalog.GetCatalogTransaction(input.context), table_id.id());
-  auto inverted = FindInvertedDefinition(&input.context, input.db, index_id);
-  SDB_ENSURE(entry && inverted, "inverted index: catalog objects for ",
-             index_id.id(), " missing");
-  auto& table = entry->Cast<duckdb::TableCatalogEntry>();
-  return MakeInjectedInvertedIndex(input.context, table.GetStorage(),
-                                   *table.Definition(), std::move(inverted));
+  const auto& record = input.storage_info.options;
+  const auto index_id = IdOption(record, kIndexIdOption);
+  const auto entry = FindIndexEntry(&input.context, input.db, index_id);
+  SDB_ENSURE(entry, "inverted index: catalog entry for ", index_id, " missing");
+  // A rebind (an ALTER-driven table rebuild, a re-bind after replay) must not
+  // open a second writer over the same directory, so it adopts the storage the
+  // index already registered under this name is holding.
+  std::shared_ptr<search::InvertedIndexStorage> storage;
+  auto& indexes = entry->Cast<duckdb::DuckIndexEntry>().GetDataTableInfo();
+  for (auto& index : indexes.GetIndexes().Indexes()) {
+    if (index.IsBound() && index.GetIndexName() == input.name &&
+        index.GetIndexType() == std::string{kTypeName}) {
+      storage = index.Cast<InvertedStoreIndex>().Storage();
+      break;
+    }
+  }
+  return duckdb::make_uniq<InvertedStoreIndex>(
+    input, entry->schema, index_id, std::move(storage),
+    entry->Cast<catalog::InvertedIndexEntry>().Config());
 }
 
-void InjectExternalIndexes(duckdb::DataTable& storage) {
-  if (!catalog::IsStoreDatabase(storage.db)) {
-    return;
+duckdb::IndexStorageInfo InvertedStoreIndex::SerializeToDisk(
+  duckdb::QueryContext, const duckdb::case_insensitive_map_t<duckdb::Value>&) {
+  return StorageRecord(*this);
+}
+
+duckdb::IndexStorageInfo InvertedStoreIndex::SerializeToWAL(
+  const duckdb::case_insensitive_map_t<duckdb::Value>&) {
+  return StorageRecord(*this);
+}
+
+duckdb::IndexType InvertedStoreIndex::GetInvertedIndexType() {
+  duckdb::IndexType type;
+  type.name = kTypeName;
+  type.create_instance = &InvertedStoreIndex::Create;
+  type.create_plan = &SereneDBCreateIndexPlan;
+  type.defer_implicit_bind = true;
+  return type;
+}
+
+std::shared_ptr<search::InvertedIndexStorage> PublishInvertedIndex(
+  duckdb::ClientContext& context, catalog::InvertedIndexEntry& entry,
+  duckdb::CatalogEntry& relation,
+  const duckdb::vector<duckdb::unique_ptr<duckdb::Expression>>& bound_exprs) {
+  const auto& options = entry.Config()->settings;
+  auto storage = search::InvertedIndexStorage::Create(
+    entry.catalog.GetOid(), entry.schema.oid, relation.oid, entry.oid, options,
+    entry.TopKScorer(context), /*is_new=*/true);
+  storage->ApplyOptions(options);
+  entry.AdoptStorage(storage);
+  auto* table = dynamic_cast<duckdb::DuckTableEntry*>(&relation);
+  if (table == nullptr) {
+    return storage;
   }
-  auto* catalog = catalog::TryGetCatalog();
-  if (!catalog) {
-    return;
-  }
-  const duckdb::idx_t table_id{storage.GetDataTableInfo()->GetCatalogId()};
-  if (!table_id.isSet()) {
-    return;
-  }
-  const auto* table_entry = catalog::FindIn<duckdb::TableCatalogEntry>(
-    nullptr, storage.db.GetCatalog(), table_id);
-  const auto table =
-    table_entry != nullptr ? table_entry->Definition() : nullptr;
-  if (!table) {
-    // Constructive DDL creates the physical table before the catalog append,
-    // so a fresh CREATE TABLE lands here with no definitions yet.
-    return;
-  }
-  auto& list = storage.GetDataTableInfo()->GetIndexes();
-  // Off this database's own INDEX_ENTRY sets: an attach reads them before the
-  // attachment is in the database manager, so nothing can resolve it by id yet.
-  for (const auto& index : catalog::RelationInvertedIndexesIn(
-         nullptr, storage.db.GetCatalog(), table_id)) {
-    const auto& definition = *index;
-    // ALTER TABLE ... DROP COLUMN rebuilds the store DataTable and reaches
-    // here with the column already gone but the catalog half of the batch not
-    // yet applied, so the snapshot still lists the indexes this very statement
-    // cascade-drops for covering it. Binding one against the surviving columns
-    // would bind it partially -- an expression key cannot be rebound at all --
-    // and re-register an index the batch's DropIndex op already unlinked. Only
-    // a drop in flight makes this skip; a column missing for any other reason
-    // stays the loud failure it was.
-    if (absl::c_any_of(definition.GetReferencedColumns(),
-                       catalog::DataStore::IsColumnDropInFlight)) {
-      continue;
-    }
-    // Built with a normal serenedb context, so the index knows its expressions
-    // and predicate before anything replays into it.
-    catalog::WithStoreBindContext(
-      storage.db, [&](duckdb::ClientContext& bind_ctx) {
-        AddInjectedInvertedIndex(
-          list, MakeInjectedInvertedIndex(bind_ctx, storage, *table, index));
-      });
-  }
+  auto& data = table->GetStorage();
+  duckdb::CreateIndexInput input{
+    context,      duckdb::TableIOManager::Get(data),
+    data.db,      entry.index_constraint_type,
+    entry.name,   entry.column_ids,
+    bound_exprs,  duckdb::IndexStorageInfo{entry.name},
+    entry.options};
+  data.GetDataTableInfo()->GetIndexes().AddIndex(
+    duckdb::make_uniq<InvertedStoreIndex>(input, entry.schema, entry.oid,
+                                          storage, entry.Config()));
+  return storage;
 }
 
 }  // namespace sdb::connector

@@ -25,7 +25,6 @@
 #include <vector>
 
 #include "auth/role_closure.h"
-#include "catalog1/lookup.h"
 #include "pg/pg_types.h"
 
 namespace sdb::pg {

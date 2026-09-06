@@ -22,6 +22,7 @@
 
 #include <absl/strings/str_cat.h>
 
+#include <algorithm>
 #include <bit>
 #include <duckdb/common/bswap.hpp>
 
@@ -98,44 +99,6 @@ struct OutColumn {
 
 }  // namespace
 
-void ScatteredField::RadixSortByKey() {
-  auto& src = _s->ranked;
-  auto& dst = _s->ranked_alt;
-  const size_t n = src.size();
-  if (n < 2) {
-    return;
-  }
-  dst.resize(n);
-  constexpr size_t kBuckets = 65536;
-  auto& counts = _s->radix_counts;
-  counts.assign(4 * kBuckets, 0);
-  for (size_t i = 0; i < n; ++i) {
-    const auto key = src[i].key;
-    ++counts[static_cast<uint16_t>(key)];
-    ++counts[kBuckets + static_cast<uint16_t>(key >> 16)];
-    ++counts[2 * kBuckets + static_cast<uint16_t>(key >> 32)];
-    ++counts[3 * kBuckets + static_cast<uint16_t>(key >> 48)];
-  }
-  const auto probe = src[0].key;
-  for (unsigned pass = 0; pass < 4; ++pass) {
-    const unsigned shift = 16 * pass;
-    auto* const c = counts.data() + pass * kBuckets;
-    if (c[static_cast<uint16_t>(probe >> shift)] == n) {
-      continue;
-    }
-    uint32_t sum = 0;
-    for (size_t b = 0; b < kBuckets; ++b) {
-      const auto k = c[b];
-      c[b] = sum;
-      sum += k;
-    }
-    for (size_t i = 0; i < n; ++i) {
-      dst[c[static_cast<uint16_t>(src[i].key >> shift)]++] = src[i];
-    }
-    std::swap(src, dst);
-  }
-}
-
 void ScatteredField::Reset(const FieldInverter& field) {
   _field = &field;
   _all_inline = field.Log().Size() == 0;
@@ -159,9 +122,9 @@ void ScatteredField::Reset(const FieldInverter& field) {
   if (!_all_inline) {
     BuildHistogram(field.Log().TermIds(), field.Dictionary().Entries().size());
   }
-  const auto fold_hint = RankLiveTerms(field.Dictionary().Entries());
+  RankLiveTerms(field.Dictionary().Entries());
   if (field.UniqueTerms()) {
-    FoldDuplicateTerms(field.Dictionary().Entries(), fold_hint);
+    FoldDuplicateTerms(field.Dictionary().Entries());
   }
   if (_all_inline) {
     return;
@@ -184,22 +147,17 @@ bool ScatteredField::InlineFillSorted() const noexcept {
 }
 
 void ScatteredField::FoldDuplicateTerms(
-  std::span<const TermDictionary::Entry> entries,
-  std::optional<size_t> first_dup_hint) {
+  std::span<const TermDictionary::Entry> entries) {
   const auto& ranked = _s->ranked;
   const auto same_term = [&](size_t r) {
     return ranked[r].key == ranked[r - 1].key &&
            entries[ranked[r].id] == entries[ranked[r - 1].id];
   };
   size_t first_dup = 0;
-  if (first_dup_hint) {
-    first_dup = *first_dup_hint;
-  } else {
-    for (size_t r = 1; r < ranked.size(); ++r) {
-      if (same_term(r)) {
-        first_dup = r;
-        break;
-      }
+  for (size_t r = 1; r < ranked.size(); ++r) {
+    if (same_term(r)) {
+      first_dup = r;
+      break;
     }
   }
   if (!first_dup) {
@@ -229,18 +187,14 @@ void ScatteredField::BuildHistogram(const LogColumn& term_ids, size_t vocab) {
   }
 }
 
-std::optional<size_t> ScatteredField::RankLiveTerms(
+void ScatteredField::RankLiveTerms(
   std::span<const TermDictionary::Entry> entries) {
   auto& ranked = _s->ranked;
   auto& cursors = _s->cursors;
-  uint64_t prev_key = 0;
   uint64_t min_key = std::numeric_limits<uint64_t>::max();
   uint64_t max_key = 0;
-  bool key_sorted = true;
   const auto note_live = [&](uint32_t i) {
     const auto key = PrefixKey(entries[i]);
-    key_sorted &= key >= prev_key;
-    prev_key = key;
     min_key = std::min(min_key, key);
     max_key = std::max(max_key, key);
     ranked.push_back({key, i});
@@ -260,47 +214,27 @@ std::optional<size_t> ScatteredField::RankLiveTerms(
     }
   }
   if (ranked.size() < 2) {
-    return 0;
+    return;
   }
-  RekeyPastSharedPrefix(entries, min_key, max_key, key_sorted);
+  RekeyPastSharedPrefix(entries, min_key, max_key);
   const auto by_term = [&](const ScatterScratch::RankedTerm& lhs,
                            const ScatterScratch::RankedTerm& rhs) {
     const auto& lt = entries[lhs.id];
     const auto& rt = entries[rhs.id];
     return lt != rt ? lt < rt : lhs.id < rhs.id;
   };
-  if (!key_sorted) {
-    if (ranked.size() < kRadixThreshold) {
-      std::sort(ranked.begin(), ranked.end(),
-                [&](const ScatterScratch::RankedTerm& lhs,
-                    const ScatterScratch::RankedTerm& rhs) {
-                  return lhs.key != rhs.key ? lhs.key < rhs.key
-                                            : by_term(lhs, rhs);
-                });
-      return std::nullopt;
-    }
-    RadixSortByKey();
-  } else {
-    const bool want_dups = _field->UniqueTerms();
-    size_t first_dup = 0;
-    bool ordered = true;
-    for (size_t r = 1, n = ranked.size(); r < n; ++r) {
-      if (ranked[r].key != ranked[r - 1].key) {
-        continue;
-      }
-      if (by_term(ranked[r], ranked[r - 1])) {
-        ordered = false;
-        break;
-      }
-      if (want_dups && !first_dup &&
-          entries[ranked[r].id] == entries[ranked[r - 1].id]) {
-        first_dup = r;
-      }
-    }
-    if (ordered) {
-      return first_dup;
-    }
+  const auto less = [&](const ScatterScratch::RankedTerm& lhs,
+                        const ScatterScratch::RankedTerm& rhs) {
+    return lhs.key != rhs.key ? lhs.key < rhs.key : by_term(lhs, rhs);
+  };
+  if (std::is_sorted(ranked.begin(), ranked.end(), less)) {
+    return;
   }
+  if (ranked.size() < kRadixThreshold) {
+    std::sort(ranked.begin(), ranked.end(), less);
+    return;
+  }
+  RadixSortByKey();
   for (size_t lo = 0, n = ranked.size(); lo < n;) {
     size_t hi = lo + 1;
     while (hi < n && ranked[hi].key == ranked[lo].key) {
@@ -312,12 +246,46 @@ std::optional<size_t> ScatteredField::RankLiveTerms(
     }
     lo = hi;
   }
-  return std::nullopt;
+}
+
+void ScatteredField::RadixSortByKey() {
+  auto& src = _s->ranked;
+  auto& dst = _s->ranked_alt;
+  const size_t n = src.size();
+  dst.resize(n);
+  constexpr size_t kBuckets = 65536;
+  constexpr unsigned kPasses = sizeof(uint64_t) / 2;
+  auto& counts = _s->radix_counts;
+  counts.assign(kPasses * kBuckets, 0);
+  for (const auto& term : src) {
+    for (unsigned pass = 0; pass < kPasses; ++pass) {
+      ++counts[pass * kBuckets +
+               static_cast<uint16_t>(term.key >> (16 * pass))];
+    }
+  }
+  const auto probe = src[0].key;
+  for (unsigned pass = 0; pass < kPasses; ++pass) {
+    const unsigned shift = 16 * pass;
+    auto* const c = counts.data() + pass * kBuckets;
+    if (c[static_cast<uint16_t>(probe >> shift)] == n) {
+      continue;
+    }
+    uint32_t sum = 0;
+    for (size_t b = 0; b < kBuckets; ++b) {
+      const auto k = c[b];
+      c[b] = sum;
+      sum += k;
+    }
+    for (const auto& term : src) {
+      dst[c[static_cast<uint16_t>(term.key >> shift)]++] = term;
+    }
+    std::swap(src, dst);
+  }
 }
 
 void ScatteredField::RekeyPastSharedPrefix(
   std::span<const TermDictionary::Entry> entries, uint64_t min_key,
-  uint64_t max_key, bool& key_sorted) {
+  uint64_t max_key) {
   auto& ranked = _s->ranked;
   for (uint32_t skip = 0; skip < kRekeyMaxSkip;) {
     const uint64_t diff = min_key ^ max_key;
@@ -327,15 +295,11 @@ void ScatteredField::RekeyPastSharedPrefix(
       break;
     }
     skip += shared;
-    uint64_t prev_key = 0;
     min_key = std::numeric_limits<uint64_t>::max();
     max_key = 0;
-    key_sorted = true;
     for (auto& term : ranked) {
       const auto key = PrefixKeyAt(entries[term.id], skip);
       term.key = key;
-      key_sorted &= key >= prev_key;
-      prev_key = key;
       min_key = std::min(min_key, key);
       max_key = std::max(max_key, key);
     }

@@ -133,13 +133,10 @@ class ScatteredField : util::Noncopyable {
 
   void BuildHistogram(const LogColumn& term_ids, size_t vocab);
   bool InlineFillSorted() const noexcept;
-  std::optional<size_t> RankLiveTerms(
-    std::span<const TermDictionary::Entry> entries);
+  void RankLiveTerms(std::span<const TermDictionary::Entry> entries);
   void RekeyPastSharedPrefix(std::span<const TermDictionary::Entry> entries,
-                             uint64_t min_key, uint64_t max_key,
-                             bool& key_sorted);
-  void FoldDuplicateTerms(std::span<const TermDictionary::Entry> entries,
-                          std::optional<size_t> first_dup_hint);
+                             uint64_t min_key, uint64_t max_key);
+  void FoldDuplicateTerms(std::span<const TermDictionary::Entry> entries);
   uint64_t PrefixSums();
   uint32_t** AssignBlocks(ManagedVector<uint32_t*>& col, size_t nblocks,
                           size_t& next);

@@ -23,7 +23,6 @@
 #include <duckdb/common/multi_file/multi_file_states.hpp>
 #include <duckdb/common/vector_operations/vector_operations.hpp>
 #include <duckdb/planner/filter/expression_filter.hpp>
-#include <ranges>
 
 #include "basics/assert.h"
 
@@ -40,18 +39,18 @@ ViewFileIndexSourceBase::ViewFileIndexSourceBase(
   _lookup_func = MakeFastPathLookupFunction(_fast_path);
 
   auto& multi_bd = _bind_data->Cast<duckdb::MultiFileBindData>();
-  const auto source_names =
-    multi_bd.names | std::views::transform([](const duckdb::Identifier& name) {
-      return std::string_view{name.GetIdentifierName()};
-    }) |
-    std::ranges::to<std::vector>();
   _column_indexes.reserve(projected_columns.size());
-  InitProjection(context, projected_columns, projected_types, bind_column_ids,
-                 source_names, [&](duckdb::idx_t file_col_idx) {
-                   SDB_ASSERT(file_col_idx < multi_bd.types.size());
-                   _column_indexes.emplace_back(file_col_idx);
-                   return multi_bd.types[file_col_idx];
-                 });
+  InitProjection(
+    context, projected_columns, projected_types, bind_column_ids,
+    [&](std::string_view name) {
+      return SourceColumn(name, multi_bd.names,
+                          &duckdb::Identifier::GetIdentifierName);
+    },
+    [&](duckdb::idx_t file_col_idx) {
+      SDB_ASSERT(file_col_idx < multi_bd.types.size());
+      _column_indexes.emplace_back(file_col_idx);
+      return multi_bd.types[file_col_idx];
+    });
   BuildPushedFilters(pushed_filters);
 }
 

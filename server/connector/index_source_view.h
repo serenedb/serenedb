@@ -21,12 +21,15 @@
 #pragma once
 
 #include <absl/functional/function_ref.h>
+#include <absl/strings/match.h>
 
 #include <duckdb/common/types.hpp>
 #include <duckdb/common/types/data_chunk.hpp>
 #include <duckdb/execution/expression_executor.hpp>
 #include <duckdb/planner/table_filter_set.hpp>
+#include <functional>
 #include <iresearch/index/index_source.hpp>
+#include <ranges>
 #include <span>
 #include <string_view>
 #include <vector>
@@ -35,6 +38,29 @@
 #include "connector/view_fast_path.h"
 
 namespace sdb::connector {
+
+[[noreturn]] void ThrowUnknownSourceColumn(std::string_view name);
+
+template<std::ranges::forward_range Names, typename Proj = std::identity>
+duckdb::idx_t SourceColumn(std::string_view name, const Names& names,
+                           Proj proj = {}) {
+  const auto find = [&](auto&& matches) {
+    return std::ranges::find_if(names, [&](const auto& candidate) {
+      return matches(std::string_view{std::invoke(proj, candidate)}, name);
+    });
+  };
+  auto it = find(std::ranges::equal_to{});
+  if (it == std::ranges::end(names)) {
+    it = find([](std::string_view lhs, std::string_view rhs) {
+      return absl::EqualsIgnoreCase(lhs, rhs);
+    });
+  }
+  if (it == std::ranges::end(names)) {
+    ThrowUnknownSourceColumn(name);
+  }
+  return static_cast<duckdb::idx_t>(
+    std::ranges::distance(std::ranges::begin(names), it));
+}
 
 class ViewIndexSourceBase : public IndexSource {
  protected:
@@ -46,7 +72,7 @@ class ViewIndexSourceBase : public IndexSource {
     std::span<const duckdb::idx_t> projected_columns,
     std::span<const duckdb::LogicalType> projected_types,
     std::span<const catalog::ColumnId> bind_column_ids,
-    std::span<const std::string_view> source_names,
+    absl::FunctionRef<duckdb::idx_t(std::string_view)> col_by_name,
     absl::FunctionRef<duckdb::LogicalType(duckdb::idx_t)> add_source_column);
 
   std::span<const int64_t> SortRows(const duckdb::Vector& pk,

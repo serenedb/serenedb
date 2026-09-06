@@ -82,15 +82,16 @@ ExternalLookupIndexSource::ExternalLookupIndexSource(
   auto names = entry.GetColumns().GetColumnNames();
   auto types = entry.GetColumns().GetColumnTypes();
 
-  const std::vector<std::string_view> source_names(names.begin(), names.end());
   std::vector<std::string> select_names;
   select_names.reserve(projected_columns.size());
-  InitProjection(context, projected_columns, projected_types, bind_column_ids,
-                 source_names, [&](duckdb::idx_t source_col) {
-                   SDB_ASSERT(source_col < names.size());
-                   select_names.push_back(names[source_col]);
-                   return types[source_col];
-                 });
+  InitProjection(
+    context, projected_columns, projected_types, bind_column_ids,
+    [&](std::string_view name) { return SourceColumn(name, names); },
+    [&](duckdb::idx_t source_col) {
+      SDB_ASSERT(source_col < names.size());
+      select_names.push_back(names[source_col]);
+      return types[source_col];
+    });
 
   _postgres_ctid = _fast_path.pk_spec == catalog::PkSpec::ExternalPostgresCtid;
   _num_key_cols = _postgres_ctid ? 1 : _fast_path.key_columns.size();

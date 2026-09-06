@@ -67,8 +67,8 @@ class PostingLead : public PostingLeaf<InputType, kCursorShape> {
 
   doc_id_t Fill(doc_id_t min, doc_id_t max, uint64_t* IRS_RESTRICT mask) {
     auto doc = _doc;
-    if (!doc_limits::valid(doc) || doc < min) {
-      doc = this->Seek(std::max(min, doc_limits::min()));
+    if (doc < min) {
+      doc = this->Seek(min);
     }
     const auto* const end = std::cend(_docs);
     for (;;) {

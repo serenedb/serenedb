@@ -458,9 +458,9 @@ doc_id_t ComputeDocIds(DocIdMapT& doc_id_map, const SubReader& reader,
       reader.docs_count() + doc_limits::min());
     return doc_limits::invalid();
   }
-  for (auto docs_itr = reader.docs_iterator();
-       !doc_limits::eof(docs_itr->Advance()); ++next_id) {
-    auto src_doc_id = docs_itr->Value();
+  auto docs_itr = reader.docs_iterator();
+  for (auto src_doc_id = docs_itr->Advance(); !doc_limits::eof(src_doc_id);
+       src_doc_id = docs_itr->Advance(), ++next_id) {
     SDB_ASSERT(src_doc_id >= doc_limits::min());
     SDB_ASSERT(src_doc_id < reader.docs_count() + doc_limits::min());
     doc_id_map[src_doc_id] = next_id;

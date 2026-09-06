@@ -586,19 +586,14 @@ void AssertSeek(const irs::SubReader& segment,
   ASSERT_NE(nullptr, seek_docs);
 
   ASSERT_TRUE(!irs::doc_limits::valid(expected_docs->Value()));
-  ASSERT_TRUE(!irs::doc_limits::valid(seq_docs->Value()));
-  ASSERT_TRUE(!irs::doc_limits::valid(seek_docs->Value()));
 
   size_t doc_index = 0;
   while (!irs::doc_limits::eof(expected_docs->Advance())) {
     SCOPED_TRACE(absl::StrCat("doc_index=", doc_index++));
     const auto expected_doc = expected_docs->Value();
 
-    ASSERT_TRUE(!irs::doc_limits::eof(seq_docs->Advance()));
-    ASSERT_EQ(expected_doc, seq_docs->Value());
-
+    ASSERT_EQ(expected_doc, seq_docs->Advance());
     ASSERT_EQ(expected_doc, seek_docs->Seek(expected_doc));
-    ASSERT_EQ(expected_doc, seek_docs->Value());
   }
 
   ASSERT_TRUE(irs::doc_limits::eof(expected_docs->Value()));

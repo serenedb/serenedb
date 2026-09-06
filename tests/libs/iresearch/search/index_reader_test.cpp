@@ -641,18 +641,13 @@ TEST(segment_reader_test, open) {
     // check live docs
     {
       auto it = rdr->docs_iterator();
-      ASSERT_TRUE(!irs::doc_limits::eof(it->Advance()));
-      ASSERT_EQ(1, it->Value());
-      ASSERT_TRUE(!irs::doc_limits::eof(it->Advance()));
-      ASSERT_EQ(2, it->Value());
-      ASSERT_TRUE(!irs::doc_limits::eof(it->Advance()));
-      ASSERT_EQ(3, it->Value());
-      ASSERT_TRUE(!irs::doc_limits::eof(it->Advance()));
-      ASSERT_EQ(4, it->Value());
-      ASSERT_TRUE(!irs::doc_limits::eof(it->Advance()));
-      ASSERT_EQ(5, it->Value());
-      ASSERT_FALSE(!irs::doc_limits::eof(it->Advance()));
-      ASSERT_FALSE(!irs::doc_limits::eof(it->Advance()));
+      ASSERT_EQ(1, it->Advance());
+      ASSERT_EQ(2, it->Advance());
+      ASSERT_EQ(3, it->Advance());
+      ASSERT_EQ(4, it->Advance());
+      ASSERT_EQ(5, it->Advance());
+      ASSERT_TRUE(irs::doc_limits::eof(it->Advance()));
+      ASSERT_TRUE(irs::doc_limits::eof(it->Advance()));
     }
 
     // check field metadata

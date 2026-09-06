@@ -383,7 +383,7 @@ class VectorClusters {
   VectorClusters& operator=(VectorClusters&&) = delete;
 
   doc_id_t Next(doc_id_t doc) {
-    const auto target = doc_limits::valid(doc) ? doc + 1 : doc_limits::min();
+    const auto target = doc + 1;
     return target <= _doc ? _doc : From(target);
   }
 
@@ -1011,7 +1011,7 @@ Node::ptr Make(const RangeVectorQuery& query, const ScoredCtx& ctx,
       return MakeVectorScored<ByWalkScored, Node::ptr, RadiusGate<Inclusive>,
                               Rescore, lead::TwoPhaseScored>(
         query, *query.State().reader, score, query.Threshold(),
-        std::move(inner), merge, ctx.fetcher);
+        std::move(inner), merge, *ctx.fetcher);
     });
   });
 }

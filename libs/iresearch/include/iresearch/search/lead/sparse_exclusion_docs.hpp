@@ -43,8 +43,6 @@ class SparseExclusionDocs {
   SparseExclusionDocs(SparseExclusionDocs&&) = delete;
   SparseExclusionDocs& operator=(SparseExclusionDocs&&) = delete;
 
-  doc_id_t Value() const noexcept { return _doc; }
-
   doc_id_t Advance() { return Converge(_include.Advance()); }
 
   doc_id_t Seek(doc_id_t target) {

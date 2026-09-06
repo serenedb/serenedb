@@ -38,11 +38,7 @@ class WindowConjunctionDocs {
     : _lead{std::make_from_tuple<Lead>(std::forward<LeadArgs>(lead))},
       _others{std::make_from_tuple<Others>(std::forward<OthersArgs>(others))} {}
 
-  doc_id_t Value() const noexcept { return _doc; }
-
-  doc_id_t Advance() {
-    return Seek(doc_limits::valid(_doc) ? _doc + 1 : doc_limits::min());
-  }
+  doc_id_t Advance() { return Seek(_doc + 1); }
 
   doc_id_t Seek(doc_id_t target) {
     if (target <= _doc) {

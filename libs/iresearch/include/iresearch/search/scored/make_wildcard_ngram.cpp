@@ -19,8 +19,7 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include "iresearch/search/common/all_docs_score.hpp"
-#include "iresearch/search/lead/impl.hpp"
-#include "iresearch/search/lead/make.hpp"
+#include "iresearch/search/common/wildcard_ngram_of.hpp"
 #include "iresearch/search/scored/detail/walk.hpp"
 #include "iresearch/search/scored/make.hpp"
 #include "iresearch/search/wildcard_ngram_filter.hpp"
@@ -30,18 +29,18 @@ namespace irs::scored {
 Root::ptr MakeWildcardNGram(const WildcardNGramQuery& query,
                             const Context& ctx) {
   SDB_ASSERT(query.Kind() != QueryKind::Empty);
-  auto node = lead::MakeWildcardNGramDocs(query);
-  if (!node) {
-    return {};
-  }
   const auto record = query.Stats(ScoredOf(ctx));
   const auto value = search::AllDocsScore(
     query.Segment(), search::ScoreArgs{.scorer = record.scorer,
                                        .stats = record.stats,
                                        .fetcher = &ctx.fetcher,
                                        .boost = query.Boost()});
-  return MakeShape<detail::ConstantWalk, lead::Erased>(
-    ctx, value, lead::Erased{std::move(node)});
+  if (ctx.table != nullptr) {
+    return search::MakeWildcardNGram<FilteredConstantWalk, Root::ptr>(
+      query, 0, ctx.table, value);
+  }
+  return search::MakeWildcardNGram<PlainConstantWalk, Root::ptr>(
+    query, 0, utils::Empty{}, value);
 }
 
 }  // namespace irs::scored

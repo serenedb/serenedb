@@ -22,6 +22,7 @@
 
 #include <absl/hash/hash.h>
 
+#include <algorithm>
 #include <cstring>
 #include <memory>
 #include <vector>
@@ -129,6 +130,51 @@ class MultiTermCollector final : public FieldPrepareCollector {
 
   size_t _slot;
   std::vector<Thread> _threads;
+};
+
+class BlendedTermsCollector final : public FieldPrepareCollector {
+ public:
+  BlendedTermsCollector(const Scorer* scorer, StatsArena& stats,
+                        uint32_t threads)
+    : FieldPrepareCollector{scorer, stats, threads}, _threads(threads) {}
+
+  void Collect(uint32_t thread, bytes_view term, const PostingMeta& meta) {
+    SDB_ASSERT(thread < _threads.size());
+    auto& terms = _threads[thread];
+    auto it = terms.find(term);
+    if (it == terms.end()) {
+      it = terms.emplace(bstring{term}, TermCollector{}).first;
+    }
+    it->second.Collect(meta);
+  }
+
+  void Finish(StatsArena&) final {
+    if (_scorer == nullptr) {
+      return;
+    }
+    const auto field = _counters.TotalField();
+    Terms merged;
+    for (auto& terms : _threads) {
+      for (auto& [term, counter] : terms) {
+        auto& one = merged[term];
+        one.docs_with_term += counter.docs_with_term;
+        one.total_term_freq += counter.total_term_freq;
+      }
+    }
+    TermCollector blended;
+    for (const auto& [term, counter] : merged) {
+      blended.docs_with_term =
+        std::max(blended.docs_with_term, counter.docs_with_term);
+      blended.total_term_freq += counter.total_term_freq;
+    }
+    _scorer->collect(const_cast<byte_type*>(_stats), &field, &blended);
+  }
+
+ private:
+  using Terms =
+    sdb::containers::NodeHashMap<bstring, TermCollector, TermHash, TermEq>;
+
+  std::vector<Terms> _threads;
 };
 
 class MultiTermVisitor : util::Noncopyable {

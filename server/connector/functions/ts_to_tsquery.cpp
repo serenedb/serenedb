@@ -239,6 +239,8 @@ void FromToTsquery(BoolTarget parent, const FilterContext& ctx,
     root, PickPerKindFieldId(column_info, duckdb::LogicalTypeId::VARCHAR),
     ctx.tokenizer};
   parser_ctx.strict_field = true;
+  parser_ctx.fuzzy_max_terms =
+    column_info.levenshtein_max_terms.value_or(ctx.levenshtein_max_terms);
   if (!sdb::ParseQuery(parser_ctx, text)) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),

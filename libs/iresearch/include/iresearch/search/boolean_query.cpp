@@ -207,6 +207,10 @@ void BooleanBuilder::Add(QueryBuilder::ptr query, Occur occur) {
   }
   if (kind == QueryKind::Terms && SplicesTerms(occur)) {
     const auto& multi = sdb::basics::downCast<MultiTermQuery>(*query);
+    if (Scores(*query, occur) && multi.MergeType() != _merge_type) {
+      bucket.filters.emplace_back(std::move(query));
+      return;
+    }
     const auto& state = multi.State();
     const auto boost = multi.Boost();
     if (occur == Occur::MustNot) {
@@ -231,7 +235,7 @@ const BooleanQuery* BooleanBuilder::Dissolves(const QueryBuilder& child,
     return nullptr;
   }
   const auto& nested = sdb::basics::downCast<BooleanQuery>(child);
-  if (occur != Occur::MustNot && nested.MergeType() != _merge_type) {
+  if (Scores(child, occur) && nested.MergeType() != _merge_type) {
     return nullptr;
   }
   const auto nested_msm = nested.DeclaredMinShouldMatch();

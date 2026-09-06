@@ -163,6 +163,10 @@ class BooleanBuilder {
     return occur == Occur::MustNot || (occur == Occur::Should && _msm == 1);
   }
 
+  bool Scores(const QueryBuilder& child, Occur occur) const noexcept {
+    return _collects && occur != Occur::MustNot && child.Scores();
+  }
+
   const BooleanQuery* Dissolves(const QueryBuilder& child,
                                 Occur occur) const noexcept;
 

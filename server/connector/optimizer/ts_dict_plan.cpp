@@ -269,8 +269,7 @@ duckdb::unique_ptr<duckdb::Expression> PushdownTsDictCall(
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                     ERR_MSG(fn, "(): column not found in index"));
   }
-  const auto* info = catalog::InvertedInfo(*found.bind_data->inverted_index)
-                       .FindColumnInfo(col_id);
+  const auto* info = found.bind_data->ScannedIndex().FindColumnInfo(col_id);
   const auto& col_type = col_ref->GetReturnType();
   const auto text_type = [&] {
     switch (col_type.id()) {
@@ -296,8 +295,7 @@ duckdb::unique_ptr<duckdb::Expression> PushdownTsDictCall(
 
   const auto [kind, agg_name] = *fn_info;
   const auto read_field =
-    catalog::InvertedInfo(*found.bind_data->inverted_index)
-      .TermFieldForColumn(col_id);
+    found.bind_data->ScannedIndex().TermFieldForColumn(col_id);
   return MakeTsDictAggregate(root, context, found, read_field,
                              static_cast<irs::field_id>(col_id), kind, agg_name,
                              col_ref->Binding().table_index, agg.GetAlias());
@@ -889,12 +887,11 @@ std::optional<KeywordDictAgg> ClassifyKeywordDictAgg(
   if (col_id == catalog::kInvalidColumnId) {
     return std::nullopt;
   }
-  const auto* index = found.bind_data->inverted_index.get();
-  if (!index) {
+  if (!found.bind_data->IsIndexRelation()) {
     return std::nullopt;
   }
   const auto field_id = static_cast<irs::field_id>(col_id);
-  if (!catalog::InvertedInfo(*index).IsKeywordField(context, field_id)) {
+  if (!found.bind_data->ScannedIndex().IsKeywordField(context, field_id)) {
     return std::nullopt;
   }
   if (is_list && !found.bind_data->IsColumnNotNull(col_id)) {
@@ -943,11 +940,11 @@ bool TsDictFacetPushdown::AdoptScan(std::optional<FoundScan> here) {
   if (_index) {
     return true;
   }
-  if (!here->bind_data->inverted_index) {
+  if (!here->bind_data->IsIndexRelation()) {
     return false;
   }
   _found = *here;
-  _index = &catalog::InvertedInfo(*here->bind_data->inverted_index);
+  _index = &here->bind_data->ScannedIndex();
   return true;
 }
 

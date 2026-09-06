@@ -146,6 +146,7 @@ enum class ScanEntryKind : uint8_t {
   // A TableEngine::Search table: its iresearch store IS the table, so every
   // column is covered in `.col` and there is no separate lookup source.
   SearchTable,
+  SearchTableIndex,
 };
 
 struct SereneDBScanBindData : public duckdb::FunctionData {
@@ -159,8 +160,7 @@ struct SereneDBScanBindData : public duckdb::FunctionData {
   duckdb::optional_ptr<duckdb::TableCatalogEntry> table_entry;
   ScanEntryKind entry_kind = ScanEntryKind::BaseTable;
 
-  std::shared_ptr<const catalog::Index> inverted_index;
-  std::vector<std::shared_ptr<const catalog::Index>> search_indexes;
+  std::vector<std::shared_ptr<const catalog::Index>> indexes;
 
   // The iresearch snapshot plus the query's search configuration (stored
   // filter, scorer, offsets, ts-dict requests). Every scan bound through this
@@ -253,7 +253,16 @@ struct SereneDBScanBindData : public duckdb::FunctionData {
     return entry_kind == ScanEntryKind::InvertedIndex;
   }
   bool IsSearchTableEntry() const noexcept {
-    return entry_kind == ScanEntryKind::SearchTable;
+    return entry_kind == ScanEntryKind::SearchTable ||
+           entry_kind == ScanEntryKind::SearchTableIndex;
+  }
+  bool IsIndexRelation() const noexcept {
+    return entry_kind == ScanEntryKind::InvertedIndex ||
+           entry_kind == ScanEntryKind::SearchTableIndex;
+  }
+  const catalog::InvertedIndex& ScannedIndex() const noexcept {
+    SDB_ASSERT(IsIndexRelation() && !indexes.empty());
+    return catalog::InvertedInfo(*indexes.front());
   }
   std::vector<const catalog::InvertedIndex*> InvertedIndexes() const;
 

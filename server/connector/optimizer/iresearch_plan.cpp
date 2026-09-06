@@ -622,7 +622,7 @@ duckdb::unique_ptr<duckdb::Expression> PushdownDistanceCall(
     return nullptr;
   }
 
-  const auto& index = catalog::InvertedInfo(*found->bind_data->inverted_index);
+  const auto& index = found->bind_data->ScannedIndex();
   const auto call_field_id = ResolveAnnTargetFieldId(
     *col_arg, *found->get, *found->bind_data, index, context);
   if (!irs::field_limits::valid(call_field_id)) {
@@ -739,8 +739,8 @@ duckdb::unique_ptr<duckdb::Expression> PushdownOffsetsCall(
       ERR_MSG("ts_offsets(): column '", col_name(), "' not found in table"));
   }
 
-  const auto* col_info = catalog::InvertedInfo(*found.bind_data->inverted_index)
-                           .FindColumnInfo(target_col_id);
+  const auto* col_info =
+    found.bind_data->ScannedIndex().FindColumnInfo(target_col_id);
   if (!col_info) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
@@ -750,12 +750,11 @@ duckdb::unique_ptr<duckdb::Expression> PushdownOffsetsCall(
   const bool offs_stored =
     col_info->features.HasFeatures(irs::IndexFeatures::Offs);
   const auto read_field = static_cast<catalog::ColumnId>(
-    catalog::InvertedInfo(*found.bind_data->inverted_index)
-      .TermFieldForColumn(target_col_id));
+    found.bind_data->ScannedIndex().TermFieldForColumn(target_col_id));
 
   if (is_text && !offs_stored) {
     auto bind = duckdb::make_uniq<connector::OffsetsBindData>();
-    bind->inverted_index = found.bind_data->inverted_index;
+    bind->inverted_index = found.bind_data->indexes.front();
     bind->column_id = target_col_id;
     bind->limit = limit;
     search_scan.offsets.push_back({.column_id = target_col_id,
@@ -1114,7 +1113,7 @@ bool TryClaimSearchTableFilter(
   duckdb::vector<duckdb::unique_ptr<duckdb::Expression>>& filters,
   duckdb::LogicalGet& get, connector::SereneDBScanBindData& bind_data,
   const search::SearchTable& shard, duckdb::ClientContext& context) {
-  bind_data.search_indexes = catalog::RelationInvertedIndexes(
+  bind_data.indexes = catalog::RelationInvertedIndexes(
     &context, shard.GetSchemaId(), shard.GetTableId());
   const auto indexes = bind_data.InvertedIndexes();
   // Hold one immutable config snapshot for the whole claim so entry pointers
@@ -1170,7 +1169,7 @@ void IResearchPushdownComplexFilter(
   }
   auto& bind_data = bind_data_ptr->Cast<connector::SereneDBScanBindData>();
   auto& ss = bind_data;
-  if (!bind_data.inverted_index) {
+  if (!bind_data.IsIndexRelation()) {
     if (!bind_data.stored_filter && bind_data.IsSearchTableEntry() &&
         bind_data.GetKind() == connector::SereneDBScanBindData::Kind::Table) {
       const auto& table_bd = bind_data.As<connector::TableScanBindData>();
@@ -1186,8 +1185,7 @@ void IResearchPushdownComplexFilter(
     return;
   }
   if (ss.TsDictMode()) {
-    ClaimTsDictFilter(filters, get, bind_data, ss,
-                      catalog::InvertedInfo(*bind_data.inverted_index),
+    ClaimTsDictFilter(filters, get, bind_data, ss, bind_data.ScannedIndex(),
                       context);
     return;
   }

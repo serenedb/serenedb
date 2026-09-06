@@ -81,6 +81,49 @@ ts	svc	body
 2025-09-23 00:00:07+00	svc1	all good in module 3
 2025-09-23 00:00:11+00	svc2	all good in module 3
 
+query
+EXPLAIN SELECT count(*) FROM mt WHERE body @@ ts_phrase('module 2') AND svc = 'svc0';
+----
+QUERY PLAN
+╭─ UNGROUPED_AGGREGATE ────────────────────────────────────────────╮
+│ Aggregates: count_star()                                         │
+│ ~1 row                                                           │
+╰─────────────────────────────────┬────────────────────────────────╯
+╭─ IRESEARCH_SCAN ────────────────┴────────────────────────────────╮
+│ Index: mt                                                        │
+│ Lookup: search                                                   │
+│ Index Filter:                                                    │
+│ ╭─ And ──────────╮                                               │
+│ ╰────────┬───────╯                                               │
+│          ├────────────────────────────────╮                      │
+│ ╭─ Terms ┴───────╮  ╭─ Phrase ────────────┴────────────────────╮ │
+│ │ Field: svc     │  │ Field: body(string)                      │ │
+│ │ Values: 'svc0' │  │ Parts: Term:module(0, 0); Term:2(1, 1);  │ │
+│ ╰────────────────╯  ╰──────────────────────────────────────────╯ │
+│ Output: row-count only                                           │
+│ ~4 rows                                                          │
+╰──────────────────────────────────────────────────────────────────╯
+
+query
+EXPLAIN SELECT count(*) FROM mt_expr WHERE ts_split_by_non_alpha(body, true) @@ ts_phrase('error');
+----
+QUERY PLAN
+╭─ UNGROUPED_AGGREGATE ────────────────────────╮
+│ Aggregates: count_star()                     │
+│ ~1 row                                       │
+╰───────────────────────┬──────────────────────╯
+╭─ IRESEARCH_SCAN ──────┴──────────────────────╮
+│ Index: mt_expr                               │
+│ Lookup: search                               │
+│ Index Filter:                                │
+│ ╭─ Term ───────────────────────────────────╮ │
+│ │ Field: ts_split_by_non_alpha(body, true) │ │
+│ │ Value: error                             │ │
+│ ╰──────────────────────────────────────────╯ │
+│ Output: row-count only                       │
+│ ~4 rows                                      │
+╰──────────────────────────────────────────────╯
+
 statement ok
 CREATE TABLE mt_pk (id BIGINT PRIMARY KEY, svc TEXT NOT NULL, body TEXT, n INT) WITH (storage = 'search', compaction_interval = 0);
 
@@ -103,10 +146,50 @@ id	svc
 3	svc0
 
 query
+EXPLAIN SELECT id FROM mt_pk WHERE id = 3 AND svc = 'svc0';
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ───────────────────────────╮
+│ Index: mt_pk                               │
+│ Lookup: search                             │
+│ Index Filter:                              │
+│ ╭─ And ──────────────╮                     │
+│ ╰──────────┬─────────╯                     │
+│            ├─────────────────────╮         │
+│ ╭─ Terms ──┴─────────╮  ╭─ Terms ┴───────╮ │
+│ │ Field: id(numeric) │  │ Field: svc     │ │
+│ │ Values: 3          │  │ Values: 'svc0' │ │
+│ ╰────────────────────╯  ╰────────────────╯ │
+│ Projections: id                            │
+│ ~4 rows                                    │
+╰────────────────────────────────────────────╯
+
+query
 SELECT count(*) AS c FROM mt_pk WHERE svc = 'svc0' AND n > 100;
 ----
 c
 4
+
+query
+EXPLAIN SELECT count(*) FROM mt_pk WHERE svc = 'svc0' AND n > 100;
+----
+QUERY PLAN
+╭─ UNGROUPED_AGGREGATE ────╮
+│ Aggregates: count_star() │
+│ ~1 row                   │
+╰─────────────┬────────────╯
+╭─ IRESEARCH_SCAN ─────────╮
+│ Index: mt_pk             │
+│ Lookup: search           │
+│ Index Filter:            │
+│ ╭─ Term ──────╮          │
+│ │ Field: svc  │          │
+│ │ Value: svc0 │          │
+│ ╰─────────────╯          │
+│ Column Filter: n > 100   │
+│ Output: row-count only   │
+│ ~1 row                   │
+╰──────────────────────────╯
 
 query
 SELECT count(*) AS c FROM mt_pk WHERE svc <> 'svc0';
@@ -115,10 +198,55 @@ c
 16
 
 query
+EXPLAIN SELECT count(*) FROM mt_pk WHERE svc <> 'svc0';
+----
+QUERY PLAN
+╭─ UNGROUPED_AGGREGATE ────╮
+│ Aggregates: count_star() │
+│ ~1 row                   │
+╰─────────────┬────────────╯
+╭─ IRESEARCH_SCAN ─────────╮
+│ Index: mt_pk             │
+│ Lookup: search           │
+│ Index Filter:            │
+│ ╭─ Not ──────────╮       │
+│ ╰────────┬───────╯       │
+│ ╭─ Terms ┴───────╮       │
+│ │ Field: svc     │       │
+│ │ Values: 'svc0' │       │
+│ ╰────────────────╯       │
+│ Output: row-count only   │
+│ ~4 rows                  │
+╰──────────────────────────╯
+
+query
 SELECT count(*) AS c FROM mt_pk WHERE body <> 'error in module 0';
 ----
 c
 18
+
+query
+EXPLAIN SELECT count(*) FROM mt_pk WHERE body <> 'error in module 0';
+----
+QUERY PLAN
+╭─ UNGROUPED_AGGREGATE ──────────────────────────────────╮
+│ Aggregates: count_star()                               │
+│ ~1 row                                                 │
+╰────────────────────────────┬───────────────────────────╯
+╭─ IRESEARCH_SCAN ───────────┴───────────────────────────╮
+│ Index: mt_pk                                           │
+│ Lookup: search                                         │
+│ Index Filter:                                          │
+│ ╭─ Not ───────────────────────╮                        │
+│ ╰──────────────┬──────────────╯                        │
+│                ├───────────────────────────╮           │
+│ ╭─ Terms ──────┴──────────────╮  ╭─ Terms ─┴─────────╮ │
+│ │ Field: body                 │  │ Field: body(null) │ │
+│ │ Values: 'error in module 0' │  ╰───────────────────╯ │
+│ ╰─────────────────────────────╯                        │
+│ Output: row-count only                                 │
+│ ~4 rows                                                │
+╰────────────────────────────────────────────────────────╯
 
 statement ok
 CREATE TABLE mt_tx (id INT, body TEXT);

@@ -45,6 +45,7 @@
 #include <iresearch/search/vector_radius_filter.hpp>
 #include <iresearch/search/vector_similarity_filter.hpp>
 #include <ranges>
+#include <span>
 
 #include "catalog/ddl/catalog.h"
 #include "catalog/entry/duckdb_index_scan_entry.h"
@@ -413,21 +414,35 @@ SereneDBScanBindData::InvertedIndexes() const {
 
 namespace {
 
-auto MakeFieldNameResolver(const SereneDBScanBindData& bind_data,
-                           const catalog::InvertedIndex& index) {
-  return [&bind_data, &index](catalog::ColumnId col_id) -> std::string {
+const catalog::InvertedIndex* OwningIndex(
+  std::span<const catalog::InvertedIndex* const> indexes, irs::field_id fid) {
+  const auto it = absl::c_find_if(indexes, [&](const auto* index) -> bool {
+    return index->LookupField(fid).entry;
+  });
+  return it == indexes.end() ? nullptr : *it;
+}
+
+auto MakeFieldNameResolver(
+  const SereneDBScanBindData& bind_data,
+  std::span<const catalog::InvertedIndex* const> indexes) {
+  return [&bind_data, indexes](catalog::ColumnId col_id) -> std::string {
     const auto fid = static_cast<irs::field_id>(col_id);
+    const auto* index = OwningIndex(indexes, fid);
     auto base = std::string{bind_data.ColumnNameById(col_id)};
     const auto column_type = bind_data.ColumnTypeById(col_id);
     const bool found_type = column_type.id() != duckdb::LogicalTypeId::INVALID;
-    const auto lookup = index.LookupField(fid);
+    const auto lookup =
+      index ? index->LookupField(fid) : catalog::InvertedIndex::FieldLookup{};
     auto entry_base = [&](irs::field_id entry_fid) {
       std::string s;
-      const auto* expr = index.ExpressionByFieldId(entry_fid);
+      const auto* expr = index->ExpressionByFieldId(entry_fid);
       if (expr && !expr->pretty_printed.empty()) {
         s = expr->pretty_printed;
       } else {
         s = bind_data.ColumnNameById(catalog::ColumnId{entry_fid});
+      }
+      if (s.empty()) {
+        s = bind_data.ColumnNameById(index->ColumnForTermField(entry_fid));
       }
       if (s.empty()) {
         s = absl::StrCat("col", entry_fid);
@@ -443,13 +458,13 @@ auto MakeFieldNameResolver(const SereneDBScanBindData& bind_data,
     if (lookup.entry) {
       const auto& entry = *lookup.entry;
       if (fid == lookup.entry_field_id) {
-        const auto* expr = index.ExpressionByFieldId(fid);
+        const auto* expr = index->ExpressionByFieldId(fid);
         if (base.empty() && expr && !expr->pretty_printed.empty()) {
           base = expr->pretty_printed;
         }
         if (base.empty()) {
           base = std::string{
-            bind_data.ColumnNameById(index.ColumnForTermField(fid))};
+            bind_data.ColumnNameById(index->ColumnForTermField(fid))};
         }
         if (base.empty()) {
           base = absl::StrCat("col", fid);
@@ -502,45 +517,48 @@ catalog::term_dict::Kind ClassifyTerms(const duckdb::LogicalType& type) {
   }
 }
 
-auto MakeFieldKindResolver(const SereneDBScanBindData& bind_data,
-                           const catalog::InvertedIndex& index) {
-  return
-    [&bind_data, &index](catalog::ColumnId col_id) -> catalog::term_dict::Kind {
-      using catalog::term_dict::Kind;
-      const auto fid = static_cast<irs::field_id>(col_id);
-      const auto lookup = index.LookupField(fid);
-      if (lookup.entry_field_id == catalog::term_dict::kPKFieldId) {
-        return Kind::NumericI64;
+auto MakeFieldKindResolver(
+  const SereneDBScanBindData& bind_data,
+  std::span<const catalog::InvertedIndex* const> indexes) {
+  return [&bind_data,
+          indexes](catalog::ColumnId col_id) -> catalog::term_dict::Kind {
+    using catalog::term_dict::Kind;
+    const auto fid = static_cast<irs::field_id>(col_id);
+    const auto* index = OwningIndex(indexes, fid);
+    const auto lookup =
+      index ? index->LookupField(fid) : catalog::InvertedIndex::FieldLookup{};
+    if (lookup.entry_field_id == catalog::term_dict::kPKFieldId) {
+      return Kind::NumericI64;
+    }
+    if (lookup.entry) {
+      const auto& entry = *lookup.entry;
+      if (fid == lookup.entry_field_id) {
+        const auto* expr = index->ExpressionByFieldId(fid);
+        if (expr) {
+          return ClassifyTerms(expr->return_type);
+        }
+        const auto column_type = bind_data.ColumnTypeById(col_id);
+        if (column_type.id() != duckdb::LogicalTypeId::INVALID) {
+          return ClassifyTerms(column_type);
+        }
+        return Kind::String;
       }
-      if (lookup.entry) {
-        const auto& entry = *lookup.entry;
-        if (fid == lookup.entry_field_id) {
-          const auto* expr = index.ExpressionByFieldId(fid);
-          if (expr) {
-            return ClassifyTerms(expr->return_type);
-          }
-          const auto column_type = bind_data.ColumnTypeById(col_id);
-          if (column_type.id() != duckdb::LogicalTypeId::INVALID) {
-            return ClassifyTerms(column_type);
-          }
-          return Kind::String;
-        }
-        if (fid == entry.null_field_id) {
-          return Kind::Null;
-        }
-        if (fid == entry.bool_field_id) {
-          return Kind::Bool;
-        }
-        if (fid == entry.numeric_field_id) {
-          return Kind::NumericF64;
-        }
+      if (fid == entry.null_field_id) {
+        return Kind::Null;
       }
-      const auto column_type = bind_data.ColumnTypeById(col_id);
-      if (column_type.id() != duckdb::LogicalTypeId::INVALID) {
-        return ClassifyTerms(column_type);
+      if (fid == entry.bool_field_id) {
+        return Kind::Bool;
       }
-      return Kind::Unsupported;
-    };
+      if (fid == entry.numeric_field_id) {
+        return Kind::NumericF64;
+      }
+    }
+    const auto column_type = bind_data.ColumnTypeById(col_id);
+    if (column_type.id() != duckdb::LogicalTypeId::INVALID) {
+      return ClassifyTerms(column_type);
+    }
+    return Kind::Unsupported;
+  };
 }
 
 std::string_view VectorMetricFunctionName(irs::VectorMetric metric) {
@@ -576,53 +594,47 @@ void SereneDBScanBindData::AppendSummary(
     }
     return ColumnNameFor(bind, id);
   };
-  if (bind.inverted_index) {
-    const auto name_of =
-      MakeFieldNameResolver(bind, catalog::InvertedInfo(*bind.inverted_index));
-    const auto kind_of =
-      MakeFieldKindResolver(bind, catalog::InvertedInfo(*bind.inverted_index));
-    const bool vector_is_range =
-      vector_scorer &&
-      vector_scorer->radius != std::numeric_limits<float>::max();
-    if (vector_is_range) {
-      const auto display =
-        MakeVectorFilter(*vector_scorer, stored_filter, vector_scorer->radius);
-      out.insert("Index Filter", duckdb::ExplainValue(irs::ToExplainNode(
-                                   *display, name_of, kind_of)));
-    } else if (stored_filter) {
-      out.insert("Index Filter", duckdb::ExplainValue(irs::ToExplainNode(
-                                   *stored_filter, name_of, kind_of)));
+  const auto indexes = bind.InvertedIndexes();
+  const auto name_of = MakeFieldNameResolver(bind, indexes);
+  const auto kind_of = MakeFieldKindResolver(bind, indexes);
+  const bool vector_is_range =
+    vector_scorer && vector_scorer->radius != std::numeric_limits<float>::max();
+  if (vector_is_range) {
+    const auto display =
+      MakeVectorFilter(*vector_scorer, stored_filter, vector_scorer->radius);
+    out.insert("Index Filter", duckdb::ExplainValue(irs::ToExplainNode(
+                                 *display, name_of, kind_of)));
+  } else if (stored_filter) {
+    out.insert("Index Filter", duckdb::ExplainValue(irs::ToExplainNode(
+                                 *stored_filter, name_of, kind_of)));
+  }
+  for (const auto& req : ts_dicts) {
+    if (!req.having_filter) {
+      continue;
     }
-    for (const auto& req : ts_dicts) {
-      if (!req.having_filter) {
-        continue;
+    // TODO(gnusi): Maybe different name? But what?
+    auto key =
+      ts_dicts.size() == 1
+        ? std::string{"Index Filter"}
+        : absl::StrCat(
+            "Index Filter(",
+            display_field(static_cast<catalog::ColumnId>(req.field_id)), ")");
+    out.insert(std::move(key), duckdb::ExplainValue(irs::ToExplainNode(
+                                 *req.having_filter, name_of, kind_of)));
+  }
+  if (vector_scorer && !vector_is_range) {
+    const auto col_id = static_cast<catalog::ColumnId>(vector_scorer->field_id);
+    const auto fname = name_of(col_id);
+    auto ctype = bind.ColumnTypeById(col_id);
+    if (ctype.id() == duckdb::LogicalTypeId::INVALID) {
+      if (const auto* expr = catalog::InvertedInfo(*bind.inverted_index)
+                               .ExpressionByFieldId(vector_scorer->field_id)) {
+        ctype = expr->return_type;
       }
-      // TODO(gnusi): Maybe different name? But what?
-      auto key =
-        ts_dicts.size() == 1
-          ? std::string{"Index Filter"}
-          : absl::StrCat(
-              "Index Filter(",
-              display_field(static_cast<catalog::ColumnId>(req.field_id)), ")");
-      out.insert(std::move(key), duckdb::ExplainValue(irs::ToExplainNode(
-                                   *req.having_filter, name_of, kind_of)));
     }
-    if (vector_scorer && !vector_is_range) {
-      const auto col_id =
-        static_cast<catalog::ColumnId>(vector_scorer->field_id);
-      const auto fname = name_of(col_id);
-      auto ctype = bind.ColumnTypeById(col_id);
-      if (ctype.id() == duckdb::LogicalTypeId::INVALID) {
-        if (const auto* expr =
-              catalog::InvertedInfo(*bind.inverted_index)
-                .ExpressionByFieldId(vector_scorer->field_id)) {
-          ctype = expr->return_type;
-        }
-      }
-      out.insert("Score",
-                 absl::StrCat(VectorMetricFunctionName(vector_scorer->metric),
-                              "(", fname, ", ", ctype.ToString(), ")"));
-    }
+    out.insert("Score",
+               absl::StrCat(VectorMetricFunctionName(vector_scorer->metric),
+                            "(", fname, ", ", ctype.ToString(), ")"));
   }
   std::unique_ptr<irs::Scorer> query_scorer;
   if (text_scorer) {

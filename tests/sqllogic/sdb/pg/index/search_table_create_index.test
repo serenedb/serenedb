@@ -68,6 +68,11 @@ QUERY PLAN
 ╭─ IRESEARCH_SCAN ─╮
 │ Index: t         │
 │ Lookup: search   │
+│ Index Filter:    │
+│ ╭─ Term ─────╮   │
+│ │ Field: tag │   │
+│ │ Value: red │   │
+│ ╰────────────╯   │
 │ Projections: id  │
 │ ~1 row           │
 ╰──────────────────╯

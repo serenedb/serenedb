@@ -1,0 +1,51 @@
+# A view over an ATTACHed duckdb table may spell quoted mixed-case columns in
+# lowercase (the catalog binds them case-insensitively). Materialising a real
+# column through the index must resolve the view's names the same way.
+control substitution on
+
+
+statement ok
+DETACH DATABASE IF EXISTS dbcase;
+
+
+statement ok
+ATTACH '${__TEST_DIR__}/dbcase.duckdb' AS dbcase;
+
+
+statement ok
+CREATE TABLE dbcase.main.docs("Id" INTEGER, "Body" TEXT, "Score" INTEGER);
+
+
+statement ok
+INSERT INTO dbcase.main.docs VALUES
+  (1, 'alpha cat runs', 10),
+  (2, 'beta dog sleeps', 20),
+  (3, 'gamma cat jumps', 30);
+
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY view_attached_case_en(template = 'keyword', frequency = true, norm = true, position = true);
+
+
+statement ok
+CREATE VIEW v_att_case AS SELECT id AS I, body AS Body, score AS S FROM dbcase.main.docs;
+
+
+statement ok
+CREATE INDEX v_att_case_idx ON v_att_case USING inverted ((ts_split_by_non_alpha(Body, true)) view_attached_case_en) INCLUDE (S);
+
+
+query
+SELECT Body FROM v_att_case_idx ORDER BY I;
+----
+body
+alpha cat runs
+beta dog sleeps
+gamma cat jumps
+
+query
+SELECT I, S, Body FROM v_att_case_idx WHERE ts_split_by_non_alpha(Body, true) @@ 'cat' ORDER BY I;
+----
+i	s	body
+1	10	alpha cat runs
+3	30	gamma cat jumps

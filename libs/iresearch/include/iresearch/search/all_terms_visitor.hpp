@@ -24,8 +24,8 @@
 
 #include "basics/noncopyable.hpp"
 #include "iresearch/formats/formats.hpp"
-#include "iresearch/search/collectors.hpp"
 #include "iresearch/search/filter_visitor.hpp"
+#include "iresearch/search/multiterm_collector.hpp"
 #include "iresearch/search/scorer.hpp"
 #include "iresearch/search/states/multiterm_state.hpp"
 
@@ -34,9 +34,9 @@ namespace irs {
 template<typename State>
 class AllTermsVisitor : public FilterVisitor, util::Noncopyable {
  public:
-  AllTermsVisitor(State& state, ByTermsCollector* collector,
-                  uint32_t thread) noexcept
-    : _state{state}, _collector{collector}, _thread{thread} {}
+  AllTermsVisitor(State& state, BlendedTermsCollector* collector,
+                  uint32_t thread, const byte_type* stats) noexcept
+    : _state{state}, _collector{collector}, _stats{stats}, _thread{thread} {}
 
   void Prepare(const SubReader&, const TermReader& field,
                TermIterator& terms) noexcept final {
@@ -48,24 +48,20 @@ class AllTermsVisitor : public FilterVisitor, util::Noncopyable {
   bool Visit(score_t boost) final {
     SDB_ASSERT(_terms);
     const auto& meta = _terms->cookie();
-    const byte_type* stats = nullptr;
     if (_collector) {
-      _collector->Term(_thread, _stat_index).Collect(meta);
-      stats = _collector->Record(_stat_index).stats;
+      _collector->Collect(_thread, _terms->value(), meta);
     }
 
-    _state.Push(meta, boost, stats);
+    _state.Push(meta, boost, _stats);
     return true;
   }
 
-  void SetIndex(uint32_t term_idx) noexcept { _stat_index = term_idx; }
-
  private:
   State& _state;
-  ByTermsCollector* _collector;
+  BlendedTermsCollector* _collector;
+  const byte_type* _stats;
   uint32_t _thread;
   TermIterator* _terms{};
-  uint32_t _stat_index = 0;
 };
 
 }  // namespace irs

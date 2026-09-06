@@ -104,6 +104,7 @@ void AssertFuzzy(const irs::Filter& f, irs::field_id field,
   EXPECT_EQ(field, fuzzy.field_id());
   EXPECT_EQ(value, irs::ViewCast<char>(irs::bytes_view{fuzzy.options().term}));
   EXPECT_EQ(distance, fuzzy.options().max_distance);
+  EXPECT_EQ(50, fuzzy.options().max_terms);
   if (boost > 0.0f) {
     EXPECT_FLOAT_EQ(boost, fuzzy.GetBoost());
   }
@@ -286,6 +287,15 @@ TEST_F(LuceneParserTest, FuzzyTermWithDistance) {
   ASSERT_EQ(1, Optional().size());
   ASSERT_EQ(1, Optional().filters.size());
   AssertFuzzy(*Optional().filters[0], kFieldId, "hello", 1);
+}
+
+TEST_F(LuceneParserTest, FuzzyTermLimitFromContext) {
+  ctx.fuzzy_max_terms = 7;
+  ASSERT_TRUE(sdb::ParseQuery(ctx, "hello~1"));
+  ASSERT_EQ(1, Optional().filters.size());
+  const auto& fuzzy =
+    sdb::basics::downCast<irs::ByEditDistance>(*Optional().filters[0]);
+  EXPECT_EQ(7, fuzzy.options().max_terms);
 }
 
 TEST_F(LuceneParserTest, RangeInclusive) {

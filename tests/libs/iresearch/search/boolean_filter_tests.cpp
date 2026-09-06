@@ -4570,6 +4570,66 @@ TEST_P(BooleanFilterTestCase, and_or_no_collector) {
   }
 }
 
+TEST_P(BooleanFilterTestCase, nested_or_dissolves_unless_scored_merge_differs) {
+  {
+    tests::JsonDocGenerator gen(resource("simple_sequential.json"),
+                                &tests::GenericJsonFieldFactory);
+    add_segment(gen);
+  }
+  auto rdr = open_reader();
+  tests::sort::Boost sort;
+
+  const auto make = [](irs::ScoreMergeType nested_merge) {
+    auto root = std::make_unique<irs::BooleanFilter>();
+    auto& nested = AddBool(*root, irs::Occur::Should);
+    nested.SetMergeType(nested_merge);
+    AddTerm(nested, irs::Occur::Should, kFieldName, "A");
+    AddTerm(nested, irs::Occur::Should, kFieldName, "B");
+    AsDisjunction(nested);
+    AddTerm(*root, irs::Occur::Should, kFieldName, "C");
+    AsDisjunction(*root);
+    return root;
+  };
+
+  using Sizes = std::pair<size_t, size_t>;
+  const Sizes kept{1, 1};
+  const Sizes flat{3, 0};
+
+  const auto prepared_should = [&](const irs::Filter& filter,
+                                   const irs::Scorer* order) -> Sizes {
+    tests::PreparedFilter prepared{filter, rdr, order};
+    const auto* query = prepared.Query(0);
+    if (query == nullptr || query->Kind() != irs::QueryKind::Boolean) {
+      ADD_FAILURE() << "not a boolean query";
+      return {};
+    }
+    const auto& should =
+      sdb::basics::downCast<irs::BooleanQuery>(*query).Bucket(
+        irs::Occur::Should);
+    return {should.postings.size(), should.filters.size()};
+  };
+  EXPECT_EQ(kept, prepared_should(*make(irs::ScoreMergeType::Max), &sort));
+  EXPECT_EQ(flat, prepared_should(*make(irs::ScoreMergeType::Sum), &sort));
+  EXPECT_EQ(flat, prepared_should(*make(irs::ScoreMergeType::Max), nullptr));
+
+  const auto optimized_should = [](std::unique_ptr<irs::BooleanFilter> root,
+                                   bool scored) -> Sizes {
+    irs::Filter::ptr filter = std::move(root);
+    irs::Optimize(filter, {.scored = scored});
+    if (filter->type() != irs::Type<irs::BooleanFilter>::id()) {
+      ADD_FAILURE() << "not a boolean filter";
+      return {};
+    }
+    const auto& should =
+      sdb::basics::downCast<irs::BooleanFilter>(*filter).Bucket(
+        irs::Occur::Should);
+    return {should.terms.size(), should.filters.size()};
+  };
+  EXPECT_EQ(kept, optimized_should(make(irs::ScoreMergeType::Max), true));
+  EXPECT_EQ(flat, optimized_should(make(irs::ScoreMergeType::Sum), true));
+  EXPECT_EQ(flat, optimized_should(make(irs::ScoreMergeType::Max), false));
+}
+
 static constexpr auto kTestDirs = tests::GetDirectories<tests::kTypesDefault>();
 
 INSTANTIATE_TEST_SUITE_P(boolean_filter_test, BooleanFilterTestCase,

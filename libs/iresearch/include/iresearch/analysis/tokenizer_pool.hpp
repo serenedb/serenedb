@@ -36,13 +36,6 @@
 
 namespace irs::analysis {
 
-// The reuse pool of constructed tokenizer instances for one dictionary: an
-// entry of the database's SharedObjectCache keyed by the dictionary's id and
-// retained by the catalog object, so it lives exactly as long as some catalog
-// snapshot (or an outstanding lease) references the dictionary. Parked idle
-// instances are owned by the pool; their memory is reserved in the buffer
-// pool, and a per-pool shrink handle in the ObjectCache lets memory pressure
-// dump a pool's idle instances wholesale.
 class TokenizerPool final : public duckdb::ObjectCacheEntry {
  public:
   static constexpr std::string_view ObjectType() {

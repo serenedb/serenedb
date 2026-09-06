@@ -27,8 +27,6 @@
 
 namespace bench {
 
-// Fill destination that touches every produced term (so the tokenizer's
-// work is not optimized away) and counts tokens.
 class DrainSink final : public irs::TokenConsumer, public irs::StoreSink {
  public:
   explicit DrainSink(irs::TokenLayout layout = irs::TokenLayout::TermsPos)

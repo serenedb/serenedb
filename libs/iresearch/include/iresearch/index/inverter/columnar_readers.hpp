@@ -26,11 +26,6 @@
 
 namespace irs {
 
-// Write-side reader: terms and postings flow exclusively through the
-// batched pull -- each term as an in-place PostingRows view, contiguous
-// for a term inside one scatter block, blocked otherwise. The classic
-// per-term iterator surface exists only as pure-virtual obligations and
-// refuses use.
 class ColumnarTermIterator final : public TermOnlyIterator {
  public:
   explicit ColumnarTermIterator(IResourceManager& rm)
@@ -62,7 +57,7 @@ class ColumnarTermIterator final : public TermOnlyIterator {
     return false;
   }
 
-  TermPostings::ptr postings(IndexFeatures /*features*/) const final {
+  TermPostings::ptr postings(IndexFeatures) const final {
     SDB_ENSURE(false, "columnar postings are span-only");
     return {};
   }
@@ -71,7 +66,7 @@ class ColumnarTermIterator final : public TermOnlyIterator {
 
   size_t NextTermsWithPostings(std::span<bytes_view> terms,
                                std::span<PostingRows> postings,
-                               IndexFeatures /*features*/) final {
+                               IndexFeatures) final {
     const auto total = _scattered->TermCount();
     SDB_ASSERT(_rank <= total);
     size_t n = std::min({terms.size(), postings.size(), total - _rank});
@@ -80,11 +75,6 @@ class ColumnarTermIterator final : public TermOnlyIterator {
     }
     const size_t first = _rank;
     if (_scattered->AllInline()) {
-      // PK shape: doc ids live in the dictionary's inline capture behind
-      // the rank permutation, so each term is one contiguous slice of a
-      // single per-batch gather (positions never exist in this shape).
-      // The batch extends while it fits the gather budget; a single
-      // over-budget term gathers whole.
       const auto base = _scattered->TermBegin(first);
       size_t used = 1;
       while (used < n &&
@@ -107,10 +97,6 @@ class ColumnarTermIterator final : public TermOnlyIterator {
         begin = end;
       }
     } else {
-      // consecutive terms share their boundary (TermEnd(i) is
-      // TermBegin(i+1)), so one bound is read per term. A term inside one
-      // scatter block is a contiguous span read in place; a block-crossing
-      // term hands out the blocked row-range view instead.
       auto begin = _scattered->TermBegin(first);
       for (size_t i = 0; i < n; ++i) {
         const auto end = _scattered->TermEnd(first + i);

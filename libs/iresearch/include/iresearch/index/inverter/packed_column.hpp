@@ -34,10 +34,6 @@
 
 namespace irs {
 
-// Fill-time bitpacked u32 column: values stage into a plain (geometrically
-// grown) buffer and every kBlockValues of them seal into a FOR-bitpacked
-// arena block at the width the block's maximum actually needs. Sequential
-// reads unpack one sealed block at a time; the open staging tail reads as-is.
 class PackedU32Column : util::Noncopyable {
   struct PackedBlock {
     const uint32_t* data;
@@ -66,9 +62,6 @@ class PackedU32Column : util::Noncopyable {
     });
   }
 
-  // Appends first differences of (base + values[i]) as a running delta from
-  // `prev`; returns the final absolute value. Batches the capacity check
-  // across the run (unlike per-element Push).
   uint32_t PushNDelta(const uint32_t* values, size_t count, uint32_t base,
                       uint32_t prev) {
     PushNImpl(count, [&](uint32_t* dst, size_t n) {
@@ -156,8 +149,6 @@ class PackedU32Column : util::Noncopyable {
     }
   }
 
-  // simdfor kernels use aligned SSE loads/stores; the arena only guarantees
-  // 8-byte alignment.
   uint32_t* Alloc16(size_t bytes) {
     const auto raw =
       reinterpret_cast<uintptr_t>(_arena->AllocateAligned(bytes + 8));

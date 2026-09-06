@@ -151,17 +151,14 @@ inline constexpr auto kWbTransitions = [] {
   using enum WbAction;
   using enum WbState;
   WbTable t{};
-  const auto at = [&](WbState s) -> WbRow& {
-    return t[std::to_underlying(s)];
-  };
+  const auto at = [&](WbState s) -> WbRow& { return t[std::to_underlying(s)]; };
   at(Begin) = NoWb4Row();
   at(Other) = BreakRow();
   at(CR) = WithGlues(NoWb4Row(), {{kLF, Newline}});
   at(Newline) = NoWb4Row();
-  at(WSeg) = WithGlues(BreakRow(), {{kWSegSpace, WSeg},
-                                    {kExtend, Other},
-                                    {kFormat, Other},
-                                    {kZWJ, Other}});
+  at(WSeg) = WithGlues(
+    BreakRow(),
+    {{kWSegSpace, WSeg}, {kExtend, Other}, {kFormat, Other}, {kZWJ, Other}});
   at(ALetter) = WithGlues(BreakRow(), {{kALetter, ALetter},
                                        {kHebrew, Hebrew},
                                        {kNumeric, Numeric},
@@ -192,7 +189,8 @@ inline constexpr auto kWbTransitions = [] {
                                             {kKatakana, Katakana},
                                             {kExtendNumLet, ExtendNumLet}});
   at(RIOdd) = WithGlues(BreakRow(), {{kRI, Other}});
-  at(HebrewSQ) = WithGlues(BreakRow(), {{kALetter, ALetter}, {kHebrew, Hebrew}});
+  at(HebrewSQ) =
+    WithGlues(BreakRow(), {{kALetter, ALetter}, {kHebrew, Hebrew}});
   at(ALetterMid) =
     WithGlues(DeferRow(), {{kALetter, ALetter}, {kHebrew, Hebrew}});
   at(NumericMid) = WithGlues(DeferRow(), {{kNumeric, Numeric}});
@@ -283,12 +281,6 @@ enum class Tier : uint8_t {
   Excluded,
 };
 
-// States from which every ASCII word byte and every space behaves
-// uniformly (word x word and space x space glue, any other pairing
-// breaks), making whole word/space runs consumable straight from window
-// masks. Katakana ('_' glues, letters break) and HebrewSQ (letters glue,
-// digits break) are asymmetric; deferred states carry a pending boundary
-// -- all excluded and left to the scalar dispatch.
 inline constexpr auto kTierClass = [] {
   std::array<Tier, kWbStateCount> t{};
   t.fill(Tier::Excluded);
@@ -309,13 +301,6 @@ inline constexpr uint8_t kSegNonAscii = 1;
 inline constexpr uint8_t kSegAlpha = 2;
 inline constexpr uint8_t kSegDigit = 4;
 
-// Consumes alternating word/space runs straight off one classified window
-// starting at i (which must hold a word or space byte): a run of the open
-// segment's class extends it, a class flip flushes [seg_start, .) with the
-// flags accumulated in `cur`, and the first complex byte (mid, newline,
-// quote, high) or the window edge stops consumption -- the segment stays
-// open, so the caller's pending/bridge machinery is never bypassed.
-// Returns the state of the last consumed run.
 template<typename Flush>
 IRS_FORCE_INLINE inline WbState ConsumeWordSpaceRuns(const byte_type* b,
                                                      Tier tier, size_t& i,
@@ -390,8 +375,7 @@ IRS_FORCE_INLINE void ScanUnicode(duckdb::string_t value, Emit&& emit) {
     if (byte < 0x80) [[likely]] {
       const auto tier = detail::kTierClass[std::to_underlying(state)];
       if ((IsWordClass(kWbClass[byte]) || byte == ' ') &&
-          tier != detail::Tier::Excluded &&
-          n - i >= classify::kClassifyBlock) {
+          tier != detail::Tier::Excluded && n - i >= classify::kClassifyBlock) {
         SDB_ASSERT(pending == kNoPending);
         zwj = false;
         state = detail::ConsumeWordSpaceRuns(b, tier, i, seg_start, cur, flush);

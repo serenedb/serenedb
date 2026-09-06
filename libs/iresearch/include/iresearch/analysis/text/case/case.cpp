@@ -24,19 +24,12 @@
 
 namespace irs::analysis::casing {
 
-// ASCII values are NFC-invariant and carry no nonspacing marks, so
-// normalization and accent stripping are identity; case conversion stays
-// within ASCII except under the locale-tailored case mappings (tr/az dotted
-// I, lt accent preservation), which keep the unicode path.
 bool AsciiCaseSafe(const char* locale_name) noexcept {
   const auto case_locale = ucase_getCaseLocale(locale_name);
   return case_locale != UCASE_LOC_TURKISH &&
          case_locale != UCASE_LOC_LITHUANIAN;
 }
 
-// Locales whose ICU case mappings are tailored beyond the locale-independent
-// simple-case table (tr/az dotted I, lt dot above, el uppercasing) keep the
-// ICU path; everywhere else simple case is the accepted drift class.
 bool SimpleCaseSafe(const char* locale_name) noexcept {
   const auto case_locale = ucase_getCaseLocale(locale_name);
   return case_locale != UCASE_LOC_TURKISH &&

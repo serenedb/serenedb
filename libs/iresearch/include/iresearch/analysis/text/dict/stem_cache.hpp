@@ -30,8 +30,6 @@ struct sb_stemmer;
 
 namespace irs::analysis::dict {
 
-// Returns nullopt when the stemmer declines; the returned view is valid until
-// the next Stem or Insert call.
 class StemCache {
  public:
   IRS_FORCE_INLINE const std::string* Find(
@@ -53,8 +51,6 @@ class StemCache {
   StringMap<std::string, std::string> _stems;
 };
 
-// The stemmer's result view, valid until the next stem call; nullopt when
-// the stemmer declines.
 std::optional<std::string_view> StemUncached(sb_stemmer* stemmer,
                                              std::string_view word);
 

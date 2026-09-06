@@ -32,7 +32,6 @@
 
 namespace {
 
-// cs field ids for every column the existence filter is exercised against.
 inline constexpr irs::field_id kPrefix = 1;
 inline constexpr irs::field_id kName = 2;
 inline constexpr irs::field_id kSeq = 3;
@@ -69,7 +68,6 @@ irs::ByColumnExistence MakeFilter(irs::field_id id) {
   return filter;
 }
 
-// Collect the set of doc_ids stored in the cs column.
 std::vector<irs::doc_id_t> ExpectedDocs(const irs::SubReader& segment,
                                         const irs::ColumnReader& column) {
   std::vector<irs::doc_id_t> docs;
@@ -91,10 +89,6 @@ std::vector<irs::doc_id_t> DrainIterator(irs::DocIterator& it) {
 
 class ColumnExistenceFilterTestCase : public tests::FilterTestCaseBase {
  protected:
-  // Mirror MaskField from origin: indexed but writes no bytes. Derive
-  // a stable id from the field name so each MaskField shares the same id
-  // as the matching `tests::FieldIdForRuntime` lookups used by other
-  // tests in this file.
   class MaskField : public tests::Ifield {
    public:
     explicit MaskField(const std::string& name)
@@ -186,7 +180,6 @@ class ColumnExistenceFilterTestCase : public tests::FilterTestCaseBase {
       counter.Reset();
     }
 
-    // Missing column id resolves to an empty iterator.
     {
       irs::ByColumnExistence filter = MakeFilter(kInvalidColumn);
       {
@@ -209,17 +202,16 @@ class ColumnExistenceFilterTestCase : public tests::FilterTestCaseBase {
       tests::JsonDocGenerator gen(
         resource("simple_sequential.json"),
         [](tests::Document& doc, const std::string& name,
-           const tests::JsonDocGenerator::JsonValue& /*data*/) {
+           const tests::JsonDocGenerator::JsonValue&) {
           doc.insert(std::make_shared<MaskField>(name));
         });
       add_segment(gen, irs::kOmCreate, irs::tests::DefaultWriterOptions(),
                   MakeStoreHook());
     }
 
-    // 'prefix', 'value', 'duplicated' are sparse (not on every doc).
-    RunExistenceCases({"prefix"}, /*dense_assertions=*/false);
-    RunExistenceCases({"name", "seq", "same"}, /*dense_assertions=*/true);
-    RunExistenceCases({"value", "duplicated"}, /*dense_assertions=*/false);
+    RunExistenceCases({"prefix"}, false);
+    RunExistenceCases({"name", "seq", "same"}, true);
+    RunExistenceCases({"value", "duplicated"}, false);
   }
 
   void SimpleSequentialExactMatch() {
@@ -230,9 +222,9 @@ class ColumnExistenceFilterTestCase : public tests::FilterTestCaseBase {
                   MakeStoreHook());
     }
 
-    RunExistenceCases({"prefix"}, /*dense_assertions=*/false);
-    RunExistenceCases({"name", "seq", "same"}, /*dense_assertions=*/true);
-    RunExistenceCases({"value", "duplicated"}, /*dense_assertions=*/false);
+    RunExistenceCases({"prefix"}, false);
+    RunExistenceCases({"name", "seq", "same"}, true);
+    RunExistenceCases({"value", "duplicated"}, false);
   }
 
   void SimpleSequentialOrder() {
@@ -266,8 +258,8 @@ class ColumnExistenceFilterTestCase : public tests::FilterTestCaseBase {
             collector_field_docs += field->docs_with_field;
           }
         };
-      sort.scorer_score = [&](const irs::ScoreOperator* /*ctx*/,
-                              irs::score_t* score, size_t n) -> void {
+      sort.scorer_score = [&](const irs::ScoreOperator*, irs::score_t* score,
+                              size_t n) -> void {
         ASSERT_EQ(1, n);
         ++scorer_score_count;
         *score = irs::score_t(cur_doc & 0xAAAAAAAA);
@@ -290,7 +282,6 @@ class ColumnExistenceFilterTestCase : public tests::FilterTestCaseBase {
       while (!irs::doc_limits::eof(filter_itr->advance())) {
         cur_doc = filter_itr->value();
         irs::score_t score_value{};
-        // Score is default (no score provider for column existence).
         scored_result.emplace(score_value, filter_itr->value());
       }
 
@@ -337,9 +328,7 @@ TEST(by_column_existence, ctor) {
   ASSERT_EQ(irs::kNoBoost, filter.Boost());
 }
 
-TEST(by_column_existence, boost) {
-  // FIXME
-}
+TEST(by_column_existence, boost) {}
 
 TEST(by_column_existence, equal) {
   ASSERT_EQ(irs::ByColumnExistence(), irs::ByColumnExistence());
@@ -362,8 +351,6 @@ class ColumnExistenceLongFilterTestCase : public tests::FilterTestCaseBase {};
 TEST_P(ColumnExistenceLongFilterTestCase, mixed_seeks) {
   constexpr irs::field_id kTarget = 1;
   constexpr irs::field_id kAllDocs = 2;
-  // need that many docs as in "some_docs" should be at least 4096 docs
-  // and should be sparse
   irs::doc_id_t with_fields[] = {
     1,    3,    5,    7,    9,    11,   13,   15,   17,   19,   21,   23,
     25,   27,   29,   31,   33,   35,   37,   39,   41,   43,   45,   47,
@@ -782,9 +769,7 @@ TEST_P(ColumnExistenceLongFilterTestCase, mixed_seeks) {
   MaxMemoryCounter counter;
 
   using SeekType = std::tuple<irs::doc_id_t, irs::doc_id_t>;
-  // doing a long (>512) jump to trigger the issue
   const SeekType seeks[] = {{527, 543}};
-  // surrogate seek pattern check
   {
     irs::ByColumnExistence filter = MakeFilter(kTarget);
 
@@ -810,7 +795,6 @@ TEST_P(ColumnExistenceLongFilterTestCase, mixed_seeks) {
   EXPECT_GT(counter.max, 0);
   counter.Reset();
 
-  // seek pattern check
   {
     irs::ByColumnExistence filter = MakeFilter(kTarget);
 

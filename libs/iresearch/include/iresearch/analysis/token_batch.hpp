@@ -68,9 +68,6 @@ IRS_FORCE_INLINE constexpr decltype(auto) ResolveLayout(TokenLayout layout,
   std::unreachable();
 }
 
-// Per-block facts a column driver derives from the data right before the
-// fill; consumers may use them to hoist per-value checks, never to change
-// results.
 struct BlockTraits {
   bool ascii = false;
 };

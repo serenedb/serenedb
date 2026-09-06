@@ -25,7 +25,6 @@
 
 namespace irs {
 
-// The "keyword" tokenizer: emits the value verbatim as its single token.
 class KeywordTokenizer : public analysis::TypedTokenizer<KeywordTokenizer>,
                          private util::Noncopyable {
  public:
@@ -34,9 +33,7 @@ class KeywordTokenizer : public analysis::TypedTokenizer<KeywordTokenizer>,
   struct Options {
     using Owner = KeywordTokenizer;
   };
-  static ptr Make(Options /*opts*/) {
-    return std::make_unique<KeywordTokenizer>();
-  }
+  static ptr Make(Options) { return std::make_unique<KeywordTokenizer>(); }
 
   TokenTraits Traits() const noexcept final {
     return {

@@ -134,8 +134,6 @@ constexpr size_t CaseConvertUtf8Bound(size_t size) noexcept {
   return size + size / 2 + utf8_utils::kMaxCharSize;
 }
 
-// 1:1 simple case mapping of a whole UTF-8 value into `dst` (capacity at
-// least CaseConvertUtf8Bound(in.size())); invalid bytes are copied verbatim.
 template<bool ToLower>
 size_t CaseConvertUtf8(std::string_view in, byte_type* dst) {
   static_assert(utf8_utils::kSimpleCaseMaxUtf8Growth <= 1);

@@ -25,8 +25,6 @@
 
 namespace irs {
 
-// Term encodings for typed columns: ingest gathers these directly into
-// keyword/constant blocks, no tokenizer involved.
 constexpr std::string_view kTrueTerm{"\xFF", 1};
 constexpr std::string_view kFalseTerm{"\x00", 1};
 
@@ -39,7 +37,6 @@ inline duckdb::string_t BoolTerm(bool value) noexcept {
   return {term.data(), static_cast<uint32_t>(term.size())};
 }
 
-// data pointer != nullptr or IRS_ASSERT failure in bytes_hash::insert(...)
 constexpr std::string_view kNullTerm{"\x00", 0};
 
 inline duckdb::string_t NullTerm() noexcept {

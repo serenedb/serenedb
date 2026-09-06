@@ -28,13 +28,6 @@ namespace irs {
 
 using numeric_utils::NumericTermCount;
 
-// Appends the precision-step trie terms of every value straight into the
-// batch's inline string_t slots. Terms layout only (trie terms of one value
-// share a position). The term count per value is a compile-time constant, so
-// slot indices and term sizes are all statically known: the inner loop unrolls
-// and the outer loop is branch-free fully-unrolled stores.
-// `value_at(i)` supplies the i-th value -- a contiguous-load lambda for plain
-// arrays, or an extract/promote projection reading a vector in place.
 template<typename T, uint32_t Step = numeric_utils::kPrecisionStepDef,
          typename ValueAt>
 void AppendNumericTermsBlock(duckdb::string_t* out, size_t count,
@@ -55,9 +48,6 @@ void AppendNumericTermsBlock(duckdb::string_t* out, size_t count,
       std::memset(&slot, 0, sizeof slot);
       auto* p = reinterpret_cast<byte_type*>(&slot) + sizeof(uint32_t);
       p[0] = static_cast<byte_type>(shift) + Enc::TYPE_MAGIC;
-      // The masked-off low bytes of `be` are zero, so storing all sizeof(U)
-      // bytes and claiming only the significant length keeps the inline
-      // zero-padding invariant intact.
       const U be = absl::big_endian::FromHost(
         payload & (std::numeric_limits<U>::max() ^ ((U{1} << shift) - U{1})));
       std::memcpy(p + 1, &be, sizeof(U));

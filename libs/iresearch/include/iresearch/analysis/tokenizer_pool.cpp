@@ -28,16 +28,11 @@
 
 namespace irs::analysis {
 
-// The pool's mutable state, shared with the shrink handle: the handle holds
-// a weak reference, so a dead pool turns its eviction into a no-op.
 struct TokenizerPool::Core {
   Core(duckdb::BufferPool& buffer_pool, size_t max_idle)
     : max_idle{max_idle},
       reservation{duckdb::MemoryTag::OBJECT_CACHE, buffer_pool} {}
 
-  // A dead BufferPool must not be touched: when the database died first,
-  // its teardown already drained this pool through the shrink handle, so
-  // the reservation is zero and the base destructor's assert holds.
   std::vector<std::pair<Tokenizer::ptr, size_t>> Drain(
     bool buffer_pool_alive) noexcept {
     std::vector<std::pair<Tokenizer::ptr, size_t>> victims;
@@ -59,9 +54,6 @@ struct TokenizerPool::Core {
   bool handle_registered ABSL_GUARDED_BY(m) = false;
 };
 
-// Evicting the handle from the ObjectCache LRU dumps the pool's idle
-// instances; the handle's weight is a floor-clamped snapshot of the idle
-// bytes at registration time.
 class TokenizerPool::ShrinkHandle final : public duckdb::ObjectCacheEntry {
  public:
   static constexpr std::string_view ObjectType() {
@@ -109,8 +101,6 @@ TokenizerPool::~TokenizerPool() noexcept {
   auto db = _db.lock();
   auto victims = _core->Drain(db != nullptr);
   if (db) {
-    // A racing successor pool re-registered under the same key loses its
-    // handle here; its next Release re-registers after a spurious drain.
     db->GetObjectCache().Delete(_handle_key);
   }
 }

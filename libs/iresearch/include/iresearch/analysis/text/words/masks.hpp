@@ -42,9 +42,6 @@ IRS_FORCE_INLINE inline WordCmps WordCmpsOf(classify::Block b) noexcept {
 
 }  // namespace detail
 
-// Per-byte membership masks for the ASCII word set: word = [A-Za-z0-9_],
-// alpha = [A-Za-z], digit = [0-9]. `block` must have kClassifyBlock readable
-// bytes.
 struct WordMasks {
   uint32_t word;
   uint32_t alpha;
@@ -68,9 +65,6 @@ IRS_FORCE_INLINE inline uint32_t ClassifyAlnumBlock(
   return ClassifyAlnum(classify::Load(block));
 }
 
-// WordMasks plus the mid-byte lanes the WB6/7 and WB11/12 bridges key on:
-// mid_al = {':' '.' '\''} (MidLetter | MidNumLet | Single_Quote) and
-// mid_nu = {',' ';' '.' '\''} (MidNum | MidNumLet | Single_Quote).
 struct WordBridgeMasks {
   uint32_t word;
   uint32_t alpha;
@@ -95,8 +89,6 @@ IRS_FORCE_INLINE inline WordBridgeMasks ClassifyWordBridgeBlock(
   return ClassifyWordBridge(classify::Load(block));
 }
 
-// WordMasks plus the space lane, for scanners that bulk-consume alternating
-// word and space runs and leave every other byte to a scalar path.
 struct WordSpaceMasks {
   uint32_t word;
   uint32_t alpha;

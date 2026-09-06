@@ -31,10 +31,6 @@
 
 namespace irs::analysis::normalize {
 
-// Accent-stripping transliterator shared by the ICU-tailored paths (text,
-// norm). The rule is taken verbatim from
-// http://userguide.icu-project.org/transforms/general; do not allocate it
-// statically since that causes memory leaks in ICU.
 inline std::unique_ptr<icu::Transliterator> MakeStripTransliterator(
   bool nfkc, UErrorCode& err) {
   const icu::UnicodeString rule(nfkc ? "NFKD; [:Nonspacing Mark:] Remove; NFKC"
@@ -44,9 +40,6 @@ inline std::unique_ptr<icu::Transliterator> MakeStripTransliterator(
                                         err)};
 }
 
-// The shared cold-path unicode step: normalize (fall back to the input on
-// failure), case-convert in place under the locale's tailorings, strip
-// nonspacing marks when a transliterator is bound.
 template<Case C>
 void NormalizeCaseStrip(const icu::Normalizer2& normalizer,
                         const icu::Locale& locale, icu::Transliterator* strip,

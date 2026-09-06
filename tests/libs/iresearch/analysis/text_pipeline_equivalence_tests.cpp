@@ -152,10 +152,6 @@ const std::vector<std::string>& Corpus() {
   return corpus;
 }
 
-// Unspaced scripts: text always uses ICU's dictionary-based breaks; the
-// default segmentation tokenizer is pure UAX#29 (divergence by POLICY, not
-// bug), while a locale-set segmentation routes these through ICU and must
-// match text exactly.
 const std::vector<std::string>& DictScriptCorpus() {
   static const std::vector<std::string> corpus = {
     "\xE6\x97\xA5\xE6\x9C\xAC\xE8\xAA\x9E\xE3\x81\xAE\xE3\x83\x86\xE3\x82"
@@ -184,11 +180,6 @@ constexpr TokenLayout kLayouts[] = {
   TokenLayout::TermsPosOffs,
 };
 
-// allow_wider_offs_end: in ngram mode, text stamps offs_end as
-// offs_start + gram bytes even for grams spanning the whole stemmed term,
-// cutting mid-word ("running" -> "run" gram ends at word_start + 3); the
-// pipeline's Remap maps whole-term grams to the true word end. The wider
-// pipeline span is the intended semantics; only that widening is tolerated.
 void ExpectTokensEq(const std::vector<tests::AnalyzerToken>& expect,
                     const std::vector<tests::AnalyzerToken>& got,
                     TokenLayout layout, bool allow_wider_offs_end = false) {

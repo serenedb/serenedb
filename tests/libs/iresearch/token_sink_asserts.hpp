@@ -28,9 +28,6 @@
 
 namespace tests {
 
-// Ascii-vs-unicode differential for analyzers with an ascii fast tier: the
-// unicode path is input-selected by appending a non-ascii sentinel word, and
-// its output must be the ascii-tier output plus the sentinel's own tokens.
 inline void AssertAsciiMatchesUnicode(irs::analysis::Tokenizer& stream,
                                       std::string_view value) {
   const auto fast = Analyze(stream, value);

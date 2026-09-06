@@ -43,13 +43,6 @@ enum WbClass : uint8_t {
   kNL,
 };
 
-// ASCII slice of UAX#29 WordBreakProperty: A-Za-z ALetter, 0-9 Numeric,
-// '_' ExtendNumLet, ':' MidLetter, ',' ';' MidNum, '.' MidNumLet,
-// '\'' Single_Quote, ' ' WSegSpace, CR/LF/VT/FF Newline, rest Other
-// (TAB and '"' included: TAB is Cc, Double_Quote only matters for Hebrew).
-// Full byte domain: callers gate on validate_ascii, but the table stays
-// total so a stray high byte classifies as Other instead of reading past
-// the table.
 inline constexpr auto kWbClass = [] {
   std::array<uint8_t, 256> t{};
   for (int c = 'A'; c <= 'Z'; ++c) {
@@ -88,11 +81,6 @@ struct Segment {
   bool has_digit;
 };
 
-// Advances `i` over a run of word bytes ([A-Za-z0-9_] = WB classes AL/NU/EX),
-// OR-ing has_alpha over any letter and has_digit over any digit -- identical to
-// the scalar per-byte loop, but blocks are classified with one movemask each
-// (the find-first-non-word exit is the idiom the compiler cannot form). Stops
-// at the first non-word byte or end.
 inline void AdvanceWordRun(const byte_type* b, size_t& i, size_t n,
                            bool& has_alpha, bool& has_digit) {
   while (n - i >= classify::kClassifyBlock) {
@@ -121,9 +109,6 @@ inline void AdvanceWordRun(const byte_type* b, size_t& i, size_t n,
   }
 }
 
-// Extends a word run past `i` (which sits at the current run's end) through
-// the WB6/7 and WB11/12 mid bridges, exactly like ScanAscii's chain.
-// Returns the final run end.
 IRS_FORCE_INLINE inline size_t ExtendWordRun(const byte_type* b, size_t i,
                                              size_t n, bool& has_alpha,
                                              bool& has_digit) noexcept {
@@ -146,17 +131,6 @@ IRS_FORCE_INLINE inline size_t ExtendWordRun(const byte_type* b, size_t i,
   return i;
 }
 
-// Word-run-only variant of ScanAscii for accepts that drop every non-word
-// segment anyway (AlphaNumeric / Alpha): separator segments are never
-// materialized and the per-segment class switch disappears. Each 32-byte
-// window is classified ONCE; run starts come from countr_zero, run ends
-// from countr_one, and has_alpha/has_digit fall out of the same masks --
-// separators cost only the bits they occupy. Mid bridges and
-// window-crossing runs bail to the scalar chain (rare) and re-window.
-// Emits the same word segments as ScanAscii, in order.
-// Bit e set iff a bridge may fire at run end e: a mid byte with the
-// matching word class on BOTH neighbours, all read from the masks
-// already in hand -- the fast path emits without re-touching bytes.
 IRS_FORCE_INLINE inline uint32_t BridgeMask(const WordBridgeMasks& m) noexcept {
   return (m.mid_al & (m.alpha << 1) & (m.alpha >> 1)) |
          (m.mid_nu & (m.digit << 1) & (m.digit >> 1));
@@ -218,13 +192,6 @@ IRS_FORCE_INLINE void ScanAsciiRuns(duckdb::string_t value, Emit&& emit) {
   }
 }
 
-// ASCII word segmentation implementing the ASCII slice of UAX#29 (the
-// differential tests pin it against the full DFA in words/unicode.hpp):
-// WB3 (CR x LF), WB3d (WSegSpace run), WB5/8/9/10/13a/13b
-// ({ALetter,Numeric,ExtendNumLet}+ glue), the one-lookahead mid rules WB6/7
-// (AL x {MidLetter,MidNumLet,SQ} x AL) and WB11/12 (NU x {MidNum,MidNumLet,
-// SQ} x NU); other newline bytes are single-char segments; everything else
-// is a WB999 break. Calls `emit` for every segment in order.
 template<typename Emit>
 IRS_FORCE_INLINE void ScanAscii(duckdb::string_t value, Emit&& emit) {
   const auto* b = reinterpret_cast<const byte_type*>(value.GetData());

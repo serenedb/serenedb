@@ -29,8 +29,6 @@
 
 namespace tests {
 
-// One case of a UCD break-test file (WordBreakTest.txt and friends): the
-// UTF-8 bytes, boundary offsets from the `/` markers, and the source line.
 struct BreakTestCase {
   std::string bytes;
   std::vector<uint32_t> boundaries;

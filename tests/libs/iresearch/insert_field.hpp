@@ -30,18 +30,12 @@
 
 namespace tests {
 
-// Engine-level per-doc drain of an id-mode batch into one inverter slot,
-// expressed on the public block API.
 inline bool InvertTokens(irs::FieldInverter& inverter, irs::doc_id_t doc,
                          irs::TokenBatch& batch, bool ends_value) {
   const irs::DocRun runs[1] = {{doc, batch.count}};
   return inverter.InvertBlock(batch, {{runs, 1}, !ends_value});
 }
 
-// Per-value insertion of a Field-concept object (Id / GetIndexFeatures /
-// GetTokens returning an unbound Tokenizer / Value returning the raw value),
-// expressed on the public block API. Production ingest is block-only; this
-// is the test-side shim for fixtures and per-value oracles.
 template<typename InsertBlockFn>
 class InsertSink final : public irs::TokenConsumer {
  public:
@@ -87,8 +81,6 @@ bool InsertFieldTokens(const irs::IndexWriter::Document& doc, FieldT&& field) {
                         });
 }
 
-// Fields exposing a block-native insert (typed columns) take it; everything
-// else drives GetTokens() through the driver onto the public block API.
 template<typename FieldT>
 bool InsertField(const irs::IndexWriter::Document& doc, FieldT&& field) {
   if constexpr (requires { field.InsertBlockInto(doc); }) {

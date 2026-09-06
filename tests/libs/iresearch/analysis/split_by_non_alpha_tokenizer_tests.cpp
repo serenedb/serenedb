@@ -300,7 +300,7 @@ TEST(split_by_non_alpha_tokenizer_test, native_fill_matches_pull) {
       std::vector<irs::DocRun> runs;
       std::vector<Tok> filled;
       const auto collect = [&](irs::TokenBatch& batch,
-                               std::span<const irs::DocRun> /*runs*/) {
+                               std::span<const irs::DocRun>) {
         EXPECT_FALSE(fill_a->Traits().explicit_pos);
         for (uint32_t i = 0; i < batch.count; ++i) {
           const auto& t = batch.terms[i];

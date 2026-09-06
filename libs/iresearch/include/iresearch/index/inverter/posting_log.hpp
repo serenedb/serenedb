@@ -42,13 +42,6 @@ constexpr TokenLayout LayoutFromFeatures(IndexFeatures features) noexcept {
   return TokenLayout::TermsPosOffs;
 }
 
-// Doc<->occurrence mapping for one field's log. Occurrences are stored in doc
-// order with no doc id per occurrence; instead Run headers over the doc-id
-// space plus a per-doc token count map occurrence positions back to docs.
-// RunLog owns the doc-ordinal timeline: DocCount() is the number of docs
-// recorded so far and the domain of every per-doc structure layered on top
-// (the explicit-position bitmap in PostingLogPosBase). Runs and per-doc counts
-// advance together in BeginDoc, so the two can never desync.
 class RunLog {
  public:
   struct Run {
@@ -59,10 +52,6 @@ class RunLog {
   RunLog(duckdb::ArenaAllocator& blocks, IResourceManager& rm)
     : _runs{ManagedTypedAllocator<Run>{rm}}, _doc_tokens{blocks, rm} {}
 
-  // Opens `doc` as the current doc: extends the open run when consecutive,
-  // bridges a short gap with zero-count doc slots (packed to ~2 bits each --
-  // cheaper than an 8B run header), else starts a new run. A repeated doc
-  // (multi-value continuation) is a no-op.
   void BeginDoc(doc_id_t doc) {
     if (!_runs.empty()) {
       auto& run = _runs.back();
@@ -84,13 +73,9 @@ class RunLog {
     _doc_tokens.Push(0);
   }
 
-  // Adds `n` tokens to the current (open) doc.
   void AddTokens(uint32_t n) { _doc_tokens.IncBack(n); }
 
-  // Number of docs recorded so far -- the ordinal domain shared by every
-  // per-doc structure layered on the log.
   size_t DocCount() const noexcept { return _doc_tokens.Size(); }
-  // Token count of the current (open) doc.
   uint32_t LastTokens() const noexcept { return _doc_tokens.Back(); }
 
   std::span<const Run> Runs() const noexcept {
@@ -98,29 +83,17 @@ class RunLog {
   }
   const LogColumn& DocTokens() const noexcept { return _doc_tokens; }
 
-  // _doc_tokens' staged/sealed values live in the shared block arena
-  // (accounted via arena size); the run headers and the block descriptors are
-  // the heap owners counted here.
   size_t Memory() const noexcept {
     return _runs.capacity() * sizeof(Run) + _doc_tokens.Memory();
   }
 
  private:
-  // Measured knee (BM_TermsMemorySparse/BM_ScatterSparseKeep, 50%/90% null
-  // corpora): vs 3 it takes -6%/-23% resident memory (runs 125k->7.7k /
-  // 262k->172k) for +12%/+30% scatter walk over the zero slots; 15 adds
-  // little memory but +62% scatter at 90%. Ingest is flat across 0..15.
   static constexpr doc_id_t kMaxBridgedGap = 7;
 
   ManagedVector<Run> _runs;
   LogColumn _doc_tokens;
 };
 
-// Per-field occurrence log. The sink writes column-by-column (field-major per
-// chunk, docs ascending within a field), so per-field ownership keeps token
-// columns contiguous per field and lets runs extend across chunk boundaries;
-// a run only breaks on a doc gap. PostingLog<L> owns exactly the columns
-// its layout indexes.
 class PostingLogBase : util::Noncopyable {
  public:
   uint64_t Size() const noexcept { return _term_ids.Size(); }
@@ -141,12 +114,6 @@ class PostingLogBase : util::Noncopyable {
   RunLog _runlog;
 };
 
-// Positions: almost all tokenizers emit increment 1, making a position equal
-// to the within-doc ordinal -- such docs skip the pos column entirely (dense,
-// the default). A doc receiving explicit positions is promoted; if it already
-// holds dense tokens the implied ramp is backfilled first, so the pos column
-// stays aligned for promoted docs and scatter reconstructs dense docs from
-// the within-doc index. An all-dense field never allocates the flag bitmap.
 class PostingLogPosBase : public PostingLogBase {
  public:
   bool DocExplicit(size_t doc_idx) const noexcept {
@@ -155,10 +122,6 @@ class PostingLogPosBase : public PostingLogBase {
            ((_explicit_words[word] >> (doc_idx & 63)) & 1);
   }
 
-  // Whether the doc opened by the last BeginDoc already carries explicit
-  // positions. A dense push must not target such a doc (position ==
-  // within-doc ordinal only holds for an all-dense doc), so the caller routes
-  // through the explicit Push instead.
   bool CurrentDocExplicit() const noexcept {
     return _runlog.DocCount() && DocExplicit(_runlog.DocCount() - 1);
   }
@@ -176,9 +139,6 @@ class PostingLogPosBase : public PostingLogBase {
       _pos{blocks, rm},
       _explicit_words{ManagedTypedAllocator<uint64_t>{rm}} {}
 
-  // Positions ride as within-doc DELTAS from the previous occurrence, reset
-  // at each promoted doc (mirrors the offset delta stream). Scatter sums per
-  // doc to recover the absolute within-doc position.
   IRS_FORCE_INLINE void PushPos(uint32_t abs) {
     _pos.Push(abs - _pos_prev);
     _pos_prev = abs;
@@ -209,8 +169,6 @@ class PostingLogPosBase : public PostingLogBase {
   IRS_FORCE_INLINE PosRoute RoutePos(bool dense, uint32_t pos_base, size_t n) {
     if (dense) {
       if (CurrentDocExplicit()) [[unlikely]] {
-        // Dense tokens appended to a promoted doc: their implied ramp
-        // becomes explicit at the running base.
         for (size_t i = 1; i <= n; ++i) {
           PushPos(pos_base + static_cast<uint32_t>(i));
         }
@@ -221,9 +179,6 @@ class PostingLogPosBase : public PostingLogBase {
     return PosRoute::WriteExplicit;
   }
 
-  // One dense-intent token; the log owns the promoted-doc decision (an
-  // explicit doc keeps explicit positions). RoutePos takes the ramp BASE --
-  // the position before this token -- so the token itself lands at `pos`.
   IRS_FORCE_INLINE void PushOne(doc_id_t doc, uint32_t term_id, uint32_t pos) {
     _runlog.BeginDoc(doc);
     _term_ids.Push(term_id);
@@ -298,12 +253,6 @@ class PostingLog<TokenLayout::TermsPosOffs> final : public PostingLogPosBase {
            _offs_len.Memory();
   }
 
-  // Offsets are per-doc monotonic (each doc's text starts at 0), so the start
-  // is stored as a within-doc DELTA from the previous occurrence's start,
-  // reset at each new doc: deltas are token strides (a few bits) where
-  // absolute starts span the whole document. Ends ride as span LENGTHS
-  // (end - start), also small and rebase-invariant. The scatter reconstructs
-  // the absolute start (per-doc running sum) and end = start + len.
   void PushBatch(doc_id_t doc, std::span<const uint32_t> term_ids, bool dense,
                  std::span<const uint32_t> pos, uint32_t pos_base,
                  std::span<const uint32_t> offs_start,
@@ -332,8 +281,6 @@ class PostingLog<TokenLayout::TermsPosOffs> final : public PostingLogPosBase {
   const LogColumn& OffsLen() const noexcept { return _offs_len; }
 
  private:
-  // Offset starts are monotonic only within a doc (they reset to 0 across
-  // docs), so the delta base resets whenever a new doc opens.
   void OpenOffsDoc(doc_id_t doc) noexcept {
     if (doc != _offs_doc) {
       _offs_prev = 0;

@@ -153,8 +153,6 @@ TEST(InverterOracleTest, WriteDeterministicIndex) {
       ASSERT_TRUE(::tests::InsertField(
         doc, OracleField{kText, kTextFeatures, &text_stream}));
 
-      // Second value for the same field on every third doc: multi-value
-      // position/offset continuation.
       std::vector<ReplayToken> extra;
       if (d % 3 == 0) {
         extra = MakeDocTokens(d + 100000, 7);

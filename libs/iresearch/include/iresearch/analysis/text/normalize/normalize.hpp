@@ -44,10 +44,6 @@ constexpr classify::ByteRange Range(uint8_t lo, uint8_t hi) noexcept {
   return {lo, static_cast<byte_type>(hi - lo)};
 }
 
-// Per-form UTF-8 lead-byte sets derived from UCD 17: kQcRanges = <form>_QC
-// != Yes or ccc != 0 under the lead; kPairLeads = refined by second byte;
-// kStripRanges adds decompositions and Mn, so outside them accent stripping
-// is an identity.
 template<sz_normal_form_t Form>
 struct FormSpec;
 
@@ -61,7 +57,6 @@ struct FormSpec<sz_normal_form_nfc_k> {
   static constexpr classify::ByteRange kStripRanges[] = {
     Range(0xC3, 0xC8), Range(0xCC, 0xD3), Range(0xD6, 0xD9), Range(0xDB, 0xE3),
     Range(0xEA, 0xED), Range(0xEF, 0xF0), Range(0xF3, 0xF3)};
-  // U+0387 = CE 87; U+0483..0489 = D2 83..89
   static constexpr bool PairIsUnsafeByte(uint8_t lead, uint8_t next) {
     if (lead == 0xCE) {
       return next == 0x87;
@@ -81,8 +76,6 @@ struct FormSpec<sz_normal_form_nfkc_k> {
   static constexpr classify::ByteRange kStripRanges[] = {
     Range(0xC2, 0xC8), Range(0xCA, 0xD3), Range(0xD6, 0xD9), Range(0xDB, 0xE3),
     Range(0xEA, 0xED), Range(0xEF, 0xF0), Range(0xF3, 0xF3)};
-  // U+0384/0385/0387 = CE 84/85/87; Greek symbol variants start at U+03D0 =
-  // CF 90 (lowercase Greek CF 80..8F stays fast); U+0483..0487 = D2 83..87
   static constexpr bool PairIsUnsafeByte(uint8_t lead, uint8_t next) {
     if (lead == 0xCE) {
       return next == 0x84 || next == 0x85 || next == 0x87;
@@ -157,10 +150,6 @@ inline size_t ContextStart(const char* data, size_t i) noexcept {
 
 }  // namespace detail
 
-// Destination bound for Compose/Decompose per sz_utf8_norm's contract: the
-// compatibility forms decompose a single codepoint into up to 18x its bytes
-// and the kernel writes unchecked, so an NFKC/NFKD destination must carry the
-// full factor; canonical forms stay within 4x.
 template<sz_normal_form_t Form>
 constexpr size_t Bound(size_t n) noexcept {
   constexpr bool kCompat =
@@ -168,9 +157,6 @@ constexpr size_t Bound(size_t n) noexcept {
   return 64 + n * (kCompat ? 18 : 4);
 }
 
-// Suspicious-lead SIMD prefilter passes whole windows without decoding;
-// dirty runs resolve via the per-codepoint engine with ONE codepoint of left
-// context, which suffices because clean windows hold only ccc=0 starters.
 template<sz_normal_form_t Form>
 inline bool Denormalized(const char* data, size_t n) noexcept {
   using namespace detail;
@@ -207,7 +193,6 @@ inline bool Denormalized(const char* data, size_t n) noexcept {
   return false;
 }
 
-// True iff accent stripping is an identity; implies already composed.
 template<sz_normal_form_t Form>
 inline bool StripSafe(const char* data, size_t n) noexcept {
   const auto* bytes = reinterpret_cast<const byte_type*>(data);
@@ -226,7 +211,6 @@ inline bool StripSafe(const char* data, size_t n) noexcept {
   return true;
 }
 
-// `out` capacity must be at least Bound<Form>(in.size()).
 template<sz_normal_form_t Form>
 inline size_t Compose(std::string_view in, char* out) noexcept {
   return sz::Norm(in.data(), in.size(), Form, out);

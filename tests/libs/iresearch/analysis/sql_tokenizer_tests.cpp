@@ -195,7 +195,6 @@ TEST(SqlTokenizerTest, parseErrors) {
                sdb::SqlException);
   ASSERT_THROW(SqlTokenizer::Make({.expression = "memory.main.upper(input)"}),
                sdb::SqlException);
-  // Text-search functions would re-enter the tokenizer machinery (recursion).
   ASSERT_THROW(SqlTokenizer::Make({.expression = "ts_lexize('d', input)"}),
                sdb::SqlException);
   ASSERT_THROW(SqlTokenizer::Make({.expression = "ts_tokenize(input, 'd')"}),

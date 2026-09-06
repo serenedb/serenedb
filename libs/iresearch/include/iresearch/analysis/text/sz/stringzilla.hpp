@@ -48,8 +48,6 @@ inline bool HasAvx512() noexcept {
 }
 #endif
 
-// norm stays on haswell: icelake measured equal-to-slower on every corpus
-// (transform -9%, multilingual scan -13%), unlike sentences/newlines.
 inline size_t Norm(const char* in, size_t n, sz_normal_form_t form,
                    char* out) noexcept {
 #ifdef __x86_64__

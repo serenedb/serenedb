@@ -28,7 +28,7 @@
 #include <string_view>
 #include <vector>
 
-#include "geo/geo_terms.h"
+#include "iresearch/search/geo_terms.hpp"
 
 namespace irs::tests {
 
@@ -103,8 +103,8 @@ inline std::vector<std::string> BinaryTerms(
     if (covering) {
       term.remove_prefix(1);
     }
-    out.push_back(sdb::geo::terms::Term(prefix, S2CellId::FromToken(term),
-                                        covering, marker));
+    out.push_back(irs::geo_terms::Term(prefix, S2CellId::FromToken(term),
+                                       covering, marker));
   }
   return out;
 }

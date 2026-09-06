@@ -33,7 +33,6 @@
 #include "basics/down_cast.h"
 #include "geo/geo_json.h"
 #include "geo/geo_params.h"
-#include "geo/geo_terms.h"
 #include "geo/wkb.h"
 #include "iresearch/analysis/token_batch.hpp"
 #include "iresearch/search/geo_filter.hpp"

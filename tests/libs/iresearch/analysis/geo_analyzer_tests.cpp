@@ -36,10 +36,10 @@
 #include <vector>
 
 #include "geo/coding.h"
-#include "geo/geo_terms.h"
 #include "gtest/gtest.h"
 #include "iresearch/analysis/geo_analyzer.hpp"
 #include "iresearch/analysis/token_sinks.hpp"
+#include "iresearch/search/geo_terms.hpp"
 #include "search/geo_test_helpers.hpp"
 #include "token_sink_utils.hpp"
 
@@ -587,8 +587,8 @@ TEST(GeoPointAnalyzerTests, json_array_sample_matches_oracle) {
 
 TEST(GeoAnalyzerTests, term_encoding_is_marker_plus_big_endian_cell) {
   const S2CellId cell{S2LatLng::FromDegrees(1.0, 2.0).ToPoint()};
-  const auto plain = sdb::geo::terms::Term({}, cell, false, '$');
-  const auto covering = sdb::geo::terms::Term({}, cell, true, '$');
+  const auto plain = irs::geo_terms::Term({}, cell, false, '$');
+  const auto covering = irs::geo_terms::Term({}, cell, true, '$');
   ASSERT_EQ(8, plain.size());
   ASSERT_EQ(9, covering.size());
   EXPECT_EQ('$', covering.front());
@@ -598,7 +598,7 @@ TEST(GeoAnalyzerTests, term_encoding_is_marker_plus_big_endian_cell) {
   EXPECT_EQ(cell.id(), std::byteswap(be));
   EXPECT_EQ(static_cast<unsigned char>(cell.id() >> 56),
             static_cast<unsigned char>(plain[0]));
-  const auto prefixed = sdb::geo::terms::Term("ab", cell, true, '#');
+  const auto prefixed = irs::geo_terms::Term("ab", cell, true, '#');
   EXPECT_EQ("ab#" + plain, prefixed);
 }
 
@@ -636,14 +636,14 @@ TEST(GeoAnalyzerTests, query_terms_match_s2_oracle) {
         coverer.GetInteriorCovering(polygon));
 
       EXPECT_EQ(irs::tests::BinaryTerms(oracle.GetQueryTerms(point, {})),
-                sdb::geo::terms::QueryTerms(options, point, {}));
+                irs::geo_terms::QueryTerms(options, point, {}));
       EXPECT_EQ(irs::tests::BinaryTerms(oracle.GetQueryTerms(polygon, {})),
-                sdb::geo::terms::QueryTerms(options, polygon, {}));
+                irs::geo_terms::QueryTerms(options, polygon, {}));
       EXPECT_EQ(irs::tests::BinaryTerms(oracle.GetQueryTerms(ring_union, {})),
-                sdb::geo::terms::QueryTerms(options, ring_union, {}));
+                irs::geo_terms::QueryTerms(options, ring_union, {}));
       EXPECT_EQ(
         irs::tests::BinaryTerms(oracle.GetQueryTerms(point, "p:"), '$', "p:"),
-        sdb::geo::terms::QueryTerms(options, point, "p:"));
+        irs::geo_terms::QueryTerms(options, point, "p:"));
     }
   }
 }

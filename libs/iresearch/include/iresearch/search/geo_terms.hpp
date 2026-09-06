@@ -32,7 +32,7 @@
 #include <string_view>
 #include <vector>
 
-namespace sdb::geo::terms {
+namespace irs::geo_terms {
 
 inline std::string Term(std::string_view prefix, S2CellId id, bool covering,
                         char marker) {
@@ -45,9 +45,11 @@ inline std::string Term(std::string_view prefix, S2CellId id, bool covering,
   return out;
 }
 
-inline std::vector<std::string> QueryTermsForCanonicalCovering(
-  const S2RegionTermIndexer::Options& options, const S2CellUnion& covering,
+inline std::vector<std::string> QueryTerms(
+  const S2RegionTermIndexer::Options& options, const S2Region& region,
   std::string_view prefix) {
+  S2RegionCoverer coverer{options};
+  const S2CellUnion covering = coverer.GetCovering(region);
   std::vector<std::string> out;
   out.reserve(2 * covering.size());
   const char marker = options.marker_character();
@@ -76,14 +78,6 @@ inline std::vector<std::string> QueryTermsForCanonicalCovering(
 }
 
 inline std::vector<std::string> QueryTerms(
-  const S2RegionTermIndexer::Options& options, const S2Region& region,
-  std::string_view prefix) {
-  S2RegionCoverer coverer{options};
-  return QueryTermsForCanonicalCovering(options, coverer.GetCovering(region),
-                                        prefix);
-}
-
-inline std::vector<std::string> QueryTerms(
   const S2RegionTermIndexer::Options& options, const S2Point& point,
   std::string_view prefix) {
   const S2CellId id{point};
@@ -100,4 +94,4 @@ inline std::vector<std::string> QueryTerms(
   return out;
 }
 
-}  // namespace sdb::geo::terms
+}  // namespace irs::geo_terms

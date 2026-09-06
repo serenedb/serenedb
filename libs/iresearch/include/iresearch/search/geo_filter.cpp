@@ -33,7 +33,6 @@
 #include "basics/log.h"
 #include "basics/memory.hpp"
 #include "geo/geo_params.h"
-#include "geo/geo_terms.h"
 #include "iresearch/formats/column/col_reader.hpp"
 #include "iresearch/formats/column/column_reader.hpp"
 #include "iresearch/formats/column/read_context.hpp"
@@ -43,6 +42,7 @@
 #include "iresearch/search/boolean_filter.hpp"
 #include "iresearch/search/collectors.hpp"
 #include "iresearch/search/geo_query.hpp"
+#include "iresearch/search/geo_terms.hpp"
 #include "iresearch/search/multiterm_query.hpp"
 #include "iresearch/search/score_function.hpp"
 #include "iresearch/search/scorer.hpp"
@@ -237,7 +237,7 @@ QueryBuilder::ptr PrepareOpenInterval(const SubReader& segment,
   }
 
   const auto geo_terms =
-    sdb::geo::terms::QueryTerms(options.options, bound, options.prefix);
+    irs::geo_terms::QueryTerms(options.options, bound, options.prefix);
 
   if (geo_terms.empty()) {
     return QueryBuilder::Empty();
@@ -285,7 +285,7 @@ QueryBuilder::ptr PrepareInterval(const SubReader& segment,
     SDB_ASSERT(max_incl);
 
     const auto geo_terms =
-      sdb::geo::terms::QueryTerms(options.options, origin, options.prefix);
+      irs::geo_terms::QueryTerms(options.options, origin, options.prefix);
 
     if (geo_terms.empty()) {
       return QueryBuilder::Empty();
@@ -316,7 +316,7 @@ QueryBuilder::ptr PrepareInterval(const SubReader& segment,
   // beyond options.max_level. Re-cover through GetQueryTerms so the coverer
   // enforces min/max level before GetQueryTermsForCanonicalCovering runs.
   const auto geo_terms =
-    sdb::geo::terms::QueryTerms(options.options, ring, options.prefix);
+    irs::geo_terms::QueryTerms(options.options, ring, options.prefix);
 
   if (geo_terms.empty()) {
     return QueryBuilder::Empty();
@@ -362,11 +362,11 @@ QueryBuilder::ptr GeoFilter::PrepareSegment(const SubReader& segment,
   const auto type = shape.type();
   if (type == ShapeContainer::Type::S2Point) {
     const auto& region = sdb::basics::downCast<S2PointRegion>(*shape.region());
-    geo_terms = sdb::geo::terms::QueryTerms(options.options, region.point(),
-                                            options.prefix);
+    geo_terms = irs::geo_terms::QueryTerms(options.options, region.point(),
+                                           options.prefix);
   } else {
     geo_terms =
-      sdb::geo::terms::QueryTerms(options.options, *shape.region(), {});
+      irs::geo_terms::QueryTerms(options.options, *shape.region(), {});
   }
 
   if (geo_terms.empty()) {

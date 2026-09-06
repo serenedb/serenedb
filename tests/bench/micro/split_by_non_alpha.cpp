@@ -124,7 +124,7 @@ void RunSegmentation(benchmark::State& state, const std::string& data) {
   SegmentationTokenizer::Options opts;
   opts.separate = SegmentationTokenizer::Options::Separate::Word;
   opts.accept = SegmentationTokenizer::Options::Accept::AlphaNumeric;
-  opts.convert = SegmentationTokenizer::Options::Convert::Lower;
+  opts.convert = irs::Case::Lower;
   auto stream = SegmentationTokenizer::Make(std::move(opts));
   bench::DrainSink sink;
   for (auto _ : state) {

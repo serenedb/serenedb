@@ -25,7 +25,6 @@
 #include <re2/regexp.h>
 
 #include <algorithm>
-#include <bit>
 #include <memory>
 #include <span>
 #include <utility>
@@ -131,31 +130,27 @@ Split SplitOn(bstring&& literal) {
   if (literal.size() == 1) {
     return delim::OneCharFinder{literal.front()};
   }
-  if (literal.size() > delim::kHorspoolNeedleThreshold) {
+  if (literal.size() > delim::kLongNeedleThreshold) {
     return delim::OneLongStringFinder{std::move(literal)};
   }
   return delim::OneStringFinder{std::move(literal)};
 }
 
 Split SplitOn(const classify::ByteSet& set) {
-  size_t count = 0;
-  for (const auto word : set.words) {
-    count += static_cast<size_t>(std::popcount(word));
-  }
-  if (count == 0) {
-    return {};
-  }
-  if (count > delim::ManyCharsFinder::kMaxBlockDelims) {
-    return delim::ByteRangesFinder{set};
-  }
   delim::ManyCharsFinder chars;
   for (int b = 0; b < 256; ++b) {
     if (set.Contains(static_cast<byte_type>(b))) {
       chars.Add(static_cast<byte_type>(b));
     }
   }
+  if (chars.ndelims == 0) {
+    return {};
+  }
   if (chars.ndelims == 1) {
     return delim::OneCharFinder{chars.delims.front()};
+  }
+  if (!chars.Blockable()) {
+    return delim::ByteRangesFinder{set};
   }
   return chars;
 }

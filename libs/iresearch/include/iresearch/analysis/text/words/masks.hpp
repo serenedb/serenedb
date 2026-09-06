@@ -79,9 +79,8 @@ struct WordBridgeMasks {
   uint32_t mid_nu;
 };
 
-IRS_FORCE_INLINE inline WordBridgeMasks ClassifyWordBridgeBlock(
-  const byte_type* block) noexcept {
-  const auto b = classify::Load(block);
+IRS_FORCE_INLINE inline WordBridgeMasks ClassifyWordBridge(
+  classify::Block b) noexcept {
   const auto c = detail::WordCmpsOf(b);
   const classify::Cmp mid = (b == '.') | (b == '\'');
   const classify::Cmp mid_al = mid | (b == ':');
@@ -89,6 +88,11 @@ IRS_FORCE_INLINE inline WordBridgeMasks ClassifyWordBridgeBlock(
   return {classify::MoveMask(c.word), classify::MoveMask(c.alpha),
           classify::MoveMask(c.digit), classify::MoveMask(mid_al),
           classify::MoveMask(mid_nu)};
+}
+
+IRS_FORCE_INLINE inline WordBridgeMasks ClassifyWordBridgeBlock(
+  const byte_type* block) noexcept {
+  return ClassifyWordBridge(classify::Load(block));
 }
 
 // WordMasks plus the space lane, for scanners that bulk-consume alternating

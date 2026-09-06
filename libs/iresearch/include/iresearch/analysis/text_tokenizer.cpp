@@ -32,7 +32,7 @@
 
 #include "basics/log.h"
 #include "basics/string_utils.h"
-#include "iresearch/analysis/text/classify/block_masks.hpp"
+#include "iresearch/analysis/text/case/case.hpp"
 #include "iresearch/analysis/text/dict/stopwords_loader.hpp"
 #include "iresearch/analysis/text/normalize/icu.hpp"
 #include "iresearch/analysis/text/words/ascii.hpp"
@@ -135,7 +135,7 @@ TextTokenizer::TextTokenizer(Options options,
     _search_ngram{options.min_gram_set || options.max_gram_set ||
                   options.preserve_original_set},
     _preserve_original{options.preserve_original},
-    _ascii_fast{classify::AsciiCaseSafe(_locale.getName())} {
+    _ascii_fast{casing::AsciiCaseSafe(_locale.getName())} {
   if (!InitIcu(options.accent, options.stemming)) {
     THROW_SQL_ERROR(
       ERR_MSG("text: failed to initialize the analyzer for the locale"));
@@ -291,7 +291,7 @@ void TextTokenizer::AsciiFillValue(TokenSink& sink, duckdb::string_t raw) {
       shadow = _shadow_buf.data();
     }
   }
-  words::ScanAsciiRuns(raw, [&](const words::AsciiSegment& seg) {
+  words::ScanAsciiRuns(raw, [&](const words::Segment& seg) {
     if (!seg.has_alpha && !seg.has_digit) {
       return;
     }

@@ -52,6 +52,7 @@ endif()
 set(IResearch_core_sources
     ./utils/snowball_stemmer.cpp
     ./analysis/token_attributes.cpp
+    ./analysis/text/case/case.cpp
     ./analysis/text/classify/block_masks.cpp
     ./analysis/tokenizer_pool.cpp
     ./analysis/text/dict/stem_cache.cpp

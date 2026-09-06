@@ -54,7 +54,7 @@ Tokenizer::ptr MakeImpl(std::vector<bstring>&& delimiters) {
     }
   }
   if (delimiters.size() == 1) {
-    if (delimiters[0].size() > delim::kHorspoolNeedleThreshold) {
+    if (delimiters[0].size() > delim::kLongNeedleThreshold) {
       return std::make_unique<Impl<delim::OneLongStringFinder>>(
         std::move(delimiters[0]));
     }

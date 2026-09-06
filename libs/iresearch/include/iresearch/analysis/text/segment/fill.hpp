@@ -31,6 +31,7 @@
 #include "iresearch/analysis/text/words/ascii.hpp"
 #include "iresearch/analysis/text/words/unicode.hpp"
 #include "iresearch/analysis/token_sink.hpp"
+#include "iresearch/analysis/tokenizer.hpp"
 #include "iresearch/utils/utf8_character_utils.hpp"
 
 namespace irs::analysis::segment {
@@ -78,20 +79,20 @@ bool AcceptBytes(std::string_view bytes) noexcept {
 }
 
 template<Accept A>
-bool AcceptSegment(const char* data,
-                   const words::UnicodeSegment& seg) noexcept {
+IRS_FORCE_INLINE bool AcceptSegment(const char* data,
+                                    const words::Segment& seg) noexcept {
   if constexpr (A == Accept::Any) {
     return true;
   } else {
-    if constexpr (A != Accept::Graphic) {
-      if (seg.has_ascii_alpha) {
+    if (seg.has_alpha) {
+      return true;
+    }
+    if constexpr (A != Accept::Alpha) {
+      if (seg.has_digit) {
         return true;
       }
-      if constexpr (A == Accept::AlphaNumeric) {
-        if (seg.has_ascii_digit) {
-          return true;
-        }
-      }
+    }
+    if constexpr (A != Accept::Graphic) {
       if (seg.ascii_only) {
         return false;
       }
@@ -124,22 +125,22 @@ void ForEachSzMatch(Finder finder, const char* data, size_t n,
   }
 }
 
-template<TokenLayout Layout, Convert C, bool Ascii>
+template<TokenLayout Layout, Case C, bool Ascii>
 IRS_FORCE_INLINE void EmitConverted(TokenSink& sink, const char* data,
                                     uint32_t value_size, uint32_t begin,
                                     uint32_t end) {
-  if constexpr (C == Convert::None) {
+  if constexpr (C == Case::None) {
     sink.EmitSlice<Layout>(data, data + value_size, Offs{begin, end});
   } else if constexpr (Ascii) {
-    sink.EmitSliceCaseConverted<Layout, C == Convert::Lower>(
+    sink.EmitSliceCaseConverted<Layout, C == Case::Lower>(
       data, data + value_size, Offs{begin, end});
   } else {
-    sink.EmitCaseConvertedUtf8<Layout, C == Convert::Lower>(
+    sink.EmitCaseConvertedUtf8<Layout, C == Case::Lower>(
       std::string_view{data + begin, end - begin}, Offs{begin, end});
   }
 }
 
-template<TokenLayout Layout, Convert C, Accept A, bool Ascii>
+template<TokenLayout Layout, Case C, Accept A, bool Ascii>
 IRS_FORCE_INLINE void EmitAccepted(TokenSink& sink, const char* data,
                                    uint32_t value_size, uint32_t begin,
                                    uint32_t end) {
@@ -151,7 +152,7 @@ IRS_FORCE_INLINE void EmitAccepted(TokenSink& sink, const char* data,
   EmitConverted<Layout, C, Ascii>(sink, data, value_size, begin, end);
 }
 
-template<TokenLayout Layout, Convert C, Accept A, bool Ascii>
+template<TokenLayout Layout, Case C, Accept A, bool Ascii>
 IRS_FORCE_INLINE void EmitTrimmedSegment(TokenSink& sink, const char* data,
                                          uint32_t value_size, uint32_t begin,
                                          uint32_t end) {
@@ -167,45 +168,32 @@ IRS_FORCE_INLINE void EmitTrimmedSegment(TokenSink& sink, const char* data,
   EmitAccepted<Layout, C, A, Ascii>(sink, data, value_size, begin, end);
 }
 
-template<TokenLayout Layout, Convert C, Accept A, bool Ascii>
+template<TokenLayout Layout, Case C, Accept A, bool Ascii>
 IRS_NO_INLINE void WordFillValue(TokenSink& sink, duckdb::string_t value) {
   const char* data = value.GetData();
   const uint32_t n = value.GetSize();
-  if constexpr (!Ascii) {
-    words::ScanUnicode(value, [&](const words::UnicodeSegment& seg) {
-      if (!AcceptSegment<A>(data, seg)) {
-        return;
-      }
-      if constexpr (C == Convert::None) {
-        EmitConverted<Layout, C, true>(sink, data, n, seg.begin, seg.end);
-      } else if (seg.ascii_only) [[likely]] {
-        EmitConverted<Layout, C, true>(sink, data, n, seg.begin, seg.end);
-      } else {
-        EmitConverted<Layout, C, false>(sink, data, n, seg.begin, seg.end);
-      }
-    });
-  } else if constexpr (A == Accept::AlphaNumeric || A == Accept::Alpha) {
-    const auto accept = [](const words::AsciiSegment& seg) IRS_FORCE_INLINE {
-      if constexpr (A == Accept::AlphaNumeric) {
-        return seg.has_alpha || seg.has_digit;
-      } else {
-        return seg.has_alpha;
-      }
-    };
-    words::ScanAsciiRuns(value, [&](const words::AsciiSegment& seg) {
-      if (!accept(seg)) {
-        return;
-      }
+  const auto emit = [&](const words::Segment& seg) IRS_FORCE_INLINE {
+    if (!AcceptSegment<A>(data, seg)) {
+      return;
+    }
+    if constexpr (C == Case::None) {
       EmitConverted<Layout, C, true>(sink, data, n, seg.begin, seg.end);
-    });
+    } else if (seg.ascii_only) [[likely]] {
+      EmitConverted<Layout, C, true>(sink, data, n, seg.begin, seg.end);
+    } else {
+      EmitConverted<Layout, C, false>(sink, data, n, seg.begin, seg.end);
+    }
+  };
+  if constexpr (!Ascii) {
+    words::ScanUnicode(value, emit);
+  } else if constexpr (A == Accept::AlphaNumeric || A == Accept::Alpha) {
+    words::ScanAsciiRuns(value, emit);
   } else {
-    words::ScanAscii(value, [&](const words::AsciiSegment& seg) {
-      EmitAccepted<Layout, C, A, true>(sink, data, n, seg.begin, seg.end);
-    });
+    words::ScanAscii(value, emit);
   }
 }
 
-template<TokenLayout Layout, Convert C, Accept A, bool Ascii>
+template<TokenLayout Layout, Case C, Accept A, bool Ascii>
 IRS_NO_INLINE void SentenceFillValue(TokenSink& sink, duckdb::string_t value) {
   const char* data = value.GetData();
   const uint32_t n = value.GetSize();
@@ -215,7 +203,7 @@ IRS_NO_INLINE void SentenceFillValue(TokenSink& sink, duckdb::string_t value) {
   });
 }
 
-template<TokenLayout Layout, Convert C, Accept A, bool Paragraph, bool Ascii>
+template<TokenLayout Layout, Case C, Accept A, bool Paragraph, bool Ascii>
 IRS_NO_INLINE void LineFillValue(TokenSink& sink, duckdb::string_t value) {
   const char* data = value.GetData();
   const uint32_t n = value.GetSize();
@@ -256,7 +244,7 @@ IRS_NO_INLINE void LineFillValue(TokenSink& sink, duckdb::string_t value) {
   emit(seg_start, n);
 }
 
-template<TokenLayout Layout, Convert C, Accept A, bool Ascii>
+template<TokenLayout Layout, Case C, Accept A, bool Ascii>
 IRS_NO_INLINE void WholeFillValue(TokenSink& sink, duckdb::string_t value) {
   const uint32_t size = value.GetSize();
   if (size == 0) {

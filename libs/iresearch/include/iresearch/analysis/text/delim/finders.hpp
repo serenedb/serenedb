@@ -34,7 +34,7 @@
 
 namespace irs::analysis::delim {
 
-inline constexpr size_t kHorspoolNeedleThreshold = 8;
+inline constexpr size_t kLongNeedleThreshold = 8;
 
 struct NoDelimFinder {
   template<typename OnDelim>
@@ -70,14 +70,18 @@ struct ManyCharsFinder {
     ++ndelims;
   }
 
+  bool Blockable() const noexcept { return ndelims <= kMaxBlockDelims; }
+
+  IRS_FORCE_INLINE uint32_t Classify(const byte_type* block) const noexcept {
+    return classify::ClassifyAnyEqBlock(block, {delims.data(), ndelims});
+  }
+
   template<typename OnDelim>
   IRS_FORCE_INLINE void ForEachDelim(bytes_view data,
                                      OnDelim&& on_delim) const {
     classify::DrainClassified(
-      data.data(), data.size(), ndelims <= kMaxBlockDelims,
-      [&](const byte_type* block) IRS_FORCE_INLINE {
-        return classify::ClassifyAnyEqBlock(block, {delims.data(), ndelims});
-      },
+      data.data(), data.size(), Blockable(),
+      [&](const byte_type* block) IRS_FORCE_INLINE { return Classify(block); },
       [&](byte_type c) IRS_FORCE_INLINE { return bytes.Contains(c); },
       [&](size_t pos) IRS_FORCE_INLINE { on_delim(pos, size_t{1}); });
   }
@@ -110,15 +114,18 @@ struct ByteRangesFinder {
     }
   }
 
+  bool Blockable() const noexcept { return nranges <= kMaxBlockRanges; }
+
+  IRS_FORCE_INLINE uint32_t Classify(const byte_type* block) const noexcept {
+    return classify::ClassifyAnyInRangeBlock(block, {ranges.data(), nranges});
+  }
+
   template<typename OnDelim>
   IRS_FORCE_INLINE void ForEachDelim(bytes_view data,
                                      OnDelim&& on_delim) const {
     classify::DrainClassified(
-      data.data(), data.size(), nranges <= kMaxBlockRanges,
-      [&](const byte_type* block) IRS_FORCE_INLINE {
-        return classify::ClassifyAnyInRangeBlock(block,
-                                                 {ranges.data(), nranges});
-      },
+      data.data(), data.size(), Blockable(),
+      [&](const byte_type* block) IRS_FORCE_INLINE { return Classify(block); },
       [&](byte_type c) IRS_FORCE_INLINE { return bytes.Contains(c); },
       [&](size_t pos) IRS_FORCE_INLINE { on_delim(pos, size_t{1}); });
   }
@@ -159,7 +166,7 @@ struct OneLongStringFinder {
 
   explicit OneLongStringFinder(bstring&& delimiter)
     : delim{std::move(delimiter)} {
-    SDB_ASSERT(delim.size() > kHorspoolNeedleThreshold);
+    SDB_ASSERT(delim.size() > kLongNeedleThreshold);
   }
 
   template<typename OnDelim>
@@ -218,19 +225,12 @@ struct OneLongStringFinder {
 };
 
 struct MultiStringFinder {
-  static constexpr size_t kMaxBlockFirsts = 8;
   static constexpr size_t kPrefix = sizeof(uint64_t);
 
   explicit MultiStringFinder(std::vector<bstring>&& delimiters) {
     for (auto& d : delimiters) {
       SDB_ASSERT(!d.empty());
-      if (!first.Contains(d.front())) {
-        first.Add(d.front());
-        if (nfirsts < kMaxBlockFirsts) {
-          firsts[nfirsts] = d.front();
-        }
-        ++nfirsts;
-      }
+      first.Add(d.front());
       const size_t head = std::min(d.size(), kPrefix);
       std::array<byte_type, kPrefix> ones{};
       std::fill_n(ones.begin(), head, byte_type{0xFF});
@@ -278,12 +278,10 @@ struct MultiStringFinder {
     const auto* p = data.data();
     const size_t size = data.size();
     size_t pos = 0;
-    if (nfirsts <= kMaxBlockFirsts && size >= classify::kClassifyBlock) {
+    if (first.Blockable() && size >= classify::kClassifyBlock) {
       for (;;) {
         const size_t base = std::min(pos, size - classify::kClassifyBlock);
-        auto mask =
-          classify::ClassifyAnyEqBlock(p + base, {firsts.data(), nfirsts}) &
-          (~uint32_t{0} << (pos - base));
+        auto mask = first.Classify(p + base) & (~uint32_t{0} << (pos - base));
         size_t next = base + classify::kClassifyBlock;
         while (mask != 0) {
           const size_t at = base + std::countr_zero(mask);
@@ -308,7 +306,7 @@ struct MultiStringFinder {
     }
     while (pos < size) {
       const size_t skip =
-        first.Contains(p[pos]) ? MatchAt(p + pos, size - pos) : 0;
+        first.bytes.Contains(p[pos]) ? MatchAt(p + pos, size - pos) : 0;
       if (skip == 0) {
         ++pos;
         continue;
@@ -322,9 +320,7 @@ struct MultiStringFinder {
   std::vector<uint64_t> masks;
   std::vector<uint32_t> sizes;
   std::vector<bstring> delims;
-  classify::ByteSet first;
-  std::array<byte_type, kMaxBlockFirsts> firsts{};
-  size_t nfirsts = 0;
+  ManyCharsFinder first;
 };
 
 }  // namespace irs::analysis::delim

@@ -45,21 +45,21 @@ class UnicodeAnalyzerImpl final : public TypedTokenizer<UnicodeAnalyzerImpl<S>>,
                   S == Options::Separate::None) {
       return {.ascii = true};
     } else {
-      return {.ascii = _convert != Options::Convert::None ||
+      return {.ascii = _convert != Case::None ||
                        _accept != Options::Accept::Any};
     }
   }
 
-  std::tuple<Options::Convert, Options::Accept, bool> PrepareBatch(
+  std::tuple<Case, Options::Accept, bool> PrepareBatch(
     BlockTraits traits) const noexcept {
     return {_convert, _accept, traits.ascii};
   }
 
   TokenTraits Traits() const noexcept final {
-    return {.offsets = true, .stable = _convert == Options::Convert::None};
+    return {.offsets = true, .stable = _convert == Case::None};
   }
 
-  template<TokenLayout Layout, Options::Convert C, Options::Accept A,
+  template<TokenLayout Layout, Case C, Options::Accept A,
            bool KnownAscii>
   bool DoFill(duckdb::string_t raw, TokenSink& sink) {
     if constexpr (S == Options::Separate::Sentence) {
@@ -77,7 +77,7 @@ class UnicodeAnalyzerImpl final : public TypedTokenizer<UnicodeAnalyzerImpl<S>>,
   }
 
  private:
-  Options::Convert _convert;
+  Case _convert;
   Options::Accept _accept;
 };
 

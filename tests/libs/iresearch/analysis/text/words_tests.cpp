@@ -39,14 +39,14 @@
 namespace {
 
 using irs::analysis::words::ScanUnicode;
-using irs::analysis::words::UnicodeSegment;
+using irs::analysis::words::Segment;
 
 using Span = std::pair<uint32_t, uint32_t>;
 
-std::vector<UnicodeSegment> Scan(std::string_view text) {
-  std::vector<UnicodeSegment> out;
+std::vector<Segment> Scan(std::string_view text) {
+  std::vector<Segment> out;
   ScanUnicode(duckdb::string_t{text.data(), static_cast<uint32_t>(text.size())},
-              [&](const UnicodeSegment& seg) { out.push_back(seg); });
+              [&](const Segment& seg) { out.push_back(seg); });
   return out;
 }
 
@@ -202,29 +202,29 @@ TEST(words_unicode_test, cjk_per_glyph) {
 TEST(words_unicode_test, segment_flags) {
   const auto segs = Scan("can' hi");
   ASSERT_EQ(4u, segs.size());
-  EXPECT_TRUE(segs[0].has_ascii_alpha);
+  EXPECT_TRUE(segs[0].has_alpha);
   EXPECT_TRUE(segs[0].ascii_only);
-  EXPECT_FALSE(segs[1].has_ascii_alpha);
-  EXPECT_FALSE(segs[2].has_ascii_alpha);
-  EXPECT_TRUE(segs[3].has_ascii_alpha);
+  EXPECT_FALSE(segs[1].has_alpha);
+  EXPECT_FALSE(segs[2].has_alpha);
+  EXPECT_TRUE(segs[3].has_alpha);
 
   const auto mixed = Scan(
     "\xD0\xB6"
     "1");
   ASSERT_EQ(1u, mixed.size());
   EXPECT_FALSE(mixed[0].ascii_only);
-  EXPECT_FALSE(mixed[0].has_ascii_alpha);
-  EXPECT_TRUE(mixed[0].has_ascii_digit);
+  EXPECT_FALSE(mixed[0].has_alpha);
+  EXPECT_TRUE(mixed[0].has_digit);
 
   const auto cafe = Scan("caf\xC3\xA9");
   ASSERT_EQ(1u, cafe.size());
   EXPECT_FALSE(cafe[0].ascii_only);
-  EXPECT_TRUE(cafe[0].has_ascii_alpha);
+  EXPECT_TRUE(cafe[0].has_alpha);
 
   const auto quote = Scan("a'\xCF\x89");
   ASSERT_EQ(1u, quote.size());
   EXPECT_FALSE(quote[0].ascii_only);
-  EXPECT_TRUE(quote[0].has_ascii_alpha);
+  EXPECT_TRUE(quote[0].has_alpha);
 }
 
 TEST(words_unicode_test, segments_tile_input) {
@@ -295,7 +295,7 @@ TEST(words_unicode_test, alyze_sanity) {
   const auto segs = Scan("ab" + stop_sign);
   ASSERT_EQ(2u, segs.size());
   EXPECT_TRUE(segs[0].ascii_only);
-  EXPECT_TRUE(segs[0].has_ascii_alpha);
+  EXPECT_TRUE(segs[0].has_alpha);
   EXPECT_FALSE(segs[1].ascii_only);
 }
 

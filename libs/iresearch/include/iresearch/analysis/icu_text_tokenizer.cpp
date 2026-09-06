@@ -39,7 +39,6 @@ namespace {
 
 using Options = IcuTextTokenizer::Options;
 using Accept = Options::Accept;
-using Convert = segment::Convert;
 
 std::unique_ptr<icu::BreakIterator> MakeBreakIterator(
   Options::Separate separate, const icu::Locale& locale) {
@@ -98,7 +97,7 @@ class IcuTextAnalyzerImpl final : public TypedTokenizer<IcuTextAnalyzerImpl<S>>,
   template<TokenLayout Layout, Accept A, bool KnownAscii>
   bool DoFill(const duckdb::string_t& raw, TokenSink& sink) {
     if constexpr (S == Options::Separate::Word && KnownAscii) {
-      segment::WordFillValue<Layout, Convert::None, A, true>(sink, raw);
+      segment::WordFillValue<Layout, Case::None, A, true>(sink, raw);
       return true;
     } else {
       return FillValue<Layout, A, KnownAscii>(sink, raw);
@@ -140,15 +139,15 @@ class IcuTextAnalyzerImpl final : public TypedTokenizer<IcuTextAnalyzerImpl<S>>,
         stop += size;
       }
       if constexpr (S == Options::Separate::Sentence) {
-        segment::EmitTrimmedSegment<Layout, Convert::None, A, KnownAscii>(
+        segment::EmitTrimmedSegment<Layout, Case::None, A, KnownAscii>(
           sink, data, n, begin, stop);
       } else if constexpr (A == Accept::AlphaNumeric || A == Accept::Alpha) {
         if (_break->getRuleStatus() != UWordBreak::UBRK_WORD_NONE) {
-          segment::EmitAccepted<Layout, Convert::None, A, KnownAscii>(
+          segment::EmitAccepted<Layout, Case::None, A, KnownAscii>(
             sink, data, n, begin, stop);
         }
       } else {
-        segment::EmitAccepted<Layout, Convert::None, A, KnownAscii>(
+        segment::EmitAccepted<Layout, Case::None, A, KnownAscii>(
           sink, data, n, begin, stop);
       }
       begin = stop;

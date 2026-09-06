@@ -53,13 +53,12 @@ Tokenizer::ptr MakeTextEn() {
 
 Tokenizer::ptr MakePipelineTextEn(
   const icu::Locale& seg_locale = irs::MakeBogusLocale()) {
-  using Convert = SegmentationTokenizer::Options::Convert;
   const bool icu = !seg_locale.isBogus();
   std::vector<Tokenizer::ptr> subs;
   if (icu) {
     subs.push_back(IcuTextTokenizer::Make({.locale = seg_locale}));
   } else {
-    subs.push_back(SegmentationTokenizer::Make({.convert = Convert::Lower}));
+    subs.push_back(SegmentationTokenizer::Make({.convert = irs::Case::Lower}));
   }
   {
     NormalizingTokenizer::Options o;
@@ -98,9 +97,8 @@ Tokenizer::ptr MakeTextEnNGram(size_t min_gram, size_t max_gram,
 
 Tokenizer::ptr MakePipelineTextEnNGram(size_t min_gram, size_t max_gram,
                                        bool preserve_original) {
-  using Convert = SegmentationTokenizer::Options::Convert;
   std::vector<Tokenizer::ptr> subs;
-  subs.push_back(SegmentationTokenizer::Make({.convert = Convert::Lower}));
+  subs.push_back(SegmentationTokenizer::Make({.convert = irs::Case::Lower}));
   {
     NormalizingTokenizer::Options o;
     o.locale = icu::Locale::createFromName("en");
@@ -280,9 +278,8 @@ TEST(TextPipelineEquivalenceTest, loaded_stopwords_match_text) {
   to.stopwords_path = root;
   auto text = TextTokenizer::Make(std::move(to), tests::Cache());
 
-  using Convert = SegmentationTokenizer::Options::Convert;
   std::vector<Tokenizer::ptr> subs;
-  subs.push_back(SegmentationTokenizer::Make({.convert = Convert::Lower}));
+  subs.push_back(SegmentationTokenizer::Make({.convert = irs::Case::Lower}));
   {
     NormalizingTokenizer::Options o;
     o.locale = icu::Locale::createFromName("en");
@@ -341,10 +338,9 @@ TEST(TextPipelineEquivalenceTest, locale_segmentation_matches_text) {
 TEST(TextPipelineEquivalenceTest, icu_sentence_segmentation) {
   using Separate = SegmentationTokenizer::Options::Separate;
   using Accept = SegmentationTokenizer::Options::Accept;
-  using Convert = SegmentationTokenizer::Options::Convert;
   auto def = SegmentationTokenizer::Make({.separate = Separate::Sentence,
                                           .accept = Accept::Any,
-                                          .convert = Convert::None});
+                                          .convert = irs::Case::None});
   auto icu = IcuTextTokenizer::Make(
     {.separate = IcuTextTokenizer::Options::Separate::Sentence,
      .accept = Accept::Any,

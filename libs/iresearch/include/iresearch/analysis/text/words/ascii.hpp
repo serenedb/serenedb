@@ -80,9 +80,10 @@ constexpr bool IsWordClass(uint8_t cls) noexcept {
   return cls >= kAL && cls <= kEX;
 }
 
-struct AsciiSegment {
+struct Segment {
   uint32_t begin;
   uint32_t end;
+  bool ascii_only;
   bool has_alpha;
   bool has_digit;
 };
@@ -92,10 +93,10 @@ struct AsciiSegment {
 // the scalar per-byte loop, but blocks are classified with one movemask each
 // (the find-first-non-word exit is the idiom the compiler cannot form). Stops
 // at the first non-word byte or end.
-inline void AdvanceWordRun(const unsigned char* b, size_t& i, size_t n,
+inline void AdvanceWordRun(const byte_type* b, size_t& i, size_t n,
                            bool& has_alpha, bool& has_digit) {
   while (n - i >= classify::kClassifyBlock) {
-    const auto m = ClassifyWordBlock(reinterpret_cast<const byte_type*>(b + i));
+    const auto m = ClassifyWordBlock(b + i);
     const uint32_t nonword = ~m.word;
     if (nonword != 0) {
       const auto k = static_cast<uint32_t>(std::countr_zero(nonword));
@@ -123,7 +124,7 @@ inline void AdvanceWordRun(const unsigned char* b, size_t& i, size_t n,
 // Extends a word run past `i` (which sits at the current run's end) through
 // the WB6/7 and WB11/12 mid bridges, exactly like ScanAscii's chain.
 // Returns the final run end.
-IRS_FORCE_INLINE inline size_t ExtendWordRun(const unsigned char* b, size_t i,
+IRS_FORCE_INLINE inline size_t ExtendWordRun(const byte_type* b, size_t i,
                                              size_t n, bool& has_alpha,
                                              bool& has_digit) noexcept {
   while (i + 1 < n) {
@@ -153,41 +154,22 @@ IRS_FORCE_INLINE inline size_t ExtendWordRun(const unsigned char* b, size_t i,
 // separators cost only the bits they occupy. Mid bridges and
 // window-crossing runs bail to the scalar chain (rare) and re-window.
 // Emits the same word segments as ScanAscii, in order.
+// Bit e set iff a bridge may fire at run end e: a mid byte with the
+// matching word class on BOTH neighbours, all read from the masks
+// already in hand -- the fast path emits without re-touching bytes.
+IRS_FORCE_INLINE inline uint32_t BridgeMask(const WordBridgeMasks& m) noexcept {
+  return (m.mid_al & (m.alpha << 1) & (m.alpha >> 1)) |
+         (m.mid_nu & (m.digit << 1) & (m.digit >> 1));
+}
+
 template<typename Emit>
 IRS_FORCE_INLINE void ScanAsciiRuns(duckdb::string_t value, Emit&& emit) {
-  const auto* b = reinterpret_cast<const unsigned char*>(value.GetData());
+  const auto* b = reinterpret_cast<const byte_type*>(value.GetData());
   const size_t n = value.GetSize();
   size_t i = 0;
-  while (i < n) {
-    if (n - i < classify::kClassifyBlock) {
-      while (i < n && !IsWordClass(kWbClass[b[i]])) {
-        ++i;
-      }
-      if (i == n) {
-        return;
-      }
-      const size_t start = i;
-      bool has_alpha = false;
-      bool has_digit = false;
-      AdvanceWordRun(b, i, n, has_alpha, has_digit);
-      i = ExtendWordRun(b, i, n, has_alpha, has_digit);
-      emit(AsciiSegment{static_cast<uint32_t>(start), static_cast<uint32_t>(i),
-                        has_alpha, has_digit});
-      continue;
-    }
-    const auto m =
-      ClassifyWordBridgeBlock(reinterpret_cast<const byte_type*>(b + i));
+  const auto drain = [&](const WordBridgeMasks& m, size_t blk,
+                         uint32_t slow) IRS_FORCE_INLINE {
     uint32_t w = m.word;
-    const size_t blk = i;
-    i = blk + classify::kClassifyBlock;
-    // Bit e set iff a bridge may fire at run end e: a mid byte with the
-    // matching word class on BOTH neighbours, all read from the masks
-    // already in hand -- the fast path emits without re-touching bytes.
-    // Bit 31 is forced: a run ending on the window edge needs the scalar
-    // chain to see the next window.
-    const uint32_t slow = (m.mid_al & (m.alpha << 1) & (m.alpha >> 1)) |
-                          (m.mid_nu & (m.digit << 1) & (m.digit >> 1)) |
-                          (1u << (classify::kClassifyBlock - 1));
     while (w != 0) {
       const auto s = static_cast<uint32_t>(std::countr_zero(w));
       const auto len = static_cast<uint32_t>(std::countr_one(w >> s));
@@ -197,29 +179,42 @@ IRS_FORCE_INLINE void ScanAsciiRuns(duckdb::string_t value, Emit&& emit) {
         bool has_digit = (m.digit >> s) != 0;
         AdvanceWordRun(b, i, n, has_alpha, has_digit);
         i = ExtendWordRun(b, i, n, has_alpha, has_digit);
-        emit(AsciiSegment{static_cast<uint32_t>(start),
-                          static_cast<uint32_t>(i), has_alpha, has_digit});
-        break;
+        emit(Segment{static_cast<uint32_t>(start), static_cast<uint32_t>(i),
+                     true, has_alpha, has_digit});
+        return;
       }
       const uint32_t runmask = ((1u << len) - 1) << s;
       bool has_alpha = (m.alpha & runmask) != 0;
       bool has_digit = (m.digit & runmask) != 0;
       const size_t end = start + len;
       if (((slow >> (s + len)) & 1u) == 0) [[likely]] {
-        emit(AsciiSegment{static_cast<uint32_t>(start),
-                          static_cast<uint32_t>(end), has_alpha, has_digit});
+        emit(Segment{static_cast<uint32_t>(start), static_cast<uint32_t>(end),
+                     true, has_alpha, has_digit});
         w &= ~runmask;
         continue;
       }
       const size_t extended = ExtendWordRun(b, end, n, has_alpha, has_digit);
-      emit(AsciiSegment{static_cast<uint32_t>(start),
-                        static_cast<uint32_t>(extended), has_alpha, has_digit});
+      emit(Segment{static_cast<uint32_t>(start),
+                   static_cast<uint32_t>(extended), true, has_alpha,
+                   has_digit});
       if (extended != end) [[unlikely]] {
         i = extended;
-        break;
+        return;
       }
       w &= ~runmask;
     }
+  };
+  while (n - i >= classify::kClassifyBlock) {
+    const auto m = ClassifyWordBridgeBlock(b + i);
+    const size_t blk = i;
+    i = blk + classify::kClassifyBlock;
+    drain(m, blk, BridgeMask(m) | (1u << (classify::kClassifyBlock - 1)));
+  }
+  while (i < n) {
+    const auto m = ClassifyWordBridge(classify::LoadPadded(b + i, n - i));
+    const size_t blk = i;
+    i = n;
+    drain(m, blk, BridgeMask(m));
   }
 }
 
@@ -232,7 +227,7 @@ IRS_FORCE_INLINE void ScanAsciiRuns(duckdb::string_t value, Emit&& emit) {
 // is a WB999 break. Calls `emit` for every segment in order.
 template<typename Emit>
 IRS_FORCE_INLINE void ScanAscii(duckdb::string_t value, Emit&& emit) {
-  const auto* b = reinterpret_cast<const unsigned char*>(value.GetData());
+  const auto* b = reinterpret_cast<const byte_type*>(value.GetData());
   const size_t n = value.GetSize();
   size_t i = 0;
   while (i < n) {
@@ -259,8 +254,8 @@ IRS_FORCE_INLINE void ScanAscii(duckdb::string_t value, Emit&& emit) {
         ++i;
         break;
     }
-    emit(AsciiSegment{static_cast<uint32_t>(seg_begin),
-                      static_cast<uint32_t>(i), has_alpha, has_digit});
+    emit(Segment{static_cast<uint32_t>(seg_begin), static_cast<uint32_t>(i),
+                 true, has_alpha, has_digit});
   }
 }
 

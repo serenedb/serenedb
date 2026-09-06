@@ -166,4 +166,8 @@ size_t CaseConvertUtf8(std::string_view in, byte_type* dst) {
   return out - dst;
 }
 
+bool AsciiCaseSafe(const char* locale_name) noexcept;
+
+bool SimpleCaseSafe(const char* locale_name) noexcept;
+
 }  // namespace irs::analysis::casing

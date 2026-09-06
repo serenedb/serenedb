@@ -96,6 +96,7 @@ struct ByteSet {
 
 IRS_FORCE_INLINE inline bool IsAsciiShort(const char* data,
                                           size_t size) noexcept {
+  SDB_ASSERT(size <= 16);
   uint64_t acc;
   if (size >= 8) {
     uint64_t lo;
@@ -126,10 +127,6 @@ IRS_FORCE_INLINE inline bool IsAsciiValue(const char* data,
   }
   return simdutf::validate_ascii(data, size);
 }
-
-bool AsciiCaseSafe(const char* locale_name) noexcept;
-
-bool SimpleCaseSafe(const char* locale_name) noexcept;
 
 template<typename Visitor>
 IRS_FORCE_INLINE void VisitSetBits(uint32_t mask, Visitor&& visit) {

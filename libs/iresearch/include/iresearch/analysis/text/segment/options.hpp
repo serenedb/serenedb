@@ -31,10 +31,4 @@ enum class Accept : uint8_t {
   Alpha,
 };
 
-enum class Convert : uint8_t {
-  None = 0,
-  Lower,
-  Upper,
-};
-
 }  // namespace irs::analysis::segment

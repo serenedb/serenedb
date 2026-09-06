@@ -45,10 +45,9 @@ class SegmentationTokenizer : private util::Noncopyable {
       Paragraph,
     };
     using Accept = segment::Accept;
-    using Convert = segment::Convert;
     Separate separate = Separate::Word;
     Accept accept = Accept::AlphaNumeric;
-    Convert convert = Convert::Lower;
+    Case convert = Case::Lower;
   };
 
   static Tokenizer::ptr Make(Options opts);

@@ -1561,10 +1561,9 @@ TEST(pipeline_token_stream_test, sole_stage_unwrapped_by_make) {
 }
 
 std::vector<irs::analysis::Tokenizer::ptr> MakeStableChildren() {
-  using Convert = irs::analysis::SegmentationTokenizer::Options::Convert;
   std::vector<irs::analysis::Tokenizer::ptr> subs;
   subs.push_back(
-    irs::analysis::SegmentationTokenizer::Make({.convert = Convert::None}));
+    irs::analysis::SegmentationTokenizer::Make({.convert = irs::Case::None}));
   subs.push_back(MakeStopwords({"the", "and", "of", "a"}));
   return subs;
 }

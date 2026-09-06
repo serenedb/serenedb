@@ -26,6 +26,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <duckdb/common/types/string_type.hpp>
+#include <initializer_list>
 #include <limits>
 #include <utility>
 
@@ -54,7 +55,8 @@ enum class WbState : uint8_t {
   HebrewDQ,
 };
 
-inline constexpr size_t kWbStateCount = 15;
+inline constexpr size_t kWbStateCount =
+  std::to_underlying(WbState::HebrewDQ) + 1;
 
 enum class WbAction : uint8_t {
   Break = 0,
@@ -101,6 +103,7 @@ inline constexpr WbState BaseState(WbProp p) noexcept {
 
 using WbRow = std::array<WbTransition, kWbPropCount>;
 using WbTable = std::array<WbRow, kWbStateCount>;
+using WbGlue = std::pair<WbProp, WbState>;
 
 inline constexpr WbRow BreakRow() noexcept {
   using enum WbAction;
@@ -115,6 +118,16 @@ inline constexpr WbRow BreakRow() noexcept {
   return row;
 }
 
+inline constexpr WbRow NoWb4Row() noexcept {
+  using enum WbAction;
+  using enum WbState;
+  WbRow row = BreakRow();
+  row[kExtend] = {Break, Other};
+  row[kFormat] = {Break, Other};
+  row[kZWJ] = {Break, Other};
+  return row;
+}
+
 inline constexpr WbRow DeferRow() noexcept {
   using enum WbAction;
   using enum WbState;
@@ -126,119 +139,64 @@ inline constexpr WbRow DeferRow() noexcept {
   return row;
 }
 
-inline constexpr void DropWb4(WbRow& row) noexcept {
-  using enum WbAction;
-  using enum WbState;
-  row[kExtend] = {Break, Other};
-  row[kFormat] = {Break, Other};
-  row[kZWJ] = {Break, Other};
+inline constexpr WbRow WithGlues(WbRow row,
+                                 std::initializer_list<WbGlue> glues) noexcept {
+  for (const auto& [prop, state] : glues) {
+    row[prop] = {WbAction::Glue, state};
+  }
+  return row;
 }
 
 inline constexpr auto kWbTransitions = [] {
   using enum WbAction;
   using enum WbState;
   WbTable t{};
-  {
-    WbRow row = BreakRow();
-    DropWb4(row);
-    t[std::to_underlying(WbState::Begin)] = row;
-  }
-  t[std::to_underlying(WbState::Other)] = BreakRow();
-  {
-    WbRow row = BreakRow();
-    row[kLF] = {Glue, Newline};
-    DropWb4(row);
-    t[std::to_underlying(WbState::CR)] = row;
-  }
-  {
-    WbRow row = BreakRow();
-    DropWb4(row);
-    t[std::to_underlying(WbState::Newline)] = row;
-  }
-  {
-    WbRow row = BreakRow();
-    row[kWSegSpace] = {Glue, WSeg};
-    row[kExtend] = {Glue, Other};
-    row[kFormat] = {Glue, Other};
-    row[kZWJ] = {Glue, Other};
-    t[std::to_underlying(WbState::WSeg)] = row;
-  }
-  {
-    WbRow row = BreakRow();
-    row[kALetter] = {Glue, ALetter};
-    row[kHebrew] = {Glue, Hebrew};
-    row[kNumeric] = {Glue, Numeric};
-    row[kMidLetter] = {Glue, ALetterMid};
-    row[kMidNumLet] = {Glue, ALetterMid};
-    row[kSingleQuote] = {Glue, ALetterMid};
-    row[kExtendNumLet] = {Glue, ExtendNumLet};
-    t[std::to_underlying(WbState::ALetter)] = row;
-  }
-  {
-    WbRow row = BreakRow();
-    row[kALetter] = {Glue, ALetter};
-    row[kHebrew] = {Glue, Hebrew};
-    row[kNumeric] = {Glue, Numeric};
-    row[kMidLetter] = {Glue, ALetterMid};
-    row[kMidNumLet] = {Glue, ALetterMid};
-    row[kSingleQuote] = {Glue, HebrewSQ};
-    row[kDoubleQuote] = {Glue, HebrewDQ};
-    row[kExtendNumLet] = {Glue, ExtendNumLet};
-    t[std::to_underlying(WbState::Hebrew)] = row;
-  }
-  {
-    WbRow row = BreakRow();
-    row[kNumeric] = {Glue, Numeric};
-    row[kALetter] = {Glue, ALetter};
-    row[kHebrew] = {Glue, Hebrew};
-    row[kMidNum] = {Glue, NumericMid};
-    row[kMidNumLet] = {Glue, NumericMid};
-    row[kSingleQuote] = {Glue, NumericMid};
-    row[kExtendNumLet] = {Glue, ExtendNumLet};
-    t[std::to_underlying(WbState::Numeric)] = row;
-  }
-  {
-    WbRow row = BreakRow();
-    row[kKatakana] = {Glue, Katakana};
-    row[kExtendNumLet] = {Glue, ExtendNumLet};
-    t[std::to_underlying(WbState::Katakana)] = row;
-  }
-  {
-    WbRow row = BreakRow();
-    row[kALetter] = {Glue, ALetter};
-    row[kHebrew] = {Glue, Hebrew};
-    row[kNumeric] = {Glue, Numeric};
-    row[kKatakana] = {Glue, Katakana};
-    row[kExtendNumLet] = {Glue, ExtendNumLet};
-    t[std::to_underlying(WbState::ExtendNumLet)] = row;
-  }
-  {
-    WbRow row = BreakRow();
-    row[kRI] = {Glue, Other};
-    t[std::to_underlying(WbState::RIOdd)] = row;
-  }
-  {
-    WbRow row = BreakRow();
-    row[kALetter] = {Glue, ALetter};
-    row[kHebrew] = {Glue, Hebrew};
-    t[std::to_underlying(WbState::HebrewSQ)] = row;
-  }
-  {
-    WbRow row = DeferRow();
-    row[kALetter] = {Glue, ALetter};
-    row[kHebrew] = {Glue, Hebrew};
-    t[std::to_underlying(WbState::ALetterMid)] = row;
-  }
-  {
-    WbRow row = DeferRow();
-    row[kNumeric] = {Glue, Numeric};
-    t[std::to_underlying(WbState::NumericMid)] = row;
-  }
-  {
-    WbRow row = DeferRow();
-    row[kHebrew] = {Glue, Hebrew};
-    t[std::to_underlying(WbState::HebrewDQ)] = row;
-  }
+  const auto at = [&](WbState s) -> WbRow& {
+    return t[std::to_underlying(s)];
+  };
+  at(Begin) = NoWb4Row();
+  at(Other) = BreakRow();
+  at(CR) = WithGlues(NoWb4Row(), {{kLF, Newline}});
+  at(Newline) = NoWb4Row();
+  at(WSeg) = WithGlues(BreakRow(), {{kWSegSpace, WSeg},
+                                    {kExtend, Other},
+                                    {kFormat, Other},
+                                    {kZWJ, Other}});
+  at(ALetter) = WithGlues(BreakRow(), {{kALetter, ALetter},
+                                       {kHebrew, Hebrew},
+                                       {kNumeric, Numeric},
+                                       {kMidLetter, ALetterMid},
+                                       {kMidNumLet, ALetterMid},
+                                       {kSingleQuote, ALetterMid},
+                                       {kExtendNumLet, ExtendNumLet}});
+  at(Hebrew) = WithGlues(BreakRow(), {{kALetter, ALetter},
+                                      {kHebrew, Hebrew},
+                                      {kNumeric, Numeric},
+                                      {kMidLetter, ALetterMid},
+                                      {kMidNumLet, ALetterMid},
+                                      {kSingleQuote, HebrewSQ},
+                                      {kDoubleQuote, HebrewDQ},
+                                      {kExtendNumLet, ExtendNumLet}});
+  at(Numeric) = WithGlues(BreakRow(), {{kNumeric, Numeric},
+                                       {kALetter, ALetter},
+                                       {kHebrew, Hebrew},
+                                       {kMidNum, NumericMid},
+                                       {kMidNumLet, NumericMid},
+                                       {kSingleQuote, NumericMid},
+                                       {kExtendNumLet, ExtendNumLet}});
+  at(Katakana) = WithGlues(
+    BreakRow(), {{kKatakana, Katakana}, {kExtendNumLet, ExtendNumLet}});
+  at(ExtendNumLet) = WithGlues(BreakRow(), {{kALetter, ALetter},
+                                            {kHebrew, Hebrew},
+                                            {kNumeric, Numeric},
+                                            {kKatakana, Katakana},
+                                            {kExtendNumLet, ExtendNumLet}});
+  at(RIOdd) = WithGlues(BreakRow(), {{kRI, Other}});
+  at(HebrewSQ) = WithGlues(BreakRow(), {{kALetter, ALetter}, {kHebrew, Hebrew}});
+  at(ALetterMid) =
+    WithGlues(DeferRow(), {{kALetter, ALetter}, {kHebrew, Hebrew}});
+  at(NumericMid) = WithGlues(DeferRow(), {{kNumeric, Numeric}});
+  at(HebrewDQ) = WithGlues(DeferRow(), {{kHebrew, Hebrew}});
   for (auto& row : t) {
     for (auto& e : row) {
       if (e.action == Glue && IsDeferredState(e.state)) {
@@ -318,10 +276,12 @@ inline constexpr WbState AsciiWordState(uint8_t cls) noexcept {
   return WbState::ALetter;
 }
 
-inline constexpr uint8_t kTierNone = 0;
-inline constexpr uint8_t kTierWord = 1;
-inline constexpr uint8_t kTierSpace = 2;
-inline constexpr uint8_t kTierExcluded = 3;
+enum class Tier : uint8_t {
+  None = 0,
+  Word,
+  Space,
+  Excluded,
+};
 
 // States from which every ASCII word byte and every space behaves
 // uniformly (word x word and space x space glue, any other pairing
@@ -330,19 +290,18 @@ inline constexpr uint8_t kTierExcluded = 3;
 // digits break) are asymmetric; deferred states carry a pending boundary
 // -- all excluded and left to the scalar dispatch.
 inline constexpr auto kTierClass = [] {
-  using enum WbState;
-  std::array<uint8_t, kWbStateCount> t{};
-  t.fill(kTierExcluded);
-  t[std::to_underlying(WbState::Begin)] = kTierNone;
-  t[std::to_underlying(WbState::Other)] = kTierNone;
-  t[std::to_underlying(WbState::CR)] = kTierNone;
-  t[std::to_underlying(WbState::Newline)] = kTierNone;
-  t[std::to_underlying(WbState::RIOdd)] = kTierNone;
-  t[std::to_underlying(WbState::WSeg)] = kTierSpace;
-  t[std::to_underlying(WbState::ALetter)] = kTierWord;
-  t[std::to_underlying(WbState::Hebrew)] = kTierWord;
-  t[std::to_underlying(WbState::Numeric)] = kTierWord;
-  t[std::to_underlying(WbState::ExtendNumLet)] = kTierWord;
+  std::array<Tier, kWbStateCount> t{};
+  t.fill(Tier::Excluded);
+  t[std::to_underlying(WbState::Begin)] = Tier::None;
+  t[std::to_underlying(WbState::Other)] = Tier::None;
+  t[std::to_underlying(WbState::CR)] = Tier::None;
+  t[std::to_underlying(WbState::Newline)] = Tier::None;
+  t[std::to_underlying(WbState::RIOdd)] = Tier::None;
+  t[std::to_underlying(WbState::WSeg)] = Tier::Space;
+  t[std::to_underlying(WbState::ALetter)] = Tier::Word;
+  t[std::to_underlying(WbState::Hebrew)] = Tier::Word;
+  t[std::to_underlying(WbState::Numeric)] = Tier::Word;
+  t[std::to_underlying(WbState::ExtendNumLet)] = Tier::Word;
   return t;
 }();
 
@@ -358,20 +317,19 @@ inline constexpr uint8_t kSegDigit = 4;
 // open, so the caller's pending/bridge machinery is never bypassed.
 // Returns the state of the last consumed run.
 template<typename Flush>
-IRS_FORCE_INLINE inline WbState ConsumeWordSpaceRuns(const unsigned char* b,
-                                                     uint8_t tier, size_t& i,
+IRS_FORCE_INLINE inline WbState ConsumeWordSpaceRuns(const byte_type* b,
+                                                     Tier tier, size_t& i,
                                                      size_t& seg_start,
                                                      uint8_t& cur,
                                                      Flush&& flush) {
-  const auto m =
-    ClassifyWordSpaceBlock(reinterpret_cast<const byte_type*>(b + i));
+  const auto m = ClassifyWordSpaceBlock(b + i);
   const auto limit =
     static_cast<uint32_t>(std::countr_zero(~(m.word | m.space)));
   auto open = tier;
   uint32_t pos = 0;
   while (pos < limit) {
     const bool is_word = ((m.word >> pos) & 1u) != 0;
-    const auto run = is_word ? kTierWord : kTierSpace;
+    const auto run = is_word ? Tier::Word : Tier::Space;
     if (run != open) {
       flush(i + pos, cur);
       seg_start = i + pos;
@@ -389,22 +347,15 @@ IRS_FORCE_INLINE inline WbState ConsumeWordSpaceRuns(const unsigned char* b,
     pos += len;
   }
   i += limit;
-  return open == kTierWord ? AsciiWordState(kWbClass[b[i - 1]]) : WbState::WSeg;
+  return open == Tier::Word ? AsciiWordState(kWbClass[b[i - 1]])
+                            : WbState::WSeg;
 }
 
 }  // namespace detail
 
-struct UnicodeSegment {
-  uint32_t begin;
-  uint32_t end;
-  bool ascii_only;
-  bool has_ascii_alpha;
-  bool has_ascii_digit;
-};
-
 template<typename Emit>
 IRS_FORCE_INLINE void ScanUnicode(duckdb::string_t value, Emit&& emit) {
-  const auto* b = reinterpret_cast<const unsigned char*>(value.GetData());
+  const auto* b = reinterpret_cast<const byte_type*>(value.GetData());
   const size_t n = value.GetSize();
   using detail::kSegAlpha;
   using detail::kSegDigit;
@@ -421,17 +372,16 @@ IRS_FORCE_INLINE void ScanUnicode(duckdb::string_t value, Emit&& emit) {
   uint8_t cur = 0;
   uint8_t held = 0;
 
-  const auto flush = [&](size_t end, uint8_t flags) {
+  const auto flush = [&](size_t end, uint8_t flags) IRS_FORCE_INLINE {
     if (end > seg_start) {
-      emit(UnicodeSegment{static_cast<uint32_t>(seg_start),
-                          static_cast<uint32_t>(end),
-                          (flags & kSegNonAscii) == 0, (flags & kSegAlpha) != 0,
-                          (flags & kSegDigit) != 0});
+      emit(Segment{static_cast<uint32_t>(seg_start), static_cast<uint32_t>(end),
+                   (flags & kSegNonAscii) == 0, (flags & kSegAlpha) != 0,
+                   (flags & kSegDigit) != 0});
     }
   };
 
   while (i < n) {
-    const unsigned char byte = b[i];
+    const byte_type byte = b[i];
     uint8_t cls;
     bool extpict = false;
     size_t cp_len = 1;
@@ -440,7 +390,8 @@ IRS_FORCE_INLINE void ScanUnicode(duckdb::string_t value, Emit&& emit) {
     if (byte < 0x80) [[likely]] {
       const auto tier = detail::kTierClass[std::to_underlying(state)];
       if ((IsWordClass(kWbClass[byte]) || byte == ' ') &&
-          tier != detail::kTierExcluded && n - i >= classify::kClassifyBlock) {
+          tier != detail::Tier::Excluded &&
+          n - i >= classify::kClassifyBlock) {
         SDB_ASSERT(pending == kNoPending);
         zwj = false;
         state = detail::ConsumeWordSpaceRuns(b, tier, i, seg_start, cur, flush);
@@ -451,11 +402,9 @@ IRS_FORCE_INLINE void ScanUnicode(duckdb::string_t value, Emit&& emit) {
                 : cls == kNumeric ? kSegDigit
                                   : uint8_t{0};
     } else {
-      const auto* p = reinterpret_cast<const byte_type*>(b + i);
-      const uint32_t cp =
-        utf8_utils::ToChar32(p, reinterpret_cast<const byte_type*>(b + n));
-      cp_len = static_cast<size_t>(reinterpret_cast<const unsigned char*>(p) -
-                                   (b + i));
+      const auto* p = b + i;
+      const uint32_t cp = utf8_utils::ToChar32(p, b + n);
+      cp_len = static_cast<size_t>(p - (b + i));
       const uint8_t props = WbLookup(cp);
       cls = props & kWbPropMask;
       extpict = (props & kWbExtPictFlag) != 0;

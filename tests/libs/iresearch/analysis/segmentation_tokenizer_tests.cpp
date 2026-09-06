@@ -53,7 +53,7 @@ using AnalyzerTokens = std::vector<AnalyzerToken>;
 // The pre-mask per-byte scan, kept verbatim as the differential reference.
 void ReferenceScanAsciiWords(
   std::string_view value,
-  const std::function<void(const irs::analysis::words::AsciiSegment&)>& emit) {
+  const std::function<void(const irs::analysis::words::Segment&)>& emit) {
   using namespace irs::analysis::words;
   const auto* b = reinterpret_cast<const unsigned char*>(value.data());
   const size_t n = value.size();
@@ -114,29 +114,29 @@ void ReferenceScanAsciiWords(
         ++i;
         break;
     }
-    emit(irs::analysis::words::AsciiSegment{static_cast<uint32_t>(seg_begin),
-                                            static_cast<uint32_t>(i), has_alpha,
-                                            has_digit});
+    emit(irs::analysis::words::Segment{static_cast<uint32_t>(seg_begin),
+                                       static_cast<uint32_t>(i), true,
+                                       has_alpha, has_digit});
   }
 }
 
 }  // namespace
 
 TEST(words_ascii_test, MaskScanMatchesReference) {
-  using irs::analysis::words::AsciiSegment;
+  using irs::analysis::words::Segment;
   const auto collect_ref = [](std::string_view v) {
-    std::vector<AsciiSegment> out;
+    std::vector<Segment> out;
     ReferenceScanAsciiWords(v,
-                            [&](const AsciiSegment& s) { out.push_back(s); });
+                            [&](const Segment& s) { out.push_back(s); });
     return out;
   };
   const auto check = [&](const std::string& v) {
     SCOPED_TRACE(testing::Message() << "n=" << v.size() << " v=" << v);
     const auto expect = collect_ref(v);
 
-    std::vector<AsciiSegment> all;
+    std::vector<Segment> all;
     irs::analysis::words::ScanAscii(
-      v, [&](const AsciiSegment& s) { all.push_back(s); });
+      v, [&](const Segment& s) { all.push_back(s); });
     ASSERT_EQ(expect.size(), all.size());
     for (size_t k = 0; k < expect.size(); ++k) {
       ASSERT_EQ(expect[k].begin, all[k].begin) << k;
@@ -208,20 +208,20 @@ TEST(words_ascii_test, MaskScanMatchesReference) {
 }
 
 TEST(words_ascii_test, WordRunsMatchFilteredScan) {
-  using irs::analysis::words::AsciiSegment;
+  using irs::analysis::words::Segment;
   const auto check = [](const std::string& v) {
     SCOPED_TRACE(testing::Message() << "n=" << v.size() << " v=" << v);
-    std::vector<AsciiSegment> expect;
-    irs::analysis::words::ScanAscii(v, [&](const AsciiSegment& s) {
+    std::vector<Segment> expect;
+    irs::analysis::words::ScanAscii(v, [&](const Segment& s) {
       const auto cls =
         irs::analysis::words::kWbClass[static_cast<unsigned char>(v[s.begin])];
       if (irs::analysis::words::IsWordClass(cls)) {
         expect.push_back(s);
       }
     });
-    std::vector<AsciiSegment> got;
+    std::vector<Segment> got;
     irs::analysis::words::ScanAsciiRuns(
-      v, [&](const AsciiSegment& s) { got.push_back(s); });
+      v, [&](const Segment& s) { got.push_back(s); });
     ASSERT_EQ(expect.size(), got.size());
     for (size_t k = 0; k < expect.size(); ++k) {
       ASSERT_EQ(expect[k].begin, got[k].begin) << k;
@@ -302,7 +302,7 @@ TEST(SegmentationTokenizerTest, consts) {
 
 TEST_P(SegmentationTokenizerTest, alpha_no_case_test) {
   Options opt{
-    .convert = Options::Convert::None,
+    .convert = irs::Case::None,
   };
   auto stream = SegmentationTokenizer::Make(std::move(opt));
   constexpr std::string_view kData =
@@ -342,7 +342,7 @@ TEST_P(SegmentationTokenizerTest, alpha_lower_case_test) {
 
 TEST_P(SegmentationTokenizerTest, alpha_upper_case_test) {
   Options opt{
-    .convert = Options::Convert::Upper,
+    .convert = irs::Case::Upper,
   };
   auto stream = SegmentationTokenizer::Make(std::move(opt));
 
@@ -365,7 +365,7 @@ TEST_P(SegmentationTokenizerTest, alpha_upper_case_test) {
 TEST_P(SegmentationTokenizerTest, graphic_upper_case_test) {
   Options opt{
     .accept = Options::Accept::Graphic,
-    .convert = Options::Convert::Upper,
+    .convert = irs::Case::Upper,
   };
   auto stream = SegmentationTokenizer::Make(std::move(opt));
   constexpr std::string_view kData =
@@ -393,7 +393,7 @@ TEST_P(SegmentationTokenizerTest, graphic_upper_case_test) {
 TEST_P(SegmentationTokenizerTest, all_lower_case_test) {
   Options opt{
     .accept = Options::Accept::Any,
-    .convert = Options::Convert::Lower,
+    .convert = irs::Case::Lower,
   };
   auto stream = SegmentationTokenizer::Make(std::move(opt));
   constexpr std::string_view kData =
@@ -446,7 +446,7 @@ TEST_P(SegmentationTokenizerTest, chinese_glyphs_test) {
 TEST_P(SegmentationTokenizerTest, crlf_merges_wb3) {
   Options opt{
     .accept = Options::Accept::Any,
-    .convert = Options::Convert::None,
+    .convert = irs::Case::None,
   };
   auto stream = SegmentationTokenizer::Make(std::move(opt));
   const AnalyzerTokens expected{
@@ -468,7 +468,7 @@ TEST_P(SegmentationTokenizerTest, simple_case_semantics) {
   }
   {
     Options opt{
-      .convert = Options::Convert::Upper,
+      .convert = irs::Case::Upper,
     };
     auto stream = SegmentationTokenizer::Make(std::move(opt));
     AssertStream(stream.get(),
@@ -504,7 +504,7 @@ TEST_P(SegmentationTokenizerTest, mixed_value_run_switching) {
 TEST_P(SegmentationTokenizerTest, non_ascii_alpha_accept) {
   Options opt{
     .accept = Options::Accept::Alpha,
-    .convert = Options::Convert::None,
+    .convert = irs::Case::None,
   };
   auto stream = SegmentationTokenizer::Make(std::move(opt));
   const AnalyzerTokens expected{
@@ -522,7 +522,7 @@ TEST(SegmentationTokenizerTest, make_empty_object) {
 
 TEST(SegmentationTokenizerTest, make_lowercase) {
   auto stream =
-    SegmentationTokenizer::Make(Options{.convert = Options::Convert::Lower});
+    SegmentationTokenizer::Make(Options{.convert = irs::Case::Lower});
   ASSERT_TRUE(stream);
   const AnalyzerTokens expected{{"test", 0, 4, 0}, {"retest", 7, 13, 1}};
   std::string data = "Test - ReTeSt";
@@ -531,7 +531,7 @@ TEST(SegmentationTokenizerTest, make_lowercase) {
 
 TEST(SegmentationTokenizerTest, make_nonecase) {
   auto stream =
-    SegmentationTokenizer::Make(Options{.convert = Options::Convert::None});
+    SegmentationTokenizer::Make(Options{.convert = irs::Case::None});
   ASSERT_TRUE(stream);
   const AnalyzerTokens expected{{"Test", 0, 4, 0}, {"ReTeSt", 7, 13, 1}};
   std::string data = "Test - ReTeSt";
@@ -540,7 +540,7 @@ TEST(SegmentationTokenizerTest, make_nonecase) {
 
 TEST(SegmentationTokenizerTest, make_uppercase) {
   auto stream =
-    SegmentationTokenizer::Make(Options{.convert = Options::Convert::Upper});
+    SegmentationTokenizer::Make(Options{.convert = irs::Case::Upper});
   ASSERT_TRUE(stream);
   const AnalyzerTokens expected{{"TEST", 0, 4, 0}, {"RETEST", 7, 13, 1}};
   std::string data = "Test - ReTeSt";
@@ -550,7 +550,7 @@ TEST(SegmentationTokenizerTest, make_uppercase) {
 TEST(SegmentationTokenizerTest, make_uppercase_alphabreak) {
   auto stream = SegmentationTokenizer::Make(Options{
     .accept = Options::Accept::Alpha,
-    .convert = Options::Convert::Upper,
+    .convert = irs::Case::Upper,
   });
   ASSERT_TRUE(stream);
   const AnalyzerTokens expected{{"TEST", 0, 4, 0}, {"RETEST", 7, 13, 1}};
@@ -561,7 +561,7 @@ TEST(SegmentationTokenizerTest, make_uppercase_alphabreak) {
 TEST(SegmentationTokenizerTest, make_uppercase_all_break) {
   auto stream = SegmentationTokenizer::Make(Options{
     .accept = Options::Accept::Any,
-    .convert = Options::Convert::Upper,
+    .convert = irs::Case::Upper,
   });
   ASSERT_TRUE(stream);
   const AnalyzerTokens expected{{"TEST", 0, 4, 0},
@@ -576,7 +576,7 @@ TEST(SegmentationTokenizerTest, make_uppercase_all_break) {
 TEST(SegmentationTokenizerTest, make_uppercase_graphic_break) {
   auto stream = SegmentationTokenizer::Make(Options{
     .accept = Options::Accept::Graphic,
-    .convert = Options::Convert::Upper,
+    .convert = irs::Case::Upper,
   });
   ASSERT_TRUE(stream);
   const AnalyzerTokens expected{
@@ -590,7 +590,7 @@ TEST(SegmentationTokenizerTest, make_uppercase_graphic_break) {
 // and `make_invalid_json` all exercised JSON-parser-level type / enum
 // validation (rejecting e.g. `"case": 1`, `"break": "_INVALID_"`,
 // non-object root values, etc.). The direct-Options API uses
-// strongly-typed enums (`Options::Convert`, `Options::Accept`) so these
+// strongly-typed enums (`irs::Case`, `Options::Accept`) so these
 // assertions are now compile-time impossibilities and collapse to the
 // happy-path enum-driven `make_*` cases above.
 TEST(SegmentationTokenizerTest, make_default_smoke) {
@@ -638,8 +638,8 @@ TEST_P(SegmentationTokenizerTest, native_fills_match_pull) {
   for (const auto accept :
        {Options::Accept::Any, Options::Accept::Graphic,
         Options::Accept::AlphaNumeric, Options::Accept::Alpha}) {
-    for (const auto convert : {Options::Convert::None, Options::Convert::Lower,
-                               Options::Convert::Upper}) {
+    for (const auto convert : {irs::Case::None, irs::Case::Lower,
+                               irs::Case::Upper}) {
       Options opts{.accept = accept, .convert = convert};
       auto pull_stream = SegmentationTokenizer::Make(Options{opts});
       auto fill_stream = SegmentationTokenizer::Make(Options{opts});
@@ -765,8 +765,8 @@ TEST(SegmentationTokenizerAsciiFastPath, mid_rule_goldens) {
   for (const auto accept :
        {Options::Accept::Any, Options::Accept::Graphic,
         Options::Accept::AlphaNumeric, Options::Accept::Alpha}) {
-    for (const auto convert : {Options::Convert::None, Options::Convert::Lower,
-                               Options::Convert::Upper}) {
+    for (const auto convert : {irs::Case::None, irs::Case::Lower,
+                               irs::Case::Upper}) {
       Options opts{.accept = accept, .convert = convert};
       for (const auto& v : values) {
         SCOPED_TRACE(testing::Message()
@@ -791,8 +791,8 @@ TEST(SegmentationTokenizerAsciiFastPath, property_oracle_random_ascii) {
   for (const auto accept :
        {Options::Accept::Any, Options::Accept::Graphic,
         Options::Accept::AlphaNumeric, Options::Accept::Alpha}) {
-    for (const auto convert : {Options::Convert::None, Options::Convert::Lower,
-                               Options::Convert::Upper}) {
+    for (const auto convert : {irs::Case::None, irs::Case::Lower,
+                               irs::Case::Upper}) {
       Options opts{.accept = accept, .convert = convert};
       for (size_t iter = 0; iter < 300; ++iter) {
         std::string v;
@@ -819,7 +819,7 @@ TEST(SegmentationTokenizerAsciiFastPath, case_convert_all_sizes) {
     "wxyzWXYZ0", "ThirteenChars",
   };
   for (const auto convert :
-       {Options::Convert::Lower, Options::Convert::Upper}) {
+       {irs::Case::Lower, irs::Case::Upper}) {
     for (const auto accept :
          {Options::Accept::AlphaNumeric, Options::Accept::Any}) {
       Options opts{.accept = accept, .convert = convert};
@@ -840,7 +840,7 @@ TEST(SegmentationTokenizerAsciiFastPath, case_convert_sparse_long_values) {
   constexpr std::string_view kGap =
     "                                                                ";
   for (const auto convert :
-       {Options::Convert::Lower, Options::Convert::Upper}) {
+       {irs::Case::Lower, irs::Case::Upper}) {
     Options opts{.accept = Options::Accept::AlphaNumeric, .convert = convert};
     for (size_t lead = 0; lead < 40; ++lead) {
       std::string v(lead, '-');
@@ -868,8 +868,8 @@ namespace {
 
 irs::analysis::SegmentationTokenizer::Options ModeOpts(
   irs::analysis::SegmentationTokenizer::Options::Separate separate,
-  irs::analysis::SegmentationTokenizer::Options::Convert convert =
-    irs::analysis::SegmentationTokenizer::Options::Convert::None) {
+  irs::Case convert =
+    irs::Case::None) {
   using Opts = irs::analysis::SegmentationTokenizer::Options;
   Opts opts;
   opts.separate = separate;
@@ -879,7 +879,7 @@ irs::analysis::SegmentationTokenizer::Options ModeOpts(
 }
 
 using ModeSeparate = irs::analysis::SegmentationTokenizer::Options::Separate;
-using ModeConvert = irs::analysis::SegmentationTokenizer::Options::Convert;
+using ModeConvert = irs::Case;
 
 }  // namespace
 
@@ -1078,7 +1078,7 @@ TEST(SegmentationTextAdoptedTest, case_modes) {
   const std::string_view data = "A qUiCk brOwn FoX";
   {
     auto stream =
-      SegmentationTokenizer::Make(Options{.convert = Options::Convert::Lower});
+      SegmentationTokenizer::Make(Options{.convert = irs::Case::Lower});
     const auto tokens = tests::AnalyzeTerms(*stream, data);
     ASSERT_TRUE(tokens.has_value());
     const std::vector<std::string> expected{"a", "quick", "brown", "fox"};
@@ -1086,7 +1086,7 @@ TEST(SegmentationTextAdoptedTest, case_modes) {
   }
   {
     auto stream =
-      SegmentationTokenizer::Make(Options{.convert = Options::Convert::Upper});
+      SegmentationTokenizer::Make(Options{.convert = irs::Case::Upper});
     const auto tokens = tests::AnalyzeTerms(*stream, data);
     ASSERT_TRUE(tokens.has_value());
     const std::vector<std::string> expected{"A", "QUICK", "BROWN", "FOX"};
@@ -1094,7 +1094,7 @@ TEST(SegmentationTextAdoptedTest, case_modes) {
   }
   {
     auto stream =
-      SegmentationTokenizer::Make(Options{.convert = Options::Convert::None});
+      SegmentationTokenizer::Make(Options{.convert = irs::Case::None});
     const auto tokens = tests::AnalyzeTerms(*stream, data);
     ASSERT_TRUE(tokens.has_value());
     const std::vector<std::string> expected{"A", "qUiCk", "brOwn", "FoX"};

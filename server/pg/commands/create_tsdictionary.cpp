@@ -540,7 +540,7 @@ class CreateTSDictionaryOptions : public OptionsParser {
       opts.accept = Opts::Accept::AlphaNumeric;
     }
 
-    opts.convert = ResolveEnum<tokenizer_options::kCase, Opts::Convert>(
+    opts.convert = ResolveEnum<tokenizer_options::kCase, irs::Case>(
       prefix, parent ? &parent->convert : nullptr);
     return opts;
   }

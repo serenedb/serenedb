@@ -25,7 +25,7 @@
 
 #include <unicode/ustring.h>
 
-#include "iresearch/analysis/text/classify/block_masks.hpp"
+#include "iresearch/analysis/text/case/case.hpp"
 #include "iresearch/analysis/text/normalize/icu.hpp"
 #include "iresearch/analysis/text/normalize/normalize.hpp"
 #include "iresearch/analysis/token_batch.hpp"
@@ -58,9 +58,9 @@ NormalizingTokenizer::NormalizingTokenizer(Options options)
   const char* locale_name =
     _options.locale.isBogus() ? "" : _options.locale.getName();
   if (_options.case_convert == Case::None ||
-      classify::SimpleCaseSafe(locale_name)) {
+      casing::SimpleCaseSafe(locale_name)) {
     _case_path = CasePath::Fast;
-  } else if (classify::AsciiCaseSafe(locale_name)) {
+  } else if (casing::AsciiCaseSafe(locale_name)) {
     _case_path = CasePath::IcuNonAscii;
   } else {
     _case_path = CasePath::Icu;

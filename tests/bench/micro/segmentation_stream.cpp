@@ -142,7 +142,7 @@ std::string MakeLongWordsAscii() {
 }
 
 SegmentationTokenizer::Options MakeOpts(
-  SegmentationTokenizer::Options::Convert convert,
+  irs::Case convert,
   SegmentationTokenizer::Options::Accept accept,
   SegmentationTokenizer::Options::Separate separate) {
   SegmentationTokenizer::Options opts;
@@ -153,7 +153,7 @@ SegmentationTokenizer::Options MakeOpts(
 }
 
 SegmentationTokenizer::Options DefaultOpts() {
-  return MakeOpts(SegmentationTokenizer::Options::Convert::Lower,
+  return MakeOpts(irs::Case::Lower,
                   SegmentationTokenizer::Options::Accept::AlphaNumeric,
                   SegmentationTokenizer::Options::Separate::Word);
 }
@@ -211,7 +211,7 @@ BENCHMARK_DEFINE_F(EnglishAscii, BmScanOnly)(benchmark::State& state) {
   const duckdb::string_t value{data.data(), static_cast<uint32_t>(data.size())};
   for (auto _ : state) {
     uint64_t acc = 0;
-    ScanAscii(value, [&](const AsciiSegment& seg) {
+    ScanAscii(value, [&](const Segment& seg) {
       acc += seg.end + static_cast<uint64_t>(seg.has_alpha);
     });
     benchmark::DoNotOptimize(acc);
@@ -224,7 +224,7 @@ BENCHMARK_DEFINE_F(EnglishAscii, BmScanWordRuns)(benchmark::State& state) {
   const duckdb::string_t value{data.data(), static_cast<uint32_t>(data.size())};
   for (auto _ : state) {
     uint64_t acc = 0;
-    ScanAsciiRuns(value, [&](const AsciiSegment& seg) {
+    ScanAsciiRuns(value, [&](const Segment& seg) {
       acc += seg.end + static_cast<uint64_t>(seg.has_alpha);
     });
     benchmark::DoNotOptimize(acc);
@@ -237,8 +237,8 @@ void RunScanUnicode(benchmark::State& state, const std::string& data) {
   const duckdb::string_t value{data.data(), static_cast<uint32_t>(data.size())};
   for (auto _ : state) {
     uint64_t acc = 0;
-    ScanUnicode(value, [&](const UnicodeSegment& seg) {
-      acc += seg.end + static_cast<uint64_t>(seg.has_ascii_alpha);
+    ScanUnicode(value, [&](const Segment& seg) {
+      acc += seg.end + static_cast<uint64_t>(seg.has_alpha);
     });
     benchmark::DoNotOptimize(acc);
   }
@@ -263,7 +263,8 @@ BENCHMARK_DEFINE_F(EnglishAscii, BmSegmentationSweep)
   RunCorpus(
     state, data,
     MakeOpts(
-      static_cast<SegmentationTokenizer::Options::Convert>(state.range(0)),
+      state.range(0) != 0 ? irs::Case::Lower
+                          : irs::Case::None,
       static_cast<SegmentationTokenizer::Options::Accept>(state.range(1)),
       static_cast<SegmentationTokenizer::Options::Separate>(state.range(2))));
 }

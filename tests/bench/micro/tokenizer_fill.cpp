@@ -1216,10 +1216,9 @@ Tokenizer::ptr MakeSolrSynonymsLarge() {
 }
 
 Tokenizer::ptr MakePipelineTextImpl(bool seg_lower) {
-  using Convert = SegmentationTokenizer::Options::Convert;
   std::vector<Tokenizer::ptr> subs;
   subs.push_back(SegmentationTokenizer::Make(
-    {.convert = seg_lower ? Convert::Lower : Convert::None}));
+    {.convert = seg_lower ? irs::Case::Lower : irs::Case::None}));
   {
     NormalizingTokenizer::Options o;
     o.locale = icu::Locale::createFromName("en");
@@ -1244,9 +1243,8 @@ Tokenizer::ptr MakePipelineText() { return MakePipelineTextImpl(false); }
 Tokenizer::ptr MakePipelineTextSegLower() { return MakePipelineTextImpl(true); }
 
 Tokenizer::ptr MakePipelineSegNgram() {
-  using Convert = SegmentationTokenizer::Options::Convert;
   std::vector<Tokenizer::ptr> subs;
-  subs.push_back(SegmentationTokenizer::Make({.convert = Convert::Lower}));
+  subs.push_back(SegmentationTokenizer::Make({.convert = irs::Case::Lower}));
   NGramTokenizerBase::Options o;
   o.min_gram = 3;
   o.max_gram = 3;
@@ -1336,9 +1334,8 @@ Tokenizer::ptr MakePipelineT2Coll() {
 }
 
 Tokenizer::ptr MakePipelineSegStop() {
-  using Convert = SegmentationTokenizer::Options::Convert;
   std::vector<Tokenizer::ptr> subs;
-  subs.push_back(SegmentationTokenizer::Make({.convert = Convert::None}));
+  subs.push_back(SegmentationTokenizer::Make({.convert = irs::Case::None}));
   {
     StopwordsTokenizer::Options o;
     o.mask = {"the", "and", "of", "a"};

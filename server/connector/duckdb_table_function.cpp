@@ -198,6 +198,48 @@ const duckdb::ColumnDefinition* FindColumnById(
   return nullptr;
 }
 
+duckdb::unique_ptr<SereneDBScanBindData> MakeTableScanBindData(
+  duckdb::TableCatalogEntry& table, ScanEntryKind kind,
+  std::string lookup_label,
+  std::shared_ptr<search::InvertedIndexSnapshot> snapshot) {
+  auto data = duckdb::make_uniq<TableScanBindData>();
+  data->table_entry = &table;
+  data->entry_kind = kind;
+  data->lookup_label = std::move(lookup_label);
+  data->snapshot = std::move(snapshot);
+  for (const auto& column : table.GetColumns().Logical()) {
+    data->column_ids.push_back(ColumnId{column.Oid()});
+    data->column_types.push_back(column.Type());
+  }
+  return data;
+}
+
+duckdb::unique_ptr<SereneDBScanBindData> MakeViewScanBindData(
+  duckdb::ClientContext& context, duckdb::ViewCatalogEntry& view,
+  const duckdb::case_insensitive_map_t<duckdb::Value>& index_options,
+  std::shared_ptr<search::InvertedIndexSnapshot> snapshot) {
+  auto view_info = view.GetInfo();
+  const auto& view_base = view_info->Cast<duckdb::CreateViewInfo>();
+  auto data = duckdb::make_uniq<ViewScanBindData>();
+  data->view_id = view.oid;
+  data->view_name = view.name.GetIdentifierName();
+  data->entry_kind = ScanEntryKind::InvertedIndex;
+  data->snapshot = std::move(snapshot);
+  data->fast_path = ResolveViewFastPath(
+    context, view_base, catalog::ParseKeyColumns(index_options));
+  data->lookup_supports_filters = false;
+  if (data->fast_path) {
+    data->lookup_label = FormatLookupLabel(*data->fast_path);
+    data->lookup_supports_filters = data->fast_path->supports_filters;
+  }
+  for (duckdb::idx_t i = 0; i < view_base.names.size(); ++i) {
+    data->column_ids.push_back(ColumnId{i});
+    data->column_types.push_back(view_base.types[i]);
+    data->column_names.push_back(view_base.names[i].GetIdentifierName());
+  }
+  return data;
+}
+
 }  // namespace
 
 duckdb::unique_ptr<duckdb::FunctionData> TableScanBindData::Copy() const {
@@ -344,9 +386,41 @@ duckdb::unique_ptr<duckdb::FunctionData> SereneDBScanBind(
   duckdb::ClientContext& context, duckdb::TableFunctionBindInput& input,
   duckdb::vector<duckdb::LogicalType>& return_types,
   duckdb::vector<duckdb::string>& names) {
-  THROW_SQL_ERROR(
-    ERR_CODE(ERRCODE_INTERNAL_ERROR),
-    ERR_MSG("SereneDBScanBind: should be provided via GetScanFunction"));
+  const duckdb::QualifiedName qualified{
+    duckdb::Identifier{input.inputs[0].GetValue<std::string>()},
+    duckdb::Identifier{input.inputs[1].GetValue<std::string>()},
+    duckdb::Identifier{input.inputs[2].GetValue<std::string>()}};
+  auto index = duckdb::Catalog::GetEntry<duckdb::IndexCatalogEntry>(
+    context, qualified, duckdb::OnEntryNotFound::RETURN_NULL);
+  if (!index || !IsInvertedIndex(*index)) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_TABLE),
+                    ERR_MSG("relation \"", qualified.Name().GetIdentifierName(),
+                            "\" does not exist"));
+  }
+  const auto& entry = basics::downCast<catalog::InvertedIndexEntry>(*index);
+  auto& relation = duckdb::Catalog::GetEntry(
+    context,
+    duckdb::EntryLookupInfo{
+      duckdb::CatalogType::TABLE_ENTRY,
+      duckdb::QualifiedName{qualified.Catalog(), index->GetSchemaName(),
+                            index->GetTableName()}});
+  auto snapshot = GetSereneDBContext(context).EnsureSearchSnapshot(
+    entry.oid, entry.Storage());
+  auto data =
+    relation.type == duckdb::CatalogType::VIEW_ENTRY
+      ? MakeViewScanBindData(context, relation.Cast<duckdb::ViewCatalogEntry>(),
+                             entry.options, std::move(snapshot))
+      : MakeTableScanBindData(relation.Cast<duckdb::TableCatalogEntry>(),
+                              ScanEntryKind::InvertedIndex, "table",
+                              std::move(snapshot));
+  data->inverted_index = &entry;
+  data->inverted_config = entry.Config();
+  data->index_top_k_scorer = entry.TopKScorer(context);
+  data->IterateColumns([&](ColumnId id, const duckdb::LogicalType& type) {
+    return_types.push_back(type);
+    names.push_back(std::string{data->ColumnNameById(id)});
+  });
+  return data;
 }
 
 static duckdb::unique_ptr<duckdb::NodeStatistics> SereneDBScanCardinality(
@@ -1235,6 +1309,22 @@ duckdb::unique_ptr<duckdb::FunctionData> IResearchScanDeserialize(
 }
 
 }  // namespace
+
+duckdb::TableFunction BindSearchTableScan(
+  catalog::SearchTableEntry& entry,
+  duckdb::unique_ptr<duckdb::FunctionData>& bind_data) {
+  const auto& store = entry.EnsureStorage();
+  if (!store) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
+                    ERR_MSG("search table \"", entry.name.GetIdentifierName(),
+                            "\" has no open store"));
+  }
+  bind_data =
+    MakeTableScanBindData(entry, ScanEntryKind::SearchTable, "search",
+                          std::make_shared<search::InvertedIndexSnapshot>(
+                            store->GetDirectoryReader(), nullptr));
+  return CreateIResearchScanFunction();
+}
 
 duckdb::TableFunction CreateIResearchScanFunction() {
   duckdb::TableFunction func{

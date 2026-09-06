@@ -24,6 +24,9 @@ DUPLICATE_FUNCTION = "42723"
 INVALID_GRANT_OPERATION = "0LP01"
 WARNING = "01000"
 INVALID_PARAMETER_VALUE = "22023"
+FEATURE_NOT_SUPPORTED = "0A000"
+READ_ONLY_SQL_TRANSACTION = "25006"
+ACTIVE_SQL_TRANSACTION = "25001"
 
 # Every 40001 text observed. The code alone is not enough: some 40001s here are
 # permanent (below), so the message decides.
@@ -52,6 +55,14 @@ PERMANENT_CONFLICT_MARKERS = (
     "read-only mode",
     "the current transaction has transaction local changes",
 )
+
+# The codes those permanent conditions should carry once the server stops
+# labelling them 40001. Paired with the same message markers so a genuinely
+# unimplemented 0A000 feature stays a finding; only the known permanent
+# rejections are excused.
+PERMANENT_REJECTION_STATES = frozenset({
+    FEATURE_NOT_SUPPORTED, READ_ONLY_SQL_TRANSACTION, ACTIVE_SQL_TRANSACTION,
+})
 
 # Codes that mean "the object I named is not there". The probe found these are not
 # interchangeable per object -- one index name yields 42P01 from DROP INDEX, 42704 from
@@ -115,6 +126,7 @@ EXPECTED_LABELS = frozenset({
     "planned_restart",
     "concurrent_ddl_conflict",
     "engine_transaction_conflict",
+    "permanent_condition_rejected",
     "object_in_use",
     "shared_key_vanished",
     "shared_key_duplicate",
@@ -185,6 +197,10 @@ def classify(sqlstate, message="", op_kind="", key_scope="private",
         if any(m in msg for m in ENGINE_CONFLICT_MARKERS):
             return _expected("engine_transaction_conflict", retryable=True)
         return _finding("conflict_without_marker")
+
+    if sqlstate in PERMANENT_REJECTION_STATES \
+            and any(m in msg for m in PERMANENT_CONFLICT_MARKERS):
+        return _expected("permanent_condition_rejected")
 
     if sqlstate == IO_ERROR and INJECTED_ABORT_MARKER in msg \
             and CATALOG_APPEND_FAILS in (faults_armed or ()):

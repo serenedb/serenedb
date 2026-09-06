@@ -211,6 +211,28 @@ def test_every_observed_permanent_40001_text_is_a_finding(marker):
     assert not c.retryable
 
 
+@pytest.mark.parametrize("state,marker", [
+    (C.FEATURE_NOT_SUPPORTED, "only write to a single attached database"),
+    (C.READ_ONLY_SQL_TRANSACTION, "read-only mode"),
+    (C.ACTIVE_SQL_TRANSACTION,
+     "the current transaction has transaction local changes"),
+])
+def test_a_permanent_condition_with_its_proper_code_is_expected(state, marker):
+    c = classify(state, f"boom: {marker}")
+    assert c.verdict is Verdict.EXPECTED
+    assert c.label == "permanent_condition_rejected"
+    assert not c.retryable
+
+
+def test_a_permanent_code_without_a_permanent_marker_stays_unclassified():
+    c = classify(C.FEATURE_NOT_SUPPORTED, "COMMENT ON DATABASE is not supported")
+    assert c.verdict is Verdict.FINDING
+    assert c.label == "unclassified", (
+        "0A000 is broad -- an unimplemented feature must stay a finding; only the "
+        "known permanent rejections carrying their markers are excused"
+    )
+
+
 def test_the_injected_append_failure_arrives_as_40001_not_58030():
     armed = (C.CATALOG_APPEND_FAILS,)
     c = classify(C.SERIALIZATION_FAILURE,

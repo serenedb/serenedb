@@ -20,8 +20,6 @@
 
 #pragma once
 
-#include <absl/algorithm/container.h>
-#include <absl/container/inlined_vector.h>
 #include <absl/functional/function_ref.h>
 #include <absl/hash/hash.h>
 #include <absl/strings/ascii.h>
@@ -46,9 +44,7 @@ namespace sdb::connector {
 
 struct CaseFoldedHash {
   size_t operator()(std::string_view name) const {
-    absl::InlinedVector<char, 64> folded(name.size());
-    absl::c_transform(name, folded.begin(), absl::ascii_tolower);
-    return absl::HashOf(std::string_view{folded.data(), folded.size()});
+    return absl::HashOf(absl::AsciiStrToLower(name));
   }
 };
 

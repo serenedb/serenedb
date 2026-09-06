@@ -1031,6 +1031,7 @@ class RangeFilterTestCase : public tests::FilterTestCaseBase {
         irs::numeric_utils::numeric_traits<double_t>::inf();
       filter.mutable_options()->range.max_type = irs::BoundType::Exclusive;
 
+      filter.SetScorer(sort.get());
       CheckQuery(tests::FilterWrapper{filter}, std::span{&sort, 1}, docs, rdr);
       ASSERT_EQ(11, finish_count);
       ASSERT_GT(finish_docs_with_field, 0u);  // scorer collected field stats
@@ -1046,28 +1047,10 @@ class RangeFilterTestCase : public tests::FilterTestCaseBase {
       *filter.mutable_field_id() = kValueFieldId;
 
       irs::Scorer::ptr sort{std::make_unique<tests::sort::FrequencySort>()};
+      filter.SetScorer(sort.get());
 
-      CheckQuery(*tests::Optimized(filter), std::span{&sort, 1}, docs, rdr);
-    }
-
-    // value = (..;..) + scored_terms_limit
-    {
-      Docs docs{2, 4, 6, 11, 12, 13, 14, 15, 16, 17, 1, 5, 7, 9, 10, 3, 8};
-      Costs costs{docs.size()};
-
-      irs::ByRange filter;
-      *filter.mutable_field_id() = kValueFieldId;
-      filter.mutable_options()->range.min =
-        irs::numeric_utils::numeric_traits<double_t>::ninf();
-      filter.mutable_options()->range.min_type = irs::BoundType::Exclusive;
-      filter.mutable_options()->range.max =
-        irs::numeric_utils::numeric_traits<double_t>::inf();
-      filter.mutable_options()->range.max_type = irs::BoundType::Exclusive;
-      filter.mutable_options()->scored_terms_limit = 2;
-
-      irs::Scorer::ptr sort{std::make_unique<tests::sort::FrequencySort>()};
-
-      CheckQuery(*tests::Optimized(filter), std::span{&sort, 1}, docs, rdr);
+      CheckQuery(*tests::Optimized(filter, sort.get()), std::span{&sort, 1},
+                 docs, rdr);
     }
 
     // value = (..;100)
@@ -1089,7 +1072,9 @@ class RangeFilterTestCase : public tests::FilterTestCaseBase {
       filter.mutable_options()->range.max_type = irs::BoundType::Exclusive;
 
       irs::Scorer::ptr sort{std::make_unique<tests::sort::FrequencySort>()};
-      CheckQuery(*tests::Optimized(filter), std::span{&sort, 1}, docs, rdr);
+      filter.SetScorer(sort.get());
+      CheckQuery(*tests::Optimized(filter, sort.get()), std::span{&sort, 1},
+                 docs, rdr);
     }
   }
 };
@@ -1100,7 +1085,6 @@ TEST(by_range_test, options) {
   ASSERT_EQ(irs::BoundType::Unbounded, opts.range.min_type);
   ASSERT_TRUE(opts.range.max.empty());
   ASSERT_EQ(irs::BoundType::Unbounded, opts.range.max_type);
-  ASSERT_EQ(1024, opts.scored_terms_limit);
 }
 
 TEST(by_range_test, ctor) {
@@ -1282,59 +1266,13 @@ TEST_P(RangeFilterTestCase, by_range_order_multi_segment_field_stats) {
   filter.mutable_options()->range.max =
     irs::numeric_utils::numeric_traits<double_t>::inf();
   filter.mutable_options()->range.max_type = irs::BoundType::Exclusive;
+  filter.SetScorer(sort.get());
 
   tests::PreparedFilter q{filter, rdr, sort.get()};
   ASSERT_NE(nullptr, q.Query(0));
 
-  ASSERT_GT(finish_count, 1u);       // multiple scored terms
-  ASSERT_NE(nullptr, shared_field);  // field stats were collected
-}
-
-TEST_P(RangeFilterTestCase, by_range_order_limit_field_stats) {
-  {
-    tests::JsonDocGenerator gen(resource("simple_sequential.json"),
-                                &tests::GenericJsonFieldFactory);
-    add_segment(gen);
-    gen.reset();
-    add_segment(gen, irs::kOmAppend);
-  }
-
-  auto rdr = open_reader();
-  ASSERT_EQ(2, rdr.size());
-
-  const irs::FieldCollector* shared_field = nullptr;
-  size_t finish_count = 0;
-
-  irs::Scorer::ptr sort{std::make_unique<tests::sort::CustomSort>()};
-  auto& scorer = static_cast<tests::sort::CustomSort&>(*sort);
-  scorer.collectors_collect = [&](irs::byte_type*,
-                                  const irs::FieldCollector* field,
-                                  const irs::TermCollector* term) -> void {
-    ++finish_count;
-    ASSERT_NE(nullptr, field);
-    ASSERT_NE(nullptr, term);
-    if (shared_field == nullptr) {
-      shared_field = field;
-    } else {
-      ASSERT_EQ(shared_field, field);
-    }
-  };
-
-  irs::ByRange filter;
-  *filter.mutable_field_id() = kValueFieldId;
-  filter.mutable_options()->range.min =
-    irs::numeric_utils::numeric_traits<double_t>::ninf();
-  filter.mutable_options()->range.min_type = irs::BoundType::Exclusive;
-  filter.mutable_options()->range.max =
-    irs::numeric_utils::numeric_traits<double_t>::inf();
-  filter.mutable_options()->range.max_type = irs::BoundType::Exclusive;
-  filter.mutable_options()->scored_terms_limit = 2;
-
-  tests::PreparedFilter q{filter, rdr, sort.get()};
-  ASSERT_NE(nullptr, q.Query(0));
-
-  ASSERT_GT(finish_count, 0u);
-  ASSERT_LE(finish_count, 2u);  // capped by scored_terms_limit
+  ASSERT_GT(finish_count, 1u);
+  ASSERT_NE(nullptr, shared_field);
 }
 
 TEST_P(RangeFilterTestCase, by_range_order_no_match_field_stats) {
@@ -1369,6 +1307,7 @@ TEST_P(RangeFilterTestCase, by_range_order_no_match_field_stats) {
   filter.mutable_options()->range.max =
     irs::numeric_utils::numeric_traits<double_t>::inf();
   filter.mutable_options()->range.max_type = irs::BoundType::Exclusive;
+  filter.SetScorer(sort.get());
 
   tests::PreparedFilter q{filter, rdr, sort.get()};
   ASSERT_NE(nullptr, q.Query(0));

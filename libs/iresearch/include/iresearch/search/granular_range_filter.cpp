@@ -29,10 +29,9 @@
 #include "iresearch/index/index_features.hpp"
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/search/filter_visitor.hpp"
-#include "iresearch/search/limited_sample_selector.hpp"
+#include "iresearch/search/multiterm_collector.hpp"
 #include "iresearch/search/multiterm_query.hpp"
 #include "iresearch/search/range_filter.hpp"
-#include "iresearch/search/term_filter.hpp"
 
 namespace irs {
 namespace {
@@ -406,11 +405,9 @@ QueryBuilder::ptr ByGranularRange::PrepareSegment(const SubReader& segment,
                                                   const irs::field_id field,
                                                   const options_type& options) {
   switch (Classify(options)) {
-    case RangeKind::Term:
-      return ByTerm::PrepareSegment(segment, ctx, field,
-                                    options.range.min.front());
     case RangeKind::Empty:
       return QueryBuilder::Empty();
+    case RangeKind::Term:
     case RangeKind::Range:
       break;
   }
@@ -422,29 +419,17 @@ QueryBuilder::ptr ByGranularRange::PrepareSegment(const SubReader& segment,
 
   auto query = memory::make_tracked<MultiTermQuery>(
     ctx.memory, segment, ctx.memory, ctx.boost, ScoreMergeType::Sum);
-  auto* collector =
-    ctx.collector
-      ? &sdb::basics::downCast<LimitedTermsCollector>(*ctx.collector)
-      : nullptr;
-  if (collector) {
-    collector->Field(ctx.thread).Collect(*reader);
-    if (collector->Limited(ctx.thread).Samples()) {
-      query->Pin();
-    }
-  }
-  SampledMultiTermVisitor mtv{
-    collector ? &collector->Limited(ctx.thread) : nullptr, query->State()};
+  MultiTermVisitor mtv{ctx, query->State(), *reader};
   VisitImpl(segment, *reader, options, mtv);
   return MultiTermQuery::Finish(std::move(query), ctx);
 }
 
 PrepareCollector::ptr ByGranularRange::MakeCollectorImpl(
   const Scorer* scorer, StatsArena& stats, uint32_t threads) const {
-  if (Classify(options()) == RangeKind::Term) {
-    return std::make_unique<ByTermsCollector>(scorer, 1, stats, threads);
+  if (!ScoresPerDoc(scorer)) {
+    return std::make_unique<AllCollector>(scorer, stats);
   }
-  return std::make_unique<LimitedTermsCollector>(
-    scorer, options().scored_terms_limit, stats, threads);
+  return std::make_unique<MultiTermCollector>(scorer, stats, threads);
 }
 
 }  // namespace irs

@@ -467,26 +467,6 @@ constexpr std::pair<std::string_view, VariableDescription>
       },
     },
     {
-      "sdb_scored_terms_limit",
-      {
-        LogicalTypeId::INTEGER,
-        "The maximum number of terms to consider for scoring in multi-term "
-        "filters. Higher values give more accurate IDF-style scoring at the "
-        "cost of memory and per-query work. 0 disables scored-term collection "
-        "entirely.",
-        [] { return duckdb::Value::INTEGER(1024); },
-        [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value& value) {
-          auto n = value.GetValue<int32_t>();
-          if (n < 0) {
-            THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                            ERR_MSG("invalid value for parameter "
-                                    "\"sdb_scored_terms_limit\": \"",
-                                    value.ToString(), "\""));
-          }
-        },
-      },
-    },
-    {
       "sdb_levenshtein_max_terms",
       {
         LogicalTypeId::INTEGER,
@@ -495,8 +475,8 @@ constexpr std::pair<std::string_view, VariableDescription>
         "query survive; the rest neither match nor contribute to scoring. "
         "Higher values improve recall on wide expansions at the cost of "
         "per-query work. 0 removes the cap, so every term within the edit "
-        "distance matches. Default 64.",
-        [] { return duckdb::Value::INTEGER(64); },
+        "distance matches. Default 50.",
+        [] { return duckdb::Value::INTEGER(50); },
         [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value& value) {
           auto n = value.GetValue<int32_t>();
           if (n < 0) {

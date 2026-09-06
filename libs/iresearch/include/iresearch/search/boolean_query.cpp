@@ -215,10 +215,6 @@ void BooleanBuilder::Add(QueryBuilder::ptr query, Occur occur) {
       }
       return;
     }
-    if (multi.Pinned()) {
-      bucket.filters.emplace_back(std::move(query));
-      return;
-    }
     const auto* const scorer = multi.Stats().scorer;
     for (const auto& entry : state.Terms()) {
       Push(bucket, state.Reader(), entry.cookie, boost * entry.boost,

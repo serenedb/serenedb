@@ -39,14 +39,12 @@ namespace irs {
 QueryBuilder::ptr MultiTermQuery::Finish(
   memory::managed_ptr<MultiTermQuery> query, const PrepareContext& ctx) {
   auto& terms = query->_state.Terms();
-  if (!query->Pinned()) {
-    absl::c_sort(terms, [](const auto& l, const auto& r) {
-      if (l.cookie.docs_count != r.cookie.docs_count) {
-        return l.cookie.docs_count > r.cookie.docs_count;
-      }
-      return l.cookie.doc_start > r.cookie.doc_start;
-    });
-  }
+  absl::c_sort(terms, [](const auto& l, const auto& r) {
+    if (l.cookie.docs_count != r.cookie.docs_count) {
+      return l.cookie.docs_count > r.cookie.docs_count;
+    }
+    return l.cookie.doc_start > r.cookie.doc_start;
+  });
   uint64_t sum = 0;
   for (const auto& entry : terms) {
     sum += entry.cookie.docs_count;
@@ -56,7 +54,7 @@ QueryBuilder::ptr MultiTermQuery::Finish(
   }
   query->_estimate_max = ClampEstimate(sum, query->_segment);
 
-  if (terms.size() == 1 && !query->Pinned()) {
+  if (terms.size() == 1) {
     const auto& entry = terms.front();
     if (!ctx.KeepsTerms() &&
         entry.cookie.docs_count == query->_segment.docs_count()) {

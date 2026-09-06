@@ -67,21 +67,19 @@ irs::ByTerm MakeTerm(std::string_view field, std::string_view term) {
   return q;
 }
 
-void FillPrefix(irs::ByPrefix& q, std::string_view field, std::string_view term,
-                size_t scored_terms_limit) {
+void FillPrefix(irs::ByPrefix& q, std::string_view field,
+                std::string_view term) {
   *q.mutable_field_id() = tests::FieldIdFor(field);
   q.mutable_options()->term = Bytes(term);
-  q.mutable_options()->scored_terms_limit = scored_terms_limit;
 }
 
 irs::TermClause MakeTermClause(std::string_view field, std::string_view term) {
   return {.field = tests::FieldIdFor(field), .term = irs::bstring{Bytes(term)}};
 }
 
-irs::Filter::ptr MakePrefixPtr(std::string_view field, std::string_view term,
-                               size_t scored_terms_limit) {
+irs::Filter::ptr MakePrefixPtr(std::string_view field, std::string_view term) {
   auto q = std::make_unique<irs::ByPrefix>();
-  FillPrefix(*q, field, term, scored_terms_limit);
+  FillPrefix(*q, field, term);
   return q;
 }
 
@@ -100,12 +98,10 @@ irs::BooleanFilter MakeTerms(
   return q;
 }
 
-irs::ByPrefix MakePrefix(std::string_view field, std::string_view term,
-                         size_t scored_terms_limit) {
+irs::ByPrefix MakePrefix(std::string_view field, std::string_view term) {
   irs::ByPrefix q;
   *q.mutable_field_id() = tests::FieldIdFor(field);
   q.mutable_options()->term = Bytes(term);
-  q.mutable_options()->scored_terms_limit = scored_terms_limit;
   return q;
 }
 
@@ -335,11 +331,8 @@ TEST_P(MergeConsistencyTestCase, prefix) {
   auto rdr = open_reader();
   ASSERT_EQ(4, rdr.size());
 
-  CheckAllScorers(MakePrefix("Fields", "B", 1024), rdr);
-
-  // limited scored terms exercises the global top-K merge path
-  CheckAllScorers(MakePrefix("Fields", "", 1), rdr);
-  CheckAllScorers(MakePrefix("Fields", "", 4), rdr);
+  CheckAllScorers(MakePrefix("Fields", "B"), rdr);
+  CheckAllScorers(MakePrefix("Fields", ""), rdr);
 }
 
 TEST_P(MergeConsistencyTestCase, range) {
@@ -366,14 +359,14 @@ TEST_P(MergeConsistencyTestCase, boolean) {
   {
     irs::BooleanFilter root;
     root.Add(MakeTermClause("Fields", "BusinessEntityID"), irs::Occur::Must);
-    root.Add(MakePrefixPtr("Fields", "S", 4), irs::Occur::Must);
+    root.Add(MakePrefixPtr("Fields", "S"), irs::Occur::Must);
     CheckAllScorers(root, rdr);
   }
 
   {
     auto sub = std::make_unique<irs::BooleanFilter>();
     sub->Add(MakeTermClause("Fields", "StartDate"), irs::Occur::Must);
-    sub->Add(MakePrefixPtr("Fields", "B", 8), irs::Occur::Must);
+    sub->Add(MakePrefixPtr("Fields", "B"), irs::Occur::Must);
 
     irs::BooleanFilter root;
     root.Add(MakeTermClause("Fields", "BusinessEntityID"), irs::Occur::Should);

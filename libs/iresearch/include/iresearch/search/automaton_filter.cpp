@@ -23,16 +23,14 @@
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/search/all_filter.hpp"
 #include "iresearch/search/filter_visitor.hpp"
-#include "iresearch/search/limited_sample_selector.hpp"
+#include "iresearch/search/multiterm_collector.hpp"
 #include "iresearch/utils/automaton_utils.hpp"
 
 namespace irs {
 
-AutomatonOptions::AutomatonOptions(automaton acceptor, bytes_view pattern,
-                                   size_t scored_terms_limit)
+AutomatonOptions::AutomatonOptions(automaton acceptor, bytes_view pattern)
   : pattern{pattern},
-    compiled{std::make_shared<const CompiledAcceptor>(std::move(acceptor))},
-    scored_terms_limit{scored_terms_limit} {}
+    compiled{std::make_shared<const CompiledAcceptor>(std::move(acceptor))} {}
 
 field_visitor AutomatonFilter::visitor(const automaton& acceptor) {
   if (!Validate(acceptor)) {
@@ -64,8 +62,10 @@ QueryBuilder::ptr AutomatonFilter::PrepareSegment(
 
 PrepareCollector::ptr AutomatonFilter::MakeCollectorImpl(
   const Scorer* scorer, StatsArena& stats, uint32_t threads) const {
-  return std::make_unique<LimitedTermsCollector>(
-    scorer, options().scored_terms_limit, stats, threads);
+  if (!ScoresPerDoc(scorer)) {
+    return std::make_unique<AllCollector>(scorer, stats);
+  }
+  return std::make_unique<MultiTermCollector>(scorer, stats, threads);
 }
 
 namespace {

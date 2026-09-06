@@ -217,6 +217,3 @@
 	path = third_party/libxml2
 	url = https://github.com/serenedb/libxml2.git
 	shallow = true
-[submodule "third_party/USearch"]
-	path = third_party/USearch
-	url = https://github.com/serenedb/USearch.git

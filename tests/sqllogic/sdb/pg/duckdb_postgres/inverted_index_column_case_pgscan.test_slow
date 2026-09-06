@@ -1,0 +1,75 @@
+control substitution on
+
+hash-threshold 100
+
+# A view over an ATTACH'd postgres table may spell quoted mixed-case columns in
+# lowercase (the catalog binds them case-insensitively). Materialising a real
+# column through the index re-fetches the matched rows from postgres and must
+# resolve the view's names the same way.
+
+
+statement ok
+ATTACH 'host=${PGHOST} port=${PGPORT} dbname=postgres user=${PGUSER}' AS pg_${__DATABASE__} (TYPE postgres);
+
+
+statement ok
+CREATE SCHEMA pg_${__DATABASE__}.iipgcase_docs;
+
+
+statement ok
+CREATE TABLE pg_${__DATABASE__}.iipgcase_docs.articles (
+  "Id"   BIGINT PRIMARY KEY,
+  "Body" TEXT,
+  "Tag"  TEXT
+);
+
+
+statement count 3
+INSERT INTO pg_${__DATABASE__}.iipgcase_docs.articles VALUES
+  (1, 'pudge goes mid and dominates the lane', 'gameplay'),
+  (2, 'anchin reads manga every weekend',      'reading'),
+  (3, 'pudge plays again in a ranked match',   'gameplay');
+
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY iipgcase_en(template = 'keyword', frequency = true, norm = true, position = true);
+
+
+statement ok
+CREATE VIEW iipgcase_v AS SELECT id AS I, body AS Body, tag AS Tag FROM pg_${__DATABASE__}.iipgcase_docs.articles;
+
+
+statement ok
+CREATE INDEX iipgcase_idx ON iipgcase_v USING inverted ((ts_split_by_non_alpha(Body, true)) iipgcase_en) INCLUDE (Tag);
+
+
+query
+SELECT Body FROM iipgcase_idx ORDER BY I;
+----
+body
+pudge goes mid and dominates the lane
+anchin reads manga every weekend
+pudge plays again in a ranked match
+
+query
+SELECT I, Tag, Body FROM iipgcase_idx WHERE ts_split_by_non_alpha(Body, true) @@ 'pudge' ORDER BY I;
+----
+i	tag	body
+1	gameplay	pudge goes mid and dominates the lane
+3	gameplay	pudge plays again in a ranked match
+
+
+statement ok
+DROP VIEW iipgcase_v;
+
+
+statement ok
+DROP TABLE pg_${__DATABASE__}.iipgcase_docs.articles;
+
+
+statement ok
+DROP SCHEMA pg_${__DATABASE__}.iipgcase_docs;
+
+
+statement ok
+DETACH pg_${__DATABASE__};

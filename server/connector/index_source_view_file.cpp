@@ -25,7 +25,6 @@
 #include <duckdb/planner/filter/expression_filter.hpp>
 
 #include "basics/assert.h"
-#include "basics/containers/flat_hash_map.h"
 
 namespace sdb::connector {
 
@@ -40,21 +39,10 @@ ViewFileIndexSourceBase::ViewFileIndexSourceBase(
   _lookup_func = MakeFastPathLookupFunction(_fast_path);
 
   auto& multi_bd = _bind_data->Cast<duckdb::MultiFileBindData>();
-  containers::FlatHashMap<std::string_view, duckdb::idx_t> name_to_file_col;
-  if (!_fast_path.projection_columns.empty()) {
-    name_to_file_col.reserve(multi_bd.names.size());
-    for (duckdb::idx_t i = 0; i < multi_bd.names.size(); ++i) {
-      name_to_file_col.emplace(multi_bd.names[i].GetIdentifierName(), i);
-    }
-  }
   _column_indexes.reserve(projected_columns.size());
   InitProjection(
     context, projected_columns, projected_types, bind_column_ids,
-    [&](std::string_view name) {
-      auto it = name_to_file_col.find(name);
-      SDB_ASSERT(it != name_to_file_col.end());
-      return it->second;
-    },
+    SourceColumns{multi_bd.names, &duckdb::Identifier::GetIdentifierName},
     [&](duckdb::idx_t file_col_idx) {
       SDB_ASSERT(file_col_idx < multi_bd.types.size());
       _column_indexes.emplace_back(file_col_idx);

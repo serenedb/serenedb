@@ -62,6 +62,7 @@ inline constexpr std::string_view kSecondaryIndexType = "secondary";
 
 inline constexpr std::string_view kIncludedKind = "included";
 inline constexpr std::string_view kIVFKind = "ivf";
+inline constexpr std::string_view kHNSWKind = "hnsw";
 
 using persistence::ExpressionData;
 using persistence::InvertedIndexOptions;

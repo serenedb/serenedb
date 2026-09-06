@@ -39,8 +39,11 @@
 #include <iresearch/store/directory_attributes.hpp>
 #include <iresearch/store/fs_directory.hpp>
 #include <iresearch/store/mmap_directory.hpp>
+#include <iresearch/utils/async.hpp>
 #include <memory>
 #include <system_error>
+#include <yaclib/coro/await.hpp>
+#include <yaclib/coro/future.hpp>
 
 #include "basics/assert.h"
 #include "basics/down_cast.h"
@@ -199,7 +202,15 @@ InvertedIndexStorage::InvertedIndexStorage(ObjectId db_id,
   _dir = std::make_unique<irs::MMapDirectory>(path, irs::DirectoryAttributes{},
                                               resource_manager);
 
+  // Take whatever the gate offers and never wait. CREATE INDEX is a
+  // ParallelSink: every DuckDB sink thread flushes its own tail segment, so a
+  // blocking wait here parks a foreground statement thread and serialises those
+  // flushes behind each other. The gate charges each build for its own calling
+  // thread, so N concurrent flushes settle at N workers rather than each
+  // fanning out; a grant of 1 means this build runs serial on the thread it is
+  // already on, which is still forward progress.
   irs::IndexWriterOptions writer_options;
+  writer_options.ann_env = &AnnBuildEnv();
   writer_options.segment_memory_max = options.segment_memory_max;
   writer_options.segment_docs_max = options.segment_docs_max;
 #ifdef SDB_DEV
@@ -419,9 +430,18 @@ ResultWithTime InvertedIndexStorage::CompactUnsafe(
   const irs::CompactionPolicy& policy,
   const irs::MergeWriter::FlushProgress& progress, bool& empty_compaction,
   const irs::IndexFieldOptions* field_options) {
+  return irs::GetReady(CompactUnsafeAsync(policy, progress, empty_compaction,
+                                          field_options, /*env=*/nullptr));
+}
+
+auto InvertedIndexStorage::CompactUnsafeAsync(
+  const irs::CompactionPolicy& policy,
+  const irs::MergeWriter::FlushProgress& progress, bool& empty_compaction,
+  const irs::IndexFieldOptions* field_options, const irs::AnnBuildEnv* env)
+  -> yaclib::Future<ResultWithTime> {
   auto begin = std::chrono::steady_clock::now();
-  auto result =
-    CompactUnsafeImpl(policy, progress, empty_compaction, field_options);
+  auto result = co_await CompactUnsafeImpl(policy, progress, empty_compaction,
+                                           field_options, env);
   uint64_t time_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
                        std::chrono::steady_clock::now() - begin)
                        .count();
@@ -430,7 +450,7 @@ ResultWithTime InvertedIndexStorage::CompactUnsafe(
   } else if (!empty_compaction) {
     _avg_consolidation_time_ms.Record(time_ms);
   }
-  return {std::move(result), time_ms};
+  co_return ResultWithTime{std::move(result), time_ms};
 }
 
 ResultWithTime InvertedIndexStorage::RefreshUnsafe(
@@ -456,44 +476,46 @@ ResultWithTime InvertedIndexStorage::RefreshUnsafe(
   return {std::move(result), time_ms};
 }
 
-absl::Status InvertedIndexStorage::CompactUnsafeImpl(
+auto InvertedIndexStorage::CompactUnsafeImpl(
   const irs::CompactionPolicy& policy,
   const irs::MergeWriter::FlushProgress& progress, bool& empty_compaction,
-  const irs::IndexFieldOptions* field_options) {
+  const irs::IndexFieldOptions* field_options, const irs::AnnBuildEnv* env)
+  -> yaclib::Future<absl::Status> {
   empty_compaction = false;
 
   if (!policy) {
-    return absl::InvalidArgumentError(
+    co_return absl::InvalidArgumentError(
       absl::StrCat("unset compaction policy while executing compaction policy "
                    "on Search index '",
                    GetId().id(), "'"));
   }
 
   try {
-    const auto res = _writer->Compact(policy, field_options, nullptr, progress);
+    const auto res = co_await _writer->CompactAsync(policy, field_options,
+                                                    nullptr, progress, env);
     if (res.error == irs::CompactionError::Fail) {
-      return absl::InternalError(absl::StrCat(
+      co_return absl::InternalError(absl::StrCat(
         "failure while executing compaction policy on Search index '",
         GetId().id(), "'"));
     }
     if (res.error == irs::CompactionError::Busy) {
       empty_compaction = false;
-      return absl::OkStatus();
+      co_return absl::OkStatus();
     }
 
     empty_compaction = (res.size == 0);
   } catch (const std::exception& e) {
-    return absl::InternalError(
+    co_return absl::InternalError(
       absl::StrCat("caught exception while executing compaction policy "
                    "on Search index '",
                    GetId().id(), "': ", e.what()));
   } catch (...) {
-    return absl::InternalError(
+    co_return absl::InternalError(
       absl::StrCat("caught exception while executing compaction policy "
                    "on Search index '",
                    GetId().id(), "'"));
   }
-  return absl::OkStatus();
+  co_return absl::OkStatus();
 }
 
 absl::Status InvertedIndexStorage::RefreshUnsafeImpl(

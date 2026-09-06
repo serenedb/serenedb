@@ -29,6 +29,7 @@
 #include <random>
 #include <span>
 #include <utility>
+#include <yaclib/async/make.hpp>
 
 #include "basics/assert.h"
 #include "basics/memory.hpp"
@@ -357,7 +358,8 @@ void IvfTermReader::Finish(IndexOutput& out) {
   _qw->Finish(out);
 }
 
-void IvfWriter::Compute(const ColumnReader& col, ReadContext& ctx) {
+auto IvfWriter::Compute(const ColumnReader& col, ReadContext& ctx,
+                        const AnnBuildEnv* /*env*/) -> yaclib::Future<> {
   SDB_ASSERT(_idx != nullptr,
              "IvfWriter::Compute: SetIdxWriter must be called first");
   const auto d = static_cast<uint32_t>(col.ArraySize());
@@ -368,15 +370,16 @@ void IvfWriter::Compute(const ColumnReader& col, ReadContext& ctx) {
   IvfBuilder builder{_info};
   auto built = builder.Compute(col, ctx, qw.get());
   if (built.empty) {
-    return;
+    return yaclib::MakeFuture();
   }
   _result = Result{.postings_id = _info.postings_id,
                    .qw = std::move(qw),
                    .data = std::move(built)};
   _built = true;
+  return yaclib::MakeFuture();
 }
 
-void IvfWriter::FlushTree() {
+void IvfWriter::Flush() {
   if (!_built) {
     return;
   }
@@ -407,7 +410,7 @@ const BasicTermReader* IvfWriter::ClusterReader(ReadContext& ctx,
   return _reader.get();
 }
 
-IvfWriter::IvfWriter(IvfInfo info) : _info{std::move(info)} {}
+IvfWriter::IvfWriter(AnnInfo info) : _info{std::move(info)} {}
 
 IvfWriter::~IvfWriter() = default;
 

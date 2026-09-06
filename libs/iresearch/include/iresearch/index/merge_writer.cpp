@@ -30,6 +30,8 @@
 #include <optional>
 #include <span>
 #include <vector>
+#include <yaclib/coro/await.hpp>
+#include <yaclib/coro/future.hpp>
 
 #include "basics/assert.h"
 #include "basics/log.h"
@@ -708,8 +710,10 @@ MergeWriter::ReaderCtx::ReaderCtx(const SubReader* reader,
   SDB_ASSERT(this->reader);
 }
 
-bool MergeWriter::Flush(SegmentMeta& segment,
-                        const FlushProgress& progress /*= {}*/) {
+auto MergeWriter::Flush(SegmentMeta& segment,
+                        const FlushProgress& progress /*= {}*/,
+                        const AnnBuildEnv* env /*= nullptr*/)
+  -> yaclib::Future<bool> {
   SDB_ASSERT(segment.codec);
 
   bool result = false;
@@ -728,11 +732,11 @@ bool MergeWriter::Flush(SegmentMeta& segment,
   IndexFeatures index_features{IndexFeatures::None};
   if (!ComputeDocMappingsAndFieldMeta(_readers, segment, field_meta_map,
                                       fields_itr, index_features)) {
-    return false;
+    co_return false;
   }
 
   if (!progress_callback()) {
-    return false;
+    co_return false;
   }
 
   std::vector<MergeSource> sources;
@@ -745,16 +749,16 @@ bool MergeWriter::Flush(SegmentMeta& segment,
     MergeNorms(*col_writer, sources, field_meta_map, _field_options);
 
   if (!progress_callback()) {
-    return false;
+    co_return false;
   }
 
   if (!sources.empty() &&
       !MergeInto(sources, *col_writer, _field_options, progress_callback)) {
-    return false;
+    co_return false;
   }
 
   if (!progress_callback()) {
-    return false;
+    co_return false;
   }
 
   std::unique_ptr<ColReader> col_reader;
@@ -763,20 +767,21 @@ bool MergeWriter::Flush(SegmentMeta& segment,
 
   col_writer->SetIdxWriter(idx);
   col_writer->Commit(segment.docs_count);
-  auto ivf_writers = col_writer->TakeIvfWriters();
+  co_await col_writer->ComputeAnn(env);
+  auto ann_writers = col_writer->TakeAnnWriters();
   if (segment.docs_count != 0) {
     col_reader = std::make_unique<ColReader>(track_dir, segment.name, _db);
     norm_provider.reader = col_reader.get();
   }
   std::optional<ReadContext> ivf_ctx;
   const auto cluster_readers =
-    PrepareIvfClusterReaders(ivf_writers, col_reader.get(), ivf_ctx);
+    PrepareIvfClusterReaders(ann_writers, col_reader.get(), ivf_ctx);
   for (const auto* reader : cluster_readers) {
     index_features |= reader->properties().index_features;
   }
 
   if (!progress_callback()) {
-    return false;
+    co_return false;
   }
 
   const FlushState state{
@@ -791,28 +796,28 @@ bool MergeWriter::Flush(SegmentMeta& segment,
       !WriteFields(state, segment, fields_itr, merged_norm_ids,
                    progress_callback, _readers.get_allocator().Manager(), idx,
                    cluster_readers)) {
-    return false;
+    co_return false;
   }
 
-  for (const auto& w : ivf_writers) {
+  for (const auto& w : ann_writers) {
     if (w) {
-      w->FlushTree();
+      w->Flush();
     }
   }
 
   idx.Commit();
 
   if (!progress_callback()) {
-    return false;
+    co_return false;
   }
 
   segment.files = track_dir.FlushTracked(segment.byte_size);
   if (segment.live_docs_count == 0) {
-    return false;
+    co_return false;
   }
   SDB_ASSERT(!segment.files.empty());
   result = true;
-  return true;
+  co_return true;
 }
 
 }  // namespace irs

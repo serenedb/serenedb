@@ -368,6 +368,15 @@ static std::string ColumnNameFor(const SereneDBScanBindData& bind,
   return absl::StrCat("col", col_id);
 }
 
+bool SereneDBScanBindData::IsHnswScored() const noexcept {
+  if (!vector_scorer || !inverted_index) {
+    return false;
+  }
+  const auto info =
+    catalog::InvertedInfo(*inverted_index).GetAnnInfo(vector_scorer->field_id);
+  return info && info->kind == irs::AnnKind::Hnsw;
+}
+
 irs::Filter::ptr MakeVectorFilter(const VectorScorerOptions& vs,
                                   std::shared_ptr<const irs::Filter> inner,
                                   float radius) {
@@ -395,6 +404,8 @@ irs::Filter::ptr MakeVectorFilter(const VectorScorerOptions& vs,
   o->quant = vs.quant;
   o->nprobe = vs.nprobe;
   o->max_search_fanout = vs.max_search_fanout;
+  o->ef_search = vs.ef_search;
+  o->min_ef = vs.min_ef;
   o->inner = std::move(inner);
   return f;
 }

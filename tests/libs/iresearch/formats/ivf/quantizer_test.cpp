@@ -23,6 +23,7 @@
 #include <cmath>
 #include <cstring>
 #include <functional>
+#include <iostream>
 #include <limits>
 #include <memory>
 #include <random>
@@ -55,7 +56,7 @@ constexpr score_t kScoreTol = 1e-6f;
 score_t ScoreTol(score_t want) { return kScoreTol * (1.f + std::fabs(want)); }
 
 // The writer emits a u64 length prefix ahead of the blob, exactly as
-// IvfWriter::FlushTree stores it; strip it to get what MakeQuantizerStats sees.
+// IvfWriter::Flush stores it; strip it to get what MakeQuantizerStats sees.
 bstring SerializeStats(const QuantizerWriter& writer) {
   bstring framed;
   BytesOutput out{framed};
@@ -1504,3 +1505,415 @@ TEST(rabitq_quantizer_test, shared_groups_match_solo_clusters_multibit) {
                                       VectorMetric::L2Sqr, kRaggedSizes, pts,
                                       cen, query);
 }
+
+namespace {
+
+struct CodeFixture {
+  bstring blob;
+  bstring codes;
+  uint32_t record_size = 0;
+  std::shared_ptr<const QuantizerStats> stats;
+};
+
+CodeFixture BuildCodes(VectorQuantization quant, uint32_t d, uint32_t nb_bits,
+                       VectorMetric metric, const std::vector<float>& points,
+                       size_t n, const std::vector<float>& centroid) {
+  CodeFixture f;
+  auto writer = MakeQuantizerWriter(quant, d, metric, /*pq_m=*/0,
+                                    /*pq_niter=*/0, nb_bits,
+                                    /*row_major=*/true);
+  EXPECT_NE(writer, nullptr);
+  if (writer->TrainSamples(n) != 0) {
+    writer->Train(points.data(), n);
+  }
+  if (QuantizerNeedsCentroid(quant)) {
+    writer->SetClusterCentroid(centroid.data());
+  }
+  f.record_size = writer->BlockSetting().record_size;
+  EXPECT_EQ(writer->BlockSetting().group_size, 1U);
+
+  f.codes.resize(n * f.record_size, 0);
+  EXPECT_TRUE(writer->EncodeInto(f.codes.data(), points.data(), n));
+
+  f.blob = SerializeStats(*writer);
+  f.stats = MakeQuantizerStats(quant, d, f.blob, metric, /*row_major=*/true);
+  EXPECT_NE(f.stats, nullptr);
+  return f;
+}
+
+std::unique_ptr<QuantizerReader> MakeKeyedReader(const CodeFixture& f,
+                                                 std::span<const float> query,
+                                                 const float* centroid) {
+  auto codebook = f.stats->MakeCodebook(query);
+  EXPECT_NE(codebook, nullptr);
+  auto reader = MakeQuantizerReader(codebook);
+  EXPECT_NE(reader, nullptr);
+  reader->StartCluster(centroid);
+  return reader;
+}
+
+float Cosine(std::span<const float> a, std::span<const float> b) {
+  double dot = 0.0;
+  double na = 0.0;
+  double nb = 0.0;
+  for (size_t i = 0; i < a.size(); ++i) {
+    dot += double{a[i]} * double{b[i]};
+    na += double{a[i]} * double{a[i]};
+    nb += double{b[i]} * double{b[i]};
+  }
+  if (na == 0.0 || nb == 0.0) {
+    return 0.f;
+  }
+  return static_cast<float>(dot / std::sqrt(na * nb));
+}
+
+struct CodeQuant {
+  VectorQuantization quant;
+  uint32_t nb_bits;
+  float min_cosine;
+  double min_tau;
+  size_t min_top10;
+};
+
+std::string CodeQuantName(const ::testing::TestParamInfo<CodeQuant>& info) {
+  switch (info.param.quant) {
+    case VectorQuantization::SQ8:
+      return "sq8";
+    case VectorQuantization::SQ4:
+      return "sq4";
+    case VectorQuantization::TQ:
+      return "tq" + std::to_string(info.param.nb_bits);
+    case VectorQuantization::TQMse:
+      return "tqmse" + std::to_string(info.param.nb_bits);
+    default:
+      return "other";
+  }
+}
+
+class code_rekey_test : public ::testing::TestWithParam<CodeQuant> {};
+
+}  // namespace
+
+// EncodeInto must produce exactly what the streaming Encode path writes,
+// otherwise a graph built on the buffer would disagree with the payload on
+// disk that queries later read.
+TEST_P(code_rekey_test, encode_into_matches_encode) {
+  const auto quant = GetParam().quant;
+  const auto nb_bits = GetParam().nb_bits;
+  constexpr uint32_t d = 128;
+  constexpr size_t n = 40;
+  const VectorMetric metric = VectorMetric::InnerProduct;
+  const auto points = MakeSpread(d, n, 7);
+  const std::vector<float> centroid(d, 0.05f);
+
+  const auto f = BuildCodes(quant, d, nb_bits, metric, points, n, centroid);
+
+  auto writer = MakeQuantizerWriter(quant, d, metric, 0, 0, nb_bits,
+                                    /*row_major=*/true);
+  ASSERT_NE(writer, nullptr);
+  if (writer->TrainSamples(n) != 0) {
+    writer->Train(points.data(), n);
+  }
+  if (QuantizerNeedsCentroid(quant)) {
+    writer->SetClusterCentroid(centroid.data());
+  }
+  SimpleMemoryAccounter memory;
+  MemoryFile file{memory};
+  uint64_t start = 0;
+  uint64_t end = 0;
+  {
+    MemoryIndexOutput out{file};
+    start = out.Position();
+    writer->Encode(out, points.data(), n);
+    writer->Finish(out);
+    out.Flush();
+    end = out.Position();
+  }
+  ExpectBytesEq(ReadPayload(file, start, end), f.codes);
+}
+
+TEST_P(code_rekey_test, decode_recovers_direction) {
+  const auto quant = GetParam().quant;
+  const auto nb_bits = GetParam().nb_bits;
+  const auto min_cosine = GetParam().min_cosine;
+  constexpr uint32_t d = 256;
+  constexpr size_t n = 64;
+  const VectorMetric metric = VectorMetric::InnerProduct;
+  const auto points = MakeSpread(d, n, 11);
+  const std::vector<float> centroid(d, 0.f);
+
+  const auto f = BuildCodes(quant, d, nb_bits, metric, points, n, centroid);
+  auto reader = MakeKeyedReader(f, {points.data(), d}, centroid.data());
+
+  std::vector<float> decoded(d, 0.f);
+  double total = 0.0;
+  for (size_t i = 0; i < n; ++i) {
+    ASSERT_TRUE(
+      reader->Decode(f.codes.data() + i * f.record_size, decoded.data()));
+    const float cos = Cosine({points.data() + i * d, d}, decoded);
+    EXPECT_GE(cos, min_cosine) << "row " << i;
+    total += cos;
+  }
+  EXPECT_GE(total / static_cast<double>(n), min_cosine);
+}
+
+// The build path scores a stored row against its neighbours by re-keying the
+// reader from that row's own code. Those scores must rank the same way as a
+// reader keyed on the raw vector, or the graph degrades.
+TEST_P(code_rekey_test, rekey_from_code_ranks_like_raw_query) {
+  const auto quant = GetParam().quant;
+  const auto nb_bits = GetParam().nb_bits;
+  constexpr uint32_t d = 256;
+  constexpr size_t n = 96;
+  const VectorMetric metric = VectorMetric::InnerProduct;
+  const auto points = MakeSpread(d, n, 13);
+  const std::vector<float> centroid(d, 0.f);
+
+  const auto f = BuildCodes(quant, d, nb_bits, metric, points, n, centroid);
+
+  std::vector<uint32_t> ids(n - 1);
+  for (size_t i = 0; i < ids.size(); ++i) {
+    ids[i] = static_cast<uint32_t>(i + 1);
+  }
+
+  auto raw = MakeKeyedReader(f, {points.data(), d}, centroid.data());
+  std::vector<score_t> want(ids.size(), 0.f);
+  raw->ComputeGathered(f.codes.data(), f.record_size, ids, kNoPrune,
+                       want.data());
+
+  std::vector<float> decoded(d, 0.f);
+  ASSERT_TRUE(raw->Decode(f.codes.data(), decoded.data()));
+  auto keyed = MakeKeyedReader(f, {points.data(), d}, centroid.data());
+  ASSERT_TRUE(keyed->SetQuery(decoded));
+  std::vector<score_t> got(ids.size(), 0.f);
+  keyed->ComputeGathered(f.codes.data(), f.record_size, ids, kNoPrune,
+                         got.data());
+
+  size_t concordant = 0;
+  size_t pairs = 0;
+  for (size_t i = 0; i < ids.size(); ++i) {
+    for (size_t j = i + 1; j < ids.size(); ++j) {
+      ++pairs;
+      const bool a = want[i] > want[j];
+      const bool b = got[i] > got[j];
+      concordant += a == b ? 1 : 0;
+    }
+  }
+  ASSERT_NE(pairs, 0U);
+
+  constexpr size_t kK = 10;
+  const auto topk = [&ids](const std::vector<score_t>& s) {
+    std::vector<uint32_t> order(ids.size());
+    for (size_t i = 0; i < order.size(); ++i) {
+      order[i] = static_cast<uint32_t>(i);
+    }
+    std::partial_sort(order.begin(), order.begin() + kK, order.end(),
+                      [&s](uint32_t a, uint32_t b) { return s[a] > s[b]; });
+    order.resize(kK);
+    std::sort(order.begin(), order.end());
+    return order;
+  };
+  const auto a = topk(want);
+  const auto b = topk(got);
+  std::vector<uint32_t> both;
+  std::set_intersection(a.begin(), a.end(), b.begin(), b.end(),
+                        std::back_inserter(both));
+
+  const double tau =
+    static_cast<double>(concordant) / static_cast<double>(pairs);
+  EXPECT_GE(tau, GetParam().min_tau);
+  EXPECT_GE(both.size(), GetParam().min_top10);
+}
+
+// The graph build scores two STORED rows against each other through the
+// symmetric code-to-code estimator rather than by decoding one side back into a
+// query. That estimator has to agree with the asymmetric one it replaces -- a
+// sign or scale slip would silently corrupt the diversity heuristic and the
+// back-link pruning, which is the kind of damage that surfaces only as a recall
+// regression much later.
+TEST_P(code_rekey_test, pair_scores_track_the_keyed_reader) {
+  const auto quant = GetParam().quant;
+  const auto nb_bits = GetParam().nb_bits;
+  constexpr uint32_t d = 128;
+  constexpr size_t n = 64;
+  const auto points = MakeSpread(d, n, 19);
+  const std::vector<float> centroid(d, 0.05f);
+  for (const VectorMetric metric :
+       {VectorMetric::InnerProduct, VectorMetric::L2Sqr}) {
+    const auto f = BuildCodes(quant, d, nb_bits, metric, points, n, centroid);
+
+    const std::vector<float> scratch(d, 0.f);
+    auto reader = MakeKeyedReader(f, scratch, centroid.data());
+    ASSERT_NE(reader, nullptr);
+    if (!reader->SupportsPairScores()) {
+      GTEST_SKIP() << "quantizer has no symmetric estimator";
+    }
+
+    std::vector<float> terms;
+    ASSERT_TRUE(
+      reader->PreparePairTerms(f.codes.data(), f.record_size, n, terms));
+    ASSERT_EQ(terms.size(), n);
+
+    std::vector<uint32_t> ids(n);
+    for (uint32_t i = 0; i < n; ++i) {
+      ids[i] = i;
+    }
+
+    std::vector<float> sym;
+    std::vector<float> keyed;
+    std::vector<score_t> sym_row(n, 0.f);
+    std::vector<score_t> keyed_row(n, 0.f);
+    std::vector<float> decoded(d, 0.f);
+
+    for (uint32_t a = 0; a < n; ++a) {
+      reader->ScorePairBatch(f.codes.data(), f.record_size, terms, a, ids,
+                             sym_row.data());
+
+      // Reference: decode row `a` and score through the ordinary keyed path --
+      // precisely what the build used to do per accepted neighbour.
+      auto keyed_reader = MakeKeyedReader(f, scratch, centroid.data());
+      ASSERT_TRUE(keyed_reader->Decode(
+        f.codes.data() + size_t{a} * f.record_size, decoded.data()));
+      ASSERT_TRUE(keyed_reader->SetQuery(decoded));
+      keyed_reader->ComputeGathered(f.codes.data(), f.record_size, ids,
+                                    std::numeric_limits<score_t>::lowest(),
+                                    keyed_row.data());
+
+      for (uint32_t b = 0; b < n; ++b) {
+        if (a == b) {
+          continue;  // a self-pair is not a decision the build ever makes
+        }
+        sym.push_back(sym_row[b]);
+        keyed.push_back(keyed_row[b]);
+      }
+    }
+
+    // Both estimate the same inner product, so they agree in shape rather than
+    // bit-for-bit: the symmetric side quantizes both operands where the keyed
+    // side quantizes only one.
+    // Shape agreement alone is not enough. The build mixes these symmetric pair
+    // scores with ASYMMETRIC candidate scores inside the diversity heuristic
+    // ("is the accepted node closer to this candidate than the query is?"), so
+    // a constant offset between the two estimators is just as damaging as noise
+    // -- and a correlation check cannot see one. Pin the offset against the
+    // spread of the scores themselves, and pin how often the two would decide a
+    // comparison differently.
+    double mean_sym = 0;
+    double mean_keyed = 0;
+    for (size_t i = 0; i < sym.size(); ++i) {
+      mean_sym += sym[i];
+      mean_keyed += keyed[i];
+    }
+    mean_sym /= static_cast<double>(sym.size());
+    mean_keyed /= static_cast<double>(keyed.size());
+    double var_keyed = 0;
+    for (const auto v : keyed) {
+      var_keyed += (v - mean_keyed) * (v - mean_keyed);
+    }
+    const double sd_keyed = std::sqrt(var_keyed / keyed.size());
+    EXPECT_LE(std::abs(mean_sym - mean_keyed), 0.05 * sd_keyed)
+      << "systematic offset " << (mean_sym - mean_keyed) << " against sd "
+      << sd_keyed << " for metric " << static_cast<int>(metric);
+
+    size_t disagree = 0;
+    for (size_t i = 0; i < sym.size(); ++i) {
+      disagree += (sym[i] > mean_keyed) != (keyed[i] > mean_keyed) ? 1 : 0;
+    }
+    EXPECT_LE(static_cast<double>(disagree) / static_cast<double>(sym.size()),
+              0.05)
+      << "metric " << static_cast<int>(metric);
+
+    EXPECT_GE(Cosine(sym, keyed), GetParam().min_cosine)
+      << "metric " << static_cast<int>(metric);
+  }
+}
+
+// Two scoring paths now serve one query. Batches below a full block go through
+// the per-row int8 kernel (no 32-lane transpose); a full block goes through
+// fastscan. They quantize the same dot product differently, so they are NOT
+// bit-identical -- what has to hold is that each is self-consistent under
+// chunking, and that the two agree closely enough to rank the same way.
+TEST_P(code_rekey_test, gathered_scores_are_chunking_invariant) {
+  const auto quant = GetParam().quant;
+  const auto nb_bits = GetParam().nb_bits;
+  constexpr uint32_t d = 256;
+  constexpr size_t n = 80;
+  const VectorMetric metric = VectorMetric::InnerProduct;
+  const auto points = MakeSpread(d, n, 29);
+  const std::vector<float> centroid(d, 0.f);
+
+  const auto f = BuildCodes(quant, d, nb_bits, metric, points, n, centroid);
+
+  std::vector<uint32_t> ids(n - 1);
+  for (size_t i = 0; i < ids.size(); ++i) {
+    ids[i] = static_cast<uint32_t>(i + 1);
+  }
+
+  auto reader = MakeKeyedReader(f, {points.data(), d}, centroid.data());
+  const auto score_in_chunks = [&](size_t chunk) {
+    std::vector<score_t> got(ids.size(), 0.f);
+    for (size_t off = 0; off < ids.size(); off += chunk) {
+      const size_t take = std::min(chunk, ids.size() - off);
+      reader->ComputeGathered(f.codes.data(), f.record_size,
+                              std::span<const uint32_t>{ids}.subspan(off, take),
+                              kNoPrune, got.data() + off);
+    }
+    return got;
+  };
+
+  // 1 and 5 are what HNSW actually passes; 16 is the last size below a block.
+  // All three take the per-row path, so they must agree exactly with each
+  // other.
+  const auto small = score_in_chunks(10);
+  for (const size_t chunk : {size_t{1}, size_t{5}, size_t{16}}) {
+    const auto got = score_in_chunks(chunk);
+    for (size_t i = 0; i < ids.size(); ++i) {
+      EXPECT_EQ(small[i], got[i]) << "chunk " << chunk << " index " << i;
+    }
+  }
+
+  // A full block takes fastscan. Compare the two paths on offset-against-spread
+  // and on how often they would order a pair differently -- an absolute
+  // tolerance would say nothing without knowing the scale.
+  const auto block = score_in_chunks(32);
+  double mean_abs_delta = 0.0;
+  double mean = 0.0;
+  for (size_t i = 0; i < ids.size(); ++i) {
+    mean_abs_delta += std::fabs(double{block[i]} - double{small[i]});
+    mean += block[i];
+  }
+  mean_abs_delta /= static_cast<double>(ids.size());
+  mean /= static_cast<double>(ids.size());
+  double var = 0.0;
+  for (const auto v : block) {
+    var += (v - mean) * (v - mean);
+  }
+  const double spread = std::sqrt(var / static_cast<double>(ids.size()));
+  ASSERT_GT(spread, 0.0);
+  EXPECT_LT(mean_abs_delta, 0.15 * spread)
+    << "per-row vs fastscan: mean |delta| " << mean_abs_delta << " against sd "
+    << spread;
+
+  size_t pairs = 0;
+  size_t disagree = 0;
+  for (size_t i = 0; i < ids.size(); ++i) {
+    for (size_t j = i + 1; j < ids.size(); ++j) {
+      ++pairs;
+      if ((block[i] > block[j]) != (small[i] > small[j])) {
+        ++disagree;
+      }
+    }
+  }
+  ASSERT_NE(pairs, 0U);
+  EXPECT_LT(static_cast<double>(disagree) / static_cast<double>(pairs), 0.03)
+    << disagree << " of " << pairs << " pairs ordered differently";
+}
+
+INSTANTIATE_TEST_SUITE_P(
+  quants, code_rekey_test,
+  ::testing::Values(CodeQuant{VectorQuantization::SQ8, 0, 0.99f, 0.99, 10},
+                    CodeQuant{VectorQuantization::SQ4, 0, 0.9f, 0.95, 9},
+                    CodeQuant{VectorQuantization::TQMse, 4, 0.9f, 0.95, 9},
+                    CodeQuant{VectorQuantization::TQMse, 2, 0.7f, 0.85, 6},
+                    CodeQuant{VectorQuantization::TQ, 3, 0.7f, 0.85, 6}),
+  CodeQuantName);

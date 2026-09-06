@@ -47,6 +47,7 @@
 #include "catalog/inverted_index.h"
 #include "pg/sql_exception_macro.h"
 #include "rest_server/database_path_feature.h"
+#include "scheduler/background_scheduler.h"
 #include "search/inverted_index_storage.h"
 #include "search/search_db_wal.h"
 #include "search/search_table_recovery.h"
@@ -54,6 +55,12 @@
 #include "search/wal_recovery.h"
 
 ABSL_DECLARE_FLAG(uint64_t, background_threads);
+
+ABSL_FLAG(uint64_t, background_merges, 0,
+          "Maximum ANN merges running at once. Each holds its own output "
+          "vectors, so this bounds merge memory; helpers within one merge "
+          "share that allocation and are budgeted separately. 0 derives it "
+          "from --background_threads.");
 
 namespace sdb::search {
 
@@ -79,6 +86,44 @@ int SearchEngine::MaxConcurrentCompactions() noexcept {
   // cleanup, and drop are light and interleave on the single spare thread.
   return std::max<int>(
     1, static_cast<int>(absl::GetFlag(FLAGS_background_threads)) - 1);
+}
+
+uint32_t SearchEngine::MaxAnnBuildWorkers() noexcept {
+  // Workers, not helpers: each build's own calling thread is charged against
+  // this too, so the pool (sized AnnBuildBudget() - 1) is never asked to host
+  // more helpers than it has threads.
+  return std::max<uint32_t>(
+    1, static_cast<uint32_t>(BackgroundScheduler::AnnBuildBudget()));
+}
+
+uint32_t SearchEngine::MaxAnnWorkersPerBuild() noexcept {
+  return std::max<uint32_t>(
+    1, static_cast<uint32_t>(BackgroundScheduler::AnnBuildThreads()));
+}
+
+uint32_t AnnAcquireWorkers(uint32_t want) noexcept {
+  return GetSearchEngine().AcquireAnnWorkers(want);
+}
+
+void AnnReleaseWorkers(uint32_t n) noexcept {
+  GetSearchEngine().ReleaseAnnWorkers(n);
+}
+
+const irs::AnnBuildEnv& AnnBuildEnv() {
+  static const irs::AnnBuildEnv env{
+    .executor = &BackgroundScheduler::instance().annExecutor(),
+    .acquire = AnnAcquireWorkers,
+    .release = AnnReleaseWorkers};
+  return env;
+}
+
+int SearchEngine::MaxConcurrentMerges() noexcept {
+  const auto configured = absl::GetFlag(FLAGS_background_merges);
+  if (configured == 0) {
+    return MaxConcurrentCompactions();
+  }
+  return std::clamp<int>(static_cast<int>(configured), 1,
+                         MaxConcurrentCompactions());
 }
 
 void SearchEngine::start() {

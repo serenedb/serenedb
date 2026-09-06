@@ -1,0 +1,57 @@
+////////////////////////////////////////////////////////////////////////////////
+/// DISCLAIMER
+///
+/// Copyright 2026 SereneDB GmbH, Berlin, Germany
+///
+/// Licensed under the Apache License, Version 2.0 (the "License");
+/// you may not use this file except in compliance with the License.
+/// You may obtain a copy of the License at
+///
+///     http://www.apache.org/licenses/LICENSE-2.0
+///
+/// Unless required by applicable law or agreed to in writing, software
+/// distributed under the License is distributed on an "AS IS" BASIS,
+/// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+/// See the License for the specific language governing permissions and
+/// limitations under the License.
+///
+/// Copyright holder is SereneDB GmbH, Berlin, Germany
+////////////////////////////////////////////////////////////////////////////////
+
+#pragma once
+
+#include <tuple>
+#include <type_traits>
+#include <yaclib/async/future.hpp>
+
+#include "pg/sql_exception_macro.h"
+
+namespace irs {
+
+// Drains a Future that completed inline. yaclib Future coroutines are eager, so
+// one that never reaches a real suspension point is already resolved when it
+// returns -- which is how a build with no executor injected stays synchronous.
+// SDB_ENSURE rather than a blocking Get(): a caller reaching here has no thread
+// to spare, so a future suspension must fail loudly instead of parking it.
+template<typename V, typename E>
+auto GetReady(yaclib::Future<V, E>&& f) -> V {
+  SDB_ENSURE(f.Ready());
+  auto result = std::move(f).Touch();
+  if constexpr (std::is_void_v<V>) {
+    std::ignore = std::move(result).Ok();
+  } else {
+    return std::move(result).Ok();
+  }
+}
+
+template<typename V, typename E>
+auto GetBlocking(yaclib::Future<V, E>&& f) -> V {
+  auto result = std::move(f).Get();
+  if constexpr (std::is_void_v<V>) {
+    std::ignore = std::move(result).Ok();
+  } else {
+    return std::move(result).Ok();
+  }
+}
+
+}  // namespace irs

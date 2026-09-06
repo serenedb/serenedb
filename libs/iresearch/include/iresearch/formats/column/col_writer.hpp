@@ -26,6 +26,7 @@
 #include <string>
 #include <string_view>
 #include <vector>
+#include <yaclib/async/future.hpp>
 
 #include "basics/assert.h"
 #include "basics/containers/flat_hash_map.h"
@@ -41,8 +42,9 @@
 
 namespace irs {
 
-class IvfWriter;
+class AnnWriter;
 class IdxWriter;
+struct AnnBuildEnv;
 
 class ColWriter final {
  public:
@@ -63,7 +65,7 @@ class ColWriter final {
                              duckdb::CompressionType::COMPRESSION_AUTO,
                            bool hyperloglog = false);
 
-  IvfWriter& AttachIVF(field_id column_id, IvfInfo info);
+  AnnWriter& AttachAnn(field_id column_id, AnnInfo info);
 
   void SetIdxWriter(IdxWriter& idx) noexcept;
 
@@ -74,9 +76,11 @@ class ColWriter final {
     return _norm_writers;
   }
 
-  std::vector<std::unique_ptr<IvfWriter>> TakeIvfWriters() noexcept;
+  std::vector<std::unique_ptr<AnnWriter>> TakeAnnWriters() noexcept;
 
   void Commit(uint64_t target_row);
+
+  auto ComputeAnn(const AnnBuildEnv* env) -> yaclib::Future<>;
 
   void Rollback() noexcept;
 
@@ -84,10 +88,10 @@ class ColWriter final {
   IndexOutput& Out() const noexcept { return *_out; }
 
  private:
-  struct IvfEntry {
+  struct AnnEntry {
     field_id column_id;
-    IvfInfo info;
-    std::unique_ptr<IvfWriter> writer;
+    AnnInfo info;
+    std::unique_ptr<AnnWriter> writer;
   };
 
   void EnsureOut();
@@ -108,9 +112,10 @@ class ColWriter final {
   sdb::containers::FlatHashMap<field_id, ColumnWriter*> _by_id;
   std::vector<std::unique_ptr<NormColumnWriter>> _norm_writers;
   sdb::containers::FlatHashMap<field_id, NormColumnWriter*> _norm_by_id;
-  std::vector<std::unique_ptr<IvfEntry>> _ivf_writers;
-  sdb::containers::FlatHashMap<field_id, IvfEntry*> _ivf_by_id;
+  std::vector<std::unique_ptr<AnnEntry>> _ann_writers;
+  sdb::containers::FlatHashMap<field_id, AnnEntry*> _ann_by_id;
   bool _committed = false;
+  bool _ann_ready = false;
 };
 
 }  // namespace irs

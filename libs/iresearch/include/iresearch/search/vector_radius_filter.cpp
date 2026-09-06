@@ -20,33 +20,24 @@
 
 #include "iresearch/search/vector_radius_filter.hpp"
 
-#include <limits>
-#include <span>
-#include <utility>
-
-#include "basics/memory.hpp"
+#include "basics/assert.h"
+#include "iresearch/search/ann_index.hpp"
 #include "iresearch/search/collectors.hpp"
-#include "iresearch/search/vector_filter_util.hpp"
-#include "iresearch/search/vector_similarity_query.hpp"
 
 namespace irs {
 
 QueryBuilder::ptr ByRadius::PrepareSegment(const SubReader& segment,
                                            const PrepareContext& ctx) const {
   const auto& opts = options();
-  VectorState state{ctx.memory};
-  QueryBuilder::ptr inner;
-  if (!PrepareVectorState(segment, ctx, field_id(), opts,
-                          std::numeric_limits<uint32_t>::max(), state, inner)) {
+  const auto* ann = segment.Ann(opts.centroids_id);
+  if (!ann) {
     return QueryBuilder::Empty();
   }
-
-  auto query = memory::make_tracked<RangeVectorQuery>(
-    ctx.memory, segment, std::move(state), std::span<const float>{opts.query},
-    opts.metric, opts.radius, opts.inclusive, ctx.boost * GetBoost(),
-    std::move(inner));
-  query->SetStats(ctx.Record());
-  return query;
+  SDB_ASSERT(ann->SupportsRange());
+  auto sub_ctx = ctx;
+  sub_ctx.Boost(GetBoost());
+  return ann->PrepareRange(segment, sub_ctx, opts, opts.radius, opts.inclusive,
+                           0);
 }
 
 PrepareCollector::ptr ByRadius::MakeCollectorImpl(const Scorer* scorer,

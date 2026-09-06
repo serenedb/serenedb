@@ -405,6 +405,25 @@ constexpr std::pair<std::string_view, VariableDescription>
       },
     },
     {
+      "sdb_hnsw_ef_search",
+      {
+        LogicalTypeId::INTEGER,
+        "Search-time beam width (ef) for HNSW vector indexes. Higher values "
+        "improve recall at the cost of latency. 0 derives ef from sdb_nprobe "
+        "with a floor of 64. Default 0.",
+        [] { return duckdb::Value::INTEGER(0); },
+        [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value& value) {
+          auto n = value.GetValue<int32_t>();
+          if (n < 0) {
+            THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                            ERR_MSG("invalid value for parameter "
+                                    "\"sdb_hnsw_ef_search\": \"",
+                                    value.ToString(), "\""));
+          }
+        },
+      },
+    },
+    {
       "sdb_ivf_sample_factor",
       {
         LogicalTypeId::DOUBLE,

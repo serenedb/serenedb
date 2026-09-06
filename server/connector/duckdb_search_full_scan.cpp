@@ -1360,8 +1360,13 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> IResearchScanInitGlobal(
     }
   }
   if (ss.vector_scorer) {
-    state->owned_filter = MakeVectorFilter(*ss.vector_scorer, ss.stored_filter,
-                                           ss.vector_scorer->EffectiveRadius());
+    auto vs = *ss.vector_scorer;
+    if (vs.quant != irs::VectorQuantization::None && ss.score_top_k) {
+      vs.min_ef =
+        ReadRerankFactor(context) * static_cast<uint32_t>(*ss.score_top_k);
+    }
+    state->owned_filter =
+      MakeVectorFilter(vs, ss.stored_filter, vs.EffectiveRadius());
     state->filter = state->owned_filter.get();
   } else {
     state->filter =

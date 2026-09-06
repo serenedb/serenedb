@@ -199,7 +199,7 @@ template <std::size_t N>
 const std::vector<std::string_view>& GetSorted(const std::string_view (&a)[N]) {{
   static const std::vector<std::string_view> v = [&] {{
     std::vector<std::string_view> r(a, a + N);
-    std::sort(r.begin(), r.end());
+    absl::c_sort(r);
     return r;
   }}();
   return v;
@@ -208,7 +208,7 @@ template <std::size_t N>
 const std::vector<std::string_view>& GetSortedCI(const std::string_view (&a)[N]) {{
   static const std::vector<std::string_view> v = [&] {{
     std::vector<std::string_view> r(a, a + N);
-    std::sort(r.begin(), r.end(), [](std::string_view x, std::string_view y) {{ return StringUtil::CILessThan(x, y); }});
+    absl::c_sort(r, [](std::string_view x, std::string_view y) {{ return StringUtil::CILessThan(x, y); }});
     return r;
   }}();
   return v;

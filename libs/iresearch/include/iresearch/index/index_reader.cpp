@@ -30,13 +30,27 @@ namespace {
 
 const SegmentInfo kEmptyInfo;
 
+struct EmptyDocs final : lead::Node {
+  EmptyDocs() noexcept { _doc = doc_limits::eof(); }
+
+  doc_id_t Advance() noexcept final { return doc_limits::eof(); }
+
+  doc_id_t Seek(doc_id_t /*target*/) noexcept final {
+    return doc_limits::eof();
+  }
+};
+
+EmptyDocs kEmptyDocs;
+
 struct EmptySubReader final : SubReader {
   uint64_t CountMappedMemory() const final { return 0; }
 
   NormReader::ptr norms(field_id) const final { return {}; }
   const SegmentInfo& Meta() const final { return kEmptyInfo; }
   const irs::DocumentMask* docs_mask() const final { return nullptr; }
-  DocIterator::ptr docs_iterator() const final { return DocIterator::empty(); }
+  lead::Node::ptr docs_iterator() const final {
+    return memory::to_managed<lead::Node>(kEmptyDocs);
+  }
   const irs::TermReader* field(field_id) const final { return nullptr; }
   std::span<const field_id> field_ids() const final { return {}; }
 };

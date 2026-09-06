@@ -21,13 +21,16 @@
 #include "iresearch/search/optimizer/range_rules.hpp"
 
 #include <algorithm>
+#include <iterator>
 #include <memory>
 #include <type_traits>
 #include <utility>
+#include <vector>
 
 #include "iresearch/search/boolean_filter.hpp"
 #include "iresearch/search/filter_optimizer.hpp"
 #include "iresearch/search/granular_range_filter.hpp"
+#include "iresearch/search/optimizer/common.hpp"
 #include "iresearch/search/range_filter.hpp"
 #include "iresearch/search/search_range.hpp"
 #include "iresearch/search/term_filter.hpp"
@@ -53,7 +56,7 @@ struct GranularRangeDegenerateRule {
 
 struct AndRangeMergeRule {
   static constexpr std::string_view kName = "and_range_merge";
-  static constexpr std::array kTargets{Type<And>::id()};
+  static constexpr std::array kTargets{Type<BooleanFilter>::id()};
   static constexpr bool kEnable = true;
 
   static bool Apply(Filter::ptr& slot, const OptimizeContext& ctx);
@@ -83,23 +86,11 @@ const bstring& RangeBound(const Range& node, bool min) noexcept {
   }
 }
 
-score_t MergedBoost(ScoreMergeType merge_type, score_t lo,
-                    score_t hi) noexcept {
-  switch (merge_type) {
-    case ScoreMergeType::Max:
-      return std::max(lo, hi);
-    case ScoreMergeType::Noop:
-      return kNoBoost;
-    case ScoreMergeType::Sum:
-      break;
-  }
-  return lo + hi;
-}
-
 template<typename Range>
 Filter::ptr MergeRangeBounds(const Range& lo, const Range& hi,
-                             ScoreMergeType merge_type) {
-  const score_t boost = MergedBoost(merge_type, lo.GetBoost(), hi.GetBoost());
+                             ScoreMergeType merge_type, bool scored) {
+  const score_t boost =
+    scored ? MergedBoost(merge_type, lo.GetBoost(), hi.GetBoost()) : kNoBoost;
   if (RangeBound(lo, true) > RangeBound(hi, false)) {
     return std::make_unique<Empty>();
   }
@@ -125,8 +116,8 @@ Filter::ptr MergeRangeBounds(const Range& lo, const Range& hi,
 }
 
 template<typename Range>
-bool MergeComplementaryRanges(And& node, const OptimizeContext& ctx) {
-  auto& children = node.mutable_filters();
+bool MergeComplementaryRanges(BooleanFilter& node, const OptimizeContext& ctx) {
+  auto& children = node.Bucket(Occur::Must).filters;
   const auto is_range = [](const Filter::ptr& child) {
     return child->type() == Type<Range>::id();
   };
@@ -148,16 +139,14 @@ bool MergeComplementaryRanges(And& node, const OptimizeContext& ctx) {
       if (!IsMaxOnly(hi) || hi.field_id() != lo.field_id()) {
         continue;
       }
-      // The merged range is scored once, so two halves scored by different
-      // scorers cannot be folded together.
-      if (children[i]->GetScorer() != children[j]->GetScorer()) {
+      if (ctx.scored && children[i]->GetScorer() != children[j]->GetScorer()) {
         continue;
       }
       if (ctx.HasAnalyzer(lo.field_id())) {
         continue;
       }
       const auto* scorer = children[i]->GetScorer();
-      children[i] = MergeRangeBounds(lo, hi, node.merge_type());
+      children[i] = MergeRangeBounds(lo, hi, node.MergeType(), ctx.scored);
       children[i]->SetScorer(scorer);
       consumed[j] = true;
       changed = true;
@@ -170,7 +159,10 @@ bool MergeComplementaryRanges(And& node, const OptimizeContext& ctx) {
   auto out = children.begin();
   for (size_t i = 0; i < consumed.size(); ++i) {
     if (!consumed[i]) {
-      *out++ = std::move(children[i]);
+      if (out != children.begin() + static_cast<ptrdiff_t>(i)) {
+        *out = std::move(children[i]);
+      }
+      ++out;
     }
   }
   children.erase(out, children.end());
@@ -179,8 +171,7 @@ bool MergeComplementaryRanges(And& node, const OptimizeContext& ctx) {
 
 }  // namespace
 
-bool RangeDegenerateRule::Apply(Filter::ptr& slot,
-                                const OptimizeContext& /*ctx*/) {
+bool RangeDegenerateRule::Apply(Filter::ptr& slot, const OptimizeContext&) {
   auto& node = sdb::basics::downCast<ByRange>(*slot);
   const auto& rng = node.options().range;
   if (rng.min_type == BoundType::Unbounded ||
@@ -200,6 +191,7 @@ bool RangeDegenerateRule::Apply(Filter::ptr& slot,
     *by_term->mutable_field_id() = node.field_id();
     by_term->mutable_options()->term = rng.min;
     by_term->SetBoost(node.GetBoost());
+    by_term->SetScorer(node.GetScorer());
     slot = std::move(by_term);
     return true;
   }
@@ -208,7 +200,7 @@ bool RangeDegenerateRule::Apply(Filter::ptr& slot,
 }
 
 bool GranularRangeDegenerateRule::Apply(Filter::ptr& slot,
-                                        const OptimizeContext& /*ctx*/) {
+                                        const OptimizeContext&) {
   auto& node = sdb::basics::downCast<ByGranularRange>(*slot);
   const auto& rng = node.options().range;
   if (rng.min.empty() || rng.max.empty()) {
@@ -227,6 +219,7 @@ bool GranularRangeDegenerateRule::Apply(Filter::ptr& slot,
     *by_term->mutable_field_id() = node.field_id();
     by_term->mutable_options()->term = rng.min.front();
     by_term->SetBoost(node.GetBoost());
+    by_term->SetScorer(node.GetScorer());
     slot = std::move(by_term);
     return true;
   }
@@ -235,8 +228,8 @@ bool GranularRangeDegenerateRule::Apply(Filter::ptr& slot,
 }
 
 bool AndRangeMergeRule::Apply(Filter::ptr& slot, const OptimizeContext& ctx) {
-  auto& node = sdb::basics::downCast<And>(*slot);
-  if (node.size() < 2) {
+  auto& node = sdb::basics::downCast<BooleanFilter>(*slot);
+  if (node.Filters(Occur::Must).size() < 2) {
     return false;
   }
   const bool merged_range = MergeComplementaryRanges<ByRange>(node, ctx);
@@ -245,10 +238,12 @@ bool AndRangeMergeRule::Apply(Filter::ptr& slot, const OptimizeContext& ctx) {
   return merged_range || merged_granular;
 }
 
-void InitRangeRules() {
-  RegisterRule<RangeDegenerateRule>();
+void InitRangeDegenerate() { RegisterRule<RangeDegenerateRule>(); }
+
+void InitGranularRangeDegenerate() {
   RegisterRule<GranularRangeDegenerateRule>();
-  RegisterRule<AndRangeMergeRule>();
 }
+
+void InitAndRangeMerge() { RegisterRule<AndRangeMergeRule>(); }
 
 }  // namespace irs::optimizer

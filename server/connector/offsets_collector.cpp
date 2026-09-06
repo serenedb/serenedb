@@ -1,7 +1,7 @@
 ////////////////////////////////////////////////////////////////////////////////
 /// DISCLAIMER
 ///
-/// Copyright 2026 SereneDB GmbH, Berlin, Germany
+/// Copyright 2025 SereneDB GmbH, Berlin, Germany
 ///
 /// Licensed under the Apache License, Version 2.0 (the "License");
 /// you may not use this file except in compliance with the License.
@@ -24,73 +24,68 @@
 #include <absl/functional/overload.h>
 
 #include <algorithm>
-#include <iresearch/analysis/token_attributes.hpp>
-#include <iresearch/index/index_features.hpp>
-#include <iresearch/search/boolean_filter.hpp>
 #include <iresearch/search/ngram_similarity_query.hpp>
 #include <iresearch/search/phrase_query.hpp>
 #include <iresearch/search/states/multiterm_state.hpp>
 #include <iresearch/search/states/ngram_state.hpp>
 #include <iresearch/search/states/phrase_state.hpp>
 #include <iresearch/search/states/term_state.hpp>
+#include <span>
 
 namespace sdb::connector {
 
-void PrepareFilterEntry(FilterEntry& entry, const irs::TermReader* reader,
-                        const irs::SubReader& segment) {
-  if (entry.docs) {
+void PrepareFilterEntry(FilterEntry& entry, const irs::TermReader* reader) {
+  if (entry.root || entry.absent) {
     return;
   }
-  auto docs = std::visit(
-    absl::Overload{[&](const irs::PostingMeta* cookie) {
-                     static constexpr auto kFeatures =
-                       irs::IndexFeatures::Freq | irs::IndexFeatures::Pos |
-                       irs::IndexFeatures::Offs;
-                     return reader->Iterator(
-                       kFeatures, irs::PostingCookie{.cookie = cookie});
-                   },
-                   [&](const auto* query) {
-                     if constexpr (requires { query->ExecuteWithOffsets(); }) {
-                       return query->ExecuteWithOffsets();
-                     } else {
-                       return query->ExecuteWithOffsets(segment);
-                     }
-                   }},
-    entry.filter);
-
-  if (!docs || irs::doc_limits::eof(docs->value())) {
+  // The three streams are the field's, so they are resolved here rather than
+  // by each shape: a field that stores no offsets has none for any of its
+  // terms, whichever shape asks.
+  irs::offsets::Handles handles;
+  if (!irs::offsets::Resolve(reader, handles)) {
+    entry.absent = true;
     return;
   }
-  entry.pos = irs::GetMutable<irs::PosAttr>(docs.get());
-  if (!entry.pos) {
-    return;
-  }
-  entry.offs = irs::get<irs::OffsAttr>(*entry.pos);
-  if (!entry.offs) {
-    return;
-  }
-
-  entry.docs = std::move(docs);
+  entry.root =
+    std::visit(absl::Overload{
+                 [&](const irs::PostingMeta* cookie) {
+                   return irs::offsets::MakePosting(*cookie, handles);
+                 },
+                 [](const auto* query) { return irs::offsets::Make(*query); }},
+               entry.filter);
+  entry.absent = entry.root == nullptr;
 }
 
-void FillRowOffsets(FieldState& state, const irs::SubReader& segment,
-                    irs::doc_id_t doc_id, size_t max_pairs,
+void FillRowOffsets(FieldState& state, irs::doc_id_t doc_id, size_t max_pairs,
                     std::vector<highlight::HitRange>& hits) {
   hits.clear();
+  if (max_pairs == 0) {
+    return;
+  }
+  // Asked for in chunks rather than in one span the size of the cap: the cap
+  // is what the row is allowed to show and an absent one arrives as SIZE_MAX,
+  // which is not a buffer size. A full chunk is what says to ask again.
+  static constexpr size_t kChunk = 256;
+  state.scratch.resize(std::min(kChunk, max_pairs));
   for (auto& entry : state.entries) {
-    PrepareFilterEntry(entry, state.reader, segment);
-    if (!entry.docs) {
+    PrepareFilterEntry(entry, state.reader);
+    if (!entry.root) {
       continue;
     }
-    if (entry.docs->seek(doc_id) != doc_id) {
-      continue;
-    }
-    const size_t entry_start = hits.size();
-    while (entry.pos->next()) {
-      if (hits.size() - entry_start >= max_pairs) {
+    // Each leaf may go up to the whole row's cap on its own, because it may
+    // be the only one that matched. Asking again with the same document is
+    // what continues it, so the loop needs no state of its own.
+    for (size_t taken = 0; taken < max_pairs;) {
+      const std::span chunk{state.scratch.data(),
+                            std::min(state.scratch.size(), max_pairs - taken)};
+      const auto count = entry.root->Run(doc_id, chunk);
+      for (uint32_t i = 0; i != count; ++i) {
+        hits.emplace_back(chunk[i].start, chunk[i].end);
+      }
+      taken += count;
+      if (count != chunk.size()) {
         break;
       }
-      hits.emplace_back(entry.offs->start, entry.offs->end);
     }
   }
   if (state.entries.size() > 1) {
@@ -128,8 +123,7 @@ void RecordCookie(FieldState& field, const irs::TermReader* reader,
 
 }  // namespace
 
-bool OffsetsCollector::Visit(const irs::TermQuery&, const irs::TermState& state,
-                             irs::score_t) {
+bool OffsetsCollector::Visit(const irs::TermState& state, irs::score_t) {
   if (auto* field = FindFieldState(state.reader)) {
     RecordCookie(*field, state.reader, state.cookie);
   }
@@ -142,16 +136,18 @@ bool OffsetsCollector::Visit(const irs::MultiTermQuery&,
   if (!field) {
     return true;
   }
+  // A term set is not a disjunction here: offsets have no algebra, so each
+  // of its terms is a leaf of its own and the dedup is what keeps a term
+  // reached twice from reporting twice.
   for (const auto& entry : state.Terms()) {
     RecordCookie(*field, state.Reader(), entry.cookie);
   }
   return true;
 }
 
-// Phrase/ngram queries don't expose per-position cookies, so record the
-// query pointer itself as the FilterEntry; ExecuteWithOffsets builds the
-// per-segment iterator. No dedup -- the prepared filter tree visits each
-// node once.
+// Phrase/ngram queries don't expose per-position cookies, so the query itself
+// is the leaf: it owns the positional match that has to be replayed. No dedup
+// -- the prepared filter tree visits each node once.
 template<typename Q>
 void OffsetsCollector::RecordQuery(const Q& query,
                                    const irs::TermReader* reader) {

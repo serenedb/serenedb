@@ -189,27 +189,25 @@ class PosIteratorImpl final : public PosAttr {
 
 }  // namespace
 
-class DocIteratorImpl : public DocIterator {
+class TermPostingsImpl : public TermPostings {
  public:
-  DocIteratorImpl() noexcept : _freq_in(kEmptyPool) {}
+  TermPostingsImpl() noexcept : _freq_in(kEmptyPool) {}
 
   // reset field
   void Reset(const FieldData& field) {
     _field = &field;
     _freq.value = 0;
-    auto& freq = std::get<AttributePtr<FreqAttr>>(_attrs);
-    auto& pos = std::get<AttributePtr<PosAttr>>(_attrs);
-    freq = nullptr;
-    pos = nullptr;
+    _has_freq = false;
+    _positions = nullptr;
     _has_cookie = false;
 
     const auto features = field.requested_features();
     if (IndexFeatures::None != (features & IndexFeatures::Freq)) {
-      freq = &_freq;
+      _has_freq = true;
 
       if (IndexFeatures::None != (features & IndexFeatures::Pos)) {
         _pos.Reset(features, _freq);
-        pos = &_pos;
+        _positions = &_pos;
         _has_cookie = field.prox_random_access();
       }
     }
@@ -225,9 +223,7 @@ class DocIteratorImpl : public DocIterator {
     _freq_in = freq;
     _posting = &posting;
 
-    const auto& ppos = std::get<AttributePtr<PosAttr>>(_attrs);
-
-    if (ppos.ptr && prox) {
+    if (_positions && prox) {
       // reset positions only once,
       // as we need iterator for sequential reads
       _pos.Reset(*prox);
@@ -238,13 +234,9 @@ class DocIteratorImpl : public DocIterator {
 
   size_t Cost() const noexcept { return _posting->size; }
 
-  Attribute* GetMutable(TypeInfo::type_id type) noexcept final {
-    return irs::GetMutable(_attrs, type);
-  }
+  PosAttr* Positions() noexcept final { return _positions; }
 
-  IRS_DOC_ITERATOR_DEFAULTS
-
-  doc_id_t advance() final {
+  doc_id_t Advance() final {
     if (_freq_in.eof()) {
       if (!_posting) {
         return _doc = doc_limits::eof();
@@ -260,7 +252,7 @@ class DocIteratorImpl : public DocIterator {
 
       _posting = nullptr;
     } else {
-      if (std::get<AttributePtr<FreqAttr>>(_attrs).ptr) {
+      if (_has_freq) {
         uint64_t delta;
 
         if (ShiftUnpack64(irs::vread<uint64_t>(_freq_in), delta)) {
@@ -287,27 +279,21 @@ class DocIteratorImpl : public DocIterator {
     return _doc;
   }
 
-  doc_id_t seek(doc_id_t doc) final {
-    SDB_ASSERT(false);
-    return _doc = doc_limits::eof();
-  }
-
   uint32_t GetFreq() const final { return _freq.value; }
 
  private:
-  using Attributes = std::tuple<AttributePtr<FreqAttr>, AttributePtr<PosAttr>>;
-
   const FieldData* _field{};
   uint64_t _cookie{};
   FreqAttr _freq;
   PosIteratorImpl<byte_block_pool::sliced_reader> _pos;
   byte_block_pool::sliced_reader _freq_in;
   const Posting* _posting{};
-  Attributes _attrs;
+  PosAttr* _positions{};
+  bool _has_freq{false};
   bool _has_cookie{false};  // FIXME remove
 };
 
-class SortingDocIteratorImpl : public DocIterator {
+class SortingTermPostingsImpl : public TermPostings {
  public:
   // reset field
   void Reset(const FieldData& field) {
@@ -315,43 +301,30 @@ class SortingDocIteratorImpl : public DocIterator {
     SDB_ASSERT(field.prox_random_access());
     _byte_pool = &field._byte_writer->parent();
 
-    auto& pfreq = std::get<AttributePtr<FreqAttr>>(_attrs);
-    auto& ppos = std::get<AttributePtr<PosAttr>>(_attrs);
-    pfreq = nullptr;
-    ppos = nullptr;
+    _positions = nullptr;
 
     const auto features = field.requested_features();
     if (IndexFeatures::None != (features & IndexFeatures::Freq)) {
-      pfreq = &_freq;
-
       if (IndexFeatures::None != (features & IndexFeatures::Pos)) {
         _pos.Reset(features, _freq);
-        ppos = &_pos;
+        _positions = &_pos;
       }
     }
   }
 
   // reset iterator,
   // docmap == null -> segment is already sorted
-  void Reset(DocIteratorImpl& it, const DocMap* docmap) {
-    static constexpr FreqAttr kNoFreq;
-    const FreqAttr* freq = &kNoFreq;
-
-    const auto* freq_attr = irs::get<FreqAttr>(it);
-    if (freq_attr) {
-      freq = freq_attr;
-    }
-
+  void Reset(TermPostingsImpl& it, const DocMap* docmap) {
     _docs.reserve(it.Cost());
     _docs.clear();
 
     if (!docmap) {
-      ResetAlreadySorted(it, *freq);
+      ResetAlreadySorted(it);
     } else if (UseDenseSort(it.Cost(),
                             docmap->size() - 1)) {  // -1 for first element
-      ResetDense(it, *freq, *docmap);
+      ResetDense(it, *docmap);
     } else {
-      ResetSparse(it, *freq, *docmap);
+      ResetSparse(it, *docmap);
     }
 
     _doc = doc_limits::invalid();
@@ -359,13 +332,9 @@ class SortingDocIteratorImpl : public DocIterator {
     _it = _docs.begin();
   }
 
-  Attribute* GetMutable(TypeInfo::type_id type) noexcept final {
-    return irs::GetMutable(_attrs, type);
-  }
+  PosAttr* Positions() noexcept final { return _positions; }
 
-  IRS_DOC_ITERATOR_DEFAULTS
-
-  doc_id_t advance() final {
+  doc_id_t Advance() final {
     while (_it != _docs.end()) {
       if (doc_limits::eof(_it->doc)) {
         // skip invalid docs
@@ -389,16 +358,9 @@ class SortingDocIteratorImpl : public DocIterator {
     return _doc = doc_limits::eof();
   }
 
-  doc_id_t seek(doc_id_t doc) final {
-    SDB_ASSERT(false);
-    return _doc = doc_limits::eof();
-  }
-
   uint32_t GetFreq() const final { return _freq.value; }
 
  private:
-  using Attributes = std::tuple<AttributePtr<FreqAttr>, AttributePtr<PosAttr>>;
-
   struct DocEntry {
     DocEntry() = default;
     DocEntry(doc_id_t doc, uint32_t freq, uint64_t cookie) noexcept
@@ -409,17 +371,16 @@ class SortingDocIteratorImpl : public DocIterator {
     uint64_t cookie;                  // prox_cookie
   };
 
-  void ResetDense(DocIteratorImpl& it, const FreqAttr& freq,
-                  std::span<const doc_id_t> docmap) {
+  void ResetDense(TermPostingsImpl& it, std::span<const doc_id_t> docmap) {
     SDB_ASSERT(!docmap.empty());
     SDB_ASSERT(irs::UseDenseSort(it.Cost(),
                                  docmap.size() - 1));  // -1 for first element
 
     _docs.resize(docmap.size() - 1);  // -1 for first element
 
-    while (!doc_limits::eof(it.advance())) {
-      SDB_ASSERT(it.value() - doc_limits::min() < docmap.size());
-      const auto new_doc = docmap[it.value()];
+    while (!doc_limits::eof(it.Advance())) {
+      SDB_ASSERT(it.Value() - doc_limits::min() < docmap.size());
+      const auto new_doc = docmap[it.Value()];
 
       if (doc_limits::eof(new_doc)) {
         // skip invalid documents
@@ -428,27 +389,26 @@ class SortingDocIteratorImpl : public DocIterator {
 
       auto& doc = _docs[new_doc - doc_limits::min()];
       doc.doc = new_doc;
-      doc.freq = freq.value;
+      doc.freq = it.GetFreq();
       doc.cookie = it.Cookie();
     }
   }
 
-  void ResetSparse(DocIteratorImpl& it, const FreqAttr& freq,
-                   std::span<const doc_id_t> docmap) {
+  void ResetSparse(TermPostingsImpl& it, std::span<const doc_id_t> docmap) {
     SDB_ASSERT(!docmap.empty());
     SDB_ASSERT(!irs::UseDenseSort(it.Cost(),
                                   docmap.size() - 1));  // -1 for first element
 
-    while (!doc_limits::eof(it.advance())) {
-      SDB_ASSERT(it.value() - doc_limits::min() < docmap.size());
-      const auto new_doc = docmap[it.value()];
+    while (!doc_limits::eof(it.Advance())) {
+      SDB_ASSERT(it.Value() - doc_limits::min() < docmap.size());
+      const auto new_doc = docmap[it.Value()];
 
       if (doc_limits::eof(new_doc)) {
         // skip invalid documents
         continue;
       }
 
-      _docs.emplace_back(new_doc, freq.value, it.Cookie());
+      _docs.emplace_back(new_doc, it.GetFreq(), it.Cookie());
     }
 
     absl::c_sort(_docs, [](const DocEntry& lhs, const DocEntry& rhs) noexcept {
@@ -456,9 +416,9 @@ class SortingDocIteratorImpl : public DocIterator {
     });
   }
 
-  void ResetAlreadySorted(DocIteratorImpl& it, const FreqAttr& freq) {
-    while (!doc_limits::eof(it.advance())) {
-      _docs.emplace_back(it.value(), freq.value, it.Cookie());
+  void ResetAlreadySorted(TermPostingsImpl& it) {
+    while (!doc_limits::eof(it.Advance())) {
+      _docs.emplace_back(it.Value(), it.GetFreq(), it.Cookie());
     }
   }
 
@@ -467,7 +427,7 @@ class SortingDocIteratorImpl : public DocIterator {
   std::vector<DocEntry> _docs;
   PosIteratorImpl<byte_block_pool::sliced_greedy_reader> _pos;
   FreqAttr _freq;
-  Attributes _attrs;
+  PosAttr* _positions{};
 };
 
 class TermIteratorImpl : public irs::TermOnlyIterator {
@@ -503,7 +463,7 @@ class TermIteratorImpl : public irs::TermOnlyIterator {
 
   Attribute* GetMutable(TypeInfo::type_id) noexcept final { return nullptr; }
 
-  DocIterator::ptr postings(IndexFeatures /*features*/) const final {
+  TermPostings::ptr postings(IndexFeatures /*features*/) const final {
     SDB_ASSERT(_it != _end);
 
     return (this->*kPostings[size_t(_field->prox_random_access())])(**_it);
@@ -523,9 +483,9 @@ class TermIteratorImpl : public irs::TermOnlyIterator {
 
  private:
   using PostingsF =
-    DocIterator::ptr (TermIteratorImpl::*)(const Posting&) const;
+    TermPostings::ptr (TermIteratorImpl::*)(const Posting&) const;
 
-  DocIterator::ptr Postings(const Posting& posting) const {
+  TermPostings::ptr Postings(const Posting& posting) const {
     SDB_ASSERT(!_doc_map);
 
     // where the term data starts
@@ -546,10 +506,10 @@ class TermIteratorImpl : public irs::TermOnlyIterator {
       prox_end);  // term's proximity // TODO: create on demand!!!
 
     _doc_itr.Reset(posting, freq, &prox);
-    return memory::to_managed<DocIterator>(_doc_itr);
+    return memory::to_managed<TermPostings>(_doc_itr);
   }
 
-  DocIterator::ptr SortPostings(const Posting& posting) const {
+  TermPostings::ptr SortPostings(const Posting& posting) const {
     // where the term data starts
     auto ptr = _field->_int_writer->parent().seek(posting.int_start);
     const auto freq_end = *ptr;
@@ -562,7 +522,7 @@ class TermIteratorImpl : public irs::TermOnlyIterator {
 
     _doc_itr.Reset(posting, freq, nullptr);
     _sorting_doc_itr.Reset(_doc_itr, _doc_map);
-    return memory::to_managed<DocIterator>(_sorting_doc_itr);
+    return memory::to_managed<TermPostings>(_sorting_doc_itr);
   }
 
   static inline const PostingsF kPostings[2]{&TermIteratorImpl::Postings,
@@ -574,8 +534,8 @@ class TermIteratorImpl : public irs::TermOnlyIterator {
   FieldsData::postings_ref_t::const_iterator _it;
   const FieldData* _field{};
   const DocMap* _doc_map{};
-  mutable DocIteratorImpl _doc_itr;
-  mutable SortingDocIteratorImpl _sorting_doc_itr;
+  mutable TermPostingsImpl _doc_itr;
+  mutable SortingTermPostingsImpl _sorting_doc_itr;
 };
 
 namespace {

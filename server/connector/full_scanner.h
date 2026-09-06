@@ -40,7 +40,7 @@ class FullScanner {
  public:
   FullScanner(const irs::ColReader& reader,
               std::span<const ColumnstoreProjection> projections,
-              std::span<const TableFilterDocIterator::FilterSpec> filters,
+              std::span<const ColFilterSpec> filters,
               duckdb::ClientContext* context, ColFilterStateCache& states);
 
   FullScanner(const FullScanner&) = delete;

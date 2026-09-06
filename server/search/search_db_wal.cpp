@@ -114,8 +114,8 @@ std::vector<std::pair<uint64_t, std::filesystem::path>> EnumerateSegments(
       out.emplace_back(first_tick, entry.path());
     }
   }
-  std::sort(out.begin(), out.end(),
-            [](const auto& a, const auto& b) { return a.first < b.first; });
+  absl::c_sort(out,
+               [](const auto& a, const auto& b) { return a.first < b.first; });
   return out;
 }
 

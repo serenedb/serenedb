@@ -45,19 +45,14 @@ constexpr const T* TryGetValue(const T* value) noexcept {
   return value;
 }
 
-constexpr std::nullptr_t TryGetValue(utils::Empty /*value*/) noexcept {
-  return nullptr;
-}
+constexpr std::nullptr_t TryGetValue(utils::Empty) noexcept { return nullptr; }
 
-// score(doc, term) = boost * log((tf + mu * P(t|C)) / (dl + mu))
-// Unlike LMDirichlet, no floor-at-zero. Can be negative for tf < mu * P(t|C).
 template<ScoreMergeType MergeType, bool HasBoost>
 IRS_FORCE_INLINE void IndriImpl(
   score_t* IRS_RESTRICT res, scores_size_t n, const uint32_t* IRS_RESTRICT freq,
   const uint32_t* IRS_RESTRICT norm,
   [[maybe_unused]] const score_t* IRS_RESTRICT boost, score_t mu_p, score_t mu,
   score_t const_boost) noexcept {
-  // mu_p = mu * collection_prob
   for (scores_size_t i = 0; i != n; ++i) {
     const score_t tf = TermCountToScore(freq[i]);
     const score_t dl = TermCountToScore(norm[i]);
@@ -126,7 +121,7 @@ struct IndriScore : public ScoreOperator {
     filter_boost;
   score_t boost;
   score_t mu;
-  score_t mu_p;  // mu * collection_prob
+  score_t mu_p;
 };
 
 }  // namespace
@@ -165,7 +160,7 @@ ScoreFunction IndriDirichlet::PrepareScorer(const ScoreContext& ctx) const {
   }
 
   if (!norm) {
-    return ScoreFunction::Default();
+    norm = kNorms.data();
   }
 
   auto* filter_boost = [&] {

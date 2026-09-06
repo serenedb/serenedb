@@ -97,8 +97,8 @@ class ColFilterStateCache {
 };
 
 // One segment's bound `.col` filters plus the per-block filter chain shared
-// by the three filter engines (TableFilterDocIterator::FilterBlock,
-// HitBatcher::EmitFiltered, FullScanner::Scan): cached zonemap verdict ->
+// by the filter engines (HitBatcher::EmitFiltered, FullScanner::Scan):
+// cached zonemap verdict ->
 // codec GatherFilter narrowing -> Slice/Reference (or deferred dense gather)
 // of the projected filter columns.
 class ColFilterChain {
@@ -160,7 +160,9 @@ class ColFilterChain {
   void FinishBind();
 
   // The filter chain over one block window [anchor, anchor+span): narrows
-  // sel[0..survivors) in place and returns the new survivor count. Projected
+  // sel[0..survivors) in place and returns the new survivor count. The span is
+  // what gets decoded, so it -- and not just the survivor count -- is what a
+  // caller must keep to one vector. Projected
   // filter columns decode over the full span into their `output` slot (the
   // caller Slices via FinishOutputs); null when nothing is projected. A
   // window that crosses a block boundary falls back to per-row evaluation
@@ -178,6 +180,11 @@ class ColFilterChain {
                      const duckdb::SelectionVector& sel,
                      duckdb::idx_t survivors, duckdb::DataChunk& output);
 
+  // Puts every bound column's scan back at the first row. The scans only move
+  // forward, so a caller that walks one segment more than once -- a pass per
+  // dictionary term -- rewinds between passes.
+  void Rewind(irs::ReadContext& ctx);
+
   // Zonemap skip: when some filter's block verdict at `row` is a definite
   // FALSE, no row before that block's end can survive -- returns the furthest
   // such end so the caller can jump the scan there (duckdb
@@ -193,13 +200,35 @@ class ColFilterChain {
   duckdb::idx_t FilterDocs(irs::doc_id_t* docs, irs::score_t* scores,
                            duckdb::idx_t n);
 
+  // The same over a set whose bit zero stands for document `base`: clears the
+  // bits that do not pass, block by block, and returns how many survived. The
+  // selection is built from the set bits instead of from a run of documents,
+  // which is the only difference -- `FilterWindow` wants offsets either way.
+  duckdb::idx_t FilterMask(irs::doc_id_t base, uint64_t* mask,
+                           duckdb::idx_t words);
+
+  // The same when only the answer is wanted: the survivors are not written
+  // back and every word walked is left zeroed, so a whole segment's set is
+  // counted and cleared in one pass.
+  duckdb::idx_t CountMask(irs::doc_id_t base, uint64_t* mask,
+                          duckdb::idx_t words);
+
+  // The computed-score filter over a window: clears the bits whose score fails
+  // it. Unlike the run form it compacts nothing -- a window's scores are
+  // indexed by offset, so the bit is the only thing that moves.
+  static duckdb::idx_t FilterMaskScores(const duckdb::TableFilter& filter,
+                                        duckdb::TableFilterState& state,
+                                        uint64_t* mask,
+                                        const irs::score_t* scores,
+                                        duckdb::idx_t words);
+
   // Applies the computed-score filter on scores[0..n), compacting docs/scores
   // in place (survivor indices ascend, so writes never clobber unread input);
   // returns the survivor count.
-  static duckdb::idx_t FilterScores(const duckdb::TableFilter& filter,
-                                    duckdb::TableFilterState& state,
-                                    irs::doc_id_t* docs, irs::score_t* scores,
-                                    duckdb::idx_t n);
+  static duckdb::idx_t FilterDocsScores(const duckdb::TableFilter& filter,
+                                        duckdb::TableFilterState& state,
+                                        irs::doc_id_t* docs,
+                                        irs::score_t* scores, duckdb::idx_t n);
   // sel[0..survivors) hold the window's surviving span offsets (ascending):
   // compacts docs (and scores when non-null) so entry w corresponds to
   // anchor + sel[w]. In-place friendly: the write cursor never passes the
@@ -214,6 +243,12 @@ class ColFilterChain {
  private:
   duckdb::ClientContext* _context = nullptr;
   ColFilterStateCache* _states = nullptr;
+  // The one walk behind `FilterMask` and `CountMask`: `Keep` writes the
+  // survivors back, otherwise the words are left zeroed.
+  template<bool Keep>
+  duckdb::idx_t WalkMask(irs::doc_id_t base, uint64_t* mask,
+                         duckdb::idx_t words);
+
   std::vector<Col> _cols;
   // FilterDocs' block-run selection. FilterSelection repoints `_sel` to a
   // buffer sized to the entering survivor count, so every block rebinds it to
@@ -226,89 +261,13 @@ class ColFilterChain {
   duckdb::unique_ptr<duckdb::AdaptiveFilter> _adaptive;
 };
 
-// A DocIterator = the inner search DocIterator + `.col` table filters. It
-// yields only doc-ids whose stored (INCLUDE'd) column values pass the filters,
-// narrowing the selection during the read via per-block zonemap skip + codec
-// ColumnSegment::Filter (ColumnReader::GatherFilter) -- exactly like
-// RowGroup::Scan. Because it IS a DocIterator, every consumer works unchanged:
-// count() (count-only), Collect() (top-k, feeding LoserScoreCollector),
-// and EmitScoredDocs()/EmitDocs() (streaming). So `.col` table filters apply to
-// count-only, top-k and streaming through one wrapper.
-class TableFilterDocIterator : public irs::DocIterator {
- public:
-  using FilterSpec = ColFilterSpec;
-
-  // Whole-segment classification result (see ClassifySegmentColFilters):
-  // `segment_dead` when a filter is ALWAYS_FALSE against the segment's
-  // whole-file statistics; `active` holds the specs that still need work.
-  struct SegmentClassification {
-    bool segment_dead = false;
-    std::vector<FilterSpec> active;
-  };
-
-  TableFilterDocIterator(irs::DocIterator::ptr inner,
-                         const irs::ColReader& col_reader,
-                         std::span<const FilterSpec> filters,
-                         duckdb::ClientContext& context,
-                         ColFilterStateCache& states);
-
-  irs::doc_id_t advance() final {
-    _doc = _inner->advance();
-    return _doc;
-  }
-  irs::doc_id_t seek(irs::doc_id_t target) final {
-    _doc = _inner->seek(target);
-    return _doc;
-  }
-  irs::doc_id_t LazySeek(irs::doc_id_t target) final {
-    _doc = _inner->LazySeek(target);
-    return _doc;
-  }
-  irs::Attribute* GetMutable(irs::TypeInfo::type_id id) noexcept final {
-    return _inner->GetMutable(id);
-  }
-  irs::ScoreFunction PrepareScore(const irs::PrepareScoreContext& ctx) final {
-    return _inner->PrepareScore(ctx);
-  }
-  void FetchScoreArgs(uint16_t index) final { _inner->FetchScoreArgs(index); }
-  uint32_t GetFreq() const final { return _inner->GetFreq(); }
-
-  uint32_t count() final;
-  uint32_t EmitDocs(irs::doc_id_t* out, irs::doc_id_t min,
-                    irs::doc_id_t max) final;
-  uint32_t EmitScoredDocs(irs::doc_id_t* out, irs::score_t* scores,
-                          irs::doc_id_t max, const irs::ScoreFunction& scorer,
-                          irs::ColumnArgsFetcher* fetcher,
-                          irs::doc_id_t min) final;
-  void Collect(const irs::ScoreFunction& scorer,
-               irs::ColumnArgsFetcher& fetcher,
-               irs::ScoreCollector& collector) final;
-  std::pair<irs::doc_id_t, bool> FillBlock(
-    irs::doc_id_t min, irs::doc_id_t max, uint64_t* mask,
-    irs::FillBlockScoreContext score, irs::FillBlockMatchContext match) final {
-    // Forwarding would silently skip the `.col` filters: no filtered path
-    // (count/Collect/EmitScoredDocs cover them all) may reach this.
-    SDB_ASSERT(false, "FillBlock on a table-filtered iterator");
-    return _inner->FillBlock(min, max, mask, score, match);
-  }
-
- private:
-  // Compacts docs[0..n) (and scores[0..n) when non-null, ascending) in place to
-  // the subset passing every `.col` filter, block by block: whole-block zonemap
-  // skip, then codec GatherFilter narrowing. Returns the survivor count.
-  duckdb::idx_t FilterBlock(irs::doc_id_t* docs, irs::score_t* scores,
-                            duckdb::idx_t n);
-
-  irs::DocIterator::ptr _inner;
-  irs::ReadContext _ctx;
-  ColFilterChain _filters;
-  // Filter on the computed score (not a `.col` field): applied on the score
-  // vector after scoring. Null when there is no score filter; the state is
-  // cache-owned.
-  const duckdb::TableFilter* _score_filter = nullptr;
-  duckdb::TableFilterState* _score_state = nullptr;
-  std::array<irs::doc_id_t, STANDARD_VECTOR_SIZE> _docbuf;
-  std::array<irs::score_t, STANDARD_VECTOR_SIZE> _scorebuf;
+// Whole-segment classification of a scan's pushed `.col` filters (see
+// ClassifySegmentColFilters): `segment_dead` when a filter is ALWAYS_FALSE
+// against the segment's whole-file statistics; `active` holds the specs that
+// still need work.
+struct ColFilterClassification {
+  bool segment_dead = false;
+  std::vector<ColFilterSpec> active;
 };
 
 }  // namespace sdb::connector

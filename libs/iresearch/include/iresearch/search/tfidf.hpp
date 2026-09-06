@@ -75,6 +75,8 @@ class TFIDF final : public irs::ScorerBase<TFIDF, TFIDFStats> {
 
   ScoreBoundSource::ptr PrepareScoreBoundSource() const final;
 
+  bool HasScoreBounds() const noexcept final { return true; }
+
   bool Compatible(const ScorerOptions& persisted) const noexcept final;
 
   bool equals(const Scorer& other) const noexcept final;

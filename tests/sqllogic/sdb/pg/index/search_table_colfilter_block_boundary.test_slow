@@ -77,8 +77,8 @@ query
 SELECT min(s) AS lo, max(s) AS hi, count(*) AS n
 FROM stbb WHERE s BETWEEN 'r99995' AND 'r99999';
 ----
-lo hi n
-r99995 r99999 5
+lo	hi	n
+r99995	r99999	5
 
 
 statement ok

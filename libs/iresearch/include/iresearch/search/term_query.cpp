@@ -22,55 +22,40 @@
 
 #include "term_query.hpp"
 
+#include <utility>
+
 #include "basics/memory.hpp"
 #include "iresearch/index/index_reader.hpp"
-#include "iresearch/search/all_iterator.hpp"
 #include "iresearch/search/prepared_state_visitor.hpp"
 #include "iresearch/search/scorer.hpp"
 
 namespace irs {
 
 TermQuery::TermQuery(const SubReader& segment, const TermReader* reader,
-                     const PostingMeta& cookie, score_t boost)
-  : QueryBuilder{segment}, _state{reader, cookie}, _boost{boost} {}
-
-DocIterator::ptr TermQuery::Execute(const ExecutionContext& ctx,
-                                    const StatsBuffer& stats) const {
-  const auto& segment = _segment;
-
-  if (_state.cookie.docs_count == 0) [[unlikely]] {
-    return DocIterator::empty();
-  }
-
-  if (!stats.HasScorer() && segment.docs_count() == _state.cookie.docs_count)
-    [[unlikely]] {
-    return memory::make_managed<AllIterator>(segment.docs_count(),
-                                             irs::ScoreSource{}, kNoBoost);
-  }
-
-  const auto* reader = _state.reader;
-  SDB_ASSERT(reader);
-  DocIterator::ptr docs;
-
-  const auto features = GetFeatures(stats.GetScorer());
-  auto it = reader->Iterator(
-    features,
-    {
-      .cookie = &_state.cookie,
-      .stats = stats.Stats(),
-      .boost = _boost,
-      .field = reader->meta(),
-    },
-    {.score_prune = MayScorePrune(ctx, stats), .scorer = stats.GetScorer()});
-  if (!it) {
-    return DocIterator::empty();
-  }
-
-  return it;
+                     const PostingMeta& cookie, score_t boost,
+                     search::StatsRecord stats)
+  : QueryBuilderImpl{segment, cookie.docs_count, QueryKind::Term},
+    _state{reader, cookie},
+    _boost{boost} {
+  SDB_ASSERT(reader != nullptr);
+  SDB_ASSERT(cookie.docs_count != 0);
+  SetStats(stats);
 }
 
 void TermQuery::Visit(PreparedStateVisitor& visitor, score_t boost) const {
-  visitor.Visit(*this, _state, boost * _boost);
+  visitor.Visit(_state, boost * _boost);
+}
+
+QueryBuilder::ptr MakeTermQuery(IResourceManager& memory,
+                                const SubReader& segment,
+                                const TermReader* reader,
+                                const PostingMeta& meta, score_t boost,
+                                search::StatsRecord stats) {
+  if (meta.docs_count == 0) {
+    return QueryBuilder::Empty();
+  }
+  return memory::make_tracked<TermQuery>(memory, segment, reader, meta, boost,
+                                         stats);
 }
 
 }  // namespace irs

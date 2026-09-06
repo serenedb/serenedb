@@ -27,20 +27,19 @@
 #include <iresearch/search/all_filter.hpp>
 #include <iresearch/search/automaton_filter.hpp>
 #include <iresearch/search/boolean_filter.hpp>
+#include <iresearch/search/constant_score.hpp>
 #include <iresearch/search/geo_filter.hpp>
 #include <iresearch/search/granular_range_filter.hpp>
 #include <iresearch/search/levenshtein_filter.hpp>
-#include <iresearch/search/mixed_boolean_filter.hpp>
 #include <iresearch/search/nested_filter.hpp>
 #include <iresearch/search/ngram_similarity_filter.hpp>
 #include <iresearch/search/phrase_filter.hpp>
 #include <iresearch/search/prefix_filter.hpp>
-#include <iresearch/search/proxy_filter.hpp>
 #include <iresearch/search/range_filter.hpp>
 #include <iresearch/search/regexp_filter.hpp>
 #include <iresearch/search/search_range.hpp>
 #include <iresearch/search/term_filter.hpp>
-#include <iresearch/search/terms_filter.hpp>
+#include <iresearch/search/term_set.hpp>
 #include <iresearch/search/vector_radius_filter.hpp>
 #include <iresearch/search/wildcard_filter.hpp>
 #include <iresearch/search/wildcard_ngram_filter.hpp>
@@ -55,6 +54,10 @@ namespace {
 using duckdb::ExplainNode;
 using sdb::basics::downCast;
 using sdb::catalog::term_dict::Kind;
+
+const Scorer* Explicit(const Scorer* scorer) noexcept {
+  return scorer == &DefaultConstScore() ? nullptr : scorer;
+}
 
 void AddMergeAttribute(ExplainNode& node, ScoreMergeType merge) {
   switch (merge) {
@@ -149,12 +152,12 @@ std::string RangeValue(const SearchRange<T>& range, Kind kind) {
 }
 
 // Renders one phrase-part option variant. Shared between Phrase and
-// WildcardNgram filters which both hold ByPhraseOptions parts.
+// WildcardNGram filters which both hold ByPhraseOptions parts.
 struct PhrasePartVisitor : util::Noncopyable {
   auto operator()(const ByTermOptions& opts) const {
     absl::StrAppend(out, "Term:", TermToString(opts.term));
   }
-  auto operator()(const ByTermsOptions& opts) const {
+  auto operator()(const TermSetOptions& opts) const {
     absl::StrAppend(out, "Terms:[",
                     absl::StrJoin(opts.terms, "",
                                   [](std::string* o, const auto& tb) {
@@ -279,7 +282,7 @@ struct FilterPrinter {
     return s;
   }
 
-  std::string WildcardNgramParts(const ByWildcardNgram& filter) const {
+  std::string WildcardNGramParts(const ByWildcardNGram& filter) const {
     std::string s;
     for (const auto& phrase : filter.options().parts) {
       absl::StrAppend(&s, "<");
@@ -294,18 +297,7 @@ struct FilterPrinter {
     return s;
   }
 
-  std::string TermsList(const ByTerms& filter, Kind kind) const {
-    return absl::StrJoin(filter.options().terms, ", ",
-                         [&](std::string* o, const auto& term_boost) {
-                           const auto& [term, boost] = term_boost;
-                           absl::StrAppend(o, "'", TermValue(term, kind), "'");
-                           if (boost != kNoBoost) {
-                             absl::StrAppend(o, "(", boost, ")");
-                           }
-                         });
-  }
-
-  std::string NgramList(const ByNGramSimilarity& filter) const {
+  std::string NGramList(const ByNGramSimilarity& filter) const {
     return absl::StrJoin(filter.options().ngrams, "",
                          [](std::string* o, const auto& ngram) {
                            absl::StrAppend(o, TermToString(ngram));
@@ -331,7 +323,7 @@ struct FilterPrinter {
 
   ExplainNode Build(const Filter& filter) const {
     auto node = BuildImpl(filter);
-    if (const auto* scorer = filter.GetScorer()) {
+    if (const auto* scorer = Explicit(filter.GetScorer())) {
       node.attributes["Score"] = scorer->ToString();
     }
     return node;
@@ -345,61 +337,103 @@ struct FilterPrinter {
     return node;
   }
 
+  // Terms are leaves rather than filters, so
+  // they read as children beside the filters -- one per field, because a
+  // bucket spans fields: `a = 1 AND b = 2` under an `OR`, and a negation over
+  // a nullable column, both put two fields in one bucket. A term whose
+  // lowering gave it a scorer of its own says so beside its value.
+  ExplainNode BuildBucket(const BooleanFilter& filter, Occur occur,
+                          std::string_view label) const {
+    ExplainNode node{std::string{label}};
+    const auto terms = filter.Terms(occur);
+    for (size_t i = 0; i != terms.size();) {
+      size_t j = i + 1;
+      while (j != terms.size() && terms[j].field == terms[i].field) {
+        ++j;
+      }
+      const auto run = terms.subspan(i, j - i);
+      i = j;
+      ExplainNode leaves{"Terms"};
+      leaves.attributes["Field"] = FieldName(run.front().field);
+      const auto kind = FieldKind(run.front().field);
+      SDB_ASSERT(kind != Kind::Null || run.size() == 1);
+      if (kind != Kind::Null || run.front().boost != kNoBoost ||
+          Explicit(run.front().scorer) != nullptr) {
+        const std::string_view quote = kind == Kind::String ? "'" : "";
+        leaves.attributes["Values"] = absl::StrJoin(
+          run, ", ", [&](std::string* o, const TermClause& clause) {
+            const auto start = o->size();
+            absl::StrAppend(o, quote, TermValue(clause.term, kind), quote);
+            const auto pad = [&] { return o->size() == start ? "" : " "; };
+            if (clause.boost != kNoBoost) {
+              absl::StrAppend(o, pad(), "(", clause.boost, ")");
+            }
+            if (const auto* own = Explicit(clause.scorer)) {
+              absl::StrAppend(o, pad(), "[", own->ToString(), "]");
+            }
+          });
+      }
+      node.children.push_back(std::move(leaves));
+    }
+    for (const auto& sub : filter.Filters(occur)) {
+      node.children.push_back(Build(*sub));
+    }
+    return node;
+  }
+
+  static bool MustIsAll(const BooleanFilter& filter) noexcept {
+    const auto filters = filter.Filters(Occur::Must);
+    if (!filter.Terms(Occur::Must).empty() || filters.size() != 1) {
+      return false;
+    }
+    const auto& child = *filters.front();
+    return child.type() == Type<All>::id() && child.GetBoost() == kNoBoost &&
+           child.GetScorer() == nullptr;
+  }
+
+  ExplainNode BuildBool(const BooleanFilter& filter) const {
+    const auto must = filter.Size(Occur::Must);
+    const auto should = filter.Size(Occur::Should);
+    const auto excluded = filter.Size(Occur::MustNot);
+    const auto min_match = filter.MinShouldMatch();
+    if (excluded == 0 && must == 0 && should != 0 && min_match == 1) {
+      auto node = BuildBucket(filter, Occur::Should, "Or");
+      AddMergeAttribute(node, filter.MergeType());
+      return node;
+    }
+    if (excluded == 0 && should == 0 && must != 0) {
+      auto node = BuildBucket(filter, Occur::Must, "And");
+      AddMergeAttribute(node, filter.MergeType());
+      return node;
+    }
+    if (excluded != 0 && should == 0 && MustIsAll(filter)) {
+      auto node = BuildBucket(filter, Occur::MustNot, "Not");
+      AddMergeAttribute(node, filter.MergeType());
+      return node;
+    }
+    ExplainNode node{"Bool"};
+    AddMergeAttribute(node, filter.MergeType());
+    static constexpr std::string_view kLabels[]{"Must", "Should", "Must Not"};
+    for (const auto occur : kAllOccur) {
+      if (filter.Size(occur) == 0) {
+        continue;
+      }
+      auto bucket = BuildBucket(filter, occur, kLabels[OccurIndex(occur)]);
+      if (occur == Occur::Should) {
+        bucket.attributes["Min Match"] = absl::StrCat(min_match);
+      }
+      node.children.push_back(std::move(bucket));
+    }
+    return node;
+  }
+
   ExplainNode BuildNode(const Filter& filter) const {
     const auto& type = filter.type();
     if (type == Type<All>::id()) {
       return ExplainNode{"All"};
     }
-    if (type == Type<And>::id()) {
-      ExplainNode node{"And"};
-      AddMergeAttribute(node, downCast<const And>(filter).merge_type());
-      for (const auto& sub : downCast<const And>(filter)) {
-        node.children.push_back(Build(*sub));
-      }
-      return node;
-    }
-    if (type == Type<Or>::id()) {
-      const auto& f = downCast<const Or>(filter);
-      ExplainNode node{"Or"};
-      if (f.min_match_count() != 1) {
-        node.attributes["Min Match"] = absl::StrCat(f.min_match_count());
-      }
-      AddMergeAttribute(node, f.merge_type());
-      for (const auto& sub : f) {
-        node.children.push_back(Build(*sub));
-      }
-      return node;
-    }
-    if (type == Type<Not>::id()) {
-      THROW_SQL_ERROR(
-        ERR_MSG("Not filter must be lowered to Exclusion by the optimizer "
-                "before printing"));
-    }
-    if (type == Type<Exclusion>::id()) {
-      const auto& f = downCast<const Exclusion>(filter);
-      const auto& incl = f.GetInclude();
-      const auto excludes = f.GetExcludes();
-      // A pure negation (implicit all-docs include) reads better as Not[X].
-      if (incl == nullptr) {
-        ExplainNode node{"Not"};
-        for (const auto& excl : excludes) {
-          node.children.push_back(Build(*excl));
-        }
-        return node;
-      }
-      ExplainNode node{"Exclusion"};
-      node.children.push_back(Build(*incl));
-      for (const auto& excl : excludes) {
-        node.children.push_back(Build(*excl));
-      }
-      return node;
-    }
-    if (type == Type<MixedBooleanFilter>::id()) {
-      const auto& f = downCast<const MixedBooleanFilter>(filter);
-      ExplainNode node{"Mixed"};
-      node.children.push_back(Build(f.GetRequired()));
-      node.children.push_back(Build(f.GetOptional()));
-      return node;
+    if (type == Type<BooleanFilter>::id()) {
+      return BuildBool(downCast<const BooleanFilter>(filter));
     }
     if (type == Type<ByTerm>::id()) {
       const auto& f = downCast<const ByTerm>(filter);
@@ -407,15 +441,6 @@ struct FilterPrinter {
       node.attributes["Field"] = FieldName(f.field_id());
       node.attributes["Value"] =
         TermValue(f.options().term, FieldKind(f.field_id()));
-      return node;
-    }
-    if (type == Type<ByTerms>::id()) {
-      const auto& f = downCast<const ByTerms>(filter);
-      ExplainNode node{"Terms"};
-      node.attributes["Field"] = FieldName(f.field_id());
-      node.attributes["Values"] = TermsList(f, FieldKind(f.field_id()));
-      node.attributes["Min Match"] = absl::StrCat(f.options().min_match);
-      AddMergeAttribute(node, f.options().merge_type);
       return node;
     }
     if (type == Type<ByRange>::id()) {
@@ -436,9 +461,9 @@ struct FilterPrinter {
     }
     if (type == Type<ByNGramSimilarity>::id()) {
       const auto& f = downCast<const ByNGramSimilarity>(filter);
-      ExplainNode node{"Ngram Similarity"};
+      ExplainNode node{"NGram Similarity"};
       node.attributes["Field"] = FieldName(f.field_id());
-      node.attributes["Ngrams"] = NgramList(f);
+      node.attributes["NGrams"] = NGramList(f);
       node.attributes["Threshold"] = absl::StrCat(f.options().threshold);
       return node;
     }
@@ -470,7 +495,7 @@ struct FilterPrinter {
       ExplainNode node{"Nested"};
       if (auto* range = std::get_if<Match>(&match); range != nullptr) {
         node.attributes["Match"] = absl::StrCat(range->min, ", ", range->max);
-      } else if (std::get_if<DocIteratorProvider>(&match) != nullptr) {
+      } else if (std::get_if<irs::MatchProvider>(&match) != nullptr) {
         node.attributes["Match"] = "<Predicate>";
       }
       node.children.push_back(Build(*child));
@@ -495,13 +520,13 @@ struct FilterPrinter {
       node.attributes["Pattern"] = TermToString(f.options().pattern);
       return node;
     }
-    if (type == Type<ByWildcardNgram>::id()) {
-      const auto& f = downCast<const ByWildcardNgram>(filter);
-      ExplainNode node{"Wildcard Ngram"};
+    if (type == Type<ByWildcardNGram>::id()) {
+      const auto& f = downCast<const ByWildcardNGram>(filter);
+      ExplainNode node{"Wildcard NGram"};
       node.attributes["Field"] = FieldName(f.field_id());
       node.attributes["Token"] = TermToString(f.options().token);
       node.attributes["Has Pos"] = f.options().has_pos ? "true" : "false";
-      node.attributes["Parts"] = WildcardNgramParts(f);
+      node.attributes["Parts"] = WildcardNGramParts(f);
       return node;
     }
     if (type == Type<Empty>::id()) {
@@ -545,9 +570,6 @@ struct FilterPrinter {
         node.children.push_back(Build(*o.inner));
       }
       return node;
-    }
-    if (type == Type<ProxyFilter>::id()) {
-      return Build(downCast<const ProxyFilter>(filter).inner());
     }
     ExplainNode node{"Unknown"};
     node.attributes["Type"] = std::string{type().name()};

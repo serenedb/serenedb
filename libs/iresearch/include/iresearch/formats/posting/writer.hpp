@@ -199,8 +199,8 @@ class PostingsWriterBase : public PostingsWriter {
       return nullptr;
     }
 
-    void Reset(AttributeProvider& attrs) noexcept {
-      if (auto* p = irs::GetMutable<PosAttr>(&attrs)) {
+    void Reset(TermPostings& docs) noexcept {
+      if (auto* p = docs.Positions()) {
         pos = p;
         offs = irs::get<OffsAttr>(*pos);
       } else {
@@ -446,7 +446,7 @@ class PostingsWriterImpl final : public PostingsWriterBase {
     : PostingsWriterBase{rm}, _volatile_attributes{volatile_attributes} {}
 
   void BeginField(const FieldProperties& meta) final;
-  void Write(DocIterator& docs, PostingMeta& meta) final;
+  void Write(TermPostings& docs, PostingMeta& meta) final;
   void End() final;
 
  private:
@@ -583,16 +583,14 @@ void PostingsWriterImpl<FormatTraits>::End() {
 }
 
 template<typename FormatTraits>
-void PostingsWriterImpl<FormatTraits>::Write(DocIterator& docs,
+void PostingsWriterImpl<FormatTraits>::Write(TermPostings& docs,
                                              PostingMeta& meta) {
-  auto refresh = [&](auto& attrs) noexcept { _attrs.Reset(attrs); };
+  auto refresh = [&](TermPostings& attrs) noexcept { _attrs.Reset(attrs); };
 
   if (!_volatile_attributes) {
     refresh(docs);
   } else {
-    auto* subscription = irs::get<AttrProviderChangeAttr>(docs);
-    SDB_ASSERT(subscription);
-    subscription->Subscribe(refresh);
+    docs.Subscribe(refresh);
   }
 
   BeginTerm(meta);
@@ -609,7 +607,7 @@ void PostingsWriterImpl<FormatTraits>::Write(DocIterator& docs,
   uint32_t total_freq = 0;
 
   while (true) {
-    const auto doc = docs.advance();
+    const auto doc = docs.Advance();
     SDB_ASSERT(doc_limits::valid(doc));
     if (doc_limits::eof(doc)) {
       break;

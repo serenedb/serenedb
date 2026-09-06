@@ -158,7 +158,7 @@ void ParseGeoConstant(const duckdb::Value& value,
 // ---------------------------------------------------------------------------
 
 std::pair<irs::GeoDistanceFilter*, double> PrepareGeoDistanceFilter(
-  irs::BooleanFilter& parent, const FilterContext& ctx,
+  BoolTarget parent, const FilterContext& ctx,
   const duckdb::BoundFunctionExpression& geo_call,
   const duckdb::Expression& dist_expr) {
   SDB_ASSERT(geo_call.GetChildren().size() == 2);
@@ -212,6 +212,7 @@ std::pair<irs::GeoDistanceFilter*, double> PrepareGeoDistanceFilter(
   auto& geo_filter =
     AddMaybeNegated<irs::GeoDistanceFilter>(parent, ctx, *column_info);
   geo_filter.SetBoost(ctx.boost);
+  geo_filter.SetScorer(&irs::DefaultConstScore());
   *geo_filter.mutable_field_id() = column_info->field_id;
 
   auto* options = geo_filter.mutable_options();
@@ -236,7 +237,7 @@ std::pair<irs::GeoDistanceFilter*, double> PrepareGeoDistanceFilter(
 // default to inclusive.
 // ---------------------------------------------------------------------------
 
-void FromGeoInRange(irs::BooleanFilter& filter, const FilterContext& ctx,
+void FromGeoInRange(BoolTarget filter, const FilterContext& ctx,
                     const duckdb::BoundFunctionExpression& func) {
   const auto num_inputs = func.GetChildren().size();
   if (num_inputs < 4 || num_inputs > 6) {
@@ -312,6 +313,7 @@ void FromGeoInRange(irs::BooleanFilter& filter, const FilterContext& ctx,
   auto& geo_filter =
     AddMaybeNegated<irs::GeoDistanceFilter>(filter, ctx, *column_info);
   geo_filter.SetBoost(ctx.boost);
+  geo_filter.SetScorer(&irs::DefaultConstScore());
   *geo_filter.mutable_field_id() = column_info->field_id;
 
   auto* options = geo_filter.mutable_options();
@@ -341,7 +343,7 @@ void FromGeoInRange(irs::BooleanFilter& filter, const FilterContext& ctx,
 // pick different GeoFilterType values.
 // ---------------------------------------------------------------------------
 
-void FromGeoFilter(irs::BooleanFilter& filter, const FilterContext& ctx,
+void FromGeoFilter(BoolTarget filter, const FilterContext& ctx,
                    const duckdb::BoundFunctionExpression& func) {
   if (func.GetChildren().size() != 2) {
     THROW_SQL_ERROR(
@@ -390,6 +392,7 @@ void FromGeoFilter(irs::BooleanFilter& filter, const FilterContext& ctx,
 
   auto& geo_filter = AddMaybeNegated<irs::GeoFilter>(filter, ctx, *column_info);
   geo_filter.SetBoost(ctx.boost);
+  geo_filter.SetScorer(&irs::DefaultConstScore());
   *geo_filter.mutable_field_id() = column_info->field_id;
 
   auto* options = geo_filter.mutable_options();
@@ -461,8 +464,7 @@ const duckdb::BoundFunctionExpression* TryGetGeoDistanceCall(
 }
 
 // ST_Distance_Centroid(field, centroid) OP distance  --  range one-sided.
-void FromGeoDistanceComparison(irs::BooleanFilter& filter,
-                               const FilterContext& ctx,
+void FromGeoDistanceComparison(BoolTarget filter, const FilterContext& ctx,
                                const duckdb::BoundFunctionExpression& geo_call,
                                const duckdb::Expression& dist_expr,
                                ComparisonOp op) {
@@ -493,8 +495,7 @@ void FromGeoDistanceComparison(irs::BooleanFilter& filter,
 }
 
 // ST_Distance_Centroid(field, centroid) = distance  --  point range [d, d].
-void FromGeoDistanceBinaryEq(irs::BooleanFilter& filter,
-                             const FilterContext& ctx,
+void FromGeoDistanceBinaryEq(BoolTarget filter, const FilterContext& ctx,
                              const duckdb::BoundFunctionExpression& geo_call,
                              const duckdb::Expression& dist_expr) {
   auto setup = PrepareGeoDistanceFilter(filter, ctx, geo_call, dist_expr);
@@ -505,8 +506,7 @@ void FromGeoDistanceBinaryEq(irs::BooleanFilter& filter,
   options->range.max_type = irs::BoundType::Inclusive;
 }
 
-bool TryDispatchGeoFunction(irs::BooleanFilter& filter,
-                            const FilterContext& ctx,
+bool TryDispatchGeoFunction(BoolTarget filter, const FilterContext& ctx,
                             const duckdb::BoundFunctionExpression& func) {
   const auto& name = func.Function().GetName().GetIdentifierName();
   if (name == kGeoInRange) {

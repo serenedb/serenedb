@@ -36,7 +36,7 @@ struct TokenizerConfig;
 
 class WildcardAnalyzer final : public TypedAnalyzer<WildcardAnalyzer>,
                                private util::Noncopyable {
-  using Ngram = NGramTokenizer<NGramTokenizerBase::InputType::UTF8>;
+  using NGram = NGramTokenizer<NGramTokenizerBase::InputType::UTF8>;
 
  public:
   struct Options {
@@ -68,7 +68,7 @@ class WildcardAnalyzer final : public TypedAnalyzer<WildcardAnalyzer>,
   }
 
   Analyzer::ptr _analyzer;
-  std::unique_ptr<Ngram> _ngram;
+  std::unique_ptr<NGram> _ngram;
   const TermAttr* _term{};
   TermAttr* _ngram_term{};
   StoreAttr _store;

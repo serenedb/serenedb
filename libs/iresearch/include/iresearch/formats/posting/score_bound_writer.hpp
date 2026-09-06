@@ -151,8 +151,8 @@ class FreqNormProducer : public AttributeProvider {
     SDB_ASSERT(0 < tf_2);
     SDB_ASSERT(0 < dl_2);
     SDB_ASSERT(tf_2 <= dl_2);
-    // idf * (k + 1) * tf / (k * (1 - b + b * dl / avg_dl) + tf)
-    // 1. idf * (k + 1) -- doesn't affect compare
+    // idf * tf / (k * (1 - b + b * dl / avg_dl) + tf)
+    // 1. idf -- doesn't affect compare
     // tf_1 / (k * (1 - b + b * dl_1 / avg_dl) + tf_1)
     // tf_2 / (k * (1 - b + b * dl_2 / avg_dl) + tf_2)
     // 2. replace division by multiply

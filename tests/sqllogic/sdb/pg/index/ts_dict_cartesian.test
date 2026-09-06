@@ -560,11 +560,12 @@ QUERY PLAN
 ╭─ IRESEARCH_SCAN ──────────┴──────────────────────────╮
 │ Index: cart_idx                                      │
 │ Index Filter:                                        │
-│ ╭─ Terms ───────────────────────────╮                │
+│ ╭─ Or ──────────────────────────────╮                │
+│ ╰─────────────────┬─────────────────╯                │
+│ ╭─ Terms ─────────┴─────────────────╮                │
 │ │ Field: body(string)               │                │
 │ │ Values:                           │                │
 │ │ 'apple', 'banana', 'date', 'kiwi' │                │
-│ │ Min Match: 1                      │                │
 │ ╰───────────────────────────────────╯                │
 │ TsDict: body                                         │
 │ Projections:                                         │

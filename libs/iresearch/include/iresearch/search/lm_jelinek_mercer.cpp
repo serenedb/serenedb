@@ -47,19 +47,14 @@ constexpr const T* TryGetValue(const T* value) noexcept {
   return value;
 }
 
-constexpr std::nullptr_t TryGetValue(utils::Empty /*value*/) noexcept {
-  return nullptr;
-}
+constexpr std::nullptr_t TryGetValue(utils::Empty) noexcept { return nullptr; }
 
-// score(doc, term) = boost * log(1 + ((1 - lambda) * tf / dl) /
-//                                    (lambda * collection_prob))
 template<ScoreMergeType MergeType, bool HasBoost>
 IRS_FORCE_INLINE void LmJmImpl(
   score_t* IRS_RESTRICT res, scores_size_t n, const uint32_t* IRS_RESTRICT freq,
   const uint32_t* IRS_RESTRICT norm,
   [[maybe_unused]] const score_t* IRS_RESTRICT boost, score_t num,
   score_t denom_inv, score_t const_boost) noexcept {
-  // num = 1 - lambda, denom_inv = 1 / (lambda * collection_prob)
   for (scores_size_t i = 0; i != n; ++i) {
     const score_t tf = TermCountToScore(freq[i]);
     SDB_ASSERT(norm[i] != 0);
@@ -130,8 +125,8 @@ struct LmJmScore : public ScoreOperator {
   [[no_unique_address]] utils::Need<HasFilterBoost, const score_t*>
     filter_boost;
   score_t boost;
-  score_t num;        // 1 - lambda
-  score_t denom_inv;  // 1 / (lambda * collection_prob)
+  score_t num;
+  score_t denom_inv;
 };
 
 }  // namespace
@@ -151,12 +146,9 @@ void LMJelinekMercer::collect(byte_type* stats_buf, const FieldCollector* field,
 ScoreFunction LMJelinekMercer::PrepareScorer(const ScoreContext& ctx) const {
   auto* freq = irs::get<FreqBlockAttr>(ctx.doc_attrs);
   if (!freq) {
-    // No frequency (e.g. irs::all filter) -- zero score.
     return ScoreFunction::Default();
   }
 
-  // Defensive: guard against a zero/unset collection probability (no stats
-  // collected, e.g. empty index).
   auto* stats = stats_cast(ctx.stats);
   if (stats->collection_prob <= 0.f) {
     return ScoreFunction::Default();
@@ -173,9 +165,7 @@ ScoreFunction LMJelinekMercer::PrepareScorer(const ScoreContext& ctx) const {
   }
 
   if (!norm) {
-    // Without norms we can't compute tf/dl. Fall back to zero scores so the
-    // behaviour degrades gracefully instead of producing NaN.
-    return ScoreFunction::Default();
+    norm = kNorms.data();
   }
 
   auto* filter_boost = [&] {

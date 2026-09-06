@@ -105,6 +105,7 @@ struct Field : public irs::FieldMeta {
   irs::bytes_view min() const;
   irs::bytes_view max() const;
   uint64_t total_freq() const;
+  uint64_t total_doc_freq() const;
 
   irs::SeekTermIterator::ptr iterator() const;
 

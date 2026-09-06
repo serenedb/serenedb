@@ -20,12 +20,10 @@
 
 #pragma once
 
-#include <memory>
-#include <vector>
+#include <algorithm>
 
 #include "iresearch/search/all_filter.hpp"
 #include "iresearch/search/filter.hpp"
-#include "iresearch/search/proxy_filter.hpp"
 #include "iresearch/search/score_function.hpp"
 #include "iresearch/search/scorer.hpp"
 
@@ -35,25 +33,24 @@ inline bool IsAllDocs(const Filter& filter) noexcept {
   return filter.type() == irs::Type<All>::id();
 }
 
-template<typename T>
-std::unique_ptr<T> MakeBoolean(std::vector<Filter::ptr> children,
-                               ScoreMergeType merge_type) {
-  auto node = std::make_unique<T>(std::move(children));
-  node->merge_type(merge_type);
-  return node;
+inline score_t MergedBoost(ScoreMergeType merge_type, score_t lo,
+                           score_t hi) noexcept {
+  switch (merge_type) {
+    case ScoreMergeType::Max:
+      return std::max(lo, hi);
+    case ScoreMergeType::Noop:
+      return kNoBoost;
+    case ScoreMergeType::Sum:
+      break;
+  }
+  return lo + hi;
 }
 
-inline bool TryFoldBoost(Filter& survivor, score_t boost, bool scored) {
+inline void FoldBoost(Filter& survivor, score_t boost, bool scored) {
   if (boost == kNoBoost || !scored) {
-    return true;
-  }
-  // ProxyFilter delegates to an inner filter and applies no boost of its own,
-  // so folding one into it would drop it.
-  if (survivor.type() == irs::Type<ProxyFilter>::id()) {
-    return false;
+    return;
   }
   survivor.SetBoost(survivor.GetBoost() * boost);
-  return true;
 }
 
 }  // namespace irs::optimizer

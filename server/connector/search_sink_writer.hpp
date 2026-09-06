@@ -80,6 +80,17 @@ inline EntryInfoProvider MakeEntryInfoProvider(
     [&config](irs::field_id field_id) { return config.FindEntry(field_id); };
 }
 
+inline std::vector<ColumnId> IndexedColumnIds(
+  const catalog::InvertedIndexConfig& config) {
+  std::vector<ColumnId> ids;
+  for (const auto& [field_id, field] : config.fields) {
+    if (field_id < kFirstSyntheticColumnId) {
+      ids.push_back(field_id);
+    }
+  }
+  return ids;
+}
+
 inline EntryInfoProvider NoEntryInfoProvider() {
   return
     [](irs::field_id) -> const catalog::InvertedIndexField* { return nullptr; };

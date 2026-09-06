@@ -75,10 +75,10 @@
 #include "basics/duckdb_engine.h"
 #include "basics/log.h"
 #include "catalog/rest/iceberg_catalog.hpp"
+#include "catalog1/catalog.h"
 #include "catalog1/cluster.h"
 #include "catalog1/entry/inverted_index.h"
 #include "catalog1/entry/role.h"
-#include "catalog1/lookup.h"
 #include "catalog1/permissions.h"
 #include "connector/duckdb_client_state.h"
 #include "connector/duckdb_physical_create_index.h"
@@ -1129,8 +1129,9 @@ absl::Status RunReindexTick(duckdb::DatabaseInstance& db,
         return absl::OkStatus();
       }
       database_name = attached->GetName().GetIdentifierName();
-      auto index = catalog::FindIn<duckdb::DuckIndexEntry>(
-        nullptr, attached->GetCatalog(), index_id);
+      auto index = attached->GetCatalog()
+                     .Cast<catalog::SereneDBCatalog>()
+                     .FindIn<duckdb::DuckIndexEntry>(nullptr, index_id);
       if (!index || index->index_type != "inverted") {
         return absl::OkStatus();
       }

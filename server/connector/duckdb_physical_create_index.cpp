@@ -426,7 +426,10 @@ SereneDBPhysicalCreateIndex::GetLocalSinkState(
     inverted_storage.GetTransaction());
   lstate->search_trx->SetFieldOptions(gstate.config);
   lstate->writer = std::make_unique<DuckDBSearchSinkInsertWriter>(
-    *lstate->search_trx, gstate.tokenizers, gstate.config);
+    *lstate->search_trx,
+    MakeTokenizerProvider(gstate.tokenizers, *gstate.config),
+    IndexedColumnIds(*gstate.config), MakeEntryInfoProvider(*gstate.config),
+    gstate.config->pk);
 
   if (IsDuckDBTable()) {
     auto& slot = lstate->uncommitted_min_slot;

@@ -33,7 +33,6 @@
 #include "basics/assert.h"
 #include "catalog1/catalog.h"
 #include "catalog1/entry/search_table.h"
-#include "catalog1/lookup.h"
 #include "connector/primary_key.h"
 #include "pg/errcodes.h"
 #include "pg/sql_exception.h"

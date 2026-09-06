@@ -3,7 +3,6 @@ add_library(
     STATIC
     boot.cpp
     catalog.cpp
-    lookup.cpp
     cluster.cpp
     entry/inverted_index.cpp
     entry/search_table.cpp

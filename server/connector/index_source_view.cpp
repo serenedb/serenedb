@@ -20,6 +20,8 @@
 
 #include "connector/index_source_view.h"
 
+#include <absl/strings/ascii.h>
+
 #include <algorithm>
 #include <duckdb/common/types/vector.hpp>
 #include <duckdb/common/vector/struct_vector.hpp>
@@ -33,7 +35,14 @@
 
 namespace sdb::connector {
 
-void ThrowUnknownSourceColumn(std::string_view name) {
+duckdb::idx_t SourceColumns::operator()(std::string_view name) const {
+  if (const auto it = _exact.find(name); it != _exact.end()) {
+    return it->second;
+  }
+  if (const auto it = _folded.find(absl::AsciiStrToLower(name));
+      it != _folded.end()) {
+    return it->second;
+  }
   THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_COLUMN),
                   ERR_MSG("column \"", name,
                           "\" of the indexed view is not a column of its "

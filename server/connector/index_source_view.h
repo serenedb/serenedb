@@ -21,7 +21,7 @@
 #pragma once
 
 #include <absl/functional/function_ref.h>
-#include <absl/strings/match.h>
+#include <absl/strings/ascii.h>
 
 #include <duckdb/common/types.hpp>
 #include <duckdb/common/types/data_chunk.hpp>
@@ -31,36 +31,35 @@
 #include <iresearch/index/index_source.hpp>
 #include <ranges>
 #include <span>
+#include <string>
 #include <string_view>
 #include <vector>
 
+#include "basics/containers/flat_hash_map.h"
 #include "catalog/table_options.h"
 #include "connector/view_fast_path.h"
 
 namespace sdb::connector {
 
-[[noreturn]] void ThrowUnknownSourceColumn(std::string_view name);
+class SourceColumns {
+ public:
+  template<std::ranges::input_range Names, typename Proj = std::identity>
+  explicit SourceColumns(const Names& names, Proj proj = {}) {
+    duckdb::idx_t index = 0;
+    for (const auto& candidate : names) {
+      const std::string_view name{std::invoke(proj, candidate)};
+      _exact.try_emplace(name, index);
+      _folded.try_emplace(absl::AsciiStrToLower(name), index);
+      ++index;
+    }
+  }
 
-template<std::ranges::forward_range Names, typename Proj = std::identity>
-duckdb::idx_t SourceColumn(std::string_view name, const Names& names,
-                           Proj proj = {}) {
-  const auto find = [&](auto&& matches) {
-    return std::ranges::find_if(names, [&](const auto& candidate) {
-      return matches(std::string_view{std::invoke(proj, candidate)}, name);
-    });
-  };
-  auto it = find(std::ranges::equal_to{});
-  if (it == std::ranges::end(names)) {
-    it = find([](std::string_view lhs, std::string_view rhs) {
-      return absl::EqualsIgnoreCase(lhs, rhs);
-    });
-  }
-  if (it == std::ranges::end(names)) {
-    ThrowUnknownSourceColumn(name);
-  }
-  return static_cast<duckdb::idx_t>(
-    std::ranges::distance(std::ranges::begin(names), it));
-}
+  duckdb::idx_t operator()(std::string_view name) const;
+
+ private:
+  containers::FlatHashMap<std::string_view, duckdb::idx_t> _exact;
+  containers::FlatHashMap<std::string, duckdb::idx_t> _folded;
+};
 
 class ViewIndexSourceBase : public IndexSource {
  protected:

@@ -42,10 +42,7 @@ ViewFileIndexSourceBase::ViewFileIndexSourceBase(
   _column_indexes.reserve(projected_columns.size());
   InitProjection(
     context, projected_columns, projected_types, bind_column_ids,
-    [&](std::string_view name) {
-      return SourceColumn(name, multi_bd.names,
-                          &duckdb::Identifier::GetIdentifierName);
-    },
+    SourceColumns{multi_bd.names, &duckdb::Identifier::GetIdentifierName},
     [&](duckdb::idx_t file_col_idx) {
       SDB_ASSERT(file_col_idx < multi_bd.types.size());
       _column_indexes.emplace_back(file_col_idx);

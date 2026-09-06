@@ -141,16 +141,15 @@ ViewTableIndexSource::ViewTableIndexSource(
   // alive for the query even if it is detached concurrently.
   duckdb::DuckTransaction::Get(context, table.ParentCatalog());
   const auto& columns = table.GetColumns();
-  const auto column_names =
-    std::views::iota(duckdb::idx_t{0}, columns.LogicalColumnCount()) |
-    std::views::transform([&](duckdb::idx_t i) -> std::string_view {
-      return columns.GetColumn(duckdb::LogicalIndex(i))
-        .Name()
-        .GetIdentifierName();
-    });
   InitProjection(
     context, projected_columns, projected_types, bind_column_ids,
-    [&](std::string_view name) { return SourceColumn(name, column_names); },
+    SourceColumns{
+      std::views::iota(duckdb::idx_t{0}, columns.LogicalColumnCount()) |
+      std::views::transform([&](duckdb::idx_t i) -> std::string_view {
+        return columns.GetColumn(duckdb::LogicalIndex(i))
+          .Name()
+          .GetIdentifierName();
+      })},
     [&](duckdb::idx_t table_col_idx) {
       SDB_ASSERT(table_col_idx < columns.LogicalColumnCount());
       return AddFetchColumn(

@@ -27,6 +27,7 @@
 #include <fast_float/fast_float.h>
 
 #include <cstdint>
+#include <cstring>
 #include <duckdb/common/operator/cast_operators.hpp>
 #include <duckdb/common/operator/decimal_cast_operators.hpp>
 #include <duckdb/common/types/bit.hpp>
@@ -43,6 +44,7 @@
 #include <duckdb/function/cast/default_casts.hpp>
 #include <duckdb/inet/inet_ipaddress.hpp>
 #include <duckdb/main/client_context.hpp>
+#include <icu-zone-lut.hpp>
 #include <limits>
 #include <string>
 #include <string_view>
@@ -621,10 +623,16 @@ void FillDeserializeContext(duckdb::ClientContext& client,
     return;
   }
   const auto tz_name = value.ToString();
+  context.session_lut.reset();
   if (IsUtcTimeZoneName(tz_name)) {
     context.session_calendar.reset();
   } else {
     context.session_calendar = MakeCalendar(tz_name);
+    if (context.session_calendar &&
+        std::strcmp(context.session_calendar->getType(), "gregorian") == 0) {
+      context.session_lut =
+        duckdb::ZoneLUT::Get(context.session_calendar->getTimeZone());
+    }
   }
 }
 
@@ -652,6 +660,11 @@ inline bool ConvertTimestampTzText(DeserializeContext& ctx,
     }
   } else {
     // No zone in the text: interpret in the session zone (null = UTC).
+    int64_t instant = 0;
+    if (ctx.session_lut && ctx.session_lut->TryResolve(result.value, instant)) {
+      result = duckdb::timestamp_t{instant};
+      return true;
+    }
     calendar = ctx.session_calendar.get();
   }
   if (calendar) {

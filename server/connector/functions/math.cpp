@@ -28,6 +28,7 @@
 #include <duckdb/common/types/interval.hpp>
 #include <duckdb/common/types/timestamp.hpp>
 #include <duckdb/common/vector_operations/generic_executor.hpp>
+#include <duckdb/function/scalar/date_bucket_rewrite.hpp>
 #include <duckdb/function/scalar_function.hpp>
 #include <duckdb/main/extension/extension_loader.hpp>
 #include <limits>
@@ -303,9 +304,6 @@ void DateBinFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
         THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                         ERR_MSG("stride must be greater than zero"));
       }
-      if (!source.IsFinite()) {
-        return source;
-      }
       if (stride.months != 0) {
         THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
                         ERR_MSG("timestamps cannot be binned into intervals "
@@ -317,6 +315,9 @@ void DateBinFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
       if (stride_us <= 0) {
         THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                         ERR_MSG("stride must be greater than zero"));
+      }
+      if (!source.IsFinite()) {
+        return source;
       }
 
       int64_t src_us = source.value;
@@ -422,12 +423,16 @@ void RegisterPgMathFunctions(duckdb::DatabaseInstance& db) {
     MakeTimestampFunction});
 
   // date_bin(stride interval, source timestamp, origin timestamp) -> timestamp
-  loader.RegisterFunction(duckdb::ScalarFunction{
-    "date_bin",
-    {duckdb::LogicalType::INTERVAL, duckdb::LogicalType::TIMESTAMP,
-     duckdb::LogicalType::TIMESTAMP},
-    duckdb::LogicalType::TIMESTAMP,
-    DateBinFunction});
+  {
+    duckdb::ScalarFunction func{
+      "date_bin",
+      {duckdb::LogicalType::INTERVAL, duckdb::LogicalType::TIMESTAMP,
+       duckdb::LogicalType::TIMESTAMP},
+      duckdb::LogicalType::TIMESTAMP,
+      DateBinFunction};
+    func.SetBucketRewriteCallback(duckdb::DateBinBucketRewrite);
+    loader.RegisterFunction(func);
+  }
 
   {
     duckdb::ScalarFunction func{

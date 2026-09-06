@@ -46,7 +46,7 @@ class SourceColumns {
   explicit SourceColumns(const Names& names, Proj proj = {}) {
     duckdb::idx_t index = 0;
     for (const auto& candidate : names) {
-      _by_name.try_emplace(std::string{std::invoke(proj, candidate)}, index++);
+      _by_name.try_emplace(std::invoke(proj, candidate), index++);
     }
   }
 

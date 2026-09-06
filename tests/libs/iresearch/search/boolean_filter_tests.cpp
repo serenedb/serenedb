@@ -1979,19 +1979,26 @@ TEST(BooleanFilter_test, duplicate_term_merges_boost) {
     EXPECT_EQ(3.f, optimized->GetBoost());
   }
 
-  // Two scorers are two contributions, so the whole clause key has to agree
-  // before one is folded into the other.
-  for (const bool scored : {true, false}) {
+  {
     tests::sort::Boost sort;
     irs::BooleanFilter q;
     AddTerm(q, irs::Occur::Must, kFieldAbc, "def", 2.f);
     AddTerm(q, irs::Occur::Must, kFieldAbc, "def", 3.f, &sort);
 
-    const auto optimized =
-      tests::Optimized(std::move(q), scored ? &sort : nullptr);
+    const auto optimized = tests::Optimized(std::move(q), &sort);
     ASSERT_EQ(irs::Type<irs::BooleanFilter>::id(), optimized->type());
     const auto& node = sdb::basics::downCast<irs::BooleanFilter>(*optimized);
     EXPECT_EQ(2, node.Size(irs::Occur::Must));
+  }
+
+  {
+    tests::sort::Boost sort;
+    irs::BooleanFilter q;
+    AddTerm(q, irs::Occur::Must, kFieldAbc, "def", 2.f);
+    AddTerm(q, irs::Occur::Must, kFieldAbc, "def", 3.f, &sort);
+
+    const auto optimized = tests::Optimized(std::move(q));
+    ASSERT_EQ(irs::Type<irs::ByTerm>::id(), optimized->type());
   }
 
   // A required clause is met by every document the node returns, so the
@@ -2837,7 +2844,6 @@ TEST(OrAcceptorFusion_test, scored_requires_uniform_boosts) {
     const auto* fused = FusedOf(filter);
     ASSERT_NE(nullptr, fused);
     EXPECT_EQ(6.f, fused->GetBoost());
-    EXPECT_EQ(2048, fused->options().scored_terms_limit);
   }
 }
 

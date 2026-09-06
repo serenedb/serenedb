@@ -768,9 +768,7 @@ void BuildTableFilter(IResearchScanGlobalState& state,
                       const SereneDBScanBindData& bind_data,
                       const duckdb::TableFilterSet& filters) {
   const catalog::InvertedIndex* index_meta =
-    bind_data.IsInvertedIndexEntry() && bind_data.inverted_index
-      ? &catalog::InvertedInfo(*bind_data.inverted_index)
-      : nullptr;
+    bind_data.IsInvertedIndexEntry() ? &bind_data.ScannedIndex() : nullptr;
   // Score-column filters, applied on the computed score vector (whatever
   // HandleScoreFilter left pushed: on top-k the collector-enforced conjuncts
   // were stripped; the floor was recorded on the bind data there). The
@@ -965,7 +963,7 @@ void ClassifyColumnstoreProjections(IResearchScanGlobalState& state,
     }
     return;
   }
-  if (!bind_data.IsInvertedIndexEntry() || !bind_data.inverted_index) {
+  if (!bind_data.IsInvertedIndexEntry()) {
     // Nothing is covered: every output column materializes through the source
     // (base-table scans never receive pushed filters, so output columns are
     // the only real ones scanned).
@@ -980,8 +978,7 @@ void ClassifyColumnstoreProjections(IResearchScanGlobalState& state,
       continue;
     }
     const auto col_id = bind_data.column_ids[bind_col];
-    const auto* info =
-      catalog::InvertedInfo(*bind_data.inverted_index).FindColumnInfo(col_id);
+    const auto* info = bind_data.ScannedIndex().FindColumnInfo(col_id);
     if (info && info->IsStored()) {
       state.lookup_projected_columns[proj] = duckdb::DConstants::INVALID_INDEX;
       if (!in_output(proj)) {
@@ -1343,13 +1340,12 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> IResearchScanInitGlobal(
                                    duckdb::GlobalTableFunctionState>(
       std::move(state));
   }
-  if (state->needs_lookup && ss.IsInvertedIndexEntry() && ss.inverted_index) {
-    const auto pk_kind =
-      catalog::InvertedInfo(*ss.inverted_index).GetOptions().pk_column;
+  if (state->needs_lookup && ss.IsInvertedIndexEntry()) {
+    const auto pk_kind = ss.ScannedIndex().GetOptions().pk_column;
     if (pk_kind == catalog::PkColumnKind::None) {
       THROW_SQL_ERROR(
         ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
-        ERR_MSG("inverted index \"", ss.inverted_index->GetName(),
+        ERR_MSG("inverted index \"", ss.indexes.front()->GetName(),
                 "\" was created WITH (store_pk = 'none'), so it does not store "
                 "row PKs and hits cannot be mapped back to source rows; select "
                 "only INCLUDE'd columns, counts or scores through this index"));
@@ -1425,11 +1421,9 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> IResearchScanInitGlobal(
   }
 
   if (state->mode == ScanMode::TopK) {
-    state->prune_scorer =
-      ResolvePruneScorer(bind_data.inverted_index
-                           ? &catalog::InvertedInfo(*bind_data.inverted_index)
-                           : nullptr,
-                         state->scorer_obj.get());
+    state->prune_scorer = ResolvePruneScorer(
+      bind_data.IsIndexRelation() ? &bind_data.ScannedIndex() : nullptr,
+      state->scorer_obj.get());
     if (state->score_static_floor >
         std::numeric_limits<irs::score_t>::lowest()) {
       // Static score floor (Lucene min_score): the collectors start at the
@@ -1470,11 +1464,9 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> IResearchScanInitGlobal(
       state->score_static_floor > std::numeric_limits<irs::score_t>::lowest();
     if (!topk_disabled && ss.text_scorer && state->ScanScore() &&
         (dynamic_bound || static_bound)) {
-      state->prune_scorer =
-        ResolvePruneScorer(bind_data.inverted_index
-                             ? &catalog::InvertedInfo(*bind_data.inverted_index)
-                             : nullptr,
-                           state->scorer_obj.get());
+      state->prune_scorer = ResolvePruneScorer(
+        bind_data.IsIndexRelation() ? &bind_data.ScannedIndex() : nullptr,
+        state->scorer_obj.get());
     }
   }
 
@@ -1484,11 +1476,8 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> IResearchScanInitGlobal(
   }
 
   if (state->mode == ScanMode::ColScan) {
-    // Search tables carry no inverted_index; fall back to the default unit.
-    uint64_t rg_rows = bind_data.inverted_index
-                         ? catalog::InvertedInfo(*bind_data.inverted_index)
-                             .GetOptions()
-                             .row_group_size
+    uint64_t rg_rows = bind_data.IsIndexRelation()
+                         ? bind_data.ScannedIndex().GetOptions().row_group_size
                          : 0;
     if (rg_rows == 0) {
       rg_rows = DEFAULT_ROW_GROUP_SIZE;
@@ -1866,9 +1855,7 @@ void IResearchSetScanOrder(
     // column's per-file statistics (duckdb's row-group reorder, one level up).
     // Only covered columns have `.col` statistics.
     const auto* info =
-      bd.inverted_index
-        ? catalog::InvertedInfo(*bd.inverted_index).FindColumnInfo(col_id)
-        : nullptr;
+      bd.IsIndexRelation() ? bd.ScannedIndex().FindColumnInfo(col_id) : nullptr;
     const bool stored =
       bd.IsSearchTableEntry() || (info != nullptr && info->IsStored());
     if (stored && !bd.scan_order) {

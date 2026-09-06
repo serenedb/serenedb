@@ -126,9 +126,7 @@ struct CreateIndexGlobalState : public duckdb::GlobalSinkState {
   std::atomic<size_t> registered_sinks{0};
 
   std::shared_ptr<search::InvertedIndexStorage> index_storage;
-  // Resolved once per build: a view-backed index has no bound index to hang
-  // them off, and every writer wants the same map.
-  catalog::TokenizerMap tokenizers;
+  catalog::IndexTokenizers tokenizers;
   // The entry's own config: the encoding handed to iresearch and the source
   // of every per-field answer the build needs.
   std::shared_ptr<const catalog::InvertedIndexConfig> config;
@@ -377,8 +375,9 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
   }
   state->pk_base_col_idx = state->columns.size();
 
-  state->tokenizers = ResolveKeyTokenizers(context, *created);
-  state->config = created->Cast<catalog::InvertedIndexEntry>().Config();
+  auto& index_entry = created->Cast<catalog::InvertedIndexEntry>();
+  state->tokenizers = index_entry.ResolveTokenizers(context);
+  state->config = index_entry.Config();
   return state;
 }
 
@@ -427,7 +426,7 @@ SereneDBPhysicalCreateIndex::GetLocalSinkState(
   lstate->search_trx->SetFieldOptions(gstate.config);
   lstate->writer = std::make_unique<DuckDBSearchSinkInsertWriter>(
     *lstate->search_trx,
-    MakeTokenizerProvider(gstate.tokenizers, *gstate.config),
+    [&gstate](irs::field_id id) { return gstate.tokenizers.Acquire(id); },
     IndexedColumnIds(*gstate.config), MakeEntryInfoProvider(*gstate.config),
     gstate.config->pk);
 

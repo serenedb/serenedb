@@ -295,7 +295,7 @@ void RegisterGeoFunctions(duckdb::ExtensionLoader& loader) {
 
 }  // namespace
 
-catalog::TokenizerCatalogEntry::TokenizerWrapper AcquireTokenizer(
+catalog::Tokenizer::TokenizerWrapper AcquireTokenizer(
   duckdb::ClientContext& context, std::string_view name) {
   auto dict = ResolveCatalogTokenizer(context, name);
   if (!dict) {

@@ -56,35 +56,14 @@ class CreateTokenizerInfo final : public duckdb::CreateInfo {
   search::Features _features;
 };
 
-class AnalyzerPool final {
+class Tokenizer final : public std::enable_shared_from_this<Tokenizer> {
  public:
-  explicit AnalyzerPool(irs::analysis::TokenizerConfig config)
-    : _config{std::move(config)} {}
-
-  irs::analysis::Analyzer::ptr Acquire();
-  void Release(irs::analysis::Analyzer::ptr analyzer) noexcept;
-
- private:
-  irs::analysis::TokenizerConfig _config;
-  absl::Mutex _mutex;
-  std::vector<irs::analysis::Analyzer::ptr> _pool ABSL_GUARDED_BY(_mutex);
-};
-
-class TokenizerCatalogEntry final : public duckdb::StandardEntry {
- public:
-  static constexpr duckdb::CatalogType Type =
-    duckdb::CatalogType::TOKENIZER_ENTRY;
-  static constexpr const char* Name = "tokenizer";
-
-  // Returns a built analyzer to the pool it came from so a per-row tokenize
-  // does not rebuild one. A null pool means the analyzer was not pooled. The
-  // shared_ptr is what lets the analyzer outlive its catalog entry.
   struct Deleter {
-    std::shared_ptr<AnalyzerPool> pool;
+    std::shared_ptr<const Tokenizer> tokenizer;
 
     void operator()(irs::analysis::Analyzer* analyzer) const {
-      if (pool) {
-        pool->Release(irs::analysis::Analyzer::ptr{analyzer});
+      if (tokenizer) {
+        tokenizer->Release(irs::analysis::Analyzer::ptr{analyzer});
       } else {
         delete analyzer;
       }
@@ -93,9 +72,10 @@ class TokenizerCatalogEntry final : public duckdb::StandardEntry {
 
   using TokenizerWrapper = std::unique_ptr<irs::analysis::Analyzer, Deleter>;
 
-  TokenizerCatalogEntry(duckdb::Catalog& catalog,
-                        duckdb::SchemaCatalogEntry& schema,
-                        CreateTokenizerInfo& info);
+  Tokenizer(search::Features features, irs::analysis::TokenizerConfig config)
+    : _config{std::move(config)}, _features{features} {}
+
+  TokenizerWrapper Acquire() const;
 
   const irs::analysis::TokenizerConfig& Config() const noexcept {
     return _config;
@@ -103,7 +83,39 @@ class TokenizerCatalogEntry final : public duckdb::StandardEntry {
 
   search::Features GetFeatures() const noexcept { return _features; }
 
-  TokenizerWrapper Acquire() const;
+ private:
+  void Release(irs::analysis::Analyzer::ptr analyzer) const noexcept;
+
+  irs::analysis::TokenizerConfig _config;
+  search::Features _features;
+  mutable absl::Mutex _mutex;
+  mutable std::vector<irs::analysis::Analyzer::ptr> _pool
+    ABSL_GUARDED_BY(_mutex);
+};
+
+using TokenizerRef = std::shared_ptr<const Tokenizer>;
+
+class TokenizerCatalogEntry final : public duckdb::StandardEntry {
+ public:
+  static constexpr duckdb::CatalogType Type =
+    duckdb::CatalogType::TOKENIZER_ENTRY;
+  static constexpr const char* Name = "tokenizer";
+
+  TokenizerCatalogEntry(duckdb::Catalog& catalog,
+                        duckdb::SchemaCatalogEntry& schema,
+                        CreateTokenizerInfo& info);
+
+  const TokenizerRef& GetTokenizer() const noexcept { return _tokenizer; }
+
+  const irs::analysis::TokenizerConfig& Config() const noexcept {
+    return _tokenizer->Config();
+  }
+
+  search::Features GetFeatures() const noexcept {
+    return _tokenizer->GetFeatures();
+  }
+
+  Tokenizer::TokenizerWrapper Acquire() const { return _tokenizer->Acquire(); }
 
   duckdb::unique_ptr<duckdb::CatalogEntry> Copy(
     duckdb::ClientContext& context) const override;
@@ -111,9 +123,7 @@ class TokenizerCatalogEntry final : public duckdb::StandardEntry {
   std::string ToSQL() const override;
 
  private:
-  irs::analysis::TokenizerConfig _config;
-  search::Features _features;
-  std::shared_ptr<AnalyzerPool> _pool;
+  TokenizerRef _tokenizer;
 };
 
 }  // namespace sdb::catalog

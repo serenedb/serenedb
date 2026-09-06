@@ -63,14 +63,6 @@ class SearchRemoveFilter;
 using TokenizerProvider =
   absl::AnyInvocable<catalog::ColumnTokenizer(irs::field_id)>;
 
-inline TokenizerProvider MakeTokenizerProvider(
-  const catalog::TokenizerMap& dicts,
-  const catalog::InvertedIndexConfig& config) {
-  return [&dicts, &config](irs::field_id field_id) -> catalog::ColumnTokenizer {
-    return config.GetTokenizer(dicts, field_id);
-  };
-}
-
 using EntryInfoProvider =
   absl::AnyInvocable<const catalog::InvertedIndexField*(irs::field_id)>;
 
@@ -174,7 +166,7 @@ class SearchSinkInsertBaseImpl {
     void SetNullValue();
 
     search::AnalyzerImpl::CacheType::ptr analyzer;
-    catalog::TokenizerCatalogEntry::TokenizerWrapper string_analyzer;
+    catalog::Tokenizer::TokenizerWrapper string_analyzer;
     irs::field_id id{irs::field_limits::invalid()};
     irs::IndexFeatures index_features;
     irs::StoreAttr own_store;

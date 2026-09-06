@@ -295,11 +295,7 @@ bool WithSearchGetters(duckdb::LogicalGet& get,
                        connector::SereneDBScanBindData& bind_data,
                        duckdb::ClientContext& context,
                        absl::FunctionRef<bool(const SearchGetters&)> fn) {
-  // Resolved once for the whole claim, against this statement's transaction:
-  // every column of this scan reads its dictionary out of this map, and the
-  // acquired analyzers must not outlive it.
-  const auto dicts =
-    connector::ResolveKeyTokenizers(context, *bind_data.inverted_index);
+  const auto tokenizers = bind_data.inverted_index->ResolveTokenizers(context);
   const auto projected_ids = BuildProjectedColumnIds(get, bind_data);
   const auto table_index = get.table_index;
   const auto relation_id = bind_data.RelationId();
@@ -322,9 +318,8 @@ bool WithSearchGetters(duckdb::LogicalGet& get,
     [&](irs::field_id field_id, const catalog::InvertedIndexField* info,
         duckdb::LogicalType type,
         bool column) -> std::optional<connector::SearchColumnInfo> {
-    auto column_info = MakeSearchColumnInfo(
-      field_id, info, std::move(type),
-      bind_data.inverted_config->GetTokenizer(dicts, field_id));
+    auto column_info = MakeSearchColumnInfo(field_id, info, std::move(type),
+                                            tokenizers.Acquire(field_id));
     if (!column_info.tokenizer.analyzer) {
       return std::nullopt;
     }

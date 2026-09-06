@@ -9,7 +9,6 @@ add_library(
     search_remove_filter.cpp
     duckdb_storage_extension.cpp
     index_expression.cpp
-    index_opclass.cpp
     inverted_index_bind.cpp
     search_filter_builder.cpp
     geo_filter_builder.cpp

@@ -36,7 +36,7 @@ using HitRange = std::pair<uint32_t, uint32_t>;
 struct Field {
   ColumnId column_id{};
   std::string field_name;
-  catalog::TokenizerCatalogEntry::TokenizerWrapper* analyzer = nullptr;
+  catalog::Tokenizer::TokenizerWrapper* analyzer = nullptr;
   size_t limit = 0;
 };
 

@@ -132,7 +132,7 @@ duckdb::LogicalType MakeTSQueryType();
 void SearchStubFn(duckdb::DataChunk& args, duckdb::ExpressionState& state,
                   duckdb::Vector& result);
 
-catalog::TokenizerCatalogEntry::TokenizerWrapper AcquireTokenizer(
+catalog::Tokenizer::TokenizerWrapper AcquireTokenizer(
   duckdb::ClientContext& context, std::string_view name);
 
 duckdb::optional_ptr<const catalog::TokenizerCatalogEntry>

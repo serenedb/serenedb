@@ -37,9 +37,6 @@ std::vector<ColumnId> CollectDependentColumns(const duckdb::Expression& expr);
 
 std::string SerializeBoundExpression(const duckdb::Expression& expr);
 
-duckdb::unique_ptr<duckdb::Expression> DeserializeBoundExpression(
-  std::string_view bytes, duckdb::ClientContext& context);
-
 // Rewrites binder-state noise so bytes match across binding contexts:
 // alias/query_location cleared, is_operator=false, column refs keyed by
 // stable catalog (table_id, col_id) instead of binder-allocated indices.

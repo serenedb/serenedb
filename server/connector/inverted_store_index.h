@@ -47,19 +47,10 @@ namespace sdb::connector {
 
 struct InvertedFeedSession;
 
-// The iresearch field an indexed expression feeds. `is_geojson` marks a JSON
-// expression that indexes into a synthetic geo column, where JSON object/array
-// leaves are meaningful instead of an error.
-struct ExpressionField {
-  irs::field_id field_id;
-  bool is_geojson;
-};
+using catalog::InvertedIndexConfig;
+using catalog::PkColumnKind;
+using catalog::PkPolicy;
 
-// The inverted index as a first-class index on store tables: postings live
-// in the iresearch storage keyed by AppendSigned(rowid) PK bytes, fed at
-// COMMIT time with final row ids through the committing connection's
-// tokenizer/transaction machinery (see CurrentCommittingContext). The
-// catalog definition/storage linkage rides the injected ids.
 class InvertedStoreIndex final : public duckdb::BoundIndex {
  public:
   static constexpr const char* kTypeName = catalog::kInvertedIndexTypeName;
@@ -73,7 +64,6 @@ class InvertedStoreIndex final : public duckdb::BoundIndex {
                      duckdb::SchemaCatalogEntry& schema, duckdb::idx_t index_id,
                      std::shared_ptr<search::InvertedIndexStorage> storage,
                      std::shared_ptr<const InvertedIndexConfig> config);
-  ~InvertedStoreIndex() override;
 
   duckdb::ErrorData Append(duckdb::IndexLock& l, duckdb::DataChunk& chunk,
                            duckdb::Vector& row_ids) override;
@@ -131,16 +121,9 @@ class InvertedStoreIndex final : public duckdb::BoundIndex {
   std::shared_ptr<InvertedFeedSession> _feed;
 };
 
-// Commit-time driver for one index's parallel feed, called by
-// query::Transaction at CommitSearch.
-//
-// Drain + pin the segments; returns the max per-segment query count. Called
-// before the commit tick is allocated.
 uint64_t PrepareInvertedFeed(InvertedFeedSession& feed);
-// Record the cursor and commit every segment at the tick.
 void FinishInvertedFeed(InvertedFeedSession& feed, uint64_t last_tick,
                         std::optional<search::WalCursor> cursor);
-// Drop the segments (rollback / teardown).
 void AbortInvertedFeed(InvertedFeedSession& feed);
 
 std::shared_ptr<search::InvertedIndexStorage> PublishInvertedIndex(

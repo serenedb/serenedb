@@ -29,7 +29,6 @@
 #include <duckdb/catalog/catalog_entry/scalar_macro_catalog_entry.hpp>
 #include <duckdb/common/constants.hpp>
 #include <duckdb/common/exception.hpp>
-#include <duckdb/common/serializer/binary_deserializer.hpp>
 #include <duckdb/common/serializer/binary_serializer.hpp>
 #include <duckdb/common/serializer/memory_stream.hpp>
 #include <duckdb/execution/column_binding_resolver.hpp>
@@ -40,7 +39,6 @@
 #include <duckdb/parser/expression/function_expression.hpp>
 #include <duckdb/parser/expression/lambda_expression.hpp>
 #include <duckdb/parser/parsed_expression_iterator.hpp>
-#include <duckdb/planner/bound_parameter_map.hpp>
 #include <duckdb/planner/expression/bound_cast_expression.hpp>
 #include <duckdb/planner/expression/bound_columnref_expression.hpp>
 #include <duckdb/planner/expression/bound_constant_expression.hpp>
@@ -89,16 +87,6 @@ std::string SerializeBoundExpression(const duckdb::Expression& expr) {
                                       duckdb::VersionStorageOptions());
   return std::string{reinterpret_cast<const char*>(stream.GetData()),
                      stream.GetPosition()};
-}
-
-duckdb::unique_ptr<duckdb::Expression> DeserializeBoundExpression(
-  std::string_view bytes, duckdb::ClientContext& context) {
-  duckdb::MemoryStream stream(
-    reinterpret_cast<duckdb::data_ptr_t>(const_cast<char*>(bytes.data())),
-    bytes.size());
-  duckdb::bound_parameter_map_t params;
-  return duckdb::BinaryDeserializer::Deserialize<duckdb::Expression>(
-    stream, context, params);
 }
 
 duckdb::unique_ptr<duckdb::Expression> NormalizeBoundExpression(

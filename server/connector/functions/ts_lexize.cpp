@@ -58,7 +58,7 @@ duckdb::optional_ptr<const catalog::TokenizerCatalogEntry> LookupTokenizerDict(
   return dict;
 }
 
-catalog::TokenizerCatalogEntry::TokenizerWrapper AcquireTokenizer(
+catalog::Tokenizer::TokenizerWrapper AcquireTokenizer(
   const catalog::TokenizerCatalogEntry& dict) {
   return dict.Acquire();
 }
@@ -89,7 +89,7 @@ struct TsLexizeBindData final : public duckdb::FunctionData {
 };
 
 struct TsLexizeLocalState final : public duckdb::FunctionLocalState {
-  catalog::TokenizerCatalogEntry::TokenizerWrapper wrapper;
+  catalog::Tokenizer::TokenizerWrapper wrapper;
 };
 
 duckdb::unique_ptr<duckdb::FunctionLocalState> InitTsLexizeLocalState(

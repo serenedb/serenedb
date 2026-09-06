@@ -58,38 +58,37 @@ TokenizerCatalogEntry::TokenizerCatalogEntry(duckdb::Catalog& catalog,
                                              CreateTokenizerInfo& info)
   : duckdb::StandardEntry{duckdb::CatalogType::TOKENIZER_ENTRY, schema, catalog,
                           info.GetQualifiedName().Name()},
-    _config{irs::analysis::Clone(info.Config())},
-    _features{info.GetFeatures()},
-    _pool{std::make_shared<AnalyzerPool>(irs::analysis::Clone(info.Config()))} {
+    _tokenizer{std::make_shared<Tokenizer>(
+      info.GetFeatures(), irs::analysis::Clone(info.Config()))} {
   comment = info.comment;
   tags = info.tags;
   dependencies = info.dependencies;
 }
 
-irs::analysis::Analyzer::ptr AnalyzerPool::Acquire() {
-  const absl::MutexLock lock{&_mutex};
-  if (_pool.empty()) {
-    return irs::analysis::CreateAnalyzer(irs::analysis::Clone(_config));
+Tokenizer::TokenizerWrapper Tokenizer::Acquire() const {
+  irs::analysis::Analyzer::ptr analyzer;
+  {
+    const absl::MutexLock lock{&_mutex};
+    if (!_pool.empty()) {
+      analyzer = std::move(_pool.back());
+      _pool.pop_back();
+    }
   }
-  auto analyzer = std::move(_pool.back());
-  SDB_ASSERT(analyzer);
-  _pool.pop_back();
-  return analyzer;
+  if (!analyzer) {
+    analyzer = irs::analysis::CreateAnalyzer(irs::analysis::Clone(_config));
+  }
+  return TokenizerWrapper{analyzer.release(), Deleter{shared_from_this()}};
 }
 
-void AnalyzerPool::Release(irs::analysis::Analyzer::ptr analyzer) noexcept {
+void Tokenizer::Release(irs::analysis::Analyzer::ptr analyzer) const noexcept {
   SDB_ASSERT(analyzer);
   const absl::MutexLock lock{&_mutex};
   _pool.push_back(std::move(analyzer));
 }
 
-TokenizerCatalogEntry::TokenizerWrapper TokenizerCatalogEntry::Acquire() const {
-  return TokenizerWrapper{_pool->Acquire().release(), Deleter{_pool}};
-}
-
 duckdb::unique_ptr<duckdb::CreateInfo> TokenizerCatalogEntry::GetInfo() const {
   auto info = duckdb::make_uniq<CreateTokenizerInfo>(
-    name, _features, irs::analysis::Clone(_config));
+    name, GetFeatures(), irs::analysis::Clone(Config()));
   info->SetQualification(catalog.GetName(), schema.name);
   info->comment = comment;
   info->tags = tags;

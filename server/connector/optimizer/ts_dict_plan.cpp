@@ -1859,8 +1859,7 @@ class TsDictFilterClaim {
         info->tokenizer.analyzer->type() !=
           irs::Type<irs::StringTokenizer>::id()) {
       info->tokenizer.analyzer =
-        catalog::TokenizerCatalogEntry::TokenizerWrapper{
-          new irs::StringTokenizer(), {}};
+        catalog::Tokenizer::TokenizerWrapper{new irs::StringTokenizer(), {}};
     }
     return info;
   }
@@ -1878,11 +1877,11 @@ class TsDictFilterClaim {
       return std::nullopt;
     }
     const auto field = _ss.ts_dicts[term_ref->req_index].field_id;
-    auto info = MakeSearchColumnInfo(
-      field, _bind_data.inverted_config->FindEntry(field),
-      duckdb::LogicalType::VARCHAR,
-      {.analyzer = catalog::TokenizerCatalogEntry::TokenizerWrapper{
-         new irs::StringTokenizer(), {}}});
+    auto info =
+      MakeSearchColumnInfo(field, _bind_data.inverted_config->FindEntry(field),
+                           duckdb::LogicalType::VARCHAR,
+                           {.analyzer = catalog::Tokenizer::TokenizerWrapper{
+                              new irs::StringTokenizer(), {}}});
     info.null_field_id = irs::field_limits::invalid();
     return info;
   }

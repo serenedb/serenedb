@@ -426,7 +426,7 @@ void CollectNullableMarkers(const FilterContext& ctx,
     });
 }
 
-catalog::TokenizerCatalogEntry::TokenizerWrapper ResolveTokenizerOrThrow(
+catalog::Tokenizer::TokenizerWrapper ResolveTokenizerOrThrow(
   const FilterContext& ctx, std::string_view name) {
   auto wrapper = AcquireTokenizer(ctx.client_context, name);
   if (!wrapper) {

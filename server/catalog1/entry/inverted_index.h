@@ -35,6 +35,7 @@
 #include <string_view>
 #include <vector>
 
+#include "basics/containers/flat_hash_map.h"
 #include "basics/containers/node_hash_map.h"
 #include "catalog1/entry/tokenizer.h"
 #include "catalog1/persistence/inverted_index.h"
@@ -46,13 +47,11 @@ class ClientContext;
 struct CreateIndexInfo;
 
 }  // namespace duckdb
-
 namespace sdb::search {
 
 class InvertedIndexStorage;
 
 }  // namespace sdb::search
-
 namespace sdb::catalog {
 
 using ScorerOptions = irs::ScorerOptions;
@@ -61,11 +60,8 @@ using persistence::InvertedIndexSettings;
 using persistence::PkColumnKind;
 using persistence::PkPolicy;
 
-using TokenizerMap =
-  duckdb::identifier_map_t<duckdb::optional_ptr<const TokenizerCatalogEntry>>;
-
 struct ColumnTokenizer {
-  TokenizerCatalogEntry::TokenizerWrapper analyzer;
+  Tokenizer::TokenizerWrapper analyzer;
   irs::IndexFeatures features = irs::IndexFeatures::None;
   irs::field_id tokenizer_column = irs::field_limits::invalid();
 };
@@ -86,13 +82,14 @@ struct InvertedIndexField {
   // reassigns oids on every load.
   duckdb::Identifier text_dictionary;
 
-  bool IsIVF() const noexcept { return column_options.ivf_info.has_value(); }
   bool HasTextDictionary() const noexcept { return !text_dictionary.empty(); }
   bool HasJsonLeafFields() const noexcept {
     return irs::field_limits::valid(numeric_field_id) &&
            irs::field_limits::valid(bool_field_id);
   }
-  bool IsTermDict() const noexcept { return !IsIVF() && indexed_term_dict; }
+  bool IsTermDict() const noexcept {
+    return !column_options.ivf_info && indexed_term_dict;
+  }
   bool IsStored() const noexcept { return store_values; }
 };
 
@@ -138,11 +135,7 @@ struct InvertedIndexConfig final : irs::IndexFieldOptions {
   InvertedIndexFieldLookup LookupField(irs::field_id field_id) const noexcept;
   bool IsKeywordField(irs::field_id field_id) const noexcept;
 
-  const InvertedIndexKey* FindKey(irs::field_id field_id) const noexcept;
   duckdb::LogicalType ExpressionType(irs::field_id field_id) const noexcept;
-
-  ColumnTokenizer GetTokenizer(const TokenizerMap& dicts,
-                               irs::field_id field_id) const;
 
   irs::field_id FindFieldIdByExpression(
     std::string_view normalized) const noexcept;
@@ -151,6 +144,25 @@ struct InvertedIndexConfig final : irs::IndexFieldOptions {
   PkPolicy pk;
   std::vector<InvertedIndexKey> keys;
   InvertedIndexFields fields;
+};
+
+class IndexTokenizers {
+ public:
+  IndexTokenizers() = default;
+  IndexTokenizers(duckdb::CatalogTransaction transaction,
+                  duckdb::SchemaCatalogEntry& schema,
+                  const InvertedIndexConfig& config);
+
+  ColumnTokenizer Acquire(irs::field_id field_id) const;
+
+ private:
+  struct Field {
+    TokenizerRef tokenizer;
+    irs::IndexFeatures features = irs::IndexFeatures::None;
+    irs::field_id tokenizer_column = irs::field_limits::invalid();
+  };
+
+  containers::FlatHashMap<irs::field_id, Field> _fields;
 };
 
 class InvertedIndexEntry final : public duckdb::DuckIndexEntry {
@@ -187,6 +199,7 @@ class InvertedIndexEntry final : public duckdb::DuckIndexEntry {
 
   const auto& Storage() const noexcept { return _storage; }
   const auto& Config() const noexcept { return _config; }
+  IndexTokenizers ResolveTokenizers(duckdb::ClientContext& context) const;
   std::optional<ScorerOptions> TopKScorer(duckdb::ClientContext& context) const;
   std::string ExpressionText(irs::field_id field_id) const;
 

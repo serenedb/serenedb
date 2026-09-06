@@ -25,6 +25,7 @@
 #include <absl/strings/strip.h>
 
 #include <array>
+#include <duckdb/catalog/catalog.hpp>
 #include <duckdb/catalog/catalog_entry/duck_table_entry.hpp>
 #include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
 #include <duckdb/common/serializer/binary_deserializer.hpp>
@@ -133,6 +134,14 @@ duckdb::shared_ptr<duckdb::IndexDataTableInfo> DataTableInfoOf(
     info.GetIndexName());
 }
 
+const InvertedIndexKey* FindKey(const InvertedIndexConfig& config,
+                                irs::field_id field_id) noexcept {
+  const auto it = absl::c_find_if(
+    config.keys,
+    [&](const InvertedIndexKey& key) { return key.field_id == field_id; });
+  return it == config.keys.end() ? nullptr : &*it;
+}
+
 }  // namespace
 
 std::vector<std::string> ParseKeyColumns(
@@ -187,33 +196,46 @@ irs::field_id InvertedIndexConfig::GetNormColumnId(irs::field_id id) const {
            : irs::field_limits::invalid();
 }
 
-ColumnTokenizer InvertedIndexConfig::GetTokenizer(
-  const TokenizerMap& dicts, irs::field_id field_id) const {
-  const auto lookup = LookupField(field_id);
-  if (lookup.entry == nullptr) {
+IndexTokenizers::IndexTokenizers(duckdb::CatalogTransaction transaction,
+                                 duckdb::SchemaCatalogEntry& schema,
+                                 const InvertedIndexConfig& config) {
+  for (const auto& [field_id, field] : config.fields) {
+    Field resolved;
+    if (field.HasTextDictionary()) {
+      const auto dict = ResolveOpclassDict(
+        transaction, schema, field.text_dictionary.GetIdentifierName());
+      if (!dict) {
+        continue;
+      }
+      resolved.tokenizer = dict->GetTokenizer();
+      resolved.features = field.features.GetIndexFeatures();
+      if (!field.features.HasFeatures(irs::IndexFeatures::Norm)) {
+        resolved.tokenizer_column = field.synthetic_column;
+      }
+    }
+    for (const auto id : {field_id, field.numeric_field_id, field.bool_field_id,
+                          field.null_field_id, field.synthetic_column}) {
+      if (irs::field_limits::valid(id)) {
+        _fields.try_emplace(id, resolved);
+      }
+    }
+  }
+}
+
+ColumnTokenizer IndexTokenizers::Acquire(irs::field_id field_id) const {
+  const auto it = _fields.find(field_id);
+  if (it == _fields.end()) {
     return {};
   }
-  if (!lookup.entry->HasTextDictionary()) {
-    // A keyword field names no dictionary: its terms are written verbatim, so
-    // both the write and the query side tokenize with a plain string stream.
-    // Owned outright rather than pooled -- Deleter's null owner deletes it.
-    return {.analyzer = TokenizerCatalogEntry::TokenizerWrapper{
+  const auto& field = it->second;
+  if (!field.tokenizer) {
+    return {.analyzer = Tokenizer::TokenizerWrapper{
               std::make_unique<irs::StringTokenizer>().release(),
-              TokenizerCatalogEntry::Deleter{nullptr}}};
+              Tokenizer::Deleter{}}};
   }
-  const auto it = dicts.find(lookup.entry->text_dictionary);
-  if (it == dicts.end() || !it->second) {
-    return {};
-  }
-  ColumnTokenizer tokenizer{
-    .analyzer = it->second->Acquire(),
-    .features = lookup.entry->features.GetIndexFeatures()};
-  // The synthetic column carries the tokenizer's own per-row payload only when
-  // the field is not norm-featured; for a norm field that column holds norms.
-  if (!lookup.entry->features.HasFeatures(irs::IndexFeatures::Norm)) {
-    tokenizer.tokenizer_column = lookup.entry->synthetic_column;
-  }
-  return tokenizer;
+  return {.analyzer = field.tokenizer->Acquire(),
+          .features = field.features,
+          .tokenizer_column = field.tokenizer_column};
 }
 
 irs::field_id InvertedIndexConfig::FindFieldIdByExpression(
@@ -263,22 +285,19 @@ bool InvertedIndexConfig::IsKeywordField(
   return !lookup.entry->HasTextDictionary() || lookup.entry->is_keyword;
 }
 
-const InvertedIndexKey* InvertedIndexConfig::FindKey(
-  irs::field_id field_id) const noexcept {
-  const auto it = absl::c_find_if(keys, [&](const InvertedIndexKey& key) {
-    return key.field_id == field_id;
-  });
-  return it == keys.end() ? nullptr : &*it;
-}
-
 duckdb::LogicalType InvertedIndexConfig::ExpressionType(
   irs::field_id field_id) const noexcept {
-  const auto* key = FindKey(field_id);
+  const auto* key = FindKey(*this, field_id);
   return key ? key->type : duckdb::LogicalType::INVALID;
 }
 
+IndexTokenizers InvertedIndexEntry::ResolveTokenizers(
+  duckdb::ClientContext& context) const {
+  return {catalog.GetCatalogTransaction(context), schema, *_config};
+}
+
 std::string InvertedIndexEntry::ExpressionText(irs::field_id field_id) const {
-  const auto* key = _config->FindKey(field_id);
+  const auto* key = FindKey(*_config, field_id);
   if (!key || key->type.id() == duckdb::LogicalTypeId::INVALID) {
     return {};
   }

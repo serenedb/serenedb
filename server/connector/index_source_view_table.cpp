@@ -140,26 +140,17 @@ ViewTableIndexSource::ViewTableIndexSource(
   // alive for the query even if it is detached concurrently.
   duckdb::DuckTransaction::Get(context, table.ParentCatalog());
   const auto& columns = table.GetColumns();
-  containers::FlatHashMap<std::string_view, duckdb::idx_t> name_to_col;
-  if (!_fast_path.projection_columns.empty()) {
-    name_to_col.reserve(columns.LogicalColumnCount());
-    duckdb::idx_t logical = 0;
-    for (const auto& col : columns.Logical()) {
-      name_to_col.emplace(col.Name().GetIdentifierName(), logical++);
-    }
+  std::vector<std::string_view> source_names;
+  source_names.reserve(columns.LogicalColumnCount());
+  for (const auto& col : columns.Logical()) {
+    source_names.emplace_back(col.Name().GetIdentifierName());
   }
-  InitProjection(
-    context, projected_columns, projected_types, bind_column_ids,
-    [&](std::string_view name) {
-      auto it = name_to_col.find(name);
-      SDB_ASSERT(it != name_to_col.end());
-      return it->second;
-    },
-    [&](duckdb::idx_t table_col_idx) {
-      SDB_ASSERT(table_col_idx < columns.LogicalColumnCount());
-      return AddFetchColumn(
-        columns.GetColumn(duckdb::LogicalIndex(table_col_idx)));
-    });
+  InitProjection(context, projected_columns, projected_types, bind_column_ids,
+                 source_names, [&](duckdb::idx_t table_col_idx) {
+                   SDB_ASSERT(table_col_idx < columns.LogicalColumnCount());
+                   return AddFetchColumn(
+                     columns.GetColumn(duckdb::LogicalIndex(table_col_idx)));
+                 });
   FinishInit(context);
   BuildPushedFilters(pushed_filters);
 }
@@ -184,19 +175,15 @@ TableRowIdIndexSource::TableRowIdIndexSource(
   for (const auto& col : scan_columns.Logical()) {
     id_to_pos.emplace(col.CatalogOid(), pos++);
   }
-  InitProjection(
-    context, projected_columns, projected_types, bind_column_ids,
-    [&](std::string_view) -> duckdb::idx_t {
-      SDB_ASSERT(false, "table index sources resolve columns by id");
-      return 0;
-    },
-    [&](duckdb::idx_t col_id) {
-      auto it = id_to_pos.find(col_id);
-      SDB_ENSURE(it != id_to_pos.end(), "column id is not on the store table");
-      SDB_ASSERT(it->second < columns.LogicalColumnCount());
-      return AddFetchColumn(
-        columns.GetColumn(duckdb::LogicalIndex(it->second)));
-    });
+  InitProjection(context, projected_columns, projected_types, bind_column_ids,
+                 {}, [&](duckdb::idx_t col_id) {
+                   auto it = id_to_pos.find(col_id);
+                   SDB_ENSURE(it != id_to_pos.end(),
+                              "column id is not on the store table");
+                   SDB_ASSERT(it->second < columns.LogicalColumnCount());
+                   return AddFetchColumn(
+                     columns.GetColumn(duckdb::LogicalIndex(it->second)));
+                 });
   FinishInit(context);
   BuildPushedFilters(pushed_filters);
 }

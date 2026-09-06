@@ -46,7 +46,7 @@ class ViewIndexSourceBase : public IndexSource {
     std::span<const duckdb::idx_t> projected_columns,
     std::span<const duckdb::LogicalType> projected_types,
     std::span<const catalog::ColumnId> bind_column_ids,
-    absl::FunctionRef<duckdb::idx_t(std::string_view)> col_by_name,
+    std::span<const std::string_view> source_names,
     absl::FunctionRef<duckdb::LogicalType(duckdb::idx_t)> add_source_column);
 
   std::span<const int64_t> SortRows(const duckdb::Vector& pk,

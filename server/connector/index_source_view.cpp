@@ -20,6 +20,9 @@
 
 #include "connector/index_source_view.h"
 
+#include <absl/algorithm/container.h>
+#include <absl/strings/match.h>
+
 #include <algorithm>
 #include <duckdb/common/types/vector.hpp>
 #include <duckdb/common/vector/struct_vector.hpp>
@@ -28,15 +31,37 @@
 #include <numeric>
 
 #include "basics/assert.h"
+#include "pg/errcodes.h"
+#include "pg/sql_exception_macro.h"
 
 namespace sdb::connector {
+namespace {
+
+duckdb::idx_t SourceColumn(std::span<const std::string_view> names,
+                           std::string_view name) {
+  auto it = absl::c_find(names, name);
+  if (it == names.end()) {
+    it = absl::c_find_if(names, [&](std::string_view candidate) {
+      return absl::EqualsIgnoreCase(candidate, name);
+    });
+  }
+  if (it == names.end()) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_COLUMN),
+                    ERR_MSG("column \"", name,
+                            "\" of the indexed view is not a column of its "
+                            "source"));
+  }
+  return static_cast<duckdb::idx_t>(it - names.begin());
+}
+
+}  // namespace
 
 void ViewIndexSourceBase::InitProjection(
   duckdb::ClientContext& context,
   std::span<const duckdb::idx_t> projected_columns,
   std::span<const duckdb::LogicalType> projected_types,
   std::span<const catalog::ColumnId> bind_column_ids,
-  absl::FunctionRef<duckdb::idx_t(std::string_view)> col_by_name,
+  std::span<const std::string_view> source_names,
   absl::FunctionRef<duckdb::LogicalType(duckdb::idx_t)> add_source_column) {
   _real_proj_slots.reserve(projected_columns.size());
   _scratch_types.reserve(projected_columns.size());
@@ -54,7 +79,8 @@ void ViewIndexSourceBase::InitProjection(
       const auto view_col_idx =
         static_cast<duckdb::idx_t>(bind_column_ids[bind_col]);
       SDB_ASSERT(view_col_idx < _fast_path.projection_columns.size());
-      source_col = col_by_name(_fast_path.projection_columns[view_col_idx]);
+      source_col =
+        SourceColumn(source_names, _fast_path.projection_columns[view_col_idx]);
     }
     _real_proj_slots.push_back(proj);
     _scratch_types.push_back(add_source_column(source_col));

@@ -31,8 +31,13 @@
 #include "basics/misc.hpp"
 #include "iresearch/analysis/token_attributes.hpp"
 #include "iresearch/index/index_reader.hpp"
-#include "iresearch/search/cost.hpp"
+#include "iresearch/search/column_collector.hpp"
+#include "iresearch/search/common/all_docs_score.hpp"
+#include "iresearch/search/common/score_args.hpp"
+#include "iresearch/search/filter.hpp"
+#include "iresearch/search/score_function.hpp"
 #include "iresearch/search/scorer.hpp"
+#include "iresearch/search/top/root.hpp"
 #include "iresearch/store/data_input.hpp"
 
 namespace irs {
@@ -116,74 +121,54 @@ HnswSearchScratch& ThreadScratch() {
   return scratch;
 }
 
-class HnswTopKIterator : public DocIterator {
+class HnswTopRoot : public top::Root {
  public:
-  HnswTopKIterator(std::vector<ScoreDoc>&& hits, score_t boost,
-                   ScoreSource score)
-    : _hits{std::move(hits)},
-      _boost{boost},
-      _score{score},
-      _cost{_hits.size()} {
-    _boosts.value = _scores.data();
-  }
-
-  doc_id_t advance() final {
-    if (_pos >= _hits.size()) {
-      _cur = .0f;
-      return _doc = doc_limits::eof();
-    }
-    _cur = _hits[_pos].score;
-    return _doc = _hits[_pos++].doc;
-  }
-
-  doc_id_t seek(doc_id_t target) final {
-    if (target <= _doc) {
-      return _doc;
-    }
-    while (_pos < _hits.size() && _hits[_pos].doc < target) {
-      ++_pos;
-    }
-    return advance();
-  }
-
-  ScoreFunction PrepareScore(const PrepareScoreContext& ctx) final {
-    SDB_ASSERT(_score.scorer);
-    return _score.scorer->PrepareScorer({
-      .segment = *ctx.segment,
-      .field = {},
-      .doc_attrs = *this,
-      .fetcher = ctx.fetcher,
-      .stats = _score.stats,
-      .boost = _boost,
+  HnswTopRoot(std::vector<ScoreDoc>&& hits, const SubReader& segment,
+              ColumnArgsFetcher& fetcher, const search::ScoreArgs& args)
+    : _hits{std::move(hits)}, _fetcher{fetcher} {
+    SDB_ASSERT(args.scorer != nullptr);
+    _provider.attr.value = _block;
+    _score = args.scorer->PrepareScorer({
+      .segment = segment,
+      .field = search::NoField(),
+      .doc_attrs = _provider,
+      .fetcher = &fetcher,
+      .stats = args.stats,
+      .boost = args.boost,
     });
   }
 
-  void FetchScoreArgs(uint16_t index) final {
-    SDB_ASSERT(index < _scores.size());
-    _scores[index] = _cur;
-  }
-
-  Attribute* GetMutable(TypeInfo::type_id type) noexcept final {
-    if (type == irs::Type<CostAttr>::id()) {
-      return &_cost;
+  void Run(LoserScoreCollector& collector) final {
+    for (size_t i = 0, total = _hits.size(); i < total;) {
+      const auto n =
+        static_cast<uint32_t>(std::min<size_t>(kScoreBlock, total - i));
+      for (uint32_t j = 0; j < n; ++j) {
+        _block[j] = _hits[i + j].score;
+        _docs[j] = _hits[i + j].doc;
+      }
+      _fetcher.Fetch(std::span<const doc_id_t>{_docs, n});
+      _score.Score(_scores, static_cast<scores_size_t>(n));
+      collector.AddDocs(_docs, n, _scores);
+      i += n;
     }
-    if (type == irs::Type<BoostBlockAttr>::id()) {
-      return &_boosts;
-    }
-    return nullptr;
   }
-
-  IRS_DOC_ITERATOR_DEFAULTS
 
  private:
+  struct Provider final : AttributeProvider {
+    Attribute* GetMutable(TypeInfo::type_id type) noexcept final {
+      return type == irs::Type<BoostBlockAttr>::id() ? &attr : nullptr;
+    }
+
+    BoostBlockAttr attr;
+  };
+
   std::vector<ScoreDoc> _hits;
-  size_t _pos = 0;
-  score_t _boost;
-  ScoreSource _score;
-  CostAttr _cost;
-  BoostBlockAttr _boosts;
-  std::array<score_t, kScoreBlock> _scores;
-  score_t _cur = .0f;
+  Provider _provider;
+  ScoreFunction _score;
+  ColumnArgsFetcher& _fetcher;
+  score_t _block[kScoreBlock];
+  score_t _scores[kScoreBlock];
+  doc_id_t _docs[kScoreBlock];
 };
 
 std::vector<ScoreDoc> CollectHits(std::span<const HnswCandidate> found,
@@ -222,8 +207,45 @@ class HnswQuery : public QueryBuilder {
       _boost{boost},
       _inclusive{inclusive} {}
 
-  DocIterator::ptr Execute(const ExecutionContext& ctx,
-                           const StatsBuffer& stats) const final {
+  top::Root::ptr PlanTop(const top::Context& ctx) const final {
+    auto hits = RunSearch();
+    if (hits.empty()) {
+      return {};
+    }
+    const auto record = Stats(top::ScoredOf(ctx));
+    const search::ScoreArgs args{.scorer = record.scorer,
+                                 .stats = record.stats,
+                                 .fetcher = &ctx.fetcher,
+                                 .boost = _boost};
+    return memory::make_managed<HnswTopRoot>(std::move(hits), _segment,
+                                             ctx.fetcher, args);
+  }
+
+  count::Root::ptr PlanCount(const count::Context&) const final { return {}; }
+
+  docs::Root::ptr PlanDocs(const docs::Context&) const final { return {}; }
+
+  scored::Root::ptr PlanScored(const scored::Context&) const final {
+    return {};
+  }
+
+  lead::Node::ptr PlanLead(const search::ScoredCtx&) const final { return {}; }
+
+  probe::Node::ptr PlanProbe(const search::ScoredCtx&, uint64_t) const final {
+    return {};
+  }
+
+  fill::Node::ptr PlanFill(const search::ScoredCtx&,
+                           ScoreMergeType) const final {
+    return {};
+  }
+
+  void Visit(PreparedStateVisitor&, score_t) const final {}
+
+  score_t Boost() const noexcept final { return _boost; }
+
+ private:
+  std::vector<ScoreDoc> RunSearch() const {
     auto& scratch = ThreadScratch();
     WithHnswDist(*_data, _query, _codebook, _metric, _d, _record_size,
                  [&](auto& dist) {
@@ -236,20 +258,9 @@ class HnswQuery : public QueryBuilder {
                                                  _max_results, scratch);
                    });
                  });
-
-    auto hits = CollectHits(scratch.nearest, _segment.docs_mask());
-    if (hits.empty()) {
-      return DocIterator::empty();
-    }
-    return memory::make_tracked<HnswTopKIterator>(ctx.memory, std::move(hits),
-                                                  _boost, stats.Source());
+    return CollectHits(scratch.nearest, _segment.docs_mask());
   }
 
-  void Visit(PreparedStateVisitor&, score_t) const final {}
-
-  score_t Boost() const noexcept final { return _boost; }
-
- private:
   std::shared_ptr<const HnswData> _data;
   std::shared_ptr<const QuantizerCodebook> _codebook;
   std::vector<float> _query;
@@ -353,10 +364,12 @@ QueryBuilder::ptr HnswIndex::PrepareKnn(const SubReader& segment,
   SDB_ASSERT(!data->stats || codebook);
   SDB_ASSERT(opts.ef_search != 0);
   const auto ef = std::max(opts.ef_search, opts.min_ef);
-  return memory::make_tracked<HnswQuery>(
+  auto built = memory::make_tracked<HnswQuery>(
     ctx.memory, segment, std::move(data), std::move(codebook), std::move(query),
     opts.metric, _header.d, _header.record_size, ef, kHnswNoThreshold,
     /*max_results=*/0, /*inclusive=*/false, ctx.boost);
+  built->SetStats(ctx.Record());
+  return built;
 }
 
 QueryBuilder::ptr HnswIndex::PrepareRange(const SubReader& segment,
@@ -378,10 +391,12 @@ QueryBuilder::ptr HnswIndex::PrepareRange(const SubReader& segment,
   const bool angular = opts.metric == VectorMetric::InnerProduct ||
                        opts.metric == VectorMetric::Cosine;
   const score_t threshold = angular ? radius : -radius;
-  return memory::make_tracked<HnswQuery>(
+  auto built = memory::make_tracked<HnswQuery>(
     ctx.memory, segment, std::move(data), std::move(codebook), std::move(query),
     opts.metric, _header.d, _header.record_size, /*ef=*/0, threshold,
     static_cast<size_t>(_header.rows), inclusive, ctx.boost);
+  built->SetStats(ctx.Record());
+  return built;
 }
 
 }  // namespace irs

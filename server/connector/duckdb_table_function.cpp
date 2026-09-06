@@ -371,8 +371,8 @@ bool SereneDBScanBindData::IsHnswScored() const noexcept {
   if (!vector_scorer || !inverted_index) {
     return false;
   }
-  const auto info = catalog::InvertedInfo(*inverted_index)
-                      .GetAnnInfo(vector_scorer->field_id);
+  const auto info =
+    catalog::InvertedInfo(*inverted_index).GetAnnInfo(vector_scorer->field_id);
   return info && info->kind == irs::AnnKind::Hnsw;
 }
 

@@ -64,13 +64,10 @@ inline std::shared_ptr<const QuantizerCodebook> ReadQuantizerCodebook(
   return quant_stats ? quant_stats->MakeCodebook(query) : nullptr;
 }
 
-inline bool PrepareVectorState(const CentroidsTree& ivf,
-                               const SubReader& segment,
-                               const PrepareContext& ctx,
-                               const VectorFilterOptions& opts, uint32_t nprobe,
-                               VectorState& state,
-                               QueryBuilder::ptr& inner_query,
-                               uint32_t max_search_fanout = 1) {
+inline bool PrepareVectorState(
+  const CentroidsTree& ivf, const SubReader& segment, const PrepareContext& ctx,
+  const VectorFilterOptions& opts, uint32_t nprobe, VectorState& state,
+  QueryBuilder::ptr& inner_query, uint32_t max_search_fanout = 1) {
   if (opts.query.empty() || nprobe == 0 ||
       !field_limits::valid(opts.centroids_id) ||
       !field_limits::valid(opts.postings_id)) {

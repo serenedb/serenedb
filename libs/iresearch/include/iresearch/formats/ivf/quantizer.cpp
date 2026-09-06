@@ -39,8 +39,8 @@
 #include <array>
 #include <bit>
 #include <cmath>
-#include <cstdio>
 #include <cstdint>
+#include <cstdio>
 #include <cstring>
 #include <limits>
 #include <numbers>
@@ -110,7 +110,6 @@ uint32_t RotatedDim(uint32_t d) noexcept {
 constexpr size_t SignBytes(uint32_t rotated_d) noexcept {
   return (static_cast<size_t>(rotated_d) + 7) / 8;
 }
-
 
 std::vector<byte_type> PackSigns(const std::vector<float>& signs) {
   std::vector<byte_type> out(SignBytes(static_cast<uint32_t>(signs.size())), 0);
@@ -1277,8 +1276,8 @@ class TurboQuantizerStats final : public QuantizerStats {
     if (stats.size() >= sizeof(TurboQuantStatsHeader) + 2 * ec_bytes) {
       _ec_scale.resize(_lay.rd);
       _ec_shift.resize(_lay.rd);
-      std::memcpy(_ec_scale.data(), stats.data() + sizeof(TurboQuantStatsHeader),
-                  ec_bytes);
+      std::memcpy(_ec_scale.data(),
+                  stats.data() + sizeof(TurboQuantStatsHeader), ec_bytes);
       std::memcpy(_ec_shift.data(),
                   stats.data() + sizeof(TurboQuantStatsHeader) + ec_bytes,
                   ec_bytes);
@@ -1286,8 +1285,8 @@ class TurboQuantizerStats final : public QuantizerStats {
       // Scale-only blob, written before the shift term existed.
       _ec_scale.resize(_lay.rd);
       _ec_shift.assign(_lay.rd, 0.f);
-      std::memcpy(_ec_scale.data(), stats.data() + sizeof(TurboQuantStatsHeader),
-                  ec_bytes);
+      std::memcpy(_ec_scale.data(),
+                  stats.data() + sizeof(TurboQuantStatsHeader), ec_bytes);
     }
     _valid = true;
   }

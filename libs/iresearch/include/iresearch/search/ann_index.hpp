@@ -81,7 +81,7 @@ inline bool PrepareInnerFilter(const std::shared_ptr<const Filter>& inner,
   auto inner_ctx = ctx;
   inner_ctx.collector = nullptr;
   out = inner->PrepareSegment(segment, inner_ctx);
-  return out != nullptr;
+  return out != nullptr && !QueryBuilder::IsEmpty(*out);
 }
 
 }  // namespace irs

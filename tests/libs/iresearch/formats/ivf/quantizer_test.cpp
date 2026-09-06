@@ -1862,7 +1862,8 @@ TEST_P(code_rekey_test, gathered_scores_are_chunking_invariant) {
   };
 
   // 1 and 5 are what HNSW actually passes; 16 is the last size below a block.
-  // All three take the per-row path, so they must agree exactly with each other.
+  // All three take the per-row path, so they must agree exactly with each
+  // other.
   const auto small = score_in_chunks(10);
   for (const size_t chunk : {size_t{1}, size_t{5}, size_t{16}}) {
     const auto got = score_in_chunks(chunk);

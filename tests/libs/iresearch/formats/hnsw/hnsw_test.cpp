@@ -30,7 +30,6 @@
 #include "iresearch/formats/hnsw/hnsw_graph.hpp"
 #include "iresearch/index/directory_reader.hpp"
 #include "iresearch/index/index_writer.hpp"
-#include "iresearch/search/cost.hpp"
 #include "iresearch/search/vector_similarity_filter.hpp"
 #include "iresearch/store/memory_directory.hpp"
 #include "iresearch/utils/index_utils.hpp"
@@ -169,8 +168,8 @@ std::vector<irs::doc_id_t> RunKnn(const irs::DirectoryReader& reader,
   auto it = prepared.Execute(0);
   EXPECT_NE(nullptr, it);
   std::vector<irs::doc_id_t> docs;
-  while (!irs::doc_limits::eof(it->advance())) {
-    docs.push_back(it->value());
+  while (!irs::doc_limits::eof(it->Advance())) {
+    docs.push_back(it->Value());
   }
   return docs;
 }
@@ -465,7 +464,6 @@ INSTANTIATE_TEST_SUITE_P(
                       HnswQuant{irs::VectorQuantization::TQ, 3, 0.5})));
 
 }  // namespace
-
 namespace {
 
 struct SelectRefDist {
@@ -548,8 +546,8 @@ TEST(HnswRandomLevelTest, UpperLevelShareMatchesRoundedDraw) {
       << "m=" << m << " share above level 0 " << share << " want ~" << want
       << " (truncation would give " << 1.0 / m << ")";
     // Expected rows per node feeds graph memory and insert cost.
-    const double want_levels = 1.0 + std::sqrt(static_cast<double>(m)) /
-                                       (static_cast<double>(m) - 1.0);
+    const double want_levels =
+      1.0 + std::sqrt(static_cast<double>(m)) / (static_cast<double>(m) - 1.0);
     EXPECT_NEAR(levels / kDraws, want_levels, 0.02) << "m=" << m;
   }
 }

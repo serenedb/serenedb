@@ -157,9 +157,8 @@ class HnswGraph {
   bool ClaimFirstEntry(uint32_t node) noexcept {
     std::atomic_ref<uint32_t> slot{_entry};
     uint32_t expected = kHnswInvalidNode;
-    return slot.compare_exchange_strong(expected, node,
-                                        std::memory_order_acq_rel,
-                                        std::memory_order_acquire);
+    return slot.compare_exchange_strong(
+      expected, node, std::memory_order_acq_rel, std::memory_order_acquire);
   }
 
   void PromoteEntry(uint32_t node) noexcept {
@@ -502,17 +501,15 @@ void HnswLinkReverse(HnswGraph& graph, Dist& dist, uint32_t peer, uint32_t node,
   items.clear();
   items.reserve(ids.size() + 1);
   for (size_t i = 0; i < ids.size(); ++i) {
-    items.push_back({.score = s.peer_scores[i],
-                     .node = ids[i],
-                     .processed = i < processed});
+    items.push_back(
+      {.score = s.peer_scores[i], .node = ids[i], .processed = i < processed});
   }
-  items.push_back({.score = dist.Pair(peer, node),
-                   .node = node,
-                   .processed = false});
-  std::ranges::sort(items, [](const HnswReverseItem& l,
-                              const HnswReverseItem& r) {
-    return l.score > r.score;
-  });
+  items.push_back(
+    {.score = dist.Pair(peer, node), .node = node, .processed = false});
+  std::ranges::sort(items,
+                    [](const HnswReverseItem& l, const HnswReverseItem& r) {
+                      return l.score > r.score;
+                    });
 
   auto& kept = s.rev_kept;
   auto& kept_processed = s.rev_kept_processed;

@@ -415,14 +415,6 @@ TermRef AddNullFilter(Filter&& root, uint64_t null_field) {
 }
 
 template<typename Filter>
-TermRef AddNullMarker(Filter&& root, uint64_t null_field) {
-  return {ToTarget(root),
-          irs::TermClause{.field = ExpectedFieldId(null_field),
-                          .term = irs::bstring{irs::ViewCast<irs::byte_type>(
-                            irs::NullTokenizer::value_null())}}};
-}
-
-template<typename Filter>
 irs::ByWildcard& AddLikeFilter(Filter&& root, uint64_t column,
                                std::string_view value) {
   auto& wc = AddChild<irs::ByWildcard>(root);
@@ -1791,8 +1783,8 @@ TEST_F(SearchFilterBuilderTest, test_NotGroup_Numeric_NullScoped) {
   auto group = AddDisjunction(AddNegation(expected));
   AddTermFilter<int32_t>(group, 1, 6);
   AddTermFilter<int32_t>(group, 2, 7);
-  AddNullMarker(group, 7);
-  AddNullMarker(group, 8);
+  AddNullFilter(group, 7);
+  AddNullFilter(group, 8);
   AssertFilter(expected, "SELECT * FROM foo WHERE NOT (c = 6 OR a = 7)",
                columns, true);
 }

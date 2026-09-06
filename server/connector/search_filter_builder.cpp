@@ -384,7 +384,8 @@ irs::bytes_view NullMarkerTerm() noexcept {
 }  // namespace
 
 void AddNullMarkerTerm(BoolTarget parent, irs::field_id null_field_id) {
-  AddTerm(parent, null_field_id, NullMarkerTerm());
+  AddTerm(parent, null_field_id, NullMarkerTerm(), irs::kNoBoost,
+          &irs::DefaultConstScore());
 }
 
 irs::BooleanFilter& AddTermSet(BoolTarget parent, irs::field_id field,

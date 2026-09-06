@@ -1,0 +1,550 @@
+statement ok
+SET TimeZone = 'Europe/Berlin';
+
+statement ok
+CREATE TABLE num AS SELECT i AS x, (i * 1.5)::DOUBLE AS d, (i * 0.25)::FLOAT AS f, ((i % 1000)::DECIMAL(9,2) / 7)::DECIMAL(12,4) AS dec, (i % 200 - 100)::TINYINT AS t8, (i % 20000 - 10000)::SMALLINT AS s16, (i * 1000003)::BIGINT AS big, (i * 7)::HUGEINT * 1000000007 AS huge, (i % 200)::UTINYINT AS u8, (i * 3)::UINTEGER AS u32, TIMESTAMP '2025-01-01' + INTERVAL (i) MINUTE AS ts, (TIMESTAMP '2025-03-29 00:00:00' + INTERVAL (i) MINUTE)::TIMESTAMPTZ AS tstz, (DATE '2025-01-01' + (i % 500)::INTEGER)::DATE AS dt, (i % 300 - 100)::INTEGER AS neg, i AS v FROM range(20000) t(i);
+
+statement ok
+INSERT INTO num VALUES (NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, -1);
+
+statement ok
+CREATE TABLE numx AS SELECT (i - 5000) * 0.37 AS d, (i - 5000)::BIGINT * 1000003 AS big, ((i - 5000) * 0.01)::DECIMAL(10,2) AS dec, i AS v FROM range(10000) t(i);
+
+statement ok
+CREATE TABLE nan AS SELECT d, v FROM numx UNION ALL SELECT 'nan'::DOUBLE, -1 UNION ALL SELECT 'inf'::DOUBLE, -2 UNION ALL SELECT '-inf'::DOUBLE, -3;
+
+statement ok
+SET disabled_optimizers = 'compressed_materialization';
+
+statement ok
+CREATE TABLE ref_num AS
+SELECT 'num floor(d / 100) * 100' AS shape, k::VARCHAR AS k, c, s FROM (SELECT floor(d / 100) * 100 AS k, count(*) AS c, sum(v) AS s FROM num GROUP BY 1)
+UNION ALL SELECT 'num floor(d / 100)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT floor(d / 100) AS k, count(*) AS c, sum(v) AS s FROM num GROUP BY 1)
+UNION ALL SELECT 'num x // 100' AS shape, k::VARCHAR AS k, c, s FROM (SELECT x // 100 AS k, count(*) AS c, sum(v) AS s FROM num GROUP BY 1)
+UNION ALL SELECT 'num x // 100 * 100' AS shape, k::VARCHAR AS k, c, s FROM (SELECT x // 100 * 100 AS k, count(*) AS c, sum(v) AS s FROM num GROUP BY 1)
+UNION ALL SELECT 'num x / 100' AS shape, k::VARCHAR AS k, c, s FROM (SELECT x / 100 AS k, count(*) AS c, sum(v) AS s FROM num GROUP BY 1)
+UNION ALL SELECT 'num x / 100 * 100' AS shape, k::VARCHAR AS k, c, s FROM (SELECT x / 100 * 100 AS k, count(*) AS c, sum(v) AS s FROM num GROUP BY 1)
+UNION ALL SELECT 'num (x / 100)::INTEGER' AS shape, k::VARCHAR AS k, c, s FROM (SELECT (x / 100)::INTEGER AS k, count(*) AS c, sum(v) AS s FROM num GROUP BY 1)
+UNION ALL SELECT 'num round(d, -2)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT round(d, -2) AS k, count(*) AS c, sum(v) AS s FROM num GROUP BY 1)
+UNION ALL SELECT 'num round(d, -1)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT round(d, -1) AS k, count(*) AS c, sum(v) AS s FROM num GROUP BY 1)
+UNION ALL SELECT 'num round(d)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT round(d) AS k, count(*) AS c, sum(v) AS s FROM num GROUP BY 1)
+UNION ALL SELECT 'num round(d / 100) * 100' AS shape, k::VARCHAR AS k, c, s FROM (SELECT round(d / 100) * 100 AS k, count(*) AS c, sum(v) AS s FROM num GROUP BY 1)
+UNION ALL SELECT 'num trunc(neg / 7.0)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT trunc(neg / 7.0) AS k, count(*) AS c, sum(v) AS s FROM num GROUP BY 1)
+UNION ALL SELECT 'num trunc(neg / 7.0) * 7' AS shape, k::VARCHAR AS k, c, s FROM (SELECT trunc(neg / 7.0) * 7 AS k, count(*) AS c, sum(v) AS s FROM num GROUP BY 1)
+UNION ALL SELECT 'num ceil(dec)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT ceil(dec) AS k, count(*) AS c, sum(v) AS s FROM num GROUP BY 1)
+UNION ALL SELECT 'num ceil(dec / 3)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT ceil(dec / 3) AS k, count(*) AS c, sum(v) AS s FROM num GROUP BY 1)
+UNION ALL SELECT 'num floor(dec * 10)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT floor(dec * 10) AS k, count(*) AS c, sum(v) AS s FROM num GROUP BY 1)
+UNION ALL SELECT 'num round(dec, -1)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT round(dec, -1) AS k, count(*) AS c, sum(v) AS s FROM num GROUP BY 1)
+UNION ALL SELECT 'num floor(d / 100.0)::DECIMAL(10,2)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT floor(d / 100.0)::DECIMAL(10,2) AS k, count(*) AS c, sum(v) AS s FROM num GROUP BY 1)
+UNION ALL SELECT 'num -x // 10' AS shape, k::VARCHAR AS k, c, s FROM (SELECT -x // 10 AS k, count(*) AS c, sum(v) AS s FROM num GROUP BY 1)
+UNION ALL SELECT 'num -(x // 10)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT -(x // 10) AS k, count(*) AS c, sum(v) AS s FROM num GROUP BY 1)
+UNION ALL SELECT 'num floor(log10(x + 1))' AS shape, k::VARCHAR AS k, c, s FROM (SELECT floor(log10(x + 1)) AS k, count(*) AS c, sum(v) AS s FROM num GROUP BY 1)
+UNION ALL SELECT 'num floor(sqrt(x))' AS shape, k::VARCHAR AS k, c, s FROM (SELECT floor(sqrt(x)) AS k, count(*) AS c, sum(v) AS s FROM num GROUP BY 1)
+UNION ALL SELECT 'num floor(ln(x + 1))' AS shape, k::VARCHAR AS k, c, s FROM (SELECT floor(ln(x + 1)) AS k, count(*) AS c, sum(v) AS s FROM num GROUP BY 1)
+UNION ALL SELECT 'num floor(log2(x + 1))' AS shape, k::VARCHAR AS k, c, s FROM (SELECT floor(log2(x + 1)) AS k, count(*) AS c, sum(v) AS s FROM num GROUP BY 1)
+UNION ALL SELECT 'num floor(exp(x / 5000.0))' AS shape, k::VARCHAR AS k, c, s FROM (SELECT floor(exp(x / 5000.0)) AS k, count(*) AS c, sum(v) AS s FROM num GROUP BY 1)
+UNION ALL SELECT 'num floor(cbrt(x))' AS shape, k::VARCHAR AS k, c, s FROM (SELECT floor(cbrt(x)) AS k, count(*) AS c, sum(v) AS s FROM num GROUP BY 1)
+UNION ALL SELECT 'num sign(neg)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT sign(neg) AS k, count(*) AS c, sum(v) AS s FROM num GROUP BY 1)
+UNION ALL SELECT 'num floor(s16 / 1000.0)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT floor(s16 / 1000.0) AS k, count(*) AS c, sum(v) AS s FROM num GROUP BY 1)
+UNION ALL SELECT 'num t8 // 10' AS shape, k::VARCHAR AS k, c, s FROM (SELECT t8 // 10 AS k, count(*) AS c, sum(v) AS s FROM num GROUP BY 1)
+UNION ALL SELECT 'num u8 // 25' AS shape, k::VARCHAR AS k, c, s FROM (SELECT u8 // 25 AS k, count(*) AS c, sum(v) AS s FROM num GROUP BY 1)
+UNION ALL SELECT 'num u32 // 5000' AS shape, k::VARCHAR AS k, c, s FROM (SELECT u32 // 5000 AS k, count(*) AS c, sum(v) AS s FROM num GROUP BY 1)
+UNION ALL SELECT 'num big // 100000000' AS shape, k::VARCHAR AS k, c, s FROM (SELECT big // 100000000 AS k, count(*) AS c, sum(v) AS s FROM num GROUP BY 1)
+UNION ALL SELECT 'num huge // 7000000049' AS shape, k::VARCHAR AS k, c, s FROM (SELECT huge // 7000000049 AS k, count(*) AS c, sum(v) AS s FROM num GROUP BY 1)
+UNION ALL SELECT 'num floor(f / 100)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT floor(f / 100) AS k, count(*) AS c, sum(v) AS s FROM num GROUP BY 1)
+UNION ALL SELECT 'num floor(f) // 100' AS shape, k::VARCHAR AS k, c, s FROM (SELECT floor(f) // 100 AS k, count(*) AS c, sum(v) AS s FROM num GROUP BY 1)
+UNION ALL SELECT 'num floor(d / 100) * 100 + 50' AS shape, k::VARCHAR AS k, c, s FROM (SELECT floor(d / 100) * 100 + 50 AS k, count(*) AS c, sum(v) AS s FROM num GROUP BY 1)
+UNION ALL SELECT 'num floor(d / 100) * 100 - 50' AS shape, k::VARCHAR AS k, c, s FROM (SELECT floor(d / 100) * 100 - 50 AS k, count(*) AS c, sum(v) AS s FROM num GROUP BY 1)
+UNION ALL SELECT 'num 100 - floor(d / 100)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT 100 - floor(d / 100) AS k, count(*) AS c, sum(v) AS s FROM num GROUP BY 1)
+UNION ALL SELECT 'num floor(d / 100) / 10.0' AS shape, k::VARCHAR AS k, c, s FROM (SELECT floor(d / 100) / 10.0 AS k, count(*) AS c, sum(v) AS s FROM num GROUP BY 1)
+UNION ALL SELECT 'num floor(d / 100) * 0.1' AS shape, k::VARCHAR AS k, c, s FROM (SELECT floor(d / 100) * 0.1 AS k, count(*) AS c, sum(v) AS s FROM num GROUP BY 1)
+UNION ALL SELECT 'num (floor(d / 100) * 100)::INTEGER' AS shape, k::VARCHAR AS k, c, s FROM (SELECT (floor(d / 100) * 100)::INTEGER AS k, count(*) AS c, sum(v) AS s FROM num GROUP BY 1)
+UNION ALL SELECT 'num (floor(d / 100) * 100)::VARCHAR' AS shape, k::VARCHAR AS k, c, s FROM (SELECT (floor(d / 100) * 100)::VARCHAR AS k, count(*) AS c, sum(v) AS s FROM num GROUP BY 1)
+UNION ALL SELECT 'num ''bin '' !! (x // 100)::VARCHAR' AS shape, k::VARCHAR AS k, c, s FROM (SELECT 'bin ' || (x // 100)::VARCHAR AS k, count(*) AS c, sum(v) AS s FROM num GROUP BY 1)
+UNION ALL SELECT 'num ''['' !! (floor(d / 100) * 100)::INTEGER::VARCHAR !! '')''' AS shape, k::VARCHAR AS k, c, s FROM (SELECT '[' || (floor(d / 100) * 100)::INTEGER::VARCHAR || ')' AS k, count(*) AS c, sum(v) AS s FROM num GROUP BY 1)
+UNION ALL SELECT 'num floor(d / 100)::FLOAT' AS shape, k::VARCHAR AS k, c, s FROM (SELECT floor(d / 100)::FLOAT AS k, count(*) AS c, sum(v) AS s FROM num GROUP BY 1)
+UNION ALL SELECT 'num floor(d / 100)::HUGEINT' AS shape, k::VARCHAR AS k, c, s FROM (SELECT floor(d / 100)::HUGEINT AS k, count(*) AS c, sum(v) AS s FROM num GROUP BY 1)
+UNION ALL SELECT 'num floor(d / 100)::DECIMAL(18,3) * 2' AS shape, k::VARCHAR AS k, c, s FROM (SELECT floor(d / 100)::DECIMAL(18,3) * 2 AS k, count(*) AS c, sum(v) AS s FROM num GROUP BY 1)
+UNION ALL SELECT 'num (x // 100)::DOUBLE / 2' AS shape, k::VARCHAR AS k, c, s FROM (SELECT (x // 100)::DOUBLE / 2 AS k, count(*) AS c, sum(v) AS s FROM num GROUP BY 1)
+UNION ALL SELECT 'num concat(''b'', x // 100)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT concat('b', x // 100) AS k, count(*) AS c, sum(v) AS s FROM num GROUP BY 1)
+UNION ALL SELECT 'num round(d, 1)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT round(d, 1) AS k, count(*) AS c, sum(v) AS s FROM num GROUP BY 1)
+UNION ALL SELECT 'num floor(d) % 10' AS shape, k::VARCHAR AS k, c, s FROM (SELECT floor(d) % 10 AS k, count(*) AS c, sum(v) AS s FROM num GROUP BY 1)
+UNION ALL SELECT 'num abs(neg) // 10' AS shape, k::VARCHAR AS k, c, s FROM (SELECT abs(neg) // 10 AS k, count(*) AS c, sum(v) AS s FROM num GROUP BY 1)
+UNION ALL SELECT 'num x * 2' AS shape, k::VARCHAR AS k, c, s FROM (SELECT x * 2 AS k, count(*) AS c, sum(v) AS s FROM num GROUP BY 1)
+UNION ALL SELECT 'num x + 1' AS shape, k::VARCHAR AS k, c, s FROM (SELECT x + 1 AS k, count(*) AS c, sum(v) AS s FROM num GROUP BY 1)
+UNION ALL SELECT 'num floor(d) + floor(d / 2)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT floor(d) + floor(d / 2) AS k, count(*) AS c, sum(v) AS s FROM num GROUP BY 1)
+UNION ALL SELECT 'num floor(sqrt(x)) * floor(sqrt(x))' AS shape, k::VARCHAR AS k, c, s FROM (SELECT floor(sqrt(x)) * floor(sqrt(x)) AS k, count(*) AS c, sum(v) AS s FROM num GROUP BY 1)
+UNION ALL SELECT 'numx floor(d / 100) * 100' AS shape, k::VARCHAR AS k, c, s FROM (SELECT floor(d / 100) * 100 AS k, count(*) AS c, sum(v) AS s FROM numx GROUP BY 1)
+UNION ALL SELECT 'numx floor(d)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT floor(d) AS k, count(*) AS c, sum(v) AS s FROM numx GROUP BY 1)
+UNION ALL SELECT 'numx round(d, -1)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT round(d, -1) AS k, count(*) AS c, sum(v) AS s FROM numx GROUP BY 1)
+UNION ALL SELECT 'numx big // 1000000007' AS shape, k::VARCHAR AS k, c, s FROM (SELECT big // 1000000007 AS k, count(*) AS c, sum(v) AS s FROM numx GROUP BY 1)
+UNION ALL SELECT 'numx trunc(d / 50)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT trunc(d / 50) AS k, count(*) AS c, sum(v) AS s FROM numx GROUP BY 1)
+UNION ALL SELECT 'numx floor(big / 1e12)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT floor(big / 1e12) AS k, count(*) AS c, sum(v) AS s FROM numx GROUP BY 1)
+UNION ALL SELECT 'numx ceil(dec * 3)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT ceil(dec * 3) AS k, count(*) AS c, sum(v) AS s FROM numx GROUP BY 1)
+UNION ALL SELECT 'numx round(dec, -1) / 10' AS shape, k::VARCHAR AS k, c, s FROM (SELECT round(dec, -1) / 10 AS k, count(*) AS c, sum(v) AS s FROM numx GROUP BY 1)
+UNION ALL SELECT 'numx (big / 1000)::INTEGER' AS shape, k::VARCHAR AS k, c, s FROM (SELECT (big / 1000)::INTEGER AS k, count(*) AS c, sum(v) AS s FROM numx GROUP BY 1)
+UNION ALL SELECT 'numx big // 3 // 5 // 7' AS shape, k::VARCHAR AS k, c, s FROM (SELECT big // 3 // 5 // 7 AS k, count(*) AS c, sum(v) AS s FROM numx GROUP BY 1)
+UNION ALL SELECT 'nan floor(d / 100) * 100' AS shape, k::VARCHAR AS k, c, s FROM (SELECT floor(d / 100) * 100 AS k, count(*) AS c, sum(v) AS s FROM nan GROUP BY 1)
+UNION ALL SELECT 'nan floor(d)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT floor(d) AS k, count(*) AS c, sum(v) AS s FROM nan GROUP BY 1)
+UNION ALL SELECT 'nan round(d, -1)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT round(d, -1) AS k, count(*) AS c, sum(v) AS s FROM nan GROUP BY 1)
+UNION ALL SELECT 'nan trunc(d)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT trunc(d) AS k, count(*) AS c, sum(v) AS s FROM nan GROUP BY 1)
+UNION ALL SELECT 'nan d // 100' AS shape, k::VARCHAR AS k, c, s FROM (SELECT d // 100 AS k, count(*) AS c, sum(v) AS s FROM nan GROUP BY 1);
+
+statement ok
+RESET disabled_optimizers;
+
+statement ok
+CREATE TABLE got_num AS
+SELECT 'num floor(d / 100) * 100' AS shape, k::VARCHAR AS k, c, s FROM (SELECT floor(d / 100) * 100 AS k, count(*) AS c, sum(v) AS s FROM num GROUP BY 1)
+UNION ALL SELECT 'num floor(d / 100)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT floor(d / 100) AS k, count(*) AS c, sum(v) AS s FROM num GROUP BY 1)
+UNION ALL SELECT 'num x // 100' AS shape, k::VARCHAR AS k, c, s FROM (SELECT x // 100 AS k, count(*) AS c, sum(v) AS s FROM num GROUP BY 1)
+UNION ALL SELECT 'num x // 100 * 100' AS shape, k::VARCHAR AS k, c, s FROM (SELECT x // 100 * 100 AS k, count(*) AS c, sum(v) AS s FROM num GROUP BY 1)
+UNION ALL SELECT 'num x / 100' AS shape, k::VARCHAR AS k, c, s FROM (SELECT x / 100 AS k, count(*) AS c, sum(v) AS s FROM num GROUP BY 1)
+UNION ALL SELECT 'num x / 100 * 100' AS shape, k::VARCHAR AS k, c, s FROM (SELECT x / 100 * 100 AS k, count(*) AS c, sum(v) AS s FROM num GROUP BY 1)
+UNION ALL SELECT 'num (x / 100)::INTEGER' AS shape, k::VARCHAR AS k, c, s FROM (SELECT (x / 100)::INTEGER AS k, count(*) AS c, sum(v) AS s FROM num GROUP BY 1)
+UNION ALL SELECT 'num round(d, -2)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT round(d, -2) AS k, count(*) AS c, sum(v) AS s FROM num GROUP BY 1)
+UNION ALL SELECT 'num round(d, -1)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT round(d, -1) AS k, count(*) AS c, sum(v) AS s FROM num GROUP BY 1)
+UNION ALL SELECT 'num round(d)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT round(d) AS k, count(*) AS c, sum(v) AS s FROM num GROUP BY 1)
+UNION ALL SELECT 'num round(d / 100) * 100' AS shape, k::VARCHAR AS k, c, s FROM (SELECT round(d / 100) * 100 AS k, count(*) AS c, sum(v) AS s FROM num GROUP BY 1)
+UNION ALL SELECT 'num trunc(neg / 7.0)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT trunc(neg / 7.0) AS k, count(*) AS c, sum(v) AS s FROM num GROUP BY 1)
+UNION ALL SELECT 'num trunc(neg / 7.0) * 7' AS shape, k::VARCHAR AS k, c, s FROM (SELECT trunc(neg / 7.0) * 7 AS k, count(*) AS c, sum(v) AS s FROM num GROUP BY 1)
+UNION ALL SELECT 'num ceil(dec)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT ceil(dec) AS k, count(*) AS c, sum(v) AS s FROM num GROUP BY 1)
+UNION ALL SELECT 'num ceil(dec / 3)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT ceil(dec / 3) AS k, count(*) AS c, sum(v) AS s FROM num GROUP BY 1)
+UNION ALL SELECT 'num floor(dec * 10)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT floor(dec * 10) AS k, count(*) AS c, sum(v) AS s FROM num GROUP BY 1)
+UNION ALL SELECT 'num round(dec, -1)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT round(dec, -1) AS k, count(*) AS c, sum(v) AS s FROM num GROUP BY 1)
+UNION ALL SELECT 'num floor(d / 100.0)::DECIMAL(10,2)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT floor(d / 100.0)::DECIMAL(10,2) AS k, count(*) AS c, sum(v) AS s FROM num GROUP BY 1)
+UNION ALL SELECT 'num -x // 10' AS shape, k::VARCHAR AS k, c, s FROM (SELECT -x // 10 AS k, count(*) AS c, sum(v) AS s FROM num GROUP BY 1)
+UNION ALL SELECT 'num -(x // 10)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT -(x // 10) AS k, count(*) AS c, sum(v) AS s FROM num GROUP BY 1)
+UNION ALL SELECT 'num floor(log10(x + 1))' AS shape, k::VARCHAR AS k, c, s FROM (SELECT floor(log10(x + 1)) AS k, count(*) AS c, sum(v) AS s FROM num GROUP BY 1)
+UNION ALL SELECT 'num floor(sqrt(x))' AS shape, k::VARCHAR AS k, c, s FROM (SELECT floor(sqrt(x)) AS k, count(*) AS c, sum(v) AS s FROM num GROUP BY 1)
+UNION ALL SELECT 'num floor(ln(x + 1))' AS shape, k::VARCHAR AS k, c, s FROM (SELECT floor(ln(x + 1)) AS k, count(*) AS c, sum(v) AS s FROM num GROUP BY 1)
+UNION ALL SELECT 'num floor(log2(x + 1))' AS shape, k::VARCHAR AS k, c, s FROM (SELECT floor(log2(x + 1)) AS k, count(*) AS c, sum(v) AS s FROM num GROUP BY 1)
+UNION ALL SELECT 'num floor(exp(x / 5000.0))' AS shape, k::VARCHAR AS k, c, s FROM (SELECT floor(exp(x / 5000.0)) AS k, count(*) AS c, sum(v) AS s FROM num GROUP BY 1)
+UNION ALL SELECT 'num floor(cbrt(x))' AS shape, k::VARCHAR AS k, c, s FROM (SELECT floor(cbrt(x)) AS k, count(*) AS c, sum(v) AS s FROM num GROUP BY 1)
+UNION ALL SELECT 'num sign(neg)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT sign(neg) AS k, count(*) AS c, sum(v) AS s FROM num GROUP BY 1)
+UNION ALL SELECT 'num floor(s16 / 1000.0)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT floor(s16 / 1000.0) AS k, count(*) AS c, sum(v) AS s FROM num GROUP BY 1)
+UNION ALL SELECT 'num t8 // 10' AS shape, k::VARCHAR AS k, c, s FROM (SELECT t8 // 10 AS k, count(*) AS c, sum(v) AS s FROM num GROUP BY 1)
+UNION ALL SELECT 'num u8 // 25' AS shape, k::VARCHAR AS k, c, s FROM (SELECT u8 // 25 AS k, count(*) AS c, sum(v) AS s FROM num GROUP BY 1)
+UNION ALL SELECT 'num u32 // 5000' AS shape, k::VARCHAR AS k, c, s FROM (SELECT u32 // 5000 AS k, count(*) AS c, sum(v) AS s FROM num GROUP BY 1)
+UNION ALL SELECT 'num big // 100000000' AS shape, k::VARCHAR AS k, c, s FROM (SELECT big // 100000000 AS k, count(*) AS c, sum(v) AS s FROM num GROUP BY 1)
+UNION ALL SELECT 'num huge // 7000000049' AS shape, k::VARCHAR AS k, c, s FROM (SELECT huge // 7000000049 AS k, count(*) AS c, sum(v) AS s FROM num GROUP BY 1)
+UNION ALL SELECT 'num floor(f / 100)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT floor(f / 100) AS k, count(*) AS c, sum(v) AS s FROM num GROUP BY 1)
+UNION ALL SELECT 'num floor(f) // 100' AS shape, k::VARCHAR AS k, c, s FROM (SELECT floor(f) // 100 AS k, count(*) AS c, sum(v) AS s FROM num GROUP BY 1)
+UNION ALL SELECT 'num floor(d / 100) * 100 + 50' AS shape, k::VARCHAR AS k, c, s FROM (SELECT floor(d / 100) * 100 + 50 AS k, count(*) AS c, sum(v) AS s FROM num GROUP BY 1)
+UNION ALL SELECT 'num floor(d / 100) * 100 - 50' AS shape, k::VARCHAR AS k, c, s FROM (SELECT floor(d / 100) * 100 - 50 AS k, count(*) AS c, sum(v) AS s FROM num GROUP BY 1)
+UNION ALL SELECT 'num 100 - floor(d / 100)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT 100 - floor(d / 100) AS k, count(*) AS c, sum(v) AS s FROM num GROUP BY 1)
+UNION ALL SELECT 'num floor(d / 100) / 10.0' AS shape, k::VARCHAR AS k, c, s FROM (SELECT floor(d / 100) / 10.0 AS k, count(*) AS c, sum(v) AS s FROM num GROUP BY 1)
+UNION ALL SELECT 'num floor(d / 100) * 0.1' AS shape, k::VARCHAR AS k, c, s FROM (SELECT floor(d / 100) * 0.1 AS k, count(*) AS c, sum(v) AS s FROM num GROUP BY 1)
+UNION ALL SELECT 'num (floor(d / 100) * 100)::INTEGER' AS shape, k::VARCHAR AS k, c, s FROM (SELECT (floor(d / 100) * 100)::INTEGER AS k, count(*) AS c, sum(v) AS s FROM num GROUP BY 1)
+UNION ALL SELECT 'num (floor(d / 100) * 100)::VARCHAR' AS shape, k::VARCHAR AS k, c, s FROM (SELECT (floor(d / 100) * 100)::VARCHAR AS k, count(*) AS c, sum(v) AS s FROM num GROUP BY 1)
+UNION ALL SELECT 'num ''bin '' !! (x // 100)::VARCHAR' AS shape, k::VARCHAR AS k, c, s FROM (SELECT 'bin ' || (x // 100)::VARCHAR AS k, count(*) AS c, sum(v) AS s FROM num GROUP BY 1)
+UNION ALL SELECT 'num ''['' !! (floor(d / 100) * 100)::INTEGER::VARCHAR !! '')''' AS shape, k::VARCHAR AS k, c, s FROM (SELECT '[' || (floor(d / 100) * 100)::INTEGER::VARCHAR || ')' AS k, count(*) AS c, sum(v) AS s FROM num GROUP BY 1)
+UNION ALL SELECT 'num floor(d / 100)::FLOAT' AS shape, k::VARCHAR AS k, c, s FROM (SELECT floor(d / 100)::FLOAT AS k, count(*) AS c, sum(v) AS s FROM num GROUP BY 1)
+UNION ALL SELECT 'num floor(d / 100)::HUGEINT' AS shape, k::VARCHAR AS k, c, s FROM (SELECT floor(d / 100)::HUGEINT AS k, count(*) AS c, sum(v) AS s FROM num GROUP BY 1)
+UNION ALL SELECT 'num floor(d / 100)::DECIMAL(18,3) * 2' AS shape, k::VARCHAR AS k, c, s FROM (SELECT floor(d / 100)::DECIMAL(18,3) * 2 AS k, count(*) AS c, sum(v) AS s FROM num GROUP BY 1)
+UNION ALL SELECT 'num (x // 100)::DOUBLE / 2' AS shape, k::VARCHAR AS k, c, s FROM (SELECT (x // 100)::DOUBLE / 2 AS k, count(*) AS c, sum(v) AS s FROM num GROUP BY 1)
+UNION ALL SELECT 'num concat(''b'', x // 100)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT concat('b', x // 100) AS k, count(*) AS c, sum(v) AS s FROM num GROUP BY 1)
+UNION ALL SELECT 'num round(d, 1)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT round(d, 1) AS k, count(*) AS c, sum(v) AS s FROM num GROUP BY 1)
+UNION ALL SELECT 'num floor(d) % 10' AS shape, k::VARCHAR AS k, c, s FROM (SELECT floor(d) % 10 AS k, count(*) AS c, sum(v) AS s FROM num GROUP BY 1)
+UNION ALL SELECT 'num abs(neg) // 10' AS shape, k::VARCHAR AS k, c, s FROM (SELECT abs(neg) // 10 AS k, count(*) AS c, sum(v) AS s FROM num GROUP BY 1)
+UNION ALL SELECT 'num x * 2' AS shape, k::VARCHAR AS k, c, s FROM (SELECT x * 2 AS k, count(*) AS c, sum(v) AS s FROM num GROUP BY 1)
+UNION ALL SELECT 'num x + 1' AS shape, k::VARCHAR AS k, c, s FROM (SELECT x + 1 AS k, count(*) AS c, sum(v) AS s FROM num GROUP BY 1)
+UNION ALL SELECT 'num floor(d) + floor(d / 2)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT floor(d) + floor(d / 2) AS k, count(*) AS c, sum(v) AS s FROM num GROUP BY 1)
+UNION ALL SELECT 'num floor(sqrt(x)) * floor(sqrt(x))' AS shape, k::VARCHAR AS k, c, s FROM (SELECT floor(sqrt(x)) * floor(sqrt(x)) AS k, count(*) AS c, sum(v) AS s FROM num GROUP BY 1)
+UNION ALL SELECT 'numx floor(d / 100) * 100' AS shape, k::VARCHAR AS k, c, s FROM (SELECT floor(d / 100) * 100 AS k, count(*) AS c, sum(v) AS s FROM numx GROUP BY 1)
+UNION ALL SELECT 'numx floor(d)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT floor(d) AS k, count(*) AS c, sum(v) AS s FROM numx GROUP BY 1)
+UNION ALL SELECT 'numx round(d, -1)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT round(d, -1) AS k, count(*) AS c, sum(v) AS s FROM numx GROUP BY 1)
+UNION ALL SELECT 'numx big // 1000000007' AS shape, k::VARCHAR AS k, c, s FROM (SELECT big // 1000000007 AS k, count(*) AS c, sum(v) AS s FROM numx GROUP BY 1)
+UNION ALL SELECT 'numx trunc(d / 50)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT trunc(d / 50) AS k, count(*) AS c, sum(v) AS s FROM numx GROUP BY 1)
+UNION ALL SELECT 'numx floor(big / 1e12)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT floor(big / 1e12) AS k, count(*) AS c, sum(v) AS s FROM numx GROUP BY 1)
+UNION ALL SELECT 'numx ceil(dec * 3)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT ceil(dec * 3) AS k, count(*) AS c, sum(v) AS s FROM numx GROUP BY 1)
+UNION ALL SELECT 'numx round(dec, -1) / 10' AS shape, k::VARCHAR AS k, c, s FROM (SELECT round(dec, -1) / 10 AS k, count(*) AS c, sum(v) AS s FROM numx GROUP BY 1)
+UNION ALL SELECT 'numx (big / 1000)::INTEGER' AS shape, k::VARCHAR AS k, c, s FROM (SELECT (big / 1000)::INTEGER AS k, count(*) AS c, sum(v) AS s FROM numx GROUP BY 1)
+UNION ALL SELECT 'numx big // 3 // 5 // 7' AS shape, k::VARCHAR AS k, c, s FROM (SELECT big // 3 // 5 // 7 AS k, count(*) AS c, sum(v) AS s FROM numx GROUP BY 1)
+UNION ALL SELECT 'nan floor(d / 100) * 100' AS shape, k::VARCHAR AS k, c, s FROM (SELECT floor(d / 100) * 100 AS k, count(*) AS c, sum(v) AS s FROM nan GROUP BY 1)
+UNION ALL SELECT 'nan floor(d)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT floor(d) AS k, count(*) AS c, sum(v) AS s FROM nan GROUP BY 1)
+UNION ALL SELECT 'nan round(d, -1)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT round(d, -1) AS k, count(*) AS c, sum(v) AS s FROM nan GROUP BY 1)
+UNION ALL SELECT 'nan trunc(d)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT trunc(d) AS k, count(*) AS c, sum(v) AS s FROM nan GROUP BY 1)
+UNION ALL SELECT 'nan d // 100' AS shape, k::VARCHAR AS k, c, s FROM (SELECT d // 100 AS k, count(*) AS c, sum(v) AS s FROM nan GROUP BY 1);
+
+query
+SELECT shape, k, c, s FROM (SELECT * FROM got_num EXCEPT ALL SELECT * FROM ref_num) ORDER BY 1, 2;
+----
+shape	k	c	s
+
+query
+SELECT shape, k, c, s FROM (SELECT * FROM ref_num EXCEPT ALL SELECT * FROM got_num) ORDER BY 1, 2;
+----
+shape	k	c	s
+
+query
+SELECT count(*) AS rows, count(DISTINCT shape) AS shapes FROM got_num;
+----
+rows	shapes
+182820	71
+
+statement ok
+SET disabled_optimizers = 'compressed_materialization';
+
+statement ok
+CREATE TABLE ref_dt AS
+SELECT 'dt date_trunc(''hour'', ts) + INTERVAL ''30 minutes''' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_trunc('hour', ts) + INTERVAL '30 minutes' AS k, count(*) AS c, sum(v) AS s FROM num GROUP BY 1)
+UNION ALL SELECT 'dt date_trunc(''day'', ts) + INTERVAL ''6 hours''' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_trunc('day', ts) + INTERVAL '6 hours' AS k, count(*) AS c, sum(v) AS s FROM num GROUP BY 1)
+UNION ALL SELECT 'dt date_trunc(''day'', ts) - INTERVAL ''1 day''' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_trunc('day', ts) - INTERVAL '1 day' AS k, count(*) AS c, sum(v) AS s FROM num GROUP BY 1)
+UNION ALL SELECT 'dt date_trunc(''week'', ts) + INTERVAL ''3 days''' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_trunc('week', ts) + INTERVAL '3 days' AS k, count(*) AS c, sum(v) AS s FROM num GROUP BY 1)
+UNION ALL SELECT 'dt date_trunc(''month'', ts) + INTERVAL ''1 month''' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_trunc('month', ts) + INTERVAL '1 month' AS k, count(*) AS c, sum(v) AS s FROM num GROUP BY 1)
+UNION ALL SELECT 'dt date_trunc(''hour'', ts) + INTERVAL ''1 month''' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_trunc('hour', ts) + INTERVAL '1 month' AS k, count(*) AS c, sum(v) AS s FROM num GROUP BY 1)
+UNION ALL SELECT 'dt epoch_ms(date_trunc(''hour'', ts))' AS shape, k::VARCHAR AS k, c, s FROM (SELECT epoch_ms(date_trunc('hour', ts)) AS k, count(*) AS c, sum(v) AS s FROM num GROUP BY 1)
+UNION ALL SELECT 'dt epoch_us(date_trunc(''hour'', ts))' AS shape, k::VARCHAR AS k, c, s FROM (SELECT epoch_us(date_trunc('hour', ts)) AS k, count(*) AS c, sum(v) AS s FROM num GROUP BY 1)
+UNION ALL SELECT 'dt epoch_ns(date_trunc(''minute'', ts))' AS shape, k::VARCHAR AS k, c, s FROM (SELECT epoch_ns(date_trunc('minute', ts)) AS k, count(*) AS c, sum(v) AS s FROM num GROUP BY 1)
+UNION ALL SELECT 'dt epoch(date_trunc(''minute'', ts))' AS shape, k::VARCHAR AS k, c, s FROM (SELECT epoch(date_trunc('minute', ts)) AS k, count(*) AS c, sum(v) AS s FROM num GROUP BY 1)
+UNION ALL SELECT 'dt epoch(date_trunc(''hour'', ts)) / 3600' AS shape, k::VARCHAR AS k, c, s FROM (SELECT epoch(date_trunc('hour', ts)) / 3600 AS k, count(*) AS c, sum(v) AS s FROM num GROUP BY 1)
+UNION ALL SELECT 'dt epoch(date_trunc(''hour'', ts)) / 3600.0' AS shape, k::VARCHAR AS k, c, s FROM (SELECT epoch(date_trunc('hour', ts)) / 3600.0 AS k, count(*) AS c, sum(v) AS s FROM num GROUP BY 1)
+UNION ALL SELECT 'dt epoch_ms(date_trunc(''hour'', ts)) / 1000' AS shape, k::VARCHAR AS k, c, s FROM (SELECT epoch_ms(date_trunc('hour', ts)) / 1000 AS k, count(*) AS c, sum(v) AS s FROM num GROUP BY 1)
+UNION ALL SELECT 'dt (epoch_ms(date_trunc(''hour'', ts)) / 1000)::BIGINT' AS shape, k::VARCHAR AS k, c, s FROM (SELECT (epoch_ms(date_trunc('hour', ts)) / 1000)::BIGINT AS k, count(*) AS c, sum(v) AS s FROM num GROUP BY 1)
+UNION ALL SELECT 'dt epoch_ms(date_trunc(''hour'', ts)) // 3600000' AS shape, k::VARCHAR AS k, c, s FROM (SELECT epoch_ms(date_trunc('hour', ts)) // 3600000 AS k, count(*) AS c, sum(v) AS s FROM num GROUP BY 1)
+UNION ALL SELECT 'dt epoch_ms(date_trunc(''hour'', ts)) * 2' AS shape, k::VARCHAR AS k, c, s FROM (SELECT epoch_ms(date_trunc('hour', ts)) * 2 AS k, count(*) AS c, sum(v) AS s FROM num GROUP BY 1)
+UNION ALL SELECT 'dt epoch(date_trunc(''day'', ts)) / 86400' AS shape, k::VARCHAR AS k, c, s FROM (SELECT epoch(date_trunc('day', ts)) / 86400 AS k, count(*) AS c, sum(v) AS s FROM num GROUP BY 1)
+UNION ALL SELECT 'dt epoch_us(time_bucket(INTERVAL ''15 minutes'', ts))' AS shape, k::VARCHAR AS k, c, s FROM (SELECT epoch_us(time_bucket(INTERVAL '15 minutes', ts)) AS k, count(*) AS c, sum(v) AS s FROM num GROUP BY 1)
+UNION ALL SELECT 'dt date_trunc(''hour'', ts)::VARCHAR' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_trunc('hour', ts)::VARCHAR AS k, count(*) AS c, sum(v) AS s FROM num GROUP BY 1)
+UNION ALL SELECT 'dt ''h='' !! date_trunc(''hour'', ts)::VARCHAR' AS shape, k::VARCHAR AS k, c, s FROM (SELECT 'h=' || date_trunc('hour', ts)::VARCHAR AS k, count(*) AS c, sum(v) AS s FROM num GROUP BY 1)
+UNION ALL SELECT 'dt date_trunc(''week'', ts)::DATE' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_trunc('week', ts)::DATE AS k, count(*) AS c, sum(v) AS s FROM num GROUP BY 1)
+UNION ALL SELECT 'dt date_trunc(''hour'', ts)::DATE' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_trunc('hour', ts)::DATE AS k, count(*) AS c, sum(v) AS s FROM num GROUP BY 1)
+UNION ALL SELECT 'dt date_trunc(''day'', ts)::DATE + 1' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_trunc('day', ts)::DATE + 1 AS k, count(*) AS c, sum(v) AS s FROM num GROUP BY 1)
+UNION ALL SELECT 'dt (date_trunc(''day'', ts)::DATE + 7)::TIMESTAMP' AS shape, k::VARCHAR AS k, c, s FROM (SELECT (date_trunc('day', ts)::DATE + 7)::TIMESTAMP AS k, count(*) AS c, sum(v) AS s FROM num GROUP BY 1)
+UNION ALL SELECT 'dt time_bucket(INTERVAL ''2 hours'', ts)::TIMESTAMP_NS' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '2 hours', ts)::TIMESTAMP_NS AS k, count(*) AS c, sum(v) AS s FROM num GROUP BY 1)
+UNION ALL SELECT 'dt date_trunc(''hour'', ts)::TIMESTAMP_MS' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_trunc('hour', ts)::TIMESTAMP_MS AS k, count(*) AS c, sum(v) AS s FROM num GROUP BY 1)
+UNION ALL SELECT 'dt date_trunc(''minute'', ts)::TIMESTAMP_S' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_trunc('minute', ts)::TIMESTAMP_S AS k, count(*) AS c, sum(v) AS s FROM num GROUP BY 1)
+UNION ALL SELECT 'dt date_trunc(''minute'', ts)::TIMESTAMP_MS::VARCHAR' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_trunc('minute', ts)::TIMESTAMP_MS::VARCHAR AS k, count(*) AS c, sum(v) AS s FROM num GROUP BY 1)
+UNION ALL SELECT 'dt strftime(ts, ''%Y-%m'') !! ''!''' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(ts, '%Y-%m') || '!' AS k, count(*) AS c, sum(v) AS s FROM num GROUP BY 1)
+UNION ALL SELECT 'dt ''<'' !! strftime(ts, ''%Y-%m-%d'') !! ''>''' AS shape, k::VARCHAR AS k, c, s FROM (SELECT '<' || strftime(ts, '%Y-%m-%d') || '>' AS k, count(*) AS c, sum(v) AS s FROM num GROUP BY 1)
+UNION ALL SELECT 'dt monthname(ts) !! ''-''' AS shape, k::VARCHAR AS k, c, s FROM (SELECT monthname(ts) || '-' AS k, count(*) AS c, sum(v) AS s FROM num GROUP BY 1)
+UNION ALL SELECT 'dt dayname(ts) !! ''!''' AS shape, k::VARCHAR AS k, c, s FROM (SELECT dayname(ts) || '!' AS k, count(*) AS c, sum(v) AS s FROM num GROUP BY 1)
+UNION ALL SELECT 'dt concat(dayname(ts), '' '', monthname(ts))' AS shape, k::VARCHAR AS k, c, s FROM (SELECT concat(dayname(ts), ' ', monthname(ts)) AS k, count(*) AS c, sum(v) AS s FROM num GROUP BY 1)
+UNION ALL SELECT 'dt last_day(ts)::TIMESTAMP' AS shape, k::VARCHAR AS k, c, s FROM (SELECT last_day(ts)::TIMESTAMP AS k, count(*) AS c, sum(v) AS s FROM num GROUP BY 1)
+UNION ALL SELECT 'dt last_day(ts) + 1' AS shape, k::VARCHAR AS k, c, s FROM (SELECT last_day(ts) + 1 AS k, count(*) AS c, sum(v) AS s FROM num GROUP BY 1)
+UNION ALL SELECT 'dt last_day(ts)::VARCHAR' AS shape, k::VARCHAR AS k, c, s FROM (SELECT last_day(ts)::VARCHAR AS k, count(*) AS c, sum(v) AS s FROM num GROUP BY 1)
+UNION ALL SELECT 'dt epoch_ms(date_trunc(''hour'', tstz))' AS shape, k::VARCHAR AS k, c, s FROM (SELECT epoch_ms(date_trunc('hour', tstz)) AS k, count(*) AS c, sum(v) AS s FROM num GROUP BY 1)
+UNION ALL SELECT 'dt epoch(date_trunc(''day'', tstz))' AS shape, k::VARCHAR AS k, c, s FROM (SELECT epoch(date_trunc('day', tstz)) AS k, count(*) AS c, sum(v) AS s FROM num GROUP BY 1)
+UNION ALL SELECT 'dt date_trunc(''day'', tstz)::TIMESTAMP' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_trunc('day', tstz)::TIMESTAMP AS k, count(*) AS c, sum(v) AS s FROM num GROUP BY 1)
+UNION ALL SELECT 'dt date_trunc(''hour'', tstz)::TIMESTAMP' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_trunc('hour', tstz)::TIMESTAMP AS k, count(*) AS c, sum(v) AS s FROM num GROUP BY 1)
+UNION ALL SELECT 'dt date_trunc(''day'', tstz)::DATE' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_trunc('day', tstz)::DATE AS k, count(*) AS c, sum(v) AS s FROM num GROUP BY 1)
+UNION ALL SELECT 'dt date_trunc(''day'', tstz) + INTERVAL ''12 hours''' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_trunc('day', tstz) + INTERVAL '12 hours' AS k, count(*) AS c, sum(v) AS s FROM num GROUP BY 1)
+UNION ALL SELECT 'dt date_trunc(''hour'', tstz) + INTERVAL ''30 minutes''' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_trunc('hour', tstz) + INTERVAL '30 minutes' AS k, count(*) AS c, sum(v) AS s FROM num GROUP BY 1)
+UNION ALL SELECT 'dt date_trunc(''hour'', tstz)::VARCHAR' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_trunc('hour', tstz)::VARCHAR AS k, count(*) AS c, sum(v) AS s FROM num GROUP BY 1)
+UNION ALL SELECT 'dt time_bucket(INTERVAL ''1 day'', tstz, ''Asia/Tokyo'') + INTERVAL ''1 hour''' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '1 day', tstz, 'Asia/Tokyo') + INTERVAL '1 hour' AS k, count(*) AS c, sum(v) AS s FROM num GROUP BY 1)
+UNION ALL SELECT 'dt (date_trunc(''hour'', ts) + INTERVAL ''30 minutes'')::VARCHAR' AS shape, k::VARCHAR AS k, c, s FROM (SELECT (date_trunc('hour', ts) + INTERVAL '30 minutes')::VARCHAR AS k, count(*) AS c, sum(v) AS s FROM num GROUP BY 1)
+UNION ALL SELECT 'dt concat(''d'', date_trunc(''day'', ts)::DATE)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT concat('d', date_trunc('day', ts)::DATE) AS k, count(*) AS c, sum(v) AS s FROM num GROUP BY 1)
+UNION ALL SELECT 'dt date_trunc(''month'', dt)::VARCHAR' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_trunc('month', dt)::VARCHAR AS k, count(*) AS c, sum(v) AS s FROM num GROUP BY 1)
+UNION ALL SELECT 'dt date_trunc(''week'', dt) + INTERVAL ''1 day''' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_trunc('week', dt) + INTERVAL '1 day' AS k, count(*) AS c, sum(v) AS s FROM num GROUP BY 1)
+UNION ALL SELECT 'dt time_bucket(INTERVAL ''7 days'', dt)::VARCHAR' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '7 days', dt)::VARCHAR AS k, count(*) AS c, sum(v) AS s FROM num GROUP BY 1)
+UNION ALL SELECT 'dt date_trunc(''hour'', ts)::TIMESTAMPTZ' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_trunc('hour', ts)::TIMESTAMPTZ AS k, count(*) AS c, sum(v) AS s FROM num GROUP BY 1)
+UNION ALL SELECT 'dt date_trunc(''day'', ts)::TIMESTAMPTZ' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_trunc('day', ts)::TIMESTAMPTZ AS k, count(*) AS c, sum(v) AS s FROM num GROUP BY 1)
+UNION ALL SELECT 'dt date_trunc(''day'', ts)::TIMESTAMPTZ::VARCHAR' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_trunc('day', ts)::TIMESTAMPTZ::VARCHAR AS k, count(*) AS c, sum(v) AS s FROM num GROUP BY 1)
+UNION ALL SELECT 'dt TRY_CAST(date_trunc(''day'', ts) AS DATE)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT TRY_CAST(date_trunc('day', ts) AS DATE) AS k, count(*) AS c, sum(v) AS s FROM num GROUP BY 1)
+UNION ALL SELECT 'dt date_trunc(''hour'', ts) + INTERVAL ''30 minutes'' + INTERVAL ''15 minutes''' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_trunc('hour', ts) + INTERVAL '30 minutes' + INTERVAL '15 minutes' AS k, count(*) AS c, sum(v) AS s FROM num GROUP BY 1)
+UNION ALL SELECT 'dt strftime(date_trunc(''hour'', ts), ''%H'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(date_trunc('hour', ts), '%H') AS k, count(*) AS c, sum(v) AS s FROM num GROUP BY 1)
+UNION ALL SELECT 'dt -epoch(date_trunc(''hour'', ts))' AS shape, k::VARCHAR AS k, c, s FROM (SELECT -epoch(date_trunc('hour', ts)) AS k, count(*) AS c, sum(v) AS s FROM num GROUP BY 1);
+
+statement ok
+RESET disabled_optimizers;
+
+statement ok
+CREATE TABLE got_dt AS
+SELECT 'dt date_trunc(''hour'', ts) + INTERVAL ''30 minutes''' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_trunc('hour', ts) + INTERVAL '30 minutes' AS k, count(*) AS c, sum(v) AS s FROM num GROUP BY 1)
+UNION ALL SELECT 'dt date_trunc(''day'', ts) + INTERVAL ''6 hours''' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_trunc('day', ts) + INTERVAL '6 hours' AS k, count(*) AS c, sum(v) AS s FROM num GROUP BY 1)
+UNION ALL SELECT 'dt date_trunc(''day'', ts) - INTERVAL ''1 day''' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_trunc('day', ts) - INTERVAL '1 day' AS k, count(*) AS c, sum(v) AS s FROM num GROUP BY 1)
+UNION ALL SELECT 'dt date_trunc(''week'', ts) + INTERVAL ''3 days''' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_trunc('week', ts) + INTERVAL '3 days' AS k, count(*) AS c, sum(v) AS s FROM num GROUP BY 1)
+UNION ALL SELECT 'dt date_trunc(''month'', ts) + INTERVAL ''1 month''' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_trunc('month', ts) + INTERVAL '1 month' AS k, count(*) AS c, sum(v) AS s FROM num GROUP BY 1)
+UNION ALL SELECT 'dt date_trunc(''hour'', ts) + INTERVAL ''1 month''' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_trunc('hour', ts) + INTERVAL '1 month' AS k, count(*) AS c, sum(v) AS s FROM num GROUP BY 1)
+UNION ALL SELECT 'dt epoch_ms(date_trunc(''hour'', ts))' AS shape, k::VARCHAR AS k, c, s FROM (SELECT epoch_ms(date_trunc('hour', ts)) AS k, count(*) AS c, sum(v) AS s FROM num GROUP BY 1)
+UNION ALL SELECT 'dt epoch_us(date_trunc(''hour'', ts))' AS shape, k::VARCHAR AS k, c, s FROM (SELECT epoch_us(date_trunc('hour', ts)) AS k, count(*) AS c, sum(v) AS s FROM num GROUP BY 1)
+UNION ALL SELECT 'dt epoch_ns(date_trunc(''minute'', ts))' AS shape, k::VARCHAR AS k, c, s FROM (SELECT epoch_ns(date_trunc('minute', ts)) AS k, count(*) AS c, sum(v) AS s FROM num GROUP BY 1)
+UNION ALL SELECT 'dt epoch(date_trunc(''minute'', ts))' AS shape, k::VARCHAR AS k, c, s FROM (SELECT epoch(date_trunc('minute', ts)) AS k, count(*) AS c, sum(v) AS s FROM num GROUP BY 1)
+UNION ALL SELECT 'dt epoch(date_trunc(''hour'', ts)) / 3600' AS shape, k::VARCHAR AS k, c, s FROM (SELECT epoch(date_trunc('hour', ts)) / 3600 AS k, count(*) AS c, sum(v) AS s FROM num GROUP BY 1)
+UNION ALL SELECT 'dt epoch(date_trunc(''hour'', ts)) / 3600.0' AS shape, k::VARCHAR AS k, c, s FROM (SELECT epoch(date_trunc('hour', ts)) / 3600.0 AS k, count(*) AS c, sum(v) AS s FROM num GROUP BY 1)
+UNION ALL SELECT 'dt epoch_ms(date_trunc(''hour'', ts)) / 1000' AS shape, k::VARCHAR AS k, c, s FROM (SELECT epoch_ms(date_trunc('hour', ts)) / 1000 AS k, count(*) AS c, sum(v) AS s FROM num GROUP BY 1)
+UNION ALL SELECT 'dt (epoch_ms(date_trunc(''hour'', ts)) / 1000)::BIGINT' AS shape, k::VARCHAR AS k, c, s FROM (SELECT (epoch_ms(date_trunc('hour', ts)) / 1000)::BIGINT AS k, count(*) AS c, sum(v) AS s FROM num GROUP BY 1)
+UNION ALL SELECT 'dt epoch_ms(date_trunc(''hour'', ts)) // 3600000' AS shape, k::VARCHAR AS k, c, s FROM (SELECT epoch_ms(date_trunc('hour', ts)) // 3600000 AS k, count(*) AS c, sum(v) AS s FROM num GROUP BY 1)
+UNION ALL SELECT 'dt epoch_ms(date_trunc(''hour'', ts)) * 2' AS shape, k::VARCHAR AS k, c, s FROM (SELECT epoch_ms(date_trunc('hour', ts)) * 2 AS k, count(*) AS c, sum(v) AS s FROM num GROUP BY 1)
+UNION ALL SELECT 'dt epoch(date_trunc(''day'', ts)) / 86400' AS shape, k::VARCHAR AS k, c, s FROM (SELECT epoch(date_trunc('day', ts)) / 86400 AS k, count(*) AS c, sum(v) AS s FROM num GROUP BY 1)
+UNION ALL SELECT 'dt epoch_us(time_bucket(INTERVAL ''15 minutes'', ts))' AS shape, k::VARCHAR AS k, c, s FROM (SELECT epoch_us(time_bucket(INTERVAL '15 minutes', ts)) AS k, count(*) AS c, sum(v) AS s FROM num GROUP BY 1)
+UNION ALL SELECT 'dt date_trunc(''hour'', ts)::VARCHAR' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_trunc('hour', ts)::VARCHAR AS k, count(*) AS c, sum(v) AS s FROM num GROUP BY 1)
+UNION ALL SELECT 'dt ''h='' !! date_trunc(''hour'', ts)::VARCHAR' AS shape, k::VARCHAR AS k, c, s FROM (SELECT 'h=' || date_trunc('hour', ts)::VARCHAR AS k, count(*) AS c, sum(v) AS s FROM num GROUP BY 1)
+UNION ALL SELECT 'dt date_trunc(''week'', ts)::DATE' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_trunc('week', ts)::DATE AS k, count(*) AS c, sum(v) AS s FROM num GROUP BY 1)
+UNION ALL SELECT 'dt date_trunc(''hour'', ts)::DATE' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_trunc('hour', ts)::DATE AS k, count(*) AS c, sum(v) AS s FROM num GROUP BY 1)
+UNION ALL SELECT 'dt date_trunc(''day'', ts)::DATE + 1' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_trunc('day', ts)::DATE + 1 AS k, count(*) AS c, sum(v) AS s FROM num GROUP BY 1)
+UNION ALL SELECT 'dt (date_trunc(''day'', ts)::DATE + 7)::TIMESTAMP' AS shape, k::VARCHAR AS k, c, s FROM (SELECT (date_trunc('day', ts)::DATE + 7)::TIMESTAMP AS k, count(*) AS c, sum(v) AS s FROM num GROUP BY 1)
+UNION ALL SELECT 'dt time_bucket(INTERVAL ''2 hours'', ts)::TIMESTAMP_NS' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '2 hours', ts)::TIMESTAMP_NS AS k, count(*) AS c, sum(v) AS s FROM num GROUP BY 1)
+UNION ALL SELECT 'dt date_trunc(''hour'', ts)::TIMESTAMP_MS' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_trunc('hour', ts)::TIMESTAMP_MS AS k, count(*) AS c, sum(v) AS s FROM num GROUP BY 1)
+UNION ALL SELECT 'dt date_trunc(''minute'', ts)::TIMESTAMP_S' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_trunc('minute', ts)::TIMESTAMP_S AS k, count(*) AS c, sum(v) AS s FROM num GROUP BY 1)
+UNION ALL SELECT 'dt date_trunc(''minute'', ts)::TIMESTAMP_MS::VARCHAR' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_trunc('minute', ts)::TIMESTAMP_MS::VARCHAR AS k, count(*) AS c, sum(v) AS s FROM num GROUP BY 1)
+UNION ALL SELECT 'dt strftime(ts, ''%Y-%m'') !! ''!''' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(ts, '%Y-%m') || '!' AS k, count(*) AS c, sum(v) AS s FROM num GROUP BY 1)
+UNION ALL SELECT 'dt ''<'' !! strftime(ts, ''%Y-%m-%d'') !! ''>''' AS shape, k::VARCHAR AS k, c, s FROM (SELECT '<' || strftime(ts, '%Y-%m-%d') || '>' AS k, count(*) AS c, sum(v) AS s FROM num GROUP BY 1)
+UNION ALL SELECT 'dt monthname(ts) !! ''-''' AS shape, k::VARCHAR AS k, c, s FROM (SELECT monthname(ts) || '-' AS k, count(*) AS c, sum(v) AS s FROM num GROUP BY 1)
+UNION ALL SELECT 'dt dayname(ts) !! ''!''' AS shape, k::VARCHAR AS k, c, s FROM (SELECT dayname(ts) || '!' AS k, count(*) AS c, sum(v) AS s FROM num GROUP BY 1)
+UNION ALL SELECT 'dt concat(dayname(ts), '' '', monthname(ts))' AS shape, k::VARCHAR AS k, c, s FROM (SELECT concat(dayname(ts), ' ', monthname(ts)) AS k, count(*) AS c, sum(v) AS s FROM num GROUP BY 1)
+UNION ALL SELECT 'dt last_day(ts)::TIMESTAMP' AS shape, k::VARCHAR AS k, c, s FROM (SELECT last_day(ts)::TIMESTAMP AS k, count(*) AS c, sum(v) AS s FROM num GROUP BY 1)
+UNION ALL SELECT 'dt last_day(ts) + 1' AS shape, k::VARCHAR AS k, c, s FROM (SELECT last_day(ts) + 1 AS k, count(*) AS c, sum(v) AS s FROM num GROUP BY 1)
+UNION ALL SELECT 'dt last_day(ts)::VARCHAR' AS shape, k::VARCHAR AS k, c, s FROM (SELECT last_day(ts)::VARCHAR AS k, count(*) AS c, sum(v) AS s FROM num GROUP BY 1)
+UNION ALL SELECT 'dt epoch_ms(date_trunc(''hour'', tstz))' AS shape, k::VARCHAR AS k, c, s FROM (SELECT epoch_ms(date_trunc('hour', tstz)) AS k, count(*) AS c, sum(v) AS s FROM num GROUP BY 1)
+UNION ALL SELECT 'dt epoch(date_trunc(''day'', tstz))' AS shape, k::VARCHAR AS k, c, s FROM (SELECT epoch(date_trunc('day', tstz)) AS k, count(*) AS c, sum(v) AS s FROM num GROUP BY 1)
+UNION ALL SELECT 'dt date_trunc(''day'', tstz)::TIMESTAMP' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_trunc('day', tstz)::TIMESTAMP AS k, count(*) AS c, sum(v) AS s FROM num GROUP BY 1)
+UNION ALL SELECT 'dt date_trunc(''hour'', tstz)::TIMESTAMP' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_trunc('hour', tstz)::TIMESTAMP AS k, count(*) AS c, sum(v) AS s FROM num GROUP BY 1)
+UNION ALL SELECT 'dt date_trunc(''day'', tstz)::DATE' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_trunc('day', tstz)::DATE AS k, count(*) AS c, sum(v) AS s FROM num GROUP BY 1)
+UNION ALL SELECT 'dt date_trunc(''day'', tstz) + INTERVAL ''12 hours''' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_trunc('day', tstz) + INTERVAL '12 hours' AS k, count(*) AS c, sum(v) AS s FROM num GROUP BY 1)
+UNION ALL SELECT 'dt date_trunc(''hour'', tstz) + INTERVAL ''30 minutes''' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_trunc('hour', tstz) + INTERVAL '30 minutes' AS k, count(*) AS c, sum(v) AS s FROM num GROUP BY 1)
+UNION ALL SELECT 'dt date_trunc(''hour'', tstz)::VARCHAR' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_trunc('hour', tstz)::VARCHAR AS k, count(*) AS c, sum(v) AS s FROM num GROUP BY 1)
+UNION ALL SELECT 'dt time_bucket(INTERVAL ''1 day'', tstz, ''Asia/Tokyo'') + INTERVAL ''1 hour''' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '1 day', tstz, 'Asia/Tokyo') + INTERVAL '1 hour' AS k, count(*) AS c, sum(v) AS s FROM num GROUP BY 1)
+UNION ALL SELECT 'dt (date_trunc(''hour'', ts) + INTERVAL ''30 minutes'')::VARCHAR' AS shape, k::VARCHAR AS k, c, s FROM (SELECT (date_trunc('hour', ts) + INTERVAL '30 minutes')::VARCHAR AS k, count(*) AS c, sum(v) AS s FROM num GROUP BY 1)
+UNION ALL SELECT 'dt concat(''d'', date_trunc(''day'', ts)::DATE)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT concat('d', date_trunc('day', ts)::DATE) AS k, count(*) AS c, sum(v) AS s FROM num GROUP BY 1)
+UNION ALL SELECT 'dt date_trunc(''month'', dt)::VARCHAR' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_trunc('month', dt)::VARCHAR AS k, count(*) AS c, sum(v) AS s FROM num GROUP BY 1)
+UNION ALL SELECT 'dt date_trunc(''week'', dt) + INTERVAL ''1 day''' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_trunc('week', dt) + INTERVAL '1 day' AS k, count(*) AS c, sum(v) AS s FROM num GROUP BY 1)
+UNION ALL SELECT 'dt time_bucket(INTERVAL ''7 days'', dt)::VARCHAR' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '7 days', dt)::VARCHAR AS k, count(*) AS c, sum(v) AS s FROM num GROUP BY 1)
+UNION ALL SELECT 'dt date_trunc(''hour'', ts)::TIMESTAMPTZ' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_trunc('hour', ts)::TIMESTAMPTZ AS k, count(*) AS c, sum(v) AS s FROM num GROUP BY 1)
+UNION ALL SELECT 'dt date_trunc(''day'', ts)::TIMESTAMPTZ' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_trunc('day', ts)::TIMESTAMPTZ AS k, count(*) AS c, sum(v) AS s FROM num GROUP BY 1)
+UNION ALL SELECT 'dt date_trunc(''day'', ts)::TIMESTAMPTZ::VARCHAR' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_trunc('day', ts)::TIMESTAMPTZ::VARCHAR AS k, count(*) AS c, sum(v) AS s FROM num GROUP BY 1)
+UNION ALL SELECT 'dt TRY_CAST(date_trunc(''day'', ts) AS DATE)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT TRY_CAST(date_trunc('day', ts) AS DATE) AS k, count(*) AS c, sum(v) AS s FROM num GROUP BY 1)
+UNION ALL SELECT 'dt date_trunc(''hour'', ts) + INTERVAL ''30 minutes'' + INTERVAL ''15 minutes''' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_trunc('hour', ts) + INTERVAL '30 minutes' + INTERVAL '15 minutes' AS k, count(*) AS c, sum(v) AS s FROM num GROUP BY 1)
+UNION ALL SELECT 'dt strftime(date_trunc(''hour'', ts), ''%H'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(date_trunc('hour', ts), '%H') AS k, count(*) AS c, sum(v) AS s FROM num GROUP BY 1)
+UNION ALL SELECT 'dt -epoch(date_trunc(''hour'', ts))' AS shape, k::VARCHAR AS k, c, s FROM (SELECT -epoch(date_trunc('hour', ts)) AS k, count(*) AS c, sum(v) AS s FROM num GROUP BY 1);
+
+query
+SELECT shape, k, c, s FROM (SELECT * FROM got_dt EXCEPT ALL SELECT * FROM ref_dt) ORDER BY 1, 2;
+----
+shape	k	c	s
+
+query
+SELECT shape, k, c, s FROM (SELECT * FROM ref_dt EXCEPT ALL SELECT * FROM got_dt) ORDER BY 1, 2;
+----
+shape	k	c	s
+
+query
+SELECT count(*) AS rows, count(DISTINCT shape) AS shapes FROM got_dt;
+----
+rows	shapes
+89004	57
+
+query
+EXPLAIN SELECT floor(d / 100) * 100 AS b, count(*) AS c FROM num GROUP BY 1;
+----
+QUERY PLAN
+╭─ PROJECTION ──────────────────────╮
+│ Projections: b, #1                │
+│ ~10,000 rows                      │
+╰─────────────────┬─────────────────╯
+╭─ PERFECT_HASH_GROUP_BY ───────────╮
+│ Groups: #0                        │
+│ Aggregates: count_star()          │
+│ ~10,000 rows                      │
+╰─────────────────┬─────────────────╯
+╭─ PROJECTION ────┴─────────────────╮
+│ Projections:                      │
+│ CAST(floor((d // 100)) AS BIGINT) │
+│ ~20,001 rows                      │
+╰─────────────────┬─────────────────╯
+╭─ SEQ_SCAN ──────┴─────────────────╮
+│ Table: num                        │
+│ Type: Sequential Scan             │
+│ Projections: d                    │
+│ ~20,001 rows                      │
+╰───────────────────────────────────╯
+
+query
+EXPLAIN SELECT x // 100 AS b, count(*) AS c FROM num GROUP BY 1;
+----
+QUERY PLAN
+╭─ PERFECT_HASH_GROUP_BY ──╮
+│ Groups: #0               │
+│ Aggregates: count_star() │
+│ ~10,000 rows             │
+╰─────────────┬────────────╯
+╭─ PROJECTION ┴────────────╮
+│ Projections: b           │
+│ ~20,001 rows             │
+╰─────────────┬────────────╯
+╭─ SEQ_SCAN ──┴────────────╮
+│ Table: num               │
+│ Type: Sequential Scan    │
+│ Projections: x           │
+│ ~20,001 rows             │
+╰──────────────────────────╯
+
+query
+EXPLAIN SELECT round(dec, -1) AS b, count(*) AS c FROM num GROUP BY 1;
+----
+QUERY PLAN
+╭─ PROJECTION ────────────────────────────╮
+│ Projections: CAST(#0 AS DECIMAL(12,0)), │
+│              #1                         │
+│ ~10,000 rows                            │
+╰────────────────────┬────────────────────╯
+╭─ PERFECT_HASH_GROUP_BY ─────────────────╮
+│ Groups: #0                              │
+│ Aggregates: count_star()                │
+│ ~10,000 rows                            │
+╰────────────────────┬────────────────────╯
+╭─ PROJECTION ───────┴────────────────────╮
+│ Projections: CAST(b AS BIGINT)          │
+│ ~20,001 rows                            │
+╰────────────────────┬────────────────────╯
+╭─ SEQ_SCAN ─────────┴────────────────────╮
+│ Table: num                              │
+│ Type: Sequential Scan                   │
+│ Projections: dec                        │
+│ ~20,001 rows                            │
+╰─────────────────────────────────────────╯
+
+query
+EXPLAIN SELECT 'bin ' || (x // 100)::VARCHAR AS b, count(*) AS c FROM num GROUP BY 1;
+----
+QUERY PLAN
+╭─ PROJECTION ─────────────╮
+│ Projections: b, #1       │
+│ ~10,000 rows             │
+╰─────────────┬────────────╯
+╭─ PERFECT_HASH_GROUP_BY ──╮
+│ Groups: #0               │
+│ Aggregates: count_star() │
+│ ~10,000 rows             │
+╰─────────────┬────────────╯
+╭─ PROJECTION ┴────────────╮
+│ Projections: x // 100    │
+│ ~20,001 rows             │
+╰─────────────┬────────────╯
+╭─ SEQ_SCAN ──┴────────────╮
+│ Table: num               │
+│ Type: Sequential Scan    │
+│ Projections: x           │
+│ ~20,001 rows             │
+╰──────────────────────────╯
+
+query
+EXPLAIN SELECT floor(d / 100) * 100 AS b, count(*) AS c FROM nan GROUP BY 1;
+----
+QUERY PLAN
+╭─ HASH_GROUP_BY ──────────╮
+│ Groups: #0               │
+│ Aggregates: count_star() │
+│ ~5,001 rows              │
+╰─────────────┬────────────╯
+╭─ PROJECTION ┴────────────╮
+│ Projections: b           │
+│ ~10,003 rows             │
+╰─────────────┬────────────╯
+╭─ SEQ_SCAN ──┴────────────╮
+│ Table: nan               │
+│ Type: Sequential Scan    │
+│ Projections: d           │
+│ ~10,003 rows             │
+╰──────────────────────────╯
+
+query
+EXPLAIN SELECT epoch_ms(date_trunc('hour', ts)) AS b, count(*) AS c FROM num GROUP BY 1;
+----
+QUERY PLAN
+╭─ PROJECTION ────────────────────────────────────╮
+│ Projections: b, #1                              │
+│ ~10,000 rows                                    │
+╰────────────────────────┬────────────────────────╯
+╭─ PERFECT_HASH_GROUP_BY ┴────────────────────────╮
+│ Groups: #0                                      │
+│ Aggregates: count_star()                        │
+│ ~10,000 rows                                    │
+╰────────────────────────┬────────────────────────╯
+╭─ PROJECTION ───────────┴────────────────────────╮
+│ Projections:                                    │
+│ __internal_date_trunc_bucket(ts, 3600000000, 0) │
+│ ~20,001 rows                                    │
+╰────────────────────────┬────────────────────────╯
+╭─ SEQ_SCAN ─────────────┴────────────────────────╮
+│ Table: num                                      │
+│ Type: Sequential Scan                           │
+│ Projections: ts                                 │
+│ ~20,001 rows                                    │
+╰─────────────────────────────────────────────────╯
+
+query
+EXPLAIN SELECT date_trunc('day', ts) + INTERVAL '6 hours' AS b, count(*) AS c FROM num GROUP BY 1;
+----
+QUERY PLAN
+╭─ PROJECTION ─────────────────────────────────────╮
+│ Projections: b, #1                               │
+│ ~10,000 rows                                     │
+╰─────────────────────────┬────────────────────────╯
+╭─ PERFECT_HASH_GROUP_BY ─┴────────────────────────╮
+│ Groups: #0                                       │
+│ Aggregates: count_star()                         │
+│ ~10,000 rows                                     │
+╰─────────────────────────┬────────────────────────╯
+╭─ PROJECTION ────────────┴────────────────────────╮
+│ Projections:                                     │
+│ __internal_date_trunc_bucket(ts, 86400000000, 0) │
+│ ~20,001 rows                                     │
+╰─────────────────────────┬────────────────────────╯
+╭─ SEQ_SCAN ──────────────┴────────────────────────╮
+│ Table: num                                       │
+│ Type: Sequential Scan                            │
+│ Projections: ts                                  │
+│ ~20,001 rows                                     │
+╰──────────────────────────────────────────────────╯
+
+query
+EXPLAIN SELECT epoch(date_trunc('hour', tstz)) / 3600 AS b, count(*) AS c FROM num GROUP BY 1;
+----
+QUERY PLAN
+╭─ PROJECTION ───────────────────────────────────╮
+│ Projections: b, #1                             │
+│ ~10,000 rows                                   │
+╰────────────────────────┬───────────────────────╯
+╭─ PERFECT_HASH_GROUP_BY ┴───────────────────────╮
+│ Groups: #0                                     │
+│ Aggregates: count_star()                       │
+│ ~10,000 rows                                   │
+╰────────────────────────┬───────────────────────╯
+╭─ PROJECTION ───────────┴───────────────────────╮
+│ Projections:                                   │
+│ __internal_icu_date_trunc_bucket('hour', tstz) │
+│ ~20,001 rows                                   │
+╰────────────────────────┬───────────────────────╯
+╭─ SEQ_SCAN ─────────────┴───────────────────────╮
+│ Table: num                                     │
+│ Type: Sequential Scan                          │
+│ Projections: tstz                              │
+│ ~20,001 rows                                   │
+╰────────────────────────────────────────────────╯
+
+query
+EXPLAIN SELECT date_trunc('hour', tstz)::TIMESTAMP AS b, count(*) AS c FROM num GROUP BY 1;
+----
+QUERY PLAN
+╭─ HASH_GROUP_BY ──────────╮
+│ Groups: #0               │
+│ Aggregates: count_star() │
+│ ~10,000 rows             │
+╰─────────────┬────────────╯
+╭─ PROJECTION ┴────────────╮
+│ Projections: b           │
+│ ~20,001 rows             │
+╰─────────────┬────────────╯
+╭─ SEQ_SCAN ──┴────────────╮
+│ Table: num               │
+│ Type: Sequential Scan    │
+│ Projections: tstz        │
+│ ~20,001 rows             │
+╰──────────────────────────╯
+
+query
+SELECT count(*) AS c, count(b) AS nn FROM (SELECT x // 0 AS b, count(*) AS c FROM num GROUP BY 1);
+----
+c	nn
+1	0
+
+query
+SELECT count(*) AS c FROM (SELECT floor(d / 0) AS b, count(*) AS c FROM num GROUP BY 1);
+----
+c
+3
+
+statement ok
+SET TimeZone = 'Etc/UTC';

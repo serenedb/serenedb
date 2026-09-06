@@ -409,12 +409,20 @@ SereneDBScanBindData::InvertedIndexes() const {
 
 namespace {
 
-const catalog::InvertedIndex* OwningIndex(
+struct FieldOwner {
+  const catalog::InvertedIndex* index = nullptr;
+  catalog::InvertedIndex::FieldLookup lookup;
+};
+
+FieldOwner FindFieldOwner(
   std::span<const catalog::InvertedIndex* const> indexes, irs::field_id fid) {
-  const auto it = absl::c_find_if(indexes, [&](const auto* index) -> bool {
-    return index->LookupField(fid).entry;
-  });
-  return it == indexes.end() ? nullptr : *it;
+  for (const auto* index : indexes) {
+    const auto lookup = index->LookupField(fid);
+    if (lookup.entry || irs::field_limits::valid(lookup.entry_field_id)) {
+      return {index, lookup};
+    }
+  }
+  return {};
 }
 
 auto MakeFieldNameResolver(
@@ -422,12 +430,10 @@ auto MakeFieldNameResolver(
   std::span<const catalog::InvertedIndex* const> indexes) {
   return [&bind_data, indexes](catalog::ColumnId col_id) -> std::string {
     const auto fid = static_cast<irs::field_id>(col_id);
-    const auto* index = OwningIndex(indexes, fid);
+    const auto [index, lookup] = FindFieldOwner(indexes, fid);
     auto base = std::string{bind_data.ColumnNameById(col_id)};
     const auto column_type = bind_data.ColumnTypeById(col_id);
     const bool found_type = column_type.id() != duckdb::LogicalTypeId::INVALID;
-    const auto lookup =
-      index ? index->LookupField(fid) : catalog::InvertedIndex::FieldLookup{};
     auto entry_base = [&](irs::field_id entry_fid) {
       std::string s;
       const auto* expr = index->ExpressionByFieldId(entry_fid);
@@ -519,9 +525,7 @@ auto MakeFieldKindResolver(
           indexes](catalog::ColumnId col_id) -> catalog::term_dict::Kind {
     using catalog::term_dict::Kind;
     const auto fid = static_cast<irs::field_id>(col_id);
-    const auto* index = OwningIndex(indexes, fid);
-    const auto lookup =
-      index ? index->LookupField(fid) : catalog::InvertedIndex::FieldLookup{};
+    const auto [index, lookup] = FindFieldOwner(indexes, fid);
     if (lookup.entry_field_id == catalog::term_dict::kPKFieldId) {
       return Kind::NumericI64;
     }

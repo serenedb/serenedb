@@ -271,6 +271,10 @@ BoolTarget Optional(BoolTarget group) noexcept {
 class TermRef {
  public:
   TermRef(BoolTarget target, irs::TermClause clause) : _occur{target.occur} {
+    if (target.occur == irs::Occur::MustNot) {
+      clause.scorer = nullptr;
+      clause.boost = irs::kNoBoost;
+    }
     target.node->Add(clause, target.occur);
     auto& terms = target.node->Bucket(target.occur).terms;
     const auto it =
@@ -316,9 +320,27 @@ irs::bstring ExpectedTerm(const T& value) {
   return term;
 }
 
+std::string ScorerName(const irs::Scorer* scorer) {
+  if (scorer == nullptr) {
+    return "none";
+  }
+  return scorer == &irs::DefaultConstScore() ? "const" : "other";
+}
+
+template<typename T>
+const irs::Scorer* ExpectedScorer() noexcept {
+  if constexpr (std::is_same_v<T, std::string_view> ||
+                std::is_same_v<T, std::string>) {
+    return nullptr;
+  } else {
+    return &irs::DefaultConstScore();
+  }
+}
+
 template<typename T, typename Filter>
 TermRef AddTermFilter(Filter&& root, uint64_t column, const T& value) {
   return {ToTarget(root), irs::TermClause{.field = ExpectedFieldId(column),
+                                          .scorer = ExpectedScorer<T>(),
                                           .term = ExpectedTerm(value)}};
 }
 
@@ -332,6 +354,7 @@ irs::Filter& AddRangeFilter(Filter&& root, uint64_t column,
                 std::is_same_v<T, std::string>) {
     auto& range = AddChild<irs::ByRange>(root);
     *range.mutable_field_id() = ExpectedFieldId(column);
+    range.SetScorer(ExpectedScorer<T>());
     auto& options = range.mutable_options()->range;
     irs::StringTokenizer stream;
     const irs::TermAttr* token = irs::get<irs::TermAttr>(stream);
@@ -359,6 +382,7 @@ irs::Filter& AddRangeFilter(Filter&& root, uint64_t column,
                   "Unexpected range type");
     auto& range = AddChild<irs::ByGranularRange>(root);
     *range.mutable_field_id() = ExpectedFieldId(column);
+    range.SetScorer(ExpectedScorer<T>());
     auto& options = range.mutable_options()->range;
     irs::NumericTokenizer stream;
     if (min_value.has_value()) {
@@ -383,6 +407,15 @@ irs::Filter& AddRangeFilter(Filter&& root, uint64_t column,
 
 template<typename Filter>
 TermRef AddNullFilter(Filter&& root, uint64_t null_field) {
+  return {ToTarget(root),
+          irs::TermClause{.field = ExpectedFieldId(null_field),
+                          .scorer = &irs::DefaultConstScore(),
+                          .term = irs::bstring{irs::ViewCast<irs::byte_type>(
+                            irs::NullTokenizer::value_null())}}};
+}
+
+template<typename Filter>
+TermRef AddNullMarker(Filter&& root, uint64_t null_field) {
   return {ToTarget(root),
           irs::TermClause{.field = ExpectedFieldId(null_field),
                           .term = irs::bstring{irs::ViewCast<irs::byte_type>(
@@ -574,8 +607,10 @@ irs::BooleanFilter& AddTermsFilter(Filter&& root, uint64_t column,
   for (const auto& value : values) {
     terms.emplace_back(ExpectedTerm(value));
   }
-  return sdb::connector::AddTermSet(ToTarget(root), ExpectedFieldId(column),
-                                    terms, min_match);
+  auto& node = sdb::connector::AddTermSet(
+    ToTarget(root), ExpectedFieldId(column), terms, min_match);
+  node.SetScorer(ExpectedScorer<T>());
+  return node;
 }
 
 // A `Should` bucket is counted against a threshold, and the clauses it
@@ -805,7 +840,8 @@ class SearchFilterBuilderTest : public ::testing::Test {
               out.append((depth + 1) * 2, ' ');
               out += "Term(occur=" + std::to_string(irs::OccurIndex(occur)) +
                      ", f=" + std::to_string(clause.field) +
-                     ", boost=" + std::to_string(clause.boost) + ")\n";
+                     ", boost=" + std::to_string(clause.boost) +
+                     ", scorer=" + ScorerName(clause.scorer) + ")\n";
             }
             for (const auto& child : node.Filters(occur)) {
               out.append((depth + 1) * 2, ' ');
@@ -1755,8 +1791,8 @@ TEST_F(SearchFilterBuilderTest, test_NotGroup_Numeric_NullScoped) {
   auto group = AddDisjunction(AddNegation(expected));
   AddTermFilter<int32_t>(group, 1, 6);
   AddTermFilter<int32_t>(group, 2, 7);
-  AddNullFilter(group, 7);
-  AddNullFilter(group, 8);
+  AddNullMarker(group, 7);
+  AddNullMarker(group, 8);
   AssertFilter(expected, "SELECT * FROM foo WHERE NOT (c = 6 OR a = 7)",
                columns, true);
 }

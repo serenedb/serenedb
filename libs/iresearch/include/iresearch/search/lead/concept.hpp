@@ -29,7 +29,6 @@ namespace irs::lead {
 
 template<typename T>
 concept Type = requires(T& t, doc_id_t target) {
-  { t.Value() } noexcept -> std::same_as<doc_id_t>;
   { t.Advance() } -> std::same_as<doc_id_t>;
   { t.Seek(target) } -> std::same_as<doc_id_t>;
 };

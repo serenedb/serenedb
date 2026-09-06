@@ -238,11 +238,9 @@ class LeadDocs : public irs::lead::Node {
  public:
   explicit LeadDocs(DocList::DocidsT docs) noexcept : _list{std::move(docs)} {}
 
-  irs::doc_id_t Advance() final { return _doc = _list.Advance(); }
+  irs::doc_id_t Advance() final { return _list.Advance(); }
 
-  irs::doc_id_t Seek(irs::doc_id_t target) final {
-    return _doc = _list.Seek(target);
-  }
+  irs::doc_id_t Seek(irs::doc_id_t target) final { return _list.Seek(target); }
 
  private:
   DocList _list;
@@ -259,11 +257,9 @@ class LeadScored : public irs::lead::Node {
       _boost{boost},
       _stats{stats} {}
 
-  irs::doc_id_t Advance() final { return _doc = _list.Advance(); }
+  irs::doc_id_t Advance() final { return _list.Advance(); }
 
-  irs::doc_id_t Seek(irs::doc_id_t target) final {
-    return _doc = _list.Seek(target);
-  }
+  irs::doc_id_t Seek(irs::doc_id_t target) final { return _list.Seek(target); }
 
   void FetchScoreArgs(uint32_t) final {}
 
@@ -728,7 +724,7 @@ detail::Boosted& AddDocs(irs::BooleanFilter& root, irs::Occur occur,
   return node;
 }
 
-std::vector<irs::doc_id_t> Collect(irs::lead::Node& docs) {
+std::vector<irs::doc_id_t> Collect(LeadCursor& docs) {
   std::vector<irs::doc_id_t> result;
   while (!irs::doc_limits::eof(docs.Advance())) {
     result.push_back(docs.Value());

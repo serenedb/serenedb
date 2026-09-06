@@ -24,6 +24,7 @@
 #include <vector>
 
 #include "iresearch/search/common/score_args.hpp"
+#include "iresearch/search/lead/impl.hpp"
 #include "iresearch/search/score_function.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
@@ -38,8 +39,6 @@ class ConstantScored {
 
   ConstantScored(ConstantScored&&) = delete;
   ConstantScored& operator=(ConstantScored&&) = delete;
-
-  doc_id_t Value() const noexcept { return _doc; }
 
   doc_id_t Advance() { return _doc = _leaf.Advance(); }
 
@@ -65,5 +64,8 @@ class ConstantScored {
   score_t _constant;
   doc_id_t _doc = doc_limits::invalid();
 };
+
+template<typename Leaf>
+using ConstantScoredImpl = Impl<ConstantScored<Leaf>>;
 
 }  // namespace irs::lead

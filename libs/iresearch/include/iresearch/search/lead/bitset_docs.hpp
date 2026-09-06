@@ -38,8 +38,6 @@ class BitsetDocs {
       _count{_set.WordCount()},
       _rest{_words[0]} {}
 
-  doc_id_t Value() const noexcept { return _doc; }
-
   doc_id_t Advance() {
     if (doc_limits::eof(_doc)) [[unlikely]] {
       return _doc;

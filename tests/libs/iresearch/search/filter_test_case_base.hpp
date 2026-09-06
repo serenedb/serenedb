@@ -69,7 +69,6 @@ class ScoredWrapper : public irs::lead::Node {
       _record(record) {
     SDB_ASSERT(_it);
     _provider.doc_block.value = _docs.data();
-    _doc = _it->Value();
   }
 
   irs::doc_id_t Advance() final { return _doc = _it->Advance(); }
@@ -78,7 +77,7 @@ class ScoredWrapper : public irs::lead::Node {
     return _doc = _it->Seek(target);
   }
 
-  void FetchScoreArgs(uint32_t slot) final { _docs[slot] = Value(); }
+  void FetchScoreArgs(uint32_t slot) final { _docs[slot] = _doc; }
 
   irs::ScoreFunction PrepareScore() final {
     return _record.scorer->PrepareScorer({
@@ -103,6 +102,7 @@ class ScoredWrapper : public irs::lead::Node {
   };
 
   irs::lead::Node::ptr _it;
+  irs::doc_id_t _doc = irs::doc_limits::invalid();
   std::vector<irs::doc_id_t> _docs;
   Provider _provider;
   const irs::SubReader& _segment;
@@ -410,24 +410,44 @@ struct FrequencyScore : public irs::ScorerBase<FrequencyScore, StatsT> {
 // can be empty, so the shape it is missing lives here.
 class LeadEmpty : public irs::lead::Node {
  public:
-  irs::doc_id_t Advance() final { return _doc = irs::doc_limits::eof(); }
+  irs::doc_id_t Advance() final { return irs::doc_limits::eof(); }
 
-  irs::doc_id_t Seek(irs::doc_id_t) final {
-    return _doc = irs::doc_limits::eof();
-  }
+  irs::doc_id_t Seek(irs::doc_id_t) final { return irs::doc_limits::eof(); }
 };
 
 class ScoredEmpty : public irs::lead::Node {
  public:
-  irs::doc_id_t Advance() final { return _doc = irs::doc_limits::eof(); }
+  irs::doc_id_t Advance() final { return irs::doc_limits::eof(); }
 
-  irs::doc_id_t Seek(irs::doc_id_t) final {
-    return _doc = irs::doc_limits::eof();
-  }
+  irs::doc_id_t Seek(irs::doc_id_t) final { return irs::doc_limits::eof(); }
 
   void FetchScoreArgs(uint32_t) final {}
 
   irs::ScoreFunction PrepareScore() final { return {}; }
+};
+
+class LeadCursor {
+ public:
+  explicit LeadCursor(irs::lead::Node::ptr node) noexcept
+    : _node{std::move(node)} {}
+
+  irs::doc_id_t Value() const noexcept { return _doc; }
+
+  irs::doc_id_t Advance() { return _doc = _node->Advance(); }
+
+  irs::doc_id_t Seek(irs::doc_id_t target) {
+    return _doc = _node->Seek(target);
+  }
+
+  void FetchScoreArgs(uint32_t slot) { _node->FetchScoreArgs(slot); }
+
+  irs::ScoreFunction PrepareScore() { return _node->PrepareScore(); }
+
+  irs::lead::Node& Node() noexcept { return *_node; }
+
+ private:
+  irs::lead::Node::ptr _node;
+  irs::doc_id_t _doc = irs::doc_limits::invalid();
 };
 
 class PreparedFilter {
@@ -464,24 +484,34 @@ class PreparedFilter {
     return query ? query->EstimateMax() : 0;
   }
 
-  irs::lead::Node::ptr Execute(size_t i) const {
+  std::unique_ptr<LeadCursor> Execute(size_t i) const {
     const auto& query = _queries[i];
     if (!query || irs::QueryBuilder::IsEmpty(*query)) {
-      return irs::memory::make_managed<LeadEmpty>();
+      return std::make_unique<LeadCursor>(
+        irs::memory::make_managed<LeadEmpty>());
     }
-    return query->PlanLead({});
+    auto node = query->PlanLead({});
+    if (!node) {
+      return nullptr;
+    }
+    return std::make_unique<LeadCursor>(std::move(node));
   }
 
-  irs::lead::Node::ptr ExecuteScored(size_t i,
-                                     irs::ColumnArgsFetcher& fetcher) const {
+  std::unique_ptr<LeadCursor> ExecuteScored(
+    size_t i, irs::ColumnArgsFetcher& fetcher) const {
     const auto& query = _queries[i];
     if (!query || irs::QueryBuilder::IsEmpty(*query)) {
-      return irs::memory::make_managed<ScoredEmpty>();
+      return std::make_unique<LeadCursor>(
+        irs::memory::make_managed<ScoredEmpty>());
     }
-    return query->PlanLead({
+    auto node = query->PlanLead({
       .scorer = _scorer,
       .fetcher = &fetcher,
     });
+    if (!node) {
+      return nullptr;
+    }
+    return std::make_unique<LeadCursor>(std::move(node));
   }
 
  private:

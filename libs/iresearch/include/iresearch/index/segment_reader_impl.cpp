@@ -58,6 +58,7 @@ class SegmentAllDocs : public lead::Node {
 
  private:
   const doc_id_t _max_doc;
+  doc_id_t _doc = doc_limits::invalid();
 };
 
 class SegmentLiveDocs : public lead::Node {
@@ -92,6 +93,7 @@ class SegmentLiveDocs : public lead::Node {
   const DocumentMask& _docs_mask;
   const doc_id_t _end;
   doc_id_t _next;
+  doc_id_t _doc = doc_limits::invalid();
 };
 
 FileRefs GetRefs(const Directory& dir, const SegmentMeta& meta) {

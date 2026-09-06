@@ -53,8 +53,6 @@ class PlainFillScored {
     _leaf.Prepare(meta, doc_in, has_score_bounds, has_freq);
   }
 
-  doc_id_t Value() const noexcept { return _leaf.Value(); }
-
   doc_id_t Fill(doc_id_t min, doc_id_t max, uint64_t* IRS_RESTRICT mask,
                 score_t* IRS_RESTRICT) {
     return _leaf.FillOr(min, max, mask);
@@ -87,8 +85,6 @@ class ConstFillScored {
                   FeaturesHaveFreq(field.meta().index_features));
   }
 
-  doc_id_t Value() const noexcept { return _leaf.Value(); }
-
   doc_id_t Fill(doc_id_t min, doc_id_t max, uint64_t* IRS_RESTRICT mask,
                 score_t* IRS_RESTRICT window) {
     if constexpr (MergeType == ScoreMergeType::Max) {
@@ -112,8 +108,6 @@ class PlainCountScored {
                bool has_score_bounds, bool has_freq) {
     _leaf.Prepare(meta, doc_in, has_score_bounds, has_freq);
   }
-
-  doc_id_t Value() const noexcept { return _leaf.Value(); }
 
   doc_id_t Count(doc_id_t min, doc_id_t max, uint32_t* IRS_RESTRICT counts,
                  uint64_t* IRS_RESTRICT mask, score_t* IRS_RESTRICT) {
@@ -156,8 +150,6 @@ class ConstCountScored {
     _leaf.Prepare(meta, doc_in, has_score_bounds,
                   FeaturesHaveFreq(field.meta().index_features));
   }
-
-  doc_id_t Value() const noexcept { return _leaf.Value(); }
 
   doc_id_t Count(doc_id_t min, doc_id_t max, uint32_t* IRS_RESTRICT counts,
                  uint64_t* IRS_RESTRICT mask, score_t* IRS_RESTRICT window) {

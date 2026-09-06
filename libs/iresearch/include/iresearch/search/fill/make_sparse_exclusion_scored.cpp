@@ -42,7 +42,7 @@ Node::ptr MakeNode(IncludeArgs&& include,
                    std::span<const search::PostingClause> exclude_terms,
                    std::span<const QueryBuilder::ptr> exclude_filters,
                    const SubReader& segment, uint64_t candidates,
-                   ColumnArgsFetcher* fetcher, ScoreMergeType merge) {
+                   ColumnArgsFetcher& fetcher, ScoreMergeType merge) {
   return search::BuildExcludeSideOf<Node::ptr, Input>(
     exclude_terms, exclude_filters, nullptr, segment, candidates,
     [&]<typename Exclude>(auto&& exclude) -> Node::ptr {
@@ -87,7 +87,7 @@ Node::ptr MakeSparseExclusionScored(
         return MakeNode<Input, Include>(
           std::forward_as_tuple(meta, *input, segment, reader,
                                 recipe.Args(posting.stats, posting.boost)),
-          exclude_terms, exclude_filters, segment, candidates, ctx.fetcher,
+          exclude_terms, exclude_filters, segment, candidates, *ctx.fetcher,
           merge);
       });
     }
@@ -101,7 +101,7 @@ Node::ptr MakeSparseExclusionScored(
   }
   return MakeNode<void, lead::Erased>(std::forward_as_tuple(std::move(include)),
                                       exclude_terms, exclude_filters, segment,
-                                      candidates, ctx.fetcher, merge);
+                                      candidates, *ctx.fetcher, merge);
 }
 
 }  // namespace irs::fill

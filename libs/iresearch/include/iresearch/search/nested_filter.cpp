@@ -76,17 +76,17 @@ bool IsValid(const ByNestedOptions::MatchType& match) noexcept {
 }
 
 struct EmptyParentsNode : ParentDocs {
-  doc_id_t Advance() final { return _doc = doc_limits::eof(); }
+  doc_id_t Advance() final { return doc_limits::eof(); }
 
-  doc_id_t Seek(doc_id_t) final { return _doc = doc_limits::eof(); }
+  doc_id_t Seek(doc_id_t) final { return doc_limits::eof(); }
 
   doc_id_t Prev() const noexcept final { return doc_limits::invalid(); }
 };
 
 struct EmptyDocsNode : lead::Node {
-  doc_id_t Advance() final { return _doc = doc_limits::eof(); }
+  doc_id_t Advance() final { return doc_limits::eof(); }
 
-  doc_id_t Seek(doc_id_t) final { return _doc = doc_limits::eof(); }
+  doc_id_t Seek(doc_id_t) final { return doc_limits::eof(); }
 };
 
 lead::Node::ptr EmptyDocs() {
@@ -104,11 +104,11 @@ class PlainChild {
     SDB_ASSERT(_child);
   }
 
-  doc_id_t Value() const noexcept { return _child->Value(); }
+  doc_id_t Value() const noexcept { return _doc; }
 
-  doc_id_t Seek(doc_id_t target) { return _child->Seek(target); }
+  doc_id_t Seek(doc_id_t target) { return _doc = _child->Seek(target); }
 
-  doc_id_t Advance() { return _child->Advance(); }
+  doc_id_t Advance() { return _doc = _child->Advance(); }
 
   void Restart() noexcept {}
 
@@ -116,6 +116,7 @@ class PlainChild {
 
  private:
   lead::Node::ptr _child;
+  doc_id_t _doc = doc_limits::invalid();
 };
 
 class ScoredChild {
@@ -132,11 +133,11 @@ class ScoredChild {
   ScoredChild(ScoredChild&&) = delete;
   ScoredChild& operator=(ScoredChild&&) = delete;
 
-  doc_id_t Value() const noexcept { return _child->Value(); }
+  doc_id_t Value() const noexcept { return _doc; }
 
-  doc_id_t Seek(doc_id_t target) { return _child->Seek(target); }
+  doc_id_t Seek(doc_id_t target) { return _doc = _child->Seek(target); }
 
-  doc_id_t Advance() { return _child->Advance(); }
+  doc_id_t Advance() { return _doc = _child->Advance(); }
 
   void Restart() noexcept {
     _held = 0;
@@ -181,6 +182,7 @@ class ScoredChild {
   lead::Node::ptr _child;
   std::unique_ptr<ColumnArgsFetcher> _fetcher;
   ScoreFunction _score;
+  doc_id_t _doc = doc_limits::invalid();
   score_t _sum = 0;
   scores_size_t _held = 0;
   ScoreMergeType _merge;
@@ -320,19 +322,19 @@ class NestedSlots {
     SDB_ASSERT(_parent);
   }
 
-  doc_id_t Seek(doc_id_t target) { return _parent->Seek(target); }
+  doc_id_t Seek(doc_id_t target) { return _doc = _parent->Seek(target); }
 
-  doc_id_t Probe(doc_id_t target) { return _parent->Seek(target); }
+  doc_id_t Probe(doc_id_t target) { return _doc = _parent->Seek(target); }
 
   doc_id_t Next(doc_id_t) {
     const auto skip = _rule.Skip(_child);
     if (doc_limits::eof(skip)) {
       return doc_limits::eof();
     }
-    if (skip > _parent->Value()) {
-      return _parent->Seek(skip + 1);
+    if (skip > _doc) {
+      return _doc = _parent->Seek(skip + 1);
     }
-    return _parent->Advance();
+    return _doc = _parent->Advance();
   }
 
   bool Match(doc_id_t parent) {
@@ -340,7 +342,7 @@ class NestedSlots {
     return _rule.Accept(_child, _parent->Prev() + 1, parent);
   }
 
-  void Settle(uint32_t slot) { _rule.Settle(_child, _parent->Value(), slot); }
+  void Settle(uint32_t slot) { _rule.Settle(_child, _doc, slot); }
 
   ScoreFunction PrepareScore() { return _child.PrepareScore(); }
 
@@ -348,6 +350,7 @@ class NestedSlots {
   Child _child;
   [[no_unique_address]] Rule _rule;
   ParentDocs::ptr _parent;
+  doc_id_t _doc = doc_limits::invalid();
 };
 
 template<typename Slots>
@@ -585,11 +588,7 @@ namespace count {
 
 Root::ptr Make(const ByNestedQuery& query, const Context& ctx) {
   if (ctx.table != nullptr) {
-    auto node = lead::Make(query);
-    if (!node) {
-      return {};
-    }
-    return MakeShape<Walk, lead::Erased>(ctx, std::move(node));
+    return PlanNestedDocs<FilteredWalk, Root::ptr>(query, ctx.table);
   }
   return PlanNestedDocs<PlainWalk, Root::ptr>(query, utils::Empty{});
 }
@@ -615,12 +614,7 @@ Node::ptr Make(const ByNestedQuery& query, const ScoredCtx& ctx) {
   if (query.ScoresChildren()) {
     return PlanNestedScored<Impl, Node::ptr>(query, ctx);
   }
-  auto node = Make(query);
-  if (!node) {
-    return {};
-  }
-  using Node = ConstantScored<Erased>;
-  return memory::make_managed<Impl<Node>>(query.Constant(), std::move(node));
+  return PlanNestedDocs<ConstantScoredImpl, Node::ptr>(query, query.Constant());
 }
 
 }  // namespace lead
@@ -634,12 +628,7 @@ Node::ptr Make(const ByNestedQuery& query, const ScoredCtx& ctx, uint64_t) {
   if (query.ScoresChildren()) {
     return PlanNestedScored<Impl, Node::ptr>(query, ctx);
   }
-  auto node = PlanNestedDocs<Impl, Node::ptr>(query);
-  if (!node) {
-    return {};
-  }
-  using Node = ConstantScored<Erased>;
-  return memory::make_managed<Impl<Node>>(query.Constant(), std::move(node));
+  return PlanNestedDocs<ConstantScoredImpl, Node::ptr>(query, query.Constant());
 }
 
 }  // namespace probe
@@ -653,15 +642,10 @@ Node::ptr Make(const ByNestedQuery& query, const ScoredCtx& ctx,
                ScoreMergeType merge) {
   if (query.ScoresChildren()) {
     return PlanNestedScored<ByWalkScored, Node::ptr>(query, ctx, merge,
-                                                     nullptr);
+                                                     *ctx.fetcher);
   }
-  auto node = lead::Make(query);
-  if (!node) {
-    return {};
-  }
-  using Node = lead::ConstantScored<lead::Erased>;
-  return memory::make_managed<ByWalkScored<Node>>(
-    merge, ctx.fetcher, query.Constant(), std::move(node));
+  return PlanNestedDocs<WalkConstantScored, Node::ptr>(
+    query, merge, *ctx.fetcher, query.Constant());
 }
 
 }  // namespace fill
@@ -676,12 +660,12 @@ Root::ptr Make(const ByNestedQuery& query, const Context& ctx) {
     return PlanNestedScored<PlainWalk, Root::ptr>(query, ScoredOf(ctx),
                                                   utils::Empty{}, ctx.fetcher);
   }
-  auto node = lead::Make(query);
-  if (!node) {
-    return {};
+  if (ctx.table != nullptr) {
+    return PlanNestedDocs<FilteredConstantWalk, Root::ptr>(query, ctx.table,
+                                                           query.Constant());
   }
-  return MakeShape<detail::ConstantWalk, lead::Erased>(
-    ctx, query.Constant(), lead::Erased{std::move(node)});
+  return PlanNestedDocs<PlainConstantWalk, Root::ptr>(query, utils::Empty{},
+                                                      query.Constant());
 }
 
 }  // namespace scored
@@ -696,12 +680,12 @@ Root::ptr Make(const ByNestedQuery& query, const Context& ctx) {
     return PlanNestedScored<PlainWalk, Root::ptr>(query, ScoredOf(ctx),
                                                   utils::Empty{}, ctx.fetcher);
   }
-  auto node = lead::Make(query);
-  if (!node) {
-    return {};
+  if (ctx.table != nullptr) {
+    return PlanNestedDocs<FilteredConstantWalk, Root::ptr>(query, ctx.table,
+                                                           query.Constant());
   }
-  return MakeShape<detail::ConstantWalk, lead::Erased>(
-    ctx, query.Constant(), lead::Erased{std::move(node)});
+  return PlanNestedDocs<PlainConstantWalk, Root::ptr>(query, utils::Empty{},
+                                                      query.Constant());
 }
 
 }  // namespace top

@@ -168,7 +168,7 @@ class VectorSimilarityQueryTest : public ::testing::Test {
     ASSERT_EQ(1U, _prepared->size());
   }
 
-  irs::lead::Node::ptr Execute() {
+  std::unique_ptr<::tests::LeadCursor> Execute() {
     auto it = _prepared->ExecuteScored(0, _fetcher);
     EXPECT_NE(nullptr, it);
     EXPECT_FALSE(irs::doc_limits::valid(it->Value()));

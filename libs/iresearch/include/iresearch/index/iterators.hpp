@@ -63,6 +63,8 @@ struct TermPostings : lead::Node {
 
   [[nodiscard]] static ptr empty() noexcept;
 
+  doc_id_t Value() const noexcept { return _doc; }
+
   // The write path reads a list front to back, so no stream here seeks.
   doc_id_t Seek(doc_id_t /*target*/) final {
     SDB_ASSERT(false);
@@ -83,6 +85,9 @@ struct TermPostings : lead::Node {
   // owes exactly one -- which is the default. Staying silent leaves the
   // consumer holding nothing.
   virtual void Subscribe(AttrRefresh refresh) { refresh(*this); }
+
+ protected:
+  doc_id_t _doc = doc_limits::invalid();
 };
 
 struct ScoreDoc {

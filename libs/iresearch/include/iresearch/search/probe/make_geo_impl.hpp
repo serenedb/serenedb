@@ -42,18 +42,14 @@ Node::ptr Make(const GeoQuery<Parser, Acceptor>& query,
 template<typename Parser, typename Acceptor>
 Node::ptr Make(const GeoQuery<Parser, Acceptor>& query, const ScoredCtx& ctx,
                uint64_t interrogations) {
-  auto approx = Make(query, interrogations);
-  if (!approx) {
-    return {};
-  }
   const auto record = query.Stats(ctx);
   const auto score =
     search::AllDocsScore(query.Segment(), ScoreArgs{.scorer = record.scorer,
                                                     .stats = record.stats,
                                                     .fetcher = ctx.fetcher,
                                                     .boost = query.Boost()});
-  using Node = ConstantScored<Erased>;
-  return memory::make_managed<Impl<Node>>(score, std::move(approx));
+  return search::MakeGeo<ConstantScoredImpl, Node::ptr>(query, interrogations,
+                                                        score);
 }
 
 }  // namespace irs::probe

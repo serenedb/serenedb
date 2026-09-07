@@ -103,9 +103,12 @@ constexpr std::string_view kToolsList = R"json(
 }
 )json";
 
-std::string Cell(duckdb::MaterializedQueryResult& result, size_t column,
-                 size_t row) {
-  return duckdb::StringValue::Get(result.GetValue(column, row));
+std::string Cell(duckdb::MaterializedQueryResult& result,
+                 std::string_view column, size_t row) {
+  const auto it = absl::c_find(result.names, column);
+  SDB_ASSERT(it != result.names.end(), "no column ", column);
+  return duckdb::StringValue::Get(
+    result.GetValue(static_cast<size_t>(it - result.names.begin()), row));
 }
 
 // One-paragraph preview of a hit: whitespace runs collapsed to a single space,
@@ -158,12 +161,6 @@ std::string HeadingLine(std::string_view path, std::string_view title) {
 ToolResult Error(std::string text) { return {std::move(text), true}; }
 
 yaclib::Task<ToolResult> SearchDocs(RequestContext& ctx, const ToolArgs& args) {
-  enum Column : size_t {
-    kPath,
-    kTitle,
-    kBreadcrumb,
-    kContentText,
-  };
   if (!args.query || absl::StripAsciiWhitespace(*args.query).empty()) {
     co_return Error("search_docs: query must not be empty");
   }
@@ -184,24 +181,19 @@ yaclib::Task<ToolResult> SearchDocs(RequestContext& ctx, const ToolArgs& args) {
   }
   std::string text;
   for (size_t row = 0; row < result->RowCount(); ++row) {
-    const auto breadcrumb = Cell(*result, kBreadcrumb, row);
+    const auto breadcrumb = Cell(*result, "breadcrumb", row);
     absl::StrAppend(&text, row == 0 ? "" : "\n\n", "[", row + 1, "] ",
-                    Cell(*result, kTitle, row));
+                    Cell(*result, "title", row));
     if (!breadcrumb.empty()) {
       absl::StrAppend(&text, " - ", breadcrumb);
     }
-    absl::StrAppend(&text, "\npath: ", Cell(*result, kPath, row), "\n",
-                    Snippet(Cell(*result, kContentText, row)));
+    absl::StrAppend(&text, "\npath: ", Cell(*result, "path", row), "\n",
+                    Snippet(Cell(*result, "content_text", row)));
   }
   co_return ToolResult{std::move(text)};
 }
 
 yaclib::Task<ToolResult> ReadDoc(RequestContext& ctx, const ToolArgs& args) {
-  enum Column : size_t {
-    kTitle,
-    kBreadcrumb,
-    kContent,
-  };
   if (!args.path || args.path->empty()) {
     co_return Error("read_doc: path is required");
   }
@@ -219,13 +211,13 @@ yaclib::Task<ToolResult> ReadDoc(RequestContext& ctx, const ToolArgs& args) {
                                  "valid paths."));
   }
   std::string text = absl::StrCat("path: ", *args.path, "\n");
-  if (const auto breadcrumb = Cell(*result, kBreadcrumb, 0);
+  if (const auto breadcrumb = Cell(*result, "breadcrumb", 0);
       !breadcrumb.empty()) {
     absl::StrAppend(&text, "in: ", breadcrumb, "\n");
   }
   absl::StrAppend(&text, "\n",
-                  HeadingLine(*args.path, Cell(*result, kTitle, 0)), "\n");
-  if (const auto content = Cell(*result, kContent, 0); !content.empty()) {
+                  HeadingLine(*args.path, Cell(*result, "title", 0)), "\n");
+  if (const auto content = Cell(*result, "content", 0); !content.empty()) {
     absl::StrAppend(&text, "\n", content);
   }
   co_return ToolResult{std::move(text)};
@@ -235,12 +227,6 @@ yaclib::Task<ToolResult> ReadDoc(RequestContext& ctx, const ToolArgs& args) {
 // rows of split docs. A prefix naming a page or heading lists the rows under
 // it.
 yaclib::Task<ToolResult> ListDocs(RequestContext& ctx, const ToolArgs& args) {
-  // Order does matter
-  enum Column : size_t {
-    kPath,
-    kTitle,
-    kBreadcrumb,
-  };
   const auto prefix = args.prefix.value_or("");
   const bool within_page =
     prefix.ends_with(".md") || prefix.ends_with(".mdx") || Depth(prefix) > 0;
@@ -260,9 +246,9 @@ yaclib::Task<ToolResult> ListDocs(RequestContext& ctx, const ToolArgs& args) {
   }
   std::string text;
   for (size_t row = 0; row < result->RowCount(); ++row) {
-    absl::StrAppend(&text, row == 0 ? "" : "\n", Cell(*result, kPath, row),
-                    " - ", Cell(*result, kTitle, row));
-    if (const auto breadcrumb = Cell(*result, kBreadcrumb, row);
+    absl::StrAppend(&text, row == 0 ? "" : "\n", Cell(*result, "path", row),
+                    " - ", Cell(*result, "title", row));
+    if (const auto breadcrumb = Cell(*result, "breadcrumb", row);
         !breadcrumb.empty()) {
       absl::StrAppend(&text, " (", breadcrumb, ")");
     }

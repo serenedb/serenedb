@@ -1,8 +1,13 @@
+# Structure of the embedded docs table, checked as invariants over every row so
+# that adding or editing documentation pages does not touch this file. A path
+# is either 'file.md' (a whole-page doc) or 'file.md#Title#Heading...' with the
+# chain of headings, one unescaped '#' per level, spaces as '_'.
+
 query
-SELECT count(*) > 100, count(*) = count(DISTINCT split_part(path, '#', 1)) FROM sdb_docs.docs WHERE length(path) - length(replace(path, '#', '')) <= 1;
+SELECT count(*) > 100 FROM sdb_docs.docs WHERE length(path) - length(replace(path, '#', '')) <= 1;
 ----
-?column?	?column?
-t	t
+?column?
+t
 
 query
 SELECT count(*) > 1000 FROM sdb_docs.docs WHERE position('#' IN path) > 0;
@@ -10,43 +15,52 @@ SELECT count(*) > 1000 FROM sdb_docs.docs WHERE position('#' IN path) > 0;
 ?column?
 t
 
+# Both kinds of doc exist.
 query
-SELECT title, breadcrumb, content LIKE '%## Quick start%', content LIKE '%## Scorer Functions%' FROM sdb_docs.docs WHERE path = 'sql/functions/search/scoring.md#Relevance_Scoring';
+SELECT count(*) > 10, count(*) FILTER (WHERE position('#' IN path) = 0) > 10 FROM sdb_docs.docs WHERE length(path) - length(replace(path, '#', '')) <= 1;
 ----
-title	breadcrumb	?column?	?column?
-Relevance Scoring	(empty)	t	t
+?column?	?column?
+t	t
 
+# A heading row's path ends with its own heading segment.
 query
-SELECT title, breadcrumb, content LIKE '%Quick start%' FROM sdb_docs.docs WHERE path = 'sql/functions/search/scoring.md#Relevance_Scoring#Scorer_Functions';
-----
-title	breadcrumb	?column?
-Scorer Functions	Relevance Scoring	f
-
-query
-SELECT path, breadcrumb FROM sdb_docs.docs WHERE starts_with(path, 'sql/statements/copy/index.md#') AND title = 'Syntax' ORDER BY path;
-----
-path	breadcrumb
-sql/statements/copy/index.md#COPY#COPY_..._FROM#Syntax	COPY / COPY ... FROM
-sql/statements/copy/index.md#COPY#COPY_..._TO#Syntax	COPY / COPY ... TO
-sql/statements/copy/index.md#COPY#COPY_FROM_DATABASE_..._TO#Syntax	COPY / COPY FROM DATABASE ... TO
-
-query
-SELECT content LIKE '%### Syntax%' AND content LIKE '%### `COPY ... TO` Options%' AND content NOT LIKE '%COPY FROM DATABASE%' FROM sdb_docs.docs WHERE path = 'sql/statements/copy/index.md#COPY#COPY_..._TO';
-----
-?column?
-t
-
-query
-SELECT count(*) FROM sdb_docs.docs WHERE starts_with(path, 'cookbook/search/autocomplete.md');
-----
-count
-1
-
-query
-SELECT count(*) FROM sdb_docs.docs WHERE path = 'sql/functions/search/scoring.md';
+SELECT count(*) FROM sdb_docs.docs
+WHERE position('#' IN path) > 0
+  AND NOT ends_with(path, '#' || replace(replace(title, '#', '\#'), ' ', '_'));
 ----
 count
 0
+
+# Rows without a heading parent (whole pages and title rows) carry no
+# breadcrumb, and a split page has no bare file row next to its title row.
+query
+WITH rows AS (
+  SELECT path, breadcrumb,
+         left(path, length(path) - length(replace(replace(title, '#', '\#'), ' ', '_')) - 1) AS parent
+  FROM sdb_docs.docs)
+SELECT count(*) FILTER (WHERE breadcrumb <> ''),
+       count(*) FILTER (WHERE position('#' IN path) > 0 AND EXISTS (SELECT 1 FROM sdb_docs.docs b WHERE b.path = rows.parent))
+FROM rows WHERE position('#' IN path) = 0 OR position('#' IN parent) = 0;
+----
+count	count
+0	0
+
+# Every nested heading row has a parent row, its content is contained in the
+# parent's (a heading carries everything nested under it), and its breadcrumb
+# is the parent's chain.
+query
+WITH rows AS (
+  SELECT path, title, breadcrumb, content,
+         left(path, length(path) - length(replace(replace(title, '#', '\#'), ' ', '_')) - 1) AS parent
+  FROM sdb_docs.docs WHERE position('#' IN path) > 0)
+SELECT count(*) FILTER (WHERE p.path IS NULL),
+       count(*) FILTER (WHERE position(c.content IN p.content) = 0),
+       count(*) FILTER (WHERE c.breadcrumb <> CASE WHEN p.breadcrumb = '' THEN p.title ELSE p.breadcrumb || ' / ' || p.title END)
+FROM rows c LEFT JOIN sdb_docs.docs p ON p.path = c.parent
+WHERE position('#' IN c.parent) > 0;
+----
+count	count	count
+0	0	0
 
 query
 SELECT count(*) FROM sdb_docs.docs WHERE title IS NULL OR title = '' OR content IS NULL OR content_text IS NULL;
@@ -54,6 +68,8 @@ SELECT count(*) FROM sdb_docs.docs WHERE title IS NULL OR title = '' OR content 
 count
 0
 
+# Nothing from the MDX source survives: frontmatter, imports, components,
+# anchors, comments, formatting inside titles.
 query
 SELECT count(*) FROM sdb_docs.docs WHERE content LIKE '---%' OR content LIKE '%import SqlLogicTest%' OR content LIKE '%<SqlLogicTest%' OR content LIKE '%<DocCallout%' OR content LIKE '%{#%' OR content LIKE '%<!--%' OR title LIKE '%`%';
 ----
@@ -66,19 +82,21 @@ SELECT length(hash), layout FROM sdb_docs.meta;
 length	layout
 64	11
 
+# The breadcrumb is indexed: a breadcrumb match names an ancestor heading.
 query
-SELECT bool_or(path = 'sql/statements/copy/index.md#COPY#COPY_FROM_DATABASE_..._TO#Syntax') FROM sdb_docs.docs_fts WHERE breadcrumb @@ 'copy database';
+SELECT count(*) > 0, bool_and(breadcrumb ILIKE '%cop%') FROM sdb_docs.docs_fts WHERE breadcrumb @@ 'copy';
 ----
-bool_or
-t
+?column?	bool_and
+t	t
 
+# Ranking sanity: a query for a topic surfaces a row of a page about it.
 query
-SELECT bool_or(starts_with(path, 'sql/indexes/inverted/index.md#')) FROM (
+SELECT bool_or(path ILIKE '%inverted%') FROM (
   SELECT path, BM25(d.tableoid) AS score
   FROM sdb_docs.docs_fts d
   WHERE title @@ 'inverted index' OR breadcrumb @@ 'inverted index' OR content_text @@ 'inverted index'
   ORDER BY score DESC, path
-  LIMIT 5
+  LIMIT 10
 );
 ----
 bool_or

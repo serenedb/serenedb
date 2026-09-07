@@ -1170,8 +1170,8 @@ skipif postgres
 > +-----------+-------+
 > (3 rows)
 
-# serened's pg_opclass surfaces the `ivf` builtin (inverted AM, FLOAT[])
-# plus every CREATE TEXT SEARCH DICTIONARY as an inverted-AM opclass.
+# serened's pg_opclass surfaces the `ivf` and `hnsw` builtins (inverted AM,
+# FLOAT[]) plus every CREATE TEXT SEARCH DICTIONARY as an inverted-AM opclass.
 skipif postgres
 \dAc
 ----
@@ -1180,10 +1180,11 @@ skipif postgres
 > |    AM    | Input type | Storage type | Operator class | Default? |
 > +----------+------------+--------------+----------------+----------+
 > | inverted | any        | [NULL]       | included       | no       |
+> | inverted | real[]     | [NULL]       | hnsw           | no       |
 > | inverted | real[]     | [NULL]       | ivf            | no       |
 > | inverted | text       | [NULL]       | simple_dict    | no       |
 > +----------+------------+--------------+----------------+----------+
-> (3 rows)
+> (4 rows)
 
 # AM-pattern form: scopes by access-method name.
 skipif postgres
@@ -1194,10 +1195,11 @@ skipif postgres
 > |    AM    | Input type | Storage type | Operator class | Default? |
 > +----------+------------+--------------+----------------+----------+
 > | inverted | any        | [NULL]       | included       | no       |
+> | inverted | real[]     | [NULL]       | hnsw           | no       |
 > | inverted | real[]     | [NULL]       | ivf            | no       |
 > | inverted | text       | [NULL]       | simple_dict    | no       |
 > +----------+------------+--------------+----------------+----------+
-> (3 rows)
+> (4 rows)
 
 # AM + type-pattern form: scopes to a single input type within the AM.
 skipif postgres

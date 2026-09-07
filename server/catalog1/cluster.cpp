@@ -30,13 +30,13 @@
 #include "basics/duckdb_engine.h"
 #include "catalog1/entry/database.h"
 #include "catalog1/entry/role.h"
+#include "pg/pg_types.h"
 
 namespace sdb::catalog {
 namespace {
 
-// duckdb refuses a CatalogSet write unless the meta transaction names this
-// database as the one it modifies. A DDL statement's binder does that; roles
-// and databases are reached from boot and from pragmas, which have no binder.
+constexpr std::string_view kRootRole = "postgres";
+
 void DeclareModified(duckdb::CatalogTransaction transaction,
                      duckdb::Catalog& catalog) {
   if (!transaction.context) {
@@ -78,6 +78,15 @@ ClusterCatalog::ClusterCatalog(duckdb::AttachedDatabase& db)
 
 void ClusterCatalog::Initialize(bool load_builtin) {
   duckdb::DuckCatalog::Initialize(load_builtin);
+  CreateRoleInfo info;
+  info.SetName(duckdb::Identifier{kRootRole});
+  info.options = RoleOption::Superuser | RoleOption::Inherit |
+                 RoleOption::CreateRole | RoleOption::CreateDb |
+                 RoleOption::Login | RoleOption::Replication |
+                 RoleOption::BypassRls;
+  CreateRole(duckdb::CatalogTransaction::GetSystemTransaction(GetDatabase()),
+             info)
+    ->oid = pg::kRootUser;
 }
 
 duckdb::optional_ptr<duckdb::CatalogEntry> ClusterCatalog::CreateRole(
@@ -110,6 +119,7 @@ duckdb::optional_ptr<duckdb::CatalogEntry> ClusterCatalog::CreateDatabase(
 bool ClusterCatalog::DropDatabase(duckdb::CatalogTransaction transaction,
                                   const duckdb::Identifier& name,
                                   bool cascade) {
+  DeclareModified(transaction, *this);
   return _databases.DropEntry(transaction, name, cascade);
 }
 

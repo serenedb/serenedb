@@ -22,8 +22,8 @@
 
 #include <duckdb/catalog/catalog_set.hpp>
 #include <duckdb/catalog/catalog_transaction.hpp>
-#include <duckdb/common/constants.hpp>
 #include <duckdb/catalog/duck_catalog.hpp>
+#include <duckdb/common/constants.hpp>
 #include <functional>
 #include <string>
 
@@ -47,6 +47,12 @@ class ClusterCatalog final : public duckdb::DuckCatalog {
   std::string GetCatalogType() override { return kStorageType; }
 
   void Initialize(bool load_builtin) override;
+
+  duckdb::CatalogTransaction LoginTransaction() {
+    return duckdb::CatalogTransaction{GetDatabase(),
+                                      duckdb::TRANSACTION_ID_START - 1,
+                                      duckdb::TRANSACTION_ID_START - 1};
+  }
 
   duckdb::optional_ptr<duckdb::CatalogEntry> CreateRole(
     duckdb::CatalogTransaction transaction, CreateRoleInfo& info);

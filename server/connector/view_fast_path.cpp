@@ -389,7 +389,7 @@ std::optional<ViewFastPath> ResolveViewFastPath(
       const auto& sdb_columns = sdb_entry->GetColumns();
       const auto has_column = [&](std::string_view name) {
         for (const auto& col : sdb_columns.Logical()) {
-          if (absl::EqualsIgnoreCase(col.Name().GetIdentifierName(), name)) {
+          if (col.Name() == duckdb::Identifier{name}) {
             return true;
           }
         }

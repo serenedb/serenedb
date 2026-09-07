@@ -32,7 +32,6 @@ add_library(
     duckdb_physical_search_update.cpp
     duckdb_pg_binary_copy.cpp
     duckdb_pg_text_copy.cpp
-    duckdb_physical_ctas.cpp
     duckdb_tokenizer_function.cpp
     duckdb_foreign_server_function.cpp
     duckdb_physical_create_index.cpp

@@ -33,7 +33,6 @@ namespace sdb::catalog {
 duckdb::unique_ptr<duckdb::CreateInfo> CreateRoleInfo::Copy() const {
   auto result = duckdb::make_uniq<CreateRoleInfo>();
   CopyProperties(*result);
-  result->oid = oid;
   result->options = options;
   result->conn_limit = conn_limit;
   result->valid_until = valid_until;

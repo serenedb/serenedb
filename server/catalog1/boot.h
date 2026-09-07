@@ -26,9 +26,10 @@
 #include <string_view>
 
 namespace duckdb {
-struct DBConfig;
-}  // namespace duckdb
 
+struct DBConfig;
+
+}  // namespace duckdb
 namespace sdb::catalog {
 
 struct DataDirectory final : duckdb::StorageExtensionInfo {

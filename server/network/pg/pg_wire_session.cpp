@@ -188,8 +188,9 @@ inline duckdb::optional_ptr<duckdb::TableCatalogEntry> FindCopyTable(
   if (!qname.Schema().empty()) {
     return lookup(qname.Schema());
   }
-  for (const auto& schema : conn.GetSearchPath()) {
-    if (auto table = lookup(duckdb::Identifier{schema})) {
+  for (const auto& entry : duckdb::ClientData::Get(conn.GetClientContext())
+                             .catalog_search_path->GetResolvedSetPaths()) {
+    if (auto table = lookup(entry.GetSchema())) {
       return table;
     }
   }
@@ -415,9 +416,9 @@ std::string_view PgWireSession<Kind>::UserName() const {
 template<SocketKind Kind>
 bool PgWireSession<Kind>::SetupConnection() {
   auto& cluster = catalog::ClusterOf();
-  auto database = cluster.LookupDatabase(
-    duckdb::CatalogTransaction::GetSystemTransaction(cluster.GetDatabase()),
-    duckdb::Identifier{std::string{DatabaseName()}});
+  auto database =
+    cluster.LookupDatabase(cluster.LoginTransaction(),
+                           duckdb::Identifier{std::string{DatabaseName()}});
   if (!database) {
     WriteFatalResponse(this->_send,
                        SQL_ERROR_DATA(ERR_CODE(ERRCODE_INVALID_CATALOG_NAME),
@@ -918,8 +919,7 @@ yaclib::Task<bool> PgWireSession<Kind>::Authenticate() {
   const hba::MembershipFn is_member = [](std::string_view user,
                                          std::string_view group) {
     auto& cluster = catalog::ClusterOf();
-    const auto transaction =
-      duckdb::CatalogTransaction::GetSystemTransaction(cluster.GetDatabase());
+    const auto transaction = cluster.LoginTransaction();
     auto user_role =
       cluster.LookupRole(transaction, duckdb::Identifier{std::string{user}});
     auto group_role =
@@ -1041,9 +1041,8 @@ yaclib::Task<bool> PgWireSession<Kind>::Authenticate() {
   }
 
   auto& cluster = catalog::ClusterOf();
-  auto entry = cluster.LookupRole(
-    duckdb::CatalogTransaction::GetSystemTransaction(cluster.GetDatabase()),
-    duckdb::Identifier{std::string{UserName()}});
+  auto entry = cluster.LookupRole(cluster.LoginTransaction(),
+                                  duckdb::Identifier{std::string{UserName()}});
   const auto* login_role =
     entry ? &entry->Cast<catalog::RoleCatalogEntry>() : nullptr;
   if (login_role != nullptr && login_role->HasValidUntil() &&

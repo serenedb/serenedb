@@ -35,13 +35,12 @@
 namespace sdb::pg {
 
 LoginCheck RequireLoginRole(std::string_view user, std::string_view dbname,
-                            const catalog::Permissions& perm) {
+                            const duckdb::Permissions& perm) {
   // No ClientContext yet -- the connection is still being established -- so
   // this reads the committed cluster state.
   auto& cluster = catalog::ClusterOf();
-  auto entry = cluster.LookupRole(
-    duckdb::CatalogTransaction::GetSystemTransaction(cluster.GetDatabase()),
-    duckdb::Identifier{std::string{user}});
+  auto entry = cluster.LookupRole(cluster.LoginTransaction(),
+                                  duckdb::Identifier{std::string{user}});
   if (!entry) {
     return {.error = SQL_ERROR_DATA(
               ERR_CODE(ERRCODE_INVALID_AUTHORIZATION_SPECIFICATION),
@@ -55,7 +54,7 @@ LoginCheck RequireLoginRole(std::string_view user, std::string_view dbname,
   }
   if (!auth::ClosureFor(nullptr, role.oid)
          ->Can(duckdb::CatalogType::DATABASE_ENTRY, perm,
-               catalog::AclMode::Connect)) {
+               duckdb::AclMode::Connect)) {
     return {.error = SQL_ERROR_DATA(
               ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
               ERR_MSG("permission denied for database \"", dbname, "\""),

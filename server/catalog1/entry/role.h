@@ -49,7 +49,6 @@ class CreateRoleInfo final : public duckdb::CreateInfo {
 
   CreateRoleInfo() : duckdb::CreateInfo{duckdb::CatalogType::ROLE_ENTRY} {}
 
-  duckdb::idx_t oid{0};
   RoleOption options{RoleOption::Inherit};
   int32_t conn_limit{kNoConnLimit};
   int64_t valid_until{kNoValidUntil};

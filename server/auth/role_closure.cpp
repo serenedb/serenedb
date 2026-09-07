@@ -166,7 +166,7 @@ RoleClosure ComputeRoleClosure(const RoleGraph& graph, duckdb::idx_t role) {
 std::shared_ptr<const RoleGraph> RolesOf(duckdb::ClientContext* context) {
   if (context == nullptr) {
     auto& cluster = catalog::ClusterOf();
-    return BuildRoleGraph(cluster, cluster.CommittedTransaction());
+    return BuildRoleGraph(cluster, cluster.LoginTransaction());
   }
   auto& cluster = catalog::ClusterOf(*context);
   return BuildRoleGraph(cluster, cluster.GetCatalogTransaction(*context));

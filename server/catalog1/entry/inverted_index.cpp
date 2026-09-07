@@ -37,8 +37,8 @@
 #include <string>
 
 #include "basics/serializer.h"
-#include "catalog1/scorer_options.h"
 #include "search/inverted_index_storage.h"
+#include "search/scorer_options.h"
 
 namespace sdb::catalog {
 namespace {
@@ -312,7 +312,7 @@ std::optional<ScorerOptions> InvertedIndexEntry::TopKScorer(
   if (text.empty()) {
     return std::nullopt;
   }
-  return ParseScorerExpression(context, text, "optimize_top_k");
+  return search::ParseScorerExpression(context, text, "optimize_top_k");
 }
 
 persistence::InvertedIndexData InvertedIndexEntry::ToPersisted() const {

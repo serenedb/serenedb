@@ -25,7 +25,9 @@
 
 namespace duckdb {
 
+class ClientContext;
 class DatabaseInstance;
+struct AlterRoleInfo;
 
 }  // namespace duckdb
 namespace sdb {
@@ -36,6 +38,8 @@ class ConnectionContext;
 namespace sdb::pg {
 
 void RegisterRbacFunctions(duckdb::DatabaseInstance& db);
+void ResolveAlterRole(duckdb::ClientContext& client,
+                      duckdb::AlterRoleInfo& info);
 
 std::string SetRole(ConnectionContext& ctx, std::string_view name);
 void ResetRole(ConnectionContext& ctx);

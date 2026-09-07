@@ -22,42 +22,15 @@
 
 #include <cstdint>
 #include <duckdb/catalog/catalog_entry.hpp>
-#include <duckdb/parser/parsed_data/alter_info.hpp>
+#include <duckdb/catalog/permissions.hpp>
 #include <duckdb/parser/parsed_data/create_info.hpp>
-#include <optional>
 #include <string>
 #include <vector>
 
 namespace sdb::catalog {
 
-enum class RoleOption : uint32_t {
-  None = 0,
-  Superuser = 1U << 0U,
-  Inherit = 1U << 1U,
-  CreateRole = 1U << 2U,
-  CreateDb = 1U << 3U,
-  Login = 1U << 4U,
-  Replication = 1U << 5U,
-  BypassRls = 1U << 6U,
-};
-
-constexpr RoleOption operator|(RoleOption lhs, RoleOption rhs) noexcept {
-  return static_cast<RoleOption>(static_cast<uint32_t>(lhs) |
-                                 static_cast<uint32_t>(rhs));
-}
-
-constexpr RoleOption operator&(RoleOption lhs, RoleOption rhs) noexcept {
-  return static_cast<RoleOption>(static_cast<uint32_t>(lhs) &
-                                 static_cast<uint32_t>(rhs));
-}
-
-constexpr bool HasOption(RoleOption options, RoleOption option) noexcept {
-  return (options & option) == option;
-}
-
-constexpr RoleOption operator~(RoleOption value) noexcept {
-  return static_cast<RoleOption>(~static_cast<uint32_t>(value));
-}
+using RoleOption = duckdb::RoleOption;
+using duckdb::HasOption;
 
 struct Membership {
   duckdb::idx_t role{0};
@@ -86,31 +59,6 @@ class CreateRoleInfo final : public duckdb::CreateInfo {
 
   duckdb::unique_ptr<duckdb::CreateInfo> Copy() const final;
   std::string ToString() const final;
-};
-
-class AlterRoleInfo final : public duckdb::AlterInfo {
- public:
-  AlterRoleInfo() : duckdb::AlterInfo{duckdb::AlterType::ALTER_ROLE} {}
-  explicit AlterRoleInfo(duckdb::Identifier name);
-
-  RoleOption set_options{RoleOption::None};
-  RoleOption clear_options{RoleOption::None};
-  std::optional<std::string> password;
-  std::optional<int32_t> conn_limit;
-  std::optional<int64_t> valid_until;
-  std::optional<duckdb::Identifier> new_name;
-  bool reset_all_config{false};
-  std::vector<std::string> reset_config;
-  std::vector<std::string> set_config;
-  std::vector<Membership> upsert_member_of;
-  std::vector<duckdb::idx_t> remove_member_of;
-
-  duckdb::CatalogType GetCatalogType() const final {
-    return duckdb::CatalogType::ROLE_ENTRY;
-  }
-  duckdb::unique_ptr<duckdb::AlterInfo> Copy() const final;
-  std::string ToString() const final;
-  void Serialize(duckdb::Serializer& serializer) const final;
 };
 
 class RoleCatalogEntry final : public duckdb::InCatalogEntry {

@@ -29,1269 +29,470 @@
 #include <duckdb/function/pragma_function.hpp>
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/main/extension/extension_loader.hpp>
+#include <duckdb/parser/parsed_data/alter_table_info.hpp>
 #include <memory>
-#include <optional>
 #include <string>
 #include <string_view>
 #include <utility>
 #include <vector>
 
-#include "auth/acl.h"
 #include "auth/role_closure.h"
-#include "catalog1/catalog.h"
-#include "catalog1/entry/database.h"
 #include "catalog1/cluster.h"
 #include "catalog1/entry/role.h"
 #include "connector/duckdb_client_state.h"
-#include "pg/connection_context.h"
 #include "network/credentials.h"
+#include "pg/connection_context.h"
 #include "pg/errcodes.h"
-#include "pg/role_dependencies.h"
 #include "pg/pg_types.h"
-#include "pg/sql_utils.h"
+#include "pg/role_dependencies.h"
+#include "pg/sql_exception_macro.h"
 
 namespace sdb::pg {
 namespace {
 
-// A role is cluster-wide, so it resolves against the cluster attachment and
-// not against the session's database.
-duckdb::optional_ptr<catalog::RoleCatalogEntry> FindRole(
-  duckdb::ClientContext& context, std::string_view name) {
-  auto& cluster = catalog::ClusterOf(context);
-  auto entry = cluster.LookupRole(cluster.GetCatalogTransaction(context),
-                                  duckdb::Identifier{std::string{name}});
-  return entry ? &entry->Cast<catalog::RoleCatalogEntry>() : nullptr;
-}
+using catalog::RoleOption;
+using duckdb::CatalogType;
 
-duckdb::Catalog& SessionDatabase(duckdb::ClientContext& context) {
-  return duckdb::Catalog::GetCatalog(
-    context,
-    duckdb::Identifier{connector::GetSereneDBContext(context).GetDatabase()});
-}
+struct Session {
+  ConnectionContext& conn;
+  duckdb::ClientContext& client;
+  std::shared_ptr<const auth::RoleGraph> roles;
+  std::shared_ptr<const auth::RoleClosure> closure;
 
-duckdb::optional_ptr<duckdb::SchemaCatalogEntry> FindSchema(
-  ConnectionContext& ctx, std::string_view name) {
-  auto& client = ctx.GetClientContext();
-  return duckdb::Catalog::GetCatalog(client,
-                                     duckdb::Identifier{ctx.GetDatabase()})
-    .GetSchema(client, duckdb::Identifier{std::string{name}},
-               duckdb::OnEntryNotFound::RETURN_NULL);
-}
-
-// Whether `schema` holds `name` as exactly this kind. The type has to be
-// re-checked because duckdb keeps tables and views in one set, so a lookup of
-// either kind answers with whichever one holds the name.
-duckdb::optional_ptr<duckdb::CatalogEntry> SchemaEntry(
-  ConnectionContext& ctx, duckdb::SchemaCatalogEntry& schema,
-  duckdb::CatalogType type, std::string_view name) {
-  auto entry =
-    schema.GetEntry(schema.GetCatalogTransaction(ctx.GetClientContext()), type,
-                    duckdb::Identifier{std::string{name}});
-  return entry && entry->type == type ? entry : nullptr;
-}
-
-auto FindAclItem(catalog::Acl& acl, duckdb::idx_t grantee,
-                 duckdb::idx_t grantor) {
-  return std::ranges::find_if(acl, [&](const catalog::AclItem& item) {
-    return item.grantee == grantee && item.grantor == grantor;
-  });
-}
-
-catalog::AclMode AclDependentPrivs(catalog::AclView acl, duckdb::idx_t grantee,
-                                   catalog::AclMode privs) {
-  catalog::AclMode dependent = catalog::AclMode::NoRights;
-  for (const auto& item : acl) {
-    if (item.grantor == grantee) {
-      dependent |= item.privs & privs;
-    }
+  duckdb::idx_t Role() const { return conn.GetRoleId(); }
+  bool Superuser() const { return closure->is_superuser; }
+  catalog::ClusterCatalog& Cluster() const {
+    return catalog::ClusterOf(client);
   }
-  return dependent;
-}
-
-void AclRevokeCascade(catalog::Acl& acl, duckdb::idx_t grantee,
-                      duckdb::idx_t grantor, catalog::AclMode privs) {
-  std::vector<std::pair<duckdb::idx_t, catalog::AclMode>> work{
-    {grantee, privs}};
-  while (!work.empty()) {
-    const auto [who, bits] = work.back();
-    work.pop_back();
-    for (const auto& item : acl) {
-      if (item.grantor != who) {
-        continue;
-      }
-      const catalog::AclMode dependent = item.privs & bits;
-      if (dependent != catalog::AclMode::NoRights) {
-        work.emplace_back(item.grantee, dependent);
-      }
-    }
-    for (auto it = acl.begin(); it != acl.end();) {
-      const bool top =
-        it->grantee == grantee && it->grantor == grantor && who == grantee;
-      if (it->grantor == who || top) {
-        it->privs &= ~bits;
-        it->grant_option &= ~bits;
-        if (it->privs == catalog::AclMode::NoRights) {
-          it = acl.erase(it);
-          continue;
-        }
-      }
-      ++it;
-    }
+  duckdb::CatalogTransaction ClusterTransaction() const {
+    return Cluster().GetCatalogTransaction(client);
   }
+};
+
+Session SessionOf(duckdb::ClientContext& client) {
+  auto& conn = connector::GetSereneDBContext(client);
+  return Session{conn, client, auth::RolesOf(&client),
+                 auth::ClosureFor(&client, conn.GetRoleId())};
 }
 
-void AclGrant(catalog::Acl& acl, duckdb::idx_t grantee, duckdb::idx_t grantor,
-              catalog::AclMode privs,
-              catalog::AclMode grant_option = catalog::AclMode::NoRights) {
-  if (auto it = FindAclItem(acl, grantee, grantor); it != acl.end()) {
-    it->privs |= privs;
-    it->grant_option |= (grant_option & privs);
-    return;
+const duckdb::Value& Arg(const duckdb::FunctionParameters& params, size_t i) {
+  return params.values[i];
+}
+
+std::string Str(const duckdb::FunctionParameters& params, size_t i) {
+  return Arg(params, i).GetValue<std::string>();
+}
+
+bool Flag(const duckdb::FunctionParameters& params, size_t i) {
+  return Arg(params, i).GetValue<bool>();
+}
+
+int64_t Big(const duckdb::FunctionParameters& params, size_t i) {
+  return Arg(params, i).GetValue<int64_t>();
+}
+
+std::vector<std::string> Names(const duckdb::FunctionParameters& params,
+                               size_t i) {
+  std::vector<std::string> out;
+  for (const auto& value : duckdb::ListValue::GetChildren(Arg(params, i))) {
+    out.push_back(value.GetValue<std::string>());
   }
-  acl.push_back(catalog::AclItem{
-    .grantee = grantee,
-    .grantor = grantor,
-    .privs = privs,
-    .grant_option = grant_option & privs,
-  });
+  return out;
 }
 
-void AclRevoke(catalog::Acl& acl, duckdb::idx_t grantee, duckdb::idx_t grantor,
-               catalog::AclMode privs) {
-  auto it = FindAclItem(acl, grantee, grantor);
-  if (it == acl.end()) {
-    return;
-  }
-  it->privs &= ~privs;
-  it->grant_option &= ~privs;
-  if (it->privs == catalog::AclMode::NoRights) {
-    acl.erase(it);
-  }
+duckdb::optional_ptr<duckdb::CatalogEntry> FindRole(const Session& s,
+                                                    std::string_view name) {
+  return s.Cluster().LookupRole(s.ClusterTransaction(),
+                                duckdb::Identifier{std::string{name}});
 }
 
-void AclRemoveGrantOption(catalog::Acl& acl, duckdb::idx_t grantee,
-                          duckdb::idx_t grantor, catalog::AclMode privs) {
-  if (auto it = FindAclItem(acl, grantee, grantor); it != acl.end()) {
-    it->grant_option &= ~privs;
-  }
-}
-
-catalog::Catalog& GlobalCatalog() { return catalog::GetCatalog(); }
-
-// The version of `schema_name` this transaction sees, refused as concurrently
-// dropped when another one has taken it.
-const duckdb::DuckSchemaEntry& RequireSchema(duckdb::ClientContext& context,
-                                             std::string_view schema_name) {
-  auto schema = SessionDatabase(context).GetSchema(
-    context, duckdb::Identifier{std::string{schema_name}},
-    duckdb::OnEntryNotFound::RETURN_NULL);
-  if (!schema) [[unlikely]] {
-    catalog::ThrowConcurrentlyDropped(duckdb::CatalogType::SCHEMA_ENTRY,
-                                      schema_name);
-  }
-  return schema->Cast<duckdb::DuckSchemaEntry>();
-}
-
-// GRANT / REVOKE ON SCHEMA and ALTER SCHEMA ... OWNER TO. A schema is one of
-// the hand-written puts -- the entry owns its contents' sets -- so the rewrite
-// goes through PutSchema rather than through the entry-kind machinery.
-void ChangeSchemaAcl(duckdb::ClientContext& client,
-                     std::string_view schema_name, auth::AclMutator mutate) {
-  const auto& schema = RequireSchema(client, schema_name);
-  auto perm = auth::MutatedAcl(schema.permissions,
-                               duckdb::CatalogType::SCHEMA_ENTRY, mutate);
-  const auto name = std::string{schema.name.GetIdentifierName()};
-  catalog::PutSchema(
-    &client, name,
-    catalog::MakeSchemaInfo(schema.oid, schema.GetDatabaseId(), name),
-    std::move(perm));
-}
-
-void ChangeSchemaOwner(duckdb::ClientContext& client,
-                       std::string_view schema_name, duckdb::idx_t new_owner,
-                       std::string_view new_owner_name) {
-  const auto& schema = RequireSchema(client, schema_name);
-  // A schema has no schema above it, so the parent check has nothing to
-  // resolve.
-  catalog::RequireOwnerTransfer(client, 0, schema.permissions, new_owner,
-                                new_owner_name, "schema",
-                                schema.name.GetIdentifierName());
-  auto perm = auth::TransferredOwner(schema.permissions, new_owner);
-  const auto name = std::string{schema.name.GetIdentifierName()};
-  catalog::PutSchema(
-    &client, name,
-    catalog::MakeSchemaInfo(schema.oid, schema.GetDatabaseId(), name),
-    std::move(perm));
-}
-
-// GRANT / REVOKE on one table. A table's entry is the object, so this is a
-// rewrite of the version the statement resolved -- re-read here because the
-// mutation scope was taken after that resolution.
-void ChangeTableAcl(duckdb::ClientContext& client,
-                    const duckdb::CreateTableInfo& table,
-                    duckdb::CatalogType type, auth::AclMutator mutate) {
-  auto current = duckdb::Catalog::GetEntry<duckdb::TableCatalogEntry>(
-    client, table.GetQualifiedName(), duckdb::OnEntryNotFound::RETURN_NULL);
-  if (!current) {
-    catalog::ThrowConcurrentlyDropped(duckdb::CatalogType::TABLE_ENTRY,
-                                      table.GetTableName().GetIdentifierName());
-  }
-  catalog::PutEntry(&client, current->name.GetIdentifierName(),
-                    current->GetInfo(),
-                    auth::MutatedAcl(current->permissions, type, mutate));
-}
-
-// The same for one column's grants, which ride the table's definition.
-// Returns the new version, so a caller changing several columns feeds each
-// result into the next call instead of re-resolving the name.
-duckdb::unique_ptr<duckdb::CreateTableInfo> ChangeColumnAcl(
-  duckdb::ClientContext& client, const duckdb::CreateTableInfo& table,
-  std::string_view column, auth::AclMutator mutate) {
-  auto entry = duckdb::Catalog::GetEntry<duckdb::TableCatalogEntry>(
-    client, table.GetQualifiedName(), duckdb::OnEntryNotFound::RETURN_NULL);
+catalog::RoleCatalogEntry& RoleByName(const Session& s, std::string_view name) {
+  auto entry = FindRole(s, name);
   if (!entry) {
-    catalog::ThrowConcurrentlyDropped(duckdb::CatalogType::TABLE_ENTRY,
-                                      table.GetTableName().GetIdentifierName());
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
+                    ERR_MSG("role \"", name, "\" does not exist"));
   }
-  auto current = entry->Definition();
-  const auto* definition = catalog::ColumnByName(*current, column);
-  if (definition == nullptr) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_COLUMN),
-                    ERR_MSG("column \"", column, "\" of relation \"",
-                            current->GetTableName().GetIdentifierName(),
-                            "\" does not exist"));
-  }
-  const duckdb::idx_t column_id{definition->Oid()};
-  // A grant is not a change to what the table is, so the definition is
-  // republished unchanged and only the permissions beside it move.
-  auto perm = entry->permissions;
-  const duckdb::idx_t owner = perm.owner;
-  catalog::Acl acl{catalog::ColumnAclOf(perm.column_acl, column_id).begin(),
-                   catalog::ColumnAclOf(perm.column_acl, column_id).end()};
-  mutate(owner, acl);
-  catalog::SetColumnAcl(perm.column_acl, column_id, std::move(acl));
-  catalog::PutEntry(&client, current->GetTableName().GetIdentifierName(),
-                    current->Copy(), std::move(perm));
-  return current;
+  return entry->Cast<catalog::RoleCatalogEntry>();
 }
 
-int32_t ParseConnLimit(bool has_conn_limit, int64_t value) {
-  if (!has_conn_limit) {
-    return catalog::Role::kNoConnLimit;
+std::string RoleName(const Session& s, duckdb::idx_t role) {
+  return std::string{s.roles->NameOf(role)};
+}
+
+[[noreturn]] void DenyRoleAction(std::string_view verb, std::string detail) {
+  THROW_SQL_ERROR(ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
+                  ERR_MSG("permission denied to ", verb, " role"),
+                  ERR_DETAIL(detail));
+}
+
+void RequireAttributeGrant(const Session& s, std::string_view verb,
+                           RoleOption options) {
+  if (s.Superuser()) {
+    return;
   }
-  if (value < catalog::Role::kNoConnLimit ||
-      value > std::numeric_limits<int32_t>::max()) {
+  const auto deny = [&](std::string_view attribute) {
+    DenyRoleAction(
+      verb, absl::StrCat("Only roles with the ", attribute, " attribute may ",
+                         verb, " roles with the ", attribute, " attribute."));
+  };
+  if (HasOption(options, RoleOption::Superuser)) {
+    deny("SUPERUSER");
+  }
+  if (HasOption(options, RoleOption::CreateDb) &&
+      !s.closure->Has(RoleOption::CreateDb)) {
+    deny("CREATEDB");
+  }
+  if (HasOption(options, RoleOption::Replication) &&
+      !s.closure->Has(RoleOption::Replication)) {
+    deny("REPLICATION");
+  }
+  if (HasOption(options, RoleOption::BypassRls) &&
+      !s.closure->Has(RoleOption::BypassRls)) {
+    deny("BYPASSRLS");
+  }
+}
+
+void RequireRoleAdmin(const Session& s, const catalog::RoleCatalogEntry& role,
+                      std::string_view verb) {
+  if (s.Superuser()) {
+    return;
+  }
+  if (role.IsSuperuser()) {
+    DenyRoleAction(
+      verb, absl::StrCat("Only roles with the SUPERUSER attribute may ", verb,
+                         " roles with the SUPERUSER attribute."));
+  }
+  if (!s.closure->Has(RoleOption::CreateRole) ||
+      !s.closure->IsAdminOf(role.oid)) {
+    DenyRoleAction(verb,
+                   absl::StrCat("Only roles with the CREATEROLE attribute and "
+                                "the ADMIN option on role \"",
+                                role.name.GetIdentifierName(), "\" may ", verb,
+                                " this role."));
+  }
+}
+
+void RequireConnectionLimit(int64_t limit) {
+  if (limit < -1) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                    ERR_MSG("invalid connection limit: ", value));
+                    ERR_MSG("invalid connection limit: ", limit));
   }
-  return static_cast<int32_t>(value);
 }
 
-int64_t ValidUntilOrUnset(bool has_valid_until, int64_t micros) {
-  return has_valid_until ? micros : catalog::Role::kNoValidUntil;
-}
-
-std::string MakePassword(bool has_password, std::string_view password,
-                         bool is_null) {
-  if (!has_password || is_null) {
-    return {};
-  }
-  // A pre-hashed verifier (SCRAM or md5, from pg_dumpall / psql \password /
-  // migrations) is stored verbatim -- re-hashing it would make the literal
-  // string the password. Cleartext is hashed to a SCRAM verifier (the default).
+std::string StoredPassword(std::string_view password) {
   if (network::IsScramVerifier(password) || network::IsMd5Verifier(password)) {
     return std::string{password};
   }
   auto verifier = network::BuildScramVerifierString(password);
   if (!verifier) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INTERNAL_ERROR),
-                    ERR_MSG("could not derive password verifier"));
+                    ERR_MSG("could not hash the password"));
   }
   return *verifier;
 }
 
-}  // namespace
+void RequireCreateRoleForDrop(const Session& s) {
+  if (!s.Superuser() && !s.closure->Has(RoleOption::CreateRole)) {
+    DenyRoleAction("drop",
+                   "Only roles with the CREATEROLE attribute and the ADMIN "
+                   "option on the target roles may drop roles.");
+  }
+}
 
-void CreateRole(ConnectionContext& ctx, std::string_view name,
-                const CreateRoleOptions& options) {
-  const int32_t conn_limit =
-    ParseConnLimit(options.has_conn_limit, options.conn_limit);
-  const int64_t valid_until =
-    ValidUntilOrUnset(options.has_valid_until, options.valid_until);
+void RefreshSuperuser(ConnectionContext& ctx) {
+  const bool superuser =
+    auth::ClosureFor(&ctx.GetClientContext(), ctx.GetRoleId())->is_superuser;
+  ctx.SetSetting("is_superuser", superuser ? "on" : "off", false);
+}
 
-  auto& catalog = GlobalCatalog();
-  catalog::RoleOption opts = catalog::RoleOption::None;
-  if (options.login) {
-    opts |= catalog::RoleOption::Login;
+RoleOption OptionIf(bool enabled, RoleOption option) {
+  return enabled ? option : RoleOption::None;
+}
+
+duckdb::idx_t GrantorOfMembership(const Session& s) {
+  return s.Superuser() ? kRootUser : s.Role();
+}
+
+void GrantMembership(const Session& s, catalog::RoleCatalogEntry& member,
+                     duckdb::idx_t role, duckdb::idx_t grantor, bool admin,
+                     bool inherit, bool set) {
+  duckdb::AlterRoleInfo alter{member.name};
+  alter.grant_role_id = role;
+  alter.grantor_id = grantor;
+  alter.admin_option = admin;
+  alter.inherit_option = inherit;
+  alter.set_option = set;
+  s.Cluster().AlterRole(s.ClusterTransaction(), member.name, alter);
+}
+
+void CreateRolePragma(duckdb::ClientContext& client,
+                      const duckdb::FunctionParameters& params) {
+  auto s = SessionOf(client);
+  const auto name = Str(params, 0);
+  const bool login = Flag(params, 1);
+  const bool superuser = Flag(params, 2);
+  const bool inherit = Flag(params, 3);
+  const bool has_password = Flag(params, 4);
+  const auto password = Str(params, 5);
+  const bool password_is_null = Flag(params, 6);
+  const bool has_conn_limit = Flag(params, 7);
+  const bool has_valid_until = Flag(params, 8);
+  const auto valid_until = Big(params, 9);
+  const bool createdb = Flag(params, 10);
+  const bool createrole = Flag(params, 11);
+  const auto conn_limit = Big(params, 12);
+  const bool replication = Flag(params, 13);
+  const bool bypassrls = Flag(params, 14);
+  const auto in_roles = Names(params, 15);
+  const auto role_members = Names(params, 16);
+  const auto admin_members = Names(params, 17);
+
+  if (!s.Superuser() && !s.closure->Has(RoleOption::CreateRole)) {
+    DenyRoleAction(
+      "create", "Only roles with the CREATEROLE attribute may create roles.");
   }
-  if (options.superuser) {
-    opts |= catalog::RoleOption::Superuser;
+  RequireAttributeGrant(s, "create",
+                        OptionIf(superuser, RoleOption::Superuser) |
+                          OptionIf(createdb, RoleOption::CreateDb) |
+                          OptionIf(replication, RoleOption::Replication) |
+                          OptionIf(bypassrls, RoleOption::BypassRls));
+  if (has_conn_limit) {
+    RequireConnectionLimit(conn_limit);
   }
-  if (options.createdb) {
-    opts |= catalog::RoleOption::CreateDb;
+  if (FindRole(s, name)) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_DUPLICATE_OBJECT),
+                    ERR_MSG("role \"", name, "\" already exists"));
   }
-  if (options.createrole) {
-    opts |= catalog::RoleOption::CreateRole;
-  }
-  if (options.replication) {
-    opts |= catalog::RoleOption::Replication;
-  }
-  if (options.bypassrls) {
-    opts |= catalog::RoleOption::BypassRls;
-  }
-  if (options.inherit) {
-    opts |= catalog::RoleOption::Inherit;
-  }
+
   catalog::CreateRoleInfo info;
-  info.SetName(duckdb::Identifier{std::string{name}});
-  info.options = opts;
-  info.conn_limit = conn_limit;
-  info.valid_until = valid_until;
-  info.password = MakePassword(options.has_password, options.password,
-                               options.password_is_null);
-
-  catalog.CreateRole(
-    duckdb::CatalogTransaction{catalog, ctx.GetClientContext()}, info);
-
-  for (const auto& g : options.in_roles) {
-    GrantRole(ctx, g, name, /*revoke=*/false, MemberOptions{});
+  info.SetName(duckdb::Identifier{name});
+  info.options = OptionIf(login, RoleOption::Login) |
+                 OptionIf(superuser, RoleOption::Superuser) |
+                 OptionIf(inherit, RoleOption::Inherit) |
+                 OptionIf(createdb, RoleOption::CreateDb) |
+                 OptionIf(createrole, RoleOption::CreateRole) |
+                 OptionIf(replication, RoleOption::Replication) |
+                 OptionIf(bypassrls, RoleOption::BypassRls);
+  if (has_password && !password_is_null) {
+    info.password = StoredPassword(password);
   }
-  for (const auto& m : options.role_members) {
-    GrantRole(ctx, name, m, /*revoke=*/false, MemberOptions{});
+  if (has_conn_limit) {
+    info.conn_limit = static_cast<int32_t>(conn_limit);
   }
-  for (const auto& a : options.admin_members) {
-    GrantRole(ctx, name, a, /*revoke=*/false, MemberOptions{.admin = 1});
+  if (has_valid_until) {
+    info.valid_until = valid_until;
+  }
+  const auto grantor = GrantorOfMembership(s);
+  for (const auto& role_name : in_roles) {
+    info.member_of.push_back(catalog::Membership{
+      .role = RoleByName(s, role_name).oid,
+      .grantor = grantor,
+      .admin_option = false,
+      .inherit_option = inherit,
+      .set_option = true,
+    });
+  }
+  auto created = s.Cluster().CreateRole(s.ClusterTransaction(), info);
+  if (!created) {
+    return;
+  }
+  const auto new_role = created->oid;
+  for (const auto& member_name : role_members) {
+    auto& member = RoleByName(s, member_name);
+    GrantMembership(s, member, new_role, grantor, false,
+                    HasOption(member.Options(), RoleOption::Inherit), true);
+  }
+  for (const auto& member_name : admin_members) {
+    auto& member = RoleByName(s, member_name);
+    GrantMembership(s, member, new_role, grantor, true,
+                    HasOption(member.Options(), RoleOption::Inherit), true);
+  }
+  if (!s.Superuser()) {
+    GrantMembership(s, RoleByName(s, RoleName(s, s.Role())), new_role,
+                    kRootUser, true, false, false);
   }
 }
 
-void DropRole(ConnectionContext& ctx, std::string_view name, bool missing_ok) {
-  auto& catalog = GlobalCatalog();
-  if (!catalog.DropRole(
-        duckdb::CatalogTransaction{catalog, ctx.GetClientContext()}, name,
-        missing_ok)) {
-    ctx.AddNotice(
-      SQL_ERROR_DATA(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
-                     ERR_MSG("role \"", name, "\" does not exist, skipping")));
+void DropRolePragma(duckdb::ClientContext& client,
+                    const duckdb::FunctionParameters& params) {
+  auto s = SessionOf(client);
+  const bool if_exists = Flag(params, 1);
+  RequireCreateRoleForDrop(s);
+  for (const auto& name : Names(params, 0)) {
+    auto entry = FindRole(s, name);
+    if (!entry) {
+      if (if_exists) {
+        continue;
+      }
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
+                      ERR_MSG("role \"", name, "\" does not exist"));
+    }
+    auto& role = entry->Cast<catalog::RoleCatalogEntry>();
+    RequireRoleAdmin(s, role, "drop");
+    if (role.oid == s.Role() || role.oid == s.conn.GetSessionRoleId() ||
+        role.oid == s.conn.GetLoginRoleId()) {
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_OBJECT_IN_USE),
+                      ERR_MSG("current user cannot be dropped"));
+    }
+
+    std::string dependent;
+    VisitRoleDependencies(client, [&](const RoleDependency& dependency) {
+      if (dependency.role == role.oid && dependent.empty()) {
+        dependent = absl::StrCat(dependency.kind, " ", dependency.name);
+      }
+    });
+    if (!dependent.empty()) {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_DEPENDENT_OBJECTS_STILL_EXIST),
+        ERR_MSG("role \"", name,
+                "\" cannot be dropped because some objects depend on it"),
+        ERR_DETAIL("depends on ", dependent));
+    }
+
+    std::vector<duckdb::Identifier> members;
+    s.Cluster().ScanRoles(
+      s.ClusterTransaction(), [&](duckdb::CatalogEntry& other) {
+        const auto& candidate = other.Cast<catalog::RoleCatalogEntry>();
+        if (std::ranges::contains(candidate.MemberOf(), role.oid,
+                                  &catalog::Membership::role)) {
+          members.push_back(candidate.name);
+        }
+      });
+    for (const auto& member : members) {
+      duckdb::AlterRoleInfo alter{member};
+      alter.grant_role_id = role.oid;
+      alter.revoke = true;
+      s.Cluster().AlterRole(s.ClusterTransaction(), member, alter);
+    }
+    s.Cluster().DropRole(s.ClusterTransaction(), role.name, false);
   }
 }
 
-namespace {
-
-catalog::RoleOption SetBit(catalog::RoleOption options, catalog::RoleOption bit,
-                           int tri) {
-  if (tri == 1) {
-    return options | bit;
+void ResolveMembership(const Session& s, duckdb::AlterRoleInfo& info,
+                       const catalog::RoleCatalogEntry& member) {
+  const auto& target = RoleByName(s, info.grant_role);
+  if (!s.Superuser() && !s.closure->IsAdminOf(target.oid)) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
+      ERR_MSG("permission denied to grant role \"",
+              target.name.GetIdentifierName(), "\""),
+      ERR_DETAIL("Only roles with the ADMIN option on role \"",
+                 target.name.GetIdentifierName(), "\" may grant this role."));
   }
-  if (tri == 0) {
-    return options & ~bit;
+  if (!info.revoke &&
+      (member.oid == target.oid ||
+       auth::ComputeRoleClosure(*s.roles, target.oid).IsMember(member.oid))) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_GRANT_OPERATION),
+                    ERR_MSG("role \"", target.name.GetIdentifierName(),
+                            "\" is a member of role \"",
+                            member.name.GetIdentifierName(), "\""));
   }
-  return options;
-}
-
-void SyncIsSuperuser(ConnectionContext& conn) {
-  const bool super =
-    auth::ClosureFor(&conn.GetClientContext(), conn.GetRoleId())->is_superuser;
-  conn.SetSetting("is_superuser", super ? "on" : "off", /*is_local=*/false);
+  info.grant_role_id = target.oid;
+  info.grantor_id = GrantorOfMembership(s);
 }
 
 }  // namespace
 
-void AlterRole(ConnectionContext& ctx, std::string_view name,
-               const AlterRoleOptions& opts) {
-  const int32_t conn_limit =
-    ParseConnLimit(opts.has_conn_limit, opts.conn_limit);
-  const int64_t valid_until =
-    ValidUntilOrUnset(opts.has_valid_until, opts.valid_until);
-
-  // Hash outside the mutate lambda (which runs under the catalog lock).
-  const std::string verifier =
-    MakePassword(opts.has_password, opts.password, opts.password_is_null);
-
-  auto& catalog = GlobalCatalog();
-  catalog.ChangeRole(
-    duckdb::CatalogTransaction{catalog, ctx.GetClientContext()}, name, "alter",
-    /*allow_self=*/false,
-    [opts, verifier, conn_limit, valid_until](
-      const catalog::Role& old_role,
-      duckdb::unique_ptr<catalog::Role>& new_role) {
-      new_role = old_role.Clone();
-      catalog::RoleOption o = new_role->Options();
-      o = SetBit(o, catalog::RoleOption::Login, opts.login);
-      o = SetBit(o, catalog::RoleOption::Superuser, opts.superuser);
-      o = SetBit(o, catalog::RoleOption::CreateDb, opts.createdb);
-      o = SetBit(o, catalog::RoleOption::CreateRole, opts.createrole);
-      o = SetBit(o, catalog::RoleOption::Replication, opts.replication);
-      o = SetBit(o, catalog::RoleOption::BypassRls, opts.bypassrls);
-      o = SetBit(o, catalog::RoleOption::Inherit, opts.inherit);
-      new_role->SetOptions(o);
-      if (opts.has_password) {
-        new_role->SetPassword(verifier);
-      }
-      if (opts.has_valid_until) {
-        new_role->SetValidUntil(valid_until);
-      }
-      if (opts.has_conn_limit) {
-        new_role->SetConnLimit(conn_limit);
-      }
-    });
+void ResolveAlterRole(duckdb::ClientContext& client,
+                      duckdb::AlterRoleInfo& info) {
+  auto s = SessionOf(client);
+  auto& role =
+    RoleByName(s, info.GetQualifiedName().Name().GetIdentifierName());
+  if (!info.grant_role.empty()) {
+    ResolveMembership(s, info, role);
+    return;
+  }
+  if (!info.new_name.empty()) {
+    if (role.oid == s.Role() || role.oid == s.conn.GetSessionRoleId()) {
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+                      ERR_MSG("session user cannot be renamed"));
+    }
+    RequireRoleAdmin(s, role, "rename");
+    if (FindRole(s, info.new_name.GetIdentifierName())) {
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_DUPLICATE_OBJECT),
+                      ERR_MSG("role \"", info.new_name.GetIdentifierName(),
+                              "\" already exists"));
+    }
+    return;
+  }
+  const bool attributes = info.set_options != RoleOption::None ||
+                          info.clear_options != RoleOption::None ||
+                          info.set_conn_limit || info.set_valid_until;
+  if (!s.Superuser() && (role.oid != s.Role() || attributes)) {
+    RequireRoleAdmin(s, role, "alter");
+    RequireAttributeGrant(s, "alter", info.set_options);
+  }
+  if (info.set_conn_limit) {
+    RequireConnectionLimit(info.conn_limit);
+  }
+  if (info.set_password) {
+    info.password =
+      info.null_password ? std::string{} : StoredPassword(info.password);
+  }
 }
 
-void RenameRole(ConnectionContext& ctx, std::string_view name,
-                std::string_view new_name) {
-  auto& catalog = GlobalCatalog();
-  catalog.ChangeRole(
-    duckdb::CatalogTransaction{catalog, ctx.GetClientContext()}, name, "rename",
-    /*allow_self=*/false,
-    [new_name = std::string{new_name}](
-      const catalog::Role& old_role,
-      duckdb::unique_ptr<catalog::Role>& new_role) {
-      new_role = old_role.Clone();
-      new_role->SetRoleName(new_name);
-    });
+void RegisterRbacFunctions(duckdb::DatabaseInstance& db) {
+  duckdb::ExtensionLoader loader(db, "serenedb");
+  using duckdb::LogicalType;
+  const auto names = LogicalType::LIST(LogicalType::VARCHAR);
+  const auto add = [&](const char* name, duckdb::pragma_function_t function,
+                       duckdb::vector<LogicalType> arguments) {
+    loader.RegisterFunction(duckdb::PragmaFunction::PragmaCall(
+      duckdb::Identifier{name}, function, std::move(arguments)));
+  };
+  add("serenedb_create_role", CreateRolePragma,
+      {LogicalType::VARCHAR, LogicalType::BOOLEAN, LogicalType::BOOLEAN,
+       LogicalType::BOOLEAN, LogicalType::BOOLEAN, LogicalType::VARCHAR,
+       LogicalType::BOOLEAN, LogicalType::BOOLEAN, LogicalType::BOOLEAN,
+       LogicalType::BIGINT, LogicalType::BOOLEAN, LogicalType::BOOLEAN,
+       LogicalType::BIGINT, LogicalType::BOOLEAN, LogicalType::BOOLEAN, names,
+       names, names});
+  add("serenedb_drop_role", DropRolePragma, {names, LogicalType::BOOLEAN});
 }
 
-std::string SetRole(ConnectionContext& conn, std::string_view name) {
-  if (absl::EqualsIgnoreCase(name, "none")) {
-    conn.SetEffectiveRole(conn.GetSessionRoleId());
-    SyncIsSuperuser(conn);
+std::string SetRole(ConnectionContext& ctx, std::string_view name) {
+  if (name.empty() || absl::EqualsIgnoreCase(name, "none")) {
+    ctx.SetEffectiveRole(ctx.GetSessionRoleId());
+    RefreshSuperuser(ctx);
     return "none";
   }
-  auto& client = conn.GetClientContext();
-  auto target = FindRole(client, name);
-  if (!target) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                    ERR_MSG("role \"", name, "\" does not exist"));
-  }
-  // SET ROLE is relative to the session role, not the (possibly already
-  // switched) effective role: members-of via set_option edges, or superuser.
-  const duckdb::idx_t session = conn.GetSessionRoleId();
-  if (!auth::ClosureFor(&client, session)->is_superuser &&
-      !auth::ComputeSetRoleClosure(*auth::RolesOf(&client), session)
-         .contains(target->oid)) {
+  auto s = SessionOf(ctx.GetClientContext());
+  auto& role = RoleByName(s, name);
+  const auto session_role = ctx.GetSessionRoleId();
+  const auto session = auth::ComputeRoleClosure(*s.roles, session_role);
+  if (role.oid != session_role && !session.is_superuser &&
+      !session.CanSet(role.oid)) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
                     ERR_MSG("permission denied to set role \"", name, "\""));
   }
-  conn.SetEffectiveRole(target->oid);
-  SyncIsSuperuser(conn);
-  return target->name.GetIdentifierName();
+  ctx.SetEffectiveRole(role.oid);
+  RefreshSuperuser(ctx);
+  return std::string{name};
 }
 
-void ResetRole(ConnectionContext& conn) {
-  conn.SetEffectiveRole(conn.GetSessionRoleId());
-  SyncIsSuperuser(conn);
+void ResetRole(ConnectionContext& ctx) {
+  ctx.SetEffectiveRole(ctx.GetSessionRoleId());
+  RefreshSuperuser(ctx);
 }
 
-std::string SetSessionAuthorization(ConnectionContext& conn,
+std::string SetSessionAuthorization(ConnectionContext& ctx,
                                     std::string_view name) {
-  auto& client = conn.GetClientContext();
-  auto target = FindRole(client, name);
-  if (!target) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                    ERR_MSG("role \"", name, "\" does not exist"));
-  }
-  const bool login_super =
-    auth::ClosureFor(&client, conn.GetLoginRoleId())->is_superuser;
-  if (!login_super && target->oid != conn.GetLoginRoleId()) {
+  auto s = SessionOf(ctx.GetClientContext());
+  auto& role = RoleByName(s, name);
+  const auto login = ctx.GetLoginRoleId();
+  if (role.oid != login && !auth::ClosureFor(&s.client, login)->is_superuser) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
       ERR_MSG("permission denied to set session authorization \"", name, "\""));
   }
-  conn.SetSessionRole(target->oid);
-  conn.SetSetting("role", "none", /*is_local=*/false);
-  SyncIsSuperuser(conn);
-  return target->name.GetIdentifierName();
+  ctx.SetSessionRole(role.oid);
+  RefreshSuperuser(ctx);
+  return std::string{name};
 }
 
-void ResetSessionAuthorization(ConnectionContext& conn) {
-  conn.ResetIdentity();
-  conn.SetSetting("role", "none", /*is_local=*/false);
-  SyncIsSuperuser(conn);
-}
-
-void AlterRoleConfig(ConnectionContext& ctx, std::string_view name,
-                     std::string_view op, std::string_view setting,
-                     std::string_view value) {
-  const bool is_self = name == ctx.user();
-
-  auto& catalog = GlobalCatalog();
-  catalog.ChangeRole(
-    duckdb::CatalogTransaction{catalog, ctx.GetClientContext()}, name, "alter",
-    /*allow_self=*/is_self,
-    [op = std::string{op}, setting = std::string{setting},
-     value = std::string{value}](const catalog::Role& old_role,
-                                 duckdb::unique_ptr<catalog::Role>& new_role) {
-      new_role = old_role.Clone();
-      if (op == "RESET_ALL") {
-        new_role->ResetAllConfig();
-      } else if (op == "RESET") {
-        new_role->ResetConfig(setting);
-      } else {
-        new_role->SetConfig(setting, value);
-      }
-    });
-}
-
-namespace {
-
-duckdb::CatalogType DefaultAclObjType(std::string_view objtype_char) {
-  if (objtype_char == "S") {
-    return duckdb::CatalogType::SEQUENCE_ENTRY;
-  }
-  if (objtype_char == "f") {
-    return duckdb::CatalogType::MACRO_ENTRY;
-  }
-  if (objtype_char == "T") {
-    return duckdb::CatalogType::TYPE_ENTRY;
-  }
-  if (objtype_char == "n") {
-    return duckdb::CatalogType::SCHEMA_ENTRY;
-  }
-  return duckdb::CatalogType::TABLE_ENTRY;
-}
-
-catalog::AclMode ParseAclModeOrThrow(std::span<const ParsedPriv> privileges,
-                                     duckdb::CatalogType type) {
-  const std::string_view object_word = type == duckdb::CatalogType::TABLE_ENTRY
-                                         ? "relation"
-                                         : ToPgObjectTypeName(type);
-  catalog::AclMode out = catalog::AclMode::NoRights;
-  for (const auto& p : privileges) {
-    auto parsed = auth::TryParseAclKeyword(p.keyword, type);
-    if (!parsed) {
-      THROW_SQL_ERROR(
-        ERR_CODE(ERRCODE_INVALID_GRANT_OPERATION),
-        ERR_MSG("invalid privilege type ", absl::AsciiStrToUpper(p.keyword),
-                " for ", object_word));
-    }
-    out |= *parsed;
-  }
-  return out;
-}
-
-bool AnyColumnPrivs(std::span<const ParsedPriv> parsed) {
-  return std::ranges::any_of(
-    parsed, [](const ParsedPriv& p) { return !p.columns.empty(); });
-}
-
-duckdb::idx_t ResolveGranteeId(duckdb::ClientContext& context,
-                               std::string_view grantee) {
-  if (grantee == "PUBLIC" || grantee == "public") {
-    return kPublicGrantee;
-  }
-  auto grantee_role = FindRole(context, grantee);
-  if (!grantee_role) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
-                    ERR_MSG("role \"", grantee, "\" does not exist"));
-  }
-  return grantee_role->oid;
-}
-
-duckdb::idx_t ResolveGrantedBy(duckdb::ClientContext& context,
-                               std::string_view granted_by) {
-  if (granted_by.empty()) {
-    return pg::kInvalidOid;
-  }
-  auto gb = FindRole(context, granted_by);
-  if (!gb) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
-                    ERR_MSG("role \"", granted_by, "\" does not exist"));
-  }
-  return gb->oid;
-}
-
-void ApplyAclChange(catalog::Acl& acl, duckdb::idx_t grantee,
-                    duckdb::idx_t grantor, catalog::AclMode privs, bool revoke,
-                    bool with_grant_option, bool grant_option_only,
-                    bool cascade) {
-  const auto grant_option =
-    with_grant_option ? privs : catalog::AclMode::NoRights;
-  if (!revoke) {
-    AclGrant(acl, grantee, grantor, privs, grant_option);
-  } else if (grant_option_only) {
-    AclRemoveGrantOption(acl, grantee, grantor, privs);
-  } else if (cascade) {
-    AclRevokeCascade(acl, grantee, grantor, privs);
-  } else {
-    AclRevoke(acl, grantee, grantor, privs);
-  }
-}
-
-}  // namespace
-
-void AlterDefaultPrivileges(ConnectionContext& ctx,
-                            std::span<const ParsedPriv> privileges,
-                            std::string_view objtype_char,
-                            std::string_view grantee, bool revoke,
-                            const DefaultPrivilegesOptions& opts) {
-  auto& catalog = GlobalCatalog();
-
-  // Without FOR ROLE postgres sets the default privileges of GetUserId() -- the
-  // current role, which SET ROLE moves -- and not of the session's login user.
-  const std::string current_role = ctx.EffectiveUserName();
-  const std::string_view defacl_role_name =
-    opts.for_role.empty() ? current_role : opts.for_role;
-  auto defacl_role = FindRole(ctx.GetClientContext(), defacl_role_name);
-  if (!defacl_role) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
-                    ERR_MSG("role \"", defacl_role_name, "\" does not exist"));
-  }
-  const duckdb::idx_t defacl_role_id = defacl_role->oid;
-
-  const duckdb::idx_t grantee_id =
-    ResolveGranteeId(ctx.GetClientContext(), grantee);
-
-  duckdb::idx_t schema_id = pg::kInvalidOid;
-  if (!opts.in_schema.empty()) {
-    auto schema = FindSchema(ctx, opts.in_schema);
-    if (!schema) {
-      THROW_SQL_ERROR(
-        ERR_CODE(ERRCODE_UNDEFINED_SCHEMA),
-        ERR_MSG("schema \"", opts.in_schema, "\" does not exist"));
-    }
-    schema_id = schema->oid;
-  }
-
-  const auto type = DefaultAclObjType(objtype_char);
-  const char objtype_c = objtype_char.empty() ? 'r' : objtype_char.front();
-
-  const catalog::AclMode privs = ParseAclModeOrThrow(privileges, type);
-
-  catalog.ChangeDefaultAcl(
-    duckdb::CatalogTransaction{catalog, ctx.GetClientContext()},
-    defacl_role_name, schema_id, objtype_c, type,
-    [grantee_id, defacl_role_id, privs, revoke,
-     with_grant_option = opts.with_grant_option,
-     grant_option_only = opts.grant_option_only,
-     cascade = opts.cascade](catalog::Acl& acl) {
-      ApplyAclChange(acl, grantee_id, defacl_role_id, privs, revoke,
-                     with_grant_option, grant_option_only, cascade);
-    });
-}
-
-namespace {
-
-// Whether one of the kinds whose entry is the object holds `name` in `schema`.
-bool EntryExists(ConnectionContext& ctx, duckdb::CatalogType type,
-                 duckdb::SchemaCatalogEntry& schema, std::string_view name) {
-  switch (type) {
-    case duckdb::CatalogType::TYPE_ENTRY:
-    case duckdb::CatalogType::VIEW_ENTRY:
-    case duckdb::CatalogType::SEQUENCE_ENTRY:
-      return SchemaEntry(ctx, schema, type, name) != nullptr;
-    case duckdb::CatalogType::MACRO_ENTRY:
-      // A scalar macro and a table macro are one kind here and two duckdb
-      // sets, so a function name has to be tried against both.
-      return SchemaEntry(ctx, schema, type, name) != nullptr ||
-             SchemaEntry(ctx, schema, duckdb::CatalogType::TABLE_MACRO_ENTRY,
-                         name) != nullptr;
-    default:
-      return false;
-  }
-}
-
-// The transaction's own view: a GRANT may name a table an earlier statement of
-// the same transaction created, and one issued after a mutation inside this
-// statement has to see that mutation too.
-duckdb::unique_ptr<duckdb::CreateTableInfo> ResolveGrantTarget(
-  ConnectionContext& ctx, std::string_view raw_name, std::string& out_schema,
-  std::string& out_name, catalog::Permissions* perm = nullptr) {
-  const std::string current_schema = ctx.GetCurrentSchema();
-  const auto parsed = ParseObjectName(raw_name, current_schema);
-  out_schema = parsed.schema;
-  out_name = parsed.relation;
-  auto schema = FindSchema(ctx, parsed.schema);
-  auto entry = schema
-                 ? SchemaEntry(ctx, *schema, duckdb::CatalogType::TABLE_ENTRY,
-                               parsed.relation)
-                 : nullptr;
-  if (!entry) {
-    return nullptr;
-  }
-  if (perm != nullptr) {
-    *perm = entry->permissions;
-  }
-  return entry->Cast<duckdb::TableCatalogEntry>().Definition();
-}
-
-}  // namespace
-namespace {
-
-// What a grant reported back to the statement. Heap-allocated so the op that
-// fills it can hold it by value: the op outlives the frame that staged it.
-struct AclGrantOutcome {
-  bool no_authority = false;
-  bool nothing_applied = false;
-  bool dependents_block = false;
-  bool not_member = false;
-};
-
-struct AclGrantContext {
-  catalog::AclMode privs;
-  duckdb::idx_t grantee_id;
-  duckdb::idx_t current_id;
-  duckdb::idx_t granted_by_id;
-  bool revoke;
-  const GrantObjectOptions& opts;
-  bool* no_authority;
-  bool* nothing_applied;
-  bool* dependents_block;
-  bool* not_member;
-};
-
-void ApplyAclGrant(duckdb::ClientContext& context, duckdb::idx_t owner,
-                   catalog::Acl& acl, const AclGrantContext& gc) {
-  const auto rc_ptr = auth::ClosureFor(&context, gc.current_id);
-  const auto& rc = *rc_ptr;
-  const bool is_superuser = rc.is_superuser;
-  const bool has_grantor = gc.granted_by_id != pg::kInvalidOid;
-  if (has_grantor && !is_superuser &&
-      !auth::ComputeMembershipClosure(*auth::RolesOf(&context), gc.current_id)
-         .contains(gc.granted_by_id)) {
-    *gc.not_member = true;
-    return;
-  }
-  const bool is_owner = rc.Owns(owner);
-  const duckdb::idx_t grantor =
-    has_grantor ? gc.granted_by_id : (is_owner ? owner : gc.current_id);
-  catalog::AclMode allowed = gc.privs;
-  if (!is_owner) {
-    allowed &= rc.GrantableModes(acl);
-  }
-  if (allowed == catalog::AclMode::NoRights) {
-    if (!is_owner && rc.HeldModes(acl) == catalog::AclMode::NoRights) {
-      *gc.no_authority = true;
-    } else {
-      *gc.nothing_applied = true;
-    }
-    return;
-  }
-  if (!gc.revoke) {
-    const auto grant_option =
-      gc.opts.with_grant_option ? allowed : catalog::AclMode::NoRights;
-    AclGrant(acl, gc.grantee_id, grantor, allowed, grant_option);
-  } else if (gc.opts.grant_option_only) {
-    AclRemoveGrantOption(acl, gc.grantee_id, grantor, allowed);
-  } else if (gc.opts.cascade) {
-    AclRevokeCascade(acl, gc.grantee_id, grantor, allowed);
-  } else if (AclDependentPrivs(acl, gc.grantee_id, allowed) !=
-             catalog::AclMode::NoRights) {
-    *gc.dependents_block = true;
-  } else {
-    AclRevoke(acl, gc.grantee_id, grantor, allowed);
-  }
-}
-
-void GrantObjectColumns(ConnectionContext& ctx, duckdb::CatalogType type,
-                        std::span<const ParsedPriv> parsed,
-                        std::string_view obj_name, std::string_view grantee,
-                        bool revoke, const GrantObjectOptions& opts) {
-  std::string schema_name;
-  std::string rel_name;
-  auto table = ResolveGrantTarget(ctx, obj_name, schema_name, rel_name);
-  if (!table) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_TABLE),
-                    ERR_MSG("relation \"", rel_name, "\" does not exist"));
-  }
-  const duckdb::idx_t current_id = ctx.GetRoleId();
-  const duckdb::idx_t grantee_id =
-    ResolveGranteeId(ctx.GetClientContext(), grantee);
-
-  const duckdb::idx_t granted_by_id =
-    ResolveGrantedBy(ctx.GetClientContext(), opts.granted_by);
-
-  auto outcome = std::make_shared<AclGrantOutcome>();
-  constexpr catalog::AclMode kColumnPrivs =
-    catalog::AclMode::Select | catalog::AclMode::Insert |
-    catalog::AclMode::Update | catalog::AclMode::References;
-  for (const auto& p : parsed) {
-    catalog::AclMode privs =
-      auth::TryParseAclKeyword(p.keyword, duckdb::CatalogType::TABLE_ENTRY)
-        .value_or(catalog::AclMode::NoRights);
-    const bool is_all = absl::EqualsIgnoreCase(p.keyword, "ALL");
-    if (!is_all && (privs & ~kColumnPrivs) != catalog::AclMode::NoRights) {
-      THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_GRANT_OPERATION),
-                      ERR_MSG("invalid privilege type ",
-                              absl::AsciiStrToUpper(p.keyword), " for column"));
-    }
-    privs &= kColumnPrivs;
-    for (const auto& column : p.columns) {
-      table = ChangeColumnAcl(
-        ctx.GetClientContext(), *table, column,
-        [outcome, privs, grantee_id, current_id, granted_by_id, revoke, opts,
-         client = &ctx.GetClientContext()](duckdb::idx_t owner,
-                                           catalog::Acl& acl) {
-          ApplyAclGrant(
-            *client, owner, acl,
-            {privs, grantee_id, current_id, granted_by_id, revoke, opts,
-             &outcome->no_authority, &outcome->nothing_applied,
-             &outcome->dependents_block, &outcome->not_member});
-        });
-      if (outcome->not_member) {
-        THROW_SQL_ERROR(
-          ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
-          ERR_MSG("must be member of role \"", opts.granted_by, "\""));
-      }
-    }
-  }
-  if (outcome->dependents_block) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_DEPENDENT_OBJECTS_STILL_EXIST),
-                    ERR_MSG("dependent privileges exist"),
-                    ERR_HINT("Use CASCADE to revoke them too."));
-  }
-  if (outcome->no_authority) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
-                    ERR_MSG("permission denied for table ", rel_name));
-  }
-  if (outcome->nothing_applied) {
-    ctx.AddNotice(SQL_ERROR_DATA(
-      ERR_CODE(revoke ? ERRCODE_WARNING_PRIVILEGE_NOT_REVOKED
-                      : ERRCODE_WARNING_PRIVILEGE_NOT_GRANTED),
-      ERR_MSG("no privileges were ", revoke ? "revoked" : "granted", " for \"",
-              rel_name, "\"")));
-  }
-}
-
-// GRANT / REVOKE ON DATABASE. A database is not in the snapshot -- its entry
-// is the object -- so it takes the catalog's database-specific mutator rather
-// than the generic one below.
-void GrantDatabase(ConnectionContext& ctx,
-                   std::span<const ParsedPriv> privileges,
-                   std::string_view db_name, std::string_view grantee,
-                   bool revoke, const GrantObjectOptions& opts) {
-  auto& catalog = GlobalCatalog();
-  auto& client = ctx.GetClientContext();
-  auto& cluster = catalog::ClusterOf(client);
-  auto database =
-    cluster.LookupDatabase(cluster.GetCatalogTransaction(client),
-                           duckdb::Identifier{std::string{db_name}});
-  if (!database) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
-                    ERR_MSG("database \"", db_name, "\" does not exist"));
-  }
-  const duckdb::idx_t current_id = ctx.GetRoleId();
-  const duckdb::idx_t grantee_id =
-    ResolveGranteeId(ctx.GetClientContext(), grantee);
-  const duckdb::idx_t granted_by_id =
-    ResolveGrantedBy(ctx.GetClientContext(), opts.granted_by);
-  const catalog::AclMode privs =
-    ParseAclModeOrThrow(privileges, duckdb::CatalogType::DATABASE_ENTRY);
-
-  auto outcome = std::make_shared<AclGrantOutcome>();
-  catalog.ChangeDatabaseAcl(
-    duckdb::CatalogTransaction{catalog, ctx.GetClientContext()},
-    (*database).oid,
-    [outcome, privs, grantee_id, current_id, granted_by_id, revoke, opts,
-     client = &ctx.GetClientContext()](duckdb::idx_t owner, catalog::Acl& acl) {
-      ApplyAclGrant(*client, owner, acl,
-                    {privs, grantee_id, current_id, granted_by_id, revoke, opts,
-                     &outcome->no_authority, &outcome->nothing_applied,
-                     &outcome->dependents_block, &outcome->not_member});
-    });
-  if (outcome->not_member) {
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
-      ERR_MSG("must be member of role \"", opts.granted_by, "\""));
-  }
-  if (outcome->dependents_block) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_DEPENDENT_OBJECTS_STILL_EXIST),
-                    ERR_MSG("dependent privileges exist"),
-                    ERR_HINT("Use CASCADE to revoke them too."));
-  }
-  if (outcome->no_authority) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
-                    ERR_MSG("permission denied for database ", db_name));
-  }
-  if (outcome->nothing_applied) {
-    ctx.AddNotice(SQL_ERROR_DATA(
-      ERR_CODE(revoke ? ERRCODE_WARNING_PRIVILEGE_NOT_REVOKED
-                      : ERRCODE_WARNING_PRIVILEGE_NOT_GRANTED),
-      ERR_MSG("no privileges were ", revoke ? "revoked" : "granted", " for \"",
-              db_name, "\"")));
-  }
-}
-
-}  // namespace
-
-void GrantObject(ConnectionContext& ctx, duckdb::CatalogType type,
-                 std::span<const ParsedPriv> privileges,
-                 std::string_view obj_name, std::string_view grantee,
-                 bool revoke, const GrantObjectOptions& opts) {
-  if (type == duckdb::CatalogType::DATABASE_ENTRY) {
-    GrantDatabase(ctx, privileges, obj_name, grantee, revoke, opts);
-    return;
-  }
-  if (AnyColumnPrivs(privileges)) {
-    GrantObjectColumns(ctx, type, privileges, obj_name, grantee, revoke, opts);
-    return;
-  }
-
-  std::string schema_name;
-  std::string rel_name;
-  bool schema_target = false;
-  // Every kind but a table is named by the schema it lives in and its own name;
-  // a table is the one the mutator takes by definition.
-  duckdb::idx_t entry_schema = pg::kInvalidOid;
-  // And a foreign server's entry is the object too, named by its database: it
-  // is a database child with no schema, as it is in postgres.
-  duckdb::idx_t server_database = pg::kInvalidOid;
-  auto& database = duckdb::Catalog::GetCatalog(
-    ctx.GetClientContext(), duckdb::Identifier{ctx.GetDatabase()});
-  if (type == duckdb::CatalogType::FOREIGN_SERVER_ENTRY) {
-    rel_name = obj_name;
-    auto& serene = database.Cast<catalog::SereneDBCatalog>();
-    if (serene.LookupForeignServer(
-          serene.GetCatalogTransaction(ctx.GetClientContext()),
-          duckdb::Identifier{std::string{obj_name}})) {
-      server_database = ctx.GetDatabaseId();
-    }
-  } else if (type == duckdb::CatalogType::SCHEMA_ENTRY) {
-    rel_name = obj_name;
-    auto schema = FindSchema(ctx, obj_name);
-    if (!schema) {
-      THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_SCHEMA),
-                      ERR_MSG("schema \"", obj_name, "\" does not exist"));
-    }
-    schema_target = true;
-  } else if (type == duckdb::CatalogType::TYPE_ENTRY ||
-             type == duckdb::CatalogType::MACRO_ENTRY ||
-             type == duckdb::CatalogType::VIEW_ENTRY ||
-             type == duckdb::CatalogType::SEQUENCE_ENTRY) {
-    // A function name carries its argument list; the entry is keyed on the bare
-    // name, as duckdb's macro sets are.
-    const auto bare = type == duckdb::CatalogType::MACRO_ENTRY
-                        ? obj_name.substr(0, obj_name.find('('))
-                        : obj_name;
-    const std::string current_schema = ctx.GetCurrentSchema();
-    const auto parsed =
-      ParseObjectName(absl::StripAsciiWhitespace(bare), current_schema);
-    schema_name = parsed.schema;
-    rel_name = parsed.relation;
-    auto schema = FindSchema(ctx, parsed.schema);
-    if (schema && EntryExists(ctx, type, *schema, parsed.relation)) {
-      entry_schema = schema->oid;
-    }
-  }
-  // A GRANT on a relation name that turns out to be a view lands on the view's
-  // own entry. The privilege keywords stay the relation set's -- PG spells a
-  // view's grants that way.
-  bool entry_is_view = false;
-  if (type == duckdb::CatalogType::TABLE_ENTRY &&
-      entry_schema == pg::kInvalidOid) {
-    const std::string current_schema = ctx.GetCurrentSchema();
-    const auto parsed = ParseObjectName(obj_name, current_schema);
-    auto schema = FindSchema(ctx, parsed.schema);
-    if (schema && SchemaEntry(ctx, *schema, duckdb::CatalogType::VIEW_ENTRY,
-                              parsed.relation)) {
-      schema_name = parsed.schema;
-      rel_name = parsed.relation;
-      entry_schema = schema->oid;
-      entry_is_view = true;
-    }
-  }
-  // A sequence is never the table half: a name the schema's sequence set does
-  // not hold is not a sequence, whatever else the relation namespace has under
-  // it, and resolving one would grant sequence privileges on a table.
-  const bool named = schema_target || entry_schema != pg::kInvalidOid ||
-                     server_database != pg::kInvalidOid;
-  auto target = (named || type == duckdb::CatalogType::FOREIGN_SERVER_ENTRY ||
-                 type == duckdb::CatalogType::SEQUENCE_ENTRY)
-                  ? nullptr
-                  : ResolveGrantTarget(ctx, obj_name, schema_name, rel_name);
-  if (!target && !named) {
-    if (type == duckdb::CatalogType::TYPE_ENTRY &&
-        RegtypeIn(rel_name) != kInvalidOid) {
-      THROW_SQL_ERROR(
-        ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
-        ERR_MSG("cannot change privileges of built-in type ", rel_name));
-    }
-    // The other half of the relation namespace still holds the name, and PG
-    // reports the kind mismatch rather than a missing relation.
-    if (type == duckdb::CatalogType::SEQUENCE_ENTRY) {
-      auto schema = FindSchema(ctx, schema_name);
-      if (schema && SchemaEntry(ctx, *schema, duckdb::CatalogType::TABLE_ENTRY,
-                                rel_name)) {
-        THROW_SQL_ERROR(ERR_CODE(ERRCODE_WRONG_OBJECT_TYPE),
-                        ERR_MSG("\"", rel_name, "\" is not a sequence"));
-      }
-    }
-    const bool is_relation = type == duckdb::CatalogType::TABLE_ENTRY ||
-                             type == duckdb::CatalogType::VIEW_ENTRY ||
-                             type == duckdb::CatalogType::SEQUENCE_ENTRY;
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
-                    ERR_MSG(is_relation ? "relation" : ToPgObjectTypeName(type),
-                            " \"", rel_name, "\" does not exist"));
-  }
-
-  const duckdb::idx_t current_id = ctx.GetRoleId();
-
-  const duckdb::idx_t grantee_id =
-    ResolveGranteeId(ctx.GetClientContext(), grantee);
-
-  const duckdb::idx_t granted_by_id =
-    ResolveGrantedBy(ctx.GetClientContext(), opts.granted_by);
-
-  const catalog::AclMode privs = ParseAclModeOrThrow(privileges, type);
-
-  auto outcome = std::make_shared<AclGrantOutcome>();
-  auto mutate = [outcome, privs, grantee_id, current_id, granted_by_id, revoke,
-                 opts, client = &ctx.GetClientContext()](duckdb::idx_t owner,
-                                                         catalog::Acl& acl) {
-    ApplyAclGrant(*client, owner, acl,
-                  {privs, grantee_id, current_id, granted_by_id, revoke, opts,
-                   &outcome->no_authority, &outcome->nothing_applied,
-                   &outcome->dependents_block, &outcome->not_member});
-  };
-  {
-    auto& client = ctx.GetClientContext();
-    if (server_database != pg::kInvalidOid) {
-      catalog::ChangeEntryAcl(client, duckdb::CatalogType::FOREIGN_SERVER_ENTRY,
-                              server_database, rel_name, std::move(mutate));
-    } else if (schema_target) {
-      ChangeSchemaAcl(client, rel_name, std::move(mutate));
-    } else if (entry_is_view || type == duckdb::CatalogType::VIEW_ENTRY) {
-      catalog::ChangeEntryAcl(client, duckdb::CatalogType::VIEW_ENTRY,
-                              entry_schema, rel_name, std::move(mutate));
-    } else if (entry_schema == pg::kInvalidOid) {
-      ChangeTableAcl(client, *target, type, std::move(mutate));
-    } else if (type == duckdb::CatalogType::TYPE_ENTRY) {
-      catalog::ChangeEntryAcl(client, duckdb::CatalogType::TYPE_ENTRY,
-                              entry_schema, rel_name, std::move(mutate));
-    } else if (type == duckdb::CatalogType::SEQUENCE_ENTRY) {
-      catalog::ChangeEntryAcl(client, duckdb::CatalogType::SEQUENCE_ENTRY,
-                              entry_schema, rel_name, std::move(mutate));
-    } else {
-      catalog::ChangeEntryAcl(client, duckdb::CatalogType::MACRO_ENTRY,
-                              entry_schema, rel_name, std::move(mutate));
-    }
-  }
-  if (outcome->not_member) {
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
-      ERR_MSG("must be member of role \"", opts.granted_by, "\""));
-  }
-  if (outcome->dependents_block) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_DEPENDENT_OBJECTS_STILL_EXIST),
-                    ERR_MSG("dependent privileges exist"),
-                    ERR_HINT("Use CASCADE to revoke them too."));
-  }
-  if (outcome->no_authority) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
-                    ERR_MSG("permission denied for ", ToPgObjectTypeName(type),
-                            " ", rel_name));
-  }
-  if (outcome->nothing_applied) {
-    ctx.AddNotice(SQL_ERROR_DATA(
-      ERR_CODE(revoke ? ERRCODE_WARNING_PRIVILEGE_NOT_REVOKED
-                      : ERRCODE_WARNING_PRIVILEGE_NOT_GRANTED),
-      ERR_MSG("no privileges were ", revoke ? "revoked" : "granted", " for \"",
-              rel_name, "\"")));
-  }
-
-  // Only a table has column grants to follow the relation's -- a view under the
-  // same relation namespace landed on its own entry instead.
-  if (revoke && target && type == duckdb::CatalogType::TABLE_ENTRY) {
-    auto& client = ctx.GetClientContext();
-    auto tbl_entry = duckdb::Catalog::GetEntry<duckdb::TableCatalogEntry>(
-      client, target->GetQualifiedName(), duckdb::OnEntryNotFound::RETURN_NULL);
-    if (tbl_entry) {
-      auto tbl = tbl_entry->Definition();
-      // The column list is read off one version, but each revoke has to build
-      // on the previous one's result, so the returned versions chain.
-      std::vector<std::string> granted;
-      for (const auto& entry : tbl_entry->permissions.column_acl) {
-        if (const auto* column = catalog::ColumnById(*tbl, entry.catalog_oid)) {
-          granted.emplace_back(column->Name().GetIdentifierName());
-        }
-      }
-      for (const auto& column : granted) {
-        tbl = ChangeColumnAcl(
-          ctx.GetClientContext(), *tbl, column,
-          [grantee_id, privs](duckdb::idx_t owner, catalog::Acl& acl) {
-            AclRevoke(acl, grantee_id, owner, privs);
-          });
-      }
-    }
-  }
-}
-
-void GrantObjectAllInSchema(ConnectionContext& ctx, duckdb::CatalogType type,
-                            std::span<const ParsedPriv> privileges,
-                            std::string_view schema_name,
-                            std::string_view grantee, bool revoke,
-                            const GrantObjectOptions& opts) {
-  auto schema = FindSchema(ctx, schema_name);
-  if (!schema) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_SCHEMA),
-                    ERR_MSG("schema \"", schema_name, "\" does not exist"));
-  }
-
-  // The schema entry is the set, so this walks it directly instead of walking
-  // the database and discarding every other schema's entries.
-  std::vector<std::string> names;
-  auto& client = ctx.GetClientContext();
-  const auto collect = [&](
-                         duckdb::CatalogType kind,
-                         absl::FunctionRef<bool(duckdb::CatalogEntry&)> keep) {
-    schema->Scan(client, kind, [&](duckdb::CatalogEntry& entry) {
-      if (entry.type == kind && keep(entry)) {
-        names.emplace_back(entry.name.GetIdentifierName());
-      }
-    });
-  };
-  const auto any = [](duckdb::CatalogEntry&) { return true; };
-  if (type == duckdb::CatalogType::MACRO_ENTRY) {
-    collect(duckdb::CatalogType::MACRO_ENTRY, any);
-    collect(duckdb::CatalogType::TABLE_MACRO_ENTRY, any);
-  } else if (type == duckdb::CatalogType::SEQUENCE_ENTRY) {
-    // Only the free-standing ones, as PG's GRANT ON ALL SEQUENCES is: a
-    // SERIAL's sequence is granted through the table that owns it.
-    collect(duckdb::CatalogType::SEQUENCE_ENTRY,
-            [](duckdb::CatalogEntry& entry) {
-              return !entry.Cast<duckdb::SequenceCatalogEntry>()
-                        .GetOwnerTableId()
-                        .isSet();
-            });
-  } else {
-    collect(duckdb::CatalogType::TABLE_ENTRY, any);
-  }
-
-  for (const auto& name : names) {
-    GrantObject(ctx, type, privileges, absl::StrCat(schema_name, ".", name),
-                grantee, revoke, opts);
-  }
-}
-
-void GrantRole(ConnectionContext& ctx, std::string_view role,
-               std::string_view member, bool revoke,
-               const MemberOptions& opts) {
-  auto& catalog = GlobalCatalog();
-  auto role_obj = FindRole(ctx.GetClientContext(), role);
-  auto member_obj = FindRole(ctx.GetClientContext(), member);
-  if (!role_obj) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
-                    ERR_MSG("role \"", role, "\" does not exist"));
-  }
-  if (!member_obj) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
-                    ERR_MSG("role \"", member, "\" does not exist"));
-  }
-
-  const duckdb::idx_t role_id = role_obj->GetId();
-  const duckdb::idx_t member_id = member_obj->GetId();
-
-  const catalog::Membership edge{
-    .role = role_id,
-    .admin_option = opts.admin == 1,
-    .inherit_option = opts.inherit == -1
-                        ? member_obj->Has(catalog::RoleOption::Inherit)
-                        : opts.inherit == 1,
-    .set_option = opts.set != 0,
-  };
-
-  catalog.ChangeMembership(
-    duckdb::CatalogTransaction{catalog, ctx.GetClientContext()}, role_id, role,
-    member_id, member, edge, revoke, opts.admin_option_only);
-}
-
-void AlterOwner(ConnectionContext& ctx, std::string_view obj_type,
-                std::string_view name, std::string_view new_owner) {
-  const auto type = FromPgObjectTypeName(obj_type);
-  SDB_ASSERT(type != duckdb::CatalogType::INVALID);
-
-  std::string_view new_owner_name = new_owner;
-  if (new_owner == "CURRENT_USER" || new_owner == "SESSION_USER" ||
-      new_owner == "CURRENT_ROLE") {
-    new_owner_name = ctx.user();
-  }
-  auto new_owner_role = FindRole(ctx.GetClientContext(), new_owner_name);
-  if (!new_owner_role) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
-                    ERR_MSG("role \"", new_owner_name, "\" does not exist"));
-  }
-  const duckdb::idx_t new_owner_id = new_owner_role->oid;
-
-  duckdb::unique_ptr<duckdb::CreateTableInfo> target;
-  if (type == duckdb::CatalogType::SCHEMA_ENTRY) {
-    auto schema = FindSchema(ctx, name);
-    if (!schema) {
-      THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_SCHEMA),
-                      ERR_MSG("schema \"", name, "\" does not exist"));
-    }
-    ChangeSchemaOwner(ctx.GetClientContext(), name, new_owner_id,
-                      new_owner_name);
-    return;
-  }
-  {
-    const std::string current_schema = ctx.GetCurrentSchema();
-    const auto parsed = ParseObjectName(name, current_schema);
-    auto schema = FindSchema(ctx, parsed.schema);
-    if (!schema) {
-      THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_SCHEMA),
-                      ERR_MSG("schema \"", parsed.schema, "\" does not exist"));
-    }
-    // Types and functions live in their own per-schema namespaces, separate
-    // from relations -- and their entry is the object, so the rewrite is
-    // theirs.
-    const auto schema_id = schema->oid;
-    auto& client = ctx.GetClientContext();
-    // A relation name that turns out to be a view is the view's own rewrite,
-    // as a type's and a function's are.
-    auto kind = type;
-    if (kind == duckdb::CatalogType::TABLE_ENTRY &&
-        SchemaEntry(ctx, *schema, duckdb::CatalogType::VIEW_ENTRY,
-                    parsed.relation)) {
-      kind = duckdb::CatalogType::VIEW_ENTRY;
-    }
-    if (kind == duckdb::CatalogType::TYPE_ENTRY ||
-        kind == duckdb::CatalogType::MACRO_ENTRY ||
-        kind == duckdb::CatalogType::VIEW_ENTRY ||
-        kind == duckdb::CatalogType::SEQUENCE_ENTRY) {
-      if (!EntryExists(ctx, kind, *schema, parsed.relation)) {
-        // A sequence shares the relation namespace, so the other half of it
-        // still answers for the name and PG reports the kind mismatch.
-        if (kind == duckdb::CatalogType::SEQUENCE_ENTRY &&
-            SchemaEntry(ctx, *schema, duckdb::CatalogType::TABLE_ENTRY,
-                        parsed.relation)) {
-          THROW_SQL_ERROR(
-            ERR_CODE(ERRCODE_WRONG_OBJECT_TYPE),
-            ERR_MSG("\"", parsed.relation, "\" is not a sequence"));
-        }
-        THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
-                        ERR_MSG(ToPgObjectTypeName(kind), " \"",
-                                parsed.relation, "\" does not exist"));
-      }
-      if (kind == duckdb::CatalogType::TYPE_ENTRY) {
-        catalog::ChangeEntryOwner(client, duckdb::CatalogType::TYPE_ENTRY,
-                                  schema_id, parsed.relation, new_owner_id,
-                                  new_owner_name);
-      } else if (kind == duckdb::CatalogType::VIEW_ENTRY) {
-        catalog::ChangeEntryOwner(client, duckdb::CatalogType::VIEW_ENTRY,
-                                  schema_id, parsed.relation, new_owner_id,
-                                  new_owner_name);
-      } else if (kind == duckdb::CatalogType::SEQUENCE_ENTRY) {
-        catalog::ChangeEntryOwner(client, duckdb::CatalogType::SEQUENCE_ENTRY,
-                                  schema_id, parsed.relation, new_owner_id,
-                                  new_owner_name);
-      } else {
-        catalog::ChangeEntryOwner(client, duckdb::CatalogType::MACRO_ENTRY,
-                                  schema_id, parsed.relation, new_owner_id,
-                                  new_owner_name);
-      }
-      return;
-    }
-    auto target_entry = SchemaEntry(
-      ctx, *schema, duckdb::CatalogType::TABLE_ENTRY, parsed.relation);
-    target = target_entry
-               ? target_entry->Cast<duckdb::TableCatalogEntry>().Definition()
-               : nullptr;
-    if (!target) {
-      THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_TABLE),
-                      ERR_MSG(ToPgObjectTypeName(type), " \"", parsed.relation,
-                              "\" does not exist"));
-    }
-  }
-  catalog::ChangeTableOwner(ctx.GetClientContext(), *target, type, new_owner_id,
-                            new_owner_name);
+void ResetSessionAuthorization(ConnectionContext& ctx) {
+  ctx.ResetIdentity();
+  RefreshSuperuser(ctx);
 }
 
 }  // namespace sdb::pg

@@ -39,6 +39,7 @@
 #include <shared_mutex>
 #include <system_error>
 
+#include "basics/debugging.h"
 #include "basics/down_cast.h"
 #include "basics/duckdb_engine.h"
 #include "basics/lifecycle.h"
@@ -442,6 +443,9 @@ ResultWithTime SearchTable::RefreshUnsafe(
     std::chrono::duration_cast<std::chrono::milliseconds>(
       std::chrono::steady_clock::now() - begin)
       .count();
+  SDB_IF_FAILURE("Search::FailOnCommit") {
+    result = absl::InternalError("debug failure point");
+  }
   _maintenance.RecordCommit(result, code, time_ms);
   return {std::move(result), time_ms};
 }

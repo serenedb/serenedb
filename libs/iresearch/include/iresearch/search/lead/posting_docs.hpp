@@ -20,9 +20,6 @@
 
 #pragma once
 
-#include <algorithm>
-
-#include "basics/bit_utils.hpp"
 #include "iresearch/formats/posting/skip_list.hpp"
 #include "iresearch/formats/posting_meta.hpp"
 #include "iresearch/search/common/posting_leaf.hpp"
@@ -34,14 +31,6 @@ namespace irs::search {
 template<typename InputType>
 class PostingLead : public PostingLeaf<InputType, kCursorShape> {
   using Base = PostingLeaf<InputType, kCursorShape>;
-
-  using Base::_doc;
-  using Base::_docs;
-  using Base::_last;
-  using Base::_left_in_leaf;
-  using Base::_left_in_list;
-  using Base::kBits;
-  using Base::ReadLeafDelta;
 
  public:
   PostingLead() = default;
@@ -63,39 +52,6 @@ class PostingLead : public PostingLeaf<InputType, kCursorShape> {
 
     this->OpenInput(meta, doc_in, bounds);
     this->ArmWalk(meta, layout, bounds);
-  }
-
-  doc_id_t Fill(doc_id_t min, doc_id_t max, uint64_t* IRS_RESTRICT mask) {
-    auto doc = _doc;
-    if (doc < min) {
-      doc = this->Seek(min);
-    }
-    const auto* const end = std::cend(_docs);
-    for (;;) {
-      if (doc_limits::eof(doc) || doc >= max) {
-        return doc;
-      }
-      const auto* it = end - _left_in_leaf - 1;
-      const auto* stop = it;
-      while (stop != end && *stop < max) {
-        ++stop;
-      }
-      for (; it != stop; ++it) {
-        const size_t offset = *it - min;
-        SetBit(mask[offset / kBits], offset % kBits);
-      }
-      if (stop != end) {
-        _left_in_leaf = static_cast<uint32_t>(end - stop) - 1;
-        return _doc = *stop;
-      }
-      _left_in_leaf = 0;
-      if (_left_in_list == 0) {
-        return _doc = doc_limits::eof();
-      }
-      ReadLeafDelta(_last);
-      doc = _doc = *(end - _left_in_leaf);
-      --_left_in_leaf;
-    }
   }
 };
 

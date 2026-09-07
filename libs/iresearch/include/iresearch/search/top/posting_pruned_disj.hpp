@@ -233,8 +233,14 @@ class PostingPrunedDisj : public PruneLeafBase<InputType, false> {
         if (cand > *(end - 1)) {
           break;
         }
-        const auto* const it = std::find(begin, end, cand);
-        if (it != end) {
+        size_t step = 1;
+        while (begin + step < end && begin[step] < cand) {
+          begin += step;
+          step <<= 1;
+        }
+        begin = std::lower_bound(begin, std::min(begin + step, end), cand);
+        const auto* const it = begin;
+        if (*it == cand) {
           if (required) {
             cand_docs[out] = cand_docs[cand_idx];
             cand_scores[out] = cand_scores[cand_idx];

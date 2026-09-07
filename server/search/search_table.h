@@ -42,6 +42,7 @@
 #include "catalog/persistence/search_table_options.h"
 #include "search/maintenance.h"
 #include "search/search_db_wal.h"
+#include "search/store_stats.h"
 
 namespace duckdb {
 
@@ -171,6 +172,8 @@ class SearchTable : public std::enable_shared_from_this<SearchTable> {
     return _writer->GetSnapshot();
   }
 
+  StoreStats GetStats() const;
+
   void Commit() {
     SDB_ASSERT(_writer && _wal);
     _writer->RefreshCommit();
@@ -269,6 +272,7 @@ class SearchTable : public std::enable_shared_from_this<SearchTable> {
   absl::Mutex _refresh_mutex;
   std::atomic<uint64_t> _compaction_gen{0};
   std::atomic<uint32_t> _stale_pressure{0};
+  MaintenanceCounters _maintenance;
 #ifdef SDB_DEV
   // Dev-only tripwire: asserts StartTasks runs at most once, so a bug can't
   // spawn competing maintenance loops.

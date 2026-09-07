@@ -1,0 +1,90 @@
+# A search table's inverted indexes are storage-less: their terms live in the
+# table's own iresearch store. sdb_metrics reports that store once, under the
+# table, with the same metrics an index with its own storage gets; the
+# storage-less indexes add no rows.
+
+statement ok
+CREATE TABLE sm_t (id BIGINT PRIMARY KEY, body TEXT);
+
+statement ok
+INSERT INTO sm_t VALUES (1, 'alpha cat'), (2, 'beta dog');
+
+statement ok
+CREATE INDEX sm_t_idx ON sm_t USING inverted (body);
+
+statement ok
+CREATE TABLE sm_s (id BIGINT PRIMARY KEY, body TEXT) WITH (storage = 'search', compaction_interval = 0);
+
+statement ok
+CREATE INDEX sm_s_idx ON sm_s USING inverted (body);
+
+statement ok
+INSERT INTO sm_s VALUES (1, 'gamma cat'), (2, 'delta dog'), (3, 'epsilon cat');
+
+statement ok
+VACUUM (REFRESH_TABLE) sm_s;
+
+statement ok
+CREATE TABLE sm_empty (id BIGINT PRIMARY KEY, body TEXT) WITH (storage = 'search', compaction_interval = 0);
+
+query
+SELECT metric, value
+FROM sdb_metrics
+WHERE relation_id = (SELECT oid FROM pg_class WHERE relname = 'sm_s')
+  AND metric IN ('num_docs', 'num_live_docs', 'num_buffered_docs', 'num_segments',
+                 'num_failed_commits', 'num_failed_cleanups', 'num_failed_consolidations')
+ORDER BY metric;
+----
+metric	value
+num_buffered_docs	0
+num_docs	3
+num_failed_cleanups	0
+num_failed_commits	0
+num_failed_consolidations	0
+num_live_docs	3
+num_segments	1
+
+query
+SELECT count(*) AS metrics,
+       count(*) FILTER (WHERE metric IN ('index_size', 'num_files') AND value > 0) AS sized
+FROM sdb_metrics
+WHERE relation_id = (SELECT oid FROM pg_class WHERE relname = 'sm_s');
+----
+metrics	sized
+12	2
+
+query
+SELECT count(*) AS storage_less_index_rows
+FROM sdb_metrics
+WHERE relation_id = (SELECT oid FROM pg_class WHERE relname = 'sm_s_idx');
+----
+storage_less_index_rows
+0
+
+query
+SELECT count(*) AS own_storage_index_rows
+FROM sdb_metrics
+WHERE relation_id = (SELECT oid FROM pg_class WHERE relname = 'sm_t_idx');
+----
+own_storage_index_rows
+12
+
+query
+SELECT metric, value
+FROM sdb_metrics
+WHERE relation_id = (SELECT oid FROM pg_class WHERE relname = 'sm_empty')
+ORDER BY metric;
+----
+metric	value
+avg_cleanup_time_ms	0
+avg_commit_time_ms	0
+avg_consolidation_time_ms	0
+index_size	0
+num_buffered_docs	0
+num_docs	0
+num_failed_cleanups	0
+num_failed_commits	0
+num_failed_consolidations	0
+num_files	1
+num_live_docs	0
+num_segments	0

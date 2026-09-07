@@ -18,7 +18,7 @@ hash-threshold 100
 
 # Exhaustive search: probe every cluster so kNN can't miss a true neighbour.
 statement ok
-SET sdb_nprobe = 1000
+SET sdb_ivf_search_nprobe = 1000
 
 # ===========================================================================
 # 1. L2 + tq at the default bit count, single cluster (nlist=1): exercises

@@ -919,14 +919,6 @@ auto HnswWriter::Compute(const ColumnReader& col, ReadContext& ctx,
     co_return {};
   }
 
-  using Clock = std::chrono::steady_clock;
-  const auto t_begin = Clock::now();
-  const auto ms_since = [](Clock::time_point from) {
-    return std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now() -
-                                                                 from)
-      .count();
-  };
-
   std::vector<uint8_t> valid(_rows, 1);
   std::vector<float> batch_buf;
   const bool normalize = _info.metric == VectorMetric::Cosine;
@@ -1025,20 +1017,11 @@ auto HnswWriter::Compute(const ColumnReader& col, ReadContext& ctx,
     _codes.shrink_to_fit();
   }
 
-  const auto encode_ms = ms_since(t_begin);
-
   const auto m = _info.m;
   const auto ef = _info.ef_construction;
   SDB_ASSERT(m != 0 && ef != 0);
   const auto donor =
     PickMergeDonor(_merge_sources, _info.centroids_id, _d, _info.metric, m);
-  const auto t_graph = Clock::now();
-  const absl::Cleanup log_phases = [&] {
-    SDB_INFO(IRESEARCH, "hnsw build: rows=", _rows, " d=", _d, " m=", m,
-             " ef=", ef, " sources=", _merge_sources.size(),
-             " donor_rows=", donor.alive, " encode_ms=", encode_ms,
-             " graph_ms=", ms_since(t_graph));
-  };
 
   if (stats) {
     HnswCodeDistFactory factory{

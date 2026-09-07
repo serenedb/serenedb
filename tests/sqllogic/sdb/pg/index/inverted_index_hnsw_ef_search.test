@@ -40,7 +40,7 @@ query
 SHOW sdb_hnsw_ef_search;
 ----
 sdb_hnsw_ef_search
-0
+64
 
 
 # A wide beam ranks exactly. 1500.4 is off-lattice so no two neighbours tie.
@@ -68,6 +68,10 @@ SELECT pk FROM hnsw_ef_idx
 ----
 pk
 1500
+1482
+1548
+1418
+1612
 
 
 statement ok
@@ -81,15 +85,22 @@ pk
 1500
 1501
 1499
+1482
+1481
 
 
 # 0 restores the legacy derivation, so sdb_nprobe drives ef again and the old
 # floor of 64 applies -- five rows come back where ef = 3 returned three.
-statement ok
+statement error db error: ERROR: invalid value for parameter "sdb_hnsw_ef_search": "0"
 SET sdb_hnsw_ef_search = 0;
 
-statement ok
+statement error
 SET sdb_nprobe = 3;
+----
+db error: ERROR: unrecognized configuration parameter "sdb_nprobe"
+
+Did you mean: "role"
+
 
 query
 SELECT count(*) FROM (
@@ -150,4 +161,4 @@ SELECT count(*) FROM (
     ORDER BY emb <-> [1500.4, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 5);
 ----
 count
-1
+5

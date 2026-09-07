@@ -51,11 +51,7 @@ constexpr bool valid(doc_id_t id) noexcept { return invalid() != id; }
 inline constexpr uint32_t kBlockSize = 128;
 inline constexpr uint32_t kSkipSize = 32;
 inline constexpr uint32_t kMaxSkipLevels = 5;
-#ifdef __AVX2__
 inline constexpr uint32_t kDocsSlack = 8;
-#else
-inline constexpr uint32_t kDocsSlack = 0;
-#endif
 inline constexpr uint32_t kScoresSlack = 8;
 inline constexpr uint32_t kMinCapacity = kBlockSize;
 

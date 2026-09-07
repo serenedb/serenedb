@@ -409,12 +409,13 @@ constexpr std::pair<std::string_view, VariableDescription>
       {
         LogicalTypeId::INTEGER,
         "Search-time beam width (ef) for HNSW vector indexes. Higher values "
-        "improve recall at the cost of latency. 0 derives ef from sdb_nprobe "
-        "with a floor of 64. Default 0.",
-        [] { return duckdb::Value::INTEGER(0); },
+        "improve recall at the cost of latency. The beam is also the result "
+        "ceiling: a value below the query's LIMIT returns fewer rows than "
+        "asked for. Default 64.",
+        [] { return duckdb::Value::INTEGER(64); },
         [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value& value) {
           auto n = value.GetValue<int32_t>();
-          if (n < 0) {
+          if (n <= 0) {
             THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                             ERR_MSG("invalid value for parameter "
                                     "\"sdb_hnsw_ef_search\": \"",

@@ -34,11 +34,13 @@
 #include "iresearch/search/column_collector.hpp"
 #include "iresearch/search/common/all_docs_score.hpp"
 #include "iresearch/search/common/score_args.hpp"
+#include "iresearch/search/count/make.hpp"
 #include "iresearch/search/filter.hpp"
 #include "iresearch/search/score_function.hpp"
 #include "iresearch/search/scorer.hpp"
 #include "iresearch/search/top/root.hpp"
 #include "iresearch/store/data_input.hpp"
+#include "pg/sql_exception_macro.h"
 
 namespace irs {
 namespace {
@@ -121,6 +123,25 @@ HnswSearchScratch& ThreadScratch() {
   return scratch;
 }
 
+void RefuseFilter(const search::TableFilter* table) {
+  if (table == nullptr) [[likely]] {
+    return;
+  }
+  THROW_SQL_ERROR(
+    ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+    ERR_MSG("an hnsw vector index does not support filtered search: the graph "
+            "walk cannot honour a predicate, so the filter would be silently "
+            "dropped. Use an ivf vector index instead"));
+}
+
+struct HnswScoreProvider final : AttributeProvider {
+  Attribute* GetMutable(TypeInfo::type_id type) noexcept final {
+    return type == irs::Type<BoostBlockAttr>::id() ? &attr : nullptr;
+  }
+
+  BoostBlockAttr attr;
+};
+
 class HnswTopRoot : public top::Root {
  public:
   HnswTopRoot(std::vector<ScoreDoc>&& hits, const SubReader& segment,
@@ -154,21 +175,137 @@ class HnswTopRoot : public top::Root {
   }
 
  private:
-  struct Provider final : AttributeProvider {
-    Attribute* GetMutable(TypeInfo::type_id type) noexcept final {
-      return type == irs::Type<BoostBlockAttr>::id() ? &attr : nullptr;
-    }
-
-    BoostBlockAttr attr;
-  };
-
   std::vector<ScoreDoc> _hits;
-  Provider _provider;
+  HnswScoreProvider _provider;
   ScoreFunction _score;
   ColumnArgsFetcher& _fetcher;
   score_t _block[kScoreBlock];
   score_t _scores[kScoreBlock];
   doc_id_t _docs[kScoreBlock];
+};
+
+class HnswLeadNode : public lead::Node {
+ public:
+  HnswLeadNode(std::vector<ScoreDoc>&& hits, const SubReader& segment,
+               const search::ScoreArgs& args)
+    : _hits{std::move(hits)} {
+    SDB_ASSERT(args.scorer != nullptr);
+    _provider.attr.value = _block;
+    _score = args.scorer->PrepareScorer({
+      .segment = segment,
+      .field = search::NoField(),
+      .doc_attrs = _provider,
+      .fetcher = args.fetcher,
+      .stats = args.stats,
+      .boost = args.boost,
+    });
+  }
+
+  HnswLeadNode(HnswLeadNode&&) = delete;
+  HnswLeadNode& operator=(HnswLeadNode&&) = delete;
+
+  doc_id_t Advance() final {
+    if (_pos == _hits.size()) {
+      return _doc = doc_limits::eof();
+    }
+    return _doc = _hits[_pos++].doc;
+  }
+
+  doc_id_t Seek(doc_id_t target) final {
+    if (target <= _doc) {
+      return _doc;
+    }
+    while (_pos != _hits.size() && _hits[_pos].doc < target) {
+      ++_pos;
+    }
+    return Advance();
+  }
+
+  void FetchScoreArgs(uint32_t slot) final {
+    SDB_ASSERT(_pos != 0 && slot < kScoreBlock);
+    _block[slot] = _hits[_pos - 1].score;
+  }
+
+  ScoreFunction PrepareScore() final { return std::move(_score); }
+
+ private:
+  std::vector<ScoreDoc> _hits;
+  HnswScoreProvider _provider;
+  ScoreFunction _score;
+  score_t _block[kScoreBlock];
+  size_t _pos = 0;
+};
+
+class HnswDocsRoot : public docs::Root {
+ public:
+  HnswDocsRoot(std::vector<ScoreDoc>&& hits, search::DeadRuns* table)
+    : _hits{std::move(hits)}, _table{table} {}
+
+  uint32_t Run(doc_id_t* IRS_RESTRICT out, uint32_t capacity) final {
+    uint32_t n = 0;
+    while (_pos != _hits.size() && n != capacity) {
+      const auto doc = _hits[_pos++].doc;
+      if (_table != nullptr && _table->Live(doc) != doc) {
+        continue;
+      }
+      out[n++] = doc;
+    }
+    return n;
+  }
+
+ private:
+  std::vector<ScoreDoc> _hits;
+  search::DeadRuns* _table;
+  size_t _pos = 0;
+};
+
+class HnswScoredRoot : public scored::Root {
+ public:
+  HnswScoredRoot(std::vector<ScoreDoc>&& hits, const SubReader& segment,
+                 ColumnArgsFetcher& fetcher, search::DeadRuns* table,
+                 const search::ScoreArgs& args)
+    : _hits{std::move(hits)}, _fetcher{fetcher}, _table{table} {
+    SDB_ASSERT(args.scorer != nullptr);
+    _provider.attr.value = _block;
+    _score = args.scorer->PrepareScorer({
+      .segment = segment,
+      .field = search::NoField(),
+      .doc_attrs = _provider,
+      .fetcher = &fetcher,
+      .stats = args.stats,
+      .boost = args.boost,
+    });
+  }
+
+  uint32_t Run(doc_id_t* IRS_RESTRICT docs, score_t* IRS_RESTRICT scores,
+               uint32_t capacity) final {
+    const auto limit = std::min<uint32_t>(capacity, kScoreBlock);
+    uint32_t n = 0;
+    while (_pos != _hits.size() && n != limit) {
+      const auto& hit = _hits[_pos++];
+      if (_table != nullptr && _table->Live(hit.doc) != hit.doc) {
+        continue;
+      }
+      docs[n] = hit.doc;
+      _block[n] = hit.score;
+      ++n;
+    }
+    if (n == 0) {
+      return 0;
+    }
+    _fetcher.Fetch(std::span<const doc_id_t>{docs, n});
+    _score.Score(scores, static_cast<scores_size_t>(n));
+    return n;
+  }
+
+ private:
+  std::vector<ScoreDoc> _hits;
+  HnswScoreProvider _provider;
+  ScoreFunction _score;
+  ColumnArgsFetcher& _fetcher;
+  search::DeadRuns* _table;
+  score_t _block[kScoreBlock];
+  size_t _pos = 0;
 };
 
 std::vector<ScoreDoc> CollectHits(std::span<const HnswCandidate> found,
@@ -208,6 +345,7 @@ class HnswQuery : public QueryBuilder {
       _inclusive{inclusive} {}
 
   top::Root::ptr PlanTop(const top::Context& ctx) const final {
+    RefuseFilter(ctx.table);
     auto hits = RunSearch();
     if (hits.empty()) {
       return {};
@@ -221,15 +359,33 @@ class HnswQuery : public QueryBuilder {
                                              ctx.fetcher, args);
   }
 
-  count::Root::ptr PlanCount(const count::Context&) const final { return {}; }
-
-  docs::Root::ptr PlanDocs(const docs::Context&) const final { return {}; }
-
-  scored::Root::ptr PlanScored(const scored::Context&) const final {
-    return {};
+  count::Root::ptr PlanCount(const count::Context& ctx) const final {
+    RefuseFilter(ctx.table);
+    return count::MakeConstant(RunSearch().size());
   }
 
-  lead::Node::ptr PlanLead(const search::ScoredCtx&) const final { return {}; }
+  docs::Root::ptr PlanDocs(const docs::Context& ctx) const final {
+    return memory::make_managed<HnswDocsRoot>(RunSearch(), ctx.table);
+  }
+
+  scored::Root::ptr PlanScored(const scored::Context& ctx) const final {
+    const auto record = Stats(scored::ScoredOf(ctx));
+    const search::ScoreArgs args{.scorer = record.scorer,
+                                 .stats = record.stats,
+                                 .fetcher = &ctx.fetcher,
+                                 .boost = _boost};
+    return memory::make_managed<HnswScoredRoot>(RunSearch(), _segment,
+                                                ctx.fetcher, ctx.table, args);
+  }
+
+  lead::Node::ptr PlanLead(const search::ScoredCtx& ctx) const final {
+    const auto record = Stats(ctx);
+    const search::ScoreArgs args{.scorer = record.scorer,
+                                 .stats = record.stats,
+                                 .fetcher = ctx.fetcher,
+                                 .boost = _boost};
+    return memory::make_managed<HnswLeadNode>(RunSearch(), _segment, args);
+  }
 
   probe::Node::ptr PlanProbe(const search::ScoredCtx&, uint64_t) const final {
     return {};

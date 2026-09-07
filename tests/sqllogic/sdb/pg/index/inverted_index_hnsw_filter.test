@@ -1,20 +1,5 @@
 control substitution on
 
-# ============================================================================
-# HNSW is ANN-only: predicates are post-filters, never pre-filters.
-#
-# A claimed conjunct would reach the index as an `inner` filter for postings
-# intersection. HNSW has no postings and does not filter during traversal, so
-# it would ignore that filter and silently return rows violating the predicate.
-# The planner therefore never claims a conjunct for an HNSW-scored scan; the
-# predicate stays a BeforeLimit lookup filter, applied while the collector's
-# over-fetched pool is materialized, with the TOP_N above trimming to k.
-#
-# The inherited cost of post-filtering is pinned at the bottom: a predicate
-# whose qualifying rows lie outside the graph's candidate neighbourhood can
-# return fewer than k rows.
-# ============================================================================
-
 statement ok
 CREATE TABLE hnsw_f (pk INTEGER PRIMARY KEY, emb FLOAT[8], label VARCHAR);
 
@@ -65,32 +50,18 @@ pk
 99
 
 
-# The predicate is honoured. Were it claimed as a postings conjunct the graph
-# would ignore it and answer 100, 101, 99 -- the unfiltered top-3.
-query
+query error an hnsw vector index does not support filtered search
 SELECT pk FROM hnsw_f_idx
   WHERE label = 'even'
   ORDER BY emb <-> [100.4, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 3;
-----
-pk
-100
-102
-98
 
 
-query
+query error an hnsw vector index does not support filtered search
 SELECT pk FROM hnsw_f_idx
   WHERE label = 'odd'
   ORDER BY emb <-> [100.4, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 3;
-----
-pk
-101
-99
-103
 
 
-# Post-filtering is exact on membership: every returned row satisfies the
-# predicate, and a full-table predicate is unaffected by the pool size.
 query
 SELECT count(*) FROM hnsw_f_idx WHERE label = 'even';
 ----

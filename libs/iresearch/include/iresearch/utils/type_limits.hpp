@@ -62,7 +62,7 @@ inline constexpr uint32_t kMinCapacity = kBlockSize;
 }  // namespace doc_limits
 
 template<typename T, size_t Size, size_t Slack>
-class SlackBuf {
+class ABSL_CACHELINE_ALIGNED SlackBuf {
  public:
   static constexpr size_t size() noexcept { return Size; }
 
@@ -77,7 +77,7 @@ class SlackBuf {
   constexpr const T* end() const noexcept { return _data + Size; }
 
  private:
-  ABSL_CACHELINE_ALIGNED T _data[Size + Slack];
+  T _data[Size + Slack];
 };
 
 using DocsBuf =

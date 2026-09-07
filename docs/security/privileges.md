@@ -1,6 +1,7 @@
 ---
 title: Privileges
 sidebar_position: 4
+split: headings
 ---
 
 import SqlLogicTest from "@site/src/components/SqlLogicTest";

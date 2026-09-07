@@ -5,6 +5,7 @@ redirect_from:
 - /docs/preview/guides/performance/indexing
 - /docs/stable/guides/performance/indexing
 title: Indexing
+split: page
 ---
 
 import DocCallout from "@site/src/components/DocCallout";

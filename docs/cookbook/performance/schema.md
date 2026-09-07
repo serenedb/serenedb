@@ -5,6 +5,7 @@ redirect_from:
 - /docs/preview/guides/performance/schema
 - /docs/stable/guides/performance/schema
 title: Schema
+split: page
 ---
 
 import DocCallout from "@site/src/components/DocCallout";

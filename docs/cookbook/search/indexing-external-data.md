@@ -1,6 +1,7 @@
 ---
 title: Indexing External Data
 sidebar_position: 32
+split: page
 ---
 
 import SqlLogicTest from "@site/src/components/SqlLogicTest";

@@ -1,5 +1,6 @@
 ---
 title: Versioning
+split: page
 ---
 
 This page explains the version numbers, release lines and related terms used across SereneDB releases.

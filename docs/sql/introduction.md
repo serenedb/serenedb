@@ -1,6 +1,7 @@
 ---
 title: SQL Introduction
 sidebar_position: 1
+split: headings
 ---
 
 import SqlLogicTest from "@site/src/components/SqlLogicTest";

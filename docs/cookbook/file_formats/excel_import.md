@@ -7,6 +7,7 @@ redirect_from:
 - /docs/preview/guides/file_formats/excel_import
 - /docs/stable/guides/file_formats/excel_import
 title: Excel Import
+split: page
 ---
 
 import SqlLogicTest from "@site/src/components/SqlLogicTest";

@@ -1,6 +1,7 @@
 ---
 title: Semantic and Hybrid Search
 sidebar_position: 16
+split: page
 ---
 
 import SqlLogicTest from "@site/src/components/SqlLogicTest";

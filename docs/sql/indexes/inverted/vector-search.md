@@ -1,6 +1,7 @@
 ---
 title: Vector Search
 sidebar_position: 7
+split: headings
 ---
 
 import SqlLogicTest from "@site/src/components/SqlLogicTest";

@@ -1,6 +1,7 @@
 ---
 title: Database Roles
 sidebar_position: 2
+split: headings
 ---
 
 import SqlLogicTest from "@site/src/components/SqlLogicTest";

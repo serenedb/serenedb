@@ -1,6 +1,7 @@
 ---
 title: Tarball
 sidebar_position: 4
+split: page
 ---
 
 # Install from a tarball

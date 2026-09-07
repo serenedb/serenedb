@@ -1,6 +1,7 @@
 ---
 title: Overview
 sidebar_position: 1
+split: page
 ---
 
 import SqlLogicTest from "@site/src/components/SqlLogicTest";

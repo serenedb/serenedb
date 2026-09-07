@@ -5,6 +5,7 @@ redirect_from:
 - /docs/preview/guides/meta/list_tables
 - /docs/stable/guides/meta/list_tables
 title: List Tables
+split: page
 ---
 
 import SqlLogicTest from "@site/src/components/SqlLogicTest";

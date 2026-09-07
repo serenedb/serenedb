@@ -1,6 +1,7 @@
 ---
 title: Migrating from Elasticsearch
 sidebar_position: 13
+split: headings
 ---
 
 import SqlLogicTest from "@site/src/components/SqlLogicTest";

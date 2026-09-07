@@ -1,5 +1,6 @@
 ---
 title: "path_hierarchy"
+split: headings
 ---
 
 import SqlLogicTest from "@site/src/components/SqlLogicTest";

@@ -1,6 +1,7 @@
 ---
 title: Shell script
 sidebar_position: 1
+split: page
 ---
 
 import DocCallout from "@site/src/components/DocCallout";

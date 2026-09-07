@@ -2,6 +2,7 @@
 title: Faceted Search & Term Dictionary
 sidebar_label: Term Dictionary
 sidebar_position: 2
+split: headings
 ---
 
 <!-- markdownlint-disable MD001 -->

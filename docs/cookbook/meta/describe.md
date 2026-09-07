@@ -5,6 +5,7 @@ redirect_from:
     - /docs/preview/guides/meta/describe
     - /docs/stable/guides/meta/describe
 title: Describe
+split: page
 ---
 
 import SqlLogicTest from "@site/src/components/SqlLogicTest";

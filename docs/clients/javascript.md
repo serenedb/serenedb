@@ -1,6 +1,7 @@
 ---
 title: JavaScript
 sidebar_position: 3
+split: page
 ---
 
 # JavaScript

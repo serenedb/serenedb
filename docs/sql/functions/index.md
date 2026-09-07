@@ -2,6 +2,7 @@
 title: Overview
 redirect_from:
 - /docs/sql/functions/overview
+split: headings
 ---
 
 import RailroadDiagram from '@site/src/components/RailroadDiagram';

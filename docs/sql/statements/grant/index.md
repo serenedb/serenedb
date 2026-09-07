@@ -1,5 +1,6 @@
 ---
 title: GRANT
+split: headings
 ---
 
 import RailroadDiagram from '@site/src/components/RailroadDiagram';

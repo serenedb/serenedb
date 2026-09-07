@@ -1,6 +1,7 @@
 ---
 title: Full-Text Search
 sidebar_position: 5
+split: headings
 ---
 
 import SqlLogicTest from "@site/src/components/SqlLogicTest";

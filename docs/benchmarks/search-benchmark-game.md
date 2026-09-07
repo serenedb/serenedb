@@ -1,5 +1,6 @@
 ---
 title: Search Benchmark Game
+split: page
 ---
 
 # Search Benchmark Game

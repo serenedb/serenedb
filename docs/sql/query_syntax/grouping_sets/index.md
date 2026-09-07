@@ -1,6 +1,7 @@
 ---
 title: GROUPING SETS
 sidebar_position: 5
+split: headings
 ---
 
 import RailroadDiagram from '@site/src/components/RailroadDiagram';

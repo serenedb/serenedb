@@ -6,6 +6,7 @@ redirect_from:
 - /docs/preview/guides/file_formats/read_file
 - /docs/stable/guides/file_formats/read_file
 title: Directly Reading Files
+split: page
 ---
 
 import SqlLogicTest from "@site/src/components/SqlLogicTest";

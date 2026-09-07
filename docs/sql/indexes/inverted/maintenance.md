@@ -1,6 +1,7 @@
 ---
 title: Maintenance & Introspection
 sidebar_position: 12
+split: headings
 ---
 
 import SqlLogicTest from "@site/src/components/SqlLogicTest";

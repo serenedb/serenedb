@@ -6,6 +6,7 @@ redirect_from:
 - /docs/preview/guides/performance/file_formats
 - /docs/stable/guides/performance/file_formats
 title: File Formats
+split: page
 ---
 
 import DocCallout from "@site/src/components/DocCallout";

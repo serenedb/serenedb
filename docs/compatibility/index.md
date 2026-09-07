@@ -1,6 +1,7 @@
 ---
 title: Compatibility
 sidebar_position: 9
+split: page
 ---
 
 # Compatibility

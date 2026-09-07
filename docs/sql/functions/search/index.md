@@ -1,6 +1,7 @@
 ---
 title: Search Functions
 sidebar_label: Overview
+split: headings
 ---
 
 These functions operate on an [inverted index](../../indexes/inverted/index.md) — SereneDB's index for full-text, vector and geospatial search. You build a query (most often with the [`@@`](./full-text.md#match-operator) operator and a [`TSQUERY`](../../data_types/tsquery.md)), optionally rank matches with a relevance scorer and highlight them. The reference is grouped by purpose:

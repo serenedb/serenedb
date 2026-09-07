@@ -1,6 +1,7 @@
 ---
 title: FROM / JOIN
 sidebar_position: 2
+split: headings
 ---
 
 import RailroadDiagram from '@site/src/components/RailroadDiagram';

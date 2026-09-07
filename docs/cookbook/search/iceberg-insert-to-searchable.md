@@ -1,6 +1,7 @@
 ---
 title: Search over Iceberg
 sidebar_position: 33
+split: page
 ---
 
 import SqlLogicTest from "@site/src/components/SqlLogicTest";

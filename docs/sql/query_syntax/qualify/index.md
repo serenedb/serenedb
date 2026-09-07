@@ -1,6 +1,7 @@
 ---
 title: QUALIFY
 sidebar_position: 12
+split: headings
 ---
 
 import RailroadDiagram from '@site/src/components/RailroadDiagram';

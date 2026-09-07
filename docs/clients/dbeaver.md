@@ -1,6 +1,7 @@
 ---
 title: DBeaver
 sidebar_position: 11
+split: page
 ---
 
 # DBeaver

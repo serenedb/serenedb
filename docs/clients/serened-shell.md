@@ -1,6 +1,7 @@
 ---
 title: serened shell
 sidebar_position: 10
+split: headings
 ---
 
 # serened shell

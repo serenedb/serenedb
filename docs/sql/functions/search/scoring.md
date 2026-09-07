@@ -2,6 +2,7 @@
 title: Relevance Scoring
 sidebar_label: Scoring
 sidebar_position: 4
+split: headings
 ---
 
 import SqlLogicTest from "@site/src/components/SqlLogicTest";

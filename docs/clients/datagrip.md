@@ -1,6 +1,7 @@
 ---
 title: DataGrip
 sidebar_position: 12
+split: page
 ---
 
 # DataGrip

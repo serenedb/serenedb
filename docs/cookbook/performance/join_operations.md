@@ -5,6 +5,7 @@ redirect_from:
 - /docs/preview/guides/performance/join_operations
 - /docs/stable/guides/performance/join_operations
 title: Join Operations
+split: page
 ---
 
 import SqlLogicTest from "@site/src/components/SqlLogicTest";

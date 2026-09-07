@@ -1,6 +1,7 @@
 ---
 title: Fuzzy Search
 sidebar_position: 8
+split: page
 ---
 
 import SqlLogicTest from "@site/src/components/SqlLogicTest";

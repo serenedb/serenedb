@@ -1,6 +1,7 @@
 ---
 title: R
 sidebar_position: 7
+split: page
 ---
 
 # R

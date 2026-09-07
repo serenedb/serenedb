@@ -1,6 +1,7 @@
 ---
 title: Significant Terms
 sidebar_position: 20
+split: page
 ---
 
 import SqlLogicTest from "@site/src/components/SqlLogicTest";

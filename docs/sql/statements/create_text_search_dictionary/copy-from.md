@@ -1,6 +1,7 @@
 ---
 title: "copy_from"
 sidebar_label: Copy From
+split: headings
 ---
 
 import SqlLogicTest from "@site/src/components/SqlLogicTest";

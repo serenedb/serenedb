@@ -5,6 +5,7 @@ redirect_from:
 - /docs/preview/guides/performance/environment
 - /docs/stable/guides/performance/environment
 title: Environment
+split: page
 ---
 
 import SqlLogicTest from "@site/src/components/SqlLogicTest";

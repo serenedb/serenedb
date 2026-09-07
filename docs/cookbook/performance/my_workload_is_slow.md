@@ -6,6 +6,7 @@ redirect_from:
 - /docs/preview/guides/performance/my_workload_is_slow
 - /docs/stable/guides/performance/my_workload_is_slow
 title: My Workload Is Slow
+split: page
 ---
 
 If you find that your workload in SereneDB is slow, we recommend performing the following checks. More detailed instructions are linked for each point.

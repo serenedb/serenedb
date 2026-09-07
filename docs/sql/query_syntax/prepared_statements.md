@@ -1,6 +1,7 @@
 ---
 title: Prepared Statements
 sidebar_position: 16
+split: headings
 ---
 
 import SqlLogicTest from "@site/src/components/SqlLogicTest";

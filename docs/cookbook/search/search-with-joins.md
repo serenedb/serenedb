@@ -1,6 +1,7 @@
 ---
 title: Search with Joins and Analytics
 sidebar_position: 23
+split: page
 ---
 
 import SqlLogicTest from "@site/src/components/SqlLogicTest";

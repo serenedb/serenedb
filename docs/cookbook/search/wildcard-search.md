@@ -1,6 +1,7 @@
 ---
 title: Wildcard Search
 sidebar_position: 4
+split: page
 ---
 
 import SqlLogicTest from "@site/src/components/SqlLogicTest";

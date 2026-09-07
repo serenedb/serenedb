@@ -5,6 +5,7 @@ redirect_from:
     - /docs/preview/sql/data_types/timestamp
     - /docs/stable/sql/data_types/timestamp
 title: Timestamp Types
+split: headings
 ---
 
 import SqlLogicTest from "@site/src/components/SqlLogicTest";

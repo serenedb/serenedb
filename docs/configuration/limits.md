@@ -6,6 +6,7 @@ redirect_from:
 - /docs/preview/operations_manual/limits
 - /docs/stable/operations_manual/limits
 title: Limits
+split: page
 ---
 
 This page contains SereneDB's built-in limit values.

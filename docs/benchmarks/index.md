@@ -1,6 +1,7 @@
 ---
 title: Benchmarks
 sidebar_position: 10
+split: page
 ---
 
 # Benchmarks

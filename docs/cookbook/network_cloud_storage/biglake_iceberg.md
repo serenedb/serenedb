@@ -1,5 +1,6 @@
 ---
 title: Google BigLake Iceberg
+split: page
 ---
 
 import SqlLogicTest from "@site/src/components/SqlLogicTest";

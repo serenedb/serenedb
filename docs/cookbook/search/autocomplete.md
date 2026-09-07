@@ -1,6 +1,7 @@
 ---
 title: Autocomplete
 sidebar_position: 10
+split: page
 ---
 
 import SqlLogicTest from "@site/src/components/SqlLogicTest";

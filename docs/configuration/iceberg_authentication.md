@@ -1,5 +1,6 @@
 ---
 title: Iceberg Catalog Authentication
+split: headings
 ---
 
 import SqlLogicTest from "@site/src/components/SqlLogicTest";

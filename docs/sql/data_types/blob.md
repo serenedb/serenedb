@@ -1,5 +1,6 @@
 ---
 title: Blob
+split: headings
 ---
 
 import SqlLogicTest from "@site/src/components/SqlLogicTest";

@@ -1,6 +1,7 @@
 ---
 title: Synonyms
 sidebar_position: 7
+split: page
 ---
 
 import SqlLogicTest from "@site/src/components/SqlLogicTest";

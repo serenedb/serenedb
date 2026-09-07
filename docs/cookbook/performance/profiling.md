@@ -12,6 +12,7 @@ redirect_from:
     - /docs/cookbook/meta/explain_analyze
     - /docs/cookbook/performance/explain_analyze
 title: Profiling
+split: page
 ---
 
 import SqlLogicTest from "@site/src/components/SqlLogicTest";

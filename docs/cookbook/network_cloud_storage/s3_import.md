@@ -6,6 +6,7 @@ redirect_from:
 - /docs/preview/guides/network_cloud_storage/s3_import
 - /docs/stable/guides/network_cloud_storage/s3_import
 title: S3 Parquet Import
+split: page
 ---
 
 import SqlLogicTest from "@site/src/components/SqlLogicTest";

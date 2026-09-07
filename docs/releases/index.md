@@ -1,5 +1,6 @@
 ---
 title: Releases
+split: page
 ---
 
 import LiveReleases from "@site/src/components/LiveReleases";

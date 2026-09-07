@@ -1,6 +1,7 @@
 ---
 title: Saved Searches
 sidebar_position: 27
+split: page
 ---
 
 import SqlLogicTest from "@site/src/components/SqlLogicTest";

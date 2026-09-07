@@ -1,6 +1,7 @@
 ---
 title: JSON Functions
 sidebar_position: 6
+split: headings
 ---
 
 import SqlLogicTest from "@site/src/components/SqlLogicTest";

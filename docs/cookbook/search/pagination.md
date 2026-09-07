@@ -1,6 +1,7 @@
 ---
 title: Pagination
 sidebar_position: 25
+split: page
 ---
 
 import SqlLogicTest from "@site/src/components/SqlLogicTest";

@@ -6,6 +6,7 @@ redirect_from:
 - /docs/preview/guides/file_formats/parquet_import
 - /docs/stable/guides/file_formats/parquet_import
 title: Parquet Import
+split: page
 ---
 
 import SqlLogicTest from "@site/src/components/SqlLogicTest";

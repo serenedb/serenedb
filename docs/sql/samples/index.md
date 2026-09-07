@@ -5,6 +5,7 @@ redirect_from:
 - /docs/preview/sql/samples
 - /docs/stable/sql/samples
 title: Samples
+split: headings
 ---
 
 import RailroadDiagram from '@site/src/components/RailroadDiagram';

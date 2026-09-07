@@ -1,5 +1,6 @@
 ---
 title: Date Part Functions
+split: headings
 ---
 
 import DocCallout from "@site/src/components/DocCallout";

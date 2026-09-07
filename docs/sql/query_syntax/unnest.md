@@ -1,6 +1,7 @@
 ---
 title: Unnesting
 sidebar_position: 10
+split: headings
 ---
 
 import SqlLogicTest from "@site/src/components/SqlLogicTest";

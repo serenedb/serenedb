@@ -7,6 +7,7 @@ redirect_from:
 - /docs/stable/guides/database_integration/sqlite
 title: SQLite Import
 draft: true
+split: page
 ---
 
 import SqlLogicTest from "@site/src/components/SqlLogicTest";

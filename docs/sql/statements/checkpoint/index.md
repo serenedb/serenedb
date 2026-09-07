@@ -1,6 +1,7 @@
 ---
 title: CHECKPOINT
 draft: true
+split: headings
 ---
 
 import RailroadDiagram from '@site/src/components/RailroadDiagram';

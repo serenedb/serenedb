@@ -1,6 +1,7 @@
 ---
 title: Pinned Results
 sidebar_position: 14
+split: page
 ---
 
 import SqlLogicTest from "@site/src/components/SqlLogicTest";

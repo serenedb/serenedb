@@ -1,6 +1,7 @@
 ---
 title: Collapsing and Grouping Results
 sidebar_position: 22
+split: page
 ---
 
 import SqlLogicTest from "@site/src/components/SqlLogicTest";

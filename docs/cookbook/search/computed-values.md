@@ -1,6 +1,7 @@
 ---
 title: Computed Values
 sidebar_position: 30
+split: page
 ---
 
 import SqlLogicTest from "@site/src/components/SqlLogicTest";

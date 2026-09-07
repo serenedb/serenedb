@@ -6,6 +6,7 @@ redirect_from:
     - /docs/stable/guides/sql_features/query_and_query_table_functions
 title: query and query_table Functions
 sidebar_label: Query and Query Table Functions
+split: page
 ---
 
 import SqlLogicTest from "@site/src/components/SqlLogicTest";

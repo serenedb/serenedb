@@ -1,6 +1,7 @@
 ---
 title: Case-Sensitivity and Diacritics
 sidebar_position: 3
+split: page
 ---
 
 import SqlLogicTest from "@site/src/components/SqlLogicTest";

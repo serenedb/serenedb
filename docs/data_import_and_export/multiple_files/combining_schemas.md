@@ -1,5 +1,6 @@
 ---
 title: Combining Schemas
+split: page
 ---
 
 import SqlLogicTest from "@site/src/components/SqlLogicTest";

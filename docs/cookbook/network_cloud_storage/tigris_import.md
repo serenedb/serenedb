@@ -1,6 +1,7 @@
 ---
 layout: docu
 title: Tigris Import
+split: page
 ---
 
 import SqlLogicTest from "@site/src/components/SqlLogicTest";

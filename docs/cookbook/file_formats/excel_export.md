@@ -7,6 +7,7 @@ redirect_from:
 - /docs/preview/guides/file_formats/excel_export
 - /docs/stable/guides/file_formats/excel_export
 title: Excel Export
+split: page
 ---
 
 import SqlLogicTest from "@site/src/components/SqlLogicTest";

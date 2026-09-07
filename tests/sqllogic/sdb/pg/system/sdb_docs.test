@@ -32,7 +32,7 @@ query
 SELECT length(hash), layout FROM sdb_docs.meta;
 ----
 length	layout
-64	4
+64	5
 
 query
 SELECT bool_or(path = 'sql/indexes/inverted/index.md') FROM sdb_docs.docs_fts WHERE content_text @@ 'inverted';
@@ -53,7 +53,32 @@ count
 5
 
 query
+SELECT count(*) FROM sdb_docs.docs WHERE split NOT IN ('headings', 'page');
+----
+count
+0
+
+query
+SELECT split FROM sdb_docs.docs WHERE path IN ('sql/functions/text.md', 'cookbook/search/autocomplete.md') ORDER BY path;
+----
+split
+page
+headings
+
+query
 SELECT count(*) > 1000, count(DISTINCT path) = (SELECT count(*) FROM sdb_docs.docs) FROM sdb_docs.sections;
+----
+?column?	?column?
+t	t
+
+query
+SELECT count(*), max(level), bool_and(s.content = d.content) FROM sdb_docs.sections s JOIN sdb_docs.docs d USING (path) WHERE path = 'cookbook/search/autocomplete.md';
+----
+count	max	bool_and
+1	0	t
+
+query
+SELECT count(*) > 5, max(level) >= 2 FROM sdb_docs.sections WHERE path = 'sql/functions/text.md';
 ----
 ?column?	?column?
 t	t

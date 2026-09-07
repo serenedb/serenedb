@@ -1,6 +1,7 @@
 ---
 title: Highlighting
 sidebar_position: 24
+split: page
 ---
 
 import SqlLogicTest from "@site/src/components/SqlLogicTest";

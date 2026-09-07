@@ -1,6 +1,7 @@
 ---
 title: FILTER
 sidebar_position: 14
+split: headings
 ---
 
 import RailroadDiagram from '@site/src/components/RailroadDiagram';

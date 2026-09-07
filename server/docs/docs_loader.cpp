@@ -59,7 +59,7 @@ constexpr std::string_view kMeta = "sdb_docs.meta";
 constexpr std::string_view kIndex = "docs_fts";
 constexpr std::string_view kSectionsIndex = "sections_fts";
 constexpr std::string_view kDictionary = "sdb_docs.english";
-constexpr int kLayout = 4;
+constexpr int kLayout = 5;
 constexpr size_t kInsertBatch = 32;
 constexpr std::string_view kStopWords =
   "\"a\",\"an\",\"also\",\"are\",\"be\",\"been\",\"but\",\"can\","
@@ -71,15 +71,17 @@ constexpr std::string_view kStopWords =
 std::string SectionsInsert() {
   return absl::StrCat(
     "INSERT INTO ", kSections, " WITH rows AS (",
-    "SELECT d.path, 0 AS level, '' AS breadcrumb, d.title, "
-    "regexp_replace(d.content, '(?s)(^|\\n)#{1,6} .*$', '') AS content, "
+    "SELECT d.path, 0 AS level, '' AS breadcrumb, d.title, d.content, "
     "0 AS ord FROM ",
-    kTable,
-    " d "
+    kTable, " d WHERE d.split = 'page' ",
+    "UNION ALL SELECT d.path, 0, '', d.title, "
+    "regexp_replace(d.content, '(?s)(^|\\n)#{1,6} .*$', ''), 0 FROM ",
+    kTable, " d WHERE d.split = 'headings' ",
     "UNION ALL SELECT d.path, s.level, s.section_path, s.title, s.content, "
     "s.start_line FROM ",
     kTable,
-    " d, UNNEST(md_extract_sections(d.content, 1, 6, 'minimal')) AS u(s)) "
+    " d, UNNEST(md_extract_sections(d.content, 1, 6, 'minimal')) AS u(s) "
+    "WHERE d.split = 'headings') "
     "SELECT row_number() OVER (ORDER BY path, ord), path, level, breadcrumb, "
     "title, content, md_to_text(content) FROM rows "
     "WHERE trim(md_to_text(content), E' \\n\\t\\r') <> ''");
@@ -136,8 +138,8 @@ class Loader {
                         "frequency = true, position = true, stopwords = '",
                         kStopWords, "')"),
            absl::StrCat("CREATE TABLE ", kTable,
-                        " (path TEXT PRIMARY KEY, title TEXT, content TEXT, "
-                        "content_text TEXT) "
+                        " (path TEXT PRIMARY KEY, title TEXT, split TEXT, "
+                        "content TEXT, content_text TEXT) "
                         "WITH (storage = 'search', compaction_interval = 0)"),
            absl::StrCat("CREATE INDEX ", kIndex, " ON ", kTable,
                         " USING inverted (content_text ", kDictionary, ")"),
@@ -194,14 +196,15 @@ class Loader {
         docs.subspan(begin, std::min(kInsertBatch, docs.size() - begin));
       std::string sql = absl::StrCat("INSERT INTO ", kTable, " VALUES ");
       duckdb::vector<duckdb::Value> values;
-      values.reserve(batch.size() * 3);
+      values.reserve(batch.size() * 4);
       for (size_t i = 0; i < batch.size(); ++i) {
-        const auto content = 3 * i + 3;
-        absl::StrAppend(&sql, i == 0 ? "" : ", ", "($", 3 * i + 1, ", $",
-                        3 * i + 2, ", $", content, ", md_to_text($", content,
-                        "))");
+        const auto content = 4 * i + 4;
+        absl::StrAppend(&sql, i == 0 ? "" : ", ", "($", 4 * i + 1, ", $",
+                        4 * i + 2, ", $", 4 * i + 3, ", $", content,
+                        ", md_to_text($", content, "))");
         values.emplace_back(std::string{batch[i].path});
         values.emplace_back(std::string{batch[i].title});
+        values.emplace_back(std::string{batch[i].split});
         values.emplace_back(std::string{batch[i].content});
       }
       auto prepared = _conn->Prepare(sql);

@@ -7,6 +7,7 @@ redirect_from:
 - /docs/preview/guides/database_integration/mysql
 - /docs/stable/guides/database_integration/mysql
 title: MySQL Import
+split: page
 ---
 
 import SqlLogicTest from "@site/src/components/SqlLogicTest";

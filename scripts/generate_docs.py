@@ -58,23 +58,33 @@ def clean(body: str) -> str:
     return text + "\n" if text else ""
 
 
-def collect(docs_dir: pathlib.Path) -> list[tuple[str, str, str]]:
+SPLIT_MODES = ("headings", "page")
+
+
+def collect(docs_dir: pathlib.Path) -> list[tuple[str, str, str, str]]:
     docs = []
+    errors = []
     for path in sorted(docs_dir.rglob("*")):
         if not path.is_file() or path.suffix not in EXTENSIONS:
             continue
         rel = path.relative_to(docs_dir).as_posix()
         meta, body = split_frontmatter(path.read_text(encoding="utf-8"))
         title = meta.get("title") or path.stem
+        split = meta.get("split")
+        if split not in SPLIT_MODES:
+            errors.append(f"{rel}: frontmatter key 'split' must be one of {', '.join(SPLIT_MODES)} (got {split!r})")
+            continue
         content = clean(body)
         for field in (title, content):
             if f"){DELIMITER}\"" in field:
-                sys.exit(f"{rel}: contains the raw string delimiter ){DELIMITER}\"")
-        docs.append((rel, title, content))
+                errors.append(f"{rel}: contains the raw string delimiter ){DELIMITER}\"")
+        docs.append((rel, title, split, content))
+    if errors:
+        sys.exit("\n".join(errors))
     return docs
 
 
-def digest(docs: list[tuple[str, str, str]]) -> str:
+def digest(docs: list[tuple[str, str, str, str]]) -> str:
     h = hashlib.sha256()
     for fields in docs:
         for field in fields:
@@ -87,12 +97,12 @@ def raw(text: str) -> str:
     return f'R"{DELIMITER}({text}){DELIMITER}"'
 
 
-def render(docs: list[tuple[str, str, str]]) -> str:
+def render(docs: list[tuple[str, str, str, str]]) -> str:
     out = ['#include "docs/docs_data.h"', "", "namespace sdb::docs {"]
     if docs:
         out += ["namespace {", "", "constexpr Doc kDocs[] = {"]
-        for rel, title, content in docs:
-            out.append(f"  {{{raw(rel)}, {raw(title)}, {raw(content)}}},")
+        for rel, title, split, content in docs:
+            out.append(f"  {{{raw(rel)}, {raw(title)}, {raw(split)}, {raw(content)}}},")
         out += ["};", "", "}  // namespace", ""]
         out.append("std::span<const Doc> GetDocs() { return kDocs; }")
     else:

@@ -1,6 +1,7 @@
 ---
 title: Faceted Search
 sidebar_position: 18
+split: page
 ---
 
 import SqlLogicTest from "@site/src/components/SqlLogicTest";

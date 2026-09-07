@@ -1,6 +1,7 @@
 ---
 title: BM25/TFIDF Ranking
 sidebar_position: 11
+split: page
 ---
 
 import SqlLogicTest from "@site/src/components/SqlLogicTest";

@@ -3,6 +3,7 @@ layout: docu
 redirect_from:
 - /oom
 title: Out-of-Memory Issues
+split: page
 ---
 
 import SqlLogicTest from "@site/src/components/SqlLogicTest";

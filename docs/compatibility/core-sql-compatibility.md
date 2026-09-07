@@ -1,3 +1,7 @@
+---
+split: headings
+---
+
 # PostgreSQL Compatibility
 
 import SqlLogicTest from "@site/src/components/SqlLogicTest";

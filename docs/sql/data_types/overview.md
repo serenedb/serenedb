@@ -1,6 +1,7 @@
 ---
 title: Data Types
 slug: /sql/data_types
+split: headings
 ---
 
 import SqlLogicTest from "@site/src/components/SqlLogicTest";

@@ -1,6 +1,7 @@
 ---
 title: serened psql
 sidebar_position: 9
+split: headings
 ---
 
 # serened psql

@@ -6,6 +6,7 @@ redirect_from:
 - /docs/preview/guides/performance/how_to_tune_workloads
 - /docs/stable/guides/performance/how_to_tune_workloads
 title: Tuning Workloads
+split: page
 ---
 
 import SqlLogicTest from "@site/src/components/SqlLogicTest";

@@ -1,6 +1,7 @@
 ---
 title: Set Operations
 sidebar_position: 15
+split: headings
 ---
 
 import RailroadDiagram from '@site/src/components/RailroadDiagram';

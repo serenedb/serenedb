@@ -1,6 +1,7 @@
 ---
 title: "C#"
 sidebar_position: 5
+split: page
 ---
 
 # C#

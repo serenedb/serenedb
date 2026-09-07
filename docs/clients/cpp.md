@@ -1,6 +1,7 @@
 ---
 title: C++
 sidebar_position: 4
+split: page
 ---
 
 # C++

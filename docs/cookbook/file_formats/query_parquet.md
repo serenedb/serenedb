@@ -6,6 +6,7 @@ redirect_from:
 - /docs/preview/guides/file_formats/query_parquet
 - /docs/stable/guides/file_formats/query_parquet
 title: Querying Parquet Files
+split: page
 ---
 
 import SqlLogicTest from "@site/src/components/SqlLogicTest";

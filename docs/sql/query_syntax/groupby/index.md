@@ -1,6 +1,7 @@
 ---
 title: GROUP BY
 sidebar_position: 4
+split: headings
 ---
 
 import RailroadDiagram from '@site/src/components/RailroadDiagram';

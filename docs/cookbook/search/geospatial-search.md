@@ -1,6 +1,7 @@
 ---
 title: Geospatial Search
 sidebar_position: 28
+split: page
 ---
 
 import SqlLogicTest from "@site/src/components/SqlLogicTest";

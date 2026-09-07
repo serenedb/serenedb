@@ -1,6 +1,7 @@
 ---
 title: Search
 sidebar_position: 2
+split: page
 ---
 
 import SqlLogicTest from "@site/src/components/SqlLogicTest";

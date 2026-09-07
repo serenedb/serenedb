@@ -1,5 +1,6 @@
 ---
 title: Nested Functions
+split: headings
 ---
 
 There are five [nested data types](../../sql/data_types/overview.md#nested--composite-types):

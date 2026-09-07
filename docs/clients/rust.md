@@ -1,6 +1,7 @@
 ---
 title: Rust
 sidebar_position: 6
+split: page
 ---
 
 # Rust

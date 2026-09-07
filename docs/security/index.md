@@ -1,6 +1,7 @@
 ---
 title: Security
 sidebar_position: 1
+split: page
 ---
 
 SereneDB manages access with the same model as PostgreSQL: **roles** own database objects and hold **privileges**, and every client connection is authenticated against a **host-based authentication** ruleset before it may act as a role.

@@ -1,5 +1,6 @@
 ---
 title: Installation
+split: page
 ---
 
 import DocCallout from "@site/src/components/DocCallout";

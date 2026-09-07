@@ -1,5 +1,6 @@
 ---
 title: Partitioned Writes
+split: page
 ---
 
 import SqlLogicTest from "@site/src/components/SqlLogicTest";

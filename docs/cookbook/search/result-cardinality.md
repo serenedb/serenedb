@@ -1,6 +1,7 @@
 ---
 title: Counting Unique Results
 sidebar_position: 21
+split: page
 ---
 
 import SqlLogicTest from "@site/src/components/SqlLogicTest";

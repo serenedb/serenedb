@@ -3,6 +3,7 @@ title: Metadata Functions
 sidebar_label: Metadata Functions
 redirect_from:
     - /docs/sql/meta/duckdb_table_functions
+split: headings
 ---
 
 import SqlLogicTest from "@site/src/components/SqlLogicTest";

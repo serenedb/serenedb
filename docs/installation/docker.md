@@ -1,6 +1,7 @@
 ---
 title: Docker
 sidebar_position: 2
+split: page
 ---
 
 # Run with Docker

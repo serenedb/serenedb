@@ -5,6 +5,7 @@ redirect_from:
 - /docs/preview/guides/meta/explain
 - /docs/stable/guides/meta/explain
 title: 'EXPLAIN: Inspect Query Plans'
+split: page
 ---
 
 import SqlLogicTest from "@site/src/components/SqlLogicTest";

@@ -1,6 +1,7 @@
 ---
 title: Writing JSON
 sidebar_position: 3
+split: page
 ---
 
 import SqlLogicTest from "@site/src/components/SqlLogicTest";

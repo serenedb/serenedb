@@ -4,6 +4,7 @@ redirect_from:
     - /docs/preview/guides/sql_features/timestamps
     - /docs/stable/guides/sql_features/timestamps
 title: Timestamp Issues
+split: page
 ---
 
 import SqlLogicTest from "@site/src/components/SqlLogicTest";

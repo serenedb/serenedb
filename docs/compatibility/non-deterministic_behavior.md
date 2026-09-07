@@ -6,6 +6,7 @@ redirect_from:
 - /docs/stable/operations_manual/non-deterministic_behavior
 - /docs/contribution/non-deterministic_behavior
 title: Non-Deterministic Behavior
+split: headings
 ---
 
 import SqlLogicTest from "@site/src/components/SqlLogicTest";

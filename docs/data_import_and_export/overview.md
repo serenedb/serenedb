@@ -6,6 +6,7 @@ redirect_from:
 - /docs/guides/performance/import
 - /docs/preview/guides/performance/import
 - /docs/stable/guides/performance/import
+split: page
 ---
 
 import SqlLogicTest from "@site/src/components/SqlLogicTest";

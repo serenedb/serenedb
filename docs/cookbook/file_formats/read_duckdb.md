@@ -3,6 +3,7 @@ layout: docu
 redirect_from:
     - /docs/stable/guides/file_formats/read_duckdb
 title: Directly Read DuckDB Databases
+split: page
 ---
 
 import SqlLogicTest from "@site/src/components/SqlLogicTest";

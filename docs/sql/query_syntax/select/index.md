@@ -1,6 +1,7 @@
 ---
 title: SELECT
 sidebar_position: 1
+split: headings
 ---
 
 import RailroadDiagram from '@site/src/components/RailroadDiagram';

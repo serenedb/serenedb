@@ -1,6 +1,7 @@
 ---
 title: Tag Cloud
 sidebar_position: 19
+split: page
 ---
 
 import SqlLogicTest from "@site/src/components/SqlLogicTest";

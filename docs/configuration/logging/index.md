@@ -6,6 +6,7 @@ redirect_from:
 - /docs/contribution/logging/overview
 - /docs/configuration/logging/overview
 title: Logging
+split: headings
 ---
 
 import SqlLogicTest from "@site/src/components/SqlLogicTest";

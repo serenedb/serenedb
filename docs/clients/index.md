@@ -1,6 +1,7 @@
 ---
 title: "Apps & Clients"
 sidebar_position: 7
+split: page
 ---
 
 # Apps & Clients

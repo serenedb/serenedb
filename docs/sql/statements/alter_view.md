@@ -1,5 +1,6 @@
 ---
 title: ALTER VIEW
+split: headings
 ---
 
 import DocCallout from "@site/src/components/DocCallout";

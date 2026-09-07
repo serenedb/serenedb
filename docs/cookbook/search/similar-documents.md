@@ -1,6 +1,7 @@
 ---
 title: Finding Similar Documents
 sidebar_position: 17
+split: page
 ---
 
 import SqlLogicTest from "@site/src/components/SqlLogicTest";

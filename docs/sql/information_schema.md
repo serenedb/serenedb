@@ -5,6 +5,7 @@ redirect_from:
 - /docs/sql/meta/information_schema
 - /docs/stable/sql/meta/information_schema
 title: Information Schema
+split: headings
 ---
 
 import SqlLogicTest from "@site/src/components/SqlLogicTest";

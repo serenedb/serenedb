@@ -5,6 +5,7 @@ redirect_from:
 - /docs/preview/guides/meta/duckdb_environment
 - /docs/stable/guides/meta/duckdb_environment
 title: SereneDB Environment
+split: page
 ---
 
 import SqlLogicTest from "@site/src/components/SqlLogicTest";

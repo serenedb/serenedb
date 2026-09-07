@@ -1,6 +1,7 @@
 ---
 title: CREATE INDEX … USING inverted
 sidebar_label: Inverted Indexes
+split: headings
 ---
 
 import SqlLogicTest from "@site/src/components/SqlLogicTest";

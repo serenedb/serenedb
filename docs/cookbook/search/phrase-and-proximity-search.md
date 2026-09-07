@@ -1,6 +1,7 @@
 ---
 title: Phrase and Proximity Search
 sidebar_position: 5
+split: page
 ---
 
 import SqlLogicTest from "@site/src/components/SqlLogicTest";

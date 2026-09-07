@@ -5,6 +5,7 @@ redirect_from:
     - /docs/preview/guides/network_cloud_storage/duckdb_over_https_or_s3
     - /docs/stable/guides/network_cloud_storage/duckdb_over_https_or_s3
 title: Attach to a DuckDB Database over HTTPS or S3
+split: page
 ---
 
 import SqlLogicTest from "@site/src/components/SqlLogicTest";

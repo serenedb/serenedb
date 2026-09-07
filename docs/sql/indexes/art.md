@@ -1,6 +1,7 @@
 ---
 title: Adaptive Radix Tree (ART)
 sidebar_position: 2
+split: headings
 ---
 
 import SqlLogicTest from "@site/src/components/SqlLogicTest";

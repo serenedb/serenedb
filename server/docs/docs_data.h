@@ -28,6 +28,7 @@ namespace sdb::docs {
 struct Doc {
   std::string_view path;
   std::string_view title;
+  std::string_view split;
   std::string_view content;
 };
 

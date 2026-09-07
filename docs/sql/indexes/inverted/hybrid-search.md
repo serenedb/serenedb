@@ -1,6 +1,7 @@
 ---
 title: Hybrid Search
 sidebar_position: 8
+split: headings
 ---
 
 import SqlLogicTest from "@site/src/components/SqlLogicTest";

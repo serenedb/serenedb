@@ -5,6 +5,7 @@ redirect_from:
 - /docs/preview/guides/file_formats/file_access
 - /docs/stable/guides/file_formats/file_access
 title: 'File Access with the file: Protocol'
+split: page
 ---
 
 SereneDB supports using the `file:` protocol. It currently supports the following formats:

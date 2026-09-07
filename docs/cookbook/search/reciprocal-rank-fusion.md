@@ -1,6 +1,7 @@
 ---
 title: Reciprocal Rank Fusion
 sidebar_position: 15
+split: page
 ---
 
 import SqlLogicTest from "@site/src/components/SqlLogicTest";

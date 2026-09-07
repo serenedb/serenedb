@@ -1,6 +1,7 @@
 ---
 title: ORDER BY
 sidebar_position: 7
+split: headings
 ---
 
 import RailroadDiagram from '@site/src/components/RailroadDiagram';

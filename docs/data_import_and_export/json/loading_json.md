@@ -1,6 +1,7 @@
 ---
 title: Loading JSON
 sidebar_position: 3
+split: headings
 ---
 
 import SqlLogicTest from "@site/src/components/SqlLogicTest";

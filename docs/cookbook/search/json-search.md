@@ -1,6 +1,7 @@
 ---
 title: Searching JSON
 sidebar_position: 29
+split: page
 ---
 
 import SqlLogicTest from "@site/src/components/SqlLogicTest";

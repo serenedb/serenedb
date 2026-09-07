@@ -5,6 +5,7 @@ redirect_from:
 - /docs/preview/guides/sql_features/asof_join
 - /docs/stable/guides/sql_features/asof_join
 title: AsOf Join
+split: page
 ---
 
 import SqlLogicTest from "@site/src/components/SqlLogicTest";

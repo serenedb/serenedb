@@ -1,6 +1,7 @@
 ---
 title: EXPORT / IMPORT DATABASE
 unlisted: true
+split: headings
 ---
 
 import RailroadDiagram from '@site/src/components/RailroadDiagram';

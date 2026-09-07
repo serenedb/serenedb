@@ -1,5 +1,6 @@
 ---
 title: CREATE INDEX
+split: headings
 ---
 
 import RailroadDiagram from '@site/src/components/RailroadDiagram';

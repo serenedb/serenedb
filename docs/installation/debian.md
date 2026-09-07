@@ -1,6 +1,7 @@
 ---
 title: Debian / Ubuntu
 sidebar_position: 3
+split: page
 ---
 
 import DocCallout from "@site/src/components/DocCallout";

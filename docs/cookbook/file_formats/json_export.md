@@ -6,6 +6,7 @@ redirect_from:
 - /docs/preview/guides/file_formats/json_export
 - /docs/stable/guides/file_formats/json_export
 title: JSON Export
+split: page
 ---
 
 import SqlLogicTest from "@site/src/components/SqlLogicTest";

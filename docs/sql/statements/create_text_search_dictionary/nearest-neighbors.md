@@ -1,6 +1,7 @@
 ---
 title: "nearest_neighbors"
 sidebar_label: Nearest Neighbors
+split: headings
 ---
 
 import SqlLogicTest from "@site/src/components/SqlLogicTest";

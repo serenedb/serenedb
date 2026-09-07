@@ -1,6 +1,7 @@
 ---
 title: One Search Box
 sidebar_position: 11
+split: page
 ---
 
 import SqlLogicTest from "@site/src/components/SqlLogicTest";

@@ -1,6 +1,7 @@
 ---
 title: Python
 sidebar_position: 1
+split: page
 ---
 
 # Python

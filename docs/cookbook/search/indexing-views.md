@@ -1,6 +1,7 @@
 ---
 title: Indexing Views
 sidebar_position: 31
+split: page
 ---
 
 import SqlLogicTest from "@site/src/components/SqlLogicTest";

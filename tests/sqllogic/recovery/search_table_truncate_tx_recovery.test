@@ -1,0 +1,53 @@
+# A transaction that writes, truncates and writes again on a search table is
+# one WAL record: rows before the truncate (published earlier or written in the
+# same transaction) must not survive replay, rows after it must.
+
+control substitution on
+
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+CREATE TABLE trt (id BIGINT PRIMARY KEY, r TEXT)
+WITH (storage = 'search', compaction_interval = 0);
+
+statement ok
+CREATE INDEX trt_r ON trt USING inverted (r);
+
+statement ok
+RESET sdb_faults;
+
+statement ok
+INSERT INTO trt VALUES (1, 'a');
+
+statement ok
+VACUUM (REFRESH_TABLE) trt;
+
+statement ok
+SET sdb_faults = 'crash_after_search_wal_commit';
+
+statement ok
+BEGIN;
+
+statement ok
+INSERT INTO trt VALUES (2, 'b');
+
+statement ok
+TRUNCATE trt;
+
+statement ok
+INSERT INTO trt VALUES (3, 'c');
+
+statement error connection closed
+COMMIT;
+
+connection after_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT id, r FROM trt ORDER BY id;
+----
+id	r
+3	c
+
+connection after_crash
+query
+SELECT id FROM trt_r WHERE r IN ('a', 'b', 'c') ORDER BY id;
+----
+id
+3

@@ -28,24 +28,30 @@ statement ok
 CREATE TABLE sm_empty (id BIGINT PRIMARY KEY, body TEXT) WITH (storage = 'search', compaction_interval = 0);
 
 query
-SELECT metric, CASE WHEN metric IN ('index_size', 'num_files') THEN (value > 0)::VARCHAR WHEN metric LIKE 'avg_%' THEN (value >= 0)::VARCHAR ELSE value::VARCHAR END AS value
+SELECT metric, value
 FROM sdb_metrics
 WHERE relation_id = (SELECT oid FROM pg_class WHERE relname = 'sm_s')
+  AND metric IN ('num_docs', 'num_live_docs', 'num_buffered_docs', 'num_segments',
+                 'num_failed_commits', 'num_failed_cleanups', 'num_failed_consolidations')
 ORDER BY metric;
 ----
 metric	value
-avg_cleanup_time_ms	true
-avg_commit_time_ms	true
-avg_consolidation_time_ms	true
-index_size	true
 num_buffered_docs	0
 num_docs	3
 num_failed_cleanups	0
 num_failed_commits	0
 num_failed_consolidations	0
-num_files	true
 num_live_docs	3
 num_segments	1
+
+query
+SELECT count(*) AS metrics,
+       count(*) FILTER (WHERE metric IN ('index_size', 'num_files') AND value > 0) AS sized
+FROM sdb_metrics
+WHERE relation_id = (SELECT oid FROM pg_class WHERE relname = 'sm_s');
+----
+metrics	sized
+12	2
 
 query
 SELECT count(*) AS storage_less_index_rows

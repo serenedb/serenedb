@@ -30,7 +30,9 @@
 #include "iresearch/formats/hnsw/hnsw_graph.hpp"
 #include "iresearch/index/directory_reader.hpp"
 #include "iresearch/index/index_writer.hpp"
+#include "iresearch/search/doc_collector.hpp"
 #include "iresearch/search/vector_similarity_filter.hpp"
+#include "iresearch/search/vector_similarity_scorer.hpp"
 #include "iresearch/store/memory_directory.hpp"
 #include "iresearch/utils/index_utils.hpp"
 #include "search/filter_test_case_base.hpp"
@@ -132,6 +134,7 @@ irs::ByVectorSimilarity MakeKnnFilter(const std::vector<float>& query,
   opts.metric = metric;
   opts.quant = quant;
   opts.nprobe = ef;
+  opts.ef_search = ef;
   return filter;
 }
 
@@ -159,24 +162,24 @@ std::vector<irs::doc_id_t> BruteForceTopK(
 }
 
 std::vector<irs::doc_id_t> RunKnn(const irs::DirectoryReader& reader,
-                                  irs::ByVectorSimilarity& filter) {
-  ::tests::PreparedFilter prepared{
-    filter,  *reader,
-    nullptr, irs::IResourceManager::gNoop,
-    nullptr, ::tests::PreparedFilter::CollectMode::Single};
-  EXPECT_EQ(1U, prepared.size());
-  auto it = prepared.Execute(0);
-  EXPECT_NE(nullptr, it);
+                                  irs::ByVectorSimilarity& filter,
+                                  size_t k = 128) {
+  irs::VectorSimilarityScorer scorer;
+  std::vector<irs::ScoreDoc> hits(k);
+  const auto count =
+    irs::ExecuteTopK(reader, filter, scorer, k, false, std::span{hits});
   std::vector<irs::doc_id_t> docs;
-  while (!irs::doc_limits::eof(it->Advance())) {
-    docs.push_back(it->Value());
+  const auto n = std::min<size_t>(count, k);
+  docs.reserve(n);
+  for (size_t i = 0; i < n; ++i) {
+    docs.push_back(hits[i].doc);
   }
   return docs;
 }
 
 // (quant, nb_bits, recall floor). TurboQuant needs its bit width spelled out --
-// TQ accepts 2|3|5 and TQMse 1|2|4 -- and estimates a shorter code than the
-// scalar quantizers do, so it carries its own floor.
+// TQ accepts 1-5 -- and estimates a shorter code than the scalar quantizers
+// do, so it carries its own floor.
 struct HnswQuant {
   irs::VectorQuantization kind;
   uint32_t nb_bits;
@@ -459,8 +462,8 @@ INSTANTIATE_TEST_SUITE_P(
     ::testing::Values(HnswQuant{irs::VectorQuantization::None, 0, 0.9},
                       HnswQuant{irs::VectorQuantization::SQ8, 0, 0.9},
                       HnswQuant{irs::VectorQuantization::SQ4, 0, 0.7},
-                      HnswQuant{irs::VectorQuantization::TQMse, 4, 0.7},
-                      HnswQuant{irs::VectorQuantization::TQMse, 2, 0.5},
+                      HnswQuant{irs::VectorQuantization::TQ, 4, 0.7},
+                      HnswQuant{irs::VectorQuantization::TQ, 2, 0.5},
                       HnswQuant{irs::VectorQuantization::TQ, 3, 0.5})));
 
 }  // namespace

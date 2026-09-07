@@ -1583,8 +1583,6 @@ std::string CodeQuantName(const ::testing::TestParamInfo<CodeQuant>& info) {
       return "sq4";
     case VectorQuantization::TQ:
       return "tq" + std::to_string(info.param.nb_bits);
-    case VectorQuantization::TQMse:
-      return "tqmse" + std::to_string(info.param.nb_bits);
     default:
       return "other";
   }
@@ -1913,7 +1911,7 @@ INSTANTIATE_TEST_SUITE_P(
   quants, code_rekey_test,
   ::testing::Values(CodeQuant{VectorQuantization::SQ8, 0, 0.99f, 0.99, 10},
                     CodeQuant{VectorQuantization::SQ4, 0, 0.9f, 0.95, 9},
-                    CodeQuant{VectorQuantization::TQMse, 4, 0.9f, 0.95, 9},
-                    CodeQuant{VectorQuantization::TQMse, 2, 0.7f, 0.85, 6},
+                    CodeQuant{VectorQuantization::TQ, 4, 0.9f, 0.95, 9},
+                    CodeQuant{VectorQuantization::TQ, 2, 0.7f, 0.85, 6},
                     CodeQuant{VectorQuantization::TQ, 3, 0.7f, 0.85, 6}),
   CodeQuantName);

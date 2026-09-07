@@ -1317,6 +1317,29 @@ duckdb::PhysicalOperator& SereneDBCatalog::PlanInsert(
   return duckdb::DuckCatalog::PlanInsert(context, planner, op, plan);
 }
 
+std::vector<duckdb::idx_t> SearchPkSlots(const SereneDBTableEntry& table,
+                                         duckdb::idx_t child_cols) {
+  const auto rowid_cols = table.GetRowIdColumns();
+  SDB_ASSERT(rowid_cols.size() <= child_cols);
+  const auto virt_start = child_cols - rowid_cols.size();
+  const auto slot_of = [&](duckdb::column_t id) {
+    const auto it = absl::c_find(rowid_cols, id);
+    SDB_ASSERT(it != rowid_cols.end());
+    return virt_start + static_cast<duckdb::idx_t>(it - rowid_cols.begin());
+  };
+  const auto pk_positions = table.GetPKColumnIndexes();
+  std::vector<duckdb::idx_t> slots;
+  if (pk_positions.empty()) {
+    slots.push_back(slot_of(kColumnIdentifierGeneratedPk));
+    return slots;
+  }
+  slots.reserve(pk_positions.size());
+  for (const auto position : pk_positions) {
+    slots.push_back(slot_of(PKVirtualColumnId(position.index)));
+  }
+  return slots;
+}
+
 duckdb::PhysicalOperator& SereneDBCatalog::PlanDelete(
   duckdb::ClientContext& context, duckdb::PhysicalPlanGenerator& planner,
   duckdb::LogicalDelete& op, duckdb::PhysicalOperator& plan) {
@@ -1367,19 +1390,7 @@ duckdb::PhysicalOperator& SereneDBCatalog::PlanDelete(
         table_entry.GetSearchData(), op.estimated_cardinality);
     }
 
-    // A Search table has no separate inverted indexes, so its scan appends only
-    // the PK virtuals (BuildRowIdColumns): [real..., pk_0..pk_{n-1}] for
-    // explicit-PK tables, or [real..., generated_pk] for generated-PK ones.
-    const auto num_pk = table_entry.GetPKColumnIndexes().size();
-    const auto child_cols = plan.types.size();
-    std::vector<duckdb::idx_t> pk_indices;
-    if (num_pk == 0) {
-      pk_indices.push_back(child_cols - 1);  // generated-PK slot is last
-    } else {
-      for (size_t i = 0; i < num_pk; ++i) {
-        pk_indices.push_back(child_cols - num_pk + i);
-      }
-    }
+    auto pk_indices = SearchPkSlots(table_entry, plan.types.size());
     // RETURNING: the binder already widened the scan to every column the clause
     // can name, and op.return_columns says which slot each of them arrived in.
     std::vector<duckdb::idx_t> column_map;
@@ -1406,15 +1417,12 @@ duckdb::PhysicalOperator& SereneDBCatalog::PlanUpdate(
     // Wrap `plan` with a PhysicalProjection that resolves VALUE_DEFAULT and
     // passes every projected new-row column through, plus the PK virtuals, so
     // SereneDBSearchUpdate sees [resolved new-row vals, pk_virtuals].
-    const auto num_pk = table_entry.GetPKColumnIndexes().size();
-    const auto num_virtual = num_pk == 0 ? 1 : num_pk;
-    const auto child_cols = plan.types.size();
-
+    const auto pk_slots = SearchPkSlots(table_entry, plan.types.size());
     const auto num_updates = op.expressions.size();
     duckdb::vector<duckdb::LogicalType> proj_types;
     duckdb::vector<duckdb::unique_ptr<duckdb::Expression>> proj_exprs;
-    proj_types.reserve(num_updates + num_virtual);
-    proj_exprs.reserve(num_updates + num_virtual);
+    proj_types.reserve(num_updates + pk_slots.size());
+    proj_exprs.reserve(num_updates + pk_slots.size());
 
     for (duckdb::idx_t i = 0; i < num_updates; ++i) {
       auto& expr = op.expressions[i];
@@ -1429,28 +1437,18 @@ duckdb::PhysicalOperator& SereneDBCatalog::PlanUpdate(
       }
     }
 
-    // Passthrough virtual columns (PKs / generated PK).
-    auto virt_start = child_cols - num_virtual;
-    for (duckdb::idx_t i = virt_start; i < child_cols; ++i) {
-      proj_types.push_back(plan.types[i]);
-      proj_exprs.push_back(
-        duckdb::make_uniq<duckdb::BoundReferenceExpression>(plan.types[i], i));
+    for (const auto slot : pk_slots) {
+      proj_types.push_back(plan.types[slot]);
+      proj_exprs.push_back(duckdb::make_uniq<duckdb::BoundReferenceExpression>(
+        plan.types[slot], slot));
     }
 
     auto& proj = planner.Make<duckdb::PhysicalProjection>(
       std::move(proj_types), std::move(proj_exprs), op.estimated_cardinality);
     proj.children.push_back(plan);
 
-    std::vector<duckdb::idx_t> pk_indices;
-    if (num_pk == 0) {
-      // generated PK is the single virtual, after the SET vals.
-      pk_indices.push_back(num_updates + num_virtual - 1);
-    } else {
-      pk_indices.reserve(num_pk);
-      for (size_t i = 0; i < num_pk; ++i) {
-        pk_indices.push_back(num_updates + i);
-      }
-    }
+    std::vector<duckdb::idx_t> pk_indices(pk_slots.size());
+    absl::c_iota(pk_indices, num_updates);
 
     auto& search_upd = planner.Make<connector::SereneDBSearchUpdate>(
       connector::ResolveSearchWriteTarget(context, table_entry),

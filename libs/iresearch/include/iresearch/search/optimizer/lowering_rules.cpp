@@ -23,16 +23,22 @@
 #include <algorithm>
 #include <cmath>
 #include <memory>
+#include <type_traits>
+#include <variant>
 
+#include "iresearch/search/automaton_filter.hpp"
+#include "iresearch/search/boolean_filter.hpp"
 #include "iresearch/search/filter_optimizer.hpp"
 #include "iresearch/search/levenshtein_filter.hpp"
 #include "iresearch/search/ngram_similarity_filter.hpp"
+#include "iresearch/search/optimizer/boolean_rules.hpp"
 #include "iresearch/search/phrase_filter.hpp"
 #include "iresearch/search/prefix_filter.hpp"
+#include "iresearch/search/range_filter.hpp"
 #include "iresearch/search/regexp_filter.hpp"
 #include "iresearch/search/scorer.hpp"
 #include "iresearch/search/term_filter.hpp"
-#include "iresearch/search/terms_filter.hpp"
+#include "iresearch/search/term_set.hpp"
 #include "iresearch/search/wildcard_filter.hpp"
 
 namespace irs::optimizer {
@@ -88,8 +94,7 @@ struct NGramSimilarityLowerRule {
 
 }  // namespace
 
-bool WildcardSimplifyRule::Apply(Filter::ptr& slot,
-                                 const OptimizeContext& /*ctx*/) {
+bool WildcardSimplifyRule::Apply(Filter::ptr& slot, const OptimizeContext&) {
   auto& node = sdb::basics::downCast<ByWildcard>(*slot);
   bstring buf;
   auto lowered = ExecuteWildcard(
@@ -99,6 +104,7 @@ bool WildcardSimplifyRule::Apply(Filter::ptr& slot,
       *filter->mutable_field_id() = node.field_id();
       filter->mutable_options()->term = term;
       filter->SetBoost(node.GetBoost());
+      filter->SetScorer(node.GetScorer());
       return filter;
     },
     [&](bytes_view term) -> Filter::ptr {
@@ -108,6 +114,7 @@ bool WildcardSimplifyRule::Apply(Filter::ptr& slot,
       filter->mutable_options()->scored_terms_limit =
         node.options().scored_terms_limit;
       filter->SetBoost(node.GetBoost());
+      filter->SetScorer(node.GetScorer());
       return filter;
     },
     [](bytes_view) -> Filter::ptr { return nullptr; });
@@ -118,8 +125,7 @@ bool WildcardSimplifyRule::Apply(Filter::ptr& slot,
   return true;
 }
 
-bool RegexpSimplifyRule::Apply(Filter::ptr& slot,
-                               const OptimizeContext& /*ctx*/) {
+bool RegexpSimplifyRule::Apply(Filter::ptr& slot, const OptimizeContext&) {
   auto& node = sdb::basics::downCast<ByRegexp>(*slot);
   bstring buf;
   auto lowered = ExecuteRegexp(
@@ -129,6 +135,7 @@ bool RegexpSimplifyRule::Apply(Filter::ptr& slot,
       *filter->mutable_field_id() = node.field_id();
       filter->mutable_options()->term = term;
       filter->SetBoost(node.GetBoost());
+      filter->SetScorer(node.GetScorer());
       return filter;
     },
     [&](bytes_view prefix) -> Filter::ptr {
@@ -138,6 +145,7 @@ bool RegexpSimplifyRule::Apply(Filter::ptr& slot,
       filter->mutable_options()->scored_terms_limit =
         node.options().scored_terms_limit;
       filter->SetBoost(node.GetBoost());
+      filter->SetScorer(node.GetScorer());
       return filter;
     },
     [](bytes_view) -> Filter::ptr { return nullptr; });
@@ -149,7 +157,7 @@ bool RegexpSimplifyRule::Apply(Filter::ptr& slot,
 }
 
 bool EditDistanceSimplifyRule::Apply(Filter::ptr& slot,
-                                     const OptimizeContext& /*ctx*/) {
+                                     const OptimizeContext&) {
   auto& node = sdb::basics::downCast<ByEditDistance>(*slot);
   const auto& opts = node.options();
   if (opts.max_distance != 0) {
@@ -162,25 +170,59 @@ bool EditDistanceSimplifyRule::Apply(Filter::ptr& slot,
   target += opts.prefix;
   target += opts.term;
   filter->SetBoost(node.GetBoost());
+  filter->SetScorer(node.GetScorer());
   slot = std::move(filter);
   return true;
 }
 
-bool PhraseLowerRule::Apply(Filter::ptr& slot, const OptimizeContext& /*ctx*/) {
+bool PhraseLowerRule::Apply(Filter::ptr& slot, const OptimizeContext&) {
   return sdb::basics::downCast<ByPhrase>(*slot).mutable_options()->LowerParts();
 }
 
-bool PhraseSimplifyRule::Apply(Filter::ptr& slot, const OptimizeContext&) {
+bool PhraseSimplifyRule::Apply(Filter::ptr& slot, const OptimizeContext& ctx) {
   auto& phrase = sdb::basics::downCast<ByPhrase>(*slot);
-  if (!phrase.options().simple() || phrase.options().size() != 1) {
+  if (phrase.options().size() != 1) {
     return false;
   }
-  auto term = std::make_unique<ByTerm>();
-  *term->mutable_field_id() = phrase.field_id();
-  *term->mutable_options() =
-    std::move(std::get<ByTermOptions>(phrase.mutable_options()->begin()->part));
-  term->SetBoost(phrase.GetBoost());
-  slot = std::move(term);
+  const auto field = phrase.field_id();
+  const auto boost = phrase.GetBoost();
+  const auto* scorer = phrase.GetScorer();
+  auto lowered = std::visit(
+    [&]<typename Options>(Options& options) -> Filter::ptr {
+      using Opts = std::remove_cvref_t<Options>;
+      if constexpr (std::is_same_v<Opts, TermSetOptions>) {
+        if (options.terms.empty()) {
+          return std::make_unique<Empty>();
+        }
+        SDB_ASSERT(options.min_match == 1);
+        if (ctx.scored) {
+          return nullptr;
+        }
+        auto node = std::make_unique<BooleanFilter>();
+        node->SetMergeType(options.merge_type);
+        for (auto& term : options.terms) {
+          node->Add(
+            TermClause{.field = field, .term = term.term, .boost = term.boost},
+            Occur::Should);
+        }
+        node->SetMinShouldMatch(1);
+        node->SetBoost(boost);
+        node->SetScorer(scorer);
+        return node;
+      } else {
+        auto node = std::make_unique<typename Opts::FilterType>();
+        *node->mutable_field_id() = field;
+        *node->mutable_options() = std::move(options);
+        node->SetBoost(boost);
+        node->SetScorer(scorer);
+        return node;
+      }
+    },
+    phrase.mutable_options()->begin()->part);
+  if (!lowered) {
+    return false;
+  }
+  slot = std::move(lowered);
   return true;
 }
 
@@ -198,15 +240,25 @@ bool NGramSimilarityLowerRule::Apply(Filter::ptr& slot,
     std::clamp(static_cast<size_t>(
                  std::ceil(static_cast<float_t>(terms_count) * threshold)),
                size_t{1}, terms_count);
+  if (terms_count == 1) {
+    auto by_term = std::make_unique<ByTerm>();
+    *by_term->mutable_field_id() = node.field_id();
+    by_term->mutable_options()->term = ngrams.front();
+    by_term->SetBoost(node.GetBoost());
+    by_term->SetScorer(node.GetScorer());
+    slot = std::move(by_term);
+    return true;
+  }
   if (!ctx.scored && min_match == 1) {
-    auto by_terms = std::make_unique<ByTerms>();
-    *by_terms->mutable_field_id() = node.field_id();
-    auto* options = by_terms->mutable_options();
+    auto disjunction_node = std::make_unique<BooleanFilter>();
     for (const auto& ngram : ngrams) {
-      options->terms.emplace(ngram, kNoBoost);
+      disjunction_node->Add(TermClause{.field = node.field_id(), .term = ngram},
+                            Occur::Should);
     }
-    by_terms->SetBoost(node.GetBoost());
-    slot = std::move(by_terms);
+    disjunction_node->SetMinShouldMatch(1);
+    disjunction_node->SetBoost(node.GetBoost());
+    disjunction_node->SetScorer(node.GetScorer());
+    slot = std::move(disjunction_node);
     return true;
   }
   if (node.options().allow_phrase && min_match == terms_count &&
@@ -218,20 +270,24 @@ bool NGramSimilarityLowerRule::Apply(Filter::ptr& slot,
       options->push_back(ByTermOptions{ngram});
     }
     by_phrase->SetBoost(node.GetBoost());
+    by_phrase->SetScorer(node.GetScorer());
     slot = std::move(by_phrase);
     return true;
   }
   return false;
 }
 
-void InitLoweringRules() {
-  RegisterRule<WildcardSimplifyRule>();
-  RegisterRule<RegexpSimplifyRule>();
-  RegisterRule<EditDistanceSimplifyRule>();
-  RegisterRule<PhraseLowerRule>();
-  RegisterRule<PhraseSimplifyRule>();
-  RegisterRule<NGramSimilarityLowerRule>();
-}
+void InitWildcardSimplify() { RegisterRule<WildcardSimplifyRule>(); }
+
+void InitRegexpSimplify() { RegisterRule<RegexpSimplifyRule>(); }
+
+void InitEditDistanceSimplify() { RegisterRule<EditDistanceSimplifyRule>(); }
+
+void InitPhraseSimplify() { RegisterRule<PhraseSimplifyRule>(); }
+
+void InitPhraseLower() { RegisterRule<PhraseLowerRule>(); }
+
+void InitNGramSimilarityLower() { RegisterRule<NGramSimilarityLowerRule>(); }
 
 namespace {
 
@@ -254,8 +310,13 @@ void LowerNode(Filter::ptr& slot) {
 
 }  // namespace
 
-void LowerAutomatons(Filter::ptr& root, const OptimizeContext& /*ctx*/) {
-  TraverseFilter(root, [](Filter::ptr& slot) { LowerNode(slot); });
+void LowerAutomatons(Filter::ptr& root, const OptimizeContext&) {
+  TraverseFilter(root, [](Filter::ptr& slot) {
+    LowerNode(slot);
+    if (slot->type() == Type<BooleanFilter>::id()) {
+      NormalizeTerms(sdb::basics::downCast<BooleanFilter>(*slot));
+    }
+  });
 }
 
 }  // namespace irs::optimizer

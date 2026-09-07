@@ -47,6 +47,7 @@ struct RecordDeserializers;
 struct DeserializeContext {
   std::unique_ptr<RecordDeserializers> record_cache;
   std::unique_ptr<icu::Calendar> session_calendar;
+  duckdb::shared_ptr<const duckdb::ZoneLUT> session_lut;
   containers::FlatHashMap<std::string, std::unique_ptr<icu::Calendar>>
     named_calendars;
 

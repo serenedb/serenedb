@@ -45,14 +45,10 @@ struct TopTerm {
     : term(term.data(), term.size()), key(std::forward<U>(key)) {}
 
   template<typename SelectorState>
-  void emplace(const SelectorState& /*state*/) {
-    // NOOP
-  }
+  void emplace(const SelectorState&) {}
 
   template<typename Visitor>
-  void Visit(const Visitor& /*visitor*/) const {
-    // NOOP
-  }
+  void Visit(const Visitor&) const {}
 
   bstring term;
   key_type key;
@@ -79,7 +75,7 @@ struct TopTermState : TopTerm<T> {
 
     const SubReader* segment;
     const TermReader* field;
-    size_t terms_count{1};  // number of terms in a segment
+    size_t terms_count{1};
     uint32_t docs_count;
   };
 
@@ -129,15 +125,9 @@ class TopTermsSelector : private util::Noncopyable {
   using key_type = typename state_type::key_type;
   using comparer_type = Comparer;
 
-  // We disallow 0 size collectors for consistency since we're not
-  // interested in this use case and don't want to burden "collect(...)"
   explicit TopTermsSelector(size_t size, const Comparer& comp = {})
     : _comparer{comp}, _heap{std::max(size_t(1), size), comp} {}
 
-  // Prepare scorer for terms collecting
-  // `segment` segment reader for the current term
-  // `state` state containing this scored term
-  // `terms` segment term-iterator positioned at the current term
   void Prepare(const SubReader& segment, const TermReader& field,
                TermIterator& terms) noexcept {
     _state.segment = &segment;
@@ -153,7 +143,6 @@ class TopTermsSelector : private util::Noncopyable {
     }
   }
 
-  // Collect current term
   bool Visit(const key_type& key) {
     const auto term = *_state.term;
 
@@ -167,7 +156,6 @@ class TopTermsSelector : private util::Noncopyable {
     return true;
   }
 
-  // FIXME rename
   template<typename Visitor>
   void Visit(const Visitor& visitor) noexcept {
     for (auto& entry : _heap.Finalize()) {
@@ -176,7 +164,6 @@ class TopTermsSelector : private util::Noncopyable {
   }
 
  private:
-  // Collector state
   struct SelectorState {
     const SubReader* segment{};
     const TermReader* field{};

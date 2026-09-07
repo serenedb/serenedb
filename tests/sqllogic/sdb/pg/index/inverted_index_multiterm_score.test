@@ -77,10 +77,10 @@ WHERE body @@ ts_starts_with('a')
 ORDER BY BM25(mt_idx.tableoid) DESC, id;
 ----
 id	body	score
-4	avocado	1.6739764
-1	apple	0.8266785
-2	apple	0.8266785
-3	apple	0.8266785
+4	avocado	0.7608983
+1	apple	0.37576297
+2	apple	0.37576297
+3	apple	0.37576297
 
 
 # TFIDF, same single-token simplification: score = idf = ln((N + 1) / (n + 1)).
@@ -134,12 +134,12 @@ WHERE body @@ ts_lt('c')
 ORDER BY BM25(mt_idx.tableoid) DESC, id;
 ----
 id	body	score
-4	avocado	1.6739764
-5	banana	1.6739764
-6	blueberry	1.6739764
-1	apple	0.8266785
-2	apple	0.8266785
-3	apple	0.8266785
+4	avocado	0.7608983
+5	banana	0.7608983
+6	blueberry	0.7608983
+1	apple	0.37576297
+2	apple	0.37576297
+3	apple	0.37576297
 
 
 # --- Multi-segment: a second batch lands in a new segment, so the collector
@@ -187,13 +187,13 @@ WHERE body @@ ts_starts_with('a')
 ORDER BY BM25(mt_idx.tableoid) DESC, id;
 ----
 id	body	score
-10	apricot	1.9924302
-4	avocado	1.4816045
-9	avocado	1.4816045
-1	apple	0.8938179
-2	apple	0.8938179
-3	apple	0.8938179
-8	apple	0.8938179
+10	apricot	0.90565
+4	avocado	0.6734566
+9	avocado	0.6734566
+1	apple	0.40628085
+2	apple	0.40628085
+3	apple	0.40628085
+8	apple	0.40628085
 
 
 # --- Boost scales a clause's score contribution; match sets are unchanged.
@@ -221,11 +221,11 @@ WHERE body @@ (('apple'::tsquery ^ 4.0) || 'apricot'::tsquery)
 ORDER BY BM25(mt_idx.tableoid) DESC, id;
 ----
 id	body	score
-1	apple	3.5752716
-2	apple	3.5752716
-3	apple	3.5752716
-8	apple	3.5752716
-10	apricot	1.9924302
+1	apple	1.6251234
+2	apple	1.6251234
+3	apple	1.6251234
+8	apple	1.6251234
+10	apricot	0.90565
 
 # A multi-token bare-string cast under a boost keeps OR semantics and scales
 # every expanded term: scores are exactly 2x the unboosted idfs.
@@ -235,11 +235,11 @@ WHERE body @@ ('apple apricot'::tsquery ^ 2.0)
 ORDER BY BM25(mt_idx.tableoid) DESC, id;
 ----
 id	body	score
-10	apricot	3.9848604
-1	apple	1.7876358
-2	apple	1.7876358
-3	apple	1.7876358
-8	apple	1.7876358
+10	apricot	1.8113
+1	apple	0.8125617
+2	apple	0.8125617
+3	apple	0.8125617
+8	apple	0.8125617
 
 # Boost on a prefix clause: 4x on appl* outranks the rarer apr* expansion.
 query IT
@@ -261,11 +261,11 @@ WHERE body @@ (ts_any(['apple', 'apricot']) ^ 2.0)
 ORDER BY BM25(mt_idx.tableoid) DESC, id;
 ----
 id	body	score
-10	apricot	3.9848604
-1	apple	1.7876358
-2	apple	1.7876358
-3	apple	1.7876358
-8	apple	1.7876358
+10	apricot	1.8113
+1	apple	0.8125617
+2	apple	0.8125617
+3	apple	0.8125617
+8	apple	0.8125617
 
 
 statement ok
@@ -310,9 +310,9 @@ WHERE body @@ ts_starts_with('a')
 ORDER BY BM25(mt_multi_idx.tableoid) DESC, id;
 ----
 id	body	score
-3	apple avocado	0.78038335
-1	apple	0.52354836
-2	avocado	0.52354836
+3	apple avocado	0.35471976
+1	apple	0.23797652
+2	avocado	0.23797652
 
 
 statement ok
@@ -363,10 +363,10 @@ WHERE body @@ ts_starts_with('apple')
 ORDER BY BM25(mtok_idx.tableoid) DESC, id;
 ----
 id	body	score
-2	apple apple	0.1448707
-1	apple	0.13245323
-3	apple cat	0.10536051
-4	apple cat dog	0.0874691
+2	apple apple	0.06585032
+1	apple	0.060206007
+3	apple cat	0.04789114
+4	apple cat dog	0.039758682
 
 
 statement ok

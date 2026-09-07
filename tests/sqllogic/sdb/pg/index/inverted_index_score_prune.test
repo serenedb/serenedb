@@ -110,10 +110,11 @@ QUERY PLAN
 │ Index: prune_small_idx                 │
 │ Lookup: table                          │
 │ Index Filter:                          │
-│ ╭─ Terms ─────────────────╮            │
+│ ╭─ Or ────────────────────╮            │
+│ ╰────────────┬────────────╯            │
+│ ╭─ Terms ────┴────────────╮            │
 │ │ Field: body(string)     │            │
 │ │ Values: 'fox', 'rabbit' │            │
-│ │ Min Match: 1            │            │
 │ ╰─────────────────────────╯            │
 │ Score: bm25(k1=1.2, b=0.75)            │
 │ Top: 3, optimized                      │

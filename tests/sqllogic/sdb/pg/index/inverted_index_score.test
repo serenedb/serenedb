@@ -331,12 +331,12 @@ UNION ALL
 ORDER BY id, score;
 ----
 id	score
-1	0.019136623
-1	1.1331773
-2	0.03676455
-3	2.177017
-4	0.031871427
-35	2.5718682
+1	0.008698467
+1	0.5150806
+2	0.01671116
+3	0.9895531
+4	0.014487015
+35	1.1690309
 
 
 # UNION ALL: different scorer types per branch (BM25 vs TFIDF) — each branch is independent
@@ -347,9 +347,9 @@ UNION ALL
 ORDER BY id, score;
 ----
 id	score
-1	0.019136623
+1	0.008698467
 1	2.3513753
-2	0.03676455
+2	0.01671116
 3	2.3513753
 
 
@@ -360,9 +360,9 @@ SELECT id, score FROM (
 ) sub ORDER BY id;
 ----
 id	score
-10	0.043432634
-11	0.043432634
-12	0.043432634
+10	0.019742107
+11	0.019742107
+12	0.019742107
 
 query
 EXPLAIN SELECT BM25(docs_idx.tableoid) as score FROM docs_idx WHERE body @@ ts_phrase('fox') ORDER BY BM25(docs_idx.tableoid) ASC LIMIT 5;
@@ -876,8 +876,8 @@ WHERE docs_idx.body @@ ts_phrase('fox') AND docs2_idx.body @@ ts_phrase('fox')
 ORDER BY docs_idx.id LIMIT 3;
 ----
 id	bm25
-2	0.03676455
-4	0.031871427
+2	0.01671116
+4	0.014487015
 
 
 query
@@ -1023,8 +1023,8 @@ WHERE docs_idx.body @@ ts_phrase('fox') AND docs2_idx.body @@ ts_phrase('fox')
 ORDER BY docs_idx.id;
 ----
 id	left_score	right_score	differs
-2	0.03676455	0.47<slt:ignore>	t
-4	0.031<slt:ignore>	0.47<slt:ignore>	t
+2	0.0167<slt:ignore>	0.21<slt:ignore>	t
+4	0.014487<slt:ignore>	0.21<slt:ignore>	t
 
 
 statement ok
@@ -1051,12 +1051,12 @@ UNION ALL
 ORDER BY id LIMIT 6;
 ----
 id	score
-2	0.03676455
-2	0.03676455
-3	2.177017
-3	2.177017
-4	0.031871427
-4	0.031871427
+2	0.01671116
+2	0.01671116
+3	0.9895531
+3	0.9895531
+4	0.014487015
+4	0.014487015
 
 
 # EXPLAIN for union tree
@@ -1351,9 +1351,9 @@ WHERE body @@ 'alpha' OR body @@ 'beta' OR body @@ 'gamma'
 ORDER BY d DESC, id;
 ----
 id	d
-1	0.9808291
-2	0.9808291
-3	0.9808291
+1	0.44583148
+2	0.44583148
+3	0.44583148
 
 
 # End-to-end BM25 ordering via SQL-surface boost wrapping a TSQUERY
@@ -1691,8 +1691,8 @@ SELECT id, round(BM25(idf_idx.tableoid)::DOUBLE, 6) AS score
 FROM idf_idx WHERE body @@ ts_phrase('alpha') ORDER BY id;
 ----
 id	score
-1	0.897014
-2	0.693147
+1	0.407734
+2	0.315067
 
 
 # 'gamma' occurs in 1 of 4 documents: log1p(3.5 / 1.5) = ln 10/3.
@@ -1839,8 +1839,8 @@ SELECT id, round(BM25(bm1_idx.tableoid)::DOUBLE, 6) AS score
 FROM bm1_idx WHERE body @@ ts_phrase('alpha') ORDER BY id;
 ----
 id	score
-1	0.897014
-2	0.693147
+1	0.407734
+2	0.315067
 
 
 # A rarer term carries a higher IDF: 'gamma' occurs in 1 of 4 documents,
@@ -1905,8 +1905,8 @@ SELECT id, round(BM25(bm1_kw_idx.tableoid)::DOUBLE, 6) AS score
 FROM bm1_kw_idx WHERE tag @@ 'red' ORDER BY id;
 ----
 id	score
-1	0
-2	0
+1	0.315067
+2	0.315067
 
 
 query
@@ -1950,9 +1950,9 @@ SELECT id, round(BM25(score_idx.tableoid)::DOUBLE, 4) AS score
 FROM score_idx WHERE body @@ 'fox' OR body @@ 'cat' ORDER BY id;
 ----
 id	score
-1	0.6671
-2	0.6951
-3	1.0471
+1	0.3032
+2	0.316
+3	0.476
 
 
 # raw_boost scores a flat 1 regardless of frequency. Only the overridden
@@ -1964,9 +1964,9 @@ FROM score_idx WHERE body @@ 'fox' OR (body @@ 'cat')::score('raw_boost()')
 ORDER BY id;
 ----
 id	score
-1	0.6671
+1	0.3032
 2	1
-3	1.5235
+3	1.238
 
 
 # raw_tf scores the term frequency: doc 2 carries 'cat' twice.
@@ -1976,9 +1976,9 @@ FROM score_idx WHERE body @@ 'fox' OR (body @@ 'cat')::score('raw_tf()')
 ORDER BY id;
 ----
 id	score
-1	0.6671
+1	0.3032
 2	2
-3	1.5235
+3	1.238
 
 
 # An override on the whole predicate applies to the root node.
@@ -1999,9 +1999,9 @@ WHERE body @@ 'fox' OR ((body @@ 'cat')::boost(3.0))::score('raw_tf()')
 ORDER BY id;
 ----
 id	score
-1	0.6671
+1	0.3032
 2	6
-3	3.5235
+3	3.238
 
 
 # A nested override wins for its own subtree.
@@ -2025,9 +2025,9 @@ SELECT id, score FROM (
 ) t ORDER BY id;
 ----
 id	score
-1	0.6671
+1	0.3032
 2	1
-3	1.5235
+3	1.238
 
 
 # ::score(NULL) excludes the subtree from scoring: it still selects rows, but
@@ -2043,9 +2043,9 @@ FROM score_idx WHERE body @@ 'fox' OR (body @@ 'cat')::score(NULL)
 ORDER BY id;
 ----
 id	score
-1	0.6671
+1	0.3032
 2	0
-3	0.5235
+3	0.238
 
 
 # ::score(NULL) applies to a whole boolean group, nested groups included: the
@@ -2069,7 +2069,7 @@ WHERE body @@ 'dog' OR (body @@ 'fox' OR body @@ 'cat')::score(NULL)
 ORDER BY id;
 ----
 id	score
-1	0.8143
+1	0.3701
 2	0
 3	0
 
@@ -2082,7 +2082,7 @@ SELECT id, round(BM25(score_idx.tableoid)::DOUBLE, 4) AS score
 FROM score_idx WHERE body @@ 'fox' AND body @@ 'dog' ORDER BY id;
 ----
 id	score
-1	1.4814
+1	0.6734
 
 
 query
@@ -2091,7 +2091,7 @@ FROM score_idx WHERE body @@ 'fox' AND (body @@ 'dog')::score(NULL)
 ORDER BY id;
 ----
 id	score
-1	0.6671
+1	0.3032
 
 
 # Two branches agreeing on the override fuse into one node carrying it, so the
@@ -2184,10 +2184,11 @@ id	score
 3	0
 
 
-# A negated branch is collected with no scorer, so there is nothing to
-# override and saying so beats ignoring it.
-query error ::score\(\.\.\.\) cannot apply to a negated predicate
+query
 SELECT id FROM score_idx WHERE NOT (body @@ 'cat')::score('raw_tf()');
+----
+id
+1
 
 
 # ::score also attaches to the tsquery operand of `@@`, not just to a whole
@@ -2221,8 +2222,8 @@ FROM score_idx WHERE body @@ 'fox'::score(NULL) OR body @@ 'cat' ORDER BY id;
 ----
 id	score
 1	0
-2	0.6951
-3	0.5235
+2	0.316
+3	0.238
 
 
 # A boost on the same operand still multiplies the overriding scorer.
@@ -2258,19 +2259,20 @@ WHERE (body @@ 'fox')::score('bm25(1.2, 0.75)')
    OR (body @@ 'cat')::score('bm25(1.2, 0.75)');
 ----
 QUERY PLAN
-╭─ IRESEARCH_SCAN ────────────────╮
-│ Index: score_idx                │
-│ Lookup: table                   │
-│ Index Filter:                   │
-│ ╭─ Terms ─────────────────────╮ │
-│ │ Field: body(string)         │ │
-│ │ Values: 'cat', 'fox'        │ │
-│ │ Min Match: 1                │ │
-│ │ Score: bm25(k1=1.2, b=0.75) │ │
-│ ╰─────────────────────────────╯ │
-│ Projections: id                 │
-│ ~1 row                          │
-╰─────────────────────────────────╯
+╭─ IRESEARCH_SCAN ───────────────────────────────────────────────╮
+│ Index: score_idx                                               │
+│ Lookup: table                                                  │
+│ Index Filter:                                                  │
+│ ╭─ Or ───────────────────────────────────────────────────────╮ │
+│ ╰──────────────────────────────┬─────────────────────────────╯ │
+│ ╭─ Terms ──────────────────────┴─────────────────────────────╮ │
+│ │ Field: body(string)                                        │ │
+│ │ Values:                                                    │ │
+│ │ 'cat' [bm25(k1=1.2, b=0.75)], 'fox' [bm25(k1=1.2, b=0.75)] │ │
+│ ╰────────────────────────────────────────────────────────────╯ │
+│ Projections: id                                                │
+│ ~1 row                                                         │
+╰────────────────────────────────────────────────────────────────╯
 
 
 # Two score(NULL) siblings must fuse as well: the marker behind it is one
@@ -2280,19 +2282,20 @@ EXPLAIN SELECT id FROM score_idx
 WHERE (body @@ 'fox')::score(NULL) OR (body @@ 'cat')::score(NULL);
 ----
 QUERY PLAN
-╭─ IRESEARCH_SCAN ─────────╮
-│ Index: score_idx         │
-│ Lookup: table            │
-│ Index Filter:            │
-│ ╭─ Terms ──────────────╮ │
-│ │ Field: body(string)  │ │
-│ │ Values: 'cat', 'fox' │ │
-│ │ Min Match: 1         │ │
-│ │ Score: unscored      │ │
-│ ╰──────────────────────╯ │
-│ Projections: id          │
-│ ~1 row                   │
-╰──────────────────────────╯
+╭─ IRESEARCH_SCAN ───────────────────────╮
+│ Index: score_idx                       │
+│ Lookup: table                          │
+│ Index Filter:                          │
+│ ╭─ Or ───────────────────────────────╮ │
+│ ╰──────────────────┬─────────────────╯ │
+│ ╭─ Terms ──────────┴─────────────────╮ │
+│ │ Field: body(string)                │ │
+│ │ Values:                            │ │
+│ │ 'cat' [unscored], 'fox' [unscored] │ │
+│ ╰────────────────────────────────────╯ │
+│ Projections: id                        │
+│ ~1 row                                 │
+╰────────────────────────────────────────╯
 
 
 # Naming the same scorer with different parameters is a different override,
@@ -2303,21 +2306,20 @@ WHERE (body @@ 'fox')::score('bm25(1.2, 0.75)')
    OR (body @@ 'cat')::score('bm25(1.3, 0.75)');
 ----
 QUERY PLAN
-╭─ IRESEARCH_SCAN ─────────────────────────────────────────────────╮
-│ Index: score_idx                                                 │
-│ Lookup: table                                                    │
-│ Index Filter:                                                    │
-│ ╭─ Or ────────────────────────╮                                  │
-│ ╰──────────────┬──────────────╯                                  │
-│                ├────────────────────────────────╮                │
-│ ╭─ Term ───────┴──────────────╮  ╭─ Term ───────┴──────────────╮ │
-│ │ Field: body(string)         │  │ Field: body(string)         │ │
-│ │ Value: fox                  │  │ Value: cat                  │ │
-│ │ Score: bm25(k1=1.2, b=0.75) │  │ Score: bm25(k1=1.3, b=0.75) │ │
-│ ╰─────────────────────────────╯  ╰─────────────────────────────╯ │
-│ Projections: id                                                  │
-│ ~1 row                                                           │
-╰──────────────────────────────────────────────────────────────────╯
+╭─ IRESEARCH_SCAN ───────────────────────────────────────────────╮
+│ Index: score_idx                                               │
+│ Lookup: table                                                  │
+│ Index Filter:                                                  │
+│ ╭─ Or ───────────────────────────────────────────────────────╮ │
+│ ╰──────────────────────────────┬─────────────────────────────╯ │
+│ ╭─ Terms ──────────────────────┴─────────────────────────────╮ │
+│ │ Field: body(string)                                        │ │
+│ │ Values:                                                    │ │
+│ │ 'cat' [bm25(k1=1.3, b=0.75)], 'fox' [bm25(k1=1.2, b=0.75)] │ │
+│ ╰────────────────────────────────────────────────────────────╯ │
+│ Projections: id                                                │
+│ ~1 row                                                         │
+╰────────────────────────────────────────────────────────────────╯
 
 
 # An override may need index features the query's own scorer does not. The
@@ -2330,8 +2332,8 @@ SELECT id, round(BM25(score_idx.tableoid)::DOUBLE, 4) AS score
 FROM score_idx WHERE body @@ 'fox' ORDER BY id;
 ----
 id	score
-1	0.6671
-3	0.5235
+1	0.3032
+3	0.238
 
 
 query
@@ -2339,8 +2341,8 @@ SELECT id, round(IDF(score_idx.tableoid)::DOUBLE, 4) AS score
 FROM score_idx WHERE (body @@ 'fox')::score('bm25(1.2, 0.75)') ORDER BY id;
 ----
 id	score
-1	0.6671
-3	0.5235
+1	0.3032
+3	0.238
 
 
 # Same shape one step further: raw_boost asks for nothing, raw_tf wants
@@ -2391,8 +2393,8 @@ SELECT id, round(IDF(score_kw_idx.tableoid)::DOUBLE, 4) AS score
 FROM score_kw_idx WHERE (tag @@ 'red')::score('bm25(1.2, 0.75)') ORDER BY id;
 ----
 id	score
-1	0
-2	0
+1	0.2136
+2	0.2136
 
 
 query
@@ -2400,8 +2402,8 @@ SELECT id, round(IDF(score_kw_idx.tableoid)::DOUBLE, 4) AS score
 FROM score_kw_idx WHERE (tag @@ 'red')::score('raw_tf()') ORDER BY id;
 ----
 id	score
-1	0
-2	0
+1	1
+2	1
 
 
 query
@@ -2409,8 +2411,8 @@ SELECT id, round(BM25(score_kw_idx.tableoid)::DOUBLE, 4) AS score
 FROM score_kw_idx WHERE tag @@ 'red' ORDER BY id;
 ----
 id	score
-1	0
-2	0
+1	0.2136
+2	0.2136
 
 
 statement ok
@@ -2463,8 +2465,8 @@ ORDER BY id;
 ----
 id	score
 1	42
-2	0.6951
-3	42.5235
+2	0.316
+3	42.238
 
 
 # Doc 3 above is 42 for fox plus cat's ordinary BM25, so the two elements are
@@ -2475,8 +2477,8 @@ FROM score_idx WHERE body @@ ts_any(['fox'::score(NULL), 'cat']) ORDER BY id;
 ----
 id	score
 1	0
-2	0.6951
-3	0.5235
+2	0.316
+3	0.238
 
 
 # Same for a per-element boost, and in either element order -- the leading
@@ -2486,9 +2488,9 @@ SELECT id, round(BM25(score_idx.tableoid)::DOUBLE, 4) AS score
 FROM score_idx WHERE body @@ ts_any(['fox'::boost(5.0), 'cat']) ORDER BY id;
 ----
 id	score
-1	3.3355
-2	0.6951
-3	3.1413
+1	1.5161
+2	0.316
+3	1.4279
 
 
 query
@@ -2496,9 +2498,9 @@ SELECT id, round(BM25(score_idx.tableoid)::DOUBLE, 4) AS score
 FROM score_idx WHERE body @@ ts_any(['cat', 'fox'::boost(5.0)]) ORDER BY id;
 ----
 id	score
-1	3.3355
-2	0.6951
-3	3.1413
+1	1.5161
+2	0.316
+3	1.4279
 
 
 query
@@ -2507,7 +2509,7 @@ FROM score_idx WHERE body @@ ts_all(['fox'::score('constant(9)'), 'cat'])
 ORDER BY id;
 ----
 id	score
-3	9.5235
+3	9.238
 
 
 # Every modifier now lives in the value, so a tsquery reads back as the
@@ -2535,9 +2537,9 @@ SELECT id, round(BM25(score_idx.tableoid)::DOUBLE, 4) AS score
 FROM score_idx WHERE (body @@ 'fox' OR body @@ 'cat')::merge('max') ORDER BY id;
 ----
 id	score
-1	0.6671
-2	0.6951
-3	0.5235
+1	0.3032
+2	0.316
+3	0.238
 
 
 # 'sum' and 'default' are what the node already did, so both read like the
@@ -2547,9 +2549,9 @@ SELECT id, round(BM25(score_idx.tableoid)::DOUBLE, 4) AS score
 FROM score_idx WHERE (body @@ 'fox' OR body @@ 'cat')::merge('sum') ORDER BY id;
 ----
 id	score
-1	0.6671
-2	0.6951
-3	1.0471
+1	0.3032
+2	0.316
+3	0.476
 
 
 query
@@ -2558,9 +2560,9 @@ FROM score_idx WHERE (body @@ 'fox' OR body @@ 'cat')::merge('default')
 ORDER BY id;
 ----
 id	score
-1	0.6671
-2	0.6951
-3	1.0471
+1	0.3032
+2	0.316
+3	0.476
 
 
 # Together with a constant this is what makes a constant score constant: doc 3
@@ -2596,7 +2598,7 @@ SELECT id, round(BM25(score_idx.tableoid)::DOUBLE, 4) AS score
 FROM score_idx WHERE (body @@ 'fox' AND body @@ 'cat')::merge('max') ORDER BY id;
 ----
 id	score
-3	0.5235
+3	0.238
 
 
 # The policy shows in the plan. Same-field branches fuse into one Terms, which
@@ -2610,11 +2612,12 @@ QUERY PLAN
 │ Index: score_idx         │
 │ Lookup: table            │
 │ Index Filter:            │
-│ ╭─ Terms ──────────────╮ │
+│ ╭─ Or ─────────────────╮ │
+│ │ Merge: max           │ │
+│ ╰───────────┬──────────╯ │
+│ ╭─ Terms ───┴──────────╮ │
 │ │ Field: body(string)  │ │
 │ │ Values: 'cat', 'fox' │ │
-│ │ Min Match: 1         │ │
-│ │ Merge: max           │ │
 │ ╰──────────────────────╯ │
 │ Projections: id          │
 │ ~1 row                   │
@@ -2631,14 +2634,14 @@ QUERY PLAN
 │ Index: score_idx                                │
 │ Lookup: table                                   │
 │ Index Filter:                                   │
-│ ╭─ Or ────────────────╮                         │
-│ │ Merge: max          │                         │
-│ ╰──────────┬──────────╯                         │
-│            ├────────────────────────╮           │
-│ ╭─ Term ───┴──────────╮  ╭─ Term ───┴─────────╮ │
-│ │ Field: body(string) │  │ Field: id(numeric) │ │
-│ │ Value: fox          │  │ Value: 2           │ │
-│ ╰─────────────────────╯  ╰────────────────────╯ │
+│ ╭─ Or ───────────────╮                          │
+│ │ Merge: max         │                          │
+│ ╰──────────┬─────────╯                          │
+│            ├───────────────────────╮            │
+│ ╭─ Terms ──┴─────────╮  ╭─ Terms ──┴──────────╮ │
+│ │ Field: id(numeric) │  │ Field: body(string) │ │
+│ │ Values: 2          │  │ Values: 'fox'       │ │
+│ ╰────────────────────╯  ╰─────────────────────╯ │
 │ Projections: id                                 │
 │ ~1 row                                          │
 ╰─────────────────────────────────────────────────╯
@@ -2653,13 +2656,13 @@ QUERY PLAN
 │ Index: score_idx                                │
 │ Lookup: table                                   │
 │ Index Filter:                                   │
-│ ╭─ Or ────────────────╮                         │
-│ ╰──────────┬──────────╯                         │
-│            ├────────────────────────╮           │
-│ ╭─ Term ───┴──────────╮  ╭─ Term ───┴─────────╮ │
-│ │ Field: body(string) │  │ Field: id(numeric) │ │
-│ │ Value: fox          │  │ Value: 2           │ │
-│ ╰─────────────────────╯  ╰────────────────────╯ │
+│ ╭─ Or ───────────────╮                          │
+│ ╰──────────┬─────────╯                          │
+│            ├───────────────────────╮            │
+│ ╭─ Terms ──┴─────────╮  ╭─ Terms ──┴──────────╮ │
+│ │ Field: id(numeric) │  │ Field: body(string) │ │
+│ │ Values: 2          │  │ Values: 'fox'       │ │
+│ ╰────────────────────╯  ╰─────────────────────╯ │
 │ Projections: id                                 │
 │ ~1 row                                          │
 ╰─────────────────────────────────────────────────╯
@@ -2680,9 +2683,9 @@ SELECT id, round(BM25(score_idx.tableoid)::DOUBLE, 4) AS score
 FROM score_idx WHERE (body @@ 'fox' OR body @@ 'cat')::merge('MAX') ORDER BY id;
 ----
 id	score
-1	0.6671
-2	0.6951
-3	0.5235
+1	0.3032
+2	0.316
+3	0.238
 
 
 # A policy binds to its own node. The inner group takes the best of
@@ -2694,9 +2697,9 @@ FROM score_idx WHERE ((body @@ 'fox' OR body @@ 'cat')::merge('max') OR body @@ 
 ORDER BY id;
 ----
 id	score
-1	1.4814
-2	0.6951
-3	0.5235
+1	0.6734
+2	0.316
+3	0.238
 
 
 # Written on the outer group instead, and the nested Or flattens into it,
@@ -2707,9 +2710,9 @@ FROM score_idx WHERE ((body @@ 'fox' OR body @@ 'cat') OR body @@ 'dog')::merge(
 ORDER BY id;
 ----
 id	score
-1	0.8143
-2	0.6951
-3	0.5235
+1	0.3701
+2	0.316
+3	0.238
 
 
 # Same thing written flat.
@@ -2719,9 +2722,9 @@ FROM score_idx WHERE (body @@ 'fox' OR body @@ 'cat' OR body @@ 'dog')::merge('m
 ORDER BY id;
 ----
 id	score
-1	0.8143
-2	0.6951
-3	0.5235
+1	0.3701
+2	0.316
+3	0.238
 
 
 # A per-branch scorer under a group policy: doc 3 matches both, and 10
@@ -2733,7 +2736,7 @@ ORDER BY id;
 ----
 id	score
 1	10
-2	0.6951
+2	0.316
 3	10
 
 
@@ -2746,8 +2749,8 @@ ORDER BY id;
 ----
 id	score
 1	0
-2	0.6951
-3	0.5235
+2	0.316
+3	0.238
 
 
 # A boost multiplies what the winning branch scored rather than what the
@@ -2758,9 +2761,9 @@ FROM score_idx WHERE (body @@ 'fox' OR body @@ 'cat')::boost(2.0)::merge('max')
 ORDER BY id;
 ----
 id	score
-1	1.3342
-2	1.3903
-3	1.0471
+1	0.6065
+2	0.6319
+3	0.476
 
 
 # The policy also reaches a group built from a tsquery value, where it
@@ -2771,9 +2774,9 @@ FROM score_idx WHERE body @@ ts_any(['fox', 'cat'])::merge('max')
 ORDER BY id;
 ----
 id	score
-1	0.6671
-2	0.6951
-3	0.5235
+1	0.3032
+2	0.316
+3	0.238
 
 
 # And an AND group with an exclusion in it.
@@ -2783,7 +2786,7 @@ FROM score_idx WHERE (NOT body @@ 'dog' AND body @@ 'fox')::merge('max')
 ORDER BY id;
 ----
 id	score
-3	0.5235
+3	0.238
 
 
 # The plans for those combinations. Nesting first: the policy sits on the inner
@@ -2793,20 +2796,42 @@ EXPLAIN SELECT id FROM score_idx
 WHERE ((body @@ 'fox' OR body @@ 'cat')::merge('max') OR body @@ 'dog');
 ----
 QUERY PLAN
+╭─ IRESEARCH_SCAN ────────────────╮
+│ Index: score_idx                │
+│ Lookup: table                   │
+│ Index Filter:                   │
+│ ╭─ Or ────────────────────────╮ │
+│ ╰──────────────┬──────────────╯ │
+│ ╭─ Terms ──────┴──────────────╮ │
+│ │ Field: body(string)         │ │
+│ │ Values: 'cat', 'dog', 'fox' │ │
+│ ╰─────────────────────────────╯ │
+│ Projections: id                 │
+│ ~1 row                          │
+╰─────────────────────────────────╯
+
+
+query
+EXPLAIN SELECT id, BM25(score_idx.tableoid) FROM score_idx
+WHERE ((body @@ 'fox' OR body @@ 'cat')::merge('max') OR body @@ 'dog');
+----
+QUERY PLAN
 ╭─ IRESEARCH_SCAN ──────────────────────────────────╮
 │ Index: score_idx                                  │
 │ Lookup: table                                     │
 │ Index Filter:                                     │
-│ ╭─ Or ─────────────────╮                          │
-│ ╰───────────┬──────────╯                          │
-│             ├────────────────────────╮            │
-│ ╭─ Terms ───┴──────────╮  ╭─ Term ───┴──────────╮ │
-│ │ Field: body(string)  │  │ Field: body(string) │ │
-│ │ Values: 'cat', 'fox' │  │ Value: dog          │ │
-│ │ Min Match: 1         │  ╰─────────────────────╯ │
-│ │ Merge: max           │                          │
-│ ╰──────────────────────╯                          │
-│ Projections: id                                   │
+│ ╭─ Or ────────────────╮                           │
+│ ╰──────────┬──────────╯                           │
+│            ├─────────────────────────╮            │
+│ ╭─ Terms ──┴──────────╮  ╭─ Or ──────┴──────────╮ │
+│ │ Field: body(string) │  │ Merge: max           │ │
+│ │ Values: 'dog'       │  ╰───────────┬──────────╯ │
+│ ╰─────────────────────╯  ╭─ Terms ───┴──────────╮ │
+│                          │ Field: body(string)  │ │
+│                          │ Values: 'cat', 'fox' │ │
+│                          ╰──────────────────────╯ │
+│ Score: bm25(k1=1.2, b=0.75)                       │
+│ Projections: id, sdb_inverted_index_score         │
 │ ~1 row                                            │
 ╰───────────────────────────────────────────────────╯
 
@@ -2822,11 +2847,12 @@ QUERY PLAN
 │ Index: score_idx                │
 │ Lookup: table                   │
 │ Index Filter:                   │
-│ ╭─ Terms ─────────────────────╮ │
+│ ╭─ Or ────────────────────────╮ │
+│ │ Merge: max                  │ │
+│ ╰──────────────┬──────────────╯ │
+│ ╭─ Terms ──────┴──────────────╮ │
 │ │ Field: body(string)         │ │
 │ │ Values: 'cat', 'dog', 'fox' │ │
-│ │ Min Match: 1                │ │
-│ │ Merge: max                  │ │
 │ ╰─────────────────────────────╯ │
 │ Projections: id                 │
 │ ~1 row                          │
@@ -2840,22 +2866,21 @@ EXPLAIN SELECT id FROM score_idx
 WHERE ((body @@ 'fox')::score('constant(10)') OR body @@ 'cat')::merge('max');
 ----
 QUERY PLAN
-╭─ IRESEARCH_SCAN ───────────────────────────────────────╮
-│ Index: score_idx                                       │
-│ Lookup: table                                          │
-│ Index Filter:                                          │
-│ ╭─ Or ──────────────────────╮                          │
-│ │ Merge: max                │                          │
-│ ╰─────────────┬─────────────╯                          │
-│               ├───────────────────────────╮            │
-│ ╭─ Term ──────┴─────────────╮  ╭─ Term ───┴──────────╮ │
-│ │ Field: body(string)       │  │ Field: body(string) │ │
-│ │ Value: fox                │  │ Value: cat          │ │
-│ │ Score: constant(value=10) │  ╰─────────────────────╯ │
-│ ╰───────────────────────────╯                          │
-│ Projections: id                                        │
-│ ~1 row                                                 │
-╰────────────────────────────────────────────────────────╯
+╭─ IRESEARCH_SCAN ──────────────────────╮
+│ Index: score_idx                      │
+│ Lookup: table                         │
+│ Index Filter:                         │
+│ ╭─ Or ──────────────────────────────╮ │
+│ │ Merge: max                        │ │
+│ ╰─────────────────┬─────────────────╯ │
+│ ╭─ Terms ─────────┴─────────────────╮ │
+│ │ Field: body(string)               │ │
+│ │ Values:                           │ │
+│ │ 'cat', 'fox' [constant(value=10)] │ │
+│ ╰───────────────────────────────────╯ │
+│ Projections: id                       │
+│ ~1 row                                │
+╰───────────────────────────────────────╯
 
 
 query
@@ -2867,12 +2892,13 @@ QUERY PLAN
 │ Index: score_idx         │
 │ Lookup: table            │
 │ Index Filter:            │
-│ ╭─ Terms ──────────────╮ │
-│ │ Field: body(string)  │ │
-│ │ Values: 'cat', 'fox' │ │
-│ │ Min Match: 1         │ │
+│ ╭─ Or ─────────────────╮ │
 │ │ Merge: max           │ │
 │ │ Boost: 2             │ │
+│ ╰───────────┬──────────╯ │
+│ ╭─ Terms ───┴──────────╮ │
+│ │ Field: body(string)  │ │
+│ │ Values: 'cat', 'fox' │ │
 │ ╰──────────────────────╯ │
 │ Projections: id          │
 │ ~1 row                   │

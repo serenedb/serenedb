@@ -22,10 +22,12 @@
 
 #pragma once
 
+#include <array>
 #include <cstdint>
 #include <string_view>
 #include <type_traits>
 
+#include "iresearch/search/score_function.hpp"
 #include "iresearch/utils/attribute_provider.hpp"
 
 namespace irs {
@@ -47,5 +49,11 @@ class Norm : public Attribute {
 
 static_assert(std::is_nothrow_move_constructible_v<Norm>);
 static_assert(std::is_nothrow_move_assignable_v<Norm>);
+
+inline constexpr std::array<uint32_t, kPostingBlock> kNorms{[] {
+  std::array<uint32_t, kPostingBlock> norms;
+  norms.fill(1);
+  return norms;
+}()};
 
 }  // namespace irs

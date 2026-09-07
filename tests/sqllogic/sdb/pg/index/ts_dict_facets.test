@@ -766,12 +766,14 @@ QUERY PLAN
 ╭─ IRESEARCH_SCAN ────────┴─────────────────────────╮
 │ Index: ffw_idx                                    │
 │ Index Filter:                                     │
-│ ╭─ Exclusion ─────────╮                           │
+│ ╭─ Bool ──────────────╮                           │
 │ ╰──────────┬──────────╯                           │
 │            ├─────────────────────────╮            │
-│ ╭─ Starts With ───────╮  ╭─ Term ────┴──────────╮ │
+│ ╭─ Must ───┴──────────╮  ╭─ Must Not ┴──────────╮ │
+│ ╰──────────┬──────────╯  ╰───────────┬──────────╯ │
+│ ╭─ Starts With ───────╮  ╭─ Terms ───┴──────────╮ │
 │ │ Field: body(string) │  │ Field: scope(string) │ │
-│ │ Prefix: charg       │  │ Value: net           │ │
+│ │ Prefix: charg       │  │ Values: 'net'        │ │
 │ │ Limit: 1024         │  ╰──────────────────────╯ │
 │ ╰─────────────────────╯                           │
 │ TsDict: scope                                     │
@@ -1089,20 +1091,22 @@ QUERY PLAN
 ╭─ IRESEARCH_SCAN ─────────────────────────┴──────────────────────────────────────────╮
 │ Index: gsf_idx                                                                      │
 │ Index Filter:                                                                       │
-│ ╭─ Exclusion ─────────╮                                                             │
+│ ╭─ Bool ──────────────╮                                                             │
 │ ╰──────────┬──────────╯                                                             │
 │            ├─────────────────────────╮                                              │
-│ ╭─ Starts With ───────╮  ╭─ Term ────┴──────────╮                                   │
+│ ╭─ Must ───┴──────────╮  ╭─ Must Not ┴──────────╮                                   │
+│ ╰──────────┬──────────╯  ╰───────────┬──────────╯                                   │
+│ ╭─ Starts With ───────╮  ╭─ Terms ───┴──────────╮                                   │
 │ │ Field: body(string) │  │ Field: brand(string) │                                   │
-│ │ Prefix: charg       │  │ Value: acme          │                                   │
+│ │ Prefix: charg       │  │ Values: 'acme'       │                                   │
 │ │ Limit: 1024         │  ╰──────────────────────╯                                   │
 │ ╰─────────────────────╯                                                             │
 │ Index Filter(brand):                                                                │
 │ ╭─ Not ────────────────╮                                                            │
 │ ╰───────────┬──────────╯                                                            │
-│ ╭─ Term ────┴──────────╮                                                            │
+│ ╭─ Terms ───┴──────────╮                                                            │
 │ │ Field: brand(string) │                                                            │
-│ │ Value: acme          │                                                            │
+│ │ Values: 'acme'       │                                                            │
 │ ╰──────────────────────╯                                                            │
 │ TsDict: brand, color                                                                │
 │ Projections:                                                                        │
@@ -1138,16 +1142,16 @@ QUERY PLAN
 │ Index Filter:                                                                       │
 │ ╭─ Not ────────────────╮                                                            │
 │ ╰───────────┬──────────╯                                                            │
-│ ╭─ Term ────┴──────────╮                                                            │
+│ ╭─ Terms ───┴──────────╮                                                            │
 │ │ Field: brand(string) │                                                            │
-│ │ Value: acme          │                                                            │
+│ │ Values: 'acme'       │                                                            │
 │ ╰──────────────────────╯                                                            │
 │ Index Filter(brand):                                                                │
 │ ╭─ Not ────────────────╮                                                            │
 │ ╰───────────┬──────────╯                                                            │
-│ ╭─ Term ────┴──────────╮                                                            │
+│ ╭─ Terms ───┴──────────╮                                                            │
 │ │ Field: brand(string) │                                                            │
-│ │ Value: acme          │                                                            │
+│ │ Values: 'acme'       │                                                            │
 │ ╰──────────────────────╯                                                            │
 │ TsDict: brand, color                                                                │
 │ Projections:                                                                        │
@@ -1720,10 +1724,11 @@ QUERY PLAN
 ╭─ IRESEARCH_SCAN ──────┴──────────────────────╮
 │ Index: fvw_idx                               │
 │ Index Filter:                                │
-│ ╭─ Terms ──────────────────────────────────╮ │
+│ ╭─ Or ─────────────────────────────────────╮ │
+│ ╰─────────────────────┬────────────────────╯ │
+│ ╭─ Terms ─────────────┴────────────────────╮ │
 │ │ Field: ts_split_by_non_alpha(body, true) │ │
 │ │ Values: 'error', 'failed'                │ │
-│ │ Min Match: 1                             │ │
 │ ╰──────────────────────────────────────────╯ │
 │ TsDict: severitytext                         │
 │ Projections:                                 │

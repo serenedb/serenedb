@@ -396,8 +396,8 @@ struct FormatTraits128 {
   }
 
   struct FillLeaf {
-    enum class Kind : uint8_t {
-      Docs,
+    enum class Kind : uint32_t {
+      Docs = 0,
       Bitset,
       Run,
     };
@@ -493,13 +493,13 @@ struct FormatTraits128 {
   }
 
   template<typename InputType>
-  IRS_FORCE_INLINE static void ReadTailDelta(byte_type raw_type, uint32_t len,
-                                             InputType& in, uint32_t* buf,
-                                             uint32_t* out, uint32_t prev) {
+  IRS_FORCE_INLINE static void ReadTailDeltaAt(byte_type raw_type, uint32_t len,
+                                               InputType& in, uint32_t* buf,
+                                               uint32_t* out, uint32_t prev) {
     SDB_ASSERT(1 <= len);
     SDB_ASSERT(len <= doc_limits::kBlockSize);
     const auto type = static_cast<DeltaEncoding>(raw_type);
-    auto* const begin = out + (doc_limits::kBlockSize - len);
+    auto* const begin = out;
     switch (type) {
       case de_values: {
         in.ReadData(reinterpret_cast<byte_type*>(begin),
@@ -573,13 +573,31 @@ struct FormatTraits128 {
       case de_delta_bitpack_31: {
         const auto* const data = ReadDataDelta(type, in, buf);
         const auto bits = (type - de_delta_bitpack_02) + 2;
+        // Bitpacking is only ever chosen for a whole block, so this writes
+        // exactly the documents the caller asked for.
+        SDB_ASSERT(len == doc_limits::kBlockSize);
         // TODO: Avoid additional switch
-        simdunpackd1(prev, reinterpret_cast<const __m128i*>(data), out, bits);
+        simdunpackd1(prev, reinterpret_cast<const __m128i*>(data), begin, bits);
       } break;
 
       default:
         SDB_UNREACHABLE();
     }
+  }
+
+  template<typename InputType>
+  IRS_FORCE_INLINE static void ReadTailDeltaAt(uint32_t len, InputType& in,
+                                               uint32_t* buf, uint32_t* out,
+                                               uint32_t prev) {
+    ReadTailDeltaAt(in.ReadByte(), len, in, buf, out, prev);
+  }
+
+  template<typename InputType>
+  IRS_FORCE_INLINE static void ReadTailDelta(byte_type raw_type, uint32_t len,
+                                             InputType& in, uint32_t* buf,
+                                             uint32_t* out, uint32_t prev) {
+    ReadTailDeltaAt(raw_type, len, in, buf,
+                    out + (doc_limits::kBlockSize - len), prev);
   }
 
   template<typename InputType>
@@ -806,6 +824,7 @@ struct FormatTraits128 {
            std::countl_zero(bitset[words - 1]);
   }
 
+ public:
   IRS_FORCE_INLINE static uint32_t* MaterializeBitsetFrom(
     uint32_t prev, const uint64_t* IRS_RESTRICT bitset, uint32_t first_word,
     uint64_t first_mask, uint32_t words, uint32_t* IRS_RESTRICT out) {
@@ -821,6 +840,7 @@ struct FormatTraits128 {
     }
   }
 
+ private:
   IRS_FORCE_INLINE static void MaterializeBitset(
     uint32_t prev, const uint64_t* IRS_RESTRICT bitset, uint32_t words,
     uint32_t* IRS_RESTRICT out, [[maybe_unused]] uint32_t len) {
@@ -1011,6 +1031,7 @@ struct FormatTraits128 {
     }
   }
 
+ public:
   IRS_FORCE_INLINE static void FillSameDelta(uint32_t* IRS_RESTRICT out,
                                              uint32_t len, uint32_t prev,
                                              uint32_t value) {
@@ -1019,6 +1040,7 @@ struct FormatTraits128 {
     }
   }
 
+ private:
   IRS_FORCE_INLINE static void FillSame(uint32_t* IRS_RESTRICT out,
                                         uint32_t len, uint32_t value) {
     std::fill_n(out, len, value);
@@ -1027,11 +1049,17 @@ struct FormatTraits128 {
   template<typename InputType>
   IRS_FORCE_INLINE static const byte_type* ReadDataImpl(
     uint32_t size, InputType& in, uint32_t* IRS_RESTRICT buf) {
-    if (const auto* data = in.ReadVolatile(size)) {
-      return data;
+    if constexpr (InputType::kVolatileAlways) {
+      // The bytes are already in memory, so there is no fallback to test and
+      // no buffer to fall back to.
+      return in.ReadVolatile(size);
+    } else {
+      if (const auto* data = in.ReadVolatile(size)) {
+        return data;
+      }
+      in.ReadData(reinterpret_cast<byte_type*>(buf), size);
+      return reinterpret_cast<byte_type*>(buf);
     }
-    in.ReadData(reinterpret_cast<byte_type*>(buf), size);
-    return reinterpret_cast<byte_type*>(buf);
   }
 
   template<typename InputType>

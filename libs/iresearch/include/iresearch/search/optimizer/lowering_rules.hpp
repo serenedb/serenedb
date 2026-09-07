@@ -24,7 +24,12 @@
 
 namespace irs::optimizer {
 
-void InitLoweringRules();
+void InitWildcardSimplify();
+void InitRegexpSimplify();
+void InitEditDistanceSimplify();
+void InitPhraseSimplify();
+void InitPhraseLower();
+void InitNGramSimilarityLower();
 
 void LowerAutomatons(Filter::ptr& root, const OptimizeContext& ctx);
 

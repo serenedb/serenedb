@@ -214,7 +214,7 @@ geom_stats
 
 query
 SELECT crs_name, auth_name, auth_code
-FROM duckdb_coordinate_systems()
+FROM sdb_coordinate_systems()
 ORDER BY crs_name;
 ----
 crs_name	auth_name	auth_code

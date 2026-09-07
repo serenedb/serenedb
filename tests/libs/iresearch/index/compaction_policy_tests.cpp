@@ -99,14 +99,9 @@ class SubReaderMock final : public irs::SubReader {
   const irs::DocumentMask* docs_mask() const final { return nullptr; }
 
   // Returns an iterator over live documents in current segment.
-  irs::DocIterator::ptr docs_iterator() const final {
+  irs::lead::Node::ptr docs_iterator() const final {
     EXPECT_FALSE(true);
     return nullptr;
-  }
-
-  irs::DocIterator::ptr mask(irs::DocIterator::ptr&& it) const final {
-    EXPECT_FALSE(true);
-    return std::move(it);
   }
 
   // Inverted index

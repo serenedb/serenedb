@@ -44,19 +44,17 @@ struct DocIdScorer : irs::ScorerBase<void> {
   explicit DocIdScorer(irs::doc_id_t divisor = 0) noexcept : divisor{divisor} {}
 
   irs::IndexFeatures GetIndexFeatures() const final {
-    return irs::IndexFeatures::None;
+    return irs::IndexFeatures::Freq;
   }
 
   struct ScorerContext : irs::ScoreOperator {
-    ScorerContext(const irs::FreqBlockAttr* freq,
-                  irs::doc_id_t divisor) noexcept
-      : freq{freq}, divisor{divisor} {}
+    explicit ScorerContext(irs::doc_id_t divisor) noexcept : divisor{divisor} {}
 
     template<irs::ScoreMergeType MergeType = irs::ScoreMergeType::Noop>
     void ScoreImpl(irs::score_t* res, irs::scores_size_t n) const noexcept {
       ASSERT_NE(nullptr, res);
       for (size_t i = 0; i < n; ++i) {
-        auto doc_id = freq ? freq->value[i] : next_doc++;
+        auto doc_id = next_doc++;
         irs::Merge<MergeType>(
           res[i], divisor == 0 ? static_cast<irs::score_t>(doc_id)
                                : static_cast<irs::score_t>(doc_id % divisor));
@@ -75,15 +73,12 @@ struct DocIdScorer : irs::ScorerBase<void> {
       ScoreImpl<irs::ScoreMergeType::Max>(res, n);
     }
 
-    const irs::FreqBlockAttr* freq;
     irs::doc_id_t divisor;
     mutable irs::doc_id_t next_doc{irs::doc_limits::min()};
   };
 
-  irs::ScoreFunction PrepareScorer(const irs::ScoreContext& ctx) const final {
-    auto* freq = irs::get<irs::FreqBlockAttr>(ctx.doc_attrs);
-
-    return irs::ScoreFunction::Make<ScorerContext>(freq, divisor);
+  irs::ScoreFunction PrepareScorer(const irs::ScoreContext&) const final {
+    return irs::ScoreFunction::Make<ScorerContext>(divisor);
   }
 
   irs::doc_id_t divisor;
@@ -126,13 +121,27 @@ auto WrapFactory = [](tests::Document& doc, const std::string& name,
   }
 };
 
+constexpr irs::field_id kFreqFieldId = 7;
+
+auto FreqFactory = [](tests::Document& doc, const std::string& name,
+                      const tests::JsonDocGenerator::JsonValue& data) {
+  tests::GenericJsonFieldFactory(doc, name, data);
+  if (name != "seq" || !data.is_number()) {
+    return;
+  }
+  auto field =
+    std::make_shared<tests::TextField<std::string>>("freq", std::string{"tok"});
+  field->id = kFreqFieldId;
+  doc.insert(std::move(field));
+};
+
 class DocCollectorTestCase : public IndexTestBase {};
 
 TEST_P(DocCollectorTestCase, test_execute_topk_basic) {
   // Create index with documents
   {
     tests::JsonDocGenerator gen(resource("simple_sequential.json"),
-                                &tests::GenericJsonFieldFactory);
+                                FreqFactory);
     add_segment(gen);
   }
 
@@ -145,12 +154,15 @@ TEST_P(DocCollectorTestCase, test_execute_topk_basic) {
 
   // Test basic top-k retrieval with All filter
   {
-    irs::All filter;
+    irs::ByTerm filter;
+    *filter.mutable_field_id() = kFreqFieldId;
+    filter.mutable_options()->term =
+      irs::ViewCast<irs::byte_type>(std::string_view("tok"));
     constexpr size_t k = 5;
 
     std::vector<irs::ScoreDoc> results(k);
     size_t count =
-      irs::ExecuteTopKWithCount(reader, filter, scorer, k, std::span{results});
+      irs::ExecuteTopK(reader, filter, scorer, k, false, std::span{results});
 
     ASSERT_EQ(total_docs, count);
     auto result_count = std::min(count, k);
@@ -186,7 +198,7 @@ TEST_P(DocCollectorTestCase, test_execute_topk_larger_k) {
 
     std::vector<irs::ScoreDoc> results(k);
     size_t count =
-      irs::ExecuteTopKWithCount(reader, filter, scorer, k, std::span{results});
+      irs::ExecuteTopK(reader, filter, scorer, k, false, std::span{results});
 
     ASSERT_EQ(total_docs, count);
     auto result_count = std::min(count, k);
@@ -221,7 +233,7 @@ TEST_P(DocCollectorTestCase, test_execute_topk_empty_results) {
 
     std::vector<irs::ScoreDoc> results(k);
     size_t count =
-      irs::ExecuteTopKWithCount(reader, filter, scorer, k, std::span{results});
+      irs::ExecuteTopK(reader, filter, scorer, k, false, std::span{results});
 
     ASSERT_EQ(0, count);
     ASSERT_EQ(0, std::min(count, k));
@@ -250,7 +262,7 @@ TEST_P(DocCollectorTestCase, test_execute_topk_all_filter) {
 
     std::vector<irs::ScoreDoc> results(k);
     size_t count =
-      irs::ExecuteTopKWithCount(reader, filter, scorer, k, std::span{results});
+      irs::ExecuteTopK(reader, filter, scorer, k, false, std::span{results});
 
     ASSERT_EQ(total_docs, count);
     auto result_count = std::min(count, k);
@@ -310,7 +322,7 @@ TEST_P(DocCollectorTestCase, test_execute_topk_multi_segment) {
 
     std::vector<irs::ScoreDoc> results(k);
     size_t count =
-      irs::ExecuteTopKWithCount(reader, filter, scorer, k, std::span{results});
+      irs::ExecuteTopK(reader, filter, scorer, k, false, std::span{results});
 
     ASSERT_EQ(total_docs, count);
     auto result_count = std::min(count, k);
@@ -345,7 +357,7 @@ TEST_P(DocCollectorTestCase, test_execute_topk_term_filter) {
 
     std::vector<irs::ScoreDoc> results(k);
     size_t count =
-      irs::ExecuteTopKWithCount(reader, filter, scorer, k, std::span{results});
+      irs::ExecuteTopK(reader, filter, scorer, k, false, std::span{results});
 
     ASSERT_GT(count, 0);
     auto result_count = std::min(count, k);
@@ -370,24 +382,23 @@ TEST_P(DocCollectorTestCase, test_execute_topk_disjunction) {
 
   // Test with disjunction filter (OR)
   {
-    irs::Or filter;
-    {
-      auto& sub = filter.add<irs::ByTerm>();
-      *sub.mutable_field_id() = kPrefixFieldId;
-      sub.mutable_options()->term =
-        irs::ViewCast<irs::byte_type>(std::string_view("abcd"));
-    }
-    {
-      auto& sub = filter.add<irs::ByTerm>();
-      *sub.mutable_field_id() = kPrefixFieldId;
-      sub.mutable_options()->term =
-        irs::ViewCast<irs::byte_type>(std::string_view("abcde"));
-    }
+    irs::BooleanFilter filter;
+    filter.Add(
+      irs::TermClause{.field = kPrefixFieldId,
+                      .term = irs::bstring{irs::ViewCast<irs::byte_type>(
+                        std::string_view("abcd"))}},
+      irs::Occur::Should);
+    filter.Add(
+      irs::TermClause{.field = kPrefixFieldId,
+                      .term = irs::bstring{irs::ViewCast<irs::byte_type>(
+                        std::string_view("abcde"))}},
+      irs::Occur::Should);
+    filter.SetMinShouldMatch(1);
     constexpr size_t k = 5;
 
     std::vector<irs::ScoreDoc> results(k);
     size_t count =
-      irs::ExecuteTopKWithCount(reader, filter, scorer, k, std::span{results});
+      irs::ExecuteTopK(reader, filter, scorer, k, false, std::span{results});
 
     ASSERT_GT(count, 0);
     auto result_count = std::min(count, k);
@@ -401,7 +412,7 @@ TEST_P(DocCollectorTestCase, test_execute_topk_k_equals_one) {
   // Create index with documents
   {
     tests::JsonDocGenerator gen(resource("simple_sequential.json"),
-                                &tests::GenericJsonFieldFactory);
+                                FreqFactory);
     add_segment(gen);
   }
 
@@ -414,12 +425,15 @@ TEST_P(DocCollectorTestCase, test_execute_topk_k_equals_one) {
 
   // Test with k=1
   {
-    irs::All filter;
+    irs::ByTerm filter;
+    *filter.mutable_field_id() = kFreqFieldId;
+    filter.mutable_options()->term =
+      irs::ViewCast<irs::byte_type>(std::string_view("tok"));
     constexpr size_t k = 1;
 
     std::vector<irs::ScoreDoc> results(k);
     size_t count =
-      irs::ExecuteTopKWithCount(reader, filter, scorer, k, std::span{results});
+      irs::ExecuteTopK(reader, filter, scorer, k, false, std::span{results});
 
     ASSERT_EQ(total_docs, count);
     auto result_count = std::min(count, k);
@@ -434,7 +448,7 @@ TEST_P(DocCollectorTestCase, test_execute_topk_verifies_top_docs) {
   // Create index with documents
   {
     tests::JsonDocGenerator gen(resource("simple_sequential.json"),
-                                &tests::GenericJsonFieldFactory);
+                                FreqFactory);
     add_segment(gen);
   }
 
@@ -447,12 +461,15 @@ TEST_P(DocCollectorTestCase, test_execute_topk_verifies_top_docs) {
 
   // Test that top-k returns the highest scoring documents
   {
-    irs::All filter;
+    irs::ByTerm filter;
+    *filter.mutable_field_id() = kFreqFieldId;
+    filter.mutable_options()->term =
+      irs::ViewCast<irs::byte_type>(std::string_view("tok"));
     constexpr size_t k = 3;
 
     std::vector<irs::ScoreDoc> results(k);
     size_t count =
-      irs::ExecuteTopKWithCount(reader, filter, scorer, k, std::span{results});
+      irs::ExecuteTopK(reader, filter, scorer, k, false, std::span{results});
 
     ASSERT_EQ(total_docs, count);
     auto result_count = std::min(count, k);
@@ -472,7 +489,7 @@ TEST_P(DocCollectorTestCase, test_execute_topk_similar_scores) {
   // Create index with documents
   {
     tests::JsonDocGenerator gen(resource("simple_sequential.json"),
-                                &tests::GenericJsonFieldFactory);
+                                FreqFactory);
     add_segment(gen);
   }
 
@@ -487,12 +504,15 @@ TEST_P(DocCollectorTestCase, test_execute_topk_similar_scores) {
 
   // Test top-k with many duplicate scores
   {
-    irs::All filter;
+    irs::ByTerm filter;
+    *filter.mutable_field_id() = kFreqFieldId;
+    filter.mutable_options()->term =
+      irs::ViewCast<irs::byte_type>(std::string_view("tok"));
     constexpr size_t k = 5;
 
     std::vector<irs::ScoreDoc> results(k);
     size_t count =
-      irs::ExecuteTopKWithCount(reader, filter, scorer, k, std::span{results});
+      irs::ExecuteTopK(reader, filter, scorer, k, false, std::span{results});
 
     ASSERT_EQ(total_docs, count);
     auto result_count = std::min(count, k);
@@ -508,12 +528,15 @@ TEST_P(DocCollectorTestCase, test_execute_topk_similar_scores) {
 
   // Test with k larger than documents with max score
   {
-    irs::All filter;
+    irs::ByTerm filter;
+    *filter.mutable_field_id() = kFreqFieldId;
+    filter.mutable_options()->term =
+      irs::ViewCast<irs::byte_type>(std::string_view("tok"));
     constexpr size_t k = 10;
 
     std::vector<irs::ScoreDoc> results(k);
     size_t count =
-      irs::ExecuteTopKWithCount(reader, filter, scorer, k, std::span{results});
+      irs::ExecuteTopK(reader, filter, scorer, k, false, std::span{results});
 
     ASSERT_EQ(total_docs, count);
     auto result_count = std::min(count, k);
@@ -551,7 +574,7 @@ TEST_P(DocCollectorTestCase, test_execute_topk_all_same_score) {
 
     std::vector<irs::ScoreDoc> results(k);
     size_t count =
-      irs::ExecuteTopKWithCount(reader, filter, scorer, k, std::span{results});
+      irs::ExecuteTopK(reader, filter, scorer, k, false, std::span{results});
 
     ASSERT_EQ(total_docs, count);
     auto result_count = std::min(count, k);

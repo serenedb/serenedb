@@ -247,26 +247,29 @@ QueryBuilder::ptr PrepareAutomatonSegment(
     return QueryBuilder::Empty();
   }
 
-  auto query = memory::make_tracked<MultiTermQuery>(
-    ctx.memory, segment, ctx.memory, ctx.boost * boost, ScoreMergeType::Sum,
-    size_t{1});
-
   const auto* reader = segment.field(field);
   if (!reader) {
-    return query;
+    return QueryBuilder::Empty();
   }
 
+  auto query = memory::make_tracked<MultiTermQuery>(
+    ctx.memory, segment, ctx.memory, ctx.boost * boost, ScoreMergeType::Sum);
   auto* collector =
     ctx.collector
       ? &sdb::basics::downCast<LimitedTermsCollector>(*ctx.collector)
       : nullptr;
   if (collector) {
-    collector->Field().Collect(*reader);
+    collector->Field(ctx.thread).Collect(*reader);
+    // A sampler with no capacity writes nothing into the state, so nothing
+    // has to outlive the decision that this node will never run.
+    if (collector->Limited(ctx.thread).Samples()) {
+      query->Pin();
+    }
   }
-  SampledMultiTermVisitor mtv{collector ? &collector->Limited() : nullptr,
-                              query->State()};
+  SampledMultiTermVisitor mtv{
+    collector ? &collector->Limited(ctx.thread) : nullptr, query->State()};
   Visit(segment, *reader, matcher, mtv);
-  return query;
+  return MultiTermQuery::Finish(std::move(query), ctx);
 }
 
 std::optional<automaton> IntersectAcceptors(const automaton& lhs,
@@ -321,6 +324,7 @@ std::optional<automaton> IntersectAcceptors(const automaton& lhs,
       }
     }
   }
+  EmplaceSinkArcs(out);
   return out;
 }
 

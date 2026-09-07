@@ -56,12 +56,9 @@ class SegmentReader final : public SubReader {
 
   const SegmentInfo& Meta() const final;
 
-  DocIterator::ptr docs_iterator() const final;
+  lead::Node::ptr docs_iterator() const final;
 
   const DocumentMask* docs_mask() const final;
-
-  // FIXME find a better way to mask documents
-  DocIterator::ptr mask(DocIterator::ptr&& it) const final;
 
   const TermReader* field(field_id id) const final;
   std::span<const field_id> field_ids() const final;

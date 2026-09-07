@@ -152,6 +152,15 @@ class MemoryIndexInput final : public IndexInput {
              : irs::vread<uint64_t>(_begin);
   }
 
+  void SkipV32() final {
+    Remain() < bytes_io<uint32_t>::kMaxVSize ? irs::vskip<uint32_t>(*this)
+                                             : irs::vskip<uint32_t>(_begin);
+  }
+  void SkipV64() final {
+    Remain() < bytes_io<uint64_t>::kMaxVSize ? irs::vskip<uint64_t>(*this)
+                                             : irs::vskip<uint64_t>(_begin);
+  }
+
   uint64_t Position() const noexcept final {
     return _start + std::distance(_buf, _begin);
   }

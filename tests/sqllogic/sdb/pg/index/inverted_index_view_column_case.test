@@ -1,0 +1,43 @@
+# A view over a file reader may spell its columns in a different case than the
+# file does (DuckDB binds them case-insensitively). Materialising a real column
+# through the index must resolve the view's names the same way.
+control substitution on
+
+
+statement count 20
+COPY (SELECT TIMESTAMP '2025-01-01 00:00:00' + INTERVAL (i) SECOND AS "Timestamp",
+             'trace' || i AS "TraceId",
+             (i % 5)::INTEGER AS "SeverityNumber",
+             CASE WHEN i % 2 = 0 THEN 'error in module ' || (i % 4) ELSE 'all good in module ' || (i % 4) END AS "Body"
+      FROM range(20) t(i))
+TO '${__TEST_DIR__}/view_column_case.parquet' (FORMAT PARQUET);
+
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY view_column_case_en (template = 'keyword', frequency = true, norm = true, position = true);
+
+statement ok
+CREATE VIEW view_column_case_v AS SELECT timestamp AS Ts, body AS Body FROM read_parquet('${__TEST_DIR__}/view_column_case.parquet');
+
+statement ok
+CREATE INDEX view_column_case_idx ON view_column_case_v USING inverted ((ts_split_by_non_alpha(Body, true)) view_column_case_en) INCLUDE (Ts);
+
+query
+SELECT Body FROM view_column_case_idx ORDER BY Ts LIMIT 1;
+----
+body
+error in module 0
+
+query
+SELECT Ts::VARCHAR AS ts, Body FROM view_column_case_idx WHERE ts_split_by_non_alpha(Body, true) @@ 'error' ORDER BY Ts LIMIT 3;
+----
+ts	body
+2025-01-01 00:00:00	error in module 0
+2025-01-01 00:00:02	error in module 2
+2025-01-01 00:00:04	error in module 0
+
+query
+SELECT count(*) AS c FROM view_column_case_idx WHERE ts_split_by_non_alpha(Body, true) @@ 'module';
+----
+c
+20

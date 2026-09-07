@@ -495,11 +495,11 @@ yaclib::Task<bool> RunAggregation(RequestContext& ctx, const Aggregation& agg,
     case Aggregation::Kind::kDateHistogram:
       // agg.interval comes from the calendar_interval whitelist.
       sql = absl::StrCat(
-        "SELECT epoch_ms(date_trunc('", agg.interval, "', ", field,
-        ")) AS k, strftime(date_trunc('", agg.interval, "', ", field,
-        "), '%Y-%m-%dT%H:%M:%S.000Z') AS ks, count(*) AS c FROM ", relation,
+        "SELECT epoch_ms(b) AS k, strftime(b, '%Y-%m-%dT%H:%M:%S.000Z') AS "
+        "ks, c FROM (SELECT date_trunc('",
+        agg.interval, "', ", field, ") AS b, count(*) AS c FROM ", relation,
         " WHERE (", filter, ") AND ", field,
-        " IS NOT NULL GROUP BY 1, 2 ORDER BY 1");
+        " IS NOT NULL GROUP BY 1) ORDER BY 1");
       break;
     default: {
       std::string_view fn;

@@ -255,9 +255,8 @@ void OffsetsScalarFn(duckdb::DataChunk& args, duckdb::ExpressionState& state,
     }
   });
 
-  auto collector = bind.stored_filter->MakeCollector(nullptr);
-  auto query = bind.stored_filter->PrepareSegment(
-    *segment, {.collector = collector.get()});
+  auto query =
+    bind.stored_filter->PrepareSegment(*segment, {.needs_terms = true});
   if (!query) {
     return;
   }
@@ -269,7 +268,7 @@ void OffsetsScalarFn(duckdb::DataChunk& args, duckdb::ExpressionState& state,
   std::vector<highlight::HitRange> offsets;
   for (duckdb::idx_t r = 0; r < count; ++r) {
     const auto target = static_cast<irs::doc_id_t>(irs::doc_limits::min() + r);
-    FillRowOffsets(entry.state, *segment, target, bind.limit, offsets);
+    FillRowOffsets(entry.state, target, bind.limit, offsets);
     WriteRowOffsets(result, r, offsets);
   }
 }
@@ -353,7 +352,7 @@ std::shared_ptr<irs::Filter> BuildFilterFromTSQuery(
     return info;
   };
 
-  auto root = std::make_unique<irs::And>();
+  auto root = std::make_unique<irs::BooleanFilter>();
   duckdb::unique_ptr<duckdb::Expression> match_owner = std::move(match_expr);
   std::span<const duckdb::unique_ptr<duckdb::Expression>> conjuncts{
     &match_owner, 1};
@@ -364,6 +363,7 @@ std::shared_ptr<irs::Filter> BuildFilterFromTSQuery(
                     ERR_MSG(s.message()));
   }
   irs::Filter::ptr filter = std::move(root);
+  EnsureIncludeSides(*filter);
   irs::Optimize(filter);
   return filter;
 }

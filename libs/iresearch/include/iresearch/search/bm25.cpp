@@ -55,9 +55,7 @@ constexpr const T* TryGetValue(const T* value) noexcept {
   return value;
 }
 
-constexpr std::nullptr_t TryGetValue(utils::Empty /*value*/) noexcept {
-  return nullptr;
-}
+constexpr std::nullptr_t TryGetValue(utils::Empty) noexcept { return nullptr; }
 
 template<ScoreMergeType MergeType>
 IRS_FORCE_INLINE void Bm1Boost(score_t* IRS_RESTRICT res, scores_size_t n,
@@ -111,9 +109,8 @@ IRS_FORCE_INLINE void Bm25(score_t* IRS_RESTRICT res, scores_size_t n,
 }
 
 struct Bm1Score : public ScoreOperator {
-  Bm1Score(score_t k, score_t boost, const BM25Stats& stats,
-           const score_t* fb) noexcept
-    : filter_boost{fb}, num{boost * (k + 1) * stats.idf} {}
+  Bm1Score(score_t boost, const BM25Stats& stats, const score_t* fb) noexcept
+    : filter_boost{fb}, num{boost * stats.idf} {}
 
   template<ScoreMergeType MergeType = ScoreMergeType::Noop>
   IRS_FORCE_INLINE void ScoreImpl(score_t* res,
@@ -152,15 +149,15 @@ struct Bm1Score : public ScoreOperator {
   }
 
   const score_t* filter_boost;
-  score_t num;  // partially precomputed numerator : boost * (k + 1) * idf
+  score_t num;
 };
 
 template<bool HasFilterBoost>
 struct Bm15Score : public ScoreOperator {
-  Bm15Score(score_t k, score_t boost, const BM25Stats& stats,
-            const FreqBlockAttr* freq, const score_t* fb) noexcept
+  Bm15Score(score_t boost, const BM25Stats& stats, const FreqBlockAttr* freq,
+            const score_t* fb) noexcept
     : filter_boost{fb},
-      num{boost * (k + 1) * stats.idf},
+      num{boost * stats.idf},
       norm_const{stats.norm_const},
       freq{freq} {
     SDB_ASSERT(this->freq);
@@ -205,18 +202,17 @@ struct Bm15Score : public ScoreOperator {
 
   [[no_unique_address]] utils::Need<HasFilterBoost, const score_t*>
     filter_boost;
-  score_t num;  // partially precomputed numerator : boost * (k + 1) * idf
-  score_t norm_const;         // 'k' factor
-  const FreqBlockAttr* freq;  // document frequency
+  score_t num;
+  score_t norm_const;
+  const FreqBlockAttr* freq;
 };
 
 template<bool HasFilterBoost>
 struct Bm25Score : public ScoreOperator {
-  Bm25Score(score_t k, score_t boost, const BM25Stats& stats,
-            const FreqBlockAttr* freq, const uint32_t* norm,
-            const score_t* filter_boost) noexcept
+  Bm25Score(score_t boost, const BM25Stats& stats, const FreqBlockAttr* freq,
+            const uint32_t* norm, const score_t* filter_boost) noexcept
     : filter_boost{filter_boost},
-      num{boost * (k + 1) * stats.idf},
+      num{boost * stats.idf},
       norm_const{stats.norm_const},
       freq{freq},
       norm{norm},
@@ -262,11 +258,11 @@ struct Bm25Score : public ScoreOperator {
 
   [[no_unique_address]] utils::Need<HasFilterBoost, const score_t*>
     filter_boost;
-  score_t num;  // partially precomputed numerator : boost * (k + 1) * idf
-  score_t norm_const;         // 'k' factor
-  const FreqBlockAttr* freq;  // document frequency
+  score_t num;
+  score_t norm_const;
+  const FreqBlockAttr* freq;
   const uint32_t* norm;
-  score_t norm_length;  // precomputed 'k*b/avg_dl'
+  score_t norm_length;
 };
 
 }  // namespace
@@ -279,19 +275,16 @@ void BM25::collect(byte_type* stats_buf, const irs::FieldCollector* field,
   const auto docs_with_term = term ? term->docs_with_term : 0;
   const auto total_term_freq = field ? field->total_term_freq : 0;
 
-  // precomputed idf value
   stats->idf += score_t(
     std::log1p((static_cast<double>(docs_with_field - docs_with_term) + 0.5) /
                (static_cast<double>(docs_with_term) + 0.5)));
   SDB_ASSERT(stats->idf >= 0.f);
 
-  // - stats were already initialized
   if (!NeedsNorm()) {
     stats->norm_const = _k;
     return;
   }
 
-  // precomputed length norm
   const score_t kb = _k * _b;
 
   stats->norm_const = _k - kb;
@@ -313,10 +306,9 @@ ScoreFunction BM25::PrepareScorer(const ScoreContext& ctx) const {
   if (IsBM1()) {
     auto* bm1_stats = stats_cast(ctx.stats);
     if (!filter_boost) {
-      return ScoreFunction::Constant(ctx.boost * (_k + 1) * bm1_stats->idf);
+      return ScoreFunction::Constant(ctx.boost * bm1_stats->idf);
     }
-    return ScoreFunction::Make<Bm1Score>(_k, ctx.boost, *bm1_stats,
-                                         filter_boost);
+    return ScoreFunction::Make<Bm1Score>(ctx.boost, *bm1_stats, filter_boost);
   }
 
   auto* freq = irs::get<FreqBlockAttr>(ctx.doc_attrs);
@@ -326,8 +318,6 @@ ScoreFunction BM25::PrepareScorer(const ScoreContext& ctx) const {
       return ScoreFunction::Default();
     }
 
-    // if there is no frequency then all the scores
-    // will be the same (e.g. filter irs::all)
     return ScoreFunction::Constant(ctx.boost);
   }
 
@@ -335,8 +325,8 @@ ScoreFunction BM25::PrepareScorer(const ScoreContext& ctx) const {
 
   return ResolveBool(filter_boost != nullptr, [&]<bool HasBoost>() {
     if (IsBM15()) {
-      return ScoreFunction::Make<Bm15Score<HasBoost>>(_k, ctx.boost, *stats,
-                                                      freq, filter_boost);
+      return ScoreFunction::Make<Bm15Score<HasBoost>>(ctx.boost, *stats, freq,
+                                                      filter_boost);
     }
 
     const uint32_t* norm = [&] {
@@ -350,15 +340,10 @@ ScoreFunction BM25::PrepareScorer(const ScoreContext& ctx) const {
     }
 
     if (!norm) {
-      static constexpr auto kNorms = [] {
-        std::array<uint32_t, kPostingBlock> norms;
-        absl::c_fill(norms, 1);
-        return norms;
-      }();
       norm = kNorms.data();
     }
 
-    return ScoreFunction::Make<Bm25Score<HasBoost>>(_k, ctx.boost, *stats, freq,
+    return ScoreFunction::Make<Bm25Score<HasBoost>>(ctx.boost, *stats, freq,
                                                     norm, filter_boost);
   });
 }
@@ -373,28 +358,13 @@ ScoreBoundWriter::ptr BM25::PrepareScoreBoundWriter(size_t max_levels) const {
     return std::make_unique<FreqNormWriter<kScoreBoundMaxFreq>>(max_levels);
   }
   if (IsBM11()) {
-    // idf * (k + 1) * tf / (k * (1 - b + b * dl / avg_dl) + tf)
-    // idf * (k + 1) -- doesn't affect compare
-    // tf / (k * (1 - b + b * dl / avg_dl) + tf)
-    // replacement tf = x * dl
-    // x * dl / (k * (1 - b + b * dl / avg_dl) + x * dl)
-    // divide by dl
-    // x / (k * ((1 - b) / dl + b / avg_dl) + x)
-    // b == 1
-    // x / (k / avg_dl + x)
     SDB_ASSERT(BoundTypeOf(GetOptions()) == ScoreBoundType::DivNorm);
     return std::make_unique<FreqNormWriter<kScoreBoundDivNorm>>(max_levels);
   }
   SDB_ASSERT(BoundTypeOf(GetOptions()) == ScoreBoundType::MinNorm);
   if (_approximate) {
-    // It's not precise if we have more than 1 segment.
-    // But search is distributed and we don't compute cluster wide avg_dl,
-    // so it's better to use this instead of kScoreBoundBM25.
-    // But if we want precise bounds, we need to return kScoreBoundBM25 here.
     return std::make_unique<FreqNormWriter<kScoreBoundAvgDL>>(max_levels, _b);
   }
-  // It's precise for any numbers of segments, even for distributed case.
-  // In other words for this we don't need to know avg_dl in ahead.
   return std::make_unique<FreqNormWriter<kScoreBoundBM25>>(max_levels, _b);
 }
 
@@ -419,9 +389,6 @@ bool BM25::Compatible(const ScorerOptions& persisted) const noexcept {
   if (type != ScoreBoundType::MinNorm) {
     return true;
   }
-  // MinNorm here means 0 < b < 1: the pair is the argmax for this b under this
-  // avg_dl mode -- kScoreBoundAvgDL and kScoreBoundBM25 pick different ones --
-  // so only a bm25 agreeing on both may read it. k1 cancels out.
   const auto* other = std::get_if<Options>(&persisted.params);
   return other && other->b == _b && other->approximate == _approximate;
 }

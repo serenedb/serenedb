@@ -1,0 +1,350 @@
+statement ok
+SET TimeZone = 'Europe/Berlin';
+
+statement ok
+CREATE TABLE edge_inf AS SELECT ts, ts::TIMESTAMPTZ AS tstz, v FROM (VALUES (TIMESTAMP 'infinity', 1), (TIMESTAMP '-infinity', 2), (TIMESTAMP '2025-06-01 12:34:56', 3), (NULL, 4)) t(ts, v);
+
+statement ok
+CREATE TABLE edge_one AS SELECT TIMESTAMP '2025-06-01 12:34:56.789012' AS ts, TIMESTAMPTZ '2025-06-01 12:34:56.789012+00' AS tstz, 1 AS v;
+
+statement ok
+CREATE TABLE edge_empty AS SELECT ts, ts::TIMESTAMPTZ AS tstz, v FROM (SELECT TIMESTAMP '2025-06-01' AS ts, 1 AS v) WHERE 1 = 0;
+
+statement ok
+CREATE TABLE edge_old AS SELECT ts, ts::TIMESTAMPTZ AS tstz, v FROM (VALUES (TIMESTAMP '0001-01-01 00:00:00', 1), (TIMESTAMP '0044-03-15 12:00:00', 2), (TIMESTAMP '1000-06-06 06:06:06', 3), (TIMESTAMP '9999-12-31 23:59:59', 4), (TIMESTAMP '2025-01-01 00:00:00', 5)) t(ts, v);
+
+statement ok
+CREATE TABLE edge_dst AS SELECT ts, ts::TIMESTAMPTZ AS tstz, ts::TIME AS tm, v FROM (VALUES (TIMESTAMP '2025-03-30 01:00:00', 1), (TIMESTAMP '2025-03-30 03:00:00', 2), (TIMESTAMP '2025-10-26 02:00:00', 3), (TIMESTAMP '2025-10-26 03:00:00', 4), (TIMESTAMP '2025-06-15 12:00:00', 5)) t(ts, v);
+
+statement ok
+CREATE TABLE edge_rows AS SELECT TIMESTAMP '2025-01-01 00:00:00' + INTERVAL (i * 97) SECOND AS ts, (TIMESTAMP '2025-01-01 00:00:00' + INTERVAL (i * 97) SECOND)::TIMESTAMPTZ AS tstz, (TIMESTAMP '2025-01-01 00:00:00' + INTERVAL (i * 97) SECOND)::TIME AS tm, (i % 97)::INTEGER AS id, i AS v FROM range(3000) t(i);
+
+query
+EXPLAIN SELECT strftime(ts, '%H:%M') AS k, count(*) AS c FROM edge_inf GROUP BY 1;
+----
+QUERY PLAN
+╭─ HASH_GROUP_BY ──────────╮
+│ Groups: #0               │
+│ Aggregates: count_star() │
+│ ~2 rows                  │
+╰─────────────┬────────────╯
+╭─ PROJECTION ┴────────────╮
+│ Projections: k           │
+│ ~4 rows                  │
+╰─────────────┬────────────╯
+╭─ SEQ_SCAN ──┴────────────╮
+│ Table: edge_inf          │
+│ Type: Sequential Scan    │
+│ Projections: ts          │
+│ ~4 rows                  │
+╰──────────────────────────╯
+
+query
+EXPLAIN SELECT date_trunc('hour', ts)::TIME AS k, count(*) AS c FROM edge_inf GROUP BY 1;
+----
+QUERY PLAN
+╭─ HASH_GROUP_BY ──────────╮
+│ Groups: #0               │
+│ Aggregates: count_star() │
+│ ~2 rows                  │
+╰─────────────┬────────────╯
+╭─ PROJECTION ┴────────────╮
+│ Projections: k           │
+│ ~4 rows                  │
+╰─────────────┬────────────╯
+╭─ SEQ_SCAN ──┴────────────╮
+│ Table: edge_inf          │
+│ Type: Sequential Scan    │
+│ Projections: ts          │
+│ ~4 rows                  │
+╰──────────────────────────╯
+
+query
+SELECT coalesce(strftime(ts, '%H:%M'), 'null') AS k, count(*) AS c, sum(v) AS s FROM edge_inf GROUP BY 1 ORDER BY 1;
+----
+k	c	s
+-infinity	1	2
+12:34	1	3
+infinity	1	1
+null	1	4
+
+query
+SELECT coalesce(strftime(tstz, '%H:%M'), 'null') AS k, count(*) AS c FROM edge_inf GROUP BY 1 ORDER BY 1;
+----
+k	c
+-infinity	1
+12:34	1
+infinity	1
+null	1
+
+query
+SELECT coalesce(date_trunc('hour', ts)::VARCHAR, 'null') AS k, coalesce(time_bucket(INTERVAL '15 minutes', ts)::VARCHAR, 'null') AS b, coalesce(monthname(ts), 'null') AS m, count(*) AS c FROM edge_inf GROUP BY 1, 2, 3 ORDER BY 1, 2;
+----
+k	b	m	c
+-infinity	-infinity	null	1
+2025-06-01 12:00:00	2025-06-01 12:30:00	June	1
+infinity	infinity	null	1
+null	null	null	1
+
+statement error db error: ERROR: Type INT64 with value infinity can't be cast to the destination type INT64
+SELECT date_trunc('hour', ts)::TIME AS k, count(*) AS c FROM edge_inf GROUP BY 1;
+
+query
+SELECT strftime(ts, '%H:%M') AS a, date_trunc('hour', ts)::TIME::VARCHAR AS b, time_bucket(INTERVAL '15 minutes', tm)::VARCHAR AS c, date_trunc('millisecond', ts)::VARCHAR AS d FROM (SELECT ts, ts::TIME AS tm FROM edge_one);
+----
+a	b	c	d
+12:34	12:00:00	12:30:00	2025-06-01 12:34:56.789
+
+query
+SELECT strftime(ts, '%H:%M') AS k, count(*) AS c FROM edge_one GROUP BY 1;
+----
+k	c
+12:34	1
+
+query
+SELECT count(*) AS groups FROM (SELECT strftime(ts, '%H:%M') AS k, count(*) AS c FROM edge_empty GROUP BY 1);
+----
+groups
+0
+
+query
+SELECT count(*) AS groups, count(*) FILTER (WHERE k IS NULL) AS nulls FROM (SELECT date_trunc('hour', ts) AS k, count(*) AS c FROM edge_empty GROUP BY 1);
+----
+groups	nulls
+0	0
+
+query
+SELECT date_trunc('year', ts)::VARCHAR AS k, count(*) AS c, sum(v) AS s FROM edge_old GROUP BY 1 ORDER BY 1;
+----
+k	c	s
+0001-01-01 00:00:00	1	1
+0044-01-01 00:00:00	1	2
+1000-01-01 00:00:00	1	3
+2025-01-01 00:00:00	1	5
+9999-01-01 00:00:00	1	4
+
+query
+SELECT date_trunc('century', ts)::VARCHAR AS k, count(*) AS c FROM edge_old GROUP BY 1 ORDER BY 1;
+----
+k	c
+0001-01-01 (BC) 00:00:00	2
+1000-01-01 00:00:00	1
+2000-01-01 00:00:00	1
+9900-01-01 00:00:00	1
+
+query
+SELECT strftime(ts, '%H:%M') AS k, count(*) AS c FROM edge_old GROUP BY 1 ORDER BY 1;
+----
+k	c
+00:00	2
+06:06	1
+12:00	1
+23:59	1
+
+query
+SELECT date_trunc('hour', tstz)::VARCHAR AS k, count(*) AS c FROM edge_dst GROUP BY 1 ORDER BY 1;
+----
+k	c
+2025-03-30 01:00:00+01	1
+2025-03-30 03:00:00+02	1
+2025-06-15 12:00:00+02	1
+2025-10-26 02:00:00+01	1
+2025-10-26 03:00:00+01	1
+
+query
+SELECT strftime(tstz, '%H:%M') AS k, count(*) AS c FROM edge_dst GROUP BY 1 ORDER BY 1;
+----
+k	c
+01:00	1
+02:00	1
+03:00	2
+12:00	1
+
+query
+SELECT date_trunc('hour', tstz)::TIME::VARCHAR AS k, count(*) AS c FROM edge_dst GROUP BY 1 ORDER BY 1;
+----
+k	c
+01:00:00	1
+02:00:00	1
+03:00:00	2
+12:00:00	1
+
+query
+SELECT time_bucket(INTERVAL '30 minutes', tm)::VARCHAR AS k, count(*) AS c FROM edge_dst GROUP BY 1 ORDER BY 1;
+----
+k	c
+01:00:00	1
+02:00:00	1
+03:00:00	2
+12:00:00	1
+
+query
+SELECT k::VARCHAR AS k, c FROM (SELECT date_trunc('hour', ts) AS k, count(*) AS c FROM edge_rows GROUP BY ROLLUP(date_trunc('hour', ts))) WHERE k IS NULL OR k = TIMESTAMP '2025-01-01 05:00:00' ORDER BY 1;
+----
+k	c
+2025-01-01 05:00:00	37
+NULL	3000
+
+query
+SELECT count(*) AS groups, sum(c) AS total FROM (SELECT date_trunc('hour', ts) AS k, count(*) AS c FROM edge_rows GROUP BY GROUPING SETS ((date_trunc('hour', ts)), ()));
+----
+groups	total
+82	6000
+
+query
+SELECT count(*) AS rows, max(w) AS last_running_total FROM (SELECT k, c, sum(c) OVER (ORDER BY k) AS w FROM (SELECT strftime(ts, '%H:%M') AS k, count(*) AS c FROM edge_rows GROUP BY 1));
+----
+rows	last_running_total
+1440	3000
+
+query
+SELECT count(*) AS matched, sum(a.c) AS total FROM (SELECT date_trunc('hour', tstz) AS k, count(*) AS c FROM edge_rows GROUP BY 1) a JOIN (SELECT date_trunc('hour', tstz) AS k, count(*) AS c FROM edge_rows GROUP BY 1) b USING (k);
+----
+matched	total
+81	3000
+
+query
+SELECT count(*) AS groups FROM (SELECT DISTINCT strftime(tstz, '%H:%M') AS k FROM edge_rows);
+----
+groups
+1440
+
+query
+SELECT count(*) AS groups, sum(c) AS total FROM (SELECT k, count(*) AS c FROM (SELECT date_trunc('hour', ts) AS k FROM edge_rows UNION ALL SELECT date_trunc('hour', ts) AS k FROM edge_rows) GROUP BY 1);
+----
+groups	total
+81	6000
+
+query
+SELECT count(*) AS groups FROM (WITH x AS (SELECT date_trunc('hour', ts) AS k FROM edge_rows) SELECT k, count(*) AS c FROM x GROUP BY 1 HAVING count(*) > 30);
+----
+groups
+80
+
+statement ok
+SET perfect_ht_threshold = 0;
+
+statement ok
+SET disabled_optimizers = 'compressed_materialization';
+
+statement ok
+CREATE OR REPLACE TABLE ref_edge AS
+SELECT 'dt hour' AS shape, k::VARCHAR AS k, c FROM (SELECT date_trunc('hour', ts) AS k, count(*) AS c FROM edge_rows GROUP BY 1)
+UNION ALL SELECT 'dt day tz', k::VARCHAR, c FROM (SELECT date_trunc('day', tstz) AS k, count(*) AS c FROM edge_rows GROUP BY 1)
+UNION ALL SELECT 'tb 15 min', k::VARCHAR, c FROM (SELECT time_bucket(INTERVAL '15 minutes', ts) AS k, count(*) AS c FROM edge_rows GROUP BY 1)
+UNION ALL SELECT 'tb 15 min tz', k::VARCHAR, c FROM (SELECT time_bucket(INTERVAL '15 minutes', tstz) AS k, count(*) AS c FROM edge_rows GROUP BY 1)
+UNION ALL SELECT 'strftime hm', k::VARCHAR, c FROM (SELECT strftime(ts, '%H:%M') AS k, count(*) AS c FROM edge_rows GROUP BY 1)
+UNION ALL SELECT 'strftime hm tz', k::VARCHAR, c FROM (SELECT strftime(tstz, '%H:%M') AS k, count(*) AS c FROM edge_rows GROUP BY 1)
+UNION ALL SELECT 'cast time', k::VARCHAR, c FROM (SELECT date_trunc('hour', ts)::TIME AS k, count(*) AS c FROM edge_rows GROUP BY 1)
+UNION ALL SELECT 'time column', k::VARCHAR, c FROM (SELECT time_bucket(INTERVAL '15 minutes', tm) AS k, count(*) AS c FROM edge_rows GROUP BY 1)
+UNION ALL SELECT 'monthname', k::VARCHAR, c FROM (SELECT monthname(ts) AS k, count(*) AS c FROM edge_rows GROUP BY 1)
+UNION ALL SELECT 'last_day tz', k::VARCHAR, c FROM (SELECT last_day(tstz) AS k, count(*) AS c FROM edge_rows GROUP BY 1)
+UNION ALL SELECT 'label', k::VARCHAR, c FROM (SELECT year(ts) || '-Q' || quarter(ts) AS k, count(*) AS c FROM edge_rows GROUP BY 1)
+UNION ALL SELECT 'epoch bin', k::VARCHAR, c FROM (SELECT floor(epoch(ts) / 3600) * 3600 AS k, count(*) AS c FROM edge_rows GROUP BY 1)
+UNION ALL SELECT 'coordinates', k::VARCHAR || '|' || k2::VARCHAR, c FROM (SELECT year(ts) AS k, month(ts) AS k2, count(*) AS c FROM edge_rows GROUP BY 1, 2)
+UNION ALL SELECT 'ms', k::VARCHAR, c FROM (SELECT date_trunc('millisecond', ts) AS k, count(*) AS c FROM edge_rows GROUP BY 1);
+
+statement ok
+SET disabled_optimizers = '';
+
+statement ok
+CREATE OR REPLACE TABLE got_edge AS
+SELECT 'dt hour' AS shape, k::VARCHAR AS k, c FROM (SELECT date_trunc('hour', ts) AS k, count(*) AS c FROM edge_rows GROUP BY 1)
+UNION ALL SELECT 'dt day tz', k::VARCHAR, c FROM (SELECT date_trunc('day', tstz) AS k, count(*) AS c FROM edge_rows GROUP BY 1)
+UNION ALL SELECT 'tb 15 min', k::VARCHAR, c FROM (SELECT time_bucket(INTERVAL '15 minutes', ts) AS k, count(*) AS c FROM edge_rows GROUP BY 1)
+UNION ALL SELECT 'tb 15 min tz', k::VARCHAR, c FROM (SELECT time_bucket(INTERVAL '15 minutes', tstz) AS k, count(*) AS c FROM edge_rows GROUP BY 1)
+UNION ALL SELECT 'strftime hm', k::VARCHAR, c FROM (SELECT strftime(ts, '%H:%M') AS k, count(*) AS c FROM edge_rows GROUP BY 1)
+UNION ALL SELECT 'strftime hm tz', k::VARCHAR, c FROM (SELECT strftime(tstz, '%H:%M') AS k, count(*) AS c FROM edge_rows GROUP BY 1)
+UNION ALL SELECT 'cast time', k::VARCHAR, c FROM (SELECT date_trunc('hour', ts)::TIME AS k, count(*) AS c FROM edge_rows GROUP BY 1)
+UNION ALL SELECT 'time column', k::VARCHAR, c FROM (SELECT time_bucket(INTERVAL '15 minutes', tm) AS k, count(*) AS c FROM edge_rows GROUP BY 1)
+UNION ALL SELECT 'monthname', k::VARCHAR, c FROM (SELECT monthname(ts) AS k, count(*) AS c FROM edge_rows GROUP BY 1)
+UNION ALL SELECT 'last_day tz', k::VARCHAR, c FROM (SELECT last_day(tstz) AS k, count(*) AS c FROM edge_rows GROUP BY 1)
+UNION ALL SELECT 'label', k::VARCHAR, c FROM (SELECT year(ts) || '-Q' || quarter(ts) AS k, count(*) AS c FROM edge_rows GROUP BY 1)
+UNION ALL SELECT 'epoch bin', k::VARCHAR, c FROM (SELECT floor(epoch(ts) / 3600) * 3600 AS k, count(*) AS c FROM edge_rows GROUP BY 1)
+UNION ALL SELECT 'coordinates', k::VARCHAR || '|' || k2::VARCHAR, c FROM (SELECT year(ts) AS k, month(ts) AS k2, count(*) AS c FROM edge_rows GROUP BY 1, 2)
+UNION ALL SELECT 'ms', k::VARCHAR, c FROM (SELECT date_trunc('millisecond', ts) AS k, count(*) AS c FROM edge_rows GROUP BY 1);
+
+query
+SELECT count(*) AS rows, (SELECT count(*) FROM (SELECT * FROM ref_edge EXCEPT ALL SELECT * FROM got_edge)) AS ref_minus_got, (SELECT count(*) FROM (SELECT * FROM got_edge EXCEPT ALL SELECT * FROM ref_edge)) AS got_minus_ref FROM ref_edge;
+----
+rows	ref_minus_got	got_minus_ref
+6818	0	0
+
+statement ok
+SET perfect_ht_threshold = 18;
+
+statement ok
+SET disabled_optimizers = '';
+
+statement ok
+CREATE OR REPLACE TABLE got_edge AS SELECT 'dt hour' AS shape, k::VARCHAR AS k, c FROM (SELECT date_trunc('hour', ts) AS k, count(*) AS c FROM edge_rows GROUP BY 1) UNION ALL SELECT 'strftime hm tz', k::VARCHAR, c FROM (SELECT strftime(tstz, '%H:%M') AS k, count(*) AS c FROM edge_rows GROUP BY 1) UNION ALL SELECT 'time column', k::VARCHAR, c FROM (SELECT time_bucket(INTERVAL '15 minutes', tm) AS k, count(*) AS c FROM edge_rows GROUP BY 1);
+
+query
+SELECT count(*) AS rows, (SELECT count(*) FROM (SELECT * FROM got_edge EXCEPT ALL SELECT * FROM ref_edge WHERE shape IN ('dt hour', 'strftime hm tz', 'time column'))) AS unexpected FROM got_edge;
+----
+rows	unexpected
+1617	0
+
+statement ok
+SET Calendar = 'japanese';
+
+statement ok
+CREATE OR REPLACE TABLE got_edge AS SELECT 'dt hour' AS shape, k::VARCHAR AS k, c FROM (SELECT date_trunc('hour', ts) AS k, count(*) AS c FROM edge_rows GROUP BY 1) UNION ALL SELECT 'strftime hm tz', k::VARCHAR, c FROM (SELECT strftime(tstz, '%H:%M') AS k, count(*) AS c FROM edge_rows GROUP BY 1) UNION ALL SELECT 'time column', k::VARCHAR, c FROM (SELECT time_bucket(INTERVAL '15 minutes', tm) AS k, count(*) AS c FROM edge_rows GROUP BY 1);
+
+query
+SELECT count(*) AS rows, (SELECT count(*) FROM (SELECT * FROM got_edge EXCEPT ALL SELECT * FROM ref_edge WHERE shape IN ('dt hour', 'strftime hm tz', 'time column'))) AS unexpected FROM got_edge;
+----
+rows	unexpected
+1617	0
+
+statement ok
+RESET Calendar;
+
+statement ok
+RESET perfect_ht_threshold;
+
+statement ok
+SET TimeZone = 'Etc/UTC';
+
+statement ok
+SET TimeZone = 'Europe/Berlin';
+
+query
+SELECT v, coalesce(date_bin(INTERVAL '1 hour', ts, TIMESTAMP '2025-01-01 00:00:00')::VARCHAR, 'null') AS hourly,
+	coalesce(date_bin(INTERVAL '90 seconds', ts, TIMESTAMP '2025-01-01 00:00:07')::VARCHAR, 'null') AS offset_origin,
+	coalesce(date_bin(INTERVAL '7 days', ts, TIMESTAMP '2024-12-30 00:00:00')::VARCHAR, 'null') AS weekly
+FROM edge_inf ORDER BY v;
+----
+v	hourly	offset_origin	weekly
+1	infinity	infinity	infinity
+2	-infinity	-infinity	-infinity
+3	2025-06-01 12:00:00	2025-06-01 12:34:37	2025-05-26 00:00:00
+4	null	null	null
+
+query
+SELECT coalesce(k::VARCHAR, 'null') AS k, c, s FROM (
+	SELECT date_bin(INTERVAL '1 hour', ts, TIMESTAMP '2025-01-01 00:00:00') AS k, count(*) AS c, coalesce(sum(v), 0) AS s
+	FROM edge_inf GROUP BY 1) ORDER BY 1 NULLS FIRST;
+----
+k	c	s
+-infinity	1	2
+2025-06-01 12:00:00	1	3
+infinity	1	1
+null	1	4
+
+statement ok
+SET disabled_optimizers = 'compressed_materialization';
+
+query
+SELECT coalesce(k::VARCHAR, 'null') AS k, c, s FROM (
+	SELECT date_bin(INTERVAL '1 hour', ts, TIMESTAMP '2025-01-01 00:00:00') AS k, count(*) AS c, coalesce(sum(v), 0) AS s
+	FROM edge_inf GROUP BY 1) ORDER BY 1 NULLS FIRST;
+----
+k	c	s
+-infinity	1	2
+2025-06-01 12:00:00	1	3
+infinity	1	1
+null	1	4
+
+statement ok
+SET disabled_optimizers = '';

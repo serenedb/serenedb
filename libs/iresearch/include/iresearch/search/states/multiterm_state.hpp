@@ -22,10 +22,12 @@
 
 #pragma once
 
-#include <limits>
+#include <span>
 
 #include "iresearch/formats/posting_meta.hpp"
+#include "iresearch/search/common/resolve.hpp"
 #include "iresearch/search/scorer.hpp"
+#include "iresearch/search/states/term_state.hpp"
 
 namespace irs {
 
@@ -33,12 +35,10 @@ struct TermReader;
 
 class MultiTermState {
  public:
-  static constexpr uint32_t kUnscored = std::numeric_limits<uint32_t>::max();
-
   struct Entry {
     PostingMeta cookie;
     score_t boost = kNoBoost;
-    uint32_t stat_offset = kUnscored;
+    const byte_type* stats = nullptr;
   };
 
   explicit MultiTermState(IResourceManager& memory) noexcept
@@ -50,13 +50,12 @@ class MultiTermState {
     _reader = reader;
   }
 
-  // Return true if state is empty
   bool Empty() const noexcept { return _terms.empty(); }
   const auto* Reader() const noexcept { return _reader; }
 
   void Push(const PostingMeta& cookie, score_t boost,
-            uint32_t stat_offset = kUnscored) {
-    _terms.emplace_back(cookie, boost, stat_offset);
+            const byte_type* stats = nullptr) {
+    _terms.emplace_back(cookie, boost, stats);
   }
 
   auto& Terms() noexcept { return _terms; }
@@ -64,7 +63,6 @@ class MultiTermState {
   auto TermsSize() const { return _terms.size(); }
 
  private:
-  // Reader using for iterate over the terms
   const TermReader* _reader = nullptr;
 
   ManagedVector<Entry> _terms;

@@ -20,7 +20,7 @@
 
 #include <duckdb/planner/expression/bound_cast_expression.hpp>
 #include <iresearch/analysis/token_attributes.hpp>
-#include <iresearch/search/terms_filter.hpp>
+#include <iresearch/search/term_set.hpp>
 #include <iresearch/utils/string.hpp>
 
 #include "connector/functions/ts_query_codec.h"
@@ -45,7 +45,7 @@ bool IsTokenizeListCall(const duckdb::Expression& expr) {
 }
 
 void FromTokenizeListInAnyAllOf(
-  irs::BooleanFilter& parent, const FilterContext& ctx,
+  BoolTarget parent, const FilterContext& ctx,
   const SearchColumnInfo& column_info,
   const duckdb::BoundFunctionExpression& outer,
   const duckdb::BoundFunctionExpression& tokenize_call, bool is_any) {
@@ -169,17 +169,17 @@ void FromTokenizeListInAnyAllOf(
     return;
   }
 
-  // Single-token short-circuit -> ByTerm.
+  const auto field =
+    PickPerKindFieldId(column_info, duckdb::LogicalTypeId::VARCHAR);
+
+  // Single-token short-circuit -> one term clause.
   if (tokens.size() == 1) {
-    auto& term = AddMaybeNegated<irs::ByTerm>(parent, ctx, column_info);
-    term.SetBoost(ctx.boost);
-    *term.mutable_field_id() =
-      PickPerKindFieldId(column_info, duckdb::LogicalTypeId::VARCHAR);
-    term.mutable_options()->term.assign(tokens[0]);
+    AddTerm(MaybeNegated(parent, ctx, column_info), field, tokens[0], ctx.boost,
+            LeafScorer(column_info));
     return;
   }
 
-  // Aggregate as ByTerms with the min_match policy:
+  // Aggregate as one term-set node with the min_match policy:
   //   ts_any without min_match -> 1
   //   ts_any(min_match=N) -> N (capped at tokens.size())
   //   ts_all -> tokens.size()
@@ -189,15 +189,10 @@ void FromTokenizeListInAnyAllOf(
   } else if (min_match) {
     min_match_value = std::min<size_t>(*min_match, tokens.size());
   }
-  auto& terms = AddMaybeNegated<irs::ByTerms>(parent, ctx, column_info);
-  terms.SetBoost(ctx.boost);
-  *terms.mutable_field_id() =
-    PickPerKindFieldId(column_info, duckdb::LogicalTypeId::VARCHAR);
-  auto& opts = *terms.mutable_options();
-  opts.min_match = min_match_value;
-  for (auto& t : tokens) {
-    opts.terms.emplace(std::move(t));
-  }
+  auto& node = AddTermSet(MaybeNegated(parent, ctx, column_info), field, tokens,
+                          min_match_value);
+  node.SetBoost(ctx.boost);
+  node.SetScorer(LeafScorer(column_info));
 }
 
 }  // namespace
@@ -290,13 +285,13 @@ void ExtractAnyAllOfArgs(
   }
 }
 
-void FromAnyAllOf(irs::BooleanFilter& parent, const FilterContext& ctx,
+void FromAnyAllOf(BoolTarget parent, const FilterContext& ctx,
                   const SearchColumnInfo& column_info,
                   const duckdb::BoundFunctionExpression& func, bool is_any) {
   // Special case: ts_any/ts_all wrapping a ts_tokenize(text_array[, name])
-  // call. Tokenise every element, flatten into a single ByTerms with the
-  // appropriate min_match. Bypasses the per-arg BuildTSQuery loop so we
-  // can emit one aggregated filter rather than N individual leaves.
+  // call. Tokenise every element into one optional bucket at the appropriate
+  // threshold. Bypasses the per-arg BuildTSQuery loop so we can emit one
+  // aggregated filter rather than N individual leaves.
   if (!func.GetChildren().empty() &&
       IsTokenizeListCall(*func.GetChildren()[0])) {
     FromTokenizeListInAnyAllOf(
@@ -313,19 +308,14 @@ void FromAnyAllOf(irs::BooleanFilter& parent, const FilterContext& ctx,
   sub_ctx.boost = irs::kNoBoost;
   sub_ctx.negated = false;
 
-  irs::BooleanFilter* group;
-  if (is_any) {
-    auto& or_group = AddMaybeNegated<irs::Or>(parent, ctx, column_info);
-    if (min_match && *min_match > 1) {
-      or_group.min_match_count(*min_match);
-    }
-    group = &or_group;
-  } else {
-    group = &AddMaybeNegated<irs::And>(parent, ctx, column_info);
-  }
-  group->SetBoost(ctx.boost);
+  const auto group = AddGroup(MaybeNegated(parent, ctx, column_info),
+                              is_any ? irs::Occur::Should : irs::Occur::Must);
+  group.node->SetBoost(ctx.boost);
   for (const auto* arg : args) {
-    BuildTSQuery(*group, sub_ctx, column_info, *arg);
+    BuildTSQuery(group, sub_ctx, column_info, *arg);
+  }
+  if (is_any) {
+    SetMinMatch(*group.node, min_match.value_or(1));
   }
 }
 

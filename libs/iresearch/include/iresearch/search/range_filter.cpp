@@ -102,12 +102,6 @@ QueryBuilder::ptr ByRange::PrepareSegment(const SubReader& segment,
                                           const irs::field_id field,
                                           const options_type::range_type& rng,
                                           score_t boost) {
-  // TODO: optimize unordered case
-  //  - seek to min
-  //  - get ordinal position of the term
-  //  - seek to max
-  //  - get ordinal position of the term
-
   switch (Classify(rng)) {
     case RangeKind::Term:
       return ByTerm::PrepareSegment(segment, ctx, field, rng.min);
@@ -117,37 +111,42 @@ QueryBuilder::ptr ByRange::PrepareSegment(const SubReader& segment,
       break;
   }
 
-  auto query = memory::make_tracked<MultiTermQuery>(
-    ctx.memory, segment, ctx.memory, ctx.boost, ScoreMergeType::Sum, size_t{1});
-
   const auto* reader = segment.field(field);
   if (!reader) {
-    return query;
+    return QueryBuilder::Empty();
   }
-
   auto* collector =
     ctx.collector
       ? &sdb::basics::downCast<LimitedTermsCollector>(*ctx.collector)
       : nullptr;
   if (collector) {
-    collector->Field().Collect(*reader);
+    collector->Field(ctx.thread).Collect(*reader);
   }
-  SampledMultiTermVisitor mtv{collector ? &collector->Limited() : nullptr,
-                              query->State()};
   ByRangeIterator terms{*reader, rng};
-  if (terms.next()) {
-    mtv.Prepare(segment, *reader, terms.GetImpl());
-    VisitTerms(terms, mtv);
+  if (!terms.next()) {
+    return QueryBuilder::Empty();
   }
-  return query;
+
+  auto query = memory::make_tracked<MultiTermQuery>(
+    ctx.memory, segment, ctx.memory, ctx.boost, ScoreMergeType::Sum);
+  if (collector && collector->Limited(ctx.thread).Samples()) {
+    query->Pin();
+  }
+  SampledMultiTermVisitor mtv{
+    collector ? &collector->Limited(ctx.thread) : nullptr, query->State()};
+  mtv.Prepare(segment, *reader, terms.GetImpl());
+  VisitTerms(terms, mtv);
+  return MultiTermQuery::Finish(std::move(query), ctx);
 }
 
-PrepareCollector::ptr ByRange::MakeCollectorImpl(const Scorer* scorer) const {
+PrepareCollector::ptr ByRange::MakeCollectorImpl(const Scorer* scorer,
+                                                 StatsArena& stats,
+                                                 uint32_t threads) const {
   if (Classify(options().range) == RangeKind::Term) {
-    return std::make_unique<ByTermsCollector>(scorer, 1);
+    return std::make_unique<ByTermsCollector>(scorer, 1, stats, threads);
   }
-  return std::make_unique<LimitedTermsCollector>(scorer,
-                                                 options().scored_terms_limit);
+  return std::make_unique<LimitedTermsCollector>(
+    scorer, options().scored_terms_limit, stats, threads);
 }
 
 void ByRange::visit(const SubReader& segment, const TermReader& reader,

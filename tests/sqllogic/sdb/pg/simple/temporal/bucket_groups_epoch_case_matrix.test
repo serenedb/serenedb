@@ -1,0 +1,399 @@
+statement ok
+SET TimeZone = 'Europe/Berlin';
+
+statement ok
+CREATE TABLE g AS SELECT TIMESTAMP '2024-12-28 00:00:00' + INTERVAL (i * 7) MINUTE AS ts, (TIMESTAMP '2024-12-28 00:00:00' + INTERVAL (i * 7) MINUTE)::TIMESTAMPTZ AS tstz, (DATE '2024-12-28' + (i % 300)::INTEGER)::DATE AS d, (i % 1000)::DOUBLE AS price, (i % 1000 - 500)::INTEGER AS delta, CASE i % 5 WHEN 0 THEN 'checkout' WHEN 1 THEN 'cart' ELSE 'web' END AS service, (i % 5)::SMALLINT AS sev, i AS v FROM range(50000) t(i);
+
+statement ok
+INSERT INTO g VALUES (NULL, NULL, NULL, NULL, NULL, NULL, NULL, -1);
+
+statement ok
+CREATE TABLE old AS SELECT TIMESTAMP '1969-12-25 00:00:00' + INTERVAL (i * 173) MINUTE AS ts, i AS v FROM range(4000) t(i);
+
+statement ok
+SET disabled_optimizers = 'compressed_materialization';
+
+statement ok
+CREATE TABLE ref_e AS
+SELECT 'ts floor(epoch(ts) / 3600) * 3600' AS shape, k::VARCHAR AS k, c, s FROM (SELECT floor(epoch(ts) / 3600) * 3600 AS k, count(*) AS c, sum(v) AS s FROM g GROUP BY 1)
+UNION ALL SELECT 'ts floor(epoch(ts) / 86400) * 86400' AS shape, k::VARCHAR AS k, c, s FROM (SELECT floor(epoch(ts) / 86400) * 86400 AS k, count(*) AS c, sum(v) AS s FROM g GROUP BY 1)
+UNION ALL SELECT 'ts to_timestamp(floor(epoch(ts) / 3600) * 3600)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT to_timestamp(floor(epoch(ts) / 3600) * 3600) AS k, count(*) AS c, sum(v) AS s FROM g GROUP BY 1)
+UNION ALL SELECT 'ts to_timestamp(floor(epoch(ts) / 900) * 900)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT to_timestamp(floor(epoch(ts) / 900) * 900) AS k, count(*) AS c, sum(v) AS s FROM g GROUP BY 1)
+UNION ALL SELECT 'ts floor(date_part(''epoch'', ts) / 3600) * 3600' AS shape, k::VARCHAR AS k, c, s FROM (SELECT floor(date_part('epoch', ts) / 3600) * 3600 AS k, count(*) AS c, sum(v) AS s FROM g GROUP BY 1)
+UNION ALL SELECT 'ts floor(extract(epoch FROM ts) / 300) * 300' AS shape, k::VARCHAR AS k, c, s FROM (SELECT floor(extract(epoch FROM ts) / 300) * 300 AS k, count(*) AS c, sum(v) AS s FROM g GROUP BY 1)
+UNION ALL SELECT 'ts to_timestamp(floor(extract(epoch FROM ts) / 300) * 300)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT to_timestamp(floor(extract(epoch FROM ts) / 300) * 300) AS k, count(*) AS c, sum(v) AS s FROM g GROUP BY 1)
+UNION ALL SELECT 'ts epoch_ms(ts) // 3600000 * 3600000' AS shape, k::VARCHAR AS k, c, s FROM (SELECT epoch_ms(ts) // 3600000 * 3600000 AS k, count(*) AS c, sum(v) AS s FROM g GROUP BY 1)
+UNION ALL SELECT 'ts epoch_ms(epoch_ms(ts) // 3600000 * 3600000)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT epoch_ms(epoch_ms(ts) // 3600000 * 3600000) AS k, count(*) AS c, sum(v) AS s FROM g GROUP BY 1)
+UNION ALL SELECT 'ts epoch_us(ts) // 3600000000' AS shape, k::VARCHAR AS k, c, s FROM (SELECT epoch_us(ts) // 3600000000 AS k, count(*) AS c, sum(v) AS s FROM g GROUP BY 1)
+UNION ALL SELECT 'ts make_timestamp(epoch_us(ts) // 3600000000 * 3600000000)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT make_timestamp(epoch_us(ts) // 3600000000 * 3600000000) AS k, count(*) AS c, sum(v) AS s FROM g GROUP BY 1)
+UNION ALL SELECT 'ts to_timestamp(floor(epoch(ts) / 3600) * 3600 + 1800)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT to_timestamp(floor(epoch(ts) / 3600) * 3600 + 1800) AS k, count(*) AS c, sum(v) AS s FROM g GROUP BY 1)
+UNION ALL SELECT 'ts to_timestamp(floor(epoch(ts) / 604800) * 604800)::DATE' AS shape, k::VARCHAR AS k, c, s FROM (SELECT to_timestamp(floor(epoch(ts) / 604800) * 604800)::DATE AS k, count(*) AS c, sum(v) AS s FROM g GROUP BY 1)
+UNION ALL SELECT 'ts to_timestamp(floor(epoch(ts) / 86400) * 86400)::DATE' AS shape, k::VARCHAR AS k, c, s FROM (SELECT to_timestamp(floor(epoch(ts) / 86400) * 86400)::DATE AS k, count(*) AS c, sum(v) AS s FROM g GROUP BY 1)
+UNION ALL SELECT 'ts floor(epoch(ts) / 3600)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT floor(epoch(ts) / 3600) AS k, count(*) AS c, sum(v) AS s FROM g GROUP BY 1)
+UNION ALL SELECT 'ts ceil(epoch(ts) / 3600)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT ceil(epoch(ts) / 3600) AS k, count(*) AS c, sum(v) AS s FROM g GROUP BY 1)
+UNION ALL SELECT 'ts round(epoch_ms(ts) / 3600000)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT round(epoch_ms(ts) / 3600000) AS k, count(*) AS c, sum(v) AS s FROM g GROUP BY 1)
+UNION ALL SELECT 'ts (epoch(ts) / 3600)::BIGINT' AS shape, k::VARCHAR AS k, c, s FROM (SELECT (epoch(ts) / 3600)::BIGINT AS k, count(*) AS c, sum(v) AS s FROM g GROUP BY 1)
+UNION ALL SELECT 'ts floor(epoch(ts) / 3600) * 3600 / 60' AS shape, k::VARCHAR AS k, c, s FROM (SELECT floor(epoch(ts) / 3600) * 3600 / 60 AS k, count(*) AS c, sum(v) AS s FROM g GROUP BY 1)
+UNION ALL SELECT 'ts epoch(ts) // 3600' AS shape, k::VARCHAR AS k, c, s FROM (SELECT epoch(ts) // 3600 AS k, count(*) AS c, sum(v) AS s FROM g GROUP BY 1)
+UNION ALL SELECT 'ts floor(epoch(ts) / 1.5)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT floor(epoch(ts) / 1.5) AS k, count(*) AS c, sum(v) AS s FROM g GROUP BY 1)
+UNION ALL SELECT 'tstz floor(epoch(tstz) / 3600) * 3600' AS shape, k::VARCHAR AS k, c, s FROM (SELECT floor(epoch(tstz) / 3600) * 3600 AS k, count(*) AS c, sum(v) AS s FROM g GROUP BY 1)
+UNION ALL SELECT 'tstz floor(epoch(tstz) / 86400) * 86400' AS shape, k::VARCHAR AS k, c, s FROM (SELECT floor(epoch(tstz) / 86400) * 86400 AS k, count(*) AS c, sum(v) AS s FROM g GROUP BY 1)
+UNION ALL SELECT 'tstz to_timestamp(floor(epoch(tstz) / 3600) * 3600)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT to_timestamp(floor(epoch(tstz) / 3600) * 3600) AS k, count(*) AS c, sum(v) AS s FROM g GROUP BY 1)
+UNION ALL SELECT 'tstz to_timestamp(floor(epoch(tstz) / 900) * 900)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT to_timestamp(floor(epoch(tstz) / 900) * 900) AS k, count(*) AS c, sum(v) AS s FROM g GROUP BY 1)
+UNION ALL SELECT 'tstz floor(date_part(''epoch'', tstz) / 3600) * 3600' AS shape, k::VARCHAR AS k, c, s FROM (SELECT floor(date_part('epoch', tstz) / 3600) * 3600 AS k, count(*) AS c, sum(v) AS s FROM g GROUP BY 1)
+UNION ALL SELECT 'tstz floor(extract(epoch FROM tstz) / 300) * 300' AS shape, k::VARCHAR AS k, c, s FROM (SELECT floor(extract(epoch FROM tstz) / 300) * 300 AS k, count(*) AS c, sum(v) AS s FROM g GROUP BY 1)
+UNION ALL SELECT 'tstz to_timestamp(floor(extract(epoch FROM tstz) / 300) * 300)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT to_timestamp(floor(extract(epoch FROM tstz) / 300) * 300) AS k, count(*) AS c, sum(v) AS s FROM g GROUP BY 1)
+UNION ALL SELECT 'tstz epoch_ms(tstz) // 3600000 * 3600000' AS shape, k::VARCHAR AS k, c, s FROM (SELECT epoch_ms(tstz) // 3600000 * 3600000 AS k, count(*) AS c, sum(v) AS s FROM g GROUP BY 1)
+UNION ALL SELECT 'tstz epoch_ms(epoch_ms(tstz) // 3600000 * 3600000)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT epoch_ms(epoch_ms(tstz) // 3600000 * 3600000) AS k, count(*) AS c, sum(v) AS s FROM g GROUP BY 1)
+UNION ALL SELECT 'tstz epoch_us(tstz) // 3600000000' AS shape, k::VARCHAR AS k, c, s FROM (SELECT epoch_us(tstz) // 3600000000 AS k, count(*) AS c, sum(v) AS s FROM g GROUP BY 1)
+UNION ALL SELECT 'tstz make_timestamp(epoch_us(tstz) // 3600000000 * 3600000000)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT make_timestamp(epoch_us(tstz) // 3600000000 * 3600000000) AS k, count(*) AS c, sum(v) AS s FROM g GROUP BY 1)
+UNION ALL SELECT 'tstz to_timestamp(floor(epoch(tstz) / 3600) * 3600 + 1800)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT to_timestamp(floor(epoch(tstz) / 3600) * 3600 + 1800) AS k, count(*) AS c, sum(v) AS s FROM g GROUP BY 1)
+UNION ALL SELECT 'tstz to_timestamp(floor(epoch(tstz) / 604800) * 604800)::DATE' AS shape, k::VARCHAR AS k, c, s FROM (SELECT to_timestamp(floor(epoch(tstz) / 604800) * 604800)::DATE AS k, count(*) AS c, sum(v) AS s FROM g GROUP BY 1)
+UNION ALL SELECT 'tstz to_timestamp(floor(epoch(tstz) / 86400) * 86400)::DATE' AS shape, k::VARCHAR AS k, c, s FROM (SELECT to_timestamp(floor(epoch(tstz) / 86400) * 86400)::DATE AS k, count(*) AS c, sum(v) AS s FROM g GROUP BY 1)
+UNION ALL SELECT 'tstz floor(epoch(tstz) / 3600)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT floor(epoch(tstz) / 3600) AS k, count(*) AS c, sum(v) AS s FROM g GROUP BY 1)
+UNION ALL SELECT 'tstz ceil(epoch(tstz) / 3600)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT ceil(epoch(tstz) / 3600) AS k, count(*) AS c, sum(v) AS s FROM g GROUP BY 1)
+UNION ALL SELECT 'tstz round(epoch_ms(tstz) / 3600000)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT round(epoch_ms(tstz) / 3600000) AS k, count(*) AS c, sum(v) AS s FROM g GROUP BY 1)
+UNION ALL SELECT 'tstz (epoch(tstz) / 3600)::BIGINT' AS shape, k::VARCHAR AS k, c, s FROM (SELECT (epoch(tstz) / 3600)::BIGINT AS k, count(*) AS c, sum(v) AS s FROM g GROUP BY 1)
+UNION ALL SELECT 'tstz floor(epoch(tstz) / 3600) * 3600 / 60' AS shape, k::VARCHAR AS k, c, s FROM (SELECT floor(epoch(tstz) / 3600) * 3600 / 60 AS k, count(*) AS c, sum(v) AS s FROM g GROUP BY 1)
+UNION ALL SELECT 'tstz epoch(tstz) // 3600' AS shape, k::VARCHAR AS k, c, s FROM (SELECT epoch(tstz) // 3600 AS k, count(*) AS c, sum(v) AS s FROM g GROUP BY 1)
+UNION ALL SELECT 'tstz floor(epoch(tstz) / 1.5)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT floor(epoch(tstz) / 1.5) AS k, count(*) AS c, sum(v) AS s FROM g GROUP BY 1)
+UNION ALL SELECT 'd floor(epoch(d) / 3600) * 3600' AS shape, k::VARCHAR AS k, c, s FROM (SELECT floor(epoch(d) / 3600) * 3600 AS k, count(*) AS c, sum(v) AS s FROM g GROUP BY 1)
+UNION ALL SELECT 'd floor(epoch(d) / 86400) * 86400' AS shape, k::VARCHAR AS k, c, s FROM (SELECT floor(epoch(d) / 86400) * 86400 AS k, count(*) AS c, sum(v) AS s FROM g GROUP BY 1)
+UNION ALL SELECT 'd to_timestamp(floor(epoch(d) / 3600) * 3600)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT to_timestamp(floor(epoch(d) / 3600) * 3600) AS k, count(*) AS c, sum(v) AS s FROM g GROUP BY 1)
+UNION ALL SELECT 'd to_timestamp(floor(epoch(d) / 900) * 900)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT to_timestamp(floor(epoch(d) / 900) * 900) AS k, count(*) AS c, sum(v) AS s FROM g GROUP BY 1)
+UNION ALL SELECT 'd floor(date_part(''epoch'', d) / 3600) * 3600' AS shape, k::VARCHAR AS k, c, s FROM (SELECT floor(date_part('epoch', d) / 3600) * 3600 AS k, count(*) AS c, sum(v) AS s FROM g GROUP BY 1)
+UNION ALL SELECT 'd floor(extract(epoch FROM d) / 300) * 300' AS shape, k::VARCHAR AS k, c, s FROM (SELECT floor(extract(epoch FROM d) / 300) * 300 AS k, count(*) AS c, sum(v) AS s FROM g GROUP BY 1)
+UNION ALL SELECT 'd to_timestamp(floor(extract(epoch FROM d) / 300) * 300)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT to_timestamp(floor(extract(epoch FROM d) / 300) * 300) AS k, count(*) AS c, sum(v) AS s FROM g GROUP BY 1)
+UNION ALL SELECT 'd epoch_ms(d) // 3600000 * 3600000' AS shape, k::VARCHAR AS k, c, s FROM (SELECT epoch_ms(d) // 3600000 * 3600000 AS k, count(*) AS c, sum(v) AS s FROM g GROUP BY 1)
+UNION ALL SELECT 'd epoch_ms(epoch_ms(d) // 3600000 * 3600000)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT epoch_ms(epoch_ms(d) // 3600000 * 3600000) AS k, count(*) AS c, sum(v) AS s FROM g GROUP BY 1)
+UNION ALL SELECT 'd epoch_us(d) // 3600000000' AS shape, k::VARCHAR AS k, c, s FROM (SELECT epoch_us(d) // 3600000000 AS k, count(*) AS c, sum(v) AS s FROM g GROUP BY 1)
+UNION ALL SELECT 'd make_timestamp(epoch_us(d) // 3600000000 * 3600000000)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT make_timestamp(epoch_us(d) // 3600000000 * 3600000000) AS k, count(*) AS c, sum(v) AS s FROM g GROUP BY 1)
+UNION ALL SELECT 'd to_timestamp(floor(epoch(d) / 3600) * 3600 + 1800)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT to_timestamp(floor(epoch(d) / 3600) * 3600 + 1800) AS k, count(*) AS c, sum(v) AS s FROM g GROUP BY 1)
+UNION ALL SELECT 'd to_timestamp(floor(epoch(d) / 604800) * 604800)::DATE' AS shape, k::VARCHAR AS k, c, s FROM (SELECT to_timestamp(floor(epoch(d) / 604800) * 604800)::DATE AS k, count(*) AS c, sum(v) AS s FROM g GROUP BY 1)
+UNION ALL SELECT 'd to_timestamp(floor(epoch(d) / 86400) * 86400)::DATE' AS shape, k::VARCHAR AS k, c, s FROM (SELECT to_timestamp(floor(epoch(d) / 86400) * 86400)::DATE AS k, count(*) AS c, sum(v) AS s FROM g GROUP BY 1)
+UNION ALL SELECT 'd floor(epoch(d) / 3600)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT floor(epoch(d) / 3600) AS k, count(*) AS c, sum(v) AS s FROM g GROUP BY 1)
+UNION ALL SELECT 'd ceil(epoch(d) / 3600)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT ceil(epoch(d) / 3600) AS k, count(*) AS c, sum(v) AS s FROM g GROUP BY 1)
+UNION ALL SELECT 'd round(epoch_ms(d) / 3600000)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT round(epoch_ms(d) / 3600000) AS k, count(*) AS c, sum(v) AS s FROM g GROUP BY 1)
+UNION ALL SELECT 'd (epoch(d) / 3600)::BIGINT' AS shape, k::VARCHAR AS k, c, s FROM (SELECT (epoch(d) / 3600)::BIGINT AS k, count(*) AS c, sum(v) AS s FROM g GROUP BY 1)
+UNION ALL SELECT 'd floor(epoch(d) / 3600) * 3600 / 60' AS shape, k::VARCHAR AS k, c, s FROM (SELECT floor(epoch(d) / 3600) * 3600 / 60 AS k, count(*) AS c, sum(v) AS s FROM g GROUP BY 1)
+UNION ALL SELECT 'd epoch(d) // 3600' AS shape, k::VARCHAR AS k, c, s FROM (SELECT epoch(d) // 3600 AS k, count(*) AS c, sum(v) AS s FROM g GROUP BY 1)
+UNION ALL SELECT 'd floor(epoch(d) / 1.5)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT floor(epoch(d) / 1.5) AS k, count(*) AS c, sum(v) AS s FROM g GROUP BY 1)
+UNION ALL SELECT 'old floor(epoch(ts) / 3600) * 3600' AS shape, k::VARCHAR AS k, c, s FROM (SELECT floor(epoch(ts) / 3600) * 3600 AS k, count(*) AS c, sum(v) AS s FROM old GROUP BY 1)
+UNION ALL SELECT 'old to_timestamp(floor(epoch(ts) / 3600) * 3600)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT to_timestamp(floor(epoch(ts) / 3600) * 3600) AS k, count(*) AS c, sum(v) AS s FROM old GROUP BY 1)
+UNION ALL SELECT 'old epoch_ms(ts) // 86400000 * 86400000' AS shape, k::VARCHAR AS k, c, s FROM (SELECT epoch_ms(ts) // 86400000 * 86400000 AS k, count(*) AS c, sum(v) AS s FROM old GROUP BY 1)
+UNION ALL SELECT 'old make_timestamp(epoch_us(ts) // 3600000000 * 3600000000)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT make_timestamp(epoch_us(ts) // 3600000000 * 3600000000) AS k, count(*) AS c, sum(v) AS s FROM old GROUP BY 1)
+UNION ALL SELECT 'bin date_bin(INTERVAL ''15 minutes'', ts, TIMESTAMP ''2001-01-01 00:05'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_bin(INTERVAL '15 minutes', ts, TIMESTAMP '2001-01-01 00:05') AS k, count(*) AS c, sum(v) AS s FROM g GROUP BY 1)
+UNION ALL SELECT 'old bin date_bin(INTERVAL ''15 minutes'', ts, TIMESTAMP ''2001-01-01 00:05'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_bin(INTERVAL '15 minutes', ts, TIMESTAMP '2001-01-01 00:05') AS k, count(*) AS c, sum(v) AS s FROM old GROUP BY 1)
+UNION ALL SELECT 'bin date_bin(INTERVAL ''15 minutes'', ts, TIMESTAMP ''2001-01-01'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_bin(INTERVAL '15 minutes', ts, TIMESTAMP '2001-01-01') AS k, count(*) AS c, sum(v) AS s FROM g GROUP BY 1)
+UNION ALL SELECT 'old bin date_bin(INTERVAL ''15 minutes'', ts, TIMESTAMP ''2001-01-01'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_bin(INTERVAL '15 minutes', ts, TIMESTAMP '2001-01-01') AS k, count(*) AS c, sum(v) AS s FROM old GROUP BY 1)
+UNION ALL SELECT 'bin date_bin(INTERVAL ''1 day'', ts, TIMESTAMP ''2000-01-01 06:00'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_bin(INTERVAL '1 day', ts, TIMESTAMP '2000-01-01 06:00') AS k, count(*) AS c, sum(v) AS s FROM g GROUP BY 1)
+UNION ALL SELECT 'old bin date_bin(INTERVAL ''1 day'', ts, TIMESTAMP ''2000-01-01 06:00'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_bin(INTERVAL '1 day', ts, TIMESTAMP '2000-01-01 06:00') AS k, count(*) AS c, sum(v) AS s FROM old GROUP BY 1)
+UNION ALL SELECT 'bin date_bin(INTERVAL ''90 minutes'', ts, TIMESTAMP ''2030-01-01'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_bin(INTERVAL '90 minutes', ts, TIMESTAMP '2030-01-01') AS k, count(*) AS c, sum(v) AS s FROM g GROUP BY 1)
+UNION ALL SELECT 'old bin date_bin(INTERVAL ''90 minutes'', ts, TIMESTAMP ''2030-01-01'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_bin(INTERVAL '90 minutes', ts, TIMESTAMP '2030-01-01') AS k, count(*) AS c, sum(v) AS s FROM old GROUP BY 1)
+UNION ALL SELECT 'bin date_bin(INTERVAL ''1 hour'', ts, TIMESTAMP ''1999-12-31 23:30'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_bin(INTERVAL '1 hour', ts, TIMESTAMP '1999-12-31 23:30') AS k, count(*) AS c, sum(v) AS s FROM g GROUP BY 1)
+UNION ALL SELECT 'old bin date_bin(INTERVAL ''1 hour'', ts, TIMESTAMP ''1999-12-31 23:30'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_bin(INTERVAL '1 hour', ts, TIMESTAMP '1999-12-31 23:30') AS k, count(*) AS c, sum(v) AS s FROM old GROUP BY 1)
+UNION ALL SELECT 'bin date_bin(INTERVAL ''3 days'', ts, TIMESTAMP ''2024-12-01'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_bin(INTERVAL '3 days', ts, TIMESTAMP '2024-12-01') AS k, count(*) AS c, sum(v) AS s FROM g GROUP BY 1)
+UNION ALL SELECT 'old bin date_bin(INTERVAL ''3 days'', ts, TIMESTAMP ''2024-12-01'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_bin(INTERVAL '3 days', ts, TIMESTAMP '2024-12-01') AS k, count(*) AS c, sum(v) AS s FROM old GROUP BY 1)
+UNION ALL SELECT 'bin date_bin(INTERVAL ''15 minutes'', ts, TIMESTAMP ''2001-01-01'')::VARCHAR' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_bin(INTERVAL '15 minutes', ts, TIMESTAMP '2001-01-01')::VARCHAR AS k, count(*) AS c, sum(v) AS s FROM g GROUP BY 1)
+UNION ALL SELECT 'old bin date_bin(INTERVAL ''15 minutes'', ts, TIMESTAMP ''2001-01-01'')::VARCHAR' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_bin(INTERVAL '15 minutes', ts, TIMESTAMP '2001-01-01')::VARCHAR AS k, count(*) AS c, sum(v) AS s FROM old GROUP BY 1)
+UNION ALL SELECT 'bin date_bin(INTERVAL ''15 minutes'', ts, TIMESTAMP ''2001-01-01'') + INTERVAL ''5 minutes''' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_bin(INTERVAL '15 minutes', ts, TIMESTAMP '2001-01-01') + INTERVAL '5 minutes' AS k, count(*) AS c, sum(v) AS s FROM g GROUP BY 1)
+UNION ALL SELECT 'old bin date_bin(INTERVAL ''15 minutes'', ts, TIMESTAMP ''2001-01-01'') + INTERVAL ''5 minutes''' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_bin(INTERVAL '15 minutes', ts, TIMESTAMP '2001-01-01') + INTERVAL '5 minutes' AS k, count(*) AS c, sum(v) AS s FROM old GROUP BY 1)
+UNION ALL SELECT 'bin epoch_ms(date_bin(INTERVAL ''1 hour'', ts, TIMESTAMP ''2000-01-01''))' AS shape, k::VARCHAR AS k, c, s FROM (SELECT epoch_ms(date_bin(INTERVAL '1 hour', ts, TIMESTAMP '2000-01-01')) AS k, count(*) AS c, sum(v) AS s FROM g GROUP BY 1)
+UNION ALL SELECT 'old bin epoch_ms(date_bin(INTERVAL ''1 hour'', ts, TIMESTAMP ''2000-01-01''))' AS shape, k::VARCHAR AS k, c, s FROM (SELECT epoch_ms(date_bin(INTERVAL '1 hour', ts, TIMESTAMP '2000-01-01')) AS k, count(*) AS c, sum(v) AS s FROM old GROUP BY 1)
+UNION ALL SELECT 'case CASE WHEN price < 100 THEN ''low'' WHEN price < 500 THEN ''mid'' ELSE ''high'' END' AS shape, k::VARCHAR AS k, c, s FROM (SELECT CASE WHEN price < 100 THEN 'low' WHEN price < 500 THEN 'mid' ELSE 'high' END AS k, count(*) AS c, sum(v) AS s FROM g GROUP BY 1)
+UNION ALL SELECT 'case CASE WHEN price < 100 THEN ''low'' WHEN price < 500 THEN ''mid'' END' AS shape, k::VARCHAR AS k, c, s FROM (SELECT CASE WHEN price < 100 THEN 'low' WHEN price < 500 THEN 'mid' END AS k, count(*) AS c, sum(v) AS s FROM g GROUP BY 1)
+UNION ALL SELECT 'case CASE WHEN price < 100 THEN ''a'' WHEN price < 500 THEN ''b'' ELSE ''a'' END' AS shape, k::VARCHAR AS k, c, s FROM (SELECT CASE WHEN price < 100 THEN 'a' WHEN price < 500 THEN 'b' ELSE 'a' END AS k, count(*) AS c, sum(v) AS s FROM g GROUP BY 1)
+UNION ALL SELECT 'case CASE WHEN service = ''checkout'' THEN 1 WHEN sev > 2 THEN 2 ELSE 3 END' AS shape, k::VARCHAR AS k, c, s FROM (SELECT CASE WHEN service = 'checkout' THEN 1 WHEN sev > 2 THEN 2 ELSE 3 END AS k, count(*) AS c, sum(v) AS s FROM g GROUP BY 1)
+UNION ALL SELECT 'case CASE WHEN price < 100 THEN ''low'' ELSE NULL END' AS shape, k::VARCHAR AS k, c, s FROM (SELECT CASE WHEN price < 100 THEN 'low' ELSE NULL END AS k, count(*) AS c, sum(v) AS s FROM g GROUP BY 1)
+UNION ALL SELECT 'case CASE WHEN price IS NULL THEN ''none'' WHEN price < 100 THEN ''low'' ELSE ''high'' END' AS shape, k::VARCHAR AS k, c, s FROM (SELECT CASE WHEN price IS NULL THEN 'none' WHEN price < 100 THEN 'low' ELSE 'high' END AS k, count(*) AS c, sum(v) AS s FROM g GROUP BY 1)
+UNION ALL SELECT 'case CASE WHEN delta < 0 THEN -1 WHEN delta = 0 THEN 0 ELSE 1 END' AS shape, k::VARCHAR AS k, c, s FROM (SELECT CASE WHEN delta < 0 THEN -1 WHEN delta = 0 THEN 0 ELSE 1 END AS k, count(*) AS c, sum(v) AS s FROM g GROUP BY 1)
+UNION ALL SELECT 'case CASE WHEN delta < -100 THEN -100.5 WHEN delta < 100 THEN 0.5 ELSE 100.5 END' AS shape, k::VARCHAR AS k, c, s FROM (SELECT CASE WHEN delta < -100 THEN -100.5 WHEN delta < 100 THEN 0.5 ELSE 100.5 END AS k, count(*) AS c, sum(v) AS s FROM g GROUP BY 1)
+UNION ALL SELECT 'case CASE WHEN price < 100 THEN DATE ''2020-01-01'' ELSE DATE ''2021-01-01'' END' AS shape, k::VARCHAR AS k, c, s FROM (SELECT CASE WHEN price < 100 THEN DATE '2020-01-01' ELSE DATE '2021-01-01' END AS k, count(*) AS c, sum(v) AS s FROM g GROUP BY 1)
+UNION ALL SELECT 'case CASE WHEN price < 100 THEN TRUE ELSE FALSE END' AS shape, k::VARCHAR AS k, c, s FROM (SELECT CASE WHEN price < 100 THEN TRUE ELSE FALSE END AS k, count(*) AS c, sum(v) AS s FROM g GROUP BY 1)
+UNION ALL SELECT 'case CASE sev WHEN 0 THEN ''zero'' WHEN 1 THEN ''one'' ELSE ''many'' END' AS shape, k::VARCHAR AS k, c, s FROM (SELECT CASE sev WHEN 0 THEN 'zero' WHEN 1 THEN 'one' ELSE 'many' END AS k, count(*) AS c, sum(v) AS s FROM g GROUP BY 1)
+UNION ALL SELECT 'case ''bin:'' !! CASE WHEN price < 100 THEN ''low'' ELSE ''high'' END' AS shape, k::VARCHAR AS k, c, s FROM (SELECT 'bin:' || CASE WHEN price < 100 THEN 'low' ELSE 'high' END AS k, count(*) AS c, sum(v) AS s FROM g GROUP BY 1)
+UNION ALL SELECT 'case (CASE WHEN price < 100 THEN 1 ELSE 2 END) * 10' AS shape, k::VARCHAR AS k, c, s FROM (SELECT (CASE WHEN price < 100 THEN 1 ELSE 2 END) * 10 AS k, count(*) AS c, sum(v) AS s FROM g GROUP BY 1)
+UNION ALL SELECT 'case CASE WHEN price < 100 THEN price ELSE 0 END' AS shape, k::VARCHAR AS k, c, s FROM (SELECT CASE WHEN price < 100 THEN price ELSE 0 END AS k, count(*) AS c, sum(v) AS s FROM g GROUP BY 1)
+UNION ALL SELECT 'case CASE WHEN price < 100 THEN ''low'' ELSE service END' AS shape, k::VARCHAR AS k, c, s FROM (SELECT CASE WHEN price < 100 THEN 'low' ELSE service END AS k, count(*) AS c, sum(v) AS s FROM g GROUP BY 1)
+UNION ALL SELECT 'case CASE WHEN ts < TIMESTAMP ''2025-01-15'' THEN ''early'' WHEN ts < TIMESTAMP ''2025-02-15'' THEN ''mid'' ELSE ''late'' END' AS shape, k::VARCHAR AS k, c, s FROM (SELECT CASE WHEN ts < TIMESTAMP '2025-01-15' THEN 'early' WHEN ts < TIMESTAMP '2025-02-15' THEN 'mid' ELSE 'late' END AS k, count(*) AS c, sum(v) AS s FROM g GROUP BY 1)
+UNION ALL SELECT 'case CASE WHEN date_trunc(''day'', ts) = DATE ''2025-01-01'' THEN ''newyear'' ELSE ''other'' END' AS shape, k::VARCHAR AS k, c, s FROM (SELECT CASE WHEN date_trunc('day', ts) = DATE '2025-01-01' THEN 'newyear' ELSE 'other' END AS k, count(*) AS c, sum(v) AS s FROM g GROUP BY 1);
+
+statement ok
+RESET disabled_optimizers;
+
+statement ok
+CREATE TABLE got_e AS
+SELECT 'ts floor(epoch(ts) / 3600) * 3600' AS shape, k::VARCHAR AS k, c, s FROM (SELECT floor(epoch(ts) / 3600) * 3600 AS k, count(*) AS c, sum(v) AS s FROM g GROUP BY 1)
+UNION ALL SELECT 'ts floor(epoch(ts) / 86400) * 86400' AS shape, k::VARCHAR AS k, c, s FROM (SELECT floor(epoch(ts) / 86400) * 86400 AS k, count(*) AS c, sum(v) AS s FROM g GROUP BY 1)
+UNION ALL SELECT 'ts to_timestamp(floor(epoch(ts) / 3600) * 3600)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT to_timestamp(floor(epoch(ts) / 3600) * 3600) AS k, count(*) AS c, sum(v) AS s FROM g GROUP BY 1)
+UNION ALL SELECT 'ts to_timestamp(floor(epoch(ts) / 900) * 900)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT to_timestamp(floor(epoch(ts) / 900) * 900) AS k, count(*) AS c, sum(v) AS s FROM g GROUP BY 1)
+UNION ALL SELECT 'ts floor(date_part(''epoch'', ts) / 3600) * 3600' AS shape, k::VARCHAR AS k, c, s FROM (SELECT floor(date_part('epoch', ts) / 3600) * 3600 AS k, count(*) AS c, sum(v) AS s FROM g GROUP BY 1)
+UNION ALL SELECT 'ts floor(extract(epoch FROM ts) / 300) * 300' AS shape, k::VARCHAR AS k, c, s FROM (SELECT floor(extract(epoch FROM ts) / 300) * 300 AS k, count(*) AS c, sum(v) AS s FROM g GROUP BY 1)
+UNION ALL SELECT 'ts to_timestamp(floor(extract(epoch FROM ts) / 300) * 300)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT to_timestamp(floor(extract(epoch FROM ts) / 300) * 300) AS k, count(*) AS c, sum(v) AS s FROM g GROUP BY 1)
+UNION ALL SELECT 'ts epoch_ms(ts) // 3600000 * 3600000' AS shape, k::VARCHAR AS k, c, s FROM (SELECT epoch_ms(ts) // 3600000 * 3600000 AS k, count(*) AS c, sum(v) AS s FROM g GROUP BY 1)
+UNION ALL SELECT 'ts epoch_ms(epoch_ms(ts) // 3600000 * 3600000)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT epoch_ms(epoch_ms(ts) // 3600000 * 3600000) AS k, count(*) AS c, sum(v) AS s FROM g GROUP BY 1)
+UNION ALL SELECT 'ts epoch_us(ts) // 3600000000' AS shape, k::VARCHAR AS k, c, s FROM (SELECT epoch_us(ts) // 3600000000 AS k, count(*) AS c, sum(v) AS s FROM g GROUP BY 1)
+UNION ALL SELECT 'ts make_timestamp(epoch_us(ts) // 3600000000 * 3600000000)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT make_timestamp(epoch_us(ts) // 3600000000 * 3600000000) AS k, count(*) AS c, sum(v) AS s FROM g GROUP BY 1)
+UNION ALL SELECT 'ts to_timestamp(floor(epoch(ts) / 3600) * 3600 + 1800)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT to_timestamp(floor(epoch(ts) / 3600) * 3600 + 1800) AS k, count(*) AS c, sum(v) AS s FROM g GROUP BY 1)
+UNION ALL SELECT 'ts to_timestamp(floor(epoch(ts) / 604800) * 604800)::DATE' AS shape, k::VARCHAR AS k, c, s FROM (SELECT to_timestamp(floor(epoch(ts) / 604800) * 604800)::DATE AS k, count(*) AS c, sum(v) AS s FROM g GROUP BY 1)
+UNION ALL SELECT 'ts to_timestamp(floor(epoch(ts) / 86400) * 86400)::DATE' AS shape, k::VARCHAR AS k, c, s FROM (SELECT to_timestamp(floor(epoch(ts) / 86400) * 86400)::DATE AS k, count(*) AS c, sum(v) AS s FROM g GROUP BY 1)
+UNION ALL SELECT 'ts floor(epoch(ts) / 3600)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT floor(epoch(ts) / 3600) AS k, count(*) AS c, sum(v) AS s FROM g GROUP BY 1)
+UNION ALL SELECT 'ts ceil(epoch(ts) / 3600)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT ceil(epoch(ts) / 3600) AS k, count(*) AS c, sum(v) AS s FROM g GROUP BY 1)
+UNION ALL SELECT 'ts round(epoch_ms(ts) / 3600000)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT round(epoch_ms(ts) / 3600000) AS k, count(*) AS c, sum(v) AS s FROM g GROUP BY 1)
+UNION ALL SELECT 'ts (epoch(ts) / 3600)::BIGINT' AS shape, k::VARCHAR AS k, c, s FROM (SELECT (epoch(ts) / 3600)::BIGINT AS k, count(*) AS c, sum(v) AS s FROM g GROUP BY 1)
+UNION ALL SELECT 'ts floor(epoch(ts) / 3600) * 3600 / 60' AS shape, k::VARCHAR AS k, c, s FROM (SELECT floor(epoch(ts) / 3600) * 3600 / 60 AS k, count(*) AS c, sum(v) AS s FROM g GROUP BY 1)
+UNION ALL SELECT 'ts epoch(ts) // 3600' AS shape, k::VARCHAR AS k, c, s FROM (SELECT epoch(ts) // 3600 AS k, count(*) AS c, sum(v) AS s FROM g GROUP BY 1)
+UNION ALL SELECT 'ts floor(epoch(ts) / 1.5)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT floor(epoch(ts) / 1.5) AS k, count(*) AS c, sum(v) AS s FROM g GROUP BY 1)
+UNION ALL SELECT 'tstz floor(epoch(tstz) / 3600) * 3600' AS shape, k::VARCHAR AS k, c, s FROM (SELECT floor(epoch(tstz) / 3600) * 3600 AS k, count(*) AS c, sum(v) AS s FROM g GROUP BY 1)
+UNION ALL SELECT 'tstz floor(epoch(tstz) / 86400) * 86400' AS shape, k::VARCHAR AS k, c, s FROM (SELECT floor(epoch(tstz) / 86400) * 86400 AS k, count(*) AS c, sum(v) AS s FROM g GROUP BY 1)
+UNION ALL SELECT 'tstz to_timestamp(floor(epoch(tstz) / 3600) * 3600)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT to_timestamp(floor(epoch(tstz) / 3600) * 3600) AS k, count(*) AS c, sum(v) AS s FROM g GROUP BY 1)
+UNION ALL SELECT 'tstz to_timestamp(floor(epoch(tstz) / 900) * 900)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT to_timestamp(floor(epoch(tstz) / 900) * 900) AS k, count(*) AS c, sum(v) AS s FROM g GROUP BY 1)
+UNION ALL SELECT 'tstz floor(date_part(''epoch'', tstz) / 3600) * 3600' AS shape, k::VARCHAR AS k, c, s FROM (SELECT floor(date_part('epoch', tstz) / 3600) * 3600 AS k, count(*) AS c, sum(v) AS s FROM g GROUP BY 1)
+UNION ALL SELECT 'tstz floor(extract(epoch FROM tstz) / 300) * 300' AS shape, k::VARCHAR AS k, c, s FROM (SELECT floor(extract(epoch FROM tstz) / 300) * 300 AS k, count(*) AS c, sum(v) AS s FROM g GROUP BY 1)
+UNION ALL SELECT 'tstz to_timestamp(floor(extract(epoch FROM tstz) / 300) * 300)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT to_timestamp(floor(extract(epoch FROM tstz) / 300) * 300) AS k, count(*) AS c, sum(v) AS s FROM g GROUP BY 1)
+UNION ALL SELECT 'tstz epoch_ms(tstz) // 3600000 * 3600000' AS shape, k::VARCHAR AS k, c, s FROM (SELECT epoch_ms(tstz) // 3600000 * 3600000 AS k, count(*) AS c, sum(v) AS s FROM g GROUP BY 1)
+UNION ALL SELECT 'tstz epoch_ms(epoch_ms(tstz) // 3600000 * 3600000)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT epoch_ms(epoch_ms(tstz) // 3600000 * 3600000) AS k, count(*) AS c, sum(v) AS s FROM g GROUP BY 1)
+UNION ALL SELECT 'tstz epoch_us(tstz) // 3600000000' AS shape, k::VARCHAR AS k, c, s FROM (SELECT epoch_us(tstz) // 3600000000 AS k, count(*) AS c, sum(v) AS s FROM g GROUP BY 1)
+UNION ALL SELECT 'tstz make_timestamp(epoch_us(tstz) // 3600000000 * 3600000000)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT make_timestamp(epoch_us(tstz) // 3600000000 * 3600000000) AS k, count(*) AS c, sum(v) AS s FROM g GROUP BY 1)
+UNION ALL SELECT 'tstz to_timestamp(floor(epoch(tstz) / 3600) * 3600 + 1800)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT to_timestamp(floor(epoch(tstz) / 3600) * 3600 + 1800) AS k, count(*) AS c, sum(v) AS s FROM g GROUP BY 1)
+UNION ALL SELECT 'tstz to_timestamp(floor(epoch(tstz) / 604800) * 604800)::DATE' AS shape, k::VARCHAR AS k, c, s FROM (SELECT to_timestamp(floor(epoch(tstz) / 604800) * 604800)::DATE AS k, count(*) AS c, sum(v) AS s FROM g GROUP BY 1)
+UNION ALL SELECT 'tstz to_timestamp(floor(epoch(tstz) / 86400) * 86400)::DATE' AS shape, k::VARCHAR AS k, c, s FROM (SELECT to_timestamp(floor(epoch(tstz) / 86400) * 86400)::DATE AS k, count(*) AS c, sum(v) AS s FROM g GROUP BY 1)
+UNION ALL SELECT 'tstz floor(epoch(tstz) / 3600)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT floor(epoch(tstz) / 3600) AS k, count(*) AS c, sum(v) AS s FROM g GROUP BY 1)
+UNION ALL SELECT 'tstz ceil(epoch(tstz) / 3600)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT ceil(epoch(tstz) / 3600) AS k, count(*) AS c, sum(v) AS s FROM g GROUP BY 1)
+UNION ALL SELECT 'tstz round(epoch_ms(tstz) / 3600000)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT round(epoch_ms(tstz) / 3600000) AS k, count(*) AS c, sum(v) AS s FROM g GROUP BY 1)
+UNION ALL SELECT 'tstz (epoch(tstz) / 3600)::BIGINT' AS shape, k::VARCHAR AS k, c, s FROM (SELECT (epoch(tstz) / 3600)::BIGINT AS k, count(*) AS c, sum(v) AS s FROM g GROUP BY 1)
+UNION ALL SELECT 'tstz floor(epoch(tstz) / 3600) * 3600 / 60' AS shape, k::VARCHAR AS k, c, s FROM (SELECT floor(epoch(tstz) / 3600) * 3600 / 60 AS k, count(*) AS c, sum(v) AS s FROM g GROUP BY 1)
+UNION ALL SELECT 'tstz epoch(tstz) // 3600' AS shape, k::VARCHAR AS k, c, s FROM (SELECT epoch(tstz) // 3600 AS k, count(*) AS c, sum(v) AS s FROM g GROUP BY 1)
+UNION ALL SELECT 'tstz floor(epoch(tstz) / 1.5)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT floor(epoch(tstz) / 1.5) AS k, count(*) AS c, sum(v) AS s FROM g GROUP BY 1)
+UNION ALL SELECT 'd floor(epoch(d) / 3600) * 3600' AS shape, k::VARCHAR AS k, c, s FROM (SELECT floor(epoch(d) / 3600) * 3600 AS k, count(*) AS c, sum(v) AS s FROM g GROUP BY 1)
+UNION ALL SELECT 'd floor(epoch(d) / 86400) * 86400' AS shape, k::VARCHAR AS k, c, s FROM (SELECT floor(epoch(d) / 86400) * 86400 AS k, count(*) AS c, sum(v) AS s FROM g GROUP BY 1)
+UNION ALL SELECT 'd to_timestamp(floor(epoch(d) / 3600) * 3600)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT to_timestamp(floor(epoch(d) / 3600) * 3600) AS k, count(*) AS c, sum(v) AS s FROM g GROUP BY 1)
+UNION ALL SELECT 'd to_timestamp(floor(epoch(d) / 900) * 900)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT to_timestamp(floor(epoch(d) / 900) * 900) AS k, count(*) AS c, sum(v) AS s FROM g GROUP BY 1)
+UNION ALL SELECT 'd floor(date_part(''epoch'', d) / 3600) * 3600' AS shape, k::VARCHAR AS k, c, s FROM (SELECT floor(date_part('epoch', d) / 3600) * 3600 AS k, count(*) AS c, sum(v) AS s FROM g GROUP BY 1)
+UNION ALL SELECT 'd floor(extract(epoch FROM d) / 300) * 300' AS shape, k::VARCHAR AS k, c, s FROM (SELECT floor(extract(epoch FROM d) / 300) * 300 AS k, count(*) AS c, sum(v) AS s FROM g GROUP BY 1)
+UNION ALL SELECT 'd to_timestamp(floor(extract(epoch FROM d) / 300) * 300)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT to_timestamp(floor(extract(epoch FROM d) / 300) * 300) AS k, count(*) AS c, sum(v) AS s FROM g GROUP BY 1)
+UNION ALL SELECT 'd epoch_ms(d) // 3600000 * 3600000' AS shape, k::VARCHAR AS k, c, s FROM (SELECT epoch_ms(d) // 3600000 * 3600000 AS k, count(*) AS c, sum(v) AS s FROM g GROUP BY 1)
+UNION ALL SELECT 'd epoch_ms(epoch_ms(d) // 3600000 * 3600000)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT epoch_ms(epoch_ms(d) // 3600000 * 3600000) AS k, count(*) AS c, sum(v) AS s FROM g GROUP BY 1)
+UNION ALL SELECT 'd epoch_us(d) // 3600000000' AS shape, k::VARCHAR AS k, c, s FROM (SELECT epoch_us(d) // 3600000000 AS k, count(*) AS c, sum(v) AS s FROM g GROUP BY 1)
+UNION ALL SELECT 'd make_timestamp(epoch_us(d) // 3600000000 * 3600000000)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT make_timestamp(epoch_us(d) // 3600000000 * 3600000000) AS k, count(*) AS c, sum(v) AS s FROM g GROUP BY 1)
+UNION ALL SELECT 'd to_timestamp(floor(epoch(d) / 3600) * 3600 + 1800)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT to_timestamp(floor(epoch(d) / 3600) * 3600 + 1800) AS k, count(*) AS c, sum(v) AS s FROM g GROUP BY 1)
+UNION ALL SELECT 'd to_timestamp(floor(epoch(d) / 604800) * 604800)::DATE' AS shape, k::VARCHAR AS k, c, s FROM (SELECT to_timestamp(floor(epoch(d) / 604800) * 604800)::DATE AS k, count(*) AS c, sum(v) AS s FROM g GROUP BY 1)
+UNION ALL SELECT 'd to_timestamp(floor(epoch(d) / 86400) * 86400)::DATE' AS shape, k::VARCHAR AS k, c, s FROM (SELECT to_timestamp(floor(epoch(d) / 86400) * 86400)::DATE AS k, count(*) AS c, sum(v) AS s FROM g GROUP BY 1)
+UNION ALL SELECT 'd floor(epoch(d) / 3600)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT floor(epoch(d) / 3600) AS k, count(*) AS c, sum(v) AS s FROM g GROUP BY 1)
+UNION ALL SELECT 'd ceil(epoch(d) / 3600)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT ceil(epoch(d) / 3600) AS k, count(*) AS c, sum(v) AS s FROM g GROUP BY 1)
+UNION ALL SELECT 'd round(epoch_ms(d) / 3600000)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT round(epoch_ms(d) / 3600000) AS k, count(*) AS c, sum(v) AS s FROM g GROUP BY 1)
+UNION ALL SELECT 'd (epoch(d) / 3600)::BIGINT' AS shape, k::VARCHAR AS k, c, s FROM (SELECT (epoch(d) / 3600)::BIGINT AS k, count(*) AS c, sum(v) AS s FROM g GROUP BY 1)
+UNION ALL SELECT 'd floor(epoch(d) / 3600) * 3600 / 60' AS shape, k::VARCHAR AS k, c, s FROM (SELECT floor(epoch(d) / 3600) * 3600 / 60 AS k, count(*) AS c, sum(v) AS s FROM g GROUP BY 1)
+UNION ALL SELECT 'd epoch(d) // 3600' AS shape, k::VARCHAR AS k, c, s FROM (SELECT epoch(d) // 3600 AS k, count(*) AS c, sum(v) AS s FROM g GROUP BY 1)
+UNION ALL SELECT 'd floor(epoch(d) / 1.5)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT floor(epoch(d) / 1.5) AS k, count(*) AS c, sum(v) AS s FROM g GROUP BY 1)
+UNION ALL SELECT 'old floor(epoch(ts) / 3600) * 3600' AS shape, k::VARCHAR AS k, c, s FROM (SELECT floor(epoch(ts) / 3600) * 3600 AS k, count(*) AS c, sum(v) AS s FROM old GROUP BY 1)
+UNION ALL SELECT 'old to_timestamp(floor(epoch(ts) / 3600) * 3600)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT to_timestamp(floor(epoch(ts) / 3600) * 3600) AS k, count(*) AS c, sum(v) AS s FROM old GROUP BY 1)
+UNION ALL SELECT 'old epoch_ms(ts) // 86400000 * 86400000' AS shape, k::VARCHAR AS k, c, s FROM (SELECT epoch_ms(ts) // 86400000 * 86400000 AS k, count(*) AS c, sum(v) AS s FROM old GROUP BY 1)
+UNION ALL SELECT 'old make_timestamp(epoch_us(ts) // 3600000000 * 3600000000)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT make_timestamp(epoch_us(ts) // 3600000000 * 3600000000) AS k, count(*) AS c, sum(v) AS s FROM old GROUP BY 1)
+UNION ALL SELECT 'bin date_bin(INTERVAL ''15 minutes'', ts, TIMESTAMP ''2001-01-01 00:05'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_bin(INTERVAL '15 minutes', ts, TIMESTAMP '2001-01-01 00:05') AS k, count(*) AS c, sum(v) AS s FROM g GROUP BY 1)
+UNION ALL SELECT 'old bin date_bin(INTERVAL ''15 minutes'', ts, TIMESTAMP ''2001-01-01 00:05'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_bin(INTERVAL '15 minutes', ts, TIMESTAMP '2001-01-01 00:05') AS k, count(*) AS c, sum(v) AS s FROM old GROUP BY 1)
+UNION ALL SELECT 'bin date_bin(INTERVAL ''15 minutes'', ts, TIMESTAMP ''2001-01-01'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_bin(INTERVAL '15 minutes', ts, TIMESTAMP '2001-01-01') AS k, count(*) AS c, sum(v) AS s FROM g GROUP BY 1)
+UNION ALL SELECT 'old bin date_bin(INTERVAL ''15 minutes'', ts, TIMESTAMP ''2001-01-01'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_bin(INTERVAL '15 minutes', ts, TIMESTAMP '2001-01-01') AS k, count(*) AS c, sum(v) AS s FROM old GROUP BY 1)
+UNION ALL SELECT 'bin date_bin(INTERVAL ''1 day'', ts, TIMESTAMP ''2000-01-01 06:00'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_bin(INTERVAL '1 day', ts, TIMESTAMP '2000-01-01 06:00') AS k, count(*) AS c, sum(v) AS s FROM g GROUP BY 1)
+UNION ALL SELECT 'old bin date_bin(INTERVAL ''1 day'', ts, TIMESTAMP ''2000-01-01 06:00'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_bin(INTERVAL '1 day', ts, TIMESTAMP '2000-01-01 06:00') AS k, count(*) AS c, sum(v) AS s FROM old GROUP BY 1)
+UNION ALL SELECT 'bin date_bin(INTERVAL ''90 minutes'', ts, TIMESTAMP ''2030-01-01'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_bin(INTERVAL '90 minutes', ts, TIMESTAMP '2030-01-01') AS k, count(*) AS c, sum(v) AS s FROM g GROUP BY 1)
+UNION ALL SELECT 'old bin date_bin(INTERVAL ''90 minutes'', ts, TIMESTAMP ''2030-01-01'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_bin(INTERVAL '90 minutes', ts, TIMESTAMP '2030-01-01') AS k, count(*) AS c, sum(v) AS s FROM old GROUP BY 1)
+UNION ALL SELECT 'bin date_bin(INTERVAL ''1 hour'', ts, TIMESTAMP ''1999-12-31 23:30'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_bin(INTERVAL '1 hour', ts, TIMESTAMP '1999-12-31 23:30') AS k, count(*) AS c, sum(v) AS s FROM g GROUP BY 1)
+UNION ALL SELECT 'old bin date_bin(INTERVAL ''1 hour'', ts, TIMESTAMP ''1999-12-31 23:30'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_bin(INTERVAL '1 hour', ts, TIMESTAMP '1999-12-31 23:30') AS k, count(*) AS c, sum(v) AS s FROM old GROUP BY 1)
+UNION ALL SELECT 'bin date_bin(INTERVAL ''3 days'', ts, TIMESTAMP ''2024-12-01'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_bin(INTERVAL '3 days', ts, TIMESTAMP '2024-12-01') AS k, count(*) AS c, sum(v) AS s FROM g GROUP BY 1)
+UNION ALL SELECT 'old bin date_bin(INTERVAL ''3 days'', ts, TIMESTAMP ''2024-12-01'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_bin(INTERVAL '3 days', ts, TIMESTAMP '2024-12-01') AS k, count(*) AS c, sum(v) AS s FROM old GROUP BY 1)
+UNION ALL SELECT 'bin date_bin(INTERVAL ''15 minutes'', ts, TIMESTAMP ''2001-01-01'')::VARCHAR' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_bin(INTERVAL '15 minutes', ts, TIMESTAMP '2001-01-01')::VARCHAR AS k, count(*) AS c, sum(v) AS s FROM g GROUP BY 1)
+UNION ALL SELECT 'old bin date_bin(INTERVAL ''15 minutes'', ts, TIMESTAMP ''2001-01-01'')::VARCHAR' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_bin(INTERVAL '15 minutes', ts, TIMESTAMP '2001-01-01')::VARCHAR AS k, count(*) AS c, sum(v) AS s FROM old GROUP BY 1)
+UNION ALL SELECT 'bin date_bin(INTERVAL ''15 minutes'', ts, TIMESTAMP ''2001-01-01'') + INTERVAL ''5 minutes''' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_bin(INTERVAL '15 minutes', ts, TIMESTAMP '2001-01-01') + INTERVAL '5 minutes' AS k, count(*) AS c, sum(v) AS s FROM g GROUP BY 1)
+UNION ALL SELECT 'old bin date_bin(INTERVAL ''15 minutes'', ts, TIMESTAMP ''2001-01-01'') + INTERVAL ''5 minutes''' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_bin(INTERVAL '15 minutes', ts, TIMESTAMP '2001-01-01') + INTERVAL '5 minutes' AS k, count(*) AS c, sum(v) AS s FROM old GROUP BY 1)
+UNION ALL SELECT 'bin epoch_ms(date_bin(INTERVAL ''1 hour'', ts, TIMESTAMP ''2000-01-01''))' AS shape, k::VARCHAR AS k, c, s FROM (SELECT epoch_ms(date_bin(INTERVAL '1 hour', ts, TIMESTAMP '2000-01-01')) AS k, count(*) AS c, sum(v) AS s FROM g GROUP BY 1)
+UNION ALL SELECT 'old bin epoch_ms(date_bin(INTERVAL ''1 hour'', ts, TIMESTAMP ''2000-01-01''))' AS shape, k::VARCHAR AS k, c, s FROM (SELECT epoch_ms(date_bin(INTERVAL '1 hour', ts, TIMESTAMP '2000-01-01')) AS k, count(*) AS c, sum(v) AS s FROM old GROUP BY 1)
+UNION ALL SELECT 'case CASE WHEN price < 100 THEN ''low'' WHEN price < 500 THEN ''mid'' ELSE ''high'' END' AS shape, k::VARCHAR AS k, c, s FROM (SELECT CASE WHEN price < 100 THEN 'low' WHEN price < 500 THEN 'mid' ELSE 'high' END AS k, count(*) AS c, sum(v) AS s FROM g GROUP BY 1)
+UNION ALL SELECT 'case CASE WHEN price < 100 THEN ''low'' WHEN price < 500 THEN ''mid'' END' AS shape, k::VARCHAR AS k, c, s FROM (SELECT CASE WHEN price < 100 THEN 'low' WHEN price < 500 THEN 'mid' END AS k, count(*) AS c, sum(v) AS s FROM g GROUP BY 1)
+UNION ALL SELECT 'case CASE WHEN price < 100 THEN ''a'' WHEN price < 500 THEN ''b'' ELSE ''a'' END' AS shape, k::VARCHAR AS k, c, s FROM (SELECT CASE WHEN price < 100 THEN 'a' WHEN price < 500 THEN 'b' ELSE 'a' END AS k, count(*) AS c, sum(v) AS s FROM g GROUP BY 1)
+UNION ALL SELECT 'case CASE WHEN service = ''checkout'' THEN 1 WHEN sev > 2 THEN 2 ELSE 3 END' AS shape, k::VARCHAR AS k, c, s FROM (SELECT CASE WHEN service = 'checkout' THEN 1 WHEN sev > 2 THEN 2 ELSE 3 END AS k, count(*) AS c, sum(v) AS s FROM g GROUP BY 1)
+UNION ALL SELECT 'case CASE WHEN price < 100 THEN ''low'' ELSE NULL END' AS shape, k::VARCHAR AS k, c, s FROM (SELECT CASE WHEN price < 100 THEN 'low' ELSE NULL END AS k, count(*) AS c, sum(v) AS s FROM g GROUP BY 1)
+UNION ALL SELECT 'case CASE WHEN price IS NULL THEN ''none'' WHEN price < 100 THEN ''low'' ELSE ''high'' END' AS shape, k::VARCHAR AS k, c, s FROM (SELECT CASE WHEN price IS NULL THEN 'none' WHEN price < 100 THEN 'low' ELSE 'high' END AS k, count(*) AS c, sum(v) AS s FROM g GROUP BY 1)
+UNION ALL SELECT 'case CASE WHEN delta < 0 THEN -1 WHEN delta = 0 THEN 0 ELSE 1 END' AS shape, k::VARCHAR AS k, c, s FROM (SELECT CASE WHEN delta < 0 THEN -1 WHEN delta = 0 THEN 0 ELSE 1 END AS k, count(*) AS c, sum(v) AS s FROM g GROUP BY 1)
+UNION ALL SELECT 'case CASE WHEN delta < -100 THEN -100.5 WHEN delta < 100 THEN 0.5 ELSE 100.5 END' AS shape, k::VARCHAR AS k, c, s FROM (SELECT CASE WHEN delta < -100 THEN -100.5 WHEN delta < 100 THEN 0.5 ELSE 100.5 END AS k, count(*) AS c, sum(v) AS s FROM g GROUP BY 1)
+UNION ALL SELECT 'case CASE WHEN price < 100 THEN DATE ''2020-01-01'' ELSE DATE ''2021-01-01'' END' AS shape, k::VARCHAR AS k, c, s FROM (SELECT CASE WHEN price < 100 THEN DATE '2020-01-01' ELSE DATE '2021-01-01' END AS k, count(*) AS c, sum(v) AS s FROM g GROUP BY 1)
+UNION ALL SELECT 'case CASE WHEN price < 100 THEN TRUE ELSE FALSE END' AS shape, k::VARCHAR AS k, c, s FROM (SELECT CASE WHEN price < 100 THEN TRUE ELSE FALSE END AS k, count(*) AS c, sum(v) AS s FROM g GROUP BY 1)
+UNION ALL SELECT 'case CASE sev WHEN 0 THEN ''zero'' WHEN 1 THEN ''one'' ELSE ''many'' END' AS shape, k::VARCHAR AS k, c, s FROM (SELECT CASE sev WHEN 0 THEN 'zero' WHEN 1 THEN 'one' ELSE 'many' END AS k, count(*) AS c, sum(v) AS s FROM g GROUP BY 1)
+UNION ALL SELECT 'case ''bin:'' !! CASE WHEN price < 100 THEN ''low'' ELSE ''high'' END' AS shape, k::VARCHAR AS k, c, s FROM (SELECT 'bin:' || CASE WHEN price < 100 THEN 'low' ELSE 'high' END AS k, count(*) AS c, sum(v) AS s FROM g GROUP BY 1)
+UNION ALL SELECT 'case (CASE WHEN price < 100 THEN 1 ELSE 2 END) * 10' AS shape, k::VARCHAR AS k, c, s FROM (SELECT (CASE WHEN price < 100 THEN 1 ELSE 2 END) * 10 AS k, count(*) AS c, sum(v) AS s FROM g GROUP BY 1)
+UNION ALL SELECT 'case CASE WHEN price < 100 THEN price ELSE 0 END' AS shape, k::VARCHAR AS k, c, s FROM (SELECT CASE WHEN price < 100 THEN price ELSE 0 END AS k, count(*) AS c, sum(v) AS s FROM g GROUP BY 1)
+UNION ALL SELECT 'case CASE WHEN price < 100 THEN ''low'' ELSE service END' AS shape, k::VARCHAR AS k, c, s FROM (SELECT CASE WHEN price < 100 THEN 'low' ELSE service END AS k, count(*) AS c, sum(v) AS s FROM g GROUP BY 1)
+UNION ALL SELECT 'case CASE WHEN ts < TIMESTAMP ''2025-01-15'' THEN ''early'' WHEN ts < TIMESTAMP ''2025-02-15'' THEN ''mid'' ELSE ''late'' END' AS shape, k::VARCHAR AS k, c, s FROM (SELECT CASE WHEN ts < TIMESTAMP '2025-01-15' THEN 'early' WHEN ts < TIMESTAMP '2025-02-15' THEN 'mid' ELSE 'late' END AS k, count(*) AS c, sum(v) AS s FROM g GROUP BY 1)
+UNION ALL SELECT 'case CASE WHEN date_trunc(''day'', ts) = DATE ''2025-01-01'' THEN ''newyear'' ELSE ''other'' END' AS shape, k::VARCHAR AS k, c, s FROM (SELECT CASE WHEN date_trunc('day', ts) = DATE '2025-01-01' THEN 'newyear' ELSE 'other' END AS k, count(*) AS c, sum(v) AS s FROM g GROUP BY 1);
+
+query
+SELECT shape, k, c, s FROM (SELECT * FROM got_e EXCEPT ALL SELECT * FROM ref_e) ORDER BY 1, 2;
+----
+shape	k	c	s
+
+query
+SELECT shape, k, c, s FROM (SELECT * FROM ref_e EXCEPT ALL SELECT * FROM got_e) ORDER BY 1, 2;
+----
+shape	k	c	s
+
+query
+SELECT count(*) AS rows, count(DISTINCT shape) AS shapes FROM got_e;
+----
+rows	shapes
+755971	102
+
+query
+EXPLAIN SELECT floor(epoch(ts) / 3600) * 3600 AS k, count(*) AS c FROM g GROUP BY 1;
+----
+QUERY PLAN
+╭─ PROJECTION ───────────────────────────────╮
+│ Projections: k, #1                         │
+│ ~25,000 rows                               │
+╰──────────────────────┬─────────────────────╯
+╭─ PERFECT_HASH_GROUP_BY ────────────────────╮
+│ Groups: #0                                 │
+│ Aggregates: count_star()                   │
+│ ~25,000 rows                               │
+╰──────────────────────┬─────────────────────╯
+╭─ PROJECTION ─────────┴─────────────────────╮
+│ Projections:                               │
+│ CAST(floor((epoch(ts) // 3600)) AS BIGINT) │
+│ ~50,001 rows                               │
+╰──────────────────────┬─────────────────────╯
+╭─ SEQ_SCAN ───────────┴─────────────────────╮
+│ Table: g                                   │
+│ Type: Sequential Scan                      │
+│ Projections: ts                            │
+│ ~50,001 rows                               │
+╰────────────────────────────────────────────╯
+
+query
+EXPLAIN SELECT to_timestamp(floor(extract(epoch FROM ts) / 300) * 300) AS k, count(*) AS c FROM g GROUP BY 1;
+----
+QUERY PLAN
+╭─ PROJECTION ──────────────────────────────╮
+│ Projections: k, #1                        │
+│ ~25,000 rows                              │
+╰─────────────────────┬─────────────────────╯
+╭─ PERFECT_HASH_GROUP_BY ───────────────────╮
+│ Groups: #0                                │
+│ Aggregates: count_star()                  │
+│ ~25,000 rows                              │
+╰─────────────────────┬─────────────────────╯
+╭─ PROJECTION ────────┴─────────────────────╮
+│ Projections:                              │
+│ CAST(floor((epoch(ts) // 300)) AS BIGINT) │
+│ ~50,001 rows                              │
+╰─────────────────────┬─────────────────────╯
+╭─ SEQ_SCAN ──────────┴─────────────────────╮
+│ Table: g                                  │
+│ Type: Sequential Scan                     │
+│ Projections: ts                           │
+│ ~50,001 rows                              │
+╰───────────────────────────────────────────╯
+
+query
+EXPLAIN SELECT date_bin(INTERVAL '15 minutes', ts, TIMESTAMP '2001-01-01 00:05') AS k, count(*) AS c FROM g GROUP BY 1;
+----
+QUERY PLAN
+╭─ PROJECTION ────────────────────────────────────────────────────╮
+│ Projections:                                                    │
+│ __internal_date_trunc_unbucket(#0, 900000000, 978307500000000), │
+│ #1                                                              │
+│ ~25,000 rows                                                    │
+╰────────────────────────────────┬────────────────────────────────╯
+╭─ PERFECT_HASH_GROUP_BY ────────┴────────────────────────────────╮
+│ Groups: #0                                                      │
+│ Aggregates: count_star()                                        │
+│ ~25,000 rows                                                    │
+╰────────────────────────────────┬────────────────────────────────╯
+╭─ PROJECTION ───────────────────┴────────────────────────────────╮
+│ Projections:                                                    │
+│ __internal_date_trunc_bucket(ts, 900000000, 978307500000000)    │
+│ ~50,001 rows                                                    │
+╰────────────────────────────────┬────────────────────────────────╯
+╭─ SEQ_SCAN ─────────────────────┴────────────────────────────────╮
+│ Table: g                                                        │
+│ Type: Sequential Scan                                           │
+│ Projections: ts                                                 │
+│ ~50,001 rows                                                    │
+╰─────────────────────────────────────────────────────────────────╯
+
+query
+EXPLAIN SELECT CASE WHEN price < 100 THEN 'low' WHEN price < 500 THEN 'mid' ELSE 'high' END AS k, count(*) AS c FROM g GROUP BY 1;
+----
+QUERY PLAN
+╭─ PROJECTION ─────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ Projections:                                                                                                 │
+│ CASE  WHEN ((#0 = 0)) THEN ('low') WHEN ((#0 = 1)) THEN ('mid') WHEN ((#0 = 2)) THEN ('high') ELSE NULL END, │
+│ #1                                                                                                           │
+│ ~25,000 rows                                                                                                 │
+╰───────────────────────────────────────────────────────┬──────────────────────────────────────────────────────╯
+╭─ PERFECT_HASH_GROUP_BY ───────────────────────────────┴──────────────────────────────────────────────────────╮
+│ Groups: #0                                                                                                   │
+│ Aggregates: count_star()                                                                                     │
+│ ~25,000 rows                                                                                                 │
+╰───────────────────────────────────────────────────────┬──────────────────────────────────────────────────────╯
+╭─ PROJECTION ──────────────────────────────────────────┴──────────────────────────────────────────────────────╮
+│ Projections:                                                                                                 │
+│ CASE  WHEN ((price < 100)) THEN (0) WHEN ((price < 500)) THEN (1) ELSE 2 END                                 │
+│ ~50,001 rows                                                                                                 │
+╰───────────────────────────────────────────────────────┬──────────────────────────────────────────────────────╯
+╭─ SEQ_SCAN ────────────────────────────────────────────┴──────────────────────────────────────────────────────╮
+│ Table: g                                                                                                     │
+│ Type: Sequential Scan                                                                                        │
+│ Projections: price                                                                                           │
+│ ~50,001 rows                                                                                                 │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+
+query
+EXPLAIN SELECT CASE WHEN price < 100 THEN price ELSE 0 END AS k, count(*) AS c FROM g GROUP BY 1;
+----
+QUERY PLAN
+╭─ HASH_GROUP_BY ──────────╮
+│ Groups: #0               │
+│ Aggregates: count_star() │
+│ ~25,000 rows             │
+╰─────────────┬────────────╯
+╭─ PROJECTION ┴────────────╮
+│ Projections: k           │
+│ ~50,001 rows             │
+╰─────────────┬────────────╯
+╭─ SEQ_SCAN ──┴────────────╮
+│ Table: g                 │
+│ Type: Sequential Scan    │
+│ Projections: price       │
+│ ~50,001 rows             │
+╰──────────────────────────╯
+
+query
+SELECT k, c FROM (SELECT CASE WHEN price < 100 THEN 'low' WHEN price < 500 THEN 'mid' ELSE 'high' END AS k, count(*) AS c FROM g GROUP BY 1) ORDER BY 1;
+----
+k	c
+high	25001
+low	5000
+mid	20000
+
+query
+SELECT k::VARCHAR AS k, c FROM (SELECT date_bin(INTERVAL '1 day', ts, TIMESTAMP '2000-01-01 06:00') AS k, count(*) AS c FROM g WHERE v < 1500 GROUP BY 1) ORDER BY 1;
+----
+k	c
+2024-12-27 06:00:00	52
+2024-12-28 06:00:00	206
+2024-12-29 06:00:00	205
+2024-12-30 06:00:00	206
+2024-12-31 06:00:00	206
+2025-01-01 06:00:00	205
+2025-01-02 06:00:00	206
+2025-01-03 06:00:00	206
+2025-01-04 06:00:00	8
+NULL	1
+
+statement error
+SELECT date_bin(INTERVAL '1 month', ts, TIMESTAMP '2000-01-01') AS k, count(*) AS c FROM g GROUP BY 1;
+----
+db error: ERROR: timestamps cannot be binned into intervals containing months or years
+
+
+statement ok
+SET TimeZone = 'Etc/UTC';

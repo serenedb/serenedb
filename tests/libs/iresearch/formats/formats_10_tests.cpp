@@ -45,48 +45,6 @@ using tests::FormatTestCase;
 
 class Format10TestCase : public tests::FormatTestCase {
  protected:
-  void AssertFrequencyAndPositions(irs::DocIterator& expected,
-                                   irs::DocIterator& actual) {
-    auto* expected_freq = irs::GetMutable<irs::FreqBlockAttr>(&expected);
-    auto* actual_freq = irs::GetMutable<irs::FreqBlockAttr>(&actual);
-    ASSERT_EQ(!expected_freq, !actual_freq);
-
-    if (!expected_freq) {
-      return;
-    }
-
-    auto* expected_pos = irs::GetMutable<irs::PosAttr>(&expected);
-    auto* actual_pos = irs::GetMutable<irs::PosAttr>(&actual);
-    ASSERT_EQ(!expected_pos, !actual_pos);
-
-    if (!expected_pos) {
-      return;
-    }
-
-    auto* expected_offset = irs::get<irs::OffsAttr>(*expected_pos);
-    auto* actual_offset = irs::get<irs::OffsAttr>(*actual_pos);
-    ASSERT_EQ(!expected_offset, !actual_offset);
-
-    auto* expected_payload = irs::get<irs::PayAttr>(*expected_pos);
-    auto* actual_payload = irs::get<irs::PayAttr>(*actual_pos);
-    ASSERT_EQ(!expected_payload, !actual_payload);
-
-    for (; expected_pos->next();) {
-      ASSERT_TRUE(actual_pos->next());
-      ASSERT_EQ(expected_pos->value(), actual_pos->value());
-
-      if (expected_offset) {
-        ASSERT_EQ(expected_offset->start, actual_offset->start);
-        ASSERT_EQ(expected_offset->end, actual_offset->end);
-      }
-
-      if (expected_payload) {
-        ASSERT_EQ(expected_payload->value, actual_payload->value);
-      }
-    }
-    ASSERT_FALSE(actual_pos->next());
-  }
-
   void PostingsSeek(const std::vector<std::pair<irs::doc_id_t, uint32_t>>& docs,
                     irs::IndexFeatures features) {
     irs::FieldMeta field;
@@ -172,48 +130,48 @@ class Format10TestCase : public tests::FormatTestCase {
           ASSERT_EQ(posting_meta.doc_delta, read_meta.doc_delta);
         }
 
-        auto assert_docs = [&](size_t seed, size_t inc) {
-          TestPostings expected_postings{docs, field.index_features};
+        const auto handles = reader->Handles();
 
-          auto actual = reader->Iterator(field.index_features, features,
-                                         {.cookie = &read_meta},
-                                         irs::IteratorFieldOptions{});
-          ASSERT_FALSE(irs::doc_limits::valid(actual->value()));
+        auto assert_docs = [&](size_t seed, size_t inc) {
+          auto actual = tests::MakeSeekPostings(read_meta, handles,
+                                                field.index_features, features,
+                                                /*has_score_bounds=*/false);
+          ASSERT_FALSE(irs::doc_limits::valid(actual->Value()));
 
           TestPostings expected(docs, field.index_features);
           for (size_t i = seed, size = docs.size(); i < size; i += inc) {
             auto& doc = docs[i];
-            ASSERT_EQ(doc.first, actual->seek(doc.first));
+            ASSERT_EQ(doc.first, actual->Seek(doc.first));
             ASSERT_EQ(doc.first,
-                      actual->seek(doc.first));  // seek to the same doc
+                      actual->Seek(doc.first));  // seek to the same doc
             ASSERT_EQ(
               doc.first,
-              actual->seek(
+              actual->Seek(
                 irs::doc_limits::invalid()));  // seek to the smaller doc
 
-            ASSERT_EQ(doc.first, expected.seek(doc.first));
-            AssertFrequencyAndPositions(expected, *actual);
+            ASSERT_EQ(doc.first, expected.SeekTo(doc.first));
+            AssertFrequencyAndPositions(expected, *actual, features);
           }
 
           if (inc == 1) {
-            ASSERT_FALSE(!irs::doc_limits::eof(actual->advance()));
-            ASSERT_TRUE(irs::doc_limits::eof(actual->value()));
+            ASSERT_FALSE(!irs::doc_limits::eof(actual->Advance()));
+            ASSERT_TRUE(irs::doc_limits::eof(actual->Value()));
 
             // seek after the existing documents
             ASSERT_TRUE(
-              irs::doc_limits::eof(actual->seek(docs.back().first + 42)));
+              irs::doc_limits::eof(actual->Seek(docs.back().first + 42)));
           }
         };
 
         // next + seek to eof
         {
-          auto it = reader->Iterator(
-            field.index_features, irs::IndexFeatures::None,
-            {.cookie = &read_meta}, irs::IteratorFieldOptions{});
-          ASSERT_FALSE(irs::doc_limits::valid(it->value()));
-          ASSERT_TRUE(!irs::doc_limits::eof(it->advance()));
-          ASSERT_EQ(docs.front().first, it->value());
-          ASSERT_TRUE(irs::doc_limits::eof(it->seek(docs.back().first + 42)));
+          auto it = tests::MakeSeekPostings(
+            read_meta, handles, field.index_features, irs::IndexFeatures::None,
+            /*has_score_bounds=*/false);
+          ASSERT_FALSE(irs::doc_limits::valid(it->Value()));
+          ASSERT_TRUE(!irs::doc_limits::eof(it->Advance()));
+          ASSERT_EQ(docs.front().first, it->Value());
+          ASSERT_TRUE(irs::doc_limits::eof(it->Seek(docs.back().first + 42)));
         }
 
         // seek to every document 127th document in a block
@@ -232,47 +190,47 @@ class Format10TestCase : public tests::FormatTestCase {
         {
           for (auto doc = docs.rbegin(), end = docs.rend(); doc != end; ++doc) {
             TestPostings expected(docs, field.index_features);
-            auto it = reader->Iterator(field.index_features, features,
-                                       {.cookie = &read_meta},
-                                       irs::IteratorFieldOptions{});
-            ASSERT_FALSE(irs::doc_limits::valid(it->value()));
-            ASSERT_EQ(doc->first, it->seek(doc->first));
+            auto it = tests::MakeSeekPostings(read_meta, handles,
+                                              field.index_features, features,
+                                              /*has_score_bounds=*/false);
+            ASSERT_FALSE(irs::doc_limits::valid(it->Value()));
+            ASSERT_EQ(doc->first, it->Seek(doc->first));
 
-            ASSERT_EQ(doc->first, expected.seek(doc->first));
-            AssertFrequencyAndPositions(expected, *it);
+            ASSERT_EQ(doc->first, expected.SeekTo(doc->first));
+            AssertFrequencyAndPositions(expected, *it, features);
             if (doc != docs.rbegin()) {
-              ASSERT_TRUE(!irs::doc_limits::eof(it->advance()));
+              ASSERT_TRUE(!irs::doc_limits::eof(it->Advance()));
               const auto expected_doc = (doc - 1)->first;
-              ASSERT_EQ(expected_doc, it->value());
+              ASSERT_EQ(expected_doc, it->Value());
 
-              ASSERT_TRUE(!irs::doc_limits::eof(expected.advance()));
-              ASSERT_EQ(expected_doc, expected.value());
-              AssertFrequencyAndPositions(expected, *it);
+              ASSERT_TRUE(!irs::doc_limits::eof(expected.Advance()));
+              ASSERT_EQ(expected_doc, expected.Value());
+              AssertFrequencyAndPositions(expected, *it, features);
             }
           }
         }
 
         // seek to irs::doc_limits::invalid()
         {
-          auto it = reader->Iterator(
-            field.index_features, irs::IndexFeatures::None,
-            {.cookie = &read_meta}, irs::IteratorFieldOptions{});
-          ASSERT_FALSE(irs::doc_limits::valid(it->value()));
+          auto it = tests::MakeSeekPostings(
+            read_meta, handles, field.index_features, irs::IndexFeatures::None,
+            /*has_score_bounds=*/false);
+          ASSERT_FALSE(irs::doc_limits::valid(it->Value()));
           ASSERT_FALSE(
-            irs::doc_limits::valid(it->seek(irs::doc_limits::invalid())));
-          ASSERT_TRUE(!irs::doc_limits::eof(it->advance()));
-          ASSERT_EQ(docs.front().first, it->value());
+            irs::doc_limits::valid(it->Seek(irs::doc_limits::invalid())));
+          ASSERT_TRUE(!irs::doc_limits::eof(it->Advance()));
+          ASSERT_EQ(docs.front().first, it->Value());
         }
 
         // seek to irs::doc_limits::eof()
         {
-          auto it = reader->Iterator(
-            field.index_features, irs::IndexFeatures::None,
-            {.cookie = &read_meta}, irs::IteratorFieldOptions{});
-          ASSERT_FALSE(irs::doc_limits::valid(it->value()));
-          ASSERT_TRUE(irs::doc_limits::eof(it->seek(irs::doc_limits::eof())));
-          ASSERT_FALSE(!irs::doc_limits::eof(it->advance()));
-          ASSERT_TRUE(irs::doc_limits::eof(it->value()));
+          auto it = tests::MakeSeekPostings(
+            read_meta, handles, field.index_features, irs::IndexFeatures::None,
+            /*has_score_bounds=*/false);
+          ASSERT_FALSE(irs::doc_limits::valid(it->Value()));
+          ASSERT_TRUE(irs::doc_limits::eof(it->Seek(irs::doc_limits::eof())));
+          ASSERT_FALSE(!irs::doc_limits::eof(it->Advance()));
+          ASSERT_TRUE(irs::doc_limits::eof(it->Value()));
         }
       }
 
@@ -396,11 +354,10 @@ TEST_P(Format10TestCase, postings_read_write_single_doc) {
       }
 
       // read documents
-      auto it =
-        reader->Iterator(field.index_features, irs::IndexFeatures::None,
-                         {.cookie = &read_meta}, irs::IteratorFieldOptions{});
-      for (size_t i = 0; !irs::doc_limits::eof(it->advance());) {
-        ASSERT_EQ(docs0[i++].first, it->value());
+      auto it = reader->Postings(field.index_features, irs::IndexFeatures::None,
+                                 read_meta, /*has_score_bounds=*/false);
+      for (size_t i = 0; !irs::doc_limits::eof(it->Advance());) {
+        ASSERT_EQ(docs0[i++].first, it->Value());
       }
     }
 
@@ -420,11 +377,10 @@ TEST_P(Format10TestCase, postings_read_write_single_doc) {
       }
 
       // read documents
-      auto it =
-        reader->Iterator(field.index_features, irs::IndexFeatures::None,
-                         {.cookie = &read_meta}, irs::IteratorFieldOptions{});
-      for (size_t i = 0; !irs::doc_limits::eof(it->advance());) {
-        ASSERT_EQ(docs1[i++].first, it->value());
+      auto it = reader->Postings(field.index_features, irs::IndexFeatures::None,
+                                 read_meta, /*has_score_bounds=*/false);
+      for (size_t i = 0; !irs::doc_limits::eof(it->Advance());) {
+        ASSERT_EQ(docs1[i++].first, it->Value());
       }
     }
 
@@ -533,11 +489,10 @@ TEST_P(Format10TestCase, postings_read_write) {
       }
 
       // read documents
-      auto it =
-        reader->Iterator(field.index_features, irs::IndexFeatures::None,
-                         {.cookie = &read_meta}, irs::IteratorFieldOptions{});
-      for (size_t i = 0; !irs::doc_limits::eof(it->advance());) {
-        ASSERT_EQ(docs0[i++].first, it->value());
+      auto it = reader->Postings(field.index_features, irs::IndexFeatures::None,
+                                 read_meta, /*has_score_bounds=*/false);
+      for (size_t i = 0; !irs::doc_limits::eof(it->Advance());) {
+        ASSERT_EQ(docs0[i++].first, it->Value());
       }
     }
 
@@ -556,11 +511,10 @@ TEST_P(Format10TestCase, postings_read_write) {
       }
 
       // read documents
-      auto it =
-        reader->Iterator(field.index_features, irs::IndexFeatures::None,
-                         {.cookie = &read_meta}, irs::IteratorFieldOptions{});
-      for (size_t i = 0; !irs::doc_limits::eof(it->advance());) {
-        ASSERT_EQ(docs1[i++].first, it->value());
+      auto it = reader->Postings(field.index_features, irs::IndexFeatures::None,
+                                 read_meta, /*has_score_bounds=*/false);
+      for (size_t i = 0; !irs::doc_limits::eof(it->Advance());) {
+        ASSERT_EQ(docs1[i++].first, it->Value());
       }
     }
 
@@ -815,48 +769,59 @@ TEST_P(Format10TestCase, ires336) {
   fr->prepare(
     irs::ReaderState{.dir = dir.get(), .meta = &meta, .idx = &idx_reader});
 
-  auto it = fr->field(field_meta.id)->iterator();
+  const auto* field = fr->field(field_meta.id);
+  ASSERT_NE(nullptr, field);
+  auto it = field->iterator();
   ASSERT_TRUE(it->seek(term));
+
+  const irs::PostingMeta term_meta = it->cookie();
+  const auto handles = field->Handles();
+  const auto layout = field->meta().index_features;
+  const bool bounds = field->HasScoreBounds();
+  auto make_docs = [&] {
+    return tests::MakeSeekPostings(term_meta, handles, layout,
+                                   irs::IndexFeatures::None, bounds);
+  };
 
   // ires-336 sequence
   {
-    auto docs = it->postings(irs::IndexFeatures::None);
-    ASSERT_EQ(4048, docs->seek(4048));
-    ASSERT_EQ(6830, docs->seek(6829));
+    auto docs = make_docs();
+    ASSERT_EQ(4048, docs->Seek(4048));
+    ASSERT_EQ(6830, docs->Seek(6829));
   }
 
   // ires-336 extended sequence
   {
-    auto docs = it->postings(irs::IndexFeatures::None);
-    ASSERT_EQ(1068, docs->seek(1068));
-    ASSERT_EQ(1875, docs->seek(1873));
-    ASSERT_EQ(4048, docs->seek(4048));
-    ASSERT_EQ(6830, docs->seek(6829));
+    auto docs = make_docs();
+    ASSERT_EQ(1068, docs->Seek(1068));
+    ASSERT_EQ(1875, docs->Seek(1873));
+    ASSERT_EQ(4048, docs->Seek(4048));
+    ASSERT_EQ(6830, docs->Seek(6829));
   }
 
   // extended sequence
   {
-    auto docs = it->postings(irs::IndexFeatures::None);
-    ASSERT_EQ(4048, docs->seek(4048));
-    ASSERT_EQ(4400, docs->seek(4400));
-    ASSERT_EQ(6830, docs->seek(6829));
+    auto docs = make_docs();
+    ASSERT_EQ(4048, docs->Seek(4048));
+    ASSERT_EQ(4400, docs->Seek(4400));
+    ASSERT_EQ(6830, docs->Seek(6829));
   }
 
   // ires-336 full sequence
   {
-    auto docs = it->postings(irs::IndexFeatures::None);
-    ASSERT_EQ(334, docs->seek(334));
-    ASSERT_EQ(1046, docs->seek(1046));
-    ASSERT_EQ(1068, docs->seek(1068));
-    ASSERT_EQ(2307, docs->seek(2307));
-    ASSERT_EQ(2843, docs->seek(2843));
-    ASSERT_EQ(3059, docs->seek(3059));
-    ASSERT_EQ(3564, docs->seek(3564));
-    ASSERT_EQ(4048, docs->seek(4048));
-    ASSERT_EQ(7773, docs->seek(7773));
-    ASSERT_EQ(8204, docs->seek(8204));
-    ASSERT_EQ(9353, docs->seek(9353));
-    ASSERT_EQ(9366, docs->seek(9366));
+    auto docs = make_docs();
+    ASSERT_EQ(334, docs->Seek(334));
+    ASSERT_EQ(1046, docs->Seek(1046));
+    ASSERT_EQ(1068, docs->Seek(1068));
+    ASSERT_EQ(2307, docs->Seek(2307));
+    ASSERT_EQ(2843, docs->Seek(2843));
+    ASSERT_EQ(3059, docs->Seek(3059));
+    ASSERT_EQ(3564, docs->Seek(3564));
+    ASSERT_EQ(4048, docs->Seek(4048));
+    ASSERT_EQ(7773, docs->Seek(7773));
+    ASSERT_EQ(8204, docs->Seek(8204));
+    ASSERT_EQ(9353, docs->Seek(9353));
+    ASSERT_EQ(9366, docs->Seek(9366));
   }
 }
 
@@ -1022,17 +987,19 @@ TEST_P(Format10TestCase, position_reset_with_offsets) {
         irs::PostingMeta read_meta;
         begin += reader->decode(begin, field.index_features, read_meta);
 
+        const auto handles = reader->Handles();
+
         for (size_t i = 0; i < docs.size();
              i += std::max<size_t>(1, docs.size() / 10)) {
-          auto actual = reader->Iterator(field.index_features, features,
-                                         {.cookie = &read_meta},
-                                         irs::IteratorFieldOptions{});
-          ASSERT_FALSE(irs::doc_limits::valid(actual->value()));
+          auto actual = tests::MakeSeekPostings(read_meta, handles,
+                                                field.index_features, features,
+                                                /*has_score_bounds=*/false);
+          ASSERT_FALSE(irs::doc_limits::valid(actual->Value()));
 
           const auto& doc = docs[i];
-          ASSERT_EQ(doc.first, actual->seek(doc.first));
+          ASSERT_EQ(doc.first, actual->Seek(doc.first));
 
-          auto* pos = irs::GetMutable<irs::PosAttr>(actual.get());
+          auto* pos = actual->Positions();
           ASSERT_NE(nullptr, pos);
 
           auto* offs = irs::get<irs::OffsAttr>(*pos);

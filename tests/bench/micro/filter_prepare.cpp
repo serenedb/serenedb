@@ -23,9 +23,11 @@
 
 #include <array>
 #include <atomic>
+#include <duckdb/common/allocator.hpp>
 #include <duckdb/main/database.hpp>
 #include <filesystem>
 #include <memory>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <system_error>
@@ -47,7 +49,7 @@
 #include "iresearch/search/range_filter.hpp"
 #include "iresearch/search/search_range.hpp"
 #include "iresearch/search/term_filter.hpp"
-#include "iresearch/search/terms_filter.hpp"
+#include "iresearch/search/term_set.hpp"
 #include "iresearch/search/tfidf.hpp"
 #include "iresearch/search/wildcard_filter.hpp"
 #include "iresearch/store/mmap_directory.hpp"
@@ -283,12 +285,12 @@ void SetUpRange(irs::ByRange& f) {
   range.max_type = irs::BoundType::Inclusive;
 }
 
-void SetUpTerms(irs::ByTerms& f) {
-  *f.mutable_field_id() = kKwFieldId;
-  auto& opts = *f.mutable_options();
+void SetUpTerms(irs::BooleanFilter& f) {
   for (size_t i = 0; i < 8; ++i) {
     const std::string term = absl::StrFormat("term_%04d", i * 37);
-    opts.terms.emplace(irs::bstring{AsBytes(term)});
+    f.Add(
+      irs::TermClause{.field = kKwFieldId, .term = irs::bstring{AsBytes(term)}},
+      irs::Occur::Should);
   }
 }
 
@@ -308,51 +310,63 @@ void SetUpPhrase(irs::ByPhrase& f) {
   opts->push_back<irs::ByTermOptions>().term = AsBytes("brown");
 }
 
-void SetUpAnd(irs::And& a) {
-  auto& f1 = a.add<irs::ByTerm>();
-  *f1.mutable_field_id() = kKwFieldId;
-  f1.mutable_options()->term = AsBytes("term_0042");
+void SetUpAnd(irs::BooleanFilter& a) {
+  a.Add(irs::TermClause{.field = kKwFieldId,
+                        .term = irs::bstring{AsBytes("term_0042")}},
+        irs::Occur::Must);
 
-  auto& f2 = a.add<irs::ByPrefix>();
-  *f2.mutable_field_id() = kKwFieldId;
-  f2.mutable_options()->term = AsBytes("term_0");
+  auto f2 = std::make_unique<irs::ByPrefix>();
+  *f2->mutable_field_id() = kKwFieldId;
+  f2->mutable_options()->term = AsBytes("term_0");
+  a.Add(std::move(f2), irs::Occur::Must);
 
-  auto& f3 = a.add<irs::ByRange>();
-  *f3.mutable_field_id() = kKwFieldId;
-  auto& range = f3.mutable_options()->range;
+  auto f3 = std::make_unique<irs::ByRange>();
+  *f3->mutable_field_id() = kKwFieldId;
+  auto& range = f3->mutable_options()->range;
   range.min = AsBytes("term_0000");
   range.min_type = irs::BoundType::Inclusive;
   range.max = AsBytes("term_0100");
   range.max_type = irs::BoundType::Inclusive;
+  a.Add(std::move(f3), irs::Occur::Must);
 }
 
-void SetUpOr(irs::Or& o) {
+void SetUpOr(irs::BooleanFilter& o) {
   static constexpr std::array<std::string_view, 3> kTerms{
     "term_0042", "term_0100", "term_0250"};
   for (auto t : kTerms) {
-    auto& f = o.add<irs::ByTerm>();
-    *f.mutable_field_id() = kKwFieldId;
-    f.mutable_options()->term = AsBytes(t);
+    o.Add(
+      irs::TermClause{.field = kKwFieldId, .term = irs::bstring{AsBytes(t)}},
+      irs::Occur::Should);
   }
 }
 
-void SetUpNot(irs::Exclusion& n) {
-  auto& inner = n.exclude<irs::ByTerm>();
-  *inner.mutable_field_id() = kKwFieldId;
-  inner.mutable_options()->term = AsBytes("term_0042");
+void SetUpNot(irs::BooleanFilter& n) {
+  n.Add(irs::TermClause{.field = kKwFieldId,
+                        .term = irs::bstring{AsBytes("term_0042")}},
+        irs::Occur::MustNot);
 }
 
 void RunPrepare(const irs::Filter::ptr& filter,
                 const irs::DirectoryReader& reader, const irs::Scorer* scorer) {
-  auto collector = filter->MakeCollector(scorer);
+  // No scorer means this variant does not score, so it builds no collector at
+  // all -- which is what an unscored prepare now costs.
+  auto& allocator = duckdb::Allocator::DefaultAllocator();
+  std::optional<irs::StatsArena> stats;
+  std::optional<irs::PreparedCollector> collector;
+  if (scorer != nullptr) {
+    stats.emplace(allocator);
+    collector.emplace(*filter, *scorer, *stats, 1);
+  }
   std::vector<irs::QueryBuilder::ptr> queries;
   queries.reserve(reader.size());
   for (const auto& sub : reader) {
-    auto q = filter->PrepareSegment(sub, {.collector = collector.get()});
+    auto q = filter->PrepareSegment(
+      sub, {.collector = collector ? collector->Get() : nullptr});
     queries.emplace_back(std::move(q));
   }
-  auto stats = collector->Finish(irs::IResourceManager::gNoop);
-  benchmark::DoNotOptimize(stats);
+  if (collector) {
+    collector->Finish();
+  }
   benchmark::DoNotOptimize(queries);
 }
 
@@ -403,7 +417,7 @@ void RunPrepare(const irs::Filter::ptr& filter,
 DEFINE_FILTER_VARIANTS(ByTerm, irs::ByTerm, SetUpTerm);
 DEFINE_FILTER_VARIANTS(ByPrefix, irs::ByPrefix, SetUpPrefix);
 DEFINE_FILTER_VARIANTS(ByRange, irs::ByRange, SetUpRange);
-DEFINE_FILTER_VARIANTS(ByTerms, irs::ByTerms, SetUpTerms);
+DEFINE_FILTER_VARIANTS(ByTerms, irs::BooleanFilter, SetUpTerms);
 DEFINE_FILTER_VARIANTS(ByWildcard_Term, irs::ByWildcard, SetUpWildcardTerm);
 DEFINE_FILTER_VARIANTS(ByWildcard_TermEscaped, irs::ByWildcard,
                        SetUpWildcardTermEscaped);
@@ -414,9 +428,9 @@ DEFINE_FILTER_VARIANTS(ByWildcard_Generic, irs::ByWildcard,
                        SetUpWildcardGeneric);
 DEFINE_FILTER_VARIANTS(ByEditDistance, irs::ByEditDistance, SetUpEdit);
 DEFINE_FILTER_VARIANTS(ByPhrase, irs::ByPhrase, SetUpPhrase);
-DEFINE_FILTER_VARIANTS(And, irs::And, SetUpAnd);
-DEFINE_FILTER_VARIANTS(Or, irs::Or, SetUpOr);
-DEFINE_FILTER_VARIANTS(Not, irs::Exclusion, SetUpNot);
+DEFINE_FILTER_VARIANTS(And, irs::BooleanFilter, SetUpAnd);
+DEFINE_FILTER_VARIANTS(Or, irs::BooleanFilter, SetUpOr);
+DEFINE_FILTER_VARIANTS(Not, irs::BooleanFilter, SetUpNot);
 
 #undef DEFINE_FILTER_VARIANTS
 

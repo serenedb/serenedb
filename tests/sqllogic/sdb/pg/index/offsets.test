@@ -581,9 +581,9 @@ WHERE body @@ ts_phrase('fox')
 ORDER BY BM25(offsets_test_idx.tableoid) DESC, id LIMIT 3;
 ----
 id	bo	s
-4	{0,3,4,7,8,11,12,15,16,19,20,23,24,27,28,31,32,35,36,39,40,43,44,47}	0.76
-1	{6,9}	0.53
-2	{0,3}	0.53
+4	{0,3,4,7,8,11,12,15,16,19,20,23,24,27,28,31,32,35,36,39,40,43,44,47}	0.34
+1	{6,9}	0.24
+2	{0,3}	0.24
 
 
 # Plan check: secondary ORDER BY (id ASC) keeps the TopN node, producing

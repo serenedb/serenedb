@@ -72,34 +72,39 @@ QueryBuilder::ptr ByPrefix::PrepareSegment(const SubReader& segment,
                                            const PrepareContext& ctx,
                                            const irs::field_id field,
                                            const bytes_view term) {
-  auto query = memory::make_tracked<MultiTermQuery>(
-    ctx.memory, segment, ctx.memory, ctx.boost, ScoreMergeType::Sum, size_t{1});
-
   const auto* reader = segment.field(field);
   if (!reader) {
-    return query;
+    return QueryBuilder::Empty();
   }
-
   auto* collector =
     ctx.collector
       ? &sdb::basics::downCast<LimitedTermsCollector>(*ctx.collector)
       : nullptr;
   if (collector) {
-    collector->Field().Collect(*reader);
+    collector->Field(ctx.thread).Collect(*reader);
   }
-  SampledMultiTermVisitor mtv{collector ? &collector->Limited() : nullptr,
-                              query->State()};
   ByPrefixIterator terms{*reader, term};
-  if (terms.next()) {
-    mtv.Prepare(segment, *reader, terms.GetImpl());
-    VisitTerms(terms, mtv);
+  if (!terms.next()) {
+    return QueryBuilder::Empty();
   }
-  return query;
+
+  auto query = memory::make_tracked<MultiTermQuery>(
+    ctx.memory, segment, ctx.memory, ctx.boost, ScoreMergeType::Sum);
+  if (collector && collector->Limited(ctx.thread).Samples()) {
+    query->Pin();
+  }
+  SampledMultiTermVisitor mtv{
+    collector ? &collector->Limited(ctx.thread) : nullptr, query->State()};
+  mtv.Prepare(segment, *reader, terms.GetImpl());
+  VisitTerms(terms, mtv);
+  return MultiTermQuery::Finish(std::move(query), ctx);
 }
 
-PrepareCollector::ptr ByPrefix::MakeCollectorImpl(const Scorer* scorer) const {
-  return std::make_unique<LimitedTermsCollector>(scorer,
-                                                 options().scored_terms_limit);
+PrepareCollector::ptr ByPrefix::MakeCollectorImpl(const Scorer* scorer,
+                                                  StatsArena& stats,
+                                                  uint32_t threads) const {
+  return std::make_unique<LimitedTermsCollector>(
+    scorer, options().scored_terms_limit, stats, threads);
 }
 
 void ByPrefix::visit(const SubReader& segment, const TermReader& reader,

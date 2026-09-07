@@ -22,40 +22,45 @@
 
 #pragma once
 
-#include "iresearch/search/filter.hpp"
+#include "iresearch/search/common/plan.hpp"
+#include "iresearch/search/estimate.hpp"
+#include "iresearch/search/query_builder_impl.hpp"
 #include "iresearch/search/states/multiterm_state.hpp"
 
 namespace irs {
 
-// Compiled query suitable for filters with non adjacent set of terms.
-class MultiTermQuery : public QueryBuilder {
+class MultiTermQuery : public QueryBuilderImpl<MultiTermQuery> {
  public:
-  // TODO(mbkkt) block_pool<byte>
-  using Stats = ManagedVector<bstring>;
-
   explicit MultiTermQuery(const SubReader& segment, IResourceManager& memory,
-                          score_t boost, ScoreMergeType merge_type,
-                          size_t min_match)
-    : QueryBuilder{segment},
+                          score_t boost, ScoreMergeType merge_type)
+    : QueryBuilderImpl{segment, 0, QueryKind::Terms},
       _state{memory},
       _boost{boost},
-      _merge_type{merge_type},
-      _min_match{min_match} {}
+      _merge_type{merge_type} {}
 
   MultiTermState& State() noexcept { return _state; }
 
-  DocIterator::ptr Execute(const ExecutionContext& ctx,
-                           const StatsBuffer& stats) const final;
+  static QueryBuilder::ptr Finish(memory::managed_ptr<MultiTermQuery> query,
+                                  const PrepareContext& ctx);
+
+  const MultiTermState& State() const noexcept { return _state; }
+
+  ScoreMergeType MergeType() const noexcept { return _merge_type; }
+
+  void Pin() noexcept { _pinned = true; }
+  bool Pinned() const noexcept { return _pinned; }
 
   void Visit(PreparedStateVisitor& visitor, score_t boost) const final;
 
   score_t Boost() const noexcept final { return _boost; }
 
+  void SetBoost(score_t value) noexcept final { _boost = value; }
+
  private:
   MultiTermState _state;
   score_t _boost;
   ScoreMergeType _merge_type;
-  size_t _min_match;
+  bool _pinned = false;
 };
 
 }  // namespace irs

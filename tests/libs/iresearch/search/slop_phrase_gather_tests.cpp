@@ -27,9 +27,13 @@
 // SDB_DEV. The SlopOverlapMatcher tests at the end pin the n >= 3
 // same-position (term-group) semantics of spm::Run and run in any build.
 
+#include <array>
+
 #include "filter_test_case_base.hpp"
 #include "iresearch/analysis/token_attributes.hpp"
 #include "iresearch/index/iterators.hpp"
+#include "iresearch/search/offsets/make.hpp"
+#include "iresearch/search/offsets/root.hpp"
 #include "iresearch/search/phrase_filter.hpp"
 #include "iresearch/search/phrase_iterator.hpp"
 #include "iresearch/search/phrase_query.hpp"
@@ -79,14 +83,19 @@ std::vector<irs::doc_id_t> CollectDocs(const tests::PreparedFilter& prepared) {
   std::vector<irs::doc_id_t> out;
   for (size_t i = 0; i < prepared.size(); ++i) {
     auto docs = prepared.Execute(i);
-    while (!irs::doc_limits::eof(docs->advance())) {
-      out.push_back(docs->value());
+    while (!irs::doc_limits::eof(docs->Advance())) {
+      out.push_back(docs->Value());
     }
   }
   return out;
 }
 
-// Collects (doc, [(start,end)...]) per matched doc via ExecuteWithOffsets.
+// Collects (doc, [(start,end)...]) per matched doc.
+//
+// The documents come from the plan and the offsets are materialized on the
+// ones it produced -- which is the split the offsets entry point is built on.
+// The two are separate objects because offsets are a leaf-only case: there is
+// no offsets iterator that also finds documents.
 struct OffsetMatch {
   irs::doc_id_t doc;
   std::vector<std::pair<uint32_t, uint32_t>> offsets;
@@ -106,19 +115,24 @@ std::vector<OffsetMatch> CollectOffsets(const tests::PreparedFilter& prepared,
     if (!phrase_query) {
       continue;
     }
-    auto docs = phrase_query->ExecuteWithOffsets(*sub);
-    if (!docs) {
+    auto docs = phrase_query->PlanLead({});
+    auto offsets = irs::offsets::Make(*phrase_query);
+    if (!docs || !offsets) {
       continue;
     }
-    auto* pos = irs::GetMutable<irs::PosAttr>(docs.get());
-    if (!pos) {
-      continue;
-    }
-    auto* offs = irs::get<irs::OffsAttr>(*pos);
-    while (!irs::doc_limits::eof(docs->advance())) {
-      OffsetMatch m{.doc = docs->value()};
-      while (pos->next()) {
-        m.offsets.emplace_back(offs ? offs->start : 0, offs ? offs->end : 0);
+    // Small on purpose: a document with more occurrences than this exercises
+    // the re-entry that a caller with no bound of its own relies on.
+    std::array<irs::offsets::Range, 4> batch;
+    while (!irs::doc_limits::eof(docs->Advance())) {
+      OffsetMatch m{.doc = docs->Value()};
+      for (;;) {
+        const auto count = offsets->Run(m.doc, batch);
+        for (uint32_t k = 0; k != count; ++k) {
+          m.offsets.emplace_back(batch[k].start, batch[k].end);
+        }
+        if (count != batch.size()) {
+          break;
+        }
       }
       out.push_back(std::move(m));
     }

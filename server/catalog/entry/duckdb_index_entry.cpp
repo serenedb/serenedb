@@ -80,7 +80,7 @@ std::vector<size_t> IndexedPositions(const duckdb::CreateTableInfo& table,
     }
   }
   std::vector<size_t> out(positions.begin(), positions.end());
-  std::sort(out.begin(), out.end());
+  absl::c_sort(out);
   return out;
 }
 

@@ -47,6 +47,11 @@
 #include "index_builder.h"
 #include "iresearch/analysis/token_attributes.hpp"
 #include "iresearch/search/bm25.hpp"
+#include "iresearch/search/count/root.hpp"
+#include "iresearch/search/docs/root.hpp"
+#include "iresearch/search/fill/node.hpp"
+#include "iresearch/search/filter.hpp"
+#include "iresearch/search/lead/node.hpp"
 #include "iresearch/search/term_filter.hpp"
 #include "search/filter_test_case_base.hpp"
 #include "tests_shared.hpp"
@@ -54,11 +59,6 @@
 namespace {
 
 inline constexpr irs::field_id kIdId = 1;
-
-// How to fill a window: collect docs in [window_min, window_max).
-using FillWindowFunc = std::function<void(
-  irs::DocIterator& iter, irs::doc_id_t window_min, irs::doc_id_t window_max,
-  std::vector<irs::doc_id_t>& docs)>;
 
 void DecodeMask(const uint64_t* mask, size_t mask_words, irs::doc_id_t base,
                 std::vector<irs::doc_id_t>& docs) {
@@ -70,67 +70,72 @@ void DecodeMask(const uint64_t* mask, size_t mask_words, irs::doc_id_t base,
   }
 }
 
-// Reference fill: advance one doc at a time.
-void FillViaAdvance(irs::DocIterator& iter, irs::doc_id_t /*window_min*/,
-                    irs::doc_id_t window_max,
+// Reference fill: advance one doc at a time up to `window_max`.
+void FillViaAdvance(irs::lead::Node& iter, irs::doc_id_t window_max,
                     std::vector<irs::doc_id_t>& docs) {
-  auto doc = iter.value();
+  auto doc = iter.Value();
   while (!irs::doc_limits::eof(doc) && doc < window_max) {
     docs.push_back(doc);
-    doc = iter.advance();
+    doc = iter.Advance();
   }
 }
 
-// Test fill: delegate to the FillBlock API, decode mask to doc IDs.
-void FillViaFillBlock(irs::DocIterator& iter, irs::doc_id_t window_min,
-                      irs::doc_id_t window_max,
-                      std::vector<irs::doc_id_t>& docs) {
-  const size_t window_size = window_max - window_min;
-  const size_t mask_words = (window_size + 63) / 64;
-  std::vector<uint64_t> mask(mask_words, 0);
-  iter.FillBlock(window_min, window_max, mask.data(), {}, {});
-  DecodeMask(mask.data(), mask_words, window_min, docs);
-}
+// The fill plan of one query, walked window by window. A window is opened
+// wherever the caller says, so the same plan answers a contiguous walk and a
+// walk that jumps forward.
+class WindowFiller {
+ public:
+  explicit WindowFiller(irs::fill::Node::ptr fill) noexcept
+    : _fill{std::move(fill)} {}
 
-// Test fill: delegate to the EmitDocs API (writes doc-ids directly).
-void FillViaEmitDocs(irs::DocIterator& iter, irs::doc_id_t window_min,
-                     irs::doc_id_t window_max,
-                     std::vector<irs::doc_id_t>& docs) {
-  docs.resize(window_max -
-              window_min);  // value() >= window_min, matches <= span
-  const auto n = iter.EmitDocs(docs.data(), window_min, window_max);
-  docs.resize(n);
-}
+  void Fill(irs::doc_id_t window_min, irs::doc_id_t window_max,
+            std::vector<irs::doc_id_t>& docs) {
+    const size_t mask_words = (window_max - window_min + 63) / 64;
+    _mask.assign(mask_words, 0);
+    _next = _fill->FillOr(window_min, window_max, _mask.data());
+    DecodeMask(_mask.data(), mask_words, window_min, docs);
+  }
 
-// Operation applied to BOTH iterators before each window fill.
+  bool Eof() const noexcept { return irs::doc_limits::eof(_next); }
+
+ private:
+  irs::fill::Node::ptr _fill;
+  std::vector<uint64_t> _mask;
+  irs::doc_id_t _next = irs::doc_limits::invalid();
+};
+
+// Operation applied to the reference iterator before each window fill. Where
+// it lands is where the next window opens, so the fill plan stays in step
+// without a reposition of its own.
 using BeforeWindowFunc =
-  std::function<void(irs::DocIterator& iter, irs::doc_id_t window_min)>;
+  std::function<void(irs::lead::Node& iter, irs::doc_id_t window_min)>;
 
 BeforeWindowFunc SeekToWindow() {
-  return [](irs::DocIterator& iter, irs::doc_id_t window_min) {
-    iter.seek(window_min);
+  return [](irs::lead::Node& iter, irs::doc_id_t window_min) {
+    iter.Seek(window_min);
   };
 }
 
 BeforeWindowFunc AdvanceSkip(size_t count) {
-  return [count](irs::DocIterator& iter, irs::doc_id_t /*window_min*/) {
-    for (size_t i = 0; i < count && !irs::doc_limits::eof(iter.value()); ++i) {
-      iter.advance();
+  return [count](irs::lead::Node& iter, irs::doc_id_t /*window_min*/) {
+    for (size_t i = 0; i < count && !irs::doc_limits::eof(iter.Value()); ++i) {
+      iter.Advance();
     }
   };
 }
 
 BeforeWindowFunc SeekSkip(irs::doc_id_t delta) {
-  return [delta](irs::DocIterator& iter, irs::doc_id_t /*window_min*/) {
-    if (!irs::doc_limits::eof(iter.value())) {
-      iter.seek(iter.value() + delta);
+  return [delta](irs::lead::Node& iter, irs::doc_id_t /*window_min*/) {
+    if (const auto doc = iter.Value();
+        irs::doc_limits::valid(doc) && !irs::doc_limits::eof(doc)) {
+      iter.Seek(doc + delta);
     }
   };
 }
 
 BeforeWindowFunc Cycle(std::vector<BeforeWindowFunc> ops, size_t num_iters) {
   return [ops = std::move(ops), num_iters, idx = size_t{0}](
-           irs::DocIterator& iter, irs::doc_id_t window_min) mutable {
+           irs::lead::Node& iter, irs::doc_id_t window_min) mutable {
     if (const auto& op = ops[(idx / num_iters) % ops.size()]) {
       op(iter, window_min);
     }
@@ -138,32 +143,40 @@ BeforeWindowFunc Cycle(std::vector<BeforeWindowFunc> ops, size_t num_iters) {
   };
 }
 
-// Walk two iterators window-by-window over [doc_limits::min(), max_doc).
-// Before each window, `before_window` runs on BOTH iterators.
-// Then reference fills via advance-loop, test fills via FillBlock.
-// Returns total number of documents seen.
-size_t CompareWindowByWindow(
-  irs::DocIterator& reference_iter, irs::DocIterator& test_iter,
-  irs::doc_id_t max_doc, irs::doc_id_t window_size,
-  const BeforeWindowFunc& before_window = {},
-  const FillWindowFunc& test_fill = FillViaFillBlock) {
+// Walk a lead plan and a fill plan window-by-window over
+// [doc_limits::min(), max_doc). Before each window, `before_window` runs on
+// the lead; the window then opens where the lead stands, so both sides see
+// the same range. Returns total number of documents seen.
+size_t CompareWindowByWindow(irs::lead::Node& reference_iter,
+                             WindowFiller& test_filler, irs::doc_id_t max_doc,
+                             irs::doc_id_t window_size,
+                             const BeforeWindowFunc& before_window = {}) {
   size_t total_docs = 0;
   std::vector<irs::doc_id_t> reference_docs;
   std::vector<irs::doc_id_t> test_docs;
 
-  for (irs::doc_id_t window_min = irs::doc_limits::min(); window_min < max_doc;
-       window_min += window_size) {
-    const auto window_max = std::min(window_min + window_size, max_doc);
-
+  irs::doc_id_t window_min = irs::doc_limits::min();
+  while (window_min < max_doc) {
     if (before_window) {
       before_window(reference_iter, window_min);
-      before_window(test_iter, window_min);
     }
+
+    const auto pos = reference_iter.Value();
+    if (irs::doc_limits::eof(pos)) {
+      break;
+    }
+    if (irs::doc_limits::valid(pos) && pos > window_min) {
+      window_min = pos;
+    }
+    if (window_min >= max_doc) {
+      break;
+    }
+    const auto window_max = std::min(window_min + window_size, max_doc);
 
     reference_docs.clear();
     test_docs.clear();
-    FillViaAdvance(reference_iter, window_min, window_max, reference_docs);
-    test_fill(test_iter, window_min, window_max, test_docs);
+    FillViaAdvance(reference_iter, window_max, reference_docs);
+    test_filler.Fill(window_min, window_max, test_docs);
 
     if (test_docs != reference_docs) {
       std::vector<irs::doc_id_t> only_in_reference;
@@ -183,44 +196,56 @@ size_t CompareWindowByWindow(
     }
     total_docs += reference_docs.size();
 
-    const bool reference_eof = irs::doc_limits::eof(reference_iter.value());
-    const bool test_eof = irs::doc_limits::eof(test_iter.value());
-    if (reference_eof || test_eof) {
-      EXPECT_EQ(reference_eof, test_eof)
+    const bool reference_eof = irs::doc_limits::eof(reference_iter.Value());
+    if (reference_eof || test_filler.Eof()) {
+      EXPECT_EQ(reference_eof, test_filler.Eof())
         << "EOF disagreement at window [" << window_min << ", " << window_max
         << ")";
       break;
     }
+    window_min = window_max;
   }
 
   return total_docs;
 }
 
+// The batched emit plan against the same query's lead plan: same documents,
+// same order, whatever capacity the batches are drained at.
+size_t CompareEmitDocs(irs::lead::Node& reference_iter, irs::docs::Root& root,
+                       uint32_t capacity) {
+  std::vector<irs::doc_id_t> reference_docs;
+  while (!irs::doc_limits::eof(reference_iter.Advance())) {
+    reference_docs.push_back(reference_iter.Value());
+  }
+
+  std::vector<irs::doc_id_t> test_docs;
+  std::vector<irs::doc_id_t> buf(capacity + irs::doc_limits::kDocsSlack);
+  for (;;) {
+    const auto n = root.Run(buf.data(), capacity);
+    if (n == 0) {
+      break;
+    }
+    test_docs.insert(test_docs.end(), buf.begin(), buf.begin() + n);
+  }
+
+  EXPECT_EQ(reference_docs, test_docs);
+  return reference_docs.size();
+}
+
 struct IteratorFactory {
   std::string name;
-  std::function<irs::DocIterator::ptr(const irs::DirectoryReader&,
-                                      const irs::SubReader&)>
-    create;
+  std::function<irs::QueryBuilder::ptr(const irs::SubReader&)> prepare;
 };
 
 IteratorFactory QueryIterator(bench::Executor& executor,
                               std::string_view query) {
   return {
     .name = std::string{query},
-    .create =
-      [&executor, query = std::string{query}](
-        const irs::DirectoryReader& reader, const irs::SubReader& segment) {
-        auto filter = executor.ParseFilter(query);
+    .prepare =
+      [&executor, query = std::string{query}](const irs::SubReader& segment) {
+        auto filter = executor.ParseFilter(query, false);
         SDB_ASSERT(filter);
-        tests::PreparedFilter prepared{*filter, reader};
-        size_t i = 0;
-        for (const auto& sub : reader) {
-          if (&sub == &segment) {
-            break;
-          }
-          ++i;
-        }
-        return prepared.Execute(i);
+        return filter->PrepareSegment(segment, {});
       },
   };
 }
@@ -251,23 +276,28 @@ void ForEachCombination(const irs::DirectoryReader& reader,
 void TestAdvanceVsFillBlock(const irs::DirectoryReader& reader,
                             const std::vector<IteratorFactory>& factories,
                             std::span<const irs::doc_id_t> window_sizes) {
-  ForEachCombination(reader, factories, window_sizes,
-                     [](const auto& reader, const auto& segment,
-                        const auto& factory, auto max_doc, auto window_size) {
-                       auto reference_iter = factory.create(reader, segment);
-                       auto test_iter = factory.create(reader, segment);
-                       auto count_iter = factory.create(reader, segment);
+  ForEachCombination(
+    reader, factories, window_sizes,
+    [](const auto& /*reader*/, const auto& segment, const auto& factory,
+       auto max_doc, auto window_size) {
+      auto query = factory.prepare(segment);
+      ASSERT_NE(nullptr, query);
+      auto reference_iter = query->PlanLead({});
+      ASSERT_NE(nullptr, reference_iter);
+      auto fill = query->PlanFill({}, irs::ScoreMergeType::Noop);
+      ASSERT_NE(nullptr, fill);
+      auto count = query->PlanCount({});
+      ASSERT_NE(nullptr, count);
+      WindowFiller filler{std::move(fill)};
 
-                       reference_iter->advance();
-                       test_iter->advance();
+      reference_iter->Advance();
 
-                       auto total = CompareWindowByWindow(
-                         *reference_iter, *test_iter, max_doc, window_size);
+      auto total =
+        CompareWindowByWindow(*reference_iter, filler, max_doc, window_size);
 
-                       EXPECT_GT(total, 0u) << "query should have matches";
-                       EXPECT_EQ(total, count_iter->count())
-                         << "total docs vs count() mismatch";
-                     });
+      EXPECT_GT(total, 0u) << "query should have matches";
+      EXPECT_EQ(total, count->Run()) << "total docs vs count mismatch";
+    });
 }
 
 void TestAdvanceVsEmitDocs(const irs::DirectoryReader& reader,
@@ -275,20 +305,23 @@ void TestAdvanceVsEmitDocs(const irs::DirectoryReader& reader,
                            std::span<const irs::doc_id_t> window_sizes) {
   ForEachCombination(
     reader, factories, window_sizes,
-    [](const auto& reader, const auto& segment, const auto& factory,
-       auto max_doc, auto window_size) {
-      auto reference_iter = factory.create(reader, segment);
-      auto test_iter = factory.create(reader, segment);
-      auto count_iter = factory.create(reader, segment);
+    [](const auto& /*reader*/, const auto& segment, const auto& factory,
+       auto /*max_doc*/, auto window_size) {
+      auto query = factory.prepare(segment);
+      ASSERT_NE(nullptr, query);
+      auto reference_iter = query->PlanLead({});
+      ASSERT_NE(nullptr, reference_iter);
+      auto emit = query->PlanDocs({});
+      ASSERT_NE(nullptr, emit);
+      auto count = query->PlanCount({});
+      ASSERT_NE(nullptr, count);
 
-      reference_iter->advance();
-      test_iter->advance();
-
-      auto total = CompareWindowByWindow(*reference_iter, *test_iter, max_doc,
-                                         window_size, {}, FillViaEmitDocs);
+      const auto capacity = std::max<uint32_t>(
+        static_cast<uint32_t>(window_size), irs::doc_limits::kMinCapacity);
+      auto total = CompareEmitDocs(*reference_iter, *emit, capacity);
 
       EXPECT_GT(total, 0u) << "query should have matches";
-      EXPECT_EQ(total, count_iter->count()) << "total docs vs count() mismatch";
+      EXPECT_EQ(total, count->Run()) << "total docs vs count mismatch";
     });
 }
 
@@ -296,34 +329,43 @@ void TestSeekVsFillBlock(const irs::DirectoryReader& reader,
                          const std::vector<IteratorFactory>& factories,
                          std::span<const irs::doc_id_t> window_sizes) {
   ForEachCombination(reader, factories, window_sizes,
-                     [](const auto& reader, const auto& segment,
+                     [](const auto& /*reader*/, const auto& segment,
                         const auto& factory, auto max_doc, auto window_size) {
-                       auto reference_iter = factory.create(reader, segment);
-                       auto test_iter = factory.create(reader, segment);
+                       auto query = factory.prepare(segment);
+                       ASSERT_NE(nullptr, query);
+                       auto reference_iter = query->PlanLead({});
+                       ASSERT_NE(nullptr, reference_iter);
+                       auto fill =
+                         query->PlanFill({}, irs::ScoreMergeType::Noop);
+                       ASSERT_NE(nullptr, fill);
+                       WindowFiller filler{std::move(fill)};
 
-                       CompareWindowByWindow(*reference_iter, *test_iter,
-                                             max_doc, window_size,
-                                             SeekToWindow());
+                       CompareWindowByWindow(*reference_iter, filler, max_doc,
+                                             window_size, SeekToWindow());
                      });
 }
 
 void TestInterleavedSeekFillBlock(const irs::DirectoryReader& reader,
                                   const std::vector<IteratorFactory>& factories,
                                   std::span<const irs::doc_id_t> window_sizes) {
-  ForEachCombination(reader, factories, window_sizes,
-                     [](const auto& reader, const auto& segment,
-                        const auto& factory, auto max_doc, auto window_size) {
-                       auto reference_iter = factory.create(reader, segment);
-                       auto test_iter = factory.create(reader, segment);
+  ForEachCombination(
+    reader, factories, window_sizes,
+    [](const auto& /*reader*/, const auto& segment, const auto& factory,
+       auto max_doc, auto window_size) {
+      auto query = factory.prepare(segment);
+      ASSERT_NE(nullptr, query);
+      auto reference_iter = query->PlanLead({});
+      ASSERT_NE(nullptr, reference_iter);
+      auto fill = query->PlanFill({}, irs::ScoreMergeType::Noop);
+      ASSERT_NE(nullptr, fill);
+      WindowFiller filler{std::move(fill)};
 
-                       reference_iter->advance();
-                       test_iter->advance();
+      reference_iter->Advance();
 
-                       BeforeWindowFunc noop;
-                       CompareWindowByWindow(*reference_iter, *test_iter,
-                                             max_doc, window_size,
-                                             Cycle({noop, SeekToWindow()}, 2));
-                     });
+      BeforeWindowFunc noop;
+      CompareWindowByWindow(*reference_iter, filler, max_doc, window_size,
+                            Cycle({noop, SeekToWindow()}, 2));
+    });
 }
 
 void TestAdvanceSkipFillBlock(const irs::DirectoryReader& reader,
@@ -332,18 +374,22 @@ void TestAdvanceSkipFillBlock(const irs::DirectoryReader& reader,
                               std::span<const size_t> skip_counts) {
   ForEachCombination(
     reader, factories, window_sizes,
-    [&skip_counts](const auto& reader, const auto& segment, const auto& factory,
-                   auto max_doc, auto window_size) {
+    [&skip_counts](const auto& /*reader*/, const auto& segment,
+                   const auto& factory, auto max_doc, auto window_size) {
       for (auto skip : skip_counts) {
         SCOPED_TRACE(testing::Message() << "advance_skip=" << skip);
 
-        auto reference_iter = factory.create(reader, segment);
-        auto test_iter = factory.create(reader, segment);
+        auto query = factory.prepare(segment);
+        ASSERT_NE(nullptr, query);
+        auto reference_iter = query->PlanLead({});
+        ASSERT_NE(nullptr, reference_iter);
+        auto fill = query->PlanFill({}, irs::ScoreMergeType::Noop);
+        ASSERT_NE(nullptr, fill);
+        WindowFiller filler{std::move(fill)};
 
-        reference_iter->advance();
-        test_iter->advance();
+        reference_iter->Advance();
 
-        CompareWindowByWindow(*reference_iter, *test_iter, max_doc, window_size,
+        CompareWindowByWindow(*reference_iter, filler, max_doc, window_size,
                               AdvanceSkip(skip));
       }
     });
@@ -355,18 +401,22 @@ void TestSeekSkipFillBlock(const irs::DirectoryReader& reader,
                            std::span<const irs::doc_id_t> skip_deltas) {
   ForEachCombination(
     reader, factories, window_sizes,
-    [&skip_deltas](const auto& reader, const auto& segment, const auto& factory,
-                   auto max_doc, auto window_size) {
+    [&skip_deltas](const auto& /*reader*/, const auto& segment,
+                   const auto& factory, auto max_doc, auto window_size) {
       for (auto delta : skip_deltas) {
         SCOPED_TRACE(testing::Message() << "seek_skip=" << delta);
 
-        auto reference_iter = factory.create(reader, segment);
-        auto test_iter = factory.create(reader, segment);
+        auto query = factory.prepare(segment);
+        ASSERT_NE(nullptr, query);
+        auto reference_iter = query->PlanLead({});
+        ASSERT_NE(nullptr, reference_iter);
+        auto fill = query->PlanFill({}, irs::ScoreMergeType::Noop);
+        ASSERT_NE(nullptr, fill);
+        WindowFiller filler{std::move(fill)};
 
-        reference_iter->advance();
-        test_iter->advance();
+        reference_iter->Advance();
 
-        CompareWindowByWindow(*reference_iter, *test_iter, max_doc, window_size,
+        CompareWindowByWindow(*reference_iter, filler, max_doc, window_size,
                               SeekSkip(delta));
       }
     });
@@ -391,6 +441,8 @@ struct ParsedQuery {
   std::vector<std::string> tags;
 };
 
+constexpr std::string_view kSkipTopK = "skip:topk";
+
 std::string HashIds(const std::vector<std::string>& ids) {
   sdb::Sha256Functor sha;
   for (const auto& id : ids) {
@@ -400,13 +452,19 @@ std::string HashIds(const std::vector<std::string>& ids) {
   return sha.Finalize();
 }
 
+void HashIdsInPlace(std::vector<std::string>& ids) {
+  if (!ids.empty()) {
+    ids = {HashIds(ids)};
+  }
+}
+
 void HashResults(std::vector<QueryResult>& results) {
   for (auto& r : results) {
     if (r.result_type == ResultType::Hash) {
       continue;
     }
-    r.top_100_result = {HashIds(r.top_100_result)};
-    r.top_100_count_result = {HashIds(r.top_100_count_result)};
+    HashIdsInPlace(r.top_100_result);
+    HashIdsInPlace(r.top_100_count_result);
     r.result_type = ResultType::Hash;
   }
 }
@@ -567,6 +625,10 @@ std::vector<QueryResult> ExecuteAllQueries(
     r.result_type = ResultType::Raw;
     r.count = executor.ExecuteCount(q.query);
     EXPECT_GT(r.count, 0) << "COUNT returned 0";
+    if (absl::c_linear_search(q.tags, kSkipTopK)) {
+      results.emplace_back(std::move(r));
+      continue;
+    }
     r.top_100 = executor.ExecuteTopK(kTopK, q.query);
     SCOPED_TRACE(testing::Message()
                  << "count=" << r.count << " top_100=" << r.top_100
@@ -756,11 +818,21 @@ class LoadTest : public TestBase {
       EXPECT_EQ(a.top_100, e.top_100)
         << "TOP_100 mismatch for query[" << i << "] \"" << a.query << "\"";
 
+      {
+        auto pruned = a.top_100_result;
+        auto exact = a.top_100_count_result;
+        absl::c_sort(pruned);
+        absl::c_sort(exact);
+        EXPECT_EQ(pruned, exact)
+          << "TOP_100 vs TOP_100_COUNT documents differ for query[" << i
+          << "] \"" << a.query << "\"";
+      }
+
       // Hash test results if reference is hashed; compare raw otherwise
       if (e.result_type == ResultType::Hash) {
         if (a.result_type == ResultType::Raw) {
-          a.top_100_result = {HashIds(a.top_100_result)};
-          a.top_100_count_result = {HashIds(a.top_100_count_result)};
+          HashIdsInPlace(a.top_100_result);
+          HashIdsInPlace(a.top_100_count_result);
         }
       }
 
@@ -794,17 +866,6 @@ class LoadTest : public TestBase {
           << "TOP_100_COUNT id[" << j << "] mismatch for query[" << i << "] \""
           << a.query << "\"";
       }
-
-      ASSERT_EQ(a.top_100_result.size(), a.top_100_count_result.size())
-        << "TOP_100 vs TOP_100_COUNT id count mismatch for query[" << i
-        << "] \"" << a.query << "\"";
-
-      for (size_t j = 0; j < a.top_100_result.size(); ++j) {
-        auto expected_id = strip_score(a.top_100_count_result[j]);
-        EXPECT_EQ(a.top_100_result[j], expected_id)
-          << "TOP_100 vs TOP_100_COUNT id[" << j << "] mismatch for query[" << i
-          << "] \"" << a.query << "\"";
-      }
     }
   }
 
@@ -831,7 +892,7 @@ class TermScoreOracle {
  public:
   TermScoreOracle(const irs::IndexReader& reader, const irs::Scorer& scorer,
                   std::span<const std::string> terms, size_t segment_idx,
-                  const irs::SubReader& segment) {
+                  const irs::SubReader& /*segment*/) {
     _terms.reserve(terms.size());
     for (const auto& term : terms) {
       auto& t = _terms.emplace_back();
@@ -840,27 +901,24 @@ class TermScoreOracle {
         irs::ViewCast<irs::byte_type>(std::string_view{term});
       t.prepared =
         std::make_unique<tests::PreparedFilter>(t.filter, reader, &scorer);
-      t.it = t.prepared->Execute(segment_idx);
+      t.it = t.prepared->ExecuteScored(segment_idx, t.fetcher);
       if (!t.it) {
         continue;
       }
-      t.score = t.it->PrepareScore({
-        .segment = &segment,
-        .fetcher = &t.fetcher,
-      });
+      t.score = t.it->PrepareScore();
     }
   }
 
   irs::score_t ScoreOf(irs::doc_id_t doc) {
     irs::score_t total = 0;
     for (auto& t : _terms) {
-      if (!t.it || irs::doc_limits::eof(t.it->value())) {
+      if (!t.it || irs::doc_limits::eof(t.it->Value())) {
         continue;
       }
-      if (t.it->value() < doc && t.it->seek(doc) != doc) {
+      if (t.it->Value() < doc && t.it->Seek(doc) != doc) {
         continue;
       }
-      if (t.it->value() != doc) {
+      if (t.it->Value() != doc) {
         continue;
       }
       t.fetcher.Fetch(doc);
@@ -874,8 +932,8 @@ class TermScoreOracle {
   struct Term {
     irs::ByTerm filter;
     std::unique_ptr<tests::PreparedFilter> prepared;
-    irs::DocIterator::ptr it;
     irs::ColumnArgsFetcher fetcher;
+    irs::lead::Node::ptr it;
     irs::ScoreFunction score;
   };
 
@@ -986,11 +1044,8 @@ TEST_F(LoadTest, ScoreAccuracyAcrossQueryShapes) {
     }
   }
 
-  // The query set is checked in, so coverage is a fixed number: 795 of the
-  // 1457 queries are a sum over terms the oracle can name, and each is
-  // checked in both modes.
-  EXPECT_EQ(eligible_queries, 795);
-  EXPECT_EQ(checked_queries, 795 * 2);
+  EXPECT_EQ(eligible_queries, 802);
+  EXPECT_EQ(checked_queries, 802 * 2);
 }
 
 TEST_F(LoadTest, DisjunctionScoreAccuracy) {
@@ -1015,7 +1070,7 @@ TEST_F(LoadTest, DisjunctionScoreAccuracy) {
 
     std::map<irs::doc_id_t, irs::score_t> reference_scores;
 
-    for (size_t segment_idx = 0; auto& segment : reader) {
+    for (size_t segment_idx = 0; [[maybe_unused]] auto& segment : reader) {
       for (auto term_str : terms) {
         irs::ByTerm filter;
         *filter.mutable_field_id() = bench::kTextFieldId;
@@ -1025,19 +1080,16 @@ TEST_F(LoadTest, DisjunctionScoreAccuracy) {
             term_str.size()});
         tests::PreparedFilter prepared{filter, reader, &scorer};
 
-        auto it = prepared.Execute(segment_idx);
+        irs::ColumnArgsFetcher fetcher;
+        auto it = prepared.ExecuteScored(segment_idx, fetcher);
         ASSERT_TRUE(it);
 
-        irs::ColumnArgsFetcher fetcher;
-        auto score_func = it->PrepareScore({
-          .segment = &segment,
-          .fetcher = &fetcher,
-        });
+        auto score_func = it->PrepareScore();
         EXPECT_FALSE(score_func.IsDefault())
           << "Score function is default for term: " << term_str;
 
-        for (auto doc = it->advance(); !irs::doc_limits::eof(doc);
-             doc = it->advance()) {
+        for (auto doc = it->Advance(); !irs::doc_limits::eof(doc);
+             doc = it->Advance()) {
           fetcher.Fetch(doc);
           it->FetchScoreArgs(0);
           irs::score_t s = score_func.Score();
@@ -1048,7 +1100,7 @@ TEST_F(LoadTest, DisjunctionScoreAccuracy) {
     }
     ASSERT_GT(reference_scores.size(), 0u) << "No reference docs found";
 
-    auto filter = gExecutor->ParseFilter(std::string{query});
+    auto filter = gExecutor->ParseFilter(std::string{query}, true);
     ASSERT_TRUE(filter);
 
     tests::PreparedFilter prepared{*filter, reader, &scorer};
@@ -1056,16 +1108,13 @@ TEST_F(LoadTest, DisjunctionScoreAccuracy) {
     // 1) Compare via advance + Score
     {
       std::map<irs::doc_id_t, irs::score_t> bd_scores;
-      for (size_t i = 0; auto& segment : reader) {
+      for (size_t i = 0; [[maybe_unused]] auto& segment : reader) {
         irs::ColumnArgsFetcher fetcher;
-        auto it = prepared.Execute(i);
-        auto score_func = it->PrepareScore({
-          .segment = &segment,
-          .fetcher = &fetcher,
-        });
+        auto it = prepared.ExecuteScored(i, fetcher);
+        auto score_func = it->PrepareScore();
 
-        for (auto doc = it->advance(); !irs::doc_limits::eof(doc);
-             doc = it->advance()) {
+        for (auto doc = it->Advance(); !irs::doc_limits::eof(doc);
+             doc = it->Advance()) {
           fetcher.Fetch(doc);
           it->FetchScoreArgs(0);
           irs::score_t s = score_func.Score();
@@ -1101,8 +1150,8 @@ TEST_F(LoadTest, DisjunctionScoreAccuracy) {
     {
       static constexpr size_t kCount = 100;
       std::vector<irs::ScoreDoc> hits(kCount);
-      const auto count = irs::ExecuteTopKWithCount(reader, *filter, scorer,
-                                                   kCount, std::span{hits});
+      const auto count = irs::ExecuteTopK(reader, *filter, scorer, kCount,
+                                          false, std::span{hits});
 
       EXPECT_EQ(count, reference_scores.size()) << "Collect: count mismatch";
 

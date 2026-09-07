@@ -24,6 +24,9 @@
 
 #include <absl/container/flat_hash_map.h>
 
+#include <memory>
+#include <vector>
+
 #include "basics/containers/flat_hash_map.h"
 #include "basics/shared.hpp"
 #include "iresearch/index/index_reader.hpp"
@@ -39,45 +42,34 @@ namespace irs {
 struct SubReader;
 struct IndexReader;
 
-// Object to collect and track a limited number of scorers,
-// terms with longer postings are treated as more important.
-// Each candidate references an entry in a per-segment MultiTermState by offset;
-// the cookie itself lives in that state, not here.
 template<typename Key, typename Comparer = std::less<Key>>
 class LimitedSampleSelector : private util::Noncopyable {
  public:
   using key_type = Key;
   using comparer_type = Comparer;
 
-  // A candidate term still in the running for the global top-K.
   struct Candidate {
-    MultiTermState* state;  // state owning the referenced term
-    uint32_t offset;        // index into state->terms
-    bstring term;           // term value, kept for dedup at score()
-    Key key;                // sampling key
+    MultiTermState* state;
+    uint32_t offset;
+    bstring term;
+    Key key;
   };
 
   explicit LimitedSampleSelector(size_t scored_terms_limit,
                                  const comparer_type& comparer = {})
     : _comparer{comparer}, _heap{scored_terms_limit, CandidateLess{comparer}} {}
 
-  // Collect the term just appended to state->terms at the given offset.
-  // terms - segment term-iterator positioned at that term.
+  bool Samples() const noexcept { return _heap.Capacity() != 0; }
+
   void collect(MultiTermState& state, uint32_t offset,
                const TermIterator& terms, const Key& key) {
     if (!_heap.Capacity()) {
-      return;  // nothing scored; the entry stays unscored (optimization)
+      return;
     }
     if (_heap.Full() && !_comparer(_heap.Min().key, key)) {
-      return;  // can't beat the current minimum; skip building the term
+      return;
     }
     _heap.Push(Candidate{&state, offset, bstring{terms.value()}, key});
-  }
-
-  // Fold another collector's candidates into this one.
-  void Merge(LimitedSampleSelector&& other) {
-    SDB_ASSERT(_heap.Capacity() == other._heap.Capacity());
-    _heap.Merge(std::move(other._heap));
   }
 
   void MergeUnsafe(LimitedSampleSelector&& other) {
@@ -85,36 +77,31 @@ class LimitedSampleSelector : private util::Noncopyable {
     _heap.PushUnsafe(std::move(other._heap));
   }
 
-  // Finish collecting: assign stat offsets to the surviving (scored) terms and
-  // evaluate their shared stats. Term/field statistics are accumulated into the
-  // caller-owned collectors.
   void score(const Scorer* scorer, const FieldCollector& field,
-             std::vector<TermCollector>& terms, ManagedVector<bstring>& stats) {
+             StatsArena& arena) {
     if (!_heap.Capacity() || _heap.Empty()) {
       return;
     }
     SDB_ASSERT(scorer);
-    // distinct term value -> stat offset shared across segments
-    sdb::containers::FlatHashMap<hashed_bytes_view, uint32_t, HashedStrHash>
-      offsets;
+    struct Slot {
+      TermCollector counter;
+      byte_type* stats = nullptr;
+    };
+    sdb::containers::FlatHashMap<hashed_bytes_view, Slot, HashedStrHash> terms;
 
     for (auto& candidate : _heap.Finalize()) {
-      auto& terms_states = candidate.state->Terms();
-      auto& entry = terms_states[candidate.offset];
+      auto& entry = candidate.state->Terms()[candidate.offset];
       auto [it, inserted] =
-        offsets.try_emplace(hashed_bytes_view{candidate.term}, uint32_t{0});
+        terms.try_emplace(hashed_bytes_view{candidate.term});
       if (inserted) {
-        it->second = static_cast<uint32_t>(terms.size());
-        terms.emplace_back();
+        it->second.stats = arena.Allocate(StatsSlot(scorer));
       }
-      const uint32_t idx = it->second;
-      terms[idx].Collect(entry.cookie);
-      entry.stat_offset = idx;
+      it->second.counter.Collect(entry.cookie);
+      entry.stats = it->second.stats;
     }
 
-    stats.resize(terms.size());
-    for (const auto& [term, idx] : offsets) {
-      FillStats(stats[idx], scorer, &field, &terms[idx]);
+    for (auto& [term, slot] : terms) {
+      scorer->collect(slot.stats, &field, &slot.counter);
     }
   }
 
@@ -148,8 +135,6 @@ struct TermFrequency {
   }
 };
 
-// Filter visitor for multiterm queries sampled into a LimitedSampleSelector.
-// The Key type (TermFrequency, ...) selects the sampling order.
 template<typename Key>
 class SampledMultiTermVisitor {
  public:
@@ -157,7 +142,7 @@ class SampledMultiTermVisitor {
                           MultiTermState& state)
     : _collector{collector}, _state{state} {}
 
-  void Prepare(const SubReader& /*segment*/, const TermReader& reader,
+  void Prepare(const SubReader&, const TermReader& reader,
                TermIterator& terms) {
     _state.Prepare(&reader);
 
@@ -165,7 +150,6 @@ class SampledMultiTermVisitor {
     _offset = 0;
   }
 
-  // FIXME can incorporate boost into collecting logic
   bool Visit(score_t boost) {
     SDB_ASSERT(_terms);
     const auto& meta = _terms->cookie();
@@ -187,42 +171,45 @@ class SampledMultiTermVisitor {
   uint32_t _offset = 0;
 };
 
-// Per-segment collector for limited-sample (top-K) filters. Owns the field
-// collector and the limited sample collector; the per-term collector is built
-// in place at Finish, since the number of distinct winners is only known after
-// all segments are merged.
 class LimitedTermsCollector final : public FieldPrepareCollector {
  public:
-  LimitedTermsCollector(const Scorer* scorer, size_t scored_terms_limit)
-    : FieldPrepareCollector{scorer},
-      _limited{scorer ? scored_terms_limit : 0} {}
+  LimitedTermsCollector(const Scorer* scorer, size_t scored_terms_limit,
+                        StatsArena& stats, uint32_t threads)
+    : FieldPrepareCollector{scorer, stats, threads, 0, false},
+      _limit{scorer ? scored_terms_limit : 0},
+      _limited(threads) {}
 
-  FieldCollector& Field() noexcept { return _field; }
-  LimitedSampleSelector<TermFrequency>& Limited() noexcept { return _limited; }
-
-  void Merge(PrepareCollector&& other) final {
-    auto& rhs = sdb::basics::downCast<LimitedTermsCollector>(other);
-    _limited.Merge(std::move(rhs._limited));
-    FieldPrepareCollector::Merge(std::move(rhs));
+  LimitedSampleSelector<TermFrequency>& Limited(uint32_t thread) {
+    SDB_ASSERT(thread < _limited.size());
+    auto& sampler = _limited[thread];
+    if (!sampler) {
+      sampler = std::make_unique<LimitedSampleSelector<TermFrequency>>(_limit);
+    }
+    return *sampler;
   }
 
-  void MergeAll(MergeVisitor visit) final {
-    visit([this](PrepareCollector& other) {
-      auto& rhs = sdb::basics::downCast<LimitedTermsCollector>(other);
-      FieldCollector::Merge(_field, rhs._field);
-      _limited.MergeUnsafe(std::move(rhs._limited));
-    });
-  }
-
-  StatsBuffer Finish(IResourceManager& memory) final {
-    StatsBuffer::Storage stats{{memory}};
-    std::vector<TermCollector> terms;
-    _limited.score(_scorer, _field, terms, stats);
-    return StatsBuffer{std::move(stats), _scorer};
+  void Finish(StatsArena& stats) final {
+    LimitedSampleSelector<TermFrequency>* head = nullptr;
+    for (auto& sampler : _limited) {
+      if (!sampler) {
+        continue;
+      }
+      if (head == nullptr) {
+        head = sampler.get();
+        continue;
+      }
+      head->MergeUnsafe(std::move(*sampler));
+    }
+    if (head == nullptr) {
+      return;
+    }
+    const auto field = _counters.TotalField();
+    head->score(_scorer, field, stats);
   }
 
  private:
-  LimitedSampleSelector<TermFrequency> _limited;
+  size_t _limit;
+  std::vector<std::unique_ptr<LimitedSampleSelector<TermFrequency>>> _limited;
 };
 
 }  // namespace irs

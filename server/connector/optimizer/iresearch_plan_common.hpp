@@ -26,6 +26,7 @@
 #include <duckdb/planner/operator/logical_get.hpp>
 #include <memory>
 #include <optional>
+#include <span>
 #include <string_view>
 #include <utility>
 #include <vector>
@@ -91,7 +92,8 @@ duckdb::idx_t AppendVirtualGetColumn(connector::SereneDBScanBindData& bind_data,
                                      std::string_view col_name);
 
 bool TryClaimIResearchConjunct(
-  irs::And& and_root, const duckdb::unique_ptr<duckdb::Expression>& conjunct,
+  irs::BooleanFilter& root,
+  const duckdb::unique_ptr<duckdb::Expression>& conjunct,
   const connector::ColumnGetter& getter,
   const connector::ExpressionGetter& expr_getter,
   duckdb::ClientContext& context, connector::FilterScorers* scorers = nullptr);
@@ -119,7 +121,7 @@ struct SearchGetters {
 
 bool WithSearchGetters(duckdb::LogicalGet& get,
                        connector::SereneDBScanBindData& bind_data,
-                       const catalog::InvertedIndex& index,
+                       std::span<const catalog::InvertedIndex* const> indexes,
                        duckdb::ClientContext& context,
                        absl::FunctionRef<bool(const SearchGetters&)> fn);
 

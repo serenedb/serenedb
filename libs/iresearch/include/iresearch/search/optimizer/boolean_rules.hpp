@@ -20,14 +20,25 @@
 
 #pragma once
 
+#include "iresearch/search/boolean_filter.hpp"
 #include "iresearch/search/filter_optimizer.hpp"
 
 namespace irs::optimizer {
 
-void InitBooleanRules();
+void InitBooleanNormalizeTerms();
+void InitBooleanMinShouldMatch();
+void InitBooleanAbsorb();
+void InitBooleanDedup();
+void InitBooleanNullMarker();
+void InitBooleanFlatten();
+void InitBooleanSingleClause();
+
+void InitOrAcceptorFusion();
 
 size_t AcceptorRank(const Filter& filter) noexcept;
 
-void FuseIntersections(Filter::ptr& root, const OptimizeContext& ctx);
+bool NormalizeTerms(BooleanFilter& node);
+
+void FuseConjunctions(Filter::ptr& root, const OptimizeContext& ctx);
 
 }  // namespace irs::optimizer

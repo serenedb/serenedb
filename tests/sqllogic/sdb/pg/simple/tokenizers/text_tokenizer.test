@@ -1295,7 +1295,7 @@ ts_lexize
 {quick,brown,fox,jump}
 
 
-# --- Ngram then norm (lowercasing ngrams) ---
+# --- NGram then norm (lowercasing ngrams) ---
 statement ok
 CREATE TEXT SEARCH DICTIONARY pipe_ngram_norm(
     template = 'pipeline',

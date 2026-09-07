@@ -98,19 +98,17 @@ void ValidateTerms(
 
     ASSERT_NE(expected_terms.end(), itr);
 
-    for (auto docs_itr = segment.mask(term_itr->postings(index_features));
-         !irs::doc_limits::eof(docs_itr->advance());) {
-      ASSERT_EQ(1, itr->second.erase(docs_itr->value()));
+    for (auto docs_itr =
+           tests::MaskPostings(segment, term_itr->postings(index_features));
+         !irs::doc_limits::eof(docs_itr->Advance());) {
+      ASSERT_EQ(1, itr->second.erase(docs_itr->Value()));
 
       if (frequency) {
-        const auto* freq_block = irs::get<irs::FreqBlockAttr>(*docs_itr);
-        ASSERT_TRUE(freq_block);
-        docs_itr->FetchScoreArgs(0);
-        ASSERT_EQ(*frequency, freq_block->value[0]);
+        ASSERT_EQ(*frequency, docs_itr->GetFreq());
       }
 
       if (position) {
-        auto* docs_itr_pos = irs::GetMutable<irs::PosAttr>(docs_itr.get());
+        auto* docs_itr_pos = docs_itr->Positions();
         ASSERT_TRUE(docs_itr_pos);
 
         for (auto pos : *position) {
@@ -2170,8 +2168,8 @@ TEST_P(MergeWriterTestCase, test_merge_writer_columns_remove) {
       // Use docs_iterator() to confirm only one local doc id is live.
       std::vector<irs::doc_id_t> live;
       for (auto it = segment.docs_iterator();
-           !irs::doc_limits::eof(it->advance());) {
-        live.push_back(it->value());
+           !irs::doc_limits::eof(it->Advance());) {
+        live.push_back(it->Value());
       }
       ASSERT_EQ(1u, live.size());
       const auto live_doc = live.front();

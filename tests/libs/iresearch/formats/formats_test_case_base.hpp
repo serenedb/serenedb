@@ -28,9 +28,86 @@
 
 #include "index/index_tests.hpp"
 #include "iresearch/analysis/token_attributes.hpp"
+#include "iresearch/formats/formats.hpp"
 #include "iresearch/index/field_meta.hpp"
+#include "iresearch/search/common/posting_pos.hpp"
+#include "iresearch/search/common/resolve.hpp"
+#include "iresearch/search/lead/node.hpp"
+#include "iresearch/search/lead/posting_docs.hpp"
 
 namespace tests {
+
+class SeekPostings : public irs::lead::Node {
+ public:
+  using ptr = irs::memory::managed_ptr<SeekPostings>;
+
+  virtual irs::PosAttr* Positions() noexcept = 0;
+
+  virtual uint32_t GetFreq() noexcept = 0;
+};
+
+template<typename Leaf>
+class SeekPostingsImpl : public SeekPostings {
+ public:
+  template<typename... Args>
+  explicit SeekPostingsImpl(Args&&... args) {
+    _leaf.Prepare(std::forward<Args>(args)...);
+  }
+
+  irs::doc_id_t Advance() final { return _doc = _leaf.Advance(); }
+
+  irs::doc_id_t Seek(irs::doc_id_t target) final {
+    return _doc = _leaf.Seek(target);
+  }
+
+  irs::PosAttr* Positions() noexcept final {
+    if constexpr (kPositions) {
+      return &_leaf.Positions();
+    } else {
+      return nullptr;
+    }
+  }
+
+  uint32_t GetFreq() noexcept final {
+    if constexpr (kPositions) {
+      return _leaf.Positions().DocFreq();
+    } else {
+      return 0;
+    }
+  }
+
+ private:
+  static constexpr bool kPositions = requires(Leaf& leaf) { leaf.Positions(); };
+
+  Leaf _leaf;
+};
+
+inline SeekPostings::ptr MakeSeekPostings(const irs::PostingMeta& meta,
+                                          const irs::PostingsHandles& handles,
+                                          irs::IndexFeatures layout,
+                                          irs::IndexFeatures required,
+                                          bool has_score_bounds) {
+  return irs::search::ResolveInput(
+    *handles.doc, [&]<typename Input> -> SeekPostings::ptr {
+      if (irs::IndexFeatures::None == (required & irs::IndexFeatures::Pos)) {
+        return irs::memory::make_managed<
+          SeekPostingsImpl<irs::search::PostingLead<Input>>>(
+          meta, *handles.doc, layout, has_score_bounds);
+      }
+      return irs::search::ResolveBounds(
+        has_score_bounds, [&]<bool Bounds> -> SeekPostings::ptr {
+          if (irs::IndexFeatures::None !=
+              (required & irs::IndexFeatures::Offs)) {
+            return irs::memory::make_managed<
+              SeekPostingsImpl<irs::search::PostingPos<Input, Bounds, true>>>(
+              meta, *handles.doc, layout, *handles.pos, handles.pay);
+          }
+          return irs::memory::make_managed<
+            SeekPostingsImpl<irs::search::PostingPos<Input, Bounds, false>>>(
+            meta, *handles.doc, layout, *handles.pos, handles.pay);
+        });
+    });
+}
 
 class MockTermReader final : public irs::BasicTermReader {
  public:
@@ -112,28 +189,21 @@ class FormatTestCase : public IndexTestBase {
     char _pay_data[21];  // enough to hold numbers up to max of uint64_t
   };
 
-  class TestPostings : public irs::DocIterator {
+  class TestPostings : public irs::TermPostings {
    public:
     // DocId + Freq
     using docs_t = std::span<const std::pair<irs::doc_id_t, uint32_t>>;
 
     TestPostings(std::span<const std::pair<irs::doc_id_t, uint32_t>> docs,
                  irs::IndexFeatures features = irs::IndexFeatures::None)
-      : _next(std::begin(docs)), _end(std::end(docs)), _pos(features) {
-      _attrs[irs::Type<irs::AttrProviderChangeAttr>::id()] = &_callback;
-      if (irs::IndexFeatures::None != (features & irs::IndexFeatures::Freq)) {
-        _attrs[irs::Type<irs::FreqBlockAttr>::id()] = &_freq_block;
-        if (irs::IndexFeatures::None != (features & irs::IndexFeatures::Pos)) {
-          _attrs[irs::Type<irs::PosAttr>::id()] = &_pos;
-        }
-      }
-    }
+      : _next(std::begin(docs)),
+        _end(std::end(docs)),
+        _pos(features),
+        _has_pos{
+          irs::IndexFeatures::None != (features & irs::IndexFeatures::Freq) &&
+          irs::IndexFeatures::None != (features & irs::IndexFeatures::Pos)} {}
 
-    irs::doc_id_t advance() final {
-      if (!irs::doc_limits::valid(_doc)) {
-        _callback(*this);
-      }
-
+    irs::doc_id_t Advance() final {
       if (_next == _end) {
         return _doc = irs::doc_limits::eof();
       }
@@ -150,28 +220,25 @@ class FormatTestCase : public IndexTestBase {
       return _doc;
     }
 
-    irs::doc_id_t seek(irs::doc_id_t target) final {
-      irs::seek(*this, target);
-      return value();
+    irs::doc_id_t SeekTo(irs::doc_id_t target) {
+      while (_doc < target) {
+        Advance();
+      }
+      return _doc;
     }
 
     uint32_t GetFreq() const final { return _freq; }
 
-    irs::Attribute* GetMutable(irs::TypeInfo::type_id type) noexcept final {
-      const auto it = _attrs.find(type);
-      return it == _attrs.end() ? nullptr : it->second;
+    irs::PosAttr* Positions() noexcept final {
+      return _has_pos ? &_pos : nullptr;
     }
 
-    IRS_DOC_ITERATOR_DEFAULTS
-
    private:
-    std::map<irs::TypeInfo::type_id, irs::Attribute*> _attrs;
     docs_t::iterator _next;
     docs_t::iterator _end;
     uint32_t _freq = 0;
-    irs::FreqBlockAttr _freq_block{.value = &_freq};
-    irs::AttrProviderChangeAttr _callback;
     FormatTestCase::Position _pos;
+    bool _has_pos;
   };
 
   bool supports_encryption() const noexcept { return true; }
@@ -210,7 +277,7 @@ class FormatTestCase : public IndexTestBase {
     // the same too.
     const irs::PostingMeta& cookie() const noexcept final { return _meta; }
 
-    irs::DocIterator::ptr postings(
+    irs::TermPostings::ptr postings(
       irs::IndexFeatures /*features*/) const final {
       return irs::memory::make_managed<FormatTestCase::TestPostings>(_docs);
     }
@@ -227,8 +294,51 @@ class FormatTestCase : public IndexTestBase {
     It _end;
   };
 
-  void AssertFrequencyAndPositions(irs::DocIterator& expected,
-                                   irs::DocIterator& actual);
+  template<typename Actual>
+  void AssertFrequencyAndPositions(TestPostings& expected, Actual& actual,
+                                   irs::IndexFeatures features) {
+    if (irs::doc_limits::eof(expected.Value())) {
+      ASSERT_TRUE(irs::doc_limits::eof(actual.Value()));
+      return;
+    }
+
+    ASSERT_EQ(expected.Value(), actual.Value());
+
+    auto* expected_pos = expected.Positions();
+    auto* actual_pos = actual.Positions();
+    ASSERT_EQ(irs::IndexFeatures::None != (features & irs::IndexFeatures::Pos),
+              actual_pos != nullptr);
+    ASSERT_EQ(!expected_pos, !actual_pos);
+
+    if (!expected_pos) {
+      return;
+    }
+
+    ASSERT_EQ(expected.GetFreq(), actual.GetFreq());
+
+    auto* expected_offset = irs::get<irs::OffsAttr>(*expected_pos);
+    auto* actual_offset = irs::get<irs::OffsAttr>(*actual_pos);
+    ASSERT_EQ(!expected_offset, !actual_offset);
+
+    auto* expected_payload = irs::get<irs::PayAttr>(*expected_pos);
+    auto* actual_payload = irs::get<irs::PayAttr>(*actual_pos);
+    ASSERT_EQ(!expected_payload, !actual_payload);
+
+    for (; expected_pos->next();) {
+      ASSERT_TRUE(actual_pos->next());
+      ASSERT_EQ(expected_pos->value(), actual_pos->value());
+
+      if (expected_offset) {
+        ASSERT_EQ(expected_offset->start, actual_offset->start);
+        ASSERT_EQ(expected_offset->end, actual_offset->end);
+      }
+
+      if (expected_payload) {
+        ASSERT_EQ(expected_payload->value, actual_payload->value);
+      }
+    }
+    ASSERT_FALSE(actual_pos->next());
+  }
 
   void AssertNoDirectoryArtifacts(
     const irs::Directory& dir, const irs::Format& codec,

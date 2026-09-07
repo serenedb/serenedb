@@ -29,7 +29,7 @@
 #include "iresearch/search/regexp_filter.hpp"
 #include "iresearch/search/term_filter.hpp"
 #include "iresearch/search/term_predicate.hpp"
-#include "iresearch/search/terms_filter.hpp"
+#include "iresearch/search/term_set.hpp"
 #include "iresearch/search/wildcard_filter.hpp"
 #include "iresearch/utils/automaton_utils.hpp"
 #include "iresearch/utils/regexp_utils.hpp"
@@ -45,6 +45,20 @@ bool Accepts(const irs::TermPredicate& pred, std::string_view term) {
   return pred.Accepts(B(term));
 }
 
+irs::TermClause Term(std::string_view term) {
+  return irs::TermClause{.term = irs::bstring{B(term)}};
+}
+
+irs::Filter::ptr Prefix(std::string_view term) {
+  auto f = std::make_unique<irs::ByPrefix>();
+  f->mutable_options()->term = irs::bstring{B(term)};
+  return f;
+}
+
+irs::Filter::ptr NotCompilable() {
+  return std::make_unique<irs::AutomatonFilter>();
+}
+
 TEST(term_predicate_test, by_term) {
   irs::ByTerm f;
   f.mutable_options()->term = irs::bstring{B("abc")};
@@ -57,10 +71,11 @@ TEST(term_predicate_test, by_term) {
   EXPECT_FALSE(Accepts(*pred, ""));
 }
 
-TEST(term_predicate_test, by_terms) {
-  irs::ByTerms f;
-  f.mutable_options()->terms.emplace(B("abc"));
-  f.mutable_options()->terms.emplace(B("xyz"));
+TEST(term_predicate_test, should_terms) {
+  irs::BooleanFilter f;
+  f.Add(Term("abc"), irs::Occur::Should);
+  f.Add(Term("xyz"), irs::Occur::Should);
+  f.SetMinShouldMatch(1);
 
   const auto pred = f.CompileTermPredicate();
   ASSERT_NE(nullptr, pred);
@@ -71,13 +86,18 @@ TEST(term_predicate_test, by_terms) {
   EXPECT_FALSE(Accepts(*pred, ""));
 }
 
-TEST(term_predicate_test, by_terms_min_match_not_compilable) {
-  irs::ByTerms f;
-  f.mutable_options()->terms.emplace(B("abc"));
-  f.mutable_options()->terms.emplace(B("xyz"));
-  f.mutable_options()->min_match = 2;
+TEST(term_predicate_test, should_terms_min_match_accepts_nothing) {
+  irs::BooleanFilter f;
+  f.Add(Term("abc"), irs::Occur::Should);
+  f.Add(Term("xyz"), irs::Occur::Should);
+  f.SetMinShouldMatch(2);
 
-  ASSERT_EQ(nullptr, f.CompileTermPredicate());
+  const auto pred = f.CompileTermPredicate();
+  ASSERT_NE(nullptr, pred);
+  EXPECT_FALSE(Accepts(*pred, "abc"));
+  EXPECT_FALSE(Accepts(*pred, "xyz"));
+  EXPECT_FALSE(Accepts(*pred, "abd"));
+  EXPECT_FALSE(Accepts(*pred, ""));
 }
 
 TEST(term_predicate_test, by_prefix) {
@@ -156,8 +176,8 @@ TEST(term_predicate_test, automaton_without_compiled_not_compilable) {
 }
 
 TEST(term_predicate_test, not_negates) {
-  irs::Not f;
-  f.filter<irs::ByTerm>().mutable_options()->term = irs::bstring{B("abc")};
+  irs::BooleanFilter f;
+  f.Add(Term("abc"), irs::Occur::MustNot);
 
   const auto pred = f.CompileTermPredicate();
   ASSERT_NE(nullptr, pred);
@@ -165,16 +185,15 @@ TEST(term_predicate_test, not_negates) {
   EXPECT_TRUE(Accepts(*pred, "abd"));
 }
 
-TEST(term_predicate_test, empty_not_not_compilable) {
-  irs::Not f;
+TEST(term_predicate_test, empty_boolean_not_compilable) {
+  irs::BooleanFilter f;
   ASSERT_EQ(nullptr, f.CompileTermPredicate());
 }
 
 TEST(term_predicate_test, and_conjunction) {
-  irs::And f;
-  f.add<irs::ByPrefix>().mutable_options()->term = irs::bstring{B("ab")};
-  f.add<irs::Not>().filter<irs::ByTerm>().mutable_options()->term =
-    irs::bstring{B("abc")};
+  irs::BooleanFilter f;
+  f.Add(Prefix("ab"), irs::Occur::Must);
+  f.Add(Term("abc"), irs::Occur::MustNot);
 
   const auto pred = f.CompileTermPredicate();
   ASSERT_NE(nullptr, pred);
@@ -184,15 +203,11 @@ TEST(term_predicate_test, and_conjunction) {
   EXPECT_FALSE(Accepts(*pred, "xyz"));
 }
 
-TEST(term_predicate_test, empty_and_not_compilable) {
-  irs::And f;
-  ASSERT_EQ(nullptr, f.CompileTermPredicate());
-}
-
 TEST(term_predicate_test, or_disjunction) {
-  irs::Or f;
-  f.add<irs::ByTerm>().mutable_options()->term = irs::bstring{B("xyz")};
-  f.add<irs::ByPrefix>().mutable_options()->term = irs::bstring{B("ab")};
+  irs::BooleanFilter f;
+  f.Add(Term("xyz"), irs::Occur::Should);
+  f.Add(Prefix("ab"), irs::Occur::Should);
+  f.SetMinShouldMatch(1);
 
   const auto pred = f.CompileTermPredicate();
   ASSERT_NE(nullptr, pred);
@@ -202,11 +217,11 @@ TEST(term_predicate_test, or_disjunction) {
 }
 
 TEST(term_predicate_test, or_min_match_counts) {
-  irs::Or f;
-  f.min_match_count(2);
-  f.add<irs::ByTerm>().mutable_options()->term = irs::bstring{B("a")};
-  f.add<irs::ByTerm>().mutable_options()->term = irs::bstring{B("b")};
-  f.add<irs::ByPrefix>().mutable_options()->term = irs::bstring{B("a")};
+  irs::BooleanFilter f;
+  f.Add(Term("a"), irs::Occur::Should);
+  f.Add(Term("b"), irs::Occur::Should);
+  f.Add(Prefix("a"), irs::Occur::Should);
+  f.SetMinShouldMatch(2);
 
   const auto pred = f.CompileTermPredicate();
   ASSERT_NE(nullptr, pred);
@@ -215,45 +230,43 @@ TEST(term_predicate_test, or_min_match_counts) {
   EXPECT_FALSE(Accepts(*pred, "ab"));
 }
 
-TEST(term_predicate_test, or_min_match_exceeds_size_not_compilable) {
-  irs::Or f;
-  f.min_match_count(3);
-  f.add<irs::ByTerm>().mutable_options()->term = irs::bstring{B("a")};
-  f.add<irs::ByTerm>().mutable_options()->term = irs::bstring{B("b")};
+TEST(term_predicate_test, should_without_min_match_not_compilable) {
+  irs::BooleanFilter f;
+  f.Add(Prefix("a"), irs::Occur::Must);
+  f.Add(Term("a"), irs::Occur::Should);
+  f.Add(Term("b"), irs::Occur::Should);
 
   ASSERT_EQ(nullptr, f.CompileTermPredicate());
 }
 
 TEST(term_predicate_test, non_acceptor_leaf_poisons_tree) {
-  const auto poison = [](auto& filter) {
-    auto& terms = filter.template add<irs::ByTerms>();
-    terms.mutable_options()->terms.emplace(B("abc"));
-    terms.mutable_options()->min_match = 2;
-  };
-
-  irs::And f;
-  f.add<irs::ByPrefix>().mutable_options()->term = irs::bstring{B("ab")};
-  poison(f);
-  ASSERT_EQ(nullptr, f.CompileTermPredicate());
-
-  irs::Or o;
-  o.add<irs::ByPrefix>().mutable_options()->term = irs::bstring{B("ab")};
-  poison(o);
-  ASSERT_EQ(nullptr, o.CompileTermPredicate());
+  {
+    irs::BooleanFilter f;
+    f.Add(Prefix("ab"), irs::Occur::Must);
+    f.Add(NotCompilable(), irs::Occur::Must);
+    ASSERT_EQ(nullptr, f.CompileTermPredicate());
+  }
+  {
+    irs::BooleanFilter f;
+    f.Add(Prefix("ab"), irs::Occur::Should);
+    f.Add(NotCompilable(), irs::Occur::Should);
+    f.SetMinShouldMatch(1);
+    ASSERT_EQ(nullptr, f.CompileTermPredicate());
+  }
 }
 
 TEST(term_predicate_test, all_is_neutral_in_conjunction) {
-  irs::And f;
-  f.add<irs::ByPrefix>().mutable_options()->term = irs::bstring{B("ab")};
-  f.add<irs::All>();
+  irs::BooleanFilter f;
+  f.Add(Prefix("ab"), irs::Occur::Must);
+  f.Add(std::make_unique<irs::All>(), irs::Occur::Must);
 
   const auto pred = f.CompileTermPredicate();
   ASSERT_NE(nullptr, pred);
   EXPECT_TRUE(Accepts(*pred, "abc"));
   EXPECT_FALSE(Accepts(*pred, "xyz"));
 
-  irs::Not n;
-  n.filter<irs::All>();
+  irs::BooleanFilter n;
+  n.Add(std::make_unique<irs::All>(), irs::Occur::MustNot);
   const auto none = n.CompileTermPredicate();
   ASSERT_NE(nullptr, none);
   EXPECT_FALSE(Accepts(*none, "anything"));
@@ -323,9 +336,9 @@ TEST(term_predicate_test, all_and_empty) {
 }
 
 TEST(term_predicate_test, exclusion) {
-  irs::Exclusion f;
-  f.include<irs::ByPrefix>().mutable_options()->term = irs::bstring{B("ab")};
-  f.exclude<irs::ByTerm>().mutable_options()->term = irs::bstring{B("abc")};
+  irs::BooleanFilter f;
+  f.Add(Prefix("ab"), irs::Occur::Must);
+  f.Add(Term("abc"), irs::Occur::MustNot);
 
   const auto pred = f.CompileTermPredicate();
   ASSERT_NE(nullptr, pred);
@@ -336,33 +349,37 @@ TEST(term_predicate_test, exclusion) {
 }
 
 TEST(term_predicate_test, exclusion_without_include_is_negation) {
-  irs::Exclusion f;
-  f.exclude<irs::ByTerm>().mutable_options()->term = irs::bstring{B("abc")};
+  irs::BooleanFilter f;
+  f.Add(Prefix("ab"), irs::Occur::MustNot);
 
   const auto pred = f.CompileTermPredicate();
   ASSERT_NE(nullptr, pred);
+  EXPECT_FALSE(Accepts(*pred, "ab"));
   EXPECT_FALSE(Accepts(*pred, "abc"));
-  EXPECT_TRUE(Accepts(*pred, "abd"));
+  EXPECT_TRUE(Accepts(*pred, "a"));
+  EXPECT_TRUE(Accepts(*pred, "xyz"));
 }
 
 TEST(term_predicate_test, exclusion_with_non_compilable_exclude) {
-  irs::Exclusion f;
-  f.include<irs::ByPrefix>().mutable_options()->term = irs::bstring{B("ab")};
-  auto& terms = f.exclude<irs::ByTerms>();
-  terms.mutable_options()->terms.emplace(B("abc"));
-  terms.mutable_options()->min_match = 2;
+  irs::BooleanFilter f;
+  f.Add(Prefix("ab"), irs::Occur::Must);
+  f.Add(NotCompilable(), irs::Occur::MustNot);
 
   ASSERT_EQ(nullptr, f.CompileTermPredicate());
 }
 
 TEST(term_predicate_test, nested_tree) {
-  irs::And f;
-  f.add<irs::ByPrefix>().mutable_options()->term = irs::bstring{B("a")};
-  auto& inner = f.add<irs::Or>();
-  inner.add<irs::ByTerm>().mutable_options()->term = irs::bstring{B("ab")};
-  auto& range = inner.add<irs::ByRange>();
-  range.mutable_options()->range.min = irs::bstring{B("ax")};
-  range.mutable_options()->range.min_type = irs::BoundType::Inclusive;
+  auto inner = std::make_unique<irs::BooleanFilter>();
+  inner->Add(Term("ab"), irs::Occur::Should);
+  auto range = std::make_unique<irs::ByRange>();
+  range->mutable_options()->range.min = irs::bstring{B("ax")};
+  range->mutable_options()->range.min_type = irs::BoundType::Inclusive;
+  inner->Add(std::move(range), irs::Occur::Should);
+  inner->SetMinShouldMatch(1);
+
+  irs::BooleanFilter f;
+  f.Add(Prefix("a"), irs::Occur::Must);
+  f.Add(std::move(inner), irs::Occur::Must);
 
   const auto pred = f.CompileTermPredicate();
   ASSERT_NE(nullptr, pred);

@@ -24,6 +24,7 @@
 
 #include "basics/resource_manager.hpp"
 #include "iresearch/formats/posting_meta.hpp"
+#include "iresearch/search/common/resolve.hpp"
 #include "iresearch/search/states/term_state.hpp"
 #include "iresearch/types.hpp"
 
@@ -31,41 +32,40 @@ namespace irs {
 
 struct TermReader;
 
-// Cached per reader fixed phrase state
 struct FixedPhraseState {
   explicit FixedPhraseState(IResourceManager& memory) noexcept
-    : terms{{memory}} {}
+    : terms{{memory}}, metas{{memory}} {}
 
-  // Mimic std::pair interface
   struct TermState {
-    TermState(const PostingMeta& first, score_t /*second*/) noexcept
-      : first{first} {}
+    TermState(const PostingMeta& first, score_t) noexcept : first{first} {}
 
     PostingMeta first;
   };
 
   using Terms = ManagedVector<TermState>;
   Terms terms;
+  ManagedVector<const PostingMeta*> metas;
   const TermReader* reader{};
+  search::PhraseHandles handles;
 };
 
 static_assert(std::is_nothrow_move_constructible_v<FixedPhraseState>);
 static_assert(std::is_nothrow_move_assignable_v<FixedPhraseState>);
 
-// Cached per reader variadic phrase state
 struct VariadicPhraseState {
   explicit VariadicPhraseState(IResourceManager& memory) noexcept
-    : num_terms{{memory}}, terms{{memory}} {}
+    : num_terms{{memory}}, terms{{memory}}, metas{{memory}}, boosts{{memory}} {}
 
   using TermState = std::pair<PostingMeta, score_t>;
 
-  ManagedVector<size_t> num_terms;  // number of terms per phrase part
-  // Per-slot connectivity-component ids over query term sets (see
-  // ComputeTermGroups in phrase_filter.cpp). Empty on the slop == 0 paths.
+  ManagedVector<uint32_t> num_terms;
   ManagedVector<uint32_t> term_groups;
   using Terms = ManagedVector<TermState>;
   Terms terms;
+  ManagedVector<const PostingMeta*> metas;
+  ManagedVector<score_t> boosts;
   const TermReader* reader{};
+  search::PhraseHandles handles;
   bool volatile_boost{};
 };
 

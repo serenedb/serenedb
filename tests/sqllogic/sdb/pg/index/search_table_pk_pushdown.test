@@ -152,13 +152,17 @@ query
 EXPLAIN SELECT pk, x FROM te WHERE pk = 5;
 ----
 QUERY PLAN
-╭─ IRESEARCH_SCAN ─╮
-│ Index: te        │
-│ Lookup: search   │
-│ Projections: pk, │
-│              x   │
-│ ~2 rows          │
-╰──────────────────╯
+╭─ IRESEARCH_SCAN ───────╮
+│ Index: te              │
+│ Lookup: search         │
+│ Index Filter:          │
+│ ╭─ Term ─────────────╮ │
+│ │ Field: pk(numeric) │ │
+│ │ Value: 5           │ │
+│ ╰────────────────────╯ │
+│ Projections: pk, x     │
+│ ~2 rows                │
+╰────────────────────────╯
 
 query
 EXPLAIN SELECT pk, x FROM te WHERE x = 50;
@@ -196,28 +200,37 @@ query
 EXPLAIN SELECT a, b, s FROM tec WHERE a = 3 AND b = 300;
 ----
 QUERY PLAN
-╭─ IRESEARCH_SCAN ─╮
-│ Index: tec       │
-│ Lookup: search   │
-│ Projections: a,  │
-│              b,  │
-│              s   │
-│ ~2 rows          │
-╰──────────────────╯
+╭─ IRESEARCH_SCAN ─────────────────────────────╮
+│ Index: tec                                   │
+│ Lookup: search                               │
+│ Index Filter:                                │
+│ ╭─ And ─────────────╮                        │
+│ ╰─────────┬─────────╯                        │
+│           ├──────────────────────╮           │
+│ ╭─ Terms ─┴─────────╮  ╭─ Terms ─┴─────────╮ │
+│ │ Field: a(numeric) │  │ Field: b(numeric) │ │
+│ │ Values: 3         │  │ Values: 300       │ │
+│ ╰───────────────────╯  ╰───────────────────╯ │
+│ Projections: a, b, s                         │
+│ ~2 rows                                      │
+╰──────────────────────────────────────────────╯
 
 # Partial composite PK (leading column only): claimed -> no Column Filter.
 query
 EXPLAIN SELECT a, b, s FROM tec WHERE a = 3;
 ----
 QUERY PLAN
-╭─ IRESEARCH_SCAN ─╮
-│ Index: tec       │
-│ Lookup: search   │
-│ Projections: a,  │
-│              b,  │
-│              s   │
-│ ~2 rows          │
-╰──────────────────╯
+╭─ IRESEARCH_SCAN ──────╮
+│ Index: tec            │
+│ Lookup: search        │
+│ Index Filter:         │
+│ ╭─ Term ────────────╮ │
+│ │ Field: a(numeric) │ │
+│ │ Value: 3          │ │
+│ ╰───────────────────╯ │
+│ Projections: a, b, s  │
+│ ~2 rows               │
+╰───────────────────────╯
 
 # Mixed: key column a claimed as a term filter; non-key column s stays a
 # columnstore Column Filter (only s appears).
@@ -228,8 +241,13 @@ QUERY PLAN
 ╭─ IRESEARCH_SCAN ────────╮
 │ Index: tec              │
 │ Lookup: search          │
-│ Projections: a, b       │
+│ Index Filter:           │
+│ ╭─ Term ────────────╮   │
+│ │ Field: a(numeric) │   │
+│ │ Value: 3          │   │
+│ ╰───────────────────╯   │
 │ Column Filter: s = 't3' │
+│ Projections: a, b       │
 │ ~1 row                  │
 ╰─────────────────────────╯
 
@@ -247,14 +265,20 @@ query
 EXPLAIN SELECT a, b, s FROM tec WHERE a = 3 OR b = 300;
 ----
 QUERY PLAN
-╭─ IRESEARCH_SCAN ─╮
-│ Index: tec       │
-│ Lookup: search   │
-│ Projections: a,  │
-│              b,  │
-│              s   │
-│ ~2 rows          │
-╰──────────────────╯
+╭─ IRESEARCH_SCAN ─────────────────────────────╮
+│ Index: tec                                   │
+│ Lookup: search                               │
+│ Index Filter:                                │
+│ ╭─ Or ──────────────╮                        │
+│ ╰─────────┬─────────╯                        │
+│           ├──────────────────────╮           │
+│ ╭─ Terms ─┴─────────╮  ╭─ Terms ─┴─────────╮ │
+│ │ Field: a(numeric) │  │ Field: b(numeric) │ │
+│ │ Values: 3         │  │ Values: 300       │ │
+│ ╰───────────────────╯  ╰───────────────────╯ │
+│ Projections: a, b, s                         │
+│ ~2 rows                                      │
+╰──────────────────────────────────────────────╯
 
 # An OR mixing a key column with a non-key column cannot be split, so the whole
 # disjunction stays a FILTER over a full scan (nothing claimed).

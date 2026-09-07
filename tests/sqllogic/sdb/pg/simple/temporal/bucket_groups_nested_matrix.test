@@ -1,0 +1,290 @@
+statement ok
+SET TimeZone = 'Europe/Berlin';
+
+statement ok
+CREATE TABLE g AS SELECT TIMESTAMP '2024-12-28 00:00:00' + INTERVAL (i * 7) MINUTE AS ts, (TIMESTAMP '2024-12-28 00:00:00' + INTERVAL (i * 7) MINUTE)::TIMESTAMPTZ AS tstz, (DATE '2024-12-28' + (i % 300)::INTEGER)::DATE AS d, (i % 1000)::DOUBLE AS price, (i % 5)::SMALLINT AS sev, i AS v FROM range(50000) t(i);
+
+statement ok
+INSERT INTO g VALUES (NULL, NULL, NULL, NULL, NULL, -1);
+
+statement ok
+CREATE TABLE dst AS SELECT tstz, v FROM (SELECT TIMESTAMPTZ '2025-03-28 00:00:00+00' + INTERVAL (i * 41) MINUTE AS tstz, i AS v FROM range(0, 400) t(i) UNION ALL SELECT TIMESTAMPTZ '2025-10-24 00:00:00+00' + INTERVAL (i * 41) MINUTE, 1000 + i FROM range(0, 400) t(i) UNION ALL SELECT TIMESTAMPTZ '2025-11-01 12:00:00+00' + INTERVAL (i * 41) MINUTE, 2000 + i FROM range(0, 100) t(i));
+
+statement ok
+SET disabled_optimizers = 'compressed_materialization';
+
+statement ok
+CREATE TABLE ref_n AS
+SELECT 'g date_trunc(''day'', ts) vs date_trunc(''hour'', ts)' AS shape, k1::VARCHAR AS k1, k2::VARCHAR AS k2, c, s FROM (SELECT date_trunc('day', ts) AS k1, date_trunc('hour', ts) AS k2, count(*) AS c, sum(v) AS s FROM g GROUP BY 1, 2)
+UNION ALL SELECT 'g date_trunc(''hour'', ts) vs date_trunc(''day'', ts)' AS shape, k1::VARCHAR AS k1, k2::VARCHAR AS k2, c, s FROM (SELECT date_trunc('hour', ts) AS k1, date_trunc('day', ts) AS k2, count(*) AS c, sum(v) AS s FROM g GROUP BY 1, 2)
+UNION ALL SELECT 'g date_trunc(''month'', ts) vs date_trunc(''day'', ts)' AS shape, k1::VARCHAR AS k1, k2::VARCHAR AS k2, c, s FROM (SELECT date_trunc('month', ts) AS k1, date_trunc('day', ts) AS k2, count(*) AS c, sum(v) AS s FROM g GROUP BY 1, 2)
+UNION ALL SELECT 'g date_trunc(''month'', ts) vs date_trunc(''week'', ts)' AS shape, k1::VARCHAR AS k1, k2::VARCHAR AS k2, c, s FROM (SELECT date_trunc('month', ts) AS k1, date_trunc('week', ts) AS k2, count(*) AS c, sum(v) AS s FROM g GROUP BY 1, 2)
+UNION ALL SELECT 'g date_trunc(''week'', ts) vs date_trunc(''day'', ts)' AS shape, k1::VARCHAR AS k1, k2::VARCHAR AS k2, c, s FROM (SELECT date_trunc('week', ts) AS k1, date_trunc('day', ts) AS k2, count(*) AS c, sum(v) AS s FROM g GROUP BY 1, 2)
+UNION ALL SELECT 'g date_trunc(''year'', ts) vs date_trunc(''quarter'', ts)' AS shape, k1::VARCHAR AS k1, k2::VARCHAR AS k2, c, s FROM (SELECT date_trunc('year', ts) AS k1, date_trunc('quarter', ts) AS k2, count(*) AS c, sum(v) AS s FROM g GROUP BY 1, 2)
+UNION ALL SELECT 'g date_trunc(''quarter'', ts) vs date_trunc(''month'', ts)' AS shape, k1::VARCHAR AS k1, k2::VARCHAR AS k2, c, s FROM (SELECT date_trunc('quarter', ts) AS k1, date_trunc('month', ts) AS k2, count(*) AS c, sum(v) AS s FROM g GROUP BY 1, 2)
+UNION ALL SELECT 'g date_trunc(''decade'', ts) vs date_trunc(''year'', ts)' AS shape, k1::VARCHAR AS k1, k2::VARCHAR AS k2, c, s FROM (SELECT date_trunc('decade', ts) AS k1, date_trunc('year', ts) AS k2, count(*) AS c, sum(v) AS s FROM g GROUP BY 1, 2)
+UNION ALL SELECT 'g date_trunc(''century'', ts) vs date_trunc(''decade'', ts)' AS shape, k1::VARCHAR AS k1, k2::VARCHAR AS k2, c, s FROM (SELECT date_trunc('century', ts) AS k1, date_trunc('decade', ts) AS k2, count(*) AS c, sum(v) AS s FROM g GROUP BY 1, 2)
+UNION ALL SELECT 'g date_trunc(''day'', ts) vs time_bucket(INTERVAL ''6 hours'', ts)' AS shape, k1::VARCHAR AS k1, k2::VARCHAR AS k2, c, s FROM (SELECT date_trunc('day', ts) AS k1, time_bucket(INTERVAL '6 hours', ts) AS k2, count(*) AS c, sum(v) AS s FROM g GROUP BY 1, 2)
+UNION ALL SELECT 'g time_bucket(INTERVAL ''2 hours'', ts) vs date_trunc(''hour'', ts)' AS shape, k1::VARCHAR AS k1, k2::VARCHAR AS k2, c, s FROM (SELECT time_bucket(INTERVAL '2 hours', ts) AS k1, date_trunc('hour', ts) AS k2, count(*) AS c, sum(v) AS s FROM g GROUP BY 1, 2)
+UNION ALL SELECT 'g time_bucket(INTERVAL ''1 day'', ts) vs time_bucket(INTERVAL ''15 minutes'', ts)' AS shape, k1::VARCHAR AS k1, k2::VARCHAR AS k2, c, s FROM (SELECT time_bucket(INTERVAL '1 day', ts) AS k1, time_bucket(INTERVAL '15 minutes', ts) AS k2, count(*) AS c, sum(v) AS s FROM g GROUP BY 1, 2)
+UNION ALL SELECT 'g time_bucket(INTERVAL ''90 minutes'', ts) vs time_bucket(INTERVAL ''30 minutes'', ts)' AS shape, k1::VARCHAR AS k1, k2::VARCHAR AS k2, c, s FROM (SELECT time_bucket(INTERVAL '90 minutes', ts) AS k1, time_bucket(INTERVAL '30 minutes', ts) AS k2, count(*) AS c, sum(v) AS s FROM g GROUP BY 1, 2)
+UNION ALL SELECT 'g time_bucket(INTERVAL ''90 minutes'', ts) vs time_bucket(INTERVAL ''1 hour'', ts)' AS shape, k1::VARCHAR AS k1, k2::VARCHAR AS k2, c, s FROM (SELECT time_bucket(INTERVAL '90 minutes', ts) AS k1, time_bucket(INTERVAL '1 hour', ts) AS k2, count(*) AS c, sum(v) AS s FROM g GROUP BY 1, 2)
+UNION ALL SELECT 'g date_trunc(''day'', ts) vs strftime(ts, ''%Y-%m-%d %H'')' AS shape, k1::VARCHAR AS k1, k2::VARCHAR AS k2, c, s FROM (SELECT date_trunc('day', ts) AS k1, strftime(ts, '%Y-%m-%d %H') AS k2, count(*) AS c, sum(v) AS s FROM g GROUP BY 1, 2)
+UNION ALL SELECT 'g strftime(ts, ''%Y-%m'') vs date_trunc(''day'', ts)' AS shape, k1::VARCHAR AS k1, k2::VARCHAR AS k2, c, s FROM (SELECT strftime(ts, '%Y-%m') AS k1, date_trunc('day', ts) AS k2, count(*) AS c, sum(v) AS s FROM g GROUP BY 1, 2)
+UNION ALL SELECT 'g strftime(ts, ''%Y-%m-%d'') vs date_trunc(''hour'', ts)' AS shape, k1::VARCHAR AS k1, k2::VARCHAR AS k2, c, s FROM (SELECT strftime(ts, '%Y-%m-%d') AS k1, date_trunc('hour', ts) AS k2, count(*) AS c, sum(v) AS s FROM g GROUP BY 1, 2)
+UNION ALL SELECT 'g date_trunc(''day'', ts)::DATE vs date_trunc(''hour'', ts)' AS shape, k1::VARCHAR AS k1, k2::VARCHAR AS k2, c, s FROM (SELECT date_trunc('day', ts)::DATE AS k1, date_trunc('hour', ts) AS k2, count(*) AS c, sum(v) AS s FROM g GROUP BY 1, 2)
+UNION ALL SELECT 'g date_trunc(''week'', ts)::DATE vs date_trunc(''day'', ts)::DATE' AS shape, k1::VARCHAR AS k1, k2::VARCHAR AS k2, c, s FROM (SELECT date_trunc('week', ts)::DATE AS k1, date_trunc('day', ts)::DATE AS k2, count(*) AS c, sum(v) AS s FROM g GROUP BY 1, 2)
+UNION ALL SELECT 'g date_trunc(''day'', ts) + INTERVAL ''6 hours'' vs date_trunc(''hour'', ts)' AS shape, k1::VARCHAR AS k1, k2::VARCHAR AS k2, c, s FROM (SELECT date_trunc('day', ts) + INTERVAL '6 hours' AS k1, date_trunc('hour', ts) AS k2, count(*) AS c, sum(v) AS s FROM g GROUP BY 1, 2)
+UNION ALL SELECT 'g epoch_ms(date_trunc(''day'', ts)) vs date_trunc(''hour'', ts)' AS shape, k1::VARCHAR AS k1, k2::VARCHAR AS k2, c, s FROM (SELECT epoch_ms(date_trunc('day', ts)) AS k1, date_trunc('hour', ts) AS k2, count(*) AS c, sum(v) AS s FROM g GROUP BY 1, 2)
+UNION ALL SELECT 'g date_trunc(''day'', ts) vs date_trunc(''hour'', ts)::TIMESTAMP_MS' AS shape, k1::VARCHAR AS k1, k2::VARCHAR AS k2, c, s FROM (SELECT date_trunc('day', ts) AS k1, date_trunc('hour', ts)::TIMESTAMP_MS AS k2, count(*) AS c, sum(v) AS s FROM g GROUP BY 1, 2)
+UNION ALL SELECT 'g concat(year(ts), ''-Q'', quarter(ts)) vs date_trunc(''month'', ts)' AS shape, k1::VARCHAR AS k1, k2::VARCHAR AS k2, c, s FROM (SELECT concat(year(ts), '-Q', quarter(ts)) AS k1, date_trunc('month', ts) AS k2, count(*) AS c, sum(v) AS s FROM g GROUP BY 1, 2)
+UNION ALL SELECT 'g concat(year(ts), ''-Q'', quarter(ts)) vs strftime(ts, ''%Y-%m'')' AS shape, k1::VARCHAR AS k1, k2::VARCHAR AS k2, c, s FROM (SELECT concat(year(ts), '-Q', quarter(ts)) AS k1, strftime(ts, '%Y-%m') AS k2, count(*) AS c, sum(v) AS s FROM g GROUP BY 1, 2)
+UNION ALL SELECT 'g monthname(ts) vs date_trunc(''day'', ts)' AS shape, k1::VARCHAR AS k1, k2::VARCHAR AS k2, c, s FROM (SELECT monthname(ts) AS k1, date_trunc('day', ts) AS k2, count(*) AS c, sum(v) AS s FROM g GROUP BY 1, 2)
+UNION ALL SELECT 'g date_trunc(''day'', ts) vs sev' AS shape, k1::VARCHAR AS k1, k2::VARCHAR AS k2, c, s FROM (SELECT date_trunc('day', ts) AS k1, sev AS k2, count(*) AS c, sum(v) AS s FROM g GROUP BY 1, 2)
+UNION ALL SELECT 'g sev vs date_trunc(''hour'', ts)' AS shape, k1::VARCHAR AS k1, k2::VARCHAR AS k2, c, s FROM (SELECT sev AS k1, date_trunc('hour', ts) AS k2, count(*) AS c, sum(v) AS s FROM g GROUP BY 1, 2)
+UNION ALL SELECT 'g date_trunc(''day'', ts) vs floor(price / 100)' AS shape, k1::VARCHAR AS k1, k2::VARCHAR AS k2, c, s FROM (SELECT date_trunc('day', ts) AS k1, floor(price / 100) AS k2, count(*) AS c, sum(v) AS s FROM g GROUP BY 1, 2)
+UNION ALL SELECT 'g date_trunc(''day'', ts) vs date_trunc(''hour'', tstz)' AS shape, k1::VARCHAR AS k1, k2::VARCHAR AS k2, c, s FROM (SELECT date_trunc('day', ts) AS k1, date_trunc('hour', tstz) AS k2, count(*) AS c, sum(v) AS s FROM g GROUP BY 1, 2)
+UNION ALL SELECT 'g date_trunc(''day'', d) vs date_trunc(''month'', d)' AS shape, k1::VARCHAR AS k1, k2::VARCHAR AS k2, c, s FROM (SELECT date_trunc('day', d) AS k1, date_trunc('month', d) AS k2, count(*) AS c, sum(v) AS s FROM g GROUP BY 1, 2)
+UNION ALL SELECT 'g date_trunc(''month'', d) vs d' AS shape, k1::VARCHAR AS k1, k2::VARCHAR AS k2, c, s FROM (SELECT date_trunc('month', d) AS k1, d AS k2, count(*) AS c, sum(v) AS s FROM g GROUP BY 1, 2)
+UNION ALL SELECT 'g date_trunc(''day'', tstz) vs date_trunc(''hour'', tstz)' AS shape, k1::VARCHAR AS k1, k2::VARCHAR AS k2, c, s FROM (SELECT date_trunc('day', tstz) AS k1, date_trunc('hour', tstz) AS k2, count(*) AS c, sum(v) AS s FROM g GROUP BY 1, 2)
+UNION ALL SELECT 'g date_trunc(''month'', tstz) vs date_trunc(''day'', tstz)' AS shape, k1::VARCHAR AS k1, k2::VARCHAR AS k2, c, s FROM (SELECT date_trunc('month', tstz) AS k1, date_trunc('day', tstz) AS k2, count(*) AS c, sum(v) AS s FROM g GROUP BY 1, 2)
+UNION ALL SELECT 'g date_trunc(''month'', tstz)::DATE vs date_trunc(''hour'', tstz)' AS shape, k1::VARCHAR AS k1, k2::VARCHAR AS k2, c, s FROM (SELECT date_trunc('month', tstz)::DATE AS k1, date_trunc('hour', tstz) AS k2, count(*) AS c, sum(v) AS s FROM g GROUP BY 1, 2)
+UNION ALL SELECT 'g time_bucket(INTERVAL ''1 day'', tstz, ''Asia/Tokyo'') vs time_bucket(INTERVAL ''1 hour'', tstz, ''Asia/Tokyo'')' AS shape, k1::VARCHAR AS k1, k2::VARCHAR AS k2, c, s FROM (SELECT time_bucket(INTERVAL '1 day', tstz, 'Asia/Tokyo') AS k1, time_bucket(INTERVAL '1 hour', tstz, 'Asia/Tokyo') AS k2, count(*) AS c, sum(v) AS s FROM g GROUP BY 1, 2)
+UNION ALL SELECT 'g date_bin(INTERVAL ''1 day'', ts, TIMESTAMP ''2000-01-01'') vs date_bin(INTERVAL ''1 hour'', ts, TIMESTAMP ''2000-01-01'')' AS shape, k1::VARCHAR AS k1, k2::VARCHAR AS k2, c, s FROM (SELECT date_bin(INTERVAL '1 day', ts, TIMESTAMP '2000-01-01') AS k1, date_bin(INTERVAL '1 hour', ts, TIMESTAMP '2000-01-01') AS k2, count(*) AS c, sum(v) AS s FROM g GROUP BY 1, 2)
+UNION ALL SELECT 'g date_bin(INTERVAL ''1 day'', ts, TIMESTAMP ''2000-01-01 06:00'') vs date_trunc(''hour'', ts)' AS shape, k1::VARCHAR AS k1, k2::VARCHAR AS k2, c, s FROM (SELECT date_bin(INTERVAL '1 day', ts, TIMESTAMP '2000-01-01 06:00') AS k1, date_trunc('hour', ts) AS k2, count(*) AS c, sum(v) AS s FROM g GROUP BY 1, 2)
+UNION ALL SELECT 'g floor(epoch(ts) / 86400) * 86400 vs floor(epoch(ts) / 3600) * 3600' AS shape, k1::VARCHAR AS k1, k2::VARCHAR AS k2, c, s FROM (SELECT floor(epoch(ts) / 86400) * 86400 AS k1, floor(epoch(ts) / 3600) * 3600 AS k2, count(*) AS c, sum(v) AS s FROM g GROUP BY 1, 2)
+UNION ALL SELECT 'g to_timestamp(floor(epoch(ts) / 86400) * 86400) vs to_timestamp(floor(epoch(ts) / 3600) * 3600)' AS shape, k1::VARCHAR AS k1, k2::VARCHAR AS k2, c, s FROM (SELECT to_timestamp(floor(epoch(ts) / 86400) * 86400) AS k1, to_timestamp(floor(epoch(ts) / 3600) * 3600) AS k2, count(*) AS c, sum(v) AS s FROM g GROUP BY 1, 2)
+UNION ALL SELECT 'dst date_trunc(''day'', tstz) vs date_trunc(''hour'', tstz)' AS shape, k1::VARCHAR AS k1, k2::VARCHAR AS k2, c, s FROM (SELECT date_trunc('day', tstz) AS k1, date_trunc('hour', tstz) AS k2, count(*) AS c, sum(v) AS s FROM dst GROUP BY 1, 2)
+UNION ALL SELECT 'dst date_trunc(''month'', tstz) vs date_trunc(''day'', tstz)' AS shape, k1::VARCHAR AS k1, k2::VARCHAR AS k2, c, s FROM (SELECT date_trunc('month', tstz) AS k1, date_trunc('day', tstz) AS k2, count(*) AS c, sum(v) AS s FROM dst GROUP BY 1, 2)
+UNION ALL SELECT 'dst date_trunc(''week'', tstz) vs date_trunc(''day'', tstz)' AS shape, k1::VARCHAR AS k1, k2::VARCHAR AS k2, c, s FROM (SELECT date_trunc('week', tstz) AS k1, date_trunc('day', tstz) AS k2, count(*) AS c, sum(v) AS s FROM dst GROUP BY 1, 2)
+UNION ALL SELECT 'dst date_trunc(''day'', tstz) vs date_trunc(''minute'', tstz)' AS shape, k1::VARCHAR AS k1, k2::VARCHAR AS k2, c, s FROM (SELECT date_trunc('day', tstz) AS k1, date_trunc('minute', tstz) AS k2, count(*) AS c, sum(v) AS s FROM dst GROUP BY 1, 2)
+UNION ALL SELECT 'dst time_bucket(INTERVAL ''1 day'', tstz, ''America/Havana'') vs time_bucket(INTERVAL ''1 hour'', tstz, ''America/Havana'')' AS shape, k1::VARCHAR AS k1, k2::VARCHAR AS k2, c, s FROM (SELECT time_bucket(INTERVAL '1 day', tstz, 'America/Havana') AS k1, time_bucket(INTERVAL '1 hour', tstz, 'America/Havana') AS k2, count(*) AS c, sum(v) AS s FROM dst GROUP BY 1, 2)
+UNION ALL SELECT 'dst time_bucket(INTERVAL ''7 days'', tstz, ''Europe/Berlin'') vs time_bucket(INTERVAL ''1 day'', tstz, ''Europe/Berlin'')' AS shape, k1::VARCHAR AS k1, k2::VARCHAR AS k2, c, s FROM (SELECT time_bucket(INTERVAL '7 days', tstz, 'Europe/Berlin') AS k1, time_bucket(INTERVAL '1 day', tstz, 'Europe/Berlin') AS k2, count(*) AS c, sum(v) AS s FROM dst GROUP BY 1, 2)
+UNION ALL SELECT 'dst date_trunc(''day'', tstz) vs time_bucket(INTERVAL ''1 hour'', tstz, ''Europe/Berlin'')' AS shape, k1::VARCHAR AS k1, k2::VARCHAR AS k2, c, s FROM (SELECT date_trunc('day', tstz) AS k1, time_bucket(INTERVAL '1 hour', tstz, 'Europe/Berlin') AS k2, count(*) AS c, sum(v) AS s FROM dst GROUP BY 1, 2)
+UNION ALL SELECT 'dst strftime(tstz, ''%Y-%m-%d'') vs date_trunc(''hour'', tstz)' AS shape, k1::VARCHAR AS k1, k2::VARCHAR AS k2, c, s FROM (SELECT strftime(tstz, '%Y-%m-%d') AS k1, date_trunc('hour', tstz) AS k2, count(*) AS c, sum(v) AS s FROM dst GROUP BY 1, 2);
+
+statement ok
+RESET disabled_optimizers;
+
+statement ok
+CREATE TABLE got_n AS
+SELECT 'g date_trunc(''day'', ts) vs date_trunc(''hour'', ts)' AS shape, k1::VARCHAR AS k1, k2::VARCHAR AS k2, c, s FROM (SELECT date_trunc('day', ts) AS k1, date_trunc('hour', ts) AS k2, count(*) AS c, sum(v) AS s FROM g GROUP BY 1, 2)
+UNION ALL SELECT 'g date_trunc(''hour'', ts) vs date_trunc(''day'', ts)' AS shape, k1::VARCHAR AS k1, k2::VARCHAR AS k2, c, s FROM (SELECT date_trunc('hour', ts) AS k1, date_trunc('day', ts) AS k2, count(*) AS c, sum(v) AS s FROM g GROUP BY 1, 2)
+UNION ALL SELECT 'g date_trunc(''month'', ts) vs date_trunc(''day'', ts)' AS shape, k1::VARCHAR AS k1, k2::VARCHAR AS k2, c, s FROM (SELECT date_trunc('month', ts) AS k1, date_trunc('day', ts) AS k2, count(*) AS c, sum(v) AS s FROM g GROUP BY 1, 2)
+UNION ALL SELECT 'g date_trunc(''month'', ts) vs date_trunc(''week'', ts)' AS shape, k1::VARCHAR AS k1, k2::VARCHAR AS k2, c, s FROM (SELECT date_trunc('month', ts) AS k1, date_trunc('week', ts) AS k2, count(*) AS c, sum(v) AS s FROM g GROUP BY 1, 2)
+UNION ALL SELECT 'g date_trunc(''week'', ts) vs date_trunc(''day'', ts)' AS shape, k1::VARCHAR AS k1, k2::VARCHAR AS k2, c, s FROM (SELECT date_trunc('week', ts) AS k1, date_trunc('day', ts) AS k2, count(*) AS c, sum(v) AS s FROM g GROUP BY 1, 2)
+UNION ALL SELECT 'g date_trunc(''year'', ts) vs date_trunc(''quarter'', ts)' AS shape, k1::VARCHAR AS k1, k2::VARCHAR AS k2, c, s FROM (SELECT date_trunc('year', ts) AS k1, date_trunc('quarter', ts) AS k2, count(*) AS c, sum(v) AS s FROM g GROUP BY 1, 2)
+UNION ALL SELECT 'g date_trunc(''quarter'', ts) vs date_trunc(''month'', ts)' AS shape, k1::VARCHAR AS k1, k2::VARCHAR AS k2, c, s FROM (SELECT date_trunc('quarter', ts) AS k1, date_trunc('month', ts) AS k2, count(*) AS c, sum(v) AS s FROM g GROUP BY 1, 2)
+UNION ALL SELECT 'g date_trunc(''decade'', ts) vs date_trunc(''year'', ts)' AS shape, k1::VARCHAR AS k1, k2::VARCHAR AS k2, c, s FROM (SELECT date_trunc('decade', ts) AS k1, date_trunc('year', ts) AS k2, count(*) AS c, sum(v) AS s FROM g GROUP BY 1, 2)
+UNION ALL SELECT 'g date_trunc(''century'', ts) vs date_trunc(''decade'', ts)' AS shape, k1::VARCHAR AS k1, k2::VARCHAR AS k2, c, s FROM (SELECT date_trunc('century', ts) AS k1, date_trunc('decade', ts) AS k2, count(*) AS c, sum(v) AS s FROM g GROUP BY 1, 2)
+UNION ALL SELECT 'g date_trunc(''day'', ts) vs time_bucket(INTERVAL ''6 hours'', ts)' AS shape, k1::VARCHAR AS k1, k2::VARCHAR AS k2, c, s FROM (SELECT date_trunc('day', ts) AS k1, time_bucket(INTERVAL '6 hours', ts) AS k2, count(*) AS c, sum(v) AS s FROM g GROUP BY 1, 2)
+UNION ALL SELECT 'g time_bucket(INTERVAL ''2 hours'', ts) vs date_trunc(''hour'', ts)' AS shape, k1::VARCHAR AS k1, k2::VARCHAR AS k2, c, s FROM (SELECT time_bucket(INTERVAL '2 hours', ts) AS k1, date_trunc('hour', ts) AS k2, count(*) AS c, sum(v) AS s FROM g GROUP BY 1, 2)
+UNION ALL SELECT 'g time_bucket(INTERVAL ''1 day'', ts) vs time_bucket(INTERVAL ''15 minutes'', ts)' AS shape, k1::VARCHAR AS k1, k2::VARCHAR AS k2, c, s FROM (SELECT time_bucket(INTERVAL '1 day', ts) AS k1, time_bucket(INTERVAL '15 minutes', ts) AS k2, count(*) AS c, sum(v) AS s FROM g GROUP BY 1, 2)
+UNION ALL SELECT 'g time_bucket(INTERVAL ''90 minutes'', ts) vs time_bucket(INTERVAL ''30 minutes'', ts)' AS shape, k1::VARCHAR AS k1, k2::VARCHAR AS k2, c, s FROM (SELECT time_bucket(INTERVAL '90 minutes', ts) AS k1, time_bucket(INTERVAL '30 minutes', ts) AS k2, count(*) AS c, sum(v) AS s FROM g GROUP BY 1, 2)
+UNION ALL SELECT 'g time_bucket(INTERVAL ''90 minutes'', ts) vs time_bucket(INTERVAL ''1 hour'', ts)' AS shape, k1::VARCHAR AS k1, k2::VARCHAR AS k2, c, s FROM (SELECT time_bucket(INTERVAL '90 minutes', ts) AS k1, time_bucket(INTERVAL '1 hour', ts) AS k2, count(*) AS c, sum(v) AS s FROM g GROUP BY 1, 2)
+UNION ALL SELECT 'g date_trunc(''day'', ts) vs strftime(ts, ''%Y-%m-%d %H'')' AS shape, k1::VARCHAR AS k1, k2::VARCHAR AS k2, c, s FROM (SELECT date_trunc('day', ts) AS k1, strftime(ts, '%Y-%m-%d %H') AS k2, count(*) AS c, sum(v) AS s FROM g GROUP BY 1, 2)
+UNION ALL SELECT 'g strftime(ts, ''%Y-%m'') vs date_trunc(''day'', ts)' AS shape, k1::VARCHAR AS k1, k2::VARCHAR AS k2, c, s FROM (SELECT strftime(ts, '%Y-%m') AS k1, date_trunc('day', ts) AS k2, count(*) AS c, sum(v) AS s FROM g GROUP BY 1, 2)
+UNION ALL SELECT 'g strftime(ts, ''%Y-%m-%d'') vs date_trunc(''hour'', ts)' AS shape, k1::VARCHAR AS k1, k2::VARCHAR AS k2, c, s FROM (SELECT strftime(ts, '%Y-%m-%d') AS k1, date_trunc('hour', ts) AS k2, count(*) AS c, sum(v) AS s FROM g GROUP BY 1, 2)
+UNION ALL SELECT 'g date_trunc(''day'', ts)::DATE vs date_trunc(''hour'', ts)' AS shape, k1::VARCHAR AS k1, k2::VARCHAR AS k2, c, s FROM (SELECT date_trunc('day', ts)::DATE AS k1, date_trunc('hour', ts) AS k2, count(*) AS c, sum(v) AS s FROM g GROUP BY 1, 2)
+UNION ALL SELECT 'g date_trunc(''week'', ts)::DATE vs date_trunc(''day'', ts)::DATE' AS shape, k1::VARCHAR AS k1, k2::VARCHAR AS k2, c, s FROM (SELECT date_trunc('week', ts)::DATE AS k1, date_trunc('day', ts)::DATE AS k2, count(*) AS c, sum(v) AS s FROM g GROUP BY 1, 2)
+UNION ALL SELECT 'g date_trunc(''day'', ts) + INTERVAL ''6 hours'' vs date_trunc(''hour'', ts)' AS shape, k1::VARCHAR AS k1, k2::VARCHAR AS k2, c, s FROM (SELECT date_trunc('day', ts) + INTERVAL '6 hours' AS k1, date_trunc('hour', ts) AS k2, count(*) AS c, sum(v) AS s FROM g GROUP BY 1, 2)
+UNION ALL SELECT 'g epoch_ms(date_trunc(''day'', ts)) vs date_trunc(''hour'', ts)' AS shape, k1::VARCHAR AS k1, k2::VARCHAR AS k2, c, s FROM (SELECT epoch_ms(date_trunc('day', ts)) AS k1, date_trunc('hour', ts) AS k2, count(*) AS c, sum(v) AS s FROM g GROUP BY 1, 2)
+UNION ALL SELECT 'g date_trunc(''day'', ts) vs date_trunc(''hour'', ts)::TIMESTAMP_MS' AS shape, k1::VARCHAR AS k1, k2::VARCHAR AS k2, c, s FROM (SELECT date_trunc('day', ts) AS k1, date_trunc('hour', ts)::TIMESTAMP_MS AS k2, count(*) AS c, sum(v) AS s FROM g GROUP BY 1, 2)
+UNION ALL SELECT 'g concat(year(ts), ''-Q'', quarter(ts)) vs date_trunc(''month'', ts)' AS shape, k1::VARCHAR AS k1, k2::VARCHAR AS k2, c, s FROM (SELECT concat(year(ts), '-Q', quarter(ts)) AS k1, date_trunc('month', ts) AS k2, count(*) AS c, sum(v) AS s FROM g GROUP BY 1, 2)
+UNION ALL SELECT 'g concat(year(ts), ''-Q'', quarter(ts)) vs strftime(ts, ''%Y-%m'')' AS shape, k1::VARCHAR AS k1, k2::VARCHAR AS k2, c, s FROM (SELECT concat(year(ts), '-Q', quarter(ts)) AS k1, strftime(ts, '%Y-%m') AS k2, count(*) AS c, sum(v) AS s FROM g GROUP BY 1, 2)
+UNION ALL SELECT 'g monthname(ts) vs date_trunc(''day'', ts)' AS shape, k1::VARCHAR AS k1, k2::VARCHAR AS k2, c, s FROM (SELECT monthname(ts) AS k1, date_trunc('day', ts) AS k2, count(*) AS c, sum(v) AS s FROM g GROUP BY 1, 2)
+UNION ALL SELECT 'g date_trunc(''day'', ts) vs sev' AS shape, k1::VARCHAR AS k1, k2::VARCHAR AS k2, c, s FROM (SELECT date_trunc('day', ts) AS k1, sev AS k2, count(*) AS c, sum(v) AS s FROM g GROUP BY 1, 2)
+UNION ALL SELECT 'g sev vs date_trunc(''hour'', ts)' AS shape, k1::VARCHAR AS k1, k2::VARCHAR AS k2, c, s FROM (SELECT sev AS k1, date_trunc('hour', ts) AS k2, count(*) AS c, sum(v) AS s FROM g GROUP BY 1, 2)
+UNION ALL SELECT 'g date_trunc(''day'', ts) vs floor(price / 100)' AS shape, k1::VARCHAR AS k1, k2::VARCHAR AS k2, c, s FROM (SELECT date_trunc('day', ts) AS k1, floor(price / 100) AS k2, count(*) AS c, sum(v) AS s FROM g GROUP BY 1, 2)
+UNION ALL SELECT 'g date_trunc(''day'', ts) vs date_trunc(''hour'', tstz)' AS shape, k1::VARCHAR AS k1, k2::VARCHAR AS k2, c, s FROM (SELECT date_trunc('day', ts) AS k1, date_trunc('hour', tstz) AS k2, count(*) AS c, sum(v) AS s FROM g GROUP BY 1, 2)
+UNION ALL SELECT 'g date_trunc(''day'', d) vs date_trunc(''month'', d)' AS shape, k1::VARCHAR AS k1, k2::VARCHAR AS k2, c, s FROM (SELECT date_trunc('day', d) AS k1, date_trunc('month', d) AS k2, count(*) AS c, sum(v) AS s FROM g GROUP BY 1, 2)
+UNION ALL SELECT 'g date_trunc(''month'', d) vs d' AS shape, k1::VARCHAR AS k1, k2::VARCHAR AS k2, c, s FROM (SELECT date_trunc('month', d) AS k1, d AS k2, count(*) AS c, sum(v) AS s FROM g GROUP BY 1, 2)
+UNION ALL SELECT 'g date_trunc(''day'', tstz) vs date_trunc(''hour'', tstz)' AS shape, k1::VARCHAR AS k1, k2::VARCHAR AS k2, c, s FROM (SELECT date_trunc('day', tstz) AS k1, date_trunc('hour', tstz) AS k2, count(*) AS c, sum(v) AS s FROM g GROUP BY 1, 2)
+UNION ALL SELECT 'g date_trunc(''month'', tstz) vs date_trunc(''day'', tstz)' AS shape, k1::VARCHAR AS k1, k2::VARCHAR AS k2, c, s FROM (SELECT date_trunc('month', tstz) AS k1, date_trunc('day', tstz) AS k2, count(*) AS c, sum(v) AS s FROM g GROUP BY 1, 2)
+UNION ALL SELECT 'g date_trunc(''month'', tstz)::DATE vs date_trunc(''hour'', tstz)' AS shape, k1::VARCHAR AS k1, k2::VARCHAR AS k2, c, s FROM (SELECT date_trunc('month', tstz)::DATE AS k1, date_trunc('hour', tstz) AS k2, count(*) AS c, sum(v) AS s FROM g GROUP BY 1, 2)
+UNION ALL SELECT 'g time_bucket(INTERVAL ''1 day'', tstz, ''Asia/Tokyo'') vs time_bucket(INTERVAL ''1 hour'', tstz, ''Asia/Tokyo'')' AS shape, k1::VARCHAR AS k1, k2::VARCHAR AS k2, c, s FROM (SELECT time_bucket(INTERVAL '1 day', tstz, 'Asia/Tokyo') AS k1, time_bucket(INTERVAL '1 hour', tstz, 'Asia/Tokyo') AS k2, count(*) AS c, sum(v) AS s FROM g GROUP BY 1, 2)
+UNION ALL SELECT 'g date_bin(INTERVAL ''1 day'', ts, TIMESTAMP ''2000-01-01'') vs date_bin(INTERVAL ''1 hour'', ts, TIMESTAMP ''2000-01-01'')' AS shape, k1::VARCHAR AS k1, k2::VARCHAR AS k2, c, s FROM (SELECT date_bin(INTERVAL '1 day', ts, TIMESTAMP '2000-01-01') AS k1, date_bin(INTERVAL '1 hour', ts, TIMESTAMP '2000-01-01') AS k2, count(*) AS c, sum(v) AS s FROM g GROUP BY 1, 2)
+UNION ALL SELECT 'g date_bin(INTERVAL ''1 day'', ts, TIMESTAMP ''2000-01-01 06:00'') vs date_trunc(''hour'', ts)' AS shape, k1::VARCHAR AS k1, k2::VARCHAR AS k2, c, s FROM (SELECT date_bin(INTERVAL '1 day', ts, TIMESTAMP '2000-01-01 06:00') AS k1, date_trunc('hour', ts) AS k2, count(*) AS c, sum(v) AS s FROM g GROUP BY 1, 2)
+UNION ALL SELECT 'g floor(epoch(ts) / 86400) * 86400 vs floor(epoch(ts) / 3600) * 3600' AS shape, k1::VARCHAR AS k1, k2::VARCHAR AS k2, c, s FROM (SELECT floor(epoch(ts) / 86400) * 86400 AS k1, floor(epoch(ts) / 3600) * 3600 AS k2, count(*) AS c, sum(v) AS s FROM g GROUP BY 1, 2)
+UNION ALL SELECT 'g to_timestamp(floor(epoch(ts) / 86400) * 86400) vs to_timestamp(floor(epoch(ts) / 3600) * 3600)' AS shape, k1::VARCHAR AS k1, k2::VARCHAR AS k2, c, s FROM (SELECT to_timestamp(floor(epoch(ts) / 86400) * 86400) AS k1, to_timestamp(floor(epoch(ts) / 3600) * 3600) AS k2, count(*) AS c, sum(v) AS s FROM g GROUP BY 1, 2)
+UNION ALL SELECT 'dst date_trunc(''day'', tstz) vs date_trunc(''hour'', tstz)' AS shape, k1::VARCHAR AS k1, k2::VARCHAR AS k2, c, s FROM (SELECT date_trunc('day', tstz) AS k1, date_trunc('hour', tstz) AS k2, count(*) AS c, sum(v) AS s FROM dst GROUP BY 1, 2)
+UNION ALL SELECT 'dst date_trunc(''month'', tstz) vs date_trunc(''day'', tstz)' AS shape, k1::VARCHAR AS k1, k2::VARCHAR AS k2, c, s FROM (SELECT date_trunc('month', tstz) AS k1, date_trunc('day', tstz) AS k2, count(*) AS c, sum(v) AS s FROM dst GROUP BY 1, 2)
+UNION ALL SELECT 'dst date_trunc(''week'', tstz) vs date_trunc(''day'', tstz)' AS shape, k1::VARCHAR AS k1, k2::VARCHAR AS k2, c, s FROM (SELECT date_trunc('week', tstz) AS k1, date_trunc('day', tstz) AS k2, count(*) AS c, sum(v) AS s FROM dst GROUP BY 1, 2)
+UNION ALL SELECT 'dst date_trunc(''day'', tstz) vs date_trunc(''minute'', tstz)' AS shape, k1::VARCHAR AS k1, k2::VARCHAR AS k2, c, s FROM (SELECT date_trunc('day', tstz) AS k1, date_trunc('minute', tstz) AS k2, count(*) AS c, sum(v) AS s FROM dst GROUP BY 1, 2)
+UNION ALL SELECT 'dst time_bucket(INTERVAL ''1 day'', tstz, ''America/Havana'') vs time_bucket(INTERVAL ''1 hour'', tstz, ''America/Havana'')' AS shape, k1::VARCHAR AS k1, k2::VARCHAR AS k2, c, s FROM (SELECT time_bucket(INTERVAL '1 day', tstz, 'America/Havana') AS k1, time_bucket(INTERVAL '1 hour', tstz, 'America/Havana') AS k2, count(*) AS c, sum(v) AS s FROM dst GROUP BY 1, 2)
+UNION ALL SELECT 'dst time_bucket(INTERVAL ''7 days'', tstz, ''Europe/Berlin'') vs time_bucket(INTERVAL ''1 day'', tstz, ''Europe/Berlin'')' AS shape, k1::VARCHAR AS k1, k2::VARCHAR AS k2, c, s FROM (SELECT time_bucket(INTERVAL '7 days', tstz, 'Europe/Berlin') AS k1, time_bucket(INTERVAL '1 day', tstz, 'Europe/Berlin') AS k2, count(*) AS c, sum(v) AS s FROM dst GROUP BY 1, 2)
+UNION ALL SELECT 'dst date_trunc(''day'', tstz) vs time_bucket(INTERVAL ''1 hour'', tstz, ''Europe/Berlin'')' AS shape, k1::VARCHAR AS k1, k2::VARCHAR AS k2, c, s FROM (SELECT date_trunc('day', tstz) AS k1, time_bucket(INTERVAL '1 hour', tstz, 'Europe/Berlin') AS k2, count(*) AS c, sum(v) AS s FROM dst GROUP BY 1, 2)
+UNION ALL SELECT 'dst strftime(tstz, ''%Y-%m-%d'') vs date_trunc(''hour'', tstz)' AS shape, k1::VARCHAR AS k1, k2::VARCHAR AS k2, c, s FROM (SELECT strftime(tstz, '%Y-%m-%d') AS k1, date_trunc('hour', tstz) AS k2, count(*) AS c, sum(v) AS s FROM dst GROUP BY 1, 2);
+
+query
+SELECT shape, k1, k2, c, s FROM (SELECT * FROM got_n EXCEPT ALL SELECT * FROM ref_n) ORDER BY 1, 2, 3;
+----
+shape	k1	k2	c	s
+
+query
+SELECT shape, k1, k2, c, s FROM (SELECT * FROM ref_n EXCEPT ALL SELECT * FROM got_n) ORDER BY 1, 2, 3;
+----
+shape	k1	k2	c	s
+
+query
+SELECT count(*) AS rows, count(DISTINCT shape) AS shapes FROM got_n;
+----
+rows	shapes
+179384	47
+
+query
+EXPLAIN SELECT date_trunc('day', ts) AS d, date_trunc('hour', ts) AS h, count(*) AS c FROM g GROUP BY 1, 2;
+----
+QUERY PLAN
+╭─ PROJECTION ───────────────────────────────────────╮
+│ Projections:                                       │
+│ d,                                                 │
+│ __internal_date_trunc_unbucket(#0, 3600000000, 0), │
+│ #1                                                 │
+│ ~25,000 rows                                       │
+╰──────────────────────────┬─────────────────────────╯
+╭─ PERFECT_HASH_GROUP_BY ──┴─────────────────────────╮
+│ Groups: #0                                         │
+│ Aggregates: count_star()                           │
+│ ~25,000 rows                                       │
+╰──────────────────────────┬─────────────────────────╯
+╭─ PROJECTION ─────────────┴─────────────────────────╮
+│ Projections:                                       │
+│ __internal_date_trunc_bucket(ts, 3600000000, 0)    │
+│ ~50,001 rows                                       │
+╰──────────────────────────┬─────────────────────────╯
+╭─ SEQ_SCAN ───────────────┴─────────────────────────╮
+│ Table: g                                           │
+│ Type: Sequential Scan                              │
+│ Projections: ts                                    │
+│ ~50,001 rows                                       │
+╰────────────────────────────────────────────────────╯
+
+query
+EXPLAIN SELECT date_trunc('month', ts) AS m, date_trunc('day', ts) AS d, date_trunc('hour', ts) AS h, count(*) AS c FROM g GROUP BY 1, 2, 3;
+----
+QUERY PLAN
+╭─ PROJECTION ───────────────────────────────────────╮
+│ Projections:                                       │
+│ m, d,                                              │
+│ __internal_date_trunc_unbucket(#0, 3600000000, 0), │
+│ #1                                                 │
+│ ~25,000 rows                                       │
+╰──────────────────────────┬─────────────────────────╯
+╭─ PERFECT_HASH_GROUP_BY ──┴─────────────────────────╮
+│ Groups: #0                                         │
+│ Aggregates: count_star()                           │
+│ ~25,000 rows                                       │
+╰──────────────────────────┬─────────────────────────╯
+╭─ PROJECTION ─────────────┴─────────────────────────╮
+│ Projections:                                       │
+│ __internal_date_trunc_bucket(ts, 3600000000, 0)    │
+│ ~50,001 rows                                       │
+╰──────────────────────────┬─────────────────────────╯
+╭─ SEQ_SCAN ───────────────┴─────────────────────────╮
+│ Table: g                                           │
+│ Type: Sequential Scan                              │
+│ Projections: ts                                    │
+│ ~50,001 rows                                       │
+╰────────────────────────────────────────────────────╯
+
+query
+EXPLAIN SELECT strftime(ts, '%Y-%m') AS m, date_trunc('day', ts) AS d, count(*) AS c FROM g GROUP BY 1, 2;
+----
+QUERY PLAN
+╭─ PROJECTION ────────────────────────────────────────╮
+│ Projections:                                        │
+│ m,                                                  │
+│ __internal_date_trunc_unbucket(#0, 86400000000, 0), │
+│ #1                                                  │
+│ ~25,000 rows                                        │
+╰──────────────────────────┬──────────────────────────╯
+╭─ PERFECT_HASH_GROUP_BY ──┴──────────────────────────╮
+│ Groups: #0                                          │
+│ Aggregates: count_star()                            │
+│ ~25,000 rows                                        │
+╰──────────────────────────┬──────────────────────────╯
+╭─ PROJECTION ─────────────┴──────────────────────────╮
+│ Projections:                                        │
+│ __internal_date_trunc_bucket(ts, 86400000000, 0)    │
+│ ~50,001 rows                                        │
+╰──────────────────────────┬──────────────────────────╯
+╭─ SEQ_SCAN ───────────────┴──────────────────────────╮
+│ Table: g                                            │
+│ Type: Sequential Scan                               │
+│ Projections: ts                                     │
+│ ~50,001 rows                                        │
+╰─────────────────────────────────────────────────────╯
+
+query
+EXPLAIN SELECT date_trunc('month', ts) AS m, date_trunc('week', ts) AS w, count(*) AS c FROM g GROUP BY 1, 2;
+----
+QUERY PLAN
+╭─ PROJECTION ─────────────────────────────────────────────────────╮
+│ Projections:                                                     │
+│ __internal_date_trunc_month_unbucket(#0, 1, 0),                  │
+│ __internal_date_trunc_unbucket(#1, 604800000000, -259200000000), │
+│ #2                                                               │
+│ ~25,000 rows                                                     │
+╰─────────────────────────────────┬────────────────────────────────╯
+╭─ PERFECT_HASH_GROUP_BY ─────────┴────────────────────────────────╮
+│ Groups: #0, #1                                                   │
+│ Aggregates: count_star()                                         │
+│ ~25,000 rows                                                     │
+╰─────────────────────────────────┬────────────────────────────────╯
+╭─ PROJECTION ────────────────────┴────────────────────────────────╮
+│ Projections:                                                     │
+│ __internal_date_trunc_month_bucket(ts, 1, 0),                    │
+│ __internal_date_trunc_bucket(ts, 604800000000, -259200000000)    │
+│ ~50,001 rows                                                     │
+╰─────────────────────────────────┬────────────────────────────────╯
+╭─ SEQ_SCAN ──────────────────────┴────────────────────────────────╮
+│ Table: g                                                         │
+│ Type: Sequential Scan                                            │
+│ Projections: ts                                                  │
+│ ~50,001 rows                                                     │
+╰──────────────────────────────────────────────────────────────────╯
+
+query
+EXPLAIN SELECT date_trunc('day', tstz) AS d, date_trunc('hour', tstz) AS h, count(*) AS c FROM dst GROUP BY 1, 2;
+----
+QUERY PLAN
+╭─ PROJECTION ────────────────────────────────────╮
+│ Projections:                                    │
+│ d,                                              │
+│ __internal_icu_date_trunc_unbucket('hour', #0), │
+│ #1                                              │
+│ ~450 rows                                       │
+╰────────────────────────┬────────────────────────╯
+╭─ PERFECT_HASH_GROUP_BY ┴────────────────────────╮
+│ Groups: #0                                      │
+│ Aggregates: count_star()                        │
+│ ~450 rows                                       │
+╰────────────────────────┬────────────────────────╯
+╭─ PROJECTION ───────────┴────────────────────────╮
+│ Projections:                                    │
+│ __internal_icu_date_trunc_bucket('hour', tstz)  │
+│ ~900 rows                                       │
+╰────────────────────────┬────────────────────────╯
+╭─ SEQ_SCAN ─────────────┴────────────────────────╮
+│ Table: dst                                      │
+│ Type: Sequential Scan                           │
+│ Projections: tstz                               │
+│ ~900 rows                                       │
+╰─────────────────────────────────────────────────╯
+
+query
+SELECT m::VARCHAR AS m, d::VARCHAR AS d, h::VARCHAR AS h, c FROM (SELECT date_trunc('month', ts) AS m, date_trunc('day', ts) AS d, date_trunc('hour', ts) AS h, count(*) AS c FROM g WHERE v BETWEEN 400 AND 460 GROUP BY 1, 2, 3) ORDER BY 3;
+----
+m	d	h	c
+2024-12-01 00:00:00	2024-12-29 00:00:00	2024-12-29 22:00:00	3
+2024-12-01 00:00:00	2024-12-29 00:00:00	2024-12-29 23:00:00	9
+2024-12-01 00:00:00	2024-12-30 00:00:00	2024-12-30 00:00:00	8
+2024-12-01 00:00:00	2024-12-30 00:00:00	2024-12-30 01:00:00	9
+2024-12-01 00:00:00	2024-12-30 00:00:00	2024-12-30 02:00:00	9
+2024-12-01 00:00:00	2024-12-30 00:00:00	2024-12-30 03:00:00	8
+2024-12-01 00:00:00	2024-12-30 00:00:00	2024-12-30 04:00:00	9
+2024-12-01 00:00:00	2024-12-30 00:00:00	2024-12-30 05:00:00	6
+
+statement ok
+SET TimeZone = 'Etc/UTC';

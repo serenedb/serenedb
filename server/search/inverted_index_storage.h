@@ -38,6 +38,7 @@
 #include "catalog/inverted_index.h"
 #include "connector/file_manifest.h"
 #include "search/maintenance.h"
+#include "search/store_stats.h"
 #include "search/tick_domain.h"
 #include "storage_engine/search_engine.h"
 
@@ -79,23 +80,6 @@ void RemoveDroppedStorageDir(const std::filesystem::path& path);
 class InvertedIndexStorage final
   : public std::enable_shared_from_this<InvertedIndexStorage> {
  public:
-  struct Stats {
-    // NOLINTBEGIN
-    uint64_t numDocs = 0;
-    uint64_t numLiveDocs = 0;
-    uint64_t numBufferedDocs = 0;
-    uint64_t numSegments = 0;
-    uint64_t numFiles = 0;
-    uint64_t indexSize = 0;
-    uint64_t numFailedCommits = 0;
-    uint64_t numFailedCleanups = 0;
-    uint64_t numFailedConsolidations = 0;
-    uint64_t avgCommitTimeMs = 0;
-    uint64_t avgCleanupTimeMs = 0;
-    uint64_t avgConsolidationTimeMs = 0;
-    // NOLINTEND
-  };
-
   InvertedIndexStorage(ObjectId db_id, const catalog::InvertedIndex& index,
                        bool is_new);
   ~InvertedIndexStorage();
@@ -164,7 +148,7 @@ class InvertedIndexStorage final
                                bool for_checkpoint = false);
 
   ResultWithTime CleanupUnsafe();
-  Stats UpdateStatsUnsafe(InvertedIndexSnapshotPtr data) const;
+  StoreStats UpdateStatsUnsafe(InvertedIndexSnapshotPtr data) const;
 
   void Refresh(const irs::ProgressReportCallback& progress = nullptr);
   // Refresh driven by the checkpoint barrier: the store WAL is about to be
@@ -177,7 +161,7 @@ class InvertedIndexStorage final
   // The database whose attachment holds this index's catalog entry.
   ObjectId GetDatabaseId() const noexcept { return _db_id; }
 
-  Stats GetStats() const;
+  StoreStats GetStats() const;
 
   InvertedIndexSnapshotPtr GetInvertedIndexSnapshot() const {
     return std::atomic_load(&_snapshot);
@@ -303,30 +287,6 @@ class InvertedIndexStorage final
   }
 
  private:
-  class MovingAverageMs {
-   public:
-    void Record(uint64_t time_ms) noexcept {
-      const uint64_t old =
-        _time_num.fetch_add((time_ms << 32U) + 1, std::memory_order_relaxed);
-      const uint64_t old_time = old >> 32U;
-      const uint64_t old_num = static_cast<uint32_t>(old);
-      if (old_num >= kWindow) {
-        _time_num.fetch_sub(((old_time / old_num) << 32U) + 1,
-                            std::memory_order_relaxed);
-      }
-    }
-    uint64_t Average() const noexcept {
-      const uint64_t v = _time_num.load(std::memory_order_relaxed);
-      const uint64_t time = v >> 32U;
-      const uint64_t num = static_cast<uint32_t>(v);
-      return num == 0 ? 0 : time / num;
-    }
-
-   private:
-    static constexpr uint64_t kWindow = 10;
-    std::atomic<uint64_t> _time_num{0};
-  };
-
   absl::Status CompactUnsafeImpl(
     const irs::CompactionPolicy& policy,
     const irs::MergeWriter::FlushProgress& progress, bool& empty_compaction,
@@ -382,12 +342,7 @@ class InvertedIndexStorage final
   std::vector<std::vector<int64_t>> _delete_log;
   std::atomic<uint64_t> _compaction_gen{0};
   std::atomic<uint32_t> _stale_pressure{0};
-  std::atomic<uint64_t> _num_failed_commits{0};
-  std::atomic<uint64_t> _num_failed_cleanups{0};
-  std::atomic<uint64_t> _num_failed_consolidations{0};
-  MovingAverageMs _avg_commit_time_ms;
-  MovingAverageMs _avg_cleanup_time_ms;
-  MovingAverageMs _avg_consolidation_time_ms;
+  MaintenanceCounters _maintenance;
   Phase _phase{Phase::Creating};
   std::atomic<Tick> _recovery_frontier_tick{0};
 

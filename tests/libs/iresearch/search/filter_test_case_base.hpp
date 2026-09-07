@@ -34,7 +34,6 @@
 #include "iresearch/analysis/token_attributes.hpp"
 #include "iresearch/search/collectors.hpp"
 #include "iresearch/search/column_collector.hpp"
-#include "iresearch/search/cost.hpp"
 #include "iresearch/search/filter.hpp"
 #include "iresearch/search/filter_optimizer.hpp"
 #include "iresearch/search/filter_visitor.hpp"
@@ -58,56 +57,69 @@ struct DocBlockAttr : public irs::Attribute {
   const irs::doc_id_t* value = nullptr;
 };
 
-class DocIteratorWrapper : public irs::DocIterator {
+class ScoredWrapper : public irs::lead::Node {
  public:
-  DocIteratorWrapper(irs::DocIterator::ptr it, irs::ScoreSource score)
-    : _it(std::move(it)), _docs(irs::kScoreBlock), _score(score) {
+  ScoredWrapper(irs::lead::Node::ptr it, const irs::SubReader& segment,
+                const irs::search::ScoredCtx& ctx,
+                irs::search::StatsRecord record)
+    : _it(std::move(it)),
+      _docs(irs::kScoreBlock),
+      _segment(segment),
+      _ctx(ctx),
+      _record(record) {
     SDB_ASSERT(_it);
-    _doc = _it->value();
+    _provider.doc_block.value = _docs.data();
+    _doc = _it->Value();
   }
 
-  irs::doc_id_t advance() final { return _doc = _it->advance(); }
+  irs::doc_id_t Advance() final { return _doc = _it->Advance(); }
 
-  irs::doc_id_t seek(irs::doc_id_t target) final {
-    return _doc = _it->seek(target);
+  irs::doc_id_t Seek(irs::doc_id_t target) final {
+    return _doc = _it->Seek(target);
   }
 
-  void FetchScoreArgs(uint16_t index) final { _docs[index] = value(); }
+  void FetchScoreArgs(uint32_t slot) final { _docs[slot] = Value(); }
 
-  irs::Attribute* GetMutable(irs::TypeInfo::type_id id) noexcept final {
-    if (irs::Type<DocBlockAttr>::id() == id) {
-      return &_doc_block_attr;
-    }
-    return _it->GetMutable(id);
-  }
-
-  irs::ScoreFunction PrepareScore(const irs::PrepareScoreContext& ctx) {
-    return _score.scorer->PrepareScorer({
-      .segment = *ctx.segment,
+  irs::ScoreFunction PrepareScore() final {
+    return _record.scorer->PrepareScorer({
+      .segment = _segment,
       .field = {},
-      .doc_attrs = *this,
-      .stats = _score.stats,
+      .doc_attrs = _provider,
+      .fetcher = _ctx.fetcher,
+      .stats = _record.stats,
     });
   }
 
-  IRS_DOC_ITERATOR_DEFAULTS
-
  private:
-  irs::DocIterator::ptr _it;
+  struct Provider : irs::AttributeProvider {
+    irs::Attribute* GetMutable(irs::TypeInfo::type_id id) noexcept final {
+      if (irs::Type<DocBlockAttr>::id() == id) {
+        return &doc_block;
+      }
+      return nullptr;
+    }
+
+    DocBlockAttr doc_block;
+  };
+
+  irs::lead::Node::ptr _it;
   std::vector<irs::doc_id_t> _docs;
-  DocBlockAttr _doc_block_attr{.value = _docs.data()};
-  irs::ScoreSource _score;
+  Provider _provider;
+  const irs::SubReader& _segment;
+  irs::search::ScoredCtx _ctx;
+  irs::search::StatsRecord _record;
 };
 
 class QueryWrapper : public irs::QueryBuilder {
  public:
+  // A wrapper answers for what it wraps, so a caller reading the estimate
+  // reads the query's. It is never the empty query -- that one is not
+  // wrapped -- so the kind it reports is its own.
   QueryWrapper(const irs::SubReader& segment, irs::QueryBuilder::ptr query)
-    : irs::QueryBuilder{segment}, _query(std::move(query)) {}
-
-  irs::DocIterator::ptr Execute(const irs::ExecutionContext& ctx,
-                                const irs::StatsBuffer& stats) const final {
-    return irs::memory::make_managed<DocIteratorWrapper>(
-      _query->Execute(ctx, stats), stats.Source());
+    : irs::QueryBuilder{segment, query->EstimateMax(), query->Kind()},
+      _query(std::move(query)) {
+    SDB_ASSERT(!irs::QueryBuilder::IsEmpty(*_query));
+    SetStats(_query->Stats());
   }
 
   void Visit(irs::PreparedStateVisitor& visitor,
@@ -116,6 +128,45 @@ class QueryWrapper : public irs::QueryBuilder {
   }
 
   irs::score_t Boost() const noexcept final { return _query->Boost(); }
+
+  // A decorator, so every plan is the wrapped query's. Deriving from
+  // `QueryBuilderImpl` instead would dispatch on `QueryWrapper` itself, which
+  // no shape has an overload for.
+  irs::count::Root::ptr PlanCount(const irs::count::Context& ctx) const final {
+    return _query->PlanCount(ctx);
+  }
+
+  irs::docs::Root::ptr PlanDocs(const irs::docs::Context& ctx) const final {
+    return _query->PlanDocs(ctx);
+  }
+
+  irs::scored::Root::ptr PlanScored(
+    const irs::scored::Context& ctx) const final {
+    return _query->PlanScored(ctx);
+  }
+
+  irs::top::Root::ptr PlanTop(const irs::top::Context& ctx) const final {
+    return _query->PlanTop(ctx);
+  }
+
+  irs::lead::Node::ptr PlanLead(const irs::search::ScoredCtx& ctx) const final {
+    auto it = _query->PlanLead(ctx);
+    if (!it || !_query->Scores()) {
+      return it;
+    }
+    return irs::memory::make_managed<ScoredWrapper>(std::move(it), Segment(),
+                                                    ctx, _query->Stats(ctx));
+  }
+
+  irs::probe::Node::ptr PlanProbe(const irs::search::ScoredCtx& ctx,
+                                  uint64_t interrogations) const final {
+    return _query->PlanProbe(ctx, interrogations);
+  }
+
+  irs::fill::Node::ptr PlanFill(const irs::search::ScoredCtx& ctx,
+                                irs::ScoreMergeType merge) const final {
+    return _query->PlanFill(ctx, merge);
+  }
 
  private:
   irs::QueryBuilder::ptr _query;
@@ -131,13 +182,22 @@ class FilterWrapper : public irs::Filter {
     if (!query) {
       return nullptr;
     }
+    // One object stands for every empty query, so there is nothing here to
+    // wrap: a wrapper around it would be a second one.
+    if (irs::QueryBuilder::IsEmpty(*query)) {
+      return query;
+    }
     return irs::memory::make_tracked<QueryWrapper>(ctx.memory, segment,
                                                    std::move(query));
   }
 
-  irs::PrepareCollector::ptr MakeCollectorImpl(
-    const irs::Scorer* scorer) const final {
-    return _filter.MakeCollector(scorer);
+  // Only ever reached through `Filter::MakeCollector`, which has already
+  // resolved the winner, so `scorer` is neither null nor `Unscored`.
+  irs::PrepareCollector::ptr MakeCollectorImpl(const irs::Scorer* scorer,
+                                               irs::StatsArena& stats,
+                                               uint32_t threads) const final {
+    SDB_ASSERT(scorer != nullptr);
+    return _filter.MakeCollector(*scorer, stats, threads);
   }
 
   irs::TypeInfo::type_id type() const noexcept final { return _filter.type(); }
@@ -224,7 +284,7 @@ struct CustomSort : public irs::ScorerBase<CustomSort, void> {
   }
 
   irs::IndexFeatures GetIndexFeatures() const override {
-    return irs::IndexFeatures::None;
+    return irs::IndexFeatures::Freq;
   }
 
   irs::ScoreFunction PrepareScorer(const irs::ScoreContext& ctx) const final {
@@ -343,12 +403,39 @@ struct FrequencyScore : public irs::ScorerBase<FrequencyScore, StatsT> {
 
 }  // namespace sort
 
+// What a query that matches nothing looks like to a driver that reads it as a
+// clause. Every root API has an empty shape of its own; the clause APIs have
+// none, because the optimizer guarantees an empty clause never reaches a
+// bucket. A test drives `lead::Node` at the root, where a whole query really
+// can be empty, so the shape it is missing lives here.
+class LeadEmpty : public irs::lead::Node {
+ public:
+  irs::doc_id_t Advance() final { return _doc = irs::doc_limits::eof(); }
+
+  irs::doc_id_t Seek(irs::doc_id_t) final {
+    return _doc = irs::doc_limits::eof();
+  }
+};
+
+class ScoredEmpty : public irs::lead::Node {
+ public:
+  irs::doc_id_t Advance() final { return _doc = irs::doc_limits::eof(); }
+
+  irs::doc_id_t Seek(irs::doc_id_t) final {
+    return _doc = irs::doc_limits::eof();
+  }
+
+  void FetchScoreArgs(uint32_t) final {}
+
+  irs::ScoreFunction PrepareScore() final { return {}; }
+};
+
 class PreparedFilter {
  public:
   enum class CollectMode {
     Single,
-    Merge,
-    MergeAll,
+    PairThreads,
+    PerSegment,
     NoCollector,
   };
 
@@ -367,34 +454,41 @@ class PreparedFilter {
 
   const irs::Scorer* Scorer() const noexcept { return _scorer; }
 
-  const irs::StatsBuffer& Stats() const noexcept { return *_stats; }
-
-  irs::DocIterator::ptr Execute(size_t i) const {
-    const auto& query = _queries[i];
-    return query ? query->Execute(*_exec, *_stats) : irs::DocIterator::empty();
+  irs::search::StatsRecord Stats() const noexcept {
+    return _queries.empty() || !_queries.front() ? irs::search::StatsRecord{}
+                                                 : _queries.front()->Stats();
   }
 
-  irs::DocIterator::ptr Execute(size_t i, bool score_prune) const {
+  irs::doc_id_t Estimate(size_t i) const noexcept {
     const auto& query = _queries[i];
-    if (!query) {
-      return irs::DocIterator::empty();
+    return query ? query->EstimateMax() : 0;
+  }
+
+  irs::lead::Node::ptr Execute(size_t i) const {
+    const auto& query = _queries[i];
+    if (!query || irs::QueryBuilder::IsEmpty(*query)) {
+      return irs::memory::make_managed<LeadEmpty>();
     }
-    return query->Execute(
-      {
-        .memory = _exec->memory,
-        .ctx = _exec->ctx,
-        .prune_scorer = score_prune ? _scorer : nullptr,
-      },
-      *_stats);
+    return query->PlanLead({});
+  }
+
+  irs::lead::Node::ptr ExecuteScored(size_t i,
+                                     irs::ColumnArgsFetcher& fetcher) const {
+    const auto& query = _queries[i];
+    if (!query || irs::QueryBuilder::IsEmpty(*query)) {
+      return irs::memory::make_managed<ScoredEmpty>();
+    }
+    return query->PlanLead({
+      .scorer = _scorer,
+      .fetcher = &fetcher,
+    });
   }
 
  private:
   const irs::Scorer* _scorer;
-  irs::PrepareCollector::ptr _collector;
-  std::vector<irs::PrepareCollector::ptr> _perseg;
+  std::optional<irs::StatsArena> _stats;
+  std::optional<irs::PreparedCollector> _collector;
   std::vector<irs::QueryBuilder::ptr> _queries;
-  std::optional<irs::StatsBuffer> _stats;
-  std::optional<irs::ExecutionContext> _exec;
 };
 
 class FilterTestCaseBase : public IndexTestBase {
@@ -402,7 +496,7 @@ class FilterTestCaseBase : public IndexTestBase {
   using Docs = std::vector<irs::doc_id_t>;
   using ScoredDocs =
     std::vector<std::pair<irs::doc_id_t, std::vector<irs::score_t>>>;
-  using Costs = std::vector<irs::CostAttr::Type>;
+  using Costs = std::vector<uint64_t>;
 
   struct Seek {
     irs::doc_id_t target;

@@ -27,7 +27,6 @@
 #include "iresearch/parser/parser.hpp"
 #include "iresearch/search/boolean_filter.hpp"
 #include "iresearch/search/levenshtein_filter.hpp"
-#include "iresearch/search/mixed_boolean_filter.hpp"
 #include "iresearch/search/phrase_filter.hpp"
 #include "iresearch/search/prefix_filter.hpp"
 #include "iresearch/search/range_filter.hpp"
@@ -44,17 +43,28 @@ namespace {
 // string.
 constexpr irs::field_id kFieldId = 1;
 
-const irs::Or* NotOr(const irs::Not& filter) {
-  return &sdb::basics::downCast<irs::Or>(*filter.filter());
+const irs::BooleanFilter& AsBoolean(const irs::Filter& f) {
+  return sdb::basics::downCast<irs::BooleanFilter>(f);
 }
 
-void AssertTerm(const irs::Filter& f, irs::field_id field,
+const irs::Clauses& SubOptional(const irs::Filter& f) {
+  return AsBoolean(f).Bucket(irs::Occur::Should);
+}
+
+const irs::Clauses& SubRequired(const irs::Filter& f) {
+  return AsBoolean(f).Bucket(irs::Occur::Must);
+}
+
+const irs::Clauses& SubExcluded(const irs::Filter& f) {
+  return AsBoolean(f).Bucket(irs::Occur::MustNot);
+}
+
+void AssertTerm(const irs::TermClause& clause, irs::field_id field,
                 std::string_view value, float boost = 0.0f) {
-  const auto& term = sdb::basics::downCast<irs::ByTerm>(f);
-  EXPECT_EQ(field, term.field_id());
-  EXPECT_EQ(value, irs::ViewCast<char>(irs::bytes_view{term.options().term}));
+  EXPECT_EQ(field, clause.field);
+  EXPECT_EQ(value, irs::ViewCast<char>(irs::bytes_view{clause.term}));
   if (boost > 0.0f) {
-    EXPECT_FLOAT_EQ(boost, term.GetBoost());
+    EXPECT_FLOAT_EQ(boost, clause.boost);
   }
 }
 
@@ -122,7 +132,7 @@ void AssertRange(const irs::Filter& f, irs::field_id field,
 
 class LuceneParserTest : public ::testing::Test {
  protected:
-  irs::MixedBooleanFilter root;
+  irs::BooleanFilter root;
   irs::analysis::SegmentationTokenizer::ptr tokenizer{
     irs::analysis::SegmentationTokenizer::Make(
       irs::analysis::SegmentationTokenizer::Options{})};
@@ -136,32 +146,41 @@ class LuceneParserTest : public ::testing::Test {
     ctx.default_field_name = "content";
   }
 
-  auto& OptionalRoot() { return root.GetOptional(); }
-  auto& RequiredRoot() { return root.GetRequired(); }
+  const irs::Clauses& Optional() const {
+    return root.Bucket(irs::Occur::Should);
+  }
+  const irs::Clauses& Required() const { return root.Bucket(irs::Occur::Must); }
+  const irs::Clauses& Excluded() const {
+    return root.Bucket(irs::Occur::MustNot);
+  }
 };
 
 TEST_F(LuceneParserTest, SimpleTerm) {
   ASSERT_TRUE(sdb::ParseQuery(ctx, "hello"));
-  ASSERT_EQ(1, OptionalRoot().size());
-  AssertTerm(OptionalRoot()[0], kFieldId, "hello");
+  ASSERT_EQ(1, Optional().size());
+  ASSERT_EQ(1, Optional().terms.size());
+  AssertTerm(Optional().terms[0], kFieldId, "hello");
 }
 
 TEST_F(LuceneParserTest, SimplePhrase) {
   ASSERT_TRUE(sdb::ParseQuery(ctx, "\"hello world\""));
-  ASSERT_EQ(1, OptionalRoot().size());
-  AssertPhrase(OptionalRoot()[0], kFieldId);
+  ASSERT_EQ(1, Optional().size());
+  ASSERT_EQ(1, Optional().filters.size());
+  AssertPhrase(*Optional().filters[0], kFieldId);
 }
 
 TEST_F(LuceneParserTest, PrefixQuery) {
   ASSERT_TRUE(sdb::ParseQuery(ctx, "hel*"));
-  ASSERT_EQ(1, OptionalRoot().size());
-  AssertPrefix(OptionalRoot()[0], kFieldId, "hel");
+  ASSERT_EQ(1, Optional().size());
+  ASSERT_EQ(1, Optional().filters.size());
+  AssertPrefix(*Optional().filters[0], kFieldId, "hel");
 }
 
 TEST_F(LuceneParserTest, WildcardQuery) {
   ASSERT_TRUE(sdb::ParseQuery(ctx, "h*llo"));
-  ASSERT_EQ(1, OptionalRoot().size());
-  AssertWildcard(OptionalRoot()[0], kFieldId, "h%llo");
+  ASSERT_EQ(1, Optional().size());
+  ASSERT_EQ(1, Optional().filters.size());
+  AssertWildcard(*Optional().filters[0], kFieldId, "h%llo");
 }
 
 // strict_field=true: a field-prefix is rejected unless it exactly
@@ -172,15 +191,17 @@ TEST_F(LuceneParserTest, WildcardQuery) {
 TEST_F(LuceneParserTest, StrictField_AllowsBareTerm) {
   ctx.strict_field = true;
   ASSERT_TRUE(sdb::ParseQuery(ctx, "hello"));
-  ASSERT_EQ(1, OptionalRoot().size());
-  AssertTerm(OptionalRoot()[0], kFieldId, "hello");
+  ASSERT_EQ(1, Optional().size());
+  ASSERT_EQ(1, Optional().terms.size());
+  AssertTerm(Optional().terms[0], kFieldId, "hello");
 }
 
 TEST_F(LuceneParserTest, StrictField_AllowsPhrase) {
   ctx.strict_field = true;
   ASSERT_TRUE(sdb::ParseQuery(ctx, "\"hello world\""));
-  ASSERT_EQ(1, OptionalRoot().size());
-  AssertPhrase(OptionalRoot()[0], kFieldId);
+  ASSERT_EQ(1, Optional().size());
+  ASSERT_EQ(1, Optional().filters.size());
+  AssertPhrase(*Optional().filters[0], kFieldId);
 }
 
 TEST_F(LuceneParserTest, StrictField_AllowsBoolean) {
@@ -192,8 +213,9 @@ TEST_F(LuceneParserTest, StrictField_AllowsMatchingFieldPrefix) {
   // Same-name prefix is redundant but not wrong -- accept it.
   ctx.strict_field = true;
   ASSERT_TRUE(sdb::ParseQuery(ctx, "content:hello"));
-  ASSERT_EQ(1, OptionalRoot().size());
-  AssertTerm(OptionalRoot()[0], kFieldId, "hello");
+  ASSERT_EQ(1, Optional().size());
+  ASSERT_EQ(1, Optional().terms.size());
+  AssertTerm(Optional().terms[0], kFieldId, "hello");
 }
 
 TEST_F(LuceneParserTest, StrictField_AllowsMatchingFieldInBoolean) {
@@ -210,8 +232,9 @@ TEST_F(LuceneParserTest, StrictField_RejectsDifferentFieldPrefix) {
     std::string::npos)
     << "got: " << ctx.error_message;
   // Failed parse leaves no clauses on the root.
-  ASSERT_EQ(0, OptionalRoot().size());
-  ASSERT_EQ(0, RequiredRoot().size());
+  ASSERT_EQ(0, Optional().size());
+  ASSERT_EQ(0, Required().size());
+  ASSERT_EQ(0, Excluded().size());
 }
 
 TEST_F(LuceneParserTest, StrictField_RejectsDifferentFieldInBoolean) {
@@ -231,341 +254,335 @@ TEST_F(LuceneParserTest, StrictField_RejectsDifferentFieldInGroup) {
 
 TEST_F(LuceneParserTest, BoostedTerm) {
   ASSERT_TRUE(sdb::ParseQuery(ctx, "hello^2"));
-  ASSERT_EQ(1, OptionalRoot().size());
-  AssertTerm(OptionalRoot()[0], kFieldId, "hello", 2.0f);
+  ASSERT_EQ(1, Optional().size());
+  ASSERT_EQ(1, Optional().terms.size());
+  AssertTerm(Optional().terms[0], kFieldId, "hello", 2.0f);
 }
 
 TEST_F(LuceneParserTest, BoostedTermFloat) {
   ASSERT_TRUE(sdb::ParseQuery(ctx, "hello^1.5"));
-  ASSERT_EQ(1, OptionalRoot().size());
-  AssertTerm(OptionalRoot()[0], kFieldId, "hello", 1.5f);
+  ASSERT_EQ(1, Optional().size());
+  ASSERT_EQ(1, Optional().terms.size());
+  AssertTerm(Optional().terms[0], kFieldId, "hello", 1.5f);
 }
 
 TEST_F(LuceneParserTest, FuzzyTerm) {
   ASSERT_TRUE(sdb::ParseQuery(ctx, "hello~"));
-  ASSERT_EQ(1, OptionalRoot().size());
-  AssertFuzzy(OptionalRoot()[0], kFieldId, "hello", 2);
+  ASSERT_EQ(1, Optional().size());
+  ASSERT_EQ(1, Optional().filters.size());
+  AssertFuzzy(*Optional().filters[0], kFieldId, "hello", 2);
 }
 
 TEST_F(LuceneParserTest, SloppyPhraseBareTilde) {
   // `"..."~` without a number keeps the exact phrase (slop 0).
   ASSERT_TRUE(sdb::ParseQuery(ctx, "\"hello world\"~"));
-  ASSERT_EQ(1, OptionalRoot().size());
-  AssertPhrase(OptionalRoot()[0], kFieldId);
+  ASSERT_EQ(1, Optional().size());
+  ASSERT_EQ(1, Optional().filters.size());
+  AssertPhrase(*Optional().filters[0], kFieldId);
 }
 
 TEST_F(LuceneParserTest, FuzzyTermWithDistance) {
   ASSERT_TRUE(sdb::ParseQuery(ctx, "hello~1"));
-  ASSERT_EQ(1, OptionalRoot().size());
-  AssertFuzzy(OptionalRoot()[0], kFieldId, "hello", 1);
+  ASSERT_EQ(1, Optional().size());
+  ASSERT_EQ(1, Optional().filters.size());
+  AssertFuzzy(*Optional().filters[0], kFieldId, "hello", 1);
 }
 
 TEST_F(LuceneParserTest, RangeInclusive) {
   ASSERT_TRUE(sdb::ParseQuery(ctx, "[alpha TO omega]"));
-  ASSERT_EQ(1, OptionalRoot().size());
-  AssertRange(OptionalRoot()[0], kFieldId, "alpha", irs::BoundType::Inclusive,
-              "omega", irs::BoundType::Inclusive);
+  ASSERT_EQ(1, Optional().size());
+  ASSERT_EQ(1, Optional().filters.size());
+  AssertRange(*Optional().filters[0], kFieldId, "alpha",
+              irs::BoundType::Inclusive, "omega", irs::BoundType::Inclusive);
 }
 
 TEST_F(LuceneParserTest, RangeExclusive) {
   ASSERT_TRUE(sdb::ParseQuery(ctx, "{alpha TO omega}"));
-  ASSERT_EQ(1, OptionalRoot().size());
-  AssertRange(OptionalRoot()[0], kFieldId, "alpha", irs::BoundType::Exclusive,
-              "omega", irs::BoundType::Exclusive);
+  ASSERT_EQ(1, Optional().size());
+  ASSERT_EQ(1, Optional().filters.size());
+  AssertRange(*Optional().filters[0], kFieldId, "alpha",
+              irs::BoundType::Exclusive, "omega", irs::BoundType::Exclusive);
 }
 
 TEST_F(LuceneParserTest, RangeUnbounded) {
   ASSERT_TRUE(sdb::ParseQuery(ctx, "[* TO omega]"));
-  ASSERT_EQ(1, OptionalRoot().size());
-  AssertRange(OptionalRoot()[0], kFieldId, "", irs::BoundType::Unbounded,
+  ASSERT_EQ(1, Optional().size());
+  ASSERT_EQ(1, Optional().filters.size());
+  AssertRange(*Optional().filters[0], kFieldId, "", irs::BoundType::Unbounded,
               "omega", irs::BoundType::Inclusive);
 }
 
 TEST_F(LuceneParserTest, ImplicitOr) {
   ASSERT_TRUE(sdb::ParseQuery(ctx, "hello world"));
-  ASSERT_EQ(2, OptionalRoot().size());
-  AssertTerm(OptionalRoot()[0], kFieldId, "hello");
-  AssertTerm(OptionalRoot()[1], kFieldId, "world");
+  ASSERT_EQ(2, Optional().size());
+  ASSERT_EQ(2, Optional().terms.size());
+  AssertTerm(Optional().terms[0], kFieldId, "hello");
+  AssertTerm(Optional().terms[1], kFieldId, "world");
 }
 
 TEST_F(LuceneParserTest, ExplicitOr) {
   ASSERT_TRUE(sdb::ParseQuery(ctx, "hello OR world"));
-  ASSERT_EQ(2, OptionalRoot().size());
-  AssertTerm(OptionalRoot()[0], kFieldId, "hello");
-  AssertTerm(OptionalRoot()[1], kFieldId, "world");
+  ASSERT_EQ(2, Optional().size());
+  ASSERT_EQ(2, Optional().terms.size());
+  AssertTerm(Optional().terms[0], kFieldId, "hello");
+  AssertTerm(Optional().terms[1], kFieldId, "world");
 }
 
 TEST_F(LuceneParserTest, AndOperator) {
   ASSERT_TRUE(sdb::ParseQuery(ctx, "hello AND world"));
-  ASSERT_TRUE(OptionalRoot().empty());
-  ASSERT_EQ(2, RequiredRoot().size());
-  AssertTerm(RequiredRoot()[0], kFieldId, "hello");
-  AssertTerm(RequiredRoot()[1], kFieldId, "world");
+  ASSERT_TRUE(Optional().empty());
+  ASSERT_TRUE(Excluded().empty());
+  ASSERT_EQ(2, Required().size());
+  ASSERT_EQ(2, Required().terms.size());
+  AssertTerm(Required().terms[0], kFieldId, "hello");
+  AssertTerm(Required().terms[1], kFieldId, "world");
 }
 
 TEST_F(LuceneParserTest, ChainedAndOperator) {
   ASSERT_TRUE(sdb::ParseQuery(ctx, "a AND b AND c"));
-  ASSERT_TRUE(OptionalRoot().empty());
-  ASSERT_EQ(3, RequiredRoot().size());
-  AssertTerm(RequiredRoot()[0], kFieldId, "a");
-  AssertTerm(RequiredRoot()[1], kFieldId, "b");
-  AssertTerm(RequiredRoot()[2], kFieldId, "c");
+  ASSERT_TRUE(Optional().empty());
+  ASSERT_TRUE(Excluded().empty());
+  ASSERT_EQ(3, Required().size());
+  ASSERT_EQ(3, Required().terms.size());
+  AssertTerm(Required().terms[0], kFieldId, "a");
+  AssertTerm(Required().terms[1], kFieldId, "b");
+  AssertTerm(Required().terms[2], kFieldId, "c");
 }
 
 TEST_F(LuceneParserTest, MixedPlusMinusOperators) {
   ASSERT_TRUE(sdb::ParseQuery(ctx, "+foo -bar +foobar -foobaz"));
-  ASSERT_TRUE(OptionalRoot().empty());
-  ASSERT_EQ(4, RequiredRoot().size());
-  AssertTerm(RequiredRoot()[0], kFieldId, "foo");
-  const auto& not1 = sdb::basics::downCast<irs::Not>(RequiredRoot()[1]);
-  const auto* not1_or = NotOr(not1);
-  ASSERT_NE(nullptr, not1_or);
-  ASSERT_EQ(1, not1_or->size());
-  AssertTerm((*not1_or)[0], kFieldId, "bar");
-  AssertTerm(RequiredRoot()[2], kFieldId, "foobar");
-  const auto& not2 = sdb::basics::downCast<irs::Not>(RequiredRoot()[3]);
-  const auto* not2_or = NotOr(not2);
-  ASSERT_NE(nullptr, not2_or);
-  ASSERT_EQ(1, not2_or->size());
-  AssertTerm((*not2_or)[0], kFieldId, "foobaz");
+  ASSERT_TRUE(Optional().empty());
+  ASSERT_EQ(2, Required().size());
+  ASSERT_EQ(2, Required().terms.size());
+  AssertTerm(Required().terms[0], kFieldId, "foo");
+  AssertTerm(Required().terms[1], kFieldId, "foobar");
+
+  ASSERT_EQ(2, Excluded().size());
+  ASSERT_EQ(2, Excluded().terms.size());
+  AssertTerm(Excluded().terms[0], kFieldId, "bar");
+  AssertTerm(Excluded().terms[1], kFieldId, "foobaz");
 }
 
 TEST_F(LuceneParserTest, MixedPlusMinusWithImplicitOr) {
   // +foo bar -baz +foobar foobaz
   // + terms go to Required, plain terms go to Optional
   ASSERT_TRUE(sdb::ParseQuery(ctx, "+foo bar -baz +foobar foobaz"));
-  ASSERT_EQ(3, RequiredRoot().size());
-  ASSERT_EQ(2, OptionalRoot().size());
+  ASSERT_EQ(2, Required().size());
+  ASSERT_EQ(1, Excluded().size());
+  ASSERT_EQ(2, Optional().size());
 
-  // Required: [foo, Not(baz), foobar]
+  // Required: [foo, foobar]
 
-  AssertTerm(RequiredRoot()[0], kFieldId, "foo");
+  ASSERT_EQ(2, Required().terms.size());
+  AssertTerm(Required().terms[0], kFieldId, "foo");
+  AssertTerm(Required().terms[1], kFieldId, "foobar");
 
-  const auto& not_filter = sdb::basics::downCast<irs::Not>(RequiredRoot()[1]);
-  const auto* not_or = NotOr(not_filter);
-  ASSERT_NE(nullptr, not_or);
-  ASSERT_EQ(1, not_or->size());
-  AssertTerm((*not_or)[0], kFieldId, "baz");
-  AssertTerm(RequiredRoot()[2], kFieldId, "foobar");
+  // Excluded: [baz]
+
+  ASSERT_EQ(1, Excluded().terms.size());
+  AssertTerm(Excluded().terms[0], kFieldId, "baz");
 
   // Optional: [bar, foobaz]
 
-  AssertTerm(OptionalRoot()[0], kFieldId, "bar");
-  AssertTerm(OptionalRoot()[1], kFieldId, "foobaz");
+  ASSERT_EQ(2, Optional().terms.size());
+  AssertTerm(Optional().terms[0], kFieldId, "bar");
+  AssertTerm(Optional().terms[1], kFieldId, "foobaz");
 }
 
 TEST_F(LuceneParserTest, DeepNestedGroups) {
   // (a AND (b OR (c AND d)))
   // AND promotes a and the subgroup to Required within the outer group
   ASSERT_TRUE(sdb::ParseQuery(ctx, "(a AND (b OR (c AND d)))"));
-  // Outer group is a MixedBooleanFilter
-  ASSERT_EQ(1, OptionalRoot().size());
-  const auto& outer_mixed =
-    sdb::basics::downCast<irs::MixedBooleanFilter>(OptionalRoot()[0]);
-  ASSERT_TRUE(outer_mixed.GetOptional().empty());
-  const auto& outer_req = outer_mixed.GetRequired();
-  ASSERT_EQ(2, outer_req.size());
+  ASSERT_EQ(1, Optional().size());
+  ASSERT_EQ(1, Optional().filters.size());
+  const auto& outer = *Optional().filters[0];
+  ASSERT_TRUE(SubOptional(outer).empty());
+  ASSERT_EQ(2, SubRequired(outer).size());
 
-  AssertTerm(outer_req[0], kFieldId, "a");
+  ASSERT_EQ(1, SubRequired(outer).terms.size());
+  AssertTerm(SubRequired(outer).terms[0], kFieldId, "a");
 
-  // Second element is the group (b OR (c AND d))
-  const auto& middle_mixed =
-    sdb::basics::downCast<irs::MixedBooleanFilter>(outer_req[1]);
-  const auto& middle_or = middle_mixed.GetOptional();
+  // The other required clause is the group (b OR (c AND d))
+  ASSERT_EQ(1, SubRequired(outer).filters.size());
+  const auto& middle = *SubRequired(outer).filters[0];
 
   // Inside: b, and (c AND d) group
-  ASSERT_EQ(2, middle_or.size());
+  ASSERT_EQ(2, SubOptional(middle).size());
 
-  AssertTerm(middle_or[0], kFieldId, "b");
+  ASSERT_EQ(1, SubOptional(middle).terms.size());
+  AssertTerm(SubOptional(middle).terms[0], kFieldId, "b");
 
-  const auto& inner_mixed =
-    sdb::basics::downCast<irs::MixedBooleanFilter>(middle_or[1]);
+  ASSERT_EQ(1, SubOptional(middle).filters.size());
+  const auto& inner = *SubOptional(middle).filters[0];
   // c AND d promotes both to Required within the inner group
-  ASSERT_TRUE(inner_mixed.GetOptional().empty());
-  const auto& inner_req = inner_mixed.GetRequired();
-  ASSERT_EQ(2, inner_req.size());
-
-  AssertTerm(inner_req[0], kFieldId, "c");
-  AssertTerm(inner_req[1], kFieldId, "d");
+  ASSERT_TRUE(SubOptional(inner).empty());
+  ASSERT_EQ(2, SubRequired(inner).size());
+  ASSERT_EQ(2, SubRequired(inner).terms.size());
+  AssertTerm(SubRequired(inner).terms[0], kFieldId, "c");
+  AssertTerm(SubRequired(inner).terms[1], kFieldId, "d");
 }
 
 TEST_F(LuceneParserTest, GroupsWithAndOr) {
   // (a b) AND (c d) - AND promotes both groups to Required
   ASSERT_TRUE(sdb::ParseQuery(ctx, "(a b) AND (c d)"));
-  ASSERT_TRUE(OptionalRoot().empty());
-  ASSERT_EQ(2, RequiredRoot().size());
+  ASSERT_TRUE(Optional().empty());
+  ASSERT_EQ(2, Required().size());
+  ASSERT_EQ(2, Required().filters.size());
 
-  const auto& group1 =
-    sdb::basics::downCast<irs::MixedBooleanFilter>(RequiredRoot()[0]);
-  const auto& group1_or = group1.GetOptional();
-  ASSERT_EQ(2, group1_or.size());
+  const auto& group1 = *Required().filters[0];
+  ASSERT_EQ(2, SubOptional(group1).size());
+  ASSERT_EQ(2, SubOptional(group1).terms.size());
+  AssertTerm(SubOptional(group1).terms[0], kFieldId, "a");
+  AssertTerm(SubOptional(group1).terms[1], kFieldId, "b");
 
-  AssertTerm(group1_or[0], kFieldId, "a");
-  AssertTerm(group1_or[1], kFieldId, "b");
-
-  const auto& group2 =
-    sdb::basics::downCast<irs::MixedBooleanFilter>(RequiredRoot()[1]);
-  const auto& group2_or = group2.GetOptional();
-  ASSERT_EQ(2, group2_or.size());
-
-  AssertTerm(group2_or[0], kFieldId, "c");
-  AssertTerm(group2_or[1], kFieldId, "d");
+  const auto& group2 = *Required().filters[1];
+  ASSERT_EQ(2, SubOptional(group2).size());
+  ASSERT_EQ(2, SubOptional(group2).terms.size());
+  AssertTerm(SubOptional(group2).terms[0], kFieldId, "c");
+  AssertTerm(SubOptional(group2).terms[1], kFieldId, "d");
 }
 
 TEST_F(LuceneParserTest, PlusMinusWithGroups) {
   // +(foo bar) -baz - required group, excluded term
   ASSERT_TRUE(sdb::ParseQuery(ctx, "+(foo bar) -baz"));
-  ASSERT_TRUE(OptionalRoot().empty());
-  ASSERT_EQ(2, RequiredRoot().size());
+  ASSERT_TRUE(Optional().empty());
+  ASSERT_EQ(1, Required().size());
+  ASSERT_EQ(1, Required().filters.size());
 
-  // First: group (foo bar) as MixedBooleanFilter
-  const auto& group =
-    sdb::basics::downCast<irs::MixedBooleanFilter>(RequiredRoot()[0]);
-  const auto& group_or = group.GetOptional();
-  ASSERT_EQ(2, group_or.size());
+  // Required: group (foo bar)
+  const auto& group = *Required().filters[0];
+  ASSERT_EQ(2, SubOptional(group).size());
+  ASSERT_EQ(2, SubOptional(group).terms.size());
+  AssertTerm(SubOptional(group).terms[0], kFieldId, "bar");
+  AssertTerm(SubOptional(group).terms[1], kFieldId, "foo");
 
-  AssertTerm(group_or[0], kFieldId, "foo");
-  AssertTerm(group_or[1], kFieldId, "bar");
-
-  // Second: Not(baz)
-  const auto& not_filter = sdb::basics::downCast<irs::Not>(RequiredRoot()[1]);
-  const auto* not_or = NotOr(not_filter);
-  ASSERT_NE(nullptr, not_or);
-  ASSERT_EQ(1, not_or->size());
-  AssertTerm((*not_or)[0], kFieldId, "baz");
+  // Excluded: baz
+  ASSERT_EQ(1, Excluded().size());
+  ASSERT_EQ(1, Excluded().terms.size());
+  AssertTerm(Excluded().terms[0], kFieldId, "baz");
 }
 
 TEST_F(LuceneParserTest, ComplexMixedQuery) {
   // (a OR b) AND +(c d) -e
-  // AND promotes (a OR b) to Required; +(c d) goes to Required; -e goes to
-  // Required
+  // AND promotes (a OR b) to Required; +(c d) goes to Required; -e is excluded
   ASSERT_TRUE(sdb::ParseQuery(ctx, "(a OR b) AND +(c d) -e"));
-  ASSERT_TRUE(OptionalRoot().empty());
-  ASSERT_EQ(3, RequiredRoot().size());
+  ASSERT_TRUE(Optional().empty());
+  ASSERT_EQ(2, Required().size());
+  ASSERT_EQ(2, Required().filters.size());
 
   // First: (a OR b)
-  const auto& group_ab =
-    sdb::basics::downCast<irs::MixedBooleanFilter>(RequiredRoot()[0]);
-  ASSERT_EQ(2, group_ab.GetOptional().size());
-  AssertTerm(group_ab.GetOptional()[0], kFieldId, "a");
-  AssertTerm(group_ab.GetOptional()[1], kFieldId, "b");
+  const auto& group_ab = *Required().filters[0];
+  ASSERT_EQ(2, SubOptional(group_ab).size());
+  ASSERT_EQ(2, SubOptional(group_ab).terms.size());
+  AssertTerm(SubOptional(group_ab).terms[0], kFieldId, "a");
+  AssertTerm(SubOptional(group_ab).terms[1], kFieldId, "b");
 
   // Second: (c d)
-  const auto& group_cd =
-    sdb::basics::downCast<irs::MixedBooleanFilter>(RequiredRoot()[1]);
-  ASSERT_EQ(2, group_cd.GetOptional().size());
-  AssertTerm(group_cd.GetOptional()[0], kFieldId, "c");
-  AssertTerm(group_cd.GetOptional()[1], kFieldId, "d");
+  const auto& group_cd = *Required().filters[1];
+  ASSERT_EQ(2, SubOptional(group_cd).size());
+  ASSERT_EQ(2, SubOptional(group_cd).terms.size());
+  AssertTerm(SubOptional(group_cd).terms[0], kFieldId, "c");
+  AssertTerm(SubOptional(group_cd).terms[1], kFieldId, "d");
 
-  // Third: Not(e)
-  const auto& not_e = sdb::basics::downCast<irs::Not>(RequiredRoot()[2]);
-  const auto* not_or = NotOr(not_e);
-  ASSERT_NE(nullptr, not_or);
-  ASSERT_EQ(1, not_or->size());
-  AssertTerm((*not_or)[0], kFieldId, "e");
+  // Excluded: e
+  ASSERT_EQ(1, Excluded().size());
+  ASSERT_EQ(1, Excluded().terms.size());
+  AssertTerm(Excluded().terms[0], kFieldId, "e");
 }
 
 TEST_F(LuceneParserTest, ComplexMixedQueryGrouped) {
   // (a OR b) AND (+(c d) -e) - AND promotes both to Required
   ASSERT_TRUE(sdb::ParseQuery(ctx, "(a OR b) AND (+(c d) -e)"));
-  ASSERT_TRUE(OptionalRoot().empty());
-  ASSERT_EQ(2, RequiredRoot().size());
+  ASSERT_TRUE(Optional().empty());
+  ASSERT_TRUE(Excluded().empty());
+  ASSERT_EQ(2, Required().size());
+  ASSERT_EQ(2, Required().filters.size());
 
   // First: group (a OR b)
-  const auto& group_ab =
-    sdb::basics::downCast<irs::MixedBooleanFilter>(RequiredRoot()[0]);
-  const auto& ab_or = group_ab.GetOptional();
-  ASSERT_EQ(2, ab_or.size());
-
-  AssertTerm(ab_or[0], kFieldId, "a");
-  AssertTerm(ab_or[1], kFieldId, "b");
+  const auto& group_ab = *Required().filters[0];
+  ASSERT_EQ(2, SubOptional(group_ab).size());
+  ASSERT_EQ(2, SubOptional(group_ab).terms.size());
+  AssertTerm(SubOptional(group_ab).terms[0], kFieldId, "a");
+  AssertTerm(SubOptional(group_ab).terms[1], kFieldId, "b");
 
   // Second: group with +(c d) -e
-  const auto& group2 =
-    sdb::basics::downCast<irs::MixedBooleanFilter>(RequiredRoot()[1]);
-  const auto& group2_req = group2.GetRequired();
-  ASSERT_EQ(2, group2_req.size());
+  const auto& group2 = *Required().filters[1];
+  ASSERT_EQ(1, SubRequired(group2).size());
+  ASSERT_EQ(1, SubRequired(group2).filters.size());
 
-  const auto& group_cd =
-    sdb::basics::downCast<irs::MixedBooleanFilter>(group2_req[0]);
-  ASSERT_EQ(2, group_cd.GetOptional().size());
+  const auto& group_cd = *SubRequired(group2).filters[0];
+  ASSERT_EQ(2, SubOptional(group_cd).size());
+  ASSERT_EQ(2, SubOptional(group_cd).terms.size());
+  AssertTerm(SubOptional(group_cd).terms[0], kFieldId, "c");
+  AssertTerm(SubOptional(group_cd).terms[1], kFieldId, "d");
 
-  AssertTerm(group_cd.GetOptional()[0], kFieldId, "c");
-  AssertTerm(group_cd.GetOptional()[1], kFieldId, "d");
-
-  const auto& not_e = sdb::basics::downCast<irs::Not>(group2_req[1]);
-  const auto* not_or = NotOr(not_e);
-  ASSERT_NE(nullptr, not_or);
-  ASSERT_EQ(1, not_or->size());
-  AssertTerm((*not_or)[0], kFieldId, "e");
+  ASSERT_EQ(1, SubExcluded(group2).size());
+  ASSERT_EQ(1, SubExcluded(group2).terms.size());
+  AssertTerm(SubExcluded(group2).terms[0], kFieldId, "e");
 }
 
 TEST_F(LuceneParserTest, NotOperator) {
   ASSERT_TRUE(sdb::ParseQuery(ctx, "NOT hello"));
-  ASSERT_TRUE(OptionalRoot().empty());
-  ASSERT_EQ(1, RequiredRoot().size());
+  ASSERT_TRUE(Optional().empty());
+  ASSERT_TRUE(Required().empty());
+  ASSERT_EQ(1, Excluded().size());
+  ASSERT_EQ(1, Excluded().terms.size());
 
-  const auto& not_filter = sdb::basics::downCast<irs::Not>(RequiredRoot()[0]);
-  const auto* inner_or = NotOr(not_filter);
-  ASSERT_NE(nullptr, inner_or);
-  ASSERT_EQ(1, inner_or->size());
-
-  AssertTerm((*inner_or)[0], kFieldId, "hello");
+  AssertTerm(Excluded().terms[0], kFieldId, "hello");
 }
 
 TEST_F(LuceneParserTest, MinusOperator) {
   ASSERT_TRUE(sdb::ParseQuery(ctx, "-hello"));
-  ASSERT_TRUE(OptionalRoot().empty());
-  ASSERT_EQ(1, RequiredRoot().size());
+  ASSERT_TRUE(Optional().empty());
+  ASSERT_TRUE(Required().empty());
+  ASSERT_EQ(1, Excluded().size());
+  ASSERT_EQ(1, Excluded().terms.size());
 
-  const auto& not_filter = sdb::basics::downCast<irs::Not>(RequiredRoot()[0]);
-  const auto* inner_or = NotOr(not_filter);
-  ASSERT_NE(nullptr, inner_or);
-  ASSERT_EQ(1, inner_or->size());
-
-  AssertTerm((*inner_or)[0], kFieldId, "hello");
+  AssertTerm(Excluded().terms[0], kFieldId, "hello");
 }
 
 TEST_F(LuceneParserTest, PlusOperator) {
   ASSERT_TRUE(sdb::ParseQuery(ctx, "+hello"));
-  ASSERT_TRUE(OptionalRoot().empty());
-  ASSERT_EQ(1, RequiredRoot().size());
+  ASSERT_TRUE(Optional().empty());
+  ASSERT_EQ(1, Required().size());
+  ASSERT_EQ(1, Required().terms.size());
 
-  AssertTerm(RequiredRoot()[0], kFieldId, "hello");
+  AssertTerm(Required().terms[0], kFieldId, "hello");
 }
 
 TEST_F(LuceneParserTest, MultiplePlusOperators) {
   ASSERT_TRUE(sdb::ParseQuery(ctx, "+foo +bar"));
-  ASSERT_TRUE(OptionalRoot().empty());
-  ASSERT_EQ(2, RequiredRoot().size());
+  ASSERT_TRUE(Optional().empty());
+  ASSERT_EQ(2, Required().size());
+  ASSERT_EQ(2, Required().terms.size());
 
-  AssertTerm(RequiredRoot()[0], kFieldId, "foo");
-  AssertTerm(RequiredRoot()[1], kFieldId, "bar");
+  AssertTerm(Required().terms[0], kFieldId, "bar");
+  AssertTerm(Required().terms[1], kFieldId, "foo");
 }
 
 TEST_F(LuceneParserTest, GroupedQuery) {
   ASSERT_TRUE(sdb::ParseQuery(ctx, "(hello OR world)"));
-  ASSERT_EQ(1, OptionalRoot().size());
-  const auto& group =
-    sdb::basics::downCast<irs::MixedBooleanFilter>(OptionalRoot()[0]);
-  ASSERT_TRUE(group.GetRequired().empty());
-  const auto& sub_or = group.GetOptional();
-  ASSERT_EQ(2, sub_or.size());
-  AssertTerm(sub_or[0], kFieldId, "hello");
-  AssertTerm(sub_or[1], kFieldId, "world");
+  ASSERT_EQ(1, Optional().size());
+  ASSERT_EQ(1, Optional().filters.size());
+  const auto& group = *Optional().filters[0];
+  ASSERT_TRUE(SubRequired(group).empty());
+  ASSERT_EQ(2, SubOptional(group).size());
+  ASSERT_EQ(2, SubOptional(group).terms.size());
+  AssertTerm(SubOptional(group).terms[0], kFieldId, "hello");
+  AssertTerm(SubOptional(group).terms[1], kFieldId, "world");
 }
 
 TEST_F(LuceneParserTest, BoostedGroup) {
   ASSERT_TRUE(sdb::ParseQuery(ctx, "(foo bar)^2.5"));
-  ASSERT_EQ(1, OptionalRoot().size());
-  const auto& group =
-    sdb::basics::downCast<irs::MixedBooleanFilter>(OptionalRoot()[0]);
+  ASSERT_EQ(1, Optional().size());
+  ASSERT_EQ(1, Optional().filters.size());
+  const auto& group = *Optional().filters[0];
   EXPECT_FLOAT_EQ(2.5f, group.GetBoost());
-  ASSERT_TRUE(group.GetRequired().empty());
-  const auto& sub_or = group.GetOptional();
-  ASSERT_EQ(2, sub_or.size());
-  AssertTerm(sub_or[0], kFieldId, "foo");
-  AssertTerm(sub_or[1], kFieldId, "bar");
+  ASSERT_TRUE(SubRequired(group).empty());
+  ASSERT_EQ(2, SubOptional(group).size());
+  ASSERT_EQ(2, SubOptional(group).terms.size());
+  AssertTerm(SubOptional(group).terms[0], kFieldId, "bar");
+  AssertTerm(SubOptional(group).terms[1], kFieldId, "foo");
 }
 
 TEST_F(LuceneParserTest, ParseError) {
@@ -602,9 +619,10 @@ TEST_F(LuceneParserTest, ParseError_UnclosedBrace) {
 
 TEST_F(LuceneParserTest, RangeMixedBrackets) {
   ASSERT_TRUE(sdb::ParseQuery(ctx, "[alpha TO omega}"));
-  ASSERT_EQ(1, OptionalRoot().size());
-  AssertRange(OptionalRoot()[0], kFieldId, "alpha", irs::BoundType::Inclusive,
-              "omega", irs::BoundType::Exclusive);
+  ASSERT_EQ(1, Optional().size());
+  ASSERT_EQ(1, Optional().filters.size());
+  AssertRange(*Optional().filters[0], kFieldId, "alpha",
+              irs::BoundType::Inclusive, "omega", irs::BoundType::Exclusive);
 }
 
 TEST_F(LuceneParserTest, ParseError_RangeMissingTO) {
@@ -678,576 +696,540 @@ TEST_F(LuceneParserTest, ParseError_BoostNonNumeric) {
 }
 
 TEST_F(LuceneParserTest, NotBetweenTerms) {
-  // guinea NOT pig -> Optional[guinea], Required[Not(pig)]
+  // guinea NOT pig -> Optional[guinea], Excluded[pig]
   ASSERT_TRUE(sdb::ParseQuery(ctx, "guinea NOT pig"));
-  ASSERT_EQ(1, RequiredRoot().size());
+  ASSERT_TRUE(Required().empty());
+  ASSERT_EQ(1, Excluded().size());
 
-  ASSERT_EQ(1, OptionalRoot().size());
-  AssertTerm(OptionalRoot()[0], kFieldId, "guinea");
+  ASSERT_EQ(1, Optional().size());
+  ASSERT_EQ(1, Optional().terms.size());
+  AssertTerm(Optional().terms[0], kFieldId, "guinea");
 
-  const auto& not_filter = sdb::basics::downCast<irs::Not>(RequiredRoot()[0]);
-  const auto* not_or = NotOr(not_filter);
-  ASSERT_NE(nullptr, not_or);
-  ASSERT_EQ(1, not_or->size());
-  AssertTerm((*not_or)[0], kFieldId, "pig");
+  ASSERT_EQ(1, Excluded().terms.size());
+  AssertTerm(Excluded().terms[0], kFieldId, "pig");
 }
 
 TEST_F(LuceneParserTest, MinusBetweenTerms) {
-  // guinea -pig -> Optional[guinea], Required[Not(pig)]
+  // guinea -pig -> Optional[guinea], Excluded[pig]
   ASSERT_TRUE(sdb::ParseQuery(ctx, "guinea -pig"));
-  ASSERT_EQ(1, RequiredRoot().size());
+  ASSERT_TRUE(Required().empty());
+  ASSERT_EQ(1, Excluded().size());
 
-  ASSERT_EQ(1, OptionalRoot().size());
-  AssertTerm(OptionalRoot()[0], kFieldId, "guinea");
+  ASSERT_EQ(1, Optional().size());
+  ASSERT_EQ(1, Optional().terms.size());
+  AssertTerm(Optional().terms[0], kFieldId, "guinea");
 
-  const auto& not_filter = sdb::basics::downCast<irs::Not>(RequiredRoot()[0]);
-  const auto* not_or = NotOr(not_filter);
-  ASSERT_NE(nullptr, not_or);
-  ASSERT_EQ(1, not_or->size());
-  AssertTerm((*not_or)[0], kFieldId, "pig");
+  ASSERT_EQ(1, Excluded().terms.size());
+  AssertTerm(Excluded().terms[0], kFieldId, "pig");
 }
 
 TEST_F(LuceneParserTest, PlusBetweenTerms) {
   // guinea +pig -> Optional[guinea], Required[pig]
   ASSERT_TRUE(sdb::ParseQuery(ctx, "guinea +pig"));
-  ASSERT_EQ(1, RequiredRoot().size());
-  AssertTerm(RequiredRoot()[0], kFieldId, "pig");
+  ASSERT_EQ(1, Required().size());
+  ASSERT_EQ(1, Required().terms.size());
+  AssertTerm(Required().terms[0], kFieldId, "pig");
 
-  ASSERT_EQ(1, OptionalRoot().size());
-  AssertTerm(OptionalRoot()[0], kFieldId, "guinea");
+  ASSERT_EQ(1, Optional().size());
+  ASSERT_EQ(1, Optional().terms.size());
+  AssertTerm(Optional().terms[0], kFieldId, "guinea");
 }
 
 TEST_F(LuceneParserTest, AndThenOr) {
   // a AND b OR c -> Required[a, b], Optional[c]
   ASSERT_TRUE(sdb::ParseQuery(ctx, "a AND b OR c"));
-  ASSERT_EQ(2, RequiredRoot().size());
-  AssertTerm(RequiredRoot()[0], kFieldId, "a");
-  AssertTerm(RequiredRoot()[1], kFieldId, "b");
+  ASSERT_EQ(2, Required().size());
+  ASSERT_EQ(2, Required().terms.size());
+  AssertTerm(Required().terms[0], kFieldId, "a");
+  AssertTerm(Required().terms[1], kFieldId, "b");
 
-  ASSERT_EQ(1, OptionalRoot().size());
-  AssertTerm(OptionalRoot()[0], kFieldId, "c");
+  ASSERT_EQ(1, Optional().size());
+  ASSERT_EQ(1, Optional().terms.size());
+  AssertTerm(Optional().terms[0], kFieldId, "c");
 }
 
 TEST_F(LuceneParserTest, OrThenAnd) {
   // a OR b AND c -> Required[b, c], Optional[a]
   ASSERT_TRUE(sdb::ParseQuery(ctx, "a OR b AND c"));
-  ASSERT_EQ(2, RequiredRoot().size());
-  AssertTerm(RequiredRoot()[0], kFieldId, "b");
-  AssertTerm(RequiredRoot()[1], kFieldId, "c");
+  ASSERT_EQ(2, Required().size());
+  ASSERT_EQ(2, Required().terms.size());
+  AssertTerm(Required().terms[0], kFieldId, "b");
+  AssertTerm(Required().terms[1], kFieldId, "c");
 
-  ASSERT_EQ(1, OptionalRoot().size());
-  AssertTerm(OptionalRoot()[0], kFieldId, "a");
+  ASSERT_EQ(1, Optional().size());
+  ASSERT_EQ(1, Optional().terms.size());
+  AssertTerm(Optional().terms[0], kFieldId, "a");
 }
 
 TEST_F(LuceneParserTest, FourChainedAnd) {
   // a AND b AND c AND d -> Required[a, b, c, d]
   ASSERT_TRUE(sdb::ParseQuery(ctx, "a AND b AND c AND d"));
-  ASSERT_TRUE(OptionalRoot().empty());
-  ASSERT_EQ(4, RequiredRoot().size());
-  AssertTerm(RequiredRoot()[0], kFieldId, "a");
-  AssertTerm(RequiredRoot()[1], kFieldId, "b");
-  AssertTerm(RequiredRoot()[2], kFieldId, "c");
-  AssertTerm(RequiredRoot()[3], kFieldId, "d");
+  ASSERT_TRUE(Optional().empty());
+  ASSERT_EQ(4, Required().size());
+  ASSERT_EQ(4, Required().terms.size());
+  AssertTerm(Required().terms[0], kFieldId, "a");
+  AssertTerm(Required().terms[1], kFieldId, "b");
+  AssertTerm(Required().terms[2], kFieldId, "c");
+  AssertTerm(Required().terms[3], kFieldId, "d");
 }
 
 TEST_F(LuceneParserTest, NotBeforeAnd) {
-  // NOT a AND b -> Required[Not(a), b]
+  // NOT a AND b -> Excluded[a], Required[b]
   ASSERT_TRUE(sdb::ParseQuery(ctx, "NOT a AND b"));
-  ASSERT_TRUE(OptionalRoot().empty());
-  ASSERT_EQ(2, RequiredRoot().size());
+  ASSERT_TRUE(Optional().empty());
+  ASSERT_EQ(1, Excluded().size());
+  ASSERT_EQ(1, Excluded().terms.size());
+  AssertTerm(Excluded().terms[0], kFieldId, "a");
 
-  const auto& not_filter = sdb::basics::downCast<irs::Not>(RequiredRoot()[0]);
-  const auto* not_or = NotOr(not_filter);
-  ASSERT_NE(nullptr, not_or);
-  ASSERT_EQ(1, not_or->size());
-  AssertTerm((*not_or)[0], kFieldId, "a");
-
-  AssertTerm(RequiredRoot()[1], kFieldId, "b");
+  ASSERT_EQ(1, Required().size());
+  ASSERT_EQ(1, Required().terms.size());
+  AssertTerm(Required().terms[0], kFieldId, "b");
 }
 
 TEST_F(LuceneParserTest, AndBeforeNot) {
-  // a AND NOT b -> Required[a, Not(b)]
+  // a AND NOT b -> Required[a], Excluded[b]
   ASSERT_TRUE(sdb::ParseQuery(ctx, "a AND NOT b"));
-  ASSERT_TRUE(OptionalRoot().empty());
-  ASSERT_EQ(2, RequiredRoot().size());
+  ASSERT_TRUE(Optional().empty());
+  ASSERT_EQ(1, Required().size());
+  ASSERT_EQ(1, Required().terms.size());
+  AssertTerm(Required().terms[0], kFieldId, "a");
 
-  AssertTerm(RequiredRoot()[0], kFieldId, "a");
-
-  const auto& not_filter = sdb::basics::downCast<irs::Not>(RequiredRoot()[1]);
-  const auto* not_or = NotOr(not_filter);
-  ASSERT_NE(nullptr, not_or);
-  ASSERT_EQ(1, not_or->size());
-  AssertTerm((*not_or)[0], kFieldId, "b");
+  ASSERT_EQ(1, Excluded().size());
+  ASSERT_EQ(1, Excluded().terms.size());
+  AssertTerm(Excluded().terms[0], kFieldId, "b");
 }
 
 TEST_F(LuceneParserTest, NotBetweenMultipleTerms) {
-  // a NOT b c -> Optional[a, c], Required[Not(b)]
+  // a NOT b c -> Optional[a, c], Excluded[b]
   ASSERT_TRUE(sdb::ParseQuery(ctx, "a NOT b c"));
-  ASSERT_EQ(2, OptionalRoot().size());
-  ASSERT_EQ(1, RequiredRoot().size());
+  ASSERT_EQ(2, Optional().size());
+  ASSERT_EQ(2, Optional().terms.size());
+  ASSERT_EQ(1, Excluded().size());
+  ASSERT_EQ(1, Excluded().terms.size());
 
-  AssertTerm(OptionalRoot()[0], kFieldId, "a");
-  AssertTerm(OptionalRoot()[1], kFieldId, "c");
+  AssertTerm(Optional().terms[0], kFieldId, "a");
+  AssertTerm(Optional().terms[1], kFieldId, "c");
 
-  const auto& not_filter = sdb::basics::downCast<irs::Not>(RequiredRoot()[0]);
-  const auto* not_or = NotOr(not_filter);
-  ASSERT_NE(nullptr, not_or);
-  ASSERT_EQ(1, not_or->size());
-  AssertTerm((*not_or)[0], kFieldId, "b");
+  AssertTerm(Excluded().terms[0], kFieldId, "b");
 }
 
 TEST_F(LuceneParserTest, AndWithMinusModifier) {
-  // a AND -b -> Required[a, Not(b)]
+  // a AND -b -> Required[a], Excluded[b]
   ASSERT_TRUE(sdb::ParseQuery(ctx, "a AND -b"));
-  ASSERT_TRUE(OptionalRoot().empty());
-  ASSERT_EQ(2, RequiredRoot().size());
+  ASSERT_TRUE(Optional().empty());
+  ASSERT_EQ(1, Required().size());
+  ASSERT_EQ(1, Required().terms.size());
+  AssertTerm(Required().terms[0], kFieldId, "a");
 
-  AssertTerm(RequiredRoot()[0], kFieldId, "a");
-
-  const auto& not_filter = sdb::basics::downCast<irs::Not>(RequiredRoot()[1]);
-  const auto* not_or = NotOr(not_filter);
-  ASSERT_NE(nullptr, not_or);
-  ASSERT_EQ(1, not_or->size());
-  AssertTerm((*not_or)[0], kFieldId, "b");
+  ASSERT_EQ(1, Excluded().size());
+  ASSERT_EQ(1, Excluded().terms.size());
+  AssertTerm(Excluded().terms[0], kFieldId, "b");
 }
 
 TEST_F(LuceneParserTest, AndWithPlusModifier) {
   // a AND +b -> Required[a, b]
   ASSERT_TRUE(sdb::ParseQuery(ctx, "a AND +b"));
-  ASSERT_TRUE(OptionalRoot().empty());
-  ASSERT_EQ(2, RequiredRoot().size());
+  ASSERT_TRUE(Optional().empty());
+  ASSERT_TRUE(Excluded().empty());
+  ASSERT_EQ(2, Required().size());
+  ASSERT_EQ(2, Required().terms.size());
 
-  AssertTerm(RequiredRoot()[0], kFieldId, "a");
-  AssertTerm(RequiredRoot()[1], kFieldId, "b");
+  AssertTerm(Required().terms[0], kFieldId, "a");
+  AssertTerm(Required().terms[1], kFieldId, "b");
 }
 
 TEST_F(LuceneParserTest, ComplexAndNotChain) {
-  // a AND -b NOT c NOT d AND e -> Required[a, Not(b), Not(c), Not(d), e]
+  // a AND -b NOT c NOT d AND e -> Required[a, e], Excluded[b, c, d]
   ASSERT_TRUE(sdb::ParseQuery(ctx, "a AND -b NOT c NOT d AND e"));
-  ASSERT_TRUE(OptionalRoot().empty());
-  ASSERT_EQ(5, RequiredRoot().size());
+  ASSERT_TRUE(Optional().empty());
+  ASSERT_EQ(2, Required().size());
+  ASSERT_EQ(2, Required().terms.size());
 
-  AssertTerm(RequiredRoot()[0], kFieldId, "a");
+  AssertTerm(Required().terms[0], kFieldId, "a");
+  AssertTerm(Required().terms[1], kFieldId, "e");
 
-  const auto& not_b = sdb::basics::downCast<irs::Not>(RequiredRoot()[1]);
-  const auto* not_b_or = NotOr(not_b);
-  ASSERT_NE(nullptr, not_b_or);
-  ASSERT_EQ(1, not_b_or->size());
-  AssertTerm((*not_b_or)[0], kFieldId, "b");
-
-  const auto& not_c = sdb::basics::downCast<irs::Not>(RequiredRoot()[2]);
-  const auto* not_c_or = NotOr(not_c);
-  ASSERT_NE(nullptr, not_c_or);
-  ASSERT_EQ(1, not_c_or->size());
-  AssertTerm((*not_c_or)[0], kFieldId, "c");
-
-  const auto& not_d = sdb::basics::downCast<irs::Not>(RequiredRoot()[3]);
-  const auto* not_d_or = NotOr(not_d);
-  ASSERT_NE(nullptr, not_d_or);
-  ASSERT_EQ(1, not_d_or->size());
-  AssertTerm((*not_d_or)[0], kFieldId, "d");
-
-  AssertTerm(RequiredRoot()[4], kFieldId, "e");
+  ASSERT_EQ(3, Excluded().size());
+  ASSERT_EQ(3, Excluded().terms.size());
+  AssertTerm(Excluded().terms[0], kFieldId, "b");
+  AssertTerm(Excluded().terms[1], kFieldId, "c");
+  AssertTerm(Excluded().terms[2], kFieldId, "d");
 }
 
 TEST_F(LuceneParserTest, MinusAndChain) {
-  // -a AND -b AND -c -> Required[Not(a), Not(b), Not(c)]
+  // -a AND -b AND -c -> Excluded[a, b, c]
   ASSERT_TRUE(sdb::ParseQuery(ctx, "-a AND -b AND -c"));
-  ASSERT_TRUE(OptionalRoot().empty());
-  ASSERT_EQ(3, RequiredRoot().size());
+  ASSERT_TRUE(Optional().empty());
+  ASSERT_TRUE(Required().empty());
+  ASSERT_EQ(3, Excluded().size());
+  ASSERT_EQ(3, Excluded().terms.size());
 
-  const auto& not_a = sdb::basics::downCast<irs::Not>(RequiredRoot()[0]);
-  const auto* not_a_or = NotOr(not_a);
-  ASSERT_NE(nullptr, not_a_or);
-  AssertTerm((*not_a_or)[0], kFieldId, "a");
-
-  const auto& not_b = sdb::basics::downCast<irs::Not>(RequiredRoot()[1]);
-  const auto* not_b_or = NotOr(not_b);
-  ASSERT_NE(nullptr, not_b_or);
-  AssertTerm((*not_b_or)[0], kFieldId, "b");
-
-  const auto& not_c = sdb::basics::downCast<irs::Not>(RequiredRoot()[2]);
-  const auto* not_c_or = NotOr(not_c);
-  ASSERT_NE(nullptr, not_c_or);
-  AssertTerm((*not_c_or)[0], kFieldId, "c");
+  AssertTerm(Excluded().terms[0], kFieldId, "a");
+  AssertTerm(Excluded().terms[1], kFieldId, "b");
+  AssertTerm(Excluded().terms[2], kFieldId, "c");
 }
 
 TEST_F(LuceneParserTest, OrWithMinusModifier) {
-  // a OR -b -> Optional[a], Required[Not(b)]
+  // a OR -b -> Optional[a], Excluded[b]
   ASSERT_TRUE(sdb::ParseQuery(ctx, "a OR -b"));
-  ASSERT_EQ(1, OptionalRoot().size());
-  ASSERT_EQ(1, RequiredRoot().size());
+  ASSERT_EQ(1, Optional().size());
+  ASSERT_EQ(1, Optional().terms.size());
+  ASSERT_EQ(1, Excluded().size());
+  ASSERT_EQ(1, Excluded().terms.size());
 
-  AssertTerm(OptionalRoot()[0], kFieldId, "a");
-
-  const auto& not_filter = sdb::basics::downCast<irs::Not>(RequiredRoot()[0]);
-  const auto* not_or = NotOr(not_filter);
-  ASSERT_NE(nullptr, not_or);
-  ASSERT_EQ(1, not_or->size());
-  AssertTerm((*not_or)[0], kFieldId, "b");
+  AssertTerm(Optional().terms[0], kFieldId, "a");
+  AssertTerm(Excluded().terms[0], kFieldId, "b");
 }
 
 TEST_F(LuceneParserTest, OrWithPlusModifier) {
   // a OR +b -> Optional[a], Required[b]
   ASSERT_TRUE(sdb::ParseQuery(ctx, "a OR +b"));
-  ASSERT_EQ(1, OptionalRoot().size());
-  ASSERT_EQ(1, RequiredRoot().size());
+  ASSERT_EQ(1, Optional().size());
+  ASSERT_EQ(1, Optional().terms.size());
+  ASSERT_EQ(1, Required().size());
+  ASSERT_EQ(1, Required().terms.size());
 
-  AssertTerm(OptionalRoot()[0], kFieldId, "a");
-  AssertTerm(RequiredRoot()[0], kFieldId, "b");
+  AssertTerm(Optional().terms[0], kFieldId, "a");
+  AssertTerm(Required().terms[0], kFieldId, "b");
 }
 
 TEST_F(LuceneParserTest, MinusOrChain) {
-  // -a OR -b -> Required[Not(a), Not(b)]
+  // -a OR -b -> Excluded[a, b]
   ASSERT_TRUE(sdb::ParseQuery(ctx, "-a OR -b"));
-  ASSERT_TRUE(OptionalRoot().empty());
-  ASSERT_EQ(2, RequiredRoot().size());
+  ASSERT_TRUE(Optional().empty());
+  ASSERT_TRUE(Required().empty());
+  ASSERT_EQ(2, Excluded().size());
+  ASSERT_EQ(2, Excluded().terms.size());
 
-  const auto& not_a = sdb::basics::downCast<irs::Not>(RequiredRoot()[0]);
-  const auto* not_a_or = NotOr(not_a);
-  ASSERT_NE(nullptr, not_a_or);
-  ASSERT_EQ(1, not_a_or->size());
-  AssertTerm((*not_a_or)[0], kFieldId, "a");
-
-  const auto& not_b = sdb::basics::downCast<irs::Not>(RequiredRoot()[1]);
-  const auto* not_b_or = NotOr(not_b);
-  ASSERT_NE(nullptr, not_b_or);
-  ASSERT_EQ(1, not_b_or->size());
-  AssertTerm((*not_b_or)[0], kFieldId, "b");
+  AssertTerm(Excluded().terms[0], kFieldId, "a");
+  AssertTerm(Excluded().terms[1], kFieldId, "b");
 }
 
 TEST_F(LuceneParserTest, OrWithMultipleMinusModifiers) {
-  // a OR -b OR -c -> Optional[a], Required[Not(b), Not(c)]
+  // a OR -b OR -c -> Optional[a], Excluded[b, c]
   ASSERT_TRUE(sdb::ParseQuery(ctx, "a OR -b OR -c"));
-  ASSERT_EQ(1, OptionalRoot().size());
-  ASSERT_EQ(2, RequiredRoot().size());
+  ASSERT_EQ(1, Optional().size());
+  ASSERT_EQ(1, Optional().terms.size());
+  ASSERT_EQ(2, Excluded().size());
+  ASSERT_EQ(2, Excluded().terms.size());
 
-  AssertTerm(OptionalRoot()[0], kFieldId, "a");
+  AssertTerm(Optional().terms[0], kFieldId, "a");
 
-  const auto& not_b = sdb::basics::downCast<irs::Not>(RequiredRoot()[0]);
-  const auto* not_b_or = NotOr(not_b);
-  ASSERT_NE(nullptr, not_b_or);
-  ASSERT_EQ(1, not_b_or->size());
-  AssertTerm((*not_b_or)[0], kFieldId, "b");
-
-  const auto& not_c = sdb::basics::downCast<irs::Not>(RequiredRoot()[1]);
-  const auto* not_c_or = NotOr(not_c);
-  ASSERT_NE(nullptr, not_c_or);
-  ASSERT_EQ(1, not_c_or->size());
-  AssertTerm((*not_c_or)[0], kFieldId, "c");
+  AssertTerm(Excluded().terms[0], kFieldId, "b");
+  AssertTerm(Excluded().terms[1], kFieldId, "c");
 }
 
 TEST_F(LuceneParserTest, MixedAndOrSimple) {
   // a AND b OR c -> Required[a, b], Optional[c]
   ASSERT_TRUE(sdb::ParseQuery(ctx, "a AND b OR c"));
-  ASSERT_EQ(2, RequiredRoot().size());
-  ASSERT_EQ(1, OptionalRoot().size());
+  ASSERT_EQ(2, Required().size());
+  ASSERT_EQ(2, Required().terms.size());
+  ASSERT_EQ(1, Optional().size());
+  ASSERT_EQ(1, Optional().terms.size());
 
-  AssertTerm(RequiredRoot()[0], kFieldId, "a");
-  AssertTerm(RequiredRoot()[1], kFieldId, "b");
-  AssertTerm(OptionalRoot()[0], kFieldId, "c");
+  AssertTerm(Required().terms[0], kFieldId, "a");
+  AssertTerm(Required().terms[1], kFieldId, "b");
+  AssertTerm(Optional().terms[0], kFieldId, "c");
 }
 
 TEST_F(LuceneParserTest, MixedOrAndSimple) {
   // a OR b AND c -> Optional[a], Required[b, c]
   ASSERT_TRUE(sdb::ParseQuery(ctx, "a OR b AND c"));
-  ASSERT_EQ(2, RequiredRoot().size());
-  ASSERT_EQ(1, OptionalRoot().size());
+  ASSERT_EQ(2, Required().size());
+  ASSERT_EQ(2, Required().terms.size());
+  ASSERT_EQ(1, Optional().size());
+  ASSERT_EQ(1, Optional().terms.size());
 
-  AssertTerm(OptionalRoot()[0], kFieldId, "a");
-  AssertTerm(RequiredRoot()[0], kFieldId, "b");
-  AssertTerm(RequiredRoot()[1], kFieldId, "c");
+  AssertTerm(Optional().terms[0], kFieldId, "a");
+  AssertTerm(Required().terms[0], kFieldId, "b");
+  AssertTerm(Required().terms[1], kFieldId, "c");
 }
 
 TEST_F(LuceneParserTest, AndWithMinusThenOr) {
-  // a AND -b OR c -> Required[a, Not(b)], Optional[c]
+  // a AND -b OR c -> Required[a], Excluded[b], Optional[c]
   ASSERT_TRUE(sdb::ParseQuery(ctx, "a AND -b OR c"));
-  ASSERT_EQ(2, RequiredRoot().size());
-  ASSERT_EQ(1, OptionalRoot().size());
+  ASSERT_EQ(1, Required().size());
+  ASSERT_EQ(1, Required().terms.size());
+  ASSERT_EQ(1, Excluded().size());
+  ASSERT_EQ(1, Excluded().terms.size());
+  ASSERT_EQ(1, Optional().size());
+  ASSERT_EQ(1, Optional().terms.size());
 
-  AssertTerm(RequiredRoot()[0], kFieldId, "a");
-
-  const auto& not_b = sdb::basics::downCast<irs::Not>(RequiredRoot()[1]);
-  const auto* not_b_or = NotOr(not_b);
-  ASSERT_NE(nullptr, not_b_or);
-  ASSERT_EQ(1, not_b_or->size());
-  AssertTerm((*not_b_or)[0], kFieldId, "b");
-
-  AssertTerm(OptionalRoot()[0], kFieldId, "c");
+  AssertTerm(Required().terms[0], kFieldId, "a");
+  AssertTerm(Excluded().terms[0], kFieldId, "b");
+  AssertTerm(Optional().terms[0], kFieldId, "c");
 }
 
 TEST_F(LuceneParserTest, OrWithMinusThenAnd) {
-  // a OR -b AND c -> Required[Not(b), a, c]
+  // a OR -b AND c -> Optional[a], Excluded[b], Required[c]
   ASSERT_TRUE(sdb::ParseQuery(ctx, "a OR -b AND c"));
-  ASSERT_EQ(3, RequiredRoot().size());
-  ASSERT_TRUE(OptionalRoot().empty());
+  ASSERT_EQ(1, Required().size());
+  ASSERT_EQ(1, Required().terms.size());
+  ASSERT_EQ(1, Excluded().size());
+  ASSERT_EQ(1, Excluded().terms.size());
+  ASSERT_EQ(1, Optional().size());
+  ASSERT_EQ(1, Optional().terms.size());
+  ASSERT_EQ(0, root.MinShouldMatch());
 
-  const auto& not_b = sdb::basics::downCast<irs::Not>(RequiredRoot()[0]);
-  const auto* not_b_or = NotOr(not_b);
-  ASSERT_NE(nullptr, not_b_or);
-  ASSERT_EQ(1, not_b_or->size());
-  AssertTerm((*not_b_or)[0], kFieldId, "b");
-
-  AssertTerm(RequiredRoot()[1], kFieldId, "a");
-  AssertTerm(RequiredRoot()[2], kFieldId, "c");
+  AssertTerm(Required().terms[0], kFieldId, "c");
+  AssertTerm(Excluded().terms[0], kFieldId, "b");
+  AssertTerm(Optional().terms[0], kFieldId, "a");
 }
 
 TEST_F(LuceneParserTest, ComplexMixedAndOrWithModifiers) {
-  // +a AND b OR -c AND d -> Required[a, b, Not(c), d]
+  // +a AND b OR -c AND d -> Required[a, b, d], Excluded[c]
   ASSERT_TRUE(sdb::ParseQuery(ctx, "+a AND b OR -c AND d"));
-  ASSERT_EQ(4, RequiredRoot().size());
-  ASSERT_TRUE(OptionalRoot().empty());
+  ASSERT_EQ(3, Required().size());
+  ASSERT_EQ(3, Required().terms.size());
+  ASSERT_EQ(1, Excluded().size());
+  ASSERT_EQ(1, Excluded().terms.size());
+  ASSERT_TRUE(Optional().empty());
 
-  AssertTerm(RequiredRoot()[0], kFieldId, "a");
-  AssertTerm(RequiredRoot()[1], kFieldId, "b");
+  AssertTerm(Required().terms[0], kFieldId, "a");
+  AssertTerm(Required().terms[1], kFieldId, "b");
+  AssertTerm(Required().terms[2], kFieldId, "d");
 
-  const auto& not_c = sdb::basics::downCast<irs::Not>(RequiredRoot()[2]);
-  const auto* not_c_or = NotOr(not_c);
-  ASSERT_NE(nullptr, not_c_or);
-  ASSERT_EQ(1, not_c_or->size());
-  AssertTerm((*not_c_or)[0], kFieldId, "c");
-
-  AssertTerm(RequiredRoot()[3], kFieldId, "d");
+  AssertTerm(Excluded().terms[0], kFieldId, "c");
 }
 
 TEST_F(LuceneParserTest, PlusOrMinusAnd) {
-  // +a OR -b AND c -> Required[a, Not(b), c]
+  // +a OR -b AND c -> Required[a, c], Excluded[b]
   ASSERT_TRUE(sdb::ParseQuery(ctx, "+a OR -b AND c"));
-  ASSERT_EQ(3, RequiredRoot().size());
-  ASSERT_TRUE(OptionalRoot().empty());
+  ASSERT_EQ(2, Required().size());
+  ASSERT_EQ(2, Required().terms.size());
+  ASSERT_EQ(1, Excluded().size());
+  ASSERT_EQ(1, Excluded().terms.size());
+  ASSERT_TRUE(Optional().empty());
 
-  AssertTerm(RequiredRoot()[0], kFieldId, "a");
-
-  const auto& not_b = sdb::basics::downCast<irs::Not>(RequiredRoot()[1]);
-  const auto* not_b_or = NotOr(not_b);
-  ASSERT_NE(nullptr, not_b_or);
-  ASSERT_EQ(1, not_b_or->size());
-  AssertTerm((*not_b_or)[0], kFieldId, "b");
-
-  AssertTerm(RequiredRoot()[2], kFieldId, "c");
+  AssertTerm(Required().terms[0], kFieldId, "a");
+  AssertTerm(Excluded().terms[0], kFieldId, "b");
+  AssertTerm(Required().terms[1], kFieldId, "c");
 }
 
 TEST_F(LuceneParserTest, AndOrAndFlat) {
-  // a AND b OR -c AND d -> Required[a, b, Not(c), d]
+  // a AND b OR -c AND d -> Required[a, b, d], Excluded[c]
   // Flat Lucene-like behavior: modifiers create MUST/MUST_NOT regardless of OR
   // This is NOT grouped as (a AND b) OR (-c AND d) - it's flat!
   ASSERT_TRUE(sdb::ParseQuery(ctx, "a AND b OR -c AND d"));
-  ASSERT_TRUE(OptionalRoot().empty());
-  ASSERT_EQ(4, RequiredRoot().size());
+  ASSERT_TRUE(Optional().empty());
+  ASSERT_EQ(3, Required().size());
+  ASSERT_EQ(3, Required().terms.size());
+  ASSERT_EQ(1, Excluded().size());
+  ASSERT_EQ(1, Excluded().terms.size());
 
-  AssertTerm(RequiredRoot()[0], kFieldId, "a");
-  AssertTerm(RequiredRoot()[1], kFieldId, "b");
+  AssertTerm(Required().terms[0], kFieldId, "a");
+  AssertTerm(Required().terms[1], kFieldId, "b");
 
-  const auto& not_c = sdb::basics::downCast<irs::Not>(RequiredRoot()[2]);
-  const auto* not_c_or = NotOr(not_c);
-  ASSERT_NE(nullptr, not_c_or);
-  ASSERT_EQ(1, not_c_or->size());
-  AssertTerm((*not_c_or)[0], kFieldId, "c");
+  AssertTerm(Excluded().terms[0], kFieldId, "c");
 
-  AssertTerm(RequiredRoot()[3], kFieldId, "d");
+  AssertTerm(Required().terms[2], kFieldId, "d");
 }
 
 TEST_F(LuceneParserTest, ManyImplicitOr) {
   // a b c d e -> Optional[a, b, c, d, e]
   ASSERT_TRUE(sdb::ParseQuery(ctx, "a b c d e"));
-  ASSERT_TRUE(RequiredRoot().empty());
-  ASSERT_EQ(5, OptionalRoot().size());
+  ASSERT_TRUE(Required().empty());
+  ASSERT_TRUE(Excluded().empty());
+  ASSERT_EQ(5, Optional().size());
+  ASSERT_EQ(5, Optional().terms.size());
 
   const char* expected[] = {"a", "b", "c", "d", "e"};
   for (size_t i = 0; i < 5; ++i) {
-    const auto& term = sdb::basics::downCast<irs::ByTerm>(OptionalRoot()[i]);
     EXPECT_EQ(expected[i],
-              irs::ViewCast<char>(irs::bytes_view{term.options().term}));
+              irs::ViewCast<char>(irs::bytes_view{Optional().terms[i].term}));
   }
 }
 
 TEST_F(LuceneParserTest, AllExcluded) {
-  // -a -b -> Required[Not(a), Not(b)]
+  // -a -b -> Excluded[a, b]
   ASSERT_TRUE(sdb::ParseQuery(ctx, "-a -b"));
-  ASSERT_TRUE(OptionalRoot().empty());
-  ASSERT_EQ(2, RequiredRoot().size());
+  ASSERT_TRUE(Optional().empty());
+  ASSERT_TRUE(Required().empty());
+  ASSERT_EQ(2, Excluded().size());
+  ASSERT_EQ(2, Excluded().terms.size());
 
-  const auto& not1 = sdb::basics::downCast<irs::Not>(RequiredRoot()[0]);
-  const auto* not1_or = NotOr(not1);
-  ASSERT_NE(nullptr, not1_or);
-  AssertTerm((*not1_or)[0], kFieldId, "a");
-
-  const auto& not2 = sdb::basics::downCast<irs::Not>(RequiredRoot()[1]);
-  const auto* not2_or = NotOr(not2);
-  ASSERT_NE(nullptr, not2_or);
-  AssertTerm((*not2_or)[0], kFieldId, "b");
+  AssertTerm(Excluded().terms[0], kFieldId, "a");
+  AssertTerm(Excluded().terms[1], kFieldId, "b");
 }
 
 TEST_F(LuceneParserTest, AllRequired) {
   // +a +b +c -> Required[a, b, c]
   ASSERT_TRUE(sdb::ParseQuery(ctx, "+a +b +c"));
-  ASSERT_TRUE(OptionalRoot().empty());
-  ASSERT_EQ(3, RequiredRoot().size());
+  ASSERT_TRUE(Optional().empty());
+  ASSERT_EQ(3, Required().size());
+  ASSERT_EQ(3, Required().terms.size());
 
-  AssertTerm(RequiredRoot()[0], kFieldId, "a");
-  AssertTerm(RequiredRoot()[1], kFieldId, "b");
-  AssertTerm(RequiredRoot()[2], kFieldId, "c");
+  AssertTerm(Required().terms[0], kFieldId, "a");
+  AssertTerm(Required().terms[1], kFieldId, "b");
+  AssertTerm(Required().terms[2], kFieldId, "c");
 }
 
 TEST_F(LuceneParserTest, BoostedPhrase) {
   // "hello world"^2 -> Optional[phrase^2]
   ASSERT_TRUE(sdb::ParseQuery(ctx, "\"hello world\"^2"));
-  ASSERT_EQ(1, OptionalRoot().size());
-  AssertPhrase(OptionalRoot()[0], kFieldId, 2.0f);
+  ASSERT_EQ(1, Optional().size());
+  ASSERT_EQ(1, Optional().filters.size());
+  AssertPhrase(*Optional().filters[0], kFieldId, 2.0f);
 }
 
 TEST_F(LuceneParserTest, BoostedPhraseFloat) {
   ASSERT_TRUE(sdb::ParseQuery(ctx, "\"hello world\"^1.5"));
-  ASSERT_EQ(1, OptionalRoot().size());
-  AssertPhrase(OptionalRoot()[0], kFieldId, 1.5f);
+  ASSERT_EQ(1, Optional().size());
+  ASSERT_EQ(1, Optional().filters.size());
+  AssertPhrase(*Optional().filters[0], kFieldId, 1.5f);
 }
 
 TEST_F(LuceneParserTest, FieldWithBoost) {
   // title:hello^3 -> Optional[title:hello^3]
   ASSERT_TRUE(sdb::ParseQuery(ctx, "title:hello^3"));
-  ASSERT_EQ(1, OptionalRoot().size());
-  AssertTerm(OptionalRoot()[0], kFieldId, "hello", 3.0f);
+  ASSERT_EQ(1, Optional().size());
+  ASSERT_EQ(1, Optional().terms.size());
+  AssertTerm(Optional().terms[0], kFieldId, "hello", 3.0f);
 }
 
 TEST_F(LuceneParserTest, FieldWithRange) {
   // date:[aaa TO zzz] -> Optional[date:range]
   ASSERT_TRUE(sdb::ParseQuery(ctx, "date:[aaa TO zzz]"));
-  ASSERT_EQ(1, OptionalRoot().size());
-  AssertRange(OptionalRoot()[0], kFieldId, "aaa", irs::BoundType::Inclusive,
-              "zzz", irs::BoundType::Inclusive);
+  ASSERT_EQ(1, Optional().size());
+  ASSERT_EQ(1, Optional().filters.size());
+  AssertRange(*Optional().filters[0], kFieldId, "aaa",
+              irs::BoundType::Inclusive, "zzz", irs::BoundType::Inclusive);
 }
 
 TEST_F(LuceneParserTest, FieldWithExclusiveRange) {
   // price:{low TO high} -> Optional[price:range exclusive]
   ASSERT_TRUE(sdb::ParseQuery(ctx, "price:{low TO high}"));
-  ASSERT_EQ(1, OptionalRoot().size());
-  AssertRange(OptionalRoot()[0], kFieldId, "low", irs::BoundType::Exclusive,
-              "high", irs::BoundType::Exclusive);
+  ASSERT_EQ(1, Optional().size());
+  ASSERT_EQ(1, Optional().filters.size());
+  AssertRange(*Optional().filters[0], kFieldId, "low",
+              irs::BoundType::Exclusive, "high", irs::BoundType::Exclusive);
 }
 
 TEST_F(LuceneParserTest, FieldWithGroupedAnd) {
   // title:(a AND b) -> Optional[group(Required[title:a, title:b])]
   ASSERT_TRUE(sdb::ParseQuery(ctx, "title:(a AND b)"));
-  ASSERT_EQ(1, OptionalRoot().size());
-  const auto& group =
-    sdb::basics::downCast<irs::MixedBooleanFilter>(OptionalRoot()[0]);
-  ASSERT_TRUE(group.GetOptional().empty());
-  const auto& req = group.GetRequired();
-  ASSERT_EQ(2, req.size());
+  ASSERT_EQ(1, Optional().size());
+  ASSERT_EQ(1, Optional().filters.size());
+  const auto& group = *Optional().filters[0];
+  ASSERT_TRUE(SubOptional(group).empty());
+  ASSERT_EQ(2, SubRequired(group).size());
+  ASSERT_EQ(2, SubRequired(group).terms.size());
 
-  AssertTerm(req[0], kFieldId, "a");
-  AssertTerm(req[1], kFieldId, "b");
+  AssertTerm(SubRequired(group).terms[0], kFieldId, "a");
+  AssertTerm(SubRequired(group).terms[1], kFieldId, "b");
 }
 
 TEST_F(LuceneParserTest, NotGroup) {
-  // NOT (a b) -> Required[Not(group)]
+  // NOT (a b) -> Excluded[group]
   ASSERT_TRUE(sdb::ParseQuery(ctx, "NOT (a b)"));
-  ASSERT_TRUE(OptionalRoot().empty());
-  ASSERT_EQ(1, RequiredRoot().size());
+  ASSERT_TRUE(Optional().empty());
+  ASSERT_TRUE(Required().empty());
+  ASSERT_EQ(1, Excluded().size());
+  ASSERT_EQ(1, Excluded().filters.size());
 
-  const auto& not_filter = sdb::basics::downCast<irs::Not>(RequiredRoot()[0]);
-  const auto* not_or = NotOr(not_filter);
-  ASSERT_NE(nullptr, not_or);
-  ASSERT_EQ(1, not_or->size());
-
-  const auto& group =
-    sdb::basics::downCast<irs::MixedBooleanFilter>((*not_or)[0]);
-  ASSERT_EQ(2, group.GetOptional().size());
+  const auto& group = *Excluded().filters[0];
+  ASSERT_EQ(2, SubOptional(group).size());
 }
 
 TEST_F(LuceneParserTest, BoostedFuzzy) {
   // hello~2^3 -> Optional[fuzzy(hello, dist=2, boost=3)]
   ASSERT_TRUE(sdb::ParseQuery(ctx, "hello~2^3"));
-  ASSERT_EQ(1, OptionalRoot().size());
-  AssertFuzzy(OptionalRoot()[0], kFieldId, "hello", 2, 3.0f);
+  ASSERT_EQ(1, Optional().size());
+  ASSERT_EQ(1, Optional().filters.size());
+  AssertFuzzy(*Optional().filters[0], kFieldId, "hello", 2, 3.0f);
 }
 
 TEST_F(LuceneParserTest, BoostedFuzzyFloat) {
   ASSERT_TRUE(sdb::ParseQuery(ctx, "hello~1^0.5"));
-  ASSERT_EQ(1, OptionalRoot().size());
-  AssertFuzzy(OptionalRoot()[0], kFieldId, "hello", 1, 0.5f);
+  ASSERT_EQ(1, Optional().size());
+  ASSERT_EQ(1, Optional().filters.size());
+  AssertFuzzy(*Optional().filters[0], kFieldId, "hello", 1, 0.5f);
 }
 
 TEST_F(LuceneParserTest, FieldWithFuzzy) {
   // title:hello~1 -> Optional[title:fuzzy(hello, 1)]
   ASSERT_TRUE(sdb::ParseQuery(ctx, "title:hello~1"));
-  ASSERT_EQ(1, OptionalRoot().size());
-  AssertFuzzy(OptionalRoot()[0], kFieldId, "hello", 1);
+  ASSERT_EQ(1, Optional().size());
+  ASSERT_EQ(1, Optional().filters.size());
+  AssertFuzzy(*Optional().filters[0], kFieldId, "hello", 1);
 }
 
 TEST_F(LuceneParserTest, FieldWithPrefix) {
   // title:hel* -> Optional[title:prefix(hel)]
   ASSERT_TRUE(sdb::ParseQuery(ctx, "title:hel*"));
-  ASSERT_EQ(1, OptionalRoot().size());
-  AssertPrefix(OptionalRoot()[0], kFieldId, "hel");
+  ASSERT_EQ(1, Optional().size());
+  ASSERT_EQ(1, Optional().filters.size());
+  AssertPrefix(*Optional().filters[0], kFieldId, "hel");
 }
 
 TEST_F(LuceneParserTest, BoostedPrefix) {
   // hel*^2 -> Optional[prefix(hel)^2]
   ASSERT_TRUE(sdb::ParseQuery(ctx, "hel*^2"));
-  ASSERT_EQ(1, OptionalRoot().size());
-  AssertPrefix(OptionalRoot()[0], kFieldId, "hel", 2.0f);
+  ASSERT_EQ(1, Optional().size());
+  ASSERT_EQ(1, Optional().filters.size());
+  AssertPrefix(*Optional().filters[0], kFieldId, "hel", 2.0f);
 }
 
 TEST_F(LuceneParserTest, BoostedPrefixFloat) {
   ASSERT_TRUE(sdb::ParseQuery(ctx, "hel*^0.8"));
-  ASSERT_EQ(1, OptionalRoot().size());
-  AssertPrefix(OptionalRoot()[0], kFieldId, "hel", 0.8f);
+  ASSERT_EQ(1, Optional().size());
+  ASSERT_EQ(1, Optional().filters.size());
+  AssertPrefix(*Optional().filters[0], kFieldId, "hel", 0.8f);
 }
 
 TEST_F(LuceneParserTest, MixedAndImplicitOrAnd) {
   // a AND b c AND d -> Required[a, b, c, d]
   // AND grabs its immediate neighbors; second AND also promotes c
   ASSERT_TRUE(sdb::ParseQuery(ctx, "a AND b c AND d"));
-  ASSERT_TRUE(OptionalRoot().empty());
-  ASSERT_EQ(4, RequiredRoot().size());
+  ASSERT_TRUE(Optional().empty());
+  ASSERT_EQ(4, Required().size());
+  ASSERT_EQ(4, Required().terms.size());
 
-  AssertTerm(RequiredRoot()[0], kFieldId, "a");
-  AssertTerm(RequiredRoot()[1], kFieldId, "b");
-  AssertTerm(RequiredRoot()[2], kFieldId, "c");
-  AssertTerm(RequiredRoot()[3], kFieldId, "d");
+  AssertTerm(Required().terms[0], kFieldId, "a");
+  AssertTerm(Required().terms[1], kFieldId, "b");
+  AssertTerm(Required().terms[2], kFieldId, "c");
+  AssertTerm(Required().terms[3], kFieldId, "d");
 }
 
 TEST_F(LuceneParserTest, PlusAndMinusGroup) {
-  // +(a b) -(c d) -> Required[group(a,b), Not(group(c,d))]
+  // +(a b) -(c d) -> Required[group(a,b)], Excluded[group(c,d)]
   ASSERT_TRUE(sdb::ParseQuery(ctx, "+(a b) -(c d)"));
-  ASSERT_TRUE(OptionalRoot().empty());
-  ASSERT_EQ(2, RequiredRoot().size());
+  ASSERT_TRUE(Optional().empty());
+  ASSERT_EQ(1, Required().size());
+  ASSERT_EQ(1, Required().filters.size());
 
-  const auto& group1 =
-    sdb::basics::downCast<irs::MixedBooleanFilter>(RequiredRoot()[0]);
-  ASSERT_EQ(2, group1.GetOptional().size());
+  const auto& group1 = *Required().filters[0];
+  ASSERT_EQ(2, SubOptional(group1).size());
 
-  const auto& not_filter = sdb::basics::downCast<irs::Not>(RequiredRoot()[1]);
-  const auto* not_or = NotOr(not_filter);
-  ASSERT_NE(nullptr, not_or);
-  ASSERT_EQ(1, not_or->size());
-  const auto& group2 =
-    sdb::basics::downCast<irs::MixedBooleanFilter>((*not_or)[0]);
-  ASSERT_EQ(2, group2.GetOptional().size());
+  ASSERT_EQ(1, Excluded().size());
+  ASSERT_EQ(1, Excluded().filters.size());
+  const auto& group2 = *Excluded().filters[0];
+  ASSERT_EQ(2, SubOptional(group2).size());
 }
 
 TEST_F(LuceneParserTest, FieldWithWildcard) {
   // title:h*llo -> Optional[title:wildcard(h*llo)]
   ASSERT_TRUE(sdb::ParseQuery(ctx, "title:h*llo"));
-  ASSERT_EQ(1, OptionalRoot().size());
-  AssertWildcard(OptionalRoot()[0], kFieldId, "h%llo");
+  ASSERT_EQ(1, Optional().size());
+  ASSERT_EQ(1, Optional().filters.size());
+  AssertWildcard(*Optional().filters[0], kFieldId, "h%llo");
 }
 
 TEST_F(LuceneParserTest, RangeWithUnboundedMax) {
   // [alpha TO *] -> Optional[range(alpha, unbounded)]
   ASSERT_TRUE(sdb::ParseQuery(ctx, "[alpha TO *]"));
-  ASSERT_EQ(1, OptionalRoot().size());
-  AssertRange(OptionalRoot()[0], kFieldId, "alpha", irs::BoundType::Inclusive,
-              "", irs::BoundType::Unbounded);
+  ASSERT_EQ(1, Optional().size());
+  ASSERT_EQ(1, Optional().filters.size());
+  AssertRange(*Optional().filters[0], kFieldId, "alpha",
+              irs::BoundType::Inclusive, "", irs::BoundType::Unbounded);
 }
 
 TEST_F(LuceneParserTest, RangeFullyUnbounded) {
   // [* TO *] -> Optional[range(unbounded, unbounded)]
   ASSERT_TRUE(sdb::ParseQuery(ctx, "[* TO *]"));
-  ASSERT_EQ(1, OptionalRoot().size());
-  AssertRange(OptionalRoot()[0], kFieldId, "", irs::BoundType::Unbounded, "",
-              irs::BoundType::Unbounded);
+  ASSERT_EQ(1, Optional().size());
+  ASSERT_EQ(1, Optional().filters.size());
+  AssertRange(*Optional().filters[0], kFieldId, "", irs::BoundType::Unbounded,
+              "", irs::BoundType::Unbounded);
 }
 
 TEST_F(LuceneParserTest, MultipleFieldQueries) {
@@ -1255,58 +1237,62 @@ TEST_F(LuceneParserTest, MultipleFieldQueries) {
   ASSERT_TRUE(
     sdb::ParseQuery(ctx, "title:foo AND author:bar AND year:[start TO end]"))
     << ctx.error_message;
-  ASSERT_TRUE(OptionalRoot().empty());
-  ASSERT_EQ(3, RequiredRoot().size());
+  ASSERT_TRUE(Optional().empty());
+  ASSERT_EQ(3, Required().size());
+  ASSERT_EQ(2, Required().terms.size());
+  ASSERT_EQ(1, Required().filters.size());
 
-  AssertTerm(RequiredRoot()[0], kFieldId, "foo");
+  AssertTerm(Required().terms[0], kFieldId, "bar");
 
-  AssertTerm(RequiredRoot()[1], kFieldId, "bar");
+  AssertTerm(Required().terms[1], kFieldId, "foo");
 
-  AssertRange(RequiredRoot()[2], kFieldId, "start", irs::BoundType::Inclusive,
-              "end", irs::BoundType::Inclusive);
+  AssertRange(*Required().filters[0], kFieldId, "start",
+              irs::BoundType::Inclusive, "end", irs::BoundType::Inclusive);
 }
 
 TEST_F(LuceneParserTest, NestedGroupsWithModifiers) {
-  // +(a (b OR c)) -d -> Required[group, Not(d)]
+  // +(a (b OR c)) -d -> Required[group], Excluded[d]
   ASSERT_TRUE(sdb::ParseQuery(ctx, "+(a (b OR c)) -d"));
-  ASSERT_TRUE(OptionalRoot().empty());
-  ASSERT_EQ(2, RequiredRoot().size());
+  ASSERT_TRUE(Optional().empty());
+  ASSERT_EQ(1, Required().size());
+  ASSERT_EQ(1, Required().filters.size());
 
-  const auto& group =
-    sdb::basics::downCast<irs::MixedBooleanFilter>(RequiredRoot()[0]);
-  const auto& group_or = group.GetOptional();
-  ASSERT_EQ(2, group_or.size());
+  const auto& group = *Required().filters[0];
+  ASSERT_EQ(2, SubOptional(group).size());
 
-  AssertTerm(group_or[0], kFieldId, "a");
-  const auto& inner =
-    sdb::basics::downCast<irs::MixedBooleanFilter>(group_or[1]);
-  ASSERT_EQ(2, inner.GetOptional().size());
+  ASSERT_EQ(1, SubOptional(group).terms.size());
+  AssertTerm(SubOptional(group).terms[0], kFieldId, "a");
+  ASSERT_EQ(1, SubOptional(group).filters.size());
+  const auto& inner = *SubOptional(group).filters[0];
+  ASSERT_EQ(2, SubOptional(inner).size());
 
-  const auto& not_filter = sdb::basics::downCast<irs::Not>(RequiredRoot()[1]);
-  const auto* not_or = NotOr(not_filter);
-  ASSERT_NE(nullptr, not_or);
-  AssertTerm((*not_or)[0], kFieldId, "d");
+  ASSERT_EQ(1, Excluded().size());
+  ASSERT_EQ(1, Excluded().terms.size());
+  AssertTerm(Excluded().terms[0], kFieldId, "d");
 }
 
 TEST_F(LuceneParserTest, PhraseWithSlop) {
   // "hello world"~3 -> Optional[phrase with slop]
   ASSERT_TRUE(sdb::ParseQuery(ctx, "\"hello world\"~3"));
-  ASSERT_EQ(1, OptionalRoot().size());
-  AssertPhrase(OptionalRoot()[0], kFieldId, 0.0f, 3);
+  ASSERT_EQ(1, Optional().size());
+  ASSERT_EQ(1, Optional().filters.size());
+  AssertPhrase(*Optional().filters[0], kFieldId, 0.0f, 3);
 }
 
 TEST_F(LuceneParserTest, PhraseWithSlopAndBoost) {
   // "hello world"~3^2 -> Optional[phrase with slop and boost]
   ASSERT_TRUE(sdb::ParseQuery(ctx, "\"hello world\"~3^2"));
-  ASSERT_EQ(1, OptionalRoot().size());
-  AssertPhrase(OptionalRoot()[0], kFieldId, 2.0f, 3);
+  ASSERT_EQ(1, Optional().size());
+  ASSERT_EQ(1, Optional().filters.size());
+  AssertPhrase(*Optional().filters[0], kFieldId, 2.0f, 3);
 }
 
 TEST_F(LuceneParserTest, FieldPhraseWithSlop) {
   // title:"hello world"~4 -> Optional[title:phrase with slop]
   ASSERT_TRUE(sdb::ParseQuery(ctx, "title:\"hello world\"~4"));
-  ASSERT_EQ(1, OptionalRoot().size());
-  AssertPhrase(OptionalRoot()[0], kFieldId, 0.0f, 4);
+  ASSERT_EQ(1, Optional().size());
+  ASSERT_EQ(1, Optional().filters.size());
+  AssertPhrase(*Optional().filters[0], kFieldId, 0.0f, 4);
 }
 
 TEST_F(LuceneParserTest, AndOrChain) {
@@ -1316,13 +1302,14 @@ TEST_F(LuceneParserTest, AndOrChain) {
   // After "a AND b": Required[a, b], Optional[]
   // After "OR c": Required[a, b], Optional[c]
   // After "AND d": Required[a, b, c, d], Optional[]
-  ASSERT_TRUE(OptionalRoot().empty());
-  ASSERT_EQ(4, RequiredRoot().size());
+  ASSERT_TRUE(Optional().empty());
+  ASSERT_EQ(4, Required().size());
+  ASSERT_EQ(4, Required().terms.size());
 
-  AssertTerm(RequiredRoot()[0], kFieldId, "a");
-  AssertTerm(RequiredRoot()[1], kFieldId, "b");
-  AssertTerm(RequiredRoot()[2], kFieldId, "c");
-  AssertTerm(RequiredRoot()[3], kFieldId, "d");
+  AssertTerm(Required().terms[0], kFieldId, "a");
+  AssertTerm(Required().terms[1], kFieldId, "b");
+  AssertTerm(Required().terms[2], kFieldId, "c");
+  AssertTerm(Required().terms[3], kFieldId, "d");
 }
 
 TEST_F(LuceneParserTest, ParseError_TrailingPlus) {
@@ -1347,167 +1334,184 @@ TEST_F(LuceneParserTest, ParseError_AndOr) {
 
 TEST_F(LuceneParserTest, QuestionMarkWildcard) {
   ASSERT_TRUE(sdb::ParseQuery(ctx, "Te?m"));
-  ASSERT_EQ(1, OptionalRoot().size());
-  AssertWildcard(OptionalRoot()[0], kFieldId, "te_m");
+  ASSERT_EQ(1, Optional().size());
+  ASSERT_EQ(1, Optional().filters.size());
+  AssertWildcard(*Optional().filters[0], kFieldId, "te_m");
 }
 
 TEST_F(LuceneParserTest, MultipleQuestionMarkWildcard) {
   ASSERT_TRUE(sdb::ParseQuery(ctx, "T??m"));
-  ASSERT_EQ(1, OptionalRoot().size());
-  AssertWildcard(OptionalRoot()[0], kFieldId, "t__m");
+  ASSERT_EQ(1, Optional().size());
+  ASSERT_EQ(1, Optional().filters.size());
+  AssertWildcard(*Optional().filters[0], kFieldId, "t__m");
 }
 
 TEST_F(LuceneParserTest, FieldQuestionMarkWildcard) {
   ASSERT_TRUE(sdb::ParseQuery(ctx, "title:Te?m"));
-  ASSERT_EQ(1, OptionalRoot().size());
-  AssertWildcard(OptionalRoot()[0], kFieldId, "te_m");
+  ASSERT_EQ(1, Optional().size());
+  ASSERT_EQ(1, Optional().filters.size());
+  AssertWildcard(*Optional().filters[0], kFieldId, "te_m");
 }
 
 TEST_F(LuceneParserTest, SuffixQuery) {
   ASSERT_TRUE(sdb::ParseQuery(ctx, "*suffix"));
-  ASSERT_EQ(1, OptionalRoot().size());
-  AssertWildcard(OptionalRoot()[0], kFieldId, "%suffix");
+  ASSERT_EQ(1, Optional().size());
+  ASSERT_EQ(1, Optional().filters.size());
+  AssertWildcard(*Optional().filters[0], kFieldId, "%suffix");
 }
 
 TEST_F(LuceneParserTest, FieldSuffixQuery) {
   ASSERT_TRUE(sdb::ParseQuery(ctx, "title:*suffix"));
-  ASSERT_EQ(1, OptionalRoot().size());
-  AssertWildcard(OptionalRoot()[0], kFieldId, "%suffix");
+  ASSERT_EQ(1, Optional().size());
+  ASSERT_EQ(1, Optional().filters.size());
+  AssertWildcard(*Optional().filters[0], kFieldId, "%suffix");
 }
 
 TEST_F(LuceneParserTest, EscapedMinus) {
   // `a-b` is one term to the query and two words to the analyzer, which is
   // what Lucene asks for under the default operator
   ASSERT_TRUE(sdb::ParseQuery(ctx, "a\\-b"));
-  ASSERT_EQ(1, OptionalRoot().size());
-  const auto& parts =
-    sdb::basics::downCast<irs::MixedBooleanFilter>(OptionalRoot()[0])
-      .GetOptional();
+  ASSERT_EQ(1, Optional().size());
+  ASSERT_EQ(1, Optional().filters.size());
+  const auto& parts = SubOptional(*Optional().filters[0]);
   ASSERT_EQ(2, parts.size());
-  AssertTerm(parts[0], kFieldId, "a");
-  AssertTerm(parts[1], kFieldId, "b");
+  ASSERT_EQ(2, parts.terms.size());
+  AssertTerm(parts.terms[0], kFieldId, "a");
+  AssertTerm(parts.terms[1], kFieldId, "b");
 }
 
 TEST_F(LuceneParserTest, EscapedColon) {
   ASSERT_TRUE(sdb::ParseQuery(ctx, "a\\:b"));
-  ASSERT_EQ(1, OptionalRoot().size());
-  AssertTerm(OptionalRoot()[0], kFieldId, "a:b");
+  ASSERT_EQ(1, Optional().size());
+  ASSERT_EQ(1, Optional().terms.size());
+  AssertTerm(Optional().terms[0], kFieldId, "a:b");
 }
 
 TEST_F(LuceneParserTest, EscapedStar) {
   // an escaped star is a star, not the place a pattern begins
   ASSERT_TRUE(sdb::ParseQuery(ctx, "a\\*b"));
-  ASSERT_EQ(1, OptionalRoot().size());
-  const auto& parts =
-    sdb::basics::downCast<irs::MixedBooleanFilter>(OptionalRoot()[0])
-      .GetOptional();
+  ASSERT_EQ(1, Optional().size());
+  ASSERT_EQ(1, Optional().filters.size());
+  const auto& parts = SubOptional(*Optional().filters[0]);
   ASSERT_EQ(2, parts.size());
-  AssertTerm(parts[0], kFieldId, "a");
-  AssertTerm(parts[1], kFieldId, "b");
+  ASSERT_EQ(2, parts.terms.size());
+  AssertTerm(parts.terms[0], kFieldId, "a");
+  AssertTerm(parts.terms[1], kFieldId, "b");
 }
 
 TEST_F(LuceneParserTest, DoubleAmpersandAnd) {
   ASSERT_TRUE(sdb::ParseQuery(ctx, "hello && world"));
-  ASSERT_TRUE(OptionalRoot().empty());
-  ASSERT_EQ(2, RequiredRoot().size());
+  ASSERT_TRUE(Optional().empty());
+  ASSERT_EQ(2, Required().size());
+  ASSERT_EQ(2, Required().terms.size());
 
-  AssertTerm(RequiredRoot()[0], kFieldId, "hello");
-  AssertTerm(RequiredRoot()[1], kFieldId, "world");
+  AssertTerm(Required().terms[0], kFieldId, "hello");
+  AssertTerm(Required().terms[1], kFieldId, "world");
 }
 
 TEST_F(LuceneParserTest, DoublePipeOr) {
   ASSERT_TRUE(sdb::ParseQuery(ctx, "hello || world"));
-  ASSERT_EQ(2, OptionalRoot().size());
-  AssertTerm(OptionalRoot()[0], kFieldId, "hello");
-  AssertTerm(OptionalRoot()[1], kFieldId, "world");
+  ASSERT_EQ(2, Optional().size());
+  ASSERT_EQ(2, Optional().terms.size());
+  AssertTerm(Optional().terms[0], kFieldId, "hello");
+  AssertTerm(Optional().terms[1], kFieldId, "world");
 }
 
 TEST_F(LuceneParserTest, ExclamationNot) {
   ASSERT_TRUE(sdb::ParseQuery(ctx, "!hello"));
-  ASSERT_TRUE(OptionalRoot().empty());
-  ASSERT_EQ(1, RequiredRoot().size());
-
-  const auto& not_filter = sdb::basics::downCast<irs::Not>(RequiredRoot()[0]);
-  const auto* not_or = NotOr(not_filter);
-  ASSERT_NE(nullptr, not_or);
-  ASSERT_EQ(1, not_or->size());
-  AssertTerm((*not_or)[0], kFieldId, "hello");
+  ASSERT_TRUE(Optional().empty());
+  ASSERT_TRUE(Required().empty());
+  ASSERT_EQ(1, Excluded().size());
+  ASSERT_EQ(1, Excluded().terms.size());
+  AssertTerm(Excluded().terms[0], kFieldId, "hello");
 }
 
 TEST_F(LuceneParserTest, BoostedRange) {
   ASSERT_TRUE(sdb::ParseQuery(ctx, "[a TO z]^2"));
-  ASSERT_EQ(1, OptionalRoot().size());
-  AssertRange(OptionalRoot()[0], kFieldId, "a", irs::BoundType::Inclusive, "z",
-              irs::BoundType::Inclusive, 2.0f);
+  ASSERT_EQ(1, Optional().size());
+  ASSERT_EQ(1, Optional().filters.size());
+  AssertRange(*Optional().filters[0], kFieldId, "a", irs::BoundType::Inclusive,
+              "z", irs::BoundType::Inclusive, 2.0f);
 }
 
 TEST_F(LuceneParserTest, BoostedRangeFloat) {
   ASSERT_TRUE(sdb::ParseQuery(ctx, "[a TO z]^0.5"));
-  ASSERT_EQ(1, OptionalRoot().size());
-  AssertRange(OptionalRoot()[0], kFieldId, "a", irs::BoundType::Inclusive, "z",
-              irs::BoundType::Inclusive, 0.5f);
+  ASSERT_EQ(1, Optional().size());
+  ASSERT_EQ(1, Optional().filters.size());
+  AssertRange(*Optional().filters[0], kFieldId, "a", irs::BoundType::Inclusive,
+              "z", irs::BoundType::Inclusive, 0.5f);
 }
 
 TEST_F(LuceneParserTest, BoostedWildcard) {
   ASSERT_TRUE(sdb::ParseQuery(ctx, "h*llo^2"));
-  ASSERT_EQ(1, OptionalRoot().size());
-  AssertWildcard(OptionalRoot()[0], kFieldId, "h%llo", 2.0f);
+  ASSERT_EQ(1, Optional().size());
+  ASSERT_EQ(1, Optional().filters.size());
+  AssertWildcard(*Optional().filters[0], kFieldId, "h%llo", 2.0f);
 }
 
 TEST_F(LuceneParserTest, BoostedWildcardFloat) {
   ASSERT_TRUE(sdb::ParseQuery(ctx, "h*llo^1.7"));
-  ASSERT_EQ(1, OptionalRoot().size());
-  AssertWildcard(OptionalRoot()[0], kFieldId, "h%llo", 1.7f);
+  ASSERT_EQ(1, Optional().size());
+  ASSERT_EQ(1, Optional().filters.size());
+  AssertWildcard(*Optional().filters[0], kFieldId, "h%llo", 1.7f);
 }
 
 TEST_F(LuceneParserTest, TabSeparator) {
   ASSERT_TRUE(sdb::ParseQuery(ctx, "hello\tworld"));
-  ASSERT_EQ(2, OptionalRoot().size());
-  AssertTerm(OptionalRoot()[0], kFieldId, "hello");
-  AssertTerm(OptionalRoot()[1], kFieldId, "world");
+  ASSERT_EQ(2, Optional().size());
+  ASSERT_EQ(2, Optional().terms.size());
+  AssertTerm(Optional().terms[0], kFieldId, "hello");
+  AssertTerm(Optional().terms[1], kFieldId, "world");
 }
 
 TEST_F(LuceneParserTest, NewlineSeparator) {
   ASSERT_TRUE(sdb::ParseQuery(ctx, "hello\nworld"));
-  ASSERT_EQ(2, OptionalRoot().size());
-  AssertTerm(OptionalRoot()[0], kFieldId, "hello");
-  AssertTerm(OptionalRoot()[1], kFieldId, "world");
+  ASSERT_EQ(2, Optional().size());
+  ASSERT_EQ(2, Optional().terms.size());
+  AssertTerm(Optional().terms[0], kFieldId, "hello");
+  AssertTerm(Optional().terms[1], kFieldId, "world");
 }
 
 TEST_F(LuceneParserTest, TermStartingWithDigits) {
   ASSERT_TRUE(sdb::ParseQuery(ctx, "2024abc"));
-  ASSERT_EQ(1, OptionalRoot().size());
-  AssertTerm(OptionalRoot()[0], kFieldId, "2024abc");
+  ASSERT_EQ(1, Optional().size());
+  ASSERT_EQ(1, Optional().terms.size());
+  AssertTerm(Optional().terms[0], kFieldId, "2024abc");
 }
 
 TEST_F(LuceneParserTest, RangeMixedBraceToSquare) {
   ASSERT_TRUE(sdb::ParseQuery(ctx, "{alpha TO omega]"));
-  ASSERT_EQ(1, OptionalRoot().size());
-  AssertRange(OptionalRoot()[0], kFieldId, "alpha", irs::BoundType::Exclusive,
-              "omega", irs::BoundType::Inclusive);
+  ASSERT_EQ(1, Optional().size());
+  ASSERT_EQ(1, Optional().filters.size());
+  AssertRange(*Optional().filters[0], kFieldId, "alpha",
+              irs::BoundType::Exclusive, "omega", irs::BoundType::Inclusive);
 }
 
 TEST_F(LuceneParserTest, RangeAndTerm) {
   ASSERT_TRUE(sdb::ParseQuery(ctx, "[a TO z] AND foo"));
-  ASSERT_TRUE(OptionalRoot().empty());
-  ASSERT_EQ(2, RequiredRoot().size());
+  ASSERT_TRUE(Optional().empty());
+  ASSERT_EQ(2, Required().size());
+  ASSERT_EQ(1, Required().filters.size());
+  ASSERT_EQ(1, Required().terms.size());
 
-  AssertRange(RequiredRoot()[0], kFieldId, "a", irs::BoundType::Inclusive, "z",
-              irs::BoundType::Inclusive);
+  AssertRange(*Required().filters[0], kFieldId, "a", irs::BoundType::Inclusive,
+              "z", irs::BoundType::Inclusive);
 
-  AssertTerm(RequiredRoot()[1], kFieldId, "foo");
+  AssertTerm(Required().terms[0], kFieldId, "foo");
 }
 
 TEST_F(LuceneParserTest, SingleCharTerm) {
   ASSERT_TRUE(sdb::ParseQuery(ctx, "a"));
-  ASSERT_EQ(1, OptionalRoot().size());
-  AssertTerm(OptionalRoot()[0], kFieldId, "a");
+  ASSERT_EQ(1, Optional().size());
+  ASSERT_EQ(1, Optional().terms.size());
+  AssertTerm(Optional().terms[0], kFieldId, "a");
 }
 
 TEST_F(LuceneParserTest, StandaloneNumber) {
   ASSERT_TRUE(sdb::ParseQuery(ctx, "123"));
-  ASSERT_EQ(1, OptionalRoot().size());
-  AssertTerm(OptionalRoot()[0], kFieldId, "123");
+  ASSERT_EQ(1, Optional().size());
+  ASSERT_EQ(1, Optional().terms.size());
+  AssertTerm(Optional().terms[0], kFieldId, "123");
 }
 
 TEST_F(LuceneParserTest, ParseError_EmptyQuery) {
@@ -1521,103 +1525,104 @@ TEST_F(LuceneParserTest, ParseError_WhitespaceOnly) {
 TEST_F(LuceneParserTest, FieldRestoresAfterSingleTerm) {
   // title:hello world -> hello=title, world=content (default)
   ASSERT_TRUE(sdb::ParseQuery(ctx, "title:hello world"));
-  ASSERT_EQ(2, OptionalRoot().size());
-  AssertTerm(OptionalRoot()[0], kFieldId, "hello");
+  ASSERT_EQ(2, Optional().size());
+  ASSERT_EQ(2, Optional().terms.size());
+  AssertTerm(Optional().terms[0], kFieldId, "hello");
 
-  AssertTerm(OptionalRoot()[1], kFieldId, "world");
+  AssertTerm(Optional().terms[1], kFieldId, "world");
 }
 
 TEST_F(LuceneParserTest, FieldScopeWithAnd) {
   // title:a AND b -> a=title, b=content; both Required
   ASSERT_TRUE(sdb::ParseQuery(ctx, "title:a AND b"));
-  ASSERT_TRUE(OptionalRoot().empty());
-  ASSERT_EQ(2, RequiredRoot().size());
+  ASSERT_TRUE(Optional().empty());
+  ASSERT_EQ(2, Required().size());
+  ASSERT_EQ(2, Required().terms.size());
 
-  AssertTerm(RequiredRoot()[0], kFieldId, "a");
+  AssertTerm(Required().terms[0], kFieldId, "a");
 
-  AssertTerm(RequiredRoot()[1], kFieldId, "b");
+  AssertTerm(Required().terms[1], kFieldId, "b");
 }
 
 TEST_F(LuceneParserTest, DifferentFieldsWithAnd) {
   // title:a AND author:b -> a=title, b=author; both Required
   ASSERT_TRUE(sdb::ParseQuery(ctx, "title:a AND author:b"));
-  ASSERT_TRUE(OptionalRoot().empty());
-  ASSERT_EQ(2, RequiredRoot().size());
+  ASSERT_TRUE(Optional().empty());
+  ASSERT_EQ(2, Required().size());
+  ASSERT_EQ(2, Required().terms.size());
 
-  AssertTerm(RequiredRoot()[0], kFieldId, "a");
+  AssertTerm(Required().terms[0], kFieldId, "a");
 
-  AssertTerm(RequiredRoot()[1], kFieldId, "b");
+  AssertTerm(Required().terms[1], kFieldId, "b");
 }
 
 TEST_F(LuceneParserTest, TwoAndGroupsOrd) {
   // (a AND b) OR (c AND d) -> Optional[group(Req[a,b]), group(Req[c,d])]
   ASSERT_TRUE(sdb::ParseQuery(ctx, "(a AND b) OR (c AND d)"));
-  ASSERT_EQ(2, OptionalRoot().size());
-  const auto& g1 =
-    sdb::basics::downCast<irs::MixedBooleanFilter>(OptionalRoot()[0]);
-  ASSERT_TRUE(g1.GetOptional().empty());
-  ASSERT_EQ(2, g1.GetRequired().size());
-  AssertTerm(g1.GetRequired()[0], kFieldId, "a");
-  AssertTerm(g1.GetRequired()[1], kFieldId, "b");
+  ASSERT_EQ(2, Optional().size());
+  ASSERT_EQ(2, Optional().filters.size());
+  const auto& g1 = *Optional().filters[0];
+  ASSERT_TRUE(SubOptional(g1).empty());
+  ASSERT_EQ(2, SubRequired(g1).size());
+  ASSERT_EQ(2, SubRequired(g1).terms.size());
+  AssertTerm(SubRequired(g1).terms[0], kFieldId, "a");
+  AssertTerm(SubRequired(g1).terms[1], kFieldId, "b");
 
-  const auto& g2 =
-    sdb::basics::downCast<irs::MixedBooleanFilter>(OptionalRoot()[1]);
-  ASSERT_TRUE(g2.GetOptional().empty());
-  ASSERT_EQ(2, g2.GetRequired().size());
-  AssertTerm(g2.GetRequired()[0], kFieldId, "c");
-  AssertTerm(g2.GetRequired()[1], kFieldId, "d");
+  const auto& g2 = *Optional().filters[1];
+  ASSERT_TRUE(SubOptional(g2).empty());
+  ASSERT_EQ(2, SubRequired(g2).size());
+  ASSERT_EQ(2, SubRequired(g2).terms.size());
+  AssertTerm(SubRequired(g2).terms[0], kFieldId, "c");
+  AssertTerm(SubRequired(g2).terms[1], kFieldId, "d");
 }
 
 TEST_F(LuceneParserTest, NotAndGroup) {
-  // NOT (a AND b) -> Required[Not(group(Req[a,b]))]
+  // NOT (a AND b) -> Excluded[group(Req[a,b])]
   ASSERT_TRUE(sdb::ParseQuery(ctx, "NOT (a AND b)"));
-  ASSERT_TRUE(OptionalRoot().empty());
-  ASSERT_EQ(1, RequiredRoot().size());
+  ASSERT_TRUE(Optional().empty());
+  ASSERT_TRUE(Required().empty());
+  ASSERT_EQ(1, Excluded().size());
+  ASSERT_EQ(1, Excluded().filters.size());
 
-  const auto& not_filter = sdb::basics::downCast<irs::Not>(RequiredRoot()[0]);
-  const auto* not_or = NotOr(not_filter);
-  ASSERT_NE(nullptr, not_or);
-  ASSERT_EQ(1, not_or->size());
-
-  const auto& group =
-    sdb::basics::downCast<irs::MixedBooleanFilter>((*not_or)[0]);
-  ASSERT_TRUE(group.GetOptional().empty());
-  ASSERT_EQ(2, group.GetRequired().size());
+  const auto& group = *Excluded().filters[0];
+  ASSERT_TRUE(SubOptional(group).empty());
+  ASSERT_EQ(2, SubRequired(group).size());
 }
 
 TEST_F(LuceneParserTest, ModifiersInsideFieldGroup) {
-  // field:(+a -b c) -> group with a=Required, Not(b)=Required, c=Optional
+  // field:(+a -b c) -> group with a=Required, b=Excluded, c=Optional
   ASSERT_TRUE(sdb::ParseQuery(ctx, "field:(+a -b c)"));
-  ASSERT_EQ(1, OptionalRoot().size());
-  const auto& group =
-    sdb::basics::downCast<irs::MixedBooleanFilter>(OptionalRoot()[0]);
-  ASSERT_EQ(1, group.GetOptional().size());
-  ASSERT_EQ(2, group.GetRequired().size());
+  ASSERT_EQ(1, Optional().size());
+  ASSERT_EQ(1, Optional().filters.size());
+  const auto& group = *Optional().filters[0];
+  ASSERT_EQ(1, SubOptional(group).size());
+  ASSERT_EQ(1, SubRequired(group).size());
+  ASSERT_EQ(1, SubExcluded(group).size());
 
-  AssertTerm(group.GetOptional()[0], kFieldId, "c");
+  ASSERT_EQ(1, SubOptional(group).terms.size());
+  AssertTerm(SubOptional(group).terms[0], kFieldId, "c");
 
-  AssertTerm(group.GetRequired()[0], kFieldId, "a");
+  ASSERT_EQ(1, SubRequired(group).terms.size());
+  AssertTerm(SubRequired(group).terms[0], kFieldId, "a");
 
-  const auto& not_filter =
-    sdb::basics::downCast<irs::Not>(group.GetRequired()[1]);
-  const auto* not_or = NotOr(not_filter);
-  ASSERT_NE(nullptr, not_or);
-  AssertTerm((*not_or)[0], kFieldId, "b");
+  ASSERT_EQ(1, SubExcluded(group).terms.size());
+  AssertTerm(SubExcluded(group).terms[0], kFieldId, "b");
 }
 
 TEST_F(LuceneParserTest, AndWithGroupInMiddle) {
   // a AND (b OR c) AND d -> Required[a, group(Opt[b,c]), d]
   ASSERT_TRUE(sdb::ParseQuery(ctx, "a AND (b OR c) AND d"));
-  ASSERT_TRUE(OptionalRoot().empty());
-  ASSERT_EQ(3, RequiredRoot().size());
+  ASSERT_TRUE(Optional().empty());
+  ASSERT_EQ(3, Required().size());
+  ASSERT_EQ(2, Required().terms.size());
+  ASSERT_EQ(1, Required().filters.size());
 
-  AssertTerm(RequiredRoot()[0], kFieldId, "a");
+  AssertTerm(Required().terms[0], kFieldId, "a");
 
-  const auto& group =
-    sdb::basics::downCast<irs::MixedBooleanFilter>(RequiredRoot()[1]);
-  ASSERT_EQ(2, group.GetOptional().size());
+  const auto& group = *Required().filters[0];
+  ASSERT_EQ(2, SubOptional(group).size());
 
-  AssertTerm(RequiredRoot()[2], kFieldId, "d");
+  AssertTerm(Required().terms[1], kFieldId, "d");
 }
 
 TEST_F(LuceneParserTest, DeeplyNestedFieldGroups) {
@@ -1627,47 +1632,53 @@ TEST_F(LuceneParserTest, DeeplyNestedFieldGroups) {
   // d = default content field
   ASSERT_TRUE(sdb::ParseQuery(ctx, "title:(author:(a b) c) d"));
   // First: outer group (title-scoped)
-  ASSERT_EQ(2, OptionalRoot().size());
-  const auto& outer =
-    sdb::basics::downCast<irs::MixedBooleanFilter>(OptionalRoot()[0]);
-  ASSERT_TRUE(outer.GetRequired().empty());
-  ASSERT_EQ(2, outer.GetOptional().size());
+  ASSERT_EQ(2, Optional().size());
+  ASSERT_EQ(1, Optional().filters.size());
+  ASSERT_EQ(1, Optional().terms.size());
+  const auto& outer = *Optional().filters[0];
+  ASSERT_TRUE(SubRequired(outer).empty());
+  ASSERT_EQ(2, SubOptional(outer).size());
 
   // Inner group (author-scoped)
-  const auto& inner =
-    sdb::basics::downCast<irs::MixedBooleanFilter>(outer.GetOptional()[0]);
-  ASSERT_TRUE(inner.GetRequired().empty());
-  ASSERT_EQ(2, inner.GetOptional().size());
-  AssertTerm(inner.GetOptional()[0], kFieldId, "a");
-  AssertTerm(inner.GetOptional()[1], kFieldId, "b");
+  ASSERT_EQ(1, SubOptional(outer).filters.size());
+  const auto& inner = *SubOptional(outer).filters[0];
+  ASSERT_TRUE(SubRequired(inner).empty());
+  ASSERT_EQ(2, SubOptional(inner).size());
+  ASSERT_EQ(2, SubOptional(inner).terms.size());
+  AssertTerm(SubOptional(inner).terms[0], kFieldId, "a");
+  AssertTerm(SubOptional(inner).terms[1], kFieldId, "b");
 
-  AssertTerm(outer.GetOptional()[1], kFieldId, "c");
+  ASSERT_EQ(1, SubOptional(outer).terms.size());
+  AssertTerm(SubOptional(outer).terms[0], kFieldId, "c");
 
   // Second: d with default field
-  AssertTerm(OptionalRoot()[1], kFieldId, "d");
+  AssertTerm(Optional().terms[0], kFieldId, "d");
 }
 
 TEST_F(LuceneParserTest, ThreeLevelNestedGroups) {
   // ((a AND b) OR c) AND d
   // Inner group: Req[a,b]. Middle group: Opt[inner, c]. AND promotes middle+d.
   ASSERT_TRUE(sdb::ParseQuery(ctx, "((a AND b) OR c) AND d"));
-  ASSERT_TRUE(OptionalRoot().empty());
-  ASSERT_EQ(2, RequiredRoot().size());
+  ASSERT_TRUE(Optional().empty());
+  ASSERT_EQ(2, Required().size());
+  ASSERT_EQ(1, Required().filters.size());
+  ASSERT_EQ(1, Required().terms.size());
 
-  const auto& middle =
-    sdb::basics::downCast<irs::MixedBooleanFilter>(RequiredRoot()[0]);
-  ASSERT_EQ(2, middle.GetOptional().size());
+  const auto& middle = *Required().filters[0];
+  ASSERT_EQ(2, SubOptional(middle).size());
 
-  const auto& inner =
-    sdb::basics::downCast<irs::MixedBooleanFilter>(middle.GetOptional()[0]);
-  ASSERT_TRUE(inner.GetOptional().empty());
-  ASSERT_EQ(2, inner.GetRequired().size());
-  AssertTerm(inner.GetRequired()[0], kFieldId, "a");
-  AssertTerm(inner.GetRequired()[1], kFieldId, "b");
+  ASSERT_EQ(1, SubOptional(middle).filters.size());
+  const auto& inner = *SubOptional(middle).filters[0];
+  ASSERT_TRUE(SubOptional(inner).empty());
+  ASSERT_EQ(2, SubRequired(inner).size());
+  ASSERT_EQ(2, SubRequired(inner).terms.size());
+  AssertTerm(SubRequired(inner).terms[0], kFieldId, "a");
+  AssertTerm(SubRequired(inner).terms[1], kFieldId, "b");
 
-  AssertTerm(middle.GetOptional()[1], kFieldId, "c");
+  ASSERT_EQ(1, SubOptional(middle).terms.size());
+  AssertTerm(SubOptional(middle).terms[0], kFieldId, "c");
 
-  AssertTerm(RequiredRoot()[1], kFieldId, "d");
+  AssertTerm(Required().terms[0], kFieldId, "d");
 }
 
 TEST_F(LuceneParserTest, NestedGroupsWithMixedOperators) {
@@ -1675,58 +1686,51 @@ TEST_F(LuceneParserTest, NestedGroupsWithMixedOperators) {
   // Inner: +group(a,b) AND group(c,d) -> all Required in outer group
   // Then OR e at top level
   ASSERT_TRUE(sdb::ParseQuery(ctx, "(+(a b) AND (c OR d)) OR e"));
-  ASSERT_EQ(2, OptionalRoot().size());
-  const auto& outer =
-    sdb::basics::downCast<irs::MixedBooleanFilter>(OptionalRoot()[0]);
-  ASSERT_TRUE(outer.GetOptional().empty());
-  ASSERT_EQ(2, outer.GetRequired().size());
+  ASSERT_EQ(2, Optional().size());
+  ASSERT_EQ(1, Optional().filters.size());
+  ASSERT_EQ(1, Optional().terms.size());
+  const auto& outer = *Optional().filters[0];
+  ASSERT_TRUE(SubOptional(outer).empty());
+  ASSERT_EQ(2, SubRequired(outer).size());
+  ASSERT_EQ(2, SubRequired(outer).filters.size());
 
-  const auto& g1 =
-    sdb::basics::downCast<irs::MixedBooleanFilter>(outer.GetRequired()[0]);
-  ASSERT_EQ(2, g1.GetOptional().size());
-  AssertTerm(g1.GetOptional()[0], kFieldId, "a");
-  AssertTerm(g1.GetOptional()[1], kFieldId, "b");
+  const auto& g1 = *SubRequired(outer).filters[0];
+  ASSERT_EQ(2, SubOptional(g1).size());
+  ASSERT_EQ(2, SubOptional(g1).terms.size());
+  AssertTerm(SubOptional(g1).terms[0], kFieldId, "a");
+  AssertTerm(SubOptional(g1).terms[1], kFieldId, "b");
 
-  const auto& g2 =
-    sdb::basics::downCast<irs::MixedBooleanFilter>(outer.GetRequired()[1]);
-  ASSERT_EQ(2, g2.GetOptional().size());
-  AssertTerm(g2.GetOptional()[0], kFieldId, "c");
-  AssertTerm(g2.GetOptional()[1], kFieldId, "d");
+  const auto& g2 = *SubRequired(outer).filters[1];
+  ASSERT_EQ(2, SubOptional(g2).size());
+  ASSERT_EQ(2, SubOptional(g2).terms.size());
+  AssertTerm(SubOptional(g2).terms[0], kFieldId, "c");
+  AssertTerm(SubOptional(g2).terms[1], kFieldId, "d");
 
-  AssertTerm(OptionalRoot()[1], kFieldId, "e");
+  AssertTerm(Optional().terms[0], kFieldId, "e");
 }
 
 TEST_F(LuceneParserTest, DeeplyNestedNotGroups) {
   // NOT (NOT (a AND b))
-  // Outer NOT wraps a group that contains inner NOT wrapping AND group
+  // Outer exclusion holds a group that excludes the AND group in turn
   ASSERT_TRUE(sdb::ParseQuery(ctx, "NOT (NOT (a AND b))"));
-  ASSERT_TRUE(OptionalRoot().empty());
-  ASSERT_EQ(1, RequiredRoot().size());
+  ASSERT_TRUE(Optional().empty());
+  ASSERT_TRUE(Required().empty());
+  ASSERT_EQ(1, Excluded().size());
+  ASSERT_EQ(1, Excluded().filters.size());
 
-  // Outer: Not(group)
-  const auto& outer_not = sdb::basics::downCast<irs::Not>(RequiredRoot()[0]);
-  const auto* outer_or = NotOr(outer_not);
-  ASSERT_NE(nullptr, outer_or);
-  ASSERT_EQ(1, outer_or->size());
+  // Middle group excludes the inner group
+  const auto& middle = *Excluded().filters[0];
+  ASSERT_TRUE(SubOptional(middle).empty());
+  ASSERT_TRUE(SubRequired(middle).empty());
+  ASSERT_EQ(1, SubExcluded(middle).size());
+  ASSERT_EQ(1, SubExcluded(middle).filters.size());
 
-  // Middle group contains Required[Not(inner_group)]
-  const auto& middle =
-    sdb::basics::downCast<irs::MixedBooleanFilter>((*outer_or)[0]);
-  ASSERT_TRUE(middle.GetOptional().empty());
-  ASSERT_EQ(1, middle.GetRequired().size());
-
-  const auto& inner_not =
-    sdb::basics::downCast<irs::Not>(middle.GetRequired()[0]);
-  const auto* inner_or = NotOr(inner_not);
-  ASSERT_NE(nullptr, inner_or);
-  ASSERT_EQ(1, inner_or->size());
-
-  const auto& inner =
-    sdb::basics::downCast<irs::MixedBooleanFilter>((*inner_or)[0]);
-  ASSERT_TRUE(inner.GetOptional().empty());
-  ASSERT_EQ(2, inner.GetRequired().size());
-  AssertTerm(inner.GetRequired()[0], kFieldId, "a");
-  AssertTerm(inner.GetRequired()[1], kFieldId, "b");
+  const auto& inner = *SubExcluded(middle).filters[0];
+  ASSERT_TRUE(SubOptional(inner).empty());
+  ASSERT_EQ(2, SubRequired(inner).size());
+  ASSERT_EQ(2, SubRequired(inner).terms.size());
+  AssertTerm(SubRequired(inner).terms[0], kFieldId, "a");
+  AssertTerm(SubRequired(inner).terms[1], kFieldId, "b");
 }
 
 TEST_F(LuceneParserTest, ComplexMultiFieldNested) {
@@ -1734,56 +1738,60 @@ TEST_F(LuceneParserTest, ComplexMultiFieldNested) {
   ASSERT_TRUE(
     sdb::ParseQuery(ctx, "title:(+hello -world) AND author:(foo OR bar)^2"))
     << ctx.error_message;
-  ASSERT_TRUE(OptionalRoot().empty());
-  ASSERT_EQ(2, RequiredRoot().size());
+  ASSERT_TRUE(Optional().empty());
+  ASSERT_EQ(2, Required().size());
+  ASSERT_EQ(2, Required().filters.size());
 
-  const auto& g1 =
-    sdb::basics::downCast<irs::MixedBooleanFilter>(RequiredRoot()[0]);
-  ASSERT_TRUE(g1.GetOptional().empty());
-  ASSERT_EQ(2, g1.GetRequired().size());
-  AssertTerm(g1.GetRequired()[0], kFieldId, "hello");
-  const auto& not_world = sdb::basics::downCast<irs::Not>(g1.GetRequired()[1]);
-  const auto* nw_or = NotOr(not_world);
-  ASSERT_NE(nullptr, nw_or);
-  AssertTerm((*nw_or)[0], kFieldId, "world");
+  const auto& g1 = *Required().filters[0];
+  ASSERT_TRUE(SubOptional(g1).empty());
+  ASSERT_EQ(1, SubRequired(g1).size());
+  ASSERT_EQ(1, SubRequired(g1).terms.size());
+  AssertTerm(SubRequired(g1).terms[0], kFieldId, "hello");
+  ASSERT_EQ(1, SubExcluded(g1).size());
+  ASSERT_EQ(1, SubExcluded(g1).terms.size());
+  AssertTerm(SubExcluded(g1).terms[0], kFieldId, "world");
 
-  const auto& g2 =
-    sdb::basics::downCast<irs::MixedBooleanFilter>(RequiredRoot()[1]);
+  const auto& g2 = *Required().filters[1];
   EXPECT_FLOAT_EQ(2.0f, g2.GetBoost());
-  ASSERT_EQ(2, g2.GetOptional().size());
-  AssertTerm(g2.GetOptional()[0], kFieldId, "foo");
-  AssertTerm(g2.GetOptional()[1], kFieldId, "bar");
+  ASSERT_EQ(2, SubOptional(g2).size());
+  ASSERT_EQ(2, SubOptional(g2).terms.size());
+  AssertTerm(SubOptional(g2).terms[0], kFieldId, "bar");
+  AssertTerm(SubOptional(g2).terms[1], kFieldId, "foo");
 }
 
 // Query: "+open source software licenses"
-// Expected: required=[open], optional=[source, software, licenses]
+// Expected: required=[open], optional=[licenses, software, source]
 TEST_F(LuceneParserTest, RequiredWithOptionals) {
   ASSERT_TRUE(sdb::ParseQuery(ctx, "+open source software licenses"))
     << ctx.error_message;
-  ASSERT_EQ(1, RequiredRoot().size());
-  ASSERT_EQ(3, OptionalRoot().size());
+  ASSERT_EQ(1, Required().size());
+  ASSERT_EQ(1, Required().terms.size());
+  ASSERT_EQ(3, Optional().size());
+  ASSERT_EQ(3, Optional().terms.size());
 
-  AssertTerm(RequiredRoot()[0], kFieldId, "open");
-  AssertTerm(OptionalRoot()[0], kFieldId, "source");
-  AssertTerm(OptionalRoot()[1], kFieldId, "software");
-  AssertTerm(OptionalRoot()[2], kFieldId, "licenses");
+  AssertTerm(Required().terms[0], kFieldId, "open");
+  AssertTerm(Optional().terms[0], kFieldId, "licenses");
+  AssertTerm(Optional().terms[1], kFieldId, "software");
+  AssertTerm(Optional().terms[2], kFieldId, "source");
 }
 
 // Query: "+open" -- required only, no optional
 TEST_F(LuceneParserTest, RequiredOnly) {
   ASSERT_TRUE(sdb::ParseQuery(ctx, "+open"));
-  ASSERT_EQ(1, RequiredRoot().size());
-  ASSERT_TRUE(OptionalRoot().empty());
-  AssertTerm(RequiredRoot()[0], kFieldId, "open");
+  ASSERT_EQ(1, Required().size());
+  ASSERT_EQ(1, Required().terms.size());
+  ASSERT_TRUE(Optional().empty());
+  AssertTerm(Required().terms[0], kFieldId, "open");
 }
 
 // Query: "open source" -- optional only (no + prefix), no required
 TEST_F(LuceneParserTest, OptionalOnly) {
   ASSERT_TRUE(sdb::ParseQuery(ctx, "open source"));
-  ASSERT_TRUE(RequiredRoot().empty());
-  ASSERT_EQ(2, OptionalRoot().size());
-  AssertTerm(OptionalRoot()[0], kFieldId, "open");
-  AssertTerm(OptionalRoot()[1], kFieldId, "source");
+  ASSERT_TRUE(Required().empty());
+  ASSERT_EQ(2, Optional().size());
+  ASSERT_EQ(2, Optional().terms.size());
+  AssertTerm(Optional().terms[0], kFieldId, "open");
+  AssertTerm(Optional().terms[1], kFieldId, "source");
 }
 
 }  // namespace
@@ -1793,45 +1801,53 @@ TEST_F(LuceneParserTest, OptionalOnly) {
 
 TEST_F(LuceneParserTest, TermIsAnalyzed) {
   ASSERT_TRUE(sdb::ParseQuery(ctx, "Hello"));
-  ASSERT_EQ(1, OptionalRoot().size());
-  AssertTerm(OptionalRoot()[0], kFieldId, "hello");
+  ASSERT_EQ(1, Optional().size());
+  ASSERT_EQ(1, Optional().terms.size());
+  AssertTerm(Optional().terms[0], kFieldId, "hello");
 }
 
 TEST_F(LuceneParserTest, TermNotAscii) {
   ASSERT_TRUE(sdb::ParseQuery(ctx, "Z\xc3\xbcrich"));
-  ASSERT_EQ(1, OptionalRoot().size());
-  AssertTerm(OptionalRoot()[0], kFieldId, "z\xc3\xbcrich");
+  ASSERT_EQ(1, Optional().size());
+  ASSERT_EQ(1, Optional().terms.size());
+  AssertTerm(Optional().terms[0], kFieldId, "z\xc3\xbcrich");
 }
 
 TEST_F(LuceneParserTest, TermWithDots) {
   ASSERT_TRUE(sdb::ParseQuery(ctx, "u.s.a"));
-  ASSERT_EQ(1, OptionalRoot().size());
-  AssertTerm(OptionalRoot()[0], kFieldId, "u.s.a");
+  ASSERT_EQ(1, Optional().size());
+  ASSERT_EQ(1, Optional().terms.size());
+  AssertTerm(Optional().terms[0], kFieldId, "u.s.a");
 }
 
 TEST_F(LuceneParserTest, TermWithApostrophe) {
   ASSERT_TRUE(sdb::ParseQuery(ctx, "don't"));
-  ASSERT_EQ(1, OptionalRoot().size());
-  AssertTerm(OptionalRoot()[0], kFieldId, "don't");
+  ASSERT_EQ(1, Optional().size());
+  ASSERT_EQ(1, Optional().terms.size());
+  AssertTerm(Optional().terms[0], kFieldId, "don't");
 }
 
 TEST_F(LuceneParserTest, PrefixIsNormalized) {
   ASSERT_TRUE(sdb::ParseQuery(ctx, "Hel*"));
-  ASSERT_EQ(1, OptionalRoot().size());
-  AssertPrefix(OptionalRoot()[0], kFieldId, "hel");
+  ASSERT_EQ(1, Optional().size());
+  ASSERT_EQ(1, Optional().filters.size());
+  AssertPrefix(*Optional().filters[0], kFieldId, "hel");
 }
 
 TEST_F(LuceneParserTest, FuzzyIsNormalized) {
   ASSERT_TRUE(sdb::ParseQuery(ctx, "Hello~1"));
-  ASSERT_EQ(1, OptionalRoot().size());
-  AssertFuzzy(OptionalRoot()[0], kFieldId, "hello", 1);
+  ASSERT_EQ(1, Optional().size());
+  ASSERT_EQ(1, Optional().filters.size());
+  AssertFuzzy(*Optional().filters[0], kFieldId, "hello", 1);
 }
 
 TEST_F(LuceneParserTest, RegexKeepsItsPattern) {
   // `.` and `*` mean what a regular expression means by them
   ASSERT_TRUE(sdb::ParseQuery(ctx, "/hel.o/"));
-  ASSERT_EQ(1, OptionalRoot().size());
-  const auto& regex = sdb::basics::downCast<irs::ByRegexp>(OptionalRoot()[0]);
+  ASSERT_EQ(1, Optional().size());
+  ASSERT_EQ(1, Optional().filters.size());
+  const auto& regex =
+    sdb::basics::downCast<irs::ByRegexp>(*Optional().filters[0]);
   EXPECT_EQ(kFieldId, regex.field_id());
   EXPECT_EQ("hel.o",
             irs::ViewCast<char>(irs::bytes_view{regex.options().pattern}));
@@ -1843,38 +1859,48 @@ TEST_F(LuceneParserTest, RegexKeepsItsPattern) {
 TEST_F(LuceneParserTest, PhraseKeepsPunctuation) {
   // the analyzer decides what `rock-n-roll` is, not the lexer
   ASSERT_TRUE(sdb::ParseQuery(ctx, "\"rock-n-roll\""));
-  ASSERT_EQ(1, OptionalRoot().size());
-  AssertPhrase(OptionalRoot()[0], kFieldId);
-  const auto& phrase = sdb::basics::downCast<irs::ByPhrase>(OptionalRoot()[0]);
+  ASSERT_EQ(1, Optional().size());
+  ASSERT_EQ(1, Optional().filters.size());
+  AssertPhrase(*Optional().filters[0], kFieldId);
+  const auto& phrase =
+    sdb::basics::downCast<irs::ByPhrase>(*Optional().filters[0]);
   EXPECT_EQ(3, phrase.options().size());
 }
 
 TEST_F(LuceneParserTest, PhraseWithNumber) {
   ASSERT_TRUE(sdb::ParseQuery(ctx, "\"world war 2\""));
-  ASSERT_EQ(1, OptionalRoot().size());
-  const auto& phrase = sdb::basics::downCast<irs::ByPhrase>(OptionalRoot()[0]);
+  ASSERT_EQ(1, Optional().size());
+  ASSERT_EQ(1, Optional().filters.size());
+  const auto& phrase =
+    sdb::basics::downCast<irs::ByPhrase>(*Optional().filters[0]);
   EXPECT_EQ(3, phrase.options().size());
 }
 
 TEST_F(LuceneParserTest, PhraseWithGap) {
   // `1-3` says how far the part after it may sit from the part before
   ASSERT_TRUE(sdb::ParseQuery(ctx, "\"alpha 1-3 beta\""));
-  ASSERT_EQ(1, OptionalRoot().size());
-  const auto& phrase = sdb::basics::downCast<irs::ByPhrase>(OptionalRoot()[0]);
+  ASSERT_EQ(1, Optional().size());
+  ASSERT_EQ(1, Optional().filters.size());
+  const auto& phrase =
+    sdb::basics::downCast<irs::ByPhrase>(*Optional().filters[0]);
   EXPECT_EQ(2, phrase.options().size());
 }
 
 TEST_F(LuceneParserTest, PhraseWithPrefixPart) {
   ASSERT_TRUE(sdb::ParseQuery(ctx, "\"alpha bet*\""));
-  ASSERT_EQ(1, OptionalRoot().size());
-  const auto& phrase = sdb::basics::downCast<irs::ByPhrase>(OptionalRoot()[0]);
+  ASSERT_EQ(1, Optional().size());
+  ASSERT_EQ(1, Optional().filters.size());
+  const auto& phrase =
+    sdb::basics::downCast<irs::ByPhrase>(*Optional().filters[0]);
   EXPECT_EQ(2, phrase.options().size());
 }
 
 TEST_F(LuceneParserTest, PhraseWithFuzzyPart) {
   ASSERT_TRUE(sdb::ParseQuery(ctx, "\"alpha beta~1\""));
-  ASSERT_EQ(1, OptionalRoot().size());
-  const auto& phrase = sdb::basics::downCast<irs::ByPhrase>(OptionalRoot()[0]);
+  ASSERT_EQ(1, Optional().size());
+  ASSERT_EQ(1, Optional().filters.size());
+  const auto& phrase =
+    sdb::basics::downCast<irs::ByPhrase>(*Optional().filters[0]);
   EXPECT_EQ(2, phrase.options().size());
 }
 
@@ -1883,67 +1909,101 @@ TEST_F(LuceneParserTest, PhraseWithFuzzyPart) {
 
 TEST_F(LuceneParserTest, GroupMinMatch) {
   ASSERT_TRUE(sdb::ParseQuery(ctx, "(alpha beta gamma)@2"));
-  ASSERT_EQ(1, OptionalRoot().size());
-  const auto& group =
-    sdb::basics::downCast<irs::MixedBooleanFilter>(OptionalRoot()[0]);
-  EXPECT_EQ(3, group.GetOptional().size());
-  EXPECT_EQ(2, group.GetOptional().min_match_count());
+  ASSERT_EQ(1, Optional().size());
+  ASSERT_EQ(1, Optional().filters.size());
+  const auto& group = AsBoolean(*Optional().filters[0]);
+  EXPECT_EQ(3, group.Size(irs::Occur::Should));
+  EXPECT_EQ(2, group.MinShouldMatch());
+}
+
+TEST_F(LuceneParserTest, GroupMinMatchBesideRequired) {
+  ASSERT_TRUE(sdb::ParseQuery(ctx, "(+alpha beta gamma)@2"));
+  ASSERT_EQ(1, Optional().size());
+  ASSERT_EQ(1, Optional().filters.size());
+  const auto& group = AsBoolean(*Optional().filters[0]);
+  EXPECT_EQ(0, group.Size(irs::Occur::Should));
+  ASSERT_EQ(2, group.Size(irs::Occur::Must));
+  const auto& required = group.Bucket(irs::Occur::Must);
+  ASSERT_EQ(1, required.terms.size());
+  AssertTerm(required.terms[0], kFieldId, "alpha");
+  ASSERT_EQ(1, required.filters.size());
+  const auto& threshold = AsBoolean(*required.filters[0]);
+  EXPECT_EQ(2, threshold.Size(irs::Occur::Should));
+  EXPECT_EQ(2, threshold.MinShouldMatch());
+}
+
+TEST_F(LuceneParserTest, GroupMinMatchZeroWithExclusion) {
+  ASSERT_TRUE(sdb::ParseQuery(ctx, "(alpha -beta)@0"));
+  ASSERT_EQ(1, Optional().size());
+  ASSERT_EQ(1, Optional().filters.size());
+  const auto& group = AsBoolean(*Optional().filters[0]);
+  EXPECT_EQ(0, group.Size(irs::Occur::Should));
+  ASSERT_EQ(1, group.Size(irs::Occur::Must));
+  EXPECT_EQ(irs::Type<irs::All>::id(),
+            group.Bucket(irs::Occur::Must).filters[0]->type());
+  ASSERT_EQ(1, group.Size(irs::Occur::MustNot));
+  AssertTerm(group.Bucket(irs::Occur::MustNot).terms[0], kFieldId, "beta");
 }
 
 TEST_F(LuceneParserTest, ComparisonLess) {
   ASSERT_TRUE(sdb::ParseQuery(ctx, "title<beta"));
-  ASSERT_EQ(1, OptionalRoot().size());
-  AssertRange(OptionalRoot()[0], kFieldId, "", irs::BoundType::Unbounded,
+  ASSERT_EQ(1, Optional().size());
+  ASSERT_EQ(1, Optional().filters.size());
+  AssertRange(*Optional().filters[0], kFieldId, "", irs::BoundType::Unbounded,
               "beta", irs::BoundType::Exclusive);
 }
 
 TEST_F(LuceneParserTest, ComparisonGreaterOrEqual) {
   ASSERT_TRUE(sdb::ParseQuery(ctx, "title>=alpha"));
-  ASSERT_EQ(1, OptionalRoot().size());
-  AssertRange(OptionalRoot()[0], kFieldId, "alpha", irs::BoundType::Inclusive,
-              "", irs::BoundType::Unbounded);
+  ASSERT_EQ(1, Optional().size());
+  ASSERT_EQ(1, Optional().filters.size());
+  AssertRange(*Optional().filters[0], kFieldId, "alpha",
+              irs::BoundType::Inclusive, "", irs::BoundType::Unbounded);
 }
 
 TEST_F(LuceneParserTest, FnOrIsADisjunction) {
   ASSERT_TRUE(sdb::ParseQuery(ctx, "fn:or(Alpha beta)"));
-  ASSERT_EQ(1, OptionalRoot().size());
-  const auto& any =
-    sdb::basics::downCast<irs::MixedBooleanFilter>(OptionalRoot()[0]);
-  ASSERT_EQ(2, any.GetOptional().size());
+  ASSERT_EQ(1, Optional().size());
+  ASSERT_EQ(1, Optional().filters.size());
+  const auto& any = SubOptional(*Optional().filters[0]);
+  ASSERT_EQ(2, any.size());
+  ASSERT_EQ(2, any.terms.size());
   // the terms of a function are terms of the index, like every other term
-  AssertTerm(any.GetOptional()[0], kFieldId, "alpha");
-  AssertTerm(any.GetOptional()[1], kFieldId, "beta");
+  AssertTerm(any.terms[0], kFieldId, "alpha");
+  AssertTerm(any.terms[1], kFieldId, "beta");
 }
 
 TEST_F(LuceneParserTest, FnUnorderedIsAConjunction) {
   ASSERT_TRUE(sdb::ParseQuery(ctx, "fn:unordered(alpha beta)"));
-  ASSERT_EQ(1, OptionalRoot().size());
-  const auto& all =
-    sdb::basics::downCast<irs::MixedBooleanFilter>(OptionalRoot()[0]);
-  EXPECT_EQ(2, all.GetRequired().size());
+  ASSERT_EQ(1, Optional().size());
+  ASSERT_EQ(1, Optional().filters.size());
+  EXPECT_EQ(2, SubRequired(*Optional().filters[0]).size());
 }
 
 TEST_F(LuceneParserTest, FnOrderedIsAPhrase) {
   ASSERT_TRUE(sdb::ParseQuery(ctx, "fn:ordered(alpha beta)"));
-  ASSERT_EQ(1, OptionalRoot().size());
-  const auto& phrase = sdb::basics::downCast<irs::ByPhrase>(OptionalRoot()[0]);
+  ASSERT_EQ(1, Optional().size());
+  ASSERT_EQ(1, Optional().filters.size());
+  const auto& phrase =
+    sdb::basics::downCast<irs::ByPhrase>(*Optional().filters[0]);
   EXPECT_EQ(2, phrase.options().size());
 }
 
 TEST_F(LuceneParserTest, FnAtLeast) {
   ASSERT_TRUE(sdb::ParseQuery(ctx, "fn:atLeast(2 alpha beta gamma)"));
-  ASSERT_EQ(1, OptionalRoot().size());
-  const auto& any =
-    sdb::basics::downCast<irs::MixedBooleanFilter>(OptionalRoot()[0]);
-  EXPECT_EQ(3, any.GetOptional().size());
-  EXPECT_EQ(2, any.GetOptional().min_match_count());
+  ASSERT_EQ(1, Optional().size());
+  ASSERT_EQ(1, Optional().filters.size());
+  const auto& any = AsBoolean(*Optional().filters[0]);
+  EXPECT_EQ(3, any.Size(irs::Occur::Should));
+  EXPECT_EQ(2, any.MinShouldMatch());
 }
 
 TEST_F(LuceneParserTest, NGram) {
   ASSERT_TRUE(sdb::ParseQuery(ctx, "fn:ngram(0.6 alpha beta gamma)"));
-  ASSERT_EQ(1, OptionalRoot().size());
+  ASSERT_EQ(1, Optional().size());
+  ASSERT_EQ(1, Optional().filters.size());
   const auto& ngram =
-    sdb::basics::downCast<irs::ByNGramSimilarity>(OptionalRoot()[0]);
+    sdb::basics::downCast<irs::ByNGramSimilarity>(*Optional().filters[0]);
   EXPECT_EQ(kFieldId, ngram.field_id());
   EXPECT_FLOAT_EQ(0.6f, ngram.options().threshold);
   EXPECT_EQ(3, ngram.options().ngrams.size());
@@ -1975,85 +2035,98 @@ TEST_F(LuceneParserTest, FieldExistenceIsRefused) {
 TEST_F(LuceneParserTest, UnicodeEscape) {
   // `\uXXXX` is the character it names -- Lucene's `discardEscapeChar`
   ASSERT_TRUE(sdb::ParseQuery(ctx, "caf\\u00e9"));
-  ASSERT_EQ(1, OptionalRoot().size());
-  AssertTerm(OptionalRoot()[0], kFieldId, "caf\xc3\xa9");
+  ASSERT_EQ(1, Optional().size());
+  ASSERT_EQ(1, Optional().terms.size());
+  AssertTerm(Optional().terms[0], kFieldId, "caf\xc3\xa9");
 }
 
 TEST_F(LuceneParserTest, EscapeKeepsWhatItProtected) {
   // the `+` is part of the term rather than an operator, and the analyzer
   // makes two words of what it protected
   ASSERT_TRUE(sdb::ParseQuery(ctx, "a\\+b"));
-  ASSERT_TRUE(RequiredRoot().empty());
-  ASSERT_EQ(1, OptionalRoot().size());
-  const auto& parts =
-    sdb::basics::downCast<irs::MixedBooleanFilter>(OptionalRoot()[0])
-      .GetOptional();
+  ASSERT_TRUE(Required().empty());
+  ASSERT_EQ(1, Optional().size());
+  ASSERT_EQ(1, Optional().filters.size());
+  const auto& parts = SubOptional(*Optional().filters[0]);
   ASSERT_EQ(2, parts.size());
-  AssertTerm(parts[0], kFieldId, "a");
-  AssertTerm(parts[1], kFieldId, "b");
+  ASSERT_EQ(2, parts.terms.size());
+  AssertTerm(parts.terms[0], kFieldId, "a");
+  AssertTerm(parts.terms[1], kFieldId, "b");
 }
 
 TEST_F(LuceneParserTest, LoneOperatorIsATerm) {
   // what was pasted in is searched for, rather than read as an operator with
   // nothing to apply to
   ASSERT_TRUE(sdb::ParseQuery(ctx, "alpha + beta"));
-  ASSERT_EQ(3, OptionalRoot().size());
-  AssertTerm(OptionalRoot()[0], kFieldId, "alpha");
-  AssertTerm(OptionalRoot()[1], kFieldId, "+");
-  AssertTerm(OptionalRoot()[2], kFieldId, "beta");
+  ASSERT_EQ(3, Optional().size());
+  ASSERT_EQ(3, Optional().terms.size());
+  AssertTerm(Optional().terms[0], kFieldId, "+");
+  AssertTerm(Optional().terms[1], kFieldId, "alpha");
+  AssertTerm(Optional().terms[2], kFieldId, "beta");
 }
 
 TEST_F(LuceneParserTest, MatchAll) {
   ASSERT_TRUE(sdb::ParseQuery(ctx, "*:*"));
-  ASSERT_EQ(1, OptionalRoot().size());
-  EXPECT_EQ(irs::Type<irs::All>::id(), OptionalRoot()[0].type());
+  ASSERT_EQ(1, Optional().size());
+  ASSERT_EQ(1, Optional().filters.size());
+  EXPECT_EQ(irs::Type<irs::All>::id(), Optional().filters[0]->type());
 }
 
 TEST_F(LuceneParserTest, RangeWithQuotedBound) {
   // a quoted bound holds what a bare one cannot: spaces, and the word TO
   ASSERT_TRUE(sdb::ParseQuery(ctx, "[\"alpha beta\" TO gamma]"));
-  ASSERT_EQ(1, OptionalRoot().size());
-  AssertRange(OptionalRoot()[0], kFieldId, "alpha beta",
+  ASSERT_EQ(1, Optional().size());
+  ASSERT_EQ(1, Optional().filters.size());
+  AssertRange(*Optional().filters[0], kFieldId, "alpha beta",
               irs::BoundType::Inclusive, "gamma", irs::BoundType::Inclusive);
 }
 
 TEST_F(LuceneParserTest, FnPhrase) {
   ASSERT_TRUE(sdb::ParseQuery(ctx, "fn:phrase(alpha beta)"));
-  ASSERT_EQ(1, OptionalRoot().size());
-  const auto& phrase = sdb::basics::downCast<irs::ByPhrase>(OptionalRoot()[0]);
+  ASSERT_EQ(1, Optional().size());
+  ASSERT_EQ(1, Optional().filters.size());
+  const auto& phrase =
+    sdb::basics::downCast<irs::ByPhrase>(*Optional().filters[0]);
   EXPECT_EQ(2, phrase.options().size());
 }
 
 TEST_F(LuceneParserTest, FnWildcard) {
   ASSERT_TRUE(sdb::ParseQuery(ctx, "fn:wildcard(al*ha)"));
-  ASSERT_EQ(1, OptionalRoot().size());
-  AssertWildcard(OptionalRoot()[0], kFieldId, "al%ha");
+  ASSERT_EQ(1, Optional().size());
+  ASSERT_EQ(1, Optional().filters.size());
+  AssertWildcard(*Optional().filters[0], kFieldId, "al%ha");
 }
 
 TEST_F(LuceneParserTest, FnFuzzyTerm) {
   ASSERT_TRUE(sdb::ParseQuery(ctx, "fn:fuzzyTerm(alpha)"));
-  ASSERT_EQ(1, OptionalRoot().size());
-  AssertFuzzy(OptionalRoot()[0], kFieldId, "alpha", 2);
+  ASSERT_EQ(1, Optional().size());
+  ASSERT_EQ(1, Optional().filters.size());
+  AssertFuzzy(*Optional().filters[0], kFieldId, "alpha", 2);
 }
 
 TEST_F(LuceneParserTest, FnFuzzyTermWithDistance) {
   ASSERT_TRUE(sdb::ParseQuery(ctx, "fn:fuzzyTerm(alpha 1)"));
-  ASSERT_EQ(1, OptionalRoot().size());
-  AssertFuzzy(OptionalRoot()[0], kFieldId, "alpha", 1);
+  ASSERT_EQ(1, Optional().size());
+  ASSERT_EQ(1, Optional().filters.size());
+  AssertFuzzy(*Optional().filters[0], kFieldId, "alpha", 1);
 }
 
 TEST_F(LuceneParserTest, FnMaxGapsOverAPair) {
   // over one pair a gap bound is a distance, which a phrase can say
   ASSERT_TRUE(sdb::ParseQuery(ctx, "fn:maxgaps(2 fn:ordered(alpha beta))"));
-  ASSERT_EQ(1, OptionalRoot().size());
-  const auto& phrase = sdb::basics::downCast<irs::ByPhrase>(OptionalRoot()[0]);
+  ASSERT_EQ(1, Optional().size());
+  ASSERT_EQ(1, Optional().filters.size());
+  const auto& phrase =
+    sdb::basics::downCast<irs::ByPhrase>(*Optional().filters[0]);
   EXPECT_EQ(2, phrase.options().size());
 }
 
 TEST_F(LuceneParserTest, FnMaxWidthOverAPair) {
   ASSERT_TRUE(sdb::ParseQuery(ctx, "fn:maxwidth(3 fn:ordered(alpha beta))"));
-  ASSERT_EQ(1, OptionalRoot().size());
-  const auto& phrase = sdb::basics::downCast<irs::ByPhrase>(OptionalRoot()[0]);
+  ASSERT_EQ(1, Optional().size());
+  ASSERT_EQ(1, Optional().filters.size());
+  const auto& phrase =
+    sdb::basics::downCast<irs::ByPhrase>(*Optional().filters[0]);
   EXPECT_EQ(2, phrase.options().size());
 }
 

@@ -206,10 +206,10 @@ catalog::InvertedIndexOptions ResolveInvertedIndexOptions(
     .compaction_floor_segment_bytes =
       resolve_ubigint(kCompactionFloorSegmentBytesSetting),
   };
-  if (auto* v = find("optimize_top_k")) {
+  if (auto* v = find(kOptimizeTopKSetting)) {
     auto value =
       v->DefaultCastAs(duckdb::LogicalType::VARCHAR).GetValue<std::string>();
-    options.topk_scorer = catalog::ParseScorerExpression(context, value);
+    options.topk_scorer = catalog::ParseScorerExpression(&context, value);
   }
   options.key_columns = KeyColumnsFromOptions(with);
   std::string store_pk = "auto";
@@ -367,11 +367,8 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
            std::ranges::to<std::vector<catalog::ColumnId>>();
   };
 
-  const auto col_index_to_id =
-    IsDuckDBTable()
-      ? make_column_ids(
-          BuildCreateIndexProjection(_pk_positions, _info->column_ids))
-      : make_column_ids(std::views::iota(size_t{0}, columns.size()));
+  const auto col_index_to_id = make_column_ids(
+    BuildCreateIndexProjection(_pk_positions, _info->column_ids));
   const auto relation_id = catalog::IdOf(_relation);
 
   // Normalize + serialize a bound expression (index key or partial-index

@@ -199,10 +199,11 @@ QUERY PLAN
 ╭─ IRESEARCH_SCAN ──────┴──────────────────────╮
 │ Index: vlog_idx                              │
 │ Index Filter:                                │
-│ ╭─ Terms ──────────────────────────────────╮ │
+│ ╭─ Or ─────────────────────────────────────╮ │
+│ ╰─────────────────────┬────────────────────╯ │
+│ ╭─ Terms ─────────────┴────────────────────╮ │
 │ │ Field: ts_split_by_non_alpha(body, true) │ │
 │ │ Values: 'alpha', 'beta'                  │ │
-│ │ Min Match: 1                             │ │
 │ ╰──────────────────────────────────────────╯ │
 │ TsDict: status                               │
 │ Projections:                                 │

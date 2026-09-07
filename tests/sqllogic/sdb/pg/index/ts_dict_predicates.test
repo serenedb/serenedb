@@ -291,9 +291,11 @@ QUERY PLAN
 ╭─ IRESEARCH_SCAN ────────┴────────────────────────╮
 │ Index: tp_idx                                    │
 │ Index Filter:                                    │
-│ ╭─ Exclusion ─────────╮                          │
+│ ╭─ Bool ──────────────╮                          │
 │ ╰──────────┬──────────╯                          │
 │            ├────────────────────────╮            │
+│ ╭─ Must ───┴──────────╮  ╭─ Must Not ──────────╮ │
+│ ╰──────────┬──────────╯  ╰──────────┬──────────╯ │
 │ ╭─ Starts With ───────╮  ╭─ Automaton ─────────╮ │
 │ │ Field: body(string) │  │ Field: body(string) │ │
 │ │ Prefix: a           │  │ Pattern: .*e        │ │
@@ -429,7 +431,7 @@ QUERY PLAN
 │ ╭─ Automaton ──────────────────────────────╮ │
 │ │ Field: cat(string)                       │ │
 │ │ Pattern:                                 │ │
-│ │ (?:ap(?s:.)*)|(?:banana)|(?:(?s:.)*cado) │ │
+│ │ (?:banana)|(?:ap(?s:.)*)|(?:(?s:.)*cado) │ │
 │ ╰──────────────────────────────────────────╯ │
 │ TsDict: cat                                  │
 │ Projections: sdb_inverted_index_term$cat     │
@@ -472,14 +474,13 @@ QUERY PLAN
 ╭─ IRESEARCH_SCAN ────────┴────────────────────────╮
 │ Index: tp_idx                                    │
 │ Index Filter:                                    │
-│ ╭─ Or ─────────────────╮                         │
-│ ╰───────────┬──────────╯                         │
-│             ├────────────────────────╮           │
-│ ╭─ Range ───┴──────────╮  ╭─ Term ───┴─────────╮ │
-│ │ Field: cat(string)   │  │ Field: cat(string) │ │
-│ │ Range: >=apple, <=az │  │ Value: kiwi        │ │
-│ │ Boost: 2             │  ╰────────────────────╯ │
-│ ╰──────────────────────╯                         │
+│ ╭─ Or ───────────────╮                           │
+│ ╰──────────┬─────────╯                           │
+│            ├────────────────────────╮            │
+│ ╭─ Terms ──┴─────────╮  ╭─ Range ───┴──────────╮ │
+│ │ Field: cat(string) │  │ Field: cat(string)   │ │
+│ │ Values: 'kiwi'     │  │ Range: >=apple, <=az │ │
+│ ╰────────────────────╯  ╰──────────────────────╯ │
 │ TsDict: cat                                      │
 │ Projections: sdb_inverted_index_term$cat         │
 │ ~1 row                                           │

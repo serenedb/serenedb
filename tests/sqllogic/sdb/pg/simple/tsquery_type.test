@@ -235,28 +235,28 @@ SELECT a, BM25(tqt_idx.tableoid) AS s FROM tqt_idx
 WHERE b @@ ts_phrase('quick') ORDER BY a;
 ----
 a	s
-1	0.9808291
+1	0.44583148
 
 query IR
 SELECT a, BM25(tqt_idx.tableoid) AS s FROM tqt_idx
 WHERE b @@ (ts_phrase('quick') ^ 2.0) ORDER BY a;
 ----
 a	s
-1	1.9616582
+1	0.89166296
 
 query IR
 SELECT a, BM25(tqt_idx.tableoid) AS s FROM tqt_idx
 WHERE b @@ ('quick'::tsquery ^ 2.0) ORDER BY a;
 ----
 a	s
-1	1.9616582
+1	0.89166296
 
 query IR
 SELECT a, BM25(tqt_idx.tableoid) AS s FROM tqt_idx
 WHERE b @@ ('quick'::tsquery::boost(2.0)) ORDER BY a;
 ----
 a	s
-1	1.9616582
+1	0.89166296
 
 # `::boost(K)` and `::tokenize(n)` compose in either order on values:
 # the boost folds into the value's boost field, the tokenize cast
@@ -266,14 +266,14 @@ SELECT a, BM25(tqt_idx.tableoid) AS s FROM tqt_idx
 WHERE b @@ ('quick'::tsquery::boost(2.0)::tokenize('keyword')) ORDER BY a;
 ----
 a	s
-1	1.9616582
+1	0.89166296
 
 query IR
 SELECT a, BM25(tqt_idx.tableoid) AS s FROM tqt_idx
 WHERE b @@ ('quick'::tsquery::tokenize('keyword')::boost(2.0)) ORDER BY a;
 ----
 a	s
-1	1.9616582
+1	0.89166296
 
 # Boost survives composition with a plain leg: the boosted leg folds to
 # a value, the composition stays a bind-time tree, and the walker reads
@@ -283,8 +283,8 @@ SELECT a, BM25(tqt_idx.tableoid) AS s FROM tqt_idx
 WHERE b @@ ('quick'::tsquery ^ 2.0 || 'turtle') ORDER BY a;
 ----
 a	s
-1	1.9616582
-3	0.9808291
+1	0.89166296
+3	0.44583148
 
 
 # ----------------------------------------------------------------------

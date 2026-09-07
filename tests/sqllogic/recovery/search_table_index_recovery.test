@@ -60,17 +60,21 @@ id	tag
 1	red
 3	red
 
-# The bare table scan no longer term-indexes a non-PK column: it falls back to a
-# columnstore Column Filter (still correct, over the rebuilt stored values).
+# The bare table scan lowers a non-PK predicate through the rebuilt inverted
+# index, the same term filter the index relation uses.
 connection after_crash
 query
 EXPLAIN SELECT id FROM sidx WHERE tag = 'red';
 ----
 QUERY PLAN
-╭─ IRESEARCH_SCAN ───────────╮
-│ Index: sidx                │
-│ Lookup: search             │
-│ Projections: id            │
-│ Column Filter: tag = 'red' │
-│ ~1 row                     │
-╰────────────────────────────╯
+╭─ IRESEARCH_SCAN ─╮
+│ Index: sidx      │
+│ Lookup: search   │
+│ Index Filter:    │
+│ ╭─ Term ─────╮   │
+│ │ Field: tag │   │
+│ │ Value: red │   │
+│ ╰────────────╯   │
+│ Projections: id  │
+│ ~1 row           │
+╰──────────────────╯

@@ -119,7 +119,7 @@ class BitsThresholdScored {
       }
     }
     std::fill(_planes.begin(), _planes.end(), uint64_t{0});
-    _min = target - target % kWindow;
+    _min = target;
     _filled = true;
     const size_t top = size_t{_min_match} - 1;
     _next = _leaves.Visit(_min + kWindow, [&](auto& leaf) {

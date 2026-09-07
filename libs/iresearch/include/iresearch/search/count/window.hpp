@@ -56,7 +56,7 @@ class Window : public Root {
 
   uint64_t Run() final {
     uint64_t total = 0;
-    doc_id_t min = 0;
+    doc_id_t min = doc_limits::min();
 
     for (;;) {
       if (!_table.Skip(min)) {

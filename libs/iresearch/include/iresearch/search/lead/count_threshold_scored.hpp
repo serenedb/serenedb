@@ -117,7 +117,7 @@ class CountThresholdScored {
         }
       }
     }
-    _min = target - target % kWindow;
+    _min = target;
     _filled = true;
     const auto max = _min + kWindow;
     _next = _leaves.Visit(max, [&](auto& leaf) {

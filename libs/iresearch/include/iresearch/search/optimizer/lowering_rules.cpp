@@ -111,8 +111,6 @@ bool WildcardSimplifyRule::Apply(Filter::ptr& slot, const OptimizeContext&) {
       auto filter = std::make_unique<ByPrefix>();
       *filter->mutable_field_id() = node.field_id();
       filter->mutable_options()->term = term;
-      filter->mutable_options()->scored_terms_limit =
-        node.options().scored_terms_limit;
       filter->SetBoost(node.GetBoost());
       filter->SetScorer(node.GetScorer());
       return filter;
@@ -142,8 +140,6 @@ bool RegexpSimplifyRule::Apply(Filter::ptr& slot, const OptimizeContext&) {
       auto filter = std::make_unique<ByPrefix>();
       *filter->mutable_field_id() = node.field_id();
       filter->mutable_options()->term = prefix;
-      filter->mutable_options()->scored_terms_limit =
-        node.options().scored_terms_limit;
       filter->SetBoost(node.GetBoost());
       filter->SetScorer(node.GetScorer());
       return filter;
@@ -295,13 +291,11 @@ void LowerNode(Filter::ptr& slot) {
   const auto type = slot->type();
   if (type == Type<ByWildcard>::id()) {
     auto& node = sdb::basics::downCast<ByWildcard>(*slot);
-    slot = LowerWildcard(node.field_id(), node.options().term,
-                         node.options().scored_terms_limit, node.GetBoost());
+    slot = LowerWildcard(node.field_id(), node.options().term, node.GetBoost());
   } else if (type == Type<ByRegexp>::id()) {
     auto& node = sdb::basics::downCast<ByRegexp>(*slot);
     slot = LowerRegexp(node.field_id(), node.options().pattern,
-                       node.options().syntax, node.options().scored_terms_limit,
-                       node.GetBoost());
+                       node.options().syntax, node.GetBoost());
   } else if (type == Type<ByEditDistance>::id()) {
     auto& node = sdb::basics::downCast<ByEditDistance>(*slot);
     slot = LowerLevenshtein(node.field_id(), node.options(), node.GetBoost());
@@ -310,11 +304,11 @@ void LowerNode(Filter::ptr& slot) {
 
 }  // namespace
 
-void LowerAutomatons(Filter::ptr& root, const OptimizeContext&) {
-  TraverseFilter(root, [](Filter::ptr& slot) {
+void LowerAutomatons(Filter::ptr& root, const OptimizeContext& ctx) {
+  TraverseFilter(root, [&](Filter::ptr& slot) {
     LowerNode(slot);
     if (slot->type() == Type<BooleanFilter>::id()) {
-      NormalizeTerms(sdb::basics::downCast<BooleanFilter>(*slot));
+      NormalizeTerms(sdb::basics::downCast<BooleanFilter>(*slot), ctx.scored);
     }
   });
 }

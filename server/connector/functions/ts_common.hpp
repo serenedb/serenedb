@@ -57,8 +57,7 @@ struct FilterContext {
   irs::analysis::Analyzer& identity;
   irs::analysis::Analyzer& tokenizer;
   duckdb::ClientContext& client_context;
-  uint32_t scored_terms_limit = 1024;
-  uint32_t levenshtein_max_terms = 64;
+  uint32_t levenshtein_max_terms = 50;
   FilterScorers* scorer_sink = nullptr;
 
   FilterContext WithTokenizer(irs::analysis::Analyzer& tokenizer) const {
@@ -73,7 +72,6 @@ struct FilterContext {
       .identity = identity,
       .tokenizer = tokenizer,
       .client_context = client_context,
-      .scored_terms_limit = scored_terms_limit,
       .levenshtein_max_terms = levenshtein_max_terms,
       .scorer_sink = scorer_sink,
     };
@@ -91,7 +89,6 @@ struct FilterContext {
       .identity = identity,
       .tokenizer = tokenizer,
       .client_context = client_context,
-      .scored_terms_limit = scored_terms_limit,
       .levenshtein_max_terms = levenshtein_max_terms,
       .scorer_sink = scorer_sink,
     };
@@ -109,7 +106,6 @@ struct FilterContext {
       .identity = identity,
       .tokenizer = tokenizer,
       .client_context = client_context,
-      .scored_terms_limit = scored_terms_limit,
       .levenshtein_max_terms = levenshtein_max_terms,
       .scorer_sink = scorer_sink,
     };
@@ -126,7 +122,13 @@ inline const irs::Scorer* LeafScorer(const SearchColumnInfo& info) {
   return type == duckdb::LogicalTypeId::VARCHAR ||
              type == duckdb::LogicalTypeId::BLOB
            ? nullptr
-           : &irs::DefaultConstScore();
+           : &irs::ForceConstScore();
+}
+
+inline void SetLeafScorer(irs::Filter& filter, const SearchColumnInfo& info) {
+  if (const auto* scorer = LeafScorer(info)) {
+    filter.SetScorer(scorer);
+  }
 }
 
 template<typename Filter, typename... Args>

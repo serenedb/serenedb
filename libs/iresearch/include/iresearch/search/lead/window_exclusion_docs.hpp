@@ -44,11 +44,7 @@ class WindowExclusionDocs {
       _excludes{
         std::make_from_tuple<Excludes>(std::forward<ExcludesArgs>(excludes))} {}
 
-  doc_id_t Value() const noexcept { return _doc; }
-
-  doc_id_t Advance() {
-    return Seek(doc_limits::valid(_doc) ? _doc + 1 : doc_limits::min());
-  }
+  doc_id_t Advance() { return Seek(_doc + 1); }
 
   doc_id_t Seek(doc_id_t target) {
     if (target <= _doc) {
@@ -87,7 +83,7 @@ class WindowExclusionDocs {
   void Refill(doc_id_t target) {
     SDB_ASSERT(!_filled || target >= _min);
     search::Clear(_mask.data(), search::kWindowWords);
-    _min = target - target % kWindow;
+    _min = target;
     _filled = true;
     const auto max = _min + kWindow;
     auto next = _lead.FillOr(_min, max, _mask.data());

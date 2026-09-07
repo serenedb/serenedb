@@ -51,7 +51,7 @@ class BitsThreshold : public Root {
     auto* const planes = _planes.data();
     const auto top = size_t{_min_match} - 1;
     auto* const answers = planes + top * search::kWindowWords;
-    doc_id_t next = 0;
+    doc_id_t next = doc_limits::min();
 
     while (_leaves.Live() >= _min_match) {
       const auto min = next;

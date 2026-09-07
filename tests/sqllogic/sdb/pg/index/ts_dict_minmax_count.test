@@ -196,7 +196,6 @@ QUERY PLAN
 │ ╭─ Starts With ──────╮                   │
 │ │ Field: cat(string) │                   │
 │ │ Prefix: r          │                   │
-│ │ Limit: 1024        │                   │
 │ ╰────────────────────╯                   │
 │ TsDict: cat                              │
 │ Projections: sdb_inverted_index_term$cat │

@@ -28,16 +28,16 @@
 
 namespace irs::search {
 
-struct EncBuf {
-  ABSL_CACHELINE_ALIGNED uint32_t data[doc_limits::kBlockSize];
+struct ABSL_CACHELINE_ALIGNED EncBuf {
+  uint32_t data[doc_limits::kBlockSize];
 };
 
-struct FreqBuf {
-  ABSL_CACHELINE_ALIGNED uint32_t data[doc_limits::kBlockSize];
+struct ABSL_CACHELINE_ALIGNED FreqBuf {
+  uint32_t data[doc_limits::kBlockSize];
 };
 
-struct GatherBuf {
-  ABSL_CACHELINE_ALIGNED uint32_t data[doc_limits::kBlockSize]{};
+struct ABSL_CACHELINE_ALIGNED GatherBuf {
+  uint32_t data[doc_limits::kBlockSize]{};
 };
 
 template<typename InputType>

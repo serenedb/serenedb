@@ -84,7 +84,7 @@ void FromRegexp(BoolTarget parent, const FilterContext& ctx,
   auto regexp = irs::CreateByRegexp(
     PickPerKindFieldId(column_info, duckdb::LogicalTypeId::VARCHAR),
     irs::ViewCast<irs::byte_type>(std::string_view{pattern}), syntax,
-    ctx.scored_terms_limit, ctx.boost);
+    ctx.boost);
   if (!ctx.negated) {
     parent.Add(std::move(regexp));
     return;

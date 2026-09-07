@@ -20,8 +20,8 @@
 
 #include <utility>
 
+#include "iresearch/search/common/wildcard_ngram_of.hpp"
 #include "iresearch/search/probe/constant_scored.hpp"
-#include "iresearch/search/probe/impl.hpp"
 #include "iresearch/search/probe/make.hpp"
 #include "iresearch/search/wildcard_ngram_filter.hpp"
 
@@ -29,12 +29,8 @@ namespace irs::probe {
 
 Node::ptr MakeWildcardNGramScored(const WildcardNGramQuery& query,
                                   score_t score, uint64_t interrogations) {
-  auto approx = MakeWildcardNGramDocs(query, interrogations);
-  if (!approx) {
-    return {};
-  }
-  using Node = ConstantScored<Erased>;
-  return memory::make_managed<Impl<Node>>(score, std::move(approx));
+  return search::MakeWildcardNGram<ConstantScoredImpl, Node::ptr>(
+    query, interrogations, score);
 }
 
 }  // namespace irs::probe

@@ -61,8 +61,11 @@ void TraverseFilter(Filter::ptr& root, Visit&& visit) {
     if (frame.children_visited) {
       const auto* scorer = (**frame.slot).GetScorer();
       visit(*frame.slot);
-      if (scorer && *frame.slot && !(**frame.slot).GetScorer()) {
-        (**frame.slot).SetScorer(scorer);
+      if (scorer != nullptr && *frame.slot) {
+        const auto* lowered = (**frame.slot).GetScorer();
+        if (lowered == nullptr || lowered == &DefaultConstScore()) {
+          (**frame.slot).SetScorer(scorer);
+        }
       }
       stack.pop_back();
       continue;

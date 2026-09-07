@@ -30,10 +30,12 @@
 #include "iresearch/search/common/all_docs_score.hpp"
 #include "iresearch/search/common/boolean_of.hpp"
 #include "iresearch/search/common/collect.hpp"
+#include "iresearch/search/common/ngram_of.hpp"
 #include "iresearch/search/common/phrase_of.hpp"
 #include "iresearch/search/common/scored_context.hpp"
 #include "iresearch/search/lead/impl.hpp"
 #include "iresearch/search/lead/make.hpp"
+#include "iresearch/search/lead/two_phase_docs.hpp"
 #include "iresearch/search/multiterm_query.hpp"
 #include "iresearch/search/ngram_similarity_query.hpp"
 #include "iresearch/search/phrase_query.hpp"
@@ -46,14 +48,30 @@
 namespace irs::top {
 namespace {
 
-template<typename Query>
-Root::ptr MakeUnscored(const Query& query, const Context& ctx) {
-  auto node = lead::Make(query);
-  if (!node) {
-    return {};
+Root::ptr MakeUnscored(const FixedPhraseQuery& query, const Context& ctx) {
+  if (ctx.table != nullptr) {
+    return search::MakeFixedPhrase<FilteredConstantWalk, Root::ptr>(
+      query, ctx.table, score_t{0});
   }
-  return MakeShape<detail::ConstantWalk, lead::Erased>(
-    ctx, score_t{0}, lead::Erased{std::move(node)});
+  return search::MakeFixedPhrase<PlainConstantWalk, Root::ptr>(
+    query, utils::Empty{}, score_t{0});
+}
+
+Root::ptr MakeUnscored(const VariadicPhraseQuery& query, const Context& ctx) {
+  if (ctx.table != nullptr) {
+    return search::MakeVariadicPhrase<FilteredConstantWalk, Root::ptr>(
+      query, ctx.table, score_t{0});
+  }
+  return search::MakeVariadicPhrase<PlainConstantWalk, Root::ptr>(
+    query, utils::Empty{}, score_t{0});
+}
+
+Root::ptr MakeUnscored(const NGramSimilarityQuery& query, const Context& ctx) {
+  return search::Build(query, [&]<typename Slots>(auto&&... args) -> Root::ptr {
+    using Node = lead::TwoPhaseDocs<Slots>;
+    return MakeShape<detail::ConstantWalk, Node>(
+      ctx, score_t{0}, std::forward<decltype(args)>(args)...);
+  });
 }
 
 }  // namespace

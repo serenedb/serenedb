@@ -61,7 +61,13 @@ class ConstantScore final : public irs::ScorerBase<ConstantScore, void> {
   score_t _value;
 };
 
+const ConstantScore& ForceConstScore() noexcept;
+
 const ConstantScore& DefaultConstScore() noexcept;
+
+inline bool IsConstScoreSingleton(const Scorer* scorer) noexcept {
+  return scorer == &ForceConstScore() || scorer == &DefaultConstScore();
+}
 
 inline bool NeedsTermStats(const Scorer& scorer) {
   return scorer.stats_size() != 0 ||
@@ -72,7 +78,7 @@ inline const Scorer* ResolveScorer(const Scorer* own, const Scorer* parent) {
   if (own == nullptr) {
     return parent;
   }
-  if (parent != nullptr && own == &DefaultConstScore() &&
+  if (parent != nullptr && IsConstScoreSingleton(own) &&
       !NeedsTermStats(*parent)) {
     return parent;
   }

@@ -20,6 +20,8 @@
 /// @author Andrey Abramov
 ////////////////////////////////////////////////////////////////////////////////
 
+#include <map>
+
 #include "basics/down_cast.h"
 #include "basics/misc.hpp"
 #include "filter_test_case_base.hpp"
@@ -28,6 +30,7 @@
 #include "iresearch/index/norm.hpp"
 #include "iresearch/search/bm25.hpp"
 #include "iresearch/search/boolean_filter.hpp"
+#include "iresearch/search/boolean_query.hpp"
 #include "iresearch/search/column_collector.hpp"
 #include "iresearch/search/filter_optimizer.hpp"
 #include "iresearch/search/levenshtein_filter.hpp"
@@ -254,7 +257,7 @@ TEST_P(ByEditDistanceTestCase, test_order) {
   }
 
   {
-    Docs docs{29};
+    Docs docs{28};
     Costs costs{docs.size()};
 
     size_t finish_count = 0;
@@ -342,7 +345,7 @@ TEST_P(ByEditDistanceTestCase, test_filter) {
   CheckQuery(*MakeLevenshtein("title", "", 1, 1024), Docs{28, 29}, Costs{2},
              rdr);
   CheckQuery(*MakeLevenshtein("title", "", 1, 0), Docs{28, 29}, Costs{2}, rdr);
-  CheckQuery(*MakeLevenshtein("title", "", 1, 1), Docs{29}, Costs{1}, rdr);
+  CheckQuery(*MakeLevenshtein("title", "", 1, 1), Docs{28}, Costs{1}, rdr);
   CheckQuery(*MakeLevenshtein("title", "aa", 1, 1024), Docs{27, 28}, Costs{2},
              rdr);
   CheckQuery(*MakeLevenshtein("title", "aa", 1, 0), Docs{27, 28}, Costs{2},
@@ -357,7 +360,7 @@ TEST_P(ByEditDistanceTestCase, test_filter) {
              rdr);
   CheckQuery(*MakeLevenshtein("title", "", 2, 0), Docs{27, 28, 29}, Costs{3},
              rdr);
-  CheckQuery(*MakeLevenshtein("title", "", 2, 1), Docs{29}, Costs{1}, rdr);
+  CheckQuery(*MakeLevenshtein("title", "", 2, 1), Docs{28}, Costs{1}, rdr);
   CheckQuery(*MakeLevenshtein("title", "", 2, 2), Docs{28, 29}, Costs{2}, rdr);
   CheckQuery(*MakeLevenshtein("title", "aa", 2, 1024), Docs{27, 28, 29, 30, 32},
              Costs{5}, rdr);
@@ -573,10 +576,10 @@ TEST_P(ByEditDistanceTestCase, bm25) {
     ASSERT_FALSE(score.IsDefault());
 
     constexpr std::pair<float_t, irs::doc_id_t> kExpectedDocs[]{
-      {2.8243692f, 261},
-      {4.2365546f, 272},
-      {3.5304620f, 273},
-      {2.8243692f, 289},
+      {3.1589780f, 261},
+      {4.7384672f, 272},
+      {3.9487224f, 273},
+      {3.1589780f, 289},
     };
 
     auto expected_doc = std::begin(kExpectedDocs);
@@ -621,8 +624,8 @@ TEST_P(ByEditDistanceTestCase, bm25) {
     ASSERT_FALSE(score.IsDefault());
 
     constexpr std::pair<float_t, irs::doc_id_t> kExpectedDocs[]{
-      {4.5050912f, 272},
-      {3.7542424f, 273},
+      {4.7384672f, 272},
+      {3.9487224f, 273},
     };
 
     auto expected_doc = std::begin(kExpectedDocs);
@@ -667,8 +670,8 @@ TEST_P(ByEditDistanceTestCase, bm25) {
     ASSERT_FALSE(score.IsDefault());
 
     constexpr std::pair<float_t, irs::doc_id_t> kExpectedDocs[]{
-      {4.5050912f, 272},
-      {3.7542424f, 273},
+      {4.7384672f, 272},
+      {3.9487224f, 273},
     };
 
     auto expected_doc = std::begin(kExpectedDocs);
@@ -714,11 +717,11 @@ TEST_P(ByEditDistanceTestCase, bm25) {
     ASSERT_FALSE(score.IsDefault());
 
     constexpr std::pair<float_t, irs::doc_id_t> kExpectedDocs[]{
-      {3.7019949f, 265},   {3.0849960f, 264},   {3.0849960f, 3054},
-      {3.0849960f, 3069},  {2.6328459f, 46355}, {2.6328459f, 46356},
-      {2.6328459f, 46357}, {2.4679966f, 263},   {2.4679966f, 3062},
-      {2.1940382f, 46353}, {2.1940382f, 46354}, {1.7552302f, 46350},
-      {1.7552302f, 46351}, {1.7552302f, 46352},
+      {4.2365541f, 265},   {3.5304618f, 264},   {3.5304618f, 3054},
+      {3.5304618f, 3069},  {3.0130219f, 46355}, {3.0130219f, 46356},
+      {3.0130219f, 46357}, {2.8243694f, 263},   {2.8243694f, 3062},
+      {2.5108514f, 46353}, {2.5108514f, 46354}, {2.0086813f, 46350},
+      {2.0086813f, 46351}, {2.0086813f, 46352},
     };
 
     std::vector<std::pair<float_t, irs::doc_id_t>> actual_docs;
@@ -1093,6 +1096,94 @@ TEST_P(ByEditDistanceTestCase, fuse_prefix) {
     AppendEditDistance(root, MakeFilter("title", "aaaw", 0, 1024));
     CheckQuery(*tests::Optimized(std::move(root)), Docs{32}, rdr);
   }
+}
+
+TEST_P(ByEditDistanceTestCase, blends_document_frequency) {
+  {
+    tests::JsonDocGenerator gen(resource("levenshtein_sequential.json"),
+                                &tests::GenericJsonFieldFactory);
+    add_segment(gen);
+  }
+  auto rdr = open_reader(irs::tests::DefaultReaderOptions());
+  ASSERT_EQ(1, rdr.size());
+
+  auto scorer = irs::BM25::Make(irs::BM25::Options{});
+  MaxMemoryCounter counter;
+  irs::ColumnArgsFetcher fetcher;
+
+  const auto scores_of = [&](const irs::Filter& filter) {
+    std::map<irs::doc_id_t, irs::score_t> scores;
+    tests::PreparedFilter prepared{filter, rdr, scorer.get(), counter};
+    fetcher.Clear();
+    auto docs = prepared.ExecuteScored(0, fetcher);
+    auto score = docs->PrepareScore();
+    while (!irs::doc_limits::eof(docs->Advance())) {
+      fetcher.Fetch(docs->Value());
+      docs->FetchScoreArgs(0);
+      irs::score_t value{};
+      score.Score(&value, 1);
+      scores.emplace(docs->Value(), value);
+    }
+    return scores;
+  };
+
+  const auto exact = scores_of(MakeTermFilter("title", "aaaaaa"));
+  ASSERT_EQ(3, exact.size());
+  const auto exact_score = exact.begin()->second;
+  for (const auto& [doc, value] : exact) {
+    ASSERT_FLOAT_EQ(exact_score, value);
+  }
+
+  const auto fuzzy = scores_of(*MakeLevenshtein("title", "aaaaa", 1));
+  ASSERT_EQ(4, fuzzy.size());
+  for (const auto& [doc, value] : fuzzy) {
+    if (exact.contains(doc)) {
+      ASSERT_FLOAT_EQ(0.8f * exact_score, value) << doc;
+    } else {
+      ASSERT_FLOAT_EQ(exact_score, value) << doc;
+    }
+  }
+}
+
+TEST_P(ByEditDistanceTestCase, max_merge_is_kept_whole_in_a_sum_parent) {
+  {
+    tests::JsonDocGenerator gen(resource("levenshtein_sequential.json"),
+                                &tests::GenericJsonFieldFactory);
+    add_segment(gen);
+  }
+  auto rdr = open_reader(irs::tests::DefaultReaderOptions());
+  auto scorer = irs::BM25::Make(irs::BM25::Options{});
+
+  const auto make = [](irs::ScoreMergeType merge) {
+    auto root = std::make_unique<irs::BooleanFilter>();
+    root->SetMergeType(merge);
+    root->Add(MakeLevenshtein("title", "aaaaa", 1), irs::Occur::Should);
+    root->Add(std::make_unique<irs::ByTerm>(MakeTermFilter("title", "def")),
+              irs::Occur::Should);
+    root->SetMinShouldMatch(1);
+    return root;
+  };
+
+  using Sizes = std::pair<size_t, size_t>;
+  const auto should_of = [&](const irs::Filter& filter,
+                             const irs::Scorer* order) -> Sizes {
+    tests::PreparedFilter prepared{filter, rdr, order};
+    const auto* query = prepared.Query(0);
+    if (query == nullptr || query->Kind() != irs::QueryKind::Boolean) {
+      ADD_FAILURE() << "not a boolean query";
+      return {};
+    }
+    const auto& should =
+      sdb::basics::downCast<irs::BooleanQuery>(*query).Bucket(
+        irs::Occur::Should);
+    return {should.postings.size(), should.filters.size()};
+  };
+
+  const Sizes kept{1, 1};
+  const Sizes flat{3, 0};
+  EXPECT_EQ(kept, should_of(*make(irs::ScoreMergeType::Sum), scorer.get()));
+  EXPECT_EQ(flat, should_of(*make(irs::ScoreMergeType::Max), scorer.get()));
+  EXPECT_EQ(flat, should_of(*make(irs::ScoreMergeType::Sum), nullptr));
 }
 
 static constexpr auto kTestDirs = tests::GetDirectories<tests::kTypesDefault>();

@@ -115,8 +115,6 @@ class PostingLeaf {
   PostingLeaf(PostingLeaf&&) = delete;
   PostingLeaf& operator=(PostingLeaf&&) = delete;
 
-  doc_id_t Value() const noexcept { return _doc; }
-
   IRS_FORCE_INLINE doc_id_t Advance() {
     if (_left_in_leaf == 0) [[unlikely]] {
       if (_left_in_list == 0) [[unlikely]] {

@@ -238,11 +238,9 @@ class LeadDocs : public irs::lead::Node {
  public:
   explicit LeadDocs(DocList::DocidsT docs) noexcept : _list{std::move(docs)} {}
 
-  irs::doc_id_t Advance() final { return _doc = _list.Advance(); }
+  irs::doc_id_t Advance() final { return _list.Advance(); }
 
-  irs::doc_id_t Seek(irs::doc_id_t target) final {
-    return _doc = _list.Seek(target);
-  }
+  irs::doc_id_t Seek(irs::doc_id_t target) final { return _list.Seek(target); }
 
  private:
   DocList _list;
@@ -259,11 +257,9 @@ class LeadScored : public irs::lead::Node {
       _boost{boost},
       _stats{stats} {}
 
-  irs::doc_id_t Advance() final { return _doc = _list.Advance(); }
+  irs::doc_id_t Advance() final { return _list.Advance(); }
 
-  irs::doc_id_t Seek(irs::doc_id_t target) final {
-    return _doc = _list.Seek(target);
-  }
+  irs::doc_id_t Seek(irs::doc_id_t target) final { return _list.Seek(target); }
 
   void FetchScoreArgs(uint32_t) final {}
 
@@ -728,7 +724,7 @@ detail::Boosted& AddDocs(irs::BooleanFilter& root, irs::Occur occur,
   return node;
 }
 
-std::vector<irs::doc_id_t> Collect(irs::lead::Node& docs) {
+std::vector<irs::doc_id_t> Collect(LeadCursor& docs) {
   std::vector<irs::doc_id_t> result;
   while (!irs::doc_limits::eof(docs.Advance())) {
     result.push_back(docs.Value());
@@ -1979,19 +1975,26 @@ TEST(BooleanFilter_test, duplicate_term_merges_boost) {
     EXPECT_EQ(3.f, optimized->GetBoost());
   }
 
-  // Two scorers are two contributions, so the whole clause key has to agree
-  // before one is folded into the other.
-  for (const bool scored : {true, false}) {
+  {
     tests::sort::Boost sort;
     irs::BooleanFilter q;
     AddTerm(q, irs::Occur::Must, kFieldAbc, "def", 2.f);
     AddTerm(q, irs::Occur::Must, kFieldAbc, "def", 3.f, &sort);
 
-    const auto optimized =
-      tests::Optimized(std::move(q), scored ? &sort : nullptr);
+    const auto optimized = tests::Optimized(std::move(q), &sort);
     ASSERT_EQ(irs::Type<irs::BooleanFilter>::id(), optimized->type());
     const auto& node = sdb::basics::downCast<irs::BooleanFilter>(*optimized);
     EXPECT_EQ(2, node.Size(irs::Occur::Must));
+  }
+
+  {
+    tests::sort::Boost sort;
+    irs::BooleanFilter q;
+    AddTerm(q, irs::Occur::Must, kFieldAbc, "def", 2.f);
+    AddTerm(q, irs::Occur::Must, kFieldAbc, "def", 3.f, &sort);
+
+    const auto optimized = tests::Optimized(std::move(q));
+    ASSERT_EQ(irs::Type<irs::ByTerm>::id(), optimized->type());
   }
 
   // A required clause is met by every document the node returns, so the
@@ -2837,7 +2840,6 @@ TEST(OrAcceptorFusion_test, scored_requires_uniform_boosts) {
     const auto* fused = FusedOf(filter);
     ASSERT_NE(nullptr, fused);
     EXPECT_EQ(6.f, fused->GetBoost());
-    EXPECT_EQ(2048, fused->options().scored_terms_limit);
   }
 }
 
@@ -4562,6 +4564,66 @@ TEST_P(BooleanFilterTestCase, and_or_no_collector) {
     AsDisjunction(root);
     check(root);
   }
+}
+
+TEST_P(BooleanFilterTestCase, nested_or_dissolves_unless_scored_merge_differs) {
+  {
+    tests::JsonDocGenerator gen(resource("simple_sequential.json"),
+                                &tests::GenericJsonFieldFactory);
+    add_segment(gen);
+  }
+  auto rdr = open_reader();
+  tests::sort::Boost sort;
+
+  const auto make = [](irs::ScoreMergeType nested_merge) {
+    auto root = std::make_unique<irs::BooleanFilter>();
+    auto& nested = AddBool(*root, irs::Occur::Should);
+    nested.SetMergeType(nested_merge);
+    AddTerm(nested, irs::Occur::Should, kFieldName, "A");
+    AddTerm(nested, irs::Occur::Should, kFieldName, "B");
+    AsDisjunction(nested);
+    AddTerm(*root, irs::Occur::Should, kFieldName, "C");
+    AsDisjunction(*root);
+    return root;
+  };
+
+  using Sizes = std::pair<size_t, size_t>;
+  const Sizes kept{1, 1};
+  const Sizes flat{3, 0};
+
+  const auto prepared_should = [&](const irs::Filter& filter,
+                                   const irs::Scorer* order) -> Sizes {
+    tests::PreparedFilter prepared{filter, rdr, order};
+    const auto* query = prepared.Query(0);
+    if (query == nullptr || query->Kind() != irs::QueryKind::Boolean) {
+      ADD_FAILURE() << "not a boolean query";
+      return {};
+    }
+    const auto& should =
+      sdb::basics::downCast<irs::BooleanQuery>(*query).Bucket(
+        irs::Occur::Should);
+    return {should.postings.size(), should.filters.size()};
+  };
+  EXPECT_EQ(kept, prepared_should(*make(irs::ScoreMergeType::Max), &sort));
+  EXPECT_EQ(flat, prepared_should(*make(irs::ScoreMergeType::Sum), &sort));
+  EXPECT_EQ(flat, prepared_should(*make(irs::ScoreMergeType::Max), nullptr));
+
+  const auto optimized_should = [](std::unique_ptr<irs::BooleanFilter> root,
+                                   bool scored) -> Sizes {
+    irs::Filter::ptr filter = std::move(root);
+    irs::Optimize(filter, {.scored = scored});
+    if (filter->type() != irs::Type<irs::BooleanFilter>::id()) {
+      ADD_FAILURE() << "not a boolean filter";
+      return {};
+    }
+    const auto& should =
+      sdb::basics::downCast<irs::BooleanFilter>(*filter).Bucket(
+        irs::Occur::Should);
+    return {should.terms.size(), should.filters.size()};
+  };
+  EXPECT_EQ(kept, optimized_should(make(irs::ScoreMergeType::Max), true));
+  EXPECT_EQ(flat, optimized_should(make(irs::ScoreMergeType::Sum), true));
+  EXPECT_EQ(flat, optimized_should(make(irs::ScoreMergeType::Max), false));
 }
 
 static constexpr auto kTestDirs = tests::GetDirectories<tests::kTypesDefault>();

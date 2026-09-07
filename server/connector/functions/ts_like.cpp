@@ -53,7 +53,7 @@ void FromLike(BoolTarget parent, const FilterContext& ctx,
       irs::Type<irs::analysis::WildcardAnalyzer>::id()) {
     auto& wf = AddMaybeNegated<irs::ByWildcardNGram>(parent, ctx, column_info);
     wf.SetBoost(ctx.boost);
-    wf.SetScorer(&irs::DefaultConstScore());
+    wf.SetScorer(&irs::ForceConstScore());
     *wf.mutable_field_id() =
       PickPerKindFieldId(column_info, duckdb::LogicalTypeId::VARCHAR);
     auto* opts = wf.mutable_options();
@@ -71,8 +71,7 @@ void FromLike(BoolTarget parent, const FilterContext& ctx,
   }
   auto wildcard = irs::CreateByWildcard(
     PickPerKindFieldId(column_info, duckdb::LogicalTypeId::VARCHAR),
-    irs::ViewCast<irs::byte_type>(std::string_view{pattern}),
-    ctx.scored_terms_limit, ctx.boost);
+    irs::ViewCast<irs::byte_type>(std::string_view{pattern}), ctx.boost);
   if (!ctx.negated) {
     parent.Add(std::move(wildcard));
     return;

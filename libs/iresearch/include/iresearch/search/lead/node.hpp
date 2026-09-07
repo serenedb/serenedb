@@ -33,8 +33,6 @@ namespace irs::lead {
 struct Node : memory::Managed {
   using ptr = memory::managed_ptr<Node>;
 
-  IRS_FORCE_INLINE doc_id_t Value() const noexcept { return _doc; }
-
   virtual doc_id_t Advance() = 0;
 
   virtual doc_id_t Seek(doc_id_t target) = 0;
@@ -42,9 +40,6 @@ struct Node : memory::Managed {
   virtual void FetchScoreArgs(uint32_t) {}
 
   virtual ScoreFunction PrepareScore() { return ScoreFunction::Default(); }
-
- protected:
-  doc_id_t _doc = doc_limits::invalid();
 };
 
 }  // namespace irs::lead

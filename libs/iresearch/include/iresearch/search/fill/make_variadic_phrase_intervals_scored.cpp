@@ -37,7 +37,7 @@ Node::ptr MakeVariadicPhraseIntervalsScored(const VariadicPhraseQuery& query,
   return search::MakeVariadicPhraseOf<search::PhraseMatch::Intervals,
                                       ByWalkScored, Node::ptr, true,
                                       lead::TwoPhaseScored>(
-    query, merge, ctx.fetcher, query.Segment(), *query.state.reader,
+    query, merge, *ctx.fetcher, query.Segment(), *query.state.reader,
     ScoreArgs{.scorer = record.scorer,
               .stats = stats,
               .fetcher = ctx.fetcher,

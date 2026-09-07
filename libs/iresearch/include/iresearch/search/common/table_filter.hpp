@@ -20,7 +20,6 @@
 
 #pragma once
 
-#include <algorithm>
 #include <cstdint>
 #include <type_traits>
 
@@ -65,9 +64,8 @@ class Narrowing {
   IRS_FORCE_INLINE bool Skip(doc_id_t& min) const {
     if constexpr (kTable) {
       for (;;) {
-        const auto from = std::max(min, doc_limits::min());
-        const auto live = _table->Live(from);
-        if (live == from) {
+        const auto live = _table->Live(min);
+        if (live == min) {
           return true;
         }
         if (doc_limits::eof(live)) {

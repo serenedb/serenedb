@@ -56,11 +56,10 @@ class CountThreshold : public Root {
     ABSL_CACHELINE_ALIGNED doc_id_t docs[kBatch];
     ABSL_CACHELINE_ALIGNED score_t scores[kBatch];
     uint32_t batch = 0;
-    doc_id_t min = 0;
-    doc_id_t next = 0;
+    doc_id_t next = doc_limits::min();
 
     while (_leaves.Live() >= _min_match) {
-      min = next;
+      const doc_id_t min = next;
       next = _leaves.Visit(min + kWindow, [min, max = min + kWindow,
                                            this](auto& leaf) IRS_FORCE_INLINE {
         return leaf.Count(min, max, _counts, _mask, _window);

@@ -79,7 +79,7 @@ using ExpressionGetter = absl::AnyInvocable<std::optional<SearchColumnInfo>(
 // The ClientContext is required (reference, not pointer): the filter
 // builder needs it to resolve named catalog analyzers at filter-build
 // time (`TOKENIZE(text, 'english')` whose stub never runs) and to read
-// the `sdb_scored_terms_limit` session setting.
+// session settings.
 // A non-ok status means "the index cannot claim this predicate" and carries
 // the reason; the optimizer treats it as "decline, fall back" (`root` may
 // hold partially-added children the caller must roll back), ts_offsets

@@ -225,7 +225,6 @@ QUERY PLAN
 │ ╭─ Starts With ──────╮                    │
 │ │ Field: cat(string) │                    │
 │ │ Prefix: r          │                    │
-│ │ Limit: 1024        │                    │
 │ ╰────────────────────╯                    │
 │ TsDict: cat                               │
 │ Projections:                              │
@@ -691,7 +690,6 @@ QUERY PLAN
 │ ╭─ Starts With ───────╮              │
 │ │ Field: body(string) │              │
 │ │ Prefix: charg       │              │
-│ │ Limit: 1024         │              │
 │ ╰─────────────────────╯              │
 │ TsDict: scope                        │
 │ Projections:                         │
@@ -774,8 +772,7 @@ QUERY PLAN
 │ ╭─ Starts With ───────╮  ╭─ Terms ───┴──────────╮ │
 │ │ Field: body(string) │  │ Field: scope(string) │ │
 │ │ Prefix: charg       │  │ Values: 'net'        │ │
-│ │ Limit: 1024         │  ╰──────────────────────╯ │
-│ ╰─────────────────────╯                           │
+│ ╰─────────────────────╯  ╰──────────────────────╯ │
 │ TsDict: scope                                     │
 │ Projections:                                      │
 │ sdb_inverted_index_term$scope,                    │
@@ -1030,7 +1027,6 @@ QUERY PLAN
 │ ╭─ Starts With ───────╮                                                             │
 │ │ Field: body(string) │                                                             │
 │ │ Prefix: charg       │                                                             │
-│ │ Limit: 1024         │                                                             │
 │ ╰─────────────────────╯                                                             │
 │ TsDict: brand, color                                                                │
 │ Projections:                                                                        │
@@ -1099,8 +1095,7 @@ QUERY PLAN
 │ ╭─ Starts With ───────╮  ╭─ Terms ───┴──────────╮                                   │
 │ │ Field: body(string) │  │ Field: brand(string) │                                   │
 │ │ Prefix: charg       │  │ Values: 'acme'       │                                   │
-│ │ Limit: 1024         │  ╰──────────────────────╯                                   │
-│ ╰─────────────────────╯                                                             │
+│ ╰─────────────────────╯  ╰──────────────────────╯                                   │
 │ Index Filter(brand):                                                                │
 │ ╭─ Not ────────────────╮                                                            │
 │ ╰───────────┬──────────╯                                                            │

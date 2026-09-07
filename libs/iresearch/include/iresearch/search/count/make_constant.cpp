@@ -23,8 +23,9 @@
 #include "iresearch/search/count/constant.hpp"
 #include "iresearch/search/count/plan.hpp"
 #include "iresearch/search/count/walk.hpp"
-#include "iresearch/search/lead/impl.hpp"
+#include "iresearch/search/lead/all_docs.hpp"
 #include "iresearch/search/lead/make.hpp"
+#include "iresearch/search/lead/plan.hpp"
 #include "iresearch/search/term_query.hpp"
 
 namespace irs::count {
@@ -33,27 +34,22 @@ Root::ptr MakeConstant(uint64_t count) {
   return memory::make_managed<Constant>(count);
 }
 
-Root::ptr MakeTerm(const search::PostingClause& posting,
-                   const SubReader& segment, const Context& ctx) {
+Root::ptr MakeTerm(const search::PostingClause& posting, const SubReader&,
+                   const Context& ctx) {
   if (ctx.table == nullptr) {
     return MakeConstant(posting.state.cookie.docs_count);
   }
-  auto node = lead::MakePostingDocs(posting, segment);
-  if (!node) {
-    return {};
-  }
-  return MakeShape<Walk, lead::Erased>(ctx, std::move(node));
+  return lead::ResolvePostingDocs<Root::ptr>(
+    posting, [&]<typename Leaf>(auto&&... args) -> Root::ptr {
+      return MakeShape<Walk, Leaf>(ctx, std::forward<decltype(args)>(args)...);
+    });
 }
 
 Root::ptr MakeAll(const SubReader& segment, const Context& ctx) {
   if (ctx.table == nullptr) {
     return MakeConstant(segment.live_docs_count());
   }
-  auto node = lead::MakeAllDocs(segment);
-  if (!node) {
-    return {};
-  }
-  return MakeShape<Walk, lead::Erased>(ctx, std::move(node));
+  return MakeShape<Walk, lead::AllDocs>(ctx, segment);
 }
 
 Root::ptr Make(const TermQuery& query, const Context& ctx) {

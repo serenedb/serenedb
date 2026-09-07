@@ -40,11 +40,7 @@ class CountThresholdDocs {
     SDB_ASSERT(_min_match > 1);
   }
 
-  doc_id_t Value() const noexcept { return _doc; }
-
-  doc_id_t Advance() {
-    return Seek(doc_limits::valid(_doc) ? _doc + 1 : doc_limits::min());
-  }
+  doc_id_t Advance() { return Seek(_doc + 1); }
 
   doc_id_t Seek(doc_id_t target) {
     if (target <= _doc) {
@@ -82,7 +78,7 @@ class CountThresholdDocs {
 
   void Refill(doc_id_t target) {
     SDB_ASSERT(!_filled || target >= _min);
-    _min = target - target % kWindow;
+    _min = target;
     _filled = true;
     const auto max = _min + kWindow;
     _next = _leaves.Visit(

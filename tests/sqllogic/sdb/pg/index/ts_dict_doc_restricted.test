@@ -119,7 +119,6 @@ QUERY PLAN
 │ ╭─ Starts With ───────────╮               │
 │ │ Field: category(string) │               │
 │ │ Prefix: news            │               │
-│ │ Limit: 1024             │               │
 │ ╰─────────────────────────╯               │
 │ TsDict: body                              │
 │ Projections:                              │

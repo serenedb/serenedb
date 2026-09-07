@@ -88,7 +88,7 @@ class BitsThreshold : public Root {
   search::Scratch _window{};
   Leaves _leaves;
   std::vector<uint64_t> _planes;
-  doc_id_t _min = 0;
+  doc_id_t _min = doc_limits::min();
   uint32_t _min_match;
 };
 

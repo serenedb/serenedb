@@ -385,7 +385,7 @@ irs::bytes_view NullMarkerTerm() noexcept {
 
 void AddNullMarkerTerm(BoolTarget parent, irs::field_id null_field_id) {
   AddTerm(parent, null_field_id, NullMarkerTerm(), irs::kNoBoost,
-          &irs::DefaultConstScore());
+          &irs::ForceConstScore());
 }
 
 irs::BooleanFilter& AddTermSet(BoolTarget parent, irs::field_id field,
@@ -625,7 +625,7 @@ absl::Status FromIsNull(BoolTarget filter, const FilterContext& ctx,
       "legacy index)");
   }
   AddTerm(ctx.negated ? Negate(filter) : filter, column_info->null_field_id,
-          NullMarkerTerm(), ctx.boost, &irs::DefaultConstScore());
+          NullMarkerTerm(), ctx.boost, &irs::ForceConstScore());
   return absl::OkStatus();
 }
 
@@ -736,7 +736,7 @@ absl::Status FromComparison(BoolTarget filter, const FilterContext& ctx,
     *range_filter.mutable_field_id() =
       PickPerKindFieldId(*column_info, type_id);
     range_filter.SetBoost(ctx.boost);
-    range_filter.SetScorer(LeafScorer(*column_info));
+    SetLeafScorer(range_filter, *column_info);
     switch (op) {
       case ComparisonOp::Lt:
         range_filter.mutable_options()->range.max_type =
@@ -767,17 +767,14 @@ absl::Status FromComparison(BoolTarget filter, const FilterContext& ctx,
 
   if (type_id == duckdb::LogicalTypeId::VARCHAR) {
     auto& range_filter = AddFilter<irs::ByRange>(filter);
-    range_filter.mutable_options()->scored_terms_limit = ctx.scored_terms_limit;
     setup_base_filter(range_filter).assign(AsRawBytes(*const_val));
   } else if (type_id == duckdb::LogicalTypeId::BOOLEAN) {
     auto& range_filter = AddFilter<irs::ByRange>(filter);
-    range_filter.mutable_options()->scored_terms_limit = ctx.scored_terms_limit;
     setup_base_filter(range_filter)
       .assign(irs::ViewCast<irs::byte_type>(
         irs::BooleanTokenizer::value(const_val->GetValue<bool>())));
   } else if (IsNumericTypeId(type_id)) {
     auto& range_filter = AddFilter<irs::ByGranularRange>(filter);
-    range_filter.mutable_options()->scored_terms_limit = ctx.scored_terms_limit;
     irs::NumericTokenizer stream;
     ResetNumericStream(stream, type_id, *const_val);
     irs::SetGranularTerm(setup_base_filter(range_filter), stream);
@@ -1340,15 +1337,15 @@ const irs::Scorer* ResolveScoreOverride(const FilterContext& ctx,
 
 bool HasScorableLeaf(const irs::Filter& filter) {
   if (filter.type() != irs::Type<irs::BooleanFilter>::id()) {
-    return filter.GetScorer() != &irs::DefaultConstScore();
+    return !irs::IsConstScoreSingleton(filter.GetScorer());
   }
   const auto& node = basics::downCast<irs::BooleanFilter>(filter);
   if (node.GetScorer() != nullptr) {
-    return node.GetScorer() != &irs::DefaultConstScore();
+    return !irs::IsConstScoreSingleton(node.GetScorer());
   }
   for (const auto occur : {irs::Occur::Must, irs::Occur::Should}) {
     for (const auto& clause : node.Bucket(occur).terms) {
-      if (clause.scorer != &irs::DefaultConstScore()) {
+      if (!irs::IsConstScoreSingleton(clause.scorer)) {
         return true;
       }
     }
@@ -1364,6 +1361,15 @@ bool HasScorableLeaf(const irs::Filter& filter) {
 void ApplyScoreOverride(irs::BooleanFilter& scope, const irs::Scorer* scorer) {
   const auto scored_clauses =
     scope.Size(irs::Occur::Must) + scope.Size(irs::Occur::Should);
+  if (scored_clauses == 1) {
+    for (const auto occur : {irs::Occur::Must, irs::Occur::Should}) {
+      for (const auto& child : scope.Filters(occur)) {
+        if (child->GetScorer() == &irs::DefaultConstScore()) {
+          child->SetScorer(scorer);
+        }
+      }
+    }
+  }
   if (irs::NeedsTermStats(*scorer) && scored_clauses != 0 &&
       !HasScorableLeaf(scope)) {
     THROW_SQL_ERROR(
@@ -2306,14 +2312,8 @@ absl::Status MakeSearchFilter(
   duckdb::column_binding_map_t<SearchColumnInfo> column_cache;
   containers::NodeHashMap<irs::field_id, SearchColumnInfo> expr_cache;
 
-  uint32_t scored_terms_limit = 1024;
   duckdb::Value v;
-  if (context.TryGetCurrentSetting("sdb_scored_terms_limit", v) &&
-      !v.IsNull()) {
-    scored_terms_limit = static_cast<uint32_t>(v.GetValue<int32_t>());
-  }
-
-  uint32_t levenshtein_max_terms = 64;
+  uint32_t levenshtein_max_terms = 50;
   if (context.TryGetCurrentSetting("sdb_levenshtein_max_terms", v) &&
       !v.IsNull()) {
     levenshtein_max_terms = static_cast<uint32_t>(v.GetValue<int32_t>());
@@ -2328,7 +2328,6 @@ absl::Status MakeSearchFilter(
     .identity = identity,
     .tokenizer = identity,
     .client_context = context,
-    .scored_terms_limit = scored_terms_limit,
     .levenshtein_max_terms = levenshtein_max_terms,
     .scorer_sink = scorers,
   };

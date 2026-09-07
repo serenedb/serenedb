@@ -81,7 +81,7 @@ class CountThreshold : public Root {
   alignas(64) uint32_t _counts[search::kWindowDocs]{};
   Emit<Table> _emit;
   Leaves _leaves;
-  doc_id_t _min = 0;
+  doc_id_t _min = doc_limits::min();
   uint32_t _min_match;
 };
 

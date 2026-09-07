@@ -36,11 +36,7 @@ class WindowDisjunctionDocs {
   WindowDisjunctionDocs(std::piecewise_construct_t, LeavesArgs&& leaves)
     : _leaves{std::make_from_tuple<Leaves>(std::forward<LeavesArgs>(leaves))} {}
 
-  doc_id_t Value() const noexcept { return _doc; }
-
-  doc_id_t Advance() {
-    return Seek(doc_limits::valid(_doc) ? _doc + 1 : doc_limits::min());
-  }
+  doc_id_t Advance() { return Seek(_doc + 1); }
 
   doc_id_t Seek(doc_id_t target) {
     if (target <= _doc) {
@@ -79,7 +75,7 @@ class WindowDisjunctionDocs {
   void Refill(doc_id_t target) {
     SDB_ASSERT(!_filled || target >= _min);
     search::Clear(_mask.data(), search::kWindowWords);
-    _min = target - target % kWindow;
+    _min = target;
     _filled = true;
     _next = _leaves.Visit(_min + kWindow, [&](auto& leaf) {
       return leaf.FillOr(_min, _min + kWindow, _mask.data());

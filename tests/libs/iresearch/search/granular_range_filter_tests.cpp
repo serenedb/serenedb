@@ -1629,7 +1629,6 @@ TEST(by_granular_range_test, options) {
   ASSERT_EQ(irs::BoundType::Unbounded, opts.range.min_type);
   ASSERT_TRUE(opts.range.max.empty());
   ASSERT_EQ(irs::BoundType::Unbounded, opts.range.max_type);
-  ASSERT_EQ(1024, opts.scored_terms_limit);
 }
 
 TEST(by_granular_range_test, ctor) {
@@ -1728,20 +1727,6 @@ TEST(by_granular_range_test, equal) {
   q6.mutable_options()->range.max_type = irs::BoundType::Exclusive;
 
   ASSERT_NE(q0, q6);
-
-  irs::ByGranularRange q7;
-  *q7.mutable_field_id() = kField;
-  irs::SetGranularTerm(
-    q7.mutable_options()->range.min,
-    irs::ViewCast<irs::byte_type>(std::string_view("min_term")));
-  irs::SetGranularTerm(
-    q7.mutable_options()->range.max,
-    irs::ViewCast<irs::byte_type>(std::string_view("max_term")));
-  q7.mutable_options()->range.min_type = irs::BoundType::Inclusive;
-  q7.mutable_options()->range.max_type = irs::BoundType::Inclusive;
-  q7.mutable_options()->scored_terms_limit = 100;
-
-  ASSERT_NE(q0, q7);
 
   ASSERT_NE(q0, q6);
 }
@@ -1845,7 +1830,9 @@ TEST_P(GranularRangeFilterTestCase, by_range_order) {
     q.mutable_options()->range.min_type = irs::BoundType::Exclusive;
     q.mutable_options()->range.max_type = irs::BoundType::Exclusive;
 
-    CheckQuery(*tests::Optimized(q), scorers, docs, rdr, false);
+    q.SetScorer(scorers.front().get());
+    CheckQuery(*tests::Optimized(q, scorers.front().get()), scorers, docs, rdr,
+               false);
     ASSERT_EQ(0, field_docs);
     ASSERT_EQ(0, finish_count);
   }
@@ -1882,6 +1869,7 @@ TEST_P(GranularRangeFilterTestCase, by_range_order) {
     q.mutable_options()->range.min_type = irs::BoundType::Exclusive;
     q.mutable_options()->range.max_type = irs::BoundType::Exclusive;
 
+    q.SetScorer(order.front().get());
     CheckQuery(tests::FilterWrapper{q}, order, docs, rdr);
     ASSERT_EQ(11, finish_count);
     ASSERT_GT(finish_docs_with_field, 0u);  // scorer collected field stats
@@ -1904,27 +1892,8 @@ TEST_P(GranularRangeFilterTestCase, by_range_order) {
     q.mutable_options()->range.min_type = irs::BoundType::Exclusive;
     q.mutable_options()->range.max_type = irs::BoundType::Exclusive;
 
-    CheckQuery(*tests::Optimized(q), order, docs, rdr);
-  }
-
-  // value = (..;..) + scored_terms_limit
-  {
-    Docs docs{2, 4, 6, 11, 12, 13, 14, 15, 16, 17, 1, 5, 7, 9, 10, 3, 8};
-    Costs costs{docs.size()};
-    std::array<irs::Scorer::ptr, 1> order{
-      std::make_unique<tests::sort::FrequencySort>()};
-
-    irs::ByGranularRange q;
-    *q.mutable_field_id() = kValue;
-    irs::SetGranularTerm(q.mutable_options()->range.min,
-                         irs::numeric_utils::numeric_traits<double_t>::ninf());
-    irs::SetGranularTerm(q.mutable_options()->range.max,
-                         irs::numeric_utils::numeric_traits<double_t>::inf());
-    q.mutable_options()->range.min_type = irs::BoundType::Exclusive;
-    q.mutable_options()->range.max_type = irs::BoundType::Exclusive;
-    q.mutable_options()->scored_terms_limit = 2;
-
-    CheckQuery(*tests::Optimized(q), order, docs, rdr);
+    q.SetScorer(order.front().get());
+    CheckQuery(*tests::Optimized(q, order.front().get()), order, docs, rdr);
   }
 
   // value = (..;100)
@@ -1948,7 +1917,8 @@ TEST_P(GranularRangeFilterTestCase, by_range_order) {
     q.mutable_options()->range.min_type = irs::BoundType::Exclusive;
     q.mutable_options()->range.max_type = irs::BoundType::Exclusive;
 
-    CheckQuery(*tests::Optimized(q), order, docs, rdr);
+    q.SetScorer(order.front().get());
+    CheckQuery(*tests::Optimized(q, order.front().get()), order, docs, rdr);
   }
 }
 
@@ -2009,7 +1979,8 @@ TEST_P(GranularRangeFilterTestCase, by_range_order_multiple_sorts) {
     irs::SetGranularTerm(q.mutable_options()->range.min, min_stream);
     q.mutable_options()->range.min_type = irs::BoundType::Inclusive;
 
-    CheckQuery(*tests::Optimized(q), order, docs, rdr);
+    q.SetScorer(order.front().get());
+    CheckQuery(*tests::Optimized(q, order.front().get()), order, docs, rdr);
   }
 }
 

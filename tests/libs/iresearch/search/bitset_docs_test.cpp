@@ -30,8 +30,10 @@
 #include "iresearch/search/common/bitset_storage.hpp"
 #include "iresearch/search/common/lazy_bitset.hpp"
 #include "iresearch/search/docs/bitset.hpp"
+#include "iresearch/search/docs/window.hpp"
 #include "iresearch/search/fill/bitset_docs.hpp"
 #include "iresearch/search/fill/node.hpp"
+#include "iresearch/search/fill/walk.hpp"
 #include "iresearch/search/lead/bitset_docs.hpp"
 #include "iresearch/search/probe/bitset_docs.hpp"
 #include "tests_shared.hpp"
@@ -65,10 +67,26 @@ std::vector<irs::doc_id_t> Range(irs::doc_id_t first, irs::doc_id_t last,
   return docs;
 }
 
-std::vector<irs::doc_id_t> Drain(irs::lead::BitsetDocs& it) {
+class Cursor {
+ public:
+  explicit Cursor(irs::search::BitsetStorage&& set) : _it{std::move(set)} {}
+
+  irs::doc_id_t Value() const noexcept { return _doc; }
+
+  irs::doc_id_t Advance() { return _doc = _it.Advance(); }
+
+  irs::doc_id_t Seek(irs::doc_id_t target) { return _doc = _it.Seek(target); }
+
+ private:
+  irs::lead::BitsetDocs _it;
+  irs::doc_id_t _doc = irs::doc_limits::invalid();
+};
+
+std::vector<irs::doc_id_t> Drain(Cursor& it) {
   std::vector<irs::doc_id_t> docs;
-  while (!irs::doc_limits::eof(it.Advance())) {
-    docs.emplace_back(it.Value());
+  for (auto doc = it.Advance(); !irs::doc_limits::eof(doc);
+       doc = it.Advance()) {
+    docs.emplace_back(doc);
   }
   return docs;
 }
@@ -124,12 +142,22 @@ class WindowFill : public irs::fill::Node {
 
 }  // namespace
 
+TEST(bitset_docs_test, walk_lead_first_window) {
+  const std::vector<irs::doc_id_t> expected{5, 10, 4100};
+  irs::docs::Window<irs::fill::WalkDocs<irs::lead::BitsetDocs>,
+                    irs::utils::Empty, irs::utils::Empty, irs::utils::Empty>
+    root{irs::utils::Empty{}, std::piecewise_construct,
+         std::forward_as_tuple(MakeSet(4200, expected)),
+         std::forward_as_tuple(), std::forward_as_tuple()};
+  ASSERT_EQ(expected, Emit(root, irs::doc_limits::kMinCapacity));
+}
+
 TEST(bitset_lead_test, advance) {
   // empty segment
   {
     auto set = MakeSet(0, {});
     ASSERT_EQ(0, irs::search::CountBits(set));
-    irs::lead::BitsetDocs it{std::move(set)};
+    Cursor it{std::move(set)};
     ASSERT_EQ(irs::doc_limits::invalid(), it.Value());
 
     ASSERT_TRUE(irs::doc_limits::eof(it.Advance()));
@@ -143,7 +171,7 @@ TEST(bitset_lead_test, advance) {
   {
     auto set = MakeSet(13, {});
     ASSERT_EQ(0, irs::search::CountBits(set));
-    irs::lead::BitsetDocs it{std::move(set)};
+    Cursor it{std::move(set)};
     ASSERT_EQ(irs::doc_limits::invalid(), it.Value());
 
     ASSERT_TRUE(irs::doc_limits::eof(it.Advance()));
@@ -158,7 +186,7 @@ TEST(bitset_lead_test, advance) {
     const auto expected = Range(1, 73);
     auto set = MakeSet(73, expected);
     ASSERT_EQ(73, irs::search::CountBits(set));
-    irs::lead::BitsetDocs it{std::move(set)};
+    Cursor it{std::move(set)};
     ASSERT_FALSE(irs::doc_limits::valid(it.Value()));
 
     ASSERT_EQ(expected, Drain(it));
@@ -172,7 +200,7 @@ TEST(bitset_lead_test, advance) {
     const auto expected = Range(1, 175, 2);
     auto set = MakeSet(176, expected);
     ASSERT_EQ(88, irs::search::CountBits(set));
-    irs::lead::BitsetDocs it{std::move(set)};
+    Cursor it{std::move(set)};
     ASSERT_FALSE(irs::doc_limits::valid(it.Value()));
 
     ASSERT_EQ(expected, Drain(it));
@@ -186,7 +214,7 @@ TEST(bitset_lead_test, advance) {
     expected.emplace_back(191);
     auto set = MakeSet(192, expected);
     ASSERT_EQ(64, irs::search::CountBits(set));
-    irs::lead::BitsetDocs it{std::move(set)};
+    Cursor it{std::move(set)};
     ASSERT_FALSE(irs::doc_limits::valid(it.Value()));
 
     ASSERT_EQ(expected, Drain(it));
@@ -200,7 +228,7 @@ TEST(bitset_lead_test, advance) {
                                               101, 103, 113, 121, 126};
     auto set = MakeSet(173, expected);
     ASSERT_EQ(10, irs::search::CountBits(set));
-    irs::lead::BitsetDocs it{std::move(set)};
+    Cursor it{std::move(set)};
     ASSERT_FALSE(irs::doc_limits::valid(it.Value()));
 
     ASSERT_EQ(expected, Drain(it));
@@ -213,7 +241,7 @@ TEST(bitset_lead_test, advance) {
     const std::vector<irs::doc_id_t> expected{185};
     auto set = MakeSet(189, expected);
     ASSERT_EQ(1, irs::search::CountBits(set));
-    irs::lead::BitsetDocs it{std::move(set)};
+    Cursor it{std::move(set)};
     ASSERT_FALSE(irs::doc_limits::valid(it.Value()));
 
     ASSERT_EQ(expected, Drain(it));
@@ -225,7 +253,7 @@ TEST(bitset_lead_test, advance) {
 TEST(bitset_lead_test, seek) {
   // empty segment
   {
-    irs::lead::BitsetDocs it{MakeSet(0, {})};
+    Cursor it{MakeSet(0, {})};
     ASSERT_EQ(irs::doc_limits::invalid(), it.Value());
 
     ASSERT_TRUE(irs::doc_limits::eof(it.Seek(1)));
@@ -237,7 +265,7 @@ TEST(bitset_lead_test, seek) {
 
   // non-empty segment holding nothing
   {
-    irs::lead::BitsetDocs it{MakeSet(13, {})};
+    Cursor it{MakeSet(13, {})};
     ASSERT_EQ(irs::doc_limits::invalid(), it.Value());
 
     ASSERT_TRUE(irs::doc_limits::eof(it.Seek(1)));
@@ -248,7 +276,7 @@ TEST(bitset_lead_test, seek) {
 
   // dense, ascending targets
   {
-    irs::lead::BitsetDocs it{MakeSet(173, Range(1, 173))};
+    Cursor it{MakeSet(173, Range(1, 173))};
     ASSERT_FALSE(irs::doc_limits::valid(it.Value()));
 
     for (irs::doc_id_t expected = 1; expected <= 173; ++expected) {
@@ -261,7 +289,7 @@ TEST(bitset_lead_test, seek) {
 
   // dense, a target at or below where it stands is where it stays
   {
-    irs::lead::BitsetDocs it{MakeSet(173, Range(1, 173))};
+    Cursor it{MakeSet(173, Range(1, 173))};
 
     ASSERT_EQ(100, it.Seek(100));
     for (irs::doc_id_t target = 100; target != 0; --target) {
@@ -273,33 +301,33 @@ TEST(bitset_lead_test, seek) {
 
   // dense, seek past the last document
   {
-    irs::lead::BitsetDocs it{MakeSet(173, Range(1, 173))};
+    Cursor it{MakeSet(173, Range(1, 173))};
     ASSERT_TRUE(irs::doc_limits::eof(it.Seek(174)));
   }
 
   // dense, seek to the last document
   {
-    irs::lead::BitsetDocs it{MakeSet(173, Range(1, 173))};
+    Cursor it{MakeSet(173, Range(1, 173))};
     ASSERT_EQ(173, it.Seek(173));
     ASSERT_TRUE(irs::doc_limits::eof(it.Advance()));
   }
 
   // dense, seek to 'eof'
   {
-    irs::lead::BitsetDocs it{MakeSet(173, Range(1, 173))};
+    Cursor it{MakeSet(173, Range(1, 173))};
     ASSERT_TRUE(irs::doc_limits::eof(it.Seek(irs::doc_limits::eof())));
   }
 
   // dense, seek before the first document
   {
-    irs::lead::BitsetDocs it{MakeSet(173, Range(1, 173))};
+    Cursor it{MakeSet(173, Range(1, 173))};
     ASSERT_EQ(irs::doc_limits::invalid(), it.Seek(irs::doc_limits::invalid()));
     ASSERT_EQ(1, it.Advance());
   }
 
   // sparse: a target on a document nobody holds lands on the next one
   {
-    irs::lead::BitsetDocs it{MakeSet(176, Range(1, 175, 2))};
+    Cursor it{MakeSet(176, Range(1, 175, 2))};
 
     ASSERT_EQ(1, it.Seek(1));
     for (irs::doc_id_t expected = 3; expected < 176; expected += 2) {
@@ -314,7 +342,7 @@ TEST(bitset_lead_test, seek) {
 
   // sparse, a target at or below where it stands is where it stays
   {
-    irs::lead::BitsetDocs it{MakeSet(176, Range(1, 175, 2))};
+    Cursor it{MakeSet(176, Range(1, 175, 2))};
 
     ASSERT_EQ(101, it.Seek(100));
     for (irs::doc_id_t target = 101; target != 0; --target) {
@@ -326,7 +354,7 @@ TEST(bitset_lead_test, seek) {
 
   // sparse with a dense region
   {
-    irs::lead::BitsetDocs it{MakeSet(173, Range(64, 126))};
+    Cursor it{MakeSet(173, Range(64, 126))};
 
     const std::vector<std::pair<irs::doc_id_t, irs::doc_id_t>> seeks{
       {64, 43},
@@ -345,8 +373,7 @@ TEST(bitset_lead_test, seek) {
 
   // sparse with a sparse region
   {
-    irs::lead::BitsetDocs it{
-      MakeSet(173, {71, 74, 82, 86, 93, 101, 103, 113, 121, 126})};
+    Cursor it{MakeSet(173, {71, 74, 82, 86, 93, 101, 103, 113, 121, 126})};
 
     const std::vector<std::pair<irs::doc_id_t, irs::doc_id_t>> seeks{
       {71, 70},
@@ -363,19 +390,19 @@ TEST(bitset_lead_test, seek) {
 
   // a target past the last document of the last word
   {
-    irs::lead::BitsetDocs it{MakeSet(189, {71, 121, 182, 186})};
+    Cursor it{MakeSet(189, {71, 121, 182, 186})};
     ASSERT_TRUE(irs::doc_limits::eof(it.Seek(187)));
     ASSERT_TRUE(irs::doc_limits::eof(it.Value()));
   }
 
   {
-    irs::lead::BitsetDocs it{MakeSet(189, {71, 121, 182, 186})};
+    Cursor it{MakeSet(189, {71, 121, 182, 186})};
     ASSERT_EQ(186, it.Seek(186));
     ASSERT_TRUE(irs::doc_limits::eof(it.Seek(187)));
   }
 
   {
-    irs::lead::BitsetDocs it{MakeSet(189, {71, 121, 182, 186})};
+    Cursor it{MakeSet(189, {71, 121, 182, 186})};
     ASSERT_EQ(182, it.Seek(181));
     ASSERT_EQ(186, it.Seek(186));
     ASSERT_TRUE(irs::doc_limits::eof(it.Seek(187)));
@@ -383,7 +410,7 @@ TEST(bitset_lead_test, seek) {
 
   // a target that crosses two empty words
   {
-    irs::lead::BitsetDocs it{MakeSet(189, {185})};
+    Cursor it{MakeSet(189, {185})};
     ASSERT_EQ(185, it.Seek(2));
     ASSERT_TRUE(irs::doc_limits::eof(it.Seek(187)));
   }
@@ -394,7 +421,7 @@ TEST(bitset_lead_test, seek_advance) {
 
   // dense
   {
-    irs::lead::BitsetDocs it{MakeSet(173, Range(1, 173))};
+    Cursor it{MakeSet(173, Range(1, 173))};
 
     for (irs::doc_id_t target = 1; target <= 173; target += kSteps + 1) {
       ASSERT_EQ(target, it.Seek(target));
@@ -411,7 +438,7 @@ TEST(bitset_lead_test, seek_advance) {
 
   // dense, a target below where it stands leaves the walk where it was
   {
-    irs::lead::BitsetDocs it{MakeSet(173, Range(1, 173))};
+    Cursor it{MakeSet(173, Range(1, 173))};
 
     ASSERT_EQ(50, it.Seek(50));
     for (irs::doc_id_t j = 1; j <= kSteps; ++j) {
@@ -423,7 +450,7 @@ TEST(bitset_lead_test, seek_advance) {
 
   // sparse: every second document
   {
-    irs::lead::BitsetDocs it{MakeSet(176, Range(1, 175, 2))};
+    Cursor it{MakeSet(176, Range(1, 175, 2))};
 
     ASSERT_EQ(1, it.Seek(1));
     for (irs::doc_id_t target = 3; target <= 176; target += 2 * (kSteps + 1)) {
@@ -441,7 +468,7 @@ TEST(bitset_lead_test, seek_advance) {
 
   // sparse with a sparse region
   {
-    irs::lead::BitsetDocs it{
+    Cursor it{
       MakeSet(189, {71, 74, 82, 86, 93, 101, 103, 113, 121, 126, 182, 186})};
 
     ASSERT_EQ(71, it.Seek(68));

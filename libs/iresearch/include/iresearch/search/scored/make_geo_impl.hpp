@@ -23,9 +23,8 @@
 #include <utility>
 
 #include "iresearch/search/common/all_docs_score.hpp"
+#include "iresearch/search/common/geo_of.hpp"
 #include "iresearch/search/geo_query.hpp"
-#include "iresearch/search/lead/impl.hpp"
-#include "iresearch/search/lead/make.hpp"
 #include "iresearch/search/scored/detail/walk.hpp"
 #include "iresearch/search/scored/make.hpp"
 
@@ -34,18 +33,18 @@ namespace irs::scored {
 template<typename Parser, typename Acceptor>
 Root::ptr Make(const GeoQuery<Parser, Acceptor>& query, const Context& ctx) {
   SDB_ASSERT(query.Kind() != QueryKind::Empty);
-  auto node = lead::Make(query);
-  if (!node) {
-    return {};
-  }
   const auto record = query.Stats(ScoredOf(ctx));
-  return MakeShape<detail::ConstantWalk, lead::Erased>(
-    ctx,
+  const auto value =
     search::AllDocsScore(query.Segment(), ScoreArgs{.scorer = record.scorer,
                                                     .stats = record.stats,
                                                     .fetcher = &ctx.fetcher,
-                                                    .boost = query.Boost()}),
-    lead::Erased{std::move(node)});
+                                                    .boost = query.Boost()});
+  if (ctx.table != nullptr) {
+    return search::MakeGeo<FilteredConstantWalk, Root::ptr>(query, 0, ctx.table,
+                                                            value);
+  }
+  return search::MakeGeo<PlainConstantWalk, Root::ptr>(query, 0, utils::Empty{},
+                                                       value);
 }
 
 }  // namespace irs::scored

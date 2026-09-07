@@ -100,6 +100,15 @@ irs::Filter::ptr MakeRegexp(std::string_view field, std::string_view value) {
   return filter;
 }
 
+irs::Filter::ptr MakeRegexp(std::string_view field, std::string_view value,
+                            const irs::Scorer* scorer) {
+  auto filter = irs::CreateByRegexp(tests::FieldIdFor(field),
+                                    irs::ViewCast<irs::byte_type>(value));
+  filter->SetScorer(scorer);
+  irs::Optimize(filter, {.scored = true});
+  return filter;
+}
+
 std::unique_ptr<irs::ByRegexp> MakeRegexpPtr(irs::field_id field,
                                              std::string_view value) {
   auto q = std::make_unique<irs::ByRegexp>();
@@ -126,7 +135,6 @@ irs::Filter::ptr OptimizedMove(F&& filter) {
 TEST(by_regexp_test, options) {
   irs::ByRegexpOptions opts;
   ASSERT_TRUE(opts.pattern.empty());
-  ASSERT_EQ(1024, opts.scored_terms_limit);
 }
 
 TEST(by_regexp_test, ctor) {
@@ -142,9 +150,6 @@ TEST(by_regexp_test, equal) {
   ASSERT_EQ(q, MakeFilter("field", "bar.*"));
   ASSERT_NE(q, MakeFilter("field1", "bar.*"));
   ASSERT_NE(q, MakeFilter("field", "bar"));
-  irs::ByRegexp q1 = MakeFilter("field", "bar.*");
-  q1.mutable_options()->scored_terms_limit = 100;
-  ASSERT_NE(q, q1);
 }
 
 TEST(by_regexp_test, boost) {
@@ -550,7 +555,8 @@ TEST_P(RegexpFilterTestCase, by_regexp_scoring_custom_sort) {
       finish_docs_with_field += field->docs_with_field;
       finish_docs_with_term += term->docs_with_term;
     };
-    CheckQuery(*MakeRegexp("prefix", ".*"), order, docs, rdr);
+    CheckQuery(*MakeRegexp("prefix", ".*", order.front().get()), order, docs,
+               rdr);
     ASSERT_EQ(9, finish_count);
     ASSERT_GT(finish_docs_with_field, 0u);  // scorer collected field stats
     ASSERT_GT(finish_docs_with_term, 0u);   // scorer collected term stats
@@ -567,13 +573,13 @@ TEST_P(RegexpFilterTestCase, by_regexp_scoring_frequency_sort) {
   {
     std::array<irs::Scorer::ptr, 1> order{
       std::make_unique<tests::sort::FrequencySort>()};
-    CheckQuery(*MakeRegexp("prefix", ".*"), order,
+    CheckQuery(*MakeRegexp("prefix", ".*", order.front().get()), order,
                Docs{31, 32, 1, 4, 9, 16, 21, 24, 26, 29}, rdr);
   }
   {
     std::array<irs::Scorer::ptr, 1> order{
       std::make_unique<tests::sort::FrequencySort>()};
-    CheckQuery(*MakeRegexp("prefix", "a.*"), order,
+    CheckQuery(*MakeRegexp("prefix", "a.*", order.front().get()), order,
                Docs{31, 32, 1, 4, 16, 21, 26, 29}, rdr);
   }
 }
@@ -602,7 +608,8 @@ TEST_P(RegexpFilterTestCase, by_regexp_scoring_complex_custom_sort) {
         field_docs += field->docs_with_field;
       }
     };
-    CheckQuery(*MakeRegexp("prefix", ".*c.*"), order, docs, rdr);
+    CheckQuery(*MakeRegexp("prefix", ".*c.*", order.front().get()), order, docs,
+               rdr);
     ASSERT_GT(field_docs, 0);
     ASSERT_GT(finish_count, 0);
   }
@@ -621,7 +628,8 @@ TEST_P(RegexpFilterTestCase, by_regexp_scoring_complex_frequency_sort) {
     Costs costs{docs.size()};
     std::array<irs::Scorer::ptr, 1> order{
       std::make_unique<tests::sort::FrequencySort>()};
-    CheckQuery(*MakeRegexp("prefix", ".*c.*"), order, docs, rdr);
+    CheckQuery(*MakeRegexp("prefix", ".*c.*", order.front().get()), order, docs,
+               rdr);
   }
 }
 
@@ -644,48 +652,6 @@ TEST_P(RegexpFilterTestCase, by_regexp_scoring_complex_with_boost) {
     ASSERT_EQ(boost, prepared.Query(0)->Boost());
   }
   counter.Reset();
-}
-
-TEST_P(RegexpFilterTestCase, by_regexp_scored_terms_limit) {
-  {
-    tests::JsonDocGenerator gen(resource("simple_sequential.json"),
-                                &tests::GenericJsonFieldFactory);
-    add_segment(gen);
-  }
-  auto rdr = open_reader();
-  // scored_terms_limit = 1 -> only 1 term gets scored
-  {
-    irs::ByRegexp q;
-    *q.mutable_field_id() = kPrefixId;
-    *q.mutable_options() = irs::ByRegexpOptions{
-      irs::ViewCast<irs::byte_type>(std::string_view(".*c.*"))};
-    q.mutable_options()->scored_terms_limit = 1;
-    tests::PreparedFilter prepared{*OptimizedMove(std::move(q)), rdr, nullptr,
-                                   irs::IResourceManager::gNoop};
-    ASSERT_NE(nullptr, prepared.Query(0));
-  }
-  // scored_terms_limit = 0
-  {
-    irs::ByRegexp q;
-    *q.mutable_field_id() = kPrefixId;
-    *q.mutable_options() = irs::ByRegexpOptions{
-      irs::ViewCast<irs::byte_type>(std::string_view(".*c.*"))};
-    q.mutable_options()->scored_terms_limit = 0;
-    tests::PreparedFilter prepared{*OptimizedMove(std::move(q)), rdr, nullptr,
-                                   irs::IResourceManager::gNoop};
-    ASSERT_NE(nullptr, prepared.Query(0));
-  }
-  // scored_terms_limit very large
-  {
-    irs::ByRegexp q;
-    *q.mutable_field_id() = kPrefixId;
-    *q.mutable_options() = irs::ByRegexpOptions{
-      irs::ViewCast<irs::byte_type>(std::string_view(".*c.*"))};
-    q.mutable_options()->scored_terms_limit = 1000000;
-    tests::PreparedFilter prepared{*OptimizedMove(std::move(q)), rdr, nullptr,
-                                   irs::IResourceManager::gNoop};
-    ASSERT_NE(nullptr, prepared.Query(0));
-  }
 }
 
 // Match all / match nothing

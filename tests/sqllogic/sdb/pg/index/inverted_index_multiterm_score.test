@@ -44,19 +44,20 @@ count
 
 # Every matched doc is scored.
 query
-SELECT id, body, BM25(mt_idx.tableoid) > 0 AS has_score FROM mt_idx
+SELECT id, body, BM25(mt_idx.tableoid) AS score FROM mt_idx
 WHERE body @@ ts_starts_with('a') ORDER BY id;
 ----
-id	body	has_score
-1	apple	t
-2	apple	t
-3	apple	t
-4	avocado	t
+id	body	score
+1	apple	1
+2	apple	1
+3	apple	1
+4	avocado	1
 
 
 # Score order: the rarer term (avocado, df 1) outranks apple (df 3).
 query
-SELECT id, body FROM mt_idx WHERE body @@ ts_starts_with('a')
+SELECT id, body FROM mt_idx
+WHERE body @@ ts_starts_with('a')::score('bm25(1.2, 0.75)')
 ORDER BY BM25(mt_idx.tableoid) DESC, id;
 ----
 id	body
@@ -73,7 +74,7 @@ id	body
 #   apple:   n=3 -> ln(1 + 4.5/3.5) = ln(2.2857) = 0.8266785
 query
 SELECT id, body, BM25(mt_idx.tableoid) AS score FROM mt_idx
-WHERE body @@ ts_starts_with('a')
+WHERE body @@ ts_starts_with('a')::score('bm25(1.2, 0.75)')
 ORDER BY BM25(mt_idx.tableoid) DESC, id;
 ----
 id	body	score
@@ -88,7 +89,7 @@ id	body	score
 #   apple:   n=3 -> ln(8/4) = ln(3) = 1.0986123
 query
 SELECT id, body, TFIDF(mt_idx.tableoid) AS score FROM mt_idx
-WHERE body @@ ts_starts_with('a')
+WHERE body @@ ts_starts_with('a')::score('tfidf()')
 ORDER BY TFIDF(mt_idx.tableoid) DESC, id;
 ----
 id	body	score
@@ -110,7 +111,8 @@ count
 
 
 query
-SELECT id, body FROM mt_idx WHERE body @@ ts_lt('c')
+SELECT id, body FROM mt_idx
+WHERE body @@ ts_lt('c')::score('bm25(1.2, 0.75)')
 ORDER BY BM25(mt_idx.tableoid) DESC, id;
 ----
 id	body
@@ -130,7 +132,7 @@ id	body
 # apple is df 3 -> ln(2.2857) = 0.8266785 (identical idf to the prefix case).
 query
 SELECT id, body, BM25(mt_idx.tableoid) AS score FROM mt_idx
-WHERE body @@ ts_lt('c')
+WHERE body @@ ts_lt('c')::score('bm25(1.2, 0.75)')
 ORDER BY BM25(mt_idx.tableoid) DESC, id;
 ----
 id	body	score
@@ -164,7 +166,8 @@ count
 # Cross-segment df drives the ranking: apricot (df 1) > avocado (df 2) >
 # apple (df 4). Wrong per-segment-only stats would reorder these.
 query
-SELECT id, body FROM mt_idx WHERE body @@ ts_starts_with('a')
+SELECT id, body FROM mt_idx
+WHERE body @@ ts_starts_with('a')::score('bm25(1.2, 0.75)')
 ORDER BY BM25(mt_idx.tableoid) DESC, id;
 ----
 id	body
@@ -183,7 +186,7 @@ id	body
 #   apple:   n=4 -> ln(1 + 6.5/4.5) = ln(2.4444) = 0.8938179
 query
 SELECT id, body, BM25(mt_idx.tableoid) AS score FROM mt_idx
-WHERE body @@ ts_starts_with('a')
+WHERE body @@ ts_starts_with('a')::score('bm25(1.2, 0.75)')
 ORDER BY BM25(mt_idx.tableoid) DESC, id;
 ----
 id	body	score
@@ -306,7 +309,7 @@ VACUUM (REFRESH_TABLE) mt_multi;
 # is length-penalized): the Sum over two terms beats either single term.
 query
 SELECT id, body, BM25(mt_multi_idx.tableoid) AS score FROM mt_multi_idx
-WHERE body @@ ts_starts_with('a')
+WHERE body @@ ts_starts_with('a')::score('bm25(1.2, 0.75)')
 ORDER BY BM25(mt_multi_idx.tableoid) DESC, id;
 ----
 id	body	score
@@ -359,7 +362,7 @@ VACUUM (REFRESH_TABLE) mtok;
 #   id 4: 0.10536051 * 2.2/2.65 = 0.0874691
 query
 SELECT id, body, BM25(mtok_idx.tableoid) AS score FROM mtok_idx
-WHERE body @@ ts_starts_with('apple')
+WHERE body @@ ts_starts_with('apple')::score('bm25(1.2, 0.75)')
 ORDER BY BM25(mtok_idx.tableoid) DESC, id;
 ----
 id	body	score

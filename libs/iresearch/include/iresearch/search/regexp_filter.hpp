@@ -70,22 +70,20 @@ struct ByRegexpOptions : ByRegexpFilterOptions {
   using filter_options = ByRegexpFilterOptions;
   using ByRegexpFilterOptions::ByRegexpFilterOptions;
 
-  size_t scored_terms_limit{1024};
-
   bool operator==(const ByRegexpOptions& rhs) const noexcept = default;
 };
 
 Filter::ptr CreateByRegexp(irs::field_id id, bytes_view pattern,
                            RegexpSyntax syntax = RegexpSyntax::Perl,
-                           size_t scored_terms_limit = 1024,
                            score_t boost = kNoBoost);
 
 Filter::ptr LowerRegexp(irs::field_id id, bytes_view pattern,
-                        RegexpSyntax syntax, size_t scored_terms_limit,
-                        score_t boost);
+                        RegexpSyntax syntax, score_t boost);
 
 class ByRegexp final : public FilterWithField<ByRegexpOptions> {
  public:
+  ByRegexp() noexcept { SetScorer(&DefaultConstScore()); }
+
   QueryBuilder::ptr PrepareSegment(const SubReader& segment,
                                    const PrepareContext& ctx) const final;
 

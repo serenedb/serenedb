@@ -370,10 +370,8 @@ void OpenReader(std::string_view format,
 
   // validate live docs
   auto live_docs = segment.docs_iterator();
-  ASSERT_TRUE(!irs::doc_limits::eof(live_docs->Advance()));
-  ASSERT_EQ(1, live_docs->Value());
-  ASSERT_FALSE(!irs::doc_limits::eof(live_docs->Advance()));
-  ASSERT_EQ(irs::doc_limits::eof(), live_docs->Value());
+  ASSERT_EQ(1, live_docs->Advance());
+  ASSERT_TRUE(irs::doc_limits::eof(live_docs->Advance()));
 }
 
 }  // namespace
@@ -1356,10 +1354,8 @@ TEST(index_death_test_formats_15, postings_reopen_fail) {
 
   // validate live docs
   auto live_docs = segment.docs_iterator();
-  ASSERT_TRUE(!irs::doc_limits::eof(live_docs->Advance()));
-  ASSERT_EQ(1, live_docs->Value());
-  ASSERT_FALSE(!irs::doc_limits::eof(live_docs->Advance()));
-  ASSERT_EQ(irs::doc_limits::eof(), live_docs->Value());
+  ASSERT_EQ(1, live_docs->Advance());
+  ASSERT_TRUE(irs::doc_limits::eof(live_docs->Advance()));
 }
 
 // =======================================================================
@@ -2950,10 +2946,8 @@ TEST(index_death_test_formats_15, columnstore_reopen_fail) {
 
   // live docs
   auto live_docs = segment.docs_iterator();
-  ASSERT_TRUE(!irs::doc_limits::eof(live_docs->Advance()));
-  ASSERT_EQ(1, live_docs->Value());
-  ASSERT_FALSE(!irs::doc_limits::eof(live_docs->Advance()));
-  ASSERT_EQ(irs::doc_limits::eof(), live_docs->Value());
+  ASSERT_EQ(1, live_docs->Advance());
+  ASSERT_TRUE(irs::doc_limits::eof(live_docs->Advance()));
 }
 
 TEST(index_death_test_formats_15, fails_in_dup) {

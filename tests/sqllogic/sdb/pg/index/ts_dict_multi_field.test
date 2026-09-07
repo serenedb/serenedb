@@ -186,7 +186,6 @@ QUERY PLAN
 │ ╭─ Starts With ────────╮  ╭─ Starts With ───────╮ │
 │ │ Field: title(string) │  │ Field: body(string) │ │
 │ │ Prefix: r            │  │ Prefix: a           │ │
-│ │ Limit: 1024          │  │ Limit: 1024         │ │
 │ ╰──────────────────────╯  ╰─────────────────────╯ │
 │ TsDict: title, body                               │
 │ Projections:                                      │

@@ -2167,9 +2167,10 @@ TEST_P(MergeWriterTestCase, test_merge_writer_columns_remove) {
       // doc4's columns are still on disk; the live-docs mask hides it.
       // Use docs_iterator() to confirm only one local doc id is live.
       std::vector<irs::doc_id_t> live;
-      for (auto it = segment.docs_iterator();
-           !irs::doc_limits::eof(it->Advance());) {
-        live.push_back(it->Value());
+      auto it = segment.docs_iterator();
+      for (auto doc = it->Advance(); !irs::doc_limits::eof(doc);
+           doc = it->Advance()) {
+        live.push_back(doc);
       }
       ASSERT_EQ(1u, live.size());
       const auto live_doc = live.front();

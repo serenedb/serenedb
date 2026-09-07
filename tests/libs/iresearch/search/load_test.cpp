@@ -71,7 +71,7 @@ void DecodeMask(const uint64_t* mask, size_t mask_words, irs::doc_id_t base,
 }
 
 // Reference fill: advance one doc at a time up to `window_max`.
-void FillViaAdvance(irs::lead::Node& iter, irs::doc_id_t window_max,
+void FillViaAdvance(tests::LeadCursor& iter, irs::doc_id_t window_max,
                     std::vector<irs::doc_id_t>& docs) {
   auto doc = iter.Value();
   while (!irs::doc_limits::eof(doc) && doc < window_max) {
@@ -108,16 +108,16 @@ class WindowFiller {
 // it lands is where the next window opens, so the fill plan stays in step
 // without a reposition of its own.
 using BeforeWindowFunc =
-  std::function<void(irs::lead::Node& iter, irs::doc_id_t window_min)>;
+  std::function<void(tests::LeadCursor& iter, irs::doc_id_t window_min)>;
 
 BeforeWindowFunc SeekToWindow() {
-  return [](irs::lead::Node& iter, irs::doc_id_t window_min) {
+  return [](tests::LeadCursor& iter, irs::doc_id_t window_min) {
     iter.Seek(window_min);
   };
 }
 
 BeforeWindowFunc AdvanceSkip(size_t count) {
-  return [count](irs::lead::Node& iter, irs::doc_id_t /*window_min*/) {
+  return [count](tests::LeadCursor& iter, irs::doc_id_t /*window_min*/) {
     for (size_t i = 0; i < count && !irs::doc_limits::eof(iter.Value()); ++i) {
       iter.Advance();
     }
@@ -125,7 +125,7 @@ BeforeWindowFunc AdvanceSkip(size_t count) {
 }
 
 BeforeWindowFunc SeekSkip(irs::doc_id_t delta) {
-  return [delta](irs::lead::Node& iter, irs::doc_id_t /*window_min*/) {
+  return [delta](tests::LeadCursor& iter, irs::doc_id_t /*window_min*/) {
     if (const auto doc = iter.Value();
         irs::doc_limits::valid(doc) && !irs::doc_limits::eof(doc)) {
       iter.Seek(doc + delta);
@@ -135,7 +135,7 @@ BeforeWindowFunc SeekSkip(irs::doc_id_t delta) {
 
 BeforeWindowFunc Cycle(std::vector<BeforeWindowFunc> ops, size_t num_iters) {
   return [ops = std::move(ops), num_iters, idx = size_t{0}](
-           irs::lead::Node& iter, irs::doc_id_t window_min) mutable {
+           tests::LeadCursor& iter, irs::doc_id_t window_min) mutable {
     if (const auto& op = ops[(idx / num_iters) % ops.size()]) {
       op(iter, window_min);
     }
@@ -147,7 +147,7 @@ BeforeWindowFunc Cycle(std::vector<BeforeWindowFunc> ops, size_t num_iters) {
 // [doc_limits::min(), max_doc). Before each window, `before_window` runs on
 // the lead; the window then opens where the lead stands, so both sides see
 // the same range. Returns total number of documents seen.
-size_t CompareWindowByWindow(irs::lead::Node& reference_iter,
+size_t CompareWindowByWindow(tests::LeadCursor& reference_iter,
                              WindowFiller& test_filler, irs::doc_id_t max_doc,
                              irs::doc_id_t window_size,
                              const BeforeWindowFunc& before_window = {}) {
@@ -211,7 +211,7 @@ size_t CompareWindowByWindow(irs::lead::Node& reference_iter,
 
 // The batched emit plan against the same query's lead plan: same documents,
 // same order, whatever capacity the batches are drained at.
-size_t CompareEmitDocs(irs::lead::Node& reference_iter, irs::docs::Root& root,
+size_t CompareEmitDocs(tests::LeadCursor& reference_iter, irs::docs::Root& root,
                        uint32_t capacity) {
   std::vector<irs::doc_id_t> reference_docs;
   while (!irs::doc_limits::eof(reference_iter.Advance())) {
@@ -933,7 +933,7 @@ class TermScoreOracle {
     irs::ByTerm filter;
     std::unique_ptr<tests::PreparedFilter> prepared;
     irs::ColumnArgsFetcher fetcher;
-    irs::lead::Node::ptr it;
+    std::unique_ptr<tests::LeadCursor> it;
     irs::ScoreFunction score;
   };
 

@@ -71,7 +71,7 @@ inline constexpr auto kCreateInvertedOptions = [] {
   for (size_t i = 0; i < kNumericInvertedOptions.size(); ++i) {
     all[i] = kNumericInvertedOptions[i];
   }
-  all[kNumericInvertedOptions.size()] = "optimize_top_k";
+  all[kNumericInvertedOptions.size()] = kOptimizeTopKSetting;
   all[kNumericInvertedOptions.size() + 1] = "store_pk";
   all[kNumericInvertedOptions.size() + 2] = "key_columns";
   return all;

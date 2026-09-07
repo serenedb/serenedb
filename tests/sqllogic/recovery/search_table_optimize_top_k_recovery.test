@@ -1,0 +1,138 @@
+control substitution on
+
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+CREATE TEXT SEARCH DICTIONARY rk_en(
+    template = 'text', locale = 'en_US.UTF-8', case = 'lower',
+    stemming = false, accent = false, frequency = true, position = true,
+    norm = true
+);
+
+statement ok
+CREATE TABLE rk (id BIGINT PRIMARY KEY, body TEXT)
+  WITH (storage = 'search', compaction_interval = 0,
+        optimize_top_k = 'bm25(1.2, 0.75)');
+
+statement ok
+CREATE INDEX rk_idx ON rk USING inverted (body rk_en);
+
+statement ok
+RESET sdb_faults;
+
+statement ok
+INSERT INTO rk VALUES (1, 'fox'), (2, 'fox fox'), (3, 'dog');
+
+statement ok
+VACUUM (REFRESH_TABLE) rk;
+
+statement ok
+SET sdb_faults = 'crash_after_search_wal_commit';
+
+statement error connection closed
+INSERT INTO rk
+SELECT i, CASE WHEN i % 1000 = 0 THEN repeat('fox ', 40)
+              ELSE 'fox ' || repeat('dog ', i % 7) END
+FROM generate_series(4, 20000) AS s(i);
+
+connection after_crash
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+VACUUM (REFRESH_TABLE) rk;
+
+connection after_crash
+query
+SELECT count(*) FROM rk_idx WHERE body @@ ts_phrase('fox');
+----
+count
+19999
+
+connection after_crash
+query
+EXPLAIN SELECT id FROM rk WHERE body @@ ts_phrase('fox') ORDER BY BM25(rk.tableoid) DESC LIMIT 3;
+----
+QUERY PLAN
+╭─ TOP_N ────────────────────────────────╮
+│ Top: 3                                 │
+│ Order By: #1 DESC                      │
+│ ~3 rows                                │
+╰────────────────────┬───────────────────╯
+╭─ IRESEARCH_SCAN ───┴───────────────────╮
+│ Index: rk                              │
+│ Lookup: search                         │
+│ Index Filter:                          │
+│ ╭─ Term ──────────────╮                │
+│ │ Field: body(string) │                │
+│ │ Value: fox          │                │
+│ ╰─────────────────────╯                │
+│ Score: bm25(k1=1.2, b=0.75)            │
+│ Top: 3, optimized                      │
+│ Projections: id,                       │
+│              sdb_inverted_index_score  │
+│ ~4,000 rows                            │
+╰────────────────────────────────────────╯
+
+connection after_crash
+query
+EXPLAIN SELECT id FROM rk_idx WHERE body @@ ts_phrase('fox') ORDER BY BM25(rk_idx.tableoid) DESC LIMIT 3;
+----
+QUERY PLAN
+╭─ TOP_N ────────────────────────────────╮
+│ Top: 3                                 │
+│ Order By: #1 DESC                      │
+│ ~3 rows                                │
+╰────────────────────┬───────────────────╯
+╭─ IRESEARCH_SCAN ───┴───────────────────╮
+│ Index: rk_idx                          │
+│ Lookup: search                         │
+│ Index Filter:                          │
+│ ╭─ Term ──────────────╮                │
+│ │ Field: body(string) │                │
+│ │ Value: fox          │                │
+│ ╰─────────────────────╯                │
+│ Score: bm25(k1=1.2, b=0.75)            │
+│ Top: 3, optimized                      │
+│ Projections: id,                       │
+│              sdb_inverted_index_score  │
+│ ~4,000 rows                            │
+╰────────────────────────────────────────╯
+
+connection after_crash
+statement ok
+SET sdb_faults = 'irs::PruningIterator';
+
+connection after_crash
+statement error db error: ERROR: intentional debug error
+SELECT id FROM rk WHERE body @@ ts_phrase('fox') ORDER BY BM25(rk.tableoid) DESC LIMIT 3;
+
+connection after_crash
+statement error db error: ERROR: intentional debug error
+SELECT id FROM rk_idx WHERE body @@ ts_phrase('fox') ORDER BY BM25(rk_idx.tableoid) DESC LIMIT 3;
+
+connection after_crash
+query
+SELECT id FROM rk_idx WHERE body @@ ts_phrase('fox') ORDER BY TFIDF(rk_idx.tableoid) DESC, id LIMIT 3;
+----
+id
+1000
+2000
+3000
+
+connection after_crash
+statement ok
+SET sdb_faults = '-irs::PruningIterator';
+
+connection after_crash
+query
+SELECT id FROM rk WHERE body @@ ts_phrase('fox') ORDER BY BM25(rk.tableoid) DESC, id LIMIT 3;
+----
+id
+1000
+2000
+3000
+
+connection after_crash
+query
+SELECT id FROM rk_idx WHERE body @@ ts_phrase('fox') ORDER BY BM25(rk_idx.tableoid) DESC, id LIMIT 3;
+----
+id
+1000
+2000
+3000

@@ -144,6 +144,15 @@ duckdb::optional_ptr<duckdb::CatalogEntry> CreateIndexImpl(
   // storage-less (GetInvertedData() == null) and folds its columns into the
   // shard's merged config.
   const bool search_backed = entry != nullptr && entry->IsSearchTable();
+  if (index.IsInverted() && search_backed &&
+      InvertedInfo(*index.GetIndex()).GetTopKScorer()) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+      ERR_MSG("optimize_top_k is a table option on a search-backed table"),
+      ERR_HINT("Set it in CREATE TABLE ... WITH (storage = 'search', "
+               "optimize_top_k = '...'); the table's store keeps the score "
+               "bounds every index on it prunes with."));
+  }
   auto storage = index.IsInverted() && !search_backed
                    ? search::InvertedIndexStorage::Create(
                        db_id, InvertedInfo(*index.GetIndex()), /*is_new=*/true)

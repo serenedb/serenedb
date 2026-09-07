@@ -13,11 +13,11 @@ CREATE TEXT SEARCH DICTIONARY bm(
 
 statement ok
 CREATE TABLE w (id BIGINT PRIMARY KEY, body TEXT)
-  WITH (storage='search', compaction_interval=0);
+  WITH (storage='search', compaction_interval=0,
+        optimize_top_k = 'bm25(1.2, 0.75)');
 
 statement ok
-CREATE INDEX w_idx ON w USING inverted (body bm)
-  WITH (optimize_top_k = 'bm25(1.2, 0.75)');
+CREATE INDEX w_idx ON w USING inverted (body bm);
 
 statement ok
 INSERT INTO w VALUES

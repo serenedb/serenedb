@@ -49,6 +49,7 @@
 #include "catalog/index.h"
 #include "catalog/inverted_index.h"
 #include "catalog/read/duckdb_catalog_sets.h"
+#include "catalog/scorer_options.h"
 #include "pg/sql_exception_macro.h"
 #include "scheduler/background_scheduler.h"
 #include "search/inverted_index_storage.h"
@@ -197,6 +198,9 @@ SearchTable::SearchTable(
     std::make_shared<const catalog::InvertedIndex::Entries>(std::move(entries));
   _terms_by_column = std::make_shared<const TermsByColumn>(std::move(terms));
   _field_options = MakeFieldOptions(_entries);
+  if (options.topk_scorer) {
+    _topk_scorer = catalog::MakeScorer(*options.topk_scorer);
+  }
   OpenWriter();
 
   _maint_settings.refresh_interval_msec = options.refresh_interval_ms;
@@ -336,6 +340,9 @@ void SearchTable::OpenWriter() {
   writer_options.lock_repository = false;
   writer_options.db = &sdb::DuckDBEngine::Instance().instance();
   writer_options.reader_options.db = writer_options.db;
+  if (_topk_scorer) {
+    writer_options.reader_options.scorer = _topk_scorer.get();
+  }
 
   writer_options.meta_payload_provider = [this](uint64_t tick,
                                                 irs::bstring& out) {

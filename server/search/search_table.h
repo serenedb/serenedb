@@ -28,6 +28,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <iresearch/index/index_writer.hpp>
+#include <iresearch/search/scorer.hpp>
 #include <iresearch/store/directory.hpp>
 #include <memory>
 #include <mutex>
@@ -260,6 +261,7 @@ class SearchTable : public std::enable_shared_from_this<SearchTable> {
   std::shared_ptr<const TermsByColumn> _terms_by_column;
   // Writer encoding config over the merged _entries, RCU-swapped with them.
   std::shared_ptr<const irs::IndexFieldOptions> _field_options;
+  std::unique_ptr<irs::Scorer> _topk_scorer;
   std::unique_ptr<irs::Directory> _dir;
   std::shared_ptr<irs::IndexWriter> _writer;
   // Borrowed from the search engine (set in OpenWriter). Outlives this object.

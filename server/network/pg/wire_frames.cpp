@@ -520,6 +520,24 @@ sdb::pg::SqlErrorData DuckErrorToSqlData(const duckdb::ErrorData& error) {
       .errmsg = error.RawMessage(),
     };
   }
+  if (error.Type() == duckdb::ExceptionType::TRANSACTION) {
+    const auto& extra = error.ExtraInfo();
+    const auto subtype_it = extra.find("error_subtype");
+    const std::string_view subtype =
+      subtype_it != extra.end() ? subtype_it->second : std::string_view{};
+    if (subtype == "CROSS_DATABASE_WRITE") {
+      return sdb::pg::SqlErrorData{.errcode = ERRCODE_FEATURE_NOT_SUPPORTED,
+                                   .errmsg = error.RawMessage()};
+    }
+    if (subtype == "READ_ONLY") {
+      return sdb::pg::SqlErrorData{.errcode = ERRCODE_READ_ONLY_SQL_TRANSACTION,
+                                   .errmsg = error.RawMessage()};
+    }
+    if (subtype == "TRANSACTION_LOCAL_CHANGES") {
+      return sdb::pg::SqlErrorData{.errcode = ERRCODE_ACTIVE_SQL_TRANSACTION,
+                                   .errmsg = error.RawMessage()};
+    }
+  }
   // An interrupted query is DuckDB "Interrupted!"; report postgres's wording.
   const bool interrupted = error.Type() == duckdb::ExceptionType::INTERRUPT;
   sdb::pg::SqlErrorData data{

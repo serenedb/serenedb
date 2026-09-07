@@ -387,7 +387,8 @@ bool DropTable(const AccessContext& ax, std::string_view database,
   }
   // Counters live outside the definition tree.
   for (const auto seq_id : owned_sequence_ids) {
-    GetCatalogStore().DropSequence(seq_id);
+    catalog::DeferDropAction(
+      ax.context, [seq_id] { GetCatalogStore().DropSequence(seq_id); });
   }
   // Check that SereneDB won't open this table after reboot
   SDB_IF_FAILURE("crash_on_drop") { return true; }

@@ -3,25 +3,19 @@ control substitution on
 # ----------------------------------------------------------------------
 # A rolled-back DROP SEQUENCE must not erase the sequence counter.
 #
-# DROP SEQUENCE has two halves and only one of them is transactional. The
-# catalog entry is dropped through CatalogSet::DropEntry, which is MVCC, so
-# a ROLLBACK brings it back. The counter is not: CatalogStore::DropSequence
-# reaches WriteSequenceDropped, which appends a SequenceDropped record and
-# flushes it under the cluster log mutex with no transaction behind it
-# (server/catalog/log/store.cpp, server/catalog/log/duckdb_global_catalog.cpp).
-# Nothing undoes that append, so the entry comes back at the next boot and
-# its counter starts over.
+# DROP SEQUENCE has two halves. The catalog entry is dropped through
+# CatalogSet::DropEntry, which is MVCC, so a ROLLBACK brings it back. The
+# counter half -- CatalogStore::DropSequence, which wipes the counter and
+# appends a SequenceDropped record to the cluster log -- is deferred to the
+# commit through DeferDropAction, the same as the drop's artifact half, so a
+# rolled-back drop never runs it and the counter is left where it was.
 #
-# In memory the counter survives, because the live SequenceCounter object is
-# never touched. Only a restart shows it, which is why this lives here.
+# Only a restart shows it, because in memory the live counter is never touched;
+# this lives here for that reason.
 #
-# The SERIAL case is the one that bites: a table nobody dropped starts
-# handing out primary keys it has already used, and the next insert fails
-# on its own unique constraint.
-#
-# The assertions marked KNOWN GAP pin broken behaviour. When the counter
-# write joins the transaction they must start failing, and the fix is to
-# change those cases to the commented expectation, NOT to delete this file.
+# The SERIAL case is the one that would otherwise bite: a table nobody dropped
+# handing out a primary key it has already used. Its owned sequence keeps its
+# counter across the same rolled-back drop, so the next insert takes a fresh id.
 # ----------------------------------------------------------------------
 
 statement ok
@@ -165,14 +159,14 @@ n
 1
 
 
-# KNOWN GAP: the rolled-back drop erased the counter, so it starts over.
-# Correct behaviour is `SELECT nextval('scar_q') > 4 AS resumed_ahead` -> t.
+# The rolled-back drop left the counter untouched, so it resumes past its
+# durable horizon, the same as the control sequence above.
 connection after_crash
 query
-SELECT nextval('scar_q') AS v;
+SELECT nextval('scar_q') > 4 AS resumed_ahead;
 ----
-v
-1
+resumed_ahead
+t
 
 
 connection after_crash
@@ -183,9 +177,8 @@ n	top
 3	3
 
 
-# KNOWN GAP: the owned sequence lost its counter too, so the next insert
-# collides with a primary key the table already holds. Correct behaviour is
-# `statement ok` with a RETURNING id of 4.
+# The owned sequence kept its counter too, so the next insert takes an id past
+# the rows already there rather than colliding with one.
 connection after_crash
-statement error (?i)duplicate key
+statement ok
 INSERT INTO scar_t(v) VALUES (40);

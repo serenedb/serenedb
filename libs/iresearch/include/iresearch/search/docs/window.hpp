@@ -95,7 +95,7 @@ class Window : public Root {
   Lead _lead;
   [[no_unique_address]] Others _others;
   [[no_unique_address]] Excludes _excludes;
-  doc_id_t _min = 0;
+  doc_id_t _min = doc_limits::min();
   bool _spent = false;
 };
 

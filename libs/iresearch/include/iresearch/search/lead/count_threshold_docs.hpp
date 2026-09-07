@@ -78,7 +78,7 @@ class CountThresholdDocs {
 
   void Refill(doc_id_t target) {
     SDB_ASSERT(!_filled || target >= _min);
-    _min = target - target % kWindow;
+    _min = target;
     _filled = true;
     const auto max = _min + kWindow;
     _next = _leaves.Visit(

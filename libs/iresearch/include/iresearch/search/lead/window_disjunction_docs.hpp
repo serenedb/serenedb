@@ -75,7 +75,7 @@ class WindowDisjunctionDocs {
   void Refill(doc_id_t target) {
     SDB_ASSERT(!_filled || target >= _min);
     search::Clear(_mask.data(), search::kWindowWords);
-    _min = target - target % kWindow;
+    _min = target;
     _filled = true;
     _next = _leaves.Visit(_min + kWindow, [&](auto& leaf) {
       return leaf.FillOr(_min, _min + kWindow, _mask.data());

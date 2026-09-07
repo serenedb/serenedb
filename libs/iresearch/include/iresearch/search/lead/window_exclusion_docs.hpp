@@ -83,7 +83,7 @@ class WindowExclusionDocs {
   void Refill(doc_id_t target) {
     SDB_ASSERT(!_filled || target >= _min);
     search::Clear(_mask.data(), search::kWindowWords);
-    _min = target - target % kWindow;
+    _min = target;
     _filled = true;
     const auto max = _min + kWindow;
     auto next = _lead.FillOr(_min, max, _mask.data());

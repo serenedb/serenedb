@@ -48,7 +48,7 @@ class BitsThreshold : public Root {
 
   uint64_t Run() final {
     uint64_t total = 0;
-    doc_id_t min = 0;
+    doc_id_t min = doc_limits::min();
     auto* const planes = _planes.data();
     const auto top = size_t{_min_match} - 1;
 

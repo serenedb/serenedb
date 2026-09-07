@@ -112,7 +112,7 @@ class WindowDisjunctionScored {
         word = PopBit(word);
       }
     }
-    _min = target - target % kWindow;
+    _min = target;
     _filled = true;
     _next = _leaves.Visit(_min + kWindow, [&](auto& leaf) {
       return leaf.Fill(_min, _min + kWindow, _mask.data(), _window);

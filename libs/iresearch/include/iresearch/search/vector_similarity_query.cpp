@@ -436,7 +436,7 @@ class VectorClusters {
         word = PopBit(word);
       }
     }
-    _min = target - target % kWindow;
+    _min = target;
     _filled = true;
     _next = doc_limits::eof();
     size_t live = 0;

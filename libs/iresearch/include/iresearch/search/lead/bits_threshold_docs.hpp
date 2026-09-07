@@ -83,7 +83,7 @@ class BitsThresholdDocs {
     std::fill(_planes.begin(), _planes.end(), uint64_t{0});
     auto* const planes = _planes.data();
     const size_t top = _min_match - 1;
-    _min = target - target % kWindow;
+    _min = target;
     _filled = true;
     bool first = true;
     _next = _leaves.Visit(_min + kWindow, [&](auto& leaf) {

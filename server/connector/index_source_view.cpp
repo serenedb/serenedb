@@ -28,8 +28,20 @@
 #include <numeric>
 
 #include "basics/assert.h"
+#include "pg/errcodes.h"
+#include "pg/sql_exception_macro.h"
 
 namespace sdb::connector {
+
+duckdb::idx_t SourceColumns::operator()(std::string_view name) const {
+  if (const auto it = _by_name.find(name); it != _by_name.end()) {
+    return it->second;
+  }
+  THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_COLUMN),
+                  ERR_MSG("column \"", name,
+                          "\" of the indexed view is not a column of its "
+                          "source"));
+}
 
 void ViewIndexSourceBase::InitProjection(
   duckdb::ClientContext& context,

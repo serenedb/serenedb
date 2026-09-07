@@ -1,7 +1,7 @@
 ////////////////////////////////////////////////////////////////////////////////
 /// DISCLAIMER
 ///
-/// Copyright 2026 SereneDB GmbH, Berlin, Germany
+/// Copyright 2025 SereneDB GmbH, Berlin, Germany
 ///
 /// Licensed under the Apache License, Version 2.0 (the "License");
 /// you may not use this file except in compliance with the License.
@@ -18,33 +18,28 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#pragma once
+#include "search/store_stats.h"
 
-#include <memory>
-#include <optional>
-#include <string>
-#include <string_view>
+#include <iresearch/index/directory_reader.hpp>
 
-#include "catalog/persistence/scorer_options.h"
-#include "query/config_variable_names.h"
+#include "basics/assert.h"
 
-namespace duckdb {
+namespace sdb::search {
 
-class BoundFunctionExpression;
-class ClientContext;
+StoreStats StoreStats::FromReader(const irs::DirectoryReader& reader) {
+  SDB_ASSERT(reader);
+  StoreStats stats;
+  auto& segments = reader->Meta().index_meta.segments;
+  stats.numSegments = segments.size();
+  stats.numDocs = reader->docs_count();
+  stats.numLiveDocs = reader->live_docs_count();
+  stats.numFiles = 1 + stats.numSegments;
+  for (const auto& segment : segments) {
+    const auto& meta = segment.meta;
+    stats.indexSize += meta.byte_size;
+    stats.numFiles += meta.files.size();
+  }
+  return stats;
+}
 
-}  // namespace duckdb
-namespace sdb::catalog {
-
-using persistence::ScorerOptions;
-
-std::unique_ptr<irs::Scorer> MakeScorer(const ScorerOptions& spec);
-
-std::optional<ScorerOptions> ExtractScorerFromBound(
-  const duckdb::BoundFunctionExpression& func, std::string_view name);
-
-ScorerOptions ParseScorerExpression(
-  duckdb::ClientContext* context, std::string input,
-  std::string_view what = kOptimizeTopKSetting);
-
-}  // namespace sdb::catalog
+}  // namespace sdb::search

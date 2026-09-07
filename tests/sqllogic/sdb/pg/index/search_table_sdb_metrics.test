@@ -1,0 +1,108 @@
+# sdb_metrics for a search table's own store, through the store's lifecycle:
+# buffered rows before a refresh, one segment per refresh, and compaction
+# folding the segments back into one.
+
+statement ok
+CREATE TABLE st (id BIGINT PRIMARY KEY, r TEXT)
+WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+
+statement ok
+CREATE INDEX st_idx ON st USING inverted (r);
+
+statement ok
+INSERT INTO st VALUES (1, 'a'), (2, 'b'), (3, 'c');
+
+query
+SELECT metric, value FROM sdb_metrics
+WHERE relation_id = (SELECT oid FROM pg_class WHERE relname = 'st')
+ORDER BY metric;
+----
+metric	value
+avg_cleanup_time_ms	0
+avg_commit_time_ms	0
+avg_consolidation_time_ms	0
+index_size	0
+num_buffered_docs	3
+num_docs	0
+num_failed_cleanups	0
+num_failed_commits	0
+num_failed_consolidations	0
+num_files	1
+num_live_docs	0
+num_segments	0
+
+statement ok
+VACUUM (REFRESH_TABLE) st;
+
+query
+SELECT metric, value FROM sdb_metrics
+WHERE relation_id = (SELECT oid FROM pg_class WHERE relname = 'st')
+ORDER BY metric;
+----
+metric	value
+avg_cleanup_time_ms	<slt:ignore>
+avg_commit_time_ms	<slt:ignore>
+avg_consolidation_time_ms	0
+index_size	<slt:ignore>
+num_buffered_docs	0
+num_docs	3
+num_failed_cleanups	0
+num_failed_commits	0
+num_failed_consolidations	0
+num_files	5
+num_live_docs	3
+num_segments	1
+
+statement ok
+INSERT INTO st VALUES (4, 'd'), (5, 'e');
+
+statement ok
+VACUUM (REFRESH_TABLE) st;
+
+query
+SELECT metric, value FROM sdb_metrics
+WHERE relation_id = (SELECT oid FROM pg_class WHERE relname = 'st')
+ORDER BY metric;
+----
+metric	value
+avg_cleanup_time_ms	<slt:ignore>
+avg_commit_time_ms	<slt:ignore>
+avg_consolidation_time_ms	0
+index_size	<slt:ignore>
+num_buffered_docs	0
+num_docs	5
+num_failed_cleanups	0
+num_failed_commits	0
+num_failed_consolidations	0
+num_files	9
+num_live_docs	5
+num_segments	2
+
+statement ok
+VACUUM (COMPACT_TABLE) st;
+
+query
+SELECT metric, value FROM sdb_metrics
+WHERE relation_id = (SELECT oid FROM pg_class WHERE relname = 'st')
+ORDER BY metric;
+----
+metric	value
+avg_cleanup_time_ms	<slt:ignore>
+avg_commit_time_ms	<slt:ignore>
+avg_consolidation_time_ms	<slt:ignore>
+index_size	<slt:ignore>
+num_buffered_docs	0
+num_docs	5
+num_failed_cleanups	0
+num_failed_commits	0
+num_failed_consolidations	0
+num_files	5
+num_live_docs	5
+num_segments	1
+
+query
+SELECT count(*) AS storage_less_index_rows FROM sdb_metrics
+WHERE relation_id = (SELECT oid FROM pg_class WHERE relname = 'st_idx');
+----
+storage_less_index_rows
+0

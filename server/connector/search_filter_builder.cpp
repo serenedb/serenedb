@@ -1322,7 +1322,7 @@ const irs::Scorer* ResolveScoreOverride(const FilterContext& ctx,
                "index."));
   }
   auto owned = catalog::MakeScorer(catalog::ParseScorerExpression(
-    ctx.client_context, std::string{expr}, "::score"));
+    &ctx.client_context, std::string{expr}, "::score"));
   if (!owned) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                     ERR_MSG("::score(...) is not a known scorer"));
@@ -1589,8 +1589,9 @@ void FromTSQueryMatch(BoolTarget filter, const FilterContext& ctx,
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
       ERR_MSG("@@ requires an inverted-indexed column on one side"),
-      ERR_HINT("Use: <indexed_col> @@ <tsquery_expr>. CREATE INDEX ... "
-               "USING inverted(<col>) if missing."));
+      ERR_HINT("Use: <indexed_col> @@ <tsquery_expr>, or query through the "
+               "index relation (FROM <index_name>). CREATE INDEX ... USING "
+               "inverted(<col>) if none exists."));
   }
   const auto& expr = left_info ? rhs : lhs;
   auto* tokenizer = column_info->tokenizer.analyzer.get();

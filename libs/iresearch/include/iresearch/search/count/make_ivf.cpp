@@ -18,35 +18,26 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include "iresearch/search/vector_similarity_query.hpp"
-
-#include <span>
-#include <vector>
-
-#include "iresearch/index/index_reader.hpp"
+#include "iresearch/search/count/make.hpp"
 #include "iresearch/search/common/vector_of.hpp"
 
-namespace irs {
+namespace irs::count {
 
-void RerankExactDistances(const SubReader& segment,
-                          const ColumnReader& vector_column, uint32_t d,
-                          std::span<const float> query, VectorMetric metric,
-                          std::span<ScoreDoc> hits) {
-  const auto* col_reader = segment.GetColReader();
-  if (!col_reader) {
-    return;
+Root::ptr Make(const RangeVectorQuery& query, const Context& ctx) {
+  auto inner = search::InnerProbe(query);
+  if (query.Inner() != nullptr && !inner) {
+    return {};
   }
-  search::RawVectorReader reader{vector_column, *col_reader, d};
-  reader.SetQuery(query, metric);
-  std::vector<doc_id_t> docs(hits.size());
-  std::vector<score_t> scores(hits.size());
-  for (size_t i = 0; i < hits.size(); ++i) {
-    docs[i] = hits[i].doc;
-  }
-  reader.ComputeDistances(docs, scores);
-  for (size_t i = 0; i < hits.size(); ++i) {
-    hits[i].score = scores[i];
-  }
+  return ResolveBool(query.Inclusive(), [&]<bool Inclusive>() -> Root::ptr {
+    if (ctx.table != nullptr) {
+      return search::MakeVectorDocs<FilteredWalk, Root::ptr, search::RadiusGate<Inclusive>,
+                            lead::TwoPhaseDocs>(query, query.Threshold(),
+                                                std::move(inner), ctx.table);
+    }
+    return search::MakeVectorDocs<PlainWalk, Root::ptr, search::RadiusGate<Inclusive>,
+                          lead::TwoPhaseDocs>(query, query.Threshold(),
+                                              std::move(inner), utils::Empty{});
+  });
 }
 
-}  // namespace irs
+}  // namespace irs::count

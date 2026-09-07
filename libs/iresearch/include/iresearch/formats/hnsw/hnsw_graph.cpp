@@ -49,42 +49,38 @@ void ReadArray(IndexInput& in, std::vector<T>& v) {
 
 }  // namespace
 
-void HnswGraph::Reset(size_t nodes, uint32_t m) {
+void HnswGraphWriter::Reset(size_t nodes, uint32_t m) {
   SDB_ASSERT(m != 0);
-  _m = m;
-  _m0 = 2 * _m;
-  _levels.assign(nodes, 0);
-  _offsets.clear();
-  _neighbors.clear();
-  _entry = kHnswInvalidNode;
-  _max_level = 0;
+  _graph._m = m;
+  _graph._m0 = 2 * _graph._m;
+  _graph._levels.assign(nodes, 0);
+  _graph._offsets.clear();
+  _graph._neighbors.clear();
+  _graph._entry = kHnswInvalidNode;
+  _graph._max_level = 0;
 }
 
-void HnswGraph::AllocateLinks() {
-  _offsets.resize(_levels.size() + 1);
+void HnswGraphWriter::AllocateLinks() {
+  auto& levels = _graph._levels;
+  _graph._offsets.resize(levels.size() + 1);
   uint64_t total = 0;
-  for (size_t i = 0; i < _levels.size(); ++i) {
-    _offsets[i] = total;
-    if (_levels[i] != 0) {
-      total += _m0 + static_cast<uint64_t>(_levels[i] - 1) * _m;
+  for (size_t i = 0; i < levels.size(); ++i) {
+    _graph._offsets[i] = total;
+    if (levels[i] != 0) {
+      total += _graph._m0 + static_cast<uint64_t>(levels[i] - 1) * _graph._m;
     }
   }
-  _offsets.back() = total;
-  _neighbors.assign(total, kHnswInvalidNode);
+  _graph._offsets.back() = total;
+  _graph._neighbors.assign(total, kHnswInvalidNode);
 
-  _proc_offsets.resize(_levels.size() + 1);
+  _proc_offsets.resize(levels.size() + 1);
   uint32_t slots = 0;
-  for (size_t i = 0; i < _levels.size(); ++i) {
+  for (size_t i = 0; i < levels.size(); ++i) {
     _proc_offsets[i] = slots;
-    slots += _levels[i];
+    slots += levels[i];
   }
   _proc_offsets.back() = slots;
   _processed.assign(slots, 0);
-}
-
-size_t HnswGraph::ByteSize() const noexcept {
-  return _levels.size() * sizeof(uint8_t) + _offsets.size() * sizeof(uint64_t) +
-         _neighbors.size() * sizeof(uint32_t);
 }
 
 void HnswGraph::Serialize(DataOutput& out) const {

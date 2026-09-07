@@ -251,12 +251,11 @@ void ColWriter::Commit(uint64_t target_row) {
   _out->WriteU64(footer_offset);
   format_utils::WriteFooter(*_out);
   _out.reset();
-  _ann_ready = !_ann_writers.empty();
   _committed = true;
 }
 
-auto ColWriter::ComputeAnn(const AnnBuildEnv* env) -> yaclib::Future<> {
-  if (!_ann_ready) {
+yaclib::Task<> ColWriter::ComputeAnn(const AnnBuildEnv* env) {
+  if (!_committed || _ann_writers.empty()) {
     co_return {};
   }
   ColReader reader{*_dir, _segment_name, *_db};

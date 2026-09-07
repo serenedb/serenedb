@@ -1,0 +1,98 @@
+////////////////////////////////////////////////////////////////////////////////
+/// DISCLAIMER
+///
+/// Copyright 2026 SereneDB GmbH, Berlin, Germany
+///
+/// Licensed under the Apache License, Version 2.0 (the "License");
+/// you may not use this file except in compliance with the License.
+/// You may obtain a copy of the License at
+///
+///     http://www.apache.org/licenses/LICENSE-2.0
+///
+/// Unless required by applicable law or agreed to in writing, software
+/// distributed under the License is distributed on an "AS IS" BASIS,
+/// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+/// See the License for the specific language governing permissions and
+/// limitations under the License.
+///
+/// Copyright holder is SereneDB GmbH, Berlin, Germany
+////////////////////////////////////////////////////////////////////////////////
+
+#include <algorithm>
+#include <span>
+#include <utility>
+#include <vector>
+
+#include "iresearch/search/column_collector.hpp"
+#include "iresearch/search/common/all_docs_score.hpp"
+#include "iresearch/search/common/score_args.hpp"
+#include "iresearch/search/common/score_provider.hpp"
+#include "iresearch/search/hnsw_query.hpp"
+#include "iresearch/search/score_function.hpp"
+#include "iresearch/search/scorer.hpp"
+#include "iresearch/search/top/make.hpp"
+
+namespace irs::top {
+
+namespace {
+
+class HnswHits : public Root {
+ public:
+  HnswHits(std::vector<ScoreDoc>&& hits, const SubReader& segment,
+           ColumnArgsFetcher& fetcher, const search::ScoreArgs& args)
+    : _hits{std::move(hits)}, _fetcher{fetcher} {
+    SDB_ASSERT(args.scorer != nullptr);
+    _provider.attr.value = _block;
+    _score = args.scorer->PrepareScorer({
+      .segment = segment,
+      .field = search::NoField(),
+      .doc_attrs = _provider,
+      .fetcher = &fetcher,
+      .stats = args.stats,
+      .boost = args.boost,
+    });
+  }
+
+  void Run(LoserScoreCollector& collector) final {
+    for (size_t i = 0, total = _hits.size(); i < total;) {
+      const auto n =
+        static_cast<uint32_t>(std::min<size_t>(kScoreBlock, total - i));
+      for (uint32_t j = 0; j < n; ++j) {
+        _block[j] = _hits[i + j].score;
+        _docs[j] = _hits[i + j].doc;
+      }
+      _fetcher.Fetch(std::span<const doc_id_t>{_docs, n});
+      _score.Score(_scores, static_cast<scores_size_t>(n));
+      collector.AddDocs(_docs, n, _scores);
+      i += n;
+    }
+  }
+
+ private:
+  std::vector<ScoreDoc> _hits;
+  search::BoostProvider _provider;
+  ScoreFunction _score;
+  ColumnArgsFetcher& _fetcher;
+  score_t _block[kScoreBlock];
+  score_t _scores[kScoreBlock];
+  doc_id_t _docs[kScoreBlock];
+};
+
+}  // namespace
+
+Root::ptr Make(const HnswQuery& query, const Context& ctx) {
+  HnswRefuseFilter(ctx.table);
+  auto hits = query.RunSearch();
+  if (hits.empty()) {
+    return {};
+  }
+  const auto record = query.Stats(ScoredOf(ctx));
+  const search::ScoreArgs args{.scorer = record.scorer,
+                               .stats = record.stats,
+                               .fetcher = &ctx.fetcher,
+                               .boost = query.Boost()};
+  return memory::make_managed<HnswHits>(std::move(hits), query.Segment(),
+                                        ctx.fetcher, args);
+}
+
+}  // namespace irs::top

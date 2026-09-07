@@ -50,15 +50,15 @@ class HnswWriter final : public AnnWriter {
     _merge_sources = sources;
   }
 
-  auto Compute(const ColumnReader& col, ReadContext& ctx,
-               const AnnBuildEnv* env) -> yaclib::Future<> final;
+  yaclib::Task<> Compute(const ColumnReader& col, ReadContext& ctx,
+                         const AnnBuildEnv* env) final;
 
   void Flush() final;
 
  private:
   AnnInfo _info;
   std::span<const MergeSource> _merge_sources;
-  HnswGraph _graph;
+  HnswGraphWriter _graph;
   std::vector<float> _vectors;
   bstring _codes;
   bstring _stats_blob;

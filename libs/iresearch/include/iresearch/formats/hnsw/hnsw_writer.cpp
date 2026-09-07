@@ -160,7 +160,7 @@ struct HealScratch {
 };
 
 template<typename Dist>
-void HealNode(HnswGraph& graph, const HnswGraph& src_graph,
+void HealNode(HnswGraphWriter& graph, const HnswGraph& src_graph,
               std::span<const uint32_t> remap, Dist& dist, uint32_t src_node,
               uint32_t node, uint32_t level, HnswBuildScratch& scratch,
               HealScratch& heal) {
@@ -490,7 +490,7 @@ struct HnswCodeDistFactory {
 
 template<typename Factory>
 struct HnswInsertJob {
-  HnswInsertJob(HnswGraph& graph, const Factory& factory, uint32_t ef,
+  HnswInsertJob(HnswGraphWriter& graph, const Factory& factory, uint32_t ef,
                 std::span<const uint32_t> nodes, size_t workers, size_t rows)
     : _graph{graph},
       _ef{ef},
@@ -533,7 +533,7 @@ struct HnswInsertJob {
   }
 
  private:
-  HnswGraph& _graph;
+  HnswGraphWriter& _graph;
   uint32_t _ef;
   std::span<const uint32_t> _nodes;  // retargeted per window by Restart()
   HnswStripeSync _sync;
@@ -542,7 +542,7 @@ struct HnswInsertJob {
   std::vector<typename Factory::Dist> _dists;
 };
 
-std::vector<uint32_t> SeedGraph(HnswGraph& graph,
+std::vector<uint32_t> SeedGraph(HnswGraphWriter& graph,
                                 std::span<const uint8_t> valid, uint32_t m,
                                 uint64_t seed) {
   const auto rows = valid.size();
@@ -585,7 +585,7 @@ std::vector<uint32_t> SeedGraph(HnswGraph& graph,
 }
 
 template<typename Factory>
-auto InsertNodes(HnswGraph& graph, const Factory& factory, uint32_t ef,
+auto InsertNodes(HnswGraphWriter& graph, const Factory& factory, uint32_t ef,
                  std::span<const uint32_t> nodes, size_t rows, uint32_t warmup,
                  const AnnBuildEnv* env) -> yaclib::Future<> {
   const bool can_fan_out = env != nullptr && env->executor != nullptr;
@@ -631,7 +631,7 @@ auto InsertNodes(HnswGraph& graph, const Factory& factory, uint32_t ef,
 }
 
 template<typename Factory>
-auto BuildGraphFromMerge(HnswGraph& graph, const Factory& factory,
+auto BuildGraphFromMerge(HnswGraphWriter& graph, const Factory& factory,
                          std::span<const uint8_t> valid, uint32_t m,
                          uint32_t ef_construction, uint64_t seed,
                          const MergeDonor& donor, const AnnBuildEnv* env)
@@ -772,7 +772,7 @@ auto BuildGraphFromMerge(HnswGraph& graph, const Factory& factory,
 }
 
 template<typename Factory>
-auto BuildGraph(HnswGraph& graph, const Factory& factory,
+auto BuildGraph(HnswGraphWriter& graph, const Factory& factory,
                 std::span<const uint8_t> valid, uint32_t m,
                 uint32_t ef_construction, uint64_t seed, const AnnBuildEnv* env)
   -> yaclib::Future<> {
@@ -794,7 +794,7 @@ struct HnswOriginals {
 inline constexpr uint32_t kHnswOriginalsWindow = 32768;
 
 template<typename Factory>
-void BuildGraphStreamed(HnswGraph& graph, const Factory& factory,
+void BuildGraphStreamed(HnswGraphWriter& graph, const Factory& factory,
                         std::span<const uint8_t> valid, uint32_t m,
                         uint32_t ef_construction, uint64_t seed,
                         const AnnBuildEnv* env, const HnswOriginals& src,
@@ -886,7 +886,7 @@ void BuildGraphStreamed(HnswGraph& graph, const Factory& factory,
 }
 
 template<typename Factory>
-auto BuildDispatch(HnswGraph& graph, const Factory& factory,
+auto BuildDispatch(HnswGraphWriter& graph, const Factory& factory,
                    std::span<const uint8_t> valid, uint32_t m, uint32_t ef,
                    uint64_t seed, const MergeDonor& donor,
                    const AnnBuildEnv* env, const HnswOriginals& src, uint32_t d)
@@ -910,8 +910,8 @@ HnswWriter::HnswWriter(AnnInfo info) : _info{std::move(info)} {}
 
 HnswWriter::~HnswWriter() = default;
 
-auto HnswWriter::Compute(const ColumnReader& col, ReadContext& ctx,
-                         const AnnBuildEnv* env) -> yaclib::Future<> {
+yaclib::Task<> HnswWriter::Compute(const ColumnReader& col, ReadContext& ctx,
+                                   const AnnBuildEnv* env) {
   _d = static_cast<uint32_t>(col.ArraySize());
   _rows = col.RowCount();
   SDB_ASSERT(_d != 0);

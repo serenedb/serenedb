@@ -80,7 +80,7 @@ class ColWriter final {
 
   void Commit(uint64_t target_row);
 
-  auto ComputeAnn(const AnnBuildEnv* env) -> yaclib::Future<>;
+  yaclib::Task<> ComputeAnn(const AnnBuildEnv* env);
 
   void Rollback() noexcept;
 
@@ -115,7 +115,6 @@ class ColWriter final {
   std::vector<std::unique_ptr<AnnEntry>> _ann_writers;
   sdb::containers::FlatHashMap<field_id, AnnEntry*> _ann_by_id;
   bool _committed = false;
-  bool _ann_ready = false;
 };
 
 }  // namespace irs

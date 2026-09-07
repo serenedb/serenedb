@@ -39,6 +39,14 @@ struct LeafProvider final : AttributeProvider {
   FreqBlockAttr freq;
 };
 
+struct BoostProvider final : AttributeProvider {
+  Attribute* GetMutable(TypeInfo::type_id type) noexcept final {
+    return type == irs::Type<BoostBlockAttr>::id() ? &attr : nullptr;
+  }
+
+  BoostBlockAttr attr;
+};
+
 struct LeafRecipe {
   const SubReader* segment = nullptr;
   const TermReader* field = nullptr;

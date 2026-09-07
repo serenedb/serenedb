@@ -168,9 +168,9 @@ void SegmentWriter::FlushFields(FlushState& state,
     _col_writer->SetIdxWriter(idx);
     _col_writer->Commit(buffered_docs());
     if (_ann_env != nullptr) {
-      GetBlocking(_col_writer->ComputeAnn(_ann_env));
+      GetBlocking(_col_writer->ComputeAnn(_ann_env).ToFuture());
     } else {
-      GetReady(_col_writer->ComputeAnn(/*env=*/nullptr));
+      GetReady(_col_writer->ComputeAnn(/*env=*/nullptr).ToFuture());
     }
     ann_writers = _col_writer->TakeAnnWriters();
     _col_writer.reset();

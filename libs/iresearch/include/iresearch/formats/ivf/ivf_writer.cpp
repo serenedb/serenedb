@@ -358,8 +358,8 @@ void IvfTermReader::Finish(IndexOutput& out) {
   _qw->Finish(out);
 }
 
-auto IvfWriter::Compute(const ColumnReader& col, ReadContext& ctx,
-                        const AnnBuildEnv* /*env*/) -> yaclib::Future<> {
+yaclib::Task<> IvfWriter::Compute(const ColumnReader& col, ReadContext& ctx,
+                                  const AnnBuildEnv* /*env*/) {
   SDB_ASSERT(_idx != nullptr,
              "IvfWriter::Compute: SetIdxWriter must be called first");
   const auto d = static_cast<uint32_t>(col.ArraySize());
@@ -370,13 +370,13 @@ auto IvfWriter::Compute(const ColumnReader& col, ReadContext& ctx,
   IvfBuilder builder{_info};
   auto built = builder.Compute(col, ctx, qw.get());
   if (built.empty) {
-    return yaclib::MakeFuture();
+    co_return {};
   }
   _result = Result{.postings_id = _info.postings_id,
                    .qw = std::move(qw),
                    .data = std::move(built)};
   _built = true;
-  return yaclib::MakeFuture();
+  co_return {};
 }
 
 void IvfWriter::Flush() {

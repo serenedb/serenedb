@@ -18,43 +18,14 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#pragma once
+#include "iresearch/search/count/make.hpp"
+#include "iresearch/search/hnsw_query.hpp"
 
-#include <span>
-#include <yaclib/coro/task.hpp>
+namespace irs::count {
 
-#include "iresearch/formats/ann_build_env.hpp"
-#include "iresearch/index/column_info.hpp"
-#include "iresearch/types.hpp"
+Root::ptr Make(const HnswQuery& query, const Context& ctx) {
+  HnswRefuseFilter(ctx.table);
+  return MakeConstant(query.RunSearch().size());
+}
 
-namespace irs {
-
-class ColumnReader;
-class IdxWriter;
-class ReadContext;
-struct MergeSource;
-
-class AnnWriter {
- public:
-  virtual ~AnnWriter() = default;
-
-  void SetIdxWriter(IdxWriter& idx) noexcept { _idx = &idx; }
-
-  virtual AnnKind Kind() const noexcept = 0;
-
-  virtual field_id ColumnId() const noexcept = 0;
-
-  virtual bool Empty() const noexcept = 0;
-
-  virtual void SetMergeSources(std::span<const MergeSource>) noexcept {}
-
-  virtual yaclib::Task<> Compute(const ColumnReader& col, ReadContext& ctx,
-                                 const AnnBuildEnv* env) = 0;
-
-  virtual void Flush() = 0;
-
- protected:
-  IdxWriter* _idx = nullptr;
-};
-
-}  // namespace irs
+}  // namespace irs::count

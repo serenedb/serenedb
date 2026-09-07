@@ -20,9 +20,10 @@
 
 #pragma once
 
+#include <absl/base/call_once.h>
+
 #include <cstdint>
 #include <memory>
-#include <mutex>
 #include <vector>
 
 #include "iresearch/formats/hnsw/hnsw_graph.hpp"
@@ -88,7 +89,7 @@ class HnswIndex final : public AnnIndex {
  private:
   HnswHeader _header;
   HnswMeta _meta;
-  mutable std::once_flag _once;
+  mutable absl::once_flag _once;
   mutable std::shared_ptr<const HnswData> _data;
 };
 

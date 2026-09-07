@@ -113,27 +113,64 @@ class HnswGraph {
  public:
   HnswGraph() = default;
 
-  void Reset(size_t nodes, uint32_t m);
-
-  void AllocateLinks();
-
   size_t Size() const noexcept { return _levels.size(); }
   uint32_t M() const noexcept { return _m; }
   uint32_t M0() const noexcept { return _m0; }
-  uint32_t MaxLevel() const noexcept { return _max_level; }
-  uint32_t EntryPoint() const noexcept {
-    return std::atomic_ref<uint32_t>{const_cast<uint32_t&>(_entry)}.load(
-      std::memory_order_acquire);
-  }
+  uint32_t EntryPoint() const noexcept { return _entry; }
   bool Empty() const noexcept { return EntryPoint() == kHnswInvalidNode; }
 
   uint32_t LevelOf(uint32_t node) const noexcept { return _levels[node]; }
 
+  std::span<const uint32_t> Neighbors(uint32_t node,
+                                      uint32_t level) const noexcept {
+    const auto width = level == 0 ? _m0 : _m;
+    return {_neighbors.data() + Base(node, level), width};
+  }
+
+  void Serialize(DataOutput& out) const;
+  static HnswGraph Deserialize(IndexInput& in);
+
+ private:
+  friend class HnswGraphWriter;
+
+  uint64_t Base(uint32_t node, uint32_t level) const noexcept {
+    SDB_ASSERT(level < _levels[node]);
+    return _offsets[node] + (level == 0 ? 0 : _m0 + uint64_t{level - 1} * _m);
+  }
+
+  std::vector<uint8_t> _levels;
+  std::vector<uint64_t> _offsets;
+  std::vector<uint32_t> _neighbors;
+  uint32_t _entry = kHnswInvalidNode;
+  uint32_t _max_level = 0;
+  uint32_t _m = kHnswDefaultM;
+  uint32_t _m0 = 2 * kHnswDefaultM;
+};
+
+class HnswGraphWriter {
+ public:
+  HnswGraphWriter() = default;
+
+  void Reset(size_t nodes, uint32_t m);
+
+  void AllocateLinks();
+
+  const HnswGraph& Graph() const noexcept { return _graph; }
+
+  size_t Size() const noexcept { return _graph.Size(); }
+  uint32_t M() const noexcept { return _graph.M(); }
+  uint32_t M0() const noexcept { return _graph.M0(); }
+  uint32_t EntryPoint() const noexcept { return _graph.EntryPoint(); }
+  bool Empty() const noexcept { return _graph.Empty(); }
+  uint32_t LevelOf(uint32_t node) const noexcept {
+    return _graph.LevelOf(node);
+  }
+
   void SetLevel(uint32_t node, uint32_t level) noexcept {
     SDB_ASSERT(level != 0);
     SDB_ASSERT(level <= kHnswMaxLevel);
-    _levels[node] = static_cast<uint8_t>(level);
-    _max_level = std::max(_max_level, level);
+    _graph._levels[node] = static_cast<uint8_t>(level);
+    _graph._max_level = std::max(_graph._max_level, level);
   }
 
   uint32_t Processed(uint32_t node, uint32_t level) const noexcept {
@@ -150,62 +187,24 @@ class HnswGraph {
     _processed[_proc_offsets[node] + level] = static_cast<uint8_t>(n);
   }
 
-  void SetEntryPoint(uint32_t node) noexcept {
-    std::atomic_ref<uint32_t>{_entry}.store(node, std::memory_order_release);
-  }
-
-  bool ClaimFirstEntry(uint32_t node) noexcept {
-    std::atomic_ref<uint32_t> slot{_entry};
-    uint32_t expected = kHnswInvalidNode;
-    return slot.compare_exchange_strong(
-      expected, node, std::memory_order_acq_rel, std::memory_order_acquire);
-  }
-
-  void PromoteEntry(uint32_t node) noexcept {
-    std::atomic_ref<uint32_t> slot{_entry};
-    uint32_t cur = slot.load(std::memory_order_acquire);
-    for (;;) {
-      if (cur != kHnswInvalidNode && _levels[node] <= _levels[cur]) {
-        return;
-      }
-      if (slot.compare_exchange_weak(cur, node, std::memory_order_acq_rel,
-                                     std::memory_order_acquire)) {
-        return;
-      }
-    }
-  }
+  void SetEntryPoint(uint32_t node) noexcept { _graph._entry = node; }
 
   std::span<uint32_t> Neighbors(uint32_t node, uint32_t level) noexcept {
-    const auto width = level == 0 ? _m0 : _m;
-    return {_neighbors.data() + Base(node, level), width};
+    const auto width = level == 0 ? _graph._m0 : _graph._m;
+    return {_graph._neighbors.data() + _graph.Base(node, level), width};
   }
 
   std::span<const uint32_t> Neighbors(uint32_t node,
                                       uint32_t level) const noexcept {
-    const auto width = level == 0 ? _m0 : _m;
-    return {_neighbors.data() + Base(node, level), width};
+    return _graph.Neighbors(node, level);
   }
 
-  void Serialize(DataOutput& out) const;
-  static HnswGraph Deserialize(IndexInput& in);
-
-  size_t ByteSize() const noexcept;
+  void Serialize(DataOutput& out) const { _graph.Serialize(out); }
 
  private:
-  uint64_t Base(uint32_t node, uint32_t level) const noexcept {
-    SDB_ASSERT(level < _levels[node]);
-    return _offsets[node] + (level == 0 ? 0 : _m0 + uint64_t{level - 1} * _m);
-  }
-
-  std::vector<uint8_t> _levels;
+  HnswGraph _graph;
   std::vector<uint32_t> _proc_offsets;
   std::vector<uint8_t> _processed;
-  std::vector<uint64_t> _offsets;
-  std::vector<uint32_t> _neighbors;
-  uint32_t _entry = kHnswInvalidNode;
-  uint32_t _max_level = 0;
-  uint32_t _m = kHnswDefaultM;
-  uint32_t _m0 = 2 * kHnswDefaultM;
 };
 
 uint32_t HnswRandomLevel(uint64_t& rng_state, uint32_t m) noexcept;
@@ -258,7 +257,7 @@ void HnswComputeDistances(const float* q, const float* base, uint32_t d,
 inline constexpr score_t kHnswNoThreshold =
   std::numeric_limits<score_t>::lowest();
 
-inline auto HnswLoadLink(const uint32_t& slot) noexcept -> uint32_t {
+inline uint32_t HnswLoadLink(const uint32_t& slot) noexcept {
   return std::atomic_ref<uint32_t>{const_cast<uint32_t&>(slot)}.load(
     std::memory_order_acquire);
 }
@@ -456,7 +455,7 @@ class HnswStripeSync {
   explicit HnswStripeSync(size_t stripes)
     : _stripes(std::bit_ceil(std::clamp<size_t>(4 * stripes, 256, 4096))) {}
 
-  using Guard = std::unique_lock<std::mutex>;
+  using Guard = std::unique_lock<absl::Mutex>;
 
   Guard Lock(uint32_t node) noexcept {
     const auto h = (node * kHnswBuildSeed) >> 32;
@@ -465,15 +464,16 @@ class HnswStripeSync {
 
  private:
   struct alignas(64) Stripe {
-    std::mutex lock;
+    absl::Mutex lock;
   };
 
   std::vector<Stripe> _stripes;
 };
 
 template<typename Dist, typename Sync = HnswNoSync>
-void HnswLinkReverse(HnswGraph& graph, Dist& dist, uint32_t peer, uint32_t node,
-                     uint32_t level, HnswBuildScratch& s, Sync&& sync = {}) {
+void HnswLinkReverse(HnswGraphWriter& graph, Dist& dist, uint32_t peer,
+                     uint32_t node, uint32_t level, HnswBuildScratch& s,
+                     Sync&& sync = {}) {
   auto guard = sync.Lock(peer);
   auto links = graph.Neighbors(peer, level);
   auto& ids = s.link_ids;
@@ -543,7 +543,7 @@ void HnswLinkReverse(HnswGraph& graph, Dist& dist, uint32_t peer, uint32_t node,
 }
 
 template<typename Dist, typename Sync = HnswNoSync>
-void HnswInsert(HnswGraph& graph, uint32_t node, Dist& dist,
+void HnswInsert(HnswGraphWriter& graph, uint32_t node, Dist& dist,
                 uint32_t ef_construction, HnswBuildScratch& s,
                 Sync&& sync = {}) {
   const uint32_t top = graph.LevelOf(node) - 1;
@@ -555,7 +555,7 @@ void HnswInsert(HnswGraph& graph, uint32_t node, Dist& dist,
   HnswCandidate cur{dist.One(entry), entry};
   if (entry_top > top) {
     s.search.visited.Advance();
-    cur = HnswGreedyDescent(graph, dist, cur, entry_top, top, s.search);
+    cur = HnswGreedyDescent(graph.Graph(), dist, cur, entry_top, top, s.search);
   }
 
   s.pending.clear();
@@ -564,7 +564,7 @@ void HnswInsert(HnswGraph& graph, uint32_t node, Dist& dist,
     s.search.visited.Advance();
     s.search.visited.TestAndSet(cur.node);
     s.search.nearest.assign(1, cur);
-    HnswSearchLevel(graph, dist, level, ef_construction, s.search);
+    HnswSearchLevel(graph.Graph(), dist, level, ef_construction, s.search);
 
     auto& found = s.search.nearest;
     std::ranges::sort(found,

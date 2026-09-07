@@ -41,6 +41,7 @@ Node::ptr Make(const NGramSimilarityQuery& query);
 Node::ptr Make(const AllQuery& query);
 Node::ptr Make(const WildcardNGramQuery& query);
 Node::ptr Make(const ByNestedQuery& query);
+inline Node::ptr Make(const HnswQuery&) { return {}; }
 inline Node::ptr Make(const KnnVectorQuery&) { return {}; }
 Node::ptr Make(const RangeVectorQuery& query);
 inline Node::ptr Make(const EmptyQueryBuilder&) { return {}; }
@@ -64,6 +65,9 @@ Node::ptr Make(const WildcardNGramQuery& query, const ScoredCtx& ctx,
                ScoreMergeType merge);
 Node::ptr Make(const ByNestedQuery& query, const ScoredCtx& ctx,
                ScoreMergeType merge);
+inline Node::ptr Make(const HnswQuery&, const ScoredCtx&, ScoreMergeType) {
+  return {};
+}
 inline Node::ptr Make(const KnnVectorQuery&, const ScoredCtx&, ScoreMergeType) {
   return {};
 }

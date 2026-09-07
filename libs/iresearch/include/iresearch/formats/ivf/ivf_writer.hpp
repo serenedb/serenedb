@@ -140,8 +140,8 @@ class IvfWriter final : public AnnWriter {
 
   bool Empty() const noexcept final { return !_built; }
 
-  auto Compute(const ColumnReader& col, ReadContext& ctx,
-               const AnnBuildEnv* env) -> yaclib::Future<> final;
+  yaclib::Task<> Compute(const ColumnReader& col, ReadContext& ctx,
+                         const AnnBuildEnv* env) final;
 
   void Flush() final;
 

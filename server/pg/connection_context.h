@@ -96,6 +96,10 @@ class ConnectionContext final : public query::Transaction {
   // serenedb mutators that emitted them.
   bool IsStorageConnection() const noexcept { return _storage_connection; }
   void MarkStorageConnection() noexcept { _storage_connection = true; }
+  // The embedded docs loader: the one writer the read-only sdb_docs schema
+  // admits.
+  bool IsSystemWriter() const noexcept { return _system_writer; }
+  void MarkSystemWriter() noexcept { _system_writer = true; }
 
   void SetEffectiveRole(ObjectId role) { _effective_role_id = role; }
   void SetSessionRole(ObjectId role) {
@@ -166,6 +170,7 @@ class ConnectionContext final : public query::Transaction {
   ObjectId _session_role_id;
   ObjectId _effective_role_id;
   bool _storage_connection = false;
+  bool _system_writer = false;
   pg::CopyInBridge* _copy_in_bridge = nullptr;
   std::string* _response_sink = nullptr;
   std::atomic<NoticeNode*> _notices{nullptr};

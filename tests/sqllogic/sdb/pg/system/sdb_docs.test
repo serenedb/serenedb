@@ -114,3 +114,97 @@ FROM (SELECT ts_lexize('sdb_docs.english', 'The index is a structure') AS t);
 ----
 list_contains	list_contains	list_contains	list_contains	list_contains
 f	f	t	t	t
+
+# The schema is read-only for everyone but the loader, the superuser included:
+# the tables are rebuilt from the binary, so a manual change would be silently
+# lost or would corrupt the search index.
+
+statement error
+INSERT INTO sdb_docs.docs VALUES ('zzz.md', 'z', '', 'c', 'c');
+----
+db error: ERROR: schema "sdb_docs" is read-only
+DETAIL: The embedded documentation is rebuilt from the server binary at startup.
+
+
+statement error
+UPDATE sdb_docs.docs SET title = 'x' WHERE path = 'cookbook/search/autocomplete.md';
+----
+db error: ERROR: schema "sdb_docs" is read-only
+DETAIL: The embedded documentation is rebuilt from the server binary at startup.
+
+
+statement error
+DELETE FROM sdb_docs.docs WHERE path = 'cookbook/search/autocomplete.md';
+----
+db error: ERROR: schema "sdb_docs" is read-only
+DETAIL: The embedded documentation is rebuilt from the server binary at startup.
+
+
+statement error
+DELETE FROM sdb_docs.meta;
+----
+db error: ERROR: schema "sdb_docs" is read-only
+DETAIL: The embedded documentation is rebuilt from the server binary at startup.
+
+
+statement error
+DROP TABLE sdb_docs.meta;
+----
+db error: ERROR: schema "sdb_docs" is read-only
+DETAIL: The embedded documentation is rebuilt from the server binary at startup.
+
+
+statement error
+DROP TABLE sdb_docs.docs;
+----
+db error: ERROR: schema "sdb_docs" is read-only
+DETAIL: The embedded documentation is rebuilt from the server binary at startup.
+
+
+statement error
+ALTER TABLE sdb_docs.docs RENAME TO docs2;
+----
+db error: ERROR: schema "sdb_docs" is read-only
+DETAIL: The embedded documentation is rebuilt from the server binary at startup.
+
+
+statement error
+ALTER TABLE sdb_docs.meta ADD COLUMN extra TEXT;
+----
+db error: ERROR: schema "sdb_docs" is read-only
+DETAIL: The embedded documentation is rebuilt from the server binary at startup.
+
+
+statement error
+CREATE TABLE sdb_docs.scratch (id INT);
+----
+db error: ERROR: schema "sdb_docs" is read-only
+DETAIL: The embedded documentation is rebuilt from the server binary at startup.
+
+
+statement error
+CREATE INDEX meta_hash_idx ON sdb_docs.meta (hash);
+----
+db error: ERROR: schema "sdb_docs" is read-only
+DETAIL: The embedded documentation is rebuilt from the server binary at startup.
+
+
+statement error
+DROP SCHEMA sdb_docs CASCADE;
+----
+db error: ERROR: schema "sdb_docs" is read-only
+DETAIL: The embedded documentation is rebuilt from the server binary at startup.
+
+
+statement error
+ALTER SCHEMA sdb_docs RENAME TO sdb_docs_old;
+----
+db error: ERROR: schema "sdb_docs" is read-only
+DETAIL: The embedded documentation is rebuilt from the server binary at startup.
+
+
+query
+SELECT count(*) > 1000, (SELECT count(*) FROM sdb_docs.meta) FROM sdb_docs.docs;
+----
+?column?	count
+t	1

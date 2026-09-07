@@ -294,6 +294,14 @@ void CollectAndEnforce(duckdb::ClientContext& context, duckdb::Binder& binder) {
     }
     const auto& perm = *governed.perm;
     const auto type = governed.type;
+    if (req.table &&
+        Has(req.verb, duckdb::AccessVerb::INSERT | duckdb::AccessVerb::UPDATE |
+                        duckdb::AccessVerb::DELETE |
+                        duckdb::AccessVerb::TRUNCATE)) {
+      catalog::EnsureWritableSchema(
+        &ctx.GetClientContext(),
+        req.table->ParentSchema().name.GetIdentifierName());
+    }
 
     const ObjectId role =
       EffectiveRole(caller, req.who, ctx.GetClientContext());

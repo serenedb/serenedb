@@ -30,6 +30,7 @@
 #include <absl/time/time.h>
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <cstdlib>
 #include <duckdb/main/database_manager.hpp>
@@ -138,8 +139,42 @@ void RequireDatabaseAccess(duckdb::ClientContext* context, ObjectId role,
                           database->name.GetIdentifierName()));
 }
 
+void EnsureWritableSchema(duckdb::ClientContext* context,
+                          std::string_view schema) {
+  struct ReadOnlySchema {
+    std::string_view name;
+    std::string_view detail;
+  };
+  constexpr std::array kReadOnlySchemas{
+    ReadOnlySchema{StaticStrings::kDocsSchema,
+                   "The embedded documentation is rebuilt from the server "
+                   "binary at startup."},
+  };
+  const auto it = absl::c_find_if(
+    kReadOnlySchemas, [&](const auto& entry) { return entry.name == schema; });
+  if (it == kReadOnlySchemas.end()) {
+    return;
+  }
+  if (context != nullptr) {
+    if (const auto* ctx = connector::GetSereneDBContextPtr(*context);
+        ctx != nullptr && ctx->IsSystemWriter()) {
+      return;
+    }
+  }
+  THROW_SQL_ERROR(ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
+                  ERR_MSG("schema \"", schema, "\" is read-only"),
+                  ERR_DETAIL(it->detail));
+}
+
+void EnsureWritableSchema(duckdb::ClientContext* context, ObjectId schema_id) {
+  if (const auto* schema = catalog::FindSchema(context, schema_id)) {
+    EnsureWritableSchema(context, schema->name.GetIdentifierName());
+  }
+}
+
 void RequireCreateOn(duckdb::ClientContext* context, ObjectId role,
                      ObjectId parent_id) {
+  EnsureWritableSchema(context, parent_id);
   const auto* schema = catalog::FindSchema(context, parent_id);
   if (schema == nullptr || auth::ClosureFor(context, role)
                              ->Can(duckdb::CatalogType::SCHEMA_ENTRY,
@@ -193,6 +228,7 @@ void RequireOwnerTransfer(const AccessContext& ax, ObjectId schema_id,
 void Catalog::DropResolved(duckdb::ClientContext* context, ObjectId parent_id,
                            duckdb::CatalogType type, ObjectId id,
                            std::string_view name, bool cascade) {
+  EnsureWritableSchema(context, parent_id);
   if (type == duckdb::CatalogType::INDEX_ENTRY) {
     // The definition outlives the entry: the artifact half reads it.
     if (const auto* entry =

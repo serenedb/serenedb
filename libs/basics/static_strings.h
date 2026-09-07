@@ -50,6 +50,7 @@ class StaticStrings {
   static constexpr std::string_view kPublic = "public";
   static constexpr std::string_view kPgCatalogSchema = "pg_catalog";
   static constexpr std::string_view kInformationSchema = "information_schema";
+  static constexpr std::string_view kDocsSchema = "sdb_docs";
 
   static const std::string kDataSourceId;
 

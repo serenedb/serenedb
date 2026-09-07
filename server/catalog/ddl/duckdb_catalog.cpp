@@ -22,6 +22,7 @@
 
 #include <absl/algorithm/container.h>
 #include <absl/cleanup/cleanup.h>
+#include <absl/strings/ascii.h>
 #include <absl/strings/match.h>
 
 #include <duckdb/catalog/catalog_entry/duck_table_entry.hpp>
@@ -699,6 +700,7 @@ void SereneDBCatalog::RenameSchema(duckdb::CatalogTransaction transaction,
   auto perm = current->permissions;
   const auto database_id = GetDatabaseId();
   const auto ax = catalog::ActingAs(client);
+  catalog::EnsureWritableSchema(&client, old_name);
   catalog::RequireOwner(&client, ax.role, perm, "schema", old_name);
   catalog::RequireDatabaseAccess(&client, ax.role,
                                  FindDatabase(&client, database_id),
@@ -920,6 +922,7 @@ void ApplyTableAlter(const AccessContext& ax,
     ThrowConcurrentlyDropped(duckdb::CatalogType::TABLE_ENTRY,
                              table.GetTableName().GetIdentifierName());
   }
+  EnsureWritableSchema(ax.context, catalog::ParentIdOf(table));
   RequireOwner(ax.context, ax.role, current->permissions, "table",
                current->name.GetIdentifierName());
   ApplyTableAlterLocked(ax.context, table, info);
@@ -2321,6 +2324,7 @@ bool SereneDBCatalog::DropSchema(const AccessContext& ax,
                     ERR_MSG("schema \"", name, "\" does not exist"));
   }
   const std::optional schema_id{IdOf(*schema)};
+  EnsureWritableSchema(ax.context, schema->name.GetIdentifierName());
   RequireOwner(ax.context, ax.role, schema->permissions, "schema",
                schema->name.GetIdentifierName());
 
@@ -2362,6 +2366,7 @@ void SereneDBCatalog::ChangeColumnType(
   }
   const auto& perm = entry->permissions;
   const auto live = entry->Definition();
+  EnsureWritableSchema(ax.context, schema_id);
   RequireOwner(ax.context, ax.role, perm, "table",
                entry->name.GetIdentifierName());
   // A missing column falls through: duckdb's alter names it in its own error.

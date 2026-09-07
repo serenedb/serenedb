@@ -61,6 +61,7 @@ duckdb::unique_ptr<CreateIndexInfo> CreateIndexOnRelation(
   }
   JoinStoreTransaction(ax.context);
   const auto schema_id = catalog::ParentIdOf(relation);
+  catalog::EnsureWritableSchema(ax.context, schema_id);
   // The noun the refusal names is the relation's own kind: a view and a table
   // are both indexable and postgres says which one it refused.
   catalog::RequireOwner(ax.context, ax.role, relation.permissions,
@@ -103,6 +104,7 @@ duckdb::optional_ptr<duckdb::CatalogEntry> CreateIndexImpl(
   duckdb::ClientContext* context, CreateIndexInfo& index,
   CreateIndexOperationOptions operation_options) {
   const auto schema_id = index.GetSchemaId();
+  catalog::EnsureWritableSchema(context, schema_id);
   if (catalog::FindRelation(context, schema_id, index.GetName())) {
     ThrowDuplicateName(NameKind::Relation, index.GetName());
   }

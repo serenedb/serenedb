@@ -498,6 +498,7 @@ void DropTableColumn(const AccessContext& ax, ObjectId database_id,
   }
   const auto& perm = entry->permissions;
   const auto live = entry->Definition();
+  EnsureWritableSchema(ax.context, catalog::ParentIdOf(table));
   RequireOwner(ax.context, ax.role, perm, "table",
                entry->name.GetIdentifierName());
   const auto* col = catalog::ColumnByName(*live, column);

@@ -57,7 +57,7 @@ class FixedHandler final : public network::HttpHandler {
 
   yaclib::Task<> Handle(network::RequestContext&, const network::HttpRequest&,
                         network::http::HttpResponseWriter& writer) override {
-    writer.Json(200, _body);
+    writer.Json(network::http::HttpStatus::Ok, _body);
     return yaclib::MakeTask();
   }
 
@@ -74,7 +74,7 @@ class EchoHandler final : public network::HttpHandler {
     for (const auto buffer : request.body) {
       body.append(static_cast<const char*>(buffer.data()), buffer.size());
     }
-    writer.Json(200, body);
+    writer.Json(network::http::HttpStatus::Ok, body);
     return yaclib::MakeTask();
   }
 };

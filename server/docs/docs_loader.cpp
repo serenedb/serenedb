@@ -52,7 +52,6 @@
 namespace sdb::docs {
 namespace {
 
-constexpr std::string_view kSchema = "sdb_docs";
 constexpr std::string_view kTable = "sdb_docs.docs";
 constexpr std::string_view kMeta = "sdb_docs.meta";
 constexpr std::string_view kIndex = "docs_fts";
@@ -73,6 +72,7 @@ class Loader {
       _ctx{std::make_shared<ConnectionContext>(
         *_conn->context, StaticStrings::kDefaultUser, id::kRootUser,
         StaticStrings::kDefaultDatabase, database_id, nullptr, 0, nullptr)} {
+    _ctx->MarkSystemWriter();
     connector::SereneDBClientState::Register(*_conn->context, _ctx);
     _conn->context->session_user = std::string{StaticStrings::kDefaultUser};
     std::vector<duckdb::CatalogSearchEntry> paths{
@@ -136,7 +136,8 @@ class Loader {
            absl::StrCat("CREATE TABLE ", kMeta, " (hash TEXT, layout INTEGER)"),
            absl::StrCat("INSERT INTO ", kMeta, " VALUES ('", GetDocsHash(),
                         "', ", kLayout, ")"),
-           absl::StrCat("GRANT USAGE ON SCHEMA ", kSchema, " TO PUBLIC"),
+           absl::StrCat("GRANT USAGE ON SCHEMA ", StaticStrings::kDocsSchema,
+                        " TO PUBLIC"),
            absl::StrCat("GRANT SELECT ON ", kTable, " TO PUBLIC"),
            absl::StrCat("GRANT SELECT ON ", kMeta, " TO PUBLIC"),
          }) {
@@ -216,7 +217,8 @@ void LoadEmbeddedDocs() {
       return;
     }
     Loader loader{catalog::IdOf(*database)};
-    if (!loader.Run(absl::StrCat("CREATE SCHEMA IF NOT EXISTS ", kSchema))) {
+    if (!loader.Run(absl::StrCat("CREATE SCHEMA IF NOT EXISTS ",
+                                 StaticStrings::kDocsSchema))) {
       // TODO warning?
       return;
     }

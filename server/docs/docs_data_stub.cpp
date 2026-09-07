@@ -18,22 +18,12 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#pragma once
-
-#include <span>
-#include <string_view>
+#include "docs/docs_data.h"
 
 namespace sdb::docs {
 
-struct Doc {
-  std::string_view path;
-  std::string_view title;
-  std::string_view breadcrumb;
-  std::string_view content;
-};
+std::span<const Doc> GetDocs() { return {}; }
 
-std::span<const Doc> GetDocs();
-
-std::string_view GetDocsHash();
+std::string_view GetDocsHash() { return "disabled"; }
 
 }  // namespace sdb::docs

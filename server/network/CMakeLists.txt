@@ -7,6 +7,7 @@ target_sources(
         listen_spec.cpp
         proxy_protocol.cpp
         http/auth.cpp
+        http/common.cpp
         http/router.cpp
         http/h1_codec.cpp
         http/response_writer.cpp

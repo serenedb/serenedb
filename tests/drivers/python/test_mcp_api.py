@@ -1,6 +1,6 @@
 """MCP (Model Context Protocol) endpoint tests.
 
-Exercises the stateless Streamable HTTP transport at /mcp: JSON-RPC
+Exercises the stateless Streamable HTTP transport at /_mcp: JSON-RPC
 initialize, tools/list and the documentation tools over the embedded docs.
 Skipped wholesale when no HTTP endpoint is configured (SDB_DRV_HTTP_PORT).
 """
@@ -46,7 +46,7 @@ def post(conn, payload, raw: str | None = None):
     body = raw if raw is not None else json.dumps(payload)
     conn.request(
         "POST",
-        "/mcp",
+        "/_mcp",
         body=body,
         headers={
             "Content-Type": "application/json",
@@ -77,7 +77,7 @@ def call_tool(conn, name, arguments):
 
 
 def test_get_is_method_not_allowed(conn):
-    conn.request("GET", "/mcp", headers={"Authorization": AUTH})
+    conn.request("GET", "/_mcp", headers={"Authorization": AUTH})
     response = conn.getresponse()
     body = json.loads(response.read())
     assert response.status == 405
@@ -167,6 +167,7 @@ def test_search_docs(conn):
     assert text.startswith("[1] ")
     assert "path: sql/indexes/inverted/" in text
     assert text.count("\npath: ") == 3
+    assert " - " in text.split("\n")[0]
 
 
 def test_search_docs_empty_query(conn):
@@ -179,26 +180,42 @@ def test_search_docs_no_results(conn):
     assert not is_error and text == "No results."
 
 
-def test_read_doc_page(conn):
+def test_read_doc_title_row_is_whole_page(conn):
     text, is_error = call_tool(
-        conn, "read_doc", {"path": "sql/functions/search/scoring.md"}
+        conn, "read_doc", {"path": "sql/functions/search/scoring.md#Relevance_Scoring"}
     )
     assert not is_error
-    assert text.startswith("# Relevance Scoring\npath: sql/functions/search/scoring.md\n")
-    assert "\n## Scorer Functions\n" in text
+    assert text.startswith(
+        "path: sql/functions/search/scoring.md#Relevance_Scoring\n\n# Relevance Scoring\n"
+    )
+    assert "\n## Scorer Functions\n" in text and "\n## Quick start\n" in text
     assert "import " not in text and "<SqlLogicTest" not in text
 
 
-def test_read_doc_section(conn):
+def test_read_doc_heading_row(conn):
     text, is_error = call_tool(
         conn,
         "read_doc",
-        {"path": "sql/functions/search/scoring.md", "section": "Scorer Functions"},
+        {"path": "sql/functions/search/scoring.md#Relevance_Scoring#Scorer_Functions"},
     )
     assert not is_error
-    assert text.startswith("Scorer Functions\npath: sql/functions/search/scoring.md\n")
+    assert text.startswith(
+        "path: sql/functions/search/scoring.md#Relevance_Scoring#Scorer_Functions\n"
+        "in: Relevance Scoring\n\n## Scorer Functions\n"
+    )
     assert "BM25" in text
-    assert "## Quick start" not in text
+    assert "Quick start" not in text
+
+
+def test_read_doc_whole_page_doc(conn):
+    text, is_error = call_tool(conn, "read_doc", {"path": "cookbook/search/autocomplete.md"})
+    assert not is_error
+    assert text.startswith("path: cookbook/search/autocomplete.md\n\n# Autocomplete\n")
+
+
+def test_read_doc_split_page_has_no_bare_row(conn):
+    text, is_error = call_tool(conn, "read_doc", {"path": "sql/functions/search/scoring.md"})
+    assert is_error and "sql/functions/search/scoring.md" in text
 
 
 def test_read_doc_unknown_path(conn):
@@ -206,11 +223,9 @@ def test_read_doc_unknown_path(conn):
     assert is_error and "nope/missing.md" in text
 
 
-def test_read_doc_unknown_section(conn):
+def test_read_doc_unknown_heading(conn):
     text, is_error = call_tool(
-        conn,
-        "read_doc",
-        {"path": "sql/functions/search/scoring.md", "section": "Nope"},
+        conn, "read_doc", {"path": "sql/functions/search/scoring.md#Relevance_Scoring#Nope"}
     )
     assert is_error and "Nope" in text
 
@@ -220,6 +235,18 @@ def test_list_docs(conn):
     assert not is_error
     lines = text.split("\n")
     assert all(line.startswith("sql/functions/search/") for line in lines)
-    assert "sql/functions/search/scoring.md - Relevance Scoring" in lines
+    assert "sql/functions/search/scoring.md#Relevance_Scoring - Relevance Scoring" in lines
+    assert not any("#Relevance_Scoring#" in line for line in lines)
     everything, _ = call_tool(conn, "list_docs", {})
     assert len(everything.split("\n")) > len(lines)
+
+
+def test_list_docs_sections(conn):
+    text, is_error = call_tool(
+        conn, "list_docs", {"prefix": "sql/functions/search/scoring.md"}
+    )
+    assert not is_error
+    lines = text.split("\n")
+    assert lines[0] == "sql/functions/search/scoring.md#Relevance_Scoring - Relevance Scoring"
+    assert "sql/functions/search/scoring.md#Relevance_Scoring#Scorer_Functions - Scorer Functions (Relevance Scoring)" in lines
+    assert len(lines) > 5

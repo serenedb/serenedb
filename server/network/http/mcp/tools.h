@@ -33,7 +33,6 @@ namespace sdb::network::http::mcp {
 struct ToolArgs {
   std::optional<std::string> query;
   std::optional<std::string> path;
-  std::optional<std::string> section;
   std::optional<std::string> prefix;
   std::optional<int64_t> limit;
 };

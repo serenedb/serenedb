@@ -35,6 +35,7 @@
 #include <yaclib/coro/task.hpp>
 #include <yaclib/lazy/make.hpp>
 
+#include "network/http/common.h"
 #include "network/http/handler.h"
 
 namespace sdb::network::http::test {
@@ -58,8 +59,8 @@ class EchoHandler final : public HttpHandler {
       length += buffer.size();
     }
     writer.WriteHead(
-      200, content_type.empty() ? "application/octet-stream" : content_type,
-      length);
+      HttpStatus::Ok,
+      content_type.empty() ? "application/octet-stream" : content_type, length);
     for (const auto buffer : request.body) {
       writer.Write({static_cast<const char*>(buffer.data()), buffer.size()});
     }
@@ -73,7 +74,7 @@ class PingHandler final : public HttpHandler {
  public:
   yaclib::Task<> Handle(RequestContext&, const HttpRequest&,
                         http::HttpResponseWriter& writer) override {
-    writer.Text(200, "pong");
+    writer.Text(HttpStatus::Ok, "pong");
     return yaclib::MakeTask();
   }
 };
@@ -85,7 +86,7 @@ class BytesHandler final : public HttpHandler {
   yaclib::Task<> Handle(RequestContext&, const HttpRequest& request,
                         http::HttpResponseWriter& writer) override {
     size_t remaining = ParseUInt(request.Query("n"));
-    writer.WriteHeadChunked(200, "application/octet-stream");
+    writer.WriteHeadChunked(HttpStatus::Ok, "application/octet-stream");
     constexpr size_t kPiece = 64 * 1024;
     std::string piece;
     size_t offset = 0;
@@ -115,7 +116,7 @@ class FuzzHandler final : public HttpHandler {
     for (const auto buffer : request.body) {
       length += buffer.size();
     }
-    writer.Json(200, absl::StrCat(R"({"received":)", length, "}"));
+    writer.Json(HttpStatus::Ok, absl::StrCat(R"({"received":)", length, "}"));
     return yaclib::MakeTask();
   }
 };
@@ -130,7 +131,8 @@ class StatusHandler final : public HttpHandler {
       raw = 200;
     }
     const int code = static_cast<int>(std::clamp<size_t>(raw, 100, 599));
-    writer.Json(code, absl::StrCat(R"({"code":)", code, "}"));
+    writer.Json(static_cast<HttpStatus>(code),
+                absl::StrCat(R"({"code":)", code, "}"));
     return yaclib::MakeTask();
   }
 };

@@ -20,45 +20,108 @@
 
 #include "network/http/mcp/tools.h"
 
+#include <absl/algorithm/container.h>
+#include <absl/strings/ascii.h>
 #include <absl/strings/str_cat.h>
 
 #include <algorithm>
+#include <array>
 #include <cstddef>
 #include <duckdb/common/types/value.hpp>
 #include <duckdb/main/materialized_query_result.hpp>
 #include <string>
 #include <string_view>
+#include <utility>
+#include <yaclib/lazy/make.hpp>
 
-#include "network/http/es/common.h"
+#include "network/http/common.h"
 
 namespace sdb::network::http::mcp {
 namespace {
 
 constexpr int64_t kDefaultLimit = 5;
 constexpr int64_t kMaxLimit = 10;
+// Length of the preview printed under each search hit; long enough to judge
+// relevance, short enough that ten hits stay under one screen.
 constexpr size_t kSnippetChars = 400;
 
-constexpr std::string_view kToolsList =
-  R"json({"tools":[{"name":"search_docs","description":"Search the SereneDB documentation. Returns numbered sections [n] with the section title, the page title, the page path and a snippet. Follow up with read_doc for the full text of a page or section.","inputSchema":{"type":"object","properties":{"query":{"type":"string","description":"Keyword query, 2-6 words naming a concrete feature or concept (no pronouns)"},"limit":{"type":"integer","minimum":1,"maximum":10,"description":"Max results (default 5)"}},"required":["query"]}},{"name":"read_doc","description":"Read a documentation page as Markdown, or a single section of it. Pass the path exactly as returned by search_docs or list_docs; add section (a section title from search_docs) to get only that section with its code examples.","inputSchema":{"type":"object","properties":{"path":{"type":"string","description":"Page path exactly as returned by search_docs or list_docs"},"section":{"type":"string","description":"Section title exactly as returned by search_docs; omit for the whole page"}},"required":["path"]}},{"name":"list_docs","description":"List documentation pages (path and title), optionally only those under a path prefix such as sql/statements/.","inputSchema":{"type":"object","properties":{"prefix":{"type":"string","description":"Path prefix to filter by; omit for all pages"}}}}]})json";
+constexpr std::string_view kToolsList = R"json(
+{
+  "tools": [
+    {
+      "name": "search_docs",
+      "description": "Search the SereneDB documentation. Returns numbered hits with title, location, a path for read_doc and a snippet. Cite the paths you used and offer read_doc for the full text.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string",
+            "description": "Keyword query, 2-6 words naming a concrete feature or concept (no pronouns)"
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 10,
+            "description": "Max results (default 5)"
+          }
+        },
+        "required": [
+          "query"
+        ]
+      }
+    },
+    {
+      "name": "read_doc",
+      "description": "Return a documentation page or section as complete Markdown. Pass a path exactly as returned by search_docs or list_docs.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string",
+            "description": "Path exactly as returned by search_docs or list_docs"
+          }
+        },
+        "required": [
+          "path"
+        ]
+      }
+    },
+    {
+      "name": "list_docs",
+      "description": "List documentation as 'path - title'. A directory prefix lists pages; a page or section path lists the sections under it. Omit the prefix for all pages.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "prefix": {
+            "type": "string",
+            "description": "Path prefix to filter by; omit for all pages"
+          }
+        }
+      }
+    }
+  ]
+}
+)json";
 
 std::string Cell(duckdb::MaterializedQueryResult& result, size_t column,
                  size_t row) {
-  const auto value = result.GetValue(column, row);
-  return value.IsNull() ? std::string{} : duckdb::StringValue::Get(value);
+  return duckdb::StringValue::Get(result.GetValue(column, row));
 }
 
+// One-paragraph preview of a hit: whitespace runs collapsed to a single space,
+// cut at a word boundary once kSnippetChars is reached.
 std::string Snippet(std::string_view text) {
   std::string out;
-  out.reserve(std::min(text.size(), kSnippetChars) + 3);
-  bool space = false;
+  out.reserve(kSnippetChars + 3);
+  bool pending_space = false;
   for (const char c : text) {
-    if (c == ' ' || c == '\n' || c == '\t' || c == '\r') {
-      space = !out.empty();
+    if (absl::ascii_isspace(c)) {
+      pending_space = !out.empty();
       continue;
     }
-    if (space) {
+    if (pending_space) {
       out.push_back(' ');
-      space = false;
+      pending_space = false;
     }
     out.push_back(c);
     if (out.size() >= kSnippetChars) {
@@ -75,23 +138,43 @@ std::string Snippet(std::string_view text) {
   return out;
 }
 
+// "page.md" is a whole-page doc; "page.md#Title#Heading" a heading row, one
+// unescaped '#' per level, with the page title acting as the H1.
+size_t Depth(std::string_view path) {
+  size_t depth = 0;
+  for (size_t i = 0; i < path.size(); ++i) {
+    if (path[i] == '#' && (i == 0 || path[i - 1] != '\\')) {
+      ++depth;
+    }
+  }
+  return depth;
+}
+
+std::string HeadingLine(std::string_view path, std::string_view title) {
+  return absl::StrCat(std::string(std::max<size_t>(Depth(path), 1), '#'), " ",
+                      title);
+}
+
 ToolResult Error(std::string text) { return {std::move(text), true}; }
 
 yaclib::Task<ToolResult> SearchDocs(RequestContext& ctx, const ToolArgs& args) {
-  if (!args.query ||
-      args.query->find_first_not_of(" \t\r\n") == std::string::npos) {
+  enum Column : size_t {
+    kPath,
+    kTitle,
+    kBreadcrumb,
+    kContentText,
+  };
+  if (!args.query || absl::StripAsciiWhitespace(*args.query).empty()) {
     co_return Error("search_docs: query must not be empty");
   }
   const auto limit =
     std::clamp(args.limit.value_or(kDefaultLimit), int64_t{1}, kMaxLimit);
-  const auto query = es::SqlLiteral(*args.query);
+  const auto query = SqlLiteral(*args.query);
   auto result = co_await ctx.RunQuery(
-    absl::StrCat("SELECT s.path, s.title, d.title, s.content_text FROM "
-                 "sdb_docs.sections_fts s JOIN sdb_docs.docs d ON d.path = "
-                 "s.path WHERE s.title @@ ",
-                 query, " OR s.content_text @@ ", query,
-                 " ORDER BY BM25(s.tableoid) DESC, s.path, s.title LIMIT ",
-                 limit),
+    absl::StrCat("SELECT path, title, breadcrumb, content_text FROM "
+                 "sdb_docs.docs_fts d WHERE title @@ ",
+                 query, " OR breadcrumb @@ ", query, " OR content_text @@ ",
+                 query, " ORDER BY BM25(d.tableoid) DESC, path LIMIT ", limit),
     /*writes=*/false);
   if (result->HasError()) {
     co_return Error(absl::StrCat("search_docs failed: ", result->GetError()));
@@ -101,107 +184,117 @@ yaclib::Task<ToolResult> SearchDocs(RequestContext& ctx, const ToolArgs& args) {
   }
   std::string text;
   for (size_t row = 0; row < result->RowCount(); ++row) {
-    const auto path = Cell(*result, 0, row);
-    const auto title = Cell(*result, 1, row);
-    const auto page = Cell(*result, 2, row);
-    absl::StrAppend(&text, row == 0 ? "" : "\n\n", "[", row + 1, "] ", title);
-    if (page != title) {
-      absl::StrAppend(&text, " - ", page);
+    const auto breadcrumb = Cell(*result, kBreadcrumb, row);
+    absl::StrAppend(&text, row == 0 ? "" : "\n\n", "[", row + 1, "] ",
+                    Cell(*result, kTitle, row));
+    if (!breadcrumb.empty()) {
+      absl::StrAppend(&text, " - ", breadcrumb);
     }
-    absl::StrAppend(&text, "\npath: ", path, "\n",
-                    Snippet(Cell(*result, 3, row)));
+    absl::StrAppend(&text, "\npath: ", Cell(*result, kPath, row), "\n",
+                    Snippet(Cell(*result, kContentText, row)));
   }
   co_return ToolResult{std::move(text)};
 }
 
 yaclib::Task<ToolResult> ReadDoc(RequestContext& ctx, const ToolArgs& args) {
+  enum Column : size_t {
+    kTitle,
+    kBreadcrumb,
+    kContent,
+  };
   if (!args.path || args.path->empty()) {
     co_return Error("read_doc: path is required");
   }
-  const auto path = es::SqlLiteral(*args.path);
-  if (args.section && !args.section->empty()) {
-    auto result = co_await ctx.RunQuery(
-      absl::StrCat("SELECT breadcrumb, content FROM sdb_docs.sections WHERE "
-                   "path = ",
-                   path, " AND title = ", es::SqlLiteral(*args.section),
-                   " ORDER BY id"),
-      /*writes=*/false);
-    if (result->HasError()) {
-      co_return Error(absl::StrCat("read_doc failed: ", result->GetError()));
-    }
-    if (result->RowCount() == 0) {
-      co_return Error(absl::StrCat("No section titled \"", *args.section,
-                                   "\" in ", *args.path,
-                                   ". Use search_docs to find section titles "
-                                   "or omit section to read the whole page."));
-    }
-    std::string text = absl::StrCat(*args.section, "\npath: ", *args.path);
-    for (size_t row = 0; row < result->RowCount(); ++row) {
-      if (result->RowCount() > 1) {
-        absl::StrAppend(&text, "\n\n[", Cell(*result, 0, row), "]");
-      }
-      absl::StrAppend(&text, "\n\n", Cell(*result, 1, row));
-    }
-    co_return ToolResult{std::move(text)};
-  }
   auto result = co_await ctx.RunQuery(
-    absl::StrCat("SELECT title, content FROM sdb_docs.docs WHERE path = ",
-                 path),
+    absl::StrCat("SELECT title, breadcrumb, content FROM sdb_docs.docs "
+                 "WHERE path = ",
+                 SqlLiteral(*args.path)),
     /*writes=*/false);
   if (result->HasError()) {
     co_return Error(absl::StrCat("read_doc failed: ", result->GetError()));
   }
   if (result->RowCount() == 0) {
-    co_return Error(absl::StrCat("No documentation page at path: ", *args.path,
+    co_return Error(absl::StrCat("No documentation at path: ", *args.path,
                                  ". Use list_docs or search_docs to find "
                                  "valid paths."));
   }
-  co_return ToolResult{absl::StrCat("# ", Cell(*result, 0, 0), "\npath: ",
-                                    *args.path, "\n\n", Cell(*result, 1, 0))};
+  std::string text = absl::StrCat("path: ", *args.path, "\n");
+  if (const auto breadcrumb = Cell(*result, kBreadcrumb, 0);
+      !breadcrumb.empty()) {
+    absl::StrAppend(&text, "in: ", breadcrumb, "\n");
+  }
+  absl::StrAppend(&text, "\n",
+                  HeadingLine(*args.path, Cell(*result, kTitle, 0)), "\n");
+  if (const auto content = Cell(*result, kContent, 0); !content.empty()) {
+    absl::StrAppend(&text, "\n", content);
+  }
+  co_return ToolResult{std::move(text)};
 }
 
+// A directory prefix lists one row per page: whole-page docs and the title
+// rows of split docs. A prefix naming a page or heading lists the rows under
+// it.
 yaclib::Task<ToolResult> ListDocs(RequestContext& ctx, const ToolArgs& args) {
+  // Order does matter
+  enum Column : size_t {
+    kPath,
+    kTitle,
+    kBreadcrumb,
+  };
   const auto prefix = args.prefix.value_or("");
+  const bool within_page =
+    prefix.ends_with(".md") || prefix.ends_with(".mdx") || Depth(prefix) > 0;
   auto result = co_await ctx.RunQuery(
-    absl::StrCat("SELECT path, title FROM sdb_docs.docs WHERE "
-                 "starts_with(path, ",
-                 es::SqlLiteral(prefix), ") ORDER BY path"),
+    absl::StrCat("SELECT path, title, breadcrumb FROM sdb_docs.docs WHERE ",
+                 within_page
+                   ? ""
+                   : "length(path) - length(replace(path, '#', '')) <= 1 AND ",
+                 "starts_with(path, ", SqlLiteral(prefix), ") ORDER BY path"),
     /*writes=*/false);
   if (result->HasError()) {
     co_return Error(absl::StrCat("list_docs failed: ", result->GetError()));
   }
   if (result->RowCount() == 0) {
     co_return ToolResult{
-      absl::StrCat("No documentation pages under prefix: ", prefix)};
+      absl::StrCat("No documentation under prefix: ", prefix)};
   }
   std::string text;
   for (size_t row = 0; row < result->RowCount(); ++row) {
-    absl::StrAppend(&text, row == 0 ? "" : "\n", Cell(*result, 0, row), " - ",
-                    Cell(*result, 1, row));
+    absl::StrAppend(&text, row == 0 ? "" : "\n", Cell(*result, kPath, row),
+                    " - ", Cell(*result, kTitle, row));
+    if (const auto breadcrumb = Cell(*result, kBreadcrumb, row);
+        !breadcrumb.empty()) {
+      absl::StrAppend(&text, " (", breadcrumb, ")");
+    }
   }
   co_return ToolResult{std::move(text)};
 }
+
+using ToolFn = yaclib::Task<ToolResult> (*)(RequestContext&, const ToolArgs&);
+
+constexpr std::array<std::pair<std::string_view, ToolFn>, 3> kTools{{
+  {"search_docs", &SearchDocs},
+  {"read_doc", &ReadDoc},
+  {"list_docs", &ListDocs},
+}};
 
 }  // namespace
 
 std::string_view ToolsListJson() { return kToolsList; }
 
 bool KnownTool(std::string_view name) {
-  return name == "search_docs" || name == "read_doc" || name == "list_docs";
+  return absl::c_any_of(kTools,
+                        [&](const auto& tool) { return tool.first == name; });
 }
 
 yaclib::Task<ToolResult> CallTool(RequestContext& ctx, std::string_view name,
                                   const ToolArgs& args) {
-  if (name == "search_docs") {
-    co_return co_await SearchDocs(ctx, args);
+  const auto it = absl::c_find_if(
+    kTools, [&](const auto& tool) { return tool.first == name; });
+  if (it == kTools.end()) {
+    return yaclib::MakeTask(Error(absl::StrCat("Unknown tool: ", name)));
   }
-  if (name == "read_doc") {
-    co_return co_await ReadDoc(ctx, args);
-  }
-  if (name == "list_docs") {
-    co_return co_await ListDocs(ctx, args);
-  }
-  co_return Error(absl::StrCat("Unknown tool: ", name));
+  return it->second(ctx, args);
 }
 
 }  // namespace sdb::network::http::mcp

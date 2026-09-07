@@ -23,10 +23,10 @@
 #include <absl/strings/ascii.h>
 #include <absl/strings/match.h>
 
+#include "network/http/common.h"
+
 namespace sdb::network::http {
 namespace {
-
-constexpr int kUnauthorized = 401;
 
 // "Basic dXNlcjpwYXNz" -> scheme + payload; scheme match is case-insensitive
 // (RFC 9110 11.1), payload keeps its exact bytes.
@@ -50,11 +50,12 @@ AuthResult HttpAuthenticator::Authenticate(
   if (!Enabled()) {
     // Unconfigured server: trust a local (loopback/unix) client, but never
     // blanket-trust a remote HTTP peer.
-    return is_loopback ? AuthResult{} : AuthResult{.status = kUnauthorized};
+    return is_loopback ? AuthResult{}
+                       : AuthResult{.status = HttpStatus::Unauthorized};
   }
   std::string_view header = authorization_header;
   if (header.empty()) {
-    return {.status = kUnauthorized};
+    return {.status = HttpStatus::Unauthorized};
   }
   if (TakeScheme(header, "Basic")) {
     return Basic(header, is_loopback);
@@ -65,19 +66,19 @@ AuthResult HttpAuthenticator::Authenticate(
   if (TakeScheme(header, "Bearer")) {
     return Bearer(header);
   }
-  return {.status = kUnauthorized};
+  return {.status = HttpStatus::Unauthorized};
 }
 
 AuthResult HttpAuthenticator::Basic(std::string_view payload,
                                     bool is_loopback) const {
   const auto decoded = network::Base64Decode(payload);
   if (!decoded) {
-    return {.status = kUnauthorized};
+    return {.status = HttpStatus::Unauthorized};
   }
   const std::string_view pair = *decoded;
   const auto colon = pair.find(':');
   if (colon == std::string_view::npos) {
-    return {.status = kUnauthorized};
+    return {.status = HttpStatus::Unauthorized};
   }
   const std::string_view user = pair.substr(0, colon);
   const std::string_view password = pair.substr(colon + 1);
@@ -89,9 +90,9 @@ AuthResult HttpAuthenticator::Basic(std::string_view payload,
     // connection. A remote peer to a passwordless role is refused, so the
     // loopback convenience never extends to the network.
     if (is_loopback) {
-      return {.status = 0, .context = {.user = std::string{user}}};
+      return {.context = {.user = std::string{user}}};
     }
-    return {.status = kUnauthorized};
+    return {.status = HttpStatus::Unauthorized};
   }
   if (credential->cleartext) {
     const auto& expected = *credential->cleartext;
@@ -100,47 +101,47 @@ AuthResult HttpAuthenticator::Basic(std::string_view payload,
           {reinterpret_cast<const uint8_t*>(password.data()), password.size()},
           {reinterpret_cast<const uint8_t*>(expected.data()),
            expected.size()})) {
-      return {.status = 0, .context = {.user = std::string{user}}};
+      return {.context = {.user = std::string{user}}};
     }
-    return {.status = kUnauthorized};
+    return {.status = HttpStatus::Unauthorized};
   }
   if (credential->scram &&
       network::VerifyCleartextAgainstScram(*credential->scram, password)) {
-    return {.status = 0, .context = {.user = std::string{user}}};
+    return {.context = {.user = std::string{user}}};
   }
-  return {.status = kUnauthorized};
+  return {.status = HttpStatus::Unauthorized};
 }
 
 AuthResult HttpAuthenticator::ApiKey(std::string_view payload) const {
   if (_api_keys == nullptr) {
-    return {.status = kUnauthorized};
+    return {.status = HttpStatus::Unauthorized};
   }
   const auto decoded = network::Base64Decode(payload);
   if (!decoded) {
-    return {.status = kUnauthorized};
+    return {.status = HttpStatus::Unauthorized};
   }
   const std::string_view pair = *decoded;
   const auto colon = pair.find(':');
   if (colon == std::string_view::npos) {
-    return {.status = kUnauthorized};
+    return {.status = HttpStatus::Unauthorized};
   }
   auto context =
     _api_keys->Validate(pair.substr(0, colon), pair.substr(colon + 1));
   if (!context) {
-    return {.status = kUnauthorized};
+    return {.status = HttpStatus::Unauthorized};
   }
-  return {.status = 0, .context = std::move(*context)};
+  return {.context = std::move(*context)};
 }
 
 AuthResult HttpAuthenticator::Bearer(std::string_view payload) const {
   if (_bearer == nullptr) {
-    return {.status = kUnauthorized};
+    return {.status = HttpStatus::Unauthorized};
   }
   auto context = _bearer->Validate(payload);
   if (!context) {
-    return {.status = kUnauthorized};
+    return {.status = HttpStatus::Unauthorized};
   }
-  return {.status = 0, .context = std::move(*context)};
+  return {.context = std::move(*context)};
 }
 
 namespace {

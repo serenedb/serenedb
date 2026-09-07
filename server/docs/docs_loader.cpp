@@ -54,12 +54,10 @@ namespace {
 
 constexpr std::string_view kSchema = "sdb_docs";
 constexpr std::string_view kTable = "sdb_docs.docs";
-constexpr std::string_view kSections = "sdb_docs.sections";
 constexpr std::string_view kMeta = "sdb_docs.meta";
 constexpr std::string_view kIndex = "docs_fts";
-constexpr std::string_view kSectionsIndex = "sections_fts";
 constexpr std::string_view kDictionary = "sdb_docs.english";
-constexpr int kLayout = 5;
+constexpr int kLayout = 11;
 constexpr size_t kInsertBatch = 32;
 constexpr std::string_view kStopWords =
   "\"a\",\"an\",\"also\",\"are\",\"be\",\"been\",\"but\",\"can\","
@@ -67,25 +65,6 @@ constexpr std::string_view kStopWords =
   "\"of\",\"should\",\"so\",\"such\",\"than\",\"that\",\"the\","
   "\"their\",\"there\",\"these\",\"they\",\"this\",\"to\",\"was\","
   "\"were\",\"which\",\"will\",\"would\"";
-
-std::string SectionsInsert() {
-  return absl::StrCat(
-    "INSERT INTO ", kSections, " WITH rows AS (",
-    "SELECT d.path, 0 AS level, '' AS breadcrumb, d.title, d.content, "
-    "0 AS ord FROM ",
-    kTable, " d WHERE d.split = 'page' ",
-    "UNION ALL SELECT d.path, 0, '', d.title, "
-    "regexp_replace(d.content, '(?s)(^|\\n)#{1,6} .*$', ''), 0 FROM ",
-    kTable, " d WHERE d.split = 'headings' ",
-    "UNION ALL SELECT d.path, s.level, s.section_path, s.title, s.content, "
-    "s.start_line FROM ",
-    kTable,
-    " d, UNNEST(md_extract_sections(d.content, 1, 6, 'minimal')) AS u(s) "
-    "WHERE d.split = 'headings') "
-    "SELECT row_number() OVER (ORDER BY path, ord), path, level, breadcrumb, "
-    "title, content, md_to_text(content) FROM rows "
-    "WHERE trim(md_to_text(content), E' \\n\\t\\r') <> ''");
-}
 
 class Loader {
  public:
@@ -128,7 +107,6 @@ class Loader {
 
   bool Rebuild() {
     for (const auto& sql : {
-           absl::StrCat("DROP TABLE IF EXISTS ", kSections),
            absl::StrCat("DROP TABLE IF EXISTS ", kTable),
            absl::StrCat("DROP TABLE IF EXISTS ", kMeta),
            absl::StrCat("DROP TEXT SEARCH DICTIONARY IF EXISTS ", kDictionary),
@@ -138,11 +116,13 @@ class Loader {
                         "frequency = true, position = true, stopwords = '",
                         kStopWords, "')"),
            absl::StrCat("CREATE TABLE ", kTable,
-                        " (path TEXT PRIMARY KEY, title TEXT, split TEXT, "
-                        "content TEXT, content_text TEXT) "
+                        " (path TEXT PRIMARY KEY, title TEXT NOT NULL, "
+                        "breadcrumb TEXT NOT NULL, "
+                        "content TEXT NOT NULL, content_text TEXT NOT NULL) "
                         "WITH (storage = 'search', compaction_interval = 0)"),
            absl::StrCat("CREATE INDEX ", kIndex, " ON ", kTable,
-                        " USING inverted (content_text ", kDictionary, ")"),
+                        " USING inverted (title ", kDictionary, ", breadcrumb ",
+                        kDictionary, ", content_text ", kDictionary, ")"),
          }) {
       if (!Run(sql)) {
         return false;
@@ -153,22 +133,11 @@ class Loader {
     }
     for (const auto& sql : {
            absl::StrCat("VACUUM (REFRESH_TABLE) ", kTable),
-           absl::StrCat("CREATE TABLE ", kSections,
-                        " (id BIGINT PRIMARY KEY, path TEXT, level INTEGER, "
-                        "breadcrumb TEXT, title TEXT, "
-                        "content TEXT, content_text TEXT) "
-                        "WITH (storage = 'search', compaction_interval = 0)"),
-           absl::StrCat("CREATE INDEX ", kSectionsIndex, " ON ", kSections,
-                        " USING inverted (title ", kDictionary,
-                        ", content_text ", kDictionary, ")"),
-           SectionsInsert(),
-           absl::StrCat("VACUUM (REFRESH_TABLE) ", kSections),
            absl::StrCat("CREATE TABLE ", kMeta, " (hash TEXT, layout INTEGER)"),
            absl::StrCat("INSERT INTO ", kMeta, " VALUES ('", GetDocsHash(),
                         "', ", kLayout, ")"),
            absl::StrCat("GRANT USAGE ON SCHEMA ", kSchema, " TO PUBLIC"),
            absl::StrCat("GRANT SELECT ON ", kTable, " TO PUBLIC"),
-           absl::StrCat("GRANT SELECT ON ", kSections, " TO PUBLIC"),
            absl::StrCat("GRANT SELECT ON ", kMeta, " TO PUBLIC"),
          }) {
       if (!Run(sql)) {
@@ -190,22 +159,26 @@ class Loader {
 
  private:
   bool Insert() {
+    constexpr size_t kColumns = 4;
     const auto docs = GetDocs();
     for (size_t begin = 0; begin < docs.size(); begin += kInsertBatch) {
       const auto batch =
         docs.subspan(begin, std::min(kInsertBatch, docs.size() - begin));
       std::string sql = absl::StrCat("INSERT INTO ", kTable, " VALUES ");
       duckdb::vector<duckdb::Value> values;
-      values.reserve(batch.size() * 4);
+      values.reserve(batch.size() * kColumns);
       for (size_t i = 0; i < batch.size(); ++i) {
-        const auto content = 4 * i + 4;
-        absl::StrAppend(&sql, i == 0 ? "" : ", ", "($", 4 * i + 1, ", $",
-                        4 * i + 2, ", $", 4 * i + 3, ", $", content,
-                        ", md_to_text($", content, "))");
-        values.emplace_back(std::string{batch[i].path});
-        values.emplace_back(std::string{batch[i].title});
-        values.emplace_back(std::string{batch[i].split});
-        values.emplace_back(std::string{batch[i].content});
+        const auto first = kColumns * i + 1;
+        absl::StrAppend(&sql, i == 0 ? "(" : ", (");
+        for (size_t column = 0; column < kColumns; ++column) {
+          absl::StrAppend(&sql, column == 0 ? "$" : ", $", first + column);
+        }
+        absl::StrAppend(&sql, ", md_to_text($", first + kColumns - 1, "))");
+        const auto& doc = batch[i];
+        values.emplace_back(std::string{doc.path});
+        values.emplace_back(std::string{doc.title});
+        values.emplace_back(std::string{doc.breadcrumb});
+        values.emplace_back(std::string{doc.content});
       }
       auto prepared = _conn->Prepare(sql);
       if (prepared->HasError()) {
@@ -229,6 +202,11 @@ class Loader {
 }  // namespace
 
 void LoadEmbeddedDocs() {
+  if (GetDocs().empty()) {
+    SDB_INFO(STARTUP,
+             "embedded docs disabled (built with SDB_EMBEDDED_DOCS=OFF)");
+    return;
+  }
   const auto begin = std::chrono::steady_clock::now();
   try {
     const auto* database =
@@ -244,14 +222,14 @@ void LoadEmbeddedDocs() {
     }
     if (loader.UpToDate()) {
       SDB_INFO(STARTUP, "embedded docs are up to date (", GetDocs().size(),
-               " pages)");
+               " rows)");
       return;
     }
     if (!loader.Rebuild()) {
       return;
     }
-    SDB_INFO(STARTUP, "embedded docs loaded: ", GetDocs().size(),
-             " pages into ", kTable, " in ",
+    SDB_INFO(STARTUP, "embedded docs loaded: ", GetDocs().size(), " rows into ",
+             kTable, " in ",
              absl::FormatDuration(
                absl::FromChrono(std::chrono::steady_clock::now() - begin)));
   } catch (const std::exception& e) {

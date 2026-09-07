@@ -1,29 +1,61 @@
 query
-SELECT count(*) > 100 FROM sdb_docs.docs;
+SELECT count(*) > 100, count(*) = count(DISTINCT split_part(path, '#', 1)) FROM sdb_docs.docs WHERE length(path) - length(replace(path, '#', '')) <= 1;
+----
+?column?	?column?
+t	t
+
+query
+SELECT count(*) > 1000 FROM sdb_docs.docs WHERE position('#' IN path) > 0;
 ----
 ?column?
 t
 
 query
-SELECT title FROM sdb_docs.docs WHERE path = 'sql/functions/search/scoring.md';
+SELECT title, breadcrumb, content LIKE '%## Quick start%', content LIKE '%## Scorer Functions%' FROM sdb_docs.docs WHERE path = 'sql/functions/search/scoring.md#Relevance_Scoring';
 ----
-title
-Relevance Scoring
+title	breadcrumb	?column?	?column?
+Relevance Scoring	(empty)	t	t
 
 query
-SELECT count(*) FROM sdb_docs.docs WHERE title IS NULL OR title = '' OR content IS NULL OR length(content) = 0 OR content_text IS NULL OR length(content_text) = 0;
+SELECT title, breadcrumb, content LIKE '%Quick start%' FROM sdb_docs.docs WHERE path = 'sql/functions/search/scoring.md#Relevance_Scoring#Scorer_Functions';
+----
+title	breadcrumb	?column?
+Scorer Functions	Relevance Scoring	f
+
+query
+SELECT path, breadcrumb FROM sdb_docs.docs WHERE starts_with(path, 'sql/statements/copy/index.md#') AND title = 'Syntax' ORDER BY path;
+----
+path	breadcrumb
+sql/statements/copy/index.md#COPY#COPY_..._FROM#Syntax	COPY / COPY ... FROM
+sql/statements/copy/index.md#COPY#COPY_..._TO#Syntax	COPY / COPY ... TO
+sql/statements/copy/index.md#COPY#COPY_FROM_DATABASE_..._TO#Syntax	COPY / COPY FROM DATABASE ... TO
+
+query
+SELECT content LIKE '%### Syntax%' AND content LIKE '%### `COPY ... TO` Options%' AND content NOT LIKE '%COPY FROM DATABASE%' FROM sdb_docs.docs WHERE path = 'sql/statements/copy/index.md#COPY#COPY_..._TO';
+----
+?column?
+t
+
+query
+SELECT count(*) FROM sdb_docs.docs WHERE starts_with(path, 'cookbook/search/autocomplete.md');
+----
+count
+1
+
+query
+SELECT count(*) FROM sdb_docs.docs WHERE path = 'sql/functions/search/scoring.md';
 ----
 count
 0
 
 query
-SELECT count(*) FROM sdb_docs.docs WHERE path NOT LIKE '%.md' AND path NOT LIKE '%.mdx';
+SELECT count(*) FROM sdb_docs.docs WHERE title IS NULL OR title = '' OR content IS NULL OR content_text IS NULL;
 ----
 count
 0
 
 query
-SELECT count(*) FROM sdb_docs.docs WHERE content LIKE '---%' OR content LIKE '%import SqlLogicTest%' OR content LIKE '%<SqlLogicTest%' OR content LIKE '%<DocCallout%' OR content LIKE '%{#%' OR content LIKE '%<!--%';
+SELECT count(*) FROM sdb_docs.docs WHERE content LIKE '---%' OR content LIKE '%import SqlLogicTest%' OR content LIKE '%<SqlLogicTest%' OR content LIKE '%<DocCallout%' OR content LIKE '%{#%' OR content LIKE '%<!--%' OR title LIKE '%`%';
 ----
 count
 0
@@ -32,89 +64,28 @@ query
 SELECT length(hash), layout FROM sdb_docs.meta;
 ----
 length	layout
-64	5
+64	11
 
 query
-SELECT bool_or(path = 'sql/indexes/inverted/index.md') FROM sdb_docs.docs_fts WHERE content_text @@ 'inverted';
+SELECT bool_or(path = 'sql/statements/copy/index.md#COPY#COPY_FROM_DATABASE_..._TO#Syntax') FROM sdb_docs.docs_fts WHERE breadcrumb @@ 'copy database';
 ----
 bool_or
 t
 
 query
-SELECT count(*) FROM (
-  SELECT path, BM25(docs_fts.tableoid) AS score
-  FROM sdb_docs.docs_fts
-  WHERE content_text @@ 'inverted index'
+SELECT bool_or(starts_with(path, 'sql/indexes/inverted/index.md#')) FROM (
+  SELECT path, BM25(d.tableoid) AS score
+  FROM sdb_docs.docs_fts d
+  WHERE title @@ 'inverted index' OR breadcrumb @@ 'inverted index' OR content_text @@ 'inverted index'
   ORDER BY score DESC, path
   LIMIT 5
 );
 ----
-count
-5
-
-query
-SELECT count(*) FROM sdb_docs.docs WHERE split NOT IN ('headings', 'page');
-----
-count
-0
-
-query
-SELECT split FROM sdb_docs.docs WHERE path IN ('sql/functions/text.md', 'cookbook/search/autocomplete.md') ORDER BY path;
-----
-split
-page
-headings
-
-query
-SELECT count(*) > 1000, count(DISTINCT path) = (SELECT count(*) FROM sdb_docs.docs) FROM sdb_docs.sections;
-----
-?column?	?column?
-t	t
-
-query
-SELECT count(*), max(level), bool_and(s.content = d.content) FROM sdb_docs.sections s JOIN sdb_docs.docs d USING (path) WHERE path = 'cookbook/search/autocomplete.md';
-----
-count	max	bool_and
-1	0	t
-
-query
-SELECT count(*) > 5, max(level) >= 2 FROM sdb_docs.sections WHERE path = 'sql/functions/text.md';
-----
-?column?	?column?
-t	t
-
-query
-SELECT level, title FROM sdb_docs.sections WHERE path = 'sql/data_types/time.md';
-----
-level	title
-0	Time
-
-query
-SELECT level, breadcrumb, title FROM sdb_docs.sections WHERE path = 'sql/functions/search/scoring.md' AND title = 'Scorer Functions';
-----
-level	breadcrumb	title
-2	scorer-functions	Scorer Functions
-
-query
-SELECT count(*) FROM sdb_docs.sections WHERE title LIKE '%{#%' OR content LIKE '%<SqlLogicTest%' OR content LIKE '%<DocCallout%' OR content_text LIKE '%import SqlLogicTest%';
-----
-count
-0
-
-query
-SELECT bool_or(path = 'sql/indexes/inverted/index.md' AND title = 'Creating an inverted index') FROM (
-  SELECT path, title, BM25(sections_fts.tableoid) AS score
-  FROM sdb_docs.sections_fts
-  WHERE title @@ 'inverted index' OR content_text @@ 'inverted index'
-  ORDER BY score DESC, path, title
-  LIMIT 5
-);
-----
 bool_or
 t
 
 query
-SELECT count(*) > 0 FROM sdb_docs.sections_fts WHERE content_text @@ ts_phrase('inverted index');
+SELECT count(*) > 0 FROM sdb_docs.docs_fts WHERE content_text @@ ts_phrase('inverted index');
 ----
 ?column?
 t

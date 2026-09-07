@@ -24,6 +24,7 @@
 #include <string_view>
 
 #include "basics/message_sequence_view.h"
+#include "network/http/common.h"
 #include "network/http/response_writer.h"
 
 namespace duckdb {
@@ -38,19 +39,19 @@ namespace sdb::network::http::es {
 inline constexpr std::string_view kProductHeader =
   "X-Elastic-Product: Elasticsearch\r\n";
 
-inline void WriteJson(HttpResponseWriter& writer, int status,
+inline void WriteJson(HttpResponseWriter& writer, HttpStatus status,
                       std::string_view body) {
-  writer.Fixed(status, "application/json", body, kProductHeader);
+  writer.Fixed(status, kJsonContentType, body, kProductHeader);
 }
 
-inline void WriteText(HttpResponseWriter& writer, int status,
+inline void WriteText(HttpResponseWriter& writer, HttpStatus status,
                       std::string_view body) {
   writer.Fixed(status, "text/plain", body, kProductHeader);
 }
 
 // ES error envelope: {"error":{"type":...,"reason":...},"status":N}.
-void WriteError(HttpResponseWriter& writer, int status, std::string_view type,
-                std::string_view reason);
+void WriteError(HttpResponseWriter& writer, HttpStatus status,
+                std::string_view type, std::string_view reason);
 
 void WriteIndexNotFound(HttpResponseWriter& writer, std::string_view index);
 
@@ -61,19 +62,5 @@ void WriteIndexNotFound(HttpResponseWriter& writer, std::string_view index);
 // index_not_found reason when the handler passes its index name.
 void WriteSqlError(HttpResponseWriter& writer, const duckdb::ErrorData& error,
                    std::string_view index = {});
-
-// Single-quoted SQL string literal with '' doubling; how the thin handlers
-// pass request strings into es_*() calls (table function arguments cannot be
-// prepared-statement parameters).
-std::string SqlLiteral(std::string_view text);
-
-// Double-quoted SQL identifier with "" doubling: injection-safe regardless
-// of what the URL path contained (name validity itself is the functions'
-// job).
-std::string SqlIdentifier(std::string_view name);
-
-// Flattens a request-body view (chunks pinned in the recv channel) into one
-// string for parsers that need contiguous bytes (simdjson padded input).
-std::string FlattenBody(const message::SequenceView& body);
 
 }  // namespace sdb::network::http::es

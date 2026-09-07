@@ -29,12 +29,12 @@
 #include <optional>
 #include <string>
 #include <string_view>
-#include <yaclib/async/make.hpp>
+#include <utility>
 #include <yaclib/coro/task.hpp>
 #include <yaclib/lazy/make.hpp>
 
 #include "basics/build.h"
-#include "network/http/es/common.h"
+#include "network/http/common.h"
 #include "network/http/handler.h"
 #include "network/http/mcp/tools.h"
 
@@ -45,10 +45,14 @@ constexpr std::string_view kLatestProtocol = "2025-06-18";
 constexpr std::string_view kKnownProtocols[] = {"2025-06-18", "2025-03-26",
                                                 "2024-11-05"};
 
-constexpr int kParseError = -32700;
-constexpr int kInvalidRequest = -32600;
-constexpr int kMethodNotFound = -32601;
-constexpr int kInvalidParams = -32602;
+// JSON-RPC 2.0 error codes
+enum class RpcCode : int {
+  ParseError = -32700,
+  InvalidRequest = -32600,
+  MethodNotFound = -32601,
+  InvalidParams = -32602,
+  ServerError = -32000,
+};
 
 constexpr std::string_view kInstructions =
   "SereneDB documentation server. search_docs finds documentation sections "
@@ -62,12 +66,27 @@ struct RpcRequest {
   std::string params;
 };
 
-std::string RpcError(std::string_view id, int code, std::string_view message) {
+struct RpcFailure {
+  RpcCode code;
+  std::string message;
+};
+
+struct ToolCall {
+  std::string name;
+  ToolArgs args;
+};
+
+using JsonValue = simdjson::simdjson_result<simdjson::ondemand::value>;
+
+// --- JSON-RPC envelopes ------------------------------------------------------
+
+std::string RpcError(std::string_view id, RpcCode code,
+                     std::string_view message) {
   simdjson::builder::string_builder sb;
   sb.append_raw(R"({"jsonrpc":"2.0","id":)");
   sb.append_raw(id);
   sb.append_raw(R"(,"error":{"code":)");
-  sb.append(static_cast<int64_t>(code));
+  sb.append(static_cast<int64_t>(std::to_underlying(code)));
   sb.append_raw(R"(,"message":)");
   sb.escape_and_append_with_quotes(message);
   sb.append_raw("}}");
@@ -91,65 +110,66 @@ std::string ToolResultJson(const ToolResult& result) {
   return std::string{sb.view().value()};
 }
 
+// --- Request parsing ---------------------------------------------------------
+
 std::string Trimmed(std::string_view raw) {
   return std::string{absl::StripAsciiWhitespace(raw)};
 }
 
-std::optional<RpcRequest> ParseRequest(std::string_view body, int& code,
-                                       std::string& message) {
+// The id is kept as raw JSON so it is echoed back exactly as sent.
+std::optional<RpcFailure> SetRequestField(RpcRequest& request,
+                                          std::string_view key,
+                                          std::string_view raw) {
+  if (key == "id") {
+    request.id = Trimmed(raw);
+    request.has_id = true;
+  } else if (key == "method") {
+    const auto trimmed = Trimmed(raw);
+    if (trimmed.size() < 2 || trimmed.front() != '"') {
+      return RpcFailure{RpcCode::InvalidRequest,
+                        "Invalid Request: method must be a string"};
+    }
+    request.method = trimmed.substr(1, trimmed.size() - 2);
+  } else if (key == "params") {
+    request.params = Trimmed(raw);
+  }
+  return std::nullopt;
+}
+
+std::optional<RpcFailure> ParseRequest(std::string_view body,
+                                       RpcRequest& request) {
+  const RpcFailure parse_error{RpcCode::ParseError, "Parse error"};
   simdjson::padded_string padded{body};
   simdjson::ondemand::parser parser;
   simdjson::ondemand::document doc;
-  if (parser.iterate(padded).get(doc) != simdjson::SUCCESS) {
-    code = kParseError;
-    message = "Parse error";
-    return std::nullopt;
-  }
   simdjson::ondemand::object object;
+  if (parser.iterate(padded).get(doc) != simdjson::SUCCESS) {
+    return parse_error;
+  }
   if (const auto error = doc.get_object().get(object);
       error != simdjson::SUCCESS) {
     if (error == simdjson::INCORRECT_TYPE) {
-      code = kInvalidRequest;
-      message = "Invalid Request: expected a single JSON-RPC object";
-    } else {
-      code = kParseError;
-      message = "Parse error";
+      return RpcFailure{RpcCode::InvalidRequest,
+                        "Invalid Request: expected a single JSON-RPC object"};
     }
-    return std::nullopt;
+    return parse_error;
   }
-  RpcRequest request;
   for (auto field : object) {
     std::string_view key;
-    if (field.unescaped_key().get(key) != simdjson::SUCCESS) {
-      code = kParseError;
-      message = "Parse error";
-      return std::nullopt;
-    }
-    auto value = field.value();
     std::string_view raw;
-    if (value.raw_json().get(raw) != simdjson::SUCCESS) {
-      code = kParseError;
-      message = "Parse error";
-      return std::nullopt;
+    if (field.unescaped_key().get(key) != simdjson::SUCCESS ||
+        field.value().raw_json().get(raw) != simdjson::SUCCESS) {
+      return parse_error;
     }
-    if (key == "id") {
-      request.id = Trimmed(raw);
-      request.has_id = true;
-    } else if (key == "method") {
-      const auto trimmed = Trimmed(raw);
-      if (trimmed.size() < 2 || trimmed.front() != '"') {
-        code = kInvalidRequest;
-        message = "Invalid Request: method must be a string";
-        return std::nullopt;
-      }
-      request.method = trimmed.substr(1, trimmed.size() - 2);
-    } else if (key == "params") {
-      request.params = Trimmed(raw);
+    if (auto failure = SetRequestField(request, key, raw)) {
+      return failure;
     }
   }
-  return request;
+  return std::nullopt;
 }
 
+// Visits the fields of the params object; false when params is not an object
+// or the visitor stopped.
 template<typename Fn>
 bool ForEachParam(std::string_view params, Fn&& fn) {
   if (params.empty()) {
@@ -175,24 +195,29 @@ bool ForEachParam(std::string_view params, Fn&& fn) {
   return true;
 }
 
-std::string Initialize(const RpcRequest& request) {
+// --- initialize --------------------------------------------------------------
+
+std::string NegotiatedProtocol(std::string_view params) {
   std::string protocol{kLatestProtocol};
-  ForEachParam(request.params, [&](std::string_view key, auto value) {
-    if (key == "protocolVersion") {
-      std::string_view requested;
-      if (value.get_string().get(requested) == simdjson::SUCCESS) {
-        for (const auto known : kKnownProtocols) {
-          if (known == requested) {
-            protocol = std::string{requested};
-          }
+  ForEachParam(params, [&](std::string_view key, JsonValue value) {
+    std::string_view requested;
+    if (key == "protocolVersion" &&
+        value.get_string().get(requested) == simdjson::SUCCESS) {
+      for (const auto known : kKnownProtocols) {
+        if (known == requested) {
+          protocol = std::string{requested};
         }
       }
     }
     return true;
   });
+  return protocol;
+}
+
+std::string Initialize(const RpcRequest& request) {
   simdjson::builder::string_builder sb;
   sb.append_raw(R"({"protocolVersion":)");
-  sb.escape_and_append_with_quotes(protocol);
+  sb.escape_and_append_with_quotes(NegotiatedProtocol(request.params));
   sb.append_raw(
     R"(,"capabilities":{"tools":{"listChanged":false}},"serverInfo":{"name":"serenedb","version":)");
   sb.escape_and_append_with_quotes(std::string_view{SERENEDB_VERSION});
@@ -202,116 +227,134 @@ std::string Initialize(const RpcRequest& request) {
   return RpcResult(request.id, std::string_view{sb.view().value()});
 }
 
-bool ParseToolCall(std::string_view params, std::string& name, ToolArgs& args,
-                   std::string& message) {
-  bool ok = true;
-  const bool parsed = ForEachParam(params, [&](std::string_view key,
-                                               auto value) {
-    if (key == "name") {
-      std::string_view text;
-      if (value.get_string().get(text) != simdjson::SUCCESS) {
-        message = "Invalid params: name must be a string";
-        return ok = false;
-      }
-      name = std::string{text};
-      return true;
+// --- tools/call --------------------------------------------------------------
+
+// One tool argument; names no tool declares are ignored.
+std::optional<std::string> ParseArgument(std::string_view name,
+                                         JsonValue argument, ToolArgs& args) {
+  if (name == "limit") {
+    int64_t limit = 0;
+    double as_double = 0;
+    if (argument.get_int64().get(limit) == simdjson::SUCCESS) {
+      args.limit = limit;
+      return std::nullopt;
     }
-    if (key != "arguments") {
-      return true;
+    if (argument.get_double().get(as_double) == simdjson::SUCCESS) {
+      args.limit = static_cast<int64_t>(as_double);
+      return std::nullopt;
     }
-    simdjson::ondemand::object arguments;
-    if (value.get_object().get(arguments) != simdjson::SUCCESS) {
-      message = "Invalid params: arguments must be an object";
-      return ok = false;
-    }
-    for (auto field : arguments) {
-      std::string_view arg;
-      if (field.unescaped_key().get(arg) != simdjson::SUCCESS) {
-        message = "Invalid params: malformed arguments";
-        return ok = false;
-      }
-      auto argument = field.value();
-      if (arg == "limit") {
-        int64_t limit = 0;
-        double as_double = 0;
-        if (argument.get_int64().get(limit) == simdjson::SUCCESS) {
-          args.limit = limit;
-        } else if (argument.get_double().get(as_double) == simdjson::SUCCESS) {
-          args.limit = static_cast<int64_t>(as_double);
-        } else {
-          message = "Invalid params: limit must be an integer";
-          return ok = false;
-        }
-        continue;
-      }
-      std::optional<std::string>* target = nullptr;
-      if (arg == "query") {
-        target = &args.query;
-      } else if (arg == "path") {
-        target = &args.path;
-      } else if (arg == "section") {
-        target = &args.section;
-      } else if (arg == "prefix") {
-        target = &args.prefix;
-      }
-      if (target == nullptr) {
-        continue;
-      }
-      std::string_view text;
-      if (argument.get_string().get(text) != simdjson::SUCCESS) {
-        message = absl::StrCat("Invalid params: ", arg, " must be a string");
-        return ok = false;
-      }
-      *target = std::string{text};
-    }
-    return true;
-  });
-  if (!parsed && ok) {
-    message = "Invalid params: expected an object";
-    return false;
+    return "Invalid params: limit must be an integer";
   }
-  return ok;
+  std::optional<std::string>* target = nullptr;
+  if (name == "query") {
+    target = &args.query;
+  } else if (name == "path") {
+    target = &args.path;
+  } else if (name == "prefix") {
+    target = &args.prefix;
+  }
+  if (target == nullptr) {
+    return std::nullopt;
+  }
+  std::string_view text;
+  if (argument.get_string().get(text) != simdjson::SUCCESS) {
+    return absl::StrCat("Invalid params: ", name, " must be a string");
+  }
+  *target = std::string{text};
+  return std::nullopt;
+}
+
+std::optional<std::string> ParseArguments(simdjson::ondemand::object arguments,
+                                          ToolArgs& args) {
+  for (auto field : arguments) {
+    std::string_view name;
+    if (field.unescaped_key().get(name) != simdjson::SUCCESS) {
+      return "Invalid params: malformed arguments";
+    }
+    if (auto error = ParseArgument(name, field.value(), args)) {
+      return error;
+    }
+  }
+  return std::nullopt;
+}
+
+std::optional<std::string> ParseToolCall(std::string_view params,
+                                         ToolCall& call) {
+  std::optional<std::string> error;
+  const bool is_object =
+    ForEachParam(params, [&](std::string_view key, JsonValue value) {
+      if (key == "name") {
+        std::string_view text;
+        if (value.get_string().get(text) != simdjson::SUCCESS) {
+          error = "Invalid params: name must be a string";
+          return false;
+        }
+        call.name = std::string{text};
+      } else if (key == "arguments") {
+        simdjson::ondemand::object arguments;
+        if (value.get_object().get(arguments) != simdjson::SUCCESS) {
+          error = "Invalid params: arguments must be an object";
+          return false;
+        }
+        error = ParseArguments(arguments, call.args);
+        return !error;
+      }
+      return true;
+    });
+  if (!error && !is_object) {
+    error = "Invalid params: expected an object";
+  }
+  return error;
+}
+
+yaclib::Task<std::string> ToolsCall(RequestContext& ctx,
+                                    const RpcRequest& rpc) {
+  ToolCall call;
+  if (const auto error = ParseToolCall(rpc.params, call)) {
+    co_return RpcError(rpc.id, RpcCode::InvalidParams, *error);
+  }
+  if (!KnownTool(call.name)) {
+    co_return RpcError(rpc.id, RpcCode::InvalidParams,
+                       absl::StrCat("Unknown tool: ", call.name));
+  }
+  const auto result = co_await CallTool(ctx, call.name, call.args);
+  co_return RpcResult(rpc.id, ToolResultJson(result));
+}
+
+// --- Dispatch ----------------------------------------------------------------
+
+yaclib::Task<std::string> Dispatch(RequestContext& ctx, const RpcRequest& rpc) {
+  if (rpc.method == "initialize") {
+    co_return Initialize(rpc);
+  }
+  if (rpc.method == "ping") {
+    co_return RpcResult(rpc.id, "{}");
+  }
+  if (rpc.method == "tools/list") {
+    co_return RpcResult(rpc.id, ToolsListJson());
+  }
+  if (rpc.method == "tools/call") {
+    co_return co_await ToolsCall(ctx, rpc);
+  }
+  co_return RpcError(rpc.id, RpcCode::MethodNotFound,
+                     absl::StrCat("Method not found: ", rpc.method));
 }
 
 class McpHandler final : public HttpHandler {
  public:
   yaclib::Task<> Handle(RequestContext& ctx, const HttpRequest& request,
-                        HttpResponseWriter& writer) override {
-    int code = 0;
-    std::string message;
-    auto rpc = ParseRequest(es::FlattenBody(request.body), code, message);
-    if (!rpc) {
-      es::WriteJson(writer, 400, RpcError("null", code, message));
+                        HttpResponseWriter& writer) final {
+    RpcRequest rpc;
+    if (const auto failure = ParseRequest(FlattenBody(request.body), rpc)) {
+      writer.Json(HttpStatus::BadRequest,
+                  RpcError("null", failure->code, failure->message));
       co_return {};
     }
-    if (!rpc->has_id) {
-      writer.Fixed(202, "application/json", "");
+    if (!rpc.has_id) {
+      writer.Fixed(HttpStatus::Accepted, kJsonContentType, "");
       co_return {};
     }
-    if (rpc->method == "initialize") {
-      es::WriteJson(writer, 200, Initialize(*rpc));
-    } else if (rpc->method == "ping") {
-      es::WriteJson(writer, 200, RpcResult(rpc->id, "{}"));
-    } else if (rpc->method == "tools/list") {
-      es::WriteJson(writer, 200, RpcResult(rpc->id, ToolsListJson()));
-    } else if (rpc->method == "tools/call") {
-      std::string name;
-      ToolArgs args;
-      if (!ParseToolCall(rpc->params, name, args, message)) {
-        es::WriteJson(writer, 200, RpcError(rpc->id, kInvalidParams, message));
-      } else if (!KnownTool(name)) {
-        es::WriteJson(writer, 200,
-                      RpcError(rpc->id, kInvalidParams,
-                               absl::StrCat("Unknown tool: ", name)));
-      } else {
-        const auto result = co_await CallTool(ctx, name, args);
-        es::WriteJson(writer, 200, RpcResult(rpc->id, ToolResultJson(result)));
-      }
-    } else {
-      es::WriteJson(writer, 200,
-                    RpcError(rpc->id, kMethodNotFound,
-                             absl::StrCat("Method not found: ", rpc->method)));
-    }
+    writer.Json(HttpStatus::Ok, co_await Dispatch(ctx, rpc));
     co_return {};
   }
 };
@@ -319,9 +362,9 @@ class McpHandler final : public HttpHandler {
 class MethodNotAllowedHandler final : public HttpHandler {
  public:
   yaclib::Task<> Handle(RequestContext&, const HttpRequest&,
-                        HttpResponseWriter& writer) override {
-    writer.Fixed(405, "application/json",
-                 RpcError("null", -32000, "Method not allowed"),
+                        HttpResponseWriter& writer) final {
+    writer.Fixed(HttpStatus::MethodNotAllowed, kJsonContentType,
+                 RpcError("null", RpcCode::ServerError, "Method not allowed"),
                  "Allow: POST\r\n");
     return yaclib::MakeTask();
   }
@@ -329,11 +372,13 @@ class MethodNotAllowedHandler final : public HttpHandler {
 
 }  // namespace
 
+// TODO: serve the conventional /mcp too; needs a way to keep an index named
+// 'mcp' reachable under ES's GET /:index at the same time.
 void Register(HttpRouter& router) {
-  router.Add(HttpMethod::Post, "/mcp", std::make_unique<McpHandler>());
+  router.Add(HttpMethod::Post, "/_mcp", std::make_unique<McpHandler>());
   for (const auto method : {HttpMethod::Get, HttpMethod::Delete,
                             HttpMethod::Put, HttpMethod::Head}) {
-    router.Add(method, "/mcp", std::make_unique<MethodNotAllowedHandler>());
+    router.Add(method, "/_mcp", std::make_unique<MethodNotAllowedHandler>());
   }
 }
 

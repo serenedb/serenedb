@@ -18,22 +18,44 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#pragma once
+#include "network/http/common.h"
 
-#include <span>
-#include <string_view>
+namespace sdb::network::http {
 
-namespace sdb::docs {
+std::string SqlLiteral(std::string_view text) {
+  std::string out;
+  out.reserve(text.size() + 2);
+  out.push_back('\'');
+  for (const char c : text) {
+    if (c == '\'') {
+      out.push_back('\'');
+    }
+    out.push_back(c);
+  }
+  out.push_back('\'');
+  return out;
+}
 
-struct Doc {
-  std::string_view path;
-  std::string_view title;
-  std::string_view breadcrumb;
-  std::string_view content;
-};
+std::string SqlIdentifier(std::string_view name) {
+  std::string out;
+  out.reserve(name.size() + 2);
+  out.push_back('"');
+  for (const char c : name) {
+    if (c == '"') {
+      out.push_back('"');
+    }
+    out.push_back(c);
+  }
+  out.push_back('"');
+  return out;
+}
 
-std::span<const Doc> GetDocs();
+std::string FlattenBody(const message::SequenceView& body) {
+  std::string out;
+  for (const auto buffer : body) {
+    out.append(reinterpret_cast<const char*>(buffer.data()), buffer.size());
+  }
+  return out;
+}
 
-std::string_view GetDocsHash();
-
-}  // namespace sdb::docs
+}  // namespace sdb::network::http

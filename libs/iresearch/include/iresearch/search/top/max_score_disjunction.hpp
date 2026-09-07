@@ -65,6 +65,10 @@ class MaxScoreDisjunction : public Root {
     _num_candidates = 0;
     _num_outer_windows = 0;
     _min_window_size = 1;
+    _window_candidates = 0;
+    _window_probes = 0;
+    _dense_left = 0;
+    _dense_streak = 0;
 
   outer:
     while (window_min < max) {
@@ -98,6 +102,7 @@ class MaxScoreDisjunction : public Root {
 
       window_min = std::min(Top(), window_max);
       ++_num_outer_windows;
+      UpdateDensity();
     }
     _admit.Flush(collector);
   }
@@ -166,6 +171,25 @@ class MaxScoreDisjunction : public Root {
     }
   }
 
+  static constexpr uint32_t kDenseSample = doc_limits::kBlockSize;
+  static constexpr uint32_t kDenseStreakMax = 64;
+
+  void UpdateDensity() noexcept {
+    if (_dense_left != 0) {
+      --_dense_left;
+    } else if (_window_candidates >= kDenseSample &&
+               uint64_t{_window_probes} * 4 >=
+                 uint64_t{3} * _window_candidates * _window_non_essential) {
+      _dense_streak =
+        std::min(std::max(2 * _dense_streak, 1U), kDenseStreakMax);
+      _dense_left = _dense_streak;
+    } else {
+      _dense_streak = 0;
+    }
+    _window_candidates = 0;
+    _window_probes = 0;
+  }
+
   bool Split(score_t score_threshold) {
     absl::c_sort(_sorted, [](const Entry* lhs, const Entry* rhs) noexcept {
       return static_cast<double>(lhs->max_score) / lhs->cost <
@@ -195,6 +219,10 @@ class MaxScoreDisjunction : public Root {
     if (_first_essential == size) {
       return false;
     }
+    if (_dense_left != 0) {
+      _first_essential = 0;
+    }
+    _window_non_essential = static_cast<uint32_t>(_first_essential);
 
     _num_essential = size - _first_essential;
     _has_non_essential = _first_essential != 0;
@@ -324,6 +352,7 @@ class MaxScoreDisjunction : public Root {
   template<typename Docs, typename Scores>
   void ProcessNonEssential(Docs& cand_docs, Scores& cand_scores, doc_id_t max) {
     _num_candidates += static_cast<uint32_t>(cand_docs.size());
+    _window_candidates += static_cast<uint32_t>(cand_docs.size());
     const score_t threshold = _collector->ScoreThreshold();
 
     for (size_t i = _first_essential; i-- != 0;) {
@@ -336,6 +365,7 @@ class MaxScoreDisjunction : public Root {
           return;
         }
       }
+      _window_probes += static_cast<uint32_t>(cand_docs.size());
       entry.leaf.ScoreCandidates(cand_docs, cand_scores, i >= _first_required,
                                  max);
     }
@@ -355,6 +385,11 @@ class MaxScoreDisjunction : public Root {
   bool _has_non_essential = false;
   uint32_t _num_candidates = 0;
   uint32_t _num_outer_windows = 0;
+  uint32_t _window_candidates = 0;
+  uint32_t _window_probes = 0;
+  uint32_t _window_non_essential = 0;
+  uint32_t _dense_left = 0;
+  uint32_t _dense_streak = 0;
   doc_id_t _min_window_size = 1;
   score_t _next_threshold = std::numeric_limits<score_t>::lowest();
   [[no_unique_address]] Admit<Table> _admit;

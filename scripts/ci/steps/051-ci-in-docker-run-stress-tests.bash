@@ -11,14 +11,7 @@
 # /dev/shm is sized explicitly because every datadir lives there, and
 # SYS_PTRACE plus an unconfined seccomp profile keep /proc thread sampling and
 # core dumps available for wedge triage.
-# On a thread-sanitizer build, point TSAN at the stress-specific suppression file.
-# The repo's own tsan.txt silences exactly the catalog frames this suite exists to
-# exercise, so with it loaded the leg reports nothing.
 STRESS_TSAN_OPTIONS="${TSAN_OPTIONS:-}"
-if [[ -n "$STRESS_TSAN_OPTIONS" && "$STRESS_TSAN_OPTIONS" == *"suppressions="* ]]; then
-	STRESS_TSAN_OPTIONS="${STRESS_TSAN_OPTIONS//suppressions=*\/tsan.txt/suppressions=\/serenedb\/resources\/suppressions\/tsan-stress.txt}"
-	echo "[stress] TSAN_OPTIONS -> $STRESS_TSAN_OPTIONS"
-fi
 
 if ! docker run --rm \
 	--user "$(id -u):$(id -g)" \

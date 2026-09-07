@@ -20,8 +20,11 @@
 
 #pragma once
 
+#include "catalog/identifiers/object_id.h"
+
 namespace sdb::docs {
 
 void LoadEmbeddedDocs();
+void EnsureEmbeddedDocs(ObjectId database_id);
 
 }  // namespace sdb::docs

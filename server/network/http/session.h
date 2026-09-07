@@ -51,6 +51,7 @@
 #include "catalog/entry/duckdb_object_entry.h"
 #include "catalog/read/duckdb_catalog_sets.h"
 #include "connector/duckdb_client_state.h"
+#include "docs/docs_loader.h"
 #include "network/cancel_registry.h"
 #include "network/connection.h"
 #include "network/cpu_resumer.h"
@@ -173,6 +174,7 @@ class HttpSession final
         THROW_SQL_ERROR_FROM_DATA(std::move(login.error));
       }
       const auto& role = login.role;
+      docs::EnsureEmbeddedDocs(database_id);
 
       _conn = DuckDBEngine::Instance().CreateConnection();
       _connection_ctx = std::make_shared<ConnectionContext>(

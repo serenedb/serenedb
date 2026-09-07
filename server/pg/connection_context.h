@@ -160,17 +160,17 @@ class ConnectionContext final : public query::Transaction {
     NoticeNode* next;
   };
 
+  bool _storage_connection = false;
+  bool _system_writer = false;
+  const int32_t _backend_pid;
   const std::string _user;
   const std::string _database_name;
   const ObjectId _database_id;
-  const int32_t _backend_pid;
   network::CancelRegistry* const _cancel_registry;
   message::Buffer* const _send_buffer;
   const ObjectId _login_role_id;
   ObjectId _session_role_id;
   ObjectId _effective_role_id;
-  bool _storage_connection = false;
-  bool _system_writer = false;
   pg::CopyInBridge* _copy_in_bridge = nullptr;
   std::string* _response_sink = nullptr;
   std::atomic<NoticeNode*> _notices{nullptr};

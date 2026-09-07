@@ -21,6 +21,7 @@
 #include "docs/docs_loader.h"
 
 #include <absl/strings/str_cat.h>
+#include <absl/synchronization/mutex.h>
 #include <absl/time/time.h>
 
 #include <algorithm>
@@ -36,8 +37,10 @@
 #include <memory>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
+#include "basics/containers/flat_hash_set.h"
 #include "basics/duckdb_engine.h"
 #include "basics/log.h"
 #include "basics/static_strings.h"
@@ -67,21 +70,19 @@ constexpr std::string_view kStopWords =
 
 class Loader {
  public:
-  explicit Loader(ObjectId database_id)
+  Loader(std::string_view database, ObjectId database_id)
     : _conn{DuckDBEngine::Instance().CreateConnection()},
       _ctx{std::make_shared<ConnectionContext>(
-        *_conn->context, StaticStrings::kDefaultUser, id::kRootUser,
-        StaticStrings::kDefaultDatabase, database_id, nullptr, 0, nullptr)} {
+        *_conn->context, StaticStrings::kDefaultUser, id::kRootUser, database,
+        database_id, nullptr, 0, nullptr)} {
     _ctx->MarkSystemWriter();
     connector::SereneDBClientState::Register(*_conn->context, _ctx);
     _conn->context->session_user = std::string{StaticStrings::kDefaultUser};
     std::vector<duckdb::CatalogSearchEntry> paths{
-      duckdb::CatalogSearchEntry{
-        duckdb::Identifier{std::string{StaticStrings::kDefaultDatabase}},
-        duckdb::Identifier{"$user"}},
-      duckdb::CatalogSearchEntry{
-        duckdb::Identifier{std::string{StaticStrings::kDefaultDatabase}},
-        duckdb::Identifier{"public"}},
+      duckdb::CatalogSearchEntry{duckdb::Identifier{std::string{database}},
+                                 duckdb::Identifier{"$user"}},
+      duckdb::CatalogSearchEntry{duckdb::Identifier{std::string{database}},
+                                 duckdb::Identifier{"public"}},
     };
     _conn->context->client_data->catalog_search_path->SetDefaultPaths(
       std::vector{paths});
@@ -200,6 +201,68 @@ class Loader {
   std::shared_ptr<ConnectionContext> _ctx;
 };
 
+bool LoadInto(std::string_view database, ObjectId database_id) {
+  const auto begin = std::chrono::steady_clock::now();
+  try {
+    Loader loader{database, database_id};
+    if (!loader.Run(absl::StrCat("CREATE SCHEMA IF NOT EXISTS ",
+                                 StaticStrings::kDocsSchema))) {
+      return false;
+    }
+    if (loader.UpToDate()) {
+      SDB_INFO(STARTUP, "embedded docs are up to date in database \"", database,
+               "\" (", GetDocs().size(), " rows)");
+      return true;
+    }
+    if (!loader.Rebuild()) {
+      return false;
+    }
+    SDB_INFO(STARTUP, "embedded docs loaded: ", GetDocs().size(),
+             " rows into database \"", database, "\" in ",
+             absl::FormatDuration(
+               absl::FromChrono(std::chrono::steady_clock::now() - begin)));
+    return true;
+  } catch (const std::exception& e) {
+    SDB_WARN(GENERAL, "embedded docs: load into database \"", database,
+             "\" failed: ", e.what());
+    return false;
+  }
+}
+
+struct Registry {
+  absl::Mutex mu;
+  containers::FlatHashSet<ObjectId> done;
+  containers::FlatHashSet<ObjectId> loading;
+};
+
+Registry& GetRegistry() {
+  static Registry registry;
+  return registry;
+}
+
+struct NotLoading {
+  Registry* registry;
+  ObjectId id;
+  bool Check() const { return !registry->loading.contains(id); }
+};
+
+void EnsureIn(std::string_view database, ObjectId database_id) {
+  auto& registry = GetRegistry();
+  {
+    absl::MutexLock lock{&registry.mu};
+    const NotLoading wait{&registry, database_id};
+    registry.mu.Await(absl::Condition(&wait, &NotLoading::Check));
+    if (registry.done.contains(database_id)) {
+      return;
+    }
+    registry.loading.insert(database_id);
+  }
+  LoadInto(database, database_id);
+  absl::MutexLock lock{&registry.mu};
+  registry.loading.erase(database_id);
+  registry.done.insert(database_id);
+}
+
 }  // namespace
 
 void LoadEmbeddedDocs() {
@@ -208,35 +271,32 @@ void LoadEmbeddedDocs() {
              "embedded docs disabled (built with SDB_EMBEDDED_DOCS=OFF)");
     return;
   }
-  const auto begin = std::chrono::steady_clock::now();
-  try {
-    const auto* database =
-      catalog::FindDatabase(nullptr, StaticStrings::kDefaultDatabase);
-    if (database == nullptr) {
-      SDB_WARN(GENERAL, "embedded docs: default database not found");
-      return;
-    }
-    Loader loader{catalog::IdOf(*database)};
-    if (!loader.Run(absl::StrCat("CREATE SCHEMA IF NOT EXISTS ",
-                                 StaticStrings::kDocsSchema))) {
-      // TODO warning?
-      return;
-    }
-    if (loader.UpToDate()) {
-      SDB_INFO(STARTUP, "embedded docs are up to date (", GetDocs().size(),
-               " rows)");
-      return;
-    }
-    if (!loader.Rebuild()) {
-      return;
-    }
-    SDB_INFO(STARTUP, "embedded docs loaded: ", GetDocs().size(), " rows into ",
-             kTable, " in ",
-             absl::FormatDuration(
-               absl::FromChrono(std::chrono::steady_clock::now() - begin)));
-  } catch (const std::exception& e) {
-    SDB_WARN(GENERAL, "embedded docs: load failed: ", e.what());
+  std::vector<std::pair<std::string, ObjectId>> databases;
+  catalog::VisitDatabases(nullptr, [&](catalog::SereneDBDatabaseEntry& entry) {
+    databases.emplace_back(entry.name.GetIdentifierName(),
+                           catalog::IdOf(entry));
+  });
+  for (const auto& [name, id] : databases) {
+    EnsureIn(name, id);
   }
+}
+
+void EnsureEmbeddedDocs(ObjectId database_id) {
+  if (GetDocs().empty()) {
+    return;
+  }
+  {
+    auto& registry = GetRegistry();
+    absl::MutexLock lock{&registry.mu};
+    if (registry.done.contains(database_id)) {
+      return;
+    }
+  }
+  const auto* database = catalog::FindDatabase(nullptr, database_id);
+  if (database == nullptr) {
+    return;
+  }
+  EnsureIn(database->name.GetIdentifierName(), database_id);
 }
 
 }  // namespace sdb::docs

@@ -39,6 +39,7 @@
 #include "catalog/entry/duckdb_object_entry.h"
 #include "catalog/entry/duckdb_table_entry.h"
 #include "catalog/read/duckdb_catalog_sets.h"
+#include "docs/docs_loader.h"
 #include "network/pg/bind_decoder.h"
 #include "network/pg/copy_eod_scanner.h"
 #include "network/pg/hba.h"
@@ -406,6 +407,7 @@ bool PgWireSession<Kind>::SetupConnection() {
   }
   const auto role = login.role;
   const bool superuser = login.superuser;
+  docs::EnsureEmbeddedDocs(database_id);
 
   _conn = DuckDBEngine::Instance().CreateConnection();
   _txn_state.emplace(_conn->context->transaction);

@@ -208,3 +208,20 @@ SELECT count(*) > 1000, (SELECT count(*) FROM sdb_docs.meta) FROM sdb_docs.docs;
 ----
 ?column?	count
 t	1
+
+
+# Every database carries the docs: a database created at runtime gets them on
+# its first connection.
+statement ok
+CREATE DATABASE slt_docs_fresh;
+
+connection fresh database=slt_docs_fresh
+query
+SELECT count(*) > 1000, (SELECT count(*) FROM sdb_docs.meta) FROM sdb_docs.docs;
+----
+?column?	count
+t	1
+
+connection default
+statement ok
+DROP DATABASE slt_docs_fresh;

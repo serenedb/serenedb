@@ -442,6 +442,7 @@ ResultWithTime SearchTable::RefreshUnsafe(
     std::chrono::duration_cast<std::chrono::milliseconds>(
       std::chrono::steady_clock::now() - begin)
       .count();
+  _maintenance.RecordCommit(result, code, time_ms);
   return {std::move(result), time_ms};
 }
 
@@ -477,7 +478,18 @@ ResultWithTime SearchTable::CompactUnsafe(
     std::chrono::duration_cast<std::chrono::milliseconds>(
       std::chrono::steady_clock::now() - begin)
       .count();
+  _maintenance.RecordCompaction(result, empty_compaction, time_ms);
   return {std::move(result), time_ms};
+}
+
+StoreStats SearchTable::GetStats() const {
+  if (!_writer) {
+    return {};
+  }
+  auto stats = StoreStats::FromReader(_writer->GetSnapshot());
+  stats.numBufferedDocs = _writer->BufferedDocs();
+  _maintenance.Fill(stats);
+  return stats;
 }
 
 ResultWithTime SearchTable::CleanupUnsafe() {
@@ -493,6 +505,7 @@ ResultWithTime SearchTable::CleanupUnsafe() {
     std::chrono::duration_cast<std::chrono::milliseconds>(
       std::chrono::steady_clock::now() - begin)
       .count();
+  _maintenance.RecordCleanup(result, time_ms);
   return {std::move(result), time_ms};
 }
 

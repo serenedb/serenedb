@@ -33,6 +33,7 @@
 
 #include "basics/assert.h"
 #include "basics/containers/flat_hash_map.h"
+#include "basics/containers/node_hash_map.h"
 #include "pg/errcodes.h"
 #include "pg/option_help.h"
 #include "pg/sql_exception_macro.h"

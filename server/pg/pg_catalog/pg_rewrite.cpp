@@ -37,8 +37,7 @@ template<>
 MaterializedData SystemTableSnapshot<PgRewrite>::GetTableData() {
   std::vector<PgRewrite> values;
   VisitEntries<duckdb::ViewCatalogEntry>(
-    _config.GetClientContext(), GetDatabase(),
-    [&](const duckdb::ViewCatalogEntry& view) {
+    _context, GetDatabase(), [&](const duckdb::ViewCatalogEntry& view) {
       values.push_back(PgRewrite{
         Oid{view.oid},
         Name{"_RETURN"},

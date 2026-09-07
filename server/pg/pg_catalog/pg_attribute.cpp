@@ -245,7 +245,7 @@ template<>
 MaterializedData SystemTableSnapshot<PgAttribute>::GetTableData() {
   std::vector<PgAttribute> values;
 
-  auto& context = _config.GetClientContext();
+  auto& context = _context;
   VisitEntries<duckdb::TableCatalogEntry>(
     context, GetDatabase(), [&](const duckdb::TableCatalogEntry& table) {
       EmitColumnsForTable(table, context, values);

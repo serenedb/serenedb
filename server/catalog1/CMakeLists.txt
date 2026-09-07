@@ -6,6 +6,7 @@ add_library(
     cluster.cpp
     entry/inverted_index.cpp
     entry/search_table.cpp
+    entry/system_table.cpp
     entry/tokenizer.cpp
     scorer_options.cpp
     entry/role.cpp

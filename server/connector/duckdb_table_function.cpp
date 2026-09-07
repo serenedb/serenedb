@@ -54,6 +54,7 @@
 #include "catalog1/catalog.h"
 #include "catalog1/entry/inverted_index.h"
 #include "catalog1/entry/search_table.h"
+#include "catalog1/entry/system_table.h"
 #include "catalog1/scorer_options.h"
 #include "connector/duckdb_client_state.h"
 #include "connector/duckdb_search_full_scan.hpp"
@@ -66,6 +67,7 @@
 #include "pg/connection_context.h"
 #include "pg/errcodes.h"
 #include "pg/sql_exception_macro.h"
+#include "pg/virtual_table.h"
 #include "search/inverted_index_storage.h"
 #include "search/search_table.h"
 
@@ -1308,6 +1310,64 @@ duckdb::unique_ptr<duckdb::FunctionData> IResearchScanDeserialize(
     "iresearch_scan deserialization not implemented");
 }
 
+struct SystemTableBindData final : duckdb::FunctionData {
+  catalog::SystemTableEntry* entry = nullptr;
+
+  duckdb::unique_ptr<duckdb::FunctionData> Copy() const final {
+    auto copy = duckdb::make_uniq<SystemTableBindData>();
+    copy->entry = entry;
+    return copy;
+  }
+
+  bool Equals(const duckdb::FunctionData& other) const final {
+    return entry == other.Cast<SystemTableBindData>().entry;
+  }
+};
+
+struct SystemTableState final : duckdb::GlobalTableFunctionState {
+  pg::MaterializedData data;
+  duckdb::vector<duckdb::column_t> column_ids;
+  duckdb::idx_t offset = 0;
+};
+
+duckdb::BindInfo SystemTableGetBindInfo(
+  const duckdb::optional_ptr<duckdb::FunctionData> bind_data) {
+  return duckdb::BindInfo{*bind_data->Cast<SystemTableBindData>().entry};
+}
+
+duckdb::unique_ptr<duckdb::GlobalTableFunctionState> SystemTableInit(
+  duckdb::ClientContext& context, duckdb::TableFunctionInitInput& input) {
+  auto& entry = *input.bind_data->Cast<SystemTableBindData>().entry;
+  auto state = duckdb::make_uniq<SystemTableState>();
+  state->data = entry.Table().Materialize(entry.catalog, context);
+  state->column_ids = input.column_ids;
+  return state;
+}
+
+void SystemTableScan(duckdb::ClientContext&, duckdb::TableFunctionInput& input,
+                     duckdb::DataChunk& output) {
+  auto& state = input.global_state->Cast<SystemTableState>();
+  if (state.offset >= state.data.size) {
+    return;
+  }
+  const auto count = std::min<duckdb::idx_t>(state.data.size - state.offset,
+                                             STANDARD_VECTOR_SIZE);
+  const auto& table =
+    input.bind_data->Cast<SystemTableBindData>().entry->Table();
+  for (duckdb::idx_t column = 0; column < output.ColumnCount(); ++column) {
+    const auto column_id = state.column_ids[column];
+    if (column_id == kColumnIdentifierTableOid) {
+      output.data[column].Reference(duckdb::Value::BIGINT(table.Id()),
+                                    duckdb::count_t(count));
+    } else {
+      output.data[column].Slice(state.data.columns[column_id], state.offset,
+                                state.offset + count);
+    }
+  }
+  output.SetCardinality(count);
+  state.offset += count;
+}
+
 }  // namespace
 
 duckdb::TableFunction BindSearchTableScan(
@@ -1324,6 +1384,20 @@ duckdb::TableFunction BindSearchTableScan(
                           std::make_shared<search::InvertedIndexSnapshot>(
                             store->GetDirectoryReader(), nullptr));
   return CreateIResearchScanFunction();
+}
+
+duckdb::TableFunction BindSystemTableScan(
+  catalog::SystemTableEntry& entry,
+  duckdb::unique_ptr<duckdb::FunctionData>& bind_data) {
+  auto data = duckdb::make_uniq<SystemTableBindData>();
+  data->entry = &entry;
+  bind_data = std::move(data);
+
+  duckdb::TableFunction func{
+    "system_table_scan", {}, SystemTableScan, nullptr, SystemTableInit};
+  func.projection_pushdown = true;
+  func.get_bind_info = SystemTableGetBindInfo;
+  return func;
 }
 
 duckdb::TableFunction CreateIResearchScanFunction() {

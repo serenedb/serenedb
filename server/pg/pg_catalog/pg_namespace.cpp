@@ -51,6 +51,9 @@ void RetrieveObjects(duckdb::ClientContext& context, duckdb::Catalog& database,
     .nspowner = pg::kRootUser,
   });
   database.ScanSchemas(context, [&](duckdb::SchemaCatalogEntry& schema) {
+    if (schema.internal) {
+      return;
+    }
     values.push_back(PgNamespace{
       .oid = schema.oid,
       .nspname = schema.name.GetIdentifierName(),
@@ -65,7 +68,7 @@ void RetrieveObjects(duckdb::ClientContext& context, duckdb::Catalog& database,
 template<>
 MaterializedData SystemTableSnapshot<PgNamespace>::GetTableData() {
   std::vector<PgNamespace> values;
-  RetrieveObjects(_config.GetClientContext(), GetDatabase(), values);
+  RetrieveObjects(_context, GetDatabase(), values);
 
   auto result = CreateColumns<PgNamespace>(values.size());
   for (size_t row = 0; row < values.size(); ++row) {

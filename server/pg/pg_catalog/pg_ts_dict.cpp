@@ -38,7 +38,7 @@ MaterializedData SystemTableSnapshot<PgTsDict>::GetTableData() {
   std::vector<PgTsDict> values;
 
   VisitEntries<catalog::TokenizerCatalogEntry>(
-    _config.GetClientContext(), GetDatabase(),
+    _context, GetDatabase(),
     [&](const catalog::TokenizerCatalogEntry& tokenizer) {
       values.push_back({
         .oid = tokenizer.oid,

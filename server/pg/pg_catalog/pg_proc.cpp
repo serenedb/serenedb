@@ -54,7 +54,7 @@ template<>
 MaterializedData SystemTableSnapshot<PgProc>::GetTableData() {
   std::vector<PgProc> values;
   std::vector<std::vector<Oid>> argtypes_storage;
-  auto& context = _config.GetClientContext();
+  auto& context = _context;
 
   const auto emit = [&](const duckdb::MacroCatalogEntry& func) {
     const auto& perm = func.permissions;

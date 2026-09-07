@@ -54,7 +54,7 @@ MaterializedData SystemTableSnapshot<PgForeignServer>::GetTableData() {
   std::deque<std::vector<Text>> opt_views;
   std::vector<PgForeignServer> values;
 
-  auto& context = _config.GetClientContext();
+  auto& context = _context;
   auto& database = GetDatabase().Cast<catalog::SereneDBCatalog>();
   database.ScanForeignServers(
     database.GetCatalogTransaction(context), [&](duckdb::CatalogEntry& entry) {

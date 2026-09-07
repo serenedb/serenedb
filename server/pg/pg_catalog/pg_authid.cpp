@@ -48,7 +48,7 @@ Timestamptz ValidUntilOf(const catalog::RoleCatalogEntry& role) {
 template<>
 MaterializedData SystemTableSnapshot<PgAuthid>::GetTableData() {
   std::vector<PgAuthid> values;
-  auto& context = _config.GetClientContext();
+  auto& context = _context;
   auto& cluster = catalog::ClusterOf(context);
   cluster.ScanRoles(
     cluster.GetCatalogTransaction(context), [&](duckdb::CatalogEntry& entry) {

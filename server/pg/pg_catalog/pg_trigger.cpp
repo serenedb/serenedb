@@ -108,7 +108,7 @@ MaterializedData SystemTableSnapshot<PgTrigger>::GetTableData() {
   std::deque<std::string> name_storage;
   std::deque<std::vector<int16_t>> tgattr_storage;
 
-  auto& context = _config.GetClientContext();
+  auto& context = _context;
 
   // The entry itself, not the info: a trigger set hangs off the entry, and
   // reading it needs a transaction against the catalog holding it.

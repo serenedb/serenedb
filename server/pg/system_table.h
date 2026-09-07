@@ -49,7 +49,6 @@
 #include "pg/pg_catalog/fwd.h"
 #include "pg/pg_types.h"
 #include "pg/virtual_table.h"
-#include "query/config.h"
 
 namespace sdb::pg {
 
@@ -115,6 +114,9 @@ template<typename T>
 void VisitEntries(duckdb::ClientContext& context, duckdb::Catalog& database,
                   absl::FunctionRef<void(T&)> visitor) {
   database.ScanSchemas(context, [&](duckdb::SchemaCatalogEntry& schema_ref) {
+    if (schema_ref.internal) {
+      return;
+    }
     schema_ref.Scan(context, T::Type, [&](duckdb::CatalogEntry& entry) {
       if (entry.type == T::Type) {
         visitor(entry.template Cast<T>());
@@ -317,39 +319,26 @@ void WriteData(std::vector<duckdb::Vector>& columns, const T& value,
 }
 
 template<typename T>
-class SystemTable;
-
-template<typename T>
-class SystemTableSnapshot final : public VirtualTableSnapshot {
+class SystemTableSnapshot final {
  public:
-  explicit SystemTableSnapshot(const VirtualTable& table,
-                               duckdb::Catalog& database, const Config& config)
-    : VirtualTableSnapshot{table, database, table.Id(), table.GetName()},
-      _config{config},
+  SystemTableSnapshot(duckdb::Catalog& database, duckdb::ClientContext& context)
+    : _database{database},
+      _context{context},
       // Once per snapshot, not once per row: resolving it walks the role
       // registry, and rebuilds the whole graph for a session that has created a
       // role itself. Every row of one snapshot answers from the same graph.
-      _roles{auth::RolesOf(&config.GetClientContext())} {}
-
-  duckdb::LogicalType RowType() const noexcept final {
-    return _table->RowType();
-  }
-
-  const MaterializedData& GetData(std::vector<std::string> names) final {
-    if (!_data) {
-      _data = GetTableData();
-    }
-    return *_data;
-  }
+      _roles{auth::RolesOf(&context)} {}
 
   MaterializedData GetTableData() { return {}; }
 
+  duckdb::Catalog& GetDatabase() const noexcept { return _database; }
+  duckdb::idx_t GetDatabaseId() const noexcept { return _database.GetOid(); }
   const auth::RoleGraph& Roles() const noexcept { return *_roles; }
 
  private:
-  const Config& _config;
+  duckdb::Catalog& _database;
+  duckdb::ClientContext& _context;
   const std::shared_ptr<const auth::RoleGraph> _roles;
-  std::optional<MaterializedData> _data;
 };
 
 template<typename T>
@@ -363,9 +352,9 @@ class SystemTable : public VirtualTable {
     }
   }
 
-  std::shared_ptr<VirtualTableSnapshot> CreateSnapshot(
-    duckdb::Catalog& database, const Config& config) const final {
-    return std::make_shared<SystemTableSnapshot<T>>(*this, database, config);
+  MaterializedData Materialize(duckdb::Catalog& database,
+                               duckdb::ClientContext& context) const final {
+    return SystemTableSnapshot<T>{database, context}.GetTableData();
   }
 
   duckdb::LogicalType RowType() const noexcept final {

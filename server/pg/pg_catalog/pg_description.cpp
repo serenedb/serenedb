@@ -54,7 +54,7 @@ std::string_view InfoComment(const duckdb::Value& value) {
 
 template<>
 MaterializedData SystemTableSnapshot<PgDescription>::GetTableData() {
-  auto& context = _config.GetClientContext();
+  auto& context = _context;
   auto& database = GetDatabase();
 
   std::vector<PgDescription> values;
@@ -78,6 +78,9 @@ MaterializedData SystemTableSnapshot<PgDescription>::GetTableData() {
   };
 
   database.ScanSchemas(context, [&](duckdb::SchemaCatalogEntry& schema_ref) {
+    if (schema_ref.internal) {
+      return;
+    }
     schema_ref.Scan(
       context, duckdb::CatalogType::TABLE_ENTRY,
       [&](duckdb::CatalogEntry& entry) {

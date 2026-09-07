@@ -33,7 +33,7 @@ template<>
 MaterializedData SystemTableSnapshot<PgAuthMembers>::GetTableData() {
   std::vector<PgAuthMembers> values;
   uint64_t oid = 1;
-  auto& context = _config.GetClientContext();
+  auto& context = _context;
   auto& cluster = catalog::ClusterOf(context);
   cluster.ScanRoles(
     cluster.GetCatalogTransaction(context), [&](duckdb::CatalogEntry& entry) {

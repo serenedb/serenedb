@@ -67,7 +67,7 @@ MaterializedData SystemTableSnapshot<PgConstraint>::GetTableData() {
   std::vector<std::vector<int16_t>> conkey_storage;
   std::vector<std::vector<int16_t>> confkey_storage;
 
-  auto& context = _config.GetClientContext();
+  auto& context = _context;
 
   // A foreign key names the relation it references and the index backing that
   // relation's key, so every table is collected up front.

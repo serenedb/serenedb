@@ -238,17 +238,30 @@ containers::NodeHashMap<std::string, StaticFunction> gInfoSchemaFunctions;
 containers::NodeHashMap<std::string, StaticView> gPgCatalogViews;
 containers::NodeHashMap<std::string, StaticView> gInfoSchemaViews;
 
+bool IsInformationSchema(std::string_view schema) {
+  SDB_ASSERT(schema == StaticStrings::kPgCatalogSchema ||
+             schema == StaticStrings::kInformationSchema);
+  return schema == StaticStrings::kInformationSchema;
+}
+
+const PgSystemSchema& TablesOf(std::string_view schema) {
+  return IsInformationSchema(schema) ? kInformationSchema : kPgCatalog;
+}
+
+const auto& ViewsOf(std::string_view schema) {
+  return IsInformationSchema(schema) ? gInfoSchemaViews : gPgCatalogViews;
+}
+
+const auto& FunctionsOf(std::string_view schema) {
+  return IsInformationSchema(schema) ? gInfoSchemaFunctions
+                                     : gPgCatalogFunctions;
+}
+
 }  // namespace
 
 const VirtualTable* GetSystemTable(std::string_view schema,
                                    std::string_view name) {
-  if (schema == StaticStrings::kPgCatalogSchema) {
-    return GetTableFromSchema(name, kPgCatalog);
-  } else if (schema == StaticStrings::kInformationSchema) {
-    return GetTableFromSchema(name, kInformationSchema);
-  } else {
-    SDB_UNREACHABLE();
-  }
+  return GetTableFromSchema(name, TablesOf(schema));
 }
 const VirtualTable* GetTable(std::string_view name) {
   if (name.starts_with("pg_") || name.starts_with("sdb_")) {
@@ -280,64 +293,39 @@ void VisitSystemViews(absl::FunctionRef<void(const StaticView&, Oid)> visitor) {
   }
 }
 
-void VisitPgCatalogTables(
-  absl::FunctionRef<void(const VirtualTable&)> visitor) {
-  for (const auto* table : kPgCatalog) {
+void VisitSystemTables(std::string_view schema,
+                       absl::FunctionRef<void(const VirtualTable&)> visitor) {
+  for (const auto* table : TablesOf(schema)) {
     visitor(*table);
   }
 }
 
-void VisitPgCatalogViews(absl::FunctionRef<void(const StaticView&)> visitor) {
-  for (const auto& [_, view] : gPgCatalogViews) {
+void VisitSystemViews(std::string_view schema,
+                      absl::FunctionRef<void(const StaticView&)> visitor) {
+  for (const auto& [_, view] : ViewsOf(schema)) {
     visitor(view);
   }
 }
 
-void VisitPgCatalogFunctions(
+void VisitSystemFunctions(
+  std::string_view schema,
   absl::FunctionRef<void(const StaticFunction&)> visitor) {
-  for (const auto& [_, f] : gPgCatalogFunctions) {
-    visitor(f);
+  for (const auto& [_, function] : FunctionsOf(schema)) {
+    visitor(function);
   }
 }
 
-void VisitInfoSchemaTables(
-  absl::FunctionRef<void(const VirtualTable&)> visitor) {
-  for (const auto* table : kInformationSchema) {
-    visitor(*table);
-  }
+StaticView GetSystemView(std::string_view schema, std::string_view name) {
+  const auto& views = ViewsOf(schema);
+  const auto it = views.find(name);
+  return it == views.end() ? StaticView{} : it->second;
 }
 
-void VisitInfoSchemaViews(absl::FunctionRef<void(const StaticView&)> visitor) {
-  for (const auto& [_, view] : gInfoSchemaViews) {
-    visitor(view);
-  }
-}
-
-void VisitInfoSchemaFunctions(
-  absl::FunctionRef<void(const StaticFunction&)> visitor) {
-  for (const auto& [_, f] : gInfoSchemaFunctions) {
-    visitor(f);
-  }
-}
-
-StaticFunction GetInfoSchemaFunction(std::string_view name) {
-  auto it = gInfoSchemaFunctions.find(name);
-  return it != gInfoSchemaFunctions.end() ? it->second : StaticFunction{};
-}
-
-StaticFunction GetPgCatalogFunction(std::string_view name) {
-  auto it = gPgCatalogFunctions.find(name);
-  return it != gPgCatalogFunctions.end() ? it->second : StaticFunction{};
-}
-
-StaticView GetInfoSchemaView(std::string_view name) {
-  auto it = gInfoSchemaViews.find(name);
-  return it == gInfoSchemaViews.end() ? StaticView{} : it->second;
-}
-
-StaticView GetView(std::string_view name) {
-  auto it = gPgCatalogViews.find(name);
-  return it == gPgCatalogViews.end() ? StaticView{} : it->second;
+StaticFunction GetSystemFunction(std::string_view schema,
+                                 std::string_view name) {
+  const auto& functions = FunctionsOf(schema);
+  const auto it = functions.find(name);
+  return it == functions.end() ? StaticFunction{} : it->second;
 }
 
 void InitSystemViews(duckdb::Parser& parser) {

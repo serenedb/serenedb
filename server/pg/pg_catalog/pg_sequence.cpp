@@ -38,7 +38,7 @@ constexpr int64_t kNoSequenceCache = 1;
 
 template<>
 MaterializedData SystemTableSnapshot<PgSequence>::GetTableData() {
-  auto& context = _config.GetClientContext();
+  auto& context = _context;
   std::vector<PgSequence> values;
   VisitEntries<duckdb::SequenceCatalogEntry>(
     context, GetDatabase(), [&](const duckdb::SequenceCatalogEntry& sequence) {

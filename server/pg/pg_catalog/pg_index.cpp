@@ -62,7 +62,7 @@ MaterializedData SystemTableSnapshot<PgIndex>::GetTableData() {
   std::vector<PgIndex> values;
   std::vector<std::vector<int16_t>> indkey_storage;
 
-  auto& context = _config.GetClientContext();
+  auto& context = _context;
 
   // Explicit user-created indexes
   VisitEntries<duckdb::DuckIndexEntry>(

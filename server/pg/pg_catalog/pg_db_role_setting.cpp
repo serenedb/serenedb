@@ -31,7 +31,7 @@ namespace sdb::pg {
 template<>
 MaterializedData SystemTableSnapshot<PgDbRoleSetting>::GetTableData() {
   std::vector<PgDbRoleSetting> values;
-  auto& context = _config.GetClientContext();
+  auto& context = _context;
   auto& cluster = catalog::ClusterOf(context);
   cluster.ScanRoles(
     cluster.GetCatalogTransaction(context), [&](duckdb::CatalogEntry& entry) {

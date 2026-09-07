@@ -222,6 +222,9 @@ void RetrieveObjects(duckdb::Catalog& database, std::vector<PgClass>& values,
   }
 
   database.ScanSchemas(context, [&](duckdb::SchemaCatalogEntry& schema_ref) {
+    if (schema_ref.internal) {
+      return;
+    }
     schema_ref.Scan(
       context, duckdb::CatalogType::TABLE_ENTRY,
       [&](duckdb::CatalogEntry& entry) {
@@ -369,8 +372,7 @@ MaterializedData SystemTableSnapshot<PgClass>::GetTableData() {
   std::vector<std::vector<std::string>> reloptions_storage;
   std::vector<std::vector<Text>> reloptions_views;
   RetrieveObjects(GetDatabase(), values, pk_index_names, uq_index_names,
-                  reloptions_storage, reloptions_views,
-                  _config.GetClientContext());
+                  reloptions_storage, reloptions_views, _context);
 
   {
     VisitSystemTables([&](const VirtualTable& table, Oid schema_oid) {

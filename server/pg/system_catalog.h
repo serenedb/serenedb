@@ -52,6 +52,9 @@ void InitSystemFunctions(duckdb::Parser& parser);
 const VirtualTable* GetSystemTable(std::string_view schema,
                                    std::string_view name);
 const VirtualTable* GetTable(std::string_view name);
+StaticView GetSystemView(std::string_view schema, std::string_view name);
+StaticFunction GetSystemFunction(std::string_view schema,
+                                 std::string_view name);
 
 void VisitSystemTables(
   absl::FunctionRef<void(const VirtualTable&, Oid)> visitor);
@@ -60,23 +63,12 @@ void VisitSystemTables(
 // definition here exactly as they do on an entry.
 void VisitSystemViews(absl::FunctionRef<void(const StaticView&, Oid)> visitor);
 
-// Schema-specific visitors for ScanEntries
-void VisitPgCatalogTables(absl::FunctionRef<void(const VirtualTable&)> visitor);
-void VisitPgCatalogViews(absl::FunctionRef<void(const StaticView&)> visitor);
-void VisitPgCatalogFunctions(
+void VisitSystemTables(std::string_view schema,
+                       absl::FunctionRef<void(const VirtualTable&)> visitor);
+void VisitSystemViews(std::string_view schema,
+                      absl::FunctionRef<void(const StaticView&)> visitor);
+void VisitSystemFunctions(
+  std::string_view schema,
   absl::FunctionRef<void(const StaticFunction&)> visitor);
-void VisitInfoSchemaTables(
-  absl::FunctionRef<void(const VirtualTable&)> visitor);
-void VisitInfoSchemaViews(absl::FunctionRef<void(const StaticView&)> visitor);
-void VisitInfoSchemaFunctions(
-  absl::FunctionRef<void(const StaticFunction&)> visitor);
-
-// Returns the unified definition for `name` (with all scalar and table
-// overloads in its macros vector), or nullptr if absent.
-StaticFunction GetPgCatalogFunction(std::string_view name);
-StaticFunction GetInfoSchemaFunction(std::string_view name);
-
-StaticView GetView(std::string_view name);
-StaticView GetInfoSchemaView(std::string_view name);
 
 }  // namespace sdb::pg

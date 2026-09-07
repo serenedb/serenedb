@@ -51,7 +51,7 @@ MaterializedData SystemTableSnapshot<PgDatabase>::GetTableData() {
   // The name and the ACL of every row are views into the entry the walk read
   // them off, which the rows written after it still point at: an entry version
   // stays in its set's chain for as long as a transaction can see it.
-  auto& context = _config.GetClientContext();
+  auto& context = _context;
   auto& cluster = catalog::ClusterOf(context);
   cluster.ScanDatabases(
     cluster.GetCatalogTransaction(context), [&](duckdb::CatalogEntry& db) {

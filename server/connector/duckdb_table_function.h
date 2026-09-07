@@ -53,6 +53,7 @@ class IndexReader;
 namespace sdb::catalog {
 
 class SearchTableEntry;
+class SystemTableEntry;
 
 }  // namespace sdb::catalog
 namespace sdb::connector {
@@ -357,6 +358,10 @@ duckdb::TableFunction CreateIResearchScanFunction();
 
 duckdb::TableFunction BindSearchTableScan(
   catalog::SearchTableEntry& entry,
+  duckdb::unique_ptr<duckdb::FunctionData>& bind_data);
+
+duckdb::TableFunction BindSystemTableScan(
+  catalog::SystemTableEntry& entry,
   duckdb::unique_ptr<duckdb::FunctionData>& bind_data);
 
 void RegisterIResearchScanFunction(duckdb::DatabaseInstance& db);

@@ -97,8 +97,7 @@ MaterializedData SystemTableSnapshot<SdbMetrics>::GetTableData() {
 
   const auto wal_first = values.size();
   auto& storage_manager =
-    duckdb::Catalog::GetCatalog(_config.GetClientContext(),
-                                duckdb::Identifier::InvalidCatalog())
+    duckdb::Catalog::GetCatalog(_context, duckdb::Identifier::InvalidCatalog())
       .GetAttached()
       .GetStorageManager();
   auto wal = storage_manager.GetWAL();
@@ -110,7 +109,7 @@ MaterializedData SystemTableSnapshot<SdbMetrics>::GetTableData() {
                       "current catalog wal file size in bytes");
   masks.insert(masks.end(), values.size() - wal_first, kPerProcessMask);
 
-  auto& context = _config.GetClientContext();
+  auto& context = _context;
   auto& catalog =
     duckdb::Catalog::GetCatalog(context, duckdb::Identifier::InvalidCatalog());
   const auto visit_index = [&](duckdb::CatalogEntry& entry) {
@@ -128,6 +127,9 @@ MaterializedData SystemTableSnapshot<SdbMetrics>::GetTableData() {
     }
   };
   catalog.ScanSchemas(context, [&](duckdb::SchemaCatalogEntry& schema) {
+    if (schema.internal) {
+      return;
+    }
     schema.Scan(context, duckdb::CatalogType::INDEX_ENTRY, visit_index);
   });
 

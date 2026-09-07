@@ -27,47 +27,6 @@
 
 namespace sdb::pg {
 
-std::string_view ToPgObjectTypeName(duckdb::CatalogType t) noexcept {
-  switch (t) {
-    using enum duckdb::CatalogType;
-    case TABLE_ENTRY:
-      return "table";
-    case SCHEMA_ENTRY:
-      return "schema";
-    case VIEW_ENTRY:
-      return "view";
-    case INDEX_ENTRY:
-      return "index";
-    case MACRO_ENTRY:
-    case TABLE_MACRO_ENTRY:
-      return "function";
-    case TYPE_ENTRY:
-      return "type";
-    case SEQUENCE_ENTRY:
-      return "sequence";
-    case DATABASE_ENTRY:
-      return "database";
-    case TOKENIZER_ENTRY:
-      return "text search dictionary";
-    case FOREIGN_SERVER_ENTRY:
-      return "foreign server";
-    case ROLE_ENTRY:
-      return "role";
-    default:
-      return "object";
-  }
-}
-
-ObjectName ParseObjectName(std::string_view name,
-                           std::string_view default_schema) {
-  const auto pos = name.find('.');
-  auto schema_name =
-    pos == std::string_view::npos ? default_schema : name.substr(0, pos);
-  auto object_name =
-    pos == std::string_view::npos ? name : name.substr(pos + 1);
-  return {.schema = schema_name, .relation = object_name};
-}
-
 int16_t TableEntryAttnum(const duckdb::TableCatalogEntry& table,
                          duckdb::idx_t column_id) {
   for (const auto& column : table.GetColumns().Logical()) {

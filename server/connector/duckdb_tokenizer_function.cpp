@@ -48,7 +48,6 @@
 #include <utility>
 
 #include "basics/assert.h"
-#include "basics/static_strings.h"
 #include "catalog1/catalog.h"
 #include "catalog1/entry/tokenizer.h"
 #include "connector/duckdb_client_state.h"
@@ -56,7 +55,6 @@
 #include "pg/connection_context.h"
 #include "pg/errcodes.h"
 #include "pg/sql_exception_macro.h"
-#include "pg/sql_utils.h"
 #include "search/search_analyzer_impl.h"
 
 namespace sdb::connector {
@@ -80,10 +78,10 @@ void CreateTSDictionaryPragma(duckdb::ClientContext& context,
   auto dict_name = args[0].GetValue<std::string>();
   auto if_not_exists = args[1].GetValue<bool>();
 
-  auto& conn_ctx = GetSereneDBContext(context);
-  auto name = pg::ParseObjectName(dict_name, StaticStrings::kPublic);
-  pg::CreateTokenizer(conn_ctx, name.relation, name.schema, if_not_exists,
-                      params.named_parameters);
+  const auto name = duckdb::QualifiedName::Parse(dict_name);
+  pg::CreateTokenizer(
+    GetSereneDBContext(context), name.Name().GetIdentifierName(),
+    name.Schema().GetIdentifierName(), if_not_exists, params.named_parameters);
 }
 
 // PRAGMA drop_text_search_dictionary('name', missing_ok)
@@ -102,27 +100,20 @@ void DropTSDictionaryPragma(duckdb::ClientContext& context,
   const auto dict_name = args[0].GetValue<std::string>();
   const auto missing_ok = args[1].GetValue<bool>();
 
-  auto& conn_ctx = GetSereneDBContext(context);
-
-  auto name = pg::ParseObjectName(dict_name, StaticStrings::kPublic);
-
   // The added kind lives in a CatalogSet on DuckSchemaEntry like every other,
   // so duckdb's own drop reaches it and brings the dependency and versioning
   // rules with it.
-  const duckdb::Identifier database{conn_ctx.GetDatabase()};
-  const duckdb::QualifiedName qualified{database,
-                                        duckdb::Identifier{name.schema},
-                                        duckdb::Identifier{name.relation}};
-  if (!duckdb::Catalog::GetEntry(
-        context,
-        duckdb::EntryLookupInfo{duckdb::CatalogType::TOKENIZER_ENTRY,
-                                qualified},
-        missing_ok ? duckdb::OnEntryNotFound::RETURN_NULL
-                   : duckdb::OnEntryNotFound::THROW_EXCEPTION)) {
-    conn_ctx.AddNotice(
-      SQL_ERROR_DATA(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
-                     ERR_MSG("text search dictionary \"", name.relation,
-                             "\" does not exist, skipping")));
+  const auto qualified = duckdb::QualifiedName::Parse(dict_name);
+  auto entry = duckdb::Catalog::GetEntry(
+    context,
+    duckdb::EntryLookupInfo{duckdb::CatalogType::TOKENIZER_ENTRY, qualified},
+    missing_ok ? duckdb::OnEntryNotFound::RETURN_NULL
+               : duckdb::OnEntryNotFound::THROW_EXCEPTION);
+  if (!entry) {
+    GetSereneDBContext(context).AddNotice(SQL_ERROR_DATA(
+      ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
+      ERR_MSG("text search dictionary \"", qualified.Name().GetIdentifierName(),
+              "\" does not exist, skipping")));
     return;
   }
   duckdb::DropInfo info;
@@ -130,9 +121,8 @@ void DropTSDictionaryPragma(duckdb::ClientContext& context,
   info.SetQualifiedName(qualified);
   info.if_not_found = duckdb::OnEntryNotFound::RETURN_NULL;
   info.cascade = false;
-  duckdb::Catalog::GetCatalog(context, database)
-    .Cast<catalog::SereneDBCatalog>()
-    .DropTokenizer(context, info);
+  entry->ParentCatalog().Cast<catalog::SereneDBCatalog>().DropTokenizer(context,
+                                                                        info);
 }
 
 }  // namespace

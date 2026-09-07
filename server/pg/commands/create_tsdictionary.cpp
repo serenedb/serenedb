@@ -69,7 +69,6 @@
 #include "pg/option_help.h"
 #include "pg/options_parser.h"
 #include "pg/sql_exception_macro.h"
-#include "pg/sql_utils.h"
 #include "pg/tokenizer_options.h"
 #include "search/search_analyzer_impl.h"
 
@@ -120,16 +119,12 @@ std::string_view TypeNameOf(const irs::analysis::TokenizerConfig& cfg) {
 class CreateTSDictionaryOptions : public OptionsParser {
  public:
   CreateTSDictionaryOptions(duckdb::ClientContext& context,
-                            duckdb::Catalog& database,
-                            std::string_view current_schema,
                             const duckdb::named_parameter_map_t& named_params)
     : OptionsParser{named_params,
                     kTSDictionaryGroup,
                     {.operation = "CREATE TEXT SEARCH DICTIONARY",
                      .help_hint = "Use WITH (HELP) to see available options"}},
-      _context{context},
-      _database{&database},
-      _current_schema{current_schema} {
+      _context{context} {
     ParseOptions([&] {
       const auto type =
         OptionsParser::EraseOptionOrDefault<tokenizer_options::kTemplate>();
@@ -862,12 +857,8 @@ class CreateTSDictionaryOptions : public OptionsParser {
                      irs::analysis::TokenizerConfig& out) {
     std::string from =
       OptionsParser::EraseOptionOrDefault<tokenizer_options::kFrom>(prefix);
-    auto name = ParseObjectName(from, _current_schema);
     auto tokenizer = duckdb::Catalog::GetEntry<catalog::TokenizerCatalogEntry>(
-      _context,
-      duckdb::QualifiedName{_database->GetName(),
-                            duckdb::Identifier{name.schema},
-                            duckdb::Identifier{name.relation}},
+      _context, duckdb::QualifiedName::Parse(from),
       duckdb::OnEntryNotFound::RETURN_NULL);
     if (!tokenizer) {
       THROW_SQL_ERROR(
@@ -894,8 +885,6 @@ class CreateTSDictionaryOptions : public OptionsParser {
   irs::analysis::TokenizerConfig _config;
   search::Features _features;
   duckdb::ClientContext& _context;
-  duckdb::Catalog* _database;
-  std::string_view _current_schema;
 };
 
 }  // namespace
@@ -908,8 +897,7 @@ void CreateTokenizer(ConnectionContext& conn_ctx, std::string_view name,
     conn_ctx.GetClientContext(), duckdb::Identifier{conn_ctx.GetDatabase()});
 
   auto [cfg, features] =
-    std::move(CreateTSDictionaryOptions{conn_ctx.GetClientContext(), database,
-                                        current_schema, options})
+    std::move(CreateTSDictionaryOptions{conn_ctx.GetClientContext(), options})
       .Result();
 
   auto test_analyzer = irs::analysis::CreateAnalyzer(irs::analysis::Clone(cfg));

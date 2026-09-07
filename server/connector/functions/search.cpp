@@ -45,7 +45,6 @@
 
 #include "catalog1/entry/inverted_index.h"
 #include "catalog1/entry/tokenizer.h"
-#include "connector/duckdb_client_state.h"
 #include "connector/functions/split_by_non_alpha.h"
 #include "connector/functions/ts_common.hpp"
 #include "connector/functions/ts_highlight.h"
@@ -54,10 +53,8 @@
 #include "connector/functions/ts_query.h"
 #include "connector/functions/ts_query_codec.h"
 #include "connector/functions/vector.h"
-#include "pg/connection_context.h"
 #include "pg/errcodes.h"
 #include "pg/sql_exception_macro.h"
-#include "pg/sql_utils.h"
 
 namespace sdb::connector {
 
@@ -306,22 +303,12 @@ catalog::Tokenizer::TokenizerWrapper AcquireTokenizer(
 
 duckdb::optional_ptr<const catalog::TokenizerCatalogEntry>
 ResolveCatalogTokenizer(duckdb::ClientContext& context, std::string_view name) {
-  auto state =
-    context.registered_state->Get<SereneDBClientState>(kSereneDBClientStateKey);
-  if (!state) [[unlikely]] {
-    return nullptr;
-  }
-  auto& conn_ctx = state->GetConnectionContext();
-  const auto current_schema = conn_ctx.GetCurrentSchema();
-  const auto qualified = pg::ParseObjectName(name, current_schema);
   // Through the duckdb catalog, so the schema entry's TOKENIZER_ENTRY set
   // answers -- including for a transaction reading its own uncommitted DDL,
   // whose version is in the set under its transaction id.
   const duckdb::EntryLookupInfo lookup{
     duckdb::CatalogType::TOKENIZER_ENTRY,
-    duckdb::QualifiedName{duckdb::Identifier{conn_ctx.GetDatabase()},
-                          duckdb::Identifier{qualified.schema},
-                          duckdb::Identifier{qualified.relation}}};
+    duckdb::QualifiedName::Parse(std::string{name})};
   auto entry = duckdb::Catalog::GetEntry(context, lookup,
                                          duckdb::OnEntryNotFound::RETURN_NULL);
   if (!entry) {

@@ -46,9 +46,6 @@ class AnnWriter {
 
   virtual bool Empty() const noexcept = 0;
 
-  // Segments this build merges, in output order; empty for a flush. Lets a
-  // backend seed itself from what the sources already computed instead of
-  // rebuilding from scratch. The span outlives Compute.
   virtual void SetMergeSources(std::span<const MergeSource>) noexcept {}
 
   virtual auto Compute(const ColumnReader& col, ReadContext& ctx,

@@ -37,22 +37,13 @@ ABSL_FLAG(uint64_t, background_threads, 0,
 
 namespace sdb {
 
-std::uint64_t BackgroundScheduler::AnnBuildThreads() noexcept {
-  const auto cores = static_cast<std::uint64_t>(CountLogicalCores());
-  if (cores <= 48) {
-    return std::max<std::uint64_t>(1, std::min<std::uint64_t>(8, cores));
-  }
-  return cores <= 64 ? 12 : 16;
-}
-
 std::uint64_t BackgroundScheduler::AnnBuildBudget() noexcept {
   return std::max<std::uint64_t>(
     1, static_cast<std::uint64_t>(CountLogicalCores()));
 }
 
 BackgroundScheduler::BackgroundScheduler()
-  : _threads(absl::GetFlag(FLAGS_background_threads)),
-    _ann_threads(AnnBuildThreads()) {
+  : _threads(absl::GetFlag(FLAGS_background_threads)) {
   // Pool size = max(logical_cores / 4, 2): floor 2 on small boxes, scaling at
   // quarter-rate on big ones. The compaction gate (max concurrent CPU-heavy
   // merges, in SearchEngine) derives from this as pool - 1: merges may use all
@@ -70,10 +61,6 @@ BackgroundScheduler::~BackgroundScheduler() { gInstance = nullptr; }
 
 void BackgroundScheduler::start() {
   _pool = yaclib::MakeFairThreadPool(_threads);
-  // Sized by the whole ANN budget, not one build's cap: several builds can be
-  // in flight at once and their helpers all land here. One less than the
-  // budget, because each build's own calling thread is worker 0 and runs a
-  // share itself.
   _ann_pool = yaclib::MakeFairThreadPool(
     std::max<std::uint64_t>(1, AnnBuildBudget() - 1));
 }

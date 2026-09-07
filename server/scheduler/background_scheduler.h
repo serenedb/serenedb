@@ -76,17 +76,8 @@ class BackgroundScheduler final {
 
   yaclib::IExecutor& executor() noexcept { return *_pool; }
 
-  // Pool for ANN graph builds, separate from the maintenance pool above. A
-  // CREATE INDEX is foreground work whose cost is the graph, not the segment
-  // copy, so budgeting it out of the quarter-rate maintenance pool caps it at
-  // cores/4 - 1 workers. Sized by AnnBuildThreads(), and idle threads just
-  // park on the queue between builds.
   yaclib::IExecutor& annExecutor() noexcept { return *_ann_pool; }
 
-  // Workers ONE ANN graph build may use, including the calling thread.
-  static std::uint64_t AnnBuildThreads() noexcept;
-
-  // Workers summed over every ANN graph build in flight.
   static std::uint64_t AnnBuildBudget() noexcept;
 
   // Completes after `d` (best-effort; immediate once CancelDelays() has run,
@@ -112,7 +103,6 @@ class BackgroundScheduler final {
 
  private:
   std::uint64_t _threads;
-  std::uint64_t _ann_threads;
   yaclib::IntrusivePtr<yaclib::FairThreadPool> _pool;
   yaclib::IntrusivePtr<yaclib::FairThreadPool> _ann_pool;
   std::atomic_bool _delays_cancelled = false;

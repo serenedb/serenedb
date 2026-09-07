@@ -890,8 +890,6 @@ uint8_t GetNibble(const uint8_t* code, uint32_t sq) noexcept {
   return static_cast<uint8_t>((sq & 1) != 0 ? byte >> 4 : byte & 0x0F);
 }
 
-// Inverse of RotateInto: H/sqrt(rd) is an involution, so applying it again
-// recovers S*x, and the sign diagonal is its own inverse.
 void RotateBack(const float* signs, const float* in, float* out, uint32_t d,
                 uint32_t rotated_d, std::vector<float>& scratch) {
   scratch.assign(in, in + rotated_d);
@@ -1050,11 +1048,6 @@ class TurboQuantizerWriter final : public QuantizerWriter {
     return true;
   }
 
-  // Everything TurboQuant trains on is derived from kIvfRotationSeed, so a
-  // freshly constructed writer with the same shape is bit-identical here --
-  // only the rotated cluster centroid is data-dependent, and it is copied
-  // rather than recomputed. What the clone does NOT share is the encode
-  // scratch, which is the whole point.
   std::unique_ptr<QuantizerWriter> CloneForEncode() const final {
     if (!_lay.row_major) {
       return nullptr;
@@ -1271,8 +1264,6 @@ class TurboQuantizerStats final : public QuantizerStats {
     _sq = std::make_unique<faiss::ScalarQuantizer>(_lay.rd, *qtype);
     TrainTurboQuant(*_sq, hdr.seed);
     GenerateSigns(_lay.rd, static_cast<int64_t>(hdr.seed), _signs);
-    // Blobs written before the per-coordinate correction existed carry the
-    // header alone; they decode unchanged against an empty scale.
     const size_t ec_bytes = size_t{_lay.rd} * sizeof(float);
     if (stats.size() >= sizeof(TurboQuantStatsHeader) + 2 * ec_bytes) {
       _ec_scale.resize(_lay.rd);
@@ -1283,7 +1274,6 @@ class TurboQuantizerStats final : public QuantizerStats {
                   stats.data() + sizeof(TurboQuantStatsHeader) + ec_bytes,
                   ec_bytes);
     } else if (stats.size() >= sizeof(TurboQuantStatsHeader) + ec_bytes) {
-      // Scale-only blob, written before the shift term existed.
       _ec_scale.resize(_lay.rd);
       _ec_shift.assign(_lay.rd, 0.f);
       std::memcpy(_ec_scale.data(),
@@ -1336,10 +1326,6 @@ class TurboQuantizerCodebook final : public QuantizerCodebook {
     _rot_query.resize(lay.rd);
     RotateInto(_stats->Signs().data(), _query.data(), _rot_query.data(), lay.d,
                lay.rd);
-    // The code holds coordinate j scaled by ec[j], so the query side carries
-    // the reciprocal: sum_j (q[j]/ec[j]) * centroid[code] reconstructs the same
-    // inner product. Applied once here, so every table built below -- the MSE
-    // LUT and the int8 direct tables -- inherits it.
     const auto& ec = _stats->EcScale();
     _qm_block.clear();
     if (!ec.empty()) {

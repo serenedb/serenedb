@@ -167,10 +167,6 @@ void DoRefresh(Storage& idx, bool run_cleanup, RefreshResult& code) {
   }
 }
 
-// Owns the merge's compaction slot: the slot is acquired by the fan-out and
-// released here, so it must outlive every suspension the merge goes through.
-// Parameters are by value -- a coroutine keeps only the reference for reference
-// parameters, and every caller's frame is gone by the first resume.
 template<class Storage>
 auto DoCompaction(std::shared_ptr<Storage> idx, irs::CompactionPolicy policy,
                   SearchEngine& engine) -> yaclib::Future<bool> {
@@ -219,9 +215,6 @@ std::vector<yaclib::FutureOn<bool>> LaunchCompactionFanout(
   std::vector<yaclib::FutureOn<bool>> runs;
   while (!ShouldStop() && engine.TryAcquireCompaction()) {
     const bool small = engine.FreeCompactionSlots() == 0;
-    // Plain lambda, not a coroutine: yaclib destroys the functor once Call()
-    // returns, which for a lambda coroutine is its first suspension. The
-    // callee copies what it needs into its own frame instead.
     runs.push_back(s.Run([&engine, weak, small]() -> yaclib::Future<bool> {
       if (ShouldStop()) {
         engine.ReleaseCompaction();

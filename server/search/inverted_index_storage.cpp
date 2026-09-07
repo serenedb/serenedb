@@ -202,13 +202,6 @@ InvertedIndexStorage::InvertedIndexStorage(ObjectId db_id,
   _dir = std::make_unique<irs::MMapDirectory>(path, irs::DirectoryAttributes{},
                                               resource_manager);
 
-  // Take whatever the gate offers and never wait. CREATE INDEX is a
-  // ParallelSink: every DuckDB sink thread flushes its own tail segment, so a
-  // blocking wait here parks a foreground statement thread and serialises those
-  // flushes behind each other. The gate charges each build for its own calling
-  // thread, so N concurrent flushes settle at N workers rather than each
-  // fanning out; a grant of 1 means this build runs serial on the thread it is
-  // already on, which is still forward progress.
   irs::IndexWriterOptions writer_options;
   writer_options.ann_env = &AnnBuildEnv();
   writer_options.segment_memory_max = options.segment_memory_max;

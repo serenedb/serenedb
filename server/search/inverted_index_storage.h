@@ -145,8 +145,6 @@ class InvertedIndexStorage final
                                bool& empty_compaction,
                                const irs::IndexFieldOptions* field_options);
 
-  // CompactUnsafe driven by the caller's executor. A null `env` never suspends,
-  // so the returned Future is ready on return.
   auto CompactUnsafeAsync(const irs::CompactionPolicy& policy,
                           const irs::MergeWriter::FlushProgress& progress,
                           bool& empty_compaction,

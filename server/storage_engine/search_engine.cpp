@@ -83,16 +83,13 @@ int SearchEngine::MaxConcurrentCompactions() noexcept {
 }
 
 uint32_t SearchEngine::MaxAnnBuildWorkers() noexcept {
-  // Workers, not helpers: each build's own calling thread is charged against
-  // this too, so the pool (sized AnnBuildBudget() - 1) is never asked to host
-  // more helpers than it has threads.
   return std::max<uint32_t>(
     1, static_cast<uint32_t>(BackgroundScheduler::AnnBuildBudget()));
 }
 
 uint32_t SearchEngine::MaxAnnWorkersPerBuild() noexcept {
-  return std::max<uint32_t>(
-    1, static_cast<uint32_t>(BackgroundScheduler::AnnBuildThreads()));
+  return std::clamp<uint32_t>(static_cast<uint32_t>(MaxConcurrentCompactions()),
+                              1, 16);
 }
 
 uint32_t AnnAcquireWorkers(uint32_t want) noexcept {

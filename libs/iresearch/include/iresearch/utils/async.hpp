@@ -28,11 +28,6 @@
 
 namespace irs {
 
-// Drains a Future that completed inline. yaclib Future coroutines are eager, so
-// one that never reaches a real suspension point is already resolved when it
-// returns -- which is how a build with no executor injected stays synchronous.
-// SDB_ENSURE rather than a blocking Get(): a caller reaching here has no thread
-// to spare, so a future suspension must fail loudly instead of parking it.
 template<typename V, typename E>
 auto GetReady(yaclib::Future<V, E>&& f) -> V {
   SDB_ENSURE(f.Ready());

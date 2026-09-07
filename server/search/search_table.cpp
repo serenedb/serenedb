@@ -533,7 +533,8 @@ void SearchTable::VacuumCompact() {
   RefreshResult code = RefreshResult::Undefined;
   RefreshUnsafe(/*wait=*/true, nullptr, code);
   bool empty = false;
-  CompactUnsafe(kFullMerge, kProgress, empty, /*field_options=*/nullptr);
+  const auto field_options = GetFieldOptions();
+  CompactUnsafe(kFullMerge, kProgress, empty, field_options.get());
   if (!empty) {
     RefreshUnsafe(/*wait=*/true, nullptr, code);
   }

@@ -177,10 +177,15 @@ class PostingPrunedDisj : public PruneLeafBase<InputType, false> {
       max, [&](const doc_id_t* IRS_RESTRICT docs, uint32_t len,
                const score_t* IRS_RESTRICT scores) IRS_FORCE_INLINE {
         static constexpr auto kBits = BitsRequired<uint64_t>();
-        for (uint32_t i = 0; i != len; ++i) {
+        const auto add = [&](uint32_t i) IRS_FORCE_INLINE {
           const size_t offset = docs[i] - min;
           SetBit(mask[offset / kBits], offset % kBits);
           window[offset] += scores[i];
+        };
+        if (len == doc_limits::kBlockSize) [[likely]] {
+          VisitDocs<doc_limits::kBlockSize>(doc_limits::kBlockSize, add);
+        } else {
+          VisitDocs<std::dynamic_extent>(len, add);
         }
       });
   }

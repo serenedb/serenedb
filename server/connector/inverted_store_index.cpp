@@ -47,7 +47,6 @@
 #include "catalog1/catalog.h"
 #include "catalog1/entry/inverted_index.h"
 #include "catalog1/entry/tokenizer.h"
-#include "catalog1/scorer_options.h"
 #include "connector/duckdb_client_state.h"
 #include "connector/duckdb_index_utils.h"
 #include "connector/duckdb_physical_create_index.h"
@@ -57,6 +56,7 @@
 #include "pg/connection_context.h"
 #include "query/config_variable_names.h"
 #include "search/inverted_index_storage.h"
+#include "search/scorer_options.h"
 #include "search/tick_domain.h"
 
 namespace sdb::connector {

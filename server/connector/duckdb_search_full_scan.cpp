@@ -77,7 +77,6 @@
 #include "basics/system-compiler.h"
 #include "catalog1/entry/inverted_index.h"
 #include "catalog1/entry/search_table.h"
-#include "catalog1/scorer_options.h"
 #include "connector/duckdb_client_state.h"
 #include "connector/duckdb_table_function.h"
 #include "connector/full_scanner.h"
@@ -94,6 +93,7 @@
 #include "pg/errcodes.h"
 #include "pg/sql_exception_macro.h"
 #include "search/inverted_index_storage.h"
+#include "search/scorer_options.h"
 
 namespace sdb::connector {
 
@@ -1276,7 +1276,7 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> IResearchScanInitGlobal(
 
   if (state->mode == ScanMode::TopK || state->mode == ScanMode::Stream) {
     if (ss.text_scorer) {
-      state->scorer_obj = catalog::MakeScorer(*ss.text_scorer);
+      state->scorer_obj = search::MakeScorer(*ss.text_scorer);
     } else if (ss.score_order) {
       state->scorer_obj = std::make_unique<irs::VectorSimilarityScorer>();
     }

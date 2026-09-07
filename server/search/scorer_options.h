@@ -20,13 +20,12 @@
 
 #pragma once
 
+#include <iresearch/search/scorer_options.hpp>
 #include <magic_enum/magic_enum.hpp>
 #include <memory>
 #include <optional>
 #include <string>
 #include <string_view>
-
-#include "catalog1/entry/inverted_index.h"
 
 namespace duckdb {
 
@@ -34,27 +33,27 @@ class BoundFunctionExpression;
 class ClientContext;
 
 }  // namespace duckdb
-namespace sdb::catalog {
+namespace sdb::search {
 
-std::unique_ptr<irs::Scorer> MakeScorer(const ScorerOptions& spec);
+std::unique_ptr<irs::Scorer> MakeScorer(const irs::ScorerOptions& spec);
 
-std::optional<ScorerOptions> ExtractScorerFromBound(
+std::optional<irs::ScorerOptions> ExtractScorerFromBound(
   const duckdb::BoundFunctionExpression& func, std::string_view name);
 
-ScorerOptions ParseScorerExpression(duckdb::ClientContext& context,
-                                    std::string input,
-                                    std::string_view what = "optimize_top_k");
+irs::ScorerOptions ParseScorerExpression(
+  duckdb::ClientContext& context, std::string input,
+  std::string_view what = "optimize_top_k");
 
-}  // namespace sdb::catalog
+}  // namespace sdb::search
 namespace magic_enum {
 
 // The SQL spellings of the DFI measures: enum_cast reads these when dfi()'s
 // measure argument is parsed, so they are the wire names, not decoration.
 template<>
 constexpr customize::customize_t
-customize::enum_name<sdb::catalog::ScorerOptions::DfiMeasure>(
-  sdb::catalog::ScorerOptions::DfiMeasure value) noexcept {
-  using DfiMeasure = sdb::catalog::ScorerOptions::DfiMeasure;
+customize::enum_name<irs::ScorerOptions::DfiMeasure>(
+  irs::ScorerOptions::DfiMeasure value) noexcept {
+  using DfiMeasure = irs::ScorerOptions::DfiMeasure;
   switch (value) {
     case DfiMeasure::Standardized:
       return "standardized";

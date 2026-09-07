@@ -46,7 +46,6 @@
 
 #include "basics/containers/flat_hash_set.h"
 #include "catalog1/entry/inverted_index.h"
-#include "catalog1/scorer_options.h"
 #include "connector/column_id.h"
 #include "connector/duckdb_client_state.h"
 #include "connector/duckdb_table_function.h"
@@ -63,6 +62,7 @@
 #include "pg/connection_context.h"
 #include "pg/errcodes.h"
 #include "pg/sql_exception_macro.h"
+#include "search/scorer_options.h"
 
 namespace sdb::optimizer {
 
@@ -496,7 +496,7 @@ bool BindingResolvesToScoreColumn(const duckdb::BoundColumnRefExpression& ref,
 bool TrySetScorer(std::optional<catalog::ScorerOptions>& scorer,
                   const duckdb::BoundFunctionExpression& func,
                   std::string_view name) {
-  auto extracted = catalog::ExtractScorerFromBound(func, name);
+  auto extracted = search::ExtractScorerFromBound(func, name);
   if (!extracted) {
     return false;
   }

@@ -79,8 +79,7 @@ int RunServer(int argc, char** argv) {
     // afterwards still see a live SearchEngine. DuckDBEngine brackets all of
     // this from main(). The up_* flags let DOWN skip whatever never came UP
     // (start() threw).
-    bool up_background = false, up_catalog = false, up_search = false,
-         up_network = false;
+    bool up_background = false, up_search = false, up_network = false;
 
     absl::Cleanup down = [&]() noexcept {
       CrashHandler::SetState("stopping");
@@ -122,13 +121,8 @@ int RunServer(int argc, char** argv) {
       }
       // The shutdown checkpoint of every attached database, taken here rather
       // than left to the DuckDB destructor in main(): an inverted index vetoes
-      // it unless it can read its definition, so the catalog below must still
-      // be up -- and the catalog must be down before that destructor, because
-      // its objects hold allocations of the allocator it takes with it.
+      // it unless it can read its definition.
       stop("storage", [&] { DuckDBEngine::Instance().CloseDatabases(); });
-      if (up_catalog) {
-        stop("catalog", [&] { catalog::ShutdownCatalog(); });
-      }
     };
 
     CrashHandler::SetState("starting");
@@ -136,7 +130,6 @@ int RunServer(int argc, char** argv) {
     background.start();
     up_background = true;
     catalog::InitCatalog(db_path.directory());
-    up_catalog = true;
     // The io pool must be up before search.start(): the per-index refresh /
     // compaction loops co_await BackgroundScheduler::Delay(), which hosts its
     // timers on the io pool. Without it Delay() returns instantly and the loops

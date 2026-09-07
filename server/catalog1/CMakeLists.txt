@@ -8,7 +8,6 @@ add_library(
     entry/search_table.cpp
     entry/system_table.cpp
     entry/tokenizer.cpp
-    scorer_options.cpp
     entry/role.cpp
     entry/foreign_server.cpp
     entry/database.cpp

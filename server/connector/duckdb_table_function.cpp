@@ -55,7 +55,6 @@
 #include "catalog1/entry/inverted_index.h"
 #include "catalog1/entry/search_table.h"
 #include "catalog1/entry/system_table.h"
-#include "catalog1/scorer_options.h"
 #include "connector/duckdb_client_state.h"
 #include "connector/duckdb_search_full_scan.hpp"
 #include "connector/functions/vector.h"
@@ -69,6 +68,7 @@
 #include "pg/sql_exception_macro.h"
 #include "pg/virtual_table.h"
 #include "search/inverted_index_storage.h"
+#include "search/scorer_options.h"
 #include "search/search_table.h"
 
 namespace sdb::connector {
@@ -739,7 +739,7 @@ void SereneDBScanBindData::AppendSummary(
   }
   std::unique_ptr<irs::Scorer> query_scorer;
   if (text_scorer) {
-    query_scorer = catalog::MakeScorer(*text_scorer);
+    query_scorer = search::MakeScorer(*text_scorer);
     if (query_scorer) {
       out.insert("Score", query_scorer->ToString());
     }
@@ -755,7 +755,7 @@ void SereneDBScanBindData::AppendSummary(
     }
     out.insert("Top", std::move(topk_val));
     if (pruning && bind.index_top_k_scorer != text_scorer) {
-      if (auto bounds = catalog::MakeScorer(*bind.index_top_k_scorer)) {
+      if (auto bounds = search::MakeScorer(*bind.index_top_k_scorer)) {
         out.insert("Bounds", bounds->ToString());
       }
     }

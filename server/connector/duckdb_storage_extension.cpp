@@ -40,6 +40,7 @@
 #include "connector/optimizer/wrap_unsupported_types.h"
 #include "pg/connection_context.h"
 #include "pg/errcodes.h"
+#include "pg/pg_types.h"
 #include "pg/sql_exception.h"
 #include "pg/sql_exception_macro.h"
 #include "pg/sql_utils.h"
@@ -57,11 +58,8 @@ duckdb::unique_ptr<duckdb::Catalog> AttachSereneDB(
   // WAL, its own checkpoint. AttachedDatabase reads info.path after this
   // returns.
   if (info.path.empty()) {
-    // CREATE DATABASE rather than a boot-time re-attach: the cluster record is
-    // what makes the name resolvable, and it rides this statement's
-    // transaction so a rollback takes it too.
-    catalog::RegisterDatabaseIn(context, name);
-    info.path = catalog::DatabaseFilePath(name);
+    info.path = static_cast<const catalog::DataDirectory&>(*storage_info)
+                  .DatabaseFile(name);
   }
   // Every serenedb on-disk format sits behind our storage version, so a
   // duckdb-version database is unaffected by anything we change.
@@ -77,14 +75,18 @@ duckdb::unique_ptr<duckdb::TransactionManager> CreateTransactionManager(
 
 }  // namespace
 
-SereneDBStorageExtension::SereneDBStorageExtension() {
+SereneDBStorageExtension::SereneDBStorageExtension(
+  duckdb::shared_ptr<catalog::DataDirectory> layout) {
   attach = AttachSereneDB;
   create_transaction_manager = CreateTransactionManager;
+  storage_info = std::move(layout);
 }
 
-void RegisterSereneDBStorage(duckdb::DBConfig& config) {
-  auto ext = duckdb::make_shared_ptr<SereneDBStorageExtension>();
-  duckdb::StorageExtension::Register(config, "serenedb", std::move(ext));
+void RegisterSereneDBStorage(
+  duckdb::DBConfig& config, duckdb::shared_ptr<catalog::DataDirectory> layout) {
+  duckdb::StorageExtension::Register(
+    config, "serenedb",
+    duckdb::make_shared_ptr<SereneDBStorageExtension>(std::move(layout)));
 }
 
 void RegisterSereneDBOptimizers(duckdb::DatabaseInstance& db) {

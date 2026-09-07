@@ -236,15 +236,16 @@ ABSL_DECLARE_FLAG(std::string, server_directory);
 namespace sdb::server::query {
 
 void ConfigureServerDBConfig(duckdb::DBConfig& config) {
-  connector::RegisterSereneDBStorage(config);
-  catalog::RegisterClusterStorage(config);
-  connector::RegisterConfigVariables(config);
-  connector::RegisterIResearchReplacementScan(config);
   // Server-mode DuckDB state lives under the datadir, never in cwd-relative
   // temp files or ~/.duckdb fallbacks (shell/psql subcommands return before
   // this mutator runs and keep DuckDB defaults).
   const auto datadir =
     lifecycle::ResolveDataDir(absl::GetFlag(FLAGS_server_directory));
+  auto layout = duckdb::make_shared_ptr<catalog::DataDirectory>(datadir);
+  connector::RegisterSereneDBStorage(config, layout);
+  catalog::RegisterClusterStorage(config, std::move(layout));
+  connector::RegisterConfigVariables(config);
+  connector::RegisterIResearchReplacementScan(config);
   config.SetOptionByName(
     "temp_directory",
     duckdb::Value{basics::file_utils::BuildFilename(datadir, "tmp")});

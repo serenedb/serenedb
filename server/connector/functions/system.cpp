@@ -799,7 +799,8 @@ struct PrivCheckModes {
 duckdb::AclMode PrivCheckKeyword(std::string_view keyword,
                                  duckdb::CatalogType type) {
   duckdb::AclMode mode;
-  if (!duckdb::TryParseAclKeyword(std::string{keyword}, type, mode)) {
+  if (!duckdb::Permissions::TryParsePrivilege(std::string{keyword}, type,
+                                              mode)) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                     ERR_MSG("unrecognized privilege type: \"", keyword, "\""));
   }

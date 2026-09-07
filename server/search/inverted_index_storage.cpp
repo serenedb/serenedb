@@ -49,18 +49,29 @@
 #include "basics/log.h"
 #include "basics/serializer.h"
 #include "basics/system-compiler.h"
-#include "catalog1/boot.h"
 #include "catalog1/catalog.h"
 #include "catalog1/entry/inverted_index.h"
-#include "catalog1/scorer_options.h"
 #include "pg/sql_exception_macro.h"
 #include "query/transaction.h"
 #include "scheduler/background_scheduler.h"
+#include "search/scorer_options.h"
 #include "search/tick_domain.h"
 #include "storage_engine/search_engine.h"
 
 namespace sdb::search {
 namespace {
+
+duckdb::optional_ptr<duckdb::AttachedDatabase> AttachedDatabaseById(
+  duckdb::idx_t id) {
+  auto& manager =
+    duckdb::DatabaseManager::Get(DuckDBEngine::Instance().instance());
+  for (auto& attached : manager.GetDatabases()) {
+    if (attached->oid == id) {
+      return attached.get();
+    }
+  }
+  return nullptr;
+}
 
 // [tick:8][wal_generation:8][wal_offset:8][tail marker:1][tail bytes...];
 // the marker declares what the tail is.
@@ -221,7 +232,7 @@ InvertedIndexStorage::InvertedIndexStorage(
   // the live catalog, so a concurrent DROP can no longer dangle it.
 
   if (const auto& options = top_k_scorer) {
-    _topk_scorer = catalog::MakeScorer(*options);
+    _topk_scorer = MakeScorer(*options);
     writer_options.reader_options.scorer = _topk_scorer.get();
   }
 
@@ -556,7 +567,7 @@ absl::Status InvertedIndexStorage::RefreshUnsafeImpl(
       _stamp_cursor_from_flush = false;
     };
     if (for_checkpoint) {
-      if (auto store = catalog::FindAttachedDatabase(_db_id)) {
+      if (auto store = AttachedDatabaseById(_db_id)) {
         const auto next_gen = store->GetStorageManager()
                                 .GetBlockManager()
                                 .GetCheckpointIteration() +

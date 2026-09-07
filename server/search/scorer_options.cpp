@@ -18,7 +18,7 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include "catalog1/scorer_options.h"
+#include "search/scorer_options.h"
 
 #include <absl/algorithm/container.h>
 #include <absl/strings/str_cat.h>
@@ -40,7 +40,7 @@
 #include "pg/errcodes.h"
 #include "pg/sql_exception_macro.h"
 
-namespace sdb::catalog {
+namespace sdb::search {
 namespace {
 
 const duckdb::Value* TryGetConstantValue(const duckdb::Expression& expr) {
@@ -52,7 +52,7 @@ const duckdb::Value* TryGetConstantValue(const duckdb::Expression& expr) {
 
 }  // namespace
 
-std::unique_ptr<irs::Scorer> MakeScorer(const ScorerOptions& spec) {
+std::unique_ptr<irs::Scorer> MakeScorer(const irs::ScorerOptions& spec) {
   return std::visit(
     []<typename P>(const P& p) -> std::unique_ptr<irs::Scorer> {
       return P::Owner::Make(p);
@@ -60,9 +60,9 @@ std::unique_ptr<irs::Scorer> MakeScorer(const ScorerOptions& spec) {
     spec.params);
 }
 
-std::optional<ScorerOptions> ExtractScorerFromBound(
+std::optional<irs::ScorerOptions> ExtractScorerFromBound(
   const duckdb::BoundFunctionExpression& func, std::string_view name) {
-  using S = ScorerOptions;
+  using S = irs::ScorerOptions;
   S scorer;
 
   if (name == S::Bm25::Owner::type_name()) {
@@ -189,8 +189,9 @@ std::optional<ScorerOptions> ExtractScorerFromBound(
   return scorer;
 }
 
-ScorerOptions ParseScorerExpression(duckdb::ClientContext& context,
-                                    std::string input, std::string_view what) {
+irs::ScorerOptions ParseScorerExpression(duckdb::ClientContext& context,
+                                         std::string input,
+                                         std::string_view what) {
   using namespace duckdb;
   auto exprs = Parser::ParseExpressionList(input);
   if (exprs.size() != 1) {
@@ -247,4 +248,4 @@ ScorerOptions ParseScorerExpression(duckdb::ClientContext& context,
   return std::move(*extracted);
 }
 
-}  // namespace sdb::catalog
+}  // namespace sdb::search

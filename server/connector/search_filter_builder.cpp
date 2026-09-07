@@ -69,7 +69,6 @@
 #include "basics/containers/flat_hash_map.h"
 #include "basics/containers/node_hash_map.h"
 #include "basics/system-compiler.h"
-#include "catalog1/scorer_options.h"
 #include "comparison_op.hpp"
 #include "connector/common.h"
 #include "connector/term_dict.h"
@@ -80,6 +79,7 @@
 #include "geo_filter_builder.hpp"
 #include "pg/errcodes.h"
 #include "pg/sql_exception_macro.h"
+#include "search/scorer_options.h"
 #include "search/search_analyzer_impl.h"
 
 namespace magic_enum {
@@ -1307,7 +1307,7 @@ const irs::Scorer* ResolveScoreOverride(const FilterContext& ctx,
       ERR_HINT("Use ::score(...) inside a WHERE predicate on an inverted "
                "index."));
   }
-  auto owned = catalog::MakeScorer(catalog::ParseScorerExpression(
+  auto owned = search::MakeScorer(search::ParseScorerExpression(
     ctx.client_context, std::string{expr}, "::score"));
   if (!owned) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),

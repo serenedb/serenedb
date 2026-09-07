@@ -22,7 +22,9 @@
 
 #include <cstdint>
 #include <duckdb/catalog/catalog_entry.hpp>
+#include <duckdb/parser/parsed_data/alter_info.hpp>
 #include <duckdb/parser/parsed_data/create_info.hpp>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -74,6 +76,7 @@ class CreateRoleInfo final : public duckdb::CreateInfo {
 
   CreateRoleInfo() : duckdb::CreateInfo{duckdb::CatalogType::ROLE_ENTRY} {}
 
+  duckdb::idx_t oid{0};
   RoleOption options{RoleOption::Inherit};
   int32_t conn_limit{kNoConnLimit};
   int64_t valid_until{kNoValidUntil};
@@ -83,6 +86,31 @@ class CreateRoleInfo final : public duckdb::CreateInfo {
 
   duckdb::unique_ptr<duckdb::CreateInfo> Copy() const final;
   std::string ToString() const final;
+};
+
+class AlterRoleInfo final : public duckdb::AlterInfo {
+ public:
+  AlterRoleInfo() : duckdb::AlterInfo{duckdb::AlterType::ALTER_ROLE} {}
+  explicit AlterRoleInfo(duckdb::Identifier name);
+
+  RoleOption set_options{RoleOption::None};
+  RoleOption clear_options{RoleOption::None};
+  std::optional<std::string> password;
+  std::optional<int32_t> conn_limit;
+  std::optional<int64_t> valid_until;
+  std::optional<duckdb::Identifier> new_name;
+  bool reset_all_config{false};
+  std::vector<std::string> reset_config;
+  std::vector<std::string> set_config;
+  std::vector<Membership> upsert_member_of;
+  std::vector<duckdb::idx_t> remove_member_of;
+
+  duckdb::CatalogType GetCatalogType() const final {
+    return duckdb::CatalogType::ROLE_ENTRY;
+  }
+  duckdb::unique_ptr<duckdb::AlterInfo> Copy() const final;
+  std::string ToString() const final;
+  void Serialize(duckdb::Serializer& serializer) const final;
 };
 
 class RoleCatalogEntry final : public duckdb::InCatalogEntry {
@@ -114,6 +142,8 @@ class RoleCatalogEntry final : public duckdb::InCatalogEntry {
 
   duckdb::unique_ptr<duckdb::CatalogEntry> Copy(
     duckdb::ClientContext& context) const override;
+  duckdb::unique_ptr<duckdb::CatalogEntry> AlterEntry(
+    duckdb::ClientContext& context, duckdb::AlterInfo& info) override;
   duckdb::unique_ptr<duckdb::CreateInfo> GetInfo() const override;
   std::string ToSQL() const override;
 

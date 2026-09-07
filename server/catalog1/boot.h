@@ -20,28 +20,29 @@
 
 #pragma once
 
-#include <duckdb.hpp>
+#include <duckdb/common/shared_ptr.hpp>
 #include <duckdb/storage/storage_extension.hpp>
+#include <string>
 #include <string_view>
+
+namespace duckdb {
+struct DBConfig;
+}  // namespace duckdb
 
 namespace sdb::catalog {
 
-struct DataDirectory;
+struct DataDirectory final : duckdb::StorageExtensionInfo {
+  explicit DataDirectory(std::string directory);
 
-}  // namespace sdb::catalog
-namespace sdb::connector {
+  std::string ClusterFile() const;
+  std::string DatabaseFile(std::string_view name) const;
 
-class SereneDBStorageExtension : public duckdb::StorageExtension {
- public:
-  explicit SereneDBStorageExtension(
-    duckdb::shared_ptr<catalog::DataDirectory> layout);
+  std::string directory;
 };
 
-// Register the storage extension with a DuckDB config (before DB creation).
-void RegisterSereneDBStorage(duckdb::DBConfig& config,
-                             duckdb::shared_ptr<catalog::DataDirectory> layout);
+void RegisterClusterStorage(duckdb::DBConfig& config,
+                            duckdb::shared_ptr<DataDirectory> layout);
 
-// Register SereneDB optimizer extensions with a live DuckDB instance.
-void RegisterSereneDBOptimizers(duckdb::DatabaseInstance& db);
+void InitCatalog(std::string_view directory);
 
-}  // namespace sdb::connector
+}  // namespace sdb::catalog

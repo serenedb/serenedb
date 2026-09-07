@@ -35,6 +35,7 @@
 #include <duckdb/catalog/dependency_manager.hpp>
 #include <duckdb/catalog/entry_lookup_info.hpp>
 #include <duckdb/storage/data_table.hpp>
+#include <span>
 #include <string>
 #include <utility>
 #include <vector>
@@ -303,7 +304,7 @@ void RetrieveObjects(duckdb::Catalog& database, std::vector<PgClass>& values,
       auto row = MakeBaseRow(sequence.ParentSchema().oid, sequence.oid,
                              sequence.name.GetIdentifierName(), perm.owner);
       row.relkind = PgClass::Relkind::Sequence;
-      row.relacl = {catalog::AclView{perm.acl}};
+      row.relacl = {std::span<const duckdb::AclItem>{perm.acl}};
       values.push_back(std::move(row));
     });
 

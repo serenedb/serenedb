@@ -23,12 +23,12 @@
 #include <absl/functional/function_ref.h>
 
 #include <duckdb/catalog/catalog_entry.hpp>
+#include <duckdb/catalog/permissions.hpp>
 #include <duckdb/parser/parsed_data/create_macro_info.hpp>
 #include <duckdb/parser/parsed_data/create_view_info.hpp>
 #include <duckdb/parser/parser.hpp>
 #include <string_view>
 
-#include "catalog1/permissions.h"
 #include "pg/pg_catalog/fwd.h"
 #include "pg/virtual_table.h"
 
@@ -39,11 +39,11 @@ namespace sdb::pg {
 // permissions travel together.
 struct StaticView {
   std::shared_ptr<const duckdb::CreateViewInfo> info;
-  catalog::Permissions permissions;
+  duckdb::CatalogPermissions permissions;
   Oid oid = 0;
 };
 using StaticFunction = std::pair<std::shared_ptr<const duckdb::CreateMacroInfo>,
-                                 catalog::Permissions>;
+                                 duckdb::CatalogPermissions>;
 
 // Parse and cache all system views and functions. Call once at startup.
 void InitSystemViews(duckdb::Parser& parser);

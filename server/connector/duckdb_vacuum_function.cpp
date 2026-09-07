@@ -300,7 +300,7 @@ struct MaintainTarget {
   std::string name;
   catalog::TableEngine engine;
   std::shared_ptr<search::SearchTable> search_data;
-  catalog::Permissions perm;
+  duckdb::CatalogPermissions perm;
 };
 
 std::shared_ptr<search::SearchTable> MaintainStoreOf(
@@ -372,11 +372,12 @@ void CollectInvertedSteps(duckdb::ClientContext& context,
   }
 }
 
-bool MayMaintain(ConnectionContext& conn_ctx, const catalog::Permissions& perm,
-                 std::string_view name, std::string_view verb) {
+bool MayMaintain(ConnectionContext& conn_ctx,
+                 const duckdb::CatalogPermissions& perm, std::string_view name,
+                 std::string_view verb) {
   if (auth::ClosureFor(&conn_ctx.GetClientContext(), conn_ctx.GetRoleId())
         ->Can(duckdb::CatalogType::TABLE_ENTRY, perm,
-              catalog::AclMode::Maintain)) {
+              duckdb::AclMode::Maintain)) {
     return true;
   }
   conn_ctx.AddNotice(SQL_ERROR_DATA(

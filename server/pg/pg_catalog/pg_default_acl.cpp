@@ -53,7 +53,7 @@ MaterializedData SystemTableSnapshot<PgDefaultAcl>::GetTableData() {
   std::vector<PgDefaultAcl> values;
   uint64_t oid = 1;
   auto& context = _context;
-  const auto add = [&](Oid schema, const catalog::DefaultAcl& entry) {
+  const auto add = [&](Oid schema, const duckdb::DefaultAcl& entry) {
     values.push_back(PgDefaultAcl{
       .oid = oid++,
       .defaclrole = entry.role,

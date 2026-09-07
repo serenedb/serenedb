@@ -49,6 +49,7 @@ DatabaseCatalogEntry::DatabaseCatalogEntry(duckdb::Catalog& catalog,
     _public_schema_id{info.public_schema_id} {
   comment = info.comment;
   tags = info.tags;
+  permissions = info.permissions;
 }
 
 duckdb::unique_ptr<duckdb::CreateInfo> DatabaseCatalogEntry::GetInfo() const {

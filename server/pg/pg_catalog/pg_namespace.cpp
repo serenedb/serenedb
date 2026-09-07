@@ -21,6 +21,7 @@
 #include "pg/pg_catalog/pg_namespace.h"
 
 #include <duckdb/catalog/catalog_entry/schema_catalog_entry.hpp>
+#include <span>
 
 #include "basics/assert.h"
 #include "pg/pg_types.h"
@@ -55,7 +56,7 @@ void RetrieveObjects(duckdb::ClientContext& context, duckdb::Catalog& database,
       .oid = schema.oid,
       .nspname = schema.name.GetIdentifierName(),
       .nspowner = schema.permissions.owner,
-      .nspacl = {catalog::AclView{schema.permissions.acl}},
+      .nspacl = {std::span<const duckdb::AclItem>{schema.permissions.acl}},
     });
   });
 }

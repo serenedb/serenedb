@@ -22,12 +22,12 @@
 #include <duckdb/catalog/catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/type_catalog_entry.hpp>
+#include <duckdb/catalog/permissions.hpp>
 #include <duckdb/parser/constraints/list.hpp>
 
 #include "app/app_server.h"
 #include "basics/containers/flat_hash_set.h"
 #include "basics/down_cast.h"
-#include "catalog1/permissions.h"
 #include "connector/primary_key.h"
 #include "pg/pg_catalog/fwd.h"
 #include "pg/pg_types.h"
@@ -151,7 +151,7 @@ void EmitColumnsForTable(const duckdb::TableCatalogEntry& table,
       .attislocal = true,
       .attinhcount = 0,
       .attcollation = GetCollationForType(type_oid),
-      .attacl = {catalog::ColumnAclOf(table.permissions, col.Oid())},
+      .attacl = {col.Acl()},
     };
     values.push_back(std::move(row));
   }

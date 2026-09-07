@@ -22,12 +22,13 @@
 
 #include <array>
 #include <duckdb/catalog/catalog.hpp>
+#include <duckdb/catalog/permissions.hpp>
 #include <duckdb/common/types.hpp>
 #include <duckdb/common/types/vector.hpp>
+#include <span>
 #include <string_view>
 #include <vector>
 
-#include "catalog1/permissions.h"
 #include "pg/pg_types.h"
 
 namespace sdb::pg {
@@ -37,8 +38,8 @@ struct MaterializedData {
   duckdb::idx_t size = 0;
 };
 
-inline constexpr std::array kSystemTableAcl{catalog::AclItem{
-  .grantee = kPublicGrantee, .privs = catalog::AclMode::Select}};
+inline constexpr std::array kSystemTableAcl{
+  duckdb::AclItem{.grantee = kPublicGrantee, .privs = duckdb::AclMode::Select}};
 
 class VirtualTable {
  public:
@@ -51,7 +52,7 @@ class VirtualTable {
 
   duckdb::idx_t Id() const noexcept { return _id; }
   std::string_view GetName() const noexcept { return _name; }
-  catalog::AclView GetAcl() const noexcept { return _acl; }
+  std::span<const duckdb::AclItem> GetAcl() const noexcept { return _acl; }
 
   virtual duckdb::LogicalType RowType() const noexcept = 0;
 
@@ -61,7 +62,7 @@ class VirtualTable {
  protected:
   duckdb::idx_t _id = 0;
   std::string_view _name;
-  catalog::AclView _acl = kSystemTableAcl;
+  std::span<const duckdb::AclItem> _acl = kSystemTableAcl;
 };
 
 }  // namespace sdb::pg

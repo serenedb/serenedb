@@ -24,6 +24,7 @@
 #include <duckdb/catalog/catalog_entry/table_macro_catalog_entry.hpp>
 #include <duckdb/function/macro_function.hpp>
 #include <duckdb/parser/parsed_data/create_macro_info.hpp>
+#include <span>
 #include <string>
 #include <vector>
 
@@ -106,7 +107,7 @@ MaterializedData SystemTableSnapshot<PgProc>::GetTableData() {
         .prorettype = rettype,
         .proargtypes = argtypes_storage.back(),
         .prosrc = func.name.GetIdentifierName(),
-        .proacl = {catalog::AclView{perm.acl}},
+        .proacl = {std::span<const duckdb::AclItem>{perm.acl}},
       });
     }
   };

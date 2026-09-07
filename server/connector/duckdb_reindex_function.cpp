@@ -30,6 +30,7 @@
 #include <duckdb/catalog/catalog_entry/schema_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/view_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_transaction.hpp>
+#include <duckdb/catalog/permissions.hpp>
 #include <duckdb/common/multi_file/multi_file_reader.hpp>
 #include <duckdb/common/multi_file/multi_file_states.hpp>
 #include <duckdb/common/string_util.hpp>
@@ -79,7 +80,6 @@
 #include "catalog1/cluster.h"
 #include "catalog1/entry/inverted_index.h"
 #include "catalog1/entry/role.h"
-#include "catalog1/permissions.h"
 #include "connector/duckdb_client_state.h"
 #include "connector/duckdb_physical_create_index.h"
 #include "connector/file_manifest.h"
@@ -195,7 +195,7 @@ ReindexTarget ResolveTarget(duckdb::ClientContext& context,
   // the passes run on internal connections and reach no other gate.
   if (!auth::ClosureFor(&context, conn_ctx.GetRoleId())
          ->Can(duckdb::CatalogType::TABLE_ENTRY, view.permissions,
-               catalog::AclMode::Maintain)) {
+               duckdb::AclMode::Maintain)) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
                     ERR_MSG("permission denied for index \"", name, "\""));
   }

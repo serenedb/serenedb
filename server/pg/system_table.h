@@ -30,6 +30,7 @@
 #include <duckdb/catalog/catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/schema_catalog_entry.hpp>
 #include <duckdb/catalog/duck_catalog.hpp>
+#include <duckdb/catalog/permissions.hpp>
 #include <duckdb/common/types.hpp>
 #include <duckdb/common/types/data_chunk.hpp>
 #include <duckdb/common/types/vector.hpp>
@@ -39,11 +40,9 @@
 #include <span>
 #include <type_traits>
 
-#include "auth/acl.h"
 #include "auth/role_closure.h"
 #include "basics/down_cast.h"
 #include "catalog1/entry/role.h"
-#include "catalog1/permissions.h"
 #include "connector/pg_logical_types.h"
 #include "pg/information_schema/fwd.h"
 #include "pg/pg_catalog/fwd.h"
@@ -53,25 +52,25 @@
 namespace sdb::pg {
 
 struct PrivChar {
-  catalog::AclMode mode;
+  duckdb::AclMode mode;
   char chr;
 };
 inline constexpr std::array kPrivChars{
-  PrivChar{catalog::AclMode::Insert, 'a'},
-  PrivChar{catalog::AclMode::Select, 'r'},
-  PrivChar{catalog::AclMode::Update, 'w'},
-  PrivChar{catalog::AclMode::Delete, 'd'},
-  PrivChar{catalog::AclMode::Truncate, 'D'},
-  PrivChar{catalog::AclMode::References, 'x'},
-  PrivChar{catalog::AclMode::Trigger, 't'},
-  PrivChar{catalog::AclMode::Maintain, 'm'},
-  PrivChar{catalog::AclMode::Execute, 'X'},
-  PrivChar{catalog::AclMode::Usage, 'U'},
-  PrivChar{catalog::AclMode::Create, 'C'},
-  PrivChar{catalog::AclMode::CreateTemp, 'T'},
-  PrivChar{catalog::AclMode::Connect, 'c'},
-  PrivChar{catalog::AclMode::Set, 's'},
-  PrivChar{catalog::AclMode::AlterSystem, 'A'},
+  PrivChar{duckdb::AclMode::Insert, 'a'},
+  PrivChar{duckdb::AclMode::Select, 'r'},
+  PrivChar{duckdb::AclMode::Update, 'w'},
+  PrivChar{duckdb::AclMode::Delete, 'd'},
+  PrivChar{duckdb::AclMode::Truncate, 'D'},
+  PrivChar{duckdb::AclMode::References, 'x'},
+  PrivChar{duckdb::AclMode::Trigger, 't'},
+  PrivChar{duckdb::AclMode::Maintain, 'm'},
+  PrivChar{duckdb::AclMode::Execute, 'X'},
+  PrivChar{duckdb::AclMode::Usage, 'U'},
+  PrivChar{duckdb::AclMode::Create, 'C'},
+  PrivChar{duckdb::AclMode::CreateTemp, 'T'},
+  PrivChar{duckdb::AclMode::Connect, 'c'},
+  PrivChar{duckdb::AclMode::Set, 's'},
+  PrivChar{duckdb::AclMode::AlterSystem, 'A'},
 };
 
 inline void PutId(std::string& out, std::string_view name) {
@@ -87,7 +86,7 @@ inline void PutId(std::string& out, std::string_view name) {
 }
 
 inline std::string AclToPgString(
-  const catalog::AclItem& item,
+  const duckdb::AclItem& item,
   absl::FunctionRef<std::string_view(duckdb::idx_t)> name_of) {
   std::string out;
   if (item.grantee != kPublicGrantee) {
@@ -95,9 +94,9 @@ inline std::string AclToPgString(
   }
   out.push_back('=');
   for (const auto& p : kPrivChars) {
-    if ((item.privs & p.mode) != catalog::AclMode::NoRights) {
+    if ((item.privs & p.mode) != duckdb::AclMode::NoRights) {
       out.push_back(p.chr);
-      if ((item.grant_option & p.mode) != catalog::AclMode::NoRights) {
+      if ((item.grant_option & p.mode) != duckdb::AclMode::NoRights) {
         out.push_back('*');
       }
     }

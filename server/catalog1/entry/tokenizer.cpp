@@ -63,6 +63,7 @@ TokenizerCatalogEntry::TokenizerCatalogEntry(duckdb::Catalog& catalog,
   comment = info.comment;
   tags = info.tags;
   dependencies = info.dependencies;
+  permissions = info.permissions;
 }
 
 Tokenizer::TokenizerWrapper Tokenizer::Acquire() const {

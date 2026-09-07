@@ -55,6 +55,7 @@ ForeignServerCatalogEntry::ForeignServerCatalogEntry(
     _options{info.options} {
   comment = info.comment;
   tags = info.tags;
+  permissions = info.permissions;
 }
 
 duckdb::unique_ptr<duckdb::CreateInfo> ForeignServerCatalogEntry::GetInfo()

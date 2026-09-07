@@ -23,6 +23,7 @@
 #include <absl/strings/str_cat.h>
 
 #include <deque>
+#include <span>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -72,7 +73,7 @@ MaterializedData SystemTableSnapshot<PgForeignServer>::GetTableData() {
         .srvfdw = 0,
         .srvtype = {},
         .srvversion = {},
-        .srvacl = {catalog::AclView{perm.acl}},
+        .srvacl = {std::span<const duckdb::AclItem>{perm.acl}},
         .srvoptions = views,
       });
     });

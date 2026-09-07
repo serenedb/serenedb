@@ -51,8 +51,8 @@
 #include <duckdb/storage/table_io_manager.hpp>
 #include <optional>
 #include <ranges>
+#include <span>
 
-#include "auth/acl.h"
 #include "auth/role_closure.h"
 #include "basics/build.h"
 #include "basics/down_cast.h"
@@ -792,18 +792,18 @@ void PgSchemaSizeOidFunction(duckdb::DataChunk& args,
 }
 
 struct PrivCheckModes {
-  catalog::AclMode privs = catalog::AclMode::NoRights;
-  catalog::AclMode grant_options = catalog::AclMode::NoRights;
+  duckdb::AclMode privs = duckdb::AclMode::NoRights;
+  duckdb::AclMode grant_options = duckdb::AclMode::NoRights;
 };
 
-catalog::AclMode PrivCheckKeyword(std::string_view keyword,
-                                  duckdb::CatalogType type) {
-  auto parsed = auth::TryParseAclKeyword(keyword, type);
-  if (!parsed) {
+duckdb::AclMode PrivCheckKeyword(std::string_view keyword,
+                                 duckdb::CatalogType type) {
+  duckdb::AclMode mode;
+  if (!duckdb::TryParseAclKeyword(std::string{keyword}, type, mode)) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                     ERR_MSG("unrecognized privilege type: \"", keyword, "\""));
   }
-  return *parsed;
+  return mode;
 }
 
 PrivCheckModes ParsePrivCheckText(std::string_view priv_text,
@@ -827,30 +827,30 @@ PrivCheckModes ParsePrivCheckText(std::string_view priv_text,
 
 bool HasAnyPermissionsPrivilegeText(duckdb::ClientContext& context,
                                     duckdb::idx_t role_id,
-                                    const catalog::Permissions& perm,
+                                    const duckdb::CatalogPermissions& perm,
                                     duckdb::CatalogType type,
                                     std::string_view priv_text) {
   const auto modes = ParsePrivCheckText(priv_text, type);
   // The cached inherit-closure (superuser bit + sorted role ids): one hash
   // lookup unless a role DDL has happened since the last check.
   const auto closure = auth::ClosureFor(&context, role_id);
-  if (modes.privs != catalog::AclMode::NoRights &&
+  if (modes.privs != duckdb::AclMode::NoRights &&
       closure->CanAny(type, perm, modes.privs)) {
     return true;
   }
-  if (modes.grant_options == catalog::AclMode::NoRights) {
+  if (modes.grant_options == duckdb::AclMode::NoRights) {
     return false;
   }
   if (closure->Owns(perm.owner)) {
     return true;
   }
-  const catalog::AclMode held = closure->GrantableModes(perm.acl);
-  return (held & modes.grant_options) != catalog::AclMode::NoRights;
+  const duckdb::AclMode held = closure->GrantableModes(perm.acl);
+  return (held & modes.grant_options) != duckdb::AclMode::NoRights;
 }
 
 bool HasAnyTablePrivilegeText(duckdb::ClientContext& context,
                               duckdb::idx_t role_id,
-                              const catalog::Permissions& perm,
+                              const duckdb::CatalogPermissions& perm,
                               std::string_view priv_text) {
   return HasAnyPermissionsPrivilegeText(
     context, role_id, perm, duckdb::CatalogType::TABLE_ENTRY, priv_text);
@@ -860,7 +860,7 @@ bool HasAnyTablePrivilegeText(duckdb::ClientContext& context,
 // table and a view the same vocabulary, so both come back here; anything else
 // under the relation namespace -- the index-as-table wrapper -- is not one, and
 // a null makes the caller answer NULL rather than false.
-const catalog::Permissions* RelationPermissions(
+const duckdb::CatalogPermissions* RelationPermissions(
   const duckdb::CatalogEntry* entry) {
   if (entry == nullptr) {
     return nullptr;
@@ -900,9 +900,11 @@ const pg::VirtualTable* ResolveSystemRelation(ConnectionContext& conn_ctx,
 // A system relation has no catalog definition: it exists for the life of the
 // statement that reads it. Its owner is root and its ACL the one grant the
 // table declares.
-catalog::Permissions SystemRelationPermissions(const pg::VirtualTable& sys) {
-  return catalog::Permissions{
-    pg::kRootUser, catalog::Acl{sys.GetAcl().begin(), sys.GetAcl().end()}};
+duckdb::CatalogPermissions SystemRelationPermissions(
+  const pg::VirtualTable& sys) {
+  return duckdb::CatalogPermissions{
+    pg::kRootUser,
+    duckdb::vector<duckdb::AclItem>{sys.GetAcl().begin(), sys.GetAcl().end()}};
 }
 
 bool SystemRelationHasColumn(const pg::VirtualTable& sys,
@@ -1201,10 +1203,9 @@ bool HasObjectPrivilegeByName(duckdb::ClientContext& context,
        obj_name == StaticStrings::kInformationSchema)) {
     const auto modes =
       ParsePrivCheckText(priv_text, duckdb::CatalogType::SCHEMA_ENTRY);
-    if ((modes.privs & catalog::AclMode::Create) !=
-          catalog::AclMode::NoRights ||
-        (modes.grant_options & catalog::AclMode::Create) !=
-          catalog::AclMode::NoRights) {
+    if ((modes.privs & duckdb::AclMode::Create) != duckdb::AclMode::NoRights ||
+        (modes.grant_options & duckdb::AclMode::Create) !=
+          duckdb::AclMode::NoRights) {
       return auth::ClosureFor(&context, role_id)->is_superuser;
     }
     return true;
@@ -1418,20 +1419,11 @@ bool PgHasRoleImpl(const auth::RoleGraph& roles, duckdb::idx_t member,
   if (member == target) {
     return mask.usage || mask.member || mask.set;
   }
-  bool ok = false;
-  if (mask.usage) {
-    ok = ok || auth::ComputeRoleClosure(roles, member).MemberOf(target);
-  }
-  if (mask.member) {
-    ok = ok || auth::ComputeMembershipClosure(roles, member).contains(target);
-  }
-  if (mask.set) {
-    ok = ok || auth::ComputeSetRoleClosure(roles, member).contains(target);
-  }
-  if (mask.admin) {
-    ok = ok || auth::HasAdminOption(roles, member, target);
-  }
-  return ok;
+  const auto closure = auth::ComputeRoleClosure(roles, member);
+  return (mask.usage && closure.MemberOf(target)) ||
+         (mask.member && closure.IsMember(target)) ||
+         (mask.set && closure.CanSet(target)) ||
+         (mask.admin && closure.IsAdminOf(target));
 }
 
 duckdb::idx_t RoleIdByName(const auth::RoleGraph& roles,
@@ -1545,14 +1537,13 @@ bool ColumnPrivHeld(duckdb::ClientContext& context, duckdb::idx_t role_id,
                     const duckdb::ColumnDefinition& column,
                     std::string_view priv) {
   const auto modes = ParsePrivCheckText(priv, duckdb::CatalogType::TABLE_ENTRY);
-  const catalog::AclView column_acl =
-    catalog::ColumnAclOf(table.permissions, column.Oid());
+  const std::span<const duckdb::AclItem> column_acl = column.Acl();
   const auto closure = auth::ClosureFor(&context, role_id);
-  if (modes.privs != catalog::AclMode::NoRights &&
+  if (modes.privs != duckdb::AclMode::NoRights &&
       closure->CanColumns(table.permissions, modes.privs, {&column_acl, 1})) {
     return true;
   }
-  if (modes.grant_options == catalog::AclMode::NoRights) {
+  if (modes.grant_options == duckdb::AclMode::NoRights) {
     return false;
   }
   const auto& rc = *closure;
@@ -1561,7 +1552,7 @@ bool ColumnPrivHeld(duckdb::ClientContext& context, duckdb::idx_t role_id,
   }
   const auto held =
     rc.GrantableModes(table.permissions.acl) | rc.GrantableModes(column_acl);
-  return (held & modes.grant_options) != catalog::AclMode::NoRights;
+  return (held & modes.grant_options) != duckdb::AclMode::NoRights;
 }
 
 bool HasColumnPrivByName(duckdb::ClientContext& context, duckdb::idx_t role_id,

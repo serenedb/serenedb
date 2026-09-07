@@ -61,6 +61,7 @@
 #include <utility>
 #include <vector>
 
+#include "auth/role_closure.h"
 #include "basics/assert.h"
 #include "catalog1/catalog.h"
 #include "catalog1/entry/tokenizer.h"
@@ -930,6 +931,15 @@ void CreateTokenizer(ConnectionContext& conn_ctx, std::string_view name,
   auto& target = database.GetSchema(
     client,
     duckdb::Identifier{std::string{schema.empty() ? current_schema : schema}});
+  const auto role = conn_ctx.GetRoleId();
+  if (!auth::ClosureFor(&client, role)
+         ->Can(duckdb::CatalogType::SCHEMA_ENTRY, target.permissions,
+               duckdb::AclMode::Create)) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
+                    ERR_MSG("permission denied for schema ",
+                            target.name.GetIdentifierName()));
+  }
+  tokenizer.permissions.owner = role;
   auto& catalog = database.Cast<catalog::SereneDBCatalog>();
   catalog.CreateTokenizer(duckdb::CatalogTransaction{catalog, client},
                           target.Cast<duckdb::DuckSchemaEntry>(), tokenizer);

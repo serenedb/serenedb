@@ -65,7 +65,7 @@ Oid CatalogClassOid(duckdb::CatalogType type) {
 
 namespace {
 
-using catalog::Permissions;
+using duckdb::CatalogPermissions;
 using duckdb::CreateTableInfo;
 
 // A relation, a function or a type as pg_depend names the referenced side of
@@ -299,7 +299,7 @@ std::vector<PgDepend> CollectEdges(duckdb::ClientContext& context,
 
 template<>
 MaterializedData SystemTableSnapshot<PgDepend>::GetTableData() {
-  auto values = CollectEdges(_config.GetClientContext(), GetDatabase());
+  auto values = CollectEdges(_context, GetDatabase());
 
   auto result = CreateColumns<PgDepend>(values.size());
   for (size_t row = 0; row < values.size(); ++row) {

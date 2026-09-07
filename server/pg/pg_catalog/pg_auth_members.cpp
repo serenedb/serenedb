@@ -43,7 +43,8 @@ MaterializedData SystemTableSnapshot<PgAuthMembers>::GetTableData() {
           .oid = oid++,
           .roleid = edge.role,
           .member = role.oid,
-          .grantor = pg::kRootUser,
+          .grantor =
+            edge.grantor == pg::kInvalidOid ? pg::kRootUser : edge.grantor,
           .admin_option = edge.admin_option,
           .inherit_option = edge.inherit_option,
           .set_option = edge.set_option,

@@ -23,13 +23,13 @@
 #include <duckdb.hpp>
 #include <duckdb/catalog/catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
+#include <duckdb/catalog/permissions.hpp>
 #include <duckdb/execution/index/index_type.hpp>
 #include <duckdb/execution/physical_operator.hpp>
 #include <duckdb/parser/parsed_data/create_index_info.hpp>
 #include <optional>
 
 #include "catalog1/catalog.h"
-#include "catalog1/permissions.h"
 #include "connector/column_id.h"
 #include "connector/file_manifest.h"
 

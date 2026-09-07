@@ -21,6 +21,7 @@
 #include "pg/pg_catalog/pg_database.h"
 
 #include <deque>
+#include <span>
 #include <string>
 #include <vector>
 
@@ -74,7 +75,7 @@ MaterializedData SystemTableSnapshot<PgDatabase>::GetTableData() {
         .dattablespace = 1663,
         .datcollate = "C.UTF-8",
         .datctype = "C.UTF-8",
-        .datacl = {catalog::AclView{db.permissions.acl}},
+        .datacl = {std::span<const duckdb::AclItem>{db.permissions.acl}},
       });
     });
 

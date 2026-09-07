@@ -153,6 +153,7 @@ class SystemSchemaGenerator final : public duckdb::DefaultGenerator {
     duckdb::CreateSchemaInfo info;
     info.SetQualifiedName(duckdb::QualifiedName({name}, duckdb::Identifier()));
     info.internal = true;
+    info.permissions.owner = pg::kRootUser;
     auto schema = duckdb::make_uniq<duckdb::DuckSchemaEntry>(catalog, info);
     for (const auto set :
          {duckdb::CatalogType::TABLE_ENTRY, duckdb::CatalogType::MACRO_ENTRY,

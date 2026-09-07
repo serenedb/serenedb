@@ -22,13 +22,13 @@
 
 #include <cstdint>
 #include <duckdb/catalog/catalog_entry.hpp>
+#include <duckdb/catalog/permissions.hpp>
 #include <duckdb/common/constants.hpp>
 #include <duckdb/common/enums/catalog_type.hpp>
 #include <string_view>
 #include <vector>
 
 #include "basics/assert.h"
-#include "catalog1/permissions.h"
 
 namespace duckdb {
 

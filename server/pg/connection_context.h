@@ -21,12 +21,12 @@
 #pragma once
 
 #include <atomic>
+#include <duckdb/catalog/permissions.hpp>
 #include <memory>
 #include <string_view>
 
 #include "basics/message_buffer.h"
 #include "catalog1/entry/role.h"
-#include "catalog1/permissions.h"
 #include "pg/sql_error.h"
 #include "query/transaction.h"
 
@@ -49,7 +49,7 @@ struct LoginCheck {
 // role exists -> may log in -> holds CONNECT on the target database
 // (superuser bypasses, as in PG's InitPostgres).
 LoginCheck RequireLoginRole(std::string_view user, std::string_view dbname,
-                            const catalog::Permissions& perm);
+                            const duckdb::CatalogPermissions& perm);
 
 }  // namespace sdb::pg
 namespace sdb::network {

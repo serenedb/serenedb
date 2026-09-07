@@ -23,6 +23,7 @@
 #include <deque>
 #include <duckdb/catalog/catalog_entry/schema_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/type_catalog_entry.hpp>
+#include <span>
 #include <string>
 #include <vector>
 
@@ -1600,7 +1601,7 @@ MaterializedData SystemTableSnapshot<PgType>::GetTableData() {
     const auto namespace_oid = type.ParentSchema().oid;
     const auto array_oid = TypeArrayOid(type_oid);
     const auto array_name = make_array_name(type_name);
-    const AclColumn type_acl{catalog::AclView{perm.acl}};
+    const AclColumn type_acl{std::span<const duckdb::AclItem>{perm.acl}};
 
     auto make_row = [&](bool as_array) {
       return PgType{

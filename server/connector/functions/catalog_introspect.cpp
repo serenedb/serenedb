@@ -26,6 +26,7 @@
 #include <duckdb/catalog/catalog_entry/duck_schema_entry.hpp>
 #include <duckdb/catalog/catalog_entry/sequence_catalog_entry.hpp>
 #include <duckdb/catalog/dependency_manager.hpp>
+#include <duckdb/catalog/permissions.hpp>
 #include <duckdb/function/table_function.hpp>
 #include <duckdb/main/attached_database.hpp>
 #include <duckdb/main/database_manager.hpp>
@@ -44,7 +45,6 @@
 #include "catalog1/entry/database.h"
 #include "catalog1/entry/foreign_server.h"
 #include "catalog1/entry/role.h"
-#include "catalog1/permissions.h"
 #include "connector/duckdb_client_state.h"
 #include "pg/connection_context.h"
 #include "pg/errcodes.h"

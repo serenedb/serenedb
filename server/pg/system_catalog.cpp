@@ -20,6 +20,7 @@
 
 #include "pg/system_catalog.h"
 
+#include <absl/algorithm/container.h>
 #include <absl/strings/str_cat.h>
 
 #include <boost/pfr.hpp>
@@ -328,6 +329,29 @@ StaticFunction GetSystemFunction(std::string_view schema,
   return it == functions.end() ? StaticFunction{} : it->second;
 }
 
+static duckdb::CatalogPermissions ViewPermissions(std::string_view name) {
+  static constexpr std::array kSuperuserOnly = {
+    std::string_view{"pg_shadow"},
+    std::string_view{"pg_aios"},
+    std::string_view{"pg_backend_memory_contexts"},
+    std::string_view{"pg_config"},
+    std::string_view{"pg_file_settings"},
+    std::string_view{"pg_ident_file_mappings"},
+    std::string_view{"pg_replication_origin_status"},
+    std::string_view{"pg_shmem_allocations"},
+    std::string_view{"pg_shmem_allocations_numa"},
+    std::string_view{"pg_statistic"},
+    std::string_view{"pg_statistic_ext_data"},
+    std::string_view{"pg_subscription"},
+    std::string_view{"pg_user_mapping"},
+  };
+  duckdb::CatalogPermissions permissions{.owner = kRootUser};
+  if (!absl::c_linear_search(kSuperuserOnly, name)) {
+    permissions.acl.assign(kSystemTableAcl.begin(), kSystemTableAcl.end());
+  }
+  return permissions;
+}
+
 void InitSystemViews(duckdb::Parser& parser) {
   uint64_t next_oid = kFirstSystemView;
   for (const auto& view : kExternalViews) {
@@ -351,7 +375,7 @@ void InitSystemViews(duckdb::Parser& parser) {
     auto& map = info_schema ? gInfoSchemaViews : gPgCatalogViews;
     map[view.name] = StaticView{
       .info = std::shared_ptr<const duckdb::CreateViewInfo>{info.release()},
-      .permissions = catalog::Permissions{.owner = kRootUser},
+      .permissions = ViewPermissions(view.name),
       .oid = next_oid++};
   }
 }
@@ -422,7 +446,7 @@ void InitSystemFunctions(duckdb::Parser& parser) {
       info->SetSchema(duckdb::Identifier{schema});
       out[name] = StaticFunction{
         std::shared_ptr<const duckdb::CreateMacroInfo>{info.release()},
-        catalog::Permissions{}};
+        duckdb::CatalogPermissions{}};
     }
   };
   publish(pg_catalog, StaticStrings::kPgCatalogSchema, gPgCatalogFunctions);

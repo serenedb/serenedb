@@ -126,6 +126,38 @@ CREATE TABLE zhirinovsky_folded (Xy INTEGER, xY INTEGER);
 db error: ERROR: Column with name xy already exists!
 
 
+# A column alias that lexes as a keyword -- timestamp, time, interval, text are
+# in the keyword tables, date is not -- folds to lowercase exactly like a plain
+# identifier. The parser used to hand keyword-lexed aliases to the catalog in
+# their source case, which a case-sensitive catalog then failed to find on an
+# unquoted (folded) reference.
+statement ok
+CREATE TABLE primakov_case AS
+  SELECT 1 AS Timestamp, 2 AS Time, 3 AS Interval, 4 AS Text, 5 AS Date, 6 AS Foo;
+
+query
+SELECT attname FROM pg_attribute a JOIN pg_class c ON c.oid = a.attrelid
+WHERE c.relname = 'primakov_case' AND a.attnum > 0 ORDER BY a.attnum;
+----
+attname
+timestamp
+time
+interval
+text
+date
+foo
+
+# An unquoted reference to a keyword alias folds and finds the folded column.
+query
+SELECT Timestamp, Time, Interval, Text, Date, Foo FROM primakov_case;
+----
+timestamp	time	interval	text	date	foo
+1	2	3	4	5	6
+
+statement ok
+DROP TABLE primakov_case;
+
+
 statement ok
 DROP TABLE zhirinovsky_named;
 

@@ -18,13 +18,10 @@ ruleset over a superuser (loopback) connection, then runs the source-IP matrix.
 
 import argparse
 import os
-import shutil
 import socket
 import struct
 import subprocess
 import sys
-import tempfile
-import time
 
 # --- minimal pg-wire client -------------------------------------------------
 
@@ -88,45 +85,18 @@ def _recvn(s: socket.socket, n: int) -> bytes:
 
 # --- server lifecycle -------------------------------------------------------
 
-def free_port() -> int:
-    s = socket.socket()
-    s.bind(("", 0))
-    p = s.getsockname()[1]
-    s.close()
-    return p
+sys.path.insert(0, os.path.join(
+    os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+    "tests", "harness", "python"))
+
+from serened import Serened as _Serened, free_port  # noqa: E402
 
 
-class Serened:
-    def __init__(self, binary: str, port: int):
-        self.binary = binary
-        self.port = port
-        self.datadir = tempfile.mkdtemp(prefix="hba_mask_")
-        self.proc = None
-
-    def start(self):
-        self.proc = subprocess.Popen(
-            [self.binary, self.datadir,
-             f"--listen=postgres://0.0.0.0:{self.port}",
-             "--auth_timeout=600s"],
-            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        deadline = time.time() + 30
-        while time.time() < deadline:
-            if probe("127.0.0.1", self.port, "127.0.0.1") != BROKEN:
-                return
-            if self.proc.poll() is not None:
-                raise RuntimeError("serened exited during startup")
-            time.sleep(0.3)
-        raise RuntimeError("serened did not come up in 30s")
-
-    def stop(self):
-        if self.proc and self.proc.poll() is None:
-            self.proc.terminate()
-            try:
-                self.proc.wait(timeout=5)
-            except subprocess.TimeoutExpired:
-                self.proc.kill()
-        self.proc = None
-        shutil.rmtree(self.datadir, ignore_errors=True)
+def Serened(binary: str, port: int) -> _Serened:
+    return _Serened(
+        binary, port=port, prefix="hba_mask_",
+        ready=lambda host, p: probe(host, p, "127.0.0.1") != BROKEN,
+    )
 
 
 # --- the mask matrix --------------------------------------------------------

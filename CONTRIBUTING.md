@@ -63,6 +63,8 @@ The test tree is split by what runs the test and what it covers:
 - `tests/server/<area>/...`, `tests/libs/<lib>/...` -- gtest unit tests; use for isolated C++ logic where a sqllogic test would be awkward (library classes / pure functions / hard-to-reproduce bugs).
 - `tests/bench/micro/...` -- microbenchmarks for performance claims.
 - `tests/duckdb/` -- driver for the **DuckDB-level** suites: DuckDB core's own test tree and each vendored extension's, via DuckDB's `unittest` binary. Built only when configured with `-DSDB_BUILD_DUCKDB_UNITTESTS=ON`.
+- `tests/stress/` -- randomized parallel DDL/DML churn against a `serened` of its own, with a model-based consistency oracle and a hang detector. Use it to *find* concurrency bugs; pin whatever it finds as a deterministic test under `tests/sqllogic/recovery/`. See [tests/stress/README.md](tests/stress/README.md).
+- `tests/harness/python/` -- the shared `serened` process fixture (start / kill / restart / log scan), used by `tests/network` and `tests/stress`.
 
 When a change needs a test:
 
@@ -80,6 +82,14 @@ When a change needs a test:
 
 # Recovery tests (auto-restarts serened on injected crashes; needs build/bin/serened)
 ./tests/sqllogic/run_recovery_tests.sh --runner ../../third_party/sqllogictest-rs
+
+# One recovery test: the path is relative to tests/sqllogic, not the repo root.
+# A repo-relative path matches nothing and the run reports a vacuous pass.
+./tests/sqllogic/run_recovery_tests.sh --runner ../../third_party/sqllogictest-rs \
+    recovery/catalog_crash_windows.test
+
+# Catalog stress suite (starts, kills and crashes its own serened)
+./tests/stress/run.sh --profile smoke
 ```
 
 C++ unit tests:

@@ -20,137 +20,28 @@
 
 #include "pg/pg_catalog/pg_shdepend.h"
 
-#include <algorithm>
-#include <duckdb/catalog/catalog_entry/dependency/dependency_entry.hpp>
-#include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
-#include <duckdb/common/optional_ptr.hpp>
 #include <vector>
 
-#include "basics/containers/flat_hash_map.h"
-#include "catalog1/cluster.h"
-#include "catalog1/entry/role.h"
 #include "pg/pg_catalog/fwd.h"
 #include "pg/pg_catalog/pg_authid.h"
-#include "pg/pg_catalog/pg_depend.h"
+#include "pg/role_dependencies.h"
 
 namespace sdb::pg {
-namespace {
-
-bool AclNames(catalog::AclView acl, duckdb::idx_t role) {
-  return std::ranges::any_of(acl, [&](const catalog::AclItem& item) {
-    return item.grantee == role || item.grantor == role;
-  });
-}
-
-// The per-column grants of every table in the database, keyed by the table.
-// A column grant makes the table name its grantee, and only the table's own
-// definition knows about it.
-using ColumnAclsByTable =
-  containers::FlatHashMap<duckdb::idx_t, const catalog::ColumnAcls*>;
-
-ColumnAclsByTable CollectColumnAcls(duckdb::ClientContext& context,
-                                    duckdb::Catalog& database) {
-  ColumnAclsByTable out;
-  VisitEntries<duckdb::TableCatalogEntry>(
-    context, database, [&](const duckdb::TableCatalogEntry& table) {
-      if (!table.GetColumnAcls().empty()) {
-        out.emplace(table.oid, &table.GetColumnAcls());
-      }
-    });
-  return out;
-}
-
-}  // namespace
 
 template<>
 MaterializedData SystemTableSnapshot<PgShdepend>::GetTableData() {
-  auto& context = _config.GetClientContext();
-  const auto database_id = GetDatabaseId();
-  // The same reverse index DROP ROLE consults: an object that names a role is
-  // exactly an edge with the Block verb, which is the verb pg_depend leaves to
-  // this table. Resolved once, not per role.
-  auto dependents = catalog::EdgeAttachments(context);
-  const auto column_acls = CollectColumnAcls(context, GetDatabase());
-
-  // Whether the dependent's grants name the role anywhere. Postgres records
-  // one pg_shdepend row per (object, role, deptype), not one per privilege, so
-  // a column grant on a table counts as the table naming the role.
-  const auto grants_name = [&](duckdb::idx_t id, catalog::AclView acl,
-                               duckdb::idx_t role) {
-    if (AclNames(acl, role)) {
-      return true;
-    }
-    const auto it = column_acls.find(id);
-    return it != column_acls.end() &&
-           std::ranges::any_of(*it->second, [&](const catalog::Acl& column) {
-             return AclNames(column, role);
-           });
-  };
-
-  // Collected before anything is resolved: reading an edge's dependent opens
-  // the role set this walk is holding, and the lock behind it is not recursive.
-  std::vector<duckdb::idx_t> roles;
-  auto& cluster = catalog::ClusterOf(context);
-  cluster.ScanRoles(
-    cluster.GetCatalogTransaction(context),
-    [&](duckdb::CatalogEntry& info) { roles.push_back(info.oid); });
-
   std::vector<PgShdepend> values;
-  for (const auto role : roles) {
-    // Everything that names a role names it as owner, grantee or grantor:
-    // nothing else points at one, which is why every dependent of a role is a
-    // row here rather than a cascade anywhere.
-    dependents.ScanDependents(
-      catalog::DependencyInfo(role),
-      [&](duckdb::optional_ptr<duckdb::CatalogEntry> dependent,
-          duckdb::DependencyEntry& edge) {
-        const auto id = catalog::DependencyInfoId(edge.EntryInfo());
-        if (!dependent || !id.isSet()) {
-          return;
-        }
-        // A database belongs to no database, which postgres writes as dbid 0.
-        // Everything else is an entry of this database's own catalog, so the
-        // lookup that finds it is also the database check.
-        const catalog::Permissions* perm = nullptr;
-        bool shared = false;
-        duckdb::optional_ptr<duckdb::CatalogEntry> database;
-        cluster.ScanDatabases(cluster.GetCatalogTransaction(context),
-                              [&](duckdb::CatalogEntry& entry) {
-                                if (!database && entry.oid == id) {
-                                  database = &entry;
-                                }
-                              });
-        auto held = catalog::LookupEntryById(context, id);
-        if (database) {
-          shared = true;
-          perm = &database->permissions;
-        } else if (held) {
-          shared = catalog::IsRoot(held->type);
-          perm = &held->permissions;
-        } else {
-          return;
-        }
-        const auto row = [&](PgShdepend::Deptype deptype) {
-          values.push_back(PgShdepend{
-            .dbid = shared ? Oid{0} : Oid{database_id},
-            .classid = CatalogClassOid(dependent->type),
-            .objid = Oid{id},
-            .objsubid = 0,
-            .refclassid = Oid{PgAuthid::kId},
-            .refobjid = Oid{role},
-            .deptype = deptype,
-          });
-        };
-        // Owner and grantee are separate rows in postgres, and an object can
-        // be both.
-        if (perm->owner == role) {
-          row(PgShdepend::Deptype::Owner);
-        }
-        if (grants_name(id, perm->acl, role)) {
-          row(PgShdepend::Deptype::Acl);
-        }
-      });
-  }
+  VisitRoleDependencies(_context, [&](const RoleDependency& dependency) {
+    values.push_back(PgShdepend{
+      .dbid = dependency.database,
+      .classid = dependency.classid,
+      .objid = dependency.objid,
+      .objsubid = dependency.objsubid,
+      .refclassid = PgAuthid::kId,
+      .refobjid = dependency.role,
+      .deptype = static_cast<PgShdepend::Deptype>(dependency.deptype),
+    });
+  });
 
   auto result = CreateColumns<PgShdepend>(values.size());
   for (size_t row = 0; row < values.size(); ++row) {

@@ -11,6 +11,8 @@ target_sources(
         pg_catalog/pg_constraint.cpp
         pg_catalog/pg_database.cpp
         pg_catalog/pg_db_role_setting.cpp
+        pg_catalog/pg_default_acl.cpp
+        pg_catalog/pg_shdepend.cpp
         pg_catalog/pg_attrdef.cpp
         pg_catalog/pg_description.cpp
         pg_catalog/pg_enum.cpp
@@ -39,6 +41,7 @@ target_sources(
         deserialize.cpp
         system_catalog.cpp
         progress_registry.cpp
+        role_dependencies.cpp
         sql_utils.cpp
         option_help.cpp
         tokenizer_options.cpp

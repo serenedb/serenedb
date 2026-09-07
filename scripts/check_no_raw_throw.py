@@ -41,10 +41,19 @@ THROW_RE = re.compile(r"\bthrow\b\s*(?P<rest>[^\s;]*)")
 # unreachable placeholders (we never serialize a plan), and duckdb itself
 # expects that exception type there -- it never surfaces to a client as a pg
 # error, so a sqlstate would be meaningless.
+# duckdb::CatalogException / duckdb::InternalException: the catalog deliberately
+# raises DuckDB's own catalog errors rather than translating them, and
+# DuckExceptionToErrcode (server/network/pg/wire_frames.cpp) already maps
+# ExceptionType::CATALOG to the precise pg sqlstate per entry kind and
+# duplicate/undefined subtype, with everything else falling to
+# ERRCODE_INTERNAL_ERROR. The sqlstate therefore survives without a translation
+# layer, which is what this check exists to guarantee.
 ALLOWED_EXPRS = (
     "sdb::SqlException",
     "duckdb::TransactionException",
     "duckdb::NotImplementedException",
+    "duckdb::CatalogException",
+    "duckdb::InternalException",
 )
 
 

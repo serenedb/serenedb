@@ -20,36 +20,60 @@
 
 #include "pg/pg_catalog/pg_default_acl.h"
 
-#include "app/app_server.h"
-#include "basics/down_cast.h"
+#include <duckdb/catalog/catalog.hpp>
+#include <duckdb/catalog/catalog_entry/schema_catalog_entry.hpp>
+
 #include "catalog1/cluster.h"
-#include "catalog1/entry/role.h"
 #include "pg/pg_catalog/fwd.h"
 #include "pg/pg_types.h"
 
 namespace sdb::pg {
+namespace {
+
+PgDefaultAcl::Defaclobjtype ObjType(duckdb::CatalogType type) {
+  switch (type) {
+    case duckdb::CatalogType::SEQUENCE_ENTRY:
+      return PgDefaultAcl::Defaclobjtype::Sequence;
+    case duckdb::CatalogType::MACRO_ENTRY:
+    case duckdb::CatalogType::TABLE_MACRO_ENTRY:
+      return PgDefaultAcl::Defaclobjtype::Function;
+    case duckdb::CatalogType::TYPE_ENTRY:
+      return PgDefaultAcl::Defaclobjtype::Type;
+    case duckdb::CatalogType::SCHEMA_ENTRY:
+      return PgDefaultAcl::Defaclobjtype::Schema;
+    default:
+      return PgDefaultAcl::Defaclobjtype::Relation;
+  }
+}
+
+}  // namespace
 
 template<>
 MaterializedData SystemTableSnapshot<PgDefaultAcl>::GetTableData() {
   std::vector<PgDefaultAcl> values;
   uint64_t oid = 1;
-  auto& context = _config.GetClientContext();
-  auto& cluster = catalog::ClusterOf(context);
-  cluster.ScanRoles(
-    cluster.GetCatalogTransaction(context), [&](duckdb::CatalogEntry& entry) {
-      const auto& role = entry.Cast<catalog::RoleCatalogEntry>();
-      for (const auto& acl : role.DefaultAcls()) {
-        // defaclnamespace 0 == all schemas (the schema-less form).
-        values.push_back(PgDefaultAcl{
-          .oid = oid++,
-          .defaclrole = role.oid,
-          .defaclnamespace = acl.schema,
-          .defaclobjtype =
-            static_cast<PgDefaultAcl::Defaclobjtype>(acl.objtype),
-          .defaclacl = {acl.acl},
-        });
-      }
+  auto& context = _context;
+  const auto add = [&](Oid schema, const catalog::DefaultAcl& entry) {
+    values.push_back(PgDefaultAcl{
+      .oid = oid++,
+      .defaclrole = entry.role,
+      .defaclnamespace = schema,
+      .defaclobjtype = ObjType(entry.objtype),
+      .defaclacl = {entry.acl},
     });
+  };
+  auto& cluster = catalog::ClusterOf(context);
+  if (auto database = cluster.LookupDatabase(
+        cluster.GetCatalogTransaction(context), GetDatabase().GetName())) {
+    for (const auto& entry : database->permissions.defaults) {
+      add(kInvalidOid, entry);
+    }
+  }
+  VisitSchemas(context, GetDatabase(), [&](duckdb::SchemaCatalogEntry& schema) {
+    for (const auto& entry : schema.permissions.defaults) {
+      add(schema.oid, entry);
+    }
+  });
 
   auto result = CreateColumns<PgDefaultAcl>(values.size());
   for (size_t row = 0; row < values.size(); ++row) {

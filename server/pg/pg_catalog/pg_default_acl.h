@@ -27,7 +27,7 @@ namespace sdb::pg {
 // https://www.postgresql.org/docs/18/catalog-pg-default-acl.html
 // NOLINTBEGIN
 struct PgDefaultAcl {
-  static constexpr uint64_t kId = 116;
+  static constexpr uint64_t kId = 826;
   static constexpr std::string_view kName = "pg_default_acl";
 
   enum class Defaclobjtype : char {

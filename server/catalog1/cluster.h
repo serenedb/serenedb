@@ -21,6 +21,8 @@
 #pragma once
 
 #include <duckdb/catalog/catalog_set.hpp>
+#include <duckdb/catalog/catalog_transaction.hpp>
+#include <duckdb/common/constants.hpp>
 #include <duckdb/catalog/duck_catalog.hpp>
 #include <functional>
 #include <string>
@@ -50,6 +52,10 @@ class ClusterCatalog final : public duckdb::DuckCatalog {
     duckdb::CatalogTransaction transaction, CreateRoleInfo& info);
   bool DropRole(duckdb::CatalogTransaction transaction,
                 const duckdb::Identifier& name, bool cascade);
+  void AlterRole(duckdb::CatalogTransaction transaction,
+                 const duckdb::Identifier& name, duckdb::AlterInfo& info);
+  void AlterDatabase(duckdb::CatalogTransaction transaction,
+                     const duckdb::Identifier& name, duckdb::AlterInfo& info);
   duckdb::optional_ptr<duckdb::CatalogEntry> LookupRole(
     duckdb::CatalogTransaction transaction, const duckdb::Identifier& name);
   void ScanRoles(duckdb::CatalogTransaction transaction,

@@ -82,7 +82,6 @@ class Config {
     return _client_ctx;
   }
 
-  std::vector<std::string> GetSearchPath() const;
   int8_t GetExtraFloatDigits() const;
   ByteaOutput GetByteaOutput() const;
   std::string GetTimeZone() const;

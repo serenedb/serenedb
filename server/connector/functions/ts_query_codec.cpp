@@ -512,8 +512,7 @@ std::optional<std::string> RenderTSQueryCall(
         if (i != 0) {
           out += ", ";
         }
-        if (absl::EqualsIgnoreCase(children[i]->GetAlias().GetIdentifierName(),
-                                   "slop")) {
+        if (children[i]->GetAlias() == "slop") {
           out += "slop := ";
         }
         out += std::move(*rendered);

@@ -78,10 +78,9 @@ void CreateTSDictionaryPragma(duckdb::ClientContext& context,
   auto dict_name = args[0].GetValue<std::string>();
   auto if_not_exists = args[1].GetValue<bool>();
 
-  const auto name = duckdb::QualifiedName::Parse(dict_name);
-  pg::CreateTokenizer(
-    GetSereneDBContext(context), name.Name().GetIdentifierName(),
-    name.Schema().GetIdentifierName(), if_not_exists, params.named_parameters);
+  pg::CreateTokenizer(GetSereneDBContext(context),
+                      duckdb::QualifiedName::Parse(dict_name), if_not_exists,
+                      params.named_parameters);
 }
 
 // PRAGMA drop_text_search_dictionary('name', missing_ok)

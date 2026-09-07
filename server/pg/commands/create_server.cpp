@@ -27,6 +27,7 @@
 #include <string>
 #include <utility>
 
+#include "auth/role_closure.h"
 #include "catalog1/catalog.h"
 #include "catalog1/entry/foreign_server.h"
 
@@ -63,6 +64,12 @@ void CreateForeignServer(ConnectionContext& conn_ctx, std::string_view name,
   info.on_conflict = if_not_exists
                        ? duckdb::OnCreateConflict::IGNORE_ON_CONFLICT
                        : duckdb::OnCreateConflict::ERROR_ON_CONFLICT;
+  const auto role = conn_ctx.GetRoleId();
+  if (!auth::ClosureFor(&conn_ctx.GetClientContext(), role)->is_superuser) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
+                    ERR_MSG("permission denied to create foreign server"));
+  }
+  info.permissions.owner = role;
 
   auto& catalog = CatalogOf(conn_ctx);
   catalog.CreateForeignServer(

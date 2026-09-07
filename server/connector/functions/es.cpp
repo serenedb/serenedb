@@ -294,8 +294,11 @@ void CreateTextIndex(duckdb::ClientContext& context, duckdb::idx_t database_id,
     options["frequency"] = duckdb::Value::BOOLEAN(true);
     options["position"] = duckdb::Value::BOOLEAN(true);
     options["norm"] = duckdb::Value::BOOLEAN(true);
-    pg::CreateTokenizer(GetSereneDBContext(context), kTextTokenizer, kEsSchema,
-                        /*if_not_exists=*/true, options);
+    pg::CreateTokenizer(
+      GetSereneDBContext(context),
+      duckdb::QualifiedName{duckdb::Identifier{}, duckdb::Identifier{kEsSchema},
+                            duckdb::Identifier{kTextTokenizer}},
+      /*if_not_exists=*/true, options);
   }
 
   const auto index_name =

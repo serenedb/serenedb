@@ -21,7 +21,6 @@
 #include "connector/duckdb_vacuum_function.h"
 
 #include <absl/strings/str_cat.h>
-#include <absl/strings/str_replace.h>
 
 #include <duckdb/catalog/catalog.hpp>
 #include <duckdb/catalog/catalog_entry/duck_index_entry.hpp>
@@ -33,6 +32,7 @@
 #include <duckdb/main/connection.hpp>
 #include <duckdb/main/database.hpp>
 #include <duckdb/main/database_manager.hpp>
+#include <duckdb/parser/keyword_helper.hpp>
 #include <iresearch/utils/index_utils.hpp>
 
 #include "auth/role_closure.h"
@@ -209,10 +209,6 @@ ResolvedName ResolveName(duckdb::ClientContext& context,
   if (out.database.empty()) {
     out.database = conn_ctx.GetDatabase();
   }
-  if (out.schema.empty() && (scope == Scope::Table || scope == Scope::Index ||
-                             scope == Scope::Column)) {
-    out.schema = conn_ctx.GetCurrentSchema();
-  }
   return out;
 }
 
@@ -309,11 +305,10 @@ std::shared_ptr<search::SearchTable> MaintainStoreOf(
   return entry ? entry->EnsureStorage() : nullptr;
 }
 
-MaintainTarget MakeMaintainTarget(std::string_view schema,
-                                  duckdb::TableCatalogEntry& table) {
+MaintainTarget MakeMaintainTarget(duckdb::TableCatalogEntry& table) {
   return {.id = table.oid,
           .schema_entry = &table.ParentSchema(),
-          .schema = std::string{schema},
+          .schema = table.ParentSchema().name.GetIdentifierName(),
           .name = std::string{table.name.GetIdentifierName()},
           .engine = dynamic_cast<const catalog::SearchTableEntry*>(&table)
                       ? catalog::TableEngine::Search
@@ -337,9 +332,9 @@ std::vector<MaintainTarget> CollectMaintainTargets(
           return;
         }
         auto& table = entry.Cast<duckdb::TableCatalogEntry>();
-        const auto in_schema = table.ParentSchema().name.GetIdentifierName();
-        if (schema.empty() || in_schema == schema) {
-          out.push_back(MakeMaintainTarget(in_schema, table));
+        if (schema.empty() ||
+            table.ParentSchema().name == duckdb::Identifier{schema}) {
+          out.push_back(MakeMaintainTarget(table));
         }
       });
   });
@@ -355,8 +350,7 @@ void CollectInvertedSteps(duckdb::ClientContext& context,
     context, duckdb::CatalogType::INDEX_ENTRY,
     [&](duckdb::CatalogEntry& entry) {
       auto& index = entry.Cast<duckdb::IndexCatalogEntry>();
-      if (!IsInvertedIndex(index) ||
-          index.GetTableName().GetIdentifierName() != table.name) {
+      if (!IsInvertedIndex(index) || index.GetTableName() != table.name) {
         return;
       }
       const auto* inverted =
@@ -439,7 +433,7 @@ void DispatchInverted(duckdb::ClientContext& context,
         duckdb::EntryLookupInfo{
           duckdb::CatalogType::TABLE_ENTRY,
           duckdb::QualifiedName{duckdb::Identifier{target.database},
-                                duckdb::Identifier{target.schema},
+                                index->ParentSchema().name,
                                 index->GetTableName()}},
         duckdb::OnEntryNotFound::RETURN_NULL);
       if (relation && !MayMaintain(conn_ctx, relation->permissions,
@@ -462,8 +456,8 @@ void DispatchInverted(duckdb::ClientContext& context,
           ERR_CODE(ERRCODE_UNDEFINED_TABLE),
           ERR_MSG("relation \"", target.object, "\" does not exist"));
       }
-      const auto table = MakeMaintainTarget(
-        target.schema, entry->Cast<duckdb::TableCatalogEntry>());
+      const auto table =
+        MakeMaintainTarget(entry->Cast<duckdb::TableCatalogEntry>());
       if (!MayMaintain(conn_ctx, table.perm, table.name, verb)) {
         return;
       }
@@ -593,8 +587,7 @@ void DispatchRecomputeStats(duckdb::ClientContext& context,
           ERR_MSG("relation \"", target.object, "\" does not exist"));
       }
       add(target.database,
-          MakeMaintainTarget(target.schema,
-                             entry->Cast<duckdb::TableCatalogEntry>()),
+          MakeMaintainTarget(entry->Cast<duckdb::TableCatalogEntry>()),
           target.column);
     } break;
     case Scope::Schema: {
@@ -633,16 +626,18 @@ void DispatchRecomputeStats(duckdb::ClientContext& context,
       pg::ProgressMetrics::Set(progress->current_relid,
                                static_cast<int64_t>(t.relation));
     }
-    auto quoted = absl::StrReplaceAll(t.table, {{"\"", "\"\""}});
     std::string column_clause;
     if (!t.column.empty()) {
       column_clause = absl::StrCat(
-        " (\"", absl::StrReplaceAll(t.column, {{"\"", "\"\""}}), "\")");
+        " (", duckdb::KeywordHelper::WriteQuotedAndEscaped(t.column, '"'), ")");
     }
-    auto result = conn.Query(absl::StrCat(
-      "VACUUM ANALYZE \"", absl::StrReplaceAll(t.database, {{"\"", "\"\""}}),
-      "\".\"", absl::StrReplaceAll(t.schema, {{"\"", "\"\""}}), "\".\"", quoted,
-      "\"", column_clause));
+    auto result = conn.Query(
+      absl::StrCat("VACUUM ANALYZE ",
+                   duckdb::QualifiedName{duckdb::Identifier{t.database},
+                                         duckdb::Identifier{t.schema},
+                                         duckdb::Identifier{t.table}}
+                     .ToString(),
+                   column_clause));
     if (result->HasError()) {
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_INTERNAL_ERROR),
                       ERR_MSG("recompute_stats failed: ", result->GetError()));

@@ -153,7 +153,6 @@ ReindexTarget ResolveTarget(duckdb::ClientContext& context,
   ReindexTarget target;
   target.name = name;
   target.database = catalog_p.empty() ? conn_ctx.GetDatabase() : catalog_p;
-  target.schema = schema_p.empty() ? conn_ctx.GetCurrentSchema() : schema_p;
   auto database = duckdb::Catalog::GetCatalogEntry(
     context, duckdb::Identifier{target.database});
   if (!database) {
@@ -163,12 +162,12 @@ ReindexTarget ResolveTarget(duckdb::ClientContext& context,
   }
   target.database_id = database->GetOid();
   const duckdb::Identifier database_name{target.database};
-  const duckdb::Identifier schema_name{target.schema};
   auto index_entry = duckdb::Catalog::GetEntry(
     context,
-    duckdb::EntryLookupInfo{duckdb::CatalogType::INDEX_ENTRY,
-                            duckdb::QualifiedName{database_name, schema_name,
-                                                  duckdb::Identifier{name}}},
+    duckdb::EntryLookupInfo{
+      duckdb::CatalogType::INDEX_ENTRY,
+      duckdb::QualifiedName{database_name, duckdb::Identifier{schema_p},
+                            duckdb::Identifier{name}}},
     duckdb::OnEntryNotFound::RETURN_NULL);
   if (!index_entry ||
       index_entry->Cast<duckdb::IndexCatalogEntry>().index_type != "inverted") {
@@ -176,13 +175,14 @@ ReindexTarget ResolveTarget(duckdb::ClientContext& context,
                     ERR_MSG("index \"", name, "\" does not exist"));
   }
   target.index = &index_entry->Cast<catalog::InvertedIndexEntry>();
+  target.schema = target.index->ParentSchema().name.GetIdentifierName();
   // Views and tables share one catalog set, so the type has to be checked
   // rather than assumed from the lookup that found the entry.
   auto relation = duckdb::Catalog::GetEntry(
     context,
     duckdb::EntryLookupInfo{
       duckdb::CatalogType::VIEW_ENTRY,
-      duckdb::QualifiedName{database_name, schema_name,
+      duckdb::QualifiedName{database_name, target.index->ParentSchema().name,
                             target.index->GetTableName()}},
     duckdb::OnEntryNotFound::RETURN_NULL);
   if (!relation || relation->type != duckdb::CatalogType::VIEW_ENTRY) {
@@ -594,7 +594,7 @@ bool RunEqualityRemoves(duckdb::ClientContext& context,
   observe.EnsureDeletesProcessed();
   const auto& view_info = *target.view_info;
   if (absl::c_any_of(view_info.names, [](const duckdb::Identifier& name) {
-        return absl::EqualsIgnoreCase(name.GetIdentifierName(), "file_index");
+        return name == "file_index";
       })) {
     // A real view column shadows the flat pk half the file scope binds by:
     // no eq road, the covered files rescan instead.

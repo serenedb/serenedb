@@ -102,17 +102,4 @@ std::string ConnectionContext::SessionUserName() const {
   return RoleName(*auth::RolesOf(&GetClientContext()), _session_role_id, _user);
 }
 
-std::string ConnectionContext::GetCurrentSchema() const {
-  auto& context = GetClientContext();
-  auto& database =
-    duckdb::Catalog::GetCatalog(context, duckdb::Identifier{_database_name});
-  auto search_path = GetSearchPath();
-  auto it = absl::c_find_if(search_path, [&](const std::string& schema_name) {
-    return database.GetSchema(context, duckdb::Identifier{schema_name},
-                              duckdb::OnEntryNotFound::RETURN_NULL) != nullptr;
-  });
-
-  return it != search_path.end() ? *it : "";
-}
-
 }  // namespace sdb

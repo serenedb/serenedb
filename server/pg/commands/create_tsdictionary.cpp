@@ -25,6 +25,7 @@
 #include <unicode/locid.h>
 
 #include <duckdb/catalog/catalog_transaction.hpp>
+#include <duckdb/planner/binder.hpp>
 #include <iresearch/analysis/classification_tokenizer.hpp>
 #include <iresearch/analysis/collation_tokenizer.hpp>
 #include <iresearch/analysis/delimited_tokenizer.hpp>
@@ -889,16 +890,12 @@ class CreateTSDictionaryOptions : public OptionsParser {
 
 }  // namespace
 
-void CreateTokenizer(ConnectionContext& conn_ctx, std::string_view name,
-                     std::string_view schema, bool if_not_exists,
+void CreateTokenizer(ConnectionContext& conn_ctx, duckdb::QualifiedName name,
+                     bool if_not_exists,
                      const duckdb::named_parameter_map_t& options) {
-  auto current_schema = conn_ctx.GetCurrentSchema();
-  auto& database = duckdb::Catalog::GetCatalog(
-    conn_ctx.GetClientContext(), duckdb::Identifier{conn_ctx.GetDatabase()});
-
+  auto& client = conn_ctx.GetClientContext();
   auto [cfg, features] =
-    std::move(CreateTSDictionaryOptions{conn_ctx.GetClientContext(), options})
-      .Result();
+    std::move(CreateTSDictionaryOptions{client, options}).Result();
 
   auto test_analyzer = irs::analysis::CreateAnalyzer(irs::analysis::Clone(cfg));
   SDB_ASSERT(test_analyzer);
@@ -909,16 +906,13 @@ void CreateTokenizer(ConnectionContext& conn_ctx, std::string_view name,
                     ERR_MSG("Unsupported index features are specified"));
   }
 
-  catalog::CreateTokenizerInfo tokenizer{duckdb::Identifier{std::string{name}},
-                                         features, std::move(cfg)};
+  catalog::CreateTokenizerInfo tokenizer{name.Name(), features, std::move(cfg)};
+  tokenizer.SetQualifiedName(std::move(name));
   tokenizer.on_conflict = if_not_exists
                             ? duckdb::OnCreateConflict::IGNORE_ON_CONFLICT
                             : duckdb::OnCreateConflict::ERROR_ON_CONFLICT;
 
-  auto& client = conn_ctx.GetClientContext();
-  auto& target = database.GetSchema(
-    client,
-    duckdb::Identifier{std::string{schema.empty() ? current_schema : schema}});
+  auto& target = duckdb::Binder::CreateBinder(client)->BindSchema(tokenizer);
   const auto role = conn_ctx.GetRoleId();
   if (!auth::ClosureFor(&client, role)
          ->Can(duckdb::CatalogType::SCHEMA_ENTRY, target.permissions,
@@ -928,7 +922,7 @@ void CreateTokenizer(ConnectionContext& conn_ctx, std::string_view name,
                             target.name.GetIdentifierName()));
   }
   tokenizer.permissions.owner = role;
-  auto& catalog = database.Cast<catalog::SereneDBCatalog>();
+  auto& catalog = target.catalog.Cast<catalog::SereneDBCatalog>();
   catalog.CreateTokenizer(duckdb::CatalogTransaction{catalog, client},
                           target.Cast<duckdb::DuckSchemaEntry>(), tokenizer);
 }

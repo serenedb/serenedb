@@ -42,7 +42,6 @@
 #include "pg/connection_context.h"
 #include "pg/errcodes.h"
 #include "pg/sql_exception_macro.h"
-#include "pg/sql_utils.h"
 
 namespace sdb::connector {
 namespace {
@@ -63,16 +62,11 @@ catalog::Tokenizer::TokenizerWrapper AcquireTokenizer(
   return dict.Acquire();
 }
 
-// The dictionary is named per row, so this arm resolves at execution time. What
-// it carries is only what makes two bindings interchangeable: the database and
-// the schema an unqualified name resolves against.
+// The dictionary is named per row, so this arm resolves at execution time.
 struct DynamicCtx {
   duckdb::idx_t db_id;
-  std::string current_schema;
 
-  bool operator==(const DynamicCtx& rhs) const {
-    return db_id == rhs.db_id && current_schema == rhs.current_schema;
-  }
+  bool operator==(const DynamicCtx& rhs) const = default;
 };
 
 struct TsLexizeBindData final : public duckdb::FunctionData {
@@ -334,10 +328,7 @@ duckdb::unique_ptr<duckdb::FunctionData> TsLexizeBind(
   duckdb::BindScalarFunctionInput& input) {
   auto& context = input.GetClientContext();
   auto& conn_ctx = GetSereneDBContext(context);
-  DynamicCtx ctx{
-    .db_id = conn_ctx.GetDatabaseId(),
-    .current_schema = conn_ctx.GetCurrentSchema(),
-  };
+  DynamicCtx ctx{.db_id = conn_ctx.GetDatabaseId()};
 
   auto bind = duckdb::make_uniq<TsLexizeBindData>();
   auto& args = input.GetArguments();

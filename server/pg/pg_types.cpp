@@ -42,7 +42,6 @@
 #include "pg/pg_types.h"
 #include "pg/serialize.h"
 #include "pg/sql_exception_macro.h"
-#include "pg/sql_utils.h"
 #include "pg/system_catalog.h"
 
 namespace sdb::pg {
@@ -630,15 +629,10 @@ std::string RegclassOut(duckdb::ClientContext* context, uint64_t oid) {
 }
 
 uint64_t RegclassIn(const ConnectionContext& ctx, std::string_view name) {
-  auto current_schema = ctx.GetCurrentSchema();
-  auto object_name = ParseObjectName(name, current_schema);
   // Every half of the relation namespace, in the order postgres resolves them
   // -- a table and a view share duckdb's set, so the first lookup covers both.
   auto& client = ctx.GetClientContext();
-  const duckdb::QualifiedName qualified{
-    duckdb::Identifier{ctx.GetDatabase()},
-    duckdb::Identifier{object_name.schema},
-    duckdb::Identifier{object_name.relation}};
+  const auto qualified = duckdb::QualifiedName::Parse(std::string{name});
   for (const auto type :
        {duckdb::CatalogType::TABLE_ENTRY, duckdb::CatalogType::SEQUENCE_ENTRY,
         duckdb::CatalogType::INDEX_ENTRY}) {
@@ -648,7 +642,7 @@ uint64_t RegclassIn(const ConnectionContext& ctx, std::string_view name) {
       return entry->oid;
     }
   }
-  auto* system_table = GetTable(object_name.relation);
+  auto* system_table = GetTable(qualified.Name().GetIdentifierName());
   if (system_table) {
     return system_table->Id();
   }

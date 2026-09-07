@@ -210,7 +210,7 @@ duckdb::DatabaseSize DatabaseStorageSize(duckdb::ClientContext& context,
   }
   const auto in_scope = [&](const duckdb::CatalogEntry& entry) {
     return only_schema.empty() ||
-           entry.ParentSchema().name.GetIdentifierName() == only_schema;
+           entry.ParentSchema().name == duckdb::Identifier{only_schema};
   };
   int64_t bytes = 0;
   int64_t blocks = 0;
@@ -902,7 +902,7 @@ bool SystemRelationHasColumn(const pg::VirtualTable& sys,
                              std::string_view column) {
   for (const auto& [name, type] :
        duckdb::StructType::GetChildTypes(sys.RowType())) {
-    if (name.GetIdentifierName() == column) {
+    if (name == duckdb::Identifier{column}) {
       return true;
     }
   }

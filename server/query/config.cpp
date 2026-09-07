@@ -23,7 +23,6 @@
 #include <absl/container/node_hash_map.h>
 #include <absl/strings/match.h>
 
-#include <duckdb/catalog/catalog_search_path.hpp>
 #include <duckdb/execution/operator/helper/physical_set.hpp>
 #include <duckdb/main/attached_database.hpp>
 #include <duckdb/main/client_context.hpp>
@@ -64,20 +63,6 @@ void Config::SetInternal(std::string_view key, std::string value) {
     _client_ctx.config.user_settings.SetUserSetting(
       setting_index.GetIndex(), duckdb::Value{std::move(value)});
   }
-}
-
-std::vector<std::string> Config::GetSearchPath() const {
-  // The set paths, not Get(): the latter appends duckdb's implicit entries
-  // (temp, main, system), and `main` would shadow `public` for every caller
-  // that takes the first resolvable schema.
-  const auto entries = duckdb::ClientData::Get(_client_ctx)
-                         .catalog_search_path->GetResolvedSetPaths();
-  std::vector<std::string> result;
-  result.reserve(entries.size());
-  for (const auto& entry : entries) {
-    result.emplace_back(entry.GetSchema().GetIdentifierName());
-  }
-  return result;
 }
 
 int8_t Config::GetExtraFloatDigits() const {

@@ -76,8 +76,6 @@ class ConnectionContext final : public query::Transaction {
 
   auto* GetCancelRegistry() const { return _cancel_registry; }
 
-  std::string GetCurrentSchema() const;
-
   duckdb::idx_t GetRoleId() const { return _effective_role_id; }
   duckdb::idx_t GetLoginRoleId() const { return _login_role_id; }
   duckdb::idx_t GetSessionRoleId() const { return _session_role_id; }

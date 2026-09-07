@@ -77,10 +77,7 @@ MaterializedData SystemTableSnapshot<PgDescription>::GetTableData() {
     });
   };
 
-  database.ScanSchemas(context, [&](duckdb::SchemaCatalogEntry& schema_ref) {
-    if (schema_ref.internal) {
-      return;
-    }
+  VisitSchemas(context, database, [&](duckdb::SchemaCatalogEntry& schema_ref) {
     schema_ref.Scan(
       context, duckdb::CatalogType::TABLE_ENTRY,
       [&](duckdb::CatalogEntry& entry) {

@@ -329,6 +329,8 @@ void RegisterServerExtensions(duckdb::DatabaseInstance& db) {
 
   connector::RegisterIResearchScanFunction(db);
 
+  connector::RegisterSystemTableScanFunction(db);
+
   connector::RegisterVectorFunctions(db);
 
   connector::RegisterEmbeddingFunctions(db);

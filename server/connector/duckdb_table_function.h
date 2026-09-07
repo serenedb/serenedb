@@ -365,5 +365,6 @@ duckdb::TableFunction BindSystemTableScan(
   duckdb::unique_ptr<duckdb::FunctionData>& bind_data);
 
 void RegisterIResearchScanFunction(duckdb::DatabaseInstance& db);
+void RegisterSystemTableScanFunction(duckdb::DatabaseInstance& db);
 
 }  // namespace sdb::connector

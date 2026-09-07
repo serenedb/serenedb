@@ -126,10 +126,7 @@ MaterializedData SystemTableSnapshot<SdbMetrics>::GetTableData() {
       masks.emplace_back(kPerIndexMask);
     }
   };
-  catalog.ScanSchemas(context, [&](duckdb::SchemaCatalogEntry& schema) {
-    if (schema.internal) {
-      return;
-    }
+  VisitSchemas(context, catalog, [&](duckdb::SchemaCatalogEntry& schema) {
     schema.Scan(context, duckdb::CatalogType::INDEX_ENTRY, visit_index);
   });
 

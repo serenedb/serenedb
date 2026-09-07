@@ -328,20 +328,20 @@ std::vector<MaintainTarget> CollectMaintainTargets(
   std::string_view schema) {
   std::vector<MaintainTarget> out;
   database.ScanSchemas(context, [&](duckdb::SchemaCatalogEntry& schema_ref) {
-    schema_ref.Scan(context, duckdb::CatalogType::TABLE_ENTRY,
-                    [&](duckdb::CatalogEntry& entry) {
-                      // Tables and views share one set, so the scan hands
-                      // back both.
-                      if (entry.type != duckdb::CatalogType::TABLE_ENTRY) {
-                        return;
-                      }
-                      auto& table = entry.Cast<duckdb::TableCatalogEntry>();
-                      const auto in_schema =
-                        table.ParentSchema().name.GetIdentifierName();
-                      if (schema.empty() || in_schema == schema) {
-                        out.push_back(MakeMaintainTarget(in_schema, table));
-                      }
-                    });
+    schema_ref.Scan(
+      context, duckdb::CatalogType::TABLE_ENTRY,
+      [&](duckdb::CatalogEntry& entry) {
+        // Tables and views share one set, so the scan hands
+        // back both.
+        if (entry.type != duckdb::CatalogType::TABLE_ENTRY || entry.internal) {
+          return;
+        }
+        auto& table = entry.Cast<duckdb::TableCatalogEntry>();
+        const auto in_schema = table.ParentSchema().name.GetIdentifierName();
+        if (schema.empty() || in_schema == schema) {
+          out.push_back(MakeMaintainTarget(in_schema, table));
+        }
+      });
   });
   return out;
 }

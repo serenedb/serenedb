@@ -158,18 +158,6 @@ std::vector<std::string> RenderInvertedIndexSettings(
   return rendered;
 }
 
-// The relation an index hangs off, by the only handle the entry carries: its
-// schema and table name.
-duckdb::optional_ptr<duckdb::TableCatalogEntry> HostTable(
-  duckdb::ClientContext& context, duckdb::Catalog& database,
-  const duckdb::IndexCatalogEntry& index) {
-  return duckdb::Catalog::GetEntry<duckdb::TableCatalogEntry>(
-    context,
-    duckdb::QualifiedName{database.GetName(), index.GetSchemaName(),
-                          index.GetTableName()},
-    duckdb::OnEntryNotFound::RETURN_NULL);
-}
-
 void RetrieveObjects(duckdb::Catalog& database, std::vector<PgClass>& values,
                      std::deque<std::string>& pk_index_names,
                      std::deque<std::string>& uq_index_names,
@@ -191,14 +179,19 @@ void RetrieveObjects(duckdb::Catalog& database, std::vector<PgClass>& values,
   // the relation the index hangs off, since an index has no owner of its own.
   // Both come off the same sets the rows do, so the whole projection answers
   // from one place.
-  std::vector<const duckdb::DuckIndexEntry*> indexes;
+  std::vector<std::pair<const duckdb::DuckIndexEntry*, duckdb::idx_t>> indexes;
   containers::FlatHashSet<duckdb::idx_t> indexed_relations;
   VisitEntries<duckdb::DuckIndexEntry>(
     context, database, [&](const duckdb::DuckIndexEntry& entry) {
-      if (auto host = HostTable(context, database, entry)) {
-        indexed_relations.insert(host->oid);
+      const auto host = entry.schema.GetEntry(
+        entry.catalog.GetCatalogTransaction(context),
+        duckdb::CatalogType::TABLE_ENTRY, entry.GetTableName());
+      const auto host_id =
+        host && host->type == duckdb::CatalogType::TABLE_ENTRY ? host->oid : 0;
+      if (host_id) {
+        indexed_relations.insert(host_id);
       }
-      indexes.push_back(&entry);
+      indexes.emplace_back(&entry, host_id);
     });
   containers::FlatHashMap<duckdb::idx_t, duckdb::idx_t> relation_owners;
   // The tables in set order, for the synthetic key-index rows below, and the
@@ -221,10 +214,7 @@ void RetrieveObjects(duckdb::Catalog& database, std::vector<PgClass>& values,
       });
   }
 
-  database.ScanSchemas(context, [&](duckdb::SchemaCatalogEntry& schema_ref) {
-    if (schema_ref.internal) {
-      return;
-    }
+  VisitSchemas(context, database, [&](duckdb::SchemaCatalogEntry& schema_ref) {
     schema_ref.Scan(
       context, duckdb::CatalogType::TABLE_ENTRY,
       [&](duckdb::CatalogEntry& entry) {
@@ -271,12 +261,8 @@ void RetrieveObjects(duckdb::Catalog& database, std::vector<PgClass>& values,
       });
   });
 
-  for (const auto* entry : indexes) {
-    auto host = HostTable(context, database, *entry);
-    if (!host) {
-      continue;
-    }
-    const auto owner = relation_owners.find(host->oid);
+  for (const auto& [entry, host_id] : indexes) {
+    const auto owner = relation_owners.find(host_id);
     if (owner == relation_owners.end()) {
       continue;
     }

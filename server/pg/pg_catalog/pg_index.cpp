@@ -67,13 +67,13 @@ MaterializedData SystemTableSnapshot<PgIndex>::GetTableData() {
   // Explicit user-created indexes
   VisitEntries<duckdb::DuckIndexEntry>(
     context, GetDatabase(), [&](const duckdb::DuckIndexEntry& entry) {
-      // The relation the index hangs off, by the only handle the entry
-      // carries: its schema and table name.
-      auto host = duckdb::Catalog::GetEntry<duckdb::TableCatalogEntry>(
-        context,
-        duckdb::QualifiedName{GetDatabase().GetName(), entry.GetSchemaName(),
-                              entry.GetTableName()},
-        duckdb::OnEntryNotFound::RETURN_NULL);
+      const auto host_entry = entry.schema.GetEntry(
+        entry.catalog.GetCatalogTransaction(context),
+        duckdb::CatalogType::TABLE_ENTRY, entry.GetTableName());
+      const auto host =
+        host_entry && host_entry->type == duckdb::CatalogType::TABLE_ENTRY
+          ? &host_entry->Cast<duckdb::TableCatalogEntry>()
+          : nullptr;
       const auto& column_ids = entry.column_ids;
       auto natts = static_cast<int16_t>(column_ids.size());
 

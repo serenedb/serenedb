@@ -107,16 +107,23 @@ inline std::string AclToPgString(
   return out;
 }
 
+inline void VisitSchemas(
+  duckdb::ClientContext& context, duckdb::Catalog& database,
+  absl::FunctionRef<void(duckdb::SchemaCatalogEntry&)> visitor) {
+  database.ScanSchemas(context, [&](duckdb::SchemaCatalogEntry& schema) {
+    if (!schema.internal) {
+      visitor(schema);
+    }
+  });
+}
+
 // Every entry of one type in the database being projected. duckdb keeps
 // tables and views in a single set, so a scan of either type yields both and
 // the entry's own type is what separates them.
 template<typename T>
 void VisitEntries(duckdb::ClientContext& context, duckdb::Catalog& database,
                   absl::FunctionRef<void(T&)> visitor) {
-  database.ScanSchemas(context, [&](duckdb::SchemaCatalogEntry& schema_ref) {
-    if (schema_ref.internal) {
-      return;
-    }
+  VisitSchemas(context, database, [&](duckdb::SchemaCatalogEntry& schema_ref) {
     schema_ref.Scan(context, T::Type, [&](duckdb::CatalogEntry& entry) {
       if (entry.type == T::Type) {
         visitor(entry.template Cast<T>());

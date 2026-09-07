@@ -1344,6 +1344,32 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> SystemTableInit(
   return state;
 }
 
+void SystemTableScanSerialize(
+  duckdb::Serializer& serializer,
+  const duckdb::optional_ptr<duckdb::FunctionData> bind_data,
+  const duckdb::TableFunction&) {
+  const auto& entry = *bind_data->Cast<SystemTableBindData>().entry;
+  serializer.WriteProperty(100, "catalog", entry.catalog.GetName());
+  serializer.WriteProperty(101, "schema", entry.schema.name);
+  serializer.WriteProperty(102, "table", entry.name);
+}
+
+duckdb::unique_ptr<duckdb::FunctionData> SystemTableScanDeserialize(
+  duckdb::Deserializer& deserializer, duckdb::TableFunction&) {
+  const auto catalog =
+    deserializer.ReadProperty<duckdb::Identifier>(100, "catalog");
+  const auto schema =
+    deserializer.ReadProperty<duckdb::Identifier>(101, "schema");
+  const auto table =
+    deserializer.ReadProperty<duckdb::Identifier>(102, "table");
+  auto& entry = duckdb::Catalog::GetEntry<duckdb::TableCatalogEntry>(
+    deserializer.Get<duckdb::ClientContext&>(),
+    duckdb::QualifiedName(catalog, schema, table));
+  auto data = duckdb::make_uniq<SystemTableBindData>();
+  data->entry = &entry.Cast<catalog::SystemTableEntry>();
+  return data;
+}
+
 void SystemTableScan(duckdb::ClientContext&, duckdb::TableFunctionInput& input,
                      duckdb::DataChunk& output) {
   auto& state = input.global_state->Cast<SystemTableState>();
@@ -1386,18 +1412,28 @@ duckdb::TableFunction BindSearchTableScan(
   return CreateIResearchScanFunction();
 }
 
+duckdb::TableFunction CreateSystemTableScanFunction() {
+  duckdb::TableFunction func{
+    "system_table_scan", {}, SystemTableScan, nullptr, SystemTableInit};
+  func.projection_pushdown = true;
+  func.get_bind_info = SystemTableGetBindInfo;
+  func.serialize = SystemTableScanSerialize;
+  func.deserialize = SystemTableScanDeserialize;
+  return func;
+}
+
 duckdb::TableFunction BindSystemTableScan(
   catalog::SystemTableEntry& entry,
   duckdb::unique_ptr<duckdb::FunctionData>& bind_data) {
   auto data = duckdb::make_uniq<SystemTableBindData>();
   data->entry = &entry;
   bind_data = std::move(data);
+  return CreateSystemTableScanFunction();
+}
 
-  duckdb::TableFunction func{
-    "system_table_scan", {}, SystemTableScan, nullptr, SystemTableInit};
-  func.projection_pushdown = true;
-  func.get_bind_info = SystemTableGetBindInfo;
-  return func;
+void RegisterSystemTableScanFunction(duckdb::DatabaseInstance& db) {
+  duckdb::ExtensionLoader loader(db, "serenedb");
+  loader.RegisterFunction(CreateSystemTableScanFunction());
 }
 
 duckdb::TableFunction CreateIResearchScanFunction() {

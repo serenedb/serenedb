@@ -50,10 +50,7 @@ void RetrieveObjects(duckdb::ClientContext& context, duckdb::Catalog& database,
     .nspname = "information_schema",
     .nspowner = pg::kRootUser,
   });
-  database.ScanSchemas(context, [&](duckdb::SchemaCatalogEntry& schema) {
-    if (schema.internal) {
-      return;
-    }
+  VisitSchemas(context, database, [&](duckdb::SchemaCatalogEntry& schema) {
     values.push_back(PgNamespace{
       .oid = schema.oid,
       .nspname = schema.name.GetIdentifierName(),

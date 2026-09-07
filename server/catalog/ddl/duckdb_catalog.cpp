@@ -1382,12 +1382,10 @@ duckdb::PhysicalOperator& SereneDBCatalog::PlanDelete(
   auto& table_entry = RequireBaseTable(op.table);
 
   if (table_entry.IsSearchTable()) {
-    // TRUNCATE (autocommit): fast iresearch Clear marker. In-transaction
-    // TRUNCATE has is_truncate but is not autocommit, so it falls through to
-    // the row-wise SereneDBSearchDelete below.
-    if (op.is_truncate && context.transaction.IsAutoCommit()) {
+    if (op.is_truncate) {
       return planner.Make<connector::SereneDBSearchTruncate>(
-        table_entry.GetSearchData(), op.estimated_cardinality);
+        table_entry.GetSearchData(), op.estimated_cardinality,
+        context.transaction.IsAutoCommit());
     }
 
     auto pk_indices = SearchPkSlots(table_entry, plan.types.size());

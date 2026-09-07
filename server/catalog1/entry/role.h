@@ -53,8 +53,13 @@ constexpr bool HasOption(RoleOption options, RoleOption option) noexcept {
   return (options & option) == option;
 }
 
+constexpr RoleOption operator~(RoleOption value) noexcept {
+  return static_cast<RoleOption>(~static_cast<uint32_t>(value));
+}
+
 struct Membership {
   duckdb::idx_t role{0};
+  duckdb::idx_t grantor{0};
   bool admin_option{false};
   bool inherit_option{true};
   bool set_option{true};
@@ -62,10 +67,6 @@ struct Membership {
   bool operator==(const Membership& rhs) const noexcept = default;
 };
 
-// A role is cluster-wide. In this reference implementation it carries no
-// privileges and nothing checks any: owner, ACLs and default privileges are
-// the RBAC phase. Existence and the membership graph are needed now, because
-// login and pg_auth_members read them.
 class CreateRoleInfo final : public duckdb::CreateInfo {
  public:
   static constexpr int32_t kNoConnLimit = -1;

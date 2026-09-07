@@ -71,13 +71,13 @@ bool Allows(std::span<const duckdb::AclItem> stored, duckdb::CatalogType type,
   };
   AclMode have = AclMode::NoRights;
   if (RolesContain(roles, owner)) {
-    have |= duckdb::AclClassPrivileges(type);
+    have |= duckdb::Permissions::AllPrivileges(type);
     if (done(have)) {
       return true;
     }
   }
   if (stored.empty()) {
-    have |= duckdb::AclPublicDefaultPrivileges(type);
+    have |= duckdb::Permissions::PublicPrivileges(type);
     return done(have);
   }
   for (const auto& item : stored) {

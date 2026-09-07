@@ -20,36 +20,34 @@
 
 #include "pg/commands/rbac.h"
 
-#include <absl/algorithm/container.h>
-#include <absl/functional/function_ref.h>
-#include <absl/strings/ascii.h>
 #include <absl/strings/match.h>
 #include <absl/strings/str_cat.h>
-#include <absl/strings/str_split.h>
 
 #include <algorithm>
-#include <duckdb/catalog/catalog_entry/duck_table_entry.hpp>
-#include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
-#include <duckdb/catalog/catalog_entry/view_catalog_entry.hpp>
-#include <duckdb/catalog/catalog_transaction.hpp>
-#include <duckdb/parser/parsed_data/create_table_info.hpp>
-#include <limits>
-#include <ranges>
+#include <duckdb/catalog/catalog.hpp>
+#include <duckdb/common/types/value.hpp>
+#include <duckdb/function/pragma_function.hpp>
+#include <duckdb/main/client_context.hpp>
+#include <duckdb/main/extension/extension_loader.hpp>
+#include <memory>
+#include <optional>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
-#include "app/app_server.h"
 #include "auth/acl.h"
 #include "auth/role_closure.h"
 #include "catalog1/catalog.h"
+#include "catalog1/entry/database.h"
 #include "catalog1/cluster.h"
 #include "catalog1/entry/role.h"
 #include "connector/duckdb_client_state.h"
+#include "pg/connection_context.h"
 #include "network/credentials.h"
 #include "pg/errcodes.h"
+#include "pg/role_dependencies.h"
 #include "pg/pg_types.h"
-#include "pg/sql_exception_macro.h"
 #include "pg/sql_utils.h"
 
 namespace sdb::pg {

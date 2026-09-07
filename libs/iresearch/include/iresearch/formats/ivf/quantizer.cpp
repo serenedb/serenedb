@@ -1095,7 +1095,7 @@ class TurboQuantizerWriter final : public QuantizerWriter {
   }
 
   VectorQuantization Kind() const noexcept final {
-    return _lay.full ? VectorQuantization::TQ : VectorQuantization::TQMse;
+    return VectorQuantization::TQ;
   }
 
  private:
@@ -1254,15 +1254,16 @@ class TurboQuantizerWriter final : public QuantizerWriter {
 template<VectorMetric M>
 class TurboQuantizerStats final : public QuantizerStats {
  public:
-  TurboQuantizerStats(uint32_t d, bool full, std::span<const byte_type> stats,
-                      bool row_major)
-    : _full{full} {
+  TurboQuantizerStats(uint32_t d, std::span<const byte_type> stats,
+                      bool row_major) {
     static_assert(M == VectorMetric::L2Sqr || M == VectorMetric::InnerProduct);
     const auto hdr = ReadPodHeader<TurboQuantStatsHeader>(stats);
+    const bool full = hdr.full != 0;
+    _full = full;
     const auto qtype = FaissTurboQuantType(full, hdr.nb_bits);
     if (stats.size() < sizeof(TurboQuantStatsHeader) || hdr.d != d ||
         hdr.layout != kTurboQuantLayout || hdr.qjl_type != kTurboQuantQjlFwht ||
-        (hdr.full != 0) != full || !qtype) {
+        !qtype) {
       return;
     }
     _lay = MakeTurboQuantLayout(d, full, hdr.nb_bits, M == VectorMetric::L2Sqr,
@@ -1292,7 +1293,7 @@ class TurboQuantizerStats final : public QuantizerStats {
   }
 
   VectorQuantization Kind() const noexcept final {
-    return _full ? VectorQuantization::TQ : VectorQuantization::TQMse;
+    return VectorQuantization::TQ;
   }
 
   std::shared_ptr<const QuantizerCodebook> MakeCodebook(
@@ -2687,9 +2688,8 @@ std::unique_ptr<QuantizerWriter> MakeQuantizerWriter(
     case VectorQuantization::PQ:
       return MakeWriterWithMetric<ProductQuantizerWriter>(metric, d, pq_m,
                                                           pq_niter);
-    case VectorQuantization::TQ:
-    case VectorQuantization::TQMse: {
-      const bool full = quant == VectorQuantization::TQ;
+    case VectorQuantization::TQ: {
+      const bool full = TQFullBits(nb_bits);
       const auto qtype = FaissTurboQuantType(full, nb_bits);
       SDB_ASSERT(qtype);
       return MakeWriterWithMetric<TurboQuantizerWriter>(
@@ -2713,9 +2713,8 @@ std::shared_ptr<const QuantizerStats> MakeQuantizerStats(
     case VectorQuantization::PQ:
       return MakeStatsWithMetric<ProductQuantizerStats>(metric, d, stats);
     case VectorQuantization::TQ:
-    case VectorQuantization::TQMse:
-      return MakeStatsWithMetric<TurboQuantizerStats>(
-        metric, d, quant == VectorQuantization::TQ, stats, row_major);
+      return MakeStatsWithMetric<TurboQuantizerStats>(metric, d, stats,
+                                                      row_major);
     case VectorQuantization::RaBitQ:
       return MakeStatsWithMetric<RaBitQuantizerStats>(metric, d, stats);
   }

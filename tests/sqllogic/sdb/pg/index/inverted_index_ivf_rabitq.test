@@ -406,7 +406,7 @@ db error: ERROR: Column 'emb': ivf option 'rabitq_bits' (10) must be between 1 a
 statement error
 CREATE INDEX rabitq_bad_bits_wrong_quant ON rabitq_bad USING inverted(pk, emb ivf (metric = 'l2', quant = 'sq8', rabitq_bits = 4));
 ----
-db error: ERROR: Column 'emb': ivf option 'rabitq_bits' is only valid with quant 'rabitq', 'tq' or 'tqmse'
+db error: ERROR: Column 'emb': ivf option 'rabitq_bits' is only valid with quant 'rabitq' or 'tq'
 
 
 # ===========================================================================

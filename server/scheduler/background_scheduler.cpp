@@ -35,18 +35,9 @@ ABSL_FLAG(uint64_t, background_threads, 0,
           "Number of background worker threads (drop / cleanup / maintenance "
           "tasks; later object-store prefetch). 0 = auto-detect.");
 
-ABSL_FLAG(uint64_t, ann_build_threads, 0,
-          "Workers one ANN (HNSW/IVF) graph build may use, including the "
-          "calling thread. Drawn from a pool of its own, not from "
-          "--background_threads. 0 = auto-detect from core count.");
-
 namespace sdb {
 
 std::uint64_t BackgroundScheduler::AnnBuildThreads() noexcept {
-  const auto configured = absl::GetFlag(FLAGS_ann_build_threads);
-  if (configured != 0) {
-    return configured;
-  }
   const auto cores = static_cast<std::uint64_t>(CountLogicalCores());
   if (cores <= 48) {
     return std::max<std::uint64_t>(1, std::min<std::uint64_t>(8, cores));
@@ -72,7 +63,6 @@ BackgroundScheduler::BackgroundScheduler()
     _threads = std::max<std::uint64_t>(2, CountLogicalCores() / 4);
   }
   absl::SetFlag(&FLAGS_background_threads, _threads);
-  absl::SetFlag(&FLAGS_ann_build_threads, _ann_threads);
   gInstance = this;
 }
 

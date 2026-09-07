@@ -9,12 +9,10 @@ hash-threshold 100
 # scored through the quantized QVectorIterator path; a kNN with a WHERE
 # filter and any range query fall back to the exact raw reranker.
 #
-# Two families share the enum: quant='tq' spends nb_bits-1 bits on the MSE
-# stage plus one QJL bit (nb_bits one of 2|3|5, default 3), quant='tqmse'
-# spends all nb_bits on the MSE stage (one of 1|2|4, default 2). Low bit
-# counts are lossy, so the sections below use well-separated vectors so exact
-# row order is deterministic. Unlike quant='rabitq', both families support
-# metric cosine.
+# quant='tq' takes nb_bits 1-5 (default 3): an odd 3 or 5 spends one bit on the
+# QJL refinement stage and the rest on MSE, every other width is MSE-only. Low
+# bit counts are lossy, so the sections below use well-separated vectors so
+# exact row order is deterministic. Unlike quant='rabitq', tq supports cosine.
 
 # Exhaustive search: probe every cluster so kNN can't miss a true neighbour.
 statement ok
@@ -108,8 +106,8 @@ pk
 6
 
 # ===========================================================================
-# 3. Inner product + tqmse (4 bits): the MSE-only family, scored without the
-#    QJL refinement stage.
+# 3. Inner product + tq (4 bits): MSE-only, scored without the QJL
+#    refinement stage.
 # ===========================================================================
 
 statement ok
@@ -117,7 +115,7 @@ CREATE TABLE tq_ip (pk INTEGER PRIMARY KEY, emb FLOAT[3])
 
 statement ok
 CREATE INDEX tq_ip_idx ON tq_ip
-  USING inverted(pk, emb ivf (metric = 'ip', quant = 'tqmse', nb_bits = 4))
+  USING inverted(pk, emb ivf (metric = 'ip', quant = 'tq', nb_bits = 4))
 
 statement count 4
 INSERT INTO tq_ip VALUES
@@ -174,7 +172,7 @@ CREATE TABLE tq_alias (pk INTEGER PRIMARY KEY, emb FLOAT[3])
 
 statement ok
 CREATE INDEX tq_alias_idx ON tq_alias
-  USING inverted(pk, emb ivf (metric = 'l2', quant = 'tqmse', rabitq_bits = 2))
+  USING inverted(pk, emb ivf (metric = 'l2', quant = 'tq', rabitq_bits = 2))
 
 statement count 2
 INSERT INTO tq_alias VALUES
@@ -255,29 +253,23 @@ count
 3
 
 # ===========================================================================
-# 7. Option guards: per-family nb_bits sets, the alias collision, and the
-#    metric restriction shared with the other quantizers.
+# 7. Option guards: the nb_bits range, the alias collision, and the metric
+#    restriction shared with the other quantizers.
 # ===========================================================================
 
 statement ok
 CREATE TABLE tq_bad (pk INTEGER PRIMARY KEY, emb FLOAT[3])
 
 statement error
-CREATE INDEX tq_bad_bits ON tq_bad USING inverted(pk, emb ivf (metric = 'l2', quant = 'tq', nb_bits = 4));
+CREATE INDEX tq_bad_bits ON tq_bad USING inverted(pk, emb ivf (metric = 'l2', quant = 'tq', nb_bits = 6));
 ----
-db error: ERROR: Column 'emb': ivf option 'nb_bits' (4) must be one of: 2 3 5 for quant 'tq'
-
-
-statement error
-CREATE INDEX tq_bad_mse_bits ON tq_bad USING inverted(pk, emb ivf (metric = 'l2', quant = 'tqmse', nb_bits = 3));
-----
-db error: ERROR: Column 'emb': ivf option 'nb_bits' (3) must be one of: 1 2 4 for quant 'tqmse'
+db error: ERROR: Column 'emb': ivf option 'nb_bits' (6) must be between 1 and 5 for quant 'tq'
 
 
 statement error
 CREATE INDEX tq_bad_wrong_quant ON tq_bad USING inverted(pk, emb ivf (metric = 'l2', quant = 'sq8', nb_bits = 2));
 ----
-db error: ERROR: Column 'emb': ivf option 'nb_bits' is only valid with quant 'rabitq', 'tq' or 'tqmse'
+db error: ERROR: Column 'emb': ivf option 'nb_bits' is only valid with quant 'rabitq' or 'tq'
 
 
 statement error

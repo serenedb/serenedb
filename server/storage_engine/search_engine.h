@@ -53,7 +53,6 @@ class SearchEngine final {
   inline static SearchEngine* gInstance = nullptr;
 
   static int MaxConcurrentCompactions() noexcept;
-  static int MaxConcurrentMerges() noexcept;
 
   static uint32_t MaxAnnBuildWorkers() noexcept;
 
@@ -81,7 +80,7 @@ class SearchEngine final {
   }
 
   bool TryAcquireCompaction() noexcept {
-    const int cap = MaxConcurrentMerges();
+    const int cap = MaxConcurrentCompactions();
     auto cur = _running_compactions.load(std::memory_order_relaxed);
     while (cur < cap) {
       if (_running_compactions.compare_exchange_weak(

@@ -164,8 +164,7 @@ class QuantizerStats : public std::enable_shared_from_this<QuantizerStats> {
 
 constexpr bool QuantizerNeedsCentroid(VectorQuantization quant) noexcept {
   return quant == VectorQuantization::PQ ||
-         quant == VectorQuantization::RaBitQ ||
-         quant == VectorQuantization::TQ || quant == VectorQuantization::TQMse;
+         quant == VectorQuantization::RaBitQ || quant == VectorQuantization::TQ;
 }
 
 bool PanoramaApplies(VectorMetric metric, uint32_t d) noexcept;

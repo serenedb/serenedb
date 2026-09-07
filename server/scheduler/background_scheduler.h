@@ -79,8 +79,8 @@ class BackgroundScheduler final {
   // Pool for ANN graph builds, separate from the maintenance pool above. A
   // CREATE INDEX is foreground work whose cost is the graph, not the segment
   // copy, so budgeting it out of the quarter-rate maintenance pool caps it at
-  // cores/4 - 1 workers. Sized by AnnBuildThreads() (--ann_build_threads), and
-  // idle threads just park on the queue between builds.
+  // cores/4 - 1 workers. Sized by AnnBuildThreads(), and idle threads just
+  // park on the queue between builds.
   yaclib::IExecutor& annExecutor() noexcept { return *_ann_pool; }
 
   // Workers ONE ANN graph build may use, including the calling thread.

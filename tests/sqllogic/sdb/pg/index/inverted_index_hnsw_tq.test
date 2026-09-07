@@ -1,7 +1,7 @@
 control substitution on
 
 # ============================================================================
-# HNSW with TurboQuant codes (quant = 'tq' / 'tqmse').
+# HNSW with TurboQuant codes (quant = 'tq').
 #
 # TurboQuant encodes the residual against a single global centroid -- the
 # dataset mean -- because HNSW has no clusters, and its codes are stored
@@ -57,34 +57,34 @@ count
 64
 
 
-# tqmse has no QJL refinement stage; nb_bits is given explicitly.
+# An even nb_bits has no QJL refinement stage; it is given explicitly.
 
 statement ok
-CREATE TABLE hnsw_tqmse (pk INTEGER PRIMARY KEY, emb FLOAT[8]);
+CREATE TABLE hnsw_tq4 (pk INTEGER PRIMARY KEY, emb FLOAT[8]);
 
 statement ok
-CREATE INDEX hnsw_tqmse_idx ON hnsw_tqmse
-  USING inverted(pk, emb hnsw (metric = 'l2', quant = 'tqmse', nb_bits = 4));
+CREATE INDEX hnsw_tq4_idx ON hnsw_tq4
+  USING inverted(pk, emb hnsw (metric = 'l2', quant = 'tq', nb_bits = 4));
 
 statement ok
-INSERT INTO hnsw_tqmse SELECT i,
+INSERT INTO hnsw_tq4 SELECT i,
   list_transform(range(8),
                  x -> CASE WHEN x = i % 8 THEN (10.0 * (1 + i / 8))::FLOAT
                            ELSE 0.0::FLOAT END)::FLOAT[8]
   FROM range(64) t(i);
 
 statement ok
-VACUUM (REFRESH_TABLE) hnsw_tqmse;
+VACUUM (REFRESH_TABLE) hnsw_tq4;
 
 query
-SELECT pk FROM hnsw_tqmse_idx
+SELECT pk FROM hnsw_tq4_idx
   ORDER BY emb <-> [0, 0, 0, 60, 0, 0, 0, 0]::FLOAT[8] LIMIT 1;
 ----
 pk
 43
 
 query
-SELECT count(*) FROM hnsw_tqmse_idx;
+SELECT count(*) FROM hnsw_tq4_idx;
 ----
 count
 64
@@ -142,23 +142,16 @@ count
 
 statement error
 CREATE INDEX bad_a ON hnsw_tq
-  USING inverted(pk, emb hnsw (metric = 'l2', quant = 'tq', nb_bits = 4));
+  USING inverted(pk, emb hnsw (metric = 'l2', quant = 'tq', nb_bits = 6));
 ----
-db error: ERROR: Column 'emb': hnsw option 'nb_bits' (4) must be one of: 2 3 5 for quant 'tq'
-
-
-statement error
-CREATE INDEX bad_b ON hnsw_tq
-  USING inverted(pk, emb hnsw (metric = 'l2', quant = 'tqmse', nb_bits = 3));
-----
-db error: ERROR: Column 'emb': hnsw option 'nb_bits' (3) must be one of: 1 2 4 for quant 'tqmse'
+db error: ERROR: Column 'emb': hnsw option 'nb_bits' (6) must be between 1 and 5 for quant 'tq'
 
 
 statement error
 CREATE INDEX bad_c ON hnsw_tq
   USING inverted(pk, emb hnsw (metric = 'l2', quant = 'sq8', nb_bits = 2));
 ----
-db error: ERROR: Column 'emb': hnsw option 'nb_bits' is only valid with quant 'tq' or 'tqmse'
+db error: ERROR: Column 'emb': hnsw option 'nb_bits' is only valid with quant 'tq'
 
 
 statement error

@@ -56,12 +56,6 @@
 
 ABSL_DECLARE_FLAG(uint64_t, background_threads);
 
-ABSL_FLAG(uint64_t, background_merges, 0,
-          "Maximum ANN merges running at once. Each holds its own output "
-          "vectors, so this bounds merge memory; helpers within one merge "
-          "share that allocation and are budgeted separately. 0 derives it "
-          "from --background_threads.");
-
 namespace sdb::search {
 
 SearchEngine::SearchEngine() : _dir_feature{DatabasePathFeature::instance()} {
@@ -115,15 +109,6 @@ const irs::AnnBuildEnv& AnnBuildEnv() {
     .acquire = AnnAcquireWorkers,
     .release = AnnReleaseWorkers};
   return env;
-}
-
-int SearchEngine::MaxConcurrentMerges() noexcept {
-  const auto configured = absl::GetFlag(FLAGS_background_merges);
-  if (configured == 0) {
-    return MaxConcurrentCompactions();
-  }
-  return std::clamp<int>(static_cast<int>(configured), 1,
-                         MaxConcurrentCompactions());
 }
 
 void SearchEngine::start() {

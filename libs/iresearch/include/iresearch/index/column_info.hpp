@@ -73,21 +73,21 @@ enum class VectorQuantization : uint8_t {
   PQ,
   RaBitQ,
   TQ,
-  TQMse,
 };
 
 inline constexpr uint32_t kRaBitQMinBits = 1;
 inline constexpr uint32_t kRaBitQMaxBits = 9;
 
+inline constexpr uint32_t kTQMinBits = 1;
+inline constexpr uint32_t kTQMaxBits = 5;
 inline constexpr uint32_t kTQDefaultBits = 3;
-inline constexpr uint32_t kTQMseDefaultBits = 2;
 
 inline constexpr bool TQBitsValid(uint32_t bits) noexcept {
-  return bits == 2 || bits == 3 || bits == 5;
+  return bits >= kTQMinBits && bits <= kTQMaxBits;
 }
 
-inline constexpr bool TQMseBitsValid(uint32_t bits) noexcept {
-  return bits == 1 || bits == 2 || bits == 4;
+inline constexpr bool TQFullBits(uint32_t bits) noexcept {
+  return bits == 3 || bits == 5;
 }
 
 inline constexpr VectorMetric EffectiveQuantMetric(

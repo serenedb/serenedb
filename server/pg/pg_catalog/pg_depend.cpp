@@ -65,8 +65,8 @@ Oid CatalogClassOid(duckdb::CatalogType type) {
 
 namespace {
 
-using duckdb::CatalogPermissions;
 using duckdb::CreateTableInfo;
+using duckdb::Permissions;
 
 // A relation, a function or a type as pg_depend names the referenced side of
 // an edge pointing at it.

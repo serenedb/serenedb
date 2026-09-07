@@ -329,7 +329,7 @@ StaticFunction GetSystemFunction(std::string_view schema,
   return it == functions.end() ? StaticFunction{} : it->second;
 }
 
-static duckdb::CatalogPermissions ViewPermissions(std::string_view name) {
+static duckdb::Permissions ViewPermissions(std::string_view name) {
   static constexpr std::array kSuperuserOnly = {
     std::string_view{"pg_shadow"},
     std::string_view{"pg_aios"},
@@ -345,7 +345,7 @@ static duckdb::CatalogPermissions ViewPermissions(std::string_view name) {
     std::string_view{"pg_subscription"},
     std::string_view{"pg_user_mapping"},
   };
-  duckdb::CatalogPermissions permissions{.owner = kRootUser};
+  duckdb::Permissions permissions{.owner = kRootUser};
   if (!absl::c_linear_search(kSuperuserOnly, name)) {
     permissions.acl.assign(kSystemTableAcl.begin(), kSystemTableAcl.end());
   }
@@ -446,7 +446,7 @@ void InitSystemFunctions(duckdb::Parser& parser) {
       info->SetSchema(duckdb::Identifier{schema});
       out[name] = StaticFunction{
         std::shared_ptr<const duckdb::CreateMacroInfo>{info.release()},
-        duckdb::CatalogPermissions{}};
+        duckdb::Permissions{}};
     }
   };
   publish(pg_catalog, StaticStrings::kPgCatalogSchema, gPgCatalogFunctions);

@@ -827,7 +827,7 @@ PrivCheckModes ParsePrivCheckText(std::string_view priv_text,
 
 bool HasAnyPermissionsPrivilegeText(duckdb::ClientContext& context,
                                     duckdb::idx_t role_id,
-                                    const duckdb::CatalogPermissions& perm,
+                                    const duckdb::Permissions& perm,
                                     duckdb::CatalogType type,
                                     std::string_view priv_text) {
   const auto modes = ParsePrivCheckText(priv_text, type);
@@ -850,7 +850,7 @@ bool HasAnyPermissionsPrivilegeText(duckdb::ClientContext& context,
 
 bool HasAnyTablePrivilegeText(duckdb::ClientContext& context,
                               duckdb::idx_t role_id,
-                              const duckdb::CatalogPermissions& perm,
+                              const duckdb::Permissions& perm,
                               std::string_view priv_text) {
   return HasAnyPermissionsPrivilegeText(
     context, role_id, perm, duckdb::CatalogType::TABLE_ENTRY, priv_text);
@@ -860,7 +860,7 @@ bool HasAnyTablePrivilegeText(duckdb::ClientContext& context,
 // table and a view the same vocabulary, so both come back here; anything else
 // under the relation namespace -- the index-as-table wrapper -- is not one, and
 // a null makes the caller answer NULL rather than false.
-const duckdb::CatalogPermissions* RelationPermissions(
+const duckdb::Permissions* RelationPermissions(
   const duckdb::CatalogEntry* entry) {
   if (entry == nullptr) {
     return nullptr;
@@ -900,9 +900,8 @@ const pg::VirtualTable* ResolveSystemRelation(ConnectionContext& conn_ctx,
 // A system relation has no catalog definition: it exists for the life of the
 // statement that reads it. Its owner is root and its ACL the one grant the
 // table declares.
-duckdb::CatalogPermissions SystemRelationPermissions(
-  const pg::VirtualTable& sys) {
-  return duckdb::CatalogPermissions{
+duckdb::Permissions SystemRelationPermissions(const pg::VirtualTable& sys) {
+  return duckdb::Permissions{
     pg::kRootUser,
     duckdb::vector<duckdb::AclItem>{sys.GetAcl().begin(), sys.GetAcl().end()}};
 }

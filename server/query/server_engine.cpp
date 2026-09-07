@@ -57,6 +57,7 @@
 #include "connector/inverted_store_index.h"
 #include "connector/iresearch_replacement_scan.h"
 #include "connector/pg_logical_types.h"
+#include "pg/commands/rbac.h"
 #include "pg/pg_catalog/pg_statistic.h"
 #include "pg/system_catalog.h"
 #include "pg/system_table.h"
@@ -330,6 +331,8 @@ void RegisterServerExtensions(duckdb::DatabaseInstance& db) {
   connector::RegisterIResearchScanFunction(db);
 
   connector::RegisterSystemTableScanFunction(db);
+
+  pg::RegisterRbacFunctions(db);
 
   connector::RegisterVectorFunctions(db);
 

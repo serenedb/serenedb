@@ -39,11 +39,11 @@ namespace sdb::pg {
 // permissions travel together.
 struct StaticView {
   std::shared_ptr<const duckdb::CreateViewInfo> info;
-  duckdb::CatalogPermissions permissions;
+  duckdb::Permissions permissions;
   Oid oid = 0;
 };
 using StaticFunction = std::pair<std::shared_ptr<const duckdb::CreateMacroInfo>,
-                                 duckdb::CatalogPermissions>;
+                                 duckdb::Permissions>;
 
 // Parse and cache all system views and functions. Call once at startup.
 void InitSystemViews(duckdb::Parser& parser);

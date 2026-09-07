@@ -25,7 +25,6 @@
 #include "catalog1/cluster.h"
 #include "catalog1/entry/role.h"
 #include "pg/pg_catalog/fwd.h"
-#include "pg/pg_types.h"
 
 namespace sdb::pg {
 
@@ -43,8 +42,7 @@ MaterializedData SystemTableSnapshot<PgAuthMembers>::GetTableData() {
           .oid = oid++,
           .roleid = edge.role,
           .member = role.oid,
-          .grantor =
-            edge.grantor == pg::kInvalidOid ? pg::kRootUser : edge.grantor,
+          .grantor = edge.grantor,
           .admin_option = edge.admin_option,
           .inherit_option = edge.inherit_option,
           .set_option = edge.set_option,

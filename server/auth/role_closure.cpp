@@ -178,8 +178,7 @@ std::shared_ptr<const RoleClosure> ClosureFor(duckdb::ClientContext* context,
     ComputeRoleClosure(*RolesOf(context), role));
 }
 
-bool RoleClosure::Can(duckdb::CatalogType type,
-                      const duckdb::CatalogPermissions& perm,
+bool RoleClosure::Can(duckdb::CatalogType type, const duckdb::Permissions& perm,
                       duckdb::AclMode need) const {
   if (Owns(perm.owner)) {
     return true;
@@ -188,7 +187,7 @@ bool RoleClosure::Can(duckdb::CatalogType type,
 }
 
 bool RoleClosure::CanAny(duckdb::CatalogType type,
-                         const duckdb::CatalogPermissions& perm,
+                         const duckdb::Permissions& perm,
                          duckdb::AclMode need) const {
   if (Owns(perm.owner)) {
     return true;
@@ -207,7 +206,7 @@ duckdb::AclMode RoleClosure::GrantableModes(
 }
 
 bool RoleClosure::CanColumns(
-  const duckdb::CatalogPermissions& perm, duckdb::AclMode need,
+  const duckdb::Permissions& perm, duckdb::AclMode need,
   std::span<const std::span<const duckdb::AclItem>> acls) const {
   if (Can(duckdb::CatalogType::TABLE_ENTRY, perm, need)) {
     return true;
@@ -219,7 +218,7 @@ bool RoleClosure::CanColumns(
 }
 
 bool RoleClosure::CanAnyColumn(
-  const duckdb::CatalogPermissions& perm, duckdb::AclMode need,
+  const duckdb::Permissions& perm, duckdb::AclMode need,
   std::span<const std::span<const duckdb::AclItem>> acls) const {
   if (Can(duckdb::CatalogType::TABLE_ENTRY, perm, need)) {
     return true;

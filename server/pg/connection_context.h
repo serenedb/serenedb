@@ -49,7 +49,7 @@ struct LoginCheck {
 // role exists -> may log in -> holds CONNECT on the target database
 // (superuser bypasses, as in PG's InitPostgres).
 LoginCheck RequireLoginRole(std::string_view user, std::string_view dbname,
-                            const duckdb::CatalogPermissions& perm);
+                            const duckdb::Permissions& perm);
 
 }  // namespace sdb::pg
 namespace sdb::network {

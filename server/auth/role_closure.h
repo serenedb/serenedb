@@ -93,17 +93,17 @@ struct RoleClosure {
     return std::ranges::binary_search(admin, r);
   }
 
-  bool Can(duckdb::CatalogType type, const duckdb::CatalogPermissions& perm,
+  bool Can(duckdb::CatalogType type, const duckdb::Permissions& perm,
            duckdb::AclMode need) const;
 
-  bool CanAny(duckdb::CatalogType type, const duckdb::CatalogPermissions& perm,
+  bool CanAny(duckdb::CatalogType type, const duckdb::Permissions& perm,
               duckdb::AclMode need) const;
 
-  bool CanColumns(const duckdb::CatalogPermissions& perm, duckdb::AclMode need,
+  bool CanColumns(const duckdb::Permissions& perm, duckdb::AclMode need,
                   std::span<const std::span<const duckdb::AclItem>> acls) const;
 
   bool CanAnyColumn(
-    const duckdb::CatalogPermissions& perm, duckdb::AclMode need,
+    const duckdb::Permissions& perm, duckdb::AclMode need,
     std::span<const std::span<const duckdb::AclItem>> acls) const;
 
   duckdb::AclMode HeldModes(std::span<const duckdb::AclItem> acl) const;

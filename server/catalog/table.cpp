@@ -39,6 +39,7 @@
 #include <string>
 #include <utility>
 
+#include "catalog/scorer_options.h"
 #include "pg/errcodes.h"
 #include "pg/sql_exception_macro.h"
 #include "query/config_variable_names.h"
@@ -61,13 +62,23 @@ T TagUint(const TableTags& tags, std::string_view key) noexcept {
   return absl::SimpleAtoi(TagValue(tags, key), &parsed) ? parsed : T{0};
 }
 
+std::optional<persistence::ScorerOptions> ReadScorerTag(
+  std::string_view text) noexcept {
+  if (text.empty()) {
+    return std::nullopt;
+  }
+  try {
+    return ParseScorerExpression(nullptr, std::string{text});
+  } catch (...) {
+    return std::nullopt;
+  }
+}
+
 }  // namespace
 
 void WriteTableTags(TableTags& tags, TableEngine engine,
                     const persistence::SearchTableOptions& search_options,
                     ObjectId generated_pk_seq_id) {
-  // duckdb's insert is first-write-wins, so a rewrite has to clear first: this
-  // is the one writer of all four keys and it must be idempotent.
   for (const auto& key :
        {kStorageOption, kRefreshIntervalSetting, kCompactionIntervalSetting,
         kCleanupIntervalStepSetting, kSegmentMemoryMaxSetting,
@@ -114,6 +125,7 @@ persistence::SearchTableOptions ReadSearchOptionTags(
     .cleanup_interval_step =
       TagUint<uint32_t>(tags, kCleanupIntervalStepSetting),
     .segment_memory_max = TagUint<uint64_t>(tags, kSegmentMemoryMaxSetting),
+    .topk_scorer = ReadScorerTag(TagValue(tags, kOptimizeTopKSetting)),
   };
 }
 

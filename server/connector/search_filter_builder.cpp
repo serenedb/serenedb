@@ -1322,7 +1322,7 @@ const irs::Scorer* ResolveScoreOverride(const FilterContext& ctx,
                "index."));
   }
   auto owned = catalog::MakeScorer(catalog::ParseScorerExpression(
-    ctx.client_context, std::string{expr}, "::score"));
+    &ctx.client_context, std::string{expr}, "::score"));
   if (!owned) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                     ERR_MSG("::score(...) is not a known scorer"));

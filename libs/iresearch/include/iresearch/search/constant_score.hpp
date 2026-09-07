@@ -42,13 +42,16 @@ class ConstantScore final : public irs::ScorerBase<ConstantScore, void> {
     return std::make_unique<ConstantScore>(opts.value);
   }
 
-  explicit ConstantScore(score_t value = VALUE()) noexcept : _value{value} {}
+  constexpr explicit ConstantScore(score_t value = VALUE()) noexcept
+    : _value{value} {}
 
   ScoreFunction PrepareScorer(const ScoreContext& ctx) const final;
 
   IndexFeatures GetIndexFeatures() const noexcept final {
     return IndexFeatures::None;
   }
+
+  bool ScoresPerDoc() const noexcept final { return false; }
 
   bool equals(const Scorer& other) const noexcept final;
 
@@ -57,5 +60,23 @@ class ConstantScore final : public irs::ScorerBase<ConstantScore, void> {
  private:
   score_t _value;
 };
+
+const ConstantScore& DefaultConstScore() noexcept;
+
+inline bool NeedsTermStats(const Scorer& scorer) {
+  return scorer.stats_size() != 0 ||
+         scorer.GetIndexFeatures() != IndexFeatures::None;
+}
+
+inline const Scorer* ResolveScorer(const Scorer* own, const Scorer* parent) {
+  if (own == nullptr) {
+    return parent;
+  }
+  if (parent != nullptr && own == &DefaultConstScore() &&
+      !NeedsTermStats(*parent)) {
+    return parent;
+  }
+  return own;
+}
 
 }  // namespace irs

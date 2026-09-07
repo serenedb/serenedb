@@ -83,8 +83,8 @@ duckdb::TableFunction TableInvertedIndexScanEntry::GetScanFunction(
   }
   data->table_entry = this;
   // Carried in both roads, so pushdown targets this index's own term fields.
-  data->inverted_index =
-    ::sdb::catalog::InvertedDefinitionIn(&context, this->catalog, _index_id);
+  data->indexes = {
+    ::sdb::catalog::InvertedDefinitionIn(&context, this->catalog, _index_id)};
 
   const auto* relation =
     catalog::FindSessionTableEntry(context, GetIndexedRelationId());
@@ -95,7 +95,7 @@ duckdb::TableFunction TableInvertedIndexScanEntry::GetScanFunction(
     auto reader = conn_ctx.SearchTxn().EnsureSearchTableReader(
       GetIndexedRelationId(),
       [&] { return relation->GetSearchData()->GetDirectoryReader(); });
-    data->entry_kind = connector::ScanEntryKind::SearchTable;
+    data->entry_kind = connector::ScanEntryKind::SearchTableIndex;
     data->lookup_label = "search";
     data->snapshot = std::make_shared<search::InvertedIndexSnapshot>(
       irs::DirectoryReader{*reader}, nullptr);
@@ -197,10 +197,10 @@ duckdb::TableFunction ViewInvertedIndexScanEntry::GetScanFunction(
   }
   data->table_entry = this;
   data->entry_kind = connector::ScanEntryKind::InvertedIndex;
-  data->inverted_index =
-    ::sdb::catalog::InvertedDefinitionIn(&context, this->catalog, _index_id);
+  data->indexes = {
+    ::sdb::catalog::InvertedDefinitionIn(&context, this->catalog, _index_id)};
   std::span<const std::string> key_cols =
-    catalog::InvertedInfo(*data->inverted_index).GetOptions().key_columns;
+    data->ScannedIndex().GetOptions().key_columns;
   data->fast_path =
     connector::ResolveViewFastPath(context, *_sdb_view, key_cols);
   if (data->fast_path) {

@@ -20,8 +20,10 @@
 
 #pragma once
 
+#include "basics/down_cast.h"
 #include "basics/empty.hpp"
 #include "iresearch/analysis/token_attributes.hpp"
+#include "iresearch/error/error.hpp"
 #include "iresearch/formats/posting/common.hpp"
 #include "iresearch/formats/posting_meta.hpp"
 
@@ -108,6 +110,21 @@ class PositionImpl final : public PosAttr {
       _pend_pos = freq;
     }
     const auto count = static_cast<uint32_t>(_pend_pos);
+    // A document's positions nearly always sit inside the block already
+    // decoded, so that case walks them straight out rather than around the
+    // loop that exists for the ones that straddle a boundary.
+    if (_buf_pos + count <= doc_limits::kBlockSize) [[likely]] {
+      auto value = _value;
+      const auto* const deltas = _pos_deltas + _buf_pos;
+      for (uint32_t i = 0; i != count; ++i) {
+        value += deltas[i];
+        out[i] = value;
+      }
+      _value = value;
+      _buf_pos += count;
+      _pend_pos = 0;
+      return count;
+    }
     auto value = _value;
     for (auto left = _pend_pos; left != 0;) {
       if (_buf_pos == doc_limits::kBlockSize) {
@@ -115,8 +132,9 @@ class PositionImpl final : public PosAttr {
         _buf_pos = 0;
       }
       const auto take = std::min(left, doc_limits::kBlockSize - _buf_pos);
+      const auto* const deltas = _pos_deltas + _buf_pos;
       for (uint64_t i = 0; i != take; ++i) {
-        value += _pos_deltas[_buf_pos + i];
+        value += deltas[i];
         out[i] = value;
       }
       SDB_ASSERT(pos_limits::valid(value));
@@ -235,7 +253,7 @@ class PositionImpl final : public PosAttr {
     }
   }
 
-  // notify iterator that corresponding DocIterator has moved forward
+  // notify the positions that the document stream has moved forward
   void Notify(uint32_t freq, uint32_t n) {
     _freq = freq;
     _pend_pos += n;

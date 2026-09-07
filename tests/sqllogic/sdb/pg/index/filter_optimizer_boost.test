@@ -21,22 +21,22 @@ SELECT id, BM25(fo_bst_idx.tableoid) AS s FROM fo_bst_idx
 WHERE w @@ 'alpha' OR w @@ 'beta' ORDER BY id;
 ----
 id	s
-1	0.9808291
-2	0.9808291
+1	0.44583148
+2	0.44583148
 
 query
 SELECT id, BM25(fo_bst_idx.tableoid) AS s FROM fo_bst_idx
 WHERE (w @@ 'alpha')::boost(5.0) ORDER BY id;
 ----
 id	s
-1	4.904146
+1	2.2291574
 
 query
 SELECT id, BM25(fo_bst_idx.tableoid) AS s FROM fo_bst_idx
 WHERE (w @@ 'alpha')::boost(2.0) OR (w @@ 'alpha')::boost(3.0) ORDER BY id;
 ----
 id	s
-1	4.904146
+1	2.2291574
 
 query
 EXPLAIN SELECT id FROM fo_bst_idx

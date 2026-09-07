@@ -24,12 +24,14 @@
 
 #include "iresearch/formats/posting_meta.hpp"
 #include "iresearch/index/column_info.hpp"
-#include "iresearch/search/cost.hpp"
+#include "iresearch/search/common/resolve.hpp"
+#include "iresearch/store/data_input.hpp"
 #include "iresearch/types.hpp"
 
 namespace irs {
 
 struct TermReader;
+class ColReader;
 class ColumnReader;
 class QuantizerCodebook;
 
@@ -43,8 +45,10 @@ struct VectorState {
 
   const TermReader* reader = nullptr;
   const ColumnReader* vector_column = nullptr;
+  const ColReader* col_reader = nullptr;
   ManagedVector<PostingMeta> cookies;
-  CostAttr::Type estimation = 0;
+  std::unique_ptr<IndexInput> payload;
+  uint64_t estimation = 0;
 
   VectorQuantization quant = VectorQuantization::None;
   uint32_t d = 0;

@@ -44,16 +44,16 @@ SELECT id, BM25(bsc_idx.tableoid) AS s FROM bsc_idx
 WHERE body @@ ts_phrase('quick fox') ORDER BY id;
 ----
 id	s
-1	1.3862944
-2	1.3862944
+1	0.63013375
+2	0.63013375
 
 query IR
 SELECT id, BM25(bsc_idx.tableoid) AS s FROM bsc_idx
 WHERE body @@ (ts_phrase('quick fox') ^ 2.0) ORDER BY id;
 ----
 id	s
-1	2.7725887
-2	2.7725887
+1	1.2602675
+2	1.2602675
 
 
 # --- Boost on an OR group (BooleanQuery folds into children) ---
@@ -63,16 +63,16 @@ SELECT id, BM25(bsc_idx.tableoid) AS s FROM bsc_idx
 WHERE body @@ (ts_phrase('lazy') || ts_phrase('turtle')) ORDER BY id;
 ----
 id	s
-3	1.2039728
-4	1.2039728
+3	0.54726034
+4	0.54726034
 
 query IR
 SELECT id, BM25(bsc_idx.tableoid) AS s FROM bsc_idx
 WHERE body @@ ((ts_phrase('lazy') || ts_phrase('turtle')) ^ 2.0) ORDER BY id;
 ----
 id	s
-3	2.4079456
-4	2.4079456
+3	1.0945207
+4	1.0945207
 
 
 # --- Boost on an AND group ---
@@ -82,16 +82,16 @@ SELECT id, BM25(bsc_idx.tableoid) AS s FROM bsc_idx
 WHERE body @@ (ts_phrase('quick') && ts_phrase('fox')) ORDER BY id;
 ----
 id	s
-1	1.3862944
-2	1.3862944
+1	0.63013375
+2	0.63013375
 
 query IR
 SELECT id, BM25(bsc_idx.tableoid) AS s FROM bsc_idx
 WHERE body @@ ((ts_phrase('quick') && ts_phrase('fox')) ^ 2.0) ORDER BY id;
 ----
 id	s
-1	2.7725887
-2	2.7725887
+1	1.2602675
+2	1.2602675
 
 
 # --- Fuzzy (per-term similarity contribution must still scale) ---
@@ -101,14 +101,14 @@ SELECT id, BM25(bsc_idx.tableoid) AS s FROM bsc_idx
 WHERE body @@ ts_levenshtein('turtel', 2) ORDER BY id;
 ----
 id	s
-4	1.0033107
+4	0.45605034
 
 query IR
 SELECT id, BM25(bsc_idx.tableoid) AS s FROM bsc_idx
 WHERE body @@ (ts_levenshtein('turtel', 2) ^ 2.0) ORDER BY id;
 ----
 id	s
-4	2.0066214
+4	0.9121007
 
 
 # --- Wildcard / regexp (automaton -> MultiTermQuery) ---
@@ -118,14 +118,14 @@ SELECT id, BM25(bsc_idx.tableoid) AS s FROM bsc_idx
 WHERE body @@ (ts_like('turt%') ^ 2.0) ORDER BY id;
 ----
 id	s
-4	2.4079456
+4	1.0945207
 
 query IR
 SELECT id, BM25(bsc_idx.tableoid) AS s FROM bsc_idx
 WHERE body @@ (ts_regexp('turtl.', 'posix') ^ 2.0) ORDER BY id;
 ----
 id	s
-4	2.4079456
+4	1.0945207
 
 
 # --- Nested boosts compose multiplicatively: 2.0 * 2.0 = 4x ---
@@ -135,5 +135,5 @@ SELECT id, BM25(bsc_idx.tableoid) AS s FROM bsc_idx
 WHERE body @@ ((ts_phrase('quick fox') ^ 2.0) ^ 2.0) ORDER BY id;
 ----
 id	s
-1	5.5451775
-2	5.5451775
+1	2.520535
+2	2.520535

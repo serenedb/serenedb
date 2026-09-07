@@ -1,0 +1,332 @@
+control substitution on
+
+statement ok
+CREATE TABLE wire AS SELECT * FROM (VALUES
+	(0, TIMESTAMPTZ '1600-01-01 12:00:00+00'),
+	(1, TIMESTAMPTZ '1850-07-04 12:00:00+00'),
+	(2, TIMESTAMPTZ '1899-12-31 23:30:00+00'),
+	(3, TIMESTAMPTZ '1900-01-01 00:30:00+00'),
+	(4, TIMESTAMPTZ '1901-06-01 00:00:00+00'),
+	(5, TIMESTAMPTZ '1937-07-01 12:00:00+00'),
+	(6, TIMESTAMPTZ '1969-12-31 23:59:59.999999+00'),
+	(7, TIMESTAMPTZ '1970-01-01 00:00:00+00'),
+	(8, TIMESTAMPTZ '2025-03-30 00:30:00+00'),
+	(9, TIMESTAMPTZ '2025-03-30 01:30:00+00'),
+	(10, TIMESTAMPTZ '2025-06-01 12:00:00+00'),
+	(11, TIMESTAMPTZ '2025-10-26 00:30:00+00'),
+	(12, TIMESTAMPTZ '2025-10-26 01:30:00+00'),
+	(13, TIMESTAMPTZ '2299-12-31 12:00:00+00'),
+	(14, TIMESTAMPTZ '2300-06-01 00:00:00+00'),
+	(15, TIMESTAMPTZ '2400-01-01 00:00:00+00')) t(i, t);
+
+statement ok
+CREATE TABLE walls AS SELECT * FROM (VALUES
+	(0, TIMESTAMP '1600-01-01 12:00:00'),
+	(1, TIMESTAMP '1899-12-31 23:30:00'),
+	(2, TIMESTAMP '1900-01-01 00:30:00'),
+	(3, TIMESTAMP '1970-01-01 00:00:00'),
+	(4, TIMESTAMP '2025-03-30 02:30:00'),
+	(5, TIMESTAMP '2025-03-30 03:30:00'),
+	(6, TIMESTAMP '2025-06-01 12:00:00'),
+	(7, TIMESTAMP '2025-10-26 01:30:00'),
+	(8, TIMESTAMP '2025-10-26 02:30:00'),
+	(9, TIMESTAMP '2299-12-31 12:00:00'),
+	(10, TIMESTAMP '2300-06-01 00:00:00')) t(i, t);
+
+statement ok
+SET TimeZone = 'Europe/Berlin';
+
+statement count 16
+COPY wire TO '${__TEST_DIR__}/europe_berlin.txt' (FORMAT text);
+
+statement ok
+CREATE OR REPLACE TABLE rendered_europe_berlin (i INTEGER, rendered VARCHAR);
+
+statement count 16
+COPY rendered_europe_berlin FROM '${__TEST_DIR__}/europe_berlin.txt' (FORMAT text);
+
+query
+SELECT i, rendered FROM rendered_europe_berlin ORDER BY i;
+----
+i	rendered
+0	1600-01-01 12:53:28+00:53:28
+1	1850-07-04 12:53:28+00:53:28
+2	1900-01-01 00:30:00+01
+3	1900-01-01 01:30:00+01
+4	1901-06-01 01:00:00+01
+5	1937-07-01 13:00:00+01
+6	1970-01-01 00:59:59.999999+01
+7	1970-01-01 01:00:00+01
+8	2025-03-30 01:30:00+01
+9	2025-03-30 03:30:00+02
+10	2025-06-01 14:00:00+02
+11	2025-10-26 02:30:00+02
+12	2025-10-26 02:30:00+01
+13	2299-12-31 13:00:00+01
+14	2300-06-01 02:00:00+02
+15	2400-01-01 01:00:00+01
+
+statement count 11
+COPY walls TO '${__TEST_DIR__}/europe_berlin_walls.txt' (FORMAT text);
+
+statement ok
+CREATE OR REPLACE TABLE zoneless_europe_berlin (i INTEGER, t TIMESTAMPTZ);
+
+statement count 11
+COPY zoneless_europe_berlin FROM '${__TEST_DIR__}/europe_berlin_walls.txt' (FORMAT text);
+
+query
+SELECT i, epoch_us(t) AS instant, (t = (SELECT t FROM walls w WHERE w.i = z.i) AT TIME ZONE 'Europe/Berlin') AS matches_wall_clock
+FROM zoneless_europe_berlin z ORDER BY i;
+----
+i	instant	matches_wall_clock
+0	-11676056008000000	t
+1	-2208994200000000	t
+2	-2208990600000000	t
+3	-3600000000	t
+4	1743298200000000	t
+5	1743298200000000	t
+6	1748772000000000	t
+7	1761435000000000	t
+8	1761442200000000	t
+9	10413745200000000	t
+10	10426831200000000	t
+
+statement ok
+SET TimeZone = 'America/Havana';
+
+statement count 16
+COPY wire TO '${__TEST_DIR__}/america_havana.txt' (FORMAT text);
+
+statement ok
+CREATE OR REPLACE TABLE rendered_america_havana (i INTEGER, rendered VARCHAR);
+
+statement count 16
+COPY rendered_america_havana FROM '${__TEST_DIR__}/america_havana.txt' (FORMAT text);
+
+query
+SELECT i, rendered FROM rendered_america_havana ORDER BY i;
+----
+i	rendered
+0	1600-01-01 06:30:32-05:29:28
+1	1850-07-04 06:30:32-05:29:28
+2	1899-12-31 18:00:24-05:29:36
+3	1899-12-31 19:00:24-05:29:36
+4	1901-05-31 18:30:24-05:29:36
+5	1937-07-01 07:00:00-05
+6	1969-12-31 18:59:59.999999-05
+7	1969-12-31 19:00:00-05
+8	2025-03-29 20:30:00-04
+9	2025-03-29 21:30:00-04
+10	2025-06-01 08:00:00-04
+11	2025-10-25 20:30:00-04
+12	2025-10-25 21:30:00-04
+13	2299-12-31 07:00:00-05
+14	2300-05-31 20:00:00-04
+15	2399-12-31 19:00:00-05
+
+statement count 11
+COPY walls TO '${__TEST_DIR__}/america_havana_walls.txt' (FORMAT text);
+
+statement ok
+CREATE OR REPLACE TABLE zoneless_america_havana (i INTEGER, t TIMESTAMPTZ);
+
+statement count 11
+COPY zoneless_america_havana FROM '${__TEST_DIR__}/america_havana_walls.txt' (FORMAT text);
+
+query
+SELECT i, epoch_us(t) AS instant, (t = (SELECT t FROM walls w WHERE w.i = z.i) AT TIME ZONE 'America/Havana') AS matches_wall_clock
+FROM zoneless_america_havana z ORDER BY i;
+----
+i	instant	matches_wall_clock
+0	-11676033032000000	t
+1	-2208970824000000	t
+2	-2208967224000000	t
+3	18000000000	t
+4	1743316200000000	t
+5	1743319800000000	t
+6	1748793600000000	t
+7	1761456600000000	t
+8	1761460200000000	t
+9	10413766800000000	t
+10	10426852800000000	t
+
+statement ok
+SET TimeZone = 'Australia/Lord_Howe';
+
+statement count 16
+COPY wire TO '${__TEST_DIR__}/australia_lord_howe.txt' (FORMAT text);
+
+statement ok
+CREATE OR REPLACE TABLE rendered_australia_lord_howe (i INTEGER, rendered VARCHAR);
+
+statement count 16
+COPY rendered_australia_lord_howe FROM '${__TEST_DIR__}/australia_lord_howe.txt' (FORMAT text);
+
+query
+SELECT i, rendered FROM rendered_australia_lord_howe ORDER BY i;
+----
+i	rendered
+0	1600-01-01 22:36:20+10:36:20
+1	1850-07-04 22:36:20+10:36:20
+2	1900-01-01 09:30:00+10
+3	1900-01-01 10:30:00+10
+4	1901-06-01 10:00:00+10
+5	1937-07-01 22:00:00+10
+6	1970-01-01 09:59:59.999999+10
+7	1970-01-01 10:00:00+10
+8	2025-03-30 11:30:00+11
+9	2025-03-30 12:30:00+11
+10	2025-06-01 22:30:00+10:30
+11	2025-10-26 11:30:00+11
+12	2025-10-26 12:30:00+11
+13	2299-12-31 23:00:00+11
+14	2300-06-01 10:30:00+10:30
+15	2400-01-01 11:00:00+11
+
+statement count 11
+COPY walls TO '${__TEST_DIR__}/australia_lord_howe_walls.txt' (FORMAT text);
+
+statement ok
+CREATE OR REPLACE TABLE zoneless_australia_lord_howe (i INTEGER, t TIMESTAMPTZ);
+
+statement count 11
+COPY zoneless_australia_lord_howe FROM '${__TEST_DIR__}/australia_lord_howe_walls.txt' (FORMAT text);
+
+query
+SELECT i, epoch_us(t) AS instant, (t = (SELECT t FROM walls w WHERE w.i = z.i) AT TIME ZONE 'Australia/Lord_Howe') AS matches_wall_clock
+FROM zoneless_australia_lord_howe z ORDER BY i;
+----
+i	instant	matches_wall_clock
+0	-11676090980000000	t
+1	-2209026600000000	t
+2	-2209023000000000	t
+3	-36000000000	t
+4	1743262200000000	t
+5	1743265800000000	t
+6	1748741400000000	t
+7	1761402600000000	t
+8	1761406200000000	t
+9	10413709200000000	t
+10	10426800600000000	t
+
+statement ok
+SET TimeZone = 'Asia/Kathmandu';
+
+statement count 16
+COPY wire TO '${__TEST_DIR__}/asia_kathmandu.txt' (FORMAT text);
+
+statement ok
+CREATE OR REPLACE TABLE rendered_asia_kathmandu (i INTEGER, rendered VARCHAR);
+
+statement count 16
+COPY rendered_asia_kathmandu FROM '${__TEST_DIR__}/asia_kathmandu.txt' (FORMAT text);
+
+query
+SELECT i, rendered FROM rendered_asia_kathmandu ORDER BY i;
+----
+i	rendered
+0	1600-01-01 17:41:16+05:41:16
+1	1850-07-04 17:41:16+05:41:16
+2	1900-01-01 05:11:16+05:41:16
+3	1900-01-01 06:11:16+05:41:16
+4	1901-06-01 05:41:16+05:41:16
+5	1937-07-01 17:30:00+05:30
+6	1970-01-01 05:29:59.999999+05:30
+7	1970-01-01 05:30:00+05:30
+8	2025-03-30 06:15:00+05:45
+9	2025-03-30 07:15:00+05:45
+10	2025-06-01 17:45:00+05:45
+11	2025-10-26 06:15:00+05:45
+12	2025-10-26 07:15:00+05:45
+13	2299-12-31 17:45:00+05:45
+14	2300-06-01 05:45:00+05:45
+15	2400-01-01 05:45:00+05:45
+
+statement count 11
+COPY walls TO '${__TEST_DIR__}/asia_kathmandu_walls.txt' (FORMAT text);
+
+statement ok
+CREATE OR REPLACE TABLE zoneless_asia_kathmandu (i INTEGER, t TIMESTAMPTZ);
+
+statement count 11
+COPY zoneless_asia_kathmandu FROM '${__TEST_DIR__}/asia_kathmandu_walls.txt' (FORMAT text);
+
+query
+SELECT i, epoch_us(t) AS instant, (t = (SELECT t FROM walls w WHERE w.i = z.i) AT TIME ZONE 'Asia/Kathmandu') AS matches_wall_clock
+FROM zoneless_asia_kathmandu z ORDER BY i;
+----
+i	instant	matches_wall_clock
+0	-11676073276000000	t
+1	-2209011076000000	t
+2	-2209007476000000	t
+3	-19800000000	t
+4	1743281100000000	t
+5	1743284700000000	t
+6	1748758500000000	t
+7	1761421500000000	t
+8	1761425100000000	t
+9	10413728100000000	t
+10	10426817700000000	t
+
+statement ok
+SET TimeZone = 'America/St_Johns';
+
+statement count 16
+COPY wire TO '${__TEST_DIR__}/america_st_johns.txt' (FORMAT text);
+
+statement ok
+CREATE OR REPLACE TABLE rendered_america_st_johns (i INTEGER, rendered VARCHAR);
+
+statement count 16
+COPY rendered_america_st_johns FROM '${__TEST_DIR__}/america_st_johns.txt' (FORMAT text);
+
+query
+SELECT i, rendered FROM rendered_america_st_johns ORDER BY i;
+----
+i	rendered
+0	1600-01-01 08:29:08-03:30:52
+1	1850-07-04 08:29:08-03:30:52
+2	1899-12-31 19:59:08-03:30:52
+3	1899-12-31 20:59:08-03:30:52
+4	1901-05-31 20:29:08-03:30:52
+5	1937-07-01 09:30:00-02:30
+6	1969-12-31 20:29:59.999999-03:30
+7	1969-12-31 20:30:00-03:30
+8	2025-03-29 22:00:00-02:30
+9	2025-03-29 23:00:00-02:30
+10	2025-06-01 09:30:00-02:30
+11	2025-10-25 22:00:00-02:30
+12	2025-10-25 23:00:00-02:30
+13	2299-12-31 08:30:00-03:30
+14	2300-05-31 21:30:00-02:30
+15	2399-12-31 20:30:00-03:30
+
+statement count 11
+COPY walls TO '${__TEST_DIR__}/america_st_johns_walls.txt' (FORMAT text);
+
+statement ok
+CREATE OR REPLACE TABLE zoneless_america_st_johns (i INTEGER, t TIMESTAMPTZ);
+
+statement count 11
+COPY zoneless_america_st_johns FROM '${__TEST_DIR__}/america_st_johns_walls.txt' (FORMAT text);
+
+query
+SELECT i, epoch_us(t) AS instant, (t = (SELECT t FROM walls w WHERE w.i = z.i) AT TIME ZONE 'America/St_Johns') AS matches_wall_clock
+FROM zoneless_america_st_johns z ORDER BY i;
+----
+i	instant	matches_wall_clock
+0	-11676040148000000	t
+1	-2208977948000000	t
+2	-2208974348000000	t
+3	12600000000	t
+4	1743310800000000	t
+5	1743314400000000	t
+6	1748788200000000	t
+7	1761451200000000	t
+8	1761454800000000	t
+9	10413761400000000	t
+10	10426847400000000	t
+
+statement ok
+SET TimeZone = 'Etc/UTC';

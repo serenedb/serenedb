@@ -101,7 +101,7 @@ irs::analysis::Analyzer::ptr MakeText(std::string_view locale,
   return irs::analysis::TextTokenizer::Make(std::move(opts));
 }
 
-irs::analysis::Analyzer::ptr MakeNgram(size_t min_gram, size_t max_gram,
+irs::analysis::Analyzer::ptr MakeNGram(size_t min_gram, size_t max_gram,
                                        bool preserve_original) {
   return irs::analysis::NGramTokenizerBase::Make(
     irs::analysis::NGramTokenizerBase::Options{
@@ -144,7 +144,7 @@ TEST(union_tokenizer_test, text_plus_ngram) {
   auto text = MakeText("en_US.UTF-8", irs::Case::Lower, /*stemming=*/false);
   ASSERT_NE(nullptr, text);
 
-  auto ngram = MakeNgram(3, 3, /*preserve_original=*/false);
+  auto ngram = MakeNGram(3, 3, /*preserve_original=*/false);
   ASSERT_NE(nullptr, ngram);
 
   std::vector<irs::analysis::Analyzer::ptr> options;
@@ -235,7 +235,7 @@ TEST(union_tokenizer_test, get_mutable_non_core) {
 
 TEST(union_tokenizer_test, VisitMembers) {
   auto text = MakeText("en_US.UTF-8", irs::Case::Lower, /*stemming=*/false);
-  auto ngram = MakeNgram(2, 3, /*preserve_original=*/false);
+  auto ngram = MakeNGram(2, 3, /*preserve_original=*/false);
 
   std::vector<irs::analysis::Analyzer::ptr> options;
   options.emplace_back(std::move(text));

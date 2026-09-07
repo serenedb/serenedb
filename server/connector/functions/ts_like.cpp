@@ -32,7 +32,7 @@
 
 namespace sdb::connector {
 
-void FromLike(irs::BooleanFilter& parent, const FilterContext& ctx,
+void FromLike(BoolTarget parent, const FilterContext& ctx,
               const SearchColumnInfo& column_info,
               const duckdb::BoundFunctionExpression& func) {
   SDB_ASSERT(func.GetChildren().size() == 1);
@@ -51,8 +51,9 @@ void FromLike(irs::BooleanFilter& parent, const FilterContext& ctx,
 
   if (column_info.tokenizer.analyzer->type() ==
       irs::Type<irs::analysis::WildcardAnalyzer>::id()) {
-    auto& wf = AddMaybeNegated<irs::ByWildcardNgram>(parent, ctx, column_info);
+    auto& wf = AddMaybeNegated<irs::ByWildcardNGram>(parent, ctx, column_info);
     wf.SetBoost(ctx.boost);
+    wf.SetScorer(&irs::DefaultConstScore());
     *wf.mutable_field_id() =
       PickPerKindFieldId(column_info, duckdb::LogicalTypeId::VARCHAR);
     auto* opts = wf.mutable_options();
@@ -73,7 +74,7 @@ void FromLike(irs::BooleanFilter& parent, const FilterContext& ctx,
     irs::ViewCast<irs::byte_type>(std::string_view{pattern}),
     ctx.scored_terms_limit, ctx.boost);
   if (!ctx.negated) {
-    parent.add(std::move(wildcard));
+    parent.Add(std::move(wildcard));
     return;
   }
   AddNegated(parent, column_info, std::move(wildcard));

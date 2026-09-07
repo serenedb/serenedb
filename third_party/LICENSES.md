@@ -90,7 +90,6 @@
       of the GNU General Public License, version 3 ("GPLv3").
 
 * [zlib-ng](https://github.com/zlib-ng/zlib-ng/blob/develop/LICENSE.md)
-* [minizip-ng](https://github.com/zlib-ng/minizip-ng/blob/develop/LICENSE)
 * [PostgreSQL](https://github.com/postgres/postgres), [PostgreSQL License](https://www.postgresql.org/about/licence/) (libpq, statically linked by the postgres_scanner extension)
 * [wyhash](https://github.com/wangyi-fudan/wyhash), Unlicense (vendored in `libs/basics/wyhash.h`)
 

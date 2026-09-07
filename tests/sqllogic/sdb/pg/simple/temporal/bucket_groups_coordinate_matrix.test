@@ -1,0 +1,628 @@
+statement ok
+SET TimeZone = 'Europe/Berlin';
+
+statement ok
+CREATE TABLE g AS SELECT TIMESTAMP '2023-11-28 00:00:00' + INTERVAL (i * 17) MINUTE AS ts, (TIMESTAMP '2023-11-28 00:00:00' + INTERVAL (i * 17) MINUTE)::TIMESTAMPTZ AS tstz, (DATE '2023-11-28' + (i % 700)::INTEGER)::DATE AS d, (i % 5)::SMALLINT AS sev, i AS v FROM range(60000) t(i);
+
+statement ok
+INSERT INTO g VALUES (NULL, NULL, NULL, NULL, -1);
+
+statement ok
+CREATE TABLE dst AS SELECT tstz, v FROM (SELECT TIMESTAMPTZ '2025-03-28 00:00:00+00' + INTERVAL (i * 41) MINUTE AS tstz, i AS v FROM range(0, 400) t(i) UNION ALL SELECT TIMESTAMPTZ '2025-10-24 00:00:00+00' + INTERVAL (i * 41) MINUTE, 1000 + i FROM range(0, 400) t(i) UNION ALL SELECT TIMESTAMPTZ '2024-12-31 12:00:00+00' + INTERVAL (i * 41) MINUTE, 2000 + i FROM range(0, 100) t(i));
+
+statement ok
+SET disabled_optimizers = 'compressed_materialization';
+
+statement ok
+CREATE TABLE ref_c AS
+SELECT 'ts year(ts), month(ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k1::VARCHAR || '/' || k2::VARCHAR AS k, c, s FROM (SELECT year(ts) AS k1, month(ts) AS k2, count(*) AS c, sum(v) AS s FROM g GROUP BY 1, 2))
+UNION ALL SELECT 'ts month(ts), year(ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k1::VARCHAR || '/' || k2::VARCHAR AS k, c, s FROM (SELECT month(ts) AS k1, year(ts) AS k2, count(*) AS c, sum(v) AS s FROM g GROUP BY 1, 2))
+UNION ALL SELECT 'ts year(ts), quarter(ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k1::VARCHAR || '/' || k2::VARCHAR AS k, c, s FROM (SELECT year(ts) AS k1, quarter(ts) AS k2, count(*) AS c, sum(v) AS s FROM g GROUP BY 1, 2))
+UNION ALL SELECT 'ts year(ts), month(ts), day(ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k1::VARCHAR || '/' || k2::VARCHAR || '/' || k3::VARCHAR AS k, c, s FROM (SELECT year(ts) AS k1, month(ts) AS k2, day(ts) AS k3, count(*) AS c, sum(v) AS s FROM g GROUP BY 1, 2, 3))
+UNION ALL SELECT 'ts year(ts), month(ts), day(ts), hour(ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k1::VARCHAR || '/' || k2::VARCHAR || '/' || k3::VARCHAR || '/' || k4::VARCHAR AS k, c, s FROM (SELECT year(ts) AS k1, month(ts) AS k2, day(ts) AS k3, hour(ts) AS k4, count(*) AS c, sum(v) AS s FROM g GROUP BY 1, 2, 3, 4))
+UNION ALL SELECT 'ts year(ts), month(ts), day(ts), hour(ts), minute(ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k1::VARCHAR || '/' || k2::VARCHAR || '/' || k3::VARCHAR || '/' || k4::VARCHAR || '/' || k5::VARCHAR AS k, c, s FROM (SELECT year(ts) AS k1, month(ts) AS k2, day(ts) AS k3, hour(ts) AS k4, minute(ts) AS k5, count(*) AS c, sum(v) AS s FROM g GROUP BY 1, 2, 3, 4, 5))
+UNION ALL SELECT 'ts isoyear(ts), week(ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k1::VARCHAR || '/' || k2::VARCHAR AS k, c, s FROM (SELECT isoyear(ts) AS k1, week(ts) AS k2, count(*) AS c, sum(v) AS s FROM g GROUP BY 1, 2))
+UNION ALL SELECT 'ts isoyear(ts), week(ts), isodow(ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k1::VARCHAR || '/' || k2::VARCHAR || '/' || k3::VARCHAR AS k, c, s FROM (SELECT isoyear(ts) AS k1, week(ts) AS k2, isodow(ts) AS k3, count(*) AS c, sum(v) AS s FROM g GROUP BY 1, 2, 3))
+UNION ALL SELECT 'ts year(ts), dayofyear(ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k1::VARCHAR || '/' || k2::VARCHAR AS k, c, s FROM (SELECT year(ts) AS k1, dayofyear(ts) AS k2, count(*) AS c, sum(v) AS s FROM g GROUP BY 1, 2))
+UNION ALL SELECT 'ts year(ts), monthname(ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k1::VARCHAR || '/' || k2::VARCHAR AS k, c, s FROM (SELECT year(ts) AS k1, monthname(ts) AS k2, count(*) AS c, sum(v) AS s FROM g GROUP BY 1, 2))
+UNION ALL SELECT 'ts year(ts), month(ts), dayname(ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k1::VARCHAR || '/' || k2::VARCHAR || '/' || k3::VARCHAR AS k, c, s FROM (SELECT year(ts) AS k1, month(ts) AS k2, dayname(ts) AS k3, count(*) AS c, sum(v) AS s FROM g GROUP BY 1, 2, 3))
+UNION ALL SELECT 'ts strftime(ts, ''%Y''), month(ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k1::VARCHAR || '/' || k2::VARCHAR AS k, c, s FROM (SELECT strftime(ts, '%Y') AS k1, month(ts) AS k2, count(*) AS c, sum(v) AS s FROM g GROUP BY 1, 2))
+UNION ALL SELECT 'ts date_part(''year'', ts), date_part(''month'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k1::VARCHAR || '/' || k2::VARCHAR AS k, c, s FROM (SELECT date_part('year', ts) AS k1, date_part('month', ts) AS k2, count(*) AS c, sum(v) AS s FROM g GROUP BY 1, 2))
+UNION ALL SELECT 'ts extract(year FROM ts), extract(month FROM ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k1::VARCHAR || '/' || k2::VARCHAR AS k, c, s FROM (SELECT extract(year FROM ts) AS k1, extract(month FROM ts) AS k2, count(*) AS c, sum(v) AS s FROM g GROUP BY 1, 2))
+UNION ALL SELECT 'ts year(ts), strftime(ts, ''%m'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k1::VARCHAR || '/' || k2::VARCHAR AS k, c, s FROM (SELECT year(ts) AS k1, strftime(ts, '%m') AS k2, count(*) AS c, sum(v) AS s FROM g GROUP BY 1, 2))
+UNION ALL SELECT 'ts year(ts), week(ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k1::VARCHAR || '/' || k2::VARCHAR AS k, c, s FROM (SELECT year(ts) AS k1, week(ts) AS k2, count(*) AS c, sum(v) AS s FROM g GROUP BY 1, 2))
+UNION ALL SELECT 'ts year(ts), month(ts), hour(ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k1::VARCHAR || '/' || k2::VARCHAR || '/' || k3::VARCHAR AS k, c, s FROM (SELECT year(ts) AS k1, month(ts) AS k2, hour(ts) AS k3, count(*) AS c, sum(v) AS s FROM g GROUP BY 1, 2, 3))
+UNION ALL SELECT 'ts month(ts), day(ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k1::VARCHAR || '/' || k2::VARCHAR AS k, c, s FROM (SELECT month(ts) AS k1, day(ts) AS k2, count(*) AS c, sum(v) AS s FROM g GROUP BY 1, 2))
+UNION ALL SELECT 'ts year(ts), decade(ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k1::VARCHAR || '/' || k2::VARCHAR AS k, c, s FROM (SELECT year(ts) AS k1, decade(ts) AS k2, count(*) AS c, sum(v) AS s FROM g GROUP BY 1, 2))
+UNION ALL SELECT 'ts decade(ts), year(ts), month(ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k1::VARCHAR || '/' || k2::VARCHAR || '/' || k3::VARCHAR AS k, c, s FROM (SELECT decade(ts) AS k1, year(ts) AS k2, month(ts) AS k3, count(*) AS c, sum(v) AS s FROM g GROUP BY 1, 2, 3))
+UNION ALL SELECT 'ts year(ts), quarter(ts), month(ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k1::VARCHAR || '/' || k2::VARCHAR || '/' || k3::VARCHAR AS k, c, s FROM (SELECT year(ts) AS k1, quarter(ts) AS k2, month(ts) AS k3, count(*) AS c, sum(v) AS s FROM g GROUP BY 1, 2, 3))
+UNION ALL SELECT 'ts year(ts)::VARCHAR, month(ts)::VARCHAR' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k1::VARCHAR || '/' || k2::VARCHAR AS k, c, s FROM (SELECT year(ts)::VARCHAR AS k1, month(ts)::VARCHAR AS k2, count(*) AS c, sum(v) AS s FROM g GROUP BY 1, 2))
+UNION ALL SELECT 'ts year(ts), month(ts), sev' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k1::VARCHAR || '/' || k2::VARCHAR || '/' || k3::VARCHAR AS k, c, s FROM (SELECT year(ts) AS k1, month(ts) AS k2, sev AS k3, count(*) AS c, sum(v) AS s FROM g GROUP BY 1, 2, 3))
+UNION ALL SELECT 'tstz year(tstz), month(tstz)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k1::VARCHAR || '/' || k2::VARCHAR AS k, c, s FROM (SELECT year(tstz) AS k1, month(tstz) AS k2, count(*) AS c, sum(v) AS s FROM g GROUP BY 1, 2))
+UNION ALL SELECT 'tstz month(tstz), year(tstz)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k1::VARCHAR || '/' || k2::VARCHAR AS k, c, s FROM (SELECT month(tstz) AS k1, year(tstz) AS k2, count(*) AS c, sum(v) AS s FROM g GROUP BY 1, 2))
+UNION ALL SELECT 'tstz year(tstz), quarter(tstz)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k1::VARCHAR || '/' || k2::VARCHAR AS k, c, s FROM (SELECT year(tstz) AS k1, quarter(tstz) AS k2, count(*) AS c, sum(v) AS s FROM g GROUP BY 1, 2))
+UNION ALL SELECT 'tstz year(tstz), month(tstz), day(tstz)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k1::VARCHAR || '/' || k2::VARCHAR || '/' || k3::VARCHAR AS k, c, s FROM (SELECT year(tstz) AS k1, month(tstz) AS k2, day(tstz) AS k3, count(*) AS c, sum(v) AS s FROM g GROUP BY 1, 2, 3))
+UNION ALL SELECT 'tstz year(tstz), month(tstz), day(tstz), hour(tstz)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k1::VARCHAR || '/' || k2::VARCHAR || '/' || k3::VARCHAR || '/' || k4::VARCHAR AS k, c, s FROM (SELECT year(tstz) AS k1, month(tstz) AS k2, day(tstz) AS k3, hour(tstz) AS k4, count(*) AS c, sum(v) AS s FROM g GROUP BY 1, 2, 3, 4))
+UNION ALL SELECT 'tstz year(tstz), month(tstz), day(tstz), hour(tstz), minute(tstz)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k1::VARCHAR || '/' || k2::VARCHAR || '/' || k3::VARCHAR || '/' || k4::VARCHAR || '/' || k5::VARCHAR AS k, c, s FROM (SELECT year(tstz) AS k1, month(tstz) AS k2, day(tstz) AS k3, hour(tstz) AS k4, minute(tstz) AS k5, count(*) AS c, sum(v) AS s FROM g GROUP BY 1, 2, 3, 4, 5))
+UNION ALL SELECT 'tstz isoyear(tstz), week(tstz)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k1::VARCHAR || '/' || k2::VARCHAR AS k, c, s FROM (SELECT isoyear(tstz) AS k1, week(tstz) AS k2, count(*) AS c, sum(v) AS s FROM g GROUP BY 1, 2))
+UNION ALL SELECT 'tstz isoyear(tstz), week(tstz), isodow(tstz)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k1::VARCHAR || '/' || k2::VARCHAR || '/' || k3::VARCHAR AS k, c, s FROM (SELECT isoyear(tstz) AS k1, week(tstz) AS k2, isodow(tstz) AS k3, count(*) AS c, sum(v) AS s FROM g GROUP BY 1, 2, 3))
+UNION ALL SELECT 'tstz year(tstz), dayofyear(tstz)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k1::VARCHAR || '/' || k2::VARCHAR AS k, c, s FROM (SELECT year(tstz) AS k1, dayofyear(tstz) AS k2, count(*) AS c, sum(v) AS s FROM g GROUP BY 1, 2))
+UNION ALL SELECT 'tstz year(tstz), monthname(tstz)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k1::VARCHAR || '/' || k2::VARCHAR AS k, c, s FROM (SELECT year(tstz) AS k1, monthname(tstz) AS k2, count(*) AS c, sum(v) AS s FROM g GROUP BY 1, 2))
+UNION ALL SELECT 'tstz year(tstz), month(tstz), dayname(tstz)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k1::VARCHAR || '/' || k2::VARCHAR || '/' || k3::VARCHAR AS k, c, s FROM (SELECT year(tstz) AS k1, month(tstz) AS k2, dayname(tstz) AS k3, count(*) AS c, sum(v) AS s FROM g GROUP BY 1, 2, 3))
+UNION ALL SELECT 'tstz strftime(tstz, ''%Y''), month(tstz)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k1::VARCHAR || '/' || k2::VARCHAR AS k, c, s FROM (SELECT strftime(tstz, '%Y') AS k1, month(tstz) AS k2, count(*) AS c, sum(v) AS s FROM g GROUP BY 1, 2))
+UNION ALL SELECT 'tstz date_part(''year'', tstz), date_part(''month'', tstz)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k1::VARCHAR || '/' || k2::VARCHAR AS k, c, s FROM (SELECT date_part('year', tstz) AS k1, date_part('month', tstz) AS k2, count(*) AS c, sum(v) AS s FROM g GROUP BY 1, 2))
+UNION ALL SELECT 'tstz extract(year FROM tstz), extract(month FROM tstz)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k1::VARCHAR || '/' || k2::VARCHAR AS k, c, s FROM (SELECT extract(year FROM tstz) AS k1, extract(month FROM tstz) AS k2, count(*) AS c, sum(v) AS s FROM g GROUP BY 1, 2))
+UNION ALL SELECT 'tstz year(tstz), strftime(tstz, ''%m'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k1::VARCHAR || '/' || k2::VARCHAR AS k, c, s FROM (SELECT year(tstz) AS k1, strftime(tstz, '%m') AS k2, count(*) AS c, sum(v) AS s FROM g GROUP BY 1, 2))
+UNION ALL SELECT 'tstz year(tstz), week(tstz)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k1::VARCHAR || '/' || k2::VARCHAR AS k, c, s FROM (SELECT year(tstz) AS k1, week(tstz) AS k2, count(*) AS c, sum(v) AS s FROM g GROUP BY 1, 2))
+UNION ALL SELECT 'tstz year(tstz), month(tstz), hour(tstz)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k1::VARCHAR || '/' || k2::VARCHAR || '/' || k3::VARCHAR AS k, c, s FROM (SELECT year(tstz) AS k1, month(tstz) AS k2, hour(tstz) AS k3, count(*) AS c, sum(v) AS s FROM g GROUP BY 1, 2, 3))
+UNION ALL SELECT 'tstz month(tstz), day(tstz)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k1::VARCHAR || '/' || k2::VARCHAR AS k, c, s FROM (SELECT month(tstz) AS k1, day(tstz) AS k2, count(*) AS c, sum(v) AS s FROM g GROUP BY 1, 2))
+UNION ALL SELECT 'tstz year(tstz), decade(tstz)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k1::VARCHAR || '/' || k2::VARCHAR AS k, c, s FROM (SELECT year(tstz) AS k1, decade(tstz) AS k2, count(*) AS c, sum(v) AS s FROM g GROUP BY 1, 2))
+UNION ALL SELECT 'tstz decade(tstz), year(tstz), month(tstz)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k1::VARCHAR || '/' || k2::VARCHAR || '/' || k3::VARCHAR AS k, c, s FROM (SELECT decade(tstz) AS k1, year(tstz) AS k2, month(tstz) AS k3, count(*) AS c, sum(v) AS s FROM g GROUP BY 1, 2, 3))
+UNION ALL SELECT 'tstz year(tstz), quarter(tstz), month(tstz)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k1::VARCHAR || '/' || k2::VARCHAR || '/' || k3::VARCHAR AS k, c, s FROM (SELECT year(tstz) AS k1, quarter(tstz) AS k2, month(tstz) AS k3, count(*) AS c, sum(v) AS s FROM g GROUP BY 1, 2, 3))
+UNION ALL SELECT 'tstz year(tstz)::VARCHAR, month(tstz)::VARCHAR' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k1::VARCHAR || '/' || k2::VARCHAR AS k, c, s FROM (SELECT year(tstz)::VARCHAR AS k1, month(tstz)::VARCHAR AS k2, count(*) AS c, sum(v) AS s FROM g GROUP BY 1, 2))
+UNION ALL SELECT 'tstz year(tstz), month(tstz), sev' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k1::VARCHAR || '/' || k2::VARCHAR || '/' || k3::VARCHAR AS k, c, s FROM (SELECT year(tstz) AS k1, month(tstz) AS k2, sev AS k3, count(*) AS c, sum(v) AS s FROM g GROUP BY 1, 2, 3))
+UNION ALL SELECT 'd year(d), month(d)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k1::VARCHAR || '/' || k2::VARCHAR AS k, c, s FROM (SELECT year(d) AS k1, month(d) AS k2, count(*) AS c, sum(v) AS s FROM g GROUP BY 1, 2))
+UNION ALL SELECT 'd month(d), year(d)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k1::VARCHAR || '/' || k2::VARCHAR AS k, c, s FROM (SELECT month(d) AS k1, year(d) AS k2, count(*) AS c, sum(v) AS s FROM g GROUP BY 1, 2))
+UNION ALL SELECT 'd year(d), quarter(d)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k1::VARCHAR || '/' || k2::VARCHAR AS k, c, s FROM (SELECT year(d) AS k1, quarter(d) AS k2, count(*) AS c, sum(v) AS s FROM g GROUP BY 1, 2))
+UNION ALL SELECT 'd year(d), month(d), day(d)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k1::VARCHAR || '/' || k2::VARCHAR || '/' || k3::VARCHAR AS k, c, s FROM (SELECT year(d) AS k1, month(d) AS k2, day(d) AS k3, count(*) AS c, sum(v) AS s FROM g GROUP BY 1, 2, 3))
+UNION ALL SELECT 'd year(d), month(d), day(d), hour(d)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k1::VARCHAR || '/' || k2::VARCHAR || '/' || k3::VARCHAR || '/' || k4::VARCHAR AS k, c, s FROM (SELECT year(d) AS k1, month(d) AS k2, day(d) AS k3, hour(d) AS k4, count(*) AS c, sum(v) AS s FROM g GROUP BY 1, 2, 3, 4))
+UNION ALL SELECT 'd year(d), month(d), day(d), hour(d), minute(d)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k1::VARCHAR || '/' || k2::VARCHAR || '/' || k3::VARCHAR || '/' || k4::VARCHAR || '/' || k5::VARCHAR AS k, c, s FROM (SELECT year(d) AS k1, month(d) AS k2, day(d) AS k3, hour(d) AS k4, minute(d) AS k5, count(*) AS c, sum(v) AS s FROM g GROUP BY 1, 2, 3, 4, 5))
+UNION ALL SELECT 'd isoyear(d), week(d)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k1::VARCHAR || '/' || k2::VARCHAR AS k, c, s FROM (SELECT isoyear(d) AS k1, week(d) AS k2, count(*) AS c, sum(v) AS s FROM g GROUP BY 1, 2))
+UNION ALL SELECT 'd isoyear(d), week(d), isodow(d)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k1::VARCHAR || '/' || k2::VARCHAR || '/' || k3::VARCHAR AS k, c, s FROM (SELECT isoyear(d) AS k1, week(d) AS k2, isodow(d) AS k3, count(*) AS c, sum(v) AS s FROM g GROUP BY 1, 2, 3))
+UNION ALL SELECT 'd year(d), dayofyear(d)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k1::VARCHAR || '/' || k2::VARCHAR AS k, c, s FROM (SELECT year(d) AS k1, dayofyear(d) AS k2, count(*) AS c, sum(v) AS s FROM g GROUP BY 1, 2))
+UNION ALL SELECT 'd year(d), monthname(d)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k1::VARCHAR || '/' || k2::VARCHAR AS k, c, s FROM (SELECT year(d) AS k1, monthname(d) AS k2, count(*) AS c, sum(v) AS s FROM g GROUP BY 1, 2))
+UNION ALL SELECT 'd year(d), month(d), dayname(d)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k1::VARCHAR || '/' || k2::VARCHAR || '/' || k3::VARCHAR AS k, c, s FROM (SELECT year(d) AS k1, month(d) AS k2, dayname(d) AS k3, count(*) AS c, sum(v) AS s FROM g GROUP BY 1, 2, 3))
+UNION ALL SELECT 'd strftime(d, ''%Y''), month(d)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k1::VARCHAR || '/' || k2::VARCHAR AS k, c, s FROM (SELECT strftime(d, '%Y') AS k1, month(d) AS k2, count(*) AS c, sum(v) AS s FROM g GROUP BY 1, 2))
+UNION ALL SELECT 'd date_part(''year'', d), date_part(''month'', d)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k1::VARCHAR || '/' || k2::VARCHAR AS k, c, s FROM (SELECT date_part('year', d) AS k1, date_part('month', d) AS k2, count(*) AS c, sum(v) AS s FROM g GROUP BY 1, 2))
+UNION ALL SELECT 'd extract(year FROM d), extract(month FROM d)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k1::VARCHAR || '/' || k2::VARCHAR AS k, c, s FROM (SELECT extract(year FROM d) AS k1, extract(month FROM d) AS k2, count(*) AS c, sum(v) AS s FROM g GROUP BY 1, 2))
+UNION ALL SELECT 'd year(d), strftime(d, ''%m'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k1::VARCHAR || '/' || k2::VARCHAR AS k, c, s FROM (SELECT year(d) AS k1, strftime(d, '%m') AS k2, count(*) AS c, sum(v) AS s FROM g GROUP BY 1, 2))
+UNION ALL SELECT 'd year(d), week(d)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k1::VARCHAR || '/' || k2::VARCHAR AS k, c, s FROM (SELECT year(d) AS k1, week(d) AS k2, count(*) AS c, sum(v) AS s FROM g GROUP BY 1, 2))
+UNION ALL SELECT 'd year(d), month(d), hour(d)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k1::VARCHAR || '/' || k2::VARCHAR || '/' || k3::VARCHAR AS k, c, s FROM (SELECT year(d) AS k1, month(d) AS k2, hour(d) AS k3, count(*) AS c, sum(v) AS s FROM g GROUP BY 1, 2, 3))
+UNION ALL SELECT 'd month(d), day(d)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k1::VARCHAR || '/' || k2::VARCHAR AS k, c, s FROM (SELECT month(d) AS k1, day(d) AS k2, count(*) AS c, sum(v) AS s FROM g GROUP BY 1, 2))
+UNION ALL SELECT 'd year(d), decade(d)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k1::VARCHAR || '/' || k2::VARCHAR AS k, c, s FROM (SELECT year(d) AS k1, decade(d) AS k2, count(*) AS c, sum(v) AS s FROM g GROUP BY 1, 2))
+UNION ALL SELECT 'd decade(d), year(d), month(d)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k1::VARCHAR || '/' || k2::VARCHAR || '/' || k3::VARCHAR AS k, c, s FROM (SELECT decade(d) AS k1, year(d) AS k2, month(d) AS k3, count(*) AS c, sum(v) AS s FROM g GROUP BY 1, 2, 3))
+UNION ALL SELECT 'd year(d), quarter(d), month(d)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k1::VARCHAR || '/' || k2::VARCHAR || '/' || k3::VARCHAR AS k, c, s FROM (SELECT year(d) AS k1, quarter(d) AS k2, month(d) AS k3, count(*) AS c, sum(v) AS s FROM g GROUP BY 1, 2, 3))
+UNION ALL SELECT 'd year(d)::VARCHAR, month(d)::VARCHAR' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k1::VARCHAR || '/' || k2::VARCHAR AS k, c, s FROM (SELECT year(d)::VARCHAR AS k1, month(d)::VARCHAR AS k2, count(*) AS c, sum(v) AS s FROM g GROUP BY 1, 2))
+UNION ALL SELECT 'd year(d), month(d), sev' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k1::VARCHAR || '/' || k2::VARCHAR || '/' || k3::VARCHAR AS k, c, s FROM (SELECT year(d) AS k1, month(d) AS k2, sev AS k3, count(*) AS c, sum(v) AS s FROM g GROUP BY 1, 2, 3))
+UNION ALL SELECT 'alias' AS shape, k::VARCHAR AS k, c, s FROM (SELECT y::VARCHAR || '/' || m::VARCHAR AS k, c, s FROM (SELECT year(ts) AS y, month(ts) AS m, count(*) AS c, sum(v) AS s FROM g GROUP BY y, m))
+UNION ALL SELECT 'subquery alias' AS shape, k::VARCHAR AS k, c, s FROM (SELECT y::VARCHAR || '/' || m::VARCHAR AS k, c, s FROM (SELECT y, m, count(*) AS c, sum(v) AS s FROM (SELECT year(ts) AS y, month(ts) AS m, v FROM g) GROUP BY y, m))
+UNION ALL SELECT 'cte alias' AS shape, k::VARCHAR AS k, c, s FROM (WITH x AS (SELECT year(ts) AS y, month(ts) AS m, v FROM g) SELECT y::VARCHAR || '/' || m::VARCHAR AS k, c, s FROM (SELECT y, m, count(*) AS c, sum(v) AS s FROM x GROUP BY y, m))
+UNION ALL SELECT 'filtered' AS shape, k::VARCHAR AS k, c, s FROM (SELECT y::VARCHAR || '/' || m::VARCHAR AS k, c, s FROM (SELECT year(ts) AS y, month(ts) AS m, count(*) AS c, sum(v) AS s FROM g WHERE v % 3 = 0 GROUP BY y, m))
+UNION ALL SELECT 'distinct' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, 1 AS c, 0 AS s FROM (SELECT DISTINCT year(ts)::VARCHAR || '/' || month(ts)::VARCHAR AS k FROM g))
+UNION ALL SELECT 'distinct pair' AS shape, k::VARCHAR AS k, c, s FROM (SELECT y::VARCHAR || '/' || m::VARCHAR AS k, 1 AS c, 0 AS s FROM (SELECT DISTINCT year(ts) AS y, month(ts) AS m FROM g))
+UNION ALL SELECT 'two inputs' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k1::VARCHAR || '/' || k2::VARCHAR AS k, c, s FROM (SELECT year(ts) AS k1, month(d) AS k2, count(*) AS c, sum(v) AS s FROM g GROUP BY 1, 2))
+UNION ALL SELECT 'mixed with date_trunc' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k1::VARCHAR || '/' || k2::VARCHAR || '/' || k3::VARCHAR AS k, c, s FROM (SELECT year(ts) AS k1, month(ts) AS k2, date_trunc('day', ts) AS k3, count(*) AS c, sum(v) AS s FROM g GROUP BY 1, 2, 3))
+UNION ALL SELECT 'with having' AS shape, k::VARCHAR AS k, c, s FROM (SELECT y::VARCHAR || '/' || m::VARCHAR AS k, c, s FROM (SELECT year(ts) AS y, month(ts) AS m, count(*) AS c, sum(v) AS s FROM g GROUP BY y, m HAVING count(*) > 100))
+UNION ALL SELECT 'dst year month' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k1::VARCHAR || '/' || k2::VARCHAR AS k, c, s FROM (SELECT year(tstz) AS k1, month(tstz) AS k2, count(*) AS c, sum(v) AS s FROM dst GROUP BY 1, 2))
+UNION ALL SELECT 'dst year month day' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k1::VARCHAR || '/' || k2::VARCHAR || '/' || k3::VARCHAR AS k, c, s FROM (SELECT year(tstz) AS k1, month(tstz) AS k2, day(tstz) AS k3, count(*) AS c, sum(v) AS s FROM dst GROUP BY 1, 2, 3))
+UNION ALL SELECT 'dst year month day hour' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k1::VARCHAR || '/' || k2::VARCHAR || '/' || k3::VARCHAR || '/' || k4::VARCHAR AS k, c, s FROM (SELECT year(tstz) AS k1, month(tstz) AS k2, day(tstz) AS k3, hour(tstz) AS k4, count(*) AS c, sum(v) AS s FROM dst GROUP BY 1, 2, 3, 4))
+UNION ALL SELECT 'dst isoyear week' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k1::VARCHAR || '/' || k2::VARCHAR AS k, c, s FROM (SELECT isoyear(tstz) AS k1, week(tstz) AS k2, count(*) AS c, sum(v) AS s FROM dst GROUP BY 1, 2));
+
+statement ok
+RESET disabled_optimizers;
+
+statement ok
+CREATE TABLE got_c AS
+SELECT 'ts year(ts), month(ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k1::VARCHAR || '/' || k2::VARCHAR AS k, c, s FROM (SELECT year(ts) AS k1, month(ts) AS k2, count(*) AS c, sum(v) AS s FROM g GROUP BY 1, 2))
+UNION ALL SELECT 'ts month(ts), year(ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k1::VARCHAR || '/' || k2::VARCHAR AS k, c, s FROM (SELECT month(ts) AS k1, year(ts) AS k2, count(*) AS c, sum(v) AS s FROM g GROUP BY 1, 2))
+UNION ALL SELECT 'ts year(ts), quarter(ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k1::VARCHAR || '/' || k2::VARCHAR AS k, c, s FROM (SELECT year(ts) AS k1, quarter(ts) AS k2, count(*) AS c, sum(v) AS s FROM g GROUP BY 1, 2))
+UNION ALL SELECT 'ts year(ts), month(ts), day(ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k1::VARCHAR || '/' || k2::VARCHAR || '/' || k3::VARCHAR AS k, c, s FROM (SELECT year(ts) AS k1, month(ts) AS k2, day(ts) AS k3, count(*) AS c, sum(v) AS s FROM g GROUP BY 1, 2, 3))
+UNION ALL SELECT 'ts year(ts), month(ts), day(ts), hour(ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k1::VARCHAR || '/' || k2::VARCHAR || '/' || k3::VARCHAR || '/' || k4::VARCHAR AS k, c, s FROM (SELECT year(ts) AS k1, month(ts) AS k2, day(ts) AS k3, hour(ts) AS k4, count(*) AS c, sum(v) AS s FROM g GROUP BY 1, 2, 3, 4))
+UNION ALL SELECT 'ts year(ts), month(ts), day(ts), hour(ts), minute(ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k1::VARCHAR || '/' || k2::VARCHAR || '/' || k3::VARCHAR || '/' || k4::VARCHAR || '/' || k5::VARCHAR AS k, c, s FROM (SELECT year(ts) AS k1, month(ts) AS k2, day(ts) AS k3, hour(ts) AS k4, minute(ts) AS k5, count(*) AS c, sum(v) AS s FROM g GROUP BY 1, 2, 3, 4, 5))
+UNION ALL SELECT 'ts isoyear(ts), week(ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k1::VARCHAR || '/' || k2::VARCHAR AS k, c, s FROM (SELECT isoyear(ts) AS k1, week(ts) AS k2, count(*) AS c, sum(v) AS s FROM g GROUP BY 1, 2))
+UNION ALL SELECT 'ts isoyear(ts), week(ts), isodow(ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k1::VARCHAR || '/' || k2::VARCHAR || '/' || k3::VARCHAR AS k, c, s FROM (SELECT isoyear(ts) AS k1, week(ts) AS k2, isodow(ts) AS k3, count(*) AS c, sum(v) AS s FROM g GROUP BY 1, 2, 3))
+UNION ALL SELECT 'ts year(ts), dayofyear(ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k1::VARCHAR || '/' || k2::VARCHAR AS k, c, s FROM (SELECT year(ts) AS k1, dayofyear(ts) AS k2, count(*) AS c, sum(v) AS s FROM g GROUP BY 1, 2))
+UNION ALL SELECT 'ts year(ts), monthname(ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k1::VARCHAR || '/' || k2::VARCHAR AS k, c, s FROM (SELECT year(ts) AS k1, monthname(ts) AS k2, count(*) AS c, sum(v) AS s FROM g GROUP BY 1, 2))
+UNION ALL SELECT 'ts year(ts), month(ts), dayname(ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k1::VARCHAR || '/' || k2::VARCHAR || '/' || k3::VARCHAR AS k, c, s FROM (SELECT year(ts) AS k1, month(ts) AS k2, dayname(ts) AS k3, count(*) AS c, sum(v) AS s FROM g GROUP BY 1, 2, 3))
+UNION ALL SELECT 'ts strftime(ts, ''%Y''), month(ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k1::VARCHAR || '/' || k2::VARCHAR AS k, c, s FROM (SELECT strftime(ts, '%Y') AS k1, month(ts) AS k2, count(*) AS c, sum(v) AS s FROM g GROUP BY 1, 2))
+UNION ALL SELECT 'ts date_part(''year'', ts), date_part(''month'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k1::VARCHAR || '/' || k2::VARCHAR AS k, c, s FROM (SELECT date_part('year', ts) AS k1, date_part('month', ts) AS k2, count(*) AS c, sum(v) AS s FROM g GROUP BY 1, 2))
+UNION ALL SELECT 'ts extract(year FROM ts), extract(month FROM ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k1::VARCHAR || '/' || k2::VARCHAR AS k, c, s FROM (SELECT extract(year FROM ts) AS k1, extract(month FROM ts) AS k2, count(*) AS c, sum(v) AS s FROM g GROUP BY 1, 2))
+UNION ALL SELECT 'ts year(ts), strftime(ts, ''%m'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k1::VARCHAR || '/' || k2::VARCHAR AS k, c, s FROM (SELECT year(ts) AS k1, strftime(ts, '%m') AS k2, count(*) AS c, sum(v) AS s FROM g GROUP BY 1, 2))
+UNION ALL SELECT 'ts year(ts), week(ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k1::VARCHAR || '/' || k2::VARCHAR AS k, c, s FROM (SELECT year(ts) AS k1, week(ts) AS k2, count(*) AS c, sum(v) AS s FROM g GROUP BY 1, 2))
+UNION ALL SELECT 'ts year(ts), month(ts), hour(ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k1::VARCHAR || '/' || k2::VARCHAR || '/' || k3::VARCHAR AS k, c, s FROM (SELECT year(ts) AS k1, month(ts) AS k2, hour(ts) AS k3, count(*) AS c, sum(v) AS s FROM g GROUP BY 1, 2, 3))
+UNION ALL SELECT 'ts month(ts), day(ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k1::VARCHAR || '/' || k2::VARCHAR AS k, c, s FROM (SELECT month(ts) AS k1, day(ts) AS k2, count(*) AS c, sum(v) AS s FROM g GROUP BY 1, 2))
+UNION ALL SELECT 'ts year(ts), decade(ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k1::VARCHAR || '/' || k2::VARCHAR AS k, c, s FROM (SELECT year(ts) AS k1, decade(ts) AS k2, count(*) AS c, sum(v) AS s FROM g GROUP BY 1, 2))
+UNION ALL SELECT 'ts decade(ts), year(ts), month(ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k1::VARCHAR || '/' || k2::VARCHAR || '/' || k3::VARCHAR AS k, c, s FROM (SELECT decade(ts) AS k1, year(ts) AS k2, month(ts) AS k3, count(*) AS c, sum(v) AS s FROM g GROUP BY 1, 2, 3))
+UNION ALL SELECT 'ts year(ts), quarter(ts), month(ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k1::VARCHAR || '/' || k2::VARCHAR || '/' || k3::VARCHAR AS k, c, s FROM (SELECT year(ts) AS k1, quarter(ts) AS k2, month(ts) AS k3, count(*) AS c, sum(v) AS s FROM g GROUP BY 1, 2, 3))
+UNION ALL SELECT 'ts year(ts)::VARCHAR, month(ts)::VARCHAR' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k1::VARCHAR || '/' || k2::VARCHAR AS k, c, s FROM (SELECT year(ts)::VARCHAR AS k1, month(ts)::VARCHAR AS k2, count(*) AS c, sum(v) AS s FROM g GROUP BY 1, 2))
+UNION ALL SELECT 'ts year(ts), month(ts), sev' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k1::VARCHAR || '/' || k2::VARCHAR || '/' || k3::VARCHAR AS k, c, s FROM (SELECT year(ts) AS k1, month(ts) AS k2, sev AS k3, count(*) AS c, sum(v) AS s FROM g GROUP BY 1, 2, 3))
+UNION ALL SELECT 'tstz year(tstz), month(tstz)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k1::VARCHAR || '/' || k2::VARCHAR AS k, c, s FROM (SELECT year(tstz) AS k1, month(tstz) AS k2, count(*) AS c, sum(v) AS s FROM g GROUP BY 1, 2))
+UNION ALL SELECT 'tstz month(tstz), year(tstz)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k1::VARCHAR || '/' || k2::VARCHAR AS k, c, s FROM (SELECT month(tstz) AS k1, year(tstz) AS k2, count(*) AS c, sum(v) AS s FROM g GROUP BY 1, 2))
+UNION ALL SELECT 'tstz year(tstz), quarter(tstz)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k1::VARCHAR || '/' || k2::VARCHAR AS k, c, s FROM (SELECT year(tstz) AS k1, quarter(tstz) AS k2, count(*) AS c, sum(v) AS s FROM g GROUP BY 1, 2))
+UNION ALL SELECT 'tstz year(tstz), month(tstz), day(tstz)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k1::VARCHAR || '/' || k2::VARCHAR || '/' || k3::VARCHAR AS k, c, s FROM (SELECT year(tstz) AS k1, month(tstz) AS k2, day(tstz) AS k3, count(*) AS c, sum(v) AS s FROM g GROUP BY 1, 2, 3))
+UNION ALL SELECT 'tstz year(tstz), month(tstz), day(tstz), hour(tstz)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k1::VARCHAR || '/' || k2::VARCHAR || '/' || k3::VARCHAR || '/' || k4::VARCHAR AS k, c, s FROM (SELECT year(tstz) AS k1, month(tstz) AS k2, day(tstz) AS k3, hour(tstz) AS k4, count(*) AS c, sum(v) AS s FROM g GROUP BY 1, 2, 3, 4))
+UNION ALL SELECT 'tstz year(tstz), month(tstz), day(tstz), hour(tstz), minute(tstz)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k1::VARCHAR || '/' || k2::VARCHAR || '/' || k3::VARCHAR || '/' || k4::VARCHAR || '/' || k5::VARCHAR AS k, c, s FROM (SELECT year(tstz) AS k1, month(tstz) AS k2, day(tstz) AS k3, hour(tstz) AS k4, minute(tstz) AS k5, count(*) AS c, sum(v) AS s FROM g GROUP BY 1, 2, 3, 4, 5))
+UNION ALL SELECT 'tstz isoyear(tstz), week(tstz)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k1::VARCHAR || '/' || k2::VARCHAR AS k, c, s FROM (SELECT isoyear(tstz) AS k1, week(tstz) AS k2, count(*) AS c, sum(v) AS s FROM g GROUP BY 1, 2))
+UNION ALL SELECT 'tstz isoyear(tstz), week(tstz), isodow(tstz)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k1::VARCHAR || '/' || k2::VARCHAR || '/' || k3::VARCHAR AS k, c, s FROM (SELECT isoyear(tstz) AS k1, week(tstz) AS k2, isodow(tstz) AS k3, count(*) AS c, sum(v) AS s FROM g GROUP BY 1, 2, 3))
+UNION ALL SELECT 'tstz year(tstz), dayofyear(tstz)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k1::VARCHAR || '/' || k2::VARCHAR AS k, c, s FROM (SELECT year(tstz) AS k1, dayofyear(tstz) AS k2, count(*) AS c, sum(v) AS s FROM g GROUP BY 1, 2))
+UNION ALL SELECT 'tstz year(tstz), monthname(tstz)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k1::VARCHAR || '/' || k2::VARCHAR AS k, c, s FROM (SELECT year(tstz) AS k1, monthname(tstz) AS k2, count(*) AS c, sum(v) AS s FROM g GROUP BY 1, 2))
+UNION ALL SELECT 'tstz year(tstz), month(tstz), dayname(tstz)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k1::VARCHAR || '/' || k2::VARCHAR || '/' || k3::VARCHAR AS k, c, s FROM (SELECT year(tstz) AS k1, month(tstz) AS k2, dayname(tstz) AS k3, count(*) AS c, sum(v) AS s FROM g GROUP BY 1, 2, 3))
+UNION ALL SELECT 'tstz strftime(tstz, ''%Y''), month(tstz)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k1::VARCHAR || '/' || k2::VARCHAR AS k, c, s FROM (SELECT strftime(tstz, '%Y') AS k1, month(tstz) AS k2, count(*) AS c, sum(v) AS s FROM g GROUP BY 1, 2))
+UNION ALL SELECT 'tstz date_part(''year'', tstz), date_part(''month'', tstz)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k1::VARCHAR || '/' || k2::VARCHAR AS k, c, s FROM (SELECT date_part('year', tstz) AS k1, date_part('month', tstz) AS k2, count(*) AS c, sum(v) AS s FROM g GROUP BY 1, 2))
+UNION ALL SELECT 'tstz extract(year FROM tstz), extract(month FROM tstz)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k1::VARCHAR || '/' || k2::VARCHAR AS k, c, s FROM (SELECT extract(year FROM tstz) AS k1, extract(month FROM tstz) AS k2, count(*) AS c, sum(v) AS s FROM g GROUP BY 1, 2))
+UNION ALL SELECT 'tstz year(tstz), strftime(tstz, ''%m'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k1::VARCHAR || '/' || k2::VARCHAR AS k, c, s FROM (SELECT year(tstz) AS k1, strftime(tstz, '%m') AS k2, count(*) AS c, sum(v) AS s FROM g GROUP BY 1, 2))
+UNION ALL SELECT 'tstz year(tstz), week(tstz)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k1::VARCHAR || '/' || k2::VARCHAR AS k, c, s FROM (SELECT year(tstz) AS k1, week(tstz) AS k2, count(*) AS c, sum(v) AS s FROM g GROUP BY 1, 2))
+UNION ALL SELECT 'tstz year(tstz), month(tstz), hour(tstz)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k1::VARCHAR || '/' || k2::VARCHAR || '/' || k3::VARCHAR AS k, c, s FROM (SELECT year(tstz) AS k1, month(tstz) AS k2, hour(tstz) AS k3, count(*) AS c, sum(v) AS s FROM g GROUP BY 1, 2, 3))
+UNION ALL SELECT 'tstz month(tstz), day(tstz)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k1::VARCHAR || '/' || k2::VARCHAR AS k, c, s FROM (SELECT month(tstz) AS k1, day(tstz) AS k2, count(*) AS c, sum(v) AS s FROM g GROUP BY 1, 2))
+UNION ALL SELECT 'tstz year(tstz), decade(tstz)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k1::VARCHAR || '/' || k2::VARCHAR AS k, c, s FROM (SELECT year(tstz) AS k1, decade(tstz) AS k2, count(*) AS c, sum(v) AS s FROM g GROUP BY 1, 2))
+UNION ALL SELECT 'tstz decade(tstz), year(tstz), month(tstz)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k1::VARCHAR || '/' || k2::VARCHAR || '/' || k3::VARCHAR AS k, c, s FROM (SELECT decade(tstz) AS k1, year(tstz) AS k2, month(tstz) AS k3, count(*) AS c, sum(v) AS s FROM g GROUP BY 1, 2, 3))
+UNION ALL SELECT 'tstz year(tstz), quarter(tstz), month(tstz)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k1::VARCHAR || '/' || k2::VARCHAR || '/' || k3::VARCHAR AS k, c, s FROM (SELECT year(tstz) AS k1, quarter(tstz) AS k2, month(tstz) AS k3, count(*) AS c, sum(v) AS s FROM g GROUP BY 1, 2, 3))
+UNION ALL SELECT 'tstz year(tstz)::VARCHAR, month(tstz)::VARCHAR' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k1::VARCHAR || '/' || k2::VARCHAR AS k, c, s FROM (SELECT year(tstz)::VARCHAR AS k1, month(tstz)::VARCHAR AS k2, count(*) AS c, sum(v) AS s FROM g GROUP BY 1, 2))
+UNION ALL SELECT 'tstz year(tstz), month(tstz), sev' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k1::VARCHAR || '/' || k2::VARCHAR || '/' || k3::VARCHAR AS k, c, s FROM (SELECT year(tstz) AS k1, month(tstz) AS k2, sev AS k3, count(*) AS c, sum(v) AS s FROM g GROUP BY 1, 2, 3))
+UNION ALL SELECT 'd year(d), month(d)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k1::VARCHAR || '/' || k2::VARCHAR AS k, c, s FROM (SELECT year(d) AS k1, month(d) AS k2, count(*) AS c, sum(v) AS s FROM g GROUP BY 1, 2))
+UNION ALL SELECT 'd month(d), year(d)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k1::VARCHAR || '/' || k2::VARCHAR AS k, c, s FROM (SELECT month(d) AS k1, year(d) AS k2, count(*) AS c, sum(v) AS s FROM g GROUP BY 1, 2))
+UNION ALL SELECT 'd year(d), quarter(d)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k1::VARCHAR || '/' || k2::VARCHAR AS k, c, s FROM (SELECT year(d) AS k1, quarter(d) AS k2, count(*) AS c, sum(v) AS s FROM g GROUP BY 1, 2))
+UNION ALL SELECT 'd year(d), month(d), day(d)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k1::VARCHAR || '/' || k2::VARCHAR || '/' || k3::VARCHAR AS k, c, s FROM (SELECT year(d) AS k1, month(d) AS k2, day(d) AS k3, count(*) AS c, sum(v) AS s FROM g GROUP BY 1, 2, 3))
+UNION ALL SELECT 'd year(d), month(d), day(d), hour(d)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k1::VARCHAR || '/' || k2::VARCHAR || '/' || k3::VARCHAR || '/' || k4::VARCHAR AS k, c, s FROM (SELECT year(d) AS k1, month(d) AS k2, day(d) AS k3, hour(d) AS k4, count(*) AS c, sum(v) AS s FROM g GROUP BY 1, 2, 3, 4))
+UNION ALL SELECT 'd year(d), month(d), day(d), hour(d), minute(d)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k1::VARCHAR || '/' || k2::VARCHAR || '/' || k3::VARCHAR || '/' || k4::VARCHAR || '/' || k5::VARCHAR AS k, c, s FROM (SELECT year(d) AS k1, month(d) AS k2, day(d) AS k3, hour(d) AS k4, minute(d) AS k5, count(*) AS c, sum(v) AS s FROM g GROUP BY 1, 2, 3, 4, 5))
+UNION ALL SELECT 'd isoyear(d), week(d)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k1::VARCHAR || '/' || k2::VARCHAR AS k, c, s FROM (SELECT isoyear(d) AS k1, week(d) AS k2, count(*) AS c, sum(v) AS s FROM g GROUP BY 1, 2))
+UNION ALL SELECT 'd isoyear(d), week(d), isodow(d)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k1::VARCHAR || '/' || k2::VARCHAR || '/' || k3::VARCHAR AS k, c, s FROM (SELECT isoyear(d) AS k1, week(d) AS k2, isodow(d) AS k3, count(*) AS c, sum(v) AS s FROM g GROUP BY 1, 2, 3))
+UNION ALL SELECT 'd year(d), dayofyear(d)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k1::VARCHAR || '/' || k2::VARCHAR AS k, c, s FROM (SELECT year(d) AS k1, dayofyear(d) AS k2, count(*) AS c, sum(v) AS s FROM g GROUP BY 1, 2))
+UNION ALL SELECT 'd year(d), monthname(d)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k1::VARCHAR || '/' || k2::VARCHAR AS k, c, s FROM (SELECT year(d) AS k1, monthname(d) AS k2, count(*) AS c, sum(v) AS s FROM g GROUP BY 1, 2))
+UNION ALL SELECT 'd year(d), month(d), dayname(d)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k1::VARCHAR || '/' || k2::VARCHAR || '/' || k3::VARCHAR AS k, c, s FROM (SELECT year(d) AS k1, month(d) AS k2, dayname(d) AS k3, count(*) AS c, sum(v) AS s FROM g GROUP BY 1, 2, 3))
+UNION ALL SELECT 'd strftime(d, ''%Y''), month(d)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k1::VARCHAR || '/' || k2::VARCHAR AS k, c, s FROM (SELECT strftime(d, '%Y') AS k1, month(d) AS k2, count(*) AS c, sum(v) AS s FROM g GROUP BY 1, 2))
+UNION ALL SELECT 'd date_part(''year'', d), date_part(''month'', d)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k1::VARCHAR || '/' || k2::VARCHAR AS k, c, s FROM (SELECT date_part('year', d) AS k1, date_part('month', d) AS k2, count(*) AS c, sum(v) AS s FROM g GROUP BY 1, 2))
+UNION ALL SELECT 'd extract(year FROM d), extract(month FROM d)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k1::VARCHAR || '/' || k2::VARCHAR AS k, c, s FROM (SELECT extract(year FROM d) AS k1, extract(month FROM d) AS k2, count(*) AS c, sum(v) AS s FROM g GROUP BY 1, 2))
+UNION ALL SELECT 'd year(d), strftime(d, ''%m'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k1::VARCHAR || '/' || k2::VARCHAR AS k, c, s FROM (SELECT year(d) AS k1, strftime(d, '%m') AS k2, count(*) AS c, sum(v) AS s FROM g GROUP BY 1, 2))
+UNION ALL SELECT 'd year(d), week(d)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k1::VARCHAR || '/' || k2::VARCHAR AS k, c, s FROM (SELECT year(d) AS k1, week(d) AS k2, count(*) AS c, sum(v) AS s FROM g GROUP BY 1, 2))
+UNION ALL SELECT 'd year(d), month(d), hour(d)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k1::VARCHAR || '/' || k2::VARCHAR || '/' || k3::VARCHAR AS k, c, s FROM (SELECT year(d) AS k1, month(d) AS k2, hour(d) AS k3, count(*) AS c, sum(v) AS s FROM g GROUP BY 1, 2, 3))
+UNION ALL SELECT 'd month(d), day(d)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k1::VARCHAR || '/' || k2::VARCHAR AS k, c, s FROM (SELECT month(d) AS k1, day(d) AS k2, count(*) AS c, sum(v) AS s FROM g GROUP BY 1, 2))
+UNION ALL SELECT 'd year(d), decade(d)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k1::VARCHAR || '/' || k2::VARCHAR AS k, c, s FROM (SELECT year(d) AS k1, decade(d) AS k2, count(*) AS c, sum(v) AS s FROM g GROUP BY 1, 2))
+UNION ALL SELECT 'd decade(d), year(d), month(d)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k1::VARCHAR || '/' || k2::VARCHAR || '/' || k3::VARCHAR AS k, c, s FROM (SELECT decade(d) AS k1, year(d) AS k2, month(d) AS k3, count(*) AS c, sum(v) AS s FROM g GROUP BY 1, 2, 3))
+UNION ALL SELECT 'd year(d), quarter(d), month(d)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k1::VARCHAR || '/' || k2::VARCHAR || '/' || k3::VARCHAR AS k, c, s FROM (SELECT year(d) AS k1, quarter(d) AS k2, month(d) AS k3, count(*) AS c, sum(v) AS s FROM g GROUP BY 1, 2, 3))
+UNION ALL SELECT 'd year(d)::VARCHAR, month(d)::VARCHAR' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k1::VARCHAR || '/' || k2::VARCHAR AS k, c, s FROM (SELECT year(d)::VARCHAR AS k1, month(d)::VARCHAR AS k2, count(*) AS c, sum(v) AS s FROM g GROUP BY 1, 2))
+UNION ALL SELECT 'd year(d), month(d), sev' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k1::VARCHAR || '/' || k2::VARCHAR || '/' || k3::VARCHAR AS k, c, s FROM (SELECT year(d) AS k1, month(d) AS k2, sev AS k3, count(*) AS c, sum(v) AS s FROM g GROUP BY 1, 2, 3))
+UNION ALL SELECT 'alias' AS shape, k::VARCHAR AS k, c, s FROM (SELECT y::VARCHAR || '/' || m::VARCHAR AS k, c, s FROM (SELECT year(ts) AS y, month(ts) AS m, count(*) AS c, sum(v) AS s FROM g GROUP BY y, m))
+UNION ALL SELECT 'subquery alias' AS shape, k::VARCHAR AS k, c, s FROM (SELECT y::VARCHAR || '/' || m::VARCHAR AS k, c, s FROM (SELECT y, m, count(*) AS c, sum(v) AS s FROM (SELECT year(ts) AS y, month(ts) AS m, v FROM g) GROUP BY y, m))
+UNION ALL SELECT 'cte alias' AS shape, k::VARCHAR AS k, c, s FROM (WITH x AS (SELECT year(ts) AS y, month(ts) AS m, v FROM g) SELECT y::VARCHAR || '/' || m::VARCHAR AS k, c, s FROM (SELECT y, m, count(*) AS c, sum(v) AS s FROM x GROUP BY y, m))
+UNION ALL SELECT 'filtered' AS shape, k::VARCHAR AS k, c, s FROM (SELECT y::VARCHAR || '/' || m::VARCHAR AS k, c, s FROM (SELECT year(ts) AS y, month(ts) AS m, count(*) AS c, sum(v) AS s FROM g WHERE v % 3 = 0 GROUP BY y, m))
+UNION ALL SELECT 'distinct' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k, 1 AS c, 0 AS s FROM (SELECT DISTINCT year(ts)::VARCHAR || '/' || month(ts)::VARCHAR AS k FROM g))
+UNION ALL SELECT 'distinct pair' AS shape, k::VARCHAR AS k, c, s FROM (SELECT y::VARCHAR || '/' || m::VARCHAR AS k, 1 AS c, 0 AS s FROM (SELECT DISTINCT year(ts) AS y, month(ts) AS m FROM g))
+UNION ALL SELECT 'two inputs' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k1::VARCHAR || '/' || k2::VARCHAR AS k, c, s FROM (SELECT year(ts) AS k1, month(d) AS k2, count(*) AS c, sum(v) AS s FROM g GROUP BY 1, 2))
+UNION ALL SELECT 'mixed with date_trunc' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k1::VARCHAR || '/' || k2::VARCHAR || '/' || k3::VARCHAR AS k, c, s FROM (SELECT year(ts) AS k1, month(ts) AS k2, date_trunc('day', ts) AS k3, count(*) AS c, sum(v) AS s FROM g GROUP BY 1, 2, 3))
+UNION ALL SELECT 'with having' AS shape, k::VARCHAR AS k, c, s FROM (SELECT y::VARCHAR || '/' || m::VARCHAR AS k, c, s FROM (SELECT year(ts) AS y, month(ts) AS m, count(*) AS c, sum(v) AS s FROM g GROUP BY y, m HAVING count(*) > 100))
+UNION ALL SELECT 'dst year month' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k1::VARCHAR || '/' || k2::VARCHAR AS k, c, s FROM (SELECT year(tstz) AS k1, month(tstz) AS k2, count(*) AS c, sum(v) AS s FROM dst GROUP BY 1, 2))
+UNION ALL SELECT 'dst year month day' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k1::VARCHAR || '/' || k2::VARCHAR || '/' || k3::VARCHAR AS k, c, s FROM (SELECT year(tstz) AS k1, month(tstz) AS k2, day(tstz) AS k3, count(*) AS c, sum(v) AS s FROM dst GROUP BY 1, 2, 3))
+UNION ALL SELECT 'dst year month day hour' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k1::VARCHAR || '/' || k2::VARCHAR || '/' || k3::VARCHAR || '/' || k4::VARCHAR AS k, c, s FROM (SELECT year(tstz) AS k1, month(tstz) AS k2, day(tstz) AS k3, hour(tstz) AS k4, count(*) AS c, sum(v) AS s FROM dst GROUP BY 1, 2, 3, 4))
+UNION ALL SELECT 'dst isoyear week' AS shape, k::VARCHAR AS k, c, s FROM (SELECT k1::VARCHAR || '/' || k2::VARCHAR AS k, c, s FROM (SELECT isoyear(tstz) AS k1, week(tstz) AS k2, count(*) AS c, sum(v) AS s FROM dst GROUP BY 1, 2));
+
+query
+SELECT shape, k, c, s FROM (SELECT * FROM got_c EXCEPT ALL SELECT * FROM ref_c) ORDER BY 1, 2;
+----
+shape	k	c	s
+
+query
+SELECT shape, k, c, s FROM (SELECT * FROM ref_c EXCEPT ALL SELECT * FROM got_c) ORDER BY 1, 2;
+----
+shape	k	c	s
+
+query
+SELECT count(*) AS rows, count(DISTINCT shape) AS shapes FROM got_c;
+----
+rows	shapes
+167980	82
+
+query
+EXPLAIN SELECT year(ts), month(ts), count(*) FROM g GROUP BY 1, 2;
+----
+QUERY PLAN
+╭─ PROJECTION ─────────────────────────────────────────────╮
+│ Projections:                                             │
+│ "year"(__internal_date_trunc_month_unbucket(#0, 1, 0)),  │
+│ "month"(__internal_date_trunc_month_unbucket(#0, 1, 0)), │
+│ #1                                                       │
+│ ~30,000 rows                                             │
+╰─────────────────────────────┬────────────────────────────╯
+╭─ PERFECT_HASH_GROUP_BY ─────┴────────────────────────────╮
+│ Groups: #0                                               │
+│ Aggregates: count_star()                                 │
+│ ~30,000 rows                                             │
+╰─────────────────────────────┬────────────────────────────╯
+╭─ PROJECTION ────────────────┴────────────────────────────╮
+│ Projections:                                             │
+│ __internal_date_trunc_month_bucket(ts, 1, 0)             │
+│ ~60,001 rows                                             │
+╰─────────────────────────────┬────────────────────────────╯
+╭─ SEQ_SCAN ──────────────────┴────────────────────────────╮
+│ Table: g                                                 │
+│ Type: Sequential Scan                                    │
+│ Projections: ts                                          │
+│ ~60,001 rows                                             │
+╰──────────────────────────────────────────────────────────╯
+
+query
+EXPLAIN SELECT year(ts), month(ts), day(ts), count(*) FROM g GROUP BY 1, 2, 3;
+----
+QUERY PLAN
+╭─ PROJECTION ─────────────────────────────────────────────────╮
+│ Projections:                                                 │
+│ "year"(__internal_date_trunc_unbucket(#0, 86400000000, 0)),  │
+│ "month"(__internal_date_trunc_unbucket(#0, 86400000000, 0)), │
+│ "day"(__internal_date_trunc_unbucket(#0, 86400000000, 0)),   │
+│ #1                                                           │
+│ ~30,000 rows                                                 │
+╰───────────────────────────────┬──────────────────────────────╯
+╭─ PERFECT_HASH_GROUP_BY ───────┴──────────────────────────────╮
+│ Groups: #0                                                   │
+│ Aggregates: count_star()                                     │
+│ ~30,000 rows                                                 │
+╰───────────────────────────────┬──────────────────────────────╯
+╭─ PROJECTION ──────────────────┴──────────────────────────────╮
+│ Projections:                                                 │
+│ __internal_date_trunc_bucket(ts, 86400000000, 0)             │
+│ ~60,001 rows                                                 │
+╰───────────────────────────────┬──────────────────────────────╯
+╭─ SEQ_SCAN ────────────────────┴──────────────────────────────╮
+│ Table: g                                                     │
+│ Type: Sequential Scan                                        │
+│ Projections: ts                                              │
+│ ~60,001 rows                                                 │
+╰──────────────────────────────────────────────────────────────╯
+
+query
+EXPLAIN SELECT isoyear(ts), week(ts), count(*) FROM g GROUP BY 1, 2;
+----
+QUERY PLAN
+╭─ PROJECTION ──────────────────────────────────────────────────────────────╮
+│ Projections:                                                              │
+│ isoyear(__internal_date_trunc_unbucket(#0, 604800000000, -259200000000)), │
+│ "week"(__internal_date_trunc_unbucket(#0, 604800000000, -259200000000)),  │
+│ #1                                                                        │
+│ ~30,000 rows                                                              │
+╰─────────────────────────────────────┬─────────────────────────────────────╯
+╭─ PERFECT_HASH_GROUP_BY ─────────────┴─────────────────────────────────────╮
+│ Groups: #0                                                                │
+│ Aggregates: count_star()                                                  │
+│ ~30,000 rows                                                              │
+╰─────────────────────────────────────┬─────────────────────────────────────╯
+╭─ PROJECTION ────────────────────────┴─────────────────────────────────────╮
+│ Projections:                                                              │
+│ __internal_date_trunc_bucket(ts, 604800000000, -259200000000)             │
+│ ~60,001 rows                                                              │
+╰─────────────────────────────────────┬─────────────────────────────────────╯
+╭─ SEQ_SCAN ──────────────────────────┴─────────────────────────────────────╮
+│ Table: g                                                                  │
+│ Type: Sequential Scan                                                     │
+│ Projections: ts                                                           │
+│ ~60,001 rows                                                              │
+╰───────────────────────────────────────────────────────────────────────────╯
+
+query
+EXPLAIN SELECT year(ts), week(ts), count(*) FROM g GROUP BY 1, 2;
+----
+QUERY PLAN
+╭─ PROJECTION ─────────────────────────────────────────────╮
+│ Projections:                                             │
+│ __internal_decompress_integral_bigint(#0, 2023),         │
+│ CAST(#1 AS BIGINT), #2                                   │
+│ ~30,000 rows                                             │
+╰─────────────────────────────┬────────────────────────────╯
+╭─ PERFECT_HASH_GROUP_BY ─────┴────────────────────────────╮
+│ Groups: #0, #1                                           │
+│ Aggregates: count_star()                                 │
+│ ~30,000 rows                                             │
+╰─────────────────────────────┬────────────────────────────╯
+╭─ PROJECTION ────────────────┴────────────────────────────╮
+│ Projections:                                             │
+│ __internal_compress_integral_utinyint("year"(ts), 2023), │
+│ CAST("week"(ts) AS TINYINT)                              │
+│ ~60,001 rows                                             │
+╰─────────────────────────────┬────────────────────────────╯
+╭─ SEQ_SCAN ──────────────────┴────────────────────────────╮
+│ Table: g                                                 │
+│ Type: Sequential Scan                                    │
+│ Projections: ts                                          │
+│ ~60,001 rows                                             │
+╰──────────────────────────────────────────────────────────╯
+
+query
+EXPLAIN SELECT year(tstz), month(tstz), count(*) FROM dst GROUP BY 1, 2;
+----
+QUERY PLAN
+╭─ PROJECTION ──────────────────────────────────────────────╮
+│ Projections:                                              │
+│ "year"(__internal_icu_date_trunc_unbucket('month', #0)),  │
+│ "month"(__internal_icu_date_trunc_unbucket('month', #0)), │
+│ #1                                                        │
+│ ~450 rows                                                 │
+╰─────────────────────────────┬─────────────────────────────╯
+╭─ PERFECT_HASH_GROUP_BY ─────┴─────────────────────────────╮
+│ Groups: #0                                                │
+│ Aggregates: count_star()                                  │
+│ ~450 rows                                                 │
+╰─────────────────────────────┬─────────────────────────────╯
+╭─ PROJECTION ────────────────┴─────────────────────────────╮
+│ Projections:                                              │
+│ __internal_icu_date_trunc_bucket('month', tstz)           │
+│ ~900 rows                                                 │
+╰─────────────────────────────┬─────────────────────────────╯
+╭─ SEQ_SCAN ──────────────────┴─────────────────────────────╮
+│ Table: dst                                                │
+│ Type: Sequential Scan                                     │
+│ Projections: tstz                                         │
+│ ~900 rows                                                 │
+╰───────────────────────────────────────────────────────────╯
+
+query
+EXPLAIN SELECT y, m, count(*) FROM (SELECT year(ts) AS y, month(ts) AS m FROM g) GROUP BY y, m;
+----
+QUERY PLAN
+╭─ PROJECTION ──────────────────────────────────╮
+│ Projections: y, m, #1                         │
+│ ~59,999 rows                                  │
+╰───────────────────────┬───────────────────────╯
+╭─ PERFECT_HASH_GROUP_BY ───────────────────────╮
+│ Groups: #0                                    │
+│ Aggregates: count_star()                      │
+│ ~59,999 rows                                  │
+╰───────────────────────┬───────────────────────╯
+╭─ PROJECTION ──────────┴───────────────────────╮
+│ Projections: #0                               │
+│ ~60,001 rows                                  │
+╰───────────────────────┬───────────────────────╯
+╭─ PROJECTION ──────────┴───────────────────────╮
+│ Projections: #0, CAST(#1 AS TINYINT)          │
+│ ~60,001 rows                                  │
+╰───────────────────────┬───────────────────────╯
+╭─ PROJECTION ──────────┴───────────────────────╮
+│ Projections:                                  │
+│ __internal_date_trunc_month_bucket(ts, 1, 0), │
+│ NULL                                          │
+│ ~60,001 rows                                  │
+╰───────────────────────┬───────────────────────╯
+╭─ SEQ_SCAN ────────────┴───────────────────────╮
+│ Table: g                                      │
+│ Type: Sequential Scan                         │
+│ Projections: ts                               │
+│ ~60,001 rows                                  │
+╰───────────────────────────────────────────────╯
+
+query
+EXPLAIN SELECT DISTINCT year(d), quarter(d) FROM g;
+----
+QUERY PLAN
+╭─ PROJECTION ─────────────────────────────────────╮
+│ Projections:                                     │
+│ __internal_decompress_integral_bigint(#0, 2023), │
+│ CAST(#1 AS BIGINT)                               │
+│ ~60,001 rows                                     │
+╰─────────────────────────┬────────────────────────╯
+╭─ HASH_GROUP_BY ─────────┴────────────────────────╮
+│ Groups: #0, #1                                   │
+│ ~60,001 rows                                     │
+╰─────────────────────────┬────────────────────────╯
+╭─ PROJECTION ────────────┴────────────────────────╮
+│ Projections:                                     │
+│ __internal_compress_integral_utinyint(#0, 2023), │
+│ CAST(#1 AS TINYINT)                              │
+│ ~60,001 rows                                     │
+╰─────────────────────────┬────────────────────────╯
+╭─ PROJECTION ────────────┴────────────────────────╮
+│ Projections: "year"(d), "quarter"(d)             │
+│ ~60,001 rows                                     │
+╰─────────────────────────┬────────────────────────╯
+╭─ SEQ_SCAN ──────────────┴────────────────────────╮
+│ Table: g                                         │
+│ Type: Sequential Scan                            │
+│ Projections: d                                   │
+│ ~60,001 rows                                     │
+╰──────────────────────────────────────────────────╯
+
+query
+SELECT year(ts) AS y, month(ts) AS m, count(*) AS c FROM g WHERE v BETWEEN 5000 AND 12000 GROUP BY 1, 2 ORDER BY 1, 2;
+----
+y	m	c
+2024	1	506
+2024	2	2457
+2024	3	2626
+2024	4	1412
+
+statement ok
+SET TimeZone = 'Europe/Berlin';
+
+query
+SELECT 'Europe/Berlin', date_trunc('day', TIMESTAMPTZ '2025-06-15 12:00:00+00')::VARCHAR, (TIMESTAMPTZ '2025-06-15 12:00:00+00')::DATE::VARCHAR, strftime(TIMESTAMPTZ '2025-06-15 12:00:00+00', '%Y-%m-%d %H:%M %z'), count(*) FROM (SELECT year(tstz), month(tstz), count(*) FROM dst GROUP BY 1, 2);
+----
+?column?	date_trunc	text	strftime	count
+Europe/Berlin	2025-06-15 00:00:00+02	2025-06-15	2025-06-15 14:00 +02	6
+
+statement ok
+SET TimeZone = 'America/Havana';
+
+query
+SELECT 'America/Havana', date_trunc('day', TIMESTAMPTZ '2025-06-15 12:00:00+00')::VARCHAR, (TIMESTAMPTZ '2025-06-15 12:00:00+00')::DATE::VARCHAR, strftime(TIMESTAMPTZ '2025-06-15 12:00:00+00', '%Y-%m-%d %H:%M %z'), count(*) FROM (SELECT year(tstz), month(tstz), count(*) FROM dst GROUP BY 1, 2);
+----
+?column?	date_trunc	text	strftime	count
+America/Havana	2025-06-15 00:00:00-04	2025-06-15	2025-06-15 08:00 -04	6
+
+statement ok
+SET TimeZone = 'Asia/Tokyo';
+
+query
+SELECT 'Asia/Tokyo', date_trunc('day', TIMESTAMPTZ '2025-06-15 12:00:00+00')::VARCHAR, (TIMESTAMPTZ '2025-06-15 12:00:00+00')::DATE::VARCHAR, strftime(TIMESTAMPTZ '2025-06-15 12:00:00+00', '%Y-%m-%d %H:%M %z'), count(*) FROM (SELECT year(tstz), month(tstz), count(*) FROM dst GROUP BY 1, 2);
+----
+?column?	date_trunc	text	strftime	count
+Asia/Tokyo	2025-06-15 00:00:00+09	2025-06-15	2025-06-15 21:00 +09	6
+
+statement ok
+SET TimeZone = 'Australia/Lord_Howe';
+
+query
+SELECT 'Australia/Lord_Howe', date_trunc('day', TIMESTAMPTZ '2025-06-15 12:00:00+00')::VARCHAR, (TIMESTAMPTZ '2025-06-15 12:00:00+00')::DATE::VARCHAR, strftime(TIMESTAMPTZ '2025-06-15 12:00:00+00', '%Y-%m-%d %H:%M %z'), count(*) FROM (SELECT year(tstz), month(tstz), count(*) FROM dst GROUP BY 1, 2);
+----
+?column?	date_trunc	text	strftime	count
+Australia/Lord_Howe	2025-06-15 00:00:00+10:30	2025-06-15	2025-06-15 22:30 +10:30	6
+
+statement ok
+SET TimeZone = 'Pacific/Kiritimati';
+
+query
+SELECT 'Pacific/Kiritimati', date_trunc('day', TIMESTAMPTZ '2025-06-15 12:00:00+00')::VARCHAR, (TIMESTAMPTZ '2025-06-15 12:00:00+00')::DATE::VARCHAR, strftime(TIMESTAMPTZ '2025-06-15 12:00:00+00', '%Y-%m-%d %H:%M %z'), count(*) FROM (SELECT year(tstz), month(tstz), count(*) FROM dst GROUP BY 1, 2);
+----
+?column?	date_trunc	text	strftime	count
+Pacific/Kiritimati	2025-06-16 00:00:00+14	2025-06-16	2025-06-16 02:00 +14	5
+
+statement ok
+SET TimeZone = 'Africa/Cairo';
+
+query
+SELECT 'Africa/Cairo', date_trunc('day', TIMESTAMPTZ '2025-06-15 12:00:00+00')::VARCHAR, (TIMESTAMPTZ '2025-06-15 12:00:00+00')::DATE::VARCHAR, strftime(TIMESTAMPTZ '2025-06-15 12:00:00+00', '%Y-%m-%d %H:%M %z'), count(*) FROM (SELECT year(tstz), month(tstz), count(*) FROM dst GROUP BY 1, 2);
+----
+?column?	date_trunc	text	strftime	count
+Africa/Cairo	2025-06-15 00:00:00+03	2025-06-15	2025-06-15 15:00 +03	6
+
+statement ok
+SET TimeZone = 'America/Sao_Paulo';
+
+query
+SELECT 'America/Sao_Paulo', date_trunc('day', TIMESTAMPTZ '2025-06-15 12:00:00+00')::VARCHAR, (TIMESTAMPTZ '2025-06-15 12:00:00+00')::DATE::VARCHAR, strftime(TIMESTAMPTZ '2025-06-15 12:00:00+00', '%Y-%m-%d %H:%M %z'), count(*) FROM (SELECT year(tstz), month(tstz), count(*) FROM dst GROUP BY 1, 2);
+----
+?column?	date_trunc	text	strftime	count
+America/Sao_Paulo	2025-06-15 00:00:00-03	2025-06-15	2025-06-15 09:00 -03	6
+
+statement ok
+SET TimeZone = 'Asia/Kolkata';
+
+query
+SELECT 'Asia/Kolkata', date_trunc('day', TIMESTAMPTZ '2025-06-15 12:00:00+00')::VARCHAR, (TIMESTAMPTZ '2025-06-15 12:00:00+00')::DATE::VARCHAR, strftime(TIMESTAMPTZ '2025-06-15 12:00:00+00', '%Y-%m-%d %H:%M %z'), count(*) FROM (SELECT year(tstz), month(tstz), count(*) FROM dst GROUP BY 1, 2);
+----
+?column?	date_trunc	text	strftime	count
+Asia/Kolkata	2025-06-15 00:00:00+05:30	2025-06-15	2025-06-15 17:30 +05:30	6
+
+statement ok
+SET TimeZone = 'Europe/Moscow';
+
+query
+SELECT 'Europe/Moscow', date_trunc('day', TIMESTAMPTZ '2025-06-15 12:00:00+00')::VARCHAR, (TIMESTAMPTZ '2025-06-15 12:00:00+00')::DATE::VARCHAR, strftime(TIMESTAMPTZ '2025-06-15 12:00:00+00', '%Y-%m-%d %H:%M %z'), count(*) FROM (SELECT year(tstz), month(tstz), count(*) FROM dst GROUP BY 1, 2);
+----
+?column?	date_trunc	text	strftime	count
+Europe/Moscow	2025-06-15 00:00:00+03	2025-06-15	2025-06-15 15:00 +03	6
+
+statement ok
+SET TimeZone = 'America/St_Johns';
+
+query
+SELECT 'America/St_Johns', date_trunc('day', TIMESTAMPTZ '2025-06-15 12:00:00+00')::VARCHAR, (TIMESTAMPTZ '2025-06-15 12:00:00+00')::DATE::VARCHAR, strftime(TIMESTAMPTZ '2025-06-15 12:00:00+00', '%Y-%m-%d %H:%M %z'), count(*) FROM (SELECT year(tstz), month(tstz), count(*) FROM dst GROUP BY 1, 2);
+----
+?column?	date_trunc	text	strftime	count
+America/St_Johns	2025-06-15 00:00:00-02:30	2025-06-15	2025-06-15 09:30 -02:30	6
+
+statement ok
+SET TimeZone = 'Pacific/Chatham';
+
+query
+SELECT 'Pacific/Chatham', date_trunc('day', TIMESTAMPTZ '2025-06-15 12:00:00+00')::VARCHAR, (TIMESTAMPTZ '2025-06-15 12:00:00+00')::DATE::VARCHAR, strftime(TIMESTAMPTZ '2025-06-15 12:00:00+00', '%Y-%m-%d %H:%M %z'), count(*) FROM (SELECT year(tstz), month(tstz), count(*) FROM dst GROUP BY 1, 2);
+----
+?column?	date_trunc	text	strftime	count
+Pacific/Chatham	2025-06-16 00:00:00+12:45	2025-06-16	2025-06-16 00:45 +12:45	5
+
+statement ok
+SET TimeZone = 'Asia/Kathmandu';
+
+query
+SELECT 'Asia/Kathmandu', date_trunc('day', TIMESTAMPTZ '2025-06-15 12:00:00+00')::VARCHAR, (TIMESTAMPTZ '2025-06-15 12:00:00+00')::DATE::VARCHAR, strftime(TIMESTAMPTZ '2025-06-15 12:00:00+00', '%Y-%m-%d %H:%M %z'), count(*) FROM (SELECT year(tstz), month(tstz), count(*) FROM dst GROUP BY 1, 2);
+----
+?column?	date_trunc	text	strftime	count
+Asia/Kathmandu	2025-06-15 00:00:00+05:45	2025-06-15	2025-06-15 17:45 +05:45	6
+
+statement ok
+SET TimeZone = 'Africa/Monrovia';
+
+query
+SELECT 'Africa/Monrovia', date_trunc('day', TIMESTAMPTZ '2025-06-15 12:00:00+00')::VARCHAR, (TIMESTAMPTZ '2025-06-15 12:00:00+00')::DATE::VARCHAR, strftime(TIMESTAMPTZ '2025-06-15 12:00:00+00', '%Y-%m-%d %H:%M %z'), count(*) FROM (SELECT year(tstz), month(tstz), count(*) FROM dst GROUP BY 1, 2);
+----
+?column?	date_trunc	text	strftime	count
+Africa/Monrovia	2025-06-15 00:00:00+00	2025-06-15	2025-06-15 12:00 +00	6
+
+statement ok
+SET TimeZone = 'Europe/Amsterdam';
+
+query
+SELECT 'Europe/Amsterdam', date_trunc('day', TIMESTAMPTZ '2025-06-15 12:00:00+00')::VARCHAR, (TIMESTAMPTZ '2025-06-15 12:00:00+00')::DATE::VARCHAR, strftime(TIMESTAMPTZ '2025-06-15 12:00:00+00', '%Y-%m-%d %H:%M %z'), count(*) FROM (SELECT year(tstz), month(tstz), count(*) FROM dst GROUP BY 1, 2);
+----
+?column?	date_trunc	text	strftime	count
+Europe/Amsterdam	2025-06-15 00:00:00+02	2025-06-15	2025-06-15 14:00 +02	6
+
+statement ok
+SET TimeZone = 'Asia/Tehran';
+
+query
+SELECT 'Asia/Tehran', date_trunc('day', TIMESTAMPTZ '2025-06-15 12:00:00+00')::VARCHAR, (TIMESTAMPTZ '2025-06-15 12:00:00+00')::DATE::VARCHAR, strftime(TIMESTAMPTZ '2025-06-15 12:00:00+00', '%Y-%m-%d %H:%M %z'), count(*) FROM (SELECT year(tstz), month(tstz), count(*) FROM dst GROUP BY 1, 2);
+----
+?column?	date_trunc	text	strftime	count
+Asia/Tehran	2025-06-15 00:00:00+03:30	2025-06-15	2025-06-15 15:30 +03:30	6
+
+statement ok
+SET TimeZone = 'America/Nuuk';
+
+query
+SELECT 'America/Nuuk', date_trunc('day', TIMESTAMPTZ '2025-06-15 12:00:00+00')::VARCHAR, (TIMESTAMPTZ '2025-06-15 12:00:00+00')::DATE::VARCHAR, strftime(TIMESTAMPTZ '2025-06-15 12:00:00+00', '%Y-%m-%d %H:%M %z'), count(*) FROM (SELECT year(tstz), month(tstz), count(*) FROM dst GROUP BY 1, 2);
+----
+?column?	date_trunc	text	strftime	count
+America/Nuuk	2025-06-15 00:00:00-01	2025-06-15	2025-06-15 11:00 -01	6
+
+statement ok
+SET TimeZone = 'Pacific/Apia';
+
+query
+SELECT 'Pacific/Apia', date_trunc('day', TIMESTAMPTZ '2025-06-15 12:00:00+00')::VARCHAR, (TIMESTAMPTZ '2025-06-15 12:00:00+00')::DATE::VARCHAR, strftime(TIMESTAMPTZ '2025-06-15 12:00:00+00', '%Y-%m-%d %H:%M %z'), count(*) FROM (SELECT year(tstz), month(tstz), count(*) FROM dst GROUP BY 1, 2);
+----
+?column?	date_trunc	text	strftime	count
+Pacific/Apia	2025-06-16 00:00:00+13	2025-06-16	2025-06-16 01:00 +13	5
+
+statement ok
+SET TimeZone = 'Antarctica/Casey';
+
+query
+SELECT 'Antarctica/Casey', date_trunc('day', TIMESTAMPTZ '2025-06-15 12:00:00+00')::VARCHAR, (TIMESTAMPTZ '2025-06-15 12:00:00+00')::DATE::VARCHAR, strftime(TIMESTAMPTZ '2025-06-15 12:00:00+00', '%Y-%m-%d %H:%M %z'), count(*) FROM (SELECT year(tstz), month(tstz), count(*) FROM dst GROUP BY 1, 2);
+----
+?column?	date_trunc	text	strftime	count
+Antarctica/Casey	2025-06-15 00:00:00+08	2025-06-15	2025-06-15 20:00 +08	6
+
+statement ok
+SET TimeZone = 'America/Santiago';
+
+query
+SELECT 'America/Santiago', date_trunc('day', TIMESTAMPTZ '2025-06-15 12:00:00+00')::VARCHAR, (TIMESTAMPTZ '2025-06-15 12:00:00+00')::DATE::VARCHAR, strftime(TIMESTAMPTZ '2025-06-15 12:00:00+00', '%Y-%m-%d %H:%M %z'), count(*) FROM (SELECT year(tstz), month(tstz), count(*) FROM dst GROUP BY 1, 2);
+----
+?column?	date_trunc	text	strftime	count
+America/Santiago	2025-06-15 00:00:00-04	2025-06-15	2025-06-15 08:00 -04	6
+
+statement ok
+SET TimeZone = 'Australia/Adelaide';
+
+query
+SELECT 'Australia/Adelaide', date_trunc('day', TIMESTAMPTZ '2025-06-15 12:00:00+00')::VARCHAR, (TIMESTAMPTZ '2025-06-15 12:00:00+00')::DATE::VARCHAR, strftime(TIMESTAMPTZ '2025-06-15 12:00:00+00', '%Y-%m-%d %H:%M %z'), count(*) FROM (SELECT year(tstz), month(tstz), count(*) FROM dst GROUP BY 1, 2);
+----
+?column?	date_trunc	text	strftime	count
+Australia/Adelaide	2025-06-15 00:00:00+09:30	2025-06-15	2025-06-15 21:30 +09:30	6
+
+statement ok
+SET TimeZone = 'Etc/UTC';
+
+query
+SELECT 'Etc/UTC', date_trunc('day', TIMESTAMPTZ '2025-06-15 12:00:00+00')::VARCHAR, (TIMESTAMPTZ '2025-06-15 12:00:00+00')::DATE::VARCHAR, strftime(TIMESTAMPTZ '2025-06-15 12:00:00+00', '%Y-%m-%d %H:%M %z'), count(*) FROM (SELECT year(tstz), month(tstz), count(*) FROM dst GROUP BY 1, 2);
+----
+?column?	date_trunc	text	strftime	count
+Etc/UTC	2025-06-15 00:00:00+00	2025-06-15	2025-06-15 12:00 +00	6
+
+statement ok
+SET TimeZone = 'Europe/Berlin';
+
+query
+SELECT 'Europe/Berlin', date_trunc('day', TIMESTAMPTZ '2025-06-15 12:00:00+00')::VARCHAR, (TIMESTAMPTZ '2025-06-15 12:00:00+00')::DATE::VARCHAR, strftime(TIMESTAMPTZ '2025-06-15 12:00:00+00', '%Y-%m-%d %H:%M %z'), count(*) FROM (SELECT year(tstz), month(tstz), count(*) FROM dst GROUP BY 1, 2);
+----
+?column?	date_trunc	text	strftime	count
+Europe/Berlin	2025-06-15 00:00:00+02	2025-06-15	2025-06-15 14:00 +02	6
+
+statement ok
+SET TimeZone = 'America/Havana';
+
+query
+SELECT 'America/Havana', date_trunc('day', TIMESTAMPTZ '2025-06-15 12:00:00+00')::VARCHAR, (TIMESTAMPTZ '2025-06-15 12:00:00+00')::DATE::VARCHAR, strftime(TIMESTAMPTZ '2025-06-15 12:00:00+00', '%Y-%m-%d %H:%M %z'), count(*) FROM (SELECT year(tstz), month(tstz), count(*) FROM dst GROUP BY 1, 2);
+----
+?column?	date_trunc	text	strftime	count
+America/Havana	2025-06-15 00:00:00-04	2025-06-15	2025-06-15 08:00 -04	6
+
+statement ok
+SET TimeZone = 'Etc/UTC';

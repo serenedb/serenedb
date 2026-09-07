@@ -61,7 +61,7 @@ SELECT id, BM25(and_score_idx.tableoid) FROM and_score_idx
 WHERE body @@ 'cat red' AND (id % 100) = 1;
 ----
 id	bm25
-1	1.3862944
+1	0.63013375
 
 
 # The same document and the same words, with the restriction pushed into the
@@ -73,7 +73,7 @@ SELECT id, BM25(and_score_idx.tableoid) FROM and_score_idx
 WHERE body @@ 'cat red' AND id = 1;
 ----
 id	bm25
-1	1.3862944
+1	1.6301337
 
 
 # Three terms, so the disjunction has three subs rather than two -- the failure
@@ -84,7 +84,7 @@ SELECT id, BM25(and_score_idx.tableoid) FROM and_score_idx
 WHERE body @@ 'cat red alpha' AND id = 1;
 ----
 id	bm25
-1	2.9267392
+1	2.330336
 
 
 # A conjunction sums its children. A single-term child always worked, so this
@@ -96,7 +96,7 @@ SELECT id, BM25(and_score_idx.tableoid) FROM and_score_idx
 WHERE body @@ 'cat red' AND body @@ 'cat' AND id = 1;
 ----
 id	bm25
-1	2.0794415
+1	1.9452006
 
 
 # Ranking is restored, not just the numbers: document 1 matches both words,

@@ -59,10 +59,11 @@ enum class ScanMode : uint8_t {
   // count(*) with no predicate and no pushed filters: the whole-reader
   // live_docs_count answers without touching a segment.
   CountFast,
-  // count(*): per-segment count() -- whole-file statistics settle or kill the
-  // pushed `.col` filters, the rest apply through the TableFilterDocIterator
-  // wrapper. Score/lookup filters cannot run here (no scoring, no source
-  // materialization), so their plans take Stream instead.
+  // count(*): a `count::Root` per segment -- whole-file statistics settle or
+  // kill the pushed `.col` filters, and where any is left the documents are
+  // produced by a `docs::Root` so their column values can be read. Score and
+  // lookup filters cannot run here (no scoring, no source materialization),
+  // so their plans take Stream instead.
   Count,
   // ORDER BY score LIMIT k: parallel top-k collectors.
   TopK,
@@ -70,7 +71,7 @@ enum class ScanMode : uint8_t {
   // work units read `.col` directly; a segment with deletes falls back to the
   // masked streaming walk. Never scores, never touches the lookup source.
   ColScan,
-  // Streaming DocIterator -> HitBatcher (bound-seeded when eligible). The only
+  // A `scored::Root` or a `docs::Root` drained into the HitBatcher. The only
   // mode that materializes through the lookup source, engaged if and only if
   // a lookup column is needed -- for a filter or for the output.
   Stream,
@@ -139,10 +140,10 @@ struct IResearchScanGlobalState : public duckdb::GlobalTableFunctionState {
   // applied during the source lookup, so it forbids the fast collector/bulk
   // paths (which never run the lookup per candidate) -- forces streaming.
   bool has_lookup_filter = false;
-  // Covered (INCLUDE'd) `.col` filters, applied in-scan by wrapping the search
-  // DocIterator in a TableFilterDocIterator (codec Filter + zonemap). `field`
-  // keys the segment columnstore; `filter` is the pushed ExpressionFilter.
-  // Empty => no `.col` filtering, no wrapper, zero cost.
+  // Covered (INCLUDE'd) `.col` filters, verified in-scan against what the
+  // plan produced (codec Filter + zonemap). `field` keys the segment
+  // columnstore; `filter` is the pushed ExpressionFilter. Empty => no `.col`
+  // filtering, nothing to verify, zero cost.
   struct ColFilter {
     irs::field_id field;
     const duckdb::TableFilter* filter;
@@ -180,24 +181,29 @@ struct IResearchScanGlobalState : public duckdb::GlobalTableFunctionState {
   // must not prune. Set once per scan mode: TopK needs only a scorer the
   // index's bounds were written for, while Stream additionally needs a pushed
   // lower bound -- a dynamic TOP_N boundary or a static score floor -- since
-  // only a lower bound can seed block-max skipping. Its ScoreThresholdAttr is
-  // seeded from that bound before each emit; the HitBatcher score filter still
-  // enforces the exact boundary on the docs that are produced.
+  // only a lower bound can seed block-max skipping. On the streaming path it
+  // is recorded and nothing reads it: that plan produces every match.
   const irs::Scorer* prune_scorer = nullptr;
 
   // --- The search predicate (`@@` / vector query) and scoring machinery.
   // `owned_filter` backs `filter` for vector/match-all queries; the prepare
-  // phase fills per-segment queries + merged term statistics. ----------------
+  // phase fills per-segment queries and reduces the per-thread counters into
+  // the stats arena. --------------------------------------------------------
   const irs::Filter* filter = nullptr;
   irs::Filter::ptr owned_filter;
   std::unique_ptr<irs::Scorer> scorer_obj;
+  // The scan projects offsets, so the prepared queries have to keep the terms
+  // an offsets walk reads. Decided once for the scan: `queries` is shared.
+  bool needs_terms = false;
   std::vector<irs::QueryBuilder::ptr> queries;
-  std::vector<irs::PrepareCollector::ptr> collectors;
-  std::optional<irs::StatsBuffer> stats;
+  std::optional<irs::StatsArena> stats_arena;
+  std::optional<irs::PreparedCollector> collector;
+  const irs::Scorer* stats_scorer = nullptr;
+  uint32_t collect_threads = 1;
   absl::Notification prepare_finished;
   std::atomic_uint32_t prepare_segment = 0;
   std::atomic_uint32_t prepare_count = 0;
-  std::atomic_uint32_t collector_slots = 0;
+  std::atomic_uint32_t thread_slots = 0;
 
   // --- Segment claiming: claimed slots in [0, claimable_segments) map through
   // `segment_order` -- empty = identity over all segments. Init-time

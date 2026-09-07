@@ -22,6 +22,6 @@
 
 namespace irs::optimizer {
 
-void InitLevenshteinPrefixRules();
+void InitLevenshteinPrefixFusion();
 
 }  // namespace irs::optimizer

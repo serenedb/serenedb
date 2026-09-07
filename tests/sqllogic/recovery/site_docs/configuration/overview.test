@@ -74,21 +74,21 @@ NULL
 # DOCS_TEST_BODY
 
 statement ok
-SELECT * FROM duckdb_logs WHERE log_level = 'DEBUG';
+SELECT * FROM sdb_logs WHERE log_level = 'DEBUG';
 
 # DOCS_TEST: example_009
 
 # DOCS_TEST_BODY
 
 statement ok
-SELECT * FROM duckdb_logs WHERE type = 'QueryLog';
+SELECT * FROM sdb_logs WHERE type = 'QueryLog';
 
 # DOCS_TEST: example_010
 
 # DOCS_TEST_BODY
 
 statement ok
-SELECT * FROM duckdb_settings() WHERE name LIKE '%logging%';
+SELECT * FROM sdb_settings() WHERE name LIKE '%logging%';
 
 # DOCS_TEST: example_011
 
@@ -120,7 +120,7 @@ threads
 
 statement ok
 SELECT *
-FROM duckdb_settings()
+FROM sdb_settings()
 WHERE name = 'threads';
 
 # DOCS_TEST: example_015
@@ -129,7 +129,7 @@ WHERE name = 'threads';
 
 statement ok
 SELECT *
-FROM duckdb_settings();
+FROM sdb_settings();
 
 # DOCS_TEST: example_016
 

@@ -38,10 +38,6 @@ struct OptimizeContext {
   bool fuse_seekable_acceptors = false;
   bool fuse_acceptor_intersections = false;
   sdb::containers::FlatHashSet<irs::field_id> analyzed_fields;
-  // Embedder-registered semantics: maps a null-marker field to the column
-  // field whose NULL rows it indexes. Rules consuming it transform on the
-  // embedder's contract (marker postings == exactly the rows where the
-  // column holds no value); absent map keeps those rules inert.
   const sdb::containers::FlatHashMap<irs::field_id, irs::field_id>*
     null_markers = nullptr;
 
@@ -63,12 +59,6 @@ void TraverseFilter(Filter::ptr& root, Visit&& visit) {
   while (!stack.empty()) {
     auto& frame = stack.back();
     if (frame.children_visited) {
-      // A visitor may replace the node outright -- lowering a wildcard to an
-      // automaton, fusing terms into a ByTerms. Its scorer applies to the whole
-      // subtree, so the replacement inherits it unless it brought one of its
-      // own; otherwise a `::score` on a rewritten node would be dropped. Only
-      // replacement is mechanical like this: a rule that *absorbs* a sibling
-      // has to decide for itself whether the scorers agree.
       const auto* scorer = (**frame.slot).GetScorer();
       visit(*frame.slot);
       if (scorer && *frame.slot && !(**frame.slot).GetScorer()) {
@@ -78,11 +68,11 @@ void TraverseFilter(Filter::ptr& root, Visit&& visit) {
       continue;
     }
     frame.children_visited = true;
-    for (auto& child : (**frame.slot).GetChildren()) {
+    (**frame.slot).VisitChildren([&](Filter::ptr& child) {
       if (child) {
         stack.emplace_back(&child, false);
       }
-    }
+    });
   }
 }
 

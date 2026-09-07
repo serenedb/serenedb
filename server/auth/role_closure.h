@@ -40,11 +40,7 @@ namespace duckdb {
 class ClientContext;
 
 }  // namespace duckdb
-namespace sdb::catalog {
-
-class Role;
-
-}  // namespace sdb::catalog
+namespace sdb::catalog {}  // namespace sdb::catalog
 namespace sdb::auth {
 
 using RoleIdSet = containers::FlatHashSet<ObjectId>;

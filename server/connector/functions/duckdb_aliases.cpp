@@ -78,6 +78,7 @@ constexpr std::array kTableFunctions{
   std::string_view{"duckdb_types"},
   std::string_view{"duckdb_variables"},
   std::string_view{"duckdb_views"},
+  std::string_view{"truncate_duckdb_logs"},
 };
 
 constexpr std::array kScalarFunctions{std::string_view{"duckdb_format_sql"}};
@@ -101,8 +102,10 @@ constexpr std::array kTableMacros{
 };
 
 std::string AliasNameFor(std::string_view source) {
-  SDB_ASSERT(source.starts_with(kSourcePrefix));
-  return absl::StrCat(kAliasPrefix, source.substr(kSourcePrefix.size()));
+  const auto pos = source.find(kSourcePrefix);
+  SDB_ASSERT(pos != std::string_view::npos);
+  return absl::StrCat(source.substr(0, pos), kAliasPrefix,
+                      source.substr(pos + kSourcePrefix.size()));
 }
 
 duckdb::Identifier AliasFor(std::string_view source) {

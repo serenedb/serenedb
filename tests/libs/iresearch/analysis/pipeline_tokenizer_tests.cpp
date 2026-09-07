@@ -42,7 +42,7 @@ irs::analysis::Analyzer::ptr MakeDelimiter(std::string_view delim) {
                                                  std::string(delim)});
 }
 
-irs::analysis::Analyzer::ptr MakeNgram(size_t min_gram, size_t max_gram,
+irs::analysis::Analyzer::ptr MakeNGram(size_t min_gram, size_t max_gram,
                                        bool preserve_original) {
   return irs::analysis::NGramTokenizerBase::Make(
     irs::analysis::NGramTokenizerBase::Options{
@@ -270,7 +270,7 @@ TEST(pipeline_token_stream_test, many_tokenizers) {
   auto delimiter = MakeDelimiter(",");
   auto delimiter2 = MakeDelimiter(" ");
   auto text = MakeText("en_US.UTF-8", irs::Case::None, /*stemming=*/false);
-  auto ngram = MakeNgram(2, 2, /*preserve_original=*/true);
+  auto ngram = MakeNGram(2, 2, /*preserve_original=*/true);
 
   std::vector<irs::analysis::Analyzer::ptr> pipeline_options;
   pipeline_options.emplace_back(std::move(delimiter));
@@ -298,8 +298,8 @@ TEST(pipeline_token_stream_test, many_tokenizers) {
 }
 
 TEST(pipeline_token_stream_test, overlapping_ngrams) {
-  auto ngram = MakeNgram(6, 7, /*preserve_original=*/false);
-  auto ngram2 = MakeNgram(2, 3, /*preserve_original=*/false);
+  auto ngram = MakeNGram(6, 7, /*preserve_original=*/false);
+  auto ngram2 = MakeNGram(2, 3, /*preserve_original=*/false);
 
   std::vector<irs::analysis::Analyzer::ptr> pipeline_options;
   pipeline_options.emplace_back(std::move(ngram));
@@ -335,7 +335,7 @@ TEST(pipeline_token_stream_test, case_ngrams) {
     {"FOX", 12, 15, 12},
   };
   {
-    auto ngram = MakeNgram(3, 3, /*preserve_original=*/false);
+    auto ngram = MakeNGram(3, 3, /*preserve_original=*/false);
     auto norm = MakeNorm("en", irs::Case::Upper);
     std::vector<irs::analysis::Analyzer::ptr> pipeline_options;
     pipeline_options.emplace_back(std::move(ngram));
@@ -344,7 +344,7 @@ TEST(pipeline_token_stream_test, case_ngrams) {
     AssertPipeline(&pipe, data, expected);
   }
   {
-    auto ngram = MakeNgram(3, 3, /*preserve_original=*/false);
+    auto ngram = MakeNGram(3, 3, /*preserve_original=*/false);
     auto norm = MakeNorm("en", irs::Case::Upper);
     std::vector<irs::analysis::Analyzer::ptr> pipeline_options;
     pipeline_options.emplace_back(std::move(norm));
@@ -424,7 +424,7 @@ TEST(pipeline_token_stream_test, hold_position_tokenizer) {
     {"uic", 1, 4, 1}, {"ic", 2, 4, 2},  {"ick", 2, 5, 2},   {"ck", 3, 5, 3},
   };
   {
-    auto ngram = MakeNgram(2, 3, /*preserve_original=*/true);
+    auto ngram = MakeNGram(2, 3, /*preserve_original=*/true);
     auto norm = MakeNorm("en", irs::Case::Lower);
     std::vector<irs::analysis::Analyzer::ptr> pipeline_options;
     pipeline_options.emplace_back(std::move(ngram));
@@ -433,7 +433,7 @@ TEST(pipeline_token_stream_test, hold_position_tokenizer) {
     AssertPipeline(&pipe, data, expected);
   }
   {
-    auto ngram = MakeNgram(2, 3, /*preserve_original=*/true);
+    auto ngram = MakeNGram(2, 3, /*preserve_original=*/true);
     auto norm = MakeNorm("en", irs::Case::Lower);
     std::vector<irs::analysis::Analyzer::ptr> pipeline_options;
     pipeline_options.emplace_back(std::move(norm));
@@ -668,7 +668,7 @@ TEST(pipeline_token_stream_test, analyzers_with_payload_offset) {
 TEST(pipeline_token_stream_test, members_visitor) {
   auto delimiter = MakeDelimiter(",");
   auto text = MakeText("en_US.UTF-8", irs::Case::None, /*stemming=*/false);
-  auto ngram = MakeNgram(2, 2, /*preserve_original=*/true);
+  auto ngram = MakeNGram(2, 2, /*preserve_original=*/true);
   auto norm = MakeNorm("en", irs::Case::Upper);
 
   std::vector<irs::TypeInfo::type_id> expected{delimiter->type(), norm->type()};

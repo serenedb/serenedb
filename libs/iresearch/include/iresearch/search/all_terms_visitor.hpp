@@ -34,15 +34,12 @@ namespace irs {
 template<typename State>
 class AllTermsVisitor : public FilterVisitor, util::Noncopyable {
  public:
-  AllTermsVisitor(State& state, FieldCollector* field_stats,
-                  ByTermsCollector::TermsData* term_stats) noexcept
-    : _state{state}, _field_stats{field_stats}, _term_stats{term_stats} {}
+  AllTermsVisitor(State& state, ByTermsCollector* collector,
+                  uint32_t thread) noexcept
+    : _state{state}, _collector{collector}, _thread{thread} {}
 
-  void Prepare(const SubReader& /*segment*/, const TermReader& field,
+  void Prepare(const SubReader&, const TermReader& field,
                TermIterator& terms) noexcept final {
-    if (_field_stats) {
-      _field_stats->Collect(field);
-    }
     _state.Prepare(&field);
 
     _terms = &terms;
@@ -51,11 +48,13 @@ class AllTermsVisitor : public FilterVisitor, util::Noncopyable {
   bool Visit(score_t boost) final {
     SDB_ASSERT(_terms);
     const auto& meta = _terms->cookie();
-    if (_term_stats) {
-      (*_term_stats)[_stat_index].Collect(meta);
+    const byte_type* stats = nullptr;
+    if (_collector) {
+      _collector->Term(_thread, _stat_index).Collect(meta);
+      stats = _collector->Record(_stat_index).stats;
     }
 
-    _state.Push(meta, boost, _stat_index);
+    _state.Push(meta, boost, stats);
     return true;
   }
 
@@ -63,8 +62,8 @@ class AllTermsVisitor : public FilterVisitor, util::Noncopyable {
 
  private:
   State& _state;
-  FieldCollector* _field_stats;
-  ByTermsCollector::TermsData* _term_stats;
+  ByTermsCollector* _collector;
+  uint32_t _thread;
   TermIterator* _terms{};
   uint32_t _stat_index = 0;
 };

@@ -162,8 +162,8 @@ class RangeFilterTestCase : public tests::FilterTestCaseBase {
 
       for (size_t i = 0; [[maybe_unused]] const auto& sub : rdr) {
         auto docs = prepared.Execute(i);
-        for (; !irs::doc_limits::eof(docs->advance());) {
-          actual.push_back(docs->value());
+        for (; !irs::doc_limits::eof(docs->Advance());) {
+          actual.push_back(docs->Value());
         }
         ++i;
       }
@@ -196,8 +196,8 @@ class RangeFilterTestCase : public tests::FilterTestCaseBase {
 
       for (size_t i = 0; [[maybe_unused]] const auto& sub : rdr) {
         auto docs = prepared.Execute(i);
-        for (; !irs::doc_limits::eof(docs->advance());) {
-          actual.push_back(docs->value());
+        for (; !irs::doc_limits::eof(docs->Advance());) {
+          actual.push_back(docs->Value());
         }
         ++i;
       }
@@ -223,8 +223,8 @@ class RangeFilterTestCase : public tests::FilterTestCaseBase {
 
       for (size_t i = 0; [[maybe_unused]] const auto& sub : rdr) {
         auto docs = prepared.Execute(i);
-        for (; !irs::doc_limits::eof(docs->advance());) {
-          actual.push_back(docs->value());
+        for (; !irs::doc_limits::eof(docs->Advance());) {
+          actual.push_back(docs->Value());
         }
         ++i;
       }
@@ -249,8 +249,8 @@ class RangeFilterTestCase : public tests::FilterTestCaseBase {
 
       for (size_t i = 0; [[maybe_unused]] const auto& sub : rdr) {
         auto docs = prepared.Execute(i);
-        for (; !irs::doc_limits::eof(docs->advance());) {
-          actual.push_back(docs->value());
+        for (; !irs::doc_limits::eof(docs->Advance());) {
+          actual.push_back(docs->Value());
         }
         ++i;
       }
@@ -280,8 +280,8 @@ class RangeFilterTestCase : public tests::FilterTestCaseBase {
 
       for (size_t i = 0; [[maybe_unused]] const auto& sub : rdr) {
         auto docs = prepared.Execute(i);
-        for (; !irs::doc_limits::eof(docs->advance());) {
-          actual.push_back(docs->value());
+        for (; !irs::doc_limits::eof(docs->Advance());) {
+          actual.push_back(docs->Value());
         }
         ++i;
       }
@@ -311,8 +311,8 @@ class RangeFilterTestCase : public tests::FilterTestCaseBase {
 
       for (size_t i = 0; [[maybe_unused]] const auto& sub : rdr) {
         auto docs = prepared.Execute(i);
-        for (; !irs::doc_limits::eof(docs->advance());) {
-          actual.push_back(docs->value());
+        for (; !irs::doc_limits::eof(docs->Advance());) {
+          actual.push_back(docs->Value());
         }
         ++i;
       }
@@ -338,8 +338,8 @@ class RangeFilterTestCase : public tests::FilterTestCaseBase {
 
       for (size_t i = 0; [[maybe_unused]] const auto& sub : rdr) {
         auto docs = prepared.Execute(i);
-        for (; !irs::doc_limits::eof(docs->advance());) {
-          actual.push_back(docs->value());
+        for (; !irs::doc_limits::eof(docs->Advance());) {
+          actual.push_back(docs->Value());
         }
         ++i;
       }
@@ -364,8 +364,8 @@ class RangeFilterTestCase : public tests::FilterTestCaseBase {
 
       for (size_t i = 0; [[maybe_unused]] const auto& sub : rdr) {
         auto docs = prepared.Execute(i);
-        for (; !irs::doc_limits::eof(docs->advance());) {
-          actual.push_back(docs->value());
+        for (; !irs::doc_limits::eof(docs->Advance());) {
+          actual.push_back(docs->Value());
         }
         ++i;
       }
@@ -395,8 +395,8 @@ class RangeFilterTestCase : public tests::FilterTestCaseBase {
 
       for (size_t i = 0; [[maybe_unused]] const auto& sub : rdr) {
         auto docs = prepared.Execute(i);
-        for (; !irs::doc_limits::eof(docs->advance());) {
-          actual.push_back(docs->value());
+        for (; !irs::doc_limits::eof(docs->Advance());) {
+          actual.push_back(docs->Value());
         }
         ++i;
       }
@@ -426,8 +426,8 @@ class RangeFilterTestCase : public tests::FilterTestCaseBase {
 
       for (size_t i = 0; [[maybe_unused]] const auto& sub : rdr) {
         auto docs = prepared.Execute(i);
-        for (; !irs::doc_limits::eof(docs->advance());) {
-          actual.push_back(docs->value());
+        for (; !irs::doc_limits::eof(docs->Advance());) {
+          actual.push_back(docs->Value());
         }
         ++i;
       }
@@ -452,8 +452,8 @@ class RangeFilterTestCase : public tests::FilterTestCaseBase {
 
       for (size_t i = 0; [[maybe_unused]] const auto& sub : rdr) {
         auto docs = prepared.Execute(i);
-        for (; !irs::doc_limits::eof(docs->advance());) {
-          actual.push_back(docs->value());
+        for (; !irs::doc_limits::eof(docs->Advance());) {
+          actual.push_back(docs->Value());
         }
         ++i;
       }
@@ -479,8 +479,8 @@ class RangeFilterTestCase : public tests::FilterTestCaseBase {
 
       for (size_t i = 0; [[maybe_unused]] const auto& sub : rdr) {
         auto docs = prepared.Execute(i);
-        for (; !irs::doc_limits::eof(docs->advance());) {
-          actual.push_back(docs->value());
+        for (; !irs::doc_limits::eof(docs->Advance());) {
+          actual.push_back(docs->Value());
         }
         ++i;
       }
@@ -509,8 +509,8 @@ class RangeFilterTestCase : public tests::FilterTestCaseBase {
 
       for (size_t i = 0; [[maybe_unused]] const auto& sub : rdr) {
         auto docs = prepared.Execute(i);
-        for (; !irs::doc_limits::eof(docs->advance());) {
-          actual.push_back(docs->value());
+        for (; !irs::doc_limits::eof(docs->Advance());) {
+          actual.push_back(docs->Value());
         }
         ++i;
       }
@@ -539,8 +539,8 @@ class RangeFilterTestCase : public tests::FilterTestCaseBase {
 
       for (size_t i = 0; [[maybe_unused]] const auto& sub : rdr) {
         auto docs = prepared.Execute(i);
-        for (; !irs::doc_limits::eof(docs->advance());) {
-          actual.push_back(docs->value());
+        for (; !irs::doc_limits::eof(docs->Advance());) {
+          actual.push_back(docs->Value());
         }
         ++i;
       }
@@ -565,8 +565,8 @@ class RangeFilterTestCase : public tests::FilterTestCaseBase {
 
       for (size_t i = 0; [[maybe_unused]] const auto& sub : rdr) {
         auto docs = prepared.Execute(i);
-        for (; !irs::doc_limits::eof(docs->advance());) {
-          actual.push_back(docs->value());
+        for (; !irs::doc_limits::eof(docs->Advance());) {
+          actual.push_back(docs->Value());
         }
         ++i;
       }
@@ -592,8 +592,8 @@ class RangeFilterTestCase : public tests::FilterTestCaseBase {
 
       for (size_t i = 0; [[maybe_unused]] const auto& sub : rdr) {
         auto docs = prepared.Execute(i);
-        for (; !irs::doc_limits::eof(docs->advance());) {
-          actual.push_back(docs->value());
+        for (; !irs::doc_limits::eof(docs->Advance());) {
+          actual.push_back(docs->Value());
         }
         ++i;
       }
@@ -1200,6 +1200,7 @@ TEST(by_range_test, boost) {
     q.mutable_options()->range.max_type = irs::BoundType::Inclusive;
 
     tests::PreparedFilter prepared{q, irs::SubReader::empty()};
+    ASSERT_TRUE(irs::QueryBuilder::IsEmpty(*prepared.Query(0)));
     ASSERT_EQ(irs::kNoBoost, prepared.Query(0)->Boost());
   }
 
@@ -1216,9 +1217,13 @@ TEST(by_range_test, boost) {
       irs::ViewCast<irs::byte_type>(std::string_view("max_term"));
     q.mutable_options()->range.max_type = irs::BoundType::Inclusive;
     q.SetBoost(boost);
+    ASSERT_EQ(boost, q.GetBoost());
 
+    // a segment without the field matches nothing, and nothing carries no
+    // boost -- so the boost is only observable where the field exists
     tests::PreparedFilter prepared{q, irs::SubReader::empty()};
-    ASSERT_EQ(boost, prepared.Query(0)->Boost());
+    ASSERT_TRUE(irs::QueryBuilder::IsEmpty(*prepared.Query(0)));
+    ASSERT_EQ(irs::kNoBoost, prepared.Query(0)->Boost());
   }
 }
 

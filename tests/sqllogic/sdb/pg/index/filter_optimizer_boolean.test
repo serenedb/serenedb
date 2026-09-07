@@ -29,10 +29,11 @@ QUERY PLAN
 │ Index: fo_bool_idx                   │
 │ Lookup: table                        │
 │ Index Filter:                        │
-│ ╭─ Terms ──────────────────────────╮ │
+│ ╭─ And ────────────────────────────╮ │
+│ ╰─────────────────┬────────────────╯ │
+│ ╭─ Terms ─────────┴────────────────╮ │
 │ │ Field: t(string)                 │ │
 │ │ Values: 'alpha', 'beta', 'gamma' │ │
-│ │ Min Match: 3                     │ │
 │ ╰──────────────────────────────────╯ │
 │ Projections: id                      │
 │ ~1 row                               │
@@ -47,11 +48,12 @@ QUERY PLAN
 │ Index: fo_bool_idx                    │
 │ Lookup: table                         │
 │ Index Filter:                         │
-│ ╭─ Terms ───────────────────────────╮ │
+│ ╭─ And ─────────────────────────────╮ │
+│ ╰─────────────────┬─────────────────╯ │
+│ ╭─ Terms ─────────┴─────────────────╮ │
 │ │ Field: t(string)                  │ │
 │ │ Values:                           │ │
 │ │ 'alpha', 'beta', 'delta', 'gamma' │ │
-│ │ Min Match: 4                      │ │
 │ ╰───────────────────────────────────╯ │
 │ Projections: id                       │
 │ ~1 row                                │
@@ -62,22 +64,19 @@ EXPLAIN SELECT id FROM fo_bool_idx
 WHERE (t @@ ts_phrase('alpha') AND t @@ ts_phrase('beta'))::boost(2.0) AND t @@ ts_phrase('gamma');
 ----
 QUERY PLAN
-╭─ IRESEARCH_SCAN ──────────────────────────────────╮
-│ Index: fo_bool_idx                                │
-│ Lookup: table                                     │
-│ Index Filter:                                     │
-│ ╭─ And ───────────────────╮                       │
-│ ╰────────────┬────────────╯                       │
-│              ├─────────────────────────╮          │
-│ ╭─ Terms ────┴────────────╮  ╭─ Term ──┴────────╮ │
-│ │ Field: t(string)        │  │ Field: t(string) │ │
-│ │ Values: 'alpha', 'beta' │  │ Value: gamma     │ │
-│ │ Min Match: 2            │  ╰──────────────────╯ │
-│ │ Boost: 2                │                       │
-│ ╰─────────────────────────╯                       │
-│ Projections: id                                   │
-│ ~1 row                                            │
-╰───────────────────────────────────────────────────╯
+╭─ IRESEARCH_SCAN ─────────────────────────────╮
+│ Index: fo_bool_idx                           │
+│ Lookup: table                                │
+│ Index Filter:                                │
+│ ╭─ And ────────────────────────────────────╮ │
+│ ╰─────────────────────┬────────────────────╯ │
+│ ╭─ Terms ─────────────┴────────────────────╮ │
+│ │ Field: t(string)                         │ │
+│ │ Values: 'alpha' (2), 'beta' (2), 'gamma' │ │
+│ ╰──────────────────────────────────────────╯ │
+│ Projections: id                              │
+│ ~1 row                                       │
+╰──────────────────────────────────────────────╯
 
 query
 EXPLAIN SELECT id FROM fo_bool_idx
@@ -88,10 +87,11 @@ QUERY PLAN
 │ Index: fo_bool_idx                   │
 │ Lookup: table                        │
 │ Index Filter:                        │
-│ ╭─ Terms ──────────────────────────╮ │
+│ ╭─ Or ─────────────────────────────╮ │
+│ ╰─────────────────┬────────────────╯ │
+│ ╭─ Terms ─────────┴────────────────╮ │
 │ │ Field: t(string)                 │ │
 │ │ Values: 'alpha', 'beta', 'gamma' │ │
-│ │ Min Match: 1                     │ │
 │ ╰──────────────────────────────────╯ │
 │ Projections: id                      │
 │ ~1 row                               │
@@ -109,10 +109,11 @@ QUERY PLAN
 │ ╭─ Or ─────────────╮                              │
 │ ╰─────────┬────────╯                              │
 │           ├────────────────────────╮              │
-│ ╭─ Term ──┴────────╮  ╭─ Terms ────┴────────────╮ │
-│ │ Field: t(string) │  │ Field: t(string)        │ │
-│ │ Value: gamma     │  │ Values: 'alpha', 'beta' │ │
-│ ╰──────────────────╯  │ Min Match: 2            │ │
+│ ╭─ Terms ─┴────────╮  ╭─ And ──────┴────────────╮ │
+│ │ Field: t(string) │  ╰────────────┬────────────╯ │
+│ │ Values: 'gamma'  │  ╭─ Terms ────┴────────────╮ │
+│ ╰──────────────────╯  │ Field: t(string)        │ │
+│                       │ Values: 'alpha', 'beta' │ │
 │                       ╰─────────────────────────╯ │
 │ Projections: id                                   │
 │ ~1 row                                            │
@@ -126,10 +127,11 @@ QUERY PLAN
 │ Index: fo_bool_idx           │
 │ Lookup: table                │
 │ Index Filter:                │
-│ ╭─ Terms ──────────────────╮ │
+│ ╭─ Or ─────────────────────╮ │
+│ ╰─────────────┬────────────╯ │
+│ ╭─ Terms ─────┴────────────╮ │
 │ │ Field: s(string)         │ │
 │ │ Values: 'alpha', 'gamma' │ │
-│ │ Min Match: 1             │ │
 │ ╰──────────────────────────╯ │
 │ Projections: id              │
 │ ~1 row                       │
@@ -143,10 +145,11 @@ QUERY PLAN
 │ Index: fo_bool_idx          │
 │ Lookup: table               │
 │ Index Filter:               │
-│ ╭─ Terms ─────────────────╮ │
+│ ╭─ And ───────────────────╮ │
+│ ╰────────────┬────────────╯ │
+│ ╭─ Terms ────┴────────────╮ │
 │ │ Field: t(string)        │ │
 │ │ Values: 'alpha', 'beta' │ │
-│ │ Min Match: 2            │ │
 │ ╰─────────────────────────╯ │
 │ Projections: id             │
 │ ~1 row                      │
@@ -163,9 +166,9 @@ QUERY PLAN
 │ ╭─ And ────────────╮                       │
 │ ╰─────────┬────────╯                       │
 │           ├─────────────────────╮          │
-│ ╭─ Term ──┴────────╮  ╭─ Term ──┴────────╮ │
-│ │ Field: t(string) │  │ Field: s(string) │ │
-│ │ Value: beta      │  │ Value: alpha     │ │
+│ ╭─ Terms ─┴────────╮  ╭─ Terms ─┴────────╮ │
+│ │ Field: s(string) │  │ Field: t(string) │ │
+│ │ Values: 'alpha'  │  │ Values: 'beta'   │ │
 │ ╰──────────────────╯  ╰──────────────────╯ │
 │ Projections: id                            │
 │ ~1 row                                     │
@@ -215,9 +218,9 @@ QUERY PLAN
 │ ╭─ Or ─────────────╮                       │
 │ ╰─────────┬────────╯                       │
 │           ├─────────────────────╮          │
-│ ╭─ Term ──┴────────╮  ╭─ Term ──┴────────╮ │
+│ ╭─ Terms ─┴────────╮  ╭─ Terms ─┴────────╮ │
 │ │ Field: s(string) │  │ Field: t(string) │ │
-│ │ Value: alpha     │  │ Value: beta      │ │
+│ │ Values: 'alpha'  │  │ Values: 'beta'   │ │
 │ ╰──────────────────╯  ╰──────────────────╯ │
 │ Projections: id                            │
 │ ~1 row                                     │
@@ -250,7 +253,6 @@ QUERY PLAN
 │ ╭─ Term ───────────╮ │
 │ │ Field: t(string) │ │
 │ │ Value: alpha     │ │
-│ │ Boost: 2         │ │
 │ ╰──────────────────╯ │
 │ Projections: id      │
 │ ~1 row               │
@@ -279,10 +281,11 @@ QUERY PLAN
 │ Index: fo_bool_idx          │
 │ Lookup: table               │
 │ Index Filter:               │
-│ ╭─ Terms ─────────────────╮ │
+│ ╭─ And ───────────────────╮ │
+│ ╰────────────┬────────────╯ │
+│ ╭─ Terms ────┴────────────╮ │
 │ │ Field: t(string)        │ │
 │ │ Values: 'alpha', 'beta' │ │
-│ │ Min Match: 2            │ │
 │ ╰─────────────────────────╯ │
 │ Projections: id             │
 │ ~1 row                      │
@@ -296,10 +299,14 @@ QUERY PLAN
 │ Index: fo_bool_idx                   │
 │ Lookup: table                        │
 │ Index Filter:                        │
-│ ╭─ Terms ──────────────────────────╮ │
+│ ╭─ Bool ───────────────────────────╮ │
+│ ╰─────────────────┬────────────────╯ │
+│ ╭─ Should ────────┴────────────────╮ │
+│ │ Min Match: 2                     │ │
+│ ╰─────────────────┬────────────────╯ │
+│ ╭─ Terms ─────────┴────────────────╮ │
 │ │ Field: t(string)                 │ │
 │ │ Values: 'alpha', 'beta', 'gamma' │ │
-│ │ Min Match: 2                     │ │
 │ ╰──────────────────────────────────╯ │
 │ Projections: id                      │
 │ ~1 row                               │
@@ -331,9 +338,29 @@ QUERY PLAN
 │ │ Field: ts(numeric)                   │ │
 │ │ Range:                               │ │
 │ │ >=629424000000000, <=670759200000000 │ │
-│ │ Boost: 2                             │ │
 │ ╰──────────────────────────────────────╯ │
 │ Projections: id                          │
+│ ~1 row                                   │
+╰──────────────────────────────────────────╯
+
+
+query
+EXPLAIN SELECT id, BM25(ts_table_idx.tableoid) FROM ts_table_idx WHERE ts BETWEEN TIMESTAMP '1989-12-12 00:00:00.000' AND TIMESTAMP '1991-04-04 10:00:00.000';
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ─────────────────────────╮
+│ Index: ts_table_idx                      │
+│ Lookup: table                            │
+│ Index Filter:                            │
+│ ╭─ Granular Range ─────────────────────╮ │
+│ │ Field: ts(numeric)                   │ │
+│ │ Range:                               │ │
+│ │ >=629424000000000, <=670759200000000 │ │
+│ │ Boost: 2                             │ │
+│ ╰──────────────────────────────────────╯ │
+│ Score: bm25(k1=1.2, b=0.75)              │
+│ Projections: id,                         │
+│              sdb_inverted_index_score    │
 │ ~1 row                                   │
 ╰──────────────────────────────────────────╯
 
@@ -356,12 +383,15 @@ QUERY PLAN
 │ ╭─ And ───────────────────────────────────╮                                           │
 │ ╰────────────────────┬────────────────────╯                                           │
 │                      ├───────────────────────────────────────────╮                    │
-│ ╭─ Terms ────────────┴────────────────────╮  ╭─ Granular Range ──┴──────────────────╮ │
-│ │ Field: body(string)                     │  │ Field: ts(numeric)                   │ │
-│ │ Values: 'afternoon', 'lunch', 'morning' │  │ Range:                               │ │
+│ ╭─ Bool ─────────────┴────────────────────╮  ╭─ Granular Range ──┴──────────────────╮ │
+│ ╰────────────────────┬────────────────────╯  │ Field: ts(numeric)                   │ │
+│ ╭─ Should ───────────┴────────────────────╮  │ Range:                               │ │
 │ │ Min Match: 2                            │  │ >=629424000000000, <=670759200000000 │ │
-│ ╰─────────────────────────────────────────╯  │ Boost: 2                             │ │
-│                                              ╰──────────────────────────────────────╯ │
+│ ╰────────────────────┬────────────────────╯  │ Boost: 2                             │ │
+│ ╭─ Terms ────────────┴────────────────────╮  ╰──────────────────────────────────────╯ │
+│ │ Field: body(string)                     │                                           │
+│ │ Values: 'afternoon', 'lunch', 'morning' │                                           │
+│ ╰─────────────────────────────────────────╯                                           │
 │ Score: bm25(k1=1.2, b=0.75)                                                           │
 │ Projections: id, sdb_inverted_index_score                                             │
 │ ~1 row                                                                                │

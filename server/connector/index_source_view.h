@@ -22,12 +22,16 @@
 
 #include <absl/functional/function_ref.h>
 
+#include <duckdb/common/case_insensitive_map.hpp>
 #include <duckdb/common/types.hpp>
 #include <duckdb/common/types/data_chunk.hpp>
 #include <duckdb/execution/expression_executor.hpp>
 #include <duckdb/planner/table_filter_set.hpp>
+#include <functional>
 #include <iresearch/index/index_source.hpp>
+#include <ranges>
 #include <span>
+#include <string>
 #include <string_view>
 #include <vector>
 
@@ -35,6 +39,22 @@
 #include "connector/view_fast_path.h"
 
 namespace sdb::connector {
+
+class SourceColumns {
+ public:
+  template<std::ranges::input_range Names, typename Proj = std::identity>
+  explicit SourceColumns(const Names& names, Proj proj = {}) {
+    duckdb::idx_t index = 0;
+    for (const auto& candidate : names) {
+      _by_name.try_emplace(std::invoke(proj, candidate), index++);
+    }
+  }
+
+  duckdb::idx_t operator()(std::string_view name) const;
+
+ private:
+  duckdb::case_insensitive_map_t<duckdb::idx_t> _by_name;
+};
 
 class ViewIndexSourceBase : public IndexSource {
  protected:

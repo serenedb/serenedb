@@ -513,9 +513,9 @@ WHERE body @@ ts_phrase('fox')
 ORDER BY score DESC, id;
 ----
 id	score
-2	0.8407818
-1	0.6173784
-3	0.43974406
+2	0.38217354
+1	0.28062654
+3	0.19988364
 
 # DOCS_TEST: bm25_params
 # DOCS_TEST_BODY
@@ -526,9 +526,9 @@ WHERE body @@ ts_phrase('fox')
 ORDER BY score DESC, id;
 ----
 id	score
-2	0.8469945
-1	0.53899646
-3	0.53899646
+2	0.38499752
+1	0.2449984
+3	0.2449984
 
 # DOCS_TEST: tfidf
 # DOCS_TEST_BODY
@@ -1057,9 +1057,9 @@ WHERE body @@ (ts_phrase('fox') ^ 3.0)
 ORDER BY score DESC, id;
 ----
 id	score
-2	2.5223455
-1	1.8521354
-3	1.3192322
+2	1.1465207
+1	0.84187967
+3	0.599651
 
 # DOCS_TEST: ts_phrase_gap
 # DOCS_TEST_BODY
@@ -1156,10 +1156,10 @@ WHERE body @@ (ts_phrase('fox') || ts_phrase('quick') ^ 5.0)
 ORDER BY score DESC, id;
 ----
 id	score
-1	5.6312833
-4	5.013905
-2	0.8407818
-3	0.43974406
+1	2.5596745
+4	2.279048
+2	0.38217354
+3	0.19988364
 
 # DOCS_TEST: ts_lexize_ngram
 # DOCS_TEST_BODY

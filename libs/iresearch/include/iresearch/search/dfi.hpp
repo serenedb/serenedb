@@ -28,28 +28,12 @@
 
 namespace irs {
 
-// Divergence From Independence (DFI) similarity.
-//
-// DFISimilarity:
-//   expected = (ttf_t + 1) * dl / (ttf_field + 1)
-//   if tf <= expected: score = 0
-//   else:              score = boost * log2(measure(tf, expected) + 1)
-//
-// Parameter-free and non-parametric; three independence measures select
-// the measure(tf, expected) kernel:
-//   Standardized:  (tf - expected) / sqrt(expected)
-//   Saturated:     (tf - expected) / expected
-//   ChiSquared:    (tf - expected)^2 / expected
-//
-// Reference: http://dx.doi.org/10.1007/s10791-013-9225-4
 enum class DFIMeasure : uint8_t {
   Standardized,
   Saturated,
   ChiSquared,
 };
 
-// Per (field, term) stats: precomputed (ttf_t + 1) / (ttf_field + 1),
-// which is multiplied by dl at scoring time to get the expected count.
 struct DFIStats {
   score_t ratio;
 };
@@ -91,6 +75,8 @@ class DFI final : public irs::ScorerBase<DFI, DFIStats> {
   ScoreBoundWriter::ptr PrepareScoreBoundWriter(size_t max_levels) const final;
 
   ScoreBoundSource::ptr PrepareScoreBoundSource() const final;
+
+  bool HasScoreBounds() const noexcept final { return true; }
 
   bool Compatible(const ScorerOptions& persisted) const noexcept final;
 

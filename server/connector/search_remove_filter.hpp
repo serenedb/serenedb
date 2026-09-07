@@ -23,6 +23,7 @@
 #include <absl/functional/any_invocable.h>
 
 #include <iresearch/analysis/token_attributes.hpp>
+#include <iresearch/index/iterators.hpp>
 #include <iresearch/search/filter.hpp>
 #include <memory>
 #include <optional>
@@ -36,7 +37,7 @@ namespace sdb::connector {
 // something that never match user created fields id.
 constexpr inline std::string_view kPkFieldName{"\x00", 1};
 
-class SearchRemoveFilter : public irs::Filter, public irs::DocIterator {
+class SearchRemoveFilter : public irs::Filter, public irs::lead::Node {
  public:
   SearchRemoveFilter(size_t batch_size, irs::field_id pk_field_id)
     : _pk_field_id{pk_field_id} {
@@ -55,8 +56,8 @@ class SearchRemoveFilter : public irs::Filter, public irs::DocIterator {
                       pk.size());
   }
 
-  irs::DocIterator::ptr MakeIterator(const irs::SubReader& segment,
-                                     const irs::ExecutionContext& ctx) const;
+  irs::lead::Node::ptr MakeLead(const irs::SubReader& segment,
+                                const irs::DocumentMask* pending) const;
 
   irs::TypeInfo::type_id type() const noexcept final {
     return irs::Type<SearchRemoveFilter>::id();
@@ -65,23 +66,18 @@ class SearchRemoveFilter : public irs::Filter, public irs::DocIterator {
   irs::QueryBuilder::ptr PrepareSegment(
     const irs::SubReader& segment, const irs::PrepareContext& ctx) const final;
 
-  irs::Attribute* GetMutable(irs::TypeInfo::type_id id) noexcept final {
-    return nullptr;
-  }
+  irs::doc_id_t Advance() final;
 
-  irs::doc_id_t advance() final;
-
-  irs::doc_id_t seek(irs::doc_id_t) noexcept final {
+  // The removal walk reads a segment front to back, so nothing seeks it.
+  irs::doc_id_t Seek(irs::doc_id_t) noexcept final {
     SDB_ASSERT(false);
     return _doc = irs::doc_limits::eof();
   }
 
-  IRS_DOC_ITERATOR_DEFAULTS
-
  private:
   const irs::field_id _pk_field_id;
-  mutable const irs::DocumentMask* _pending_mask{};
   mutable const irs::DocumentMask* _segment_mask{};
+  mutable const irs::DocumentMask* _pending_mask{};
   mutable const irs::TermReader* _pk_field{};
   mutable size_t _pos{0};
   // TODO(Dronplane) use persistent duckdb memory pool for proper memory
@@ -102,7 +98,7 @@ class SearchRemoveFilter : public irs::Filter, public irs::DocIterator {
 // Re-evaluated per segment at apply time like every remove filter, so
 // merges/compaction cannot invalidate it.
 class SearchRemovePrefixFilter final : public irs::Filter,
-                                       public irs::DocIterator {
+                                       public irs::lead::Node {
  public:
   // "Smallest dead row >= min_row", nullopt once exhausted; called with
   // non-decreasing arguments.
@@ -120,10 +116,10 @@ class SearchRemovePrefixFilter final : public irs::Filter,
     PushEntry(prefix).dead = std::move(dead);
   }
 
-  irs::DocIterator::ptr MakeIterator(const irs::SubReader& segment,
-                                     const irs::ExecutionContext& ctx) const;
+  irs::lead::Node::ptr MakeLead(const irs::SubReader& segment,
+                                const irs::DocumentMask* pending) const;
 
-  irs::doc_id_t advance() final;
+  irs::doc_id_t Advance() final;
 
   irs::TypeInfo::type_id type() const noexcept final {
     return irs::Type<SearchRemovePrefixFilter>::id();
@@ -132,16 +128,10 @@ class SearchRemovePrefixFilter final : public irs::Filter,
   irs::QueryBuilder::ptr PrepareSegment(
     const irs::SubReader& segment, const irs::PrepareContext& ctx) const final;
 
-  irs::Attribute* GetMutable(irs::TypeInfo::type_id) noexcept final {
-    return nullptr;
-  }
-
-  irs::doc_id_t seek(irs::doc_id_t) noexcept final {
+  irs::doc_id_t Seek(irs::doc_id_t) noexcept final {
     SDB_ASSERT(false);
     return _doc = irs::doc_limits::eof();
   }
-
-  IRS_DOC_ITERATOR_DEFAULTS
 
  private:
   struct Entry {
@@ -155,14 +145,14 @@ class SearchRemovePrefixFilter final : public irs::Filter,
   void NextEntry() const noexcept;
 
   const irs::field_id _pk_field_id;
-  mutable const irs::DocumentMask* _pending_mask{};
   mutable const irs::DocumentMask* _segment_mask{};
+  mutable const irs::DocumentMask* _pending_mask{};
   mutable const irs::TermReader* _pk_field{};
   // Per-ENTRY dictionary iterator: the whole-file arm seeks once then
   // walks, the cursor arm issues seeks only -- one instance never mixes
   // the two patterns.
   mutable irs::SeekTermIterator::ptr _terms;
-  mutable irs::DocIterator::ptr _postings;
+  mutable irs::TermPostings::ptr _postings;
   mutable size_t _pos{0};
   mutable int64_t _resume_row{0};
   mutable std::string _key_scratch;

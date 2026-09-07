@@ -23,6 +23,7 @@
 #include "app/app_server.h"
 #include "basics/down_cast.h"
 #include "catalog/ddl/catalog.h"
+#include "catalog/entry/duckdb_object_entry.h"
 #include "catalog/read/duckdb_catalog_sets.h"
 #include "catalog/role.h"
 #include "pg/pg_catalog/fwd.h"
@@ -34,7 +35,7 @@ catalog::MaterializedData SystemTableSnapshot<PgAuthMembers>::GetTableData() {
   std::vector<PgAuthMembers> values;
   uint64_t oid = 1;
   catalog::VisitRoles(&_config.GetClientContext(),
-                      [&](const catalog::Role& role) {
+                      [&](const catalog::SereneDBRoleEntry& role) {
                         for (const auto& edge : role.MemberOf()) {
                           values.push_back(PgAuthMembers{
                             .oid = oid++,

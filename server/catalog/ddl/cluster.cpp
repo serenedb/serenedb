@@ -55,8 +55,9 @@ namespace {
 
 // Roles and databases hang off the instance: their writes are attributed to
 // the storage-less cluster-global attachment, not the statement's database.
-// Called before _mutex, like JoinStoreTransaction: it opens the transaction.
-// Context-less callers (boot, replay, background drops) have none to join.
+// Called ahead of the mutation's own work, like JoinStoreTransaction: it opens
+// the transaction. Context-less callers (boot, replay, background drops) have
+// none to join.
 void JoinClusterGlobal(duckdb::ClientContext* context,
                        duckdb::DatabaseModificationType modification) {
   if (context != nullptr) {
@@ -76,7 +77,7 @@ void RequireDatabaseOwner(duckdb::ClientContext* context, ObjectId role,
 }
 
 void RequireRoleMembership(duckdb::ClientContext* context, ObjectId actor_id,
-                           const Role& target) {
+                           const SereneDBRoleEntry& target) {
   if (auth::ClosureFor(context, actor_id)->MemberOf(target.GetId())) {
     return;
   }
@@ -87,7 +88,7 @@ void RequireRoleMembership(duckdb::ClientContext* context, ObjectId actor_id,
 }
 
 void RequireRoleAdmin(duckdb::ClientContext* context, ObjectId actor_id,
-                      const Role& target, std::string_view verb) {
+                      const SereneDBRoleEntry& target, std::string_view verb) {
   auto actor = catalog::FindRole(context, actor_id);
   if (actor && actor->IsSuperuser()) {
     return;
@@ -179,7 +180,6 @@ std::pair<ObjectId, Permissions> Catalog::CreateDatabase(
   ObjectId owner, bool if_not_exists) {
   JoinClusterGlobal(ax.context,
                     duckdb::DatabaseModificationType::CREATE_CATALOG_ENTRY);
-  absl::MutexLock lock{&_mutex};
   RequireRoleAttribute(ax.context, ax.role, RoleOption::CreateDb,
                        "create database", {});
   if (catalog::FindDatabase(ax.context, database->GetName())) {
@@ -207,11 +207,10 @@ std::pair<ObjectId, Permissions> Catalog::CreateDatabase(
 }
 
 void Catalog::CreateRole(const AccessContext& ax,
-                         duckdb::unique_ptr<Role> role) {
+                         duckdb::unique_ptr<CreateRoleInfo> role) {
   SDB_DEBUG(GENERAL, "Creating role: ", role->GetName());
   JoinClusterGlobal(ax.context,
                     duckdb::DatabaseModificationType::CREATE_CATALOG_ENTRY);
-  absl::MutexLock lock{&_mutex};
   RequireRoleAttribute(
     ax.context, ax.role, RoleOption::CreateRole, "create role",
     "Only roles with the CREATEROLE attribute may create roles.");
@@ -223,10 +222,10 @@ void Catalog::CreateRole(const AccessContext& ax,
   if (!role->GetId().isSet()) {
     role->SetId(NextId());
   }
-  duckdb::unique_ptr<Role> updated;
+  duckdb::unique_ptr<CreateRoleInfo> updated;
   if (auto creator = catalog::FindRole(ax.context, ax.role);
       creator && !creator->IsSuperuser()) {
-    updated = creator->Clone();
+    updated = creator->Record();
     updated->AddMembership(Membership{
       .role = role->GetId(),
       .admin_option = true,
@@ -236,18 +235,18 @@ void Catalog::CreateRole(const AccessContext& ax,
   }
   catalog::PutRole(ax.context, {}, std::move(role));
   if (updated) {
-    const auto name = updated->GetName();
+    const auto name = std::string{updated->GetName()};
     catalog::PutRole(ax.context, name, std::move(updated));
   }
 }
 
 void Catalog::ChangeRoleImpl(
   duckdb::ClientContext* context, ObjectId actor_id, std::string_view name,
-  absl::FunctionRef<void(duckdb::ClientContext*, const Role&)> check,
-  ChangeCallback<Role> callback) {
+  absl::FunctionRef<void(duckdb::ClientContext*, const SereneDBRoleEntry&)>
+    check,
+  ChangeCallback<SereneDBRoleEntry, CreateRoleInfo> callback) {
   JoinClusterGlobal(context,
                     duckdb::DatabaseModificationType::CREATE_CATALOG_ENTRY);
-  absl::MutexLock lock{&_mutex};
   auto current = catalog::FindRole(context, name);
   if (!current) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
@@ -256,7 +255,7 @@ void Catalog::ChangeRoleImpl(
   catalog::RequireRoleNotVanished(context, name);
   check(context, *current);  // caller's access check, on the live entry
 
-  duckdb::unique_ptr<Role> updated;
+  duckdb::unique_ptr<CreateRoleInfo> updated;
   callback(*current, updated);
   if (!updated) {
     return;
@@ -275,12 +274,12 @@ void Catalog::ChangeRoleImpl(
   catalog::PutRole(context, old_name, std::move(updated));
 }
 
-void Catalog::ChangeRole(const AccessContext& ax, std::string_view name,
-                         std::string_view verb, bool allow_self,
-                         ChangeCallback<Role> callback) {
+void Catalog::ChangeRole(
+  const AccessContext& ax, std::string_view name, std::string_view verb,
+  bool allow_self, ChangeCallback<SereneDBRoleEntry, CreateRoleInfo> callback) {
   ChangeRoleImpl(
     ax.context, ax.role, name,
-    [&](duckdb::ClientContext* context, const Role& role) {
+    [&](duckdb::ClientContext* context, const SereneDBRoleEntry& role) {
       if (allow_self && ax.role == role.GetId()) {
         return;  // a role may change its own entry (e.g. SET config)
       }
@@ -295,12 +294,13 @@ void Catalog::ChangeDefaultAcl(const AccessContext& ax,
                                absl::AnyInvocable<void(Acl&)> mutate) {
   ChangeRoleImpl(
     ax.context, ax.role, role_name,
-    [&](duckdb::ClientContext* context, const Role& role) {
+    [&](duckdb::ClientContext* context, const SereneDBRoleEntry& role) {
       RequireRoleMembership(context, ax.role, role);
     },
     [schema, objtype, type, mutate = std::move(mutate)](
-      const Role& old_role, duckdb::unique_ptr<Role>& new_role) mutable {
-      new_role = old_role.Clone();
+      const SereneDBRoleEntry& old_role,
+      duckdb::unique_ptr<CreateRoleInfo>& new_role) mutable {
+      new_role = old_role.Record();
       new_role->ChangeDefaultAcl(schema, objtype, type, mutate);
     });
 }
@@ -312,7 +312,6 @@ void Catalog::ChangeMembership(const AccessContext& ax, ObjectId role,
                                bool admin_option_only) {
   JoinClusterGlobal(ax.context,
                     duckdb::DatabaseModificationType::CREATE_CATALOG_ENTRY);
-  absl::MutexLock lock{&_mutex};
   auto roles = auth::RolesOf(ax.context);
   auto actor = catalog::FindRole(ax.context, ax.role);
   if (!(actor && actor->IsSuperuser()) &&
@@ -344,7 +343,7 @@ void Catalog::ChangeMembership(const AccessContext& ax, ObjectId role,
   }
   catalog::RequireRoleNotVanished(ax.context, member_name);
 
-  auto new_role = member_role->Clone();
+  auto new_role = member_role->Record();
   if (revoke && admin_option_only) {
     auto edges = new_role->MemberOf();
     auto it = std::ranges::find(edges, role, &Membership::role);
@@ -366,7 +365,6 @@ void Catalog::ChangeDatabaseAcl(const AccessContext& ax, ObjectId database_id,
                                 AclMutator mutate) {
   JoinClusterGlobal(ax.context,
                     duckdb::DatabaseModificationType::CREATE_CATALOG_ENTRY);
-  absl::MutexLock lock{&_mutex};
   auto database = catalog::FindDatabase(ax.context, database_id);
   if (!database) [[unlikely]] {
     ThrowConcurrentlyDropped(database_id);
@@ -382,7 +380,6 @@ bool Catalog::DropRole(const AccessContext& ax, std::string_view role,
                        bool missing_ok) {
   JoinClusterGlobal(ax.context,
                     duckdb::DatabaseModificationType::DROP_CATALOG_ENTRY);
-  absl::MutexLock lock{&_mutex};
   RequireRoleAttribute(ax.context, ax.role, RoleOption::CreateRole, "drop role",
                        "Only roles with the CREATEROLE attribute and the ADMIN "
                        "option on the target roles may drop roles.");
@@ -426,7 +423,6 @@ void Catalog::DropDatabase(const AccessContext& ax, std::string_view name,
   JoinStoreTransaction(ax.context);
   JoinClusterGlobal(ax.context,
                     duckdb::DatabaseModificationType::DROP_CATALOG_ENTRY);
-  absl::MutexLock lock{&_mutex};
   auto database = catalog::FindDatabase(ax.context, name);
   if (!database) {
     THROW_SQL_ERROR(ERR_MSG("database \"", name, "\" does not exist"));

@@ -292,7 +292,6 @@ bool RenameFunctionObject(const catalog::AccessContext& ax,
 void AlterInvertedIndexOptions(
   const catalog::AccessContext& ax, const catalog::CreateIndexInfo& index,
   absl::AnyInvocable<void(catalog::InvertedIndexOptions&)> mutate) {
-  catalog::Catalog::MutationScope mutation{catalog::GetCatalog()};
   RequireIndexOwner(ax, index);
   const auto current =
     Find<SereneDBIndexEntry>(ax.context, index.GetSchemaId(), index.GetId());
@@ -389,7 +388,6 @@ void SetObjectComment(const catalog::AccessContext& ax, ObjectId database_id,
       if (relation.kind == duckdb::CatalogType::INDEX_ENTRY) {
         // An index keeps its comment in its own definition, not the entry
         // field duckdb's SET_COMMENT alter writes.
-        catalog::Catalog::MutationScope mutation{catalog::GetCatalog()};
         SetEntryComment(ax, duckdb::CatalogType::INDEX_ENTRY, schema_id, target,
                         comment);
         return;
@@ -1242,7 +1240,6 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateIndex(
   }
   const auto ax = catalog::ActingAs(*context);
   catalog::JoinStoreTransaction(context);
-  catalog::Catalog::MutationScope mutation{catalog::GetCatalog()};
   catalog::RequireOwner(context, ax.role, table.permissions,
                         pg::ToPgObjectTypeName(table.type),
                         table.name.GetIdentifierName());
@@ -1268,7 +1265,6 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateFunction(
     info.on_conflict == duckdb::OnCreateConflict::IGNORE_ON_CONFLICT;
   const auto function_name = info.GetFunctionName().GetIdentifierName();
 
-  catalog::Catalog::MutationScope mutation{catalog::GetCatalog()};
   const auto schema_id = RequireSchemaId(&context, role);
   const auto* existing = FindFunction(&context, schema_id, function_name);
 
@@ -1337,7 +1333,6 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateView(
   const bool if_not_exists =
     info.on_conflict == duckdb::OnCreateConflict::IGNORE_ON_CONFLICT;
 
-  catalog::Catalog::MutationScope mutation{catalog::GetCatalog()};
   const auto schema_id = RequireSchemaId(&context, role);
   const auto view_name = info.GetViewName().GetIdentifierName();
   const auto* existing =
@@ -1422,7 +1417,6 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateSequence(
     info.on_conflict == duckdb::OnCreateConflict::IGNORE_ON_CONFLICT;
 
   auto& context = transaction.GetContext();
-  catalog::Catalog::MutationScope mutation{catalog::GetCatalog()};
   const auto schema_id = RequireSchemaId(&context, role);
   if (FindRelation(&context, schema_id, options.name)) {
     if (if_not_exists) {
@@ -1443,9 +1437,8 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateSequence(
   auto definition =
     catalog::MakeSequenceInfo(id, schema_id, std::move(options));
   // The counter's seed rides the same frame as the definition, so a sequence
-  // is never durable without the value it starts from.
-  // Both under one scope: the record above is this write's own, and the entry
-  // must not append a second one.
+  // is never durable without the value it starts from. The record above is
+  // this write's own, and the entry must not append a second one.
   catalog::GetCatalog().RecordSequenceSeed(&context, catalog::IdOf(*definition),
                                            seed);
   auto placed = PutEntry(&context, /*old_name=*/{}, definition->Copy(), perm);
@@ -1486,7 +1479,6 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateType(
   const bool if_not_exists =
     info.on_conflict == duckdb::OnCreateConflict::IGNORE_ON_CONFLICT;
 
-  catalog::Catalog::MutationScope mutation{catalog::GetCatalog()};
   const auto schema_id = RequireSchemaId(&context, role);
   const auto type_name = info.GetTypeName().GetIdentifierName();
   if (Find<duckdb::TypeCatalogEntry>(&context, schema_id, type_name)) {

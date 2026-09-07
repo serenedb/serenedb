@@ -357,9 +357,9 @@ QUERY PLAN
 │ ╭─ And ────────────╮                              │
 │ ╰─────────┬────────╯                              │
 │           ├────────────────────────╮              │
-│ ╭─ Term ──┴────────╮  ╭─ Term ─────┴────────────╮ │
+│ ╭─ Terms ─┴────────╮  ╭─ Terms ────┴────────────╮ │
 │ │ Field: a(string) │  │ Field: (a || b)(string) │ │
-│ │ Value: foo       │  │ Value: foobaz           │ │
+│ │ Values: 'foo'    │  │ Values: 'foobaz'        │ │
 │ ╰──────────────────╯  ╰─────────────────────────╯ │
 │ Projections: id                                   │
 │ ~1 row                                            │

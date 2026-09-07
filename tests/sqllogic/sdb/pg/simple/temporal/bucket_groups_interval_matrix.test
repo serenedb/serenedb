@@ -1,0 +1,455 @@
+statement ok
+SET TimeZone = 'Europe/Berlin';
+
+statement ok
+CREATE TABLE iv AS SELECT TIMESTAMP '2025-03-29 12:00:00' + INTERVAL (i * 17) SECOND AS ts, (TIMESTAMP '2025-03-29 12:00:00' + INTERVAL (i * 17) SECOND)::TIMESTAMPTZ AS tstz, i AS v FROM range(20000) t(i);
+
+statement ok
+INSERT INTO iv VALUES (NULL, NULL, -1);
+
+statement ok
+CREATE TABLE ivw AS SELECT TIMESTAMP '2023-11-01 00:00:00' + INTERVAL (i * 3671) SECOND AS ts, (TIMESTAMP '2023-11-01 00:00:00' + INTERVAL (i * 3671) SECOND)::TIMESTAMPTZ AS tstz, i AS v FROM range(20000) t(i);
+
+statement ok
+INSERT INTO ivw VALUES (NULL, NULL, -1);
+
+statement ok
+CREATE TABLE ivn AS SELECT TIMESTAMP '2025-01-01 00:00:00' + INTERVAL (i) SECOND AS ts, (TIMESTAMP '2025-01-01 00:00:00' + INTERVAL (i) SECOND)::TIMESTAMPTZ AS tstz, i AS v FROM range(20000) t(i);
+
+statement ok
+INSERT INTO ivn VALUES (NULL, NULL, -1);
+
+statement ok
+SET disabled_optimizers = 'compressed_materialization';
+
+statement ok
+CREATE TABLE ref_iv AS
+SELECT 'iv time_bucket(INTERVAL ''10 seconds'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '10 seconds', ts) AS k, count(*) AS c, sum(v) AS s FROM iv GROUP BY 1)
+UNION ALL SELECT 'iv time_bucket(INTERVAL ''90 seconds'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '90 seconds', ts) AS k, count(*) AS c, sum(v) AS s FROM iv GROUP BY 1)
+UNION ALL SELECT 'iv time_bucket(INTERVAL ''7 minutes'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '7 minutes', ts) AS k, count(*) AS c, sum(v) AS s FROM iv GROUP BY 1)
+UNION ALL SELECT 'iv time_bucket(INTERVAL ''15 minutes'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '15 minutes', ts) AS k, count(*) AS c, sum(v) AS s FROM iv GROUP BY 1)
+UNION ALL SELECT 'iv time_bucket(INTERVAL ''45 minutes'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '45 minutes', ts) AS k, count(*) AS c, sum(v) AS s FROM iv GROUP BY 1)
+UNION ALL SELECT 'iv time_bucket(INTERVAL ''1 hour'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '1 hour', ts) AS k, count(*) AS c, sum(v) AS s FROM iv GROUP BY 1)
+UNION ALL SELECT 'iv time_bucket(INTERVAL ''3 hours'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '3 hours', ts) AS k, count(*) AS c, sum(v) AS s FROM iv GROUP BY 1)
+UNION ALL SELECT 'iv time_bucket(INTERVAL ''150 milliseconds'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '150 milliseconds', ts) AS k, count(*) AS c, sum(v) AS s FROM iv GROUP BY 1)
+UNION ALL SELECT 'ivw time_bucket(INTERVAL ''2 days'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '2 days', ts) AS k, count(*) AS c, sum(v) AS s FROM ivw GROUP BY 1)
+UNION ALL SELECT 'ivw time_bucket(INTERVAL ''1 month'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '1 month', ts) AS k, count(*) AS c, sum(v) AS s FROM ivw GROUP BY 1)
+UNION ALL SELECT 'ivw time_bucket(INTERVAL ''4 months'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '4 months', ts) AS k, count(*) AS c, sum(v) AS s FROM ivw GROUP BY 1)
+UNION ALL SELECT 'iv time_bucket(INTERVAL ''15 minutes'', ts, INTERVAL ''5 minutes'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '15 minutes', ts, INTERVAL '5 minutes') AS k, count(*) AS c, sum(v) AS s FROM iv GROUP BY 1)
+UNION ALL SELECT 'iv time_bucket(INTERVAL ''90 seconds'', ts, INTERVAL ''-20 seconds'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '90 seconds', ts, INTERVAL '-20 seconds') AS k, count(*) AS c, sum(v) AS s FROM iv GROUP BY 1)
+UNION ALL SELECT 'iv time_bucket(INTERVAL ''90 seconds'', ts, TIMESTAMP ''2025-01-01 00:00:07'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '90 seconds', ts, TIMESTAMP '2025-01-01 00:00:07') AS k, count(*) AS c, sum(v) AS s FROM iv GROUP BY 1)
+UNION ALL SELECT 'iv time_bucket(INTERVAL ''7 minutes'', ts, DATE ''2024-12-30'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '7 minutes', ts, DATE '2024-12-30') AS k, count(*) AS c, sum(v) AS s FROM iv GROUP BY 1)
+UNION ALL SELECT 'ivw time_bucket(INTERVAL ''5 months'', ts, TIMESTAMP ''2024-02-17 00:00:00'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '5 months', ts, TIMESTAMP '2024-02-17 00:00:00') AS k, count(*) AS c, sum(v) AS s FROM ivw GROUP BY 1)
+UNION ALL SELECT 'iv date_bin(INTERVAL ''90 seconds'', ts, TIMESTAMP ''2025-01-01 00:00:07'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_bin(INTERVAL '90 seconds', ts, TIMESTAMP '2025-01-01 00:00:07') AS k, count(*) AS c, sum(v) AS s FROM iv GROUP BY 1)
+UNION ALL SELECT 'iv date_bin(INTERVAL ''7 minutes'', ts, TIMESTAMP ''2024-12-31 23:58:00'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_bin(INTERVAL '7 minutes', ts, TIMESTAMP '2024-12-31 23:58:00') AS k, count(*) AS c, sum(v) AS s FROM iv GROUP BY 1)
+UNION ALL SELECT 'iv date_bin(INTERVAL ''1 hour 30 minutes'', ts, TIMESTAMP ''2025-01-01 00:00:00'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_bin(INTERVAL '1 hour 30 minutes', ts, TIMESTAMP '2025-01-01 00:00:00') AS k, count(*) AS c, sum(v) AS s FROM iv GROUP BY 1)
+UNION ALL SELECT 'ivn date_trunc(''second'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_trunc('second', ts) AS k, count(*) AS c, sum(v) AS s FROM ivn GROUP BY 1)
+UNION ALL SELECT 'iv date_trunc(''minute'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_trunc('minute', ts) AS k, count(*) AS c, sum(v) AS s FROM iv GROUP BY 1)
+UNION ALL SELECT 'iv date_trunc(''hour'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_trunc('hour', ts) AS k, count(*) AS c, sum(v) AS s FROM iv GROUP BY 1)
+UNION ALL SELECT 'iv floor(epoch(ts) / 900) * 900' AS shape, k::VARCHAR AS k, c, s FROM (SELECT floor(epoch(ts) / 900) * 900 AS k, count(*) AS c, sum(v) AS s FROM iv GROUP BY 1)
+UNION ALL SELECT 'iv epoch_ms(ts) // 60000' AS shape, k::VARCHAR AS k, c, s FROM (SELECT epoch_ms(ts) // 60000 AS k, count(*) AS c, sum(v) AS s FROM iv GROUP BY 1)
+UNION ALL SELECT 'iv to_timestamp(floor(epoch(ts) / 900) * 900)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT to_timestamp(floor(epoch(ts) / 900) * 900) AS k, count(*) AS c, sum(v) AS s FROM iv GROUP BY 1)
+UNION ALL SELECT 'iv time_bucket(INTERVAL (v % 3 + 1) MINUTE, ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL (v % 3 + 1) MINUTE, ts) AS k, count(*) AS c, sum(v) AS s FROM iv GROUP BY 1)
+UNION ALL SELECT 'iv time_bucket(INTERVAL ''90 seconds'', tstz)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '90 seconds', tstz) AS k, count(*) AS c, sum(v) AS s FROM iv GROUP BY 1)
+UNION ALL SELECT 'iv time_bucket(INTERVAL ''7 minutes'', tstz)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '7 minutes', tstz) AS k, count(*) AS c, sum(v) AS s FROM iv GROUP BY 1)
+UNION ALL SELECT 'iv time_bucket(INTERVAL ''15 minutes'', tstz)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '15 minutes', tstz) AS k, count(*) AS c, sum(v) AS s FROM iv GROUP BY 1)
+UNION ALL SELECT 'iv time_bucket(INTERVAL ''1 hour'', tstz)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '1 hour', tstz) AS k, count(*) AS c, sum(v) AS s FROM iv GROUP BY 1)
+UNION ALL SELECT 'ivw time_bucket(INTERVAL ''1 day'', tstz)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '1 day', tstz) AS k, count(*) AS c, sum(v) AS s FROM ivw GROUP BY 1)
+UNION ALL SELECT 'ivw time_bucket(INTERVAL ''1 month'', tstz)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '1 month', tstz) AS k, count(*) AS c, sum(v) AS s FROM ivw GROUP BY 1)
+UNION ALL SELECT 'iv time_bucket(INTERVAL ''15 minutes'', tstz, INTERVAL ''5 minutes'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '15 minutes', tstz, INTERVAL '5 minutes') AS k, count(*) AS c, sum(v) AS s FROM iv GROUP BY 1)
+UNION ALL SELECT 'iv time_bucket(INTERVAL ''90 seconds'', tstz, TIMESTAMPTZ ''2025-01-01 00:00:07+00'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '90 seconds', tstz, TIMESTAMPTZ '2025-01-01 00:00:07+00') AS k, count(*) AS c, sum(v) AS s FROM iv GROUP BY 1)
+UNION ALL SELECT 'iv date_trunc(''minute'', tstz)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_trunc('minute', tstz) AS k, count(*) AS c, sum(v) AS s FROM iv GROUP BY 1)
+UNION ALL SELECT 'iv date_trunc(''hour'', tstz)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_trunc('hour', tstz) AS k, count(*) AS c, sum(v) AS s FROM iv GROUP BY 1)
+UNION ALL SELECT 'iv time_bucket(INTERVAL ''15 minutes'', tstz, ''America/Havana'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '15 minutes', tstz, 'America/Havana') AS k, count(*) AS c, sum(v) AS s FROM iv GROUP BY 1)
+UNION ALL SELECT 'iv time_bucket(INTERVAL ''45 minutes'', tstz, ''Australia/Lord_Howe'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '45 minutes', tstz, 'Australia/Lord_Howe') AS k, count(*) AS c, sum(v) AS s FROM iv GROUP BY 1)
+UNION ALL SELECT 'ivw time_bucket(INTERVAL ''1 day'', tstz, ''America/Havana'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '1 day', tstz, 'America/Havana') AS k, count(*) AS c, sum(v) AS s FROM ivw GROUP BY 1)
+UNION ALL SELECT 'ivw time_bucket(INTERVAL ''1 month'', tstz, ''Pacific/Kiritimati'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '1 month', tstz, 'Pacific/Kiritimati') AS k, count(*) AS c, sum(v) AS s FROM ivw GROUP BY 1)
+UNION ALL SELECT 'iv floor(epoch(tstz) / 900) * 900' AS shape, k::VARCHAR AS k, c, s FROM (SELECT floor(epoch(tstz) / 900) * 900 AS k, count(*) AS c, sum(v) AS s FROM iv GROUP BY 1)
+;
+
+statement ok
+SET disabled_optimizers = '';
+
+statement ok
+CREATE TABLE got_iv AS
+SELECT 'iv time_bucket(INTERVAL ''10 seconds'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '10 seconds', ts) AS k, count(*) AS c, sum(v) AS s FROM iv GROUP BY 1)
+UNION ALL SELECT 'iv time_bucket(INTERVAL ''90 seconds'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '90 seconds', ts) AS k, count(*) AS c, sum(v) AS s FROM iv GROUP BY 1)
+UNION ALL SELECT 'iv time_bucket(INTERVAL ''7 minutes'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '7 minutes', ts) AS k, count(*) AS c, sum(v) AS s FROM iv GROUP BY 1)
+UNION ALL SELECT 'iv time_bucket(INTERVAL ''15 minutes'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '15 minutes', ts) AS k, count(*) AS c, sum(v) AS s FROM iv GROUP BY 1)
+UNION ALL SELECT 'iv time_bucket(INTERVAL ''45 minutes'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '45 minutes', ts) AS k, count(*) AS c, sum(v) AS s FROM iv GROUP BY 1)
+UNION ALL SELECT 'iv time_bucket(INTERVAL ''1 hour'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '1 hour', ts) AS k, count(*) AS c, sum(v) AS s FROM iv GROUP BY 1)
+UNION ALL SELECT 'iv time_bucket(INTERVAL ''3 hours'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '3 hours', ts) AS k, count(*) AS c, sum(v) AS s FROM iv GROUP BY 1)
+UNION ALL SELECT 'iv time_bucket(INTERVAL ''150 milliseconds'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '150 milliseconds', ts) AS k, count(*) AS c, sum(v) AS s FROM iv GROUP BY 1)
+UNION ALL SELECT 'ivw time_bucket(INTERVAL ''2 days'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '2 days', ts) AS k, count(*) AS c, sum(v) AS s FROM ivw GROUP BY 1)
+UNION ALL SELECT 'ivw time_bucket(INTERVAL ''1 month'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '1 month', ts) AS k, count(*) AS c, sum(v) AS s FROM ivw GROUP BY 1)
+UNION ALL SELECT 'ivw time_bucket(INTERVAL ''4 months'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '4 months', ts) AS k, count(*) AS c, sum(v) AS s FROM ivw GROUP BY 1)
+UNION ALL SELECT 'iv time_bucket(INTERVAL ''15 minutes'', ts, INTERVAL ''5 minutes'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '15 minutes', ts, INTERVAL '5 minutes') AS k, count(*) AS c, sum(v) AS s FROM iv GROUP BY 1)
+UNION ALL SELECT 'iv time_bucket(INTERVAL ''90 seconds'', ts, INTERVAL ''-20 seconds'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '90 seconds', ts, INTERVAL '-20 seconds') AS k, count(*) AS c, sum(v) AS s FROM iv GROUP BY 1)
+UNION ALL SELECT 'iv time_bucket(INTERVAL ''90 seconds'', ts, TIMESTAMP ''2025-01-01 00:00:07'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '90 seconds', ts, TIMESTAMP '2025-01-01 00:00:07') AS k, count(*) AS c, sum(v) AS s FROM iv GROUP BY 1)
+UNION ALL SELECT 'iv time_bucket(INTERVAL ''7 minutes'', ts, DATE ''2024-12-30'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '7 minutes', ts, DATE '2024-12-30') AS k, count(*) AS c, sum(v) AS s FROM iv GROUP BY 1)
+UNION ALL SELECT 'ivw time_bucket(INTERVAL ''5 months'', ts, TIMESTAMP ''2024-02-17 00:00:00'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '5 months', ts, TIMESTAMP '2024-02-17 00:00:00') AS k, count(*) AS c, sum(v) AS s FROM ivw GROUP BY 1)
+UNION ALL SELECT 'iv date_bin(INTERVAL ''90 seconds'', ts, TIMESTAMP ''2025-01-01 00:00:07'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_bin(INTERVAL '90 seconds', ts, TIMESTAMP '2025-01-01 00:00:07') AS k, count(*) AS c, sum(v) AS s FROM iv GROUP BY 1)
+UNION ALL SELECT 'iv date_bin(INTERVAL ''7 minutes'', ts, TIMESTAMP ''2024-12-31 23:58:00'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_bin(INTERVAL '7 minutes', ts, TIMESTAMP '2024-12-31 23:58:00') AS k, count(*) AS c, sum(v) AS s FROM iv GROUP BY 1)
+UNION ALL SELECT 'iv date_bin(INTERVAL ''1 hour 30 minutes'', ts, TIMESTAMP ''2025-01-01 00:00:00'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_bin(INTERVAL '1 hour 30 minutes', ts, TIMESTAMP '2025-01-01 00:00:00') AS k, count(*) AS c, sum(v) AS s FROM iv GROUP BY 1)
+UNION ALL SELECT 'ivn date_trunc(''second'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_trunc('second', ts) AS k, count(*) AS c, sum(v) AS s FROM ivn GROUP BY 1)
+UNION ALL SELECT 'iv date_trunc(''minute'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_trunc('minute', ts) AS k, count(*) AS c, sum(v) AS s FROM iv GROUP BY 1)
+UNION ALL SELECT 'iv date_trunc(''hour'', ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_trunc('hour', ts) AS k, count(*) AS c, sum(v) AS s FROM iv GROUP BY 1)
+UNION ALL SELECT 'iv floor(epoch(ts) / 900) * 900' AS shape, k::VARCHAR AS k, c, s FROM (SELECT floor(epoch(ts) / 900) * 900 AS k, count(*) AS c, sum(v) AS s FROM iv GROUP BY 1)
+UNION ALL SELECT 'iv epoch_ms(ts) // 60000' AS shape, k::VARCHAR AS k, c, s FROM (SELECT epoch_ms(ts) // 60000 AS k, count(*) AS c, sum(v) AS s FROM iv GROUP BY 1)
+UNION ALL SELECT 'iv to_timestamp(floor(epoch(ts) / 900) * 900)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT to_timestamp(floor(epoch(ts) / 900) * 900) AS k, count(*) AS c, sum(v) AS s FROM iv GROUP BY 1)
+UNION ALL SELECT 'iv time_bucket(INTERVAL (v % 3 + 1) MINUTE, ts)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL (v % 3 + 1) MINUTE, ts) AS k, count(*) AS c, sum(v) AS s FROM iv GROUP BY 1)
+UNION ALL SELECT 'iv time_bucket(INTERVAL ''90 seconds'', tstz)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '90 seconds', tstz) AS k, count(*) AS c, sum(v) AS s FROM iv GROUP BY 1)
+UNION ALL SELECT 'iv time_bucket(INTERVAL ''7 minutes'', tstz)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '7 minutes', tstz) AS k, count(*) AS c, sum(v) AS s FROM iv GROUP BY 1)
+UNION ALL SELECT 'iv time_bucket(INTERVAL ''15 minutes'', tstz)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '15 minutes', tstz) AS k, count(*) AS c, sum(v) AS s FROM iv GROUP BY 1)
+UNION ALL SELECT 'iv time_bucket(INTERVAL ''1 hour'', tstz)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '1 hour', tstz) AS k, count(*) AS c, sum(v) AS s FROM iv GROUP BY 1)
+UNION ALL SELECT 'ivw time_bucket(INTERVAL ''1 day'', tstz)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '1 day', tstz) AS k, count(*) AS c, sum(v) AS s FROM ivw GROUP BY 1)
+UNION ALL SELECT 'ivw time_bucket(INTERVAL ''1 month'', tstz)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '1 month', tstz) AS k, count(*) AS c, sum(v) AS s FROM ivw GROUP BY 1)
+UNION ALL SELECT 'iv time_bucket(INTERVAL ''15 minutes'', tstz, INTERVAL ''5 minutes'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '15 minutes', tstz, INTERVAL '5 minutes') AS k, count(*) AS c, sum(v) AS s FROM iv GROUP BY 1)
+UNION ALL SELECT 'iv time_bucket(INTERVAL ''90 seconds'', tstz, TIMESTAMPTZ ''2025-01-01 00:00:07+00'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '90 seconds', tstz, TIMESTAMPTZ '2025-01-01 00:00:07+00') AS k, count(*) AS c, sum(v) AS s FROM iv GROUP BY 1)
+UNION ALL SELECT 'iv date_trunc(''minute'', tstz)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_trunc('minute', tstz) AS k, count(*) AS c, sum(v) AS s FROM iv GROUP BY 1)
+UNION ALL SELECT 'iv date_trunc(''hour'', tstz)' AS shape, k::VARCHAR AS k, c, s FROM (SELECT date_trunc('hour', tstz) AS k, count(*) AS c, sum(v) AS s FROM iv GROUP BY 1)
+UNION ALL SELECT 'iv time_bucket(INTERVAL ''15 minutes'', tstz, ''America/Havana'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '15 minutes', tstz, 'America/Havana') AS k, count(*) AS c, sum(v) AS s FROM iv GROUP BY 1)
+UNION ALL SELECT 'iv time_bucket(INTERVAL ''45 minutes'', tstz, ''Australia/Lord_Howe'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '45 minutes', tstz, 'Australia/Lord_Howe') AS k, count(*) AS c, sum(v) AS s FROM iv GROUP BY 1)
+UNION ALL SELECT 'ivw time_bucket(INTERVAL ''1 day'', tstz, ''America/Havana'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '1 day', tstz, 'America/Havana') AS k, count(*) AS c, sum(v) AS s FROM ivw GROUP BY 1)
+UNION ALL SELECT 'ivw time_bucket(INTERVAL ''1 month'', tstz, ''Pacific/Kiritimati'')' AS shape, k::VARCHAR AS k, c, s FROM (SELECT time_bucket(INTERVAL '1 month', tstz, 'Pacific/Kiritimati') AS k, count(*) AS c, sum(v) AS s FROM ivw GROUP BY 1)
+UNION ALL SELECT 'iv floor(epoch(tstz) / 900) * 900' AS shape, k::VARCHAR AS k, c, s FROM (SELECT floor(epoch(tstz) / 900) * 900 AS k, count(*) AS c, sum(v) AS s FROM iv GROUP BY 1)
+;
+
+query
+SELECT count(*) AS rows, count(DISTINCT shape) AS shapes FROM ref_iv;
+----
+rows	shapes
+114433	41
+
+query
+SELECT count(*) AS ref_minus_got FROM (SELECT * FROM ref_iv EXCEPT ALL SELECT * FROM got_iv);
+----
+ref_minus_got
+0
+
+query
+SELECT count(*) AS got_minus_ref FROM (SELECT * FROM got_iv EXCEPT ALL SELECT * FROM ref_iv);
+----
+got_minus_ref
+0
+
+query
+EXPLAIN SELECT time_bucket(INTERVAL '7 minutes', ts) AS b, count(*) AS c FROM iv GROUP BY 1;
+----
+QUERY PLAN
+╭─ PROJECTION ──────────────────────────────────────────────╮
+│ Projections:                                              │
+│ __internal_date_trunc_unbucket(#0, 420000000, 360000000), │
+│ #1                                                        │
+│ ~10,000 rows                                              │
+╰─────────────────────────────┬─────────────────────────────╯
+╭─ PERFECT_HASH_GROUP_BY ─────┴─────────────────────────────╮
+│ Groups: #0                                                │
+│ Aggregates: count_star()                                  │
+│ ~10,000 rows                                              │
+╰─────────────────────────────┬─────────────────────────────╯
+╭─ PROJECTION ────────────────┴─────────────────────────────╮
+│ Projections:                                              │
+│ __internal_date_trunc_bucket(ts, 420000000, 360000000)    │
+│ ~20,001 rows                                              │
+╰─────────────────────────────┬─────────────────────────────╯
+╭─ SEQ_SCAN ──────────────────┴─────────────────────────────╮
+│ Table: iv                                                 │
+│ Type: Sequential Scan                                     │
+│ Projections: ts                                           │
+│ ~20,001 rows                                              │
+╰───────────────────────────────────────────────────────────╯
+
+query
+EXPLAIN SELECT time_bucket(INTERVAL '90 seconds', ts, TIMESTAMP '2025-01-01 00:00:07') AS b, count(*) AS c FROM iv GROUP BY 1;
+----
+QUERY PLAN
+╭─ PROJECTION ───────────────────────────────────────────╮
+│ Projections:                                           │
+│ __internal_date_trunc_unbucket(#0, 90000000, 7000000), │
+│ #1                                                     │
+│ ~10,000 rows                                           │
+╰────────────────────────────┬───────────────────────────╯
+╭─ PERFECT_HASH_GROUP_BY ────┴───────────────────────────╮
+│ Groups: #0                                             │
+│ Aggregates: count_star()                               │
+│ ~10,000 rows                                           │
+╰────────────────────────────┬───────────────────────────╯
+╭─ PROJECTION ───────────────┴───────────────────────────╮
+│ Projections:                                           │
+│ __internal_date_trunc_bucket(ts, 90000000, 7000000)    │
+│ ~20,001 rows                                           │
+╰────────────────────────────┬───────────────────────────╯
+╭─ SEQ_SCAN ─────────────────┴───────────────────────────╮
+│ Table: iv                                              │
+│ Type: Sequential Scan                                  │
+│ Projections: ts                                        │
+│ ~20,001 rows                                           │
+╰────────────────────────────────────────────────────────╯
+
+query
+EXPLAIN SELECT time_bucket(INTERVAL '15 minutes', ts, INTERVAL '5 minutes') AS b, count(*) AS c FROM iv GROUP BY 1;
+----
+QUERY PLAN
+╭─ PROJECTION ──────────────────────────────────────────────╮
+│ Projections:                                              │
+│ __internal_date_trunc_unbucket(#0, 900000000, 300000000), │
+│ #1                                                        │
+│ ~10,000 rows                                              │
+╰─────────────────────────────┬─────────────────────────────╯
+╭─ PERFECT_HASH_GROUP_BY ─────┴─────────────────────────────╮
+│ Groups: #0                                                │
+│ Aggregates: count_star()                                  │
+│ ~10,000 rows                                              │
+╰─────────────────────────────┬─────────────────────────────╯
+╭─ PROJECTION ────────────────┴─────────────────────────────╮
+│ Projections:                                              │
+│ __internal_date_trunc_bucket(ts, 900000000, 300000000)    │
+│ ~20,001 rows                                              │
+╰─────────────────────────────┬─────────────────────────────╯
+╭─ SEQ_SCAN ──────────────────┴─────────────────────────────╮
+│ Table: iv                                                 │
+│ Type: Sequential Scan                                     │
+│ Projections: ts                                           │
+│ ~20,001 rows                                              │
+╰───────────────────────────────────────────────────────────╯
+
+query
+EXPLAIN SELECT date_bin(INTERVAL '90 seconds', ts, TIMESTAMP '2025-01-01 00:00:07') AS b, count(*) AS c FROM iv GROUP BY 1;
+----
+QUERY PLAN
+╭─ PROJECTION ────────────────────────────────────────────────────╮
+│ Projections:                                                    │
+│ __internal_date_trunc_unbucket(#0, 90000000, 1735689607000000), │
+│ #1                                                              │
+│ ~10,000 rows                                                    │
+╰────────────────────────────────┬────────────────────────────────╯
+╭─ PERFECT_HASH_GROUP_BY ────────┴────────────────────────────────╮
+│ Groups: #0                                                      │
+│ Aggregates: count_star()                                        │
+│ ~10,000 rows                                                    │
+╰────────────────────────────────┬────────────────────────────────╯
+╭─ PROJECTION ───────────────────┴────────────────────────────────╮
+│ Projections:                                                    │
+│ __internal_date_trunc_bucket(ts, 90000000, 1735689607000000)    │
+│ ~20,001 rows                                                    │
+╰────────────────────────────────┬────────────────────────────────╯
+╭─ SEQ_SCAN ─────────────────────┴────────────────────────────────╮
+│ Table: iv                                                       │
+│ Type: Sequential Scan                                           │
+│ Projections: ts                                                 │
+│ ~20,001 rows                                                    │
+╰─────────────────────────────────────────────────────────────────╯
+
+query
+EXPLAIN SELECT date_trunc('second', ts) AS b, count(*) AS c FROM ivn GROUP BY 1;
+----
+QUERY PLAN
+╭─ PROJECTION ────────────────────────────────────╮
+│ Projections:                                    │
+│ __internal_date_trunc_unbucket(#0, 1000000, 0), │
+│ #1                                              │
+│ ~10,000 rows                                    │
+╰────────────────────────┬────────────────────────╯
+╭─ PERFECT_HASH_GROUP_BY ┴────────────────────────╮
+│ Groups: #0                                      │
+│ Aggregates: count_star()                        │
+│ ~10,000 rows                                    │
+╰────────────────────────┬────────────────────────╯
+╭─ PROJECTION ───────────┴────────────────────────╮
+│ Projections:                                    │
+│ __internal_date_trunc_bucket(ts, 1000000, 0)    │
+│ ~20,001 rows                                    │
+╰────────────────────────┬────────────────────────╯
+╭─ SEQ_SCAN ─────────────┴────────────────────────╮
+│ Table: ivn                                      │
+│ Type: Sequential Scan                           │
+│ Projections: ts                                 │
+│ ~20,001 rows                                    │
+╰─────────────────────────────────────────────────╯
+
+query
+EXPLAIN SELECT date_trunc('second', ts) AS b, count(*) AS c FROM ivw GROUP BY 1;
+----
+QUERY PLAN
+╭─ HASH_GROUP_BY ──────────╮
+│ Groups: #0               │
+│ Aggregates: count_star() │
+│ ~10,000 rows             │
+╰─────────────┬────────────╯
+╭─ PROJECTION ┴────────────╮
+│ Projections: b           │
+│ ~20,001 rows             │
+╰─────────────┬────────────╯
+╭─ SEQ_SCAN ──┴────────────╮
+│ Table: ivw               │
+│ Type: Sequential Scan    │
+│ Projections: ts          │
+│ ~20,001 rows             │
+╰──────────────────────────╯
+
+query
+EXPLAIN SELECT time_bucket(INTERVAL (v % 3 + 1) MINUTE, ts) AS b, count(*) AS c FROM iv GROUP BY 1;
+----
+QUERY PLAN
+╭─ HASH_GROUP_BY ──────────╮
+│ Groups: #0               │
+│ Aggregates: count_star() │
+│ ~10,000 rows             │
+╰─────────────┬────────────╯
+╭─ PROJECTION ┴────────────╮
+│ Projections: b           │
+│ ~20,001 rows             │
+╰─────────────┬────────────╯
+╭─ SEQ_SCAN ──┴────────────╮
+│ Table: iv                │
+│ Type: Sequential Scan    │
+│ Projections: v, ts       │
+│ ~20,001 rows             │
+╰──────────────────────────╯
+
+query
+EXPLAIN SELECT time_bucket(INTERVAL '45 minutes', tstz) AS b, count(*) AS c FROM iv GROUP BY 1;
+----
+QUERY PLAN
+╭─ PROJECTION ────────────────────────────────────────────────────────╮
+│ Projections:                                                        │
+│ __internal_date_trunc_unbucket_tz(#0, 2700000000, 946857600000000), │
+│ #1                                                                  │
+│ ~10,000 rows                                                        │
+╰──────────────────────────────────┬──────────────────────────────────╯
+╭─ PERFECT_HASH_GROUP_BY ──────────┴──────────────────────────────────╮
+│ Groups: #0                                                          │
+│ Aggregates: count_star()                                            │
+│ ~10,000 rows                                                        │
+╰──────────────────────────────────┬──────────────────────────────────╯
+╭─ PROJECTION ─────────────────────┴──────────────────────────────────╮
+│ Projections:                                                        │
+│ __internal_date_trunc_bucket(tstz, 2700000000, 946857600000000)     │
+│ ~20,001 rows                                                        │
+╰──────────────────────────────────┬──────────────────────────────────╯
+╭─ SEQ_SCAN ───────────────────────┴──────────────────────────────────╮
+│ Table: iv                                                           │
+│ Type: Sequential Scan                                               │
+│ Projections: tstz                                                   │
+│ ~20,001 rows                                                        │
+╰─────────────────────────────────────────────────────────────────────╯
+
+statement error db error: ERROR: Month intervals cannot have day or time component
+SELECT time_bucket(INTERVAL '1 month 2 hours', ts) AS b, count(*) AS c FROM ivw GROUP BY 1;
+
+statement error db error: ERROR: Period must be greater than 0
+SELECT time_bucket(INTERVAL '0 seconds', ts) AS b, count(*) AS c FROM iv GROUP BY 1;
+
+statement error db error: ERROR: Period must be greater than 0
+SELECT time_bucket(INTERVAL '-5 minutes', ts) AS b, count(*) AS c FROM iv GROUP BY 1;
+
+statement error db error: ERROR: timestamps cannot be binned into intervals containing months or years
+SELECT date_bin(INTERVAL '1 month', ts, TIMESTAMP '2025-01-01 00:00:00') AS b, count(*) AS c FROM iv GROUP BY 1;
+
+statement error db error: ERROR: stride must be greater than zero
+SELECT date_bin(INTERVAL '0 seconds', ts, TIMESTAMP '2025-01-01 00:00:00') AS b, count(*) AS c FROM iv GROUP BY 1;
+
+statement ok
+SET TimeZone = 'Asia/Kolkata';
+
+query
+EXPLAIN SELECT date_trunc('hour', tstz) AS b, count(*) AS c FROM iv GROUP BY 1;
+----
+QUERY PLAN
+╭─ HASH_GROUP_BY ──────────╮
+│ Groups: #0               │
+│ Aggregates: count_star() │
+│ ~10,000 rows             │
+╰─────────────┬────────────╯
+╭─ PROJECTION ┴────────────╮
+│ Projections: b           │
+│ ~20,001 rows             │
+╰─────────────┬────────────╯
+╭─ SEQ_SCAN ──┴────────────╮
+│ Table: iv                │
+│ Type: Sequential Scan    │
+│ Projections: tstz        │
+│ ~20,001 rows             │
+╰──────────────────────────╯
+
+query
+EXPLAIN SELECT time_bucket(INTERVAL '30 minutes', tstz) AS b, count(*) AS c FROM iv GROUP BY 1;
+----
+QUERY PLAN
+╭─ PROJECTION ────────────────────────────────────────────────────────╮
+│ Projections:                                                        │
+│ __internal_date_trunc_unbucket_tz(#0, 1800000000, 946857600000000), │
+│ #1                                                                  │
+│ ~10,000 rows                                                        │
+╰──────────────────────────────────┬──────────────────────────────────╯
+╭─ PERFECT_HASH_GROUP_BY ──────────┴──────────────────────────────────╮
+│ Groups: #0                                                          │
+│ Aggregates: count_star()                                            │
+│ ~10,000 rows                                                        │
+╰──────────────────────────────────┬──────────────────────────────────╯
+╭─ PROJECTION ─────────────────────┴──────────────────────────────────╮
+│ Projections:                                                        │
+│ __internal_date_trunc_bucket(tstz, 1800000000, 946857600000000)     │
+│ ~20,001 rows                                                        │
+╰──────────────────────────────────┬──────────────────────────────────╯
+╭─ SEQ_SCAN ───────────────────────┴──────────────────────────────────╮
+│ Table: iv                                                           │
+│ Type: Sequential Scan                                               │
+│ Projections: tstz                                                   │
+│ ~20,001 rows                                                        │
+╰─────────────────────────────────────────────────────────────────────╯
+
+statement ok
+SET TimeZone = 'Australia/Lord_Howe';
+
+query
+EXPLAIN SELECT time_bucket(INTERVAL '30 minutes', tstz) AS b, count(*) AS c FROM iv GROUP BY 1;
+----
+QUERY PLAN
+╭─ PROJECTION ────────────────────────────────────────────────────────╮
+│ Projections:                                                        │
+│ __internal_date_trunc_unbucket_tz(#0, 1800000000, 946857600000000), │
+│ #1                                                                  │
+│ ~10,000 rows                                                        │
+╰──────────────────────────────────┬──────────────────────────────────╯
+╭─ PERFECT_HASH_GROUP_BY ──────────┴──────────────────────────────────╮
+│ Groups: #0                                                          │
+│ Aggregates: count_star()                                            │
+│ ~10,000 rows                                                        │
+╰──────────────────────────────────┬──────────────────────────────────╯
+╭─ PROJECTION ─────────────────────┴──────────────────────────────────╮
+│ Projections:                                                        │
+│ __internal_date_trunc_bucket(tstz, 1800000000, 946857600000000)     │
+│ ~20,001 rows                                                        │
+╰──────────────────────────────────┬──────────────────────────────────╯
+╭─ SEQ_SCAN ───────────────────────┴──────────────────────────────────╮
+│ Table: iv                                                           │
+│ Type: Sequential Scan                                               │
+│ Projections: tstz                                                   │
+│ ~20,001 rows                                                        │
+╰─────────────────────────────────────────────────────────────────────╯
+
+statement ok
+SET TimeZone = 'Europe/Berlin';
+
+query
+SELECT time_bucket(INTERVAL '90 minutes', TIMESTAMPTZ '2025-03-30 00:30:00+00')::VARCHAR AS spring, time_bucket(INTERVAL '90 minutes', TIMESTAMPTZ '2025-10-26 00:30:00+00')::VARCHAR AS fall, time_bucket(INTERVAL '7 minutes', TIMESTAMP '2025-03-29 12:03:00')::VARCHAR AS naive, date_bin(INTERVAL '90 seconds', TIMESTAMP '2025-03-29 12:03:00', TIMESTAMP '2025-01-01 00:00:07')::VARCHAR AS binned;
+----
+spring	fall	naive	binned
+2025-03-30 01:00:00+01	2025-10-26 02:00:00+02	2025-03-29 11:57:00	2025-03-29 12:01:37
+
+query
+SELECT count(*) AS buckets, min(b)::VARCHAR AS first, max(b)::VARCHAR AS last FROM (SELECT time_bucket(INTERVAL '7 minutes', ts) AS b FROM iv GROUP BY 1);
+----
+buckets	first	last
+811	2025-03-29 11:57:00	2025-04-02 10:20:00
+
+query
+SELECT count(*) AS buckets FROM (SELECT time_bucket(INTERVAL '15 minutes', tstz, 'America/Havana') AS b FROM iv GROUP BY 1);
+----
+buckets
+375
+
+statement ok
+SET TimeZone = 'Etc/UTC';

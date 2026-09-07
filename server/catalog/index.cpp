@@ -974,8 +974,14 @@ duckdb::unique_ptr<Index> NewInvertedIndex(
     ApplyOpclassToEntry(context, c, c.name, c.GetColumn().type, database_id,
                         schema_name, index_col);
   }
-  for (auto& [_, entry] : entries) {
-    EnsureId(entry.null_field_id);
+  std::vector<irs::field_id> null_order;
+  null_order.reserve(entries.size());
+  for (const auto& [fid, _] : entries) {
+    null_order.push_back(fid);
+  }
+  absl::c_sort(null_order);
+  for (const auto fid : null_order) {
+    EnsureId(entries.at(fid).null_field_id);
   }
   return duckdb::make_uniq<InvertedIndex>(
     schema_id, id, relation_id, name, std::string{}, std::move(key_columns),

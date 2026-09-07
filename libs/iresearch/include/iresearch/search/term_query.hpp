@@ -22,27 +22,34 @@
 
 #pragma once
 
-#include "iresearch/search/filter.hpp"
+#include "iresearch/search/query_builder_impl.hpp"
 #include "iresearch/search/states/term_state.hpp"
 
 namespace irs {
 
-// Compiled query suitable for filters with a single term like "by_term"
-class TermQuery : public QueryBuilder {
+class TermQuery : public QueryBuilderImpl<TermQuery> {
  public:
-  explicit TermQuery(const SubReader& segment, const TermReader* reader,
-                     const PostingMeta& cookie, score_t boost);
-
-  DocIterator::ptr Execute(const ExecutionContext& ctx,
-                           const StatsBuffer& stats) const final;
+  TermQuery(const SubReader& segment, const TermReader* reader,
+            const PostingMeta& cookie, score_t boost,
+            search::StatsRecord stats);
 
   void Visit(PreparedStateVisitor&, score_t boost) const final;
 
   score_t Boost() const noexcept final { return _boost; }
 
+  void SetBoost(score_t value) noexcept final { _boost = value; }
+
+  const TermState& State() const noexcept { return _state; }
+
  private:
   TermState _state;
   score_t _boost;
 };
+
+QueryBuilder::ptr MakeTermQuery(IResourceManager& memory,
+                                const SubReader& segment,
+                                const TermReader* reader,
+                                const PostingMeta& meta, score_t boost,
+                                search::StatsRecord stats = {});
 
 }  // namespace irs

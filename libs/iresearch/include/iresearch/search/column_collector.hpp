@@ -42,10 +42,6 @@ class ColumnArgsFetcher {
   }
   ~ColumnArgsFetcher() { Free(); }
 
-  // Caches the norm reader for `field`. The first call materialises the
-  // per-doc norm scratch buffer; subsequent calls hit the cache. Returns
-  // a pointer to the scratch buffer the Fetch* methods fill, or nullptr
-  // when `reader` is empty.
   const uint32_t* AddNorms(field_id field, NormReader::ptr reader) {
     if (!reader) {
       return nullptr;

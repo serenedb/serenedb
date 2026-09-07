@@ -21,18 +21,21 @@
 #include <algorithm>
 #include <vector>
 
+#include "basics/down_cast.h"
 #include "filter_test_case_base.hpp"
 #include "formats/column/test_cs_helpers.hpp"
 #include "index/doc_generator.hpp"
 #include "iresearch/search/all_filter.hpp"
 #include "iresearch/search/boolean_filter.hpp"
+#include "iresearch/search/boolean_query.hpp"
 #include "iresearch/search/levenshtein_filter.hpp"
+#include "iresearch/search/multiterm_query.hpp"
 #include "iresearch/search/ngram_similarity_filter.hpp"
 #include "iresearch/search/phrase_filter.hpp"
 #include "iresearch/search/prefix_filter.hpp"
 #include "iresearch/search/range_filter.hpp"
 #include "iresearch/search/term_filter.hpp"
-#include "iresearch/search/terms_filter.hpp"
+#include "iresearch/search/term_set.hpp"
 
 namespace {
 
@@ -71,16 +74,29 @@ void FillPrefix(irs::ByPrefix& q, std::string_view field, std::string_view term,
   q.mutable_options()->scored_terms_limit = scored_terms_limit;
 }
 
-irs::ByTerms MakeTerms(
+irs::TermClause MakeTermClause(std::string_view field, std::string_view term) {
+  return {.field = tests::FieldIdFor(field), .term = irs::bstring{Bytes(term)}};
+}
+
+irs::Filter::ptr MakePrefixPtr(std::string_view field, std::string_view term,
+                               size_t scored_terms_limit) {
+  auto q = std::make_unique<irs::ByPrefix>();
+  FillPrefix(*q, field, term, scored_terms_limit);
+  return q;
+}
+
+irs::BooleanFilter MakeTerms(
   std::string_view field,
   const std::vector<std::pair<std::string_view, irs::score_t>>& terms,
   size_t min_match) {
-  irs::ByTerms q;
-  *q.mutable_field_id() = tests::FieldIdFor(field);
-  q.mutable_options()->min_match = min_match;
+  irs::BooleanFilter q;
   for (const auto& [term, boost] : terms) {
-    q.mutable_options()->terms.emplace(Bytes(term), boost);
+    q.Add(irs::TermClause{.field = tests::FieldIdFor(field),
+                          .term = irs::bstring{Bytes(term)},
+                          .boost = boost},
+          irs::Occur::Should);
   }
+  q.SetMinShouldMatch(static_cast<uint32_t>(min_match));
   return q;
 }
 
@@ -105,76 +121,118 @@ irs::ByRange MakeRange(std::string_view field, std::string_view min,
   return q;
 }
 
-void AssertStatsEqual(const irs::StatsBuffer& lhs, const irs::StatsBuffer& rhs,
-                      bool ordered_stats = true) {
-  ASSERT_EQ(lhs.HasScorer(), rhs.HasScorer());
+struct StatsEntry {
+  const irs::Scorer* scorer;
+  bool scored;
+  irs::bstring bytes;
 
-  const auto& l = lhs.GetAllStats();
-  const auto& r = rhs.GetAllStats();
-  ASSERT_EQ(l.size(), r.size());
-  if (ordered_stats) {
-    for (size_t i = 0, n = l.size(); i < n; ++i) {
-      ASSERT_EQ(l[i], r[i]);
+  bool operator==(const StatsEntry&) const = default;
+};
+
+using StatsDump = std::vector<StatsEntry>;
+
+void DumpRecord(const irs::search::StatsRecord& record, StatsDump& out) {
+  StatsEntry entry{.scorer = record.scorer, .scored = record.stats != nullptr};
+  if (entry.scored) {
+    ASSERT_NE(nullptr, record.scorer);
+    entry.bytes.assign(record.stats,
+                       record.stats + record.scorer->stats_size());
+  }
+  out.emplace_back(std::move(entry));
+}
+
+void DumpQuery(const irs::QueryBuilder& query, StatsDump& out) {
+  ASSERT_NO_FATAL_FAILURE(DumpRecord(query.Stats(), out));
+  switch (query.Kind()) {
+    case irs::QueryKind::Boolean: {
+      const auto& boolean = sdb::basics::downCast<irs::BooleanQuery>(query);
+      for (const auto occur : irs::kAllOccur) {
+        const auto& bucket = boolean.Bucket(occur);
+        for (const auto& clause : bucket.postings) {
+          ASSERT_NO_FATAL_FAILURE(DumpRecord(clause.stats, out));
+        }
+        for (const auto& clause : bucket.all_docs) {
+          ASSERT_NO_FATAL_FAILURE(DumpRecord(clause.stats, out));
+        }
+        for (const auto& child : bucket.filters) {
+          ASSERT_NE(nullptr, child);
+          ASSERT_NO_FATAL_FAILURE(DumpQuery(*child, out));
+        }
+      }
+      break;
     }
-  } else {
-    std::vector<irs::bstring> l_sorted{l.begin(), l.end()};
-    std::vector<irs::bstring> r_sorted{r.begin(), r.end()};
-    std::sort(l_sorted.begin(), l_sorted.end());
-    std::sort(r_sorted.begin(), r_sorted.end());
-    ASSERT_EQ(l_sorted, r_sorted);
+    case irs::QueryKind::Terms: {
+      const auto& multi = sdb::basics::downCast<irs::MultiTermQuery>(query);
+      const auto* const scorer = multi.Stats().scorer;
+      for (const auto& entry : multi.State().Terms()) {
+        ASSERT_NO_FATAL_FAILURE(
+          DumpRecord({.stats = entry.stats, .scorer = scorer}, out));
+      }
+      break;
+    }
+    default:
+      break;
   }
+}
 
-  ASSERT_EQ(lhs.ChildCount(), rhs.ChildCount());
-  for (size_t i = 0, n = lhs.ChildCount(); i < n; ++i) {
-    AssertStatsEqual(lhs.Child(i), rhs.Child(i), ordered_stats);
+StatsDump DumpStats(const tests::PreparedFilter& prepared) {
+  StatsDump out;
+  for (size_t i = 0, n = prepared.size(); i != n; ++i) {
+    const auto* query = prepared.Query(i);
+    if (query == nullptr || irs::QueryBuilder::IsEmpty(*query)) {
+      out.emplace_back();
+      continue;
+    }
+    DumpQuery(*query, out);
   }
+  return out;
 }
 
 using ScoredDocs = std::vector<std::pair<irs::doc_id_t, irs::score_t>>;
 
 void CollectSegment(const tests::PreparedFilter& prepared, size_t i,
-                    const irs::SubReader& sub, ScoredDocs& out,
-                    irs::CostAttr::Type& cost) {
-  auto docs = prepared.Execute(i);
-  ASSERT_NE(nullptr, docs);
-  cost = irs::CostAttr::extract(*docs);
+                    ScoredDocs& out, uint64_t& cost) {
+  cost = prepared.Estimate(i);
 
-  const auto* scorer = prepared.Scorer();
-  irs::ScoreFunction score;
-  if (scorer != nullptr) {
-    score = docs->PrepareScore({
-      .segment = &sub,
-    });
-  }
+  if (prepared.Scorer() != nullptr) {
+    irs::ColumnArgsFetcher fetcher;
+    auto docs = prepared.ExecuteScored(i, fetcher);
+    ASSERT_NE(nullptr, docs);
+    auto score = docs->PrepareScore();
 
-  while (!irs::doc_limits::eof(docs->advance())) {
-    irs::score_t value = 0;
-    if (scorer != nullptr) {
+    while (!irs::doc_limits::eof(docs->Advance())) {
       docs->FetchScoreArgs(0);
+      fetcher.Fetch(docs->Value());
+      irs::score_t value = 0;
       score.Score(&value, 1);
+      out.emplace_back(docs->Value(), value);
     }
-    out.emplace_back(docs->value(), value);
+  } else {
+    auto docs = prepared.Execute(i);
+    ASSERT_NE(nullptr, docs);
+
+    while (!irs::doc_limits::eof(docs->Advance())) {
+      out.emplace_back(docs->Value(), 0.f);
+    }
   }
 }
 
 void AssertSameAsSingle(const tests::PreparedFilter& single,
                         const tests::PreparedFilter& other,
-                        const irs::IndexReader& index, bool ordered_stats) {
+                        const irs::IndexReader& index) {
   ASSERT_EQ(single.size(), other.size());
   ASSERT_EQ(index.size(), single.size());
-  ASSERT_NO_FATAL_FAILURE(
-    AssertStatsEqual(single.Stats(), other.Stats(), ordered_stats));
+  ASSERT_EQ(DumpStats(single), DumpStats(other));
 
-  for (size_t i = 0; const auto& sub : index) {
+  for (size_t i = 0; [[maybe_unused]] const auto& sub : index) {
     ScoredDocs single_docs;
     ScoredDocs other_docs;
-    irs::CostAttr::Type single_cost = 0;
-    irs::CostAttr::Type other_cost = 0;
+    uint64_t single_cost = 0;
+    uint64_t other_cost = 0;
 
     ASSERT_NO_FATAL_FAILURE(
-      CollectSegment(single, i, sub, single_docs, single_cost));
-    ASSERT_NO_FATAL_FAILURE(
-      CollectSegment(other, i, sub, other_docs, other_cost));
+      CollectSegment(single, i, single_docs, single_cost));
+    ASSERT_NO_FATAL_FAILURE(CollectSegment(other, i, other_docs, other_cost));
 
     ASSERT_EQ(single_docs, other_docs);
     ASSERT_EQ(single_cost, other_cost);
@@ -187,21 +245,20 @@ void AssertMergeConsistent(const irs::Filter& filter,
                            const irs::Scorer* scorer) {
   tests::PreparedFilter single{
     filter, index, scorer, irs::IResourceManager::gNoop, nullptr, Mode::Single};
-  tests::PreparedFilter merged{
-    filter, index, scorer, irs::IResourceManager::gNoop, nullptr, Mode::Merge};
-  tests::PreparedFilter merged_all{filter,  index,
-                                   scorer,  irs::IResourceManager::gNoop,
-                                   nullptr, Mode::MergeAll};
+  tests::PreparedFilter paired{filter,  index,
+                               scorer,  irs::IResourceManager::gNoop,
+                               nullptr, Mode::PairThreads};
+  tests::PreparedFilter per_segment{filter,  index,
+                                    scorer,  irs::IResourceManager::gNoop,
+                                    nullptr, Mode::PerSegment};
 
   {
-    SCOPED_TRACE("pairwise merge");
-    ASSERT_NO_FATAL_FAILURE(
-      AssertSameAsSingle(single, merged, index, /*ordered_stats=*/true));
+    SCOPED_TRACE("two counter blocks");
+    ASSERT_NO_FATAL_FAILURE(AssertSameAsSingle(single, paired, index));
   }
   {
-    SCOPED_TRACE("n-way merge");
-    ASSERT_NO_FATAL_FAILURE(
-      AssertSameAsSingle(single, merged_all, index, /*ordered_stats=*/false));
+    SCOPED_TRACE("one counter block per segment");
+    ASSERT_NO_FATAL_FAILURE(AssertSameAsSingle(single, per_segment, index));
   }
 }
 
@@ -240,6 +297,11 @@ class MergeConsistencyTestCase : public tests::FilterTestCaseBase {
     {
       SCOPED_TRACE("frequency scorer");
       tests::sort::FrequencySort scorer;
+      ASSERT_NO_FATAL_FAILURE(AssertMergeConsistent(filter, index, &scorer));
+    }
+    {
+      SCOPED_TRACE("tfidf scorer");
+      irs::TFIDF scorer;
       ASSERT_NO_FATAL_FAILURE(AssertMergeConsistent(filter, index, &scorer));
     }
   }
@@ -294,25 +356,29 @@ TEST_P(MergeConsistencyTestCase, boolean) {
   ASSERT_EQ(4, rdr.size());
 
   {
-    irs::Or root;
-    FillTerm(root.add<irs::ByTerm>(), "Fields", "BusinessEntityID");
-    FillTerm(root.add<irs::ByTerm>(), "Fields", "StartDate");
+    irs::BooleanFilter root;
+    root.Add(MakeTermClause("Fields", "BusinessEntityID"), irs::Occur::Should);
+    root.Add(MakeTermClause("Fields", "StartDate"), irs::Occur::Should);
+    root.SetMinShouldMatch(1);
     CheckAllScorers(root, rdr);
   }
 
   {
-    irs::And root;
-    FillTerm(root.add<irs::ByTerm>(), "Fields", "BusinessEntityID");
-    FillPrefix(root.add<irs::ByPrefix>(), "Fields", "S", 4);
+    irs::BooleanFilter root;
+    root.Add(MakeTermClause("Fields", "BusinessEntityID"), irs::Occur::Must);
+    root.Add(MakePrefixPtr("Fields", "S", 4), irs::Occur::Must);
     CheckAllScorers(root, rdr);
   }
 
   {
-    irs::Or root;
-    FillTerm(root.add<irs::ByTerm>(), "Fields", "BusinessEntityID");
-    auto& sub = root.add<irs::And>();
-    FillTerm(sub.add<irs::ByTerm>(), "Fields", "StartDate");
-    FillPrefix(sub.add<irs::ByPrefix>(), "Fields", "B", 8);
+    auto sub = std::make_unique<irs::BooleanFilter>();
+    sub->Add(MakeTermClause("Fields", "StartDate"), irs::Occur::Must);
+    sub->Add(MakePrefixPtr("Fields", "B", 8), irs::Occur::Must);
+
+    irs::BooleanFilter root;
+    root.Add(MakeTermClause("Fields", "BusinessEntityID"), irs::Occur::Should);
+    root.Add(std::move(sub), irs::Occur::Should);
+    root.SetMinShouldMatch(1);
     CheckAllScorers(root, rdr);
   }
 }

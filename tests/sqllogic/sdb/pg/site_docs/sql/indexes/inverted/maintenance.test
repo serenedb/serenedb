@@ -50,7 +50,7 @@ VACUUM (RECOMPUTE_STATS_TABLE) my_logs;
 
 query
 SELECT index_name, table_name
-FROM duckdb_indexes()
+FROM sdb_indexes()
 WHERE table_name = 'my_logs';
 ----
 index_name	table_name

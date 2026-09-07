@@ -1,0 +1,133 @@
+statement ok
+CREATE TABLE acs AS SELECT i % 7 AS g, i AS v, (i * 1.5)::DOUBLE AS f,
+	TIMESTAMP '2025-01-01' + INTERVAL (i) MINUTE AS ts,
+	(TIMESTAMP '2025-01-01' + INTERVAL (i) MINUTE)::TIMESTAMPTZ AS tstz FROM range(2000) t(i);
+
+statement ok
+INSERT INTO acs VALUES (3, NULL, NULL, NULL, NULL);
+
+statement ok
+CREATE OR REPLACE TABLE shapes AS SELECT * FROM (VALUES
+	('avg beside its parts', 'SELECT g, count(*), sum(v), min(v), max(v), avg(v) FROM acs GROUP BY g'),
+	('avg beside count', 'SELECT g, count(*), sum(v), min(v), max(v), count(v) FROM acs GROUP BY g'),
+	('two averages', 'SELECT g, avg(v), avg(v + 1) FROM acs GROUP BY g'),
+	('repeated average', 'SELECT g, avg(v), avg(v), avg(v) FROM acs GROUP BY g'),
+	('average and its pieces', 'SELECT g, avg(v), count(v), sum(v) FROM acs GROUP BY g'),
+	('mixed with stddev', 'SELECT g, count(*), count(*), avg(v), avg(v + 1), stddev(v) FROM acs GROUP BY g'),
+	('ungrouped', 'SELECT avg(v), avg(v), count(*), sum(v) FROM acs'),
+	('filtered average', 'SELECT g, sum(v) FILTER (WHERE v % 2 = 0), avg(v) FILTER (WHERE v % 2 = 0), count(*) FROM acs GROUP BY g'),
+	('distinct beside average', 'SELECT g, count(*), count(v), count(DISTINCT v), avg(v) FROM acs GROUP BY g'),
+	('bucketed group', 'SELECT date_trunc(''hour'', ts), avg(v), count(*), count(v) FROM acs GROUP BY 1'),
+	('average of a double', 'SELECT g, avg(f), avg(f), sum(f), count(f) FROM acs GROUP BY g'),
+	('order statistics', 'SELECT g, mode(v), median(v), avg(v), median(v) FROM acs GROUP BY g'),
+	('having a count', 'SELECT g, count(*), sum(v), min(v), max(v), avg(v) FROM acs GROUP BY g HAVING count(*) > 1'),
+	('having an average', 'SELECT g, avg(v), stddev(v), count(*), count(v) FROM acs GROUP BY g HAVING avg(v) > 1'),
+	('having order statistics', 'SELECT g, median(v), avg(v), count(DISTINCT v % 5) FROM acs GROUP BY g HAVING count(*) > 1'),
+	('having two keys', 'SELECT (ts + INTERVAL ''2 months'') a, (tstz AT TIME ZONE ''Europe/Berlin'')::DATE b, avg(v), avg(v + 1), count(v) FROM acs GROUP BY 1, 2 HAVING count(*) > 1'),
+	('having and ordering', 'SELECT g, avg(v) FROM acs GROUP BY g HAVING count(*) > 1 ORDER BY 1 LIMIT 3'),
+	('nested in a subquery', 'SELECT count(*) FROM (SELECT g, avg(v), count(v), sum(v) FROM acs GROUP BY g HAVING count(*) > 1)'),
+	('distinct of a truncation', 'SELECT DISTINCT date_trunc(''hour'', ts) FROM acs')) t(shape, sql);
+
+query
+SELECT shape, (json_serialize_plan(sql, optimize := true)::VARCHAR NOT LIKE '%"error":true%') AS planned
+FROM shapes ORDER BY 1;
+----
+shape	planned
+average and its pieces	t
+average of a double	t
+avg beside count	t
+avg beside its parts	t
+bucketed group	t
+distinct beside average	t
+distinct of a truncation	t
+filtered average	t
+having a count	t
+having an average	t
+having and ordering	t
+having order statistics	t
+having two keys	t
+mixed with stddev	t
+nested in a subquery	t
+order statistics	t
+repeated average	t
+two averages	t
+ungrouped	t
+
+statement ok
+SET disabled_optimizers = 'statistics_propagation';
+
+query
+SELECT shape, (json_serialize_plan(sql, optimize := true)::VARCHAR NOT LIKE '%"error":true%') AS planned
+FROM shapes ORDER BY 1;
+----
+shape	planned
+average and its pieces	t
+average of a double	t
+avg beside count	t
+avg beside its parts	t
+bucketed group	t
+distinct beside average	t
+distinct of a truncation	t
+filtered average	t
+having a count	t
+having an average	t
+having and ordering	t
+having order statistics	t
+having two keys	t
+mixed with stddev	t
+nested in a subquery	t
+order statistics	t
+repeated average	t
+two averages	t
+ungrouped	t
+
+statement ok
+SET disabled_optimizers = 'statistics_propagation,column_lifetime';
+
+query
+SELECT count(*) AS unreadable_plans FROM shapes
+WHERE json_serialize_plan(sql, optimize := true)::VARCHAR LIKE '%"error":true%';
+----
+unreadable_plans
+0
+
+statement ok
+SET disabled_optimizers = 'common_aggregate';
+
+statement ok
+CREATE OR REPLACE TABLE acs_off AS
+SELECT 'avg beside its parts' AS shape, g::VARCHAR AS k, (count(*) || '|' || sum(v) || '|' || min(v) || '|' || max(v) || '|' || avg(v)) AS r FROM acs GROUP BY g
+UNION ALL SELECT 'two averages', g::VARCHAR, (avg(v) || '|' || avg(v + 1) || '|' || count(v) || '|' || sum(v)) FROM acs GROUP BY g
+UNION ALL SELECT 'repeated average', g::VARCHAR, (avg(v) || '|' || avg(v) || '|' || avg(f) || '|' || stddev(v)) FROM acs GROUP BY g
+UNION ALL SELECT 'distinct beside average', g::VARCHAR, (count(*) || '|' || count(v) || '|' || count(DISTINCT v) || '|' || avg(v)) FROM acs GROUP BY g
+UNION ALL SELECT 'filtered average', g::VARCHAR, (sum(v) FILTER (WHERE v % 2 = 0) || '|' || avg(v) FILTER (WHERE v % 2 = 0) || '|' || count(*)) FROM acs GROUP BY g
+UNION ALL SELECT 'ungrouped', 'all', (avg(v) || '|' || avg(v) || '|' || count(*) || '|' || sum(v)) FROM acs
+UNION ALL SELECT 'bucketed group', date_trunc('hour', ts)::VARCHAR, (avg(v) || '|' || count(*) || '|' || count(v)) FROM acs GROUP BY 2
+UNION ALL SELECT 'order statistics', g::VARCHAR, (mode(v) || '|' || median(v) || '|' || avg(v) || '|' || median(v)) FROM acs GROUP BY g
+UNION ALL SELECT 'having a count', g::VARCHAR, (count(*) || '|' || sum(v) || '|' || avg(v)) FROM acs GROUP BY g HAVING count(*) > 1
+UNION ALL SELECT 'having an average', g::VARCHAR, (avg(v) || '|' || stddev(v) || '|' || count(v)) FROM acs GROUP BY g HAVING avg(v) > 1;
+
+statement ok
+SET disabled_optimizers = '';
+
+statement ok
+CREATE OR REPLACE TABLE acs_on AS
+SELECT 'avg beside its parts' AS shape, g::VARCHAR AS k, (count(*) || '|' || sum(v) || '|' || min(v) || '|' || max(v) || '|' || avg(v)) AS r FROM acs GROUP BY g
+UNION ALL SELECT 'two averages', g::VARCHAR, (avg(v) || '|' || avg(v + 1) || '|' || count(v) || '|' || sum(v)) FROM acs GROUP BY g
+UNION ALL SELECT 'repeated average', g::VARCHAR, (avg(v) || '|' || avg(v) || '|' || avg(f) || '|' || stddev(v)) FROM acs GROUP BY g
+UNION ALL SELECT 'distinct beside average', g::VARCHAR, (count(*) || '|' || count(v) || '|' || count(DISTINCT v) || '|' || avg(v)) FROM acs GROUP BY g
+UNION ALL SELECT 'filtered average', g::VARCHAR, (sum(v) FILTER (WHERE v % 2 = 0) || '|' || avg(v) FILTER (WHERE v % 2 = 0) || '|' || count(*)) FROM acs GROUP BY g
+UNION ALL SELECT 'ungrouped', 'all', (avg(v) || '|' || avg(v) || '|' || count(*) || '|' || sum(v)) FROM acs
+UNION ALL SELECT 'bucketed group', date_trunc('hour', ts)::VARCHAR, (avg(v) || '|' || count(*) || '|' || count(v)) FROM acs GROUP BY 2
+UNION ALL SELECT 'order statistics', g::VARCHAR, (mode(v) || '|' || median(v) || '|' || avg(v) || '|' || median(v)) FROM acs GROUP BY g
+UNION ALL SELECT 'having a count', g::VARCHAR, (count(*) || '|' || sum(v) || '|' || avg(v)) FROM acs GROUP BY g HAVING count(*) > 1
+UNION ALL SELECT 'having an average', g::VARCHAR, (avg(v) || '|' || stddev(v) || '|' || count(v)) FROM acs GROUP BY g HAVING avg(v) > 1;
+
+query
+SELECT count(*) AS rows, count(DISTINCT shape) AS shapes,
+	(SELECT count(*) FROM (SELECT * FROM acs_off EXCEPT ALL SELECT * FROM acs_on)) AS lost,
+	(SELECT count(*) FROM (SELECT * FROM acs_on EXCEPT ALL SELECT * FROM acs_off)) AS gained
+FROM acs_off;
+----
+rows	shapes	lost	gained
+92	10	0	0

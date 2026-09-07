@@ -27,6 +27,7 @@
 
 #include "iresearch/analysis/token_attributes.hpp"
 #include "iresearch/index/index_reader.hpp"
+#include "iresearch/search/all_filter.hpp"
 #include "iresearch/search/collectors.hpp"
 #include "iresearch/search/filter_visitor.hpp"
 #include "iresearch/search/term_query.hpp"
@@ -49,8 +50,16 @@ class ByTermIterator : public TermIterator {
 
   const PostingMeta& cookie() const final { return _meta; }
 
-  DocIterator::ptr postings(IndexFeatures features) const final {
-    return _reader->Iterator(features, PostingCookie{.cookie = &_meta});
+  TermPostings::ptr postings(IndexFeatures features) const final {
+    if (_meta.docs_count == 0) {
+      return TermPostings::empty();
+    }
+    auto it = _reader->iterator();
+    SDB_ASSERT(it);
+    if (!it->seek(_term.value)) {
+      return TermPostings::empty();
+    }
+    return it->postings(features);
   }
 
   bool next() final { return std::exchange(_found, false); }
@@ -80,26 +89,34 @@ QueryBuilder::ptr ByTerm::PrepareSegment(const SubReader& segment,
                                          const bytes_view term) {
   const auto* reader = segment.field(field);
   if (!reader) {
-    // field absent in this segment: a boost-carrying empty query so the boost
-    // is still observable and consistent with the multi-term path
-    return memory::make_tracked<TermQuery>(ctx.memory, segment, nullptr,
-                                           kNoPosting, ctx.boost);
+    return QueryBuilder::Empty();
+  }
+  auto* const collector =
+    ctx.collector ? &sdb::basics::downCast<ByTermsCollector>(*ctx.collector)
+                  : nullptr;
+  if (collector) {
+    SDB_ASSERT(collector->Size() == 1);
+    collector->Field(ctx.thread).Collect(*reader);
   }
   const auto meta = reader->Lookup(term);
-  if (ctx.collector) {
-    auto& collector = sdb::basics::downCast<ByTermsCollector>(*ctx.collector);
-    SDB_ASSERT(collector.Terms().size() == 1);
-    collector.Field().Collect(*reader);
-    if (meta.docs_count != 0) {
-      collector.Terms()[0].Collect(meta);
-    }
+  if (meta.docs_count == 0) {
+    return QueryBuilder::Empty();
   }
-  return memory::make_tracked<TermQuery>(ctx.memory, segment, reader, meta,
-                                         ctx.boost);
+  if (collector) {
+    collector->Term(ctx.thread, 0).Collect(meta);
+    return MakeTermQuery(ctx.memory, segment, reader, meta, ctx.boost,
+                         collector->Record(0));
+  }
+  if (meta.docs_count == segment.docs_count() && !ctx.needs_terms) {
+    return MakeAllQuery(segment, ctx, kNoBoost);
+  }
+  return MakeTermQuery(ctx.memory, segment, reader, meta, ctx.boost);
 }
 
-PrepareCollector::ptr ByTerm::MakeCollectorImpl(const Scorer* scorer) const {
-  return std::make_unique<ByTermsCollector>(scorer, 1);
+PrepareCollector::ptr ByTerm::MakeCollectorImpl(const Scorer* scorer,
+                                                StatsArena& stats,
+                                                uint32_t threads) const {
+  return std::make_unique<ByTermsCollector>(scorer, 1, stats, threads);
 }
 
 TermPredicate::ptr ByTerm::CompileTermPredicate() const {

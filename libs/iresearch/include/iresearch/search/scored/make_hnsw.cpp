@@ -34,7 +34,6 @@
 #include "iresearch/search/scorer.hpp"
 
 namespace irs::scored {
-
 namespace {
 
 class HnswHits : public Root {

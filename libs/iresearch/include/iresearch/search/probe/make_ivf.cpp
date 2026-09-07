@@ -29,7 +29,8 @@ Node::ptr Make(const RangeVectorQuery& query, uint64_t) {
     return {};
   }
   return ResolveBool(query.Inclusive(), [&]<bool Inclusive>() -> Node::ptr {
-    return search::MakeVectorDocs<Impl, Node::ptr, search::RadiusGate<Inclusive>, TwoPhaseDocs>(
+    return search::MakeVectorDocs<Impl, Node::ptr,
+                                  search::RadiusGate<Inclusive>, TwoPhaseDocs>(
       query, query.Threshold(), std::move(inner));
   });
 }
@@ -46,8 +47,9 @@ Node::ptr Make(const RangeVectorQuery& query, const ScoredCtx& ctx, uint64_t) {
                                 .boost = query.Boost()};
   return ResolveBool(query.Inclusive(), [&]<bool Inclusive>() -> Node::ptr {
     return ResolveBool(query.Rescored(), [&]<bool Rescore>() -> Node::ptr {
-      return search::MakeVectorScored<Impl, Node::ptr, search::RadiusGate<Inclusive>, Rescore,
-                              probe::TwoPhaseScored>(
+      return search::MakeVectorScored<Impl, Node::ptr,
+                                      search::RadiusGate<Inclusive>, Rescore,
+                                      probe::TwoPhaseScored>(
         query, *query.State().reader, score, query.Threshold(),
         std::move(inner));
     });

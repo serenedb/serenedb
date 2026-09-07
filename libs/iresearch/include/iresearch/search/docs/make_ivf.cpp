@@ -18,8 +18,8 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include "iresearch/search/docs/make.hpp"
 #include "iresearch/search/common/vector_of.hpp"
+#include "iresearch/search/docs/make.hpp"
 
 namespace irs::docs {
 
@@ -30,13 +30,14 @@ Root::ptr Make(const RangeVectorQuery& query, const Context& ctx) {
   }
   return ResolveBool(query.Inclusive(), [&]<bool Inclusive>() -> Root::ptr {
     if (ctx.table != nullptr) {
-      return search::MakeVectorDocs<FilteredWalk, Root::ptr, search::RadiusGate<Inclusive>,
-                            lead::TwoPhaseDocs>(query, query.Threshold(),
-                                                std::move(inner), ctx.table);
+      return search::MakeVectorDocs<FilteredWalk, Root::ptr,
+                                    search::RadiusGate<Inclusive>,
+                                    lead::TwoPhaseDocs>(
+        query, query.Threshold(), std::move(inner), ctx.table);
     }
-    return search::MakeVectorDocs<PlainWalk, Root::ptr, search::RadiusGate<Inclusive>,
-                          lead::TwoPhaseDocs>(query, query.Threshold(),
-                                              std::move(inner), utils::Empty{});
+    return search::MakeVectorDocs<
+      PlainWalk, Root::ptr, search::RadiusGate<Inclusive>, lead::TwoPhaseDocs>(
+      query, query.Threshold(), std::move(inner), utils::Empty{});
   });
 }
 

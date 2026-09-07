@@ -23,7 +23,6 @@
 #include "iresearch/search/top/make.hpp"
 
 namespace irs::top {
-
 namespace {
 
 template<typename Cluster>
@@ -111,13 +110,15 @@ Root::ptr Make(const RangeVectorQuery& query, const Context& ctx) {
   return ResolveBool(query.Inclusive(), [&]<bool Inclusive>() -> Root::ptr {
     return ResolveBool(query.Rescored(), [&]<bool Rescore>() -> Root::ptr {
       if (ctx.table != nullptr) {
-        return search::MakeVectorScored<FilteredWalk, Root::ptr, search::RadiusGate<Inclusive>,
-                                Rescore, lead::TwoPhaseScored>(
+        return search::MakeVectorScored<FilteredWalk, Root::ptr,
+                                        search::RadiusGate<Inclusive>, Rescore,
+                                        lead::TwoPhaseScored>(
           query, *query.State().reader, score, query.Threshold(),
           std::move(inner), ctx.table, ctx.fetcher);
       }
-      return search::MakeVectorScored<PlainWalk, Root::ptr, search::RadiusGate<Inclusive>,
-                              Rescore, lead::TwoPhaseScored>(
+      return search::MakeVectorScored<PlainWalk, Root::ptr,
+                                      search::RadiusGate<Inclusive>, Rescore,
+                                      lead::TwoPhaseScored>(
         query, *query.State().reader, score, query.Threshold(),
         std::move(inner), utils::Empty{}, ctx.fetcher);
     });
@@ -148,15 +149,15 @@ Root::ptr Make(const KnnVectorQuery& query, const Context& ctx) {
     return {};
   }
   if (ctx.table != nullptr) {
-    return search::MakeVectorScored<FilteredWalk, Root::ptr, search::AcceptAll, false,
-                            lead::TwoPhaseScored>(query, field, score,
-                                                  search::Unbounded(), std::move(inner),
-                                                  ctx.table, ctx.fetcher);
+    return search::MakeVectorScored<FilteredWalk, Root::ptr, search::AcceptAll,
+                                    false, lead::TwoPhaseScored>(
+      query, field, score, search::Unbounded(), std::move(inner), ctx.table,
+      ctx.fetcher);
   }
-  return search::MakeVectorScored<PlainWalk, Root::ptr, search::AcceptAll, false,
-                          lead::TwoPhaseScored>(query, field, score,
-                                                search::Unbounded(), std::move(inner),
-                                                utils::Empty{}, ctx.fetcher);
+  return search::MakeVectorScored<PlainWalk, Root::ptr, search::AcceptAll,
+                                  false, lead::TwoPhaseScored>(
+    query, field, score, search::Unbounded(), std::move(inner), utils::Empty{},
+    ctx.fetcher);
 }
 
 }  // namespace irs::top

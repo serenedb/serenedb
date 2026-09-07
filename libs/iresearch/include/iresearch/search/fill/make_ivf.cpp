@@ -18,8 +18,8 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include "iresearch/search/fill/make.hpp"
 #include "iresearch/search/common/vector_of.hpp"
+#include "iresearch/search/fill/make.hpp"
 
 namespace irs::fill {
 
@@ -29,9 +29,9 @@ Node::ptr Make(const RangeVectorQuery& query) {
     return {};
   }
   return ResolveBool(query.Inclusive(), [&]<bool Inclusive>() -> Node::ptr {
-    return search::MakeVectorDocs<ByWalkDocs, Node::ptr, search::RadiusGate<Inclusive>,
-                          lead::TwoPhaseDocs>(query, query.Threshold(),
-                                              std::move(inner));
+    return search::MakeVectorDocs<
+      ByWalkDocs, Node::ptr, search::RadiusGate<Inclusive>, lead::TwoPhaseDocs>(
+      query, query.Threshold(), std::move(inner));
   });
 }
 
@@ -48,10 +48,11 @@ Node::ptr Make(const RangeVectorQuery& query, const ScoredCtx& ctx,
                                 .boost = query.Boost()};
   return ResolveBool(query.Inclusive(), [&]<bool Inclusive>() -> Node::ptr {
     return ResolveBool(query.Rescored(), [&]<bool Rescore>() -> Node::ptr {
-      return search::MakeVectorScored<ByWalkScored, Node::ptr, search::RadiusGate<Inclusive>,
-                              Rescore, lead::TwoPhaseScored>(
+      return search::MakeVectorScored<ByWalkScored, Node::ptr,
+                                      search::RadiusGate<Inclusive>, Rescore,
+                                      lead::TwoPhaseScored>(
         query, *query.State().reader, score, query.Threshold(),
-        std::move(inner), merge, ctx.fetcher);
+        std::move(inner), merge, *ctx.fetcher);
     });
   });
 }

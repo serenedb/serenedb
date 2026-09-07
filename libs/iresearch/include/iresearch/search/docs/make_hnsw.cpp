@@ -26,7 +26,6 @@
 #include "iresearch/search/hnsw_query.hpp"
 
 namespace irs::docs {
-
 namespace {
 
 class HnswHits : public Root {

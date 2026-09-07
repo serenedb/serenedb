@@ -30,7 +30,6 @@
 #include "iresearch/search/scorer.hpp"
 
 namespace irs::lead {
-
 namespace {
 
 class HnswHits : public Node {
@@ -83,6 +82,7 @@ class HnswHits : public Node {
   ScoreFunction _score;
   score_t _block[kScoreBlock];
   size_t _pos = 0;
+  doc_id_t _doc = doc_limits::invalid();
 };
 
 }  // namespace

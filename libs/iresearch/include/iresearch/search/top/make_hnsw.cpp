@@ -33,7 +33,6 @@
 #include "iresearch/search/top/make.hpp"
 
 namespace irs::top {
-
 namespace {
 
 class HnswHits : public Root {

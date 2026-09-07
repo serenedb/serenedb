@@ -41,10 +41,8 @@
 namespace {
 
 constexpr auto kBits = irs::search::BitsetStorage::kBits;
+constexpr auto kMin = irs::search::BitsetStorage::kMin;
 
-// A segment of `docs_count` documents holding exactly `docs`. Bit `i` is the
-// document `i`, so a document is its own index and zero -- which is not a
-// document -- is never set.
 irs::search::BitsetStorage MakeSet(irs::doc_id_t docs_count,
                                    const std::vector<irs::doc_id_t>& docs) {
   irs::search::BitsetStorage set{docs_count};
@@ -52,7 +50,8 @@ irs::search::BitsetStorage MakeSet(irs::doc_id_t docs_count,
   for (auto doc : docs) {
     EXPECT_TRUE(irs::doc_limits::valid(doc));
     EXPECT_LE(doc, docs_count);
-    irs::SetBit(words[doc / kBits], doc % kBits);
+    const auto offset = doc - kMin;
+    irs::SetBit(words[offset / kBits], offset % kBits);
   }
   set.Trim();
   return set;
@@ -489,21 +488,19 @@ TEST(bitset_lead_test, seek_advance) {
 // above the target is a bound and not necessarily a match -- what it
 // guarantees is that nothing between the two is held.
 TEST(bitset_probe_test, probe) {
-  // empty segment: the only word holds nothing, and there is no word past it
+  // empty segment
   {
     irs::probe::BitsetDocs it{MakeSet(0, {})};
-    ASSERT_EQ(kBits, it.Probe(1));
-    ASSERT_TRUE(irs::doc_limits::eof(it.Probe(kBits)));
+    ASSERT_TRUE(irs::doc_limits::eof(it.Probe(1)));
   }
 
   // one document, then the words past it
   {
     irs::probe::BitsetDocs it{MakeSet(128, {7})};
     ASSERT_EQ(7, it.Probe(7));
-    ASSERT_EQ(kBits, it.Probe(8));
-    ASSERT_EQ(2 * kBits, it.Probe(kBits));
-    ASSERT_EQ(3 * kBits, it.Probe(2 * kBits));
-    ASSERT_TRUE(irs::doc_limits::eof(it.Probe(3 * kBits)));
+    ASSERT_EQ(kMin + kBits, it.Probe(8));
+    ASSERT_EQ(kMin + 2 * kBits, it.Probe(kMin + kBits));
+    ASSERT_TRUE(irs::doc_limits::eof(it.Probe(kMin + 2 * kBits)));
   }
 
   // a miss inside the word answers with the next document that word holds
@@ -512,7 +509,7 @@ TEST(bitset_probe_test, probe) {
     ASSERT_EQ(7, it.Probe(7));
     ASSERT_EQ(13, it.Probe(8));
     ASSERT_EQ(30, it.Probe(14));
-    ASSERT_EQ(kBits, it.Probe(31));
+    ASSERT_EQ(kMin + kBits, it.Probe(31));
   }
 
   // nothing is remembered: the same question has the same answer
@@ -533,7 +530,7 @@ TEST(bitset_probe_test, probe) {
     ASSERT_EQ(64, it.Probe(64));
     ASSERT_EQ(65, it.Probe(65));
     ASSERT_EQ(90, it.Probe(66));
-    ASSERT_EQ(2 * kBits, it.Probe(91));
+    ASSERT_EQ(kMin + 2 * kBits, it.Probe(91));
   }
 
   // bit sixty-three of the first word, hit and miss
@@ -571,18 +568,17 @@ TEST(bitset_probe_test, probe) {
   {
     irs::probe::BitsetDocs it{MakeSet(256, {3, 200})};
     ASSERT_EQ(3, it.Probe(3));
-    ASSERT_EQ(2 * kBits, it.Probe(100));
-    ASSERT_EQ(3 * kBits, it.Probe(2 * kBits));
-    ASSERT_EQ(200, it.Probe(3 * kBits));
+    ASSERT_EQ(kMin + 2 * kBits, it.Probe(100));
+    ASSERT_EQ(kMin + 3 * kBits, it.Probe(kMin + 2 * kBits));
+    ASSERT_EQ(200, it.Probe(kMin + 3 * kBits));
   }
 
   // past every document, and then past every word
   {
     irs::probe::BitsetDocs it{MakeSet(128, {1, 50, 90})};
     ASSERT_EQ(90, it.Probe(90));
-    ASSERT_EQ(2 * kBits, it.Probe(91));
-    ASSERT_EQ(3 * kBits, it.Probe(2 * kBits));
-    ASSERT_TRUE(irs::doc_limits::eof(it.Probe(3 * kBits)));
+    ASSERT_EQ(kMin + 2 * kBits, it.Probe(91));
+    ASSERT_TRUE(irs::doc_limits::eof(it.Probe(kMin + 2 * kBits)));
   }
 
   // a word holding every document
@@ -711,12 +707,12 @@ TEST(lazy_bitset_test, fills_only_as_far_as_asked) {
   irs::search::LazyBitset set{std::move(node), kDocs, nullptr};
 
   ASSERT_EQ(0, fill->windows());
-  ASSERT_EQ(0, set.Filled());
+  ASSERT_EQ(kMin, set.Filled());
   ASSERT_EQ(kDocs + 1, set.End());
 
   ASSERT_TRUE(set.Contains(3));
   ASSERT_EQ(1, fill->windows());
-  ASSERT_EQ(irs::search::kWindowDocs, set.Filled());
+  ASSERT_EQ(kMin + irs::search::kWindowDocs, set.Filled());
 
   // Already decided, so nothing is filled to answer it.
   ASSERT_FALSE(set.Contains(7));
@@ -724,7 +720,7 @@ TEST(lazy_bitset_test, fills_only_as_far_as_asked) {
 
   ASSERT_TRUE(set.Contains(5000));
   ASSERT_EQ(2, fill->windows());
-  ASSERT_EQ(2 * irs::search::kWindowDocs, set.Filled());
+  ASSERT_EQ(kMin + 2 * irs::search::kWindowDocs, set.Filled());
 
   // A probe that finds nothing in what is decided fills on, and what it
   // reaches is coherent afterwards.

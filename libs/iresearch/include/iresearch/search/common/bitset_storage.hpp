@@ -35,17 +35,23 @@ namespace irs::search {
 class BitsetStorage {
  public:
   static constexpr auto kBits = BitsRequired<uint64_t>();
+  static constexpr auto kWordShift = std::countr_zero(kBits);
+  static constexpr doc_id_t kMin = doc_limits::min();
+
+  static constexpr doc_id_t WindowMin(doc_id_t doc) noexcept {
+    return doc - (doc - kMin) % kWindowDocs;
+  }
 
   BitsetStorage() = default;
 
   explicit BitsetStorage(doc_id_t docs_count)
-    : _end{docs_count + doc_limits::min()},
-      _words{static_cast<uint32_t>((_end + (kBits - 1)) / kBits)},
+    : _end{kMin + docs_count},
+      _words{static_cast<uint32_t>((docs_count + (kBits - 1)) / kBits)},
       _alloc{_words + kWindowDocs / kBits + 1},
-      _bits{std::make_unique<uint64_t[]>(_alloc)} {}
+      _bits{std::make_unique<uint64_t[]>(_alloc + 1)} {}
 
-  uint64_t* Words() noexcept { return _bits.get(); }
-  const uint64_t* Words() const noexcept { return _bits.get(); }
+  uint64_t* Words() noexcept { return _bits.get() + 1; }
+  const uint64_t* Words() const noexcept { return _bits.get() + 1; }
 
   uint32_t WordCount() const noexcept { return _words; }
   uint32_t Alloc() const noexcept { return _alloc; }
@@ -53,11 +59,12 @@ class BitsetStorage {
   doc_id_t End() const noexcept { return _end; }
 
   void Trim() noexcept {
-    if (const auto tail = _end % kBits; tail != 0) {
-      _bits[_end / kBits] &= ~uint64_t{0} >> (kBits - tail);
+    auto* const words = Words();
+    const auto used = _end - kMin;
+    if (const auto tail = used % kBits; tail != 0) {
+      words[used / kBits] &= ~uint64_t{0} >> (kBits - tail);
     }
-    std::fill(_bits.get() + _words, _bits.get() + _alloc, uint64_t{0});
-    SDB_ASSERT(!CheckBit(_bits[0], 0));
+    std::fill(words + _words, words + _alloc, uint64_t{0});
   }
 
  private:
@@ -78,20 +85,23 @@ inline uint64_t CountBits(const BitsetStorage& set) noexcept {
 
 inline doc_id_t NextBit(const BitsetStorage& set, doc_id_t from) noexcept {
   constexpr auto kBits = BitsetStorage::kBits;
+  SDB_ASSERT(doc_limits::valid(from));
   if (from >= set.End()) {
     return doc_limits::eof();
   }
   const auto* const bits = set.Words();
   const auto count = set.WordCount();
-  auto word = static_cast<uint32_t>(from / kBits);
-  auto rest = bits[word] & (~uint64_t{0} << (from % kBits));
+  const auto offset = from - BitsetStorage::kMin;
+  auto word = static_cast<uint32_t>(offset / kBits);
+  auto rest = bits[word] & (~uint64_t{0} << (offset % kBits));
   while (rest == 0) {
     if (++word == count) {
       return doc_limits::eof();
     }
     rest = bits[word];
   }
-  return static_cast<doc_id_t>(size_t{word} * kBits +
+  return BitsetStorage::kMin +
+         static_cast<doc_id_t>(size_t{word} * kBits +
                                static_cast<size_t>(std::countr_zero(rest)));
 }
 
@@ -103,6 +113,7 @@ inline void OrWindow(const BitsetStorage& set, doc_id_t min, doc_id_t max,
     return;
   }
   const auto* const bits = set.Words();
+  const auto base = min - BitsetStorage::kMin;
   const auto at = [&](size_t offset) IRS_FORCE_INLINE {
     const auto word = offset / kBits;
     const auto shift = offset % kBits;
@@ -115,11 +126,11 @@ inline void OrWindow(const BitsetStorage& set, doc_id_t min, doc_id_t max,
   const uint32_t len = stop - min;
   const uint32_t full = len / kBits;
   for (uint32_t w = 0; w != full; ++w) {
-    mask[w] |= at(min + size_t{w} * kBits);
+    mask[w] |= at(base + size_t{w} * kBits);
   }
   if (const auto rest = len % kBits; rest != 0) {
     mask[full] |=
-      at(min + size_t{full} * kBits) & (~uint64_t{0} >> (kBits - rest));
+      at(base + size_t{full} * kBits) & (~uint64_t{0} >> (kBits - rest));
   }
 }
 
@@ -133,6 +144,7 @@ inline void AndWindow(const BitsetStorage& set, doc_id_t min, doc_id_t max,
     return;
   }
   const auto* const bits = set.Words();
+  const auto base = min - BitsetStorage::kMin;
   const auto at = [&](size_t offset) IRS_FORCE_INLINE {
     const auto word = offset / kBits;
     const auto shift = offset % kBits;
@@ -145,12 +157,12 @@ inline void AndWindow(const BitsetStorage& set, doc_id_t min, doc_id_t max,
   const uint32_t len = stop - min;
   const uint32_t full = len / kBits;
   for (uint32_t w = 0; w != full; ++w) {
-    mask[w] &= at(min + size_t{w} * kBits);
+    mask[w] &= at(base + size_t{w} * kBits);
   }
   auto tail = full;
   if (const auto rest = len % kBits; rest != 0) {
     mask[full] &=
-      at(min + size_t{full} * kBits) & (~uint64_t{0} >> (kBits - rest));
+      at(base + size_t{full} * kBits) & (~uint64_t{0} >> (kBits - rest));
     ++tail;
   }
   for (auto w = tail; w != words; ++w) {
@@ -166,6 +178,7 @@ inline void AndNotWindow(const BitsetStorage& set, doc_id_t min, doc_id_t max,
     return;
   }
   const auto* const bits = set.Words();
+  const auto base = min - BitsetStorage::kMin;
   const auto at = [&](size_t offset) IRS_FORCE_INLINE {
     const auto word = offset / kBits;
     const auto shift = offset % kBits;
@@ -178,11 +191,121 @@ inline void AndNotWindow(const BitsetStorage& set, doc_id_t min, doc_id_t max,
   const uint32_t len = stop - min;
   const uint32_t full = len / kBits;
   for (uint32_t w = 0; w != full; ++w) {
-    mask[w] &= ~at(min + size_t{w} * kBits);
+    mask[w] &= ~at(base + size_t{w} * kBits);
   }
   if (const auto rest = len % kBits; rest != 0) {
     mask[full] &=
-      ~(at(min + size_t{full} * kBits) & (~uint64_t{0} >> (kBits - rest)));
+      ~(at(base + size_t{full} * kBits) & (~uint64_t{0} >> (kBits - rest)));
+  }
+}
+
+inline IRS_FORCE_INLINE void OrBlock(uint64_t* IRS_RESTRICT dst, int64_t begin,
+                                     const uint64_t* IRS_RESTRICT src,
+                                     uint32_t words) noexcept {
+  constexpr auto kBits = BitsetStorage::kBits;
+  SDB_ASSERT(words != 0);
+  SDB_ASSERT(begin >= -1);
+  dst += begin >> BitsetStorage::kWordShift;
+  const auto shift = static_cast<uint32_t>(begin & (kBits - 1));
+  if (shift == 0) {
+    for (uint32_t i = 0; i != words; ++i) {
+      dst[i] |= src[i];
+    }
+    return;
+  }
+  uint64_t carry = 0;
+  for (uint32_t i = 0; i != words; ++i) {
+    const auto word = src[i];
+    dst[i] |= (word << shift) | carry;
+    carry = word >> (kBits - shift);
+  }
+  dst[words] |= carry;
+}
+
+inline IRS_FORCE_INLINE void ClearBlock(uint64_t* IRS_RESTRICT dst,
+                                        int64_t begin,
+                                        const uint64_t* IRS_RESTRICT src,
+                                        uint32_t words) noexcept {
+  constexpr auto kBits = BitsetStorage::kBits;
+  SDB_ASSERT(words != 0);
+  SDB_ASSERT(begin >= -1);
+  dst += begin >> BitsetStorage::kWordShift;
+  const auto shift = static_cast<uint32_t>(begin & (kBits - 1));
+  if (shift == 0) {
+    for (uint32_t i = 0; i != words; ++i) {
+      dst[i] &= ~src[i];
+    }
+    return;
+  }
+  uint64_t carry = 0;
+  for (uint32_t i = 0; i != words; ++i) {
+    const auto word = src[i];
+    dst[i] &= ~((word << shift) | carry);
+    carry = word >> (kBits - shift);
+  }
+  dst[words] &= ~carry;
+}
+
+inline IRS_FORCE_INLINE uint64_t CountBlock(const uint64_t* IRS_RESTRICT dst,
+                                            int64_t begin,
+                                            const uint64_t* IRS_RESTRICT src,
+                                            uint32_t words) noexcept {
+  constexpr auto kBits = BitsetStorage::kBits;
+  SDB_ASSERT(words != 0);
+  SDB_ASSERT(begin >= -1);
+  dst += begin >> BitsetStorage::kWordShift;
+  const auto shift = static_cast<uint32_t>(begin & (kBits - 1));
+  uint64_t total = 0;
+  if (shift == 0) {
+    for (uint32_t i = 0; i != words; ++i) {
+      total += static_cast<uint64_t>(std::popcount(dst[i] & src[i]));
+    }
+    return total;
+  }
+  uint64_t carry = 0;
+  for (uint32_t i = 0; i != words; ++i) {
+    const auto word = src[i];
+    total +=
+      static_cast<uint64_t>(std::popcount(dst[i] & ((word << shift) | carry)));
+    carry = word >> (kBits - shift);
+  }
+  return total + static_cast<uint64_t>(std::popcount(dst[words] & carry));
+}
+
+inline IRS_FORCE_INLINE void RetainBlock(uint64_t* IRS_RESTRICT dst,
+                                         int64_t begin,
+                                         const uint64_t* IRS_RESTRICT src,
+                                         uint32_t words,
+                                         uint64_t last) noexcept {
+  constexpr auto kBits = BitsetStorage::kBits;
+  SDB_ASSERT(words != 0);
+  SDB_ASSERT(begin >= -1);
+  SDB_ASSERT(static_cast<int64_t>(last) > begin);
+  const auto shift = static_cast<uint32_t>(begin & (kBits - 1));
+  auto* const base = dst + (begin >> BitsetStorage::kWordShift);
+  const auto stop = static_cast<uint32_t>(
+    (static_cast<int64_t>(last) >> BitsetStorage::kWordShift) -
+    (begin >> BitsetStorage::kWordShift));
+  const auto top = last & (kBits - 1);
+  const uint64_t above =
+    top == kBits - 1 ? uint64_t{0} : (~uint64_t{0} << (top + 1));
+  uint64_t keep = (uint64_t{2} << shift) - 1;
+  uint64_t carry = 0;
+  for (uint32_t i = 0; i <= stop; ++i) {
+    const auto word = i < words ? src[i] : uint64_t{0};
+    uint64_t mask;
+    if (shift == 0) {
+      mask = word;
+    } else {
+      mask = (word << shift) | carry;
+      carry = word >> (kBits - shift);
+    }
+    mask |= keep;
+    keep = 0;
+    if (i == stop) {
+      mask |= above;
+    }
+    base[i] &= mask;
   }
 }
 

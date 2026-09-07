@@ -111,8 +111,8 @@ class WindowDisjunction : public Root {
   ABSL_CACHELINE_ALIGNED score_t _window[kWindow];
   Leaves _leaves;
   [[no_unique_address]] Excludes _excludes;
-  doc_id_t _min = doc_limits::min();
-  doc_id_t _next = 0;
+  doc_id_t _min = 0;
+  doc_id_t _next = doc_limits::min();
   uint32_t _word = kNumWords;
   score_t _constant;
   [[no_unique_address]] search::Narrowing<Table> _table;

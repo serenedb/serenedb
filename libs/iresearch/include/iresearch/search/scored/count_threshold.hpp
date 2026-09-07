@@ -109,8 +109,8 @@ class CountThreshold : public Root {
   ABSL_CACHELINE_ALIGNED uint32_t _counts[kWindow]{};
   ABSL_CACHELINE_ALIGNED score_t _window[kWindow]{};
   Leaves _leaves;
-  doc_id_t _min = doc_limits::min();
-  doc_id_t _next = 0;
+  doc_id_t _min = 0;
+  doc_id_t _next = doc_limits::min();
   uint32_t _word = kNumWords;
   uint32_t _min_match;
   score_t _constant;

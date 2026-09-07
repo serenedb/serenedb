@@ -31,6 +31,7 @@ namespace irs::lead {
 class BitsetDocs {
  public:
   static constexpr auto kBits = search::BitsetStorage::kBits;
+  static constexpr auto kMin = search::BitsetStorage::kMin;
 
   explicit BitsetDocs(search::BitsetStorage&& set) noexcept
     : _set{std::move(set)},
@@ -49,7 +50,8 @@ class BitsetDocs {
     if (target <= _doc) {
       return _doc;
     }
-    const auto word = static_cast<uint32_t>(target / kBits);
+    const auto offset = target - kMin;
+    const auto word = static_cast<uint32_t>(offset / kBits);
     if (word != _word) {
       if (word >= _count) [[unlikely]] {
         _word = _count;
@@ -59,7 +61,7 @@ class BitsetDocs {
       _word = word;
       _rest = _words[word];
     }
-    _rest &= ~uint64_t{0} << (target % kBits);
+    _rest &= ~uint64_t{0} << (offset % kBits);
     return Next();
   }
 
@@ -72,7 +74,7 @@ class BitsetDocs {
       }
       _rest = _words[_word];
     }
-    _doc = static_cast<doc_id_t>(size_t{_word} * kBits +
+    _doc = static_cast<doc_id_t>(kMin + size_t{_word} * kBits +
                                  static_cast<size_t>(std::countr_zero(_rest)));
     _rest &= _rest - 1;
     return _doc;

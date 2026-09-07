@@ -20,7 +20,6 @@
 
 #pragma once
 
-#include <algorithm>
 #include <span>
 #include <utility>
 
@@ -77,9 +76,10 @@ class WalkDocs {
 
  private:
   doc_id_t From(doc_id_t min) {
+    SDB_ASSERT(doc_limits::valid(min));
     auto doc = _doc;
-    if (const auto start = std::max(min, doc_limits::min()); doc < start) {
-      doc = _leaf.Seek(start);
+    if (doc < min) {
+      doc = _leaf.Seek(min);
     }
     return doc;
   }
@@ -123,9 +123,10 @@ class WalkScored {
 
  private:
   doc_id_t From(doc_id_t min) {
+    SDB_ASSERT(doc_limits::valid(min));
     auto doc = _doc;
-    if (const auto start = std::max(min, doc_limits::min()); doc < start) {
-      doc = _leaf.Seek(start);
+    if (doc < min) {
+      doc = _leaf.Seek(min);
     }
     return doc;
   }

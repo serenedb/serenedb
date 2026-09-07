@@ -282,18 +282,19 @@ void TestAdvanceVsFillBlock(const irs::DirectoryReader& reader,
        auto max_doc, auto window_size) {
       auto query = factory.prepare(segment);
       ASSERT_NE(nullptr, query);
-      auto reference_iter = query->PlanLead({});
-      ASSERT_NE(nullptr, reference_iter);
+      auto lead = query->PlanLead({});
+      ASSERT_NE(nullptr, lead);
+      tests::LeadCursor reference_iter{std::move(lead)};
       auto fill = query->PlanFill({}, irs::ScoreMergeType::Noop);
       ASSERT_NE(nullptr, fill);
       auto count = query->PlanCount({});
       ASSERT_NE(nullptr, count);
       WindowFiller filler{std::move(fill)};
 
-      reference_iter->Advance();
+      reference_iter.Advance();
 
       auto total =
-        CompareWindowByWindow(*reference_iter, filler, max_doc, window_size);
+        CompareWindowByWindow(reference_iter, filler, max_doc, window_size);
 
       EXPECT_GT(total, 0u) << "query should have matches";
       EXPECT_EQ(total, count->Run()) << "total docs vs count mismatch";
@@ -309,8 +310,9 @@ void TestAdvanceVsEmitDocs(const irs::DirectoryReader& reader,
        auto /*max_doc*/, auto window_size) {
       auto query = factory.prepare(segment);
       ASSERT_NE(nullptr, query);
-      auto reference_iter = query->PlanLead({});
-      ASSERT_NE(nullptr, reference_iter);
+      auto lead = query->PlanLead({});
+      ASSERT_NE(nullptr, lead);
+      tests::LeadCursor reference_iter{std::move(lead)};
       auto emit = query->PlanDocs({});
       ASSERT_NE(nullptr, emit);
       auto count = query->PlanCount({});
@@ -318,7 +320,7 @@ void TestAdvanceVsEmitDocs(const irs::DirectoryReader& reader,
 
       const auto capacity = std::max<uint32_t>(
         static_cast<uint32_t>(window_size), irs::doc_limits::kMinCapacity);
-      auto total = CompareEmitDocs(*reference_iter, *emit, capacity);
+      auto total = CompareEmitDocs(reference_iter, *emit, capacity);
 
       EXPECT_GT(total, 0u) << "query should have matches";
       EXPECT_EQ(total, count->Run()) << "total docs vs count mismatch";
@@ -333,14 +335,15 @@ void TestSeekVsFillBlock(const irs::DirectoryReader& reader,
                         const auto& factory, auto max_doc, auto window_size) {
                        auto query = factory.prepare(segment);
                        ASSERT_NE(nullptr, query);
-                       auto reference_iter = query->PlanLead({});
-                       ASSERT_NE(nullptr, reference_iter);
+                       auto lead = query->PlanLead({});
+                       ASSERT_NE(nullptr, lead);
+                       tests::LeadCursor reference_iter{std::move(lead)};
                        auto fill =
                          query->PlanFill({}, irs::ScoreMergeType::Noop);
                        ASSERT_NE(nullptr, fill);
                        WindowFiller filler{std::move(fill)};
 
-                       CompareWindowByWindow(*reference_iter, filler, max_doc,
+                       CompareWindowByWindow(reference_iter, filler, max_doc,
                                              window_size, SeekToWindow());
                      });
 }
@@ -354,16 +357,17 @@ void TestInterleavedSeekFillBlock(const irs::DirectoryReader& reader,
        auto max_doc, auto window_size) {
       auto query = factory.prepare(segment);
       ASSERT_NE(nullptr, query);
-      auto reference_iter = query->PlanLead({});
-      ASSERT_NE(nullptr, reference_iter);
+      auto lead = query->PlanLead({});
+      ASSERT_NE(nullptr, lead);
+      tests::LeadCursor reference_iter{std::move(lead)};
       auto fill = query->PlanFill({}, irs::ScoreMergeType::Noop);
       ASSERT_NE(nullptr, fill);
       WindowFiller filler{std::move(fill)};
 
-      reference_iter->Advance();
+      reference_iter.Advance();
 
       BeforeWindowFunc noop;
-      CompareWindowByWindow(*reference_iter, filler, max_doc, window_size,
+      CompareWindowByWindow(reference_iter, filler, max_doc, window_size,
                             Cycle({noop, SeekToWindow()}, 2));
     });
 }
@@ -381,15 +385,16 @@ void TestAdvanceSkipFillBlock(const irs::DirectoryReader& reader,
 
         auto query = factory.prepare(segment);
         ASSERT_NE(nullptr, query);
-        auto reference_iter = query->PlanLead({});
-        ASSERT_NE(nullptr, reference_iter);
+        auto lead = query->PlanLead({});
+        ASSERT_NE(nullptr, lead);
+        tests::LeadCursor reference_iter{std::move(lead)};
         auto fill = query->PlanFill({}, irs::ScoreMergeType::Noop);
         ASSERT_NE(nullptr, fill);
         WindowFiller filler{std::move(fill)};
 
-        reference_iter->Advance();
+        reference_iter.Advance();
 
-        CompareWindowByWindow(*reference_iter, filler, max_doc, window_size,
+        CompareWindowByWindow(reference_iter, filler, max_doc, window_size,
                               AdvanceSkip(skip));
       }
     });
@@ -408,15 +413,16 @@ void TestSeekSkipFillBlock(const irs::DirectoryReader& reader,
 
         auto query = factory.prepare(segment);
         ASSERT_NE(nullptr, query);
-        auto reference_iter = query->PlanLead({});
-        ASSERT_NE(nullptr, reference_iter);
+        auto lead = query->PlanLead({});
+        ASSERT_NE(nullptr, lead);
+        tests::LeadCursor reference_iter{std::move(lead)};
         auto fill = query->PlanFill({}, irs::ScoreMergeType::Noop);
         ASSERT_NE(nullptr, fill);
         WindowFiller filler{std::move(fill)};
 
-        reference_iter->Advance();
+        reference_iter.Advance();
 
-        CompareWindowByWindow(*reference_iter, filler, max_doc, window_size,
+        CompareWindowByWindow(reference_iter, filler, max_doc, window_size,
                               SeekSkip(delta));
       }
     });

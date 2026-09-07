@@ -49,7 +49,7 @@ class CountThreshold : public Root {
 
   uint64_t Run() final {
     uint64_t total = 0;
-    doc_id_t min = 0;
+    doc_id_t min = doc_limits::min();
 
     while (_leaves.Live() >= _min_match) {
       if (!_table.Skip(min)) {

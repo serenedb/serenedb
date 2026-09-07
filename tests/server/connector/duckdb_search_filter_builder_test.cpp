@@ -324,7 +324,7 @@ std::string ScorerName(const irs::Scorer* scorer) {
   if (scorer == nullptr) {
     return "none";
   }
-  return scorer == &irs::DefaultConstScore() ? "const" : "other";
+  return scorer == &irs::ForceConstScore() ? "const" : "other";
 }
 
 template<typename T>
@@ -333,7 +333,7 @@ const irs::Scorer* ExpectedScorer() noexcept {
                 std::is_same_v<T, std::string>) {
     return nullptr;
   } else {
-    return &irs::DefaultConstScore();
+    return &irs::ForceConstScore();
   }
 }
 
@@ -409,7 +409,7 @@ template<typename Filter>
 TermRef AddNullFilter(Filter&& root, uint64_t null_field) {
   return {ToTarget(root),
           irs::TermClause{.field = ExpectedFieldId(null_field),
-                          .scorer = &irs::DefaultConstScore(),
+                          .scorer = &irs::ForceConstScore(),
                           .term = irs::bstring{irs::ViewCast<irs::byte_type>(
                             irs::NullTokenizer::value_null())}}};
 }
@@ -463,7 +463,7 @@ irs::ByEditDistance& AddEditDistanceFilter(Filter&& root, uint64_t column,
                                            std::string_view term,
                                            uint8_t max_distance,
                                            bool with_transpositions = true,
-                                           size_t max_terms = 64,
+                                           size_t max_terms = 50,
                                            std::string_view prefix = "") {
   auto& ed = AddChild<irs::ByEditDistance>(root);
   *ed.mutable_field_id() = ExpectedFieldId(column);
@@ -2577,7 +2577,7 @@ TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_LevenshteinWithPrefix) {
   irs::BooleanFilter expected;
   AddEditDistanceFilter(expected, 1, "roximate", 1,
                         /*with_transpositions=*/true,
-                        /*max_terms=*/64, /*prefix=*/"app");
+                        /*max_terms=*/50, /*prefix=*/"app");
   AssertFilter(
     expected,
     "SELECT * FROM foo WHERE b @@ ts_levenshtein('roximate', 1, true, 'app')",
@@ -5398,7 +5398,7 @@ TEST_F(SearchFilterBuilderTest,
   irs::BooleanFilter expected;
   AddEditDistanceFilter(expected, 1, "roximate", 1,
                         /*with_transpositions=*/true,
-                        /*max_terms=*/64, /*prefix=*/"app");
+                        /*max_terms=*/50, /*prefix=*/"app");
   AssertFilter(expected,
                "SELECT * FROM foo WHERE levenshtein_matches(b, 'roximate', 1, "
                "true, 'app')",

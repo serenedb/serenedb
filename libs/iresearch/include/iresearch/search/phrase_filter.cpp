@@ -597,7 +597,6 @@ bool ByPhraseOptions::LowerParts() {
   for (auto& info : _phrase) {
     if (const auto* w = std::get_if<ByWildcardOptions>(&info.part); w) {
       bstring buf;
-      const auto lim = w->scored_terms_limit;
       info.part = ExecuteWildcard(
         buf, bytes_view{w->term},
         [](bytes_view term) -> phrase_part {
@@ -605,19 +604,17 @@ bool ByPhraseOptions::LowerParts() {
           opts.term = term;
           return opts;
         },
-        [lim](bytes_view prefix) -> phrase_part {
+        [](bytes_view prefix) -> phrase_part {
           ByPrefixOptions opts;
           opts.term = prefix;
-          opts.scored_terms_limit = lim;
           return opts;
         },
-        [lim](bytes_view term) -> phrase_part {
-          return AutomatonOptions{FromWildcard(term), term, lim};
+        [](bytes_view term) -> phrase_part {
+          return AutomatonOptions{FromWildcard(term), term};
         });
       changed = true;
     } else if (const auto* r = std::get_if<ByRegexpOptions>(&info.part); r) {
       bstring buf;
-      const auto lim = r->scored_terms_limit;
       const auto syntax = r->syntax;
       info.part = ExecuteRegexp(
         buf, bytes_view{r->pattern},
@@ -626,15 +623,14 @@ bool ByPhraseOptions::LowerParts() {
           opts.term = term;
           return opts;
         },
-        [lim](bytes_view prefix) -> phrase_part {
+        [](bytes_view prefix) -> phrase_part {
           ByPrefixOptions opts;
           opts.term = prefix;
-          opts.scored_terms_limit = lim;
           return opts;
         },
-        [lim, syntax](bytes_view pattern) -> phrase_part {
+        [syntax](bytes_view pattern) -> phrase_part {
           return AutomatonOptions{
-            FromRegexp(pattern, kDefaultMaxDfaStates, syntax), pattern, lim};
+            FromRegexp(pattern, kDefaultMaxDfaStates, syntax), pattern};
         });
       changed = true;
     } else if (const auto* e = std::get_if<ByEditDistanceOptions>(&info.part);

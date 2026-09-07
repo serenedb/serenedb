@@ -212,7 +212,7 @@ std::pair<irs::GeoDistanceFilter*, double> PrepareGeoDistanceFilter(
   auto& geo_filter =
     AddMaybeNegated<irs::GeoDistanceFilter>(parent, ctx, *column_info);
   geo_filter.SetBoost(ctx.boost);
-  geo_filter.SetScorer(&irs::DefaultConstScore());
+  geo_filter.SetScorer(&irs::ForceConstScore());
   *geo_filter.mutable_field_id() = column_info->field_id;
 
   auto* options = geo_filter.mutable_options();
@@ -313,7 +313,7 @@ void FromGeoInRange(BoolTarget filter, const FilterContext& ctx,
   auto& geo_filter =
     AddMaybeNegated<irs::GeoDistanceFilter>(filter, ctx, *column_info);
   geo_filter.SetBoost(ctx.boost);
-  geo_filter.SetScorer(&irs::DefaultConstScore());
+  geo_filter.SetScorer(&irs::ForceConstScore());
   *geo_filter.mutable_field_id() = column_info->field_id;
 
   auto* options = geo_filter.mutable_options();
@@ -392,7 +392,7 @@ void FromGeoFilter(BoolTarget filter, const FilterContext& ctx,
 
   auto& geo_filter = AddMaybeNegated<irs::GeoFilter>(filter, ctx, *column_info);
   geo_filter.SetBoost(ctx.boost);
-  geo_filter.SetScorer(&irs::DefaultConstScore());
+  geo_filter.SetScorer(&irs::ForceConstScore());
   *geo_filter.mutable_field_id() = column_info->field_id;
 
   auto* options = geo_filter.mutable_options();

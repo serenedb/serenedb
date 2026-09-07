@@ -32,17 +32,19 @@ namespace irs::probe {
 class BitsetDocs {
  public:
   static constexpr auto kBits = search::BitsetStorage::kBits;
+  static constexpr auto kMin = search::BitsetStorage::kMin;
 
   explicit BitsetDocs(search::BitsetStorage&& set) noexcept
     : _set{std::move(set)}, _words{_set.Words()}, _count{_set.WordCount()} {}
 
   IRS_FORCE_INLINE doc_id_t Probe(doc_id_t target) {
-    const auto word = target / kBits;
+    const auto offset = target - kMin;
+    const auto word = offset / kBits;
     if (word >= _count) [[unlikely]] {
       return doc_limits::eof();
     }
-    const auto rest = _words[word] & (~uint64_t{0} << (target % kBits));
-    return word * kBits + std::countr_zero(rest);
+    const auto rest = _words[word] & (~uint64_t{0} << (offset % kBits));
+    return kMin + word * kBits + std::countr_zero(rest);
   }
 
  private:

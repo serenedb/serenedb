@@ -54,8 +54,10 @@ class Bitset : public Root {
       if (n + card > capacity) {
         return n;
       }
-      n = static_cast<uint32_t>(MaterializeWord(_word * kBits, word, out + n) -
-                                out);
+      n = static_cast<uint32_t>(
+        MaterializeWord(search::BitsetStorage::kMin + _word * kBits, word,
+                        out + n) -
+        out);
     }
     return n;
   }

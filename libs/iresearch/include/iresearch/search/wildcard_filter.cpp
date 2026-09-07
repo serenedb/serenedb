@@ -37,8 +37,7 @@ QueryBuilder::ptr ByWildcard::PrepareSegment(const SubReader&,
     ERR_MSG("ByWildcard must be lowered by the optimizer before prepare"));
 }
 
-Filter::ptr LowerWildcard(irs::field_id id, bytes_view term,
-                          size_t scored_terms_limit, score_t boost) {
+Filter::ptr LowerWildcard(irs::field_id id, bytes_view term, score_t boost) {
   bstring buf;
   return ExecuteWildcard(
     buf, term,
@@ -53,26 +52,22 @@ Filter::ptr LowerWildcard(irs::field_id id, bytes_view term,
       auto filter = std::make_unique<ByPrefix>();
       *filter->mutable_field_id() = id;
       filter->mutable_options()->term = term;
-      filter->mutable_options()->scored_terms_limit = scored_terms_limit;
       filter->SetBoost(boost);
       return filter;
     },
     [&](bytes_view term) -> Filter::ptr {
       auto filter = std::make_unique<AutomatonFilter>();
       *filter->mutable_field_id() = id;
-      *filter->mutable_options() =
-        AutomatonOptions{FromWildcard(term), term, scored_terms_limit};
+      *filter->mutable_options() = AutomatonOptions{FromWildcard(term), term};
       filter->SetBoost(boost);
       return filter;
     });
 }
 
-Filter::ptr CreateByWildcard(irs::field_id id, bytes_view term,
-                             size_t scored_terms_limit, score_t boost) {
+Filter::ptr CreateByWildcard(irs::field_id id, bytes_view term, score_t boost) {
   auto filter = std::make_unique<ByWildcard>();
   *filter->mutable_field_id() = id;
   filter->mutable_options()->term = term;
-  filter->mutable_options()->scored_terms_limit = scored_terms_limit;
   filter->SetBoost(boost);
   return filter;
 }

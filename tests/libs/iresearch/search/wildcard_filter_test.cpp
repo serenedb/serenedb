@@ -81,12 +81,20 @@ irs::Filter::ptr MakeWildcard(irs::field_id field, std::string_view term) {
   return filter;
 }
 
+irs::Filter::ptr MakeWildcard(irs::field_id field, std::string_view term,
+                              const irs::Scorer* scorer) {
+  auto filter =
+    irs::CreateByWildcard(field, irs::ViewCast<irs::byte_type>(term));
+  filter->SetScorer(scorer);
+  irs::Optimize(filter, {.scored = true});
+  return filter;
+}
+
 }  // namespace
 
 TEST(by_wildcard_test, options) {
   irs::ByWildcardOptions opts;
   ASSERT_TRUE(opts.term.empty());
-  ASSERT_EQ(1024, opts.scored_terms_limit);
 }
 
 TEST(by_wildcard_test, ctor) {
@@ -103,10 +111,6 @@ TEST(by_wildcard_test, equal) {
   ASSERT_EQ(q, MakeFilter(kFieldId, "bar*"));
   ASSERT_NE(q, MakeFilter(kField1Id, "bar*"));
   ASSERT_NE(q, MakeFilter(kFieldId, "bar"));
-
-  irs::ByWildcard q1 = MakeFilter(kFieldId, "bar*");
-  q1.mutable_options()->scored_terms_limit = 100;
-  ASSERT_NE(q, q1);
 }
 
 TEST(by_wildcard_test, boost) {
@@ -122,8 +126,7 @@ TEST(by_wildcard_test, boost) {
     irs::score_t boost = 1.5f;
 
     irs::Filter::ptr q = irs::CreateByWildcard(
-      kFieldId, irs::ViewCast<irs::byte_type>(std::string_view("bar*")), 1024,
-      boost);
+      kFieldId, irs::ViewCast<irs::byte_type>(std::string_view("bar*")), boost);
     irs::Optimize(q);
     ASSERT_EQ(boost, q->GetBoost());
 
@@ -199,7 +202,8 @@ TEST_P(WildcardFilterTestCase, simple_sequential_order) {
       finish_docs_with_field += field->docs_with_field;
       finish_docs_with_term += term->docs_with_term;
     };
-    CheckQuery(*MakeWildcard(kPrefixId, "%"), order, docs, rdr);
+    CheckQuery(*MakeWildcard(kPrefixId, "%", order.front().get()), order, docs,
+               rdr);
     ASSERT_EQ(9, finish_count);
     ASSERT_GT(finish_docs_with_field, 0u);  // scorer collected field stats
     ASSERT_GT(finish_docs_with_term, 0u);   // scorer collected term stats
@@ -213,7 +217,8 @@ TEST_P(WildcardFilterTestCase, simple_sequential_order) {
     std::array<irs::Scorer::ptr, 1> order{
       std::make_unique<tests::sort::FrequencySort>()};
 
-    CheckQuery(*MakeWildcard(kPrefixId, "%"), order, docs, rdr);
+    CheckQuery(*MakeWildcard(kPrefixId, "%", order.front().get()), order, docs,
+               rdr);
   }
 
   // prefix
@@ -224,7 +229,8 @@ TEST_P(WildcardFilterTestCase, simple_sequential_order) {
     std::array<irs::Scorer::ptr, 1> order{
       std::make_unique<tests::sort::FrequencySort>()};
 
-    CheckQuery(*MakeWildcard(kPrefixId, "a%"), order, docs, rdr);
+    CheckQuery(*MakeWildcard(kPrefixId, "a%", order.front().get()), order, docs,
+               rdr);
   }
 }
 

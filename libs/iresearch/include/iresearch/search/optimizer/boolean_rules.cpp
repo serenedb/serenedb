@@ -216,14 +216,17 @@ bool Overlaps(const Clauses& lhs, const Clauses& rhs) {
   });
 }
 
-size_t DedupTerms(std::vector<TermClause>& terms, ScoreMergeType merge) {
+size_t DedupTerms(std::vector<TermClause>& terms, ScoreMergeType merge,
+                  bool scored) {
   if (terms.size() < 2) {
     return 0;
   }
-  constexpr TermClauseLess kLess{};
+  const auto same = [scored](const TermClause& lhs, const TermClause& rhs) {
+    return scored ? !TermClauseLess{}(lhs, rhs) : !TermPostingLess{}(lhs, rhs);
+  };
   size_t kept = 0;
   for (size_t i = 1; i != terms.size(); ++i) {
-    if (!kLess(terms[kept], terms[i])) {
+    if (same(terms[kept], terms[i])) {
       MergeBoost(terms[kept].boost, terms[i].boost, merge);
       continue;
     }
@@ -254,7 +257,7 @@ size_t DedupFilters(std::vector<Filter::ptr>& filters) {
 
 }  // namespace
 
-bool NormalizeTerms(BooleanFilter& node) {
+bool NormalizeTerms(BooleanFilter& node, bool scored) {
   bool changed = false;
   const auto merge = node.MergeType();
   for (const auto occur : kAllOccur) {
@@ -274,7 +277,8 @@ bool NormalizeTerms(BooleanFilter& node) {
     }
     if (occur != Occur::Should || node.MinShouldMatch() <= 1) {
       DedupTerms(node.Bucket(occur).terms,
-                 occur == Occur::MustNot ? ScoreMergeType::Noop : merge);
+                 occur == Occur::MustNot ? ScoreMergeType::Noop : merge,
+                 scored);
     }
     changed = true;
   }
@@ -282,8 +286,9 @@ bool NormalizeTerms(BooleanFilter& node) {
 }
 
 bool BooleanNormalizeTermsRule::Apply(Filter::ptr& slot,
-                                      const OptimizeContext&) {
-  return NormalizeTerms(sdb::basics::downCast<BooleanFilter>(*slot));
+                                      const OptimizeContext& ctx) {
+  return NormalizeTerms(sdb::basics::downCast<BooleanFilter>(*slot),
+                        ctx.scored);
 }
 
 bool BooleanMinShouldMatchRule::Apply(Filter::ptr& slot,
@@ -443,9 +448,9 @@ bool BooleanDedupRule::Apply(Filter::ptr& slot, const OptimizeContext& ctx) {
   }
 
   const auto merge = node.MergeType();
-  changed |= DedupTerms(node.Bucket(Occur::Must).terms, merge) != 0;
+  changed |= DedupTerms(node.Bucket(Occur::Must).terms, merge, ctx.scored) != 0;
   if (node.MinShouldMatch() <= 1) {
-    const auto dropped = DedupTerms(should.terms, merge);
+    const auto dropped = DedupTerms(should.terms, merge, ctx.scored);
     changed |= dropped != 0;
     if (Unreachable(node)) {
       slot = std::make_unique<Empty>();
@@ -687,7 +692,6 @@ struct OrAcceptorFusionRule {
   struct AcceptorInfo {
     field_id field;
     score_t boost;
-    size_t scored_terms_limit;
   };
 
   static std::optional<AcceptorInfo> InfoOf(const Filter& child);
@@ -724,29 +728,24 @@ bool IsAllRequired(const BooleanFilter& node) noexcept {
 
 std::optional<OrAcceptorFusionRule::AcceptorInfo> OrAcceptorFusionRule::InfoOf(
   const Filter& child) {
-  const auto info = [](const auto& filter, size_t scored_terms_limit) {
-    return AcceptorInfo{filter.field_id(), filter.GetBoost(),
-                        scored_terms_limit};
+  const auto info = [](const auto& filter) {
+    return AcceptorInfo{filter.field_id(), filter.GetBoost()};
   };
   const auto type = child.type();
   if (type == Type<ByTerm>::id()) {
-    return info(sdb::basics::downCast<ByTerm>(child), 0);
+    return info(sdb::basics::downCast<ByTerm>(child));
   }
   if (type == Type<ByPrefix>::id()) {
-    const auto& filter = sdb::basics::downCast<ByPrefix>(child);
-    return info(filter, filter.options().scored_terms_limit);
+    return info(sdb::basics::downCast<ByPrefix>(child));
   }
   if (type == Type<ByWildcard>::id()) {
-    const auto& filter = sdb::basics::downCast<ByWildcard>(child);
-    return info(filter, filter.options().scored_terms_limit);
+    return info(sdb::basics::downCast<ByWildcard>(child));
   }
   if (type == Type<ByRegexp>::id()) {
-    const auto& filter = sdb::basics::downCast<ByRegexp>(child);
-    return info(filter, filter.options().scored_terms_limit);
+    return info(sdb::basics::downCast<ByRegexp>(child));
   }
   if (type == Type<AutomatonFilter>::id()) {
-    const auto& filter = sdb::basics::downCast<AutomatonFilter>(child);
-    return info(filter, filter.options().scored_terms_limit);
+    return info(sdb::basics::downCast<AutomatonFilter>(child));
   }
   return std::nullopt;
 }
@@ -851,9 +850,8 @@ bool OrAcceptorFusionRule::Apply(Filter::ptr& slot,
   }
 
   size_t seekable = terms.size();
-  size_t scored_terms_limit = 0;
   for (const auto& term : terms) {
-    if (term.field != field || term.scorer != scorer) {
+    if (term.field != field || (ctx.scored && term.scorer != scorer)) {
       return false;
     }
     if (ctx.scored && term.boost != boost) {
@@ -862,14 +860,14 @@ bool OrAcceptorFusionRule::Apply(Filter::ptr& slot,
   }
   for (const auto& child : filters) {
     const auto info = InfoOf(*child);
-    if (!info || info->field != field || child->GetScorer() != scorer) {
+    if (!info || info->field != field ||
+        (ctx.scored && child->GetScorer() != scorer)) {
       return false;
     }
     if (ctx.scored && info->boost != boost) {
       return false;
     }
     seekable += child->type() == Type<ByPrefix>::id();
-    scored_terms_limit += info->scored_terms_limit;
   }
   if (filters.empty()) {
     return false;
@@ -900,8 +898,7 @@ bool OrAcceptorFusionRule::Apply(Filter::ptr& slot,
   }
   auto fused = std::make_unique<AutomatonFilter>();
   *fused->mutable_field_id() = field;
-  *fused->mutable_options() =
-    AutomatonOptions{std::move(dfa), pattern, scored_terms_limit};
+  *fused->mutable_options() = AutomatonOptions{std::move(dfa), pattern};
   fused->SetBoost(ctx.scored ? node.GetBoost() * boost : node.GetBoost());
   fused->SetScorer(scorer);
   slot = std::move(fused);
@@ -1036,7 +1033,7 @@ bool AndAcceptorFusionRule::Apply(Filter::ptr& slot,
   auto fused_filter = std::make_unique<AutomatonFilter>();
   *fused_filter->mutable_field_id() = driver->field;
   *fused_filter->mutable_options() =
-    AutomatonOptions{std::move(fused), pattern, 0};
+    AutomatonOptions{std::move(fused), pattern};
 
   consumed.emplace_back(order.front());
   std::vector<bool> dead(must.size(), false);

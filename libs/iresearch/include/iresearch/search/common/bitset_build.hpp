@@ -21,6 +21,7 @@
 #pragma once
 
 #include <algorithm>
+#include <optional>
 #include <span>
 #include <utility>
 #include <vector>
@@ -82,109 +83,59 @@ inline IRS_FORCE_INLINE void ClearBitRange(uint64_t* IRS_RESTRICT words,
   words[last] &= ~tail;
 }
 
-inline IRS_FORCE_INLINE void AndNotBitsetAt(uint64_t* IRS_RESTRICT dst,
-                                            uint64_t prev,
-                                            const uint64_t* IRS_RESTRICT src,
-                                            uint32_t words) noexcept {
-  constexpr auto kBits = BitsRequired<uint64_t>();
-  SDB_ASSERT(words != 0);
-  dst += prev / kBits;
-  const auto shift = prev % kBits;
-  if (shift == 0) {
-    for (uint32_t i = 0; i != words; ++i) {
-      dst[i] &= ~src[i];
-    }
-    return;
-  }
-  uint64_t carry = 0;
-  for (uint32_t i = 0; i != words; ++i) {
-    const auto word = src[i];
-    dst[i] &= ~((word << shift) | carry);
-    carry = word >> (kBits - shift);
-  }
-  dst[words] &= ~carry;
-}
-
-inline IRS_FORCE_INLINE void AndBitsetAt(uint64_t* IRS_RESTRICT dst,
-                                         uint64_t prev,
-                                         const uint64_t* IRS_RESTRICT src,
-                                         uint32_t words,
-                                         uint64_t max) noexcept {
-  constexpr auto kBits = BitsRequired<uint64_t>();
-  SDB_ASSERT(words != 0);
-  SDB_ASSERT(max > prev);
-  const auto shift = prev % kBits;
-  auto* const base = dst + prev / kBits;
-  const auto stop = static_cast<uint32_t>(max / kBits - prev / kBits);
-  const auto top = max % kBits;
-  const uint64_t above =
-    top == kBits - 1 ? uint64_t{0} : (~uint64_t{0} << (top + 1));
-  uint64_t keep = (uint64_t{2} << shift) - 1;
-  uint64_t carry = 0;
-  for (uint32_t i = 0; i <= stop; ++i) {
-    const auto word = i < words ? src[i] : uint64_t{0};
-    uint64_t mask;
-    if (shift == 0) {
-      mask = word;
-    } else {
-      mask = (word << shift) | carry;
-      carry = word >> (kBits - shift);
-    }
-    mask |= keep;
-    keep = 0;
-    if (i == stop) {
-      mask |= above;
-    }
-    base[i] &= mask;
-  }
-}
-
 struct OrBits {
-  static constexpr auto kBits = BitsRequired<uint64_t>();
+  static constexpr auto kBits = BitsetStorage::kBits;
+  static constexpr auto kMin = BitsetStorage::kMin;
   static constexpr bool kOrdered = false;
 
   uint64_t* IRS_RESTRICT words;
 
   IRS_FORCE_INLINE void Run(uint64_t prev, uint32_t len) noexcept {
-    SetBitRange(words, prev + 1, prev + 1 + len);
+    const auto first = prev + 1 - kMin;
+    SetBitRange(words, first, first + len);
   }
 
   IRS_FORCE_INLINE void Bitset(uint64_t prev, const uint64_t* IRS_RESTRICT src,
                                uint32_t n, uint64_t) noexcept {
-    OrBitsetAt(words, prev, src, n);
+    OrBlock(words, static_cast<int64_t>(prev) - kMin, src, n);
   }
 
   IRS_FORCE_INLINE void Doc(size_t doc) noexcept {
-    SetBit(words[doc / kBits], doc % kBits);
+    const auto offset = doc - kMin;
+    SetBit(words[offset / kBits], offset % kBits);
   }
 
   IRS_FORCE_INLINE void Finish(uint32_t) noexcept {}
 };
 
 struct ClearBits {
-  static constexpr auto kBits = BitsRequired<uint64_t>();
+  static constexpr auto kBits = BitsetStorage::kBits;
+  static constexpr auto kMin = BitsetStorage::kMin;
   static constexpr bool kOrdered = false;
 
   uint64_t* IRS_RESTRICT words;
 
   IRS_FORCE_INLINE void Run(uint64_t prev, uint32_t len) noexcept {
-    ClearBitRange(words, prev + 1, prev + 1 + len);
+    const auto first = prev + 1 - kMin;
+    ClearBitRange(words, first, first + len);
   }
 
   IRS_FORCE_INLINE void Bitset(uint64_t prev, const uint64_t* IRS_RESTRICT src,
                                uint32_t n, uint64_t) noexcept {
-    AndNotBitsetAt(words, prev, src, n);
+    ClearBlock(words, static_cast<int64_t>(prev) - kMin, src, n);
   }
 
   IRS_FORCE_INLINE void Doc(size_t doc) noexcept {
-    UnsetBit(words[doc / kBits], doc % kBits);
+    const auto offset = doc - kMin;
+    UnsetBit(words[offset / kBits], offset % kBits);
   }
 
   IRS_FORCE_INLINE void Finish(uint32_t) noexcept {}
 };
 
 struct RetainBits {
-  static constexpr auto kBits = BitsRequired<uint64_t>();
+  static constexpr auto kBits = BitsetStorage::kBits;
+  static constexpr auto kMin = BitsetStorage::kMin;
   static constexpr bool kOrdered = true;
 
   uint64_t* IRS_RESTRICT words;
@@ -198,8 +149,8 @@ struct RetainBits {
 
   static constexpr uint32_t kBulkGap = 16;
 
-  IRS_FORCE_INLINE void Reach(uint64_t doc) noexcept {
-    const auto word = static_cast<uint32_t>(doc / kBits);
+  IRS_FORCE_INLINE void Reach(uint64_t offset) noexcept {
+    const auto word = static_cast<uint32_t>(offset / kBits);
     if (word == at) {
       return;
     }
@@ -217,8 +168,8 @@ struct RetainBits {
   }
 
   IRS_FORCE_INLINE void Run(uint64_t prev, uint32_t len) noexcept {
-    const uint64_t first = prev + 1;
-    const uint64_t last = prev + len;
+    const uint64_t first = prev + 1 - kMin;
+    const uint64_t last = prev + len - kMin;
     Reach(first);
     const auto word = static_cast<uint32_t>(last / kBits);
     if (word == at) {
@@ -232,16 +183,19 @@ struct RetainBits {
 
   IRS_FORCE_INLINE void Bitset(uint64_t prev, const uint64_t* IRS_RESTRICT src,
                                uint32_t n, uint64_t max) noexcept {
-    Reach(prev + 1);
-    words[at] &= keep | (~uint64_t{0} << ((prev + 1) % kBits));
-    AndBitsetAt(words, prev, src, n, max);
-    at = static_cast<uint32_t>(max / kBits);
-    keep = (uint64_t{2} << (max % kBits)) - 1;
+    const auto first = prev + 1 - kMin;
+    const auto last = max - kMin;
+    Reach(first);
+    words[at] &= keep | (~uint64_t{0} << (first % kBits));
+    RetainBlock(words, static_cast<int64_t>(prev) - kMin, src, n, last);
+    at = static_cast<uint32_t>(last / kBits);
+    keep = (uint64_t{2} << (last % kBits)) - 1;
   }
 
   IRS_FORCE_INLINE void Doc(size_t doc) noexcept {
-    Reach(doc);
-    keep |= uint64_t{1} << (doc % kBits);
+    const auto offset = doc - kMin;
+    Reach(offset);
+    keep |= uint64_t{1} << (offset % kBits);
   }
 
   IRS_FORCE_INLINE void Finish(uint32_t word_count) noexcept {
@@ -348,12 +302,14 @@ void ReadTerms(std::span<const Term> terms, const TermReader* field,
 inline void ReadFill(FillNode& node, doc_id_t end,
                      uint64_t* IRS_RESTRICT words) {
   constexpr auto kBits = BitsetStorage::kBits;
-  for (doc_id_t min = 0; min < end;) {
-    const auto next = node.FillOr(min, min + kWindowDocs, words + min / kBits);
+  constexpr auto kMin = BitsetStorage::kMin;
+  for (auto min = kMin; min < end;) {
+    const auto next =
+      node.FillOr(min, min + kWindowDocs, words + (min - kMin) / kBits);
     if (next >= end) {
       break;
     }
-    min = std::max(min + kWindowDocs, next - next % kWindowDocs);
+    min = std::max(min + kWindowDocs, BitsetStorage::WindowMin(next));
   }
 }
 
@@ -412,14 +368,14 @@ inline BitsetStorage BuildBitset(BitsetBuckets& buckets, const IndexInput& doc,
       ReadFill(*node, bits.End(), words);
     }
 
-    std::unique_ptr<uint64_t[]> scratch;
+    std::optional<BitsetStorage> scratch;
     const auto open_scratch = [&]() -> uint64_t* {
       if (!scratch) {
-        scratch = std::make_unique<uint64_t[]>(bits.Alloc());
+        scratch.emplace(docs_count);
       } else {
-        std::fill_n(scratch.get(), bits.Alloc(), uint64_t{0});
+        std::fill_n(scratch->Words(), scratch->Alloc(), uint64_t{0});
       }
-      return scratch.get();
+      return scratch->Words();
     };
 
     for (size_t i = 0, n = buckets.must.size(); i != n; ++i) {

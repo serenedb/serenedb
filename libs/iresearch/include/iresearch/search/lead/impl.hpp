@@ -39,9 +39,9 @@ class Impl : public Node {
   template<typename... Args>
   explicit Impl(Args&&... args) : _leaf{std::forward<Args>(args)...} {}
 
-  doc_id_t Advance() final { return _doc = _leaf.Advance(); }
+  doc_id_t Advance() final { return _leaf.Advance(); }
 
-  doc_id_t Seek(doc_id_t target) final { return _doc = _leaf.Seek(target); }
+  doc_id_t Seek(doc_id_t target) final { return _leaf.Seek(target); }
 
   void FetchScoreArgs(uint32_t slot) final {
     if constexpr (ScoredType<Leaf>) {
@@ -66,8 +66,6 @@ class Erased {
   Erased() = default;
 
   explicit Erased(Node::ptr node) noexcept : _node{std::move(node)} {}
-
-  IRS_FORCE_INLINE doc_id_t Value() const noexcept { return _node->Value(); }
 
   IRS_FORCE_INLINE doc_id_t Advance() { return _node->Advance(); }
 

@@ -27,6 +27,11 @@
 
 namespace irs {
 
+const ConstantScore& ForceConstScore() noexcept {
+  static constexpr ConstantScore kForce;
+  return kForce;
+}
+
 const ConstantScore& DefaultConstScore() noexcept {
   static constexpr ConstantScore kDefault;
   return kDefault;

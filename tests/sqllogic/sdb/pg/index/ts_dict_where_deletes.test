@@ -178,7 +178,6 @@ QUERY PLAN
 │ ╭─ Starts With ──────╮                   │
 │ │ Field: cat(string) │                   │
 │ │ Prefix: p          │                   │
-│ │ Limit: 1024        │                   │
 │ ╰────────────────────╯                   │
 │ TsDict: cat                              │
 │ Projections: sdb_inverted_index_term$cat │
@@ -346,8 +345,7 @@ QUERY PLAN
 │ ╭─ Starts With ──────╮  ╭─ Terms ──┴─────────╮ │
 │ │ Field: cat(string) │  │ Field: cat(string) │ │
 │ │ Prefix: p          │  │ Values: 'pear'     │ │
-│ │ Limit: 1024        │  ╰────────────────────╯ │
-│ ╰────────────────────╯                         │
+│ ╰────────────────────╯  ╰────────────────────╯ │
 │ TsDict: cat                                    │
 │ Projections: sdb_inverted_index_term$cat       │
 │ ~2 rows                                        │

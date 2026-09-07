@@ -31,8 +31,6 @@ namespace {
 const SegmentInfo kEmptyInfo;
 
 struct EmptyDocs final : lead::Node {
-  EmptyDocs() noexcept { _doc = doc_limits::eof(); }
-
   doc_id_t Advance() noexcept final { return doc_limits::eof(); }
 
   doc_id_t Seek(doc_id_t /*target*/) noexcept final {

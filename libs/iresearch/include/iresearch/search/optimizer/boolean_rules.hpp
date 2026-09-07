@@ -37,7 +37,7 @@ void InitOrAcceptorFusion();
 
 size_t AcceptorRank(const Filter& filter) noexcept;
 
-bool NormalizeTerms(BooleanFilter& node);
+bool NormalizeTerms(BooleanFilter& node, bool scored);
 
 void FuseConjunctions(Filter::ptr& root, const OptimizeContext& ctx);
 

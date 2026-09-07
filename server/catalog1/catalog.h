@@ -51,6 +51,10 @@ class SereneDBCatalog : public duckdb::DuckCatalog {
 
   std::string GetDefaultSchema() const override;
 
+  duckdb::optional_ptr<duckdb::CatalogEntry> CreateSchema(
+    duckdb::CatalogTransaction transaction,
+    duckdb::CreateSchemaInfo& info) override;
+
   duckdb::unique_ptr<duckdb::IndexCatalogEntry> MakeIndexEntry(
     duckdb::DuckSchemaEntry& schema, duckdb::CreateIndexInfo& info,
     duckdb::TableCatalogEntry& table) override;

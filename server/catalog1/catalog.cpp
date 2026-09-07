@@ -21,8 +21,10 @@
 #include "catalog1/catalog.h"
 
 #include <algorithm>
+#include <duckdb/catalog/default/default_schemas.hpp>
 #include <duckdb/common/enums/database_modification_type.hpp>
 #include <duckdb/common/exception.hpp>
+#include <duckdb/common/exception/catalog_exception.hpp>
 #include <duckdb/execution/physical_plan_generator.hpp>
 #include <duckdb/main/attached_database.hpp>
 #include <duckdb/parser/expression/columnref_expression.hpp>
@@ -48,6 +50,7 @@
 #include "catalog1/entry/inverted_index.h"
 #include "catalog1/entry/role.h"
 #include "catalog1/entry/search_table.h"
+#include "catalog1/entry/system_table.h"
 #include "catalog1/entry/tokenizer.h"
 #include "connector/duckdb_physical_create_index.h"
 #include "connector/duckdb_physical_search_delete.h"
@@ -213,6 +216,20 @@ void SereneDBCatalog::Initialize(bool load_builtin) {
     {duckdb::Identifier{StaticStrings::kPublic}}, duckdb::Identifier()));
   info.on_conflict = duckdb::OnCreateConflict::IGNORE_ON_CONFLICT;
   CreateSchema(data, info);
+  MountSystemSchemas(*this);
+}
+
+duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBCatalog::CreateSchema(
+  duckdb::CatalogTransaction transaction, duckdb::CreateSchemaInfo& info) {
+  const auto& name = info.GetQualifiedName().Schema();
+  if (duckdb::DefaultSchemaGenerator::IsDefaultSchema(name)) {
+    if (info.on_conflict == duckdb::OnCreateConflict::IGNORE_ON_CONFLICT) {
+      return nullptr;
+    }
+    throw duckdb::CatalogException::EntryAlreadyExists(
+      duckdb::CatalogType::SCHEMA_ENTRY, name);
+  }
+  return duckdb::DuckCatalog::CreateSchema(transaction, info);
 }
 
 duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBCatalog::CreateTokenizer(

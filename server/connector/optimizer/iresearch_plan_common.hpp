@@ -61,6 +61,8 @@ std::shared_ptr<const catalog::InvertedIndex> TermDictIndexFor(
 struct FoundScan {
   duckdb::LogicalGet* get;
   connector::SereneDBScanBindData* bind_data;
+
+  explicit operator bool() const noexcept { return get; }
 };
 
 std::optional<FoundScan> AsSearchScan(duckdb::LogicalOperator& op);

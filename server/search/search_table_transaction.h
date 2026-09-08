@@ -72,7 +72,8 @@ class SearchTableTransaction {
   void AddSearchDeletes(const std::shared_ptr<SearchTable>& shard,
                         std::span<const std::string> pks);
 
-  void AddSearchTruncate(const std::shared_ptr<SearchTable>& shard);
+  void AddSearchTruncate(const std::shared_ptr<SearchTable>& shard,
+                         bool clears_shard);
 
   template<typename Factory>
   std::shared_ptr<irs::DirectoryReader> EnsureSearchTableReader(

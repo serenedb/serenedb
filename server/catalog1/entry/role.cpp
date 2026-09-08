@@ -52,7 +52,7 @@ std::string CreateRoleInfo::ToString() const {
 RoleCatalogEntry::RoleCatalogEntry(duckdb::Catalog& catalog,
                                    CreateRoleInfo& info)
   : duckdb::InCatalogEntry{duckdb::CatalogType::ROLE_ENTRY, catalog,
-                           info.GetQualifiedName().Name()},
+                           info.GetQualifiedName().Name(), info.oid},
     _options{info.options},
     _conn_limit{info.conn_limit},
     _valid_until{info.valid_until},

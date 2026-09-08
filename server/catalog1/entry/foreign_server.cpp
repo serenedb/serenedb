@@ -48,7 +48,7 @@ std::string CreateForeignServerInfo::ToString() const {
 ForeignServerCatalogEntry::ForeignServerCatalogEntry(
   duckdb::Catalog& catalog, CreateForeignServerInfo& info)
   : duckdb::InCatalogEntry{duckdb::CatalogType::FOREIGN_SERVER_ENTRY, catalog,
-                           info.GetQualifiedName().Name()},
+                           info.GetQualifiedName().Name(), info.oid},
     _server_type{info.server_type},
     _version{info.version},
     _fdw_name{info.fdw_name},

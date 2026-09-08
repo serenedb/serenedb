@@ -81,13 +81,13 @@ void ClusterCatalog::Initialize(bool load_builtin) {
   duckdb::DuckCatalog::Initialize(load_builtin);
   CreateRoleInfo info;
   info.SetName(duckdb::Identifier{kRootRole});
+  info.oid = pg::kRootUser;
   info.options = RoleOption::Superuser | RoleOption::Inherit |
                  RoleOption::CreateRole | RoleOption::CreateDb |
                  RoleOption::Login | RoleOption::Replication |
                  RoleOption::BypassRls;
   CreateRole(duckdb::CatalogTransaction::GetSystemTransaction(GetDatabase()),
-             info)
-    ->oid = pg::kRootUser;
+             info);
 }
 
 duckdb::optional_ptr<duckdb::CatalogEntry> ClusterCatalog::CreateRole(

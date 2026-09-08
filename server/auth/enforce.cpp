@@ -1028,29 +1028,7 @@ class Enforcer {
       RequireGrantable(*database);
       return;
     }
-    if (!info.in_schema) {
-      RequireGrantable(ResolveTarget(info));
-      return;
-    }
-    const auto& name = info.GetQualifiedName();
-    auto schema =
-      duckdb::Catalog::GetSchema(_context, name.Catalog(), name.Schema(),
-                                 duckdb::OnEntryNotFound::RETURN_NULL);
-    if (!schema) {
-      THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_SCHEMA_NAME),
-                      ERR_MSG("schema \"", name.Schema().GetIdentifierName(),
-                              "\" does not exist"));
-    }
-    schema->Scan(_context, info.entry_catalog_type,
-                 [&](duckdb::CatalogEntry& entry) {
-                   RequireGrantable(entry);
-                   info.targets.push_back(entry.name);
-                 });
-    if (info.targets.empty()) {
-      info.if_not_found = duckdb::OnEntryNotFound::RETURN_NULL;
-    } else {
-      info.SetName(info.targets.front());
-    }
+    RequireGrantable(ResolveTarget(info));
   }
 
   void ResolveOwner(duckdb::AlterPermissionsInfo& info) {

@@ -57,7 +57,7 @@ TokenizerCatalogEntry::TokenizerCatalogEntry(duckdb::Catalog& catalog,
                                              duckdb::SchemaCatalogEntry& schema,
                                              CreateTokenizerInfo& info)
   : duckdb::StandardEntry{duckdb::CatalogType::TOKENIZER_ENTRY, schema, catalog,
-                          info.GetQualifiedName().Name()},
+                          info.GetQualifiedName().Name(), info.catalog_oid},
     _tokenizer{std::make_shared<Tokenizer>(
       info.GetFeatures(), irs::analysis::Clone(info.Config()))} {
   comment = info.comment;

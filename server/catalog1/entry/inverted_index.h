@@ -198,6 +198,8 @@ class InvertedIndexEntry final : public duckdb::DuckIndexEntry {
   }
 
   const auto& Storage() const noexcept { return _storage; }
+  const std::shared_ptr<search::InvertedIndexStorage>& EnsureStorage(
+    duckdb::ClientContext& context) const;
   const auto& Config() const noexcept { return _config; }
   IndexTokenizers ResolveTokenizers(duckdb::ClientContext& context) const;
   std::optional<ScorerOptions> TopKScorer(duckdb::ClientContext& context) const;
@@ -206,7 +208,7 @@ class InvertedIndexEntry final : public duckdb::DuckIndexEntry {
  private:
   persistence::InvertedIndexData ToPersisted() const;
 
-  std::shared_ptr<search::InvertedIndexStorage> _storage;
+  mutable std::shared_ptr<search::InvertedIndexStorage> _storage;
   std::shared_ptr<const InvertedIndexConfig> _config;
   duckdb::Identifier _relation_name;
 };

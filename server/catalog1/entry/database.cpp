@@ -45,7 +45,7 @@ std::string CreateDatabaseInfo::ToString() const {
 DatabaseCatalogEntry::DatabaseCatalogEntry(duckdb::Catalog& catalog,
                                            CreateDatabaseInfo& info)
   : duckdb::InCatalogEntry{duckdb::CatalogType::DATABASE_ENTRY, catalog,
-                           info.GetQualifiedName().Name()},
+                           info.GetQualifiedName().Name(), info.oid},
     _public_schema_id{info.public_schema_id} {
   comment = info.comment;
   tags = info.tags;

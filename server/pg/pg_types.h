@@ -50,6 +50,8 @@ inline constexpr duckdb::idx_t kPublicGrantee = 0;
 // objects that must carry them.
 inline constexpr duckdb::idx_t kPgCatalogSchema = 11;
 inline constexpr duckdb::idx_t kPgInformationSchema = 13;
+inline constexpr duckdb::idx_t kPgPublicSchema = 2200;
+inline constexpr duckdb::idx_t kPgPostgresDatabase = 5;
 
 inline constexpr duckdb::idx_t kRootUser = 1000000;
 

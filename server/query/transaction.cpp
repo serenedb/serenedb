@@ -36,7 +36,7 @@
 #include "basics/duckdb_engine.h"
 #include "basics/log.h"
 #include "catalog1/catalog.h"
-#include "connector/inverted_store_index.h"
+#include "catalog1/entry/inverted_index.h"
 #include "pg/sql_exception_macro.h"
 #include "search/inverted_index_storage.h"
 #include "search/search_table.h"
@@ -154,26 +154,38 @@ void Transaction::PreCommit() noexcept {
 
 void Transaction::PreRollback() noexcept { RollbackVariables(); }
 
+irs::IndexWriter::Transaction& Transaction::EnsureIndexTransaction(
+  duckdb::idx_t index_id, std::shared_ptr<search::InvertedIndexStorage> storage,
+  std::shared_ptr<const catalog::InvertedIndexConfig> config) {
+  SDB_ASSERT(storage);
+  auto& entry = _search_transactions.try_emplace(index_id).first->second;
+  if (!entry.transaction) {
+    entry.transaction = std::make_unique<irs::IndexWriter::Transaction>(
+      storage->GetTransaction());
+    entry.transaction->SetFieldOptions(std::move(config));
+    entry.storage = std::move(storage);
+  }
+  return *entry.transaction;
+}
+
 void Transaction::CommitSearch(
   std::optional<search::WalCursor> cursor) noexcept {
-  if (_search_feeds.empty()) {
+  if (_search_transactions.empty()) {
     return;
   }
-  absl::Cleanup rollback = [&] {
-    AbortInvertedFeeds();
-    _search_feeds.clear();
-  };
+  absl::Cleanup rollback = [&] { _search_transactions.clear(); };
 
-  // Phase 1, before the tick exists: drain the workers and pin every staged
-  // segment onto the flush context. Pinning must precede Advance -- otherwise a
-  // refresh whose tick snapshot lands in between could advance its committed
-  // tick past an unpinned segment (lost insert / FlushPending assert). Returns
-  // each feed's widest query count, so the reserved band leaves every writer's
-  // first_tick strictly above the tick it last committed at.
+  // Pin every staged segment onto the flush context before the tick exists.
+  // Pinning must precede Advance -- otherwise a refresh whose tick snapshot
+  // lands in between could advance its committed tick past an unpinned segment
+  // (lost insert / FlushPending assert). The widest query count sizes the
+  // reserved band so every writer's first_tick stays strictly above the tick
+  // it last committed at.
   uint64_t max_queries = 0;
-  for (auto& [index_id, feed] : _search_feeds) {
+  for (auto& [index_id, entry] : _search_transactions) {
+    entry.transaction->RegisterFlush();
     max_queries =
-      std::max<uint64_t>(max_queries, connector::PrepareInvertedFeed(*feed));
+      std::max<uint64_t>(max_queries, entry.transaction->GetQueries());
   }
   SDB_IF_FAILURE("long_waited_advance") {
     static std::atomic<uint32_t> gSeedCounter{0};
@@ -188,23 +200,26 @@ void Transaction::CommitSearch(
 
   std::move(rollback).Cancel();
 
-  // Phase 2: each feed records this commit's WAL cursor into its own table
-  // before its segments become flushable, then commits them all at the tick.
-  // The cursor is this commit's exact WAL position, captured under the WAL lock
-  // by the engine: commits overlap, so reading the WAL size here would include
-  // later transactions' bytes and over-claim (skipping their re-stream after a
+  // Each index records this commit's WAL cursor into its own table before its
+  // segment becomes flushable, then commits at the tick. The cursor is this
+  // commit's exact WAL position, captured under the WAL lock by the engine:
+  // commits overlap, so reading the WAL size here would include later
+  // transactions' bytes and over-claim (skipping their re-stream after a
   // crash).
-  for (auto& [index_id, feed] : _search_feeds) {
-    connector::FinishInvertedFeed(*feed, last_tick, cursor);
+  for (auto& [index_id, entry] : _search_transactions) {
+    if (cursor) {
+      entry.storage->RecordFlushCursor(last_tick, *cursor);
+    }
+    if (entry.transaction->Commit(last_tick)) {
+      continue;
+    }
+    SDB_ERROR(SEARCH, "search index commit failed for index '", index_id,
+              "' at tick ", last_tick,
+              "; the index will be rebuilt from the store on next boot");
+    entry.storage->MarkOutOfSync();
   }
 
-  _search_feeds.clear();
-}
-
-void Transaction::AbortInvertedFeeds() noexcept {
-  for (auto& [index_id, feed] : _search_feeds) {
-    connector::AbortInvertedFeed(*feed);
-  }
+  _search_transactions.clear();
 }
 
 void Transaction::Commit() {
@@ -258,10 +273,7 @@ search::InvertedIndexSnapshotPtr Transaction::EnsureSearchSnapshot(
 }
 
 void Transaction::Destroy() noexcept {
-  // Commit clears these in CommitSearch; on the rollback/teardown path the
-  // sessions still hold uncommitted staged segments -- drain and drop them.
-  AbortInvertedFeeds();
-  _search_feeds.clear();
+  _search_transactions.clear();
   _search_snapshots.clear();
   _search_txn.reset();
   _num_log_data_markers = 0;

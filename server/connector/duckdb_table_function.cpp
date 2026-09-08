@@ -1399,12 +1399,7 @@ void SystemTableScan(duckdb::ClientContext&, duckdb::TableFunctionInput& input,
 duckdb::TableFunction BindSearchTableScan(
   catalog::SearchTableEntry& entry,
   duckdb::unique_ptr<duckdb::FunctionData>& bind_data) {
-  const auto& store = entry.EnsureStorage();
-  if (!store) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
-                    ERR_MSG("search table \"", entry.name.GetIdentifierName(),
-                            "\" has no open store"));
-  }
+  const auto& store = entry.Storage();
   bind_data =
     MakeTableScanBindData(entry, ScanEntryKind::SearchTable, "search",
                           std::make_shared<search::InvertedIndexSnapshot>(

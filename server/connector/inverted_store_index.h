@@ -27,6 +27,7 @@
 #include <duckdb/execution/index/index_type.hpp>
 #include <duckdb/parser/parsed_expression.hpp>
 #include <iresearch/index/column_info.hpp>
+#include <iresearch/index/index_writer.hpp>
 #include <iresearch/types.hpp>
 #include <memory>
 #include <optional>
@@ -45,7 +46,7 @@ class ClientContext;
 }  // namespace duckdb
 namespace sdb::connector {
 
-struct InvertedFeedSession;
+class DuckDBSearchSinkInsertWriter;
 
 using catalog::InvertedIndexConfig;
 using catalog::PkColumnKind;
@@ -64,6 +65,7 @@ class InvertedStoreIndex final : public duckdb::BoundIndex {
                      std::shared_ptr<search::InvertedIndexStorage> storage,
                      std::shared_ptr<const InvertedIndexConfig> config,
                      catalog::IndexTokenizers tokenizers);
+  ~InvertedStoreIndex() override;
 
   duckdb::ErrorData Append(duckdb::IndexLock& l, duckdb::DataChunk& chunk,
                            duckdb::Vector& row_ids) override;
@@ -75,6 +77,9 @@ class InvertedStoreIndex final : public duckdb::BoundIndex {
     duckdb::IndexLock& l, duckdb::DataChunk& chunk, duckdb::Vector& row_ids,
     duckdb::optional_ptr<duckdb::SelectionVector> deleted_sel,
     duckdb::optional_ptr<duckdb::SelectionVector> non_deleted_sel) override;
+
+  void OnReplayRange(duckdb::idx_t commit_offset) override;
+  void FinishReplay() override;
 
   duckdb::IndexStorageInfo SerializeToDisk(
     duckdb::QueryContext context,
@@ -99,18 +104,24 @@ class InvertedStoreIndex final : public duckdb::BoundIndex {
  public:
   const auto& Storage() const noexcept { return _storage; }
 
-  const duckdb::vector<duckdb::unique_ptr<duckdb::Expression>>& Expressions()
-    const noexcept {
-    return bound_expressions;
-  }
-
   duckdb::idx_t IndexId() const noexcept { return _index_id; }
 
  private:
+  struct ReplaySession;
+
   duckdb::ErrorData AppendImpl(duckdb::DataChunk& chunk,
                                duckdb::Vector& row_ids);
 
-  std::shared_ptr<InvertedFeedSession> EnsureInvertedFeedSession();
+  irs::IndexWriter::Transaction NewTransaction();
+  std::unique_ptr<DuckDBSearchSinkInsertWriter> MakeInsertWriter(
+    irs::IndexWriter::Transaction& trx);
+  void WriteChunk(DuckDBSearchSinkInsertWriter& writer,
+                  irs::IndexWriter::Transaction& trx, duckdb::DataChunk& chunk,
+                  duckdb::Vector& row_ids);
+
+  ReplaySession& EnsureReplaySession();
+  void ReplayAppend(duckdb::DataChunk& chunk, duckdb::Vector& row_ids);
+  void ReplayDelete(duckdb::DataChunk& chunk, duckdb::Vector& row_ids);
 
   duckdb::idx_t _index_id = 0;
 
@@ -118,13 +129,9 @@ class InvertedStoreIndex final : public duckdb::BoundIndex {
   std::shared_ptr<const InvertedIndexConfig> _config;
   catalog::IndexTokenizers _tokenizers;
 
-  std::shared_ptr<InvertedFeedSession> _feed;
+  std::unique_ptr<ReplaySession> _replay;
+  duckdb::idx_t _replay_commit_offset = 0;
 };
-
-uint64_t PrepareInvertedFeed(InvertedFeedSession& feed);
-void FinishInvertedFeed(InvertedFeedSession& feed, uint64_t last_tick,
-                        std::optional<search::WalCursor> cursor);
-void AbortInvertedFeed(InvertedFeedSession& feed);
 
 std::shared_ptr<search::InvertedIndexStorage> PublishInvertedIndex(
   duckdb::ClientContext& context, catalog::InvertedIndexEntry& entry,

@@ -32,6 +32,7 @@
 #include <string>
 #include <string_view>
 
+#include "basics/assert.h"
 #include "catalog1/persistence/search_table.h"
 
 namespace duckdb {
@@ -93,10 +94,12 @@ class SearchTableEntry final : public duckdb::TableCatalogEntry {
     _storage = std::move(storage);
   }
 
-  const auto& Storage() const noexcept { return _storage; }
-  const std::shared_ptr<search::SearchTable>& EnsureStorage() const;
+  const auto& Storage() const noexcept {
+    SDB_ASSERT(_storage);
+    return _storage;
+  }
   const auto& Options() const noexcept { return _options; }
-
+  std::shared_ptr<search::SearchTable> _storage;
  private:
   mutable std::shared_ptr<search::SearchTable> _storage;
   SearchTableOptions _options;

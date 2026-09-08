@@ -386,21 +386,10 @@ duckdb::unique_ptr<duckdb::BoundIndex> InvertedStoreIndex::Create(
   const auto index_id = IdOption(record, kIndexIdOption);
   const auto entry = FindIndexEntry(&input.context, input.db, index_id);
   SDB_ENSURE(entry, "inverted index: catalog entry for ", index_id, " missing");
-  // A rebind (an ALTER-driven table rebuild, a re-bind after replay) must not
-  // open a second writer over the same directory, so it adopts the storage the
-  // index already registered under this name is holding.
-  std::shared_ptr<search::InvertedIndexStorage> storage;
-  auto& indexes = entry->Cast<duckdb::DuckIndexEntry>().GetDataTableInfo();
-  for (auto& index : indexes.GetIndexes().Indexes()) {
-    if (index.IsBound() && index.GetIndexName() == input.name &&
-        index.GetIndexType() == std::string{kTypeName}) {
-      storage = index.Cast<InvertedStoreIndex>().Storage();
-      break;
-    }
-  }
   const auto& index_entry = entry->Cast<catalog::InvertedIndexEntry>();
+  SDB_ENSURE(index_entry.Storage());
   return duckdb::make_uniq<InvertedStoreIndex>(
-    input, index_id, std::move(storage), index_entry.Config(),
+    input, index_id, index_entry.Storage(), index_entry.Config(),
     index_entry.ResolveTokenizers(input.context));
 }
 

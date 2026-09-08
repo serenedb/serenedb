@@ -191,7 +191,7 @@ SereneDBSearchInsert::GetGlobalSinkState(duckdb::ClientContext& context) const {
     }
   }
 
-  state->search_table = table->EnsureStorage();
+  state->search_table = table->Storage();
   state->table_lock = std::shared_lock{state->search_table->GetTableLock()};
 
   const auto& columns = table->GetColumns();

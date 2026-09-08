@@ -302,7 +302,7 @@ struct MaintainTarget {
 std::shared_ptr<search::SearchTable> MaintainStoreOf(
   const duckdb::TableCatalogEntry& table) {
   const auto* entry = dynamic_cast<const catalog::SearchTableEntry*>(&table);
-  return entry ? entry->EnsureStorage() : nullptr;
+  return entry ? entry->Storage() : nullptr;
 }
 
 MaintainTarget MakeMaintainTarget(duckdb::TableCatalogEntry& table) {

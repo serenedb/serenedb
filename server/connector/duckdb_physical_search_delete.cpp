@@ -126,7 +126,7 @@ SereneDBSearchDelete::GetGlobalSinkState(duckdb::ClientContext& context) const {
   }
 
   auto state = duckdb::make_uniq<SearchTableDeleteState>();
-  state->search_table = _table->EnsureStorage();
+  state->search_table = _table->Storage();
   state->table_lock = std::shared_lock{state->search_table->GetTableLock()};
 
   state->pk_columns = _pk_columns;

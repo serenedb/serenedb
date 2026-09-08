@@ -234,4 +234,3 @@ SELECT count(*) > 1000, (SELECT count(*) FROM sdb_docs.meta) FROM sdb_docs.docs;
 ----
 ?column?	count
 t	1
-

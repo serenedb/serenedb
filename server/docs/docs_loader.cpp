@@ -53,7 +53,6 @@
 #include "docs/docs_data.h"
 #include "pg/connection_context.h"
 
-
 // TODO: fix when cross database reference will be supported
 ABSL_FLAG(std::string, embedded_docs, "all",
           "Where the embedded documentation is loaded: all (every database, on "
@@ -62,7 +61,11 @@ ABSL_FLAG(std::string, embedded_docs, "all",
 namespace sdb::docs {
 namespace {
 
-enum class Scope { All, DefaultDatabase, Off };
+enum class Scope {
+  All,
+  DefaultDatabase,
+  Off,
+};
 
 Scope gScope = Scope::All;
 

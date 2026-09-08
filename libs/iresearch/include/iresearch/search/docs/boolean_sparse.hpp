@@ -20,58 +20,72 @@
 
 #pragma once
 
+#include <cstdint>
 #include <tuple>
+#include <type_traits>
 #include <utility>
 
+#include "basics/empty.hpp"
 #include "iresearch/search/common/table_filter.hpp"
 #include "iresearch/search/docs/root.hpp"
 #include "iresearch/search/lead/concept.hpp"
-#include "iresearch/search/probe/concept.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
 namespace irs::docs {
 
-template<lead::Type Include, probe::Type Exclude, typename Table>
-class SparseExclusion : public Root {
+template<lead::Type Lead, typename Probes, typename Excludes, typename Table>
+class BooleanSparse : public Root {
  public:
+  static constexpr bool kProbes = !std::is_same_v<Probes, utils::Empty>;
+  static constexpr bool kExcludes = !std::is_same_v<Excludes, utils::Empty>;
   static constexpr bool kTable = !std::is_same_v<Table, utils::Empty>;
+  static_assert(kProbes || kExcludes);
 
-  template<typename IncludeArgs, typename ExcludeArgs>
-  SparseExclusion(Table table, std::piecewise_construct_t,
-                  IncludeArgs&& include, ExcludeArgs&& exclude)
-    : _include{std::make_from_tuple<Include>(
-        std::forward<IncludeArgs>(include))},
-      _exclude{
-        std::make_from_tuple<Exclude>(std::forward<ExcludeArgs>(exclude))},
+  template<typename LeadArgs, typename ProbesArgs, typename ExcludesArgs>
+  BooleanSparse(Table table, std::piecewise_construct_t, LeadArgs&& lead,
+                ProbesArgs&& probes, ExcludesArgs&& excludes)
+    : _lead{std::make_from_tuple<Lead>(std::forward<LeadArgs>(lead))},
+      _probes{std::make_from_tuple<Probes>(std::forward<ProbesArgs>(probes))},
+      _excludes{
+        std::make_from_tuple<Excludes>(std::forward<ExcludesArgs>(excludes))},
       _table{table} {}
 
-  SparseExclusion(SparseExclusion&&) = delete;
-  SparseExclusion& operator=(SparseExclusion&&) = delete;
+  BooleanSparse(BooleanSparse&&) = delete;
+  BooleanSparse& operator=(BooleanSparse&&) = delete;
 
   uint32_t Run(doc_id_t* IRS_RESTRICT out, uint32_t capacity) final {
     SDB_ASSERT(capacity >= doc_limits::kMinCapacity);
-    uint32_t n = 0;
     if (_spent) {
       return 0;
     }
+    uint32_t n = 0;
+    auto doc = _lead.Advance();
 
-    for (auto doc = _include.Advance(); !doc_limits::eof(doc);
-         doc = _include.Advance()) {
+    while (!doc_limits::eof(doc)) {
       if constexpr (kTable) {
-        if (const auto live = _table.Live(doc); live != doc) {
-          doc = _include.Seek(live);
-          if (doc_limits::eof(doc)) {
-            break;
-          }
+        const auto live = _table.Live(doc);
+        if (live != doc) {
+          doc = _lead.Seek(live);
+          continue;
         }
       }
-      if (_exclude.Probe(doc) == doc) {
-        continue;
+      if constexpr (kProbes) {
+        const auto probe = _probes.Probe(doc);
+        if (probe != doc) {
+          doc = _lead.Seek(probe);
+          continue;
+        }
       }
-      out[n++] = doc;
+      out[n] = doc;
+      if constexpr (kExcludes) {
+        n += static_cast<uint32_t>(_excludes.Probe(doc) != doc);
+      } else {
+        ++n;
+      }
       if (n == capacity) {
         return n;
       }
+      doc = _lead.Advance();
     }
 
     _spent = true;
@@ -79,8 +93,9 @@ class SparseExclusion : public Root {
   }
 
  private:
-  Include _include;
-  Exclude _exclude;
+  Lead _lead;
+  [[no_unique_address]] Probes _probes;
+  [[no_unique_address]] Excludes _excludes;
   bool _spent = false;
   [[no_unique_address]] search::Narrowing<Table> _table;
 };

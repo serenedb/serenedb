@@ -23,7 +23,7 @@
 
 #include "iresearch/search/common/posting_count.hpp"
 #include "iresearch/search/docs/count_threshold.hpp"
-#include "iresearch/search/docs/plan.hpp"
+#include "iresearch/search/docs/make_boolean.hpp"
 #include "iresearch/search/fill/set_leaves.hpp"
 
 namespace irs::docs {

@@ -19,21 +19,15 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include "iresearch/index/index_reader.hpp"
-#include "iresearch/search/common/exclusion_bitset.hpp"
-#include "iresearch/search/docs/bitset.hpp"
-#include "iresearch/search/docs/plan.hpp"
+#include "iresearch/search/common/boolean_bitset.hpp"
+#include "iresearch/search/docs/boolean_bitset.hpp"
+#include "iresearch/search/docs/make_boolean.hpp"
 
 namespace irs::docs {
 
-Root::ptr MakeBitsetExclusion(
-  std::span<const search::PostingClause> terms,
-  std::span<const QueryBuilder::ptr> filters,
-  std::span<const search::PostingClause> exclude_terms,
-  std::span<const QueryBuilder::ptr> exclude_filters, const SubReader& segment,
-  uint64_t candidates, const Context& ctx) {
-  return search::MakeExclusionBitset<Root::ptr>(
-    terms, filters, nullptr, exclude_terms, exclude_filters, nullptr, segment,
-    candidates, nullptr);
+Root::ptr MakeBitset(const search::BooleanGroups& groups,
+                     const SubReader& segment, const Context&) {
+  return search::MakeBooleanBitset<Root::ptr>(groups, segment, nullptr);
 }
 
 }  // namespace irs::docs

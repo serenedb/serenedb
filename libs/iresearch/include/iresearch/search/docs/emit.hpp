@@ -35,9 +35,8 @@ class Emit {
  public:
   explicit Emit(Table table) noexcept : _table{table} {}
 
-  IRS_FORCE_INLINE uint64_t* Mask() noexcept { return _mask.data(); }
-
-  IRS_FORCE_INLINE void Opened(doc_id_t base) noexcept {
+  IRS_FORCE_INLINE void Opened(doc_id_t base, uint64_t* words) noexcept {
+    _words = words;
     _base = base;
     _word = 0;
   }
@@ -47,7 +46,7 @@ class Emit {
   IRS_FORCE_INLINE bool Drain(doc_id_t* IRS_RESTRICT out, uint32_t capacity,
                               uint32_t& n) noexcept {
     for (; _word != search::kWindowWords; ++_word) {
-      const auto word = _mask[_word];
+      const auto word = _words[_word];
       if (word == 0) {
         continue;
       }
@@ -56,7 +55,7 @@ class Emit {
           return false;
         }
       }
-      _mask[_word] = 0;
+      _words[_word] = 0;
       n = static_cast<uint32_t>(
         MaterializeWord(_base + _word * search::kWindowBits, word, out + n) -
         out);
@@ -65,7 +64,7 @@ class Emit {
   }
 
  private:
-  search::Scratch _mask{};
+  uint64_t* _words = nullptr;
   uint32_t _word = search::kWindowWords;
   doc_id_t _base = 0;
   [[no_unique_address]] search::Narrowing<Table> _table;

@@ -76,9 +76,7 @@ class BitsThreshold : public Root {
         return doc;
       });
 
-      std::copy_n(planes + top * search::kWindowWords, search::kWindowWords,
-                  _emit.Mask());
-      _emit.Opened(_min);
+      _emit.Opened(_min, planes + top * search::kWindowWords);
       _min = next;
     }
   }

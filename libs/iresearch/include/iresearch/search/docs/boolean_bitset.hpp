@@ -33,9 +33,9 @@
 
 namespace irs::docs {
 
-class Bitset : public Root {
+class BooleanBitset : public Root {
  public:
-  explicit Bitset(search::BitsetStorage&& set) noexcept
+  explicit BooleanBitset(search::BitsetStorage&& set) noexcept
     : _set{std::move(set)} {}
 
   uint32_t Run(doc_id_t* IRS_RESTRICT out, uint32_t capacity) final {
@@ -44,7 +44,6 @@ class Bitset : public Root {
     const auto* const words = _set.Words();
     const auto count = _set.WordCount();
     uint32_t n = 0;
-
     for (; _word != count; ++_word) {
       const auto word = words[_word];
       if (word == 0) {
@@ -78,7 +77,7 @@ inline docs::Root::ptr MakeBitsetNode<docs::Root::ptr>(BitsetBuckets&& buckets,
                                                        const IndexInput& doc,
                                                        doc_id_t docs_count,
                                                        TableFilter*) {
-  return memory::make_managed<docs::Bitset>(
+  return memory::make_managed<docs::BooleanBitset>(
     BuildBitset(buckets, doc, docs_count));
 }
 

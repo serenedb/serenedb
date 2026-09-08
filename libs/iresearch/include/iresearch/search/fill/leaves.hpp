@@ -115,4 +115,23 @@ class ProbedAndNot {
   Probe _probe;
 };
 
+template<typename Leaves>
+class FilledAndNot {
+ public:
+  template<typename LeavesArgs>
+  FilledAndNot(std::piecewise_construct_t, LeavesArgs&& leaves)
+    : _leaves{std::make_from_tuple<Leaves>(std::forward<LeavesArgs>(leaves))} {}
+
+  FilledAndNot(FilledAndNot&&) = delete;
+  FilledAndNot& operator=(FilledAndNot&&) = delete;
+
+  void Remove(doc_id_t min, doc_id_t max, uint64_t* IRS_RESTRICT mask) {
+    _leaves.Visit(max,
+                  [&](auto& leaf) { return leaf.FillAndNot(min, max, mask); });
+  }
+
+ private:
+  Leaves _leaves;
+};
+
 }  // namespace irs::fill

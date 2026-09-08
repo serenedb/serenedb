@@ -62,7 +62,7 @@ class CountThreshold : public Root {
       const auto next = _leaves.Visit(
         max, [&](auto& leaf) { return leaf.Count(_min, max, _counts); });
 
-      auto* const mask = _emit.Mask();
+      auto* const mask = _mask.data();
       for (uint32_t w = 0; w != search::kWindowWords; ++w) {
         auto* const counts = _counts + w * search::kWindowBits;
         uint64_t word = 0;
@@ -72,7 +72,7 @@ class CountThreshold : public Root {
         std::fill_n(counts, search::kWindowBits, uint32_t{0});
         mask[w] = word;
       }
-      _emit.Opened(_min);
+      _emit.Opened(_min, mask);
       _min = next;
     }
   }
@@ -80,6 +80,7 @@ class CountThreshold : public Root {
  private:
   alignas(64) uint32_t _counts[search::kWindowDocs]{};
   Emit<Table> _emit;
+  search::Scratch _mask{};
   Leaves _leaves;
   doc_id_t _min = doc_limits::min();
   uint32_t _min_match;

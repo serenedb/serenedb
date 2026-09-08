@@ -331,14 +331,10 @@ set(IResearch_core_sources
     ./search/docs/make_posting.cpp
     ./search/docs/make_single_posting.cpp
     ./search/docs/make_all.cpp
-    ./search/docs/make_bitset_disjunction.cpp
-    ./search/docs/make_window_disjunction.cpp
-    ./search/docs/make_bitset_conjunction.cpp
-    ./search/docs/make_window_conjunction.cpp
-    ./search/docs/make_sparse_conjunction.cpp
-    ./search/docs/make_bitset_exclusion.cpp
-    ./search/docs/make_window_exclusion.cpp
-    ./search/docs/make_sparse_exclusion.cpp
+    ./search/docs/make_boolean.cpp
+    ./search/docs/make_boolean_bitset.cpp
+    ./search/docs/make_boolean_window.cpp
+    ./search/docs/make_boolean_sparse.cpp
     ./search/docs/make_bits_threshold.cpp
     ./search/docs/make_count_threshold.cpp
     ./search/docs/make_fixed_phrase.cpp

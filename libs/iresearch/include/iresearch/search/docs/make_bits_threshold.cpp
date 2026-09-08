@@ -22,7 +22,7 @@
 #include <utility>
 
 #include "iresearch/search/docs/bits_threshold.hpp"
-#include "iresearch/search/docs/plan.hpp"
+#include "iresearch/search/docs/make_boolean.hpp"
 
 namespace irs::docs {
 

@@ -28,6 +28,7 @@
 #include <duckdb/execution/physical_plan_generator.hpp>
 #include <duckdb/main/attached_database.hpp>
 #include <duckdb/parser/expression/columnref_expression.hpp>
+#include <duckdb/parser/parsed_data/alter_info.hpp>
 #include <duckdb/parser/parsed_data/create_schema_info.hpp>
 #include <duckdb/parser/parsed_expression_iterator.hpp>
 #include <duckdb/parser/statement/create_statement.hpp>
@@ -45,6 +46,7 @@
 
 #include "basics/assert.h"
 #include "basics/static_strings.h"
+#include "catalog1/cluster.h"
 #include "catalog1/entry/database.h"
 #include "catalog1/entry/foreign_server.h"
 #include "catalog1/entry/inverted_index.h"
@@ -52,13 +54,16 @@
 #include "catalog1/entry/search_table.h"
 #include "catalog1/entry/system_table.h"
 #include "catalog1/entry/tokenizer.h"
+#include "connector/duckdb_client_state.h"
 #include "connector/duckdb_physical_create_index.h"
 #include "connector/duckdb_physical_search_delete.h"
 #include "connector/duckdb_physical_search_insert.h"
 #include "connector/duckdb_physical_search_update.h"
 #include "connector/search_table_dispatch.h"
 #include "connector/view_index_bind.h"
+#include "pg/connection_context.h"
 #include "pg/errcodes.h"
+#include "pg/pg_types.h"
 #include "pg/sql_exception_macro.h"
 
 namespace sdb::catalog {

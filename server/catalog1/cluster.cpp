@@ -101,6 +101,17 @@ bool ClusterCatalog::DropRole(duckdb::CatalogTransaction transaction,
   return _roles.DropEntry(transaction, name, cascade);
 }
 
+void ClusterCatalog::Alter(duckdb::CatalogTransaction transaction,
+                           duckdb::AlterInfo& info) {
+  DeclareModified(transaction, *this);
+  const auto type = info.GetCatalogType();
+  auto& set = type == duckdb::CatalogType::DATABASE_ENTRY ? _databases : _roles;
+  const auto& name = info.GetQualifiedName().Name();
+  if (!set.AlterEntry(transaction, name, info)) {
+    throw duckdb::CatalogException::MissingEntry(type, name, std::string{});
+  }
+}
+
 void ClusterCatalog::AlterRole(duckdb::CatalogTransaction transaction,
                                const duckdb::Identifier& name,
                                duckdb::AlterInfo& info) {
@@ -108,16 +119,6 @@ void ClusterCatalog::AlterRole(duckdb::CatalogTransaction transaction,
   if (!_roles.AlterEntry(transaction, name, info)) {
     throw duckdb::CatalogException::MissingEntry(
       duckdb::CatalogType::ROLE_ENTRY, name, std::string{});
-  }
-}
-
-void ClusterCatalog::AlterDatabase(duckdb::CatalogTransaction transaction,
-                                   const duckdb::Identifier& name,
-                                   duckdb::AlterInfo& info) {
-  DeclareModified(transaction, *this);
-  if (!_databases.AlterEntry(transaction, name, info)) {
-    throw duckdb::CatalogException::MissingEntry(
-      duckdb::CatalogType::DATABASE_ENTRY, name, std::string{});
   }
 }
 

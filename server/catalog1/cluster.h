@@ -47,6 +47,8 @@ class ClusterCatalog final : public duckdb::DuckCatalog {
   std::string GetCatalogType() override { return kStorageType; }
 
   void Initialize(bool load_builtin) override;
+  void Alter(duckdb::CatalogTransaction transaction,
+             duckdb::AlterInfo& info) override;
 
   duckdb::CatalogTransaction LoginTransaction() {
     return duckdb::CatalogTransaction{GetDatabase(),
@@ -60,8 +62,6 @@ class ClusterCatalog final : public duckdb::DuckCatalog {
                 const duckdb::Identifier& name, bool cascade);
   void AlterRole(duckdb::CatalogTransaction transaction,
                  const duckdb::Identifier& name, duckdb::AlterInfo& info);
-  void AlterDatabase(duckdb::CatalogTransaction transaction,
-                     const duckdb::Identifier& name, duckdb::AlterInfo& info);
   duckdb::optional_ptr<duckdb::CatalogEntry> LookupRole(
     duckdb::CatalogTransaction transaction, const duckdb::Identifier& name);
   void ScanRoles(duckdb::CatalogTransaction transaction,

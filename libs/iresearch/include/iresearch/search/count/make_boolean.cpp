@@ -41,8 +41,9 @@ Root::ptr MakeDisjunction(std::span<const search::PostingClause> terms,
   if (!CollectDense(terms, filters, nullptr, doc, rest)) {
     return {};
   }
-  const auto docs_count = static_cast<doc_id_t>(segment.docs_count());
-  if (auto folded = MakeBitsetDisjunction(terms, doc, rest, docs_count, ctx)) {
+  if (auto folded = MakeBitset(
+        {.should = terms, .should_filters = filters, .should_fills = &rest},
+        segment, ctx)) {
     return folded;
   }
   return MakeWindowDisjunction(terms, doc, rest, ctx);
@@ -61,7 +62,8 @@ Root::ptr MakeConjunction(std::span<const search::PostingClause> terms,
     return windowed;
   }
   if (!filters.empty()) {
-    if (auto folded = MakeBitsetConjunction(terms, filters, segment, ctx)) {
+    if (auto folded =
+          MakeBitset({.must = terms, .must_filters = filters}, segment, ctx)) {
       return folded;
     }
   }
@@ -168,9 +170,11 @@ Root::ptr MakeExclusion(const BooleanQuery& query, const Context& ctx) {
     return memory::make_managed<Subtract>(segment.docs_count(),
                                           std::move(excluded));
   }
-  if (auto folded =
-        MakeBitsetExclusion(must_terms, must_filters, exclude_terms,
-                            exclude_filters, segment, candidates, ctx)) {
+  if (auto folded = MakeBitset({.must = must_terms,
+                                .must_filters = must_filters,
+                                .must_not = exclude_terms,
+                                .must_not_filters = exclude_filters},
+                               segment, ctx)) {
     return folded;
   }
   if (auto windowed =

@@ -28,7 +28,7 @@
 #include "iresearch/search/common/bitset_of.hpp"
 #include "iresearch/search/common/collect.hpp"
 #include "iresearch/search/common/phrase_of.hpp"
-#include "iresearch/search/count/bitset.hpp"
+#include "iresearch/search/count/boolean_bitset.hpp"
 #include "iresearch/search/count/make.hpp"
 #include "iresearch/search/count/walk.hpp"
 #include "iresearch/search/fill/set_leaves.hpp"

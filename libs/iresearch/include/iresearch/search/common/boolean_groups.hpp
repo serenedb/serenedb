@@ -21,13 +21,26 @@
 #pragma once
 
 #include <cstdint>
+#include <span>
 #include <utility>
+#include <vector>
 
 #include "basics/shared.hpp"
+#include "iresearch/search/common/plan.hpp"
 #include "iresearch/search/common/window.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
 namespace irs::search {
+
+struct BooleanGroups {
+  std::span<const PostingClause> must;
+  std::span<const QueryBuilder::ptr> must_filters;
+  std::span<const PostingClause> should;
+  std::span<const QueryBuilder::ptr> should_filters;
+  std::vector<FillNode::ptr>* should_fills = nullptr;
+  std::span<const PostingClause> must_not;
+  std::span<const QueryBuilder::ptr> must_not_filters;
+};
 
 template<typename Leaves>
 class OrGroup {

@@ -18,44 +18,16 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include <vector>
-
 #include "iresearch/index/index_reader.hpp"
-#include "iresearch/search/common/conjunction_bitset.hpp"
-#include "iresearch/search/common/exclusion_bitset.hpp"
-#include "iresearch/search/count/bitset.hpp"
+#include "iresearch/search/common/boolean_bitset.hpp"
+#include "iresearch/search/count/boolean_bitset.hpp"
 #include "iresearch/search/count/make_boolean.hpp"
 
 namespace irs::count {
 
-Root::ptr MakeBitsetDisjunction(std::span<const search::PostingClause> terms,
-                                const IndexInput* doc,
-                                std::vector<FillNode::ptr>& rest,
-                                doc_id_t docs_count, const Context& ctx) {
-  if (terms.empty() ||
-      !search::TakeBitset<Root::ptr>(terms, *doc, docs_count)) {
-    return {};
-  }
-  return search::MakeBitsetWith<Root::ptr>(terms, nullptr, *doc, docs_count,
-                                           std::move(rest), ctx.table);
-}
-
-Root::ptr MakeBitsetConjunction(std::span<const search::PostingClause> terms,
-                                std::span<const QueryBuilder::ptr> filters,
-                                const SubReader& segment, const Context& ctx) {
-  return search::MakeConjunctionBitset<Root::ptr>(terms, filters, nullptr,
-                                                  segment, ctx.table);
-}
-
-Root::ptr MakeBitsetExclusion(
-  std::span<const search::PostingClause> terms,
-  std::span<const QueryBuilder::ptr> filters,
-  std::span<const search::PostingClause> exclude_terms,
-  std::span<const QueryBuilder::ptr> exclude_filters, const SubReader& segment,
-  uint64_t candidates, const Context& ctx) {
-  return search::MakeExclusionBitset<Root::ptr>(
-    terms, filters, nullptr, exclude_terms, exclude_filters, nullptr, segment,
-    candidates, ctx.table);
+Root::ptr MakeBitset(const search::BooleanGroups& groups,
+                     const SubReader& segment, const Context& ctx) {
+  return search::MakeBooleanBitset<Root::ptr>(groups, segment, ctx.table);
 }
 
 }  // namespace irs::count

@@ -20,9 +20,7 @@
 
 #pragma once
 
-#include <algorithm>
 #include <cstdint>
-#include <type_traits>
 #include <utility>
 
 #include "basics/empty.hpp"
@@ -30,16 +28,15 @@
 #include "iresearch/search/common/bitset_of.hpp"
 #include "iresearch/search/common/bitset_storage.hpp"
 #include "iresearch/search/common/table_filter.hpp"
-#include "iresearch/search/common/window.hpp"
 #include "iresearch/search/count/root.hpp"
 
 namespace irs::count {
 
 template<typename Table>
-class Bitset : public Root {
+class BooleanBitset : public Root {
  public:
-  Bitset(search::BitsetBuckets&& buckets, const IndexInput& doc,
-         doc_id_t docs_count, Table table) noexcept
+  BooleanBitset(search::BitsetBuckets&& buckets, const IndexInput& doc,
+                doc_id_t docs_count, Table table) noexcept
     : _buckets{std::move(buckets)},
       _doc{&doc},
       _docs_count{docs_count},
@@ -69,10 +66,10 @@ inline count::Root::ptr MakeBitsetNode<count::Root::ptr>(
   BitsetBuckets&& buckets, const IndexInput& doc, doc_id_t docs_count,
   TableFilter* table) {
   if (table != nullptr) {
-    return memory::make_managed<count::Bitset<TableFilter*>>(
+    return memory::make_managed<count::BooleanBitset<TableFilter*>>(
       std::move(buckets), doc, docs_count, table);
   }
-  return memory::make_managed<count::Bitset<utils::Empty>>(
+  return memory::make_managed<count::BooleanBitset<utils::Empty>>(
     std::move(buckets), doc, docs_count, utils::Empty{});
 }
 

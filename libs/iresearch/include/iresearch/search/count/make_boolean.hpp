@@ -51,19 +51,8 @@ Root::ptr MakeThreshold(std::span<const search::PostingClause> terms,
 Root::ptr MakeRequired(const BooleanQuery& query, const Context& ctx);
 Root::ptr MakeExclusion(const BooleanQuery& query, const Context& ctx);
 
-Root::ptr MakeBitsetDisjunction(std::span<const search::PostingClause> terms,
-                                const IndexInput* doc,
-                                std::vector<FillNode::ptr>& rest,
-                                doc_id_t docs_count, const Context& ctx);
-Root::ptr MakeBitsetConjunction(std::span<const search::PostingClause> terms,
-                                std::span<const QueryBuilder::ptr> filters,
-                                const SubReader& segment, const Context& ctx);
-Root::ptr MakeBitsetExclusion(
-  std::span<const search::PostingClause> terms,
-  std::span<const QueryBuilder::ptr> filters,
-  std::span<const search::PostingClause> exclude_terms,
-  std::span<const QueryBuilder::ptr> exclude_filters, const SubReader& segment,
-  uint64_t candidates, const Context& ctx);
+Root::ptr MakeBitset(const search::BooleanGroups& groups,
+                     const SubReader& segment, const Context& ctx);
 
 Root::ptr MakeWindowDisjunction(std::span<const search::PostingClause> terms,
                                 const IndexInput* doc,

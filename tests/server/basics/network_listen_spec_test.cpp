@@ -87,7 +87,7 @@ TEST(ListenSpec, MultipleCommaSeparated) {
   EXPECT_EQ(specs[0].protocol, ListenProtocol::Pg);
   EXPECT_EQ(specs[1].protocol, ListenProtocol::Http);
   ASSERT_EQ(specs[1].apis.size(), 1u);
-  EXPECT_EQ(specs[1].apis[0], "es");
+  EXPECT_EQ(specs[1].apis[0], network::HttpApi::Es);
 }
 
 TEST(ListenSpec, HttpsImpliesTls) {
@@ -143,7 +143,7 @@ TEST(ListenSpec, HttpUnixSpecialScheme) {
   EXPECT_EQ(specs[0].transport, ListenTransport::Unix);
   EXPECT_EQ(specs[0].unix_path, "/tmp/sdbhttp.sock");
   ASSERT_EQ(specs[0].apis.size(), 1u);
-  EXPECT_EQ(specs[0].apis[0], "es");
+  EXPECT_EQ(specs[0].apis[0], network::HttpApi::Es);
 }
 
 TEST(ListenSpec, UnixModeAndGroup) {

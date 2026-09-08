@@ -53,19 +53,14 @@
 namespace sdb::docs {
 namespace {
 
+constexpr std::string_view kSchema = StaticStrings::kDocsSchema;
 constexpr std::string_view kTable = "sdb_docs.docs";
+constexpr std::string_view kIndexRelation = "sdb_docs.docs_fts";
 constexpr std::string_view kMeta = "sdb_docs.meta";
 constexpr std::string_view kIndex = "docs_fts";
-constexpr std::string_view kDictionary = "sdb_docs.english";
-constexpr int kLayout = 11;
+constexpr std::string_view kDictionary = "sdb_docs.words";
+constexpr int kLayout = 12;
 constexpr size_t kInsertBatch = 32;
-constexpr std::string_view kStopWords =
-  "\"a\",\"an\",\"also\",\"are\",\"be\",\"been\",\"but\",\"can\","
-  "\"do\",\"does\",\"for\",\"has\",\"have\",\"it\",\"its\",\"may\","
-  "\"of\",\"should\",\"so\",\"such\",\"than\",\"that\",\"the\","
-  "\"their\",\"there\",\"these\",\"they\",\"this\",\"to\",\"was\","
-  "\"were\",\"which\",\"will\",\"would\"";
-
 class Loader {
  public:
   Loader(std::string_view database, ObjectId database_id)
@@ -106,14 +101,19 @@ class Loader {
 
   bool Rebuild() {
     for (const auto& sql : {
+           absl::StrCat("DROP FUNCTION IF EXISTS ", kSchema, ".search(TEXT)"),
+           absl::StrCat("DROP FUNCTION IF EXISTS ", kSchema,
+                        ".search(TEXT, INTEGER)"),
+           absl::StrCat("DROP FUNCTION IF EXISTS ", kSchema, ".read(TEXT)"),
+           absl::StrCat("DROP FUNCTION IF EXISTS ", kSchema, ".sections(TEXT)"),
+           absl::StrCat("DROP FUNCTION IF EXISTS ", kSchema,
+                        ".reference(TEXT)"),
            absl::StrCat("DROP TABLE IF EXISTS ", kTable),
            absl::StrCat("DROP TABLE IF EXISTS ", kMeta),
            absl::StrCat("DROP TEXT SEARCH DICTIONARY IF EXISTS ", kDictionary),
            absl::StrCat("CREATE TEXT SEARCH DICTIONARY ", kDictionary,
-                        " (template = 'text', locale = 'en_US.UTF-8', "
-                        "case = 'lower', stemming = true, accent = false, "
-                        "frequency = true, position = true, stopwords = '",
-                        kStopWords, "')"),
+                        " (template = 'segmentation', case = 'lower', "
+                        "break = 'alpha', frequency = true, position = true)"),
            absl::StrCat("CREATE TABLE ", kTable,
                         " (path TEXT PRIMARY KEY, title TEXT NOT NULL, "
                         "breadcrumb TEXT NOT NULL, "
@@ -132,6 +132,40 @@ class Loader {
     }
     for (const auto& sql : {
            absl::StrCat("VACUUM (REFRESH_TABLE) ", kTable),
+           absl::StrCat(
+             "CREATE FUNCTION ", kSchema,
+             ".search(query TEXT, max_hits INTEGER) RETURNS TABLE(path TEXT, "
+             "title TEXT, breadcrumb TEXT, snippet TEXT, score DOUBLE "
+             "PRECISION) LANGUAGE SQL BEGIN ATOMIC SELECT d.path, d.title, "
+             "d.breadcrumb, left(regexp_replace(d.content_text, '\\s+', ' ', "
+             "'g'), 400), BM25(d.tableoid) FROM ",
+             kIndexRelation,
+             " d WHERE d.title @@ query OR d.breadcrumb @@ query OR "
+             "d.content_text @@ query ORDER BY BM25(d.tableoid) DESC, d.path "
+             "LIMIT max_hits; END"),
+           absl::StrCat("CREATE FUNCTION ", kSchema,
+                        ".search(query TEXT) RETURNS TABLE(path TEXT, title "
+                        "TEXT, breadcrumb TEXT, snippet TEXT, score DOUBLE "
+                        "PRECISION) LANGUAGE SQL BEGIN ATOMIC SELECT * FROM ",
+                        kSchema, ".search(query, 5); END"),
+           absl::StrCat("CREATE FUNCTION ", kSchema,
+                        ".read(doc_path TEXT) RETURNS TEXT LANGUAGE SQL BEGIN "
+                        "ATOMIC SELECT content FROM ",
+                        kTable, " WHERE path = doc_path; END"),
+           absl::StrCat("CREATE FUNCTION ", kSchema,
+                        ".sections(prefix TEXT) RETURNS TABLE(path TEXT, title "
+                        "TEXT, breadcrumb TEXT) LANGUAGE SQL BEGIN ATOMIC "
+                        "SELECT path, title, breadcrumb FROM ",
+                        kTable,
+                        " WHERE starts_with(path, prefix) ORDER BY path; END"),
+           absl::StrCat("CREATE FUNCTION ", kSchema,
+                        ".reference(name TEXT) RETURNS TABLE(path TEXT, title "
+                        "TEXT, breadcrumb TEXT) LANGUAGE SQL BEGIN ATOMIC "
+                        "SELECT path, title, breadcrumb FROM ",
+                        kTable,
+                        " WHERE lower(title) = lower(name) OR "
+                        "starts_with(lower(title), lower(name) || '(') ORDER "
+                        "BY path; END"),
            absl::StrCat("CREATE TABLE ", kMeta, " (hash TEXT, layout INTEGER)"),
            absl::StrCat("INSERT INTO ", kMeta, " VALUES ('", GetDocsHash(),
                         "', ", kLayout, ")"),

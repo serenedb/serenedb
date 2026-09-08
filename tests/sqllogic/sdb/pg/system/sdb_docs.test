@@ -89,7 +89,7 @@ query
 SELECT length(hash), layout FROM sdb_docs.meta;
 ----
 length	layout
-64	11
+64	12
 
 # The breadcrumb is indexed: a breadcrumb match names an ancestor heading.
 connection docs database=postgres
@@ -122,11 +122,47 @@ t
 
 connection docs database=postgres
 query
-SELECT list_contains(t, 'the'), list_contains(t, 'a'), list_contains(t, 'is'), list_contains(t, 'index'), list_contains(t, 'structur')
-FROM (SELECT ts_lexize('sdb_docs.english', 'The index is a structure') AS t);
+SELECT list_contains(t, 'the'), list_contains(t, 'index'), list_contains(t, 'structure'), list_contains(t, 'md_to_text'), list_contains(t, 'MD_TO_TEXT')
+FROM (SELECT ts_lexize('sdb_docs.words', 'The index is a structure; see md_to_text()') AS t);
 ----
 list_contains	list_contains	list_contains	list_contains	list_contains
-f	f	t	t	t
+t	t	t	t	f
+
+# SQL entry points over the same rows and index.
+connection docs database=postgres
+query
+SELECT count(*), bool_and(path <> '' AND snippet <> '' AND score > 0) FROM sdb_docs.search('create search table', 3);
+----
+count	bool_and
+3	t
+
+connection docs database=postgres
+query
+SELECT (SELECT count(*) FROM sdb_docs.search('create search table')) = (SELECT count(*) FROM sdb_docs.search('create search table', 5));
+----
+?column?
+t
+
+connection docs database=postgres
+query
+SELECT length(sdb_docs.read('sql/statements/create_table/index.md#CREATE_TABLE')) > 100, sdb_docs.read('no/such/page.md') IS NULL;
+----
+?column?	?column?
+t	t
+
+connection docs database=postgres
+query
+SELECT count(*) > 3, bool_and(starts_with(path, 'sql/statements/create_table/')) FROM sdb_docs.sections('sql/statements/create_table/');
+----
+?column?	bool_and
+t	t
+
+connection docs database=postgres
+query
+SELECT count(*) >= 1, bool_and(lower(title) LIKE 'any_value%') FROM sdb_docs.reference('ANY_VALUE');
+----
+?column?	bool_and
+t	t
 
 # The schema is read-only for everyone but the loader, the superuser included:
 # the tables are rebuilt from the binary, so a manual change would be silently

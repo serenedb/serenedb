@@ -21,9 +21,11 @@
 #pragma once
 
 #include <cstdint>
+#include <map>
 #include <optional>
 #include <string>
 #include <string_view>
+#include <vector>
 #include <yaclib/coro/task.hpp>
 
 #include "network/http/handler.h"
@@ -42,7 +44,30 @@ struct ToolResult {
   bool is_error = false;
 };
 
-std::string_view ToolsListJson();
+struct SchemaProperty {
+  std::string type;
+  std::string description;
+  std::optional<int64_t> minimum;
+  std::optional<int64_t> maximum;
+};
+
+struct InputSchema {
+  std::string type{"object"};
+  std::map<std::string, SchemaProperty> properties;
+  std::vector<std::string> required;
+};
+
+struct ToolDescriptor {
+  std::string name;
+  std::string description;
+  InputSchema inputSchema;  // NOLINT(readability-identifier-naming)
+};
+
+struct ToolsList {
+  std::vector<ToolDescriptor> tools;
+};
+
+const ToolsList& Tools();
 
 bool KnownTool(std::string_view name);
 

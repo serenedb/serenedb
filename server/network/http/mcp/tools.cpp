@@ -41,67 +41,6 @@ namespace {
 
 constexpr int64_t kDefaultLimit = 5;
 constexpr int64_t kMaxLimit = 10;
-// Length of the preview printed under each search hit; long enough to judge
-// relevance, short enough that ten hits stay under one screen.
-constexpr size_t kSnippetChars = 400;
-
-constexpr std::string_view kToolsList = R"json(
-{
-  "tools": [
-    {
-      "name": "search_docs",
-      "description": "Search the SereneDB documentation. Returns numbered hits with title, location, a path for read_doc and a snippet. Cite the paths you used and offer read_doc for the full text.",
-      "inputSchema": {
-        "type": "object",
-        "properties": {
-          "query": {
-            "type": "string",
-            "description": "Keyword query, 2-6 words naming a concrete feature or concept (no pronouns)"
-          },
-          "limit": {
-            "type": "integer",
-            "minimum": 1,
-            "maximum": 10,
-            "description": "Max results (default 5)"
-          }
-        },
-        "required": [
-          "query"
-        ]
-      }
-    },
-    {
-      "name": "read_doc",
-      "description": "Return a documentation page or section as complete Markdown. Pass a path exactly as returned by search_docs or list_docs.",
-      "inputSchema": {
-        "type": "object",
-        "properties": {
-          "path": {
-            "type": "string",
-            "description": "Path exactly as returned by search_docs or list_docs"
-          }
-        },
-        "required": [
-          "path"
-        ]
-      }
-    },
-    {
-      "name": "list_docs",
-      "description": "List documentation as 'path - title'. A directory prefix lists pages; a page or section path lists the sections under it. Omit the prefix for all pages.",
-      "inputSchema": {
-        "type": "object",
-        "properties": {
-          "prefix": {
-            "type": "string",
-            "description": "Path prefix to filter by; omit for all pages"
-          }
-        }
-      }
-    }
-  ]
-}
-)json";
 
 std::string Cell(duckdb::MaterializedQueryResult& result,
                  std::string_view column, size_t row) {
@@ -109,36 +48,6 @@ std::string Cell(duckdb::MaterializedQueryResult& result,
   SDB_ASSERT(it != result.names.end(), "no column ", column);
   return duckdb::StringValue::Get(
     result.GetValue(static_cast<size_t>(it - result.names.begin()), row));
-}
-
-// One-paragraph preview of a hit: whitespace runs collapsed to a single space,
-// cut at a word boundary once kSnippetChars is reached.
-std::string Snippet(std::string_view text) {
-  std::string out;
-  out.reserve(kSnippetChars + 3);
-  bool pending_space = false;
-  for (const char c : text) {
-    if (absl::ascii_isspace(c)) {
-      pending_space = !out.empty();
-      continue;
-    }
-    if (pending_space) {
-      out.push_back(' ');
-      pending_space = false;
-    }
-    out.push_back(c);
-    if (out.size() >= kSnippetChars) {
-      break;
-    }
-  }
-  if (out.size() >= kSnippetChars) {
-    const auto cut = out.rfind(' ');
-    if (cut != std::string::npos && cut > kSnippetChars / 2) {
-      out.resize(cut);
-    }
-    out.append("...");
-  }
-  return out;
 }
 
 // "page.md" is a whole-page doc; "page.md#Title#Heading" a heading row, one
@@ -166,12 +75,10 @@ yaclib::Task<ToolResult> SearchDocs(RequestContext& ctx, const ToolArgs& args) {
   }
   const auto limit =
     std::clamp(args.limit.value_or(kDefaultLimit), int64_t{1}, kMaxLimit);
-  const auto query = SqlLiteral(*args.query);
   auto result = co_await ctx.RunQuery(
-    absl::StrCat("SELECT path, title, breadcrumb, content_text FROM "
-                 "sdb_docs.docs_fts d WHERE title @@ ",
-                 query, " OR breadcrumb @@ ", query, " OR content_text @@ ",
-                 query, " ORDER BY BM25(d.tableoid) DESC, path LIMIT ", limit),
+    absl::StrCat("SELECT path, title, breadcrumb, snippet FROM "
+                 "sdb_docs.search(",
+                 SqlLiteral(*args.query), ", ", limit, ")"),
     /*writes=*/false);
   if (result->HasError()) {
     co_return Error(absl::StrCat("search_docs failed: ", result->GetError()));
@@ -188,7 +95,7 @@ yaclib::Task<ToolResult> SearchDocs(RequestContext& ctx, const ToolArgs& args) {
       absl::StrAppend(&text, " - ", breadcrumb);
     }
     absl::StrAppend(&text, "\npath: ", Cell(*result, "path", row), "\n",
-                    Snippet(Cell(*result, "content_text", row)));
+                    Cell(*result, "snippet", row));
   }
   co_return ToolResult{std::move(text)};
 }
@@ -266,7 +173,48 @@ constexpr std::array<std::pair<std::string_view, ToolFn>, 3> kTools{{
 
 }  // namespace
 
-std::string_view ToolsListJson() { return kToolsList; }
+const ToolsList& Tools() {
+  static const ToolsList list{
+    .tools = {
+      {.name = "search_docs",
+       .description =
+         "Search the SereneDB documentation. Returns numbered hits with "
+         "title, location, a path for read_doc and a snippet. Cite the paths "
+         "you used and offer read_doc for the full text.",
+       .inputSchema =
+         {.properties = {{"query",
+                          {.type = "string",
+                           .description = "Keyword query, 2-6 words naming a "
+                                          "concrete feature or concept (no "
+                                          "pronouns)"}},
+                         {"limit",
+                          {.type = "integer",
+                           .description = "Max results (default 5)",
+                           .minimum = 1,
+                           .maximum = kMaxLimit}}},
+          .required = {"query"}}},
+      {.name = "read_doc",
+       .description = "Return a documentation page or section as complete "
+                      "Markdown. Pass a path exactly as returned by "
+                      "search_docs or list_docs.",
+       .inputSchema = {.properties = {{"path",
+                                       {.type = "string",
+                                        .description =
+                                          "Path exactly as returned by "
+                                          "search_docs or list_docs"}}},
+                       .required = {"path"}}},
+      {.name = "list_docs",
+       .description = "List documentation as 'path - title'. A directory "
+                      "prefix lists pages; a page or section path lists the "
+                      "sections under it. Omit the prefix for all pages.",
+       .inputSchema = {.properties = {{"prefix",
+                                       {.type = "string",
+                                        .description =
+                                          "Path prefix to filter by; omit for "
+                                          "all pages"}}}}},
+    }};
+  return list;
+}
 
 bool KnownTool(std::string_view name) {
   return absl::c_any_of(kTools,

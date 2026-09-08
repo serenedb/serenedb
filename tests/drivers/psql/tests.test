@@ -1181,8 +1181,8 @@ skipif postgres
 > +----------+------------+--------------+----------------+----------+
 > | inverted | any        | [NULL]       | included       | no       |
 > | inverted | real[]     | [NULL]       | ivf            | no       |
-> | inverted | text       | [NULL]       | english        | no       |
 > | inverted | text       | [NULL]       | simple_dict    | no       |
+> | inverted | text       | [NULL]       | words          | no       |
 > +----------+------------+--------------+----------------+----------+
 > (4 rows)
 
@@ -1196,8 +1196,8 @@ skipif postgres
 > +----------+------------+--------------+----------------+----------+
 > | inverted | any        | [NULL]       | included       | no       |
 > | inverted | real[]     | [NULL]       | ivf            | no       |
-> | inverted | text       | [NULL]       | english        | no       |
 > | inverted | text       | [NULL]       | simple_dict    | no       |
+> | inverted | text       | [NULL]       | words          | no       |
 > +----------+------------+--------------+----------------+----------+
 > (4 rows)
 
@@ -1209,8 +1209,8 @@ skipif postgres
 > +----------+------------+--------------+----------------+----------+
 > |    AM    | Input type | Storage type | Operator class | Default? |
 > +----------+------------+--------------+----------------+----------+
-> | inverted | text       | [NULL]       | english        | no       |
 > | inverted | text       | [NULL]       | simple_dict    | no       |
+> | inverted | text       | [NULL]       | words          | no       |
 > +----------+------------+--------------+----------------+----------+
 > (2 rows)
 
@@ -1278,7 +1278,7 @@ skipif postgres
 > |    Schema    |    Name     | Description |
 > +--------------+-------------+-------------+
 > | SCHEMA | simple_dict | [NULL]      |
-> | sdb_docs     | english     | [NULL]      |
+> | sdb_docs     | words       | [NULL]      |
 > +--------------+-------------+-------------+
 > (2 rows)
 

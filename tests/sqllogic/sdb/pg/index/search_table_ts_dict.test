@@ -63,3 +63,126 @@ SELECT list_sort(ts_dict_agg(an)) AS terms FROM i_an WHERE an @@ 'quick';
 ----
 terms
 {brown,dog,fox,quick}
+
+# The same aggregates against the bare table. A search table's scan is already
+# an index scan, so the planner resolves the index covering the column itself
+# and reads that index's allocated term field.
+query
+SELECT list_sort(ts_dict_agg(an)) AS terms FROM t;
+----
+terms
+{brown,dog,fox,lazy,quick}
+
+query
+SELECT list_sort(ts_dict_agg(tag)) AS terms FROM t;
+----
+terms
+{blue,red}
+
+query
+SELECT list_sort(ts_dict_count(an)) AS counts FROM t;
+----
+counts
+{1,1,1,2,2}
+
+query
+SELECT ts_dict_min(an) AS lo, ts_dict_max(an) AS hi FROM t;
+----
+lo	hi
+brown	quick
+
+# Positionally aligned term / live-doc-count pairs.
+query
+SELECT unnest(ts_dict_agg(tag)) AS term, unnest(ts_dict_count(tag)) AS n
+FROM t ORDER BY term;
+----
+term	n
+blue	1
+red	2
+
+# The dictionary scan runs on the table's own store and names the column, not
+# the allocated term field.
+query
+EXPLAIN SELECT unnest(ts_dict_agg(tag)), unnest(ts_dict_count(tag)) FROM t
+----
+QUERY PLAN
+╭─ PROJECTION ────────────────────────────────────────╮
+│ Projections:                                        │
+│ sdb_inverted_index_term$tag,                        │
+│ CAST(sdb_inverted_index_term_count$tag AS INTEGER)  │
+│ ~1 row                                              │
+╰──────────────────────────┬──────────────────────────╯
+╭─ HASH_GROUP_BY ──────────┴──────────────────────────╮
+│ Groups: #0                                          │
+│ Aggregates: sum(#1)                                 │
+│ ~1 row                                              │
+╰──────────────────────────┬──────────────────────────╯
+╭─ IRESEARCH_SCAN ─────────┴──────────────────────────╮
+│ Index: t                                            │
+│ Lookup: search                                      │
+│ TsDict: tag                                         │
+│ Projections:                                        │
+│ sdb_inverted_index_term$tag,                        │
+│ sdb_inverted_index_term_count$tag                   │
+│ ~2 rows                                             │
+╰─────────────────────────────────────────────────────╯
+
+# Faceted against the bare table: the doc predicate is claimed into the
+# dictionary scan exactly as through the index relation.
+query
+SELECT list_sort(ts_dict_agg(an)) AS terms FROM t WHERE an @@ 'quick';
+----
+terms
+{brown,dog,fox,quick}
+
+query
+SELECT list_sort(ts_dict_agg(tag)) AS terms FROM t WHERE an @@ 'lazy';
+----
+terms
+{red}
+
+# A column no index covers has no dictionary to read: a clean error, not a
+# crash.
+statement error
+SELECT ts_dict_agg(id) FROM t;
+----
+db error: ERROR: ts_dict_agg(): column has no text term dictionary
+HINT: ts_dict_agg requires a text-tokenized or keyword VARCHAR column, or an array of such
+
+
+# Several indexes on one table: each column's dictionary is read from the index
+# that covers it, and a predicate on a column of another index still restricts
+# the facet.
+statement ok
+CREATE TABLE m (id BIGINT PRIMARY KEY, a TEXT, b TEXT)
+  WITH (storage='search', compaction_interval=0);
+
+statement ok
+CREATE INDEX m_a ON m USING inverted (a);
+
+statement ok
+CREATE INDEX m_b ON m USING inverted (b d1);
+
+statement ok
+INSERT INTO m VALUES (1, 'x', 'hello world'), (2, 'y', 'hello there');
+
+statement ok
+VACUUM (REFRESH_TABLE) m;
+
+query
+SELECT list_sort(ts_dict_agg(a)) AS terms FROM m;
+----
+terms
+{x,y}
+
+query
+SELECT list_sort(ts_dict_agg(b)) AS terms FROM m;
+----
+terms
+{hello,there,world}
+
+query
+SELECT list_sort(ts_dict_agg(b)) AS terms FROM m WHERE a @@ 'x';
+----
+terms
+{hello,world}

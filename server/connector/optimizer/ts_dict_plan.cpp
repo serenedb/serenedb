@@ -269,7 +269,9 @@ duckdb::unique_ptr<duckdb::Expression> PushdownTsDictCall(
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                     ERR_MSG(fn, "(): column not found in index"));
   }
-  const auto* info = found.bind_data->ScannedIndex().FindColumnInfo(col_id);
+  ResolveSearchTableIndexes(*found.bind_data, context);
+  const auto index = TermDictIndexFor(*found.bind_data, col_id);
+  const auto* info = index ? index->FindColumnInfo(col_id) : nullptr;
   const auto& col_type = col_ref->GetReturnType();
   const auto text_type = [&] {
     switch (col_type.id()) {
@@ -294,8 +296,7 @@ duckdb::unique_ptr<duckdb::Expression> PushdownTsDictCall(
   }
 
   const auto [kind, agg_name] = *fn_info;
-  const auto read_field =
-    found.bind_data->ScannedIndex().TermFieldForColumn(col_id);
+  const auto read_field = index->TermFieldForColumn(col_id);
   return MakeTsDictAggregate(root, context, found, read_field,
                              static_cast<irs::field_id>(col_id), kind, agg_name,
                              col_ref->Binding().table_index, agg.GetAlias());
@@ -429,7 +430,7 @@ duckdb::unique_ptr<duckdb::LogicalOperator> InjectTsDictGroupBy(
         : get_ti;
     const auto source = ExposeGetColumnAt(
       *child, anchor, *found->get, req.term_col_idx,
-      TsDictColName(*found->bind_data, req.field_id, TsDictColKind::Term),
+      TsDictColName(*found->bind_data, req.display_id, TsDictColKind::Term),
       duckdb::LogicalType::VARCHAR);
     entries.push_back({.source = source,
                        .source_type = duckdb::LogicalType::VARCHAR,
@@ -1826,8 +1827,11 @@ class TsDictFilterClaim {
         }
         return true;
       }
-      const auto field = static_cast<irs::field_id>(col_id);
-      if (col_id == catalog::kInvalidColumnId || !Enumerated(field)) {
+      if (col_id == catalog::kInvalidColumnId) {
+        return false;
+      }
+      const auto field = _index.TermFieldForColumn(col_id);
+      if (!Enumerated(field)) {
         return false;
       }
       const auto type = _bind_data.ColumnTypeById(col_id).id();
@@ -2093,7 +2097,11 @@ void ClaimTsDictFilter(
       .Claim();
     return true;
   };
-  WithSearchGetters(get, bind_data, std::array{&index}, context, claim);
+  auto indexes = bind_data.InvertedIndexes();
+  if (indexes.empty()) {
+    indexes.push_back(&index);
+  }
+  WithSearchGetters(get, bind_data, indexes, context, claim);
 }
 
 }  // namespace sdb::optimizer

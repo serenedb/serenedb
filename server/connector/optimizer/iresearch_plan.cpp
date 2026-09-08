@@ -111,6 +111,41 @@ std::vector<catalog::ColumnId> BuildProjectedColumnIds(
   return projected_ids;
 }
 
+void ResolveSearchTableIndexes(connector::SereneDBScanBindData& bind_data,
+                               duckdb::ClientContext& context) {
+  if (bind_data.IsIndexRelation() || !bind_data.IsSearchTableEntry() ||
+      !bind_data.indexes.empty() ||
+      bind_data.GetKind() != connector::SereneDBScanBindData::Kind::Table) {
+    return;
+  }
+  const auto& table_bd = bind_data.As<connector::TableScanBindData>();
+  const auto* entry = dynamic_cast<const catalog::SereneDBTableEntry*>(
+    table_bd.table_entry.get());
+  if (!entry || !entry->GetSearchData()) {
+    return;
+  }
+  const auto& shard = *entry->GetSearchData();
+  bind_data.indexes = catalog::RelationInvertedIndexes(
+    &context, shard.GetSchemaId(), shard.GetTableId());
+}
+
+std::shared_ptr<const catalog::InvertedIndex> TermDictIndexFor(
+  const connector::SereneDBScanBindData& bind_data, catalog::ColumnId col_id) {
+  if (bind_data.IsIndexRelation()) {
+    return std::static_pointer_cast<const catalog::InvertedIndex>(
+      bind_data.indexes.front());
+  }
+  for (const auto& index : bind_data.indexes) {
+    auto inverted =
+      std::static_pointer_cast<const catalog::InvertedIndex>(index);
+    const auto* info = inverted->FindColumnInfo(col_id);
+    if (info && info->IsTermDict()) {
+      return inverted;
+    }
+  }
+  return nullptr;
+}
+
 irs::field_id ResolveAnnTargetFieldId(
   const duckdb::Expression& col_arg, const duckdb::LogicalGet& get,
   const connector::SereneDBScanBindData& bind_data,
@@ -1174,6 +1209,17 @@ void IResearchPushdownComplexFilter(
         bind_data.GetKind() == connector::SereneDBScanBindData::Kind::Table) {
       const auto& table_bd = bind_data.As<connector::TableScanBindData>();
       // The shard comes off the entry the scan was bound to: a search table's
+    if (ss.TsDictMode()) {
+      const auto indexes = bind_data.InvertedIndexes();
+      const auto field = ss.ts_dicts.front().field_id;
+      const auto it = absl::c_find_if(indexes, [&](const auto* index) -> bool {
+        return index->FindEntry(field);
+      });
+      if (it != indexes.end()) {
+        ClaimTsDictFilter(filters, get, bind_data, ss, **it, context);
+      }
+      return;
+    }
       // bind data carries no catalog::Table of its own.
       const auto* entry = dynamic_cast<const catalog::SereneDBTableEntry*>(
         table_bd.table_entry.get());

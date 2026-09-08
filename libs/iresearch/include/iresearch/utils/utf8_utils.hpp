@@ -115,7 +115,7 @@ inline uint32_t ToChar32Impl(const byte_type*& it,
   uint32_t cp = *it++;
   auto length = LengthFromChar8<(Checked ? 0 : 4)>(cp);
   if constexpr (Checked) {
-    if (length == 0 || it + length - 1 > end) [[unlikely]] {
+    if (length == 0 || end - it < length - 1) [[unlikely]] {
       return kInvalidChar32;
     }
   }

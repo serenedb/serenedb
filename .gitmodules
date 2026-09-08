@@ -217,3 +217,7 @@
 	path = third_party/libxml2
 	url = https://github.com/serenedb/libxml2.git
 	shallow = true
+[submodule "third_party/stringzilla"]
+	path = third_party/stringzilla
+	url = https://github.com/serenedb/StringZilla.git
+	shallow = true

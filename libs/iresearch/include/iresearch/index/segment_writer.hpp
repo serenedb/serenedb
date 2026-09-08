@@ -23,15 +23,15 @@
 
 #pragma once
 
+#include "basics/bit_utils.hpp"
 #include "basics/containers/bitset.hpp"
 #include "basics/noncopyable.hpp"
-#include "iresearch/analysis/tokenizer.hpp"
 #include "iresearch/formats/column/col_reader.hpp"
 #include "iresearch/formats/column/col_writer.hpp"
 #include "iresearch/formats/index/burst_trie.hpp"
 #include "iresearch/formats/norm_reader_impl.hpp"
-#include "iresearch/index/field_data.hpp"
 #include "iresearch/index/index_reader.hpp"
+#include "iresearch/index/inverter/fields_inverter.hpp"
 #include "iresearch/utils/directory_utils.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
@@ -67,28 +67,53 @@ class SegmentWriter final : public NormProvider, util::Noncopyable {
   // Begin a batch. Returns first valid doc_id in the batch.
   doc_id_t begin(DocContext ctx, doc_id_t batch_size = 1);
 
-  void ResetNorms() noexcept { _doc.clear(); }
-
-  template<typename Field>
-  bool insert(Field&& field) {
-    SDB_ASSERT(LastDocId() < doc_limits::eof());
-    return insert(std::forward<Field>(field), LastDocId());
-  }
-
-  template<typename Field>
-  bool insert(Field&& field, doc_id_t doc) {
-    if (!_valid) [[unlikely]] {
+  // WithField/WithTokens are the only ingest doors: the FieldInverter
+  // Invert* entries are the vocabulary, run under the writer's failure
+  // protocol (feature mismatch or inversion failure poisons the writer).
+  // WithField runs `func(slot)` against the resolved slot; WithTokens
+  // serves streamed fills against the pooled TokenSink.
+  template<typename Func>
+  bool WithField(field_id id, IndexFeatures index_features, Func&& func) {
+    auto* slot = Field(id, index_features);
+    if (!slot) [[unlikely]] {
       return false;
     }
-    SDB_ASSERT(doc <= LastDocId());
-    SDB_ASSERT(doc >= _batch_first_doc_id);
-    return index(std::forward<Field>(field), doc);
+    return WithSlot(*slot, std::forward<Func>(func));
   }
 
+  // Streamed sibling of WithField: `func(slot, sink)` runs against the
+  // resolved slot and the writer-pooled TokenSink wired to flush batches
+  // into it under the same failure protocol (a failed flush poisons the
+  // writer; later flushes no-op and the call reports false). Slot config
+  // (Configure with the producer's traits) belongs at the top of `func`,
+  // before the first emit. Per-value stored blobs, if any, go to `store`.
+  template<typename Func>
+  bool WithTokens(field_id id, IndexFeatures index_features, StoreSink* store,
+                  Func&& func) {
+    auto* slot = Field(id, index_features);
+    if (!slot) [[unlikely]] {
+      return false;
+    }
+    if (!_token_sink) {
+      _token_sink = std::make_unique<TokenSink>(Allocator());
+    }
+    TokensTarget target{*this, *slot};
+    _token_sink->Discard();
+    _token_sink->Bind(target, store);
+    try {
+      func(*slot, *_token_sink);
+      _token_sink->Finish();
+    } catch (...) {
+      _token_sink->Discard();
+      throw;
+    }
+    return _valid;
+  }
+
+  duckdb::Allocator& Allocator() const noexcept { return _fields.Allocator(); }
+
   void commit() {
-    if (_valid) {
-      finish();
-    } else {
+    if (!_valid) {
       rollback();
     }
   }
@@ -154,16 +179,45 @@ class SegmentWriter final : public NormProvider, util::Noncopyable {
   }
 
  private:
-  bool index(field_id id, doc_id_t doc, IndexFeatures index_features,
-             Tokenizer& tokens);
-
-  template<typename Field>
-  bool index(Field&& field, doc_id_t doc) {
-    auto& tokens = static_cast<Tokenizer&>(field.GetTokens());
-    return index(field.Id(), doc, field.GetIndexFeatures(), tokens);
+  // Per-column slot acquisition: resolves (creating on first sight) and
+  // validates the requested features once; a feature mismatch poisons the
+  // writer and returns null.
+  FieldInverter* Field(field_id id, IndexFeatures index_features) {
+    auto* slot = _fields.Emplace(id, index_features);
+    if (!IsSubsetOf(index_features, slot->Meta().index_features)) [[unlikely]] {
+      _valid = false;
+      return nullptr;
+    }
+    return slot;
   }
 
-  void finish();
+  template<typename Func>
+  bool WithSlot(FieldInverter& slot, Func&& func) {
+    if (!_valid) [[unlikely]] {
+      return false;
+    }
+    if (!func(slot)) [[unlikely]] {
+      _valid = false;
+      return false;
+    }
+    SDB_ASSERT(!doc_limits::valid(slot.LastDoc()) ||
+               slot.LastDoc() <= LastDocId());
+    return true;
+  }
+
+  struct TokensTarget final : TokenConsumer {
+    TokensTarget(SegmentWriter& writer, FieldInverter& slot) noexcept
+      : writer{&writer}, slot{&slot} {}
+
+    void Consume(TokenBatch& batch, DocRuns runs) final {
+      writer->WithSlot(*slot, [&](FieldInverter& fld) {
+        return fld.InvertBlock(batch, runs);
+      });
+    }
+
+    SegmentWriter* writer;
+    FieldInverter* slot;
+  };
 
   void FlushFields(FlushState& state,
                    std::span<const BasicTermReader* const> extra);
@@ -177,8 +231,8 @@ class SegmentWriter final : public NormProvider, util::Noncopyable {
   std::unique_ptr<ColReader> _col_reader;
   ManagedVector<DocContext> _docs_context;
   DocsMask _docs_mask;
-  FieldsData _fields;
-  std::vector<const FieldData*> _doc;
+  FieldsInverter _fields;
+  std::unique_ptr<TokenSink> _token_sink;
   std::string _seg_name;
   std::unique_ptr<burst_trie::FieldWriter> _field_writer;
   duckdb::DatabaseInstance& _db;

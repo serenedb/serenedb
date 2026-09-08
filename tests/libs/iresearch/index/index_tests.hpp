@@ -25,9 +25,8 @@
 
 #include "assert_format.hpp"
 #include "doc_generator.hpp"
-#include "iresearch/analysis/analyzer.hpp"
 #include "iresearch/analysis/token_attributes.hpp"
-#include "iresearch/analysis/tokenizers.hpp"
+#include "iresearch/analysis/tokenizer.hpp"
 #include "iresearch/index/directory_reader.hpp"
 #include "iresearch/index/directory_reader_impl.hpp"
 #include "iresearch/index/index_writer.hpp"

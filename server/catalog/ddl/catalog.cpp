@@ -405,7 +405,7 @@ void EnsureSystemDatabase() {
   // states.
   BootstrapEntry(duckdb::make_uniq<CreateDatabaseInfo>(
                    id::kSystemDB, StaticStrings::kDefaultDatabase, NextId()),
-                 Permissions{id::kRootUser});
+                 Permissions{id::kRootUser, {}, {}});
 }
 
 }  // namespace

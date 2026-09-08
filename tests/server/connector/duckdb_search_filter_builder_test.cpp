@@ -28,14 +28,15 @@
 #include <duckdb/planner/logical_operator.hpp>
 #include <duckdb/planner/operator/logical_filter.hpp>
 #include <duckdb/planner/operator/logical_get.hpp>
-#include <iresearch/analysis/analyzer.hpp>
-#include <iresearch/analysis/geo_analyzer.hpp>
+#include <iresearch/analysis/geo_tokenizer.hpp>
+#include <iresearch/analysis/keyword_tokenizer.hpp>
 #include <iresearch/analysis/ngram_tokenizer.hpp>
 #include <iresearch/analysis/segmentation_tokenizer.hpp>
+#include <iresearch/analysis/tokenizer.hpp>
 #include <iresearch/analysis/tokenizer_config.hpp>
-#include <iresearch/analysis/tokenizers.hpp>
-#include <iresearch/analysis/wildcard_analyzer.hpp>
+#include <iresearch/analysis/wildcard_tokenizer.hpp>
 #include <iresearch/formats/formats.hpp>
+#include <iresearch/index/typed_terms.hpp>
 #include <iresearch/search/all_filter.hpp>
 #include <iresearch/search/boolean_filter.hpp>
 #include <iresearch/search/geo_filter.hpp>
@@ -50,6 +51,7 @@
 #include <iresearch/search/term_set.hpp>
 #include <iresearch/search/wildcard_filter.hpp>
 #include <iresearch/search/wildcard_ngram_filter.hpp>
+#include <iresearch/utils/numeric_utils.hpp>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -58,6 +60,7 @@
 
 #include "basics/assert.h"
 #include "basics/down_cast.h"
+#include "basics/duckdb_engine.h"
 #include "connector/functions/search.h"
 #include "connector/search_filter_builder.hpp"
 #include "gtest/gtest.h"
@@ -67,6 +70,14 @@ namespace {
 using namespace sdb;
 using sdb::connector::ColumnGetter;
 using sdb::connector::SearchColumnInfo;
+
+// Leaked on purpose: tests_main shuts the engine down before main returns,
+// so a static Connection destructor would outlive it.
+duckdb::ClientContext& TestContext() {
+  static auto* conn =
+    new duckdb::Connection{::sdb::DuckDBEngine::Instance().instance()};
+  return *conn->context;
+}
 
 // Sentinel tokenizer column id shared by analyzer-provider stubs that need
 // a non-null column reference but do not care which one. Use a value
@@ -142,21 +153,21 @@ struct ColumnSpec {
 using AnalyzerProvider = std::function<catalog::ColumnTokenizer(uint64_t)>;
 
 catalog::ColumnTokenizer IdentityAnalyzerProvider(uint64_t) {
-  static catalog::Tokenizer gStringTokenizer(
+  static catalog::Tokenizer gKeywordTokenizer(
     ObjectId{12345}, {},
-    irs::analysis::TokenizerConfig{.config = irs::StringTokenizer::Options{}});
-  auto tokenizer = gStringTokenizer.GetTokenizer();
+    irs::analysis::TokenizerConfig{.config = irs::KeywordTokenizer::Options{}});
+  auto tokenizer = gKeywordTokenizer.GetTokenizer(TestContext());
   return {.analyzer = std::move(tokenizer),
           .features = irs::IndexFeatures::None};
 }
 
 template<irs::IndexFeatures Features>
 catalog::ColumnTokenizer SegmentationAnalyzerProviderBase(uint64_t) {
-  static catalog::Tokenizer gStringTokenizer(
+  static catalog::Tokenizer gKeywordTokenizer(
     ObjectId{12346}, {},
     irs::analysis::TokenizerConfig{
       .config = irs::analysis::SegmentationTokenizer::Options{}});
-  auto tokenizer = gStringTokenizer.GetTokenizer();
+  auto tokenizer = gKeywordTokenizer.GetTokenizer(TestContext());
   return {.analyzer = std::move(tokenizer), .features = Features};
 }
 
@@ -166,31 +177,31 @@ catalog::ColumnTokenizer SegmentationAnalyzerProvider(uint64_t id) {
 }
 
 [[maybe_unused]] catalog::ColumnTokenizer NGramAnalyzerProvider(uint64_t) {
-  irs::analysis::NGramTokenizerBase::Options ngram_opts{
+  irs::analysis::NGramTokenizer::Options ngram_opts{
     .min_gram = 2,
     .max_gram = 2,
     .preserve_original = false,
-    .stream_bytes_type = irs::analysis::NGramTokenizerBase::InputType::UTF8,
+    .stream_bytes_type = irs::analysis::NGramTokenizer::InputType::UTF8,
   };
   static catalog::Tokenizer gNGramTokenizer(
     ObjectId{12347}, {},
     irs::analysis::TokenizerConfig{.config = std::move(ngram_opts)});
-  auto tokenizer = gNGramTokenizer.GetTokenizer();
+  auto tokenizer = gNGramTokenizer.GetTokenizer(TestContext());
   return {.analyzer = std::move(tokenizer),
           .features = irs::IndexFeatures::Pos | irs::IndexFeatures::Freq};
 }
 
-[[maybe_unused]] catalog::ColumnTokenizer WildcardAnalyzerProvider(uint64_t) {
-  irs::analysis::WildcardAnalyzer::Options wildcard_opts{
+[[maybe_unused]] catalog::ColumnTokenizer WildcardTokenizerProvider(uint64_t) {
+  irs::analysis::WildcardTokenizer::Options wildcard_opts{
     .base_analyzer = std::make_unique<irs::analysis::TokenizerConfig>(
       irs::analysis::TokenizerConfig{.config =
-                                       irs::StringTokenizer::Options{}}),
+                                       irs::KeywordTokenizer::Options{}}),
     .ngram_size = 3,
   };
   static catalog::Tokenizer gWildcardTokenizer(
     ObjectId{12348}, {},
     irs::analysis::TokenizerConfig{.config = std::move(wildcard_opts)});
-  auto tokenizer = gWildcardTokenizer.GetTokenizer();
+  auto tokenizer = gWildcardTokenizer.GetTokenizer(TestContext());
   return {
     .analyzer = std::move(tokenizer),
     .features = irs::IndexFeatures::Pos | irs::IndexFeatures::Freq,
@@ -198,12 +209,12 @@ catalog::ColumnTokenizer SegmentationAnalyzerProvider(uint64_t id) {
   };
 }
 
-[[maybe_unused]] catalog::ColumnTokenizer GeoJsonAnalyzerProvider(uint64_t) {
+[[maybe_unused]] catalog::ColumnTokenizer GeoJsonTokenizerProvider(uint64_t) {
   static catalog::Tokenizer gGeoTokenizer(
     ObjectId{12349}, {},
     irs::analysis::TokenizerConfig{
-      .config = irs::analysis::GeoJsonAnalyzer::Options{}});
-  auto tokenizer = gGeoTokenizer.GetTokenizer();
+      .config = irs::analysis::GeoJsonTokenizer::Options{}});
+  auto tokenizer = gGeoTokenizer.GetTokenizer(TestContext());
   return {
     .analyzer = std::move(tokenizer),
     .features = irs::IndexFeatures::None,
@@ -299,23 +310,15 @@ template<typename T>
 irs::bstring ExpectedTerm(const T& value) {
   irs::bstring term;
   if constexpr (std::is_same_v<T, bool>) {
-    term.assign(
-      irs::ViewCast<irs::byte_type>(irs::BooleanTokenizer::value(value)));
+    term.assign(irs::ViewCast<irs::byte_type>(irs::BooleanTerm(value)));
   } else if constexpr (std::is_same_v<T, std::string_view> ||
                        std::is_same_v<T, std::string>) {
-    irs::StringTokenizer stream;
-    const irs::TermAttr* token = irs::get<irs::TermAttr>(stream);
-    stream.reset(value);
-    stream.next();
-    term.assign(token->value);
+    term.assign(irs::ViewCast<irs::byte_type>(std::string_view{value}));
   } else {
     static_assert(std::is_floating_point_v<T> || std::is_integral_v<T>,
                   "Unexpected term type");
-    irs::NumericTokenizer stream;
-    const irs::TermAttr* token = irs::get<irs::TermAttr>(stream);
-    stream.reset(value);
-    stream.next();
-    term.assign(token->value);
+    irs::byte_type buf[irs::numeric_utils::kNumericTermMaxSize];
+    term.assign(irs::numeric_utils::EncodeNumericTerm(buf, value));
   }
   return term;
 }
@@ -356,21 +359,17 @@ irs::Filter& AddRangeFilter(Filter&& root, uint64_t column,
     *range.mutable_field_id() = ExpectedFieldId(column);
     range.SetScorer(ExpectedScorer<T>());
     auto& options = range.mutable_options()->range;
-    irs::StringTokenizer stream;
-    const irs::TermAttr* token = irs::get<irs::TermAttr>(stream);
     if (min_value.has_value()) {
-      stream.reset(*min_value);
-      stream.next();
-      options.min.assign(token->value);
+      options.min.assign(
+        irs::ViewCast<irs::byte_type>(std::string_view{*min_value}));
       options.min_type =
         min_inclusive ? irs::BoundType::Inclusive : irs::BoundType::Exclusive;
     } else {
       options.min_type = irs::BoundType::Unbounded;
     }
     if (max_value.has_value()) {
-      stream.reset(*max_value);
-      stream.next();
-      options.max.assign(token->value);
+      options.max.assign(
+        irs::ViewCast<irs::byte_type>(std::string_view{*max_value}));
       options.max_type =
         max_inclusive ? irs::BoundType::Inclusive : irs::BoundType::Exclusive;
     } else {
@@ -384,18 +383,15 @@ irs::Filter& AddRangeFilter(Filter&& root, uint64_t column,
     *range.mutable_field_id() = ExpectedFieldId(column);
     range.SetScorer(ExpectedScorer<T>());
     auto& options = range.mutable_options()->range;
-    irs::NumericTokenizer stream;
     if (min_value.has_value()) {
-      stream.reset(*min_value);
-      irs::SetGranularTerm(options.min, stream);
+      irs::SetGranularNumericTerm(options.min, *min_value);
       options.min_type =
         min_inclusive ? irs::BoundType::Inclusive : irs::BoundType::Exclusive;
     } else {
       options.min_type = irs::BoundType::Unbounded;
     }
     if (max_value.has_value()) {
-      stream.reset(*max_value);
-      irs::SetGranularTerm(options.max, stream);
+      irs::SetGranularNumericTerm(options.max, *max_value);
       options.max_type =
         max_inclusive ? irs::BoundType::Inclusive : irs::BoundType::Exclusive;
     } else {
@@ -410,8 +406,8 @@ TermRef AddNullFilter(Filter&& root, uint64_t null_field) {
   return {ToTarget(root),
           irs::TermClause{.field = ExpectedFieldId(null_field),
                           .scorer = &irs::ForceConstScore(),
-                          .term = irs::bstring{irs::ViewCast<irs::byte_type>(
-                            irs::NullTokenizer::value_null())}}};
+                          .term = irs::bstring{
+                            irs::ViewCast<irs::byte_type>(irs::kNullTerm)}}};
 }
 
 template<typename Filter>
@@ -540,7 +536,7 @@ irs::GeoDistanceFilter& AddGeoDistanceFilter(Filter&& root, uint64_t column,
   }
   // FromGeoDistanceComparison stamps the tokenizer column id onto the
   // filter; mirror that here so operator== matches.
-  auto column_analyzer = GeoJsonAnalyzerProvider(column);
+  auto column_analyzer = GeoJsonTokenizerProvider(column);
   SDB_ASSERT(irs::field_limits::valid(column_analyzer.tokenizer_column));
   options->store_field_id = column_analyzer.tokenizer_column;
   return geo;
@@ -564,7 +560,7 @@ irs::GeoFilter& AddGeoFilter(Filter&& root, uint64_t column,
   options->shape.reset(shape_point);
   // FromGeoInRange stamps the tokenizer column id onto the filter;
   // mirror that here so operator== matches.
-  auto column_analyzer = GeoJsonAnalyzerProvider(column);
+  auto column_analyzer = GeoJsonTokenizerProvider(column);
   SDB_ASSERT(irs::field_limits::valid(column_analyzer.tokenizer_column));
   options->store_field_id = column_analyzer.tokenizer_column;
   return gf;
@@ -574,12 +570,12 @@ template<typename Filter>
 irs::ByWildcardNGram& AddWildcardNGramFilter(Filter&& root, uint64_t column,
                                              std::string_view pattern,
                                              bool has_positions) {
-  auto column_analyzer = WildcardAnalyzerProvider(column);
+  auto column_analyzer = WildcardTokenizerProvider(column);
   auto& wf = AddChild<irs::ByWildcardNGram>(root);
   *wf.mutable_field_id() = ExpectedFieldId(column);
   auto* opts = wf.mutable_options();
   *opts = {pattern,
-           basics::downCast<irs::analysis::WildcardAnalyzer>(
+           basics::downCast<irs::analysis::WildcardTokenizer>(
              *column_analyzer.analyzer.get()),
            has_positions};
   SDB_ASSERT(irs::field_limits::valid(column_analyzer.tokenizer_column));
@@ -2284,15 +2280,15 @@ TEST_F(SearchFilterBuilderTest, test_TermGreaterEq_IntegerColumn) {
 }
 
 TEST_F(SearchFilterBuilderTest, test_TermLessEq_BooleanColumn) {
-  // LESS_EQUAL on a BOOLEAN column emits irs::ByRange via BooleanTokenizer.
+  // LESS_EQUAL on a BOOLEAN column emits irs::ByRange via the boolean term
+  // encoding.
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::BOOLEAN, .name = "b"}};
   irs::BooleanFilter expected;
   auto& range = AddChild<irs::ByRange>(expected);
   *range.mutable_field_id() = ExpectedFieldId(1);
   auto& opts = range.mutable_options()->range;
-  opts.max.assign(
-    irs::ViewCast<irs::byte_type>(irs::BooleanTokenizer::value(true)));
+  opts.max.assign(irs::ViewCast<irs::byte_type>(irs::BooleanTerm(true)));
   opts.max_type = irs::BoundType::Inclusive;
   AssertFilter(expected, "SELECT * FROM foo WHERE b @@ ts_le(true)", columns,
                true);
@@ -2363,46 +2359,46 @@ TEST_F(SearchFilterBuilderTest, test_TermLike_EscapedPatternSegmentation) {
                columns, true, SegmentationAnalyzerProvider);
 }
 
-// Columns indexed by WildcardAnalyzer get the ngram-aware ByWildcardNGram
+// Columns indexed by WildcardTokenizer get the ngram-aware ByWildcardNGram
 // filter (instead of ByWildcard), so the LIKE pattern is evaluated through
 // the inverted index using the analyzer's ngram tokenization.
-TEST_F(SearchFilterBuilderTest, test_TermLike_WildcardAnalyzer) {
+TEST_F(SearchFilterBuilderTest, test_TermLike_WildcardTokenizer) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
   irs::BooleanFilter expected;
   AddWildcardNGramFilter(expected, 1, "%foo_", true);
   AssertFilter(expected, "SELECT * FROM foo WHERE b LIKE '%foo_'", columns,
-               true, WildcardAnalyzerProvider);
+               true, WildcardTokenizerProvider);
 }
 
 // Same column kind, accessed via the TSQUERY surface -- exercises
-// BuildFtsLike's WildcardAnalyzer dispatch.
-TEST_F(SearchFilterBuilderTest, test_TermLike_WildcardAnalyzer_TSQuery) {
+// BuildFtsLike's WildcardTokenizer dispatch.
+TEST_F(SearchFilterBuilderTest, test_TermLike_WildcardTokenizer_TSQuery) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
   irs::BooleanFilter expected;
   AddWildcardNGramFilter(expected, 1, "%foo_", true);
   AssertFilter(expected, "SELECT * FROM foo WHERE b @@ (ts_like('%foo_'))",
-               columns, true, WildcardAnalyzerProvider);
+               columns, true, WildcardTokenizerProvider);
 }
 
-TEST_F(SearchFilterBuilderTest, test_TermLike_WildcardAnalyzer_NotConst) {
+TEST_F(SearchFilterBuilderTest, test_TermLike_WildcardTokenizer_NotConst) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "a"},
     {.id = 2, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
   irs::BooleanFilter expected;
   AssertFilter(expected, "SELECT * FROM foo WHERE a LIKE b", columns, false,
-               WildcardAnalyzerProvider);
+               WildcardTokenizerProvider);
 }
 
-TEST_F(SearchFilterBuilderTest, test_TermLike_WildcardAnalyzer_WithNot) {
+TEST_F(SearchFilterBuilderTest, test_TermLike_WildcardTokenizer_WithNot) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "a"}};
   irs::BooleanFilter expected;
   auto not_filter = AddNegation(expected);
   AddWildcardNGramFilter(not_filter, 1, "%foo_", true);
   AssertFilter(expected, "SELECT * FROM foo WHERE NOT(a LIKE '%foo_')", columns,
-               true, WildcardAnalyzerProvider);
+               true, WildcardTokenizerProvider);
 }
 
 TEST_F(SearchFilterBuilderTest, test_TermIn_Segmentation) {
@@ -2682,14 +2678,14 @@ TEST_F(SearchFilterBuilderTest, test_Boost_Like) {
 }
 
 TEST_F(SearchFilterBuilderTest, test_Boost_WildcardFilter) {
-  // Boost on a TSQUERY-surface LIKE against a WildcardAnalyzer column
+  // Boost on a TSQUERY-surface LIKE against a WildcardTokenizer column
   // dispatches to ByWildcardNGram and threads the boost through.
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
   irs::BooleanFilter expected;
   AddWildcardNGramFilter(expected, 1, "foo%", true).SetBoost(3.0f);
   AssertFilter(expected, "SELECT * FROM foo WHERE b @@ (ts_like('foo%')) ^ 3.0",
-               columns, true, WildcardAnalyzerProvider);
+               columns, true, WildcardTokenizerProvider);
 }
 
 TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_NGramBoost) {
@@ -2928,7 +2924,7 @@ TEST_F(SearchFilterBuilderTest, test_Boost_GeoInRange) {
                "SELECT * FROM foo WHERE (ST_Distance_Between(g, "
                "'{\"type\":\"Point\",\"coordinates\":[10,20]}', 100.0, 500.0))"
                "::boost(2.5)",
-               columns, true, GeoJsonAnalyzerProvider);
+               columns, true, GeoJsonTokenizerProvider);
 }
 
 TEST_F(SearchFilterBuilderTest, test_Boost_GeoDistance) {
@@ -2947,7 +2943,7 @@ TEST_F(SearchFilterBuilderTest, test_Boost_GeoDistance) {
                "SELECT * FROM foo WHERE (ST_Distance_Centroid(g,"
                "'{\"type\":\"Point\",\"coordinates\":[10,20]}') < 100.0)"
                "::boost(1.5)",
-               columns, true, GeoJsonAnalyzerProvider);
+               columns, true, GeoJsonTokenizerProvider);
 }
 
 TEST_F(SearchFilterBuilderTest, test_Boost_GeoIntersects) {
@@ -2960,7 +2956,7 @@ TEST_F(SearchFilterBuilderTest, test_Boost_GeoIntersects) {
   AssertFilter(expected,
                "SELECT * FROM foo WHERE (ST_Intersects(g, "
                "'{\"type\":\"Point\",\"coordinates\":[10,20]}'))::boost(2.0)",
-               columns, true, GeoJsonAnalyzerProvider);
+               columns, true, GeoJsonTokenizerProvider);
 }
 
 TEST_F(SearchFilterBuilderTest, test_Boost_GeoContains) {
@@ -2975,7 +2971,7 @@ TEST_F(SearchFilterBuilderTest, test_Boost_GeoContains) {
   AssertFilter(expected,
                "SELECT * FROM foo WHERE (ST_Contains(g, "
                "'{\"type\":\"Point\",\"coordinates\":[10,20]}'))::boost(3.0)",
-               columns, true, GeoJsonAnalyzerProvider);
+               columns, true, GeoJsonTokenizerProvider);
 }
 
 TEST_F(SearchFilterBuilderTest, test_Boost_GeoContains_SwappedArgs) {
@@ -2991,7 +2987,7 @@ TEST_F(SearchFilterBuilderTest, test_Boost_GeoContains_SwappedArgs) {
                "SELECT * FROM foo WHERE (ST_Contains("
                "'{\"type\":\"Point\",\"coordinates\":[10,20]}', g))"
                "::boost(0.75)",
-               columns, true, GeoJsonAnalyzerProvider);
+               columns, true, GeoJsonTokenizerProvider);
 }
 
 // ===========================================================================
@@ -3012,7 +3008,7 @@ TEST_F(SearchFilterBuilderTest, test_GeoInRange_Basic) {
   AssertFilter(expected,
                "SELECT * FROM foo WHERE ST_Distance_Between(g, "
                "'{\"type\":\"Point\",\"coordinates\":[10,20]}', 100.0, 500.0)",
-               columns, true, GeoJsonAnalyzerProvider);
+               columns, true, GeoJsonTokenizerProvider);
 }
 
 TEST_F(SearchFilterBuilderTest, test_GeoInRange_GeometryField) {
@@ -3024,7 +3020,7 @@ TEST_F(SearchFilterBuilderTest, test_GeoInRange_GeometryField) {
   AssertFilter(expected,
                "SELECT * FROM foo WHERE ST_Distance_Between(g, "
                "'{\"type\":\"Point\",\"coordinates\":[10,20]}', 100.0, 500.0)",
-               columns, true, GeoJsonAnalyzerProvider);
+               columns, true, GeoJsonTokenizerProvider);
 }
 
 TEST_F(SearchFilterBuilderTest, test_GeoInRange_MinZeroLeavesUnbounded) {
@@ -3039,7 +3035,7 @@ TEST_F(SearchFilterBuilderTest, test_GeoInRange_MinZeroLeavesUnbounded) {
   AssertFilter(expected,
                "SELECT * FROM foo WHERE ST_Distance_Between(g, "
                "'{\"type\":\"Point\",\"coordinates\":[10,20]}', 0.0, 500.0)",
-               columns, true, GeoJsonAnalyzerProvider);
+               columns, true, GeoJsonTokenizerProvider);
 }
 
 TEST_F(SearchFilterBuilderTest, test_GeoInRange_ExclusiveBounds) {
@@ -3052,7 +3048,7 @@ TEST_F(SearchFilterBuilderTest, test_GeoInRange_ExclusiveBounds) {
                "SELECT * FROM foo WHERE ST_Distance_Between(g, "
                "'{\"type\":\"Point\",\"coordinates\":[10,20]}', 100.0, 500.0, "
                "false, false)",
-               columns, true, GeoJsonAnalyzerProvider);
+               columns, true, GeoJsonTokenizerProvider);
 }
 
 TEST_F(SearchFilterBuilderTest, test_GeoInRange_FiveArgsExclusiveMin) {
@@ -3066,7 +3062,7 @@ TEST_F(SearchFilterBuilderTest, test_GeoInRange_FiveArgsExclusiveMin) {
     expected,
     "SELECT * FROM foo WHERE ST_Distance_Between(g, "
     "'{\"type\":\"Point\",\"coordinates\":[10,20]}', 100.0, 500.0, false)",
-    columns, true, GeoJsonAnalyzerProvider);
+    columns, true, GeoJsonTokenizerProvider);
 }
 
 TEST_F(SearchFilterBuilderTest, test_GeoInRange_NotNegation) {
@@ -3079,7 +3075,7 @@ TEST_F(SearchFilterBuilderTest, test_GeoInRange_NotNegation) {
   AssertFilter(expected,
                "SELECT * FROM foo WHERE NOT ST_Distance_Between(g, "
                "'{\"type\":\"Point\",\"coordinates\":[10,20]}', 100.0, 500.0)",
-               columns, true, GeoJsonAnalyzerProvider);
+               columns, true, GeoJsonTokenizerProvider);
 }
 
 TEST_F(SearchFilterBuilderTest, test_GeoInRange_NonConstantCentroid) {
@@ -3089,7 +3085,7 @@ TEST_F(SearchFilterBuilderTest, test_GeoInRange_NonConstantCentroid) {
   irs::BooleanFilter expected;
   AssertFilter(
     expected, "SELECT * FROM foo WHERE ST_Distance_Between(g, c, 100.0, 500.0)",
-    columns, false, GeoJsonAnalyzerProvider,
+    columns, false, GeoJsonTokenizerProvider,
     "ST_Distance_Between centroid must be a constant");
 }
 
@@ -3103,7 +3099,7 @@ TEST_F(SearchFilterBuilderTest, test_GeoInRange_WrongAnalyzer) {
                "SELECT * FROM foo WHERE ST_Distance_Between(g, "
                "'{\"type\":\"Point\",\"coordinates\":[10,20]}', 100.0, 500.0)",
                columns, false, SegmentationAnalyzerProvider,
-               "Analyzer for field is not a geo analyzer");
+               "Tokenizer for field is not a geo analyzer");
 }
 
 TEST_F(SearchFilterBuilderTest, test_GeoInRange_InvalidGeoJsonCentroid) {
@@ -3113,7 +3109,7 @@ TEST_F(SearchFilterBuilderTest, test_GeoInRange_InvalidGeoJsonCentroid) {
   AssertFilter(expected,
                "SELECT * FROM foo WHERE ST_Distance_Between(g, "
                "'not a geojson', 100.0, 500.0)",
-               columns, false, GeoJsonAnalyzerProvider,
+               columns, false, GeoJsonTokenizerProvider,
                "Geo argument is not valid JSON");
 }
 
@@ -3132,7 +3128,7 @@ TEST_F(SearchFilterBuilderTest, test_GeoDistance_Eq) {
   AssertFilter(expected,
                "SELECT * FROM foo WHERE ST_Distance_Centroid(g,"
                "'{\"type\":\"Point\",\"coordinates\":[10,20]}') = 100.0",
-               columns, true, GeoJsonAnalyzerProvider);
+               columns, true, GeoJsonTokenizerProvider);
 }
 
 TEST_F(SearchFilterBuilderTest, test_GeoDistance_NotEq) {
@@ -3145,7 +3141,7 @@ TEST_F(SearchFilterBuilderTest, test_GeoDistance_NotEq) {
   AssertFilter(expected,
                "SELECT * FROM foo WHERE ST_Distance_Centroid(g,"
                "'{\"type\":\"Point\",\"coordinates\":[10,20]}') != 100.0",
-               columns, true, GeoJsonAnalyzerProvider);
+               columns, true, GeoJsonTokenizerProvider);
 }
 
 TEST_F(SearchFilterBuilderTest, test_GeoDistance_Lt) {
@@ -3157,7 +3153,7 @@ TEST_F(SearchFilterBuilderTest, test_GeoDistance_Lt) {
   AssertFilter(expected,
                "SELECT * FROM foo WHERE ST_Distance_Centroid(g,"
                "'{\"type\":\"Point\",\"coordinates\":[10,20]}') < 100.0",
-               columns, true, GeoJsonAnalyzerProvider);
+               columns, true, GeoJsonTokenizerProvider);
 }
 
 TEST_F(SearchFilterBuilderTest, test_GeoDistance_Le) {
@@ -3169,7 +3165,7 @@ TEST_F(SearchFilterBuilderTest, test_GeoDistance_Le) {
   AssertFilter(expected,
                "SELECT * FROM foo WHERE ST_Distance_Centroid(g,"
                "'{\"type\":\"Point\",\"coordinates\":[10,20]}') <= 100.0",
-               columns, true, GeoJsonAnalyzerProvider);
+               columns, true, GeoJsonTokenizerProvider);
 }
 
 TEST_F(SearchFilterBuilderTest, test_GeoDistance_Gt) {
@@ -3181,7 +3177,7 @@ TEST_F(SearchFilterBuilderTest, test_GeoDistance_Gt) {
   AssertFilter(expected,
                "SELECT * FROM foo WHERE ST_Distance_Centroid(g,"
                "'{\"type\":\"Point\",\"coordinates\":[10,20]}') > 100.0",
-               columns, true, GeoJsonAnalyzerProvider);
+               columns, true, GeoJsonTokenizerProvider);
 }
 
 TEST_F(SearchFilterBuilderTest, test_GeoDistance_Ge) {
@@ -3193,7 +3189,7 @@ TEST_F(SearchFilterBuilderTest, test_GeoDistance_Ge) {
   AssertFilter(expected,
                "SELECT * FROM foo WHERE ST_Distance_Centroid(g,"
                "'{\"type\":\"Point\",\"coordinates\":[10,20]}') >= 100.0",
-               columns, true, GeoJsonAnalyzerProvider);
+               columns, true, GeoJsonTokenizerProvider);
 }
 
 TEST_F(SearchFilterBuilderTest, test_GeoDistance_GeometryField) {
@@ -3205,7 +3201,7 @@ TEST_F(SearchFilterBuilderTest, test_GeoDistance_GeometryField) {
   AssertFilter(expected,
                "SELECT * FROM foo WHERE ST_Distance_Centroid(g,"
                "'{\"type\":\"Point\",\"coordinates\":[10,20]}') < 500.0",
-               columns, true, GeoJsonAnalyzerProvider);
+               columns, true, GeoJsonTokenizerProvider);
 }
 
 TEST_F(SearchFilterBuilderTest, test_GeoDistance_NonConstantDistance) {
@@ -3216,7 +3212,7 @@ TEST_F(SearchFilterBuilderTest, test_GeoDistance_NonConstantDistance) {
   AssertFilter(expected,
                "SELECT * FROM foo WHERE ST_Distance_Centroid(g,"
                "'{\"type\":\"Point\",\"coordinates\":[10,20]}') < d",
-               columns, false, GeoJsonAnalyzerProvider,
+               columns, false, GeoJsonTokenizerProvider,
                "Geo distance: comparison value must be a constant DOUBLE");
 }
 
@@ -3228,7 +3224,7 @@ TEST_F(SearchFilterBuilderTest, test_GeoDistance_WrongAnalyzer) {
                "SELECT * FROM foo WHERE ST_Distance_Centroid(g,"
                "'{\"type\":\"Point\",\"coordinates\":[10,20]}') < 100.0",
                columns, false, SegmentationAnalyzerProvider,
-               "Analyzer for field is not a geo analyzer");
+               "Tokenizer for field is not a geo analyzer");
 }
 
 TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_BoostCastLevenshtein) {
@@ -4209,11 +4205,9 @@ TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_RangeBool) {
   auto& range = AddChild<irs::ByRange>(expected);
   *range.mutable_field_id() = ExpectedFieldId(1);
   auto& opts = range.mutable_options()->range;
-  opts.min.assign(
-    irs::ViewCast<irs::byte_type>(irs::BooleanTokenizer::value(false)));
+  opts.min.assign(irs::ViewCast<irs::byte_type>(irs::BooleanTerm(false)));
   opts.min_type = irs::BoundType::Inclusive;
-  opts.max.assign(
-    irs::ViewCast<irs::byte_type>(irs::BooleanTokenizer::value(true)));
+  opts.max.assign(irs::ViewCast<irs::byte_type>(irs::BooleanTerm(true)));
   opts.max_type = irs::BoundType::Inclusive;
   AssertFilter(
     expected,
@@ -4430,8 +4424,7 @@ TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_RangeBoolOpenRight) {
   auto& range = AddChild<irs::ByRange>(expected);
   *range.mutable_field_id() = ExpectedFieldId(1);
   auto& opts = range.mutable_options()->range;
-  opts.min.assign(
-    irs::ViewCast<irs::byte_type>(irs::BooleanTokenizer::value(false)));
+  opts.min.assign(irs::ViewCast<irs::byte_type>(irs::BooleanTerm(false)));
   opts.min_type = irs::BoundType::Inclusive;
   AssertFilter(
     expected,

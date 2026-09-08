@@ -447,13 +447,22 @@ class PostingsWriterImpl final : public PostingsWriterBase {
 
   void BeginField(const FieldProperties& meta) final;
   void Write(TermPostings& docs, PostingMeta& meta) final;
+  bool WritePostings(const PostingRows& postings, PostingMeta& meta) final;
   void End() final;
 
  private:
   void FlushTailDoc() final;
   void FlushTailPos();
   void FlushTailPay();
+  template<bool HasOffs>
+  void PushPosition(uint32_t pos, uint32_t offs_start = 0,
+                    uint32_t offs_end = 0);
+  template<bool HasOffs>
+  void PushPositions(const uint32_t* pos, const uint32_t* offs_start,
+                     const uint32_t* offs_end, size_t n);
   void AddPosition(uint32_t pos);
+  void BeginDocInTerm(doc_id_t doc, uint32_t freq, uint32_t docs_count,
+                      PostingMeta& meta, bool has_freq);
 
   // Buffer for block encoding (worst case)
   uint32_t _enc_buf[std::max(doc_limits::kBlockSize, pos_limits::kBlockSize)];
@@ -527,15 +536,18 @@ void PostingsWriterImpl<FormatTraits>::BeginField(const FieldProperties& meta) {
 }
 
 template<typename FormatTraits>
-void PostingsWriterImpl<FormatTraits>::AddPosition(uint32_t pos) {
+template<bool HasOffs>
+void PostingsWriterImpl<FormatTraits>::PushPosition(uint32_t pos,
+                                                    uint32_t offs_start,
+                                                    uint32_t offs_end) {
   // at least positions stream should be created
   SDB_ASSERT(_features.HasPosition());
-  SDB_ASSERT(!_features.HasOffset() == !_attrs.offs);
+  SDB_ASSERT(_features.HasOffset() == HasOffs);
 
   SDB_ASSERT(_pos.size == _pay.size || _pay.size == 0);
   _pos.Next(pos);
-  if (_features.HasOffset()) {
-    _pay.PushOffset(_attrs.offs->start, _attrs.offs->end);
+  if constexpr (HasOffs) {
+    _pay.PushOffset(offs_start, offs_end);
   }
   SDB_ASSERT(_pos.size == _pay.size || _pay.size == 0);
 
@@ -544,13 +556,85 @@ void PostingsWriterImpl<FormatTraits>::AddPosition(uint32_t pos) {
     FormatTraits::WriteBlock(*_pos_out, _pos.buf, _enc_buf);
     _pos.size = 0;
 
-    if (_features.HasOffset()) {
+    if constexpr (HasOffs) {
       SDB_ASSERT(_pay_out);
       SDB_ASSERT(_pay.size != 0);
       FormatTraits::WriteBlock(*_pay_out, _pay.offs_start_buf, _enc_buf);
       FormatTraits::WriteBlock(*_pay_out, _pay.offs_len_buf, _enc_buf);
       _pay.size = 0;
     }
+  }
+}
+
+// Bulk form of PushPosition for one doc's position run handed over as
+// columns: deltas land block-chunk-at-a-time (the inner subtract loops
+// vectorize), the block-full check runs once per chunk instead of once per
+// position.
+template<typename FormatTraits>
+template<bool HasOffs>
+void PostingsWriterImpl<FormatTraits>::PushPositions(const uint32_t* pos,
+                                                     const uint32_t* offs_start,
+                                                     const uint32_t* offs_end,
+                                                     size_t n) {
+  SDB_ASSERT(_features.HasPosition());
+  SDB_ASSERT(_features.HasOffset() == HasOffs);
+
+  size_t k = 0;
+  while (k < n) {
+    SDB_ASSERT(_pos.size < pos_limits::kBlockSize);
+    const size_t take =
+      std::min<size_t>(pos_limits::kBlockSize - _pos.size, n - k);
+
+    uint32_t* out = _pos.buf + _pos.size;
+    uint32_t last = _pos.last;
+    for (size_t m = 0; m < take; ++m) {
+      SDB_ASSERT(last <= pos[k + m]);
+      out[m] = pos[k + m] - last;
+      last = pos[k + m];
+    }
+    _pos.last = last;
+    _pos.size += static_cast<uint32_t>(take);
+
+    if constexpr (HasOffs) {
+      uint32_t* sb = _pay.offs_start_buf + _pay.size;
+      uint32_t* lb = _pay.offs_len_buf + _pay.size;
+      uint32_t last_start = _pay.last;
+      for (size_t m = 0; m < take; ++m) {
+        SDB_ASSERT(last_start <= offs_start[k + m]);
+        SDB_ASSERT(offs_start[k + m] <= offs_end[k + m]);
+        sb[m] = offs_start[k + m] - last_start;
+        lb[m] = offs_end[k + m] - offs_start[k + m];
+        last_start = offs_start[k + m];
+      }
+      _pay.last = last_start;
+      _pay.size += static_cast<uint32_t>(take);
+    }
+    SDB_ASSERT(_pos.size == _pay.size || _pay.size == 0);
+
+    if (_pos.Full()) [[unlikely]] {
+      SDB_ASSERT(_pos_out);
+      FormatTraits::WriteBlock(*_pos_out, _pos.buf, _enc_buf);
+      _pos.size = 0;
+
+      if constexpr (HasOffs) {
+        SDB_ASSERT(_pay_out);
+        SDB_ASSERT(_pay.size != 0);
+        FormatTraits::WriteBlock(*_pay_out, _pay.offs_start_buf, _enc_buf);
+        FormatTraits::WriteBlock(*_pay_out, _pay.offs_len_buf, _enc_buf);
+        _pay.size = 0;
+      }
+    }
+    k += take;
+  }
+}
+
+template<typename FormatTraits>
+void PostingsWriterImpl<FormatTraits>::AddPosition(uint32_t pos) {
+  SDB_ASSERT(!_features.HasOffset() == !_attrs.offs);
+  if (_features.HasOffset()) {
+    PushPosition<true>(pos, _attrs.offs->start, _attrs.offs->end);
+  } else {
+    PushPosition<false>(pos);
   }
 }
 
@@ -579,6 +663,61 @@ void PostingsWriterImpl<FormatTraits>::End() {
     _pay_out.reset();  // ensure stream is closed
   } else {
     SDB_ASSERT(_pay.size == 0);
+  }
+}
+
+template<typename FormatTraits>
+IRS_FORCE_INLINE void PostingsWriterImpl<FormatTraits>::BeginDocInTerm(
+  doc_id_t doc, uint32_t freq, uint32_t docs_count, PostingMeta& meta,
+  bool has_freq) {
+  if (_doc.last >= doc) [[unlikely]] {
+    throw IndexError{
+      absl::StrCat("While beginning document in postings_writer, error: "
+                   "docs out of order '",
+                   doc, "' < '", _doc.last, "'")};
+  }
+
+  if (doc_limits::valid(_doc.last) && _doc.Empty()) {
+    if (!_skip_armed) {
+      ArmSkip(meta);
+    }
+    _skip.Skip(docs_count, [this](size_t level, MemoryIndexOutput& out) {
+      WriteSkip(level, out);
+
+      ApplyToWriter([&](auto& writer) {
+        const uint8_t size = writer.Size(level);
+        SDB_ASSERT(size <= ScoreBoundWriter::kMaxSize);
+        out.WriteByte(size);
+      });
+      ApplyToWriter([&](auto& writer) { writer.Write(level, out); });
+    });
+  }
+
+  if (has_freq) {
+    _doc.Push(doc, freq);
+  } else {
+    _doc.Push(doc);
+  }
+  if (_doc.Full()) {
+    FormatTraits::WriteBlockDelta(*_doc_out, _doc.docs, _doc.block_last,
+                                  _enc_buf);
+    if (has_freq) {
+      FormatTraits::WriteBlock(*_doc_out, _doc.freqs, _enc_buf);
+    }
+    _doc.block_last = _doc.last;
+    _doc.size = 0;
+  }
+
+  _docs.set(doc);
+
+  // First position offsets now is format dependent
+  _pos.last = pos_limits::invalid();
+  _pay.last = 0;
+
+  if (_valid_writer) {
+    _attrs.doc.value = doc;
+    _attrs.freq.value = freq;
+    _valid_writer->Update();
   }
 }
 
@@ -617,55 +756,8 @@ void PostingsWriterImpl<FormatTraits>::Write(TermPostings& docs,
       _term_docs.push_back(doc);
     }
 
-    if (_doc.last >= doc) [[unlikely]] {
-      throw IndexError{
-        absl::StrCat("While beginning document in postings_writer, error: "
-                     "docs out of order '",
-                     doc, "' < '", _doc.last, "'")};
-    }
+    BeginDocInTerm(doc, freq, docs_count, meta, has_freq);
 
-    if (doc_limits::valid(_doc.last) && _doc.Empty()) {
-      if (!_skip_armed) {
-        ArmSkip(meta);
-      }
-      _skip.Skip(docs_count, [this](size_t level, MemoryIndexOutput& out) {
-        WriteSkip(level, out);
-
-        ApplyToWriter([&](auto& writer) {
-          const uint8_t size = writer.Size(level);
-          SDB_ASSERT(size <= ScoreBoundWriter::kMaxSize);
-          out.WriteByte(size);
-        });
-        ApplyToWriter([&](auto& writer) { writer.Write(level, out); });
-      });
-    }
-
-    if (has_freq) {
-      _doc.Push(doc, freq);
-    } else {
-      _doc.Push(doc);
-    }
-    if (_doc.Full()) {
-      FormatTraits::WriteBlockDelta(*_doc_out, _doc.docs, _doc.block_last,
-                                    _enc_buf);
-      if (has_freq) {
-        FormatTraits::WriteBlock(*_doc_out, _doc.freqs, _enc_buf);
-      }
-      _doc.block_last = _doc.last;
-      _doc.size = 0;
-    }
-
-    _docs.set(doc);
-
-    // First position offsets now is format dependent
-    _pos.last = pos_limits::invalid();
-    _pay.last = 0;
-
-    if (_valid_writer) {
-      _attrs.doc.value = doc;
-      _attrs.freq.value = freq;
-      _valid_writer->Update();
-    }
     if (has_pos) {
       SDB_ASSERT(_attrs.pos);
       while (_attrs.pos->next()) {
@@ -689,6 +781,79 @@ void PostingsWriterImpl<FormatTraits>::Write(TermPostings& docs,
     meta.pos_offset = _term_pay->PendingLanes();
     _term_pay->WriteTermPayload(*_pay_out, _term_docs);
   }
+}
+
+// Span fast path: the same per-doc protocol as Write, fed straight from
+// the term's row columns instead of per-doc iterator dispatch; the row
+// walk itself lives in TermPostings::VisitRuns.
+template<typename FormatTraits>
+bool PostingsWriterImpl<FormatTraits>::WritePostings(
+  const PostingRows& postings, PostingMeta& meta) {
+  BeginTerm(meta);
+  ApplyToWriter([&](auto& writer) { writer.Reset(); });
+
+  const bool has_vec = _features.HasVector();
+  if (has_vec) {
+    _term_docs.clear();
+  }
+  const bool has_freq = _features.HasFrequency();
+  const bool has_pos = _features.HasPosition();
+  const bool has_offs = _features.HasOffset();
+
+  _attrs.pos = nullptr;
+  _attrs.offs = nullptr;
+
+  uint32_t docs_count = 0;
+  uint32_t total_freq = 0;
+
+  const auto begin_doc = [&](doc_id_t doc,
+                             uint32_t occurrences) IRS_FORCE_INLINE {
+    const uint32_t freq = has_freq ? occurrences : 0;
+    if (has_vec) {
+      _term_docs.push_back(doc);
+    }
+    BeginDocInTerm(doc, freq, docs_count, meta, has_freq);
+    ++docs_count;
+    total_freq += freq;
+  };
+
+  SDB_ASSERT(!has_pos || postings.span.pos != nullptr ||
+             postings.pos_blocks != nullptr);
+  SDB_ASSERT(!has_offs || postings.span.offs_start != nullptr ||
+             postings.offs_start_blocks != nullptr);
+  if (has_pos) {
+    ResolveBool(has_offs, [&]<bool HasOffs> {
+      const auto emit_positions =
+        [&](const uint32_t* pos, const uint32_t* offs_start,
+            const uint32_t* offs_end, size_t n) IRS_FORCE_INLINE {
+          if (n == 1) [[likely]] {
+            if constexpr (HasOffs) {
+              PushPosition<HasOffs>(pos[0], offs_start[0], offs_end[0]);
+            } else {
+              PushPosition<HasOffs>(pos[0]);
+            }
+          } else {
+            PushPositions<HasOffs>(pos, offs_start, offs_end, n);
+          }
+        };
+
+      postings.VisitRuns(begin_doc, emit_positions);
+    });
+  } else {
+    postings.VisitRuns(begin_doc);
+  }
+
+  meta.docs_count = docs_count;
+  meta.freq = total_freq;
+  EndTerm(meta);
+
+  if (has_vec) {
+    SDB_ASSERT(_pay_out && _term_pay);
+    meta.pay_start = _pay_out->Position();
+    meta.pos_offset = _term_pay->PendingLanes();
+    _term_pay->WriteTermPayload(*_pay_out, _term_docs);
+  }
+  return true;
 }
 
 }  // namespace irs

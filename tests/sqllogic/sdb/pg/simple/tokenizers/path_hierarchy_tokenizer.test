@@ -55,19 +55,6 @@ db error: ERROR: option "skip" is not applicable in this context
 HINT: Use WITH (HELP) to see available options
 
 
-# --- BufferSize option not applicable to other tokenizers ---
-
-statement error
-CREATE TEXT SEARCH DICTIONARY path_err5(
-    template = 'text',
-    locale = 'en_US.UTF-8',
-    buffersize = 2048
-)
-----
-db error: ERROR: option "buffersize" is not applicable in this context
-HINT: Use WITH (HELP) to see available options
-
-
 # PATH HIERARCHY TOKENIZER
 
 # --- Basic forward hierarchy: default delimiter "/" ---
@@ -344,20 +331,3 @@ SELECT ts_lexize('path_long', '/level1/level2/level3/level4/level5');
 ----
 ts_lexize
 {/level1,/level1/level2,/level1/level2/level3,/level1/level2/level3/level4,/level1/level2/level3/level4/level5}
-
-
-# --- Buffer size parameter (doesn't affect output, just performance) ---
-
-statement ok
-CREATE TEXT SEARCH DICTIONARY path_buffer(
-    template = 'path_hierarchy',
-    delimiter = '/',
-    buffersize = 2048
-)
-
-
-query
-SELECT ts_lexize('path_buffer', '/a/b/c');
-----
-ts_lexize
-{/a,/a/b,/a/b/c}

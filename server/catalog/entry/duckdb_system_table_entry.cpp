@@ -141,7 +141,8 @@ SystemTableEntry::SystemTableEntry(duckdb::Catalog& catalog,
     *this, virtual_table.Id(),
     catalog::Permissions{id::kRootUser,
                          catalog::Acl{virtual_table.GetAcl().begin(),
-                                      virtual_table.GetAcl().end()}});
+                                      virtual_table.GetAcl().end()},
+                         {}});
 }
 
 duckdb::unique_ptr<duckdb::BaseStatistics> SystemTableEntry::GetStatistics(

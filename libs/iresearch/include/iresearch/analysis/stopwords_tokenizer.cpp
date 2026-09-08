@@ -23,36 +23,40 @@
 
 #include "stopwords_tokenizer.hpp"
 
-#include <string_view>
+#include "iresearch/analysis/text/dict/stopwords_loader.hpp"
+#include "iresearch/analysis/token_batch.hpp"
+#include "pg/sql_exception_macro.h"
 
 namespace irs::analysis {
 
 StopwordsTokenizer::StopwordsTokenizer(
-  StopwordsTokenizer::stopwords_set&& stopwords)
-  : _stopwords{std::move(stopwords)} {}
-
-Analyzer::ptr StopwordsTokenizer::Make(Options opts) {
-  return std::make_unique<StopwordsTokenizer>(std::move(opts.mask));
+  duckdb::shared_ptr<const StopwordSet> stopwords) noexcept
+  : _stopwords{std::move(stopwords)} {
+  SDB_ASSERT(_stopwords);
 }
 
-bool StopwordsTokenizer::next() {
-  if (_term_eof) {
-    return false;
+Tokenizer::ptr StopwordsTokenizer::Make(Options opts,
+                                        duckdb::SharedObjectCache& cache) {
+  auto stopwords = duckdb::make_uniq<StopwordSet>(std::move(opts.mask));
+  if (!opts.stopwords_path.empty() &&
+      !dict::LoadStopwords(*stopwords, {}, opts.stopwords_path)) {
+    THROW_SQL_ERROR(ERR_MSG("stopwords: failed to load stopwords"));
   }
+  stopwords->ShrinkToFit();
 
-  _term_eof = true;
+  return std::make_unique<StopwordsTokenizer>(
+    StopwordSet::GetOrBuild(cache, std::move(stopwords)));
+}
 
+template<TokenLayout Layout, typename Sink>
+bool StopwordsTokenizer::DoFill(const duckdb::string_t& raw, Sink& sink) {
+  if (!_stopwords->Contains(raw)) {
+    sink.template Emit<Layout>(raw);
+  }
   return true;
 }
 
-bool StopwordsTokenizer::reset(std::string_view data) {
-  auto& offset = std::get<OffsAttr>(_attrs);
-  offset.start = 0;
-  offset.end = uint32_t(data.size());
-  auto& term = std::get<TermAttr>(_attrs);
-  term.value = ViewCast<byte_type>(data);
-  _term_eof = _stopwords.contains(data);
-  return true;
-}
+template class TypedTokenizer<StopwordsTokenizer>;
+template class TypedTokenStage<StopwordsTokenizer>;
 
 }  // namespace irs::analysis

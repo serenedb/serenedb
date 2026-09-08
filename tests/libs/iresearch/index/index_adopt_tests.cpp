@@ -109,7 +109,7 @@ class IndexAdoptTest : public TestBase {
                         std::string_view value) {
     tests::StringField field{"name", value};
     field.id = kNameFieldId;
-    return trx.Insert().Insert(&field, &field + 1);
+    return tests::InsertFields(trx.Insert(), &field, &field + 1);
   }
 
   static irs::Filter::ptr ByName(std::string_view value) {

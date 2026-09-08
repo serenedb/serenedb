@@ -158,8 +158,8 @@ const SereneDBTableEntry* CreateTable(
   // Generated serial/PK sequences are owned by the table owner too (PG: ALTER
   // TABLE OWNER TO cascades to them, so they must start matching).
   const ObjectId owner = ax.role;
-  const Permissions perm{owner};
-  const Permissions sequence_perm{owner};
+  const Permissions perm{owner, {}, {}};
+  const Permissions sequence_perm{owner, {}, {}};
   std::vector<duckdb::unique_ptr<duckdb::CreateSequenceInfo>> sequences;
   sequences.reserve(sequence_specs.size() + 1);
   const auto make_sequence = [&](SequenceOptions opts) {

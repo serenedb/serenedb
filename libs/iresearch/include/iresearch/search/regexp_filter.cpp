@@ -36,8 +36,7 @@ QueryBuilder::ptr ByRegexp::PrepareSegment(const SubReader&,
 }
 
 Filter::ptr LowerRegexp(irs::field_id id, bytes_view pattern,
-                        RegexpSyntax syntax, size_t scored_terms_limit,
-                        score_t boost) {
+                        RegexpSyntax syntax, score_t boost) {
   bstring buf;
   return ExecuteRegexp(
     buf, pattern,
@@ -52,29 +51,25 @@ Filter::ptr LowerRegexp(irs::field_id id, bytes_view pattern,
       auto filter = std::make_unique<ByPrefix>();
       *filter->mutable_field_id() = id;
       filter->mutable_options()->term = prefix;
-      filter->mutable_options()->scored_terms_limit = scored_terms_limit;
       filter->SetBoost(boost);
       return filter;
     },
     [&](bytes_view pattern) -> Filter::ptr {
       auto filter = std::make_unique<AutomatonFilter>();
       *filter->mutable_field_id() = id;
-      *filter->mutable_options() =
-        AutomatonOptions{FromRegexp(pattern, kDefaultMaxDfaStates, syntax),
-                         pattern, scored_terms_limit};
+      *filter->mutable_options() = AutomatonOptions{
+        FromRegexp(pattern, kDefaultMaxDfaStates, syntax), pattern};
       filter->SetBoost(boost);
       return filter;
     });
 }
 
 Filter::ptr CreateByRegexp(irs::field_id id, bytes_view pattern,
-                           RegexpSyntax syntax, size_t scored_terms_limit,
-                           score_t boost) {
+                           RegexpSyntax syntax, score_t boost) {
   auto filter = std::make_unique<ByRegexp>();
   *filter->mutable_field_id() = id;
   filter->mutable_options()->pattern = pattern;
   filter->mutable_options()->syntax = syntax;
-  filter->mutable_options()->scored_terms_limit = scored_terms_limit;
   filter->SetBoost(boost);
   return filter;
 }

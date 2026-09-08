@@ -41,8 +41,6 @@ struct ByGranularRangeOptions {
 
   range_type range;
 
-  size_t scored_terms_limit{1024};
-
   bool is_granular{true};
 
   bool operator==(const ByGranularRangeOptions& rhs) const noexcept = default;
@@ -59,6 +57,8 @@ void SetGranularTerm(ByGranularRangeOptions::terms& boundary,
 
 class ByGranularRange : public FilterWithField<ByGranularRangeOptions> {
  public:
+  ByGranularRange() noexcept { SetScorer(&DefaultConstScore()); }
+
   QueryBuilder::ptr PrepareSegment(const SubReader& segment,
                                    const PrepareContext& ctx) const final;
   static QueryBuilder::ptr PrepareSegment(const SubReader& segment,

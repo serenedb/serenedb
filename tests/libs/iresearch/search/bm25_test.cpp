@@ -153,6 +153,7 @@ void Bm25TestCase::TestQueryNorms() {
 
     irs::ByRange filter;
     *filter.mutable_field_id() = kField;
+    filter.SetScorer(&scorer);
     filter.mutable_options()->range.min =
       irs::ViewCast<irs::byte_type>(std::string_view("6"));
     filter.mutable_options()->range.min_type = irs::BoundType::Exclusive;
@@ -200,6 +201,7 @@ void Bm25TestCase::TestQueryNorms() {
 
     irs::ByRange filter;
     *filter.mutable_field_id() = kField;
+    filter.SetScorer(&scorer);
     filter.mutable_options()->range.min =
       irs::ViewCast<irs::byte_type>(std::string_view("6"));
     filter.mutable_options()->range.min_type = irs::BoundType::Inclusive;
@@ -954,6 +956,7 @@ TEST_P(Bm25TestCase, test_query) {
       irs::DirectoryReader(dir(), codec(), irs::tests::DefaultReaderOptions());
     irs::ByPrefix filter;
     *filter.mutable_field_id() = kPrefix;
+    filter.SetScorer(&scorer);
     filter.mutable_options()->term =
       irs::ViewCast<irs::byte_type>(std::string_view(""));
 
@@ -1008,6 +1011,7 @@ TEST_P(Bm25TestCase, test_query) {
 
     irs::ByRange filter;
     *filter.mutable_field_id() = kField;
+    filter.SetScorer(&scorer);
     filter.mutable_options()->range.min =
       irs::ViewCast<irs::byte_type>(std::string_view("6"));
     filter.mutable_options()->range.min_type = irs::BoundType::Exclusive;
@@ -1047,20 +1051,19 @@ TEST_P(Bm25TestCase, test_query) {
   EXPECT_GT(counter.max, 0);
   counter.Reset();
 
-  // by_range single + scored_terms_limit(0)
-  // by_range single + scored_terms_limit(1)
-  for (size_t limit = 0; limit != 2; ++limit) {
+  // by_range single
+  {
     irs::tests::BlobPointReader values{segment, *column};
 
     irs::ByRange filter;
     *filter.mutable_field_id() = kField;
+    filter.SetScorer(&scorer);
     filter.mutable_options()->range.min =
       irs::ViewCast<irs::byte_type>(std::string_view("8"));
     filter.mutable_options()->range.min_type = irs::BoundType::Inclusive;
     filter.mutable_options()->range.max =
       irs::ViewCast<irs::byte_type>(std::string_view("9"));
     filter.mutable_options()->range.max_type = irs::BoundType::Exclusive;
-    filter.mutable_options()->scored_terms_limit = limit;
 
     std::multimap<irs::score_t, uint32_t, std::greater<>> sorted;
     constexpr std::array kExpected{3, 7};
@@ -1100,6 +1103,7 @@ TEST_P(Bm25TestCase, test_query) {
 
     irs::ByRange filter;
     *filter.mutable_field_id() = kField;
+    filter.SetScorer(&scorer);
     filter.mutable_options()->range.min =
       irs::ViewCast<irs::byte_type>(std::string_view("6"));
     filter.mutable_options()->range.min_type = irs::BoundType::Exclusive;
@@ -1145,6 +1149,7 @@ TEST_P(Bm25TestCase, test_query) {
 
     irs::ByRange filter;
     *filter.mutable_field_id() = kField;
+    filter.SetScorer(&scorer);
     filter.mutable_options()->range.min =
       irs::ViewCast<irs::byte_type>(std::string_view("6"));
     filter.mutable_options()->range.min_type = irs::BoundType::Inclusive;

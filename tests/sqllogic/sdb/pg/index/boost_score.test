@@ -118,14 +118,14 @@ SELECT id, BM25(bsc_idx.tableoid) AS s FROM bsc_idx
 WHERE body @@ (ts_like('turt%') ^ 2.0) ORDER BY id;
 ----
 id	s
-4	1.0945207
+4	2
 
 query IR
 SELECT id, BM25(bsc_idx.tableoid) AS s FROM bsc_idx
 WHERE body @@ (ts_regexp('turtl.', 'posix') ^ 2.0) ORDER BY id;
 ----
 id	s
-4	1.0945207
+4	2
 
 
 # --- Nested boosts compose multiplicatively: 2.0 * 2.0 = 4x ---

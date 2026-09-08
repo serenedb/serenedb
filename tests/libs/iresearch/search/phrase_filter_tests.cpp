@@ -3666,7 +3666,7 @@ TEST_P(PhraseFilterTestCase, sequential_three_terms) {
       finish_docs_with_term += term->docs_with_term;
     };
 
-    irs::lead::Node* it = nullptr;
+    tests::LeadCursor* it = nullptr;
     sort.scorer_score = [&](const irs::ScoreOperator*, irs::score_t* score,
                             size_t n) {
       ASSERT_NE(nullptr, it);
@@ -3971,7 +3971,7 @@ TEST_P(PhraseFilterTestCase, sequential_three_terms) {
       finish_docs_with_field += field->docs_with_field;
       finish_docs_with_term += term->docs_with_term;
     };
-    irs::lead::Node* it = nullptr;
+    tests::LeadCursor* it = nullptr;
     sort.scorer_score = [&](const irs::ScoreOperator*, irs::score_t* score,
                             size_t n) {
       ASSERT_NE(nullptr, it);
@@ -5519,7 +5519,7 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
       irs::ViewCast<irs::byte_type>(std::string_view("forward"));
 
     tests::sort::CustomSort sort;
-    irs::lead::Node* it = nullptr;
+    tests::LeadCursor* it = nullptr;
     sort.scorer_score = [&](const irs::ScoreOperator*, irs::score_t* score,
                             size_t n) {
       ASSERT_NE(nullptr, it);
@@ -5587,7 +5587,7 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
       irs::ViewCast<irs::byte_type>(std::string_view("forward"));
 
     tests::sort::CustomSort sort;
-    irs::lead::Node* it = nullptr;
+    tests::LeadCursor* it = nullptr;
     sort.scorer_score = [&](const irs::ScoreOperator*, irs::score_t* score,
                             size_t n) {
       ASSERT_NE(nullptr, it);
@@ -5676,7 +5676,7 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
       irs::ViewCast<irs::byte_type>(std::string_view("quick"));
 
     tests::sort::CustomSort sort;
-    irs::lead::Node* it = nullptr;
+    tests::LeadCursor* it = nullptr;
     sort.scorer_score = [&](const irs::ScoreOperator*, irs::score_t* score,
                             size_t n) {
       ASSERT_NE(nullptr, it);
@@ -6084,7 +6084,7 @@ TEST_P(PhraseFilterTestCase, interval_several_terms) {
     disjunction.SetMinShouldMatch(1);
 
     tests::sort::CustomSort sort;
-    irs::lead::Node* it = nullptr;
+    tests::LeadCursor* it = nullptr;
     sort.scorer_score = [&](const irs::ScoreOperator*, irs::score_t* score,
                             size_t n) {
       ASSERT_NE(nullptr, it);
@@ -6557,7 +6557,7 @@ TEST_P(PhraseFilterTestCase, interval_several_terms) {
     disjunction.SetMinShouldMatch(1);
 
     tests::sort::CustomSort sort;
-    irs::lead::Node* it = nullptr;
+    tests::LeadCursor* it = nullptr;
     sort.scorer_score = [&](const irs::ScoreOperator*, irs::score_t* score,
                             size_t n) {
       ASSERT_NE(nullptr, it);
@@ -6677,7 +6677,7 @@ TEST_P(PhraseFilterTestCase, interval_several_terms) {
     disjunction.SetMinShouldMatch(1);
 
     tests::sort::CustomSort sort;
-    irs::lead::Node* it = nullptr;
+    tests::LeadCursor* it = nullptr;
     sort.scorer_score = [&](const irs::ScoreOperator*, irs::score_t* score,
                             size_t n) {
       ASSERT_NE(nullptr, it);
@@ -6797,7 +6797,7 @@ TEST_P(PhraseFilterTestCase, interval_several_terms) {
     disjunction.SetMinShouldMatch(1);
 
     tests::sort::CustomSort sort;
-    irs::lead::Node* it = nullptr;
+    tests::LeadCursor* it = nullptr;
     sort.scorer_score = [&](const irs::ScoreOperator*, irs::score_t* score,
                             size_t n) {
       ASSERT_NE(nullptr, it);

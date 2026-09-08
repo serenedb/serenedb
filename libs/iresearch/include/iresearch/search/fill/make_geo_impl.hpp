@@ -28,9 +28,6 @@
 #include "iresearch/search/fill/make.hpp"
 #include "iresearch/search/fill/walk.hpp"
 #include "iresearch/search/geo_query.hpp"
-#include "iresearch/search/lead/constant_scored.hpp"
-#include "iresearch/search/lead/impl.hpp"
-#include "iresearch/search/lead/make.hpp"
 
 namespace irs::fill {
 
@@ -43,19 +40,14 @@ Node::ptr Make(const GeoQuery<Parser, Acceptor>& query) {
 template<typename Parser, typename Acceptor>
 Node::ptr Make(const GeoQuery<Parser, Acceptor>& query, const ScoredCtx& ctx,
                ScoreMergeType merge) {
-  auto node = lead::Make(query);
-  if (!node) {
-    return {};
-  }
   const auto record = query.Stats(ctx);
   const auto value = search::AllDocsScore(
     query.Segment(), search::ScoreArgs{.scorer = record.scorer,
                                        .stats = record.stats,
                                        .fetcher = ctx.fetcher,
                                        .boost = query.Boost()});
-  using Node = lead::ConstantScored<lead::Erased>;
-  return memory::make_managed<ByWalkScored<Node>>(merge, ctx.fetcher, value,
-                                                  std::move(node));
+  return search::MakeGeo<WalkConstantScored, Node::ptr>(query, 0, merge,
+                                                        *ctx.fetcher, value);
 }
 
 }  // namespace irs::fill

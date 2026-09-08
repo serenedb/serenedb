@@ -75,6 +75,7 @@ class SearchRemoveFilter : public irs::Filter, public irs::lead::Node {
   }
 
  private:
+  irs::doc_id_t _doc = irs::doc_limits::invalid();
   const irs::field_id _pk_field_id;
   mutable const irs::DocumentMask* _segment_mask{};
   mutable const irs::DocumentMask* _pending_mask{};
@@ -134,6 +135,8 @@ class SearchRemovePrefixFilter final : public irs::Filter,
   }
 
  private:
+  irs::doc_id_t _doc = irs::doc_limits::invalid();
+
   struct Entry {
     irs::bstring prefix;
     // nullopt = whole file.

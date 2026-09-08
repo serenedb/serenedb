@@ -22,11 +22,9 @@
 
 #include "iresearch/search/common/all_docs_score.hpp"
 #include "iresearch/search/common/scored_context.hpp"
+#include "iresearch/search/common/wildcard_ngram_of.hpp"
 #include "iresearch/search/fill/plan.hpp"
 #include "iresearch/search/fill/walk.hpp"
-#include "iresearch/search/lead/constant_scored.hpp"
-#include "iresearch/search/lead/impl.hpp"
-#include "iresearch/search/lead/make.hpp"
 #include "iresearch/search/wildcard_ngram_filter.hpp"
 
 namespace irs::fill {
@@ -34,19 +32,14 @@ namespace irs::fill {
 Node::ptr MakeWildcardNGramScored(const WildcardNGramQuery& query,
                                   const ScoredCtx& ctx, ScoreMergeType merge) {
   SDB_ASSERT(query.Kind() != QueryKind::Empty);
-  auto node = lead::MakeWildcardNGramDocs(query);
-  if (!node) {
-    return {};
-  }
   const auto record = query.Stats(ctx);
   const auto value =
     search::AllDocsScore(query.Segment(), ScoreArgs{.scorer = record.scorer,
                                                     .stats = record.stats,
                                                     .fetcher = ctx.fetcher,
                                                     .boost = query.Boost()});
-  using Node = lead::ConstantScored<lead::Erased>;
-  return memory::make_managed<ByWalkScored<Node>>(merge, ctx.fetcher, value,
-                                                  std::move(node));
+  return search::MakeWildcardNGram<WalkConstantScored, Node::ptr>(
+    query, 0, merge, *ctx.fetcher, value);
 }
 
 }  // namespace irs::fill

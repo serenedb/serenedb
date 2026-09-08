@@ -46,10 +46,10 @@ inline constexpr irs::field_id kChild = 99;
 
 struct ChildIterator : irs::lead::Node {
  public:
-  ChildIterator(irs::lead::Node::ptr&& it, std::set<irs::doc_id_t> parents)
+  ChildIterator(std::unique_ptr<tests::LeadCursor> it,
+                std::set<irs::doc_id_t> parents)
     : _it{std::move(it)}, _parents{std::move(parents)} {
     SDB_ASSERT(_it);
-    _doc = _it->Value();
   }
 
   irs::doc_id_t Advance() final {
@@ -62,8 +62,8 @@ struct ChildIterator : irs::lead::Node {
   }
 
   irs::doc_id_t Seek(irs::doc_id_t target) final {
-    if (const auto doc = Value(); target <= doc) [[unlikely]] {
-      return doc;
+    if (target <= _doc) [[unlikely]] {
+      return _doc;
     }
     const auto doc = _it->Seek(target);
     if (irs::doc_limits::eof(doc) || !_parents.contains(doc)) {
@@ -73,8 +73,9 @@ struct ChildIterator : irs::lead::Node {
   }
 
  private:
-  irs::lead::Node::ptr _it;
+  std::unique_ptr<tests::LeadCursor> _it;
   std::set<irs::doc_id_t> _parents;
+  irs::doc_id_t _doc = irs::doc_limits::invalid();
 };
 
 class PrevDocWrapper : public irs::ParentDocs {
@@ -82,7 +83,6 @@ class PrevDocWrapper : public irs::ParentDocs {
   explicit PrevDocWrapper(irs::lead::Node::ptr&& it) noexcept
     : _it{std::move(it)} {
     SDB_ASSERT(_it);
-    _doc = _it->Value();
   }
 
   irs::doc_id_t Advance() final { return _doc = _it->Advance(); }
@@ -95,6 +95,7 @@ class PrevDocWrapper : public irs::ParentDocs {
 
  private:
   irs::lead::Node::ptr _it;
+  irs::doc_id_t _doc = irs::doc_limits::invalid();
 };
 
 class VectorDocs : public irs::lead::Node {
@@ -121,6 +122,7 @@ class VectorDocs : public irs::lead::Node {
  private:
   std::vector<irs::doc_id_t> _docs;
   size_t _pos{0};
+  irs::doc_id_t _doc = irs::doc_limits::invalid();
 };
 
 struct DocIdScorer : public irs::ScorerBase<void> {
@@ -199,6 +201,7 @@ class ParentDocIterator : public irs::ParentDocs {
  private:
   std::vector<irs::doc_id_t> _parents;
   size_t _pos{0};
+  irs::doc_id_t _doc{irs::doc_limits::invalid()};
   irs::doc_id_t _prev{irs::doc_limits::invalid()};
 };
 

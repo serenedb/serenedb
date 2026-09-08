@@ -55,8 +55,6 @@ class TwoPhaseScored {
   TwoPhaseScored(TwoPhaseScored&&) = delete;
   TwoPhaseScored& operator=(TwoPhaseScored&&) = delete;
 
-  doc_id_t Value() const noexcept { return _doc; }
-
   doc_id_t Advance() { return Converge(_slots.Next(_doc)); }
 
   doc_id_t Seek(doc_id_t target) {

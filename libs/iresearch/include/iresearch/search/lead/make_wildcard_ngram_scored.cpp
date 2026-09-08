@@ -20,8 +20,8 @@
 
 #include <utility>
 
+#include "iresearch/search/common/wildcard_ngram_of.hpp"
 #include "iresearch/search/lead/constant_scored.hpp"
-#include "iresearch/search/lead/impl.hpp"
 #include "iresearch/search/lead/plan.hpp"
 #include "iresearch/search/wildcard_ngram_filter.hpp"
 
@@ -29,12 +29,8 @@ namespace irs::lead {
 
 Node::ptr MakeWildcardNGramScored(const WildcardNGramQuery& query,
                                   score_t score) {
-  auto node = MakeWildcardNGramDocs(query);
-  if (!node) {
-    return {};
-  }
-  using Node = ConstantScored<Erased>;
-  return memory::make_managed<Impl<Node>>(score, std::move(node));
+  return search::MakeWildcardNGram<ConstantScoredImpl, Node::ptr>(query, 0,
+                                                                  score);
 }
 
 }  // namespace irs::lead

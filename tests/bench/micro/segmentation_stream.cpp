@@ -142,8 +142,7 @@ std::string MakeLongWordsAscii() {
 }
 
 SegmentationTokenizer::Options MakeOpts(
-  irs::Case convert,
-  SegmentationTokenizer::Options::Accept accept,
+  irs::Case convert, SegmentationTokenizer::Options::Accept accept,
   SegmentationTokenizer::Options::Separate separate) {
   SegmentationTokenizer::Options opts;
   opts.convert = convert;
@@ -263,8 +262,7 @@ BENCHMARK_DEFINE_F(EnglishAscii, BmSegmentationSweep)
   RunCorpus(
     state, data,
     MakeOpts(
-      state.range(0) != 0 ? irs::Case::Lower
-                          : irs::Case::None,
+      state.range(0) != 0 ? irs::Case::Lower : irs::Case::None,
       static_cast<SegmentationTokenizer::Options::Accept>(state.range(1)),
       static_cast<SegmentationTokenizer::Options::Separate>(state.range(2))));
 }

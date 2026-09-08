@@ -45,8 +45,8 @@ class UnicodeAnalyzerImpl final : public TypedTokenizer<UnicodeAnalyzerImpl<S>>,
                   S == Options::Separate::None) {
       return {.ascii = true};
     } else {
-      return {.ascii = _convert != Case::None ||
-                       _accept != Options::Accept::Any};
+      return {.ascii =
+                _convert != Case::None || _accept != Options::Accept::Any};
     }
   }
 
@@ -59,8 +59,7 @@ class UnicodeAnalyzerImpl final : public TypedTokenizer<UnicodeAnalyzerImpl<S>>,
     return {.offsets = true, .stable = _convert == Case::None};
   }
 
-  template<TokenLayout Layout, Case C, Options::Accept A,
-           bool KnownAscii>
+  template<TokenLayout Layout, Case C, Options::Accept A, bool KnownAscii>
   bool DoFill(duckdb::string_t raw, TokenSink& sink) {
     if constexpr (S == Options::Separate::Sentence) {
       segment::SentenceFillValue<Layout, C, A, KnownAscii>(sink, raw);

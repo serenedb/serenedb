@@ -147,8 +147,8 @@ class IcuTextAnalyzerImpl final : public TypedTokenizer<IcuTextAnalyzerImpl<S>>,
             sink, data, n, begin, stop);
         }
       } else {
-        segment::EmitAccepted<Layout, Case::None, A, KnownAscii>(
-          sink, data, n, begin, stop);
+        segment::EmitAccepted<Layout, Case::None, A, KnownAscii>(sink, data, n,
+                                                                 begin, stop);
       }
       begin = stop;
     }

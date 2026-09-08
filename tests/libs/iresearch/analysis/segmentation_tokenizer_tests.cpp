@@ -126,8 +126,7 @@ TEST(words_ascii_test, MaskScanMatchesReference) {
   using irs::analysis::words::Segment;
   const auto collect_ref = [](std::string_view v) {
     std::vector<Segment> out;
-    ReferenceScanAsciiWords(v,
-                            [&](const Segment& s) { out.push_back(s); });
+    ReferenceScanAsciiWords(v, [&](const Segment& s) { out.push_back(s); });
     return out;
   };
   const auto check = [&](const std::string& v) {
@@ -638,8 +637,8 @@ TEST_P(SegmentationTokenizerTest, native_fills_match_pull) {
   for (const auto accept :
        {Options::Accept::Any, Options::Accept::Graphic,
         Options::Accept::AlphaNumeric, Options::Accept::Alpha}) {
-    for (const auto convert : {irs::Case::None, irs::Case::Lower,
-                               irs::Case::Upper}) {
+    for (const auto convert :
+         {irs::Case::None, irs::Case::Lower, irs::Case::Upper}) {
       Options opts{.accept = accept, .convert = convert};
       auto pull_stream = SegmentationTokenizer::Make(Options{opts});
       auto fill_stream = SegmentationTokenizer::Make(Options{opts});
@@ -765,8 +764,8 @@ TEST(SegmentationTokenizerAsciiFastPath, mid_rule_goldens) {
   for (const auto accept :
        {Options::Accept::Any, Options::Accept::Graphic,
         Options::Accept::AlphaNumeric, Options::Accept::Alpha}) {
-    for (const auto convert : {irs::Case::None, irs::Case::Lower,
-                               irs::Case::Upper}) {
+    for (const auto convert :
+         {irs::Case::None, irs::Case::Lower, irs::Case::Upper}) {
       Options opts{.accept = accept, .convert = convert};
       for (const auto& v : values) {
         SCOPED_TRACE(testing::Message()
@@ -791,8 +790,8 @@ TEST(SegmentationTokenizerAsciiFastPath, property_oracle_random_ascii) {
   for (const auto accept :
        {Options::Accept::Any, Options::Accept::Graphic,
         Options::Accept::AlphaNumeric, Options::Accept::Alpha}) {
-    for (const auto convert : {irs::Case::None, irs::Case::Lower,
-                               irs::Case::Upper}) {
+    for (const auto convert :
+         {irs::Case::None, irs::Case::Lower, irs::Case::Upper}) {
       Options opts{.accept = accept, .convert = convert};
       for (size_t iter = 0; iter < 300; ++iter) {
         std::string v;
@@ -818,8 +817,7 @@ TEST(SegmentationTokenizerAsciiFastPath, case_convert_all_sizes) {
     "sHoRt",     "3.14",          "Q",
     "wxyzWXYZ0", "ThirteenChars",
   };
-  for (const auto convert :
-       {irs::Case::Lower, irs::Case::Upper}) {
+  for (const auto convert : {irs::Case::Lower, irs::Case::Upper}) {
     for (const auto accept :
          {Options::Accept::AlphaNumeric, Options::Accept::Any}) {
       Options opts{.accept = accept, .convert = convert};
@@ -839,8 +837,7 @@ TEST(SegmentationTokenizerAsciiFastPath, case_convert_all_sizes) {
 TEST(SegmentationTokenizerAsciiFastPath, case_convert_sparse_long_values) {
   constexpr std::string_view kGap =
     "                                                                ";
-  for (const auto convert :
-       {irs::Case::Lower, irs::Case::Upper}) {
+  for (const auto convert : {irs::Case::Lower, irs::Case::Upper}) {
     Options opts{.accept = Options::Accept::AlphaNumeric, .convert = convert};
     for (size_t lead = 0; lead < 40; ++lead) {
       std::string v(lead, '-');
@@ -868,8 +865,7 @@ namespace {
 
 irs::analysis::SegmentationTokenizer::Options ModeOpts(
   irs::analysis::SegmentationTokenizer::Options::Separate separate,
-  irs::Case convert =
-    irs::Case::None) {
+  irs::Case convert = irs::Case::None) {
   using Opts = irs::analysis::SegmentationTokenizer::Options;
   Opts opts;
   opts.separate = separate;

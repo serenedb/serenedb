@@ -124,8 +124,7 @@ re2::RE2::Options RegexOptions(int group) {
   return options;
 }
 
-delim::Finder SplitOnLiteral(std::span<const re2::Rune> runes,
-                             bool fold_case) {
+delim::Finder SplitOnLiteral(std::span<const re2::Rune> runes, bool fold_case) {
   bstring literal;
   literal.reserve(runes.size() * utf8_utils::kMaxCharSize);
   for (const auto rune : runes) {

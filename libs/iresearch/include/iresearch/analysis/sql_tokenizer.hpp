@@ -30,7 +30,7 @@ namespace duckdb {
 class Expression;
 class ParsedExpression;
 
-}
+}  // namespace duckdb
 namespace irs::analysis {
 
 class SqlTokenizer final : public Tokenizer, private util::Noncopyable {

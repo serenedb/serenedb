@@ -30,7 +30,6 @@
 #include "basics/log.h"
 
 namespace irs::analysis::dict {
-
 namespace {
 
 bool LoadStopwordsFile(const std::filesystem::path& file,

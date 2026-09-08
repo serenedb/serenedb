@@ -326,10 +326,9 @@ struct MultiStringFinder {
   ManyCharsFinder first;
 };
 
-using Finder =
-  std::variant<std::monostate, NoDelimFinder, OneCharFinder, ManyCharsFinder,
-               ByteRangesFinder, OneStringFinder, OneLongStringFinder,
-               MultiStringFinder>;
+using Finder = std::variant<std::monostate, NoDelimFinder, OneCharFinder,
+                            ManyCharsFinder, ByteRangesFinder, OneStringFinder,
+                            OneLongStringFinder, MultiStringFinder>;
 
 inline Finder FinderFor(bstring&& delimiter) {
   if (delimiter.size() == 1) {

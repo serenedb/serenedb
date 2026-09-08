@@ -67,8 +67,8 @@ duckdb::unique_ptr<duckdb::FunctionData> MinHashBind(
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                     ERR_MSG("minhash: num_hashes must be a constant"));
   }
-  const auto value =
-    duckdb::ExpressionExecutor::EvaluateScalar(input.GetClientContext(), *args[1]);
+  const auto value = duckdb::ExpressionExecutor::EvaluateScalar(
+    input.GetClientContext(), *args[1]);
   if (value.IsNull()) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                     ERR_MSG("minhash: num_hashes must not be NULL"));
@@ -138,7 +138,8 @@ void MinHashFunction(duckdb::DataChunk& args, duckdb::ExpressionState& state,
       static_cast<duckdb::idx_t>(std::distance(sketch.begin(), sketch.end()));
     duckdb::ListVector::SetListSize(result, offset);
     duckdb::ListVector::Reserve(result, offset + produced);
-    auto* data = duckdb::FlatVector::GetDataMutable<duckdb::string_t>(signatures);
+    auto* data =
+      duckdb::FlatVector::GetDataMutable<duckdb::string_t>(signatures);
     for (const auto hash : sketch) {
       const auto value = absl::little_endian::FromHost(hash);
       data[offset++] = duckdb::StringVector::AddStringOrBlob(

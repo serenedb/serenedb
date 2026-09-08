@@ -869,7 +869,11 @@ TEST(TokenizerInversion, SurvivesDeletesAndUpdates) {
     const auto traits = reference->Traits();
     const auto plan = PlanFor(traits);
 
-    enum Fate : uint8_t { kKeep, kRemoved, kReplaced };
+    enum Fate : uint8_t {
+      kKeep,
+      kRemoved,
+      kReplaced,
+    };
     std::vector<Fate> fate(values.size(), kKeep);
     auto live = values;
     for (size_t i = 0; i < values.size(); ++i) {

@@ -20,16 +20,15 @@
 
 #include <gtest/gtest.h>
 
+#include <array>
+#include <atomic>
+#include <chrono>
+#include <condition_variable>
 #include <duckdb.hpp>
 #include <duckdb/common/exception.hpp>
 #include <duckdb/storage/buffer/buffer_pool.hpp>
 #include <duckdb/storage/buffer_manager.hpp>
 #include <duckdb/storage/shared_object_cache.hpp>
-
-#include <array>
-#include <atomic>
-#include <chrono>
-#include <condition_variable>
 #include <mutex>
 #include <string>
 #include <string_view>
@@ -182,9 +181,8 @@ TEST_F(SharedObjectCacheTest, failed_build_hands_key_to_next_waiter) {
   }
 
   duckdb::shared_ptr<SharedTestObject> result;
-  std::thread waiting([&] {
-    result = cache.GetOrBuild<SharedTestObject>("handoff", Build);
-  });
+  std::thread waiting(
+    [&] { result = cache.GetOrBuild<SharedTestObject>("handoff", Build); });
   std::this_thread::sleep_for(std::chrono::milliseconds{10});
   {
     const std::lock_guard<std::mutex> lock{m};

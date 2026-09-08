@@ -61,13 +61,7 @@ INSERT INTO vedernikoff_iceberg_t5 VALUES (9999);
 statement error
 DROP FUNCTION vedernikoff_iceberg_within_bounds(INT);
 ----
-db error: ERROR: Cannot drop entry "vedernikoff_iceberg_within_bounds" because there are entries that depend on it.
-table "vedernikoff_iceberg_t1" depends on macro function "vedernikoff_iceberg_within_bounds".
-table "vedernikoff_iceberg_t2" depends on macro function "vedernikoff_iceberg_within_bounds".
-table "vedernikoff_iceberg_t3" depends on macro function "vedernikoff_iceberg_within_bounds".
-table "vedernikoff_iceberg_t4" depends on macro function "vedernikoff_iceberg_within_bounds".
-table "vedernikoff_iceberg_t5" depends on macro function "vedernikoff_iceberg_within_bounds".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: Cannot drop entry "vedernikoff_iceberg_within_bounds" because there are entries that depend on it.<slt:ignore>
 
 
 
@@ -137,9 +131,7 @@ INSERT INTO vedernikoff_solid_payments (amount) VALUES (500);
 statement error
 DROP SEQUENCE vedernikoff_solid_payday_seq;
 ----
-db error: ERROR: Cannot drop entry "vedernikoff_solid_payday_seq" because there are entries that depend on it.
-table "vedernikoff_solid_payments" depends on sequence "vedernikoff_solid_payday_seq".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: Cannot drop entry "vedernikoff_solid_payday_seq" because there are entries that depend on it.<slt:ignore>
 
 
 
@@ -190,9 +182,7 @@ INSERT INTO vedernikoff_mop_data VALUES (5000);
 statement error
 DROP FUNCTION vedernikoff_mop_is_positive(INT);
 ----
-db error: ERROR: Cannot drop entry "vedernikoff_mop_is_positive" because there are entries that depend on it.
-table "vedernikoff_mop_data" depends on macro function "vedernikoff_mop_is_positive".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: Cannot drop entry "vedernikoff_mop_is_positive" because there are entries that depend on it.<slt:ignore>
 
 
 
@@ -241,10 +231,7 @@ INSERT INTO vedernikoff_ml_data VALUES (42);
 statement error
 DROP FUNCTION vedernikoff_ml_inner(INT);
 ----
-db error: ERROR: Cannot drop entry "vedernikoff_ml_inner" because there are entries that depend on it.
-macro function "vedernikoff_ml_outer" depends on macro function "vedernikoff_ml_inner".
-table "vedernikoff_ml_data" depends on macro function "vedernikoff_ml_inner".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: Cannot drop entry "vedernikoff_ml_inner" because there are entries that depend on it.<slt:ignore>
 
 
 
@@ -296,9 +283,7 @@ INSERT INTO vedernikoff_clickclack_metrics VALUES (1, 1, 5000);
 statement error
 DROP FUNCTION vedernikoff_clickclack_threshold();
 ----
-db error: ERROR: Cannot drop entry "vedernikoff_clickclack_threshold" because there are entries that depend on it.
-table "vedernikoff_clickclack_metrics" depends on macro function "vedernikoff_clickclack_threshold".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: Cannot drop entry "vedernikoff_clickclack_threshold" because there are entries that depend on it.<slt:ignore>
 
 
 

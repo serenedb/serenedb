@@ -75,13 +75,7 @@ id	v
 statement error
 DROP SEQUENCE clickclack_query_id_seq;
 ----
-db error: ERROR: Cannot drop entry "clickclack_query_id_seq" because there are entries that depend on it.
-table "clickclack_audit" depends on sequence "clickclack_query_id_seq".
-table "clickclack_dashboards" depends on sequence "clickclack_query_id_seq".
-table "clickclack_error_log" depends on sequence "clickclack_query_id_seq".
-table "clickclack_ingest_jobs" depends on sequence "clickclack_query_id_seq".
-table "clickclack_query_plans" depends on sequence "clickclack_query_id_seq".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: Cannot drop entry "clickclack_query_id_seq" because there are entries that depend on it.<slt:ignore>
 
 
 

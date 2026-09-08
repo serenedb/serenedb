@@ -25,6 +25,7 @@
 #include <duckdb/main/attached_database.hpp>
 #include <duckdb/main/database_manager.hpp>
 #include <duckdb/transaction/meta_transaction.hpp>
+#include <string_view>
 #include <utility>
 
 #include "basics/duckdb_engine.h"
@@ -96,7 +97,28 @@ duckdb::optional_ptr<duckdb::CatalogEntry> ClusterCatalog::CreateRole(
 
 bool ClusterCatalog::DropRole(duckdb::CatalogTransaction transaction,
                               const duckdb::Identifier& name, bool cascade) {
+  DeclareModified(transaction, *this);
   return _roles.DropEntry(transaction, name, cascade);
+}
+
+void ClusterCatalog::AlterRole(duckdb::CatalogTransaction transaction,
+                               const duckdb::Identifier& name,
+                               duckdb::AlterInfo& info) {
+  DeclareModified(transaction, *this);
+  if (!_roles.AlterEntry(transaction, name, info)) {
+    throw duckdb::CatalogException::MissingEntry(
+      duckdb::CatalogType::ROLE_ENTRY, name, std::string{});
+  }
+}
+
+void ClusterCatalog::AlterDatabase(duckdb::CatalogTransaction transaction,
+                                   const duckdb::Identifier& name,
+                                   duckdb::AlterInfo& info) {
+  DeclareModified(transaction, *this);
+  if (!_databases.AlterEntry(transaction, name, info)) {
+    throw duckdb::CatalogException::MissingEntry(
+      duckdb::CatalogType::DATABASE_ENTRY, name, std::string{});
+  }
 }
 
 duckdb::optional_ptr<duckdb::CatalogEntry> ClusterCatalog::LookupRole(

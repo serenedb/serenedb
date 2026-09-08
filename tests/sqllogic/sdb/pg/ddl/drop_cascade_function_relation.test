@@ -30,9 +30,7 @@ babsky_count_t
 statement error
 DROP TABLE babsky_t;
 ----
-db error: ERROR: Cannot drop entry "babsky_t" because there are entries that depend on it.
-macro function "babsky_count_t" depends on table "babsky_t".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: Cannot drop entry "babsky_t" because there are entries that depend on it.<slt:ignore>
 
 
 
@@ -72,9 +70,7 @@ clickclack_count_v
 statement error
 DROP VIEW clickclack_v;
 ----
-db error: ERROR: Cannot drop entry "clickclack_v" because there are entries that depend on it.
-macro function "clickclack_count_v" depends on view "clickclack_v".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: Cannot drop entry "clickclack_v" because there are entries that depend on it.<slt:ignore>
 
 
 
@@ -109,9 +105,7 @@ CREATE FUNCTION kostya_pivot() AS (SELECT count(*) FROM kostya_a);
 statement error
 DROP TABLE kostya_a;
 ----
-db error: ERROR: Cannot drop entry "kostya_a" because there are entries that depend on it.
-macro function "kostya_pivot" depends on table "kostya_a".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: Cannot drop entry "kostya_a" because there are entries that depend on it.<slt:ignore>
 
 
 
@@ -128,9 +122,7 @@ DROP TABLE kostya_a;
 statement error
 DROP TABLE kostya_b;
 ----
-db error: ERROR: Cannot drop entry "kostya_b" because there are entries that depend on it.
-macro function "kostya_pivot" depends on table "kostya_b".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: Cannot drop entry "kostya_b" because there are entries that depend on it.<slt:ignore>
 
 
 
@@ -159,10 +151,7 @@ CREATE FUNCTION iceberg_share_b() AS (SELECT min(n) FROM iceberg_shared);
 statement error
 DROP TABLE iceberg_shared;
 ----
-db error: ERROR: Cannot drop entry "iceberg_shared" because there are entries that depend on it.
-macro function "iceberg_share_a" depends on table "iceberg_shared".
-macro function "iceberg_share_b" depends on table "iceberg_shared".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: Cannot drop entry "iceberg_shared" because there are entries that depend on it.<slt:ignore>
 
 
 

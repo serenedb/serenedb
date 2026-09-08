@@ -87,20 +87,18 @@ struct ByWildcardOptions : ByWildcardFilterOptions {
   using filter_options = ByWildcardFilterOptions;
   using ByWildcardFilterOptions::ByWildcardFilterOptions;
 
-  size_t scored_terms_limit{1024};
-
   bool operator==(const ByWildcardOptions& rhs) const noexcept = default;
 };
 
 Filter::ptr CreateByWildcard(irs::field_id id, bytes_view term,
-                             size_t scored_terms_limit = 1024,
                              score_t boost = kNoBoost);
 
-Filter::ptr LowerWildcard(irs::field_id id, bytes_view term,
-                          size_t scored_terms_limit, score_t boost);
+Filter::ptr LowerWildcard(irs::field_id id, bytes_view term, score_t boost);
 
 class ByWildcard final : public FilterWithField<ByWildcardOptions> {
  public:
+  ByWildcard() noexcept { SetScorer(&DefaultConstScore()); }
+
   QueryBuilder::ptr PrepareSegment(const SubReader& segment,
                                    const PrepareContext& ctx) const final;
 

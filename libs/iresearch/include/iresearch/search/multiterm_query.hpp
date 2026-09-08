@@ -47,9 +47,6 @@ class MultiTermQuery : public QueryBuilderImpl<MultiTermQuery> {
 
   ScoreMergeType MergeType() const noexcept { return _merge_type; }
 
-  void Pin() noexcept { _pinned = true; }
-  bool Pinned() const noexcept { return _pinned; }
-
   void Visit(PreparedStateVisitor& visitor, score_t boost) const final;
 
   score_t Boost() const noexcept final { return _boost; }
@@ -60,7 +57,6 @@ class MultiTermQuery : public QueryBuilderImpl<MultiTermQuery> {
   MultiTermState _state;
   score_t _boost;
   ScoreMergeType _merge_type;
-  bool _pinned = false;
 };
 
 }  // namespace irs

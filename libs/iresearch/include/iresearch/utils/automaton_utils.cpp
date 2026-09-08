@@ -26,7 +26,7 @@
 #include "fst/union.h"
 #include "fstext/determinize-star.h"
 #include "iresearch/index/index_reader.hpp"
-#include "iresearch/search/limited_sample_selector.hpp"
+#include "iresearch/search/multiterm_collector.hpp"
 #include "iresearch/search/multiterm_query.hpp"
 #include "iresearch/utils/string.hpp"
 
@@ -254,20 +254,7 @@ QueryBuilder::ptr PrepareAutomatonSegment(
 
   auto query = memory::make_tracked<MultiTermQuery>(
     ctx.memory, segment, ctx.memory, ctx.boost * boost, ScoreMergeType::Sum);
-  auto* collector =
-    ctx.collector
-      ? &sdb::basics::downCast<LimitedTermsCollector>(*ctx.collector)
-      : nullptr;
-  if (collector) {
-    collector->Field(ctx.thread).Collect(*reader);
-    // A sampler with no capacity writes nothing into the state, so nothing
-    // has to outlive the decision that this node will never run.
-    if (collector->Limited(ctx.thread).Samples()) {
-      query->Pin();
-    }
-  }
-  SampledMultiTermVisitor mtv{
-    collector ? &collector->Limited(ctx.thread) : nullptr, query->State()};
+  MultiTermVisitor mtv{ctx, query->State(), *reader};
   Visit(segment, *reader, matcher, mtv);
   return MultiTermQuery::Finish(std::move(query), ctx);
 }

@@ -96,12 +96,14 @@ duckdb::TableFunction TableInvertedIndexScanEntry::GetScanFunction(
       GetIndexedRelationId(),
       [&] { return relation->GetSearchData()->GetDirectoryReader(); });
     data->entry_kind = connector::ScanEntryKind::SearchTableIndex;
+    data->topk_scorer = relation->SearchOptions().topk_scorer;
     data->lookup_label = "search";
     data->snapshot = std::make_shared<search::InvertedIndexSnapshot>(
       irs::DirectoryReader{*reader}, nullptr);
   } else {
     data->entry_kind = connector::ScanEntryKind::InvertedIndex;
     data->lookup_label = "table";
+    data->topk_scorer = data->ScannedIndex().GetTopKScorer();
     data->snapshot = conn_ctx.EnsureSearchSnapshot(
       _index_id, ::sdb::catalog::InvertedStorageIn(this->catalog, _index_id));
   }
@@ -199,6 +201,7 @@ duckdb::TableFunction ViewInvertedIndexScanEntry::GetScanFunction(
   data->entry_kind = connector::ScanEntryKind::InvertedIndex;
   data->indexes = {
     ::sdb::catalog::InvertedDefinitionIn(&context, this->catalog, _index_id)};
+  data->topk_scorer = data->ScannedIndex().GetTopKScorer();
   std::span<const std::string> key_cols =
     data->ScannedIndex().GetOptions().key_columns;
   data->fast_path =

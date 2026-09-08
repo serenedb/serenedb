@@ -47,7 +47,8 @@ class Bitset : public Root {
 
   uint64_t Run() final {
     auto set = search::BuildBitset(_buckets, *_doc, _docs_count);
-    return _table.Count(0, set.Words(), set.WordCount());
+    return _table.Count(search::BitsetStorage::kMin, set.Words(),
+                        set.WordCount());
   }
 
  private:

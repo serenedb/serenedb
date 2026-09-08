@@ -123,8 +123,9 @@ std::vector<OffsetMatch> CollectOffsets(const tests::PreparedFilter& prepared,
     // Small on purpose: a document with more occurrences than this exercises
     // the re-entry that a caller with no bound of its own relies on.
     std::array<irs::offsets::Range, 4> batch;
-    while (!irs::doc_limits::eof(docs->Advance())) {
-      OffsetMatch m{.doc = docs->Value()};
+    for (auto doc = docs->Advance(); !irs::doc_limits::eof(doc);
+         doc = docs->Advance()) {
+      OffsetMatch m{.doc = doc};
       for (;;) {
         const auto count = offsets->Run(m.doc, batch);
         for (uint32_t k = 0; k != count; ++k) {

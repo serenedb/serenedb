@@ -54,11 +54,7 @@ class BitsThresholdScored {
   BitsThresholdScored(BitsThresholdScored&&) = delete;
   BitsThresholdScored& operator=(BitsThresholdScored&&) = delete;
 
-  doc_id_t Value() const noexcept { return _doc; }
-
-  doc_id_t Advance() {
-    return Seek(doc_limits::valid(_doc) ? _doc + 1 : doc_limits::min());
-  }
+  doc_id_t Advance() { return Seek(_doc + 1); }
 
   doc_id_t Seek(doc_id_t target) {
     if (target <= _doc) {
@@ -123,7 +119,7 @@ class BitsThresholdScored {
       }
     }
     std::fill(_planes.begin(), _planes.end(), uint64_t{0});
-    _min = target - target % kWindow;
+    _min = target;
     _filled = true;
     const size_t top = size_t{_min_match} - 1;
     _next = _leaves.Visit(_min + kWindow, [&](auto& leaf) {

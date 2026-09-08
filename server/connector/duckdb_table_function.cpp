@@ -69,6 +69,7 @@ void CopyCommon(const SereneDBScanBindData& src, SereneDBScanBindData& dst) {
   dst.table_entry = src.table_entry;
   dst.entry_kind = src.entry_kind;
   dst.indexes = src.indexes;
+  dst.topk_scorer = src.topk_scorer;
   dst.stored_filter = src.stored_filter;
   dst.filter_scorers = src.filter_scorers;
   dst.snapshot = src.snapshot;
@@ -334,13 +335,10 @@ static duckdb::vector<duckdb::column_t> SereneDBScanGetRowIdColumns(
   return result;
 }
 
-const irs::Scorer* ResolvePruneScorer(const catalog::InvertedIndex* index,
-                                      const irs::Scorer* scorer) {
-  if (!index || !scorer) {
-    return nullptr;
-  }
-  const auto& topk = index->GetTopKScorer();
-  return topk && scorer->Compatible(*topk) ? scorer : nullptr;
+const irs::Scorer* ResolvePruneScorer(
+  const std::optional<catalog::ScorerOptions>& topk,
+  const irs::Scorer* scorer) {
+  return topk && scorer && scorer->Compatible(*topk) ? scorer : nullptr;
 }
 
 std::string SereneDBScanBindData::DisplayColumnName(
@@ -645,13 +643,13 @@ void SereneDBScanBindData::AppendSummary(
     // TODO(mbkkt): prunnable/etc instead of optimized?
     // TODO(mbkkt): streaming top k also should be marked when pruning enabled
     std::string topk_val = absl::StrCat(*score_top_k);
-    const auto* index = bind.IsIndexRelation() ? &bind.ScannedIndex() : nullptr;
-    const auto* pruning = ResolvePruneScorer(index, query_scorer.get());
+    const auto* pruning =
+      ResolvePruneScorer(bind.topk_scorer, query_scorer.get());
     if (pruning) {
       absl::StrAppend(&topk_val, ", optimized");
     }
     out.insert("Top", std::move(topk_val));
-    if (const auto& topk = index->GetTopKScorer();
+    if (const auto& topk = bind.topk_scorer;
         pruning && topk && topk != text_scorer) {
       if (auto bounds = catalog::MakeScorer(*topk)) {
         out.insert("Bounds", bounds->ToString());

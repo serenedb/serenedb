@@ -21,6 +21,9 @@
 #pragma once
 
 #include <cstdint>
+#include <optional>
+
+#include "catalog/persistence/scorer_options.h"
 
 namespace sdb::catalog::persistence {
 
@@ -32,6 +35,7 @@ struct SearchTableOptions {
   uint32_t compaction_interval_ms = 0;
   uint32_t cleanup_interval_step = 0;
   uint64_t segment_memory_max = uint64_t{256} << 20;
+  std::optional<ScorerOptions> topk_scorer;
 };
 
 }  // namespace sdb::catalog::persistence

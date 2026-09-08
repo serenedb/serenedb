@@ -41,8 +41,6 @@ class SparseConjunctionDocs {
   SparseConjunctionDocs(SparseConjunctionDocs&&) = delete;
   SparseConjunctionDocs& operator=(SparseConjunctionDocs&&) = delete;
 
-  doc_id_t Value() const noexcept { return _doc; }
-
   doc_id_t Advance() { return Converge(_head.Advance()); }
 
   doc_id_t Seek(doc_id_t target) {

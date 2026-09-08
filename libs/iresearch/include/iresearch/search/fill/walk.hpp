@@ -20,7 +20,6 @@
 
 #pragma once
 
-#include <algorithm>
 #include <span>
 #include <utility>
 
@@ -30,6 +29,7 @@
 #include "iresearch/search/common/window.hpp"
 #include "iresearch/search/fill/impl.hpp"
 #include "iresearch/search/lead/concept.hpp"
+#include "iresearch/search/lead/constant_scored.hpp"
 #include "iresearch/search/score_function.hpp"
 #include "iresearch/search/scorer.hpp"
 #include "iresearch/utils/type_limits.hpp"
@@ -76,9 +76,10 @@ class WalkDocs {
 
  private:
   doc_id_t From(doc_id_t min) {
+    SDB_ASSERT(doc_limits::valid(min));
     auto doc = _doc;
-    if (!doc_limits::valid(doc) || doc < min) {
-      doc = _leaf.Seek(std::max(min, doc_limits::min()));
+    if (doc < min) {
+      doc = _leaf.Seek(min);
     }
     return doc;
   }
@@ -91,7 +92,7 @@ template<typename Leaf>
 class WalkScored {
  public:
   template<typename... Args>
-  explicit WalkScored(ScoreMergeType merge, ColumnArgsFetcher* fetcher,
+  explicit WalkScored(ScoreMergeType merge, ColumnArgsFetcher& fetcher,
                       Args&&... args)
     : _leaf{std::forward<Args>(args)...},
       _score{_leaf.PrepareScore()},
@@ -122,9 +123,10 @@ class WalkScored {
 
  private:
   doc_id_t From(doc_id_t min) {
+    SDB_ASSERT(doc_limits::valid(min));
     auto doc = _doc;
-    if (!doc_limits::valid(doc) || doc < min) {
-      doc = _leaf.Seek(std::max(min, doc_limits::min()));
+    if (doc < min) {
+      doc = _leaf.Seek(min);
     }
     return doc;
   }
@@ -135,15 +137,11 @@ class WalkScored {
       return;
     }
     if (n == kScoreBlock) [[likely]] {
-      if (_fetcher != nullptr) {
-        _fetcher->FetchScoreBlock(
-          std::span<const doc_id_t, kScoreBlock>{_docs, kScoreBlock});
-      }
+      _fetcher.FetchScoreBlock(
+        std::span<const doc_id_t, kScoreBlock>{_docs, kScoreBlock});
       _score.ScoreBlock(_scores);
     } else {
-      if (_fetcher != nullptr) {
-        _fetcher->Fetch(std::span<const doc_id_t>{_docs, n});
-      }
+      _fetcher.Fetch(std::span<const doc_id_t>{_docs, n});
       _score.Score(_scores, n);
     }
     irs::ResolveMergeType(_merge, [&]<ScoreMergeType Merge> {
@@ -157,7 +155,7 @@ class WalkScored {
   ABSL_CACHELINE_ALIGNED score_t _scores[kScoreBlock];
   Leaf _leaf;
   ScoreFunction _score;
-  ColumnArgsFetcher* _fetcher;
+  ColumnArgsFetcher& _fetcher;
   ScoreMergeType _merge;
   doc_id_t _doc = doc_limits::invalid();
 };
@@ -167,5 +165,8 @@ using ByWalkDocs = Impl<WalkDocs<Node>>;
 
 template<typename Node>
 using ByWalkScored = Impl<WalkScored<Node>>;
+
+template<typename Node>
+using WalkConstantScored = ByWalkScored<lead::ConstantScored<Node>>;
 
 }  // namespace irs::fill

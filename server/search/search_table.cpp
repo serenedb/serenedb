@@ -39,6 +39,7 @@
 #include <shared_mutex>
 #include <system_error>
 
+#include "basics/debugging.h"
 #include "basics/down_cast.h"
 #include "basics/duckdb_engine.h"
 #include "basics/lifecycle.h"
@@ -48,6 +49,7 @@
 #include "catalog/index.h"
 #include "catalog/inverted_index.h"
 #include "catalog/read/duckdb_catalog_sets.h"
+#include "catalog/scorer_options.h"
 #include "pg/sql_exception_macro.h"
 #include "scheduler/background_scheduler.h"
 #include "search/inverted_index_storage.h"
@@ -196,6 +198,9 @@ SearchTable::SearchTable(
     std::make_shared<const catalog::InvertedIndex::Entries>(std::move(entries));
   _terms_by_column = std::make_shared<const TermsByColumn>(std::move(terms));
   _field_options = MakeFieldOptions(_entries);
+  if (options.topk_scorer) {
+    _topk_scorer = catalog::MakeScorer(*options.topk_scorer);
+  }
   OpenWriter();
 
   _maint_settings.refresh_interval_msec = options.refresh_interval_ms;
@@ -335,6 +340,9 @@ void SearchTable::OpenWriter() {
   writer_options.lock_repository = false;
   writer_options.db = &sdb::DuckDBEngine::Instance().instance();
   writer_options.reader_options.db = writer_options.db;
+  if (_topk_scorer) {
+    writer_options.reader_options.scorer = _topk_scorer.get();
+  }
 
   writer_options.meta_payload_provider = [this](uint64_t tick,
                                                 irs::bstring& out) {
@@ -442,6 +450,10 @@ ResultWithTime SearchTable::RefreshUnsafe(
     std::chrono::duration_cast<std::chrono::milliseconds>(
       std::chrono::steady_clock::now() - begin)
       .count();
+  SDB_IF_FAILURE("Search::FailOnCommit") {
+    result = absl::InternalError("debug failure point");
+  }
+  _maintenance.RecordCommit(result, code, time_ms);
   return {std::move(result), time_ms};
 }
 
@@ -477,7 +489,18 @@ ResultWithTime SearchTable::CompactUnsafe(
     std::chrono::duration_cast<std::chrono::milliseconds>(
       std::chrono::steady_clock::now() - begin)
       .count();
+  _maintenance.RecordCompaction(result, empty_compaction, time_ms);
   return {std::move(result), time_ms};
+}
+
+StoreStats SearchTable::GetStats() const {
+  if (!_writer) {
+    return {};
+  }
+  auto stats = StoreStats::FromReader(_writer->GetSnapshot());
+  stats.numBufferedDocs = _writer->BufferedDocs();
+  _maintenance.Fill(stats);
+  return stats;
 }
 
 ResultWithTime SearchTable::CleanupUnsafe() {
@@ -493,6 +516,7 @@ ResultWithTime SearchTable::CleanupUnsafe() {
     std::chrono::duration_cast<std::chrono::milliseconds>(
       std::chrono::steady_clock::now() - begin)
       .count();
+  _maintenance.RecordCleanup(result, time_ms);
   return {std::move(result), time_ms};
 }
 
@@ -509,7 +533,8 @@ void SearchTable::VacuumCompact() {
   RefreshResult code = RefreshResult::Undefined;
   RefreshUnsafe(/*wait=*/true, nullptr, code);
   bool empty = false;
-  CompactUnsafe(kFullMerge, kProgress, empty, /*field_options=*/nullptr);
+  const auto field_options = GetFieldOptions();
+  CompactUnsafe(kFullMerge, kProgress, empty, field_options.get());
   if (!empty) {
     RefreshUnsafe(/*wait=*/true, nullptr, code);
   }

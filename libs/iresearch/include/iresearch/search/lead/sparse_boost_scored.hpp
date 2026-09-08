@@ -63,8 +63,6 @@ class SparseBoostScored {
   SparseBoostScored(SparseBoostScored&&) = delete;
   SparseBoostScored& operator=(SparseBoostScored&&) = delete;
 
-  doc_id_t Value() const noexcept { return _doc; }
-
   doc_id_t Advance() { return _doc = _head.Advance(); }
 
   doc_id_t Seek(doc_id_t target) {

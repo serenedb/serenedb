@@ -75,10 +75,10 @@ while IFS= read -r f; do
 	esac
 
 	case "$f" in
-	third_party/duckdb/* | third_party/CMakeLists.txt)
-		# The fork itself (including its own vendored third_party: mbedtls, ICU,
-		# yyjson...) and the wiring that decides which vendored copy every dep
-		# resolves to. Either can move any suite.
+	third_party/duckdb | third_party/CMakeLists.txt)
+		# A bump of the fork submodule (which carries its own vendored third_party:
+		# mbedtls, ICU, yyjson...) and the wiring that decides which vendored copy
+		# every dep resolves to. Either can move any suite.
 		other_tp=true
 		for s in $ALL_SUITES; do suite_hit[$s]=1; done
 		;;

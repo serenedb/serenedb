@@ -332,6 +332,22 @@
           "categoryLabel": "server/catalog/ddl/catalog.cpp"
         }
       ]
+    },
+    {
+      "id": "server/docs/docs_loader.cpp",
+      "label": "server/docs/docs_loader.cpp",
+      "flags": [
+        {
+          "name": "embedded_docs",
+          "flag": "--embedded_docs",
+          "type": "",
+          "defaultValue": "all",
+          "description": "Where the embedded documentation is loaded: all (every database, on its first connection), default (the default database only), off.",
+          "source": "server/docs/docs_loader.cpp",
+          "category": "server/docs/docs_loader.cpp",
+          "categoryLabel": "server/docs/docs_loader.cpp"
+        }
+      ]
     }
   ]
 }

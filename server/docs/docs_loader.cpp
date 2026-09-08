@@ -20,6 +20,7 @@
 
 #include "docs/docs_loader.h"
 
+#include <absl/flags/flag.h>
 #include <absl/strings/str_cat.h>
 #include <absl/synchronization/mutex.h>
 #include <absl/time/time.h>
@@ -52,8 +53,45 @@
 #include "docs/docs_data.h"
 #include "pg/connection_context.h"
 
+
+// TODO: fix when cross database reference will be supported
+ABSL_FLAG(std::string, embedded_docs, "all",
+          "Where the embedded documentation is loaded: all (every database, on "
+          "its first connection), default (the default database only), off.");
+
 namespace sdb::docs {
 namespace {
+
+enum class Scope { All, DefaultDatabase, Off };
+
+Scope gScope = Scope::All;
+
+Scope ParseScope() {
+  const auto value = absl::GetFlag(FLAGS_embedded_docs);
+  if (value == "all") {
+    return Scope::All;
+  }
+  if (value == "default") {
+    return Scope::DefaultDatabase;
+  }
+  if (value == "off") {
+    return Scope::Off;
+  }
+  SDB_FATAL(GENERAL, "--embedded_docs must be all, default or off, got '",
+            value, "'");
+}
+
+bool InScope(std::string_view database) {
+  switch (gScope) {
+    case Scope::All:
+      return true;
+    case Scope::DefaultDatabase:
+      return database == StaticStrings::kDefaultDatabase;
+    case Scope::Off:
+      return false;
+  }
+  return false;
+}
 
 constexpr std::string_view kTable = "sdb_docs.docs";
 constexpr std::string_view kMeta = "sdb_docs.meta";
@@ -271,13 +309,20 @@ void LoadEmbeddedDocs() {
              "embedded docs disabled (built with SDB_EMBEDDED_DOCS=OFF)");
     return;
   }
+  gScope = ParseScope();
+  if (gScope == Scope::Off) {
+    SDB_INFO(STARTUP, "embedded docs disabled (--embedded_docs=off)");
+    return;
+  }
   std::vector<std::pair<std::string, ObjectId>> databases;
   catalog::VisitDatabases(nullptr, [&](catalog::SereneDBDatabaseEntry& entry) {
     databases.emplace_back(entry.name.GetIdentifierName(),
                            catalog::IdOf(entry));
   });
   for (const auto& [name, id] : databases) {
-    EnsureIn(name, id);
+    if (InScope(name)) {
+      EnsureIn(name, id);
+    }
   }
 }
 
@@ -293,7 +338,7 @@ void EnsureEmbeddedDocs(ObjectId database_id) {
     }
   }
   const auto* database = catalog::FindDatabase(nullptr, database_id);
-  if (database == nullptr) {
+  if (database == nullptr || !InScope(database->name.GetIdentifierName())) {
     return;
   }
   EnsureIn(database->name.GetIdentifierName(), database_id);

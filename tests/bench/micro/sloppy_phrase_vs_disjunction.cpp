@@ -44,6 +44,7 @@
 #include <simdutf.h>
 
 #include <algorithm>
+#include <array>
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
@@ -54,6 +55,9 @@
 #include <iresearch/index/index_features.hpp>
 #include <iresearch/index/index_writer.hpp>
 #include <iresearch/search/boolean_filter.hpp>
+#include <iresearch/search/count/make.hpp>
+#include <iresearch/search/docs/make.hpp>
+#include <iresearch/search/offsets/make.hpp>
 #include <iresearch/search/phrase_filter.hpp>
 #include <iresearch/search/phrase_query.hpp>
 #include <iresearch/search/slop_phrase.hpp>
@@ -802,25 +806,27 @@ irs::ByPhrase MakeSlopPhraseGap(std::string_view t0, std::string_view t1,
 
 // push_back<ByTermOptions>(offs) sets offs_min=offs_max=offs+1, so to
 // request position delta g pass offs=g-1.
-void AppendFixedPhrase(irs::Or& or_filter, std::string_view first,
+void AppendFixedPhrase(irs::BooleanFilter& or_filter, std::string_view first,
                        std::string_view second, irs::PosAttr::value_t gap) {
   SDB_ASSERT(gap >= 1);
-  auto& phrase = or_filter.add<irs::ByPhrase>();
-  *phrase.mutable_field_id() = kFieldId;
-  phrase.mutable_options()->push_back<irs::ByTermOptions>().term =
+  auto phrase = std::make_unique<irs::ByPhrase>();
+  *phrase->mutable_field_id() = kFieldId;
+  phrase->mutable_options()->push_back<irs::ByTermOptions>().term =
     irs::ViewCast<irs::byte_type>(first);
-  phrase.mutable_options()
+  phrase->mutable_options()
     ->push_back<irs::ByTermOptions>(/*offs=*/gap - 1)
     .term = irs::ViewCast<irs::byte_type>(second);
+  or_filter.Add(std::move(phrase), irs::Occur::Should);
 }
 
 // Builds the disjunction matching the same chains as MakeSlopPhrase for two
 // terms with expected step 1: forward phrases for gaps in [1, slop+1] and
 // reversed phrases for gaps in [1, slop-1] (reversed cost = gap + 1, so the
 // bound is slop-1).
-irs::Or MakeDisjunctionEquivalent(std::string_view t0, std::string_view t1,
-                                  irs::PosAttr::value_t slop) {
-  irs::Or q;
+irs::BooleanFilter MakeDisjunctionEquivalent(std::string_view t0,
+                                             std::string_view t1,
+                                             irs::PosAttr::value_t slop) {
+  irs::BooleanFilter q;
   for (irs::PosAttr::value_t g = 1; g <= slop + 1; ++g) {
     AppendFixedPhrase(q, t0, t1, g);
   }
@@ -838,7 +844,7 @@ irs::Or MakeDisjunctionEquivalent(std::string_view t0, std::string_view t1,
 // must equal the slop benchmark's docs= - the built-in correctness check.
 // Enumeration is bounded: for expected==1, span = sum(gaps) <= slop + n - 1.
 // Reproduces the n==2 helper exactly. Untimed (runs in make()).
-void AppendSlopPhraseVariants(irs::Or& or_filter,
+void AppendSlopPhraseVariants(irs::BooleanFilter& or_filter,
                               const std::vector<std::string_view>& terms,
                               irs::PosAttr::value_t slop) {
   const size_t n = terms.size();
@@ -868,15 +874,16 @@ void AppendSlopPhraseVariants(irs::Or& or_filter,
         return;
       }
     }
-    auto& phrase = or_filter.add<irs::ByPhrase>();
-    *phrase.mutable_field_id() = kFieldId;
-    phrase.mutable_options()->push_back<irs::ByTermOptions>().term =
+    auto phrase = std::make_unique<irs::ByPhrase>();
+    *phrase->mutable_field_id() = kFieldId;
+    phrase->mutable_options()->push_back<irs::ByTermOptions>().term =
       irs::ViewCast<irs::byte_type>(terms[perm[0]]);
     for (size_t j = 1; j < n; ++j) {
-      phrase.mutable_options()
+      phrase->mutable_options()
         ->push_back<irs::ByTermOptions>(/*offs=*/gaps[j - 1] - 1)
         .term = irs::ViewCast<irs::byte_type>(terms[perm[j]]);
     }
+    or_filter.Add(std::move(phrase), irs::Occur::Should);
   };
 
   // Enumerate gap vectors (each >= 1, sum <= span_budget); cost is checked
@@ -898,9 +905,9 @@ void AppendSlopPhraseVariants(irs::Or& or_filter,
   } while (std::next_permutation(perm.begin(), perm.end()));
 }
 
-irs::Or MakeDisjunctionEquivalentN(const std::vector<std::string_view>& terms,
-                                   irs::PosAttr::value_t slop) {
-  irs::Or q;
+irs::BooleanFilter MakeDisjunctionEquivalentN(
+  const std::vector<std::string_view>& terms, irs::PosAttr::value_t slop) {
+  irs::BooleanFilter q;
   AppendSlopPhraseVariants(q, terms, slop);
   return q;
 }
@@ -923,12 +930,11 @@ struct MaxMemoryCounter final : irs::IResourceManager {
   size_t max{0};
 };
 
-// Per-segment prepared queries plus an empty StatsBuffer for unscored
-// execution: the NoCollector shape of tests::PreparedFilter, inlined here
-// because the bench target has no access to the test helpers.
+// Per-segment prepared queries for unscored execution: the NoCollector shape
+// of tests::PreparedFilter, inlined here because the bench target has no
+// access to the test helpers.
 struct BenchPrepared {
   std::vector<irs::QueryBuilder::ptr> queries;
-  irs::StatsBuffer stats;
 
   bool AnyNull() const noexcept {
     return absl::c_any_of(queries, [](const auto& q) { return !q; });
@@ -993,9 +999,9 @@ template<typename MakeFn>
   for (auto _ : state) {
     per_iter = 0;
     for (const auto& query : prepared.queries) {
-      auto docs = query->Execute({}, prepared.stats);
-      while (!irs::doc_limits::eof(docs->advance())) {
-        ++per_iter;
+      auto plan = irs::count::MakeRoot(*query);
+      if (plan) {
+        per_iter += plan->Run();
       }
     }
     benchmark::DoNotOptimize(per_iter);
@@ -1019,7 +1025,7 @@ irs::ByPhrase MakeSlopPhraseVariadic2(irs::PosAttr::value_t slop) {
   *q.mutable_field_id() = kFieldId;
   q.mutable_options()->push_back<irs::ByTermOptions>().term =
     irs::ViewCast<irs::byte_type>(std::string_view("the"));
-  auto& st = q.mutable_options()->push_back<irs::ByTermsOptions>();
+  auto& st = q.mutable_options()->push_back<irs::TermSetOptions>();
   st.terms.emplace(
     irs::ViewCast<irs::byte_type>(std::string_view("commission")));
   st.terms.emplace(irs::ViewCast<irs::byte_type>(std::string_view("council")));
@@ -1029,8 +1035,9 @@ irs::ByPhrase MakeSlopPhraseVariadic2(irs::PosAttr::value_t slop) {
 
 // Baseline for the variadic pair: the union of the per-synonym phrase
 // expansions ("the commission" variants OR "the council" variants).
-irs::Or MakeDisjunctionEquivalentVariadic2(irs::PosAttr::value_t slop) {
-  irs::Or q;
+irs::BooleanFilter MakeDisjunctionEquivalentVariadic2(
+  irs::PosAttr::value_t slop) {
+  irs::BooleanFilter q;
   AppendSlopPhraseVariants(q, {"the", "commission"}, slop);
   AppendSlopPhraseVariants(q, {"the", "council"}, slop);
   return q;
@@ -1044,7 +1051,7 @@ irs::ByPhrase MakeSlopPhraseVariadic4(irs::PosAttr::value_t slop) {
   *q.mutable_field_id() = kFieldId;
   q.mutable_options()->push_back<irs::ByTermOptions>().term =
     irs::ViewCast<irs::byte_type>(std::string_view("the"));
-  auto& st = q.mutable_options()->push_back<irs::ByTermsOptions>();
+  auto& st = q.mutable_options()->push_back<irs::TermSetOptions>();
   st.terms.emplace(
     irs::ViewCast<irs::byte_type>(std::string_view("commission")));
   st.terms.emplace(irs::ViewCast<irs::byte_type>(std::string_view("council")));
@@ -1055,8 +1062,9 @@ irs::ByPhrase MakeSlopPhraseVariadic4(irs::PosAttr::value_t slop) {
   return q;
 }
 
-irs::Or MakeDisjunctionEquivalentVariadic4(irs::PosAttr::value_t slop) {
-  irs::Or q;
+irs::BooleanFilter MakeDisjunctionEquivalentVariadic4(
+  irs::PosAttr::value_t slop) {
+  irs::BooleanFilter q;
   AppendSlopPhraseVariants(q, {"the", "commission"}, slop);
   AppendSlopPhraseVariants(q, {"the", "council"}, slop);
   AppendSlopPhraseVariants(q, {"the", "parliament"}, slop);
@@ -1088,6 +1096,11 @@ template<typename PhraseQueryT = irs::FixedPhraseQuery, typename MakeFn>
     phrase_queries.push_back(phrase_query);
   }
 
+  irs::SlackBuf<irs::doc_id_t, irs::doc_limits::kMinCapacity,
+                irs::doc_limits::kDocsSlack>
+    doc_buf;
+  std::array<irs::offsets::Range, 256> range_buf;
+
   size_t docs_per_iter = 0;
   size_t matches_per_iter = 0;
 #ifdef SLOP_PROFILE
@@ -1098,20 +1111,26 @@ template<typename PhraseQueryT = irs::FixedPhraseQuery, typename MakeFn>
   for (auto _ : state) {
     docs_per_iter = 0;
     matches_per_iter = 0;
-    size_t seg = 0;
-    for (const auto& sub : rdr) {
-      auto docs = phrase_queries[seg++]->ExecuteWithOffsets(sub);
-      if (!docs) {
+    for (size_t seg = 0; seg != prepared.queries.size(); ++seg) {
+      auto docs = irs::docs::MakeRoot(*prepared.queries[seg]);
+      auto offs = irs::offsets::Make(*phrase_queries[seg]);
+      if (!docs || !offs) {
         continue;
       }
-      auto* pos = irs::GetMutable<irs::PosAttr>(docs.get());
-      if (!pos) {
-        continue;
-      }
-      while (!irs::doc_limits::eof(docs->advance())) {
-        ++docs_per_iter;
-        while (pos->next()) {
-          ++matches_per_iter;
+      for (;;) {
+        const auto n = docs->Run(doc_buf.data(), doc_buf.size());
+        if (n == 0) {
+          break;
+        }
+        docs_per_iter += n;
+        for (uint32_t i = 0; i != n; ++i) {
+          for (;;) {
+            const auto m = offs->Run(doc_buf[i], range_buf);
+            matches_per_iter += m;
+            if (m != range_buf.size()) {
+              break;
+            }
+          }
         }
       }
     }

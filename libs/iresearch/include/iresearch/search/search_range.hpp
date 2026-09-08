@@ -40,10 +40,7 @@ struct SearchRange {
   BoundType min_type = BoundType::Unbounded;
   BoundType max_type = BoundType::Unbounded;
 
-  bool operator==(const SearchRange& rhs) const noexcept {
-    return min == rhs.min && min_type == rhs.min_type && max == rhs.max &&
-           max_type == rhs.max_type;
-  }
+  bool operator==(const SearchRange& rhs) const noexcept = default;
 };
 
 }  // namespace irs

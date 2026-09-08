@@ -1,0 +1,579 @@
+statement ok
+SET TimeZone = 'Europe/Berlin';
+
+statement ok
+CREATE TABLE tb AS SELECT TIMESTAMP '2024-12-23 00:00:00' + INTERVAL (i * 37) MINUTE AS ts, (TIMESTAMP '2024-12-23 00:00:00' + INTERVAL (i * 37) MINUTE)::TIMESTAMPTZ AS tstz, (DATE '2024-12-23' + (i % 400)::INTEGER)::DATE AS d, i AS v FROM range(0, 1500) t(i);
+
+statement ok
+INSERT INTO tb VALUES (NULL, NULL, NULL, -1);
+
+statement ok
+CREATE TABLE tb_inf AS SELECT * FROM tb;
+
+statement ok
+INSERT INTO tb_inf VALUES (TIMESTAMP 'infinity', TIMESTAMPTZ 'infinity', DATE 'infinity', -2), (TIMESTAMP '-infinity', TIMESTAMPTZ '-infinity', DATE '-infinity', -3);
+
+statement ok
+CREATE TABLE tb_wide AS SELECT TIMESTAMP '1950-06-01 00:00:00' + INTERVAL (i * 29) DAY AS ts, (TIMESTAMP '1950-06-01 00:00:00' + INTERVAL (i * 29) DAY)::TIMESTAMPTZ AS tstz, (DATE '1950-06-01' + (i * 29)::INTEGER)::DATE AS d, i AS v FROM range(0, 1400) t(i);
+
+statement ok
+SET disabled_optimizers = 'compressed_materialization';
+
+statement ok
+CREATE TABLE ref_tb AS
+SELECT 'f1 ts %Y' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(ts, '%Y') AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'f2 ts %Y-%m' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(ts, '%Y-%m') AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'f3 ts %Y-%m-%d' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(ts, '%Y-%m-%d') AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'f4 ts %Y-%m-%d %H' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(ts, '%Y-%m-%d %H') AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'f5 ts %Y-%m-%d %H:%M' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(ts, '%Y-%m-%d %H:%M') AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'f6 ts %Y-%m-%d %H:%M:%S' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(ts, '%Y-%m-%d %H:%M:%S') AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'f7 ts %Y-%j' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(ts, '%Y-%j') AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'f8 ts %Y %B %d %A' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(ts, '%Y %B %d %A') AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'f9 ts %d.%m.%Y' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(ts, '%d.%m.%Y') AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'f10 ts %Y/%b' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(ts, '%Y/%b') AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'f11 ts %m' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(ts, '%m') AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'f12 ts %Y-%m-%d %I %p' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(ts, '%Y-%m-%d %I %p') AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'f13 ts %Y-%m-%d %I' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(ts, '%Y-%m-%d %I') AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'f14 ts %Y-%U' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(ts, '%Y-%U') AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'f15 ts %Y-%W' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(ts, '%Y-%W') AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'f16 ts %G-%V' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(ts, '%G-%V') AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'f17 ts %G-W%V' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(ts, '%G-W%V') AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'f18 ts %G-%V-%u' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(ts, '%G-%V-%u') AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'f19 ts %G-%V %A' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(ts, '%G-%V %A') AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'f20 ts %G-%V %w' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(ts, '%G-%V %w') AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'f21 ts %Y-%V' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(ts, '%Y-%V') AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'f22 ts %G-%m' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(ts, '%G-%m') AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'f23 ts %G' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(ts, '%G') AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'f24 ts %V' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(ts, '%V') AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'f25 ts %B %V' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(ts, '%B %V') AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'f26 ts %G-%V %H' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(ts, '%G-%V %H') AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'f27 ts %y-%m' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(ts, '%y-%m') AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'f28 ts %y-%m-%d' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(ts, '%y-%m-%d') AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'f29 ts %y' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(ts, '%y') AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'f30 ts %y-%j' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(ts, '%y-%j') AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'f31 ts %Y-%m-%d %H:%M:%S.%f' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(ts, '%Y-%m-%d %H:%M:%S.%f') AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'f32 ts %Y-%m-%d %z' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(ts, '%Y-%m-%d %z') AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'f33 ts %c' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(ts, '%c') AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'f34 ts %x' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(ts, '%x') AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'f35 ts %Y-%m-%d %p' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(ts, '%Y-%m-%d %p') AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'f36 ts %-d/%-m/%Y' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(ts, '%-d/%-m/%Y') AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'f37 ts %B %Y' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(ts, '%B %Y') AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'f38 ts %A' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(ts, '%A') AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'f39 ts %a %d %b %Y' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(ts, '%a %d %b %Y') AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'f40 ts %Y-%m-%dT%H:%M' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(ts, '%Y-%m-%dT%H:%M') AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'f41 ts %H' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(ts, '%H') AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'f42 ts %Y-%m-%d %-I%p' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(ts, '%Y-%m-%d %-I%p') AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'f43 d %Y' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(d, '%Y') AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'f44 d %Y-%m' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(d, '%Y-%m') AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'f45 d %Y-%m-%d' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(d, '%Y-%m-%d') AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'f46 d %Y-%m-%d %H' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(d, '%Y-%m-%d %H') AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'f47 d %Y-%m-%d %H:%M' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(d, '%Y-%m-%d %H:%M') AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'f48 d %Y-%m-%d %H:%M:%S' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(d, '%Y-%m-%d %H:%M:%S') AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'f49 d %Y-%j' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(d, '%Y-%j') AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'f50 d %Y %B %d %A' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(d, '%Y %B %d %A') AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'f51 d %d.%m.%Y' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(d, '%d.%m.%Y') AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'f52 d %Y/%b' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(d, '%Y/%b') AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'f53 d %m' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(d, '%m') AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'f54 d %Y-%m-%d %I %p' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(d, '%Y-%m-%d %I %p') AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'f55 d %Y-%m-%d %I' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(d, '%Y-%m-%d %I') AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'f56 d %Y-%U' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(d, '%Y-%U') AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'f57 d %Y-%W' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(d, '%Y-%W') AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'f58 d %G-%V' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(d, '%G-%V') AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'f59 d %G-W%V' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(d, '%G-W%V') AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'f60 d %G-%V-%u' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(d, '%G-%V-%u') AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'f61 d %G-%V %A' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(d, '%G-%V %A') AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'f62 d %G-%V %w' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(d, '%G-%V %w') AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'f63 d %Y-%V' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(d, '%Y-%V') AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'f64 d %G-%m' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(d, '%G-%m') AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'f65 d %G' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(d, '%G') AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'f66 d %V' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(d, '%V') AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'f67 d %B %V' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(d, '%B %V') AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'f68 d %G-%V %H' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(d, '%G-%V %H') AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'f69 d %y-%m' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(d, '%y-%m') AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'f70 d %y-%m-%d' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(d, '%y-%m-%d') AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'f71 d %y' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(d, '%y') AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'f72 d %y-%j' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(d, '%y-%j') AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'f73 d %Y-%m-%d %H:%M:%S.%f' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(d, '%Y-%m-%d %H:%M:%S.%f') AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'f74 d %Y-%m-%d %z' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(d, '%Y-%m-%d %z') AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'f75 d %c' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(d, '%c') AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'f76 d %x' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(d, '%x') AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'f77 d %Y-%m-%d %p' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(d, '%Y-%m-%d %p') AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'f78 d %-d/%-m/%Y' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(d, '%-d/%-m/%Y') AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'f79 d %B %Y' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(d, '%B %Y') AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'f80 d %A' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(d, '%A') AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'f81 d %a %d %b %Y' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(d, '%a %d %b %Y') AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'f82 d %Y-%m-%dT%H:%M' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(d, '%Y-%m-%dT%H:%M') AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'f83 d %H' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(d, '%H') AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'f84 d %Y-%m-%d %-I%p' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(d, '%Y-%m-%d %-I%p') AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'f85 tstz %Y' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(tstz, '%Y') AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'f86 tstz %Y-%m' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(tstz, '%Y-%m') AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'f87 tstz %Y-%m-%d' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(tstz, '%Y-%m-%d') AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'f88 tstz %Y-%m-%d %H' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(tstz, '%Y-%m-%d %H') AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'f89 tstz %Y-%m-%d %H:%M' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(tstz, '%Y-%m-%d %H:%M') AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'f90 tstz %Y-%m-%d %H:%M:%S' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(tstz, '%Y-%m-%d %H:%M:%S') AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'f91 tstz %Y-%j' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(tstz, '%Y-%j') AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'f92 tstz %Y %B %d %A' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(tstz, '%Y %B %d %A') AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'f93 tstz %d.%m.%Y' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(tstz, '%d.%m.%Y') AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'f94 tstz %Y/%b' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(tstz, '%Y/%b') AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'f95 tstz %m' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(tstz, '%m') AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'f96 tstz %Y-%m-%d %I %p' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(tstz, '%Y-%m-%d %I %p') AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'f97 tstz %Y-%m-%d %I' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(tstz, '%Y-%m-%d %I') AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'f98 tstz %Y-%U' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(tstz, '%Y-%U') AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'f99 tstz %Y-%W' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(tstz, '%Y-%W') AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'f100 tstz %G-%V' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(tstz, '%G-%V') AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'f101 tstz %G-W%V' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(tstz, '%G-W%V') AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'f102 tstz %G-%V-%u' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(tstz, '%G-%V-%u') AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'f103 tstz %G-%V %A' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(tstz, '%G-%V %A') AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'f104 tstz %G-%V %w' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(tstz, '%G-%V %w') AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'f105 tstz %Y-%V' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(tstz, '%Y-%V') AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'f106 tstz %G-%m' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(tstz, '%G-%m') AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'f107 tstz %G' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(tstz, '%G') AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'f108 tstz %V' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(tstz, '%V') AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'f109 tstz %B %V' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(tstz, '%B %V') AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'f110 tstz %G-%V %H' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(tstz, '%G-%V %H') AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'f111 tstz %y-%m' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(tstz, '%y-%m') AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'f112 tstz %y-%m-%d' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(tstz, '%y-%m-%d') AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'f113 tstz %y' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(tstz, '%y') AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'f114 tstz %y-%j' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(tstz, '%y-%j') AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'f115 tstz %Y-%m-%d %H:%M:%S.%f' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(tstz, '%Y-%m-%d %H:%M:%S.%f') AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'f116 tstz %Y-%m-%d %z' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(tstz, '%Y-%m-%d %z') AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'f117 tstz %c' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(tstz, '%c') AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'f118 tstz %x' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(tstz, '%x') AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'f119 tstz %Y-%m-%d %p' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(tstz, '%Y-%m-%d %p') AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'f120 tstz %-d/%-m/%Y' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(tstz, '%-d/%-m/%Y') AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'f121 tstz %B %Y' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(tstz, '%B %Y') AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'f122 tstz %A' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(tstz, '%A') AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'f123 tstz %a %d %b %Y' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(tstz, '%a %d %b %Y') AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'f124 tstz %Y-%m-%dT%H:%M' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(tstz, '%Y-%m-%dT%H:%M') AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'f125 tstz %H' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(tstz, '%H') AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'f126 tstz %Y-%m-%d %-I%p' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(tstz, '%Y-%m-%d %-I%p') AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'mn ts' AS shape, k::VARCHAR AS k, c, s FROM (SELECT monthname(ts) AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'dn ts' AS shape, k::VARCHAR AS k, c, s FROM (SELECT dayname(ts) AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'ld ts' AS shape, k::VARCHAR AS k, c, s FROM (SELECT last_day(ts) AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'mn d' AS shape, k::VARCHAR AS k, c, s FROM (SELECT monthname(d) AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'dn d' AS shape, k::VARCHAR AS k, c, s FROM (SELECT dayname(d) AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'ld d' AS shape, k::VARCHAR AS k, c, s FROM (SELECT last_day(d) AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'mn tstz' AS shape, k::VARCHAR AS k, c, s FROM (SELECT monthname(tstz) AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'dn tstz' AS shape, k::VARCHAR AS k, c, s FROM (SELECT dayname(tstz) AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'ld tstz' AS shape, k::VARCHAR AS k, c, s FROM (SELECT last_day(tstz) AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1);
+
+statement ok
+RESET disabled_optimizers;
+
+statement ok
+CREATE TABLE got_tb AS
+SELECT 'f1 ts %Y' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(ts, '%Y') AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'f2 ts %Y-%m' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(ts, '%Y-%m') AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'f3 ts %Y-%m-%d' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(ts, '%Y-%m-%d') AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'f4 ts %Y-%m-%d %H' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(ts, '%Y-%m-%d %H') AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'f5 ts %Y-%m-%d %H:%M' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(ts, '%Y-%m-%d %H:%M') AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'f6 ts %Y-%m-%d %H:%M:%S' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(ts, '%Y-%m-%d %H:%M:%S') AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'f7 ts %Y-%j' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(ts, '%Y-%j') AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'f8 ts %Y %B %d %A' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(ts, '%Y %B %d %A') AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'f9 ts %d.%m.%Y' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(ts, '%d.%m.%Y') AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'f10 ts %Y/%b' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(ts, '%Y/%b') AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'f11 ts %m' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(ts, '%m') AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'f12 ts %Y-%m-%d %I %p' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(ts, '%Y-%m-%d %I %p') AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'f13 ts %Y-%m-%d %I' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(ts, '%Y-%m-%d %I') AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'f14 ts %Y-%U' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(ts, '%Y-%U') AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'f15 ts %Y-%W' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(ts, '%Y-%W') AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'f16 ts %G-%V' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(ts, '%G-%V') AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'f17 ts %G-W%V' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(ts, '%G-W%V') AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'f18 ts %G-%V-%u' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(ts, '%G-%V-%u') AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'f19 ts %G-%V %A' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(ts, '%G-%V %A') AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'f20 ts %G-%V %w' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(ts, '%G-%V %w') AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'f21 ts %Y-%V' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(ts, '%Y-%V') AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'f22 ts %G-%m' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(ts, '%G-%m') AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'f23 ts %G' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(ts, '%G') AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'f24 ts %V' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(ts, '%V') AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'f25 ts %B %V' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(ts, '%B %V') AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'f26 ts %G-%V %H' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(ts, '%G-%V %H') AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'f27 ts %y-%m' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(ts, '%y-%m') AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'f28 ts %y-%m-%d' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(ts, '%y-%m-%d') AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'f29 ts %y' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(ts, '%y') AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'f30 ts %y-%j' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(ts, '%y-%j') AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'f31 ts %Y-%m-%d %H:%M:%S.%f' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(ts, '%Y-%m-%d %H:%M:%S.%f') AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'f32 ts %Y-%m-%d %z' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(ts, '%Y-%m-%d %z') AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'f33 ts %c' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(ts, '%c') AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'f34 ts %x' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(ts, '%x') AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'f35 ts %Y-%m-%d %p' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(ts, '%Y-%m-%d %p') AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'f36 ts %-d/%-m/%Y' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(ts, '%-d/%-m/%Y') AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'f37 ts %B %Y' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(ts, '%B %Y') AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'f38 ts %A' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(ts, '%A') AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'f39 ts %a %d %b %Y' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(ts, '%a %d %b %Y') AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'f40 ts %Y-%m-%dT%H:%M' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(ts, '%Y-%m-%dT%H:%M') AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'f41 ts %H' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(ts, '%H') AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'f42 ts %Y-%m-%d %-I%p' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(ts, '%Y-%m-%d %-I%p') AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'f43 d %Y' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(d, '%Y') AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'f44 d %Y-%m' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(d, '%Y-%m') AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'f45 d %Y-%m-%d' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(d, '%Y-%m-%d') AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'f46 d %Y-%m-%d %H' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(d, '%Y-%m-%d %H') AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'f47 d %Y-%m-%d %H:%M' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(d, '%Y-%m-%d %H:%M') AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'f48 d %Y-%m-%d %H:%M:%S' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(d, '%Y-%m-%d %H:%M:%S') AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'f49 d %Y-%j' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(d, '%Y-%j') AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'f50 d %Y %B %d %A' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(d, '%Y %B %d %A') AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'f51 d %d.%m.%Y' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(d, '%d.%m.%Y') AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'f52 d %Y/%b' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(d, '%Y/%b') AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'f53 d %m' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(d, '%m') AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'f54 d %Y-%m-%d %I %p' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(d, '%Y-%m-%d %I %p') AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'f55 d %Y-%m-%d %I' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(d, '%Y-%m-%d %I') AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'f56 d %Y-%U' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(d, '%Y-%U') AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'f57 d %Y-%W' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(d, '%Y-%W') AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'f58 d %G-%V' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(d, '%G-%V') AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'f59 d %G-W%V' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(d, '%G-W%V') AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'f60 d %G-%V-%u' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(d, '%G-%V-%u') AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'f61 d %G-%V %A' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(d, '%G-%V %A') AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'f62 d %G-%V %w' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(d, '%G-%V %w') AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'f63 d %Y-%V' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(d, '%Y-%V') AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'f64 d %G-%m' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(d, '%G-%m') AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'f65 d %G' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(d, '%G') AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'f66 d %V' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(d, '%V') AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'f67 d %B %V' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(d, '%B %V') AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'f68 d %G-%V %H' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(d, '%G-%V %H') AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'f69 d %y-%m' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(d, '%y-%m') AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'f70 d %y-%m-%d' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(d, '%y-%m-%d') AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'f71 d %y' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(d, '%y') AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'f72 d %y-%j' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(d, '%y-%j') AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'f73 d %Y-%m-%d %H:%M:%S.%f' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(d, '%Y-%m-%d %H:%M:%S.%f') AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'f74 d %Y-%m-%d %z' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(d, '%Y-%m-%d %z') AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'f75 d %c' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(d, '%c') AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'f76 d %x' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(d, '%x') AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'f77 d %Y-%m-%d %p' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(d, '%Y-%m-%d %p') AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'f78 d %-d/%-m/%Y' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(d, '%-d/%-m/%Y') AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'f79 d %B %Y' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(d, '%B %Y') AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'f80 d %A' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(d, '%A') AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'f81 d %a %d %b %Y' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(d, '%a %d %b %Y') AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'f82 d %Y-%m-%dT%H:%M' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(d, '%Y-%m-%dT%H:%M') AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'f83 d %H' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(d, '%H') AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'f84 d %Y-%m-%d %-I%p' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(d, '%Y-%m-%d %-I%p') AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'f85 tstz %Y' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(tstz, '%Y') AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'f86 tstz %Y-%m' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(tstz, '%Y-%m') AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'f87 tstz %Y-%m-%d' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(tstz, '%Y-%m-%d') AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'f88 tstz %Y-%m-%d %H' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(tstz, '%Y-%m-%d %H') AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'f89 tstz %Y-%m-%d %H:%M' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(tstz, '%Y-%m-%d %H:%M') AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'f90 tstz %Y-%m-%d %H:%M:%S' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(tstz, '%Y-%m-%d %H:%M:%S') AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'f91 tstz %Y-%j' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(tstz, '%Y-%j') AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'f92 tstz %Y %B %d %A' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(tstz, '%Y %B %d %A') AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'f93 tstz %d.%m.%Y' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(tstz, '%d.%m.%Y') AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'f94 tstz %Y/%b' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(tstz, '%Y/%b') AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'f95 tstz %m' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(tstz, '%m') AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'f96 tstz %Y-%m-%d %I %p' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(tstz, '%Y-%m-%d %I %p') AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'f97 tstz %Y-%m-%d %I' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(tstz, '%Y-%m-%d %I') AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'f98 tstz %Y-%U' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(tstz, '%Y-%U') AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'f99 tstz %Y-%W' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(tstz, '%Y-%W') AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'f100 tstz %G-%V' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(tstz, '%G-%V') AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'f101 tstz %G-W%V' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(tstz, '%G-W%V') AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'f102 tstz %G-%V-%u' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(tstz, '%G-%V-%u') AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'f103 tstz %G-%V %A' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(tstz, '%G-%V %A') AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'f104 tstz %G-%V %w' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(tstz, '%G-%V %w') AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'f105 tstz %Y-%V' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(tstz, '%Y-%V') AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'f106 tstz %G-%m' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(tstz, '%G-%m') AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'f107 tstz %G' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(tstz, '%G') AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'f108 tstz %V' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(tstz, '%V') AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'f109 tstz %B %V' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(tstz, '%B %V') AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'f110 tstz %G-%V %H' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(tstz, '%G-%V %H') AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'f111 tstz %y-%m' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(tstz, '%y-%m') AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'f112 tstz %y-%m-%d' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(tstz, '%y-%m-%d') AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'f113 tstz %y' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(tstz, '%y') AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'f114 tstz %y-%j' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(tstz, '%y-%j') AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'f115 tstz %Y-%m-%d %H:%M:%S.%f' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(tstz, '%Y-%m-%d %H:%M:%S.%f') AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'f116 tstz %Y-%m-%d %z' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(tstz, '%Y-%m-%d %z') AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'f117 tstz %c' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(tstz, '%c') AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'f118 tstz %x' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(tstz, '%x') AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'f119 tstz %Y-%m-%d %p' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(tstz, '%Y-%m-%d %p') AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'f120 tstz %-d/%-m/%Y' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(tstz, '%-d/%-m/%Y') AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'f121 tstz %B %Y' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(tstz, '%B %Y') AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'f122 tstz %A' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(tstz, '%A') AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'f123 tstz %a %d %b %Y' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(tstz, '%a %d %b %Y') AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'f124 tstz %Y-%m-%dT%H:%M' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(tstz, '%Y-%m-%dT%H:%M') AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'f125 tstz %H' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(tstz, '%H') AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'f126 tstz %Y-%m-%d %-I%p' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(tstz, '%Y-%m-%d %-I%p') AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'mn ts' AS shape, k::VARCHAR AS k, c, s FROM (SELECT monthname(ts) AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'dn ts' AS shape, k::VARCHAR AS k, c, s FROM (SELECT dayname(ts) AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'ld ts' AS shape, k::VARCHAR AS k, c, s FROM (SELECT last_day(ts) AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'mn d' AS shape, k::VARCHAR AS k, c, s FROM (SELECT monthname(d) AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'dn d' AS shape, k::VARCHAR AS k, c, s FROM (SELECT dayname(d) AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'ld d' AS shape, k::VARCHAR AS k, c, s FROM (SELECT last_day(d) AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'mn tstz' AS shape, k::VARCHAR AS k, c, s FROM (SELECT monthname(tstz) AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'dn tstz' AS shape, k::VARCHAR AS k, c, s FROM (SELECT dayname(tstz) AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1)
+UNION ALL SELECT 'ld tstz' AS shape, k::VARCHAR AS k, c, s FROM (SELECT last_day(tstz) AS k, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1);
+
+query
+SELECT shape, k, c, s FROM (SELECT * FROM got_tb EXCEPT ALL SELECT * FROM ref_tb) ORDER BY 1, 2;
+----
+shape	k	c	s
+
+query
+SELECT shape, k, c, s FROM (SELECT * FROM ref_tb EXCEPT ALL SELECT * FROM got_tb) ORDER BY 1, 2;
+----
+shape	k	c	s
+
+query
+SELECT count(*) AS rows, count(DISTINCT shape) AS shapes FROM got_tb;
+----
+rows	shapes
+33093	135
+
+statement ok
+SET disabled_optimizers = 'compressed_materialization';
+
+statement ok
+CREATE TABLE ref_inf AS
+SELECT 'inf ts %Y-%m' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(ts, '%Y-%m') AS k, count(*) AS c, sum(v) AS s FROM tb_inf GROUP BY 1)
+UNION ALL SELECT 'inf ts %Y-%m-%d' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(ts, '%Y-%m-%d') AS k, count(*) AS c, sum(v) AS s FROM tb_inf GROUP BY 1)
+UNION ALL SELECT 'inf ts %G-%V' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(ts, '%G-%V') AS k, count(*) AS c, sum(v) AS s FROM tb_inf GROUP BY 1)
+UNION ALL SELECT 'inf ts %y-%m' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(ts, '%y-%m') AS k, count(*) AS c, sum(v) AS s FROM tb_inf GROUP BY 1)
+UNION ALL SELECT 'inf ts %Y-%m-%d %H' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(ts, '%Y-%m-%d %H') AS k, count(*) AS c, sum(v) AS s FROM tb_inf GROUP BY 1)
+UNION ALL SELECT 'inf mn ts' AS shape, k::VARCHAR AS k, c, s FROM (SELECT monthname(ts) AS k, count(*) AS c, sum(v) AS s FROM tb_inf GROUP BY 1)
+UNION ALL SELECT 'inf dn ts' AS shape, k::VARCHAR AS k, c, s FROM (SELECT dayname(ts) AS k, count(*) AS c, sum(v) AS s FROM tb_inf GROUP BY 1)
+UNION ALL SELECT 'inf ld ts' AS shape, k::VARCHAR AS k, c, s FROM (SELECT last_day(ts) AS k, count(*) AS c, sum(v) AS s FROM tb_inf GROUP BY 1)
+UNION ALL SELECT 'inf d %Y-%m' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(d, '%Y-%m') AS k, count(*) AS c, sum(v) AS s FROM tb_inf GROUP BY 1)
+UNION ALL SELECT 'inf d %Y-%m-%d' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(d, '%Y-%m-%d') AS k, count(*) AS c, sum(v) AS s FROM tb_inf GROUP BY 1)
+UNION ALL SELECT 'inf d %G-%V' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(d, '%G-%V') AS k, count(*) AS c, sum(v) AS s FROM tb_inf GROUP BY 1)
+UNION ALL SELECT 'inf d %y-%m' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(d, '%y-%m') AS k, count(*) AS c, sum(v) AS s FROM tb_inf GROUP BY 1)
+UNION ALL SELECT 'inf d %Y-%m-%d %H' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(d, '%Y-%m-%d %H') AS k, count(*) AS c, sum(v) AS s FROM tb_inf GROUP BY 1)
+UNION ALL SELECT 'inf mn d' AS shape, k::VARCHAR AS k, c, s FROM (SELECT monthname(d) AS k, count(*) AS c, sum(v) AS s FROM tb_inf GROUP BY 1)
+UNION ALL SELECT 'inf dn d' AS shape, k::VARCHAR AS k, c, s FROM (SELECT dayname(d) AS k, count(*) AS c, sum(v) AS s FROM tb_inf GROUP BY 1)
+UNION ALL SELECT 'inf ld d' AS shape, k::VARCHAR AS k, c, s FROM (SELECT last_day(d) AS k, count(*) AS c, sum(v) AS s FROM tb_inf GROUP BY 1)
+UNION ALL SELECT 'inf tstz %Y-%m' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(tstz, '%Y-%m') AS k, count(*) AS c, sum(v) AS s FROM tb_inf GROUP BY 1)
+UNION ALL SELECT 'inf tstz %Y-%m-%d' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(tstz, '%Y-%m-%d') AS k, count(*) AS c, sum(v) AS s FROM tb_inf GROUP BY 1)
+UNION ALL SELECT 'inf tstz %G-%V' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(tstz, '%G-%V') AS k, count(*) AS c, sum(v) AS s FROM tb_inf GROUP BY 1)
+UNION ALL SELECT 'inf tstz %y-%m' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(tstz, '%y-%m') AS k, count(*) AS c, sum(v) AS s FROM tb_inf GROUP BY 1)
+UNION ALL SELECT 'inf tstz %Y-%m-%d %H' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(tstz, '%Y-%m-%d %H') AS k, count(*) AS c, sum(v) AS s FROM tb_inf GROUP BY 1)
+UNION ALL SELECT 'inf mn tstz' AS shape, k::VARCHAR AS k, c, s FROM (SELECT monthname(tstz) AS k, count(*) AS c, sum(v) AS s FROM tb_inf GROUP BY 1)
+UNION ALL SELECT 'inf dn tstz' AS shape, k::VARCHAR AS k, c, s FROM (SELECT dayname(tstz) AS k, count(*) AS c, sum(v) AS s FROM tb_inf GROUP BY 1)
+UNION ALL SELECT 'inf ld tstz' AS shape, k::VARCHAR AS k, c, s FROM (SELECT last_day(tstz) AS k, count(*) AS c, sum(v) AS s FROM tb_inf GROUP BY 1);
+
+statement ok
+RESET disabled_optimizers;
+
+statement ok
+CREATE TABLE got_inf AS
+SELECT 'inf ts %Y-%m' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(ts, '%Y-%m') AS k, count(*) AS c, sum(v) AS s FROM tb_inf GROUP BY 1)
+UNION ALL SELECT 'inf ts %Y-%m-%d' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(ts, '%Y-%m-%d') AS k, count(*) AS c, sum(v) AS s FROM tb_inf GROUP BY 1)
+UNION ALL SELECT 'inf ts %G-%V' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(ts, '%G-%V') AS k, count(*) AS c, sum(v) AS s FROM tb_inf GROUP BY 1)
+UNION ALL SELECT 'inf ts %y-%m' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(ts, '%y-%m') AS k, count(*) AS c, sum(v) AS s FROM tb_inf GROUP BY 1)
+UNION ALL SELECT 'inf ts %Y-%m-%d %H' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(ts, '%Y-%m-%d %H') AS k, count(*) AS c, sum(v) AS s FROM tb_inf GROUP BY 1)
+UNION ALL SELECT 'inf mn ts' AS shape, k::VARCHAR AS k, c, s FROM (SELECT monthname(ts) AS k, count(*) AS c, sum(v) AS s FROM tb_inf GROUP BY 1)
+UNION ALL SELECT 'inf dn ts' AS shape, k::VARCHAR AS k, c, s FROM (SELECT dayname(ts) AS k, count(*) AS c, sum(v) AS s FROM tb_inf GROUP BY 1)
+UNION ALL SELECT 'inf ld ts' AS shape, k::VARCHAR AS k, c, s FROM (SELECT last_day(ts) AS k, count(*) AS c, sum(v) AS s FROM tb_inf GROUP BY 1)
+UNION ALL SELECT 'inf d %Y-%m' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(d, '%Y-%m') AS k, count(*) AS c, sum(v) AS s FROM tb_inf GROUP BY 1)
+UNION ALL SELECT 'inf d %Y-%m-%d' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(d, '%Y-%m-%d') AS k, count(*) AS c, sum(v) AS s FROM tb_inf GROUP BY 1)
+UNION ALL SELECT 'inf d %G-%V' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(d, '%G-%V') AS k, count(*) AS c, sum(v) AS s FROM tb_inf GROUP BY 1)
+UNION ALL SELECT 'inf d %y-%m' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(d, '%y-%m') AS k, count(*) AS c, sum(v) AS s FROM tb_inf GROUP BY 1)
+UNION ALL SELECT 'inf d %Y-%m-%d %H' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(d, '%Y-%m-%d %H') AS k, count(*) AS c, sum(v) AS s FROM tb_inf GROUP BY 1)
+UNION ALL SELECT 'inf mn d' AS shape, k::VARCHAR AS k, c, s FROM (SELECT monthname(d) AS k, count(*) AS c, sum(v) AS s FROM tb_inf GROUP BY 1)
+UNION ALL SELECT 'inf dn d' AS shape, k::VARCHAR AS k, c, s FROM (SELECT dayname(d) AS k, count(*) AS c, sum(v) AS s FROM tb_inf GROUP BY 1)
+UNION ALL SELECT 'inf ld d' AS shape, k::VARCHAR AS k, c, s FROM (SELECT last_day(d) AS k, count(*) AS c, sum(v) AS s FROM tb_inf GROUP BY 1)
+UNION ALL SELECT 'inf tstz %Y-%m' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(tstz, '%Y-%m') AS k, count(*) AS c, sum(v) AS s FROM tb_inf GROUP BY 1)
+UNION ALL SELECT 'inf tstz %Y-%m-%d' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(tstz, '%Y-%m-%d') AS k, count(*) AS c, sum(v) AS s FROM tb_inf GROUP BY 1)
+UNION ALL SELECT 'inf tstz %G-%V' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(tstz, '%G-%V') AS k, count(*) AS c, sum(v) AS s FROM tb_inf GROUP BY 1)
+UNION ALL SELECT 'inf tstz %y-%m' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(tstz, '%y-%m') AS k, count(*) AS c, sum(v) AS s FROM tb_inf GROUP BY 1)
+UNION ALL SELECT 'inf tstz %Y-%m-%d %H' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(tstz, '%Y-%m-%d %H') AS k, count(*) AS c, sum(v) AS s FROM tb_inf GROUP BY 1)
+UNION ALL SELECT 'inf mn tstz' AS shape, k::VARCHAR AS k, c, s FROM (SELECT monthname(tstz) AS k, count(*) AS c, sum(v) AS s FROM tb_inf GROUP BY 1)
+UNION ALL SELECT 'inf dn tstz' AS shape, k::VARCHAR AS k, c, s FROM (SELECT dayname(tstz) AS k, count(*) AS c, sum(v) AS s FROM tb_inf GROUP BY 1)
+UNION ALL SELECT 'inf ld tstz' AS shape, k::VARCHAR AS k, c, s FROM (SELECT last_day(tstz) AS k, count(*) AS c, sum(v) AS s FROM tb_inf GROUP BY 1);
+
+query
+SELECT shape, k, c, s FROM (SELECT * FROM got_inf EXCEPT ALL SELECT * FROM ref_inf) ORDER BY 1, 2;
+----
+shape	k	c	s
+
+query
+SELECT shape, k, c, s FROM (SELECT * FROM ref_inf EXCEPT ALL SELECT * FROM got_inf) ORDER BY 1, 2;
+----
+shape	k	c	s
+
+query
+SELECT count(*) AS rows, count(DISTINCT shape) AS shapes FROM got_inf;
+----
+rows	shapes
+2943	24
+
+statement ok
+SET disabled_optimizers = 'compressed_materialization';
+
+statement ok
+CREATE TABLE ref_wide AS
+SELECT 'wide ts %Y-%m' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(ts, '%Y-%m') AS k, count(*) AS c, sum(v) AS s FROM tb_wide GROUP BY 1)
+UNION ALL SELECT 'wide ts %y-%m' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(ts, '%y-%m') AS k, count(*) AS c, sum(v) AS s FROM tb_wide GROUP BY 1)
+UNION ALL SELECT 'wide ts %y' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(ts, '%y') AS k, count(*) AS c, sum(v) AS s FROM tb_wide GROUP BY 1)
+UNION ALL SELECT 'wide ts %G-%V' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(ts, '%G-%V') AS k, count(*) AS c, sum(v) AS s FROM tb_wide GROUP BY 1)
+UNION ALL SELECT 'wide ts %Y' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(ts, '%Y') AS k, count(*) AS c, sum(v) AS s FROM tb_wide GROUP BY 1)
+UNION ALL SELECT 'wide ts %Y-%m-%d' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(ts, '%Y-%m-%d') AS k, count(*) AS c, sum(v) AS s FROM tb_wide GROUP BY 1)
+UNION ALL SELECT 'wide d %Y-%m' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(d, '%Y-%m') AS k, count(*) AS c, sum(v) AS s FROM tb_wide GROUP BY 1)
+UNION ALL SELECT 'wide d %y-%m' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(d, '%y-%m') AS k, count(*) AS c, sum(v) AS s FROM tb_wide GROUP BY 1)
+UNION ALL SELECT 'wide d %y' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(d, '%y') AS k, count(*) AS c, sum(v) AS s FROM tb_wide GROUP BY 1)
+UNION ALL SELECT 'wide d %G-%V' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(d, '%G-%V') AS k, count(*) AS c, sum(v) AS s FROM tb_wide GROUP BY 1)
+UNION ALL SELECT 'wide d %Y' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(d, '%Y') AS k, count(*) AS c, sum(v) AS s FROM tb_wide GROUP BY 1)
+UNION ALL SELECT 'wide d %Y-%m-%d' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(d, '%Y-%m-%d') AS k, count(*) AS c, sum(v) AS s FROM tb_wide GROUP BY 1)
+UNION ALL SELECT 'wide tstz %Y-%m' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(tstz, '%Y-%m') AS k, count(*) AS c, sum(v) AS s FROM tb_wide GROUP BY 1)
+UNION ALL SELECT 'wide tstz %y-%m' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(tstz, '%y-%m') AS k, count(*) AS c, sum(v) AS s FROM tb_wide GROUP BY 1)
+UNION ALL SELECT 'wide tstz %y' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(tstz, '%y') AS k, count(*) AS c, sum(v) AS s FROM tb_wide GROUP BY 1)
+UNION ALL SELECT 'wide tstz %G-%V' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(tstz, '%G-%V') AS k, count(*) AS c, sum(v) AS s FROM tb_wide GROUP BY 1)
+UNION ALL SELECT 'wide tstz %Y' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(tstz, '%Y') AS k, count(*) AS c, sum(v) AS s FROM tb_wide GROUP BY 1)
+UNION ALL SELECT 'wide tstz %Y-%m-%d' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(tstz, '%Y-%m-%d') AS k, count(*) AS c, sum(v) AS s FROM tb_wide GROUP BY 1);
+
+statement ok
+RESET disabled_optimizers;
+
+statement ok
+CREATE TABLE got_wide AS
+SELECT 'wide ts %Y-%m' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(ts, '%Y-%m') AS k, count(*) AS c, sum(v) AS s FROM tb_wide GROUP BY 1)
+UNION ALL SELECT 'wide ts %y-%m' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(ts, '%y-%m') AS k, count(*) AS c, sum(v) AS s FROM tb_wide GROUP BY 1)
+UNION ALL SELECT 'wide ts %y' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(ts, '%y') AS k, count(*) AS c, sum(v) AS s FROM tb_wide GROUP BY 1)
+UNION ALL SELECT 'wide ts %G-%V' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(ts, '%G-%V') AS k, count(*) AS c, sum(v) AS s FROM tb_wide GROUP BY 1)
+UNION ALL SELECT 'wide ts %Y' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(ts, '%Y') AS k, count(*) AS c, sum(v) AS s FROM tb_wide GROUP BY 1)
+UNION ALL SELECT 'wide ts %Y-%m-%d' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(ts, '%Y-%m-%d') AS k, count(*) AS c, sum(v) AS s FROM tb_wide GROUP BY 1)
+UNION ALL SELECT 'wide d %Y-%m' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(d, '%Y-%m') AS k, count(*) AS c, sum(v) AS s FROM tb_wide GROUP BY 1)
+UNION ALL SELECT 'wide d %y-%m' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(d, '%y-%m') AS k, count(*) AS c, sum(v) AS s FROM tb_wide GROUP BY 1)
+UNION ALL SELECT 'wide d %y' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(d, '%y') AS k, count(*) AS c, sum(v) AS s FROM tb_wide GROUP BY 1)
+UNION ALL SELECT 'wide d %G-%V' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(d, '%G-%V') AS k, count(*) AS c, sum(v) AS s FROM tb_wide GROUP BY 1)
+UNION ALL SELECT 'wide d %Y' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(d, '%Y') AS k, count(*) AS c, sum(v) AS s FROM tb_wide GROUP BY 1)
+UNION ALL SELECT 'wide d %Y-%m-%d' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(d, '%Y-%m-%d') AS k, count(*) AS c, sum(v) AS s FROM tb_wide GROUP BY 1)
+UNION ALL SELECT 'wide tstz %Y-%m' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(tstz, '%Y-%m') AS k, count(*) AS c, sum(v) AS s FROM tb_wide GROUP BY 1)
+UNION ALL SELECT 'wide tstz %y-%m' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(tstz, '%y-%m') AS k, count(*) AS c, sum(v) AS s FROM tb_wide GROUP BY 1)
+UNION ALL SELECT 'wide tstz %y' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(tstz, '%y') AS k, count(*) AS c, sum(v) AS s FROM tb_wide GROUP BY 1)
+UNION ALL SELECT 'wide tstz %G-%V' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(tstz, '%G-%V') AS k, count(*) AS c, sum(v) AS s FROM tb_wide GROUP BY 1)
+UNION ALL SELECT 'wide tstz %Y' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(tstz, '%Y') AS k, count(*) AS c, sum(v) AS s FROM tb_wide GROUP BY 1)
+UNION ALL SELECT 'wide tstz %Y-%m-%d' AS shape, k::VARCHAR AS k, c, s FROM (SELECT strftime(tstz, '%Y-%m-%d') AS k, count(*) AS c, sum(v) AS s FROM tb_wide GROUP BY 1);
+
+query
+SELECT shape, k, c, s FROM (SELECT * FROM got_wide EXCEPT ALL SELECT * FROM ref_wide) ORDER BY 1, 2;
+----
+shape	k	c	s
+
+query
+SELECT shape, k, c, s FROM (SELECT * FROM ref_wide EXCEPT ALL SELECT * FROM got_wide) ORDER BY 1, 2;
+----
+shape	k	c	s
+
+query
+SELECT count(*) AS rows, count(DISTINCT shape) AS shapes FROM got_wide;
+----
+rows	shapes
+16620	18
+
+query
+EXPLAIN SELECT strftime(tstz, '%G-%V') AS w, count(*) AS c FROM tb GROUP BY 1;
+----
+QUERY PLAN
+╭─ PROJECTION ───────────────────────────────────────────────────────╮
+│ Projections:                                                       │
+│ strftime(__internal_icu_date_trunc_unbucket('week', #0), '%G-%V'), │
+│ #1                                                                 │
+│ ~750 rows                                                          │
+╰──────────────────────────────────┬─────────────────────────────────╯
+╭─ PERFECT_HASH_GROUP_BY ──────────┴─────────────────────────────────╮
+│ Groups: #0                                                         │
+│ Aggregates: count_star()                                           │
+│ ~750 rows                                                          │
+╰──────────────────────────────────┬─────────────────────────────────╯
+╭─ PROJECTION ─────────────────────┴─────────────────────────────────╮
+│ Projections:                                                       │
+│ __internal_icu_date_trunc_bucket('week', tstz)                     │
+│ ~1,501 rows                                                        │
+╰──────────────────────────────────┬─────────────────────────────────╯
+╭─ SEQ_SCAN ───────────────────────┴─────────────────────────────────╮
+│ Table: tb                                                          │
+│ Type: Sequential Scan                                              │
+│ Projections: tstz                                                  │
+│ ~1,501 rows                                                        │
+╰────────────────────────────────────────────────────────────────────╯
+
+query
+EXPLAIN SELECT strftime(d, '%G-%V-%u') AS w, count(*) AS c FROM tb GROUP BY 1;
+----
+QUERY PLAN
+╭─ PROJECTION ────────────────────────────────────────────────────────────────────────────╮
+│ Projections:                                                                            │
+│ strftime(CAST(__internal_date_trunc_unbucket(#0, 86400000000, 0) AS DATE), '%G-%V-%u'), │
+│ #1                                                                                      │
+│ ~750 rows                                                                               │
+╰────────────────────────────────────────────┬────────────────────────────────────────────╯
+╭─ PERFECT_HASH_GROUP_BY ────────────────────┴────────────────────────────────────────────╮
+│ Groups: #0                                                                              │
+│ Aggregates: count_star()                                                                │
+│ ~750 rows                                                                               │
+╰────────────────────────────────────────────┬────────────────────────────────────────────╯
+╭─ PROJECTION ───────────────────────────────┴────────────────────────────────────────────╮
+│ Projections:                                                                            │
+│ __internal_date_trunc_bucket(CAST(d AS TIMESTAMP), 86400000000, 0)                      │
+│ ~1,501 rows                                                                             │
+╰────────────────────────────────────────────┬────────────────────────────────────────────╯
+╭─ SEQ_SCAN ─────────────────────────────────┴────────────────────────────────────────────╮
+│ Table: tb                                                                               │
+│ Type: Sequential Scan                                                                   │
+│ Projections: d                                                                          │
+│ ~1,501 rows                                                                             │
+╰─────────────────────────────────────────────────────────────────────────────────────────╯
+
+query
+EXPLAIN SELECT strftime(tstz, '%y-%m') AS m, count(*) AS c FROM tb GROUP BY 1;
+----
+QUERY PLAN
+╭─ PROJECTION ────────────────────────────────────────────────────────╮
+│ Projections:                                                        │
+│ strftime(__internal_icu_date_trunc_unbucket('month', #0), '%y-%m'), │
+│ #1                                                                  │
+│ ~750 rows                                                           │
+╰──────────────────────────────────┬──────────────────────────────────╯
+╭─ PERFECT_HASH_GROUP_BY ──────────┴──────────────────────────────────╮
+│ Groups: #0                                                          │
+│ Aggregates: count_star()                                            │
+│ ~750 rows                                                           │
+╰──────────────────────────────────┬──────────────────────────────────╯
+╭─ PROJECTION ─────────────────────┴──────────────────────────────────╮
+│ Projections:                                                        │
+│ __internal_icu_date_trunc_bucket('month', tstz)                     │
+│ ~1,501 rows                                                         │
+╰──────────────────────────────────┬──────────────────────────────────╯
+╭─ SEQ_SCAN ───────────────────────┴──────────────────────────────────╮
+│ Table: tb                                                           │
+│ Type: Sequential Scan                                               │
+│ Projections: tstz                                                   │
+│ ~1,501 rows                                                         │
+╰─────────────────────────────────────────────────────────────────────╯
+
+query
+EXPLAIN SELECT strftime(tstz, '%y-%m') AS m, count(*) AS c FROM tb_wide GROUP BY 1;
+----
+QUERY PLAN
+╭─ HASH_GROUP_BY ──────────╮
+│ Groups: #0               │
+│ Aggregates: count_star() │
+│ ~700 rows                │
+╰─────────────┬────────────╯
+╭─ PROJECTION ┴────────────╮
+│ Projections: m           │
+│ ~1,400 rows              │
+╰─────────────┬────────────╯
+╭─ SEQ_SCAN ──┴────────────╮
+│ Table: tb_wide           │
+│ Type: Sequential Scan    │
+│ Projections: tstz        │
+│ ~1,400 rows              │
+╰──────────────────────────╯
+
+query
+EXPLAIN SELECT strftime(ts, '%B %V') AS m, count(*) AS c FROM tb GROUP BY 1;
+----
+QUERY PLAN
+╭─ HASH_GROUP_BY ──────────╮
+│ Groups: #0               │
+│ Aggregates: count_star() │
+│ ~750 rows                │
+╰─────────────┬────────────╯
+╭─ PROJECTION ┴────────────╮
+│ Projections: m           │
+│ ~1,501 rows              │
+╰─────────────┬────────────╯
+╭─ SEQ_SCAN ──┴────────────╮
+│ Table: tb                │
+│ Type: Sequential Scan    │
+│ Projections: ts          │
+│ ~1,501 rows              │
+╰──────────────────────────╯
+
+statement ok
+SET TimeZone = 'Etc/UTC';

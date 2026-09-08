@@ -43,7 +43,6 @@ std::ostream& operator<<(std::ostream& os, const std::pair<T1, T2>& p) {
 #include "iresearch/search/boolean_filter.hpp"
 #include "iresearch/search/doc_collector.hpp"
 #include "iresearch/search/filter_optimizer.hpp"
-#include "iresearch/search/mixed_boolean_filter.hpp"
 #include "iresearch/search/tfidf.hpp"
 #include "iresearch/types.hpp"
 #include "tests_shared.hpp"
@@ -334,7 +333,7 @@ class BlockScoringTestCase : public IndexTestBase {
   // queries to the default field, which is unsuitable for these tests.
   irs::Filter::ptr ParseQuery(std::string_view query,
                               irs::field_id default_field = kContentId) {
-    auto root = std::make_unique<irs::MixedBooleanFilter>();
+    auto root = std::make_unique<irs::BooleanFilter>();
 
     size_t pos = 0;
     while (pos < query.size()) {
@@ -368,20 +367,19 @@ class BlockScoringTestCase : public IndexTestBase {
         term = token.substr(colon + 1);
       }
 
-      if (required) {
-        auto& by_term = root->GetRequired().add<irs::ByTerm>();
-        *by_term.mutable_field_id() = field_id;
-        by_term.mutable_options()->term = irs::ViewCast<irs::byte_type>(term);
-      } else if (negated) {
-        auto& neg =
-          root->GetRequired().add<irs::Exclusion>().exclude<irs::ByTerm>();
-        *neg.mutable_field_id() = field_id;
-        neg.mutable_options()->term = irs::ViewCast<irs::byte_type>(term);
-      } else {
-        auto& by_term = root->GetOptional().add<irs::ByTerm>();
-        *by_term.mutable_field_id() = field_id;
-        by_term.mutable_options()->term = irs::ViewCast<irs::byte_type>(term);
-      }
+      const auto occur = required  ? irs::Occur::Must
+                         : negated ? irs::Occur::MustNot
+                                   : irs::Occur::Should;
+      root->Add(
+        irs::TermClause{
+          .field = field_id,
+          .term = irs::bstring{irs::ViewCast<irs::byte_type>(term)},
+        },
+        occur);
+    }
+    if (root->Size(irs::Occur::Must) == 0 &&
+        root->Size(irs::Occur::Should) != 0) {
+      root->SetMinShouldMatch(1);
     }
     irs::Filter::ptr f = std::move(root);
     irs::Optimize(f);
@@ -412,7 +410,7 @@ TEST_P(BlockScoringTestCase, TfidfBytermBlockScoring) {
   std::vector<irs::ScoreDoc> docs(kTopK);
 
   size_t count =
-    irs::ExecuteTopKWithCount(reader, *filter, scorer, kTopK, std::span{docs});
+    irs::ExecuteTopK(reader, *filter, scorer, kTopK, false, std::span{docs});
 
   ASSERT_GT(count, 0) << "Expected matches for 'database' in topic field";
   auto result_count = std::min(count, kTopK);
@@ -429,7 +427,7 @@ TEST(LoserScoreCollectorPredicate, FiltersAndPreservesThreshold) {
 
   constexpr size_t kTopK = 3;
   std::vector<irs::ScoreDoc> hits(kTopK);
-  irs::score_t threshold = std::numeric_limits<irs::score_t>::min();
+  irs::score_t threshold = std::numeric_limits<irs::score_t>::lowest();
   irs::LoserScoreCollector collector(threshold, std::span{hits});
 
   for (irs::doc_id_t doc = 1; doc <= 20; ++doc) {
@@ -460,7 +458,7 @@ TEST(LoserScoreCollectorPredicate, FiltersBatchedAddDocsAcrossChunks) {
 
   constexpr size_t kTopK = 3;
   std::vector<irs::ScoreDoc> hits(kTopK);
-  irs::score_t threshold = std::numeric_limits<irs::score_t>::min();
+  irs::score_t threshold = std::numeric_limits<irs::score_t>::lowest();
   irs::LoserScoreCollector collector(threshold, std::span{hits});
 
   // A batch of survivors spanning more than kScoreBlock (32) docs in a single
@@ -510,7 +508,7 @@ TEST_P(BlockScoringTestCase, TfidfTopicSearch) {
   std::vector<irs::ScoreDoc> docs(kTopK);
 
   size_t count =
-    irs::ExecuteTopKWithCount(reader, *filter, scorer, kTopK, std::span{docs});
+    irs::ExecuteTopK(reader, *filter, scorer, kTopK, false, std::span{docs});
 
   ASSERT_GT(count, 5) << "Expected multiple matches for 'physics' in topic";
   auto result_count = std::min(count, kTopK);
@@ -544,7 +542,7 @@ TEST_P(BlockScoringTestCase, Bm25BytermBlockScoring) {
   std::vector<irs::ScoreDoc> docs(kTopK);
 
   size_t count =
-    irs::ExecuteTopKWithCount(reader, *filter, scorer, kTopK, std::span{docs});
+    irs::ExecuteTopK(reader, *filter, scorer, kTopK, false, std::span{docs});
 
   ASSERT_GT(count, 0) << "Expected matches for 'search' in topic field";
   auto result_count = std::min(count, kTopK);
@@ -578,7 +576,7 @@ TEST_P(BlockScoringTestCase, Bm25ChemistrySearch) {
   std::vector<irs::ScoreDoc> docs(kTopK);
 
   size_t count =
-    irs::ExecuteTopKWithCount(reader, *filter, scorer, kTopK, std::span{docs});
+    irs::ExecuteTopK(reader, *filter, scorer, kTopK, false, std::span{docs});
 
   ASSERT_GT(count, 0);
   auto result_count = std::min(count, kTopK);
@@ -613,7 +611,7 @@ TEST_P(BlockScoringTestCase, TfidfAndFilterBlockScoring) {
   std::vector<irs::ScoreDoc> docs(kTopK);
 
   size_t count =
-    irs::ExecuteTopKWithCount(reader, *filter, scorer, kTopK, std::span{docs});
+    irs::ExecuteTopK(reader, *filter, scorer, kTopK, false, std::span{docs});
 
   ASSERT_GT(count, 0) << "Expected matches for tech AND database";
   auto result_count = std::min(count, kTopK);
@@ -650,7 +648,7 @@ TEST_P(BlockScoringTestCase, Bm25AndFilterBlockScoring) {
   std::vector<irs::ScoreDoc> docs(kTopK);
 
   size_t count =
-    irs::ExecuteTopKWithCount(reader, *filter, scorer, kTopK, std::span{docs});
+    irs::ExecuteTopK(reader, *filter, scorer, kTopK, false, std::span{docs});
 
   ASSERT_GT(count, 0) << "Expected matches for science AND physics";
   auto result_count = std::min(count, kTopK);
@@ -687,7 +685,7 @@ TEST_P(BlockScoringTestCase, BlockBoundarySmallK) {
   std::vector<irs::ScoreDoc> docs(kTopK);
 
   size_t count =
-    irs::ExecuteTopKWithCount(reader, *filter, scorer, kTopK, std::span{docs});
+    irs::ExecuteTopK(reader, *filter, scorer, kTopK, false, std::span{docs});
 
   // Should have many tech documents, k=3 should trigger multiple blocks
   ASSERT_GT(count, kTopK * 2)
@@ -724,7 +722,7 @@ TEST_P(BlockScoringTestCase, BlockBoundaryLargeK) {
   std::vector<irs::ScoreDoc> docs(kTopK);
 
   size_t count =
-    irs::ExecuteTopKWithCount(reader, *filter, scorer, kTopK, std::span{docs});
+    irs::ExecuteTopK(reader, *filter, scorer, kTopK, false, std::span{docs});
 
   ASSERT_GT(count, 0);
   auto result_count = std::min(count, kTopK);
@@ -758,13 +756,13 @@ TEST_P(BlockScoringTestCase, TfidfVsBm25Comparison) {
 
   // Get TFIDF results
   std::vector<irs::ScoreDoc> tfidf_docs(kTopK);
-  size_t tfidf_count = irs::ExecuteTopKWithCount(reader, *filter, tfidf_scorer,
-                                                 kTopK, std::span{tfidf_docs});
+  size_t tfidf_count = irs::ExecuteTopK(reader, *filter, tfidf_scorer, kTopK,
+                                        false, std::span{tfidf_docs});
 
   // Get BM25 results
   std::vector<irs::ScoreDoc> bm25_docs(kTopK);
-  size_t bm25_count = irs::ExecuteTopKWithCount(reader, *filter, bm25_scorer,
-                                                kTopK, std::span{bm25_docs});
+  size_t bm25_count = irs::ExecuteTopK(reader, *filter, bm25_scorer, kTopK,
+                                       false, std::span{bm25_docs});
 
   // Both should return the same number of matching documents
   ASSERT_EQ(tfidf_count, bm25_count);
@@ -808,7 +806,7 @@ TEST_P(BlockScoringTestCase, KLargerThanMatches) {
   std::vector<irs::ScoreDoc> docs(kTopK);
 
   size_t count =
-    irs::ExecuteTopKWithCount(reader, *filter, scorer, kTopK, std::span{docs});
+    irs::ExecuteTopK(reader, *filter, scorer, kTopK, false, std::span{docs});
 
   ASSERT_GT(count, 0);
   ASSERT_LT(count, kTopK) << "Should have fewer chemistry docs than k";
@@ -841,7 +839,7 @@ TEST_P(BlockScoringTestCase, EmptyResultSet) {
   std::vector<irs::ScoreDoc> docs(kTopK);
 
   size_t count =
-    irs::ExecuteTopKWithCount(reader, *filter, scorer, kTopK, std::span{docs});
+    irs::ExecuteTopK(reader, *filter, scorer, kTopK, false, std::span{docs});
 
   ASSERT_EQ(0, count);
 }
@@ -868,7 +866,7 @@ TEST_P(BlockScoringTestCase, AndFilterThreeClauses) {
   std::vector<irs::ScoreDoc> docs(kTopK);
 
   size_t count =
-    irs::ExecuteTopKWithCount(reader, *filter, scorer, kTopK, std::span{docs});
+    irs::ExecuteTopK(reader, *filter, scorer, kTopK, false, std::span{docs});
 
   // Some documents should match all three conditions
   auto result_count = std::min(count, kTopK);
@@ -910,8 +908,8 @@ TEST_P(BlockScoringTestCase, Bm25ParameterVariations) {
 
     std::vector<irs::ScoreDoc> docs(kTopK);
 
-    size_t count = irs::ExecuteTopKWithCount(reader, *filter, scorer, kTopK,
-                                             std::span{docs});
+    size_t count =
+      irs::ExecuteTopK(reader, *filter, scorer, kTopK, false, std::span{docs});
 
     ASSERT_GT(count, 0);
     auto result_count = std::min(count, kTopK);
@@ -932,8 +930,8 @@ TEST_P(BlockScoringTestCase, Bm25ParameterVariations) {
 
     std::vector<irs::ScoreDoc> docs(kTopK);
 
-    size_t count = irs::ExecuteTopKWithCount(reader, *filter, scorer, kTopK,
-                                             std::span{docs});
+    size_t count =
+      irs::ExecuteTopK(reader, *filter, scorer, kTopK, false, std::span{docs});
 
     ASSERT_GT(count, 0);
     auto result_count = std::min(count, kTopK);
@@ -954,8 +952,8 @@ TEST_P(BlockScoringTestCase, Bm25ParameterVariations) {
 
     std::vector<irs::ScoreDoc> docs(kTopK);
 
-    size_t count = irs::ExecuteTopKWithCount(reader, *filter, scorer, kTopK,
-                                             std::span{docs});
+    size_t count =
+      irs::ExecuteTopK(reader, *filter, scorer, kTopK, false, std::span{docs});
 
     ASSERT_GT(count, 0);
     auto result_count = std::min(count, kTopK);
@@ -992,8 +990,8 @@ TEST_P(BlockScoringTestCase, TfidfWithWithoutNorms) {
 
     std::vector<irs::ScoreDoc> docs_with_norms(kTopK);
 
-    size_t count = irs::ExecuteTopKWithCount(reader, *filter, scorer, kTopK,
-                                             std::span{docs_with_norms});
+    size_t count = irs::ExecuteTopK(reader, *filter, scorer, kTopK, false,
+                                    std::span{docs_with_norms});
 
     ASSERT_GT(count, 0);
     auto result_count = std::min(count, kTopK);
@@ -1014,8 +1012,8 @@ TEST_P(BlockScoringTestCase, TfidfWithWithoutNorms) {
 
     std::vector<irs::ScoreDoc> docs_without_norms(kTopK);
 
-    size_t count = irs::ExecuteTopKWithCount(reader, *filter, scorer, kTopK,
-                                             std::span{docs_without_norms});
+    size_t count = irs::ExecuteTopK(reader, *filter, scorer, kTopK, false,
+                                    std::span{docs_without_norms});
 
     ASSERT_GT(count, 0);
     auto result_count = std::min(count, kTopK);
@@ -1057,7 +1055,7 @@ TEST_P(BlockScoringTestCase, MultisegTfidfByterm) {
   std::vector<irs::ScoreDoc> docs(kTopK);
 
   size_t count =
-    irs::ExecuteTopKWithCount(reader, *filter, scorer, kTopK, std::span{docs});
+    irs::ExecuteTopK(reader, *filter, scorer, kTopK, false, std::span{docs});
 
   ASSERT_GT(count, 0);
   auto result_count = std::min(count, kTopK);
@@ -1089,7 +1087,7 @@ TEST_P(BlockScoringTestCase, MultisegBm25Byterm) {
   std::vector<irs::ScoreDoc> docs(kTopK);
 
   size_t count =
-    irs::ExecuteTopKWithCount(reader, *filter, scorer, kTopK, std::span{docs});
+    irs::ExecuteTopK(reader, *filter, scorer, kTopK, false, std::span{docs});
 
   ASSERT_GT(count, 0);
   auto result_count = std::min(count, kTopK);
@@ -1120,7 +1118,7 @@ TEST_P(BlockScoringTestCase, MultisegTfidfAndFilter) {
   std::vector<irs::ScoreDoc> docs(kTopK);
 
   size_t count =
-    irs::ExecuteTopKWithCount(reader, *filter, scorer, kTopK, std::span{docs});
+    irs::ExecuteTopK(reader, *filter, scorer, kTopK, false, std::span{docs});
 
   ASSERT_GT(count, 0) << "Expected matches for tech AND database";
   auto result_count = std::min(count, kTopK);
@@ -1154,7 +1152,7 @@ TEST_P(BlockScoringTestCase, MultisegBm25AndFilter) {
   std::vector<irs::ScoreDoc> docs(kTopK);
 
   size_t count =
-    irs::ExecuteTopKWithCount(reader, *filter, scorer, kTopK, std::span{docs});
+    irs::ExecuteTopK(reader, *filter, scorer, kTopK, false, std::span{docs});
 
   ASSERT_GT(count, 0) << "Expected matches for science AND physics";
   auto result_count = std::min(count, kTopK);
@@ -1188,7 +1186,7 @@ TEST_P(BlockScoringTestCase, MultisegSmallKBlockBoundaries) {
   std::vector<irs::ScoreDoc> docs(kTopK);
 
   size_t count =
-    irs::ExecuteTopKWithCount(reader, *filter, scorer, kTopK, std::span{docs});
+    irs::ExecuteTopK(reader, *filter, scorer, kTopK, false, std::span{docs});
 
   ASSERT_GT(count, kTopK * 2) << "Need many matches to test block boundaries";
   auto result_count = std::min(count, kTopK);
@@ -1220,7 +1218,7 @@ TEST_P(BlockScoringTestCase, MultisegQuantumQuery) {
   std::vector<irs::ScoreDoc> docs(kTopK);
 
   size_t count =
-    irs::ExecuteTopKWithCount(reader, *filter, scorer, kTopK, std::span{docs});
+    irs::ExecuteTopK(reader, *filter, scorer, kTopK, false, std::span{docs});
 
   ASSERT_GT(count, 0);
   auto result_count = std::min(count, kTopK);
@@ -1252,7 +1250,7 @@ TEST_P(BlockScoringTestCase, TfidfDisjunctionTwoTerms) {
   std::vector<irs::ScoreDoc> docs(kTopK);
 
   size_t count =
-    irs::ExecuteTopKWithCount(reader, *filter, scorer, kTopK, std::span{docs});
+    irs::ExecuteTopK(reader, *filter, scorer, kTopK, false, std::span{docs});
 
   ASSERT_GT(count, 0) << "Expected matches for database OR search";
   auto result_count = std::min(count, kTopK);
@@ -1287,7 +1285,7 @@ TEST_P(BlockScoringTestCase, Bm25DisjunctionTwoTerms) {
   std::vector<irs::ScoreDoc> docs(kTopK);
 
   size_t count =
-    irs::ExecuteTopKWithCount(reader, *filter, scorer, kTopK, std::span{docs});
+    irs::ExecuteTopK(reader, *filter, scorer, kTopK, false, std::span{docs});
 
   ASSERT_GT(count, 0) << "Expected matches for tech OR science";
   auto result_count = std::min(count, kTopK);
@@ -1321,7 +1319,7 @@ TEST_P(BlockScoringTestCase, MultisegTfidfDisjunction) {
   std::vector<irs::ScoreDoc> docs(kTopK);
 
   size_t count =
-    irs::ExecuteTopKWithCount(reader, *filter, scorer, kTopK, std::span{docs});
+    irs::ExecuteTopK(reader, *filter, scorer, kTopK, false, std::span{docs});
 
   ASSERT_GT(count, 0) << "Expected matches for physics OR chemistry";
   auto result_count = std::min(count, kTopK);
@@ -1357,7 +1355,7 @@ TEST_P(BlockScoringTestCase, MultisegBm25Disjunction) {
   std::vector<irs::ScoreDoc> docs(kTopK);
 
   size_t count =
-    irs::ExecuteTopKWithCount(reader, *filter, scorer, kTopK, std::span{docs});
+    irs::ExecuteTopK(reader, *filter, scorer, kTopK, false, std::span{docs});
 
   ASSERT_GT(count, 0) << "Expected matches for tech OR science";
   auto result_count = std::min(count, kTopK);
@@ -1395,7 +1393,7 @@ TEST_P(BlockScoringTestCase, Bm25DisjunctionFourTerms) {
   std::vector<irs::ScoreDoc> docs(kTopK);
 
   size_t count =
-    irs::ExecuteTopKWithCount(reader, *filter, scorer, kTopK, std::span{docs});
+    irs::ExecuteTopK(reader, *filter, scorer, kTopK, false, std::span{docs});
 
   ASSERT_GT(count, 0) << "Expected matches for 4-term disjunction";
   auto result_count = std::min(count, kTopK);
@@ -1431,7 +1429,7 @@ TEST_P(BlockScoringTestCase, MultisegTfidfDisjunctionFiveTerms) {
   std::vector<irs::ScoreDoc> docs(kTopK);
 
   size_t count =
-    irs::ExecuteTopKWithCount(reader, *filter, scorer, kTopK, std::span{docs});
+    irs::ExecuteTopK(reader, *filter, scorer, kTopK, false, std::span{docs});
 
   ASSERT_GT(count, 0) << "Expected matches for 5-term disjunction";
   auto result_count = std::min(count, kTopK);
@@ -1475,7 +1473,7 @@ TEST_P(BlockScoringTestCase, Bm25DisjunctionThreeTermsSameField) {
   std::vector<irs::ScoreDoc> docs(kTopK);
 
   size_t count =
-    irs::ExecuteTopKWithCount(reader, *filter, scorer, kTopK, std::span{docs});
+    irs::ExecuteTopK(reader, *filter, scorer, kTopK, false, std::span{docs});
 
   ASSERT_GT(count, 0) << "Expected matches for 3-term disjunction";
   auto result_count = std::min(count, kTopK);

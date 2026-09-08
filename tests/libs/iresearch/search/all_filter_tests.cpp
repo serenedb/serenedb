@@ -25,7 +25,6 @@
 #include "iresearch/index/field_meta.hpp"
 #include "iresearch/search/all_filter.hpp"
 #include "iresearch/search/bm25.hpp"
-#include "iresearch/search/cost.hpp"
 #include "iresearch/search/scorer.hpp"
 #include "iresearch/search/tfidf.hpp"
 #include "tests_shared.hpp"
@@ -48,19 +47,17 @@ TEST_P(AllFilterTestCase, all_sequential) {
 
   Docs docs{1,  2,  3,  4,  5,  6,  7,  8,  9,  10, 11, 12, 13, 14, 15, 16,
             17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32};
-  std::vector<irs::CostAttr::Type> cost{docs.size()};
+  std::vector<uint64_t> cost{docs.size()};
 
   CheckQuery(irs::All(), docs, cost, rdr);
 
-  // check iterator attributes, no order
   MaxMemoryCounter counter;
   {
     const irs::All all_filter;
     tests::PreparedFilter prepared{all_filter, *rdr, nullptr, counter};
     auto it = prepared.Execute(0);
-    auto* it_cost = irs::get<irs::CostAttr>(*it);
-    ASSERT_TRUE(it_cost);
-    ASSERT_EQ(docs.size(), it_cost->estimate());
+    ASSERT_NE(nullptr, it);
+    ASSERT_EQ(docs.size(), prepared.Estimate(0));
   }
   EXPECT_EQ(counter.current, 0);
   EXPECT_GT(counter.max, 0);
@@ -88,8 +85,8 @@ TEST_P(AllFilterTestCase, all_order) {
 
   // custom order
   {
-    Docs docs{1, 4,  5,  16, 17, 20, 21, 2,  3,  6,  7,  18, 19, 22, 23, 8,
-              9, 12, 13, 24, 25, 28, 29, 10, 11, 14, 15, 26, 27, 30, 31, 32};
+    Docs docs{1,  2,  3,  4,  5,  6,  7,  8,  9,  10, 11, 12, 13, 14, 15, 16,
+              17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32};
     size_t collector_finish_count = 0;
     size_t collector_field_docs = 0;
     size_t scorer_score_count = 0;
@@ -117,7 +114,7 @@ TEST_P(AllFilterTestCase, all_order) {
     CheckQuery(irs::All(), std::span{&bucket, 1}, docs, rdr);
     ASSERT_EQ(0, collector_field_docs);
     ASSERT_EQ(1, collector_finish_count);
-    ASSERT_EQ(32, scorer_score_count);
+    ASSERT_EQ(1, scorer_score_count);
   }
 
   // custom order (no scorer)

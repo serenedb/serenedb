@@ -23,76 +23,96 @@
 #include <span>
 #include <vector>
 
+#include "iresearch/formats/ivf/ivf_reader.hpp"
 #include "iresearch/index/column_info.hpp"
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/index/iterators.hpp"
-#include "iresearch/search/filter.hpp"
+#include "iresearch/search/estimate.hpp"
+#include "iresearch/search/query_builder_impl.hpp"
 #include "iresearch/search/states/vector_state.hpp"
 
 namespace irs {
 
-class KnnVectorQuery : public QueryBuilder {
+class VectorQueryBase {
+ public:
+  const VectorState& State() const noexcept { return _state; }
+
+  std::span<const float> Query() const noexcept { return _query; }
+
+  VectorMetric Metric() const noexcept { return _metric; }
+
+  const QueryBuilder* Inner() const noexcept { return _inner.get(); }
+
+  bool Rescored() const noexcept {
+    return _state.quant != VectorQuantization::None &&
+           _state.vector_column != nullptr && _state.col_reader != nullptr;
+  }
+
+ protected:
+  VectorQueryBase(VectorState&& state, std::span<const float> query,
+                  VectorMetric metric, QueryBuilder::ptr&& inner) noexcept
+    : _state{std::move(state)},
+      _query{query},
+      _inner{std::move(inner)},
+      _metric{metric} {}
+
+  VectorState _state;
+  std::span<const float> _query;
+  QueryBuilder::ptr _inner;
+  VectorMetric _metric;
+};
+
+class KnnVectorQuery : public QueryBuilderImpl<KnnVectorQuery>,
+                       public VectorQueryBase {
  public:
   KnnVectorQuery(const SubReader& segment, VectorState&& state,
                  std::span<const float> query, VectorMetric metric,
                  score_t boost, QueryBuilder::ptr&& inner = nullptr)
-    : QueryBuilder{segment},
-      _state{std::move(state)},
-      _query{query},
-      _inner{std::move(inner)},
-      _metric{metric},
+    : QueryBuilderImpl{segment, ClampEstimate(state.estimation, segment),
+                       QueryKind::Other},
+      VectorQueryBase{std::move(state), query, metric, std::move(inner)},
       _boost{boost} {}
-
-  DocIterator::ptr Execute(const ExecutionContext& ctx,
-                           const StatsBuffer& stats) const final;
 
   void Visit(PreparedStateVisitor&, score_t) const final {}
 
   score_t Boost() const noexcept final { return _boost; }
 
+  void SetBoost(score_t value) noexcept final { _boost = value; }
+
  private:
-  VectorState _state;
-  std::span<const float> _query;
-  QueryBuilder::ptr _inner;
-  VectorMetric _metric;
   score_t _boost;
 };
 
-// Prepared range query (ByRadius). Probes every cluster, reranks the union from
-// the raw vectors (exact distances -- SQ8 would be approximate and unsound for
-// a membership test), and gates each candidate by `radius`/`inclusive`,
-// emitting the in-ball docs in ascending doc order. An optional `inner`
-// predicate is intersected with the candidates.
-class RangeVectorQuery : public QueryBuilder {
+class RangeVectorQuery : public QueryBuilderImpl<RangeVectorQuery>,
+                         public VectorQueryBase {
  public:
   RangeVectorQuery(const SubReader& segment, VectorState&& state,
                    std::span<const float> query, VectorMetric metric,
                    float radius, bool inclusive, score_t boost,
                    QueryBuilder::ptr&& inner = nullptr)
-    : QueryBuilder{segment},
-      _state{std::move(state)},
-      _query{query},
-      _inner{std::move(inner)},
-      _metric{metric},
+    : QueryBuilderImpl{segment, ClampEstimate(state.estimation, segment),
+                       QueryKind::Other},
+      VectorQueryBase{std::move(state), query, metric, std::move(inner)},
       _radius{radius},
-      _inclusive{inclusive},
-      _boost{boost} {}
+      _boost{boost},
+      _inclusive{inclusive} {}
 
-  DocIterator::ptr Execute(const ExecutionContext& ctx,
-                           const StatsBuffer& stats) const final;
+  score_t Threshold() const noexcept {
+    return VectorMetricIsAngular(_metric) ? _radius : -_radius;
+  }
+
+  bool Inclusive() const noexcept { return _inclusive; }
 
   void Visit(PreparedStateVisitor&, score_t) const final {}
 
   score_t Boost() const noexcept final { return _boost; }
 
+  void SetBoost(score_t value) noexcept final { _boost = value; }
+
  private:
-  VectorState _state;
-  std::span<const float> _query;
-  QueryBuilder::ptr _inner;
-  VectorMetric _metric;
   float _radius;
-  bool _inclusive;
   score_t _boost;
+  bool _inclusive;
 };
 
 void RerankExactDistances(const SubReader& segment,

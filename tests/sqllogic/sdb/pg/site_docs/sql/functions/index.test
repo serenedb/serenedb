@@ -95,7 +95,7 @@ SELECT DISTINCT ON(function_name)
     function_type,
     return_type,
     parameter_types
-FROM duckdb_functions()
+FROM sdb_functions()
 WHERE function_type = 'scalar'
   AND function_name LIKE 'b%'
 ORDER BY function_name;

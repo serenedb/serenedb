@@ -35,9 +35,9 @@
 #include <iresearch/index/norm.hpp>
 #include <iresearch/parser/parser.hpp>
 #include <iresearch/search/bm25.hpp>
+#include <iresearch/search/boolean_filter.hpp>
 #include <iresearch/search/doc_collector.hpp>
 #include <iresearch/search/filter_optimizer.hpp>
-#include <iresearch/search/mixed_boolean_filter.hpp>
 #include <iresearch/search/scorer.hpp>
 #include <iresearch/store/memory_directory.hpp>
 #include <iresearch/store/store_utils.hpp>
@@ -138,13 +138,13 @@ irs::Filter::ptr ParseQuery(std::string_view query_str,
                             irs::field_id default_field,
                             irs::analysis::Analyzer& tokenizer,
                             bool scored = false) {
-  auto root = std::make_unique<irs::MixedBooleanFilter>();
+  auto root = std::make_unique<irs::BooleanFilter>();
   sdb::ParserContext context{*root, default_field, tokenizer};
   if (!sdb::ParseQuery(context, query_str)) {
     std::cerr << "Query parse error: " << context.error_message << "\n";
     return {};
   }
-  if (root->empty()) {
+  if (!root->Valid()) {
     return {};
   }
   irs::Filter::ptr filter = std::move(root);
@@ -155,22 +155,23 @@ irs::Filter::ptr ParseQuery(std::string_view query_str,
 // Helper: count documents matching a filter across all segments.
 size_t CountMatches(const irs::DirectoryReader& reader,
                     const irs::Filter& filter) {
-  auto collector = filter.MakeCollector(nullptr);
+  // Counting does not score, so there is no collector and no statistics.
   std::vector<irs::QueryBuilder::ptr> queries;
   queries.reserve(reader.size());
   for (auto& segment : reader) {
-    queries.emplace_back(
-      filter.PrepareSegment(segment, {.collector = collector.get()}));
+    queries.emplace_back(filter.PrepareSegment(segment, {}));
   }
-  const auto stats = collector->Finish(irs::IResourceManager::gNoop);
 
   size_t count = 0;
   for (auto& query : queries) {
     if (!query) {
       continue;
     }
-    auto docs = query->Execute({}, stats);
-    count += docs->count();
+    auto plan = query->PlanCount({});
+    if (!plan) {
+      continue;
+    }
+    count += plan->Run();
   }
   return count;
 }
@@ -255,8 +256,8 @@ void QueryTopK(const irs::DirectoryReader& reader, const irs::Scorer& scorer,
   constexpr size_t kTopK = 3;
   std::vector<irs::ScoreDoc> results(kTopK);
 
-  auto total = irs::ExecuteTopKWithCount(reader, *filter, scorer, kTopK,
-                                         std::span{results});
+  auto total = irs::ExecuteTopK(reader, *filter, scorer, kTopK,
+                                /*score_prune=*/false, std::span{results});
 
   std::cout << "Top " << kTopK << " results for 'search' "
             << "(total matches: " << total << "):\n";

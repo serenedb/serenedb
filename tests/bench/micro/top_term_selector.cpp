@@ -70,8 +70,8 @@ class SeekTermIterator : public irs::SeekTermIterator {
 
   irs::bytes_view value() const noexcept final { return _value.value; }
 
-  irs::DocIterator::ptr postings(irs::IndexFeatures /*features*/) const final {
-    return irs::DocIterator::empty();
+  irs::TermPostings::ptr postings(irs::IndexFeatures /*features*/) const final {
+    return irs::TermPostings::empty();
   }
 
  private:
@@ -90,8 +90,8 @@ struct SubReader final : irs::SubReader {
 
   const irs::SegmentInfo& Meta() const noexcept final { return info; }
   const irs::DocumentMask* docs_mask() const noexcept final { return nullptr; }
-  irs::DocIterator::ptr docs_iterator() const final {
-    return irs::DocIterator::empty();
+  irs::lead::Node::ptr docs_iterator() const final {
+    return irs::SubReader::empty().docs_iterator();
   }
   const irs::TermReader* field(irs::field_id) const final { return nullptr; }
   std::span<const irs::field_id> field_ids() const noexcept final { return {}; }

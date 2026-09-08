@@ -29,16 +29,6 @@
 
 namespace irs {
 
-// Bayesian smoothing using Dirichlet priors as implemented in the Indri
-// search engine.
-//
-// IndriDirichletSimilarity:
-//   score(doc, term) = boost * log((tf + mu * P(t | C)) / (dl + mu))
-//
-// Unlike LMDirichlet which clamps negative contributions to 0, Indri
-// returns the raw log ratio -- documents where the observed tf is below
-// the collection prior get a negative score, which matters when Indri
-// combines scores across query terms via sum.
 class IndriDirichlet final : public irs::ScorerBase<IndriDirichlet, LMStats> {
  public:
   static constexpr std::string_view type_name() noexcept {

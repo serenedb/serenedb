@@ -6,10 +6,6 @@ vptr:s2cell.cc
 # https://github.com/libjpeg-turbo/libjpeg-turbo/issues/470
 pointer-overflow:third_party/lz4/lib/lz4.c
 
-# It's intentional perform operations with nullptr
-# TODO(mbkkt) I think it can be fixed with using uintptr_t instead of pointer
-pointer-overflow:libs/iresearch/include/iresearch/search/bitset_doc_iterator.cpp
-
 # https://github.com/openssl/openssl/issues/22896
 function:third_party/openssl
 

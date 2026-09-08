@@ -29,16 +29,6 @@
 
 namespace irs {
 
-// Language model with Bayesian (Dirichlet) smoothing.
-//
-// LMDirichletSimilarity:
-//   score(doc, term) = boost * (log(1 + tf / (mu * P(t|C))) +
-//                               log(mu / (dl + mu)))
-// clamped to [0, +inf) because the raw formula can yield negative
-// contributions for terms that appear less often than the collection
-// prior predicts.
-//
-// P(t|C) = (ttf_term + 1) / (ttf_field + 1)
 class LMDirichlet final : public irs::ScorerBase<LMDirichlet, LMStats> {
  public:
   static constexpr std::string_view type_name() noexcept {
@@ -77,6 +67,8 @@ class LMDirichlet final : public irs::ScorerBase<LMDirichlet, LMStats> {
   ScoreBoundWriter::ptr PrepareScoreBoundWriter(size_t max_levels) const final;
 
   ScoreBoundSource::ptr PrepareScoreBoundSource() const final;
+
+  bool HasScoreBounds() const noexcept final { return true; }
 
   bool Compatible(const ScorerOptions& persisted) const noexcept final;
 

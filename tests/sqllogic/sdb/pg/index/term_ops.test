@@ -104,7 +104,7 @@ DROP TABLE test_term_ops;
 #
 # The wildcard text-search template ngram-tokenises terms at index time.
 # SQL `b LIKE 'pat'` against a wildcard-analyzer column dispatches to the
-# ngram-aware ByWildcardNgram filter (instead of the term-dictionary
+# ngram-aware ByWildcardNGram filter (instead of the term-dictionary
 # scanning ByWildcard) so the LIKE pattern is evaluated through the
 # inverted index using the analyzer's ngram tokenization.
 

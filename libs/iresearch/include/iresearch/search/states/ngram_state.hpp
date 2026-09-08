@@ -24,6 +24,7 @@
 
 #include "basics/resource_manager.hpp"
 #include "iresearch/formats/posting_meta.hpp"
+#include "iresearch/search/common/resolve.hpp"
 
 namespace irs {
 
@@ -34,6 +35,8 @@ struct NGramState {
 
   const TermReader* reader{};
   ManagedVector<PostingMeta> terms;
+  size_t total_terms{};
+  search::PhraseHandles handles;
 };
 
 }  // namespace irs

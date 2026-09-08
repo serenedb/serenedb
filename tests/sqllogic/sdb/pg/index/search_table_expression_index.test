@@ -1,0 +1,72 @@
+statement ok
+CREATE TEXT SEARCH DICTIONARY sx_en (
+    template = 'text', locale = 'en_US.UTF-8', case = 'lower',
+    stemming = false, accent = false, frequency = true, position = true, norm = true
+);
+
+statement ok
+CREATE TABLE sx_src AS SELECT (TIMESTAMP '2025-09-23' + INTERVAL (i) SECOND)::TIMESTAMPTZ_NS AS ts,
+	'svc' || (i % 3) AS svc, (i % 5)::SMALLINT AS sev,
+	CASE WHEN i % 2 = 0 THEN 'error in module ' || i ELSE 'all good in module ' || i END AS body
+FROM range(20) t(i);
+
+statement ok
+CREATE TABLE sx_last WITH (storage = 'search', compaction_interval = 0) AS SELECT ts, svc, sev, body FROM sx_src WHERE false;
+
+statement ok
+CREATE INDEX sx_last_idx ON sx_last USING inverted ((ts_split_by_non_alpha(body, true)) sx_en);
+
+statement ok
+INSERT INTO sx_last SELECT ts, svc, sev, body FROM sx_src;
+
+statement ok
+VACUUM (REFRESH_TABLE) sx_last;
+
+statement ok
+CREATE TABLE sx_second WITH (storage = 'search', compaction_interval = 0) AS SELECT svc, body, ts, sev FROM sx_src WHERE false;
+
+statement ok
+CREATE INDEX sx_second_idx ON sx_second USING inverted ((ts_split_by_non_alpha(body, true)) sx_en);
+
+statement ok
+INSERT INTO sx_second SELECT svc, body, ts, sev FROM sx_src;
+
+statement ok
+VACUUM (REFRESH_TABLE) sx_second;
+
+statement ok
+CREATE TABLE sx_first WITH (storage = 'search', compaction_interval = 0) AS SELECT body, ts, svc, sev FROM sx_src WHERE false;
+
+statement ok
+CREATE INDEX sx_first_idx ON sx_first USING inverted ((ts_split_by_non_alpha(body, true)) sx_en);
+
+statement ok
+INSERT INTO sx_first SELECT body, ts, svc, sev FROM sx_src;
+
+statement ok
+VACUUM (REFRESH_TABLE) sx_first;
+
+statement ok
+CREATE TABLE sx_txn AS SELECT ts, svc, sev, body FROM sx_src;
+
+statement ok
+CREATE INDEX sx_txn_idx ON sx_txn USING inverted ((ts_split_by_non_alpha(body, true)) sx_en);
+
+query
+SELECT 'body last' AS layout, count(*) AS errors FROM sx_last_idx WHERE ts_split_by_non_alpha(body, true) @@ ts_phrase('error')
+UNION ALL SELECT 'body second', count(*) FROM sx_second_idx WHERE ts_split_by_non_alpha(body, true) @@ ts_phrase('error')
+UNION ALL SELECT 'body first', count(*) FROM sx_first_idx WHERE ts_split_by_non_alpha(body, true) @@ ts_phrase('error')
+UNION ALL SELECT 'transactional', count(*) FROM sx_txn_idx WHERE ts_split_by_non_alpha(body, true) @@ ts_phrase('error')
+ORDER BY 1;
+----
+layout	errors
+body first	10
+body last	10
+body second	10
+transactional	10
+
+query
+SELECT count(*) AS rows, count(*) FILTER (WHERE body LIKE 'error%') AS errors FROM sx_second_idx;
+----
+rows	errors
+20	10

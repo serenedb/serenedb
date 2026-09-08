@@ -46,11 +46,8 @@ struct ByRangeOptions : ByRangeFilterOptions {
   using FilterType = ByRange;
   using filter_options = ByRangeFilterOptions;
 
-  size_t scored_terms_limit{1024};
-
   bool operator==(const ByRangeOptions& rhs) const noexcept {
-    return filter_options::operator==(rhs) &&
-           scored_terms_limit == rhs.scored_terms_limit;
+    return filter_options::operator==(rhs);
   }
 };
 
@@ -97,6 +94,8 @@ struct RangeAcceptor {
 
 class ByRange : public FilterWithField<ByRangeOptions> {
  public:
+  ByRange() noexcept { SetScorer(&DefaultConstScore()); }
+
   static void visit(const SubReader& segment, const TermReader& reader,
                     const ByRangeOptions& options, FilterVisitor& visitor);
 
@@ -108,7 +107,9 @@ class ByRange : public FilterWithField<ByRangeOptions> {
                                           const options_type::range_type& rng,
                                           score_t boost);
 
-  PrepareCollector::ptr MakeCollectorImpl(const Scorer* scorer) const final;
+  PrepareCollector::ptr MakeCollectorImpl(const Scorer* scorer,
+                                          StatsArena& stats,
+                                          uint32_t threads) const final;
 
   TermPredicate::ptr CompileTermPredicate() const final;
 

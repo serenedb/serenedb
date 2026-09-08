@@ -50,10 +50,11 @@ HitBatcher::HitBatcher(std::span<const ColumnstoreProjection> projections,
 
 HitBatcher::~HitBatcher() = default;
 
-void HitBatcher::BeginSegment(
-  uint32_t seg_idx, const irs::ColReader* col_reader,
-  duckdb::ClientContext* context, ColFilterStateCache* states,
-  std::span<const TableFilterDocIterator::FilterSpec> filters) {
+void HitBatcher::BeginSegment(uint32_t seg_idx,
+                              const irs::ColReader* col_reader,
+                              duckdb::ClientContext* context,
+                              ColFilterStateCache* states,
+                              std::span<const ColFilterSpec> filters) {
   SDB_ASSERT(Empty(), "drain the batcher before switching segments");
   SDB_ASSERT(filters.empty() || states != nullptr,
              "bound filters need the worker's state cache");
@@ -340,8 +341,8 @@ HitBatcher::Batch HitBatcher::EmitFiltered(duckdb::DataChunk& output) {
   // computed, in-memory scores, no columnstore read. Run it first so the `.col`
   // pass reads only survivors. Compacts the staged docs/scores in place.
   if (_score_filter != nullptr && _track_scores && count != 0) {
-    count = ColFilterChain::FilterScores(*_score_filter, *_score_state,
-                                         _docs.data(), ScoreData(), count);
+    count = ColFilterChain::FilterDocsScores(*_score_filter, *_score_state,
+                                             _docs.data(), ScoreData(), count);
   }
 
   // The `.col` filters and every column materialization key their span offsets

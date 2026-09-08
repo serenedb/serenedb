@@ -31,7 +31,6 @@ namespace irs {
 class ByTerm;
 struct FilterVisitor;
 
-// Options for term filter
 struct ByTermOptions {
   using FilterType = ByTerm;
 
@@ -46,7 +45,6 @@ struct TermAcceptor {
   bool operator()(bytes_view value) const noexcept { return value == term; }
 };
 
-// User-side term filter
 class ByTerm : public FilterWithField<ByTermOptions> {
  public:
   static void Visit(const SubReader& segment, const TermReader& field,
@@ -63,7 +61,9 @@ class ByTerm : public FilterWithField<ByTermOptions> {
                                           const irs::field_id field,
                                           const bytes_view term);
 
-  PrepareCollector::ptr MakeCollectorImpl(const Scorer* scorer) const final;
+  PrepareCollector::ptr MakeCollectorImpl(const Scorer* scorer,
+                                          StatsArena& stats,
+                                          uint32_t threads) const final;
 
   TermPredicate::ptr CompileTermPredicate() const final;
 

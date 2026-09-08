@@ -176,6 +176,40 @@ typedef std::tuple<tests::dir_param_f, FormatInfo> index_test_context;
 
 void AssertSnapshotEquality(irs::DirectoryReader lhs, irs::DirectoryReader rhs);
 
+// A posting list is written before anything is deleted, so a reader walking
+// one sees documents the segment no longer has. Only a plan knows about the
+// segment's mask, and a test that drives the postings directly builds none.
+class MaskedPostings : public irs::TermPostings {
+ public:
+  MaskedPostings(irs::TermPostings::ptr&& postings,
+                 const irs::DocumentMask& mask) noexcept
+    : _postings{std::move(postings)}, _mask{&mask} {}
+
+  irs::doc_id_t Advance() final {
+    do {
+      _doc = _postings->Advance();
+    } while (!irs::doc_limits::eof(_doc) && _mask->contains(_doc));
+    return _doc;
+  }
+
+  uint32_t GetFreq() const final { return _postings->GetFreq(); }
+
+  irs::PosAttr* Positions() noexcept final { return _postings->Positions(); }
+
+ private:
+  irs::TermPostings::ptr _postings;
+  const irs::DocumentMask* _mask;
+};
+
+inline irs::TermPostings::ptr MaskPostings(const irs::SubReader& segment,
+                                           irs::TermPostings::ptr&& postings) {
+  const auto* mask = segment.docs_mask();
+  if (mask == nullptr || mask->empty()) {
+    return std::move(postings);
+  }
+  return irs::memory::make_managed<MaskedPostings>(std::move(postings), *mask);
+}
+
 class IndexTestBase : public virtual TestParamBase<index_test_context> {
  public:
   static std::string to_string(

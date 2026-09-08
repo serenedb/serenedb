@@ -96,12 +96,20 @@ inline IRS_FORCE_INLINE uint32_t* MaterializeWord(uint32_t offset,
       reinterpret_cast<__m256i*>(out + ((prefix >> (b * 8)) & 0xFF)),
       _mm256_add_epi32(base, _mm256_cvtepi8_epi32(pos8)));
   }
-  return out + std::popcount(word);
+  const auto count = static_cast<uint32_t>(std::popcount(word));
+  _mm256_storeu_si256(reinterpret_cast<__m256i*>(out + count),
+                      _mm256_set1_epi32(static_cast<int>(offset)));
+  return out + count;
 #else
+  auto* const begin = out;
   do {
     *out++ = offset + std::countr_zero(word);
     word = PopBit(word);
   } while (word != 0);
+  for (auto* pad = out; pad != begin + ((out - begin + 7) & ~ptrdiff_t{7});
+       ++pad) {
+    *pad = offset;
+  }
   return out;
 #endif
 }

@@ -43,7 +43,7 @@ inline constexpr std::string_view kMergeTypeName = "merge";
 // TSQUERY leaf constructors (unprefixed). Produce a TSQUERY value;
 // stubs throw at runtime -- the filter builder claims them at bind.
 inline constexpr std::string_view kTSQPhrase = "ts_phrase";
-inline constexpr std::string_view kTSQNgram = "ts_ngram";
+inline constexpr std::string_view kTSQNGram = "ts_ngram";
 inline constexpr std::string_view kTSQLike = "ts_like";
 inline constexpr std::string_view kTSQPrefix = "ts_starts_with";
 inline constexpr std::string_view kTSQLevenshtein = "ts_levenshtein";
@@ -95,7 +95,7 @@ inline constexpr std::string_view kTSQueryMatch = "@@";
 
 // Sugar predicates -- rewritten to `col @@ ts_*(...)` at filter-build.
 inline constexpr std::string_view kPhraseMatches = "phrase_matches";
-inline constexpr std::string_view kNgramMatches = "ngram_matches";
+inline constexpr std::string_view kNGramMatches = "ngram_matches";
 inline constexpr std::string_view kLevenshteinMatches = "levenshtein_matches";
 inline constexpr std::string_view kHasAllTokens = "has_all_tokens";
 inline constexpr std::string_view kHasAnyTokens = "has_any_tokens";

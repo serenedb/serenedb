@@ -67,8 +67,6 @@ struct ScorerOptions {
   }
 };
 
-// The bound classification of a persisted options set: dispatches to the
-// writing scorer's own BoundTypeOf. Scorers with no bound writer report None.
 inline Scorer::ScoreBoundType BoundTypeOf(const ScorerOptions& opts) noexcept {
   return std::visit(
     []<typename P>(const P& p) {

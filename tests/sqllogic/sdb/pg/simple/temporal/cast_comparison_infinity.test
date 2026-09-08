@@ -1,0 +1,319 @@
+statement ok
+SET TimeZone = 'Europe/Berlin';
+
+statement ok
+CREATE TABLE ci AS SELECT i AS v, TIMESTAMP '2025-03-25 00:00:00' + INTERVAL (i * 37) MINUTE AS ts,
+ (TIMESTAMP '2025-03-25 00:00:00' + INTERVAL (i * 37) MINUTE)::DATE AS d FROM range(500) t(i);
+
+statement ok
+INSERT INTO ci VALUES (-1, NULL, NULL), (-2, TIMESTAMP 'infinity', DATE 'infinity'),
+ (-3, TIMESTAMP '-infinity', DATE '-infinity');
+
+statement ok
+SET disabled_optimizers = 'expression_rewriter';
+
+statement ok
+CREATE OR REPLACE TABLE ref_ci AS
+SELECT 'last_day(ts)::TIMESTAMP = TIMESTAMP ''infinity''' AS shape, count(*) AS c, coalesce(sum(v), 0) AS s FROM ci WHERE last_day(ts)::TIMESTAMP = TIMESTAMP 'infinity'
+UNION ALL SELECT 'last_day(ts)::TIMESTAMP = TIMESTAMP ''-infinity''' AS shape, count(*) AS c, coalesce(sum(v), 0) AS s FROM ci WHERE last_day(ts)::TIMESTAMP = TIMESTAMP '-infinity'
+UNION ALL SELECT 'last_day(ts)::TIMESTAMP = TIMESTAMP ''2025-04-15 00:00:00''' AS shape, count(*) AS c, coalesce(sum(v), 0) AS s FROM ci WHERE last_day(ts)::TIMESTAMP = TIMESTAMP '2025-04-15 00:00:00'
+UNION ALL SELECT 'last_day(ts)::TIMESTAMP = TIMESTAMP ''2025-04-15 13:07:13''' AS shape, count(*) AS c, coalesce(sum(v), 0) AS s FROM ci WHERE last_day(ts)::TIMESTAMP = TIMESTAMP '2025-04-15 13:07:13'
+UNION ALL SELECT 'last_day(ts)::TIMESTAMP <> TIMESTAMP ''infinity''' AS shape, count(*) AS c, coalesce(sum(v), 0) AS s FROM ci WHERE last_day(ts)::TIMESTAMP <> TIMESTAMP 'infinity'
+UNION ALL SELECT 'last_day(ts)::TIMESTAMP <> TIMESTAMP ''-infinity''' AS shape, count(*) AS c, coalesce(sum(v), 0) AS s FROM ci WHERE last_day(ts)::TIMESTAMP <> TIMESTAMP '-infinity'
+UNION ALL SELECT 'last_day(ts)::TIMESTAMP <> TIMESTAMP ''2025-04-15 00:00:00''' AS shape, count(*) AS c, coalesce(sum(v), 0) AS s FROM ci WHERE last_day(ts)::TIMESTAMP <> TIMESTAMP '2025-04-15 00:00:00'
+UNION ALL SELECT 'last_day(ts)::TIMESTAMP <> TIMESTAMP ''2025-04-15 13:07:13''' AS shape, count(*) AS c, coalesce(sum(v), 0) AS s FROM ci WHERE last_day(ts)::TIMESTAMP <> TIMESTAMP '2025-04-15 13:07:13'
+UNION ALL SELECT 'last_day(ts)::TIMESTAMP < TIMESTAMP ''infinity''' AS shape, count(*) AS c, coalesce(sum(v), 0) AS s FROM ci WHERE last_day(ts)::TIMESTAMP < TIMESTAMP 'infinity'
+UNION ALL SELECT 'last_day(ts)::TIMESTAMP < TIMESTAMP ''-infinity''' AS shape, count(*) AS c, coalesce(sum(v), 0) AS s FROM ci WHERE last_day(ts)::TIMESTAMP < TIMESTAMP '-infinity'
+UNION ALL SELECT 'last_day(ts)::TIMESTAMP < TIMESTAMP ''2025-04-15 00:00:00''' AS shape, count(*) AS c, coalesce(sum(v), 0) AS s FROM ci WHERE last_day(ts)::TIMESTAMP < TIMESTAMP '2025-04-15 00:00:00'
+UNION ALL SELECT 'last_day(ts)::TIMESTAMP < TIMESTAMP ''2025-04-15 13:07:13''' AS shape, count(*) AS c, coalesce(sum(v), 0) AS s FROM ci WHERE last_day(ts)::TIMESTAMP < TIMESTAMP '2025-04-15 13:07:13'
+UNION ALL SELECT 'last_day(ts)::TIMESTAMP <= TIMESTAMP ''infinity''' AS shape, count(*) AS c, coalesce(sum(v), 0) AS s FROM ci WHERE last_day(ts)::TIMESTAMP <= TIMESTAMP 'infinity'
+UNION ALL SELECT 'last_day(ts)::TIMESTAMP <= TIMESTAMP ''-infinity''' AS shape, count(*) AS c, coalesce(sum(v), 0) AS s FROM ci WHERE last_day(ts)::TIMESTAMP <= TIMESTAMP '-infinity'
+UNION ALL SELECT 'last_day(ts)::TIMESTAMP <= TIMESTAMP ''2025-04-15 00:00:00''' AS shape, count(*) AS c, coalesce(sum(v), 0) AS s FROM ci WHERE last_day(ts)::TIMESTAMP <= TIMESTAMP '2025-04-15 00:00:00'
+UNION ALL SELECT 'last_day(ts)::TIMESTAMP <= TIMESTAMP ''2025-04-15 13:07:13''' AS shape, count(*) AS c, coalesce(sum(v), 0) AS s FROM ci WHERE last_day(ts)::TIMESTAMP <= TIMESTAMP '2025-04-15 13:07:13'
+UNION ALL SELECT 'last_day(ts)::TIMESTAMP > TIMESTAMP ''infinity''' AS shape, count(*) AS c, coalesce(sum(v), 0) AS s FROM ci WHERE last_day(ts)::TIMESTAMP > TIMESTAMP 'infinity'
+UNION ALL SELECT 'last_day(ts)::TIMESTAMP > TIMESTAMP ''-infinity''' AS shape, count(*) AS c, coalesce(sum(v), 0) AS s FROM ci WHERE last_day(ts)::TIMESTAMP > TIMESTAMP '-infinity'
+UNION ALL SELECT 'last_day(ts)::TIMESTAMP > TIMESTAMP ''2025-04-15 00:00:00''' AS shape, count(*) AS c, coalesce(sum(v), 0) AS s FROM ci WHERE last_day(ts)::TIMESTAMP > TIMESTAMP '2025-04-15 00:00:00'
+UNION ALL SELECT 'last_day(ts)::TIMESTAMP > TIMESTAMP ''2025-04-15 13:07:13''' AS shape, count(*) AS c, coalesce(sum(v), 0) AS s FROM ci WHERE last_day(ts)::TIMESTAMP > TIMESTAMP '2025-04-15 13:07:13'
+UNION ALL SELECT 'last_day(ts)::TIMESTAMP >= TIMESTAMP ''infinity''' AS shape, count(*) AS c, coalesce(sum(v), 0) AS s FROM ci WHERE last_day(ts)::TIMESTAMP >= TIMESTAMP 'infinity'
+UNION ALL SELECT 'last_day(ts)::TIMESTAMP >= TIMESTAMP ''-infinity''' AS shape, count(*) AS c, coalesce(sum(v), 0) AS s FROM ci WHERE last_day(ts)::TIMESTAMP >= TIMESTAMP '-infinity'
+UNION ALL SELECT 'last_day(ts)::TIMESTAMP >= TIMESTAMP ''2025-04-15 00:00:00''' AS shape, count(*) AS c, coalesce(sum(v), 0) AS s FROM ci WHERE last_day(ts)::TIMESTAMP >= TIMESTAMP '2025-04-15 00:00:00'
+UNION ALL SELECT 'last_day(ts)::TIMESTAMP >= TIMESTAMP ''2025-04-15 13:07:13''' AS shape, count(*) AS c, coalesce(sum(v), 0) AS s FROM ci WHERE last_day(ts)::TIMESTAMP >= TIMESTAMP '2025-04-15 13:07:13'
+UNION ALL SELECT 'd::TIMESTAMP = TIMESTAMP ''infinity''' AS shape, count(*) AS c, coalesce(sum(v), 0) AS s FROM ci WHERE d::TIMESTAMP = TIMESTAMP 'infinity'
+UNION ALL SELECT 'd::TIMESTAMP = TIMESTAMP ''-infinity''' AS shape, count(*) AS c, coalesce(sum(v), 0) AS s FROM ci WHERE d::TIMESTAMP = TIMESTAMP '-infinity'
+UNION ALL SELECT 'd::TIMESTAMP = TIMESTAMP ''2025-04-15 00:00:00''' AS shape, count(*) AS c, coalesce(sum(v), 0) AS s FROM ci WHERE d::TIMESTAMP = TIMESTAMP '2025-04-15 00:00:00'
+UNION ALL SELECT 'd::TIMESTAMP = TIMESTAMP ''2025-04-15 13:07:13''' AS shape, count(*) AS c, coalesce(sum(v), 0) AS s FROM ci WHERE d::TIMESTAMP = TIMESTAMP '2025-04-15 13:07:13'
+UNION ALL SELECT 'd::TIMESTAMP <> TIMESTAMP ''infinity''' AS shape, count(*) AS c, coalesce(sum(v), 0) AS s FROM ci WHERE d::TIMESTAMP <> TIMESTAMP 'infinity'
+UNION ALL SELECT 'd::TIMESTAMP <> TIMESTAMP ''-infinity''' AS shape, count(*) AS c, coalesce(sum(v), 0) AS s FROM ci WHERE d::TIMESTAMP <> TIMESTAMP '-infinity'
+UNION ALL SELECT 'd::TIMESTAMP <> TIMESTAMP ''2025-04-15 00:00:00''' AS shape, count(*) AS c, coalesce(sum(v), 0) AS s FROM ci WHERE d::TIMESTAMP <> TIMESTAMP '2025-04-15 00:00:00'
+UNION ALL SELECT 'd::TIMESTAMP <> TIMESTAMP ''2025-04-15 13:07:13''' AS shape, count(*) AS c, coalesce(sum(v), 0) AS s FROM ci WHERE d::TIMESTAMP <> TIMESTAMP '2025-04-15 13:07:13'
+UNION ALL SELECT 'd::TIMESTAMP < TIMESTAMP ''infinity''' AS shape, count(*) AS c, coalesce(sum(v), 0) AS s FROM ci WHERE d::TIMESTAMP < TIMESTAMP 'infinity'
+UNION ALL SELECT 'd::TIMESTAMP < TIMESTAMP ''-infinity''' AS shape, count(*) AS c, coalesce(sum(v), 0) AS s FROM ci WHERE d::TIMESTAMP < TIMESTAMP '-infinity'
+UNION ALL SELECT 'd::TIMESTAMP < TIMESTAMP ''2025-04-15 00:00:00''' AS shape, count(*) AS c, coalesce(sum(v), 0) AS s FROM ci WHERE d::TIMESTAMP < TIMESTAMP '2025-04-15 00:00:00'
+UNION ALL SELECT 'd::TIMESTAMP < TIMESTAMP ''2025-04-15 13:07:13''' AS shape, count(*) AS c, coalesce(sum(v), 0) AS s FROM ci WHERE d::TIMESTAMP < TIMESTAMP '2025-04-15 13:07:13'
+UNION ALL SELECT 'd::TIMESTAMP <= TIMESTAMP ''infinity''' AS shape, count(*) AS c, coalesce(sum(v), 0) AS s FROM ci WHERE d::TIMESTAMP <= TIMESTAMP 'infinity'
+UNION ALL SELECT 'd::TIMESTAMP <= TIMESTAMP ''-infinity''' AS shape, count(*) AS c, coalesce(sum(v), 0) AS s FROM ci WHERE d::TIMESTAMP <= TIMESTAMP '-infinity'
+UNION ALL SELECT 'd::TIMESTAMP <= TIMESTAMP ''2025-04-15 00:00:00''' AS shape, count(*) AS c, coalesce(sum(v), 0) AS s FROM ci WHERE d::TIMESTAMP <= TIMESTAMP '2025-04-15 00:00:00'
+UNION ALL SELECT 'd::TIMESTAMP <= TIMESTAMP ''2025-04-15 13:07:13''' AS shape, count(*) AS c, coalesce(sum(v), 0) AS s FROM ci WHERE d::TIMESTAMP <= TIMESTAMP '2025-04-15 13:07:13'
+UNION ALL SELECT 'd::TIMESTAMP > TIMESTAMP ''infinity''' AS shape, count(*) AS c, coalesce(sum(v), 0) AS s FROM ci WHERE d::TIMESTAMP > TIMESTAMP 'infinity'
+UNION ALL SELECT 'd::TIMESTAMP > TIMESTAMP ''-infinity''' AS shape, count(*) AS c, coalesce(sum(v), 0) AS s FROM ci WHERE d::TIMESTAMP > TIMESTAMP '-infinity'
+UNION ALL SELECT 'd::TIMESTAMP > TIMESTAMP ''2025-04-15 00:00:00''' AS shape, count(*) AS c, coalesce(sum(v), 0) AS s FROM ci WHERE d::TIMESTAMP > TIMESTAMP '2025-04-15 00:00:00'
+UNION ALL SELECT 'd::TIMESTAMP > TIMESTAMP ''2025-04-15 13:07:13''' AS shape, count(*) AS c, coalesce(sum(v), 0) AS s FROM ci WHERE d::TIMESTAMP > TIMESTAMP '2025-04-15 13:07:13'
+UNION ALL SELECT 'd::TIMESTAMP >= TIMESTAMP ''infinity''' AS shape, count(*) AS c, coalesce(sum(v), 0) AS s FROM ci WHERE d::TIMESTAMP >= TIMESTAMP 'infinity'
+UNION ALL SELECT 'd::TIMESTAMP >= TIMESTAMP ''-infinity''' AS shape, count(*) AS c, coalesce(sum(v), 0) AS s FROM ci WHERE d::TIMESTAMP >= TIMESTAMP '-infinity'
+UNION ALL SELECT 'd::TIMESTAMP >= TIMESTAMP ''2025-04-15 00:00:00''' AS shape, count(*) AS c, coalesce(sum(v), 0) AS s FROM ci WHERE d::TIMESTAMP >= TIMESTAMP '2025-04-15 00:00:00'
+UNION ALL SELECT 'd::TIMESTAMP >= TIMESTAMP ''2025-04-15 13:07:13''' AS shape, count(*) AS c, coalesce(sum(v), 0) AS s FROM ci WHERE d::TIMESTAMP >= TIMESTAMP '2025-04-15 13:07:13'
+UNION ALL SELECT 'date_trunc(''month'', ts)::DATE::TIMESTAMP = TIMESTAMP ''infinity''' AS shape, count(*) AS c, coalesce(sum(v), 0) AS s FROM ci WHERE date_trunc('month', ts)::DATE::TIMESTAMP = TIMESTAMP 'infinity'
+UNION ALL SELECT 'date_trunc(''month'', ts)::DATE::TIMESTAMP = TIMESTAMP ''-infinity''' AS shape, count(*) AS c, coalesce(sum(v), 0) AS s FROM ci WHERE date_trunc('month', ts)::DATE::TIMESTAMP = TIMESTAMP '-infinity'
+UNION ALL SELECT 'date_trunc(''month'', ts)::DATE::TIMESTAMP = TIMESTAMP ''2025-04-15 00:00:00''' AS shape, count(*) AS c, coalesce(sum(v), 0) AS s FROM ci WHERE date_trunc('month', ts)::DATE::TIMESTAMP = TIMESTAMP '2025-04-15 00:00:00'
+UNION ALL SELECT 'date_trunc(''month'', ts)::DATE::TIMESTAMP = TIMESTAMP ''2025-04-15 13:07:13''' AS shape, count(*) AS c, coalesce(sum(v), 0) AS s FROM ci WHERE date_trunc('month', ts)::DATE::TIMESTAMP = TIMESTAMP '2025-04-15 13:07:13'
+UNION ALL SELECT 'date_trunc(''month'', ts)::DATE::TIMESTAMP <> TIMESTAMP ''infinity''' AS shape, count(*) AS c, coalesce(sum(v), 0) AS s FROM ci WHERE date_trunc('month', ts)::DATE::TIMESTAMP <> TIMESTAMP 'infinity'
+UNION ALL SELECT 'date_trunc(''month'', ts)::DATE::TIMESTAMP <> TIMESTAMP ''-infinity''' AS shape, count(*) AS c, coalesce(sum(v), 0) AS s FROM ci WHERE date_trunc('month', ts)::DATE::TIMESTAMP <> TIMESTAMP '-infinity'
+UNION ALL SELECT 'date_trunc(''month'', ts)::DATE::TIMESTAMP <> TIMESTAMP ''2025-04-15 00:00:00''' AS shape, count(*) AS c, coalesce(sum(v), 0) AS s FROM ci WHERE date_trunc('month', ts)::DATE::TIMESTAMP <> TIMESTAMP '2025-04-15 00:00:00'
+UNION ALL SELECT 'date_trunc(''month'', ts)::DATE::TIMESTAMP <> TIMESTAMP ''2025-04-15 13:07:13''' AS shape, count(*) AS c, coalesce(sum(v), 0) AS s FROM ci WHERE date_trunc('month', ts)::DATE::TIMESTAMP <> TIMESTAMP '2025-04-15 13:07:13'
+UNION ALL SELECT 'date_trunc(''month'', ts)::DATE::TIMESTAMP < TIMESTAMP ''infinity''' AS shape, count(*) AS c, coalesce(sum(v), 0) AS s FROM ci WHERE date_trunc('month', ts)::DATE::TIMESTAMP < TIMESTAMP 'infinity'
+UNION ALL SELECT 'date_trunc(''month'', ts)::DATE::TIMESTAMP < TIMESTAMP ''-infinity''' AS shape, count(*) AS c, coalesce(sum(v), 0) AS s FROM ci WHERE date_trunc('month', ts)::DATE::TIMESTAMP < TIMESTAMP '-infinity'
+UNION ALL SELECT 'date_trunc(''month'', ts)::DATE::TIMESTAMP < TIMESTAMP ''2025-04-15 00:00:00''' AS shape, count(*) AS c, coalesce(sum(v), 0) AS s FROM ci WHERE date_trunc('month', ts)::DATE::TIMESTAMP < TIMESTAMP '2025-04-15 00:00:00'
+UNION ALL SELECT 'date_trunc(''month'', ts)::DATE::TIMESTAMP < TIMESTAMP ''2025-04-15 13:07:13''' AS shape, count(*) AS c, coalesce(sum(v), 0) AS s FROM ci WHERE date_trunc('month', ts)::DATE::TIMESTAMP < TIMESTAMP '2025-04-15 13:07:13'
+UNION ALL SELECT 'date_trunc(''month'', ts)::DATE::TIMESTAMP <= TIMESTAMP ''infinity''' AS shape, count(*) AS c, coalesce(sum(v), 0) AS s FROM ci WHERE date_trunc('month', ts)::DATE::TIMESTAMP <= TIMESTAMP 'infinity'
+UNION ALL SELECT 'date_trunc(''month'', ts)::DATE::TIMESTAMP <= TIMESTAMP ''-infinity''' AS shape, count(*) AS c, coalesce(sum(v), 0) AS s FROM ci WHERE date_trunc('month', ts)::DATE::TIMESTAMP <= TIMESTAMP '-infinity'
+UNION ALL SELECT 'date_trunc(''month'', ts)::DATE::TIMESTAMP <= TIMESTAMP ''2025-04-15 00:00:00''' AS shape, count(*) AS c, coalesce(sum(v), 0) AS s FROM ci WHERE date_trunc('month', ts)::DATE::TIMESTAMP <= TIMESTAMP '2025-04-15 00:00:00'
+UNION ALL SELECT 'date_trunc(''month'', ts)::DATE::TIMESTAMP <= TIMESTAMP ''2025-04-15 13:07:13''' AS shape, count(*) AS c, coalesce(sum(v), 0) AS s FROM ci WHERE date_trunc('month', ts)::DATE::TIMESTAMP <= TIMESTAMP '2025-04-15 13:07:13'
+UNION ALL SELECT 'date_trunc(''month'', ts)::DATE::TIMESTAMP > TIMESTAMP ''infinity''' AS shape, count(*) AS c, coalesce(sum(v), 0) AS s FROM ci WHERE date_trunc('month', ts)::DATE::TIMESTAMP > TIMESTAMP 'infinity'
+UNION ALL SELECT 'date_trunc(''month'', ts)::DATE::TIMESTAMP > TIMESTAMP ''-infinity''' AS shape, count(*) AS c, coalesce(sum(v), 0) AS s FROM ci WHERE date_trunc('month', ts)::DATE::TIMESTAMP > TIMESTAMP '-infinity'
+UNION ALL SELECT 'date_trunc(''month'', ts)::DATE::TIMESTAMP > TIMESTAMP ''2025-04-15 00:00:00''' AS shape, count(*) AS c, coalesce(sum(v), 0) AS s FROM ci WHERE date_trunc('month', ts)::DATE::TIMESTAMP > TIMESTAMP '2025-04-15 00:00:00'
+UNION ALL SELECT 'date_trunc(''month'', ts)::DATE::TIMESTAMP > TIMESTAMP ''2025-04-15 13:07:13''' AS shape, count(*) AS c, coalesce(sum(v), 0) AS s FROM ci WHERE date_trunc('month', ts)::DATE::TIMESTAMP > TIMESTAMP '2025-04-15 13:07:13'
+UNION ALL SELECT 'date_trunc(''month'', ts)::DATE::TIMESTAMP >= TIMESTAMP ''infinity''' AS shape, count(*) AS c, coalesce(sum(v), 0) AS s FROM ci WHERE date_trunc('month', ts)::DATE::TIMESTAMP >= TIMESTAMP 'infinity'
+UNION ALL SELECT 'date_trunc(''month'', ts)::DATE::TIMESTAMP >= TIMESTAMP ''-infinity''' AS shape, count(*) AS c, coalesce(sum(v), 0) AS s FROM ci WHERE date_trunc('month', ts)::DATE::TIMESTAMP >= TIMESTAMP '-infinity'
+UNION ALL SELECT 'date_trunc(''month'', ts)::DATE::TIMESTAMP >= TIMESTAMP ''2025-04-15 00:00:00''' AS shape, count(*) AS c, coalesce(sum(v), 0) AS s FROM ci WHERE date_trunc('month', ts)::DATE::TIMESTAMP >= TIMESTAMP '2025-04-15 00:00:00'
+UNION ALL SELECT 'date_trunc(''month'', ts)::DATE::TIMESTAMP >= TIMESTAMP ''2025-04-15 13:07:13''' AS shape, count(*) AS c, coalesce(sum(v), 0) AS s FROM ci WHERE date_trunc('month', ts)::DATE::TIMESTAMP >= TIMESTAMP '2025-04-15 13:07:13'
+UNION ALL SELECT 'last_day(ts)::TIMESTAMPTZ = TIMESTAMPTZ ''infinity''' AS shape, count(*) AS c, coalesce(sum(v), 0) AS s FROM ci WHERE last_day(ts)::TIMESTAMPTZ = TIMESTAMPTZ 'infinity'
+UNION ALL SELECT 'last_day(ts)::TIMESTAMPTZ = TIMESTAMPTZ ''-infinity''' AS shape, count(*) AS c, coalesce(sum(v), 0) AS s FROM ci WHERE last_day(ts)::TIMESTAMPTZ = TIMESTAMPTZ '-infinity'
+UNION ALL SELECT 'last_day(ts)::TIMESTAMPTZ = TIMESTAMPTZ ''2025-04-15 00:00:00+00''' AS shape, count(*) AS c, coalesce(sum(v), 0) AS s FROM ci WHERE last_day(ts)::TIMESTAMPTZ = TIMESTAMPTZ '2025-04-15 00:00:00+00'
+UNION ALL SELECT 'last_day(ts)::TIMESTAMPTZ = TIMESTAMPTZ ''2025-04-15 13:07:13+00''' AS shape, count(*) AS c, coalesce(sum(v), 0) AS s FROM ci WHERE last_day(ts)::TIMESTAMPTZ = TIMESTAMPTZ '2025-04-15 13:07:13+00'
+UNION ALL SELECT 'last_day(ts)::TIMESTAMPTZ <> TIMESTAMPTZ ''infinity''' AS shape, count(*) AS c, coalesce(sum(v), 0) AS s FROM ci WHERE last_day(ts)::TIMESTAMPTZ <> TIMESTAMPTZ 'infinity'
+UNION ALL SELECT 'last_day(ts)::TIMESTAMPTZ <> TIMESTAMPTZ ''-infinity''' AS shape, count(*) AS c, coalesce(sum(v), 0) AS s FROM ci WHERE last_day(ts)::TIMESTAMPTZ <> TIMESTAMPTZ '-infinity'
+UNION ALL SELECT 'last_day(ts)::TIMESTAMPTZ <> TIMESTAMPTZ ''2025-04-15 00:00:00+00''' AS shape, count(*) AS c, coalesce(sum(v), 0) AS s FROM ci WHERE last_day(ts)::TIMESTAMPTZ <> TIMESTAMPTZ '2025-04-15 00:00:00+00'
+UNION ALL SELECT 'last_day(ts)::TIMESTAMPTZ <> TIMESTAMPTZ ''2025-04-15 13:07:13+00''' AS shape, count(*) AS c, coalesce(sum(v), 0) AS s FROM ci WHERE last_day(ts)::TIMESTAMPTZ <> TIMESTAMPTZ '2025-04-15 13:07:13+00'
+UNION ALL SELECT 'last_day(ts)::TIMESTAMPTZ < TIMESTAMPTZ ''infinity''' AS shape, count(*) AS c, coalesce(sum(v), 0) AS s FROM ci WHERE last_day(ts)::TIMESTAMPTZ < TIMESTAMPTZ 'infinity'
+UNION ALL SELECT 'last_day(ts)::TIMESTAMPTZ < TIMESTAMPTZ ''-infinity''' AS shape, count(*) AS c, coalesce(sum(v), 0) AS s FROM ci WHERE last_day(ts)::TIMESTAMPTZ < TIMESTAMPTZ '-infinity'
+UNION ALL SELECT 'last_day(ts)::TIMESTAMPTZ < TIMESTAMPTZ ''2025-04-15 00:00:00+00''' AS shape, count(*) AS c, coalesce(sum(v), 0) AS s FROM ci WHERE last_day(ts)::TIMESTAMPTZ < TIMESTAMPTZ '2025-04-15 00:00:00+00'
+UNION ALL SELECT 'last_day(ts)::TIMESTAMPTZ < TIMESTAMPTZ ''2025-04-15 13:07:13+00''' AS shape, count(*) AS c, coalesce(sum(v), 0) AS s FROM ci WHERE last_day(ts)::TIMESTAMPTZ < TIMESTAMPTZ '2025-04-15 13:07:13+00'
+UNION ALL SELECT 'last_day(ts)::TIMESTAMPTZ <= TIMESTAMPTZ ''infinity''' AS shape, count(*) AS c, coalesce(sum(v), 0) AS s FROM ci WHERE last_day(ts)::TIMESTAMPTZ <= TIMESTAMPTZ 'infinity'
+UNION ALL SELECT 'last_day(ts)::TIMESTAMPTZ <= TIMESTAMPTZ ''-infinity''' AS shape, count(*) AS c, coalesce(sum(v), 0) AS s FROM ci WHERE last_day(ts)::TIMESTAMPTZ <= TIMESTAMPTZ '-infinity'
+UNION ALL SELECT 'last_day(ts)::TIMESTAMPTZ <= TIMESTAMPTZ ''2025-04-15 00:00:00+00''' AS shape, count(*) AS c, coalesce(sum(v), 0) AS s FROM ci WHERE last_day(ts)::TIMESTAMPTZ <= TIMESTAMPTZ '2025-04-15 00:00:00+00'
+UNION ALL SELECT 'last_day(ts)::TIMESTAMPTZ <= TIMESTAMPTZ ''2025-04-15 13:07:13+00''' AS shape, count(*) AS c, coalesce(sum(v), 0) AS s FROM ci WHERE last_day(ts)::TIMESTAMPTZ <= TIMESTAMPTZ '2025-04-15 13:07:13+00'
+UNION ALL SELECT 'last_day(ts)::TIMESTAMPTZ > TIMESTAMPTZ ''infinity''' AS shape, count(*) AS c, coalesce(sum(v), 0) AS s FROM ci WHERE last_day(ts)::TIMESTAMPTZ > TIMESTAMPTZ 'infinity'
+UNION ALL SELECT 'last_day(ts)::TIMESTAMPTZ > TIMESTAMPTZ ''-infinity''' AS shape, count(*) AS c, coalesce(sum(v), 0) AS s FROM ci WHERE last_day(ts)::TIMESTAMPTZ > TIMESTAMPTZ '-infinity'
+UNION ALL SELECT 'last_day(ts)::TIMESTAMPTZ > TIMESTAMPTZ ''2025-04-15 00:00:00+00''' AS shape, count(*) AS c, coalesce(sum(v), 0) AS s FROM ci WHERE last_day(ts)::TIMESTAMPTZ > TIMESTAMPTZ '2025-04-15 00:00:00+00'
+UNION ALL SELECT 'last_day(ts)::TIMESTAMPTZ > TIMESTAMPTZ ''2025-04-15 13:07:13+00''' AS shape, count(*) AS c, coalesce(sum(v), 0) AS s FROM ci WHERE last_day(ts)::TIMESTAMPTZ > TIMESTAMPTZ '2025-04-15 13:07:13+00'
+UNION ALL SELECT 'last_day(ts)::TIMESTAMPTZ >= TIMESTAMPTZ ''infinity''' AS shape, count(*) AS c, coalesce(sum(v), 0) AS s FROM ci WHERE last_day(ts)::TIMESTAMPTZ >= TIMESTAMPTZ 'infinity'
+UNION ALL SELECT 'last_day(ts)::TIMESTAMPTZ >= TIMESTAMPTZ ''-infinity''' AS shape, count(*) AS c, coalesce(sum(v), 0) AS s FROM ci WHERE last_day(ts)::TIMESTAMPTZ >= TIMESTAMPTZ '-infinity'
+UNION ALL SELECT 'last_day(ts)::TIMESTAMPTZ >= TIMESTAMPTZ ''2025-04-15 00:00:00+00''' AS shape, count(*) AS c, coalesce(sum(v), 0) AS s FROM ci WHERE last_day(ts)::TIMESTAMPTZ >= TIMESTAMPTZ '2025-04-15 00:00:00+00'
+UNION ALL SELECT 'last_day(ts)::TIMESTAMPTZ >= TIMESTAMPTZ ''2025-04-15 13:07:13+00''' AS shape, count(*) AS c, coalesce(sum(v), 0) AS s FROM ci WHERE last_day(ts)::TIMESTAMPTZ >= TIMESTAMPTZ '2025-04-15 13:07:13+00'
+UNION ALL SELECT 'd::TIMESTAMPTZ = TIMESTAMPTZ ''infinity''' AS shape, count(*) AS c, coalesce(sum(v), 0) AS s FROM ci WHERE d::TIMESTAMPTZ = TIMESTAMPTZ 'infinity'
+UNION ALL SELECT 'd::TIMESTAMPTZ = TIMESTAMPTZ ''-infinity''' AS shape, count(*) AS c, coalesce(sum(v), 0) AS s FROM ci WHERE d::TIMESTAMPTZ = TIMESTAMPTZ '-infinity'
+UNION ALL SELECT 'd::TIMESTAMPTZ = TIMESTAMPTZ ''2025-04-15 00:00:00+00''' AS shape, count(*) AS c, coalesce(sum(v), 0) AS s FROM ci WHERE d::TIMESTAMPTZ = TIMESTAMPTZ '2025-04-15 00:00:00+00'
+UNION ALL SELECT 'd::TIMESTAMPTZ = TIMESTAMPTZ ''2025-04-15 13:07:13+00''' AS shape, count(*) AS c, coalesce(sum(v), 0) AS s FROM ci WHERE d::TIMESTAMPTZ = TIMESTAMPTZ '2025-04-15 13:07:13+00'
+UNION ALL SELECT 'd::TIMESTAMPTZ <> TIMESTAMPTZ ''infinity''' AS shape, count(*) AS c, coalesce(sum(v), 0) AS s FROM ci WHERE d::TIMESTAMPTZ <> TIMESTAMPTZ 'infinity'
+UNION ALL SELECT 'd::TIMESTAMPTZ <> TIMESTAMPTZ ''-infinity''' AS shape, count(*) AS c, coalesce(sum(v), 0) AS s FROM ci WHERE d::TIMESTAMPTZ <> TIMESTAMPTZ '-infinity'
+UNION ALL SELECT 'd::TIMESTAMPTZ <> TIMESTAMPTZ ''2025-04-15 00:00:00+00''' AS shape, count(*) AS c, coalesce(sum(v), 0) AS s FROM ci WHERE d::TIMESTAMPTZ <> TIMESTAMPTZ '2025-04-15 00:00:00+00'
+UNION ALL SELECT 'd::TIMESTAMPTZ <> TIMESTAMPTZ ''2025-04-15 13:07:13+00''' AS shape, count(*) AS c, coalesce(sum(v), 0) AS s FROM ci WHERE d::TIMESTAMPTZ <> TIMESTAMPTZ '2025-04-15 13:07:13+00'
+UNION ALL SELECT 'd::TIMESTAMPTZ < TIMESTAMPTZ ''infinity''' AS shape, count(*) AS c, coalesce(sum(v), 0) AS s FROM ci WHERE d::TIMESTAMPTZ < TIMESTAMPTZ 'infinity'
+UNION ALL SELECT 'd::TIMESTAMPTZ < TIMESTAMPTZ ''-infinity''' AS shape, count(*) AS c, coalesce(sum(v), 0) AS s FROM ci WHERE d::TIMESTAMPTZ < TIMESTAMPTZ '-infinity'
+UNION ALL SELECT 'd::TIMESTAMPTZ < TIMESTAMPTZ ''2025-04-15 00:00:00+00''' AS shape, count(*) AS c, coalesce(sum(v), 0) AS s FROM ci WHERE d::TIMESTAMPTZ < TIMESTAMPTZ '2025-04-15 00:00:00+00'
+UNION ALL SELECT 'd::TIMESTAMPTZ < TIMESTAMPTZ ''2025-04-15 13:07:13+00''' AS shape, count(*) AS c, coalesce(sum(v), 0) AS s FROM ci WHERE d::TIMESTAMPTZ < TIMESTAMPTZ '2025-04-15 13:07:13+00'
+UNION ALL SELECT 'd::TIMESTAMPTZ <= TIMESTAMPTZ ''infinity''' AS shape, count(*) AS c, coalesce(sum(v), 0) AS s FROM ci WHERE d::TIMESTAMPTZ <= TIMESTAMPTZ 'infinity'
+UNION ALL SELECT 'd::TIMESTAMPTZ <= TIMESTAMPTZ ''-infinity''' AS shape, count(*) AS c, coalesce(sum(v), 0) AS s FROM ci WHERE d::TIMESTAMPTZ <= TIMESTAMPTZ '-infinity'
+UNION ALL SELECT 'd::TIMESTAMPTZ <= TIMESTAMPTZ ''2025-04-15 00:00:00+00''' AS shape, count(*) AS c, coalesce(sum(v), 0) AS s FROM ci WHERE d::TIMESTAMPTZ <= TIMESTAMPTZ '2025-04-15 00:00:00+00'
+UNION ALL SELECT 'd::TIMESTAMPTZ <= TIMESTAMPTZ ''2025-04-15 13:07:13+00''' AS shape, count(*) AS c, coalesce(sum(v), 0) AS s FROM ci WHERE d::TIMESTAMPTZ <= TIMESTAMPTZ '2025-04-15 13:07:13+00'
+UNION ALL SELECT 'd::TIMESTAMPTZ > TIMESTAMPTZ ''infinity''' AS shape, count(*) AS c, coalesce(sum(v), 0) AS s FROM ci WHERE d::TIMESTAMPTZ > TIMESTAMPTZ 'infinity'
+UNION ALL SELECT 'd::TIMESTAMPTZ > TIMESTAMPTZ ''-infinity''' AS shape, count(*) AS c, coalesce(sum(v), 0) AS s FROM ci WHERE d::TIMESTAMPTZ > TIMESTAMPTZ '-infinity'
+UNION ALL SELECT 'd::TIMESTAMPTZ > TIMESTAMPTZ ''2025-04-15 00:00:00+00''' AS shape, count(*) AS c, coalesce(sum(v), 0) AS s FROM ci WHERE d::TIMESTAMPTZ > TIMESTAMPTZ '2025-04-15 00:00:00+00'
+UNION ALL SELECT 'd::TIMESTAMPTZ > TIMESTAMPTZ ''2025-04-15 13:07:13+00''' AS shape, count(*) AS c, coalesce(sum(v), 0) AS s FROM ci WHERE d::TIMESTAMPTZ > TIMESTAMPTZ '2025-04-15 13:07:13+00'
+UNION ALL SELECT 'd::TIMESTAMPTZ >= TIMESTAMPTZ ''infinity''' AS shape, count(*) AS c, coalesce(sum(v), 0) AS s FROM ci WHERE d::TIMESTAMPTZ >= TIMESTAMPTZ 'infinity'
+UNION ALL SELECT 'd::TIMESTAMPTZ >= TIMESTAMPTZ ''-infinity''' AS shape, count(*) AS c, coalesce(sum(v), 0) AS s FROM ci WHERE d::TIMESTAMPTZ >= TIMESTAMPTZ '-infinity'
+UNION ALL SELECT 'd::TIMESTAMPTZ >= TIMESTAMPTZ ''2025-04-15 00:00:00+00''' AS shape, count(*) AS c, coalesce(sum(v), 0) AS s FROM ci WHERE d::TIMESTAMPTZ >= TIMESTAMPTZ '2025-04-15 00:00:00+00'
+UNION ALL SELECT 'd::TIMESTAMPTZ >= TIMESTAMPTZ ''2025-04-15 13:07:13+00''' AS shape, count(*) AS c, coalesce(sum(v), 0) AS s FROM ci WHERE d::TIMESTAMPTZ >= TIMESTAMPTZ '2025-04-15 13:07:13+00'
+UNION ALL SELECT 'last_day(ts)::TIMESTAMP BETWEEN TIMESTAMP ''-infinity'' AND TIMESTAMP ''infinity''' AS shape, count(*) AS c, coalesce(sum(v), 0) AS s FROM ci WHERE last_day(ts)::TIMESTAMP BETWEEN TIMESTAMP '-infinity' AND TIMESTAMP 'infinity'
+UNION ALL SELECT 'last_day(ts)::TIMESTAMP NOT BETWEEN TIMESTAMP ''2025-01-01 12:00:00'' AND TIMESTAMP ''infinity''' AS shape, count(*) AS c, coalesce(sum(v), 0) AS s FROM ci WHERE last_day(ts)::TIMESTAMP NOT BETWEEN TIMESTAMP '2025-01-01 12:00:00' AND TIMESTAMP 'infinity'
+UNION ALL SELECT 'last_day(ts)::TIMESTAMP IN (TIMESTAMP ''infinity'', TIMESTAMP ''2025-04-30 00:00:00'')' AS shape, count(*) AS c, coalesce(sum(v), 0) AS s FROM ci WHERE last_day(ts)::TIMESTAMP IN (TIMESTAMP 'infinity', TIMESTAMP '2025-04-30 00:00:00')
+UNION ALL SELECT 'last_day(ts)::TIMESTAMP NOT IN (TIMESTAMP ''infinity'', TIMESTAMP ''2025-04-30 13:07:13'')' AS shape, count(*) AS c, coalesce(sum(v), 0) AS s FROM ci WHERE last_day(ts)::TIMESTAMP NOT IN (TIMESTAMP 'infinity', TIMESTAMP '2025-04-30 13:07:13')
+UNION ALL SELECT 'NOT (last_day(ts)::TIMESTAMP <= TIMESTAMP ''infinity'')' AS shape, count(*) AS c, coalesce(sum(v), 0) AS s FROM ci WHERE NOT (last_day(ts)::TIMESTAMP <= TIMESTAMP 'infinity')
+UNION ALL SELECT 'd::TIMESTAMP IS DISTINCT FROM TIMESTAMP ''infinity''' AS shape, count(*) AS c, coalesce(sum(v), 0) AS s FROM ci WHERE d::TIMESTAMP IS DISTINCT FROM TIMESTAMP 'infinity'
+UNION ALL SELECT 'd::TIMESTAMP IS NOT DISTINCT FROM TIMESTAMP ''-infinity''' AS shape, count(*) AS c, coalesce(sum(v), 0) AS s FROM ci WHERE d::TIMESTAMP IS NOT DISTINCT FROM TIMESTAMP '-infinity'
+UNION ALL SELECT '(last_day(ts)::TIMESTAMP > TIMESTAMP ''-infinity'') AND (v % 3 <> 0)' AS shape, count(*) AS c, coalesce(sum(v), 0) AS s FROM ci WHERE (last_day(ts)::TIMESTAMP > TIMESTAMP '-infinity') AND (v % 3 <> 0);
+
+statement ok
+SET disabled_optimizers = '';
+
+statement ok
+CREATE OR REPLACE TABLE got_ci AS
+SELECT 'last_day(ts)::TIMESTAMP = TIMESTAMP ''infinity''' AS shape, count(*) AS c, coalesce(sum(v), 0) AS s FROM ci WHERE last_day(ts)::TIMESTAMP = TIMESTAMP 'infinity'
+UNION ALL SELECT 'last_day(ts)::TIMESTAMP = TIMESTAMP ''-infinity''' AS shape, count(*) AS c, coalesce(sum(v), 0) AS s FROM ci WHERE last_day(ts)::TIMESTAMP = TIMESTAMP '-infinity'
+UNION ALL SELECT 'last_day(ts)::TIMESTAMP = TIMESTAMP ''2025-04-15 00:00:00''' AS shape, count(*) AS c, coalesce(sum(v), 0) AS s FROM ci WHERE last_day(ts)::TIMESTAMP = TIMESTAMP '2025-04-15 00:00:00'
+UNION ALL SELECT 'last_day(ts)::TIMESTAMP = TIMESTAMP ''2025-04-15 13:07:13''' AS shape, count(*) AS c, coalesce(sum(v), 0) AS s FROM ci WHERE last_day(ts)::TIMESTAMP = TIMESTAMP '2025-04-15 13:07:13'
+UNION ALL SELECT 'last_day(ts)::TIMESTAMP <> TIMESTAMP ''infinity''' AS shape, count(*) AS c, coalesce(sum(v), 0) AS s FROM ci WHERE last_day(ts)::TIMESTAMP <> TIMESTAMP 'infinity'
+UNION ALL SELECT 'last_day(ts)::TIMESTAMP <> TIMESTAMP ''-infinity''' AS shape, count(*) AS c, coalesce(sum(v), 0) AS s FROM ci WHERE last_day(ts)::TIMESTAMP <> TIMESTAMP '-infinity'
+UNION ALL SELECT 'last_day(ts)::TIMESTAMP <> TIMESTAMP ''2025-04-15 00:00:00''' AS shape, count(*) AS c, coalesce(sum(v), 0) AS s FROM ci WHERE last_day(ts)::TIMESTAMP <> TIMESTAMP '2025-04-15 00:00:00'
+UNION ALL SELECT 'last_day(ts)::TIMESTAMP <> TIMESTAMP ''2025-04-15 13:07:13''' AS shape, count(*) AS c, coalesce(sum(v), 0) AS s FROM ci WHERE last_day(ts)::TIMESTAMP <> TIMESTAMP '2025-04-15 13:07:13'
+UNION ALL SELECT 'last_day(ts)::TIMESTAMP < TIMESTAMP ''infinity''' AS shape, count(*) AS c, coalesce(sum(v), 0) AS s FROM ci WHERE last_day(ts)::TIMESTAMP < TIMESTAMP 'infinity'
+UNION ALL SELECT 'last_day(ts)::TIMESTAMP < TIMESTAMP ''-infinity''' AS shape, count(*) AS c, coalesce(sum(v), 0) AS s FROM ci WHERE last_day(ts)::TIMESTAMP < TIMESTAMP '-infinity'
+UNION ALL SELECT 'last_day(ts)::TIMESTAMP < TIMESTAMP ''2025-04-15 00:00:00''' AS shape, count(*) AS c, coalesce(sum(v), 0) AS s FROM ci WHERE last_day(ts)::TIMESTAMP < TIMESTAMP '2025-04-15 00:00:00'
+UNION ALL SELECT 'last_day(ts)::TIMESTAMP < TIMESTAMP ''2025-04-15 13:07:13''' AS shape, count(*) AS c, coalesce(sum(v), 0) AS s FROM ci WHERE last_day(ts)::TIMESTAMP < TIMESTAMP '2025-04-15 13:07:13'
+UNION ALL SELECT 'last_day(ts)::TIMESTAMP <= TIMESTAMP ''infinity''' AS shape, count(*) AS c, coalesce(sum(v), 0) AS s FROM ci WHERE last_day(ts)::TIMESTAMP <= TIMESTAMP 'infinity'
+UNION ALL SELECT 'last_day(ts)::TIMESTAMP <= TIMESTAMP ''-infinity''' AS shape, count(*) AS c, coalesce(sum(v), 0) AS s FROM ci WHERE last_day(ts)::TIMESTAMP <= TIMESTAMP '-infinity'
+UNION ALL SELECT 'last_day(ts)::TIMESTAMP <= TIMESTAMP ''2025-04-15 00:00:00''' AS shape, count(*) AS c, coalesce(sum(v), 0) AS s FROM ci WHERE last_day(ts)::TIMESTAMP <= TIMESTAMP '2025-04-15 00:00:00'
+UNION ALL SELECT 'last_day(ts)::TIMESTAMP <= TIMESTAMP ''2025-04-15 13:07:13''' AS shape, count(*) AS c, coalesce(sum(v), 0) AS s FROM ci WHERE last_day(ts)::TIMESTAMP <= TIMESTAMP '2025-04-15 13:07:13'
+UNION ALL SELECT 'last_day(ts)::TIMESTAMP > TIMESTAMP ''infinity''' AS shape, count(*) AS c, coalesce(sum(v), 0) AS s FROM ci WHERE last_day(ts)::TIMESTAMP > TIMESTAMP 'infinity'
+UNION ALL SELECT 'last_day(ts)::TIMESTAMP > TIMESTAMP ''-infinity''' AS shape, count(*) AS c, coalesce(sum(v), 0) AS s FROM ci WHERE last_day(ts)::TIMESTAMP > TIMESTAMP '-infinity'
+UNION ALL SELECT 'last_day(ts)::TIMESTAMP > TIMESTAMP ''2025-04-15 00:00:00''' AS shape, count(*) AS c, coalesce(sum(v), 0) AS s FROM ci WHERE last_day(ts)::TIMESTAMP > TIMESTAMP '2025-04-15 00:00:00'
+UNION ALL SELECT 'last_day(ts)::TIMESTAMP > TIMESTAMP ''2025-04-15 13:07:13''' AS shape, count(*) AS c, coalesce(sum(v), 0) AS s FROM ci WHERE last_day(ts)::TIMESTAMP > TIMESTAMP '2025-04-15 13:07:13'
+UNION ALL SELECT 'last_day(ts)::TIMESTAMP >= TIMESTAMP ''infinity''' AS shape, count(*) AS c, coalesce(sum(v), 0) AS s FROM ci WHERE last_day(ts)::TIMESTAMP >= TIMESTAMP 'infinity'
+UNION ALL SELECT 'last_day(ts)::TIMESTAMP >= TIMESTAMP ''-infinity''' AS shape, count(*) AS c, coalesce(sum(v), 0) AS s FROM ci WHERE last_day(ts)::TIMESTAMP >= TIMESTAMP '-infinity'
+UNION ALL SELECT 'last_day(ts)::TIMESTAMP >= TIMESTAMP ''2025-04-15 00:00:00''' AS shape, count(*) AS c, coalesce(sum(v), 0) AS s FROM ci WHERE last_day(ts)::TIMESTAMP >= TIMESTAMP '2025-04-15 00:00:00'
+UNION ALL SELECT 'last_day(ts)::TIMESTAMP >= TIMESTAMP ''2025-04-15 13:07:13''' AS shape, count(*) AS c, coalesce(sum(v), 0) AS s FROM ci WHERE last_day(ts)::TIMESTAMP >= TIMESTAMP '2025-04-15 13:07:13'
+UNION ALL SELECT 'd::TIMESTAMP = TIMESTAMP ''infinity''' AS shape, count(*) AS c, coalesce(sum(v), 0) AS s FROM ci WHERE d::TIMESTAMP = TIMESTAMP 'infinity'
+UNION ALL SELECT 'd::TIMESTAMP = TIMESTAMP ''-infinity''' AS shape, count(*) AS c, coalesce(sum(v), 0) AS s FROM ci WHERE d::TIMESTAMP = TIMESTAMP '-infinity'
+UNION ALL SELECT 'd::TIMESTAMP = TIMESTAMP ''2025-04-15 00:00:00''' AS shape, count(*) AS c, coalesce(sum(v), 0) AS s FROM ci WHERE d::TIMESTAMP = TIMESTAMP '2025-04-15 00:00:00'
+UNION ALL SELECT 'd::TIMESTAMP = TIMESTAMP ''2025-04-15 13:07:13''' AS shape, count(*) AS c, coalesce(sum(v), 0) AS s FROM ci WHERE d::TIMESTAMP = TIMESTAMP '2025-04-15 13:07:13'
+UNION ALL SELECT 'd::TIMESTAMP <> TIMESTAMP ''infinity''' AS shape, count(*) AS c, coalesce(sum(v), 0) AS s FROM ci WHERE d::TIMESTAMP <> TIMESTAMP 'infinity'
+UNION ALL SELECT 'd::TIMESTAMP <> TIMESTAMP ''-infinity''' AS shape, count(*) AS c, coalesce(sum(v), 0) AS s FROM ci WHERE d::TIMESTAMP <> TIMESTAMP '-infinity'
+UNION ALL SELECT 'd::TIMESTAMP <> TIMESTAMP ''2025-04-15 00:00:00''' AS shape, count(*) AS c, coalesce(sum(v), 0) AS s FROM ci WHERE d::TIMESTAMP <> TIMESTAMP '2025-04-15 00:00:00'
+UNION ALL SELECT 'd::TIMESTAMP <> TIMESTAMP ''2025-04-15 13:07:13''' AS shape, count(*) AS c, coalesce(sum(v), 0) AS s FROM ci WHERE d::TIMESTAMP <> TIMESTAMP '2025-04-15 13:07:13'
+UNION ALL SELECT 'd::TIMESTAMP < TIMESTAMP ''infinity''' AS shape, count(*) AS c, coalesce(sum(v), 0) AS s FROM ci WHERE d::TIMESTAMP < TIMESTAMP 'infinity'
+UNION ALL SELECT 'd::TIMESTAMP < TIMESTAMP ''-infinity''' AS shape, count(*) AS c, coalesce(sum(v), 0) AS s FROM ci WHERE d::TIMESTAMP < TIMESTAMP '-infinity'
+UNION ALL SELECT 'd::TIMESTAMP < TIMESTAMP ''2025-04-15 00:00:00''' AS shape, count(*) AS c, coalesce(sum(v), 0) AS s FROM ci WHERE d::TIMESTAMP < TIMESTAMP '2025-04-15 00:00:00'
+UNION ALL SELECT 'd::TIMESTAMP < TIMESTAMP ''2025-04-15 13:07:13''' AS shape, count(*) AS c, coalesce(sum(v), 0) AS s FROM ci WHERE d::TIMESTAMP < TIMESTAMP '2025-04-15 13:07:13'
+UNION ALL SELECT 'd::TIMESTAMP <= TIMESTAMP ''infinity''' AS shape, count(*) AS c, coalesce(sum(v), 0) AS s FROM ci WHERE d::TIMESTAMP <= TIMESTAMP 'infinity'
+UNION ALL SELECT 'd::TIMESTAMP <= TIMESTAMP ''-infinity''' AS shape, count(*) AS c, coalesce(sum(v), 0) AS s FROM ci WHERE d::TIMESTAMP <= TIMESTAMP '-infinity'
+UNION ALL SELECT 'd::TIMESTAMP <= TIMESTAMP ''2025-04-15 00:00:00''' AS shape, count(*) AS c, coalesce(sum(v), 0) AS s FROM ci WHERE d::TIMESTAMP <= TIMESTAMP '2025-04-15 00:00:00'
+UNION ALL SELECT 'd::TIMESTAMP <= TIMESTAMP ''2025-04-15 13:07:13''' AS shape, count(*) AS c, coalesce(sum(v), 0) AS s FROM ci WHERE d::TIMESTAMP <= TIMESTAMP '2025-04-15 13:07:13'
+UNION ALL SELECT 'd::TIMESTAMP > TIMESTAMP ''infinity''' AS shape, count(*) AS c, coalesce(sum(v), 0) AS s FROM ci WHERE d::TIMESTAMP > TIMESTAMP 'infinity'
+UNION ALL SELECT 'd::TIMESTAMP > TIMESTAMP ''-infinity''' AS shape, count(*) AS c, coalesce(sum(v), 0) AS s FROM ci WHERE d::TIMESTAMP > TIMESTAMP '-infinity'
+UNION ALL SELECT 'd::TIMESTAMP > TIMESTAMP ''2025-04-15 00:00:00''' AS shape, count(*) AS c, coalesce(sum(v), 0) AS s FROM ci WHERE d::TIMESTAMP > TIMESTAMP '2025-04-15 00:00:00'
+UNION ALL SELECT 'd::TIMESTAMP > TIMESTAMP ''2025-04-15 13:07:13''' AS shape, count(*) AS c, coalesce(sum(v), 0) AS s FROM ci WHERE d::TIMESTAMP > TIMESTAMP '2025-04-15 13:07:13'
+UNION ALL SELECT 'd::TIMESTAMP >= TIMESTAMP ''infinity''' AS shape, count(*) AS c, coalesce(sum(v), 0) AS s FROM ci WHERE d::TIMESTAMP >= TIMESTAMP 'infinity'
+UNION ALL SELECT 'd::TIMESTAMP >= TIMESTAMP ''-infinity''' AS shape, count(*) AS c, coalesce(sum(v), 0) AS s FROM ci WHERE d::TIMESTAMP >= TIMESTAMP '-infinity'
+UNION ALL SELECT 'd::TIMESTAMP >= TIMESTAMP ''2025-04-15 00:00:00''' AS shape, count(*) AS c, coalesce(sum(v), 0) AS s FROM ci WHERE d::TIMESTAMP >= TIMESTAMP '2025-04-15 00:00:00'
+UNION ALL SELECT 'd::TIMESTAMP >= TIMESTAMP ''2025-04-15 13:07:13''' AS shape, count(*) AS c, coalesce(sum(v), 0) AS s FROM ci WHERE d::TIMESTAMP >= TIMESTAMP '2025-04-15 13:07:13'
+UNION ALL SELECT 'date_trunc(''month'', ts)::DATE::TIMESTAMP = TIMESTAMP ''infinity''' AS shape, count(*) AS c, coalesce(sum(v), 0) AS s FROM ci WHERE date_trunc('month', ts)::DATE::TIMESTAMP = TIMESTAMP 'infinity'
+UNION ALL SELECT 'date_trunc(''month'', ts)::DATE::TIMESTAMP = TIMESTAMP ''-infinity''' AS shape, count(*) AS c, coalesce(sum(v), 0) AS s FROM ci WHERE date_trunc('month', ts)::DATE::TIMESTAMP = TIMESTAMP '-infinity'
+UNION ALL SELECT 'date_trunc(''month'', ts)::DATE::TIMESTAMP = TIMESTAMP ''2025-04-15 00:00:00''' AS shape, count(*) AS c, coalesce(sum(v), 0) AS s FROM ci WHERE date_trunc('month', ts)::DATE::TIMESTAMP = TIMESTAMP '2025-04-15 00:00:00'
+UNION ALL SELECT 'date_trunc(''month'', ts)::DATE::TIMESTAMP = TIMESTAMP ''2025-04-15 13:07:13''' AS shape, count(*) AS c, coalesce(sum(v), 0) AS s FROM ci WHERE date_trunc('month', ts)::DATE::TIMESTAMP = TIMESTAMP '2025-04-15 13:07:13'
+UNION ALL SELECT 'date_trunc(''month'', ts)::DATE::TIMESTAMP <> TIMESTAMP ''infinity''' AS shape, count(*) AS c, coalesce(sum(v), 0) AS s FROM ci WHERE date_trunc('month', ts)::DATE::TIMESTAMP <> TIMESTAMP 'infinity'
+UNION ALL SELECT 'date_trunc(''month'', ts)::DATE::TIMESTAMP <> TIMESTAMP ''-infinity''' AS shape, count(*) AS c, coalesce(sum(v), 0) AS s FROM ci WHERE date_trunc('month', ts)::DATE::TIMESTAMP <> TIMESTAMP '-infinity'
+UNION ALL SELECT 'date_trunc(''month'', ts)::DATE::TIMESTAMP <> TIMESTAMP ''2025-04-15 00:00:00''' AS shape, count(*) AS c, coalesce(sum(v), 0) AS s FROM ci WHERE date_trunc('month', ts)::DATE::TIMESTAMP <> TIMESTAMP '2025-04-15 00:00:00'
+UNION ALL SELECT 'date_trunc(''month'', ts)::DATE::TIMESTAMP <> TIMESTAMP ''2025-04-15 13:07:13''' AS shape, count(*) AS c, coalesce(sum(v), 0) AS s FROM ci WHERE date_trunc('month', ts)::DATE::TIMESTAMP <> TIMESTAMP '2025-04-15 13:07:13'
+UNION ALL SELECT 'date_trunc(''month'', ts)::DATE::TIMESTAMP < TIMESTAMP ''infinity''' AS shape, count(*) AS c, coalesce(sum(v), 0) AS s FROM ci WHERE date_trunc('month', ts)::DATE::TIMESTAMP < TIMESTAMP 'infinity'
+UNION ALL SELECT 'date_trunc(''month'', ts)::DATE::TIMESTAMP < TIMESTAMP ''-infinity''' AS shape, count(*) AS c, coalesce(sum(v), 0) AS s FROM ci WHERE date_trunc('month', ts)::DATE::TIMESTAMP < TIMESTAMP '-infinity'
+UNION ALL SELECT 'date_trunc(''month'', ts)::DATE::TIMESTAMP < TIMESTAMP ''2025-04-15 00:00:00''' AS shape, count(*) AS c, coalesce(sum(v), 0) AS s FROM ci WHERE date_trunc('month', ts)::DATE::TIMESTAMP < TIMESTAMP '2025-04-15 00:00:00'
+UNION ALL SELECT 'date_trunc(''month'', ts)::DATE::TIMESTAMP < TIMESTAMP ''2025-04-15 13:07:13''' AS shape, count(*) AS c, coalesce(sum(v), 0) AS s FROM ci WHERE date_trunc('month', ts)::DATE::TIMESTAMP < TIMESTAMP '2025-04-15 13:07:13'
+UNION ALL SELECT 'date_trunc(''month'', ts)::DATE::TIMESTAMP <= TIMESTAMP ''infinity''' AS shape, count(*) AS c, coalesce(sum(v), 0) AS s FROM ci WHERE date_trunc('month', ts)::DATE::TIMESTAMP <= TIMESTAMP 'infinity'
+UNION ALL SELECT 'date_trunc(''month'', ts)::DATE::TIMESTAMP <= TIMESTAMP ''-infinity''' AS shape, count(*) AS c, coalesce(sum(v), 0) AS s FROM ci WHERE date_trunc('month', ts)::DATE::TIMESTAMP <= TIMESTAMP '-infinity'
+UNION ALL SELECT 'date_trunc(''month'', ts)::DATE::TIMESTAMP <= TIMESTAMP ''2025-04-15 00:00:00''' AS shape, count(*) AS c, coalesce(sum(v), 0) AS s FROM ci WHERE date_trunc('month', ts)::DATE::TIMESTAMP <= TIMESTAMP '2025-04-15 00:00:00'
+UNION ALL SELECT 'date_trunc(''month'', ts)::DATE::TIMESTAMP <= TIMESTAMP ''2025-04-15 13:07:13''' AS shape, count(*) AS c, coalesce(sum(v), 0) AS s FROM ci WHERE date_trunc('month', ts)::DATE::TIMESTAMP <= TIMESTAMP '2025-04-15 13:07:13'
+UNION ALL SELECT 'date_trunc(''month'', ts)::DATE::TIMESTAMP > TIMESTAMP ''infinity''' AS shape, count(*) AS c, coalesce(sum(v), 0) AS s FROM ci WHERE date_trunc('month', ts)::DATE::TIMESTAMP > TIMESTAMP 'infinity'
+UNION ALL SELECT 'date_trunc(''month'', ts)::DATE::TIMESTAMP > TIMESTAMP ''-infinity''' AS shape, count(*) AS c, coalesce(sum(v), 0) AS s FROM ci WHERE date_trunc('month', ts)::DATE::TIMESTAMP > TIMESTAMP '-infinity'
+UNION ALL SELECT 'date_trunc(''month'', ts)::DATE::TIMESTAMP > TIMESTAMP ''2025-04-15 00:00:00''' AS shape, count(*) AS c, coalesce(sum(v), 0) AS s FROM ci WHERE date_trunc('month', ts)::DATE::TIMESTAMP > TIMESTAMP '2025-04-15 00:00:00'
+UNION ALL SELECT 'date_trunc(''month'', ts)::DATE::TIMESTAMP > TIMESTAMP ''2025-04-15 13:07:13''' AS shape, count(*) AS c, coalesce(sum(v), 0) AS s FROM ci WHERE date_trunc('month', ts)::DATE::TIMESTAMP > TIMESTAMP '2025-04-15 13:07:13'
+UNION ALL SELECT 'date_trunc(''month'', ts)::DATE::TIMESTAMP >= TIMESTAMP ''infinity''' AS shape, count(*) AS c, coalesce(sum(v), 0) AS s FROM ci WHERE date_trunc('month', ts)::DATE::TIMESTAMP >= TIMESTAMP 'infinity'
+UNION ALL SELECT 'date_trunc(''month'', ts)::DATE::TIMESTAMP >= TIMESTAMP ''-infinity''' AS shape, count(*) AS c, coalesce(sum(v), 0) AS s FROM ci WHERE date_trunc('month', ts)::DATE::TIMESTAMP >= TIMESTAMP '-infinity'
+UNION ALL SELECT 'date_trunc(''month'', ts)::DATE::TIMESTAMP >= TIMESTAMP ''2025-04-15 00:00:00''' AS shape, count(*) AS c, coalesce(sum(v), 0) AS s FROM ci WHERE date_trunc('month', ts)::DATE::TIMESTAMP >= TIMESTAMP '2025-04-15 00:00:00'
+UNION ALL SELECT 'date_trunc(''month'', ts)::DATE::TIMESTAMP >= TIMESTAMP ''2025-04-15 13:07:13''' AS shape, count(*) AS c, coalesce(sum(v), 0) AS s FROM ci WHERE date_trunc('month', ts)::DATE::TIMESTAMP >= TIMESTAMP '2025-04-15 13:07:13'
+UNION ALL SELECT 'last_day(ts)::TIMESTAMPTZ = TIMESTAMPTZ ''infinity''' AS shape, count(*) AS c, coalesce(sum(v), 0) AS s FROM ci WHERE last_day(ts)::TIMESTAMPTZ = TIMESTAMPTZ 'infinity'
+UNION ALL SELECT 'last_day(ts)::TIMESTAMPTZ = TIMESTAMPTZ ''-infinity''' AS shape, count(*) AS c, coalesce(sum(v), 0) AS s FROM ci WHERE last_day(ts)::TIMESTAMPTZ = TIMESTAMPTZ '-infinity'
+UNION ALL SELECT 'last_day(ts)::TIMESTAMPTZ = TIMESTAMPTZ ''2025-04-15 00:00:00+00''' AS shape, count(*) AS c, coalesce(sum(v), 0) AS s FROM ci WHERE last_day(ts)::TIMESTAMPTZ = TIMESTAMPTZ '2025-04-15 00:00:00+00'
+UNION ALL SELECT 'last_day(ts)::TIMESTAMPTZ = TIMESTAMPTZ ''2025-04-15 13:07:13+00''' AS shape, count(*) AS c, coalesce(sum(v), 0) AS s FROM ci WHERE last_day(ts)::TIMESTAMPTZ = TIMESTAMPTZ '2025-04-15 13:07:13+00'
+UNION ALL SELECT 'last_day(ts)::TIMESTAMPTZ <> TIMESTAMPTZ ''infinity''' AS shape, count(*) AS c, coalesce(sum(v), 0) AS s FROM ci WHERE last_day(ts)::TIMESTAMPTZ <> TIMESTAMPTZ 'infinity'
+UNION ALL SELECT 'last_day(ts)::TIMESTAMPTZ <> TIMESTAMPTZ ''-infinity''' AS shape, count(*) AS c, coalesce(sum(v), 0) AS s FROM ci WHERE last_day(ts)::TIMESTAMPTZ <> TIMESTAMPTZ '-infinity'
+UNION ALL SELECT 'last_day(ts)::TIMESTAMPTZ <> TIMESTAMPTZ ''2025-04-15 00:00:00+00''' AS shape, count(*) AS c, coalesce(sum(v), 0) AS s FROM ci WHERE last_day(ts)::TIMESTAMPTZ <> TIMESTAMPTZ '2025-04-15 00:00:00+00'
+UNION ALL SELECT 'last_day(ts)::TIMESTAMPTZ <> TIMESTAMPTZ ''2025-04-15 13:07:13+00''' AS shape, count(*) AS c, coalesce(sum(v), 0) AS s FROM ci WHERE last_day(ts)::TIMESTAMPTZ <> TIMESTAMPTZ '2025-04-15 13:07:13+00'
+UNION ALL SELECT 'last_day(ts)::TIMESTAMPTZ < TIMESTAMPTZ ''infinity''' AS shape, count(*) AS c, coalesce(sum(v), 0) AS s FROM ci WHERE last_day(ts)::TIMESTAMPTZ < TIMESTAMPTZ 'infinity'
+UNION ALL SELECT 'last_day(ts)::TIMESTAMPTZ < TIMESTAMPTZ ''-infinity''' AS shape, count(*) AS c, coalesce(sum(v), 0) AS s FROM ci WHERE last_day(ts)::TIMESTAMPTZ < TIMESTAMPTZ '-infinity'
+UNION ALL SELECT 'last_day(ts)::TIMESTAMPTZ < TIMESTAMPTZ ''2025-04-15 00:00:00+00''' AS shape, count(*) AS c, coalesce(sum(v), 0) AS s FROM ci WHERE last_day(ts)::TIMESTAMPTZ < TIMESTAMPTZ '2025-04-15 00:00:00+00'
+UNION ALL SELECT 'last_day(ts)::TIMESTAMPTZ < TIMESTAMPTZ ''2025-04-15 13:07:13+00''' AS shape, count(*) AS c, coalesce(sum(v), 0) AS s FROM ci WHERE last_day(ts)::TIMESTAMPTZ < TIMESTAMPTZ '2025-04-15 13:07:13+00'
+UNION ALL SELECT 'last_day(ts)::TIMESTAMPTZ <= TIMESTAMPTZ ''infinity''' AS shape, count(*) AS c, coalesce(sum(v), 0) AS s FROM ci WHERE last_day(ts)::TIMESTAMPTZ <= TIMESTAMPTZ 'infinity'
+UNION ALL SELECT 'last_day(ts)::TIMESTAMPTZ <= TIMESTAMPTZ ''-infinity''' AS shape, count(*) AS c, coalesce(sum(v), 0) AS s FROM ci WHERE last_day(ts)::TIMESTAMPTZ <= TIMESTAMPTZ '-infinity'
+UNION ALL SELECT 'last_day(ts)::TIMESTAMPTZ <= TIMESTAMPTZ ''2025-04-15 00:00:00+00''' AS shape, count(*) AS c, coalesce(sum(v), 0) AS s FROM ci WHERE last_day(ts)::TIMESTAMPTZ <= TIMESTAMPTZ '2025-04-15 00:00:00+00'
+UNION ALL SELECT 'last_day(ts)::TIMESTAMPTZ <= TIMESTAMPTZ ''2025-04-15 13:07:13+00''' AS shape, count(*) AS c, coalesce(sum(v), 0) AS s FROM ci WHERE last_day(ts)::TIMESTAMPTZ <= TIMESTAMPTZ '2025-04-15 13:07:13+00'
+UNION ALL SELECT 'last_day(ts)::TIMESTAMPTZ > TIMESTAMPTZ ''infinity''' AS shape, count(*) AS c, coalesce(sum(v), 0) AS s FROM ci WHERE last_day(ts)::TIMESTAMPTZ > TIMESTAMPTZ 'infinity'
+UNION ALL SELECT 'last_day(ts)::TIMESTAMPTZ > TIMESTAMPTZ ''-infinity''' AS shape, count(*) AS c, coalesce(sum(v), 0) AS s FROM ci WHERE last_day(ts)::TIMESTAMPTZ > TIMESTAMPTZ '-infinity'
+UNION ALL SELECT 'last_day(ts)::TIMESTAMPTZ > TIMESTAMPTZ ''2025-04-15 00:00:00+00''' AS shape, count(*) AS c, coalesce(sum(v), 0) AS s FROM ci WHERE last_day(ts)::TIMESTAMPTZ > TIMESTAMPTZ '2025-04-15 00:00:00+00'
+UNION ALL SELECT 'last_day(ts)::TIMESTAMPTZ > TIMESTAMPTZ ''2025-04-15 13:07:13+00''' AS shape, count(*) AS c, coalesce(sum(v), 0) AS s FROM ci WHERE last_day(ts)::TIMESTAMPTZ > TIMESTAMPTZ '2025-04-15 13:07:13+00'
+UNION ALL SELECT 'last_day(ts)::TIMESTAMPTZ >= TIMESTAMPTZ ''infinity''' AS shape, count(*) AS c, coalesce(sum(v), 0) AS s FROM ci WHERE last_day(ts)::TIMESTAMPTZ >= TIMESTAMPTZ 'infinity'
+UNION ALL SELECT 'last_day(ts)::TIMESTAMPTZ >= TIMESTAMPTZ ''-infinity''' AS shape, count(*) AS c, coalesce(sum(v), 0) AS s FROM ci WHERE last_day(ts)::TIMESTAMPTZ >= TIMESTAMPTZ '-infinity'
+UNION ALL SELECT 'last_day(ts)::TIMESTAMPTZ >= TIMESTAMPTZ ''2025-04-15 00:00:00+00''' AS shape, count(*) AS c, coalesce(sum(v), 0) AS s FROM ci WHERE last_day(ts)::TIMESTAMPTZ >= TIMESTAMPTZ '2025-04-15 00:00:00+00'
+UNION ALL SELECT 'last_day(ts)::TIMESTAMPTZ >= TIMESTAMPTZ ''2025-04-15 13:07:13+00''' AS shape, count(*) AS c, coalesce(sum(v), 0) AS s FROM ci WHERE last_day(ts)::TIMESTAMPTZ >= TIMESTAMPTZ '2025-04-15 13:07:13+00'
+UNION ALL SELECT 'd::TIMESTAMPTZ = TIMESTAMPTZ ''infinity''' AS shape, count(*) AS c, coalesce(sum(v), 0) AS s FROM ci WHERE d::TIMESTAMPTZ = TIMESTAMPTZ 'infinity'
+UNION ALL SELECT 'd::TIMESTAMPTZ = TIMESTAMPTZ ''-infinity''' AS shape, count(*) AS c, coalesce(sum(v), 0) AS s FROM ci WHERE d::TIMESTAMPTZ = TIMESTAMPTZ '-infinity'
+UNION ALL SELECT 'd::TIMESTAMPTZ = TIMESTAMPTZ ''2025-04-15 00:00:00+00''' AS shape, count(*) AS c, coalesce(sum(v), 0) AS s FROM ci WHERE d::TIMESTAMPTZ = TIMESTAMPTZ '2025-04-15 00:00:00+00'
+UNION ALL SELECT 'd::TIMESTAMPTZ = TIMESTAMPTZ ''2025-04-15 13:07:13+00''' AS shape, count(*) AS c, coalesce(sum(v), 0) AS s FROM ci WHERE d::TIMESTAMPTZ = TIMESTAMPTZ '2025-04-15 13:07:13+00'
+UNION ALL SELECT 'd::TIMESTAMPTZ <> TIMESTAMPTZ ''infinity''' AS shape, count(*) AS c, coalesce(sum(v), 0) AS s FROM ci WHERE d::TIMESTAMPTZ <> TIMESTAMPTZ 'infinity'
+UNION ALL SELECT 'd::TIMESTAMPTZ <> TIMESTAMPTZ ''-infinity''' AS shape, count(*) AS c, coalesce(sum(v), 0) AS s FROM ci WHERE d::TIMESTAMPTZ <> TIMESTAMPTZ '-infinity'
+UNION ALL SELECT 'd::TIMESTAMPTZ <> TIMESTAMPTZ ''2025-04-15 00:00:00+00''' AS shape, count(*) AS c, coalesce(sum(v), 0) AS s FROM ci WHERE d::TIMESTAMPTZ <> TIMESTAMPTZ '2025-04-15 00:00:00+00'
+UNION ALL SELECT 'd::TIMESTAMPTZ <> TIMESTAMPTZ ''2025-04-15 13:07:13+00''' AS shape, count(*) AS c, coalesce(sum(v), 0) AS s FROM ci WHERE d::TIMESTAMPTZ <> TIMESTAMPTZ '2025-04-15 13:07:13+00'
+UNION ALL SELECT 'd::TIMESTAMPTZ < TIMESTAMPTZ ''infinity''' AS shape, count(*) AS c, coalesce(sum(v), 0) AS s FROM ci WHERE d::TIMESTAMPTZ < TIMESTAMPTZ 'infinity'
+UNION ALL SELECT 'd::TIMESTAMPTZ < TIMESTAMPTZ ''-infinity''' AS shape, count(*) AS c, coalesce(sum(v), 0) AS s FROM ci WHERE d::TIMESTAMPTZ < TIMESTAMPTZ '-infinity'
+UNION ALL SELECT 'd::TIMESTAMPTZ < TIMESTAMPTZ ''2025-04-15 00:00:00+00''' AS shape, count(*) AS c, coalesce(sum(v), 0) AS s FROM ci WHERE d::TIMESTAMPTZ < TIMESTAMPTZ '2025-04-15 00:00:00+00'
+UNION ALL SELECT 'd::TIMESTAMPTZ < TIMESTAMPTZ ''2025-04-15 13:07:13+00''' AS shape, count(*) AS c, coalesce(sum(v), 0) AS s FROM ci WHERE d::TIMESTAMPTZ < TIMESTAMPTZ '2025-04-15 13:07:13+00'
+UNION ALL SELECT 'd::TIMESTAMPTZ <= TIMESTAMPTZ ''infinity''' AS shape, count(*) AS c, coalesce(sum(v), 0) AS s FROM ci WHERE d::TIMESTAMPTZ <= TIMESTAMPTZ 'infinity'
+UNION ALL SELECT 'd::TIMESTAMPTZ <= TIMESTAMPTZ ''-infinity''' AS shape, count(*) AS c, coalesce(sum(v), 0) AS s FROM ci WHERE d::TIMESTAMPTZ <= TIMESTAMPTZ '-infinity'
+UNION ALL SELECT 'd::TIMESTAMPTZ <= TIMESTAMPTZ ''2025-04-15 00:00:00+00''' AS shape, count(*) AS c, coalesce(sum(v), 0) AS s FROM ci WHERE d::TIMESTAMPTZ <= TIMESTAMPTZ '2025-04-15 00:00:00+00'
+UNION ALL SELECT 'd::TIMESTAMPTZ <= TIMESTAMPTZ ''2025-04-15 13:07:13+00''' AS shape, count(*) AS c, coalesce(sum(v), 0) AS s FROM ci WHERE d::TIMESTAMPTZ <= TIMESTAMPTZ '2025-04-15 13:07:13+00'
+UNION ALL SELECT 'd::TIMESTAMPTZ > TIMESTAMPTZ ''infinity''' AS shape, count(*) AS c, coalesce(sum(v), 0) AS s FROM ci WHERE d::TIMESTAMPTZ > TIMESTAMPTZ 'infinity'
+UNION ALL SELECT 'd::TIMESTAMPTZ > TIMESTAMPTZ ''-infinity''' AS shape, count(*) AS c, coalesce(sum(v), 0) AS s FROM ci WHERE d::TIMESTAMPTZ > TIMESTAMPTZ '-infinity'
+UNION ALL SELECT 'd::TIMESTAMPTZ > TIMESTAMPTZ ''2025-04-15 00:00:00+00''' AS shape, count(*) AS c, coalesce(sum(v), 0) AS s FROM ci WHERE d::TIMESTAMPTZ > TIMESTAMPTZ '2025-04-15 00:00:00+00'
+UNION ALL SELECT 'd::TIMESTAMPTZ > TIMESTAMPTZ ''2025-04-15 13:07:13+00''' AS shape, count(*) AS c, coalesce(sum(v), 0) AS s FROM ci WHERE d::TIMESTAMPTZ > TIMESTAMPTZ '2025-04-15 13:07:13+00'
+UNION ALL SELECT 'd::TIMESTAMPTZ >= TIMESTAMPTZ ''infinity''' AS shape, count(*) AS c, coalesce(sum(v), 0) AS s FROM ci WHERE d::TIMESTAMPTZ >= TIMESTAMPTZ 'infinity'
+UNION ALL SELECT 'd::TIMESTAMPTZ >= TIMESTAMPTZ ''-infinity''' AS shape, count(*) AS c, coalesce(sum(v), 0) AS s FROM ci WHERE d::TIMESTAMPTZ >= TIMESTAMPTZ '-infinity'
+UNION ALL SELECT 'd::TIMESTAMPTZ >= TIMESTAMPTZ ''2025-04-15 00:00:00+00''' AS shape, count(*) AS c, coalesce(sum(v), 0) AS s FROM ci WHERE d::TIMESTAMPTZ >= TIMESTAMPTZ '2025-04-15 00:00:00+00'
+UNION ALL SELECT 'd::TIMESTAMPTZ >= TIMESTAMPTZ ''2025-04-15 13:07:13+00''' AS shape, count(*) AS c, coalesce(sum(v), 0) AS s FROM ci WHERE d::TIMESTAMPTZ >= TIMESTAMPTZ '2025-04-15 13:07:13+00'
+UNION ALL SELECT 'last_day(ts)::TIMESTAMP BETWEEN TIMESTAMP ''-infinity'' AND TIMESTAMP ''infinity''' AS shape, count(*) AS c, coalesce(sum(v), 0) AS s FROM ci WHERE last_day(ts)::TIMESTAMP BETWEEN TIMESTAMP '-infinity' AND TIMESTAMP 'infinity'
+UNION ALL SELECT 'last_day(ts)::TIMESTAMP NOT BETWEEN TIMESTAMP ''2025-01-01 12:00:00'' AND TIMESTAMP ''infinity''' AS shape, count(*) AS c, coalesce(sum(v), 0) AS s FROM ci WHERE last_day(ts)::TIMESTAMP NOT BETWEEN TIMESTAMP '2025-01-01 12:00:00' AND TIMESTAMP 'infinity'
+UNION ALL SELECT 'last_day(ts)::TIMESTAMP IN (TIMESTAMP ''infinity'', TIMESTAMP ''2025-04-30 00:00:00'')' AS shape, count(*) AS c, coalesce(sum(v), 0) AS s FROM ci WHERE last_day(ts)::TIMESTAMP IN (TIMESTAMP 'infinity', TIMESTAMP '2025-04-30 00:00:00')
+UNION ALL SELECT 'last_day(ts)::TIMESTAMP NOT IN (TIMESTAMP ''infinity'', TIMESTAMP ''2025-04-30 13:07:13'')' AS shape, count(*) AS c, coalesce(sum(v), 0) AS s FROM ci WHERE last_day(ts)::TIMESTAMP NOT IN (TIMESTAMP 'infinity', TIMESTAMP '2025-04-30 13:07:13')
+UNION ALL SELECT 'NOT (last_day(ts)::TIMESTAMP <= TIMESTAMP ''infinity'')' AS shape, count(*) AS c, coalesce(sum(v), 0) AS s FROM ci WHERE NOT (last_day(ts)::TIMESTAMP <= TIMESTAMP 'infinity')
+UNION ALL SELECT 'd::TIMESTAMP IS DISTINCT FROM TIMESTAMP ''infinity''' AS shape, count(*) AS c, coalesce(sum(v), 0) AS s FROM ci WHERE d::TIMESTAMP IS DISTINCT FROM TIMESTAMP 'infinity'
+UNION ALL SELECT 'd::TIMESTAMP IS NOT DISTINCT FROM TIMESTAMP ''-infinity''' AS shape, count(*) AS c, coalesce(sum(v), 0) AS s FROM ci WHERE d::TIMESTAMP IS NOT DISTINCT FROM TIMESTAMP '-infinity'
+UNION ALL SELECT '(last_day(ts)::TIMESTAMP > TIMESTAMP ''-infinity'') AND (v % 3 <> 0)' AS shape, count(*) AS c, coalesce(sum(v), 0) AS s FROM ci WHERE (last_day(ts)::TIMESTAMP > TIMESTAMP '-infinity') AND (v % 3 <> 0);
+
+query
+SELECT count(*) AS rows, count(DISTINCT shape) AS shapes,
+	(SELECT count(*) FROM (SELECT * FROM ref_ci EXCEPT ALL SELECT * FROM got_ci)) AS lost,
+	(SELECT count(*) FROM (SELECT * FROM got_ci EXCEPT ALL SELECT * FROM ref_ci)) AS gained
+FROM ref_ci;
+----
+rows	shapes	lost	gained
+128	128	0	0
+
+query
+SELECT shape, c, s FROM got_ci WHERE shape LIKE '%infinity%' ORDER BY shape LIMIT 24;
+----
+shape	c	s
+(last_day(ts)::TIMESTAMP > TIMESTAMP '-infinity') AND (v % 3 <> 0)	333	83167
+NOT (last_day(ts)::TIMESTAMP <= TIMESTAMP 'infinity')	0	0
+d::TIMESTAMP < TIMESTAMP '-infinity'	0	0
+d::TIMESTAMP < TIMESTAMP 'infinity'	501	124747
+d::TIMESTAMP <= TIMESTAMP '-infinity'	1	-3
+d::TIMESTAMP <= TIMESTAMP 'infinity'	502	124745
+d::TIMESTAMP <> TIMESTAMP '-infinity'	501	124748
+d::TIMESTAMP <> TIMESTAMP 'infinity'	501	124747
+d::TIMESTAMP = TIMESTAMP '-infinity'	1	-3
+d::TIMESTAMP = TIMESTAMP 'infinity'	1	-2
+d::TIMESTAMP > TIMESTAMP '-infinity'	501	124748
+d::TIMESTAMP > TIMESTAMP 'infinity'	0	0
+d::TIMESTAMP >= TIMESTAMP '-infinity'	502	124745
+d::TIMESTAMP >= TIMESTAMP 'infinity'	1	-2
+d::TIMESTAMP IS DISTINCT FROM TIMESTAMP 'infinity'	502	124746
+d::TIMESTAMP IS NOT DISTINCT FROM TIMESTAMP '-infinity'	1	-3
+d::TIMESTAMPTZ < TIMESTAMPTZ '-infinity'	0	0
+d::TIMESTAMPTZ < TIMESTAMPTZ 'infinity'	501	124747
+d::TIMESTAMPTZ <= TIMESTAMPTZ '-infinity'	1	-3
+d::TIMESTAMPTZ <= TIMESTAMPTZ 'infinity'	502	124745
+d::TIMESTAMPTZ <> TIMESTAMPTZ '-infinity'	501	124748
+d::TIMESTAMPTZ <> TIMESTAMPTZ 'infinity'	501	124747
+d::TIMESTAMPTZ = TIMESTAMPTZ '-infinity'	1	-3
+d::TIMESTAMPTZ = TIMESTAMPTZ 'infinity'	1	-2
+
+statement ok
+SET TimeZone = 'Etc/UTC';

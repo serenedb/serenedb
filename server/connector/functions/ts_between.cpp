@@ -76,7 +76,7 @@ void FillByRangeOptionsVarchar(const RangeArgs& args,
   }
 }
 
-void FromHalfRange(irs::BooleanFilter& parent, const FilterContext& ctx,
+void FromHalfRange(BoolTarget parent, const FilterContext& ctx,
                    const SearchColumnInfo& column_info,
                    const duckdb::BoundFunctionExpression& func,
                    std::string_view label, bool is_lower, bool inclusive) {
@@ -159,8 +159,8 @@ void FromHalfRange(irs::BooleanFilter& parent, const FilterContext& ctx,
     auto& range = AddMaybeNegated<irs::ByRange>(parent, ctx, column_info);
     *range.mutable_field_id() = PickPerKindFieldId(column_info, col_type);
     range.SetBoost(ctx.boost);
+    SetLeafScorer(range, column_info);
     auto* options = range.mutable_options();
-    options->scored_terms_limit = ctx.scored_terms_limit;
     auto& rng = options->range;
     if (is_lower) {
       rng.min.assign(token->value);
@@ -184,8 +184,8 @@ void FromHalfRange(irs::BooleanFilter& parent, const FilterContext& ctx,
     auto& range = AddMaybeNegated<irs::ByRange>(parent, ctx, column_info);
     *range.mutable_field_id() = PickPerKindFieldId(column_info, col_type);
     range.SetBoost(ctx.boost);
+    SetLeafScorer(range, column_info);
     auto* options = range.mutable_options();
-    options->scored_terms_limit = ctx.scored_terms_limit;
     auto& rng = options->range;
     auto bytes = irs::ViewCast<irs::byte_type>(
       irs::BooleanTokenizer::value(bound_val->GetValue<bool>()));
@@ -202,8 +202,8 @@ void FromHalfRange(irs::BooleanFilter& parent, const FilterContext& ctx,
   auto& range = AddMaybeNegated<irs::ByGranularRange>(parent, ctx, column_info);
   *range.mutable_field_id() = PickPerKindFieldId(column_info, col_type);
   range.SetBoost(ctx.boost);
+  SetLeafScorer(range, column_info);
   auto* options = range.mutable_options();
-  options->scored_terms_limit = ctx.scored_terms_limit;
   auto& rng = options->range;
   auto cast = bound_val->type() == column_info.logical_type
                 ? *bound_val
@@ -219,7 +219,7 @@ void FromHalfRange(irs::BooleanFilter& parent, const FilterContext& ctx,
   }
 }
 
-void FromBetween(irs::BooleanFilter& parent, const FilterContext& ctx,
+void FromBetween(BoolTarget parent, const FilterContext& ctx,
                  const SearchColumnInfo& column_info,
                  const duckdb::BoundFunctionExpression& func) {
   auto args = ParseRangeArgs(func);
@@ -285,15 +285,15 @@ void FromBetween(irs::BooleanFilter& parent, const FilterContext& ctx,
     auto& range = AddMaybeNegated<irs::ByRange>(parent, ctx, column_info);
     *range.mutable_field_id() = PickPerKindFieldId(column_info, col_type);
     range.SetBoost(ctx.boost);
+    SetLeafScorer(range, column_info);
     auto* options = range.mutable_options();
-    options->scored_terms_limit = ctx.scored_terms_limit;
     FillByRangeOptionsVarchar(args, *options);
   } else if (col_type == duckdb::LogicalTypeId::BOOLEAN) {
     auto& range = AddMaybeNegated<irs::ByRange>(parent, ctx, column_info);
     *range.mutable_field_id() = PickPerKindFieldId(column_info, col_type);
     range.SetBoost(ctx.boost);
+    SetLeafScorer(range, column_info);
     auto* options = range.mutable_options();
-    options->scored_terms_limit = ctx.scored_terms_limit;
     auto& rng = options->range;
     if (args.min) {
       rng.min.assign(irs::ViewCast<irs::byte_type>(
@@ -314,8 +314,8 @@ void FromBetween(irs::BooleanFilter& parent, const FilterContext& ctx,
       AddMaybeNegated<irs::ByGranularRange>(parent, ctx, column_info);
     *range.mutable_field_id() = PickPerKindFieldId(column_info, col_type);
     range.SetBoost(ctx.boost);
+    SetLeafScorer(range, column_info);
     auto* range_opts = range.mutable_options();
-    range_opts->scored_terms_limit = ctx.scored_terms_limit;
     auto& rng = range_opts->range;
     auto emit_bound = [&](const duckdb::Value& v,
                           irs::ByGranularRangeOptions::terms& boundary,

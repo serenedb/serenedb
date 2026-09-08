@@ -40,14 +40,16 @@ QueryBuilder::ptr ByVectorSimilarity::PrepareSegment(
     return QueryBuilder::Empty();
   }
 
-  return memory::make_tracked<KnnVectorQuery>(
+  auto query = memory::make_tracked<KnnVectorQuery>(
     ctx.memory, segment, std::move(state), std::span<const float>{opts.query},
     opts.metric, ctx.boost * GetBoost(), std::move(inner));
+  query->SetStats(ctx.Record());
+  return query;
 }
 
 PrepareCollector::ptr ByVectorSimilarity::MakeCollectorImpl(
-  const Scorer* scorer) const {
-  return std::make_unique<AllCollector>(scorer);
+  const Scorer* scorer, StatsArena& stats, uint32_t) const {
+  return std::make_unique<AllCollector>(scorer, stats);
 }
 
 }  // namespace irs

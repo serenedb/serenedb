@@ -1,0 +1,91 @@
+statement ok
+SET TimeZone = 'Etc/UTC';
+
+statement ok
+CREATE TABLE rr AS SELECT * FROM (VALUES (TIMESTAMP '1999-03-15'), (TIMESTAMP '2099-03-15'),
+	(TIMESTAMP '1999-03-20'), (TIMESTAMP '2099-11-01')) t(ts);
+
+statement ok
+CREATE TABLE rr_time AS SELECT * FROM (VALUES (TIME '24:00:00'), (TIME '01:30:00'),
+	(TIME '23:59:59.999999')) t(t);
+
+statement ok
+CREATE TABLE rr_num AS SELECT i FROM range(2000) t(i);
+
+statement ok
+CREATE TABLE rr_big AS SELECT * FROM (VALUES (0::BIGINT), (9223372036854775807::BIGINT)) t(b);
+
+statement ok
+CREATE TABLE rr_mul AS SELECT * FROM (VALUES (0::BIGINT), (1::BIGINT)) t(i);
+
+statement ok
+SET disabled_optimizers = 'compressed_materialization,expression_rewriter';
+
+statement ok
+CREATE OR REPLACE TABLE rr_off AS
+SELECT 'two digit year' AS shape, to_json(q)::VARCHAR AS k FROM (SELECT strftime(ts, '%y') a, strftime(ts, '%m') b, count(*) c FROM rr GROUP BY 1, 2) q
+UNION ALL SELECT 'two digit year and day' AS shape, to_json(q)::VARCHAR AS k FROM (SELECT strftime(ts, '%y') a, strftime(ts, '%d') b, count(*) c FROM rr GROUP BY 1, 2) q
+UNION ALL SELECT 'four digit year' AS shape, to_json(q)::VARCHAR AS k FROM (SELECT strftime(ts, '%Y') a, strftime(ts, '%m') b, count(*) c FROM rr GROUP BY 1, 2) q
+UNION ALL SELECT 'time of day full day' AS shape, to_json(q)::VARCHAR AS k FROM (SELECT time_bucket(INTERVAL '1 hour', t) k, count(*) c FROM rr_time GROUP BY 1) q
+UNION ALL SELECT 'time of day quarter' AS shape, to_json(q)::VARCHAR AS k FROM (SELECT time_bucket(INTERVAL '15 minutes', t) k, count(*) c FROM rr_time GROUP BY 1) q;
+
+statement ok
+RESET disabled_optimizers;
+
+statement ok
+CREATE OR REPLACE TABLE rr_on AS
+SELECT 'two digit year' AS shape, to_json(q)::VARCHAR AS k FROM (SELECT strftime(ts, '%y') a, strftime(ts, '%m') b, count(*) c FROM rr GROUP BY 1, 2) q
+UNION ALL SELECT 'two digit year and day' AS shape, to_json(q)::VARCHAR AS k FROM (SELECT strftime(ts, '%y') a, strftime(ts, '%d') b, count(*) c FROM rr GROUP BY 1, 2) q
+UNION ALL SELECT 'four digit year' AS shape, to_json(q)::VARCHAR AS k FROM (SELECT strftime(ts, '%Y') a, strftime(ts, '%m') b, count(*) c FROM rr GROUP BY 1, 2) q
+UNION ALL SELECT 'time of day full day' AS shape, to_json(q)::VARCHAR AS k FROM (SELECT time_bucket(INTERVAL '1 hour', t) k, count(*) c FROM rr_time GROUP BY 1) q
+UNION ALL SELECT 'time of day quarter' AS shape, to_json(q)::VARCHAR AS k FROM (SELECT time_bucket(INTERVAL '15 minutes', t) k, count(*) c FROM rr_time GROUP BY 1) q;
+
+query
+SELECT count(*) AS rows, count(DISTINCT shape) AS shapes,
+	(SELECT count(*) FROM (SELECT * FROM rr_off EXCEPT ALL SELECT * FROM rr_on)) AS lost,
+	(SELECT count(*) FROM (SELECT * FROM rr_on EXCEPT ALL SELECT * FROM rr_off)) AS gained
+FROM rr_on;
+----
+rows	shapes	lost	gained
+14	5	0	0
+
+query
+SELECT shape, count(*) AS keys FROM rr_on GROUP BY 1 ORDER BY 1;
+----
+shape	keys
+four digit year	3
+time of day full day	3
+time of day quarter	3
+two digit year	2
+two digit year and day	3
+
+query
+SELECT json_serialize_plan('SELECT count(*) FROM rr_num WHERE floor(random() * 10) <> 5', optimize := true)::VARCHAR LIKE '%floor%' AS volatile_input_kept,
+	json_serialize_plan('SELECT count(*) FROM rr_num WHERE floor(i / 10.0) = 5', optimize := true)::VARCHAR LIKE '%floor%' AS stable_input_rewritten;
+----
+volatile_input_kept	stable_input_rewritten
+t	f
+
+query
+SELECT json_serialize_plan('SELECT __internal_date_trunc_month_unbucket(b, 1, 0) FROM rr_big', optimize := true)::VARCHAR
+	NOT LIKE '%"error":true%' AS statistics_declined;
+----
+statistics_declined
+t
+
+query
+SELECT count(*) AS keys FROM (SELECT i * CAST(-9223372036854775808 AS BIGINT) k, count(*) c FROM rr_mul GROUP BY 1);
+----
+keys
+2
+
+query
+SELECT __internal_icu_date_trunc_unbucket('hour', 100, 3600000000, 0) AS valid;
+----
+valid
+1970-01-05 04:00:00+00
+
+statement error
+SELECT __internal_icu_date_trunc_unbucket('hour', 9223372036854775807, 9223372036854775807, 0);
+----
+db error: ERROR: Time zone bucket 9223372036854775807 of width 9223372036854775807 is out of range

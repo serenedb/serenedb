@@ -37,20 +37,15 @@ inline constexpr scores_size_t kPostingBlock = 4 * kScoreBlock;
 static_assert(kPostingBlock < std::numeric_limits<scores_size_t>::max());
 static_assert(kPostingBlock % kScoreBlock == 0);
 
-// Possible variants of merging multiple scores
 enum class ScoreMergeType {
-  // Do nothing
   Noop = 0,
 
-  // Sum multiple scores
   Sum,
 
-  // Find max amongst multiple scores
   Max,
 };
 
 struct ScoreOperator : memory::Managed {
-  // TODO(mbkkt): Maybe add ScoreSum and ScoreMax for single score?
   virtual score_t Score() const noexcept {
     score_t result;
     Score(&result, 1);

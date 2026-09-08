@@ -28,6 +28,7 @@
 #include <duckdb/storage/data_table.hpp>
 #include <duckdb/storage/table/scan_state.hpp>
 #include <duckdb/transaction/duck_transaction.hpp>
+#include <ranges>
 
 #include "basics/assert.h"
 #include "basics/containers/flat_hash_map.h"
@@ -140,21 +141,15 @@ ViewTableIndexSource::ViewTableIndexSource(
   // alive for the query even if it is detached concurrently.
   duckdb::DuckTransaction::Get(context, table.ParentCatalog());
   const auto& columns = table.GetColumns();
-  containers::FlatHashMap<std::string_view, duckdb::idx_t> name_to_col;
-  if (!_fast_path.projection_columns.empty()) {
-    name_to_col.reserve(columns.LogicalColumnCount());
-    duckdb::idx_t logical = 0;
-    for (const auto& col : columns.Logical()) {
-      name_to_col.emplace(col.Name().GetIdentifierName(), logical++);
-    }
-  }
   InitProjection(
     context, projected_columns, projected_types, bind_column_ids,
-    [&](std::string_view name) {
-      auto it = name_to_col.find(name);
-      SDB_ASSERT(it != name_to_col.end());
-      return it->second;
-    },
+    SourceColumns{
+      std::views::iota(duckdb::idx_t{0}, columns.LogicalColumnCount()) |
+      std::views::transform([&](duckdb::idx_t i) -> std::string_view {
+        return columns.GetColumn(duckdb::LogicalIndex(i))
+          .Name()
+          .GetIdentifierName();
+      })},
     [&](duckdb::idx_t table_col_idx) {
       SDB_ASSERT(table_col_idx < columns.LogicalColumnCount());
       return AddFetchColumn(

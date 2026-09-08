@@ -1164,10 +1164,11 @@ QUERY PLAN
 │ Index: mixed_idx                       │
 │ Lookup: table                          │
 │ Index Filter:                          │
-│ ╭─ Terms ───────────────╮              │
+│ ╭─ Or ──────────────────╮              │
+│ ╰───────────┬───────────╯              │
+│ ╭─ Terms ───┴───────────╮              │
 │ │ Field: body(string)   │              │
 │ │ Values: 'blue', 'red' │              │
-│ │ Min Match: 1          │              │
 │ ╰───────────────────────╯              │
 │ Column Filter: id > 2                  │
 │ Score: l2_distance(emb, FLOAT[3])      │

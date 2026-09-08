@@ -39,6 +39,7 @@
 #include <iresearch/index/directory_reader.hpp>
 #include <iresearch/index/index_features.hpp>
 #include <iresearch/index/index_writer.hpp>
+#include <iresearch/search/count/make.hpp>
 #include <iresearch/search/regexp_filter.hpp>
 #include <iresearch/search/wildcard_filter.hpp>
 #include <iresearch/store/data_output.hpp>
@@ -448,10 +449,9 @@ void BenchPrepare(benchmark::State& state, const irs::DirectoryReader& rdr,
   // the real prepare pipeline.
   {
     auto q = make();
-    auto collector = q.MakeCollector(nullptr);
     irs::QueryBuilder::ptr check;
     for (const auto& sub : rdr) {
-      check = q.PrepareSegment(sub, {.collector = collector.get()});
+      check = q.PrepareSegment(sub, {});
     }
     if (!check) {
       state.SkipWithError("prepare returned null");
@@ -461,10 +461,9 @@ void BenchPrepare(benchmark::State& state, const irs::DirectoryReader& rdr,
 
   for (auto _ : state) {
     auto q = make();
-    auto collector = q.MakeCollector(nullptr);
     irs::QueryBuilder::ptr prepared;
     for (const auto& sub : rdr) {
-      prepared = q.PrepareSegment(sub, {.collector = collector.get()});
+      prepared = q.PrepareSegment(sub, {});
     }
     benchmark::DoNotOptimize(prepared);
   }
@@ -474,13 +473,10 @@ template<typename MakeFn>
 void BenchExecuteOnly(benchmark::State& state, const irs::DirectoryReader& rdr,
                       MakeFn make) {
   auto q = make();
-  auto collector = q.MakeCollector(nullptr);
   std::vector<irs::QueryBuilder::ptr> prepared;
   for (const auto& sub : rdr) {
-    prepared.emplace_back(
-      q.PrepareSegment(sub, {.collector = collector.get()}));
+    prepared.emplace_back(q.PrepareSegment(sub, {}));
   }
-  const auto stats = collector->Finish(irs::IResourceManager::gNoop);
   if (prepared.empty() || !prepared.front()) {
     state.SkipWithError("prepare returned null");
     return;
@@ -495,10 +491,11 @@ void BenchExecuteOnly(benchmark::State& state, const irs::DirectoryReader& rdr,
       if (!p) {
         continue;
       }
-      auto docs = p->Execute({}, stats);
-      while (!irs::doc_limits::eof(docs->advance())) {
-        ++per_iter;
+      auto plan = irs::count::MakeRoot(*p);
+      if (!plan) {
+        continue;
       }
+      per_iter += plan->Run();
     }
     benchmark::DoNotOptimize(per_iter);
   }

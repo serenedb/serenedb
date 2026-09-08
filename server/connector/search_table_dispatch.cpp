@@ -28,6 +28,7 @@
 #include <string>
 
 #include "basics/assert.h"
+#include "catalog/scorer_options.h"
 #include "catalog/table.h"
 #include "connector/inverted_index_options_util.h"
 #include "connector/with_option_resolver.h"
@@ -231,6 +232,13 @@ void ApplyStorageKind(
     } else {
       search_options.segment_memory_max = ResolveUbigintWithOption(
         context, kSegmentMemoryMaxSetting, /*with_value=*/nullptr);
+    }
+    if (const auto topk = with_options.find(std::string{kOptimizeTopKSetting});
+        topk != with_options.end() && topk->second) {
+      auto text = *ExtractString(kOptimizeTopKSetting, *topk->second);
+      catalog::ParseScorerExpression(nullptr, text);
+      info.tags.insert(std::string{kOptimizeTopKSetting}, std::move(text));
+      with_options.erase(std::string{kOptimizeTopKSetting});
     }
   }
   // The sequence feeding the synthetic primary key is not known until the

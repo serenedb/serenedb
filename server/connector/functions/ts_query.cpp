@@ -804,7 +804,7 @@ void RegisterTSQueryConstructors(duckdb::ExtensionLoader& loader) {
 
   // NGRAM(text [, threshold]) -- tokenises via ambient analyzer.
   {
-    duckdb::ScalarFunctionSet set{duckdb::Identifier{kTSQNgram}};
+    duckdb::ScalarFunctionSet set{duckdb::Identifier{kTSQNGram}};
     for (auto first_arg :
          {duckdb::LogicalType::VARCHAR, duckdb::LogicalType::BLOB}) {
       set.AddFunction(TSQConstructor({first_arg}));
@@ -1110,7 +1110,7 @@ void RegisterPredicateFunctions(duckdb::ExtensionLoader& loader) {
   }
 
   {
-    duckdb::ScalarFunctionSet set{duckdb::Identifier{kNgramMatches}};
+    duckdb::ScalarFunctionSet set{duckdb::Identifier{kNGramMatches}};
     set.AddFunction(duckdb::ScalarFunction(
       {duckdb::LogicalType::ANY, duckdb::LogicalType::VARCHAR},
       duckdb::LogicalType::BOOLEAN, SearchStubFn));

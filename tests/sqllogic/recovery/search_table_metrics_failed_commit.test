@@ -1,0 +1,45 @@
+# A search table's refresh that fails is counted in sdb_metrics the same way an
+# index's own storage counts it. The fault point fires after the commit itself,
+# so the rows are published and the failure is only recorded.
+
+statement ok
+CREATE TABLE stf (id BIGINT PRIMARY KEY, r TEXT)
+WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+
+statement ok
+CREATE INDEX stf_idx ON stf USING inverted (r);
+
+statement ok
+INSERT INTO stf VALUES (1, 'a'), (2, 'b'), (3, 'c');
+
+statement ok
+SET sdb_faults = 'Search::FailOnCommit';
+
+statement ok
+VACUUM (REFRESH_TABLE) stf;
+
+statement ok
+RESET sdb_faults;
+
+query
+SELECT metric, value FROM sdb_metrics
+WHERE relation_id = (SELECT oid FROM pg_class WHERE relname = 'stf')
+  AND metric IN ('num_docs', 'num_live_docs', 'num_failed_commits', 'num_failed_cleanups', 'num_failed_consolidations')
+ORDER BY metric;
+----
+metric	value
+num_docs	3
+num_failed_cleanups	0
+num_failed_commits	1
+num_failed_consolidations	0
+num_live_docs	3
+
+statement ok
+VACUUM (REFRESH_TABLE) stf;
+
+query
+SELECT value AS failed_commits FROM sdb_metrics
+WHERE relation_id = (SELECT oid FROM pg_class WHERE relname = 'stf') AND metric = 'num_failed_commits';
+----
+failed_commits
+1

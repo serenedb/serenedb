@@ -69,9 +69,7 @@ class SegmentReaderImpl final : public SubReader {
 
   const DocumentMask* docs_mask() const final { return _docs_mask.get(); }
 
-  DocIterator::ptr docs_iterator() const final;
-
-  DocIterator::ptr mask(DocIterator::ptr&& it) const final;
+  lead::Node::ptr docs_iterator() const final;
 
   const TermReader* field(field_id id) const final {
     return _field_reader->field(id);

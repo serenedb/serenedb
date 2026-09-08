@@ -1149,9 +1149,9 @@ QUERY PLAN
 │ ╭─ And ───────────────╮                         │
 │ ╰──────────┬──────────╯                         │
 │            ├────────────────────────╮           │
-│ ╭─ Term ───┴──────────╮  ╭─ Geo ────┴─────────╮ │
+│ ╭─ Terms ──┴──────────╮  ╭─ Geo ────┴─────────╮ │
 │ │ Field: body(string) │  │ Field: geo(string) │ │
-│ │ Value: cafe         │  │ Op: Intersects     │ │
+│ │ Values: 'cafe'      │  │ Op: Intersects     │ │
 │ ╰─────────────────────╯  │ Shape: S2Polygon   │ │
 │                          ╰────────────────────╯ │
 │ Score: bm25(k1=1.2, b=0.75)                     │
@@ -1176,26 +1176,27 @@ WHERE body @@ ('blue'::TSQUERY ^ 1000.0 || 'red')
 ORDER BY BM25(places_idx.tableoid) DESC, id;
 ----
 QUERY PLAN
-╭─ ORDER_BY ──────────────────────────────────────────────╮
-│ Order By: #1 DESC, places_idx.id ASC                    │
-│ ~1 row                                                  │
-╰────────────────────────────┬────────────────────────────╯
-╭─ IRESEARCH_SCAN ───────────┴────────────────────────────╮
-│ Index: places_idx                                       │
-│ Lookup: table                                           │
-│ Index Filter:                                           │
-│ ╭─ And ───────────────────────╮                         │
-│ ╰──────────────┬──────────────╯                         │
-│                ├────────────────────────────╮           │
-│ ╭─ Terms ──────┴──────────────╮  ╭─ Geo Distance ─────╮ │
-│ │ Field: body(string)         │  │ Field: geo(string) │ │
-│ │ Values: 'blue'(1000), 'red' │  │ Range: *, <500     │ │
-│ │ Min Match: 1                │  ╰────────────────────╯ │
-│ ╰─────────────────────────────╯                         │
-│ Score: bm25(k1=1.2, b=0.75)                             │
-│ Projections: id, sdb_inverted_index_score               │
-│ ~1 row                                                  │
-╰─────────────────────────────────────────────────────────╯
+╭─ ORDER_BY ───────────────────────────────────────────────╮
+│ Order By: #1 DESC, places_idx.id ASC                     │
+│ ~1 row                                                   │
+╰─────────────────────────────┬────────────────────────────╯
+╭─ IRESEARCH_SCAN ────────────┴────────────────────────────╮
+│ Index: places_idx                                        │
+│ Lookup: table                                            │
+│ Index Filter:                                            │
+│ ╭─ And ────────────────────────╮                         │
+│ ╰───────────────┬──────────────╯                         │
+│                 ├────────────────────────────╮           │
+│ ╭─ Or ──────────┴──────────────╮  ╭─ Geo Distance ─────╮ │
+│ ╰───────────────┬──────────────╯  │ Field: geo(string) │ │
+│ ╭─ Terms ───────┴──────────────╮  │ Range: *, <500     │ │
+│ │ Field: body(string)          │  ╰────────────────────╯ │
+│ │ Values: 'blue' (1000), 'red' │                         │
+│ ╰──────────────────────────────╯                         │
+│ Score: bm25(k1=1.2, b=0.75)                              │
+│ Projections: id, sdb_inverted_index_score                │
+│ ~1 row                                                   │
+╰──────────────────────────────────────────────────────────╯
 
 
 # --- GEOMETRY column + source coding ---

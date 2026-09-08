@@ -41,14 +41,18 @@ QueryBuilder::ptr ByRadius::PrepareSegment(const SubReader& segment,
     return QueryBuilder::Empty();
   }
 
-  return memory::make_tracked<RangeVectorQuery>(
+  auto query = memory::make_tracked<RangeVectorQuery>(
     ctx.memory, segment, std::move(state), std::span<const float>{opts.query},
     opts.metric, opts.radius, opts.inclusive, ctx.boost * GetBoost(),
     std::move(inner));
+  query->SetStats(ctx.Record());
+  return query;
 }
 
-PrepareCollector::ptr ByRadius::MakeCollectorImpl(const Scorer* scorer) const {
-  return std::make_unique<AllCollector>(scorer);
+PrepareCollector::ptr ByRadius::MakeCollectorImpl(const Scorer* scorer,
+                                                  StatsArena& stats,
+                                                  uint32_t) const {
+  return std::make_unique<AllCollector>(scorer, stats);
 }
 
 }  // namespace irs

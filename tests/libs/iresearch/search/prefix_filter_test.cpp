@@ -51,12 +51,17 @@ namespace {
 [[maybe_unused]] inline constexpr irs::field_id kEmptyFieldId =
   irs::field_limits::invalid();
 
-irs::ByPrefix MakeFilter(irs::field_id field, const std::string_view term,
-                         size_t scored_terms_limit = 1024) {
+irs::ByPrefix MakeFilter(irs::field_id field, const std::string_view term) {
   irs::ByPrefix q;
   *q.mutable_field_id() = field;
   q.mutable_options()->term = irs::ViewCast<irs::byte_type>(term);
-  q.mutable_options()->scored_terms_limit = scored_terms_limit;
+  return q;
+}
+
+irs::ByPrefix MakeFilter(irs::field_id field, const std::string_view term,
+                         const irs::Scorer* scorer) {
+  auto q = MakeFilter(field, term);
+  q.SetScorer(scorer);
   return q;
 }
 
@@ -97,7 +102,8 @@ class PrefixFilterTestCase : public tests::FilterTestCaseBase {
         finish_docs_with_field += field->docs_with_field;
         finish_docs_with_term += term->docs_with_term;
       };
-      CheckQuery(MakeFilter(kPrefixId, ""), order, docs, rdr);
+      CheckQuery(MakeFilter(kPrefixId, "", order.front().get()), order, docs,
+                 rdr);
       ASSERT_EQ(9, finish_count);
       ASSERT_GT(finish_docs_with_field, 0u);  // scorer collected field stats
       ASSERT_GT(finish_docs_with_term, 0u);   // scorer collected term stats
@@ -110,19 +116,8 @@ class PrefixFilterTestCase : public tests::FilterTestCaseBase {
 
       irs::Scorer::ptr scorer{std::make_unique<tests::sort::FrequencySort>()};
 
-      CheckQuery(MakeFilter(kPrefixId, ""), std::span{&scorer, 1}, docs, rdr);
-    }
-
-    // empty prefix + scored_terms_limit
-    {
-      // They are all in the lazy bitset iterator
-      Docs docs{1, 4, 9, 16, 21, 24, 26, 29, 31, 32};
-      Costs costs{docs.size()};
-
-      irs::Scorer::ptr scorer{std::make_unique<tests::sort::FrequencySort>()};
-
-      CheckQuery(MakeFilter(kPrefixId, "", 1), std::span{&scorer, 1}, docs,
-                 rdr);
+      CheckQuery(MakeFilter(kPrefixId, "", scorer.get()), std::span{&scorer, 1},
+                 docs, rdr);
     }
 
     // prefix
@@ -133,7 +128,8 @@ class PrefixFilterTestCase : public tests::FilterTestCaseBase {
       std::array<irs::Scorer::ptr, 1> order{
         std::make_unique<tests::sort::FrequencySort>()};
 
-      CheckQuery(MakeFilter(kPrefixId, "a"), order, docs, rdr);
+      CheckQuery(MakeFilter(kPrefixId, "a", order.front().get()), order, docs,
+                 rdr);
     }
 
     // prefix
@@ -145,7 +141,8 @@ class PrefixFilterTestCase : public tests::FilterTestCaseBase {
         std::make_unique<tests::sort::FrequencySort>(),
         std::make_unique<tests::sort::FrequencySort>()};
 
-      CheckQuery(MakeFilter(kPrefixId, "a"), order, docs, rdr);
+      CheckQuery(MakeFilter(kPrefixId, "a", order.front().get()), order, docs,
+                 rdr);
     }
   }
 
@@ -262,7 +259,6 @@ class PrefixFilterTestCase : public tests::FilterTestCaseBase {
 TEST(by_prefix_test, options) {
   irs::ByPrefixOptions opts;
   ASSERT_TRUE(opts.term.empty());
-  ASSERT_EQ(1024, opts.scored_terms_limit);
 }
 
 TEST(by_prefix_test, ctor) {
@@ -281,15 +277,7 @@ TEST(by_prefix_test, equal) {
 
     ASSERT_EQ(q, MakeFilter(kField, "term"));
     ASSERT_NE(q, MakeFilter(kField1, "term"));
-    ASSERT_NE(q, MakeFilter(kField, "term", 100));
-  }
-
-  {
-    irs::ByPrefix q = MakeFilter(kField, "term", 100);
-
-    ASSERT_EQ(q, MakeFilter(kField, "term", 100));
-    ASSERT_NE(q, MakeFilter(kField1, "term", 100));
-    ASSERT_NE(q, MakeFilter(kField, "term"));
+    ASSERT_NE(q, MakeFilter(kField, "terms"));
   }
 }
 
@@ -300,13 +288,14 @@ TEST(by_prefix_test, boost) {
   // no boost
   {
     irs::ByPrefix q = MakeFilter(kField, "term");
+    ASSERT_EQ(irs::kNoBoost, q.GetBoost());
 
     tests::PreparedFilter prepared{q, irs::SubReader::empty(), nullptr,
                                    counter};
+    ASSERT_TRUE(irs::QueryBuilder::IsEmpty(*prepared.Query(0)));
     ASSERT_EQ(irs::kNoBoost, prepared.Query(0)->Boost());
   }
   EXPECT_EQ(counter.current, 0);
-  EXPECT_GT(counter.max, 0);
   counter.Reset();
 
   // with boost
@@ -314,13 +303,16 @@ TEST(by_prefix_test, boost) {
     irs::score_t boost = 1.5f;
     irs::ByPrefix q = MakeFilter(kField, "term");
     q.SetBoost(boost);
+    ASSERT_EQ(boost, q.GetBoost());
 
+    // a segment without the field matches nothing, and nothing carries no
+    // boost -- so the boost is only observable where the field exists
     tests::PreparedFilter prepared{q, irs::SubReader::empty(), nullptr,
                                    counter};
-    ASSERT_EQ(boost, prepared.Query(0)->Boost());
+    ASSERT_TRUE(irs::QueryBuilder::IsEmpty(*prepared.Query(0)));
+    ASSERT_EQ(irs::kNoBoost, prepared.Query(0)->Boost());
   }
   EXPECT_EQ(counter.current, 0);
-  EXPECT_GT(counter.max, 0);
   counter.Reset();
 }
 
@@ -425,7 +417,7 @@ TEST_P(PrefixFilterTestCase, by_prefix_order_partial_field_stats) {
     ASSERT_EQ(expected_docs_with_field, field->docs_with_field);
   };
 
-  const auto filter = MakeFilter(kPrefixId, "");
+  const auto filter = MakeFilter(kPrefixId, "", &scorer);
   tests::PreparedFilter prepared{filter, rdr, &scorer};
   ASSERT_NE(nullptr, prepared.Query(0));
 
@@ -464,7 +456,8 @@ TEST_P(PrefixFilterTestCase, by_prefix_order_multiple_terms_score) {
   };
 
   irs::Scorer::ptr scorer{std::make_unique<tests::sort::FrequencySort>()};
-  CheckQuery(MakeFilter(kNameId, "a"), std::span{&scorer, 1}, expected, rdr);
+  CheckQuery(MakeFilter(kNameId, "a", scorer.get()), std::span{&scorer, 1},
+             expected, rdr);
 }
 
 TEST_P(PrefixFilterTestCase, by_prefix_no_collector) {
@@ -483,8 +476,8 @@ TEST_P(PrefixFilterTestCase, by_prefix_no_collector) {
     Docs docs;
     for (size_t i = 0, n = prepared.size(); i < n; ++i) {
       auto it = prepared.Execute(i);
-      while (!irs::doc_limits::eof(it->advance())) {
-        docs.push_back(it->value());
+      while (!irs::doc_limits::eof(it->Advance())) {
+        docs.push_back(it->Value());
       }
     }
     return docs;

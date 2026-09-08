@@ -26,7 +26,7 @@
 #include "fst/union.h"
 #include "fstext/determinize-star.h"
 #include "iresearch/index/index_reader.hpp"
-#include "iresearch/search/limited_sample_selector.hpp"
+#include "iresearch/search/multiterm_collector.hpp"
 #include "iresearch/search/multiterm_query.hpp"
 #include "iresearch/utils/string.hpp"
 
@@ -247,26 +247,16 @@ QueryBuilder::ptr PrepareAutomatonSegment(
     return QueryBuilder::Empty();
   }
 
-  auto query = memory::make_tracked<MultiTermQuery>(
-    ctx.memory, segment, ctx.memory, ctx.boost * boost, ScoreMergeType::Sum,
-    size_t{1});
-
   const auto* reader = segment.field(field);
   if (!reader) {
-    return query;
+    return QueryBuilder::Empty();
   }
 
-  auto* collector =
-    ctx.collector
-      ? &sdb::basics::downCast<LimitedTermsCollector>(*ctx.collector)
-      : nullptr;
-  if (collector) {
-    collector->Field().Collect(*reader);
-  }
-  SampledMultiTermVisitor mtv{collector ? &collector->Limited() : nullptr,
-                              query->State()};
+  auto query = memory::make_tracked<MultiTermQuery>(
+    ctx.memory, segment, ctx.memory, ctx.boost * boost, ScoreMergeType::Sum);
+  MultiTermVisitor mtv{ctx, query->State(), *reader};
   Visit(segment, *reader, matcher, mtv);
-  return query;
+  return MultiTermQuery::Finish(std::move(query), ctx);
 }
 
 std::optional<automaton> IntersectAcceptors(const automaton& lhs,
@@ -321,6 +311,7 @@ std::optional<automaton> IntersectAcceptors(const automaton& lhs,
       }
     }
   }
+  EmplaceSinkArcs(out);
   return out;
 }
 

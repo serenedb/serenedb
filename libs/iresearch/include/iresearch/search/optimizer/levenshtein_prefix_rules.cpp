@@ -28,6 +28,7 @@
 #include "iresearch/search/boolean_filter.hpp"
 #include "iresearch/search/filter_optimizer.hpp"
 #include "iresearch/search/levenshtein_filter.hpp"
+#include "iresearch/search/optimizer/common.hpp"
 #include "iresearch/search/prefix_filter.hpp"
 
 namespace irs::optimizer {
@@ -35,7 +36,7 @@ namespace {
 
 struct LevenshteinPrefixFusionRule {
   static constexpr std::string_view kName = "levenshtein_prefix_fusion";
-  static constexpr std::array kTargets{Type<And>::id()};
+  static constexpr std::array kTargets{Type<BooleanFilter>::id()};
   static constexpr bool kEnable = true;
 
   static bool Apply(Filter::ptr& slot, const OptimizeContext& ctx);
@@ -46,12 +47,13 @@ struct PrefixEntry {
   field_id field;
   bytes_view term;
   const Scorer* scorer;
+  score_t boost;
 };
 
 bool LevenshteinPrefixFusionRule::Apply(Filter::ptr& slot,
                                         const OptimizeContext& ctx) {
-  auto& node = sdb::basics::downCast<And>(*slot);
-  auto& children = node.mutable_filters();
+  auto& node = sdb::basics::downCast<BooleanFilter>(*slot);
+  auto& children = node.Bucket(Occur::Must).filters;
 
   std::vector<PrefixEntry> prefixes;
   for (size_t i = 0; i < children.size(); ++i) {
@@ -61,7 +63,8 @@ bool LevenshteinPrefixFusionRule::Apply(Filter::ptr& slot,
         continue;
       }
       prefixes.emplace_back(children[i].get(), prefix.field_id(),
-                            prefix.options().term, children[i]->GetScorer());
+                            prefix.options().term, children[i]->GetScorer(),
+                            prefix.GetBoost());
     }
   }
   if (prefixes.empty()) {
@@ -85,16 +88,16 @@ bool LevenshteinPrefixFusionRule::Apply(Filter::ptr& slot,
 
     const PrefixEntry* best = nullptr;
     for (const auto& entry : prefixes) {
-      // Absorbing the prefix drops whatever it contributed to the score, so
-      // the two nodes have to be scored by the same scorer for that to be a
-      // no-op.
       if (entry.field != filter.field_id() ||
-          entry.scorer != child->GetScorer() ||
+          (ctx.scored && entry.scorer != child->GetScorer()) ||
           !bytes_view{target}.starts_with(entry.term)) {
         continue;
       }
       changed = true;
-      remove_prefixes.insert(entry.node);
+      if (remove_prefixes.insert(entry.node).second && ctx.scored) {
+        child->SetBoost(
+          MergedBoost(node.MergeType(), child->GetBoost(), entry.boost));
+      }
       if (entry.term.size() <= opts.prefix.size()) {
         continue;
       }
@@ -119,7 +122,7 @@ bool LevenshteinPrefixFusionRule::Apply(Filter::ptr& slot,
 
 }  // namespace
 
-void InitLevenshteinPrefixRules() {
+void InitLevenshteinPrefixFusion() {
   RegisterRule<LevenshteinPrefixFusionRule>();
 }
 

@@ -1,0 +1,264 @@
+statement ok
+SET TimeZone = 'Europe/Berlin';
+
+statement ok
+CREATE TABLE cov AS SELECT TIMESTAMP '2025-03-29 12:00:00' + INTERVAL (i * 37) MINUTE AS ts, (TIMESTAMP '2025-03-29 12:00:00' + INTERVAL (i * 37) MINUTE)::TIMESTAMPTZ AS tstz, (TIMESTAMP '2025-03-29 12:00:00' + INTERVAL (i * 37) MINUTE)::DATE AS d, (TIMESTAMP '2025-03-29 12:00:00' + INTERVAL (i * 37) MINUTE)::TIME AS tm, i AS v FROM range(4000) t(i);
+
+statement ok
+CREATE TABLE cov_ms AS SELECT TIMESTAMP '2025-01-01 00:00:00' + INTERVAL (i) MILLISECOND AS ts, i AS v FROM range(4000) t(i);
+
+statement ok
+CREATE TABLE cov_wide AS SELECT TIMESTAMP '2019-01-01 00:00:00' + INTERVAL (i * 41) HOUR AS ts, i AS v FROM range(4000) t(i);
+
+statement ok
+CREATE VIEW cov_view AS SELECT date_trunc('hour', ts) AS k, v FROM cov;
+
+statement ok
+CREATE TABLE sink (k TIMESTAMP, c BIGINT);
+
+statement ok
+SET TimeZone = 'Europe/Berlin';
+
+statement ok
+CREATE OR REPLACE TABLE shapes AS SELECT * FROM (VALUES
+	('date_trunc hour', 'SELECT date_trunc(''hour'', ts) k, count(*) c FROM cov GROUP BY 1'),
+	('date_trunc month', 'SELECT date_trunc(''month'', ts) k, count(*) c FROM cov GROUP BY 1'),
+	('date_trunc week', 'SELECT date_trunc(''week'', ts) k, count(*) c FROM cov GROUP BY 1'),
+	('date_trunc hour zoned', 'SELECT date_trunc(''hour'', tstz) k, count(*) c FROM cov GROUP BY 1'),
+	('date_trunc day zoned', 'SELECT date_trunc(''day'', tstz) k, count(*) c FROM cov GROUP BY 1'),
+	('date_trunc millisecond narrow', 'SELECT date_trunc(''millisecond'', ts) k, count(*) c FROM cov_ms GROUP BY 1'),
+	('date_trunc microsecond narrow', 'SELECT date_trunc(''microsecond'', ts) k, count(*) c FROM cov_ms GROUP BY 1'),
+	('date_trunc second wide: over budget', 'SELECT date_trunc(''second'', ts) k, count(*) c FROM cov_wide GROUP BY 1'),
+	('date_trunc day on DATE: cheaper plain', 'SELECT date_trunc(''day'', d) k, count(*) c FROM cov GROUP BY 1'),
+	('time_bucket 15 minutes', 'SELECT time_bucket(INTERVAL ''15 minutes'', ts) k, count(*) c FROM cov GROUP BY 1'),
+	('time_bucket 7 minutes', 'SELECT time_bucket(INTERVAL ''7 minutes'', ts) k, count(*) c FROM cov GROUP BY 1'),
+	('time_bucket 1 month', 'SELECT time_bucket(INTERVAL ''1 month'', ts) k, count(*) c FROM cov_wide GROUP BY 1'),
+	('time_bucket offset', 'SELECT time_bucket(INTERVAL ''15 minutes'', ts, INTERVAL ''5 minutes'') k, count(*) c FROM cov GROUP BY 1'),
+	('time_bucket origin', 'SELECT time_bucket(INTERVAL ''90 seconds'', ts, TIMESTAMP ''2025-01-01 00:00:07'') k, count(*) c FROM cov GROUP BY 1'),
+	('time_bucket zoned', 'SELECT time_bucket(INTERVAL ''15 minutes'', tstz) k, count(*) c FROM cov GROUP BY 1'),
+	('time_bucket with zone', 'SELECT time_bucket(INTERVAL ''1 day'', tstz, ''America/Havana'') k, count(*) c FROM cov GROUP BY 1'),
+	('time_bucket with zone and origin', 'SELECT time_bucket(INTERVAL ''1 day'', tstz, ''America/Havana'', TIMESTAMPTZ ''2025-01-01 05:00:00+00'') k, count(*) c FROM cov GROUP BY 1'),
+	('time_bucket non-constant width: declines', 'SELECT time_bucket(INTERVAL (v % 3 + 1) MINUTE, ts) k, count(*) c FROM cov GROUP BY 1'),
+	('time_bucket on TIME divides a day', 'SELECT time_bucket(INTERVAL ''15 minutes'', tm) k, count(*) c FROM cov GROUP BY 1'),
+	('time_bucket on TIME wraps: declines', 'SELECT time_bucket(INTERVAL ''7 minutes'', tm) k, count(*) c FROM cov GROUP BY 1'),
+	('date_bin', 'SELECT date_bin(INTERVAL ''90 seconds'', ts, TIMESTAMP ''2025-01-01 00:00:07'') k, count(*) c FROM cov GROUP BY 1'),
+	('strftime date', 'SELECT strftime(ts, ''%Y-%m-%d'') k, count(*) c FROM cov GROUP BY 1'),
+	('strftime date zoned', 'SELECT strftime(tstz, ''%Y-%m-%d %H'') k, count(*) c FROM cov GROUP BY 1'),
+	('strftime time of day', 'SELECT strftime(ts, ''%H:%M'') k, count(*) c FROM cov GROUP BY 1'),
+	('strftime time of day zoned', 'SELECT strftime(tstz, ''%H'') k, count(*) c FROM cov GROUP BY 1'),
+	('strftime 12 hour without am pm: declines', 'SELECT strftime(ts, ''%I'') k, count(*) c FROM cov GROUP BY 1'),
+	('strftime 12 hour with am pm', 'SELECT strftime(ts, ''%I %p'') k, count(*) c FROM cov GROUP BY 1'),
+	('strftime with offset: declines', 'SELECT strftime(tstz, ''%H:%M %z'') k, count(*) c FROM cov GROUP BY 1'),
+	('strftime week without year: declines', 'SELECT strftime(ts, ''%V'') k, count(*) c FROM cov GROUP BY 1'),
+	('cast hour to TIME', 'SELECT date_trunc(''hour'', ts)::TIME k, count(*) c FROM cov GROUP BY 1'),
+	('cast hour zoned to TIME', 'SELECT date_trunc(''hour'', tstz)::TIME k, count(*) c FROM cov GROUP BY 1'),
+	('cast to TIME at microseconds: over budget', 'SELECT ts::TIME k, count(*) c FROM cov GROUP BY 1'),
+	('cast to TIME under another zone: declines', 'SELECT time_bucket(INTERVAL ''15 minutes'', tstz, ''America/Havana'')::TIME k, count(*) c FROM cov GROUP BY 1'),
+	('cast zoned to DATE', 'SELECT tstz::DATE k, count(*) c FROM cov GROUP BY 1'),
+	('cast month to DATE', 'SELECT date_trunc(''month'', ts)::DATE k, count(*) c FROM cov GROUP BY 1'),
+	('monthname', 'SELECT monthname(ts) k, count(*) c FROM cov GROUP BY 1'),
+	('dayname zoned', 'SELECT dayname(tstz) k, count(*) c FROM cov GROUP BY 1'),
+	('last_day', 'SELECT last_day(ts) k, count(*) c FROM cov GROUP BY 1'),
+	('coordinates year month', 'SELECT year(ts) y, month(ts) m, count(*) c FROM cov GROUP BY 1, 2'),
+	('coordinates year week: ambiguous', 'SELECT year(ts) y, week(ts) w, count(*) c FROM cov GROUP BY 1, 2'),
+	('nested day and hour', 'SELECT date_trunc(''day'', ts) a, date_trunc(''hour'', ts) b, count(*) c FROM cov GROUP BY 1, 2'),
+	('at time zone', 'SELECT date_trunc(''hour'', ts AT TIME ZONE ''America/Havana'') k, count(*) c FROM cov GROUP BY 1'),
+	('label year quarter', 'SELECT year(ts) || ''-Q'' || quarter(ts) k, count(*) c FROM cov GROUP BY 1'),
+	('alias in subquery', 'SELECT k, count(*) c FROM (SELECT date_trunc(''hour'', ts) k FROM cov) GROUP BY 1'),
+	('alias in cte', 'WITH x AS (SELECT date_trunc(''hour'', ts) k FROM cov) SELECT k, count(*) c FROM x GROUP BY 1'),
+	('wrapped alias', 'SELECT k::VARCHAR || ''x'' k, count(*) c FROM (SELECT date_trunc(''hour'', ts) k FROM cov) GROUP BY 1'),
+	('select distinct', 'SELECT DISTINCT date_trunc(''hour'', ts) k FROM cov'),
+	('select distinct over budget: declines', 'SELECT DISTINCT ts::TIME k FROM cov'),
+	('select distinct two keys', 'SELECT DISTINCT date_trunc(''day'', ts) a, date_trunc(''hour'', ts) b FROM cov'),
+	('select distinct with a plain key: declines', 'SELECT DISTINCT date_trunc(''hour'', ts) k, v % 3 m FROM cov'),
+	('select distinct with a varchar key: declines', 'SELECT DISTINCT date_trunc(''hour'', ts) k, v::VARCHAR m FROM cov'),
+	('union all branches', 'SELECT k, count(*) c FROM (SELECT date_trunc(''hour'', ts) k FROM cov UNION ALL SELECT date_trunc(''hour'', ts) k FROM cov) GROUP BY 1'),
+	('distinct aggregate: declines', 'SELECT date_trunc(''hour'', ts) k, count(DISTINCT v) c FROM cov GROUP BY 1'),
+	('rollup', 'SELECT date_trunc(''hour'', ts) k, count(*) c FROM cov GROUP BY ROLLUP(date_trunc(''hour'', ts))'),
+	('grouping sets: declines', 'SELECT date_trunc(''hour'', ts) k, date_trunc(''day'', ts) d, count(*) c FROM cov GROUP BY GROUPING SETS ((1), (2))'),
+	('cube: declines', 'SELECT date_trunc(''hour'', ts) k, v % 3 m, count(*) c FROM cov GROUP BY CUBE (1, 2)'),
+	('distinct on', 'SELECT DISTINCT ON (date_trunc(''hour'', ts)) v FROM cov ORDER BY date_trunc(''hour'', ts), v'),
+	('having', 'SELECT date_trunc(''hour'', ts) k, count(*) c FROM cov GROUP BY 1 HAVING count(*) > 1'),
+	('filtered', 'SELECT date_trunc(''hour'', ts) k, count(*) c FROM cov WHERE ts > TIMESTAMP ''2025-03-30 00:00:00'' GROUP BY 1'),
+	('ordered by the key', 'SELECT date_trunc(''hour'', ts) k, count(*) c FROM cov GROUP BY 1 ORDER BY 1'),
+	('window partition to aggregate', 'SELECT count(*) OVER (PARTITION BY date_trunc(''hour'', ts)) c FROM cov'),
+	('view', 'SELECT k, count(*) c FROM cov_view GROUP BY 1'),
+	('insert select', 'INSERT INTO sink SELECT date_trunc(''hour'', ts), count(*) FROM cov GROUP BY 1'),
+	('create table as', 'CREATE TABLE sink2 AS SELECT date_trunc(''hour'', ts) k, count(*) c FROM cov GROUP BY 1'),
+	('join above', 'SELECT g.k, s.c FROM (SELECT date_trunc(''hour'', ts) k, count(*) c FROM cov GROUP BY 1) g JOIN sink s ON s.k = g.k'),
+	('correlated subquery: declines', 'SELECT (SELECT count(*) FROM cov c2 WHERE date_trunc(''hour'', c2.ts) = date_trunc(''hour'', c1.ts)) c FROM cov c1'),
+	('epoch bin', 'SELECT floor(epoch(ts) / 900) * 900 k, count(*) c FROM cov GROUP BY 1'),
+	('epoch of a truncation', 'SELECT epoch_ms(date_trunc(''hour'', ts)) k, count(*) c FROM cov GROUP BY 1'),
+	('interval shift of a truncation', 'SELECT date_trunc(''hour'', ts) + INTERVAL ''30 minutes'' k, count(*) c FROM cov GROUP BY 1'),
+	('numeric bin', 'SELECT v // 100 k, count(*) c FROM cov GROUP BY 1'),
+	('minute keys over the state budget: declines', 'SELECT date_trunc(''minute'', ts) k, count(*) c FROM cov GROUP BY 1')) t(shape, sql);
+
+statement ok
+SET disabled_optimizers = 'compressed_materialization';
+
+statement ok
+CREATE OR REPLACE TABLE plan_off AS SELECT shape,
+	CASE WHEN plan LIKE '%"error":true%' THEN 'unplanned' ELSE plan END AS plan
+FROM (SELECT shape, json_serialize_plan(sql, optimize := true)::VARCHAR AS plan FROM shapes);
+
+statement ok
+SET disabled_optimizers = '';
+
+statement ok
+CREATE OR REPLACE TABLE plan_on AS SELECT shape,
+	CASE WHEN plan LIKE '%"error":true%' THEN 'unplanned' ELSE plan END AS plan
+FROM (SELECT shape, json_serialize_plan(sql, optimize := true)::VARCHAR AS plan FROM shapes);
+
+query
+SELECT n.shape, (n.plan <> 'unplanned') AS planned, (n.plan LIKE '%date_trunc%bucket%' OR n.plan LIKE '%time_of_day_bucket%' OR n.plan LIKE '%cyclic_bucket%' OR n.plan LIKE '%__internal_month_of_year%' OR n.plan LIKE '%__internal_day_of_week%') AS bucketed,
+	len(regexp_extract_all(n.plan, '"type":"LOGICAL_[A-Z_]+"'))
+		> len(regexp_extract_all(f.plan, '"type":"LOGICAL_[A-Z_]+"')) AS restructured
+FROM plan_on n JOIN plan_off f USING (shape) ORDER BY 1;
+----
+shape	planned	bucketed	restructured
+alias in cte	t	t	t
+alias in subquery	t	t	t
+at time zone	t	t	t
+cast hour to TIME	t	t	t
+cast hour zoned to TIME	t	t	t
+cast month to DATE	t	t	t
+cast to TIME at microseconds: over budget	t	f	f
+cast to TIME under another zone: declines	t	f	f
+cast zoned to DATE	t	t	t
+coordinates year month	t	t	t
+coordinates year week: ambiguous	t	f	t
+correlated subquery: declines	t	f	f
+create table as	t	t	t
+cube: declines	t	f	f
+date_bin	t	t	t
+date_trunc day on DATE: cheaper plain	t	f	f
+date_trunc day zoned	t	t	t
+date_trunc hour	t	t	t
+date_trunc hour zoned	t	t	t
+date_trunc microsecond narrow	t	f	f
+date_trunc millisecond narrow	t	t	t
+date_trunc month	t	t	t
+date_trunc second wide: over budget	t	f	f
+date_trunc week	t	t	t
+dayname zoned	t	t	t
+distinct aggregate: declines	t	f	f
+distinct on	t	t	t
+epoch bin	t	f	t
+epoch of a truncation	t	t	t
+filtered	t	t	t
+grouping sets: declines	t	f	f
+having	t	t	t
+insert select	t	t	t
+interval shift of a truncation	t	t	t
+join above	t	t	t
+label year quarter	t	t	t
+last_day	t	t	t
+minute keys over the state budget: declines	t	f	f
+monthname	t	t	t
+nested day and hour	t	t	t
+numeric bin	t	f	t
+ordered by the key	t	t	t
+rollup	t	t	t
+select distinct	t	t	f
+select distinct over budget: declines	t	f	f
+select distinct two keys	t	t	f
+select distinct with a plain key: declines	t	f	f
+select distinct with a varchar key: declines	t	f	f
+strftime 12 hour with am pm	t	t	t
+strftime 12 hour without am pm: declines	t	f	f
+strftime date	t	t	t
+strftime date zoned	t	t	t
+strftime time of day	t	t	t
+strftime time of day zoned	t	t	t
+strftime week without year: declines	t	f	f
+strftime with offset: declines	t	f	f
+time_bucket 1 month	t	t	t
+time_bucket 15 minutes	t	t	t
+time_bucket 7 minutes	t	t	t
+time_bucket non-constant width: declines	t	f	f
+time_bucket offset	t	t	t
+time_bucket on TIME divides a day	t	t	t
+time_bucket on TIME wraps: declines	t	f	f
+time_bucket origin	t	t	t
+time_bucket with zone	t	t	t
+time_bucket with zone and origin	t	t	t
+time_bucket zoned	t	t	t
+union all branches	t	t	t
+view	t	t	t
+window partition to aggregate	t	t	t
+wrapped alias	t	t	t
+
+statement ok
+SET TimeZone = 'Asia/Kolkata';
+
+statement ok
+CREATE OR REPLACE TABLE shapes AS SELECT * FROM (VALUES
+	('half hour zone wall clock hour: declines', 'SELECT date_trunc(''hour'', tstz) k, count(*) c FROM cov GROUP BY 1'),
+	('half hour zone instant bucket', 'SELECT time_bucket(INTERVAL ''30 minutes'', tstz) k, count(*) c FROM cov GROUP BY 1'),
+	('half hour zone time of day', 'SELECT strftime(tstz, ''%H:%M'') k, count(*) c FROM cov GROUP BY 1')) t(shape, sql);
+
+statement ok
+SET disabled_optimizers = 'compressed_materialization';
+
+statement ok
+CREATE OR REPLACE TABLE plan_off AS SELECT shape,
+	CASE WHEN plan LIKE '%"error":true%' THEN 'unplanned' ELSE plan END AS plan
+FROM (SELECT shape, json_serialize_plan(sql, optimize := true)::VARCHAR AS plan FROM shapes);
+
+statement ok
+SET disabled_optimizers = '';
+
+statement ok
+CREATE OR REPLACE TABLE plan_on AS SELECT shape,
+	CASE WHEN plan LIKE '%"error":true%' THEN 'unplanned' ELSE plan END AS plan
+FROM (SELECT shape, json_serialize_plan(sql, optimize := true)::VARCHAR AS plan FROM shapes);
+
+query
+SELECT n.shape, (n.plan <> 'unplanned') AS planned, (n.plan LIKE '%date_trunc%bucket%' OR n.plan LIKE '%time_of_day_bucket%' OR n.plan LIKE '%cyclic_bucket%' OR n.plan LIKE '%__internal_month_of_year%' OR n.plan LIKE '%__internal_day_of_week%') AS bucketed,
+	len(regexp_extract_all(n.plan, '"type":"LOGICAL_[A-Z_]+"'))
+		> len(regexp_extract_all(f.plan, '"type":"LOGICAL_[A-Z_]+"')) AS restructured
+FROM plan_on n JOIN plan_off f USING (shape) ORDER BY 1;
+----
+shape	planned	bucketed	restructured
+half hour zone instant bucket	t	t	t
+half hour zone time of day	t	t	t
+half hour zone wall clock hour: declines	t	f	f
+
+statement ok
+SET TimeZone = 'Australia/Lord_Howe';
+
+statement ok
+CREATE OR REPLACE TABLE shapes AS SELECT * FROM (VALUES
+	('half hour dst wall clock hour: declines', 'SELECT date_trunc(''hour'', tstz) k, count(*) c FROM cov GROUP BY 1'),
+	('half hour dst cast to TIME: declines', 'SELECT date_trunc(''hour'', tstz)::TIME k, count(*) c FROM cov GROUP BY 1'),
+	('half hour dst instant bucket', 'SELECT time_bucket(INTERVAL ''30 minutes'', tstz) k, count(*) c FROM cov GROUP BY 1')) t(shape, sql);
+
+statement ok
+SET disabled_optimizers = 'compressed_materialization';
+
+statement ok
+CREATE OR REPLACE TABLE plan_off AS SELECT shape,
+	CASE WHEN plan LIKE '%"error":true%' THEN 'unplanned' ELSE plan END AS plan
+FROM (SELECT shape, json_serialize_plan(sql, optimize := true)::VARCHAR AS plan FROM shapes);
+
+statement ok
+SET disabled_optimizers = '';
+
+statement ok
+CREATE OR REPLACE TABLE plan_on AS SELECT shape,
+	CASE WHEN plan LIKE '%"error":true%' THEN 'unplanned' ELSE plan END AS plan
+FROM (SELECT shape, json_serialize_plan(sql, optimize := true)::VARCHAR AS plan FROM shapes);
+
+query
+SELECT n.shape, (n.plan <> 'unplanned') AS planned, (n.plan LIKE '%date_trunc%bucket%' OR n.plan LIKE '%time_of_day_bucket%' OR n.plan LIKE '%cyclic_bucket%' OR n.plan LIKE '%__internal_month_of_year%' OR n.plan LIKE '%__internal_day_of_week%') AS bucketed,
+	len(regexp_extract_all(n.plan, '"type":"LOGICAL_[A-Z_]+"'))
+		> len(regexp_extract_all(f.plan, '"type":"LOGICAL_[A-Z_]+"')) AS restructured
+FROM plan_on n JOIN plan_off f USING (shape) ORDER BY 1;
+----
+shape	planned	bucketed	restructured
+half hour dst cast to TIME: declines	t	f	f
+half hour dst instant bucket	t	t	t
+half hour dst wall clock hour: declines	t	f	f
+
+statement ok
+SET TimeZone = 'Etc/UTC';

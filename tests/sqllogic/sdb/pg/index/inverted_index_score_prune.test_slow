@@ -134,7 +134,7 @@ count
 1000
 
 
-# === Literal term (ByTerm -> SinglePruningIterator) ===
+# === Literal term (ByTerm -> PruningIterator) ===
 # Common term: pruning has lots of room (heap fills fast, then skips).
 
 query
@@ -245,7 +245,7 @@ count
 0
 
 
-# === ts_any (ByTerms -> MaxScoreIterator) ===
+# === ts_any (ByTerms -> PruningIterator) ===
 # Three-term disjunction over the animal slot -- every row matches one
 # branch, so this is the densest possible posting union.
 

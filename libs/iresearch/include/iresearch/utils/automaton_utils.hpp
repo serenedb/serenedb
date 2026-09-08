@@ -112,7 +112,7 @@ class AutomatonTermIterator : public SeekTermIterator {
 
   bytes_view value() const noexcept final { return *_value; }
 
-  DocIterator::ptr postings(IndexFeatures features) const final {
+  TermPostings::ptr postings(IndexFeatures features) const final {
     return _it->postings(features);
   }
 
@@ -500,7 +500,6 @@ inline automaton MakeAll() {
 ///        and other properties
 /// @param field field name
 /// @param matcher input matcher
-/// @param scored_terms_limit score as many terms
 /// @param index index reader
 /// @param order compiled order
 /// @param bool query boost

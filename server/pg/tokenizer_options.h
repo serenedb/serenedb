@@ -122,16 +122,16 @@ inline constexpr OptionInfo kEndMarker{
 
 // Sparse NGram
 
-void CheckMaxNgramLength(std::string_view option, int value);
+void CheckMaxNGramLength(std::string_view option, int value);
 
 inline constexpr OptionInfo kCovering{
   "covering", false,
   "Emit the minimal covering n-gram chain (query side) instead of all sparse "
   "n-grams (index side)"};
 
-inline constexpr OptionInfo kMaxNgramLength{
+inline constexpr OptionInfo kMaxNGramLength{
   "maxngramlength", 16, "Maximum emitted n-gram length (minimum 3)",
-  CheckMaxNgramLength};
+  CheckMaxNGramLength};
 
 // Classification
 
@@ -152,10 +152,10 @@ inline constexpr OptionInfo kNumHashes{
 
 // Wildcard
 
-void CheckNgramSize(std::string_view option, int value);
-inline constexpr OptionInfo kNgramSize{
+void CheckNGramSize(std::string_view option, int value);
+inline constexpr OptionInfo kNGramSize{
   "ngramsize", 3, "N-gram size for wildcard prefix indexing (minimum 2)",
-  CheckNgramSize};
+  CheckNGramSize};
 
 // Geo options (kGeoMaxCells, kGeoLatitude, kGeoJsonType, ...) live in
 // "pg/geo_tokenizer_options.h", brought in by the include above.
@@ -240,7 +240,7 @@ inline constexpr OptionInfo kTextOptions[] = {
 inline constexpr OptionInfo kNGramOptions[] = {
   kMinGram, kMaxGram, kPreserveOriginal, kInputType, kStartMarker, kEndMarker};
 
-inline constexpr OptionInfo kSparseNGramOptions[] = {kMaxNgramLength,
+inline constexpr OptionInfo kSparseNGramOptions[] = {kMaxNGramLength,
                                                      kCovering};
 
 inline constexpr OptionInfo kNearestNeighborsOptions[] = {kModelLocation,
@@ -263,7 +263,7 @@ inline constexpr OptionInfo kCopyFromOptions[] = {kFrom};
 
 inline constexpr OptionInfo kMinHashOptions[] = {kNumHashes};
 
-inline constexpr OptionInfo kWildcardOptions[] = {kNgramSize};
+inline constexpr OptionInfo kWildcardOptions[] = {kNGramSize};
 
 inline constexpr OptionInfo kNormOptions[] = {kLocale, kCase, kAccent};
 

@@ -170,7 +170,6 @@ QUERY PLAN
 │ ╭─ Starts With ───────╮                              │
 │ │ Field: body(string) │                              │
 │ │ Prefix: a           │                              │
-│ │ Limit: 1024         │                              │
 │ ╰─────────────────────╯                              │
 │ TsDict: body                                         │
 │ Projections:                                         │
@@ -215,7 +214,6 @@ QUERY PLAN
 │ ╭─ Starts With ───────╮                              │
 │ │ Field: body(string) │                              │
 │ │ Prefix: b           │                              │
-│ │ Limit: 1024         │                              │
 │ ╰─────────────────────╯                              │
 │ TsDict: body                                         │
 │ Projections:                                         │
@@ -560,11 +558,12 @@ QUERY PLAN
 ╭─ IRESEARCH_SCAN ──────────┴──────────────────────────╮
 │ Index: cart_idx                                      │
 │ Index Filter:                                        │
-│ ╭─ Terms ───────────────────────────╮                │
+│ ╭─ Or ──────────────────────────────╮                │
+│ ╰─────────────────┬─────────────────╯                │
+│ ╭─ Terms ─────────┴─────────────────╮                │
 │ │ Field: body(string)               │                │
 │ │ Values:                           │                │
 │ │ 'apple', 'banana', 'date', 'kiwi' │                │
-│ │ Min Match: 1                      │                │
 │ ╰───────────────────────────────────╯                │
 │ TsDict: body                                         │
 │ Projections:                                         │

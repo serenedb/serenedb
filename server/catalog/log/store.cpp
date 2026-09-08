@@ -529,7 +529,7 @@ void CatalogStore::Compact() {
       for (const auto& [id, value] : _sequences) {
         seq_ids.push_back(id);
       }
-      std::sort(seq_ids.begin(), seq_ids.end());
+      absl::c_sort(seq_ids);
       for (const auto id : seq_ids) {
         catalog::WriteSequenceValueTo(wal, ObjectId{id}, _sequences[id],
                                       /*max_merge=*/false);
@@ -609,8 +609,7 @@ std::vector<ObjectId> CatalogStore::SequenceIds() const {
   for (const auto& [id, value] : _sequences) {
     ids.emplace_back(id);
   }
-  std::sort(ids.begin(), ids.end(),
-            [](ObjectId lhs, ObjectId rhs) { return lhs.id() < rhs.id(); });
+  absl::c_sort(ids, [](auto l, auto r) { return l.id() < r.id(); });
   return ids;
 }
 

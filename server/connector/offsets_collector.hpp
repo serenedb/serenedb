@@ -21,12 +21,14 @@
 #pragma once
 
 #include <duckdb/common/types.hpp>
-#include <iresearch/index/iterators.hpp>
+#include <iresearch/search/offsets/make.hpp>
+#include <iresearch/search/offsets/root.hpp>
 #include <iresearch/search/prepared_state_visitor.hpp>
 #include <span>
 #include <variant>
 #include <vector>
 
+#include "basics/containers/flat_hash_set.h"
 #include "connector/highlight/highlight_types.h"
 
 namespace irs {
@@ -34,8 +36,6 @@ namespace irs {
 class FixedPhraseQuery;
 class VariadicPhraseQuery;
 class NGramSimilarityQuery;
-struct PosAttr;
-struct OffsAttr;
 struct SubReader;
 struct TermReader;
 
@@ -49,9 +49,8 @@ struct FilterEntry {
     filter;
 
   // Lazy: null until first use in a segment, then reused for all docs.
-  irs::DocIterator::ptr docs;
-  irs::PosAttr* pos = nullptr;
-  const irs::OffsAttr* offs = nullptr;
+  irs::offsets::Root::ptr root;
+  bool absent = false;
 };
 
 // Per-field state, rebuilt on each segment transition.
@@ -59,6 +58,7 @@ struct FieldState {
   const irs::TermReader* reader = nullptr;
   std::vector<FilterEntry> entries;
   containers::FlatHashSet<const irs::PostingMeta*> seen_cookies;
+  std::vector<irs::offsets::Range> scratch;
 
   void Clear() noexcept {
     reader = nullptr;
@@ -74,11 +74,9 @@ struct FieldEntry {
   FieldState state;
 };
 
-void PrepareFilterEntry(FilterEntry& entry, const irs::TermReader* reader,
-                        const irs::SubReader& segment);
+void PrepareFilterEntry(FilterEntry& entry, const irs::TermReader* reader);
 
-void FillRowOffsets(FieldState& state, const irs::SubReader& segment,
-                    irs::doc_id_t doc_id, size_t max_pairs,
+void FillRowOffsets(FieldState& state, irs::doc_id_t doc_id, size_t max_pairs,
                     std::vector<highlight::HitRange>& hits);
 
 class OffsetsCollector final : public irs::PreparedStateVisitor {
@@ -88,8 +86,7 @@ class OffsetsCollector final : public irs::PreparedStateVisitor {
 
   bool Visit(const irs::BooleanQuery&, irs::score_t) final { return true; }
   bool Visit(const irs::ByNestedQuery&, irs::score_t) final { return false; }
-  bool Visit(const irs::TermQuery&, const irs::TermState& state,
-             irs::score_t) final;
+  bool Visit(const irs::TermState& state, irs::score_t) final;
   bool Visit(const irs::MultiTermQuery&, const irs::MultiTermState& state,
              irs::score_t) final;
   bool Visit(const irs::FixedPhraseQuery& query,

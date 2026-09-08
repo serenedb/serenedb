@@ -53,16 +53,11 @@ const ColReader* SegmentReader::GetColReader() const {
   return _impl ? _impl->GetColReader() : nullptr;
 }
 
-// FIXME find a better way to mask documents
-DocIterator::ptr SegmentReader::mask(DocIterator::ptr&& it) const {
-  return _impl->mask(std::move(it));
-}
-
 const TermReader* SegmentReader::field(field_id id) const {
   return _impl->field(id);
 }
 
-DocIterator::ptr SegmentReader::docs_iterator() const {
+lead::Node::ptr SegmentReader::docs_iterator() const {
   return _impl->docs_iterator();
 }
 

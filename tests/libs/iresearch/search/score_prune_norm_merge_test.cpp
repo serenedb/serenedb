@@ -43,7 +43,6 @@
 #include "index/doc_generator.hpp"
 #include "index/index_tests.hpp"
 #include "iresearch/index/index_features.hpp"
-#include "iresearch/search/cost.hpp"
 
 namespace {
 

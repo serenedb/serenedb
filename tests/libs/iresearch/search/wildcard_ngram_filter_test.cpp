@@ -23,7 +23,6 @@
 #include "iresearch/analysis/wildcard_analyzer.hpp"
 #include "iresearch/index/directory_reader.hpp"
 #include "iresearch/index/index_writer.hpp"
-#include "iresearch/search/cost.hpp"
 #include "iresearch/search/wildcard_ngram_filter.hpp"
 #include "iresearch/store/memory_directory.hpp"
 #include "iresearch/utils/type_limits.hpp"
@@ -76,16 +75,16 @@ inline constexpr irs::field_id kTextId = 2;
 inline constexpr irs::field_id kFieldId = 3;
 inline constexpr irs::field_id kOtherId = 4;
 
-// Build a ByWildcardNgram for the given field and SQL LIKE pattern.
+// Build a ByWildcardNGram for the given field and SQL LIKE pattern.
 // `store_field_id` is wired to kStoreId so the filter's per-doc point
 // access lands on the cs column written below in the `query` test.
-irs::ByWildcardNgram MakeFilter(irs::field_id field, std::string_view pattern,
+irs::ByWildcardNGram MakeFilter(irs::field_id field, std::string_view pattern,
                                 irs::analysis::WildcardAnalyzer& analyzer,
                                 bool has_positions = true) {
-  irs::ByWildcardNgram filter;
+  irs::ByWildcardNGram filter;
   *filter.mutable_field_id() = field;
   *filter.mutable_options() =
-    irs::ByWildcardNgramOptions{pattern, analyzer, has_positions};
+    irs::ByWildcardNGramOptions{pattern, analyzer, has_positions};
   filter.mutable_options()->store_field_id = kStoreId;
   return filter;
 }
@@ -93,50 +92,50 @@ irs::ByWildcardNgram MakeFilter(irs::field_id field, std::string_view pattern,
 }  // namespace
 
 // ---------------------------------------------------------------------------
-// ByWildcardNgramOptions unit tests
+// ByWildcardNGramOptions unit tests
 // ---------------------------------------------------------------------------
 
-TEST(WildcardNgramFilterOptionsTest, default_ctor) {
-  irs::ByWildcardNgramOptions opts;
+TEST(WildcardNGramFilterOptionsTest, default_ctor) {
+  irs::ByWildcardNGramOptions opts;
   EXPECT_TRUE(opts.parts.empty());
   EXPECT_TRUE(opts.token.empty());
   EXPECT_TRUE(opts.has_pos);
   EXPECT_EQ(nullptr, opts.matcher);
 }
 
-TEST(WildcardNgramFilterOptionsTest, equality_empty) {
-  irs::ByWildcardNgramOptions a;
-  irs::ByWildcardNgramOptions b;
+TEST(WildcardNGramFilterOptionsTest, equality_empty) {
+  irs::ByWildcardNGramOptions a;
+  irs::ByWildcardNGramOptions b;
   EXPECT_TRUE(a == b);
 }
 
-TEST(WildcardNgramFilterOptionsTest, equality_with_matcher) {
+TEST(WildcardNGramFilterOptionsTest, equality_with_matcher) {
   irs::analysis::WildcardAnalyzer analyzer{nullptr, 3};
 
   // A middle "%" causes needs_matcher=true, so BuildLikeMatcher is called.
-  irs::ByWildcardNgramOptions a{"foo%bar", analyzer, true};
-  irs::ByWildcardNgramOptions b{"foo%bar", analyzer, true};
+  irs::ByWildcardNGramOptions a{"foo%bar", analyzer, true};
+  irs::ByWildcardNGramOptions b{"foo%bar", analyzer, true};
   EXPECT_TRUE(a == b);
 
-  irs::ByWildcardNgramOptions c{"foo%baz", analyzer, true};
+  irs::ByWildcardNGramOptions c{"foo%baz", analyzer, true};
   EXPECT_FALSE(a == c);
 }
 
-TEST(WildcardNgramFilterOptionsTest, equality_different_has_pos) {
+TEST(WildcardNGramFilterOptionsTest, equality_different_has_pos) {
   irs::analysis::WildcardAnalyzer analyzer{nullptr, 3};
 
-  irs::ByWildcardNgramOptions a{"foo_bar", analyzer, true};
-  irs::ByWildcardNgramOptions b{"foo_bar", analyzer, false};
+  irs::ByWildcardNGramOptions a{"foo_bar", analyzer, true};
+  irs::ByWildcardNGramOptions b{"foo_bar", analyzer, false};
   EXPECT_FALSE(a == b);
 }
 
-TEST(WildcardNgramFilterOptionsTest, one_null_matcher) {
+TEST(WildcardNGramFilterOptionsTest, one_null_matcher) {
   // One options has a matcher (because of '_'), the other doesn't
   // (pure prefix) -- they must not be equal.
   irs::analysis::WildcardAnalyzer analyzer{nullptr, 3};
 
-  irs::ByWildcardNgramOptions with_matcher{"a_c", analyzer, true};
-  irs::ByWildcardNgramOptions no_matcher{"abc%", analyzer, true};
+  irs::ByWildcardNGramOptions with_matcher{"a_c", analyzer, true};
+  irs::ByWildcardNGramOptions no_matcher{"abc%", analyzer, true};
 
   EXPECT_NE(with_matcher.matcher, nullptr);
   EXPECT_EQ(no_matcher.matcher, nullptr);
@@ -144,18 +143,18 @@ TEST(WildcardNgramFilterOptionsTest, one_null_matcher) {
 }
 
 // ---------------------------------------------------------------------------
-// ByWildcardNgram unit tests
+// ByWildcardNGram unit tests
 // ---------------------------------------------------------------------------
 
-TEST(WildcardNgramFilterTest, ctor) {
-  irs::ByWildcardNgram q;
-  EXPECT_EQ(irs::Type<irs::ByWildcardNgram>::id(), q.type());
-  EXPECT_EQ(irs::ByWildcardNgramOptions{}, q.options());
+TEST(WildcardNGramFilterTest, ctor) {
+  irs::ByWildcardNGram q;
+  EXPECT_EQ(irs::Type<irs::ByWildcardNGram>::id(), q.type());
+  EXPECT_EQ(irs::ByWildcardNGramOptions{}, q.options());
   EXPECT_EQ(irs::field_limits::invalid(), q.field_id());
   EXPECT_EQ(irs::kNoBoost, q.GetBoost());
 }
 
-TEST(WildcardNgramFilterTest, equal) {
+TEST(WildcardNGramFilterTest, equal) {
   irs::analysis::WildcardAnalyzer analyzer{nullptr, 3};
 
   auto q = MakeFilter(kFieldId, "foo_bar", analyzer);
@@ -172,7 +171,7 @@ TEST(WildcardNgramFilterTest, equal) {
 // Integration tests: build an in-memory index and run queries
 // ---------------------------------------------------------------------------
 
-TEST(WildcardNgramFilterTest, query) {
+TEST(WildcardNGramFilterTest, query) {
   // Documents indexed under field "text" (1-indexed doc_ids):
   //  doc 1: "foobar"
   //  doc 2: "foobaz"
@@ -226,15 +225,15 @@ TEST(WildcardNgramFilterTest, query) {
   MaxMemoryCounter counter;
 
   // Execute a filter and return matched doc_ids across all segments.
-  auto execute = [&](const irs::ByWildcardNgram& q) {
+  auto execute = [&](const irs::ByWildcardNGram& q) {
     tests::PreparedFilter prepared{q, *reader, nullptr, counter};
     counter.Reset();
 
     std::vector<irs::doc_id_t> result;
     for (size_t i = 0, n = prepared.size(); i < n; ++i) {
       auto docs = prepared.Execute(i);
-      while (!irs::doc_limits::eof(docs->advance())) {
-        result.push_back(docs->value());
+      while (!irs::doc_limits::eof(docs->Advance())) {
+        result.push_back(docs->Value());
       }
     }
     return result;

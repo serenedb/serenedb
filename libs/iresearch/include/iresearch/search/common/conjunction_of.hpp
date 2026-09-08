@@ -26,12 +26,13 @@
 #include <utility>
 #include <vector>
 
+#include "basics/empty.hpp"
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/search/common/collect.hpp"
 #include "iresearch/search/common/conjunction_bitset.hpp"
 #include "iresearch/search/common/plan.hpp"
 #include "iresearch/search/fill/walk.hpp"
-#include "iresearch/search/lead/sparse_conjunction_docs.hpp"
+#include "iresearch/search/lead/boolean_sparse.hpp"
 
 namespace irs::search {
 
@@ -48,15 +49,15 @@ Result BuildConjunctionOf(std::span<const Term> terms,
   return BuildConjunction<Result, Term>(
     terms, filters, field, segment, interrogations,
     []<typename Lead, typename Others>(auto&& lead, auto&& others) -> Result {
-      using Node = lead::SparseConjunctionDocs<Lead, Others>;
+      using Node = lead::BooleanSparse<Lead, Others, utils::Empty>;
       if constexpr (kFilled) {
         return memory::make_managed<fill::ByWalkDocs<Node>>(
           std::piecewise_construct, std::forward<decltype(lead)>(lead),
-          std::forward<decltype(others)>(others));
+          std::forward<decltype(others)>(others), std::forward_as_tuple());
       } else {
         return memory::make_managed<lead::Impl<Node>>(
           std::piecewise_construct, std::forward<decltype(lead)>(lead),
-          std::forward<decltype(others)>(others));
+          std::forward<decltype(others)>(others), std::forward_as_tuple());
       }
     });
 }

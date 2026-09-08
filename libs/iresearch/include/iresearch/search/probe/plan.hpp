@@ -22,15 +22,17 @@
 
 #include <span>
 
+#include "basics/empty.hpp"
 #include "iresearch/search/common/bitset_of.hpp"
 #include "iresearch/search/common/optional_scored.hpp"
 #include "iresearch/search/common/posting_probe.hpp"
 #include "iresearch/search/common/probe_leaves.hpp"
 #include "iresearch/search/common/resolve.hpp"
+#include "iresearch/search/probe/boolean_sparse.hpp"
 #include "iresearch/search/probe/impl.hpp"
+#include "iresearch/search/probe/leaves.hpp"
 #include "iresearch/search/probe/make.hpp"
 #include "iresearch/search/probe/single_posting.hpp"
-#include "iresearch/search/probe/sparse_disjunction_docs.hpp"
 #include "iresearch/search/probe/sparse_disjunction_scored.hpp"
 
 namespace irs::probe {
@@ -63,9 +65,12 @@ Node::ptr MakeSparseDisjunctionDocs(std::span<const Term> terms,
     [&]<typename Leaf>(size_t size, auto&& init) -> Node::ptr {
       return search::ResolveArity<search::kRunArity, search::kRunFloor>(
         size, [&]<size_t N> -> Node::ptr {
-          using Node = SparseDisjunctionDocs<Leaf, N>;
+          using Node =
+            BooleanSparse<utils::Empty, OrLeaves<Leaf, N>, utils::Empty>;
           return memory::make_managed<Impl<Node>>(
-            size, std::forward<decltype(init)>(init));
+            std::piecewise_construct, std::forward_as_tuple(),
+            std::forward_as_tuple(size, std::forward<decltype(init)>(init)),
+            std::forward_as_tuple());
         });
     });
 }

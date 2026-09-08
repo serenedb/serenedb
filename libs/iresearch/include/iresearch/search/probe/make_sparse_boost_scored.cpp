@@ -29,10 +29,10 @@
 #include "iresearch/search/common/optional_scored.hpp"
 #include "iresearch/search/common/resolve.hpp"
 #include "iresearch/search/probe/impl.hpp"
+#include "iresearch/search/probe/leaves.hpp"
 #include "iresearch/search/probe/make.hpp"
 #include "iresearch/search/probe/posting_scored.hpp"
 #include "iresearch/search/probe/sparse_boost_scored.hpp"
-#include "iresearch/search/probe/sparse_conjunction_docs.hpp"
 #include "iresearch/search/probe/sparse_conjunction_scored.hpp"
 
 namespace irs::probe {

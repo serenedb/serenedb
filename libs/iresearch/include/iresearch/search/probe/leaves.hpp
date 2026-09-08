@@ -20,9 +20,13 @@
 
 #pragma once
 
+#include <algorithm>
+#include <cstdint>
+#include <tuple>
 #include <utility>
 #include <vector>
 
+#include "basics/assert.h"
 #include "basics/shared.hpp"
 #include "iresearch/search/common/fixed_array.hpp"
 #include "iresearch/search/common/score_args.hpp"
@@ -32,22 +36,22 @@
 namespace irs::probe {
 
 template<Type Leaf, size_t N = 0>
-class SparseConjunctionDocs {
+class AndLeaves {
  public:
   template<typename Init>
-  SparseConjunctionDocs(size_t size, Init&& init)
+  AndLeaves(size_t size, Init&& init)
     : _leaves{size, std::forward<Init>(init)} {
     SDB_ASSERT(_leaves.size() > 1);
   }
 
   template<typename... Args>
-  explicit SparseConjunctionDocs(std::piecewise_construct_t, Args&&... args)
+  explicit AndLeaves(std::piecewise_construct_t, Args&&... args)
     : _leaves{std::piecewise_construct, std::forward<Args>(args)...} {
     static_assert(N > 1);
   }
 
-  SparseConjunctionDocs(SparseConjunctionDocs&&) = delete;
-  SparseConjunctionDocs& operator=(SparseConjunctionDocs&&) = delete;
+  AndLeaves(AndLeaves&&) = delete;
+  AndLeaves& operator=(AndLeaves&&) = delete;
 
   IRS_FORCE_INLINE doc_id_t Probe(doc_id_t target) {
     for (auto& leaf : _leaves) {
@@ -74,12 +78,71 @@ class SparseConjunctionDocs {
   search::RunOf<Leaf, N> _leaves;
 };
 
+template<Type Leaf, size_t N = 0>
+class OrLeaves {
+ public:
+  template<typename Init>
+  OrLeaves(size_t size, Init&& init) : _leaves{size, std::forward<Init>(init)} {
+    SDB_ASSERT(_leaves.size() > 1);
+  }
+
+  OrLeaves(OrLeaves&&) = delete;
+  OrLeaves& operator=(OrLeaves&&) = delete;
+
+  doc_id_t Probe(doc_id_t target) {
+    auto next = doc_limits::eof();
+    for (size_t i = 0, count = _leaves.size(); i != count; ++i) {
+      const auto doc = _leaves[i].Probe(target);
+      if (doc == target) {
+        return target;
+      }
+      next = std::min(next, doc);
+    }
+    return next;
+  }
+
+ private:
+  search::RunOf<Leaf, N> _leaves;
+};
+
+template<Type Leaf, size_t N = 0>
+class ThresholdLeaves {
+ public:
+  template<typename Init>
+  ThresholdLeaves(size_t size, Init&& init, uint32_t min_match)
+    : _probes{size, std::forward<Init>(init)}, _min_match{min_match} {
+    SDB_ASSERT(_min_match > 1);
+    SDB_ASSERT(_probes.size() >= _min_match);
+  }
+
+  ThresholdLeaves(ThresholdLeaves&&) = delete;
+  ThresholdLeaves& operator=(ThresholdLeaves&&) = delete;
+
+  doc_id_t Probe(doc_id_t target) {
+    uint32_t hits = 0;
+    uint32_t left = static_cast<uint32_t>(_probes.size());
+    for (auto& probe : _probes) {
+      hits += static_cast<uint32_t>(probe.Probe(target) == target);
+      if (hits == _min_match) {
+        return target;
+      }
+      --left;
+      if (hits + left < _min_match) {
+        break;
+      }
+    }
+    return target + 1;
+  }
+
+ private:
+  search::RunOf<Leaf, N> _probes;
+  uint32_t _min_match;
+};
+
 class NoLeaves {
  public:
   IRS_FORCE_INLINE doc_id_t Probe(doc_id_t target) noexcept { return target; }
-
   IRS_FORCE_INLINE void FetchScoreArgs(uint32_t) noexcept {}
-
   void CollectScorers(std::vector<ScoreFunction>&) const noexcept {}
 };
 

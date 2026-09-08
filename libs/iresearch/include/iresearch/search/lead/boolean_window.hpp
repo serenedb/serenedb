@@ -22,21 +22,41 @@
 
 #include <algorithm>
 #include <bit>
+#include <cstdint>
+#include <tuple>
+#include <type_traits>
 #include <utility>
 
+#include "basics/empty.hpp"
 #include "iresearch/search/common/window.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
 namespace irs::lead {
 
-template<typename Lead, typename Others>
-class WindowConjunctionDocs {
+template<typename Lead, typename Others, typename Optional, typename Excludes>
+class BooleanWindow {
  public:
-  template<typename LeadArgs, typename OthersArgs>
-  WindowConjunctionDocs(std::piecewise_construct_t, LeadArgs&& lead,
-                        OthersArgs&& others)
+  static constexpr bool kLead = !std::is_same_v<Lead, utils::Empty>;
+  static constexpr bool kOthers = !std::is_same_v<Others, utils::Empty>;
+  static constexpr bool kOptional = !std::is_same_v<Optional, utils::Empty>;
+  static constexpr bool kExcludes = !std::is_same_v<Excludes, utils::Empty>;
+  static_assert(kLead != kOptional);
+  static_assert(kLead || !kOthers);
+
+  template<typename LeadArgs, typename OthersArgs, typename OptionalArgs,
+           typename ExcludesArgs>
+  BooleanWindow(std::piecewise_construct_t, LeadArgs&& lead,
+                OthersArgs&& others, OptionalArgs&& optional,
+                ExcludesArgs&& excludes)
     : _lead{std::make_from_tuple<Lead>(std::forward<LeadArgs>(lead))},
-      _others{std::make_from_tuple<Others>(std::forward<OthersArgs>(others))} {}
+      _others{std::make_from_tuple<Others>(std::forward<OthersArgs>(others))},
+      _optional{
+        std::make_from_tuple<Optional>(std::forward<OptionalArgs>(optional))},
+      _excludes{
+        std::make_from_tuple<Excludes>(std::forward<ExcludesArgs>(excludes))} {}
+
+  BooleanWindow(BooleanWindow&&) = delete;
+  BooleanWindow& operator=(BooleanWindow&&) = delete;
 
   doc_id_t Advance() { return Seek(_doc + 1); }
 
@@ -76,13 +96,25 @@ class WindowConjunctionDocs {
 
   void Refill(doc_id_t target) {
     SDB_ASSERT(!_filled || target >= _min);
-    search::Clear(_mask.data(), search::kWindowWords);
+    auto* const words = _mask.data();
+    search::Clear(words, search::kWindowWords);
     _min = target;
     _filled = true;
     const auto max = _min + kWindow;
-    _next = std::max(_lead.FillOr(_min, max, _mask.data()),
-                     _others.Restrict(_min, max, _mask.data()));
-    _spent = doc_limits::eof(_next);
+    doc_id_t next;
+    if constexpr (kLead) {
+      next = _lead.FillOr(_min, max, words);
+      if constexpr (kOthers) {
+        next = std::max(next, _others.Restrict(_min, max, words));
+      }
+    } else {
+      next = _optional.Fill(_min, max, words);
+    }
+    if constexpr (kExcludes) {
+      _excludes.Remove(_min, max, words);
+    }
+    _next = next;
+    _spent = doc_limits::eof(next);
   }
 
   doc_id_t Find(doc_id_t offset) const noexcept {
@@ -100,8 +132,10 @@ class WindowConjunctionDocs {
   }
 
   search::Scratch _mask{};
-  Lead _lead;
-  Others _others;
+  [[no_unique_address]] Lead _lead;
+  [[no_unique_address]] Others _others;
+  [[no_unique_address]] Optional _optional;
+  [[no_unique_address]] Excludes _excludes;
   doc_id_t _min = 0;
   doc_id_t _next = doc_limits::eof();
   doc_id_t _doc = doc_limits::invalid();

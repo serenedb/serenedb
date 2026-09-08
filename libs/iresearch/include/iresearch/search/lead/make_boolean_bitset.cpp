@@ -18,23 +18,15 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include <span>
-#include <utility>
-#include <vector>
+#include "iresearch/index/index_reader.hpp"
+#include "iresearch/search/common/boolean_bitset.hpp"
+#include "iresearch/search/lead/make_boolean.hpp"
 
-#include "iresearch/search/common/bitset_of.hpp"
-#include "iresearch/search/fill/plan.hpp"
+namespace irs::lead {
 
-namespace irs::fill {
-
-Node::ptr MakeBitsetDisjunctionDocs(
-  std::span<const search::PostingClause> terms, const IndexInput* doc,
-  const std::vector<Node::ptr>& rest, doc_id_t docs_count) {
-  if (terms.empty() || !rest.empty()) {
-    return {};
-  }
-  return search::MakeBitsetOf<Node::ptr>(terms, nullptr, *doc, docs_count,
-                                         nullptr);
+Node::ptr MakeBitsetDocs(const search::BooleanGroups& groups,
+                         const SubReader& segment) {
+  return search::MakeBooleanBitset<Node::ptr>(groups, segment, nullptr);
 }
 
-}  // namespace irs::fill
+}  // namespace irs::lead

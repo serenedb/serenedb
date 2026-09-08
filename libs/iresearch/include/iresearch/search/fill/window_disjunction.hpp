@@ -33,25 +33,6 @@
 
 namespace irs::fill {
 
-template<typename Leaves>
-class WindowDisjunctionDocs {
- public:
-  template<typename LeavesArgs>
-  WindowDisjunctionDocs(std::piecewise_construct_t, LeavesArgs&& leaves)
-    : _leaves{std::make_from_tuple<Leaves>(std::forward<LeavesArgs>(leaves))} {}
-
-  doc_id_t FillOr(doc_id_t min, doc_id_t max, uint64_t* IRS_RESTRICT mask) {
-    if (_leaves.Empty()) {
-      return doc_limits::eof();
-    }
-    return _leaves.Visit(
-      max, [&](auto& leaf) { return leaf.FillOr(min, max, mask); });
-  }
-
- private:
-  Leaves _leaves;
-};
-
 template<typename Leaves, bool HasConst = false>
 class WindowDisjunctionScored {
  public:

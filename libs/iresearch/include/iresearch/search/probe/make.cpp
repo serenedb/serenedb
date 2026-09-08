@@ -51,31 +51,6 @@ search::ScoreRecipe RecipeOf(const SubReader& segment, const ScoredCtx& ctx) {
 
 }  // namespace
 
-Node::ptr MakeRequiredDocs(std::span<const search::PostingClause> must,
-                           std::span<const QueryBuilder::ptr> must_filters,
-                           std::span<const search::PostingClause> should,
-                           std::span<const QueryBuilder::ptr> should_filters,
-                           uint32_t min_should_match, const SubReader& segment,
-                           uint64_t interrogations) {
-  if (min_should_match == 0) {
-    return MakeSparseConjunctionDocs(must, must_filters, segment,
-                                     interrogations);
-  }
-  if (must.empty() && must_filters.empty()) {
-    return probe::BuildOptionalProbe(should, should_filters, min_should_match,
-                                     segment, interrogations);
-  }
-  auto other = probe::BuildOptionalProbe(
-    should, should_filters, min_should_match, segment,
-    std::min(interrogations,
-             search::IncludeCandidates(must, must_filters, segment)));
-  if (!other) {
-    return {};
-  }
-  return MakeSparseConjunctionWithDocs(must, must_filters, segment,
-                                       interrogations, std::move(other));
-}
-
 Node::ptr Make(const TermQuery& query, uint64_t) {
   return MakePostingDocs(search::PostingClause{query.State()}, query.Segment());
 }
@@ -115,24 +90,6 @@ Node::ptr Make(const AllQuery& query, uint64_t) {
 
 Node::ptr Make(const WildcardNGramQuery& query, uint64_t interrogations) {
   return MakeWildcardNGramDocs(query, interrogations);
-}
-
-Node::ptr Make(const BooleanQuery& query, uint64_t interrogations) {
-  const auto& segment = query.Segment();
-  const auto exclude = query.Terms(Occur::MustNot);
-  const auto exclude_filters = query.Queries(Occur::MustNot);
-  const auto must = query.Terms(Occur::Must);
-  const auto must_filters = query.Queries(Occur::Must);
-  const auto should = query.Terms(Occur::Should);
-  const auto should_filters = query.Queries(Occur::Should);
-  const auto min_should_match = query.MinShouldMatch();
-  if (exclude.empty() && exclude_filters.empty()) {
-    return MakeRequiredDocs(must, must_filters, should, should_filters,
-                            min_should_match, segment, interrogations);
-  }
-  return MakeSparseExclusionDocs(must, must_filters, should, should_filters,
-                                 min_should_match, exclude, exclude_filters,
-                                 segment, interrogations);
 }
 
 Node::ptr Make(const TermQuery& query, const ScoredCtx& ctx, uint64_t) {

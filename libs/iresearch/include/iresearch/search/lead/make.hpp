@@ -82,33 +82,11 @@ Node::ptr MakeAllDocs(const SubReader& segment);
 Node::ptr MakeAllScored(const SubReader& segment, score_t score);
 Node::ptr MakeAllScored(const SubReader& segment, const ScoreArgs& args);
 
-Node::ptr MakeBitsetDisjunctionDocs(std::span<const PostingClause> terms,
-                                    std::span<const QueryBuilder::ptr> filters,
-                                    const SubReader& segment);
-
-Node::ptr MakeWindowDisjunctionDocs(std::span<const PostingClause> terms,
-                                    std::span<const QueryBuilder::ptr> filters,
-                                    const SubReader& segment);
 Node::ptr MakeWindowDisjunctionScored(
   std::span<const PostingClause> terms,
   std::span<const QueryBuilder::ptr> filters, search::Terms uniformity,
   const SubReader& segment, const ScoredCtx& ctx, ScoreMergeType merge,
   score_t absorbed);
-
-Node::ptr MakeBitsetConjunctionDocs(std::span<const PostingClause> terms,
-                                    std::span<const QueryBuilder::ptr> filters,
-                                    const SubReader& segment);
-Node::ptr MakeWindowConjunctionDocs(std::span<const PostingClause> terms,
-                                    std::span<const QueryBuilder::ptr> filters,
-                                    const SubReader& segment);
-Node::ptr MakeSparseConjunctionDocs(std::span<const PostingClause> terms,
-                                    std::span<const QueryBuilder::ptr> filters,
-                                    const SubReader& segment);
-
-Node::ptr MakeSparseConjunctionWithDocs(
-  std::span<const PostingClause> must,
-  std::span<const QueryBuilder::ptr> must_filters, const SubReader& segment,
-  ProbeNode::ptr other);
 
 Node::ptr MakeSparseConjunctionScored(
   std::span<const PostingClause> terms,
@@ -123,27 +101,6 @@ Node::ptr MakeSparseConjunctionWithScored(
   const SubReader& segment, const ScoredCtx& ctx, ScoreMergeType merge,
   score_t absorbed);
 
-Node::ptr MakeBitsetExclusionDocs(
-  std::span<const PostingClause> must,
-  std::span<const QueryBuilder::ptr> must_filters,
-  std::span<const PostingClause> should,
-  std::span<const QueryBuilder::ptr> should_filters, uint32_t min_should_match,
-  std::span<const PostingClause> excludes,
-  std::span<const QueryBuilder::ptr> exclude_filters, const SubReader& segment);
-Node::ptr MakeWindowExclusionDocs(
-  std::span<const PostingClause> must,
-  std::span<const QueryBuilder::ptr> must_filters,
-  std::span<const PostingClause> should,
-  std::span<const QueryBuilder::ptr> should_filters, uint32_t min_should_match,
-  std::span<const PostingClause> excludes,
-  std::span<const QueryBuilder::ptr> exclude_filters, const SubReader& segment);
-Node::ptr MakeSparseExclusionDocs(
-  std::span<const PostingClause> must,
-  std::span<const QueryBuilder::ptr> must_filters,
-  std::span<const PostingClause> should,
-  std::span<const QueryBuilder::ptr> should_filters, uint32_t min_should_match,
-  std::span<const PostingClause> excludes,
-  std::span<const QueryBuilder::ptr> exclude_filters, const SubReader& segment);
 Node::ptr MakeSparseExclusionScored(
   std::span<const PostingClause> must,
   std::span<const QueryBuilder::ptr> must_filters,
@@ -212,15 +169,6 @@ Node::ptr MakeWildcardNGramDocs(const WildcardNGramQuery& query);
 Node::ptr MakeWildcardNGramScored(const WildcardNGramQuery& query,
                                   score_t score);
 
-Node::ptr MakeConjunctionDocs(std::span<const PostingClause> terms,
-                              std::span<const QueryBuilder::ptr> filters,
-                              const SubReader& segment);
-Node::ptr MakeDisjunctionDocs(std::span<const PostingClause> terms,
-                              std::span<const QueryBuilder::ptr> filters,
-                              const SubReader& segment);
-Node::ptr MakeThresholdDocs(std::span<const PostingClause> terms,
-                            std::span<const QueryBuilder::ptr> filters,
-                            const SubReader& segment, uint32_t min_match);
 Node::ptr MakeRequiredDocs(std::span<const PostingClause> must,
                            std::span<const QueryBuilder::ptr> must_filters,
                            std::span<const PostingClause> should,
@@ -234,13 +182,5 @@ Node::ptr MakeRequiredScored(std::span<const PostingClause> must,
                              uint32_t min_should_match,
                              const SubReader& segment, const ScoredCtx& ctx,
                              ScoreMergeType merge, score_t absorbed);
-Node::ptr MakeExclusionDocs(std::span<const PostingClause> must,
-                            std::span<const QueryBuilder::ptr> must_filters,
-                            std::span<const PostingClause> should,
-                            std::span<const QueryBuilder::ptr> should_filters,
-                            uint32_t min_should_match,
-                            std::span<const PostingClause> excludes,
-                            std::span<const QueryBuilder::ptr> exclude_filters,
-                            const SubReader& segment);
 
 }  // namespace irs::lead

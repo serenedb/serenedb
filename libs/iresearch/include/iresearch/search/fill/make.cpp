@@ -35,6 +35,7 @@
 #include "iresearch/search/common/ngram_of.hpp"
 #include "iresearch/search/common/phrase_of.hpp"
 #include "iresearch/search/common/scored_context.hpp"
+#include "iresearch/search/fill/make_boolean.hpp"
 #include "iresearch/search/fill/plan.hpp"
 #include "iresearch/search/fill/walk.hpp"
 #include "iresearch/search/fill/window_scored.hpp"
@@ -169,43 +170,6 @@ Node::ptr Make(const WildcardNGramQuery& query, const ScoredCtx& ctx,
   return MakeWildcardNGramScored(query, ctx, merge);
 }
 
-Node::ptr MakeConjunctionDocs(std::span<const search::PostingClause> terms,
-                              std::span<const QueryBuilder::ptr> filters,
-                              const SubReader& segment) {
-  if (terms.empty() && filters.empty()) {
-    return MakeAllDocs(segment);
-  }
-  if (terms.size() + filters.size() == 1) {
-    if (search::HeadIsTerm(terms, filters)) {
-      return FillOf(terms.front(), nullptr, segment);
-    }
-    return filters.front()->PlanFill({}, ScoreMergeType::Noop);
-  }
-  if (auto folded = MakeBitsetConjunctionDocs(terms, filters, segment)) {
-    return folded;
-  }
-  if (auto windowed = MakeWindowConjunctionDocs(terms, filters, segment)) {
-    return windowed;
-  }
-  return MakeSparseConjunctionDocs(terms, filters, segment);
-}
-
-Node::ptr MakeDisjunctionDocs(std::span<const search::PostingClause> terms,
-                              std::span<const QueryBuilder::ptr> filters,
-                              const SubReader& segment) {
-  SDB_ASSERT(terms.size() + filters.size() > 1);
-  const IndexInput* doc = nullptr;
-  std::vector<Node::ptr> rest;
-  if (!CollectDense(terms, filters, nullptr, doc, rest)) {
-    return {};
-  }
-  if (auto folded = MakeBitsetDisjunctionDocs(
-        terms, doc, rest, static_cast<doc_id_t>(segment.docs_count()))) {
-    return folded;
-  }
-  return MakeWindowDisjunctionDocs(terms, doc, rest);
-}
-
 Node::ptr MakeDisjunctionScored(std::span<const search::PostingClause> terms,
                                 std::span<const QueryBuilder::ptr> filters,
                                 search::Terms uniformity,
@@ -223,24 +187,6 @@ Node::ptr MakeDisjunctionScored(std::span<const search::PostingClause> terms,
   const ScoreRecipe recipe{.segment = &segment, .fetcher = ctx.fetcher};
   return MakeWindowDisjunctionScored(terms, nullptr, nullptr, kNoBoost, doc,
                                      rest, uniformity, recipe, merge, absorbed);
-}
-
-Node::ptr MakeThresholdDocs(std::span<const search::PostingClause> terms,
-                            std::span<const QueryBuilder::ptr> filters,
-                            const SubReader&, uint32_t min_match) {
-  SDB_ASSERT(min_match > 1);
-  SDB_ASSERT(terms.size() + filters.size() >= min_match);
-  const IndexInput* doc = nullptr;
-  std::vector<Node::ptr> rest;
-  if (!CollectDense(terms, filters, nullptr, doc, rest)) {
-    return {};
-  }
-  if (min_match > search::kBitplaneMaxMatch) {
-    if (auto counted = MakeCountThresholdDocs(terms, doc, rest, min_match)) {
-      return counted;
-    }
-  }
-  return MakeBitsThresholdDocs(terms, doc, rest, min_match);
 }
 
 Node::ptr MakeThresholdScored(std::span<const search::PostingClause> terms,
@@ -267,84 +213,6 @@ Node::ptr MakeThresholdScored(std::span<const search::PostingClause> terms,
   }
   return MakeBitsThresholdScored(terms, doc, rest, uniformity, recipe, merge,
                                  min_match, absorbed);
-}
-
-Node::ptr MakeRequiredDocs(std::span<const search::PostingClause> must_terms,
-                           std::span<const QueryBuilder::ptr> must_filters,
-                           std::span<const search::PostingClause> should_terms,
-                           std::span<const QueryBuilder::ptr> should_filters,
-                           uint32_t min_should_match,
-                           const SubReader& segment) {
-  if (min_should_match == 0) {
-    return MakeConjunctionDocs(must_terms, must_filters, segment);
-  }
-  if (must_terms.empty() && must_filters.empty()) {
-    return min_should_match == 1
-             ? MakeDisjunctionDocs(should_terms, should_filters, segment)
-             : MakeThresholdDocs(should_terms, should_filters, segment,
-                                 min_should_match);
-  }
-  auto probe = probe::BuildOptionalProbe(
-    should_terms, should_filters, min_should_match, segment,
-    search::IncludeCandidates(must_terms, must_filters, segment));
-  if (!probe) {
-    return {};
-  }
-  return MakeSparseConjunctionWithDocs(must_terms, must_filters, segment,
-                                       std::move(probe));
-}
-
-Node::ptr MakeExclusionDocs(
-  std::span<const search::PostingClause> must_terms,
-  std::span<const QueryBuilder::ptr> must_filters,
-  std::span<const search::PostingClause> should_terms,
-  std::span<const QueryBuilder::ptr> should_filters, uint32_t min_should_match,
-  std::span<const search::PostingClause> exclude_terms,
-  std::span<const QueryBuilder::ptr> exclude_filters,
-  const SubReader& segment) {
-  SDB_ASSERT(!exclude_terms.empty() || !exclude_filters.empty());
-  const auto candidates =
-    search::IncludeCandidates(must_terms, must_filters, segment);
-  if (min_should_match == 0 && (!must_terms.empty() || !must_filters.empty())) {
-    if (auto folded =
-          MakeBitsetExclusionDocs(must_terms, must_filters, exclude_terms,
-                                  exclude_filters, segment, candidates)) {
-      return folded;
-    }
-    if (auto windowed =
-          MakeWindowExclusionDocs(must_terms, must_filters, exclude_terms,
-                                  exclude_filters, segment, candidates)) {
-      return windowed;
-    }
-    return MakeSparseExclusionDocs(must_terms, must_filters, exclude_terms,
-                                   exclude_filters, segment, candidates);
-  }
-  auto include =
-    lead::MakeRequiredDocs(must_terms, must_filters, should_terms,
-                           should_filters, min_should_match, segment);
-  if (!include) {
-    return {};
-  }
-  return MakeSparseExclusionOfDocs(std::move(include), exclude_terms,
-                                   exclude_filters, segment, candidates);
-}
-
-Node::ptr Make(const BooleanQuery& query) {
-  const auto& segment = query.Segment();
-  const auto exclude_terms = query.Terms(Occur::MustNot);
-  const auto exclude_filters = query.Queries(Occur::MustNot);
-  const auto must_terms = query.Terms(Occur::Must);
-  const auto must_filters = query.Queries(Occur::Must);
-  const auto should_terms = query.Terms(Occur::Should);
-  const auto should_filters = query.Queries(Occur::Should);
-  const auto min_should_match = query.MinShouldMatch();
-  if (exclude_terms.empty() && exclude_filters.empty()) {
-    return MakeRequiredDocs(must_terms, must_filters, should_terms,
-                            should_filters, min_should_match, segment);
-  }
-  return MakeExclusionDocs(must_terms, must_filters, should_terms,
-                           should_filters, min_should_match, exclude_terms,
-                           exclude_filters, segment);
 }
 
 Node::ptr Make(const BooleanQuery& query, const ScoredCtx& ctx,

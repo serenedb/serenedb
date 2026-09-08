@@ -30,7 +30,7 @@
 #include "iresearch/search/common/bitset_of.hpp"
 #include "iresearch/search/common/collect.hpp"
 #include "iresearch/search/common/plan.hpp"
-#include "iresearch/search/probe/sparse_disjunction_docs.hpp"
+#include "iresearch/search/probe/leaves.hpp"
 
 namespace irs::search {
 
@@ -66,7 +66,7 @@ Result BuildExcludeSideOf(std::span<const Term> metas,
         return make.template operator()<Probe>(std::forward_as_tuple(
           CookieOf(metas.front()), *DocOf(own), LayoutOf(own), BoundsOf(own)));
       }
-      return make.template operator()<probe::SparseDisjunctionDocs<Probe>>(
+      return make.template operator()<probe::OrLeaves<Probe>>(
         std::forward_as_tuple(metas.size(), [&](Probe& probe, size_t i) {
           const auto& own = FieldOf(metas[i], field);
           probe.Prepare(CookieOf(metas[i]), *DocOf(own), LayoutOf(own),
@@ -102,7 +102,7 @@ Result BuildExcludeSideOf(std::span<const Term> metas,
     return make.template operator()<probe::Erased>(
       std::forward_as_tuple(std::move(probes.front())));
   }
-  using Exclude = probe::SparseDisjunctionDocs<probe::Erased>;
+  using Exclude = probe::OrLeaves<probe::Erased>;
   return make.template operator()<Exclude>(std::forward_as_tuple(
     probes.size(),
     [&](probe::Erased& leaf, size_t i) { leaf = std::move(probes[i]); }));

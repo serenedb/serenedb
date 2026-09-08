@@ -38,8 +38,8 @@
 #include "iresearch/search/lead/make.hpp"
 #include "iresearch/search/lead/posting_docs.hpp"
 #include "iresearch/search/probe/impl.hpp"
+#include "iresearch/search/probe/leaves.hpp"
 #include "iresearch/search/probe/make.hpp"
-#include "iresearch/search/probe/sparse_conjunction_docs.hpp"
 
 namespace irs::search {
 
@@ -175,7 +175,7 @@ Result BuildConjunction(std::span<const Term> terms,
             std::forward_as_tuple(CookieOf(one), *DocOf(own), LayoutOf(own),
                                   BoundsOf(own)));
         } else if constexpr (N != 0) {
-          using Tail = probe::SparseConjunctionDocs<Probe, N>;
+          using Tail = probe::AndLeaves<Probe, N>;
           return [&]<size_t... I>(std::index_sequence<I...>) {
             return make.template operator()<Head, Tail>(
               std::forward<decltype(head)>(head),
@@ -187,14 +187,13 @@ Result BuildConjunction(std::span<const Term> terms,
                                       BoundsOf(FieldOf(rest[I], field)))...));
           }(std::make_index_sequence<N>{});
         } else {
-          return make
-            .template operator()<Head, probe::SparseConjunctionDocs<Probe>>(
-              std::forward<decltype(head)>(head),
-              std::forward_as_tuple(rest.size(), [&](Probe& probe, size_t i) {
-                const auto& own = FieldOf(rest[i], field);
-                probe.Prepare(CookieOf(rest[i]), *DocOf(own), LayoutOf(own),
-                              BoundsOf(own));
-              }));
+          return make.template operator()<Head, probe::AndLeaves<Probe>>(
+            std::forward<decltype(head)>(head),
+            std::forward_as_tuple(rest.size(), [&](Probe& probe, size_t i) {
+              const auto& own = FieldOf(rest[i], field);
+              probe.Prepare(CookieOf(rest[i]), *DocOf(own), LayoutOf(own),
+                            BoundsOf(own));
+            }));
         }
       });
   };
@@ -227,7 +226,7 @@ Result BuildConjunction(std::span<const Term> terms,
             std::forward<decltype(head)>(head),
             std::forward_as_tuple(std::move(probes.front())));
         } else if constexpr (N != 0) {
-          using Tail = probe::SparseConjunctionDocs<probe::Erased, N>;
+          using Tail = probe::AndLeaves<probe::Erased, N>;
           return [&]<size_t... I>(std::index_sequence<I...>) {
             return make.template operator()<Head, Tail>(
               std::forward<decltype(head)>(head),
@@ -236,7 +235,7 @@ Result BuildConjunction(std::span<const Term> terms,
                 std::forward_as_tuple(std::move(probes[I]))...));
           }(std::make_index_sequence<N>{});
         } else {
-          using Tail = probe::SparseConjunctionDocs<probe::Erased>;
+          using Tail = probe::AndLeaves<probe::Erased>;
           return make.template operator()<Head, Tail>(
             std::forward<decltype(head)>(head),
             std::forward_as_tuple(probes.size(),

@@ -41,7 +41,8 @@ Result MakeBooleanBitset(const BooleanGroups& groups, const SubReader& segment,
   const auto docs_count = static_cast<doc_id_t>(segment.docs_count());
   if (groups.must.empty() && groups.must_filters.empty()) {
     if (groups.should.empty() || !groups.must_not.empty() ||
-        !groups.must_not_filters.empty()) {
+        !groups.must_not_filters.empty() ||
+        (!groups.should_filters.empty() && groups.should_fills == nullptr)) {
       return {};
     }
     const auto* const doc = DocOf(FieldOf(groups.should.front(), nullptr));

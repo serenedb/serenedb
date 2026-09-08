@@ -64,54 +64,11 @@ using search::ResolveFillScored;
 using search::ResolveInput;
 using search::SegmentDoc;
 
-Node::ptr MakeBitsetDisjunctionDocs(
-  std::span<const search::PostingClause> terms, const IndexInput* doc,
-  const std::vector<Node::ptr>& rest, doc_id_t docs_count);
-
-Node::ptr MakeWindowDisjunctionDocs(
-  std::span<const search::PostingClause> terms, const IndexInput* doc,
-  std::vector<Node::ptr>& rest);
-
-Node::ptr MakeBitsetConjunctionDocs(
-  std::span<const search::PostingClause> terms,
-  std::span<const QueryBuilder::ptr> filters, const SubReader& segment);
-Node::ptr MakeWindowConjunctionDocs(
-  std::span<const search::PostingClause> terms,
-  std::span<const QueryBuilder::ptr> filters, const SubReader& segment);
-Node::ptr MakeSparseConjunctionDocs(
-  std::span<const search::PostingClause> terms,
-  std::span<const QueryBuilder::ptr> filters, const SubReader& segment);
-Node::ptr MakeSparseConjunctionWithDocs(
-  std::span<const search::PostingClause> terms,
-  std::span<const QueryBuilder::ptr> filters, const SubReader& segment,
-  ProbeNode::ptr other);
 Node::ptr MakeSparseConjunctionScored(
   std::span<const search::PostingClause> terms,
   std::span<const QueryBuilder::ptr> filters, const SubReader& segment,
   const ScoredCtx& ctx, ScoreMergeType merge, score_t absorbed);
 
-Node::ptr MakeBitsetExclusionDocs(
-  std::span<const search::PostingClause> terms,
-  std::span<const QueryBuilder::ptr> filters,
-  std::span<const search::PostingClause> exclude_terms,
-  std::span<const QueryBuilder::ptr> exclude_filters, const SubReader& segment,
-  uint64_t candidates);
-Node::ptr MakeWindowExclusionDocs(
-  std::span<const search::PostingClause> terms,
-  std::span<const QueryBuilder::ptr> filters,
-  std::span<const search::PostingClause> exclude_terms,
-  std::span<const QueryBuilder::ptr> exclude_filters, const SubReader& segment,
-  uint64_t candidates);
-Node::ptr MakeSparseExclusionDocs(
-  std::span<const search::PostingClause> terms,
-  std::span<const QueryBuilder::ptr> filters,
-  std::span<const search::PostingClause> exclude_terms,
-  std::span<const QueryBuilder::ptr> exclude_filters, const SubReader& segment,
-  uint64_t candidates);
-Node::ptr MakeSparseExclusionOfDocs(
-  LeadNode::ptr include, std::span<const search::PostingClause> exclude_terms,
-  std::span<const QueryBuilder::ptr> exclude_filters, const SubReader& segment,
-  uint64_t candidates);
 Node::ptr MakeSparseExclusionScored(
   std::span<const search::PostingClause> must_terms,
   std::span<const QueryBuilder::ptr> must_filters,
@@ -183,38 +140,6 @@ Node::ptr MakeNGramScored(const NGramSimilarityQuery& query,
                           const ScoredCtx& ctx, ScoreMergeType merge);
 Node::ptr MakeNGramAllScored(const NGramSimilarityQuery& query,
                              const ScoredCtx& ctx, ScoreMergeType merge);
-
-template<typename Term>
-Node::ptr MakeWindowDisjunctionOfTermsDocs(std::span<const Term> terms,
-                                           const TermReader* field,
-                                           const IndexInput& doc) {
-  SDB_ASSERT(terms.size() > 1);
-  return search::ResolveInput(doc, [&]<typename Input> -> Node::ptr {
-    using Leaf = search::PostingFill<Input>;
-    return memory::make_managed<Impl<WindowDisjunctionDocs<SetLeaves<Leaf>>>>(
-      std::piecewise_construct,
-      std::forward_as_tuple(terms.size(), [&](Leaf& leaf, size_t i) {
-        const auto& own = search::FieldOf(terms[i], field);
-        const auto& meta = search::CookieOf(terms[i]);
-        SDB_ASSERT(meta.docs_count != 0);
-        leaf.Prepare(meta, doc, meta.docs_count != 1 && search::BoundsOf(own),
-                     meta.docs_count != 1 && search::FreqOf(own));
-      }));
-  });
-}
-
-template<typename Term>
-Node::ptr MakeDisjunctionOfTermsDocs(std::span<const Term> terms,
-                                     const TermReader* field,
-                                     const IndexInput& doc,
-                                     doc_id_t docs_count) {
-  SDB_ASSERT(terms.size() > 1);
-  if (search::TakeBitset<Node::ptr>(terms, doc, docs_count)) {
-    return search::MakeBitsetOf<Node::ptr>(terms, field, doc, docs_count,
-                                           nullptr);
-  }
-  return MakeWindowDisjunctionOfTermsDocs(terms, field, doc);
-}
 
 template<typename Term>
 Node::ptr MakeWindowDisjunctionScored(

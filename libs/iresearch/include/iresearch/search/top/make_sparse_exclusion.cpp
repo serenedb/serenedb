@@ -31,7 +31,7 @@
 #include "iresearch/search/common/scored_context.hpp"
 #include "iresearch/search/lead/impl.hpp"
 #include "iresearch/search/lead/make.hpp"
-#include "iresearch/search/probe/sparse_conjunction_docs.hpp"
+#include "iresearch/search/probe/leaves.hpp"
 #include "iresearch/search/top/detail/term_block.hpp"
 #include "iresearch/search/top/detail/walk_block.hpp"
 #include "iresearch/search/top/make.hpp"

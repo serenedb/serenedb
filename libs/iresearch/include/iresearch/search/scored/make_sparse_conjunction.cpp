@@ -32,9 +32,9 @@
 #include "iresearch/search/lead/impl.hpp"
 #include "iresearch/search/lead/make.hpp"
 #include "iresearch/search/probe/impl.hpp"
+#include "iresearch/search/probe/leaves.hpp"
 #include "iresearch/search/probe/make.hpp"
 #include "iresearch/search/probe/sparse_boost_scored.hpp"
-#include "iresearch/search/probe/sparse_conjunction_docs.hpp"
 #include "iresearch/search/scored/make.hpp"
 #include "iresearch/search/scored/sparse_conjunction.hpp"
 

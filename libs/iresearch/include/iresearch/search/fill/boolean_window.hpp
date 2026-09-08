@@ -27,16 +27,13 @@
 #include <utility>
 
 #include "basics/empty.hpp"
-#include "iresearch/search/common/table_filter.hpp"
 #include "iresearch/search/common/window.hpp"
-#include "iresearch/search/count/root.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
-namespace irs::count {
+namespace irs::fill {
 
-template<typename Lead, typename Others, typename Optional, typename Excludes,
-         typename Table>
-class BooleanWindow : public Root {
+template<typename Lead, typename Others, typename Optional, typename Excludes>
+class BooleanWindow {
  public:
   static constexpr bool kLead = !std::is_same_v<Lead, utils::Empty>;
   static constexpr bool kOthers = !std::is_same_v<Others, utils::Empty>;
@@ -47,7 +44,7 @@ class BooleanWindow : public Root {
 
   template<typename LeadArgs, typename OthersArgs, typename OptionalArgs,
            typename ExcludesArgs>
-  BooleanWindow(Table table, std::piecewise_construct_t, LeadArgs&& lead,
+  BooleanWindow(std::piecewise_construct_t, LeadArgs&& lead,
                 OthersArgs&& others, OptionalArgs&& optional,
                 ExcludesArgs&& excludes)
     : _lead{std::make_from_tuple<Lead>(std::forward<LeadArgs>(lead))},
@@ -55,58 +52,62 @@ class BooleanWindow : public Root {
       _optional{
         std::make_from_tuple<Optional>(std::forward<OptionalArgs>(optional))},
       _excludes{
-        std::make_from_tuple<Excludes>(std::forward<ExcludesArgs>(excludes))},
-      _table{table} {}
+        std::make_from_tuple<Excludes>(std::forward<ExcludesArgs>(excludes))} {}
 
   BooleanWindow(BooleanWindow&&) = delete;
   BooleanWindow& operator=(BooleanWindow&&) = delete;
 
-  uint64_t Run() final {
-    uint64_t total = 0;
-    doc_id_t min = doc_limits::min();
-
-    for (;;) {
-      if constexpr (kOptional) {
-        if (_optional.Exhausted()) {
-          return total;
-        }
+  doc_id_t FillOr(doc_id_t min, doc_id_t max, uint64_t* IRS_RESTRICT mask) {
+    if constexpr (kOptional && !kExcludes) {
+      return _optional.Fill(min, max, mask);
+    } else {
+      const auto words = search::WindowWords(min, max);
+      const auto next = Compute(min, max, words);
+      for (size_t w = 0; w != words; ++w) {
+        mask[w] |= _own[w];
       }
-      if (!_table.Skip(min)) {
-        return total;
-      }
-      SDB_ASSERT(min <= doc_limits::eof() - search::kWindowDocs);
-      const doc_id_t max = min + search::kWindowDocs;
-
-      auto* const words = _mask.data();
-      doc_id_t next;
-      if constexpr (kLead) {
-        next = _lead.FillOr(min, max, words);
-        if constexpr (kOthers) {
-          next = std::max(next, _others.Restrict(min, max, words));
-        }
-      } else {
-        next = _optional.Fill(min, max, words);
-      }
-      if constexpr (kExcludes) {
-        _excludes.Remove(min, max, words);
-      }
-
-      total += _table.CountAndClear(min, words, search::kWindowWords);
-
-      if (doc_limits::eof(next)) {
-        return total;
-      }
-      min = next;
+      return next;
     }
   }
 
+  doc_id_t FillAnd(doc_id_t min, doc_id_t max, uint64_t* IRS_RESTRICT mask) {
+    const auto words = search::WindowWords(min, max);
+    const auto next = Compute(min, max, words);
+    search::FoldAnd(mask, _own.data(), words);
+    return next;
+  }
+
+  doc_id_t FillAndNot(doc_id_t min, doc_id_t max, uint64_t* IRS_RESTRICT mask) {
+    const auto words = search::WindowWords(min, max);
+    const auto next = Compute(min, max, words);
+    search::FoldAndNot(mask, _own.data(), words);
+    return next;
+  }
+
  private:
-  search::Scratch _mask{};
+  doc_id_t Compute(doc_id_t min, doc_id_t max, size_t words) {
+    auto* const own = _own.data();
+    search::Clear(own, words);
+    doc_id_t next;
+    if constexpr (kLead) {
+      next = _lead.FillOr(min, max, own);
+      if constexpr (kOthers) {
+        next = std::max(next, _others.Restrict(min, max, own));
+      }
+    } else {
+      next = _optional.Fill(min, max, own);
+    }
+    if constexpr (kExcludes) {
+      _excludes.Remove(min, max, own);
+    }
+    return next;
+  }
+
+  search::Scratch _own{};
   [[no_unique_address]] Lead _lead;
   [[no_unique_address]] Others _others;
   [[no_unique_address]] Optional _optional;
   [[no_unique_address]] Excludes _excludes;
-  [[no_unique_address]] search::Narrowing<Table> _table;
 };
 
-}  // namespace irs::count
+}  // namespace irs::fill

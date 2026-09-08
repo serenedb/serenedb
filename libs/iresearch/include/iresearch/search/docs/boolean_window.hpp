@@ -81,17 +81,15 @@ class BooleanWindow : public Root {
       }
       SDB_ASSERT(_min <= doc_limits::eof() - search::kWindowDocs);
       const doc_id_t max = _min + search::kWindowDocs;
+      auto* const words = _mask.data();
       doc_id_t next;
-      uint64_t* words;
       if constexpr (kLead) {
-        words = _mask.data();
         next = _lead.FillOr(_min, max, words);
         if constexpr (kOthers) {
           next = std::max(next, _others.Restrict(_min, max, words));
         }
       } else {
-        next = _optional.Fill(_min, max);
-        words = _optional.Words();
+        next = _optional.Fill(_min, max, words);
       }
       if constexpr (kExcludes) {
         _excludes.Remove(_min, max, words);
@@ -107,7 +105,7 @@ class BooleanWindow : public Root {
 
  private:
   Emit<Table> _emit;
-  [[no_unique_address]] utils::Need<kLead, search::Scratch> _mask{};
+  search::Scratch _mask{};
   [[no_unique_address]] Lead _lead;
   [[no_unique_address]] Others _others;
   [[no_unique_address]] Optional _optional;

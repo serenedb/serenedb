@@ -93,10 +93,6 @@ Node::ptr MakePostingDocs(const search::PostingClause& posting,
 
 Node::ptr MakeAllDocs(const SubReader& segment);
 
-Node::ptr MakeBitsetDisjunctionDocs(
-  std::span<const search::PostingClause> terms,
-  std::span<const QueryBuilder::ptr> filters, const SubReader& segment,
-  uint64_t interrogations);
 Node::ptr MakeSparseConjunctionDocs(
   std::span<const search::PostingClause> terms,
   std::span<const QueryBuilder::ptr> filters, const SubReader& segment,

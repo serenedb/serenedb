@@ -28,9 +28,9 @@
 #include "iresearch/search/common/optional_scored.hpp"
 #include "iresearch/search/common/resolve.hpp"
 #include "iresearch/search/probe/impl.hpp"
+#include "iresearch/search/probe/leaves.hpp"
 #include "iresearch/search/probe/make.hpp"
 #include "iresearch/search/probe/plan.hpp"
-#include "iresearch/search/probe/sparse_conjunction_docs.hpp"
 #include "iresearch/search/probe/sparse_conjunction_scored.hpp"
 
 namespace irs::probe {
@@ -64,7 +64,7 @@ Node::ptr MakeSparseConjunctionScored(
     [&]<typename Leaf>(size_t size, auto&& init) -> Node::ptr {
       return search::ResolveArity<search::kRunArity, search::kRunFloor>(
         size, [&]<size_t N> -> Node::ptr {
-          using Node = SparseConjunctionScored<SparseConjunctionDocs<Leaf, N>>;
+          using Node = SparseConjunctionScored<AndLeaves<Leaf, N>>;
           return memory::make_managed<Impl<Node>>(
             std::piecewise_construct,
             std::forward_as_tuple(size, std::forward<decltype(init)>(init)),

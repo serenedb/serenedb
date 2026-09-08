@@ -53,18 +53,13 @@ class OrGroup {
 
   bool Exhausted() const noexcept { return _leaves.Empty(); }
 
-  doc_id_t Fill(doc_id_t min, doc_id_t max) {
+  doc_id_t Fill(doc_id_t min, doc_id_t max, uint64_t* IRS_RESTRICT words) {
     return _leaves.Visit(max, [&](auto& leaf) IRS_FORCE_INLINE {
-      return leaf.FillOr(min, max, _mask.data());
+      return leaf.FillOr(min, max, words);
     });
   }
 
-  uint64_t* Words() noexcept { return _mask.data(); }
-
-  void Reset() noexcept {}
-
  private:
-  Scratch _mask{};
   Leaves _leaves;
 };
 

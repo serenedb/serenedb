@@ -20,9 +20,7 @@
 
 #include "docs/docs_loader.h"
 
-#include <absl/flags/flag.h>
 #include <absl/strings/str_cat.h>
-#include <absl/synchronization/mutex.h>
 #include <absl/time/time.h>
 
 #include <algorithm>
@@ -38,10 +36,8 @@
 #include <memory>
 #include <string>
 #include <string_view>
-#include <utility>
 #include <vector>
 
-#include "basics/containers/flat_hash_set.h"
 #include "basics/duckdb_engine.h"
 #include "basics/log.h"
 #include "basics/static_strings.h"
@@ -54,47 +50,8 @@
 #include "pg/connection_context.h"
 
 // TODO: fix when cross database reference will be supported
-ABSL_FLAG(std::string, embedded_docs, "all",
-          "Where the embedded documentation is loaded: all (every database, on "
-          "its first connection), default (the default database only), off.");
-
 namespace sdb::docs {
 namespace {
-
-enum class Scope {
-  All,
-  DefaultDatabase,
-  Off,
-};
-
-Scope gScope = Scope::All;
-
-Scope ParseScope() {
-  const auto value = absl::GetFlag(FLAGS_embedded_docs);
-  if (value == "all") {
-    return Scope::All;
-  }
-  if (value == "default") {
-    return Scope::DefaultDatabase;
-  }
-  if (value == "off") {
-    return Scope::Off;
-  }
-  SDB_FATAL(GENERAL, "--embedded_docs must be all, default or off, got '",
-            value, "'");
-}
-
-bool InScope(std::string_view database) {
-  switch (gScope) {
-    case Scope::All:
-      return true;
-    case Scope::DefaultDatabase:
-      return database == StaticStrings::kDefaultDatabase;
-    case Scope::Off:
-      return false;
-  }
-  return false;
-}
 
 constexpr std::string_view kTable = "sdb_docs.docs";
 constexpr std::string_view kMeta = "sdb_docs.meta";
@@ -270,40 +227,6 @@ bool LoadInto(std::string_view database, ObjectId database_id) {
   }
 }
 
-struct Registry {
-  absl::Mutex mu;
-  containers::FlatHashSet<ObjectId> done;
-  containers::FlatHashSet<ObjectId> loading;
-};
-
-Registry& GetRegistry() {
-  static Registry registry;
-  return registry;
-}
-
-struct NotLoading {
-  Registry* registry;
-  ObjectId id;
-  bool Check() const { return !registry->loading.contains(id); }
-};
-
-void EnsureIn(std::string_view database, ObjectId database_id) {
-  auto& registry = GetRegistry();
-  {
-    absl::MutexLock lock{&registry.mu};
-    const NotLoading wait{&registry, database_id};
-    registry.mu.Await(absl::Condition(&wait, &NotLoading::Check));
-    if (registry.done.contains(database_id)) {
-      return;
-    }
-    registry.loading.insert(database_id);
-  }
-  LoadInto(database, database_id);
-  absl::MutexLock lock{&registry.mu};
-  registry.loading.erase(database_id);
-  registry.done.insert(database_id);
-}
-
 }  // namespace
 
 void LoadEmbeddedDocs() {
@@ -312,39 +235,13 @@ void LoadEmbeddedDocs() {
              "embedded docs disabled (built with SDB_EMBEDDED_DOCS=OFF)");
     return;
   }
-  gScope = ParseScope();
-  if (gScope == Scope::Off) {
-    SDB_INFO(STARTUP, "embedded docs disabled (--embedded_docs=off)");
+  const auto* database =
+    catalog::FindDatabase(nullptr, StaticStrings::kDefaultDatabase);
+  if (database == nullptr) {
+    SDB_WARN(GENERAL, "embedded docs: default database not found");
     return;
   }
-  std::vector<std::pair<std::string, ObjectId>> databases;
-  catalog::VisitDatabases(nullptr, [&](catalog::SereneDBDatabaseEntry& entry) {
-    databases.emplace_back(entry.name.GetIdentifierName(),
-                           catalog::IdOf(entry));
-  });
-  for (const auto& [name, id] : databases) {
-    if (InScope(name)) {
-      EnsureIn(name, id);
-    }
-  }
-}
-
-void EnsureEmbeddedDocs(ObjectId database_id) {
-  if (GetDocs().empty()) {
-    return;
-  }
-  {
-    auto& registry = GetRegistry();
-    absl::MutexLock lock{&registry.mu};
-    if (registry.done.contains(database_id)) {
-      return;
-    }
-  }
-  const auto* database = catalog::FindDatabase(nullptr, database_id);
-  if (database == nullptr || !InScope(database->name.GetIdentifierName())) {
-    return;
-  }
-  EnsureIn(database->name.GetIdentifierName(), database_id);
+  LoadInto(database->name.GetIdentifierName(), catalog::IdOf(*database));
 }
 
 }  // namespace sdb::docs

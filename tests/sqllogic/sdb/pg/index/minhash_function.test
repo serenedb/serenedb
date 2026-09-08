@@ -122,7 +122,7 @@ WHERE minhash(regexp_split_to_array(lower(body), '\W+'), 8)
       @@ ts_any(ts_tokenize(minhash(regexp_split_to_array(lower('quick brown'), '\W+'), 8), 'keyword'), 2);
 ----
 db error: ERROR: @@ requires an inverted-indexed column on one side
-HINT: Use: <indexed_col> @@ <tsquery_expr>. CREATE INDEX ... USING inverted(<col>) if missing.
+HINT: Use: <indexed_col> @@ <tsquery_expr>, or query through the index relation (FROM <index_name>). CREATE INDEX ... USING inverted(<col>) if none exists.
 
 
 statement error

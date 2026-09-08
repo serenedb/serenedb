@@ -43,12 +43,11 @@ Tokenizer::ptr StemmingTokenizer::Make(Options opts) {
   return std::make_unique<StemmingTokenizer>(std::move(opts));
 }
 
-static_assert(std::string().capacity() >= kTermViewSlack);
-
 template<TokenLayout Layout, typename Sink>
-IRS_FORCE_INLINE void EmitStem(const std::string& stem, Sink& sink) {
+IRS_FORCE_INLINE void EmitStem(const std::string& padded, Sink& sink) {
+  const auto stem = dict::StemCache::View(padded);
   sink.template Emit<Layout>(stem.data(), static_cast<uint32_t>(stem.size()),
-                             stem.data() + kTermViewSlack);
+                             padded.data() + padded.size());
 }
 
 template<TokenLayout Layout, typename Sink>

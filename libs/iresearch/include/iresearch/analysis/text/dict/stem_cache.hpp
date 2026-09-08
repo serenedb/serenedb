@@ -25,6 +25,7 @@
 #include <string_view>
 
 #include "iresearch/analysis/text/dict/string_table.hpp"
+#include "iresearch/analysis/text/term_view.hpp"
 
 struct sb_stemmer;
 
@@ -35,6 +36,11 @@ class StemCache {
   IRS_FORCE_INLINE const std::string* Find(
     const duckdb::string_t& word) const noexcept {
     return _stems.Find(word);
+  }
+
+  IRS_FORCE_INLINE static std::string_view View(
+    const std::string& padded) noexcept {
+    return {padded.data(), padded.size() - kTermViewSlack};
   }
 
   const std::string& Insert(const duckdb::string_t& word,

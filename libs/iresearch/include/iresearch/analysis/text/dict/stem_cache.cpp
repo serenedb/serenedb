@@ -43,20 +43,21 @@ const std::string& StemCache::Insert(const duckdb::string_t& word,
     _stems.EraseHalf();
   }
   auto& entry = _stems[std::string{word.GetData(), word.GetSize()}];
-  entry = stem;
+  entry.assign(stem);
+  entry.append(kTermViewSlack, '\0');
   return entry;
 }
 
 std::optional<std::string_view> StemCache::Stem(sb_stemmer* stemmer,
                                                 const duckdb::string_t& word) {
   if (const auto* stem = Find(word)) {
-    return std::string_view{*stem};
+    return View(*stem);
   }
   const auto stemmed = StemUncached(stemmer, {word.GetData(), word.GetSize()});
   if (!stemmed) {
     return std::nullopt;
   }
-  return std::string_view{Insert(word, *stemmed)};
+  return View(Insert(word, *stemmed));
 }
 
 }  // namespace irs::analysis::dict

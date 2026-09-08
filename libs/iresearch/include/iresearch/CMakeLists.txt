@@ -151,14 +151,10 @@ set(IResearch_core_sources
     ./search/count/make_hnsw.cpp
     ./search/count/make_ivf.cpp
     ./search/count/make_constant.cpp
-    ./search/count/make_bitset_disjunction.cpp
-    ./search/count/make_window_disjunction.cpp
-    ./search/count/make_bitset_conjunction.cpp
-    ./search/count/make_window_conjunction.cpp
-    ./search/count/make_sparse_conjunction.cpp
-    ./search/count/make_bitset_exclusion.cpp
-    ./search/count/make_window_exclusion.cpp
-    ./search/count/make_sparse_exclusion.cpp
+    ./search/count/make_boolean.cpp
+    ./search/count/make_boolean_bitset.cpp
+    ./search/count/make_boolean_window.cpp
+    ./search/count/make_boolean_sparse.cpp
     ./search/count/make_subtract_conjunction.cpp
     ./search/count/make_subtract_disjunction.cpp
     ./search/count/make_bits_threshold.cpp

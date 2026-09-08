@@ -18,14 +18,34 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include <span>
+#include <vector>
 
 #include "iresearch/index/index_reader.hpp"
+#include "iresearch/search/common/conjunction_bitset.hpp"
 #include "iresearch/search/common/exclusion_bitset.hpp"
 #include "iresearch/search/count/bitset.hpp"
-#include "iresearch/search/count/plan.hpp"
+#include "iresearch/search/count/make_boolean.hpp"
 
 namespace irs::count {
+
+Root::ptr MakeBitsetDisjunction(std::span<const search::PostingClause> terms,
+                                const IndexInput* doc,
+                                std::vector<FillNode::ptr>& rest,
+                                doc_id_t docs_count, const Context& ctx) {
+  if (terms.empty() ||
+      !search::TakeBitset<Root::ptr>(terms, *doc, docs_count)) {
+    return {};
+  }
+  return search::MakeBitsetWith<Root::ptr>(terms, nullptr, *doc, docs_count,
+                                           std::move(rest), ctx.table);
+}
+
+Root::ptr MakeBitsetConjunction(std::span<const search::PostingClause> terms,
+                                std::span<const QueryBuilder::ptr> filters,
+                                const SubReader& segment, const Context& ctx) {
+  return search::MakeConjunctionBitset<Root::ptr>(terms, filters, nullptr,
+                                                  segment, ctx.table);
+}
 
 Root::ptr MakeBitsetExclusion(
   std::span<const search::PostingClause> terms,

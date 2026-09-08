@@ -18,20 +18,41 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include <span>
+#pragma once
 
-#include "iresearch/index/index_reader.hpp"
-#include "iresearch/search/common/conjunction_bitset.hpp"
-#include "iresearch/search/count/bitset.hpp"
-#include "iresearch/search/count/plan.hpp"
+#include <cstdint>
+#include <utility>
 
-namespace irs::count {
+#include "basics/shared.hpp"
+#include "iresearch/search/common/window.hpp"
+#include "iresearch/utils/type_limits.hpp"
 
-Root::ptr MakeBitsetConjunction(std::span<const search::PostingClause> terms,
-                                std::span<const QueryBuilder::ptr> filters,
-                                const SubReader& segment, const Context& ctx) {
-  return search::MakeConjunctionBitset<Root::ptr>(terms, filters, nullptr,
-                                                  segment, ctx.table);
-}
+namespace irs::search {
 
-}  // namespace irs::count
+template<typename Leaves>
+class OrGroup {
+ public:
+  template<typename... Args>
+  explicit OrGroup(Args&&... args) : _leaves{std::forward<Args>(args)...} {}
+
+  OrGroup(OrGroup&&) = delete;
+  OrGroup& operator=(OrGroup&&) = delete;
+
+  bool Exhausted() const noexcept { return _leaves.Empty(); }
+
+  doc_id_t Fill(doc_id_t min, doc_id_t max) {
+    return _leaves.Visit(max, [&](auto& leaf) IRS_FORCE_INLINE {
+      return leaf.FillOr(min, max, _mask.data());
+    });
+  }
+
+  uint64_t* Words() noexcept { return _mask.data(); }
+
+  void Reset() noexcept {}
+
+ private:
+  Scratch _mask{};
+  Leaves _leaves;
+};
+
+}  // namespace irs::search

@@ -24,7 +24,7 @@
 #include <vector>
 
 #include "iresearch/search/count/bits_threshold.hpp"
-#include "iresearch/search/count/plan.hpp"
+#include "iresearch/search/count/make_boolean.hpp"
 
 namespace irs::count {
 

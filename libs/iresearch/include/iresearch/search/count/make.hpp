@@ -58,19 +58,6 @@ Root::ptr Make(const BooleanQuery& query, const Context& ctx);
 template<typename Parser, typename Acceptor>
 Root::ptr Make(const GeoQuery<Parser, Acceptor>& query, const Context& ctx);
 
-Root::ptr MakeConjunction(std::span<const search::PostingClause> terms,
-                          std::span<const QueryBuilder::ptr> filters,
-                          const SubReader& segment, const Context& ctx);
-Root::ptr MakeDisjunction(std::span<const search::PostingClause> terms,
-                          std::span<const QueryBuilder::ptr> filters,
-                          const SubReader& segment, const Context& ctx);
-Root::ptr MakeThreshold(std::span<const search::PostingClause> terms,
-                        std::span<const QueryBuilder::ptr> filters,
-                        const SubReader& segment, uint32_t min_match,
-                        const Context& ctx);
-Root::ptr MakeRequired(const BooleanQuery& query, const Context& ctx);
-Root::ptr MakeExclusion(const BooleanQuery& query, const Context& ctx);
-
 Root::ptr MakeMasked(const QueryBuilder& query, const Context& ctx);
 
 }  // namespace irs::count

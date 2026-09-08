@@ -24,7 +24,7 @@
 
 #include "iresearch/search/common/posting_count.hpp"
 #include "iresearch/search/count/count_threshold.hpp"
-#include "iresearch/search/count/plan.hpp"
+#include "iresearch/search/count/make_boolean.hpp"
 #include "iresearch/search/fill/set_leaves.hpp"
 
 namespace irs::count {

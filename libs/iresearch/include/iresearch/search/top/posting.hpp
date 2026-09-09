@@ -29,6 +29,7 @@
 #include "basics/empty.hpp"
 #include "iresearch/formats/posting_meta.hpp"
 #include "iresearch/index/index_reader.hpp"
+#include "iresearch/search/common/exclude_block.hpp"
 #include "iresearch/search/common/score_args.hpp"
 #include "iresearch/search/top/admit.hpp"
 #include "iresearch/search/top/detail/term_block.hpp"
@@ -77,14 +78,7 @@ class Posting : public Root {
         break;
       }
       if constexpr (kExcludes) {
-        uint32_t kept = 0;
-        [[clang::code_align(64)]] for (uint32_t i = 0; i != len; ++i) {
-          const auto doc = docs[i];
-          docs[kept] = doc;
-          scores[kept] = scores[i];
-          kept += static_cast<uint32_t>(_excludes.Probe(doc) != doc);
-        }
-        len = kept;
+        len = search::ExcludeBlock(_excludes, docs, scores, len);
       }
       if (len != 0) {
         _admit.AddDocs(collector, docs, len, scores);

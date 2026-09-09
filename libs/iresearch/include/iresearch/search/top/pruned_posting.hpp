@@ -26,6 +26,7 @@
 
 #include "basics/empty.hpp"
 #include "iresearch/index/iterators.hpp"
+#include "iresearch/search/common/exclude_block.hpp"
 #include "iresearch/search/top/admit.hpp"
 #include "iresearch/search/top/detail/prune_leaf.hpp"
 #include "iresearch/search/top/root.hpp"
@@ -73,14 +74,7 @@ class PrunedPosting : public Root,
     const auto emit = [&](doc_id_t* IRS_RESTRICT docs, uint32_t len,
                           score_t* IRS_RESTRICT scores) IRS_FORCE_INLINE {
       if constexpr (kExcludes) {
-        uint32_t kept = 0;
-        for (uint32_t i = 0; i != len; ++i) {
-          const auto doc = docs[i];
-          docs[kept] = doc;
-          scores[kept] = scores[i];
-          kept += static_cast<uint32_t>(_excludes.Probe(doc) != doc);
-        }
-        len = kept;
+        len = search::ExcludeBlock(_excludes, docs, scores, len);
       }
       if (len != 0) {
         _admit.AddDocs(collector, docs, len, scores);

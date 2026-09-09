@@ -30,6 +30,7 @@
 #include "iresearch/formats/posting_meta.hpp"
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/search/column_collector.hpp"
+#include "iresearch/search/common/exclude_block.hpp"
 #include "iresearch/search/common/posting_batch.hpp"
 #include "iresearch/search/common/score_args.hpp"
 #include "iresearch/search/common/table_filter.hpp"
@@ -181,14 +182,7 @@ class Posting : public Root,
         _boost.Apply(dest, out, len);
       }
       if constexpr (kExcludes) {
-        uint32_t kept = 0;
-        for (uint32_t i = 0; i != len; ++i) {
-          const auto doc = dest[i];
-          dest[kept] = doc;
-          out[kept] = out[i];
-          kept += static_cast<uint32_t>(_excludes.Probe(doc) != doc);
-        }
-        emitted += kept;
+        emitted += search::ExcludeBlock(_excludes, dest, out, len);
       } else {
         emitted += len;
       }

@@ -326,6 +326,12 @@ struct BitsetBuckets {
     }
     return false;
   }
+
+  bool DenseLead(doc_id_t docs_count) const noexcept {
+    return must.size() == 1 &&
+           AppliedInPlace(std::span<const PostingClause>{must.front()},
+                          docs_count);
+  }
 };
 
 inline BitsetStorage BuildBitset(BitsetBuckets& buckets, const IndexInput& doc,

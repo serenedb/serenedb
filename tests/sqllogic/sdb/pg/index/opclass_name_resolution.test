@@ -307,7 +307,7 @@ statement error
 CREATE INDEX hint_parens_dict ON hint_ivf_col USING inverted(
     id, s hint_only_dict (compression = 'zstd'));
 ----
-db error: ERROR: Unknown built-in opclass 'hint_only_dict' on 's' (known: included, ivf)
+db error: ERROR: Unknown built-in opclass 'hint_only_dict' on 's' (known: included, ivf, hnsw)
 
 
 # A non-built-in name with no dict by that name: bare-name lookup misses,

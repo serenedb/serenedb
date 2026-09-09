@@ -284,7 +284,7 @@ TEST(CatalogPersistence, entry_config_serialized) {
       .store_values = true,
       .compression = duckdb::CompressionType::COMPRESSION_UNCOMPRESSED,
       .features = search::Features{},
-      .ivf_config = std::nullopt,
+      .ann_config = std::nullopt,
       .synthetic_column = irs::field_limits::invalid(),
     });
 }
@@ -297,8 +297,9 @@ TEST(CatalogPersistence, entry_config_serialized_ivf) {
       .store_values = true,
       .compression = duckdb::CompressionType::COMPRESSION_UNCOMPRESSED,
       .features = search::Features{},
-      .ivf_config =
-        IVFColumnConfig{
+      .ann_config =
+        AnnColumnConfig{
+          .kind = irs::AnnKind::Ivf,
           .d = 128,
           .metric = irs::VectorMetric::InnerProduct,
           .quant = irs::VectorQuantization::SQ8,

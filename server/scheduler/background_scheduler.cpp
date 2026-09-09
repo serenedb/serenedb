@@ -37,6 +37,11 @@ ABSL_FLAG(uint64_t, background_threads, 0,
 
 namespace sdb {
 
+std::uint64_t BackgroundScheduler::AnnBuildBudget() noexcept {
+  return std::max<std::uint64_t>(
+    1, static_cast<std::uint64_t>(CountLogicalCores()));
+}
+
 BackgroundScheduler::BackgroundScheduler()
   : _threads(absl::GetFlag(FLAGS_background_threads)) {
   // Pool size = max(logical_cores / 4, 2): floor 2 on small boxes, scaling at
@@ -56,9 +61,16 @@ BackgroundScheduler::~BackgroundScheduler() { gInstance = nullptr; }
 
 void BackgroundScheduler::start() {
   _pool = yaclib::MakeFairThreadPool(_threads);
+  _ann_pool = yaclib::MakeFairThreadPool(
+    std::max<std::uint64_t>(1, AnnBuildBudget() - 1));
 }
 
 void BackgroundScheduler::stop() {
+  if (_ann_pool) {
+    _ann_pool->SoftStop();
+    _ann_pool->Wait();
+    _ann_pool = nullptr;
+  }
   if (_pool) {
     _pool->SoftStop();
     _pool->Wait();

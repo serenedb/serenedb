@@ -20,12 +20,15 @@
 
 #include "connector/duckdb_vacuum_function.h"
 
+#include <absl/cleanup/cleanup.h>
 #include <absl/strings/str_cat.h>
 #include <absl/strings/str_replace.h>
 
 #include <duckdb/function/pragma_function.hpp>
 #include <duckdb/main/connection.hpp>
 #include <duckdb/main/database.hpp>
+#include <iresearch/formats/ann_build_env.hpp>
+#include <iresearch/utils/async.hpp>
 #include <iresearch/utils/index_utils.hpp>
 
 #include "auth/role_closure.h"
@@ -44,8 +47,10 @@
 #include "pg/connection_context.h"
 #include "pg/errcodes.h"
 #include "pg/sql_exception_macro.h"
+#include "scheduler/background_scheduler.h"
 #include "search/inverted_index_storage.h"
 #include "search/search_table.h"
+#include "storage_engine/search_engine.h"
 
 namespace sdb::connector {
 namespace {
@@ -236,13 +241,22 @@ void CompactInvertedStorage(search::InvertedIndexStorage& inverted,
     }
     return !context.IsInterrupted();
   };
+  auto& engine = search::GetSearchEngine();
+  const bool slot = engine.TryAcquireCompaction();
+  absl::Cleanup release_slot = [&engine, slot] {
+    if (slot) {
+      engine.ReleaseCompaction();
+    }
+  };
+  const irs::AnnBuildEnv* env_ptr = slot ? &search::AnnBuildEnv() : nullptr;
+
   inverted.Refresh();
   for (size_t pass = 0; pass < 8; ++pass) {
     bool empty_compaction = false;
     // The merge encodes against the index definition the step captured, which
     // the step holds for the whole call.
-    const auto [res, _] =
-      inverted.CompactUnsafe(kPolicy, tick, empty_compaction, &index);
+    const auto [res, _] = irs::GetBlocking(inverted.CompactUnsafeAsync(
+      kPolicy, tick, empty_compaction, &index, env_ptr));
     if (!res.ok()) {
       THROW_SQL_ERROR(
         ERR_CODE(ERRCODE_INTERNAL_ERROR),

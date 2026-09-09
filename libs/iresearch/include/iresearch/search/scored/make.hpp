@@ -88,6 +88,7 @@ inline Root::ptr Make(const EmptyQueryBuilder&, const Context&) {
   return MakeEmpty();
 }
 
+Root::ptr Make(const HnswQuery& query, const Context& ctx);
 Root::ptr Make(const KnnVectorQuery& query, const Context& ctx);
 
 Root::ptr MakePosting(const PostingClause& posting, const SubReader& segment,

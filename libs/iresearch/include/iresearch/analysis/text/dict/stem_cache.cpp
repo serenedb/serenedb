@@ -47,7 +47,7 @@ const char* StemCache::Store(duckdb::ArenaAllocator& arena,
 }
 
 void StemCache::Compact() {
-  duckdb::ArenaAllocator survivors{_arena.GetAllocator()};
+  duckdb::ArenaAllocator survivors{duckdb::Allocator::DefaultAllocator()};
   _stems.ForEachMapped([&](duckdb::string_t& stem) {
     if (!stem.IsInlined()) {
       const auto size = static_cast<uint32_t>(stem.GetSize());

@@ -23,9 +23,11 @@
 #include <benchmark/benchmark.h>
 
 #include <cstdint>
+#include <cstring>
 #include <iresearch/analysis/pattern_tokenizer.hpp>
 #include <iresearch/analysis/segmentation_tokenizer.hpp>
 #include <iresearch/analysis/split_by_non_alpha_tokenizer.hpp>
+#include <iresearch/analysis/text/case/case.hpp>
 #include <iresearch/analysis/text/words/split_by_non_alpha.hpp>
 #include <string>
 
@@ -103,6 +105,42 @@ void RunSplit(benchmark::State& state, const std::string& data) {
   for (auto _ : state) {
     stream->Fill(data, sink.writer, {sink.layout});
     benchmark::DoNotOptimize(sink.Consume());
+  }
+  SetBytes(state, data);
+}
+
+enum class Fold : uint8_t { None, PerTokenAbsl, PerTokenExact, PerValueAbsl };
+
+template<Fold F>
+void RunEmit(benchmark::State& state, const std::string& data) {
+  std::string out(data.size(), '\0');
+  std::string value(data.size(), '\0');
+  for (auto _ : state) {
+    const char* src = data.data();
+    if constexpr (F == Fold::PerValueAbsl) {
+      absl::ascii_internal::AsciiStrToLower(value.data(), data.data(),
+                                            data.size());
+      src = value.data();
+    }
+    size_t at = 0;
+    words::SplitByNonAlpha(duckdb::string_t{src, static_cast<uint32_t>(
+                                                   data.size())},
+                           [&](size_t begin, size_t end) {
+                             const size_t n = end - begin;
+                             char* dst = out.data() + at;
+                             if constexpr (F == Fold::PerTokenAbsl) {
+                               absl::ascii_internal::AsciiStrToLower(
+                                 dst, src + begin, n);
+                             } else if constexpr (F == Fold::PerTokenExact) {
+                               irs::analysis::casing::CaseConvertAsciiExact<
+                                 true>(dst, src + begin, n);
+                             } else {
+                               std::memcpy(dst, src + begin, n);
+                             }
+                             at += n;
+                           });
+    benchmark::DoNotOptimize(out.data());
+    benchmark::ClobberMemory();
   }
   SetBytes(state, data);
 }
@@ -194,6 +232,46 @@ BENCHMARK_DEFINE_F(LongTokenCorpus, BmPattern)(benchmark::State& state) {
 BENCHMARK_DEFINE_F(LongTokenCorpus, BmSegmentation)(benchmark::State& state) {
   RunSegmentation(state, data);
 }
+
+BENCHMARK_DEFINE_F(MixedCorpus, BmEmitCopy)(benchmark::State& state) {
+  RunEmit<Fold::None>(state, data);
+}
+BENCHMARK_DEFINE_F(MixedCorpus, BmEmitFoldPerTokenAbsl)
+(benchmark::State& state) {
+  RunEmit<Fold::PerTokenAbsl>(state, data);
+}
+BENCHMARK_DEFINE_F(MixedCorpus, BmEmitFoldPerTokenExact)
+(benchmark::State& state) {
+  RunEmit<Fold::PerTokenExact>(state, data);
+}
+BENCHMARK_DEFINE_F(MixedCorpus, BmEmitFoldPerValueAbsl)
+(benchmark::State& state) {
+  RunEmit<Fold::PerValueAbsl>(state, data);
+}
+BENCHMARK_DEFINE_F(LongTokenCorpus, BmEmitCopy)(benchmark::State& state) {
+  RunEmit<Fold::None>(state, data);
+}
+BENCHMARK_DEFINE_F(LongTokenCorpus, BmEmitFoldPerTokenAbsl)
+(benchmark::State& state) {
+  RunEmit<Fold::PerTokenAbsl>(state, data);
+}
+BENCHMARK_DEFINE_F(LongTokenCorpus, BmEmitFoldPerTokenExact)
+(benchmark::State& state) {
+  RunEmit<Fold::PerTokenExact>(state, data);
+}
+BENCHMARK_DEFINE_F(LongTokenCorpus, BmEmitFoldPerValueAbsl)
+(benchmark::State& state) {
+  RunEmit<Fold::PerValueAbsl>(state, data);
+}
+
+BENCHMARK_REGISTER_F(MixedCorpus, BmEmitCopy);
+BENCHMARK_REGISTER_F(MixedCorpus, BmEmitFoldPerTokenAbsl);
+BENCHMARK_REGISTER_F(MixedCorpus, BmEmitFoldPerTokenExact);
+BENCHMARK_REGISTER_F(MixedCorpus, BmEmitFoldPerValueAbsl);
+BENCHMARK_REGISTER_F(LongTokenCorpus, BmEmitCopy);
+BENCHMARK_REGISTER_F(LongTokenCorpus, BmEmitFoldPerTokenAbsl);
+BENCHMARK_REGISTER_F(LongTokenCorpus, BmEmitFoldPerTokenExact);
+BENCHMARK_REGISTER_F(LongTokenCorpus, BmEmitFoldPerValueAbsl);
 
 BENCHMARK_REGISTER_F(MixedCorpus, BmFunction)->Arg(0)->Arg(1);
 BENCHMARK_REGISTER_F(MixedCorpus, BmSplit)->Arg(0)->Arg(1);

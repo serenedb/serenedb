@@ -77,24 +77,32 @@ class PostingFill : public PostingLeaf<InputType, kWindowShape> {
   }
 
   doc_id_t FillOr(doc_id_t min, doc_id_t max, uint64_t* IRS_RESTRICT mask) {
-    return FillImpl<false>(min, max, mask, [](size_t) IRS_FORCE_INLINE {});
+    return FillImpl<false, false>(min, max, mask,
+                                  [](size_t) IRS_FORCE_INLINE {});
+  }
+
+  doc_id_t FillAndNot(doc_id_t min, doc_id_t max, uint64_t* IRS_RESTRICT mask) {
+    return FillImpl<false, true>(min, max, mask,
+                                 [](size_t) IRS_FORCE_INLINE {});
   }
 
   doc_id_t FillSum(doc_id_t min, doc_id_t max, uint64_t* IRS_RESTRICT mask,
                    score_t* IRS_RESTRICT scores, score_t constant) {
-    return FillImpl<true>(min, max, mask, [=](size_t offset) IRS_FORCE_INLINE {
-      Merge<ScoreMergeType::Sum>(scores[offset], constant);
-    });
+    return FillImpl<true, false>(
+      min, max, mask, [=](size_t offset) IRS_FORCE_INLINE {
+        Merge<ScoreMergeType::Sum>(scores[offset], constant);
+      });
   }
 
   doc_id_t FillMax(doc_id_t min, doc_id_t max, uint64_t* IRS_RESTRICT mask,
                    score_t* IRS_RESTRICT scores, score_t constant) {
-    return FillImpl<true>(min, max, mask, [=](size_t offset) IRS_FORCE_INLINE {
-      Merge<ScoreMergeType::Max>(scores[offset], constant);
-    });
+    return FillImpl<true, false>(
+      min, max, mask, [=](size_t offset) IRS_FORCE_INLINE {
+        Merge<ScoreMergeType::Max>(scores[offset], constant);
+      });
   }
 
-  template<bool Scored, typename Write>
+  template<bool Scored, bool Clear, typename Write>
   doc_id_t FillImpl(doc_id_t min, doc_id_t max, uint64_t* IRS_RESTRICT mask,
                     Write&& write) {
     SDB_ASSERT(min < max);
@@ -109,14 +117,15 @@ class PostingFill : public PostingLeaf<InputType, kWindowShape> {
       if (begin == end) {
         _left_in_leaf = 0;
       } else if (_last >= max) {
-        const auto* const it = SetUntil(begin, end, min, max, mask, write);
+        const auto* const it =
+          MarkUntil<Clear>(begin, end, min, max, mask, write);
         _left_in_leaf = static_cast<uint32_t>(end - it);
         return _doc = *it;
       } else {
         if (end - begin == kBlock) [[likely]] {
-          SetBlock(begin, min, mask, write);
+          MarkBlock<Clear>(begin, min, mask, write);
         } else {
-          SetRange(begin, end, min, mask, write);
+          MarkRange<Clear>(begin, end, min, mask, write);
         }
         _left_in_leaf = 0;
       }
@@ -143,7 +152,7 @@ class PostingFill : public PostingLeaf<InputType, kWindowShape> {
       if (leaf.Maskable()) {
         if constexpr (!Scored) {
           if (base >= min) [[likely]] {
-            const auto live = FormatTraits128::MaskLeaf(
+            const auto live = FormatTraits128::MaskLeaf<Clear>(
               leaf, base, len, min, max, mask, std::end(_docs));
             SkipFreqs(len);
             if (live == 0) {
@@ -162,15 +171,16 @@ class PostingFill : public PostingLeaf<InputType, kWindowShape> {
       if (leaf.max < max) {
         if (begin != end) {
           if (end - begin == kBlock) [[likely]] {
-            SetBlock(begin, min, mask, write);
+            MarkBlock<Clear>(begin, min, mask, write);
           } else {
-            SetRange(begin, end, min, mask, write);
+            MarkRange<Clear>(begin, end, min, mask, write);
           }
         }
         continue;
       }
 
-      const auto* const it = SetUntil(begin, end, min, max, mask, write);
+      const auto* const it =
+        MarkUntil<Clear>(begin, end, min, max, mask, write);
       _left_in_leaf = static_cast<uint32_t>(end - it);
       return _doc = *it;
     }
@@ -206,35 +216,6 @@ class PostingFill : public PostingLeaf<InputType, kWindowShape> {
       const auto at = AndLeaf(cursor, min, max);
       if (_last >= max) {
         cursor.Settle(limit);
-        return _doc = at;
-      }
-    }
-  }
-
-  doc_id_t FillAndNot(doc_id_t min, doc_id_t max, uint64_t* IRS_RESTRICT mask) {
-    SDB_ASSERT(min < max);
-
-    if (_doc >= max) {
-      return _doc;
-    }
-
-    if (_leaf_len != 0 && _last >= min) {
-      const auto at = ClearLeaf(mask, min, max);
-      if (_last >= max) {
-        return _doc = at;
-      }
-    }
-
-    for (;;) {
-      if (_left_in_list == 0) {
-        return _doc = doc_limits::eof();
-      }
-      ReadLeaf();
-      if (_last < min) {
-        continue;
-      }
-      const auto at = ClearLeaf(mask, min, max);
-      if (_last >= max) {
         return _doc = at;
       }
     }
@@ -287,52 +268,6 @@ class PostingFill : public PostingLeaf<InputType, kWindowShape> {
     return it != end ? *it : _last;
   }
 
-  doc_id_t ClearLeaf(uint64_t* IRS_RESTRICT mask, doc_id_t min,
-                     doc_id_t max) noexcept {
-    uint64_t lo = 0;
-    uint64_t hi = 0;
-    if (!Span(min, max, lo, hi)) {
-      return InLeafFrom(max);
-    }
-    if (_leaf.IsRun()) {
-      ClearInclusive(mask, lo, hi);
-      return std::max<doc_id_t>(max, _leaf_base + 1);
-    }
-    if (_leaf.IsBitset()) {
-      const auto delta =
-        static_cast<int64_t>(min) - static_cast<int64_t>(_leaf_base);
-      const auto first = static_cast<uint32_t>(lo / kBits);
-      const auto last = static_cast<uint32_t>(hi / kBits);
-      for (auto i = first; i <= last; ++i) {
-        auto bits = WordAt(_leaf.bitset, _leaf.words,
-                           static_cast<int64_t>(uint64_t{i} * kBits) + delta);
-        if (i == first) {
-          bits &= ~uint64_t{0} << (lo % kBits);
-        }
-        if (i == last && hi % kBits != kBits - 1) {
-          bits &= ~(~uint64_t{0} << (hi % kBits + 1));
-        }
-        mask[i] &= ~bits;
-      }
-      return InLeafFrom(max);
-    }
-    const auto* const end = std::cend(_docs);
-    const auto stop = std::min<doc_id_t>(_last + 1, max);
-    const auto* it = end - _leaf_len;
-    for (; it != end; ++it) {
-      const auto doc = *it;
-      if (doc < min) {
-        continue;
-      }
-      if (doc >= stop) {
-        break;
-      }
-      const size_t offset = doc - min;
-      UnsetBit(mask[offset / kBits], offset % kBits);
-    }
-    return it != end ? *it : _last;
-  }
-
   doc_id_t InLeafFrom(doc_id_t target) const noexcept {
     SDB_ASSERT(target <= _last);
     if (_leaf.IsRun()) {
@@ -373,44 +308,53 @@ class PostingFill : public PostingLeaf<InputType, kWindowShape> {
                                            leaf.words, out);
   }
 
-  template<typename Write>
-  IRS_FORCE_INLINE static void SetRange(const doc_id_t* begin,
-                                        const doc_id_t* end, doc_id_t min,
-                                        uint64_t* IRS_RESTRICT mask,
-                                        Write&& write) noexcept {
+  template<bool Clear>
+  IRS_FORCE_INLINE static void Mark(uint64_t& word, size_t bit) noexcept {
+    if constexpr (Clear) {
+      UnsetBit(word, bit);
+    } else {
+      SetBit(word, bit);
+    }
+  }
+
+  template<bool Clear, typename Write>
+  IRS_FORCE_INLINE static void MarkRange(const doc_id_t* begin,
+                                         const doc_id_t* end, doc_id_t min,
+                                         uint64_t* IRS_RESTRICT mask,
+                                         Write&& write) noexcept {
     for (; begin != end; ++begin) {
       const size_t offset = *begin - min;
-      SetBit(mask[offset / kBits], offset % kBits);
+      Mark<Clear>(mask[offset / kBits], offset % kBits);
       write(offset);
     }
   }
 
-  template<typename Write>
-  IRS_FORCE_INLINE static const doc_id_t* SetUntil(const doc_id_t* begin,
-                                                   const doc_id_t* end,
-                                                   doc_id_t min, doc_id_t max,
-                                                   uint64_t* IRS_RESTRICT mask,
-                                                   Write&& write) noexcept {
+  template<bool Clear, typename Write>
+  IRS_FORCE_INLINE static const doc_id_t* MarkUntil(const doc_id_t* begin,
+                                                    const doc_id_t* end,
+                                                    doc_id_t min, doc_id_t max,
+                                                    uint64_t* IRS_RESTRICT mask,
+                                                    Write&& write) noexcept {
     for (; begin != end; ++begin) {
       const auto doc = *begin;
       if (doc >= max) {
         break;
       }
       const size_t offset = doc - min;
-      SetBit(mask[offset / kBits], offset % kBits);
+      Mark<Clear>(mask[offset / kBits], offset % kBits);
       write(offset);
     }
     return begin;
   }
 
-  template<typename Write>
-  IRS_FORCE_INLINE static void SetBlock(const doc_id_t* begin, doc_id_t min,
-                                        uint64_t* IRS_RESTRICT mask,
-                                        Write&& write) noexcept {
+  template<bool Clear, typename Write>
+  IRS_FORCE_INLINE static void MarkBlock(const doc_id_t* begin, doc_id_t min,
+                                         uint64_t* IRS_RESTRICT mask,
+                                         Write&& write) noexcept {
     VisitDocs<doc_limits::kBlockSize>(
       doc_limits::kBlockSize, [&](uint32_t i) IRS_FORCE_INLINE {
         const size_t offset = begin[i] - min;
-        SetBit(mask[offset / kBits], offset % kBits);
+        Mark<Clear>(mask[offset / kBits], offset % kBits);
         write(offset);
       });
   }

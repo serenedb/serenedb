@@ -63,26 +63,6 @@ bool AppliedInPlace(std::span<const Term> clause,
          DensePosting(CookieOf(clause.front()).docs_count, docs_count);
 }
 
-inline IRS_FORCE_INLINE void ClearBitRange(uint64_t* IRS_RESTRICT words,
-                                           uint64_t begin,
-                                           uint64_t end) noexcept {
-  constexpr auto kBits = BitsRequired<uint64_t>();
-  if (begin >= end) {
-    return;
-  }
-  const auto first = begin / kBits;
-  const auto last = (end - 1) / kBits;
-  const uint64_t head = ~uint64_t{0} << (begin % kBits);
-  const uint64_t tail = ~uint64_t{0} >> (kBits - 1 - (end - 1) % kBits);
-  if (first == last) {
-    words[first] &= ~(head & tail);
-    return;
-  }
-  words[first] &= ~head;
-  std::fill(words + first + 1, words + last, uint64_t{0});
-  words[last] &= ~tail;
-}
-
 struct OrBits {
   static constexpr auto kBits = BitsetStorage::kBits;
   static constexpr auto kMin = BitsetStorage::kMin;

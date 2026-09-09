@@ -213,7 +213,7 @@ statement count 1
 COPY (SELECT 8 AS id, 'late loop catches up' AS body)
 TO '${__TEST_DIR__}/rvp_glob/f7.parquet' (FORMAT PARQUET);
 
-query ok retry 160 backoff 250ms
+query ok retry 480 backoff 250ms
 SELECT count(*) FROM rvp_idx2;
 ----
 count

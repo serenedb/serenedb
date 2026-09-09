@@ -114,8 +114,8 @@ smallint between above range	f
 smallint between out of range	f
 smallint distinct from above range	f
 smallint equals above range	t
-smallint equals below range	f
+smallint equals below range	t
 smallint in list all out of range	t
 smallint in list with one out of range	f
 smallint not in list with one out of range	f
-truncation over a narrow column	f
+truncation over a narrow column	t

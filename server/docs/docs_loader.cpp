@@ -101,7 +101,6 @@ class Loader {
 
   bool Rebuild() {
     for (const auto& sql : {
-           absl::StrCat("DROP FUNCTION IF EXISTS ", kSchema, ".search(TEXT)"),
            absl::StrCat("DROP FUNCTION IF EXISTS ", kSchema,
                         ".search(TEXT, INTEGER)"),
            absl::StrCat("DROP FUNCTION IF EXISTS ", kSchema, ".read(TEXT)"),
@@ -143,11 +142,6 @@ class Loader {
              " d WHERE d.title @@ query OR d.breadcrumb @@ query OR "
              "d.content_text @@ query ORDER BY BM25(d.tableoid) DESC, d.path "
              "LIMIT max_hits; END"),
-           absl::StrCat("CREATE FUNCTION ", kSchema,
-                        ".search(query TEXT) RETURNS TABLE(path TEXT, title "
-                        "TEXT, breadcrumb TEXT, snippet TEXT, score DOUBLE "
-                        "PRECISION) LANGUAGE SQL BEGIN ATOMIC SELECT * FROM ",
-                        kSchema, ".search(query, 5); END"),
            absl::StrCat("CREATE FUNCTION ", kSchema,
                         ".read(doc_path TEXT) RETURNS TEXT LANGUAGE SQL BEGIN "
                         "ATOMIC SELECT content FROM ",

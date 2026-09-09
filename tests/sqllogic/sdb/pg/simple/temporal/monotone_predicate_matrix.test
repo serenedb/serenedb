@@ -4657,17 +4657,12 @@ query
 EXPLAIN SELECT count(*) FROM g WHERE date_trunc('day', ts) = TIMESTAMP '2025-01-15 12:00';
 ----
 QUERY PLAN
-╭─ UNGROUPED_AGGREGATE ────────────────────────────────────────────────────────────────╮
-│ Aggregates: count_star()                                                             │
-│ ~1 row                                                                               │
-╰───────────────────────────────────────────┬──────────────────────────────────────────╯
-╭─ SEQ_SCAN ────────────────────────────────┴──────────────────────────────────────────╮
-│ Table: g                                                                             │
-│ Type: Sequential Scan                                                                │
-│ Column Filter:                                                                       │
-│ (ts >= '2025-01-16 00:00:00'::TIMESTAMP) AND (ts < '2025-01-16 00:00:00'::TIMESTAMP) │
-│ ~10,000 rows                                                                         │
-╰──────────────────────────────────────────────────────────────────────────────────────╯
+╭─ UNGROUPED_AGGREGATE ────╮
+│ Aggregates: count_star() │
+│ ~1 row                   │
+╰─────────────┬────────────╯
+╭─ EMPTY_RESULT ───────────╮
+╰──────────────────────────╯
 
 statement ok
 SET TimeZone = 'Antarctica/Casey';

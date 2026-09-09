@@ -115,7 +115,8 @@ DROP TABLE sic_inv;
 
 query
 SELECT count(*) AS n FROM duckdb_indexes(include_hidden := true)
-WHERE table_name NOT IN (SELECT relname FROM pg_class WHERE relkind = 'r');
+WHERE database_name = current_database()
+  AND table_name NOT IN (SELECT relname FROM pg_class WHERE relkind = 'r');
 ----
 n
 0

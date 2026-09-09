@@ -138,13 +138,6 @@ count	bool_and
 
 connection docs database=postgres
 query
-SELECT (SELECT count(*) FROM sdb_docs.search('create search table')) = (SELECT count(*) FROM sdb_docs.search('create search table', 5));
-----
-?column?
-t
-
-connection docs database=postgres
-query
 SELECT length(sdb_docs.read('sql/statements/create_table/index.md#CREATE_TABLE')) > 100, sdb_docs.read('no/such/page.md') IS NULL;
 ----
 ?column?	?column?

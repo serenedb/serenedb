@@ -124,7 +124,8 @@ n
 
 query
 SELECT count(*) AS n FROM duckdb_indexes(include_hidden := true)
-WHERE index_name NOT IN (SELECT relname FROM pg_class WHERE relkind = 'i');
+WHERE database_name = current_database()
+  AND index_name NOT IN (SELECT relname FROM pg_class WHERE relkind = 'i');
 ----
 n
 0

@@ -819,7 +819,7 @@ bool PostingsWriterImpl<FormatTraits>::WritePostings(
 
   SDB_ASSERT(!has_pos || postings.span.pos != nullptr ||
              postings.pos_blocks != nullptr);
-  SDB_ASSERT(!has_offs || postings.span.offs_start != nullptr ||
+  SDB_ASSERT(!has_pos || !has_offs || postings.span.offs_start != nullptr ||
              postings.offs_start_blocks != nullptr);
   if (has_pos) {
     ResolveBool(has_offs, [&]<bool HasOffs> {

@@ -58,10 +58,16 @@ IRS_FORCE_INLINE inline duckdb::string_t CaseConvertTermViewAscii(
   return std::bit_cast<duckdb::string_t>(b);
 }
 
+template<typename T>
+struct DispatchValues {
+  static constexpr auto kValues = magic_enum::enum_values<T>();
+};
+
 template<typename T, size_t I, typename With>
 IRS_FORCE_INLINE constexpr decltype(auto) ResolveEnum(T value, With& with) {
-  constexpr auto kValue = magic_enum::enum_value<T>(I);
-  if constexpr (I + 1 == magic_enum::enum_count<T>()) {
+  constexpr auto kValues = DispatchValues<T>::kValues;
+  constexpr auto kValue = kValues[I];
+  if constexpr (I + 1 == kValues.size()) {
     return with(std::integral_constant<T, kValue>{});
   } else {
     if (value == kValue) {
@@ -98,7 +104,7 @@ IRS_FORCE_INLINE constexpr decltype(auto) ResolveValues(Visitor&& visit,
       });
   } else {
     static_assert(std::is_enum_v<T>);
-    SDB_ASSERT(magic_enum::enum_contains(value),
+    SDB_ASSERT(std::ranges::contains(DispatchValues<T>::kValues, value),
                "fill dispatch: option enum out of range");
     return ResolveEnum<T, 0>(value, with);
   }

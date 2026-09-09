@@ -22,6 +22,8 @@
 
 #pragma once
 
+#include <array>
+
 #include "basics/shared.hpp"
 #include "iresearch/analysis/text/segment/options.hpp"
 #include "tokenizer.hpp"
@@ -81,3 +83,13 @@ customize::enum_name<irs::analysis::SegmentationTokenizer::Options::Accept>(
 }
 
 }  // namespace magic_enum
+namespace irs {
+
+template<>
+struct DispatchValues<analysis::SegmentationTokenizer::Options::Accept> {
+  using Accept = analysis::SegmentationTokenizer::Options::Accept;
+  static constexpr std::array kValues{Accept::Any, Accept::Graphic,
+                                      Accept::AlphaNumeric, Accept::Alpha};
+};
+
+}  // namespace irs

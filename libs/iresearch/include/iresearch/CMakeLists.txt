@@ -427,7 +427,6 @@ set(IResearch_core_sources
     ./search/ngram_similarity_filter.cpp
     ./search/vector_similarity_filter.cpp
     ./search/hnsw_query.cpp
-    ./search/vector_similarity_query.cpp
     ./search/vector_similarity_scorer.cpp
     ./search/vector_radius_filter.cpp
     ./search/geo_filter.cpp

@@ -40,11 +40,13 @@ class HnswQuery : public QueryBuilderImpl<HnswQuery> {
             std::shared_ptr<const QuantizerCodebook> codebook,
             std::vector<float> query, VectorMetric metric, uint32_t d,
             uint32_t record_size, uint32_t ef, score_t threshold,
-            size_t max_results, bool inclusive, score_t boost)
+            size_t max_results, bool inclusive, score_t boost,
+            const ColumnReader* exact_column = nullptr)
     : QueryBuilderImpl{segment},
       _data{std::move(data)},
       _codebook{std::move(codebook)},
       _query{std::move(query)},
+      _exact_column{exact_column},
       _metric{metric},
       _d{d},
       _record_size{record_size},
@@ -64,6 +66,7 @@ class HnswQuery : public QueryBuilderImpl<HnswQuery> {
   std::shared_ptr<const HnswData> _data;
   std::shared_ptr<const QuantizerCodebook> _codebook;
   std::vector<float> _query;
+  const ColumnReader* _exact_column;
   VectorMetric _metric;
   uint32_t _d;
   uint32_t _record_size;

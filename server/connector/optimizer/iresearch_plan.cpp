@@ -620,6 +620,10 @@ uint32_t ReadHnswEfSearch(duckdb::ClientContext& context) {
   return ReadIntSetting(context, "sdb_hnsw_ef_search");
 }
 
+float ReadRerankFactor(duckdb::ClientContext& context) {
+  return static_cast<float>(ReadDoubleSetting(context, "sdb_rerank_factor"));
+}
+
 duckdb::unique_ptr<duckdb::Expression> PushdownDistanceCall(
   duckdb::BoundFunctionExpression& func, const connector::AnnFunctionInfo& info,
   duckdb::LogicalOperator& root, duckdb::ClientContext& context) {
@@ -693,6 +697,7 @@ duckdb::unique_ptr<duckdb::Expression> PushdownDistanceCall(
       .nprobe = ReadSearchNprobe(context),
       .max_search_fanout = ReadMaxSearchFanout(context),
       .ef_search = ReadHnswEfSearch(context),
+      .rerank_factor = ReadRerankFactor(context),
     };
     ss.score_order = info.order;
   } else {

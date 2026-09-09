@@ -104,6 +104,7 @@ struct HnswFrontierOrder {
 struct HnswSearchScratch {
   HnswVisited visited;
   std::vector<HnswCandidate> nearest;
+  std::vector<HnswCandidate> nearest_exact;
   std::vector<HnswCandidate> frontier;
   std::vector<uint32_t> batch;
   std::vector<score_t> scores;
@@ -266,7 +267,7 @@ inline void HnswStoreLink(uint32_t& slot, uint32_t id) noexcept {
   std::atomic_ref<uint32_t>{slot}.store(id, std::memory_order_release);
 }
 
-template<typename Dist>
+template<bool Exact = false, typename Dist>
 void HnswSearchLevel(const HnswGraph& graph, Dist& dist, uint32_t level,
                      uint32_t ef, HnswSearchScratch& s) {
   auto& nearest = s.nearest;
@@ -274,6 +275,10 @@ void HnswSearchLevel(const HnswGraph& graph, Dist& dist, uint32_t level,
   frontier.assign(nearest.begin(), nearest.end());
   std::make_heap(frontier.begin(), frontier.end(), HnswFrontierOrder{});
   std::make_heap(nearest.begin(), nearest.end(), HnswNearestOrder{});
+  if constexpr (Exact) {
+    std::make_heap(s.nearest_exact.begin(), s.nearest_exact.end(),
+                   HnswNearestOrder{});
+  }
 
   while (!frontier.empty()) {
     std::pop_heap(frontier.begin(), frontier.end(), HnswFrontierOrder{});
@@ -282,6 +287,16 @@ void HnswSearchLevel(const HnswGraph& graph, Dist& dist, uint32_t level,
 
     if (nearest.size() >= ef && cur.score < nearest.front().score) {
       break;
+    }
+
+    if constexpr (Exact) {
+      auto& graded = s.nearest_exact;
+      graded.push_back({dist.Exact(cur.node), cur.node});
+      std::push_heap(graded.begin(), graded.end(), HnswNearestOrder{});
+      if (graded.size() > ef) {
+        std::pop_heap(graded.begin(), graded.end(), HnswNearestOrder{});
+        graded.pop_back();
+      }
     }
 
     s.batch.clear();
@@ -596,10 +611,11 @@ void HnswInsert(HnswGraphWriter& graph, uint32_t node, Dist& dist,
   }
 }
 
-template<typename Dist>
+template<bool Exact = false, typename Dist>
 void HnswSearchTopK(const HnswGraph& graph, Dist& dist, uint32_t ef,
                     HnswSearchScratch& s) {
   s.nearest.clear();
+  s.nearest_exact.clear();
   if (graph.Empty()) {
     return;
   }
@@ -614,7 +630,10 @@ void HnswSearchTopK(const HnswGraph& graph, Dist& dist, uint32_t ef,
   s.visited.Advance();
   s.visited.TestAndSet(cur.node);
   s.nearest.assign(1, cur);
-  HnswSearchLevel(graph, dist, 0, ef, s);
+  HnswSearchLevel<Exact>(graph, dist, 0, ef, s);
+  if constexpr (Exact) {
+    s.nearest.swap(s.nearest_exact);
+  }
 }
 
 template<bool Inclusive, typename Dist>

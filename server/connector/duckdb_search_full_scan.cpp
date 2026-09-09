@@ -1080,28 +1080,6 @@ size_t CollectorPoolSize(const IResearchScanGlobalState& g,
   return g.topk.rerank_pool != 0 ? g.topk.rerank_pool : *bind.score_top_k;
 }
 
-void RerankHits(IResearchScanGlobalState& g, std::span<irs::ScoreDoc> hits) {
-  SDB_ASSERT(g.vector_scorer != nullptr);
-  SDB_ASSERT(g.reader != nullptr);
-  const auto& vs = *g.vector_scorer;
-  const std::span<const float> query{vs.query_vector};
-  const auto d = static_cast<uint32_t>(vs.query_vector.size());
-  size_t i = 0;
-  while (i < hits.size()) {
-    const uint32_t seg = hits[i].segment_idx;
-    size_t j = i + 1;
-    while (j < hits.size() && hits[j].segment_idx == seg) {
-      ++j;
-    }
-    const auto& sub = (*g.reader)[seg];
-    if (const auto* vec_col = sub.Column(vs.field_id); vec_col != nullptr) {
-      irs::RerankExactDistances(sub, *vec_col, d, query, vs.metric,
-                                hits.subspan(i, j - i));
-    }
-    i = j;
-  }
-}
-
 // Current lower-bound score from the dynamic TOP_N boundary, or lowest() when
 // it is not yet initialized or is not a lower bound (no bound yet, and a score
 // of 0 is a legal hit). Seeds the streaming prune threshold; the exact
@@ -1360,11 +1338,7 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> IResearchScanInitGlobal(
     }
   }
   if (ss.vector_scorer) {
-    auto vs = *ss.vector_scorer;
-    if (vs.quant != irs::VectorQuantization::None && ss.score_top_k) {
-      vs.min_ef =
-        ReadRerankFactor(context) * static_cast<uint32_t>(*ss.score_top_k);
-    }
+    const auto& vs = *ss.vector_scorer;
     state->owned_filter =
       MakeVectorFilter(vs, ss.stored_filter, vs.EffectiveRadius());
     state->filter = state->owned_filter.get();
@@ -2111,13 +2085,6 @@ void TopKScanLocalState::PrepareEmitBuffer(IResearchScanGlobalState& g) {
   auto accepted_slice = hit_slice.subspan(0, accepted);
   size_t kept = accepted;
   if (g.topk.rerank_pool > 0 && g.vector_scorer != nullptr) {
-    SortScoreDocsBySegDoc(accepted_slice);
-    // Rerank exact distances only when the collector's scores are approximate
-    // (quantized); a non-quantized pool (over-fetched only to survive a lookup
-    // filter) already carries exact distances.
-    if (g.vector_scorer->quant != irs::VectorQuantization::None) {
-      RerankHits(g, accepted_slice);
-    }
     const size_t kreal = *g.scan->score_top_k;
     // Trim the over-fetched pool to the exact k only when nothing downstream
     // drops rows. With a lookup filter, keep the whole pool so the lookup can

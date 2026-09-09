@@ -124,7 +124,7 @@ irs::DirectoryReader BuildIndex(irs::Directory& dir,
 irs::ByVectorSimilarity MakeKnnFilter(const std::vector<float>& query,
                                       irs::VectorMetric metric,
                                       irs::VectorQuantization quant,
-                                      uint32_t ef) {
+                                      uint32_t ef, float rerank_factor = 1.f) {
   irs::ByVectorSimilarity filter;
   *filter.mutable_field_id() = kVec;
   auto& opts = *filter.mutable_options();
@@ -135,6 +135,7 @@ irs::ByVectorSimilarity MakeKnnFilter(const std::vector<float>& query,
   opts.quant = quant;
   opts.nprobe = ef;
   opts.ef_search = ef;
+  opts.rerank_factor = rerank_factor;
   return filter;
 }
 
@@ -454,6 +455,46 @@ TEST_P(HnswIndexTest, QueryVectorFindsItself) {
   EXPECT_EQ(12U, found);
 }
 
+TEST_P(HnswIndexTest, ExactRescoreBeatsQuantizedRanking) {
+  if (Quant() == irs::VectorQuantization::None) {
+    GTEST_SKIP() << "an unquantized walk already scores full vectors";
+  }
+  const auto metric = Metric();
+  constexpr size_t kRows = 2000;
+  constexpr size_t kK = 10;
+  constexpr uint32_t kEf = 64;
+
+  const auto vecs = MakeVectors(kRows, 11);
+  irs::MemoryDirectory dir;
+  auto reader = BuildIndex(dir, vecs, metric, Quant(), NbBits());
+  ASSERT_NE(nullptr, reader);
+
+  const auto queries = MakeVectors(40, 5);
+  size_t total = 0;
+  size_t matched_quantized = 0;
+  size_t matched_exact = 0;
+  for (const auto& q : queries) {
+    const auto want = BruteForceTopK(vecs, q, metric, kK);
+    total += want.size();
+    for (const float factor : {0.f, 1.f}) {
+      auto filter = MakeKnnFilter(q, metric, Quant(), kEf, factor);
+      const auto got = RunKnn(reader, filter, kK);
+      auto& matched = factor == 0.f ? matched_quantized : matched_exact;
+      for (const auto doc : want) {
+        matched += std::ranges::find(got, doc) != got.end() ? 1 : 0;
+      }
+    }
+  }
+  const auto recall = [total](size_t matched) {
+    return static_cast<double>(matched) / static_cast<double>(total);
+  };
+  EXPECT_GT(recall(matched_exact), recall(matched_quantized))
+    << "exact " << recall(matched_exact) << " quantized "
+    << recall(matched_quantized) << " for metric " << static_cast<int>(metric)
+    << " quant " << static_cast<int>(Quant());
+  EXPECT_GE(recall(matched_exact), 0.85);
+}
+
 INSTANTIATE_TEST_SUITE_P(
   metrics, HnswIndexTest,
   ::testing::Combine(
@@ -604,4 +645,122 @@ TEST(HnswSelectNeighborsTest, TransposedMatchesReference) {
       }
     }
   }
+}
+
+namespace {
+
+struct WalkCountDist {
+  const std::vector<float>* pts;
+  uint32_t d;
+  const float* q = nullptr;
+  size_t quantized = 0;
+  size_t exact = 0;
+
+  const float* Row(uint32_t id) const noexcept {
+    return pts->data() + static_cast<size_t>(id) * d;
+  }
+
+  irs::score_t Score(const float* x, const float* y) const noexcept {
+    float s = 0.f;
+    for (uint32_t i = 0; i < d; ++i) {
+      const float t = x[i] - y[i];
+      s += t * t;
+    }
+    return -s;
+  }
+
+  void SetQuery(uint32_t node) noexcept { q = Row(node); }
+
+  bool CheapPair() const noexcept { return true; }
+
+  irs::score_t Pair(uint32_t a, uint32_t b) const noexcept {
+    return Score(Row(a), Row(b));
+  }
+
+  void PairBatch(uint32_t from, std::span<const uint32_t> to,
+                 irs::score_t* out) const noexcept {
+    for (size_t i = 0; i < to.size(); ++i) {
+      out[i] = Pair(from, to[i]);
+    }
+  }
+
+  irs::score_t One(uint32_t id) noexcept {
+    ++quantized;
+    return Score(q, Row(id));
+  }
+
+  void Batch(std::span<const uint32_t> ids, irs::score_t* out,
+             irs::score_t = irs::kHnswNoThreshold) noexcept {
+    quantized += ids.size();
+    for (size_t i = 0; i < ids.size(); ++i) {
+      out[i] = Score(q, Row(ids[i]));
+    }
+  }
+
+  void Prefetch(uint32_t) const noexcept {}
+
+  irs::score_t Exact(uint32_t id) noexcept {
+    ++exact;
+    return Score(q, Row(id));
+  }
+};
+
+}  // namespace
+
+TEST(HnswTwoScorerTest, ExactScoringsAreASliceOfTheWalk) {
+  constexpr uint32_t kD = 8;
+  constexpr size_t kNodes = 4000;
+  constexpr uint32_t kM = 8;
+  constexpr uint32_t kEf = 64;
+
+  std::mt19937 rng{20260909};
+  std::normal_distribution<float> nd{0.f, 1.f};
+  std::vector<float> pts(kNodes * kD);
+  for (float& v : pts) {
+    v = nd(rng);
+  }
+
+  irs::HnswGraphWriter graph;
+  graph.Reset(kNodes, kM);
+  uint64_t seed = irs::kHnswBuildSeed;
+  for (size_t i = 0; i < kNodes; ++i) {
+    graph.SetLevel(static_cast<uint32_t>(i), irs::HnswRandomLevel(seed, kM));
+  }
+  graph.AllocateLinks();
+  uint32_t entry = 0;
+  for (uint32_t i = 1; i < kNodes; ++i) {
+    if (graph.LevelOf(i) > graph.LevelOf(entry)) {
+      entry = i;
+    }
+  }
+  graph.SetEntryPoint(entry);
+
+  WalkCountDist dist{.pts = &pts, .d = kD};
+  irs::HnswBuildScratch build;
+  build.search.visited.Reset(kNodes);
+  for (uint32_t i = 0; i < kNodes; ++i) {
+    if (i == entry) {
+      continue;
+    }
+    dist.SetQuery(i);
+    irs::HnswInsert(graph, i, dist, 64, build);
+  }
+
+  irs::HnswSearchScratch s;
+  size_t quantized = 0;
+  size_t exact = 0;
+  for (uint32_t i = 0; i < kNodes; i += 200) {
+    dist.SetQuery(i);
+    dist.quantized = 0;
+    dist.exact = 0;
+    irs::HnswSearchTopK<true>(graph.Graph(), dist, kEf, s);
+    ASSERT_FALSE(s.nearest.empty());
+    ASSERT_LE(s.nearest.size(), kEf);
+    ASSERT_GT(dist.exact, 0U);
+    quantized += dist.quantized;
+    exact += dist.exact;
+  }
+
+  EXPECT_GT(quantized, 4 * exact)
+    << "exact " << exact << " quantized " << quantized;
 }

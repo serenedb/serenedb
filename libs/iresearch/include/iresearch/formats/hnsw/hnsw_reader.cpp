@@ -21,6 +21,7 @@
 #include "iresearch/formats/hnsw/hnsw_reader.hpp"
 
 #include <algorithm>
+#include <cmath>
 #include <cstring>
 #include <limits>
 #include <span>
@@ -125,11 +126,20 @@ QueryBuilder::ptr HnswIndex::PrepareKnn(const SubReader& segment,
   auto codebook = data->stats ? data->stats->MakeCodebook(query) : nullptr;
   SDB_ASSERT(!data->stats || codebook);
   SDB_ASSERT(opts.ef_search != 0);
-  const auto ef = std::max(opts.ef_search, opts.min_ef);
+  const auto* exact_column = opts.rerank_factor != 0.f &&
+                                 _header.quant != VectorQuantization::None &&
+                                 segment.GetColReader() != nullptr
+                               ? segment.Column(opts.centroids_id)
+                               : nullptr;
+  const auto ef =
+    exact_column != nullptr
+      ? static_cast<uint32_t>(
+          std::ceil(static_cast<float>(opts.ef_search) * opts.rerank_factor))
+      : opts.ef_search;
   auto built = memory::make_tracked<HnswQuery>(
     ctx.memory, segment, std::move(data), std::move(codebook), std::move(query),
     opts.metric, _header.d, _header.record_size, ef, kHnswNoThreshold,
-    /*max_results=*/0, /*inclusive=*/false, ctx.boost);
+    /*max_results=*/0, /*inclusive=*/false, ctx.boost, exact_column);
   built->SetStats(ctx.Record());
   return built;
 }

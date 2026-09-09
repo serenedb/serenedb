@@ -466,14 +466,20 @@ constexpr std::pair<std::string_view, VariableDescription>
       "sdb_rerank_factor",
       {
         LogicalTypeId::DOUBLE,
-        "Multiplier applied to LIMIT k to size the candidate pool re-scored "
-        "with exact distances for a quantized IVF vector-similarity query "
-        "(pool = ceil(sdb_rerank_factor * k)). Higher values improve recall "
-        "at the cost of latency; 0 disables reranking (top-k picked by the "
-        "approximate quantized distance). Fractional values are allowed, but "
-        "a nonzero factor below 1 is rejected because the pool must cover k. "
-        "Default 4. Unquantized (quant = 'none') indexes never rerank, "
-        "regardless of this setting.",
+        "Exact-distance rescoring for quantized vector-similarity queries. "
+        "The scan stays quantized -- it still decides which candidates are "
+        "visited and when to stop -- but every candidate it admits is "
+        "additionally scored against the raw vector column, and that exact "
+        "ranking is what the query returns, so the result is not capped by "
+        "the quantizer's fidelity. The factor also widens the search: an hnsw "
+        "index searches ef = ceil(sdb_hnsw_ef_search * sdb_rerank_factor), "
+        "and an ivf index keeps a candidate pool of ceil(sdb_rerank_factor * "
+        "k). Higher values improve recall at the cost of latency; 0 disables "
+        "rescoring entirely (top-k picked by the approximate quantized "
+        "distance). Fractional values are allowed, but a nonzero factor below "
+        "1 is rejected because the pool must cover k. Default 4. Unquantized "
+        "(quant = 'none') indexes already score full vectors, so this setting "
+        "does not apply to them.",
         [] { return duckdb::Value::DOUBLE(4); },
         [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value& value) {
           auto n = value.GetValue<double>();

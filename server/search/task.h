@@ -22,7 +22,6 @@
 #pragma once
 
 #include <absl/status/status.h>
-#include <absl/status/statusor.h>
 
 #include <functional>
 #include <memory>
@@ -57,7 +56,7 @@ extern template yaclib::Future<> CompactionCoordinator(
 yaclib::Future<> ReindexLoop(std::weak_ptr<InvertedIndexStorage> weak);
 
 using ReindexRunner =
-  std::function<absl::StatusOr<bool>(ObjectId database_id, ObjectId index_id)>;
+  std::function<absl::Status(ObjectId database_id, ObjectId index_id)>;
 void SetReindexRunner(ReindexRunner runner);
 
 }  // namespace sdb::search

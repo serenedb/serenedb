@@ -925,8 +925,9 @@ class Enforcer {
 
   duckdb::idx_t RoleId(std::string_view name) {
     auto& cluster = catalog::ClusterOf(_context);
-    auto role = cluster.LookupRole(cluster.GetCatalogTransaction(_context),
-                                   duckdb::Identifier{std::string{name}});
+    auto role = cluster.GetCatalogSet(duckdb::CatalogType::ROLE_ENTRY)
+                  .GetEntry(cluster.GetCatalogTransaction(_context),
+                            duckdb::Identifier{std::string{name}});
     if (!role) {
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
                       ERR_MSG("role \"", name, "\" does not exist"));
@@ -1108,8 +1109,9 @@ class Enforcer {
   duckdb::optional_ptr<duckdb::CatalogEntry> DatabaseEntry(
     std::string_view name) {
     auto& cluster = catalog::ClusterOf(_context);
-    return cluster.LookupDatabase(cluster.GetCatalogTransaction(_context),
-                                  duckdb::Identifier{std::string{name}});
+    return cluster.GetCatalogSet(duckdb::CatalogType::DATABASE_ENTRY)
+      .GetEntry(cluster.GetCatalogTransaction(_context),
+                duckdb::Identifier{std::string{name}});
   }
 
   void RequireDatabasePrivilege(AclMode need) {

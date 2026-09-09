@@ -83,7 +83,7 @@ void DeclareModified(duckdb::CatalogTransaction transaction,
 }  // namespace
 
 SereneDBCatalog::SereneDBCatalog(duckdb::AttachedDatabase& db)
-  : duckdb::DuckCatalog{db}, _foreign_servers{*this} {}
+  : duckdb::DuckCatalog{db} {}
 
 duckdb::unique_ptr<duckdb::TableCatalogEntry> SereneDBCatalog::MakeTableEntry(
   duckdb::CatalogTransaction transaction, duckdb::DuckSchemaEntry& schema,
@@ -97,6 +97,16 @@ duckdb::unique_ptr<duckdb::TableCatalogEntry> SereneDBCatalog::MakeTableEntry(
   }
   options.erase(std::string{kStorageOption});
   return duckdb::DuckCatalog::MakeTableEntry(transaction, schema, info);
+}
+
+duckdb::unique_ptr<duckdb::InCatalogEntry>
+SereneDBCatalog::MakeForeignServerEntry(duckdb::CreateForeignServerInfo& info) {
+  return duckdb::make_uniq<ForeignServerCatalogEntry>(*this, info);
+}
+
+duckdb::unique_ptr<duckdb::StandardEntry> SereneDBCatalog::MakeTokenizerEntry(
+  duckdb::DuckSchemaEntry& schema, duckdb::CreateTokenizerInfo& info) {
+  return duckdb::make_uniq<TokenizerCatalogEntry>(*this, schema, info);
 }
 
 duckdb::unique_ptr<duckdb::IndexCatalogEntry> SereneDBCatalog::MakeIndexEntry(

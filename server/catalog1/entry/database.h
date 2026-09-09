@@ -21,7 +21,7 @@
 #pragma once
 
 #include <duckdb/catalog/catalog_entry.hpp>
-#include <duckdb/parser/parsed_data/create_info.hpp>
+#include <duckdb/parser/parsed_data/create_database_info.hpp>
 #include <string>
 
 namespace sdb::catalog {
@@ -32,17 +32,14 @@ class DatabaseCatalogEntry final : public duckdb::InCatalogEntry {
     duckdb::CatalogType::DATABASE_ENTRY;
   static constexpr const char* Name = "database";
 
-  DatabaseCatalogEntry(duckdb::Catalog& catalog, CreateDatabaseInfo& info);
-
-  duckdb::idx_t PublicSchemaId() const noexcept { return _public_schema_id; }
+  DatabaseCatalogEntry(duckdb::Catalog& catalog,
+                       duckdb::CreateDatabaseInfo& info);
 
   duckdb::unique_ptr<duckdb::CatalogEntry> Copy(
     duckdb::ClientContext& context) const override;
   duckdb::unique_ptr<duckdb::CreateInfo> GetInfo() const override;
   std::string ToSQL() const override;
-
- private:
-  duckdb::idx_t _public_schema_id;
+  void OnDrop() override;
 };
 
 }  // namespace sdb::catalog

@@ -30,6 +30,7 @@
 #include <duckdb/parser/expression/columnref_expression.hpp>
 #include <duckdb/parser/parsed_data/alter_info.hpp>
 #include <duckdb/parser/parsed_data/create_schema_info.hpp>
+#include <duckdb/parser/parsed_data/drop_info.hpp>
 #include <duckdb/parser/parsed_expression_iterator.hpp>
 #include <duckdb/parser/statement/create_statement.hpp>
 #include <duckdb/planner/binder.hpp>
@@ -65,6 +66,7 @@
 #include "pg/errcodes.h"
 #include "pg/pg_types.h"
 #include "pg/sql_exception_macro.h"
+#include "search/search_table.h"
 
 namespace sdb::catalog {
 namespace {
@@ -93,6 +95,12 @@ duckdb::unique_ptr<duckdb::TableCatalogEntry> SereneDBCatalog::MakeTableEntry(
     auto entry =
       duckdb::make_uniq<SearchTableEntry>(*this, schema, info, transaction);
     connector::EnsureGeneratedPkSequence(transaction, schema, *entry);
+    if (info.Base().oid == 0) {
+      auto storage = search::SearchTable::Create(
+        GetOid(), schema.oid, entry->oid, true, entry->Options());
+      storage->StartTasks();
+      entry->AdoptStorage(std::move(storage));
+    }
     return std::move(entry);
   }
   options.erase(std::string{kStorageOption});
@@ -231,8 +239,21 @@ void SereneDBCatalog::Initialize(bool load_builtin) {
     {duckdb::Identifier{StaticStrings::kPublic}}, duckdb::Identifier()));
   info.on_conflict = duckdb::OnCreateConflict::IGNORE_ON_CONFLICT;
   info.permissions.owner = pg::kRootUser;
+  info.oid = pg::kPgPublicSchema;
   CreateSchema(data, info);
   MountSystemSchemas(*this);
+}
+
+void SereneDBCatalog::OnDetach(duckdb::ClientContext& context) {
+  if (context.transaction.HasActiveTransaction()) {
+    auto& cluster = ClusterOf(context);
+    duckdb::DropInfo info;
+    info.type = duckdb::CatalogType::DATABASE_ENTRY;
+    info.SetName(GetName());
+    info.if_not_found = duckdb::OnEntryNotFound::RETURN_NULL;
+    cluster.DropDatabase(cluster.GetCatalogTransaction(context), info);
+  }
+  duckdb::DuckCatalog::OnDetach(context);
 }
 
 duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBCatalog::CreateSchema(
@@ -250,10 +271,9 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBCatalog::CreateSchema(
 
 duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBCatalog::CreateTokenizer(
   duckdb::CatalogTransaction transaction, duckdb::DuckSchemaEntry& schema,
-  CreateTokenizerInfo& info) {
+  duckdb::CreateTokenizerInfo& info) {
   DeclareModified(transaction, *this);
-  auto entry = duckdb::make_uniq<TokenizerCatalogEntry>(*this, schema, info);
-  return schema.AddEntry(transaction, std::move(entry), info.on_conflict);
+  return schema.CreateTokenizer(transaction, info);
 }
 
 void SereneDBCatalog::DropTokenizer(duckdb::ClientContext& context,
@@ -264,43 +284,17 @@ void SereneDBCatalog::DropTokenizer(duckdb::ClientContext& context,
 }
 
 duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBCatalog::CreateForeignServer(
-  duckdb::CatalogTransaction transaction, CreateForeignServerInfo& info) {
-  const auto& entry_name = info.GetQualifiedName().Name();
-  if (info.on_conflict != duckdb::OnCreateConflict::ERROR_ON_CONFLICT) {
-    const auto existing = _foreign_servers.GetEntry(transaction, entry_name);
-    if (existing) {
-      if (info.on_conflict == duckdb::OnCreateConflict::IGNORE_ON_CONFLICT) {
-        return nullptr;
-      }
-      _foreign_servers.DropEntry(transaction, entry_name, false);
-    }
-  }
-  auto entry = duckdb::make_uniq<ForeignServerCatalogEntry>(*this, info);
-  auto result = entry.get();
-  if (!_foreign_servers.CreateEntry(transaction, entry_name, std::move(entry),
-                                    info.dependencies)) {
-    throw duckdb::CatalogException::EntryAlreadyExists(
-      duckdb::CatalogType::FOREIGN_SERVER_ENTRY, entry_name);
-  }
-  return result;
-}
-
-bool SereneDBCatalog::DropForeignServer(duckdb::CatalogTransaction transaction,
-                                        const duckdb::Identifier& name,
-                                        bool cascade) {
-  DeclareModified(transaction, *this);
-  return _foreign_servers.DropEntry(transaction, name, cascade);
-}
-
-void SereneDBCatalog::ScanForeignServers(
   duckdb::CatalogTransaction transaction,
-  const std::function<void(duckdb::CatalogEntry&)>& callback) {
-  _foreign_servers.Scan(transaction, callback);
+  duckdb::CreateForeignServerInfo& info) {
+  DeclareModified(transaction, *this);
+  return duckdb::DuckCatalog::CreateForeignServer(transaction, info);
 }
 
-duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBCatalog::LookupForeignServer(
-  duckdb::CatalogTransaction transaction, const duckdb::Identifier& name) {
-  return _foreign_servers.GetEntry(transaction, name);
+void SereneDBCatalog::DropForeignServer(duckdb::CatalogTransaction transaction,
+                                        duckdb::DropInfo& info) {
+  DeclareModified(transaction, *this,
+                  duckdb::DatabaseModificationType::DROP_CATALOG_ENTRY);
+  duckdb::DuckCatalog::DropForeignServer(transaction, info);
 }
 
 }  // namespace sdb::catalog

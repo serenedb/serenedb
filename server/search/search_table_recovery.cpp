@@ -77,8 +77,7 @@ void ForEachSearchTable(
     [&](duckdb::SchemaCatalogEntry& schema) {
       schema.Scan(
         duckdb::CatalogType::TABLE_ENTRY, [&](duckdb::CatalogEntry& entry) {
-          auto& table = entry.Cast<duckdb::TableCatalogEntry>();
-          if (auto* search = dynamic_cast<catalog::SearchTableEntry*>(&table)) {
+          if (auto* search = dynamic_cast<catalog::SearchTableEntry*>(&entry)) {
             callback(*search);
           }
         });

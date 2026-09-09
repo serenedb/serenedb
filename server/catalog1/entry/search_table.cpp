@@ -32,7 +32,6 @@
 #include <duckdb/planner/operator/logical_update.hpp>
 #include <duckdb/planner/parsed_data/bound_create_table_info.hpp>
 #include <duckdb/storage/table_storage_info.hpp>
-#include <filesystem>
 #include <utility>
 
 #include "basics/serializer.h"
@@ -171,6 +170,12 @@ duckdb::vector<duckdb::column_t> SearchTableEntry::GetRowIdColumns() const {
   return result;
 }
 
+void SearchTableEntry::OnDrop() {
+  if (_storage) {
+    _storage->MarkDropped();
+  }
+}
+
 void SearchTableEntry::BindUpdateConstraints(duckdb::Binder&,
                                              duckdb::LogicalGet& get,
                                              duckdb::LogicalProjection& proj,
@@ -203,20 +208,6 @@ std::string SearchTableEntry::ToSQL() const {
   info->Cast<duckdb::CreateTableInfo>().options.erase(
     std::string{kPayloadOption});
   return info->ToString();
-}
-
-const std::shared_ptr<search::SearchTable>& SearchTableEntry::EnsureStorage()
-  const {
-  if (_storage) {
-    return _storage;
-  }
-  const auto db_id = catalog.Cast<SereneDBCatalog>().GetOid();
-  const auto is_new = !std::filesystem::exists(
-    search::SearchTable::GetPath(db_id, schema.oid, oid));
-  _storage =
-    search::SearchTable::Create(db_id, schema.oid, oid, is_new, _options);
-  _storage->StartTasks();
-  return _storage;
 }
 
 duckdb::TableFunction SearchTableEntry::GetScanFunction(

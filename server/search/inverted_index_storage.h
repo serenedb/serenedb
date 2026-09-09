@@ -309,12 +309,6 @@ class InvertedIndexStorage final
     _phase = Phase::Recovering;
   }
 
-  // Highest tick the recovery replay has both retired and covered with a
-  // cursor point; a Recovering-phase refresh commits at most this tick.
-  void SetRecoveryFrontierTick(Tick tick) noexcept {
-    _recovery_frontier_tick.store(tick, std::memory_order_release);
-  }
-
  private:
   class MovingAverageMs {
    public:
@@ -402,7 +396,6 @@ class InvertedIndexStorage final
   MovingAverageMs _avg_cleanup_time_ms;
   MovingAverageMs _avg_consolidation_time_ms;
   Phase _phase{Phase::Creating};
-  std::atomic<Tick> _recovery_frontier_tick{0};
 
   irs::IResourceManager* _writers_memory{&irs::IResourceManager::gNoop};
   irs::IResourceManager* _readers_memory{&irs::IResourceManager::gNoop};

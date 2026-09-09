@@ -55,4 +55,8 @@ std::string DatabaseCatalogEntry::ToSQL() const {
   return GetInfo()->ToString();
 }
 
+void DatabaseCatalogEntry::OnDrop() {
+  RemoveDatabaseFiles(catalog.GetAttached(), oid);
+}
+
 }  // namespace sdb::catalog

@@ -85,6 +85,8 @@ class SearchTableEntry final : public duckdb::TableCatalogEntry {
 
   duckdb::vector<duckdb::column_t> GetRowIdColumns() const override;
 
+  void OnDrop() override;
+
   void BindUpdateConstraints(duckdb::Binder& binder, duckdb::LogicalGet& get,
                              duckdb::LogicalProjection& proj,
                              duckdb::LogicalUpdate& update,
@@ -99,9 +101,9 @@ class SearchTableEntry final : public duckdb::TableCatalogEntry {
     return _storage;
   }
   const auto& Options() const noexcept { return _options; }
-  std::shared_ptr<search::SearchTable> _storage;
+
  private:
-  mutable std::shared_ptr<search::SearchTable> _storage;
+  std::shared_ptr<search::SearchTable> _storage;
   SearchTableOptions _options;
 };
 

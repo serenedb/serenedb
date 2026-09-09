@@ -23,7 +23,6 @@
 #include <duckdb/catalog/catalog_entry/duck_schema_entry.hpp>
 #include <duckdb/catalog/catalog_set.hpp>
 #include <duckdb/catalog/duck_catalog.hpp>
-#include <functional>
 #include <string>
 
 #include "catalog1/entry/foreign_server.h"
@@ -48,6 +47,8 @@ class SereneDBCatalog : public duckdb::DuckCatalog {
   std::string GetCatalogType() override { return kStorageType; }
 
   void Initialize(bool load_builtin) override;
+
+  void OnDetach(duckdb::ClientContext& context) override;
 
   std::string GetDefaultSchema() const override;
 

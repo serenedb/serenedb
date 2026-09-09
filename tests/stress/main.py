@@ -507,12 +507,22 @@ def run_oracle(workers, pause_event, dsn, run_tag, datadir, oid_registry, label,
         row_keys = set()
         for m in models:
             row_keys |= set(m.row_bearing_keys())
-        with psycopg.connect(dsn) as conn:
-            conn.autocommit = True
-            snap = snapshot_mod.take(conn, run_tag, datadir=datadir,
-                                     row_keys=row_keys,
-                                     scan_artifacts=scan_artifacts)
-            return oracle.run_all(models, snap, conn, oid_registry)
+        try:
+            with psycopg.connect(dsn) as conn:
+                conn.autocommit = True
+                snap = snapshot_mod.take(conn, run_tag, datadir=datadir,
+                                         row_keys=row_keys,
+                                         scan_artifacts=scan_artifacts)
+                return oracle.run_all(models, snap, conn, oid_registry)
+        except psycopg.OperationalError as exc:
+            # The server can die between the drain and this snapshot -- an injected
+            # crash or a real one -- and a refused or dropped connection here must
+            # not abort the whole run; the watchdog records the death itself.
+            return [{
+                "kind": "quiesce_abandoned_server_unhealthy", "key": None,
+                "detail": f"{label}: server unreachable for the snapshot: "
+                          f"{str(exc)[:180]}",
+                "candidates": None, "observed": None}]
     finally:
         quiesce.resume(pause_event)
 

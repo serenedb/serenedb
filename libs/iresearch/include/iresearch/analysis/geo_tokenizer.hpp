@@ -217,7 +217,7 @@ class GeoJsonTokenizer final : public TypedTokenizer<GeoJsonTokenizer>,
     return _coding != Coding::Source && _type != Type::Centroid;
   }
 
-  bool StageTerms();
+  void StageTerms();
 
   void Store(TokenSink& sink) final;
 

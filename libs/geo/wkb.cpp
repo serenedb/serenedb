@@ -25,6 +25,7 @@
 #include <s2/s2loop.h>
 #include <s2/s2point.h>
 #include <s2/s2point_region.h>
+#include <s2/s2pointutil.h>
 #include <s2/s2polygon.h>
 #include <s2/s2polyline.h>
 
@@ -468,6 +469,9 @@ bool ParseShapeWKB(std::string_view bytes, ShapeContainer& region) {
     WkbCursor cursor{bytes};
     WithGeometryReader(cursor,
                        [&]<class R>(R& r) { ParseGeometry(r, region); });
+    if (!S2::IsUnitLength(region.centroid())) {
+      THROW_SQL_ERROR(ERR_MSG("WKB: degenerate geometry has no centroid"));
+    }
     return true;
   } catch (const sdb::SqlException&) {
     return false;

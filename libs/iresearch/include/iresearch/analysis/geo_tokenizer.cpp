@@ -23,7 +23,6 @@
 
 #include <absl/base/internal/endian.h>
 #include <s2/s2latlng.h>
-#include <s2/s2pointutil.h>
 
 #include <bit>
 #include <cmath>
@@ -318,7 +317,8 @@ bool GeoJsonTokenizer::reset(simdjson::ondemand::value json) {
   if (!parsed) {
     return false;
   }
-  return StageTerms();
+  StageTerms();
+  return true;
 }
 
 bool GeoJsonTokenizer::resetWKB(duckdb::string_t wkb) {
@@ -341,7 +341,8 @@ bool GeoJsonTokenizer::resetWKB(duckdb::string_t wkb) {
   if (SerializesShape()) {
     _shape.Encode(_encoder, _s2_coding);
   }
-  return StageTerms();
+  StageTerms();
+  return true;
 }
 
 void GeoJsonTokenizer::prepare(GeoFilterOptionsBase& options) const {
@@ -364,26 +365,18 @@ void GeoJsonTokenizer::prepare(GeoFilterOptionsBase& options) const {
   options.coding = _s2_coding;
 }
 
-bool GeoJsonTokenizer::StageTerms() {
+void GeoJsonTokenizer::StageTerms() {
   ClearStaged();
   _centroid = _shape.centroid();
-  if (_shape.type() == geo::ShapeContainer::Type::S2Point) {
+  if (_type == Type::Centroid ||
+      _shape.type() == geo::ShapeContainer::Type::S2Point) {
     StagePoint(_centroid);
-    return true;
-  }
-  const bool unit = S2::IsUnitLength(_centroid);
-  if (_type == Type::Centroid) {
-    if (!unit) {
-      return false;
+  } else {
+    StageCovering(*_shape.region());
+    if (!_shape.contains(_centroid)) {
+      StagePoint(_centroid);
     }
-    StagePoint(_centroid);
-    return true;
   }
-  StageCovering(*_shape.region());
-  if (unit && !_shape.contains(_centroid)) {
-    StagePoint(_centroid);
-  }
-  return true;
 }
 
 void GeoJsonTokenizer::Store(TokenSink& sink) {

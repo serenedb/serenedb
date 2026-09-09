@@ -45,7 +45,7 @@ class Emit {
 
   IRS_FORCE_INLINE bool Drain(doc_id_t* IRS_RESTRICT out, uint32_t capacity,
                               uint32_t& n) noexcept {
-    for (; _word != search::kWindowWords; ++_word) {
+    [[clang::code_align(64)]] for (; _word != search::kWindowWords; ++_word) {
       const auto word = _words[_word];
       if (word == 0) {
         continue;

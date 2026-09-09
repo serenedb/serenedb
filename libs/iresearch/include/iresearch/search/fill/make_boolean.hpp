@@ -41,9 +41,6 @@
 
 namespace irs::fill {
 
-Node::ptr MakeBitsetDocs(const search::BooleanGroups& groups,
-                         const SubReader& segment);
-
 Node::ptr MakeSparseConjunctionScored(
   std::span<const search::PostingClause> terms,
   std::span<const QueryBuilder::ptr> filters, const SubReader& segment,
@@ -65,37 +62,6 @@ Node::ptr MakeSparseBoostScored(
   std::span<const QueryBuilder::ptr> should_filters, search::Terms uniformity,
   const SubReader& segment, const ScoredCtx& ctx, ScoreMergeType merge,
   score_t absorbed);
-
-Node::ptr MakeWindowDisjunctionDocs(
-  std::span<const search::PostingClause> terms, const IndexInput* doc,
-  std::vector<Node::ptr>& rest);
-Node::ptr MakeWindowConjunctionDocs(
-  std::span<const search::PostingClause> terms,
-  std::span<const QueryBuilder::ptr> filters, const SubReader& segment);
-Node::ptr MakeWindowExclusionDocs(
-  std::span<const search::PostingClause> terms,
-  std::span<const QueryBuilder::ptr> filters,
-  std::span<const search::PostingClause> exclude_terms,
-  std::span<const QueryBuilder::ptr> exclude_filters, const SubReader& segment,
-  uint64_t candidates);
-
-Node::ptr MakeSparseConjunctionDocs(
-  std::span<const search::PostingClause> terms,
-  std::span<const QueryBuilder::ptr> filters, const SubReader& segment);
-Node::ptr MakeSparseConjunctionWithDocs(
-  std::span<const search::PostingClause> terms,
-  std::span<const QueryBuilder::ptr> filters, const SubReader& segment,
-  ProbeNode::ptr other);
-Node::ptr MakeSparseExclusionDocs(
-  std::span<const search::PostingClause> terms,
-  std::span<const QueryBuilder::ptr> filters,
-  std::span<const search::PostingClause> exclude_terms,
-  std::span<const QueryBuilder::ptr> exclude_filters, const SubReader& segment,
-  uint64_t candidates);
-Node::ptr MakeSparseExclusionOfDocs(
-  LeadNode::ptr include, std::span<const search::PostingClause> exclude_terms,
-  std::span<const QueryBuilder::ptr> exclude_filters, const SubReader& segment,
-  uint64_t candidates);
 
 template<typename Term>
 Node::ptr MakeWindowDisjunctionOfTermsDocs(std::span<const Term> terms,

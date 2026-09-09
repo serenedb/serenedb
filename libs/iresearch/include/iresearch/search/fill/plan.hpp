@@ -63,10 +63,6 @@ using search::ResolveFillScored;
 using search::ResolveInput;
 using search::SegmentDoc;
 
-Node::ptr MakeWindowThresholdDocs(std::span<const search::PostingClause> terms,
-                                  const IndexInput* doc,
-                                  std::vector<Node::ptr>& rest,
-                                  uint32_t min_match);
 Node::ptr MakeWindowThresholdScored(
   std::span<const search::PostingClause> terms, const IndexInput* doc,
   std::vector<Node::ptr>& rest, search::Terms uniformity,

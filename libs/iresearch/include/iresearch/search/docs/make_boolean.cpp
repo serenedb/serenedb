@@ -33,12 +33,26 @@ namespace {
 struct Api {
   using Result = Root::ptr;
   using Context = docs::Context;
-  using Table = search::DeadRuns*;
 
-  template<typename... Parts>
-  using Window = BooleanWindow<Parts...>;
-  template<typename... Parts>
-  using Sparse = BooleanSparse<Parts...>;
+  static constexpr bool kBitsetFirst = false;
+  static constexpr bool kBitsetTerms = false;
+  static constexpr bool kWindowNodes = true;
+  static constexpr bool kBitsetFills = true;
+  static constexpr bool kSingleTermWindow = false;
+  static constexpr bool kFilterExclusionWindow = true;
+
+  template<typename Lead, typename Others, typename Optional, typename Excludes,
+           typename... Args>
+  static Result MakeWindow(const Context& ctx, Args&&... args) {
+    return MakeShape<BooleanWindow, Lead, Others, Optional, Excludes>(
+      ctx, std::piecewise_construct, std::forward<Args>(args)...);
+  }
+
+  template<typename Lead, typename Probes, typename Excludes, typename... Args>
+  static Result MakeSparse(const Context& ctx, Args&&... args) {
+    return MakeShape<BooleanSparse, Lead, Probes, Excludes>(
+      ctx, std::piecewise_construct, std::forward<Args>(args)...);
+  }
 
   static Result PlanChild(const QueryBuilder& child, const Context& ctx) {
     return child.PlanDocs(ctx);

@@ -177,9 +177,6 @@ set(IResearch_core_sources
     ./search/lead/make_all_docs.cpp
     ./search/lead/make_all_scored.cpp
     ./search/lead/make_boolean.cpp
-    ./search/lead/make_boolean_bitset.cpp
-    ./search/lead/make_boolean_window.cpp
-    ./search/lead/make_boolean_sparse.cpp
     ./search/lead/make_boolean_scored.cpp
     ./search/lead/make_boolean_window_scored.cpp
     ./search/lead/make_boolean_sparse_scored.cpp
@@ -265,10 +262,8 @@ set(IResearch_core_sources
     ./search/fill/make_all_docs.cpp
     ./search/fill/make_all_scored.cpp
     ./search/fill/make_boolean.cpp
-    ./search/fill/make_boolean_bitset.cpp
-    ./search/fill/make_boolean_window.cpp
-    ./search/fill/make_boolean_sparse.cpp
     ./search/fill/make_boolean_scored.cpp
+    ./search/fill/make_boolean_window_scored.cpp
     ./search/fill/make_boolean_sparse_scored.cpp
     ./search/fill/make_fixed_phrase_docs.cpp
     ./search/fill/make_fixed_phrase_scored.cpp

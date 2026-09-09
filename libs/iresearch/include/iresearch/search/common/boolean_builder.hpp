@@ -54,31 +54,6 @@ using Result = typename Api::Result;
 template<typename Api>
 using Context = typename Api::Context;
 
-template<typename Api, template<typename...> class Shape, typename... Parts,
-         typename... Args>
-Result<Api> MakeShape(const Context<Api>& ctx, Args&&... args) {
-  if (ctx.table != nullptr) {
-    return memory::make_managed<Shape<Parts..., typename Api::Table>>(
-      ctx.table, std::forward<Args>(args)...);
-  }
-  return memory::make_managed<Shape<Parts..., utils::Empty>>(
-    utils::Empty{}, std::forward<Args>(args)...);
-}
-
-template<typename Api, typename Lead, typename Others, typename Optional,
-         typename Excludes, typename... Args>
-Result<Api> MakeWindow(const Context<Api>& ctx, Args&&... args) {
-  return MakeShape<Api, Api::template Window, Lead, Others, Optional, Excludes>(
-    ctx, std::piecewise_construct, std::forward<Args>(args)...);
-}
-
-template<typename Api, typename Lead, typename Probes, typename Excludes,
-         typename... Args>
-Result<Api> MakeSparse(const Context<Api>& ctx, Args&&... args) {
-  return MakeShape<Api, Api::template Sparse, Lead, Probes, Excludes>(
-    ctx, std::piecewise_construct, std::forward<Args>(args)...);
-}
-
 template<typename Api>
 Result<Api> MakeBitset(const BooleanGroups& groups, const SubReader& segment,
                        const Context<Api>& ctx) {
@@ -89,16 +64,26 @@ template<typename Api, typename Excludes, typename ExcludesArgs>
 Result<Api> MakeWindowOfTerms(std::span<const PostingClause> terms,
                               const IndexInput& doc, ExcludesArgs&& excludes,
                               const Context<Api>& ctx) {
-  SDB_ASSERT(terms.size() >= 2);
+  SDB_ASSERT(!terms.empty());
   return ResolveInput(doc, [&]<typename Input> -> Result<Api> {
     using Leaf = PostingFill<Input>;
-    using Others = fill::AndLeaves<Leaf>;
     const auto& own = FieldOf(terms.front(), nullptr);
     const auto& front = CookieOf(terms.front());
-    return MakeWindow<Api, Leaf, Others, utils::Empty, Excludes>(
-      ctx,
-      std::forward_as_tuple(front, doc, front.docs_count != 1 && BoundsOf(own),
-                            front.docs_count != 1 && FreqOf(own)),
+    const bool bounds = front.docs_count != 1 && BoundsOf(own);
+    const bool freq = front.docs_count != 1 && FreqOf(own);
+    const auto lead = std::forward_as_tuple(front, doc, bounds, freq);
+    if constexpr (Api::kSingleTermWindow) {
+      if (terms.size() == 1) {
+        return Api::template MakeWindow<Leaf, utils::Empty, utils::Empty,
+                                        Excludes>(
+          ctx, lead, std::forward_as_tuple(), std::forward_as_tuple(),
+          std::forward<ExcludesArgs>(excludes));
+      }
+    }
+    SDB_ASSERT(terms.size() >= 2);
+    using Others = fill::AndLeaves<Leaf>;
+    return Api::template MakeWindow<Leaf, Others, utils::Empty, Excludes>(
+      ctx, lead,
       std::forward_as_tuple(
         terms.size() - 1,
         [&](Leaf& leaf, size_t i) {
@@ -136,7 +121,8 @@ Result<Api> MakeWindowOfNodes(std::span<const PostingClause> terms,
     return {};
   }
   using Others = fill::AndLeaves<fill::Erased>;
-  return MakeWindow<Api, fill::Erased, Others, utils::Empty, utils::Empty>(
+  return Api::template MakeWindow<fill::Erased, Others, utils::Empty,
+                                  utils::Empty>(
     ctx, std::forward_as_tuple(std::move(nodes.front())),
     std::forward_as_tuple(nodes.size() - 1,
                           [&](fill::Erased& leaf, size_t i) {
@@ -153,8 +139,8 @@ Result<Api> MakeWindowDisjunction(std::span<const PostingClause> terms,
   return BuildDense<Result<Api>>(
     terms, nullptr, doc, rest,
     [&]<typename Set>(auto&&... args) -> Result<Api> {
-      return MakeWindow<Api, utils::Empty, utils::Empty, OrGroup<Set>,
-                        utils::Empty>(
+      return Api::template MakeWindow<utils::Empty, utils::Empty, OrGroup<Set>,
+                                      utils::Empty>(
         ctx, std::forward_as_tuple(), std::forward_as_tuple(),
         std::forward_as_tuple(std::forward<decltype(args)>(args)...),
         std::forward_as_tuple());
@@ -167,11 +153,14 @@ Result<Api> MakeWindowConjunction(std::span<const PostingClause> terms,
                                   const SubReader& segment,
                                   const Context<Api>& ctx) {
   const auto docs_count = static_cast<doc_id_t>(segment.docs_count());
-  if (!filters.empty()) {
-    if (HeadEstimate(terms, filters) < docs_count / kDensityThresholdInverse) {
-      return {};
+  if constexpr (Api::kWindowNodes) {
+    if (!filters.empty()) {
+      if (HeadEstimate(terms, filters) <
+          docs_count / kDensityThresholdInverse) {
+        return {};
+      }
+      return MakeWindowOfNodes<Api>(terms, filters, segment, ctx);
     }
-    return MakeWindowOfNodes<Api>(terms, filters, segment, ctx);
   }
   const IndexInput* doc = nullptr;
   if (!WindowTerms(terms, filters, nullptr, doc)) {
@@ -195,7 +184,8 @@ Result<Api> MakeWindowNegation(
     return {};
   }
   using Excludes = fill::FilledAndNot<fill::SetLeaves<fill::Erased>>;
-  return MakeWindow<Api, fill::AllDocs, utils::Empty, utils::Empty, Excludes>(
+  return Api::template MakeWindow<fill::AllDocs, utils::Empty, utils::Empty,
+                                  Excludes>(
     ctx, std::forward_as_tuple(segment), std::forward_as_tuple(),
     std::forward_as_tuple(),
     std::forward_as_tuple(
@@ -215,28 +205,37 @@ Result<Api> MakeWindowExclusion(
   SDB_ASSERT(!terms.empty() || !filters.empty());
   if (terms.size() + filters.size() == 1) {
     if (HeadIsTerm(terms, filters)) {
-      return {};
+      if constexpr (!Api::kSingleTermWindow) {
+        return {};
+      }
+    } else {
+      if constexpr (!Api::kFilterExclusionWindow) {
+        return {};
+      } else {
+        auto node = filters.front()->PlanFill({}, ScoreMergeType::Noop);
+        if (!node) {
+          return {};
+        }
+        return BuildExcludeSide<Result<Api>>(
+          exclude_terms, exclude_filters, nullptr, segment, candidates,
+          [&]<typename Exclude>(auto&& exclude) -> Result<Api> {
+            return Api::template MakeWindow<fill::Erased, utils::Empty,
+                                            utils::Empty,
+                                            fill::ProbedAndNot<Exclude>>(
+              ctx, std::forward_as_tuple(std::move(node)),
+              std::forward_as_tuple(), std::forward_as_tuple(),
+              std::forward_as_tuple(std::piecewise_construct,
+                                    std::forward<decltype(exclude)>(exclude)));
+          });
+      }
     }
-    auto node = filters.front()->PlanFill({}, ScoreMergeType::Noop);
-    if (!node) {
-      return {};
-    }
-    return BuildExcludeSide<Result<Api>>(
-      exclude_terms, exclude_filters, nullptr, segment, candidates,
-      [&]<typename Exclude>(auto&& exclude) -> Result<Api> {
-        return MakeWindow<Api, fill::Erased, utils::Empty, utils::Empty,
-                          fill::ProbedAndNot<Exclude>>(
-          ctx, std::forward_as_tuple(std::move(node)), std::forward_as_tuple(),
-          std::forward_as_tuple(),
-          std::forward_as_tuple(std::piecewise_construct,
-                                std::forward<decltype(exclude)>(exclude)));
-      });
   }
   const IndexInput* doc = nullptr;
   if (!WindowTerms(terms, filters, nullptr, doc)) {
     return {};
   }
-  if (!DenseConjunction(terms, static_cast<doc_id_t>(segment.docs_count()))) {
+  if (terms.size() >= 2 &&
+      !DenseConjunction(terms, static_cast<doc_id_t>(segment.docs_count()))) {
     return {};
   }
   return BuildExcludeSide<Result<Api>>(
@@ -267,8 +266,9 @@ Result<Api> MakeWindowThreshold(std::span<const PostingClause> terms,
         leaf.Prepare(meta, in, meta.docs_count != 1 && BoundsOf(own),
                      meta.docs_count != 1 && FreqOf(own));
       };
-      return MakeWindow<Api, utils::Empty, utils::Empty,
-                        TallyGroup<fill::SetLeaves<Leaf>>, utils::Empty>(
+      return Api::template MakeWindow<utils::Empty, utils::Empty,
+                                      TallyGroup<fill::SetLeaves<Leaf>>,
+                                      utils::Empty>(
         ctx, std::forward_as_tuple(), std::forward_as_tuple(),
         std::forward_as_tuple(std::piecewise_construct,
                               std::forward_as_tuple(terms.size(), init),
@@ -279,8 +279,8 @@ Result<Api> MakeWindowThreshold(std::span<const PostingClause> terms,
   return BuildDense<Result<Api>>(
     terms, nullptr, doc, rest,
     [&]<typename Set>(auto&&... args) -> Result<Api> {
-      return MakeWindow<Api, utils::Empty, utils::Empty, ThresholdGroup<Set>,
-                        utils::Empty>(
+      return Api::template MakeWindow<utils::Empty, utils::Empty,
+                                      ThresholdGroup<Set>, utils::Empty>(
         ctx, std::forward_as_tuple(), std::forward_as_tuple(),
         std::forward_as_tuple(
           std::piecewise_construct,
@@ -298,7 +298,7 @@ Result<Api> MakeSparseConjunction(std::span<const PostingClause> terms,
   return BuildConjunction<Result<Api>>(
     terms, filters, nullptr, segment, 0,
     [&]<typename Head, typename Tail>(auto&& head, auto&& tail) -> Result<Api> {
-      return MakeSparse<Api, Head, Tail, utils::Empty>(
+      return Api::template MakeSparse<Head, Tail, utils::Empty>(
         ctx, std::forward<decltype(head)>(head),
         std::forward<decltype(tail)>(tail), std::forward_as_tuple());
     });
@@ -313,7 +313,7 @@ Result<Api> MakeSparseConjunctionWith(
   return BuildRequiredLeadOf<Result<Api>>(
     terms, filters, nullptr, segment,
     [&]<typename Head>(auto&& head) -> Result<Api> {
-      return MakeSparse<Api, Head, probe::Erased, utils::Empty>(
+      return Api::template MakeSparse<Head, probe::Erased, utils::Empty>(
         ctx, std::forward<decltype(head)>(head),
         std::forward_as_tuple(std::move(other)), std::forward_as_tuple());
     });
@@ -328,10 +328,23 @@ Result<Api> MakeSparseExclusionOf(
   return BuildExcludeSide<Result<Api>>(
     exclude_terms, exclude_filters, nullptr, segment, candidates,
     [&]<typename Exclude>(auto&& exclude) -> Result<Api> {
-      return MakeSparse<Api, lead::Erased, utils::Empty, Exclude>(
+      return Api::template MakeSparse<lead::Erased, utils::Empty, Exclude>(
         ctx, std::forward_as_tuple(std::move(include)), std::forward_as_tuple(),
         std::forward<decltype(exclude)>(exclude));
     });
+}
+
+template<typename Api>
+Result<Api> MakeSparseNegation(
+  std::span<const PostingClause> exclude_terms,
+  std::span<const QueryBuilder::ptr> exclude_filters, const SubReader& segment,
+  uint64_t candidates, const Context<Api>& ctx) {
+  auto driven = lead::MakeAllDocs(segment);
+  if (!driven) {
+    return {};
+  }
+  return MakeSparseExclusionOf<Api>(std::move(driven), exclude_terms,
+                                    exclude_filters, segment, candidates, ctx);
 }
 
 template<typename Api>
@@ -356,7 +369,7 @@ Result<Api> MakeSparseExclusion(
         return BuildExcludeSide<Result<Api>>(
           exclude_terms, exclude_filters, nullptr, segment, candidates,
           [&]<typename Exclude>(auto&& exclude) -> Result<Api> {
-            return MakeSparse<Api, Head, Tail, Exclude>(
+            return Api::template MakeSparse<Head, Tail, Exclude>(
               ctx, std::forward<decltype(head)>(head),
               std::forward<decltype(tail)>(tail),
               std::forward<decltype(exclude)>(exclude));
@@ -379,7 +392,7 @@ Result<Api> MakeSparseExclusion(
     return BuildExcludeSideOf<Result<Api>, Input>(
       exclude_terms, exclude_filters, nullptr, segment, candidates,
       [&]<typename Exclude>(auto&& exclude) -> Result<Api> {
-        return MakeSparse<Api, Include, utils::Empty, Exclude>(
+        return Api::template MakeSparse<Include, utils::Empty, Exclude>(
           ctx,
           std::forward_as_tuple(meta, *DocOf(own), LayoutOf(own),
                                 BoundsOf(own)),
@@ -398,9 +411,11 @@ Result<Api> MakeDisjunction(std::span<const PostingClause> terms,
   if (!CollectDense(terms, filters, nullptr, doc, rest)) {
     return {};
   }
-  if (auto folded = MakeBitset<Api>(
-        {.should = terms, .should_filters = filters, .should_fills = &rest},
-        segment, ctx)) {
+  if (auto folded =
+        MakeBitset<Api>({.should = terms,
+                         .should_filters = filters,
+                         .should_fills = Api::kBitsetFills ? &rest : nullptr},
+                        segment, ctx)) {
     return folded;
   }
   return MakeWindowDisjunction<Api>(terms, doc, rest, ctx);
@@ -416,13 +431,24 @@ Result<Api> MakeConjunction(std::span<const PostingClause> terms,
              ? Api::MakeTerm(terms.front(), segment, ctx)
              : Api::PlanChild(*filters.front(), ctx);
   }
+  const auto fold = [&] -> Result<Api> {
+    if (!Api::kBitsetTerms && filters.empty()) {
+      return {};
+    }
+    return MakeBitset<Api>({.must = terms, .must_filters = filters}, segment,
+                           ctx);
+  };
+  if constexpr (Api::kBitsetFirst) {
+    if (auto folded = fold()) {
+      return folded;
+    }
+  }
   if (auto windowed =
         MakeWindowConjunction<Api>(terms, filters, segment, ctx)) {
     return windowed;
   }
-  if (!filters.empty()) {
-    if (auto folded = MakeBitset<Api>({.must = terms, .must_filters = filters},
-                                      segment, ctx)) {
+  if constexpr (!Api::kBitsetFirst) {
+    if (auto folded = fold()) {
       return folded;
     }
   }
@@ -446,11 +472,12 @@ Result<Api> MakeThreshold(std::span<const PostingClause> terms,
 }
 
 template<typename Api>
-Result<Api> MakeRequired(const BooleanQuery& query, const Context<Api>& ctx) {
-  const auto& segment = query.Segment();
-  const auto must_terms = query.Terms(Occur::Must);
-  const auto must_filters = query.Queries(Occur::Must);
-  const auto min_match = query.MinShouldMatch();
+Result<Api> MakeRequired(std::span<const PostingClause> must_terms,
+                         std::span<const QueryBuilder::ptr> must_filters,
+                         std::span<const PostingClause> should_terms,
+                         std::span<const QueryBuilder::ptr> should_filters,
+                         uint32_t min_match, const SubReader& segment,
+                         const Context<Api>& ctx) {
   const bool no_must = must_terms.empty() && must_filters.empty();
   if (min_match == 0) {
     if (no_must) {
@@ -458,8 +485,6 @@ Result<Api> MakeRequired(const BooleanQuery& query, const Context<Api>& ctx) {
     }
     return MakeConjunction<Api>(must_terms, must_filters, segment, ctx);
   }
-  const auto should_terms = query.Terms(Occur::Should);
-  const auto should_filters = query.Queries(Occur::Should);
   if (no_must) {
     return min_match == 1
              ? MakeDisjunction<Api>(should_terms, should_filters, segment, ctx)
@@ -474,6 +499,14 @@ Result<Api> MakeRequired(const BooleanQuery& query, const Context<Api>& ctx) {
   }
   return MakeSparseConjunctionWith<Api>(must_terms, must_filters, segment,
                                         std::move(probe), ctx);
+}
+
+template<typename Api>
+Result<Api> MakeRequired(const BooleanQuery& query, const Context<Api>& ctx) {
+  return MakeRequired<Api>(query.Terms(Occur::Must), query.Queries(Occur::Must),
+                           query.Terms(Occur::Should),
+                           query.Queries(Occur::Should), query.MinShouldMatch(),
+                           query.Segment(), ctx);
 }
 
 template<typename Api>

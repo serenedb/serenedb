@@ -83,28 +83,6 @@ template<typename Parser, typename Acceptor>
 Node::ptr Make(const GeoQuery<Parser, Acceptor>& query, const ScoredCtx& ctx,
                ScoreMergeType merge);
 
-Node::ptr MakeConjunctionDocs(std::span<const search::PostingClause> terms,
-                              std::span<const QueryBuilder::ptr> filters,
-                              const SubReader& segment);
-Node::ptr MakeDisjunctionDocs(std::span<const search::PostingClause> terms,
-                              std::span<const QueryBuilder::ptr> filters,
-                              const SubReader& segment);
-Node::ptr MakeThresholdDocs(std::span<const search::PostingClause> terms,
-                            std::span<const QueryBuilder::ptr> filters,
-                            const SubReader& segment, uint32_t min_match);
-Node::ptr MakeRequiredDocs(std::span<const search::PostingClause> must_terms,
-                           std::span<const QueryBuilder::ptr> must_filters,
-                           std::span<const search::PostingClause> should_terms,
-                           std::span<const QueryBuilder::ptr> should_filters,
-                           uint32_t min_should_match, const SubReader& segment);
-Node::ptr MakeExclusionDocs(
-  std::span<const search::PostingClause> must_terms,
-  std::span<const QueryBuilder::ptr> must_filters,
-  std::span<const search::PostingClause> should_terms,
-  std::span<const QueryBuilder::ptr> should_filters, uint32_t min_should_match,
-  std::span<const search::PostingClause> exclude_terms,
-  std::span<const QueryBuilder::ptr> exclude_filters, const SubReader& segment);
-
 Node::ptr MakeDisjunctionScored(std::span<const search::PostingClause> terms,
                                 std::span<const QueryBuilder::ptr> filters,
                                 search::Terms uniformity,

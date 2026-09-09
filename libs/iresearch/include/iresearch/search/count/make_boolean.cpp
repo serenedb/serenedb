@@ -28,7 +28,6 @@
 #include "iresearch/search/common/boolean_builder.hpp"
 #include "iresearch/search/count/boolean_sparse.hpp"
 #include "iresearch/search/count/subtract.hpp"
-#include "iresearch/search/lead/make.hpp"
 
 namespace irs::count {
 
@@ -37,13 +36,8 @@ Root::ptr Api::MakeNegation(
   std::span<const QueryBuilder::ptr> exclude_filters, const SubReader& segment,
   uint64_t candidates, const Context& ctx) {
   if (ctx.table != nullptr) {
-    auto driven = lead::MakeAllDocs(segment);
-    if (!driven) {
-      return {};
-    }
-    return search::builder::MakeSparseExclusionOf<Api>(
-      std::move(driven), exclude_terms, exclude_filters, segment, candidates,
-      ctx);
+    return search::builder::MakeSparseNegation<Api>(
+      exclude_terms, exclude_filters, segment, candidates, ctx);
   }
   Root::ptr excluded;
   if (exclude_terms.size() + exclude_filters.size() == 1) {

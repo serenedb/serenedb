@@ -111,10 +111,6 @@ Node::ptr MakeSparseExclusionScored(
   std::span<const QueryBuilder::ptr> exclude_filters, const SubReader& segment,
   const ScoredCtx& ctx, ScoreMergeType merge, score_t absorbed);
 
-Node::ptr MakeWindowThresholdDocs(std::span<const PostingClause> terms,
-                                  const IndexInput* doc,
-                                  std::vector<search::FillNode::ptr>& rest,
-                                  uint32_t min_match);
 Node::ptr MakeWindowThresholdScored(std::span<const PostingClause> terms,
                                     std::span<const QueryBuilder::ptr> filters,
                                     search::Terms uniformity,

@@ -31,7 +31,7 @@
 #include "iresearch/search/common/collect_scored.hpp"
 #include "iresearch/search/common/conjunction_scored.hpp"
 #include "iresearch/search/common/exclusion_of.hpp"
-#include "iresearch/search/common/optional_scored.hpp"
+#include "iresearch/search/common/probe_leaves.hpp"
 #include "iresearch/search/common/resolve.hpp"
 #include "iresearch/search/common/score_policy.hpp"
 #include "iresearch/search/common/scored_context.hpp"
@@ -153,19 +153,19 @@ Root::ptr MakeSparseConjunction(const BooleanQuery& query,
       });
     return only;
   }
-  return conjunction([&]<typename Head, typename Tail>(
-                       auto&& head, auto&& tail) -> Root::ptr {
-    if (!held) {
-      return MakeSparse<Head, Tail, utils::Empty, utils::Empty>(
+  return conjunction(
+    [&]<typename Head, typename Tail>(auto&& head, auto&& tail) -> Root::ptr {
+      if (!held) {
+        return MakeSparse<Head, Tail, utils::Empty, utils::Empty>(
+          ctx, score, std::forward<decltype(head)>(head),
+          std::forward<decltype(tail)>(tail), std::forward_as_tuple(),
+          std::forward_as_tuple());
+      }
+      return MakeSparse<Head, Tail, probe::Erased, utils::Empty>(
         ctx, score, std::forward<decltype(head)>(head),
-        std::forward<decltype(tail)>(tail), std::forward_as_tuple(),
-        std::forward_as_tuple());
-    }
-    return MakeSparse<Head, Tail, probe::Erased, utils::Empty>(
-      ctx, score, std::forward<decltype(head)>(head),
-      std::forward<decltype(tail)>(tail),
-      std::forward_as_tuple(std::move(held)), std::forward_as_tuple());
-  });
+        std::forward<decltype(tail)>(tail),
+        std::forward_as_tuple(std::move(held)), std::forward_as_tuple());
+    });
 }
 
 Root::ptr MakeSparseExclusion(const BooleanQuery& query,
@@ -222,9 +222,9 @@ Root::ptr MakeSparseExclusion(const BooleanQuery& query,
     excludes, exclude_filters, nullptr, segment, candidates,
     [&]<typename Excludes>(auto&& negated) -> Root::ptr {
       return MakeSparse<lead::Erased, utils::Empty, utils::Empty, Excludes>(
-        ctx, search::Scored{merge, 0}, std::forward_as_tuple(std::move(include)),
-        std::forward_as_tuple(), std::forward_as_tuple(),
-        std::forward<decltype(negated)>(negated));
+        ctx, search::Scored{merge, 0},
+        std::forward_as_tuple(std::move(include)), std::forward_as_tuple(),
+        std::forward_as_tuple(), std::forward<decltype(negated)>(negated));
     });
 }
 

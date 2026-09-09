@@ -25,8 +25,8 @@
 
 #include "basics/empty.hpp"
 #include "iresearch/index/index_reader.hpp"
+#include "iresearch/search/common/collect.hpp"
 #include "iresearch/search/common/exclusion_of.hpp"
-#include "iresearch/search/common/window_of.hpp"
 #include "iresearch/search/count/make_boolean.hpp"
 #include "iresearch/search/fill/impl.hpp"
 #include "iresearch/search/fill/leaves.hpp"

@@ -30,7 +30,7 @@
 #include "iresearch/search/common/collect_scored.hpp"
 #include "iresearch/search/common/conjunction_scored.hpp"
 #include "iresearch/search/common/exclusion_of.hpp"
-#include "iresearch/search/common/optional_scored.hpp"
+#include "iresearch/search/common/probe_leaves.hpp"
 #include "iresearch/search/common/resolve.hpp"
 #include "iresearch/search/common/score_policy.hpp"
 #include "iresearch/search/lead/impl.hpp"

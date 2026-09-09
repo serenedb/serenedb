@@ -225,13 +225,4 @@ Result MakeBitsetOf(std::span<const Term> terms, const TermReader* field,
                                 docs_count, table);
 }
 
-template<typename Result, typename Term>
-Result MakeBitsetWith(std::span<const Term> terms, const TermReader* field,
-                      const IndexInput& doc, doc_id_t docs_count,
-                      std::vector<FillNode::ptr>&& rest, TableFilter* table) {
-  auto buckets = DisjunctionBuckets(terms, field);
-  buckets.fills = std::move(rest);
-  return MakeBitsetNode<Result>(std::move(buckets), doc, docs_count, table);
-}
-
 }  // namespace irs::search

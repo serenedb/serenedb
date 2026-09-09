@@ -24,7 +24,6 @@
 
 #include "basics/empty.hpp"
 #include "iresearch/search/common/bitset_of.hpp"
-#include "iresearch/search/common/optional_scored.hpp"
 #include "iresearch/search/common/posting_probe.hpp"
 #include "iresearch/search/common/probe_leaves.hpp"
 #include "iresearch/search/common/resolve.hpp"

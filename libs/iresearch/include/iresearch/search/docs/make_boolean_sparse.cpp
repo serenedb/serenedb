@@ -23,8 +23,8 @@
 
 #include "basics/empty.hpp"
 #include "iresearch/index/index_reader.hpp"
+#include "iresearch/search/common/boolean_bitset.hpp"
 #include "iresearch/search/common/boolean_of.hpp"
-#include "iresearch/search/common/conjunction_bitset.hpp"
 #include "iresearch/search/common/exclusion_of.hpp"
 #include "iresearch/search/docs/boolean_sparse.hpp"
 #include "iresearch/search/docs/make_boolean.hpp"

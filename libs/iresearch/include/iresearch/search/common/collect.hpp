@@ -82,6 +82,24 @@ uint64_t IncludeCandidates(std::span<const Term> terms,
 }
 
 template<typename Term>
+bool DenseConjunction(std::span<const Term> terms,
+                      doc_id_t segment_docs_count) noexcept {
+  return terms.size() >= 2 && CookieOf(terms.front()).docs_count >=
+                                segment_docs_count / kDensityThresholdInverse;
+}
+
+template<typename Term>
+bool WindowTerms(std::span<const Term> terms,
+                 std::span<const QueryBuilder::ptr> filters,
+                 const TermReader* field, const IndexInput*& doc) {
+  if (terms.empty() || !filters.empty()) {
+    return false;
+  }
+  doc = DocOf(FieldOf(terms.front(), field));
+  return doc != nullptr;
+}
+
+template<typename Term>
 bool CollectDense(std::span<const Term> terms,
                   std::span<const QueryBuilder::ptr> filters,
                   const TermReader* field, const IndexInput*& doc,

@@ -38,6 +38,7 @@
 #include "iresearch/formats/ivf/ivf_writer.hpp"
 #include "iresearch/index/inverter/columnar_flush.hpp"
 #include "iresearch/store/store_utils.hpp"
+#include "iresearch/utils/async.hpp"
 #include "iresearch/utils/index_utils.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
@@ -112,7 +113,8 @@ SegmentWriter::SegmentWriter(ConstructToken, Directory& dir,
         .GetBufferAllocator(),
       options.resource_manager}},
     _db{DerefDb(options.db)},
-    _fallback_field_options{options.field_options} {
+    _fallback_field_options{options.field_options},
+    _ann_env{options.ann_env} {
   _docs_mask.set = decltype(_docs_mask.set){{options.resource_manager}};
 }
 
@@ -142,12 +144,17 @@ void SegmentWriter::FlushFields(FlushState& state,
 
   IdxWriter idx{_dir, _seg_name, _db};
 
-  std::vector<std::unique_ptr<IvfWriter>> ivf_writers;
+  std::vector<std::unique_ptr<AnnWriter>> ann_writers;
   if (_col_writer) {
     _col_writer->SetIdxWriter(idx);
     _fields.FinalizeNorms();
     _col_writer->Commit(buffered_docs());
-    ivf_writers = _col_writer->TakeIvfWriters();
+    if (_ann_env != nullptr) {
+      GetBlocking(_col_writer->ComputeAnn(_ann_env).ToFuture());
+    } else {
+      GetReady(_col_writer->ComputeAnn(/*env=*/nullptr).ToFuture());
+    }
+    ann_writers = _col_writer->TakeAnnWriters();
     _col_writer.reset();
   }
 
@@ -156,13 +163,13 @@ void SegmentWriter::FlushFields(FlushState& state,
     _field_writer->SetIdxWriter(idx);
     std::optional<ReadContext> ivf_ctx;
     const auto cluster_readers =
-      PrepareIvfClusterReaders(ivf_writers, _col_reader.get(), ivf_ctx);
+      PrepareIvfClusterReaders(ann_writers, _col_reader.get(), ivf_ctx);
     FlushFields(state, cluster_readers);
   }
 
-  for (const auto& w : ivf_writers) {
+  for (const auto& w : ann_writers) {
     if (w) {
-      w->FlushTree();
+      w->Flush();
     }
   }
 

@@ -44,6 +44,7 @@
 #include "catalog/inverted_index.h"
 #include "pg/sql_exception_macro.h"
 #include "rest_server/database_path_feature.h"
+#include "scheduler/background_scheduler.h"
 #include "search/inverted_index_storage.h"
 #include "search/search_db_wal.h"
 #include "search/search_table_recovery.h"
@@ -71,6 +72,32 @@ int SearchEngine::MaxConcurrentCompactions() noexcept {
   // cleanup, and drop are light and interleave on the single spare thread.
   return std::max<int>(
     1, static_cast<int>(absl::GetFlag(FLAGS_background_threads)) - 1);
+}
+
+uint32_t SearchEngine::MaxAnnBuildWorkers() noexcept {
+  return std::max<uint32_t>(
+    1, static_cast<uint32_t>(BackgroundScheduler::AnnBuildBudget()));
+}
+
+uint32_t SearchEngine::MaxAnnWorkersPerBuild() noexcept {
+  return std::clamp<uint32_t>(static_cast<uint32_t>(MaxConcurrentCompactions()),
+                              1, 16);
+}
+
+uint32_t AnnAcquireWorkers(uint32_t want) noexcept {
+  return GetSearchEngine().AcquireAnnWorkers(want);
+}
+
+void AnnReleaseWorkers(uint32_t n) noexcept {
+  GetSearchEngine().ReleaseAnnWorkers(n);
+}
+
+const irs::AnnBuildEnv& AnnBuildEnv() {
+  static const irs::AnnBuildEnv env{
+    .executor = &BackgroundScheduler::instance().annExecutor(),
+    .acquire = AnnAcquireWorkers,
+    .release = AnnReleaseWorkers};
+  return env;
 }
 
 void SearchEngine::start() {

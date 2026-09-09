@@ -1,0 +1,305 @@
+control substitution on
+
+# ============================================================================
+# HNSW radius search.
+#
+# The graph walk uses the radius as a fixed pruning bound instead of the
+# tightening k-th-best, expanding every node inside it. Unlike IVF -- which
+# probes clusters and reranks their union -- completeness here is bounded by
+# graph reachability, so membership is approximate by design. Soundness is not:
+# every returned row is genuinely inside the radius, and `count(*)` and the
+# emitting form must go through the same gate, never a conjunct re-applied
+# above the scan.
+#
+# Distances are spread far wider than any quantization error, and quant='none'
+# is pinned besides, so these results are exact and can be compared row for row
+# against the base table.
+# ============================================================================
+
+statement ok
+CREATE TABLE hnsw_r (pk INTEGER PRIMARY KEY, emb FLOAT[3]);
+
+
+statement ok
+CREATE INDEX hnsw_r_idx ON hnsw_r
+  USING inverted(pk, emb hnsw (metric = 'l2', quant = 'none'));
+
+
+statement ok
+INSERT INTO hnsw_r VALUES
+  (1, [10, 0, 0]::FLOAT[3]),
+  (2, [0, 0, 0]::FLOAT[3]),
+  (3, [100, 0, 0]::FLOAT[3]),
+  (4, [14, 0, 0]::FLOAT[3]),
+  (5, [-20, 0, 0]::FLOAT[3]),
+  (6, [8, 0, 0]::FLOAT[3]);
+
+
+statement ok
+VACUUM (REFRESH_TABLE) hnsw_r;
+
+
+# The scan serves the radius itself -- a plain filter above a full scan would
+# make every assertion below pass without the graph being involved at all.
+query
+EXPLAIN SELECT pk FROM hnsw_r_idx
+  WHERE emb <-> [11, 0, 0]::FLOAT[3] < 12 ORDER BY pk;
+----
+QUERY PLAN
+╭─ ORDER_BY ──────────────────╮
+│ Order By: hnsw_r_idx.pk ASC │
+│ ~6 rows                     │
+╰──────────────┬──────────────╯
+╭─ IRESEARCH_SCAN ────────────╮
+│ Index: hnsw_r_idx           │
+│ Lookup: table               │
+│ Index Filter:               │
+│ ╭─ Vector Range ─╮          │
+│ │ Field: emb     │          │
+│ │ Metric: l2     │          │
+│ │ Radius: < 12   │          │
+│ ╰────────────────╯          │
+│ Projections: pk             │
+│ ~6 rows                     │
+╰─────────────────────────────╯
+
+
+# Distances from [11,0,0] are 1, 3, 3, 11, 31, 89.
+query
+SELECT pk FROM hnsw_r_idx
+  WHERE emb <-> [11, 0, 0]::FLOAT[3] < 5 ORDER BY pk;
+----
+pk
+1
+4
+6
+
+
+query
+SELECT count(*) FROM hnsw_r_idx
+  WHERE emb <-> [11, 0, 0]::FLOAT[3] < 5;
+----
+count
+3
+
+
+query
+SELECT pk FROM hnsw_r_idx
+  WHERE emb <-> [11, 0, 0]::FLOAT[3] < 12 ORDER BY pk;
+----
+pk
+1
+2
+4
+6
+
+
+# count(*) and the emitting form share one gate.
+query
+SELECT count(*) FROM hnsw_r_idx
+  WHERE emb <-> [11, 0, 0]::FLOAT[3] < 12;
+----
+count
+4
+
+
+# The projected distance is the exact one, not the gate value.
+query
+SELECT pk, round(emb <-> [11, 0, 0]::FLOAT[3], 3) AS d FROM hnsw_r_idx
+  WHERE emb <-> [11, 0, 0]::FLOAT[3] < 12 ORDER BY pk;
+----
+pk	d
+1	1
+2	11
+4	3
+6	3
+
+
+# The index must not change membership versus the base table.
+query
+SELECT pk FROM hnsw_r
+  WHERE emb <-> [11, 0, 0]::FLOAT[3] < 12 ORDER BY pk;
+----
+pk
+1
+2
+4
+6
+
+
+# A radius tighter than every row returns nothing, not the nearest row.
+query
+SELECT count(*) FROM hnsw_r_idx
+  WHERE emb <-> [11, 0, 0]::FLOAT[3] < 0.5;
+----
+count
+0
+
+
+# A radius wider than the whole dataset returns every row.
+query
+SELECT count(*) FROM hnsw_r_idx
+  WHERE emb <-> [11, 0, 0]::FLOAT[3] < 1000;
+----
+count
+6
+
+
+# The default quantizer takes a different scoring path in range mode (codes
+# gathered into one ComputeBlock rather than the raw kernel), so it needs its
+# own coverage. These distances sit far outside sq8's error, so membership is
+# unchanged.
+statement ok
+CREATE TABLE hnsw_rq (pk INTEGER PRIMARY KEY, emb FLOAT[3]);
+
+
+statement ok
+CREATE INDEX hnsw_rq_idx ON hnsw_rq
+  USING inverted(pk, emb hnsw (metric = 'l2'));
+
+
+statement ok
+INSERT INTO hnsw_rq SELECT pk, emb FROM hnsw_r;
+
+
+statement ok
+VACUUM (REFRESH_TABLE) hnsw_rq;
+
+
+query
+SELECT pk FROM hnsw_rq_idx
+  WHERE emb <-> [11, 0, 0]::FLOAT[3] < 5 ORDER BY pk;
+----
+pk
+1
+4
+6
+
+
+query
+SELECT pk FROM hnsw_rq_idx
+  WHERE emb <-> [11, 0, 0]::FLOAT[3] < 12 ORDER BY pk;
+----
+pk
+1
+2
+4
+6
+
+
+query
+SELECT count(*) FROM hnsw_rq_idx
+  WHERE emb <-> [11, 0, 0]::FLOAT[3] < 12;
+----
+count
+4
+
+
+# ============================================================================
+# Strict vs inclusive at an exact boundary.
+#
+# Distances from [11, 0, 0] are pk1=1, pk4=3, pk6=3, pk2=11, pk5=31, pk3=89, so
+# a radius of 3 or 11 lands exactly on a row. IVF honours the operator; HNSW
+# used to accept `>= radius` whatever was written, making `<` and `<=` return
+# the same rows.
+# ============================================================================
+
+query
+SELECT pk FROM hnsw_r_idx
+  WHERE emb <-> [11, 0, 0]::FLOAT[3] < 3 ORDER BY pk;
+----
+pk
+1
+
+
+query
+SELECT pk FROM hnsw_r_idx
+  WHERE emb <-> [11, 0, 0]::FLOAT[3] <= 3 ORDER BY pk;
+----
+pk
+1
+4
+6
+
+
+query
+SELECT pk FROM hnsw_r_idx
+  WHERE emb <-> [11, 0, 0]::FLOAT[3] < 11 ORDER BY pk;
+----
+pk
+1
+4
+6
+
+
+query
+SELECT pk FROM hnsw_r_idx
+  WHERE emb <-> [11, 0, 0]::FLOAT[3] <= 11 ORDER BY pk;
+----
+pk
+1
+2
+4
+6
+
+
+query
+SELECT count(*) FROM hnsw_r_idx
+  WHERE emb <-> [11, 0, 0]::FLOAT[3] < 3;
+----
+count
+1
+
+
+query
+SELECT count(*) FROM hnsw_r_idx
+  WHERE emb <-> [11, 0, 0]::FLOAT[3] <= 3;
+----
+count
+3
+
+
+# A segment whose emb column is entirely NULL builds no graph, so the writer
+# emits no ANN footer entry and the segment has no index to prepare against.
+# The radius filter used to assert-and-dereference that null, which is a no-op
+# assert plus a segfault in release.
+statement ok
+CREATE TABLE hnsw_r_null (pk INTEGER PRIMARY KEY, emb FLOAT[3]);
+
+
+statement ok
+CREATE INDEX hnsw_r_null_idx ON hnsw_r_null
+  USING inverted(pk, emb hnsw (metric = 'l2', quant = 'none'));
+
+
+statement ok
+INSERT INTO hnsw_r_null VALUES (1, NULL), (2, NULL);
+
+
+statement ok
+VACUUM (REFRESH_TABLE) hnsw_r_null;
+
+
+statement ok
+INSERT INTO hnsw_r_null VALUES (3, [1, 0, 0]::FLOAT[3]),
+  (4, [50, 0, 0]::FLOAT[3]);
+
+
+statement ok
+VACUUM (REFRESH_TABLE) hnsw_r_null;
+
+
+query
+SELECT pk FROM hnsw_r_null_idx
+  WHERE emb <-> [1, 0, 0]::FLOAT[3] < 5 ORDER BY pk;
+----
+pk
+3
+
+
+query
+SELECT count(*) FROM hnsw_r_null_idx
+  WHERE emb <-> [1, 0, 0]::FLOAT[3] < 5;
+----
+count
+1

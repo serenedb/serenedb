@@ -24,6 +24,7 @@
 #include <absl/strings/match.h>
 #include <s2/s2loop.h>
 #include <s2/s2point_region.h>
+#include <s2/s2pointutil.h>
 #include <s2/s2polygon.h>
 #include <s2/s2polyline.h>
 #include <s2/util/coding/coder.h>
@@ -672,6 +673,11 @@ void ParseRegionImpl(ondemand::value json, ShapeContainer& region,
     default:
       THROW_SQL_ERROR(
         ERR_MSG("GeoJSON type GeometryCollection is not supported"));
+  }
+  if constexpr (Validation) {
+    if (!S2::IsUnitLength(region.centroid())) {
+      THROW_SQL_ERROR(ERR_MSG("Degenerate geometry has no centroid."));
+    }
   }
   if (Validation && encoder != nullptr && is_s2) {
     SDB_ASSERT(encoder->length() == 0);

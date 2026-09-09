@@ -30,7 +30,7 @@
 #include <duckdb/function/function_set.hpp>
 #include <duckdb/function/scalar_function.hpp>
 #include <duckdb/main/client_context.hpp>
-#include <iresearch/analysis/split_by_non_alpha.hpp>
+#include <iresearch/analysis/text/words/split_by_non_alpha.hpp>
 #include <string_view>
 
 #include "connector/common.h"
@@ -98,7 +98,7 @@ void Split(duckdb::DataChunk& args, duckdb::Vector& result, PushRow push_row) {
       continue;
     }
     const auto row_offset = sink.Offset();
-    push_row(sink, row, AsView(text_values[text_row]));
+    push_row(sink, row, text_values[text_row]);
     list_entries[row] = {row_offset, sink.Offset() - row_offset};
   }
 }
@@ -106,9 +106,10 @@ void Split(duckdb::DataChunk& args, duckdb::Vector& result, PushRow push_row) {
 template<bool ToLower>
 void SplitConstant(duckdb::DataChunk& args, duckdb::ExpressionState&,
                    duckdb::Vector& result) {
-  Split(args, result, [](ListSink& sink, duckdb::idx_t, std::string_view text) {
-    irs::analysis::SplitByNonAlpha(
-      text, [&](std::string_view token) { sink.Push<ToLower>(token); });
+  Split(args, result, [](ListSink& sink, duckdb::idx_t, duckdb::string_t text) {
+    irs::analysis::words::SplitByNonAlpha(text, [&](size_t begin, size_t end) {
+      sink.Push<ToLower>(std::string_view{text.GetData() + begin, end - begin});
+    });
   });
 }
 
@@ -120,18 +121,20 @@ void SplitDynamic(duckdb::DataChunk& args, duckdb::ExpressionState&,
     duckdb::UnifiedVectorFormat::GetData<bool>(to_lower_format);
 
   Split(args, result,
-        [&](ListSink& sink, duckdb::idx_t row, std::string_view text) {
+        [&](ListSink& sink, duckdb::idx_t row, duckdb::string_t text) {
           auto to_lower_row = to_lower_format.sel->get_index(row);
           const bool to_lower =
             to_lower_format.validity.RowIsValid(to_lower_row) &&
             to_lower_values[to_lower_row];
-          irs::analysis::SplitByNonAlpha(text, [&](std::string_view token) {
-            if (to_lower) {
-              sink.Push<true>(token);
-            } else {
-              sink.Push<false>(token);
-            }
-          });
+          irs::analysis::words::SplitByNonAlpha(
+            text, [&](size_t begin, size_t end) {
+              const std::string_view token{text.GetData() + begin, end - begin};
+              if (to_lower) {
+                sink.Push<true>(token);
+              } else {
+                sink.Push<false>(token);
+              }
+            });
         });
 }
 

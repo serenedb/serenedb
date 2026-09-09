@@ -112,7 +112,7 @@ void CreateForeignServer(ConnectionContext& conn_ctx, std::string_view name,
   auto& catalog = catalog::DatabaseCatalog(&conn_ctx.GetClientContext(), db_id);
   if (!catalog.CreateForeignServer(
         catalog::ActingAs(conn_ctx.GetRoleId(), conn_ctx.GetClientContext()),
-        db_id, server, catalog::Permissions{conn_ctx.GetRoleId()},
+        db_id, server, catalog::Permissions{conn_ctx.GetRoleId(), {}, {}},
         if_not_exists)) {
     return;
   }

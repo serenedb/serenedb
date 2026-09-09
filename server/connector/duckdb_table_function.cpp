@@ -614,7 +614,7 @@ void SereneDBScanBindData::AppendSummary(
         ? std::string{"Index Filter"}
         : absl::StrCat(
             "Index Filter(",
-            display_field(static_cast<catalog::ColumnId>(req.field_id)), ")");
+            display_field(static_cast<catalog::ColumnId>(req.display_id)), ")");
     out.insert(std::move(key), duckdb::ExplainValue(irs::ToExplainNode(
                                  *req.having_filter, name_of, kind_of)));
   }
@@ -667,7 +667,7 @@ void SereneDBScanBindData::AppendSummary(
   if (TsDictMode()) {
     auto names =
       absl::StrJoin(ts_dicts | std::views::transform([&](const auto& req) {
-                      return display_field(catalog::ColumnId{req.field_id});
+                      return display_field(catalog::ColumnId{req.display_id});
                     }),
                     ", ");
     out.insert("TsDict", std::move(names));

@@ -72,6 +72,8 @@
 #include <vector>
 
 #include "basics/duckdb_engine.h"
+#include "insert_field.hpp"
+#include "test_resources.hpp"
 #include "utf8proc_wrapper.hpp"
 
 #ifdef SLOP_PROFILE
@@ -91,7 +93,8 @@ struct IField {
 
   virtual irs::field_id Id() const = 0;
   virtual irs::IndexFeatures GetIndexFeatures() const = 0;
-  virtual irs::Tokenizer& GetTokens() const = 0;
+  virtual irs::analysis::Tokenizer& GetTokens() const = 0;
+  virtual std::string_view Value() const = 0;
   virtual bool Write(irs::DataOutput& out) const = 0;
 };
 
@@ -115,12 +118,14 @@ class FieldBase : public IField {
 class TextField final : public FieldBase {
  public:
   TextField(irs::field_id id, irs::IndexFeatures extra_features)
-    : _stream(irs::analysis::TextTokenizer::Make([] {
-        irs::analysis::TextTokenizer::Options opts;
-        opts.locale = icu::Locale::createFromName("C");
-        opts.explicit_stopwords_set = true;
-        return opts;
-      }())) {
+    : _stream(irs::analysis::TextTokenizer::Make(
+        [] {
+          irs::analysis::TextTokenizer::Options opts;
+          opts.locale = icu::Locale::createFromName("C");
+          opts.explicit_stopwords_set = true;
+          return opts;
+        }(),
+        tests::Cache())) {
     SetId(id);
     SetIndexFeatures(irs::IndexFeatures::Freq | irs::IndexFeatures::Pos |
                      irs::IndexFeatures::Offs | extra_features);
@@ -128,15 +133,14 @@ class TextField final : public FieldBase {
 
   void SetValue(std::string_view value) noexcept { _value = value; }
 
-  irs::Tokenizer& GetTokens() const final {
-    _stream->reset(_value);
-    return *_stream;
-  }
+  irs::analysis::Tokenizer& GetTokens() const final { return *_stream; }
+
+  std::string_view Value() const final { return _value; }
 
   bool Write(irs::DataOutput&) const final { return false; }
 
  private:
-  irs::analysis::Analyzer::ptr _stream;
+  irs::analysis::Tokenizer::ptr _stream;
   std::string_view _value;
 };
 
@@ -429,7 +433,8 @@ Corpus BuildIndex() {
   while (auto* doc = reader.Next()) {
     auto trx = writer->GetBatch();
     auto inserter = trx.Insert();
-    if (!inserter.Insert(doc->indexed.begin(), doc->indexed.end())) {
+    if (!tests::InsertFields(inserter, doc->indexed.begin(),
+                             doc->indexed.end())) {
       Die("Insert returned false");
     }
     trx.Commit();
@@ -501,7 +506,8 @@ Corpus BuildSyntheticIndex() {
     auto trx = writer->GetBatch();
     auto inserter = trx.Insert();
     const auto& doc = tpl.Get();
-    if (!inserter.Insert(doc.indexed.begin(), doc.indexed.end())) {
+    if (!tests::InsertFields(inserter, doc.indexed.begin(),
+                             doc.indexed.end())) {
       Die("synthetic Insert returned false");
     }
     trx.Commit();
@@ -564,7 +570,8 @@ Corpus BuildDense3Index() {
     auto trx = writer->GetBatch();
     auto inserter = trx.Insert();
     const auto& doc = tpl.Get();
-    if (!inserter.Insert(doc.indexed.begin(), doc.indexed.end())) {
+    if (!tests::InsertFields(inserter, doc.indexed.begin(),
+                             doc.indexed.end())) {
       Die("dense3 Insert returned false");
     }
     trx.Commit();
@@ -624,7 +631,8 @@ Corpus BuildAllSameIndex() {
     auto trx = writer->GetBatch();
     auto inserter = trx.Insert();
     const auto& doc = tpl.Get();
-    if (!inserter.Insert(doc.indexed.begin(), doc.indexed.end())) {
+    if (!tests::InsertFields(inserter, doc.indexed.begin(),
+                             doc.indexed.end())) {
       Die("allsame Insert returned false");
     }
     trx.Commit();
@@ -694,7 +702,8 @@ Corpus BuildFarApartIndex() {
     auto trx = writer->GetBatch();
     auto inserter = trx.Insert();
     const auto& doc = tpl.Get();
-    if (!inserter.Insert(doc.indexed.begin(), doc.indexed.end())) {
+    if (!tests::InsertFields(inserter, doc.indexed.begin(),
+                             doc.indexed.end())) {
       Die("farapart Insert returned false");
     }
     trx.Commit();

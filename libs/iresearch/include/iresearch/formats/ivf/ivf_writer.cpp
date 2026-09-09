@@ -241,6 +241,30 @@ class IvfTermIterator final : public TermOnlyIterator {
 
   Attribute* GetMutable(TypeInfo::type_id) noexcept final { return nullptr; }
 
+  size_t NextTermsWithPostings(std::span<bytes_view> terms,
+                               std::span<PostingRows> postings,
+                               IndexFeatures /*features*/) final {
+    const auto n = std::min({terms.size(), postings.size(), _count - _next});
+    if (n == 0) {
+      return 0;
+    }
+    const auto first = _next;
+    for (size_t i = 0; i < n; ++i) {
+      // a cluster's docs are one contiguous slice: always a single span
+      const auto b = _cluster_offsets[first + i];
+      const auto e = _cluster_offsets[first + i + 1];
+      postings[i] = {.span = {.docs = _cluster_docs.data() + b,
+                              .pos = nullptr,
+                              .offs_start = nullptr,
+                              .offs_end = nullptr,
+                              .count = static_cast<size_t>(e - b)}};
+      terms[i] = bytes_view{_terms.data() + (first + i) * kWidth, kWidth};
+    }
+    _next += n;
+    _cur = _next == 0 ? 0 : _next - 1;
+    return n;
+  }
+
  private:
   class DocIter final : public TermPostings {
    public:

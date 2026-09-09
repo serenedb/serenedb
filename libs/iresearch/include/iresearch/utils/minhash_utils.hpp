@@ -60,7 +60,7 @@ class MinHash {
 
   // Update MinHash with the new value.
   // `noexcept` because we reserved enough space in constructor already.
-  IRS_NO_INLINE void Insert(uint64_t hash_value) {
+  void Insert(uint64_t hash_value) {
     if ((_left == 0 && hash_value >= _min_hashes.front()) ||
         !_dedup.emplace(hash_value).second) {
       return;

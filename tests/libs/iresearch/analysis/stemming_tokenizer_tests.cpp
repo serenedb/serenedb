@@ -23,6 +23,8 @@
 
 #include "gtest/gtest.h"
 #include "iresearch/analysis/stemming_tokenizer.hpp"
+#include "iresearch/analysis/token_batch.hpp"
+#include "token_sink_utils.hpp"
 
 namespace {
 
@@ -34,6 +36,28 @@ TEST_F(StemmingTokenizerTests, consts) {
   static_assert("stem" == irs::Type<irs::analysis::StemmingTokenizer>::name());
 }
 
+namespace {
+
+void AssertStemBlock(irs::analysis::StemmingTokenizer& stream,
+                     std::string_view data, std::string_view expected) {
+  size_t flushes = 0;
+  const auto check = [&](irs::TokenBatch& batch, irs::DocRuns /*runs*/) {
+    ++flushes;
+    ASSERT_EQ(1, batch.count);
+    const auto& t = batch.terms[0];
+    ASSERT_EQ(expected, std::string_view(t.GetData(), t.GetSize()));
+    ASSERT_EQ(0, batch.offs_start[0]);
+    ASSERT_EQ(data.size(), batch.offs_end[0]);
+  };
+  tests::FnTokenSink sink{irs::TokenLayout::TermsPosOffs, check};
+  ASSERT_TRUE(stream.Fill(tests::ToStringT(data), irs::doc_limits::min(),
+                          sink.writer, {sink.layout}));
+  sink.writer.Finish();
+  ASSERT_EQ(1, flushes);
+}
+
+}  // namespace
+
 TEST_F(StemmingTokenizerTests, test_stemming) {
   // test stemming (locale std::string_view{})
   // there is no Snowball stemmer for "C" locale
@@ -44,19 +68,10 @@ TEST_F(StemmingTokenizerTests, test_stemming) {
     std::string_view data("running");
     irs::analysis::StemmingTokenizer stream(opts);
     ASSERT_EQ(irs::Type<irs::analysis::StemmingTokenizer>::id(), stream.type());
+    ASSERT_TRUE(stream.Traits().unique);
+    ASSERT_FALSE(stream.Traits().keyword);
 
-    auto* offset = irs::get<irs::OffsAttr>(stream);
-    auto* payload = irs::get<irs::PayAttr>(stream);
-    ASSERT_EQ(nullptr, payload);
-    auto* term = irs::get<irs::TermAttr>(stream);
-
-    ASSERT_TRUE(stream.reset(data));
-
-    ASSERT_TRUE(stream.next());
-    ASSERT_EQ(0, offset->start);
-    ASSERT_EQ(7, offset->end);
-    ASSERT_EQ("running", irs::ViewCast<char>(term->value));
-    ASSERT_FALSE(stream.next());
+    AssertStemBlock(stream, data, "running");
   }
 
   // test stemming (stemmer exists)
@@ -67,19 +82,7 @@ TEST_F(StemmingTokenizerTests, test_stemming) {
     opts.locale = icu::Locale::createFromName("en");
 
     irs::analysis::StemmingTokenizer stream(opts);
-
-    auto* offset = irs::get<irs::OffsAttr>(stream);
-    auto* payload = irs::get<irs::PayAttr>(stream);
-    ASSERT_EQ(nullptr, payload);
-    auto* term = irs::get<irs::TermAttr>(stream);
-
-    ASSERT_TRUE(stream.reset(data));
-
-    ASSERT_TRUE(stream.next());
-    ASSERT_EQ(0, offset->start);
-    ASSERT_EQ(7, offset->end);
-    ASSERT_EQ("run", irs::ViewCast<char>(term->value));
-    ASSERT_FALSE(stream.next());
+    AssertStemBlock(stream, data, "run");
   }
 
   // test stemming (stemmer does not exist)
@@ -91,19 +94,7 @@ TEST_F(StemmingTokenizerTests, test_stemming) {
     opts.locale = icu::Locale::createFromName("zh");
 
     irs::analysis::StemmingTokenizer stream(opts);
-
-    ASSERT_TRUE(stream.reset(data));
-
-    auto* offset = irs::get<irs::OffsAttr>(stream);
-    auto* payload = irs::get<irs::PayAttr>(stream);
-    ASSERT_EQ(nullptr, payload);
-    auto* term = irs::get<irs::TermAttr>(stream);
-
-    ASSERT_TRUE(stream.next());
-    ASSERT_EQ(0, offset->start);
-    ASSERT_EQ(7, offset->end);
-    ASSERT_EQ("running", irs::ViewCast<char>(term->value));
-    ASSERT_FALSE(stream.next());
+    AssertStemBlock(stream, data, "running");
   }
 }
 
@@ -115,18 +106,11 @@ TEST_F(StemmingTokenizerTests, test_load) {
     });
 
   ASSERT_NE(nullptr, stream);
-  ASSERT_TRUE(stream->reset(data));
 
-  auto* offset = irs::get<irs::OffsAttr>(*stream);
-  auto* payload = irs::get<irs::PayAttr>(*stream);
-  ASSERT_EQ(nullptr, payload);
-  auto* term = irs::get<irs::TermAttr>(*stream);
-
-  ASSERT_TRUE(stream->next());
-  ASSERT_EQ(0, offset->start);
-  ASSERT_EQ(7, offset->end);
-  ASSERT_EQ("run", irs::ViewCast<char>(term->value));
-  ASSERT_FALSE(stream->next());
+  auto tokens = tests::Analyze(*stream, data);
+  ASSERT_TRUE(tokens.has_value());
+  ASSERT_EQ(1, tokens->size());
+  EXPECT_EQ((tests::AnalyzerToken{"run", 1, 0, 7}), tokens->front());
 }
 
 TEST_F(StemmingTokenizerTests, test_load_invalid) {
@@ -149,4 +133,148 @@ TEST_F(StemmingTokenizerTests, test_invalid_locale) {
     irs::analysis::StemmingTokenizer::Options{
       .locale = irs::MakeBogusLocale(),
     }));
+}
+
+TEST_F(StemmingTokenizerTests, native_fills_match_pull) {
+  irs::analysis::StemmingTokenizer::Options opts;
+  opts.locale = icu::Locale::createFromName("en");
+  irs::analysis::StemmingTokenizer pull_stream{opts};
+  irs::analysis::StemmingTokenizer fill_stream{opts};
+
+  const std::vector<std::string> values = {
+    "running",     "jumps", "consideration", "", "a", std::string(64, 'x'),
+    "caf\xc3\xa9s"};
+
+  for (const auto& v : values) {
+    SCOPED_TRACE(v);
+    auto terms = tests::AnalyzeTerms(pull_stream, v);
+    ASSERT_TRUE(terms.has_value());
+    ASSERT_EQ(1, terms->size());
+    AssertStemBlock(fill_stream, v, terms->front());
+  }
+}
+
+TEST_F(StemmingTokenizerTests, column_fill_runs) {
+  irs::analysis::StemmingTokenizer::Options opts;
+  opts.locale = icu::Locale::createFromName("en");
+  irs::analysis::StemmingTokenizer stream{opts};
+
+  constexpr size_t kCap = irs::TokenBatch::kCapacity;
+  constexpr size_t kTotal = kCap + 3;
+  const std::vector<std::string> inputs = {"running", "consideration"};
+
+  std::vector<std::string> stemmed;
+  {
+    irs::analysis::StemmingTokenizer one{opts};
+    for (const auto& v : inputs) {
+      auto terms = tests::AnalyzeTerms(one, v);
+      ASSERT_TRUE(terms.has_value());
+      ASSERT_EQ(1, terms->size());
+      stemmed.push_back(std::move(terms->front()));
+    }
+  }
+
+  std::vector<duckdb::string_t> vals;
+  for (size_t i = 0; i < kTotal; ++i) {
+    const auto& v = inputs[i % inputs.size()];
+    vals.emplace_back(v.data(), static_cast<uint32_t>(v.size()));
+  }
+
+  size_t consumed = 0;
+  size_t flushes = 0;
+  const auto check = [&](irs::TokenBatch& batch,
+                         std::span<const irs::DocRun> runs) {
+    ++flushes;
+    if (flushes == 1) {
+      ASSERT_EQ(kCap, batch.count);
+    }
+    ASSERT_EQ(batch.count, runs.size());
+    for (uint32_t i = 0; i < batch.count; ++i) {
+      ASSERT_EQ(consumed + i + 1, runs[i].doc);
+      ASSERT_EQ(1, runs[i].ntokens);
+    }
+    for (uint32_t i = 0; i < batch.count; ++i, ++consumed) {
+      const auto& t = batch.terms[i];
+      ASSERT_EQ(stemmed[consumed % inputs.size()],
+                std::string_view(t.GetData(), t.GetSize()));
+    }
+  };
+  tests::FnTokenSink sink{irs::TokenLayout::Terms, check};
+  tests::FillColumn(stream, vals, 1, sink.writer, sink.layout);
+  ASSERT_EQ(1, flushes);
+  sink.writer.Finish();
+  ASSERT_EQ(2, flushes);
+  ASSERT_EQ(kTotal, consumed);
+}
+
+TEST(StemmingTokenizerCache, repeated_terms_match_fresh_analyzer) {
+  const std::vector<std::string> vocab = {
+    "running",   "jumps",    "easily",         "connection", "connections",
+    "connected", "national", "nationality",    "generously", "cats",
+    "x",         "",         "already-stemmed"};
+  irs::analysis::StemmingTokenizer::Options opts{
+    .locale = icu::Locale::createFromName("en")};
+
+  auto cached = irs::analysis::StemmingTokenizer::Make(
+    irs::analysis::StemmingTokenizer::Options{opts});
+  uint64_t seed = 42;
+  for (size_t iter = 0; iter < 2000; ++iter) {
+    seed = seed * 6364136223846793005ULL + 1;
+    const auto& word = vocab[(seed >> 33) % vocab.size()];
+    SCOPED_TRACE(testing::Message() << "iter=" << iter << " word=" << word);
+    auto fresh = irs::analysis::StemmingTokenizer::Make(
+      irs::analysis::StemmingTokenizer::Options{opts});
+    const auto got = tests::Analyze(*cached, word);
+    const auto want = tests::Analyze(*fresh, word);
+    ASSERT_TRUE(got.has_value());
+    ASSERT_TRUE(want.has_value());
+    ASSERT_EQ(*want, *got);
+  }
+}
+
+TEST(StemmingTokenizerCache, cap_overflow_stays_correct) {
+  irs::analysis::StemmingTokenizer::Options opts{
+    .locale = icu::Locale::createFromName("en")};
+  auto cached = irs::analysis::StemmingTokenizer::Make(
+    irs::analysis::StemmingTokenizer::Options{opts});
+  auto fresh = irs::analysis::StemmingTokenizer::Make(
+    irs::analysis::StemmingTokenizer::Options{opts});
+  for (size_t i = 0; i < 70000; ++i) {
+    const std::string word = "word" + std::to_string(i) + "ing";
+    const auto got = tests::Analyze(*cached, word);
+    ASSERT_TRUE(got.has_value());
+    if ((i % 9973) == 0 || i > 69990) {
+      SCOPED_TRACE(word);
+      const auto want = tests::Analyze(*fresh, word);
+      ASSERT_EQ(*want, *got);
+    }
+  }
+  const auto again = tests::Analyze(*cached, "running");
+  const auto want = tests::Analyze(*fresh, "running");
+  ASSERT_EQ(*want, *again);
+}
+
+TEST(StemmingTokenizerCache, long_words_bypass_cache) {
+  irs::analysis::StemmingTokenizer::Options opts{
+    .locale = icu::Locale::createFromName("en")};
+  auto cached = irs::analysis::StemmingTokenizer::Make(
+    irs::analysis::StemmingTokenizer::Options{opts});
+  auto fresh = irs::analysis::StemmingTokenizer::Make(
+    irs::analysis::StemmingTokenizer::Options{opts});
+  const std::string long_word(80, 'a');
+  for (int rep = 0; rep < 3; ++rep) {
+    const auto got = tests::Analyze(*cached, long_word + "ing");
+    const auto want = tests::Analyze(*fresh, long_word + "ing");
+    ASSERT_EQ(*want, *got);
+  }
+}
+
+TEST(StemmingTokenizerCache, memory_usage_reports_cache_bytes) {
+  irs::analysis::StemmingTokenizer::Options opts{
+    .locale = icu::Locale::createFromName("en")};
+  auto stream = irs::analysis::StemmingTokenizer::Make(std::move(opts));
+  ASSERT_TRUE(stream);
+  EXPECT_EQ(0u, stream->MemoryUsage());
+  ASSERT_TRUE(tests::Analyze(*stream, "running"));
+  EXPECT_GT(stream->MemoryUsage(), 0u);
 }

@@ -21,7 +21,6 @@
 #pragma once
 
 #include <duckdb/storage/arena_allocator.hpp>
-
 #include <optional>
 #include <string>
 #include <string_view>

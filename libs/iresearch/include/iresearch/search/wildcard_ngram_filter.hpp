@@ -42,7 +42,7 @@
 namespace irs {
 namespace analysis {
 
-class WildcardAnalyzer;
+class WildcardTokenizer;
 
 }  // namespace analysis
 
@@ -165,7 +165,7 @@ struct ByWildcardNGramOptions {
     default;
 
   ByWildcardNGramOptions(std::string_view pattern,
-                         analysis::WildcardAnalyzer& analyzer,
+                         analysis::WildcardTokenizer& analyzer,
                          bool has_positions);
 };
 

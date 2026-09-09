@@ -18,12 +18,15 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
+#include <absl/strings/str_join.h>
+
 #include <array>
 #include <string>
 #include <vector>
 
 #include "filter_test_case_base.hpp"
 #include "index/index_tests.hpp"
+#include "iresearch/analysis/delimited_tokenizer.hpp"
 #include "iresearch/index/index_features.hpp"
 #include "iresearch/index/norm.hpp"
 #include "iresearch/search/bm25.hpp"
@@ -74,63 +77,24 @@ std::string_view NameOf(irs::field_id id) noexcept {
   }
 }
 
-class WordsStream final : public irs::analysis::TypedAnalyzer<WordsStream>,
-                          private irs::util::Noncopyable {
- public:
-  static constexpr std::string_view type_name() noexcept {
-    return "score_constant_words";
-  }
-
-  explicit WordsStream(const std::vector<std::string>& words) noexcept
-    : _words{&words} {}
-
-  irs::Attribute* GetMutable(irs::TypeInfo::type_id type) noexcept final {
-    return irs::GetMutable(_attrs, type);
-  }
-
-  bool next() final {
-    if (_i >= _words->size()) {
-      return false;
-    }
-    std::get<irs::IncAttr>(_attrs).value = 1;
-    std::get<irs::TermAttr>(_attrs).value =
-      irs::ViewCast<irs::byte_type>(std::string_view{(*_words)[_i]});
-    ++_i;
-    return true;
-  }
-
-  bool reset(std::string_view) final {
-    _i = 0;
-    return true;
-  }
-
- private:
-  using Attributes = std::tuple<irs::IncAttr, irs::TermAttr>;
-
-  const std::vector<std::string>* _words;
-  Attributes _attrs;
-  size_t _i{0};
-};
-
 class WordsField : public tests::FieldBase {
  public:
-  WordsField(irs::field_id field_id, std::vector<std::string> words) {
+  WordsField(irs::field_id field_id, const std::vector<std::string>& words)
+    : _value{absl::StrJoin(words, " ")} {
     this->Name(std::string{NameOf(field_id)});
     this->id = field_id;
     this->index_features = FeaturesOf(field_id);
-    _words = std::move(words);
   }
 
-  irs::Tokenizer& GetTokens() const final {
-    _stream.reset({});
-    return _stream;
-  }
+  irs::analysis::Tokenizer& GetTokens() const final { return _stream; }
+
+  std::string_view Value() const final { return _value; }
 
  private:
   bool Write(irs::DataOutput&) const final { return false; }
 
-  std::vector<std::string> _words;
-  mutable WordsStream _stream{_words};
+  std::string _value;
+  mutable irs::analysis::DelimitedTokenizer _stream{" "};
 };
 
 struct Case {

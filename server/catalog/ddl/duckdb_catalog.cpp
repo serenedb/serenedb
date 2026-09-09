@@ -667,7 +667,7 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBCatalog::CreateSchema(
   PutSchema(
     &client, {},
     catalog::MakeSchemaInfo(catalog::NextId(), database_id, schema_name),
-    catalog::Permissions{owner});
+    catalog::Permissions{owner, {}, {}});
   // New snapshot will have the schema; next LookupSchema will find it
   return nullptr;
 }
@@ -2432,7 +2432,7 @@ bool SereneDBCatalog::CreateTokenizer(
     tokenizer->SetId(NextId());
   }
   tokenizer->SetSchemaId(*schema_id);
-  Permissions perm{ax.role};
+  Permissions perm{ax.role, {}, {}};
   catalog::PutEntry(ax.context, /*old_name=*/{}, tokenizer->Copy(),
                     std::move(perm));
   return true;

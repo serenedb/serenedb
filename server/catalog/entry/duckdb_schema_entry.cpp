@@ -1271,7 +1271,7 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateFunction(
   auto declared =
     duckdb::unique_ptr_cast<duckdb::CreateInfo, duckdb::CreateMacroInfo>(
       info.Copy());
-  catalog::Permissions perm{role};
+  catalog::Permissions perm{role, {}, {}};
   if (existing) {
     catalog::RequireOwner(&context, role, existing->permissions, "function",
                           existing->name.GetIdentifierName());
@@ -1338,7 +1338,7 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateView(
   const auto* existing =
     Find<duckdb::ViewCatalogEntry>(&context, schema_id, view_name);
 
-  catalog::Permissions perm{role};
+  catalog::Permissions perm{role, {}, {}};
   if (replace && existing) {
     catalog::RequireOwner(&context, role, existing->permissions, "view",
                           existing->name.GetIdentifierName());
@@ -1431,7 +1431,7 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateSequence(
   }
   const auto id = catalog::NextId();
   const auto seed = options.Seed();
-  const catalog::Permissions perm{role};
+  const catalog::Permissions perm{role, {}, {}};
   // One definition, handed to the record and to the entry: nothing is derived
   // at append time.
   auto definition =
@@ -1500,7 +1500,7 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateType(
   copied->type = StampUserType(copied->type, type_name, id);
   catalog::SetIdentity(*copied, id, schema_id);
   PutEntry(&context, /*old_name=*/{}, std::move(copied),
-           catalog::Permissions{role});
+           catalog::Permissions{role, {}, {}});
   return nullptr;
 }
 

@@ -115,4 +115,16 @@ inline void AppendGenerated(std::string& key, uint64_t generated_id) {
                                        std::bit_cast<int64_t>(generated_id));
 }
 
+inline duckdb::string_t SignedKeyTerm(int64_t value) noexcept {
+  static_assert(sizeof(int64_t) <= duckdb::string_t::INLINE_LENGTH);
+  char buf[sizeof(int64_t)];
+  absl::big_endian::Store(buf, value);
+  buf[0] = static_cast<char>(static_cast<uint8_t>(buf[0]) ^ 0x80);
+  return duckdb::string_t{buf, sizeof buf};
+}
+
+inline duckdb::string_t GeneratedKeyTerm(uint64_t generated_id) noexcept {
+  return SignedKeyTerm(std::bit_cast<int64_t>(generated_id));
+}
+
 }  // namespace sdb::catalog::duckdb_primary_key

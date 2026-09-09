@@ -224,4 +224,7 @@
 [submodule "third_party/cmark-gfm"]
 	path = third_party/cmark-gfm
 	url = https://github.com/serenedb/cmark-gfm.git
+[submodule "third_party/stringzilla"]
+	path = third_party/stringzilla
+	url = https://github.com/serenedb/StringZilla.git
 	shallow = true

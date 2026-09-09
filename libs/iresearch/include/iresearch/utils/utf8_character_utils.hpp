@@ -27,6 +27,7 @@
 #include <algorithm>
 
 #include "basics/shared.hpp"
+#include "iresearch/utils/utf8_case_tables.hpp"
 #include "iresearch/utils/utf8_character_tables.hpp"
 
 namespace irs::utf8_utils {
@@ -66,6 +67,91 @@ constexpr uint16_t CharGeneralCategory(uint32_t c) noexcept {
 
 constexpr char CharPrimaryCategory(uint32_t c) noexcept {
   return static_cast<char>(CharGeneralCategory(c) >> 8U);
+}
+
+template<const auto& Table>
+class SimpleCaseStages {
+ public:
+  static constexpr uint32_t kMaxCp = Table.back().cp;
+
+  constexpr SimpleCaseStages() noexcept {
+    size_t next = 1;
+    size_t block = 0;
+    uint32_t prev = ~uint32_t{0};
+    for (const CaseMap& m : Table) {
+      const uint32_t b = m.cp >> kBlockBits;
+      if (b != prev) {
+        block = next++;
+        _stage1[b] = static_cast<uint8_t>(block);
+        prev = b;
+      }
+      _stage2[block * kBlock + (m.cp & (kBlock - 1))] =
+        static_cast<uint16_t>(m.to - m.cp);
+    }
+  }
+
+  constexpr uint32_t Map(uint32_t c) const noexcept {
+    if (c > kMaxCp) {
+      return c;
+    }
+    const uint16_t delta =
+      _stage2[size_t{_stage1[c >> kBlockBits]} * kBlock + (c & (kBlock - 1))];
+    return (c & ~uint32_t{0xFFFF}) | ((c + delta) & 0xFFFF);
+  }
+
+ private:
+  static constexpr uint32_t kBlockBits = 6;
+  static constexpr uint32_t kBlock = 1U << kBlockBits;
+
+  static constexpr bool Sorted() noexcept {
+    for (size_t i = 1; i < Table.size(); ++i) {
+      if (Table[i - 1].cp >= Table[i].cp) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  static constexpr bool SamePlane() noexcept {
+    for (const CaseMap& m : Table) {
+      if ((m.to >> 16) != (m.cp >> 16)) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  static constexpr size_t CountBlocks() noexcept {
+    size_t blocks = 1;
+    uint32_t prev = ~uint32_t{0};
+    for (const CaseMap& m : Table) {
+      const uint32_t b = m.cp >> kBlockBits;
+      blocks += (b != prev);
+      prev = b;
+    }
+    return blocks;
+  }
+
+  static constexpr size_t kBlocks = CountBlocks();
+  static_assert(Sorted());
+  static_assert(SamePlane());
+  static_assert(kBlocks <= 256);
+
+  std::array<uint8_t, (kMaxCp >> kBlockBits) + 1> _stage1{};
+  std::array<uint16_t, kBlocks * kBlock> _stage2{};
+};
+
+ABSL_CACHELINE_ALIGNED inline constexpr SimpleCaseStages<kSimpleLowerTable>
+  kSimpleLowerStages{};
+ABSL_CACHELINE_ALIGNED inline constexpr SimpleCaseStages<kSimpleUpperTable>
+  kSimpleUpperStages{};
+
+constexpr uint32_t CharToLowerSimple(uint32_t c) noexcept {
+  return kSimpleLowerStages.Map(c);
+}
+
+constexpr uint32_t CharToUpperSimple(uint32_t c) noexcept {
+  return kSimpleUpperStages.Map(c);
 }
 
 }  // namespace irs::utf8_utils

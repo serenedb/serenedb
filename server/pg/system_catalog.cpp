@@ -371,7 +371,7 @@ void InitSystemViews(duckdb::Parser& parser) {
     auto& map = info_schema ? gInfoSchemaViews : gPgCatalogViews;
     map[view.name] =
       StaticView{std::shared_ptr<const duckdb::CreateViewInfo>{info.release()},
-                 catalog::Permissions{id::kRootUser, std::move(acl)}};
+                 catalog::Permissions{id::kRootUser, std::move(acl), {}}};
   }
 }
 

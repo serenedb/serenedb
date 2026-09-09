@@ -32,13 +32,15 @@
 #include <functional>
 
 #include "basics/down_cast.h"
+#include "insert_field.hpp"
+#include "iresearch/analysis/keyword_tokenizer.hpp"
 #include "iresearch/analysis/text_tokenizer.hpp"
-#include "iresearch/analysis/tokenizers.hpp"
 #include "iresearch/index/index_features.hpp"
 #include "iresearch/index/index_writer.hpp"
 #include "iresearch/store/store_utils.hpp"
 #include "iresearch/utils/iterator.hpp"
 #include "iresearch/utils/type_limits.hpp"
+#include "test_resources.hpp"
 
 namespace irs {
 
@@ -213,7 +215,25 @@ struct Ifield {
   virtual ~Ifield() = default;
 
   virtual irs::IndexFeatures GetIndexFeatures() const = 0;
-  virtual irs::Tokenizer& GetTokens() const = 0;
+  virtual irs::analysis::Tokenizer& GetTokens() const {
+    SDB_ASSERT(false);
+    static irs::KeywordTokenizer kNoTokens;
+    return kNoTokens;
+  }
+  virtual std::string_view Value() const {
+    SDB_ASSERT(false);
+    return {};
+  }
+  // Typed fields override with a block-native insert; the default drives
+  // GetTokens() through the driver onto the public block API.
+  virtual bool InsertBlockInto(const irs::IndexWriter::Document& doc) const {
+    return InsertFieldTokens(doc, *this);
+  }
+  // Expected-index model terms for block-native fields (engaged, possibly
+  // empty); disengaged means the model tokenizes GetTokens().
+  virtual std::optional<std::vector<irs::bstring>> BlockTerms() const {
+    return std::nullopt;
+  }
   // Field identity; the on-disk storage key.
   virtual irs::field_id Id() const = 0;
   virtual std::string_view Name() const = 0;
@@ -258,13 +278,13 @@ class LongField : public FieldBase {
 
   LongField() = default;
 
-  irs::Tokenizer& GetTokens() const final;
+  bool InsertBlockInto(const irs::IndexWriter::Document& doc) const final;
+  std::optional<std::vector<irs::bstring>> BlockTerms() const final;
   void value(value_t value) { _value = value; }
   value_t value() const { return _value; }
   bool Write(irs::DataOutput& out) const final;
 
  private:
-  mutable irs::NumericTokenizer _stream;
   int64_t _value{};
 };
 
@@ -279,19 +299,19 @@ class IntField : public FieldBase {
   explicit IntField(
     std::string_view name = "", int32_t value = 0,
     irs::IndexFeatures extra_features = irs::IndexFeatures::None)
-    : _stream(std::make_shared<irs::NumericTokenizer>()), _value{value} {
+    : _value{value} {
     this->Name(std::string{name});
     this->index_features |= extra_features;
   }
   IntField(IntField&& other) = default;
 
-  irs::Tokenizer& GetTokens() const final;
+  bool InsertBlockInto(const irs::IndexWriter::Document& doc) const final;
+  std::optional<std::vector<irs::bstring>> BlockTerms() const final;
   void value(value_t value) { _value = value; }
   value_t value() const { return _value; }
   bool Write(irs::DataOutput& out) const final;
 
  private:
-  mutable std::shared_ptr<irs::NumericTokenizer> _stream;
   int32_t _value{};
 };
 
@@ -305,13 +325,13 @@ class DoubleField : public FieldBase {
 
   DoubleField() = default;
 
-  irs::Tokenizer& GetTokens() const final;
+  bool InsertBlockInto(const irs::IndexWriter::Document& doc) const final;
+  std::optional<std::vector<irs::bstring>> BlockTerms() const final;
   void value(value_t value) { _value = value; }
   value_t value() const { return _value; }
   bool Write(irs::DataOutput& out) const final;
 
  private:
-  mutable irs::NumericTokenizer _stream;
   double_t _value{};
 };
 
@@ -325,13 +345,13 @@ class FloatField : public FieldBase {
 
   FloatField() = default;
 
-  irs::Tokenizer& GetTokens() const final;
+  bool InsertBlockInto(const irs::IndexWriter::Document& doc) const final;
+  std::optional<std::vector<irs::bstring>> BlockTerms() const final;
   void value(value_t value) { _value = value; }
   value_t value() const { return _value; }
   bool Write(irs::DataOutput& out) const final;
 
  private:
-  mutable irs::NumericTokenizer _stream;
   float_t _value{};
 };
 
@@ -343,7 +363,10 @@ class BinaryField : public FieldBase {
  public:
   BinaryField() = default;
 
-  irs::Tokenizer& GetTokens() const final;
+  irs::analysis::Tokenizer& GetTokens() const final;
+  std::string_view Value() const final {
+    return irs::ViewCast<char, irs::byte_type>(irs::bytes_view{_value});
+  }
   const irs::bstring& value() const { return _value; }
   void value(irs::bytes_view value) { _value = value; }
   void value(irs::bstring&& value) { _value = std::move(value); }
@@ -356,7 +379,7 @@ class BinaryField : public FieldBase {
   bool Write(irs::DataOutput& out) const final;
 
  private:
-  mutable irs::StringTokenizer _stream;
+  mutable irs::KeywordTokenizer _stream;
   irs::bstring _value;
 };
 
@@ -665,7 +688,7 @@ class CsvDocGenerator : public DocGeneratorBase {
   DocTemplate& _doc;
   std::ifstream _ifs;
   std::string _line;
-  irs::analysis::Analyzer::ptr _stream;
+  irs::analysis::Tokenizer::ptr _stream;
 };
 
 /* Generates documents from json file based on type of JSON value */
@@ -777,58 +800,32 @@ class JsonDocGenerator : public DocGeneratorBase {
   std::vector<Document>::const_iterator _next;
 };
 
-// stream wrapper which sets payload equal to term value
-class TokenizerPayload final : public irs::Tokenizer {
- public:
-  explicit TokenizerPayload(irs::Tokenizer* impl);
-  bool next() final;
-
-  irs::Attribute* GetMutable(irs::TypeInfo::type_id type) noexcept final;
-
- private:
-  const irs::TermAttr* _term;
-  irs::PayAttr _pay;
-  irs::Tokenizer* _impl;
-};
-
 // Construct the "text" analyzer with locale=C and an empty (explicit) stopword
 // list. Mirrors the legacy registry call `tests::LegacyGetAnalyzer("text",
 // Json,
 // "{\"locale\":\"C\", \"stopwords\":[]}")`.
-inline irs::analysis::Analyzer::ptr MakeDocGenTextTokenizer() {
+inline irs::analysis::Tokenizer::ptr MakeDocGenTextTokenizer() {
   irs::analysis::TextTokenizer::Options opts;
   opts.locale = icu::Locale::createFromName("C");
   opts.explicit_stopwords_set = true;
-  return irs::analysis::TextTokenizer::Make(std::move(opts));
+  return irs::analysis::TextTokenizer::Make(std::move(opts), tests::Cache());
 }
 
 // field which uses text analyzer for tokenization and stemming
 template<typename T>
 class TextField : public tests::FieldBase {
  public:
-  TextField(const std::string& name, bool payload = false,
+  TextField(const std::string& name, bool /*payload*/ = false,
             irs::IndexFeatures extra_features = irs::IndexFeatures::None)
     : _token_stream(MakeDocGenTextTokenizer()) {
-    if (payload) {
-      if (!_token_stream->reset(_value)) {
-        throw irs::IllegalState{"Failed to reset stream."};
-      }
-      _pay_stream.reset(new TokenizerPayload(_token_stream.get()));
-    }
     this->Name(name);
     index_features = irs::IndexFeatures::Freq | irs::IndexFeatures::Pos |
                      irs::IndexFeatures::Offs | extra_features;
   }
 
-  TextField(const std::string& name, const T& value, bool payload = false,
+  TextField(const std::string& name, const T& value, bool /*payload*/ = false,
             irs::IndexFeatures extra_features = irs::IndexFeatures::None)
     : _token_stream(MakeDocGenTextTokenizer()), _value(value) {
-    if (payload) {
-      if (!_token_stream->reset(_value)) {
-        throw irs::IllegalState{"Failed to reset stream."};
-      }
-      _pay_stream.reset(new TokenizerPayload(_token_stream.get()));
-    }
     this->Name(name);
     index_features = irs::IndexFeatures::Freq | irs::IndexFeatures::Pos |
                      irs::IndexFeatures::Offs | extra_features;
@@ -840,18 +837,13 @@ class TextField : public tests::FieldBase {
   void value(const T& value) { _value = value; }
   void value(T&& value) { _value = std::move(value); }
 
-  irs::Tokenizer& GetTokens() const final {
-    _token_stream->reset(_value);
-
-    return _pay_stream ? static_cast<irs::Tokenizer&>(*_pay_stream)
-                       : *_token_stream;
-  }
+  irs::analysis::Tokenizer& GetTokens() const final { return *_token_stream; }
+  std::string_view Value() const final { return _value; }
 
  private:
   bool Write(irs::DataOutput&) const final { return false; }
 
-  std::unique_ptr<TokenizerPayload> _pay_stream;
-  irs::analysis::Analyzer::ptr _token_stream;
+  irs::analysis::Tokenizer::ptr _token_stream;
   T _value;
 };
 
@@ -867,11 +859,12 @@ class StringField : public tests::FieldBase {
   void value(std::string_view str);
   std::string_view value() const { return _value; }
 
-  irs::Tokenizer& GetTokens() const final;
+  irs::analysis::Tokenizer& GetTokens() const final;
+  std::string_view Value() const final { return _value; }
   bool Write(irs::DataOutput& out) const final;
 
  private:
-  mutable irs::StringTokenizer _stream;
+  mutable irs::KeywordTokenizer _stream;
   std::string _value;
 };
 
@@ -888,11 +881,12 @@ class StringViewField : public tests::FieldBase {
   void value(std::string_view str);
   std::string_view value() const { return _value; }
 
-  irs::Tokenizer& GetTokens() const final;
+  irs::analysis::Tokenizer& GetTokens() const final;
+  std::string_view Value() const final { return _value; }
   bool Write(irs::DataOutput& out) const final;
 
  private:
-  mutable irs::StringTokenizer _stream;
+  mutable irs::KeywordTokenizer _stream;
   std::string_view _value;
 };
 
@@ -928,7 +922,7 @@ void NormStringJsonFieldFactory(tests::Document& doc, const std::string& name,
 template<typename Indexed>
 bool Insert(irs::IndexWriter& writer, Indexed ibegin, Indexed iend) {
   auto ctx = writer.GetBatch();
-  if (!ctx.Insert().Insert(ibegin, iend)) {
+  if (!tests::InsertFields(ctx.Insert(), ibegin, iend)) {
     return false;
   }
   ctx.Commit();
@@ -960,7 +954,7 @@ bool InsertBatch(irs::IndexWriter& writer, DocGenerator& gen,
     while (inserted_docs < batch_size && (src = gen.next()) != nullptr) {
       inserted_docs++;
       segment.insert(*src);
-      if (!doc.Insert(src->indexed.begin(), src->indexed.end())) {
+      if (!tests::InsertFields(doc, src->indexed.begin(), src->indexed.end())) {
         return false;
       };
       doc.NextDocument();
@@ -978,7 +972,7 @@ template<typename Indexed>
 bool Update(irs::IndexWriter& writer, const irs::Filter& filter, Indexed ibegin,
             Indexed iend) {
   auto ctx = writer.GetBatch();
-  if (!ctx.Replace(filter).Insert(ibegin, iend)) {
+  if (!tests::InsertFields(ctx.Replace(filter), ibegin, iend)) {
     return false;
   }
   ctx.Commit();
@@ -989,7 +983,7 @@ template<typename Indexed>
 bool Update(irs::IndexWriter& writer, irs::Filter::ptr&& filter, Indexed ibegin,
             Indexed iend) {
   auto ctx = writer.GetBatch();
-  if (!ctx.Replace(std::move(filter)).Insert(ibegin, iend)) {
+  if (!tests::InsertFields(ctx.Replace(std::move(filter)), ibegin, iend)) {
     return false;
   }
   ctx.Commit();
@@ -1001,7 +995,7 @@ bool Update(irs::IndexWriter& writer,
             const std::shared_ptr<irs::Filter>& filter, Indexed ibegin,
             Indexed iend) {
   auto ctx = writer.GetBatch();
-  if (!ctx.Replace(filter).Insert(ibegin, iend)) {
+  if (!tests::InsertFields(ctx.Replace(filter), ibegin, iend)) {
     return false;
   }
   ctx.Commit();

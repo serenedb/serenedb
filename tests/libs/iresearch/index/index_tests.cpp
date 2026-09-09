@@ -35,6 +35,7 @@
 #include "basics/duckdb_engine.h"
 #include "basics/file_utils_ext.hpp"
 #include "formats/column/test_cs_helpers.hpp"
+#include "insert_field.hpp"
 #include "iresearch/formats/formats.hpp"
 #include "iresearch/index/field_meta.hpp"
 #include "iresearch/index/index_features.hpp"
@@ -101,7 +102,7 @@ inline bool InsertWithName(irs::IndexWriter& writer,
   auto ctx = writer.GetBatch();
   {
     auto d = ctx.Insert();
-    if (!d.Insert(src.indexed.begin(), src.indexed.end())) {
+    if (!tests::InsertFields(d, src.indexed.begin(), src.indexed.end())) {
       return false;
     }
     if (!ProbeWritable(src.indexed)) {
@@ -123,7 +124,7 @@ bool UpdateWithName(irs::IndexWriter& writer, Filter&& filter,
   auto ctx = writer.GetBatch();
   {
     auto d = ctx.Replace(std::forward<Filter>(filter));
-    if (!d.Insert(src.indexed.begin(), src.indexed.end())) {
+    if (!tests::InsertFields(d, src.indexed.begin(), src.indexed.end())) {
       return false;
     }
     if (!ProbeWritable(src.indexed)) {
@@ -154,7 +155,7 @@ bool InsertBatchWithName(irs::IndexWriter& writer, DocGenerator& gen,
     while (inserted_docs < batch_size && (src = gen.next()) != nullptr) {
       inserted_docs++;
       segment.insert(*src);
-      if (!d.Insert(src->indexed.begin(), src->indexed.end())) {
+      if (!tests::InsertFields(d, src->indexed.begin(), src->indexed.end())) {
         return false;
       }
       CaptureNameLikeFields(d, src->indexed);
@@ -344,7 +345,8 @@ void IndexTestBase::write_segment(irs::IndexWriter& writer,
     auto ctx = writer.GetBatch();
     {
       auto doc = ctx.Insert();
-      ASSERT_TRUE(doc.Insert(src->indexed.begin(), src->indexed.end()));
+      ASSERT_TRUE(
+        tests::InsertFields(doc, src->indexed.begin(), src->indexed.end()));
       if (store) {
         store(doc, *src);
       } else {
@@ -1148,30 +1150,19 @@ class IndexTestCase : public tests::IndexTestBase {
     tests::JsonDocGenerator gen(resource("simple_sequential.json"),
                                 &tests::GenericJsonFieldFactory);
 
-    struct InvalidTokenizer final : public irs::Tokenizer {
-      irs::Attribute* GetMutable(irs::TypeInfo::type_id) noexcept final {
-        return nullptr;
-      }
-      bool next() final { return false; }
-    };
-    // Field can be stored but can not be indexed due to lack of attributes in
-    // tokenizer
+    // Requesting features beyond a field's first-seen set is rejected by the
+    // slot acquisition and poisons the batch.
     struct FieldT {
-      irs::field_id Id() const { return 1; }
+      irs::IndexFeatures features;
+      mutable irs::KeywordTokenizer token_stream;
 
-      irs::IndexFeatures GetIndexFeatures() const {
-        return irs::IndexFeatures::None;
-      }
-
-      irs::Tokenizer& GetTokens() { return token_stream; }
-
-      bool Write(irs::DataOutput& out) const {
-        irs::WriteStr(out, std::string_view{"test_field"});
-        return true;
-      }
-
-      InvalidTokenizer token_stream;
-    } invalid_field;
+      irs::field_id Id() const { return 424242; }
+      irs::IndexFeatures GetIndexFeatures() const { return features; }
+      irs::analysis::Tokenizer& GetTokens() const { return token_stream; }
+      std::string_view Value() const { return "test_field"; }
+    };
+    FieldT valid_field{irs::IndexFeatures::Freq};
+    FieldT invalid_field{irs::IndexFeatures::Freq | irs::IndexFeatures::Pos};
 
     const tests::Document* doc1 = gen.next();
     const tests::Document* doc2 = gen.next();
@@ -1186,12 +1177,15 @@ class IndexTestCase : public tests::IndexTestBase {
       doc.NextDocument();
       doc.NextFieldBatch();
 
-      ASSERT_TRUE(doc.Insert(doc1->stored.begin(), doc1->stored.end()));
+      ASSERT_TRUE(
+        tests::InsertFields(doc, doc1->stored.begin(), doc1->stored.end()));
       doc.NextDocument();
-      ASSERT_TRUE(doc.Insert(doc2->stored.begin(), doc2->stored.end()));
+      ASSERT_TRUE(
+        tests::InsertFields(doc, doc2->stored.begin(), doc2->stored.end()));
       doc.NextDocument();
 
-      ASSERT_FALSE(doc.Insert(invalid_field));
+      ASSERT_TRUE(tests::InsertField(doc, valid_field));
+      ASSERT_FALSE(tests::InsertField(doc, invalid_field));
       ASSERT_FALSE(doc);
       // entire batch should be rollbacked
     }
@@ -1309,7 +1303,7 @@ class IndexTestCase : public tests::IndexTestBase {
     class Field {
      public:
       Field(irs::field_id id, const std::string_view& value)
-        : _stream(std::make_unique<irs::StringTokenizer>()),
+        : _stream(std::make_unique<irs::KeywordTokenizer>()),
           _id(id),
           _value(value) {}
       Field(Field&& other) noexcept
@@ -1317,16 +1311,14 @@ class IndexTestCase : public tests::IndexTestBase {
           _id(other._id),
           _value(std::move(other._value)) {}
       irs::field_id Id() const { return _id; }
-      irs::Tokenizer& GetTokens() const {
-        _stream->reset(_value);
-        return *_stream;
-      }
+      irs::analysis::Tokenizer& GetTokens() const { return *_stream; }
+      std::string_view Value() const { return _value; }
       irs::IndexFeatures GetIndexFeatures() const {
         return irs::IndexFeatures::None;
       }
 
      private:
-      mutable std::unique_ptr<irs::StringTokenizer> _stream;
+      mutable std::unique_ptr<irs::KeywordTokenizer> _stream;
       irs::field_id _id;
       std::string_view _value;
     };
@@ -1517,11 +1509,11 @@ void IndexTestCase::DocsBitUnion(irs::IndexFeatures features,
           irs::SetBit(expected_b[i / kWordBits], i % kWordBits);
         }
         field.value(value);
-        ASSERT_TRUE(docs.Insert().Insert(field));
+        ASSERT_TRUE(tests::InsertField(docs.Insert(), field));
       }
 
       field.value("C");
-      ASSERT_TRUE(docs.Insert().Insert(field));
+      ASSERT_TRUE(tests::InsertField(docs.Insert(), field));
       docs.Commit();
     }
 
@@ -2249,12 +2241,12 @@ TEST_P(IndexTestCase, concurrent_add_remove_overlap_commit_mt) {
 
       {
         auto doc = ctx.Insert();
-        doc.Insert(doc1->indexed.begin(), doc1->indexed.end());
+        tests::InsertFields(doc, doc1->indexed.begin(), doc1->indexed.end());
         CaptureNameLikeFields(doc, doc1->indexed);
       }
       {
         auto doc = ctx.Insert();
-        doc.Insert(doc2->indexed.begin(), doc2->indexed.end());
+        tests::InsertFields(doc, doc2->indexed.begin(), doc2->indexed.end());
         CaptureNameLikeFields(doc, doc2->indexed);
       }
 
@@ -2314,12 +2306,12 @@ TEST_P(IndexTestCase, concurrent_add_remove_overlap_commit_mt) {
 
       {
         auto doc = ctx.Insert();
-        doc.Insert(doc1->indexed.begin(), doc1->indexed.end());
+        tests::InsertFields(doc, doc1->indexed.begin(), doc1->indexed.end());
         CaptureNameLikeFields(doc, doc1->indexed);
       }
       {
         auto doc = ctx.Insert();
-        doc.Insert(doc2->indexed.begin(), doc2->indexed.end());
+        tests::InsertFields(doc, doc2->indexed.begin(), doc2->indexed.end());
         CaptureNameLikeFields(doc, doc2->indexed);
       }
       ctx.Commit();
@@ -2548,7 +2540,7 @@ TEST_P(IndexTestCase, document_context) {
 
     {
       auto doc = ctx.Replace(*(query_doc1));
-      doc.Insert(doc2->indexed.begin(), doc2->indexed.end());
+      tests::InsertFields(doc, doc2->indexed.begin(), doc2->indexed.end());
       CaptureNameLikeFields(doc, doc2->indexed);
     }
     std::atomic<bool> commit(false);  // FIXME TODO remove once segment_context
@@ -2619,7 +2611,8 @@ TEST_P(IndexTestCase, document_context) {
       ctx.Reset();
       {
         auto doc = ctx.Insert();
-        ASSERT_TRUE(doc.Insert(doc1->indexed.begin(), doc1->indexed.end()));
+        ASSERT_TRUE(
+          tests::InsertFields(doc, doc1->indexed.begin(), doc1->indexed.end()));
         CaptureNameLikeFields(doc, doc1->indexed);
       }
       ctx.Commit();
@@ -2659,7 +2652,8 @@ TEST_P(IndexTestCase, document_context) {
 
       {
         auto doc = ctx.Insert();
-        ASSERT_TRUE(doc.Insert(doc2->indexed.begin(), doc2->indexed.end()));
+        ASSERT_TRUE(
+          tests::InsertFields(doc, doc2->indexed.begin(), doc2->indexed.end()));
         CaptureNameLikeFields(doc, doc2->indexed);
       }
       ctx.Reset();
@@ -2697,13 +2691,15 @@ TEST_P(IndexTestCase, document_context) {
 
       {
         auto doc = ctx.Insert();
-        ASSERT_TRUE(doc.Insert(doc1->indexed.begin(), doc1->indexed.end()));
+        ASSERT_TRUE(
+          tests::InsertFields(doc, doc1->indexed.begin(), doc1->indexed.end()));
         CaptureNameLikeFields(doc, doc1->indexed);
       }
       ctx.Reset();
       {
         auto doc = ctx.Insert();
-        ASSERT_TRUE(doc.Insert(doc2->indexed.begin(), doc2->indexed.end()));
+        ASSERT_TRUE(
+          tests::InsertFields(doc, doc2->indexed.begin(), doc2->indexed.end()));
         CaptureNameLikeFields(doc, doc2->indexed);
       }
       ctx.Commit();
@@ -2743,19 +2739,22 @@ TEST_P(IndexTestCase, document_context) {
 
       {
         auto doc = ctx.Insert();
-        ASSERT_TRUE(doc.Insert(doc2->indexed.begin(), doc2->indexed.end()));
+        ASSERT_TRUE(
+          tests::InsertFields(doc, doc2->indexed.begin(), doc2->indexed.end()));
         CaptureNameLikeFields(doc, doc2->indexed);
       }
       ctx.Reset();
       {
         auto doc = ctx.Insert();
-        ASSERT_TRUE(doc.Insert(doc3->indexed.begin(), doc3->indexed.end()));
+        ASSERT_TRUE(
+          tests::InsertFields(doc, doc3->indexed.begin(), doc3->indexed.end()));
         CaptureNameLikeFields(doc, doc3->indexed);
       }
       ctx.Reset();
       {
         auto doc = ctx.Insert();
-        ASSERT_TRUE(doc.Insert(doc4->indexed.begin(), doc4->indexed.end()));
+        ASSERT_TRUE(
+          tests::InsertFields(doc, doc4->indexed.begin(), doc4->indexed.end()));
         CaptureNameLikeFields(doc, doc4->indexed);
       }
       ctx.Commit();
@@ -2799,18 +2798,21 @@ TEST_P(IndexTestCase, document_context) {
 
       {
         auto doc = ctx.Insert();
-        ASSERT_TRUE(doc.Insert(doc2->indexed.begin(), doc2->indexed.end()));
+        ASSERT_TRUE(
+          tests::InsertFields(doc, doc2->indexed.begin(), doc2->indexed.end()));
         CaptureNameLikeFields(doc, doc2->indexed);
       }
       {
         auto doc = ctx.Insert();
-        ASSERT_TRUE(doc.Insert(doc3->indexed.begin(), doc3->indexed.end()));
+        ASSERT_TRUE(
+          tests::InsertFields(doc, doc3->indexed.begin(), doc3->indexed.end()));
         CaptureNameLikeFields(doc, doc3->indexed);
       }
       ctx.Reset();
       {
         auto doc = ctx.Insert();
-        ASSERT_TRUE(doc.Insert(doc4->indexed.begin(), doc4->indexed.end()));
+        ASSERT_TRUE(
+          tests::InsertFields(doc, doc4->indexed.begin(), doc4->indexed.end()));
         CaptureNameLikeFields(doc, doc4->indexed);
       }
       ctx.Commit();
@@ -2909,7 +2911,8 @@ TEST_P(IndexTestCase, document_context) {
       ctx.Reset();
       {
         auto doc = ctx.Insert();
-        ASSERT_TRUE(doc.Insert(doc2->indexed.begin(), doc2->indexed.end()));
+        ASSERT_TRUE(
+          tests::InsertFields(doc, doc2->indexed.begin(), doc2->indexed.end()));
         CaptureNameLikeFields(doc, doc2->indexed);
       }
       ctx.Commit();
@@ -2955,20 +2958,23 @@ TEST_P(IndexTestCase, document_context) {
 
       {
         auto doc = ctx.Insert();
-        ASSERT_TRUE(doc.Insert(doc2->indexed.begin(), doc2->indexed.end()));
+        ASSERT_TRUE(
+          tests::InsertFields(doc, doc2->indexed.begin(), doc2->indexed.end()));
         CaptureNameLikeFields(doc, doc2->indexed);
       }
       ctx.Remove(*(query_doc1));
       {
         auto doc = ctx.Insert();
-        ASSERT_TRUE(doc.Insert(doc3->indexed.begin(), doc3->indexed.end()));
+        ASSERT_TRUE(
+          tests::InsertFields(doc, doc3->indexed.begin(), doc3->indexed.end()));
         CaptureNameLikeFields(doc, doc3->indexed);
       }
       ctx.Remove(*(query_doc2));
       ctx.Reset();
       {
         auto doc = ctx.Insert();
-        ASSERT_TRUE(doc.Insert(doc4->indexed.begin(), doc4->indexed.end()));
+        ASSERT_TRUE(
+          tests::InsertFields(doc, doc4->indexed.begin(), doc4->indexed.end()));
         CaptureNameLikeFields(doc, doc4->indexed);
       }
       ctx.Commit();
@@ -3028,7 +3034,8 @@ TEST_P(IndexTestCase, document_context) {
 
       {
         auto doc = ctx.Replace(*(query_doc1));
-        ASSERT_TRUE(doc.Insert(doc2->indexed.begin(), doc2->indexed.end()));
+        ASSERT_TRUE(
+          tests::InsertFields(doc, doc2->indexed.begin(), doc2->indexed.end()));
         CaptureNameLikeFields(doc, doc2->indexed);
       }
       ctx.Reset();
@@ -3069,13 +3076,15 @@ TEST_P(IndexTestCase, document_context) {
 
       {
         auto doc = ctx.Replace(*(query_doc1));
-        ASSERT_TRUE(doc.Insert(doc2->indexed.begin(), doc2->indexed.end()));
+        ASSERT_TRUE(
+          tests::InsertFields(doc, doc2->indexed.begin(), doc2->indexed.end()));
         CaptureNameLikeFields(doc, doc2->indexed);
       }
       ctx.Reset();
       {
         auto doc = ctx.Insert();
-        ASSERT_TRUE(doc.Insert(doc3->indexed.begin(), doc3->indexed.end()));
+        ASSERT_TRUE(
+          tests::InsertFields(doc, doc3->indexed.begin(), doc3->indexed.end()));
         CaptureNameLikeFields(doc, doc3->indexed);
       }
       ASSERT_TRUE(ctx.Commit());
@@ -3115,25 +3124,29 @@ TEST_P(IndexTestCase, document_context) {
       auto ctx = writer->GetBatch();
       {
         auto doc = ctx.Insert();
-        ASSERT_TRUE(doc.Insert(doc1->indexed.begin(), doc1->indexed.end()));
+        ASSERT_TRUE(
+          tests::InsertFields(doc, doc1->indexed.begin(), doc1->indexed.end()));
         CaptureNameLikeFields(doc, doc1->indexed);
       }
       ctx.Commit();
       {
         auto doc = ctx.Insert();
-        ASSERT_TRUE(doc.Insert(doc2->indexed.begin(), doc2->indexed.end()));
+        ASSERT_TRUE(
+          tests::InsertFields(doc, doc2->indexed.begin(), doc2->indexed.end()));
         CaptureNameLikeFields(doc, doc2->indexed);
       }
       // implicit flush
       {
         auto doc = ctx.Insert();
-        ASSERT_TRUE(doc.Insert(doc3->indexed.begin(), doc3->indexed.end()));
+        ASSERT_TRUE(
+          tests::InsertFields(doc, doc3->indexed.begin(), doc3->indexed.end()));
         CaptureNameLikeFields(doc, doc3->indexed);
       }
       ctx.Reset();
       {
         auto doc = ctx.Insert();
-        ASSERT_TRUE(doc.Insert(doc4->indexed.begin(), doc4->indexed.end()));
+        ASSERT_TRUE(
+          tests::InsertFields(doc, doc4->indexed.begin(), doc4->indexed.end()));
         CaptureNameLikeFields(doc, doc4->indexed);
       }
       // implicit commit and flush
@@ -3197,19 +3210,22 @@ TEST_P(IndexTestCase, document_context) {
       auto ctx = writer->GetBatch();
       {
         auto doc = ctx.Insert();
-        ASSERT_TRUE(doc.Insert(doc1->indexed.begin(), doc1->indexed.end()));
+        ASSERT_TRUE(
+          tests::InsertFields(doc, doc1->indexed.begin(), doc1->indexed.end()));
         CaptureNameLikeFields(doc, doc1->indexed);
       }
       ctx.Commit();
       for (size_t i = 0; i != kWordSize; ++i) {
         auto doc = ctx.Insert();
-        ASSERT_TRUE(doc.Insert(doc2->indexed.begin(), doc2->indexed.end()));
+        ASSERT_TRUE(
+          tests::InsertFields(doc, doc2->indexed.begin(), doc2->indexed.end()));
         CaptureNameLikeFields(doc, doc2->indexed);
       }
       ctx.Reset();
       {
         auto doc = ctx.Insert();
-        ASSERT_TRUE(doc.Insert(doc1->indexed.begin(), doc1->indexed.end()));
+        ASSERT_TRUE(
+          tests::InsertFields(doc, doc1->indexed.begin(), doc1->indexed.end()));
         CaptureNameLikeFields(doc, doc1->indexed);
       }
       ctx.Commit();
@@ -3263,18 +3279,21 @@ TEST_P(IndexTestCase, document_context) {
 
       {
         auto doc = ctx.Replace(*(query_doc1));
-        ASSERT_TRUE(doc.Insert(doc2->indexed.begin(), doc2->indexed.end()));
+        ASSERT_TRUE(
+          tests::InsertFields(doc, doc2->indexed.begin(), doc2->indexed.end()));
         CaptureNameLikeFields(doc, doc2->indexed);
       }
       {
         auto doc = ctx.Replace(*(query_doc2));
-        ASSERT_TRUE(doc.Insert(doc3->indexed.begin(), doc3->indexed.end()));
+        ASSERT_TRUE(
+          tests::InsertFields(doc, doc3->indexed.begin(), doc3->indexed.end()));
         CaptureNameLikeFields(doc, doc3->indexed);
       }
       ctx.Reset();
       {
         auto doc = ctx.Insert();
-        ASSERT_TRUE(doc.Insert(doc4->indexed.begin(), doc4->indexed.end()));
+        ASSERT_TRUE(
+          tests::InsertFields(doc, doc4->indexed.begin(), doc4->indexed.end()));
         CaptureNameLikeFields(doc, doc4->indexed);
       }
       ctx.Commit();
@@ -3333,12 +3352,14 @@ TEST_P(IndexTestCase, document_context) {
 
       {
         auto doc = ctx.Insert();
-        ASSERT_TRUE(doc.Insert(doc1->indexed.begin(), doc1->indexed.end()));
+        ASSERT_TRUE(
+          tests::InsertFields(doc, doc1->indexed.begin(), doc1->indexed.end()));
         CaptureNameLikeFields(doc, doc1->indexed);
       }
       {
         auto doc = ctx.Insert();
-        ASSERT_TRUE(doc.Insert(doc2->indexed.begin(), doc2->indexed.end()));
+        ASSERT_TRUE(
+          tests::InsertFields(doc, doc2->indexed.begin(), doc2->indexed.end()));
         CaptureNameLikeFields(doc, doc2->indexed);
       }
       ctx.Commit();
@@ -3402,14 +3423,14 @@ TEST_P(IndexTestCase, document_context) {
 
           {
             auto doc = ctx.Insert();
-            ASSERT_TRUE(doc.Insert(doc2->indexed.begin(), doc2->indexed.end()));
-            CaptureNameLikeFields(doc, doc2->indexed);
+            ASSERT_TRUE(tests::InsertFields(doc, doc2->indexed.begin(),
+       doc2->indexed.end())); CaptureNameLikeFields(doc, doc2->indexed);
           }
           writer->RefreshCommit(); AssertSnapshotEquality(*writer);
           {
             auto doc = ctx.Insert();
-            ASSERT_TRUE(doc.Insert(doc3->indexed.begin(), doc3->indexed.end()));
-            CaptureNameLikeFields(doc, doc3->indexed);
+            ASSERT_TRUE(tests::InsertFields(doc, doc3->indexed.begin(),
+       doc3->indexed.end())); CaptureNameLikeFields(doc, doc3->indexed);
           }
         }
 
@@ -3494,12 +3515,14 @@ TEST_P(IndexTestCase, document_context) {
 
       {
         auto doc = ctx.Insert();
-        ASSERT_TRUE(doc.Insert(doc1->indexed.begin(), doc1->indexed.end()));
+        ASSERT_TRUE(
+          tests::InsertFields(doc, doc1->indexed.begin(), doc1->indexed.end()));
         CaptureNameLikeFields(doc, doc1->indexed);
       }
       {
         auto doc = ctx.Insert();
-        ASSERT_TRUE(doc.Insert(doc2->indexed.begin(), doc2->indexed.end()));
+        ASSERT_TRUE(
+          tests::InsertFields(doc, doc2->indexed.begin(), doc2->indexed.end()));
         CaptureNameLikeFields(doc, doc2->indexed);
       }
       ctx.Commit();
@@ -3562,14 +3585,14 @@ TEST_P(IndexTestCase, document_context) {
 
           {
             auto doc = ctx.Insert();
-            ASSERT_TRUE(doc.Insert(doc2->indexed.begin(), doc2->indexed.end()));
-            CaptureNameLikeFields(doc, doc2->indexed);
+            ASSERT_TRUE(tests::InsertFields(doc, doc2->indexed.begin(),
+       doc2->indexed.end())); CaptureNameLikeFields(doc, doc2->indexed);
           }
           writer->RefreshCommit(); AssertSnapshotEquality(*writer);
           {
             auto doc = ctx.Insert();
-            ASSERT_TRUE(doc.Insert(doc3->indexed.begin(), doc3->indexed.end()));
-            CaptureNameLikeFields(doc, doc3->indexed);
+            ASSERT_TRUE(tests::InsertFields(doc, doc3->indexed.begin(),
+       doc3->indexed.end())); CaptureNameLikeFields(doc, doc3->indexed);
           }
         }
 
@@ -4376,28 +4399,28 @@ TEST_P(IndexTestCase, doc_update) {
 
     {
       auto doc = trx1.Insert();
-      doc.Insert(doc1->indexed.begin(), doc1->indexed.end());
+      tests::InsertFields(doc, doc1->indexed.begin(), doc1->indexed.end());
       CaptureNameLikeFields(doc, doc1->indexed);
     }
     {
       auto doc = trx1.Insert();
-      doc.Insert(doc2->indexed.begin(), doc2->indexed.end());
+      tests::InsertFields(doc, doc2->indexed.begin(), doc2->indexed.end());
       CaptureNameLikeFields(doc, doc2->indexed);
       trx1.Remove(*query_doc2);
     }
     {
       auto doc = trx3.Insert();
-      doc.Insert(doc2->indexed.begin(), doc2->indexed.end());
+      tests::InsertFields(doc, doc2->indexed.begin(), doc2->indexed.end());
       CaptureNameLikeFields(doc, doc2->indexed);
     }
     {
       auto doc = trx4.Replace(*query_doc2);
-      doc.Insert(doc3->indexed.begin(), doc3->indexed.end());
+      tests::InsertFields(doc, doc3->indexed.begin(), doc3->indexed.end());
       CaptureNameLikeFields(doc, doc3->indexed);
     }
     {
       auto doc = trx2.Replace(*query_doc3);
-      doc.Insert(doc4->indexed.begin(), doc4->indexed.end());
+      tests::InsertFields(doc, doc4->indexed.begin(), doc4->indexed.end());
       CaptureNameLikeFields(doc, doc4->indexed);
     }
 
@@ -4914,15 +4937,14 @@ TEST_P(IndexTestCase, doc_update) {
   {
     class TestField : public tests::FieldBase {
      public:
-      irs::StringTokenizer tokens;
+      mutable irs::KeywordTokenizer tokens;
       bool write_result;
       bool Write(irs::DataOutput& out) const final {
         out.WriteByte(1);
         return write_result;
       }
-      irs::Tokenizer& GetTokens() const final {
-        return const_cast<TestField*>(this)->tokens;
-      }
+      irs::analysis::Tokenizer& GetTokens() const final { return tokens; }
+      std::string_view Value() const final { return "data"; }
     };
 
     tests::JsonDocGenerator gen(resource("simple_sequential.json"),
@@ -4954,10 +4976,6 @@ TEST_P(IndexTestCase, doc_update) {
     test_field1->Name(test_field_name);
     test_field2->Name(test_field_name);
     test_field3->Name(test_field_name);
-    test_field0->tokens.reset("data");
-    test_field1->tokens.reset("data");
-    test_field2->tokens.reset("data");
-    test_field3->tokens.reset("data");
     test_field0->write_result = true;
     test_field1->write_result = true;
     test_field2->write_result = false;
@@ -11102,7 +11120,8 @@ TEST_P(IndexTestCase, segment_options) {
 
     {
       auto doc = ctx.Insert();
-      ASSERT_TRUE(doc.Insert(doc1->indexed.begin(), doc1->indexed.end()));
+      ASSERT_TRUE(
+        tests::InsertFields(doc, doc1->indexed.begin(), doc1->indexed.end()));
       CaptureNameLikeFields(doc, doc1->indexed);
     }
 
@@ -11329,8 +11348,8 @@ TEST_P(IndexTestCase, segment_options) {
       {
         auto doc = ctx.Insert(true);
 
-        ASSERT_TRUE(
-          doc.Insert(std::begin(doc2->indexed), std::end(doc2->indexed)));
+        ASSERT_TRUE(tests::InsertFields(doc, std::begin(doc2->indexed),
+                                        std::end(doc2->indexed)));
         CaptureNameLikeFields(doc, doc2->indexed);
       }
       ctx.Commit();
@@ -11651,25 +11670,23 @@ TEST_P(IndexTestCase, writer_remove_all_from_last_segment_compaction) {
   AssertSnapshotEquality(*writer);
 }
 
+namespace {
+
+struct NoNormsEmptyTokenizer final
+  : irs::analysis::TypedTokenizer<NoNormsEmptyTokenizer> {
+  static constexpr std::string_view type_name() noexcept {
+    return "NoNormsEmptyTokenizer";
+  }
+  irs::TokenTraits Traits() const noexcept final { return {}; }
+  template<irs::TokenLayout>
+  bool DoFill(duckdb::string_t, irs::TokenSink&) {
+    return true;
+  }
+};
+
+}  // namespace
+
 TEST_P(IndexTestCase, ensure_no_empty_norms_written) {
-  struct EmptyTokenizer : irs::Tokenizer {
-    bool next() noexcept final { return false; }
-    irs::Attribute* GetMutable(irs::TypeInfo::type_id type) noexcept final {
-      if (type == irs::Type<irs::IncAttr>::id()) {
-        return &inc;
-      }
-
-      if (type == irs::Type<irs::TermAttr>::id()) {
-        return &term;
-      }
-
-      return nullptr;
-    }
-
-    irs::IncAttr inc;
-    irs::TermAttr term;
-  };
-
   struct EmptyField {
     irs::field_id Id() const { return kTestFieldId; }
     std::string_view Name() const { return "test"; };
@@ -11677,9 +11694,10 @@ TEST_P(IndexTestCase, ensure_no_empty_norms_written) {
       return irs::IndexFeatures::Freq | irs::IndexFeatures::Pos |
              irs::IndexFeatures::Norm;
     }
-    irs::Tokenizer& GetTokens() const noexcept { return stream; }
+    irs::analysis::Tokenizer& GetTokens() const noexcept { return stream; }
+    std::string_view Value() const noexcept { return {}; }
 
-    mutable EmptyTokenizer stream;
+    mutable NoNormsEmptyTokenizer stream;
   } empty;
 
   {
@@ -11692,7 +11710,7 @@ TEST_P(IndexTestCase, ensure_no_empty_norms_written) {
       auto docs = writer->GetBatch();
       {
         auto doc = docs.Insert();
-        ASSERT_TRUE(doc.Insert(empty));
+        ASSERT_TRUE(tests::InsertField(doc, empty));
       }
       docs.Commit();
     }
@@ -11704,7 +11722,7 @@ TEST_P(IndexTestCase, ensure_no_empty_norms_written) {
       auto docs = writer->GetBatch();
       {
         auto doc = docs.Insert();
-        ASSERT_TRUE(doc.Insert(field));
+        ASSERT_TRUE(tests::InsertField(doc, field));
       }
       docs.Commit();
     }
@@ -11715,8 +11733,8 @@ TEST_P(IndexTestCase, ensure_no_empty_norms_written) {
       auto docs = writer->GetBatch();
       {
         auto doc = docs.Insert();
-        ASSERT_TRUE(doc.Insert(field));
-        ASSERT_TRUE(doc.Insert(field));
+        ASSERT_TRUE(tests::InsertField(doc, field));
+        ASSERT_TRUE(tests::InsertField(doc, field));
       }
       docs.Commit();
     }
@@ -12131,9 +12149,9 @@ TEST_P(IndexTestCase11, commit_payload) {
       auto trx = writer->GetBatch();
       {
         auto doc = trx.Insert();
-        doc.Insert(doc0->indexed.begin(), doc0->indexed.end());
+        tests::InsertFields(doc, doc0->indexed.begin(), doc0->indexed.end());
         CaptureNameLikeFields(doc, doc0->indexed);
-        doc.Insert(doc0->stored.begin(), doc0->stored.end());
+        tests::InsertFields(doc, doc0->stored.begin(), doc0->stored.end());
         ASSERT_TRUE(doc);
       }
       trx.Commit(expected_tick - 10);
@@ -12145,9 +12163,9 @@ TEST_P(IndexTestCase11, commit_payload) {
       auto trx = writer->GetBatch();
       {
         auto doc = trx.Insert();
-        doc.Insert(doc0->indexed.begin(), doc0->indexed.end());
+        tests::InsertFields(doc, doc0->indexed.begin(), doc0->indexed.end());
         CaptureNameLikeFields(doc, doc0->indexed);
-        doc.Insert(doc0->stored.begin(), doc0->stored.end());
+        tests::InsertFields(doc, doc0->stored.begin(), doc0->stored.end());
         ASSERT_TRUE(doc);
       }
       trx.Commit(expected_tick);
@@ -12186,9 +12204,9 @@ TEST_P(IndexTestCase11, commit_payload) {
       auto trx = writer->GetBatch();
       {
         auto doc = trx.Insert();
-        doc.Insert(doc0->indexed.begin(), doc0->indexed.end());
+        tests::InsertFields(doc, doc0->indexed.begin(), doc0->indexed.end());
         CaptureNameLikeFields(doc, doc0->indexed);
-        doc.Insert(doc0->stored.begin(), doc0->stored.end());
+        tests::InsertFields(doc, doc0->stored.begin(), doc0->stored.end());
         ASSERT_TRUE(doc);
       }
       trx.Commit(expected_tick - 10);
@@ -12199,9 +12217,9 @@ TEST_P(IndexTestCase11, commit_payload) {
       auto trx = writer->GetBatch();
       {
         auto doc = trx.Insert();
-        doc.Insert(doc0->indexed.begin(), doc0->indexed.end());
+        tests::InsertFields(doc, doc0->indexed.begin(), doc0->indexed.end());
         CaptureNameLikeFields(doc, doc0->indexed);
-        doc.Insert(doc0->stored.begin(), doc0->stored.end());
+        tests::InsertFields(doc, doc0->stored.begin(), doc0->stored.end());
         ASSERT_TRUE(doc);
       }
       trx.Commit(expected_tick);
@@ -12232,9 +12250,9 @@ TEST_P(IndexTestCase11, commit_payload) {
       auto trx = writer->GetBatch();
       {
         auto doc = trx.Insert();
-        doc.Insert(doc0->indexed.begin(), doc0->indexed.end());
+        tests::InsertFields(doc, doc0->indexed.begin(), doc0->indexed.end());
         CaptureNameLikeFields(doc, doc0->indexed);
-        doc.Insert(doc0->stored.begin(), doc0->stored.end());
+        tests::InsertFields(doc, doc0->stored.begin(), doc0->stored.end());
         ASSERT_TRUE(doc);
       }
       trx.Commit(expected_tick);
@@ -12245,9 +12263,9 @@ TEST_P(IndexTestCase11, commit_payload) {
       auto trx = writer->GetBatch();
       {
         auto doc = trx.Insert();
-        doc.Insert(doc0->indexed.begin(), doc0->indexed.end());
+        tests::InsertFields(doc, doc0->indexed.begin(), doc0->indexed.end());
         CaptureNameLikeFields(doc, doc0->indexed);
-        doc.Insert(doc0->stored.begin(), doc0->stored.end());
+        tests::InsertFields(doc, doc0->stored.begin(), doc0->stored.end());
         ASSERT_TRUE(doc);
       }
       trx.Commit(expected_tick);
@@ -12285,9 +12303,9 @@ TEST_P(IndexTestCase11, commit_payload) {
       auto trx = writer->GetBatch();
       {
         auto doc = trx.Insert();
-        doc.Insert(doc0->indexed.begin(), doc0->indexed.end());
+        tests::InsertFields(doc, doc0->indexed.begin(), doc0->indexed.end());
         CaptureNameLikeFields(doc, doc0->indexed);
-        doc.Insert(doc0->stored.begin(), doc0->stored.end());
+        tests::InsertFields(doc, doc0->stored.begin(), doc0->stored.end());
         ASSERT_TRUE(doc);
       }
       trx.Commit(expected_tick);
@@ -12298,9 +12316,9 @@ TEST_P(IndexTestCase11, commit_payload) {
       auto trx = writer->GetBatch();
       {
         auto doc = trx.Insert();
-        doc.Insert(doc0->indexed.begin(), doc0->indexed.end());
+        tests::InsertFields(doc, doc0->indexed.begin(), doc0->indexed.end());
         CaptureNameLikeFields(doc, doc0->indexed);
-        doc.Insert(doc0->stored.begin(), doc0->stored.end());
+        tests::InsertFields(doc, doc0->stored.begin(), doc0->stored.end());
         ASSERT_TRUE(doc);
       }
       trx.Commit(expected_tick);
@@ -12340,9 +12358,9 @@ TEST_P(IndexTestCase11, commit_payload) {
       auto trx = writer->GetBatch();
       {
         auto doc = trx.Insert();
-        doc.Insert(doc0->indexed.begin(), doc0->indexed.end());
+        tests::InsertFields(doc, doc0->indexed.begin(), doc0->indexed.end());
         CaptureNameLikeFields(doc, doc0->indexed);
-        doc.Insert(doc0->stored.begin(), doc0->stored.end());
+        tests::InsertFields(doc, doc0->stored.begin(), doc0->stored.end());
         ASSERT_TRUE(doc);
       }
       trx.Commit();
@@ -12381,16 +12399,16 @@ TEST_P(IndexTestCase11, testExternalGeneration) {
     auto trx = writer->GetBatch();
     {
       auto doc = trx.Insert();
-      doc.Insert(doc0->indexed.begin(), doc0->indexed.end());
+      tests::InsertFields(doc, doc0->indexed.begin(), doc0->indexed.end());
       CaptureNameLikeFields(doc, doc0->indexed);
-      doc.Insert(doc0->stored.begin(), doc0->stored.end());
+      tests::InsertFields(doc, doc0->stored.begin(), doc0->stored.end());
       ASSERT_TRUE(doc);
     }
     {
       auto doc = trx.Insert();
-      doc.Insert(doc1->indexed.begin(), doc1->indexed.end());
+      tests::InsertFields(doc, doc1->indexed.begin(), doc1->indexed.end());
       CaptureNameLikeFields(doc, doc1->indexed);
-      doc.Insert(doc1->stored.begin(), doc1->stored.end());
+      tests::InsertFields(doc, doc1->stored.begin(), doc1->stored.end());
       ASSERT_TRUE(doc);
     }
     // subcontext with remove
@@ -12435,13 +12453,13 @@ TEST_P(IndexTestCase11, testExternalGenerationDifferentStart) {
     ASSERT_TRUE(trx.Valid());
     {
       auto doc = trx.Insert();
-      doc.Insert(doc0->indexed.begin(), doc0->indexed.end());
+      tests::InsertFields(doc, doc0->indexed.begin(), doc0->indexed.end());
       CaptureNameLikeFields(doc, doc0->indexed);
       ASSERT_TRUE(doc);
     }
     {
       auto doc = trx.Insert();
-      doc.Insert(doc1->indexed.begin(), doc1->indexed.end());
+      tests::InsertFields(doc, doc1->indexed.begin(), doc1->indexed.end());
       CaptureNameLikeFields(doc, doc1->indexed);
       ASSERT_TRUE(doc);
     }
@@ -12497,16 +12515,16 @@ TEST_P(IndexTestCase11, testExternalGenerationRemoveBeforeInsert) {
     auto trx = writer->GetBatch();
     {
       auto doc = trx.Insert();
-      doc.Insert(doc0->indexed.begin(), doc0->indexed.end());
+      tests::InsertFields(doc, doc0->indexed.begin(), doc0->indexed.end());
       CaptureNameLikeFields(doc, doc0->indexed);
-      doc.Insert(doc0->stored.begin(), doc0->stored.end());
+      tests::InsertFields(doc, doc0->stored.begin(), doc0->stored.end());
       ASSERT_TRUE(doc);
     }
     {
       auto doc = trx.Insert();
-      doc.Insert(doc1->indexed.begin(), doc1->indexed.end());
+      tests::InsertFields(doc, doc1->indexed.begin(), doc1->indexed.end());
       CaptureNameLikeFields(doc, doc1->indexed);
-      doc.Insert(doc1->stored.begin(), doc1->stored.end());
+      tests::InsertFields(doc, doc1->stored.begin(), doc1->stored.end());
       ASSERT_TRUE(doc);
     }
     // subcontext with remove

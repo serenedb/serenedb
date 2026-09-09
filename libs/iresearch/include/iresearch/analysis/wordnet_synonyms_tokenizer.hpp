@@ -20,30 +20,43 @@
 
 #pragma once
 
-#include <absl/container/flat_hash_map.h>
-
-#include <memory>
+#include <duckdb/storage/shared_object_cache.hpp>
 #include <string>
 #include <string_view>
+#include <vector>
 
-#include "iresearch/analysis/analyzer.hpp"
-#include "iresearch/analysis/token_attributes.hpp"
-#include "iresearch/utils/attribute_helper.hpp"
-#include "pg/sql_exception_macro.h"
+#include "iresearch/analysis/expand_tokens.hpp"
+#include "iresearch/analysis/text/dict/string_table.hpp"
+#include "iresearch/analysis/tokenizer.hpp"
 
 namespace irs::analysis {
 
 class WordnetSynonymsTokenizer final
-  : public TypedAnalyzer<WordnetSynonymsTokenizer>,
+  : public TypedTokenizer<WordnetSynonymsTokenizer>,
+    public TypedTokenExpander<WordnetSynonymsTokenizer>,
     private util::Noncopyable {
  public:
   using SynonymsGroups = std::vector<std::string_view>;
-  using SynonymsMap = absl::flat_hash_map<std::string, SynonymsGroups>;
+  using SynonymsMap = dict::StringMap<std::string_view, SynonymsGroups>;
 
-  // `mapping`'s value string_views reference `text`; the keys own their own
-  // storage.
+  // `mapping`'s keys and value string_views reference `text`, whose escaped
+  // lemmas `Parse` unescapes in place.
   // Members are listed in lifetime order: text must outlive mapping.
-  struct State {
+  struct State : duckdb::ObjectCacheEntry {
+    static constexpr std::string_view ObjectType() {
+      return "wordnet_synonyms_state";
+    }
+
+    std::string GetObjectType() final { return std::string{ObjectType()}; }
+
+    duckdb::optional_idx GetEstimatedCacheMemory() const final {
+      size_t size = text.size() + mapping.MemoryBytes();
+      mapping.ForEachMapped([&](const SynonymsGroups& groups) {
+        size += groups.capacity() * sizeof(std::string_view);
+      });
+      return size;
+    }
+
     std::string text;
     SynonymsMap mapping;
   };
@@ -53,34 +66,29 @@ class WordnetSynonymsTokenizer final
     // Inline synonyms file content (Wordnet `s(...)` lines).
     std::string synonyms_text;
   };
-  static Analyzer::ptr Make(Options opts);
+  static Tokenizer::ptr Make(Options opts, duckdb::SharedObjectCache& cache);
 
   static constexpr std::string_view type_name() noexcept {
     return "wordnet_synonyms";
   }
 
-  static SynonymsMap Parse(std::string_view input);
-  static std::shared_ptr<const State> MakeState(std::string text);
+  static SynonymsMap Parse(std::string& input);
+  static duckdb::unique_ptr<State> MakeState(std::string text);
 
   explicit WordnetSynonymsTokenizer(
-    std::shared_ptr<const State> state) noexcept;
-
-  Attribute* GetMutable(TypeInfo::type_id type) noexcept final {
-    return irs::GetMutable(_attrs, type);
+    duckdb::shared_ptr<const State> state) noexcept;
+  TokenTraits Traits() const noexcept final {
+    return {.offsets = true, .stable = true};
   }
-  bool next() final;
-  bool reset(std::string_view data) final;
+
+  template<TokenLayout Layout, typename Sink>
+  IRS_FORCE_INLINE bool DoFill(const duckdb::string_t& value, Sink& sink);
 
  private:
-  std::shared_ptr<const State> _state;
-
-  using attributes = std::tuple<IncAttr, OffsAttr, TermAttr>;
-  attributes _attrs;
-
-  const std::string_view* _begin{};
-  const std::string_view* _curr{};
-  const std::string_view* _end{};
-  bool _term_exists = false;
+  duckdb::shared_ptr<const State> _state;
 };
+
+extern template class TypedTokenizer<WordnetSynonymsTokenizer>;
+extern template class TypedTokenExpander<WordnetSynonymsTokenizer>;
 
 }  // namespace irs::analysis

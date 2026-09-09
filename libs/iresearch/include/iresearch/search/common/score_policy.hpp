@@ -18,13 +18,18 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include <type_traits>
-#include <utility>
+#pragma once
 
-#include "iresearch/index/index_reader.hpp"
-#include "iresearch/search/common/optional_scored.hpp"
-#include "iresearch/search/probe/impl.hpp"
-#include "iresearch/search/probe/make.hpp"
-#include "iresearch/search/probe/sparse_disjunction_scored.hpp"
+#include "iresearch/search/scorer.hpp"
+#include "iresearch/utils/type_limits.hpp"
 
-namespace irs::probe {}  // namespace irs::probe
+namespace irs::search {
+
+struct Scored {
+  ScoreMergeType inner;
+  score_t absorbed = 0;
+};
+
+struct Inherited {};
+
+}  // namespace irs::search

@@ -185,14 +185,13 @@ set(IResearch_core_sources
     ./search/lead/make_boolean_bitset.cpp
     ./search/lead/make_boolean_window.cpp
     ./search/lead/make_boolean_sparse.cpp
-    ./search/lead/make_window_disjunction_scored.cpp
-    ./search/lead/make_sparse_conjunction_scored.cpp
-    ./search/lead/make_sparse_exclusion_scored.cpp
+    ./search/lead/make_boolean_scored.cpp
+    ./search/lead/make_boolean_window_scored.cpp
+    ./search/lead/make_boolean_sparse_scored.cpp
     ./search/lead/make_bits_threshold_docs.cpp
     ./search/lead/make_bits_threshold_scored.cpp
     ./search/lead/make_count_threshold_docs.cpp
     ./search/lead/make_count_threshold_scored.cpp
-    ./search/lead/make_sparse_boost_scored.cpp
     ./search/lead/make_fixed_phrase_docs.cpp
     ./search/lead/make_fixed_phrase_scored.cpp
     ./search/lead/make_fixed_phrase_intervals_docs.cpp
@@ -238,11 +237,8 @@ set(IResearch_core_sources
     ./search/probe/make_all_scored.cpp
     ./search/probe/make_boolean.cpp
     ./search/probe/make_boolean_sparse.cpp
-    ./search/probe/make_sparse_disjunction_scored.cpp
-    ./search/probe/make_sparse_conjunction_scored.cpp
-    ./search/probe/make_sparse_threshold_scored.cpp
-    ./search/probe/make_sparse_exclusion_scored.cpp
-    ./search/probe/make_sparse_boost_scored.cpp
+    ./search/probe/make_boolean_scored.cpp
+    ./search/probe/make_boolean_sparse_scored.cpp
     ./search/probe/make_fixed_phrase_docs.cpp
     ./search/probe/make_fixed_phrase_scored.cpp
     ./search/probe/make_fixed_phrase_intervals_docs.cpp
@@ -281,14 +277,12 @@ set(IResearch_core_sources
     ./search/fill/make_boolean_bitset.cpp
     ./search/fill/make_boolean_window.cpp
     ./search/fill/make_boolean_sparse.cpp
-    ./search/fill/make_window_disjunction_scored.cpp
-    ./search/fill/make_sparse_conjunction_scored.cpp
-    ./search/fill/make_sparse_exclusion_scored.cpp
+    ./search/fill/make_boolean_scored.cpp
+    ./search/fill/make_boolean_sparse_scored.cpp
     ./search/fill/make_bits_threshold_docs.cpp
     ./search/fill/make_bits_threshold_scored.cpp
     ./search/fill/make_count_threshold_docs.cpp
     ./search/fill/make_count_threshold_scored.cpp
-    ./search/fill/make_sparse_boost_scored.cpp
     ./search/fill/make_fixed_phrase_docs.cpp
     ./search/fill/make_fixed_phrase_scored.cpp
     ./search/fill/make_fixed_phrase_intervals_docs.cpp

@@ -33,7 +33,6 @@
 #include "iresearch/search/lead/impl.hpp"
 #include "iresearch/search/lead/make.hpp"
 #include "iresearch/search/lead/single_posting_docs.hpp"
-#include "iresearch/search/lead/window_disjunction_scored.hpp"
 
 namespace irs::lead {
 
@@ -83,25 +82,6 @@ Result ResolvePostingDocs(const PostingClause& posting, Make&& make) {
     return make.template operator()<PostingLead<Input>>(
       meta, doc, search::LayoutOf(own), search::BoundsOf(own));
   });
-}
-
-template<typename Term>
-Node::ptr MakeWindowDisjunctionOfTermsScored(
-  std::span<const Term> terms, const TermReader* field, const Scorer* scorer,
-  score_t boost, const IndexInput& doc, search::Terms uniformity,
-  const SubReader& segment, const ScoredCtx& ctx, ScoreMergeType merge,
-  score_t absorbed) {
-  const auto make = [&]<typename Set>(auto&&... args) -> Node::ptr {
-    const auto leaves =
-      std::forward_as_tuple(std::forward<decltype(args)>(args)...);
-    using Node = WindowDisjunctionScored<Set>;
-    return memory::make_managed<Impl<Node>>(std::piecewise_construct, leaves,
-                                            merge, absorbed);
-  };
-  const ScoreRecipe recipe{.segment = &segment, .fetcher = ctx.fetcher};
-  std::vector<fill::Node::ptr> rest;
-  return search::BuildScoredWindow<Node::ptr, Term>(
-    terms, field, scorer, boost, &doc, rest, uniformity, recipe, merge, make);
 }
 
 }  // namespace irs::lead

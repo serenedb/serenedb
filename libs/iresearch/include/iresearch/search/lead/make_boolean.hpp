@@ -30,7 +30,10 @@
 #include "iresearch/search/common/bitset_of.hpp"
 #include "iresearch/search/common/boolean_groups.hpp"
 #include "iresearch/search/common/collect.hpp"
+#include "iresearch/search/common/collect_scored.hpp"
 #include "iresearch/search/common/plan.hpp"
+#include "iresearch/search/common/score_policy.hpp"
+#include "iresearch/search/common/scored_context.hpp"
 #include "iresearch/search/fill/set_leaves.hpp"
 #include "iresearch/search/lead/boolean_window.hpp"
 #include "iresearch/search/lead/impl.hpp"
@@ -127,6 +130,27 @@ Node::ptr MakeDisjunctionOfTermsDocs(std::span<const Term> terms,
                                            nullptr);
   }
   return MakeWindowDisjunctionOfTermsDocs<Term>(terms, field, doc);
+}
+
+template<typename Term>
+Node::ptr MakeWindowDisjunctionOfTermsScored(
+  std::span<const Term> terms, const TermReader* field, const Scorer* scorer,
+  score_t boost, const IndexInput& doc, search::Terms uniformity,
+  const SubReader& segment, const ScoredCtx& ctx, ScoreMergeType merge,
+  score_t absorbed) {
+  const auto make = [&]<typename Set>(auto&&... args) -> Node::ptr {
+    using Node = BooleanWindow<utils::Empty, utils::Empty, search::OrGroup<Set>,
+                               utils::Empty, search::Scored>;
+    return memory::make_managed<Impl<Node>>(
+      std::piecewise_construct, std::forward_as_tuple(),
+      std::forward_as_tuple(),
+      std::forward_as_tuple(std::forward<decltype(args)>(args)...),
+      std::forward_as_tuple(), search::Scored{merge, absorbed});
+  };
+  const ScoreRecipe recipe{.segment = &segment, .fetcher = ctx.fetcher};
+  std::vector<fill::Node::ptr> rest;
+  return search::BuildScoredWindow<Node::ptr, Term>(
+    terms, field, scorer, boost, &doc, rest, uniformity, recipe, merge, make);
 }
 
 }  // namespace irs::lead

@@ -33,11 +33,15 @@
 namespace irs::lead {
 namespace {
 
-template<typename Lead, typename Probes, typename Excludes, typename... Args>
-Node::ptr MakeSparse(Args&&... args) {
-  using Node = BooleanSparse<Lead, Probes, Excludes>;
-  return memory::make_managed<Impl<Node>>(std::piecewise_construct,
-                                          std::forward<Args>(args)...);
+template<typename Lead, typename Probes, typename Excludes, typename LeadArgs,
+         typename ProbesArgs, typename ExcludesArgs>
+Node::ptr MakeSparse(LeadArgs&& lead, ProbesArgs&& probes,
+                     ExcludesArgs&& excludes) {
+  using Node = BooleanSparse<Lead, Probes, utils::Empty, Excludes>;
+  return memory::make_managed<Impl<Node>>(
+    std::piecewise_construct, std::forward<LeadArgs>(lead),
+    std::forward<ProbesArgs>(probes), std::forward_as_tuple(),
+    std::forward<ExcludesArgs>(excludes));
 }
 
 }  // namespace

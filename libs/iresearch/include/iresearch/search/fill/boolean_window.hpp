@@ -21,43 +21,53 @@
 #pragma once
 
 #include <algorithm>
+#include <bit>
 #include <cstdint>
 #include <tuple>
 #include <type_traits>
 #include <utility>
 
+#include "basics/bit_utils.hpp"
 #include "basics/empty.hpp"
+#include "iresearch/search/common/score_policy.hpp"
 #include "iresearch/search/common/window.hpp"
+#include "iresearch/search/scorer.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
 namespace irs::fill {
 
-template<typename Lead, typename Others, typename Optional, typename Excludes>
+template<typename Lead, typename Others, typename Optional, typename Excludes,
+         typename Score = utils::Empty>
 class BooleanWindow {
  public:
   static constexpr bool kLead = !std::is_same_v<Lead, utils::Empty>;
   static constexpr bool kOthers = !std::is_same_v<Others, utils::Empty>;
   static constexpr bool kOptional = !std::is_same_v<Optional, utils::Empty>;
   static constexpr bool kExcludes = !std::is_same_v<Excludes, utils::Empty>;
+  static constexpr bool kScored = std::is_same_v<Score, search::Scored>;
   static_assert(kLead != kOptional);
   static_assert(kLead || !kOthers);
+  static_assert(!kScored || (kOptional && !kExcludes));
 
   template<typename LeadArgs, typename OthersArgs, typename OptionalArgs,
            typename ExcludesArgs>
   BooleanWindow(std::piecewise_construct_t, LeadArgs&& lead,
                 OthersArgs&& others, OptionalArgs&& optional,
-                ExcludesArgs&& excludes)
+                ExcludesArgs&& excludes, Score score = {})
     : _lead{std::make_from_tuple<Lead>(std::forward<LeadArgs>(lead))},
       _others{std::make_from_tuple<Others>(std::forward<OthersArgs>(others))},
       _optional{
         std::make_from_tuple<Optional>(std::forward<OptionalArgs>(optional))},
       _excludes{
-        std::make_from_tuple<Excludes>(std::forward<ExcludesArgs>(excludes))} {}
+        std::make_from_tuple<Excludes>(std::forward<ExcludesArgs>(excludes))},
+      _score{score} {}
 
   BooleanWindow(BooleanWindow&&) = delete;
   BooleanWindow& operator=(BooleanWindow&&) = delete;
 
-  doc_id_t FillOr(doc_id_t min, doc_id_t max, uint64_t* IRS_RESTRICT mask) {
+  doc_id_t FillOr(doc_id_t min, doc_id_t max, uint64_t* IRS_RESTRICT mask)
+    requires(!kScored)
+  {
     if constexpr (kOptional && !kExcludes) {
       return _optional.Fill(min, max, mask);
     } else {
@@ -70,17 +80,36 @@ class BooleanWindow {
     }
   }
 
-  doc_id_t FillAnd(doc_id_t min, doc_id_t max, uint64_t* IRS_RESTRICT mask) {
+  doc_id_t FillAnd(doc_id_t min, doc_id_t max, uint64_t* IRS_RESTRICT mask)
+    requires(!kScored)
+  {
     const auto words = search::WindowWords(min, max);
     const auto next = Compute(min, max, words);
     search::FoldAnd(mask, _own.data(), words);
     return next;
   }
 
-  doc_id_t FillAndNot(doc_id_t min, doc_id_t max, uint64_t* IRS_RESTRICT mask) {
+  doc_id_t FillAndNot(doc_id_t min, doc_id_t max, uint64_t* IRS_RESTRICT mask)
+    requires(!kScored)
+  {
     const auto words = search::WindowWords(min, max);
     const auto next = Compute(min, max, words);
     search::FoldAndNot(mask, _own.data(), words);
+    return next;
+  }
+
+  doc_id_t Fill(doc_id_t min, doc_id_t max, uint64_t* IRS_RESTRICT mask,
+                score_t* IRS_RESTRICT scores)
+    requires kScored
+  {
+    if (_score.absorbed == 0) {
+      return _optional.Fill(min, max, mask, scores);
+    }
+    const auto next = _optional.Fill(min, max, _own.data(), scores);
+    const auto words = search::WindowWords(min, max);
+    irs::ResolveMergeType(_score.inner, [&]<ScoreMergeType Inner> {
+      Absorb<Inner>(mask, scores, words);
+    });
     return next;
   }
 
@@ -103,11 +132,29 @@ class BooleanWindow {
     return next;
   }
 
+  template<ScoreMergeType Inner>
+  IRS_FORCE_INLINE void Absorb(uint64_t* IRS_RESTRICT mask,
+                               score_t* IRS_RESTRICT scores,
+                               size_t words) noexcept {
+    for (size_t w = 0; w != words; ++w) {
+      auto bits = std::exchange(_own[w], uint64_t{0});
+      mask[w] |= bits;
+      const size_t base = w * search::kWindowBits;
+      while (bits != 0) {
+        irs::Merge<Inner>(
+          scores[base + static_cast<uint32_t>(std::countr_zero(bits))],
+          _score.absorbed);
+        bits = PopBit(bits);
+      }
+    }
+  }
+
   search::Scratch _own{};
   [[no_unique_address]] Lead _lead;
   [[no_unique_address]] Others _others;
   [[no_unique_address]] Optional _optional;
   [[no_unique_address]] Excludes _excludes;
+  [[no_unique_address]] Score _score;
 };
 
 }  // namespace irs::fill

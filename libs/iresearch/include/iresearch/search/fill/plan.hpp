@@ -32,7 +32,6 @@
 #include "iresearch/search/fill/impl.hpp"
 #include "iresearch/search/fill/make.hpp"
 #include "iresearch/search/fill/set_leaves.hpp"
-#include "iresearch/search/fill/window_disjunction.hpp"
 
 namespace irs::fill {
 
@@ -64,22 +63,6 @@ using search::ResolveFillScored;
 using search::ResolveInput;
 using search::SegmentDoc;
 
-Node::ptr MakeSparseConjunctionScored(
-  std::span<const search::PostingClause> terms,
-  std::span<const QueryBuilder::ptr> filters, const SubReader& segment,
-  const ScoredCtx& ctx, ScoreMergeType merge, score_t absorbed);
-
-Node::ptr MakeSparseExclusionScored(
-  std::span<const search::PostingClause> must_terms,
-  std::span<const QueryBuilder::ptr> must_filters,
-  std::span<const search::PostingClause> should_terms,
-  std::span<const QueryBuilder::ptr> should_filters,
-  search::Terms should_uniformity, uint32_t min_should_match,
-  std::span<const search::PostingClause> exclude_terms,
-  std::span<const QueryBuilder::ptr> exclude_filters, const SubReader& segment,
-  const ScoredCtx& ctx, ScoreMergeType merge, ScoreMergeType own,
-  score_t absorbed);
-
 Node::ptr MakeBitsThresholdDocs(std::span<const search::PostingClause> terms,
                                 const IndexInput* doc,
                                 std::vector<Node::ptr>& rest,
@@ -102,14 +85,6 @@ Node::ptr MakeCountThresholdScored(std::span<const search::PostingClause> terms,
                                    const ScoreRecipe& recipe,
                                    ScoreMergeType merge, uint32_t min_match,
                                    score_t absorbed);
-
-Node::ptr MakeSparseBoostScored(
-  std::span<const search::PostingClause> must_terms,
-  std::span<const QueryBuilder::ptr> must_filters,
-  std::span<const search::PostingClause> should_terms,
-  std::span<const QueryBuilder::ptr> should_filters, search::Terms uniformity,
-  const SubReader& segment, const ScoredCtx& ctx, ScoreMergeType merge,
-  score_t absorbed);
 
 Node::ptr MakeFixedPhraseDocs(const FixedPhraseQuery& query);
 Node::ptr MakeFixedPhraseIntervalsDocs(const FixedPhraseQuery& query);
@@ -140,28 +115,5 @@ Node::ptr MakeNGramScored(const NGramSimilarityQuery& query,
                           const ScoredCtx& ctx, ScoreMergeType merge);
 Node::ptr MakeNGramAllScored(const NGramSimilarityQuery& query,
                              const ScoredCtx& ctx, ScoreMergeType merge);
-
-template<typename Term>
-Node::ptr MakeWindowDisjunctionScored(
-  std::span<const Term> terms, const TermReader* field, const Scorer* scorer,
-  score_t boost, const IndexInput* doc, std::vector<Node::ptr>& rest,
-  search::Terms uniformity, const ScoreRecipe& recipe, ScoreMergeType merge,
-  score_t absorbed = 0) {
-  SDB_ASSERT(!terms.empty() || !rest.empty());
-  const auto make = [&]<typename Set>(auto&&... args) -> Node::ptr {
-    const auto leaves =
-      std::forward_as_tuple(std::forward<decltype(args)>(args)...);
-    if (absorbed == 0) {
-      using Node = WindowDisjunctionScored<Set, false>;
-      return memory::make_managed<Impl<Node>>(std::piecewise_construct, leaves,
-                                              merge);
-    }
-    using Node = WindowDisjunctionScored<Set, true>;
-    return memory::make_managed<Impl<Node>>(std::piecewise_construct, leaves,
-                                            merge, absorbed);
-  };
-  return search::BuildScoredWindow<Node::ptr>(
-    terms, field, scorer, boost, doc, rest, uniformity, recipe, merge, make);
-}
 
 }  // namespace irs::fill

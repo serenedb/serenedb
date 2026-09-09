@@ -27,10 +27,14 @@
 #include <vector>
 
 #include "basics/assert.h"
+#include "basics/bit_utils.hpp"
+#include "basics/empty.hpp"
 #include "basics/shared.hpp"
 #include "iresearch/search/common/fixed_array.hpp"
+#include "iresearch/search/common/score/make_probe.hpp"
 #include "iresearch/search/common/score_args.hpp"
 #include "iresearch/search/probe/concept.hpp"
+#include "iresearch/search/score_function.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
 namespace irs::probe {
@@ -78,11 +82,14 @@ class AndLeaves {
   search::RunOf<Leaf, N> _leaves;
 };
 
-template<Type Leaf, size_t N = 0>
+template<Type Leaf, size_t N = 0, bool Scored = false>
 class OrLeaves {
  public:
+  static constexpr bool kDecides = true;
+
   template<typename Init>
-  OrLeaves(size_t size, Init&& init) : _leaves{size, std::forward<Init>(init)} {
+  OrLeaves(size_t size, Init&& init)
+    : _leaves{size, std::forward<Init>(init)}, _held{size} {
     SDB_ASSERT(_leaves.size() > 1);
   }
 
@@ -94,6 +101,10 @@ class OrLeaves {
     for (size_t i = 0, count = _leaves.size(); i != count; ++i) {
       const auto doc = _leaves[i].Probe(target);
       if (doc == target) {
+        if constexpr (Scored) {
+          _doc = target;
+          _first = static_cast<uint32_t>(i);
+        }
         return target;
       }
       next = std::min(next, doc);
@@ -101,16 +112,46 @@ class OrLeaves {
     return next;
   }
 
+  IRS_FORCE_INLINE void FetchScoreArgs(uint32_t slot)
+    requires Scored
+  {
+    SDB_ASSERT(slot < kScoreBlock);
+    SetBit(_held[_first], slot);
+    _leaves[_first].FetchScoreArgs(slot);
+    for (size_t i = _first + 1, count = _leaves.size(); i != count; ++i) {
+      if (_leaves[i].Probe(_doc) != _doc) {
+        continue;
+      }
+      SetBit(_held[i], slot);
+      _leaves[i].FetchScoreArgs(slot);
+    }
+  }
+
+  ScoreFunction PrepareScore(ScoreMergeType inner, score_t absorbed)
+    requires Scored
+  {
+    return search::MakeProbeOf(inner, _leaves, _held, absorbed);
+  }
+
  private:
   search::RunOf<Leaf, N> _leaves;
+  [[no_unique_address]] utils::Need<Scored, search::RunOf<uint32_t, N>> _held;
+  [[no_unique_address]] utils::Need<Scored, doc_id_t> _doc =
+    doc_limits::invalid();
+  [[no_unique_address]] utils::Need<Scored, uint32_t> _first = 0;
 };
 
-template<Type Leaf, size_t N = 0>
+template<Type Leaf, size_t N = 0, bool Scored = false>
 class ThresholdLeaves {
  public:
+  static constexpr bool kDecides = true;
+
   template<typename Init>
   ThresholdLeaves(size_t size, Init&& init, uint32_t min_match)
-    : _probes{size, std::forward<Init>(init)}, _min_match{min_match} {
+    : _probes{size, std::forward<Init>(init)},
+      _held{size},
+      _matched{min_match},
+      _min_match{min_match} {
     SDB_ASSERT(_min_match > 1);
     SDB_ASSERT(_probes.size() >= _min_match);
   }
@@ -119,24 +160,130 @@ class ThresholdLeaves {
   ThresholdLeaves& operator=(ThresholdLeaves&&) = delete;
 
   doc_id_t Probe(doc_id_t target) {
-    uint32_t hits = 0;
-    uint32_t left = static_cast<uint32_t>(_probes.size());
-    for (auto& probe : _probes) {
-      hits += static_cast<uint32_t>(probe.Probe(target) == target);
-      if (hits == _min_match) {
-        return target;
+    if constexpr (Scored) {
+      auto next = doc_limits::eof();
+      uint32_t hits = 0;
+      auto left = static_cast<uint32_t>(_probes.size());
+      for (size_t i = 0, count = _probes.size(); i != count; ++i) {
+        const auto doc = _probes[i].Probe(target);
+        if (doc == target) {
+          _matched[hits++] = static_cast<uint32_t>(i);
+          if (hits == _min_match) {
+            _doc = target;
+            return target;
+          }
+        } else {
+          next = std::min(next, doc);
+        }
+        if (hits + --left < _min_match) {
+          return target + 1;
+        }
       }
-      --left;
-      if (hits + left < _min_match) {
-        break;
+      return next;
+    } else {
+      uint32_t hits = 0;
+      uint32_t left = static_cast<uint32_t>(_probes.size());
+      for (auto& probe : _probes) {
+        hits += static_cast<uint32_t>(probe.Probe(target) == target);
+        if (hits == _min_match) {
+          return target;
+        }
+        --left;
+        if (hits + left < _min_match) {
+          break;
+        }
       }
+      return target + 1;
     }
-    return target + 1;
+  }
+
+  IRS_FORCE_INLINE void FetchScoreArgs(uint32_t slot)
+    requires Scored
+  {
+    SDB_ASSERT(slot < kScoreBlock);
+    for (const auto matched : _matched) {
+      SetBit(_held[matched], slot);
+      _probes[matched].FetchScoreArgs(slot);
+    }
+    for (size_t i = _matched[_min_match - 1] + 1, count = _probes.size();
+         i != count; ++i) {
+      if (_probes[i].Probe(_doc) != _doc) {
+        continue;
+      }
+      SetBit(_held[i], slot);
+      _probes[i].FetchScoreArgs(slot);
+    }
+  }
+
+  ScoreFunction PrepareScore(ScoreMergeType inner, score_t absorbed)
+    requires Scored
+  {
+    return search::MakeProbeOf(inner, _probes, _held, absorbed);
   }
 
  private:
   search::RunOf<Leaf, N> _probes;
+  [[no_unique_address]] utils::Need<Scored, search::RunOf<uint32_t, N>> _held;
+  [[no_unique_address]] utils::Need<Scored, search::RunOf<uint32_t, N>>
+    _matched;
+  [[no_unique_address]] utils::Need<Scored, doc_id_t> _doc =
+    doc_limits::invalid();
   uint32_t _min_match;
+};
+
+template<Type Leaf, size_t N = 0>
+class BoostLeaves {
+ public:
+  static constexpr bool kDecides = false;
+
+  template<typename Init>
+  BoostLeaves(size_t size, Init&& init)
+    : _leaves{size, std::forward<Init>(init)}, _held{size} {
+    SDB_ASSERT(!_leaves.empty());
+  }
+
+  BoostLeaves(BoostLeaves&&) = delete;
+  BoostLeaves& operator=(BoostLeaves&&) = delete;
+
+  IRS_FORCE_INLINE doc_id_t Probe(doc_id_t target) {
+    _doc = target;
+    return target;
+  }
+
+  IRS_FORCE_INLINE void FetchScoreArgs(uint32_t slot) {
+    FetchScoreArgs(slot, _doc);
+  }
+
+  IRS_FORCE_INLINE void FetchScoreArgs(uint32_t slot, doc_id_t doc) {
+    SDB_ASSERT(slot < kScoreBlock);
+    for (size_t i = 0, count = _leaves.size(); i != count; ++i) {
+      if (_leaves[i].Probe(doc) != doc) {
+        continue;
+      }
+      SetBit(_held[i], slot);
+      _leaves[i].FetchScoreArgs(slot);
+    }
+  }
+
+  ScoreFunction PrepareScore(ScoreMergeType inner) {
+    return search::MakeProbeOf(inner, _leaves, _held);
+  }
+
+  ScoreFunction PrepareScore(ScoreMergeType inner, ScoreFunction&& required,
+                             score_t absorbed) {
+    std::vector<ScoreFunction> probed;
+    probed.reserve(_leaves.size());
+    for (auto& leaf : _leaves) {
+      probed.emplace_back(leaf.PrepareScore());
+    }
+    return search::MakeProbeScore(inner, std::move(required), std::move(probed),
+                                  _held.data(), absorbed);
+  }
+
+ private:
+  search::RunOf<Leaf, N> _leaves;
+  search::RunOf<uint32_t, N> _held;
+  doc_id_t _doc = doc_limits::invalid();
 };
 
 class NoLeaves {

@@ -26,34 +26,44 @@
 #include <tuple>
 #include <type_traits>
 #include <utility>
+#include <vector>
 
+#include "basics/bit_utils.hpp"
 #include "basics/empty.hpp"
+#include "basics/shared.hpp"
+#include "iresearch/search/common/score/make_window.hpp"
+#include "iresearch/search/common/score_args.hpp"
 #include "iresearch/search/common/window.hpp"
+#include "iresearch/search/score_function.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
 namespace irs::lead {
 
-template<typename Lead, typename Others, typename Optional, typename Excludes>
+template<typename Lead, typename Others, typename Optional, typename Excludes,
+         typename Score = utils::Empty>
 class BooleanWindow {
  public:
   static constexpr bool kLead = !std::is_same_v<Lead, utils::Empty>;
   static constexpr bool kOthers = !std::is_same_v<Others, utils::Empty>;
   static constexpr bool kOptional = !std::is_same_v<Optional, utils::Empty>;
   static constexpr bool kExcludes = !std::is_same_v<Excludes, utils::Empty>;
+  static constexpr bool kScored = !std::is_same_v<Score, utils::Empty>;
   static_assert(kLead != kOptional);
   static_assert(kLead || !kOthers);
+  static_assert(!kScored || (kOptional && !kExcludes));
 
   template<typename LeadArgs, typename OthersArgs, typename OptionalArgs,
            typename ExcludesArgs>
   BooleanWindow(std::piecewise_construct_t, LeadArgs&& lead,
                 OthersArgs&& others, OptionalArgs&& optional,
-                ExcludesArgs&& excludes)
+                ExcludesArgs&& excludes, Score score = {})
     : _lead{std::make_from_tuple<Lead>(std::forward<LeadArgs>(lead))},
       _others{std::make_from_tuple<Others>(std::forward<OthersArgs>(others))},
       _optional{
         std::make_from_tuple<Optional>(std::forward<OptionalArgs>(optional))},
       _excludes{
-        std::make_from_tuple<Excludes>(std::forward<ExcludesArgs>(excludes))} {}
+        std::make_from_tuple<Excludes>(std::forward<ExcludesArgs>(excludes))},
+      _score{score} {}
 
   BooleanWindow(BooleanWindow&&) = delete;
   BooleanWindow& operator=(BooleanWindow&&) = delete;
@@ -65,6 +75,25 @@ class BooleanWindow {
       return _doc;
     }
     return _doc = From(target);
+  }
+
+  IRS_FORCE_INLINE void FetchScoreArgs(uint32_t slot)
+    requires kScored
+  {
+    SDB_ASSERT(slot < kScoreBlock);
+    _gathered[slot] = _filled ? _window[_doc - _min] : score_t{0};
+  }
+
+  ScoreFunction PrepareScore()
+    requires kScored
+  {
+    return search::MakeWindowScore(_score.inner, _gathered, _score.absorbed);
+  }
+
+  void CollectScorers(std::vector<ScoreFunction>& out)
+    requires kScored
+  {
+    search::AppendScorer(out, PrepareScore());
   }
 
  private:
@@ -97,7 +126,19 @@ class BooleanWindow {
   void Refill(doc_id_t target) {
     SDB_ASSERT(!_filled || target >= _min);
     auto* const words = _mask.data();
-    search::Clear(words, search::kWindowWords);
+    if constexpr (kScored) {
+      for (uint32_t w = 0; w != search::kWindowWords; ++w) {
+        auto word = words[w];
+        words[w] = 0;
+        const auto base = w * kBits;
+        while (word != 0) {
+          _window[base + std::countr_zero(word)] = 0;
+          word = PopBit(word);
+        }
+      }
+    } else {
+      search::Clear(words, search::kWindowWords);
+    }
     _min = target;
     _filled = true;
     const auto max = _min + kWindow;
@@ -107,6 +148,8 @@ class BooleanWindow {
       if constexpr (kOthers) {
         next = std::max(next, _others.Restrict(_min, max, words));
       }
+    } else if constexpr (kScored) {
+      next = _optional.Fill(_min, max, words, _window);
     } else {
       next = _optional.Fill(_min, max, words);
     }
@@ -132,6 +175,10 @@ class BooleanWindow {
   }
 
   search::Scratch _mask{};
+  [[no_unique_address]] ABSL_CACHELINE_ALIGNED
+    utils::Need<kScored, score_t[kWindow]> _window{};
+  [[no_unique_address]] ABSL_CACHELINE_ALIGNED
+    utils::Need<kScored, score_t[kScoreBlock]> _gathered{};
   [[no_unique_address]] Lead _lead;
   [[no_unique_address]] Others _others;
   [[no_unique_address]] Optional _optional;
@@ -141,6 +188,7 @@ class BooleanWindow {
   doc_id_t _doc = doc_limits::invalid();
   bool _filled = false;
   bool _spent = false;
+  [[no_unique_address]] Score _score;
 };
 
 }  // namespace irs::lead

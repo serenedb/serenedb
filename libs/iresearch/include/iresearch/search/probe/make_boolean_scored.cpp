@@ -20,59 +20,21 @@
 
 #include <algorithm>
 #include <span>
-#include <type_traits>
+#include <tuple>
 #include <utility>
 
+#include "basics/empty.hpp"
 #include "iresearch/index/index_reader.hpp"
+#include "iresearch/search/boolean_query.hpp"
 #include "iresearch/search/common/collect.hpp"
-#include "iresearch/search/common/optional_scored.hpp"
-#include "iresearch/search/common/resolve.hpp"
+#include "iresearch/search/common/score_policy.hpp"
+#include "iresearch/search/common/scored_context.hpp"
+#include "iresearch/search/probe/boolean_sparse.hpp"
 #include "iresearch/search/probe/impl.hpp"
-#include "iresearch/search/probe/leaves.hpp"
 #include "iresearch/search/probe/make.hpp"
 #include "iresearch/search/probe/plan.hpp"
-#include "iresearch/search/probe/sparse_conjunction_scored.hpp"
 
 namespace irs::probe {
-
-Node::ptr MakeSparseConjunctionScored(
-  std::span<const search::PostingClause> terms,
-  std::span<const QueryBuilder::ptr> filters, search::Terms uniformity,
-  const SubReader& segment, const ScoreRecipe& recipe, ScoreMergeType merge,
-  uint64_t interrogations, const ScoredCtx& ctx, score_t absorbed) {
-  const auto size = terms.size() + filters.size();
-  if (size == 0) {
-    return absorbed != 0 ? MakeAllScored(segment, absorbed) : Node::ptr{};
-  }
-  const auto clause = ScoredClauseOf(segment, ctx, recipe);
-  if (size == 1) {
-    auto only =
-      filters.empty()
-        ? clause(terms.front(), nullptr, interrogations)
-        : clause(search::PostingClause{TermState{nullptr, PostingMeta{}}},
-                 filters.front().get(), interrogations);
-    if (absorbed == 0 || !only) {
-      return only;
-    }
-    using Node = SparseConjunctionScored<Erased>;
-    return memory::make_managed<Impl<Node>>(Erased{std::move(only)}, merge,
-                                            absorbed);
-  }
-  return search::BuildOptionalLeaves<Node::ptr>(
-    terms, filters, uniformity, nullptr, nullptr, kNoBoost, segment, recipe,
-    interrogations, clause,
-    [&]<typename Leaf>(size_t size, auto&& init) -> Node::ptr {
-      return search::ResolveArity<search::kRunArity, search::kRunFloor>(
-        size, [&]<size_t N> -> Node::ptr {
-          using Node = SparseConjunctionScored<AndLeaves<Leaf, N>>;
-          return memory::make_managed<Impl<Node>>(
-            std::piecewise_construct,
-            std::forward_as_tuple(size, std::forward<decltype(init)>(init)),
-            merge, absorbed);
-        });
-    },
-    search::ProbeOrder::Narrowest);
-}
 
 Node::ptr MakeRequiredScored(
   std::span<const search::PostingClause> must,
@@ -114,10 +76,43 @@ Node::ptr MakeRequiredScored(
   if (!required) {
     return {};
   }
-  using Leaves = BothLeaves<Erased, Erased>;
-  using Node = SparseConjunctionScored<Leaves>;
+  using Node = BooleanSparse<Erased, Erased, utils::Empty, search::Scored>;
   return memory::make_managed<Impl<Node>>(
-    Leaves{Erased{std::move(required)}, Erased{std::move(optional)}}, merge);
+    std::piecewise_construct, std::forward_as_tuple(std::move(required)),
+    std::forward_as_tuple(std::move(optional)), std::forward_as_tuple(),
+    search::Scored{merge, 0});
+}
+
+Node::ptr Make(const BooleanQuery& query, const ScoredCtx& ctx,
+               uint64_t interrogations) {
+  const auto& segment = query.Segment();
+  const auto merge = query.MergeType();
+  const ScoreRecipe recipe{.segment = &segment, .fetcher = ctx.fetcher};
+  const auto absorbed = query.Absorbed();
+  const auto must = query.Terms(Occur::Must);
+  const auto must_filters = query.Queries(Occur::Must);
+  const auto must_uniformity = query.Uniformity(Occur::Must);
+  const auto should = query.Terms(Occur::Should);
+  const auto should_filters = query.Queries(Occur::Should);
+  const auto should_uniformity = query.Uniformity(Occur::Should);
+  const auto min_should_match = query.MinShouldMatch();
+  const auto exclude = query.Terms(Occur::MustNot);
+  const auto exclude_filters = query.Queries(Occur::MustNot);
+  if (!exclude.empty() || !exclude_filters.empty()) {
+    return MakeSparseExclusionScored(
+      must, must_filters, must_uniformity, should, should_filters,
+      should_uniformity, min_should_match, exclude, exclude_filters, segment,
+      recipe, merge, interrogations, ctx, absorbed);
+  }
+  if ((!should.empty() || !should_filters.empty()) && min_should_match == 0) {
+    return MakeSparseBoostScored(must, must_filters, must_uniformity, should,
+                                 should_filters, should_uniformity, segment,
+                                 recipe, merge, interrogations, ctx, absorbed);
+  }
+  return MakeRequiredScored(must, must_filters, must_uniformity, should,
+                            should_filters, should_uniformity, min_should_match,
+                            segment, recipe, merge, interrogations, ctx,
+                            absorbed);
 }
 
 }  // namespace irs::probe

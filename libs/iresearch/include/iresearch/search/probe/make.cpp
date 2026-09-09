@@ -187,37 +187,4 @@ Node::ptr Make(const WildcardNGramQuery& query, const ScoredCtx& ctx,
     interrogations);
 }
 
-Node::ptr Make(const BooleanQuery& query, const ScoredCtx& ctx,
-               uint64_t interrogations) {
-  const auto& segment = query.Segment();
-  const auto merge = query.MergeType();
-  const auto recipe = RecipeOf(segment, ctx);
-  const auto absorbed = query.Absorbed();
-  const auto must = query.Terms(Occur::Must);
-  const auto must_filters = query.Queries(Occur::Must);
-  const auto must_uniformity = query.Uniformity(Occur::Must);
-  const auto should = query.Terms(Occur::Should);
-  const auto should_filters = query.Queries(Occur::Should);
-  const auto should_uniformity = query.Uniformity(Occur::Should);
-  const auto min_should_match = query.MinShouldMatch();
-  const auto exclude = query.Terms(Occur::MustNot);
-  const auto exclude_filters = query.Queries(Occur::MustNot);
-
-  if (!exclude.empty() || !exclude_filters.empty()) {
-    return MakeSparseExclusionScored(
-      must, must_filters, must_uniformity, should, should_filters,
-      should_uniformity, min_should_match, exclude, exclude_filters, segment,
-      recipe, merge, interrogations, ctx, absorbed);
-  }
-  if ((!should.empty() || !should_filters.empty()) && min_should_match == 0) {
-    return MakeSparseBoostScored(must, must_filters, must_uniformity, should,
-                                 should_filters, should_uniformity, segment,
-                                 recipe, merge, interrogations, ctx, absorbed);
-  }
-  return MakeRequiredScored(must, must_filters, must_uniformity, should,
-                            should_filters, should_uniformity, min_should_match,
-                            segment, recipe, merge, interrogations, ctx,
-                            absorbed);
-}
-
 }  // namespace irs::probe

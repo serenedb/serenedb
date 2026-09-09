@@ -30,7 +30,10 @@
 #include "iresearch/search/common/bitset_of.hpp"
 #include "iresearch/search/common/boolean_groups.hpp"
 #include "iresearch/search/common/collect.hpp"
+#include "iresearch/search/common/collect_scored.hpp"
 #include "iresearch/search/common/plan.hpp"
+#include "iresearch/search/common/score_policy.hpp"
+#include "iresearch/search/common/scored_context.hpp"
 #include "iresearch/search/fill/boolean_window.hpp"
 #include "iresearch/search/fill/impl.hpp"
 #include "iresearch/search/fill/plan.hpp"
@@ -40,6 +43,28 @@ namespace irs::fill {
 
 Node::ptr MakeBitsetDocs(const search::BooleanGroups& groups,
                          const SubReader& segment);
+
+Node::ptr MakeSparseConjunctionScored(
+  std::span<const search::PostingClause> terms,
+  std::span<const QueryBuilder::ptr> filters, const SubReader& segment,
+  const ScoredCtx& ctx, ScoreMergeType merge, score_t absorbed);
+Node::ptr MakeSparseExclusionScored(
+  std::span<const search::PostingClause> must_terms,
+  std::span<const QueryBuilder::ptr> must_filters,
+  std::span<const search::PostingClause> should_terms,
+  std::span<const QueryBuilder::ptr> should_filters,
+  search::Terms should_uniformity, uint32_t min_should_match,
+  std::span<const search::PostingClause> exclude_terms,
+  std::span<const QueryBuilder::ptr> exclude_filters, const SubReader& segment,
+  const ScoredCtx& ctx, ScoreMergeType merge, ScoreMergeType own,
+  score_t absorbed);
+Node::ptr MakeSparseBoostScored(
+  std::span<const search::PostingClause> must_terms,
+  std::span<const QueryBuilder::ptr> must_filters,
+  std::span<const search::PostingClause> should_terms,
+  std::span<const QueryBuilder::ptr> should_filters, search::Terms uniformity,
+  const SubReader& segment, const ScoredCtx& ctx, ScoreMergeType merge,
+  score_t absorbed);
 
 Node::ptr MakeWindowDisjunctionDocs(
   std::span<const search::PostingClause> terms, const IndexInput* doc,
@@ -109,6 +134,26 @@ Node::ptr MakeDisjunctionOfTermsDocs(std::span<const Term> terms,
                                            nullptr);
   }
   return MakeWindowDisjunctionOfTermsDocs(terms, field, doc);
+}
+
+template<typename Term>
+Node::ptr MakeWindowDisjunctionScored(
+  std::span<const Term> terms, const TermReader* field, const Scorer* scorer,
+  score_t boost, const IndexInput* doc, std::vector<Node::ptr>& rest,
+  search::Terms uniformity, const ScoreRecipe& recipe, ScoreMergeType merge,
+  score_t absorbed = 0) {
+  SDB_ASSERT(!terms.empty() || !rest.empty());
+  const auto make = [&]<typename Set>(auto&&... args) -> Node::ptr {
+    using Node = BooleanWindow<utils::Empty, utils::Empty, search::OrGroup<Set>,
+                               utils::Empty, search::Scored>;
+    return memory::make_managed<Impl<Node>>(
+      std::piecewise_construct, std::forward_as_tuple(),
+      std::forward_as_tuple(),
+      std::forward_as_tuple(std::forward<decltype(args)>(args)...),
+      std::forward_as_tuple(), search::Scored{merge, absorbed});
+  };
+  return search::BuildScoredWindow<Node::ptr>(
+    terms, field, scorer, boost, doc, rest, uniformity, recipe, merge, make);
 }
 
 }  // namespace irs::fill

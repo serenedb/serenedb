@@ -23,27 +23,44 @@
 #include <tuple>
 #include <type_traits>
 #include <utility>
+#include <vector>
 
 #include "basics/empty.hpp"
+#include "basics/shared.hpp"
+#include "iresearch/search/common/score/make_conjunction.hpp"
+#include "iresearch/search/common/score_args.hpp"
+#include "iresearch/search/common/score_policy.hpp"
 #include "iresearch/search/lead/concept.hpp"
+#include "iresearch/search/score_function.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
 namespace irs::lead {
 
-template<Type Lead, typename Probes, typename Excludes>
+template<Type Lead, typename Probes, typename Optional, typename Excludes,
+         typename Score = utils::Empty>
 class BooleanSparse {
  public:
   static constexpr bool kProbes = !std::is_same_v<Probes, utils::Empty>;
+  static constexpr bool kOptional = !std::is_same_v<Optional, utils::Empty>;
   static constexpr bool kExcludes = !std::is_same_v<Excludes, utils::Empty>;
-  static_assert(kProbes || kExcludes);
+  static constexpr bool kScored = std::is_same_v<Score, search::Scored>;
+  static constexpr bool kInherited = std::is_same_v<Score, search::Inherited>;
+  static_assert(kProbes || kOptional || kExcludes);
+  static_assert(kScored || !kOptional);
+  static_assert(!kInherited || (!kProbes && !kOptional));
 
-  template<typename LeadArgs, typename ProbesArgs, typename ExcludesArgs>
+  template<typename LeadArgs, typename ProbesArgs, typename OptionalArgs,
+           typename ExcludesArgs>
   BooleanSparse(std::piecewise_construct_t, LeadArgs&& lead,
-                ProbesArgs&& probes, ExcludesArgs&& excludes)
+                ProbesArgs&& probes, OptionalArgs&& optional,
+                ExcludesArgs&& excludes, Score score = {})
     : _lead{std::make_from_tuple<Lead>(std::forward<LeadArgs>(lead))},
       _probes{std::make_from_tuple<Probes>(std::forward<ProbesArgs>(probes))},
+      _optional{
+        std::make_from_tuple<Optional>(std::forward<OptionalArgs>(optional))},
       _excludes{
-        std::make_from_tuple<Excludes>(std::forward<ExcludesArgs>(excludes))} {}
+        std::make_from_tuple<Excludes>(std::forward<ExcludesArgs>(excludes))},
+      _score{score} {}
 
   BooleanSparse(BooleanSparse&&) = delete;
   BooleanSparse& operator=(BooleanSparse&&) = delete;
@@ -57,7 +74,56 @@ class BooleanSparse {
     return Converge(_lead.Seek(target));
   }
 
+  IRS_FORCE_INLINE void FetchScoreArgs(uint32_t slot)
+    requires(kScored || kInherited)
+  {
+    _lead.FetchScoreArgs(slot);
+    if constexpr (kProbes) {
+      _probes.FetchScoreArgs(slot);
+    }
+    if constexpr (kOptional) {
+      _optional.FetchScoreArgs(slot, _doc);
+    }
+  }
+
+  ScoreFunction PrepareScore()
+    requires(kScored || kInherited)
+  {
+    if constexpr (kInherited) {
+      return _lead.PrepareScore();
+    } else {
+      auto required = Required();
+      if constexpr (kOptional) {
+        return _optional.PrepareScore(_score.inner, std::move(required),
+                                      _score.absorbed);
+      } else {
+        return required;
+      }
+    }
+  }
+
+  void CollectScorers(std::vector<ScoreFunction>& out)
+    requires(kScored || kInherited)
+  {
+    search::AppendScorer(out, PrepareScore());
+  }
+
  private:
+  ScoreFunction Required()
+    requires kScored
+  {
+    if constexpr (kProbes) {
+      std::vector<ScoreFunction> scorers;
+      search::AppendScorer(scorers, _lead.PrepareScore());
+      _probes.CollectScorers(scorers);
+      return search::MakeConjunctionScore(
+        _score.inner, std::move(scorers),
+        kOptional ? score_t{0} : _score.absorbed);
+    } else {
+      return _lead.PrepareScore();
+    }
+  }
+
   doc_id_t Converge(doc_id_t doc) {
     while (!doc_limits::eof(doc)) {
       if constexpr (kProbes) {
@@ -80,8 +146,10 @@ class BooleanSparse {
 
   Lead _lead;
   [[no_unique_address]] Probes _probes;
+  [[no_unique_address]] Optional _optional;
   [[no_unique_address]] Excludes _excludes;
   doc_id_t _doc = doc_limits::invalid();
+  [[no_unique_address]] Score _score;
 };
 
 }  // namespace irs::lead

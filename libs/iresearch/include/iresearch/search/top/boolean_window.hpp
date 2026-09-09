@@ -27,6 +27,7 @@
 #include "basics/bit_utils.hpp"
 #include "basics/empty.hpp"
 #include "iresearch/index/iterators.hpp"
+#include "iresearch/search/common/boolean_groups.hpp"
 #include "iresearch/search/common/window.hpp"
 #include "iresearch/search/top/admit.hpp"
 #include "iresearch/search/top/root.hpp"
@@ -42,7 +43,9 @@ class BooleanWindow : public Root {
   static constexpr bool kLead = !std::is_same_v<Lead, utils::Empty>;
   static constexpr bool kOptional = !std::is_same_v<Optional, utils::Empty>;
   static constexpr bool kExcludes = !std::is_same_v<Excludes, utils::Empty>;
+  static constexpr bool kTally = kOptional && search::Tallies<Optional>();
   static_assert(kLead != kOptional);
+  static_assert(!kTally || !kExcludes);
 
   template<typename LeadArgs, typename OptionalArgs, typename ExcludesArgs>
   BooleanWindow(Table table, std::piecewise_construct_t, LeadArgs&& lead,
@@ -72,6 +75,9 @@ class BooleanWindow : public Root {
         if constexpr (kExcludes) {
           _excludes.Remove(min, max, _mask);
         }
+      } else if constexpr (kTally) {
+        next = _optional.FillTouched(min, max, _mask, _window);
+        Tally();
       } else {
         next = _optional.Fill(min, max, _mask, _window);
         if constexpr (kExcludes) {
@@ -85,6 +91,39 @@ class BooleanWindow : public Root {
   }
 
  private:
+  void Tally() {
+    auto* const counts_base = _optional.Counts();
+    const auto min_match = _optional.MinMatch();
+    for (size_t w = 0; w != kNumWords; ++w) {
+      auto touched = _mask[w];
+      if (touched == 0) {
+        continue;
+      }
+      const auto base = w * BitsRequired<uint64_t>();
+      auto* const counts = counts_base + base;
+      auto* const slots = _window + base;
+      uint64_t answer = touched;
+      if (std::popcount(touched) >= search::kDenseWord) {
+        answer = search::TallyAnswer(counts, min_match);
+        std::fill_n(counts, BitsRequired<uint64_t>(), uint32_t{0});
+        if (answer == 0) {
+          std::fill_n(slots, BitsRequired<uint64_t>(), score_t{0});
+        }
+      } else {
+        while (touched != 0) {
+          const auto bit = static_cast<uint32_t>(std::countr_zero(touched));
+          if (counts[bit] < min_match) {
+            answer ^= uint64_t{1} << bit;
+            slots[bit] = 0;
+          }
+          counts[bit] = 0;
+          touched = PopBit(touched);
+        }
+      }
+      _mask[w] = answer;
+    }
+  }
+
   ABSL_CACHELINE_ALIGNED uint64_t _mask[kNumWords]{};
   ABSL_CACHELINE_ALIGNED score_t _window[kWindow]{};
   [[no_unique_address]] Lead _lead;

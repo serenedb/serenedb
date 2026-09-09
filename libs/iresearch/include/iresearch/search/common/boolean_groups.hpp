@@ -50,6 +50,15 @@ struct BooleanGroups {
 
 inline constexpr int kDenseWord = 16;
 
+inline IRS_FORCE_INLINE uint64_t
+TallyAnswer(const uint32_t* IRS_RESTRICT counts, uint32_t min_match) noexcept {
+  uint64_t answer = 0;
+  for (uint32_t i = 0; i != kWindowBits; ++i) {
+    answer |= uint64_t{counts[i] >= min_match} << i;
+  }
+  return answer;
+}
+
 inline IRS_FORCE_INLINE void ResetTouched(uint64_t touched,
                                           score_t* IRS_RESTRICT scores,
                                           score_t constant) noexcept {
@@ -207,6 +216,7 @@ class TallyGroup {
  public:
   static constexpr bool kRetracts = true;
   static constexpr bool kLazyReset = Lazy;
+  static constexpr bool kTally = !Lazy;
 
   template<typename LeavesArgs>
   TallyGroup(std::piecewise_construct_t, LeavesArgs&& leaves,
@@ -221,6 +231,22 @@ class TallyGroup {
   TallyGroup& operator=(TallyGroup&&) = delete;
 
   bool Exhausted() const noexcept { return _leaves.Live() < _min_match; }
+
+  uint32_t* Counts() noexcept { return _counts; }
+
+  uint32_t MinMatch() const noexcept { return _min_match; }
+
+  doc_id_t FillTouched(doc_id_t min, doc_id_t max, uint64_t* IRS_RESTRICT words,
+                       score_t* IRS_RESTRICT scores) {
+    static_assert(!Lazy);
+    if (Exhausted()) {
+      return doc_limits::eof();
+    }
+    const auto next = _leaves.Visit(max, [&](auto& leaf) IRS_FORCE_INLINE {
+      return leaf.Count(min, max, _counts, words, scores);
+    });
+    return Exhausted() ? doc_limits::eof() : next;
+  }
 
   doc_id_t Fill(doc_id_t min, doc_id_t max, uint64_t* IRS_RESTRICT words) {
     if (Exhausted()) {
@@ -273,9 +299,7 @@ class TallyGroup {
       auto* const slots = scores + base;
       uint64_t answer = 0;
       if (std::popcount(touched) >= kDenseWord) {
-        for (uint32_t i = 0; i != kWindowBits; ++i) {
-          answer |= uint64_t{counts[i] >= min_match} << i;
-        }
+        answer = TallyAnswer(counts, min_match);
         std::fill_n(counts, kWindowBits, uint32_t{0});
         if constexpr (!Lazy) {
           for (uint32_t i = 0; i != kWindowBits; ++i) {

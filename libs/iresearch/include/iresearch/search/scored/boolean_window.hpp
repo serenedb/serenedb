@@ -29,6 +29,7 @@
 
 #include "basics/bit_utils.hpp"
 #include "basics/empty.hpp"
+#include "iresearch/search/common/boolean_groups.hpp"
 #include "iresearch/search/common/table_filter.hpp"
 #include "iresearch/search/common/window.hpp"
 #include "iresearch/search/scored/root.hpp"
@@ -47,7 +48,9 @@ class BooleanWindow : public Root {
   static constexpr bool kOptional = !std::is_same_v<Optional, utils::Empty>;
   static constexpr bool kExcludes = !std::is_same_v<Excludes, utils::Empty>;
   static constexpr bool kResets = kOptional && !search::LazyReset<Optional>();
+  static constexpr bool kTally = kOptional && search::Tallies<Optional>();
   static_assert(kLead != kOptional);
+  static_assert(!kTally || !kExcludes);
 
   template<typename LeadArgs, typename OptionalArgs, typename ExcludesArgs>
   BooleanWindow(Table table, std::piecewise_construct_t, LeadArgs&& lead,
@@ -86,6 +89,40 @@ class BooleanWindow : public Root {
         }
         _mask[_word] = 0;
         const auto base = _word * BitsRequired<uint64_t>();
+        if constexpr (kTally) {
+          auto* const counts = _optional.Counts() + base;
+          const auto min_match = _optional.MinMatch();
+          if (std::popcount(word) >= search::kDenseWord) {
+            const auto answer = search::TallyAnswer(counts, min_match);
+            std::fill_n(counts, BitsRequired<uint64_t>(), uint32_t{0});
+            const auto first = n;
+            n = static_cast<uint32_t>(
+              MaterializeWord(min + static_cast<doc_id_t>(base), answer,
+                              out + n) -
+              out);
+            const auto padded = first + ((n - first + 7) & ~uint32_t{7});
+            for (auto i = first; i != padded; i += 8) {
+              for (uint32_t j = 0; j != 8; ++j) {
+                scores[i + j] = window[out[i + j] - min];
+              }
+            }
+            std::fill_n(_window + base, BitsRequired<uint64_t>(), _constant);
+            continue;
+          }
+          while (word != 0) {
+            const auto bit = static_cast<uint32_t>(std::countr_zero(word));
+            const auto offset = base + bit;
+            if (counts[bit] >= min_match) {
+              out[n] = min + static_cast<doc_id_t>(offset);
+              scores[n] = _window[offset];
+              ++n;
+            }
+            counts[bit] = 0;
+            _window[offset] = _constant;
+            word = PopBit(word);
+          }
+          continue;
+        }
         if (std::popcount(word) < kSparseWord) {
           while (word != 0) {
             const auto offset =
@@ -128,6 +165,8 @@ class BooleanWindow : public Root {
         if constexpr (kExcludes) {
           _excludes.Remove(_min, max, _mask);
         }
+      } else if constexpr (kTally) {
+        next = _optional.FillTouched(_min, max, _mask, _window);
       } else {
         next = _optional.Fill(_min, max, _mask, _window);
         if constexpr (kExcludes) {

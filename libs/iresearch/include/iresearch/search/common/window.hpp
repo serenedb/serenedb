@@ -88,6 +88,15 @@ consteval bool LazyReset() {
   }
 }
 
+template<typename Group>
+consteval bool Tallies() {
+  if constexpr (requires { Group::kTally; }) {
+    return Group::kTally;
+  } else {
+    return false;
+  }
+}
+
 inline IRS_FORCE_INLINE void Clear(uint64_t* IRS_RESTRICT dst,
                                    size_t words) noexcept {
   for (size_t w = 0; w != words; ++w) {

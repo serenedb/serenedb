@@ -21,61 +21,32 @@
 #pragma once
 
 #include <cstddef>
-#include <memory>
 #include <string>
 
-#include "analyzer.hpp"
-#include "token_attributes.hpp"
+#include "tokenizer.hpp"
 
-namespace irs {
-namespace analysis {
+namespace irs::analysis {
 
-/// @brief tokenizer that treats text as a path hierarchy and generates
-///        tokens at each level of the hierarchy
-/// @note expects UTF-8 encoded input, e.g. "/a/b/c" generates tokens:
-///       "/a", "/a/b", "/a/b/c" or in reverse mode: "/a/b/c", "a/b/c", "b/c",
-///       "c"
-/// @note Configuration (compatible with Lucene PathHierarchyTokenizer):
-///       - delimiter: path separator (default: "/"); UTF-8 byte sequence
-///       - replacement: optional replacement for delimiter (default: delimiter)
-///       - buffer_size: the number of characters read into the term buffer in a
-///       single pass. Defaults to 1024. The term buffer will grow by this size
-///       until all the text has been consumed. It is advisable not to change
-///       this setting.
-///       - reverse: use reverse tokenization for domain-like hierarchies
-///       (default: false)
-///       - skip: number of initial tokens to skip (default: 0)
-class PathHierarchyTokenizer : public TypedAnalyzer<PathHierarchyTokenizer> {
+class PathHierarchyTokenizer {
  public:
   struct Options {
     using Owner = PathHierarchyTokenizer;
-    std::string delimiter = "/";    // path separator (byte sequence)
-    std::string replacement = "/";  // replacement for delimiter
-    size_t buffer_size = 1024;      // term buffer size hint
-    size_t skip = 0;                // skip first N tokens
-    bool reverse = false;           // reverse: domain hierarchies
+    std::string delimiter = "/";
+    std::string replacement = "/";
+    size_t skip = 0;
+    bool reverse = false;
   };
 
   static constexpr std::string_view type_name() noexcept {
     return "path_hierarchy";
   }
 
-  static Analyzer::ptr Make(Options opts);
-
-  ~PathHierarchyTokenizer() override;
-
-  Attribute* GetMutable(TypeInfo::type_id type) noexcept final;
+  static Tokenizer::ptr Make(Options opts);
 
  protected:
   explicit PathHierarchyTokenizer(Options&& options) noexcept;
 
-  using Attributes = std::tuple<IncAttr, OffsAttr, TermAttr>;
-  Attributes _attrs;
   const Options _options;
-
-  bool _term_eof = true;
-  std::string_view _data;  // input data
 };
 
-}  // namespace analysis
-}  // namespace irs
+}  // namespace irs::analysis

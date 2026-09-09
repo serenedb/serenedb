@@ -6,20 +6,44 @@ set(iresearch-tests_sources
     ./analysis/nearest_neighbors_tokenizer_test.cpp
     ./analysis/ngram_tokenizer_test.cpp
     ./analysis/sparse_ngram_tokenizer_test.cpp
-    ./analysis/minhash_tokenizer_test.cpp
     ./analysis/multi_delimited_tokenizer_tests.cpp
     ./analysis/pipeline_tokenizer_tests.cpp
+    ./analysis/text_pipeline_equivalence_tests.cpp
     ./analysis/union_tokenizer_tests.cpp
     ./analysis/segmentation_tokenizer_tests.cpp
+    ./analysis/text/case_tests.cpp
+    ./analysis/text/normalize_tests.cpp
+    ./analysis/text/stem_cache_tests.cpp
+    ./analysis/text/string_table_tests.cpp
+    ./analysis/resources_tests.cpp
+    ./analysis/shared_object_cache_tests.cpp
+    ./analysis/text/sentence_tests.cpp
+    ./analysis/text/words_tests.cpp
     ./analysis/normalizing_tokenizer_tests.cpp
+    ./analysis/geo_tokenizer_tests.cpp
     ./analysis/stemming_tokenizer_tests.cpp
     ./analysis/stopwords_tokenizer_tests.cpp
     ./analysis/solr_synonyms_tokenizer_tests.cpp
+    ./analysis/split_by_non_alpha_tokenizer_tests.cpp
     ./analysis/wordnet_synonyms_tokenizer_tests.cpp
     ./analysis/path_hierarchy_tokenizer_test.cpp
     ./analysis/token_attributes_test.cpp
     ./analysis/tokenizer_tests.cpp
+    ./analysis/tokenizer_fuzz_corpus.cpp
+    ./analysis/tokenizer_fuzz_mutator.cpp
+    ./analysis/tokenizer_fuzz_oracles.cpp
+    ./analysis/tokenizer_fuzz_specs.cpp
+    ./analysis/tokenizer_fuzz_checks.cpp
+    ./analysis/tokenizer_fuzz_tests.cpp
+    ./analysis/tokenizer_inversion_tests.cpp
+    ./analysis/tokenizer_store_tests.cpp
+    ./analysis/tokenizer_config_tests.cpp
+    ./analysis/tokenizer_lifecycle_tests.cpp
     ./analysis/pattern_tokenizer_tests.cpp
+    ./analysis/shingle_tokenizer_tests.cpp
+    ./analysis/sql_tokenizer_tests.cpp
+    ./analysis/sql_tokenizer_fuzz_tests.cpp
+    ./analysis/wildcard_tokenizer_tests.cpp
     ./formats/column/column_reader_test.cpp
     ./formats/column/test_cs_helpers.cpp
     ./formats/columnstore2_test.cpp
@@ -46,8 +70,9 @@ set(iresearch-tests_sources
     ./index/norm_test.cpp
     ./index/index_death_tests.cpp
     ./index/field_meta_test.cpp
+    ./index/inverter_oracle_test.cpp
+    ./index/inverter_tests.cpp
     ./index/merge_writer_tests.cpp
-    ./index/postings_tests.cpp
     ./index/segment_writer_tests.cpp
     ./index/sorted_index_tests.cpp
     ./index/compaction_policy_tests.cpp
@@ -91,7 +116,7 @@ set(iresearch-tests_sources
     ./search/top_terms_selector_test.cpp
     ./search/geo_filter_test.cpp
     ./search/geo_distance_filter_test.cpp
-    ./search/geo_analyzer_test.cpp
+    ./search/geo_tokenizer_test.cpp
     ./search/doc_collector_test.cpp
     ./search/merge_consistency_test.cpp
     ./search/vector_similarity_query_test.cpp
@@ -112,7 +137,6 @@ set(iresearch-tests_sources
     ./utils/directory_utils_tests.cpp
     ./utils/bit_packing_tests.cpp
     ./utils/bit_utils_tests.cpp
-    ./utils/block_pool_test.cpp
     ./utils/levenshtein_utils_test.cpp
     ./utils/wildcard_utils_test.cpp
     ./utils/regexp_utils_test.cpp
@@ -136,6 +160,11 @@ set(iresearch-tests_sources
 )
 
 set(iresearch-tests_headers
+    ./analysis/tokenizer_fuzz_corpus.hpp
+    ./analysis/tokenizer_fuzz_mutator.hpp
+    ./analysis/tokenizer_fuzz_oracles.hpp
+    ./analysis/tokenizer_fuzz_specs.hpp
+    ./analysis/tokenizer_fuzz_checks.hpp
     ./index/assert_format.hpp
     ./index/doc_generator.hpp
     ./index/index_tests.hpp
@@ -197,7 +226,6 @@ target_include_directories(
     PRIVATE
         ${Fasttext_INCLUDE_DIR}
         ${Boost_INCLUDE_DIRS}
-        ${FROZEN_INCLUDE_DIR}
         $<TARGET_PROPERTY:iresearch-ofst,INTERFACE_INCLUDE_DIRECTORIES>
         ${CMAKE_SOURCE_DIR}/third_party/duckdb/third_party/utf8proc/include
 )
@@ -234,7 +262,6 @@ target_include_directories(
     PRIVATE
         ${Fasttext_INCLUDE_DIR}
         ${Boost_INCLUDE_DIRS}
-        ${FROZEN_INCLUDE_DIR}
         $<TARGET_PROPERTY:iresearch-ofst,INTERFACE_INCLUDE_DIRECTORIES>
         ${CMAKE_SOURCE_DIR}/third_party/duckdb/third_party/utf8proc/include
 )

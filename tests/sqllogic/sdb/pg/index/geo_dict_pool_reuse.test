@@ -1,0 +1,52 @@
+control substitution on
+
+# Regression: a pooled geo analyzer leased for GEOMETRY (WKB) ingest must be
+# reset to text-input mode when returned to the pool. Before the fix the
+# instance kept wkb mode, so a later ts_lexize lease of the same dictionary
+# fed GeoJSON text through a WKB parser and produced no tokens.
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY geo_pool_dict(template = 'geojson',
+    coding = 's2point');
+
+query
+SELECT count(*) > 0 AS has_tokens
+FROM unnest(ts_lexize('geo_pool_dict',
+    '{"type":"Point","coordinates":[37.6156,55.7522]}')) AS t;
+----
+has_tokens
+t
+
+statement ok
+CREATE TABLE geo_pool_t(pk INTEGER PRIMARY KEY, g GEOMETRY('OGC:CRS84'));
+
+statement ok
+CREATE INDEX geo_pool_idx ON geo_pool_t USING inverted(pk, g geo_pool_dict);
+
+statement ok
+INSERT INTO geo_pool_t VALUES
+    (1, 'POINT(0 0)'::GEOMETRY('OGC:CRS84')),
+    (2, 'POINT(10 20)'::GEOMETRY('OGC:CRS84'));
+
+statement ok
+VACUUM (REFRESH_TABLE) geo_pool_t;
+
+query
+SELECT count(*) FROM geo_pool_idx;
+----
+count
+2
+
+query
+SELECT count(*) > 0 AS has_tokens
+FROM unnest(ts_lexize('geo_pool_dict',
+    '{"type":"Point","coordinates":[37.6156,55.7522]}')) AS t;
+----
+has_tokens
+t
+
+statement ok
+DROP TABLE geo_pool_t CASCADE;
+
+statement ok
+DROP TEXT SEARCH DICTIONARY geo_pool_dict;

@@ -21,9 +21,11 @@
 /// @author Vasiliy Nabatchikov
 ////////////////////////////////////////////////////////////////////////////////
 
-#include "iresearch/analysis/analyzer.hpp"
 #include "iresearch/analysis/text_tokenizer.hpp"
+#include "iresearch/analysis/tokenizer.hpp"
+#include "test_resources.hpp"
 #include "tests_shared.hpp"
+#include "token_sink_utils.hpp"
 
 namespace tests {
 
@@ -41,13 +43,14 @@ using namespace tests;
 TEST_F(AnalyzerTest, test_load) {
   // locale with default ingnored_words
   {
-    auto analyzer =
-      irs::analysis::TextTokenizer::Make(irs::analysis::TextTokenizer::Options{
+    auto analyzer = irs::analysis::TextTokenizer::Make(
+      irs::analysis::TextTokenizer::Options{
         .locale = icu::Locale::createFromName("en"),
-      });
+      },
+      tests::Cache());
 
     ASSERT_NE(nullptr, analyzer);
-    ASSERT_TRUE(analyzer->reset("abc"));
+    ASSERT_TRUE(tests::Analyze(*analyzer, "abc").has_value());
   }
 
   // locale with provided ignored_words
@@ -55,14 +58,15 @@ TEST_F(AnalyzerTest, test_load) {
     irs::analysis::TextTokenizer::Options opts{
       .locale = icu::Locale::createFromName("en"),
     };
-    opts.explicit_stopwords.insert("abc");
-    opts.explicit_stopwords.insert("def");
-    opts.explicit_stopwords.insert("ghi");
+    opts.explicit_stopwords.push_back("abc");
+    opts.explicit_stopwords.push_back("def");
+    opts.explicit_stopwords.push_back("ghi");
     opts.explicit_stopwords_set = true;
-    auto analyzer = irs::analysis::TextTokenizer::Make(std::move(opts));
+    auto analyzer =
+      irs::analysis::TextTokenizer::Make(std::move(opts), tests::Cache());
 
     ASSERT_NE(nullptr, analyzer);
-    ASSERT_TRUE(analyzer->reset("abc"));
+    ASSERT_TRUE(tests::Analyze(*analyzer, "abc").has_value());
   }
 
   // .........................................................................
@@ -73,6 +77,6 @@ TEST_F(AnalyzerTest, test_load) {
   // .........................................................................
   {
     ASSERT_ANY_THROW(irs::analysis::TextTokenizer::Make(
-      irs::analysis::TextTokenizer::Options{}));
+      irs::analysis::TextTokenizer::Options{}, tests::Cache()));
   }
 }

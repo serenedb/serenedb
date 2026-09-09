@@ -24,54 +24,90 @@
 #pragma once
 
 #include <unicode/locid.h>
+#include <unicode/normalizer2.h>
+#include <unicode/translit.h>
 
-#include "analyzer.hpp"
-#include "iresearch/utils/attribute_helper.hpp"
+#include <memory>
+#include <string>
+#include <tuple>
+
+#include "basics/noncopyable.hpp"
+#include "iresearch/analysis/process_tokens.hpp"
 #include "iresearch/utils/icu_locale_serde.hpp"
-#include "token_attributes.hpp"
+#include "tokenizer.hpp"
 
 namespace irs {
 namespace analysis {
 
-////////////////////////////////////////////////////////////////////////////////
-/// @class normalizing_token_stream
-/// @brief an tokenizer capable of normalizing the text, treated as a single
-///        token, i.e. case conversion and accent removal
-/// @note expects UTF-8 encoded input
-////////////////////////////////////////////////////////////////////////////////
-class NormalizingTokenizer final : public TypedAnalyzer<NormalizingTokenizer>,
+enum class NormForm : uint8_t {
+  Nfc,
+  Nfkc,
+};
+
+class NormalizingTokenizer final : public TypedTokenizer<NormalizingTokenizer>,
+                                   public TypedTokenStage<NormalizingTokenizer>,
                                    private util::Noncopyable {
  public:
   struct Options {
     using Owner = NormalizingTokenizer;
     icu::Locale locale = irs::MakeBogusLocale();
-    Case case_convert{Case::None};  // no extra normalization
-    bool accent{true};              // no extra normalization
+    Case case_convert{Case::None};
+    bool accent{true};
+    NormForm form{NormForm::Nfc};
   };
   static ptr Make(Options opts);
 
   static constexpr std::string_view type_name() noexcept { return "norm"; }
 
   explicit NormalizingTokenizer(Options options);
-  Attribute* GetMutable(TypeInfo::type_id type) noexcept final {
-    return irs::GetMutable(_attrs, type);
+
+  TokenTraits Traits() const noexcept final {
+    return {
+      .unique = true,
+      .offsets = true,
+    };
   }
-  bool next() final;
-  bool reset(std::string_view data) final;
+
+  std::tuple<Case, bool, bool> PrepareBatch(BlockTraits traits);
+
+  size_t MemoryUsage() const noexcept final {
+    return _norm_buf.capacity() + _strip_buf.capacity() +
+           static_cast<size_t>(_udata.getCapacity() + _token.getCapacity()) *
+             sizeof(char16_t);
+  }
+
+  template<TokenLayout Layout, Case C, bool Accent, bool KnownAscii,
+           typename Sink>
+  bool DoFill(const duckdb::string_t& value, Sink& sink);
+
+  BlockTraits WantedBlockTraits() const noexcept final {
+    return {.ascii = _case_path != CasePath::Icu};
+  }
 
  private:
-  // token value with evaluated quotes
-  using attributes = std::tuple<IncAttr, OffsAttr, TermAttr>;
-
-  struct StateT;
-  struct StateDeleterT {
-    void operator()(StateT*) const noexcept;
+  enum class CasePath : uint8_t {
+    Fast,
+    IcuNonAscii,
+    Icu,
   };
 
-  attributes _attrs;
-  std::unique_ptr<StateT, StateDeleterT> _state;
-  bool _term_eof;
+  template<TokenLayout Layout, Case C, bool Accent, typename Sink>
+  bool UnicodeEmit(const duckdb::string_t& raw, Sink& sink);
+  template<TokenLayout Layout, Case C, bool Accent, NormForm F, typename Sink>
+  bool FastUnicodeEmit(const duckdb::string_t& raw, Sink& sink);
+
+  Options _options;
+  icu::UnicodeString _udata;
+  icu::UnicodeString _token;
+  const icu::Normalizer2* _normalizer{};
+  std::unique_ptr<icu::Transliterator> _transliterator;
+  std::string _norm_buf;
+  std::string _strip_buf;
+  CasePath _case_path = CasePath::Fast;
 };
+
+extern template class TypedTokenizer<NormalizingTokenizer>;
+extern template class TypedTokenStage<NormalizingTokenizer>;
 
 }  // namespace analysis
 }  // namespace irs

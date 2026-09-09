@@ -1,0 +1,163 @@
+# DOCS_TEST: example_001
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY shingle_bigram (
+    template = 'shingle',
+    tokenizer_template = 'delimiter',
+    tokenizer_delimiter = ' ',
+    mingram = 2,
+    maxgram = 2
+);
+
+# "quick brown fox" -> quick, quick+brown, brown, brown+fox, fox (5 terms; the
+# shingle separator is a raw 0xFF byte, so assert on structure not the bytes).
+
+query
+SELECT array_length(ts_lexize('shingle_bigram', 'quick brown fox'), 1) AS n;
+----
+n
+5
+
+query
+SELECT 'quick' = ANY(ts_lexize('shingle_bigram', 'quick brown fox')) AS has_unigram;
+----
+has_unigram
+t
+
+# DOCS_TEST: example_002
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY shingle_escalate (
+    template = 'shingle',
+    tokenizer_template = 'delimiter',
+    tokenizer_delimiter = ' ',
+    mingram = 2,
+    maxgram = 3,
+    frequentwords = '"the","of"'
+);
+
+# A frequent-containing window escalates to the trigram (6 terms); an all-rare
+# window keeps only the dense bigrams (5 terms).
+
+query
+SELECT array_length(ts_lexize('shingle_escalate', 'the quick brown'), 1) AS n;
+----
+n
+6
+
+query
+SELECT array_length(ts_lexize('shingle_escalate', 'quick brown fox'), 1) AS n;
+----
+n
+5
+
+# DOCS_TEST_END
+
+# indexing + a plain term match (positional phrase search is a follow-up; a
+# shingle dictionary already indexes the unigrams and shingle terms)
+
+statement ok
+CREATE TABLE shingle_docs(pk INTEGER PRIMARY KEY, body TEXT);
+
+statement ok
+CREATE INDEX shingle_docs_idx ON shingle_docs
+    USING inverted(pk, body shingle_bigram);
+
+statement ok
+INSERT INTO shingle_docs VALUES (1, 'quick brown fox'), (2, 'lazy dog sleeps');
+
+statement ok
+VACUUM (REFRESH_TABLE) shingle_docs;
+
+query
+SELECT count(*) FROM shingle_docs_idx;
+----
+count
+2
+
+query
+SELECT pk FROM shingle_docs_idx WHERE body @@ 'quick' ORDER BY pk;
+----
+pk
+1
+
+query
+SELECT pk FROM shingle_docs_idx WHERE body @@ 'dog' ORDER BY pk;
+----
+pk
+2
+
+# errors
+
+statement error "maxgram" must be >= "mingram"
+CREATE TEXT SEARCH DICTIONARY shingle_bad_size (
+    template = 'shingle',
+    tokenizer_template = 'delimiter',
+    tokenizer_delimiter = ' ',
+    mingram = 3,
+    maxgram = 2
+);
+
+statement error "storetokens" = false cannot be combined with "frequentwords"
+CREATE TEXT SEARCH DICTIONARY shingle_store_freq (
+    template = 'shingle',
+    tokenizer_template = 'delimiter',
+    tokenizer_delimiter = ' ',
+    storetokens = false,
+    frequentwords = '"the"'
+);
+
+statement error Unsupported index features are specified
+CREATE TEXT SEARCH DICTIONARY shingle_offset (
+    template = 'shingle',
+    tokenizer_template = 'delimiter',
+    tokenizer_delimiter = ' ',
+    frequency = true,
+    position = true,
+    offset = true
+);
+
+statement error the 'norm' feature cannot be combined with an analyzer that stores a per-document blob
+CREATE TEXT SEARCH DICTIONARY shingle_norm_store (
+    template = 'shingle',
+    tokenizer_template = 'delimiter',
+    tokenizer_delimiter = ' ',
+    frequency = true,
+    position = true,
+    norm = true
+);
+
+# norm is allowed once token storage is off (norm reuses the synthetic column)
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY shingle_norm_ok (
+    template = 'shingle',
+    tokenizer_template = 'delimiter',
+    tokenizer_delimiter = ' ',
+    frequency = true,
+    position = true,
+    norm = true,
+    storetokens = false
+);
+
+query
+SELECT array_length(ts_lexize('shingle_norm_ok', 'quick brown fox'), 1) AS n;
+----
+n
+5
+
+statement ok
+DROP TABLE shingle_docs CASCADE;
+
+statement ok
+DROP TEXT SEARCH DICTIONARY shingle_bigram;
+
+statement ok
+DROP TEXT SEARCH DICTIONARY shingle_escalate;
+
+statement ok
+DROP TEXT SEARCH DICTIONARY shingle_norm_ok;

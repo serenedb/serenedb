@@ -43,12 +43,7 @@ struct Api {
   using Result = Root::ptr;
   using Context = count::Context;
 
-  static constexpr bool kBitsetFirst = false;
-  static constexpr bool kBitsetTerms = false;
   static constexpr bool kWindowNodes = true;
-  static constexpr bool kBitsetFills = true;
-  static constexpr bool kSingleTermWindow = false;
-  static constexpr bool kFilterExclusionWindow = true;
 
   template<typename Lead, typename Others, typename Optional, typename Excludes,
            typename... Args>

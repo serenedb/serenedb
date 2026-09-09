@@ -64,26 +64,16 @@ template<typename Api, typename Excludes, typename ExcludesArgs>
 Result<Api> MakeWindowOfTerms(std::span<const PostingClause> terms,
                               const IndexInput& doc, ExcludesArgs&& excludes,
                               const Context<Api>& ctx) {
-  SDB_ASSERT(!terms.empty());
+  SDB_ASSERT(terms.size() >= 2);
   return ResolveInput(doc, [&]<typename Input> -> Result<Api> {
     using Leaf = PostingFill<Input>;
+    using Others = fill::AndLeaves<Leaf>;
     const auto& own = FieldOf(terms.front(), nullptr);
     const auto& front = CookieOf(terms.front());
-    const bool bounds = front.docs_count != 1 && BoundsOf(own);
-    const bool freq = front.docs_count != 1 && FreqOf(own);
-    const auto lead = std::forward_as_tuple(front, doc, bounds, freq);
-    if constexpr (Api::kSingleTermWindow) {
-      if (terms.size() == 1) {
-        return Api::template MakeWindow<Leaf, utils::Empty, utils::Empty,
-                                        Excludes>(
-          ctx, lead, std::forward_as_tuple(), std::forward_as_tuple(),
-          std::forward<ExcludesArgs>(excludes));
-      }
-    }
-    SDB_ASSERT(terms.size() >= 2);
-    using Others = fill::AndLeaves<Leaf>;
     return Api::template MakeWindow<Leaf, Others, utils::Empty, Excludes>(
-      ctx, lead,
+      ctx,
+      std::forward_as_tuple(front, doc, front.docs_count != 1 && BoundsOf(own),
+                            front.docs_count != 1 && FreqOf(own)),
       std::forward_as_tuple(
         terms.size() - 1,
         [&](Leaf& leaf, size_t i) {
@@ -205,37 +195,29 @@ Result<Api> MakeWindowExclusion(
   SDB_ASSERT(!terms.empty() || !filters.empty());
   if (terms.size() + filters.size() == 1) {
     if (HeadIsTerm(terms, filters)) {
-      if constexpr (!Api::kSingleTermWindow) {
-        return {};
-      }
-    } else {
-      if constexpr (!Api::kFilterExclusionWindow) {
-        return {};
-      } else {
-        auto node = filters.front()->PlanFill({}, ScoreMergeType::Noop);
-        if (!node) {
-          return {};
-        }
-        return BuildExcludeSide<Result<Api>>(
-          exclude_terms, exclude_filters, nullptr, segment, candidates,
-          [&]<typename Exclude>(auto&& exclude) -> Result<Api> {
-            return Api::template MakeWindow<fill::Erased, utils::Empty,
-                                            utils::Empty,
-                                            fill::ProbedAndNot<Exclude>>(
-              ctx, std::forward_as_tuple(std::move(node)),
-              std::forward_as_tuple(), std::forward_as_tuple(),
-              std::forward_as_tuple(std::piecewise_construct,
-                                    std::forward<decltype(exclude)>(exclude)));
-          });
-      }
+      return {};
     }
+    auto node = filters.front()->PlanFill({}, ScoreMergeType::Noop);
+    if (!node) {
+      return {};
+    }
+    return BuildExcludeSide<Result<Api>>(
+      exclude_terms, exclude_filters, nullptr, segment, candidates,
+      [&]<typename Exclude>(auto&& exclude) -> Result<Api> {
+        return Api::template MakeWindow<fill::Erased, utils::Empty,
+                                        utils::Empty,
+                                        fill::ProbedAndNot<Exclude>>(
+          ctx, std::forward_as_tuple(std::move(node)), std::forward_as_tuple(),
+          std::forward_as_tuple(),
+          std::forward_as_tuple(std::piecewise_construct,
+                                std::forward<decltype(exclude)>(exclude)));
+      });
   }
   const IndexInput* doc = nullptr;
   if (!WindowTerms(terms, filters, nullptr, doc)) {
     return {};
   }
-  if (terms.size() >= 2 &&
-      !DenseConjunction(terms, static_cast<doc_id_t>(segment.docs_count()))) {
+  if (!DenseConjunction(terms, static_cast<doc_id_t>(segment.docs_count()))) {
     return {};
   }
   return BuildExcludeSide<Result<Api>>(
@@ -411,11 +393,9 @@ Result<Api> MakeDisjunction(std::span<const PostingClause> terms,
   if (!CollectDense(terms, filters, nullptr, doc, rest)) {
     return {};
   }
-  if (auto folded =
-        MakeBitset<Api>({.should = terms,
-                         .should_filters = filters,
-                         .should_fills = Api::kBitsetFills ? &rest : nullptr},
-                        segment, ctx)) {
+  if (auto folded = MakeBitset<Api>(
+        {.should = terms, .should_filters = filters, .should_fills = &rest},
+        segment, ctx)) {
     return folded;
   }
   return MakeWindowDisjunction<Api>(terms, doc, rest, ctx);
@@ -431,24 +411,13 @@ Result<Api> MakeConjunction(std::span<const PostingClause> terms,
              ? Api::MakeTerm(terms.front(), segment, ctx)
              : Api::PlanChild(*filters.front(), ctx);
   }
-  const auto fold = [&] -> Result<Api> {
-    if (!Api::kBitsetTerms && filters.empty()) {
-      return {};
-    }
-    return MakeBitset<Api>({.must = terms, .must_filters = filters}, segment,
-                           ctx);
-  };
-  if constexpr (Api::kBitsetFirst) {
-    if (auto folded = fold()) {
-      return folded;
-    }
-  }
   if (auto windowed =
         MakeWindowConjunction<Api>(terms, filters, segment, ctx)) {
     return windowed;
   }
-  if constexpr (!Api::kBitsetFirst) {
-    if (auto folded = fold()) {
+  if (!filters.empty()) {
+    if (auto folded = MakeBitset<Api>({.must = terms, .must_filters = filters},
+                                      segment, ctx)) {
       return folded;
     }
   }

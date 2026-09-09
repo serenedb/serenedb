@@ -1,4 +1,0 @@
-{
-  "description": "SereneDB test-config for the vendored duckdb_markdown test suite. Every entry is a known SereneDB divergence from upstream DuckDB, not a flake -- see tests/duckdb/README.md.",
-  "skip_tests": []
-}

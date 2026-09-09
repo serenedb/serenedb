@@ -22,6 +22,8 @@
 
 #include <libstemmer.h>
 
+#include <cstring>
+
 namespace irs::analysis::dict {
 
 std::optional<std::string_view> StemUncached(sb_stemmer* stemmer,
@@ -37,27 +39,50 @@ std::optional<std::string_view> StemUncached(sb_stemmer* stemmer,
                           static_cast<size_t>(sb_stemmer_length(stemmer))};
 }
 
-const std::string& StemCache::Insert(const duckdb::string_t& word,
-                                     std::string_view stem) {
+const char* StemCache::Store(duckdb::ArenaAllocator& arena,
+                             std::string_view stem) {
+  auto* data = arena.Allocate(stem.size());
+  std::memcpy(data, stem.data(), stem.size());
+  return reinterpret_cast<const char*>(data);
+}
+
+void StemCache::Compact() {
+  duckdb::ArenaAllocator survivors{_arena.GetAllocator()};
+  _stems.ForEachMapped([&](duckdb::string_t& stem) {
+    if (!stem.IsInlined()) {
+      const auto size = static_cast<uint32_t>(stem.GetSize());
+      stem = duckdb::string_t{Store(survivors, {stem.GetData(), size}), size};
+    }
+  });
+  _arena.Destroy();
+  survivors.Move(_arena);
+}
+
+const duckdb::string_t& StemCache::Insert(const duckdb::string_t& word,
+                                          std::string_view stem) {
   if (_stems.Size() == kMaxEntries) {
     _stems.EraseHalf();
+    Compact();
   }
+  const auto size = static_cast<uint32_t>(stem.size());
   auto& entry = _stems[std::string{word.GetData(), word.GetSize()}];
-  entry.assign(stem);
-  entry.append(kTermViewSlack, '\0');
+  entry = size <= duckdb::string_t::INLINE_LENGTH
+            ? duckdb::string_t{stem.data(), size}
+            : duckdb::string_t{Store(_arena, stem), size};
   return entry;
 }
 
 std::optional<std::string_view> StemCache::Stem(sb_stemmer* stemmer,
                                                 const duckdb::string_t& word) {
   if (const auto* stem = Find(word)) {
-    return View(*stem);
+    return std::string_view{stem->GetData(), stem->GetSize()};
   }
   const auto stemmed = StemUncached(stemmer, {word.GetData(), word.GetSize()});
   if (!stemmed) {
     return std::nullopt;
   }
-  return View(Insert(word, *stemmed));
+  const auto& entry = Insert(word, *stemmed);
+  return std::string_view{entry.GetData(), entry.GetSize()};
 }
 
 }  // namespace irs::analysis::dict

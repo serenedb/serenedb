@@ -385,8 +385,8 @@ TEST_F(PatternTokenizerTests, test_utf8_split_comma_4byte_emoji) {
 }
 
 TEST_F(PatternTokenizerTests, test_split_utf8_literal_delimiter) {
-  std::string_view data("аба->цаба->x");
-  auto stream = MakePattern("->");
+  std::string_view data("аба€цаба€x");
+  auto stream = MakePattern("€");
 
   AssertTokenStreamContents(stream.get(), data, {"аба", "цаба", "x"},
                             {0, 9, 20}, {6, 17, 21}, {1, 1, 1});
@@ -674,7 +674,7 @@ TEST(PatternTokenizerFastSplit, property_oracle) {
                                    {",|;", -1},        {"(?i)::", -1},
                                    {"(?:,+)+", -1},    {"(?:ab)+", -1},
                                    {"§", -1},          {"§+", -1},
-                                   {"a§b", -1},        {"->", -1},
+                                   {"a§b", -1},        {"€", -1},
                                    {"<<<<<<<<<<", -1}, {"\\W+", -1},
                                    {"[^,]+", -1},      {"[^A-Za-z0-9]+", -1},
                                    {"[^aeiou]+", -1},  {"[^\\n]", -1},
@@ -711,7 +711,7 @@ TEST(PatternTokenizerFastSplit, property_oracle) {
                                                           ";",
                                                           ";",
                                                           "§",
-                                                          "->",
+                                                          "€",
                                                           "汉",
                                                           "é",
                                                           "\xF0\x9F\x98\x8A",
@@ -725,8 +725,8 @@ TEST(PatternTokenizerFastSplit, property_oracle) {
     for (const std::string_view v :
          {std::string_view{""}, std::string_view{","}, std::string_view{",,"},
           std::string_view{"x"}, std::string_view{",x,"},
-          std::string_view{"a b,c;d"}, std::string_view{"аба->цаба->->x"},
-          std::string_view{"->->"}, std::string_view{"§x§§"},
+          std::string_view{"a b,c;d"}, std::string_view{"аба€цаба€€x"},
+          std::string_view{"€€"}, std::string_view{"§x§§"},
           std::string_view{"a§b§§c"}, std::string_view{"a1\nb22\n\nc333"},
           std::string_view{"x<<<<<<<<<<y<<<<<<<<<<<<z"}}) {
       SCOPED_TRACE(testing::Message() << "pattern=" << pattern << " group="

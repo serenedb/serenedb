@@ -20,12 +20,13 @@
 
 #pragma once
 
+#include <duckdb/storage/arena_allocator.hpp>
+
 #include <optional>
 #include <string>
 #include <string_view>
 
 #include "iresearch/analysis/text/dict/string_table.hpp"
-#include "iresearch/analysis/text/term_view.hpp"
 
 struct sb_stemmer;
 
@@ -33,28 +34,30 @@ namespace irs::analysis::dict {
 
 class StemCache {
  public:
-  IRS_FORCE_INLINE const std::string* Find(
+  IRS_FORCE_INLINE const duckdb::string_t* Find(
     const duckdb::string_t& word) const noexcept {
     return _stems.Find(word);
   }
 
-  IRS_FORCE_INLINE static std::string_view View(
-    const std::string& padded) noexcept {
-    return {padded.data(), padded.size() - kTermViewSlack};
-  }
-
-  const std::string& Insert(const duckdb::string_t& word,
-                            std::string_view stem);
+  const duckdb::string_t& Insert(const duckdb::string_t& word,
+                                 std::string_view stem);
 
   std::optional<std::string_view> Stem(sb_stemmer* stemmer,
                                        const duckdb::string_t& word);
 
-  size_t MemoryBytes() const noexcept { return _stems.MemoryBytes(); }
+  size_t MemoryBytes() const noexcept {
+    return _stems.MemoryBytes() + _arena.AllocationSize();
+  }
 
  private:
   static constexpr size_t kMaxEntries = size_t{1} << 16;
 
-  StringMap<std::string, std::string> _stems;
+  static const char* Store(duckdb::ArenaAllocator& arena,
+                           std::string_view stem);
+  void Compact();
+
+  StringMap<std::string, duckdb::string_t> _stems;
+  duckdb::ArenaAllocator _arena{duckdb::Allocator::DefaultAllocator()};
 };
 
 std::optional<std::string_view> StemUncached(sb_stemmer* stemmer,

@@ -44,10 +44,13 @@ Tokenizer::ptr StemmingTokenizer::Make(Options opts) {
 }
 
 template<TokenLayout Layout, typename Sink>
-IRS_FORCE_INLINE void EmitStem(const std::string& padded, Sink& sink) {
-  const auto stem = dict::StemCache::View(padded);
-  sink.template Emit<Layout>(stem.data(), static_cast<uint32_t>(stem.size()),
-                             padded.data() + padded.size());
+IRS_FORCE_INLINE void EmitStem(const duckdb::string_t& stem, Sink& sink) {
+  if (stem.IsInlined()) [[likely]] {
+    sink.template Emit<Layout>(stem);
+    return;
+  }
+  sink.template Emit<Layout>(stem.GetData(),
+                             static_cast<uint32_t>(stem.GetSize()));
 }
 
 template<TokenLayout Layout, typename Sink>

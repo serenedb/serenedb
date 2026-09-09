@@ -9,14 +9,6 @@
 # introduced an AT_LA pseudo-token (emitted by a 3-token lookahead
 # filter in base_yylex) to keep the two AT-prefixed productions
 # unambiguous.  These tests pin the result.
-#
-# Note on column-name case: a keyword-derived identifier folds to lower case
-# like a plain identifier (see column_name_case.test); with
-# preserve_identifier_case on -- set below -- it keeps the user-typed case, so
-# `AS at` yields "at" and `AS AT` yields "AT".  Headers below reflect that.
-
-statement ok
-SET preserve_identifier_case = on;
 
 
 # ----------------------------------------------------------------------
@@ -70,7 +62,7 @@ at
 query
 SELECT 42 as AT;
 ----
-AT
+at
 42
 
 

@@ -95,6 +95,7 @@ PROFILES = {
 SCENARIO_CONFLICT_CEILING = {
     "shared_arena": 0.97,
     "name_reuse": 0.60,
+    "server_race": 0.55,
 }
 
 

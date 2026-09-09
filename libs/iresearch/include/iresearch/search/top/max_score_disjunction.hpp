@@ -400,8 +400,10 @@ class MaxScoreDisjunction : public Root {
     }
 
     if (!_has_non_essential) {
-      _num_candidates += static_cast<uint32_t>(CountMask());
+      const auto before = collector.TotalMatches();
       _admit.Window(collector, _scores, _mask, min, kNumWords);
+      _num_candidates +=
+        static_cast<uint32_t>(collector.TotalMatches() - before);
       return;
     }
     const auto count = DrainCandidates(min);
@@ -411,14 +413,6 @@ class MaxScoreDisjunction : public Root {
     if (cand_docs.count != 0) {
       _admit.AddDocs(collector, _cand_docs, cand_docs.count, _cand_scores);
     }
-  }
-
-  size_t CountMask() const noexcept {
-    size_t count = 0;
-    for (const auto word : _mask) {
-      count += static_cast<size_t>(std::popcount(word));
-    }
-    return count;
   }
 
   size_t DrainCandidates(doc_id_t min) {

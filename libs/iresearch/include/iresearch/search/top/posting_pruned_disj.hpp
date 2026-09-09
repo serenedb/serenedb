@@ -50,6 +50,7 @@ class PostingPrunedDisj : public PruneLeafBase<InputType, false> {
 
  public:
   using Base::MaxScore;
+  using Base::SeekToBlock;
   using Base::SetSkipBoundsBelow;
   using Base::Value;
 
@@ -70,31 +71,13 @@ class PostingPrunedDisj : public PruneLeafBase<InputType, false> {
     Prepare(meta, doc_in, layout, segment, field, args);
   }
 
-  doc_id_t SeekToBlock(doc_id_t target) {
-    if (_skip.NumLevels() == 0) [[unlikely]] {
-      return doc_limits::eof();
-    }
-    auto& reader = _skip.Reader();
-    const auto upper_bound = reader.UpperBound();
-    if (upper_bound >= target) {
-      return upper_bound;
-    }
-    const auto below = reader.SkipBoundsBelow();
-    reader.SetSkipBoundsBelow(std::max(below, target));
-    _left_in_list = _skip.Seek(target);
-    reader.SetSkipBoundsBelow(below);
-    _left_in_leaf = 0;
-    _needs_reposition = true;
-    _upper_bound = reader.UpperBound();
-    return _upper_bound;
-  }
-
   doc_id_t Seek(doc_id_t target) {
     if (target <= _doc) [[unlikely]] {
       return _doc;
     }
     if (_skip.Reader().IsLessThanUpperBound(target)) [[unlikely]] {
-      if (!doc_limits::eof(SeekToBlock(target))) {
+      SeekToBlock(target);
+      if (_needs_reposition) {
         _doc = _skip.Reader().State().doc;
       }
     }

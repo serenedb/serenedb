@@ -301,6 +301,28 @@ class PruneLeafBase {
     _doc = state.doc;
   }
 
+  doc_id_t SeekToBlock(doc_id_t target) {
+    if (_skip.NumLevels() == 0) [[unlikely]] {
+      return doc_limits::eof();
+    }
+    auto& reader = _skip.Reader();
+    const auto upper_bound = reader.UpperBound();
+    if (upper_bound >= target) {
+      return upper_bound;
+    }
+    const auto below = reader.SkipBoundsBelow();
+    reader.SetSkipBoundsBelow(std::max(below, target));
+    const auto left = _skip.Seek(target);
+    reader.SetSkipBoundsBelow(below);
+    _upper_bound = reader.UpperBound();
+    if (_needs_reposition || target > _max_in_leaf) {
+      _left_in_list = left;
+      _left_in_leaf = 0;
+      _needs_reposition = true;
+    }
+    return _upper_bound;
+  }
+
   void RepositionForWindow(doc_id_t min) {
     if (!_needs_reposition || _left_in_list == 0) [[likely]] {
       return;

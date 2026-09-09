@@ -210,7 +210,7 @@ DETACH db18;
 statement ok
 DETACH IF EXISTS db19;
 
-statement ok
+statement ok retry 40 backoff 250ms
 ATTACH '${__TEST_DIR__}/db18.duckdb' AS db19;
 
 statement ok
@@ -247,7 +247,7 @@ DETACH db18;
 
 # DOCS_TEST_BODY
 
-statement ok
+statement ok retry 40 backoff 250ms
 ATTACH '${__TEST_DIR__}/db18b.duckdb' AS db19;
 
 statement ok

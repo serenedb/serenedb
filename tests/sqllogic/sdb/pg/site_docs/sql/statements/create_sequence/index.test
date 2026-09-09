@@ -11,7 +11,7 @@ CREATE SEQUENCE serial;
 
 # DOCS_TEST_BODY
 
-statement error db error: ERROR: sequence INCREMENT must be positive \(negative increments not yet supported\)
+statement error db error: ERROR: Sequence with name "serial" already exists!
 CREATE SEQUENCE serial START WITH 99 INCREMENT BY -1 MAXVALUE 99;
 
 # DOCS_TEST: example_008

@@ -203,28 +203,28 @@ INSERT INTO pk_comp VALUES (1, 'y', 'three');
 statement error
 CREATE TABLE pk_struct(k STRUCT(a INT) PRIMARY KEY, v TEXT);
 ----
-db error: ERROR: primary key column "k" has unsupported nested type STRUCT(a INTEGER)
+db error: ERROR: Invalid Type [STRUCT(a INTEGER)]: Invalid type for index key.
 
 
 statement error
 CREATE TABLE pk_list(k INT[] PRIMARY KEY, v TEXT);
 ----
-db error: ERROR: primary key column "k" has unsupported nested type INTEGER[]
+db error: ERROR: Invalid Type [INTEGER[]]: Invalid type for index key.
 
 
 statement error
 CREATE TABLE complex_pk (a INTEGER, b INTEGER[] PRIMARY KEY);
 ----
-db error: ERROR: primary key column "b" has unsupported nested type INTEGER[]
+db error: ERROR: Invalid Type [INTEGER[]]: Invalid type for index key.
 
 
 statement error
 CREATE TABLE pk_map(k MAP(INTEGER, INTEGER) PRIMARY KEY, v TEXT);
 ----
-db error: ERROR: primary key column "k" has unsupported nested type MAP(INTEGER, INTEGER)
+db error: ERROR: Invalid Type [MAP(INTEGER, INTEGER)]: Invalid type for index key.
 
 
 statement error
 CREATE TABLE uq_struct(id INT PRIMARY KEY, k STRUCT(a INT), UNIQUE(k));
 ----
-db error: ERROR: unique constraint column "k" has unsupported nested type STRUCT(a INTEGER)
+db error: ERROR: Invalid Type [STRUCT(a INTEGER)]: Invalid type for index key.

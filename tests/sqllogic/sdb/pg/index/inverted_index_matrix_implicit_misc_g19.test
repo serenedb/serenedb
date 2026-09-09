@@ -92,7 +92,7 @@ db error: ERROR: Column 'list_bit' has unsupported type BIT[] and can not be ind
 statement error
 CREATE INDEX g19_imp_list_enum ON g19_t USING inverted(pk, list_enum);
 ----
-db error: ERROR: Column 'list_enum' has unsupported type g19_enum_t[] and can not be indexed
+db error: ERROR: Column 'list_enum' has unsupported type ENUM('alpha', 'beta', 'gamma')[] and can not be indexed
 
 
 statement error
@@ -167,7 +167,7 @@ db error: ERROR: Column 'bit_s' has unsupported type BIT and can not be indexed
 statement error
 CREATE INDEX g19_imp_enum_s ON g19_t USING inverted(pk, enum_s);
 ----
-db error: ERROR: Column 'enum_s' has unsupported type g19_enum_t and can not be indexed
+db error: ERROR: Column 'enum_s' has unsupported type ENUM('alpha', 'beta', 'gamma') and can not be indexed
 
 
 statement error

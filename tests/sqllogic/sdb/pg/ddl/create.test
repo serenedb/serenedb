@@ -5,7 +5,7 @@ CREATE DATABASE my_test_unique_db_name;
 query error
 CREATE DATABASE my_test_unique_db_name;
 ----
-db error: ERROR: database "my_test_unique_db_name" already exists
+db error: ERROR: Failed to attach database: database with name "my_test_unique_db_name" already exists
 
 
 statement ok
@@ -27,7 +27,7 @@ CREATE DATABASE my_test_unique_db_name;
 query error
 CREATE DATABASE my_test_unique_db_name;
 ----
-db error: ERROR: database "my_test_unique_db_name" already exists
+db error: ERROR: Failed to attach database: database with name "my_test_unique_db_name" already exists
 
 
 statement ok

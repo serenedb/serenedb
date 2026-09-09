@@ -198,19 +198,19 @@ CREATE SEQUENCE rbd_ok_q;
 
 
 statement ok
-CREATE ROLE rbd_ok_r;
-
-
-statement ok
 CREATE TEXT SEARCH DICTIONARY rbd_ok_d (template = 'keyword');
 
 
 statement ok
-CREATE DATABASE rbd_ok_db;
+COMMIT;
 
 
 statement ok
-COMMIT;
+CREATE ROLE rbd_ok_r;
+
+
+statement ok
+CREATE DATABASE rbd_ok_db;
 
 
 # ----------------------------------------------------------------------

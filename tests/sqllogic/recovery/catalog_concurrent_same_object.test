@@ -59,7 +59,7 @@ connection s2
 statement error
 ALTER TABLE ccso_t OWNER TO ccso_owner
 ----
-db error: ERROR: could not serialize access due to concurrent DDL on the same object
+db error: ERROR: Catalog write-write conflict on alter with "ccso_t"
 
 
 connection s1

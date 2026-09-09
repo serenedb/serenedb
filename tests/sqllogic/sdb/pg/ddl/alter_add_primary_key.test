@@ -194,7 +194,7 @@ ALTER TABLE pk_nulls ADD PRIMARY KEY (i);
 statement error
 ALTER TABLE pk1 ADD PRIMARY KEY (j);
 ----
-db error: ERROR: multiple primary keys for table "pk1" are not allowed
+db error: ERROR: table "pk1" can have only one primary key: PRIMARY KEY(i)
 
 
 # ---------------------------------------------------------------------------

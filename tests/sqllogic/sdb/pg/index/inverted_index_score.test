@@ -658,7 +658,8 @@ db error: ERROR: No function matches the given name and argument types 'bm25(BIG
 query error
 SELECT id, BM25(docs.tableoid) FROM docs WHERE id > 0;
 ----
-db error: ERROR: bm25() requires an inverted index scan in the same sub-query
+db error: ERROR: Table "docs" does not have a column named "tableoid"
+Candidate bindings: "body"
 
 
 # EXPLAIN for BM25 basic scan
@@ -996,13 +997,13 @@ QUERY PLAN
 │ Conditions: id = id                    │
 │ ~7 rows                                │
 ╰────────────────────┬───────────────────╯
-                     ├──────────────────────────────────╮
-╭─ IRESEARCH_SCAN ───┴───────────────────╮  ╭─ SEQ_SCAN ┴───────────╮
-│ Index: docs_idx                        │  │ Table: meta           │
-│ Lookup: table                          │  │ Type: Sequential Scan │
-│ Index Filter:                          │  │ Projections: id, tag  │
-│ ╭─ Term ──────────────╮                │  │ ~3 rows               │
-│ │ Field: body(string) │                │  ╰───────────────────────╯
+                     ├──────────────────────────────────────────────────╮
+╭─ IRESEARCH_SCAN ───┴───────────────────╮  ╭─ SEQ_SCAN ────────────────┴───────────────────────────╮
+│ Index: docs_idx                        │  │ Table: inverted_index_score_test_njkdimfu.public.meta │
+│ Lookup: table                          │  │ Type: Sequential Scan                                 │
+│ Index Filter:                          │  │ Projections: id, tag                                  │
+│ ╭─ Term ──────────────╮                │  │ ~3 rows                                               │
+│ │ Field: body(string) │                │  ╰───────────────────────────────────────────────────────╯
 │ │ Value: fox          │                │
 │ ╰─────────────────────╯                │
 │ Score: bm25(k1=1.2, b=0.75)            │

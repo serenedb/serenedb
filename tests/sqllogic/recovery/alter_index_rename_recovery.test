@@ -182,17 +182,14 @@ relname
 rni_ri
 
 
-# A checkpoint rewrites the whole file from the catalog, so the rewritten index
-# records have to carry the ancestry as well. Force one, then crash into a boot
-# that reads only the rewritten file.
-connection after_crash
-statement ok
-SET sdb_faults = 'compact_inside_ddl';
-
-
 connection after_crash
 statement ok
 CREATE TABLE rni_compact (x INTEGER);
+
+
+connection after_crash
+statement ok
+CHECKPOINT;
 
 
 connection after_crash

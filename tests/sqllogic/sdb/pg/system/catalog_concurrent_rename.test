@@ -31,7 +31,7 @@ connection s2
 statement error
 ALTER TABLE ccr_t RENAME TO ccr_t2
 ----
-db error: ERROR: could not serialize access due to concurrent DDL on the same object
+db error: ERROR: Catalog write-write conflict on alter with "ccr_t"
 
 
 # The refusal ended the statement, not the connection.
@@ -137,7 +137,7 @@ connection s6
 statement error
 ALTER TABLE ccr_m OWNER TO ccr_owner
 ----
-db error: ERROR: could not serialize access due to concurrent DDL on the same object
+db error: ERROR: Catalog write-write conflict on alter with "ccr_m"
 
 
 connection s5

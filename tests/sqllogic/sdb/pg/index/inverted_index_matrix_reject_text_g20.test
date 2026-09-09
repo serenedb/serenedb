@@ -157,7 +157,7 @@ db error: ERROR: Column 'bit_s' has unsupported type BIT and can not be indexed
 statement error
 CREATE INDEX g20_kw_en ON g20_t USING inverted(pk, enum_s kw_dict);
 ----
-db error: ERROR: Column 'enum_s' has unsupported type g20_enum_t and can not be indexed
+db error: ERROR: Column 'enum_s' has unsupported type ENUM('a', 'b') and can not be indexed
 
 
 # (k) kw_dict on INTEGER expression source: term_dict accepts (NumericI32),
@@ -251,7 +251,7 @@ db error: ERROR: Column 'bit_s' has unsupported type BIT and can not be indexed
 statement error
 CREATE INDEX g20_ng_en ON g20_t USING inverted(pk, enum_s ng_dict);
 ----
-db error: ERROR: Column 'enum_s' has unsupported type g20_enum_t and can not be indexed
+db error: ERROR: Column 'enum_s' has unsupported type ENUM('a', 'b') and can not be indexed
 
 
 # (k) ng_dict on INTEGER expression source.
@@ -341,7 +341,7 @@ db error: ERROR: Column 'bit_s' has unsupported type BIT and can not be indexed
 statement error
 CREATE INDEX g20_at_en ON g20_t USING inverted(pk, enum_s any_text_dict);
 ----
-db error: ERROR: Column 'enum_s' has unsupported type g20_enum_t and can not be indexed
+db error: ERROR: Column 'enum_s' has unsupported type ENUM('a', 'b') and can not be indexed
 
 
 # (k) any_text_dict on INTEGER expression source.

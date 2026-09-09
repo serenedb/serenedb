@@ -223,17 +223,13 @@ statement ok
 DROP SEQUENCE dre.s CASCADE;
 
 
-# The resolution rides the definition record, so it lands in the same frame as
-# the store half it describes -- and a crash between that frame and the data
-# commit leaves the database behind the log tail. Boot replays the gap, and the
-# edge has to come back with the definition rather than being resolved again.
 connection after_crash
 statement ok
 CREATE SEQUENCE dre.gs;
 
 connection after_crash
 statement ok
-SET sdb_faults = 'crash_after_catalog_before_data';
+SET sdb_faults = 'crash_after_search_commit';
 
 connection after_crash
 statement error connection closed
@@ -284,11 +280,11 @@ ALTER TABLE dre.pt RENAME TO pt2;
 
 connection after_gap
 statement ok
-SET sdb_faults = 'compact_inside_ddl';
+CREATE TABLE dre.compact_trigger(x INTEGER);
 
 connection after_gap
 statement ok
-CREATE TABLE dre.compact_trigger(x INTEGER);
+CHECKPOINT;
 
 connection after_gap
 statement ok

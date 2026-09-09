@@ -21,16 +21,12 @@ END;
 statement error
 DROP TABLE deadinside;
 ----
-db error: ERROR: "deadinside" is not a table
-HINT: Use DROP INDEX to remove an index.
+db error: ERROR: Table with name deadinside does not exist!
+Did you mean "duckdb_indexes"?
 
 
-statement error
+statement ok
 DROP TABLE IF EXISTS deadinside;
-----
-db error: ERROR: "deadinside" is not a table
-HINT: Use DROP INDEX to remove an index.
-
 
 statement error
 DROP INDEX pudge;

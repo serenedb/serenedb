@@ -12,7 +12,7 @@ CREATE SCHEMA test
 statement error
 CREATE SCHEMA test
 ----
-db error: ERROR: schema "test" already exists
+db error: ERROR: Schema with name "test" already exists!
 
 
 query

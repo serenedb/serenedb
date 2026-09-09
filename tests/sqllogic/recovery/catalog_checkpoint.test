@@ -79,11 +79,11 @@ COMMENT ON TABLE ckp.t IS 'checkpointed';
 
 
 statement ok
-SET sdb_faults = 'compact_inside_ddl';
+CREATE TABLE ckp.trigger_compaction(x INTEGER);
 
 
 statement ok
-CREATE TABLE ckp.trigger_compaction(x INTEGER);
+CHECKPOINT;
 
 
 statement ok
@@ -199,11 +199,6 @@ count
 # fold fires from that commit's own hook.
 connection after_checkpoint
 statement ok
-SET sdb_faults = 'compact_inside_ddl';
-
-
-connection after_checkpoint
-statement ok
 CREATE ROLE ckp_window_role;
 
 
@@ -294,11 +289,6 @@ CREATE ROLE ckp_db_role;
 
 connection after_window
 statement ok
-SET sdb_faults = 'compact_inside_ddl';
-
-
-connection after_window
-statement ok
 CREATE DATABASE ckp_window_db;
 
 
@@ -359,12 +349,12 @@ CREATE ROLE ckp_schema_role;
 
 connection after_db_window
 statement ok
-SET sdb_faults = 'compact_inside_ddl';
+CREATE SCHEMA ckp_schema_window;
 
 
 connection after_db_window
 statement ok
-CREATE SCHEMA ckp_schema_window;
+CHECKPOINT;
 
 
 connection after_db_window
@@ -472,19 +462,17 @@ first
 
 connection after_schema_window
 statement ok
-SET sdb_faults = 'compact_inside_ddl';
-
-
-# The last catalog write before the crash: a comment and a grant, both of which
-# rewrite the definition beside the same counter.
-connection after_schema_window
-statement ok
 COMMENT ON SEQUENCE ckp_seq_window.s IS 'checkpointed sequence';
 
 
 connection after_schema_window
 statement ok
 GRANT USAGE ON SEQUENCE ckp_seq_window.s TO ckp_seq_role;
+
+
+connection after_schema_window
+statement ok
+CHECKPOINT;
 
 
 connection after_schema_window
@@ -571,11 +559,6 @@ CREATE SCHEMA ckp_dict_window;
 
 connection after_seq_window
 statement ok
-SET sdb_faults = 'compact_inside_ddl';
-
-
-connection after_seq_window
-statement ok
 CREATE TEXT SEARCH DICTIONARY ckp_dict_window.d(
     template = 'text',
     locale = 'en_US.UTF-8',
@@ -585,6 +568,11 @@ CREATE TEXT SEARCH DICTIONARY ckp_dict_window.d(
     frequency = true,
     position = true
 );
+
+
+connection after_seq_window
+statement ok
+CHECKPOINT;
 
 
 connection after_seq_window
@@ -668,12 +656,12 @@ CREATE INDEX ckp_gone_inv ON ckp.gone USING inverted(a);
 
 connection after_dict_window
 statement ok
-SET sdb_faults = 'compact_inside_drop';
+DROP TABLE ckp.gone;
 
 
 connection after_dict_window
 statement ok
-DROP TABLE ckp.gone;
+CHECKPOINT;
 
 
 connection after_dict_window

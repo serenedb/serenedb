@@ -483,13 +483,13 @@ yaclib::Future<> ReindexLoop(std::weak_ptr<InvertedIndexStorage> weak) {
         database_id = idx->GetDatabaseId();
         id = idx->GetId();
       }
-      const auto status = g_reindex_runner(database_id, id);
-      if (status.ok()) {
-        return LoopTick::kProgress;
+      const auto did_work = g_reindex_runner(database_id, id);
+      if (!did_work.ok()) {
+        SDB_WARN(SEARCH, "periodic reindex of Search index '", id.id(),
+                 "' failed: ", did_work.status().message());
+        return LoopTick::kIdle;
       }
-      SDB_WARN(SEARCH, "periodic reindex of Search index '", id.id(),
-               "' failed: ", status.message());
-      return LoopTick::kIdle;
+      return *did_work ? LoopTick::kProgress : LoopTick::kIdle;
     });
 }
 

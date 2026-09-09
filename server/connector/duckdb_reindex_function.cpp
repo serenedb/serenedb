@@ -22,6 +22,7 @@
 
 #include <absl/algorithm/container.h>
 #include <absl/cleanup/cleanup.h>
+#include <absl/status/statusor.h>
 #include <absl/strings/str_cat.h>
 
 #include <duckdb/catalog/catalog_transaction.hpp>
@@ -1083,8 +1084,8 @@ void ReindexPragma(duckdb::ClientContext& context,
 // ReindexLoop tick: one REINDEX on an internal session impersonating the
 // relation OWNER (the identity a manual owner-run REINDEX has). Quiet
 // outcomes return OK -- vanished index/owner, claim lost to a manual run.
-absl::Status RunReindexTick(duckdb::DatabaseInstance& db, ObjectId database_id,
-                            ObjectId index_id) {
+absl::StatusOr<bool> RunReindexTick(duckdb::DatabaseInstance& db,
+                                    ObjectId database_id, ObjectId index_id) {
   try {
     std::string database_name;
     std::string index_name;
@@ -1097,7 +1098,7 @@ absl::Status RunReindexTick(duckdb::DatabaseInstance& db, ObjectId database_id,
       // known yet.
       const auto attached = catalog::TryStoreDatabase(database_id);
       if (!attached) {
-        return absl::OkStatus();
+        return false;
       }
       database_name = attached->GetName().GetIdentifierName();
       auto& db_catalog =
@@ -1105,7 +1106,7 @@ absl::Status RunReindexTick(duckdb::DatabaseInstance& db, ObjectId database_id,
       const auto* index = catalog::FindIn<catalog::SereneDBIndexEntry>(
         nullptr, db_catalog, index_id);
       if (!index || !index->IsInverted()) {
-        return absl::OkStatus();
+        return false;
       }
       const auto& def = index->Definition();
       index_name = def.GetName();
@@ -1115,7 +1116,7 @@ absl::Status RunReindexTick(duckdb::DatabaseInstance& db, ObjectId database_id,
       const auto relation =
         catalog::LookupEntryById(trx, db_catalog, def.GetRelationId());
       if (!schema || !relation) {
-        return absl::OkStatus();
+        return false;
       }
       schema_name = schema->name.GetIdentifierName();
       owner_id = ObjectId{relation->permissions.owner};
@@ -1148,13 +1149,14 @@ absl::Status RunReindexTick(duckdb::DatabaseInstance& db, ObjectId database_id,
     // teardown rolls it back.
     conn.BeginTransaction();
 
-    RunReindex(*conn.context, index_name, schema_name, database_name);
-    return absl::OkStatus();
+    const auto outcome =
+      RunReindex(*conn.context, index_name, schema_name, database_name);
+    return outcome.action != ReindexAction::UpToDate;
   } catch (const SqlException& ex) {
     if (ex.error().errcode == ERRCODE_OBJECT_IN_USE ||
         ex.error().errcode == ERRCODE_UNDEFINED_OBJECT) {
       // A manual REINDEX holds the claim / the index vanished mid-tick.
-      return absl::OkStatus();
+      return false;
     }
     return absl::InternalError(ex.message());
   } catch (const std::exception& ex) {

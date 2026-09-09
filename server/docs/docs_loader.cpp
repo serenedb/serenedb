@@ -49,7 +49,6 @@
 #include "docs/docs_data.h"
 #include "pg/connection_context.h"
 
-// TODO: fix when cross database reference will be supported
 namespace sdb::docs {
 namespace {
 
@@ -58,7 +57,7 @@ constexpr std::string_view kTable = "sdb_docs.docs";
 constexpr std::string_view kIndexRelation = "sdb_docs.docs_fts";
 constexpr std::string_view kMeta = "sdb_docs.meta";
 constexpr std::string_view kIndex = "docs_fts";
-constexpr std::string_view kDictionary = "sdb_docs.words";
+constexpr std::string_view kTokenizer = "sdb_docs.tokenizer";
 constexpr int kLayout = 12;
 constexpr size_t kInsertBatch = 32;
 class Loader {
@@ -109,8 +108,8 @@ class Loader {
                         ".reference(TEXT)"),
            absl::StrCat("DROP TABLE IF EXISTS ", kTable),
            absl::StrCat("DROP TABLE IF EXISTS ", kMeta),
-           absl::StrCat("DROP TEXT SEARCH DICTIONARY IF EXISTS ", kDictionary),
-           absl::StrCat("CREATE TEXT SEARCH DICTIONARY ", kDictionary,
+           absl::StrCat("DROP TEXT SEARCH DICTIONARY IF EXISTS ", kTokenizer),
+           absl::StrCat("CREATE TEXT SEARCH DICTIONARY ", kTokenizer,
                         " (template = 'segmentation', case = 'lower', "
                         "break = 'alpha', frequency = true, position = true)"),
            absl::StrCat("CREATE TABLE ", kTable,
@@ -119,8 +118,8 @@ class Loader {
                         "content TEXT NOT NULL, content_text TEXT NOT NULL) "
                         "WITH (storage = 'search', compaction_interval = 0)"),
            absl::StrCat("CREATE INDEX ", kIndex, " ON ", kTable,
-                        " USING inverted (title ", kDictionary, ", breadcrumb ",
-                        kDictionary, ", content_text ", kDictionary, ")"),
+                        " USING inverted (title ", kTokenizer, ", breadcrumb ",
+                        kTokenizer, ", content_text ", kTokenizer, ")"),
          }) {
       if (!Run(sql)) {
         return false;

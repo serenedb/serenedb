@@ -123,7 +123,7 @@ t
 connection docs database=postgres
 query
 SELECT list_contains(t, 'the'), list_contains(t, 'index'), list_contains(t, 'structure'), list_contains(t, 'md_to_text'), list_contains(t, 'MD_TO_TEXT')
-FROM (SELECT ts_lexize('sdb_docs.words', 'The index is a structure; see md_to_text()') AS t);
+FROM (SELECT ts_lexize('sdb_docs.tokenizer', 'The index is a structure; see md_to_text()') AS t);
 ----
 list_contains	list_contains	list_contains	list_contains	list_contains
 t	t	t	t	f

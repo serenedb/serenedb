@@ -18,22 +18,67 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
+#include <limits>
 #include <span>
 #include <tuple>
 #include <utility>
 #include <vector>
 
+#include "basics/empty.hpp"
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/search/boolean_query.hpp"
 #include "iresearch/search/common/collect.hpp"
 #include "iresearch/search/common/collect_scored.hpp"
 #include "iresearch/search/common/exclusion_of.hpp"
 #include "iresearch/search/common/scored_context.hpp"
+#include "iresearch/search/fill/all_docs.hpp"
+#include "iresearch/search/fill/impl.hpp"
 #include "iresearch/search/fill/leaves.hpp"
-#include "iresearch/search/top/make.hpp"
-#include "iresearch/search/top/window_disjunction.hpp"
+#include "iresearch/search/fill/set_leaves.hpp"
+#include "iresearch/search/top/make_boolean.hpp"
 
 namespace irs::top {
+namespace {
+
+Root::ptr MakeWindowNegation(std::span<const PostingClause> excludes,
+                             std::span<const QueryBuilder::ptr> exclude_filters,
+                             const SubReader& segment, const Context& ctx,
+                             ScoreMergeType merge, score_t absorbed) {
+  SDB_ASSERT(!excludes.empty() || !exclude_filters.empty());
+  std::vector<search::FillNode::ptr> nodes;
+  nodes.reserve(excludes.size() + exclude_filters.size());
+  const auto take = [&](search::FillNode::ptr node) {
+    if (!node) {
+      return false;
+    }
+    nodes.emplace_back(std::move(node));
+    return true;
+  };
+  if (!search::VisitOrderedOf(
+        excludes, exclude_filters, false, 0,
+        std::numeric_limits<size_t>::max(),
+        [&](const PostingClause& term) {
+          return take(search::FillOf(term, nullptr, segment));
+        },
+        [&](const QueryBuilder& child) {
+          return take(child.PlanFill({}, ScoreMergeType::Noop));
+        })) {
+    return {};
+  }
+  using Excludes = fill::FilledAndNot<fill::SetLeaves<fill::Erased>>;
+  return MakeShape<BooleanWindow, fill::AllDocs, utils::Empty, Excludes>(
+    ctx, std::piecewise_construct, std::forward_as_tuple(segment),
+    std::forward_as_tuple(),
+    std::forward_as_tuple(std::piecewise_construct,
+                          std::forward_as_tuple(
+                            nodes.size(),
+                            [&](fill::Erased& leaf, size_t i) {
+                              leaf = fill::Erased{std::move(nodes[i])};
+                            })),
+    merge, absorbed);
+}
+
+}  // namespace
 
 Root::ptr MakeWindowExclusion(const BooleanQuery& query,
                               const SubReader& segment, const Context& ctx,
@@ -45,12 +90,14 @@ Root::ptr MakeWindowExclusion(const BooleanQuery& query,
   const std::span excludes = query.Terms(Occur::MustNot);
   const std::span exclude_filters = query.Queries(Occur::MustNot);
   SDB_ASSERT(!excludes.empty() || !exclude_filters.empty());
-
   std::span<const PostingClause> terms;
   std::span<const QueryBuilder::ptr> filters;
   if (must.empty() && must_filters.empty()) {
-    if (query.MinShouldMatch() != 1 ||
-        (should.empty() && should_filters.empty())) {
+    if (should.empty() && should_filters.empty()) {
+      return MakeWindowNegation(excludes, exclude_filters, segment, ctx, merge,
+                                absorbed);
+    }
+    if (query.MinShouldMatch() != 1) {
       return {};
     }
     terms = should;
@@ -61,7 +108,6 @@ Root::ptr MakeWindowExclusion(const BooleanQuery& query,
   } else {
     return {};
   }
-
   const IndexInput* doc = nullptr;
   std::vector<search::FillNode::ptr> rest;
   if (!search::CollectDenseScored(terms, filters, nullptr, doc, rest,
@@ -80,10 +126,10 @@ Root::ptr MakeWindowExclusion(const BooleanQuery& query,
     [&]<typename Exclude>(auto&& negated) -> Root::ptr {
       using Excludes = fill::ProbedAndNot<Exclude>;
       const auto make = [&]<typename Set>(auto&&... args) -> Root::ptr {
-        const auto leaves =
-          std::forward_as_tuple(std::forward<decltype(args)>(args)...);
-        return MakeShape<WindowDisjunction, Set, Excludes>(
-          ctx, std::piecewise_construct, leaves,
+        return MakeShape<BooleanWindow, utils::Empty, search::OrGroup<Set>,
+                         Excludes>(
+          ctx, std::piecewise_construct, std::forward_as_tuple(),
+          std::forward_as_tuple(std::forward<decltype(args)>(args)...),
           std::forward_as_tuple(std::piecewise_construct,
                                 std::forward<decltype(negated)>(negated)),
           merge, absorbed);

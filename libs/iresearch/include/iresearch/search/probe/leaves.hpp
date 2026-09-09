@@ -293,37 +293,4 @@ class NoLeaves {
   void CollectScorers(std::vector<ScoreFunction>&) const noexcept {}
 };
 
-template<typename First, typename Second>
-class BothLeaves {
- public:
-  BothLeaves(First&& first, Second&& second) noexcept
-    : _first{std::move(first)}, _second{std::move(second)} {}
-
-  template<typename FirstArgs, typename SecondArgs>
-  BothLeaves(std::piecewise_construct_t, FirstArgs&& first, SecondArgs&& second)
-    : _first{std::make_from_tuple<First>(std::forward<FirstArgs>(first))},
-      _second{std::make_from_tuple<Second>(std::forward<SecondArgs>(second))} {}
-
-  IRS_FORCE_INLINE doc_id_t Probe(doc_id_t target) {
-    if (const auto probe = _first.Probe(target); probe != target) {
-      return probe;
-    }
-    return _second.Probe(target);
-  }
-
-  IRS_FORCE_INLINE void FetchScoreArgs(uint32_t slot) {
-    _first.FetchScoreArgs(slot);
-    _second.FetchScoreArgs(slot);
-  }
-
-  void CollectScorers(std::vector<ScoreFunction>& out) {
-    _first.CollectScorers(out);
-    _second.CollectScorers(out);
-  }
-
- private:
-  First _first;
-  Second _second;
-};
-
 }  // namespace irs::probe

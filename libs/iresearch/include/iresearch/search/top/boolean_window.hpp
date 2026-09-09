@@ -20,6 +20,7 @@
 
 #pragma once
 
+#include <tuple>
 #include <type_traits>
 #include <utility>
 
@@ -33,33 +34,46 @@
 
 namespace irs::top {
 
-template<typename Leaves, typename Excludes, typename Table>
-class WindowDisjunction : public Root {
+template<typename Lead, typename Optional, typename Excludes, typename Table>
+class BooleanWindow : public Root {
  public:
   static constexpr size_t kNumWords = search::kWindowWords;
   static constexpr doc_id_t kWindow = search::kWindowDocs;
+  static constexpr bool kLead = !std::is_same_v<Lead, utils::Empty>;
+  static constexpr bool kOptional = !std::is_same_v<Optional, utils::Empty>;
   static constexpr bool kExcludes = !std::is_same_v<Excludes, utils::Empty>;
+  static_assert(kLead != kOptional);
 
-  template<typename LeavesArgs, typename ExcludesArgs>
-  WindowDisjunction(Table table, std::piecewise_construct_t,
-                    LeavesArgs&& leaves, ExcludesArgs&& excludes,
-                    ScoreMergeType merge, score_t absorbed = 0)
-    : _leaves{std::make_from_tuple<Leaves>(std::forward<LeavesArgs>(leaves))},
+  template<typename LeadArgs, typename OptionalArgs, typename ExcludesArgs>
+  BooleanWindow(Table table, std::piecewise_construct_t, LeadArgs&& lead,
+                OptionalArgs&& optional, ExcludesArgs&& excludes,
+                ScoreMergeType merge, score_t absorbed)
+    : _lead{std::make_from_tuple<Lead>(std::forward<LeadArgs>(lead))},
+      _optional{
+        std::make_from_tuple<Optional>(std::forward<OptionalArgs>(optional))},
       _excludes{
         std::make_from_tuple<Excludes>(std::forward<ExcludesArgs>(excludes))},
       _score{merge, absorbed},
       _admit{table} {}
 
+  BooleanWindow(BooleanWindow&&) = delete;
+  BooleanWindow& operator=(BooleanWindow&&) = delete;
+
   void Run(LoserScoreCollector& collector) final {
     doc_id_t next = doc_limits::min();
-    while (!_leaves.Empty()) {
+    while (!doc_limits::eof(next)) {
       const auto min = next;
       const auto max = min + kWindow;
-      next = _leaves.Visit(max, [min, max, this](auto& leaf) IRS_FORCE_INLINE {
-        return leaf.Fill(min, max, _mask, _window);
-      });
-      if constexpr (kExcludes) {
-        _excludes.Remove(min, max, _mask, _window, score_t{0});
+      if constexpr (kLead) {
+        next = _lead.FillOr(min, max, _mask);
+        if constexpr (kExcludes) {
+          _excludes.Remove(min, max, _mask);
+        }
+      } else {
+        next = _optional.Fill(min, max, _mask, _window);
+        if constexpr (kExcludes) {
+          _excludes.Remove(min, max, _mask, _window, score_t{0});
+        }
       }
       _score.Apply(_window, _mask, kNumWords);
       _admit.Window(collector, _window, _mask, min, kNumWords);
@@ -70,7 +84,8 @@ class WindowDisjunction : public Root {
  private:
   ABSL_CACHELINE_ALIGNED uint64_t _mask[kNumWords]{};
   ABSL_CACHELINE_ALIGNED score_t _window[kWindow]{};
-  Leaves _leaves;
+  [[no_unique_address]] Lead _lead;
+  [[no_unique_address]] Optional _optional;
   [[no_unique_address]] Excludes _excludes;
   RootWindowScore _score;
   [[no_unique_address]] Admit<Table> _admit;

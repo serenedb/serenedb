@@ -34,7 +34,6 @@
 #include "iresearch/search/top/max_score_disjunction.hpp"
 #include "iresearch/search/top/posting_pruned_disj.hpp"
 #include "iresearch/search/top/root.hpp"
-#include "iresearch/search/top/window_disjunction.hpp"
 #include "pg/sql_exception_macro.h"
 
 namespace irs::top {
@@ -101,18 +100,6 @@ Root::ptr MakeAll(const SubReader& segment, const Context& ctx,
                   const search::StatsRecord& record, score_t boost);
 Root::ptr MakeAll(const SubReader& segment, const Context& ctx, score_t score);
 
-Root::ptr MakeSparseConjunction(const BooleanQuery& query,
-                                const SubReader& segment, const Context& ctx,
-                                ScoreMergeType merge, score_t absorbed);
-
-Root::ptr MakeSparseExclusion(const BooleanQuery& query,
-                              const SubReader& segment, const Context& ctx,
-                              ScoreMergeType merge, score_t absorbed);
-
-Root::ptr MakeWindowExclusion(const BooleanQuery& query,
-                              const SubReader& segment, const Context& ctx,
-                              ScoreMergeType merge, score_t absorbed);
-
 Root::ptr MakeBitsThreshold(std::span<const PostingClause> terms,
                             std::span<const QueryBuilder::ptr> filters,
                             search::Terms uniformity, const SubReader& segment,
@@ -160,36 +147,6 @@ Root::ptr MakeWandConjunction(std::span<const PostingClause> terms,
                               search::Terms uniformity,
                               const SubReader& segment, const Context& ctx,
                               ScoreMergeType merge);
-
-template<typename Term>
-Root::ptr MakeWindowDisjunction(std::span<const Term> terms,
-                                std::span<const QueryBuilder::ptr> filters,
-                                search::Terms uniformity,
-                                const TermReader* field, const Scorer* scorer,
-                                score_t boost, const SubReader& segment,
-                                const Context& ctx, ScoreMergeType merge,
-                                score_t absorbed) {
-  SDB_ASSERT(terms.size() + filters.size() > 1);
-  const IndexInput* doc = nullptr;
-  std::vector<search::FillNode::ptr> rest;
-  if (!search::CollectDenseScored(terms, filters, field, doc, rest,
-                                  [&](const QueryBuilder& child) {
-                                    return child.PlanFill(ScoredOf(ctx), merge);
-                                  })) {
-    return {};
-  }
-  const auto make = [&]<typename Set>(auto&&... args) -> Root::ptr {
-    const auto leaves =
-      std::forward_as_tuple(std::forward<decltype(args)>(args)...);
-    return MakeShape<WindowDisjunction, Set, utils::Empty>(
-      ctx, std::piecewise_construct, leaves, std::forward_as_tuple(), merge,
-      absorbed);
-  };
-  const search::ScoreRecipe recipe{.segment = &segment,
-                                   .fetcher = &ctx.fetcher};
-  return search::BuildScoredWindow<Root::ptr>(
-    terms, field, scorer, boost, doc, rest, uniformity, recipe, merge, make);
-}
 
 template<typename Term>
 Root::ptr MakeMaxScoreDisjunction(std::span<const Term> terms,

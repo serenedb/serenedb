@@ -365,10 +365,9 @@ set(IResearch_core_sources
     ./search/top/make_posting.cpp
     ./search/top/make_single_posting.cpp
     ./search/top/make_all.cpp
-    ./search/top/make_window_disjunction.cpp
-    ./search/top/make_sparse_conjunction.cpp
-    ./search/top/make_sparse_exclusion.cpp
-    ./search/top/make_window_exclusion.cpp
+    ./search/top/make_boolean.cpp
+    ./search/top/make_boolean_window.cpp
+    ./search/top/make_boolean_sparse.cpp
     ./search/top/make_bits_threshold.cpp
     ./search/top/make_count_threshold.cpp
     ./search/top/make_fixed_phrase.cpp

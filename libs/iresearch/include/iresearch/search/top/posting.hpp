@@ -22,6 +22,11 @@
 
 #include <absl/base/optimization.h>
 
+#include <tuple>
+#include <type_traits>
+#include <utility>
+
+#include "basics/empty.hpp"
 #include "iresearch/formats/posting_meta.hpp"
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/search/common/score_args.hpp"
@@ -33,14 +38,21 @@
 
 namespace irs::top {
 
-template<typename InputType, typename Table>
+template<typename InputType, typename Excludes, typename Table>
 class Posting : public Root {
  public:
   static constexpr bool kTable = !std::is_same_v<Table, utils::Empty>;
-
+  static constexpr bool kExcludes = !std::is_same_v<Excludes, utils::Empty>;
   using Block = detail::TermBlock<InputType, Table>;
 
-  explicit Posting(Table table) noexcept : _admit{table} {}
+  template<typename ExcludesArgs>
+  Posting(Table table, std::piecewise_construct_t, ExcludesArgs&& excludes)
+    : _excludes{
+        std::make_from_tuple<Excludes>(std::forward<ExcludesArgs>(excludes))},
+      _admit{table} {}
+
+  Posting(Posting&&) = delete;
+  Posting& operator=(Posting&&) = delete;
 
   void Prepare(const PostingMeta& meta, const IndexInput& doc_in,
                const SubReader& segment, const TermReader& field,
@@ -52,7 +64,6 @@ class Posting : public Root {
   void Run(LoserScoreCollector& collector) final {
     ABSL_CACHELINE_ALIGNED doc_id_t docs[Block::kFill + doc_limits::kDocsSlack];
     ABSL_CACHELINE_ALIGNED score_t scores[Block::kFill];
-
     for (;;) {
       if constexpr (kTable) {
         const auto from = _block.Last() + doc_limits::min();
@@ -61,17 +72,30 @@ class Posting : public Root {
           break;
         }
       }
-      const auto len = _block.Fill(docs, scores);
+      auto len = _block.Fill(docs, scores);
       if (len == 0) {
         break;
       }
-      _admit.AddDocs(collector, docs, len, scores);
+      if constexpr (kExcludes) {
+        uint32_t kept = 0;
+        for (uint32_t i = 0; i != len; ++i) {
+          const auto doc = docs[i];
+          docs[kept] = doc;
+          scores[kept] = scores[i];
+          kept += static_cast<uint32_t>(_excludes.Probe(doc) != doc);
+        }
+        len = kept;
+      }
+      if (len != 0) {
+        _admit.AddDocs(collector, docs, len, scores);
+      }
     }
     _admit.Flush(collector);
   }
 
  private:
   Block _block;
+  [[no_unique_address]] Excludes _excludes;
   [[no_unique_address]] Admit<Table> _admit;
 };
 

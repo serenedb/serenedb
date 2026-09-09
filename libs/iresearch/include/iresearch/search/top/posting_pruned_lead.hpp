@@ -142,8 +142,7 @@ class PostingPrunedLead : public PruneLeafBase<InputType, false> {
 
   tail: {
     auto* const begin = std::end(_docs) - _left_in_leaf;
-    auto* const end = std::find_if(begin, std::end(_docs),
-                                   [max](doc_id_t doc) { return doc >= max; });
+    auto* const end = this->FirstNotBelow(begin, max);
     _left_in_leaf = static_cast<uint32_t>(std::end(_docs) - end);
     if (end != begin) {
       Emit(begin, static_cast<uint32_t>(end - begin), visit);

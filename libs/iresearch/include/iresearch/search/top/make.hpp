@@ -189,7 +189,8 @@ Root::ptr MakeMaxScoreDisjunction(
     };
     if (excludes.empty() && exclude_filters.empty()) {
       return MakeShape<MaxScoreDisjunction, Leaf, utils::Empty>(
-        ctx, terms.size(), init, std::forward_as_tuple());
+        ctx, terms.size(), static_cast<doc_id_t>(segment.docs_count()), init,
+        std::forward_as_tuple());
     }
     const auto candidates =
       std::min<uint64_t>(search::SumDocs(terms), segment.docs_count());
@@ -198,7 +199,7 @@ Root::ptr MakeMaxScoreDisjunction(
       [&]<typename Exclude>(auto&& negated) -> Root::ptr {
         return MakeShape<MaxScoreDisjunction, Leaf,
                          fill::ProbedAndNot<Exclude>>(
-          ctx, terms.size(), init,
+          ctx, terms.size(), static_cast<doc_id_t>(segment.docs_count()), init,
           std::forward_as_tuple(std::piecewise_construct,
                                 std::forward<decltype(negated)>(negated)));
       });

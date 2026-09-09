@@ -234,6 +234,8 @@ class PruneLeafBase {
       *(std::end(_docs) - 1) = doc_limits::min() + meta.doc_delta;
       *(std::end(_freqs.data) - 1) = meta.freq;
       _left_in_list = 0;
+      _len = 1;
+      _scored = false;
       return true;
     }
 
@@ -310,11 +312,20 @@ class PruneLeafBase {
     }
     ReadLeaf(state.doc);
     const auto* const first =
-      std::find_if(std::end(_docs) - _left_in_leaf, std::end(_docs),
-                   [min](doc_id_t doc) { return doc >= min; });
+      FirstNotBelow(std::end(_docs) - _left_in_leaf, min);
     SDB_ASSERT(first != std::end(_docs));
     _doc = *first;
     _left_in_leaf = static_cast<uint32_t>(std::end(_docs) - first) - 1;
+  }
+
+  IRS_FORCE_INLINE const doc_id_t* FirstNotBelow(const doc_id_t* begin,
+                                                 doc_id_t max) const noexcept {
+    if (_len == doc_limits::kBlockSize) [[likely]] {
+      return BranchlessLowerBound<doc_limits::kBlockSize>(std::cbegin(_docs),
+                                                          max);
+    }
+    return std::find_if(begin, std::cend(_docs),
+                        [max](doc_id_t doc) { return doc >= max; });
   }
 
   void ReadLeaf(doc_id_t prev) {
@@ -327,28 +338,37 @@ class PruneLeafBase {
     _left_in_list -= len;
     _base = prev;
     _max_in_leaf = *(std::end(_docs) - 1);
+    _scored = false;
   }
 
   template<typename Visitor>
   IRS_FORCE_INLINE void Emit(doc_id_t* docs, uint32_t len, Visitor&& visit) {
+    if (!_scored) {
+      ScoreLeaf();
+    }
+    visit(docs, len, Scores() + (docs - std::begin(_docs)));
+  }
+
+  IRS_FORCE_INLINE score_t* Scores() noexcept {
     static_assert(sizeof(score_t) == sizeof(_enc.data[0]));
-    const auto offset = static_cast<size_t>(docs - std::begin(_docs));
-    score_t* p;
-    if (len == doc_limits::kBlockSize) {
+    return reinterpret_cast<score_t*>(std::begin(_enc.data));
+  }
+
+  void ScoreLeaf() {
+    _scored = true;
+    if (_len == doc_limits::kBlockSize) {
       _fetcher->FetchPostingBlock(
         std::span<const doc_id_t, doc_limits::kBlockSize>{
-          docs, doc_limits::kBlockSize});
-      p = reinterpret_cast<score_t*>(std::begin(_enc.data));
-      _provider.freq.value = _freqs.data;
-      _score.ScorePostingBlock(p);
-    } else {
-      _fetcher->Fetch(std::span<const doc_id_t>{docs, len});
-      p = reinterpret_cast<score_t*>(std::end(_enc.data) - len);
-      _provider.freq.value = _freqs.data + offset;
-      _score.Score(p, static_cast<scores_size_t>(len));
-      _provider.freq.value = _freqs.data;
+          std::begin(_docs), doc_limits::kBlockSize});
+      _score.ScorePostingBlock(Scores());
+      return;
     }
-    visit(docs, len, p);
+    const auto offset = doc_limits::kBlockSize - _len;
+    _fetcher->Fetch(
+      std::span<const doc_id_t>{std::begin(_docs) + offset, _len});
+    _provider.freq.value = _freqs.data + offset;
+    _score.Score(Scores() + offset, static_cast<scores_size_t>(_len));
+    _provider.freq.value = _freqs.data;
   }
 
   EncBuf _enc;
@@ -368,6 +388,7 @@ class PruneLeafBase {
   doc_id_t _upper_bound = doc_limits::eof();
   uint32_t _left_in_list = 0;
   bool _needs_reposition = false;
+  bool _scored = false;
 };
 
 }  // namespace irs::search

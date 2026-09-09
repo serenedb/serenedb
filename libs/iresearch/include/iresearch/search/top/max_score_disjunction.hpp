@@ -49,10 +49,11 @@ class MaxScoreDisjunction : public Root {
   static constexpr doc_id_t kWordBits = search::kWindowBits;
   static constexpr size_t kNumWords = search::kWindowWords;
   static constexpr doc_id_t kWindow = search::kWindowDocs;
+  static constexpr doc_id_t kExhaustiveWindows = 4;
   static constexpr bool kExcludes = !std::is_same_v<Excludes, utils::Empty>;
 
   template<typename Init, typename ExcludesArgs>
-  MaxScoreDisjunction(Table table, size_t size, Init&& init,
+  MaxScoreDisjunction(Table table, size_t size, doc_id_t docs, Init&& init,
                       ExcludesArgs&& excludes)
     : _entries{size,
                [&](Entry& entry, size_t i) {
@@ -62,7 +63,8 @@ class MaxScoreDisjunction : public Root {
                            size_t i) noexcept { entry = &_entries[i]; }},
       _excludes{
         std::make_from_tuple<Excludes>(std::forward<ExcludesArgs>(excludes))},
-      _admit{table} {}
+      _admit{table},
+      _docs_count{static_cast<double>(std::max<doc_id_t>(1, docs))} {}
 
   MaxScoreDisjunction(MaxScoreDisjunction&&) = delete;
   MaxScoreDisjunction& operator=(MaxScoreDisjunction&&) = delete;
@@ -75,6 +77,7 @@ class MaxScoreDisjunction : public Root {
     _num_candidates = 0;
     _num_outer_windows = 0;
     _min_window_size = 1;
+    _promote_ticks = 0;
 
   outer:
     while (window_min < max) {
@@ -91,6 +94,14 @@ class MaxScoreDisjunction : public Root {
           break;
         }
         window_max = next;
+      }
+      if (_first_essential != 0 && ++_promote_ticks % kSampleEvery != 0 &&
+          Promote(window_max - window_min)) {
+        Finish(collector.ScoreThreshold());
+        if (_first_essential == 0 && !doc_limits::eof(window_max)) {
+          window_max =
+            std::max(window_max, window_min + kWindow * kExhaustiveWindows);
+        }
       }
 
       ProcessEssential([&](Entry* entry) {
@@ -118,6 +129,9 @@ class MaxScoreDisjunction : public Root {
     uint32_t cost = 1;
     score_t max_score = 0;
     double prefix_score_sum = 0;
+    double ratio = 0;
+    uint64_t candidates = 0;
+    uint64_t probes = 0;
   };
 
   template<typename T>
@@ -167,19 +181,20 @@ class MaxScoreDisjunction : public Root {
     for (auto& entry : _entries) {
       if (entry.leaf.Value() >= max) {
         entry.max_score = 0;
+        entry.ratio = 0;
         continue;
       }
       if (entry.leaf.Value() < min) {
         entry.leaf.SeekToBlock(min);
       }
       entry.max_score = entry.leaf.MaxScore(max - 1);
+      entry.ratio = static_cast<double>(entry.max_score) / entry.cost;
     }
   }
 
   bool Split(score_t score_threshold) {
     absl::c_sort(_sorted, [](const Entry* lhs, const Entry* rhs) noexcept {
-      return static_cast<double>(lhs->max_score) / lhs->cost <
-             static_cast<double>(rhs->max_score) / rhs->cost;
+      return lhs->ratio < rhs->ratio;
     });
 
     const auto threshold = static_cast<double>(score_threshold);
@@ -205,8 +220,12 @@ class MaxScoreDisjunction : public Root {
     if (_first_essential == size) {
       return false;
     }
+    Finish(threshold);
+    return true;
+  }
 
-    _num_essential = size - _first_essential;
+  void Finish(double threshold) noexcept {
+    _num_essential = _sorted.size() - _first_essential;
     _has_non_essential = _first_essential != 0;
 
     _first_required = _first_essential;
@@ -224,7 +243,93 @@ class MaxScoreDisjunction : public Root {
         required += _sorted[_first_required]->max_score;
       }
     }
-    return true;
+  }
+
+  static constexpr double kDrainCost = 1.5;
+  static constexpr double kAdmitCost = 0.3;
+  static constexpr double kProbeCost = 6;
+  static constexpr double kDecodeCost = 0.2;
+  static constexpr double kCallCost = 15;
+  static constexpr double kDenseSecond = 2;
+  static constexpr double kPromoteGain = 0.75;
+  static constexpr uint32_t kSampleEvery = 32;
+  static constexpr uint64_t kMinCandidates = doc_limits::kBlockSize;
+  static constexpr uint64_t kSurvivalWindow = 16 * doc_limits::kBlockSize;
+
+  static double Survival(const Entry& entry) noexcept {
+    if (entry.candidates < kMinCandidates) {
+      return 0.0;
+    }
+    return static_cast<double>(entry.probes) /
+           static_cast<double>(entry.candidates);
+  }
+
+  static void Observe(Entry& entry, uint32_t candidates,
+                      size_t probed) noexcept {
+    entry.candidates += candidates;
+    entry.probes += probed;
+    if (entry.candidates > kSurvivalWindow) {
+      entry.candidates /= 2;
+      entry.probes /= 2;
+    }
+  }
+
+  bool WindowPath(size_t first) const noexcept {
+    if (_sorted.size() - first < 2) {
+      return false;
+    }
+    uint32_t largest = 0;
+    uint32_t second = 0;
+    for (size_t i = first; i != _sorted.size(); ++i) {
+      const auto cost = _sorted[i]->cost;
+      if (cost > largest) {
+        second = largest;
+        largest = cost;
+      } else if (cost > second) {
+        second = cost;
+      }
+    }
+    return second * (kWindow / 2.0) >= kDenseSecond * _docs_count;
+  }
+
+  double Cost(double fill, size_t first, double scale,
+              double windows) const noexcept {
+    if (first == 0) {
+      return fill * (1 + kAdmitCost);
+    }
+    double cost = fill * (1 + kDrainCost);
+    for (size_t i = 0; i != first; ++i) {
+      const auto& entry = *_sorted[i];
+      const double probes = fill * Survival(entry);
+      const double docs = entry.cost * scale;
+      cost += probes * kProbeCost + windows * kCallCost +
+              std::min(docs, probes * doc_limits::kBlockSize) * kDecodeCost;
+    }
+    return cost;
+  }
+
+  bool Promote(doc_id_t span) noexcept {
+    const size_t scored = _first_essential;
+    if (!WindowPath(scored)) {
+      return false;
+    }
+    const double scale = static_cast<double>(span) / _docs_count;
+    const double windows = static_cast<double>(span) / kWindow;
+    double fill = 0;
+    for (size_t i = scored; i != _sorted.size(); ++i) {
+      fill += _sorted[i]->cost * scale;
+    }
+    double best = Cost(fill, scored, scale, windows) * kPromoteGain;
+    for (size_t first = scored; first != 0;) {
+      --first;
+      fill += _sorted[first]->cost * scale;
+      const double cost = Cost(fill, first, scale, windows);
+      if (cost < best) {
+        best = cost;
+        _first_essential = first;
+      }
+    }
+    return _first_essential != scored;
   }
 
   doc_id_t ComputeOuterWindow(doc_id_t min) {
@@ -265,6 +370,8 @@ class MaxScoreDisjunction : public Root {
           View<score_t> cand_scores{scores, len};
           ProcessNonEssential(cand_docs, cand_scores, max);
           len = static_cast<uint32_t>(cand_docs.count);
+        } else {
+          _num_candidates += len;
         }
         if (len != 0) {
           _admit.AddDocs(collector, docs, len, scores);
@@ -293,6 +400,7 @@ class MaxScoreDisjunction : public Root {
     }
 
     if (!_has_non_essential) {
+      _num_candidates += static_cast<uint32_t>(CountMask());
       _admit.Window(collector, _scores, _mask, min, kNumWords);
       return;
     }
@@ -303,6 +411,14 @@ class MaxScoreDisjunction : public Root {
     if (cand_docs.count != 0) {
       _admit.AddDocs(collector, _cand_docs, cand_docs.count, _cand_scores);
     }
+  }
+
+  size_t CountMask() const noexcept {
+    size_t count = 0;
+    for (const auto word : _mask) {
+      count += static_cast<size_t>(std::popcount(word));
+    }
+    return count;
   }
 
   size_t DrainCandidates(doc_id_t min) {
@@ -352,7 +468,11 @@ class MaxScoreDisjunction : public Root {
 
   template<typename Docs, typename Scores>
   void ProcessNonEssential(Docs& cand_docs, Scores& cand_scores, doc_id_t max) {
-    _num_candidates += static_cast<uint32_t>(cand_docs.size());
+    const auto candidates = static_cast<uint32_t>(cand_docs.size());
+    if (candidates == 0) {
+      return;
+    }
+    _num_candidates += candidates;
     const score_t threshold = _collector->ScoreThreshold();
 
     for (size_t i = _first_essential; i-- != 0;) {
@@ -362,9 +482,14 @@ class MaxScoreDisjunction : public Root {
       if (score_threshold > 0) {
         FilterCompetitive(cand_docs, cand_scores, score_threshold);
         if (cand_docs.empty()) {
+          Observe(entry, candidates, 0);
+          while (i-- != 0) {
+            Observe(*_sorted[i], candidates, 0);
+          }
           return;
         }
       }
+      Observe(entry, candidates, cand_docs.size());
       entry.leaf.ScoreCandidates(cand_docs, cand_scores, i >= _first_required,
                                  max);
     }
@@ -388,6 +513,8 @@ class MaxScoreDisjunction : public Root {
   doc_id_t _min_window_size = 1;
   score_t _next_threshold = std::numeric_limits<score_t>::lowest();
   [[no_unique_address]] Admit<Table> _admit;
+  const double _docs_count;
+  uint32_t _promote_ticks = 0;
 };
 
 }  // namespace irs::top

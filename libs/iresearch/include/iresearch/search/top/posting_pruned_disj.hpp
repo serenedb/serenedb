@@ -154,8 +154,7 @@ class PostingPrunedDisj : public PruneLeafBase<InputType, false> {
 
   tail: {
     auto* const begin = std::end(_docs) - _left_in_leaf;
-    auto* const end = std::find_if(begin, std::end(_docs),
-                                   [max](doc_id_t doc) { return doc >= max; });
+    auto* const end = Base::FirstNotBelow(begin, max);
     _left_in_leaf = static_cast<uint32_t>(std::end(_docs) - end);
     if (end != begin) {
       Emit(begin, static_cast<uint32_t>(end - begin), visit);
@@ -177,10 +176,17 @@ class PostingPrunedDisj : public PruneLeafBase<InputType, false> {
       max, [&](const doc_id_t* IRS_RESTRICT docs, uint32_t len,
                const score_t* IRS_RESTRICT scores) IRS_FORCE_INLINE {
         static constexpr auto kBits = BitsRequired<uint64_t>();
-        for (uint32_t i = 0; i != len; ++i) {
+        const auto add = [&](uint32_t i) IRS_FORCE_INLINE {
           const size_t offset = docs[i] - min;
           SetBit(mask[offset / kBits], offset % kBits);
           window[offset] += scores[i];
+        };
+        if (len == doc_limits::kBlockSize) [[likely]] {
+          VisitDocs<doc_limits::kBlockSize>(doc_limits::kBlockSize, add);
+        } else {
+          for (uint32_t i = 0; i != len; ++i) {
+            add(i);
+          }
         }
       });
   }
@@ -207,13 +213,14 @@ class PostingPrunedDisj : public PruneLeafBase<InputType, false> {
     ABSL_CACHELINE_ALIGNED doc_id_t docs[kScoreBlock];
     ABSL_CACHELINE_ALIGNED uint32_t freqs[kScoreBlock];
     ABSL_CACHELINE_ALIGNED uint32_t indices[kScoreBlock];
+    ABSL_CACHELINE_ALIGNED score_t scores[kScoreBlock];
     size_t count = 0;
     _provider.freq.value = freqs;
 
     auto score_block = [&](uint32_t len) {
       SDB_ASSERT(len != 0);
       _fetcher->Fetch(std::span<const doc_id_t>{docs, len});
-      auto* const p = reinterpret_cast<score_t*>(std::end(_enc.data) - len);
+      auto* const p = scores;
       if (len == kScoreBlock) {
         _score.ScoreBlock(p);
       } else {
@@ -310,9 +317,8 @@ class PostingPrunedDisj : public PruneLeafBase<InputType, false> {
     }
 
   cand_tail: {
-    const auto* const begin = std::end(_docs) - _left_in_leaf;
-    const auto* const end = std::find_if(
-      begin, std::cend(_docs), [max](doc_id_t doc) { return doc >= max; });
+    const auto* const begin = std::cend(_docs) - _left_in_leaf;
+    const auto* const end = Base::FirstNotBelow(begin, max);
     if (end != begin) {
       find_in_block(begin, end);
     }

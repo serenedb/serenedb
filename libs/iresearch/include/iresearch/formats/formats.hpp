@@ -67,6 +67,8 @@ struct ScoreBoundWriter;
 using DocMap = ManagedVector<doc_id_t>;
 using DocMapView = std::span<const doc_id_t>;
 
+struct AnnBuildEnv;
+
 struct SegmentWriterOptions {
   ScorerPtr scorer = nullptr;
   const Comparer* const comparator{};
@@ -78,6 +80,8 @@ struct SegmentWriterOptions {
   // Non-owning. For a segment writer just the fallback (the owning override
   // comes via SetFieldOptions); for a merge writer the whole config.
   const IndexFieldOptions* field_options = nullptr;
+  // Non-owning. Null builds the segment's ANN graph on the flushing thread.
+  const AnnBuildEnv* ann_env = nullptr;
 };
 
 struct TermPayloadWriter {

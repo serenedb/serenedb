@@ -102,6 +102,9 @@ set(IResearch_core_sources
     ./formats/index/burst_trie.cpp
     ./formats/index/idx_reader.cpp
     ./formats/index/idx_writer.cpp
+    ./formats/hnsw/hnsw_graph.cpp
+    ./formats/hnsw/hnsw_reader.cpp
+    ./formats/hnsw/hnsw_writer.cpp
     ./formats/ivf/centroids.cpp
     ./formats/ivf/clustering.cpp
     ./formats/ivf/ivf_writer.cpp
@@ -145,6 +148,8 @@ set(IResearch_core_sources
     ./search/wildcard_ngram_filter.cpp
     ./search/levenshtein_filter.cpp
     ./search/count/make.cpp
+    ./search/count/make_hnsw.cpp
+    ./search/count/make_ivf.cpp
     ./search/count/make_constant.cpp
     ./search/count/make_bitset_disjunction.cpp
     ./search/count/make_window_disjunction.cpp
@@ -174,6 +179,8 @@ set(IResearch_core_sources
     ./search/count/make_masked.cpp
     ./search/count/make_term_counts.cpp
     ./search/lead/make.cpp
+    ./search/lead/make_hnsw.cpp
+    ./search/lead/make_ivf.cpp
     ./search/lead/make_posting_docs.cpp
     ./search/lead/make_posting_scored.cpp
     ./search/lead/make_all_docs.cpp
@@ -231,6 +238,7 @@ set(IResearch_core_sources
     ./search/offsets/make_ngram.cpp
     ./search/offsets/make_ngram_all.cpp
     ./search/probe/make.cpp
+    ./search/probe/make_ivf.cpp
     ./search/probe/make_posting_docs.cpp
     ./search/probe/make_posting_scored.cpp
     ./search/probe/make_single_posting_scored.cpp
@@ -272,6 +280,7 @@ set(IResearch_core_sources
     ./search/probe/make_geo_distance_docs.cpp
     ./search/probe/make_geo_distance_scored.cpp
     ./search/fill/make.cpp
+    ./search/fill/make_ivf.cpp
     ./search/fill/make_posting_docs.cpp
     ./search/fill/make_posting_scored.cpp
     ./search/fill/make_single_posting_docs.cpp
@@ -321,6 +330,8 @@ set(IResearch_core_sources
     ./search/fill/make_geo_distance_docs.cpp
     ./search/fill/make_geo_distance_scored.cpp
     ./search/docs/make.cpp
+    ./search/docs/make_hnsw.cpp
+    ./search/docs/make_ivf.cpp
     ./search/docs/make_posting.cpp
     ./search/docs/make_single_posting.cpp
     ./search/docs/make_all.cpp
@@ -348,6 +359,8 @@ set(IResearch_core_sources
     ./search/docs/make_geo_is_contained.cpp
     ./search/docs/make_geo_distance.cpp
     ./search/scored/make.cpp
+    ./search/scored/make_hnsw.cpp
+    ./search/scored/make_ivf.cpp
     ./search/scored/make_posting.cpp
     ./search/scored/make_single_posting.cpp
     ./search/scored/make_all.cpp
@@ -372,6 +385,8 @@ set(IResearch_core_sources
     ./search/scored/make_geo_is_contained.cpp
     ./search/scored/make_geo_distance.cpp
     ./search/top/make.cpp
+    ./search/top/make_hnsw.cpp
+    ./search/top/make_ivf.cpp
     ./search/top/make_posting.cpp
     ./search/top/make_single_posting.cpp
     ./search/top/make_all.cpp
@@ -411,6 +426,7 @@ set(IResearch_core_sources
     ./search/optimizer/levenshtein_prefix_rules.cpp
     ./search/ngram_similarity_filter.cpp
     ./search/vector_similarity_filter.cpp
+    ./search/hnsw_query.cpp
     ./search/vector_similarity_query.cpp
     ./search/vector_similarity_scorer.cpp
     ./search/vector_radius_filter.cpp

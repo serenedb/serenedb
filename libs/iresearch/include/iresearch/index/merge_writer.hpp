@@ -24,9 +24,11 @@
 #pragma once
 
 #include <vector>
+#include <yaclib/async/future.hpp>
 
 #include "basics/memory.hpp"
 #include "basics/noncopyable.hpp"
+#include "iresearch/formats/ann_build_env.hpp"
 #include "iresearch/formats/column/col_reader.hpp"
 #include "iresearch/index/index_features.hpp"
 #include "iresearch/index/index_meta.hpp"
@@ -97,7 +99,8 @@ class MergeWriter : public util::Noncopyable {
   }
 
   // Flush all added readers into a single segment.
-  bool Flush(SegmentMeta& segment, const FlushProgress& progress = {});
+  auto Flush(SegmentMeta& segment, const FlushProgress& progress = {},
+             const AnnBuildEnv* env = nullptr) -> yaclib::Future<bool>;
 
   const ReaderCtx& operator[](size_t i) const noexcept {
     SDB_ASSERT(i < _readers.size());

@@ -41,7 +41,7 @@ class ReadContext final : public BlockManager,
                           public duckdb::ColumnStreamReader {
  public:
   explicit ReadContext(duckdb::DatabaseInstance& db) noexcept;
-  explicit ReadContext(const ColReader& reader);
+  explicit ReadContext(const ColReader& reader, bool random_access = false);
   ReadContext(duckdb::DatabaseInstance& db, IndexInput::ptr in);
   ~ReadContext() final;
 
@@ -93,6 +93,7 @@ class ReadContext final : public BlockManager,
   IndexInput::ptr _in;
   duckdb::unique_ptr<duckdb::MemoryMappedFile> _mapping;
   std::vector<std::pair<uint64_t, uint64_t>> _ranges;
+  bool _random_access = false;
   size_t _live_handles = 0;
 };
 

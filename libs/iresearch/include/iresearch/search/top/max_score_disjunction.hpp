@@ -49,7 +49,8 @@ class MaxScoreDisjunction : public Root {
   static constexpr doc_id_t kWordBits = search::kWindowBits;
   static constexpr size_t kNumWords = search::kWindowWords;
   static constexpr doc_id_t kWindow = search::kWindowDocs;
-  static constexpr doc_id_t kExhaustiveWindows = 4;
+  static constexpr doc_id_t kExhaustiveWindowsMin = 2;
+  static constexpr doc_id_t kExhaustiveWindowsMax = 16;
   static constexpr bool kExcludes = !std::is_same_v<Excludes, utils::Empty>;
 
   template<typename Init, typename ExcludesArgs>
@@ -78,6 +79,7 @@ class MaxScoreDisjunction : public Root {
     _num_outer_windows = 0;
     _min_window_size = 1;
     _promote_ticks = 0;
+    _exhaustive_windows = kExhaustiveWindowsMin;
 
   outer:
     while (window_min < max) {
@@ -100,8 +102,14 @@ class MaxScoreDisjunction : public Root {
         Finish(collector.ScoreThreshold());
         if (_first_essential == 0 && !doc_limits::eof(window_max)) {
           window_max =
-            std::max(window_max, window_min + kWindow * kExhaustiveWindows);
+            std::max(window_max, window_min + kWindow * _exhaustive_windows);
         }
+      }
+      if (_first_essential == 0) {
+        _exhaustive_windows =
+          std::min(2 * _exhaustive_windows, kExhaustiveWindowsMax);
+      } else {
+        _exhaustive_windows = kExhaustiveWindowsMin;
       }
 
       ProcessEssential([&](Entry* entry) {
@@ -509,6 +517,7 @@ class MaxScoreDisjunction : public Root {
   [[no_unique_address]] Admit<Table> _admit;
   const double _docs_count;
   uint32_t _promote_ticks = 0;
+  doc_id_t _exhaustive_windows = kExhaustiveWindowsMin;
 };
 
 }  // namespace irs::top

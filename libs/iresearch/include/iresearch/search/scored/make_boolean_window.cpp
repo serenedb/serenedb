@@ -47,22 +47,8 @@ Root::ptr MakeWindowNegation(std::span<const PostingClause> excludes,
                              score_t absorbed) {
   SDB_ASSERT(!excludes.empty() || !exclude_filters.empty());
   std::vector<search::FillNode::ptr> nodes;
-  nodes.reserve(excludes.size() + exclude_filters.size());
-  const auto take = [&](search::FillNode::ptr node) {
-    if (!node) {
-      return false;
-    }
-    nodes.emplace_back(std::move(node));
-    return true;
-  };
-  if (!search::VisitOrderedOf(
-        excludes, exclude_filters, false, 0, std::numeric_limits<size_t>::max(),
-        [&](const PostingClause& term) {
-          return take(search::FillOf(term, nullptr, segment));
-        },
-        [&](const QueryBuilder& child) {
-          return take(child.PlanFill({}, ScoreMergeType::Noop));
-        })) {
+  if (!search::CollectFills(excludes, exclude_filters, nullptr, segment,
+                            nodes)) {
     return {};
   }
   using Excludes = fill::FilledAndNot<fill::SetLeaves<fill::Erased>>;

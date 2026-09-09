@@ -21,7 +21,11 @@
 #pragma once
 
 #include <algorithm>
+#include <tuple>
+#include <type_traits>
+#include <utility>
 
+#include "basics/empty.hpp"
 #include "iresearch/formats/posting_meta.hpp"
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/search/common/posting_batch.hpp"
@@ -33,7 +37,7 @@
 
 namespace irs::scored {
 
-template<typename InputType, typename Table>
+template<typename InputType, typename Excludes, typename Table>
 class Posting : public Root,
                 public search::PostingBatch<InputType, Table, true> {
   using Base = search::PostingBatch<InputType, Table, true>;
@@ -47,8 +51,16 @@ class Posting : public Root,
 
  public:
   using Base::kTable;
+  static constexpr bool kExcludes = !std::is_same_v<Excludes, utils::Empty>;
 
-  explicit Posting(Table table) noexcept : _table{table} {}
+  template<typename ExcludesArgs>
+  Posting(Table table, std::piecewise_construct_t, ExcludesArgs&& excludes)
+    : _excludes{std::make_from_tuple<Excludes>(
+        std::forward<ExcludesArgs>(excludes))},
+      _table{table} {}
+
+  Posting(Posting&&) = delete;
+  Posting& operator=(Posting&&) = delete;
 
   void Prepare(const PostingMeta& meta, const IndexInput& doc_in,
                const SubReader& segment, const TermReader& field,
@@ -74,20 +86,33 @@ class Posting : public Root,
       }
       const auto len = std::min(_left_in_list, kBlock);
       auto* const dest = docs + emitted;
+      auto* const out = scores + emitted;
       ReadDocs(dest, len);
 
       if (len == kBlock) {
-        ScoreBlock(dest, scores + emitted);
+        ScoreBlock(dest, out);
       } else {
-        ScoreTail(dest, scores + emitted, len);
+        ScoreTail(dest, out, len);
       }
-      emitted += len;
+      if constexpr (kExcludes) {
+        uint32_t kept = 0;
+        for (uint32_t i = 0; i != len; ++i) {
+          const auto doc = dest[i];
+          dest[kept] = doc;
+          out[kept] = out[i];
+          kept += static_cast<uint32_t>(_excludes.Probe(doc) != doc);
+        }
+        emitted += kept;
+      } else {
+        emitted += len;
+      }
     }
 
     return emitted;
   }
 
  private:
+  [[no_unique_address]] Excludes _excludes;
   [[no_unique_address]] search::Narrowing<Table> _table;
 };
 

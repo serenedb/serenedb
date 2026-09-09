@@ -35,12 +35,12 @@
 #include "iresearch/search/common/score_policy.hpp"
 #include "iresearch/search/lead/impl.hpp"
 #include "iresearch/search/lead/make.hpp"
-#include "iresearch/search/lead/posting_scored.hpp"
 #include "iresearch/search/probe/impl.hpp"
 #include "iresearch/search/probe/leaves.hpp"
 #include "iresearch/search/probe/make.hpp"
 #include "iresearch/search/scored/boolean_sparse.hpp"
 #include "iresearch/search/scored/make_boolean.hpp"
+#include "iresearch/search/scored/posting.hpp"
 
 namespace irs::scored {
 namespace {
@@ -183,16 +183,19 @@ Root::ptr MakeSparseExclusion(const BooleanQuery& query,
     const search::ScoreRecipe recipe{.segment = &segment,
                                      .fetcher = &ctx.fetcher};
     return search::ResolveInput(doc, [&]<typename Input> -> Root::ptr {
-      using Include = search::PostingLeadScored<Input>;
       return search::BuildExcludeSideOf<Root::ptr, Input>(
         excludes, exclude_filters, nullptr, segment, candidates,
         [&]<typename Exclude>(auto&& negated) -> Root::ptr {
-          return MakeSparse<Include, utils::Empty, utils::Empty, Exclude>(
-            ctx, score,
-            std::forward_as_tuple(meta, doc, segment, own,
-                                  recipe.Args(posting.stats, posting.boost)),
-            std::forward_as_tuple(), std::forward_as_tuple(),
-            std::forward<decltype(negated)>(negated));
+          return MakePrepared(ctx, [&](auto table) -> Root::ptr {
+            auto root =
+              memory::make_managed<Posting<Input, Exclude, decltype(table)>>(
+                table, std::piecewise_construct,
+                std::forward<decltype(negated)>(negated));
+            root->Prepare(meta, doc, segment, own,
+                          recipe.Args(posting.stats, posting.boost),
+                          search::LayoutOf(own), search::BoundsOf(own));
+            return root;
+          });
         });
     });
   }

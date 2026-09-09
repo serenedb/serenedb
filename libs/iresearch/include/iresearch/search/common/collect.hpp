@@ -66,6 +66,29 @@ inline FillNode::ptr FillOf(const PostingClause& posting,
 }
 
 template<typename Term>
+bool CollectFills(std::span<const Term> terms,
+                  std::span<const QueryBuilder::ptr> filters,
+                  const TermReader* field, const SubReader& segment,
+                  std::vector<FillNode::ptr>& nodes) {
+  nodes.reserve(nodes.size() + terms.size() + filters.size());
+  const auto take = [&](FillNode::ptr node) {
+    if (!node) {
+      return false;
+    }
+    nodes.emplace_back(std::move(node));
+    return true;
+  };
+  return VisitOrderedOf(
+    terms, filters, false, 0, std::numeric_limits<size_t>::max(),
+    [&](const Term& term) {
+      return take(FillOf(ClauseOf(term, field), nullptr, segment));
+    },
+    [&](const QueryBuilder& child) {
+      return take(child.PlanFill({}, ScoreMergeType::Noop));
+    });
+}
+
+template<typename Term>
 uint64_t IncludeCandidates(std::span<const Term> terms,
                            std::span<const QueryBuilder::ptr> filters,
                            const SubReader& segment) noexcept {

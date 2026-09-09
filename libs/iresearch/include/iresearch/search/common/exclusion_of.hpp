@@ -28,8 +28,12 @@
 
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/search/common/bitset_of.hpp"
+#include "iresearch/search/common/boolean_groups.hpp"
 #include "iresearch/search/common/collect.hpp"
 #include "iresearch/search/common/plan.hpp"
+#include "iresearch/search/fill/impl.hpp"
+#include "iresearch/search/fill/set_leaves.hpp"
+#include "iresearch/search/probe/boolean_window.hpp"
 #include "iresearch/search/probe/leaves.hpp"
 
 namespace irs::search {
@@ -45,6 +49,33 @@ bool ExcludeTerms(std::span<const Term> terms,
   return doc != nullptr;
 }
 
+inline constexpr uint64_t kBooleanFillWeight = 2;
+inline constexpr uint64_t kPositionalFillWeight = 8;
+
+template<typename Term>
+uint64_t ExcludeFillCost(std::span<const Term> terms,
+                         std::span<const QueryBuilder::ptr> filters) noexcept {
+  uint64_t cost = SumDocs(terms);
+  for (const auto& child : filters) {
+    SDB_ASSERT(child);
+    const uint64_t estimate = child->EstimateMax();
+    switch (child->Kind()) {
+      case QueryKind::Term:
+      case QueryKind::Terms:
+      case QueryKind::All:
+        cost += estimate;
+        break;
+      case QueryKind::Boolean:
+        cost += kBooleanFillWeight * estimate;
+        break;
+      default:
+        cost += kPositionalFillWeight * estimate;
+        break;
+    }
+  }
+  return cost;
+}
+
 template<typename Result, typename Input, typename Term, typename Make>
 Result BuildExcludeSideOf(std::span<const Term> metas,
                           std::span<const QueryBuilder::ptr> filters,
@@ -52,8 +83,8 @@ Result BuildExcludeSideOf(std::span<const Term> metas,
                           uint64_t candidates, Make&& make) {
   SDB_ASSERT(!metas.empty() || !filters.empty());
   const IndexInput* doc = nullptr;
+  const auto docs_count = static_cast<doc_id_t>(segment.docs_count());
   if (ExcludeTerms(metas, filters, field, doc)) {
-    const auto docs_count = static_cast<doc_id_t>(segment.docs_count());
     if (TakeProbeBitset(metas, *doc, docs_count, candidates)) {
       auto buckets = DisjunctionBuckets(metas, field);
       return make.template operator()<probe::BitsetDocs>(
@@ -78,6 +109,19 @@ Result BuildExcludeSideOf(std::span<const Term> metas,
     } else {
       return concrete.template operator()<Input>();
     }
+  }
+  if (candidates >= docs_count / kDensityThresholdInverse &&
+      candidates >= ExcludeFillCost(metas, filters)) {
+    std::vector<FillNode::ptr> fills;
+    if (!CollectFills(metas, filters, field, segment, fills)) {
+      return {};
+    }
+    using Window = probe::BooleanWindow<OrGroup<fill::SetLeaves<fill::Erased>>>;
+    return make.template operator()<Window>(std::forward_as_tuple(
+      std::piecewise_construct,
+      std::forward_as_tuple(fills.size(), [&](fill::Erased& leaf, size_t i) {
+        leaf = fill::Erased{std::move(fills[i])};
+      })));
   }
   std::vector<probe::Erased> probes;
   probes.reserve(metas.size() + filters.size());

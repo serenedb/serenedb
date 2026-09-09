@@ -63,15 +63,19 @@ class AndLeaves {
   search::RunOf<Leaf, N> _leaves;
 };
 
-template<probe::Type Probe>
+template<probe::Type Leaf>
 class ProbedAndNot {
  public:
   template<typename Args>
   ProbedAndNot(std::piecewise_construct_t, Args&& probe)
-    : _probe{std::make_from_tuple<Probe>(std::forward<Args>(probe))} {}
+    : _probe{std::make_from_tuple<Leaf>(std::forward<Args>(probe))} {}
 
   ProbedAndNot(ProbedAndNot&&) = delete;
   ProbedAndNot& operator=(ProbedAndNot&&) = delete;
+
+  IRS_FORCE_INLINE doc_id_t Probe(doc_id_t target) {
+    return _probe.Probe(target);
+  }
 
   void Remove(doc_id_t min, doc_id_t max, uint64_t* IRS_RESTRICT mask) {
     const auto words = search::WindowWords(min, max);
@@ -112,7 +116,7 @@ class ProbedAndNot {
   }
 
  private:
-  Probe _probe;
+  Leaf _probe;
 };
 
 template<typename Leaves>

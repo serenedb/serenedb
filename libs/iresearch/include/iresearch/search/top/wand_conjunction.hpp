@@ -24,8 +24,11 @@
 
 #include <algorithm>
 #include <cstddef>
+#include <tuple>
+#include <type_traits>
 #include <utility>
 
+#include "basics/empty.hpp"
 #include "iresearch/search/column_collector.hpp"
 #include "iresearch/search/score_function.hpp"
 #include "iresearch/search/top/admit.hpp"
@@ -35,23 +38,29 @@
 
 namespace irs::top {
 
-template<typename Lead, typename Others, typename Table>
+template<typename Lead, typename Others, typename Excludes, typename Table>
 class WandConjunction : public Root {
  public:
   static constexpr uint32_t kChunk = kScoreBlock;
   static constexpr size_t kNarrowWindowClauses = 4;
   static constexpr uint32_t kNarrowFragment = 32;
+  static constexpr bool kExcludes = !std::is_same_v<Excludes, utils::Empty>;
 
-  template<typename Init>
+  template<typename Init, typename ExcludesArgs>
   WandConjunction(Table table, ColumnArgsFetcher& fetcher, size_t size,
-                  Init&& init)
+                  Init&& init, ExcludesArgs&& excludes)
     : _others{fetcher, size - 1,
               [&](auto& leaf, size_t i) { init(leaf, i + 1); }},
+      _excludes{
+        std::make_from_tuple<Excludes>(std::forward<ExcludesArgs>(excludes))},
       _admit{table} {
     SDB_ASSERT(size > 1);
     _narrow = size >= kNarrowWindowClauses;
     init(_lead, 0);
   }
+
+  WandConjunction(WandConjunction&&) = delete;
+  WandConjunction& operator=(WandConjunction&&) = delete;
 
   void Run(LoserScoreCollector& collector) final {
     for (auto doc = _lead.Advance(); !doc_limits::eof(doc);) {
@@ -73,6 +82,9 @@ class WandConjunction : public Root {
 
       _lead.ForEachScoredBlock(
         last + 1, [&](doc_id_t* docs, uint32_t len, score_t* scores) {
+          if constexpr (kExcludes) {
+            len = Exclude(docs, scores, len);
+          }
           for (uint32_t off = 0; off < len; off += kChunk) {
             const auto n = std::min<uint32_t>(kChunk, len - off);
             const auto kept =
@@ -90,8 +102,22 @@ class WandConjunction : public Root {
   }
 
  private:
+  IRS_FORCE_INLINE uint32_t Exclude(doc_id_t* IRS_RESTRICT docs,
+                                    score_t* IRS_RESTRICT scores,
+                                    uint32_t len) {
+    uint32_t kept = 0;
+    for (uint32_t i = 0; i != len; ++i) {
+      const auto doc = docs[i];
+      docs[kept] = doc;
+      scores[kept] = scores[i];
+      kept += static_cast<uint32_t>(_excludes.Probe(doc) != doc);
+    }
+    return kept;
+  }
+
   Lead _lead;
   Others _others;
+  [[no_unique_address]] Excludes _excludes;
   bool _narrow = false;
   [[no_unique_address]] Admit<Table> _admit;
 };

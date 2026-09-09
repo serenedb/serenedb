@@ -19,13 +19,14 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include <cmath>
-#include <cstddef>
 #include <span>
+#include <tuple>
+#include <utility>
 
+#include "basics/empty.hpp"
 #include "iresearch/index/index_reader.hpp"
-#include "iresearch/search/common/plan.hpp"
+#include "iresearch/search/common/exclusion_of.hpp"
 #include "iresearch/search/common/resolve.hpp"
-#include "iresearch/search/common/scored_context.hpp"
 #include "iresearch/search/top/detail/prune_leaves.hpp"
 #include "iresearch/search/top/make.hpp"
 #include "iresearch/search/top/posting_pruned_clause.hpp"
@@ -40,11 +41,12 @@ inline constexpr double kPruneMatchesPerHitPair = 75.0;
 
 }  // namespace
 
-Root::ptr MakeWandConjunction(std::span<const PostingClause> terms,
-                              std::span<const QueryBuilder::ptr> filters,
-                              search::Terms uniformity,
-                              const SubReader& segment, const Context& ctx,
-                              ScoreMergeType merge) {
+Root::ptr MakeWandConjunction(
+  std::span<const PostingClause> terms,
+  std::span<const QueryBuilder::ptr> filters, search::Terms uniformity,
+  std::span<const PostingClause> excludes,
+  std::span<const QueryBuilder::ptr> exclude_filters, const SubReader& segment,
+  const Context& ctx, ScoreMergeType merge) {
   if (merge != ScoreMergeType::Sum || !filters.empty() || terms.size() < 2 ||
       uniformity != search::Terms::Bounded) {
     return {};
@@ -61,17 +63,13 @@ Root::ptr MakeWandConjunction(std::span<const PostingClause> terms,
   if (matches < static_cast<double>(ctx.k) * per_hit) {
     return {};
   }
-
   const auto* const doc =
     search::DocOf(search::FieldOf(terms.front(), nullptr));
   SDB_ASSERT(doc != nullptr);
-
   const auto size = terms.size();
-
   return search::ResolveInput(*doc, [&]<typename Input> -> Root::ptr {
     using Lead = search::PostingPrunedLead<Input>;
     using Clause = search::PostingPrunedClause<Input>;
-
     const auto init = [&](auto& leaf, size_t i) {
       const auto& posting = terms[i];
       const auto& own = *posting.state.reader;
@@ -83,10 +81,19 @@ Root::ptr MakeWandConjunction(std::span<const PostingClause> terms,
                              .fetcher = &ctx.fetcher,
                              .boost = posting.boost});
     };
-
     using Others = detail::PruneLeaves<Clause>;
-    return MakeShape<WandConjunction, Lead, Others>(ctx, ctx.fetcher, size,
-                                                    init);
+    if (excludes.empty() && exclude_filters.empty()) {
+      return MakeShape<WandConjunction, Lead, Others, utils::Empty>(
+        ctx, ctx.fetcher, size, init, std::forward_as_tuple());
+    }
+    return search::BuildExcludeSide<Root::ptr>(
+      excludes, exclude_filters, nullptr, segment,
+      terms.front().state.cookie.docs_count,
+      [&]<typename Exclude>(auto&& negated) -> Root::ptr {
+        return MakeShape<WandConjunction, Lead, Others, Exclude>(
+          ctx, ctx.fetcher, size, init,
+          std::forward<decltype(negated)>(negated));
+      });
   });
 }
 

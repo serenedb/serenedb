@@ -116,7 +116,7 @@ Root::ptr Make(const MultiTermQuery& query, const Context& ctx) {
     if (merge == ScoreMergeType::Sum) {
       if (auto pruned =
             MakeMaxScoreDisjunction(terms, {}, uniformity, field, scorer, boost,
-                                    query.Segment(), ctx, merge)) {
+                                    {}, {}, query.Segment(), ctx, merge)) {
         return pruned;
       }
     }

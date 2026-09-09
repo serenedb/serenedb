@@ -23,6 +23,8 @@
 #include <algorithm>
 #include <bit>
 #include <limits>
+#include <tuple>
+#include <type_traits>
 #include <utility>
 
 #ifdef __AVX2__
@@ -30,6 +32,7 @@
 #endif
 
 #include "basics/bit_utils.hpp"
+#include "basics/empty.hpp"
 #include "iresearch/index/iterators.hpp"
 #include "iresearch/search/common/fixed_array.hpp"
 #include "iresearch/search/common/score_filter.hpp"
@@ -40,22 +43,29 @@
 
 namespace irs::top {
 
-template<typename Leaf, typename Table>
+template<typename Leaf, typename Excludes, typename Table>
 class MaxScoreDisjunction : public Root {
  public:
   static constexpr doc_id_t kWordBits = search::kWindowBits;
   static constexpr size_t kNumWords = search::kWindowWords;
   static constexpr doc_id_t kWindow = search::kWindowDocs;
+  static constexpr bool kExcludes = !std::is_same_v<Excludes, utils::Empty>;
 
-  template<typename Init>
-  MaxScoreDisjunction(Table table, size_t size, Init&& init)
+  template<typename Init, typename ExcludesArgs>
+  MaxScoreDisjunction(Table table, size_t size, Init&& init,
+                      ExcludesArgs&& excludes)
     : _entries{size,
                [&](Entry& entry, size_t i) {
                  entry.cost = std::max<uint32_t>(1, init(entry.leaf, i));
                }},
       _sorted{size, [this](Entry*& entry,
                            size_t i) noexcept { entry = &_entries[i]; }},
+      _excludes{
+        std::make_from_tuple<Excludes>(std::forward<ExcludesArgs>(excludes))},
       _admit{table} {}
+
+  MaxScoreDisjunction(MaxScoreDisjunction&&) = delete;
+  MaxScoreDisjunction& operator=(MaxScoreDisjunction&&) = delete;
 
   void Run(LoserScoreCollector& collector) final {
     _collector = &collector;
@@ -247,6 +257,9 @@ class MaxScoreDisjunction : public Root {
     leaf.ForEachScoredBlock(
       max, [&](doc_id_t* IRS_RESTRICT docs, uint32_t len,
                score_t* IRS_RESTRICT scores) IRS_FORCE_INLINE {
+        if constexpr (kExcludes) {
+          len = Exclude(docs, scores, len);
+        }
         if (_has_non_essential) {
           View<doc_id_t> cand_docs{docs, len};
           View<score_t> cand_scores{scores, len};
@@ -275,6 +288,9 @@ class MaxScoreDisjunction : public Root {
     ProcessEssential([&](Entry* entry) IRS_FORCE_INLINE {
       entry->leaf.Fill(min, max, _mask, _scores);
     });
+    if constexpr (kExcludes) {
+      _excludes.Remove(min, max, _mask, _scores, score_t{0});
+    }
 
     if (!_has_non_essential) {
       _admit.Window(collector, _scores, _mask, min, kNumWords);
@@ -308,6 +324,19 @@ class MaxScoreDisjunction : public Root {
       } while (word != 0);
     }
     return count;
+  }
+
+  IRS_FORCE_INLINE uint32_t Exclude(doc_id_t* IRS_RESTRICT docs,
+                                    score_t* IRS_RESTRICT scores,
+                                    uint32_t len) {
+    uint32_t kept = 0;
+    for (uint32_t i = 0; i != len; ++i) {
+      const auto doc = docs[i];
+      docs[kept] = doc;
+      scores[kept] = scores[i];
+      kept += static_cast<uint32_t>(_excludes.Probe(doc) != doc);
+    }
+    return kept;
   }
 
   template<typename Docs, typename Scores>
@@ -349,6 +378,7 @@ class MaxScoreDisjunction : public Root {
   LoserScoreCollector* _collector = nullptr;
   search::FixedArray<Entry> _entries;
   search::FixedArray<Entry*> _sorted;
+  [[no_unique_address]] Excludes _excludes;
   size_t _first_essential = 0;
   size_t _first_required = 0;
   size_t _num_essential = 0;

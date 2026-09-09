@@ -83,18 +83,6 @@ template<typename Parser, typename Acceptor>
 Node::ptr Make(const GeoQuery<Parser, Acceptor>& query, const ScoredCtx& ctx,
                ScoreMergeType merge);
 
-Node::ptr MakeDisjunctionScored(std::span<const search::PostingClause> terms,
-                                std::span<const QueryBuilder::ptr> filters,
-                                search::Terms uniformity,
-                                const SubReader& segment, const ScoredCtx& ctx,
-                                ScoreMergeType merge, score_t absorbed);
-Node::ptr MakeThresholdScored(std::span<const search::PostingClause> terms,
-                              std::span<const QueryBuilder::ptr> filters,
-                              search::Terms uniformity,
-                              const SubReader& segment, const ScoredCtx& ctx,
-                              ScoreMergeType merge, uint32_t min_match,
-                              score_t absorbed);
-
 Node::ptr MakePostingDocs(const search::PostingClause& posting,
                           const SubReader& segment);
 Node::ptr MakePostingScored(const search::PostingClause& posting,

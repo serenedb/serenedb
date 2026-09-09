@@ -47,8 +47,8 @@ class Posting : public Root {
 
   template<typename ExcludesArgs>
   Posting(Table table, std::piecewise_construct_t, ExcludesArgs&& excludes)
-    : _excludes{
-        std::make_from_tuple<Excludes>(std::forward<ExcludesArgs>(excludes))},
+    : _excludes{std::make_from_tuple<Excludes>(
+        std::forward<ExcludesArgs>(excludes))},
       _admit{table} {}
 
   Posting(Posting&&) = delete;
@@ -78,7 +78,7 @@ class Posting : public Root {
       }
       if constexpr (kExcludes) {
         uint32_t kept = 0;
-        for (uint32_t i = 0; i != len; ++i) {
+        [[clang::code_align(64)]] for (uint32_t i = 0; i != len; ++i) {
           const auto doc = docs[i];
           docs[kept] = doc;
           scores[kept] = scores[i];

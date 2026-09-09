@@ -34,12 +34,67 @@
 #include "iresearch/search/common/plan.hpp"
 #include "iresearch/search/common/score_policy.hpp"
 #include "iresearch/search/common/scored_context.hpp"
+#include "iresearch/search/common/scored_node_builder.hpp"
 #include "iresearch/search/fill/set_leaves.hpp"
+#include "iresearch/search/lead/boolean_sparse.hpp"
 #include "iresearch/search/lead/boolean_window.hpp"
 #include "iresearch/search/lead/impl.hpp"
 #include "iresearch/search/lead/plan.hpp"
 
 namespace irs::lead {
+
+struct ScoredApi {
+  using Result = Node::ptr;
+  using Context = ScoredCtx;
+
+  static constexpr bool kLazyGroups = true;
+  static constexpr bool kSingleClause = true;
+  static constexpr bool kWrapsMerge = false;
+
+  static score_t Base(score_t) noexcept { return 0; }
+
+  static ScoreMergeType Inner(ScoreMergeType merge) noexcept { return merge; }
+
+  template<typename Optional, typename OptionalArgs>
+  static Result MakeWindow(search::Scored score, OptionalArgs&& optional) {
+    using Window = BooleanWindow<utils::Empty, utils::Empty, Optional,
+                                 utils::Empty, search::Scored>;
+    return memory::make_managed<Impl<Window>>(
+      std::piecewise_construct, std::forward_as_tuple(),
+      std::forward_as_tuple(), std::forward<OptionalArgs>(optional),
+      std::forward_as_tuple(), score);
+  }
+
+  template<typename Lead, typename Probes, typename Optional, typename Excludes,
+           typename LeadArgs, typename ProbesArgs, typename OptionalArgs,
+           typename ExcludesArgs, typename Score>
+  static Result MakeSparse(const Context&, ScoreMergeType, LeadArgs&& lead,
+                           ProbesArgs&& probes, OptionalArgs&& optional,
+                           ExcludesArgs&& excludes, Score score) {
+    using Sparse = BooleanSparse<Lead, Probes, Optional, Excludes, Score>;
+    return memory::make_managed<Impl<Sparse>>(
+      std::piecewise_construct, std::forward<LeadArgs>(lead),
+      std::forward<ProbesArgs>(probes), std::forward<OptionalArgs>(optional),
+      std::forward<ExcludesArgs>(excludes), score);
+  }
+
+  static Result MakeAll(const SubReader& segment, const Context&,
+                        ScoreMergeType, score_t absorbed) {
+    return MakeAllScored(segment, absorbed);
+  }
+
+  static Result MakeRequiredWith(
+    std::span<const PostingClause> must,
+    std::span<const QueryBuilder::ptr> must_filters,
+    std::span<const PostingClause> should,
+    std::span<const QueryBuilder::ptr> should_filters, search::Terms uniformity,
+    uint32_t min_match, const SubReader& segment, const Context& ctx,
+    ScoreMergeType merge, score_t absorbed) {
+    return search::builder::MakeNodeConjunctionWith<ScoredApi>(
+      must, must_filters, should, should_filters, uniformity, min_match,
+      segment, ctx, merge, absorbed);
+  }
+};
 
 template<typename Term>
 Node::ptr MakeWindowDisjunctionOfTermsDocs(std::span<const Term> terms,
@@ -86,19 +141,11 @@ Node::ptr MakeWindowDisjunctionOfTermsScored(
   score_t boost, const IndexInput& doc, search::Terms uniformity,
   const SubReader& segment, const ScoredCtx& ctx, ScoreMergeType merge,
   score_t absorbed) {
-  const auto make = [&]<typename Set>(auto&&... args) -> Node::ptr {
-    using Node = BooleanWindow<utils::Empty, utils::Empty, search::OrGroup<Set>,
-                               utils::Empty, search::Scored>;
-    return memory::make_managed<Impl<Node>>(
-      std::piecewise_construct, std::forward_as_tuple(),
-      std::forward_as_tuple(),
-      std::forward_as_tuple(std::forward<decltype(args)>(args)...),
-      std::forward_as_tuple(), search::Scored{merge, absorbed});
-  };
   const ScoreRecipe recipe{.segment = &segment, .fetcher = ctx.fetcher};
   std::vector<fill::Node::ptr> rest;
-  return search::BuildScoredWindow<Node::ptr, Term>(
-    terms, field, scorer, boost, &doc, rest, uniformity, recipe, merge, make);
+  return search::builder::MakeNodeDisjunctionWindow<ScoredApi, Term>(
+    terms, field, scorer, boost, &doc, rest, uniformity, recipe, merge,
+    absorbed);
 }
 
 }  // namespace irs::lead

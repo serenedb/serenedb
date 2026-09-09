@@ -34,34 +34,86 @@
 #include "iresearch/search/common/plan.hpp"
 #include "iresearch/search/common/score_policy.hpp"
 #include "iresearch/search/common/scored_context.hpp"
+#include "iresearch/search/common/scored_node_builder.hpp"
 #include "iresearch/search/fill/boolean_window.hpp"
 #include "iresearch/search/fill/impl.hpp"
+#include "iresearch/search/fill/make.hpp"
 #include "iresearch/search/fill/plan.hpp"
 #include "iresearch/search/fill/set_leaves.hpp"
+#include "iresearch/search/fill/walk.hpp"
+#include "iresearch/search/fill/window_scored.hpp"
+#include "iresearch/search/lead/boolean_sparse.hpp"
+#include "iresearch/search/lead/impl.hpp"
+#include "iresearch/search/lead/make.hpp"
 
 namespace irs::fill {
 
-Node::ptr MakeSparseConjunctionScored(
-  std::span<const search::PostingClause> terms,
-  std::span<const QueryBuilder::ptr> filters, const SubReader& segment,
-  const ScoredCtx& ctx, ScoreMergeType merge, score_t absorbed);
-Node::ptr MakeSparseExclusionScored(
-  std::span<const search::PostingClause> must_terms,
-  std::span<const QueryBuilder::ptr> must_filters,
-  std::span<const search::PostingClause> should_terms,
-  std::span<const QueryBuilder::ptr> should_filters,
-  search::Terms should_uniformity, uint32_t min_should_match,
-  std::span<const search::PostingClause> exclude_terms,
-  std::span<const QueryBuilder::ptr> exclude_filters, const SubReader& segment,
-  const ScoredCtx& ctx, ScoreMergeType merge, ScoreMergeType own,
-  score_t absorbed);
-Node::ptr MakeSparseBoostScored(
-  std::span<const search::PostingClause> must_terms,
-  std::span<const QueryBuilder::ptr> must_filters,
-  std::span<const search::PostingClause> should_terms,
-  std::span<const QueryBuilder::ptr> should_filters, search::Terms uniformity,
-  const SubReader& segment, const ScoredCtx& ctx, ScoreMergeType merge,
-  score_t absorbed);
+struct ScoredApi {
+  using Result = Node::ptr;
+  using Context = ScoredCtx;
+
+  static constexpr bool kLazyGroups = false;
+  static constexpr bool kSingleClause = false;
+  static constexpr bool kWrapsMerge = true;
+
+  static score_t Base(score_t absorbed) noexcept { return absorbed; }
+
+  static ScoreMergeType Inner(ScoreMergeType) noexcept {
+    return ScoreMergeType::Sum;
+  }
+
+  template<typename Optional, typename OptionalArgs>
+  static Result MakeWindow(search::Scored score, OptionalArgs&& optional) {
+    using Window = BooleanWindow<utils::Empty, utils::Empty, Optional,
+                                 utils::Empty, search::Scored>;
+    return memory::make_managed<Impl<Window>>(
+      std::piecewise_construct, std::forward_as_tuple(),
+      std::forward_as_tuple(), std::forward<OptionalArgs>(optional),
+      std::forward_as_tuple(), score);
+  }
+
+  template<typename Lead, typename Probes, typename Optional, typename Excludes,
+           typename LeadArgs, typename ProbesArgs, typename OptionalArgs,
+           typename ExcludesArgs, typename Score>
+  static Result MakeSparse(const Context& ctx, ScoreMergeType merge,
+                           LeadArgs&& lead, ProbesArgs&& probes,
+                           OptionalArgs&& optional, ExcludesArgs&& excludes,
+                           Score score) {
+    using Sparse = lead::BooleanSparse<Lead, Probes, Optional, Excludes, Score>;
+    return memory::make_managed<ByWalkScored<Sparse>>(
+      merge, *ctx.fetcher, std::piecewise_construct,
+      std::forward<LeadArgs>(lead), std::forward<ProbesArgs>(probes),
+      std::forward<OptionalArgs>(optional),
+      std::forward<ExcludesArgs>(excludes), score);
+  }
+
+  static Result MakeAll(const SubReader& segment, const Context&,
+                        ScoreMergeType merge, score_t absorbed) {
+    return MakeAllScored(segment, merge, absorbed);
+  }
+
+  static Result MakeRequiredWith(
+    std::span<const search::PostingClause> must,
+    std::span<const QueryBuilder::ptr> must_filters,
+    std::span<const search::PostingClause> should,
+    std::span<const QueryBuilder::ptr> should_filters, search::Terms uniformity,
+    uint32_t min_match, const SubReader& segment, const Context& ctx,
+    ScoreMergeType merge, score_t absorbed) {
+    auto node = lead::MakeRequiredScored(must, must_filters, should,
+                                         should_filters, uniformity, min_match,
+                                         segment, ctx, merge, absorbed);
+    if (!node) {
+      return {};
+    }
+    return memory::make_managed<ByWalkScored<lead::Erased>>(
+      merge, *ctx.fetcher, lead::Erased{std::move(node)});
+  }
+
+  static Result WrapMerge(ScoreMergeType merge, Result child) {
+    return memory::make_managed<ByWindowScored<Erased>>(
+      merge, Erased{std::move(child)});
+  }
+};
 
 template<typename Term>
 Node::ptr MakeWindowDisjunctionOfTermsDocs(std::span<const Term> terms,
@@ -108,18 +160,9 @@ Node::ptr MakeWindowDisjunctionScored(
   score_t boost, const IndexInput* doc, std::vector<Node::ptr>& rest,
   search::Terms uniformity, const ScoreRecipe& recipe, ScoreMergeType merge,
   score_t absorbed = 0) {
-  SDB_ASSERT(!terms.empty() || !rest.empty());
-  const auto make = [&]<typename Set>(auto&&... args) -> Node::ptr {
-    using Node = BooleanWindow<utils::Empty, utils::Empty, search::OrGroup<Set>,
-                               utils::Empty, search::Scored>;
-    return memory::make_managed<Impl<Node>>(
-      std::piecewise_construct, std::forward_as_tuple(),
-      std::forward_as_tuple(),
-      std::forward_as_tuple(std::forward<decltype(args)>(args)...),
-      std::forward_as_tuple(), search::Scored{merge, absorbed});
-  };
-  return search::BuildScoredWindow<Node::ptr>(
-    terms, field, scorer, boost, doc, rest, uniformity, recipe, merge, make);
+  return search::builder::MakeNodeDisjunctionWindow<ScoredApi, Term>(
+    terms, field, scorer, boost, doc, rest, uniformity, recipe, merge,
+    absorbed);
 }
 
 }  // namespace irs::fill

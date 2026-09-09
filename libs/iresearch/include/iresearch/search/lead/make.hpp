@@ -82,48 +82,9 @@ Node::ptr MakeAllDocs(const SubReader& segment);
 Node::ptr MakeAllScored(const SubReader& segment, score_t score);
 Node::ptr MakeAllScored(const SubReader& segment, const ScoreArgs& args);
 
-Node::ptr MakeWindowDisjunctionScored(
-  std::span<const PostingClause> terms,
-  std::span<const QueryBuilder::ptr> filters, search::Terms uniformity,
-  const SubReader& segment, const ScoredCtx& ctx, ScoreMergeType merge,
-  score_t absorbed);
-
 Node::ptr MakeSparseConjunctionScored(
   std::span<const PostingClause> terms,
   std::span<const QueryBuilder::ptr> filters, const SubReader& segment,
-  const ScoredCtx& ctx, ScoreMergeType merge, score_t absorbed);
-Node::ptr MakeSparseConjunctionWithScored(
-  std::span<const PostingClause> must,
-  std::span<const QueryBuilder::ptr> must_filters,
-  std::span<const PostingClause> should,
-  std::span<const QueryBuilder::ptr> should_filters,
-  search::Terms should_uniformity, uint32_t min_should_match,
-  const SubReader& segment, const ScoredCtx& ctx, ScoreMergeType merge,
-  score_t absorbed);
-
-Node::ptr MakeSparseExclusionScored(
-  std::span<const PostingClause> must,
-  std::span<const QueryBuilder::ptr> must_filters,
-  std::span<const PostingClause> should,
-  std::span<const QueryBuilder::ptr> should_filters,
-  search::Terms should_uniformity, uint32_t min_should_match,
-  std::span<const PostingClause> excludes,
-  std::span<const QueryBuilder::ptr> exclude_filters, const SubReader& segment,
-  const ScoredCtx& ctx, ScoreMergeType merge, score_t absorbed);
-
-Node::ptr MakeWindowThresholdScored(std::span<const PostingClause> terms,
-                                    std::span<const QueryBuilder::ptr> filters,
-                                    search::Terms uniformity,
-                                    const SubReader& segment,
-                                    const ScoredCtx& ctx, ScoreMergeType merge,
-                                    uint32_t min_match, score_t absorbed);
-
-Node::ptr MakeSparseBoostScored(
-  std::span<const PostingClause> must,
-  std::span<const QueryBuilder::ptr> must_filters,
-  std::span<const PostingClause> should,
-  std::span<const QueryBuilder::ptr> should_filters,
-  search::Terms should_uniformity, const SubReader& segment,
   const ScoredCtx& ctx, ScoreMergeType merge, score_t absorbed);
 
 Node::ptr MakeFixedPhraseDocs(const FixedPhraseQuery& query);

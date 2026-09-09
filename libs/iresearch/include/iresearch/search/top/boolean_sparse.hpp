@@ -77,7 +77,7 @@ class BooleanSparse : public Root {
     ABSL_CACHELINE_ALIGNED score_t scores[kBatch];
     uint32_t batch = 0;
     auto doc = _lead.Advance();
-    while (!doc_limits::eof(doc)) {
+    [[clang::code_align(64)]] while (!doc_limits::eof(doc)) {
       if constexpr (kProbes) {
         if (const auto probe = _probes.Probe(doc); probe != doc) {
           doc = _lead.Seek(probe);

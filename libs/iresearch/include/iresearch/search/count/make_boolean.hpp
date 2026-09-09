@@ -93,14 +93,10 @@ Root::ptr MakeSubtractDisjunction(const search::PostingClause& first,
                                   const search::PostingClause& second,
                                   const SubReader& segment, const Context& ctx);
 
-Root::ptr MakeBitsThreshold(std::span<const search::PostingClause> terms,
-                            const IndexInput* doc,
-                            std::vector<FillNode::ptr>& rest,
-                            uint32_t min_match, const Context& ctx);
-Root::ptr MakeCountThreshold(std::span<const search::PostingClause> terms,
-                             const IndexInput* doc,
-                             const std::vector<FillNode::ptr>& rest,
-                             uint32_t min_match, const Context& ctx);
+Root::ptr MakeWindowThreshold(std::span<const search::PostingClause> terms,
+                              const IndexInput* doc,
+                              std::vector<FillNode::ptr>& rest,
+                              uint32_t min_match, const Context& ctx);
 
 template<typename Term>
 doc_id_t RarestOf(std::span<const Term> terms) noexcept {

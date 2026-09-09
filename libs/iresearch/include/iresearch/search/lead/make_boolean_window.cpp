@@ -26,7 +26,9 @@
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/search/common/collect.hpp"
 #include "iresearch/search/common/exclusion_of.hpp"
+#include "iresearch/search/common/posting_count.hpp"
 #include "iresearch/search/fill/leaves.hpp"
+#include "iresearch/search/fill/set_leaves.hpp"
 #include "iresearch/search/lead/make_boolean.hpp"
 
 namespace irs::lead {
@@ -124,6 +126,45 @@ Node::ptr MakeWindowExclusionDocs(
         must, *doc,
         std::forward_as_tuple(std::piecewise_construct,
                               std::forward<decltype(exclude)>(exclude)));
+    });
+}
+
+Node::ptr MakeWindowThresholdDocs(std::span<const PostingClause> terms,
+                                  const IndexInput* doc,
+                                  std::vector<FillNode::ptr>& rest,
+                                  uint32_t min_match) {
+  SDB_ASSERT(min_match > 1);
+  SDB_ASSERT(terms.size() + rest.size() >= min_match);
+  if (min_match > search::kBitplaneMaxMatch && rest.empty()) {
+    const auto& in = *doc;
+    return ResolveInput(in, [&]<typename Input> -> Node::ptr {
+      using Leaf = search::PostingCount<Input>;
+      const auto init = [&](Leaf& leaf, size_t i) {
+        const auto& own = FieldOf(terms[i], nullptr);
+        const auto& meta = CookieOf(terms[i]);
+        leaf.Prepare(meta, in, meta.docs_count != 1 && search::BoundsOf(own),
+                     meta.docs_count != 1 && search::FreqOf(own));
+      };
+      return MakeWindow<utils::Empty, utils::Empty,
+                        search::TallyGroup<fill::SetLeaves<Leaf>>,
+                        utils::Empty>(
+        std::forward_as_tuple(), std::forward_as_tuple(),
+        std::forward_as_tuple(std::piecewise_construct,
+                              std::forward_as_tuple(terms.size(), init),
+                              min_match, score_t{0}),
+        std::forward_as_tuple());
+    });
+  }
+  return BuildDense<Node::ptr>(
+    terms, nullptr, doc, rest, [&]<typename Set>(auto&&... args) -> Node::ptr {
+      return MakeWindow<utils::Empty, utils::Empty, search::ThresholdGroup<Set>,
+                        utils::Empty>(
+        std::forward_as_tuple(), std::forward_as_tuple(),
+        std::forward_as_tuple(
+          std::piecewise_construct,
+          std::forward_as_tuple(std::forward<decltype(args)>(args)...),
+          min_match, score_t{0}),
+        std::forward_as_tuple());
     });
 }
 

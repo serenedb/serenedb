@@ -80,12 +80,7 @@ Node::ptr MakeThresholdDocs(std::span<const search::PostingClause> terms,
   if (!CollectDense(terms, filters, nullptr, doc, rest)) {
     return {};
   }
-  if (min_match > search::kBitplaneMaxMatch) {
-    if (auto counted = MakeCountThresholdDocs(terms, doc, rest, min_match)) {
-      return counted;
-    }
-  }
-  return MakeBitsThresholdDocs(terms, doc, rest, min_match);
+  return MakeWindowThresholdDocs(terms, doc, rest, min_match);
 }
 
 Node::ptr MakeRequiredDocs(std::span<const search::PostingClause> must_terms,

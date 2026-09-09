@@ -70,14 +70,8 @@ Node::ptr MakeThresholdScored(std::span<const search::PostingClause> terms,
     return {};
   }
   const ScoreRecipe recipe{.segment = &segment, .fetcher = ctx.fetcher};
-  if (min_match > search::kBitplaneMaxMatch) {
-    if (auto counted = MakeCountThresholdScored(
-          terms, doc, rest, uniformity, recipe, merge, min_match, absorbed)) {
-      return counted;
-    }
-  }
-  return MakeBitsThresholdScored(terms, doc, rest, uniformity, recipe, merge,
-                                 min_match, absorbed);
+  return MakeWindowThresholdScored(terms, doc, rest, uniformity, recipe, merge,
+                                   min_match, absorbed);
 }
 
 Node::ptr Make(const BooleanQuery& query, const ScoredCtx& ctx,

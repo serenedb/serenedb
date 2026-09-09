@@ -62,6 +62,9 @@ class BooleanWindow : public Root {
   void Run(LoserScoreCollector& collector) final {
     doc_id_t next = doc_limits::min();
     while (!doc_limits::eof(next)) {
+      if (!_admit.Skip(next)) {
+        break;
+      }
       const auto min = next;
       const auto max = min + kWindow;
       if constexpr (kLead) {

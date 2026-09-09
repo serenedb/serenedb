@@ -85,14 +85,10 @@ Root::ptr MakeSparseExclusionOf(
   std::span<const QueryBuilder::ptr> exclude_filters, const SubReader& segment,
   uint64_t candidates, const Context& ctx);
 
-Root::ptr MakeBitsThreshold(std::span<const search::PostingClause> terms,
-                            const IndexInput* doc,
-                            std::vector<FillNode::ptr>& rest,
-                            uint32_t min_match, const Context& ctx);
-Root::ptr MakeCountThreshold(std::span<const search::PostingClause> terms,
-                             const IndexInput* doc,
-                             const std::vector<FillNode::ptr>& rest,
-                             uint32_t min_match, const Context& ctx);
+Root::ptr MakeWindowThreshold(std::span<const search::PostingClause> terms,
+                              const IndexInput* doc,
+                              std::vector<FillNode::ptr>& rest,
+                              uint32_t min_match, const Context& ctx);
 
 template<typename Term>
 Root::ptr MakeBitsetDisjunctionOfTerms(std::span<const Term> terms,

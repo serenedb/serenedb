@@ -42,9 +42,11 @@ class BooleanWindow : public Root {
  public:
   static constexpr size_t kNumWords = search::kWindowWords;
   static constexpr doc_id_t kWindow = search::kWindowDocs;
+  static constexpr int kSparseWord = 32;
   static constexpr bool kLead = !std::is_same_v<Lead, utils::Empty>;
   static constexpr bool kOptional = !std::is_same_v<Optional, utils::Empty>;
   static constexpr bool kExcludes = !std::is_same_v<Excludes, utils::Empty>;
+  static constexpr bool kResets = kOptional && !search::LazyReset<Optional>();
   static_assert(kLead != kOptional);
 
   template<typename LeadArgs, typename OptionalArgs, typename ExcludesArgs>
@@ -73,7 +75,7 @@ class BooleanWindow : public Root {
       const score_t* IRS_RESTRICT const window = _window;
       const auto min = _min;
       for (; _word != kNumWords; ++_word) {
-        const auto word = _mask[_word];
+        auto word = _mask[_word];
         if (word == 0) {
           continue;
         }
@@ -84,6 +86,20 @@ class BooleanWindow : public Root {
         }
         _mask[_word] = 0;
         const auto base = _word * BitsRequired<uint64_t>();
+        if (std::popcount(word) < kSparseWord) {
+          while (word != 0) {
+            const auto offset =
+              base + static_cast<uint32_t>(std::countr_zero(word));
+            out[n] = min + static_cast<doc_id_t>(offset);
+            scores[n] = _window[offset];
+            if constexpr (kResets) {
+              _window[offset] = _constant;
+            }
+            ++n;
+            word = PopBit(word);
+          }
+          continue;
+        }
         const auto first = n;
         n = static_cast<uint32_t>(
           MaterializeWord(min + static_cast<doc_id_t>(base), word, out + n) -
@@ -94,7 +110,7 @@ class BooleanWindow : public Root {
             scores[i + j] = window[out[i + j] - min];
           }
         }
-        if constexpr (kOptional) {
+        if constexpr (kResets) {
           std::fill_n(_window + base, BitsRequired<uint64_t>(), _constant);
         }
       }

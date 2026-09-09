@@ -63,28 +63,15 @@ using search::ResolveFillScored;
 using search::ResolveInput;
 using search::SegmentDoc;
 
-Node::ptr MakeBitsThresholdDocs(std::span<const search::PostingClause> terms,
-                                const IndexInput* doc,
-                                std::vector<Node::ptr>& rest,
-                                uint32_t min_match);
-Node::ptr MakeCountThresholdDocs(std::span<const search::PostingClause> terms,
-                                 const IndexInput* doc,
-                                 const std::vector<Node::ptr>& rest,
-                                 uint32_t min_match);
-Node::ptr MakeBitsThresholdScored(std::span<const search::PostingClause> terms,
+Node::ptr MakeWindowThresholdDocs(std::span<const search::PostingClause> terms,
                                   const IndexInput* doc,
                                   std::vector<Node::ptr>& rest,
-                                  search::Terms uniformity,
-                                  const ScoreRecipe& recipe,
-                                  ScoreMergeType merge, uint32_t min_match,
-                                  score_t absorbed);
-Node::ptr MakeCountThresholdScored(std::span<const search::PostingClause> terms,
-                                   const IndexInput* doc,
-                                   const std::vector<Node::ptr>& rest,
-                                   search::Terms uniformity,
-                                   const ScoreRecipe& recipe,
-                                   ScoreMergeType merge, uint32_t min_match,
-                                   score_t absorbed);
+                                  uint32_t min_match);
+Node::ptr MakeWindowThresholdScored(
+  std::span<const search::PostingClause> terms, const IndexInput* doc,
+  std::vector<Node::ptr>& rest, search::Terms uniformity,
+  const ScoreRecipe& recipe, ScoreMergeType merge, uint32_t min_match,
+  score_t absorbed);
 
 Node::ptr MakeFixedPhraseDocs(const FixedPhraseQuery& query);
 Node::ptr MakeFixedPhraseIntervalsDocs(const FixedPhraseQuery& query);

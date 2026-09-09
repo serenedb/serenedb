@@ -63,15 +63,8 @@ Root::ptr Make(const BooleanQuery& query, const Context& ctx) {
                                    nullptr, kNoBoost, segment, ctx, merge,
                                    absorbed);
     }
-    if (min_match > search::kBitplaneMaxMatch) {
-      if (auto counted =
-            MakeCountThreshold(should, should_filters, uniformity, segment, ctx,
-                               merge, min_match, absorbed)) {
-        return counted;
-      }
-    }
-    return MakeBitsThreshold(should, should_filters, uniformity, segment, ctx,
-                             merge, min_match, absorbed);
+    return MakeWindowThreshold(should, should_filters, uniformity, segment, ctx,
+                               merge, min_match, absorbed);
   }
   if (ctx.prune && !optional && merge == ScoreMergeType::Sum && absorbed == 0) {
     if (auto pruned =

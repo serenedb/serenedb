@@ -126,7 +126,7 @@ class BooleanWindow {
   void Refill(doc_id_t target) {
     SDB_ASSERT(!_filled || target >= _min);
     auto* const words = _mask.data();
-    if constexpr (kScored) {
+    if constexpr (kScored && !search::LazyReset<Optional>()) {
       for (uint32_t w = 0; w != search::kWindowWords; ++w) {
         auto word = words[w];
         words[w] = 0;

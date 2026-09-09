@@ -20,6 +20,8 @@
 
 #pragma once
 
+#include <absl/base/optimization.h>
+
 #include <algorithm>
 #include <bit>
 #include <cstdint>
@@ -45,6 +47,7 @@ class BooleanWindow {
   static constexpr bool kOptional = !std::is_same_v<Optional, utils::Empty>;
   static constexpr bool kExcludes = !std::is_same_v<Excludes, utils::Empty>;
   static constexpr bool kScored = std::is_same_v<Score, search::Scored>;
+  static constexpr bool kRetracts = kScored && search::Retracts<Optional>();
   static_assert(kLead != kOptional);
   static_assert(kLead || !kOthers);
   static_assert(!kScored || (kOptional && !kExcludes));
@@ -60,7 +63,11 @@ class BooleanWindow {
         std::make_from_tuple<Optional>(std::forward<OptionalArgs>(optional))},
       _excludes{
         std::make_from_tuple<Excludes>(std::forward<ExcludesArgs>(excludes))},
-      _score{score} {}
+      _score{score} {
+    if constexpr (kRetracts) {
+      std::fill_n(_scores, search::kWindowDocs, _score.absorbed);
+    }
+  }
 
   BooleanWindow(BooleanWindow&&) = delete;
   BooleanWindow& operator=(BooleanWindow&&) = delete;
@@ -102,15 +109,24 @@ class BooleanWindow {
                 score_t* IRS_RESTRICT scores)
     requires kScored
   {
-    if (_score.absorbed == 0) {
-      return _optional.Fill(min, max, mask, scores);
+    if constexpr (kRetracts) {
+      const auto next = _optional.Fill(min, max, _own.data(), _scores);
+      const auto words = search::WindowWords(min, max);
+      irs::ResolveMergeType(_score.inner, [&]<ScoreMergeType Inner> {
+        Fold<Inner>(mask, scores, words);
+      });
+      return next;
+    } else {
+      if (_score.absorbed == 0) {
+        return _optional.Fill(min, max, mask, scores);
+      }
+      const auto next = _optional.Fill(min, max, _own.data(), scores);
+      const auto words = search::WindowWords(min, max);
+      irs::ResolveMergeType(_score.inner, [&]<ScoreMergeType Inner> {
+        Absorb<Inner>(mask, scores, words);
+      });
+      return next;
     }
-    const auto next = _optional.Fill(min, max, _own.data(), scores);
-    const auto words = search::WindowWords(min, max);
-    irs::ResolveMergeType(_score.inner, [&]<ScoreMergeType Inner> {
-      Absorb<Inner>(mask, scores, words);
-    });
-    return next;
   }
 
  private:
@@ -149,7 +165,31 @@ class BooleanWindow {
     }
   }
 
+  template<ScoreMergeType Inner>
+  IRS_FORCE_INLINE void Fold(uint64_t* IRS_RESTRICT mask,
+                             score_t* IRS_RESTRICT scores,
+                             size_t words) noexcept
+    requires kRetracts
+  {
+    for (size_t w = 0; w != words; ++w) {
+      auto bits = std::exchange(_own[w], uint64_t{0});
+      mask[w] |= bits;
+      const size_t base = w * search::kWindowBits;
+      while (bits != 0) {
+        const auto offset =
+          base + static_cast<uint32_t>(std::countr_zero(bits));
+        irs::Merge<Inner>(scores[offset], _scores[offset]);
+        if constexpr (!search::LazyReset<Optional>()) {
+          _scores[offset] = _score.absorbed;
+        }
+        bits = PopBit(bits);
+      }
+    }
+  }
+
   search::Scratch _own{};
+  [[no_unique_address]] ABSL_CACHELINE_ALIGNED
+    utils::Need<kRetracts, score_t[search::kWindowDocs]> _scores{};
   [[no_unique_address]] Lead _lead;
   [[no_unique_address]] Others _others;
   [[no_unique_address]] Optional _optional;

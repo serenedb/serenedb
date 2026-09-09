@@ -81,12 +81,7 @@ Root::ptr MakeThreshold(std::span<const search::PostingClause> terms,
   if (!CollectDense(terms, filters, nullptr, doc, rest)) {
     return {};
   }
-  if (min_match > search::kBitplaneMaxMatch) {
-    if (auto counted = MakeCountThreshold(terms, doc, rest, min_match, ctx)) {
-      return counted;
-    }
-  }
-  return MakeBitsThreshold(terms, doc, rest, min_match, ctx);
+  return MakeWindowThreshold(terms, doc, rest, min_match, ctx);
 }
 
 Root::ptr MakeRequired(const BooleanQuery& query, const Context& ctx) {

@@ -69,15 +69,15 @@ Node::ptr MakeDisjunctionDocs(std::span<const PostingClause> terms,
 
 Node::ptr MakeThresholdDocs(std::span<const PostingClause> terms,
                             std::span<const QueryBuilder::ptr> filters,
-                            const SubReader& segment, uint32_t min_match) {
+                            const SubReader&, uint32_t min_match) {
   SDB_ASSERT(min_match > 1);
-  if (min_match > search::kBitplaneMaxMatch) {
-    if (auto counted =
-          MakeCountThresholdDocs(terms, filters, segment, min_match)) {
-      return counted;
-    }
+  const IndexInput* doc = nullptr;
+  std::vector<FillNode::ptr> rest;
+  if (!CollectDense(terms, filters, nullptr, doc, rest) ||
+      terms.size() + rest.size() < min_match) {
+    return {};
   }
-  return MakeBitsThresholdDocs(terms, filters, segment, min_match);
+  return MakeWindowThresholdDocs(terms, doc, rest, min_match);
 }
 
 Node::ptr MakeRequiredDocs(std::span<const PostingClause> must,

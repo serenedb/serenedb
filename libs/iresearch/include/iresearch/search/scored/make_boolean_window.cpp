@@ -30,6 +30,7 @@
 #include "iresearch/search/common/collect.hpp"
 #include "iresearch/search/common/collect_scored.hpp"
 #include "iresearch/search/common/exclusion_of.hpp"
+#include "iresearch/search/common/fill_posting_scored.hpp"
 #include "iresearch/search/common/scored_context.hpp"
 #include "iresearch/search/fill/all_docs.hpp"
 #include "iresearch/search/fill/impl.hpp"
@@ -77,7 +78,61 @@ Root::ptr MakeWindowNegation(std::span<const PostingClause> excludes,
     absorbed);
 }
 
+template<template<typename> class Group, typename Set, typename... Args>
+Root::ptr MakeThresholdWindow(const Context& ctx, uint32_t min_match,
+                              score_t absorbed, Args&&... args) {
+  return MakeShape<BooleanWindow, utils::Empty, Group<Set>, utils::Empty>(
+    ctx, std::piecewise_construct, std::forward_as_tuple(),
+    std::forward_as_tuple(std::piecewise_construct,
+                          std::forward_as_tuple(std::forward<Args>(args)...),
+                          min_match, absorbed),
+    std::forward_as_tuple(), absorbed);
+}
+
 }  // namespace
+
+Root::ptr MakeWindowThreshold(std::span<const PostingClause> terms,
+                              std::span<const QueryBuilder::ptr> filters,
+                              search::Terms uniformity,
+                              const SubReader& segment, const Context& ctx,
+                              ScoreMergeType merge, uint32_t min_match,
+                              score_t absorbed) {
+  SDB_ASSERT(min_match > 1);
+  SDB_ASSERT(terms.size() + filters.size() >= min_match);
+  SDB_ASSERT(min_match != terms.size() + filters.size());
+  const IndexInput* doc = nullptr;
+  std::vector<search::FillNode::ptr> rest;
+  if (!search::CollectDenseScored(terms, filters, nullptr, doc, rest,
+                                  [&](const QueryBuilder& child) {
+                                    return child.PlanFill(ScoredOf(ctx), merge);
+                                  })) {
+    return {};
+  }
+  const search::ScoreRecipe recipe{.segment = &segment,
+                                   .fetcher = &ctx.fetcher};
+  if (min_match > search::kBitplaneMaxMatch && rest.empty() &&
+      uniformity != search::Terms::Mixed) {
+    auto counted = search::ResolveCountScored<Root::ptr>(
+      *doc, uniformity >= search::Terms::Scored, merge,
+      [&]<typename Leaf, typename Plain> -> Root::ptr {
+        return search::BuildScoredTerms<Root::ptr, Leaf, Plain>(
+          terms, nullptr, nullptr, kNoBoost, doc, recipe,
+          [&]<typename Set>(auto&&... args) -> Root::ptr {
+            return MakeThresholdWindow<search::TallyGroup, Set>(
+              ctx, min_match, absorbed, std::forward<decltype(args)>(args)...);
+          });
+      });
+    if (counted) {
+      return counted;
+    }
+  }
+  return search::BuildScoredWindow<Root::ptr>(
+    terms, nullptr, nullptr, kNoBoost, doc, rest, uniformity, recipe, merge,
+    [&]<typename Set>(auto&&... args) -> Root::ptr {
+      return MakeThresholdWindow<search::ThresholdGroup, Set>(
+        ctx, min_match, absorbed, std::forward<decltype(args)>(args)...);
+    });
+}
 
 Root::ptr MakeWindowExclusion(const BooleanQuery& query,
                               const SubReader& segment, const Context& ctx,

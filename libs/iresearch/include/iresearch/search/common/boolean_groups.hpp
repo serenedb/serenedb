@@ -20,11 +20,17 @@
 
 #pragma once
 
+#include <absl/base/optimization.h>
+
+#include <algorithm>
+#include <bit>
 #include <cstdint>
 #include <span>
+#include <tuple>
 #include <utility>
 #include <vector>
 
+#include "basics/bit_utils.hpp"
 #include "basics/shared.hpp"
 #include "iresearch/search/common/plan.hpp"
 #include "iresearch/search/common/window.hpp"
@@ -42,9 +48,47 @@ struct BooleanGroups {
   std::span<const QueryBuilder::ptr> must_not_filters;
 };
 
+inline constexpr int kDenseWord = 16;
+
+inline IRS_FORCE_INLINE void ResetTouched(uint64_t touched,
+                                          score_t* IRS_RESTRICT scores,
+                                          score_t constant) noexcept {
+  if (touched == 0) {
+    return;
+  }
+  if (std::popcount(touched) >= kDenseWord) {
+    std::fill_n(scores, kWindowBits, constant);
+    return;
+  }
+  while (touched != 0) {
+    scores[static_cast<uint32_t>(std::countr_zero(touched))] = constant;
+    touched = PopBit(touched);
+  }
+}
+
+inline IRS_FORCE_INLINE void ResetRetracted(uint64_t retract, uint64_t answer,
+                                            score_t* IRS_RESTRICT scores,
+                                            score_t constant) noexcept {
+  if (retract == 0) {
+    return;
+  }
+  if (std::popcount(retract) >= kDenseWord) {
+    for (uint32_t i = 0; i != kWindowBits; ++i) {
+      scores[i] = ((answer >> i) & 1) != 0 ? scores[i] : constant;
+    }
+    return;
+  }
+  while (retract != 0) {
+    scores[static_cast<uint32_t>(std::countr_zero(retract))] = constant;
+    retract = PopBit(retract);
+  }
+}
+
 template<typename Leaves>
 class OrGroup {
  public:
+  static constexpr bool kRetracts = false;
+
   template<typename... Args>
   explicit OrGroup(Args&&... args) : _leaves{std::forward<Args>(args)...} {}
 
@@ -68,6 +112,199 @@ class OrGroup {
 
  private:
   Leaves _leaves;
+};
+
+template<typename Leaves, bool Lazy = false>
+class ThresholdGroup {
+ public:
+  static constexpr bool kRetracts = true;
+  static constexpr bool kLazyReset = Lazy;
+
+  template<typename LeavesArgs>
+  ThresholdGroup(std::piecewise_construct_t, LeavesArgs&& leaves,
+                 uint32_t min_match, score_t constant)
+    : _leaves{std::make_from_tuple<Leaves>(std::forward<LeavesArgs>(leaves))},
+      _planes(size_t{min_match} * kWindowWords, 0),
+      _constant{constant},
+      _min_match{min_match} {
+    SDB_ASSERT(_min_match > 1);
+  }
+
+  ThresholdGroup(ThresholdGroup&&) = delete;
+  ThresholdGroup& operator=(ThresholdGroup&&) = delete;
+
+  bool Exhausted() const noexcept { return _leaves.Live() < _min_match; }
+
+  doc_id_t Fill(doc_id_t min, doc_id_t max, uint64_t* IRS_RESTRICT words) {
+    std::fill(_planes.begin(), _planes.end(), uint64_t{0});
+    if (Exhausted()) {
+      return doc_limits::eof();
+    }
+    const auto count = WindowWords(min, max);
+    auto* const planes = _planes.data();
+    const auto top = size_t{_min_match} - 1;
+    bool first = true;
+    const auto next = _leaves.Visit(max, [&](auto& leaf) IRS_FORCE_INLINE {
+      if (first) {
+        first = false;
+        return leaf.FillOr(min, max, planes);
+      }
+      Clear(_scratch.data(), count);
+      const auto doc = leaf.FillOr(min, max, _scratch.data());
+      FoldCarry(planes, _scratch.data(), count, top);
+      return doc;
+    });
+    const auto* const answers = planes + top * kWindowWords;
+    for (size_t w = 0; w != count; ++w) {
+      words[w] |= answers[w];
+    }
+    return Exhausted() ? doc_limits::eof() : next;
+  }
+
+  doc_id_t Fill(doc_id_t min, doc_id_t max, uint64_t* IRS_RESTRICT words,
+                score_t* IRS_RESTRICT scores) {
+    auto* const planes = _planes.data();
+    const auto constant = _constant;
+    if constexpr (Lazy) {
+      for (size_t w = 0; w != kWindowWords; ++w) {
+        ResetTouched(planes[w], scores + w * kWindowBits, constant);
+      }
+    }
+    std::fill(_planes.begin(), _planes.end(), uint64_t{0});
+    if (Exhausted()) {
+      return doc_limits::eof();
+    }
+    const auto count = WindowWords(min, max);
+    const auto top = size_t{_min_match} - 1;
+    const auto next = _leaves.Visit(max, [&](auto& leaf) IRS_FORCE_INLINE {
+      Clear(_scratch.data(), count);
+      const auto doc = leaf.Fill(min, max, _scratch.data(), scores);
+      FoldCarry(planes, _scratch.data(), count, top);
+      return doc;
+    });
+    const auto* const answers = planes + top * kWindowWords;
+    for (size_t w = 0; w != count; ++w) {
+      const auto answer = answers[w];
+      if constexpr (!Lazy) {
+        ResetRetracted(planes[w] & ~answer, answer, scores + w * kWindowBits,
+                       constant);
+      }
+      words[w] |= answer;
+    }
+    return Exhausted() ? doc_limits::eof() : next;
+  }
+
+ private:
+  Scratch _scratch{};
+  Leaves _leaves;
+  std::vector<uint64_t> _planes;
+  score_t _constant;
+  uint32_t _min_match;
+};
+
+template<typename Leaves, bool Lazy = false>
+class TallyGroup {
+ public:
+  static constexpr bool kRetracts = true;
+  static constexpr bool kLazyReset = Lazy;
+
+  template<typename LeavesArgs>
+  TallyGroup(std::piecewise_construct_t, LeavesArgs&& leaves,
+             uint32_t min_match, score_t constant)
+    : _leaves{std::make_from_tuple<Leaves>(std::forward<LeavesArgs>(leaves))},
+      _constant{constant},
+      _min_match{min_match} {
+    SDB_ASSERT(_min_match > 1);
+  }
+
+  TallyGroup(TallyGroup&&) = delete;
+  TallyGroup& operator=(TallyGroup&&) = delete;
+
+  bool Exhausted() const noexcept { return _leaves.Live() < _min_match; }
+
+  doc_id_t Fill(doc_id_t min, doc_id_t max, uint64_t* IRS_RESTRICT words) {
+    if (Exhausted()) {
+      return doc_limits::eof();
+    }
+    const auto count = WindowWords(min, max);
+    const auto min_match = _min_match;
+    const auto next = _leaves.Visit(max, [&](auto& leaf) IRS_FORCE_INLINE {
+      return leaf.Count(min, max, _counts);
+    });
+    for (size_t w = 0; w != count; ++w) {
+      auto* const counts = _counts + w * kWindowBits;
+      uint64_t word = 0;
+      for (uint32_t i = 0; i != kWindowBits; ++i) {
+        word |= uint64_t{counts[i] >= min_match} << i;
+      }
+      std::fill_n(counts, kWindowBits, uint32_t{0});
+      words[w] |= word;
+    }
+    return Exhausted() ? doc_limits::eof() : next;
+  }
+
+  doc_id_t Fill(doc_id_t min, doc_id_t max, uint64_t* IRS_RESTRICT words,
+                score_t* IRS_RESTRICT scores) {
+    const auto constant = _constant;
+    const auto min_match = _min_match;
+    if constexpr (Lazy) {
+      for (size_t w = 0; w != kWindowWords; ++w) {
+        ResetTouched(std::exchange(_touched[w], uint64_t{0}),
+                     scores + w * kWindowBits, constant);
+      }
+    }
+    if (Exhausted()) {
+      return doc_limits::eof();
+    }
+    const auto count = WindowWords(min, max);
+    const auto next = _leaves.Visit(max, [&](auto& leaf) IRS_FORCE_INLINE {
+      return leaf.Count(min, max, _counts, _touched.data(), scores);
+    });
+    for (size_t w = 0; w != count; ++w) {
+      auto touched = _touched[w];
+      if constexpr (!Lazy) {
+        _touched[w] = 0;
+      }
+      if (touched == 0) {
+        continue;
+      }
+      const auto base = w * kWindowBits;
+      auto* const counts = _counts + base;
+      auto* const slots = scores + base;
+      uint64_t answer = 0;
+      if (std::popcount(touched) >= kDenseWord) {
+        for (uint32_t i = 0; i != kWindowBits; ++i) {
+          answer |= uint64_t{counts[i] >= min_match} << i;
+        }
+        std::fill_n(counts, kWindowBits, uint32_t{0});
+        if constexpr (!Lazy) {
+          for (uint32_t i = 0; i != kWindowBits; ++i) {
+            slots[i] = ((answer >> i) & 1) != 0 ? slots[i] : constant;
+          }
+        }
+      } else {
+        while (touched != 0) {
+          const auto bit = static_cast<uint32_t>(std::countr_zero(touched));
+          const bool keep = counts[bit] >= min_match;
+          answer |= uint64_t{keep} << bit;
+          counts[bit] = 0;
+          if constexpr (!Lazy) {
+            slots[bit] = keep ? slots[bit] : constant;
+          }
+          touched = PopBit(touched);
+        }
+      }
+      words[w] |= answer;
+    }
+    return Exhausted() ? doc_limits::eof() : next;
+  }
+
+ private:
+  ABSL_CACHELINE_ALIGNED uint32_t _counts[kWindowDocs]{};
+  Scratch _touched{};
+  Leaves _leaves;
+  score_t _constant;
+  uint32_t _min_match;
 };
 
 }  // namespace irs::search

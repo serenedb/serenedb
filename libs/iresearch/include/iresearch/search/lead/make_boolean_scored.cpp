@@ -50,16 +50,9 @@ Node::ptr MakeRequiredScored(std::span<const PostingClause> must,
                                          should_uniformity, segment, ctx, merge,
                                          absorbed);
     }
-    if (min_should_match > search::kBitplaneMaxMatch) {
-      if (auto counted = MakeCountThresholdScored(
-            should, should_filters, should_uniformity, segment, ctx, merge,
-            min_should_match, absorbed)) {
-        return counted;
-      }
-    }
-    return MakeBitsThresholdScored(should, should_filters, should_uniformity,
-                                   segment, ctx, merge, min_should_match,
-                                   absorbed);
+    return MakeWindowThresholdScored(should, should_filters, should_uniformity,
+                                     segment, ctx, merge, min_should_match,
+                                     absorbed);
   }
   if (min_should_match != 0) {
     return MakeSparseConjunctionWithScored(

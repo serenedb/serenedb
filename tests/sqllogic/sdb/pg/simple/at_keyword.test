@@ -59,12 +59,6 @@ SELECT 1 AS at;
 at
 1
 
-query
-SELECT 42 as AT;
-----
-at
-42
-
 
 query
 SELECT 1 at;

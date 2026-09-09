@@ -398,11 +398,11 @@ Result<Api> MakeScored(const BooleanQuery& query, const Context<Api>& ctx) {
     if constexpr (Api::kPrunes) {
       if (Api::Prunes(ctx, merge, absorbed)) {
         if (no_must) {
-          if (optional && min_match == 1 &&
+          if (optional && min_match != 0 &&
               should.size() + should_filters.size() > 1) {
             if (auto pruned = Api::MakePrunedDisjunction(
                   should, should_filters, query.Uniformity(Occur::Should),
-                  excludes, exclude_filters, segment, ctx, merge)) {
+                  excludes, exclude_filters, segment, ctx, merge, min_match)) {
               return pruned;
             }
           }
@@ -431,16 +431,16 @@ Result<Api> MakeScored(const BooleanQuery& query, const Context<Api>& ctx) {
       return Api::MakeAll(segment, ctx, absorbed);
     }
     const auto uniformity = query.Uniformity(Occur::Should);
-    if (min_match == 1) {
-      if constexpr (Api::kPrunes) {
-        if (Api::Prunes(ctx, merge, absorbed)) {
-          if (auto pruned =
-                Api::MakePrunedDisjunction(should, should_filters, uniformity,
-                                           {}, {}, segment, ctx, merge)) {
-            return pruned;
-          }
+    if constexpr (Api::kPrunes) {
+      if (Api::Prunes(ctx, merge, absorbed)) {
+        if (auto pruned =
+              Api::MakePrunedDisjunction(should, should_filters, uniformity, {},
+                                         {}, segment, ctx, merge, min_match)) {
+          return pruned;
         }
       }
+    }
+    if (min_match == 1) {
       return MakeScoredDisjunction<Api>(should, should_filters, uniformity,
                                         nullptr, nullptr, kNoBoost, segment,
                                         ctx, merge, absorbed);

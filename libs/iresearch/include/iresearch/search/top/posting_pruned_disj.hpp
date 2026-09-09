@@ -174,9 +174,49 @@ class PostingPrunedDisj : public PruneLeafBase<InputType, false> {
       });
   }
 
+  void FillCounted(doc_id_t min, doc_id_t max, uint64_t* IRS_RESTRICT mask,
+                   score_t* IRS_RESTRICT window,
+                   uint32_t* IRS_RESTRICT counts) {
+    ForEachScoredBlock(
+      max, [&](const doc_id_t* IRS_RESTRICT docs, uint32_t len,
+               const score_t* IRS_RESTRICT scores) IRS_FORCE_INLINE {
+        static constexpr auto kBits = BitsRequired<uint64_t>();
+        const auto add = [&](uint32_t i) IRS_FORCE_INLINE {
+          const size_t offset = docs[i] - min;
+          SetBit(mask[offset / kBits], offset % kBits);
+          window[offset] += scores[i];
+          ++counts[offset];
+        };
+        if (len == doc_limits::kBlockSize) [[likely]] {
+          VisitDocs<doc_limits::kBlockSize>(doc_limits::kBlockSize, add);
+        } else {
+          for (uint32_t i = 0; i != len; ++i) {
+            add(i);
+          }
+        }
+      });
+  }
+
   template<typename DocsBuffer, typename ScoresBuffer>
   void ScoreCandidates(DocsBuffer& cand_docs, ScoresBuffer& cand_scores,
                        bool required, doc_id_t window_max) {
+    ScoreCandidatesImpl<false>(cand_docs, cand_scores, cand_scores, required,
+                               window_max);
+  }
+
+  template<typename DocsBuffer, typename ScoresBuffer, typename MatchesBuffer>
+  void ScoreCandidates(DocsBuffer& cand_docs, ScoresBuffer& cand_scores,
+                       MatchesBuffer& cand_matches, bool required,
+                       doc_id_t window_max) {
+    ScoreCandidatesImpl<true>(cand_docs, cand_scores, cand_matches, required,
+                              window_max);
+  }
+
+  template<bool Counted, typename DocsBuffer, typename ScoresBuffer,
+           typename MatchesBuffer>
+  void ScoreCandidatesImpl(DocsBuffer& cand_docs, ScoresBuffer& cand_scores,
+                           [[maybe_unused]] MatchesBuffer& cand_matches,
+                           bool required, doc_id_t window_max) {
     SDB_ASSERT(!cand_docs.empty());
     size_t out = 0;
     SetSkipBoundsBelow(window_max);
@@ -189,6 +229,9 @@ class PostingPrunedDisj : public PruneLeafBase<InputType, false> {
       if (required) {
         cand_docs.resize(0);
         cand_scores.resize(0);
+        if constexpr (Counted) {
+          cand_matches.resize(0);
+        }
       }
       return;
     }
@@ -211,6 +254,9 @@ class PostingPrunedDisj : public PruneLeafBase<InputType, false> {
       }
       for (uint32_t j = 0; j != len; ++j) {
         cand_scores[indices[j]] += p[j];
+        if constexpr (Counted) {
+          ++cand_matches[indices[j]];
+        }
       }
       count = 0;
     };
@@ -232,6 +278,9 @@ class PostingPrunedDisj : public PruneLeafBase<InputType, false> {
           if (required) {
             cand_docs[out] = cand_docs[cand_idx];
             cand_scores[out] = cand_scores[cand_idx];
+            if constexpr (Counted) {
+              cand_matches[out] = cand_matches[cand_idx];
+            }
             indices[count] = out;
             ++out;
           } else {
@@ -325,6 +374,9 @@ class PostingPrunedDisj : public PruneLeafBase<InputType, false> {
     if (required) {
       cand_docs.resize(out);
       cand_scores.resize(out);
+      if constexpr (Counted) {
+        cand_matches.resize(out);
+      }
     }
   }
 

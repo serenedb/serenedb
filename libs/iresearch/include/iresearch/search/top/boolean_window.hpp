@@ -92,36 +92,8 @@ class BooleanWindow : public Root {
 
  private:
   void Tally() {
-    auto* const counts_base = _optional.Counts();
-    const auto min_match = _optional.MinMatch();
-    for (size_t w = 0; w != kNumWords; ++w) {
-      auto touched = _mask[w];
-      if (touched == 0) {
-        continue;
-      }
-      const auto base = w * BitsRequired<uint64_t>();
-      auto* const counts = counts_base + base;
-      auto* const slots = _window + base;
-      uint64_t answer = touched;
-      if (std::popcount(touched) >= search::kDenseWord) {
-        answer = search::TallyAnswer(counts, min_match);
-        std::fill_n(counts, BitsRequired<uint64_t>(), uint32_t{0});
-        if (answer == 0) {
-          std::fill_n(slots, BitsRequired<uint64_t>(), score_t{0});
-        }
-      } else {
-        while (touched != 0) {
-          const auto bit = static_cast<uint32_t>(std::countr_zero(touched));
-          if (counts[bit] < min_match) {
-            answer ^= uint64_t{1} << bit;
-            slots[bit] = 0;
-          }
-          counts[bit] = 0;
-          touched = PopBit(touched);
-        }
-      }
-      _mask[w] = answer;
-    }
+    search::TallyMask(_mask, _mask, _optional.Counts(), _window,
+                      _optional.MinMatch(), kNumWords);
   }
 
   ABSL_CACHELINE_ALIGNED uint64_t _mask[kNumWords]{};

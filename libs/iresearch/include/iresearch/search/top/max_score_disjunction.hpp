@@ -34,6 +34,7 @@
 #include "basics/bit_utils.hpp"
 #include "basics/empty.hpp"
 #include "iresearch/index/iterators.hpp"
+#include "iresearch/search/common/boolean_groups.hpp"
 #include "iresearch/search/common/fixed_array.hpp"
 #include "iresearch/search/common/score_filter.hpp"
 #include "iresearch/search/common/window.hpp"
@@ -43,7 +44,11 @@
 
 namespace irs::top {
 
-template<typename Leaf, typename Excludes, typename Table>
+struct MinMatch {
+  uint32_t value;
+};
+
+template<typename Leaf, typename Match, typename Excludes, typename Table>
 class MaxScoreDisjunction : public Root {
  public:
   static constexpr doc_id_t kWordBits = search::kWindowBits;
@@ -51,11 +56,12 @@ class MaxScoreDisjunction : public Root {
   static constexpr doc_id_t kWindow = search::kWindowDocs;
   static constexpr doc_id_t kExhaustiveWindowsMin = 2;
   static constexpr doc_id_t kExhaustiveWindowsMax = 16;
+  static constexpr bool kMinMatch = !std::is_same_v<Match, utils::Empty>;
   static constexpr bool kExcludes = !std::is_same_v<Excludes, utils::Empty>;
 
   template<typename Init, typename ExcludesArgs>
-  MaxScoreDisjunction(Table table, size_t size, doc_id_t docs, Init&& init,
-                      ExcludesArgs&& excludes)
+  MaxScoreDisjunction(Table table, size_t size, doc_id_t docs, Match match,
+                      Init&& init, ExcludesArgs&& excludes)
     : _entries{size,
                [&](Entry& entry, size_t i) {
                  entry.cost = std::max<uint32_t>(1, init(entry.leaf, i));
@@ -65,7 +71,13 @@ class MaxScoreDisjunction : public Root {
       _excludes{
         std::make_from_tuple<Excludes>(std::forward<ExcludesArgs>(excludes))},
       _admit{table},
-      _docs_count{static_cast<double>(std::max<doc_id_t>(1, docs))} {}
+      _docs_count{static_cast<double>(std::max<doc_id_t>(1, docs))},
+      _match{match} {
+    if constexpr (kMinMatch) {
+      SDB_ASSERT(_match.value > 1);
+      SDB_ASSERT(_match.value < size);
+    }
+  }
 
   MaxScoreDisjunction(MaxScoreDisjunction&&) = delete;
   MaxScoreDisjunction& operator=(MaxScoreDisjunction&&) = delete;
@@ -366,6 +378,7 @@ class MaxScoreDisjunction : public Root {
   }
 
   void ProcessSingleEssential(LoserScoreCollector& collector, doc_id_t max) {
+    SDB_ASSERT(_has_non_essential || !kMinMatch);
     auto& leaf = _sorted[_first_essential]->leaf;
     leaf.ForEachScoredBlock(
       max, [&](doc_id_t* IRS_RESTRICT docs, uint32_t len,
@@ -376,7 +389,15 @@ class MaxScoreDisjunction : public Root {
         if (_has_non_essential) {
           View<doc_id_t> cand_docs{docs, len};
           View<score_t> cand_scores{scores, len};
-          ProcessNonEssential(cand_docs, cand_scores, max);
+          if constexpr (kMinMatch) {
+            std::fill_n(_tally.cand_matches, len, uint32_t{1});
+            View<uint32_t> cand_matches{_tally.cand_matches, len};
+            ProcessNonEssential<true>(cand_docs, cand_scores, cand_matches,
+                                      max);
+          } else {
+            utils::Empty none;
+            ProcessNonEssential<false>(cand_docs, cand_scores, none, max);
+          }
           len = static_cast<uint32_t>(cand_docs.count);
         } else {
           _num_candidates += len;
@@ -394,33 +415,92 @@ class MaxScoreDisjunction : public Root {
       return;
     }
     if (const auto second = SecondEssentialDoc(); second >= min + kWindow / 2) {
-      ProcessSingleEssential(collector, std::min(max, second));
+      const auto stop = std::min(max, second);
+      if (kMinMatch && !_has_non_essential) {
+        _sorted[_first_essential]->leaf.Seek(stop);
+      } else {
+        ProcessSingleEssential(collector, stop);
+      }
       UpdateHeapTop();
       return;
     }
 
     max = std::min(min + kWindow, max);
-    ProcessEssential([&](Entry* entry) IRS_FORCE_INLINE {
-      entry->leaf.Fill(min, max, _mask, _scores);
-    });
+    if constexpr (kMinMatch) {
+      ProcessEssential([&](Entry* entry) IRS_FORCE_INLINE {
+        entry->leaf.FillCounted(min, max, _mask, _scores, _tally.counts);
+      });
+    } else {
+      ProcessEssential([&](Entry* entry) IRS_FORCE_INLINE {
+        entry->leaf.Fill(min, max, _mask, _scores);
+      });
+    }
+    const uint64_t* touched = _mask;
     if constexpr (kExcludes) {
+      if constexpr (kMinMatch) {
+        std::copy_n(_mask, kNumWords, _touched.words);
+        touched = _touched.words;
+      }
       _excludes.Remove(min, max, _mask, _scores, score_t{0});
     }
 
     if (!_has_non_essential) {
+      if constexpr (kMinMatch) {
+        search::TallyMask(touched, _mask, _tally.counts, _scores, _match.value,
+                          kNumWords);
+      }
       const auto before = collector.TotalMatches();
       _admit.Window(collector, _scores, _mask, min, kNumWords);
       _num_candidates +=
         static_cast<uint32_t>(collector.TotalMatches() - before);
       return;
     }
-    const auto count = DrainCandidates(min);
-    View<doc_id_t> cand_docs{_cand_docs, count};
-    View<score_t> cand_scores{_cand_scores, count};
-    ProcessNonEssential(cand_docs, cand_scores, max);
-    if (cand_docs.count != 0) {
-      _admit.AddDocs(collector, _cand_docs, cand_docs.count, _cand_scores);
+    if constexpr (kMinMatch) {
+      const auto count = DrainCounted(min, touched);
+      View<doc_id_t> cand_docs{_cand_docs, count};
+      View<score_t> cand_scores{_cand_scores, count};
+      View<uint32_t> cand_matches{_tally.cand_matches, count};
+      ProcessNonEssential<true>(cand_docs, cand_scores, cand_matches, max);
+      if (cand_docs.count != 0) {
+        _admit.AddDocs(collector, _cand_docs, cand_docs.count, _cand_scores);
+      }
+    } else {
+      const auto count = DrainCandidates(min);
+      View<doc_id_t> cand_docs{_cand_docs, count};
+      View<score_t> cand_scores{_cand_scores, count};
+      utils::Empty none;
+      ProcessNonEssential<false>(cand_docs, cand_scores, none, max);
+      if (cand_docs.count != 0) {
+        _admit.AddDocs(collector, _cand_docs, cand_docs.count, _cand_scores);
+      }
     }
+  }
+
+  size_t DrainCounted(doc_id_t min, const uint64_t* touched) {
+    size_t count = 0;
+    for (size_t i = 0; i != kNumWords; ++i) {
+      auto word = touched[i];
+      if (word == 0) {
+        continue;
+      }
+      const auto kept = _mask[i];
+      _mask[i] = 0;
+      const size_t base = i * kWordBits;
+      do {
+        const auto bit = static_cast<uint32_t>(std::countr_zero(word));
+        const size_t offset = base + bit;
+        const auto hits = std::exchange(_tally.counts[offset], uint32_t{0});
+        const auto score = std::exchange(_scores[offset], 0.f);
+        if (((kept >> bit) & 1) != 0) {
+          _cand_docs[count] = min + static_cast<doc_id_t>(offset);
+          _cand_scores[count] = score;
+          _tally.cand_matches[count] = hits;
+          ++count;
+        }
+        word = PopBit(word);
+      } while (word != 0);
+    }
+    return count;
   }
 
   size_t DrainCandidates(doc_id_t min) {
@@ -457,50 +537,106 @@ class MaxScoreDisjunction : public Root {
     return kept;
   }
 
-  template<typename Docs, typename Scores>
-  static void FilterCompetitive(Docs& docs, Scores& scores,
+  template<bool Counted, typename Docs, typename Scores, typename Matches>
+  static void FilterCompetitive(Docs& docs, Scores& scores, Matches& matches,
                                 score_t score_threshold) {
     SDB_ASSERT(score_threshold > 0);
-    const auto out =
-      search::FilterScores(docs.data, scores.data,
-                           static_cast<uint32_t>(docs.size()), score_threshold);
+    uint32_t out;
+    if constexpr (Counted) {
+      out = search::FilterScores(docs.data, scores.data, matches.data,
+                                 static_cast<uint32_t>(docs.size()),
+                                 score_threshold);
+      matches.resize(out);
+    } else {
+      out = search::FilterScores(docs.data, scores.data,
+                                 static_cast<uint32_t>(docs.size()),
+                                 score_threshold);
+    }
     docs.resize(out);
     scores.resize(out);
   }
 
-  template<typename Docs, typename Scores>
-  void ProcessNonEssential(Docs& cand_docs, Scores& cand_scores, doc_id_t max) {
+  template<typename Docs, typename Scores, typename Matches>
+  static void FilterMatches(Docs& docs, Scores& scores, Matches& matches,
+                            uint32_t need) {
+    const auto out =
+      search::FilterMatches(docs.data, scores.data, matches.data,
+                            static_cast<uint32_t>(docs.size()), need);
+    docs.resize(out);
+    scores.resize(out);
+    matches.resize(out);
+  }
+
+  template<bool Counted, typename Docs, typename Scores, typename Matches>
+  void ProcessNonEssential(Docs& cand_docs, Scores& cand_scores,
+                           Matches& cand_matches, doc_id_t max) {
     const auto candidates = static_cast<uint32_t>(cand_docs.size());
     if (candidates == 0) {
       return;
     }
     _num_candidates += candidates;
     const score_t threshold = _collector->ScoreThreshold();
+    const auto give_up = [&](size_t i) {
+      Observe(*_sorted[i], candidates, 0);
+      while (i-- != 0) {
+        Observe(*_sorted[i], candidates, 0);
+      }
+    };
 
     for (size_t i = _first_essential; i-- != 0;) {
       auto& entry = *_sorted[i];
       const auto score_threshold =
         threshold - static_cast<score_t>(entry.prefix_score_sum);
       if (score_threshold > 0) {
-        FilterCompetitive(cand_docs, cand_scores, score_threshold);
+        FilterCompetitive<Counted>(cand_docs, cand_scores, cand_matches,
+                                   score_threshold);
         if (cand_docs.empty()) {
-          Observe(entry, candidates, 0);
-          while (i-- != 0) {
-            Observe(*_sorted[i], candidates, 0);
-          }
+          give_up(i);
           return;
         }
       }
+      if constexpr (Counted) {
+        if (const auto reach = static_cast<uint32_t>(i + 1);
+            _match.value > reach) {
+          FilterMatches(cand_docs, cand_scores, cand_matches,
+                        _match.value - reach);
+          if (cand_docs.empty()) {
+            give_up(i);
+            return;
+          }
+        }
+      }
       Observe(entry, candidates, cand_docs.size());
-      entry.leaf.ScoreCandidates(cand_docs, cand_scores, i >= _first_required,
-                                 max);
+      if constexpr (Counted) {
+        entry.leaf.ScoreCandidates(cand_docs, cand_scores, cand_matches,
+                                   i >= _first_required, max);
+      } else {
+        entry.leaf.ScoreCandidates(cand_docs, cand_scores, i >= _first_required,
+                                   max);
+      }
+    }
+    if constexpr (Counted) {
+      if (!cand_docs.empty()) {
+        FilterMatches(cand_docs, cand_scores, cand_matches, _match.value);
+      }
     }
   }
+
+  struct Tally {
+    ABSL_CACHELINE_ALIGNED uint32_t counts[kWindow]{};
+    ABSL_CACHELINE_ALIGNED uint32_t cand_matches[kWindow];
+  };
+
+  struct Touched {
+    uint64_t words[kNumWords];
+  };
 
   ABSL_CACHELINE_ALIGNED uint64_t _mask[kNumWords]{};
   ABSL_CACHELINE_ALIGNED score_t _scores[kWindow]{};
   ABSL_CACHELINE_ALIGNED doc_id_t _cand_docs[kWindow];
   ABSL_CACHELINE_ALIGNED score_t _cand_scores[kWindow];
+  [[no_unique_address]] utils::Need<kMinMatch, Tally> _tally{};
+  [[no_unique_address]] utils::Need<kMinMatch && kExcludes, Touched> _touched;
 
   LoserScoreCollector* _collector = nullptr;
   search::FixedArray<Entry> _entries;
@@ -518,6 +654,7 @@ class MaxScoreDisjunction : public Root {
   const double _docs_count;
   uint32_t _promote_ticks = 0;
   doc_id_t _exhaustive_windows = kExhaustiveWindowsMin;
+  [[no_unique_address]] const Match _match;
 };
 
 }  // namespace irs::top

@@ -141,10 +141,11 @@ struct Api {
     std::span<const QueryBuilder::ptr> should_filters, search::Terms uniformity,
     std::span<const PostingClause> excludes,
     std::span<const QueryBuilder::ptr> exclude_filters,
-    const SubReader& segment, const Context& ctx, ScoreMergeType merge) {
+    const SubReader& segment, const Context& ctx, ScoreMergeType merge,
+    uint32_t min_match) {
     return MakeMaxScoreDisjunction(should, should_filters, uniformity, nullptr,
                                    nullptr, kNoBoost, excludes, exclude_filters,
-                                   segment, ctx, merge);
+                                   segment, ctx, merge, min_match);
   }
 
   static Result MakePrunedConjunction(

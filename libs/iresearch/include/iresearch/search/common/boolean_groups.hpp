@@ -59,6 +59,40 @@ TallyAnswer(const uint32_t* IRS_RESTRICT counts, uint32_t min_match) noexcept {
   return answer;
 }
 
+inline void TallyMask(const uint64_t* touched, uint64_t* mask,
+                      uint32_t* IRS_RESTRICT counts,
+                      score_t* IRS_RESTRICT scores, uint32_t min_match,
+                      size_t words) noexcept {
+  for (size_t w = 0; w != words; ++w) {
+    auto rest = touched[w];
+    if (rest == 0) {
+      continue;
+    }
+    const auto base = w * kWindowBits;
+    auto* const word_counts = counts + base;
+    auto* const slots = scores + base;
+    uint64_t answer = rest;
+    if (std::popcount(rest) >= kDenseWord) {
+      answer = TallyAnswer(word_counts, min_match);
+      std::fill_n(word_counts, kWindowBits, uint32_t{0});
+      if ((mask[w] & answer) == 0) {
+        std::fill_n(slots, kWindowBits, score_t{0});
+      }
+    } else {
+      while (rest != 0) {
+        const auto bit = static_cast<uint32_t>(std::countr_zero(rest));
+        if (word_counts[bit] < min_match) {
+          answer ^= uint64_t{1} << bit;
+          slots[bit] = 0;
+        }
+        word_counts[bit] = 0;
+        rest = PopBit(rest);
+      }
+    }
+    mask[w] &= answer;
+  }
+}
+
 inline IRS_FORCE_INLINE void ResetTouched(uint64_t touched,
                                           score_t* IRS_RESTRICT scores,
                                           score_t constant) noexcept {

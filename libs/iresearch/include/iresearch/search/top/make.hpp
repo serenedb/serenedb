@@ -151,16 +151,23 @@ Root::ptr MakeMaxScoreDisjunction(
   search::Terms uniformity, const TermReader* field, const Scorer* scorer,
   score_t boost, std::span<const PostingClause> excludes,
   std::span<const QueryBuilder::ptr> exclude_filters, const SubReader& segment,
-  const Context& ctx, ScoreMergeType merge) {
+  const Context& ctx, ScoreMergeType merge, uint32_t min_match = 1) {
   SDB_ASSERT(terms.size() + filters.size() > 1);
+  SDB_ASSERT(min_match != 0);
   if (merge != ScoreMergeType::Sum || !filters.empty() ||
-      uniformity != search::Terms::Bounded) {
+      uniformity != search::Terms::Bounded || min_match >= terms.size()) {
     return {};
   }
+  uint64_t densest = 0;
   for (size_t i = 0; i != terms.size(); ++i) {
     if (!search::ScoresOf(terms[i], scorer)) {
       return {};
     }
+    densest =
+      std::max<uint64_t>(densest, search::CookieOf(terms[i]).docs_count);
+  }
+  if (min_match > 1 && 2 * densest < segment.docs_count()) {
+    return {};
   }
   SDB_IF_FAILURE("irs::PruningIterator") {
     THROW_SQL_ERROR(ERR_MSG("intentional debug error"));
@@ -180,22 +187,28 @@ Root::ptr MakeMaxScoreDisjunction(
                              .boost = posting.boost});
       return posting.state.cookie.docs_count;
     };
-    if (excludes.empty() && exclude_filters.empty()) {
-      return MakeShape<MaxScoreDisjunction, Leaf, utils::Empty>(
-        ctx, terms.size(), static_cast<doc_id_t>(segment.docs_count()), init,
-        std::forward_as_tuple());
+    const auto docs_count = static_cast<doc_id_t>(segment.docs_count());
+    const auto make = [&]<typename Match>(Match match) -> Root::ptr {
+      if (excludes.empty() && exclude_filters.empty()) {
+        return MakeShape<MaxScoreDisjunction, Leaf, Match, utils::Empty>(
+          ctx, terms.size(), docs_count, match, init, std::forward_as_tuple());
+      }
+      const auto candidates =
+        std::min<uint64_t>(search::SumDocs(terms), segment.docs_count());
+      return search::BuildExcludeSide<Root::ptr>(
+        excludes, exclude_filters, nullptr, segment, candidates,
+        [&]<typename Exclude>(auto&& negated) -> Root::ptr {
+          return MakeShape<MaxScoreDisjunction, Leaf, Match,
+                           fill::ProbedAndNot<Exclude>>(
+            ctx, terms.size(), docs_count, match, init,
+            std::forward_as_tuple(std::piecewise_construct,
+                                  std::forward<decltype(negated)>(negated)));
+        });
+    };
+    if (min_match > 1) {
+      return make(MinMatch{min_match});
     }
-    const auto candidates =
-      std::min<uint64_t>(search::SumDocs(terms), segment.docs_count());
-    return search::BuildExcludeSide<Root::ptr>(
-      excludes, exclude_filters, nullptr, segment, candidates,
-      [&]<typename Exclude>(auto&& negated) -> Root::ptr {
-        return MakeShape<MaxScoreDisjunction, Leaf,
-                         fill::ProbedAndNot<Exclude>>(
-          ctx, terms.size(), static_cast<doc_id_t>(segment.docs_count()), init,
-          std::forward_as_tuple(std::piecewise_construct,
-                                std::forward<decltype(negated)>(negated)));
-      });
+    return make(utils::Empty{});
   });
 }
 

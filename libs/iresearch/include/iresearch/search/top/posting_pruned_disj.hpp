@@ -233,8 +233,12 @@ class PostingPrunedDisj : public PruneLeafBase<InputType, false> {
         if (cand > *(end - 1)) {
           break;
         }
-        const auto* const it = std::find(begin, end, cand);
-        if (it != end) {
+        const doc_id_t* it = BranchlessLowerBound<doc_limits::kBlockSize>(
+          std::cbegin(_docs), cand);
+        if (it < begin) {
+          it = begin;
+        }
+        if (it != end && *it == cand) {
           if (required) {
             cand_docs[out] = cand_docs[cand_idx];
             cand_scores[out] = cand_scores[cand_idx];
@@ -245,13 +249,14 @@ class PostingPrunedDisj : public PruneLeafBase<InputType, false> {
           }
           docs[count] = cand;
           freqs[count] =
-            _freqs.data[static_cast<size_t>(it - std::begin(_docs))];
+            _freqs.data[static_cast<size_t>(it - std::cbegin(_docs))];
           ++count;
           if (count == kScoreBlock) {
             score_block(kScoreBlock);
           }
-          begin = it + 1;
+          ++it;
         }
+        begin = it;
         ++cand_idx;
       }
     };

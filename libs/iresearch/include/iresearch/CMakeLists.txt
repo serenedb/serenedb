@@ -152,9 +152,6 @@ set(IResearch_core_sources
     ./search/count/make_ivf.cpp
     ./search/count/make_constant.cpp
     ./search/count/make_boolean.cpp
-    ./search/count/make_boolean_bitset.cpp
-    ./search/count/make_boolean_window.cpp
-    ./search/count/make_boolean_sparse.cpp
     ./search/count/make_subtract_conjunction.cpp
     ./search/count/make_subtract_disjunction.cpp
     ./search/count/make_fixed_phrase.cpp
@@ -306,9 +303,6 @@ set(IResearch_core_sources
     ./search/docs/make_single_posting.cpp
     ./search/docs/make_all.cpp
     ./search/docs/make_boolean.cpp
-    ./search/docs/make_boolean_bitset.cpp
-    ./search/docs/make_boolean_window.cpp
-    ./search/docs/make_boolean_sparse.cpp
     ./search/docs/make_fixed_phrase.cpp
     ./search/docs/make_fixed_phrase_intervals.cpp
     ./search/docs/make_fixed_phrase_slop.cpp

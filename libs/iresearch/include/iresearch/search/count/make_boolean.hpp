@@ -32,59 +32,45 @@
 #include "iresearch/search/common/boolean_groups.hpp"
 #include "iresearch/search/common/collect.hpp"
 #include "iresearch/search/common/plan.hpp"
+#include "iresearch/search/count/boolean_sparse.hpp"
 #include "iresearch/search/count/boolean_window.hpp"
 #include "iresearch/search/count/plan.hpp"
 #include "iresearch/search/fill/set_leaves.hpp"
 
 namespace irs::count {
 
-Root::ptr MakeConjunction(std::span<const search::PostingClause> terms,
-                          std::span<const QueryBuilder::ptr> filters,
-                          const SubReader& segment, const Context& ctx);
-Root::ptr MakeDisjunction(std::span<const search::PostingClause> terms,
-                          std::span<const QueryBuilder::ptr> filters,
-                          const SubReader& segment, const Context& ctx);
-Root::ptr MakeThreshold(std::span<const search::PostingClause> terms,
-                        std::span<const QueryBuilder::ptr> filters,
-                        const SubReader& segment, uint32_t min_match,
-                        const Context& ctx);
-Root::ptr MakeRequired(const BooleanQuery& query, const Context& ctx);
-Root::ptr MakeExclusion(const BooleanQuery& query, const Context& ctx);
+struct Api {
+  using Result = Root::ptr;
+  using Context = count::Context;
+  using Table = search::TableFilter*;
 
-Root::ptr MakeBitset(const search::BooleanGroups& groups,
-                     const SubReader& segment, const Context& ctx);
+  template<typename... Parts>
+  using Window = BooleanWindow<Parts...>;
+  template<typename... Parts>
+  using Sparse = BooleanSparse<Parts...>;
 
-Root::ptr MakeWindowDisjunction(std::span<const search::PostingClause> terms,
-                                const IndexInput* doc,
-                                std::vector<FillNode::ptr>& rest,
-                                const Context& ctx);
-Root::ptr MakeWindowConjunction(std::span<const search::PostingClause> terms,
-                                std::span<const QueryBuilder::ptr> filters,
-                                const SubReader& segment, const Context& ctx);
-Root::ptr MakeWindowExclusion(
-  std::span<const search::PostingClause> terms,
-  std::span<const QueryBuilder::ptr> filters,
-  std::span<const search::PostingClause> exclude_terms,
-  std::span<const QueryBuilder::ptr> exclude_filters, const SubReader& segment,
-  uint64_t candidates, const Context& ctx);
+  static Result PlanChild(const QueryBuilder& child, const Context& ctx) {
+    return child.PlanCount(ctx);
+  }
 
-Root::ptr MakeSparseConjunction(std::span<const search::PostingClause> terms,
-                                std::span<const QueryBuilder::ptr> filters,
-                                const SubReader& segment, const Context& ctx);
-Root::ptr MakeSparseConjunctionWith(
-  std::span<const search::PostingClause> terms,
-  std::span<const QueryBuilder::ptr> filters, const SubReader& segment,
-  ProbeNode::ptr other, const Context& ctx);
-Root::ptr MakeSparseExclusion(
-  std::span<const search::PostingClause> terms,
-  std::span<const QueryBuilder::ptr> filters,
-  std::span<const search::PostingClause> exclude_terms,
-  std::span<const QueryBuilder::ptr> exclude_filters, const SubReader& segment,
-  uint64_t candidates, const Context& ctx);
-Root::ptr MakeSparseExclusionOf(
-  LeadNode::ptr include, std::span<const search::PostingClause> exclude_terms,
-  std::span<const QueryBuilder::ptr> exclude_filters, const SubReader& segment,
-  uint64_t candidates, const Context& ctx);
+  static Result MakeTerm(const search::PostingClause& term,
+                         const SubReader& segment, const Context& ctx) {
+    return count::MakeTerm(term, segment, ctx);
+  }
+
+  static Result MakeAll(const SubReader& segment, const Context& ctx) {
+    return count::MakeAll(segment, ctx);
+  }
+
+  static search::TableFilter* BitsetTable(const Context& ctx) noexcept {
+    return ctx.table;
+  }
+
+  static Result MakeNegation(
+    std::span<const search::PostingClause> exclude_terms,
+    std::span<const QueryBuilder::ptr> exclude_filters,
+    const SubReader& segment, uint64_t candidates, const Context& ctx);
+};
 
 Root::ptr MakeSubtractConjunction(std::span<const search::PostingClause> terms,
                                   std::span<const QueryBuilder::ptr> filters,
@@ -92,11 +78,6 @@ Root::ptr MakeSubtractConjunction(std::span<const search::PostingClause> terms,
 Root::ptr MakeSubtractDisjunction(const search::PostingClause& first,
                                   const search::PostingClause& second,
                                   const SubReader& segment, const Context& ctx);
-
-Root::ptr MakeWindowThreshold(std::span<const search::PostingClause> terms,
-                              const IndexInput* doc,
-                              std::vector<FillNode::ptr>& rest,
-                              uint32_t min_match, const Context& ctx);
 
 template<typename Term>
 doc_id_t RarestOf(std::span<const Term> terms) noexcept {

@@ -24,11 +24,14 @@
 
 #include "basics/empty.hpp"
 #include "iresearch/search/common/bitset_of.hpp"
+#include "iresearch/search/common/boolean_groups.hpp"
+#include "iresearch/search/common/collect_scored.hpp"
 #include "iresearch/search/common/posting_probe.hpp"
 #include "iresearch/search/common/probe_leaves.hpp"
 #include "iresearch/search/common/resolve.hpp"
 #include "iresearch/search/common/score_policy.hpp"
 #include "iresearch/search/probe/boolean_sparse.hpp"
+#include "iresearch/search/probe/boolean_window.hpp"
 #include "iresearch/search/probe/impl.hpp"
 #include "iresearch/search/probe/leaves.hpp"
 #include "iresearch/search/probe/make.hpp"
@@ -119,6 +122,59 @@ Node::ptr MakeSparseDisjunctionScored(
     search::ProbeOrder::Densest);
 }
 
+template<typename Term>
+Node::ptr MakeWindowDisjunctionScored(
+  std::span<const Term> terms, std::span<const QueryBuilder::ptr> filters,
+  search::Terms uniformity, const TermReader* field, const Scorer* scorer,
+  score_t boost, const SubReader& segment, const ScoreRecipe& recipe,
+  ScoreMergeType merge, const ScoredCtx& ctx, score_t absorbed = 0) {
+  const IndexInput* doc = nullptr;
+  std::vector<search::FillNode::ptr> rest;
+  if (!search::CollectDenseScored(terms, filters, field, doc, rest,
+                                  [&](const QueryBuilder& child) {
+                                    return child.PlanFill(ctx, merge);
+                                  })) {
+    return {};
+  }
+  return search::BuildScoredWindow<Node::ptr>(
+    terms, field, scorer, boost, doc, rest, uniformity, recipe, merge,
+    [&]<typename Set>(auto&&... args) -> Node::ptr {
+      using Node = BooleanWindow<search::OrGroup<Set>, search::Scored>;
+      return memory::make_managed<Impl<Node>>(
+        std::piecewise_construct,
+        std::forward_as_tuple(std::forward<decltype(args)>(args)...),
+        search::Scored{merge, absorbed});
+    });
+}
+
+template<typename Term, typename ClauseFn>
+Node::ptr MakeDisjunctionScored(std::span<const Term> terms,
+                                std::span<const QueryBuilder::ptr> filters,
+                                search::Terms uniformity,
+                                const TermReader* field, const Scorer* scorer,
+                                score_t boost, const SubReader& segment,
+                                const ScoreRecipe& recipe, ScoreMergeType merge,
+                                uint64_t interrogations, ClauseFn clause,
+                                const ScoredCtx& ctx, score_t absorbed = 0) {
+  SDB_ASSERT(terms.size() + filters.size() > 1);
+  if (filters.empty() && !terms.empty()) {
+    const auto* const doc =
+      search::DocOf(search::FieldOf(terms.front(), field));
+    const auto docs_count = static_cast<doc_id_t>(segment.docs_count());
+    if (doc != nullptr &&
+        search::TakeProbeBitset(terms, *doc, docs_count, interrogations)) {
+      if (auto windowed = MakeWindowDisjunctionScored(
+            terms, filters, uniformity, field, scorer, boost, segment, recipe,
+            merge, ctx, absorbed)) {
+        return windowed;
+      }
+    }
+  }
+  return MakeSparseDisjunctionScored(terms, filters, uniformity, field, scorer,
+                                     boost, segment, recipe, merge,
+                                     interrogations, clause, absorbed);
+}
+
 inline Node::ptr BuildOptionalProbe(
   std::span<const search::PostingClause> should,
   std::span<const QueryBuilder::ptr> should_filters, uint32_t min_should_match,
@@ -140,10 +196,10 @@ inline Node::ptr BuildOptionalProbeScored(
   SDB_ASSERT(min_should_match != 0);
   SDB_ASSERT(should.size() + should_filters.size() >= min_should_match);
   return min_should_match == 1
-           ? MakeSparseDisjunctionScored(should, should_filters, uniformity,
-                                         nullptr, nullptr, kNoBoost, segment,
-                                         recipe, merge, interrogations,
-                                         ScoredClauseOf(segment, ctx, recipe))
+           ? MakeDisjunctionScored(should, should_filters, uniformity, nullptr,
+                                   nullptr, kNoBoost, segment, recipe, merge,
+                                   interrogations,
+                                   ScoredClauseOf(segment, ctx, recipe), ctx)
            : MakeSparseThresholdScored(should, should_filters, uniformity,
                                        segment, recipe, merge, min_should_match,
                                        interrogations, ctx);

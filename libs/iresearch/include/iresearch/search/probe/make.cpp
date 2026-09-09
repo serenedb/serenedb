@@ -114,9 +114,9 @@ Node::ptr Make(const MultiTermQuery& query, const ScoredCtx& ctx,
       search::ClauseOf(terms.front(), field, scorer, boost), segment, recipe);
   }
   const auto clause = ScoredClauseOf(segment, ctx, recipe);
-  return MakeSparseDisjunctionScored(
-    terms, {}, search::UniformityOf(*field, scorer), field, scorer, boost,
-    segment, recipe, merge, interrogations, clause);
+  return MakeDisjunctionScored(terms, {}, search::UniformityOf(*field, scorer),
+                               field, scorer, boost, segment, recipe, merge,
+                               interrogations, clause, ctx);
 }
 
 Node::ptr Make(const FixedPhraseQuery& query, const ScoredCtx& ctx,

@@ -57,10 +57,10 @@ Node::ptr MakeRequiredScored(
   const auto optional_absorbed = no_must ? absorbed : score_t{0};
   auto optional =
     min_should_match == 1
-      ? MakeSparseDisjunctionScored(
+      ? MakeDisjunctionScored(
           should, should_filters, should_uniformity, nullptr, nullptr, kNoBoost,
           segment, recipe, merge, reach, ScoredClauseOf(segment, ctx, recipe),
-          optional_absorbed)
+          ctx, optional_absorbed)
       : MakeSparseThresholdScored(should, should_filters, should_uniformity,
                                   segment, recipe, merge, min_should_match,
                                   reach, ctx, optional_absorbed);

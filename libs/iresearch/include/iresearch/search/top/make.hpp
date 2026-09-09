@@ -104,13 +104,6 @@ Root::ptr MakeAll(const SubReader& segment, const Context& ctx,
                   const search::StatsRecord& record, score_t boost);
 Root::ptr MakeAll(const SubReader& segment, const Context& ctx, score_t score);
 
-Root::ptr MakeWindowThreshold(std::span<const PostingClause> terms,
-                              std::span<const QueryBuilder::ptr> filters,
-                              search::Terms uniformity,
-                              const SubReader& segment, const Context& ctx,
-                              ScoreMergeType merge, uint32_t min_match,
-                              score_t absorbed);
-
 Root::ptr MakeFixedPhrase(const FixedPhraseQuery& query, const Context& ctx);
 Root::ptr MakeFixedPhraseIntervals(const FixedPhraseQuery& query,
                                    const Context& ctx);

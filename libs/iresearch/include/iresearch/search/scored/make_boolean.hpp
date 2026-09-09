@@ -24,30 +24,107 @@
 #include <span>
 #include <tuple>
 #include <utility>
-#include <vector>
 
 #include "basics/empty.hpp"
-#include "iresearch/search/common/boolean_groups.hpp"
-#include "iresearch/search/common/collect_scored.hpp"
 #include "iresearch/search/common/plan.hpp"
+#include "iresearch/search/common/resolve.hpp"
 #include "iresearch/search/common/score_args.hpp"
+#include "iresearch/search/common/score_policy.hpp"
+#include "iresearch/search/common/scored_builder.hpp"
+#include "iresearch/search/common/scored_context.hpp"
+#include "iresearch/search/scored/boolean_sparse.hpp"
 #include "iresearch/search/scored/boolean_window.hpp"
 #include "iresearch/search/scored/make.hpp"
+#include "iresearch/search/scored/posting.hpp"
 
 namespace irs::scored {
 
-Root::ptr MakeSparseConjunction(const BooleanQuery& query,
-                                const SubReader& segment, const Context& ctx,
-                                ScoreMergeType merge, score_t absorbed);
-Root::ptr MakeSparseExclusion(const BooleanQuery& query,
-                              const SubReader& segment, const Context& ctx,
-                              ScoreMergeType merge, score_t absorbed);
-Root::ptr MakeWindowExclusion(const BooleanQuery& query,
-                              const SubReader& segment, const Context& ctx,
-                              ScoreMergeType merge, score_t absorbed);
 Root::ptr MakeBoostedPosting(const BooleanQuery& query,
                              const SubReader& segment, const Context& ctx,
                              ScoreMergeType merge, score_t absorbed);
+
+struct Api {
+  using Result = Root::ptr;
+  using Context = scored::Context;
+
+  static constexpr bool kPrunes = false;
+  static constexpr bool kBoostArity = false;
+
+  template<typename Lead, typename Optional, typename Excludes,
+           typename LeadArgs, typename OptionalArgs, typename ExcludesArgs>
+  static Result MakeWindow(const Context& ctx, ScoreMergeType, score_t absorbed,
+                           LeadArgs&& lead, OptionalArgs&& optional,
+                           ExcludesArgs&& excludes) {
+    return MakeShape<BooleanWindow, Lead, Optional, Excludes>(
+      ctx, std::piecewise_construct, std::forward<LeadArgs>(lead),
+      std::forward<OptionalArgs>(optional),
+      std::forward<ExcludesArgs>(excludes), absorbed);
+  }
+
+  template<typename Lead, typename Probes, typename Optional, typename Excludes,
+           typename... Args>
+  static Result MakeSparse(const Context& ctx, search::Scored score,
+                           Args&&... args) {
+    return MakeShape<BooleanSparse, Lead, Probes, Optional, Excludes>(
+      ctx, std::piecewise_construct, ctx.fetcher, score,
+      std::forward<Args>(args)...);
+  }
+
+  template<typename Input, typename Exclude, typename ExcludeArgs>
+  static Result MakeExcludedPosting(const Context& ctx, ExcludeArgs&& negated,
+                                    const PostingClause& posting,
+                                    const IndexInput& doc,
+                                    const SubReader& segment,
+                                    const TermReader& own,
+                                    const ScoreRecipe& recipe) {
+    return MakePrepared(ctx, [&](auto table) -> Result {
+      auto root =
+        memory::make_managed<Posting<Input, Exclude, decltype(table)>>(
+          table, std::piecewise_construct, std::forward<ExcludeArgs>(negated));
+      root->Prepare(posting.state.cookie, doc, segment, own,
+                    recipe.Args(posting.stats, posting.boost),
+                    search::LayoutOf(own), search::BoundsOf(own));
+      return root;
+    });
+  }
+
+  static score_t Base(score_t absorbed) noexcept { return absorbed; }
+
+  static search::ScoredCtx ChildContext(const Context& ctx) noexcept {
+    return ScoredOf(ctx);
+  }
+
+  static ScoreRecipe Recipe(const SubReader& segment,
+                            const Context& ctx) noexcept {
+    return {.segment = &segment, .fetcher = &ctx.fetcher};
+  }
+
+  static Result PlanChild(const QueryBuilder& child, const Context& ctx) {
+    return child.PlanScored(ctx);
+  }
+
+  static Result MakePosting(const PostingClause& posting,
+                            const SubReader& segment, const Context& ctx) {
+    return scored::MakePosting(posting, segment, ctx);
+  }
+
+  static Result MakeSinglePosting(const PostingClause& posting,
+                                  const SubReader& segment,
+                                  const Context& ctx) {
+    return scored::MakeSinglePosting(posting, segment, ctx);
+  }
+
+  static Result MakeAll(const SubReader& segment, const Context& ctx,
+                        score_t absorbed) {
+    return scored::MakeAll(segment, ctx, absorbed);
+  }
+
+  static Result MakeBoosted(const BooleanQuery& query, const SubReader& segment,
+                            const Context& ctx, ScoreMergeType merge,
+                            score_t absorbed) {
+    return MakeBoostedPosting(query, segment, ctx, merge, absorbed);
+  }
+};
 
 template<typename Term>
 Root::ptr MakeWindowDisjunction(std::span<const Term> terms,
@@ -57,26 +134,9 @@ Root::ptr MakeWindowDisjunction(std::span<const Term> terms,
                                 score_t boost, const SubReader& segment,
                                 const Context& ctx, ScoreMergeType merge,
                                 score_t absorbed) {
-  SDB_ASSERT(terms.size() + filters.size() > 1);
-  const IndexInput* doc = nullptr;
-  std::vector<search::FillNode::ptr> rest;
-  if (!search::CollectDenseScored(terms, filters, field, doc, rest,
-                                  [&](const QueryBuilder& child) {
-                                    return child.PlanFill(ScoredOf(ctx), merge);
-                                  })) {
-    return {};
-  }
-  const auto make = [&]<typename Set>(auto&&... args) -> Root::ptr {
-    return MakeShape<BooleanWindow, utils::Empty, search::OrGroup<Set>,
-                     utils::Empty>(
-      ctx, std::piecewise_construct, std::forward_as_tuple(),
-      std::forward_as_tuple(std::forward<decltype(args)>(args)...),
-      std::forward_as_tuple(), absorbed);
-  };
-  const search::ScoreRecipe recipe{.segment = &segment,
-                                   .fetcher = &ctx.fetcher};
-  return search::BuildScoredWindow<Root::ptr>(
-    terms, field, scorer, boost, doc, rest, uniformity, recipe, merge, make);
+  return search::builder::MakeScoredDisjunction<Api, Term>(
+    terms, filters, uniformity, field, scorer, boost, segment, ctx, merge,
+    absorbed);
 }
 
 }  // namespace irs::scored

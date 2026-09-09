@@ -318,8 +318,6 @@ set(IResearch_core_sources
     ./search/scored/make_single_posting.cpp
     ./search/scored/make_all.cpp
     ./search/scored/make_boolean.cpp
-    ./search/scored/make_boolean_window.cpp
-    ./search/scored/make_boolean_sparse.cpp
     ./search/scored/make_boosted_posting.cpp
     ./search/scored/make_fixed_phrase.cpp
     ./search/scored/make_fixed_phrase_intervals.cpp
@@ -341,8 +339,6 @@ set(IResearch_core_sources
     ./search/top/make_single_posting.cpp
     ./search/top/make_all.cpp
     ./search/top/make_boolean.cpp
-    ./search/top/make_boolean_window.cpp
-    ./search/top/make_boolean_sparse.cpp
     ./search/top/make_fixed_phrase.cpp
     ./search/top/make_fixed_phrase_intervals.cpp
     ./search/top/make_fixed_phrase_slop.cpp

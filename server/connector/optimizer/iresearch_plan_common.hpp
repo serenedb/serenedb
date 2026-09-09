@@ -52,9 +52,17 @@ std::vector<catalog::ColumnId> BuildProjectedColumnIds(
   const duckdb::LogicalGet& get,
   const connector::SereneDBScanBindData& bind_data);
 
+void ResolveSearchTableIndexes(connector::SereneDBScanBindData& bind_data,
+                               duckdb::ClientContext& context);
+
+std::shared_ptr<const catalog::InvertedIndex> TermDictIndexFor(
+  const connector::SereneDBScanBindData& bind_data, catalog::ColumnId col_id);
+
 struct FoundScan {
   duckdb::LogicalGet* get;
   connector::SereneDBScanBindData* bind_data;
+
+  explicit operator bool() const noexcept { return get; }
 };
 
 std::optional<FoundScan> AsSearchScan(duckdb::LogicalOperator& op);

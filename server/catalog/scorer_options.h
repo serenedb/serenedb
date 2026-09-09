@@ -26,6 +26,7 @@
 #include <string_view>
 
 #include "catalog/persistence/scorer_options.h"
+#include "query/config_variable_names.h"
 
 namespace duckdb {
 
@@ -42,8 +43,8 @@ std::unique_ptr<irs::Scorer> MakeScorer(const ScorerOptions& spec);
 std::optional<ScorerOptions> ExtractScorerFromBound(
   const duckdb::BoundFunctionExpression& func, std::string_view name);
 
-ScorerOptions ParseScorerExpression(duckdb::ClientContext& context,
-                                    std::string input,
-                                    std::string_view what = "optimize_top_k");
+ScorerOptions ParseScorerExpression(
+  duckdb::ClientContext* context, std::string input,
+  std::string_view what = kOptimizeTopKSetting);
 
 }  // namespace sdb::catalog

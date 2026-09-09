@@ -56,7 +56,7 @@ using sdb::basics::downCast;
 using sdb::catalog::term_dict::Kind;
 
 const Scorer* Explicit(const Scorer* scorer) noexcept {
-  return scorer == &DefaultConstScore() ? nullptr : scorer;
+  return IsConstScoreSingleton(scorer) ? nullptr : scorer;
 }
 
 void AddMergeAttribute(ExplainNode& node, ScoreMergeType merge) {
@@ -486,7 +486,6 @@ struct FilterPrinter {
       ExplainNode node{"Starts With"};
       node.attributes["Field"] = FieldName(f.field_id());
       node.attributes["Prefix"] = TermToString(f.options().term);
-      node.attributes["Limit"] = absl::StrCat(f.options().scored_terms_limit);
       return node;
     }
     if (type == Type<ByNestedFilter>::id()) {

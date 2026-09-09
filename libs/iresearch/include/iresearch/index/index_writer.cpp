@@ -429,13 +429,15 @@ bool MapRemovals(const CandidatesMapping& candidates_mapping,
       // passed to the merge_writer
 
       // no more docs in merged reader
-      if (doc_limits::eof(merged_itr->Advance())) {
-        if (!doc_limits::eof(current_itr->Advance())) {
+      auto merged = merged_itr->Advance();
+      auto current = doc_limits::invalid();
+      if (doc_limits::eof(merged)) {
+        current = current_itr->Advance();
+        if (!doc_limits::eof(current)) {
           SDB_WARN(IRESEARCH, "Failed to map removals for compacted segment '",
                    old_meta.name, "' version '", old_meta.version,
                    "' from current segment '", new_meta.name, "' version '",
-                   new_meta.version, "', current segment has doc_id '",
-                   current_itr->Value(),
+                   new_meta.version, "', current segment has doc_id '", current,
                    "' not present in the compacted segment");
 
           return false;  // current reader has unmerged docs
@@ -445,11 +447,13 @@ bool MapRemovals(const CandidatesMapping& candidates_mapping,
       }
 
       // mask all remaining doc_ids
-      if (doc_limits::eof(current_itr->Advance())) {
+      current = current_itr->Advance();
+      if (doc_limits::eof(current)) {
         do {
-          SDB_ASSERT(!merge_ctx.remap.IsMasked(merged_itr->Value()));
-          docs_mask.insert(merge_ctx.remap.Remap(merged_itr->Value()));
-        } while (!doc_limits::eof(merged_itr->Advance()));
+          SDB_ASSERT(!merge_ctx.remap.IsMasked(merged));
+          docs_mask.insert(merge_ctx.remap.Remap(merged));
+          merged = merged_itr->Advance();
+        } while (!doc_limits::eof(merged));
 
         continue;  // continue wih next mapping
       }
@@ -457,42 +461,44 @@ bool MapRemovals(const CandidatesMapping& candidates_mapping,
       // validate that all docs in the current reader were merged, and add any
       // removed docs to the merged mask
       for (;;) {
-        while (merged_itr->Value() < current_itr->Value()) {
-          SDB_ASSERT(!merge_ctx.remap.IsMasked(merged_itr->Value()));
-          docs_mask.insert(merge_ctx.remap.Remap(merged_itr->Value()));
+        while (merged < current) {
+          SDB_ASSERT(!merge_ctx.remap.IsMasked(merged));
+          docs_mask.insert(merge_ctx.remap.Remap(merged));
 
-          if (doc_limits::eof(merged_itr->Advance())) {
-            SDB_WARN(
-              IRESEARCH, "Failed to map removals for compacted segment '",
-              old_meta.name, "' version '", old_meta.version,
-              "' from current segment '", new_meta.name, "' version '",
-              new_meta.version, "', current segment has doc_id '",
-              current_itr->Value(), "' not present in the compacted segment");
+          merged = merged_itr->Advance();
+          if (doc_limits::eof(merged)) {
+            SDB_WARN(IRESEARCH,
+                     "Failed to map removals for compacted segment '",
+                     old_meta.name, "' version '", old_meta.version,
+                     "' from current segment '", new_meta.name, "' version '",
+                     new_meta.version, "', current segment has doc_id '",
+                     current, "' not present in the compacted segment");
 
             return false;  // current reader has unmerged docs
           }
         }
 
-        if (merged_itr->Value() > current_itr->Value()) {
+        if (merged > current) {
           SDB_WARN(IRESEARCH, "Failed to map removals for compacted segment '",
                    old_meta.name, "' version '", old_meta.version,
                    "' from current segment '", new_meta.name, "' version '",
-                   new_meta.version, "', current segment has doc_id '",
-                   current_itr->Value(),
+                   new_meta.version, "', current segment has doc_id '", current,
                    "' not present in the compacted segment");
 
           return false;  // current reader has unmerged docs
         }
 
         // no more docs in merged reader
-        if (doc_limits::eof(merged_itr->Advance())) {
-          if (!doc_limits::eof(current_itr->Advance())) {
-            SDB_WARN(
-              IRESEARCH, "Failed to map removals for compacted segment '",
-              old_meta.name, "' version '", old_meta.version,
-              "' from current segment '", new_meta.name, "' version '",
-              new_meta.version, "', current segment has doc_id '",
-              current_itr->Value(), "' not present in the compacted segment");
+        merged = merged_itr->Advance();
+        if (doc_limits::eof(merged)) {
+          current = current_itr->Advance();
+          if (!doc_limits::eof(current)) {
+            SDB_WARN(IRESEARCH,
+                     "Failed to map removals for compacted segment '",
+                     old_meta.name, "' version '", old_meta.version,
+                     "' from current segment '", new_meta.name, "' version '",
+                     new_meta.version, "', current segment has doc_id '",
+                     current, "' not present in the compacted segment");
 
             return false;  // current reader has unmerged docs
           }
@@ -501,11 +507,13 @@ bool MapRemovals(const CandidatesMapping& candidates_mapping,
         }
 
         // mask all remaining doc_ids
-        if (doc_limits::eof(current_itr->Advance())) {
+        current = current_itr->Advance();
+        if (doc_limits::eof(current)) {
           do {
-            SDB_ASSERT(!merge_ctx.remap.IsMasked(merged_itr->Value()));
-            docs_mask.insert(merge_ctx.remap.Remap(merged_itr->Value()));
-          } while (!doc_limits::eof(merged_itr->Advance()));
+            SDB_ASSERT(!merge_ctx.remap.IsMasked(merged));
+            docs_mask.insert(merge_ctx.remap.Remap(merged));
+            merged = merged_itr->Advance();
+          } while (!doc_limits::eof(merged));
 
           break;  // continue wih next mapping
         }

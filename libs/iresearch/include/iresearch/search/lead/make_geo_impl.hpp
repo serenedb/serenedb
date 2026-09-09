@@ -40,18 +40,13 @@ Node::ptr Make(const GeoQuery<Parser, Acceptor>& query) {
 
 template<typename Parser, typename Acceptor>
 Node::ptr Make(const GeoQuery<Parser, Acceptor>& query, const ScoredCtx& ctx) {
-  auto node = Make(query);
-  if (!node) {
-    return {};
-  }
   const auto record = query.Stats(ctx);
   const auto value =
     search::AllDocsScore(query.Segment(), ScoreArgs{.scorer = record.scorer,
                                                     .stats = record.stats,
                                                     .fetcher = ctx.fetcher,
                                                     .boost = query.Boost()});
-  using Node = ConstantScored<Erased>;
-  return memory::make_managed<Impl<Node>>(value, std::move(node));
+  return search::MakeGeo<ConstantScoredImpl, Node::ptr>(query, 0, value);
 }
 
 }  // namespace irs::lead

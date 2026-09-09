@@ -102,7 +102,7 @@ class AllDocs {
 
   bool Span(doc_id_t min, doc_id_t max, doc_id_t& begin,
             doc_id_t& end) const noexcept {
-    begin = std::max(min, doc_limits::min());
+    begin = min;
     end = std::min(max, _last + 1);
     return begin < end;
   }

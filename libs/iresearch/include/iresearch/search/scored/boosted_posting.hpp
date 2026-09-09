@@ -66,6 +66,7 @@ class BoostedPosting : public Root,
     this->MakeScore(segment, field, args);
     _boost.Prepare(boost_meta, doc_in, segment, boost_field, boost_args);
     _boost_score = _boost.PrepareScore();
+    _boost_doc = doc_limits::invalid();
   }
 
   uint32_t Run(doc_id_t* IRS_RESTRICT docs, score_t* IRS_RESTRICT scores,
@@ -100,7 +101,7 @@ class BoostedPosting : public Root,
   void Boost(const doc_id_t* IRS_RESTRICT docs, score_t* IRS_RESTRICT scores,
              uint32_t len) {
     const doc_id_t last = docs[len - 1];
-    auto doc = _boost.Value();
+    auto doc = _boost_doc;
     if (doc > last) {
       return;
     }
@@ -131,6 +132,7 @@ class BoostedPosting : public Root,
       }
       ++at;
     }
+    _boost_doc = doc;
     if (held != 0) {
       Flush(scores, held);
     }
@@ -148,6 +150,7 @@ class BoostedPosting : public Root,
 
   ColumnArgsFetcher& _fetcher;
   search::PostingLeadScored<InputType> _boost;
+  doc_id_t _boost_doc = doc_limits::invalid();
   ScoreFunction _boost_score;
   ABSL_CACHELINE_ALIGNED doc_id_t _cand[kScoreBlock];
   ABSL_CACHELINE_ALIGNED score_t _boosts[kScoreBlock];

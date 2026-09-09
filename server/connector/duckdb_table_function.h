@@ -134,11 +134,11 @@ enum class TsDictTermUses : uint8_t {
 
 ENABLE_BITMASK_ENUM(TsDictTermUses);
 
-// The scorer `index`'s persisted per-block bounds may be pruned against, or
-// null when they cannot be: no index, no query scorer, no bounds, or bounds a
-// different scorer wrote.
-const irs::Scorer* ResolvePruneScorer(const catalog::InvertedIndex* index,
-                                      const irs::Scorer* scorer);
+// The scorer whose persisted per-block bounds may be pruned against, or null
+// when they cannot be: no query scorer, no bounds, or bounds a different scorer
+// wrote.
+const irs::Scorer* ResolvePruneScorer(
+  const std::optional<catalog::ScorerOptions>& topk, const irs::Scorer* scorer);
 
 enum class ScanEntryKind : uint8_t {
   BaseTable,
@@ -161,6 +161,7 @@ struct SereneDBScanBindData : public duckdb::FunctionData {
   ScanEntryKind entry_kind = ScanEntryKind::BaseTable;
 
   std::vector<std::shared_ptr<const catalog::Index>> indexes;
+  std::optional<catalog::ScorerOptions> topk_scorer;
 
   // The iresearch snapshot plus the query's search configuration (stored
   // filter, scorer, offsets, ts-dict requests). Every scan bound through this

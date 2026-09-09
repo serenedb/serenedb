@@ -160,7 +160,7 @@ TEST(term_predicate_test, by_range) {
 TEST(term_predicate_test, automaton) {
   irs::AutomatonFilter f;
   *f.mutable_options() =
-    irs::AutomatonOptions{irs::FromWildcard("a%b"), B("a%b"), 1024};
+    irs::AutomatonOptions{irs::FromWildcard("a%b"), B("a%b")};
 
   const auto pred = f.CompileTermPredicate();
   ASSERT_NE(nullptr, pred);

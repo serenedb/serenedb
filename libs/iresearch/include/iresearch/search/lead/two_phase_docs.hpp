@@ -32,8 +32,6 @@ class TwoPhaseDocs {
   template<typename... Args>
   explicit TwoPhaseDocs(Args&&... args) : _slots{std::forward<Args>(args)...} {}
 
-  doc_id_t Value() const noexcept { return _doc; }
-
   doc_id_t Advance() { return Converge(_slots.Next(_doc)); }
 
   doc_id_t Seek(doc_id_t target) {

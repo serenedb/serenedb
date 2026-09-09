@@ -62,7 +62,7 @@ struct TopTermComparer {
 
   bool operator()(const TopTerm<T>& lhs, const T& rhs_key,
                   const bytes_view& rhs_term) const noexcept {
-    return lhs.key < rhs_key || (!(rhs_key < lhs.key) && lhs.term < rhs_term);
+    return lhs.key < rhs_key || (!(rhs_key < lhs.key) && lhs.term > rhs_term);
   }
 };
 

@@ -680,8 +680,7 @@ TEST_P(TermsFilterTestCase, compile_term_iterator_matches_predicate) {
     ASSERT_NE(0, dfa.NumStates());
     irs::AutomatonFilter f;
     *f.mutable_field_id() = kDuplicatedId;
-    *f.mutable_options() =
-      irs::AutomatonOptions{std::move(dfa), B("a.*|v.*"), 1024};
+    *f.mutable_options() = irs::AutomatonOptions{std::move(dfa), B("a.*|v.*")};
     check(f, true);
   }
 }

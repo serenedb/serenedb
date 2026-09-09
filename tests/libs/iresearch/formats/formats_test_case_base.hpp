@@ -41,9 +41,14 @@ class SeekPostings : public irs::lead::Node {
  public:
   using ptr = irs::memory::managed_ptr<SeekPostings>;
 
+  irs::doc_id_t Value() const noexcept { return _doc; }
+
   virtual irs::PosAttr* Positions() noexcept = 0;
 
   virtual uint32_t GetFreq() noexcept = 0;
+
+ protected:
+  irs::doc_id_t _doc = irs::doc_limits::invalid();
 };
 
 template<typename Leaf>

@@ -500,7 +500,6 @@ inline automaton MakeAll() {
 ///        and other properties
 /// @param field field name
 /// @param matcher input matcher
-/// @param scored_terms_limit score as many terms
 /// @param index index reader
 /// @param order compiled order
 /// @param bool query boost

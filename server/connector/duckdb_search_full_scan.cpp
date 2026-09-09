@@ -1421,9 +1421,8 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> IResearchScanInitGlobal(
   }
 
   if (state->mode == ScanMode::TopK) {
-    state->prune_scorer = ResolvePruneScorer(
-      bind_data.IsIndexRelation() ? &bind_data.ScannedIndex() : nullptr,
-      state->scorer_obj.get());
+    state->prune_scorer =
+      ResolvePruneScorer(bind_data.topk_scorer, state->scorer_obj.get());
     if (state->score_static_floor >
         std::numeric_limits<irs::score_t>::lowest()) {
       // Static score floor (Lucene min_score): the collectors start at the
@@ -1464,9 +1463,8 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> IResearchScanInitGlobal(
       state->score_static_floor > std::numeric_limits<irs::score_t>::lowest();
     if (!topk_disabled && ss.text_scorer && state->ScanScore() &&
         (dynamic_bound || static_bound)) {
-      state->prune_scorer = ResolvePruneScorer(
-        bind_data.IsIndexRelation() ? &bind_data.ScannedIndex() : nullptr,
-        state->scorer_obj.get());
+      state->prune_scorer =
+        ResolvePruneScorer(bind_data.topk_scorer, state->scorer_obj.get());
     }
   }
 

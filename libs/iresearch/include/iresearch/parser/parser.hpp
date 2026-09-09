@@ -62,6 +62,7 @@ struct ParserContext {
   std::string error_message;
   Modifier last_mod{Modifier::None};
   bool strict_field = false;
+  size_t fuzzy_max_terms = 50;
 
   // What is being built while the grammar reads its parts.
   irs::ByPhrase* phrase{nullptr};
@@ -275,6 +276,7 @@ struct ParserContext {
     auto& part = Emplace<irs::ByEditDistanceOptions>();
     part.term = Analyze(word);
     part.max_distance = static_cast<uint8_t>(distance);
+    part.max_terms = fuzzy_max_terms;
     part.with_transpositions = true;
   }
 
@@ -631,6 +633,7 @@ struct ParserContext {
     *f.mutable_field_id() = default_field_id;
     f.mutable_options()->term = std::move(value);
     f.mutable_options()->max_distance = static_cast<uint8_t>(distance);
+    f.mutable_options()->max_terms = fuzzy_max_terms;
     f.mutable_options()->with_transpositions = true;
     return f;
   }

@@ -206,10 +206,10 @@ catalog::InvertedIndexOptions ResolveInvertedIndexOptions(
     .compaction_floor_segment_bytes =
       resolve_ubigint(kCompactionFloorSegmentBytesSetting),
   };
-  if (auto* v = find("optimize_top_k")) {
+  if (auto* v = find(kOptimizeTopKSetting)) {
     auto value =
       v->DefaultCastAs(duckdb::LogicalType::VARCHAR).GetValue<std::string>();
-    options.topk_scorer = catalog::ParseScorerExpression(context, value);
+    options.topk_scorer = catalog::ParseScorerExpression(&context, value);
   }
   options.key_columns = KeyColumnsFromOptions(with);
   std::string store_pk = "auto";

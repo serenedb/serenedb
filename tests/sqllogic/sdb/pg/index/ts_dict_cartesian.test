@@ -170,7 +170,6 @@ QUERY PLAN
 │ ╭─ Starts With ───────╮                              │
 │ │ Field: body(string) │                              │
 │ │ Prefix: a           │                              │
-│ │ Limit: 1024         │                              │
 │ ╰─────────────────────╯                              │
 │ TsDict: body                                         │
 │ Projections:                                         │
@@ -215,7 +214,6 @@ QUERY PLAN
 │ ╭─ Starts With ───────╮                              │
 │ │ Field: body(string) │                              │
 │ │ Prefix: b           │                              │
-│ │ Limit: 1024         │                              │
 │ ╰─────────────────────╯                              │
 │ TsDict: body                                         │
 │ Projections:                                         │

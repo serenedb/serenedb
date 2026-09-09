@@ -51,7 +51,7 @@ class WindowDisjunction : public Root {
       _admit{table} {}
 
   void Run(LoserScoreCollector& collector) final {
-    doc_id_t next = 0;
+    doc_id_t next = doc_limits::min();
     while (!_leaves.Empty()) {
       const auto min = next;
       const auto max = min + kWindow;

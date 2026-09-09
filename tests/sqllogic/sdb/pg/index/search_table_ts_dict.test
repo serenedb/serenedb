@@ -63,3 +63,338 @@ SELECT list_sort(ts_dict_agg(an)) AS terms FROM i_an WHERE an @@ 'quick';
 ----
 terms
 {brown,dog,fox,quick}
+
+# The same aggregates against the bare table. A search table's scan is already
+# an index scan, so the planner resolves the index covering the column itself
+# and reads that index's allocated term field.
+query
+SELECT list_sort(ts_dict_agg(an)) AS terms FROM t;
+----
+terms
+{brown,dog,fox,lazy,quick}
+
+query
+SELECT list_sort(ts_dict_agg(tag)) AS terms FROM t;
+----
+terms
+{blue,red}
+
+query
+SELECT list_sort(ts_dict_count(an)) AS counts FROM t;
+----
+counts
+{1,1,1,2,2}
+
+query
+SELECT ts_dict_min(an) AS lo, ts_dict_max(an) AS hi FROM t;
+----
+lo	hi
+brown	quick
+
+# Positionally aligned term / live-doc-count pairs.
+query
+SELECT unnest(ts_dict_agg(tag)) AS term, unnest(ts_dict_count(tag)) AS n
+FROM t ORDER BY term;
+----
+term	n
+blue	1
+red	2
+
+# The dictionary scan runs on the table's own store and names the column, not
+# the allocated term field.
+query
+EXPLAIN SELECT unnest(ts_dict_agg(tag)), unnest(ts_dict_count(tag)) FROM t
+----
+QUERY PLAN
+╭─ PROJECTION ────────────────────────────────────────╮
+│ Projections:                                        │
+│ sdb_inverted_index_term$tag,                        │
+│ CAST(sdb_inverted_index_term_count$tag AS INTEGER)  │
+│ ~1 row                                              │
+╰──────────────────────────┬──────────────────────────╯
+╭─ HASH_GROUP_BY ──────────┴──────────────────────────╮
+│ Groups: #0                                          │
+│ Aggregates: sum(#1)                                 │
+│ ~1 row                                              │
+╰──────────────────────────┬──────────────────────────╯
+╭─ IRESEARCH_SCAN ─────────┴──────────────────────────╮
+│ Index: t                                            │
+│ Lookup: search                                      │
+│ TsDict: tag                                         │
+│ Projections:                                        │
+│ sdb_inverted_index_term$tag,                        │
+│ sdb_inverted_index_term_count$tag                   │
+│ ~2 rows                                             │
+╰─────────────────────────────────────────────────────╯
+
+# Faceted against the bare table: the doc predicate is claimed into the
+# dictionary scan exactly as through the index relation.
+query
+SELECT list_sort(ts_dict_agg(an)) AS terms FROM t WHERE an @@ 'quick';
+----
+terms
+{brown,dog,fox,quick}
+
+query
+SELECT list_sort(ts_dict_agg(tag)) AS terms FROM t WHERE an @@ 'lazy';
+----
+terms
+{red}
+
+# A column no index covers has no dictionary to read: a clean error, not a
+# crash.
+statement error
+SELECT ts_dict_agg(id) FROM t;
+----
+db error: ERROR: ts_dict_agg(): column has no text term dictionary
+HINT: ts_dict_agg requires a text-tokenized or keyword VARCHAR column, or an array of such
+
+
+# Several indexes on one table: each column's dictionary is read from the index
+# that covers it, and a predicate on a column of another index still restricts
+# the facet.
+statement ok
+CREATE TABLE m (id BIGINT PRIMARY KEY, a TEXT, b TEXT)
+  WITH (storage='search', compaction_interval=0);
+
+statement ok
+CREATE INDEX m_a ON m USING inverted (a);
+
+statement ok
+CREATE INDEX m_b ON m USING inverted (b d1);
+
+statement ok
+INSERT INTO m VALUES (1, 'x', 'hello world'), (2, 'y', 'hello there');
+
+statement ok
+VACUUM (REFRESH_TABLE) m;
+
+query
+SELECT list_sort(ts_dict_agg(a)) AS terms FROM m;
+----
+terms
+{x,y}
+
+query
+SELECT list_sort(ts_dict_agg(b)) AS terms FROM m;
+----
+terms
+{hello,there,world}
+
+query
+SELECT list_sort(ts_dict_agg(b)) AS terms FROM m WHERE a @@ 'x';
+----
+terms
+{hello,world}
+
+
+# The implicit dictionary rewrites reach search tables too: a keyword GROUP BY
+# facet, count(DISTINCT) and min/max are served from the term dictionary,
+# through the index relation and the bare table alike.
+query
+SELECT tag, count(*) AS n FROM i_an GROUP BY tag ORDER BY tag;
+----
+tag	n
+blue	1
+red	2
+
+query
+SELECT tag, count(*) AS n FROM t GROUP BY tag ORDER BY tag;
+----
+tag	n
+blue	1
+red	2
+
+query
+SELECT tag, count(*) AS n FROM t WHERE an @@ 'quick' GROUP BY tag ORDER BY tag;
+----
+tag	n
+blue	1
+red	1
+
+query
+SELECT count(DISTINCT tag) AS n, min(tag) AS lo, max(tag) AS hi FROM t;
+----
+n	lo	hi
+2	blue	red
+
+query
+EXPLAIN SELECT tag, count(*) AS n FROM t WHERE an @@ 'quick' GROUP BY tag
+----
+QUERY PLAN
+╭─ PROJECTION ──────────────────────────────╮
+│ Projections: sdb_inverted_index_term$tag, │
+│              CAST(#1 AS BIGINT)           │
+│ ~1 row                                    │
+╰─────────────────────┬─────────────────────╯
+╭─ HASH_GROUP_BY ─────┴─────────────────────╮
+│ Groups: #0                                │
+│ Aggregates: sum(#1)                       │
+│ ~1 row                                    │
+╰─────────────────────┬─────────────────────╯
+╭─ IRESEARCH_SCAN ────┴─────────────────────╮
+│ Index: t                                  │
+│ Lookup: search                            │
+│ Index Filter:                             │
+│ ╭─ Term ────────────╮                     │
+│ │ Field: an(string) │                     │
+│ │ Value: quick      │                     │
+│ ╰───────────────────╯                     │
+│ TsDict: tag                               │
+│ Projections:                              │
+│ sdb_inverted_index_term$tag,              │
+│ sdb_inverted_index_term_count$tag         │
+│ ~2 rows                                   │
+╰───────────────────────────────────────────╯
+
+
+# GROUPING SETS facets on a search table: one dictionary pass over several
+# keyword keys, also when the keys live in different indexes. One nullable key
+# gets its NULL group synthesized from the null marker; two nullable keys
+# decline (their NULL groups would collide) and stay a plain scan with the same
+# answers.
+statement ok
+CREATE TABLE g (id BIGINT PRIMARY KEY, cat TEXT NOT NULL, brand TEXT NOT NULL,
+                note TEXT)
+  WITH (storage='search', compaction_interval=0);
+
+statement ok
+CREATE INDEX g_idx ON g USING inverted (cat, brand);
+
+statement ok
+INSERT INTO g VALUES (1, 'shoe', 'acme', 'x'), (2, 'shoe', 'zed', 'y'),
+  (3, 'hat', 'acme', 'z');
+
+statement ok
+VACUUM (REFRESH_TABLE) g;
+
+query TTI
+SELECT cat, brand, count(*) AS n FROM g
+GROUP BY GROUPING SETS ((cat), (brand))
+ORDER BY cat NULLS LAST, brand
+----
+cat	brand	n
+hat	NULL	1
+shoe	NULL	2
+NULL	acme	2
+NULL	zed	1
+
+query TTI
+SELECT cat, brand, count(*) AS n FROM g WHERE brand @@ 'acme'
+GROUP BY GROUPING SETS ((cat), (brand))
+ORDER BY cat NULLS LAST, brand
+----
+cat	brand	n
+hat	NULL	1
+shoe	NULL	1
+NULL	acme	2
+
+query
+EXPLAIN SELECT cat, brand, count(*) AS n FROM g
+GROUP BY GROUPING SETS ((cat), (brand))
+----
+QUERY PLAN
+╭─ PROJECTION ──────────────────────────────────────────────────────────────────────╮
+│ Projections:                                                                      │
+│ sdb_inverted_index_term$cat, sdb_inverted_index_term$brand, CAST(#2 AS BIGINT)    │
+│ ~3 rows                                                                           │
+╰─────────────────────────────────────────┬─────────────────────────────────────────╯
+╭─ HASH_GROUP_BY ─────────────────────────┴─────────────────────────────────────────╮
+│ Groups: #0, #1                                                                    │
+│ Aggregates: sum(#2)                                                               │
+│ ~3 rows                                                                           │
+╰─────────────────────────────────────────┬─────────────────────────────────────────╯
+╭─ PROJECTION ────────────────────────────┴─────────────────────────────────────────╮
+│ Projections:                                                                      │
+│ sdb_inverted_index_term$cat, sdb_inverted_index_term$brand,                       │
+│ COALESCE(sdb_inverted_index_term_count$cat, sdb_inverted_index_term_count$brand)  │
+│ ~4 rows                                                                           │
+╰─────────────────────────────────────────┬─────────────────────────────────────────╯
+╭─ IRESEARCH_SCAN ────────────────────────┴─────────────────────────────────────────╮
+│ Index: g                                                                          │
+│ Lookup: search                                                                    │
+│ TsDict: cat, brand                                                                │
+│ Projections:                                                                      │
+│ sdb_inverted_index_term$cat, sdb_inverted_index_term_count$cat,                   │
+│ sdb_inverted_index_term$brand, sdb_inverted_index_term_count$brand                │
+│ ~4 rows                                                                           │
+╰───────────────────────────────────────────────────────────────────────────────────╯
+
+# The keys served by two different indexes.
+statement ok
+CREATE TABLE g2 (id BIGINT PRIMARY KEY, cat TEXT NOT NULL, brand TEXT NOT NULL)
+  WITH (storage='search', compaction_interval=0);
+
+statement ok
+CREATE INDEX g2_cat ON g2 USING inverted (cat);
+
+statement ok
+CREATE INDEX g2_brand ON g2 USING inverted (brand);
+
+statement ok
+INSERT INTO g2 VALUES (1, 'shoe', 'acme'), (2, 'shoe', 'zed'), (3, 'hat', 'acme');
+
+statement ok
+VACUUM (REFRESH_TABLE) g2;
+
+query TTI
+SELECT cat, brand, count(*) AS n FROM g2
+GROUP BY GROUPING SETS ((cat), (brand))
+ORDER BY cat NULLS LAST, brand
+----
+cat	brand	n
+hat	NULL	1
+shoe	NULL	2
+NULL	acme	2
+NULL	zed	1
+
+# One nullable key.
+statement ok
+CREATE TABLE g3 (id BIGINT PRIMARY KEY, cat TEXT NOT NULL, brand TEXT)
+  WITH (storage='search', compaction_interval=0);
+
+statement ok
+CREATE INDEX g3_idx ON g3 USING inverted (cat, brand);
+
+statement ok
+INSERT INTO g3 VALUES (1, 'shoe', 'acme'), (2, 'shoe', NULL), (3, 'hat', 'acme');
+
+statement ok
+VACUUM (REFRESH_TABLE) g3;
+
+query TTI
+SELECT cat, brand, count(*) AS n FROM g3
+GROUP BY GROUPING SETS ((cat), (brand))
+ORDER BY cat NULLS LAST, brand NULLS LAST
+----
+cat	brand	n
+hat	NULL	1
+shoe	NULL	2
+NULL	acme	2
+NULL	NULL	1
+
+# Two nullable keys.
+statement ok
+CREATE TABLE g4 (id BIGINT PRIMARY KEY, cat TEXT, brand TEXT)
+  WITH (storage='search', compaction_interval=0);
+
+statement ok
+CREATE INDEX g4_idx ON g4 USING inverted (cat, brand);
+
+statement ok
+INSERT INTO g4 VALUES (1, 'shoe', 'acme'), (2, NULL, NULL), (3, 'hat', 'acme');
+
+statement ok
+VACUUM (REFRESH_TABLE) g4;
+
+query TTI
+SELECT cat, brand, count(*) AS n FROM g4
+GROUP BY GROUPING SETS ((cat), (brand))
+ORDER BY cat NULLS LAST, brand NULLS LAST, n
+----
+cat	brand	n
+hat	NULL	1
+shoe	NULL	1
+NULL	acme	2
+NULL	NULL	1
+NULL	NULL	1

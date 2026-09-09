@@ -85,7 +85,7 @@ void CaptureNGramAttrs(sort::CustomSort& scorer, NGramAttrs& attrs) {
   };
 }
 
-irs::score_t GetFilterBoost(const NGramAttrs& attrs, irs::lead::Node& doc) {
+irs::score_t GetFilterBoost(const NGramAttrs& attrs, tests::LeadCursor& doc) {
   if (attrs.boost == nullptr) {
     return irs::kNoBoost;
   }

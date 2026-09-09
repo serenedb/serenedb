@@ -65,10 +65,6 @@ class Complement : public Root {
            ++w, base += search::kWindowBits) {
         auto word = ~_excluded[w];
         _excluded[w] = 0;
-        if (base < doc_limits::min()) {
-          const auto skip = doc_limits::min() - base;
-          word &= ~((uint64_t{1} << skip) - 1);
-        }
         if (base + search::kWindowBits > _end) {
           const auto keep = _end > base ? _end - base : 0;
           word &= keep >= search::kWindowBits ? ~uint64_t{0}
@@ -85,7 +81,7 @@ class Complement : public Root {
   Emit<Table> _emit;
   search::Scratch _excluded{};
   Leaves _leaves;
-  doc_id_t _min = 0;
+  doc_id_t _min = doc_limits::min();
   doc_id_t _end;
 };
 

@@ -34,21 +34,22 @@ MaterializedData SystemTableSnapshot<PgAuthMembers>::GetTableData() {
   uint64_t oid = 1;
   auto& context = _context;
   auto& cluster = catalog::ClusterOf(context);
-  cluster.ScanRoles(
-    cluster.GetCatalogTransaction(context), [&](duckdb::CatalogEntry& entry) {
-      const auto& role = entry.Cast<catalog::RoleCatalogEntry>();
-      for (const auto& edge : role.MemberOf()) {
-        values.push_back(PgAuthMembers{
-          .oid = oid++,
-          .roleid = edge.role,
-          .member = role.oid,
-          .grantor = edge.grantor,
-          .admin_option = edge.admin_option,
-          .inherit_option = edge.inherit_option,
-          .set_option = edge.set_option,
-        });
-      }
-    });
+  cluster.GetCatalogSet(duckdb::CatalogType::ROLE_ENTRY)
+    .Scan(cluster.GetCatalogTransaction(context),
+          [&](duckdb::CatalogEntry& entry) {
+            const auto& role = entry.Cast<catalog::RoleCatalogEntry>();
+            for (const auto& edge : role.MemberOf()) {
+              values.push_back(PgAuthMembers{
+                .oid = oid++,
+                .roleid = edge.role,
+                .member = role.oid,
+                .grantor = edge.grantor,
+                .admin_option = edge.admin_option,
+                .inherit_option = edge.inherit_option,
+                .set_option = edge.set_option,
+              });
+            }
+          });
 
   auto result = CreateColumns<PgAuthMembers>(values.size());
   for (size_t row = 0; row < values.size(); ++row) {

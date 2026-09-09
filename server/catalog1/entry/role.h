@@ -23,49 +23,20 @@
 #include <cstdint>
 #include <duckdb/catalog/catalog_entry.hpp>
 #include <duckdb/catalog/permissions.hpp>
-#include <duckdb/parser/parsed_data/create_info.hpp>
+#include <duckdb/parser/parsed_data/create_role_info.hpp>
 #include <string>
-#include <vector>
 
 namespace sdb::catalog {
 
 using RoleOption = duckdb::RoleOption;
 using duckdb::HasOption;
 
-struct Membership {
-  duckdb::idx_t role{0};
-  duckdb::idx_t grantor{0};
-  bool admin_option{false};
-  bool inherit_option{true};
-  bool set_option{true};
-
-  bool operator==(const Membership& rhs) const noexcept = default;
-};
-
-class CreateRoleInfo final : public duckdb::CreateInfo {
- public:
-  static constexpr int32_t kNoConnLimit = -1;
-  static constexpr int64_t kNoValidUntil = 0;
-
-  CreateRoleInfo() : duckdb::CreateInfo{duckdb::CatalogType::ROLE_ENTRY} {}
-
-  RoleOption options{RoleOption::Inherit};
-  int32_t conn_limit{kNoConnLimit};
-  int64_t valid_until{kNoValidUntil};
-  std::string password;
-  std::vector<Membership> member_of;
-  std::vector<std::string> config;
-
-  duckdb::unique_ptr<duckdb::CreateInfo> Copy() const final;
-  std::string ToString() const final;
-};
-
 class RoleCatalogEntry final : public duckdb::InCatalogEntry {
  public:
   static constexpr duckdb::CatalogType Type = duckdb::CatalogType::ROLE_ENTRY;
   static constexpr const char* Name = "role";
 
-  RoleCatalogEntry(duckdb::Catalog& catalog, CreateRoleInfo& info);
+  RoleCatalogEntry(duckdb::Catalog& catalog, duckdb::CreateRoleInfo& info);
 
   RoleOption Options() const noexcept { return _options; }
   bool CanLogin() const noexcept {
@@ -77,15 +48,13 @@ class RoleCatalogEntry final : public duckdb::InCatalogEntry {
 
   int32_t ConnLimit() const noexcept { return _conn_limit; }
   int64_t ValidUntil() const noexcept { return _valid_until; }
-  bool HasValidUntil() const noexcept {
-    return _valid_until != CreateRoleInfo::kNoValidUntil;
-  }
+  bool HasValidUntil() const noexcept { return _valid_until != 0; }
 
   const std::string& Password() const noexcept { return _password; }
-  const std::vector<Membership>& MemberOf() const noexcept {
+  const duckdb::vector<duckdb::Membership>& MemberOf() const noexcept {
     return _member_of;
   }
-  const std::vector<std::string>& Config() const noexcept { return _config; }
+  const duckdb::vector<std::string>& Config() const noexcept { return _config; }
 
   duckdb::unique_ptr<duckdb::CatalogEntry> Copy(
     duckdb::ClientContext& context) const override;
@@ -99,8 +68,8 @@ class RoleCatalogEntry final : public duckdb::InCatalogEntry {
   int32_t _conn_limit;
   int64_t _valid_until;
   std::string _password;
-  std::vector<Membership> _member_of;
-  std::vector<std::string> _config;
+  duckdb::vector<duckdb::Membership> _member_of;
+  duckdb::vector<std::string> _config;
 };
 
 }  // namespace sdb::catalog

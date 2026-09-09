@@ -120,10 +120,7 @@ void RunSearchTableRecovery(bool skip_wal_recovery) {
     const duckdb::idx_t db_id = database->oid;
     containers::NodeHashMap<duckdb::idx_t, ShardInfo> shards;
     ForEachSearchTable(*database, [&](const catalog::SearchTableEntry& entry) {
-      auto search = entry.EnsureStorage();
-      if (!search) {
-        return;
-      }
+      auto search = entry.Storage();
       ShardInfo info;
       info.search = search.get();
       info.shard = std::move(search);
@@ -247,7 +244,7 @@ void RunSearchTableRecovery(bool skip_wal_recovery) {
 void StartSearchTableMaintenance() {
   for (const auto& database : SereneDatabases()) {
     ForEachSearchTable(*database, [&](const catalog::SearchTableEntry& table) {
-      table.EnsureStorage();
+      table.Storage()->StartTasks();
     });
   }
 }

@@ -20,42 +20,25 @@
 
 #include "catalog1/entry/database.h"
 
-#include <absl/strings/str_cat.h>
-
 #include <duckdb/catalog/catalog.hpp>
-#include <duckdb/parser/keyword_helper.hpp>
 #include <utility>
+
+#include "catalog1/boot.h"
 
 namespace sdb::catalog {
 
-duckdb::unique_ptr<duckdb::CreateInfo> CreateDatabaseInfo::Copy() const {
-  auto result = duckdb::make_uniq<CreateDatabaseInfo>();
-  CopyProperties(*result);
-  result->public_schema_id = public_schema_id;
-  return std::move(result);
-}
-
-std::string CreateDatabaseInfo::ToString() const {
-  return absl::StrCat("CREATE DATABASE ",
-                      duckdb::KeywordHelper::WriteOptionallyQuoted(
-                        qualified_name.Name().GetIdentifierName()),
-                      ";");
-}
-
 DatabaseCatalogEntry::DatabaseCatalogEntry(duckdb::Catalog& catalog,
-                                           CreateDatabaseInfo& info)
+                                           duckdb::CreateDatabaseInfo& info)
   : duckdb::InCatalogEntry{duckdb::CatalogType::DATABASE_ENTRY, catalog,
-                           info.GetQualifiedName().Name(), info.oid},
-    _public_schema_id{info.public_schema_id} {
+                           info.GetQualifiedName().Name(), info.oid} {
   comment = info.comment;
   tags = info.tags;
   permissions = info.permissions;
 }
 
 duckdb::unique_ptr<duckdb::CreateInfo> DatabaseCatalogEntry::GetInfo() const {
-  auto info = duckdb::make_uniq<CreateDatabaseInfo>();
+  auto info = duckdb::make_uniq<duckdb::CreateDatabaseInfo>();
   info->SetName(name);
-  info->public_schema_id = _public_schema_id;
   info->comment = comment;
   info->tags = tags;
   return std::move(info);
@@ -65,7 +48,7 @@ duckdb::unique_ptr<duckdb::CatalogEntry> DatabaseCatalogEntry::Copy(
   duckdb::ClientContext& context) const {
   auto info = GetInfo();
   return duckdb::make_uniq<DatabaseCatalogEntry>(
-    catalog, info->Cast<CreateDatabaseInfo>());
+    catalog, info->Cast<duckdb::CreateDatabaseInfo>());
 }
 
 std::string DatabaseCatalogEntry::ToSQL() const {

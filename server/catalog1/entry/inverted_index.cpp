@@ -36,7 +36,6 @@
 #include <iresearch/analysis/tokenizers.hpp>
 #include <string>
 
-#include "basics/assert.h"
 #include "basics/serializer.h"
 #include "search/inverted_index_storage.h"
 #include "search/scorer_options.h"
@@ -400,26 +399,6 @@ void InvertedIndexEntry::Rollback(duckdb::CatalogEntry& prev_entry) {
     _storage->MarkDropped();
   }
   duckdb::DuckIndexEntry::Rollback(prev_entry);
-}
-
-const std::shared_ptr<search::InvertedIndexStorage>&
-InvertedIndexEntry::EnsureStorage(duckdb::ClientContext& context) const {
-  if (_storage) {
-    return _storage;
-  }
-  const auto relation =
-    schema.GetEntry(catalog.GetCatalogTransaction(context),
-                    duckdb::CatalogType::TABLE_ENTRY, GetTableName());
-  SDB_ENSURE(relation, "inverted index \"", name.GetIdentifierName(),
-             "\": relation \"", GetTableName().GetIdentifierName(),
-             "\" missing");
-  _storage = search::InvertedIndexStorage::Create(
-    catalog.GetOid(), schema.oid, relation->oid, oid, _config->settings,
-    TopKScorer(context), false);
-  _storage->ApplyOptions(_config->settings);
-  _storage->FinishCreation();
-  _storage->StartTasks();
-  return _storage;
 }
 
 }  // namespace sdb::catalog

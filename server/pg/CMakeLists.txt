@@ -12,6 +12,7 @@ target_sources(
         pg_catalog/pg_database.cpp
         pg_catalog/pg_db_role_setting.cpp
         pg_catalog/pg_default_acl.cpp
+        pg_catalog/pg_depend.cpp
         pg_catalog/pg_shdepend.cpp
         pg_catalog/pg_attrdef.cpp
         pg_catalog/pg_description.cpp

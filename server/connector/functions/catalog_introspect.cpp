@@ -162,14 +162,15 @@ void CatalogSetsExecute(duckdb::ClientContext& context,
         });
       // Foreign servers are database children, so their set hangs off the
       // catalog and has no schema name to report.
-      catalog.ScanForeignServers(transaction, [&](duckdb::CatalogEntry& entry) {
-        state.rows.push_back(
-          {.schema = {},
-           .entry_type = duckdb::CatalogTypeToString(entry.type),
-           .name = entry.name.GetIdentifierName(),
-           .entry_oid = entry.oid,
-           .visible = true});
-      });
+      catalog.GetCatalogSet(duckdb::CatalogType::FOREIGN_SERVER_ENTRY)
+        .Scan(transaction, [&](duckdb::CatalogEntry& entry) {
+          state.rows.push_back(
+            {.schema = {},
+             .entry_type = duckdb::CatalogTypeToString(entry.type),
+             .name = entry.name.GetIdentifierName(),
+             .entry_oid = entry.oid,
+             .visible = true});
+        });
     }
     // The two cluster-global sets belong to no database at all, so they are
     // reported whichever one the session is in, with no schema name.
@@ -184,8 +185,10 @@ void CatalogSetsExecute(duckdb::ClientContext& context,
            .entry_oid = entry.oid,
            .visible = true});
       };
-      cluster.ScanRoles(transaction, row);
-      cluster.ScanDatabases(transaction, row);
+      cluster.GetCatalogSet(duckdb::CatalogType::ROLE_ENTRY)
+        .Scan(transaction, row);
+      cluster.GetCatalogSet(duckdb::CatalogType::DATABASE_ENTRY)
+        .Scan(transaction, row);
     }
     // One row per recorded edge, from every attached manager: an edge is kept
     // by the dependent's own catalog, so no one of them holds the whole graph.

@@ -416,9 +416,9 @@ std::string_view PgWireSession<Kind>::UserName() const {
 template<SocketKind Kind>
 bool PgWireSession<Kind>::SetupConnection() {
   auto& cluster = catalog::ClusterOf();
-  auto database =
-    cluster.LookupDatabase(cluster.LoginTransaction(),
-                           duckdb::Identifier{std::string{DatabaseName()}});
+  auto database = cluster.GetCatalogSet(duckdb::CatalogType::DATABASE_ENTRY)
+                    .GetEntry(cluster.LoginTransaction(),
+                              duckdb::Identifier{std::string{DatabaseName()}});
   if (!database) {
     WriteFatalResponse(this->_send,
                        SQL_ERROR_DATA(ERR_CODE(ERRCODE_INVALID_CATALOG_NAME),
@@ -920,10 +920,11 @@ yaclib::Task<bool> PgWireSession<Kind>::Authenticate() {
                                          std::string_view group) {
     auto& cluster = catalog::ClusterOf();
     const auto transaction = cluster.LoginTransaction();
+    auto& roles = cluster.GetCatalogSet(duckdb::CatalogType::ROLE_ENTRY);
     auto user_role =
-      cluster.LookupRole(transaction, duckdb::Identifier{std::string{user}});
+      roles.GetEntry(transaction, duckdb::Identifier{std::string{user}});
     auto group_role =
-      cluster.LookupRole(transaction, duckdb::Identifier{std::string{group}});
+      roles.GetEntry(transaction, duckdb::Identifier{std::string{group}});
     if (!user_role || !group_role) {
       return false;  // missing_ok: unknown login role or target group
     }
@@ -1041,8 +1042,9 @@ yaclib::Task<bool> PgWireSession<Kind>::Authenticate() {
   }
 
   auto& cluster = catalog::ClusterOf();
-  auto entry = cluster.LookupRole(cluster.LoginTransaction(),
-                                  duckdb::Identifier{std::string{UserName()}});
+  auto entry = cluster.GetCatalogSet(duckdb::CatalogType::ROLE_ENTRY)
+                 .GetEntry(cluster.LoginTransaction(),
+                           duckdb::Identifier{std::string{UserName()}});
   const auto* login_role =
     entry ? &entry->Cast<catalog::RoleCatalogEntry>() : nullptr;
   if (login_role != nullptr && login_role->HasValidUntil() &&

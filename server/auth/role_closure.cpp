@@ -99,7 +99,7 @@ bool ColumnGrants(std::span<const duckdb::AclItem> acl, duckdb::idx_t owner,
 }
 
 std::vector<duckdb::idx_t> Reachable(const RoleGraph& graph, duckdb::idx_t role,
-                                     bool catalog::Membership::* option) {
+                                     bool duckdb::Membership::* option) {
   containers::FlatHashSet<duckdb::idx_t> seen{role};
   std::vector<duckdb::idx_t> work{role};
   while (!work.empty()) {
@@ -123,14 +123,15 @@ std::vector<duckdb::idx_t> Reachable(const RoleGraph& graph, duckdb::idx_t role,
 std::shared_ptr<const RoleGraph> BuildRoleGraph(
   catalog::ClusterCatalog& cluster, duckdb::CatalogTransaction transaction) {
   auto graph = std::make_shared<RoleGraph>();
-  cluster.ScanRoles(transaction, [&](duckdb::CatalogEntry& entry) {
-    const auto& role = entry.Cast<catalog::RoleCatalogEntry>();
-    auto& node = graph->nodes[role.oid];
-    node.name = role.name.GetIdentifierName();
-    node.member_of = role.MemberOf();
-    node.options = role.Options();
-    node.is_superuser = role.IsSuperuser();
-  });
+  cluster.GetCatalogSet(duckdb::CatalogType::ROLE_ENTRY)
+    .Scan(transaction, [&](duckdb::CatalogEntry& entry) {
+      const auto& role = entry.Cast<catalog::RoleCatalogEntry>();
+      auto& node = graph->nodes[role.oid];
+      node.name = role.name.GetIdentifierName();
+      node.member_of = role.MemberOf();
+      node.options = role.Options();
+      node.is_superuser = role.IsSuperuser();
+    });
   return graph;
 }
 
@@ -141,9 +142,9 @@ RoleClosure ComputeRoleClosure(const RoleGraph& graph, duckdb::idx_t role) {
   if (role == pg::kInvalidOid) {
     return out;
   }
-  out.closure = Reachable(graph, role, &catalog::Membership::inherit_option);
+  out.closure = Reachable(graph, role, &duckdb::Membership::inherit_option);
   out.members = Reachable(graph, role, nullptr);
-  out.settable = Reachable(graph, role, &catalog::Membership::set_option);
+  out.settable = Reachable(graph, role, &duckdb::Membership::set_option);
   for (const auto member : out.members) {
     const auto* node = graph.Find(member);
     if (node == nullptr) {

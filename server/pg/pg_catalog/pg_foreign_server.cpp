@@ -57,26 +57,28 @@ MaterializedData SystemTableSnapshot<PgForeignServer>::GetTableData() {
 
   auto& context = _context;
   auto& database = GetDatabase().Cast<catalog::SereneDBCatalog>();
-  database.ScanForeignServers(
-    database.GetCatalogTransaction(context), [&](duckdb::CatalogEntry& entry) {
-      const auto& server = entry.Cast<catalog::ForeignServerCatalogEntry>();
-      const auto& perm = server.permissions;
-      auto& bytes = opt_bytes.emplace_back();
-      for (const auto& [key, value] : server.Options()) {
-        bytes.push_back(absl::StrCat(key, "=", value));
-      }
-      const auto& views = opt_views.emplace_back(bytes.begin(), bytes.end());
-      values.push_back(PgForeignServer{
-        .oid = server.oid,
-        .srvname = server.name.GetIdentifierName(),
-        .srvowner = perm.owner,
-        .srvfdw = 0,
-        .srvtype = {},
-        .srvversion = {},
-        .srvacl = {std::span<const duckdb::AclItem>{perm.acl}},
-        .srvoptions = views,
+  database.GetCatalogSet(duckdb::CatalogType::FOREIGN_SERVER_ENTRY)
+    .Scan(
+      database.GetCatalogTransaction(context),
+      [&](duckdb::CatalogEntry& entry) {
+        const auto& server = entry.Cast<catalog::ForeignServerCatalogEntry>();
+        const auto& perm = server.permissions;
+        auto& bytes = opt_bytes.emplace_back();
+        for (const auto& [key, value] : server.Options()) {
+          bytes.push_back(absl::StrCat(key, "=", value));
+        }
+        const auto& views = opt_views.emplace_back(bytes.begin(), bytes.end());
+        values.push_back(PgForeignServer{
+          .oid = server.oid,
+          .srvname = server.name.GetIdentifierName(),
+          .srvowner = perm.owner,
+          .srvfdw = 0,
+          .srvtype = {},
+          .srvversion = {},
+          .srvacl = {std::span<const duckdb::AclItem>{perm.acl}},
+          .srvoptions = views,
+        });
       });
-    });
 
   auto result = CreateColumns<PgForeignServer>(values.size());
   for (size_t row = 0; row < values.size(); ++row) {

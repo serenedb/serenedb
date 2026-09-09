@@ -20,33 +20,12 @@
 
 #include "catalog1/entry/foreign_server.h"
 
-#include <absl/strings/str_cat.h>
-
-#include <duckdb/catalog/catalog.hpp>
-#include <duckdb/parser/keyword_helper.hpp>
 #include <utility>
 
 namespace sdb::catalog {
 
-duckdb::unique_ptr<duckdb::CreateInfo> CreateForeignServerInfo::Copy() const {
-  auto result = duckdb::make_uniq<CreateForeignServerInfo>();
-  CopyProperties(*result);
-  result->server_type = server_type;
-  result->version = version;
-  result->fdw_name = fdw_name;
-  result->options = options;
-  return std::move(result);
-}
-
-std::string CreateForeignServerInfo::ToString() const {
-  return absl::StrCat("CREATE SERVER ",
-                      duckdb::KeywordHelper::WriteOptionallyQuoted(
-                        qualified_name.Name().GetIdentifierName()),
-                      ";");
-}
-
 ForeignServerCatalogEntry::ForeignServerCatalogEntry(
-  duckdb::Catalog& catalog, CreateForeignServerInfo& info)
+  duckdb::Catalog& catalog, duckdb::CreateForeignServerInfo& info)
   : duckdb::InCatalogEntry{duckdb::CatalogType::FOREIGN_SERVER_ENTRY, catalog,
                            info.GetQualifiedName().Name(), info.oid},
     _server_type{info.server_type},
@@ -60,7 +39,7 @@ ForeignServerCatalogEntry::ForeignServerCatalogEntry(
 
 duckdb::unique_ptr<duckdb::CreateInfo> ForeignServerCatalogEntry::GetInfo()
   const {
-  auto info = duckdb::make_uniq<CreateForeignServerInfo>();
+  auto info = duckdb::make_uniq<duckdb::CreateForeignServerInfo>();
   info->SetName(name);
   info->server_type = _server_type;
   info->version = _version;
@@ -75,7 +54,7 @@ duckdb::unique_ptr<duckdb::CatalogEntry> ForeignServerCatalogEntry::Copy(
   duckdb::ClientContext& context) const {
   auto info = GetInfo();
   return duckdb::make_uniq<ForeignServerCatalogEntry>(
-    catalog, info->Cast<CreateForeignServerInfo>());
+    catalog, info->Cast<duckdb::CreateForeignServerInfo>());
 }
 
 std::string ForeignServerCatalogEntry::ToSQL() const {

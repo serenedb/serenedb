@@ -26,7 +26,6 @@
 #include <duckdb/main/database_manager.hpp>
 #include <duckdb/transaction/meta_transaction.hpp>
 #include <string_view>
-#include <utility>
 
 #include "basics/duckdb_engine.h"
 #include "catalog1/entry/database.h"
@@ -48,113 +47,75 @@ void DeclareModified(duckdb::CatalogTransaction transaction,
                     duckdb::DatabaseModificationType::CREATE_CATALOG_ENTRY);
 }
 
-template<typename Entry, typename Info>
-duckdb::optional_ptr<duckdb::CatalogEntry> CreateClusterEntry(
-  duckdb::Catalog& catalog, duckdb::CatalogSet& set,
-  duckdb::CatalogTransaction transaction, Info& info) {
-  DeclareModified(transaction, catalog);
-  const auto& entry_name = info.GetQualifiedName().Name();
-  if (info.on_conflict != duckdb::OnCreateConflict::ERROR_ON_CONFLICT) {
-    const auto existing = set.GetEntry(transaction, entry_name);
-    if (existing) {
-      if (info.on_conflict == duckdb::OnCreateConflict::IGNORE_ON_CONFLICT) {
-        return nullptr;
-      }
-      set.DropEntry(transaction, entry_name, false);
-    }
-  }
-  auto entry = duckdb::make_uniq<Entry>(catalog, info);
-  auto result = entry.get();
-  if (!set.CreateEntry(transaction, entry_name, std::move(entry),
-                       info.dependencies)) {
-    throw duckdb::CatalogException::EntryAlreadyExists(Entry::Type, entry_name);
-  }
-  return result;
-}
-
 }  // namespace
 
 ClusterCatalog::ClusterCatalog(duckdb::AttachedDatabase& db)
-  : duckdb::DuckCatalog{db}, _roles{*this}, _databases{*this} {}
+  : duckdb::DuckCatalog{db} {}
 
-void ClusterCatalog::Initialize(bool load_builtin) {
-  duckdb::DuckCatalog::Initialize(load_builtin);
-  CreateRoleInfo info;
-  info.SetName(duckdb::Identifier{kRootRole});
+duckdb::unique_ptr<duckdb::InCatalogEntry> ClusterCatalog::MakeRoleEntry(
+  duckdb::CreateRoleInfo& info) {
+  return duckdb::make_uniq<RoleCatalogEntry>(*this, info);
+}
+
+duckdb::unique_ptr<duckdb::InCatalogEntry> ClusterCatalog::MakeDatabaseEntry(
+  duckdb::CreateDatabaseInfo& info) {
+  return duckdb::make_uniq<DatabaseCatalogEntry>(*this, info);
+}
+
+void ClusterCatalog::FinalizeLoad(
+  duckdb::optional_ptr<duckdb::ClientContext> context) {
+  duckdb::DuckCatalog::FinalizeLoad(context);
+  if (!context) {
+    return;
+  }
+  const auto transaction = GetCatalogTransaction(*context);
+  const duckdb::Identifier root{kRootRole};
+  if (GetCatalogSet(duckdb::CatalogType::ROLE_ENTRY)
+        .GetEntry(transaction, root)) {
+    return;
+  }
+  duckdb::CreateRoleInfo info;
+  info.SetName(root);
   info.oid = pg::kRootUser;
   info.options = RoleOption::Superuser | RoleOption::Inherit |
                  RoleOption::CreateRole | RoleOption::CreateDb |
                  RoleOption::Login | RoleOption::Replication |
                  RoleOption::BypassRls;
-  CreateRole(duckdb::CatalogTransaction::GetSystemTransaction(GetDatabase()),
-             info);
+  CreateRole(transaction, info);
 }
 
 duckdb::optional_ptr<duckdb::CatalogEntry> ClusterCatalog::CreateRole(
-  duckdb::CatalogTransaction transaction, CreateRoleInfo& info) {
-  return CreateClusterEntry<RoleCatalogEntry>(*this, _roles, transaction, info);
+  duckdb::CatalogTransaction transaction, duckdb::CreateRoleInfo& info) {
+  DeclareModified(transaction, *this);
+  return duckdb::DuckCatalog::CreateRole(transaction, info);
 }
 
-bool ClusterCatalog::DropRole(duckdb::CatalogTransaction transaction,
-                              const duckdb::Identifier& name, bool cascade) {
+void ClusterCatalog::DropRole(duckdb::CatalogTransaction transaction,
+                              duckdb::DropInfo& info) {
   DeclareModified(transaction, *this);
-  return _roles.DropEntry(transaction, name, cascade);
+  duckdb::DuckCatalog::DropRole(transaction, info);
 }
 
 void ClusterCatalog::Alter(duckdb::CatalogTransaction transaction,
                            duckdb::AlterInfo& info) {
   DeclareModified(transaction, *this);
   const auto type = info.GetCatalogType();
-  auto& set = type == duckdb::CatalogType::DATABASE_ENTRY ? _databases : _roles;
   const auto& name = info.GetQualifiedName().Name();
-  if (!set.AlterEntry(transaction, name, info)) {
+  if (!GetCatalogSet(type).AlterEntry(transaction, name, info)) {
     throw duckdb::CatalogException::MissingEntry(type, name, std::string{});
   }
 }
 
-void ClusterCatalog::AlterRole(duckdb::CatalogTransaction transaction,
-                               const duckdb::Identifier& name,
-                               duckdb::AlterInfo& info) {
-  DeclareModified(transaction, *this);
-  if (!_roles.AlterEntry(transaction, name, info)) {
-    throw duckdb::CatalogException::MissingEntry(
-      duckdb::CatalogType::ROLE_ENTRY, name, std::string{});
-  }
-}
-
-duckdb::optional_ptr<duckdb::CatalogEntry> ClusterCatalog::LookupRole(
-  duckdb::CatalogTransaction transaction, const duckdb::Identifier& name) {
-  return _roles.GetEntry(transaction, name);
-}
-
-void ClusterCatalog::ScanRoles(
-  duckdb::CatalogTransaction transaction,
-  const std::function<void(duckdb::CatalogEntry&)>& callback) {
-  _roles.Scan(transaction, callback);
-}
-
 duckdb::optional_ptr<duckdb::CatalogEntry> ClusterCatalog::CreateDatabase(
-  duckdb::CatalogTransaction transaction, CreateDatabaseInfo& info) {
-  return CreateClusterEntry<DatabaseCatalogEntry>(*this, _databases,
-                                                  transaction, info);
-}
-
-bool ClusterCatalog::DropDatabase(duckdb::CatalogTransaction transaction,
-                                  const duckdb::Identifier& name,
-                                  bool cascade) {
+  duckdb::CatalogTransaction transaction, duckdb::CreateDatabaseInfo& info) {
   DeclareModified(transaction, *this);
-  return _databases.DropEntry(transaction, name, cascade);
+  return duckdb::DuckCatalog::CreateDatabase(transaction, info);
 }
 
-duckdb::optional_ptr<duckdb::CatalogEntry> ClusterCatalog::LookupDatabase(
-  duckdb::CatalogTransaction transaction, const duckdb::Identifier& name) {
-  return _databases.GetEntry(transaction, name);
-}
-
-void ClusterCatalog::ScanDatabases(
-  duckdb::CatalogTransaction transaction,
-  const std::function<void(duckdb::CatalogEntry&)>& callback) {
-  _databases.Scan(transaction, callback);
+void ClusterCatalog::DropDatabase(duckdb::CatalogTransaction transaction,
+                                  duckdb::DropInfo& info) {
+  DeclareModified(transaction, *this);
+  duckdb::DuckCatalog::DropDatabase(transaction, info);
 }
 
 ClusterCatalog& ClusterOf(duckdb::ClientContext& context) {

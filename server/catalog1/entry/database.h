@@ -26,20 +26,6 @@
 
 namespace sdb::catalog {
 
-// The durable definition of a database. duckdb keeps owning the live
-// attachment (AttachedDatabase, in DatabaseManager's map); this entry is the
-// definition it is derived from, and it is the one that is transactional.
-class CreateDatabaseInfo final : public duckdb::CreateInfo {
- public:
-  CreateDatabaseInfo()
-    : duckdb::CreateInfo{duckdb::CatalogType::DATABASE_ENTRY} {}
-
-  duckdb::idx_t public_schema_id{0};
-
-  duckdb::unique_ptr<duckdb::CreateInfo> Copy() const final;
-  std::string ToString() const final;
-};
-
 class DatabaseCatalogEntry final : public duckdb::InCatalogEntry {
  public:
   static constexpr duckdb::CatalogType Type =

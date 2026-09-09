@@ -63,8 +63,9 @@ MaterializedData SystemTableSnapshot<PgDefaultAcl>::GetTableData() {
     });
   };
   auto& cluster = catalog::ClusterOf(context);
-  if (auto database = cluster.LookupDatabase(
-        cluster.GetCatalogTransaction(context), GetDatabase().GetName())) {
+  if (auto database = cluster.GetCatalogSet(duckdb::CatalogType::DATABASE_ENTRY)
+                        .GetEntry(cluster.GetCatalogTransaction(context),
+                                  GetDatabase().GetName())) {
     for (const auto& entry : database->permissions.defaults) {
       add(kInvalidOid, entry);
     }

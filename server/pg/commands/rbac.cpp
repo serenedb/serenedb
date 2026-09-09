@@ -30,6 +30,7 @@
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/main/extension/extension_loader.hpp>
 #include <duckdb/parser/parsed_data/alter_table_info.hpp>
+#include <duckdb/parser/parsed_data/drop_info.hpp>
 #include <memory>
 #include <string>
 #include <string_view>
@@ -102,8 +103,9 @@ std::vector<std::string> Names(const duckdb::FunctionParameters& params,
 
 duckdb::optional_ptr<duckdb::CatalogEntry> FindRole(const Session& s,
                                                     std::string_view name) {
-  return s.Cluster().LookupRole(s.ClusterTransaction(),
-                                duckdb::Identifier{std::string{name}});
+  return s.Cluster()
+    .GetCatalogSet(CatalogType::ROLE_ENTRY)
+    .GetEntry(s.ClusterTransaction(), duckdb::Identifier{std::string{name}});
 }
 
 catalog::RoleCatalogEntry& RoleByName(const Session& s, std::string_view name) {
@@ -222,7 +224,7 @@ void GrantMembership(const Session& s, catalog::RoleCatalogEntry& member,
   alter.admin_option = admin;
   alter.inherit_option = inherit;
   alter.set_option = set;
-  s.Cluster().AlterRole(s.ClusterTransaction(), member.name, alter);
+  s.Cluster().Alter(s.ClusterTransaction(), alter);
 }
 
 void CreateRolePragma(duckdb::ClientContext& client,
@@ -264,7 +266,7 @@ void CreateRolePragma(duckdb::ClientContext& client,
                     ERR_MSG("role \"", name, "\" already exists"));
   }
 
-  catalog::CreateRoleInfo info;
+  duckdb::CreateRoleInfo info;
   info.SetName(duckdb::Identifier{name});
   info.options = OptionIf(login, RoleOption::Login) |
                  OptionIf(superuser, RoleOption::Superuser) |
@@ -284,7 +286,7 @@ void CreateRolePragma(duckdb::ClientContext& client,
   }
   const auto grantor = GrantorOfMembership(s);
   for (const auto& role_name : in_roles) {
-    info.member_of.push_back(catalog::Membership{
+    info.member_of.push_back(duckdb::Membership{
       .role = RoleByName(s, role_name).oid,
       .grantor = grantor,
       .admin_option = false,
@@ -350,11 +352,12 @@ void DropRolePragma(duckdb::ClientContext& client,
     }
 
     std::vector<duckdb::Identifier> members;
-    s.Cluster().ScanRoles(
-      s.ClusterTransaction(), [&](duckdb::CatalogEntry& other) {
+    s.Cluster()
+      .GetCatalogSet(CatalogType::ROLE_ENTRY)
+      .Scan(s.ClusterTransaction(), [&](duckdb::CatalogEntry& other) {
         const auto& candidate = other.Cast<catalog::RoleCatalogEntry>();
         if (std::ranges::contains(candidate.MemberOf(), role.oid,
-                                  &catalog::Membership::role)) {
+                                  &duckdb::Membership::role)) {
           members.push_back(candidate.name);
         }
       });
@@ -362,9 +365,12 @@ void DropRolePragma(duckdb::ClientContext& client,
       duckdb::AlterRoleInfo alter{member};
       alter.grant_role_id = role.oid;
       alter.revoke = true;
-      s.Cluster().AlterRole(s.ClusterTransaction(), member, alter);
+      s.Cluster().Alter(s.ClusterTransaction(), alter);
     }
-    s.Cluster().DropRole(s.ClusterTransaction(), role.name, false);
+    duckdb::DropInfo drop;
+    drop.type = CatalogType::ROLE_ENTRY;
+    drop.SetName(role.name);
+    s.Cluster().DropRole(s.ClusterTransaction(), drop);
   }
 }
 

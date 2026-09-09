@@ -275,28 +275,30 @@ namespace {
 const catalog::RoleCatalogEntry* FindRole(duckdb::ClientContext& context,
                                           std::string_view name) {
   auto& cluster = catalog::ClusterOf(context);
-  auto entry = cluster.LookupRole(cluster.GetCatalogTransaction(context),
-                                  duckdb::Identifier{name});
+  auto entry = cluster.GetCatalogSet(duckdb::CatalogType::ROLE_ENTRY)
+                 .GetEntry(cluster.GetCatalogTransaction(context),
+                           duckdb::Identifier{name});
   return entry ? &entry->Cast<catalog::RoleCatalogEntry>() : nullptr;
 }
 
 duckdb::optional_ptr<duckdb::CatalogEntry> FindDatabase(
   duckdb::ClientContext& context, std::string_view name) {
   auto& cluster = catalog::ClusterOf(context);
-  return cluster.LookupDatabase(cluster.GetCatalogTransaction(context),
-                                duckdb::Identifier{name});
+  return cluster.GetCatalogSet(duckdb::CatalogType::DATABASE_ENTRY)
+    .GetEntry(cluster.GetCatalogTransaction(context), duckdb::Identifier{name});
 }
 
 duckdb::optional_ptr<duckdb::CatalogEntry> FindDatabaseById(
   duckdb::ClientContext& context, duckdb::idx_t id) {
   auto& cluster = catalog::ClusterOf(context);
   duckdb::optional_ptr<duckdb::CatalogEntry> result;
-  cluster.ScanDatabases(cluster.GetCatalogTransaction(context),
-                        [&](duckdb::CatalogEntry& entry) {
-                          if (!result && entry.oid == id) {
-                            result = &entry;
-                          }
-                        });
+  cluster.GetCatalogSet(duckdb::CatalogType::DATABASE_ENTRY)
+    .Scan(cluster.GetCatalogTransaction(context),
+          [&](duckdb::CatalogEntry& entry) {
+            if (!result && entry.oid == id) {
+              result = &entry;
+            }
+          });
   return result;
 }
 

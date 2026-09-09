@@ -33,21 +33,22 @@ MaterializedData SystemTableSnapshot<PgDbRoleSetting>::GetTableData() {
   std::vector<PgDbRoleSetting> values;
   auto& context = _context;
   auto& cluster = catalog::ClusterOf(context);
-  cluster.ScanRoles(
-    cluster.GetCatalogTransaction(context), [&](duckdb::CatalogEntry& entry) {
-      const auto& role = entry.Cast<catalog::RoleCatalogEntry>();
-      const auto& config = role.Config();
-      if (config.empty()) {
-        // PG inserts a pg_db_role_setting row only when a GUC is set.
-        return;
-      }
-      values.push_back(PgDbRoleSetting{
-        // Role-wide (all databases) -> the pg_roles.rolconfig join.
-        .setdatabase = 0,
-        .setrole = role.oid,
-        .setconfig = config,
-      });
-    });
+  cluster.GetCatalogSet(duckdb::CatalogType::ROLE_ENTRY)
+    .Scan(cluster.GetCatalogTransaction(context),
+          [&](duckdb::CatalogEntry& entry) {
+            const auto& role = entry.Cast<catalog::RoleCatalogEntry>();
+            const auto& config = role.Config();
+            if (config.empty()) {
+              // PG inserts a pg_db_role_setting row only when a GUC is set.
+              return;
+            }
+            values.push_back(PgDbRoleSetting{
+              // Role-wide (all databases) -> the pg_roles.rolconfig join.
+              .setdatabase = 0,
+              .setrole = role.oid,
+              .setconfig = config,
+            });
+          });
 
   auto result = CreateColumns<PgDbRoleSetting>(values.size());
   for (size_t row = 0; row < values.size(); ++row) {

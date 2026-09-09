@@ -906,8 +906,10 @@ void CreateTokenizer(ConnectionContext& conn_ctx, duckdb::QualifiedName name,
                     ERR_MSG("Unsupported index features are specified"));
   }
 
-  catalog::CreateTokenizerInfo tokenizer{name.Name(), features, std::move(cfg)};
+  duckdb::CreateTokenizerInfo tokenizer;
   tokenizer.SetQualifiedName(std::move(name));
+  tokenizer.features = std::to_underlying(features.GetIndexFeatures());
+  tokenizer.config = catalog::PackTokenizerConfig(cfg);
   tokenizer.on_conflict = if_not_exists
                             ? duckdb::OnCreateConflict::IGNORE_ON_CONFLICT
                             : duckdb::OnCreateConflict::ERROR_ON_CONFLICT;

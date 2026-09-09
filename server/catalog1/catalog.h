@@ -63,6 +63,13 @@ class SereneDBCatalog : public duckdb::DuckCatalog {
     duckdb::CatalogTransaction transaction, duckdb::DuckSchemaEntry& schema,
     duckdb::BoundCreateTableInfo& info) override;
 
+  duckdb::unique_ptr<duckdb::InCatalogEntry> MakeForeignServerEntry(
+    duckdb::CreateForeignServerInfo& info) override;
+
+  duckdb::unique_ptr<duckdb::StandardEntry> MakeTokenizerEntry(
+    duckdb::DuckSchemaEntry& schema,
+    duckdb::CreateTokenizerInfo& info) override;
+
   duckdb::optional_ptr<duckdb::SchemaCatalogEntry> FindSchemaById(
     duckdb::optional_ptr<duckdb::ClientContext> context, duckdb::idx_t id);
 
@@ -102,25 +109,16 @@ class SereneDBCatalog : public duckdb::DuckCatalog {
 
   duckdb::optional_ptr<duckdb::CatalogEntry> CreateTokenizer(
     duckdb::CatalogTransaction transaction, duckdb::DuckSchemaEntry& schema,
-    CreateTokenizerInfo& info);
+    duckdb::CreateTokenizerInfo& info);
 
   void DropTokenizer(duckdb::ClientContext& context, duckdb::DropInfo& info);
 
   duckdb::optional_ptr<duckdb::CatalogEntry> CreateForeignServer(
-    duckdb::CatalogTransaction transaction, CreateForeignServerInfo& info);
-
-  bool DropForeignServer(duckdb::CatalogTransaction transaction,
-                         const duckdb::Identifier& name, bool cascade);
-
-  void ScanForeignServers(
     duckdb::CatalogTransaction transaction,
-    const std::function<void(duckdb::CatalogEntry&)>& callback);
+    duckdb::CreateForeignServerInfo& info);
 
-  duckdb::optional_ptr<duckdb::CatalogEntry> LookupForeignServer(
-    duckdb::CatalogTransaction transaction, const duckdb::Identifier& name);
-
- private:
-  duckdb::CatalogSet _foreign_servers;
+  void DropForeignServer(duckdb::CatalogTransaction transaction,
+                         duckdb::DropInfo& info);
 };
 
 }  // namespace sdb::catalog

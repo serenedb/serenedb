@@ -23,7 +23,7 @@
 #include <absl/synchronization/mutex.h>
 
 #include <duckdb/catalog/standard_entry.hpp>
-#include <duckdb/parser/parsed_data/create_info.hpp>
+#include <duckdb/parser/parsed_data/create_tokenizer_info.hpp>
 #include <iresearch/analysis/analyzer.hpp>
 #include <iresearch/analysis/tokenizer_config.hpp>
 #include <memory>
@@ -34,27 +34,8 @@
 
 namespace sdb::catalog {
 
-class CreateTokenizerInfo final : public duckdb::CreateInfo {
- public:
-  CreateTokenizerInfo()
-    : duckdb::CreateInfo{duckdb::CatalogType::TOKENIZER_ENTRY} {}
-
-  CreateTokenizerInfo(duckdb::Identifier name, search::Features features,
-                      irs::analysis::TokenizerConfig config);
-
-  const irs::analysis::TokenizerConfig& Config() const noexcept {
-    return _config;
-  }
-
-  search::Features GetFeatures() const noexcept { return _features; }
-
-  duckdb::unique_ptr<duckdb::CreateInfo> Copy() const final;
-  std::string ToString() const final;
-
- private:
-  irs::analysis::TokenizerConfig _config;
-  search::Features _features;
-};
+std::string PackTokenizerConfig(const irs::analysis::TokenizerConfig& config);
+irs::analysis::TokenizerConfig UnpackTokenizerConfig(const std::string& bytes);
 
 class Tokenizer final : public std::enable_shared_from_this<Tokenizer> {
  public:
@@ -103,7 +84,7 @@ class TokenizerCatalogEntry final : public duckdb::StandardEntry {
 
   TokenizerCatalogEntry(duckdb::Catalog& catalog,
                         duckdb::SchemaCatalogEntry& schema,
-                        CreateTokenizerInfo& info);
+                        duckdb::CreateTokenizerInfo& info);
 
   const TokenizerRef& GetTokenizer() const noexcept { return _tokenizer; }
 

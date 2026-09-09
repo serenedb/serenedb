@@ -162,8 +162,9 @@ class HttpSession final
     if (!_conn) {
       const auto dbname = StaticStrings::kDefaultDatabase;
       auto& cluster = catalog::ClusterOf();
-      auto database = cluster.LookupDatabase(
-        cluster.LoginTransaction(), duckdb::Identifier{std::string{dbname}});
+      auto database = cluster.GetCatalogSet(duckdb::CatalogType::DATABASE_ENTRY)
+                        .GetEntry(cluster.LoginTransaction(),
+                                  duckdb::Identifier{std::string{dbname}});
       SDB_ENSURE(database);
       const auto database_id = database->oid;
       const std::string_view user =

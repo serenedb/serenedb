@@ -20,37 +20,15 @@
 
 #include "catalog1/entry/role.h"
 
-#include <absl/strings/str_cat.h>
-
 #include <algorithm>
-#include <duckdb/catalog/catalog.hpp>
-#include <duckdb/parser/keyword_helper.hpp>
 #include <duckdb/parser/parsed_data/alter_table_info.hpp>
+#include <string_view>
 #include <utility>
 
 namespace sdb::catalog {
 
-duckdb::unique_ptr<duckdb::CreateInfo> CreateRoleInfo::Copy() const {
-  auto result = duckdb::make_uniq<CreateRoleInfo>();
-  CopyProperties(*result);
-  result->options = options;
-  result->conn_limit = conn_limit;
-  result->valid_until = valid_until;
-  result->password = password;
-  result->member_of = member_of;
-  result->config = config;
-  return std::move(result);
-}
-
-std::string CreateRoleInfo::ToString() const {
-  return absl::StrCat("CREATE ROLE ",
-                      duckdb::KeywordHelper::WriteOptionallyQuoted(
-                        qualified_name.Name().GetIdentifierName()),
-                      ";");
-}
-
 RoleCatalogEntry::RoleCatalogEntry(duckdb::Catalog& catalog,
-                                   CreateRoleInfo& info)
+                                   duckdb::CreateRoleInfo& info)
   : duckdb::InCatalogEntry{duckdb::CatalogType::ROLE_ENTRY, catalog,
                            info.GetQualifiedName().Name(), info.oid},
     _options{info.options},
@@ -65,7 +43,7 @@ RoleCatalogEntry::RoleCatalogEntry(duckdb::Catalog& catalog,
 }
 
 duckdb::unique_ptr<duckdb::CreateInfo> RoleCatalogEntry::GetInfo() const {
-  auto info = duckdb::make_uniq<CreateRoleInfo>();
+  auto info = duckdb::make_uniq<duckdb::CreateRoleInfo>();
   info->SetName(name);
   info->options = _options;
   info->conn_limit = _conn_limit;
@@ -81,8 +59,8 @@ duckdb::unique_ptr<duckdb::CreateInfo> RoleCatalogEntry::GetInfo() const {
 duckdb::unique_ptr<duckdb::CatalogEntry> RoleCatalogEntry::Copy(
   duckdb::ClientContext& context) const {
   auto info = GetInfo();
-  return duckdb::make_uniq<RoleCatalogEntry>(catalog,
-                                             info->Cast<CreateRoleInfo>());
+  return duckdb::make_uniq<RoleCatalogEntry>(
+    catalog, info->Cast<duckdb::CreateRoleInfo>());
 }
 
 namespace {
@@ -100,7 +78,7 @@ duckdb::unique_ptr<duckdb::CatalogEntry> RoleCatalogEntry::AlterEntry(
   }
   const auto& alter = info.Cast<duckdb::AlterRoleInfo>();
   auto copy = GetInfo();
-  auto& next = copy->Cast<CreateRoleInfo>();
+  auto& next = copy->Cast<duckdb::CreateRoleInfo>();
   next.options = (next.options | alter.set_options) & ~alter.clear_options;
   if (alter.set_password) {
     next.password = alter.password;
@@ -133,8 +111,8 @@ duckdb::unique_ptr<duckdb::CatalogEntry> RoleCatalogEntry::AlterEntry(
     }
   }
   if (alter.grant_role_id != 0) {
-    auto it =
-      std::ranges::find(next.member_of, alter.grant_role_id, &Membership::role);
+    auto it = std::ranges::find(next.member_of, alter.grant_role_id,
+                                &duckdb::Membership::role);
     if (alter.revoke && !alter.option_only) {
       if (it != next.member_of.end()) {
         next.member_of.erase(it);
@@ -143,7 +121,7 @@ duckdb::unique_ptr<duckdb::CatalogEntry> RoleCatalogEntry::AlterEntry(
       auto edge =
         it != next.member_of.end()
           ? *it
-          : Membership{
+          : duckdb::Membership{
               .role = alter.grant_role_id,
               .grantor = alter.grantor_id,
               .admin_option = false,

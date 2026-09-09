@@ -43,7 +43,7 @@ namespace sdb::auth {
 struct RoleGraph {
   struct Node {
     std::string name;
-    std::vector<catalog::Membership> member_of;
+    std::vector<duckdb::Membership> member_of;
     catalog::RoleOption options = catalog::RoleOption::None;
     bool is_superuser = false;
   };

@@ -20,46 +20,45 @@
 
 #include "catalog1/entry/tokenizer.h"
 
-#include <absl/strings/str_cat.h>
-
 #include <duckdb/catalog/catalog.hpp>
 #include <duckdb/catalog/catalog_entry/schema_catalog_entry.hpp>
-#include <duckdb/parser/keyword_helper.hpp>
+#include <duckdb/common/serializer/binary_deserializer.hpp>
+#include <duckdb/common/serializer/binary_serializer.hpp>
+#include <duckdb/common/serializer/memory_stream.hpp>
 #include <utility>
 
 #include "basics/assert.h"
+#include "basics/serializer.h"
 
 namespace sdb::catalog {
 
-CreateTokenizerInfo::CreateTokenizerInfo(duckdb::Identifier name,
-                                         search::Features features,
-                                         irs::analysis::TokenizerConfig config)
-  : duckdb::CreateInfo{duckdb::CatalogType::TOKENIZER_ENTRY},
-    _config{std::move(config)},
-    _features{features} {
-  SetName(std::move(name));
+std::string PackTokenizerConfig(const irs::analysis::TokenizerConfig& config) {
+  duckdb::MemoryStream stream;
+  duckdb::BinarySerializer serializer{stream};
+  basics::WriteTuple(serializer, config);
+  return std::string{reinterpret_cast<const char*>(stream.GetData()),
+                     stream.GetPosition()};
 }
 
-duckdb::unique_ptr<duckdb::CreateInfo> CreateTokenizerInfo::Copy() const {
-  auto result = duckdb::make_uniq<CreateTokenizerInfo>(
-    qualified_name.Name(), _features, irs::analysis::Clone(_config));
-  CopyProperties(*result);
-  return std::move(result);
-}
-
-std::string CreateTokenizerInfo::ToString() const {
-  return absl::StrCat(
-    "CREATE TEXT SEARCH DICTIONARY ",
-    duckdb::KeywordHelper::WriteOptionallyQuoted(QualifiedNameToString()), ";");
+irs::analysis::TokenizerConfig UnpackTokenizerConfig(const std::string& bytes) {
+  duckdb::MemoryStream stream{
+    const_cast<duckdb::data_ptr_t>(
+      reinterpret_cast<duckdb::const_data_ptr_t>(bytes.data())),
+    bytes.size()};
+  duckdb::BinaryDeserializer deserializer{stream};
+  irs::analysis::TokenizerConfig config;
+  basics::ReadTuple(deserializer, config);
+  return config;
 }
 
 TokenizerCatalogEntry::TokenizerCatalogEntry(duckdb::Catalog& catalog,
                                              duckdb::SchemaCatalogEntry& schema,
-                                             CreateTokenizerInfo& info)
+                                             duckdb::CreateTokenizerInfo& info)
   : duckdb::StandardEntry{duckdb::CatalogType::TOKENIZER_ENTRY, schema, catalog,
                           info.GetQualifiedName().Name(), info.oid},
     _tokenizer{std::make_shared<Tokenizer>(
-      info.GetFeatures(), irs::analysis::Clone(info.Config()))} {
+      search::Features{static_cast<irs::IndexFeatures>(info.features)},
+      UnpackTokenizerConfig(info.config))} {
   comment = info.comment;
   tags = info.tags;
   dependencies = info.dependencies;
@@ -88,9 +87,11 @@ void Tokenizer::Release(irs::analysis::Analyzer::ptr analyzer) const noexcept {
 }
 
 duckdb::unique_ptr<duckdb::CreateInfo> TokenizerCatalogEntry::GetInfo() const {
-  auto info = duckdb::make_uniq<CreateTokenizerInfo>(
-    name, GetFeatures(), irs::analysis::Clone(Config()));
+  auto info = duckdb::make_uniq<duckdb::CreateTokenizerInfo>();
+  info->SetName(name);
   info->SetQualification(catalog.GetName(), schema.name);
+  info->features = std::to_underlying(GetFeatures().GetIndexFeatures());
+  info->config = PackTokenizerConfig(Config());
   info->comment = comment;
   info->tags = tags;
   info->dependencies = dependencies;
@@ -101,7 +102,7 @@ duckdb::unique_ptr<duckdb::CatalogEntry> TokenizerCatalogEntry::Copy(
   duckdb::ClientContext& context) const {
   auto info = GetInfo();
   return duckdb::make_uniq<TokenizerCatalogEntry>(
-    catalog, schema, info->Cast<CreateTokenizerInfo>());
+    catalog, schema, info->Cast<duckdb::CreateTokenizerInfo>());
 }
 
 std::string TokenizerCatalogEntry::ToSQL() const {

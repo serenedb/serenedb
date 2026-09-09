@@ -24,6 +24,7 @@
 
 #include <duckdb/catalog/catalog.hpp>
 #include <duckdb/main/client_context.hpp>
+#include <duckdb/parser/parsed_data/drop_info.hpp>
 #include <string>
 #include <utility>
 
@@ -57,7 +58,7 @@ catalog::ServerOptions MakeServerOptions(
 void CreateForeignServer(ConnectionContext& conn_ctx, std::string_view name,
                          std::string_view fdw_name, bool if_not_exists,
                          const duckdb::named_parameter_map_t& options) {
-  catalog::CreateForeignServerInfo info;
+  duckdb::CreateForeignServerInfo info;
   info.SetName(duckdb::Identifier{name});
   info.fdw_name = std::string{fdw_name};
   info.options = MakeServerOptions(options);
@@ -78,14 +79,15 @@ void CreateForeignServer(ConnectionContext& conn_ctx, std::string_view name,
 
 void DropForeignServer(ConnectionContext& conn_ctx, std::string_view name,
                        bool missing_ok, bool cascade) {
+  duckdb::DropInfo info;
+  info.type = duckdb::CatalogType::FOREIGN_SERVER_ENTRY;
+  info.SetName(duckdb::Identifier{name});
+  info.cascade = cascade;
+  info.if_not_found = missing_ok ? duckdb::OnEntryNotFound::RETURN_NULL
+                                 : duckdb::OnEntryNotFound::THROW_EXCEPTION;
   auto& catalog = CatalogOf(conn_ctx);
-  const bool dropped = catalog.DropForeignServer(
-    catalog.GetCatalogTransaction(conn_ctx.GetClientContext()),
-    duckdb::Identifier{name}, cascade);
-  if (!dropped && !missing_ok) {
-    throw duckdb::CatalogException("server \"%s\" does not exist",
-                                   std::string{name});
-  }
+  catalog.DropForeignServer(
+    catalog.GetCatalogTransaction(conn_ctx.GetClientContext()), info);
 }
 
 }  // namespace sdb::pg

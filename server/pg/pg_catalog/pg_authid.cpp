@@ -50,25 +50,26 @@ MaterializedData SystemTableSnapshot<PgAuthid>::GetTableData() {
   std::vector<PgAuthid> values;
   auto& context = _context;
   auto& cluster = catalog::ClusterOf(context);
-  cluster.ScanRoles(
-    cluster.GetCatalogTransaction(context), [&](duckdb::CatalogEntry& entry) {
-      using catalog::RoleOption;
-      const auto& role = entry.Cast<catalog::RoleCatalogEntry>();
-      const auto options = role.Options();
-      values.push_back(PgAuthid{
-        .oid = role.oid,
-        .rolname = role.name.GetIdentifierName(),
-        .rolsuper = HasOption(options, RoleOption::Superuser),
-        .rolinherit = HasOption(options, RoleOption::Inherit),
-        .rolcreaterole = HasOption(options, RoleOption::CreateRole),
-        .rolcreatedb = HasOption(options, RoleOption::CreateDb),
-        .rolcanlogin = role.CanLogin(),
-        .rolreplication = HasOption(options, RoleOption::Replication),
-        .rolbypassrls = HasOption(options, RoleOption::BypassRls),
-        .rolconnlimit = role.ConnLimit(),
-        .rolvaliduntil = ValidUntilOf(role),
-      });
-    });
+  cluster.GetCatalogSet(duckdb::CatalogType::ROLE_ENTRY)
+    .Scan(cluster.GetCatalogTransaction(context),
+          [&](duckdb::CatalogEntry& entry) {
+            using catalog::RoleOption;
+            const auto& role = entry.Cast<catalog::RoleCatalogEntry>();
+            const auto options = role.Options();
+            values.push_back(PgAuthid{
+              .oid = role.oid,
+              .rolname = role.name.GetIdentifierName(),
+              .rolsuper = HasOption(options, RoleOption::Superuser),
+              .rolinherit = HasOption(options, RoleOption::Inherit),
+              .rolcreaterole = HasOption(options, RoleOption::CreateRole),
+              .rolcreatedb = HasOption(options, RoleOption::CreateDb),
+              .rolcanlogin = role.CanLogin(),
+              .rolreplication = HasOption(options, RoleOption::Replication),
+              .rolbypassrls = HasOption(options, RoleOption::BypassRls),
+              .rolconnlimit = role.ConnLimit(),
+              .rolvaliduntil = ValidUntilOf(role),
+            });
+          });
 
   auto result = CreateColumns<PgAuthid>(values.size());
   for (size_t row = 0; row < values.size(); ++row) {

@@ -24,8 +24,8 @@
 #include "iresearch/search/boolean_query.hpp"
 #include "iresearch/search/common/all_docs_score.hpp"
 #include "iresearch/search/common/resolve.hpp"
-#include "iresearch/search/scored/boosted_posting.hpp"
 #include "iresearch/search/scored/make_boolean.hpp"
+#include "iresearch/search/scored/posting.hpp"
 
 namespace irs::scored {
 
@@ -74,10 +74,14 @@ Root::ptr MakeBoostedPosting(const BooleanQuery& query,
   }
   return search::ResolveInput(*doc, [&]<typename Input> -> Root::ptr {
     return MakePrepared(ctx, [&](auto table) -> Root::ptr {
-      auto root = memory::make_managed<BoostedPosting<Input, decltype(table)>>(
-        table, ctx.fetcher);
+      auto root = memory::make_managed<
+        Posting<Input, BoostTerm<Input>, utils::Empty, decltype(table)>>(
+        table, std::piecewise_construct, std::forward_as_tuple(ctx.fetcher),
+        std::forward_as_tuple());
       root->Prepare(meta, *doc, segment, own, args, search::LayoutOf(own),
-                    search::BoundsOf(own), boost_meta, boost_own, boost_args);
+                    search::BoundsOf(own));
+      root->Optional().Prepare(boost_meta, *doc, segment, boost_own,
+                               boost_args);
       return root;
     });
   });

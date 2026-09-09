@@ -50,9 +50,10 @@ Root::ptr MakePosting(const PostingClause& posting, const SubReader& segment,
   }
   return search::ResolveInput(*doc, [&]<typename Input> -> Root::ptr {
     return MakePrepared(ctx, [&](auto table) -> Root::ptr {
-      auto root =
-        memory::make_managed<Posting<Input, utils::Empty, decltype(table)>>(
-          table, std::piecewise_construct, std::forward_as_tuple());
+      auto root = memory::make_managed<
+        Posting<Input, utils::Empty, utils::Empty, decltype(table)>>(
+        table, std::piecewise_construct, std::forward_as_tuple(),
+        std::forward_as_tuple());
       root->Prepare(meta, *doc, segment, own, args, search::LayoutOf(own),
                     search::BoundsOf(own));
       return root;

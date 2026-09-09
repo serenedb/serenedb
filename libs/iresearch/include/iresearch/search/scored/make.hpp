@@ -31,7 +31,6 @@
 #include "iresearch/search/common/scored_context.hpp"
 #include "iresearch/search/scored/detail/walk.hpp"
 #include "iresearch/search/scored/root.hpp"
-#include "iresearch/search/scored/window_disjunction.hpp"
 
 namespace irs {
 namespace scored {
@@ -101,22 +100,6 @@ Root::ptr MakeAll(const SubReader& segment, const Context& ctx,
                   const search::StatsRecord& record, score_t boost);
 Root::ptr MakeAll(const SubReader& segment, const Context& ctx, score_t score);
 
-Root::ptr MakeSparseConjunction(const BooleanQuery& query,
-                                const SubReader& segment, const Context& ctx,
-                                ScoreMergeType merge, score_t absorbed);
-
-Root::ptr MakeBoostedPosting(const BooleanQuery& query,
-                             const SubReader& segment, const Context& ctx,
-                             ScoreMergeType merge, score_t absorbed);
-
-Root::ptr MakeSparseExclusion(const BooleanQuery& query,
-                              const SubReader& segment, const Context& ctx,
-                              ScoreMergeType merge, score_t absorbed);
-
-Root::ptr MakeWindowExclusion(const BooleanQuery& query,
-                              const SubReader& segment, const Context& ctx,
-                              ScoreMergeType merge, score_t absorbed);
-
 Root::ptr MakeBitsThreshold(std::span<const PostingClause> terms,
                             std::span<const QueryBuilder::ptr> filters,
                             search::Terms uniformity, const SubReader& segment,
@@ -147,35 +130,6 @@ Root::ptr MakeNGramAll(const NGramSimilarityQuery& query, const Context& ctx);
 
 Root::ptr MakeWildcardNGram(const WildcardNGramQuery& query,
                             const Context& ctx);
-
-template<typename Term>
-Root::ptr MakeWindowDisjunction(std::span<const Term> terms,
-                                std::span<const QueryBuilder::ptr> filters,
-                                search::Terms uniformity,
-                                const TermReader* field, const Scorer* scorer,
-                                score_t boost, const SubReader& segment,
-                                const Context& ctx, ScoreMergeType merge,
-                                score_t absorbed) {
-  SDB_ASSERT(terms.size() + filters.size() > 1);
-  const IndexInput* doc = nullptr;
-  std::vector<search::FillNode::ptr> rest;
-  if (!search::CollectDenseScored(terms, filters, field, doc, rest,
-                                  [&](const QueryBuilder& child) {
-                                    return child.PlanFill(ScoredOf(ctx), merge);
-                                  })) {
-    return {};
-  }
-  const auto make = [&]<typename Set>(auto&&... args) -> Root::ptr {
-    const auto leaves =
-      std::forward_as_tuple(std::forward<decltype(args)>(args)...);
-    return MakeShape<WindowDisjunction, Set, utils::Empty>(
-      ctx, std::piecewise_construct, leaves, std::forward_as_tuple(), absorbed);
-  };
-  const search::ScoreRecipe recipe{.segment = &segment,
-                                   .fetcher = &ctx.fetcher};
-  return search::BuildScoredWindow<Root::ptr>(
-    terms, field, scorer, boost, doc, rest, uniformity, recipe, merge, make);
-}
 
 }  // namespace scored
 }  // namespace irs

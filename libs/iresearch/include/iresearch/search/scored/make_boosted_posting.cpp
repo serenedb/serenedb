@@ -25,7 +25,7 @@
 #include "iresearch/search/common/all_docs_score.hpp"
 #include "iresearch/search/common/resolve.hpp"
 #include "iresearch/search/scored/boosted_posting.hpp"
-#include "iresearch/search/scored/make.hpp"
+#include "iresearch/search/scored/make_boolean.hpp"
 
 namespace irs::scored {
 

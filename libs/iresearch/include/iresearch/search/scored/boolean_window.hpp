@@ -22,6 +22,8 @@
 
 #include <algorithm>
 #include <bit>
+#include <cstdint>
+#include <tuple>
 #include <type_traits>
 #include <utility>
 
@@ -35,31 +37,38 @@
 
 namespace irs::scored {
 
-template<typename Leaves, typename Excludes, typename Table>
-class WindowDisjunction : public Root {
+template<typename Lead, typename Optional, typename Excludes, typename Table>
+class BooleanWindow : public Root {
  public:
   static constexpr size_t kNumWords = search::kWindowWords;
   static constexpr doc_id_t kWindow = search::kWindowDocs;
+  static constexpr bool kLead = !std::is_same_v<Lead, utils::Empty>;
+  static constexpr bool kOptional = !std::is_same_v<Optional, utils::Empty>;
   static constexpr bool kExcludes = !std::is_same_v<Excludes, utils::Empty>;
+  static_assert(kLead != kOptional);
 
-  template<typename LeavesArgs, typename ExcludesArgs>
-  WindowDisjunction(Table table, std::piecewise_construct_t,
-                    LeavesArgs&& leaves, ExcludesArgs&& excludes,
-                    score_t absorbed = 0)
-    : _leaves{std::make_from_tuple<Leaves>(std::forward<LeavesArgs>(leaves))},
+  template<typename LeadArgs, typename OptionalArgs, typename ExcludesArgs>
+  BooleanWindow(Table table, std::piecewise_construct_t, LeadArgs&& lead,
+                OptionalArgs&& optional, ExcludesArgs&& excludes,
+                score_t constant)
+    : _lead{std::make_from_tuple<Lead>(std::forward<LeadArgs>(lead))},
+      _optional{
+        std::make_from_tuple<Optional>(std::forward<OptionalArgs>(optional))},
       _excludes{
         std::make_from_tuple<Excludes>(std::forward<ExcludesArgs>(excludes))},
-      _constant{absorbed},
+      _constant{constant},
       _table{table} {
     std::fill_n(_window, kWindow, _constant);
   }
+
+  BooleanWindow(BooleanWindow&&) = delete;
+  BooleanWindow& operator=(BooleanWindow&&) = delete;
 
   uint32_t Run(doc_id_t* IRS_RESTRICT out, score_t* IRS_RESTRICT scores,
                uint32_t capacity) final {
     SDB_ASSERT(capacity >= doc_limits::kMinCapacity);
     SDB_ASSERT(capacity >= BitsRequired<uint64_t>());
     uint32_t n = 0;
-
     for (;;) {
       const score_t* IRS_RESTRICT const window = _window;
       const auto min = _min;
@@ -85,23 +94,32 @@ class WindowDisjunction : public Root {
             scores[i + j] = window[out[i + j] - min];
           }
         }
-        std::fill_n(_window + base, BitsRequired<uint64_t>(), _constant);
+        if constexpr (kOptional) {
+          std::fill_n(_window + base, BitsRequired<uint64_t>(), _constant);
+        }
       }
-
-      if (_leaves.Empty()) {
+      if (_spent) {
         return n;
       }
       if (!_table.Skip(_next)) {
         return n;
       }
       _min = _next;
-      _next = _leaves.Visit(
-        _min + kWindow,
-        [min = _min, max = _min + kWindow, this](auto& leaf)
-          IRS_FORCE_INLINE { return leaf.Fill(min, max, _mask, _window); });
-      if constexpr (kExcludes) {
-        _excludes.Remove(_min, _min + kWindow, _mask, _window, _constant);
+      const auto max = _min + kWindow;
+      doc_id_t next;
+      if constexpr (kLead) {
+        next = _lead.FillOr(_min, max, _mask);
+        if constexpr (kExcludes) {
+          _excludes.Remove(_min, max, _mask);
+        }
+      } else {
+        next = _optional.Fill(_min, max, _mask, _window);
+        if constexpr (kExcludes) {
+          _excludes.Remove(_min, max, _mask, _window, _constant);
+        }
       }
+      _next = next;
+      _spent = doc_limits::eof(next);
       _word = 0;
     }
   }
@@ -109,12 +127,14 @@ class WindowDisjunction : public Root {
  private:
   ABSL_CACHELINE_ALIGNED uint64_t _mask[kNumWords]{};
   ABSL_CACHELINE_ALIGNED score_t _window[kWindow];
-  Leaves _leaves;
+  [[no_unique_address]] Lead _lead;
+  [[no_unique_address]] Optional _optional;
   [[no_unique_address]] Excludes _excludes;
   doc_id_t _min = 0;
   doc_id_t _next = doc_limits::min();
   uint32_t _word = kNumWords;
   score_t _constant;
+  bool _spent = false;
   [[no_unique_address]] search::Narrowing<Table> _table;
 };
 

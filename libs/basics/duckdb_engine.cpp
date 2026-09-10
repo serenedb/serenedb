@@ -25,6 +25,7 @@
 #include <absl/strings/ascii.h>
 
 #include <duckdb/common/case_insensitive_map.hpp>
+#include <duckdb/common/identifier.hpp>
 #include <duckdb/common/types/value.hpp>
 #include <duckdb/logging/log_manager.hpp>
 #include <duckdb/logging/logger.hpp>
@@ -73,6 +74,7 @@ DuckDBEngine& DuckDBEngine::Instance() {
 
 void DuckDBEngine::Initialize(DBConfigMutator mutator) {
   SDB_ASSERT(!_db);
+  duckdb::SetIdentifierCaseSensitivity(true);
   duckdb::DBConfig config;
   config.SetOptionByName("preserve_identifier_case", duckdb::Value{false});
   config.SetOptionByName("disable_database_invalidation", duckdb::Value{true});

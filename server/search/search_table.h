@@ -34,7 +34,7 @@
 #include <shared_mutex>
 
 #include "basics/assert.h"
-#include "catalog1/entry/search_table.h"
+#include "catalog/entry/search_table.h"
 #include "search/maintenance.h"
 #include "search/search_db_wal.h"
 

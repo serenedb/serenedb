@@ -18,7 +18,7 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include "catalog1/entry/foreign_server.h"
+#include "catalog/entry/foreign_server.h"
 
 #include <utility>
 
@@ -55,10 +55,6 @@ duckdb::unique_ptr<duckdb::CatalogEntry> ForeignServerCatalogEntry::Copy(
   auto info = GetInfo();
   return duckdb::make_uniq<ForeignServerCatalogEntry>(
     catalog, info->Cast<duckdb::CreateForeignServerInfo>());
-}
-
-std::string ForeignServerCatalogEntry::ToSQL() const {
-  return GetInfo()->ToString();
 }
 
 }  // namespace sdb::catalog

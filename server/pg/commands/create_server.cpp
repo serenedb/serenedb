@@ -29,8 +29,8 @@
 #include <utility>
 
 #include "auth/role_closure.h"
-#include "catalog1/catalog.h"
-#include "catalog1/entry/foreign_server.h"
+#include "catalog/catalog.h"
+#include "catalog/entry/foreign_server.h"
 
 namespace sdb::pg {
 namespace {

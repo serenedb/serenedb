@@ -22,7 +22,7 @@
 
 #include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
 
-#include "catalog1/catalog.h"
+#include "catalog/catalog.h"
 #include "connector/column_id.h"
 #include "connector/duckdb_client_state.h"
 #include "connector/duckdb_table_function.h"

@@ -26,8 +26,8 @@
 #include <string>
 #include <utility>
 
-#include "catalog1/entry/search_table.h"
-#include "catalog1/entry/tokenizer.h"
+#include "catalog/entry/search_table.h"
+#include "catalog/entry/tokenizer.h"
 #include "connector/column_id.h"
 namespace sdb::connector::highlight {
 

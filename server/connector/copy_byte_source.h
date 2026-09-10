@@ -28,9 +28,24 @@
 #include <string_view>
 #include <vector>
 
+#include "basics/message_buffer.h"
 #include "pg/copy_in_bridge.h"
 
 namespace sdb::connector {
+
+// Drain everything committed to `buffer` into `handle` as raw bytes, leaving
+// the buffer empty for the next chunk. Shared by the binary (PGCOPY) and text
+// COPY TO writers.
+inline void DrainToHandle(message::Buffer& buffer, duckdb::FileHandle& handle) {
+  auto chain = buffer.ReleaseChain();
+  for (auto* chunk = chain.head; chunk; chunk = chunk->Next()) {
+    const auto data = chunk->Data(chunk->GetEnd());
+    if (!data.empty()) {
+      handle.Write(const_cast<uint8_t*>(data.data()),
+                   static_cast<duckdb::idx_t>(data.size()));
+    }
+  }
+}
 
 // Zero-copy byte source for a COPY FROM stream: a decoder reads STRAIGHT out of
 // the source's current view. `View()` returns the bytes on hand (blocking /

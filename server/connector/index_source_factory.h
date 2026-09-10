@@ -26,7 +26,7 @@
 #include <memory>
 #include <span>
 
-#include "catalog1/entry/search_table.h"
+#include "catalog/entry/search_table.h"
 #include "connector/column_id.h"
 namespace duckdb {
 

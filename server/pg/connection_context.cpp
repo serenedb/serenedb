@@ -25,9 +25,9 @@
 
 #include "app/app_server.h"
 #include "auth/role_closure.h"
-#include "catalog1/cluster.h"
-#include "catalog1/entry/database.h"
-#include "catalog1/entry/role.h"
+#include "catalog/cluster.h"
+#include "catalog/entry/database.h"
+#include "catalog/entry/role.h"
 #include "pg/errcodes.h"
 #include "pg/sql_exception_macro.h"
 #include "query/transaction.h"

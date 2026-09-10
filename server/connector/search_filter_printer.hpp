@@ -25,7 +25,7 @@
 #include <iresearch/search/filter.hpp>
 #include <string>
 
-#include "catalog1/entry/inverted_index.h"
+#include "catalog/entry/inverted_index.h"
 #include "connector/term_dict.h"
 
 namespace irs {

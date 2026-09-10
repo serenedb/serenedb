@@ -21,7 +21,7 @@
 #include "pg/pg_catalog/pg_ts_dict.h"
 
 #include "basics/assert.h"
-#include "catalog1/entry/tokenizer.h"
+#include "catalog/entry/tokenizer.h"
 #include "pg/pg_catalog/fwd.h"
 
 namespace sdb::pg {

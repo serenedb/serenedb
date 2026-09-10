@@ -18,7 +18,7 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include "catalog1/entry/system_table.h"
+#include "catalog/entry/system_table.h"
 
 #include <duckdb/catalog/catalog_entry/duck_schema_entry.hpp>
 #include <duckdb/catalog/catalog_entry/scalar_macro_catalog_entry.hpp>
@@ -33,7 +33,7 @@
 #include <duckdb/storage/table_storage_info.hpp>
 
 #include "basics/static_strings.h"
-#include "catalog1/catalog.h"
+#include "catalog/catalog.h"
 #include "connector/column_id.h"
 #include "connector/duckdb_table_function.h"
 #include "pg/pg_types.h"
@@ -181,11 +181,6 @@ SystemTableEntry::SystemTableEntry(duckdb::Catalog& catalog,
   permissions.owner = pg::kRootUser;
   const auto acl = table.GetAcl();
   permissions.acl.assign(acl.begin(), acl.end());
-}
-
-duckdb::unique_ptr<duckdb::BaseStatistics> SystemTableEntry::GetStatistics(
-  duckdb::ClientContext&, duckdb::column_t) {
-  return nullptr;
 }
 
 duckdb::TableFunction SystemTableEntry::GetScanFunction(

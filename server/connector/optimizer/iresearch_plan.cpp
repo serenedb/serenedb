@@ -45,7 +45,7 @@
 #include <vector>
 
 #include "basics/containers/flat_hash_set.h"
-#include "catalog1/entry/inverted_index.h"
+#include "catalog/entry/inverted_index.h"
 #include "connector/column_id.h"
 #include "connector/duckdb_client_state.h"
 #include "connector/duckdb_table_function.h"

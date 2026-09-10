@@ -18,44 +18,16 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include <absl/container/flat_hash_map.h>
-#include <absl/strings/str_cat.h>
-#include <unicode/locid.h>
+#include "connector/duckdb_tokenizer_function.h"
 
-#include <duckdb/catalog/catalog.hpp>
-#include <duckdb/catalog/entry_lookup_info.hpp>
-#include <duckdb/parser/parsed_data/drop_info.hpp>
-#include <iresearch/analysis/analyzer.hpp>
-#include <iresearch/analysis/classification_tokenizer.hpp>
-#include <iresearch/analysis/collation_tokenizer.hpp>
-#include <iresearch/analysis/delimited_tokenizer.hpp>
-#include <iresearch/analysis/minhash_tokenizer.hpp>
-#include <iresearch/analysis/multi_delimited_tokenizer.hpp>
-#include <iresearch/analysis/nearest_neighbors_tokenizer.hpp>
-#include <iresearch/analysis/ngram_tokenizer.hpp>
-#include <iresearch/analysis/normalizing_tokenizer.hpp>
-#include <iresearch/analysis/path_hierarchy_tokenizer.hpp>
-#include <iresearch/analysis/pattern_tokenizer.hpp>
-#include <iresearch/analysis/pipeline_tokenizer.hpp>
-#include <iresearch/analysis/segmentation_tokenizer.hpp>
-#include <iresearch/analysis/stemming_tokenizer.hpp>
-#include <iresearch/analysis/stopwords_tokenizer.hpp>
-#include <iresearch/analysis/text_tokenizer.hpp>
-#include <iresearch/analysis/tokenizer.hpp>
-#include <iresearch/index/index_features.hpp>
-#include <iresearch/utils/attribute_provider.hpp>
-#include <type_traits>
-#include <utility>
+#include <duckdb/main/extension/extension_loader.hpp>
+#include <duckdb/parser/qualified_name.hpp>
+#include <string>
 
-#include "basics/assert.h"
-#include "catalog1/catalog.h"
-#include "catalog1/entry/tokenizer.h"
 #include "connector/duckdb_client_state.h"
 #include "pg/commands/create_tsdictionary.h"
-#include "pg/connection_context.h"
 #include "pg/errcodes.h"
 #include "pg/sql_exception_macro.h"
-#include "search/search_analyzer_impl.h"
 
 namespace sdb::connector {
 namespace {
@@ -83,47 +55,6 @@ void CreateTSDictionaryPragma(duckdb::ClientContext& context,
                       params.named_parameters);
 }
 
-// PRAGMA drop_text_search_dictionary('name', missing_ok)
-// Parameters:
-//   [0] name (VARCHAR) -- optionally schema-qualified as "schema.name"
-//   [1] missing_ok (BOOLEAN)
-void DropTSDictionaryPragma(duckdb::ClientContext& context,
-                            const duckdb::FunctionParameters& params) {
-  auto& args = params.values;
-  if (args.size() < 2) {
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-      ERR_MSG("drop_text_search_dictionary requires name and missing_ok"));
-  }
-
-  const auto dict_name = args[0].GetValue<std::string>();
-  const auto missing_ok = args[1].GetValue<bool>();
-
-  // The added kind lives in a CatalogSet on DuckSchemaEntry like every other,
-  // so duckdb's own drop reaches it and brings the dependency and versioning
-  // rules with it.
-  const auto qualified = duckdb::QualifiedName::Parse(dict_name);
-  auto entry = duckdb::Catalog::GetEntry(
-    context,
-    duckdb::EntryLookupInfo{duckdb::CatalogType::TOKENIZER_ENTRY, qualified},
-    missing_ok ? duckdb::OnEntryNotFound::RETURN_NULL
-               : duckdb::OnEntryNotFound::THROW_EXCEPTION);
-  if (!entry) {
-    GetSereneDBContext(context).AddNotice(SQL_ERROR_DATA(
-      ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
-      ERR_MSG("text search dictionary \"", qualified.Name().GetIdentifierName(),
-              "\" does not exist, skipping")));
-    return;
-  }
-  duckdb::DropInfo info;
-  info.type = duckdb::CatalogType::TOKENIZER_ENTRY;
-  info.SetQualifiedName(qualified);
-  info.if_not_found = duckdb::OnEntryNotFound::RETURN_NULL;
-  info.cascade = false;
-  entry->ParentCatalog().Cast<catalog::SereneDBCatalog>().DropTokenizer(context,
-                                                                        info);
-}
-
 }  // namespace
 
 void RegisterTokenizerPragma(duckdb::DatabaseInstance& db) {
@@ -135,12 +66,6 @@ void RegisterTokenizerPragma(duckdb::DatabaseInstance& db) {
   // Tokenizer-specific kwargs are validated by CreateTSDictionaryPragma itself.
   create_pragma.accept_arbitrary_named_parameters = true;
   loader.RegisterFunction(create_pragma);
-
-  auto drop_pragma = duckdb::PragmaFunction::PragmaCall(
-    "drop_text_search_dictionary", DropTSDictionaryPragma,
-    {duckdb::LogicalType::VARCHAR, duckdb::LogicalType::BOOLEAN});
-  drop_pragma.accept_arbitrary_named_parameters = true;
-  loader.RegisterFunction(drop_pragma);
 }
 
 }  // namespace sdb::connector

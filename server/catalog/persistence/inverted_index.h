@@ -75,7 +75,7 @@ struct FieldRecord {
   bool whole_value = false;
   bool is_keyword = false;
   irs::ColumnOptions column_options;
-  std::string text_dictionary;
+  duckdb::idx_t text_dictionary = 0;
 };
 
 struct InvertedIndexData {

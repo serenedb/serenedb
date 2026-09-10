@@ -28,8 +28,8 @@
 #include <vector>
 
 #include "basics/assert.h"
-#include "catalog1/cluster.h"
-#include "catalog1/entry/role.h"
+#include "catalog/cluster.h"
+#include "catalog/entry/role.h"
 #include "pg/pg_types.h"
 
 namespace sdb::auth {

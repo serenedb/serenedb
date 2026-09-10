@@ -41,8 +41,8 @@
 #include <span>
 #include <vector>
 
-#include "catalog1/catalog.h"
-#include "catalog1/entry/search_table.h"
+#include "catalog/catalog.h"
+#include "catalog/entry/search_table.h"
 #include "connector/column_id.h"
 #include "connector/duckdb_client_state.h"
 #include "connector/functions/search.h"

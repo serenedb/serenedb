@@ -51,10 +51,10 @@
 #include <iresearch/search/vector_radius_filter.hpp>
 #include <iresearch/search/vector_similarity_filter.hpp>
 
-#include "catalog1/catalog.h"
-#include "catalog1/entry/inverted_index.h"
-#include "catalog1/entry/search_table.h"
-#include "catalog1/entry/system_table.h"
+#include "catalog/catalog.h"
+#include "catalog/entry/inverted_index.h"
+#include "catalog/entry/search_table.h"
+#include "catalog/entry/system_table.h"
 #include "connector/duckdb_client_state.h"
 #include "connector/duckdb_search_full_scan.hpp"
 #include "connector/functions/vector.h"

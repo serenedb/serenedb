@@ -24,7 +24,7 @@
 #include <duckdb/planner/operator/logical_get.hpp>
 #include <memory>
 
-#include "catalog1/entry/inverted_index.h"
+#include "catalog/entry/inverted_index.h"
 #include "connector/duckdb_table_function.h"
 
 namespace sdb::optimizer {

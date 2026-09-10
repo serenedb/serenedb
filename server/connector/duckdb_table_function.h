@@ -39,7 +39,7 @@
 #include "basics/bit_utils.hpp"
 #include "basics/down_cast.h"
 #include "basics/system-compiler.h"
-#include "catalog1/entry/inverted_index.h"
+#include "catalog/entry/inverted_index.h"
 #include "connector/view_fast_path.h"
 
 namespace irs {

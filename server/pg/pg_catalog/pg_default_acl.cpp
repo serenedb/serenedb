@@ -23,7 +23,7 @@
 #include <duckdb/catalog/catalog.hpp>
 #include <duckdb/catalog/catalog_entry/schema_catalog_entry.hpp>
 
-#include "catalog1/cluster.h"
+#include "catalog/cluster.h"
 #include "pg/pg_catalog/fwd.h"
 #include "pg/pg_types.h"
 

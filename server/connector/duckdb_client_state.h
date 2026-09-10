@@ -23,8 +23,9 @@
 #include <duckdb.hpp>
 #include <duckdb/main/client_context_state.hpp>
 #include <memory>
+#include <vector>
 
-#include "catalog1/boot.h"
+#include "catalog/boot.h"
 #include "pg/progress_registry.h"
 
 namespace sdb {
@@ -115,6 +116,9 @@ class SereneDBClientState final : public duckdb::ClientContextState {
 
   void QueryBegin(duckdb::ClientContext& context) final;
   void QueryEnd(duckdb::ClientContext& context) final;
+
+  void OnBoundPlan(duckdb::ClientContext& context, duckdb::Binder& binder,
+                   duckdb::LogicalOperator& plan) final;
 
   // COPY classification for the NEXT query, staged by the wire session before
   // PendingQuery. QueryBegin resets the metrics of the previous statement, so

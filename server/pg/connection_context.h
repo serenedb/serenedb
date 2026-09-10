@@ -26,7 +26,7 @@
 #include <string_view>
 
 #include "basics/message_buffer.h"
-#include "catalog1/entry/role.h"
+#include "catalog/entry/role.h"
 #include "pg/sql_error.h"
 #include "query/transaction.h"
 

@@ -67,7 +67,7 @@
 #include "basics/containers/flat_hash_map.h"
 #include "basics/containers/flat_hash_set.h"
 #include "basics/containers/node_hash_map.h"
-#include "catalog1/cluster.h"
+#include "catalog/cluster.h"
 #include "connector/duckdb_table_function.h"
 #include "pg/commands/rbac.h"
 #include "pg/connection_context.h"
@@ -327,6 +327,8 @@ class Enforcer {
             _nextval = true;
           } else if (name == "currval") {
             _currval = true;
+          } else if (name == "setval") {
+            _setval = true;
           }
           break;
         }
@@ -394,6 +396,7 @@ class Enforcer {
         Stamp(*create.info, DefaultObjType(op.type), create.schema);
         if (_enforce && create.schema) {
           RequireSchemaCreate(*create.schema);
+          CheckReplace(*create.info);
         }
         break;
       }
@@ -775,6 +778,10 @@ class Enforcer {
                                       AclMode::Usage | AclMode::Select)) {
             Denied(*entry);
           }
+          if (_setval && !_caller_closure.Can(entry->type, entry->permissions,
+                                              AclMode::Update)) {
+            Denied(*entry);
+          }
           break;
         default:
           break;
@@ -893,6 +900,18 @@ class Enforcer {
     }
   }
 
+  // CREATE OR REPLACE keeps an existing object under its own name, which is the
+  // owner's to change.
+  void CheckReplace(const duckdb::CreateInfo& info) {
+    if (info.on_conflict != duckdb::OnCreateConflict::REPLACE_ON_CONFLICT ||
+        !IsSchemaScoped(info.type)) {
+      return;
+    }
+    if (auto entry = FindEntry(info.type, info.GetQualifiedName())) {
+      RequireOwner(*entry);
+    }
+  }
+
   void CheckAlter(const duckdb::AlterInfo& info) {
     const auto type = info.GetCatalogType();
     if (!IsSchemaScoped(type)) {
@@ -976,6 +995,13 @@ class Enforcer {
 
   duckdb::CatalogEntry& ResolveTarget(duckdb::AlterPermissionsInfo& info) {
     const auto& name = info.GetQualifiedName();
+    if (info.entry_catalog_type == CatalogType::SCHEMA_ENTRY) {
+      auto& schema =
+        duckdb::Catalog::GetSchema(_context, name.Catalog(), name.Name());
+      info.SetQualifiedName(schema.ParentCatalog().GetName(),
+                            duckdb::Identifier(), schema.name);
+      return schema;
+    }
     auto entry = FindEntry(info.entry_catalog_type, name);
     if (!entry && info.entry_catalog_type == CatalogType::MACRO_ENTRY) {
       entry = FindEntry(CatalogType::TABLE_MACRO_ENTRY, name);
@@ -996,9 +1022,6 @@ class Enforcer {
   }
 
   void ResolveGrant(duckdb::AlterPermissionsInfo& info) {
-    if (info.entry_catalog_type == CatalogType::SCHEMA_ENTRY) {
-      NotSupported("GRANT ON SCHEMA");
-    }
     if (info.entry_catalog_type == CatalogType::FOREIGN_SERVER_ENTRY) {
       NotSupported("GRANT ON FOREIGN SERVER");
     }
@@ -1033,9 +1056,6 @@ class Enforcer {
   }
 
   void ResolveOwner(duckdb::AlterPermissionsInfo& info) {
-    if (info.entry_catalog_type == CatalogType::SCHEMA_ENTRY) {
-      NotSupported("ALTER SCHEMA OWNER");
-    }
     auto& entry = ResolveTarget(info);
     info.new_owner_id = RoleSpecId(info.new_owner);
     if (!_enforce || info.new_owner_id == entry.permissions.owner) {
@@ -1048,7 +1068,8 @@ class Enforcer {
                       ERR_MSG("must be able to SET ROLE \"",
                               _roles->NameOf(info.new_owner_id), "\""));
     }
-    if (!ClosureOf(info.new_owner_id)
+    if (entry.type != CatalogType::SCHEMA_ENTRY &&
+        !ClosureOf(info.new_owner_id)
            .Can(CatalogType::SCHEMA_ENTRY, entry.ParentSchema().permissions,
                 AclMode::Create)) {
       Denied(entry.ParentSchema());
@@ -1056,9 +1077,6 @@ class Enforcer {
   }
 
   void ResolveDefaultPrivileges(duckdb::AlterPermissionsInfo& info) {
-    if (!info.default_schema.empty()) {
-      NotSupported("ALTER DEFAULT PRIVILEGES IN SCHEMA");
-    }
     info.target_role = info.for_role.empty() ? _caller : RoleId(info.for_role);
     if (_enforce && !_caller_closure.MemberOf(info.target_role)) {
       THROW_SQL_ERROR(
@@ -1066,6 +1084,18 @@ class Enforcer {
         ERR_MSG("permission denied to change default privileges"));
     }
     info.grantee_id = GranteeId(info.grantee);
+    if (!info.default_schema.empty()) {
+      info.entry_catalog_type = CatalogType::SCHEMA_ENTRY;
+      info.SetQualifiedName(duckdb::Identifier{}, duckdb::Identifier{},
+                            duckdb::Identifier{info.default_schema});
+      auto& schema = ResolveTarget(info);
+      if (_enforce && !ClosureOf(info.target_role)
+                         .Can(CatalogType::SCHEMA_ENTRY, schema.permissions,
+                              AclMode::Create)) {
+        Denied(schema);
+      }
+      return;
+    }
     const auto& database = _connection.GetDatabase();
     if (!DatabaseEntry(database)) {
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_DATABASE),
@@ -1180,6 +1210,7 @@ class Enforcer {
   bool _file_copy = false;
   bool _nextval = false;
   bool _currval = false;
+  bool _setval = false;
 };
 
 }  // namespace

@@ -20,7 +20,6 @@
 
 #include "connector/inverted_index_bind.h"
 
-#include <absl/algorithm/container.h>
 #include <absl/strings/ascii.h>
 #include <absl/strings/str_cat.h>
 #include <absl/strings/str_join.h>
@@ -38,7 +37,6 @@
 #include <iresearch/analysis/token_attributes.hpp>
 #include <iresearch/types.hpp>
 #include <iresearch/utils/attribute_provider.hpp>
-#include <limits>
 #include <span>
 #include <string>
 #include <utility>
@@ -46,9 +44,10 @@
 #include "basics/assert.h"
 #include "basics/containers/flat_hash_set.h"
 #include "basics/down_cast.h"
-#include "catalog1/entry/inverted_index.h"
-#include "catalog1/entry/tokenizer.h"
+#include "catalog/entry/inverted_index.h"
+#include "catalog/entry/tokenizer.h"
 #include "connector/column_id.h"
+#include "connector/functions/search.h"
 #include "connector/geo_validate.h"
 #include "connector/index_expression.hpp"
 #include "connector/term_dict.h"
@@ -67,7 +66,6 @@ using catalog::InvertedIndexKey;
 using catalog::InvertedIndexSettings;
 using catalog::PkColumnKind;
 using catalog::PkPolicy;
-using catalog::ResolveOpclassDict;
 using catalog::TokenizerCatalogEntry;
 
 constexpr std::string_view kMetricField = "metric";
@@ -782,6 +780,28 @@ void ValidateInvertedIndexKey(std::string_view label,
   ValidateTermDictKey(label, type, opclass.name);
 }
 
+// An opclass names a dictionary of the index's own schema first -- the index
+// and its dictionary are created together and that schema need not be on the
+// reader's search path -- and otherwise resolves like any other name.
+duckdb::optional_ptr<const TokenizerCatalogEntry> ResolveOpclassTokenizer(
+  duckdb::ClientContext& context, duckdb::SchemaCatalogEntry& schema,
+  std::string_view name) {
+  auto parsed = duckdb::QualifiedName::Parse(std::string{name});
+  if (parsed.Schema().empty()) {
+    auto local =
+      schema.GetEntry(schema.catalog.GetCatalogTransaction(context),
+                      duckdb::CatalogType::TOKENIZER_ENTRY, parsed.Name());
+    if (local) {
+      return &local->Cast<TokenizerCatalogEntry>();
+    }
+  }
+  auto dict = ResolveCatalogTokenizer(context, name);
+  if (dict && &dict->ParentCatalog() != &schema.ParentCatalog()) {
+    return nullptr;
+  }
+  return dict;
+}
+
 // Folds one key's opclass into the field's config, drawing whatever sub-field
 // ids that opclass turns out to need from `next_sub_id`. Merges: a column
 // listed twice arrives here twice with the same `entry`.
@@ -792,7 +812,7 @@ void ApplyOpclassToEntry(
   duckdb::ClientContext& context, std::string_view schema_name,
   std::string_view label, const duckdb::LogicalType& value_type,
   const KeyOpclass& opclass,
-  duckdb::optional_ptr<catalog::TokenizerCatalogEntry> dict,
+  duckdb::optional_ptr<const catalog::TokenizerCatalogEntry> dict,
   irs::field_id& next_sub_id, catalog::InvertedIndexField& entry) {
   if (opclass.name.empty()) {
     return;
@@ -832,56 +852,6 @@ const duckdb::Value* FindOption(
   return it != with.end() ? &it->second : nullptr;
 }
 
-bool IsUint32InvertedOption(std::string_view name) {
-  static constexpr auto kUint32Options = std::to_array({
-    kRowGroupSizeSetting,
-    kRefreshIntervalSetting,
-    kReindexIntervalSetting,
-    kCompactionIntervalSetting,
-    kCleanupIntervalStepSetting,
-    kSegmentDocsMaxSetting,
-    kCompactionMaxSegmentsSetting,
-  });
-  return absl::c_contains(kUint32Options, name);
-}
-
-// Options where 0 is a real value, not a rejected degenerate: iresearch
-// defines segment_docs_max 0 == unlimited, and a maintenance interval (or
-// cleanup step) of 0 disables that background task -- the established idiom
-// deterministic tests rely on.
-bool IsZeroAllowedInvertedOption(std::string_view name) {
-  static constexpr auto kZeroAllowed = std::to_array({
-    kSegmentDocsMaxSetting,
-    kRefreshIntervalSetting,
-    kReindexIntervalSetting,
-    kCompactionIntervalSetting,
-    kCleanupIntervalStepSetting,
-  });
-  return absl::c_contains(kZeroAllowed, name);
-}
-
-uint64_t ValidateInvertedIndexOptionValue(std::string_view name,
-                                          const duckdb::Value& raw) {
-  auto value = raw;
-  if (!value.DefaultTryCastAs(duckdb::LogicalType::UBIGINT)) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                    ERR_MSG("invalid value for parameter \"", name, "\": \"",
-                            raw.ToString(), "\""));
-  }
-  const auto result = value.GetValue<uint64_t>();
-  if (result == 0 && !IsZeroAllowedInvertedOption(name)) {
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-      ERR_MSG("invalid value for parameter \"", name, "\": \"0\""));
-  }
-  if (IsUint32InvertedOption(name) &&
-      result > std::numeric_limits<uint32_t>::max()) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                    ERR_MSG("value for option \"", name, "\" is out of range"));
-  }
-  return result;
-}
-
 // Field ids of the keys that are not bare columns. A bare column indexes under
 // its own column id; an expression has none, so it takes a slot from the
 // synthetic range, which no relation column can ever collide with. Stride 8
@@ -902,13 +872,14 @@ InvertedIndexSettings ResolveSettings(
   bool table_backed) {
   auto resolve_uint = [&](std::string_view name) -> uint32_t {
     if (const auto* v = FindOption(with, name)) {
-      return static_cast<uint32_t>(ValidateInvertedIndexOptionValue(name, *v));
+      return static_cast<uint32_t>(
+        catalog::ValidateInvertedIndexOption(name, *v));
     }
     return connector::ResolveUintWithOption(context, name, nullptr);
   };
   auto resolve_ubigint = [&](std::string_view name) -> uint64_t {
     if (const auto* v = FindOption(with, name)) {
-      return ValidateInvertedIndexOptionValue(name, *v);
+      return catalog::ValidateInvertedIndexOption(name, *v);
     }
     return connector::ResolveUbigintWithOption(context, name, nullptr);
   };
@@ -1017,7 +988,6 @@ void DeriveKeys(
   static_assert(std::is_same_v<connector::ColumnId, duckdb::column_t>);
   const std::span<const connector::ColumnId> column_ids{
     entry.column_ids.data(), entry.column_ids.size()};
-  const auto transaction = entry.catalog.GetCatalogTransaction(context);
 
   const size_t keys = entry.parsed_expressions.size();
   config.keys.reserve(keys);
@@ -1079,9 +1049,9 @@ void DeriveKeys(
 
     // A built-in is only a built-in in the parenthesised form, so a bare name
     // is looked up as a dictionary first and may shadow one.
-    duckdb::optional_ptr<TokenizerCatalogEntry> dict;
+    duckdb::optional_ptr<const TokenizerCatalogEntry> dict;
     if (opclass.IsTokenizer()) {
-      dict = ResolveOpclassDict(transaction, entry.schema, opclass.name);
+      dict = ResolveOpclassTokenizer(context, entry.schema, opclass.name);
       // One tokenizer per key. A column keys on its id, checked on its field
       // below; an expression has no id of its own -- each gets a fresh block
       // -- so it keys on its text, which is what makes two spellings of the
@@ -1120,7 +1090,7 @@ void DeriveKeys(
       field.indexed_term_dict = true;
     }
     if (dict) {
-      field.text_dictionary = duckdb::Identifier{std::string{opclass.name}};
+      field.text_dictionary = dict->oid;
     }
     ApplyOpclassToEntry(context, entry.schema.name.GetIdentifierName(), label,
                         value_type, opclass, dict, next_sub_id, field);

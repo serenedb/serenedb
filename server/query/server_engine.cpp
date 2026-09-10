@@ -31,7 +31,7 @@
 #include "basics/file_utils.h"
 #include "basics/lifecycle.h"
 #include "basics/number_of_cores.h"
-#include "catalog1/boot.h"
+#include "catalog/boot.h"
 #include "connector/duckdb_copy_filesystem.h"
 #include "connector/duckdb_foreign_server_function.h"
 #include "connector/duckdb_pg_binary_copy.h"

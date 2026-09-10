@@ -27,7 +27,7 @@
 #include <span>
 #include <string_view>
 
-#include "catalog1/entry/search_table.h"
+#include "catalog/entry/search_table.h"
 #include "connector/column_id.h"
 #include "connector/index_expression.hpp"
 #include "pg/sql_exception_macro.h"

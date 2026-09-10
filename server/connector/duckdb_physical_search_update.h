@@ -26,7 +26,7 @@
 #include <memory>
 #include <vector>
 
-#include "catalog1/entry/search_table.h"
+#include "catalog/entry/search_table.h"
 
 namespace sdb::connector {
 

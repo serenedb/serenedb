@@ -25,8 +25,9 @@
 #include <duckdb/catalog/duck_catalog.hpp>
 #include <string>
 
-#include "catalog1/entry/foreign_server.h"
-#include "catalog1/entry/tokenizer.h"
+#include "basics/static_strings.h"
+#include "catalog/entry/foreign_server.h"
+#include "catalog/entry/tokenizer.h"
 
 namespace duckdb {
 
@@ -40,7 +41,7 @@ struct DropInfo;
 }  // namespace duckdb
 namespace sdb::catalog {
 
-class SereneDBCatalog : public duckdb::DuckCatalog {
+class SereneDBCatalog final : public duckdb::DuckCatalog {
  public:
   static constexpr const char* kStorageType = "serenedb";
 
@@ -52,7 +53,9 @@ class SereneDBCatalog : public duckdb::DuckCatalog {
 
   void OnDetach(duckdb::ClientContext& context) override;
 
-  std::string GetDefaultSchema() const override;
+  std::string GetDefaultSchema() const override {
+    return std::string{StaticStrings::kPublic};
+  }
 
   duckdb::optional_ptr<duckdb::CatalogEntry> CreateSchema(
     duckdb::CatalogTransaction transaction,
@@ -67,7 +70,9 @@ class SereneDBCatalog : public duckdb::DuckCatalog {
     duckdb::BoundCreateTableInfo& info) override;
 
   duckdb::unique_ptr<duckdb::InCatalogEntry> MakeForeignServerEntry(
-    duckdb::CreateForeignServerInfo& info) override;
+    duckdb::CreateForeignServerInfo& info) override {
+    return duckdb::make_uniq<ForeignServerCatalogEntry>(*this, info);
+  }
 
   duckdb::unique_ptr<duckdb::StandardEntry> MakeTokenizerEntry(
     duckdb::DuckSchemaEntry& schema,
@@ -121,8 +126,6 @@ class SereneDBCatalog : public duckdb::DuckCatalog {
   duckdb::optional_ptr<duckdb::CatalogEntry> CreateTokenizer(
     duckdb::CatalogTransaction transaction, duckdb::DuckSchemaEntry& schema,
     duckdb::CreateTokenizerInfo& info);
-
-  void DropTokenizer(duckdb::ClientContext& context, duckdb::DropInfo& info);
 
   duckdb::optional_ptr<duckdb::CatalogEntry> CreateForeignServer(
     duckdb::CatalogTransaction transaction,

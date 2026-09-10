@@ -32,7 +32,7 @@
 
 #include "app/app_server.h"
 #include "basics/down_cast.h"
-#include "catalog1/entry/role.h"
+#include "catalog/entry/role.h"
 #include "pg/pg_catalog/fwd.h"
 #include "pg/pg_types.h"
 

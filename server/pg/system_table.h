@@ -42,7 +42,7 @@
 
 #include "auth/role_closure.h"
 #include "basics/down_cast.h"
-#include "catalog1/entry/role.h"
+#include "catalog/entry/role.h"
 #include "connector/pg_logical_types.h"
 #include "pg/information_schema/fwd.h"
 #include "pg/pg_catalog/fwd.h"

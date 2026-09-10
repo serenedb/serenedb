@@ -101,7 +101,7 @@ class TokenizerCatalogEntry final : public duckdb::StandardEntry {
   duckdb::unique_ptr<duckdb::CatalogEntry> Copy(
     duckdb::ClientContext& context) const override;
   duckdb::unique_ptr<duckdb::CreateInfo> GetInfo() const override;
-  std::string ToSQL() const override;
+  std::string ToSQL() const override { return GetInfo()->ToString(); }
 
  private:
   TokenizerRef _tokenizer;

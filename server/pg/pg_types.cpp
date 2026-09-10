@@ -33,7 +33,7 @@
 
 #include "basics/containers/flat_hash_map.h"
 #include "basics/down_cast.h"
-#include "catalog1/catalog.h"
+#include "catalog/catalog.h"
 #include "connector/duckdb_client_state.h"
 #include "connector/functions/ts_query_codec.h"
 #include "connector/pg_logical_types.h"

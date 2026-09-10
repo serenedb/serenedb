@@ -29,7 +29,7 @@
 
 #include "basics/containers/flat_hash_set.h"
 #include "basics/down_cast.h"
-#include "catalog1/entry/role.h"
+#include "catalog/entry/role.h"
 #include "pg/pg_catalog/fwd.h"
 #include "pg/pg_types.h"
 

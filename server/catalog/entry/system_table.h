@@ -43,7 +43,9 @@ class SystemTableEntry final : public duckdb::TableCatalogEntry {
                    const pg::VirtualTable& table);
 
   duckdb::unique_ptr<duckdb::BaseStatistics> GetStatistics(
-    duckdb::ClientContext& context, duckdb::column_t column_id) override;
+    duckdb::ClientContext&, duckdb::column_t) override {
+    return nullptr;
+  }
 
   duckdb::TableFunction GetScanFunction(
     duckdb::ClientContext& context,

@@ -168,7 +168,7 @@ ORDER BY column_name
 ----
 table_name	column_name	data_type
 sf_t	id	INTEGER
-sf_t	mood	sf_mood
+sf_t	mood	ENUM('ok', 'bad')
 sf_t	name	VARCHAR
 
 query

@@ -75,11 +75,11 @@
 #include "basics/containers/flat_hash_set.h"
 #include "basics/duckdb_engine.h"
 #include "basics/log.h"
+#include "catalog/catalog.h"
+#include "catalog/cluster.h"
+#include "catalog/entry/inverted_index.h"
+#include "catalog/entry/role.h"
 #include "catalog/rest/iceberg_catalog.hpp"
-#include "catalog1/catalog.h"
-#include "catalog1/cluster.h"
-#include "catalog1/entry/inverted_index.h"
-#include "catalog1/entry/role.h"
 #include "connector/duckdb_client_state.h"
 #include "connector/duckdb_physical_create_index.h"
 #include "connector/file_manifest.h"
@@ -293,7 +293,16 @@ bool RunPkScanRemoves(duckdb::ClientContext& context,
   // PlanDelete admits the index target only on an internal connection.
   PassConnection pass{context, conn_ctx, target};
   auto result = pass.Query(std::move(statement));
-  return !result->HasError();
+  if (result->HasError()) {
+    // The caller demotes to a full rescan either way; without this the reason
+    // is invisible, and a road that cannot be planned looks like one that
+    // simply had nothing to remove.
+    SDB_WARN(SEARCH, "reindex \"", target.name,
+             "\": removing dead rows by key failed, falling back to a rescan: ",
+             result->GetError());
+    return false;
+  }
+  return true;
 }
 
 // Delete kind 3 -- equality deletes (iceberg): covered files group by
@@ -372,9 +381,8 @@ std::vector<EqRow> ParseEqRows(
     uint64_t pos = source - columns.begin();
     if (!fast_path.projection_columns.empty()) {
       const auto name = source->name.GetIdentifierName();
-      const auto it = absl::c_find_if(
-        fast_path.projection_columns,
-        [&](const auto& p) { return duckdb::StringUtil::CIEquals(p, name); });
+      const auto it = absl::c_find_if(fast_path.projection_columns,
+                                      [&](const auto& p) { return p == name; });
       if (it == fast_path.projection_columns.end()) {
         return std::nullopt;
       }

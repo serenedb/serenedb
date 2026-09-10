@@ -26,7 +26,7 @@
 #include <yaclib/async/future.hpp>
 
 #include "basics/containers/flat_hash_map.h"
-#include "catalog1/catalog.h"
+#include "catalog/catalog.h"
 #include "query/config.h"
 #include "search/inverted_index_storage.h"
 #include "search/search_table_transaction.h"

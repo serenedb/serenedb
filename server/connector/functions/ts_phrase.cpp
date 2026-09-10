@@ -41,21 +41,6 @@
 namespace sdb::connector {
 namespace {
 
-// DECIMAL/DOUBLE -> BIGINT rounds even under a strict cast, so
-// integrality is enforced by an exact round-trip: 2.0 passes, 1.5
-// errors instead of silently becoming 2.
-bool TryCastExactInt64(const duckdb::Value& v, duckdb::Value& out) {
-  if (v.IsNull() || !v.type().IsNumeric() ||
-      !v.DefaultTryCastAs(duckdb::LogicalType::BIGINT, out,
-                          /*error_message=*/nullptr, /*strict=*/true)) {
-    return false;
-  }
-  duckdb::Value back;
-  return out.DefaultTryCastAs(v.type(), back,
-                              /*error_message=*/nullptr, /*strict=*/false) &&
-         duckdb::Value::NotDistinctFrom(back, v);
-}
-
 PhraseGap ParsePhraseGap(const duckdb::Value& val, std::string_view label,
                          std::string_view hint,
                          std::optional<size_t> arg_index = std::nullopt) {

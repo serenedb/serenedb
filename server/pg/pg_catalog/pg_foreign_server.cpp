@@ -28,8 +28,8 @@
 #include <string_view>
 #include <vector>
 
-#include "catalog1/catalog.h"
-#include "catalog1/entry/foreign_server.h"
+#include "catalog/catalog.h"
+#include "catalog/entry/foreign_server.h"
 #include "pg/pg_catalog/fwd.h"
 
 namespace sdb::pg {

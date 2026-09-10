@@ -31,7 +31,7 @@
 
 #include "basics/containers/flat_hash_map.h"
 #include "basics/containers/flat_hash_set.h"
-#include "catalog1/entry/role.h"
+#include "catalog/entry/role.h"
 
 namespace duckdb {
 

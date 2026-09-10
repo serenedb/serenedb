@@ -26,7 +26,7 @@
 #include <duckdb/planner/expression.hpp>
 #include <memory>
 
-#include "catalog1/entry/inverted_index.h"
+#include "catalog/entry/inverted_index.h"
 
 namespace duckdb {
 

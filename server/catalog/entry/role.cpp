@@ -18,7 +18,7 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include "catalog1/entry/role.h"
+#include "catalog/entry/role.h"
 
 #include <algorithm>
 #include <duckdb/parser/parsed_data/alter_table_info.hpp>

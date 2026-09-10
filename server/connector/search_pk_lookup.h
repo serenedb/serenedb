@@ -34,7 +34,7 @@
 #include "basics/assert.h"
 #include "basics/debugging.h"
 #include "basics/duckdb_engine.h"
-#include "catalog1/entry/search_table.h"
+#include "catalog/entry/search_table.h"
 #include "connector/column_id.h"
 #include "pg/sql_exception_macro.h"
 

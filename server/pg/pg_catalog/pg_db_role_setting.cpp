@@ -22,8 +22,8 @@
 
 #include "app/app_server.h"
 #include "basics/down_cast.h"
-#include "catalog1/cluster.h"
-#include "catalog1/entry/role.h"
+#include "catalog/cluster.h"
+#include "catalog/entry/role.h"
 #include "pg/pg_catalog/fwd.h"
 
 namespace sdb::pg {

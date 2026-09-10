@@ -18,7 +18,7 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include "catalog1/entry/tokenizer.h"
+#include "catalog/entry/tokenizer.h"
 
 #include <duckdb/catalog/catalog.hpp>
 #include <duckdb/catalog/catalog_entry/schema_catalog_entry.hpp>
@@ -103,10 +103,6 @@ duckdb::unique_ptr<duckdb::CatalogEntry> TokenizerCatalogEntry::Copy(
   auto info = GetInfo();
   return duckdb::make_uniq<TokenizerCatalogEntry>(
     catalog, schema, info->Cast<duckdb::CreateTokenizerInfo>());
-}
-
-std::string TokenizerCatalogEntry::ToSQL() const {
-  return GetInfo()->ToString();
 }
 
 }  // namespace sdb::catalog

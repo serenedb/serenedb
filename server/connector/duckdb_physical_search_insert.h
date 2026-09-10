@@ -25,7 +25,7 @@
 #include <duckdb/planner/parsed_data/bound_create_table_info.hpp>
 #include <memory>
 
-#include "catalog1/entry/search_table.h"
+#include "catalog/entry/search_table.h"
 
 namespace sdb::connector {
 

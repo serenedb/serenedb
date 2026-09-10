@@ -29,7 +29,7 @@
 
 #include "basics/assert.h"
 #include "basics/down_cast.h"
-#include "catalog1/entry/search_table.h"
+#include "catalog/entry/search_table.h"
 #include "connector/common.h"
 #include "connector/primary_key.h"
 #include "connector/term_dict.h"

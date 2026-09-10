@@ -33,7 +33,7 @@
 #include <vector>
 
 #include "basics/down_cast.h"
-#include "catalog1/entry/inverted_index.h"
+#include "catalog/entry/inverted_index.h"
 #include "pg/pg_catalog/pg_class.h"
 #include "pg/pg_catalog/pg_proc.h"
 #include "pg/pg_catalog/pg_type.h"

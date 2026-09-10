@@ -30,8 +30,8 @@
 #include <span>
 
 #include "basics/containers/flat_hash_map.h"
-#include "catalog1/catalog.h"
-#include "catalog1/entry/inverted_index.h"
+#include "catalog/catalog.h"
+#include "catalog/entry/inverted_index.h"
 #include "connector/term_dict.h"
 
 namespace sdb::connector {

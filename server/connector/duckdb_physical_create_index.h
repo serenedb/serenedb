@@ -29,7 +29,7 @@
 #include <duckdb/parser/parsed_data/create_index_info.hpp>
 #include <optional>
 
-#include "catalog1/catalog.h"
+#include "catalog/catalog.h"
 #include "connector/column_id.h"
 #include "connector/file_manifest.h"
 

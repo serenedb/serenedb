@@ -28,7 +28,7 @@
 #include "app/app_server.h"
 #include "basics/assert.h"
 #include "basics/down_cast.h"
-#include "catalog1/entry/inverted_index.h"
+#include "catalog/entry/inverted_index.h"
 #include "pg/pg_catalog/fwd.h"
 #include "pg/sql_utils.h"
 #include "pg/system_catalog.h"

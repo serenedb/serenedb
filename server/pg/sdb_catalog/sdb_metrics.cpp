@@ -30,8 +30,8 @@
 #include "basics/assert.h"
 #include "basics/down_cast.h"
 #include "basics/metrics.h"
-#include "catalog1/catalog.h"
-#include "catalog1/entry/inverted_index.h"
+#include "catalog/catalog.h"
+#include "catalog/entry/inverted_index.h"
 #include "connector/inverted_store_index.h"
 #include "search/inverted_index_storage.h"
 

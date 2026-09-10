@@ -35,7 +35,7 @@
 #include "basics/assert.h"
 #include "basics/containers/flat_hash_set.h"
 #include "basics/system-compiler.h"
-#include "catalog1/catalog.h"
+#include "catalog/catalog.h"
 #include "pg/connection_context.h"
 #include "pg/errcodes.h"
 #include "pg/sql_exception_macro.h"

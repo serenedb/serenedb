@@ -49,6 +49,18 @@
 #include "connector/functions/ts_common.hpp"
 
 namespace sdb::connector {
+
+bool TryCastExactInt64(const duckdb::Value& v, duckdb::Value& out) {
+  if (v.IsNull() || !v.type().IsNumeric() ||
+      !v.DefaultTryCastAs(duckdb::LogicalType::BIGINT, out,
+                          /*error_message=*/nullptr, /*strict=*/true)) {
+    return false;
+  }
+  duckdb::Value back;
+  return out.DefaultTryCastAs(v.type(), back,
+                              /*error_message=*/nullptr, /*strict=*/false) &&
+         duckdb::Value::NotDistinctFrom(back, v);
+}
 namespace {
 
 constexpr size_t kMaxStructuredNodes = 4096;

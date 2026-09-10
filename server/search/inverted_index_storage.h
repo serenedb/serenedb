@@ -35,7 +35,7 @@
 #include <mutex>
 #include <vector>
 
-#include "catalog1/persistence/inverted_index.h"
+#include "catalog/persistence/inverted_index.h"
 #include "connector/file_manifest.h"
 #include "search/maintenance.h"
 #include "search/tick_domain.h"

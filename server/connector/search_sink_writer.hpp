@@ -41,7 +41,7 @@
 #include "basics/containers/flat_hash_set.h"
 #include "basics/containers/node_hash_map.h"
 #include "basics/primary_key.hpp"
-#include "catalog1/entry/inverted_index.h"
+#include "catalog/entry/inverted_index.h"
 #include "connector/column_id.h"
 #include "connector/duckdb_sink_writer_base.h"
 #include "connector/index_expression.hpp"

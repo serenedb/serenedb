@@ -49,7 +49,7 @@
 #include "basics/message_buffer.h"
 #include "basics/metrics.h"
 #include "basics/static_strings.h"
-#include "catalog1/cluster.h"
+#include "catalog/cluster.h"
 #include "connector/duckdb_client_state.h"
 #include "network/cancel_registry.h"
 #include "network/connection.h"

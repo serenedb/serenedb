@@ -40,8 +40,8 @@
 #include "basics/lifecycle.h"
 #include "basics/metrics.h"
 #include "basics/system-compiler.h"
-#include "catalog1/cluster.h"
-#include "catalog1/entry/role.h"
+#include "catalog/cluster.h"
+#include "catalog/entry/role.h"
 #include "network/pg/bind_decoder.h"
 #include "network/pg/copy_eod_scanner.h"
 #include "network/pg/hba.h"
@@ -183,7 +183,10 @@ inline duckdb::optional_ptr<duckdb::TableCatalogEntry> FindCopyTable(
     }
     auto entry = schema->GetEntry(transaction, duckdb::CatalogType::TABLE_ENTRY,
                                   qname.Name());
-    return entry ? &entry->Cast<duckdb::TableCatalogEntry>() : nullptr;
+    if (!entry || entry->type != duckdb::TableCatalogEntry::Type) {
+      return nullptr;
+    }
+    return &entry->Cast<duckdb::TableCatalogEntry>();
   };
   if (!qname.Schema().empty()) {
     return lookup(qname.Schema());

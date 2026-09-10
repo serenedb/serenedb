@@ -43,8 +43,8 @@
 #include <iresearch/utils/string.hpp>
 #include <iresearch/utils/utf8_utils.hpp>
 
-#include "catalog1/entry/inverted_index.h"
-#include "catalog1/entry/tokenizer.h"
+#include "catalog/entry/inverted_index.h"
+#include "catalog/entry/tokenizer.h"
 #include "connector/functions/split_by_non_alpha.h"
 #include "connector/functions/ts_common.hpp"
 #include "connector/functions/ts_highlight.h"

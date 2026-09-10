@@ -33,8 +33,8 @@
 #include <iresearch/utils/string.hpp>
 #include <variant>
 
-#include "catalog1/catalog.h"
-#include "catalog1/entry/tokenizer.h"
+#include "catalog/catalog.h"
+#include "catalog/entry/tokenizer.h"
 #include "connector/common.h"
 #include "connector/duckdb_client_state.h"
 #include "connector/functions/search.h"

@@ -17,7 +17,7 @@ performance metrics and system events.
 ## Basics
 
 The SereneDB logging mechanism can be enabled or disabled using a special function, `enable_logging`. Logs are exposed through a
-table function named `duckdb_logs`, which can be queried like any standard table.
+table function named `sdb_logs`, which can be queried like any standard table.
 
 Example:
 
@@ -67,7 +67,7 @@ To enable multiple log types, simply pass:
 
 ### Structured Logging
 
-Some log types like `HTTP` will have an associated message schema. To make SereneDB automatically parse the message, use the `duckdb_logs_parsed()` macro. For example:
+Some log types like `HTTP` will have an associated message schema. To make SereneDB automatically parse the message, use the `sdb_logs_parsed(log_type)` macro, passing the type positionally. For example:
 
 <SqlLogicTest id="configuration/logging/index/example_007" />
 
@@ -87,7 +87,7 @@ This is a (non-exhaustive) list of the available log types in SereneDB.
 
 ### SereneDB Server Log Types
 
-Beyond the core types above, the SereneDB server (`serened`) emits its own log types from its subsystems. These types are not accepted as a filter argument to `enable_logging` (which only recognizes the core types listed earlier). Instead, enable logging without a type filter and select the subsystem you are interested in through the `type` column of `duckdb_logs` — for example `SELECT * FROM duckdb_logs WHERE type = 'Search'` to see only search-engine activity.
+Beyond the core types above, the SereneDB server (`serened`) emits its own log types from its subsystems. These types are not accepted as a filter argument to `enable_logging` (which only recognizes the core types listed earlier). Instead, enable logging without a type filter and select the subsystem you are interested in through the `type` column of `sdb_logs` — for example `SELECT * FROM sdb_logs WHERE type = 'Search'` to see only search-engine activity.
 
 | Log Type    | Description                                                                                  |
 |-------------|----------------------------------------------------------------------------------------------|
@@ -98,7 +98,7 @@ Beyond the core types above, the SereneDB server (`serened`) emits its own log t
 | `SSL`       | TLS/SSL configuration and connection events                                                  |
 | `HTTP`      | HTTP traffic (shared with the core `HTTP` type above)                                        |
 
-Server log messages that are not assigned a type fall into the default (empty) type, so they appear in `duckdb_logs` with an empty `type` and are always shown when logging is enabled without a type filter.
+Server log messages that are not assigned a type fall into the default (empty) type, so they appear in `sdb_logs` with an empty `type` and are always shown when logging is enabled without a type filter.
 
 ## Log Storages
 
@@ -112,8 +112,8 @@ the following log storage types are implemented in core SereneDB.
 | `file`      | Log to (a) csv file(s)                                    |
 
 
-Note that the `duckdb_logs` table function is automatically updated to target the currently active log storage. This means that switching
-the log storage may influence what is returned by the `duckdb_logs` function.
+Note that the `sdb_logs` table function is automatically updated to target the currently active log storage. This means that switching
+the log storage may influence what is returned by the `sdb_logs` function.
 
 ### Logging to stdout
 
@@ -148,9 +148,9 @@ and reduces the total size of the logs. To configure normalization of `file` log
 
 <SqlLogicTest id="configuration/logging/index/example_012" />
 
-Note that the difference between normalized and denormalized is typically hidden from users through the 'duckdb_logs' function,
+Note that the difference between normalized and denormalized is typically hidden from users through the 'sdb_logs' function,
 which automatically joins normalized tables into a single unified result. To illustrate, both configurations above will be
-queryable using `FROM duckdb_logs;` and will produce identical results.
+queryable using `FROM sdb_logs;` and will produce identical results.
 
 ### Buffer Size
 

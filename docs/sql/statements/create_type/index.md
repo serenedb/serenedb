@@ -33,7 +33,7 @@ Create a type alias:
 <RailroadDiagram source={RailroadSource} production="rrdiagram" />
 
 The `CREATE TYPE` clause defines a new data type available to this SereneDB instance.
-These new types can then be inspected in the [`duckdb_types` table](../../functions/duckdb_table_functions.md#duckdb_types).
+These new types can then be inspected in the [`sdb_types` table](../../functions/metadata.md#sdb_types).
 
 ## Limitations
 

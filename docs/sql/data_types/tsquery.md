@@ -22,6 +22,8 @@ A `TSQUERY` is rarely written as a literal. You normally build one of three ways
 - **A constructor function** such as [`ts_phrase`](../functions/search/full-text.md#ts_phrase), `ts_levenshtein`, `ts_between` or `to_tsquery`. See the [function reference](../functions/search/full-text.md).
 - **A cast** that changes how a string is interpreted: `'text'::tokenize('dictionary')` analyzes with a named dictionary (`'keyword'` for an exact, un-analyzed token), and `query::boost(factor)` scales its score contribution.
 
+Further modifiers ride on a `TSQUERY` value the same way: `::slop(N)` widens a phrase, `::score(scorer)` scores one subtree with a scorer of its own (`::score(NULL)` excludes it from scoring) and `::merge(policy)` sets how a boolean node combines its branches. Because they attach to the value rather than to the predicate, they survive being passed through a constructor such as [`ts_any`](../functions/search/full-text.md#ts_any) or bound as a statement parameter. See [Per-node score control](../functions/search/scoring.md#per-node).
+
 <SqlLogicTest id="sql/data_types/tsquery/example_001" />
 
 ## Composing queries

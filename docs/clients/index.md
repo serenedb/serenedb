@@ -6,7 +6,7 @@ split: page
 
 # Apps & Clients
 
-Use SereneDB applications, or connect with any PostgreSQL-compatible client or driver through the PostgreSQL wire protocol.
+Use SereneDB applications, or connect with any PostgreSQL-compatible client or driver through the PostgreSQL wire protocol. Framework integrations build higher-level features — such as a LangChain vector store — on the same protocol.
 
 ## Apps
 
@@ -26,6 +26,12 @@ Use SereneDB applications, or connect with any PostgreSQL-compatible client or d
 | C# | Npgsql | 8.0.4 | Full | [Guide](./csharp.md) |
 | Rust | tokio-postgres | 0.7.12 | Full | [Guide](./rust.md) |
 | R | RPostgres | 1.4.7 | Full | [Guide](./r.md) |
+
+## Frameworks & Integrations
+
+| Framework | Package | Purpose | Guide |
+|---|---|---|---|
+| LangChain (Python) | `langchain-serenedb` | Vector store: embeddings, metadata filtering, hybrid BM25 + vector retrieval | [Guide](./langchain-serenedb/index.md) |
 
 ## Tools
 

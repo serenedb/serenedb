@@ -15,7 +15,7 @@ Use the `geojson` dictionary template on a `JSON` column holding GeoJSON. The co
 
 <SqlLogicTest id="sql/indexes/inverted/geospatial-search/example_001" />
 
-The `geojson` template indexes `Point`, `Polygon` and other GeoJSON geometries. GeoJSON coordinates are `[longitude, latitude]`. A `geopoint` template is also available for extracting a point from latitude/longitude fields of a JSON object, and the `geojson` template accepts `coding = 's2point'` to index points via S2 cell coverings.
+The `geojson` template indexes `Point`, `LineString`, `Polygon`, `MultiPoint`, `MultiLineString` and `MultiPolygon` geometries; `GeometryCollection` is rejected. GeoJSON coordinates are `[longitude, latitude]`. Each geometry is reduced to [S2](http://s2geometry.io/) cell-ID terms — a cell covering for a shape, one ancestor cell per level for a point. A query shape is covered the same way, so rows match when their cells overlap. A `geopoint` template is also available for extracting a point from latitude/longitude fields of a JSON object, and the `geojson` template accepts `coding = 's2point'` to store a compact S2 encoding of each geometry instead of the source value.
 
 ### Indexing a `GEOMETRY` column
 

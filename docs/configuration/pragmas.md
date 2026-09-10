@@ -283,7 +283,7 @@ For example, to disable `filter_pushdown` and `statistics_propagation`, run:
 
 <SqlLogicTest id="configuration/pragmas/example_046" />
 
-The available optimizations can be queried using the [`duckdb_optimizers()` table function](../sql/functions/duckdb_table_functions.md#duckdb_optimizers).
+The available optimizations can be queried using the [`sdb_optimizers()` table function](../sql/functions/metadata.md#sdb_optimizers).
 
 To re-enable the optimizers, run:
 

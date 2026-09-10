@@ -112,6 +112,8 @@ Analyze `text` into a query using a chosen dictionary, overriding the column's d
 
 **How it works.** The one-argument form analyzes `text` with the same dictionary as the column it is matched against, so the query and the index agree on casing, stemming and stop-words. Naming a dictionary forces a specific analyzer — useful when you want, say, exact `'keyword'` matching against a column that is otherwise stemmed. Multi-token output is combined with `OR`.
 
+**Other value modifiers.** `::score(scorer)` and `::merge(policy)` change how a subtree scores rather than what it matches; see [Per-node score control](./scoring.md#per-node).
+
 **`::tokenize` cast.** The cast `'text'::tokenize('dictionary')` is exactly equivalent to `ts_tokenize('text', 'dictionary')` and reads naturally inline — for example `WHERE body @@ 'Running'::tokenize('exact')`. The cast **requires** a dictionary name (use `'keyword'` to bypass analysis); there is no no-argument cast form.
 
 | Query | Matches `id` | Why |
@@ -765,6 +767,7 @@ Match rows by the nullness of an indexed column.
 | :--- | :--- |
 | [`ts_lexize(dictionary, text)`](#ts_lexize) | Return the tokens a dictionary produces for `text`. |
 | [`ts_split_by_non_alpha(text [, to_lower])`](#ts_split_by_non_alpha) | Split `text` on runs of non-alphanumeric characters. |
+| [`minhash(tokens, num_hashes)`](#minhash) | Reduce a token list to a MinHash signature of at most `num_hashes` components. |
 
 #### `ts_lexize(dictionary, text)` {#ts_lexize}
 
@@ -779,7 +782,7 @@ Return the tokens a dictionary produces for `text` — the tool for inspecting a
 
 | Input | Tokens | Why |
 | :--- | :--- | :--- |
-| `ts_lexize('en', 'Quick BROWN')` | `{quick, brown}` | The `en` text dictionary lower-cases and splits on whitespace. |
+| `ts_lexize('en', 'Quick BROWN')` | `{quick, brown}` | The `en` text dictionary splits at word boundaries and lower-cases each word. |
 | `ts_lexize('bigram', 'help')` | `{he, el, lp}` | The `bigram` n-gram dictionary emits overlapping 2-grams. |
 
 <SqlLogicTest id="sql/functions/full_text_search/ts_lexize" />
@@ -805,6 +808,17 @@ A token is a maximal run of `[A-Za-z0-9]`; every other character — punctuation
 | `ts_split_by_non_alpha('The Quick-Brown FOX 2024', true)` | `true` | `{the,quick,brown,fox,2024}` |
 
 <SqlLogicTest id="sql/functions/full_text_search/ts_split_by_non_alpha" />
+
+#### `minhash(tokens, num_hashes)` {#minhash}
+
+Reduce a list of tokens to a [MinHash](../../statements/create_text_search_dictionary/minhash/index.md) signature and return it as a `LIST(BLOB)`. Two documents that share most of their tokens share most of their signature, so the number of matching components estimates the Jaccard similarity of their token sets.
+
+| Parameter | Type | Default | Meaning |
+| :--- | :--- | :--- | :--- |
+| `tokens` | `LIST(VARCHAR)` or `LIST(BLOB)` | — | The token set to summarize. A `NULL` list yields `NULL`; `NULL` elements are skipped. |
+| `num_hashes` | `INTEGER` | — | Signature width. Must be a foldable constant and `>= 1`, or the query fails when it is bound. |
+
+Every element is hashed to a 64-bit value and the `num_hashes` smallest distinct hashes are kept, each returned as 8 bytes. The result depends only on which distinct tokens the input holds, not on their order or their frequency, and it is shorter than `num_hashes` when the input holds fewer distinct tokens. The components are opaque hashes, so match whole signatures — index the signature as an expression, or build it in the `expression` of a [`sql`](../../statements/create_text_search_dictionary/sql.md) dictionary, and compare with [`ts_any`](#ts_any) where `min_match` is the similarity threshold. The [`minhash` page](../../statements/create_text_search_dictionary/minhash/index.md) works both shapes through.
 
 ## Coming from Elasticsearch {#mapping}
 
@@ -840,7 +854,7 @@ Elasticsearch features without a direct SereneDB equivalent, and what to use ins
 | [`constant_score`](https://www.elastic.co/guide/en/elasticsearch/reference/current/query-dsl-constant-score-query.html) | none; `ORDER BY` a literal, or `raw_boost` (see [Ranking](../../indexes/inverted/ranking.md)) |
 | [`boosting`](https://www.elastic.co/guide/en/elasticsearch/reference/current/query-dsl-boosting-query.html) (`negative_boost`) | none; raise a clause with [`^`](#a--factor-boost) or exclude with [`!!`](#-a-not) |
 | [`match_phrase_prefix`](https://www.elastic.co/guide/en/elasticsearch/reference/current/query-dsl-match-query-phrase-prefix.html) / `match_bool_prefix` | combine [`ts_phrase`](#ts_phrase) with [`ts_starts_with`](#ts_starts_with) |
-| [`more_like_this`](https://www.elastic.co/guide/en/elasticsearch/reference/current/query-dsl-mlt-query.html) | none; use vector similarity ([Vector Search](../../indexes/inverted/vector-search.md)) |
+| [`more_like_this`](https://www.elastic.co/guide/en/elasticsearch/reference/current/query-dsl-mlt-query.html) | none; use [`minhash`](#minhash) signatures or vector similarity ([Vector Search](../../indexes/inverted/vector-search.md)) |
 
 ## See also
 

@@ -161,11 +161,11 @@ For compatibility with PostgreSQL full-text search, SereneDB accepts the familia
 
 ## Highlighting {#highlighting}
 
-[`ts_highlight`](../../functions/search/highlighting.md) wraps matched terms in markup. Its standalone form takes a text and an array of start/end character offsets (such as those produced by `ts_offsets`); the default markup is `<b>...</b>`, and `StartSel`/`StopSel` options override it:
+[`ts_highlight`](../../functions/search/highlighting.md) wraps matched terms in markup. Its standalone form takes a text and an array of start/end byte offsets (such as those produced by `ts_offsets`); the default markup is `<b>...</b>`, and `StartSel`/`StopSel` options override it:
 
 <SqlLogicTest id="sql/indexes/inverted/full-text-search/example_026" />
 
-[`ts_offsets`](../../functions/search/highlighting.md) returns the character offsets of the matched tokens as interleaved `start, end` pairs — the building block for custom highlighting in the client. It requires `offset` to be enabled on the column:
+[`ts_offsets`](../../functions/search/highlighting.md) returns the byte offsets of the matched tokens as interleaved `start, end` pairs — the building block for custom highlighting in the client. Enabling `offset` on the column stores those offsets in the index; without it they are recomputed for each matching row:
 
 <SqlLogicTest id="sql/indexes/inverted/full-text-search/example_027" />
 

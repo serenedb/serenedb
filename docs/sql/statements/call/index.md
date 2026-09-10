@@ -13,7 +13,7 @@ The `CALL` statement invokes the given [table function](../../query_syntax/from_
 
 ## Examples
 
-Invoke the 'duckdb_functions' table function:
+Invoke the 'sdb_functions' table function:
 
 <SqlLogicTest id="sql/statements/call/index/example_001" />
 

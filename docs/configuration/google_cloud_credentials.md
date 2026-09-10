@@ -61,7 +61,7 @@ Open `key.json` and copy three of its fields into a secret. The `private_key` va
     Paste the key inside plain <code>'...'</code> quotes. PostgreSQL's escape-string syntax (<code>E'...'</code>) would consume the <code>\n</code> sequences and corrupt the key.
 </DocCallout>
 
-`PRIVATE_KEY_ID` is optional — it tells Google which of the account's keys (up to 10 can exist, e.g. during rotation) signed the request. `TOKEN_URI` (defaults to Google's token endpoint) and `OAUTH2_SCOPE` (defaults to `https://www.googleapis.com/auth/cloud-platform`) are also accepted. The `private_key` is stored redacted: it never appears in `duckdb_secrets()` output or catalog dumps.
+`PRIVATE_KEY_ID` is optional — it tells Google which of the account's keys (up to 10 can exist, e.g. during rotation) signed the request. `TOKEN_URI` (defaults to Google's token endpoint) and `OAUTH2_SCOPE` (defaults to `https://www.googleapis.com/auth/cloud-platform`) are also accepted. The `private_key` is stored redacted: it never appears in `sdb_secrets()` output or catalog dumps.
 
 ## Attached service account
 

@@ -32,7 +32,7 @@ Each view below describes one facet of the catalog, and you can query it like an
 
 By default these views also include SereneDB's internal objects, which live in the `information_schema` and `pg_catalog` schemas. To list only your own objects, exclude those system schemas, for example `WHERE table_schema NOT IN ('information_schema', 'pg_catalog')`. See the [Examples](#examples) below for common queries.
 
-Because these views follow the SQL standard, the same queries run unchanged against PostgreSQL, which makes them a portable choice for database tools, ORMs and migration scripts. Where you need SereneDB-specific metadata that the standard does not cover — such as internal object details or storage information — use the native [Metadata Functions](functions/duckdb_table_functions.md) instead.
+Because these views follow the SQL standard, the same queries run unchanged against PostgreSQL, which makes them a portable choice for database tools, ORMs and migration scripts. Where you need SereneDB-specific metadata that the standard does not cover — such as internal object details or storage information — use the native [Metadata Functions](functions/metadata.md) instead.
 
 Following the SQL standard, the views use a small set of domain types (`sql_identifier`, `character_data`, `cardinal_number` and `yes_or_no`) rather than SereneDB's native types. In particular, the boolean-style columns (for example `is_nullable` and `is_updatable`) return the strings `'YES'` and `'NO'` rather than `BOOLEAN` values, so compare against `'YES'`/`'NO'` when filtering on them.
 
@@ -206,4 +206,4 @@ Retrieve the definition of a view:
 
 ## See Also
 
-SereneDB also provides native introspection through the [Metadata Functions](functions/duckdb_table_functions.md) and the [Catalog Functions](functions/catalog.md). These often expose additional SereneDB-specific details and internal objects that the SQL-standard `information_schema` views omit.
+SereneDB also provides native introspection through the [Metadata Functions](functions/metadata.md) and the [Catalog Functions](functions/catalog.md). These often expose additional SereneDB-specific details and internal objects that the SQL-standard `information_schema` views omit.

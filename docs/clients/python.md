@@ -75,3 +75,7 @@ with conn.cursor() as cur:
 ```python
 conn.close()
 ```
+
+## LangChain
+
+For LangChain applications, SereneDB ships a vector store integration that builds on psycopg 3: see [langchain-serenedb](./langchain-serenedb/index.md).

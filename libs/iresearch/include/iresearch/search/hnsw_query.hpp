@@ -32,8 +32,6 @@
 
 namespace irs {
 
-// The graph walk is a batch: RunSearch() returns the whole result, so every
-// plan shape is served by replaying that hit list rather than by an iterator.
 class HnswQuery : public QueryBuilderImpl<HnswQuery> {
  public:
   HnswQuery(const SubReader& segment, std::shared_ptr<const HnswData> data,
@@ -74,8 +72,6 @@ class HnswQuery : public QueryBuilderImpl<HnswQuery> {
   bool _inclusive;
 };
 
-// An hnsw graph walk cannot honour a pushed predicate, so a filter must be
-// refused rather than silently dropped.
 void HnswRefuseFilter(const search::TableFilter* table);
 
 }  // namespace irs

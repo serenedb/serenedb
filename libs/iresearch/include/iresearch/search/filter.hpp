@@ -84,6 +84,7 @@ enum class QueryKind : uint32_t {
   Term,
   Terms,
   Boolean,
+  Phrase,
 };
 
 class QueryBuilder : public memory::Managed {
@@ -92,17 +93,26 @@ class QueryBuilder : public memory::Managed {
 
   QueryBuilder(const SubReader& segment) noexcept
     : _segment{segment},
-      _estimate_max{static_cast<uint32_t>(segment.docs_count())} {}
+      _estimate_max{static_cast<uint32_t>(segment.docs_count())},
+      _estimate_matches{_estimate_max},
+      _postings{_estimate_max} {}
 
   QueryBuilder(const SubReader& segment, uint32_t estimate,
                QueryKind kind) noexcept
-    : _segment{segment}, _estimate_max{estimate}, _kind{kind} {
+    : _segment{segment},
+      _estimate_max{estimate},
+      _estimate_matches{estimate},
+      _postings{estimate},
+      _kind{kind} {
     SDB_ASSERT(estimate <= segment.docs_count());
   }
 
   const SubReader& Segment() const noexcept { return _segment; }
   QueryKind Kind() const noexcept { return _kind; }
   uint32_t EstimateMax() const noexcept { return _estimate_max; }
+  uint32_t EstimateMatches() const noexcept { return _estimate_matches; }
+  uint64_t Postings() const noexcept { return _postings; }
+  uint32_t Leaves() const noexcept { return _leaves; }
 
   void SetStats(search::StatsRecord stats) noexcept { _stats = stats; }
 
@@ -152,6 +162,9 @@ class QueryBuilder : public memory::Managed {
  protected:
   const SubReader& _segment;
   uint32_t _estimate_max = 0;
+  uint32_t _estimate_matches = 0;
+  uint64_t _postings = 0;
+  uint32_t _leaves = 1;
   QueryKind _kind = QueryKind::Other;
 
  private:

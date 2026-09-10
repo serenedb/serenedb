@@ -145,6 +145,25 @@ uint64_t HeadEstimate(std::span<const Term> terms,
                                     : filters.front()->EstimateMax();
 }
 
+inline constexpr uint64_t kPhraseCandidateShare = 16;
+
+inline uint64_t ChildCandidates(const QueryBuilder& child) noexcept {
+  const uint64_t docs = child.EstimateMax();
+  if (child.Kind() != QueryKind::Phrase ||
+      docs * kPhraseCandidateShare >= child.Segment().docs_count()) {
+    return docs;
+  }
+  return std::max<uint64_t>(
+    1, uint64_t{child.EstimateMatches()} / kPhraseCandidateShare);
+}
+
+template<typename Term>
+uint64_t HeadCandidates(std::span<const Term> terms,
+                        std::span<const QueryBuilder::ptr> filters) noexcept {
+  return HeadIsTerm(terms, filters) ? CookieOf(terms.front()).docs_count
+                                    : ChildCandidates(*filters.front());
+}
+
 inline Terms UniformityOf(const TermReader& field,
                           const Scorer* scorer) noexcept {
   if (!FreqOf(field) || !ScoresPerDoc(scorer)) {

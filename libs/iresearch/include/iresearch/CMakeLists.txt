@@ -151,18 +151,9 @@ set(IResearch_core_sources
     ./search/count/make_hnsw.cpp
     ./search/count/make_ivf.cpp
     ./search/count/make_constant.cpp
-    ./search/count/make_bitset_disjunction.cpp
-    ./search/count/make_window_disjunction.cpp
-    ./search/count/make_bitset_conjunction.cpp
-    ./search/count/make_window_conjunction.cpp
-    ./search/count/make_sparse_conjunction.cpp
-    ./search/count/make_bitset_exclusion.cpp
-    ./search/count/make_window_exclusion.cpp
-    ./search/count/make_sparse_exclusion.cpp
+    ./search/count/make_boolean.cpp
     ./search/count/make_subtract_conjunction.cpp
     ./search/count/make_subtract_disjunction.cpp
-    ./search/count/make_bits_threshold.cpp
-    ./search/count/make_count_threshold.cpp
     ./search/count/make_fixed_phrase.cpp
     ./search/count/make_fixed_phrase_intervals.cpp
     ./search/count/make_fixed_phrase_slop.cpp
@@ -185,22 +176,8 @@ set(IResearch_core_sources
     ./search/lead/make_posting_scored.cpp
     ./search/lead/make_all_docs.cpp
     ./search/lead/make_all_scored.cpp
-    ./search/lead/make_bitset_disjunction_docs.cpp
-    ./search/lead/make_window_disjunction_docs.cpp
-    ./search/lead/make_window_disjunction_scored.cpp
-    ./search/lead/make_bitset_conjunction_docs.cpp
-    ./search/lead/make_window_conjunction_docs.cpp
-    ./search/lead/make_sparse_conjunction_docs.cpp
-    ./search/lead/make_sparse_conjunction_scored.cpp
-    ./search/lead/make_bitset_exclusion_docs.cpp
-    ./search/lead/make_window_exclusion_docs.cpp
-    ./search/lead/make_sparse_exclusion_docs.cpp
-    ./search/lead/make_sparse_exclusion_scored.cpp
-    ./search/lead/make_bits_threshold_docs.cpp
-    ./search/lead/make_bits_threshold_scored.cpp
-    ./search/lead/make_count_threshold_docs.cpp
-    ./search/lead/make_count_threshold_scored.cpp
-    ./search/lead/make_sparse_boost_scored.cpp
+    ./search/lead/make_boolean.cpp
+    ./search/lead/make_boolean_scored.cpp
     ./search/lead/make_fixed_phrase_docs.cpp
     ./search/lead/make_fixed_phrase_scored.cpp
     ./search/lead/make_fixed_phrase_intervals_docs.cpp
@@ -244,15 +221,10 @@ set(IResearch_core_sources
     ./search/probe/make_single_posting_scored.cpp
     ./search/probe/make_all_docs.cpp
     ./search/probe/make_all_scored.cpp
-    ./search/probe/make_bitset_disjunction_docs.cpp
-    ./search/probe/make_sparse_disjunction_scored.cpp
-    ./search/probe/make_sparse_conjunction_docs.cpp
-    ./search/probe/make_sparse_conjunction_scored.cpp
-    ./search/probe/make_sparse_threshold_docs.cpp
-    ./search/probe/make_sparse_threshold_scored.cpp
-    ./search/probe/make_sparse_exclusion_docs.cpp
-    ./search/probe/make_sparse_exclusion_scored.cpp
-    ./search/probe/make_sparse_boost_scored.cpp
+    ./search/probe/make_boolean.cpp
+    ./search/probe/make_boolean_sparse.cpp
+    ./search/probe/make_boolean_scored.cpp
+    ./search/probe/make_boolean_sparse_scored.cpp
     ./search/probe/make_fixed_phrase_docs.cpp
     ./search/probe/make_fixed_phrase_scored.cpp
     ./search/probe/make_fixed_phrase_intervals_docs.cpp
@@ -287,22 +259,8 @@ set(IResearch_core_sources
     ./search/fill/make_single_posting_scored.cpp
     ./search/fill/make_all_docs.cpp
     ./search/fill/make_all_scored.cpp
-    ./search/fill/make_bitset_disjunction_docs.cpp
-    ./search/fill/make_window_disjunction_docs.cpp
-    ./search/fill/make_window_disjunction_scored.cpp
-    ./search/fill/make_bitset_conjunction_docs.cpp
-    ./search/fill/make_window_conjunction_docs.cpp
-    ./search/fill/make_sparse_conjunction_docs.cpp
-    ./search/fill/make_sparse_conjunction_scored.cpp
-    ./search/fill/make_bitset_exclusion_docs.cpp
-    ./search/fill/make_window_exclusion_docs.cpp
-    ./search/fill/make_sparse_exclusion_docs.cpp
-    ./search/fill/make_sparse_exclusion_scored.cpp
-    ./search/fill/make_bits_threshold_docs.cpp
-    ./search/fill/make_bits_threshold_scored.cpp
-    ./search/fill/make_count_threshold_docs.cpp
-    ./search/fill/make_count_threshold_scored.cpp
-    ./search/fill/make_sparse_boost_scored.cpp
+    ./search/fill/make_boolean.cpp
+    ./search/fill/make_boolean_scored.cpp
     ./search/fill/make_fixed_phrase_docs.cpp
     ./search/fill/make_fixed_phrase_scored.cpp
     ./search/fill/make_fixed_phrase_intervals_docs.cpp
@@ -335,16 +293,7 @@ set(IResearch_core_sources
     ./search/docs/make_posting.cpp
     ./search/docs/make_single_posting.cpp
     ./search/docs/make_all.cpp
-    ./search/docs/make_bitset_disjunction.cpp
-    ./search/docs/make_window_disjunction.cpp
-    ./search/docs/make_bitset_conjunction.cpp
-    ./search/docs/make_window_conjunction.cpp
-    ./search/docs/make_sparse_conjunction.cpp
-    ./search/docs/make_bitset_exclusion.cpp
-    ./search/docs/make_window_exclusion.cpp
-    ./search/docs/make_sparse_exclusion.cpp
-    ./search/docs/make_bits_threshold.cpp
-    ./search/docs/make_count_threshold.cpp
+    ./search/docs/make_boolean.cpp
     ./search/docs/make_fixed_phrase.cpp
     ./search/docs/make_fixed_phrase_intervals.cpp
     ./search/docs/make_fixed_phrase_slop.cpp
@@ -364,13 +313,8 @@ set(IResearch_core_sources
     ./search/scored/make_posting.cpp
     ./search/scored/make_single_posting.cpp
     ./search/scored/make_all.cpp
-    ./search/scored/make_window_disjunction.cpp
-    ./search/scored/make_sparse_conjunction.cpp
+    ./search/scored/make_boolean.cpp
     ./search/scored/make_boosted_posting.cpp
-    ./search/scored/make_sparse_exclusion.cpp
-    ./search/scored/make_window_exclusion.cpp
-    ./search/scored/make_bits_threshold.cpp
-    ./search/scored/make_count_threshold.cpp
     ./search/scored/make_fixed_phrase.cpp
     ./search/scored/make_fixed_phrase_intervals.cpp
     ./search/scored/make_fixed_phrase_slop.cpp
@@ -390,12 +334,7 @@ set(IResearch_core_sources
     ./search/top/make_posting.cpp
     ./search/top/make_single_posting.cpp
     ./search/top/make_all.cpp
-    ./search/top/make_window_disjunction.cpp
-    ./search/top/make_sparse_conjunction.cpp
-    ./search/top/make_sparse_exclusion.cpp
-    ./search/top/make_window_exclusion.cpp
-    ./search/top/make_bits_threshold.cpp
-    ./search/top/make_count_threshold.cpp
+    ./search/top/make_boolean.cpp
     ./search/top/make_fixed_phrase.cpp
     ./search/top/make_fixed_phrase_intervals.cpp
     ./search/top/make_fixed_phrase_slop.cpp
@@ -413,8 +352,9 @@ set(IResearch_core_sources
     ./search/top/make_pruned_posting.cpp
     ./search/top/make_fixed_phrase_pruned.cpp
     ./search/top/make_fixed_phrase_intervals_pruned.cpp
-    ./search/top/make_max_score_disjunction.cpp
-    ./search/top/make_wand_conjunction.cpp
+    ./search/top/make_pruned_disjunction.cpp
+    ./search/top/make_pruned_conjunction.cpp
+    ./search/top/make_pruned_conjunction_nested.cpp
     ./search/multiterm_query.cpp
     ./search/term_query.cpp
     ./search/boolean_filter.cpp

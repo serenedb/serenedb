@@ -21,18 +21,20 @@
 #pragma once
 
 #include "basics/down_cast.h"
+#include "basics/empty.hpp"
+#include "iresearch/search/common/boolean_groups.hpp"
 #include "iresearch/search/common/collect.hpp"
 #include "iresearch/search/common/plan.hpp"
 #include "iresearch/search/fill/all_docs.hpp"
 #include "iresearch/search/fill/set_leaves.hpp"
 #include "iresearch/search/fill/walk.hpp"
 #include "iresearch/search/lead/all_docs.hpp"
+#include "iresearch/search/lead/boolean_window.hpp"
 #include "iresearch/search/lead/two_phase_docs.hpp"
 #include "iresearch/search/lead/wildcard_ngram_slots_docs.hpp"
-#include "iresearch/search/lead/window_disjunction_docs.hpp"
 #include "iresearch/search/multiterm_query.hpp"
 #include "iresearch/search/probe/all_docs.hpp"
-#include "iresearch/search/probe/sparse_disjunction_docs.hpp"
+#include "iresearch/search/probe/leaves.hpp"
 #include "iresearch/search/probe/two_phase_docs.hpp"
 #include "iresearch/search/probe/wildcard_ngram_slots_docs.hpp"
 #include "iresearch/search/term_query.hpp"
@@ -142,7 +144,7 @@ Result MakeWildcardNGram(const WildcardNGramQuery& query,
   if constexpr (kProbed) {
     return ResolveInput(*DocOf(*field), [&]<typename Input> -> Result {
       using Leaf = PostingProbe<Input>;
-      return make.template operator()<probe::SparseDisjunctionDocs<Leaf>>(
+      return make.template operator()<probe::OrLeaves<Leaf>>(
         terms.size(), [&](Leaf& leaf, size_t i) {
           leaf.Prepare(terms[i].cookie, *DocOf(*field), LayoutOf(*field),
                        BoundsOf(*field));
@@ -151,13 +153,18 @@ Result MakeWildcardNGram(const WildcardNGramQuery& query,
   } else {
     return ResolveInput(*DocOf(*field), [&]<typename Input> -> Result {
       using Leaf = PostingFill<Input>;
-      using Node = lead::WindowDisjunctionDocs<fill::SetLeaves<Leaf>>;
+      using Optional = OrGroup<fill::SetLeaves<Leaf>>;
+      using Node =
+        lead::BooleanWindow<utils::Empty, utils::Empty, Optional, utils::Empty>;
       return make.template operator()<Node>(
-        std::piecewise_construct,
-        std::forward_as_tuple(terms.size(), [&](Leaf& leaf, size_t i) {
-          leaf.Prepare(terms[i].cookie, *DocOf(*field), BoundsOf(*field),
-                       FreqOf(*field));
-        }));
+        std::piecewise_construct, std::forward_as_tuple(),
+        std::forward_as_tuple(),
+        std::forward_as_tuple(terms.size(),
+                              [&](Leaf& leaf, size_t i) {
+                                leaf.Prepare(terms[i].cookie, *DocOf(*field),
+                                             BoundsOf(*field), FreqOf(*field));
+                              }),
+        std::forward_as_tuple());
     });
   }
 }

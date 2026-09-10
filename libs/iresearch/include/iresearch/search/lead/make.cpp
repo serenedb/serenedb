@@ -35,6 +35,7 @@
 #include "iresearch/search/common/collect.hpp"
 #include "iresearch/search/common/phrase_of.hpp"
 #include "iresearch/search/common/scored_context.hpp"
+#include "iresearch/search/lead/make_boolean.hpp"
 #include "iresearch/search/lead/plan.hpp"
 #include "iresearch/search/multiterm_query.hpp"
 #include "iresearch/search/ngram_similarity_query.hpp"
@@ -45,92 +46,6 @@
 #include "iresearch/search/wildcard_ngram_filter.hpp"
 
 namespace irs::lead {
-
-Node::ptr MakeConjunctionDocs(std::span<const PostingClause> terms,
-                              std::span<const QueryBuilder::ptr> filters,
-                              const SubReader& segment) {
-  if (terms.empty() && filters.empty()) {
-    return MakeAllDocs(segment);
-  }
-  if (auto folded = MakeBitsetConjunctionDocs(terms, filters, segment)) {
-    return folded;
-  }
-  if (auto windowed = MakeWindowConjunctionDocs(terms, filters, segment)) {
-    return windowed;
-  }
-  return MakeSparseConjunctionDocs(terms, filters, segment);
-}
-
-Node::ptr MakeDisjunctionDocs(std::span<const PostingClause> terms,
-                              std::span<const QueryBuilder::ptr> filters,
-                              const SubReader& segment) {
-  SDB_ASSERT(terms.size() + filters.size() > 1);
-  if (auto folded = MakeBitsetDisjunctionDocs(terms, filters, segment)) {
-    return folded;
-  }
-  return MakeWindowDisjunctionDocs(terms, filters, segment);
-}
-
-Node::ptr MakeThresholdDocs(std::span<const PostingClause> terms,
-                            std::span<const QueryBuilder::ptr> filters,
-                            const SubReader& segment, uint32_t min_match) {
-  SDB_ASSERT(min_match > 1);
-  if (min_match > search::kBitplaneMaxMatch) {
-    if (auto counted =
-          MakeCountThresholdDocs(terms, filters, segment, min_match)) {
-      return counted;
-    }
-  }
-  return MakeBitsThresholdDocs(terms, filters, segment, min_match);
-}
-
-Node::ptr MakeRequiredDocs(std::span<const PostingClause> must,
-                           std::span<const QueryBuilder::ptr> must_filters,
-                           std::span<const PostingClause> should,
-                           std::span<const QueryBuilder::ptr> should_filters,
-                           uint32_t min_should_match,
-                           const SubReader& segment) {
-  if (min_should_match == 0) {
-    return MakeConjunctionDocs(must, must_filters, segment);
-  }
-  if (must.empty() && must_filters.empty()) {
-    return min_should_match == 1
-             ? MakeDisjunctionDocs(should, should_filters, segment)
-             : MakeThresholdDocs(should, should_filters, segment,
-                                 min_should_match);
-  }
-  auto other = probe::BuildOptionalProbe(
-    should, should_filters, min_should_match, segment,
-    search::IncludeCandidates(must, must_filters, segment));
-  if (!other) {
-    return {};
-  }
-  return MakeSparseConjunctionWithDocs(must, must_filters, segment,
-                                       std::move(other));
-}
-
-Node::ptr MakeExclusionDocs(std::span<const PostingClause> must,
-                            std::span<const QueryBuilder::ptr> must_filters,
-                            std::span<const PostingClause> should,
-                            std::span<const QueryBuilder::ptr> should_filters,
-                            uint32_t min_should_match,
-                            std::span<const PostingClause> excludes,
-                            std::span<const QueryBuilder::ptr> exclude_filters,
-                            const SubReader& segment) {
-  if (auto folded = MakeBitsetExclusionDocs(
-        must, must_filters, should, should_filters, min_should_match, excludes,
-        exclude_filters, segment)) {
-    return folded;
-  }
-  if (auto windowed = MakeWindowExclusionDocs(
-        must, must_filters, should, should_filters, min_should_match, excludes,
-        exclude_filters, segment)) {
-    return windowed;
-  }
-  return MakeSparseExclusionDocs(must, must_filters, should, should_filters,
-                                 min_should_match, excludes, exclude_filters,
-                                 segment);
-}
 
 Node::ptr Make(const TermQuery& query) {
   return MakePostingDocs(PostingClause{query.State()}, query.Segment());
@@ -257,90 +172,6 @@ Node::ptr Make(const WildcardNGramQuery& query, const ScoredCtx& ctx) {
                                                     .stats = record.stats,
                                                     .fetcher = ctx.fetcher,
                                                     .boost = query.Boost()}));
-}
-
-Node::ptr Make(const BooleanQuery& query) {
-  const auto& segment = query.Segment();
-  const auto excludes = query.Terms(Occur::MustNot);
-  const auto exclude_filters = query.Queries(Occur::MustNot);
-  const auto must = query.Terms(Occur::Must);
-  const auto must_filters = query.Queries(Occur::Must);
-  const auto should = query.Terms(Occur::Should);
-  const auto should_filters = query.Queries(Occur::Should);
-  const auto min_should_match = query.MinShouldMatch();
-  if (excludes.empty() && exclude_filters.empty()) {
-    return MakeRequiredDocs(must, must_filters, should, should_filters,
-                            min_should_match, segment);
-  }
-  return MakeExclusionDocs(must, must_filters, should, should_filters,
-                           min_should_match, excludes, exclude_filters,
-                           segment);
-}
-
-Node::ptr MakeRequiredScored(std::span<const PostingClause> must,
-                             std::span<const QueryBuilder::ptr> must_filters,
-                             std::span<const PostingClause> should,
-                             std::span<const QueryBuilder::ptr> should_filters,
-                             search::Terms should_uniformity,
-                             uint32_t min_should_match,
-                             const SubReader& segment, const ScoredCtx& ctx,
-                             ScoreMergeType merge, score_t absorbed) {
-  if (!(should.empty() && should_filters.empty()) && min_should_match == 0) {
-    return MakeSparseBoostScored(must, must_filters, should, should_filters,
-                                 should_uniformity, segment, ctx, merge,
-                                 absorbed);
-  }
-  if (must.empty() && must_filters.empty()) {
-    if (min_should_match == 0) {
-      return MakeAllScored(segment, absorbed);
-    }
-    if (min_should_match == 1) {
-      return MakeWindowDisjunctionScored(should, should_filters,
-                                         should_uniformity, segment, ctx, merge,
-                                         absorbed);
-    }
-    if (min_should_match > search::kBitplaneMaxMatch) {
-      if (auto counted = MakeCountThresholdScored(
-            should, should_filters, should_uniformity, segment, ctx, merge,
-            min_should_match, absorbed)) {
-        return counted;
-      }
-    }
-    return MakeBitsThresholdScored(should, should_filters, should_uniformity,
-                                   segment, ctx, merge, min_should_match,
-                                   absorbed);
-  }
-  if (min_should_match != 0) {
-    return MakeSparseConjunctionWithScored(
-      must, must_filters, should, should_filters, should_uniformity,
-      min_should_match, segment, ctx, merge, absorbed);
-  }
-  return MakeSparseConjunctionScored(must, must_filters, segment, ctx, merge,
-                                     absorbed);
-}
-
-Node::ptr Make(const BooleanQuery& query, const ScoredCtx& ctx) {
-  const auto& segment = query.Segment();
-  const auto merge = query.MergeType();
-  const auto absorbed = query.Absorbed();
-  const auto excludes = query.Terms(Occur::MustNot);
-  const auto exclude_filters = query.Queries(Occur::MustNot);
-  const auto must = query.Terms(Occur::Must);
-  const auto must_filters = query.Queries(Occur::Must);
-  const auto should = query.Terms(Occur::Should);
-  const auto should_filters = query.Queries(Occur::Should);
-  const auto should_uniformity = query.Uniformity(Occur::Should);
-  const auto min_should_match = query.MinShouldMatch();
-
-  if (!excludes.empty() || !exclude_filters.empty()) {
-    return MakeSparseExclusionScored(must, must_filters, should, should_filters,
-                                     should_uniformity, min_should_match,
-                                     excludes, exclude_filters, segment, ctx,
-                                     merge, absorbed);
-  }
-  return MakeRequiredScored(must, must_filters, should, should_filters,
-                            should_uniformity, min_should_match, segment, ctx,
-                            merge, absorbed);
 }
 
 }  // namespace irs::lead

@@ -45,7 +45,18 @@ class PruneLeaves {
     : _fetcher{fetcher},
       _leaves{size, std::forward<Init>(init)},
       _scorers{size, [this](ScoreFunction& scorer,
-                            size_t i) { scorer = _leaves[i].PrepareScore(); }},
+                            size_t i) { scorer = Scorer(_leaves[i]); }},
+      _remaining{size},
+      _suffix{size},
+      _order{size} {}
+
+  template<typename Args>
+  PruneLeaves(ColumnArgsFetcher& fetcher, size_t size,
+              std::piecewise_construct_t, Args&& args)
+    : _fetcher{fetcher},
+      _leaves{size, std::piecewise_construct, std::forward<Args>(args)},
+      _scorers{size, [this](ScoreFunction& scorer,
+                            size_t i) { scorer = Scorer(_leaves[i]); }},
       _remaining{size},
       _suffix{size},
       _order{size} {}
@@ -58,10 +69,7 @@ class PruneLeaves {
   doc_id_t AdvanceTo(doc_id_t min) {
     doc_id_t end = doc_limits::eof();
     for (auto& leaf : _leaves) {
-      const auto e = leaf.AdvanceBlock(std::max(leaf.Value(), min));
-      if (!doc_limits::eof(e)) {
-        end = std::min(end, e);
-      }
+      end = std::min(end, leaf.AdvanceBlock(min));
     }
     return end;
   }
@@ -120,6 +128,14 @@ class PruneLeaves {
   }
 
  private:
+  static ScoreFunction Scorer(Leaf& leaf) {
+    if constexpr (requires { leaf.PrepareScore(); }) {
+      return leaf.PrepareScore();
+    } else {
+      return leaf.PrepareScore(ScoreMergeType::Sum, score_t{0});
+    }
+  }
+
   ColumnArgsFetcher& _fetcher;
   search::RunOf<Leaf, N> _leaves;
   search::RunOf<ScoreFunction, N> _scorers;

@@ -38,8 +38,8 @@
 #include "iresearch/search/lead/make.hpp"
 #include "iresearch/search/lead/posting_docs.hpp"
 #include "iresearch/search/probe/impl.hpp"
+#include "iresearch/search/probe/leaves.hpp"
 #include "iresearch/search/probe/make.hpp"
-#include "iresearch/search/probe/sparse_conjunction_docs.hpp"
 
 namespace irs::search {
 
@@ -66,19 +66,76 @@ inline FillNode::ptr FillOf(const PostingClause& posting,
 }
 
 template<typename Term>
+bool CollectFills(std::span<const Term> terms,
+                  std::span<const QueryBuilder::ptr> filters,
+                  const TermReader* field, const SubReader& segment,
+                  std::vector<FillNode::ptr>& nodes) {
+  nodes.reserve(nodes.size() + terms.size() + filters.size());
+  const auto take = [&](FillNode::ptr node) {
+    if (!node) {
+      return false;
+    }
+    nodes.emplace_back(std::move(node));
+    return true;
+  };
+  return VisitOrderedOf(
+    terms, filters, false, 0, std::numeric_limits<size_t>::max(),
+    [&](const Term& term) {
+      return take(FillOf(ClauseOf(term, field), nullptr, segment));
+    },
+    [&](const QueryBuilder& child) {
+      return take(child.PlanFill({}, ScoreMergeType::Noop));
+    });
+}
+
+template<typename Term>
 uint64_t IncludeCandidates(std::span<const Term> terms,
                            std::span<const QueryBuilder::ptr> filters,
                            const SubReader& segment) noexcept {
-  uint64_t candidates = segment.docs_count();
+  const auto docs_count = static_cast<doc_id_t>(segment.docs_count());
+  uint64_t candidates = docs_count;
   if (!terms.empty()) {
     candidates =
       std::min(candidates, uint64_t{CookieOf(terms.front()).docs_count});
   }
   if (!filters.empty()) {
     SDB_ASSERT(filters.front());
-    candidates = std::min(candidates, uint64_t{filters.front()->EstimateMax()});
+    candidates = std::min(candidates, ChildCandidates(*filters.front()));
   }
   return candidates;
+}
+
+template<typename Term>
+uint64_t LeadCandidates(std::span<const Term> terms,
+                        std::span<const QueryBuilder::ptr> filters,
+                        doc_id_t docs_count) noexcept {
+  uint64_t candidates = 0;
+  for (size_t i = 0; i != terms.size(); ++i) {
+    candidates += CookieOf(terms[i]).docs_count;
+  }
+  for (const auto& filter : filters) {
+    SDB_ASSERT(filter);
+    candidates += ChildCandidates(*filter);
+  }
+  return candidates;
+}
+
+template<typename Term>
+bool DenseConjunction(std::span<const Term> terms,
+                      doc_id_t segment_docs_count) noexcept {
+  return terms.size() >= 2 && CookieOf(terms.front()).docs_count >=
+                                segment_docs_count / kDensityThresholdInverse;
+}
+
+template<typename Term>
+bool WindowTerms(std::span<const Term> terms,
+                 std::span<const QueryBuilder::ptr> filters,
+                 const TermReader* field, const IndexInput*& doc) {
+  if (terms.empty() || !filters.empty()) {
+    return false;
+  }
+  doc = DocOf(FieldOf(terms.front(), field));
+  return doc != nullptr;
 }
 
 template<typename Term>
@@ -175,7 +232,7 @@ Result BuildConjunction(std::span<const Term> terms,
             std::forward_as_tuple(CookieOf(one), *DocOf(own), LayoutOf(own),
                                   BoundsOf(own)));
         } else if constexpr (N != 0) {
-          using Tail = probe::SparseConjunctionDocs<Probe, N>;
+          using Tail = probe::AndLeaves<Probe, N>;
           return [&]<size_t... I>(std::index_sequence<I...>) {
             return make.template operator()<Head, Tail>(
               std::forward<decltype(head)>(head),
@@ -187,14 +244,13 @@ Result BuildConjunction(std::span<const Term> terms,
                                       BoundsOf(FieldOf(rest[I], field)))...));
           }(std::make_index_sequence<N>{});
         } else {
-          return make
-            .template operator()<Head, probe::SparseConjunctionDocs<Probe>>(
-              std::forward<decltype(head)>(head),
-              std::forward_as_tuple(rest.size(), [&](Probe& probe, size_t i) {
-                const auto& own = FieldOf(rest[i], field);
-                probe.Prepare(CookieOf(rest[i]), *DocOf(own), LayoutOf(own),
-                              BoundsOf(own));
-              }));
+          return make.template operator()<Head, probe::AndLeaves<Probe>>(
+            std::forward<decltype(head)>(head),
+            std::forward_as_tuple(rest.size(), [&](Probe& probe, size_t i) {
+              const auto& own = FieldOf(rest[i], field);
+              probe.Prepare(CookieOf(rest[i]), *DocOf(own), LayoutOf(own),
+                            BoundsOf(own));
+            }));
         }
       });
   };
@@ -227,7 +283,7 @@ Result BuildConjunction(std::span<const Term> terms,
             std::forward<decltype(head)>(head),
             std::forward_as_tuple(std::move(probes.front())));
         } else if constexpr (N != 0) {
-          using Tail = probe::SparseConjunctionDocs<probe::Erased, N>;
+          using Tail = probe::AndLeaves<probe::Erased, N>;
           return [&]<size_t... I>(std::index_sequence<I...>) {
             return make.template operator()<Head, Tail>(
               std::forward<decltype(head)>(head),
@@ -236,7 +292,7 @@ Result BuildConjunction(std::span<const Term> terms,
                 std::forward_as_tuple(std::move(probes[I]))...));
           }(std::make_index_sequence<N>{});
         } else {
-          using Tail = probe::SparseConjunctionDocs<probe::Erased>;
+          using Tail = probe::AndLeaves<probe::Erased>;
           return make.template operator()<Head, Tail>(
             std::forward<decltype(head)>(head),
             std::forward_as_tuple(probes.size(),

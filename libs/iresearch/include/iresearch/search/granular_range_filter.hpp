@@ -52,11 +52,6 @@ void SetGranularTerm(ByGranularRangeOptions::terms& boundary, T&& value) {
   boundary.emplace_back(std::forward<T>(value));
 }
 
-//////////////////////////////////////////////////////////////////////////////
-/// @brief convenient helper for setting granular term at a specified range
-///        boundary: one term per precision-step level, shift 0 first
-///        (sequential 'granularity_level' value)
-//////////////////////////////////////////////////////////////////////////////
 template<typename T>
 void SetGranularNumericTerm(ByGranularRangeOptions::terms& boundary, T value) {
   boundary.clear();

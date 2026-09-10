@@ -333,8 +333,13 @@ size_t Executor::HashResults() const {
     const auto q =
       static_cast<int64_t>(std::llround(static_cast<double>(h.score) * 1e3));
     hash = HashBatch(hash, &q, 1);
+    hash = HashBatch(hash, &h.doc, 1);
   }
   return hash;
+}
+
+size_t Executor::HashResultsWithCount(size_t count) const {
+  return HashBatch(HashResults(), &count, 1);
 }
 
 void Executor::PrintResults() const {

@@ -47,6 +47,15 @@ class BitsetDocs {
     return kMin + word * kBits + std::countr_zero(rest);
   }
 
+  IRS_FORCE_INLINE bool Test(doc_id_t doc) const noexcept {
+    const auto offset = doc - kMin;
+    const auto word = offset / kBits;
+    if (word >= _count) [[unlikely]] {
+      return false;
+    }
+    return ((_words[word] >> (offset % kBits)) & 1) != 0;
+  }
+
  private:
   search::BitsetStorage _set;
   const uint64_t* _words;

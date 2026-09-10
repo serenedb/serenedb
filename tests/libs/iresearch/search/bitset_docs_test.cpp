@@ -29,8 +29,8 @@
 #include "basics/memory.hpp"
 #include "iresearch/search/common/bitset_storage.hpp"
 #include "iresearch/search/common/lazy_bitset.hpp"
-#include "iresearch/search/docs/bitset.hpp"
-#include "iresearch/search/docs/window.hpp"
+#include "iresearch/search/docs/boolean_bitset.hpp"
+#include "iresearch/search/docs/boolean_window.hpp"
 #include "iresearch/search/fill/bitset_docs.hpp"
 #include "iresearch/search/fill/node.hpp"
 #include "iresearch/search/fill/walk.hpp"
@@ -143,11 +143,15 @@ class WindowFill : public irs::fill::Node {
 
 TEST(bitset_docs_test, walk_lead_first_window) {
   const std::vector<irs::doc_id_t> expected{5, 10, 4100};
-  irs::docs::Window<irs::fill::WalkDocs<irs::lead::BitsetDocs>,
-                    irs::utils::Empty, irs::utils::Empty, irs::utils::Empty>
-    root{irs::utils::Empty{}, std::piecewise_construct,
+  irs::docs::BooleanWindow<irs::fill::WalkDocs<irs::lead::BitsetDocs>,
+                           irs::utils::Empty, irs::utils::Empty,
+                           irs::utils::Empty, irs::utils::Empty>
+    root{irs::utils::Empty{},
+         std::piecewise_construct,
          std::forward_as_tuple(MakeSet(4200, expected)),
-         std::forward_as_tuple(), std::forward_as_tuple()};
+         std::forward_as_tuple(),
+         std::forward_as_tuple(),
+         std::forward_as_tuple()};
   ASSERT_EQ(expected, Emit(root, irs::doc_limits::kMinCapacity));
 }
 
@@ -667,20 +671,20 @@ TEST(bitset_docs_test, run) {
   // one batch, and then nothing
   {
     const std::vector<irs::doc_id_t> expected{3, 70, 130, 4095};
-    irs::docs::Bitset root{MakeSet(4096, expected)};
+    irs::docs::BooleanBitset root{MakeSet(4096, expected)};
     ASSERT_EQ(expected, Emit(root, irs::doc_limits::kMinCapacity));
   }
 
   // more documents than one batch holds: a word is never split across two
   {
     const auto expected = Range(1, 300);
-    irs::docs::Bitset root{MakeSet(300, expected)};
+    irs::docs::BooleanBitset root{MakeSet(300, expected)};
     ASSERT_EQ(expected, Emit(root, irs::doc_limits::kMinCapacity));
   }
 
   // a segment holding nothing
   {
-    irs::docs::Bitset root{MakeSet(300, {})};
+    irs::docs::BooleanBitset root{MakeSet(300, {})};
     ASSERT_TRUE(Emit(root, irs::doc_limits::kMinCapacity).empty());
   }
 }

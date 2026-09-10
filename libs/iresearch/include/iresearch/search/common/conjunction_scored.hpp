@@ -36,8 +36,8 @@
 #include "iresearch/search/lead/impl.hpp"
 #include "iresearch/search/lead/posting_scored.hpp"
 #include "iresearch/search/probe/impl.hpp"
+#include "iresearch/search/probe/leaves.hpp"
 #include "iresearch/search/probe/posting_scored.hpp"
-#include "iresearch/search/probe/sparse_conjunction_docs.hpp"
 namespace irs::search {
 
 template<typename Result, typename Term, typename MakeProbeClause,
@@ -54,7 +54,7 @@ Result BuildScoredConjunction(std::span<const Term> terms,
   const auto rest = head_term ? terms.subspan(1) : terms;
   const auto rest_filters = head_term ? filters : filters.subspan(1);
   const auto rest_size = rest.size() + rest_filters.size();
-  const uint64_t reach = HeadEstimate(terms, filters);
+  const uint64_t reach = HeadCandidates(terms, filters);
   const auto clause = [&](const Term& term) {
     return ClauseOf(term, field, scorer, boost);
   };
@@ -83,7 +83,7 @@ Result BuildScoredConjunction(std::span<const Term> terms,
                                   *DocOf(*posting.state.reader), segment,
                                   *posting.state.reader, args(posting)));
         } else if constexpr (N != 0) {
-          using Tail = probe::SparseConjunctionDocs<Probe, N>;
+          using Tail = probe::AndLeaves<Probe, N>;
           return [&]<size_t... I>(std::index_sequence<I...>) {
             return make.template operator()<Head, Tail>(
               std::forward<decltype(head)>(head),
@@ -95,15 +95,13 @@ Result BuildScoredConjunction(std::span<const Term> terms,
                                       args(clause(rest[I])))...));
           }(std::make_index_sequence<N>{});
         } else {
-          return make
-            .template operator()<Head, probe::SparseConjunctionDocs<Probe>>(
-              std::forward<decltype(head)>(head),
-              std::forward_as_tuple(rest.size(), [&](Probe& probe, size_t i) {
-                const auto posting = clause(rest[i]);
-                probe.Prepare(posting.state.cookie,
-                              *DocOf(*posting.state.reader), segment,
-                              *posting.state.reader, args(posting));
-              }));
+          return make.template operator()<Head, probe::AndLeaves<Probe>>(
+            std::forward<decltype(head)>(head),
+            std::forward_as_tuple(rest.size(), [&](Probe& probe, size_t i) {
+              const auto posting = clause(rest[i]);
+              probe.Prepare(posting.state.cookie, *DocOf(*posting.state.reader),
+                            segment, *posting.state.reader, args(posting));
+            }));
         }
       });
   };
@@ -134,7 +132,7 @@ Result BuildScoredConjunction(std::span<const Term> terms,
         std::forward<decltype(head)>(head),
         std::forward_as_tuple(std::move(probes.front())));
     }
-    using Tail = probe::SparseConjunctionDocs<probe::Erased>;
+    using Tail = probe::AndLeaves<probe::Erased>;
     return make.template operator()<Head, Tail>(
       std::forward<decltype(head)>(head),
       std::forward_as_tuple(probes.size(), [&](probe::Erased& leaf, size_t i) {

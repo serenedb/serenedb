@@ -73,6 +73,7 @@ class PrunedDisjunction : public Root {
         std::make_from_tuple<Excludes>(std::forward<ExcludesArgs>(excludes))},
       _admit{table},
       _docs_count{static_cast<double>(std::max<doc_id_t>(1, docs))},
+      _docs_end{std::max<doc_id_t>(1, docs)},
       _match{match} {
     if constexpr (kMinMatch) {
       SDB_ASSERT(_match.value > 1);
@@ -119,6 +120,9 @@ class PrunedDisjunction : public Root {
         }
       }
       if (_first_essential == 0) {
+        if (window_max <= _docs_end - kWindow && Saturating()) {
+          window_max = std::max(window_max, window_min + kWindow);
+        }
         _exhaustive_windows =
           std::min(2 * _exhaustive_windows, kExhaustiveWindowsMax);
       } else {
@@ -351,6 +355,14 @@ class PrunedDisjunction : public Root {
       }
     }
     return _first_essential != scored;
+  }
+
+  bool Saturating() const noexcept {
+    uint64_t postings = 0;
+    for (size_t i = _first_essential; i != _sorted.size(); ++i) {
+      postings += _sorted[i]->cost;
+    }
+    return postings >= _docs_end;
   }
 
   doc_id_t ComputeOuterWindow(doc_id_t min) {
@@ -640,6 +652,7 @@ class PrunedDisjunction : public Root {
   score_t _next_threshold = std::numeric_limits<score_t>::lowest();
   [[no_unique_address]] Admit<Table> _admit;
   const double _docs_count;
+  const doc_id_t _docs_end;
   uint32_t _promote_ticks = 0;
   doc_id_t _exhaustive_windows = kExhaustiveWindowsMin;
   [[no_unique_address]] const Match _match;

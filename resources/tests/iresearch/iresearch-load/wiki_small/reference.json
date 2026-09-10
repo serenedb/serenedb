@@ -1478,7 +1478,7 @@
   {
     "query": "battle of the bulge",
     "count": 4269122,
-    "top_100": 7739,
+    "top_100": 4338,
     "result_type": "Hash",
     "top_100_result": [
       "c53d77d8d28625dbb4857cdd9e9eba9220506d709c2381eebea538e23bfe4da9"
@@ -1838,7 +1838,7 @@
   {
     "query": "jesus as a child",
     "count": 4053767,
-    "top_100": 21955,
+    "top_100": 19424,
     "result_type": "Hash",
     "top_100_result": [
       "950a10f4bbdcf551f09b43e17c2b28c705b4a7d0f5bb2e5b88b22cd712ec094c"
@@ -2054,7 +2054,7 @@
   {
     "query": "lord of the rings",
     "count": 4269269,
-    "top_100": 25116,
+    "top_100": 25154,
     "result_type": "Hash",
     "top_100_result": [
       "29e8c2660c7eed8acd165c9a15b4b9ae689c335da54f2a70b3bac1ea42ec0246"
@@ -2594,7 +2594,7 @@
   {
     "query": "tallest trees in the world",
     "count": 4316962,
-    "top_100": 42828,
+    "top_100": 45402,
     "result_type": "Hash",
     "top_100_result": [
       "39c9a51fc0efd70e47227528b9b814beaee1a1f581771a047ec7e5757ae47547"
@@ -3134,7 +3134,7 @@
   {
     "query": "american academy of child and adolescent psychiatry",
     "count": 4068902,
-    "top_100": 27290,
+    "top_100": 27084,
     "result_type": "Hash",
     "top_100_result": [
       "0a10f0b23ac668e7da3bfcd2663772c709a3566fe11b8979208d5d1c513e964f"
@@ -7202,7 +7202,7 @@
   {
     "query": "the garden of eden",
     "count": 4269187,
-    "top_100": 28354,
+    "top_100": 25025,
     "result_type": "Hash",
     "top_100_result": [
       "05fd8d507830f484610a161a92049cbabc3e6e19a40f2ada147d5bc229089ff2"
@@ -9758,7 +9758,7 @@
   {
     "query": "the book of life",
     "count": 4270466,
-    "top_100": 12965,
+    "top_100": 12697,
     "result_type": "Hash",
     "top_100_result": [
       "6dcb72cd8c9ea99981f4dd5036780779cdac4fe747db53a30217acdbaa567418"
@@ -10766,7 +10766,7 @@
   {
     "query": "laborers international union of north america",
     "count": 3837689,
-    "top_100": 49406,
+    "top_100": 47727,
     "result_type": "Hash",
     "top_100_result": [
       "8d57f2d39f0bd021e453a51b658289a459fcd0191966816fc6dc4e629bc00ba0"
@@ -10814,7 +10814,7 @@
   {
     "query": "to be or not to be",
     "count": 3239046,
-    "top_100": 7492,
+    "top_100": 7223,
     "result_type": "Hash",
     "top_100_result": [
       "274dee33422e8deb1cc21d2cd0b1b57fb1ea5b369a8334a7d4a35425530c15ae"
@@ -10826,7 +10826,7 @@
   {
     "query": "a search engine is an information retrieval software system designed to help find information stored on one or more computer systems",
     "count": 4539182,
-    "top_100": 92311,
+    "top_100": 69863,
     "result_type": "Hash",
     "top_100_result": [
       "bae7712bf57d4765bca74f249758622ce43ac855dd39eae7db3c781556ab40ab"
@@ -12914,7 +12914,7 @@
   {
     "query": "(the world state)@2",
     "count": 1027681,
-    "top_100": 1261,
+    "top_100": 1717,
     "result_type": "Hash",
     "top_100_result": [
       "3e374e4991c856f337b9e05cc0d438a0c604a6f8ae12ee7603f6bf0c1355dfc0"
@@ -12926,7 +12926,7 @@
   {
     "query": "(the world state history)@3",
     "count": 368422,
-    "top_100": 7268,
+    "top_100": 11726,
     "result_type": "Hash",
     "top_100_result": [
       "a3835f66c3bae1b24eb0ff760436df94c65158e12e9c236aeba7fffd34643364"
@@ -17486,7 +17486,7 @@
   {
     "query": "(the world) (state history)",
     "count": 4178671,
-    "top_100": 24500,
+    "top_100": 72625,
     "result_type": "Hash",
     "top_100_result": [
       "a3835f66c3bae1b24eb0ff760436df94c65158e12e9c236aeba7fffd34643364"
@@ -17534,7 +17534,7 @@
   {
     "query": "((the world) (state history)) climate",
     "count": 4178713,
-    "top_100": 99896,
+    "top_100": 102935,
     "result_type": "Hash",
     "top_100_result": [
       "a318409bfba5214b42aad1de8c93eff982a488dfca4cd92bb03ab76e31a1c55a"

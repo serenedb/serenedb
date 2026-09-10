@@ -38,7 +38,7 @@
   {
     "query": "griffith observatory",
     "count": 15456,
-    "top_100": 8286,
+    "top_100": 8231,
     "result_type": "Hash",
     "top_100_result": [
       "f517e01a509cd60ffd7b205a386d27a384f8f98e0876d7c9cc3a55641587cf50"
@@ -110,7 +110,7 @@
   {
     "query": "vicenza italy",
     "count": 104150,
-    "top_100": 7127,
+    "top_100": 4931,
     "result_type": "Hash",
     "top_100_result": [
       "cc26a99281314e36fbf1ca54f534605157f18cebef6ab522680b01c68a0385aa"
@@ -146,7 +146,7 @@
   {
     "query": "digital scanning",
     "count": 54291,
-    "top_100": 8195,
+    "top_100": 8030,
     "result_type": "Hash",
     "top_100_result": [
       "522244b03008f9fc68950bfeba7924c76c69f200446671d690087e006dd84c8d"
@@ -182,7 +182,7 @@
   {
     "query": "plus size clothing",
     "count": 195119,
-    "top_100": 35756,
+    "top_100": 194739,
     "result_type": "Hash",
     "top_100_result": [
       "2f0a7164dd4e595d63ef4c0e9c07d27d46cfe201704569f2a50cbcc7c9a7dc19"
@@ -218,7 +218,7 @@
   {
     "query": "borders books",
     "count": 167943,
-    "top_100": 17564,
+    "top_100": 13663,
     "result_type": "Hash",
     "top_100_result": [
       "4ae4f1e8475811e7602b3c413560de53686959ebaae4a65369932a1fff89c4db"
@@ -254,7 +254,7 @@
   {
     "query": "american funds",
     "count": 612165,
-    "top_100": 8693,
+    "top_100": 6860,
     "result_type": "Hash",
     "top_100_result": [
       "6fb559ffb96a62dac61ea5f631432784ab11c865c66dda59c4b2948e6737a13f"
@@ -290,7 +290,7 @@
   {
     "query": "scottsdale az",
     "count": 7747,
-    "top_100": 5037,
+    "top_100": 5036,
     "result_type": "Hash",
     "top_100_result": [
       "492080d90c0c276d4c7630db6248548c42c97ce30987b51947626edb4492bfe5"
@@ -326,7 +326,7 @@
   {
     "query": "wisconsin attorney general",
     "count": 397913,
-    "top_100": 3493,
+    "top_100": 8947,
     "result_type": "Hash",
     "top_100_result": [
       "90a0e7e074cdc416b1f26ddd08514df7e9b4b9ae6a503076c44185cb1276840c"
@@ -362,7 +362,7 @@
   {
     "query": "the english restoration",
     "count": 4173863,
-    "top_100": 3946,
+    "top_100": 24367,
     "result_type": "Hash",
     "top_100_result": [
       "7b8f379f9f4c61386d3c654375e6a0c314843f0079cccc5b6fb1d7aa538d9447"
@@ -398,7 +398,7 @@
   {
     "query": "freelance work",
     "count": 454176,
-    "top_100": 11809,
+    "top_100": 9837,
     "result_type": "Hash",
     "top_100_result": [
       "e4c1d5025189eae4892ee777a2874ee0489b0afebd7fb5cc135d69462441c5ab"
@@ -434,7 +434,7 @@
   {
     "query": "french culinary institute",
     "count": 336808,
-    "top_100": 20935,
+    "top_100": 22201,
     "result_type": "Hash",
     "top_100_result": [
       "52a411cce7e743037c6ce9ac66f8dd9bd0bf67c7b37d8f24f062327c912102b7"
@@ -470,7 +470,7 @@
   {
     "query": "color combinations",
     "count": 61359,
-    "top_100": 11429,
+    "top_100": 10431,
     "result_type": "Hash",
     "top_100_result": [
       "2691a043dcce2d8de2a7457deae011f6f7779f66199469f29e22d33db9bdd096"
@@ -506,7 +506,7 @@
   {
     "query": "italian translation",
     "count": 151582,
-    "top_100": 7367,
+    "top_100": 6857,
     "result_type": "Hash",
     "top_100_result": [
       "6aa85d9e2c7d545f71249b8a4957eae5a9d473696383f0274ad92970287e8c00"
@@ -542,7 +542,7 @@
   {
     "query": "milwaukee newspaper",
     "count": 86776,
-    "top_100": 9004,
+    "top_100": 8924,
     "result_type": "Hash",
     "top_100_result": [
       "c7ee184f11537fbff025206ef229bbe31bc87a5b009cb984b442ec2fb7076fe3"
@@ -578,7 +578,7 @@
   {
     "query": "robert green ingersoll",
     "count": 249193,
-    "top_100": 18017,
+    "top_100": 19457,
     "result_type": "Hash",
     "top_100_result": [
       "f8106131461088b91468e29feb25b9b5a129bb1a6b3d4fe1d96fa6c033e65b22"
@@ -650,7 +650,7 @@
   {
     "query": "body painting",
     "count": 194083,
-    "top_100": 6339,
+    "top_100": 6288,
     "result_type": "Hash",
     "top_100_result": [
       "f3d6428def4651848b8a39c595a559a03bd9e49bf1071e47d4d8810eb5b103ce"
@@ -686,7 +686,7 @@
   {
     "query": "who dares wins",
     "count": 1192562,
-    "top_100": 6226,
+    "top_100": 11895,
     "result_type": "Hash",
     "top_100_result": [
       "b3bf01c04f947ba43a6a3034a6871fed05ae87b1b7ff236470bb5b585c2998e8"
@@ -722,7 +722,7 @@
   {
     "query": "west palm beach florida",
     "count": 510849,
-    "top_100": 4178,
+    "top_100": 70896,
     "result_type": "Hash",
     "top_100_result": [
       "e8b41d261358781ca2c35d59ebdc2899d5afcb0052c378fec61d779e7f39a7dc"
@@ -758,7 +758,7 @@
   {
     "query": "stone mountain",
     "count": 170364,
-    "top_100": 8583,
+    "top_100": 8340,
     "result_type": "Hash",
     "top_100_result": [
       "23044cf6668ed740a4b148ab4ea7ccb83c12ec1bc6e5d2e20c361786471077a8"
@@ -830,7 +830,7 @@
   {
     "query": "ford modeling agency",
     "count": 95654,
-    "top_100": 17189,
+    "top_100": 95099,
     "result_type": "Hash",
     "top_100_result": [
       "e327b66b61f422d1614dcbd0fc03af571c069f0198eeed38ab4fb633e546a956"
@@ -866,7 +866,7 @@
   {
     "query": "glass works",
     "count": 260381,
-    "top_100": 6244,
+    "top_100": 5737,
     "result_type": "Hash",
     "top_100_result": [
       "3372a027cc5c294a6af49ea0edfe0cbf1905a9d32e3df1b7fe1a88cdce6bc33e"
@@ -902,7 +902,7 @@
   {
     "query": "personal loan",
     "count": 217122,
-    "top_100": 6824,
+    "top_100": 6284,
     "result_type": "Hash",
     "top_100_result": [
       "d48425b0981559b3f418f9b7b9a731e9431c24643a8d4724b200c425fbc3c770"
@@ -938,7 +938,7 @@
   {
     "query": "texas state legislature",
     "count": 584269,
-    "top_100": 4483,
+    "top_100": 18403,
     "result_type": "Hash",
     "top_100_result": [
       "dee16fa124a111faf9d04ecdf1275e7a3c946da23305f47dc5652b82646b80ee"
@@ -974,7 +974,7 @@
   {
     "query": "spiritual warfare",
     "count": 46081,
-    "top_100": 20344,
+    "top_100": 19058,
     "result_type": "Hash",
     "top_100_result": [
       "1d5fba7f12c98cbb49717fad529e143f9a7bd1c21a048f4a1c179b5395767174"
@@ -1010,10 +1010,10 @@
   {
     "query": "georgia public broadcasting",
     "count": 401520,
-    "top_100": 10381,
+    "top_100": 142552,
     "result_type": "Hash",
     "top_100_result": [
-      "8c115252754a58c6454f9a0bd9c75c955871063af3745d9e59d4e96930bfa3d1"
+      "4bc83204be9d6c9051862fe9222f9a692389fa9510cddeed8b4bd3566689df2c"
     ],
     "top_100_count_result": [
       "8c115252754a58c6454f9a0bd9c75c955871063af3745d9e59d4e96930bfa3d1"
@@ -1046,7 +1046,7 @@
   {
     "query": "graffiti art",
     "count": 160168,
-    "top_100": 6484,
+    "top_100": 5129,
     "result_type": "Hash",
     "top_100_result": [
       "21d8f38353dc183ca0a651cd3b8711cce03298ff598e3a237503d28dc3fca06a"
@@ -1082,7 +1082,7 @@
   {
     "query": "texas death row",
     "count": 402259,
-    "top_100": 17349,
+    "top_100": 252891,
     "result_type": "Hash",
     "top_100_result": [
       "d8740f30c812bdd5f5a1d66dd0c1c0197433cefad424db38399503dbd426a8d8"
@@ -1118,7 +1118,7 @@
   {
     "query": "catholic answers",
     "count": 99118,
-    "top_100": 15674,
+    "top_100": 12201,
     "result_type": "Hash",
     "top_100_result": [
       "507037027b704a55606e9196640541ad14547a5d7d6d7220c3a141b0f8bfdf31"
@@ -1154,7 +1154,7 @@
   {
     "query": "interest only",
     "count": 825043,
-    "top_100": 6584,
+    "top_100": 6331,
     "result_type": "Hash",
     "top_100_result": [
       "28b86910e3089f15a79f9ee1b8480100fc83e71a5eee43be318975bf30dacc4e"
@@ -1190,7 +1190,7 @@
   {
     "query": "region iv",
     "count": 298138,
-    "top_100": 9238,
+    "top_100": 8253,
     "result_type": "Hash",
     "top_100_result": [
       "4357677f11f97a7d7be4877d6f8fcfd78007f809a4da688162b690e27d9c9eec"
@@ -1226,7 +1226,7 @@
   {
     "query": "army reserve",
     "count": 229696,
-    "top_100": 4535,
+    "top_100": 4038,
     "result_type": "Hash",
     "top_100_result": [
       "a5c73999d4914c95cdd39af015e7650c7e9e67691b041d3b227e2049f8e9e3ed"
@@ -1262,7 +1262,7 @@
   {
     "query": "chicken coop",
     "count": 10040,
-    "top_100": 4428,
+    "top_100": 4427,
     "result_type": "Hash",
     "top_100_result": [
       "c3a87613043330a39ffa31bc57e2070da4367ad5574937a07018f24979baf2f5"
@@ -1298,7 +1298,7 @@
   {
     "query": "people having sex",
     "count": 702120,
-    "top_100": 8257,
+    "top_100": 33869,
     "result_type": "Hash",
     "top_100_result": [
       "2dd3135d260a4c50a8b96d8c5303d3fccdcf02beb1a3b420ff85aa7aa11beaef"
@@ -1334,7 +1334,7 @@
   {
     "query": "new york population",
     "count": 1251867,
-    "top_100": 3024,
+    "top_100": 19292,
     "result_type": "Hash",
     "top_100_result": [
       "72e8db641f356c23f368b60889c206042990b3d7c7f29c1e427c73ce5437438f"
@@ -1370,7 +1370,7 @@
   {
     "query": "most improved player",
     "count": 909970,
-    "top_100": 13954,
+    "top_100": 117669,
     "result_type": "Hash",
     "top_100_result": [
       "93767a4c0ecf1ff5344e28fe890022f68d17919954d3e2cdfa3ba0ce487d22a4"
@@ -1442,7 +1442,7 @@
   {
     "query": "mercury insurance",
     "count": 35325,
-    "top_100": 13770,
+    "top_100": 13709,
     "result_type": "Hash",
     "top_100_result": [
       "549623c489d3157a9e05a831716e99b39bf667bf1e5c72a4cb5ced13727dc8eb"
@@ -1478,7 +1478,7 @@
   {
     "query": "battle of the bulge",
     "count": 4269122,
-    "top_100": 1489,
+    "top_100": 7739,
     "result_type": "Hash",
     "top_100_result": [
       "c53d77d8d28625dbb4857cdd9e9eba9220506d709c2381eebea538e23bfe4da9"
@@ -1514,7 +1514,7 @@
   {
     "query": "secretary of state",
     "count": 3806416,
-    "top_100": 4493,
+    "top_100": 10578,
     "result_type": "Hash",
     "top_100_result": [
       "9d7c7a89759a655c5cb3ac1ab8342ca270bd3825e88826375b7e9dbee3059f08"
@@ -1550,7 +1550,7 @@
   {
     "query": "third trimester",
     "count": 333268,
-    "top_100": 16470,
+    "top_100": 6179,
     "result_type": "Hash",
     "top_100_result": [
       "084083918a8b2f3a2a64c74d834dde2c769990b6a989eeeaad9ed23f4e9fe272"
@@ -1586,7 +1586,7 @@
   {
     "query": "hempstead new york",
     "count": 970283,
-    "top_100": 4757,
+    "top_100": 6251,
     "result_type": "Hash",
     "top_100_result": [
       "553057b439077de0f053fb9839cbcafb438e0b7bbf5d0659571bf8404b1e7124"
@@ -1622,7 +1622,7 @@
   {
     "query": "university of washington",
     "count": 3808759,
-    "top_100": 3062,
+    "top_100": 11054,
     "result_type": "Hash",
     "top_100_result": [
       "be7c214e95af3e367fe5335f9525d74f65c8ee41f30f9ea712dd404a498a5930"
@@ -1658,7 +1658,7 @@
   {
     "query": "japan airlines",
     "count": 134727,
-    "top_100": 7040,
+    "top_100": 5682,
     "result_type": "Hash",
     "top_100_result": [
       "c6ef4d19419aaff8bc22eb3046fffbda9dfece26183ec4510057fe9d4a16613b"
@@ -1694,7 +1694,7 @@
   {
     "query": "freedom tower",
     "count": 106587,
-    "top_100": 18646,
+    "top_100": 16839,
     "result_type": "Hash",
     "top_100_result": [
       "439021fd3d155af5fcbe2e5516e98dae8a51e68f8881f2bbec6e3d6aa3221964"
@@ -1730,7 +1730,7 @@
   {
     "query": "virginia usa",
     "count": 146818,
-    "top_100": 5430,
+    "top_100": 5079,
     "result_type": "Hash",
     "top_100_result": [
       "fb9a947de3b739fe3374fde1645d3fe075554719212b7ed27261a12558d90517"
@@ -1838,7 +1838,7 @@
   {
     "query": "jesus as a child",
     "count": 4053767,
-    "top_100": 4808,
+    "top_100": 21955,
     "result_type": "Hash",
     "top_100_result": [
       "950a10f4bbdcf551f09b43e17c2b28c705b4a7d0f5bb2e5b88b22cd712ec094c"
@@ -1874,7 +1874,7 @@
   {
     "query": "montessori schools",
     "count": 130601,
-    "top_100": 12326,
+    "top_100": 6312,
     "result_type": "Hash",
     "top_100_result": [
       "fa1b9f97a5bea0ffcec87a47b91bbb0983be4255537008b14299652a456327c3"
@@ -1910,7 +1910,7 @@
   {
     "query": "oxford dictionary",
     "count": 54702,
-    "top_100": 4271,
+    "top_100": 4260,
     "result_type": "Hash",
     "top_100_result": [
       "26227e26085d8bf4d30ea8fa99e6410a8ca01cda8e361194db76a8cae2f2c6d7"
@@ -1946,7 +1946,7 @@
   {
     "query": "state of louisiana",
     "count": 3806988,
-    "top_100": 7058,
+    "top_100": 51132,
     "result_type": "Hash",
     "top_100_result": [
       "930e3a7496ef0b3396f994c3c0b944872a61102d9e40a8a69e9406f6150386d6"
@@ -1982,7 +1982,7 @@
   {
     "query": "penny stocks",
     "count": 11759,
-    "top_100": 9339,
+    "top_100": 9338,
     "result_type": "Hash",
     "top_100_result": [
       "3f6515fe328d95c09b986a056d5088ba22cf0cd59d8b4983579cc0d69b17a933"
@@ -2018,7 +2018,7 @@
   {
     "query": "cured of cancer",
     "count": 3798569,
-    "top_100": 3831,
+    "top_100": 17814,
     "result_type": "Hash",
     "top_100_result": [
       "437866a5f4c401d2649a651b6389d23b60467d5f51da9a2cc14188c17ea4ce64"
@@ -2054,7 +2054,7 @@
   {
     "query": "lord of the rings",
     "count": 4269269,
-    "top_100": 1443,
+    "top_100": 25116,
     "result_type": "Hash",
     "top_100_result": [
       "29e8c2660c7eed8acd165c9a15b4b9ae689c335da54f2a70b3bac1ea42ec0246"
@@ -2090,7 +2090,7 @@
   {
     "query": "helen of troy",
     "count": 3798848,
-    "top_100": 35299,
+    "top_100": 22269,
     "result_type": "Hash",
     "top_100_result": [
       "44dcd2d90e046a9125842998fb7fe3cb924e69e2a4e5b8e99e0a25426af74b4a"
@@ -2126,7 +2126,7 @@
   {
     "query": "long legs",
     "count": 401948,
-    "top_100": 6019,
+    "top_100": 4930,
     "result_type": "Hash",
     "top_100_result": [
       "1d045faab754d721994b37b630f40f6e7329ff12cb6469468452525a7164d6cf"
@@ -2198,7 +2198,7 @@
   {
     "query": "connecticut post",
     "count": 237265,
-    "top_100": 5977,
+    "top_100": 5577,
     "result_type": "Hash",
     "top_100_result": [
       "d1de4955af476b35f40eb2fe9ea5dbc62950ac98c3d1b4b2155a6527cfd51011"
@@ -2270,7 +2270,7 @@
   {
     "query": "chicago bulls",
     "count": 79894,
-    "top_100": 3174,
+    "top_100": 3173,
     "result_type": "Hash",
     "top_100_result": [
       "399ebf17485d650f99d1edda8e8b45947b7a0ff682785c465375a96122f087d9"
@@ -2306,7 +2306,7 @@
   {
     "query": "child support",
     "count": 301066,
-    "top_100": 10593,
+    "top_100": 9160,
     "result_type": "Hash",
     "top_100_result": [
       "9237db651f69940d8c625c26f2789970d690b2269922cf72c30e742ad1d855f9"
@@ -2342,7 +2342,7 @@
   {
     "query": "iq scores",
     "count": 21776,
-    "top_100": 5541,
+    "top_100": 5517,
     "result_type": "Hash",
     "top_100_result": [
       "860621b9d4d64b6ddaac242a3472060d06abecd23596d81f2d01460989a6c13d"
@@ -2378,7 +2378,7 @@
   {
     "query": "philadelphia phillies",
     "count": 43534,
-    "top_100": 3119,
+    "top_100": 3080,
     "result_type": "Hash",
     "top_100_result": [
       "76ec11d4cbde730bf903bc1934d5e4e6d2b17699481ab0c2982a6816c464e385"
@@ -2414,7 +2414,7 @@
   {
     "query": "trans siberian orchestra",
     "count": 47760,
-    "top_100": 11195,
+    "top_100": 11167,
     "result_type": "Hash",
     "top_100_result": [
       "30df71654e99779ba70d49f7729a6daeed901f86ec5b060e137fc1e353b6762a"
@@ -2450,7 +2450,7 @@
   {
     "query": "naomi wallace",
     "count": 14465,
-    "top_100": 6933,
+    "top_100": 6902,
     "result_type": "Hash",
     "top_100_result": [
       "57d852ade738dbcfd713252668a74e769390ae53d2396050f4e7899e56b102a1"
@@ -2486,7 +2486,7 @@
   {
     "query": "montgomery college",
     "count": 301693,
-    "top_100": 9741,
+    "top_100": 6080,
     "result_type": "Hash",
     "top_100_result": [
       "20ff91544e82cd628a7f99827159887e993300abc770f7b31f996384fbe0364a"
@@ -2558,7 +2558,7 @@
   {
     "query": "binghamton new york",
     "count": 970192,
-    "top_100": 3596,
+    "top_100": 5309,
     "result_type": "Hash",
     "top_100_result": [
       "e7dd2584a50df02c311ba6d584bf016a296cf13aa94d0e8a9ab1531068f1f319"
@@ -2594,7 +2594,7 @@
   {
     "query": "tallest trees in the world",
     "count": 4316962,
-    "top_100": 8368,
+    "top_100": 42828,
     "result_type": "Hash",
     "top_100_result": [
       "39c9a51fc0efd70e47227528b9b814beaee1a1f581771a047ec7e5757ae47547"
@@ -2630,7 +2630,7 @@
   {
     "query": "reading museum",
     "count": 153516,
-    "top_100": 13793,
+    "top_100": 10918,
     "result_type": "Hash",
     "top_100_result": [
       "d487fa0cdba10d8bebf3fdf5e943696ad7087095c9cedd402e60a87ffa0de2e4"
@@ -2666,7 +2666,7 @@
   {
     "query": "merry christmas",
     "count": 36406,
-    "top_100": 4011,
+    "top_100": 4006,
     "result_type": "Hash",
     "top_100_result": [
       "3ff71b7613fdce8687516723c7f781fd5874f08b3f8453f8d073071ec6ce1f5f"
@@ -2702,7 +2702,7 @@
   {
     "query": "flow meter",
     "count": 52377,
-    "top_100": 12311,
+    "top_100": 11701,
     "result_type": "Hash",
     "top_100_result": [
       "b615696844d309d8edfc1cb50700e79d801a39c6fcb1aa1cf9688a82aec9058a"
@@ -2738,7 +2738,7 @@
   {
     "query": "famous quotes",
     "count": 150258,
-    "top_100": 12141,
+    "top_100": 8435,
     "result_type": "Hash",
     "top_100_result": [
       "7621b6d5e7977be77321af6319460e95be70897ff9c0d8d22ba046b587c99364"
@@ -2774,7 +2774,7 @@
   {
     "query": "georgian architecture",
     "count": 66350,
-    "top_100": 4283,
+    "top_100": 4242,
     "result_type": "Hash",
     "top_100_result": [
       "395492651a884a4acab9410094670746455ee5fb234650928b9951298a666725"
@@ -2810,7 +2810,7 @@
   {
     "query": "prayer times",
     "count": 310479,
-    "top_100": 9199,
+    "top_100": 6715,
     "result_type": "Hash",
     "top_100_result": [
       "09ed817345c67fe0dcf440b925ab23758a1eab57b682f686ecd4f29802768547"
@@ -2846,7 +2846,7 @@
   {
     "query": "columbia university",
     "count": 503138,
-    "top_100": 4390,
+    "top_100": 3705,
     "result_type": "Hash",
     "top_100_result": [
       "91041f950e5538a843e84c30e7f89d2653d19e3d6815d1342fba002b8f1156bf"
@@ -2882,7 +2882,7 @@
   {
     "query": "fluid power",
     "count": 200883,
-    "top_100": 7832,
+    "top_100": 6383,
     "result_type": "Hash",
     "top_100_result": [
       "865b849d66467d1f73ca771bc1893b0ba938f63cb6c4c55ba0352eeb86b07512"
@@ -2918,7 +2918,7 @@
   {
     "query": "american south",
     "count": 1038231,
-    "top_100": 7994,
+    "top_100": 6751,
     "result_type": "Hash",
     "top_100_result": [
       "a3da5c9620808e2cff34d8b7caec74a6a99a160cc8395b7af16e7c81c82fd218"
@@ -2954,7 +2954,7 @@
   {
     "query": "international baseball",
     "count": 402608,
-    "top_100": 7048,
+    "top_100": 6369,
     "result_type": "Hash",
     "top_100_result": [
       "144b4d089d55a2b3bb515a771b51f632ebba2763c1b447e6312adaf6d02269b7"
@@ -3026,7 +3026,7 @@
   {
     "query": "the globe newspaper",
     "count": 4168651,
-    "top_100": 7076,
+    "top_100": 20887,
     "result_type": "Hash",
     "top_100_result": [
       "0dd5f2997a1dddc36163449501c4584300da03c9a15425a4f996a401d585ef9c"
@@ -3062,7 +3062,7 @@
   {
     "query": "decorative windows",
     "count": 51200,
-    "top_100": 6793,
+    "top_100": 6694,
     "result_type": "Hash",
     "top_100_result": [
       "97828da5df54db5927d7480304ca3ee0bb141f39e90fd9de42b188d75b2e21b0"
@@ -3098,7 +3098,7 @@
   {
     "query": "ancient egypt",
     "count": 114383,
-    "top_100": 3908,
+    "top_100": 3823,
     "result_type": "Hash",
     "top_100_result": [
       "ecf9bc1597669499fa1561772030d2957603e2bb675f8cb6e96ae8ba123a0a03"
@@ -3134,7 +3134,7 @@
   {
     "query": "american academy of child and adolescent psychiatry",
     "count": 4068902,
-    "top_100": 4800,
+    "top_100": 27290,
     "result_type": "Hash",
     "top_100_result": [
       "0a10f0b23ac668e7da3bfcd2663772c709a3566fe11b8979208d5d1c513e964f"
@@ -3170,7 +3170,7 @@
   {
     "query": "york photo",
     "count": 272980,
-    "top_100": 7399,
+    "top_100": 5845,
     "result_type": "Hash",
     "top_100_result": [
       "a3e8aa761428470efdc878b96a3bb784eee389a55fb3087527fa60dbf95b27a6"
@@ -3206,7 +3206,7 @@
   {
     "query": "good luck",
     "count": 193597,
-    "top_100": 8918,
+    "top_100": 6111,
     "result_type": "Hash",
     "top_100_result": [
       "bba85de179e971fade3a1e785fe1e8780a51a67c54ad6394190bc9e31ef112c3"
@@ -3242,7 +3242,7 @@
   {
     "query": "world bank president",
     "count": 854242,
-    "top_100": 7955,
+    "top_100": 39962,
     "result_type": "Hash",
     "top_100_result": [
       "3a2fdce7e93772dfaf0484721523b17a2af1eca42908517c9effe5cec8c1ed76"
@@ -3278,7 +3278,7 @@
   {
     "query": "jonathan daniel",
     "count": 66857,
-    "top_100": 9261,
+    "top_100": 8910,
     "result_type": "Hash",
     "top_100_result": [
       "c646134b6bf0975e9e2c096cfc75a1ab291157c8d8cdbc4547215c873b2b12b1"
@@ -3314,7 +3314,7 @@
   {
     "query": "clothing optional",
     "count": 32425,
-    "top_100": 15423,
+    "top_100": 15151,
     "result_type": "Hash",
     "top_100_result": [
       "0ddc5fbb2fe797e15e17eab876916ac63ad406b241c86fa85188b240511aa6ef"
@@ -3350,7 +3350,7 @@
   {
     "query": "xena warrior princess",
     "count": 39428,
-    "top_100": 7725,
+    "top_100": 11622,
     "result_type": "Hash",
     "top_100_result": [
       "e03d7de7e42249062ec65afde11beb5591ab77eef0a5bd6ca4487faf4dc6fa9d"
@@ -3386,7 +3386,7 @@
   {
     "query": "time for kids",
     "count": 2470107,
-    "top_100": 6693,
+    "top_100": 17602,
     "result_type": "Hash",
     "top_100_result": [
       "96f0b48f1847c828493d00297fbc6d1824df39471f2118c7204dc6afa4f25e4c"
@@ -3422,7 +3422,7 @@
   {
     "query": "tom welling",
     "count": 58784,
-    "top_100": 9222,
+    "top_100": 9170,
     "result_type": "Hash",
     "top_100_result": [
       "719f3a52a66a867c6f83ea13fbc4299aacc760b686ba9f47c3d779a65f7c710e"
@@ -3494,7 +3494,7 @@
   {
     "query": "heart disease",
     "count": 127400,
-    "top_100": 5338,
+    "top_100": 5255,
     "result_type": "Hash",
     "top_100_result": [
       "2ea162cb32505135ad9bcfdd93024ad9dde22cf0412603aba35c07aba3719c84"
@@ -3530,7 +3530,7 @@
   {
     "query": "st petersburg high school",
     "count": 961109,
-    "top_100": 8437,
+    "top_100": 162611,
     "result_type": "Hash",
     "top_100_result": [
       "3011c877a4fcd7d1cea7387e3366771c418efc4eef9b88fde0c8896ef5a56e6f"
@@ -3602,7 +3602,7 @@
   {
     "query": "hotel del coronado",
     "count": 102668,
-    "top_100": 28217,
+    "top_100": 29870,
     "result_type": "Hash",
     "top_100_result": [
       "c2ac2960b0ca5dc941119d8f502bc2d49c7e9d70ebaca57ef021fb0056a56fce"
@@ -3638,7 +3638,7 @@
   {
     "query": "law dictionary",
     "count": 212065,
-    "top_100": 9698,
+    "top_100": 7455,
     "result_type": "Hash",
     "top_100_result": [
       "1f9ffaad8bf72184b0d26e31aa2116a3821b0ccedd764e1da9e12c2324b6b160"
@@ -3710,7 +3710,7 @@
   {
     "query": "kenosha wisconsin",
     "count": 32570,
-    "top_100": 3809,
+    "top_100": 3553,
     "result_type": "Hash",
     "top_100_result": [
       "3fa2abd5628d6ff2a81e45a822d139dc331254cd200fef40ebabb4102321092c"
@@ -3746,7 +3746,7 @@
   {
     "query": "false prophets",
     "count": 29690,
-    "top_100": 9014,
+    "top_100": 8450,
     "result_type": "Hash",
     "top_100_result": [
       "bb22ab7a1bf36fe02c9d68383797c589b2aa9597479068960efb854d32ee343c"
@@ -3782,7 +3782,7 @@
   {
     "query": "cheap hotels",
     "count": 23089,
-    "top_100": 14076,
+    "top_100": 13993,
     "result_type": "Hash",
     "top_100_result": [
       "f5eb4e47ad766e3ddef02ac62d1db956ca974c2647c5582b81ff901c4fd620f8"
@@ -3818,7 +3818,7 @@
   {
     "query": "walk the line",
     "count": 4169495,
-    "top_100": 15600,
+    "top_100": 25656,
     "result_type": "Hash",
     "top_100_result": [
       "a79d27ff658b0eac04a0b20501c60fab3a73fef1600006b5c8411ce6a3303c54"
@@ -3854,7 +3854,7 @@
   {
     "query": "missy elliott",
     "count": 8017,
-    "top_100": 3921,
+    "top_100": 3906,
     "result_type": "Hash",
     "top_100_result": [
       "65b993cbe77196df071c7409b53afe50089a89e636476b07e35e922b02aca0aa"
@@ -3890,7 +3890,7 @@
   {
     "query": "portrait studio",
     "count": 132425,
-    "top_100": 5546,
+    "top_100": 5219,
     "result_type": "Hash",
     "top_100_result": [
       "db84390901fc5eb528be57f32ab11bfd6d5d1acd5305eb71940d759a147bf309"
@@ -3962,7 +3962,7 @@
   {
     "query": "kitchen accessories",
     "count": 22473,
-    "top_100": 12332,
+    "top_100": 12297,
     "result_type": "Hash",
     "top_100_result": [
       "d7aa9142e5fdfb5d9a01d852388a759be884c783e8c1f46f464ea7d2ef6c06c9"
@@ -3998,7 +3998,7 @@
   {
     "query": "consumer affairs",
     "count": 88332,
-    "top_100": 7824,
+    "top_100": 6921,
     "result_type": "Hash",
     "top_100_result": [
       "93d95c119c9748110b7e7d4d98865a0d6f47c495df9955c754acea51cd9161a1"
@@ -4034,7 +4034,7 @@
   {
     "query": "adobe buildings",
     "count": 103711,
-    "top_100": 7157,
+    "top_100": 5340,
     "result_type": "Hash",
     "top_100_result": [
       "cbfbbc242bc1819e38724b612ff2a69109f8bb946ccb3046fdbef975855bd683"
@@ -4070,7 +4070,7 @@
   {
     "query": "national book award",
     "count": 918170,
-    "top_100": 5721,
+    "top_100": 24845,
     "result_type": "Hash",
     "top_100_result": [
       "4937ba6e19598f347c91569404e85ec3db734048649f5109fc1eae5712ad8216"
@@ -4106,7 +4106,7 @@
   {
     "query": "back surgery",
     "count": 375689,
-    "top_100": 7362,
+    "top_100": 6687,
     "result_type": "Hash",
     "top_100_result": [
       "e8552f0249c4ee5796ba611f8639e9cf5cd1d0f00887d4dac27c109520170fb2"
@@ -4142,7 +4142,7 @@
   {
     "query": "mid continent airport",
     "count": 212075,
-    "top_100": 33652,
+    "top_100": 211090,
     "result_type": "Hash",
     "top_100_result": [
       "7864fbffeb5c1439e79de0789d1d2883e716ed0ebe436fd3036b4746c5bd2515"
@@ -4178,7 +4178,7 @@
   {
     "query": "developmental delays",
     "count": 16569,
-    "top_100": 8788,
+    "top_100": 8775,
     "result_type": "Hash",
     "top_100_result": [
       "f9be7675f8acf545cf5304bd6c71ac769add2162d98b922b4783dc1d7aba6cc7"
@@ -4250,7 +4250,7 @@
   {
     "query": "canadian real estate",
     "count": 281073,
-    "top_100": 13394,
+    "top_100": 82400,
     "result_type": "Hash",
     "top_100_result": [
       "573aa0910427b74eb96b17e719c15386d7d7e7589c9b55febcab56d3ccd3ce58"
@@ -4286,7 +4286,7 @@
   {
     "query": "barrett jackson",
     "count": 38213,
-    "top_100": 6785,
+    "top_100": 6725,
     "result_type": "Hash",
     "top_100_result": [
       "b052ff7a0b783094f081947e1665492366d0de4e5450531212139e2838bc7a81"
@@ -4358,7 +4358,7 @@
   {
     "query": "john donne",
     "count": 345824,
-    "top_100": 8375,
+    "top_100": 6246,
     "result_type": "Hash",
     "top_100_result": [
       "417ce3799185dee4f568567282a1341f17d60e7eed72b1340c8b2afe006540df"
@@ -4394,7 +4394,7 @@
   {
     "query": "evening wear",
     "count": 70020,
-    "top_100": 13749,
+    "top_100": 12798,
     "result_type": "Hash",
     "top_100_result": [
       "0587d07d0b5c169f3c896c156a31bf6a149c04dd54b4e99f56edc23d58688a99"
@@ -4430,7 +4430,7 @@
   {
     "query": "toxic encephalopathy",
     "count": 10103,
-    "top_100": 6903,
+    "top_100": 6837,
     "result_type": "Hash",
     "top_100_result": [
       "afcdeba52e5951786fc971f8a75897049683206dc8d0a6dfc38d5f9da0fe5ceb"
@@ -4466,7 +4466,7 @@
   {
     "query": "critical care nurse",
     "count": 165540,
-    "top_100": 15408,
+    "top_100": 110728,
     "result_type": "Hash",
     "top_100_result": [
       "604f7471f5527a3064379e42461863834005e356e26b05bc1e729ec54893633a"
@@ -4502,7 +4502,7 @@
   {
     "query": "the breakfast club",
     "count": 4174361,
-    "top_100": 25065,
+    "top_100": 50143,
     "result_type": "Hash",
     "top_100_result": [
       "e87debe94bb38335ab0a46a19c8f76e26a547c6ba0946722ea7af3cbf196b92e"
@@ -4538,7 +4538,7 @@
   {
     "query": "lost episode",
     "count": 264631,
-    "top_100": 7418,
+    "top_100": 7371,
     "result_type": "Hash",
     "top_100_result": [
       "371f0d2c8437ce7896da06bc723c496a528c6fe7a4891a5362e62e8d26ede5cc"
@@ -4574,7 +4574,7 @@
   {
     "query": "seal pictures",
     "count": 55153,
-    "top_100": 12599,
+    "top_100": 12431,
     "result_type": "Hash",
     "top_100_result": [
       "b33dc7de1825e31791ccfc82bad18968c74a98dbd487ae7417802e9c7847dd7d"
@@ -4610,7 +4610,7 @@
   {
     "query": "critical care medicine",
     "count": 194086,
-    "top_100": 17534,
+    "top_100": 132629,
     "result_type": "Hash",
     "top_100_result": [
       "9e5055583377e9cc4e6582c7da848feab9571f2827be77ee8f09d9bb043208b0"
@@ -4682,7 +4682,7 @@
   {
     "query": "john wilkes booth",
     "count": 352602,
-    "top_100": 8411,
+    "top_100": 8621,
     "result_type": "Hash",
     "top_100_result": [
       "2bee6c05214d8bc052772ba9ccfffd8dd90afa30f312a59a669a494c6b0db538"
@@ -4718,7 +4718,7 @@
   {
     "query": "sesame street",
     "count": 162074,
-    "top_100": 10283,
+    "top_100": 6336,
     "result_type": "Hash",
     "top_100_result": [
       "9208d33c668dd2b00000c1ce4843b2728c3456446864401172b335682c521860"
@@ -4754,7 +4754,7 @@
   {
     "query": "ellen degeneres show",
     "count": 231765,
-    "top_100": 3710,
+    "top_100": 4797,
     "result_type": "Hash",
     "top_100_result": [
       "849eaac0ea030b4ea57d1236749583e3e11d4e5526cd0359294887a8af1e0d54"
@@ -4790,7 +4790,7 @@
   {
     "query": "jaguar x type",
     "count": 217412,
-    "top_100": 20477,
+    "top_100": 20142,
     "result_type": "Hash",
     "top_100_result": [
       "61b6b20a26d9d93e6cb1cf99dac0b32ded4b8b5402e467c7c77a89d27bc24b96"
@@ -4826,7 +4826,7 @@
   {
     "query": "the movement",
     "count": 4168236,
-    "top_100": 6712,
+    "top_100": 4852,
     "result_type": "Hash",
     "top_100_result": [
       "a94a87395bc8c25702053926f2e5aca8c30d71f02deeaa397c02cddd1063425c"
@@ -4862,7 +4862,7 @@
   {
     "query": "sarah fisher",
     "count": 33310,
-    "top_100": 9979,
+    "top_100": 9937,
     "result_type": "Hash",
     "top_100_result": [
       "efa61c0f46752ea8caac54ae22b9c8f44f5ab881d2d79fb2ea8bea66d34c9c41"
@@ -4934,7 +4934,7 @@
   {
     "query": "little brown jug",
     "count": 268624,
-    "top_100": 16201,
+    "top_100": 16980,
     "result_type": "Hash",
     "top_100_result": [
       "5fb1213a2e41dc5b647c67187070f94b4e41c1ba6676f10fc679cabe6cadc97c"
@@ -4970,7 +4970,7 @@
   {
     "query": "books on cd",
     "count": 2372215,
-    "top_100": 7661,
+    "top_100": 31549,
     "result_type": "Hash",
     "top_100_result": [
       "87d47f9a5d71f40cb20e376063dc2857975d1ccf94cdef952244e5bddf7aedd4"
@@ -5114,7 +5114,7 @@
   {
     "query": "weather underground",
     "count": 76229,
-    "top_100": 19542,
+    "top_100": 18363,
     "result_type": "Hash",
     "top_100_result": [
       "73153dd86d0d04c4410a45d6e4b0dce17a4d68d1b76886988abc8390c7259ea2"
@@ -5186,7 +5186,7 @@
   {
     "query": "analog computer",
     "count": 73305,
-    "top_100": 5889,
+    "top_100": 5167,
     "result_type": "Hash",
     "top_100_result": [
       "4c13b3ddd3068cd72727bf577d2ab4ef4e52b1125765bb72639a3639008f4eb3"
@@ -5222,7 +5222,7 @@
   {
     "query": "pump it up",
     "count": 2315797,
-    "top_100": 2626,
+    "top_100": 24649,
     "result_type": "Hash",
     "top_100_result": [
       "0478e2db2b5e80e974eeb015e62a8bee26b26bb67b4e5d63dfa28b48772033ac"
@@ -5258,7 +5258,7 @@
   {
     "query": "food carts",
     "count": 92901,
-    "top_100": 16395,
+    "top_100": 10915,
     "result_type": "Hash",
     "top_100_result": [
       "c910cc0d7d3c31802710fe9a2afe981a9f59dc61e2682ccf3989c67d7859e29a"
@@ -5294,7 +5294,7 @@
   {
     "query": "graduate management admission test",
     "count": 226887,
-    "top_100": 19028,
+    "top_100": 226212,
     "result_type": "Hash",
     "top_100_result": [
       "fc68c6312296d5fd4d5236cce6dbc3579640a89e061f544c4ea2817cc7562a09"
@@ -5330,7 +5330,7 @@
   {
     "query": "big boss man",
     "count": 322018,
-    "top_100": 17111,
+    "top_100": 180763,
     "result_type": "Hash",
     "top_100_result": [
       "57ab7998eeaa165042cc6d6c5986b27dc1fb85cf2e8cf6f644a17df1acf7b1ab"
@@ -5366,7 +5366,7 @@
   {
     "query": "gun magazines",
     "count": 68175,
-    "top_100": 10961,
+    "top_100": 10756,
     "result_type": "Hash",
     "top_100_result": [
       "59e78b199f23b28205c3e46356e66a48084dca8f96ad78e772a975898d2e9044"
@@ -5402,7 +5402,7 @@
   {
     "query": "bankruptcy laws",
     "count": 62207,
-    "top_100": 12354,
+    "top_100": 10824,
     "result_type": "Hash",
     "top_100_result": [
       "f4c87a0a74f2d55487cf698d92fb0f3c2eb99be85449051654579aeafa8dcbcf"
@@ -5474,7 +5474,7 @@
   {
     "query": "sky news",
     "count": 134076,
-    "top_100": 5791,
+    "top_100": 5621,
     "result_type": "Hash",
     "top_100_result": [
       "c324f651f82c8274d6516b9ccdf7a51f62536377027408348be1aa5853e4a5cb"
@@ -5582,7 +5582,7 @@
   {
     "query": "padre island",
     "count": 167104,
-    "top_100": 17357,
+    "top_100": 7723,
     "result_type": "Hash",
     "top_100_result": [
       "6e2008eb0524677a5eaad62522f1b7604271620cfafbbef87a6dddd365d2953f"
@@ -5618,7 +5618,7 @@
   {
     "query": "worcester state college",
     "count": 730213,
-    "top_100": 9145,
+    "top_100": 56556,
     "result_type": "Hash",
     "top_100_result": [
       "b73780f842bd1f0fad57189efabe29abb46cafffd785cad5cc299745d057c376"
@@ -5690,7 +5690,7 @@
   {
     "query": "jefferson davis high school",
     "count": 774500,
-    "top_100": 5679,
+    "top_100": 35957,
     "result_type": "Hash",
     "top_100_result": [
       "52e270397fbddf9d1f60d06a42830b93ef29553372f3ca59198fbbc75db1af0c"
@@ -5726,7 +5726,7 @@
   {
     "query": "game downloads",
     "count": 188645,
-    "top_100": 14294,
+    "top_100": 8668,
     "result_type": "Hash",
     "top_100_result": [
       "5d0983a6fbbad2e8c3fe49ce5044e9fddac77b13007530677f3a2e60f8696e86"
@@ -5762,7 +5762,7 @@
   {
     "query": "chicken noodle soup",
     "count": 14092,
-    "top_100": 4422,
+    "top_100": 4431,
     "result_type": "Hash",
     "top_100_result": [
       "4ec1f1276fdcdf7e5e18361d6c29ccf2fc0ba2a820669a31abbd394c65858422"
@@ -5798,7 +5798,7 @@
   {
     "query": "music stands",
     "count": 310569,
-    "top_100": 7487,
+    "top_100": 6929,
     "result_type": "Hash",
     "top_100_result": [
       "03dc7286ca113ee35fe9d4f9c3fb9e13b8df949481af1e840a2c36c8d0b7f113"
@@ -5870,7 +5870,7 @@
   {
     "query": "camp claiborne",
     "count": 69112,
-    "top_100": 8041,
+    "top_100": 7782,
     "result_type": "Hash",
     "top_100_result": [
       "a3362ca88c0541020acf42ab9da2da5caac2354eef72bdb986b3b3ce00ef3c64"
@@ -5906,7 +5906,7 @@
   {
     "query": "william wallace",
     "count": 192280,
-    "top_100": 5004,
+    "top_100": 4418,
     "result_type": "Hash",
     "top_100_result": [
       "474b448321a891e08b4f920f4786a1609b02aa3fc424f8a97b622b5e43eddaf1"
@@ -5942,7 +5942,7 @@
   {
     "query": "home loan",
     "count": 389360,
-    "top_100": 5567,
+    "top_100": 5002,
     "result_type": "Hash",
     "top_100_result": [
       "09e966592c243f1441d355e6b16bd737af8771b1898af2682a434e48a393c95a"
@@ -5978,7 +5978,7 @@
   {
     "query": "cherry blossom",
     "count": 11304,
-    "top_100": 4080,
+    "top_100": 4067,
     "result_type": "Hash",
     "top_100_result": [
       "e0ec214935faad15b555f9915cae8f5887b8ae28ec5ca9fad9aa76cc4eb39c59"
@@ -6014,7 +6014,7 @@
   {
     "query": "miami dade college",
     "count": 308550,
-    "top_100": 5391,
+    "top_100": 6136,
     "result_type": "Hash",
     "top_100_result": [
       "bcdd7691c8b0691dec5bab7f945a5abac1e90dcda162819c8311e7570d9c4600"
@@ -6050,7 +6050,7 @@
   {
     "query": "time in denver",
     "count": 4014087,
-    "top_100": 2326,
+    "top_100": 24180,
     "result_type": "Hash",
     "top_100_result": [
       "d5685bba685c0bc82a14832aa40a1b0a7a154b0e761b5121024217248b2ebf0f"
@@ -6086,7 +6086,7 @@
   {
     "query": "naked news",
     "count": 119020,
-    "top_100": 9380,
+    "top_100": 9190,
     "result_type": "Hash",
     "top_100_result": [
       "20b1b4cc09ff07e226c906d1b641deee46e627533a173fb815cddbbce063aafc"
@@ -6122,7 +6122,7 @@
   {
     "query": "wildlife photography",
     "count": 43329,
-    "top_100": 10770,
+    "top_100": 10751,
     "result_type": "Hash",
     "top_100_result": [
       "f78be188ce7907a31db98b0f857c5a714f0c2d29937deaa81c3e9ea1db6fcc40"
@@ -6158,7 +6158,7 @@
   {
     "query": "david kim",
     "count": 159993,
-    "top_100": 5608,
+    "top_100": 5537,
     "result_type": "Hash",
     "top_100_result": [
       "df77215a710b7b698c87eb028b113dbb52f6eed7d58b28cf8e39fb7900128b83"
@@ -6230,7 +6230,7 @@
   {
     "query": "all funds",
     "count": 909593,
-    "top_100": 5896,
+    "top_100": 5554,
     "result_type": "Hash",
     "top_100_result": [
       "47d8a6f809a69af1e58334b8fa7bff5da2fd01929f229e4b3cdbedd0141e0ebd"
@@ -6266,7 +6266,7 @@
   {
     "query": "zion national park",
     "count": 758591,
-    "top_100": 6414,
+    "top_100": 8396,
     "result_type": "Hash",
     "top_100_result": [
       "962cb2e318b95056ed5238cc54505b3399b5d367a07f9064aa635b41e5d75e61"
@@ -6302,7 +6302,7 @@
   {
     "query": "john klein",
     "count": 349637,
-    "top_100": 16869,
+    "top_100": 12005,
     "result_type": "Hash",
     "top_100_result": [
       "30e8d8ffa50dc0d890e65231ca6eb5dc35008421082a4af3fa2f2117071441b2"
@@ -6338,7 +6338,7 @@
   {
     "query": "edith wharton",
     "count": 7958,
-    "top_100": 3764,
+    "top_100": 3760,
     "result_type": "Hash",
     "top_100_result": [
       "9857fb00aea115056fbc2027f587f7bbdae53836934039920ba42004c6f8b86d"
@@ -6374,7 +6374,7 @@
   {
     "query": "times union",
     "count": 446943,
-    "top_100": 10249,
+    "top_100": 9609,
     "result_type": "Hash",
     "top_100_result": [
       "90c089fbc15acdebf02fd8dd5c6bc3a4363cab82193ef737ddbbc3513ea8fe4b"
@@ -6410,7 +6410,7 @@
   {
     "query": "milan tennessee",
     "count": 51473,
-    "top_100": 20433,
+    "top_100": 19991,
     "result_type": "Hash",
     "top_100_result": [
       "69f14c74b12e22f98440c165cf0805e9ff646d0c70863a89b834b47cdd7fca71"
@@ -6446,7 +6446,7 @@
   {
     "query": "western herald",
     "count": 266528,
-    "top_100": 14855,
+    "top_100": 12086,
     "result_type": "Hash",
     "top_100_result": [
       "54d12ca93303cb414d80e74c05c21b3b7aca47ff2fab1777e91df7282c885199"
@@ -6482,7 +6482,7 @@
   {
     "query": "care a lot",
     "count": 3980373,
-    "top_100": 7482,
+    "top_100": 19078,
     "result_type": "Hash",
     "top_100_result": [
       "2f341b353af4ff21c0543a3777bebe418a3f6704611eabde5d44a11873a097ec"
@@ -6518,7 +6518,7 @@
   {
     "query": "costume designers",
     "count": 21196,
-    "top_100": 9893,
+    "top_100": 9872,
     "result_type": "Hash",
     "top_100_result": [
       "161d66e843a3cef9bb2cea5ec1de224f21d1cb7a897c6daa188dcaf78f0de66a"
@@ -6554,7 +6554,7 @@
   {
     "query": "the actors studio",
     "count": 4169611,
-    "top_100": 10313,
+    "top_100": 27962,
     "result_type": "Hash",
     "top_100_result": [
       "1c5974c3361e72df0db13e9533cf25c1e1816fc6c2877f70f77a041955cd8197"
@@ -6590,7 +6590,7 @@
   {
     "query": "personal chef",
     "count": 196687,
-    "top_100": 9356,
+    "top_100": 8005,
     "result_type": "Hash",
     "top_100_result": [
       "628c547ffff627ccc8f4f28358398863cd1cec14fb5367193cf6fafc2b911b8d"
@@ -6662,7 +6662,7 @@
   {
     "query": "bismarck state college",
     "count": 727128,
-    "top_100": 5686,
+    "top_100": 9616,
     "result_type": "Hash",
     "top_100_result": [
       "500cffb7a7bbdb7493556d8632635d7b772100d6718994b27b32d5b43821ecea"
@@ -6698,7 +6698,7 @@
   {
     "query": "the oregonian newspaper",
     "count": 4168611,
-    "top_100": 1405,
+    "top_100": 7545,
     "result_type": "Hash",
     "top_100_result": [
       "ac05eaf5289edf23f0f2d7fff6b0a493b3cfcb0ba67ec73c0c673d954b3d64ea"
@@ -6734,7 +6734,7 @@
   {
     "query": "justin timberlake",
     "count": 11727,
-    "top_100": 3587,
+    "top_100": 3580,
     "result_type": "Hash",
     "top_100_result": [
       "afefe8aa4fbcbeff3f8d5f3dac64598f32ae4932bcf11db27d97a44cd2662ad8"
@@ -6770,7 +6770,7 @@
   {
     "query": "hawk mountain",
     "count": 100754,
-    "top_100": 6467,
+    "top_100": 6242,
     "result_type": "Hash",
     "top_100_result": [
       "ebcf67a908297569c9419e00581055a2bf6d56c309a683d4636160270d176a84"
@@ -6842,7 +6842,7 @@
   {
     "query": "chicago teachers union",
     "count": 279042,
-    "top_100": 25909,
+    "top_100": 277500,
     "result_type": "Hash",
     "top_100_result": [
       "dea76acbbc0b05cf62d37c9352e7468fafa5afa2aed46de0dd41f7ae904b7888"
@@ -6878,7 +6878,7 @@
   {
     "query": "connecticut historical society",
     "count": 292410,
-    "top_100": 17355,
+    "top_100": 146779,
     "result_type": "Hash",
     "top_100_result": [
       "a4b7f52b5dea5599b7faf5aa5d170487404bbf54a83b0cc127a9f540150fefb2"
@@ -6950,7 +6950,7 @@
   {
     "query": "robert fuller",
     "count": 146946,
-    "top_100": 6423,
+    "top_100": 5971,
     "result_type": "Hash",
     "top_100_result": [
       "5d78873dc2690845355518a78fbd15e47784446105283ed5a37e036a7ed7d694"
@@ -7022,7 +7022,7 @@
   {
     "query": "bass fishing",
     "count": 67801,
-    "top_100": 6154,
+    "top_100": 5928,
     "result_type": "Hash",
     "top_100_result": [
       "9dfd0b2b377db947c5eef7af91ffd29449fa3473a3263af4932d58452b127c33"
@@ -7058,7 +7058,7 @@
   {
     "query": "ford parts",
     "count": 172197,
-    "top_100": 6886,
+    "top_100": 6871,
     "result_type": "Hash",
     "top_100_result": [
       "30fc3d004ee3e79bd4efa524c79ede39c455b584ed11f1ebc74b69db8f70ab8b"
@@ -7094,7 +7094,7 @@
   {
     "query": "automatic writing",
     "count": 139608,
-    "top_100": 13166,
+    "top_100": 13127,
     "result_type": "Hash",
     "top_100_result": [
       "f0536c820541659dcb525e51fc28d18a89c5028c49ab59b4cc3913036985b6eb"
@@ -7130,7 +7130,7 @@
   {
     "query": "roundabout theatre",
     "count": 75177,
-    "top_100": 7339,
+    "top_100": 6940,
     "result_type": "Hash",
     "top_100_result": [
       "f9e3db52056b0a158b037387f1adaf33382d2c8e165d8b95a7450b6b5bba6043"
@@ -7166,7 +7166,7 @@
   {
     "query": "table lamps",
     "count": 65937,
-    "top_100": 10475,
+    "top_100": 10132,
     "result_type": "Hash",
     "top_100_result": [
       "745d59d0837427af2a981bb2183c2eb893b167f056ebc1dca5b16a76801b66aa"
@@ -7202,7 +7202,7 @@
   {
     "query": "the garden of eden",
     "count": 4269187,
-    "top_100": 2436,
+    "top_100": 28354,
     "result_type": "Hash",
     "top_100_result": [
       "05fd8d507830f484610a161a92049cbabc3e6e19a40f2ada147d5bc229089ff2"
@@ -7238,7 +7238,7 @@
   {
     "query": "immigration to mexico",
     "count": 3107762,
-    "top_100": 13142,
+    "top_100": 19593,
     "result_type": "Hash",
     "top_100_result": [
       "ad4492b7516bdd386f455d7f1a2706352fc5a9b7b6ac15bb0ce264c0b14675e9"
@@ -7274,7 +7274,7 @@
   {
     "query": "the daily breeze",
     "count": 4168303,
-    "top_100": 4728,
+    "top_100": 7415,
     "result_type": "Hash",
     "top_100_result": [
       "59dc9766f37d5ecca77752110ceb1cca65e2196b608b378d071cdc0921d7b324"
@@ -7346,7 +7346,7 @@
   {
     "query": "term life insurance",
     "count": 651176,
-    "top_100": 7397,
+    "top_100": 43700,
     "result_type": "Hash",
     "top_100_result": [
       "478947135b3d89e2fac48e7146fd20ccefc82e0063a807697490e34420aa8ad8"
@@ -7382,7 +7382,7 @@
   {
     "query": "tennis elbow",
     "count": 38349,
-    "top_100": 9867,
+    "top_100": 9736,
     "result_type": "Hash",
     "top_100_result": [
       "9e5cf3f3256b6a82a74071a5038cb5c2c020cfa264c157376be61f6a027804fe"
@@ -7454,7 +7454,7 @@
   {
     "query": "us coast guard",
     "count": 337147,
-    "top_100": 11664,
+    "top_100": 52230,
     "result_type": "Hash",
     "top_100_result": [
       "542f417fec6b6f1c61afd7bd76ab740f11daa1a8abb3740cf970b0a7a058121b"
@@ -7490,7 +7490,7 @@
   {
     "query": "car stereo",
     "count": 90307,
-    "top_100": 7806,
+    "top_100": 6399,
     "result_type": "Hash",
     "top_100_result": [
       "952aba02c613dab189c82c3c2fc9ab11888785850fa56e4f748d1f5364f87c61"
@@ -7526,7 +7526,7 @@
   {
     "query": "playa del rey",
     "count": 53641,
-    "top_100": 2703,
+    "top_100": 2897,
     "result_type": "Hash",
     "top_100_result": [
       "1222d252de55de4d835544dd5f2a0fc6186359ed856b13adf064638b3efba1e3"
@@ -7562,7 +7562,7 @@
   {
     "query": "domain names",
     "count": 132261,
-    "top_100": 5282,
+    "top_100": 5199,
     "result_type": "Hash",
     "top_100_result": [
       "f0fdce529551e8674a6069da40f0195f657bb78306efdc5dfbaaeb12205e7933"
@@ -7598,7 +7598,7 @@
   {
     "query": "premier wine",
     "count": 75264,
-    "top_100": 6781,
+    "top_100": 6738,
     "result_type": "Hash",
     "top_100_result": [
       "832b4aadb5cf82bf89710cd1f62e435dad88497ef52676a4c3ad204553cfe54a"
@@ -7634,7 +7634,7 @@
   {
     "query": "too faced",
     "count": 178211,
-    "top_100": 13859,
+    "top_100": 13412,
     "result_type": "Hash",
     "top_100_result": [
       "7bbf42af13d93dae237a6adfbcf78f852e897a300aa9fb0ed4128fb26bfc95f0"
@@ -7670,7 +7670,7 @@
   {
     "query": "avon school",
     "count": 477882,
-    "top_100": 21995,
+    "top_100": 13938,
     "result_type": "Hash",
     "top_100_result": [
       "5702446b898c9ed60ecf6c8049c7495de544a2fe86642b5c814afd8a342c040c"
@@ -7706,7 +7706,7 @@
   {
     "query": "jungle boy",
     "count": 68527,
-    "top_100": 8896,
+    "top_100": 8238,
     "result_type": "Hash",
     "top_100_result": [
       "de36c3dc14b6f5bdd76e875e4ef3fced7bea838ffd95b712d4e01e44d1fef1b7"
@@ -7742,7 +7742,7 @@
   {
     "query": "ventura college",
     "count": 294537,
-    "top_100": 20047,
+    "top_100": 10053,
     "result_type": "Hash",
     "top_100_result": [
       "a823f23b52afbcb1767fa08909f5c27f84344ae9e44f8596d594bf82ad74b251"
@@ -7778,7 +7778,7 @@
   {
     "query": "kansas city kings",
     "count": 555478,
-    "top_100": 5441,
+    "top_100": 20667,
     "result_type": "Hash",
     "top_100_result": [
       "283e138c36ffc2934eb71b5210b3bd0deaab1d7b0be96f6e216f16d0a5f94ab3"
@@ -7814,7 +7814,7 @@
   {
     "query": "new haven",
     "count": 962508,
-    "top_100": 12335,
+    "top_100": 8792,
     "result_type": "Hash",
     "top_100_result": [
       "8d8ecbf8fe96b3e02dcfe86b28eb8732b1df8ef7d002571766ef8fef3cb5189d"
@@ -7850,7 +7850,7 @@
   {
     "query": "ron keel",
     "count": 22177,
-    "top_100": 10576,
+    "top_100": 10546,
     "result_type": "Hash",
     "top_100_result": [
       "eb399de968e9c8bda306c2b05434d2473bba73a903a610906f240d7c9ce3120d"
@@ -7886,7 +7886,7 @@
   {
     "query": "business consultants",
     "count": 183559,
-    "top_100": 16458,
+    "top_100": 9171,
     "result_type": "Hash",
     "top_100_result": [
       "a22fdaa36120ed34ebd719fee9c87f7b346a4e4e7ead3e83d042f87d3adf9341"
@@ -7922,7 +7922,7 @@
   {
     "query": "open source software",
     "count": 318670,
-    "top_100": 3884,
+    "top_100": 10957,
     "result_type": "Hash",
     "top_100_result": [
       "7a6f7f395675a60e055d6536747efa89900217cd774be6d025e220c3980fe808"
@@ -7958,7 +7958,7 @@
   {
     "query": "ambassador of italy",
     "count": 3802857,
-    "top_100": 12194,
+    "top_100": 33813,
     "result_type": "Hash",
     "top_100_result": [
       "f8e9a42db0478e2cb9c4335f0d3cc2277e5b039908ba4ad5607c8e240110c457"
@@ -7994,7 +7994,7 @@
   {
     "query": "los angeles daily news",
     "count": 254583,
-    "top_100": 14410,
+    "top_100": 253632,
     "result_type": "Hash",
     "top_100_result": [
       "9fbb5e7783d1f57822afe7cc2b9c3fab3c8290fff914ce99321ae8a370456ce2"
@@ -8030,7 +8030,7 @@
   {
     "query": "napa auto parts",
     "count": 162351,
-    "top_100": 5197,
+    "top_100": 5978,
     "result_type": "Hash",
     "top_100_result": [
       "710b0107c078ae141d426e1b315c9c0f6447563cf7df252c573ef78f1843d9c9"
@@ -8066,7 +8066,7 @@
   {
     "query": "law school rankings",
     "count": 620188,
-    "top_100": 7530,
+    "top_100": 60396,
     "result_type": "Hash",
     "top_100_result": [
       "636bfb9af8b39a55574c94ddeab1192ce277c46be87d894775d4b110958de7a3"
@@ -8102,7 +8102,7 @@
   {
     "query": "hsbc bank",
     "count": 91128,
-    "top_100": 7748,
+    "top_100": 6605,
     "result_type": "Hash",
     "top_100_result": [
       "a569e5ad69814903a77489c6643a48619a90d0b6465421f2d7fa4579e6c7dde2"
@@ -8174,7 +8174,7 @@
   {
     "query": "mushroom kingdom",
     "count": 140156,
-    "top_100": 10002,
+    "top_100": 6473,
     "result_type": "Hash",
     "top_100_result": [
       "593524a3d86975f1811ab9e24c6d3c3468dbd088e0fdf838a239f350009714da"
@@ -8210,7 +8210,7 @@
   {
     "query": "the progressive",
     "count": 4168228,
-    "top_100": 10557,
+    "top_100": 5100,
     "result_type": "Hash",
     "top_100_result": [
       "ab76b2746cf9f99e3608557c2e760f48bef1f72362dae45e4dc13b6198130083"
@@ -8282,7 +8282,7 @@
   {
     "query": "ugly people",
     "count": 485132,
-    "top_100": 23107,
+    "top_100": 14569,
     "result_type": "Hash",
     "top_100_result": [
       "af124b1a28b4f5d17b2dac32d6916de94addc69f76c81802454a72e719b48d97"
@@ -8318,7 +8318,7 @@
   {
     "query": "little shop of horrors",
     "count": 3800827,
-    "top_100": 7527,
+    "top_100": 48437,
     "result_type": "Hash",
     "top_100_result": [
       "4d00c8038d156cee79b0c5f79ad6035b418a2b2bcdd8d356e77cee0edb156a05"
@@ -8390,7 +8390,7 @@
   {
     "query": "internet fraud",
     "count": 57181,
-    "top_100": 11130,
+    "top_100": 10980,
     "result_type": "Hash",
     "top_100_result": [
       "32bdad331259975ff4aadeb5f7c8a2b3b3ea7f247f48ce8400288f6560b4c0b3"
@@ -8426,7 +8426,7 @@
   {
     "query": "tv party",
     "count": 324999,
-    "top_100": 9622,
+    "top_100": 9233,
     "result_type": "Hash",
     "top_100_result": [
       "542edfabe324b3d39181fb203434c10961e783c8189335d386177866df65ce9c"
@@ -8462,7 +8462,7 @@
   {
     "query": "new jersey police",
     "count": 1012784,
-    "top_100": 3421,
+    "top_100": 3353,
     "result_type": "Hash",
     "top_100_result": [
       "0b3e92242369b2f9e251d3fafc8bf0601e78b5ceb6001eac2eee554f0d2284ae"
@@ -8498,7 +8498,7 @@
   {
     "query": "university of akron",
     "count": 3806175,
-    "top_100": 1760,
+    "top_100": 10246,
     "result_type": "Hash",
     "top_100_result": [
       "0e7a12dc346dc676b3e2a55f6f53d5c30674a88b33a7b3ea15573e5d717c5513"
@@ -8534,7 +8534,7 @@
   {
     "query": "the news journal",
     "count": 4168906,
-    "top_100": 9837,
+    "top_100": 27625,
     "result_type": "Hash",
     "top_100_result": [
       "0fa3a32c3d43a89df3b43b38e416e216919998c8affc4749dc7cfb4a7d535a27"
@@ -8570,7 +8570,7 @@
   {
     "query": "cartoon network",
     "count": 121970,
-    "top_100": 4216,
+    "top_100": 4210,
     "result_type": "Hash",
     "top_100_result": [
       "7587051ba809aed28daa8a0b9007d0a8edb2417c78e0576e7cd38ce7e5d6776d"
@@ -8606,7 +8606,7 @@
   {
     "query": "robert reed",
     "count": 152743,
-    "top_100": 7495,
+    "top_100": 7026,
     "result_type": "Hash",
     "top_100_result": [
       "edf07aa86e356fa007459877b4a91a0e5f63505535bb84c4e6d080b2ca41f0f0"
@@ -8642,7 +8642,7 @@
   {
     "query": "interracial love",
     "count": 126726,
-    "top_100": 18553,
+    "top_100": 10039,
     "result_type": "Hash",
     "top_100_result": [
       "0aeef0e8835bc6a748b1ef1f09fe495d8621850b93c494dee11082c2247ba1c0"
@@ -8678,7 +8678,7 @@
   {
     "query": "round table",
     "count": 212022,
-    "top_100": 4971,
+    "top_100": 4930,
     "result_type": "Hash",
     "top_100_result": [
       "9b591890259b3a5e6e89d59074f0ae31b086e8fa97a87b738ea1dfe6046a5d56"
@@ -8714,7 +8714,7 @@
   {
     "query": "low estrogen",
     "count": 148462,
-    "top_100": 11661,
+    "top_100": 4728,
     "result_type": "Hash",
     "top_100_result": [
       "7780ec6be436bf5b989c7a383249b6958f09d8901abfb521b4dc62b3c436a374"
@@ -8750,7 +8750,7 @@
   {
     "query": "akron beacon",
     "count": 7393,
-    "top_100": 4634,
+    "top_100": 4629,
     "result_type": "Hash",
     "top_100_result": [
       "75a9525ea72f9ca0a71f145e01690fea5a2e2a38c97ef8e79e0373f169f3fc28"
@@ -8786,7 +8786,7 @@
   {
     "query": "john wellington",
     "count": 355372,
-    "top_100": 6200,
+    "top_100": 5589,
     "result_type": "Hash",
     "top_100_result": [
       "0b6f8244d8d5ca19c917f5a986b3313caabda07032c24f23e9295e6bfc48c602"
@@ -8822,7 +8822,7 @@
   {
     "query": "city in iran",
     "count": 4015610,
-    "top_100": 2141,
+    "top_100": 12840,
     "result_type": "Hash",
     "top_100_result": [
       "4053e3fab6d89121d16f5e26bdd11d7c9b1f6bb664195dd94b17db432e6c7458"
@@ -8858,7 +8858,7 @@
   {
     "query": "corpus christi tx",
     "count": 11520,
-    "top_100": 3197,
+    "top_100": 3195,
     "result_type": "Hash",
     "top_100_result": [
       "6358f5ec8db2c6935abb3c5e2a3703070139e839887b760b670b7828dcfa084f"
@@ -8894,7 +8894,7 @@
   {
     "query": "becoming a widow",
     "count": 3980779,
-    "top_100": 2558,
+    "top_100": 10682,
     "result_type": "Hash",
     "top_100_result": [
       "8271c9784003c930eb8aceff0ba7982ee4c98130d35fb9cf666d21ed1c502c84"
@@ -8966,7 +8966,7 @@
   {
     "query": "centerville high school",
     "count": 748828,
-    "top_100": 1789,
+    "top_100": 2104,
     "result_type": "Hash",
     "top_100_result": [
       "150888568bc5df79591528a958f94f163ebf47e1383c235d83f348170a666aa7"
@@ -9002,7 +9002,7 @@
   {
     "query": "foam mattress",
     "count": 3783,
-    "top_100": 3783,
+    "top_100": 3782,
     "result_type": "Hash",
     "top_100_result": [
       "bbd5382403d65a6dd0bf81c7a9207c5851975a5db2c3f2af7c1596fe53a4dcbc"
@@ -9038,7 +9038,7 @@
   {
     "query": "music videos",
     "count": 273351,
-    "top_100": 3600,
+    "top_100": 3211,
     "result_type": "Hash",
     "top_100_result": [
       "36b7b634e105a057cd8dedc9e55738a91df61bf8552efab610b9296d2b0f10d4"
@@ -9074,7 +9074,7 @@
   {
     "query": "farmers almanac",
     "count": 29487,
-    "top_100": 7074,
+    "top_100": 7007,
     "result_type": "Hash",
     "top_100_result": [
       "53c879ee52881a2fed41126dc3340a1eed87e733d55bf53be783045a4778ccb2"
@@ -9110,7 +9110,7 @@
   {
     "query": "civil war battlefields",
     "count": 463674,
-    "top_100": 4165,
+    "top_100": 7509,
     "result_type": "Hash",
     "top_100_result": [
       "e7d0f0503c3c46a7d0314ac4f0ce5dcb41e2952acd9bb28a65be52ab8ba8cf4f"
@@ -9146,7 +9146,7 @@
   {
     "query": "national security cutter",
     "count": 687519,
-    "top_100": 7118,
+    "top_100": 8846,
     "result_type": "Hash",
     "top_100_result": [
       "a15fdd1a84781211359cdfab264e1262e5867279fb37ef2507dab4b06559d75f"
@@ -9182,7 +9182,7 @@
   {
     "query": "eastern mennonite university",
     "count": 638452,
-    "top_100": 8650,
+    "top_100": 11709,
     "result_type": "Hash",
     "top_100_result": [
       "16985ac3bcc1d931755d71e71c004a6afae455827ea4b83426fac4a83de33de0"
@@ -9218,10 +9218,10 @@
   {
     "query": "new york times best sellers list",
     "count": 1424119,
-    "top_100": 2416,
+    "top_100": 555440,
     "result_type": "Hash",
     "top_100_result": [
-      "20d91b573b98b43b6131939a25a5022479ca39dc6bd5556e51b33ca391aba0e5"
+      "058e6af389e6e40396031cf7607f70ee6e66e559d168943f46d7147a7a91fa64"
     ],
     "top_100_count_result": [
       "058e6af389e6e40396031cf7607f70ee6e66e559d168943f46d7147a7a91fa64"
@@ -9254,7 +9254,7 @@
   {
     "query": "usb hub",
     "count": 16349,
-    "top_100": 6630,
+    "top_100": 6625,
     "result_type": "Hash",
     "top_100_result": [
       "9bd85d847f4b965a91cae43ea8b043ca13dd94caaea3a06b0feea26c3041dca8"
@@ -9326,7 +9326,7 @@
   {
     "query": "new york towns",
     "count": 1004290,
-    "top_100": 6015,
+    "top_100": 43645,
     "result_type": "Hash",
     "top_100_result": [
       "a15911b3393a059e741266384e3a41d629f6f8aae24b1394163d92ad3883f8a0"
@@ -9362,7 +9362,7 @@
   {
     "query": "medal of honor",
     "count": 3815915,
-    "top_100": 11399,
+    "top_100": 27956,
     "result_type": "Hash",
     "top_100_result": [
       "e765b730ae774b914367c1340a1fb9e0c8a68acac16d68e7e4440b89cbabe28a"
@@ -9398,7 +9398,7 @@
   {
     "query": "hot springs south dakota",
     "count": 621002,
-    "top_100": 4615,
+    "top_100": 10232,
     "result_type": "Hash",
     "top_100_result": [
       "7f39f01cad7014fd43b38b395b452a8a57c617aaf99ed807012ce35d937e876d"
@@ -9434,7 +9434,7 @@
   {
     "query": "home business",
     "count": 506318,
-    "top_100": 10048,
+    "top_100": 9412,
     "result_type": "Hash",
     "top_100_result": [
       "56ca070d4cdd61a2d91df07eefb88c760111f6ba09b47c3dbae34842257a4713"
@@ -9470,7 +9470,7 @@
   {
     "query": "perfume bottles",
     "count": 7141,
-    "top_100": 5436,
+    "top_100": 5434,
     "result_type": "Hash",
     "top_100_result": [
       "ec703c14bae40a2cc21072a9632c5c3d8e9c64dd418db916ec6c5301e9715e4a"
@@ -9506,7 +9506,7 @@
   {
     "query": "old photos",
     "count": 341994,
-    "top_100": 11764,
+    "top_100": 10222,
     "result_type": "Hash",
     "top_100_result": [
       "403f342ed359ec28867551d70eb37e53ce319db24582346178e808d5a4a07977"
@@ -9542,7 +9542,7 @@
   {
     "query": "edith head",
     "count": 236925,
-    "top_100": 15344,
+    "top_100": 11997,
     "result_type": "Hash",
     "top_100_result": [
       "c4683f7a69f5b1b7354056fd5d01b447b0d6742e108f24dcc64b885a8e642e7f"
@@ -9578,7 +9578,7 @@
   {
     "query": "danube river",
     "count": 254858,
-    "top_100": 11750,
+    "top_100": 8530,
     "result_type": "Hash",
     "top_100_result": [
       "7e6448ac065dfd3fdd45e705c368b51d038fb71d69660d144f4e93655e4dfd58"
@@ -9650,7 +9650,7 @@
   {
     "query": "the british embassy",
     "count": 4171627,
-    "top_100": 12272,
+    "top_100": 24291,
     "result_type": "Hash",
     "top_100_result": [
       "4c8736ae826c8e9a0fd2611e8887ebb370bdc41aee60cca59d091d58f60515e2"
@@ -9686,7 +9686,7 @@
   {
     "query": "human trafficking",
     "count": 138987,
-    "top_100": 7460,
+    "top_100": 5000,
     "result_type": "Hash",
     "top_100_result": [
       "a9c3dc24fdb60e5388ddda694cf5610478a95fc8a572b05affd3dc10c718633b"
@@ -9722,7 +9722,7 @@
   {
     "query": "new england aquarium",
     "count": 1078395,
-    "top_100": 8745,
+    "top_100": 9123,
     "result_type": "Hash",
     "top_100_result": [
       "7ec29ff133d7a33afc2fbd35b555d3f6df090ef1ad35fbdd13665abfb96f492f"
@@ -9758,7 +9758,7 @@
   {
     "query": "the book of life",
     "count": 4270466,
-    "top_100": 3122,
+    "top_100": 12965,
     "result_type": "Hash",
     "top_100_result": [
       "6dcb72cd8c9ea99981f4dd5036780779cdac4fe747db53a30217acdbaa567418"
@@ -9830,7 +9830,7 @@
   {
     "query": "water filters",
     "count": 200981,
-    "top_100": 16048,
+    "top_100": 8864,
     "result_type": "Hash",
     "top_100_result": [
       "ca62b00f444d2d7f7867e7bf21cf3692c0716db181c20c610fb878f7ce17d886"
@@ -9866,7 +9866,7 @@
   {
     "query": "general motors",
     "count": 360655,
-    "top_100": 8642,
+    "top_100": 7280,
     "result_type": "Hash",
     "top_100_result": [
       "004f3c0fdc13dd082d7968bf841c11db566223b6bedb8a335007d5a0f09f4a06"
@@ -9938,7 +9938,7 @@
   {
     "query": "blue ridge parkway",
     "count": 126816,
-    "top_100": 9682,
+    "top_100": 53558,
     "result_type": "Hash",
     "top_100_result": [
       "1802f717c5e386abbf5c5b3cf55d749bab3e558c02f839815f413718fdb47940"
@@ -9974,7 +9974,7 @@
   {
     "query": "elizabeth vargas",
     "count": 55586,
-    "top_100": 5714,
+    "top_100": 5586,
     "result_type": "Hash",
     "top_100_result": [
       "932285ed20b0fe73cc96f8841182d6ba7ea3db92096f581a63c0fa7c6e23c8ef"
@@ -10046,7 +10046,7 @@
   {
     "query": "air mattress",
     "count": 170597,
-    "top_100": 15480,
+    "top_100": 7969,
     "result_type": "Hash",
     "top_100_result": [
       "efdcc23f69e712a03cd1bc52437d36215cf0e02946c5bbea6fd10f9c1d22f816"
@@ -10082,7 +10082,7 @@
   {
     "query": "pocket pc",
     "count": 26300,
-    "top_100": 7465,
+    "top_100": 7438,
     "result_type": "Hash",
     "top_100_result": [
       "3f6930efe16bea91eeff95fafcffd283ac5b802ca0cc19a1d35e645f68bb4714"
@@ -10118,7 +10118,7 @@
   {
     "query": "chicago public schools",
     "count": 467039,
-    "top_100": 8537,
+    "top_100": 91228,
     "result_type": "Hash",
     "top_100_result": [
       "d83f05931d50b97876598f6b60d339a7c9794a0661b7b69c69dcb12202f64128"
@@ -10154,7 +10154,7 @@
   {
     "query": "george r brown convention center",
     "count": 635117,
-    "top_100": 24273,
+    "top_100": 634519,
     "result_type": "Hash",
     "top_100_result": [
       "fe0f34e1473a18a60cd85fb243cb387478f20b1973580012990ea3d51e0e3a48"
@@ -10190,7 +10190,7 @@
   {
     "query": "warren county",
     "count": 487676,
-    "top_100": 5377,
+    "top_100": 3689,
     "result_type": "Hash",
     "top_100_result": [
       "7598b984ac62c3adee3f4b02a7458fd5d6c4e7e0ef126b69da20d7a8a966f745"
@@ -10226,7 +10226,7 @@
   {
     "query": "animal rights",
     "count": 144566,
-    "top_100": 8990,
+    "top_100": 7803,
     "result_type": "Hash",
     "top_100_result": [
       "24895fbd4a78c9eb06b66bb0b0888e4c38419772090686173c07ff6f3243478b"
@@ -10262,7 +10262,7 @@
   {
     "query": "david lee roth",
     "count": 192019,
-    "top_100": 11382,
+    "top_100": 11303,
     "result_type": "Hash",
     "top_100_result": [
       "9838ff2d497037a1be49601af0919515385586b598af8d485f879b6be33f18e4"
@@ -10298,7 +10298,7 @@
   {
     "query": "central community college",
     "count": 778663,
-    "top_100": 19826,
+    "top_100": 103863,
     "result_type": "Hash",
     "top_100_result": [
       "a3a942a5b56eb4ad44fd72b957f92d7af0bb878fc12d151f45c0587ce8dc2ffe"
@@ -10334,7 +10334,7 @@
   {
     "query": "power rangers ninja storm",
     "count": 231009,
-    "top_100": 9902,
+    "top_100": 114065,
     "result_type": "Hash",
     "top_100_result": [
       "e4819fd624d5cc1386f4e25ae7923b78818eb0e00f9f227a919ad909796dfa6b"
@@ -10370,7 +10370,7 @@
   {
     "query": "movie theatres",
     "count": 89056,
-    "top_100": 7675,
+    "top_100": 5617,
     "result_type": "Hash",
     "top_100_result": [
       "f1eb0d98bd183b3100e49cadb1c4ae4149b4ccba89993208515f0a512602344e"
@@ -10406,7 +10406,7 @@
   {
     "query": "canary bird",
     "count": 41550,
-    "top_100": 10304,
+    "top_100": 6342,
     "result_type": "Hash",
     "top_100_result": [
       "4322c16f48ec0c9769f4a8871bae848279509f43224613e6a872572a880d70d5"
@@ -10478,7 +10478,7 @@
   {
     "query": "david thornton",
     "count": 148177,
-    "top_100": 7249,
+    "top_100": 7001,
     "result_type": "Hash",
     "top_100_result": [
       "5cf8535194e69f0eedc2b18b6c78c74b82557cc290066abfa3dd0316a4885d09"
@@ -10514,7 +10514,7 @@
   {
     "query": "jamie murray",
     "count": 27089,
-    "top_100": 9354,
+    "top_100": 9324,
     "result_type": "Hash",
     "top_100_result": [
       "714743aab23525f3860763877f4e0b4b1013c152f4eda6a47763e4818d499b9d"
@@ -10550,7 +10550,7 @@
   {
     "query": "boulder city nevada",
     "count": 536979,
-    "top_100": 6931,
+    "top_100": 28175,
     "result_type": "Hash",
     "top_100_result": [
       "bf24728334cfe9815082d74120b6084916d9d5bdb091ea429d2f1158154e3ea3"
@@ -10586,7 +10586,7 @@
   {
     "query": "united states constitution",
     "count": 686232,
-    "top_100": 5244,
+    "top_100": 11861,
     "result_type": "Hash",
     "top_100_result": [
       "b48180309c74e1a518d50a4e9aa1ea63ac137b67f60fcbf45d316071fadc785e"
@@ -10622,7 +10622,7 @@
   {
     "query": "niceville high school",
     "count": 748534,
-    "top_100": 1133,
+    "top_100": 1469,
     "result_type": "Hash",
     "top_100_result": [
       "3393fb1100ffffc2da6ce05c7b689ad241e1616acc58dce4f176aa18ac99a8c6"
@@ -10658,7 +10658,7 @@
   {
     "query": "sleep study",
     "count": 155369,
-    "top_100": 9709,
+    "top_100": 8384,
     "result_type": "Hash",
     "top_100_result": [
       "f8a1d4ecd89d04a10772c45800f9bc950ac79d52590308358bfe721bff1d3557"
@@ -10694,7 +10694,7 @@
   {
     "query": "true religion",
     "count": 126586,
-    "top_100": 15134,
+    "top_100": 12181,
     "result_type": "Hash",
     "top_100_result": [
       "e279f5e790e75f09171319d0943879edb37bb6189721bff90e8af5497eb0e019"
@@ -10730,7 +10730,7 @@
   {
     "query": "google satellite",
     "count": 36113,
-    "top_100": 9044,
+    "top_100": 8953,
     "result_type": "Hash",
     "top_100_result": [
       "e18131e6cb1f70c9ae055acc0bb57653ac9aa07f7fa8faac81fcfb145ad77582"
@@ -10766,7 +10766,7 @@
   {
     "query": "laborers international union of north america",
     "count": 3837689,
-    "top_100": 7216,
+    "top_100": 49406,
     "result_type": "Hash",
     "top_100_result": [
       "8d57f2d39f0bd021e453a51b658289a459fcd0191966816fc6dc4e629bc00ba0"
@@ -10814,7 +10814,7 @@
   {
     "query": "to be or not to be",
     "count": 3239046,
-    "top_100": 3948,
+    "top_100": 7492,
     "result_type": "Hash",
     "top_100_result": [
       "274dee33422e8deb1cc21d2cd0b1b57fb1ea5b369a8334a7d4a35425530c15ae"
@@ -10826,7 +10826,7 @@
   {
     "query": "a search engine is an information retrieval software system designed to help find information stored on one or more computer systems",
     "count": 4539182,
-    "top_100": 3295,
+    "top_100": 92311,
     "result_type": "Hash",
     "top_100_result": [
       "bae7712bf57d4765bca74f249758622ce43ac855dd39eae7db3c781556ab40ab"
@@ -11366,7 +11366,7 @@
   {
     "query": "+mercury -planet -element",
     "count": 9895,
-    "top_100": 9895,
+    "top_100": 8970,
     "result_type": "Hash",
     "top_100_result": [
       "0e7f84475af3fe6c0267d5b8b6fc8d5f970111a16d48502cbca08426cce2f362"
@@ -11378,7 +11378,7 @@
   {
     "query": "+mercury -planet",
     "count": 10327,
-    "top_100": 10327,
+    "top_100": 9369,
     "result_type": "Hash",
     "top_100_result": [
       "740230b40e3b85b67cc2c7016a226c285cf64442b334d42cae6c4fc09b1ed6ea"
@@ -11390,7 +11390,7 @@
   {
     "query": "+java -coffee -island",
     "count": 9756,
-    "top_100": 9756,
+    "top_100": 8533,
     "result_type": "Hash",
     "top_100_result": [
       "958097c90dcab2b6d61390ad1803e6f148a7030c6b84ea0f9f32109cfd71753b"
@@ -11402,7 +11402,7 @@
   {
     "query": "+java -coffee",
     "count": 11530,
-    "top_100": 11530,
+    "top_100": 10010,
     "result_type": "Hash",
     "top_100_result": [
       "f4faa9b0d10699fba2715be3d998e8f95ba513b00493768cc9ba9890a6e27391"
@@ -11438,7 +11438,7 @@
   {
     "query": "+amazon -river -rainforest",
     "count": 7740,
-    "top_100": 7740,
+    "top_100": 7358,
     "result_type": "Hash",
     "top_100_result": [
       "d90e2acb4c67c3109acf1d2e6a5089d548c965cc5ddf153ffba326dc381359f8"
@@ -11450,7 +11450,7 @@
   {
     "query": "+apple -fruit -tree",
     "count": 12832,
-    "top_100": 12832,
+    "top_100": 11338,
     "result_type": "Hash",
     "top_100_result": [
       "8ed6cc4fd10b3b1f0e97e9180bfad7940322f472f1bfa2c582e6647d068d7855"
@@ -11462,7 +11462,7 @@
   {
     "query": "+delta -airlines -river",
     "count": 11876,
-    "top_100": 11876,
+    "top_100": 9864,
     "result_type": "Hash",
     "top_100_result": [
       "435dd9fbce603064c6f5f9b8d22757e85ed6e6427978b823b4af8d9a1c4ae899"
@@ -11474,7 +11474,7 @@
   {
     "query": "+jordan -country -basketball",
     "count": 16503,
-    "top_100": 16503,
+    "top_100": 12814,
     "result_type": "Hash",
     "top_100_result": [
       "556a08301a7ca8453491e391adad0e0673fb7e23737eb53d74c68a0e23c8e23a"
@@ -11498,7 +11498,7 @@
   {
     "query": "+bass -fish -guitar",
     "count": 17780,
-    "top_100": 17780,
+    "top_100": 12485,
     "result_type": "Hash",
     "top_100_result": [
       "e388dac4ee054df8105bbd4a9d7666f441764f2239aab8e501489c41afe51aca"
@@ -12914,7 +12914,7 @@
   {
     "query": "(the world state)@2",
     "count": 1027681,
-    "top_100": 1027681,
+    "top_100": 1261,
     "result_type": "Hash",
     "top_100_result": [
       "3e374e4991c856f337b9e05cc0d438a0c604a6f8ae12ee7603f6bf0c1355dfc0"
@@ -12926,7 +12926,7 @@
   {
     "query": "(the world state history)@3",
     "count": 368422,
-    "top_100": 368422,
+    "top_100": 7268,
     "result_type": "Hash",
     "top_100_result": [
       "a3835f66c3bae1b24eb0ff760436df94c65158e12e9c236aeba7fffd34643364"
@@ -14306,7 +14306,7 @@
   {
     "query": "+the -\"griffith observatory\"",
     "count": 4168009,
-    "top_100": 4168009,
+    "top_100": 78209,
     "result_type": "Hash",
     "top_100_result": [
       "f3ba46b2bcb4e2a8c3dc450d2fdbb86c8576e50277d958ad1cdf10d48e4ce19a"
@@ -14426,7 +14426,7 @@
   {
     "query": "+world -\"bowel obstruction\"",
     "count": 634021,
-    "top_100": 634021,
+    "top_100": 40257,
     "result_type": "Hash",
     "top_100_result": [
       "d8d9d42715b2fcedebdfe9077aed4354860b2e9a66ceba80f2603d9183b6389a"
@@ -14546,7 +14546,7 @@
   {
     "query": "+state -\"vicenza italy\"",
     "count": 523047,
-    "top_100": 523047,
+    "top_100": 48053,
     "result_type": "Hash",
     "top_100_result": [
       "ddf882df6167f7336d6bec5bf44e59227c13f0c100f8e1d7ea08a849904733d5"
@@ -14666,7 +14666,7 @@
   {
     "query": "+history -\"digital scanning\"",
     "count": 681008,
-    "top_100": 681008,
+    "top_100": 48306,
     "result_type": "Hash",
     "top_100_result": [
       "5c4d7d9ca791e80316c84e7b3f93b61e20fc0168bd2a6387dcdf40454766617a"
@@ -14786,7 +14786,7 @@
   {
     "query": "+president -\"borders books\"",
     "count": 243850,
-    "top_100": 243850,
+    "top_100": 44046,
     "result_type": "Hash",
     "top_100_result": [
       "fb0c4340983c1cf42d7a0c4d0227261d43b5bb715ebd9e459d210b0deddf9267"
@@ -14906,7 +14906,7 @@
   {
     "query": "+river -\"american funds\"",
     "count": 252277,
-    "top_100": 252277,
+    "top_100": 44666,
     "result_type": "Hash",
     "top_100_result": [
       "917d58d81f5a45ee502028f36c31d4bf324101831c65bbb0c013ab2a03b5f142"
@@ -15026,7 +15026,7 @@
   {
     "query": "+population -\"scottsdale az\"",
     "count": 365703,
-    "top_100": 365703,
+    "top_100": 34824,
     "result_type": "Hash",
     "top_100_result": [
       "5d57ec32f58395a6de2a58a98b3f85437d037a17cdb318dbca582d4abef358cc"
@@ -15146,7 +15146,7 @@
   {
     "query": "+university -\"freelance work\"",
     "count": 465915,
-    "top_100": 465915,
+    "top_100": 48881,
     "result_type": "Hash",
     "top_100_result": [
       "3f0e8fc44d7da76215ad43da6949522b285636dcaf86750600b5b4c801884623"
@@ -15266,7 +15266,7 @@
   {
     "query": "+germany -\"color combinations\"",
     "count": 175317,
-    "top_100": 175317,
+    "top_100": 34913,
     "result_type": "Hash",
     "top_100_result": [
       "37f8fad789f42bff29cf48ae0184a87f92b6688d0905b4e272d953eba12bcc88"
@@ -15386,7 +15386,7 @@
   {
     "query": "+album -\"italian translation\"",
     "count": 198200,
-    "top_100": 198200,
+    "top_100": 38849,
     "result_type": "Hash",
     "top_100_result": [
       "f4f4486654c11cb4752647f3199a94c723002f31ab8cfa3e2a52349500dfd2bd"
@@ -17486,7 +17486,7 @@
   {
     "query": "(the world) (state history)",
     "count": 4178671,
-    "top_100": 2801,
+    "top_100": 24500,
     "result_type": "Hash",
     "top_100_result": [
       "a3835f66c3bae1b24eb0ff760436df94c65158e12e9c236aeba7fffd34643364"
@@ -17498,7 +17498,7 @@
   {
     "query": "(climate policy) (energy goals)",
     "count": 238156,
-    "top_100": 17982,
+    "top_100": 237447,
     "result_type": "Hash",
     "top_100_result": [
       "19aa01bdccc49c77abab95ec08358019b04edaf92bbdff030312a75bc93c54a9"
@@ -17534,7 +17534,7 @@
   {
     "query": "((the world) (state history)) climate",
     "count": 4178713,
-    "top_100": 3815,
+    "top_100": 99896,
     "result_type": "Hash",
     "top_100_result": [
       "a318409bfba5214b42aad1de8c93eff982a488dfca4cd92bb03ab76e31a1c55a"
@@ -17618,7 +17618,7 @@
   {
     "query": "climate climate policy policy",
     "count": 116554,
-    "top_100": 8326,
+    "top_100": 7437,
     "result_type": "Hash",
     "top_100_result": [
       "cf70de227d79ea127dfe511112bd74fc7ae1457172afe8b86af0b1520a14f86f"
@@ -17630,7 +17630,7 @@
   {
     "query": "world state -history",
     "count": 727502,
-    "top_100": 727502,
+    "top_100": 14501,
     "result_type": "Hash",
     "top_100_result": [
       "af55467977893bc289808cb62b37401ec93fda5768e48cf4b9b3e948be163eca"
@@ -17642,7 +17642,7 @@
   {
     "query": "climate energy -policy",
     "count": 93145,
-    "top_100": 93145,
+    "top_100": 7385,
     "result_type": "Hash",
     "top_100_result": [
       "9748c6da4ea59e078af012d804bbeafc35fb193ddb8866e987565c21bdb94d55"
@@ -17654,7 +17654,7 @@
   {
     "query": "(the world) -\"griffith observatory\"",
     "count": 4170900,
-    "top_100": 4170900,
+    "top_100": 1446,
     "result_type": "Hash",
     "top_100_result": [
       "1cce6680dc763b7af056df43c7e025b5df6159d5cbd2a91d4f05e725d91bc28f"
@@ -17690,7 +17690,7 @@
   {
     "query": "climate -(griffith observatory)",
     "count": 41347,
-    "top_100": 41347,
+    "top_100": 20207,
     "result_type": "Hash",
     "top_100_result": [
       "39b021fc9be526a90e50a86e2532011312d969c7dea813dc093d1e8e41348c8a"
@@ -17702,7 +17702,7 @@
   {
     "query": "energy -(bowel obstruction)",
     "count": 65836,
-    "top_100": 65836,
+    "top_100": 28409,
     "result_type": "Hash",
     "top_100_result": [
       "436793088c6eb91a8f442c4ad192c8d767e38cfccae7f4ec5f6725314eb4b0d1"
@@ -17714,7 +17714,7 @@
   {
     "query": "+the -griffith -observatory",
     "count": 4152838,
-    "top_100": 4152838,
+    "top_100": 78175,
     "result_type": "Hash",
     "top_100_result": [
       "f3ba46b2bcb4e2a8c3dc450d2fdbb86c8576e50277d958ad1cdf10d48e4ce19a"
@@ -17846,7 +17846,7 @@
   {
     "query": "-stat* +the",
     "count": 2932696,
-    "top_100": 2932696,
+    "top_100": 92174,
     "result_type": "Hash",
     "top_100_result": [
       "f468a8c43bccd1bfb812ae5a97bc4a09593cd446601e12ec11daefa19a8656cc"
@@ -17870,7 +17870,7 @@
   {
     "query": "+the +stat*",
     "count": 1235370,
-    "top_100": 1235370,
+    "top_100": 276303,
     "result_type": "Hash",
     "top_100_result": [
       "0bc1bf3bd08496b415eb0c24b21a45d703ed88e1f7b5105661a4041cac080394"
@@ -17882,7 +17882,7 @@
   {
     "query": "+the +histor*",
     "count": 840838,
-    "top_100": 840838,
+    "top_100": 189333,
     "result_type": "Hash",
     "top_100_result": [
       "594e095ae576cb30af8476995f9b955612548380ee3da23e94d28a80439293e7"
@@ -17930,7 +17930,7 @@
   {
     "query": "+(world state) +(history president)",
     "count": 389264,
-    "top_100": 389264,
+    "top_100": 101442,
     "result_type": "Hash",
     "top_100_result": [
       "d361ebeb89c7f5007a7152f6bf7451c46c832f9f8b4891db99d8b9e5a9ea3e50"
@@ -17942,7 +17942,7 @@
   {
     "query": "+(the world) +(state history) +(president river)",
     "count": 238026,
-    "top_100": 238026,
+    "top_100": 23993,
     "result_type": "Hash",
     "top_100_result": [
       "b183f29e53c970871f85203da99b4f94a1ab8c736fb359d509432174e88927fb"
@@ -18002,7 +18002,7 @@
   {
     "query": "+world +state -(history president)",
     "count": 44751,
-    "top_100": 44751,
+    "top_100": 10016,
     "result_type": "Hash",
     "top_100_result": [
       "813f00e04ff44ce8d947d03ec687dfcf42247f1c7c65872f83a4b2ec0f0e514b"
@@ -18014,7 +18014,7 @@
   {
     "query": "+(+world +state) -(+history +president)",
     "count": 102671,
-    "top_100": 102671,
+    "top_100": 16720,
     "result_type": "Hash",
     "top_100_result": [
       "e6c79ffe442119a68e3fc77001deb959a1afef6fdc87da43c01453c385bdbc24"
@@ -18026,7 +18026,7 @@
   {
     "query": "+(world state) +(history president) -(river album)",
     "count": 324252,
-    "top_100": 324252,
+    "top_100": 93727,
     "result_type": "Hash",
     "top_100_result": [
       "0f66b0179190fe6469f3c0a90989b1aed34468173ed06adc1d2c25ce7281c3b8"
@@ -18074,7 +18074,7 @@
   {
     "query": "+((world state) (history president)) +(river president)",
     "count": 364664,
-    "top_100": 364664,
+    "top_100": 363779,
     "result_type": "Hash",
     "top_100_result": [
       "c7cd8b692c1526c9831120a90ea4465b4b18617eee5c4be24e0058a97740d304"
@@ -18110,7 +18110,7 @@
   {
     "query": "+(the) +((world state) (history president))",
     "count": 1483043,
-    "top_100": 1483043,
+    "top_100": 5039,
     "result_type": "Hash",
     "top_100_result": [
       "4bd196661055b1f1536af0e7ac140377465861d03df7c557ae458b311ecb5025"
@@ -18182,7 +18182,7 @@
   {
     "query": "+(world state) +(history president) -\"new york\"",
     "count": 328628,
-    "top_100": 328628,
+    "top_100": 91580,
     "result_type": "Hash",
     "top_100_result": [
       "7de26758e273245625a60bc30e9bb8caa78fcd8182427df53779a29ba528220d"
@@ -18242,7 +18242,7 @@
   {
     "query": "+(world state) +histor*",
     "count": 360844,
-    "top_100": 360844,
+    "top_100": 149152,
     "result_type": "Hash",
     "top_100_result": [
       "164cea661d50ddde049775057845e9d41a8fd5daff870f2d5ffd67d0ad72cbaa"
@@ -18302,7 +18302,7 @@
   {
     "query": "+the -(world state history)@2",
     "count": 3799646,
-    "top_100": 3799646,
+    "top_100": 87043,
     "result_type": "Hash",
     "top_100_result": [
       "f52048c001ca4549510bfd13d2908060673a6a09e79908ae9ceba871a6647c95"
@@ -18338,7 +18338,7 @@
   {
     "query": "+world -(+state -history)",
     "count": 574384,
-    "top_100": 574384,
+    "top_100": 37105,
     "result_type": "Hash",
     "top_100_result": [
       "d1ce38f3c34a05538c0cbddee71661d3db937bbcd2f578f2460afc8611110752"
@@ -18350,7 +18350,7 @@
   {
     "query": "+(world -state) +(history -president)",
     "count": 118642,
-    "top_100": 118642,
+    "top_100": 16291,
     "result_type": "Hash",
     "top_100_result": [
       "d6263f42764c9dff395593ca92c15520eaf11d84acf87e10e8858dfba4a840cb"
@@ -18374,7 +18374,7 @@
   {
     "query": "+the -(world state) -\"new york\"",
     "count": 3021241,
-    "top_100": 3021241,
+    "top_100": 87696,
     "result_type": "Hash",
     "top_100_result": [
       "16be8007834d1403931c3e8f9f904d1475e9a74d0148eb1bb7892c7ea37d285c"
@@ -18386,7 +18386,7 @@
   {
     "query": "+telescope -stat*",
     "count": 3337,
-    "top_100": 3337,
+    "top_100": 3176,
     "result_type": "Hash",
     "top_100_result": [
       "4d9f41d1214d7ffe5a725c8b0130198b6c0d80d319a8bbf47f8541e679810c92"

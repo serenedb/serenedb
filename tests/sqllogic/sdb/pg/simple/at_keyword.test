@@ -67,7 +67,7 @@ at
 query
 SELECT 42 as AT;
 ----
-AT
+at
 42
 
 

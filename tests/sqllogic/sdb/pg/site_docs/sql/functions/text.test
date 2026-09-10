@@ -950,12 +950,16 @@ result
 #| md5_number
 #| 152195979970564155685860391459828531600
 
+# DOCS_TEST_BODY
+
 # DOCS_TEST: read_text
 # DOCS_TEST_RAW
 #| SELECT content FROM read_text('hello.txt');
 #| ----
 #| content
 #| hello
+
+# DOCS_TEST_BODY
 
 # DOCS_TEST: format
 # DOCS_TEST_BODY

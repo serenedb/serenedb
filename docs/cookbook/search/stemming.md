@@ -8,7 +8,7 @@ import SqlLogicTest from "@site/src/components/SqlLogicTest";
 
 # Stemming and Stopwords
 
-A search for "run" should find "running" and "runs". Noise words like "the" and "a" should never bloat the index. A [text dictionary](../../sql/indexes/inverted/text-analysis.md) handles both: [`stemming = true`](../../sql/statements/create_text_search_dictionary/stem.md) reduces words to their root with the Snowball stemmer picked by `locale`, while [`stopwords`](../../sql/statements/create_text_search_dictionary/stopwords.md) drops a list of words before they ever reach the index. The same dictionary analyzes the indexed text and the query, so the inflection you store and the term you search for meet in the middle.
+A search for "run" should find "running" and "runs". Noise words like "the" and "a" should never bloat the index. A [text dictionary](../../sql/indexes/inverted/text-analysis.md) handles both: [`stemming = true`](../../sql/statements/create_text_search_dictionary/text.md) reduces words to their root with the Snowball stemmer picked by `locale`, while [`stopwords`](../../sql/statements/create_text_search_dictionary/stopwords.md) drops a list of words before they ever reach the index. The same dictionary analyzes the indexed text and the query, so the inflection you store and the term you search for meet in the middle.
 
 Three short articles share one indexed `body` column whose dictionary stems each word and strips the stopwords.
 

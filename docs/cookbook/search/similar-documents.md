@@ -33,28 +33,28 @@ To find the copies you compare every pair and keep the ones inside a tiny radius
 
 ## MinHash for near-duplicate text
 
-Distances work once you have vectors. To catch near-duplicate text from the words alone, with no embedding model in the loop, SereneDB has the [`minhash`](../../sql/statements/create_text_search_dictionary/minhash/index.md) dictionary template. It wraps a tokenizer and reduces each document to a fixed set of `numhashes` hash values, its signature. Two documents that share most of their words share most of their signature, so the fraction of matching hashes estimates the Jaccard similarity of their word sets. That estimate is the standard signal for approximate deduplication across a large collection.
+Distances work once you have vectors. To catch near-duplicate text from the words alone, with no embedding model in the loop, SereneDB has the [`minhash`](../../sql/statements/create_text_search_dictionary/minhash/index.md) scalar function. It takes a list of tokens and a signature width, hashes every token and keeps the smallest hashes; that set is the document's signature. Two documents that share most of their words share most of their signature, so the fraction of matching components estimates the Jaccard similarity of their word sets. That estimate is the standard signal for approximate deduplication across a large collection.
 
-Build one and inspect a signature:
+There is no `minhash` dictionary template. The signature is built by calling the function, either inside an indexed expression or inside the `expression` of a [`sql`](../../sql/statements/create_text_search_dictionary/sql.md) dictionary. Index the signature, then match its components as keyword terms:
 
 ```sql
-CREATE TEXT SEARCH DICTIONARY doc_minhash (
-    template = 'minhash',
-    numhashes = 64,
-    tokenizer_template = 'text',
-    tokenizer_locale = 'en_US.UTF-8',
-    tokenizer_case = 'lower',
-    tokenizer_stemming = false
+CREATE TABLE mh_docs(id INTEGER, body TEXT);
+
+CREATE INDEX mh_idx ON mh_docs USING inverted(
+    id,
+    (minhash(regexp_split_to_array(lower(body), '\W+'), 64))
 );
 
-SELECT ts_lexize('doc_minhash', 'the quick brown fox jumps over the lazy dog');
+SELECT id FROM mh_idx
+WHERE minhash(regexp_split_to_array(lower(body), '\W+'), 64)
+      @@ ts_any(ts_tokenize(minhash(regexp_split_to_array(lower('the quick brown fox'), '\W+'), 64), 'keyword'), 8);
 ```
 
-The values that come back are opaque hashes like `c1vB9RXiIbY`, not readable words: the same token always hashes the same way, so overlapping vocabulary shows up as overlapping hashes. `numhashes` sets how many hashes form the signature, trading index size for a sharper similarity estimate. The exact bytes are specific to the engine build, so compare whole signatures between documents and never match on an individual value. That is why this stays an overview rather than a worked query with fixed expected output.
+The `min_match` argument of `ts_any` is how many components must match, so it is the similarity threshold. Both sides have to build the token list the same way, or the signatures never line up. The second argument of `minhash` sets how many hashes form the signature, trading index size for a sharper similarity estimate. The components are opaque 8-byte hash values, not readable words, so compare whole signatures between documents and never match on an individual value. That is why this stays an overview rather than a worked query with fixed expected output.
 
 ## See also
 
 - [Semantic and Hybrid Search](./hybrid-search.md): ranking by a search-box query vector and fusing it with keyword matches
 - [Vector Search guide](../../sql/indexes/inverted/vector-search.md): building `ivf` indexes, choosing a metric and tuning recall
 - [Vector functions reference](../../sql/functions/vector.md): `l2_distance`, `cosine_distance` and the distance operators
-- [`minhash` template](../../sql/statements/create_text_search_dictionary/minhash/index.md): the signature options and how overlap estimates Jaccard similarity
+- [`minhash` function](../../sql/statements/create_text_search_dictionary/minhash/index.md): the signature arguments and how overlap estimates Jaccard similarity

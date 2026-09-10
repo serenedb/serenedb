@@ -226,6 +226,81 @@ The `^` operator multiplies a query clause's contribution to the score, so you c
 
 `raw_boost` exposes the applied factor directly. See [Relevance ranking → Boosting](../../indexes/inverted/ranking.md#boosting) for boosting across multiple columns.
 
+## Per-node score control {#per-node}
+
+Two modifiers change how a *part* of a query scores, while the rest of it stays on the `ORDER BY` scorer. Both are [`TSQUERY`](../../data_types/tsquery.md) modifiers, like [`::boost`](#boosting) and `::slop`, so they travel with the value: they apply to a parenthesized predicate, to a group built by [`ts_any`](./full-text.md#ts_any) or [`ts_all`](./full-text.md#ts_all), and to a bound parameter.
+
+### `::merge(policy)` {#merge}
+
+Sets how a boolean node combines what its branches scored.
+
+| Policy | Effect |
+| :--- | :--- |
+| `'sum'` · `'default'` | Add every matching branch's contribution. This is the behaviour without the modifier. |
+| `'max'` | Take the best matching branch and ignore the others. |
+
+The name is read case-insensitively. Any other name is an error rather than a silent fallback.
+
+```sql
+SELECT id, BM25(docs_idx.tableoid) AS score
+FROM   docs_idx
+WHERE  (body @@ 'fox' OR body @@ 'cat')::merge('max');
+```
+
+Under the default `sum`, a document containing both `fox` and `cat` collects both contributions and outranks a document that matched one branch strongly. Under `max` it is scored once, on its best branch.
+
+**The synonym case.** This is what makes `max` worth reaching for. Expanding a user's `car` into `car OR automobile` creates two branches that mean one thing, so summing them rewards a document for happening to use both spellings:
+
+```sql
+SELECT id, BM25(docs_idx.tableoid) AS score
+FROM   docs_idx
+WHERE  body @@ ts_any(['car', 'automobile'])::merge('max');
+```
+
+**It binds to its own node.** Nesting is therefore meaningful. With `((a OR b)::merge('max') OR c)` the inner group takes the best of `a` and `b` and the outer group still adds `c` on top. Move the modifier to the outer group and the best single branch of all three wins.
+
+**It requires a boolean group.** A leaf has no branches to combine, so `(body @@ 'fox')::merge('max')` is an error.
+
+`EXPLAIN` prints `Merge: max` on the node that carries the policy. Same-field branches fuse into one `Terms` node, which carries the policy of the `Or` it replaced.
+
+### `::score(scorer)` {#score-modifier}
+
+Scores the wrapped subtree with a scorer of its own. Everything outside it stays on the `ORDER BY` scorer, so one scan can mix signals:
+
+```sql
+SELECT id, BM25(docs_idx.tableoid) AS score
+FROM   docs_idx
+WHERE  body @@ 'fox' OR (body @@ 'cat')::score('constant(1)');
+```
+
+The `fox` branch stays on BM25 and the `cat` branch scores a flat `1`. Any [scorer](#scorers) may be named.
+
+`::score(NULL)` excludes a subtree from scoring altogether. It still selects rows, contributes nothing to the score and requests no index features, so its postings are read without frequency or norms:
+
+```sql
+SELECT id, BM25(docs_idx.tableoid) AS score
+FROM   docs_idx
+WHERE  body @@ 'fox' OR (body @@ 'cat')::score(NULL);
+```
+
+Rows that match only through the unscored branch come back with `0`, and the rest score exactly as if that branch were not in the query. This is the equivalent of an Elasticsearch `filter` clause.
+
+:::note Zero is a real score
+An unscored branch makes `0` a legitimate score, which matters for `ORDER BY <scorer> DESC LIMIT k`. The top-k collector admits zero-scoring hits, so those rows are returned rather than dropped.
+:::
+
+### Combining the two {#combining}
+
+The modifiers compose in either order, and `::score` wraps the group while `::merge` applies to the node whose branches actually combine:
+
+```sql
+-- a constant score that stays constant: a document matching both
+-- branches scores 42, not 84
+WHERE (body @@ 'fox' OR body @@ 'cat')::score('constant(42)')::merge('max')
+```
+
+A per-branch scorer competes on its own terms under a group policy, so a `constant(10)` branch survives a `max` against a BM25 sibling. An unscored branch has nothing to compare, so the other branch wins by default.
+
 ## Top-K and WAND pruning {#top-k}
 
 The common shape `ORDER BY <scorer>(idx.tableoid) DESC LIMIT k` returns the best `k` matches. Building the index with the `optimize_top_k` option enables **WAND** pruning, which skips candidates that provably cannot reach the top `k`:
@@ -249,6 +324,8 @@ If you are coming from Elasticsearch or OpenSearch, here is how their relevance-
 | [`constant_score`](https://www.elastic.co/guide/en/elasticsearch/reference/current/query-dsl-constant-score-query.html) | `raw_boost(idx.tableoid)` returns `1` for every match when no `^` boost is applied; or `ORDER BY` a literal |
 | [`function_score`](https://www.elastic.co/guide/en/elasticsearch/reference/current/query-dsl-function-score-query.html) `weight` | fold the scorer into an arithmetic expression, e.g. `BM25(idx.tableoid) * 2` |
 | [`function_score`](https://www.elastic.co/guide/en/elasticsearch/reference/current/query-dsl-function-score-query.html) `field_value_factor` | blend the scorer with a column in the `SELECT` / `ORDER BY` expression |
+| [`dis_max`](https://www.elastic.co/guide/en/elasticsearch/reference/current/query-dsl-dis-max-query.html) | `::merge('max')` on the disjunction ([Per-node score control](#merge)) |
+| `bool` [`filter`](https://www.elastic.co/guide/en/elasticsearch/reference/current/query-dsl-bool-query.html) clause | `::score(NULL)` on the clause ([Per-node score control](#score-modifier)) |
 | Top-K acceleration | `optimize_top_k` + WAND pruning ([Top-K](#top-k)) |
 | Tie-breaking | extra `ORDER BY` columns, typically the primary key |
 | [Reciprocal Rank Fusion](https://www.elastic.co/guide/en/elasticsearch/reference/current/rrf.html) | [Reciprocal Rank Fusion](../../../cookbook/search/reciprocal-rank-fusion.md) |

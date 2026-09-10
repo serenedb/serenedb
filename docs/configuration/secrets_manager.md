@@ -77,7 +77,7 @@ Now, if the user queries something from `s3://⟨my-other-bucket⟩/something`, 
 
 ## Listing Secrets
 
-Secrets can be listed using the built-in table-producing function, e.g., by using the [`duckdb_secrets()` table function](../sql/functions/duckdb_table_functions.md#duckdb_secrets):
+Secrets can be listed using the built-in table-producing function, e.g., by using the [`sdb_secrets()` table function](../sql/functions/metadata.md#sdb_secrets):
 
 <SqlLogicTest id="configuration/secrets_manager/example_008" />
 

@@ -15,23 +15,32 @@ This is ideal for file paths, category trees and URL paths where you want a quer
 
 | Option | Type | Default | Description |
 |---|---|---|---|
-| `DELIMITER` | string | `'/'` | Path separator character or string |
-| `REPLACEMENT` | string | same as `DELIMITER` | String that replaces the delimiter in the emitted tokens |
-| `REVERSE` | boolean | `false` | Build the hierarchy from the right (for domain-like values) |
-| `SKIP` | integer | `0` | Number of leading components to drop before building prefixes |
-| `BUFFERSIZE` | integer | `1024` | Term buffer size hint (characters per pass) |
+| `DELIMITER` | string | `'/'` | Path separator, matched as a raw byte sequence; it may be longer than one byte, such as `'::'`. An explicitly empty value falls back to `/` |
+| `REPLACEMENT` | string | same as `DELIMITER` | String written in place of every delimiter occurrence inside the emitted tokens. An explicitly empty value keeps the delimiter |
+| `REVERSE` | boolean | `false` | Build the hierarchy from the trailing end (for domain-like values) |
+| `SKIP` | integer | `0` | Number of leading components to drop before prefixes are formed; with `REVERSE = true`, the number of trailing components to drop |
 
 ## Tokenization
 
-Each token is a cumulative prefix of the path. The input is cut on `DELIMITER` and one token is emitted for the first component, then for the first two, and so on up to the whole value. `REVERSE` builds the prefixes from the trailing end instead; `SKIP` discards a number of leading components before prefixes are formed; `REPLACEMENT` rewrites the delimiter character in the output.
+Each token is a cumulative prefix of the path. The input is cut on `DELIMITER` and one token is emitted for the first component, then for the first two, and so on up to the whole value, so the original value survives as the last token. With `REVERSE = true` the tokens are cumulative suffixes instead, longest first, so the original value comes out first. A trailing delimiter is kept in the token that ends on it.
+
+`SKIP` discards leading components before the prefixes are formed, and the surviving tokens start at the delimiter in front of the first kept component. A leading delimiter is consumed as part of the first skip step, so `/a/b/c` and `a/b/c` drop the same number of named components. In reverse mode `SKIP` discards trailing components and every token keeps the trailing delimiter. With a non-zero `SKIP` the whole value is no longer emitted. If `SKIP` consumes every delimiter, no tokens are emitted.
+
+`REPLACEMENT` rewrites every delimiter occurrence inside the token text, including a leading one.
+
+Matching is byte-based. There is no case folding, accent folding or Unicode normalization, and a multi-byte `DELIMITER` must match exactly. Empty input emits no tokens. Positions are consecutive in emission order, and offsets point into the original value even when `REPLACEMENT` changes the token length, so `OFFSET` works with this template.
 
 The table shows the tokens emitted for a few option combinations:
 
 | Options | Input | Tokens |
 |---|---|---|
 | `DELIMITER = '/'` | `/usr/local/bin` | `/usr`, `/usr/local`, `/usr/local/bin` |
+| `DELIMITER = '/'` | `/a/b/` | `/a`, `/a/b`, `/a/b/` |
+| `DELIMITER = '::'` | `a::b::c` | `a`, `a::b`, `a::b::c` |
+| `DELIMITER = '/'`, `REPLACEMENT = '-'` | `/a/b/c` | `-a`, `-a-b`, `-a-b-c` |
 | `DELIMITER = '/'`, `SKIP = 1` | `/usr/local/bin` | `/local`, `/local/bin` |
 | `DELIMITER = '.'`, `REVERSE = true` | `docs.serenedb.com` | `docs.serenedb.com`, `serenedb.com`, `com` |
+| `DELIMITER = '.'`, `REVERSE = true`, `SKIP = 1` | `com.example.www.api` | `com.example.www.`, `example.www.`, `www.` |
 
 ### Index a filesystem path into its ancestors
 
@@ -41,7 +50,7 @@ A search for any ancestor prefix matches every path stored beneath it:
 
 ### Reverse mode for a domain name
 
-With `REVERSE = true` and `DELIMITER = '.'` the prefixes grow from the right, so a subdomain matches its parent domains:
+With `REVERSE = true` and `DELIMITER = '.'` each token is a suffix of the value, so a subdomain matches its parent domains:
 
 <SqlLogicTest id="sql/statements/create_text_search_dictionary/path-hierarchy/example_002" />
 

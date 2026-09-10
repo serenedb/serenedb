@@ -13,7 +13,7 @@ Analysis in SereneDB is configured entirely through a [**text search dictionary*
 
 <DocCallout type="tip">
 
-**Token vs. term.** A *token* is produced during analysis and carries metadata (its position, character offsets). A *term* is the normalized value that actually lands in the index. Tokens are what the pipeline transforms; terms are what you match against.
+**Token vs. term.** A *token* is produced during analysis and carries metadata (its position, byte offsets). A *term* is the normalized value that actually lands in the index. Tokens are what the pipeline transforms; terms are what you match against.
 
 </DocCallout>
 
@@ -54,7 +54,7 @@ The `ngram` template emits overlapping character n-grams, which power substring 
 
 <SqlLogicTest id="sql/indexes/inverted/text-analysis/example_003" />
 
-Further tokenizing templates — `sparse_ngram`, `delimiter` / `multi_delimiter`, `segmentation`, `pattern`, `path_hierarchy`, `wildcard` — are listed in the [`CREATE TEXT SEARCH DICTIONARY` reference](../../statements/create_text_search_dictionary/index.md).
+Further tokenizing templates — `sparse_ngram`, `delimiter` / `multi_delimiter`, `segmentation`, `icu_text`, `split_by_non_alpha`, `pattern`, `path_hierarchy`, `wildcard`, `shingle`, `sql` — are listed in the [`CREATE TEXT SEARCH DICTIONARY` reference](../../statements/create_text_search_dictionary/index.md).
 
 ## Normalization
 
@@ -90,14 +90,14 @@ By default the index records only which terms appear in which rows. Some query a
 |---|---|---|
 | `frequency` | how often each term occurs | [relevance scoring](./ranking.md) |
 | `position` | each token's ordinal position | [phrase and proximity](./full-text-search.md#phrase-search) queries |
-| `offset` | each token's character offsets | [highlighting](./full-text-search.md#highlighting) |
+| `offset` | each token's byte offsets in the source value | [highlighting](./full-text-search.md#highlighting) |
 | `norm` | a length-normalization factor | some scorers |
 
 The flags have dependencies: `position` and `norm` require `frequency`, and `offset` requires `frequency` and `position`. Positions are what let phrase search distinguish `quick brown fox` from `fox brown quick` — the tokens are the same, but their positions differ:
 
 ```mermaid
 flowchart LR
-    p0["pos 0<br/>quick"] --> p1["pos 1<br/>brown"] --> p2["pos 2<br/>fox"]
+    p0["pos 1<br/>quick"] --> p1["pos 2<br/>brown"] --> p2["pos 3<br/>fox"]
 ```
 
 Enable only the flags your queries need — each one enlarges the index.

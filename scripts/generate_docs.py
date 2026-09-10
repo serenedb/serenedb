@@ -6,6 +6,8 @@ import pathlib
 import re
 import sys
 
+import sqllogic_snippets
+
 DELIMITER = "sdbdoc"
 EXTENSIONS = {".md", ".mdx"}
 
@@ -120,7 +122,7 @@ def split_units(page: str, title: str, body: str) -> list[Unit]:
     return units
 
 
-def collect(docs_dir: pathlib.Path) -> list[Unit]:
+def collect(docs_dir: pathlib.Path, snippets: dict, report) -> list[Unit]:
     units = []
     errors = []
     for path in sorted(docs_dir.rglob("*")):
@@ -133,7 +135,7 @@ def collect(docs_dir: pathlib.Path) -> list[Unit]:
         if split not in SPLIT_MODES:
             errors.append(f"{rel}: frontmatter key 'split' must be one of {', '.join(SPLIT_MODES)} (got {split!r})")
             continue
-        content = clean(body)
+        content = clean(sqllogic_snippets.inline(body, snippets, rel, report))
         page_units = split_units(rel, title, content) if split == "headings" else [Unit(rel, title, "", content)]
         seen = set()
         for unit in page_units:
@@ -183,18 +185,39 @@ def render(units: list[Unit]) -> str:
     return "\n".join(out)
 
 
+def report_snippets(report) -> None:
+    for page, ids in sorted(report.empty.items()):
+        print(f"{page}: {len(ids)} SqlLogicTest tags resolved to an empty snippet", file=sys.stderr)
+    missing = sorted((page, ids) for page, ids in report.missing.items())
+    total = sum(len(ids) for _, ids in missing)
+    if not total:
+        return
+    print(f"warning: {total} SqlLogicTest ids have no matching test marker", file=sys.stderr)
+    for page, ids in missing:
+        print(f"  {page}: {', '.join(sorted(ids))}", file=sys.stderr)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("docs_dir", type=pathlib.Path)
     parser.add_argument("output", type=pathlib.Path)
+    parser.add_argument("--tests-dir", type=pathlib.Path, default=None)
     args = parser.parse_args()
     if not args.docs_dir.is_dir():
         sys.exit(f"{args.docs_dir}: not a directory")
-    units = collect(args.docs_dir)
+    tests_dir = args.tests_dir or args.docs_dir.parent / "tests" / "sqllogic"
+    if not tests_dir.is_dir():
+        sys.exit(f"{tests_dir}: not a directory (pass --tests-dir)")
+    snippets = sqllogic_snippets.load(tests_dir)
+    if not snippets:
+        sys.exit(f"{tests_dir}: no DOCS_TEST markers found")
+    report = sqllogic_snippets.Report()
+    units = collect(args.docs_dir, snippets, report)
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(render(units), encoding="utf-8")
     pages = len({u.path.split("#", 1)[0] for u in units})
-    print(f"generated {args.output}: {pages} pages, {len(units)} rows")
+    report_snippets(report)
+    print(f"generated {args.output}: {pages} pages, {len(units)} rows, {report.inlined} snippets")
 
 
 if __name__ == "__main__":

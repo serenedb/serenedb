@@ -108,7 +108,7 @@ CRS identifiers in SereneDB are always strings. `OGC:CRS84` is the identifier fo
 
 Only a handful of common CRSs are registered as known in this build of SereneDB. Registering additional CRSs, such as the over 7000 CRSs from the [EPSG Geodetic Parameter Dataset](https://epsg.org/home.html), is not available in this build.
 
-You can list all available CRSs known to SereneDB using the [`duckdb_coordinate_systems()`](../../sql/functions/duckdb_table_functions.md#duckdb_coordinate_systems) function:
+You can list all available CRSs known to SereneDB using the [`sdb_coordinate_systems()`](../../sql/functions/metadata.md#sdb_coordinate_systems) function:
 
 <SqlLogicTest id="sql/data_types/geometry/example_006" />
 

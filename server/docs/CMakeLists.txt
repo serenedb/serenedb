@@ -1,5 +1,6 @@
 if(SDB_EMBEDDED_DOCS)
     set(SDB_DOCS_DIR ${CMAKE_SOURCE_DIR}/docs)
+    set(SDB_DOCS_TESTS_DIR ${CMAKE_SOURCE_DIR}/tests/sqllogic)
     set(SDB_DOCS_GENERATED ${CMAKE_CURRENT_BINARY_DIR}/docs_data.cpp)
 
     file(
@@ -9,16 +10,30 @@ if(SDB_EMBEDDED_DOCS)
         ${SDB_DOCS_DIR}/*.mdx
     )
 
+    file(
+        GLOB_RECURSE SDB_DOCS_SNIPPET_SOURCES
+        CONFIGURE_DEPENDS
+        ${SDB_DOCS_TESTS_DIR}/sdb/pg/site_docs/*.test
+        ${SDB_DOCS_TESTS_DIR}/sdb/pg/site_docs/*.test_slow
+        ${SDB_DOCS_TESTS_DIR}/recovery/site_docs/*.test
+        ${SDB_DOCS_TESTS_DIR}/recovery/site_docs/*.test_slow
+    )
+
     add_custom_command(
         OUTPUT ${SDB_DOCS_GENERATED}
         COMMAND
             ${PYTHON_EXECUTABLE} ${CMAKE_SOURCE_DIR}/scripts/generate_docs.py
-            ${SDB_DOCS_DIR} ${SDB_DOCS_GENERATED}.tmp
+            ${SDB_DOCS_DIR} ${SDB_DOCS_GENERATED}.tmp --tests-dir
+            ${SDB_DOCS_TESTS_DIR}
         COMMAND
             ${CMAKE_COMMAND} -E copy_if_different ${SDB_DOCS_GENERATED}.tmp
             ${SDB_DOCS_GENERATED}
         COMMAND ${CMAKE_COMMAND} -E remove ${SDB_DOCS_GENERATED}.tmp
-        DEPENDS ${SDB_DOCS_SOURCES} ${CMAKE_SOURCE_DIR}/scripts/generate_docs.py
+        DEPENDS
+            ${SDB_DOCS_SOURCES}
+            ${SDB_DOCS_SNIPPET_SOURCES}
+            ${CMAKE_SOURCE_DIR}/scripts/generate_docs.py
+            ${CMAKE_SOURCE_DIR}/scripts/sqllogic_snippets.py
         COMMENT "Generating embedded docs ${SDB_DOCS_GENERATED}"
         VERBATIM
     )

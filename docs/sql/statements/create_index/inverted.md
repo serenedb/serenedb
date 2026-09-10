@@ -49,8 +49,7 @@ The trailing `WITH (...)` clause sets index-level options.
 | `refresh_interval` | `1000` | Background refresh interval in milliseconds; `0` disables it |
 | `compaction_interval` | `1000` | Background compaction interval in milliseconds; `0` disables it |
 | `cleanup_interval_step` | `1` | Commit ticks between cleanup passes; `0` disables it |
-| `row_group_size` | `122880` | Row-group size for stored (`INCLUDE`d) columns |
-| `norm_row_group_size` | `122880` | Row-group size for norm columns when `norm` is enabled |
+| `row_group_size` | `122880` | Row-group size for stored (`INCLUDE`d) columns and for norm columns; there is no separate norm setting |
 | `optimize_top_k` | — | Scorer expression enabling top-K (WAND) pruning, e.g. `'bm25(1.2, 0.75)'` |
 | `pk` | auto | Primary-key column to use as row identity when indexing a [view](../../indexes/inverted/index.md#indexing-a-table-or-a-view) |
 

@@ -173,7 +173,7 @@ A list of available calendars can be pulled from the `icu_calendar_names()` tabl
 ## Settings
 
 The current value of the `TimeZone` and `Calendar` settings are determined by ICU when it starts up.
-They can be queried from the `duckdb_settings()` table function:
+They can be queried from the `sdb_settings()` table function:
 
 <SqlLogicTest id="sql/data_types/timestamp/example_014" />
 

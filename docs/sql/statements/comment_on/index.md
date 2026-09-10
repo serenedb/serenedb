@@ -63,7 +63,7 @@ Commenting on a `MACRO TABLE`:
 
 ## Reading Comments
 
-Comments can be read by querying the `comment` column of the respective [metadata functions](../../functions/duckdb_table_functions.md):
+Comments can be read by querying the `comment` column of the respective [metadata functions](../../functions/metadata.md):
 
 List comments on `TABLE`s:
 

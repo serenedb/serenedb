@@ -48,8 +48,8 @@ Additionally, the functions `coalesce` and `ifnull` cannot be used with function
 
 ## Query Functions
 
-The `duckdb_functions()` table function shows the list of functions currently built into the system.
+The `sdb_functions()` table function shows the list of functions currently built into the system.
 
 <SqlLogicTest id="sql/functions/index/example_008" />
 
-In addition to the columns shown above, `duckdb_functions()` exposes the `parameters` and `description` columns, which provide the parameter names and a human-readable description (where available) for each function.
+In addition to the columns shown above, `sdb_functions()` exposes the `parameters` and `description` columns, which provide the parameter names and a human-readable description (where available) for each function.

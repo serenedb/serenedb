@@ -113,12 +113,12 @@ class PrunedDisjunction : public Root {
       if (_first_essential != 0 && ++_promote_ticks % kSampleEvery != 0 &&
           Promote(window_max - window_min)) {
         Finish(collector.ScoreThreshold());
-        if (_first_essential == 0 && !doc_limits::eof(window_max)) {
+      }
+      if (_first_essential == 0) {
+        if (!doc_limits::eof(window_max)) {
           window_max =
             std::max(window_max, window_min + kWindow * _exhaustive_windows);
         }
-      }
-      if (_first_essential == 0) {
         _exhaustive_windows =
           std::min(2 * _exhaustive_windows, kExhaustiveWindowsMax);
       } else {

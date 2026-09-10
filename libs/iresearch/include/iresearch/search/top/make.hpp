@@ -157,6 +157,13 @@ Root::ptr MakeWandConjunction(
   std::span<const QueryBuilder::ptr> exclude_filters, const SubReader& segment,
   const Context& ctx, ScoreMergeType merge);
 
+Root::ptr MakeNestedWandConjunction(
+  std::span<const PostingClause> terms,
+  std::span<const QueryBuilder::ptr> filters,
+  std::span<const PostingClause> excludes,
+  std::span<const QueryBuilder::ptr> exclude_filters, const SubReader& segment,
+  const Context& ctx, ScoreMergeType merge);
+
 template<typename Term>
 Root::ptr MakeMaxScoreDisjunction(
   std::span<const Term> terms, std::span<const QueryBuilder::ptr> filters,

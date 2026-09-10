@@ -47,8 +47,14 @@ Root::ptr MakeWandConjunction(
   std::span<const PostingClause> excludes,
   std::span<const QueryBuilder::ptr> exclude_filters, const SubReader& segment,
   const Context& ctx, ScoreMergeType merge) {
-  if (merge != ScoreMergeType::Sum || !filters.empty() || terms.size() < 2 ||
-      uniformity != search::Terms::Bounded) {
+  if (merge != ScoreMergeType::Sum) {
+    return {};
+  }
+  if (!filters.empty()) {
+    return MakeNestedWandConjunction(terms, filters, excludes, exclude_filters,
+                                     segment, ctx, merge);
+  }
+  if (terms.size() < 2 || uniformity != search::Terms::Bounded) {
     return {};
   }
   const auto docs = static_cast<double>(segment.docs_count());

@@ -1,7 +1,7 @@
 control substitution on
 
 statement ok
-SET sdb_faults = 'crash_before_catalog_commit';
+SET sdb_faults = 'crash_before_commit';
 
 statement error connection closed
 CREATE TABLE cw (a INTEGER PRIMARY KEY, b TEXT);
@@ -168,7 +168,7 @@ DROP TABLE cw_wide;
 
 connection after_gap_using
 statement ok
-SET sdb_faults = 'crash_before_catalog_commit';
+SET sdb_faults = 'crash_before_commit';
 
 connection after_gap_using
 statement error connection closed

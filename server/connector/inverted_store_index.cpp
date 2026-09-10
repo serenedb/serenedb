@@ -153,7 +153,7 @@ void InvertedStoreIndex::WriteChunk(DuckDBSearchSinkInsertWriter& writer,
     ExecuteExpressions(chunk, results);
     for (size_t i = 0; i < keys.size(); ++i) {
       const auto* entry = _config->FindEntry(keys[i].field_id);
-      if (!entry || !entry->whole_value) {
+      if (!entry || entry->IsTokenized()) {
         RejectJsonObjectArrayLeaves(results.data[i], total);
       }
     }

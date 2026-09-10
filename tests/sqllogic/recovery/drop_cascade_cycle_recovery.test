@@ -1,12 +1,10 @@
 control substitution on
 
 
-# Mutual / cyclic dependency: view body references function, function body
-# references view. The cycle is the primary motivation for FinalizeLoad's
-# second pass -- AddDependencies during load processes objects in some order
-# and one of the two edges hits a not-yet-loaded target. ModifyDependency
-# tolerates the missing target under _in_load, and FinalizeLoad fills the
-# edge in after every object has registered its dependency record.
+# A view over a function, across a restart. The mutual cycle this file used to
+# build (function body reading the view that reads the function) cannot be
+# created: CREATE OR REPLACE refuses to make an entry depend on itself.
+
 
 statement ok
 CREATE TABLE kostya_t (n INT);
@@ -16,19 +14,18 @@ statement count 2
 INSERT INTO kostya_t VALUES (1), (2);
 
 
-# 1. Plain function over the table.
 statement ok
 CREATE FUNCTION babsky_fn(x INT) AS x + 1;
 
 
-# 2. View references the function.
 statement ok
 CREATE VIEW clickclack_v AS SELECT babsky_fn(n) AS c FROM kostya_t;
 
 
-# 3. OR REPLACE function so its body references the view -- now g <-> v.
-statement ok
+statement error
 CREATE OR REPLACE FUNCTION babsky_fn(x INT) AS (SELECT count(*)::INT FROM clickclack_v) + x;
+----
+db error: ERROR: CREATE OR REPLACE is not allowed to depend on itself
 
 
 statement ok
@@ -44,26 +41,37 @@ statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
 SELECT 1;
 
 
-# Both halves of the cycle survived; RESTRICT is blocked from either side.
 connection after_crash
-statement error (?i)cannot drop entry .*babsky_fn.* because there are entries that depend on it
+query
+SELECT c FROM clickclack_v ORDER BY c;
+----
+c
+2
+3
+
+
+# The view -> function edge came back with them: the function cannot be
+# dropped while the view reads it.
+connection after_crash
+statement error
 DROP FUNCTION babsky_fn;
+----
+db error: ERROR: Cannot drop entry "babsky_fn" because there are entries that depend on it.
+view "clickclack_v" depends on macro function "babsky_fn".
+Use DROP...CASCADE to drop all dependents.
 
 
-connection after_crash
-statement error (?i)cannot drop entry .*clickclack_v.* because there are entries that depend on it
-DROP VIEW clickclack_v;
-
-
-# CASCADE from either side drops both. Pick the function side.
 connection after_crash
 statement ok
 DROP FUNCTION babsky_fn CASCADE;
 
 
 connection after_crash
-statement error (?i)(table|relation|view).*clickclack_v.*does not exist
+statement error
 SELECT * FROM clickclack_v;
+----
+db error: ERROR: Table with name clickclack_v does not exist!
+Did you mean "<slt:ignore>"?
 
 
 connection after_crash

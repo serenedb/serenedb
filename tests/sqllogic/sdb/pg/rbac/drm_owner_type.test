@@ -5,7 +5,8 @@
 # USAGE ON TYPE is a privilege dependency (not ownership) but it blocks DROP
 # ROLE just the same until revoked.
 #
-# All assertions were validated against a live PostgreSQL 19 oracle.
+# Only the role edge is tracked: a table column declared with the type is not
+# a dependency, so DROP TYPE never needs CASCADE to clear the ownership edge.
 
 
 statement ok
@@ -218,10 +219,14 @@ statement ok
 DROP ROLE dotype_kostya;
 
 
-# --- Owned type that is in use by a table column: DROP ROLE refused; the plain
-# DROP TYPE is itself refused (column depends on it) and needs CASCADE. ---
+# --- Owned type that is in use by a table column: DROP ROLE is still refused,
+# but the plain DROP TYPE succeeds -- the column is not a dependency. ---
 statement ok
 CREATE TABLE dot_babsky (id int, payload dot_mop);
+
+
+statement count 1
+INSERT INTO dot_babsky VALUES (1, ROW(7));
 
 
 statement error
@@ -230,16 +235,17 @@ DROP ROLE dotype_vedernikoff;
 db error: ERROR: role "dotype_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
 
 
-# Plain DROP TYPE fails: the table column depends on the type.
-statement error
-DROP TYPE dot_mop;
-----
-<slt:ignore>
-
-
-# CASCADE drops the dependent column, then the type, clearing the ownership dep.
 statement ok
-DROP TYPE dot_mop CASCADE;
+DROP TYPE dot_mop;
+
+
+# The column keeps its struct layout and stays readable without the type.
+query
+SELECT id, payload FROM dot_babsky ORDER BY id;
+----
+id	payload
+1	(7)
+
 
 
 statement ok

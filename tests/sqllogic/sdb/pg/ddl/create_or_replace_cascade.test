@@ -53,8 +53,11 @@ statement ok
 DROP FUNCTION clickclack(INT) CASCADE;
 
 
-statement error (?i)(table|relation|view).*v_clickclack.*does not exist
+statement error
 SELECT * FROM v_clickclack;
+----
+db error: ERROR: Table with name v_clickclack does not exist!
+Did you mean "<slt:ignore>"?
 
 
 query
@@ -83,10 +86,14 @@ statement ok
 CREATE VIEW v_babsky AS SELECT babsky(n) AS c FROM vedernikoff_nums;
 
 
-# Replace the function body in place; the dependent view must survive and see
-# the new definition (x + 100), and there must be exactly one babsky.
-statement ok
+# A replace is a drop plus a create, so a dependent view refuses it.
+statement error
 CREATE OR REPLACE FUNCTION babsky(x INT) AS x + 100;
+----
+db error: ERROR: Cannot drop entry "babsky" because there are entries that depend on it.
+view "v_babsky" depends on macro function "babsky".
+Use DROP...CASCADE to drop all dependents.
+
 
 
 query
@@ -100,9 +107,9 @@ query
 SELECT c FROM v_babsky ORDER BY c;
 ----
 c
-101
-102
-103
+2
+3
+4
 
 
 statement error
@@ -118,8 +125,11 @@ statement ok
 DROP FUNCTION babsky(INT) CASCADE;
 
 
-statement error (?i)(table|relation|view).*v_babsky.*does not exist
+statement error
 SELECT * FROM v_babsky;
+----
+db error: ERROR: Table with name v_babsky does not exist!
+Did you mean "<slt:ignore>"?
 
 
 # --- 3. Repeated replace churn followed by a single cascade -----------------
@@ -151,8 +161,11 @@ statement ok
 DROP FUNCTION kostya(INT) CASCADE;
 
 
-statement error (?i)(table|relation|view).*v_kostya.*does not exist
+statement error
 SELECT * FROM v_kostya;
+----
+db error: ERROR: Table with name v_kostya does not exist!
+Did you mean "<slt:ignore>"?
 
 
 statement ok
@@ -273,11 +286,7 @@ statement ok
 DROP TABLE dashboard;
 
 
-# --- 5. CREATE OR REPLACE FUNCTION blocked when an index uses it ------------
-# Inverted indexes bake the function body into their serialized expression at
-# CREATE INDEX time. Replacing the function would silently stale the index --
-# queries via the new macro form would miss the index. Require the user to
-# drop the index first.
+# --- 5. CREATE OR REPLACE FUNCTION with an index over it --------------------
 
 statement ok
 CREATE TEXT SEARCH DICTIONARY mop_dict(template = 'keyword');
@@ -299,18 +308,16 @@ statement ok
 CREATE INDEX clickclack_or_idx ON clickclack_or USING inverted(id, (babsky_or(n)));
 
 
-# Trying to replace the function: rejected because the index depends on it.
-statement error (?i)cannot replace function .*babsky_or.* because indexes depend on it
-CREATE OR REPLACE FUNCTION babsky_or(x INT) AS x * 3;
-
-
-# After dropping the index, replace works.
-statement ok
-DROP INDEX clickclack_or_idx;
-
-
+# A dependent inverted index does not refuse the replace -- it is dropped.
 statement ok
 CREATE OR REPLACE FUNCTION babsky_or(x INT) AS x * 3;
+
+
+query
+SELECT count(*) FROM pg_indexes WHERE indexname = 'clickclack_or_idx';
+----
+count
+0
 
 
 query

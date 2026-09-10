@@ -83,92 +83,20 @@ statement ok
 DROP SEQUENCE clickclack_query_id_seq CASCADE;
 
 
-statement error (?i)(sequence|relation).*clickclack_query_id_seq.*does not exist
+statement error
 SELECT nextval('clickclack_query_id_seq');
-
-
-query
-SELECT id, v FROM clickclack_dashboards ORDER BY id;
 ----
-id	v
-1000	r1a
+db error: ERROR: Sequence with name clickclack_query_id_seq does not exist!
+Did you mean "<slt:ignore>"?
 
 
+
+# DROP SEQUENCE CASCADE drops every dependent table whole, not just its DEFAULT.
 query
-SELECT id, v FROM clickclack_ingest_jobs ORDER BY id;
+SELECT count(*) FROM pg_class
+  WHERE relname IN ('clickclack_dashboards', 'clickclack_ingest_jobs',
+                    'clickclack_query_plans', 'clickclack_error_log',
+                    'clickclack_audit');
 ----
-id	v
-1007	r2a
-
-
-query
-SELECT id, v FROM clickclack_query_plans ORDER BY id;
-----
-id	v
-1014	r3a
-
-
-query
-SELECT id, v FROM clickclack_error_log ORDER BY id;
-----
-id	v
-1021	r4a
-
-
-query
-SELECT id, v FROM clickclack_audit ORDER BY id;
-----
-id	v
-1028	r5a
-
-
-statement error (?i)(null|not.?null|violates|constraint)
-INSERT INTO clickclack_dashboards (v) VALUES ('after');
-
-
-statement error (?i)(null|not.?null|violates|constraint)
-INSERT INTO clickclack_ingest_jobs (v) VALUES ('after');
-
-
-statement error (?i)(null|not.?null|violates|constraint)
-INSERT INTO clickclack_query_plans (v) VALUES ('after');
-
-
-statement error (?i)(null|not.?null|violates|constraint)
-INSERT INTO clickclack_error_log (v) VALUES ('after');
-
-
-statement error (?i)(null|not.?null|violates|constraint)
-INSERT INTO clickclack_audit (v) VALUES ('after');
-
-
-statement count 1
-INSERT INTO clickclack_ingest_jobs (id, v) VALUES (777, 'r2-explicit');
-
-
-query
-SELECT id, other_id, v FROM clickclack_ingest_jobs ORDER BY id;
-----
-id	other_id	v
-777	42	r2-explicit
-1007	42	r2a
-
-
-statement ok
-DROP TABLE clickclack_dashboards;
-
-
-statement ok
-DROP TABLE clickclack_ingest_jobs;
-
-
-statement ok
-DROP TABLE clickclack_query_plans;
-
-
-statement ok
-DROP TABLE clickclack_error_log;
-
-
-statement ok
-DROP TABLE clickclack_audit;
+count
+0

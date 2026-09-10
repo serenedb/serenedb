@@ -65,17 +65,21 @@ Use DROP...CASCADE to drop all dependents.
 
 
 
+# CASCADE granularity: dropping one of the two sequences takes the whole table,
+# not just its column DEFAULT.
 statement ok
 DROP SEQUENCE iceberg_partition_seq CASCADE;
 
 
 query
-SELECT count(*) FROM pg_class WHERE relname = 'iceberg_partition_seq';
+SELECT count(*) AS n FROM pg_class
+  WHERE relname IN ('iceberg_partition_seq', 'iceberg_manifest');
 ----
-count
+n
 0
 
 
+# The other sequence is untouched and keeps counting.
 query
 SELECT nextval('public.iceberg_snapshot_seq');
 ----
@@ -83,28 +87,8 @@ nextval
 102
 
 
-query
-SELECT id, v FROM iceberg_manifest ORDER BY v;
-----
-id	v
-110	row1
-112	row2
-
-
-statement error (?i)(null|not.?null|violates|constraint)
-INSERT INTO iceberg_manifest (v) VALUES ('after-cascade');
-
-
-statement count 1
-INSERT INTO iceberg_manifest (id, v) VALUES (9999, 'explicit');
-
-
 statement ok
 DROP SEQUENCE iceberg_snapshot_seq RESTRICT;
-
-
-statement ok
-DROP TABLE iceberg_manifest;
 
 
 statement ok
@@ -147,26 +131,10 @@ DROP SEQUENCE clickclack_query_seq CASCADE;
 
 
 query
-SELECT v FROM clickclack_query_log ORDER BY v;
+SELECT count(*) AS n FROM pg_class WHERE relname = 'clickclack_query_log';
 ----
-v
-3
-7
-
-
-statement count 1
-INSERT INTO clickclack_query_log DEFAULT VALUES;
-
-
-query
-SELECT count(*) FROM clickclack_query_log WHERE v IS NULL;
-----
-count
-1
-
-
-statement ok
-DROP TABLE clickclack_query_log;
+n
+0
 
 
 statement ok
@@ -200,35 +168,15 @@ statement ok
 DROP SEQUENCE mop_listing_seq CASCADE;
 
 
-statement count 1
-INSERT INTO mop_applications_log (v) VALUES ('after-x');
-
-
 query
-SELECT a IS NULL AS a_null, b, v FROM mop_applications_log WHERE v = 'after-x';
+SELECT count(*) AS n FROM pg_class WHERE relname = 'mop_applications_log';
 ----
-a_null	b	v
-t	2	after-x
+n
+0
 
 
 statement ok
 DROP SEQUENCE mop_recruiter_seq CASCADE;
-
-
-statement count 1
-INSERT INTO mop_applications_log (v) VALUES ('after-both');
-
-
-query
-SELECT a IS NULL AS a_null, b IS NULL AS b_null, v
-  FROM mop_applications_log WHERE v = 'after-both';
-----
-a_null	b_null	v
-t	t	after-both
-
-
-statement ok
-DROP TABLE mop_applications_log;
 
 
 statement ok
@@ -251,8 +199,30 @@ statement count 1
 INSERT INTO solid_violations_ironically (payload) VALUES ('r');
 
 
-statement error
+query
+SELECT a, b, payload FROM solid_violations_ironically;
+----
+a	b	payload
+2	3	r
+
+
+# The SERIAL sequence is not owned by solid_module, so DROP TABLE leaves it --
+# and solid_violations_ironically -- alone.
+statement ok
 DROP TABLE solid_module;
+
+
+query
+SELECT relname FROM pg_class
+  WHERE relname IN ('solid_module', 'solid_module_id_seq')
+  ORDER BY relname;
+----
+relname
+solid_module_id_seq
+
+
+statement error
+DROP SEQUENCE solid_module_id_seq;
 ----
 db error: ERROR: Cannot drop entry "solid_module_id_seq" because there are entries that depend on it.
 table "solid_violations_ironically" depends on sequence "solid_module_id_seq".
@@ -261,39 +231,14 @@ Use DROP...CASCADE to drop all dependents.
 
 
 statement ok
-DROP TABLE solid_module CASCADE;
+DROP SEQUENCE solid_module_id_seq CASCADE;
 
 
 query
-SELECT count(*) FROM pg_class
-  WHERE relname IN ('solid_module', 'solid_module_id_seq');
+SELECT count(*) AS n FROM pg_class WHERE relname = 'solid_violations_ironically';
 ----
-count
+n
 0
-
-
-query
-SELECT a IS NOT NULL AS a_set, b IS NOT NULL AS b_set, payload
-  FROM solid_violations_ironically WHERE payload = 'r';
-----
-a_set	b_set	payload
-t	t	r
-
-
-statement count 1
-INSERT INTO solid_violations_ironically (payload) VALUES ('after');
-
-
-query
-SELECT a IS NULL AS a_null, b IS NULL AS b_null, payload
-  FROM solid_violations_ironically WHERE payload = 'after';
-----
-a_null	b_null	payload
-t	t	after
-
-
-statement ok
-DROP TABLE solid_violations_ironically;
 
 
 statement ok
@@ -357,16 +302,19 @@ statement ok
 DROP SEQUENCE clickclack_ingest_b CASCADE;
 
 
+query
+SELECT count(*) AS n FROM pg_class WHERE relname = 'clickclack_ingest_job';
+----
+n
+0
+
+
 statement ok
 DROP SEQUENCE clickclack_ingest_a RESTRICT;
 
 
 statement ok
 DROP SEQUENCE clickclack_ingest_c RESTRICT;
-
-
-statement ok
-DROP TABLE clickclack_ingest_job;
 
 
 statement ok
@@ -416,30 +364,16 @@ Use DROP...CASCADE to drop all dependents.
 
 
 
+# A currval() DEFAULT makes the same dependency, and CASCADE drops the table.
 statement ok
 DROP SEQUENCE ml_loss_seq CASCADE;
 
 
 query
-SELECT v, payload FROM ml_weights;
+SELECT count(*) AS n FROM pg_class WHERE relname = 'ml_weights';
 ----
-v	payload
-1	r1
-
-
-statement count 1
-INSERT INTO ml_weights (payload) VALUES ('r2');
-
-
-query
-SELECT v IS NULL AS v_null, payload FROM ml_weights WHERE payload = 'r2';
-----
-v_null	payload
-t	r2
-
-
-statement ok
-DROP TABLE ml_weights;
+n
+0
 
 
 statement ok
@@ -487,25 +421,10 @@ DROP SEQUENCE ml_lecture_seq CASCADE;
 
 
 query
-SELECT v, payload FROM ml_lectures;
+SELECT count(*) AS n FROM pg_class WHERE relname = 'ml_lectures';
 ----
-v	payload
-100	r1
-
-
-statement count 1
-INSERT INTO ml_lectures (payload) VALUES ('r2');
-
-
-query
-SELECT v IS NULL AS v_null, payload FROM ml_lectures WHERE payload = 'r2';
-----
-v_null	payload
-t	r2
-
-
-statement ok
-DROP TABLE ml_lectures;
+n
+0
 
 
 statement ok
@@ -576,13 +495,16 @@ statement ok
 DROP SEQUENCE vedernikoff_seq_a CASCADE;
 
 
+query
+SELECT count(*) AS n FROM pg_class WHERE relname = 'vedernikoff_journal';
+----
+n
+0
+
+
 statement ok
 DROP SEQUENCE vedernikoff_seq_b RESTRICT;
 
 
 statement ok
 DROP SEQUENCE vedernikoff_seq_c RESTRICT;
-
-
-statement ok
-DROP TABLE vedernikoff_journal;

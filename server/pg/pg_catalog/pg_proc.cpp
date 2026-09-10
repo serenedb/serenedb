@@ -23,6 +23,8 @@
 #include <duckdb/catalog/catalog_entry/scalar_macro_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/table_macro_catalog_entry.hpp>
 #include <duckdb/function/macro_function.hpp>
+#include <duckdb/function/scalar_macro_function.hpp>
+#include <duckdb/function/table_macro_function.hpp>
 #include <duckdb/parser/parsed_data/create_macro_info.hpp>
 #include <span>
 #include <string>
@@ -48,6 +50,13 @@ constexpr uint64_t kNullMask = MaskFromNulls({
 });
 
 constexpr Oid kLangSql = 14;
+
+std::string MacroBody(const duckdb::MacroFunction& macro) {
+  if (macro.type == duckdb::MacroType::TABLE_MACRO) {
+    return macro.Cast<duckdb::TableMacroFunction>().query_node->ToString();
+  }
+  return macro.Cast<duckdb::ScalarMacroFunction>().expression->ToString();
+}
 
 }  // namespace
 
@@ -106,7 +115,7 @@ MaterializedData SystemTableSnapshot<PgProc>::GetTableData() {
         .pronargdefaults = 0,
         .prorettype = rettype,
         .proargtypes = argtypes_storage.back(),
-        .prosrc = func.name.GetIdentifierName(),
+        .prosrc = MacroBody(*macro),
         .proacl = {std::span<const duckdb::AclItem>{perm.acl}},
       });
     }

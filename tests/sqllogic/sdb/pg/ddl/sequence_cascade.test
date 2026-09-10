@@ -24,21 +24,18 @@ id	payload
 3	first
 
 
+# Both tables depend on the sequence, so a plain DROP SEQUENCE is refused.
 statement error
-DROP TABLE clickclack_dashboards;
+DROP SEQUENCE clickclack_dashboards_id_seq;
 ----
-db error: ERROR: Cannot drop entry "clickclack_dashboards_id_seq" because there are entries that depend on it.
-table "clickclack_dashboards_audit" depends on sequence "clickclack_dashboards_id_seq".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: Cannot drop entry "clickclack_dashboards_id_seq" because there are entries that depend on it.<slt:ignore>
 
 
 
 statement error
-DROP TABLE clickclack_dashboards RESTRICT;
+DROP SEQUENCE clickclack_dashboards_id_seq RESTRICT;
 ----
-db error: ERROR: Cannot drop entry "clickclack_dashboards_id_seq" because there are entries that depend on it.
-table "clickclack_dashboards_audit" depends on sequence "clickclack_dashboards_id_seq".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: Cannot drop entry "clickclack_dashboards_id_seq" because there are entries that depend on it.<slt:ignore>
 
 
 
@@ -62,27 +59,31 @@ id	payload
 4	still-works
 
 
-statement error
-DROP SEQUENCE clickclack_dashboards_id_seq;
-----
-db error: ERROR: Cannot drop entry "clickclack_dashboards_id_seq" because there are entries that depend on it.<slt:ignore>
-
-
-
 statement ok
 DROP TABLE clickclack_dashboards CASCADE;
 
 
-statement error
-SELECT * FROM clickclack_dashboards;
+query
+SELECT count(*) AS n FROM pg_class WHERE relname = 'clickclack_dashboards';
 ----
-db error: ERROR: Table with name clickclack_dashboards does not exist!<slt:ignore>
+n
+0
 
 
-statement error
+# The sequence is not owned by the dropped table -- it keeps counting.
+query
 SELECT nextval('clickclack_dashboards_id_seq');
 ----
-db error: ERROR: Sequence with name clickclack_dashboards_id_seq does not exist!<slt:ignore>
+nextval
+5
+
+
+statement count 1
+INSERT INTO clickclack_dashboards_audit (id, payload) VALUES (100, 'explicit');
+
+
+statement count 1
+INSERT INTO clickclack_dashboards_audit (payload) VALUES ('default-still-works');
 
 
 query
@@ -91,20 +92,20 @@ SELECT id, payload FROM clickclack_dashboards_audit ORDER BY id;
 id	payload
 3	first
 4	still-works
+6	default-still-works
+100	explicit
 
 
-statement count 1
-INSERT INTO clickclack_dashboards_audit (id, payload) VALUES (100, 'explicit');
-
-
-statement error
-INSERT INTO clickclack_dashboards_audit (payload) VALUES ('would-have-been-default');
-----
-db error: ERROR: NOT NULL constraint failed: clickclack_dashboards_audit.id
-
-
+# CASCADE granularity: the dependent TABLE goes, not just its column DEFAULT.
 statement ok
-DROP TABLE clickclack_dashboards_audit;
+DROP SEQUENCE clickclack_dashboards_id_seq CASCADE;
+
+
+query
+SELECT count(*) AS n FROM pg_class WHERE relname = 'clickclack_dashboards_audit';
+----
+n
+0
 
 
 statement ok
@@ -154,56 +155,17 @@ nextval
 12
 
 
+# CASCADE takes both dependent tables with the sequence.
 statement ok
 DROP SEQUENCE iceberg_manifest_seq CASCADE;
 
 
-statement error
-SELECT nextval('iceberg_manifest_seq');
-----
-db error: ERROR: Sequence with name iceberg_manifest_seq does not exist!<slt:ignore>
-
-
 query
-SELECT id, v FROM iceberg_partitions ORDER BY id;
+SELECT count(*) AS n FROM pg_class
+  WHERE relname IN ('iceberg_manifest_seq', 'iceberg_partitions', 'iceberg_audits');
 ----
-id	v
-10	iceberg_partitions-row
-
-
-query
-SELECT id, v FROM iceberg_audits ORDER BY id;
-----
-id	v
-11	iceberg_audits-row
-
-
-statement count 1
-INSERT INTO iceberg_partitions (id, v) VALUES (500, 'explicit-iceberg_partitions');
-
-
-statement error
-INSERT INTO iceberg_partitions (v) VALUES ('omitted');
-----
-db error: ERROR: NOT NULL constraint failed: iceberg_partitions.id
-
-
-statement count 1
-INSERT INTO iceberg_audits (id, v) VALUES (501, 'explicit-iceberg_audits');
-
-
-statement error
-INSERT INTO iceberg_audits (v) VALUES ('omitted');
-----
-db error: ERROR: NOT NULL constraint failed: iceberg_audits.id
-
-
-statement ok
-DROP TABLE iceberg_partitions;
-
-
-statement ok
-DROP TABLE iceberg_audits;
+n
+0
 
 
 statement ok

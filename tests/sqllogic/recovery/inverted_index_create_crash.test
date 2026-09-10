@@ -26,7 +26,7 @@ statement ok
 INSERT INTO cc_t VALUES (1, 'alpha bravo charlie'), (2, 'delta echo foxtrot');
 
 statement ok
-SET sdb_faults = 'crash_before_catalog_commit';
+SET sdb_faults = 'crash_before_commit';
 
 statement error connection closed
 CREATE INDEX cc_idx ON cc_t USING inverted(a, b cc_dict);

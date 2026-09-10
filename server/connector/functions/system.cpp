@@ -1154,11 +1154,17 @@ bool HasObjectPrivilegeByName(duckdb::ClientContext& context,
     const auto bare = type == duckdb::CatalogType::MACRO_ENTRY
                         ? obj_name.substr(0, obj_name.find('('))
                         : obj_name;
-    auto entry = duckdb::Catalog::GetEntry(
-      context,
-      duckdb::EntryLookupInfo{type, duckdb::QualifiedName::Parse(std::string{
-                                      absl::StripAsciiWhitespace(bare)})},
-      duckdb::OnEntryNotFound::RETURN_NULL);
+    const auto name = duckdb::QualifiedName::Parse(
+      std::string{absl::StripAsciiWhitespace(bare)});
+    auto entry =
+      duckdb::Catalog::GetEntry(context, duckdb::EntryLookupInfo{type, name},
+                                duckdb::OnEntryNotFound::RETURN_NULL);
+    if (!entry && type == duckdb::CatalogType::MACRO_ENTRY) {
+      entry = duckdb::Catalog::GetEntry(
+        context,
+        duckdb::EntryLookupInfo{duckdb::CatalogType::TABLE_MACRO_ENTRY, name},
+        duckdb::OnEntryNotFound::RETURN_NULL);
+    }
     if (entry) {
       try {
         return HasAnyPermissionsPrivilegeText(
@@ -1284,6 +1290,10 @@ bool HasObjectPrivilegeByOidImpl(duckdb::ClientContext& context,
       type == duckdb::CatalogType::TYPE_ENTRY ||
       type == duckdb::CatalogType::MACRO_ENTRY) {
     auto entry = FindByOid(context, type, obj_id);
+    if (!entry && type == duckdb::CatalogType::MACRO_ENTRY) {
+      entry =
+        FindByOid(context, duckdb::CatalogType::TABLE_MACRO_ENTRY, obj_id);
+    }
     if (!entry) {
       is_null = true;
       return false;

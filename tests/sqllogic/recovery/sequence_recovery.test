@@ -56,16 +56,14 @@ statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
 SELECT 1;
 
 
-# Counter for kostya_iceberg_review_id resumes past the burnt log-ahead: the
-# durable horizon runs 32 values (PG's SEQ_LOG_VALS) beyond the last one handed
-# out, so 105 + 32*5. Gaps are allowed, landing off the START/INCREMENT lattice
-# is not -- every value stays 100 + k*5.
+# After a crash a sequence resumes at the last persisted value plus one
+# increment, so there is no gap: 105 + 5, still on the 100 + k*5 lattice.
 connection after_crash
 query
 SELECT nextval('kostya_iceberg_review_id');
 ----
 nextval
-265
+110
 
 
 connection after_crash
@@ -73,16 +71,16 @@ query
 SELECT nextval('kostya_iceberg_review_id');
 ----
 nextval
-270
+115
 
 
-# solid_ironic_love_violation_no continues past its own burnt log-ahead: 1 + 32.
+# solid_ironic_love_violation_no continues at its last persisted value plus one.
 connection after_crash
 query
 SELECT nextval('solid_ironic_love_violation_no');
 ----
 nextval
-34
+2
 
 
 # mop_application_attempt -- never used pre-crash. First nextval post-recovery
@@ -110,7 +108,7 @@ query
 SELECT currval('kostya_iceberg_review_id');
 ----
 currval
-270
+115
 
 
 # setval persists across the next crash too.

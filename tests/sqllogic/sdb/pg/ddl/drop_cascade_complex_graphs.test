@@ -69,12 +69,18 @@ statement ok
 DROP VIEW v_mop_chain1 CASCADE;
 
 
-statement error (?i)(table|relation|view).*v_mop_chain1.*does not exist
+statement error
 SELECT * FROM v_mop_chain1;
+----
+db error: ERROR: Table with name v_mop_chain1 does not exist!
+Did you mean "<slt:ignore>"?
 
 
-statement error (?i)(table|relation|view).*v_mop_chain4.*does not exist
+statement error
 SELECT * FROM v_mop_chain4;
+----
+db error: ERROR: Table with name v_mop_chain4 does not exist!
+Did you mean "<slt:ignore>"?
 
 
 query
@@ -148,8 +154,11 @@ statement ok
 DROP TABLE mop_applications CASCADE;
 
 
-statement error (?i)(table|relation|view).*v_mop_diamond2.*does not exist
+statement error
 SELECT * FROM v_mop_diamond2;
+----
+db error: ERROR: Table with name v_mop_diamond2 does not exist!
+Did you mean "<slt:ignore>"?
 
 
 statement ok
@@ -176,16 +185,25 @@ statement ok
 DROP TABLE mop_applications CASCADE;
 
 
-statement error (?i)(table|relation|view).*v_mop_diamond1.*does not exist
+statement error
 SELECT * FROM v_mop_diamond1;
+----
+db error: ERROR: Table with name v_mop_diamond1 does not exist!
+Did you mean "<slt:ignore>"?
 
 
-statement error (?i)(table|relation|view).*v_mop_diamond2.*does not exist
+statement error
 SELECT * FROM v_mop_diamond2;
+----
+db error: ERROR: Table with name v_mop_diamond2 does not exist!
+Did you mean "<slt:ignore>"?
 
 
-statement error (?i)(table|relation|view).*v_mop_diamond3.*does not exist
+statement error
 SELECT * FROM v_mop_diamond3;
+----
+db error: ERROR: Table with name v_mop_diamond3 does not exist!
+Did you mean "<slt:ignore>"?
 
 
 statement ok
@@ -233,20 +251,32 @@ statement ok
 DROP TABLE mop_recruiter_calls CASCADE;
 
 
-statement error (?i)(table|relation|view).*v_mop_fan_x.*does not exist
+statement error
 SELECT * FROM v_mop_fan_x;
+----
+db error: ERROR: Table with name v_mop_fan_x does not exist!
+Did you mean "<slt:ignore>"?
 
 
-statement error (?i)(table|relation|view).*v_mop_fan_y.*does not exist
+statement error
 SELECT * FROM v_mop_fan_y;
+----
+db error: ERROR: Table with name v_mop_fan_y does not exist!
+Did you mean "<slt:ignore>"?
 
 
-statement error (?i)(table|relation|view).*v_mop_fan_z.*does not exist
+statement error
 SELECT * FROM v_mop_fan_z;
+----
+db error: ERROR: Table with name v_mop_fan_z does not exist!
+Did you mean "<slt:ignore>"?
 
 
-statement error (?i)(table|relation|view).*v_mop_fan_top.*does not exist
+statement error
 SELECT * FROM v_mop_fan_top;
+----
+db error: ERROR: Table with name v_mop_fan_top does not exist!
+Did you mean "<slt:ignore>"?
 
 
 statement ok
@@ -301,26 +331,30 @@ statement ok
 DROP SEQUENCE mop_app_id_seq CASCADE;
 
 
-query
-SELECT payload FROM mop_apps_log;
+query error
+SELECT c, payload FROM mop_apps_log ORDER BY c;
 ----
-payload
+db error: ERROR: Table with name mop_apps_log does not exist!
+Did you mean "<slt:ignore>"?
 
 
-statement error (?i)(table|relation|view).*v_mop_pipeline.*does not exist
+
+statement error
 SELECT * FROM v_mop_pipeline;
+----
+db error: ERROR: Table with name v_mop_pipeline does not exist!
+Did you mean "<slt:ignore>"?
 
 
-statement error (?i)(table|relation|view).*v_mop_summary.*does not exist
+statement error
 SELECT * FROM v_mop_summary;
+----
+db error: ERROR: Table with name v_mop_summary does not exist!
+Did you mean "<slt:ignore>"?
 
 
 statement ok
 DROP TABLE mop_apps_t;
-
-
-statement ok
-DROP TABLE mop_apps_log;
 
 
 statement ok
@@ -358,12 +392,18 @@ statement ok
 DROP TABLE mop_sx.mop_inputs_t CASCADE;
 
 
-statement error (?i)(table|relation|view).*v_mop_f1.*does not exist
+statement error
 SELECT * FROM mop_sy.v_mop_f1;
+----
+db error: ERROR: Table with name v_mop_f1 does not exist!
+Did you mean "<slt:ignore>"?
 
 
-statement error (?i)(table|relation|view).*v_mop_f2.*does not exist
+statement error
 SELECT * FROM mop_sy.v_mop_f2;
+----
+db error: ERROR: Table with name v_mop_f2 does not exist!
+Did you mean "<slt:ignore>"?
 
 
 query

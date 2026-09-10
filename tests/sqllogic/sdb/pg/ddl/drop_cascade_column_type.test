@@ -1,3 +1,8 @@
+# A table column declared with a user-defined type records no dependency on
+# that type: DROP TYPE succeeds (plain, RESTRICT or CASCADE) while tables use
+# it, nothing else is dropped, and the column keeps the enum duckdb copied
+# into it.
+
 statement ok
 CREATE TYPE iceberg_partition_kind AS ENUM ('red', 'green', 'blue');
 
@@ -18,57 +23,40 @@ id	c
 2	green
 
 
-statement error
-DROP TYPE iceberg_partition_kind;
-----
-db error: ERROR: Cannot drop entry "iceberg_partition_kind" because there are entries that depend on it.
-table "iceberg_manifests" depends on type "iceberg_partition_kind".
-Use DROP...CASCADE to drop all dependents.
-
-
-
-statement error
-DROP TYPE iceberg_partition_kind RESTRICT;
-----
-db error: ERROR: Cannot drop entry "iceberg_partition_kind" because there are entries that depend on it.
-table "iceberg_manifests" depends on type "iceberg_partition_kind".
-Use DROP...CASCADE to drop all dependents.
-
-
-
-query
-SELECT count(*) FROM iceberg_manifests;
-----
-count
-2
-
-
 statement ok
-DROP TYPE iceberg_partition_kind CASCADE;
+DROP TYPE iceberg_partition_kind;
 
 
 query
-SELECT count(*) FROM iceberg_manifests;
+SELECT id, c FROM iceberg_manifests ORDER BY id;
 ----
-count
-2
+id	c
+1	red
+2	green
 
 
-statement error (?i)(column|referenced).*c.*
-SELECT c FROM iceberg_manifests;
-
-
+# The column still sorts by enum ordinal, not alphabetically.
 query
-SELECT id FROM iceberg_manifests ORDER BY id;
+SELECT c FROM iceberg_manifests ORDER BY c;
 ----
-id
-1
-2
+c
+red
+green
+
+
+# The type name itself is gone, so a new column cannot be declared with it.
+statement error
+CREATE TABLE iceberg_manifests_copy (id INT, c iceberg_partition_kind);
+----
+db error: ERROR: Type with name iceberg_partition_kind does not exist!
+Did you mean "<slt:ignore>"?
 
 
 statement ok
 DROP TABLE iceberg_manifests;
 
+
+# Several columns of the same type in one table: all keep working.
 
 statement ok
 CREATE TYPE clickclack_node_state AS ENUM ('on','off');
@@ -82,37 +70,22 @@ statement count 1
 INSERT INTO clickclack_workers VALUES (1, 'on', 'off', 'lamp');
 
 
-statement error
-DROP TYPE clickclack_node_state;
-----
-db error: ERROR: Cannot drop entry "clickclack_node_state" because there are entries that depend on it.
-table "clickclack_workers" depends on type "clickclack_node_state".
-Use DROP...CASCADE to drop all dependents.
-
-
-
 statement ok
-DROP TYPE clickclack_node_state CASCADE;
+DROP TYPE clickclack_node_state;
 
 
 query
-SELECT id, label FROM clickclack_workers;
+SELECT id, s1, s2, label FROM clickclack_workers ORDER BY id;
 ----
-id	label
-1	lamp
-
-
-statement error (?i)(column|referenced).*s1.*
-SELECT s1 FROM clickclack_workers;
-
-
-statement error (?i)(column|referenced).*s2.*
-SELECT s2 FROM clickclack_workers;
+id	s1	s2	label
+1	on	off	lamp
 
 
 statement ok
 DROP TABLE clickclack_workers;
 
+
+# CASCADE has nothing to cascade to: both tables using the type survive.
 
 statement ok
 CREATE TYPE mop_application_priority AS ENUM ('low','high');
@@ -134,40 +107,22 @@ statement count 1
 INSERT INTO mop_recruiter_calls VALUES (1, 'low');
 
 
-statement error
-DROP TYPE mop_application_priority;
-----
-db error: ERROR: Cannot drop entry "mop_application_priority" because there are entries that depend on it.
-table "mop_applications" depends on type "mop_application_priority".
-table "mop_recruiter_calls" depends on type "mop_application_priority".
-Use DROP...CASCADE to drop all dependents.
-
-
-
 statement ok
 DROP TYPE mop_application_priority CASCADE;
 
 
 query
-SELECT id FROM mop_applications;
+SELECT id, p FROM mop_applications ORDER BY id;
 ----
-id
-1
+id	p
+1	high
 
 
 query
-SELECT id FROM mop_recruiter_calls;
+SELECT id, p FROM mop_recruiter_calls ORDER BY id;
 ----
-id
-1
-
-
-statement error (?i)(column|referenced).*p.*
-SELECT p FROM mop_applications;
-
-
-statement error (?i)(column|referenced).*p.*
-SELECT p FROM mop_recruiter_calls;
+id	p
+1	low
 
 
 statement ok
@@ -194,6 +149,9 @@ statement ok
 DROP TYPE solid_principle_flag RESTRICT;
 
 
+# The column owns its own copy of the enum: re-creating the type with an extra
+# label does not extend the column's accepted values.
+
 statement ok
 CREATE TYPE ml_loss_mood AS ENUM ('happy','sad');
 
@@ -214,11 +172,22 @@ statement ok
 CREATE TYPE ml_loss_mood AS ENUM ('happy','sad','meh');
 
 
-query
-SELECT id FROM ml_lectures;
+statement error
+INSERT INTO ml_lectures VALUES (2, 'meh');
 ----
-id
-1
+db error: ERROR: Could not convert string 'meh' to UINT8
+
+
+statement count 1
+INSERT INTO ml_lectures VALUES (2, 'sad');
+
+
+query
+SELECT id, m FROM ml_lectures ORDER BY id;
+----
+id	m
+1	happy
+2	sad
 
 
 statement ok
@@ -229,8 +198,8 @@ statement ok
 DROP TYPE ml_loss_mood;
 
 
-# --- Column->index cascade. DROP TYPE removes a column; PG drops any index
-# --- covering that column (single-col or compound), keeps unrelated indexes.
+# --- Indexes over a column of the type. Nothing depends on the type, so
+# --- DROP TYPE CASCADE keeps every index, including the one on that column.
 
 statement ok
 CREATE TYPE vedernikoff_iceberg_state AS ENUM ('open','closed','pending');
@@ -256,6 +225,10 @@ statement ok
 CREATE INDEX ix_state_body ON vedernikoff_manifests(state, body);
 
 
+statement count 2
+INSERT INTO vedernikoff_manifests VALUES (1, 'b1', 'open'), (2, 'b2', 'closed');
+
+
 query
 SELECT indexname FROM pg_indexes
   WHERE tablename = 'vedernikoff_manifests' ORDER BY indexname;
@@ -271,8 +244,6 @@ statement ok
 DROP TYPE vedernikoff_iceberg_state CASCADE;
 
 
-# Indexes covering the dropped `state` column are gone (single + compound).
-# Index on unrelated `body` survives. PK on `id` survives.
 query
 SELECT indexname FROM pg_indexes
   WHERE tablename = 'vedernikoff_manifests' ORDER BY indexname;
@@ -280,13 +251,24 @@ SELECT indexname FROM pg_indexes
 indexname
 PRIMARY_vedernikoff_manifests_id
 ix_body
+ix_state
+ix_state_body
 
 
-# Table itself + remaining columns still queryable.
 query
-SELECT id, body FROM vedernikoff_manifests;
+SELECT id, body, state FROM vedernikoff_manifests ORDER BY id;
 ----
-id	body
+id	body	state
+1	b1	open
+2	b2	closed
+
+
+# The index on the column of the dropped type still answers lookups.
+query
+SELECT id FROM vedernikoff_manifests WHERE state = 'open' ORDER BY id;
+----
+id
+1
 
 
 statement ok
@@ -334,17 +316,12 @@ statement ok
 CREATE INDEX ix_jobs_label ON vedernikoff_clickclack_data.jobs(label);
 
 
-statement error
-DROP TYPE vedernikoff_clickclack_types.priority;
-----
-db error: ERROR: Cannot drop entry "priority" because there are entries that depend on it.
-table "jobs" depends on type "priority".
-Use DROP...CASCADE to drop all dependents.
-
+statement count 2
+INSERT INTO vedernikoff_clickclack_data.jobs VALUES (1, 'low', 'a'), (2, 'high', 'b');
 
 
 statement ok
-DROP TYPE vedernikoff_clickclack_types.priority CASCADE;
+DROP TYPE vedernikoff_clickclack_types.priority;
 
 
 query
@@ -353,6 +330,25 @@ SELECT indexname FROM pg_indexes
 ----
 indexname
 ix_jobs_label
+ix_jobs_p
+
+
+query
+SELECT id, p, label FROM vedernikoff_clickclack_data.jobs ORDER BY id;
+----
+id	p	label
+1	low	a
+2	high	b
+
+
+statement error
+CREATE TABLE vedernikoff_clickclack_data.jobs_copy (
+  id INT,
+  p vedernikoff_clickclack_types.priority
+);
+----
+db error: ERROR: Type with name priority does not exist!
+Did you mean "<slt:ignore>"?
 
 
 statement ok

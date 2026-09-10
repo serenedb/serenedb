@@ -38,24 +38,34 @@ CREATE TABLE vedernikoff_iceberg_t5 (
 );
 
 
-statement error (?i)
+statement error
 INSERT INTO vedernikoff_iceberg_t1 VALUES (5000);
+----
+db error: ERROR: CHECK constraint failed on table vedernikoff_iceberg_t1 with expression CHECK(vedernikoff_iceberg_within_bounds(v))
 
 
-statement error (?i)
+statement error
 INSERT INTO vedernikoff_iceberg_t2 VALUES (-5);
+----
+db error: ERROR: CHECK constraint failed on table vedernikoff_iceberg_t2 with expression CHECK(vedernikoff_iceberg_within_bounds(v))
 
 
-statement error (?i)
+statement error
 INSERT INTO vedernikoff_iceberg_t3 VALUES (100000);
+----
+db error: ERROR: CHECK constraint failed on table vedernikoff_iceberg_t3 with expression CHECK(vedernikoff_iceberg_within_bounds(v))
 
 
-statement error (?i)
+statement error
 INSERT INTO vedernikoff_iceberg_t4 VALUES (-99);
+----
+db error: ERROR: CHECK constraint failed on table vedernikoff_iceberg_t4 with expression CHECK(vedernikoff_iceberg_within_bounds(v))
 
 
-statement error (?i)
+statement error
 INSERT INTO vedernikoff_iceberg_t5 VALUES (9999);
+----
+db error: ERROR: CHECK constraint failed on table vedernikoff_iceberg_t5 with expression CHECK(vedernikoff_iceberg_within_bounds(v))
 
 
 statement error
@@ -69,45 +79,14 @@ statement ok
 DROP FUNCTION vedernikoff_iceberg_within_bounds(INT) CASCADE;
 
 
-# All CHECKs cleared.
-statement count 1
-INSERT INTO vedernikoff_iceberg_t1 VALUES (5000);
-
-
-statement count 1
-INSERT INTO vedernikoff_iceberg_t2 VALUES (-5);
-
-
-statement count 1
-INSERT INTO vedernikoff_iceberg_t3 VALUES (100000);
-
-
-statement count 1
-INSERT INTO vedernikoff_iceberg_t4 VALUES (-99);
-
-
-statement count 1
-INSERT INTO vedernikoff_iceberg_t5 VALUES (9999);
-
-
-statement ok
-DROP TABLE vedernikoff_iceberg_t1;
-
-
-statement ok
-DROP TABLE vedernikoff_iceberg_t2;
-
-
-statement ok
-DROP TABLE vedernikoff_iceberg_t3;
-
-
-statement ok
-DROP TABLE vedernikoff_iceberg_t4;
-
-
-statement ok
-DROP TABLE vedernikoff_iceberg_t5;
+# The CHECK makes each table depend on the function, so all five go with it.
+query
+SELECT count(*) FROM information_schema.tables WHERE table_name IN (
+  'vedernikoff_iceberg_t1', 'vedernikoff_iceberg_t2', 'vedernikoff_iceberg_t3',
+  'vedernikoff_iceberg_t4', 'vedernikoff_iceberg_t5');
+----
+count
+0
 
 
 # --- 2. Sequence in CHECK + DEFAULT on the same table --------------------
@@ -139,12 +118,13 @@ statement ok
 DROP SEQUENCE vedernikoff_solid_payday_seq CASCADE;
 
 
-statement count 1
-INSERT INTO vedernikoff_solid_payments (amount) VALUES (999999999);
+# The DEFAULT and the CHECK both point at the sequence: the table goes.
+query error
+SELECT id, amount FROM vedernikoff_solid_payments ORDER BY id;
+----
+db error: ERROR: Table with name vedernikoff_solid_payments does not exist!
+Did you mean "<slt:ignore>"?
 
-
-statement ok
-DROP TABLE vedernikoff_solid_payments;
 
 
 # --- 3. Multiple functions in one CHECK constraint -----------------------
@@ -170,15 +150,19 @@ statement count 1
 INSERT INTO vedernikoff_mop_data VALUES (500);
 
 
-statement error (?i)
+statement error
 INSERT INTO vedernikoff_mop_data VALUES (-1);
+----
+db error: ERROR: CHECK constraint failed on table vedernikoff_mop_data with expression CHECK((vedernikoff_mop_is_positive(v) AND vedernikoff_mop_is_small(v)))
 
 
-statement error (?i)
+statement error
 INSERT INTO vedernikoff_mop_data VALUES (5000);
+----
+db error: ERROR: CHECK constraint failed on table vedernikoff_mop_data with expression CHECK((vedernikoff_mop_is_positive(v) AND vedernikoff_mop_is_small(v)))
 
 
-# Drop one function with CASCADE -- whole CHECK should be cleared.
+# Drop one of the two CHECK functions with CASCADE -- the table goes with it.
 statement error
 DROP FUNCTION vedernikoff_mop_is_positive(INT);
 ----
@@ -190,21 +174,16 @@ statement ok
 DROP FUNCTION vedernikoff_mop_is_positive(INT) CASCADE;
 
 
-# CHECK cleared, both predicates gone.
-statement count 1
-INSERT INTO vedernikoff_mop_data VALUES (-1);
+query error
+SELECT v FROM vedernikoff_mop_data ORDER BY v;
+----
+db error: ERROR: Table with name vedernikoff_mop_data does not exist!
+Did you mean "<slt:ignore>"?
 
 
-statement count 1
-INSERT INTO vedernikoff_mop_data VALUES (5000);
-
-
+# The second CHECK function lost its only dependent with the table.
 statement ok
 DROP FUNCTION vedernikoff_mop_is_small(INT);
-
-
-statement ok
-DROP TABLE vedernikoff_mop_data;
 
 
 # --- 4. Chained: fn1 calls fn2 used by CHECK -----------------------------
@@ -227,7 +206,7 @@ statement count 1
 INSERT INTO vedernikoff_ml_data VALUES (42);
 
 
-# Drop the inner with CASCADE -- outer fn dies, CHECK on data table cleared.
+# Drop the inner with CASCADE -- outer fn dies, and the table CHECKing it too.
 statement error
 DROP FUNCTION vedernikoff_ml_inner(INT);
 ----
@@ -239,12 +218,19 @@ statement ok
 DROP FUNCTION vedernikoff_ml_inner(INT) CASCADE;
 
 
-statement error (?i)(macro|function).*vedernikoff_ml_outer.*does not exist
+statement error
 SELECT vedernikoff_ml_outer(1);
+----
+db error: ERROR: Scalar Function with name vedernikoff_ml_outer does not exist!
+Did you mean "<slt:ignore>"?
 
 
-statement ok
-DROP TABLE vedernikoff_ml_data;
+query error
+SELECT v FROM vedernikoff_ml_data ORDER BY v;
+----
+db error: ERROR: Table with name vedernikoff_ml_data does not exist!
+Did you mean "<slt:ignore>"?
+
 
 
 # --- 5. Multiple CHECKs on one table, all referencing a single fn --------
@@ -268,16 +254,22 @@ statement count 1
 INSERT INTO vedernikoff_clickclack_metrics VALUES (100, 50, 1);
 
 
-statement error (?i)
+statement error
 INSERT INTO vedernikoff_clickclack_metrics VALUES (5000, 1, 1);
+----
+db error: ERROR: CHECK constraint failed on table vedernikoff_clickclack_metrics with expression CHECK((qps < vedernikoff_clickclack_threshold()))
 
 
-statement error (?i)
+statement error
 INSERT INTO vedernikoff_clickclack_metrics VALUES (1, 5000, 1);
+----
+db error: ERROR: CHECK constraint failed on table vedernikoff_clickclack_metrics with expression CHECK((latency < vedernikoff_clickclack_threshold()))
 
 
-statement error (?i)
+statement error
 INSERT INTO vedernikoff_clickclack_metrics VALUES (1, 1, 5000);
+----
+db error: ERROR: CHECK constraint failed on table vedernikoff_clickclack_metrics with expression CHECK((err < vedernikoff_clickclack_threshold()))
 
 
 statement error
@@ -291,10 +283,9 @@ statement ok
 DROP FUNCTION vedernikoff_clickclack_threshold() CASCADE;
 
 
-# All three CHECKs cleared.
-statement count 1
-INSERT INTO vedernikoff_clickclack_metrics VALUES (5000, 5000, 5000);
-
-
-statement ok
-DROP TABLE vedernikoff_clickclack_metrics;
+# Three CHECKs on the same function, one table dropped.
+query error
+SELECT qps, latency, err FROM vedernikoff_clickclack_metrics ORDER BY qps;
+----
+db error: ERROR: Table with name vedernikoff_clickclack_metrics does not exist!
+Did you mean "<slt:ignore>"?

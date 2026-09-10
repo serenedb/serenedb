@@ -24,8 +24,11 @@ statement ok
 DROP SEQUENCE iceberg_snapshot_seq CASCADE;
 
 
-statement error (?i)(macro|function).*iceberg_next_snapshot.*does not exist
+statement error
 SELECT iceberg_next_snapshot();
+----
+db error: ERROR: Scalar Function with name iceberg_next_snapshot does not exist!
+Did you mean "<slt:ignore>"?
 
 
 statement ok
@@ -54,12 +57,18 @@ statement ok
 DROP FUNCTION clickclack_inner_plan(INT) CASCADE;
 
 
-statement error (?i)(macro|function).*clickclack_inner_plan.*does not exist
+statement error
 SELECT clickclack_inner_plan(1);
+----
+db error: ERROR: Scalar Function with name clickclack_inner_plan does not exist!
+Did you mean "<slt:ignore>"?
 
 
-statement error (?i)(macro|function).*clickclack_outer_plan.*does not exist
+statement error
 SELECT clickclack_outer_plan(1);
+----
+db error: ERROR: Scalar Function with name clickclack_outer_plan does not exist!
+Did you mean "<slt:ignore>"?
 
 
 statement ok
@@ -123,16 +132,25 @@ statement ok
 DROP FUNCTION iceberg_unmarshal_v1(INT) CASCADE;
 
 
-statement error (?i)(macro|function).*iceberg_unmarshal_v1.*does not exist
+statement error
 SELECT iceberg_unmarshal_v1(0);
+----
+db error: ERROR: Scalar Function with name iceberg_unmarshal_v1 does not exist!
+Did you mean "<slt:ignore>"?
 
 
-statement error (?i)(macro|function).*iceberg_unmarshal_v2.*does not exist
+statement error
 SELECT iceberg_unmarshal_v2(0);
+----
+db error: ERROR: Scalar Function with name iceberg_unmarshal_v2 does not exist!
+Did you mean "<slt:ignore>"?
 
 
-statement error (?i)(macro|function).*iceberg_unmarshal_v3.*does not exist
+statement error
 SELECT iceberg_unmarshal_v3(0);
+----
+db error: ERROR: Scalar Function with name iceberg_unmarshal_v3 does not exist!
+Did you mean "<slt:ignore>"?
 
 
 statement ok
@@ -166,12 +184,18 @@ statement ok
 DROP SEQUENCE mop_listing_seq CASCADE;
 
 
-statement error (?i)(macro|function).*mop_use_listing.*does not exist
+statement error
 SELECT mop_use_listing();
+----
+db error: ERROR: Scalar Function with name mop_use_listing does not exist!
+Did you mean "<slt:ignore>"?
 
 
-statement error (?i)(table|view|relation).*mop_listings_feed.*does not exist
+statement error
 SELECT * FROM mop_listings_feed;
+----
+db error: ERROR: Table with name mop_listings_feed does not exist!
+Did you mean "<slt:ignore>"?
 
 
 query
@@ -219,26 +243,17 @@ db error: ERROR: Cannot drop entry "ml_paper_default_id" because there are entri
 
 
 
-# CASCADE clears the DEFAULT on the column without dropping the table.
+# CASCADE drops the whole table, not just the DEFAULT on the column.
 statement ok
 DROP FUNCTION ml_paper_default_id() CASCADE;
 
 
-# After the DEFAULT is cleared, INSERT without explicit id should write NULL.
-statement ok
-INSERT INTO ml_paper_runs (tag) VALUES ('vedernikoff_run2');
-
-
-query
+query error
 SELECT id, tag FROM ml_paper_runs ORDER BY tag;
 ----
-id	tag
-1001	vedernikoff_run1
-NULL	vedernikoff_run2
+db error: ERROR: Table with name ml_paper_runs does not exist!
+Did you mean "<slt:ignore>"?
 
-
-statement ok
-DROP TABLE ml_paper_runs;
 
 
 statement ok

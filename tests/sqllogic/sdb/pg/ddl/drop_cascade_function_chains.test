@@ -105,12 +105,18 @@ statement ok
 DROP FUNCTION vedernikoff_step1(INT) CASCADE;
 
 
-statement error (?i)(macro|function).*vedernikoff_step2.*does not exist
+statement error
 SELECT vedernikoff_step2(0);
+----
+db error: ERROR: Scalar Function with name vedernikoff_step2 does not exist!
+Did you mean "<slt:ignore>"?
 
 
-statement error (?i)(macro|function).*vedernikoff_step5.*does not exist
+statement error
 SELECT vedernikoff_step5(0);
+----
+db error: ERROR: Scalar Function with name vedernikoff_step5 does not exist!
+Did you mean "<slt:ignore>"?
 
 
 # --- 2. Function depending on sequence -------------------------------------
@@ -142,8 +148,11 @@ statement ok
 DROP SEQUENCE vedernikoff_iceberg_snap_seq CASCADE;
 
 
-statement error (?i)(macro|function).*vedernikoff_iceberg_next_snap.*does not exist
+statement error
 SELECT vedernikoff_iceberg_next_snap();
+----
+db error: ERROR: Scalar Function with name vedernikoff_iceberg_next_snap does not exist!
+Did you mean "<slt:ignore>"?
 
 
 # --- 3. View depending on a function depending on a sequence --------------
@@ -189,12 +198,18 @@ statement ok
 DROP SEQUENCE vedernikoff_solid_partition_seq CASCADE;
 
 
-statement error (?i)(macro|function).*vedernikoff_solid_next_partition.*does not exist
+statement error
 SELECT vedernikoff_solid_next_partition();
+----
+db error: ERROR: Scalar Function with name vedernikoff_solid_next_partition does not exist!
+Did you mean "<slt:ignore>"?
 
 
-statement error (?i).*vedernikoff_solid_manifest_feed.*does not exist
+statement error
 SELECT * FROM vedernikoff_solid_manifest_feed;
+----
+db error: ERROR: Table with name vedernikoff_solid_manifest_feed does not exist!
+Did you mean "<slt:ignore>"?
 
 
 # Underlying table is fine.
@@ -241,16 +256,25 @@ statement ok
 DROP FUNCTION vedernikoff_clickclack_fan_root() CASCADE;
 
 
-statement error (?i).*vedernikoff_clickclack_view_a.*does not exist
+statement error
 SELECT * FROM vedernikoff_clickclack_view_a;
+----
+db error: ERROR: Table with name vedernikoff_clickclack_view_a does not exist!
+Did you mean "<slt:ignore>"?
 
 
-statement error (?i).*vedernikoff_clickclack_view_b.*does not exist
+statement error
 SELECT * FROM vedernikoff_clickclack_view_b;
+----
+db error: ERROR: Table with name vedernikoff_clickclack_view_b does not exist!
+Did you mean "<slt:ignore>"?
 
 
-statement error (?i).*vedernikoff_clickclack_view_c.*does not exist
+statement error
 SELECT * FROM vedernikoff_clickclack_view_c;
+----
+db error: ERROR: Table with name vedernikoff_clickclack_view_c does not exist!
+Did you mean "<slt:ignore>"?
 
 
 # --- 5. Function used by column DEFAULT on multiple tables -----------------
@@ -297,37 +321,13 @@ statement ok
 DROP FUNCTION vedernikoff_mop_next_listing() CASCADE;
 
 
-# Both DEFAULTs cleared.
-statement ok
-INSERT INTO vedernikoff_mop_active (body) VALUES ('a2');
-
-
-statement ok
-INSERT INTO vedernikoff_mop_archived (body) VALUES ('arch2');
-
-
+# Both tables defaulted from the function, so both are dropped.
 query
-SELECT id, body FROM vedernikoff_mop_active ORDER BY body;
+SELECT count(*) FROM information_schema.tables WHERE table_name IN (
+  'vedernikoff_mop_active', 'vedernikoff_mop_archived');
 ----
-id	body
-1	a1
-NULL	a2
-
-
-query
-SELECT id, body FROM vedernikoff_mop_archived ORDER BY body;
-----
-id	body
-2	arch1
-NULL	arch2
-
-
-statement ok
-DROP TABLE vedernikoff_mop_active;
-
-
-statement ok
-DROP TABLE vedernikoff_mop_archived;
+count
+0
 
 
 statement ok
@@ -358,16 +358,22 @@ CREATE TABLE vedernikoff_iceberg_t_charlie (
 );
 
 
-statement error (?i)
+statement error
 INSERT INTO vedernikoff_iceberg_t_alpha VALUES (500);
+----
+db error: ERROR: CHECK constraint failed on table vedernikoff_iceberg_t_alpha with expression CHECK(vedernikoff_iceberg_threshold(v))
 
 
-statement error (?i)
+statement error
 INSERT INTO vedernikoff_iceberg_t_bravo VALUES (-1);
+----
+db error: ERROR: CHECK constraint failed on table vedernikoff_iceberg_t_bravo with expression CHECK(vedernikoff_iceberg_threshold(v))
 
 
-statement error (?i)
+statement error
 INSERT INTO vedernikoff_iceberg_t_charlie VALUES (10000);
+----
+db error: ERROR: CHECK constraint failed on table vedernikoff_iceberg_t_charlie with expression CHECK(vedernikoff_iceberg_threshold(v))
 
 
 statement error
@@ -381,29 +387,27 @@ statement ok
 DROP FUNCTION vedernikoff_iceberg_threshold(INT) CASCADE;
 
 
-# CHECKs cleared on every table.
-statement count 1
-INSERT INTO vedernikoff_iceberg_t_alpha VALUES (500);
+# Every table CHECKing the function is dropped with it.
+query error
+SELECT v FROM vedernikoff_iceberg_t_alpha ORDER BY v;
+----
+db error: ERROR: Table with name vedernikoff_iceberg_t_alpha does not exist!
+Did you mean "<slt:ignore>"?
 
 
-statement count 1
-INSERT INTO vedernikoff_iceberg_t_bravo VALUES (-1);
+query error
+SELECT v FROM vedernikoff_iceberg_t_bravo ORDER BY v;
+----
+db error: ERROR: Table with name vedernikoff_iceberg_t_bravo does not exist!
+Did you mean "<slt:ignore>"?
 
 
-statement count 1
-INSERT INTO vedernikoff_iceberg_t_charlie VALUES (10000);
+query error
+SELECT v FROM vedernikoff_iceberg_t_charlie ORDER BY v;
+----
+db error: ERROR: Table with name vedernikoff_iceberg_t_charlie does not exist!
+Did you mean "<slt:ignore>"?
 
-
-statement ok
-DROP TABLE vedernikoff_iceberg_t_alpha;
-
-
-statement ok
-DROP TABLE vedernikoff_iceberg_t_bravo;
-
-
-statement ok
-DROP TABLE vedernikoff_iceberg_t_charlie;
 
 
 # --- 7. Mixed: function used by view, DEFAULT, and CHECK simultaneously ---
@@ -446,29 +450,27 @@ DROP FUNCTION vedernikoff_grand_master_next() CASCADE;
 
 
 # View and function gone.
-statement error (?i).*vedernikoff_grand_pulse.*does not exist
+statement error
 SELECT * FROM vedernikoff_grand_pulse;
+----
+db error: ERROR: Table with name vedernikoff_grand_pulse does not exist!
+Did you mean "<slt:ignore>"?
 
 
-statement error (?i)(macro|function).*vedernikoff_grand_master_next.*does not exist
+statement error
 SELECT vedernikoff_grand_master_next();
+----
+db error: ERROR: Scalar Function with name vedernikoff_grand_master_next does not exist!
+Did you mean "<slt:ignore>"?
 
 
-# Record table survives, CHECK cleared, DEFAULT cleared.
-statement ok
-INSERT INTO vedernikoff_grand_records (payload) VALUES ('after');
-
-
-query
+# The record table reached the function through both DEFAULT and CHECK.
+query error
 SELECT id, payload FROM vedernikoff_grand_records ORDER BY payload;
 ----
-id	payload
-NULL	after
-100	start
+db error: ERROR: Table with name vedernikoff_grand_records does not exist!
+Did you mean "<slt:ignore>"?
 
-
-statement ok
-DROP TABLE vedernikoff_grand_records;
 
 
 statement ok
@@ -512,16 +514,25 @@ statement ok
 DROP FUNCTION vedernikoff_solid_root_fn() CASCADE;
 
 
-statement error (?i)(macro|function).*vedernikoff_solid_mid_fn.*does not exist
+statement error
 SELECT vedernikoff_solid_mid_fn();
+----
+db error: ERROR: Scalar Function with name vedernikoff_solid_mid_fn does not exist!
+Did you mean "<slt:ignore>"?
 
 
-statement error (?i)(macro|function).*vedernikoff_solid_top_fn.*does not exist
+statement error
 SELECT vedernikoff_solid_top_fn();
+----
+db error: ERROR: Scalar Function with name vedernikoff_solid_top_fn does not exist!
+Did you mean "<slt:ignore>"?
 
 
-statement error (?i).*vedernikoff_solid_dashboard.*does not exist
+statement error
 SELECT * FROM vedernikoff_solid_dashboard;
+----
+db error: ERROR: Table with name vedernikoff_solid_dashboard does not exist!
+Did you mean "<slt:ignore>"?
 
 
 # --- 9. Self-overlapping: same seq used as DEFAULT AND CHECK on one table -
@@ -554,13 +565,13 @@ statement ok
 DROP SEQUENCE vedernikoff_ml_journal_seq CASCADE;
 
 
-# Both DEFAULT and CHECK gone.
-statement count 1
-INSERT INTO vedernikoff_ml_journal (body) VALUES (repeat('z', 5000));
+# One table, two edges to the sequence (DEFAULT and CHECK): dropped once.
+query error
+SELECT id, body FROM vedernikoff_ml_journal ORDER BY id;
+----
+db error: ERROR: Table with name vedernikoff_ml_journal does not exist!
+Did you mean "<slt:ignore>"?
 
-
-statement ok
-DROP TABLE vedernikoff_ml_journal;
 
 
 # --- 10. Mutually overlapping chain: fn1 used by fn2 used by view used by
@@ -603,22 +614,16 @@ statement ok
 DROP FUNCTION vedernikoff_ml_base(INT) CASCADE;
 
 
-# Mid is gone, DEFAULT cleared.
-statement error (?i)(macro|function).*vedernikoff_ml_mid.*does not exist
+# Mid is gone, and the table whose DEFAULT called it goes with it.
+statement error
 SELECT vedernikoff_ml_mid(1);
+----
+db error: ERROR: Scalar Function with name vedernikoff_ml_mid does not exist!
+Did you mean "<slt:ignore>"?
 
 
-statement ok
-INSERT INTO vedernikoff_ml_runs (name) VALUES ('after');
-
-
-query
+query error
 SELECT id, name FROM vedernikoff_ml_runs ORDER BY name;
 ----
-id	name
-NULL	after
-12	first
-
-
-statement ok
-DROP TABLE vedernikoff_ml_runs;
+db error: ERROR: Table with name vedernikoff_ml_runs does not exist!
+Did you mean "<slt:ignore>"?

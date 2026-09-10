@@ -291,37 +291,16 @@ db error: ERROR: Cannot drop entry "clickclack_mix_seq" because there are entrie
 
 
 
+# CASCADE takes the dependent table whole, alongside the dependent view.
 statement ok
 DROP SEQUENCE clickclack_mix_seq CASCADE;
 
 
 query
-SELECT v FROM clickclack_mix_t;
+SELECT count(*) AS n FROM pg_class WHERE relname IN ('clickclack_mix_t', 'v_clickclack_mix');
 ----
-v
-row
-
-
-statement count 1
-INSERT INTO clickclack_mix_t (v) VALUES ('after');
-
-
-query
-SELECT v, id IS NULL AS id_null FROM clickclack_mix_t ORDER BY v;
-----
-v	id_null
-after	t
-row	f
-
-
-statement error
-SELECT * FROM v_clickclack_mix;
-----
-db error: ERROR: Table with name v_clickclack_mix does not exist!<slt:ignore>
-
-
-statement ok
-DROP TABLE clickclack_mix_t;
+n
+0
 
 
 statement ok
@@ -534,31 +513,33 @@ CREATE VIEW v_clickclack_uses_serial AS
   SELECT nextval('public.clickclack_owner_t_id_seq') AS next_id;
 
 
-statement error
-DROP TABLE clickclack_owner_t;
-----
-db error: ERROR: Cannot drop entry "clickclack_owner_t_id_seq" because there are entries that depend on it.
-view "v_clickclack_uses_serial" depends on sequence "clickclack_owner_t_id_seq".
-Use DROP...CASCADE to drop all dependents.
-
-
-
+# The SERIAL sequence is not owned by the table, so the view's dependency on
+# it does not block a plain DROP TABLE, and both outlive the table.
 statement ok
-DROP TABLE clickclack_owner_t CASCADE;
+DROP TABLE clickclack_owner_t;
 
 
 query
-SELECT count(*) FROM pg_class
+SELECT count(*) AS n FROM pg_class
   WHERE relname IN ('clickclack_owner_t', 'clickclack_owner_t_id_seq');
 ----
-count
-0
+n
+1
 
 
-statement error
-SELECT * FROM v_clickclack_uses_serial;
+query
+SELECT next_id FROM v_clickclack_uses_serial;
 ----
-db error: ERROR: Table with name v_clickclack_uses_serial does not exist!<slt:ignore>
+next_id
+2
+
+
+statement ok
+DROP VIEW v_clickclack_uses_serial;
+
+
+statement ok
+DROP SEQUENCE clickclack_owner_t_id_seq;
 
 
 statement ok

@@ -1,12 +1,14 @@
-# Quoted / case-sensitive role names. MixedCase identifiers wrapped in double
-# quotes ("ident_Vedernikoff") create, grant, and round-trip through pg_roles
-# and has_table_privilege byte-identically on real PostgreSQL and serenedb.
+# Quoted MixedCase role names. Double quotes ("ident_Vedernikoff") fix the
+# spelling the role is stored and displayed under, but the role catalog matches
+# names case-insensitively, so two roles differing only in case cannot coexist.
 #
 # Key facts proven here:
 #   * A quoted MixedCase role preserves its case in pg_roles.rolname.
-#   * has_table_privilege takes the role NAME as a string literal, so the case
-#     must match exactly: the quoted name works, the folded lowercase name is a
-#     hard "does not exist" error -- the SAME error text on both engines.
+#   * Creating a second role whose name differs only in case is refused.
+#   * has_table_privilege resolves its role-name argument through the catalog,
+#     so the folded lowercase spelling names the same MixedCase role.
+#   * pg_has_role does not: its role-name argument is matched case-exactly and
+#     the folded spelling is a hard "does not exist" there.
 #   * Grants/revokes to the quoted name drive the oracle exactly like an
 #     unquoted role.
 #   * A connection that logs in AS the MixedCase role sees the MixedCase name
@@ -64,6 +66,15 @@ ident_Vedernikoff
 ident_babsky
 
 
+# The stored spelling is all that differs: the name is claimed for every case,
+# so a role differing from ident_babsky only in case cannot be created.
+
+statement error
+CREATE ROLE "IDENT_Babsky";
+----
+db error: ERROR: role "IDENT_Babsky" already exists
+
+
 # Membership reachability is case-exact through pg_has_role. We make babsky a
 # member of the MixedCase group and confirm the closure uses the exact name.
 
@@ -116,16 +127,28 @@ t	t
 
 
 # ============================================================================
-# Case sensitivity of the NAME argument. has_table_privilege resolves its
-# first argument as a string-valued role name, NOT an identifier, so it is
-# case-sensitive: the folded lowercase spelling does not name any role and
-# raises the SAME 'does not exist' error on both engines.
+# Case of the NAME argument. has_table_privilege resolves its first argument
+# through the role catalog, which matches case-insensitively, so every casing
+# of the stored name reaches the same role and answers the same.
 # ============================================================================
 
-statement error
-SELECT has_table_privilege('ident_vedernikoff','ident_makak','SELECT');
+query
+SELECT has_table_privilege('ident_vedernikoff','ident_makak','SELECT') AS folded,
+       has_table_privilege('ident_VEDERNIKOFF','ident_makak','INSERT') AS upper;
 ----
-db error: ERROR: role "ident_vedernikoff" does not exist
+folded	upper
+t	t
+
+
+# pg_has_role resolves its role arguments the same way, so either spelling of
+# the MixedCase role reaches it.
+
+query
+SELECT pg_has_role('ident_babsky','ident_vedernikoff','MEMBER') AS folded,
+       pg_has_role('ident_babsky','ident_VEDERNIKOFF','MEMBER') AS stored;
+----
+folded	stored
+t	t
 
 
 # An entirely unknown role name is the same hard error.

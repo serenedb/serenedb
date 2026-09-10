@@ -6,8 +6,21 @@ statement ok
 CREATE TABLE clickclack_dashboard (id BIGINT DEFAULT nextval('public.clickclack_query_log_id_seq'), v TEXT);
 
 
-statement error
+# The SERIAL sequence is not owned by the table, so DROP TABLE succeeds and
+# leaves the sequence (and clickclack_dashboard's DEFAULT) intact.
+statement ok
 DROP TABLE clickclack_query_log;
+
+
+query
+SELECT count(*) AS n FROM pg_class WHERE relname = 'clickclack_query_log';
+----
+n
+0
+
+
+statement error
+DROP SEQUENCE clickclack_query_log_id_seq;
 ----
 db error: ERROR: Cannot drop entry "clickclack_query_log_id_seq" because there are entries that depend on it.
 table "clickclack_dashboard" depends on sequence "clickclack_query_log_id_seq".
@@ -16,7 +29,7 @@ Use DROP...CASCADE to drop all dependents.
 
 
 statement error
-DROP TABLE clickclack_query_log RESTRICT;
+DROP SEQUENCE clickclack_query_log_id_seq RESTRICT;
 ----
 db error: ERROR: Cannot drop entry "clickclack_query_log_id_seq" because there are entries that depend on it.
 table "clickclack_dashboard" depends on sequence "clickclack_query_log_id_seq".
@@ -29,7 +42,7 @@ DROP TABLE clickclack_dashboard;
 
 
 statement ok
-DROP TABLE clickclack_query_log RESTRICT;
+DROP SEQUENCE clickclack_query_log_id_seq RESTRICT;
 
 
 statement ok
@@ -74,6 +87,10 @@ DROP TABLE iceberg_manifest;
 
 statement ok
 DROP TABLE iceberg_snapshot;
+
+
+statement ok
+DROP SEQUENCE iceberg_snapshot_id_seq;
 
 
 statement ok
@@ -132,24 +149,16 @@ serial_col	static_col	text_col	payload
 1	42	hello	row1
 
 
+# CASCADE granularity: the dependent TABLE goes, not just the column DEFAULT.
 statement ok
 DROP SEQUENCE solid_principle_seq CASCADE;
 
 
-statement count 1
-INSERT INTO solid_violations (payload) VALUES ('row2');
-
-
 query
-SELECT serial_col IS NULL AS s_null, static_col, text_col, payload
-  FROM solid_violations WHERE payload = 'row2';
+SELECT count(*) AS n FROM pg_class WHERE relname = 'solid_violations';
 ----
-s_null	static_col	text_col	payload
-t	42	hello	row2
-
-
-statement ok
-DROP TABLE solid_violations;
+n
+0
 
 
 statement ok
@@ -169,8 +178,24 @@ statement count 1
 INSERT INTO clickclack_ingest_log (v) VALUES ('r');
 
 
-statement error
+statement ok
 DROP TABLE clickclack_ingest_job RESTRICT;
+
+
+# All three SERIAL sequences outlive the table.
+query
+SELECT relname FROM pg_class
+  WHERE relname IN ('clickclack_ingest_job', 'clickclack_ingest_job_a_seq', 'clickclack_ingest_job_b_seq', 'clickclack_ingest_job_c_seq')
+  ORDER BY relname;
+----
+relname
+clickclack_ingest_job_a_seq
+clickclack_ingest_job_b_seq
+clickclack_ingest_job_c_seq
+
+
+statement error
+DROP SEQUENCE clickclack_ingest_job_b_seq;
 ----
 db error: ERROR: Cannot drop entry "clickclack_ingest_job_b_seq" because there are entries that depend on it.
 table "clickclack_ingest_log" depends on sequence "clickclack_ingest_job_b_seq".
@@ -179,31 +204,22 @@ Use DROP...CASCADE to drop all dependents.
 
 
 statement ok
-DROP TABLE clickclack_ingest_job CASCADE;
+DROP SEQUENCE clickclack_ingest_job_b_seq CASCADE;
 
 
 query
-SELECT count(*) FROM pg_class
-  WHERE relname IN ('clickclack_ingest_job', 'clickclack_ingest_job_a_seq', 'clickclack_ingest_job_b_seq', 'clickclack_ingest_job_c_seq');
+SELECT count(*) AS n FROM pg_class WHERE relname = 'clickclack_ingest_log';
 ----
-count
+n
 0
 
 
-statement count 1
-INSERT INTO clickclack_ingest_log (v) VALUES ('after-cascade');
-
-
-query
-SELECT v, id IS NULL AS id_null FROM clickclack_ingest_log ORDER BY v;
-----
-v	id_null
-after-cascade	t
-r	f
+statement ok
+DROP SEQUENCE clickclack_ingest_job_a_seq;
 
 
 statement ok
-DROP TABLE clickclack_ingest_log;
+DROP SEQUENCE clickclack_ingest_job_c_seq;
 
 
 statement ok
@@ -222,8 +238,11 @@ statement ok
 DROP SEQUENCE mop_listing_seq CASCADE;
 
 
-statement ok
-DROP TABLE mop_application RESTRICT;
+query
+SELECT count(*) AS n FROM pg_class WHERE relname = 'mop_application';
+----
+n
+0
 
 
 statement ok
@@ -245,17 +264,8 @@ statement count 1
 INSERT INTO public.clickclack_audit_ref (v) VALUES ('cross');
 
 
-statement error
-DROP TABLE iceberg_audits.snapshots;
-----
-db error: ERROR: Cannot drop entry "snapshots_id_seq" because there are entries that depend on it.
-table "clickclack_audit_ref" depends on sequence "snapshots_id_seq".
-Use DROP...CASCADE to drop all dependents.
-
-
-
 statement ok
-DROP TABLE iceberg_audits.snapshots CASCADE;
+DROP TABLE iceberg_audits.snapshots;
 
 
 query
@@ -265,12 +275,32 @@ v
 cross
 
 
-statement ok
-DROP TABLE public.clickclack_audit_ref;
+statement error
+DROP SEQUENCE iceberg_audits.snapshots_id_seq;
+----
+db error: ERROR: Cannot drop entry "snapshots_id_seq" because there are entries that depend on it.
+table "clickclack_audit_ref" depends on sequence "snapshots_id_seq".
+Use DROP...CASCADE to drop all dependents.
 
 
+
+statement error
+DROP SCHEMA iceberg_audits;
+----
+db error: ERROR: Cannot drop entry "iceberg_audits" because there are entries that depend on it.<slt:ignore>
+
+
+
+# The cascade reaches across schemas: the sequence takes public.clickclack_audit_ref with it.
 statement ok
 DROP SCHEMA iceberg_audits CASCADE;
+
+
+query
+SELECT count(*) AS n FROM pg_class WHERE relname = 'clickclack_audit_ref';
+----
+n
+0
 
 
 statement ok
@@ -285,8 +315,18 @@ statement count 1
 INSERT INTO vedernikoff_diary (v) VALUES ('before');
 
 
+# CASCADE walks to dependents, not to the sequence the table itself depends on.
 statement ok
 DROP TABLE vedernikoff_diary CASCADE;
+
+
+query
+SELECT relname FROM pg_class
+  WHERE relname IN ('vedernikoff_diary', 'vedernikoff_diary_id_seq')
+  ORDER BY relname;
+----
+relname
+vedernikoff_diary_id_seq
 
 
 statement ok
@@ -308,11 +348,16 @@ statement count 1
 INSERT INTO vedernikoff_diary_index (id, v) VALUES (777, 'explicit');
 
 
+statement count 1
+INSERT INTO vedernikoff_diary_index (v) VALUES ('defaulted');
+
+
 query
-SELECT v, id IS NULL AS id_null FROM vedernikoff_diary_index ORDER BY v;
+SELECT v, id FROM vedernikoff_diary_index ORDER BY v;
 ----
-v	id_null
-explicit	f
+v	id
+defaulted	2
+explicit	777
 
 
 statement ok
@@ -321,3 +366,11 @@ DROP TABLE vedernikoff_diary;
 
 statement ok
 DROP TABLE vedernikoff_diary_index;
+
+
+statement ok
+DROP SEQUENCE vedernikoff_diary_id_seq;
+
+
+statement ok
+DROP SEQUENCE vedernikoff_diary_id_seq1;

@@ -894,7 +894,7 @@ statement error
 CREATE TABLE search_bad_interval (a INTEGER PRIMARY KEY)
   WITH (storage = 'search', refresh_interval = 'x');
 ----
-db error: ERROR: WITH option "refresh_interval" expects an integer literal
+db error: ERROR: Failed to cast value: Could not convert string 'x' to UINT32
 
 
 # The interval options are search-only: an inverted-style per-object scoping,

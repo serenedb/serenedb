@@ -91,6 +91,9 @@ struct InvertedIndexField {
     return !column_options.ivf_info && indexed_term_dict;
   }
   bool IsStored() const noexcept { return store_values; }
+  bool IsTokenized() const noexcept {
+    return !whole_value && (!IsStored() || IsTermDict());
+  }
 };
 
 struct InvertedIndexFieldLookup {

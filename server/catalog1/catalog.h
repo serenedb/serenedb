@@ -33,6 +33,8 @@ namespace duckdb {
 class PhysicalPlanGenerator;
 class PhysicalOperator;
 class LogicalInsert;
+class LogicalCreateTable;
+class LogicalMergeInto;
 struct DropInfo;
 
 }  // namespace duckdb
@@ -94,6 +96,14 @@ class SereneDBCatalog : public duckdb::DuckCatalog {
                                        duckdb::PhysicalPlanGenerator& planner,
                                        duckdb::LogicalDelete& op,
                                        duckdb::PhysicalOperator& plan) override;
+
+  duckdb::PhysicalOperator& PlanCreateTableAs(
+    duckdb::ClientContext& context, duckdb::PhysicalPlanGenerator& planner,
+    duckdb::LogicalCreateTable& op, duckdb::PhysicalOperator& plan) override;
+
+  duckdb::PhysicalOperator& PlanMergeInto(
+    duckdb::ClientContext& context, duckdb::PhysicalPlanGenerator& planner,
+    duckdb::LogicalMergeInto& op, duckdb::PhysicalOperator& plan) override;
 
   duckdb::PhysicalOperator& PlanUpdate(duckdb::ClientContext& context,
                                        duckdb::PhysicalPlanGenerator& planner,

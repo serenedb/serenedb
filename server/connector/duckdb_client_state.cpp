@@ -30,6 +30,7 @@
 #include <duckdb/main/client_context.hpp>
 #include <utility>
 
+#include "auth/enforce.h"
 #include "auth/role_closure.h"
 #include "basics/assert.h"
 #include "basics/containers/flat_hash_set.h"
@@ -195,8 +196,8 @@ void SereneDBClientState::TransactionPreCommit(
   duckdb::MetaTransaction& transaction, duckdb::ClientContext& context) {
   // Pre-durability crash point: fires before the engine commit, so the
   // transaction must be absent after restart. Only write transactions
-  // crash (the fault-arming SET itself must survive). Name historical.
-  SDB_IF_FAILURE("crash_before_search_commit") {
+  // crash (the fault-arming SET itself must survive).
+  SDB_IF_FAILURE("crash_before_commit") {
     if (transaction.ModifiedDatabase()) {
       SDB_IMMEDIATE_ABORT();
     }
@@ -243,6 +244,11 @@ void SereneDBClientState::TransactionCommit(
       SDB_IMMEDIATE_ABORT();
     }
   }
+  SDB_IF_FAILURE("crash_on_drop") {
+    if (transaction.ModifiedDatabase()) {
+      SDB_IMMEDIATE_ABORT();
+    }
+  }
   tls_committing_ctx = nullptr;
   _connection_ctx->Commit();
 }
@@ -273,6 +279,12 @@ void SereneDBClientState::QueryEnd(duckdb::ClientContext& context) {
   copy_stdin_done = false;
   progress_source->EndQuery();
   _connection_ctx->OnStatementEnd();
+}
+
+void SereneDBClientState::OnBoundPlan(duckdb::ClientContext& context,
+                                      duckdb::Binder& binder,
+                                      duckdb::LogicalOperator& plan) {
+  auth::EnforcePlan(context, *_connection_ctx, binder, plan);
 }
 
 ConnectionContext* GetSereneDBContextPtr(duckdb::ClientContext& context) {

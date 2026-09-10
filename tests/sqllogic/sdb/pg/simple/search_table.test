@@ -221,25 +221,25 @@ db error: ERROR: CREATE INDEX on a search-backed table is not yet supported
 statement error
 ALTER TABLE search_dml ADD COLUMN c INTEGER;
 ----
-db error: ERROR: ALTER TABLE ADD COLUMN on a search-backed table is not yet supported
+db error: ERROR: ALTER TABLE ADD_COLUMN on a search-backed table is not yet supported
 
 
 statement error
 ALTER TABLE search_dml DROP COLUMN b;
 ----
-db error: ERROR: ALTER TABLE DROP COLUMN on a search-backed table is not yet supported
+db error: ERROR: ALTER TABLE REMOVE_COLUMN on a search-backed table is not yet supported
 
 
 statement error
 ALTER TABLE search_dml ALTER COLUMN b TYPE VARCHAR;
 ----
-db error: ERROR: ALTER TABLE ALTER COLUMN TYPE on a search-backed table is not yet supported
+db error: ERROR: ALTER TABLE ALTER_COLUMN_TYPE on a search-backed table is not yet supported
 
 
 statement error
 ALTER TABLE search_dml DROP CONSTRAINT search_dml_pkey;
 ----
-db error: ERROR: ALTER TABLE DROP CONSTRAINT on a search-backed table is not yet supported
+db error: ERROR: ALTER TABLE DROP_CONSTRAINT on a search-backed table is not yet supported
 
 
 # Renames are catalog-only metadata -- iresearch and the scan are keyed by

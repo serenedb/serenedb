@@ -196,6 +196,30 @@ duckdb::PhysicalOperator& SereneDBCatalog::PlanDelete(
   return del;
 }
 
+duckdb::PhysicalOperator& SereneDBCatalog::PlanCreateTableAs(
+  duckdb::ClientContext& context, duckdb::PhysicalPlanGenerator& planner,
+  duckdb::LogicalCreateTable& op, duckdb::PhysicalOperator& plan) {
+  if (connector::ReadStorageEngine(op.info->Base().options) !=
+      TableEngine::Search) {
+    return duckdb::DuckCatalog::PlanCreateTableAs(context, planner, op, plan);
+  }
+  auto& insert = planner.Make<connector::SereneDBSearchInsert>(
+    std::move(op.info), op.estimated_cardinality);
+  insert.children.push_back(plan);
+  return insert;
+}
+
+duckdb::PhysicalOperator& SereneDBCatalog::PlanMergeInto(
+  duckdb::ClientContext& context, duckdb::PhysicalPlanGenerator& planner,
+  duckdb::LogicalMergeInto& op, duckdb::PhysicalOperator& plan) {
+  if (dynamic_cast<const SearchTableEntry*>(&op.table)) {
+    throw duckdb::NotImplementedException(
+      "MERGE INTO (and INSERT ... ON CONFLICT) is not yet supported on "
+      "search-backed tables");
+  }
+  return duckdb::DuckCatalog::PlanMergeInto(context, planner, op, plan);
+}
+
 duckdb::PhysicalOperator& SereneDBCatalog::PlanUpdate(
   duckdb::ClientContext& context, duckdb::PhysicalPlanGenerator& planner,
   duckdb::LogicalUpdate& op, duckdb::PhysicalOperator& plan) {

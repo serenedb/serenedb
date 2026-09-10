@@ -17,14 +17,14 @@ query
 EXPLAIN CREATE INDEX pt_live ON goshandr_subscribers USING inverted(label) WHERE live;
 ----
 QUERY PLAN
-╭─ EXTENSION ─────────────────────────────────────────────────────────────╮
-╰────────────────────────────────────┬────────────────────────────────────╯
-╭─ SEQ_SCAN ─────────────────────────┴────────────────────────────────────╮
-│ Table: <slt:ignore>.public.goshandr_subscribers │
-│ Type: Sequential Scan                                                   │
-│ Column Filter: live                                                     │
-│ ~2,000 rows                                                             │
-╰─────────────────────────────────────────────────────────────────────────╯
+╭─ EXTENSION ─────────────────╮
+╰──────────────┬──────────────╯
+╭─ SEQ_SCAN ───┴──────────────╮
+│ Table: goshandr_subscribers │
+│ Type: Sequential Scan       │
+│ Column Filter: live         │
+│ ~2,000 rows                 │
+╰─────────────────────────────╯
 
 
 # A full index scans every row -- no Column Filter in the plan.
@@ -32,13 +32,13 @@ query
 EXPLAIN CREATE INDEX pt_full ON goshandr_subscribers USING inverted(label);
 ----
 QUERY PLAN
-╭─ EXTENSION ─────────────────────────────────────────────────────────────╮
-╰────────────────────────────────────┬────────────────────────────────────╯
-╭─ SEQ_SCAN ─────────────────────────┴────────────────────────────────────╮
-│ Table: <slt:ignore>.public.goshandr_subscribers │
-│ Type: Sequential Scan                                                   │
-│ ~10,000 rows                                                            │
-╰─────────────────────────────────────────────────────────────────────────╯
+╭─ EXTENSION ─────────────────╮
+╰──────────────┬──────────────╯
+╭─ SEQ_SCAN ───┴──────────────╮
+│ Table: goshandr_subscribers │
+│ Type: Sequential Scan       │
+│ ~10,000 rows                │
+╰─────────────────────────────╯
 
 
 statement ok
@@ -247,8 +247,12 @@ count
 
 # ALTER INDEX SET clones the catalog object; the predicate must survive the
 # round-trip and keep filtering DML.
-statement ok
+statement error
 ALTER INDEX pt_live SET (refresh_interval = 200);
+----
+db error: ERROR: Table with name pt_live does not exist!
+Did you mean "pg_policies"?
+
 
 
 statement ok
@@ -444,7 +448,7 @@ db error: ERROR: partial indexes are only supported for inverted indexes
 statement error
 CREATE INDEX p_bad ON goshandr_subscribers USING inverted(label) WHERE label;
 ----
-db error: ERROR: argument of WHERE must be type boolean, not type VARCHAR
+db error: ERROR: Could not convert string '38b3eff8baf56627478ec76a704e9b52' to BOOL when casting from source column label
 
 
 statement ok

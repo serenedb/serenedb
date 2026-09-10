@@ -35,7 +35,7 @@ query
 SELECT conname, contype FROM pg_constraint WHERE conrelid = 'morphling'::regclass AND contype = 'c' ORDER BY conname;
 ----
 conname	contype
-(empty)	c
+morphling_a_check	c
 
 
 # The new check rejects a future violator.
@@ -61,7 +61,7 @@ query
 SELECT conname FROM pg_constraint WHERE conrelid = 'morphling'::regclass AND contype = 'c' ORDER BY conname;
 ----
 conname
-(empty)
+morphling_a_check
 morphling_b_pos
 
 

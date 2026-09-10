@@ -40,13 +40,13 @@ SELECT conname || ' ' || contype::text AS c FROM pg_constraint
 WHERE conrelid = 'con'::regclass ORDER BY contype::text, conname;
 ----
 c
- c
 con_ck1 c
- f
+con_ck2_check c
 con_fk1 f
- n
- n
+con_fk2_fkey f
+con_id_not_null n
 con_nn1 n
+con_nn2_not_null n
 con_pk p
 UNIQUE_con_uq2 u
 con_uq1 u

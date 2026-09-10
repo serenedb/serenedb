@@ -76,8 +76,10 @@ std::string ConstraintName(const duckdb::TableCatalogEntry& table,
       .GetIdentifierName();
   }
   duckdb::vector<std::string> columns;
+  std::string_view suffix;
   switch (constraint.type) {
     case duckdb::ConstraintType::NOT_NULL:
+      suffix = "_not_null";
       columns.push_back(
         table.GetColumns()
           .GetColumn(constraint.Cast<duckdb::NotNullConstraint>().index)
@@ -85,6 +87,7 @@ std::string ConstraintName(const duckdb::TableCatalogEntry& table,
           .GetIdentifierName());
       break;
     case duckdb::ConstraintType::CHECK:
+      suffix = "_check";
       duckdb::ParsedExpressionIterator::VisitExpression<
         duckdb::ColumnRefExpression>(
         *constraint.Cast<duckdb::CheckConstraint>().expression,
@@ -101,6 +104,7 @@ std::string ConstraintName(const duckdb::TableCatalogEntry& table,
       }
       break;
     case duckdb::ConstraintType::FOREIGN_KEY:
+      suffix = "_fkey";
       for (const auto& column :
            constraint.Cast<duckdb::ForeignKeyConstraint>().fk_columns) {
         columns.push_back(column.GetIdentifierName());
@@ -113,14 +117,7 @@ std::string ConstraintName(const duckdb::TableCatalogEntry& table,
   if (!columns.empty()) {
     name += "_" + duckdb::StringUtil::Join(columns, "_");
   }
-  switch (constraint.type) {
-    case duckdb::ConstraintType::NOT_NULL:
-      return name + "_not_null";
-    case duckdb::ConstraintType::CHECK:
-      return name + "_check";
-    default:
-      return name + "_fkey";
-  }
+  return name + std::string{suffix};
 }
 
 }  // namespace sdb::pg

@@ -34,6 +34,8 @@
 #include <duckdb/common/vector/struct_vector.hpp>
 #include <duckdb/execution/execution_context.hpp>
 #include <duckdb/execution/operator/projection/physical_projection.hpp>
+#include <duckdb/execution/operator/scan/physical_table_scan.hpp>
+#include <duckdb/function/table/table_scan.hpp>
 #include <duckdb/main/attached_database.hpp>
 #include <duckdb/main/database_manager.hpp>
 #include <duckdb/parallel/task_scheduler.hpp>
@@ -466,11 +468,6 @@ duckdb::SinkResultType SereneDBPhysicalCreateIndex::Sink(
     duckdb::UnifiedVectorFormat fmt;
     rowid_vec.ToUnifiedFormat(num_rows, fmt);
     auto* rowids = duckdb::UnifiedVectorFormat::GetData<int64_t>(fmt);
-    // Select rather than trim a suffix: a suffix trim would be equivalent only
-    // while the backfill scans in rowid order and nothing below reorders, and
-    // if that ever stopped holding the rows it let through would be indexed
-    // twice -- silently, since duplicates are legal for this index. Selecting
-    // costs the same pass and does not depend on the order.
     auto& sel = lstate->backfill_sel;
     duckdb::idx_t keep = 0;
     for (duckdb::idx_t i = 0; i < num_rows; ++i) {
@@ -586,7 +583,7 @@ duckdb::SinkResultType SereneDBPhysicalCreateIndex::Sink(
       }
       SDB_ASSERT(slot < chunk.ColumnCount());
       const auto* entry = config.FindEntry(keys[k].field_id);
-      if (!entry || !entry->whole_value) {
+      if (!entry || entry->IsTokenized()) {
         RejectJsonObjectArrayLeaves(chunk.data[slot], num_rows);
       }
       expression_values.push_back({keys[k].field_id, &chunk.data[slot]});
@@ -700,7 +697,7 @@ duckdb::SinkFinalizeType SereneDBPhysicalCreateIndex::Finalize(
     gstate.progress->SetPhase(pg::progress_phase::CreateIndex::Finalizing);
   }
   if (!IsReindexPass()) {
-    SDB_IF_FAILURE("crash_before_catalog_commit") { SDB_IMMEDIATE_ABORT(); }
+    SDB_IF_FAILURE("crash_before_commit") { SDB_IMMEDIATE_ABORT(); }
   }
   return duckdb::SinkFinalizeType::READY;
 }

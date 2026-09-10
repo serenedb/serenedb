@@ -46,13 +46,12 @@ SELECT * FROM enf_secret;
 db error: ERROR: permission denied for table enf_secret
 
 
-# A secondary index is not a relation: its name does not resolve.
+# M1 regression: reading the table via its INDEX name must ALSO be denied.
 connection c_enf user=enf_user password=enf_user_pw
 statement error
 SELECT * FROM enf_secret_idx;
 ----
-db error: ERROR: Table with name enf_secret_idx does not exist!
-Did you mean "enf_secret"?
+db error: ERROR: permission denied for table enf_secret
 
 
 connection c_enf user=enf_user password=enf_user_pw
@@ -90,6 +89,15 @@ SELECT id, ssn FROM enf_secret ORDER BY id;
 id	ssn
 1	111-22-3333
 2	444-55-6666
+
+
+# SELECT via the index name now also works (same privilege).
+connection c_enf user=enf_user password=enf_user_pw
+query
+SELECT count(*) FROM enf_secret_idx;
+----
+count
+2
 
 
 connection c_enf user=enf_user password=enf_user_pw

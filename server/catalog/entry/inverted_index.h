@@ -125,7 +125,7 @@ std::vector<std::string> ParseKeyColumns(
   const duckdb::case_insensitive_map_t<duckdb::Value>& options);
 
 duckdb::optional_ptr<TokenizerCatalogEntry> ResolveOpclassDict(
-  duckdb::CatalogTransaction transaction, duckdb::SchemaCatalogEntry& schema,
+  duckdb::ClientContext& context, duckdb::SchemaCatalogEntry& schema,
   std::string_view opclass);
 
 struct InvertedIndexConfig final : irs::IndexFieldOptions {
@@ -152,7 +152,7 @@ struct InvertedIndexConfig final : irs::IndexFieldOptions {
 class IndexTokenizers {
  public:
   IndexTokenizers() = default;
-  IndexTokenizers(duckdb::CatalogTransaction transaction,
+  IndexTokenizers(duckdb::ClientContext& context,
                   duckdb::SchemaCatalogEntry& schema,
                   const InvertedIndexConfig& config);
 

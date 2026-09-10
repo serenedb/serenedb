@@ -54,7 +54,7 @@ Result BuildScoredConjunction(std::span<const Term> terms,
   const auto rest = head_term ? terms.subspan(1) : terms;
   const auto rest_filters = head_term ? filters : filters.subspan(1);
   const auto rest_size = rest.size() + rest_filters.size();
-  const uint64_t reach = HeadEstimate(terms, filters);
+  const uint64_t reach = HeadCandidates(terms, filters);
   const auto clause = [&](const Term& term) {
     return ClauseOf(term, field, scorer, boost);
   };

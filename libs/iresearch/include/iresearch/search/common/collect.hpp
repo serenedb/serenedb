@@ -88,16 +88,6 @@ bool CollectFills(std::span<const Term> terms,
     });
 }
 
-inline constexpr uint64_t kPhraseCandidateShare = 16;
-
-inline uint64_t ChildCandidates(const QueryBuilder& child, doc_id_t) noexcept {
-  if (child.Kind() != QueryKind::Phrase) {
-    return child.EstimateMax();
-  }
-  return std::max<uint64_t>(
-    1, uint64_t{child.EstimateMatches()} / kPhraseCandidateShare);
-}
-
 template<typename Term>
 uint64_t IncludeCandidates(std::span<const Term> terms,
                            std::span<const QueryBuilder::ptr> filters,
@@ -110,8 +100,7 @@ uint64_t IncludeCandidates(std::span<const Term> terms,
   }
   if (!filters.empty()) {
     SDB_ASSERT(filters.front());
-    candidates =
-      std::min(candidates, ChildCandidates(*filters.front(), docs_count));
+    candidates = std::min(candidates, ChildCandidates(*filters.front()));
   }
   return candidates;
 }
@@ -126,7 +115,7 @@ uint64_t LeadCandidates(std::span<const Term> terms,
   }
   for (const auto& filter : filters) {
     SDB_ASSERT(filter);
-    candidates += ChildCandidates(*filter, docs_count);
+    candidates += ChildCandidates(*filter);
   }
   return candidates;
 }

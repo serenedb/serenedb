@@ -25,6 +25,7 @@
 
 #include "formats/column/test_cs_helpers.hpp"
 #include "formats_test_case_base.hpp"
+#include "insert_field.hpp"
 #include "iresearch/index/norm.hpp"
 #include "iresearch/store/directory_attributes.hpp"
 #include "tests_shared.hpp"
@@ -41,7 +42,7 @@ bool InsertWithName(irs::IndexWriter& writer, const tests::Document& doc) {
   auto ctx = writer.GetBatch();
   {
     auto d = ctx.Insert();
-    if (!d.Insert(doc.indexed.begin(), doc.indexed.end())) {
+    if (!tests::InsertFields(d, doc.indexed.begin(), doc.indexed.end())) {
       return false;
     }
     const auto* name =

@@ -38,8 +38,10 @@
 // macro definitions similar to the ones at
 // https://kernelnewbies.org/FAQ/LikelyUnlikely
 #if defined(__GNUC__) || defined(__GNUG__)
+#define SDB_LIKELY(v) __builtin_expect(!!(v), 1)
 #define SDB_UNLIKELY(v) __builtin_expect(!!(v), 0)
 #else
+#define SDB_LIKELY(v) v
 #define SDB_UNLIKELY(v) v
 #endif
 

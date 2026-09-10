@@ -803,7 +803,7 @@ const catalog::VirtualTable* ResolveSystemRelation(ConnectionContext& conn_ctx,
 catalog::Permissions SystemRelationPermissions(
   const catalog::VirtualTable& sys) {
   return catalog::Permissions{
-    id::kRootUser, catalog::Acl{sys.GetAcl().begin(), sys.GetAcl().end()}};
+    id::kRootUser, catalog::Acl{sys.GetAcl().begin(), sys.GetAcl().end()}, {}};
 }
 
 bool SystemRelationHasColumn(const catalog::VirtualTable& sys,

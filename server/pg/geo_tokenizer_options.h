@@ -20,7 +20,7 @@
 
 #pragma once
 
-#include <iresearch/analysis/geo_analyzer.hpp>
+#include <iresearch/analysis/geo_tokenizer.hpp>
 
 #include "pg/option_help.h"
 
@@ -77,12 +77,12 @@ inline constexpr OptionGroup kGeoS2Subgroup{"options", kGeoS2Options, {}};
 inline constexpr OptionGroup kGeoPointSubgroups[] = {kGeoS2Subgroup};
 inline constexpr OptionGroup kGeoJsonSubgroups[] = {kGeoS2Subgroup};
 inline constexpr OptionGroup kGeoPointGroup{
-  irs::analysis::GeoPointAnalyzer::type_name(),
+  irs::analysis::GeoPointTokenizer::type_name(),
   kGeoPointOptions,
   kGeoPointSubgroups,
 };
 inline constexpr OptionGroup kGeoJsonGroup{
-  irs::analysis::GeoJsonAnalyzer::type_name(),
+  irs::analysis::GeoJsonTokenizer::type_name(),
   kGeoJsonOptions,
   kGeoJsonSubgroups,
 };

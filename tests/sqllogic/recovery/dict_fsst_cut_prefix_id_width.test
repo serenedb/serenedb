@@ -1,0 +1,114 @@
+# dict_fsst cut sizing: the prefix-id width the cheap bound prices is stale.
+#
+# CleavedUpperBound charges the prefix-id field at the prefix_cap of the LAST real cleave. A segment
+# that commits to FSST_PLUS while it holds a handful of shared-prefix groups freezes that budget at
+# 8 bits. Every later row-adjacent pair that shares two codes is a zero-value group the DP still
+# forms, and once the group count passes 256, 512, ... 4096 the real prefix-id field widens for EVERY
+# entry in the segment while the bound keeps charging 8 bits. The margin is ROW_HEADROOM plus one
+# encoded row; with ~40k entries one extra bit is 5KB, so the segment grows past the block with every
+# per-row check passing, nothing rewinds, and the final flush of the row group throws
+# "dict_fsst: refusing to write a cleaved segment layout of N bytes past the 262136-byte block".
+# A few thousand rows later the bound does fail, the real cleave sees the overflow and FlushRewind
+# writes the certified prefix -- so the hole is only visible when the row group ends inside the
+# window, which this row count does (42,500 .. 45,000 all reproduce; 42,000 fits, 45,500 rewinds).
+#
+# Shape, in row order:
+#   1a  2 groups x 2600 rows: 48-char group prefix, a digit cycling 0/1/2, 7 pseudo-random printable
+#       chars. Two large row-order groups so the row cleave wins and commits PLUS_ROW; the digit keeps
+#       within-run LCP constant whatever symbols FSST builds at the boundary; in sorted order each
+#       group splits only by digit. The random chars put every printable byte in FSST's sample.
+#   1b  unique 4-char strings over all 95 printable chars, LCP 0 to their row neighbours: neutral to
+#       the bound, so the commit may land anywhere inside them. In sorted order they form 95
+#       first-char clusters the DP takes whole, which is what keeps prefix_cap small at the commit
+#       (prefix_cap covers the sorted candidate too; a 62-char alphabet splits into 3,844 groups).
+#   2   3-char pairs sharing 2 chars, LCP 0 between consecutive pairs: zero-value groups.
+# Default row groups, default block size. Deterministic: single source, ORDER BY.
+
+control substitution on
+
+
+statement ok
+ATTACH '${__TEST_DIR__}/dfpw.db' AS dfpw (TYPE duckdb, STORAGE_VERSION 'serenedb_v1');
+
+
+statement ok
+SET force_compression='dict_fsst';
+
+
+statement ok
+CREATE TABLE dfpw.t AS
+  SELECT ord,
+    CASE WHEN ord < 5200 THEN
+      chr((65 + ord // 2600)::INTEGER) || 'QWERTYUIOPASDFGHJKLZXCVBNM0123456789QWERTYUIOPA'
+      || chr((48 + (ord % 2600) % 3)::INTEGER)
+      || chr((32 + (((ord % 2600) * 7919) % 857375) % 95)::INTEGER)
+      || chr((32 + ((((ord % 2600) * 7919) % 857375) // 95) % 95)::INTEGER)
+      || chr((32 + ((((ord % 2600) * 7919) % 857375) // 9025) % 95)::INTEGER)
+      || chr((32 + (((ord % 2600) * 104729) % 857375) % 95)::INTEGER)
+      || chr((32 + ((((ord % 2600) * 104729) % 857375) // 95) % 95)::INTEGER)
+      || chr((32 + ((((ord % 2600) * 104729) % 857375) // 9025) % 95)::INTEGER)
+      || chr((32 + ((ord % 2600) * 31) % 95)::INTEGER)
+    WHEN ord < 34000 THEN
+      chr((32 + (ord - 5200) % 95)::INTEGER)
+      || chr((32 + ((((ord - 5200) // 95) * 7919) % 857375) % 95)::INTEGER)
+      || chr((32 + (((((ord - 5200) // 95) * 7919) % 857375) // 95) % 95)::INTEGER)
+      || chr((32 + (((((ord - 5200) // 95) * 7919) % 857375) // 9025) % 95)::INTEGER)
+    ELSE
+      chr((97 + ((ord - 34000) // 2) % 26)::INTEGER)
+      || chr((97 + (((ord - 34000) // 2) // 26) % 26)::INTEGER)
+      || substr('abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ',
+                (2 * (((ord - 34000) // 2) // 676) + ((ord - 34000) % 2) + 1)::INTEGER, 1)
+    END AS s
+  FROM range(43750) t(ord) ORDER BY ord;
+
+
+statement ok
+CHECKPOINT dfpw;
+
+
+# every row survived with its exact value
+query
+SELECT count(*) AS n, count(DISTINCT s) AS dn,
+       bool_and(s = CASE WHEN ord < 5200 THEN
+         chr((65 + ord // 2600)::INTEGER) || 'QWERTYUIOPASDFGHJKLZXCVBNM0123456789QWERTYUIOPA'
+         || chr((48 + (ord % 2600) % 3)::INTEGER)
+         || chr((32 + (((ord % 2600) * 7919) % 857375) % 95)::INTEGER)
+         || chr((32 + ((((ord % 2600) * 7919) % 857375) // 95) % 95)::INTEGER)
+         || chr((32 + ((((ord % 2600) * 7919) % 857375) // 9025) % 95)::INTEGER)
+         || chr((32 + (((ord % 2600) * 104729) % 857375) % 95)::INTEGER)
+         || chr((32 + ((((ord % 2600) * 104729) % 857375) // 95) % 95)::INTEGER)
+         || chr((32 + ((((ord % 2600) * 104729) % 857375) // 9025) % 95)::INTEGER)
+         || chr((32 + ((ord % 2600) * 31) % 95)::INTEGER)
+       WHEN ord < 34000 THEN
+         chr((32 + (ord - 5200) % 95)::INTEGER)
+         || chr((32 + ((((ord - 5200) // 95) * 7919) % 857375) % 95)::INTEGER)
+         || chr((32 + (((((ord - 5200) // 95) * 7919) % 857375) // 95) % 95)::INTEGER)
+         || chr((32 + (((((ord - 5200) // 95) * 7919) % 857375) // 9025) % 95)::INTEGER)
+       ELSE
+         chr((97 + ((ord - 34000) // 2) % 26)::INTEGER)
+         || chr((97 + (((ord - 34000) // 2) // 26) % 26)::INTEGER)
+         || substr('abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ',
+                   (2 * (((ord - 34000) // 2) // 676) + ((ord - 34000) % 2) + 1)::INTEGER, 1)
+       END) AS rows_match
+  FROM dfpw.t;
+----
+n	dn	rows_match
+43750	43750	t
+
+
+# the column landed in dict_fsst
+query
+SELECT count(*) > 0 AS has_dict_fsst
+  FROM pragma_storage_info('dfpw.t', include_segment_info=true)
+  WHERE column_name='s' AND compression='DICT_FSST';
+----
+has_dict_fsst
+t
+
+
+statement ok
+DROP TABLE dfpw.t;
+
+
+statement ok
+DETACH dfpw;

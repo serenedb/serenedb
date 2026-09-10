@@ -23,163 +23,506 @@
 
 #include "pipeline_tokenizer.hpp"
 
-#include <string_view>
+#include <cstring>
 
+#include "basics/misc.hpp"
+#include "iresearch/analysis/process_tokens.hpp"
+#include "iresearch/analysis/token_batch.hpp"
 #include "iresearch/analysis/tokenizer_config.hpp"
 #include "pg/sql_exception_macro.h"
 
 namespace irs::analysis {
 namespace {
 
-constexpr OffsAttr kNoOffset;
+class EmptyTokenizer final : public TypedTokenizer<EmptyTokenizer> {
+ public:
+  static constexpr std::string_view type_name() noexcept { return "empty"; }
 
-PayAttr* FindPayload(std::span<const Analyzer::ptr> pipeline) {
-  for (auto it = pipeline.rbegin(); it != pipeline.rend(); ++it) {
-    auto* payload = irs::GetMutable<PayAttr>(it->get());
-    if (payload) {
-      return payload;
-    }
+  TokenTraits Traits() const noexcept final { return {}; }
+
+  template<TokenLayout Layout>
+  bool DoFill(duckdb::string_t, TokenSink&) const noexcept {
+    return true;
   }
-  return nullptr;
-}
-
-bool AllHaveOffset(std::span<const Analyzer::ptr> pipeline) {
-  return absl::c_all_of(pipeline, [](const Analyzer::ptr& v) {
-    return nullptr != irs::get<OffsAttr>(*v);
-  });
-}
+};
 
 }  // namespace
 
-PipelineTokenizer::PipelineTokenizer(std::vector<Analyzer::ptr> options)
-  : _attrs{{},
-           options.empty() ? nullptr
-                           : irs::GetMutable<TermAttr>(options.back().get()),
-           AllHaveOffset(options) ? &_offs : AttributePtr<OffsAttr>{},
-           FindPayload(options)} {
-  const auto track_offset = irs::get<OffsAttr>(*this) != nullptr;
-  _pipeline.reserve(options.size());
-  for (auto& p : options) {
-    SDB_ASSERT(p);
-    _pipeline.emplace_back(std::move(p), track_offset);
-  }
-  options.clear();  // mimic move semantic
-  if (_pipeline.empty()) {
-    _pipeline.emplace_back();
-  }
-  _top = _pipeline.begin();
-  _bottom = --_pipeline.end();
-}
-
-/// Moves pipeline to next token.
-/// Term is taken from last analyzer in pipeline
-/// Offset is recalculated accordingly (only if ALL analyzers in pipeline )
-/// Payload is taken from lowest analyzer having this attribute
-/// Increment is calculated according to following position change rules
-///  - If none of pipeline members changes position - whole pipeline holds
-///  position
-///  - If one or more pipeline member moves - pipeline moves( change from max->0
-///  is not move, see rules below!).
-///    All position gaps are accumulated (e.g. if one member has inc 2(1 pos
-///    gap) and other has inc 3(2 pos gap)  - pipeline has inc 4 (1+2 pos gap))
-///  - All position changes caused by parent analyzer move next (e.g. transfer
-///  from max->0 by first next after reset) are collapsed.
-///    e.g if parent moves after next, all its children are resetted to new
-///    token and also moves step froward - this whole operation is just one step
-///    for pipeline (if any of children has moved more than 1 step - gaps are
-///    preserved!)
-///  - If parent after next is NOT moved (inc == 0) than pipeline makes one step
-///  forward if at least one child changes
-///    position from any positive value back to 0 due to reset (additional gaps
-///    also preserved!) as this is not change max->0 and position is indeed
-///    changed.
-bool PipelineTokenizer::next() {
-  uint32_t pipeline_inc = 0;
-  bool step_for_rollback = false;
-  do {
-    while (!_current->next()) {
-      if (_current == _top) {
-        // reached pipeline top and next has failed - we are done
-        return false;
-      }
-      --_current;
+PipelineTokenizer::PipelineTokenizer(std::vector<Tokenizer::ptr> options) {
+  // One visit per stage: validate it against what the stage before it
+  // produces, fold the chain traits and classify it into the segment being
+  // built.
+  SDB_ASSERT(options.size() > 1);
+  std::vector<uint32_t> offsets;
+  uint32_t segment_first = 0;
+  bool segment_stable = true;
+  bool producer_dense = true;
+  bool producer_stable = false;
+  for (size_t i = 0; i < options.size(); ++i) {
+    SDB_ASSERT(options[i]);
+    auto& child = *options[i];
+    const auto traits = child.Traits();
+    if (i != 0 && _traits.output != traits.input) {
+      THROW_SQL_ERROR(ERR_MSG("pipeline: stage ", i, " expects ",
+                              duckdb::LogicalTypeIdToString(traits.input),
+                              " input, but the preceding stage produces ",
+                              duckdb::LogicalTypeIdToString(_traits.output)));
     }
-    pipeline_inc = _current->inc->value;
-    const auto top_holds_position = _current->inc->value == 0;
-    // go down to lowest pipe to get actual tokens
-    while (_current != _bottom) {
-      const auto prev_term = _current->term->value;
-      const auto prev_start = _current->start();
-      const auto prev_end = _current->end();
-      ++_current;
-      // check do we need to do step forward due to rollback to 0.
-      step_for_rollback |=
-        top_holds_position && _current->pos != 0 &&
-        _current->pos != std::numeric_limits<uint32_t>::max();
-      if (!_current->reset(prev_start, prev_end, ViewCast<char>(prev_term))) {
-        return false;
-      }
-      if (!_current->next()) {  // empty one found. Another round from the very
-                                // beginning.
-        SDB_ASSERT(_current != _top);
-        --_current;
-        break;
-      }
-      pipeline_inc += _current->inc->value;
-      SDB_ASSERT(_current->inc->value >
-                 0);  // first increment after reset should
-                      // be positive to give 0 or next pos!
-      SDB_ASSERT(pipeline_inc > 0);
-      pipeline_inc--;  // compensate placing sub_analyzer from max to 0 due to
-                       // reset as this step actually does not move whole
-                       // pipeline sub analyzer just stays same pos as it`s
-                       // parent (step for rollback to 0 will be done below if
-                       // necessary!)
+    if (traits.store) {
+      THROW_SQL_ERROR(
+        ERR_MSG("pipeline: stage ", i,
+                " produces a per-document store blob, which a pipeline "
+                "cannot deliver"));
     }
-  } while (_current != _bottom);
-  if (step_for_rollback) {
-    pipeline_inc++;
+    _wanted_traits.ascii |= child.WantedBlockTraits().ascii;
+    if (i == 0) {
+      producer_dense = !traits.explicit_pos;
+      producer_stable = traits.stable;
+      _traits = traits;
+    } else {
+      _split_mixed_blocks |= child.WantedBlockTraits().ascii;
+      _traits.output = traits.output;
+      _traits.unique &= traits.unique;
+      _traits.offsets &= traits.offsets;
+      _traits.stable &= traits.stable;
+      // Fan-out alone keeps the ramp: a child emitting dense positions has its
+      // increments rebased onto the parent stream, and a parent that emits
+      // nothing simply never commits. Only explicit child positions (stacked
+      // synonyms, ngrams) break it.
+      _traits.explicit_pos |= traits.explicit_pos;
+      if (auto* stage = dynamic_cast<TokenStage*>(&child)) {
+        SDB_ASSERT(!traits.explicit_pos);
+        _filters.push_back(stage);
+        segment_stable &= traits.stable;
+      } else {
+        auto* expander = dynamic_cast<TokenExpander*>(&child);
+        const bool first = _links.empty();
+        offsets.push_back(segment_first);
+        _links.push_back(std::make_unique<ChainSink>(
+          expander, expander ? nullptr : &child, first && producer_dense,
+          first && producer_stable && segment_stable));
+        segment_first = static_cast<uint32_t>(_filters.size());
+        segment_stable = true;
+      }
+    }
   }
-  std::get<IncAttr>(_attrs).value = pipeline_inc;
-  _offs.start = _current->start();
-  _offs.end = _current->end();
-  return true;
+  _pipeline = std::move(options);
+  _front = _pipeline.front().get();
+  _interpose = segment_first != _filters.size();
+  if (_interpose) {
+    const bool first = _links.empty();
+    offsets.push_back(segment_first);
+    _links.push_back(
+      std::make_unique<ChainSink>(nullptr, nullptr, first && producer_dense,
+                                  first && producer_stable && segment_stable));
+  }
+  SDB_ASSERT(!_links.empty());
+  for (size_t i = 0, n = _links.size(); i < n; ++i) {
+    const uint32_t end =
+      i + 1 == n ? static_cast<uint32_t>(_filters.size()) : offsets[i + 1];
+    _links[i]->SetFilters({_filters.data() + offsets[i], end - offsets[i]});
+  }
+  _chain = _interpose ? _links.size() - 1 : _links.size();
+  _head = _links.front().get();
 }
 
-bool PipelineTokenizer::reset(std::string_view data) {
-  _current = _top;
-  return _pipeline.front().reset(0, static_cast<uint32_t>(data.size()), data);
+void PipelineTokenizer::BindLinks(TokenSink& sink, TokenLayout layout,
+                                  bool column) {
+  _bound_sink = &sink;
+  _bound_layout = layout;
+  _bound_column = column;
+  const size_t chain = column ? _chain : _links.size();
+  for (size_t i = 0; i < chain; ++i) {
+    auto& out = i + 1 == chain ? sink : _links[i + 1]->writer;
+    _links[i]->Bind(&out, layout, column || i + 1 != chain);
+  }
+  if (column && _interpose) {
+    _links.back()->Bind(nullptr, layout, false);
+  }
 }
 
-Analyzer::ptr PipelineTokenizer::Make(Options opts) {
-  if (opts.children.empty()) {
-    THROW_SQL_ERROR(ERR_MSG("pipeline: requires at least one child analyzer"));
+const uint64_t* PipelineTokenizer::ChainSink::RunFilters(TokenBatch& batch) {
+  if (_filters.empty()) {
+    return nullptr;
   }
-  std::vector<Analyzer::ptr> live_children;
+  std::memset(_valid, 0xFF, sizeof _valid);
+  BatchCtx ctx{{.ascii = _ascii}, _arena, _valid};
+  bool all_kept = true;
+  for (auto* stage : _filters) {
+    all_kept &= stage->ProcessTokens(batch, ctx);
+  }
+  return all_kept ? nullptr : _valid;
+}
+
+void PipelineTokenizer::ChainSink::Consume(TokenBatch& batch, DocRuns runs) {
+  SDB_ASSERT(_data || runs.size() <= 1);
+  const uint64_t* valid = RunFilters(batch);
+  if (_through) {
+    PassThrough(batch, runs, valid);
+  } else if (_expander) {
+    ExpandBatch(batch, runs, valid);
+  } else if (_terminal) {
+    DriveTerminal(batch, runs, valid);
+  } else {
+    DeliverBatch(batch, runs, valid);
+  }
+  if (!_filters.empty()) {
+    _arena.Reset();
+  }
+}
+
+void PipelineTokenizer::ChainSink::PassThrough(TokenBatch& batch, DocRuns runs,
+                                               const uint64_t* valid) {
+  if (!valid) {
+    _through->Consume(batch, runs);
+    return;
+  }
+  ResolveValues(
+    [&](auto layout_tag, auto explicit_pos) IRS_FORCE_INLINE {
+      Compact<layout_tag(), explicit_pos()>(batch, runs, valid);
+    },
+    _out_layout, !_in_dense);
+  _through->Consume(batch, {{_cruns.get(), runs.size()}, runs.tail_open});
+}
+
+template<TokenLayout L, bool Explicit>
+IRS_NO_INLINE void PipelineTokenizer::ChainSink::Compact(
+  TokenBatch& batch, DocRuns runs, const uint64_t* valid) {
+  uint32_t dst = 0;
+  uint32_t first = 0;
+  for (size_t r = 0, n = runs.size(); r < n; ++r) {
+    const auto run = runs[r];
+    const uint32_t end = first + run.ntokens;
+    const uint32_t run_dst = dst;
+    if constexpr (Explicit && L != TokenLayout::Terms) {
+      if (run.doc != _open_doc) {
+        _pos.Bind(_in_dense);
+        _open_doc = run.doc;
+      }
+    }
+    for (uint32_t i = first; i < end; ++i) {
+      [[maybe_unused]] uint32_t inc = 1;
+      if constexpr (Explicit && L != TokenLayout::Terms) {
+        inc = _pos.Observe(batch, i);
+      }
+      if (!IsValid(valid, i)) {
+        continue;
+      }
+      if (dst != i) {
+        batch.terms[dst] = batch.terms[i];
+        if constexpr (L == TokenLayout::TermsPosOffs) {
+          batch.offs_start[dst] = batch.offs_start[i];
+          batch.offs_end[dst] = batch.offs_end[i];
+        }
+      }
+      if constexpr (Explicit && L != TokenLayout::Terms) {
+        batch.pos[dst] = _pos.Commit(inc);
+      }
+      ++dst;
+    }
+    _cruns[r] = {run.doc, dst - run_dst};
+    first = end;
+  }
+  batch.count = dst;
+}
+
+void PipelineTokenizer::ChainSink::ExpandBatch(TokenBatch& batch, DocRuns runs,
+                                               const uint64_t* valid) {
+  uint32_t base = 0;
+  for (size_t r = 0, n = runs.size(); r < n; ++r) {
+    const auto run = runs[r];
+    const uint32_t first = base;
+    const uint32_t end = base + run.ntokens;
+    base = end;
+    const bool open_after = r + 1 == n && runs.tail_open;
+    OpenRun(run.doc);
+    _expander->ExpandTokens(batch, first, end, *_out,
+                            {_out_layout,
+                             {.ascii = _ascii && _filters.empty()},
+                             _value,
+                             &_pos,
+                             valid});
+    if (!open_after) {
+      CloseSource();
+    }
+  }
+}
+
+void PipelineTokenizer::ChainSink::DriveTerminal(TokenBatch& batch,
+                                                 DocRuns runs,
+                                                 const uint64_t* valid) {
+  duckdb::UnifiedVectorFormat fmt;
+  fmt.sel = duckdb::FlatVector::IncrementalSelectionVector();
+  fmt.data = reinterpret_cast<duckdb::const_data_ptr_t>(batch.terms);
+  fmt.physical_type = duckdb::PhysicalType::VARCHAR;
+  if (valid) {
+    fmt.validity = duckdb::ValidityMask{
+      const_cast<uint64_t*>(valid), static_cast<duckdb::idx_t>(batch.count)};
+  }
+  _src = &batch;
+  _src_runs = runs;
+  _src_run = 0;
+  _src_run_end = 0;
+  _scan = 0;
+  _cur_parent = kNoParent;
+  _terminal->Fill(fmt, batch.count, doc_limits::min(), *_scratch,
+                  {_out_layout, {.ascii = _ascii && _filters.empty()}});
+  _scratch->Finish();
+  FinishSourceBatch(runs.tail_open);
+  _src = nullptr;
+}
+
+void PipelineTokenizer::ChainSink::RebaseConsume(TokenBatch& batch,
+                                                 DocRuns runs) {
+  ResolveLayout(_out_layout, [&]<TokenLayout L>() {
+    uint32_t base = 0;
+    for (size_t r = 0, n = runs.size(); r < n; ++r) {
+      const auto run = runs[r];
+      const uint32_t first = base;
+      const uint32_t end = base + run.ntokens;
+      base = end;
+      const auto parent = static_cast<uint32_t>(run.doc - doc_limits::min());
+      if (parent != _cur_parent) {
+        AdvanceToParent(parent);
+      }
+      RebaseRun<L>(batch, first, end, parent);
+      _cur_parent = r + 1 == n && runs.tail_open ? parent : kNoParent;
+    }
+  });
+}
+
+template<TokenLayout L>
+void PipelineTokenizer::ChainSink::RebaseRun(const TokenBatch& batch,
+                                             uint32_t first, uint32_t end,
+                                             uint32_t parent) {
+  for (uint32_t i = first; i < end; ++i) {
+    const auto term = batch.terms[i];
+    const auto size = static_cast<uint32_t>(term.GetSize());
+    if constexpr (L == TokenLayout::Terms) {
+      _out->Emit<L>(_value, term.GetData(), size);
+    } else {
+      const uint32_t child_pos = _child_dense ? _cp.Last() + 1 : batch.pos[i];
+      const uint32_t pos = _pos.Commit(_cp.Next(child_pos));
+      if constexpr (L == TokenLayout::TermsPosOffs) {
+        const Offs offs =
+          RebaseOffs(_src->offs_start[parent], _src->offs_end[parent],
+                     static_cast<uint32_t>(_src->terms[parent].GetSize()),
+                     {batch.offs_start[i], batch.offs_end[i]});
+        _out->Emit<L>(_value, term.GetData(), size, pos, offs);
+      } else {
+        _out->Emit<L>(_value, term.GetData(), size, pos);
+      }
+    }
+  }
+}
+
+void PipelineTokenizer::ChainSink::AdvanceToParent(uint32_t parent) {
+  while (true) {
+    while (_scan >= _src_run_end) {
+      NextSourceRun();
+    }
+    uint32_t inc = 1;
+    if (_out_layout != TokenLayout::Terms) {
+      inc = _pos.Observe(*_src, _scan);
+    }
+    if (_scan++ == parent) {
+      _cp = ChildPos{inc};
+      return;
+    }
+  }
+}
+
+void PipelineTokenizer::ChainSink::NextSourceRun() {
+  SDB_ASSERT(_src_run < _src_runs.size());
+  const auto run = _src_runs[_src_run++];
+  _src_run_end += run.ntokens;
+  OpenRun(run.doc);
+}
+
+void PipelineTokenizer::ChainSink::FinishSourceBatch(bool tail_open) {
+  const uint32_t count = _src->count;
+  while (_scan < count) {
+    while (_scan >= _src_run_end) {
+      NextSourceRun();
+    }
+    if (_out_layout != TokenLayout::Terms) {
+      _pos.Observe(*_src, _scan);
+    }
+    ++_scan;
+  }
+  while (_src_run < _src_runs.size()) {
+    NextSourceRun();
+  }
+  if (!tail_open && doc_limits::valid(_open_doc)) {
+    CloseSource();
+  }
+}
+
+void PipelineTokenizer::ChainSink::DeliverBatch(TokenBatch& batch, DocRuns runs,
+                                                const uint64_t* valid) {
+  ResolveValues(
+    [&](auto layout_tag, auto has_drop, auto stable,
+        auto dense) IRS_FORCE_INLINE {
+      Deliver<layout_tag(), has_drop(), stable(), dense()>(batch, runs, valid);
+    },
+    _out_layout, static_cast<bool>(valid), _stable, _in_dense);
+}
+
+template<TokenLayout L, bool HasDrop, bool Stable, bool Dense>
+IRS_NO_INLINE void PipelineTokenizer::ChainSink::Deliver(
+  const TokenBatch& batch, DocRuns runs, const uint64_t* valid) {
+  uint32_t base = 0;
+  for (size_t r = 0, n = runs.size(); r < n; ++r) {
+    const auto run = runs[r];
+    const uint32_t first = base;
+    const uint32_t end = base + run.ntokens;
+    base = end;
+    const bool open_after = r + 1 == n && runs.tail_open;
+    OpenRun(run.doc);
+    if constexpr (L == TokenLayout::Terms ||
+                  (Dense && L == TokenLayout::TermsPos)) {
+      _out->EmitTerms<L, Stable>(_value, batch, first, run.ntokens,
+                                 HasDrop ? valid : nullptr);
+    } else {
+      for (uint32_t i = first; i < end; ++i) {
+        const uint32_t inc = _pos.Observe(batch, i);
+        if constexpr (HasDrop) {
+          if (!IsValid(valid, i)) {
+            continue;
+          }
+        }
+        const auto term = batch.terms[i];
+        const uint32_t pos = _pos.Commit(inc);
+        if constexpr (Stable) {
+          if constexpr (L == TokenLayout::TermsPos) {
+            _out->Emit<L>(term, pos);
+          } else {
+            _out->Emit<L>(term, pos,
+                          Offs{batch.offs_start[i], batch.offs_end[i]});
+          }
+        } else {
+          const auto size = static_cast<uint32_t>(term.GetSize());
+          if constexpr (L == TokenLayout::TermsPos) {
+            _out->Emit<L>(_value, term.GetData(), size, pos);
+          } else {
+            _out->Emit<L>(_value, term.GetData(), size, pos,
+                          Offs{batch.offs_start[i], batch.offs_end[i]});
+          }
+        }
+      }
+    }
+    if (!open_after) {
+      CloseSource();
+    }
+  }
+}
+
+Tokenizer::ptr PipelineTokenizer::Make(Options opts,
+                                       duckdb::SharedObjectCache& cache) {
+  std::vector<Tokenizer::ptr> live_children;
   live_children.reserve(opts.children.size());
   for (auto& child : opts.children) {
     if (!child) {
       THROW_SQL_ERROR(ERR_MSG("pipeline: null child analyzer config"));
     }
-    live_children.emplace_back(CreateAnalyzer(std::move(*child)));
+    auto tokenizer = CreateTokenizer(std::move(*child), cache);
+    SDB_ENSURE(tokenizer);
+    const auto traits = tokenizer->Traits();
+    if (!live_children.empty() && traits.keyword) {
+      SDB_ASSERT(traits.input == traits.output);
+      continue;
+    }
+    live_children.emplace_back(std::move(tokenizer));
+  }
+  if (live_children.empty()) {
+    return std::make_unique<EmptyTokenizer>();
+  }
+  if (live_children.size() == 1) {
+    return std::move(live_children.front());
   }
   return std::make_unique<PipelineTokenizer>(std::move(live_children));
 }
 
-PipelineTokenizer::SubAnalyzerT::SubAnalyzerT(Analyzer::ptr a,
-                                              bool track_offset)
-  : term(irs::get<TermAttr>(*a)),
-    inc(irs::get<IncAttr>(*a)),
-    offs(track_offset ? irs::get<OffsAttr>(*a) : &kNoOffset),
-    _analyzer(std::move(a)) {
-  SDB_ASSERT(inc);
-  SDB_ASSERT(term);
+void PipelineTokenizer::Fill(const duckdb::UnifiedVectorFormat& fmt,
+                             uint32_t count, doc_id_t first_doc,
+                             TokenSink& sink, FillCtx ctx) {
+  if (&sink != _bound_sink || ctx.layout != _bound_layout || !_bound_column)
+    [[unlikely]] {
+    BindLinks(sink, ctx.layout, true);
+  }
+  auto& input = _chain == 0 ? sink : _head->writer;
+  const auto* data =
+    duckdb::UnifiedVectorFormat::GetData<duckdb::string_t>(fmt);
+  ctx.traits = ComputeBlockTraits(fmt, count, data, _wanted_traits, ctx.traits);
+  for (auto& link : _links) {
+    link->BindColumn(fmt, data, first_doc);
+  }
+  _head->SetAscii(ctx.traits.ascii || _split_mixed_blocks);
+  TokenConsumer* prev = nullptr;
+  Finally restore = [&]() noexcept {
+    if (!prev) {
+      return;
+    }
+    sink.Discard();
+    sink.Rebind(*prev);
+    _links.back()->SetThrough(nullptr);
+  };
+  if (_interpose) {
+    sink.Finish();
+    prev = sink.Rebind(*_links.back());
+    _links.back()->SetThrough(prev);
+  }
+  const auto drain = [&] {
+    for (size_t i = 0; i < _chain; ++i) {
+      _links[i]->writer.Finish();
+    }
+    if (_interpose) {
+      sink.Finish();
+    }
+  };
+  if (ctx.traits.ascii || !_split_mixed_blocks) [[likely]] {
+    _front->Fill(fmt, count, first_doc, input, ctx);
+  } else {
+    // Mixed block: a single non-ascii value would otherwise force every
+    // value in it down the unicode path, so refine per value and drain the
+    // chain whenever the fact flips.
+    bool ascii = true;
+    ForEachValidRow(fmt, count, [&](uint32_t i, uint32_t idx) {
+      const auto value = data[idx];
+      const auto traits = ComputeValueTraits(value, _wanted_traits, {});
+      if (traits.ascii != ascii) {
+        drain();
+        ascii = traits.ascii;
+        _head->SetAscii(ascii);
+      }
+      _front->Fill(value, first_doc + i, input, {ctx.layout, traits});
+      return true;
+    });
+  }
+  drain();
 }
 
-PipelineTokenizer::SubAnalyzerT::SubAnalyzerT()
-  : term(nullptr),
-    inc(nullptr),
-    offs(nullptr),
-    _analyzer(std::make_unique<EmptyAnalyzer>()) {}
+bool PipelineTokenizer::Fill(const duckdb::string_t& value, TokenSink& sink,
+                             FillCtx ctx) {
+  if (&sink != _bound_sink || ctx.layout != _bound_layout || _bound_column)
+    [[unlikely]] {
+    BindLinks(sink, ctx.layout, false);
+  }
+  ctx.traits = ComputeValueTraits(value, _wanted_traits, ctx.traits);
+  for (auto& link : _links) {
+    link->BindValue(value);
+  }
+  _head->SetAscii(ctx.traits.ascii);
+  if (!_front->Fill(value, doc_limits::min(), _head->writer, ctx)) {
+    for (auto& link : _links) {
+      link->writer.Discard();
+    }
+    return false;
+  }
+  for (auto& link : _links) {
+    link->writer.Finish();
+  }
+  return true;
+}
 
 }  // namespace irs::analysis

@@ -29,6 +29,7 @@
 #include <random>
 #include <span>
 #include <utility>
+#include <yaclib/async/make.hpp>
 
 #include "basics/assert.h"
 #include "basics/memory.hpp"
@@ -241,6 +242,30 @@ class IvfTermIterator final : public TermOnlyIterator {
 
   Attribute* GetMutable(TypeInfo::type_id) noexcept final { return nullptr; }
 
+  size_t NextTermsWithPostings(std::span<bytes_view> terms,
+                               std::span<PostingRows> postings,
+                               IndexFeatures /*features*/) final {
+    const auto n = std::min({terms.size(), postings.size(), _count - _next});
+    if (n == 0) {
+      return 0;
+    }
+    const auto first = _next;
+    for (size_t i = 0; i < n; ++i) {
+      // a cluster's docs are one contiguous slice: always a single span
+      const auto b = _cluster_offsets[first + i];
+      const auto e = _cluster_offsets[first + i + 1];
+      postings[i] = {.span = {.docs = _cluster_docs.data() + b,
+                              .pos = nullptr,
+                              .offs_start = nullptr,
+                              .offs_end = nullptr,
+                              .count = static_cast<size_t>(e - b)}};
+      terms[i] = bytes_view{_terms.data() + (first + i) * kWidth, kWidth};
+    }
+    _next += n;
+    _cur = _next == 0 ? 0 : _next - 1;
+    return n;
+  }
+
  private:
   class DocIter final : public TermPostings {
    public:
@@ -357,7 +382,8 @@ void IvfTermReader::Finish(IndexOutput& out) {
   _qw->Finish(out);
 }
 
-void IvfWriter::Compute(const ColumnReader& col, ReadContext& ctx) {
+yaclib::Task<> IvfWriter::Compute(const ColumnReader& col, ReadContext& ctx,
+                                  const AnnBuildEnv* /*env*/) {
   SDB_ASSERT(_idx != nullptr,
              "IvfWriter::Compute: SetIdxWriter must be called first");
   const auto d = static_cast<uint32_t>(col.ArraySize());
@@ -368,15 +394,16 @@ void IvfWriter::Compute(const ColumnReader& col, ReadContext& ctx) {
   IvfBuilder builder{_info};
   auto built = builder.Compute(col, ctx, qw.get());
   if (built.empty) {
-    return;
+    co_return {};
   }
   _result = Result{.postings_id = _info.postings_id,
                    .qw = std::move(qw),
                    .data = std::move(built)};
   _built = true;
+  co_return {};
 }
 
-void IvfWriter::FlushTree() {
+void IvfWriter::Flush() {
   if (!_built) {
     return;
   }
@@ -407,7 +434,7 @@ const BasicTermReader* IvfWriter::ClusterReader(ReadContext& ctx,
   return _reader.get();
 }
 
-IvfWriter::IvfWriter(IvfInfo info) : _info{std::move(info)} {}
+IvfWriter::IvfWriter(AnnInfo info) : _info{std::move(info)} {}
 
 IvfWriter::~IvfWriter() = default;
 

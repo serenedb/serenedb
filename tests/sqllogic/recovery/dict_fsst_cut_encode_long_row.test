@@ -1,0 +1,85 @@
+# dict_fsst cut sizing: one long row lands a raw segment far past the block, at default settings.
+#
+# Before a segment is FSST-encoded only its raw DICTIONARY layout is watched, with ENCODE_HEADROOM
+# (16KB) of slack. A single long row can move that layout by much more than 16KB in one step: it adds
+# its own bytes AND re-prices the string-lengths field of every entry, whose bitpacked width jumps from
+# bits(short) to bits(long) -- here 3 -> 14 bits over ~24k entries, 33KB on its own. The encode trigger
+# then fires on a layout already past the block, and the freshly encoded segment is past it too: the
+# rows are half duplicates, so the selection buffer survives encoding, and 6-char pseudo-random tokens
+# give FSST almost nothing to shrink. The encode-time cleave must resolve that on the spot: flush the
+# segment without the long row and start the next one with it. Before the fix this segment was left
+# uncertified, FlushRewind on it was a silent no-op, and the row-group end threw
+# "dict_fsst: refusing to write a ... segment layout ... past the 262136-byte block" out of the commit.
+#
+# Shape: 48,000 rows over 24,000 pseudo-random 6-char values (each twice, consecutively), then one
+# 16,000-char pseudo-random printable row, then 2,000 more short rows. Default row groups (one row
+# group), default block size. Deterministic: single source, ORDER BY. The first segment must end exactly
+# before the long row.
+
+control substitution on
+
+
+statement ok
+ATTACH '${__TEST_DIR__}/dfel.db' AS dfel (TYPE duckdb, STORAGE_VERSION 'serenedb_v1');
+
+
+statement ok
+SET force_compression='dict_fsst';
+
+
+statement ok
+CREATE TABLE dfel.t AS
+  SELECT ord,
+    CASE WHEN ord = 48000 THEN
+      (SELECT string_agg(chr((32 + (hash(ord * 16384 + i) % 95))::INTEGER), '' ORDER BY i) FROM range(16000) r(i))
+    ELSE
+      substr('abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789', (1 + hash((ord // 2) * 6 + 0) % 62)::INTEGER, 1)
+      || substr('abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789', (1 + hash((ord // 2) * 6 + 1) % 62)::INTEGER, 1)
+      || substr('abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789', (1 + hash((ord // 2) * 6 + 2) % 62)::INTEGER, 1)
+      || substr('abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789', (1 + hash((ord // 2) * 6 + 3) % 62)::INTEGER, 1)
+      || substr('abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789', (1 + hash((ord // 2) * 6 + 4) % 62)::INTEGER, 1)
+      || substr('abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789', (1 + hash((ord // 2) * 6 + 5) % 62)::INTEGER, 1)
+    END AS s
+  FROM range(50001) t(ord) ORDER BY ord;
+
+
+statement ok
+CHECKPOINT dfel;
+
+
+# every row survived with its exact value
+query
+SELECT count(*) AS n, max(length(s)) AS max_len,
+       bool_and(s = CASE WHEN ord = 48000 THEN
+         (SELECT string_agg(chr((32 + (hash(ord * 16384 + i) % 95))::INTEGER), '' ORDER BY i) FROM range(16000) r(i))
+       ELSE
+         substr('abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789', (1 + hash((ord // 2) * 6 + 0) % 62)::INTEGER, 1)
+         || substr('abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789', (1 + hash((ord // 2) * 6 + 1) % 62)::INTEGER, 1)
+         || substr('abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789', (1 + hash((ord // 2) * 6 + 2) % 62)::INTEGER, 1)
+         || substr('abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789', (1 + hash((ord // 2) * 6 + 3) % 62)::INTEGER, 1)
+         || substr('abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789', (1 + hash((ord // 2) * 6 + 4) % 62)::INTEGER, 1)
+         || substr('abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789', (1 + hash((ord // 2) * 6 + 5) % 62)::INTEGER, 1)
+       END) AS rows_match
+  FROM dfel.t;
+----
+n	max_len	rows_match
+50001	16000	t
+
+
+# dict_fsst took the column, and the first segment ends right before the long row
+query
+SELECT (SELECT count(*) > 0 FROM pragma_storage_info('dfel.t', include_segment_info=true)
+         WHERE column_name='s' AND compression='DICT_FSST') AS has_dict_fsst,
+       (SELECT count FROM pragma_storage_info('dfel.t', include_segment_info=true)
+         WHERE column_name='s' AND segment_type='VARCHAR' ORDER BY row_group_id, segment_id LIMIT 1) AS first_segment_rows;
+----
+has_dict_fsst	first_segment_rows
+t	48000
+
+
+statement ok
+DROP TABLE dfel.t;
+
+
+statement ok
+DETACH dfel;

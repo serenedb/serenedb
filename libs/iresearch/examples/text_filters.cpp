@@ -21,8 +21,9 @@
 #include <array>
 #include <duckdb/main/database.hpp>
 #include <iostream>
-#include <iresearch/analysis/analyzer.hpp>
 #include <iresearch/analysis/segmentation_tokenizer.hpp>
+#include <iresearch/analysis/token_batch.hpp>
+#include <iresearch/analysis/tokenizer.hpp>
 #include <iresearch/formats/column/col_reader.hpp>
 #include <iresearch/formats/formats.hpp>
 #include <iresearch/index/directory_reader.hpp>
@@ -69,7 +70,7 @@ inline constexpr irs::field_id kBodyFieldId = 1;
 struct TextField {
   irs::field_id id{kBodyFieldId};
   std::string_view text;
-  irs::analysis::Analyzer::ptr tokenizer{
+  irs::analysis::Tokenizer::ptr tokenizer{
     irs::analysis::SegmentationTokenizer::Make(
       irs::analysis::SegmentationTokenizer::Options{})};
 
@@ -80,11 +81,22 @@ struct TextField {
            irs::IndexFeatures::Norm;
   }
 
-  irs::Tokenizer& GetTokens() const {
-    tokenizer->reset(text);
-    return *tokenizer;
-  }
+  irs::analysis::Tokenizer& GetTokens() const { return *tokenizer; }
+
+  std::string_view Value() const noexcept { return text; }
 };
+
+bool InsertTokens(const irs::IndexWriter::Document& doc, const auto& field) {
+  const duckdb::string_t value{field.Value().data(),
+                               static_cast<uint32_t>(field.Value().size())};
+  const irs::doc_id_t doc_id = doc.DocId();
+  return doc.WithTokens(field.Id(), field.GetIndexFeatures(), nullptr,
+                        [&](irs::FieldInverter& fld, irs::TokenSink& w) {
+                          fld.Configure(field.GetTokens().Traits());
+                          field.GetTokens().Fill(value, doc_id, w,
+                                                 {fld.Layout()});
+                        });
+}
 
 // Six documents chosen to make each filter's effect visible. Tokens are
 // lowercase-segmented; the indexed terms for doc 0 are
@@ -124,7 +136,7 @@ irs::DirectoryReader BuildIndex(irs::Directory& dir,
     for (auto [name, text] : kCorpus) {
       body.text = text;
       auto doc = trx.Insert();
-      doc.Insert(body);
+      InsertTokens(doc, body);
       names_out.emplace_back(name);
     }
     trx.Commit();

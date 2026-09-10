@@ -196,7 +196,7 @@ std::pair<ObjectId, Permissions> Catalog::CreateDatabase(
   SDB_IF_FAILURE("unable_to_create") {
     THROW_SQL_ERROR(ERR_MSG("internal error"));
   }
-  Permissions perm{owner};
+  Permissions perm{owner, {}, {}};
   // The public schema is made when the catalog is opened, the way duckdb makes
   // its own default schema -- so what has to be durable is its id, and the
   // database states it. That keeps CREATE DATABASE a write to one database.

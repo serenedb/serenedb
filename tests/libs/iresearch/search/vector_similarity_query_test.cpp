@@ -62,7 +62,7 @@ irs::IndexWriterOptions MakeWriterOptions(
     irs::ColumnOptions col;
     if (id == kVec) {
       col.compression = compression;
-      col.ivf_info = irs::IvfInfo{
+      col.ann_info = irs::AnnInfo{
         .centroids_id = kVec,
         .postings_id = kVec,
         .d = kDim,
@@ -108,16 +108,17 @@ irs::DirectoryReader BuildIndex(
     irs::IndexWriter::Make(dir, codec, irs::kOmCreate, std::move(opts));
   EXPECT_NE(nullptr, writer);
 
-  irs::tests::StringField name_field;
-  name_field.field_name = "name";
-  name_field.id = kName;
-  name_field.value = "doc";
   {
     auto trx = writer->GetBatch();
+    const duckdb::string_t name_value{"doc", 3};
     for (irs::doc_id_t i = 0; i < n; ++i) {
       auto doc = trx.Insert();
-      EXPECT_TRUE(doc.Insert(name_field));
-      WriteVectorAt(*doc.GetColWriter(), doc.DocId(), doc.DocId());
+      const auto d = doc.DocId();
+      EXPECT_TRUE(doc.WithField(
+        kName, irs::IndexFeatures::Freq, [&](irs::FieldInverter& fld) {
+          return fld.InvertKeywords([&](auto&& emit) { emit(name_value, d); });
+        }));
+      WriteVectorAt(*doc.GetColWriter(), d, d);
     }
     trx.Commit();
   }
@@ -142,10 +143,10 @@ irs::ByVectorSimilarity MakeKnnFilter() {
 // everything PrepareSegment needs to stay on it, so the test cannot silently
 // degrade to the raw-rerank path and pass vacuously.
 void AssertQuantizedPath(const irs::SubReader& segment) {
-  const auto* ivf = segment.Ivf(kVec);
-  ASSERT_NE(nullptr, ivf);
-  ASSERT_FALSE(ivf->Empty());
-  ASSERT_TRUE(ivf->HasQuantStats());
+  const auto* ann = segment.Ann(kVec);
+  ASSERT_NE(nullptr, ann);
+  ASSERT_FALSE(ann->Empty());
+  ASSERT_TRUE(ann->HasQuantStats());
   const auto* postings = segment.field(kVec);
   ASSERT_NE(nullptr, postings);
   ASSERT_NE(irs::IndexFeatures::None,

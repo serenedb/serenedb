@@ -20,7 +20,7 @@
 
 #include <duckdb/planner/expression/bound_cast_expression.hpp>
 #include <iresearch/analysis/token_attributes.hpp>
-#include <iresearch/analysis/wildcard_analyzer.hpp>
+#include <iresearch/analysis/wildcard_tokenizer.hpp>
 #include <iresearch/search/wildcard_filter.hpp>
 #include <iresearch/search/wildcard_ngram_filter.hpp>
 #include <iresearch/utils/string.hpp>
@@ -50,7 +50,7 @@ void FromLike(BoolTarget parent, const FilterContext& ctx,
   }
 
   if (column_info.tokenizer.analyzer->type() ==
-      irs::Type<irs::analysis::WildcardAnalyzer>::id()) {
+      irs::Type<irs::analysis::WildcardTokenizer>::id()) {
     auto& wf = AddMaybeNegated<irs::ByWildcardNGram>(parent, ctx, column_info);
     wf.SetBoost(ctx.boost);
     wf.SetScorer(&irs::ForceConstScore());
@@ -59,7 +59,7 @@ void FromLike(BoolTarget parent, const FilterContext& ctx,
     auto* opts = wf.mutable_options();
     *opts = {
       pattern,
-      basics::downCast<irs::analysis::WildcardAnalyzer>(
+      basics::downCast<irs::analysis::WildcardTokenizer>(
         *column_info.tokenizer.analyzer.get()),
       (column_info.tokenizer.features & irs::IndexFeatures::Pos) ==
         irs::IndexFeatures::Pos,

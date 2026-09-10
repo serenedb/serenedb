@@ -67,8 +67,9 @@ struct ScoreBoundWriter;
 using DocMap = ManagedVector<doc_id_t>;
 using DocMapView = std::span<const doc_id_t>;
 
+struct AnnBuildEnv;
+
 struct SegmentWriterOptions {
-  const IndexFeatures scorers_features;
   ScorerPtr scorer = nullptr;
   const Comparer* const comparator{};
   // TODO(mbkkt) Remove it from here? We could use directory
@@ -79,6 +80,8 @@ struct SegmentWriterOptions {
   // Non-owning. For a segment writer just the fallback (the owning override
   // comes via SetFieldOptions); for a merge writer the whole config.
   const IndexFieldOptions* field_options = nullptr;
+  // Non-owning. Null builds the segment's ANN graph on the flushing thread.
+  const AnnBuildEnv* ann_env = nullptr;
 };
 
 struct TermPayloadWriter {
@@ -106,13 +109,21 @@ struct PostingsWriter {
   virtual void BeginField(const FieldProperties& meta) = 0;
   virtual void SetTermPayloadWriter(TermPayloadWriter*) {}
   virtual void Write(TermPostings& docs, PostingMeta& meta) = 0;
+  // Span fast path: consume one term's postings, handed over as an
+  // in-place row view. Returns false (consuming nothing) when the writer
+  // has no span path; batching readers require a span-capable writer, so
+  // the field writer treats false as a contract violation.
+  virtual bool WritePostings(const PostingRows& /*postings*/,
+                             PostingMeta& /*meta*/) {
+    return false;
+  }
   virtual void BeginBlock() = 0;
   virtual void Encode(BufferedOutput& out, const PostingMeta& state) = 0;
   virtual FieldStats EndField() = 0;
   virtual void End() = 0;
 };
 
-struct BasicTermReader : public AttributeProvider {
+struct BasicTermReader : public memory::Managed {
   virtual TermOnlyIterator::ptr iterator() const = 0;
 
   virtual field_id id() const = 0;

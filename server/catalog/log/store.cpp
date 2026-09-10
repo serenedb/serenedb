@@ -214,8 +214,8 @@ void CatalogStore::ApplyStoreOp(duckdb::ClientContext* context,
 void StoreAlter(duckdb::ClientContext* context, ObjectId database_id,
                 ObjectId relation, duckdb::unique_ptr<duckdb::AlterInfo> info) {
   info->oid = relation.id();
-  GetCatalogStore().ApplyStoreOp(context,
-                                 {database_id, relation, std::move(info)});
+  GetCatalogStore().ApplyStoreOp(
+    context, {database_id, relation, std::move(info), {}, {}, {}});
 }
 
 void StoreCreateIndex(duckdb::ClientContext* context, ObjectId database_id,
@@ -233,8 +233,8 @@ void StoreDropIndex(duckdb::ClientContext* context, ObjectId database_id,
   auto info = duckdb::make_uniq<duckdb::DropInfo>();
   info->type = duckdb::CatalogType::INDEX_ENTRY;
   info->SetName(duckdb::Identifier{name});
-  GetCatalogStore().ApplyStoreOp(context,
-                                 {database_id, relation_id, std::move(info)});
+  GetCatalogStore().ApplyStoreOp(
+    context, {database_id, relation_id, std::move(info), {}, {}, {}});
 }
 
 void StoreRenameIndex(duckdb::ClientContext* context, ObjectId database_id,
@@ -244,10 +244,14 @@ void StoreRenameIndex(duckdb::ClientContext* context, ObjectId database_id,
     duckdb::QualifiedName{duckdb::Identifier{}, duckdb::Identifier{},
                           duckdb::Identifier{from}},
     duckdb::OnEntryNotFound::RETURN_NULL};
-  GetCatalogStore().ApplyStoreOp(context,
-                                 {database_id, relation_id,
-                                  duckdb::make_uniq<duckdb::RenameTableInfo>(
-                                    target, duckdb::Identifier{to})});
+  GetCatalogStore().ApplyStoreOp(
+    context,
+    {database_id,
+     relation_id,
+     duckdb::make_uniq<duckdb::RenameTableInfo>(target, duckdb::Identifier{to}),
+     {},
+     {},
+     {}});
 }
 
 CatalogStore::CatalogStore() {

@@ -24,6 +24,7 @@
 #include <limits>
 #include <memory>
 #include <span>
+#include <vector>
 
 #include "iresearch/index/column_info.hpp"
 #include "iresearch/types.hpp"
@@ -56,9 +57,22 @@ class QuantizerWriter {
 
   virtual void SetClusterCentroid(const float* /*centroid*/) {}
 
+  virtual size_t RefineSamples(size_t /*rows*/) const noexcept { return 0; }
+  virtual void Refine(const float* /*vecs*/, size_t /*n*/) {}
+  virtual void RefineDone() {}
+
   virtual PayloadBlockSetting BlockSetting() const noexcept = 0;
 
   virtual void Encode(IndexOutput& out, const float* vecs, size_t n) = 0;
+
+  virtual bool EncodeInto(byte_type* /*dst*/, const float* /*vecs*/,
+                          size_t /*n*/) {
+    return false;
+  }
+
+  virtual std::unique_ptr<QuantizerWriter> CloneForEncode() const {
+    return nullptr;
+  }
 
   virtual void Finish(IndexOutput& out) = 0;
 
@@ -76,6 +90,34 @@ class QuantizerReader {
   virtual void StartCluster(const float* centroid) = 0;
   virtual void ComputeBlock(std::span<const byte_type> block, score_t threshold,
                             score_t* out) = 0;
+
+  virtual void ComputeGathered(const byte_type* base, uint32_t record_size,
+                               std::span<const uint32_t> ids, score_t threshold,
+                               score_t* out);
+
+  virtual bool Decode(const byte_type* /*code*/, float* /*out*/) const {
+    return false;
+  }
+
+  virtual bool SetQuery(std::span<const float> /*query*/) { return false; }
+
+  virtual bool SupportsPairScores() const noexcept { return false; }
+
+  virtual bool PreparePairTerms(const byte_type* /*base*/,
+                                uint32_t /*record_size*/, uint64_t /*rows*/,
+                                std::vector<float>& /*terms*/) {
+    return false;
+  }
+
+  virtual void ScorePairBatch(const byte_type* /*base*/,
+                              uint32_t /*record_size*/,
+                              std::span<const float> /*terms*/,
+                              uint32_t /*from*/,
+                              std::span<const uint32_t> /*ids*/,
+                              score_t* /*out*/) {}
+
+ private:
+  std::vector<byte_type> _gather;
 };
 
 class QuantizerCodebook
@@ -97,20 +139,23 @@ class QuantizerStats : public std::enable_shared_from_this<QuantizerStats> {
 };
 
 constexpr bool QuantizerNeedsCentroid(VectorQuantization quant) noexcept {
-  return quant == VectorQuantization::PQ || quant == VectorQuantization::RaBitQ;
+  return quant == VectorQuantization::PQ ||
+         quant == VectorQuantization::RaBitQ || quant == VectorQuantization::TQ;
 }
 
 bool PanoramaApplies(VectorMetric metric, uint32_t d) noexcept;
 
 std::unique_ptr<QuantizerWriter> MakeQuantizerWriter(
   VectorQuantization quant, uint32_t d, VectorMetric metric, uint32_t pq_m,
-  uint32_t pq_niter, uint32_t nb_bits);
+  uint32_t pq_niter, uint32_t nb_bits, bool row_major = false);
 
 std::shared_ptr<const QuantizerStats> MakeQuantizerStats(
   VectorQuantization quant, uint32_t d, std::span<const byte_type> stats,
-  VectorMetric metric);
+  VectorMetric metric, bool row_major = false);
 
 std::unique_ptr<QuantizerReader> MakeQuantizerReader(
   const std::shared_ptr<const QuantizerCodebook>& codebook);
+
+void GenerateSigns(uint32_t rotated_d, int64_t seed, std::vector<float>& signs);
 
 }  // namespace irs

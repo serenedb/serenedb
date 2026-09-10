@@ -82,8 +82,8 @@ class SegmentReaderImpl final : public SubReader {
   NormReader::ptr norms(field_id field) const final;
 
   const ColumnReader* Column(field_id field) const final;
-  const CentroidsTree* Ivf(field_id field) const final;
-  IndexInput::ptr ReopenIvf() const final;
+  const AnnIndex* Ann(field_id field) const final;
+  IndexInput::ptr ReopenAnn() const final;
   const ColReader* GetColReader() const final {
     return _data ? _data->col_reader.get() : nullptr;
   }

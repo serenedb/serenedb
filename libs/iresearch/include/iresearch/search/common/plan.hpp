@@ -46,6 +46,7 @@ class AllQuery;
 class NGramSimilarityQuery;
 class WildcardNGramQuery;
 class ByNestedQuery;
+class HnswQuery;
 class KnnVectorQuery;
 class RangeVectorQuery;
 class BooleanQuery;

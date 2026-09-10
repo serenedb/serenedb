@@ -9,11 +9,6 @@
 # introduced an AT_LA pseudo-token (emitted by a 3-token lookahead
 # filter in base_yylex) to keep the two AT-prefixed productions
 # unambiguous.  These tests pin the result.
-#
-# Note on column-name case: this codebase's scanner preserves the
-# user-typed case for keyword-derived identifiers (divergence from
-# upstream Postgres).  So `AS at` yields a column named "at" and
-# `AS AT` yields a column named "AT".  Headers below reflect that.
 
 
 # ----------------------------------------------------------------------

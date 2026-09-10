@@ -360,14 +360,33 @@ void SortById(CheckpointEntries& entries, size_t from) {
             });
 }
 
+struct StoredEntry {
+  ObjectId oid;
+  ObjectId schema_oid;
+  ObjectId relation_id;
+  ObjectId owner_id;
+  CatalogStore::CheckpointRecord record;
+};
+
 template<typename Entry>
-std::vector<Entry*> DatabaseEntriesOf(duckdb::ClientContext* context,
-                                      ObjectId database) {
-  std::vector<Entry*> found;
+std::vector<StoredEntry> DatabaseEntriesOf(duckdb::ClientContext* context,
+                                           ObjectId database) {
+  std::vector<StoredEntry> found;
   catalog::Visit<Entry>(context, database, [&](const Entry& entry) {
-    found.push_back(const_cast<Entry*>(&entry));
+    ObjectId relation_id{};
+    ObjectId owner_id{};
+    if constexpr (std::is_same_v<Entry, catalog::SereneDBIndexEntry>) {
+      relation_id = entry.GetRelationId();
+    }
+    if constexpr (std::is_same_v<Entry, catalog::SereneDBSequenceEntry>) {
+      owner_id = entry.GetOwnerTableId();
+    }
+    found.push_back(StoredEntry{
+      ObjectId{entry.oid}, ObjectId{entry.ParentSchema().oid}, relation_id,
+      owner_id, CatalogStore::CheckpointRecord(entry)});
   });
-  std::ranges::sort(found, {}, [](const Entry* entry) { return entry->oid; });
+  std::ranges::sort(found, {},
+                    [](const StoredEntry& entry) { return entry.oid.id(); });
   return found;
 }
 
@@ -392,19 +411,19 @@ CheckpointEntries CatalogStore::CheckpointEntriesOf() {
     nullptr, [&](catalog::SereneDBRoleEntry& role) { out.emplace_back(role); });
   SortById(out, 0);
 
-  std::vector<catalog::SereneDBDatabaseEntry*> databases;
-  catalog::VisitDatabases(nullptr,
-                          [&](catalog::SereneDBDatabaseEntry& database) {
-                            databases.push_back(&database);
-                          });
-  std::ranges::sort(databases, {},
-                    [](const catalog::SereneDBDatabaseEntry* database) {
-                      return database->oid;
-                    });
+  std::vector<StoredEntry> databases;
+  catalog::VisitDatabases(
+    nullptr, [&](catalog::SereneDBDatabaseEntry& database) {
+      databases.push_back(StoredEntry{
+        ObjectId{database.oid}, {}, {}, {}, CheckpointRecord(database)});
+    });
+  std::ranges::sort(databases, {}, [](const StoredEntry& database) {
+    return database.oid.id();
+  });
 
-  for (auto* database : databases) {
-    const ObjectId db_id{database->oid};
-    out.emplace_back(*database);
+  for (auto& database : databases) {
+    const ObjectId db_id = database.oid;
+    out.push_back(std::move(database.record));
     // Foreign servers are database children, so they come out of the catalog's
     // own set rather than a schema's.
     const auto servers_from = out.size();
@@ -417,29 +436,27 @@ CheckpointEntries CatalogStore::CheckpointEntriesOf() {
 
     // Once for the whole database, because the walk is per database and not per
     // schema; each is filed under the schema it belongs to below.
-    const auto tokenizers =
+    auto tokenizers =
       DatabaseEntriesOf<catalog::SereneDBTokenizerEntry>(nullptr, db_id);
-    const auto types =
-      DatabaseEntriesOf<duckdb::TypeCatalogEntry>(nullptr, db_id);
+    auto types = DatabaseEntriesOf<duckdb::TypeCatalogEntry>(nullptr, db_id);
     // A function occupies the scalar slot and a table function the other, and
     // both are filed under the schema they were created in.
     auto functions =
       DatabaseEntriesOf<duckdb::ScalarMacroCatalogEntry>(nullptr, db_id);
-    const auto table_functions =
+    auto table_functions =
       DatabaseEntriesOf<duckdb::TableMacroCatalogEntry>(nullptr, db_id);
-    const auto sequences =
+    auto sequences =
       DatabaseEntriesOf<catalog::SereneDBSequenceEntry>(nullptr, db_id);
-    const auto tables =
+    auto tables =
       DatabaseEntriesOf<catalog::SereneDBTableEntry>(nullptr, db_id);
-    const auto views =
-      DatabaseEntriesOf<duckdb::ViewCatalogEntry>(nullptr, db_id);
-    const auto indexes =
+    auto views = DatabaseEntriesOf<duckdb::ViewCatalogEntry>(nullptr, db_id);
+    auto indexes =
       DatabaseEntriesOf<catalog::SereneDBIndexEntry>(nullptr, db_id);
 
     const auto put_indexes = [&](ObjectId relation_id) {
-      for (auto* index : indexes) {
-        if (index->GetRelationId() == relation_id) {
-          out.emplace_back(*index);
+      for (auto& index : indexes) {
+        if (index.relation_id == relation_id && index.record.info) {
+          out.push_back(std::move(index.record));
         }
       }
     };
@@ -447,67 +464,69 @@ CheckpointEntries CatalogStore::CheckpointEntriesOf() {
     // ones. A sequence's name is always in its schema's relation namespace, so
     // the owning table decides only where in the walk it comes out.
     const auto put_sequences = [&](ObjectId schema_id, ObjectId owner) {
-      for (auto* sequence : sequences) {
-        if (ObjectId{sequence->ParentSchema().oid} == schema_id &&
-            sequence->GetOwnerTableId() == owner) {
-          out.emplace_back(*sequence);
+      for (auto& sequence : sequences) {
+        if (sequence.schema_oid == schema_id && sequence.owner_id == owner &&
+            sequence.record.info) {
+          out.push_back(std::move(sequence.record));
         }
       }
     };
-    const auto in_schema = [](const auto* entry, ObjectId schema_id) {
-      return ObjectId{entry->ParentSchema().oid} == schema_id;
+    const auto in_schema = [](const StoredEntry& entry, ObjectId schema_id) {
+      return entry.schema_oid == schema_id;
     };
 
-    std::vector<catalog::SereneDBSchemaEntry*> schemas;
-    catalog::VisitSchemas(nullptr, db_id,
-                          [&](catalog::SereneDBSchemaEntry& schema) {
-                            schemas.push_back(&schema);
-                          });
+    std::vector<StoredEntry> schemas;
+    catalog::VisitSchemas(
+      nullptr, db_id, [&](catalog::SereneDBSchemaEntry& schema) {
+        schemas.push_back(StoredEntry{
+          ObjectId{schema.oid}, {}, {}, {}, CheckpointRecord(schema)});
+      });
     std::ranges::sort(
-      schemas, {},
-      [](const catalog::SereneDBSchemaEntry* schema) { return schema->oid; });
-    for (auto* schema : schemas) {
-      const ObjectId schema_id{schema->oid};
-      out.emplace_back(*schema);
-      for (auto* tokenizer : tokenizers) {
+      schemas, {}, [](const StoredEntry& schema) { return schema.oid.id(); });
+    for (auto& schema : schemas) {
+      const ObjectId schema_id = schema.oid;
+      out.push_back(std::move(schema.record));
+      for (auto& tokenizer : tokenizers) {
         if (in_schema(tokenizer, schema_id)) {
-          out.emplace_back(*tokenizer);
+          out.push_back(std::move(tokenizer.record));
         }
       }
-      for (auto* type : types) {
+      for (auto& type : types) {
         if (in_schema(type, schema_id)) {
-          out.emplace_back(*type);
+          out.push_back(std::move(type.record));
         }
       }
       // Free-standing sequences before anything that can name one in a DEFAULT;
       // the ones a table owns are written after that table, below.
       put_sequences(schema_id, ObjectId{});
-      for (auto* function : functions) {
+      for (auto& function : functions) {
         if (in_schema(function, schema_id)) {
-          out.emplace_back(*function);
+          out.push_back(std::move(function.record));
         }
       }
-      for (auto* function : table_functions) {
+      for (auto& function : table_functions) {
         if (in_schema(function, schema_id)) {
-          out.emplace_back(*function);
+          out.push_back(std::move(function.record));
         }
       }
-      for (auto* table : tables) {
+      for (auto& table : tables) {
         if (!in_schema(table, schema_id)) {
           continue;
         }
-        out.emplace_back(*table);
+        const ObjectId table_id = table.oid;
+        out.push_back(std::move(table.record));
         // Owned sequences are entries of their own, so they come back as such
         // rather than riding this one.
-        put_sequences(schema_id, ObjectId{table->oid});
-        put_indexes(ObjectId{table->oid});
+        put_sequences(schema_id, table_id);
+        put_indexes(table_id);
       }
-      for (auto* view : views) {
+      for (auto& view : views) {
         if (!in_schema(view, schema_id)) {
           continue;
         }
-        out.emplace_back(*view);
-        put_indexes(ObjectId{view->oid});
+        const ObjectId view_id = view.oid;
+        out.push_back(std::move(view.record));
+        put_indexes(view_id);
       }
     }
   }

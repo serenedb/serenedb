@@ -209,7 +209,7 @@ void Catalog::DropResolved(duckdb::ClientContext* context, ObjectId parent_id,
   // the indexes on a relation with it.
   catalog::DropEntryOfKind(context, type, parent_id, name, cascade);
   if (type == duckdb::CatalogType::SEQUENCE_ENTRY) {
-    GetCatalogStore().DropSequence(id);
+    DeferDropAction(context, [id] { GetCatalogStore().DropSequence(id); });
   }
 }
 

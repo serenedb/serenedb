@@ -41,6 +41,16 @@ on:
         type: boolean
         required: false
         default: false
+      STRESS:
+        description: "also run the catalog stress suite (tests/stress)"
+        type: boolean
+        required: false
+        default: false
+      STRESS_SOFT_FAIL:
+        description: "report stress-suite failures without failing the job (burn-in)"
+        type: boolean
+        required: false
+        default: true
       RUN_EXTRA:
         description: "sanitizer configs only: run the full in-scope set (gtest + iresearch + extension + sqlite + sqlsmith), not just ours + drivers"
         type: boolean
@@ -53,6 +63,21 @@ on:
         default: ""
       FUZZ_QUERIES:
         description: "sqlsmith --max-queries per instance (empty = runner default)"
+        type: string
+        required: false
+        default: ""
+      STRESS_PROFILE:
+        description: "tests/stress profile: smoke | soak | soak-tsan (empty = runner default)"
+        type: string
+        required: false
+        default: ""
+      STRESS_SECONDS:
+        description: "tests/stress duration override (empty = profile default)"
+        type: string
+        required: false
+        default: ""
+      STRESS_WORKERS:
+        description: "tests/stress concurrent sessions (empty = profile default)"
         type: string
         required: false
         default: ""
@@ -98,6 +123,16 @@ on:
         type: boolean
         required: false
         default: false
+      STRESS:
+        description: "also run the catalog stress suite (tests/stress)"
+        type: boolean
+        required: false
+        default: false
+      STRESS_SOFT_FAIL:
+        description: "report stress-suite failures without failing the job (burn-in)"
+        type: boolean
+        required: false
+        default: true
       RUN_EXTRA:
         description: "sanitizer configs only: run the full in-scope set, not just ours + drivers"
         type: boolean
@@ -113,6 +148,18 @@ on:
         required: false
         default: ""
       FUZZ_PARALLEL:
+        type: string
+        required: false
+        default: ""
+      STRESS_PROFILE:
+        type: string
+        required: false
+        default: ""
+      STRESS_SECONDS:
+        type: string
+        required: false
+        default: ""
+      STRESS_WORKERS:
         type: string
         required: false
         default: ""
@@ -167,6 +214,8 @@ jobs:
           echo "DUCKDB_SUITES=${{ inputs.DUCKDB_SUITES }}" >> $GITHUB_ENV
           echo "RUN_SQLITE=${{ inputs.SQLITE }}"       >> $GITHUB_ENV
           echo "RUN_SQLSMITH=${{ inputs.SQLSMITH }}"   >> $GITHUB_ENV
+          echo "RUN_STRESS=${{ inputs.STRESS }}"       >> $GITHUB_ENV
+          echo "STRESS_SOFT_FAIL=${{ inputs.STRESS_SOFT_FAIL }}" >> $GITHUB_ENV
           echo "RUN_EXTRA=${{ inputs.RUN_EXTRA }}"     >> $GITHUB_ENV
 
           echo "BUILDMODE=RelWithDebInfo" >> $GITHUB_ENV
@@ -195,6 +244,9 @@ jobs:
         env:
           SDB_FUZZ_QUERIES: ${{ inputs.FUZZ_QUERIES }}
           SDB_FUZZ_PARALLEL: ${{ inputs.FUZZ_PARALLEL }}
+          SDB_STRESS_PROFILE: ${{ inputs.STRESS_PROFILE }}
+          SDB_STRESS_SECONDS: ${{ inputs.STRESS_SECONDS }}
+          SDB_STRESS_WORKERS: ${{ inputs.STRESS_WORKERS }}
         run: ./scripts/ci/steps/02-ci-build-docker-env-file.bash
 
       # One-time per CI machine:
@@ -260,6 +312,9 @@ jobs:
         env:
           SDB_FUZZ_QUERIES: ${{ inputs.FUZZ_QUERIES }}
           SDB_FUZZ_PARALLEL: ${{ inputs.FUZZ_PARALLEL }}
+          SDB_STRESS_PROFILE: ${{ inputs.STRESS_PROFILE }}
+          SDB_STRESS_SECONDS: ${{ inputs.STRESS_SECONDS }}
+          SDB_STRESS_WORKERS: ${{ inputs.STRESS_WORKERS }}
           # iresearch-load corpus comes from S3; a failed/missing fetch fails the job.
           SEARCHBENCH_S3_KEY_ID: ${{ secrets.SEARCHBENCH_S3_KEY_ID }}
           SEARCHBENCH_S3_SECRET: ${{ secrets.SEARCHBENCH_S3_SECRET }}

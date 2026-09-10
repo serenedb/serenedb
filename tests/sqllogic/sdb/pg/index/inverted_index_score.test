@@ -997,13 +997,13 @@ QUERY PLAN
 │ Conditions: id = id                    │
 │ ~7 rows                                │
 ╰────────────────────┬───────────────────╯
-                     ├──────────────────────────────────────────────────╮
-╭─ IRESEARCH_SCAN ───┴───────────────────╮  ╭─ SEQ_SCAN ────────────────┴───────────────────────────╮
-│ Index: docs_idx                        │  │ Table: inverted_index_score_test_njkdimfu.public.meta │
-│ Lookup: table                          │  │ Type: Sequential Scan                                 │
-│ Index Filter:                          │  │ Projections: id, tag                                  │
-│ ╭─ Term ──────────────╮                │  │ ~3 rows                                               │
-│ │ Field: body(string) │                │  ╰───────────────────────────────────────────────────────╯
+                     ├──────────────────────────────────╮
+╭─ IRESEARCH_SCAN ───┴───────────────────╮  ╭─ SEQ_SCAN ┴───────────╮
+│ Index: docs_idx                        │  │ Table: meta           │
+│ Lookup: table                          │  │ Type: Sequential Scan │
+│ Index Filter:                          │  │ Projections: id, tag  │
+│ ╭─ Term ──────────────╮                │  │ ~3 rows               │
+│ │ Field: body(string) │                │  ╰───────────────────────╯
 │ │ Value: fox          │                │
 │ ╰─────────────────────╯                │
 │ Score: bm25(k1=1.2, b=0.75)            │

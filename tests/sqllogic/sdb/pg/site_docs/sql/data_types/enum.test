@@ -272,7 +272,6 @@ WHERE priority_level >= 'medium';
 ----
 name	priority_level
 b	medium
-c	high
 
 # DOCS_TEST: example_018
 

@@ -25,11 +25,13 @@
 #include <cstdint>
 #include <optional>
 #include <string_view>
+#include <utility>
 #include <yaclib/async/future.hpp>
 #include <yaclib/coro/task.hpp>
 
 #include "basics/debugging.h"
 #include "basics/message_buffer.h"
+#include "network/http/common.h"
 
 namespace sdb::network::http {
 
@@ -44,7 +46,7 @@ class ResponseSink {
   virtual bool Broken() const noexcept = 0;
 };
 
-std::string_view ReasonPhrase(int status) noexcept;
+std::string_view ReasonPhrase(HttpStatus status) noexcept;
 
 // The ONLY way a handler produces output: head + body written straight into
 // the session's send buffer (zero copy -- the one memcpy is into the wire
@@ -71,20 +73,20 @@ class HttpResponseWriter {
   void SetExtraHeaders(std::string_view headers) noexcept { _extra = headers; }
 
   // --- one-shot responses -------------------------------------------------
-  void Json(int status, std::string_view body) {
-    Fixed(status, "application/json", body);
+  void Json(HttpStatus status, std::string_view body) {
+    Fixed(status, kJsonContentType, body);
   }
 
-  void Text(int status, std::string_view body) {
+  void Text(HttpStatus status, std::string_view body) {
     Fixed(status, "text/plain", body);
   }
 
-  void Error(int status, std::string_view error_label) {
+  void Error(HttpStatus status, std::string_view error_label) {
     Json(status, absl::StrCat(R"({"error":")", error_label, R"("})"));
   }
 
-  void Fixed(int status, std::string_view content_type, std::string_view body,
-             std::string_view extra_headers = {}) {
+  void Fixed(HttpStatus status, std::string_view content_type,
+             std::string_view body, std::string_view extra_headers = {}) {
     WriteHead(status, content_type, body.size(), extra_headers);
     // WriteHead (via EncodeHead) already committed the head. Append the body
     // (if one is expected) and flush.
@@ -97,7 +99,7 @@ class HttpResponseWriter {
   }
 
   // --- known-length streamed body ----------------------------------------
-  void WriteHead(int status, std::string_view content_type,
+  void WriteHead(HttpStatus status, std::string_view content_type,
                  uint64_t content_length, std::string_view extra_headers = {}) {
     const bool bodiless =
       EncodeHead(status, content_type, &content_length, extra_headers);
@@ -137,7 +139,7 @@ class HttpResponseWriter {
   }
 
   // --- chunked streamed body ----------------------------------------------
-  void WriteHeadChunked(int status, std::string_view content_type,
+  void WriteHeadChunked(HttpStatus status, std::string_view content_type,
                         std::string_view extra_headers = {}) {
     EncodeHead(status, content_type, nullptr, extra_headers);
     _state = State::kChunkedBody;
@@ -222,15 +224,17 @@ class HttpResponseWriter {
 
   // Returns whether the status is bodiless (1xx/204/304); the caller must then
   // emit no body and no framing length.
-  bool EncodeHead(int status, std::string_view content_type,
+  bool EncodeHead(HttpStatus status, std::string_view content_type,
                   const uint64_t* content_length,
                   std::string_view extra_headers) {
     SDB_ASSERT(_state == State::kIdle);
+    const auto code = std::to_underlying(status);
     // 1xx/204/304 carry neither a body nor framing length (RFC 9112 6.1).
-    const bool bodiless =
-      status == 204 || status == 304 || (status >= 100 && status < 200);
+    const bool bodiless = status == HttpStatus::NoContent ||
+                          status == HttpStatus::NotModified ||
+                          (code >= 100 && code < 200);
     std::string head =
-      absl::StrCat("HTTP/1.1 ", status, " ", ReasonPhrase(status),
+      absl::StrCat("HTTP/1.1 ", code, " ", ReasonPhrase(status),
                    "\r\nContent-Type: ", content_type);
     if (bodiless) {
       // no Content-Length, no Transfer-Encoding

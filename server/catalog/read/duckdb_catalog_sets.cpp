@@ -1448,6 +1448,7 @@ duckdb::optional_ptr<duckdb::CatalogEntry> RequireDropTarget(
   ObjectId parent_id, std::string_view name, bool missing_ok) {
   auto* object = FindEntryOfKind(ax.context, type, parent_id, name);
   if (object != nullptr) {
+    catalog::EnsureWritableSchema(ax.context, parent_id);
     RequireEntryOwner(ax, type, *object);
     return object;
   }

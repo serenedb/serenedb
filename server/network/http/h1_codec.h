@@ -28,6 +28,7 @@
 #include <vector>
 
 #include "basics/message_buffer.h"
+#include "network/http/common.h"
 #include "network/http/request.h"
 
 namespace sdb::network {
@@ -71,7 +72,11 @@ class H1Codec final {
   }
   [[nodiscard]] bool IsChunked() const noexcept { return _chunked; }
   [[nodiscard]] bool KeepAlive() const noexcept { return _keep_alive; }
-  [[nodiscard]] int ErrorStatus() const noexcept { return _error_status; }
+  [[nodiscard]] http::HttpStatus ErrorStatus() const noexcept {
+    return _error_status == http::HttpStatus::None
+             ? http::HttpStatus::BadRequest
+             : _error_status;
+  }
 
   void Reset() noexcept;
 
@@ -83,7 +88,7 @@ class H1Codec final {
   static int OnBody(llhttp_t* parser, const char* at, size_t length);
   static int OnMessageComplete(llhttp_t* parser);
 
-  int Fail(int status) noexcept;
+  int Fail(http::HttpStatus status) noexcept;
 
   H1Limits _limits;
   llhttp_t _parser;
@@ -98,7 +103,7 @@ class H1Codec final {
   bool _keep_alive{true};
   bool _paused{false};
   bool _body_done{false};
-  int _error_status{0};
+  http::HttpStatus _error_status = http::HttpStatus::None;
   H1Event _event{H1Event::NeedMore};
 };
 

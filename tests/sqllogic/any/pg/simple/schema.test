@@ -15,7 +15,7 @@ CREATE TABLE t2(r text);
 
 
 query
-SELECT c.relname, n.nspname FROM pg_class c JOIN pg_namespace n ON c.relnamespace = n.oid WHERE relkind = 'r' AND c.relname NOT LIKE 'sdb_%' ORDER BY n.nspname, c.relname;
+SELECT c.relname, n.nspname FROM pg_class c JOIN pg_namespace n ON c.relnamespace = n.oid WHERE relkind = 'r' AND c.relname NOT LIKE 'sdb_%' AND n.nspname <> 'sdb_docs' ORDER BY n.nspname, c.relname;
 ----
 relname	nspname
 sql_features	information_schema

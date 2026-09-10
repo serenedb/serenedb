@@ -24,6 +24,7 @@
 #include <cstddef>
 #include <string>
 #include <string_view>
+#include <utility>
 
 #include "basics/message_buffer.h"
 #include "network/http/h1_codec.h"
@@ -76,7 +77,7 @@ HeadResult DriveHead(H1Codec& codec, std::string_view input,
       return result;
     }
     if (fed.event == H1Event::Error) {
-      result.error = codec.ErrorStatus();
+      result.error = std::to_underlying(codec.ErrorStatus());
       return result;
     }
   }

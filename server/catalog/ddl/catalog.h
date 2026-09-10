@@ -239,6 +239,11 @@ std::optional<ObjectId> TryFindSchemaId(duckdb::ClientContext* context,
                                         ObjectId database_id,
                                         std::string_view name);
 
+// Schemas the server owns take writes only from its own writer.
+void EnsureWritableSchema(duckdb::ClientContext* context,
+                          std::string_view schema);
+void EnsureWritableSchema(duckdb::ClientContext* context, ObjectId schema_id);
+
 // CREATE inside `parent_id`: throws 42501 unless `role` has CREATE on the
 // schema. Silent when the schema is gone -- the create's own resolution is
 // what reports that.

@@ -33,22 +33,23 @@ CREATE INDEX con_sec ON con(ck2);
 statement ok
 CREATE UNIQUE INDEX con_usec ON con(nn2);
 
-# pg_constraint: every constraint type, explicit name kept, auto name PG-shaped.
+# pg_constraint: every constraint type; an explicit name is kept, an unnamed
+# key carries duckdb's index name and an unnamed CHECK / NOT NULL / FK none.
 query
 SELECT conname || ' ' || contype::text AS c FROM pg_constraint
 WHERE conrelid = 'con'::regclass ORDER BY contype::text, conname;
 ----
 c
+ c
 con_ck1 c
-con_ck2_check c
+ f
 con_fk1 f
-con_fk2_fkey f
-con_id_not_null n
+ n
+ n
 con_nn1 n
-con_nn2_not_null n
 con_pk p
+UNIQUE_con_uq2 u
 con_uq1 u
-con_uq2_key u
 
 # pg_indexes: PK + UNIQUE-constraint backing indexes AND user secondary indexes.
 query
@@ -56,10 +57,10 @@ SELECT indexname AS c FROM pg_indexes
 WHERE schemaname = 'public' AND tablename = 'con' ORDER BY 1;
 ----
 c
+UNIQUE_con_uq2
 con_pk
 con_sec
 con_uq1
-con_uq2_key
 con_usec
 
 # pg_index: uniqueness / primariness of each backing index.
@@ -69,10 +70,10 @@ FROM pg_index i JOIN pg_class c ON c.oid = i.indexrelid
 WHERE i.indrelid = 'con'::regclass ORDER BY 1;
 ----
 c
+UNIQUE_con_uq2 true false
 con_pk true true
 con_sec false false
 con_uq1 true false
-con_uq2_key true false
 con_usec true false
 
 # Plain / unique *indexes* are indexes, not constraints: absent from pg_constraint.
@@ -92,10 +93,10 @@ WHERE relkind = 'i'
 ORDER BY 1;
 ----
 c
+UNIQUE_con_uq2
 con_pk
 con_sec
 con_uq1
-con_uq2_key
 con_usec
 
 statement ok

@@ -146,6 +146,7 @@ void CatalogSetsExecute(duckdb::ClientContext& context,
           // flavours of macro.
           for (const auto type : {duckdb::CatalogType::TABLE_ENTRY,
                                   duckdb::CatalogType::INDEX_ENTRY,
+                                  duckdb::CatalogType::SEQUENCE_ENTRY,
                                   duckdb::CatalogType::MACRO_ENTRY,
                                   duckdb::CatalogType::TYPE_ENTRY,
                                   duckdb::CatalogType::TOKENIZER_ENTRY}) {
@@ -203,8 +204,7 @@ void CatalogSetsExecute(duckdb::ClientContext& context,
                                  duckdb::CatalogEntry& dependent,
                                  const duckdb::DependencyDependentFlags&) {
         state.rows.push_back({.schema = {},
-                              .entry_type = duckdb::CatalogTypeToString(
-                                duckdb::CatalogType::DEPENDENCY_ENTRY),
+                              .entry_type = "Dependency",
                               .name = std::to_string(dependent.oid),
                               .entry_oid = referenced.oid,
                               .visible = true});

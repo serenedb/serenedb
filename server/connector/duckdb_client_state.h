@@ -24,6 +24,7 @@
 #include <duckdb/main/client_context_state.hpp>
 #include <memory>
 
+#include "catalog1/boot.h"
 #include "pg/progress_registry.h"
 
 namespace sdb {

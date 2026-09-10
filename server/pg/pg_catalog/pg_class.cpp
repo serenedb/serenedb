@@ -188,7 +188,10 @@ void RetrieveObjects(duckdb::Catalog& database, std::vector<PgClass>& values,
         entry.catalog.GetCatalogTransaction(context),
         duckdb::CatalogType::TABLE_ENTRY, entry.GetTableName());
       const auto host_id =
-        host && host->type == duckdb::CatalogType::TABLE_ENTRY ? host->oid : 0;
+        host && (host->type == duckdb::CatalogType::TABLE_ENTRY ||
+                 host->type == duckdb::CatalogType::VIEW_ENTRY)
+          ? host->oid
+          : 0;
       if (host_id) {
         indexed_relations.insert(host_id);
       }
@@ -298,7 +301,7 @@ void RetrieveObjects(duckdb::Catalog& database, std::vector<PgClass>& values,
       // such relation and neither does pg_class. A SERIAL's sequence is a real
       // one and is listed, as PG lists it.
       const auto& perm = sequence.permissions;
-      if (generated_pk_sequences.contains(sequence.oid)) {
+      if (sequence.internal || generated_pk_sequences.contains(sequence.oid)) {
         return;
       }
       auto row = MakeBaseRow(sequence.ParentSchema().oid, sequence.oid,
@@ -339,7 +342,7 @@ void RetrieveObjects(duckdb::Catalog& database, std::vector<PgClass>& values,
           continue;
         }
         auto& names = primary ? pk_index_names : uq_index_names;
-        names.push_back(unique.constraint_name);
+        names.push_back(ConstraintName(table->name, unique));
         auto row = MakeBaseRow(schema_id, KeyIndexOid(table->oid, position),
                                names.back(), table->permissions.owner);
         row.relkind = PgClass::Relkind::Index;

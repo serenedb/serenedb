@@ -25,12 +25,15 @@
 #include <duckdb/catalog/permissions.hpp>
 #include <duckdb/common/constants.hpp>
 #include <duckdb/common/enums/catalog_type.hpp>
+#include <string>
 #include <vector>
 
 #include "basics/assert.h"
 
 namespace duckdb {
 
+class Constraint;
+class Identifier;
 class TableCatalogEntry;
 class UniqueConstraint;
 
@@ -58,5 +61,8 @@ int16_t TableEntryAttnum(const duckdb::TableCatalogEntry& table,
 std::vector<int16_t> KeyConstraintAttnums(
   const duckdb::TableCatalogEntry& table,
   const duckdb::UniqueConstraint& constraint);
+
+std::string ConstraintName(const duckdb::Identifier& table,
+                           const duckdb::Constraint& constraint);
 
 }  // namespace sdb::pg

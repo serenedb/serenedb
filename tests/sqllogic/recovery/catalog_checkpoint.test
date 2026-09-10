@@ -157,9 +157,9 @@ query
 SELECT indexname FROM pg_indexes WHERE schemaname = 'ckp' ORDER BY indexname;
 ----
 indexname
+PRIMARY_t_id
 ckp_b
 ckp_inv
-t_pkey
 
 
 connection after_checkpoint

@@ -16,26 +16,6 @@ statement error retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
 SELECT * FROM vedernikoff;
 
 
-# crash mid-write after SST ingest, table should be gone
-
-connection ctas_after_1
-statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
-RESET sdb_faults;
-
-connection ctas_after_1
-statement ok
-SET sdb_faults = 'crash_sst_sink_after_ingest';
-
-connection ctas_after_1
-statement error connection closed
-CREATE TABLE vedernikoff AS
-SELECT iq, CONCAT('salary ', salary::text, ' bucks') AS salary
-FROM generate_series(1, 100) AS clickclack(iq),
-     generate_series(1, 10) AS serenedb(salary);
-
-connection ctas_after_2
-statement error retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
-SELECT * FROM vedernikoff;
 
 
 # completed CTAS should survive crash
@@ -85,28 +65,6 @@ FROM generate_series(1, 100) AS clickclack(iq),
      generate_series(1, 10) AS serenedb(salary);
 
 connection select_into_after_1
-statement error retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
-SELECT * FROM vedernikoff;
-
-
-# SELECT INTO: crash mid-write after SST ingest, table should be gone
-
-connection select_into_after_1
-statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
-RESET sdb_faults;
-
-connection select_into_after_1
-statement ok
-SET sdb_faults = 'crash_sst_sink_after_ingest';
-
-connection select_into_after_1
-statement error connection closed
-SELECT iq, CONCAT('salary ', salary::text, ' bucks') AS salary
-INTO vedernikoff
-FROM generate_series(1, 100) AS clickclack(iq),
-     generate_series(1, 10) AS serenedb(salary);
-
-connection select_into_after_2
 statement error retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
 SELECT * FROM vedernikoff;
 

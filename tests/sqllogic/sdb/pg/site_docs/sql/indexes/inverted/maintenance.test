@@ -67,5 +67,5 @@ WHERE tablename = 'my_logs'
 ORDER BY indexname;
 ----
 indexname
+PRIMARY_my_logs_id
 logs_idx
-my_logs_pkey

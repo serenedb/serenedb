@@ -88,7 +88,7 @@ catalog::TableEngine ReadStorageEngine(
 }
 
 duckdb::Identifier GeneratedPkSequenceName(const duckdb::Identifier& table) {
-  return duckdb::Identifier{table.GetIdentifierName() + "__sdb_pk_seq"};
+  return duckdb::Identifier{table.GetIdentifierName() + "_pk_seq"};
 }
 
 void EnsureGeneratedPkSequence(duckdb::CatalogTransaction transaction,

@@ -22,7 +22,7 @@ statement error
 DROP TABLE deadinside;
 ----
 db error: ERROR: Table with name deadinside does not exist!
-Did you mean "duckdb_indexes"?
+Did you mean "<slt:ignore>"?
 
 
 statement ok

@@ -191,7 +191,7 @@ connection s10
 statement error
 ALTER TABLE ccso_r RENAME TO ccso_r2
 ----
-db error: ERROR: could not serialize access due to concurrent DDL on the same object
+db error: ERROR: Catalog write-write conflict on alter with "ccso_r"
 
 
 connection s9
@@ -236,7 +236,7 @@ connection s12
 statement error
 ALTER TABLE ccso_n RENAME TO ccso_n2
 ----
-db error: ERROR: could not serialize access due to concurrent DDL on the same object
+db error: ERROR: Catalog write-write conflict on alter with "ccso_n"
 
 
 connection s11

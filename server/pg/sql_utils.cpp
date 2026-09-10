@@ -21,6 +21,7 @@
 #include "sql_utils.h"
 
 #include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
+#include <duckdb/parser/constraint.hpp>
 #include <duckdb/parser/constraints/unique_constraint.hpp>
 
 #include "pg/sql_exception_macro.h"
@@ -54,6 +55,17 @@ std::vector<int16_t> KeyConstraintAttnums(
         : 0);
   }
   return out;
+}
+
+std::string ConstraintName(const duckdb::Identifier& table,
+                           const duckdb::Constraint& constraint) {
+  if (!constraint.constraint_name.empty() ||
+      constraint.type != duckdb::ConstraintType::UNIQUE) {
+    return constraint.constraint_name;
+  }
+  return constraint.Cast<duckdb::UniqueConstraint>()
+    .GetName(table)
+    .GetIdentifierName();
 }
 
 }  // namespace sdb::pg

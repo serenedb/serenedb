@@ -18,7 +18,7 @@ SELECT conname FROM pg_catalog.pg_constraint
   WHERE conrelid = 'dropcol_check_one'::regclass ORDER BY conname
 ----
 conname
-dropcol_check_one_b_check
+(empty)
 
 
 statement ok

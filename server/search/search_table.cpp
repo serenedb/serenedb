@@ -147,8 +147,6 @@ void SearchTable::OpenWriter() {
 
   irs::IndexWriterOptions writer_options;
   writer_options.segment_memory_max = 256 * (size_t{1} << 20);
-  // TODO(Dronplane): for now we rely on rocksdb (still present) lock
-  // But in future we need own server wide data dir lock.
   writer_options.lock_repository = false;
   writer_options.db = &sdb::DuckDBEngine::Instance().instance();
   writer_options.reader_options.db = writer_options.db;

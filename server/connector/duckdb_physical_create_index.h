@@ -129,14 +129,6 @@ class SereneDBPhysicalCreateIndex final : public duckdb::PhysicalOperator {
     return _expression_slot_base.IsValid();
   }
 
-  // `relation` is the catalog entry the index is built on: either a table or a
-  // view (foreign-source-backed), which is where its id, its name and the
-  // authority over it are read from.
-  // `columns` is the relation's column list.
-  // `bound_expressions` carries the IndexBinder's output (one per
-  // `info->parsed_expressions`). For a bare column ref the slot is set but
-  // unused; for an arbitrary expression we normalise + serialise
-  // it via helpers into a `catalog::ExpressionData`.
   SereneDBPhysicalCreateIndex(
     duckdb::PhysicalPlan& plan, duckdb::CatalogEntry& relation,
     std::vector<IndexRelationColumn> columns, duckdb::idx_t database_id,

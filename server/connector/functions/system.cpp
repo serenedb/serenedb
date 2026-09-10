@@ -1423,8 +1423,9 @@ bool PgHasRoleImpl(const auth::RoleGraph& roles, duckdb::idx_t member,
 
 duckdb::idx_t RoleIdByName(const auth::RoleGraph& roles,
                            std::string_view name) {
+  const duckdb::Identifier wanted{name};
   for (const auto& [id, node] : roles.nodes) {
-    if (node.name == name) {
+    if (duckdb::Identifier{node.name} == wanted) {
       return id;
     }
   }

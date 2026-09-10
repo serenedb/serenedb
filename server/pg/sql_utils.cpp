@@ -20,9 +20,17 @@
 
 #include "sql_utils.h"
 
+#include <algorithm>
 #include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
+#include <duckdb/common/string_util.hpp>
 #include <duckdb/parser/constraint.hpp>
+#include <duckdb/parser/constraints/check_constraint.hpp>
+#include <duckdb/parser/constraints/foreign_key_constraint.hpp>
+#include <duckdb/parser/constraints/not_null_constraint.hpp>
 #include <duckdb/parser/constraints/unique_constraint.hpp>
+#include <duckdb/parser/expression/columnref_expression.hpp>
+#include <duckdb/parser/parsed_expression_iterator.hpp>
+#include <vector>
 
 #include "pg/sql_exception_macro.h"
 
@@ -57,15 +65,62 @@ std::vector<int16_t> KeyConstraintAttnums(
   return out;
 }
 
-std::string ConstraintName(const duckdb::Identifier& table,
+std::string ConstraintName(const duckdb::TableCatalogEntry& table,
                            const duckdb::Constraint& constraint) {
-  if (!constraint.constraint_name.empty() ||
-      constraint.type != duckdb::ConstraintType::UNIQUE) {
+  if (!constraint.constraint_name.empty()) {
     return constraint.constraint_name;
   }
-  return constraint.Cast<duckdb::UniqueConstraint>()
-    .GetName(table)
-    .GetIdentifierName();
+  if (constraint.type == duckdb::ConstraintType::UNIQUE) {
+    return constraint.Cast<duckdb::UniqueConstraint>()
+      .GetName(table.name)
+      .GetIdentifierName();
+  }
+  duckdb::vector<std::string> columns;
+  switch (constraint.type) {
+    case duckdb::ConstraintType::NOT_NULL:
+      columns.push_back(
+        table.GetColumns()
+          .GetColumn(constraint.Cast<duckdb::NotNullConstraint>().index)
+          .Name()
+          .GetIdentifierName());
+      break;
+    case duckdb::ConstraintType::CHECK:
+      duckdb::ParsedExpressionIterator::VisitExpression<
+        duckdb::ColumnRefExpression>(
+        *constraint.Cast<duckdb::CheckConstraint>().expression,
+        [&columns](const duckdb::ColumnRefExpression& ref) {
+          auto name = ref.GetColumnName().GetIdentifierName();
+          if (std::ranges::find(columns, name) == columns.end()) {
+            columns.push_back(std::move(name));
+          }
+        });
+      // A CHECK over more than one column is named for the table alone, as
+      // postgres names it.
+      if (columns.size() != 1) {
+        columns.clear();
+      }
+      break;
+    case duckdb::ConstraintType::FOREIGN_KEY:
+      for (const auto& column :
+           constraint.Cast<duckdb::ForeignKeyConstraint>().fk_columns) {
+        columns.push_back(column.GetIdentifierName());
+      }
+      break;
+    default:
+      return {};
+  }
+  auto name = table.name.GetIdentifierName();
+  if (!columns.empty()) {
+    name += "_" + duckdb::StringUtil::Join(columns, "_");
+  }
+  switch (constraint.type) {
+    case duckdb::ConstraintType::NOT_NULL:
+      return name + "_not_null";
+    case duckdb::ConstraintType::CHECK:
+      return name + "_check";
+    default:
+      return name + "_fkey";
+  }
 }
 
 }  // namespace sdb::pg

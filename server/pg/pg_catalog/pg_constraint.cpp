@@ -159,7 +159,7 @@ MaterializedData SystemTableSnapshot<PgConstraint>::GetTableData() {
               duckdb::ForeignKeyType::FK_TYPE_PRIMARY_KEY_TABLE) {
           continue;
         }
-        conname_storage.emplace_back(ConstraintName(table.name, *constraint));
+        conname_storage.emplace_back(ConstraintName(table, *constraint));
         auto row =
           base(PgConstraint::Contype::Check, ConstraintOid(table.oid, position),
                conname_storage.back());

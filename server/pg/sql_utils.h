@@ -62,7 +62,7 @@ std::vector<int16_t> KeyConstraintAttnums(
   const duckdb::TableCatalogEntry& table,
   const duckdb::UniqueConstraint& constraint);
 
-std::string ConstraintName(const duckdb::Identifier& table,
+std::string ConstraintName(const duckdb::TableCatalogEntry& table,
                            const duckdb::Constraint& constraint);
 
 }  // namespace sdb::pg

@@ -123,7 +123,7 @@ statement ok
 SET sdb_faults = 'crash_on_drop';
 
 
-statement error (?i)connection closed|server closed|terminat|reset|EOF
+statement error connection closed
 DROP SCHEMA vedernikoff_x_core CASCADE;
 
 

@@ -342,7 +342,7 @@ void RetrieveObjects(duckdb::Catalog& database, std::vector<PgClass>& values,
           continue;
         }
         auto& names = primary ? pk_index_names : uq_index_names;
-        names.push_back(ConstraintName(table->name, unique));
+        names.push_back(ConstraintName(*table, unique));
         auto row = MakeBaseRow(schema_id, KeyIndexOid(table->oid, position),
                                names.back(), table->permissions.owner);
         row.relkind = PgClass::Relkind::Index;

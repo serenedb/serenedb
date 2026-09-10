@@ -460,9 +460,9 @@ bool PgWireSession<Kind>::SetupConnection() {
                                     static_cast<int64_t>(bytes));
       const auto command = static_cast<sdb::pg::ProgressCommand>(
         metrics.command.load(std::memory_order_relaxed));
-      SDB_IF_FAILURE("pause_sst_sink_mid_copy") {
+      SDB_IF_FAILURE("pause_copy_from_mid_stream") {
         if (command == sdb::pg::ProgressCommand::CopyFrom) {
-          SDB_WAIT_ON_FAILURE("pause_sst_sink_mid_copy");
+          SDB_WAIT_ON_FAILURE("pause_copy_from_mid_stream");
         }
       }
       SDB_IF_FAILURE("pause_copy_to_mid_stream") {

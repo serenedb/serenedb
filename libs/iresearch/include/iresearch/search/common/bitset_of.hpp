@@ -84,7 +84,10 @@ inline constexpr double kDenseBuildWordCost = 3.0;
 inline constexpr double kFoldWordCost = 0.25;
 inline constexpr uint64_t kPhraseMatchShare = 16;
 
-enum class ExcludeUse { PerDoc, PerBlock };
+enum class ExcludeUse {
+  PerDoc,
+  PerBlock,
+};
 
 struct ClauseCost {
   uint64_t docs;

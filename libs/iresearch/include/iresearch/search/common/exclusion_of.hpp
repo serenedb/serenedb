@@ -52,7 +52,11 @@ bool ExcludeTerms(std::span<const Term> terms,
   return doc != nullptr;
 }
 
-enum class ExcludeForm { Probes, Window, Bitset };
+enum class ExcludeForm {
+  Probes,
+  Window,
+  Bitset,
+};
 
 template<typename Term>
 class ExcludeCosts {

@@ -22,8 +22,10 @@
 
 #include <absl/base/optimization.h>
 
+#include <algorithm>
 #include <bit>
 #include <cstdint>
+#include <limits>
 #include <tuple>
 #include <type_traits>
 #include <utility>
@@ -41,11 +43,13 @@
 
 namespace irs::probe {
 
-template<typename Optional, typename Score = utils::Empty>
+template<typename Optional, typename Score = utils::Empty, bool Bounded = false>
 class BooleanWindow {
  public:
   static constexpr bool kScored = std::is_same_v<Score, search::Scored>;
+  static constexpr bool kBounded = Bounded;
   static_assert(!search::Retracts<Optional>());
+  static_assert(!kBounded || kScored);
 
   template<typename OptionalArgs>
   BooleanWindow(std::piecewise_construct_t, OptionalArgs&& optional,
@@ -53,6 +57,15 @@ class BooleanWindow {
     : _optional{std::make_from_tuple<Optional>(
         std::forward<OptionalArgs>(optional))},
       _score{score} {}
+
+  template<typename OptionalArgs>
+  BooleanWindow(std::piecewise_construct_t, OptionalArgs&& optional,
+                Score score, score_t bound)
+    requires kBounded
+    : _optional{std::make_from_tuple<Optional>(
+        std::forward<OptionalArgs>(optional))},
+      _score{score},
+      _bound{bound} {}
 
   BooleanWindow(BooleanWindow&&) = delete;
   BooleanWindow& operator=(BooleanWindow&&) = delete;
@@ -62,6 +75,30 @@ class BooleanWindow {
       return _doc;
     }
     return _doc = From(target);
+  }
+
+  doc_id_t AdvanceBlock(doc_id_t target)
+    requires kBounded
+  {
+    if (doc_limits::eof(target)) {
+      return doc_limits::eof();
+    }
+    if (!_filled || target >= _min + kWindow) {
+      if (_spent) {
+        return doc_limits::eof();
+      }
+      Refill(target);
+    }
+    return _min + (kWindow - 1);
+  }
+
+  score_t MaxScore(doc_id_t last) const noexcept
+    requires kBounded
+  {
+    if (_filled && last < _min + kWindow) {
+      return _max;
+    }
+    return _spent ? score_t{0} : _bound;
   }
 
   IRS_FORCE_INLINE void FetchScoreArgs(uint32_t slot)
@@ -132,6 +169,18 @@ class BooleanWindow {
     doc_id_t next;
     if constexpr (kScored) {
       next = _optional.Fill(_min, max, words, _window);
+      if constexpr (kBounded) {
+        score_t top = 0;
+        for (uint32_t w = 0; w != search::kWindowWords; ++w) {
+          auto word = words[w];
+          const auto base = w * kBits;
+          while (word != 0) {
+            top = std::max(top, _window[base + std::countr_zero(word)]);
+            word = PopBit(word);
+          }
+        }
+        _max = top;
+      }
     } else {
       next = _optional.Fill(_min, max, words);
     }
@@ -165,6 +214,9 @@ class BooleanWindow {
   bool _filled = false;
   bool _spent = false;
   [[no_unique_address]] Score _score;
+  [[no_unique_address]] utils::Need<kBounded, score_t> _bound =
+    std::numeric_limits<score_t>::max();
+  [[no_unique_address]] utils::Need<kBounded, score_t> _max = 0;
 };
 
 }  // namespace irs::probe

@@ -124,19 +124,54 @@ re2::RE2::Options RegexOptions(int group) {
   return options;
 }
 
-delim::Finder SplitOnLiteral(std::span<const re2::Rune> runes, bool fold_case) {
-  bstring literal;
-  literal.reserve(runes.size() * utf8_utils::kMaxCharSize);
+bool AppendLiteral(std::span<const re2::Rune> runes, bool fold_case,
+                   bstring& literal) {
   for (const auto rune : runes) {
     if (fold_case && (rune >= 128 ||
                       absl::ascii_isalpha(static_cast<unsigned char>(rune)))) {
-      return {};
+      return false;
     }
     byte_type buf[utf8_utils::kMaxCharSize];
     literal.append(buf,
                    utf8_utils::FromChar32(static_cast<uint32_t>(rune), buf));
   }
+  return true;
+}
+
+bool AppendLiteralOf(re2::Regexp& re, bool fold_case, bstring& literal) {
+  const bool fold =
+    fold_case || (re.parse_flags() & re2::Regexp::FoldCase) != 0;
+  if (re.op() == re2::kRegexpLiteral) {
+    const re2::Rune rune = re.rune();
+    return AppendLiteral({&rune, 1}, fold, literal);
+  }
+  if (re.op() == re2::kRegexpLiteralString) {
+    return AppendLiteral({re.runes(), static_cast<size_t>(re.nrunes())}, fold,
+                         literal);
+  }
+  return false;
+}
+
+delim::Finder SplitOnLiteral(std::span<const re2::Rune> runes, bool fold_case) {
+  bstring literal;
+  literal.reserve(runes.size() * utf8_utils::kMaxCharSize);
+  if (!AppendLiteral(runes, fold_case, literal)) {
+    return {};
+  }
   return delim::FinderFor(std::move(literal));
+}
+
+delim::Finder SplitOnAlternation(re2::Regexp& re, bool fold_case) {
+  std::vector<bstring> delimiters;
+  delimiters.reserve(static_cast<size_t>(re.nsub()));
+  for (int i = 0; i < re.nsub(); ++i) {
+    bstring literal;
+    if (!AppendLiteralOf(*re.sub()[i], fold_case, literal) || literal.empty()) {
+      return {};
+    }
+    delimiters.push_back(std::move(literal));
+  }
+  return delim::FinderFor(std::move(delimiters));
 }
 
 delim::Finder DetectSplit(const re2::RE2& pattern, int group) {
@@ -158,6 +193,9 @@ delim::Finder DetectSplit(const re2::RE2& pattern, int group) {
   if (group < 0 && re->op() == re2::kRegexpLiteralString) {
     return SplitOnLiteral({re->runes(), static_cast<size_t>(re->nrunes())},
                           fold_case);
+  }
+  if (group < 0 && re->op() == re2::kRegexpAlternate) {
+    return SplitOnAlternation(*re, fold_case);
   }
   if (re->op() != re2::kRegexpCharClass || (group == 0 && !(plus && greedy))) {
     return {};

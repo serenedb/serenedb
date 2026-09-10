@@ -123,31 +123,31 @@ void RunEmit(benchmark::State& state, const std::string& data) {
       src = value.data();
     }
     size_t at = 0;
-    words::SplitByNonAlpha(duckdb::string_t{src, static_cast<uint32_t>(
-                                                   data.size())},
-                           [&](size_t begin, size_t end) {
-                             const size_t n = end - begin;
-                             char* dst = out.data() + at;
-                             if constexpr (F == Fold::PerTokenAbsl) {
-                               absl::ascii_internal::AsciiStrToLower(
-                                 dst, src + begin, n);
-                             } else if constexpr (F == Fold::PerTokenExact) {
-                               irs::analysis::casing::CaseConvertAsciiExact<
-                                 true>(dst, src + begin, n);
-                             } else {
-                               std::memcpy(dst, src + begin, n);
-                             }
-                             at += n;
-                           });
+    words::SplitByNonAlpha(
+      duckdb::string_t{src, static_cast<uint32_t>(data.size())},
+      [&](size_t begin, size_t end) {
+        const size_t n = end - begin;
+        char* dst = out.data() + at;
+        if constexpr (F == Fold::PerTokenAbsl) {
+          absl::ascii_internal::AsciiStrToLower(dst, src + begin, n);
+        } else if constexpr (F == Fold::PerTokenExact) {
+          irs::analysis::casing::CaseConvertAsciiExact<true>(dst, src + begin,
+                                                             n);
+        } else {
+          std::memcpy(dst, src + begin, n);
+        }
+        at += n;
+      });
     benchmark::DoNotOptimize(out.data());
     benchmark::ClobberMemory();
   }
   SetBytes(state, data);
 }
 
-void RunPattern(benchmark::State& state, const std::string& data) {
+void RunPatternWith(benchmark::State& state, const std::string& data,
+                    std::string_view pattern) {
   PatternTokenizer::Options opts;
-  opts.pattern = "[^A-Za-z0-9]+";
+  opts.pattern = std::string{pattern};
   opts.group = -1;
   auto stream = PatternTokenizer::Make(std::move(opts));
   bench::DrainSink sink;
@@ -156,6 +156,10 @@ void RunPattern(benchmark::State& state, const std::string& data) {
     benchmark::DoNotOptimize(sink.Consume());
   }
   SetBytes(state, data);
+}
+
+void RunPattern(benchmark::State& state, const std::string& data) {
+  RunPatternWith(state, data, "[^A-Za-z0-9]+");
 }
 
 void RunSegmentation(benchmark::State& state, const std::string& data) {
@@ -217,6 +221,11 @@ BENCHMARK_DEFINE_F(MixedCorpus, BmSplit)(benchmark::State& state) {
 BENCHMARK_DEFINE_F(MixedCorpus, BmPattern)(benchmark::State& state) {
   RunPattern(state, data);
 }
+BENCHMARK_DEFINE_F(MixedCorpus, BmPatternLiterals)(benchmark::State& state) {
+  RunPatternWith(state, data, ", |! |-_");
+}
+BENCHMARK_DEFINE_F(MixedCorpus, BmPatternLiteralsRegex)
+(benchmark::State& state) { RunPatternWith(state, data, "(?:, |! |-_){1}"); }
 BENCHMARK_DEFINE_F(MixedCorpus, BmSegmentation)(benchmark::State& state) {
   RunSegmentation(state, data);
 }
@@ -237,33 +246,23 @@ BENCHMARK_DEFINE_F(MixedCorpus, BmEmitCopy)(benchmark::State& state) {
   RunEmit<Fold::None>(state, data);
 }
 BENCHMARK_DEFINE_F(MixedCorpus, BmEmitFoldPerTokenAbsl)
-(benchmark::State& state) {
-  RunEmit<Fold::PerTokenAbsl>(state, data);
-}
+(benchmark::State& state) { RunEmit<Fold::PerTokenAbsl>(state, data); }
 BENCHMARK_DEFINE_F(MixedCorpus, BmEmitFoldPerTokenExact)
-(benchmark::State& state) {
-  RunEmit<Fold::PerTokenExact>(state, data);
-}
+(benchmark::State& state) { RunEmit<Fold::PerTokenExact>(state, data); }
 BENCHMARK_DEFINE_F(MixedCorpus, BmEmitFoldPerValueAbsl)
-(benchmark::State& state) {
-  RunEmit<Fold::PerValueAbsl>(state, data);
-}
+(benchmark::State& state) { RunEmit<Fold::PerValueAbsl>(state, data); }
 BENCHMARK_DEFINE_F(LongTokenCorpus, BmEmitCopy)(benchmark::State& state) {
   RunEmit<Fold::None>(state, data);
 }
 BENCHMARK_DEFINE_F(LongTokenCorpus, BmEmitFoldPerTokenAbsl)
-(benchmark::State& state) {
-  RunEmit<Fold::PerTokenAbsl>(state, data);
-}
+(benchmark::State& state) { RunEmit<Fold::PerTokenAbsl>(state, data); }
 BENCHMARK_DEFINE_F(LongTokenCorpus, BmEmitFoldPerTokenExact)
-(benchmark::State& state) {
-  RunEmit<Fold::PerTokenExact>(state, data);
-}
+(benchmark::State& state) { RunEmit<Fold::PerTokenExact>(state, data); }
 BENCHMARK_DEFINE_F(LongTokenCorpus, BmEmitFoldPerValueAbsl)
-(benchmark::State& state) {
-  RunEmit<Fold::PerValueAbsl>(state, data);
-}
+(benchmark::State& state) { RunEmit<Fold::PerValueAbsl>(state, data); }
 
+BENCHMARK_REGISTER_F(MixedCorpus, BmPatternLiterals);
+BENCHMARK_REGISTER_F(MixedCorpus, BmPatternLiteralsRegex);
 BENCHMARK_REGISTER_F(MixedCorpus, BmEmitCopy);
 BENCHMARK_REGISTER_F(MixedCorpus, BmEmitFoldPerTokenAbsl);
 BENCHMARK_REGISTER_F(MixedCorpus, BmEmitFoldPerTokenExact);

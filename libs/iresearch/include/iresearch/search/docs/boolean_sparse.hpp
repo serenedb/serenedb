@@ -26,6 +26,7 @@
 #include <utility>
 
 #include "basics/empty.hpp"
+#include "iresearch/search/common/exclude_block.hpp"
 #include "iresearch/search/common/table_filter.hpp"
 #include "iresearch/search/docs/root.hpp"
 #include "iresearch/search/lead/concept.hpp"
@@ -78,7 +79,7 @@ class BooleanSparse : public Root {
       }
       out[n] = doc;
       if constexpr (kExcludes) {
-        n += static_cast<uint32_t>(_excludes.Probe(doc) != doc);
+        n += static_cast<uint32_t>(!search::IsExcluded(_excludes, doc));
       } else {
         ++n;
       }

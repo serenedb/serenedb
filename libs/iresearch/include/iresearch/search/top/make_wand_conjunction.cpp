@@ -86,9 +86,9 @@ Root::ptr MakeWandConjunction(
       return MakeShape<WandConjunction, Lead, Others, utils::Empty>(
         ctx, ctx.fetcher, size, init, std::forward_as_tuple());
     }
-    return search::BuildExcludeSide<Root::ptr>(
-      excludes, exclude_filters, nullptr, segment,
-      terms.front().state.cookie.docs_count,
+    const uint64_t lead = terms.front().state.cookie.docs_count;
+    return search::BuildBlockExcludes<Root::ptr>(
+      excludes, exclude_filters, nullptr, segment, lead, lead,
       [&]<typename Exclude>(auto&& negated) -> Root::ptr {
         return MakeShape<WandConjunction, Lead, Others, Exclude>(
           ctx, ctx.fetcher, size, init,

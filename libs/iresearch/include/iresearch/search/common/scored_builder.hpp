@@ -171,19 +171,21 @@ Result<Api> MakeScoredExclusionWindow(const BooleanQuery& query,
                           })) {
     return {};
   }
-  const auto candidates = IncludeCandidates(must, must_filters, segment);
+  auto candidates = IncludeCandidates(must, must_filters, segment);
+  if (must.empty() && must_filters.empty()) {
+    candidates = std::min(candidates,
+                          LeadCandidates(terms, filters, segment.docs_count()));
+  }
   const auto recipe = Api::Recipe(segment, ctx);
   const auto uniformity = query.Uniformity(Occur::Should);
-  return BuildExcludeSide<Result<Api>>(
+  return BuildWindowExcludes<Result<Api>>(
     excludes, exclude_filters, nullptr, segment, candidates,
-    [&]<typename Exclude>(auto&& negated) -> Result<Api> {
-      using Excludes = fill::ProbedAndNot<Exclude>;
+    [&]<typename Excludes>(auto&& negated) -> Result<Api> {
       const auto make = [&]<typename Set>(auto&&... args) -> Result<Api> {
         return Api::template MakeWindow<utils::Empty, OrGroup<Set>, Excludes>(
           ctx, merge, absorbed, std::forward_as_tuple(),
           std::forward_as_tuple(std::forward<decltype(args)>(args)...),
-          std::forward_as_tuple(std::piecewise_construct,
-                                std::forward<decltype(negated)>(negated)));
+          std::forward<decltype(negated)>(negated));
       };
       return BuildScoredWindow<Result<Api>>(terms, nullptr, nullptr, kNoBoost,
                                             doc, rest, uniformity, recipe,
@@ -344,7 +346,11 @@ Result<Api> MakeScoredExclusion(const BooleanQuery& query,
   const std::span excludes = query.Terms(Occur::MustNot);
   const std::span exclude_filters = query.Queries(Occur::MustNot);
   SDB_ASSERT(!excludes.empty() || !exclude_filters.empty());
-  const auto candidates = IncludeCandidates(must, must_filters, segment);
+  auto candidates = IncludeCandidates(must, must_filters, segment);
+  if (must.empty() && must_filters.empty()) {
+    candidates = std::min(
+      candidates, LeadCandidates(should, should_filters, segment.docs_count()));
+  }
   if (absorbed == 0 && should.empty() && should_filters.empty() &&
       must.size() == 1 && must_filters.empty() &&
       ScoresPerDocTerm(must.front())) {
@@ -353,8 +359,8 @@ Result<Api> MakeScoredExclusion(const BooleanQuery& query,
     const auto& doc = *DocOf(own);
     const auto recipe = Api::Recipe(segment, ctx);
     return ResolveInput(doc, [&]<typename Input> -> Result<Api> {
-      return BuildExcludeSideOf<Result<Api>, Input>(
-        excludes, exclude_filters, nullptr, segment, candidates,
+      return BuildBlockExcludesOf<Result<Api>, Input>(
+        excludes, exclude_filters, nullptr, segment, candidates, candidates,
         [&]<typename Exclude>(auto&& negated) -> Result<Api> {
           return Api::template MakeExcludedPosting<Input, Exclude>(
             ctx, std::forward<decltype(negated)>(negated), posting, doc,

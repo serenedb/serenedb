@@ -53,6 +53,9 @@ QueryBuilder::ptr MultiTermQuery::Finish(
     return QueryBuilder::Empty();
   }
   query->_estimate_max = ClampEstimate(sum, query->_segment);
+  query->_estimate_matches = query->_estimate_max;
+  query->_postings = sum;
+  query->_leaves = static_cast<uint32_t>(terms.size());
 
   if (terms.size() == 1) {
     const auto& entry = terms.front();

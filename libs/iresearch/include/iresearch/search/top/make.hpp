@@ -20,6 +20,7 @@
 
 #pragma once
 
+#include <algorithm>
 #include <cstdint>
 #include <span>
 #include <vector>
@@ -50,6 +51,17 @@ Root::ptr MakeShape(const Context& ctx, Args&&... args) {
   }
   return memory::make_managed<Shape<Parts..., utils::Empty>>(
     utils::Empty{}, std::forward<Args>(args)...);
+}
+
+inline constexpr uint64_t kPrunedVisitsPerHit = 400;
+inline constexpr uint64_t kPrunedVisitedShare = 100;
+
+inline uint64_t PrunedCandidates(uint64_t docs, const Context& ctx) noexcept {
+  if (ctx.k == 0) {
+    return docs;
+  }
+  return std::min(
+    docs, uint64_t{ctx.k} * kPrunedVisitsPerHit + docs / kPrunedVisitedShare);
 }
 
 template<typename Make>
@@ -195,8 +207,8 @@ Root::ptr MakeMaxScoreDisjunction(
       }
       const auto candidates =
         std::min<uint64_t>(search::SumDocs(terms), segment.docs_count());
-      return search::BuildExcludeSide<Root::ptr>(
-        excludes, exclude_filters, nullptr, segment, candidates,
+      return search::BuildBlockExcludes<Root::ptr>(
+        excludes, exclude_filters, nullptr, segment, candidates, candidates,
         [&]<typename Exclude>(auto&& negated) -> Root::ptr {
           return MakeShape<MaxScoreDisjunction, Leaf, Match,
                            fill::ProbedAndNot<Exclude>>(

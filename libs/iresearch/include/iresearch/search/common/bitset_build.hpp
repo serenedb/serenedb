@@ -47,6 +47,10 @@ inline uint64_t SegmentWords(doc_id_t docs_count) noexcept {
   return uint64_t{docs_count} / BitsetStorage::kBits + 1;
 }
 
+inline uint64_t SegmentWindows(doc_id_t docs_count) noexcept {
+  return uint64_t{docs_count} / kWindowDocs + 1;
+}
+
 inline bool DensePosting(uint64_t docs, doc_id_t docs_count) noexcept {
   return docs * kBitsetDensity >= docs_count;
 }

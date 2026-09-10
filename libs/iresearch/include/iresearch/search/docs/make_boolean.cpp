@@ -35,6 +35,9 @@ struct Api {
   using Context = docs::Context;
 
   static constexpr bool kWindowNodes = true;
+  static constexpr bool kWindowLeadDrains = true;
+  static constexpr double kSparseLeadCost = 1.0;
+  static constexpr bool kWindowLeadRefills = true;
 
   template<typename Lead, typename Others, typename Optional, typename Excludes,
            typename... Args>

@@ -29,6 +29,15 @@
 namespace irs::search {
 
 template<typename Excludes>
+IRS_FORCE_INLINE bool IsExcluded(Excludes& excludes, doc_id_t doc) {
+  if constexpr (requires { excludes.Test(doc); }) {
+    return excludes.Test(doc);
+  } else {
+    return excludes.Probe(doc) == doc;
+  }
+}
+
+template<typename Excludes>
 IRS_FORCE_INLINE uint32_t ExcludeBlock(Excludes& excludes,
                                        doc_id_t* IRS_RESTRICT docs,
                                        score_t* IRS_RESTRICT scores,
@@ -41,7 +50,7 @@ IRS_FORCE_INLINE uint32_t ExcludeBlock(Excludes& excludes,
     const auto doc = docs[i];
     docs[kept] = doc;
     scores[kept] = scores[i];
-    kept += static_cast<uint32_t>(excludes.Probe(doc) != doc);
+    kept += static_cast<uint32_t>(!IsExcluded(excludes, doc));
   }
   return kept;
 }

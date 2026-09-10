@@ -67,8 +67,9 @@ Root::ptr MakePrunedPosting(const PostingClause& posting,
         ctx, std::forward_as_tuple(), meta, doc, search::LayoutOf(own), segment,
         own, args);
     }
-    return search::BuildExcludeSideOf<Root::ptr, Input>(
-      excludes, exclude_filters, nullptr, segment, meta.docs_count,
+    return search::BuildBlockExcludesOf<Root::ptr, Input>(
+      excludes, exclude_filters, nullptr, segment,
+      PrunedCandidates(meta.docs_count, ctx), meta.docs_count,
       [&]<typename Exclude>(auto&& negated) -> Root::ptr {
         return MakeShape<PrunedPosting, Input, Exclude>(
           ctx, std::forward<decltype(negated)>(negated), meta, doc,

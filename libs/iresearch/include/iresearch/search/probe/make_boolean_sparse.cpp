@@ -147,9 +147,16 @@ Node::ptr MakeSparseExclusionDocs(
   std::span<const QueryBuilder::ptr> exclude_filters, const SubReader& segment,
   uint64_t interrogations) {
   SDB_ASSERT(!exclude.empty() || !exclude_filters.empty());
-  const auto reach = std::min(
-    search::IncludeCandidates(must, must_filters, segment), interrogations);
   const bool no_must = must.empty() && must_filters.empty();
+  const uint64_t docs_count = segment.docs_count();
+  uint64_t lead = search::IncludeCandidates(must, must_filters, segment);
+  if (no_must && min_should_match != 0) {
+    lead = std::min(docs_count,
+                    search::LeadCandidates(should, should_filters,
+                                           static_cast<doc_id_t>(docs_count)));
+  }
+  const auto reach = std::max<uint64_t>(
+    1, docs_count == 0 ? 0 : interrogations * lead / docs_count);
   Node::ptr optional;
   if (min_should_match != 0) {
     optional = BuildOptionalProbe(should, should_filters, min_should_match,
@@ -161,7 +168,7 @@ Node::ptr MakeSparseExclusionDocs(
   const auto excluded = [&]<typename Musts, typename Optional>(
                           auto&& musts, auto&& optional_args) -> Node::ptr {
     return search::BuildExcludeSide<Node::ptr>(
-      exclude, exclude_filters, nullptr, segment, reach,
+      exclude, exclude_filters, nullptr, segment, reach, lead,
       [&]<typename Exclude>(auto&& excludes) -> Node::ptr {
         return MakeSparse<Musts, Optional, Exclude>(
           std::forward<decltype(musts)>(musts),

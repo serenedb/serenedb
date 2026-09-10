@@ -71,7 +71,20 @@ class BooleanQuery : public QueryBuilderImpl<BooleanQuery> {
       _declared_msm{declared_msm},
       _min_should_match{min_should_match},
       _boost{boost},
-      _merge_type{merge_type} {}
+      _merge_type{merge_type} {
+    _postings = 0;
+    _leaves = 0;
+    for (const auto& bucket : _clauses) {
+      for (const auto& posting : bucket.postings) {
+        _postings += posting.state.cookie.docs_count;
+      }
+      _leaves += static_cast<uint32_t>(bucket.postings.size());
+      for (const auto& child : bucket.filters) {
+        _postings += child->Postings();
+        _leaves += child->Leaves();
+      }
+    }
+  }
 
   void Visit(PreparedStateVisitor& visitor, score_t boost) const final;
 

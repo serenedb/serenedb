@@ -131,8 +131,16 @@ Node::ptr MakeSparseExclusionScored(
   std::span<const QueryBuilder::ptr> exclude_filters, const SubReader& segment,
   const ScoreRecipe& recipe, ScoreMergeType merge, uint64_t interrogations,
   const ScoredCtx& ctx, score_t absorbed) {
-  const auto candidates = std::min(
-    search::IncludeCandidates(must, must_filters, segment), interrogations);
+  const bool no_must = must.empty() && must_filters.empty();
+  const uint64_t docs_count = segment.docs_count();
+  uint64_t lead = search::IncludeCandidates(must, must_filters, segment);
+  if (no_must && min_should_match != 0) {
+    lead = std::min(docs_count,
+                    search::LeadCandidates(should, should_filters,
+                                           static_cast<doc_id_t>(docs_count)));
+  }
+  const auto candidates = std::max<uint64_t>(
+    1, docs_count == 0 ? 0 : interrogations * lead / docs_count);
   if (absorbed == 0 && min_should_match == 0 && must.size() == 1 &&
       must_filters.empty() && ScoresPerDocTerm(must.front())) {
     const auto& posting = must.front();
@@ -141,7 +149,7 @@ Node::ptr MakeSparseExclusionScored(
     return search::ResolveInput(*doc, [&]<typename Input> -> Node::ptr {
       using Include = search::PostingProbeScored<Input>;
       return search::BuildExcludeSideOf<Node::ptr, Input>(
-        exclude, exclude_filters, nullptr, segment, candidates,
+        exclude, exclude_filters, nullptr, segment, candidates, lead,
         [&]<typename Exclude>(auto&& excluded) -> Node::ptr {
           return MakeSparseScored<Include, utils::Empty, Exclude>(
             std::forward_as_tuple(posting.state.cookie, *doc, segment, own,
@@ -159,7 +167,7 @@ Node::ptr MakeSparseExclusionScored(
     return {};
   }
   return search::BuildExcludeSide<Node::ptr>(
-    exclude, exclude_filters, nullptr, segment, candidates,
+    exclude, exclude_filters, nullptr, segment, candidates, lead,
     [&]<typename Exclude>(auto&& excluded) -> Node::ptr {
       return MakeSparseScored<Erased, utils::Empty, Exclude>(
         std::forward_as_tuple(std::move(include)), std::forward_as_tuple(),

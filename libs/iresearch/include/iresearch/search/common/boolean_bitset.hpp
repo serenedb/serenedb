@@ -31,6 +31,7 @@
 #include "iresearch/search/common/bitset_of.hpp"
 #include "iresearch/search/common/boolean_groups.hpp"
 #include "iresearch/search/common/collect.hpp"
+#include "iresearch/search/common/exclusion_of.hpp"
 #include "iresearch/search/common/plan.hpp"
 #include "iresearch/search/common/resolve.hpp"
 #include "iresearch/search/multiterm_query.hpp"
@@ -94,30 +95,34 @@ Result MakeConjunctionBitset(std::span<const Term> terms,
   return MakeBitsetNode<Result>(std::move(buckets), *doc, docs_count, table);
 }
 
+struct ExcludeFills {
+  std::vector<const QueryBuilder*> children;
+  double cost = 0;
+};
+
 template<typename Term>
 void CollectExcludeBuckets(std::span<const Term> terms,
                            std::span<const QueryBuilder::ptr> filters,
-                           const TermReader* field, BitsetBuckets& out,
-                           std::vector<const QueryBuilder*>& fills,
-                           uint64_t& fill_docs) {
+                           const TermReader* field, doc_id_t docs_count,
+                           BitsetBuckets& out, ExcludeFills& fills) {
   out.must_not.reserve(out.must_not.size() + terms.size());
   for (size_t i = 0; i != terms.size(); ++i) {
     out.must_not.emplace_back(ClauseOf(terms[i], field));
   }
   for (const auto& child : filters) {
     SDB_ASSERT(child);
-    if (ClauseTerms(*child, out.must_not)) {
-      continue;
-    }
-    fill_docs += child->EstimateMax();
-    fills.emplace_back(child.get());
+    const auto clause = ChildClauseCost(*child, docs_count);
+    fills.cost +=
+      clause.fill +
+      static_cast<double>(SegmentWindows(docs_count)) *
+        (clause.nested ? kEagerNestedWindowCost : kEagerChildWindowCost);
+    fills.children.emplace_back(child.get());
   }
 }
 
-inline bool PlanExcludeFills(std::span<const QueryBuilder* const> fills,
-                             BitsetBuckets& out) {
-  out.exclude_fills.reserve(fills.size());
-  for (const auto* child : fills) {
+inline bool PlanExcludeFills(const ExcludeFills& fills, BitsetBuckets& out) {
+  out.exclude_fills.reserve(fills.children.size());
+  for (const auto* child : fills.children) {
     auto node = child->PlanFill({}, ScoreMergeType::Noop);
     if (!node) {
       return false;
@@ -127,28 +132,45 @@ inline bool PlanExcludeFills(std::span<const QueryBuilder* const> fills,
   return true;
 }
 
-inline bool TakeExclusionFold(const BitsetBuckets& buckets, size_t fills,
-                              uint64_t fill_docs, const IndexInput& doc,
-                              doc_id_t docs_count,
+inline bool TakeExclusionFold(const BitsetBuckets& buckets,
+                              const ExcludeFills& fills, const FoldEmit& emit,
+                              const ExcludeCosts<PostingClause>& exclusion,
+                              const IndexInput& doc, doc_id_t docs_count,
                               uint64_t candidates) noexcept {
-  if (fills == 0 && !buckets.NeedsSet() && !buckets.DenseLead(docs_count)) {
+  if (fills.children.empty() && !buckets.NeedsSet() &&
+      !buckets.DenseLead(docs_count)) {
     return false;
   }
-  const auto words = SegmentWords(docs_count);
-  auto cost =
-    FoldConjunctionCost(buckets.must, 0, buckets.Seed(docs_count), docs_count) +
-    FoldReadClause(std::span<const PostingClause>{buckets.must_not}, docs_count,
-                   words);
-  if (fills != 0) {
-    cost += fill_docs + 2 * words;
+  const auto words = static_cast<double>(SegmentWords(docs_count));
+  const auto docs = static_cast<double>(candidates);
+  const bool single =
+    buckets.must.size() == 1 && buckets.must.front().size() == 1;
+  double cost = words * kFoldWordCost;
+  if (single) {
+    cost +=
+      PostingBuildCost(buckets.must.front().front().state.cookie.docs_count,
+                       docs_count, kSeedBuildCost);
+  } else {
+    cost += static_cast<double>(FoldConjunctionCost(
+      buckets.must, 0, buckets.Seed(docs_count), docs_count));
   }
-  const auto walk = WalkConjunctionCost(buckets.must, 0, candidates) +
-                    candidates * (buckets.must_not.size() + fills);
+  for (const auto& clause : buckets.must_not) {
+    cost +=
+      PostingBuildCost(clause.state.cookie.docs_count, docs_count, kClearCost);
+  }
+  cost += fills.cost + emit.word * words +
+          (emit.docs ? DocsEmitCost(docs, words) : 0.0);
+  double walk =
+    static_cast<double>(WalkConjunctionCost(buckets.must, 0, candidates)) +
+    exclusion.Sparse(emit.sparse_lead, true);
+  if (single) {
+    walk = std::min(walk, exclusion.WindowLead(docs, emit.docs, true, true));
+  }
   size_t terms = buckets.must_not.size();
   for (const auto& clause : buckets.must) {
     terms += clause.size();
   }
-  return TakeFold(walk >= cost, terms, doc, docs_count);
+  return TakeFold(cost < walk, terms, doc, docs_count);
 }
 
 template<typename Result>
@@ -193,14 +215,16 @@ Result MakeBooleanBitset(const BooleanGroups& groups, const SubReader& segment,
     }
     return MakeBitsetNode<Result>(std::move(buckets), *doc, docs_count, table);
   }
-  uint64_t fill_docs = 0;
-  std::vector<const QueryBuilder*> fills;
-  CollectExcludeBuckets(groups.must_not, groups.must_not_filters, nullptr,
-                        buckets, fills, fill_docs);
   const auto candidates =
     IncludeCandidates(groups.must, groups.must_filters, segment);
-  if (!TakeExclusionFold(buckets, fills.size(), fill_docs, *doc, docs_count,
-                         candidates) ||
+  ExcludeFills fills;
+  CollectExcludeBuckets(groups.must_not, groups.must_not_filters, nullptr,
+                        docs_count, buckets, fills);
+  const ExcludeCosts<PostingClause> exclusion{
+    groups.must_not, groups.must_not_filters, candidates, candidates,
+    docs_count,      ExcludeUse::PerDoc};
+  if (!TakeExclusionFold(buckets, fills, kFoldEmit<Result>, exclusion, *doc,
+                         docs_count, candidates) ||
       !PlanExcludeFills(fills, buckets)) {
     return {};
   }

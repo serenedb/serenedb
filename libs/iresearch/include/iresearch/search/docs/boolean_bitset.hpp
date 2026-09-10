@@ -71,6 +71,8 @@ namespace irs::search {
 
 template<>
 inline constexpr uint64_t kFoldPostings<docs::Root::ptr> = 4;
+template<>
+inline constexpr FoldEmit kFoldEmit<docs::Root::ptr>{0.0, 1.0, true};
 
 template<>
 inline docs::Root::ptr MakeBitsetNode<docs::Root::ptr>(BitsetBuckets&& buckets,

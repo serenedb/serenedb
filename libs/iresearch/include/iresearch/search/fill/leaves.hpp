@@ -27,6 +27,7 @@
 #include <vector>
 
 #include "basics/bit_utils.hpp"
+#include "iresearch/search/common/exclude_block.hpp"
 #include "iresearch/search/common/fixed_array.hpp"
 #include "iresearch/search/common/window.hpp"
 #include "iresearch/search/fill/concept.hpp"
@@ -86,7 +87,7 @@ class ProbedAndNot {
       while (word != 0) {
         const auto bit = static_cast<uint32_t>(std::countr_zero(word));
         const auto doc = base + bit;
-        if (_probe.Probe(doc) == doc) {
+        if (search::IsExcluded(_probe, doc)) {
           live &= ~(uint64_t{1} << bit);
         }
         word = PopBit(word);
@@ -105,7 +106,7 @@ class ProbedAndNot {
       while (word != 0) {
         const auto bit = static_cast<uint32_t>(std::countr_zero(word));
         const auto doc = base + bit;
-        if (_probe.Probe(doc) == doc) {
+        if (search::IsExcluded(_probe, doc)) {
           live &= ~(uint64_t{1} << bit);
           scores[w * search::kWindowBits + bit] = reset;
         }
@@ -132,6 +133,21 @@ class FilledAndNot {
   void Remove(doc_id_t min, doc_id_t max, uint64_t* IRS_RESTRICT mask) {
     _leaves.Visit(max,
                   [&](auto& leaf) { return leaf.FillAndNot(min, max, mask); });
+  }
+
+  void Remove(doc_id_t min, doc_id_t max, uint64_t* IRS_RESTRICT mask,
+              score_t* IRS_RESTRICT scores, score_t reset) {
+    const auto words = search::WindowWords(min, max);
+    uint64_t before[search::kWindowWords];
+    std::copy_n(mask, words, before);
+    Remove(min, max, mask);
+    for (size_t w = 0; w != words; ++w) {
+      auto removed = before[w] & ~mask[w];
+      while (removed != 0) {
+        scores[w * search::kWindowBits + std::countr_zero(removed)] = reset;
+        removed = PopBit(removed);
+      }
+    }
   }
 
  private:

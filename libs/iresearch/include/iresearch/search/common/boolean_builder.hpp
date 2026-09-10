@@ -193,41 +193,63 @@ Result<Api> MakeWindowExclusion(
   std::span<const QueryBuilder::ptr> exclude_filters, const SubReader& segment,
   uint64_t candidates, const Context<Api>& ctx) {
   SDB_ASSERT(!terms.empty() || !filters.empty());
+  const auto docs_count = static_cast<doc_id_t>(segment.docs_count());
   if (terms.size() + filters.size() == 1) {
     if (HeadIsTerm(terms, filters)) {
-      return {};
+      const ExcludeCosts<PostingClause> costs{
+        exclude_terms, exclude_filters, candidates,
+        candidates,    docs_count,      ExcludeUse::PerDoc};
+      if (!costs.TakesWindowLead(SegmentDoc(segment) != nullptr,
+                                 Api::kWindowLeadDrains, Api::kSparseLeadCost,
+                                 Api::kWindowLeadRefills, candidates)) {
+        return {};
+      }
+      const auto& own = FieldOf(terms.front(), nullptr);
+      const auto* const doc = DocOf(own);
+      if (doc == nullptr) {
+        return {};
+      }
+      const auto& front = CookieOf(terms.front());
+      return ResolveInput(*doc, [&]<typename Input> -> Result<Api> {
+        return BuildWindowExcludes<Result<Api>>(
+          exclude_terms, exclude_filters, nullptr, segment, candidates,
+          [&]<typename Excludes>(auto&& excludes) -> Result<Api> {
+            return Api::template MakeWindow<PostingFill<Input>, utils::Empty,
+                                            utils::Empty, Excludes>(
+              ctx,
+              std::forward_as_tuple(front, *doc,
+                                    front.docs_count != 1 && BoundsOf(own),
+                                    front.docs_count != 1 && FreqOf(own)),
+              std::forward_as_tuple(), std::forward_as_tuple(),
+              std::forward<decltype(excludes)>(excludes));
+          });
+      });
     }
     auto node = filters.front()->PlanFill({}, ScoreMergeType::Noop);
     if (!node) {
       return {};
     }
-    return BuildExcludeSide<Result<Api>>(
+    return BuildWindowExcludes<Result<Api>>(
       exclude_terms, exclude_filters, nullptr, segment, candidates,
-      [&]<typename Exclude>(auto&& exclude) -> Result<Api> {
+      [&]<typename Excludes>(auto&& excludes) -> Result<Api> {
         return Api::template MakeWindow<fill::Erased, utils::Empty,
-                                        utils::Empty,
-                                        fill::ProbedAndNot<Exclude>>(
+                                        utils::Empty, Excludes>(
           ctx, std::forward_as_tuple(std::move(node)), std::forward_as_tuple(),
-          std::forward_as_tuple(),
-          std::forward_as_tuple(std::piecewise_construct,
-                                std::forward<decltype(exclude)>(exclude)));
+          std::forward_as_tuple(), std::forward<decltype(excludes)>(excludes));
       });
   }
   const IndexInput* doc = nullptr;
   if (!WindowTerms(terms, filters, nullptr, doc)) {
     return {};
   }
-  if (!DenseConjunction(terms, static_cast<doc_id_t>(segment.docs_count()))) {
+  if (!DenseConjunction(terms, docs_count)) {
     return {};
   }
-  return BuildExcludeSide<Result<Api>>(
+  return BuildWindowExcludes<Result<Api>>(
     exclude_terms, exclude_filters, nullptr, segment, candidates,
-    [&]<typename Exclude>(auto&& exclude) -> Result<Api> {
-      return MakeWindowOfTerms<Api, fill::ProbedAndNot<Exclude>>(
-        terms, *doc,
-        std::forward_as_tuple(std::piecewise_construct,
-                              std::forward<decltype(exclude)>(exclude)),
-        ctx);
+    [&]<typename Excludes>(auto&& excludes) -> Result<Api> {
+      return MakeWindowOfTerms<Api, Excludes>(
+        terms, *doc, std::forward<decltype(excludes)>(excludes), ctx);
     });
 }
 
@@ -486,12 +508,18 @@ Result<Api> MakeExclusion(const BooleanQuery& query, const Context<Api>& ctx) {
   const auto exclude_terms = query.Terms(Occur::MustNot);
   const auto exclude_filters = query.Queries(Occur::MustNot);
   SDB_ASSERT(!exclude_terms.empty() || !exclude_filters.empty());
-  const auto candidates = IncludeCandidates(must_terms, must_filters, segment);
+  auto candidates = IncludeCandidates(must_terms, must_filters, segment);
   const auto min_match = query.MinShouldMatch();
   if (min_match != 0) {
-    auto driven = lead::MakeRequiredDocs(
-      must_terms, must_filters, query.Terms(Occur::Should),
-      query.Queries(Occur::Should), min_match, segment);
+    const std::span should_terms = query.Terms(Occur::Should);
+    const std::span should_filters = query.Queries(Occur::Should);
+    if (must_terms.empty() && must_filters.empty()) {
+      candidates = std::min(
+        candidates,
+        LeadCandidates(should_terms, should_filters, segment.docs_count()));
+    }
+    auto driven = lead::MakeRequiredDocs(must_terms, must_filters, should_terms,
+                                         should_filters, min_match, segment);
     if (!driven) {
       return {};
     }

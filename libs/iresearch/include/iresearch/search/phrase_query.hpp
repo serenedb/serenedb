@@ -23,6 +23,7 @@
 #pragma once
 
 #include <algorithm>
+#include <cmath>
 #include <limits>
 
 #include "basics/misc.hpp"
@@ -61,9 +62,15 @@ class PhraseQuery : public QueryBuilder {
                       return pos.offs_max != pos.offs_min;
                     })} {
     uint32_t least = std::numeric_limits<uint32_t>::max();
+    const double docs_count =
+      static_cast<double>(std::max<uint64_t>(segment.docs_count(), 1));
+    double density = 1.0;
+    uint64_t postings = 0;
     if constexpr (std::is_same_v<StateType, FixedPhraseState>) {
       for (const auto& term : this->state.terms) {
         least = std::min(least, term.first.docs_count);
+        density *= std::sqrt(term.first.docs_count / docs_count);
+        postings += term.first.docs_count;
       }
     } else {
       size_t begin = 0;
@@ -74,9 +81,17 @@ class PhraseQuery : public QueryBuilder {
         }
         begin += count;
         least = std::min(least, ClampEstimate(slot, segment));
+        density *= std::sqrt(std::min(static_cast<double>(slot), docs_count) /
+                             docs_count);
+        postings += slot;
       }
     }
+    _kind = QueryKind::Phrase;
     _estimate_max = least == std::numeric_limits<uint32_t>::max() ? 0 : least;
+    _estimate_matches = static_cast<uint32_t>(std::ceil(
+      std::sqrt(static_cast<double>(_estimate_max) * docs_count) * density));
+    _postings = postings;
+    _leaves = static_cast<uint32_t>(this->state.terms.size());
   }
 
   score_t Boost() const noexcept final { return boost; }

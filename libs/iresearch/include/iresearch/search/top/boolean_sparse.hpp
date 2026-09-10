@@ -31,6 +31,7 @@
 #include "basics/empty.hpp"
 #include "iresearch/index/iterators.hpp"
 #include "iresearch/search/column_collector.hpp"
+#include "iresearch/search/common/exclude_block.hpp"
 #include "iresearch/search/common/score/make_conjunction.hpp"
 #include "iresearch/search/common/score_args.hpp"
 #include "iresearch/search/common/score_policy.hpp"
@@ -91,7 +92,7 @@ class BooleanSparse : public Root {
         }
       }
       if constexpr (kExcludes) {
-        if (_excludes.Probe(doc) == doc) {
+        if (search::IsExcluded(_excludes, doc)) {
           doc = _lead.Advance();
           continue;
         }

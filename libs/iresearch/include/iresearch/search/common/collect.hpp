@@ -88,18 +88,45 @@ bool CollectFills(std::span<const Term> terms,
     });
 }
 
+inline constexpr uint64_t kPhraseCandidateShare = 16;
+
+inline uint64_t ChildCandidates(const QueryBuilder& child, doc_id_t) noexcept {
+  if (child.Kind() != QueryKind::Phrase) {
+    return child.EstimateMax();
+  }
+  return std::max<uint64_t>(
+    1, uint64_t{child.EstimateMatches()} / kPhraseCandidateShare);
+}
+
 template<typename Term>
 uint64_t IncludeCandidates(std::span<const Term> terms,
                            std::span<const QueryBuilder::ptr> filters,
                            const SubReader& segment) noexcept {
-  uint64_t candidates = segment.docs_count();
+  const auto docs_count = static_cast<doc_id_t>(segment.docs_count());
+  uint64_t candidates = docs_count;
   if (!terms.empty()) {
     candidates =
       std::min(candidates, uint64_t{CookieOf(terms.front()).docs_count});
   }
   if (!filters.empty()) {
     SDB_ASSERT(filters.front());
-    candidates = std::min(candidates, uint64_t{filters.front()->EstimateMax()});
+    candidates =
+      std::min(candidates, ChildCandidates(*filters.front(), docs_count));
+  }
+  return candidates;
+}
+
+template<typename Term>
+uint64_t LeadCandidates(std::span<const Term> terms,
+                        std::span<const QueryBuilder::ptr> filters,
+                        doc_id_t docs_count) noexcept {
+  uint64_t candidates = 0;
+  for (size_t i = 0; i != terms.size(); ++i) {
+    candidates += CookieOf(terms[i]).docs_count;
+  }
+  for (const auto& filter : filters) {
+    SDB_ASSERT(filter);
+    candidates += ChildCandidates(*filter, docs_count);
   }
   return candidates;
 }

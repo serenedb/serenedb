@@ -60,6 +60,8 @@ namespace irs::search {
 
 template<>
 inline constexpr uint64_t kFoldPostings<count::Root::ptr> = 4;
+template<>
+inline constexpr FoldEmit kFoldEmit<count::Root::ptr>{0.3, 1.0, false};
 
 template<>
 inline count::Root::ptr MakeBitsetNode<count::Root::ptr>(

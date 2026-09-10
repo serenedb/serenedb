@@ -27,6 +27,7 @@
 
 #include "basics/empty.hpp"
 #include "basics/shared.hpp"
+#include "iresearch/search/common/exclude_block.hpp"
 #include "iresearch/search/common/score/make_conjunction.hpp"
 #include "iresearch/search/common/score_args.hpp"
 #include "iresearch/search/common/score_policy.hpp"
@@ -82,7 +83,7 @@ class BooleanSparse {
       }
     }
     if constexpr (kExcludes) {
-      if (_excludes.Probe(target) == target) {
+      if (search::IsExcluded(_excludes, target)) {
         return target + 1;
       }
     }

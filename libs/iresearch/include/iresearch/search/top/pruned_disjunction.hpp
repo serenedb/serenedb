@@ -50,7 +50,7 @@ struct MinMatch {
 };
 
 template<typename Leaf, typename Match, typename Excludes, typename Table>
-class MaxScoreDisjunction : public Root {
+class PrunedDisjunction : public Root {
  public:
   static constexpr doc_id_t kWordBits = search::kWindowBits;
   static constexpr size_t kNumWords = search::kWindowWords;
@@ -61,8 +61,8 @@ class MaxScoreDisjunction : public Root {
   static constexpr bool kExcludes = !std::is_same_v<Excludes, utils::Empty>;
 
   template<typename Init, typename ExcludesArgs>
-  MaxScoreDisjunction(Table table, size_t size, doc_id_t docs, Match match,
-                      Init&& init, ExcludesArgs&& excludes)
+  PrunedDisjunction(Table table, size_t size, doc_id_t docs, Match match,
+                    Init&& init, ExcludesArgs&& excludes)
     : _entries{size,
                [&](Entry& entry, size_t i) {
                  entry.cost = std::max<uint32_t>(1, init(entry.leaf, i));
@@ -80,8 +80,8 @@ class MaxScoreDisjunction : public Root {
     }
   }
 
-  MaxScoreDisjunction(MaxScoreDisjunction&&) = delete;
-  MaxScoreDisjunction& operator=(MaxScoreDisjunction&&) = delete;
+  PrunedDisjunction(PrunedDisjunction&&) = delete;
+  PrunedDisjunction& operator=(PrunedDisjunction&&) = delete;
 
   void Run(LoserScoreCollector& collector) final {
     _collector = &collector;

@@ -86,11 +86,15 @@ template<Type Leaf, size_t N = 0, bool Scored = false>
 class OrLeaves {
  public:
   static constexpr bool kDecides = true;
+  static constexpr bool kBounded = requires(Leaf& leaf, doc_id_t doc) {
+    { leaf.AdvanceBlock(doc) } -> std::same_as<doc_id_t>;
+    { leaf.MaxScore(doc) } -> std::same_as<score_t>;
+  };
 
   template<typename Init>
   OrLeaves(size_t size, Init&& init)
     : _leaves{size, std::forward<Init>(init)}, _held{size} {
-    SDB_ASSERT(_leaves.size() > 1);
+    SDB_ASSERT(!_leaves.empty());
   }
 
   OrLeaves(OrLeaves&&) = delete;
@@ -98,12 +102,16 @@ class OrLeaves {
 
   doc_id_t Probe(doc_id_t target) {
     auto next = doc_limits::eof();
+    if constexpr (Scored) {
+      _hit = false;
+    }
     for (size_t i = 0, count = _leaves.size(); i != count; ++i) {
       const auto doc = _leaves[i].Probe(target);
       if (doc == target) {
         if constexpr (Scored) {
           _doc = target;
           _first = static_cast<uint32_t>(i);
+          _hit = true;
         }
         return target;
       }
@@ -112,10 +120,33 @@ class OrLeaves {
     return next;
   }
 
+  doc_id_t AdvanceBlock(doc_id_t target)
+    requires kBounded
+  {
+    auto end = doc_limits::eof();
+    for (auto& leaf : _leaves) {
+      end = std::min(end, leaf.AdvanceBlock(target));
+    }
+    return end;
+  }
+
+  score_t MaxScore(doc_id_t last) noexcept
+    requires kBounded
+  {
+    score_t bound = 0;
+    for (auto& leaf : _leaves) {
+      bound += leaf.MaxScore(last);
+    }
+    return bound;
+  }
+
   IRS_FORCE_INLINE void FetchScoreArgs(uint32_t slot)
     requires Scored
   {
     SDB_ASSERT(slot < kScoreBlock);
+    if (!_hit) {
+      return;
+    }
     SetBit(_held[_first], slot);
     _leaves[_first].FetchScoreArgs(slot);
     for (size_t i = _first + 1, count = _leaves.size(); i != count; ++i) {
@@ -139,6 +170,7 @@ class OrLeaves {
   [[no_unique_address]] utils::Need<Scored, doc_id_t> _doc =
     doc_limits::invalid();
   [[no_unique_address]] utils::Need<Scored, uint32_t> _first = 0;
+  [[no_unique_address]] utils::Need<Scored, bool> _hit = false;
 };
 
 template<Type Leaf, size_t N = 0, bool Scored = false>

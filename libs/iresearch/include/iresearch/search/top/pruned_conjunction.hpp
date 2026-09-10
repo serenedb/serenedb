@@ -40,7 +40,7 @@
 namespace irs::top {
 
 template<typename Lead, typename Others, typename Excludes, typename Table>
-class WandConjunction : public Root {
+class PrunedConjunction : public Root {
  public:
   static constexpr uint32_t kChunk = kScoreBlock;
   static constexpr size_t kNarrowWindowClauses = 4;
@@ -48,8 +48,8 @@ class WandConjunction : public Root {
   static constexpr bool kExcludes = !std::is_same_v<Excludes, utils::Empty>;
 
   template<typename Init, typename ExcludesArgs>
-  WandConjunction(Table table, ColumnArgsFetcher& fetcher, size_t size,
-                  Init&& init, ExcludesArgs&& excludes)
+  PrunedConjunction(Table table, ColumnArgsFetcher& fetcher, size_t size,
+                    Init&& init, ExcludesArgs&& excludes)
     : _others{fetcher, size - 1,
               [&](auto& leaf, size_t i) { init(leaf, i + 1); }},
       _excludes{
@@ -60,8 +60,22 @@ class WandConjunction : public Root {
     init(_lead, 0);
   }
 
-  WandConjunction(WandConjunction&&) = delete;
-  WandConjunction& operator=(WandConjunction&&) = delete;
+  template<typename LeadArgs, typename OthersArgs, typename ExcludesArgs>
+  PrunedConjunction(Table table, ColumnArgsFetcher& fetcher, size_t size,
+                    std::piecewise_construct_t, LeadArgs&& lead,
+                    OthersArgs&& others, ExcludesArgs&& excludes)
+    : _lead{std::make_from_tuple<Lead>(std::forward<LeadArgs>(lead))},
+      _others{fetcher, size - 1, std::piecewise_construct,
+              std::forward<OthersArgs>(others)},
+      _excludes{
+        std::make_from_tuple<Excludes>(std::forward<ExcludesArgs>(excludes))},
+      _admit{table} {
+    SDB_ASSERT(size > 1);
+    _narrow = size >= kNarrowWindowClauses;
+  }
+
+  PrunedConjunction(PrunedConjunction&&) = delete;
+  PrunedConjunction& operator=(PrunedConjunction&&) = delete;
 
   void Run(LoserScoreCollector& collector) final {
     for (auto doc = _lead.Advance(); !doc_limits::eof(doc);) {

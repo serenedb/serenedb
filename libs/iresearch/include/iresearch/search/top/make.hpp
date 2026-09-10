@@ -36,8 +36,8 @@
 #include "iresearch/search/fill/leaves.hpp"
 #include "iresearch/search/filter.hpp"
 #include "iresearch/search/top/detail/walk.hpp"
-#include "iresearch/search/top/max_score_disjunction.hpp"
 #include "iresearch/search/top/posting_pruned_disj.hpp"
+#include "iresearch/search/top/pruned_disjunction.hpp"
 #include "iresearch/search/top/root.hpp"
 #include "pg/sql_exception_macro.h"
 
@@ -150,14 +150,14 @@ Root::ptr MakeFixedPhrasePruned(const FixedPhraseQuery& query,
 Root::ptr MakeFixedPhraseIntervalsPruned(const FixedPhraseQuery& query,
                                          const Context& ctx);
 
-Root::ptr MakeWandConjunction(
+Root::ptr MakePrunedConjunction(
   std::span<const PostingClause> terms,
   std::span<const QueryBuilder::ptr> filters, search::Terms uniformity,
   std::span<const PostingClause> excludes,
   std::span<const QueryBuilder::ptr> exclude_filters, const SubReader& segment,
   const Context& ctx, ScoreMergeType merge);
 
-Root::ptr MakeNestedWandConjunction(
+Root::ptr MakeNestedPrunedConjunction(
   std::span<const PostingClause> terms,
   std::span<const QueryBuilder::ptr> filters,
   std::span<const PostingClause> excludes,
@@ -165,7 +165,7 @@ Root::ptr MakeNestedWandConjunction(
   const Context& ctx, ScoreMergeType merge);
 
 template<typename Term>
-Root::ptr MakeMaxScoreDisjunction(
+Root::ptr MakePrunedDisjunction(
   std::span<const Term> terms, std::span<const QueryBuilder::ptr> filters,
   search::Terms uniformity, const TermReader* field, const Scorer* scorer,
   score_t boost, std::span<const PostingClause> excludes,
@@ -209,7 +209,7 @@ Root::ptr MakeMaxScoreDisjunction(
     const auto docs_count = static_cast<doc_id_t>(segment.docs_count());
     const auto make = [&]<typename Match>(Match match) -> Root::ptr {
       if (excludes.empty() && exclude_filters.empty()) {
-        return MakeShape<MaxScoreDisjunction, Leaf, Match, utils::Empty>(
+        return MakeShape<PrunedDisjunction, Leaf, Match, utils::Empty>(
           ctx, terms.size(), docs_count, match, init, std::forward_as_tuple());
       }
       const auto candidates =
@@ -217,7 +217,7 @@ Root::ptr MakeMaxScoreDisjunction(
       return search::BuildBlockExcludes<Root::ptr>(
         excludes, exclude_filters, nullptr, segment, candidates, candidates,
         [&]<typename Exclude>(auto&& negated) -> Root::ptr {
-          return MakeShape<MaxScoreDisjunction, Leaf, Match,
+          return MakeShape<PrunedDisjunction, Leaf, Match,
                            fill::ProbedAndNot<Exclude>>(
             ctx, terms.size(), docs_count, match, init,
             std::forward_as_tuple(std::piecewise_construct,

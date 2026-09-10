@@ -352,9 +352,9 @@ set(IResearch_core_sources
     ./search/top/make_pruned_posting.cpp
     ./search/top/make_fixed_phrase_pruned.cpp
     ./search/top/make_fixed_phrase_intervals_pruned.cpp
-    ./search/top/make_max_score_disjunction.cpp
-    ./search/top/make_wand_conjunction.cpp
-    ./search/top/make_wand_nested.cpp
+    ./search/top/make_pruned_disjunction.cpp
+    ./search/top/make_pruned_conjunction.cpp
+    ./search/top/make_pruned_conjunction_nested.cpp
     ./search/multiterm_query.cpp
     ./search/term_query.cpp
     ./search/boolean_filter.cpp

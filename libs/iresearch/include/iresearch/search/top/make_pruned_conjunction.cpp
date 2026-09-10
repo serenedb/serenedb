@@ -31,7 +31,7 @@
 #include "iresearch/search/top/make.hpp"
 #include "iresearch/search/top/posting_pruned_clause.hpp"
 #include "iresearch/search/top/posting_pruned_lead.hpp"
-#include "iresearch/search/top/wand_conjunction.hpp"
+#include "iresearch/search/top/pruned_conjunction.hpp"
 
 namespace irs::top {
 namespace {
@@ -41,7 +41,7 @@ inline constexpr double kPruneMatchesPerHitPair = 75.0;
 
 }  // namespace
 
-Root::ptr MakeWandConjunction(
+Root::ptr MakePrunedConjunction(
   std::span<const PostingClause> terms,
   std::span<const QueryBuilder::ptr> filters, search::Terms uniformity,
   std::span<const PostingClause> excludes,
@@ -51,8 +51,8 @@ Root::ptr MakeWandConjunction(
     return {};
   }
   if (!filters.empty()) {
-    return MakeNestedWandConjunction(terms, filters, excludes, exclude_filters,
-                                     segment, ctx, merge);
+    return MakeNestedPrunedConjunction(terms, filters, excludes,
+                                       exclude_filters, segment, ctx, merge);
   }
   if (terms.size() < 2 || uniformity != search::Terms::Bounded) {
     return {};
@@ -89,14 +89,14 @@ Root::ptr MakeWandConjunction(
     };
     using Others = detail::PruneLeaves<Clause>;
     if (excludes.empty() && exclude_filters.empty()) {
-      return MakeShape<WandConjunction, Lead, Others, utils::Empty>(
+      return MakeShape<PrunedConjunction, Lead, Others, utils::Empty>(
         ctx, ctx.fetcher, size, init, std::forward_as_tuple());
     }
     const uint64_t lead = terms.front().state.cookie.docs_count;
     return search::BuildBlockExcludes<Root::ptr>(
       excludes, exclude_filters, nullptr, segment, lead, lead,
       [&]<typename Exclude>(auto&& negated) -> Root::ptr {
-        return MakeShape<WandConjunction, Lead, Others, Exclude>(
+        return MakeShape<PrunedConjunction, Lead, Others, Exclude>(
           ctx, ctx.fetcher, size, init,
           std::forward<decltype(negated)>(negated));
       });

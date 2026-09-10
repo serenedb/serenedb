@@ -24,7 +24,7 @@
 #include "iresearch/search/common/resolve.hpp"
 #include "iresearch/search/common/scored_context.hpp"
 #include "iresearch/search/top/make.hpp"
-#include "iresearch/search/top/max_score_disjunction.hpp"
 #include "iresearch/search/top/posting_pruned_disj.hpp"
+#include "iresearch/search/top/pruned_disjunction.hpp"
 
 namespace irs::top {}  // namespace irs::top

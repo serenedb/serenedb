@@ -1185,7 +1185,7 @@ skipif postgres
 > | inverted | text       | [NULL]       | simple_dict    | no       |
 > | inverted | text       | [NULL]       | tokenizer      | no       |
 > +----------+------------+--------------+----------------+----------+
-> (4 rows)
+> (5 rows)
 
 # AM-pattern form: scopes by access-method name.
 skipif postgres
@@ -1201,7 +1201,7 @@ skipif postgres
 > | inverted | text       | [NULL]       | simple_dict    | no       |
 > | inverted | text       | [NULL]       | tokenizer      | no       |
 > +----------+------------+--------------+----------------+----------+
-> (4 rows)
+> (5 rows)
 
 # AM + type-pattern form: scopes to a single input type within the AM.
 skipif postgres

@@ -42,6 +42,7 @@
 #include "iresearch/search/query_builder_impl.hpp"
 #include "iresearch/search/scored/detail/walk.hpp"
 #include "iresearch/search/scored/empty.hpp"
+#include "iresearch/search/scored/make_boolean.hpp"
 #include "iresearch/search/scored/masked.hpp"
 #include "iresearch/search/term_query.hpp"
 #include "iresearch/search/wildcard_ngram_filter.hpp"
@@ -140,50 +141,6 @@ Root::ptr Make(const AllQuery& query, const Context& ctx) {
 
 Root::ptr Make(const WildcardNGramQuery& query, const Context& ctx) {
   return MakeWildcardNGram(query, ctx);
-}
-
-Root::ptr Make(const BooleanQuery& query, const Context& ctx) {
-  const auto& segment = query.Segment();
-  const auto merge = query.MergeType();
-  const auto absorbed = query.Absorbed();
-  const std::span must = query.Terms(Occur::Must);
-  const std::span must_filters = query.Queries(Occur::Must);
-  const std::span should = query.Terms(Occur::Should);
-  const std::span should_filters = query.Queries(Occur::Should);
-  const auto min_match = query.MinShouldMatch();
-
-  const bool optional = !should.empty() || !should_filters.empty();
-  const bool only_scores = optional && min_match == 0;
-
-  if (!query.Terms(Occur::MustNot).empty() ||
-      !query.Queries(Occur::MustNot).empty()) {
-    if (auto windowed =
-          MakeWindowExclusion(query, segment, ctx, merge, absorbed)) {
-      return windowed;
-    }
-    return MakeSparseExclusion(query, segment, ctx, merge, absorbed);
-  }
-  if (must.empty() && must_filters.empty() && !only_scores) {
-    if (!optional) {
-      return MakeAll(segment, ctx, absorbed);
-    }
-    const auto uniformity = query.Uniformity(Occur::Should);
-    if (min_match == 1) {
-      return MakeWindowDisjunction(should, should_filters, uniformity, nullptr,
-                                   nullptr, kNoBoost, segment, ctx, merge,
-                                   absorbed);
-    }
-    if (min_match > search::kBitplaneMaxMatch) {
-      if (auto counted =
-            MakeCountThreshold(should, should_filters, uniformity, segment, ctx,
-                               merge, min_match, absorbed)) {
-        return counted;
-      }
-    }
-    return MakeBitsThreshold(should, should_filters, uniformity, segment, ctx,
-                             merge, min_match, absorbed);
-  }
-  return MakeSparseConjunction(query, segment, ctx, merge, absorbed);
 }
 
 Root::ptr MakeRoot(const QueryBuilder& query, const Context& ctx) {

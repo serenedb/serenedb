@@ -25,7 +25,7 @@
 
 #include "iresearch/search/common/posting_probe.hpp"
 #include "iresearch/search/geo_query.hpp"
-#include "iresearch/search/probe/sparse_disjunction_docs.hpp"
+#include "iresearch/search/probe/leaves.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
 namespace irs::probe {

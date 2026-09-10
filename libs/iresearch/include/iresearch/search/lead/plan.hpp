@@ -33,8 +33,6 @@
 #include "iresearch/search/lead/impl.hpp"
 #include "iresearch/search/lead/make.hpp"
 #include "iresearch/search/lead/single_posting_docs.hpp"
-#include "iresearch/search/lead/window_disjunction_docs.hpp"
-#include "iresearch/search/lead/window_disjunction_scored.hpp"
 
 namespace irs::lead {
 
@@ -84,58 +82,6 @@ Result ResolvePostingDocs(const PostingClause& posting, Make&& make) {
     return make.template operator()<PostingLead<Input>>(
       meta, doc, search::LayoutOf(own), search::BoundsOf(own));
   });
-}
-
-template<typename Term>
-Node::ptr MakeWindowDisjunctionOfTermsDocs(std::span<const Term> terms,
-                                           const TermReader* field,
-                                           const IndexInput& doc) {
-  SDB_ASSERT(terms.size() > 1);
-  return search::ResolveInput(doc, [&]<typename Input> -> Node::ptr {
-    using Leaf = search::PostingFill<Input>;
-    using Set = fill::SetLeaves<Leaf>;
-    return memory::make_managed<Impl<WindowDisjunctionDocs<Set>>>(
-      std::piecewise_construct,
-      std::forward_as_tuple(terms.size(), [&](Leaf& leaf, size_t i) {
-        const auto& own = FieldOf(terms[i], field);
-        const auto& meta = CookieOf(terms[i]);
-        SDB_ASSERT(meta.docs_count != 0);
-        leaf.Prepare(meta, doc, meta.docs_count != 1 && search::BoundsOf(own),
-                     meta.docs_count != 1 && search::FreqOf(own));
-      }));
-  });
-}
-
-template<typename Term>
-Node::ptr MakeDisjunctionOfTermsDocs(std::span<const Term> terms,
-                                     const TermReader* field,
-                                     const IndexInput& doc,
-                                     doc_id_t docs_count) {
-  SDB_ASSERT(terms.size() > 1);
-  if (search::TakeBitset<Node::ptr>(terms, doc, docs_count)) {
-    return search::MakeBitsetOf<Node::ptr>(terms, field, doc, docs_count,
-                                           nullptr);
-  }
-  return MakeWindowDisjunctionOfTermsDocs<Term>(terms, field, doc);
-}
-
-template<typename Term>
-Node::ptr MakeWindowDisjunctionOfTermsScored(
-  std::span<const Term> terms, const TermReader* field, const Scorer* scorer,
-  score_t boost, const IndexInput& doc, search::Terms uniformity,
-  const SubReader& segment, const ScoredCtx& ctx, ScoreMergeType merge,
-  score_t absorbed) {
-  const auto make = [&]<typename Set>(auto&&... args) -> Node::ptr {
-    const auto leaves =
-      std::forward_as_tuple(std::forward<decltype(args)>(args)...);
-    using Node = WindowDisjunctionScored<Set>;
-    return memory::make_managed<Impl<Node>>(std::piecewise_construct, leaves,
-                                            merge, absorbed);
-  };
-  const ScoreRecipe recipe{.segment = &segment, .fetcher = ctx.fetcher};
-  std::vector<fill::Node::ptr> rest;
-  return search::BuildScoredWindow<Node::ptr, Term>(
-    terms, field, scorer, boost, &doc, rest, uniformity, recipe, merge, make);
 }
 
 }  // namespace irs::lead

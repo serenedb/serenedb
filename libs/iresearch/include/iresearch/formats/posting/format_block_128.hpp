@@ -412,6 +412,7 @@ struct FormatTraits128 {
     bool IsBitset() const noexcept { return kind == Kind::Bitset; }
   };
 
+  template<bool Clear>
   IRS_FORCE_INLINE static uint32_t MaskLeaf(FillLeaf leaf, uint32_t prev,
                                             uint32_t len, doc_id_t min,
                                             doc_id_t max,
@@ -421,15 +422,30 @@ struct FormatTraits128 {
     SDB_ASSERT(min <= prev && prev < max);
     constexpr auto kBits = BitsRequired<uint64_t>();
     const uint64_t first = prev - min;
+    const auto range = [&](uint64_t begin, uint64_t end) IRS_FORCE_INLINE {
+      if constexpr (Clear) {
+        ClearBitRange(mask, begin, end);
+      } else {
+        SetBitRange(mask, begin, end);
+      }
+    };
+    const auto bitset_at = [&](const uint64_t* IRS_RESTRICT src, uint32_t words,
+                               uint64_t last) IRS_FORCE_INLINE {
+      if constexpr (Clear) {
+        AndNotBitsetAt(mask, first, src, words, last);
+      } else {
+        OrBitsetAt(mask, first, src, words, last);
+      }
+    };
 
     if (leaf.IsRun()) {
       if (leaf.max < max) {
-        SetBitRange(mask, first + 1, first + 1 + len);
+        range(first + 1, first + 1 + len);
         return 0;
       }
       const auto inside = max - prev - 1;
       if (inside != 0) {
-        SetBitRange(mask, first + 1, first + 1 + inside);
+        range(first + 1, first + 1 + inside);
       }
       const auto live = len - inside;
       FillSameDelta(docs_end - live, live, max - 1, 1);
@@ -438,13 +454,13 @@ struct FormatTraits128 {
 
     const auto* const bitset = leaf.bitset;
     if (leaf.max < max) {
-      OrBitsetAt(mask, first, bitset, leaf.words);
+      bitset_at(bitset, leaf.words, bitset[leaf.words - 1]);
       return 0;
     }
     const auto limit = max - prev;
     const auto split = (limit - 1) / kBits;
     const auto keep = ~uint64_t{0} >> (kBits - 1 - (limit - 1) % kBits);
-    OrBitsetAt(mask, first, bitset, split + 1, bitset[split] & keep);
+    bitset_at(bitset, split + 1, bitset[split] & keep);
 
     const auto rest = bitset[split] & ~keep;
     auto live = static_cast<uint32_t>(std::popcount(rest));

@@ -41,7 +41,7 @@ struct HnswQueryDist {
   }
 
   void Batch(std::span<const uint32_t> ids, score_t* out,
-             score_t /*threshold*/ = 0.f) const noexcept {
+             score_t = 0.f) const noexcept {
     HnswComputeDistances<M>(q, base, d, ids, out);
   }
 

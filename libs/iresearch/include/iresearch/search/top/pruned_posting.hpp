@@ -20,16 +20,20 @@
 
 #pragma once
 
+#include <tuple>
+#include <type_traits>
 #include <utility>
 
+#include "basics/empty.hpp"
 #include "iresearch/index/iterators.hpp"
+#include "iresearch/search/common/exclude_block.hpp"
 #include "iresearch/search/top/admit.hpp"
 #include "iresearch/search/top/detail/prune_leaf.hpp"
 #include "iresearch/search/top/root.hpp"
 
 namespace irs::top {
 
-template<typename InputType, typename Table>
+template<typename InputType, typename Excludes, typename Table>
 class PrunedPosting : public Root,
                       public search::PruneLeafBase<InputType, true> {
   using Base = search::PruneLeafBase<InputType, true>;
@@ -44,10 +48,18 @@ class PrunedPosting : public Root,
   using Base::ReadLeaf;
 
  public:
-  template<typename... Args>
-  explicit PrunedPosting(Table table, Args&&... args) : _admit{table} {
+  static constexpr bool kExcludes = !std::is_same_v<Excludes, utils::Empty>;
+
+  template<typename ExcludesArgs, typename... Args>
+  PrunedPosting(Table table, ExcludesArgs&& excludes, Args&&... args)
+    : _excludes{std::make_from_tuple<Excludes>(
+        std::forward<ExcludesArgs>(excludes))},
+      _admit{table} {
     Prepare(std::forward<Args>(args)...);
   }
+
+  PrunedPosting(PrunedPosting&&) = delete;
+  PrunedPosting& operator=(PrunedPosting&&) = delete;
 
   void Prepare(const PostingMeta& meta, const IndexInput& doc_in,
                IndexFeatures layout, const SubReader& segment,
@@ -59,9 +71,14 @@ class PrunedPosting : public Root,
   }
 
   void Run(LoserScoreCollector& collector) final {
-    const auto emit = [&](const doc_id_t* IRS_RESTRICT docs, uint32_t len,
-                          const score_t* IRS_RESTRICT scores) IRS_FORCE_INLINE {
-      _admit.AddDocs(collector, docs, len, scores);
+    const auto emit = [&](doc_id_t* IRS_RESTRICT docs, uint32_t len,
+                          score_t* IRS_RESTRICT scores) IRS_FORCE_INLINE {
+      if constexpr (kExcludes) {
+        len = search::ExcludeBlock(_excludes, docs, scores, len);
+      }
+      if (len != 0) {
+        _admit.AddDocs(collector, docs, len, scores);
+      }
       _skip.Reader().Threshold() = collector.ScoreThreshold();
     };
 
@@ -96,6 +113,7 @@ class PrunedPosting : public Root,
   }
 
  private:
+  [[no_unique_address]] Excludes _excludes;
   [[no_unique_address]] Admit<Table> _admit;
 };
 

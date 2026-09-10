@@ -164,11 +164,31 @@ inline IRS_FORCE_INLINE void SetBitRange(uint64_t* IRS_RESTRICT words,
   words[last] |= tail;
 }
 
-inline IRS_FORCE_INLINE void OrBitsetAt(uint64_t* IRS_RESTRICT dst,
-                                        uint64_t begin,
-                                        const uint64_t* IRS_RESTRICT src,
-                                        uint32_t words,
-                                        uint64_t last) noexcept {
+inline IRS_FORCE_INLINE void ClearBitRange(uint64_t* IRS_RESTRICT words,
+                                           uint64_t begin,
+                                           uint64_t end) noexcept {
+  SDB_ASSERT(begin < end);
+  constexpr auto kBits = BitsRequired<uint64_t>();
+  const auto first = begin / kBits;
+  const auto last = (end - 1) / kBits;
+  const uint64_t head = ~uint64_t{0} << (begin % kBits);
+  const uint64_t tail = ~uint64_t{0} >> (kBits - 1 - (end - 1) % kBits);
+  if (first == last) {
+    words[first] &= ~(head & tail);
+    return;
+  }
+  words[first] &= ~head;
+  for (auto i = first + 1; i != last; ++i) {
+    words[i] = 0;
+  }
+  words[last] &= ~tail;
+}
+
+template<typename Merge>
+IRS_FORCE_INLINE void MergeBitsetAt(uint64_t* IRS_RESTRICT dst, uint64_t begin,
+                                    const uint64_t* IRS_RESTRICT src,
+                                    uint32_t words, uint64_t last,
+                                    Merge&& merge) noexcept {
   SDB_ASSERT(words != 0);
   constexpr auto kBits = BitsRequired<uint64_t>();
   const auto tail = words - 1;
@@ -176,22 +196,32 @@ inline IRS_FORCE_INLINE void OrBitsetAt(uint64_t* IRS_RESTRICT dst,
   const auto shift = begin % kBits;
   if (shift == 0) {
     for (uint32_t i = 0; i != tail; ++i) {
-      dst[i] |= src[i];
+      merge(dst[i], src[i]);
     }
-    dst[tail] |= last;
+    merge(dst[tail], last);
     return;
   }
   uint64_t carry = 0;
   for (uint32_t i = 0; i != tail; ++i) {
     const auto word = src[i];
-    dst[i] |= (word << shift) | carry;
+    merge(dst[i], (word << shift) | carry);
     carry = word >> (kBits - shift);
   }
-  dst[tail] |= (last << shift) | carry;
+  merge(dst[tail], (last << shift) | carry);
   carry = last >> (kBits - shift);
   if (carry != 0) {
-    dst[words] |= carry;
+    merge(dst[words], carry);
   }
+}
+
+inline IRS_FORCE_INLINE void OrBitsetAt(uint64_t* IRS_RESTRICT dst,
+                                        uint64_t begin,
+                                        const uint64_t* IRS_RESTRICT src,
+                                        uint32_t words,
+                                        uint64_t last) noexcept {
+  MergeBitsetAt(dst, begin, src, words, last,
+                [](uint64_t& word, uint64_t bits)
+                  IRS_FORCE_INLINE { word |= bits; });
 }
 
 inline IRS_FORCE_INLINE void OrBitsetAt(uint64_t* IRS_RESTRICT dst,
@@ -199,6 +229,16 @@ inline IRS_FORCE_INLINE void OrBitsetAt(uint64_t* IRS_RESTRICT dst,
                                         const uint64_t* IRS_RESTRICT src,
                                         uint32_t words) noexcept {
   OrBitsetAt(dst, begin, src, words, src[words - 1]);
+}
+
+inline IRS_FORCE_INLINE void AndNotBitsetAt(uint64_t* IRS_RESTRICT dst,
+                                            uint64_t begin,
+                                            const uint64_t* IRS_RESTRICT src,
+                                            uint32_t words,
+                                            uint64_t last) noexcept {
+  MergeBitsetAt(dst, begin, src, words, last,
+                [](uint64_t& word, uint64_t bits)
+                  IRS_FORCE_INLINE { word &= ~bits; });
 }
 
 template<size_t N, typename Visitor>

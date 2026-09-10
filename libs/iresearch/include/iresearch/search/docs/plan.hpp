@@ -28,10 +28,9 @@
 #include "iresearch/search/common/bitset_of.hpp"
 #include "iresearch/search/common/collect.hpp"
 #include "iresearch/search/common/phrase_of.hpp"
-#include "iresearch/search/docs/bitset.hpp"
+#include "iresearch/search/docs/boolean_bitset.hpp"
 #include "iresearch/search/docs/make.hpp"
 #include "iresearch/search/docs/walk.hpp"
-#include "iresearch/search/docs/window.hpp"
 #include "iresearch/search/fill/set_leaves.hpp"
 
 namespace irs::docs {
@@ -94,63 +93,6 @@ using search::ResolveBounds;
 using search::ResolveInput;
 using search::SegmentDoc;
 
-Root::ptr MakeBitsetDisjunction(std::span<const search::PostingClause> terms,
-                                const IndexInput* doc,
-                                std::vector<FillNode::ptr>& rest,
-                                doc_id_t docs_count, const Context& ctx);
-Root::ptr MakeWindowDisjunction(std::span<const search::PostingClause> terms,
-                                const IndexInput* doc,
-                                std::vector<FillNode::ptr>& rest,
-                                const Context& ctx);
-Root::ptr MakeBitsetConjunction(std::span<const search::PostingClause> terms,
-                                std::span<const QueryBuilder::ptr> filters,
-                                const SubReader& segment, const Context& ctx);
-Root::ptr MakeWindowConjunction(std::span<const search::PostingClause> terms,
-                                std::span<const QueryBuilder::ptr> filters,
-                                const SubReader& segment, const Context& ctx);
-Root::ptr MakeSparseConjunction(std::span<const search::PostingClause> terms,
-                                std::span<const QueryBuilder::ptr> filters,
-                                const SubReader& segment, const Context& ctx);
-Root::ptr MakeSparseConjunctionWith(
-  std::span<const search::PostingClause> terms,
-  std::span<const QueryBuilder::ptr> filters, const SubReader& segment,
-  ProbeNode::ptr other, const Context& ctx);
-
-Root::ptr MakeBitsetExclusion(
-  std::span<const search::PostingClause> terms,
-  std::span<const QueryBuilder::ptr> filters,
-  std::span<const search::PostingClause> exclude_terms,
-  std::span<const QueryBuilder::ptr> exclude_filters, const SubReader& segment,
-  uint64_t candidates, const Context& ctx);
-Root::ptr MakeWindowExclusion(
-  std::span<const search::PostingClause> terms,
-  std::span<const QueryBuilder::ptr> filters,
-  std::span<const search::PostingClause> exclude_terms,
-  std::span<const QueryBuilder::ptr> exclude_filters, const SubReader& segment,
-  uint64_t candidates, const Context& ctx);
-Root::ptr MakeComplement(std::span<const search::PostingClause> exclude_terms,
-                         std::span<const QueryBuilder::ptr> exclude_filters,
-                         const SubReader& segment, const Context& ctx);
-Root::ptr MakeSparseExclusion(
-  std::span<const search::PostingClause> terms,
-  std::span<const QueryBuilder::ptr> filters,
-  std::span<const search::PostingClause> exclude_terms,
-  std::span<const QueryBuilder::ptr> exclude_filters, const SubReader& segment,
-  uint64_t candidates, const Context& ctx);
-Root::ptr MakeSparseExclusionOf(
-  LeadNode::ptr include, std::span<const search::PostingClause> exclude_terms,
-  std::span<const QueryBuilder::ptr> exclude_filters, const SubReader& segment,
-  uint64_t candidates, const Context& ctx);
-
-Root::ptr MakeBitsThreshold(std::span<const search::PostingClause> terms,
-                            const IndexInput* doc,
-                            std::vector<FillNode::ptr>& rest,
-                            uint32_t min_match, const Context& ctx);
-Root::ptr MakeCountThreshold(std::span<const search::PostingClause> terms,
-                             const IndexInput* doc,
-                             const std::vector<FillNode::ptr>& rest,
-                             uint32_t min_match, const Context& ctx);
-
 Root::ptr MakeFixedPhrase(const FixedPhraseQuery& query, const Context& ctx);
 Root::ptr MakeFixedPhraseIntervals(const FixedPhraseQuery& query,
                                    const Context& ctx);
@@ -165,45 +107,5 @@ Root::ptr MakeVariadicPhraseSlop(const VariadicPhraseQuery& query,
 
 Root::ptr MakeNGram(const NGramSimilarityQuery& query, const Context& ctx);
 Root::ptr MakeNGramAll(const NGramSimilarityQuery& query, const Context& ctx);
-
-template<typename Term>
-Root::ptr MakeBitsetDisjunctionOfTerms(std::span<const Term> terms,
-                                       const TermReader* field,
-                                       const IndexInput& doc,
-                                       doc_id_t docs_count, const Context&) {
-  return search::MakeBitsetOf<Root::ptr>(terms, field, doc, docs_count,
-                                         nullptr);
-}
-
-template<typename Term>
-Root::ptr MakeWindowDisjunctionOfTerms(std::span<const Term> terms,
-                                       const TermReader* field,
-                                       const IndexInput& doc,
-                                       const Context& ctx) {
-  SDB_ASSERT(terms.size() > 1);
-  return ResolveInput(doc, [&]<typename Input> -> Root::ptr {
-    using Leaf = PostingFill<Input>;
-    const auto init = [&](Leaf& leaf, size_t i) {
-      const auto& own = search::FieldOf(terms[i], field);
-      const auto& meta = search::CookieOf(terms[i]);
-      SDB_ASSERT(meta.docs_count != 0);
-      leaf.Prepare(meta, doc, meta.docs_count != 1 && search::BoundsOf(own),
-                   meta.docs_count != 1 && search::FreqOf(own));
-    };
-    return MakeWindowOfSet<fill::SetLeaves<Leaf>>(ctx, terms.size(), init);
-  });
-}
-
-template<typename Term>
-Root::ptr MakeDisjunctionOfTerms(std::span<const Term> terms,
-                                 const TermReader* field, const IndexInput& doc,
-                                 doc_id_t docs_count, const Context& ctx) {
-  SDB_ASSERT(terms.size() > 1);
-  if (auto folded =
-        MakeBitsetDisjunctionOfTerms(terms, field, doc, docs_count, ctx)) {
-    return folded;
-  }
-  return MakeWindowDisjunctionOfTerms(terms, field, doc, ctx);
-}
 
 }  // namespace irs::docs

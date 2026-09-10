@@ -50,6 +50,7 @@ class PostingPrunedDisj : public PruneLeafBase<InputType, false> {
 
  public:
   using Base::MaxScore;
+  using Base::SeekToBlock;
   using Base::SetSkipBoundsBelow;
   using Base::Value;
 
@@ -70,31 +71,13 @@ class PostingPrunedDisj : public PruneLeafBase<InputType, false> {
     Prepare(meta, doc_in, layout, segment, field, args);
   }
 
-  doc_id_t SeekToBlock(doc_id_t target) {
-    if (_skip.NumLevels() == 0) [[unlikely]] {
-      return doc_limits::eof();
-    }
-    auto& reader = _skip.Reader();
-    const auto upper_bound = reader.UpperBound();
-    if (upper_bound >= target) {
-      return upper_bound;
-    }
-    const auto below = reader.SkipBoundsBelow();
-    reader.SetSkipBoundsBelow(std::max(below, target));
-    _left_in_list = _skip.Seek(target);
-    reader.SetSkipBoundsBelow(below);
-    _left_in_leaf = 0;
-    _needs_reposition = true;
-    _upper_bound = reader.UpperBound();
-    return _upper_bound;
-  }
-
   doc_id_t Seek(doc_id_t target) {
     if (target <= _doc) [[unlikely]] {
       return _doc;
     }
     if (_skip.Reader().IsLessThanUpperBound(target)) [[unlikely]] {
-      if (!doc_limits::eof(SeekToBlock(target))) {
+      SeekToBlock(target);
+      if (_needs_reposition) {
         _doc = _skip.Reader().State().doc;
       }
     }
@@ -154,8 +137,7 @@ class PostingPrunedDisj : public PruneLeafBase<InputType, false> {
 
   tail: {
     auto* const begin = std::end(_docs) - _left_in_leaf;
-    auto* const end = std::find_if(begin, std::end(_docs),
-                                   [max](doc_id_t doc) { return doc >= max; });
+    auto* const end = Base::FirstNotBelow(begin, max);
     _left_in_leaf = static_cast<uint32_t>(std::end(_docs) - end);
     if (end != begin) {
       Emit(begin, static_cast<uint32_t>(end - begin), visit);
@@ -177,10 +159,40 @@ class PostingPrunedDisj : public PruneLeafBase<InputType, false> {
       max, [&](const doc_id_t* IRS_RESTRICT docs, uint32_t len,
                const score_t* IRS_RESTRICT scores) IRS_FORCE_INLINE {
         static constexpr auto kBits = BitsRequired<uint64_t>();
-        for (uint32_t i = 0; i != len; ++i) {
+        const auto add = [&](uint32_t i) IRS_FORCE_INLINE {
           const size_t offset = docs[i] - min;
           SetBit(mask[offset / kBits], offset % kBits);
           window[offset] += scores[i];
+        };
+        if (len == doc_limits::kBlockSize) [[likely]] {
+          VisitDocs<doc_limits::kBlockSize>(doc_limits::kBlockSize, add);
+        } else {
+          for (uint32_t i = 0; i != len; ++i) {
+            add(i);
+          }
+        }
+      });
+  }
+
+  void FillCounted(doc_id_t min, doc_id_t max, uint64_t* IRS_RESTRICT mask,
+                   score_t* IRS_RESTRICT window,
+                   uint32_t* IRS_RESTRICT counts) {
+    ForEachScoredBlock(
+      max, [&](const doc_id_t* IRS_RESTRICT docs, uint32_t len,
+               const score_t* IRS_RESTRICT scores) IRS_FORCE_INLINE {
+        static constexpr auto kBits = BitsRequired<uint64_t>();
+        const auto add = [&](uint32_t i) IRS_FORCE_INLINE {
+          const size_t offset = docs[i] - min;
+          SetBit(mask[offset / kBits], offset % kBits);
+          window[offset] += scores[i];
+          ++counts[offset];
+        };
+        if (len == doc_limits::kBlockSize) [[likely]] {
+          VisitDocs<doc_limits::kBlockSize>(doc_limits::kBlockSize, add);
+        } else {
+          for (uint32_t i = 0; i != len; ++i) {
+            add(i);
+          }
         }
       });
   }
@@ -188,6 +200,23 @@ class PostingPrunedDisj : public PruneLeafBase<InputType, false> {
   template<typename DocsBuffer, typename ScoresBuffer>
   void ScoreCandidates(DocsBuffer& cand_docs, ScoresBuffer& cand_scores,
                        bool required, doc_id_t window_max) {
+    ScoreCandidatesImpl<false>(cand_docs, cand_scores, cand_scores, required,
+                               window_max);
+  }
+
+  template<typename DocsBuffer, typename ScoresBuffer, typename MatchesBuffer>
+  void ScoreCandidates(DocsBuffer& cand_docs, ScoresBuffer& cand_scores,
+                       MatchesBuffer& cand_matches, bool required,
+                       doc_id_t window_max) {
+    ScoreCandidatesImpl<true>(cand_docs, cand_scores, cand_matches, required,
+                              window_max);
+  }
+
+  template<bool Counted, typename DocsBuffer, typename ScoresBuffer,
+           typename MatchesBuffer>
+  void ScoreCandidatesImpl(DocsBuffer& cand_docs, ScoresBuffer& cand_scores,
+                           [[maybe_unused]] MatchesBuffer& cand_matches,
+                           bool required, doc_id_t window_max) {
     SDB_ASSERT(!cand_docs.empty());
     size_t out = 0;
     SetSkipBoundsBelow(window_max);
@@ -200,6 +229,9 @@ class PostingPrunedDisj : public PruneLeafBase<InputType, false> {
       if (required) {
         cand_docs.resize(0);
         cand_scores.resize(0);
+        if constexpr (Counted) {
+          cand_matches.resize(0);
+        }
       }
       return;
     }
@@ -207,13 +239,14 @@ class PostingPrunedDisj : public PruneLeafBase<InputType, false> {
     ABSL_CACHELINE_ALIGNED doc_id_t docs[kScoreBlock];
     ABSL_CACHELINE_ALIGNED uint32_t freqs[kScoreBlock];
     ABSL_CACHELINE_ALIGNED uint32_t indices[kScoreBlock];
+    ABSL_CACHELINE_ALIGNED score_t scores[kScoreBlock];
     size_t count = 0;
     _provider.freq.value = freqs;
 
     auto score_block = [&](uint32_t len) {
       SDB_ASSERT(len != 0);
       _fetcher->Fetch(std::span<const doc_id_t>{docs, len});
-      auto* const p = reinterpret_cast<score_t*>(std::end(_enc.data) - len);
+      auto* const p = scores;
       if (len == kScoreBlock) {
         _score.ScoreBlock(p);
       } else {
@@ -221,6 +254,9 @@ class PostingPrunedDisj : public PruneLeafBase<InputType, false> {
       }
       for (uint32_t j = 0; j != len; ++j) {
         cand_scores[indices[j]] += p[j];
+        if constexpr (Counted) {
+          ++cand_matches[indices[j]];
+        }
       }
       count = 0;
     };
@@ -233,11 +269,18 @@ class PostingPrunedDisj : public PruneLeafBase<InputType, false> {
         if (cand > *(end - 1)) {
           break;
         }
-        const auto* const it = std::find(begin, end, cand);
-        if (it != end) {
+        const doc_id_t* it = BranchlessLowerBound<doc_limits::kBlockSize>(
+          std::cbegin(_docs), cand);
+        if (it < begin) {
+          it = begin;
+        }
+        if (it != end && *it == cand) {
           if (required) {
             cand_docs[out] = cand_docs[cand_idx];
             cand_scores[out] = cand_scores[cand_idx];
+            if constexpr (Counted) {
+              cand_matches[out] = cand_matches[cand_idx];
+            }
             indices[count] = out;
             ++out;
           } else {
@@ -245,13 +288,14 @@ class PostingPrunedDisj : public PruneLeafBase<InputType, false> {
           }
           docs[count] = cand;
           freqs[count] =
-            _freqs.data[static_cast<size_t>(it - std::begin(_docs))];
+            _freqs.data[static_cast<size_t>(it - std::cbegin(_docs))];
           ++count;
           if (count == kScoreBlock) {
             score_block(kScoreBlock);
           }
-          begin = it + 1;
+          ++it;
         }
+        begin = it;
         ++cand_idx;
       }
     };
@@ -305,9 +349,8 @@ class PostingPrunedDisj : public PruneLeafBase<InputType, false> {
     }
 
   cand_tail: {
-    const auto* const begin = std::end(_docs) - _left_in_leaf;
-    const auto* const end = std::find_if(
-      begin, std::cend(_docs), [max](doc_id_t doc) { return doc >= max; });
+    const auto* const begin = std::cend(_docs) - _left_in_leaf;
+    const auto* const end = Base::FirstNotBelow(begin, max);
     if (end != begin) {
       find_in_block(begin, end);
     }
@@ -331,6 +374,9 @@ class PostingPrunedDisj : public PruneLeafBase<InputType, false> {
     if (required) {
       cand_docs.resize(out);
       cand_scores.resize(out);
+      if constexpr (Counted) {
+        cand_matches.resize(out);
+      }
     }
   }
 

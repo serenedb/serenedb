@@ -56,6 +56,14 @@ size_t ScoredCount(std::span<const Term> terms, const Scorer* scorer) noexcept {
   return count;
 }
 
+inline bool ScoresPerDocTerm(const PostingClause& posting) noexcept {
+  SDB_ASSERT(posting.state.reader != nullptr);
+  const auto& own = *posting.state.reader;
+  return posting.state.cookie.docs_count != 1 &&
+         posting.stats.stats != nullptr && DocOf(own) != nullptr &&
+         FreqOf(own) && ScoresPerDoc(posting.stats.scorer);
+}
+
 template<typename Term, typename PlanChild>
 bool CollectDenseScored(std::span<const Term> terms,
                         std::span<const QueryBuilder::ptr> filters,

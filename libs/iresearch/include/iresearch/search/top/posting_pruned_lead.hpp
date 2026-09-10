@@ -79,7 +79,8 @@ class PostingPrunedLead : public PruneLeafBase<InputType, false> {
       return _doc;
     }
     if (_skip.Reader().IsLessThanUpperBound(target)) [[unlikely]] {
-      if (!doc_limits::eof(SeekToBlock(target))) {
+      Base::SeekToBlock(target);
+      if (_needs_reposition) {
         _doc = _skip.Reader().State().doc;
       }
     }
@@ -142,8 +143,7 @@ class PostingPrunedLead : public PruneLeafBase<InputType, false> {
 
   tail: {
     auto* const begin = std::end(_docs) - _left_in_leaf;
-    auto* const end = std::find_if(begin, std::end(_docs),
-                                   [max](doc_id_t doc) { return doc >= max; });
+    auto* const end = this->FirstNotBelow(begin, max);
     _left_in_leaf = static_cast<uint32_t>(std::end(_docs) - end);
     if (end != begin) {
       Emit(begin, static_cast<uint32_t>(end - begin), visit);
@@ -157,26 +157,6 @@ class PostingPrunedLead : public PruneLeafBase<InputType, false> {
     } else {
       _doc = doc_limits::eof();
     }
-  }
-
- private:
-  doc_id_t SeekToBlock(doc_id_t target) {
-    if (_skip.NumLevels() == 0) [[unlikely]] {
-      return doc_limits::eof();
-    }
-    auto& reader = _skip.Reader();
-    const auto upper_bound = reader.UpperBound();
-    if (upper_bound >= target) {
-      return upper_bound;
-    }
-    const auto below = reader.SkipBoundsBelow();
-    reader.SetSkipBoundsBelow(std::max(below, target));
-    _left_in_list = _skip.Seek(target);
-    reader.SetSkipBoundsBelow(below);
-    _left_in_leaf = 0;
-    _needs_reposition = true;
-    _upper_bound = reader.UpperBound();
-    return _upper_bound;
   }
 };
 

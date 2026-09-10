@@ -91,6 +91,7 @@ class Executor {
   size_t ExecuteTopKWithCount(size_t k, std::string_view query);
   size_t ExecuteCount(std::string_view query);
   size_t HashResults() const;
+  size_t HashResultsWithCount(size_t count) const;
   void PrintResults() const;
 
   // Where `Report::print` writes. The benchmark harness reads stderr; a test

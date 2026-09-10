@@ -70,6 +70,33 @@ IRS_FORCE_INLINE constexpr bool NextWindow(doc_id_t min, doc_id_t next,
   return true;
 }
 
+template<typename Group>
+consteval bool Retracts() {
+  if constexpr (requires { Group::kRetracts; }) {
+    return Group::kRetracts;
+  } else {
+    return false;
+  }
+}
+
+template<typename Group>
+consteval bool LazyReset() {
+  if constexpr (requires { Group::kLazyReset; }) {
+    return Group::kLazyReset;
+  } else {
+    return false;
+  }
+}
+
+template<typename Group>
+consteval bool Tallies() {
+  if constexpr (requires { Group::kTally; }) {
+    return Group::kTally;
+  } else {
+    return false;
+  }
+}
+
 inline IRS_FORCE_INLINE void Clear(uint64_t* IRS_RESTRICT dst,
                                    size_t words) noexcept {
   for (size_t w = 0; w != words; ++w) {

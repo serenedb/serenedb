@@ -28,15 +28,48 @@
 #include <utility>
 #include <vector>
 
+#include "basics/empty.hpp"
+#include "iresearch/index/index_reader.hpp"
 #include "iresearch/search/boolean_query.hpp"
 #include "iresearch/search/common/all_docs_score.hpp"
+#include "iresearch/search/common/boolean_bitset.hpp"
 #include "iresearch/search/common/collect.hpp"
-#include "iresearch/search/common/conjunction_of.hpp"
 #include "iresearch/search/common/plan.hpp"
 #include "iresearch/search/common/scored_context.hpp"
+#include "iresearch/search/fill/walk.hpp"
+#include "iresearch/search/lead/boolean_sparse.hpp"
 #include "iresearch/search/probe/make.hpp"
 
 namespace irs::search {
+
+template<typename Result, typename Term>
+Result BuildConjunctionOf(std::span<const Term> terms,
+                          std::span<const QueryBuilder::ptr> filters,
+                          const TermReader* field, const SubReader& segment,
+                          uint64_t interrogations) {
+  constexpr bool kFilled = std::is_same_v<Result, FillNode::ptr>;
+  if (auto folded = MakeConjunctionBitset<Result>(terms, filters, field,
+                                                  segment, nullptr)) {
+    return folded;
+  }
+  return BuildConjunction<Result, Term>(
+    terms, filters, field, segment, interrogations,
+    []<typename Lead, typename Others>(auto&& lead, auto&& others) -> Result {
+      using Node =
+        lead::BooleanSparse<Lead, Others, utils::Empty, utils::Empty>;
+      if constexpr (kFilled) {
+        return memory::make_managed<fill::ByWalkDocs<Node>>(
+          std::piecewise_construct, std::forward<decltype(lead)>(lead),
+          std::forward<decltype(others)>(others), std::forward_as_tuple(),
+          std::forward_as_tuple());
+      } else {
+        return memory::make_managed<lead::Impl<Node>>(
+          std::piecewise_construct, std::forward<decltype(lead)>(lead),
+          std::forward<decltype(others)>(others), std::forward_as_tuple(),
+          std::forward_as_tuple());
+      }
+    });
+}
 
 template<typename Result, typename Term, typename Make>
 Result BuildRequiredLeadOf(std::span<const Term> terms,

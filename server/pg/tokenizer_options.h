@@ -50,31 +50,9 @@
 #include <variant>
 
 #include "basics/assert.h"
-#include "magic_enum/magic_enum.hpp"
 #include "pg/geo_tokenizer_options.h"
 #include "pg/option_help.h"
 
-namespace magic_enum {
-
-template<>
-constexpr customize::customize_t
-customize::enum_name<irs::analysis::NGramTokenizer::NGramMode>(
-  irs::analysis::NGramTokenizer::NGramMode value) noexcept {
-  using NGramMode = irs::analysis::NGramTokenizer::NGramMode;
-  switch (value) {
-    case NGramMode::All:
-      return "all";
-    case NGramMode::Prefix:
-      return "only_prefix";
-    case NGramMode::Suffix:
-      return "only_suffix";
-    case NGramMode::PrefixAndSuffix:
-      return "only_prefix_and_suffix";
-  }
-  return invalid_tag;
-}
-
-}  // namespace magic_enum
 namespace sdb::pg::tokenizer_options {
 
 using namespace std::string_view_literals;

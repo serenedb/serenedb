@@ -22,6 +22,7 @@
 
 #pragma once
 
+#include <magic_enum/magic_enum.hpp>
 #include <tuple>
 #include <vector>
 
@@ -111,3 +112,27 @@ class NGramTokenizer final : public TypedTokenizer<NGramTokenizer>,
 extern template class TypedTokenizer<NGramTokenizer>;
 
 }  // namespace irs::analysis
+namespace magic_enum {
+
+// The one reflection of NGramMode, beside the enum: every TU that reflects it
+// must see the same names, or the linker mixes the per-TU tables (ODR). The
+// names are the user surface -- the `mode` option of the ngram dictionary.
+template<>
+constexpr customize::customize_t
+customize::enum_name<irs::analysis::NGramTokenizer::NGramMode>(
+  irs::analysis::NGramTokenizer::NGramMode value) noexcept {
+  using NGramMode = irs::analysis::NGramTokenizer::NGramMode;
+  switch (value) {
+    case NGramMode::All:
+      return "all";
+    case NGramMode::Prefix:
+      return "only_prefix";
+    case NGramMode::Suffix:
+      return "only_suffix";
+    case NGramMode::PrefixAndSuffix:
+      return "only_prefix_and_suffix";
+  }
+  return invalid_tag;
+}
+
+}  // namespace magic_enum

@@ -1179,7 +1179,7 @@ QUERY PLAN
 │ ~2 rows                                                     │
 ╰──────────────────────────────┬──────────────────────────────╯
 ╭─ SEQ_SCAN ───────────────────┴──────────────────────────────╮
-│ Table: <slt:ignore>.public.hl_dyn                 │
+│ Table: hl_dyn                                               │
 │ Type: Sequential Scan                                       │
 │ Projections: doc                                            │
 │ ~2 rows                                                     │
@@ -1201,7 +1201,7 @@ QUERY PLAN
 │ ~2 rows                                                                        │
 ╰────────────────────────────────────────┬───────────────────────────────────────╯
 ╭─ SEQ_SCAN ─────────────────────────────┴───────────────────────────────────────╮
-│ Table: <slt:ignore>.public.hl_dyn                                    │
+│ Table: hl_dyn                                                                  │
 │ Type: Sequential Scan                                                          │
 │ Projections: doc                                                               │
 │ ~2 rows                                                                        │

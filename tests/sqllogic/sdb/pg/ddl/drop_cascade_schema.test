@@ -34,16 +34,22 @@ statement ok
 DROP SCHEMA IF EXISTS mop_drafts_c CASCADE;
 
 
-statement error (?i)(schema|namespace).*mop_dream_company.*does not exist
+statement error
 DROP SCHEMA mop_dream_company;
+----
+db error: ERROR: Schema with name mop_dream_company does not exist!
 
 
-statement error (?i)(schema|namespace).*mop_dream_company.*does not exist
+statement error
 DROP SCHEMA mop_dream_company RESTRICT;
+----
+db error: ERROR: Schema with name mop_dream_company does not exist!
 
 
-statement error (?i)(schema|namespace).*mop_dream_company.*does not exist
+statement error
 DROP SCHEMA mop_dream_company CASCADE;
+----
+db error: ERROR: Schema with name mop_dream_company does not exist!
 
 
 statement ok
@@ -232,16 +238,22 @@ count
 0
 
 
-statement error (?i)cannot drop schema .*pg_catalog.* because it is required by the database
+statement error
 DROP SCHEMA pg_catalog;
+----
+db error: ERROR: Cannot drop entry "pg_catalog" because it is an internal system entry
 
 
-statement error (?i)cannot drop schema .*pg_catalog.* because it is required by the database
+statement error
 DROP SCHEMA pg_catalog CASCADE;
+----
+db error: ERROR: Cannot drop entry "pg_catalog" because it is an internal system entry
 
 
-statement error (?i)cannot drop schema .*information_schema.* because it is required by the database
+statement error
 DROP SCHEMA information_schema;
+----
+db error: ERROR: Cannot drop entry "information_schema" because it is an internal system entry
 
 
 statement ok

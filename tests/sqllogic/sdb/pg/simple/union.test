@@ -17,33 +17,32 @@ query
 EXPLAIN SELECT u FROM union_values;
 ----
 QUERY PLAN
-╭─ PROJECTION ─────────────────────╮
-│ Projections: CAST(#0 AS VARCHAR) │
-│ ~4 rows                          │
-╰─────────────────┬────────────────╯
-╭─ SEQ_SCAN ──────┴────────────────╮
-│ Table: union_values              │
-│ Type: Sequential Scan            │
-│ Projections: u                   │
-│ ~4 rows                          │
-╰──────────────────────────────────╯
+╭─ PROJECTION ──────────────────────────────────────────╮
+│ Projections: CAST(#0 AS VARCHAR)                      │
+│ ~4 rows                                               │
+╰───────────────────────────┬───────────────────────────╯
+╭─ SEQ_SCAN ────────────────┴───────────────────────────╮
+│ Table: <slt:ignore>.public.union_values │
+│ Type: Sequential Scan                                 │
+│ Projections: u                                        │
+│ ~4 rows                                               │
+╰───────────────────────────────────────────────────────╯
 
 
 query
 EXPLAIN SELECT id, u FROM union_values;
 ----
 QUERY PLAN
-╭─ PROJECTION ──────────────────────╮
-│ Projections: #0,                  │
-│              CAST(#1 AS VARCHAR)  │
-│ ~4 rows                           │
-╰─────────────────┬─────────────────╯
-╭─ SEQ_SCAN ──────┴─────────────────╮
-│ Table: union_values               │
-│ Type: Sequential Scan             │
-│ Projections: id, u                │
-│ ~4 rows                           │
-╰───────────────────────────────────╯
+╭─ PROJECTION ──────────────────────────────────────────╮
+│ Projections: #0, CAST(#1 AS VARCHAR)                  │
+│ ~4 rows                                               │
+╰───────────────────────────┬───────────────────────────╯
+╭─ SEQ_SCAN ────────────────┴───────────────────────────╮
+│ Table: <slt:ignore>.public.union_values │
+│ Type: Sequential Scan                                 │
+│ Projections: id, u                                    │
+│ ~4 rows                                               │
+╰───────────────────────────────────────────────────────╯
 
 
 query

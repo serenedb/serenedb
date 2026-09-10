@@ -29,8 +29,10 @@ QUERY PLAN
 ╰────────────────────╯
 
 
-query error db error: ERROR: table t has 2 columns but 1 values were supplied
+query error
 EXPLAIN INSERT INTO t VALUES ('text');
+----
+db error: ERROR: table t has 2 columns but 1 values were supplied
 
 
 statement error

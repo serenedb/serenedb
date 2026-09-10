@@ -65,10 +65,7 @@ id	payload
 statement error
 DROP SEQUENCE clickclack_dashboards_id_seq;
 ----
-db error: ERROR: Cannot drop entry "clickclack_dashboards_id_seq" because there are entries that depend on it.
-table "clickclack_dashboards" depends on sequence "clickclack_dashboards_id_seq".
-table "clickclack_dashboards_audit" depends on sequence "clickclack_dashboards_id_seq".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: Cannot drop entry "clickclack_dashboards_id_seq" because there are entries that depend on it.<slt:ignore>
 
 
 
@@ -76,12 +73,16 @@ statement ok
 DROP TABLE clickclack_dashboards CASCADE;
 
 
-statement error (?i)(table|relation).*clickclack_dashboards.*does not exist
+statement error
 SELECT * FROM clickclack_dashboards;
+----
+db error: ERROR: Table with name clickclack_dashboards does not exist!<slt:ignore>
 
 
-statement error (?i)(sequence|relation).*clickclack_dashboards_id_seq.*does not exist
+statement error
 SELECT nextval('clickclack_dashboards_id_seq');
+----
+db error: ERROR: Sequence with name clickclack_dashboards_id_seq does not exist!<slt:ignore>
 
 
 query
@@ -96,8 +97,10 @@ statement count 1
 INSERT INTO clickclack_dashboards_audit (id, payload) VALUES (100, 'explicit');
 
 
-statement error (?i)(null|not.?null|violates|constraint)
+statement error
 INSERT INTO clickclack_dashboards_audit (payload) VALUES ('would-have-been-default');
+----
+db error: ERROR: NOT NULL constraint failed: clickclack_dashboards_audit.id
 
 
 statement ok
@@ -133,20 +136,14 @@ INSERT INTO iceberg_audits (v) VALUES ('iceberg_audits-row');
 statement error
 DROP SEQUENCE iceberg_manifest_seq;
 ----
-db error: ERROR: Cannot drop entry "iceberg_manifest_seq" because there are entries that depend on it.
-table "iceberg_audits" depends on sequence "iceberg_manifest_seq".
-table "iceberg_partitions" depends on sequence "iceberg_manifest_seq".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: Cannot drop entry "iceberg_manifest_seq" because there are entries that depend on it.<slt:ignore>
 
 
 
 statement error
 DROP SEQUENCE iceberg_manifest_seq RESTRICT;
 ----
-db error: ERROR: Cannot drop entry "iceberg_manifest_seq" because there are entries that depend on it.
-table "iceberg_audits" depends on sequence "iceberg_manifest_seq".
-table "iceberg_partitions" depends on sequence "iceberg_manifest_seq".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: Cannot drop entry "iceberg_manifest_seq" because there are entries that depend on it.<slt:ignore>
 
 
 
@@ -161,8 +158,10 @@ statement ok
 DROP SEQUENCE iceberg_manifest_seq CASCADE;
 
 
-statement error (?i)(sequence|relation).*iceberg_manifest_seq.*does not exist
+statement error
 SELECT nextval('iceberg_manifest_seq');
+----
+db error: ERROR: Sequence with name iceberg_manifest_seq does not exist!<slt:ignore>
 
 
 query
@@ -183,16 +182,20 @@ statement count 1
 INSERT INTO iceberg_partitions (id, v) VALUES (500, 'explicit-iceberg_partitions');
 
 
-statement error (?i)(null|not.?null|violates|constraint)
+statement error
 INSERT INTO iceberg_partitions (v) VALUES ('omitted');
+----
+db error: ERROR: NOT NULL constraint failed: iceberg_partitions.id
 
 
 statement count 1
 INSERT INTO iceberg_audits (id, v) VALUES (501, 'explicit-iceberg_audits');
 
 
-statement error (?i)(null|not.?null|violates|constraint)
+statement error
 INSERT INTO iceberg_audits (v) VALUES ('omitted');
+----
+db error: ERROR: NOT NULL constraint failed: iceberg_audits.id
 
 
 statement ok

@@ -32,7 +32,6 @@ statement error
 DROP SCHEMA test
 ----
 db error: ERROR: Cannot drop entry "test" because there are entries that depend on it.
-sequence "test_pk_seq" depends on schema "test".
 table "test" depends on schema "test".
 Use DROP...CASCADE to drop all dependents.
 
@@ -51,7 +50,6 @@ statement error
 DROP SCHEMA test
 ----
 db error: ERROR: Cannot drop entry "test" because there are entries that depend on it.
-sequence "test_pk_seq" depends on schema "test".
 table "test" depends on schema "test".
 Use DROP...CASCADE to drop all dependents.
 
@@ -63,7 +61,7 @@ DROP SCHEMA test CASCADE
 statement error
 DROP SCHEMA test
 ----
-db error: ERROR: schema "test" does not exist
+db error: ERROR: Schema with name test does not exist!
 
 
 query

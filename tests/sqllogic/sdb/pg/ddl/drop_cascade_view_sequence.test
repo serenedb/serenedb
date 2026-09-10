@@ -42,12 +42,16 @@ statement ok
 DROP SEQUENCE clickclack_query_id_seq CASCADE;
 
 
-statement error (?i)(table|relation|view).*v_clickclack_load.*does not exist
+statement error
 SELECT * FROM v_clickclack_load;
+----
+db error: ERROR: Table with name v_clickclack_load does not exist!<slt:ignore>
 
 
-statement error (?i)(sequence|relation).*clickclack_query_id_seq.*does not exist
+statement error
 SELECT nextval('public.clickclack_query_id_seq');
+----
+db error: ERROR: Sequence with name clickclack_query_id_seq does not exist!<slt:ignore>
 
 
 statement ok
@@ -85,8 +89,10 @@ statement ok
 DROP SEQUENCE clickclack_cv_seq CASCADE;
 
 
-statement error (?i)(table|relation|view).*v_clickclack_cv.*does not exist
+statement error
 SELECT * FROM v_clickclack_cv;
+----
+db error: ERROR: Table with name v_clickclack_cv does not exist!<slt:ignore>
 
 
 statement ok
@@ -117,8 +123,10 @@ statement ok
 DROP SEQUENCE clickclack_sv_seq CASCADE;
 
 
-statement error (?i)(table|relation|view).*v_clickclack_sv.*does not exist
+statement error
 SELECT * FROM v_clickclack_sv;
+----
+db error: ERROR: Table with name v_clickclack_sv does not exist!<slt:ignore>
 
 
 statement ok
@@ -161,11 +169,7 @@ n
 statement error
 DROP SEQUENCE clickclack_shared_seq;
 ----
-db error: ERROR: Cannot drop entry "clickclack_shared_seq" because there are entries that depend on it.
-view "v_clickclack_a" depends on sequence "clickclack_shared_seq".
-view "v_clickclack_b" depends on sequence "clickclack_shared_seq".
-view "v_clickclack_c" depends on sequence "clickclack_shared_seq".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: Cannot drop entry "clickclack_shared_seq" because there are entries that depend on it.<slt:ignore>
 
 
 
@@ -173,16 +177,22 @@ statement ok
 DROP SEQUENCE clickclack_shared_seq CASCADE;
 
 
-statement error (?i)(table|relation|view).*v_clickclack_a.*does not exist
+statement error
 SELECT * FROM v_clickclack_a;
+----
+db error: ERROR: Table with name v_clickclack_a does not exist!<slt:ignore>
 
 
-statement error (?i)(table|relation|view).*v_clickclack_b.*does not exist
+statement error
 SELECT * FROM v_clickclack_b;
+----
+db error: ERROR: Table with name v_clickclack_b does not exist!<slt:ignore>
 
 
-statement error (?i)(table|relation|view).*v_clickclack_c.*does not exist
+statement error
 SELECT * FROM v_clickclack_c;
+----
+db error: ERROR: Table with name v_clickclack_c does not exist!<slt:ignore>
 
 
 statement ok
@@ -221,8 +231,10 @@ statement ok
 DROP SEQUENCE iceberg_seq_home.partition_seq CASCADE;
 
 
-statement error (?i)(table|relation|view).*audit_v.*does not exist
+statement error
 SELECT * FROM iceberg_view_home.audit_v;
+----
+db error: ERROR: Table with name audit_v does not exist!<slt:ignore>
 
 
 statement ok
@@ -268,20 +280,14 @@ INSERT INTO clickclack_mix_t (v) VALUES ('row');
 statement error
 DROP SEQUENCE clickclack_mix_seq;
 ----
-db error: ERROR: Cannot drop entry "clickclack_mix_seq" because there are entries that depend on it.
-table "clickclack_mix_t" depends on sequence "clickclack_mix_seq".
-view "v_clickclack_mix" depends on sequence "clickclack_mix_seq".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: Cannot drop entry "clickclack_mix_seq" because there are entries that depend on it.<slt:ignore>
 
 
 
 statement error
 DROP SEQUENCE clickclack_mix_seq RESTRICT;
 ----
-db error: ERROR: Cannot drop entry "clickclack_mix_seq" because there are entries that depend on it.
-table "clickclack_mix_t" depends on sequence "clickclack_mix_seq".
-view "v_clickclack_mix" depends on sequence "clickclack_mix_seq".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: Cannot drop entry "clickclack_mix_seq" because there are entries that depend on it.<slt:ignore>
 
 
 
@@ -308,8 +314,10 @@ after	t
 row	f
 
 
-statement error (?i)(table|relation|view).*v_clickclack_mix.*does not exist
+statement error
 SELECT * FROM v_clickclack_mix;
+----
+db error: ERROR: Table with name v_clickclack_mix does not exist!<slt:ignore>
 
 
 statement ok
@@ -331,10 +339,7 @@ CREATE VIEW v_clickclack_chain2 AS SELECT nextval('public.clickclack_chain_seq')
 statement error
 DROP SEQUENCE clickclack_chain_seq;
 ----
-db error: ERROR: Cannot drop entry "clickclack_chain_seq" because there are entries that depend on it.
-view "v_clickclack_chain1" depends on sequence "clickclack_chain_seq".
-view "v_clickclack_chain2" depends on sequence "clickclack_chain_seq".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: Cannot drop entry "clickclack_chain_seq" because there are entries that depend on it.<slt:ignore>
 
 
 
@@ -342,12 +347,16 @@ statement ok
 DROP SEQUENCE clickclack_chain_seq CASCADE;
 
 
-statement error (?i)(table|relation|view).*v_clickclack_chain1.*does not exist
+statement error
 SELECT * FROM v_clickclack_chain1;
+----
+db error: ERROR: Table with name v_clickclack_chain1 does not exist!<slt:ignore>
 
 
-statement error (?i)(table|relation|view).*v_clickclack_chain2.*does not exist
+statement error
 SELECT * FROM v_clickclack_chain2;
+----
+db error: ERROR: Table with name v_clickclack_chain2 does not exist!<slt:ignore>
 
 
 statement ok
@@ -381,8 +390,10 @@ statement ok
 DROP SEQUENCE clickclack_all3_seq CASCADE;
 
 
-statement error (?i)(table|relation|view).*v_clickclack_all3.*does not exist
+statement error
 SELECT * FROM v_clickclack_all3;
+----
+db error: ERROR: Table with name v_clickclack_all3 does not exist!<slt:ignore>
 
 
 statement ok
@@ -421,8 +432,10 @@ statement ok
 DROP SEQUENCE clickclack_pair1_seq CASCADE;
 
 
-statement error (?i)(table|relation|view).*v_clickclack_pair.*does not exist
+statement error
 SELECT * FROM v_clickclack_pair;
+----
+db error: ERROR: Table with name v_clickclack_pair does not exist!<slt:ignore>
 
 
 statement ok
@@ -450,10 +463,7 @@ CREATE VIEW v_clickclack_dvb AS
 statement error
 DROP SEQUENCE clickclack_d1_seq;
 ----
-db error: ERROR: Cannot drop entry "clickclack_d1_seq" because there are entries that depend on it.
-view "v_clickclack_dva" depends on sequence "clickclack_d1_seq".
-view "v_clickclack_dvb" depends on sequence "clickclack_d1_seq".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: Cannot drop entry "clickclack_d1_seq" because there are entries that depend on it.<slt:ignore>
 
 
 
@@ -461,12 +471,16 @@ statement ok
 DROP SEQUENCE clickclack_d1_seq CASCADE;
 
 
-statement error (?i)(table|relation|view).*v_clickclack_dva.*does not exist
+statement error
 SELECT * FROM v_clickclack_dva;
+----
+db error: ERROR: Table with name v_clickclack_dva does not exist!<slt:ignore>
 
 
-statement error (?i)(table|relation|view).*v_clickclack_dvb.*does not exist
+statement error
 SELECT * FROM v_clickclack_dvb;
+----
+db error: ERROR: Table with name v_clickclack_dvb does not exist!<slt:ignore>
 
 
 statement ok
@@ -492,11 +506,7 @@ CREATE VIEW clickclack_sch.v_dashboard_b AS SELECT nextval('clickclack_sch.dashb
 statement error
 DROP SCHEMA clickclack_sch RESTRICT;
 ----
-db error: ERROR: Cannot drop entry "clickclack_sch" because there are entries that depend on it.
-sequence "dashboard_seq" depends on schema "clickclack_sch".
-view "v_dashboard_a" depends on sequence "dashboard_seq".
-view "v_dashboard_b" depends on sequence "dashboard_seq".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: Cannot drop entry "clickclack_sch" because there are entries that depend on it.<slt:ignore>
 
 
 
@@ -545,8 +555,10 @@ count
 0
 
 
-statement error (?i)(table|relation|view).*v_clickclack_uses_serial.*does not exist
+statement error
 SELECT * FROM v_clickclack_uses_serial;
+----
+db error: ERROR: Table with name v_clickclack_uses_serial does not exist!<slt:ignore>
 
 
 statement ok
@@ -610,8 +622,10 @@ statement ok
 DROP SEQUENCE clickclack_sub_seq CASCADE;
 
 
-statement error (?i)(table|relation|view).*v_clickclack_sub.*does not exist
+statement error
 SELECT * FROM v_clickclack_sub;
+----
+db error: ERROR: Table with name v_clickclack_sub does not exist!<slt:ignore>
 
 
 statement ok
@@ -644,8 +658,10 @@ statement ok
 DROP SEQUENCE clickclack_cte_seq CASCADE;
 
 
-statement error (?i)(table|relation|view).*v_clickclack_cte.*does not exist
+statement error
 SELECT * FROM v_clickclack_cte;
+----
+db error: ERROR: Table with name v_clickclack_cte does not exist!<slt:ignore>
 
 
 statement ok
@@ -679,8 +695,10 @@ statement ok
 DROP SEQUENCE clickclack_union_seq CASCADE;
 
 
-statement error (?i)(table|relation|view).*v_clickclack_union.*does not exist
+statement error
 SELECT * FROM v_clickclack_union;
+----
+db error: ERROR: Table with name v_clickclack_union does not exist!<slt:ignore>
 
 
 statement ok
@@ -713,8 +731,10 @@ statement ok
 DROP SEQUENCE clickclack_where_seq CASCADE;
 
 
-statement error (?i)(table|relation|view).*v_clickclack_where.*does not exist
+statement error
 SELECT * FROM v_clickclack_where;
+----
+db error: ERROR: Table with name v_clickclack_where does not exist!<slt:ignore>
 
 
 statement ok

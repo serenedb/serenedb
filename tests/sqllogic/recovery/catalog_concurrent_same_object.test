@@ -117,7 +117,7 @@ connection s4
 statement error
 GRANT SELECT ON ccso_u TO ccso_grantee
 ----
-db error: ERROR: could not serialize access due to concurrent DDL on the same object
+db error: ERROR: Catalog write-write conflict on alter with "ccso_u"
 
 
 connection s3
@@ -155,7 +155,7 @@ connection s6
 statement error
 ALTER TABLE ccso_v RENAME TO ccso_v2
 ----
-db error: ERROR: could not serialize access due to concurrent DDL on the same object
+db error: ERROR: Catalog write-write conflict on alter with "ccso_v"
 
 
 connection s5

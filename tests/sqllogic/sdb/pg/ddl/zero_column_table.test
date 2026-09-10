@@ -1,0 +1,96 @@
+# Zero-physical-column tables (CREATE TABLE t();). PostgreSQL allows them and can
+# store/return rows with no columns. SereneDB allows creating and introspecting
+# them, but its columnar engine cannot materialize a zero-column row or result set,
+# so the operations that would produce one are rejected with a clean error (never
+# an internal assertion), and the last column of a table cannot be dropped.
+#
+# Catalog counts are scoped to current_database() so the test is safe under the
+# parallel shared-server harness (another test's identically-named table cannot
+# leak in).
+
+
+statement ok
+CREATE TABLE zerocol_tbl();
+
+
+query
+SELECT count(*) FROM zerocol_tbl;
+----
+count
+0
+
+
+query
+SELECT count(*) FROM information_schema.columns
+WHERE table_name = 'zerocol_tbl' AND table_catalog = current_database();
+----
+count
+0
+
+
+statement ok
+DELETE FROM zerocol_tbl;
+
+
+statement ok
+TRUNCATE zerocol_tbl;
+
+
+query error
+SELECT FROM zerocol_tbl;
+----
+db error: ERROR: SELECT clause without selection list
+
+
+statement error
+INSERT INTO zerocol_tbl SELECT;
+----
+db error: ERROR: SELECT clause without selection list
+
+
+# A column can be added; the table then behaves normally.
+statement ok
+ALTER TABLE zerocol_tbl ADD COLUMN a int;
+
+
+query
+SELECT count(*) FROM information_schema.columns
+WHERE table_name = 'zerocol_tbl' AND table_catalog = current_database();
+----
+count
+1
+
+
+# The last column cannot be dropped: the table would have no column to hold
+# its rows.
+statement error
+ALTER TABLE zerocol_tbl DROP COLUMN a;
+----
+db error: ERROR: Cannot drop column: table only has one column remaining!
+
+
+query
+SELECT count(*) FROM information_schema.columns
+WHERE table_name = 'zerocol_tbl' AND table_catalog = current_database();
+----
+count
+1
+
+
+statement ok
+INSERT INTO zerocol_tbl DEFAULT VALUES;
+
+
+statement ok
+INSERT INTO zerocol_tbl DEFAULT VALUES;
+
+
+query
+SELECT count(*) FROM zerocol_tbl;
+----
+count
+2
+
+
+statement ok
+DROP TABLE zerocol_tbl;

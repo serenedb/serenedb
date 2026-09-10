@@ -311,10 +311,6 @@ QueryBuilder::ptr PrepareInterval(const SubReader& segment,
 
   const auto ring = coverer.GetCovering(max_bound).Difference(
     coverer.GetInteriorCovering(min_bound));
-  // S2CellUnion::Difference has no level cap: GetDifferenceInternal recurses
-  // until cells are disjoint or fully contained, so `ring` can have cells
-  // beyond options.max_level. Re-cover through GetQueryTerms so the coverer
-  // enforces min/max level before GetQueryTermsForCanonicalCovering runs.
   const auto geo_terms =
     irs::geo_terms::QueryTerms(options.options, ring, options.prefix);
 

@@ -450,7 +450,8 @@ void Catalog::DropDatabase(const AccessContext& ax, std::string_view name,
       tables.push_back(&table);
     });
   for (const auto seq_id : owned_sequences) {
-    GetCatalogStore().DropSequence(seq_id);
+    catalog::DeferDropAction(
+      ax.context, [seq_id] { GetCatalogStore().DropSequence(seq_id); });
   }
   // Check that SereneDB won't open this database after reboot
   bool crash_on_drop = false;

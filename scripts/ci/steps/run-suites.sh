@@ -20,6 +20,18 @@ run() {
 	return 0
 }
 
+# Like run(), but a failure is reported and NOT folded into rc. For a suite that
+# is still earning trust: it must be visible in the log and the artifacts without
+# being able to turn the whole nightly red.
+run_soft() {
+	echo "::group::$* (soft-fail)"
+	"$@"
+	local r=$?
+	echo "::endgroup::"
+	[[ $r -ne 0 ]] && echo "SOFT-FAILED ($r): $*" >&2
+	return 0
+}
+
 declare -a BG_PIDS=() BG_NAMES=()
 run_bg() {
 	echo "(parallel start) $*"
@@ -96,6 +108,18 @@ run_sqlsmith() {
 	fi
 }
 
+# Diff-gated heavy suite: catalog stress. Runs last and against a serened of its
+# own, because the failure it looks for wedges the whole process -- the same
+# reason the network tests are a standalone launcher rather than a --host client.
+run_stress() {
+	[[ "${RUN_STRESS:-false}" == "true" ]] || return 0
+	if [[ "${STRESS_SOFT_FAIL:-true}" == "true" ]]; then
+		run_soft bash "${STEPS}/051-ci-in-docker-run-stress-tests.bash"
+	else
+		run bash "${STEPS}/051-ci-in-docker-run-stress-tests.bash"
+	fi
+}
+
 # Sanitizer configs run ours + drivers by default; RUN_EXTRA is what widens them
 # to the full in-scope set. Fold that into the diff gates here so the bodies
 # below only ever read RUN_* -- in particular run_serened_core needs RUN_SQLITE
@@ -147,5 +171,10 @@ esac
 
 # Join the backgrounded iresearch load test (no-op when none was started).
 wait_bg
+
+# After wait_bg on purpose: the stress suite saturates the box and looks for a
+# wedge, so it must not share the machine with the iresearch load test or read
+# its contention as a hang.
+run_stress
 
 exit $rc

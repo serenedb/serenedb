@@ -69,28 +69,29 @@ class BooleanSparse : public Root {
           continue;
         }
       }
+      auto probe = doc;
       if constexpr (kProbes) {
-        const auto probe = _probes.Probe(doc);
-        if (probe != doc) {
-          doc = _lead.Seek(probe);
-          continue;
-        }
+        probe = _probes.Probe(doc);
       }
-      bool kept = true;
-      if constexpr (kExcludes) {
-        kept = !search::IsExcluded(_excludes, doc);
-      }
-      if constexpr (kTable) {
-        _docs[n] = doc;
-        n += static_cast<uint32_t>(kept);
-        if (n == kRun) {
-          total += _table.Run(_docs.data(), nullptr, n);
-          n = 0;
+      if (probe == doc) {
+        bool kept = true;
+        if constexpr (kExcludes) {
+          kept = !search::IsExcluded(_excludes, doc);
         }
+        if constexpr (kTable) {
+          _docs[n] = doc;
+          n += static_cast<uint32_t>(kept);
+          if (n == kRun) {
+            total += _table.Run(_docs.data(), nullptr, n);
+            n = 0;
+          }
+        } else {
+          total += static_cast<uint64_t>(kept);
+        }
+        doc = _lead.Advance();
       } else {
-        total += static_cast<uint64_t>(kept);
+        doc = _lead.Seek(probe);
       }
-      doc = _lead.Advance();
     }
 
     if constexpr (kTable) {

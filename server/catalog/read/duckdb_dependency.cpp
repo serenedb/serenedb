@@ -150,6 +150,24 @@ duckdb::LogicalDependencyList EntryDependencies(
       add(kept);
     }
   }
+  switch (info.type) {
+    using enum duckdb::CatalogType;
+    case TABLE_ENTRY:
+    case VIEW_ENTRY:
+    case INDEX_ENTRY:
+    case SEQUENCE_ENTRY:
+    case TYPE_ENTRY:
+    case MACRO_ENTRY:
+    case TABLE_MACRO_ENTRY:
+    case TOKENIZER_ENTRY:
+      if (const auto parent = catalog::ParentIdOf(info); parent.isSet()) {
+        add(duckdb::LogicalDependency{nullptr, DependencyInfo(parent),
+                                      duckdb::Identifier{}});
+      }
+      break;
+    default:
+      break;
+  }
   if (info.type == duckdb::CatalogType::TABLE_ENTRY) {
     AddDefinitionEdges(basics::downCast<const duckdb::CreateTableInfo>(info),
                        add);

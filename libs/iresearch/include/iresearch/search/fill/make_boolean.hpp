@@ -107,8 +107,10 @@ struct ScoredApi {
   }
 
   static Result WrapMerge(ScoreMergeType merge, Result child) {
-    return memory::make_managed<ByWindowScored<Erased>>(
-      merge, Erased{std::move(child)});
+    return irs::ResolveMergeType(merge, [&]<ScoreMergeType Merge> -> Result {
+      return memory::make_managed<ByWindowScored<Erased, Merge>>(
+        Erased{std::move(child)});
+    });
   }
 };
 

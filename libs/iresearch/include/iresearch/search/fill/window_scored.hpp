@@ -35,24 +35,21 @@
 
 namespace irs::fill {
 
-template<ScoredType Child>
+template<ScoredType Child, ScoreMergeType Merge>
 class WindowScored {
  public:
   template<typename... Args>
-  explicit WindowScored(ScoreMergeType merge, Args&&... args)
-    : _child{std::forward<Args>(args)...}, _merge{merge} {}
+  explicit WindowScored(Args&&... args)
+    : _child{std::forward<Args>(args)...} {}
 
   doc_id_t Fill(doc_id_t min, doc_id_t max, uint64_t* IRS_RESTRICT mask,
                 score_t* IRS_RESTRICT scores) {
     const auto next = _child.Fill(min, max, _mask.data(), _scores);
-    const auto words = search::WindowWords(min, max);
-    irs::ResolveMergeType(
-      _merge, [&]<ScoreMergeType Merge> { Fold<Merge>(mask, scores, words); });
+    Fold(mask, scores, search::WindowWords(min, max));
     return next;
   }
 
  private:
-  template<ScoreMergeType Merge>
   IRS_FORCE_INLINE void Fold(uint64_t* IRS_RESTRICT mask,
                              score_t* IRS_RESTRICT scores,
                              size_t words) noexcept {
@@ -71,10 +68,9 @@ class WindowScored {
   search::Scratch _mask{};
   ABSL_CACHELINE_ALIGNED score_t _scores[search::kWindowDocs]{};
   Child _child;
-  ScoreMergeType _merge;
 };
 
-template<typename Child>
-using ByWindowScored = Impl<WindowScored<Child>>;
+template<typename Child, ScoreMergeType Merge>
+using ByWindowScored = Impl<WindowScored<Child, Merge>>;
 
 }  // namespace irs::fill

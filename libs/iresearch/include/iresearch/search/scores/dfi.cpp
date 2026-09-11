@@ -18,17 +18,20 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include "lm_jelinek_mercer.hpp"
+#include "dfi.hpp"
 
 #include <absl/strings/str_cat.h>
 
 #include <cmath>
+#include <string_view>
 
 #include "basics/down_cast.h"
 #include "basics/empty.hpp"
 #include "basics/misc.hpp"
 #include "basics/shared.hpp"
 #include "iresearch/analysis/token_attributes.hpp"
+#include "iresearch/error/error.hpp"
+#include "iresearch/formats/formats.hpp"
 #include "iresearch/formats/posting/score_bound_writer.hpp"
 #include "iresearch/index/field_meta.hpp"
 #include "iresearch/index/index_reader.hpp"
@@ -36,8 +39,10 @@
 #include "iresearch/search/collectors.hpp"
 #include "iresearch/search/column_collector.hpp"
 #include "iresearch/search/score_function.hpp"
-#include "iresearch/search/scorer.hpp"
-#include "iresearch/search/scorer_options.hpp"
+#include "iresearch/search/scores/scorer.hpp"
+#include "iresearch/search/scores/scorer_options.hpp"
+#include "iresearch/store/data_output.hpp"
+#include "iresearch/utils/string.hpp"
 
 namespace irs {
 namespace {
@@ -49,18 +54,36 @@ constexpr const T* TryGetValue(const T* value) noexcept {
 
 constexpr std::nullptr_t TryGetValue(utils::Empty) noexcept { return nullptr; }
 
-template<ScoreMergeType MergeType, bool HasBoost>
-IRS_FORCE_INLINE void LmJmImpl(
+template<DFIMeasure M>
+IRS_FORCE_INLINE score_t MeasureKernel(score_t diff,
+                                       score_t expected) noexcept {
+  if constexpr (M == DFIMeasure::Standardized) {
+    return diff / std::sqrt(expected);
+  } else if constexpr (M == DFIMeasure::Saturated) {
+    return diff / expected;
+  } else if constexpr (M == DFIMeasure::ChiSquared) {
+    return diff * diff / expected;
+  } else {
+    static_assert(false);
+  }
+}
+
+template<ScoreMergeType MergeType, DFIMeasure M, bool HasBoost>
+IRS_FORCE_INLINE void DFIImpl(
   score_t* IRS_RESTRICT res, scores_size_t n, const uint32_t* IRS_RESTRICT freq,
   const uint32_t* IRS_RESTRICT norm,
-  [[maybe_unused]] const score_t* IRS_RESTRICT boost, score_t num,
-  score_t denom_inv, score_t const_boost) noexcept {
+  [[maybe_unused]] const score_t* IRS_RESTRICT boost, score_t ratio,
+  score_t const_boost) noexcept {
+  constexpr score_t kInvLn2 = 1.4426950408889634f;
   for (scores_size_t i = 0; i != n; ++i) {
     const score_t tf = TermCountToScore(freq[i]);
-    SDB_ASSERT(norm[i] != 0);
     const score_t dl = TermCountToScore(norm[i]);
-    const score_t ratio = (num * tf / dl) * denom_inv;
-    score_t r = std::log1p(ratio);
+    const score_t expected = ratio * dl;
+    score_t r = 0.f;
+    if (tf > expected && expected > 0.f) {
+      const score_t measure = MeasureKernel<M>(tf - expected, expected);
+      r = std::log1p(measure) * kInvLn2;
+    }
     if constexpr (HasBoost) {
       r *= const_boost * boost[i];
     } else {
@@ -70,24 +93,21 @@ IRS_FORCE_INLINE void LmJmImpl(
   }
 }
 
-template<bool HasFilterBoost>
-struct LmJmScore : public ScoreOperator {
-  LmJmScore(score_t boost, score_t lambda, const LMStats& stats,
-            const FreqBlockAttr* freq, const uint32_t* norm,
-            const score_t* fb) noexcept
+template<DFIMeasure M, bool HasFilterBoost>
+struct DFIScore : public ScoreOperator {
+  DFIScore(score_t boost, const DFIStats& stats, const FreqBlockAttr* freq,
+           const uint32_t* norm, const score_t* fb) noexcept
     : freq{freq},
       norm{norm},
       filter_boost{fb},
       boost{boost},
-      num{1.f - lambda},
-      denom_inv{1.f / (lambda * stats.collection_prob)} {}
+      ratio{stats.ratio} {}
 
   template<ScoreMergeType MergeType = ScoreMergeType::Noop>
   IRS_FORCE_INLINE void ScoreImpl(score_t* res,
                                   scores_size_t n) const noexcept {
-    LmJmImpl<MergeType, HasFilterBoost>(res, n, freq->value, norm,
-                                        TryGetValue(filter_boost), num,
-                                        denom_inv, boost);
+    DFIImpl<MergeType, M, HasFilterBoost>(
+      res, n, freq->value, norm, TryGetValue(filter_boost), ratio, boost);
   }
 
   score_t Score() const noexcept final {
@@ -125,14 +145,23 @@ struct LmJmScore : public ScoreOperator {
   [[no_unique_address]] utils::Need<HasFilterBoost, const score_t*>
     filter_boost;
   score_t boost;
-  score_t num;
-  score_t denom_inv;
+  score_t ratio;
 };
+
+template<DFIMeasure M>
+ScoreFunction MakeScoreMeasure(const ScoreContext& ctx, const DFIStats& stats,
+                               const FreqBlockAttr* freq, const uint32_t* norm,
+                               const score_t* filter_boost) {
+  return ResolveBool(filter_boost != nullptr, [&]<bool HasBoost>() {
+    return ScoreFunction::Make<DFIScore<M, HasBoost>>(ctx.boost, stats, freq,
+                                                      norm, filter_boost);
+  });
+}
 
 }  // namespace
 
-void LMJelinekMercer::collect(byte_type* stats_buf, const FieldCollector* field,
-                              const TermCollector* term) const {
+void DFI::collect(byte_type* stats_buf, const FieldCollector* field,
+                  const TermCollector* term) const {
   auto* stats = stats_cast(stats_buf);
 
   const auto ttf_field = field ? field->total_term_freq : 0;
@@ -140,17 +169,17 @@ void LMJelinekMercer::collect(byte_type* stats_buf, const FieldCollector* field,
 
   const double num = static_cast<double>(ttf_term) + 1.0;
   const double den = static_cast<double>(ttf_field) + 1.0;
-  stats->collection_prob = static_cast<score_t>(num / den);
+  stats->ratio = static_cast<score_t>(num / den);
 }
 
-ScoreFunction LMJelinekMercer::PrepareScorer(const ScoreContext& ctx) const {
+ScoreFunction DFI::PrepareScorer(const ScoreContext& ctx) const {
   auto* freq = irs::get<FreqBlockAttr>(ctx.doc_attrs);
   if (!freq) {
     return ScoreFunction::Default();
   }
 
   auto* stats = stats_cast(ctx.stats);
-  if (stats->collection_prob <= 0.f) {
+  if (stats->ratio <= 0.f) {
     return ScoreFunction::Default();
   }
 
@@ -173,36 +202,54 @@ ScoreFunction LMJelinekMercer::PrepareScorer(const ScoreContext& ctx) const {
     return attr ? attr->value : nullptr;
   }();
 
-  return ResolveBool(filter_boost != nullptr, [&]<bool HasBoost>() {
-    return ScoreFunction::Make<LmJmScore<HasBoost>>(ctx.boost, _lambda, *stats,
-                                                    freq, norm, filter_boost);
-  });
+  switch (_measure) {
+    case DFIMeasure::Standardized:
+      return MakeScoreMeasure<DFIMeasure::Standardized>(ctx, *stats, freq, norm,
+                                                        filter_boost);
+    case DFIMeasure::Saturated:
+      return MakeScoreMeasure<DFIMeasure::Saturated>(ctx, *stats, freq, norm,
+                                                     filter_boost);
+    case DFIMeasure::ChiSquared:
+      return MakeScoreMeasure<DFIMeasure::ChiSquared>(ctx, *stats, freq, norm,
+                                                      filter_boost);
+  }
+  return ScoreFunction::Default();
 }
 
-std::string LMJelinekMercer::ToString() const {
-  return absl::StrCat("lm_jm(lambda=", _lambda, ")");
+std::string DFI::ToString() const {
+  const auto* measure = [&]() -> const char* {
+    switch (_measure) {
+      case DFIMeasure::Standardized:
+        return "standardized";
+      case DFIMeasure::Saturated:
+        return "saturated";
+      case DFIMeasure::ChiSquared:
+        return "chi_squared";
+    }
+    return "?";
+  }();
+  return absl::StrCat("dfi(measure=", measure, ")");
 }
 
-bool LMJelinekMercer::equals(const Scorer& other) const noexcept {
+bool DFI::equals(const Scorer& other) const noexcept {
   if (!Scorer::equals(other)) {
     return false;
   }
-  const auto& p = sdb::basics::downCast<LMJelinekMercer>(other);
-  return p._lambda == _lambda;
+  const auto& p = sdb::basics::downCast<DFI>(other);
+  return p._measure == _measure;
 }
 
-ScoreBoundWriter::ptr LMJelinekMercer::PrepareScoreBoundWriter(
-  size_t max_levels) const {
-  return std::make_unique<FreqNormWriter<kScoreBoundDivNorm>>(max_levels);
+ScoreBoundWriter::ptr DFI::PrepareScoreBoundWriter(size_t max_levels) const {
+  return std::make_unique<FreqNormWriter<kScoreBoundMinNorm>>(max_levels);
 }
 
-ScoreBoundSource::ptr LMJelinekMercer::PrepareScoreBoundSource() const {
+ScoreBoundSource::ptr DFI::PrepareScoreBoundSource() const {
   return std::make_unique<FreqNormSource<kScoreBoundFreq | kScoreBoundNorm>>();
 }
 
-bool LMJelinekMercer::Compatible(
-  const ScorerOptions& persisted) const noexcept {
-  return irs::BoundTypeOf(persisted) == BoundTypeOf(Options{});
+bool DFI::Compatible(const ScorerOptions& persisted) const noexcept {
+  return irs::BoundTypeOf(persisted) == BoundTypeOf(Options{}) &&
+         !std::get_if<ScorerOptions::Bm25>(&persisted.params);
 }
 
 }  // namespace irs

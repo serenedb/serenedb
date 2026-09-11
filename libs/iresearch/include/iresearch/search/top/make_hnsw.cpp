@@ -29,7 +29,7 @@
 #include "iresearch/search/common/score_provider.hpp"
 #include "iresearch/search/hnsw_query.hpp"
 #include "iresearch/search/score_function.hpp"
-#include "iresearch/search/scorer.hpp"
+#include "iresearch/search/scores/scorer.hpp"
 #include "iresearch/search/top/make.hpp"
 
 namespace irs::top {

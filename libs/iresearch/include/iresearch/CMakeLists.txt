@@ -368,20 +368,20 @@ set(IResearch_core_sources
     ./search/vector_similarity_filter.cpp
     ./search/hnsw_query.cpp
     ./search/vector_similarity_query.cpp
-    ./search/vector_similarity_scorer.cpp
+    ./search/scores/vector_similarity_scorer.cpp
     ./search/vector_radius_filter.cpp
     ./search/geo_filter.cpp
-    ./search/tfidf.cpp
-    ./search/bm25.cpp
-    ./search/lm_jelinek_mercer.cpp
-    ./search/lm_dirichlet.cpp
-    ./search/indri_dirichlet.cpp
-    ./search/dfi.cpp
-    ./search/idf.cpp
-    ./search/raw_boost.cpp
-    ./search/constant_score.cpp
-    ./search/raw_tf.cpp
-    ./search/raw_dl.cpp
+    ./search/scores/tfidf.cpp
+    ./search/scores/bm25.cpp
+    ./search/scores/lm_jelinek_mercer.cpp
+    ./search/scores/lm_dirichlet.cpp
+    ./search/scores/indri_dirichlet.cpp
+    ./search/scores/dfi.cpp
+    ./search/scores/idf.cpp
+    ./search/scores/raw_boost.cpp
+    ./search/scores/constant_score.cpp
+    ./search/scores/raw_tf.cpp
+    ./search/scores/raw_dl.cpp
     ./store/data_input.cpp
     ./store/directory.cpp
     ./store/directory_attributes.cpp
@@ -467,8 +467,8 @@ include_directories(SYSTEM ${IRESEARCH_EXTERNAL_INCLUDES})
 add_library(iresearch-static STATIC ${IResearch_core_sources})
 
 set_source_files_properties(
-    search/bm25.cpp
-    search/tfidf.cpp
+    search/scores/bm25.cpp
+    search/scores/tfidf.cpp
     PROPERTIES
         COMPILE_OPTIONS
             "-fapprox-func -fno-math-errno -fassociative-math -freciprocal-math -fno-signed-zeros -fno-trapping-math -fno-rounding-math -ffp-contract=fast"

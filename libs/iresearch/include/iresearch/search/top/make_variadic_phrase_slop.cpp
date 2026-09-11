@@ -20,7 +20,7 @@
 
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/search/common/all_docs_score.hpp"
-#include "iresearch/search/common/phrase_of.hpp"
+#include "iresearch/search/offsets/phrase_of.hpp"
 #include "iresearch/search/common/scored_context.hpp"
 #include "iresearch/search/lead/two_phase_scored.hpp"
 #include "iresearch/search/phrase_query.hpp"

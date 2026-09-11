@@ -18,31 +18,24 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include "dfi.hpp"
+#include "indri_dirichlet.hpp"
 
 #include <absl/strings/str_cat.h>
 
 #include <cmath>
-#include <string_view>
 
 #include "basics/down_cast.h"
 #include "basics/empty.hpp"
 #include "basics/misc.hpp"
 #include "basics/shared.hpp"
 #include "iresearch/analysis/token_attributes.hpp"
-#include "iresearch/error/error.hpp"
-#include "iresearch/formats/formats.hpp"
-#include "iresearch/formats/posting/score_bound_writer.hpp"
 #include "iresearch/index/field_meta.hpp"
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/index/norm.hpp"
 #include "iresearch/search/collectors.hpp"
 #include "iresearch/search/column_collector.hpp"
 #include "iresearch/search/score_function.hpp"
-#include "iresearch/search/scorer.hpp"
-#include "iresearch/search/scorer_options.hpp"
-#include "iresearch/store/data_output.hpp"
-#include "iresearch/utils/string.hpp"
+#include "iresearch/search/scores/scorer.hpp"
 
 namespace irs {
 namespace {
@@ -54,36 +47,16 @@ constexpr const T* TryGetValue(const T* value) noexcept {
 
 constexpr std::nullptr_t TryGetValue(utils::Empty) noexcept { return nullptr; }
 
-template<DFIMeasure M>
-IRS_FORCE_INLINE score_t MeasureKernel(score_t diff,
-                                       score_t expected) noexcept {
-  if constexpr (M == DFIMeasure::Standardized) {
-    return diff / std::sqrt(expected);
-  } else if constexpr (M == DFIMeasure::Saturated) {
-    return diff / expected;
-  } else if constexpr (M == DFIMeasure::ChiSquared) {
-    return diff * diff / expected;
-  } else {
-    static_assert(false);
-  }
-}
-
-template<ScoreMergeType MergeType, DFIMeasure M, bool HasBoost>
-IRS_FORCE_INLINE void DFIImpl(
+template<ScoreMergeType MergeType, bool HasBoost>
+IRS_FORCE_INLINE void IndriImpl(
   score_t* IRS_RESTRICT res, scores_size_t n, const uint32_t* IRS_RESTRICT freq,
   const uint32_t* IRS_RESTRICT norm,
-  [[maybe_unused]] const score_t* IRS_RESTRICT boost, score_t ratio,
+  [[maybe_unused]] const score_t* IRS_RESTRICT boost, score_t mu_p, score_t mu,
   score_t const_boost) noexcept {
-  constexpr score_t kInvLn2 = 1.4426950408889634f;
   for (scores_size_t i = 0; i != n; ++i) {
     const score_t tf = TermCountToScore(freq[i]);
     const score_t dl = TermCountToScore(norm[i]);
-    const score_t expected = ratio * dl;
-    score_t r = 0.f;
-    if (tf > expected && expected > 0.f) {
-      const score_t measure = MeasureKernel<M>(tf - expected, expected);
-      r = std::log1p(measure) * kInvLn2;
-    }
+    score_t r = std::log((tf + mu_p) / (dl + mu));
     if constexpr (HasBoost) {
       r *= const_boost * boost[i];
     } else {
@@ -93,21 +66,23 @@ IRS_FORCE_INLINE void DFIImpl(
   }
 }
 
-template<DFIMeasure M, bool HasFilterBoost>
-struct DFIScore : public ScoreOperator {
-  DFIScore(score_t boost, const DFIStats& stats, const FreqBlockAttr* freq,
-           const uint32_t* norm, const score_t* fb) noexcept
+template<bool HasFilterBoost>
+struct IndriScore : public ScoreOperator {
+  IndriScore(score_t boost, score_t mu, const LMStats& stats,
+             const FreqBlockAttr* freq, const uint32_t* norm,
+             const score_t* fb) noexcept
     : freq{freq},
       norm{norm},
       filter_boost{fb},
       boost{boost},
-      ratio{stats.ratio} {}
+      mu{mu},
+      mu_p{mu * stats.collection_prob} {}
 
   template<ScoreMergeType MergeType = ScoreMergeType::Noop>
   IRS_FORCE_INLINE void ScoreImpl(score_t* res,
                                   scores_size_t n) const noexcept {
-    DFIImpl<MergeType, M, HasFilterBoost>(
-      res, n, freq->value, norm, TryGetValue(filter_boost), ratio, boost);
+    IndriImpl<MergeType, HasFilterBoost>(
+      res, n, freq->value, norm, TryGetValue(filter_boost), mu_p, mu, boost);
   }
 
   score_t Score() const noexcept final {
@@ -145,23 +120,14 @@ struct DFIScore : public ScoreOperator {
   [[no_unique_address]] utils::Need<HasFilterBoost, const score_t*>
     filter_boost;
   score_t boost;
-  score_t ratio;
+  score_t mu;
+  score_t mu_p;
 };
-
-template<DFIMeasure M>
-ScoreFunction MakeScoreMeasure(const ScoreContext& ctx, const DFIStats& stats,
-                               const FreqBlockAttr* freq, const uint32_t* norm,
-                               const score_t* filter_boost) {
-  return ResolveBool(filter_boost != nullptr, [&]<bool HasBoost>() {
-    return ScoreFunction::Make<DFIScore<M, HasBoost>>(ctx.boost, stats, freq,
-                                                      norm, filter_boost);
-  });
-}
 
 }  // namespace
 
-void DFI::collect(byte_type* stats_buf, const FieldCollector* field,
-                  const TermCollector* term) const {
+void IndriDirichlet::collect(byte_type* stats_buf, const FieldCollector* field,
+                             const TermCollector* term) const {
   auto* stats = stats_cast(stats_buf);
 
   const auto ttf_field = field ? field->total_term_freq : 0;
@@ -169,17 +135,17 @@ void DFI::collect(byte_type* stats_buf, const FieldCollector* field,
 
   const double num = static_cast<double>(ttf_term) + 1.0;
   const double den = static_cast<double>(ttf_field) + 1.0;
-  stats->ratio = static_cast<score_t>(num / den);
+  stats->collection_prob = static_cast<score_t>(num / den);
 }
 
-ScoreFunction DFI::PrepareScorer(const ScoreContext& ctx) const {
+ScoreFunction IndriDirichlet::PrepareScorer(const ScoreContext& ctx) const {
   auto* freq = irs::get<FreqBlockAttr>(ctx.doc_attrs);
   if (!freq) {
     return ScoreFunction::Default();
   }
 
   auto* stats = stats_cast(ctx.stats);
-  if (stats->ratio <= 0.f) {
+  if (stats->collection_prob <= 0.f || _mu <= 0.f) {
     return ScoreFunction::Default();
   }
 
@@ -202,54 +168,22 @@ ScoreFunction DFI::PrepareScorer(const ScoreContext& ctx) const {
     return attr ? attr->value : nullptr;
   }();
 
-  switch (_measure) {
-    case DFIMeasure::Standardized:
-      return MakeScoreMeasure<DFIMeasure::Standardized>(ctx, *stats, freq, norm,
-                                                        filter_boost);
-    case DFIMeasure::Saturated:
-      return MakeScoreMeasure<DFIMeasure::Saturated>(ctx, *stats, freq, norm,
-                                                     filter_boost);
-    case DFIMeasure::ChiSquared:
-      return MakeScoreMeasure<DFIMeasure::ChiSquared>(ctx, *stats, freq, norm,
-                                                      filter_boost);
-  }
-  return ScoreFunction::Default();
+  return ResolveBool(filter_boost != nullptr, [&]<bool HasBoost>() {
+    return ScoreFunction::Make<IndriScore<HasBoost>>(ctx.boost, _mu, *stats,
+                                                     freq, norm, filter_boost);
+  });
 }
 
-std::string DFI::ToString() const {
-  const auto* measure = [&]() -> const char* {
-    switch (_measure) {
-      case DFIMeasure::Standardized:
-        return "standardized";
-      case DFIMeasure::Saturated:
-        return "saturated";
-      case DFIMeasure::ChiSquared:
-        return "chi_squared";
-    }
-    return "?";
-  }();
-  return absl::StrCat("dfi(measure=", measure, ")");
+std::string IndriDirichlet::ToString() const {
+  return absl::StrCat("indri_dirichlet(mu=", _mu, ")");
 }
 
-bool DFI::equals(const Scorer& other) const noexcept {
+bool IndriDirichlet::equals(const Scorer& other) const noexcept {
   if (!Scorer::equals(other)) {
     return false;
   }
-  const auto& p = sdb::basics::downCast<DFI>(other);
-  return p._measure == _measure;
-}
-
-ScoreBoundWriter::ptr DFI::PrepareScoreBoundWriter(size_t max_levels) const {
-  return std::make_unique<FreqNormWriter<kScoreBoundMinNorm>>(max_levels);
-}
-
-ScoreBoundSource::ptr DFI::PrepareScoreBoundSource() const {
-  return std::make_unique<FreqNormSource<kScoreBoundFreq | kScoreBoundNorm>>();
-}
-
-bool DFI::Compatible(const ScorerOptions& persisted) const noexcept {
-  return irs::BoundTypeOf(persisted) == BoundTypeOf(Options{}) &&
-         !std::get_if<ScorerOptions::Bm25>(&persisted.params);
+  const auto& p = sdb::basics::downCast<IndriDirichlet>(other);
+  return p._mu == _mu;
 }
 
 }  // namespace irs

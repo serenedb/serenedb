@@ -36,7 +36,7 @@
 #include "iresearch/search/prefix_filter.hpp"
 #include "iresearch/search/range_filter.hpp"
 #include "iresearch/search/regexp_filter.hpp"
-#include "iresearch/search/scorer.hpp"
+#include "iresearch/search/scores/scorer.hpp"
 #include "iresearch/search/term_filter.hpp"
 #include "iresearch/search/term_set.hpp"
 #include "iresearch/search/wildcard_filter.hpp"

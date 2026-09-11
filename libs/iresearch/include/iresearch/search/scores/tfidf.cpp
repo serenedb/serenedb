@@ -41,8 +41,8 @@
 #include "iresearch/search/collectors.hpp"
 #include "iresearch/search/column_collector.hpp"
 #include "iresearch/search/score_function.hpp"
-#include "iresearch/search/scorer.hpp"
-#include "iresearch/search/scorer_options.hpp"
+#include "iresearch/search/scores/scorer.hpp"
+#include "iresearch/search/scores/scorer_options.hpp"
 
 namespace irs {
 namespace {

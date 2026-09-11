@@ -25,7 +25,7 @@
 
 #include "basics/bit_utils.hpp"
 #include "basics/shared.hpp"
-#include "iresearch/search/scorer.hpp"
+#include "iresearch/search/scores/scorer.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
 namespace irs::search {

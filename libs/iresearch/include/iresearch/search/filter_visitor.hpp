@@ -24,7 +24,7 @@
 
 #include "basics/shared.hpp"
 #include "iresearch/index/iterators.hpp"
-#include "iresearch/search/scorer.hpp"
+#include "iresearch/search/scores/scorer.hpp"
 #include "iresearch/types.hpp"
 
 namespace irs {

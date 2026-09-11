@@ -26,7 +26,7 @@
 #include "iresearch/search/common/posting_count_scored.hpp"
 #include "iresearch/search/common/resolve.hpp"
 #include "iresearch/search/fill/posting_scored.hpp"
-#include "iresearch/search/scorer.hpp"
+#include "iresearch/search/scores/scorer.hpp"
 
 namespace irs::search {
 

@@ -22,47 +22,72 @@
 
 #pragma once
 
-#include "iresearch/search/column_collector.hpp"
-#include "iresearch/search/scorer.hpp"
+#include "iresearch/index/field_meta.hpp"
+#include "iresearch/search/scores/scorer.hpp"
 
 namespace irs {
 
-struct TFIDFStats {
-  score_t value;
+struct BM25Stats {
+  score_t idf;
+  score_t norm_const;
+  score_t norm_length;
 };
 
-class TFIDF final : public irs::ScorerBase<TFIDF, TFIDFStats> {
+class BM25 final : public irs::ScorerBase<BM25, BM25Stats> {
  public:
-  static constexpr std::string_view type_name() noexcept { return "tfidf"; }
+  static constexpr std::string_view type_name() noexcept { return "bm25"; }
 
-  static constexpr bool WITH_NORMS() noexcept { return false; }
+  static constexpr score_t K() noexcept { return 1.2f; }
+
+  static constexpr score_t B() noexcept { return 0.75f; }
 
   static constexpr bool BOOST_AS_SCORE() noexcept { return false; }
 
   struct Options {
-    using Owner = TFIDF;
-    bool with_norms = WITH_NORMS();
+    using Owner = BM25;
+    float k1 = K();
+    float b = B();
     bool boost_as_score = BOOST_AS_SCORE();
+    bool approximate = true;
     bool operator==(const Options&) const = default;
   };
 
   static ScoreBoundType BoundTypeOf(const Options& opts) noexcept {
-    return opts.with_norms ? ScoreBoundType::DivNorm : ScoreBoundType::MaxFreq;
+    if (opts.k1 == 0.f) {
+      return ScoreBoundType::None;
+    }
+    if (opts.b == 0.f) {
+      return ScoreBoundType::MaxFreq;
+    }
+    if (opts.b == 1.f) {
+      return ScoreBoundType::DivNorm;
+    }
+    return ScoreBoundType::MinNorm;
   }
 
-  static std::unique_ptr<TFIDF> Make(const Options& opts) {
-    return std::make_unique<TFIDF>(opts.with_norms, opts.boost_as_score);
+  static std::unique_ptr<BM25> Make(const Options& opts) {
+    return std::make_unique<BM25>(opts.k1, opts.b, opts.boost_as_score,
+                                  opts.approximate);
   }
 
-  explicit TFIDF(bool normalize = WITH_NORMS(),
-                 bool boost_as_score = BOOST_AS_SCORE()) noexcept
-    : _normalize{normalize}, _boost_as_score{boost_as_score} {}
+  BM25(score_t k = K(), score_t b = B(), bool boost_as_score = BOOST_AS_SCORE(),
+       bool approximate = true) noexcept
+    : _k{k},
+      _b{b},
+      _boost_as_score{boost_as_score},
+      _approximate{approximate} {}
 
   void collect(byte_type* stats_buf, const irs::FieldCollector* field,
                const irs::TermCollector* term) const final;
 
+  bool ScoresPerDoc() const noexcept final { return !IsBM1(); }
+
   IndexFeatures GetIndexFeatures() const noexcept final {
-    if (normalize()) {
+    if (IsBM1()) {
+      return IndexFeatures::None;
+    }
+
+    if (NeedsNorm()) {
       return IndexFeatures::Freq | IndexFeatures::Norm;
     }
 
@@ -75,7 +100,7 @@ class TFIDF final : public irs::ScorerBase<TFIDF, TFIDFStats> {
 
   ScoreBoundSource::ptr PrepareScoreBoundSource() const final;
 
-  bool HasScoreBounds() const noexcept final { return true; }
+  bool HasScoreBounds() const noexcept final { return !IsBM1(); }
 
   bool Compatible(const ScorerOptions& persisted) const noexcept final;
 
@@ -84,16 +109,31 @@ class TFIDF final : public irs::ScorerBase<TFIDF, TFIDFStats> {
   std::string ToString() const final;
 
   Options GetOptions() const noexcept {
-    return {.with_norms = _normalize, .boost_as_score = _boost_as_score};
+    return {.k1 = _k,
+            .b = _b,
+            .boost_as_score = _boost_as_score,
+            .approximate = _approximate};
   }
 
-  bool normalize() const noexcept { return _normalize; }
+  score_t k() const noexcept { return _k; }
+
+  score_t b() const noexcept { return _b; }
 
   bool use_boost_as_score() const noexcept { return _boost_as_score; }
 
+  bool IsBM15() const noexcept { return _b == 0.f; }
+
+  bool IsBM11() const noexcept { return _b == 1.f; }
+
+  bool IsBM1() const noexcept { return _k == 0.f; }
+
+  bool NeedsNorm() const noexcept { return !IsBM1() && !IsBM15(); }
+
  private:
-  bool _normalize;
+  score_t _k;
+  score_t _b;
   bool _boost_as_score;
+  bool _approximate;
 };
 
 }  // namespace irs

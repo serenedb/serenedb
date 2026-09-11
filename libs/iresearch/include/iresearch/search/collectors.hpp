@@ -34,7 +34,7 @@
 #include "iresearch/formats/posting_meta.hpp"
 #include "iresearch/search/common/fixed_array.hpp"
 #include "iresearch/search/common/score_args.hpp"
-#include "iresearch/search/scorer.hpp"
+#include "iresearch/search/scores/scorer.hpp"
 #include "iresearch/search/stats_arena.hpp"
 
 namespace irs {

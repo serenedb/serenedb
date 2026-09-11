@@ -28,7 +28,7 @@
 #include <iresearch/search/doc_collector.hpp>
 #include <iresearch/search/docs/root.hpp>
 #include <iresearch/search/filter.hpp>
-#include <iresearch/search/scorer.hpp>
+#include <iresearch/search/scores/scorer.hpp>
 #include <iresearch/store/mmap_directory.hpp>
 #include <optional>
 #include <span>

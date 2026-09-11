@@ -18,24 +18,17 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include "indri_dirichlet.hpp"
+#include "raw_dl.hpp"
 
-#include <absl/strings/str_cat.h>
-
-#include <cmath>
-
-#include "basics/down_cast.h"
 #include "basics/empty.hpp"
 #include "basics/misc.hpp"
 #include "basics/shared.hpp"
 #include "iresearch/analysis/token_attributes.hpp"
-#include "iresearch/index/field_meta.hpp"
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/index/norm.hpp"
-#include "iresearch/search/collectors.hpp"
 #include "iresearch/search/column_collector.hpp"
 #include "iresearch/search/score_function.hpp"
-#include "iresearch/search/scorer.hpp"
+#include "iresearch/search/scores/scorer.hpp"
 
 namespace irs {
 namespace {
@@ -48,41 +41,35 @@ constexpr const T* TryGetValue(const T* value) noexcept {
 constexpr std::nullptr_t TryGetValue(utils::Empty) noexcept { return nullptr; }
 
 template<ScoreMergeType MergeType, bool HasBoost>
-IRS_FORCE_INLINE void IndriImpl(
-  score_t* IRS_RESTRICT res, scores_size_t n, const uint32_t* IRS_RESTRICT freq,
-  const uint32_t* IRS_RESTRICT norm,
-  [[maybe_unused]] const score_t* IRS_RESTRICT boost, score_t mu_p, score_t mu,
-  score_t const_boost) noexcept {
+IRS_FORCE_INLINE void DocLenImpl(
+  score_t* IRS_RESTRICT res, scores_size_t n, const uint32_t* IRS_RESTRICT norm,
+  [[maybe_unused]] const score_t* IRS_RESTRICT boost,
+  score_t base_boost) noexcept {
   for (scores_size_t i = 0; i != n; ++i) {
-    const score_t tf = TermCountToScore(freq[i]);
-    const score_t dl = TermCountToScore(norm[i]);
-    score_t r = std::log((tf + mu_p) / (dl + mu));
-    if constexpr (HasBoost) {
-      r *= const_boost * boost[i];
-    } else {
-      r *= const_boost;
-    }
+    const auto r = [&] IRS_FORCE_INLINE {
+      if constexpr (HasBoost) {
+        return boost[i] * base_boost * TermCountToScore(norm[i]);
+      } else {
+        return base_boost * TermCountToScore(norm[i]);
+      }
+    }();
     Merge<MergeType>(res[i], r);
   }
 }
 
 template<bool HasFilterBoost>
-struct IndriScore : public ScoreOperator {
-  IndriScore(score_t boost, score_t mu, const LMStats& stats,
-             const FreqBlockAttr* freq, const uint32_t* norm,
-             const score_t* fb) noexcept
-    : freq{freq},
-      norm{norm},
-      filter_boost{fb},
-      boost{boost},
-      mu{mu},
-      mu_p{mu * stats.collection_prob} {}
+struct RawDLScore : public ScoreOperator {
+  RawDLScore(score_t boost, const uint32_t* norm,
+             const score_t* filter_boost) noexcept
+    : norm{norm}, filter_boost{filter_boost}, boost{boost} {
+    SDB_ASSERT(this->norm);
+  }
 
   template<ScoreMergeType MergeType = ScoreMergeType::Noop>
-  IRS_FORCE_INLINE void ScoreImpl(score_t* res,
+  IRS_FORCE_INLINE void ScoreImpl(score_t* IRS_RESTRICT res,
                                   scores_size_t n) const noexcept {
-    IndriImpl<MergeType, HasFilterBoost>(
-      res, n, freq->value, norm, TryGetValue(filter_boost), mu_p, mu, boost);
+    DocLenImpl<MergeType, HasFilterBoost>(res, n, norm,
+                                          TryGetValue(filter_boost), boost);
   }
 
   score_t Score() const noexcept final {
@@ -115,37 +102,16 @@ struct IndriScore : public ScoreOperator {
     ScoreImpl(res, kPostingBlock);
   }
 
-  const FreqBlockAttr* freq;
   const uint32_t* norm;
   [[no_unique_address]] utils::Need<HasFilterBoost, const score_t*>
     filter_boost;
   score_t boost;
-  score_t mu;
-  score_t mu_p;
 };
 
 }  // namespace
 
-void IndriDirichlet::collect(byte_type* stats_buf, const FieldCollector* field,
-                             const TermCollector* term) const {
-  auto* stats = stats_cast(stats_buf);
-
-  const auto ttf_field = field ? field->total_term_freq : 0;
-  const auto ttf_term = term ? term->total_term_freq : 0;
-
-  const double num = static_cast<double>(ttf_term) + 1.0;
-  const double den = static_cast<double>(ttf_field) + 1.0;
-  stats->collection_prob = static_cast<score_t>(num / den);
-}
-
-ScoreFunction IndriDirichlet::PrepareScorer(const ScoreContext& ctx) const {
-  auto* freq = irs::get<FreqBlockAttr>(ctx.doc_attrs);
-  if (!freq) {
-    return ScoreFunction::Default();
-  }
-
-  auto* stats = stats_cast(ctx.stats);
-  if (stats->collection_prob <= 0.f || _mu <= 0.f) {
+ScoreFunction RawDL::PrepareScorer(const ScoreContext& ctx) const {
+  if (!irs::get<FreqBlockAttr>(ctx.doc_attrs)) {
     return ScoreFunction::Default();
   }
 
@@ -153,12 +119,10 @@ ScoreFunction IndriDirichlet::PrepareScorer(const ScoreContext& ctx) const {
     auto* attr = irs::get<Norm>(ctx.doc_attrs);
     return attr ? &attr->value : nullptr;
   }();
-
   if (!norm) {
-    auto norm_reader = ctx.segment.norms(ctx.field.norm);
-    norm = ctx.fetcher.AddNorms(ctx.field.norm, std::move(norm_reader));
+    norm =
+      ctx.fetcher.AddNorms(ctx.field.norm, ctx.segment.norms(ctx.field.norm));
   }
-
   if (!norm) {
     norm = kNorms.data();
   }
@@ -169,21 +133,9 @@ ScoreFunction IndriDirichlet::PrepareScorer(const ScoreContext& ctx) const {
   }();
 
   return ResolveBool(filter_boost != nullptr, [&]<bool HasBoost>() {
-    return ScoreFunction::Make<IndriScore<HasBoost>>(ctx.boost, _mu, *stats,
-                                                     freq, norm, filter_boost);
+    return ScoreFunction::Make<RawDLScore<HasBoost>>(ctx.boost, norm,
+                                                     filter_boost);
   });
-}
-
-std::string IndriDirichlet::ToString() const {
-  return absl::StrCat("indri_dirichlet(mu=", _mu, ")");
-}
-
-bool IndriDirichlet::equals(const Scorer& other) const noexcept {
-  if (!Scorer::equals(other)) {
-    return false;
-  }
-  const auto& p = sdb::basics::downCast<IndriDirichlet>(other);
-  return p._mu == _mu;
 }
 
 }  // namespace irs

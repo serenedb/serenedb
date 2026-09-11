@@ -47,7 +47,7 @@
 #include "index_builder.h"
 #include "insert_field.hpp"
 #include "iresearch/analysis/token_attributes.hpp"
-#include "iresearch/search/bm25.hpp"
+#include "iresearch/search/scores/bm25.hpp"
 #include "iresearch/search/count/root.hpp"
 #include "iresearch/search/docs/root.hpp"
 #include "iresearch/search/fill/node.hpp"

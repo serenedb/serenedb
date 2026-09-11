@@ -23,7 +23,7 @@
 #include <bit>
 
 #include "basics/bit_utils.hpp"
-#include "iresearch/search/scorer.hpp"
+#include "iresearch/search/scores/scorer.hpp"
 
 namespace irs::search {
 namespace {

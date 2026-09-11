@@ -30,7 +30,7 @@
 #include "iresearch/search/collectors.hpp"
 #include "iresearch/search/geo_filter.hpp"
 #include "iresearch/search/score_function.hpp"
-#include "iresearch/search/scorer.hpp"
+#include "iresearch/search/scores/scorer.hpp"
 #include "iresearch/store/memory_directory.hpp"
 #include "iresearch/store/store_utils.hpp"
 #include "s2/s2point_region.h"

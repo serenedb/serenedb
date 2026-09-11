@@ -18,7 +18,7 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include "iresearch/search/vector_similarity_scorer.hpp"
+#include "iresearch/search/scores/vector_similarity_scorer.hpp"
 
 #include "basics/assert.h"
 #include "iresearch/analysis/token_attributes.hpp"

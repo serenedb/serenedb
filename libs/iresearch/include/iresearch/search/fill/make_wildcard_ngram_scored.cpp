@@ -22,7 +22,7 @@
 
 #include "iresearch/search/common/all_docs_score.hpp"
 #include "iresearch/search/common/scored_context.hpp"
-#include "iresearch/search/common/wildcard_ngram_of.hpp"
+#include "iresearch/search/offsets/wildcard_ngram_of.hpp"
 #include "iresearch/search/fill/plan.hpp"
 #include "iresearch/search/fill/walk.hpp"
 #include "iresearch/search/wildcard_ngram_filter.hpp"

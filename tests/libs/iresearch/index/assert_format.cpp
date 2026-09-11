@@ -47,7 +47,7 @@
 #include "iresearch/search/term_filter.hpp"
 #include "iresearch/search/term_iterator.hpp"
 #include "iresearch/search/term_predicate.hpp"
-#include "iresearch/search/tfidf.hpp"
+#include "iresearch/search/scores/tfidf.hpp"
 #include "iresearch/store/data_output.hpp"
 #include "iresearch/utils/automaton_utils.hpp"
 #include "iresearch/utils/bytes_output.hpp"

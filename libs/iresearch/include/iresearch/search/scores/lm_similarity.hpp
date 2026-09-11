@@ -23,7 +23,7 @@
 #include <cstdint>
 
 #include "iresearch/index/field_meta.hpp"
-#include "iresearch/search/scorer.hpp"
+#include "iresearch/search/scores/scorer.hpp"
 
 namespace irs {
 

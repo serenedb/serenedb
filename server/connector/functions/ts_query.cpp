@@ -40,7 +40,7 @@
 #include <duckdb/planner/expression/bound_function_expression.hpp>
 #include <duckdb/planner/logical_operator_visitor.hpp>
 #include <iresearch/analysis/keyword_tokenizer.hpp>
-#include <iresearch/search/unscored.hpp>
+#include <iresearch/search/scores/unscored.hpp>
 
 #include "connector/functions/search.h"
 #include "connector/functions/ts_common.hpp"

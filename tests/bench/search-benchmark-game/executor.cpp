@@ -32,7 +32,7 @@
 #include <iresearch/analysis/token_sinks.hpp>
 #include <iresearch/index/norm.hpp>
 #include <iresearch/parser/parser.hpp>
-#include <iresearch/search/bm25.hpp>
+#include <iresearch/search/scores/bm25.hpp>
 #include <iresearch/search/boolean_filter.hpp>
 #include <iresearch/search/count/make.hpp>
 #include <iresearch/search/docs/make.hpp>

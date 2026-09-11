@@ -33,7 +33,7 @@
 #include "basics/empty.hpp"
 #include "iresearch/search/common/score_policy.hpp"
 #include "iresearch/search/common/window.hpp"
-#include "iresearch/search/scorer.hpp"
+#include "iresearch/search/scores/scorer.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
 namespace irs::fill {

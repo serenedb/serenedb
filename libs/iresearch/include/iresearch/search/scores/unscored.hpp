@@ -20,29 +20,45 @@
 
 #pragma once
 
-#include "iresearch/search/scorer.hpp"
+#include <string>
+
+#include "iresearch/search/scores/scorer.hpp"
 
 namespace irs {
 
-struct VectorSimilarityScorer final : ScorerBase<VectorSimilarityScorer, void> {
-  static constexpr std::string_view type_name() noexcept {
-    return "vector_similarity";
-  }
+class Unscored final : public irs::ScorerBase<Unscored, void> {
+ public:
+  static constexpr std::string_view type_name() noexcept { return "unscored"; }
 
   struct Options {
-    using Owner = VectorSimilarityScorer;
+    using Owner = Unscored;
     bool operator==(const Options&) const = default;
   };
 
-  static std::unique_ptr<VectorSimilarityScorer> Make(const Options&) {
-    return std::make_unique<VectorSimilarityScorer>();
+  static std::unique_ptr<Unscored> Make(const Options&) {
+    return std::make_unique<Unscored>();
   }
 
-  ScoreFunction PrepareScorer(const ScoreContext& ctx) const final;
+  static const Unscored& Instance() noexcept {
+    static const Unscored kInstance;
+    return kInstance;
+  }
 
   IndexFeatures GetIndexFeatures() const noexcept final {
-    return IndexFeatures::Vec;
+    return IndexFeatures::None;
   }
+
+  bool ScoresPerDoc() const noexcept final { return false; }
+
+  ScoreFunction PrepareScorer(const ScoreContext&) const final {
+    return ScoreFunction::Default();
+  }
+
+  std::string ToString() const final { return "unscored"; }
 };
+
+inline bool IsUnscored(const Scorer& scorer) noexcept {
+  return scorer.type() == irs::Type<Unscored>::id();
+}
 
 }  // namespace irs

@@ -25,8 +25,8 @@
 #include "index/index_tests.hpp"
 #include "iresearch/index/index_features.hpp"
 #include "iresearch/index/norm.hpp"
-#include "iresearch/search/raw_tf.hpp"
-#include "iresearch/search/scorer.hpp"
+#include "iresearch/search/scores/raw_tf.hpp"
+#include "iresearch/search/scores/scorer.hpp"
 #include "iresearch/search/term_filter.hpp"
 #include "tests_shared.hpp"
 

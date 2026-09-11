@@ -28,7 +28,7 @@
 #include "iresearch/search/boolean_filter.hpp"
 #include "iresearch/search/doc_collector.hpp"
 #include "iresearch/search/score_function.hpp"
-#include "iresearch/search/scorer.hpp"
+#include "iresearch/search/scores/scorer.hpp"
 #include "iresearch/search/term_filter.hpp"
 #include "iresearch/types.hpp"
 #include "tests_shared.hpp"

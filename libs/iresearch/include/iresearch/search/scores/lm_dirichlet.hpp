@@ -20,35 +20,26 @@
 
 #pragma once
 
-#include <cstdint>
+#include <cmath>
 
 #include "iresearch/index/field_meta.hpp"
-#include "iresearch/search/scorer.hpp"
+#include "iresearch/search/scores/lm_similarity.hpp"
+#include "iresearch/search/scores/scorer.hpp"
 #include "pg/sql_exception_macro.h"
 
 namespace irs {
 
-enum class DFIMeasure : uint8_t {
-  Standardized,
-  Saturated,
-  ChiSquared,
-};
-
-struct DFIStats {
-  score_t ratio;
-};
-
-class DFI final : public irs::ScorerBase<DFI, DFIStats> {
+class LMDirichlet final : public irs::ScorerBase<LMDirichlet, LMStats> {
  public:
-  static constexpr std::string_view type_name() noexcept { return "dfi"; }
-
-  static constexpr DFIMeasure MEASURE() noexcept {
-    return DFIMeasure::Standardized;
+  static constexpr std::string_view type_name() noexcept {
+    return "lm_dirichlet";
   }
 
+  static constexpr score_t MU() noexcept { return 2000.f; }
+
   struct Options {
-    using Owner = DFI;
-    DFIMeasure measure = MEASURE();
+    using Owner = LMDirichlet;
+    float mu = MU();
     bool operator==(const Options&) const = default;
   };
 
@@ -56,14 +47,15 @@ class DFI final : public irs::ScorerBase<DFI, DFIStats> {
     return ScoreBoundType::MinNorm;
   }
 
-  static std::unique_ptr<DFI> Make(const Options& opts) {
-    if (opts.measure > DFIMeasure::ChiSquared) {
-      THROW_SQL_ERROR(ERR_MSG("dfi: invalid measure"));
+  static std::unique_ptr<LMDirichlet> Make(const Options& opts) {
+    if (opts.mu < 0.f || !std::isfinite(opts.mu)) {
+      THROW_SQL_ERROR(
+        ERR_MSG("lm_dirichlet: mu must be a non-negative finite value"));
     }
-    return std::make_unique<DFI>(opts.measure);
+    return std::make_unique<LMDirichlet>(opts.mu);
   }
 
-  explicit DFI(DFIMeasure measure = MEASURE()) noexcept : _measure{measure} {}
+  explicit LMDirichlet(score_t mu = MU()) noexcept : _mu{mu} {}
 
   void collect(byte_type* stats_buf, const irs::FieldCollector* field,
                const irs::TermCollector* term) const final;
@@ -86,10 +78,10 @@ class DFI final : public irs::ScorerBase<DFI, DFIStats> {
 
   std::string ToString() const final;
 
-  DFIMeasure measure() const noexcept { return _measure; }
+  score_t mu() const noexcept { return _mu; }
 
  private:
-  DFIMeasure _measure;
+  score_t _mu;
 };
 
 }  // namespace irs

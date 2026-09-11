@@ -23,7 +23,7 @@
 #include <absl/base/optimization.h>
 
 #include "basics/shared.hpp"
-#include "iresearch/search/scorer.hpp"
+#include "iresearch/search/scores/scorer.hpp"
 
 namespace irs::search {
 namespace {

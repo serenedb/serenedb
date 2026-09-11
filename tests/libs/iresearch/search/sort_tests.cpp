@@ -26,7 +26,7 @@
 #include <algorithm>
 
 #include "iresearch/search/score_function.hpp"
-#include "iresearch/search/scorer.hpp"
+#include "iresearch/search/scores/scorer.hpp"
 
 namespace {
 

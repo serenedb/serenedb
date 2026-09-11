@@ -47,7 +47,7 @@
 #include "iresearch/search/query_builder_impl.hpp"
 #include "iresearch/search/score_function.hpp"
 #include "iresearch/search/scored/detail/walk.hpp"
-#include "iresearch/search/scorer.hpp"
+#include "iresearch/search/scores/scorer.hpp"
 #include "iresearch/search/top/detail/walk.hpp"
 #include "iresearch/utils/type_limits.hpp"
 

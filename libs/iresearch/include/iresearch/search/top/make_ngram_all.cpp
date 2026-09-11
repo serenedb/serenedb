@@ -24,7 +24,7 @@
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/search/common/all_docs_score.hpp"
 #include "iresearch/search/common/collect.hpp"
-#include "iresearch/search/common/ngram_of.hpp"
+#include "iresearch/search/offsets/ngram_of.hpp"
 #include "iresearch/search/common/scored_context.hpp"
 #include "iresearch/search/lead/two_phase_scored.hpp"
 #include "iresearch/search/ngram_similarity_query.hpp"

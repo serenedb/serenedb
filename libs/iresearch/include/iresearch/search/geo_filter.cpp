@@ -45,7 +45,7 @@
 #include "iresearch/search/geo_terms.hpp"
 #include "iresearch/search/multiterm_query.hpp"
 #include "iresearch/search/score_function.hpp"
-#include "iresearch/search/scorer.hpp"
+#include "iresearch/search/scores/scorer.hpp"
 #include "iresearch/types.hpp"
 
 namespace irs {

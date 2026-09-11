@@ -20,38 +20,38 @@
 
 #pragma once
 
-#include <cmath>
-
 #include "iresearch/index/field_meta.hpp"
-#include "iresearch/search/lm_similarity.hpp"
-#include "iresearch/search/scorer.hpp"
+#include "iresearch/search/scores/lm_similarity.hpp"
+#include "iresearch/search/scores/scorer.hpp"
 #include "pg/sql_exception_macro.h"
 
 namespace irs {
 
-class IndriDirichlet final : public irs::ScorerBase<IndriDirichlet, LMStats> {
+class LMJelinekMercer final : public irs::ScorerBase<LMJelinekMercer, LMStats> {
  public:
-  static constexpr std::string_view type_name() noexcept {
-    return "indri_dirichlet";
-  }
+  static constexpr std::string_view type_name() noexcept { return "lm_jm"; }
 
-  static constexpr score_t MU() noexcept { return 2000.f; }
+  static constexpr score_t LAMBDA() noexcept { return 0.1f; }
 
   struct Options {
-    using Owner = IndriDirichlet;
-    float mu = MU();
+    using Owner = LMJelinekMercer;
+    float lambda = LAMBDA();
     bool operator==(const Options&) const = default;
   };
 
-  static std::unique_ptr<IndriDirichlet> Make(const Options& opts) {
-    if (opts.mu < 0.f || !std::isfinite(opts.mu)) {
-      THROW_SQL_ERROR(
-        ERR_MSG("indri_dirichlet: mu must be a non-negative finite value"));
-    }
-    return std::make_unique<IndriDirichlet>(opts.mu);
+  static ScoreBoundType BoundTypeOf(const Options&) noexcept {
+    return ScoreBoundType::DivNorm;
   }
 
-  explicit IndriDirichlet(score_t mu = MU()) noexcept : _mu{mu} {}
+  static std::unique_ptr<LMJelinekMercer> Make(const Options& opts) {
+    if (!(opts.lambda > 0.f) || opts.lambda > 1.f) {
+      THROW_SQL_ERROR(ERR_MSG("lm_jelinek_mercer: lambda must be in (0, 1]"));
+    }
+    return std::make_unique<LMJelinekMercer>(opts.lambda);
+  }
+
+  explicit LMJelinekMercer(score_t lambda = LAMBDA()) noexcept
+    : _lambda{lambda} {}
 
   void collect(byte_type* stats_buf, const irs::FieldCollector* field,
                const irs::TermCollector* term) const final;
@@ -60,16 +60,24 @@ class IndriDirichlet final : public irs::ScorerBase<IndriDirichlet, LMStats> {
     return IndexFeatures::Freq | IndexFeatures::Norm;
   }
 
+  ScoreBoundWriter::ptr PrepareScoreBoundWriter(size_t max_levels) const final;
+
+  ScoreBoundSource::ptr PrepareScoreBoundSource() const final;
+
+  bool HasScoreBounds() const noexcept final { return true; }
+
+  bool Compatible(const ScorerOptions& persisted) const noexcept final;
+
   ScoreFunction PrepareScorer(const ScoreContext& ctx) const final;
 
   bool equals(const Scorer& other) const noexcept final;
 
   std::string ToString() const final;
 
-  score_t mu() const noexcept { return _mu; }
+  score_t lambda() const noexcept { return _lambda; }
 
  private:
-  score_t _mu;
+  score_t _lambda;
 };
 
 }  // namespace irs

@@ -27,7 +27,7 @@
 #include "basics/memory.hpp"
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/search/prepared_state_visitor.hpp"
-#include "iresearch/search/scorer.hpp"
+#include "iresearch/search/scores/scorer.hpp"
 
 namespace irs {
 

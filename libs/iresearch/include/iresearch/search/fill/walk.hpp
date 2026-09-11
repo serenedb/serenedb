@@ -32,7 +32,7 @@
 #include "iresearch/search/lead/concept.hpp"
 #include "iresearch/search/lead/constant_scored.hpp"
 #include "iresearch/search/score_function.hpp"
-#include "iresearch/search/scorer.hpp"
+#include "iresearch/search/scores/scorer.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
 namespace irs::fill {

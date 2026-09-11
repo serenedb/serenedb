@@ -26,7 +26,7 @@
 #include <vector>
 
 #include "iresearch/search/common/fixed_array.hpp"
-#include "iresearch/search/common/phrase_variadic_pos.hpp"
+#include "iresearch/search/offsets/phrase_variadic_pos.hpp"
 #include "iresearch/search/phrase_iterator.hpp"
 #include "iresearch/utils/type_limits.hpp"
 

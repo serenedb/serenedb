@@ -33,7 +33,7 @@
 #include "iresearch/search/doc_collector.hpp"
 #include "iresearch/search/filter_optimizer.hpp"
 #include "iresearch/search/term_filter.hpp"
-#include "iresearch/search/tfidf.hpp"
+#include "iresearch/search/scores/tfidf.hpp"
 #include "iresearch/types.hpp"
 #include "tests_shared.hpp"
 

@@ -20,45 +20,43 @@
 
 #pragma once
 
-#include <string>
-
-#include "iresearch/search/scorer.hpp"
+#include "iresearch/index/field_meta.hpp"
+#include "iresearch/search/scores/scorer.hpp"
 
 namespace irs {
 
-class Unscored final : public irs::ScorerBase<Unscored, void> {
+class RawTF final : public irs::ScorerBase<RawTF, void> {
  public:
-  static constexpr std::string_view type_name() noexcept { return "unscored"; }
+  static constexpr std::string_view type_name() noexcept { return "raw_tf"; }
 
   struct Options {
-    using Owner = Unscored;
+    using Owner = RawTF;
     bool operator==(const Options&) const = default;
   };
 
-  static std::unique_ptr<Unscored> Make(const Options&) {
-    return std::make_unique<Unscored>();
+  static ScoreBoundType BoundTypeOf(const Options&) noexcept {
+    return ScoreBoundType::MaxFreq;
   }
 
-  static const Unscored& Instance() noexcept {
-    static const Unscored kInstance;
-    return kInstance;
+  static std::unique_ptr<RawTF> Make(const Options&) {
+    return std::make_unique<RawTF>();
   }
+
+  RawTF() noexcept = default;
 
   IndexFeatures GetIndexFeatures() const noexcept final {
-    return IndexFeatures::None;
+    return IndexFeatures::Freq;
   }
 
-  bool ScoresPerDoc() const noexcept final { return false; }
+  ScoreBoundWriter::ptr PrepareScoreBoundWriter(size_t max_levels) const final;
 
-  ScoreFunction PrepareScorer(const ScoreContext&) const final {
-    return ScoreFunction::Default();
-  }
+  ScoreBoundSource::ptr PrepareScoreBoundSource() const final;
 
-  std::string ToString() const final { return "unscored"; }
+  bool HasScoreBounds() const noexcept final { return true; }
+
+  bool Compatible(const ScorerOptions& persisted) const noexcept final;
+
+  ScoreFunction PrepareScorer(const ScoreContext& ctx) const final;
 };
-
-inline bool IsUnscored(const Scorer& scorer) noexcept {
-  return scorer.type() == irs::Type<Unscored>::id();
-}
 
 }  // namespace irs

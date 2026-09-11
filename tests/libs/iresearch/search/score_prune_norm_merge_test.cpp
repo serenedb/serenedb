@@ -34,7 +34,7 @@
 
 #include <iresearch/index/index_reader.hpp>
 #include <iresearch/index/norm.hpp>
-#include <iresearch/search/bm25.hpp>
+#include <iresearch/search/scores/bm25.hpp>
 #include <iresearch/search/doc_collector.hpp>
 #include <iresearch/search/term_filter.hpp>
 #include <iresearch/utils/index_utils.hpp>

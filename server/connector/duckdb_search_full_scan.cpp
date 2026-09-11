@@ -62,12 +62,12 @@
 #include <iresearch/search/range_filter.hpp>
 #include <iresearch/search/score_function.hpp>
 #include <iresearch/search/scored/make.hpp>
-#include <iresearch/search/scorer.hpp>
+#include <iresearch/search/scores/scorer.hpp>
 #include <iresearch/search/term_filter.hpp>
 #include <iresearch/search/term_set.hpp>
 #include <iresearch/search/top/make.hpp>
 #include <iresearch/search/vector_similarity_query.hpp>
-#include <iresearch/search/vector_similarity_scorer.hpp>
+#include <iresearch/search/scores/vector_similarity_scorer.hpp>
 #include <iresearch/utils/string.hpp>
 #include <mutex>
 #include <optional>

@@ -26,8 +26,8 @@
 #include "iresearch/analysis/token_attributes.hpp"
 #include "iresearch/formats/posting/score_bound_writer.hpp"
 #include "iresearch/search/score_function.hpp"
-#include "iresearch/search/scorer.hpp"
-#include "iresearch/search/scorer_options.hpp"
+#include "iresearch/search/scores/scorer.hpp"
+#include "iresearch/search/scores/scorer_options.hpp"
 
 namespace irs {
 namespace {

@@ -36,7 +36,7 @@
 #include "iresearch/search/column_collector.hpp"
 #include "iresearch/search/common/fixed_array.hpp"
 #include "iresearch/search/score_function.hpp"
-#include "iresearch/search/scorer.hpp"
+#include "iresearch/search/scores/scorer.hpp"
 
 namespace irs {
 

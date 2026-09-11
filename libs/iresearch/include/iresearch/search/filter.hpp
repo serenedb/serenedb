@@ -38,7 +38,7 @@
 #include "iresearch/search/collectors.hpp"
 #include "iresearch/search/column_collector.hpp"
 #include "iresearch/search/common/scored_context.hpp"
-#include "iresearch/search/constant_score.hpp"
+#include "iresearch/search/scores/constant_score.hpp"
 #include "iresearch/search/count/root.hpp"
 #include "iresearch/search/docs/root.hpp"
 #include "iresearch/search/fill/node.hpp"
@@ -49,7 +49,7 @@
 #include "iresearch/search/term_iterator.hpp"
 #include "iresearch/search/term_predicate.hpp"
 #include "iresearch/search/top/root.hpp"
-#include "iresearch/search/unscored.hpp"
+#include "iresearch/search/scores/unscored.hpp"
 #include "iresearch/utils/hash_utils.hpp"
 
 namespace irs {

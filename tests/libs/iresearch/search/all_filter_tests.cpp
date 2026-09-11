@@ -24,9 +24,9 @@
 #include "filter_test_case_base.hpp"
 #include "iresearch/index/field_meta.hpp"
 #include "iresearch/search/all_filter.hpp"
-#include "iresearch/search/bm25.hpp"
-#include "iresearch/search/scorer.hpp"
-#include "iresearch/search/tfidf.hpp"
+#include "iresearch/search/scores/bm25.hpp"
+#include "iresearch/search/scores/scorer.hpp"
+#include "iresearch/search/scores/tfidf.hpp"
 #include "tests_shared.hpp"
 
 namespace {

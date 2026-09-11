@@ -22,10 +22,10 @@
 #include "iresearch/search/boolean_filter.hpp"
 #include "iresearch/search/filter_optimizer.hpp"
 #include "iresearch/search/levenshtein_filter.hpp"
-#include "iresearch/search/raw_tf.hpp"
-#include "iresearch/search/scorer.hpp"
+#include "iresearch/search/scores/raw_tf.hpp"
+#include "iresearch/search/scores/scorer.hpp"
 #include "iresearch/search/term_filter.hpp"
-#include "iresearch/search/unscored.hpp"
+#include "iresearch/search/scores/unscored.hpp"
 #include "iresearch/search/wildcard_filter.hpp"
 #include "tests_shared.hpp"
 

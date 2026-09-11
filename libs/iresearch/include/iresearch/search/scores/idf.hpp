@@ -1,7 +1,7 @@
 ////////////////////////////////////////////////////////////////////////////////
 /// DISCLAIMER
 ///
-/// Copyright 2020 ArangoDB GmbH, Cologne, Germany
+/// Copyright 2026 SereneDB GmbH, Berlin, Germany
 ///
 /// Licensed under the Apache License, Version 2.0 (the "License");
 /// you may not use this file except in compliance with the License.
@@ -15,37 +15,42 @@
 /// See the License for the specific language governing permissions and
 /// limitations under the License.
 ///
-/// Copyright holder is ArangoDB GmbH, Cologne, Germany
-///
-/// @author Andrey Abramov
+/// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
 #pragma once
 
-#include "iresearch/index/field_meta.hpp"
-#include "iresearch/search/scorer.hpp"
+#include "iresearch/search/scores/scorer.hpp"
 
 namespace irs {
 
-struct RawBoost final : ScorerBase<RawBoost, void> {
-  static constexpr std::string_view type_name() noexcept { return "raw_boost"; }
+struct IDFStats {
+  score_t value;
+};
+
+class IDF final : public irs::ScorerBase<IDF, IDFStats> {
+ public:
+  static constexpr std::string_view type_name() noexcept { return "idf"; }
 
   struct Options {
-    using Owner = RawBoost;
+    using Owner = IDF;
     bool operator==(const Options&) const = default;
   };
 
-  static std::unique_ptr<RawBoost> Make(const Options&) {
-    return std::make_unique<RawBoost>();
+  static std::unique_ptr<IDF> Make(const Options&) {
+    return std::make_unique<IDF>();
   }
 
-  ScoreFunction PrepareScorer(const ScoreContext& ctx) const final;
+  void collect(byte_type* stats_buf, const irs::FieldCollector* field,
+               const irs::TermCollector* term) const final;
 
   IndexFeatures GetIndexFeatures() const noexcept final {
     return IndexFeatures::None;
   }
 
   bool ScoresPerDoc() const noexcept final { return false; }
+
+  ScoreFunction PrepareScorer(const ScoreContext& ctx) const final;
 };
 
 }  // namespace irs

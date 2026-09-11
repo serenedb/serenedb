@@ -39,7 +39,7 @@
 #include "iresearch/search/common/posting_skip.hpp"
 #include "iresearch/search/common/score_args.hpp"
 #include "iresearch/search/common/skip_walk.hpp"
-#include "iresearch/search/scorer.hpp"
+#include "iresearch/search/scores/scorer.hpp"
 #include "iresearch/store/data_input.hpp"
 #include "iresearch/utils/type_limits.hpp"
 

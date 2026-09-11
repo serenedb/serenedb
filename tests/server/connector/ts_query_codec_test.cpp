@@ -23,7 +23,7 @@
 #include "connector/functions/search.h"
 #include "connector/functions/ts_query_codec.h"
 #include "gtest/gtest.h"
-#include "iresearch/search/unscored.hpp"
+#include "iresearch/search/scores/unscored.hpp"
 
 namespace {
 

@@ -27,7 +27,7 @@
 #include <duckdb/storage/table/row_group_reorderer.hpp>
 #include <functional>
 #include <iresearch/search/filter.hpp>
-#include <iresearch/search/scorer.hpp>
+#include <iresearch/search/scores/scorer.hpp>
 #include <iresearch/utils/string.hpp>
 #include <memory>
 #include <optional>

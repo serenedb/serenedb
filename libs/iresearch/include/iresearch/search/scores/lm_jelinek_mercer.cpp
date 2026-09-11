@@ -18,7 +18,7 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include "lm_dirichlet.hpp"
+#include "lm_jelinek_mercer.hpp"
 
 #include <absl/strings/str_cat.h>
 
@@ -36,8 +36,8 @@
 #include "iresearch/search/collectors.hpp"
 #include "iresearch/search/column_collector.hpp"
 #include "iresearch/search/score_function.hpp"
-#include "iresearch/search/scorer.hpp"
-#include "iresearch/search/scorer_options.hpp"
+#include "iresearch/search/scores/scorer.hpp"
+#include "iresearch/search/scores/scorer_options.hpp"
 
 namespace irs {
 namespace {
@@ -50,20 +50,17 @@ constexpr const T* TryGetValue(const T* value) noexcept {
 constexpr std::nullptr_t TryGetValue(utils::Empty) noexcept { return nullptr; }
 
 template<ScoreMergeType MergeType, bool HasBoost>
-IRS_FORCE_INLINE void LmDirImpl(
+IRS_FORCE_INLINE void LmJmImpl(
   score_t* IRS_RESTRICT res, scores_size_t n, const uint32_t* IRS_RESTRICT freq,
   const uint32_t* IRS_RESTRICT norm,
-  [[maybe_unused]] const score_t* IRS_RESTRICT boost, score_t mu_p_inv,
-  score_t mu, score_t const_boost) noexcept {
+  [[maybe_unused]] const score_t* IRS_RESTRICT boost, score_t num,
+  score_t denom_inv, score_t const_boost) noexcept {
   for (scores_size_t i = 0; i != n; ++i) {
     const score_t tf = TermCountToScore(freq[i]);
+    SDB_ASSERT(norm[i] != 0);
     const score_t dl = TermCountToScore(norm[i]);
-    const score_t weight = std::log1p(tf * mu_p_inv);
-    const score_t doc_norm = std::log1p(dl / mu);
-    score_t r = weight - doc_norm;
-    if (r < 0.f) {
-      r = 0.f;
-    }
+    const score_t ratio = (num * tf / dl) * denom_inv;
+    score_t r = std::log1p(ratio);
     if constexpr (HasBoost) {
       r *= const_boost * boost[i];
     } else {
@@ -74,23 +71,23 @@ IRS_FORCE_INLINE void LmDirImpl(
 }
 
 template<bool HasFilterBoost>
-struct LmDirScore : public ScoreOperator {
-  LmDirScore(score_t boost, score_t mu, const LMStats& stats,
-             const FreqBlockAttr* freq, const uint32_t* norm,
-             const score_t* fb) noexcept
+struct LmJmScore : public ScoreOperator {
+  LmJmScore(score_t boost, score_t lambda, const LMStats& stats,
+            const FreqBlockAttr* freq, const uint32_t* norm,
+            const score_t* fb) noexcept
     : freq{freq},
       norm{norm},
       filter_boost{fb},
       boost{boost},
-      mu{mu},
-      mu_p_inv{1.f / (mu * stats.collection_prob)} {}
+      num{1.f - lambda},
+      denom_inv{1.f / (lambda * stats.collection_prob)} {}
 
   template<ScoreMergeType MergeType = ScoreMergeType::Noop>
   IRS_FORCE_INLINE void ScoreImpl(score_t* res,
                                   scores_size_t n) const noexcept {
-    LmDirImpl<MergeType, HasFilterBoost>(res, n, freq->value, norm,
-                                         TryGetValue(filter_boost), mu_p_inv,
-                                         mu, boost);
+    LmJmImpl<MergeType, HasFilterBoost>(res, n, freq->value, norm,
+                                        TryGetValue(filter_boost), num,
+                                        denom_inv, boost);
   }
 
   score_t Score() const noexcept final {
@@ -128,14 +125,14 @@ struct LmDirScore : public ScoreOperator {
   [[no_unique_address]] utils::Need<HasFilterBoost, const score_t*>
     filter_boost;
   score_t boost;
-  score_t mu;
-  score_t mu_p_inv;
+  score_t num;
+  score_t denom_inv;
 };
 
 }  // namespace
 
-void LMDirichlet::collect(byte_type* stats_buf, const FieldCollector* field,
-                          const TermCollector* term) const {
+void LMJelinekMercer::collect(byte_type* stats_buf, const FieldCollector* field,
+                              const TermCollector* term) const {
   auto* stats = stats_cast(stats_buf);
 
   const auto ttf_field = field ? field->total_term_freq : 0;
@@ -146,14 +143,14 @@ void LMDirichlet::collect(byte_type* stats_buf, const FieldCollector* field,
   stats->collection_prob = static_cast<score_t>(num / den);
 }
 
-ScoreFunction LMDirichlet::PrepareScorer(const ScoreContext& ctx) const {
+ScoreFunction LMJelinekMercer::PrepareScorer(const ScoreContext& ctx) const {
   auto* freq = irs::get<FreqBlockAttr>(ctx.doc_attrs);
   if (!freq) {
     return ScoreFunction::Default();
   }
 
   auto* stats = stats_cast(ctx.stats);
-  if (stats->collection_prob <= 0.f || _mu <= 0.f) {
+  if (stats->collection_prob <= 0.f) {
     return ScoreFunction::Default();
   }
 
@@ -177,35 +174,35 @@ ScoreFunction LMDirichlet::PrepareScorer(const ScoreContext& ctx) const {
   }();
 
   return ResolveBool(filter_boost != nullptr, [&]<bool HasBoost>() {
-    return ScoreFunction::Make<LmDirScore<HasBoost>>(ctx.boost, _mu, *stats,
-                                                     freq, norm, filter_boost);
+    return ScoreFunction::Make<LmJmScore<HasBoost>>(ctx.boost, _lambda, *stats,
+                                                    freq, norm, filter_boost);
   });
 }
 
-std::string LMDirichlet::ToString() const {
-  return absl::StrCat("lm_dirichlet(mu=", _mu, ")");
+std::string LMJelinekMercer::ToString() const {
+  return absl::StrCat("lm_jm(lambda=", _lambda, ")");
 }
 
-bool LMDirichlet::equals(const Scorer& other) const noexcept {
+bool LMJelinekMercer::equals(const Scorer& other) const noexcept {
   if (!Scorer::equals(other)) {
     return false;
   }
-  const auto& p = sdb::basics::downCast<LMDirichlet>(other);
-  return p._mu == _mu;
+  const auto& p = sdb::basics::downCast<LMJelinekMercer>(other);
+  return p._lambda == _lambda;
 }
 
-ScoreBoundWriter::ptr LMDirichlet::PrepareScoreBoundWriter(
+ScoreBoundWriter::ptr LMJelinekMercer::PrepareScoreBoundWriter(
   size_t max_levels) const {
-  return std::make_unique<FreqNormWriter<kScoreBoundMinNorm>>(max_levels);
+  return std::make_unique<FreqNormWriter<kScoreBoundDivNorm>>(max_levels);
 }
 
-ScoreBoundSource::ptr LMDirichlet::PrepareScoreBoundSource() const {
+ScoreBoundSource::ptr LMJelinekMercer::PrepareScoreBoundSource() const {
   return std::make_unique<FreqNormSource<kScoreBoundFreq | kScoreBoundNorm>>();
 }
 
-bool LMDirichlet::Compatible(const ScorerOptions& persisted) const noexcept {
-  return irs::BoundTypeOf(persisted) == BoundTypeOf(Options{}) &&
-         !std::get_if<ScorerOptions::Bm25>(&persisted.params);
+bool LMJelinekMercer::Compatible(
+  const ScorerOptions& persisted) const noexcept {
+  return irs::BoundTypeOf(persisted) == BoundTypeOf(Options{});
 }
 
 }  // namespace irs

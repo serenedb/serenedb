@@ -23,7 +23,7 @@
 #include "iresearch/search/common/score_args.hpp"
 #include "iresearch/search/common/table_filter.hpp"
 #include "iresearch/search/score_function.hpp"
-#include "iresearch/search/scorer.hpp"
+#include "iresearch/search/scores/scorer.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
 namespace irs {

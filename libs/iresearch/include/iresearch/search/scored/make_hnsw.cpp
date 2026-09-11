@@ -31,7 +31,7 @@
 #include "iresearch/search/hnsw_query.hpp"
 #include "iresearch/search/score_function.hpp"
 #include "iresearch/search/scored/make.hpp"
-#include "iresearch/search/scorer.hpp"
+#include "iresearch/search/scores/scorer.hpp"
 
 namespace irs::scored {
 namespace {

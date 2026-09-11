@@ -22,8 +22,8 @@
 #include <vector>
 
 #include "iresearch/index/index_reader.hpp"
-#include "iresearch/search/common/phrase_fixed_slots.hpp"
-#include "iresearch/search/common/phrase_of.hpp"
+#include "iresearch/search/offsets/phrase_fixed_slots.hpp"
+#include "iresearch/search/offsets/phrase_of.hpp"
 #include "iresearch/search/common/posting_pos.hpp"
 #include "iresearch/search/common/resolve.hpp"
 #include "iresearch/search/common/scored_context.hpp"

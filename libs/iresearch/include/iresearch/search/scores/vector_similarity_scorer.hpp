@@ -20,31 +20,29 @@
 
 #pragma once
 
-#include "iresearch/index/field_meta.hpp"
-#include "iresearch/search/scorer.hpp"
+#include "iresearch/search/scores/scorer.hpp"
 
 namespace irs {
 
-class RawDL final : public irs::ScorerBase<RawDL, void> {
- public:
-  static constexpr std::string_view type_name() noexcept { return "raw_dl"; }
+struct VectorSimilarityScorer final : ScorerBase<VectorSimilarityScorer, void> {
+  static constexpr std::string_view type_name() noexcept {
+    return "vector_similarity";
+  }
 
   struct Options {
-    using Owner = RawDL;
+    using Owner = VectorSimilarityScorer;
     bool operator==(const Options&) const = default;
   };
 
-  static std::unique_ptr<RawDL> Make(const Options&) {
-    return std::make_unique<RawDL>();
-  }
-
-  RawDL() noexcept = default;
-
-  IndexFeatures GetIndexFeatures() const noexcept final {
-    return IndexFeatures::Freq | IndexFeatures::Norm;
+  static std::unique_ptr<VectorSimilarityScorer> Make(const Options&) {
+    return std::make_unique<VectorSimilarityScorer>();
   }
 
   ScoreFunction PrepareScorer(const ScoreContext& ctx) const final;
+
+  IndexFeatures GetIndexFeatures() const noexcept final {
+    return IndexFeatures::Vec;
+  }
 };
 
 }  // namespace irs

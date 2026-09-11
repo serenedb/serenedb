@@ -20,18 +20,18 @@
 
 #pragma once
 
-#include <iresearch/search/bm25.hpp>
-#include <iresearch/search/constant_score.hpp>
-#include <iresearch/search/dfi.hpp>
-#include <iresearch/search/idf.hpp>
-#include <iresearch/search/indri_dirichlet.hpp>
-#include <iresearch/search/lm_dirichlet.hpp>
-#include <iresearch/search/lm_jelinek_mercer.hpp>
-#include <iresearch/search/raw_boost.hpp>
-#include <iresearch/search/raw_dl.hpp>
-#include <iresearch/search/raw_tf.hpp>
-#include <iresearch/search/scorer.hpp>
-#include <iresearch/search/tfidf.hpp>
+#include <iresearch/search/scores/bm25.hpp>
+#include <iresearch/search/scores/constant_score.hpp>
+#include <iresearch/search/scores/dfi.hpp>
+#include <iresearch/search/scores/idf.hpp>
+#include <iresearch/search/scores/indri_dirichlet.hpp>
+#include <iresearch/search/scores/lm_dirichlet.hpp>
+#include <iresearch/search/scores/lm_jelinek_mercer.hpp>
+#include <iresearch/search/scores/raw_boost.hpp>
+#include <iresearch/search/scores/raw_dl.hpp>
+#include <iresearch/search/scores/raw_tf.hpp>
+#include <iresearch/search/scores/scorer.hpp>
+#include <iresearch/search/scores/tfidf.hpp>
 #include <string_view>
 #include <variant>
 

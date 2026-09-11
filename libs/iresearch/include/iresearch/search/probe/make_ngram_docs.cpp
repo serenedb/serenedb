@@ -21,7 +21,7 @@
 #include <utility>
 #include <vector>
 
-#include "iresearch/search/common/ngram_of.hpp"
+#include "iresearch/search/offsets/ngram_of.hpp"
 #include "iresearch/search/probe/impl.hpp"
 #include "iresearch/search/probe/make.hpp"
 #include "iresearch/search/probe/two_phase_docs.hpp"

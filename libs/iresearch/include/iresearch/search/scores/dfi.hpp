@@ -20,26 +20,35 @@
 
 #pragma once
 
-#include <cmath>
+#include <cstdint>
 
 #include "iresearch/index/field_meta.hpp"
-#include "iresearch/search/lm_similarity.hpp"
-#include "iresearch/search/scorer.hpp"
+#include "iresearch/search/scores/scorer.hpp"
 #include "pg/sql_exception_macro.h"
 
 namespace irs {
 
-class LMDirichlet final : public irs::ScorerBase<LMDirichlet, LMStats> {
+enum class DFIMeasure : uint8_t {
+  Standardized,
+  Saturated,
+  ChiSquared,
+};
+
+struct DFIStats {
+  score_t ratio;
+};
+
+class DFI final : public irs::ScorerBase<DFI, DFIStats> {
  public:
-  static constexpr std::string_view type_name() noexcept {
-    return "lm_dirichlet";
+  static constexpr std::string_view type_name() noexcept { return "dfi"; }
+
+  static constexpr DFIMeasure MEASURE() noexcept {
+    return DFIMeasure::Standardized;
   }
 
-  static constexpr score_t MU() noexcept { return 2000.f; }
-
   struct Options {
-    using Owner = LMDirichlet;
-    float mu = MU();
+    using Owner = DFI;
+    DFIMeasure measure = MEASURE();
     bool operator==(const Options&) const = default;
   };
 
@@ -47,15 +56,14 @@ class LMDirichlet final : public irs::ScorerBase<LMDirichlet, LMStats> {
     return ScoreBoundType::MinNorm;
   }
 
-  static std::unique_ptr<LMDirichlet> Make(const Options& opts) {
-    if (opts.mu < 0.f || !std::isfinite(opts.mu)) {
-      THROW_SQL_ERROR(
-        ERR_MSG("lm_dirichlet: mu must be a non-negative finite value"));
+  static std::unique_ptr<DFI> Make(const Options& opts) {
+    if (opts.measure > DFIMeasure::ChiSquared) {
+      THROW_SQL_ERROR(ERR_MSG("dfi: invalid measure"));
     }
-    return std::make_unique<LMDirichlet>(opts.mu);
+    return std::make_unique<DFI>(opts.measure);
   }
 
-  explicit LMDirichlet(score_t mu = MU()) noexcept : _mu{mu} {}
+  explicit DFI(DFIMeasure measure = MEASURE()) noexcept : _measure{measure} {}
 
   void collect(byte_type* stats_buf, const irs::FieldCollector* field,
                const irs::TermCollector* term) const final;
@@ -78,10 +86,10 @@ class LMDirichlet final : public irs::ScorerBase<LMDirichlet, LMStats> {
 
   std::string ToString() const final;
 
-  score_t mu() const noexcept { return _mu; }
+  DFIMeasure measure() const noexcept { return _measure; }
 
  private:
-  score_t _mu;
+  DFIMeasure _measure;
 };
 
 }  // namespace irs

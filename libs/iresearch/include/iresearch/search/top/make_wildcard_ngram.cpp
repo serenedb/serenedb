@@ -19,7 +19,7 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include "iresearch/search/common/all_docs_score.hpp"
-#include "iresearch/search/common/wildcard_ngram_of.hpp"
+#include "iresearch/search/offsets/wildcard_ngram_of.hpp"
 #include "iresearch/search/top/detail/walk.hpp"
 #include "iresearch/search/top/make.hpp"
 #include "iresearch/search/wildcard_ngram_filter.hpp"

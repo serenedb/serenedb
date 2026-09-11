@@ -28,7 +28,7 @@
 #include "basics/bit_utils.hpp"
 #include "basics/empty.hpp"
 #include "basics/shared.hpp"
-#include "iresearch/search/scorer.hpp"
+#include "iresearch/search/scores/scorer.hpp"
 
 namespace irs::search {
 namespace {

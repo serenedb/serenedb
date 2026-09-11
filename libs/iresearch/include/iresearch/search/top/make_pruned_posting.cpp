@@ -27,7 +27,7 @@
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/search/common/exclusion_of.hpp"
 #include "iresearch/search/common/resolve.hpp"
-#include "iresearch/search/scorer.hpp"
+#include "iresearch/search/scores/scorer.hpp"
 #include "iresearch/search/top/make.hpp"
 #include "iresearch/search/top/pruned_posting.hpp"
 #include "pg/sql_exception_macro.h"

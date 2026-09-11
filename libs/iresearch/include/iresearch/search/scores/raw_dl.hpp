@@ -20,35 +20,29 @@
 
 #pragma once
 
-#include "iresearch/search/scorer.hpp"
+#include "iresearch/index/field_meta.hpp"
+#include "iresearch/search/scores/scorer.hpp"
 
 namespace irs {
 
-struct IDFStats {
-  score_t value;
-};
-
-class IDF final : public irs::ScorerBase<IDF, IDFStats> {
+class RawDL final : public irs::ScorerBase<RawDL, void> {
  public:
-  static constexpr std::string_view type_name() noexcept { return "idf"; }
+  static constexpr std::string_view type_name() noexcept { return "raw_dl"; }
 
   struct Options {
-    using Owner = IDF;
+    using Owner = RawDL;
     bool operator==(const Options&) const = default;
   };
 
-  static std::unique_ptr<IDF> Make(const Options&) {
-    return std::make_unique<IDF>();
+  static std::unique_ptr<RawDL> Make(const Options&) {
+    return std::make_unique<RawDL>();
   }
 
-  void collect(byte_type* stats_buf, const irs::FieldCollector* field,
-               const irs::TermCollector* term) const final;
+  RawDL() noexcept = default;
 
   IndexFeatures GetIndexFeatures() const noexcept final {
-    return IndexFeatures::None;
+    return IndexFeatures::Freq | IndexFeatures::Norm;
   }
-
-  bool ScoresPerDoc() const noexcept final { return false; }
 
   ScoreFunction PrepareScorer(const ScoreContext& ctx) const final;
 };

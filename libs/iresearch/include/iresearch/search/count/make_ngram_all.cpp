@@ -21,7 +21,7 @@
 #include <utility>
 #include <vector>
 
-#include "iresearch/search/common/ngram_of.hpp"
+#include "iresearch/search/offsets/ngram_of.hpp"
 #include "iresearch/search/count/plan.hpp"
 #include "iresearch/search/count/walk.hpp"
 

@@ -1436,15 +1436,8 @@ auto IndexWriter::CompactAsync(const CompactionPolicy& policy,
     if (floor == 0) {
       policy(candidates, *committed_reader, _compacting.segments);
     } else {
-      // Hide the protected segments from the policy instead of vetoing its
-      // choice afterwards. A policy with a budget -- the tiered one the search
-      // table runs during a build, among others -- spends that budget on the
-      // segments it likes best, which are the small old ones a floor is
-      // protecting; filtering the result would leave it with nothing and merge
-      // nothing, so a long build would starve compaction of the segments
-      // written *during* it. Hidden, they are simply unavailable and the
-      // policy picks from what is left. The set already means "not available
-      // to you", so every policy that honours it honours this for free.
+      // Hide the backfill-protected segments from the policy
+      // TODO(Dronplane): maybe make it member and not refill every run?
       CompactingSegments unavailable = _compacting.segments;
       for (const auto& segment : *committed_reader) {
         uint64_t id = 0;
@@ -1455,11 +1448,7 @@ auto IndexWriter::CompactAsync(const CompactionPolicy& policy,
       }
       policy(candidates, *committed_reader, unavailable);
 
-      // Nothing *enforces* that a policy honours the set, and a merge that
-      // consumed a segment a build is rebuilding would be worse than a missed
-      // merge: the build's swap tolerates a source that vanished, so it would
-      // adopt its rebuilt copy alongside the merge output carrying the same
-      // rows. Duplicates, silently. Keep the veto as the hard guarantee.
+      // TODO(Dronplane): should it be an assert?
       std::erase_if(candidates, [floor](const SubReader* candidate) {
         uint64_t id = 0;
         return ParseSegmentId(candidate->Meta().name, id) && id <= floor;

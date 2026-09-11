@@ -237,11 +237,17 @@ catalog::TokenizerMap ResolveShardTokenizers(const SearchTable& shard,
   // the database off the connection's SereneDB state, which WAL replay's bare
   // duckdb::Connection does not have. The shard knows its own database.
   auto& db_catalog = catalog::DatabaseCatalog(context, shard.GetDbId());
-  for (const auto& index : catalog::RelationInvertedIndexes(
-         context, shard.GetSchemaId(), shard.GetTableId())) {
-    for (const auto id : catalog::InvertedInfo(*index).GetTokenizers()) {
-      dicts.try_emplace(id, catalog::FindTokenizerIn(context, db_catalog, id));
+  // Off the merged config, not the committed index list: MergeIndexConfig
+  // publishes a new index's fields before its entry commits, so the catalog
+  // would hide a dictionary that concurrent writers already have to emit.
+  const auto config = shard.GetIndexConfig();
+  for (const auto& [field_id, entry] : *config) {
+    if (!entry.HasTextDictionary()) {
+      continue;
     }
+    dicts.try_emplace(
+      entry.text_dictionary,
+      catalog::FindTokenizerIn(context, db_catalog, entry.text_dictionary));
   }
   return dicts;
 }

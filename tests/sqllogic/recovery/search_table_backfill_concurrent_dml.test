@@ -285,5 +285,98 @@ statement ok
 DROP TABLE bfd;
 
 
+## Part 3 -- a tokenized build must not break concurrent writers
+#
+# CreateIndexImpl publishes the new term field into the shard's merged config
+# before the index entry commits, so that writers carry the field from the
+# first moment. A writer therefore has to emit terms for a dictionary that is
+# still invisible to its own session. Resolving dictionaries off the committed
+# index list made every INSERT fail with "Dictionary for inverted index does
+# not exists" for the whole build -- 78% of them in a 10M-row load test.
+# They resolve off the merged config instead, which is the same thing the
+# write path emits from.
+statement ok
+CREATE TEXT SEARCH DICTIONARY bfe_dict(
+    template = 'text', locale = 'en_US.UTF-8', case = 'lower',
+    stemming = false, accent = false, frequency = true, position = true
+)
+
+
+statement ok
+CREATE TABLE bfe (id BIGINT, body TEXT)
+  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+
+
+statement ok
+INSERT INTO bfe VALUES (1, 'alpha beta'), (2, 'gamma delta');
+
+
+statement ok
+VACUUM (REFRESH_TABLE) bfe;
+
+
+statement ok
+SET sdb_faults = 'pause_search_backfill_before_swap';
+
+
+connection builder3
+statement async ok
+CREATE INDEX bfe_idx ON bfe USING inverted (body bfe_dict);
+
+
+connection default
+query ok retry 40 backoff 250ms
+SELECT tuples_done FROM pg_stat_progress_create_index
+WHERE relid = 'bfe'::regclass;
+----
+tuples_done
+2
+
+
+# The build is parked with its config published and its index entry
+# uncommitted: exactly the window that used to reject every write.
+statement ok
+INSERT INTO bfe VALUES (3, 'epsilon zeta');
+
+
+statement ok
+SET sdb_faults = '-pause_search_backfill_before_swap';
+
+
+wait
+
+
+statement ok
+VACUUM (REFRESH_TABLE) bfe;
+
+
+query
+SELECT id, body FROM bfe ORDER BY id;
+----
+id	body
+1	alpha beta
+2	gamma delta
+3	epsilon zeta
+
+
+# Rebuilt rows and the mid-build row are both reachable by token.
+query
+SELECT id FROM bfe_idx WHERE body @@ 'beta';
+----
+id
+1
+
+
+query
+SELECT id FROM bfe_idx WHERE body @@ 'epsilon';
+----
+id
+3
+
+
+statement ok
+DROP TABLE bfe;
+
+
 statement ok
 RESET sdb_faults;

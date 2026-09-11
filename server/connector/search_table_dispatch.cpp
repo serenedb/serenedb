@@ -29,6 +29,7 @@
 
 #include "basics/assert.h"
 #include "catalog/entry/duckdb_table_entry.h"
+#include "catalog/scorer_options.h"
 #include "catalog/table.h"
 #include "connector/duckdb_client_state.h"
 #include "connector/inverted_index_options_util.h"
@@ -213,9 +214,16 @@ void ApplyStorageKind(
       search_options.segment_memory_max = ResolveUbigintWithOption(
         context, kSegmentMemoryMaxSetting, /*with_value=*/nullptr);
     }
+    if (const auto topk = with_options.find(std::string{kOptimizeTopKSetting});
+        topk != with_options.end() && topk->second) {
+      auto text = *ExtractString(kOptimizeTopKSetting, *topk->second);
+      catalog::ParseScorerExpression(nullptr, text);
+      info.tags.insert(std::string{kOptimizeTopKSetting}, std::move(text));
+      with_options.erase(std::string{kOptimizeTopKSetting});
+    }
   }
   // The sequence feeding the synthetic primary key is not known until the
-  // create runs under the catalog mutex; the tags are rewritten there.
+  // create runs; the tags are rewritten there.
   catalog::SetTableTags(info, engine, search_options, ObjectId{});
 }
 

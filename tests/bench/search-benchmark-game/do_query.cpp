@@ -54,7 +54,11 @@ size_t ExecuteCommand(bench::Executor& executor, const bench::Command& cmd,
       if (cmd.report.print) {
         executor.PrintResults();
       }
-      return cmd.report.hash ? executor.HashResults() : count;
+      if (!cmd.report.hash) {
+        return count;
+      }
+      return cmd.prune ? executor.HashResults()
+                       : executor.HashResultsWithCount(count);
     }
   }
   return 0;

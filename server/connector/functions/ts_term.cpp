@@ -21,8 +21,8 @@
 #include <absl/status/status.h>
 
 #include <duckdb/planner/expression/bound_cast_expression.hpp>
-#include <iresearch/analysis/token_attributes.hpp>
-#include <iresearch/search/terms_filter.hpp>
+#include <iresearch/analysis/token_sinks.hpp>
+#include <iresearch/search/term_set.hpp>
 #include <iresearch/utils/string.hpp>
 
 #include "pg/errcodes.h"
@@ -31,11 +31,11 @@
 
 namespace sdb::connector {
 
-absl::Status SetupTermFilter(irs::ByTerm& filter,
+absl::Status SetupTermClause(irs::TermClause& clause,
                              const SearchColumnInfo& column_info,
                              const duckdb::Value& value);
 
-void BuildFtsTerm(irs::BooleanFilter& parent, const FilterContext& ctx,
+void BuildFtsTerm(BoolTarget parent, const FilterContext& ctx,
                   const SearchColumnInfo& column_info,
                   const duckdb::Value& value) {
   if (value.IsNull()) {
@@ -43,18 +43,21 @@ void BuildFtsTerm(irs::BooleanFilter& parent, const FilterContext& ctx,
     return;
   }
 
-  auto& term = AddMaybeNegated<irs::ByTerm>(parent, ctx, column_info);
-  term.SetBoost(ctx.boost);
-  // SetupTermFilter declines for unsupported column types (it is shared with
+  irs::TermClause clause{
+    .scorer = LeafScorer(column_info),
+    .boost = ctx.boost,
+  };
+  // SetupTermClause declines for unsupported column types (it is shared with
   // the speculative comparison path); under ts_* syntax that is a user error.
-  if (auto s = SetupTermFilter(term, column_info, value); !s.ok()) {
+  if (auto s = SetupTermClause(clause, column_info, value); !s.ok()) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE), ERR_MSG(s.message()),
       ERR_HINT("The value's type must match the column's indexed type."));
   }
+  MaybeNegated(parent, ctx, column_info).Add(std::move(clause));
 }
 
-void BuildFtsTokens(irs::BooleanFilter& parent, const FilterContext& ctx,
+void BuildFtsTokens(BoolTarget parent, const FilterContext& ctx,
                     const SearchColumnInfo& column_info, std::string_view text,
                     bool require_all) {
   if (column_info.logical_type.id() != duckdb::LogicalTypeId::VARCHAR &&
@@ -63,41 +66,41 @@ void BuildFtsTokens(irs::BooleanFilter& parent, const FilterContext& ctx,
     return;
   }
   auto& analyzer = ctx.tokenizer;
-  std::vector<irs::bstring> tokens;
-  if (!analyzer.reset(text)) {
+  irs::ValueAnalyzer value_analyzer;
+  irs::ValueTokens tokens;
+  if (!value_analyzer.Analyze(
+        analyzer,
+        duckdb::string_t{text.data(), static_cast<uint32_t>(text.size())},
+        tokens)) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                     ERR_MSG("Failed to analyse '", text, "'"),
                     ERR_HINT("The column's analyzer rejected the input text."));
   }
-  const auto* tok_attr = irs::get<irs::TermAttr>(analyzer);
-  while (analyzer.next()) {
-    tokens.emplace_back(tok_attr->value.begin(), tok_attr->value.end());
-  }
+  const auto toks = tokens.terms();
 
-  if (tokens.empty()) {
+  if (toks.empty()) {
     AddMaybeNegated<irs::Empty>(parent, ctx, column_info);
     return;
   }
   const auto field_id =
     PickPerKindFieldId(column_info, duckdb::LogicalTypeId::VARCHAR);
-  if (tokens.size() == 1) {
-    auto& term = AddMaybeNegated<irs::ByTerm>(parent, ctx, column_info);
-    term.SetBoost(ctx.boost);
-    *term.mutable_field_id() = field_id;
-    term.mutable_options()->term.assign(tokens[0]);
+  if (toks.size() == 1) {
+    AddTerm(MaybeNegated(parent, ctx, column_info), field_id,
+            irs::AsBytesView(toks[0]), ctx.boost);
     return;
   }
-  // Multi-token: ByTerms with min_match=1 (OR) or N (AND).
-  auto& terms = AddMaybeNegated<irs::ByTerms>(parent, ctx, column_info);
-  terms.SetBoost(ctx.boost);
-  *terms.mutable_field_id() = field_id;
-  auto& opts = *terms.mutable_options();
-  opts.min_match = require_all ? tokens.size() : 1;
-  for (auto& t : tokens) {
-    opts.terms.emplace(std::move(t));
+  // Multi-token: one term-set node, every token required (AND) or one of
+  // them (OR).
+  std::vector<irs::bstring> terms;
+  terms.reserve(toks.size());
+  for (const auto& t : toks) {
+    terms.emplace_back(irs::AsBytesView(t));
   }
+  AddTermSet(MaybeNegated(parent, ctx, column_info), field_id, terms,
+             require_all ? terms.size() : 1)
+    .SetBoost(ctx.boost);
 }
-void FromTerm(irs::BooleanFilter& parent, const FilterContext& ctx,
+void FromTerm(BoolTarget parent, const FilterContext& ctx,
               const SearchColumnInfo& column_info,
               const duckdb::BoundFunctionExpression& func) {
   if (func.GetChildren().size() != 1) {

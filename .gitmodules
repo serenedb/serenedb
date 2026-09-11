@@ -42,10 +42,6 @@
 	path = third_party/liburing
 	url = https://github.com/serenedb/liburing.git
 	shallow = true
-[submodule "third_party/minizip-ng"]
-	path = third_party/minizip-ng
-	url = https://github.com/serenedb/minizip-ng.git
-	shallow = true
 [submodule "third_party/lz4"]
 	path = third_party/lz4
 	url = https://github.com/serenedb/lz4.git
@@ -220,4 +216,15 @@
 [submodule "third_party/libxml2"]
 	path = third_party/libxml2
 	url = https://github.com/serenedb/libxml2.git
+	shallow = true
+[submodule "third_party/duckdb_markdown"]
+	path = third_party/duckdb_markdown
+	url = https://github.com/serenedb/duckdb_markdown.git
+	shallow = true
+[submodule "third_party/cmark-gfm"]
+	path = third_party/cmark-gfm
+	url = https://github.com/serenedb/cmark-gfm.git
+[submodule "third_party/stringzilla"]
+	path = third_party/stringzilla
+	url = https://github.com/serenedb/StringZilla.git
 	shallow = true

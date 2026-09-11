@@ -23,18 +23,33 @@
 #pragma once
 
 #include "iresearch/formats/posting_meta.hpp"
+#include "iresearch/search/common/resolve.hpp"
+#include "iresearch/search/common/score_args.hpp"
 
 namespace irs {
 
 struct TermReader;
 
-// Cached per reader term state
 struct TermState {
-  TermState(const TermReader* reader, const PostingMeta& cookie) noexcept
+  TermState(const TermReader* reader, const PostingMeta& cookie)
     : reader{reader}, cookie{cookie} {}
 
   const TermReader* reader;
   PostingMeta cookie;
 };
 
+namespace search {
+
+struct PostingClause {
+  TermState state;
+  score_t boost = kNoBoost;
+  StatsRecord stats{};
+};
+
+struct AllDocsClause {
+  score_t boost = kNoBoost;
+  StatsRecord stats;
+};
+
+}  // namespace search
 }  // namespace irs

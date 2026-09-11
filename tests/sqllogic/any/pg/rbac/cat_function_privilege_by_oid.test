@@ -33,17 +33,17 @@ WHERE n.nspname = 'public'
   AND p.proname IN ('fpo_fedorov', 'fpo_vedernikoff')
 ORDER BY p.proname;
 ----
-proname by_oid
-fpo_fedorov t
-fpo_vedernikoff t
+proname	by_oid
+fpo_fedorov	t
+fpo_vedernikoff	t
 
 
 query
 SELECT has_function_privilege('fpo_fedorov(int)', 'EXECUTE') AS scalar_by_name,
        has_function_privilege('fpo_vedernikoff()', 'EXECUTE') AS table_by_name;
 ----
-scalar_by_name table_by_name
-t t
+scalar_by_name	table_by_name
+t	t
 
 
 # The set-returning function's oid is its own, not the scalar's.

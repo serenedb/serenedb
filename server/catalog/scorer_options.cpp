@@ -35,7 +35,10 @@
 #include <duckdb/planner/expression/bound_function_expression.hpp>
 #include <duckdb/planner/expression_binder/constant_binder.hpp>
 #include <magic_enum/magic_enum.hpp>
+#include <ranges>
+#include <span>
 #include <string>
+#include <vector>
 
 #include "pg/errcodes.h"
 #include "pg/sql_exception_macro.h"
@@ -50,26 +53,16 @@ const duckdb::Value* TryGetConstantValue(const duckdb::Expression& expr) {
   return &expr.Cast<duckdb::BoundConstantExpression>().GetValue();
 }
 
-}  // namespace
-
-std::unique_ptr<irs::Scorer> MakeScorer(const ScorerOptions& spec) {
-  return std::visit(
-    []<typename P>(const P& p) -> std::unique_ptr<irs::Scorer> {
-      return P::Owner::Make(p);
-    },
-    spec.params);
-}
-
-std::optional<ScorerOptions> ExtractScorerFromBound(
-  const duckdb::BoundFunctionExpression& func, std::string_view name) {
+std::optional<ScorerOptions> ExtractScorer(
+  std::string_view name, std::span<const duckdb::Value* const> args) {
   using S = ScorerOptions;
   S scorer;
 
   if (name == S::Bm25::Owner::type_name()) {
     S::Bm25 p;
-    if (func.GetChildren().size() == 3) {
-      auto* k1v = TryGetConstantValue(*func.GetChildren()[1]);
-      auto* bv = TryGetConstantValue(*func.GetChildren()[2]);
+    if (args.size() == 2) {
+      auto* k1v = args[0];
+      auto* bv = args[1];
       if (!k1v || !bv) {
         return std::nullopt;
       }
@@ -79,8 +72,8 @@ std::optional<ScorerOptions> ExtractScorerFromBound(
     scorer.params = p;
   } else if (name == S::Tfidf::Owner::type_name()) {
     S::Tfidf p;
-    if (func.GetChildren().size() == 2) {
-      auto* cv = TryGetConstantValue(*func.GetChildren()[1]);
+    if (args.size() == 1) {
+      auto* cv = args[0];
       if (!cv) {
         return std::nullopt;
       }
@@ -89,8 +82,8 @@ std::optional<ScorerOptions> ExtractScorerFromBound(
     scorer.params = p;
   } else if (name == S::LmJm::Owner::type_name()) {
     S::LmJm p;
-    if (func.GetChildren().size() == 2) {
-      auto* lv = TryGetConstantValue(*func.GetChildren()[1]);
+    if (args.size() == 1) {
+      auto* lv = args[0];
       if (!lv) {
         return std::nullopt;
       }
@@ -104,8 +97,8 @@ std::optional<ScorerOptions> ExtractScorerFromBound(
     scorer.params = p;
   } else if (name == S::LmDirichlet::Owner::type_name()) {
     S::LmDirichlet p;
-    if (func.GetChildren().size() == 2) {
-      auto* mv = TryGetConstantValue(*func.GetChildren()[1]);
+    if (args.size() == 1) {
+      auto* mv = args[0];
       if (!mv) {
         return std::nullopt;
       }
@@ -120,8 +113,8 @@ std::optional<ScorerOptions> ExtractScorerFromBound(
     scorer.params = p;
   } else if (name == S::IndriDirichlet::Owner::type_name()) {
     S::IndriDirichlet p;
-    if (func.GetChildren().size() == 2) {
-      auto* mv = TryGetConstantValue(*func.GetChildren()[1]);
+    if (args.size() == 1) {
+      auto* mv = args[0];
       if (!mv) {
         return std::nullopt;
       }
@@ -137,8 +130,8 @@ std::optional<ScorerOptions> ExtractScorerFromBound(
     scorer.params = p;
   } else if (name == S::Dfi::Owner::type_name()) {
     S::Dfi p;
-    if (func.GetChildren().size() == 2) {
-      auto* mv = TryGetConstantValue(*func.GetChildren()[1]);
+    if (args.size() == 1) {
+      auto* mv = args[0];
       if (!mv) {
         return std::nullopt;
       }
@@ -166,8 +159,8 @@ std::optional<ScorerOptions> ExtractScorerFromBound(
     scorer.params = S::Idf{};
   } else if (name == S::Constant::Owner::type_name()) {
     S::Constant p;
-    if (func.GetChildren().size() == 2) {
-      auto* vv = TryGetConstantValue(*func.GetChildren()[1]);
+    if (args.size() == 1) {
+      auto* vv = args[0];
       if (!vv) {
         return std::nullopt;
       }
@@ -189,7 +182,26 @@ std::optional<ScorerOptions> ExtractScorerFromBound(
   return scorer;
 }
 
-ScorerOptions ParseScorerExpression(duckdb::ClientContext& context,
+}  // namespace
+
+std::unique_ptr<irs::Scorer> MakeScorer(const ScorerOptions& spec) {
+  return std::visit(
+    []<typename P>(const P& p) -> std::unique_ptr<irs::Scorer> {
+      return P::Owner::Make(p);
+    },
+    spec.params);
+}
+
+std::optional<ScorerOptions> ExtractScorerFromBound(
+  const duckdb::BoundFunctionExpression& func, std::string_view name) {
+  std::vector<const duckdb::Value*> args;
+  for (const auto& child : func.GetChildren() | std::views::drop(1)) {
+    args.push_back(TryGetConstantValue(*child));
+  }
+  return ExtractScorer(name, args);
+}
+
+ScorerOptions ParseScorerExpression(duckdb::ClientContext* context,
                                     std::string input, std::string_view what) {
   using namespace duckdb;
   auto exprs = Parser::ParseExpressionList(input);
@@ -207,20 +219,36 @@ ScorerOptions ParseScorerExpression(duckdb::ClientContext& context,
       ERR_HINT("Use e.g. 'tfidf()' or 'bm25(1.2, 0.75)'"));
   }
 
+  auto& fn = fn_expr->Cast<FunctionExpression>();
+  std::string name = fn.FunctionName().GetIdentifierName();
+  absl::AsciiStrToLower(&name);
+
+  std::vector<const Value*> literals;
+  for (const auto& arg : fn.GetArguments()) {
+    const auto& expr = arg.GetExpression();
+    if (expr.GetExpressionClass() == ExpressionClass::CONSTANT) {
+      literals.push_back(&expr.Cast<ConstantExpression>().GetValue());
+    }
+  }
+  if (literals.size() == fn.GetArguments().size()) {
+    return *ExtractScorer(name, literals);
+  }
+  if (!context) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+      ERR_MSG("'", what, "' scorer args must be constants: '", input, "'"),
+      ERR_HINT("Use e.g. 'tfidf()' or 'bm25(1.2, 0.75)'"));
+  }
+
   // Prepend a tableoid placeholder to match the SQL `BM25(idx.tableoid, ...)`
   // overload that ConstantBinder will resolve.
-  auto& fn = fn_expr->Cast<FunctionExpression>();
   fn.GetArgumentsMutable().insert(
     fn.GetArgumentsMutable().begin(),
     FunctionArgument{unique_ptr<ParsedExpression>(
       make_uniq<ConstantExpression>(Value::BIGINT(0)))});
 
-  // Capture the name now -- Bind() consumes fn_expr.
-  std::string name = fn.FunctionName().GetIdentifierName();
-  absl::AsciiStrToLower(&name);
-
-  auto binder = Binder::CreateBinder(context);
-  ConstantBinder cb(*binder, context, "optimize_top_k");
+  auto binder = Binder::CreateBinder(*context);
+  ConstantBinder cb(*binder, *context, std::string{kOptimizeTopKSetting});
   auto bound = cb.Bind(fn_expr);
   if (!bound ||
       bound->GetExpressionClass() != ExpressionClass::BOUND_FUNCTION) {
@@ -233,7 +261,7 @@ ScorerOptions ParseScorerExpression(duckdb::ClientContext& context,
   for (auto& child : bound_fn.GetChildrenMutable()) {
     if (child->GetExpressionClass() != ExpressionClass::BOUND_CONSTANT &&
         child->IsFoldable()) {
-      auto val = ExpressionExecutor::EvaluateScalar(context, *child);
+      auto val = ExpressionExecutor::EvaluateScalar(*context, *child);
       child = make_uniq<BoundConstantExpression>(std::move(val));
     }
   }

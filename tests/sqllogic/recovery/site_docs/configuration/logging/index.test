@@ -11,7 +11,7 @@ Success
 
 statement ok
 -- Run some queries...
-SELECT * FROM duckdb_logs;
+SELECT * FROM sdb_logs;
 
 # DOCS_TEST: example_002
 
@@ -27,7 +27,7 @@ Success
 # DOCS_TEST_BODY
 
 query
-CALL truncate_duckdb_logs();
+CALL truncate_sdb_logs();
 ----
 Success
 
@@ -61,7 +61,7 @@ Success
 # DOCS_TEST: example_007
 
 statement ok
-CALL truncate_duckdb_logs();
+CALL truncate_sdb_logs();
 
 statement ok
 CALL enable_logging('HTTP');
@@ -69,14 +69,14 @@ CALL enable_logging('HTTP');
 # DOCS_TEST_BODY
 
 statement ok
-SELECT request.headers FROM duckdb_logs_parsed('HTTP');
+SELECT request.headers FROM sdb_logs_parsed('HTTP');
 
 # DOCS_TEST: example_008
 
 # DOCS_TEST_BODY
 
 statement ok
-DESCRIBE FROM duckdb_logs_parsed('HTTP');
+DESCRIBE FROM sdb_logs_parsed('HTTP');
 
 # DOCS_TEST: example_009
 

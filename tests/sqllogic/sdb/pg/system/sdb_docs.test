@@ -1,0 +1,265 @@
+# Structure of the embedded docs table, checked as invariants over every row so
+# that adding or editing documentation pages does not touch this file. A path
+# is either 'file.md' (a whole-page doc) or 'file.md#Title#Heading...' with the
+# chain of headings, one unescaped '#' per level, spaces as '_'.
+
+connection docs database=postgres
+query
+SELECT count(*) > 100 FROM sdb_docs.docs WHERE length(path) - length(replace(path, '#', '')) <= 1;
+----
+?column?
+t
+
+connection docs database=postgres
+query
+SELECT count(*) > 1000 FROM sdb_docs.docs WHERE position('#' IN path) > 0;
+----
+?column?
+t
+
+# Both kinds of doc exist.
+connection docs database=postgres
+query
+SELECT count(*) > 10, count(*) FILTER (WHERE position('#' IN path) = 0) > 10 FROM sdb_docs.docs WHERE length(path) - length(replace(path, '#', '')) <= 1;
+----
+?column?	?column?
+t	t
+
+# A heading row's path ends with its own heading segment.
+connection docs database=postgres
+query
+SELECT count(*) FROM sdb_docs.docs
+WHERE position('#' IN path) > 0
+  AND NOT ends_with(path, '#' || replace(replace(title, '#', '\#'), ' ', '_'));
+----
+count
+0
+
+# Rows without a heading parent (whole pages and title rows) carry no
+# breadcrumb, and a split page has no bare file row next to its title row.
+connection docs database=postgres
+query
+WITH rows AS (
+  SELECT path, breadcrumb,
+         left(path, length(path) - length(replace(replace(title, '#', '\#'), ' ', '_')) - 1) AS parent
+  FROM sdb_docs.docs)
+SELECT count(*) FILTER (WHERE breadcrumb <> ''),
+       count(*) FILTER (WHERE position('#' IN path) > 0 AND EXISTS (SELECT 1 FROM sdb_docs.docs b WHERE b.path = rows.parent))
+FROM rows WHERE position('#' IN path) = 0 OR position('#' IN parent) = 0;
+----
+count	count
+0	0
+
+# Every nested heading row has a parent row, its content is contained in the
+# parent's (a heading carries everything nested under it), and its breadcrumb
+# is the parent's chain.
+connection docs database=postgres
+query
+WITH rows AS (
+  SELECT path, title, breadcrumb, content,
+         left(path, length(path) - length(replace(replace(title, '#', '\#'), ' ', '_')) - 1) AS parent
+  FROM sdb_docs.docs WHERE position('#' IN path) > 0)
+SELECT count(*) FILTER (WHERE p.path IS NULL),
+       count(*) FILTER (WHERE position(c.content IN p.content) = 0),
+       count(*) FILTER (WHERE c.breadcrumb <> CASE WHEN p.breadcrumb = '' THEN p.title ELSE p.breadcrumb || ' / ' || p.title END)
+FROM rows c LEFT JOIN sdb_docs.docs p ON p.path = c.parent
+WHERE position('#' IN c.parent) > 0;
+----
+count	count	count
+0	0	0
+
+connection docs database=postgres
+query
+SELECT count(*) FROM sdb_docs.docs WHERE title IS NULL OR title = '' OR content IS NULL OR content_text IS NULL;
+----
+count
+0
+
+# Nothing from the MDX source survives: frontmatter, imports, components,
+# anchors, comments, formatting inside titles.
+connection docs database=postgres
+query
+SELECT count(*) FROM sdb_docs.docs WHERE content LIKE '---%' OR content LIKE '%import SqlLogicTest%' OR content LIKE '%<SqlLogicTest%' OR content LIKE '%<DocCallout%' OR content LIKE '%{#%' OR content LIKE '%<!--%' OR title LIKE '%`%';
+----
+count
+0
+
+connection docs database=postgres
+query
+SELECT length(hash), layout FROM sdb_docs.meta;
+----
+length	layout
+64	12
+
+# The breadcrumb is indexed: a breadcrumb match names an ancestor heading.
+connection docs database=postgres
+query
+SELECT count(*) > 0, bool_and(breadcrumb ILIKE '%cop%') FROM sdb_docs.docs_fts WHERE breadcrumb @@ 'copy';
+----
+?column?	bool_and
+t	t
+
+# Ranking sanity: a query for a topic surfaces a row of a page about it.
+connection docs database=postgres
+query
+SELECT bool_or(path ILIKE '%inverted%') FROM (
+  SELECT path, BM25(d.tableoid) AS score
+  FROM sdb_docs.docs_fts d
+  WHERE title @@ 'inverted index' OR breadcrumb @@ 'inverted index' OR content_text @@ 'inverted index'
+  ORDER BY score DESC, path
+  LIMIT 10
+);
+----
+bool_or
+t
+
+connection docs database=postgres
+query
+SELECT count(*) > 0 FROM sdb_docs.docs_fts WHERE content_text @@ ts_phrase('inverted index');
+----
+?column?
+t
+
+connection docs database=postgres
+query
+SELECT list_contains(t, 'the'), list_contains(t, 'index'), list_contains(t, 'structure'), list_contains(t, 'md_to_text'), list_contains(t, 'MD_TO_TEXT')
+FROM (SELECT ts_lexize('sdb_docs.tokenizer', 'The index is a structure; see md_to_text()') AS t);
+----
+list_contains	list_contains	list_contains	list_contains	list_contains
+t	t	t	t	f
+
+# SQL entry points over the same rows and index.
+connection docs database=postgres
+query
+SELECT count(*), bool_and(path <> '' AND snippet <> '' AND score > 0) FROM sdb_docs.search('create search table', 3);
+----
+count	bool_and
+3	t
+
+connection docs database=postgres
+query
+SELECT length(sdb_docs.read('sql/statements/create_table/index.md#CREATE_TABLE')) > 100, sdb_docs.read('no/such/page.md') IS NULL;
+----
+?column?	?column?
+t	t
+
+connection docs database=postgres
+query
+SELECT count(*) > 3, bool_and(starts_with(path, 'sql/statements/create_table/')) FROM sdb_docs.sections('sql/statements/create_table/');
+----
+?column?	bool_and
+t	t
+
+connection docs database=postgres
+query
+SELECT count(*) >= 1, bool_and(lower(title) LIKE 'any_value%') FROM sdb_docs.reference('ANY_VALUE');
+----
+?column?	bool_and
+t	t
+
+# The schema is read-only for everyone but the loader, the superuser included:
+# the tables are rebuilt from the binary, so a manual change would be silently
+# lost or would corrupt the search index.
+
+connection docs database=postgres
+statement error
+INSERT INTO sdb_docs.docs VALUES ('zzz.md', 'z', '', 'c', 'c');
+----
+db error: ERROR: schema "sdb_docs" is read-only
+DETAIL: The embedded documentation is rebuilt from the server binary at startup.
+
+
+connection docs database=postgres
+statement error
+UPDATE sdb_docs.docs SET title = 'x' WHERE path = 'cookbook/search/autocomplete.md';
+----
+db error: ERROR: schema "sdb_docs" is read-only
+DETAIL: The embedded documentation is rebuilt from the server binary at startup.
+
+
+connection docs database=postgres
+statement error
+DELETE FROM sdb_docs.docs WHERE path = 'cookbook/search/autocomplete.md';
+----
+db error: ERROR: schema "sdb_docs" is read-only
+DETAIL: The embedded documentation is rebuilt from the server binary at startup.
+
+
+connection docs database=postgres
+statement error
+DELETE FROM sdb_docs.meta;
+----
+db error: ERROR: schema "sdb_docs" is read-only
+DETAIL: The embedded documentation is rebuilt from the server binary at startup.
+
+
+connection docs database=postgres
+statement error
+DROP TABLE sdb_docs.meta;
+----
+db error: ERROR: schema "sdb_docs" is read-only
+DETAIL: The embedded documentation is rebuilt from the server binary at startup.
+
+
+connection docs database=postgres
+statement error
+DROP TABLE sdb_docs.docs;
+----
+db error: ERROR: schema "sdb_docs" is read-only
+DETAIL: The embedded documentation is rebuilt from the server binary at startup.
+
+
+connection docs database=postgres
+statement error
+ALTER TABLE sdb_docs.docs RENAME TO docs2;
+----
+db error: ERROR: schema "sdb_docs" is read-only
+DETAIL: The embedded documentation is rebuilt from the server binary at startup.
+
+
+connection docs database=postgres
+statement error
+ALTER TABLE sdb_docs.meta ADD COLUMN extra TEXT;
+----
+db error: ERROR: schema "sdb_docs" is read-only
+DETAIL: The embedded documentation is rebuilt from the server binary at startup.
+
+
+connection docs database=postgres
+statement error
+CREATE TABLE sdb_docs.scratch (id INT);
+----
+db error: ERROR: schema "sdb_docs" is read-only
+DETAIL: The embedded documentation is rebuilt from the server binary at startup.
+
+
+connection docs database=postgres
+statement error
+CREATE INDEX meta_hash_idx ON sdb_docs.meta (hash);
+----
+db error: ERROR: schema "sdb_docs" is read-only
+DETAIL: The embedded documentation is rebuilt from the server binary at startup.
+
+
+connection docs database=postgres
+statement error
+DROP SCHEMA sdb_docs CASCADE;
+----
+db error: ERROR: schema "sdb_docs" is read-only
+DETAIL: The embedded documentation is rebuilt from the server binary at startup.
+
+
+connection docs database=postgres
+statement error
+ALTER SCHEMA sdb_docs RENAME TO sdb_docs_old;
+----
+db error: ERROR: schema "sdb_docs" is read-only
+DETAIL: The embedded documentation is rebuilt from the server binary at startup.
+
+
+connection docs database=postgres
+query
+SELECT count(*) > 1000, (SELECT count(*) FROM sdb_docs.meta) FROM sdb_docs.docs;
+----
+?column?	count
+t	1

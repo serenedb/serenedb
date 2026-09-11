@@ -54,8 +54,8 @@ class CatalogEntry;
 }  // namespace duckdb
 namespace sdb::catalog {
 
-class Role;
 class CreateDatabaseInfo;
+class CreateRoleInfo;
 class CreateTokenizerInfo;
 struct AccessContext;
 class Index;
@@ -108,7 +108,7 @@ void SetEntryComment(const catalog::AccessContext& ax, duckdb::CatalogType type,
 // entry builds its next version, the set places it, and the catalog record is
 // the commit walk's. The caller has resolved the target's kind and checked the
 // new name against the namespaces the kind shares; owner and existence are
-// re-checked here, under the mutation scope.
+// re-checked here.
 void ApplyEntryAlter(const catalog::AccessContext& ax, duckdb::CatalogType type,
                      ObjectId parent_id, std::string_view name,
                      duckdb::AlterInfo& info);
@@ -296,11 +296,12 @@ void VisitRoleEntries(duckdb::ClientContext* context,
 // Roles live in the cluster-global attachment rather than in a database; the
 // mutators write its ROLE_ENTRY set directly and queue the matching
 // catalog-log record beside it. A null `context` reads what is committed.
-void VisitRoles(duckdb::ClientContext* context,
-                absl::FunctionRef<void(const catalog::Role&)> visitor);
-const catalog::Role* FindRole(duckdb::ClientContext* context,
-                              std::string_view name);
-const catalog::Role* FindRole(duckdb::ClientContext* context, ObjectId id);
+void VisitRoles(
+  duckdb::ClientContext* context,
+  absl::FunctionRef<void(const catalog::SereneDBRoleEntry&)> visitor);
+const SereneDBRoleEntry* FindRole(duckdb::ClientContext* context,
+                                  std::string_view name);
+const SereneDBRoleEntry* FindRole(duckdb::ClientContext* context, ObjectId id);
 
 // Whether this transaction has written a role it has not committed. Its own
 // version is the one it must read, so it neither uses nor fills the shared
@@ -319,7 +320,7 @@ void RequireRoleNotVanished(duckdb::ClientContext* context,
 // empty for a create, different for a rename. Throws 40001 when another
 // transaction is holding, or has committed, a version of the same role.
 void PutRole(duckdb::ClientContext* context, std::string_view old_name,
-             std::shared_ptr<const catalog::Role> role);
+             duckdb::unique_ptr<catalog::CreateRoleInfo> role);
 void DropRoleEntry(duckdb::ClientContext* context, std::string_view name);
 
 // A database's duckdb entry IS the object; the set is cluster-global like the

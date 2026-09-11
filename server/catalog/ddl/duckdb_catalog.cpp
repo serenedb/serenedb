@@ -22,6 +22,7 @@
 
 #include <absl/algorithm/container.h>
 #include <absl/cleanup/cleanup.h>
+#include <absl/strings/ascii.h>
 #include <absl/strings/match.h>
 
 #include <duckdb/catalog/catalog_entry/duck_table_entry.hpp>
@@ -146,7 +147,6 @@ bool DropSchemaChild(duckdb::ClientContext& context, duckdb::CatalogType type,
                      const duckdb::DropInfo& info, bool missing_ok) {
   const auto& qualified = info.GetQualifiedName();
   catalog::JoinStoreTransaction(&context);
-  catalog::Catalog::MutationScope mutation{catalog::GetCatalog()};
   const auto* database =
     FindDatabase(&context, qualified.Catalog().GetIdentifierName());
   if (!database) {
@@ -164,12 +164,11 @@ bool DropSchemaChild(duckdb::ClientContext& context, duckdb::CatalogType type,
 }
 
 // What survives a DROP of one or more overloads: a rewrite of the function
-// under the identity the owner already holds. Resolved again under the
-// mutation scope -- the surgery above ran outside it.
+// under the identity the owner already holds. Resolved again here -- the
+// surgery above ran against an earlier read.
 void InstallSurvivingOverloads(
   duckdb::ClientContext& context, ObjectId database_id, std::string_view schema,
   std::string_view name, duckdb::unique_ptr<duckdb::CreateMacroInfo> next) {
-  catalog::Catalog::MutationScope lock{catalog::GetCatalog()};
   const auto schema_id =
     catalog::TryFindSchemaId(&context, database_id, schema);
   if (!schema_id) {
@@ -651,9 +650,6 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBCatalog::CreateSchema(
   const ObjectId owner = SchemaOwner(client, info, creator);
   const auto database_id = GetDatabaseId();
 
-  // Under the catalog mutex from here: the name check and the write have to be
-  // one step, or two concurrent CREATE SCHEMAs both find the name free.
-  catalog::Catalog::MutationScope mutation{catalog::GetCatalog()};
   // PG: CREATE SCHEMA requires CREATE on the current database of the role
   // running it, whoever ends up owning the schema.
   catalog::RequireDatabaseAccess(&client, creator,
@@ -672,7 +668,7 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBCatalog::CreateSchema(
   PutSchema(
     &client, {},
     catalog::MakeSchemaInfo(catalog::NextId(), database_id, schema_name),
-    catalog::Permissions{owner});
+    catalog::Permissions{owner, {}, {}});
   // New snapshot will have the schema; next LookupSchema will find it
   return nullptr;
 }
@@ -705,9 +701,7 @@ void SereneDBCatalog::RenameSchema(duckdb::CatalogTransaction transaction,
   auto perm = current->permissions;
   const auto database_id = GetDatabaseId();
   const auto ax = catalog::ActingAs(client);
-  // Under the catalog mutex from here: the name check and the write have to be
-  // one step, or two concurrent renames both find the new name free.
-  catalog::Catalog::MutationScope mutation{catalog::GetCatalog()};
+  catalog::EnsureWritableSchema(&client, old_name);
   catalog::RequireOwner(&client, ax.role, perm, "schema", old_name);
   catalog::RequireDatabaseAccess(&client, ax.role,
                                  FindDatabase(&client, database_id),
@@ -752,13 +746,21 @@ void SereneDBCatalog::ScanSchemas(
   // The static schemas are generated content, not schemas of this database:
   // duckdb's own system catalog already answers for those two names, and
   // listing ours beside them would double every information_schema row.
+  // Collected first, called back after: the set's lock must not be held across
+  // a callback -- one that resolves a transaction takes locks of its own. Safe
+  // here because this road has a statement behind it, whose transaction pins
+  // every version it can see.
+  duckdb::vector<duckdb::reference<duckdb::SchemaCatalogEntry>> schemas;
   GetSchemaCatalogSet().Scan(GetCatalogTransaction(context),
                              [&](duckdb::CatalogEntry& entry) {
                                auto& schema = entry.Cast<SereneDBSchemaEntry>();
                                if (!schema.IsStatic()) {
-                                 callback(schema);
+                                 schemas.push_back(schema);
                                }
                              });
+  for (auto& schema : schemas) {
+    callback(schema.get());
+  }
 }
 
 duckdb::optional_ptr<duckdb::TableCatalogEntry>
@@ -915,13 +917,13 @@ void ApplyTableAlter(const AccessContext& ax,
                      const duckdb::CreateTableInfo& table,
                      duckdb::AlterInfo& info) {
   JoinStoreTransaction(ax.context);
-  catalog::Catalog::MutationScope lock{catalog::GetCatalog()};
   const auto* current = catalog::Find<SereneDBTableEntry>(
     ax.context, catalog::ParentIdOf(table), catalog::IdOf(table));
   if (current == nullptr) {
     ThrowConcurrentlyDropped(duckdb::CatalogType::TABLE_ENTRY,
                              table.GetTableName().GetIdentifierName());
   }
+  EnsureWritableSchema(ax.context, catalog::ParentIdOf(table));
   RequireOwner(ax.context, ax.role, current->permissions, "table",
                current->name.GetIdentifierName());
   ApplyTableAlterLocked(ax.context, table, info);
@@ -1319,6 +1321,21 @@ duckdb::PhysicalOperator& SereneDBCatalog::PlanInsert(
   return duckdb::DuckCatalog::PlanInsert(context, planner, op, plan);
 }
 
+std::vector<duckdb::idx_t> SearchPkSlots(const SereneDBTableEntry& table,
+                                         duckdb::idx_t child_cols) {
+  const auto rowid_cols = table.GetRowIdColumns();
+  SDB_ASSERT(rowid_cols.size() <= child_cols);
+  const auto virt_start = child_cols - rowid_cols.size();
+  const auto slot_of = [&](duckdb::column_t id) {
+    const auto it = absl::c_find(rowid_cols, id);
+    SDB_ASSERT(it != rowid_cols.end());
+    return virt_start + static_cast<duckdb::idx_t>(it - rowid_cols.begin());
+  };
+  // A search table's row identity is always the synthetic rowid, never the
+  // declared PRIMARY KEY -- which is only an indexed column set here.
+  return {slot_of(kColumnIdentifierGeneratedPk)};
+}
+
 duckdb::PhysicalOperator& SereneDBCatalog::PlanDelete(
   duckdb::ClientContext& context, duckdb::PhysicalPlanGenerator& planner,
   duckdb::LogicalDelete& op, duckdb::PhysicalOperator& plan) {
@@ -1361,19 +1378,13 @@ duckdb::PhysicalOperator& SereneDBCatalog::PlanDelete(
   auto& table_entry = RequireBaseTable(op.table);
 
   if (table_entry.IsSearchTable()) {
-    // TRUNCATE (autocommit): fast iresearch Clear marker. In-transaction
-    // TRUNCATE has is_truncate but is not autocommit, so it falls through to
-    // the row-wise SereneDBSearchDelete below.
-    if (op.is_truncate && context.transaction.IsAutoCommit()) {
+    if (op.is_truncate) {
       return planner.Make<connector::SereneDBSearchTruncate>(
-        table_entry.GetSearchData(), op.estimated_cardinality);
+        table_entry.GetSearchData(), op.estimated_cardinality,
+        context.transaction.IsAutoCommit());
     }
 
-    // A Search table's row identity is always the synthetic rowid, which
-    // BuildRowIdColumns appends last: [real..., key/indexed virtuals...,
-    // generated_pk].
-    const auto child_cols = plan.types.size();
-    std::vector<duckdb::idx_t> pk_indices{child_cols - 1};
+    auto pk_indices = SearchPkSlots(table_entry, plan.types.size());
     // RETURNING: the binder already widened the scan to every column the clause
     // can name, and op.return_columns says which slot each of them arrived in.
     std::vector<duckdb::idx_t> column_map;
@@ -1398,19 +1409,14 @@ duckdb::PhysicalOperator& SereneDBCatalog::PlanUpdate(
 
   if (table_entry.IsSearchTable()) {
     // Wrap `plan` with a PhysicalProjection that resolves VALUE_DEFAULT and
-    // passes every projected new-row column through, plus the rowid virtuals,
-    // so SereneDBSearchUpdate sees [resolved new-row vals, rowid virtuals].
-    // The count comes from the entry rather than the key: a Search table's
-    // rowid set is [key..., indexed..., generated_pk], and only its last
-    // element is the row identity.
-    const auto num_virtual = table_entry.GetRowIdColumns().size();
-    const auto child_cols = plan.types.size();
-
+    // passes every projected new-row column through, plus the PK virtuals, so
+    // SereneDBSearchUpdate sees [resolved new-row vals, pk_virtuals].
+    const auto pk_slots = SearchPkSlots(table_entry, plan.types.size());
     const auto num_updates = op.expressions.size();
     duckdb::vector<duckdb::LogicalType> proj_types;
     duckdb::vector<duckdb::unique_ptr<duckdb::Expression>> proj_exprs;
-    proj_types.reserve(num_updates + num_virtual);
-    proj_exprs.reserve(num_updates + num_virtual);
+    proj_types.reserve(num_updates + pk_slots.size());
+    proj_exprs.reserve(num_updates + pk_slots.size());
 
     for (duckdb::idx_t i = 0; i < num_updates; ++i) {
       auto& expr = op.expressions[i];
@@ -1425,20 +1431,18 @@ duckdb::PhysicalOperator& SereneDBCatalog::PlanUpdate(
       }
     }
 
-    // Passthrough virtual columns (key / indexed / generated PK).
-    auto virt_start = child_cols - num_virtual;
-    for (duckdb::idx_t i = virt_start; i < child_cols; ++i) {
-      proj_types.push_back(plan.types[i]);
-      proj_exprs.push_back(
-        duckdb::make_uniq<duckdb::BoundReferenceExpression>(plan.types[i], i));
+    for (const auto slot : pk_slots) {
+      proj_types.push_back(plan.types[slot]);
+      proj_exprs.push_back(duckdb::make_uniq<duckdb::BoundReferenceExpression>(
+        plan.types[slot], slot));
     }
 
     auto& proj = planner.Make<duckdb::PhysicalProjection>(
       std::move(proj_types), std::move(proj_exprs), op.estimated_cardinality);
     proj.children.push_back(plan);
 
-    // The generated PK is the last virtual, after the SET vals.
-    std::vector<duckdb::idx_t> pk_indices{num_updates + num_virtual - 1};
+    std::vector<duckdb::idx_t> pk_indices(pk_slots.size());
+    absl::c_iota(pk_indices, num_updates);
 
     auto& search_upd = planner.Make<connector::SereneDBSearchUpdate>(
       connector::ResolveSearchWriteTarget(context, table_entry),
@@ -2279,22 +2283,19 @@ void SereneDBCatalog::WriteCatalogChange(
       dynamic_cast<const SereneDBTableEntry*>(&version) == nullptr) {
     return;
   }
-  auto wal = ScopedCatalogWal();
-  if (!wal) {
+  if (!ClusterCatalogWal()) {
     return;
   }
-  MarkCatalogDecision();
   if (dropped) {
-    MarkCatalogDrop();
-    wal->WriteDropEntry(version);
+    BufferCatalogDrop(version.GetInfo());
     return;
   }
   // Ahead of the definition it belongs to: a recipe with no definition is
   // dropped at boot, a definition with no recipe reshapes by cast.
   if (auto recipe = UndoBufferRowRecipe(old_entry, extra_data)) {
-    wal->WriteAlter(*recipe);
+    BufferCatalogRecipe(std::move(recipe));
   }
-  wal->WriteCreateEntry(version);
+  BufferCatalogCreate(version.GetInfo(), version.permissions);
 }
 
 bool SereneDBCatalog::DropSchema(const AccessContext& ax,
@@ -2302,7 +2303,6 @@ bool SereneDBCatalog::DropSchema(const AccessContext& ax,
                                  std::string_view name, bool cascade,
                                  bool missing_ok) {
   JoinStoreTransaction(ax.context);
-  catalog::Catalog::MutationScope lock{catalog::GetCatalog()};
 
   const auto database_id = FindDatabaseId(ax.context, database);
   if (!database_id) {
@@ -2321,6 +2321,7 @@ bool SereneDBCatalog::DropSchema(const AccessContext& ax,
                     ERR_MSG("schema \"", name, "\" does not exist"));
   }
   const std::optional schema_id{IdOf(*schema)};
+  EnsureWritableSchema(ax.context, schema->name.GetIdentifierName());
   RequireOwner(ax.context, ax.role, schema->permissions, "schema",
                schema->name.GetIdentifierName());
 
@@ -2352,7 +2353,6 @@ void SereneDBCatalog::ChangeColumnType(
   std::string_view column, duckdb::LogicalType new_type,
   duckdb::unique_ptr<duckdb::ParsedExpression> using_expr) {
   JoinStoreTransaction(ax.context);
-  catalog::Catalog::MutationScope lock{catalog::GetCatalog()};
   const auto table_id = catalog::IdOf(table);
   const auto schema_id = catalog::ParentIdOf(table);
   const auto* entry =
@@ -2363,6 +2363,7 @@ void SereneDBCatalog::ChangeColumnType(
   }
   const auto& perm = entry->permissions;
   const auto live = entry->Definition();
+  EnsureWritableSchema(ax.context, schema_id);
   RequireOwner(ax.context, ax.role, perm, "table",
                entry->name.GetIdentifierName());
   // A missing column falls through: duckdb's alter names it in its own error.
@@ -2413,7 +2414,6 @@ void SereneDBCatalog::ChangeColumnType(
 bool SereneDBCatalog::CreateTokenizer(
   const AccessContext& ax, ObjectId database_id, std::string_view schema,
   std::shared_ptr<CreateTokenizerInfo> tokenizer, bool if_not_exists) {
-  catalog::Catalog::MutationScope lock{catalog::GetCatalog()};
   auto schema_id = TryFindSchemaId(ax.context, database_id, schema);
   if (!schema_id) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_SCHEMA),
@@ -2433,7 +2433,7 @@ bool SereneDBCatalog::CreateTokenizer(
     tokenizer->SetId(NextId());
   }
   tokenizer->SetSchemaId(*schema_id);
-  Permissions perm{ax.role};
+  Permissions perm{ax.role, {}, {}};
   catalog::PutEntry(ax.context, /*old_name=*/{}, tokenizer->Copy(),
                     std::move(perm));
   return true;
@@ -2443,7 +2443,6 @@ bool SereneDBCatalog::CreateForeignServer(
   const AccessContext& ax, ObjectId database_id,
   std::shared_ptr<CreateForeignServerInfo> info, Permissions perm,
   bool if_not_exists) {
-  catalog::Catalog::MutationScope lock{catalog::GetCatalog()};
   // Gated on CREATE on the database, same as CREATE SCHEMA -- PG gates on FDW
   // USAGE instead, but serenedb has no foreign-data-wrapper catalog object to
   // hang an ACL on.

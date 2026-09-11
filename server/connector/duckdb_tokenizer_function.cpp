@@ -22,11 +22,9 @@
 #include <absl/strings/str_cat.h>
 #include <unicode/locid.h>
 
-#include <iresearch/analysis/analyzer.hpp>
 #include <iresearch/analysis/classification_tokenizer.hpp>
 #include <iresearch/analysis/collation_tokenizer.hpp>
 #include <iresearch/analysis/delimited_tokenizer.hpp>
-#include <iresearch/analysis/minhash_tokenizer.hpp>
 #include <iresearch/analysis/multi_delimited_tokenizer.hpp>
 #include <iresearch/analysis/nearest_neighbors_tokenizer.hpp>
 #include <iresearch/analysis/ngram_tokenizer.hpp>
@@ -108,7 +106,6 @@ void DropTSDictionaryPragma(duckdb::ClientContext& context,
   auto name = pg::ParseObjectName(dict_name, StaticStrings::kPublic);
 
   catalog::JoinStoreTransaction(&context);
-  catalog::Catalog::MutationScope mutation{catalog::GetCatalog()};
   const auto database_id =
     catalog::FindDatabaseId(&context, conn_ctx.GetDatabase());
   const auto schema_id =

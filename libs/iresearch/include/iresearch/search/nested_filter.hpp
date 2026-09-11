@@ -23,9 +23,11 @@
 #pragma once
 
 #include <compare>
+#include <functional>
 #include <variant>
 
 #include "iresearch/search/filter.hpp"
+#include "iresearch/search/lead/node.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
 namespace irs {
@@ -52,24 +54,27 @@ struct Match {
 static constexpr Match kMatchNone{0, 0};
 static constexpr Match kMatchAny{1};
 
-using DocIteratorProvider = std::function<DocIterator::ptr(const SubReader&)>;
+struct ParentDocs : lead::Node {
+  using ptr = memory::managed_ptr<ParentDocs>;
 
-// Options for ByNestedFilter filter
+  virtual doc_id_t Prev() const noexcept = 0;
+};
+
+using ParentProvider = std::function<ParentDocs::ptr(const SubReader&)>;
+
+using MatchProvider = std::function<lead::Node::ptr(const SubReader&)>;
+
 struct ByNestedOptions {
   using FilterType = ByNestedFilter;
 
-  using MatchType = std::variant<Match, DocIteratorProvider>;
+  using MatchType = std::variant<Match, MatchProvider>;
 
-  // Parent filter.
-  DocIteratorProvider parent;
+  ParentProvider parent;
 
-  // Child filter.
   Filter::ptr child;
 
-  // Match type: range or predicate
   MatchType match{kMatchAny};
 
-  // Score merge type.
   ScoreMergeType merge_type{ScoreMergeType::Sum};
 
   bool operator==(const ByNestedOptions& rhs) const noexcept {
@@ -90,13 +95,14 @@ struct ByNestedOptions {
   }
 };
 
-// Filter is capable of finding parents by the corresponding child filter.
 class ByNestedFilter final : public FilterWithOptions<ByNestedOptions> {
  public:
   QueryBuilder::ptr PrepareSegment(const SubReader& segment,
                                    const PrepareContext& ctx) const final;
 
-  PrepareCollector::ptr MakeCollectorImpl(const Scorer* scorer) const final;
+  PrepareCollector::ptr MakeCollectorImpl(const Scorer* scorer,
+                                          StatsArena& stats,
+                                          uint32_t threads) const final;
 };
 
 }  // namespace irs

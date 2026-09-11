@@ -92,7 +92,7 @@ void yyerror(sdb::ParserContext& ctx, const char *s);
 %%
 
 query:
-    clause_list
+    clause_list                     { ctx.EndClauseList(); }
     ;
 
 clause_list:
@@ -177,12 +177,9 @@ base_term:
 group:
     LPAREN                          {
                                       $<filter>$ = ctx.current_root;
-                                      ctx.current_root = &ctx.current_root->GetOptional().add<irs::MixedBooleanFilter>();
+                                      ctx.current_root = &ctx.BeginGroup();
                                     }
-        clause_list RPAREN          {
-                                      $$ = ctx.current_root;
-                                      ctx.current_root = sdb::basics::downCast<irs::MixedBooleanFilter>($<filter>2);
-                                    }
+        clause_list RPAREN          { $$ = &ctx.EndGroup($<filter>2); }
     ;
 
 // A phrase is a list of parts, each of them the same thing a clause outside

@@ -149,32 +149,9 @@ set(WITH_SANITIZER "OFF" CACHE STRING "" FORCE)
 sdb_update_module(${GIT_EXECUTABLE} "zlib-ng" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
 add_subdirectory(zlib-ng)
 
-# Create ZLIB::ZLIB alias for velox compatibility
+# For compatibility
 add_library(ZLIB::ZLIB ALIAS zlib-ng)
-
-################################################################################
-## MINIZIP-NG
-################################################################################
-
-set(MZ_COMPAT ON CACHE BOOL "" FORCE)
-set(MZ_ZLIB ON CACHE BOOL "" FORCE)
 set(ZLIB_FOUND ON CACHE BOOL "" FORCE)
-set(MZ_BZIP2 OFF CACHE BOOL "" FORCE)
-set(MZ_LZMA OFF CACHE BOOL "" FORCE)
-set(MZ_ZSTD OFF CACHE BOOL "" FORCE)
-set(MZ_LIBCOMP OFF CACHE BOOL "" FORCE)
-set(MZ_FETCH_LIBS OFF CACHE BOOL "" FORCE)
-set(MZ_PKCRYPT OFF CACHE BOOL "" FORCE)
-set(MZ_WZAES OFF CACHE BOOL "" FORCE)
-set(MZ_OPENSSL OFF CACHE BOOL "" FORCE)
-set(MZ_LIBBSD OFF CACHE BOOL "" FORCE)
-set(MZ_ICONV OFF CACHE BOOL "" FORCE)
-set(MZ_SANITIZER "OFF" CACHE STRING "" FORCE)
-
-sdb_update_module(${GIT_EXECUTABLE} "minizip-ng" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
-add_subdirectory(minizip-ng)
-
-target_link_libraries(minizip PUBLIC zlib-ng)
 
 ################################################################################
 ## BOOST
@@ -186,7 +163,7 @@ add_subdirectory(boost)
 set(BOOST_VERSION ${BOOST_VERSION} PARENT_SCOPE)
 set(BOOST_INCLUDE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/boost")
 # explicitly set since suppressing Boost search
-# needed for iresearch and boost::text
+# needed for iresearch
 set(Boost_INCLUDE_DIRS "${BOOST_INCLUDE_PATH}")
 set(Boost_INCLUDE_DIRS "${Boost_INCLUDE_DIRS}" PARENT_SCOPE)
 
@@ -339,27 +316,6 @@ target_link_libraries(
 
 # TODO(mbkkt) make it submodule
 add_subdirectory(simdcomp)
-
-################################################################################
-### frozen library
-################################################################################
-
-set(FROZEN_INCLUDE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/frozen/include)
-set(FROZEN_INCLUDE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/frozen/include PARENT_SCOPE)
-
-################################################################################
-### Boost::Text library
-################################################################################
-
-set(CXX_STD ${CMAKE_CXX_STANDARD} CACHE STRING "" FORCE)
-# TODO(mbkkt) make it submodule
-add_subdirectory(text)
-target_compile_definitions(
-    text
-    PUBLIC
-        -DBOOST_STL_INTERFACES_DISABLE_CONCEPTS=1
-        -DBOOST_STL_INTERFACES_DISABLE_DEDUCED_THIS=1
-)
 
 ################################################################################
 ### fastText library
@@ -706,6 +662,31 @@ sdb_update_module(${GIT_EXECUTABLE} "azure-sdk-for-cpp" ${CMAKE_CURRENT_SOURCE_D
 add_subdirectory(azure-cmake)
 
 ################################################################################
+## cmark-gfm
+################################################################################
+
+sdb_update_module(${GIT_EXECUTABLE} "cmark-gfm" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
+
+set(CMARK_TESTS OFF CACHE BOOL "" FORCE)
+set(CMARK_SHARED OFF CACHE BOOL "" FORCE)
+set(CMARK_STATIC ON CACHE BOOL "" FORCE)
+
+add_subdirectory(cmark-gfm)
+
+target_include_directories(
+    libcmark-gfm_static
+    SYSTEM
+    INTERFACE
+        ${CMAKE_CURRENT_SOURCE_DIR}/cmark-gfm/src
+        ${CMAKE_CURRENT_BINARY_DIR}/cmark-gfm/src
+)
+target_include_directories(
+    libcmark-gfm-extensions_static
+    SYSTEM
+    INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/cmark-gfm/extensions
+)
+
+################################################################################
 ## duckdb
 ################################################################################
 
@@ -748,6 +729,7 @@ set(BUILD_EXTENSIONS
 # these files after the BUILD_EXTENSIONS list is resolved.
 set(DUCKDB_EXTENSION_CONFIGS
     "${CMAKE_CURRENT_SOURCE_DIR}/duckdb_clickhouse/extension_config.cmake"
+    "${CMAKE_CURRENT_SOURCE_DIR}/duckdb_markdown/extension_config.cmake"
     CACHE STRING
     ""
     FORCE
@@ -760,6 +742,7 @@ sdb_update_module(${GIT_EXECUTABLE} "duckdb_avro" ${CMAKE_CURRENT_SOURCE_DIR} "R
 sdb_update_module(${GIT_EXECUTABLE} "duckdb_iceberg" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
 sdb_update_module(${GIT_EXECUTABLE} "duckdb_postgres" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
 sdb_update_module(${GIT_EXECUTABLE} "duckdb_inet" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
+sdb_update_module(${GIT_EXECUTABLE} "duckdb_markdown" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
 sdb_update_module(${GIT_EXECUTABLE} "database-connector" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
 
 # duckdb's in-tree extensions resolve their includes from directory scope (not from duckdb_static's
@@ -799,6 +782,7 @@ target_link_libraries(
         autocomplete_extension
         icu_extension
         inet_extension
+        markdown_extension
         # SIMD string-encoding routines (base64 + UTF-8/UTF-16/Latin-1). This
         # one PUBLIC edge propagates the simdutf include to duckdb core and to
         # every static extension (they each link duckdb_static).

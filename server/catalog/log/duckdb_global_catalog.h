@@ -125,16 +125,48 @@ duckdb::optional_ptr<SereneDBGlobalCatalog> TryGlobalCatalog();
 // what serenedb supplies is the file and the handful of records duckdb has
 // none of. It is not a database's WAL -- the catalog outlives every database
 // and is there before any of them -- so it hangs off the cluster-global
-// attachment's storage manager rather than belonging to it.
+// attachment's storage manager rather than belonging to it. A probe: writers
+// re-resolve the log under its own lock.
 duckdb::optional_ptr<duckdb::WriteAheadLog> ClusterCatalogWal();
 
-// Ends the run of catalog records a committing transaction wrote: they are made
-// durable and the log is released, or -- `committed` false -- the run is
-// rewound and released without a marker, discarding one whose commit threw. A
-// no-op unless this thread wrote a record. This is where the crash windows a
-// statement has are modelled; a background reclamation writes records too, and
-// no client is waiting on those.
+// One catalog change of a committing transaction, buffered on its thread: the
+// walk that produces records holds catalog locks, so nothing here touches the
+// log -- the splice that ends the run takes it, briefly, once the walk is
+// done. A create carries the version and its grants, a drop the identity it
+// removes, a recipe how the rows of the version after it got their shape.
+void BufferCatalogCreate(duckdb::unique_ptr<duckdb::CreateInfo> info,
+                         const duckdb::CatalogPermissions& permissions);
+void BufferCatalogDrop(duckdb::unique_ptr<duckdb::CreateInfo> info);
+void BufferCatalogRecipe(duckdb::unique_ptr<duckdb::AlterInfo> recipe);
+
+// Ends the run of catalog records a committing transaction buffered: they are
+// spliced into the log and made durable under its lock -- taken only here, and
+// never across work that waits -- or, `committed` false, discarded without the
+// log ever seeing them. A no-op unless this thread buffered a record. This is
+// where the crash windows a statement has are modelled; a background
+// reclamation writes records too, and no client is waiting on those.
 void EndCommittingCatalogRun(bool committed);
+
+// A record written outside any transaction -- first boot's fixed entries:
+// appended and made durable on the spot.
+void WriteBootstrapEntry(const duckdb::CreateInfo& info,
+                         const duckdb::CatalogPermissions& permissions);
+
+// The log's append and on-disk sizes, read under its lock -- the writer's
+// counters are bare, and a metrics read must not race an append. Zeros when
+// the log is not open.
+struct ClusterCatalogWalSizes {
+  uint64_t appended_bytes = 0;
+  uint64_t size_on_disk = 0;
+};
+ClusterCatalogWalSizes ClusterCatalogWalSize();
+
+// The cluster log's lock: duckdb's own WAL lock of the storage manager the
+// log hangs off, which the storage-less global attachment never takes itself.
+// It guards the file, the log pointer, and the state staged beside the log --
+// sequence values, reshape recipes. A leaf; empty before init, which is
+// single-threaded.
+duckdb::unique_lock<duckdb::mutex> LockClusterCatalogWal();
 
 // Parks the artifact half of a removal this transaction performed, run once the
 // removal records are durable: it must not run for a drop whose commit can
@@ -187,18 +219,15 @@ void InitClusterCatalogWal();
 // before the instance it was built over -- nothing may outlive that.
 void CloseClusterCatalogWal();
 
-// The log, taken by the first catalog record of a commit and held until it
-// ends, so one transaction's records are contiguous and the flush that makes
-// them durable covers that transaction alone. Every record locates its own
-// object by id, so no record needs to say which database it belongs to. Null
-// before the log is open.
-duckdb::optional_ptr<duckdb::WriteAheadLog> ScopedCatalogWal();
-
 // The catalog written out: the log is replaced by one create per live object,
-// which is what lets it stop growing. `fill` writes that snapshot into a log of
-// its own, which then takes the place of the one in use. The caller holds
-// whatever lock makes its snapshot answer for every record being replaced.
+// which is what lets it stop growing. The whole rewrite runs under the log's
+// lock, and it runs only if the log still holds exactly `expected_written`
+// bytes -- what the caller saw before reading its snapshot -- so a record
+// landing since then abandons the rewrite rather than being lost with the
+// replaced file. `fill` must take no lock of its own: the caller collects
+// what it writes first.
 void RewriteClusterCatalogWal(
+  uint64_t expected_written,
   absl::FunctionRef<void(duckdb::WriteAheadLog&)> fill);
 
 // State a catalog keeps that is not an entry, in the one record duckdb hands
@@ -237,19 +266,6 @@ void WriteSequenceDropped(ObjectId sequence_id);
 // difference between the two definitions.
 std::vector<duckdb::unique_ptr<duckdb::AlterInfo>> TakeRowRecipes(
   ObjectId table_id);
-
-// Says the open run carries a version of an object, which is what makes the
-// flush that ends it the moment the catalog decided.
-void MarkCatalogDecision();
-// Says the open run drops an object: artifacts survive it that no transaction
-// rolls back, and the window between the durable removal and their sweep is
-// where the drop fault sits.
-void MarkCatalogDrop();
-
-// As EndCommittingCatalogRun without the crash windows: flushes what the
-// commit's own flush did not already make durable -- or, `committed` false,
-// rewinds the run -- and releases the log.
-void EndClusterCatalogWal(bool committed);
 
 // Attributes a cluster-global write to that attachment: starts the
 // transaction's DuckTransaction there and marks it written, instead of leaving

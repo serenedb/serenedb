@@ -63,7 +63,7 @@ auto ExecuteWildcard(bstring& buf, bytes_view term, Term&& t, Prefix&& p,
       SDB_ASSERT(!term.empty());
       const auto idx = term.find_first_of(WildcardMatch::kAnyStr);
       SDB_ASSERT(idx != bytes_view::npos);
-      term = bytes_view{term.data(), idx};  // remove trailing '%'
+      term = bytes_view{term.data(), idx};
       return p(term);
     }
     case WildcardType::Wildcard:
@@ -82,27 +82,23 @@ struct ByWildcardFilterOptions {
   }
 };
 
-// Options for wildcard filter
 struct ByWildcardOptions : ByWildcardFilterOptions {
   using FilterType = ByWildcard;
   using filter_options = ByWildcardFilterOptions;
   using ByWildcardFilterOptions::ByWildcardFilterOptions;
 
-  // The maximum number of most frequent terms to consider for scoring
-  size_t scored_terms_limit{1024};
-
   bool operator==(const ByWildcardOptions& rhs) const noexcept = default;
 };
 
 Filter::ptr CreateByWildcard(irs::field_id id, bytes_view term,
-                             size_t scored_terms_limit = 1024,
                              score_t boost = kNoBoost);
 
-Filter::ptr LowerWildcard(irs::field_id id, bytes_view term,
-                          size_t scored_terms_limit, score_t boost);
+Filter::ptr LowerWildcard(irs::field_id id, bytes_view term, score_t boost);
 
 class ByWildcard final : public FilterWithField<ByWildcardOptions> {
  public:
+  ByWildcard() noexcept { SetScorer(&DefaultConstScore()); }
+
   QueryBuilder::ptr PrepareSegment(const SubReader& segment,
                                    const PrepareContext& ctx) const final;
 

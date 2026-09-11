@@ -31,11 +31,11 @@
 
 namespace sdb::connector {
 
-FullScanner::FullScanner(
-  const irs::ColReader& reader,
-  std::span<const ColumnstoreProjection> projections,
-  std::span<const TableFilterDocIterator::FilterSpec> filters,
-  duckdb::ClientContext* context, ColFilterStateCache& states)
+FullScanner::FullScanner(const irs::ColReader& reader,
+                         std::span<const ColumnstoreProjection> projections,
+                         std::span<const ColFilterSpec> filters,
+                         duckdb::ClientContext* context,
+                         ColFilterStateCache& states)
   : _ctx{reader} {
   _sel_data = duckdb::make_buffer<duckdb::SelectionData>(STANDARD_VECTOR_SIZE);
   _sel.Initialize(_sel_data);

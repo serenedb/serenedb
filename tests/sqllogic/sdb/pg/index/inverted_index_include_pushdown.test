@@ -64,20 +64,20 @@ EXPLAIN SELECT id FROM logs_idx
 WHERE body @@ 'connection' AND service = 'frontend' AND sev >= 13;
 ----
 QUERY PLAN
-╭─ IRESEARCH_SCAN ─────────────────────────────────────────────────────────────╮
-│ Index: logs_idx                                                              │
-│ Lookup: table                                                                │
-│ Index Filter:                                                                │
-│ ╭─ And ───────────────╮                                                      │
-│ ╰──────────┬──────────╯                                                      │
-│            ├────────────────────────┬──────────────────────────╮             │
-│ ╭─ Term ───┴──────────╮  ╭─ Granular Range ────╮  ╭─ Term ─────┴───────────╮ │
-│ │ Field: body(string) │  │ Field: sev(numeric) │  │ Field: service(string) │ │
-│ │ Value: connection   │  │ Range: >=13         │  │ Value: frontend        │ │
-│ ╰─────────────────────╯  ╰─────────────────────╯  ╰────────────────────────╯ │
-│ Projections: id                                                              │
-│ ~1 row                                                                       │
-╰──────────────────────────────────────────────────────────────────────────────╯
+╭─ IRESEARCH_SCAN ──────────────────────────────────────────────────────────────╮
+│ Index: logs_idx                                                               │
+│ Lookup: table                                                                 │
+│ Index Filter:                                                                 │
+│ ╭─ And ────────────────╮                                                      │
+│ ╰───────────┬──────────╯                                                      │
+│             ├──────────────────────────┬─────────────────────────╮            │
+│ ╭─ Terms ───┴──────────╮  ╭─ Terms ────┴───────────╮  ╭─ Granular Range ────╮ │
+│ │ Field: body(string)  │  │ Field: service(string) │  │ Field: sev(numeric) │ │
+│ │ Values: 'connection' │  │ Values: 'frontend'     │  │ Range: >=13         │ │
+│ ╰──────────────────────╯  ╰────────────────────────╯  ╰─────────────────────╯ │
+│ Projections: id                                                               │
+│ ~1 row                                                                        │
+╰───────────────────────────────────────────────────────────────────────────────╯
 
 
 # Result matches the brute-force interpretation.

@@ -34,7 +34,7 @@ class RawDL final : public irs::ScorerBase<RawDL, void> {
     bool operator==(const Options&) const = default;
   };
 
-  static std::unique_ptr<RawDL> Make(const Options& /*opts*/) {
+  static std::unique_ptr<RawDL> Make(const Options&) {
     return std::make_unique<RawDL>();
   }
 

@@ -16,7 +16,7 @@ changed="$(git diff --name-only "${BASE_REF}...HEAD")"
 #
 # Directories that affect no DuckDB suite -- iresearch and the rest of the serenedb
 # stack -- deliberately fall through to none here; they have their own gates.
-ALL_SUITES="core avro azure httpfs iceberg inet postgres_scanner"
+ALL_SUITES="core avro azure httpfs iceberg inet markdown postgres_scanner"
 ALL_SUITES_DIRS="abseil-cpp ada brotli fast_float fmt jemalloc jemalloc-cmake llvm-project lz4 re2 simdutf snappy tcmalloc zlib-ng zstd"
 
 # dir -> space-separated suite list
@@ -50,6 +50,8 @@ declare -A SUITE_OF_DIR=(
 	[postgres]="postgres_scanner"
 	[database-connector]="postgres_scanner"
 	[duckdb_inet]="inet"
+	[duckdb_markdown]="markdown"
+	[cmark-gfm]="markdown"
 	[curl]="httpfs iceberg postgres_scanner"
 	[openssl]="httpfs azure iceberg postgres_scanner"
 	[openssl-cmake]="httpfs azure iceberg postgres_scanner"
@@ -73,10 +75,10 @@ while IFS= read -r f; do
 	esac
 
 	case "$f" in
-	third_party/duckdb/* | third_party/CMakeLists.txt)
-		# The fork itself (including its own vendored third_party: mbedtls, ICU,
-		# yyjson...) and the wiring that decides which vendored copy every dep
-		# resolves to. Either can move any suite.
+	third_party/duckdb | third_party/CMakeLists.txt)
+		# A bump of the fork submodule (which carries its own vendored third_party:
+		# mbedtls, ICU, yyjson...) and the wiring that decides which vendored copy
+		# every dep resolves to. Either can move any suite.
 		other_tp=true
 		for s in $ALL_SUITES; do suite_hit[$s]=1; done
 		;;

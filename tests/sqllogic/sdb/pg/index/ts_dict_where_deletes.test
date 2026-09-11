@@ -137,10 +137,11 @@ QUERY PLAN
 ╭─ IRESEARCH_SCAN ────┴────────────────────╮
 │ Index: wdk_idx                           │
 │ Index Filter:                            │
-│ ╭─ Terms ────────────────────────╮       │
+│ ╭─ Or ───────────────────────────╮       │
+│ ╰────────────────┬───────────────╯       │
+│ ╭─ Terms ────────┴───────────────╮       │
 │ │ Field: cat(string)             │       │
 │ │ Values: 'fig', 'lime', 'zebra' │       │
-│ │ Min Match: 1                   │       │
 │ ╰────────────────────────────────╯       │
 │ TsDict: cat                              │
 │ Projections: sdb_inverted_index_term$cat │
@@ -177,7 +178,6 @@ QUERY PLAN
 │ ╭─ Starts With ──────╮                   │
 │ │ Field: cat(string) │                   │
 │ │ Prefix: p          │                   │
-│ │ Limit: 1024        │                   │
 │ ╰────────────────────╯                   │
 │ TsDict: cat                              │
 │ Projections: sdb_inverted_index_term$cat │
@@ -221,7 +221,6 @@ QUERY PLAN
 │ ╭─ Range ────────────╮                   │
 │ │ Field: cat(string) │                   │
 │ │ Range: >=a, <=m    │                   │
-│ │ Boost: 2           │                   │
 │ ╰────────────────────╯                   │
 │ TsDict: cat                              │
 │ Projections: sdb_inverted_index_term$cat │
@@ -338,14 +337,15 @@ QUERY PLAN
 ╭─ IRESEARCH_SCAN ───────┴───────────────────────╮
 │ Index: wdk_idx                                 │
 │ Index Filter:                                  │
-│ ╭─ Exclusion ────────╮                         │
+│ ╭─ Bool ─────────────╮                         │
 │ ╰──────────┬─────────╯                         │
 │            ├───────────────────────╮           │
-│ ╭─ Starts With ──────╮  ╭─ Term ───┴─────────╮ │
+│ ╭─ Must ───┴─────────╮  ╭─ Must Not ─────────╮ │
+│ ╰──────────┬─────────╯  ╰──────────┬─────────╯ │
+│ ╭─ Starts With ──────╮  ╭─ Terms ──┴─────────╮ │
 │ │ Field: cat(string) │  │ Field: cat(string) │ │
-│ │ Prefix: p          │  │ Value: pear        │ │
-│ │ Limit: 1024        │  ╰────────────────────╯ │
-│ ╰────────────────────╯                         │
+│ │ Prefix: p          │  │ Values: 'pear'     │ │
+│ ╰────────────────────╯  ╰────────────────────╯ │
 │ TsDict: cat                                    │
 │ Projections: sdb_inverted_index_term$cat       │
 │ ~2 rows                                        │
@@ -404,7 +404,6 @@ QUERY PLAN
 │ ╭─ Range ──────────────╮                 │
 │ │ Field: cat(string)   │                 │
 │ │ Range: >=lime, <pine │                 │
-│ │ Boost: 2             │                 │
 │ ╰──────────────────────╯                 │
 │ TsDict: cat                              │
 │ Projections: sdb_inverted_index_term$cat │

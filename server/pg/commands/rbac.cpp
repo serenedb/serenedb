@@ -183,8 +183,8 @@ void ChangeSchemaOwner(const catalog::AccessContext& ax, ObjectId schema_id,
 }
 
 // GRANT / REVOKE on one table. A table's entry is the object, so this is a
-// rewrite of the version the statement resolved -- re-read here because the
-// mutation scope was taken after that resolution.
+// rewrite of the version the statement resolved -- re-read here so the rewrite
+// starts from the version current at write time.
 void ChangeTableAcl(const catalog::AccessContext& ax,
                     const duckdb::CreateTableInfo& table,
                     duckdb::CatalogType type, auth::AclMutator mutate) {
@@ -237,9 +237,9 @@ duckdb::unique_ptr<duckdb::CreateTableInfo> ChangeColumnAcl(
 
 int32_t ParseConnLimit(bool has_conn_limit, int64_t value) {
   if (!has_conn_limit) {
-    return catalog::Role::kNoConnLimit;
+    return catalog::CreateRoleInfo::kNoConnLimit;
   }
-  if (value < catalog::Role::kNoConnLimit ||
+  if (value < catalog::CreateRoleInfo::kNoConnLimit ||
       value > std::numeric_limits<int32_t>::max()) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                     ERR_MSG("invalid connection limit: ", value));
@@ -248,7 +248,7 @@ int32_t ParseConnLimit(bool has_conn_limit, int64_t value) {
 }
 
 int64_t ValidUntilOrUnset(bool has_valid_until, int64_t micros) {
-  return has_valid_until ? micros : catalog::Role::kNoValidUntil;
+  return has_valid_until ? micros : catalog::CreateRoleInfo::kNoValidUntil;
 }
 
 std::string MakePassword(bool has_password, std::string_view password,
@@ -302,7 +302,7 @@ void CreateRole(ConnectionContext& ctx, std::string_view name,
   if (options.inherit) {
     opts |= catalog::RoleOption::Inherit;
   }
-  auto role = duckdb::make_uniq<catalog::Role>(
+  auto role = duckdb::make_uniq<catalog::CreateRoleInfo>(
     ObjectId{},
     catalog::persistence::RoleData{
       .name = std::string{name},
@@ -375,9 +375,9 @@ void AlterRole(ConnectionContext& ctx, std::string_view name,
     catalog::ActingAs(ctx.GetRoleId(), ctx.GetClientContext()), name, "alter",
     /*allow_self=*/false,
     [opts, verifier, conn_limit, valid_until](
-      const catalog::Role& old_role,
-      duckdb::unique_ptr<catalog::Role>& new_role) {
-      new_role = old_role.Clone();
+      const catalog::SereneDBRoleEntry& old_role,
+      duckdb::unique_ptr<catalog::CreateRoleInfo>& new_role) {
+      new_role = old_role.Record();
       catalog::RoleOption o = new_role->Options();
       o = SetBit(o, catalog::RoleOption::Login, opts.login);
       o = SetBit(o, catalog::RoleOption::Superuser, opts.superuser);
@@ -406,9 +406,9 @@ void RenameRole(ConnectionContext& ctx, std::string_view name,
                      name, "rename",
                      /*allow_self=*/false,
                      [new_name = std::string{new_name}](
-                       const catalog::Role& old_role,
-                       duckdb::unique_ptr<catalog::Role>& new_role) {
-                       new_role = old_role.Clone();
+                       const catalog::SereneDBRoleEntry& old_role,
+                       duckdb::unique_ptr<catalog::CreateRoleInfo>& new_role) {
+                       new_role = old_role.Record();
                        new_role->SetRoleName(new_name);
                      });
 }
@@ -477,21 +477,22 @@ void AlterRoleConfig(ConnectionContext& ctx, std::string_view name,
   const bool is_self = name == ctx.user();
 
   auto& catalog = GlobalCatalog();
-  catalog.ChangeRole(
-    catalog::ActingAs(ctx.GetRoleId(), ctx.GetClientContext()), name, "alter",
-    /*allow_self=*/is_self,
-    [op = std::string{op}, setting = std::string{setting},
-     value = std::string{value}](const catalog::Role& old_role,
-                                 duckdb::unique_ptr<catalog::Role>& new_role) {
-      new_role = old_role.Clone();
-      if (op == "RESET_ALL") {
-        new_role->ResetAllConfig();
-      } else if (op == "RESET") {
-        new_role->ResetConfig(setting);
-      } else {
-        new_role->SetConfig(setting, value);
-      }
-    });
+  catalog.ChangeRole(catalog::ActingAs(ctx.GetRoleId(), ctx.GetClientContext()),
+                     name, "alter",
+                     /*allow_self=*/is_self,
+                     [op = std::string{op}, setting = std::string{setting},
+                      value = std::string{value}](
+                       const catalog::SereneDBRoleEntry& old_role,
+                       duckdb::unique_ptr<catalog::CreateRoleInfo>& new_role) {
+                       new_role = old_role.Record();
+                       if (op == "RESET_ALL") {
+                         new_role->ResetAllConfig();
+                       } else if (op == "RESET") {
+                         new_role->ResetConfig(setting);
+                       } else {
+                         new_role->SetConfig(setting, value);
+                       }
+                     });
 }
 
 namespace {
@@ -780,7 +781,6 @@ void GrantObjectColumns(ConnectionContext& ctx, duckdb::CatalogType type,
     }
     privs &= kColumnPrivs;
     for (const auto& column : p.columns) {
-      catalog::Catalog::MutationScope mutation{GlobalCatalog()};
       table = ChangeColumnAcl(
         catalog::ActingAs(current_id, ctx.GetClientContext()), *table, column,
         [outcome, privs, grantee_id, current_id, granted_by_id, revoke, opts,
@@ -885,7 +885,6 @@ void GrantObject(ConnectionContext& ctx, duckdb::CatalogType type,
     return;
   }
 
-  auto& catalog = GlobalCatalog();
   std::string schema_name;
   std::string rel_name;
   ObjectId schema_target;
@@ -1006,7 +1005,6 @@ void GrantObject(ConnectionContext& ctx, duckdb::CatalogType type,
   };
   {
     const auto ax = catalog::ActingAs(current_id, ctx.GetClientContext());
-    catalog::Catalog::MutationScope mutation{catalog};
     if (server_database.isSet()) {
       catalog::ChangeEntryAcl(ax, duckdb::CatalogType::FOREIGN_SERVER_ENTRY,
                               server_database, rel_name, std::move(mutate));
@@ -1069,7 +1067,6 @@ void GrantObject(ConnectionContext& ctx, duckdb::CatalogType type,
         }
       }
       for (const auto& column : granted) {
-        catalog::Catalog::MutationScope mutation{catalog};
         tbl = ChangeColumnAcl(
           catalog::ActingAs(current_id, ctx.GetClientContext()), *tbl, column,
           [grantee_id, privs](ObjectId owner, catalog::Acl& acl) {
@@ -1189,7 +1186,6 @@ void AlterOwner(ConnectionContext& ctx, std::string_view obj_type,
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_SCHEMA),
                       ERR_MSG("schema \"", name, "\" does not exist"));
     }
-    catalog::Catalog::MutationScope mutation{catalog::GetCatalog()};
     ChangeSchemaOwner(catalog::ActingAs(current_id, ctx.GetClientContext()),
                       catalog::IdOf(*schema), new_owner_id, new_owner_name);
     return;
@@ -1235,7 +1231,6 @@ void AlterOwner(ConnectionContext& ctx, std::string_view obj_type,
                         ERR_MSG(ToPgObjectTypeName(kind), " \"",
                                 parsed.relation, "\" does not exist"));
       }
-      catalog::Catalog::MutationScope mutation{catalog::GetCatalog()};
       if (kind == duckdb::CatalogType::TYPE_ENTRY) {
         catalog::ChangeEntryOwner(ax, duckdb::CatalogType::TYPE_ENTRY,
                                   schema_id, parsed.relation, new_owner_id,

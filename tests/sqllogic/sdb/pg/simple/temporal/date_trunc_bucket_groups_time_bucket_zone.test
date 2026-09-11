@@ -1,0 +1,309 @@
+statement ok
+SET TimeZone = 'Asia/Tokyo';
+
+statement ok
+CREATE TABLE dst AS SELECT tstz, v FROM (SELECT TIMESTAMPTZ '2025-03-28 00:00:00+00' + INTERVAL (i * 41) MINUTE AS tstz, i AS v FROM range(0, 400) t(i) UNION ALL SELECT TIMESTAMPTZ '2025-10-24 00:00:00+00' + INTERVAL (i * 41) MINUTE, 1000 + i FROM range(0, 400) t(i) UNION ALL SELECT TIMESTAMPTZ '2025-04-04 00:00:00+00' + INTERVAL (i * 41) MINUTE, 2000 + i FROM range(0, 200) t(i) UNION ALL SELECT TIMESTAMPTZ '2025-09-05 00:00:00+00' + INTERVAL (i * 41) MINUTE, 3000 + i FROM range(0, 200) t(i) UNION ALL SELECT TIMESTAMPTZ '2025-11-01 12:00:00+00' + INTERVAL (i * 41) MINUTE, 4000 + i FROM range(0, 100) t(i));
+
+statement ok
+INSERT INTO dst VALUES (NULL, -1);
+
+statement ok
+CREATE TABLE old AS SELECT TIMESTAMPTZ '1998-12-25 00:00:00+00' + INTERVAL (i * 173) MINUTE AS tstz, i AS v FROM range(0, 1200) t(i);
+
+query
+EXPLAIN SELECT time_bucket(INTERVAL '7 days', tstz, 'Europe/Berlin') AS b, count(*) AS c FROM dst GROUP BY 1;
+----
+QUERY PLAN
+╭─ PROJECTION ───────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ Projections:                                                                                                           │
+│ time_bucket('7 days'::INTERVAL, __internal_icu_date_trunc_unbucket('time_bucket_day', #0, 7, 10959), 'Europe/Berlin'), │
+│ #1                                                                                                                     │
+│ ~650 rows                                                                                                              │
+╰────────────────────────────────────────────────────────────┬───────────────────────────────────────────────────────────╯
+╭─ PERFECT_HASH_GROUP_BY ────────────────────────────────────┴───────────────────────────────────────────────────────────╮
+│ Groups: #0                                                                                                             │
+│ Aggregates: count_star()                                                                                               │
+│ ~650 rows                                                                                                              │
+╰────────────────────────────────────────────────────────────┬───────────────────────────────────────────────────────────╯
+╭─ PROJECTION ───────────────────────────────────────────────┴───────────────────────────────────────────────────────────╮
+│ Projections:                                                                                                           │
+│ __internal_icu_date_trunc_bucket('time_bucket_day', tstz, 7, 10959)                                                    │
+│ ~1,301 rows                                                                                                            │
+╰────────────────────────────────────────────────────────────┬───────────────────────────────────────────────────────────╯
+╭─ SEQ_SCAN ─────────────────────────────────────────────────┴───────────────────────────────────────────────────────────╮
+│ Table: dst                                                                                                             │
+│ Type: Sequential Scan                                                                                                  │
+│ Projections: tstz                                                                                                      │
+│ ~1,301 rows                                                                                                            │
+╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+
+query
+EXPLAIN SELECT time_bucket(INTERVAL '90 minutes', tstz, 'Australia/Lord_Howe') AS b, count(*) AS c FROM dst GROUP BY 1;
+----
+QUERY PLAN
+╭─ PROJECTION ────────────────────────────────────────────────────────╮
+│ Projections:                                                        │
+│ __internal_date_trunc_unbucket_tz(#0, 5400000000, 946818000000000), │
+│ #1                                                                  │
+│ ~650 rows                                                           │
+╰──────────────────────────────────┬──────────────────────────────────╯
+╭─ PERFECT_HASH_GROUP_BY ──────────┴──────────────────────────────────╮
+│ Groups: #0                                                          │
+│ Aggregates: count_star()                                            │
+│ ~650 rows                                                           │
+╰──────────────────────────────────┬──────────────────────────────────╯
+╭─ PROJECTION ─────────────────────┴──────────────────────────────────╮
+│ Projections:                                                        │
+│ __internal_date_trunc_bucket(tstz, 5400000000, 946818000000000)     │
+│ ~1,301 rows                                                         │
+╰──────────────────────────────────┬──────────────────────────────────╯
+╭─ SEQ_SCAN ───────────────────────┴──────────────────────────────────╮
+│ Table: dst                                                          │
+│ Type: Sequential Scan                                               │
+│ Projections: tstz                                                   │
+│ ~1,301 rows                                                         │
+╰─────────────────────────────────────────────────────────────────────╯
+
+query
+EXPLAIN SELECT time_bucket(INTERVAL '1 month', tstz, 'America/Havana') AS b, count(*) AS c FROM dst GROUP BY 1;
+----
+QUERY PLAN
+╭─ PROJECTION ─────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ Projections:                                                                                                             │
+│ time_bucket('1 mon'::INTERVAL, __internal_icu_date_trunc_unbucket('time_bucket_month', #0, 1, 24000), 'America/Havana'), │
+│ #1                                                                                                                       │
+│ ~650 rows                                                                                                                │
+╰─────────────────────────────────────────────────────────────┬────────────────────────────────────────────────────────────╯
+╭─ PERFECT_HASH_GROUP_BY ─────────────────────────────────────┴────────────────────────────────────────────────────────────╮
+│ Groups: #0                                                                                                               │
+│ Aggregates: count_star()                                                                                                 │
+│ ~650 rows                                                                                                                │
+╰─────────────────────────────────────────────────────────────┬────────────────────────────────────────────────────────────╯
+╭─ PROJECTION ────────────────────────────────────────────────┴────────────────────────────────────────────────────────────╮
+│ Projections:                                                                                                             │
+│ __internal_icu_date_trunc_bucket('time_bucket_month', tstz, 1, 24000)                                                    │
+│ ~1,301 rows                                                                                                              │
+╰─────────────────────────────────────────────────────────────┬────────────────────────────────────────────────────────────╯
+╭─ SEQ_SCAN ──────────────────────────────────────────────────┴────────────────────────────────────────────────────────────╮
+│ Table: dst                                                                                                               │
+│ Type: Sequential Scan                                                                                                    │
+│ Projections: tstz                                                                                                        │
+│ ~1,301 rows                                                                                                              │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+
+query
+EXPLAIN SELECT time_bucket(INTERVAL '1 day', tstz, CASE WHEN v % 2 = 0 THEN 'Europe/Berlin' ELSE 'UTC' END) AS b, count(*) AS c FROM dst GROUP BY 1;
+----
+QUERY PLAN
+╭─ HASH_GROUP_BY ──────────╮
+│ Groups: #0               │
+│ Aggregates: count_star() │
+│ ~650 rows                │
+╰─────────────┬────────────╯
+╭─ PROJECTION ┴────────────╮
+│ Projections: b           │
+│ ~1,301 rows              │
+╰─────────────┬────────────╯
+╭─ SEQ_SCAN ──┴────────────╮
+│ Table: dst               │
+│ Type: Sequential Scan    │
+│ Projections: tstz, v     │
+│ ~1,301 rows              │
+╰──────────────────────────╯
+
+query
+SELECT b::VARCHAR AS b, lo::VARCHAR AS lo, hi::VARCHAR AS hi, c FROM (SELECT time_bucket(INTERVAL '1 day', tstz, 'America/Santiago') AS b, min(tstz) AS lo, max(tstz) AS hi, count(*) AS c FROM dst WHERE v BETWEEN 2000 AND 2199 OR v BETWEEN 3000 AND 3199 GROUP BY 1) ORDER BY 1;
+----
+b	lo	hi	c
+2025-04-03 12:00:00+09	2025-04-04 09:00:00+09	2025-04-04 11:44:00+09	5
+2025-04-04 12:00:00+09	2025-04-04 12:25:00+09	2025-04-05 11:39:00+09	35
+2025-04-05 12:00:00+09	2025-04-05 12:20:00+09	2025-04-06 12:56:00+09	37
+2025-04-06 13:00:00+09	2025-04-06 13:37:00+09	2025-04-07 12:51:00+09	35
+2025-04-07 13:00:00+09	2025-04-07 13:32:00+09	2025-04-08 12:46:00+09	35
+2025-04-08 13:00:00+09	2025-04-08 13:27:00+09	2025-04-09 12:41:00+09	35
+2025-04-09 13:00:00+09	2025-04-09 13:22:00+09	2025-04-10 00:59:00+09	18
+2025-09-04 13:00:00+09	2025-09-05 09:00:00+09	2025-09-05 12:25:00+09	6
+2025-09-05 13:00:00+09	2025-09-05 13:06:00+09	2025-09-06 12:20:00+09	35
+2025-09-06 13:00:00+09	2025-09-06 13:01:00+09	2025-09-07 12:56:00+09	36
+2025-09-07 13:00:00+09	2025-09-07 13:37:00+09	2025-09-08 11:29:00+09	33
+2025-09-08 12:00:00+09	2025-09-08 12:10:00+09	2025-09-09 11:24:00+09	35
+2025-09-09 12:00:00+09	2025-09-09 12:05:00+09	2025-09-10 11:19:00+09	35
+2025-09-10 12:00:00+09	2025-09-10 12:00:00+09	2025-09-11 00:59:00+09	20
+
+query
+SELECT b::VARCHAR AS b, c, s FROM (SELECT time_bucket(INTERVAL '1 hour', tstz, 'Europe/Berlin') AS b, count(*) AS c, sum(v) AS s FROM dst WHERE tstz BETWEEN '2025-10-25 22:00:00+00' AND '2025-10-26 03:00:00+00' GROUP BY 1) ORDER BY 1;
+----
+b	c	s
+2025-10-26 07:00:00+09	1	1068
+2025-10-26 08:00:00+09	2	2139
+2025-10-26 09:00:00+09	1	1071
+2025-10-26 10:00:00+09	2	2145
+2025-10-26 11:00:00+09	1	1074
+
+query
+SELECT b::VARCHAR AS b, c FROM (SELECT time_bucket(INTERVAL '90 minutes', tstz, 'Australia/Lord_Howe') AS b, count(*) AS c FROM dst WHERE tstz BETWEEN '2025-04-05 12:00:00+00' AND '2025-04-05 18:00:00+00' GROUP BY 1) ORDER BY 1;
+----
+b	c
+2025-04-05 20:30:00+09	3
+2025-04-05 22:00:00+09	5
+2025-04-05 23:30:00+09	4
+2025-04-06 01:00:00+09	4
+2025-04-06 02:30:00+09	2
+
+query
+SELECT b::VARCHAR AS b, c, s FROM (SELECT time_bucket(INTERVAL '1 month', tstz, 'Pacific/Kiritimati') AS b, count(*) AS c, sum(v) AS s FROM dst GROUP BY 1) ORDER BY 1;
+----
+b	c	s
+2025-02-28 19:00:00+09	120	7140
+2025-03-31 19:00:00+09	480	492560
+2025-08-31 19:00:00+09	200	619900
+2025-09-30 19:00:00+09	261	294930
+2025-10-31 19:00:00+09	239	589820
+NULL	1	-1
+
+query
+SELECT b::VARCHAR AS b, c, s FROM (SELECT time_bucket(INTERVAL '3 days', tstz, 'America/St_Johns') AS b, count(*) AS c, sum(v) AS s FROM old WHERE v < 200 GROUP BY 1) ORDER BY 1;
+----
+b	c	s
+1998-12-24 12:30:00+09	18	153
+1998-12-27 12:30:00+09	25	750
+1998-12-30 12:30:00+09	25	1375
+1999-01-02 12:30:00+09	25	2000
+1999-01-05 12:30:00+09	25	2625
+1999-01-08 12:30:00+09	25	3250
+1999-01-11 12:30:00+09	25	3875
+1999-01-14 12:30:00+09	25	4500
+1999-01-17 12:30:00+09	7	1372
+
+query
+SELECT b::VARCHAR AS b, c, s FROM (SELECT time_bucket(INTERVAL '2 months', tstz, 'Asia/Kolkata') AS b, count(*) AS c, sum(v) AS s FROM old GROUP BY 1) ORDER BY 1;
+----
+b	c	s
+1998-11-01 03:30:00+09	57	1596
+1999-01-01 03:30:00+09	491	148282
+1999-03-01 03:30:00+09	508	407162
+1999-05-01 03:30:00+09	144	162360
+
+query
+SELECT b::VARCHAR AS b, c FROM (SELECT time_bucket(INTERVAL '1 day', tstz, 'America/Havana') AS b, count(*) AS c FROM dst WHERE tstz BETWEEN '2025-11-01 20:00:00+00' AND '2025-11-02 12:00:00+00' GROUP BY 1) ORDER BY 1;
+----
+b	c
+2025-11-01 13:00:00+09	26
+2025-11-02 14:00:00+09	21
+
+statement error
+SELECT time_bucket(INTERVAL '1 day', tstz, 'Mars/Olympus') AS b, count(*) AS c FROM dst GROUP BY 1;
+----
+db error: ERROR: Unknown TimeZone 'Mars/Olympus'!
+
+Candidate time zones: "Asia/Omsk", "Asia/Muscat", "Europe/Oslo", "Asia/Srednekolymsk", "Asia/Thimphu"
+
+
+statement ok
+SET disabled_optimizers = 'compressed_materialization';
+
+query
+SELECT b::VARCHAR AS b, lo::VARCHAR AS lo, hi::VARCHAR AS hi, c FROM (SELECT time_bucket(INTERVAL '1 day', tstz, 'America/Santiago') AS b, min(tstz) AS lo, max(tstz) AS hi, count(*) AS c FROM dst WHERE v BETWEEN 2000 AND 2199 OR v BETWEEN 3000 AND 3199 GROUP BY 1) ORDER BY 1;
+----
+b	lo	hi	c
+2025-04-03 12:00:00+09	2025-04-04 09:00:00+09	2025-04-04 11:44:00+09	5
+2025-04-04 12:00:00+09	2025-04-04 12:25:00+09	2025-04-05 11:39:00+09	35
+2025-04-05 12:00:00+09	2025-04-05 12:20:00+09	2025-04-06 12:56:00+09	37
+2025-04-06 13:00:00+09	2025-04-06 13:37:00+09	2025-04-07 12:51:00+09	35
+2025-04-07 13:00:00+09	2025-04-07 13:32:00+09	2025-04-08 12:46:00+09	35
+2025-04-08 13:00:00+09	2025-04-08 13:27:00+09	2025-04-09 12:41:00+09	35
+2025-04-09 13:00:00+09	2025-04-09 13:22:00+09	2025-04-10 00:59:00+09	18
+2025-09-04 13:00:00+09	2025-09-05 09:00:00+09	2025-09-05 12:25:00+09	6
+2025-09-05 13:00:00+09	2025-09-05 13:06:00+09	2025-09-06 12:20:00+09	35
+2025-09-06 13:00:00+09	2025-09-06 13:01:00+09	2025-09-07 12:56:00+09	36
+2025-09-07 13:00:00+09	2025-09-07 13:37:00+09	2025-09-08 11:29:00+09	33
+2025-09-08 12:00:00+09	2025-09-08 12:10:00+09	2025-09-09 11:24:00+09	35
+2025-09-09 12:00:00+09	2025-09-09 12:05:00+09	2025-09-10 11:19:00+09	35
+2025-09-10 12:00:00+09	2025-09-10 12:00:00+09	2025-09-11 00:59:00+09	20
+
+query
+SELECT b::VARCHAR AS b, c, s FROM (SELECT time_bucket(INTERVAL '1 hour', tstz, 'Europe/Berlin') AS b, count(*) AS c, sum(v) AS s FROM dst WHERE tstz BETWEEN '2025-10-25 22:00:00+00' AND '2025-10-26 03:00:00+00' GROUP BY 1) ORDER BY 1;
+----
+b	c	s
+2025-10-26 07:00:00+09	1	1068
+2025-10-26 08:00:00+09	2	2139
+2025-10-26 09:00:00+09	1	1071
+2025-10-26 10:00:00+09	2	2145
+2025-10-26 11:00:00+09	1	1074
+
+query
+SELECT b::VARCHAR AS b, c FROM (SELECT time_bucket(INTERVAL '90 minutes', tstz, 'Australia/Lord_Howe') AS b, count(*) AS c FROM dst WHERE tstz BETWEEN '2025-04-05 12:00:00+00' AND '2025-04-05 18:00:00+00' GROUP BY 1) ORDER BY 1;
+----
+b	c
+2025-04-05 20:30:00+09	3
+2025-04-05 22:00:00+09	5
+2025-04-05 23:30:00+09	4
+2025-04-06 01:00:00+09	4
+2025-04-06 02:30:00+09	2
+
+query
+SELECT b::VARCHAR AS b, c, s FROM (SELECT time_bucket(INTERVAL '1 month', tstz, 'Pacific/Kiritimati') AS b, count(*) AS c, sum(v) AS s FROM dst GROUP BY 1) ORDER BY 1;
+----
+b	c	s
+2025-02-28 19:00:00+09	120	7140
+2025-03-31 19:00:00+09	480	492560
+2025-08-31 19:00:00+09	200	619900
+2025-09-30 19:00:00+09	261	294930
+2025-10-31 19:00:00+09	239	589820
+NULL	1	-1
+
+query
+SELECT b::VARCHAR AS b, c, s FROM (SELECT time_bucket(INTERVAL '3 days', tstz, 'America/St_Johns') AS b, count(*) AS c, sum(v) AS s FROM old WHERE v < 200 GROUP BY 1) ORDER BY 1;
+----
+b	c	s
+1998-12-24 12:30:00+09	18	153
+1998-12-27 12:30:00+09	25	750
+1998-12-30 12:30:00+09	25	1375
+1999-01-02 12:30:00+09	25	2000
+1999-01-05 12:30:00+09	25	2625
+1999-01-08 12:30:00+09	25	3250
+1999-01-11 12:30:00+09	25	3875
+1999-01-14 12:30:00+09	25	4500
+1999-01-17 12:30:00+09	7	1372
+
+query
+SELECT b::VARCHAR AS b, c, s FROM (SELECT time_bucket(INTERVAL '2 months', tstz, 'Asia/Kolkata') AS b, count(*) AS c, sum(v) AS s FROM old GROUP BY 1) ORDER BY 1;
+----
+b	c	s
+1998-11-01 03:30:00+09	57	1596
+1999-01-01 03:30:00+09	491	148282
+1999-03-01 03:30:00+09	508	407162
+1999-05-01 03:30:00+09	144	162360
+
+query
+SELECT b::VARCHAR AS b, c FROM (SELECT time_bucket(INTERVAL '1 day', tstz, 'America/Havana') AS b, count(*) AS c FROM dst WHERE tstz BETWEEN '2025-11-01 20:00:00+00' AND '2025-11-02 12:00:00+00' GROUP BY 1) ORDER BY 1;
+----
+b	c
+2025-11-01 13:00:00+09	26
+2025-11-02 14:00:00+09	21
+
+statement error
+SELECT time_bucket(INTERVAL '1 day', tstz, 'Mars/Olympus') AS b, count(*) AS c FROM dst GROUP BY 1;
+----
+db error: ERROR: Unknown TimeZone 'Mars/Olympus'!
+
+Candidate time zones: "Asia/Omsk", "Asia/Muscat", "Europe/Oslo", "Asia/Srednekolymsk", "Asia/Thimphu"
+
+
+statement ok
+RESET disabled_optimizers;
+
+statement error
+SELECT __internal_icu_date_trunc_bucket('day', TIMESTAMPTZ '2025-01-01 00:00:00+00', 0, 0);
+----
+db error: ERROR: Time zone bucket width must be positive
+
+
+statement error
+SELECT __internal_icu_date_trunc_unbucket('fortnight', 1, 1, 0);
+----
+db error: ERROR: extract specifier "fortnight" not recognized
+
+
+statement ok
+SET TimeZone = 'Etc/UTC';

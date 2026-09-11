@@ -20,9 +20,12 @@
 
 #pragma once
 
+#include <array>
 #include <cstdint>
 #include <optional>
 #include <string>
+#include <string_view>
+#include <utility>
 #include <vector>
 
 #include "basics/asio_ns.h"
@@ -54,6 +57,18 @@ enum class ProxyMode : uint8_t {
   Require,
 };
 
+enum class HttpApi {
+  Es,
+  Test,
+  Mcp,
+};
+
+constexpr std::array<std::pair<std::string_view, HttpApi>, 3> kHttpApis{{
+  {"es", HttpApi::Es},
+  {"test", HttpApi::Test},
+  {"mcp", HttpApi::Mcp},
+}};
+
 struct ListenSpec {
   std::string url;
   ListenProtocol protocol = ListenProtocol::Pg;
@@ -77,7 +92,7 @@ struct ListenSpec {
   std::string key;
   std::string ca;
 
-  std::vector<std::string> apis;
+  std::vector<HttpApi> apis;
 
   std::optional<int> backlog;
   std::optional<bool> reuseport;

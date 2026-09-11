@@ -88,29 +88,3 @@ CREATE TEXT SEARCH DICTIONARY pipe_extended (
     STEP3_TEMPLATE = 'stopwords',
     STEP3_STOPWORDS = '"bar","foo"'
 );
-
-# DOCS_TEST: example_007
-
-# DOCS_TEST_RAW
-#| CREATE TEXT SEARCH DICTIONARY minhash_variant (
-#|     template = 'copy_from',
-#|     from = 'minhash_text',
-#|     TOKENIZER_STOPWORDS = '"fox"'
-#| );
-
-# DOCS_TEST_BODY
-
-statement ok
-CREATE TEXT SEARCH DICTIONARY minhash_text (
-    template = 'minhash',
-    tokenizer_template = 'text',
-    tokenizer_locale = 'en_US.UTF-8',
-    numhashes = 2
-);
-
-statement ok
-CREATE TEXT SEARCH DICTIONARY minhash_variant (
-    template = 'copy_from',
-    from = 'minhash_text',
-    TOKENIZER_STOPWORDS = '"fox"'
-);

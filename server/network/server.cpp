@@ -40,6 +40,7 @@
 #include "network/connection.h"
 #include "network/credentials.h"
 #include "network/http/es/handlers.h"
+#include "network/http/mcp/handlers.h"
 #include "network/http/test/handlers.h"
 #include "network/pg/hba.h"
 #include "network/socket.h"
@@ -247,11 +248,17 @@ asio_ns::ssl::context* Server::BuildTls(const network::ListenSpec& spec) {
 
 network::HttpRouter& Server::BuildRouter(const network::ListenSpec& spec) {
   network::HttpRouter& router = _routers.emplace_back();
-  for (const auto& api : spec.apis) {
-    if (api == "es") {
-      network::http::es::Register(router);
-    } else if (api == "test") {
-      network::http::test::Register(router);
+  for (const auto api : spec.apis) {
+    switch (api) {
+      case network::HttpApi::Es:
+        network::http::es::Register(router);
+        break;
+      case network::HttpApi::Test:
+        network::http::test::Register(router);
+        break;
+      case network::HttpApi::Mcp:
+        network::http::mcp::Register(router);
+        break;
     }
   }
   return router;

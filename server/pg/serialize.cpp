@@ -51,6 +51,7 @@
 #include <duckdb/common/types/uhugeint.hpp>
 #include <duckdb/common/types/uuid.hpp>
 #include <duckdb/inet/inet_ipaddress.hpp>
+#include <icu-zone-lut.hpp>
 #include <limits>
 #include <string_view>
 #include <type_traits>
@@ -937,14 +938,21 @@ int32_t SessionTzOffsetSeconds(const icu::TimeZone& tz, int64_t utc_ms) {
   return (raw_ms + dst_ms) / 1000;
 }
 
+int32_t SessionOffsetSeconds(const SerializationContext& ctx, int64_t utc_us) {
+  int64_t offset_us = 0;
+  if (ctx.zone_lut && ctx.zone_lut->TryOffset(utc_us, offset_us)) {
+    return static_cast<int32_t>(offset_us / 1'000'000);
+  }
+  return SessionTzOffsetSeconds(*ctx.time_zone, utc_us / 1000);
+}
+
 template<WrapContext InContainer>
 struct TimestampTzTextCore {
   using Value = duckdb::timestamp_tz_t;
   IRS_FORCE_INLINE static void Render(SerializationContext& ctx, Value tz) {
     const auto ts = duckdb::timestamp_t{tz};
     if (ctx.time_zone && ts.IsFinite()) {
-      const auto offset_secs =
-        SessionTzOffsetSeconds(*ctx.time_zone, ts.value / 1000);
+      const auto offset_secs = SessionOffsetSeconds(ctx, ts.value);
       int64_t local_us = 0;
       if (duckdb::TryAddOperator::Operation(
             ts.value, int64_t{offset_secs} * 1'000'000, local_us)) {
@@ -981,8 +989,7 @@ struct TimestampTzNsTextCore {
   IRS_FORCE_INLINE static void Render(SerializationContext& ctx, Value tz) {
     duckdb::StringHeap heap{duckdb::Allocator::DefaultAllocator()};
     if (ctx.time_zone && tz.IsFinite()) {
-      const auto offset_secs =
-        SessionTzOffsetSeconds(*ctx.time_zone, tz.value / 1'000'000);
+      const auto offset_secs = SessionOffsetSeconds(ctx, tz.value / 1'000);
       int64_t local_ns = 0;
       if (duckdb::TryAddOperator::Operation(
             tz.value, int64_t{offset_secs} * 1'000'000'000, local_ns)) {
@@ -2335,9 +2342,11 @@ void FillContext(const Config& config, SerializationContext& context) {
   const auto tz_name = config.GetTimeZone();
   if (IsUtcTimeZoneName(tz_name)) {
     context.time_zone.reset();
+    context.zone_lut.reset();
   } else {
     context.time_zone.reset(
       icu::TimeZone::createTimeZone(icu::UnicodeString::fromUTF8(tz_name)));
+    context.zone_lut = duckdb::ZoneLUT::Get(*context.time_zone);
   }
   context.client = &config.GetClientContext();
   // types_cache stays lazy (GetSerializersCache); record results only.

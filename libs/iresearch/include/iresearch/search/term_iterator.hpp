@@ -43,7 +43,7 @@ class WrappedTermIterator : public TermIterator {
  public:
   bytes_view value() const noexcept final { return _impl->value(); }
   const PostingMeta& cookie() const final { return _impl->cookie(); }
-  DocIterator::ptr postings(IndexFeatures features) const final {
+  TermPostings::ptr postings(IndexFeatures features) const final {
     return _impl->postings(features);
   }
   Attribute* GetMutable(TypeInfo::type_id id) noexcept override {
@@ -79,7 +79,7 @@ class FilteredTermIterator : public TermIterator {
   }
   bytes_view value() const noexcept final { return _inner->value(); }
   const PostingMeta& cookie() const final { return _inner->cookie(); }
-  DocIterator::ptr postings(IndexFeatures features) const final {
+  TermPostings::ptr postings(IndexFeatures features) const final {
     return _inner->postings(features);
   }
   Attribute* GetMutable(TypeInfo::type_id id) noexcept final {

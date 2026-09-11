@@ -30,15 +30,12 @@
 //   - Miss:                  keys not present, varied lengths
 //
 // Approaches under test:
-//   1. frozen::unordered_map  - lowercase keys,  AsciiStrToLower on input
-//   2. frozen::unordered_map  - canonical keys,  case-insensitive hash/equal
-//   3. absl::flat_hash_map    - lowercase keys,  AsciiStrToLower on input
-//   4. absl::flat_hash_map    - canonical keys,  case-insensitive hash/equal
-//   5. linear scan            - canonical keys,  EqualsIgnoreCase   (baseline)
-//   6. utils::TrivialBiMap    - lowercase keys,  ICase switch-on-length
+//   1. absl::flat_hash_map    - lowercase keys,  AsciiStrToLower on input
+//   2. absl::flat_hash_map    - canonical keys,  case-insensitive hash/equal
+//   3. linear scan            - canonical keys,  EqualsIgnoreCase   (baseline)
+//   4. utils::TrivialBiMap    - lowercase keys,  ICase switch-on-length
 //
-// Approaches 1 and 2 require building with -DSDB_BENCH_FROZEN=1.
-// Approach 6 requires building with -DSDB_ENABLE_TRIVIAL_BIMAP=1 (the
+// Approach 4 requires building with -DSDB_ENABLE_TRIVIAL_BIMAP=1 (the
 // TrivialBiMap header was dropped from the tree with the container campaign).
 
 #include <absl/container/flat_hash_map.h>
@@ -46,9 +43,6 @@
 #include <absl/strings/match.h>
 #include <absl/strings/string_view.h>
 #include <benchmark/benchmark.h>
-#ifdef SDB_BENCH_FROZEN
-#include <frozen/unordered_map.h>
-#endif
 
 #include <string_view>
 
@@ -337,122 +331,7 @@ static constexpr std::string_view kMissKeys[] = {
   "xyz",                     // short, len 3
 };
 
-// Approach 1 - frozen::unordered_map, lowercase keys  [#ifdef SDB_BENCH_FROZEN]
-
-#ifdef SDB_BENCH_FROZEN
-// clang-format off
-constexpr auto kFrozenLower =
-  frozen::make_unordered_map<std::string_view, Value>({
-    {"execution_threads", 0}, {"join_order_algorithm", 1},
-    {"search_path", 2}, {"extra_float_digits", 3}, {"bytea_output", 4},
-    {"client_encoding", 5}, {"application_name", 6},
-    {"default_transaction_read_only", 7}, {"in_hot_standby", 8},
-    {"integer_datetimes", 9}, {"scram_iterations", 10},
-    {"server_encoding", 11}, {"server_version", 12},
-    {"standard_conforming_strings", 13}, {"datestyle", 14},
-    {"intervalstyle", 15}, {"timezone", 16},
-    {"sdb_write_conflict_policy", 17},
-    {"default_transaction_isolation", 19}, {"transaction_isolation", 20},
-    {"query_max_memory_per_node", 21}, {"session_timezone", 22},
-    {"adjust_timestamp_to_session_timezone", 23},
-    {"expression.eval_simplified", 24}, {"expression.track_cpu_usage", 25},
-    {"track_operator_cpu_usage", 26}, {"legacy_cast", 27},
-    {"cast_match_struct_by_name", 28},
-    {"expression.max_array_size_in_reduce", 29},
-    {"expression.max_compiled_regexes", 30},
-    {"max_local_exchange_buffer_size", 31},
-    {"max_local_exchange_partition_count", 32},
-    {"min_local_exchange_partition_count_to_use_partition_buffer", 33},
-    {"max_local_exchange_partition_buffer_size", 34},
-    {"local_exchange_partition_buffer_preserve_encoding", 35},
-    {"local_merge_source_queue_size", 36},
-    {"exchange.max_buffer_size", 37}, {"merge_exchange.max_buffer_size", 38},
-    {"min_exchange_output_batch_bytes", 39},
-    {"max_partial_aggregation_memory", 40},
-    {"max_extended_partial_aggregation_memory", 41},
-    {"abandon_partial_aggregation_min_rows", 42},
-    {"abandon_partial_aggregation_min_pct", 43},
-    {"abandon_partial_topn_row_number_min_rows", 44},
-    {"abandon_partial_topn_row_number_min_pct", 45},
-    {"max_elements_size_in_repeat_and_sequence", 46},
-    {"max_page_partitioning_buffer_size", 47},
-    {"max_output_buffer_size", 48}, {"preferred_output_batch_bytes", 49},
-    {"preferred_output_batch_rows", 50}, {"max_output_batch_rows", 51},
-    {"table_scan_getoutput_time_limit_ms", 52},
-    {"hash_adaptivity_enabled", 53},
-    {"adaptive_filter_reordering_enabled", 54},
-    {"spill_enabled", 55}, {"aggregation_spill_enabled", 56},
-    {"join_spill_enabled", 57},
-    {"mixed_grouped_mode_hash_join_spill_enabled", 58},
-    {"order_by_spill_enabled", 59}, {"window_spill_enabled", 60},
-    {"writer_spill_enabled", 61}, {"row_number_spill_enabled", 62},
-    {"topn_row_number_spill_enabled", 63}, {"local_merge_spill_enabled", 64},
-    {"local_merge_max_num_merge_sources", 65},
-    {"max_spill_run_rows", 66}, {"max_spill_bytes", 67},
-    {"max_spill_level", 68}, {"max_spill_file_size", 69},
-    {"spill_compression_codec", 70}, {"spill_prefixsort_enabled", 71},
-    {"spill_write_buffer_size", 72}, {"spill_read_buffer_size", 73},
-    {"spill_file_create_config", 74}, {"spiller_start_partition_bit", 75},
-    {"spiller_num_partition_bits", 76},
-    {"min_spillable_reservation_pct", 77},
-    {"spillable_reservation_growth_pct", 78},
-    {"writer_flush_threshold_bytes", 79},
-    {"presto.array_agg.ignore_nulls", 80}, {"spark.ansi_enabled", 81},
-    {"spark.bloom_filter.expected_num_items", 82},
-    {"spark.bloom_filter.num_bits", 83},
-    {"spark.bloom_filter.max_num_bits", 84},
-    {"spark.partition_id", 85}, {"spark.legacy_date_formatter", 86},
-    {"spark.legacy_statistical_aggregate", 87},
-    {"spark.json_ignore_null_fields", 88},
-    {"task_writer_count", 89}, {"task_partitioned_writer_count", 90},
-    {"hash_probe_finish_early_on_empty_build", 91},
-    {"min_table_rows_for_parallel_join_build", 92},
-    {"debug.validate_output_from_operators", 93},
-    {"enable_expression_evaluation_cache", 94},
-    {"max_shared_subexpr_results_cached", 95},
-    {"max_split_preload_per_driver", 96},
-    {"driver_cpu_time_slice_limit_ms", 97},
-    {"prefixsort_normalized_key_max_bytes", 98},
-    {"prefixsort_min_rows", 99}, {"prefixsort_max_string_prefix_length", 100},
-    {"query_trace_enabled", 101}, {"query_trace_dir", 102},
-    {"query_trace_node_id", 103}, {"query_trace_max_bytes", 104},
-    {"query_trace_task_reg_exp", 105}, {"query_trace_dry_run", 106},
-    {"op_trace_directory_create_config", 107},
-    {"debug_disable_expression_with_peeling", 108},
-    {"debug_disable_common_sub_expressions", 109},
-    {"debug_disable_expression_with_memoization", 110},
-    {"debug_disable_expression_with_lazy_inputs", 111},
-    {"debug_aggregation_approx_percentile_fixed_random_seed", 112},
-    {"debug_memory_pool_name_regex", 113},
-    {"debug_memory_pool_warn_threshold_bytes", 114},
-    {"debug_lambda_function_evaluation_batch_size", 115},
-    {"debug_bing_tile_children_max_zoom_shift", 116},
-    {"selective_nimble_reader_enabled", 117},
-    {"scaled_writer_rebalance_max_memory_usage_ratio", 118},
-    {"scaled_writer_max_partitions_per_writer", 119},
-    {"scaled_writer_min_partition_processed_bytes_rebalance_threshold", 120},
-    {"scaled_writer_min_processed_bytes_rebalance_threshold", 121},
-    {"table_scan_scaled_processing_enabled", 122},
-    {"table_scan_scale_up_memory_usage_ratio", 123},
-    {"shuffle_compression_codec", 124},
-    {"throw_exception_on_duplicate_map_keys", 125},
-    {"index_lookup_join_max_prefetch_batches", 126},
-    {"index_lookup_join_split_output", 127},
-    {"request_data_sizes_max_wait_sec", 128},
-    {"streaming_aggregation_min_output_batch_rows", 129},
-    {"streaming_aggregation_eager_flush", 130},
-    {"field_names_in_json_cast_enabled", 131},
-    {"operator_track_expression_stats", 132},
-    {"enable_operator_batch_size_stats", 133},
-    {"unnest_split_output", 134}, {"query_memory_reclaimer_priority", 135},
-    {"max_num_splits_listened_to", 136}, {"source", 137},
-    {"client_tags", 138},
-  });
-// clang-format on
-#endif  // SDB_BENCH_FROZEN
-
-// Approach 2 - frozen::unordered_map, canonical keys, icase hash/equal
-//              [IcaseHash/IcaseEqual also used by approach 4]
+// Case-insensitive hash/equal shared by the canonical-key approach (2)
 
 struct IcaseHash {
   constexpr std::size_t operator()(std::string_view v) const noexcept {
@@ -498,124 +377,7 @@ struct IcaseEqual {
   using is_transparent = void;
 };
 
-#ifdef SDB_BENCH_FROZEN
-// clang-format off
-constexpr auto kFrozenIcase =
-  frozen::make_unordered_map<std::string_view, Value>(
-    {
-      {"execution_threads", 0}, {"join_order_algorithm", 1},
-      {"search_path", 2}, {"extra_float_digits", 3}, {"bytea_output", 4},
-      {"client_encoding", 5}, {"application_name", 6},
-      {"default_transaction_read_only", 7}, {"in_hot_standby", 8},
-      {"integer_datetimes", 9}, {"scram_iterations", 10},
-      {"server_encoding", 11}, {"server_version", 12},
-      {"standard_conforming_strings", 13}, {"DateStyle", 14},
-      {"IntervalStyle", 15}, {"TimeZone", 16},
-      {"sdb_write_conflict_policy", 17},
-      {"default_transaction_isolation", 19}, {"transaction_isolation", 20},
-      {"query_max_memory_per_node", 21}, {"session_timezone", 22},
-      {"adjust_timestamp_to_session_timezone", 23},
-      {"expression.eval_simplified", 24}, {"expression.track_cpu_usage", 25},
-      {"track_operator_cpu_usage", 26}, {"legacy_cast", 27},
-      {"cast_match_struct_by_name", 28},
-      {"expression.max_array_size_in_reduce", 29},
-      {"expression.max_compiled_regexes", 30},
-      {"max_local_exchange_buffer_size", 31},
-      {"max_local_exchange_partition_count", 32},
-      {"min_local_exchange_partition_count_to_use_partition_buffer", 33},
-      {"max_local_exchange_partition_buffer_size", 34},
-      {"local_exchange_partition_buffer_preserve_encoding", 35},
-      {"local_merge_source_queue_size", 36},
-      {"exchange.max_buffer_size", 37}, {"merge_exchange.max_buffer_size", 38},
-      {"min_exchange_output_batch_bytes", 39},
-      {"max_partial_aggregation_memory", 40},
-      {"max_extended_partial_aggregation_memory", 41},
-      {"abandon_partial_aggregation_min_rows", 42},
-      {"abandon_partial_aggregation_min_pct", 43},
-      {"abandon_partial_topn_row_number_min_rows", 44},
-      {"abandon_partial_topn_row_number_min_pct", 45},
-      {"max_elements_size_in_repeat_and_sequence", 46},
-      {"max_page_partitioning_buffer_size", 47},
-      {"max_output_buffer_size", 48}, {"preferred_output_batch_bytes", 49},
-      {"preferred_output_batch_rows", 50}, {"max_output_batch_rows", 51},
-      {"table_scan_getoutput_time_limit_ms", 52},
-      {"hash_adaptivity_enabled", 53},
-      {"adaptive_filter_reordering_enabled", 54},
-      {"spill_enabled", 55}, {"aggregation_spill_enabled", 56},
-      {"join_spill_enabled", 57},
-      {"mixed_grouped_mode_hash_join_spill_enabled", 58},
-      {"order_by_spill_enabled", 59}, {"window_spill_enabled", 60},
-      {"writer_spill_enabled", 61}, {"row_number_spill_enabled", 62},
-      {"topn_row_number_spill_enabled", 63},
-      {"local_merge_spill_enabled", 64},
-      {"local_merge_max_num_merge_sources", 65},
-      {"max_spill_run_rows", 66}, {"max_spill_bytes", 67},
-      {"max_spill_level", 68}, {"max_spill_file_size", 69},
-      {"spill_compression_codec", 70}, {"spill_prefixsort_enabled", 71},
-      {"spill_write_buffer_size", 72}, {"spill_read_buffer_size", 73},
-      {"spill_file_create_config", 74}, {"spiller_start_partition_bit", 75},
-      {"spiller_num_partition_bits", 76},
-      {"min_spillable_reservation_pct", 77},
-      {"spillable_reservation_growth_pct", 78},
-      {"writer_flush_threshold_bytes", 79},
-      {"presto.array_agg.ignore_nulls", 80}, {"spark.ansi_enabled", 81},
-      {"spark.bloom_filter.expected_num_items", 82},
-      {"spark.bloom_filter.num_bits", 83},
-      {"spark.bloom_filter.max_num_bits", 84},
-      {"spark.partition_id", 85}, {"spark.legacy_date_formatter", 86},
-      {"spark.legacy_statistical_aggregate", 87},
-      {"spark.json_ignore_null_fields", 88},
-      {"task_writer_count", 89}, {"task_partitioned_writer_count", 90},
-      {"hash_probe_finish_early_on_empty_build", 91},
-      {"min_table_rows_for_parallel_join_build", 92},
-      {"debug.validate_output_from_operators", 93},
-      {"enable_expression_evaluation_cache", 94},
-      {"max_shared_subexpr_results_cached", 95},
-      {"max_split_preload_per_driver", 96},
-      {"driver_cpu_time_slice_limit_ms", 97},
-      {"prefixsort_normalized_key_max_bytes", 98},
-      {"prefixsort_min_rows", 99},
-      {"prefixsort_max_string_prefix_length", 100},
-      {"query_trace_enabled", 101}, {"query_trace_dir", 102},
-      {"query_trace_node_id", 103}, {"query_trace_max_bytes", 104},
-      {"query_trace_task_reg_exp", 105}, {"query_trace_dry_run", 106},
-      {"op_trace_directory_create_config", 107},
-      {"debug_disable_expression_with_peeling", 108},
-      {"debug_disable_common_sub_expressions", 109},
-      {"debug_disable_expression_with_memoization", 110},
-      {"debug_disable_expression_with_lazy_inputs", 111},
-      {"debug_aggregation_approx_percentile_fixed_random_seed", 112},
-      {"debug_memory_pool_name_regex", 113},
-      {"debug_memory_pool_warn_threshold_bytes", 114},
-      {"debug_lambda_function_evaluation_batch_size", 115},
-      {"debug_bing_tile_children_max_zoom_shift", 116},
-      {"selective_nimble_reader_enabled", 117},
-      {"scaled_writer_rebalance_max_memory_usage_ratio", 118},
-      {"scaled_writer_max_partitions_per_writer", 119},
-      {"scaled_writer_min_partition_processed_bytes_rebalance_threshold", 120},
-      {"scaled_writer_min_processed_bytes_rebalance_threshold", 121},
-      {"table_scan_scaled_processing_enabled", 122},
-      {"table_scan_scale_up_memory_usage_ratio", 123},
-      {"shuffle_compression_codec", 124},
-      {"throw_exception_on_duplicate_map_keys", 125},
-      {"index_lookup_join_max_prefetch_batches", 126},
-      {"index_lookup_join_split_output", 127},
-      {"request_data_sizes_max_wait_sec", 128},
-      {"streaming_aggregation_min_output_batch_rows", 129},
-      {"streaming_aggregation_eager_flush", 130},
-      {"field_names_in_json_cast_enabled", 131},
-      {"operator_track_expression_stats", 132},
-      {"enable_operator_batch_size_stats", 133},
-      {"unnest_split_output", 134},
-      {"query_memory_reclaimer_priority", 135},
-      {"max_num_splits_listened_to", 136}, {"source", 137},
-      {"client_tags", 138},
-    },
-    IcaseHash{}, IcaseEqual{});
-// clang-format on
-#endif  // SDB_BENCH_FROZEN
-
-// Approach 3 - absl::flat_hash_map, lowercase keys
+// Approach 1 - absl::flat_hash_map, lowercase keys
 
 const absl::flat_hash_map<std::string, Value> kAbslLower = [] {
   absl::flat_hash_map<std::string, Value> m;
@@ -626,7 +388,7 @@ const absl::flat_hash_map<std::string, Value> kAbslLower = [] {
   return m;
 }();
 
-// Approach 4 - absl::flat_hash_map, canonical keys, icase hash/equal
+// Approach 2 - absl::flat_hash_map, canonical keys, icase hash/equal
 
 const absl::flat_hash_map<std::string, Value, IcaseHash, IcaseEqual>
   kAbslIcase = [] {
@@ -638,7 +400,7 @@ const absl::flat_hash_map<std::string, Value, IcaseHash, IcaseEqual>
     return m;
   }();
 
-// Approach 6 - utils::TrivialBiMap, lowercase keys
+// Approach 4 - utils::TrivialBiMap, lowercase keys
 
 #ifdef SDB_ENABLE_TRIVIAL_BIMAP
 static constexpr Value kTrivialValues[] = {
@@ -713,14 +475,6 @@ template<typename Map>
 
 // Wire-protocol path (13 canonical-case keys, happens once per connection)
 
-#ifdef SDB_BENCH_FROZEN
-void BmFrozenLower_Wire(benchmark::State& s) {
-  LookupAll(s, kFrozenLower, kWireKeys, std::size(kWireKeys), true);
-}
-void BmFrozenIcase_Wire(benchmark::State& s) {
-  LookupAll(s, kFrozenIcase, kWireKeys, std::size(kWireKeys), false);
-}
-#endif  // SDB_BENCH_FROZEN
 void BmAbslLower_Wire(benchmark::State& s) {
   LookupAll(s, kAbslLower, kWireKeys, std::size(kWireKeys), true);
 }
@@ -736,10 +490,6 @@ void BmTrivial_Wire(benchmark::State& s) {
 }
 #endif  // SDB_ENABLE_TRIVIAL_BIMAP
 
-#ifdef SDB_BENCH_FROZEN
-BENCHMARK(BmFrozenLower_Wire);
-BENCHMARK(BmFrozenIcase_Wire);
-#endif  // SDB_BENCH_FROZEN
 BENCHMARK(BmAbslLower_Wire);
 BENCHMARK(BmAbslIcase_Wire);
 BENCHMARK(BmLinear_Wire);
@@ -749,14 +499,6 @@ BENCHMARK(BmTrivial_Wire);
 
 // SQL SET/SHOW path (lowercase input)
 
-#ifdef SDB_BENCH_FROZEN
-void BmFrozenLower_Sql(benchmark::State& s) {
-  LookupAll(s, kFrozenLower, kSqlKeys, std::size(kSqlKeys), false);
-}
-void BmFrozenIcase_Sql(benchmark::State& s) {
-  LookupAll(s, kFrozenIcase, kSqlKeys, std::size(kSqlKeys), false);
-}
-#endif  // SDB_BENCH_FROZEN
 void BmAbslLower_Sql(benchmark::State& s) {
   LookupAll(s, kAbslLower, kSqlKeys, std::size(kSqlKeys), false);
 }
@@ -772,10 +514,6 @@ void BmTrivial_Sql(benchmark::State& s) {
 }
 #endif  // SDB_ENABLE_TRIVIAL_BIMAP
 
-#ifdef SDB_BENCH_FROZEN
-BENCHMARK(BmFrozenLower_Sql);
-BENCHMARK(BmFrozenIcase_Sql);
-#endif  // SDB_BENCH_FROZEN
 BENCHMARK(BmAbslLower_Sql);
 BENCHMARK(BmAbslIcase_Sql);
 BENCHMARK(BmLinear_Sql);
@@ -785,14 +523,6 @@ BENCHMARK(BmTrivial_Sql);
 
 // Miss cases (varied key lengths to exercise length-dispatch fairly)
 
-#ifdef SDB_BENCH_FROZEN
-void BmFrozenLower_Miss(benchmark::State& s) {
-  LookupAll(s, kFrozenLower, kMissKeys, std::size(kMissKeys), false);
-}
-void BmFrozenIcase_Miss(benchmark::State& s) {
-  LookupAll(s, kFrozenIcase, kMissKeys, std::size(kMissKeys), false);
-}
-#endif  // SDB_BENCH_FROZEN
 void BmAbslLower_Miss(benchmark::State& s) {
   LookupAll(s, kAbslLower, kMissKeys, std::size(kMissKeys), false);
 }
@@ -808,10 +538,6 @@ void BmTrivial_Miss(benchmark::State& s) {
 }
 #endif  // SDB_ENABLE_TRIVIAL_BIMAP
 
-#ifdef SDB_BENCH_FROZEN
-BENCHMARK(BmFrozenLower_Miss);
-BENCHMARK(BmFrozenIcase_Miss);
-#endif  // SDB_BENCH_FROZEN
 BENCHMARK(BmAbslLower_Miss);
 BENCHMARK(BmAbslIcase_Miss);
 BENCHMARK(BmLinear_Miss);

@@ -32,6 +32,7 @@
 #include <iresearch/index/index_meta.hpp>
 #include <iresearch/store/directory_attributes.hpp>
 #include <iresearch/store/mmap_directory.hpp>
+#include <iresearch/utils/async.hpp>
 #include <iresearch/utils/directory_utils.hpp>
 #include <iresearch/utils/index_utils.hpp>
 #include <limits>
@@ -39,7 +40,10 @@
 #include <shared_mutex>
 #include <system_error>
 #include <utility>
+#include <yaclib/coro/await.hpp>
+#include <yaclib/coro/future.hpp>
 
+#include "basics/debugging.h"
 #include "basics/down_cast.h"
 #include "basics/duckdb_engine.h"
 #include "basics/lifecycle.h"
@@ -49,6 +53,7 @@
 #include "catalog/index.h"
 #include "catalog/inverted_index.h"
 #include "catalog/read/duckdb_catalog_sets.h"
+#include "catalog/scorer_options.h"
 #include "pg/sql_exception_macro.h"
 #include "scheduler/background_scheduler.h"
 #include "search/inverted_index_storage.h"
@@ -152,7 +157,7 @@ class MergedFieldOptions final : public irs::IndexFieldOptions {
       // An IVF entry keys the merged config by its column id (the value
       // column), not a per-index term field, so this attaches the ANN index to
       // that column.
-      .ivf_info = catalog::IvfInfoForEntry(id, entry),
+      .ann_info = catalog::AnnInfoForEntry(id, entry),
       .hyperloglog = entry.hyperloglog,
     };
   }
@@ -197,6 +202,9 @@ SearchTable::SearchTable(
     std::make_shared<const catalog::InvertedIndex::Entries>(std::move(entries));
   _terms_by_column = std::make_shared<const TermsByColumn>(std::move(terms));
   _field_options = MakeFieldOptions(_entries);
+  if (options.topk_scorer) {
+    _topk_scorer = catalog::MakeScorer(*options.topk_scorer);
+  }
   OpenWriter();
 
   _maint_settings.refresh_interval_msec = options.refresh_interval_ms;
@@ -245,8 +253,8 @@ catalog::ColumnTokenizer SearchTable::GetTokenizer(
   if (it == config->end()) {
     return {};  // not a merged-config field: the default string tokenizer
   }
-  return catalog::TokenizerForEntry(ResolveShardTokenizers(*this, &context),
-                                    it->second);
+  return catalog::TokenizerForEntry(
+    context, ResolveShardTokenizers(*this, &context), it->second);
 }
 
 unsigned SearchTable::RegisterWriter() { return _writers.Register(); }
@@ -339,7 +347,7 @@ SearchTable::~SearchTable() {
   GetSearchEngine().GetDbWal(_db_id).DeregisterShard(_table_id);
   BackgroundScheduler::instance()
     .Run([index_dir = GetPath(_db_id, _schema_id, _table_id)] {
-      RemoveDroppedStorageDir(index_dir, 2);
+      RemoveDroppedStorageDir(index_dir);
     })
     .Detach();
 }
@@ -384,6 +392,9 @@ void SearchTable::OpenWriter() {
   writer_options.lock_repository = false;
   writer_options.db = &sdb::DuckDBEngine::Instance().instance();
   writer_options.reader_options.db = writer_options.db;
+  if (_topk_scorer) {
+    writer_options.reader_options.scorer = _topk_scorer.get();
+  }
 
   writer_options.meta_payload_provider = [this](uint64_t tick,
                                                 irs::bstring& out) {
@@ -491,6 +502,10 @@ ResultWithTime SearchTable::RefreshUnsafe(
     std::chrono::duration_cast<std::chrono::milliseconds>(
       std::chrono::steady_clock::now() - begin)
       .count();
+  SDB_IF_FAILURE("Search::FailOnCommit") {
+    result = absl::InternalError("debug failure point");
+  }
+  _maintenance.RecordCommit(result, code, time_ms);
   return {std::move(result), time_ms};
 }
 
@@ -498,6 +513,15 @@ ResultWithTime SearchTable::CompactUnsafe(
   const irs::CompactionPolicy& policy,
   const irs::MergeWriter::FlushProgress& progress, bool& empty_compaction,
   const irs::IndexFieldOptions* field_options) {
+  return irs::GetReady(CompactUnsafeAsync(policy, progress, empty_compaction,
+                                          field_options, /*env=*/nullptr));
+}
+
+auto SearchTable::CompactUnsafeAsync(
+  const irs::CompactionPolicy& policy,
+  const irs::MergeWriter::FlushProgress& progress, bool& empty_compaction,
+  const irs::IndexFieldOptions* field_options, const irs::AnnBuildEnv* env)
+  -> yaclib::Future<ResultWithTime> {
   const auto begin = std::chrono::steady_clock::now();
   empty_compaction = false;
   auto result = absl::OkStatus();
@@ -508,8 +532,8 @@ ResultWithTime SearchTable::CompactUnsafe(
     try {
       // iresearch serializes Compact against refresh/DML internally, so a long
       // merge never blocks the refresh chain.
-      const auto res =
-        _writer->Compact(policy, field_options, nullptr, progress);
+      const auto res = co_await _writer->CompactAsync(policy, field_options,
+                                                      nullptr, progress, env);
       if (!res) {
         result = absl::InternalError(absl::StrCat(
           "compaction failed for search table ", GetTableId().id()));
@@ -526,7 +550,18 @@ ResultWithTime SearchTable::CompactUnsafe(
     std::chrono::duration_cast<std::chrono::milliseconds>(
       std::chrono::steady_clock::now() - begin)
       .count();
-  return {std::move(result), time_ms};
+  _maintenance.RecordCompaction(result, empty_compaction, time_ms);
+  co_return ResultWithTime{std::move(result), time_ms};
+}
+
+StoreStats SearchTable::GetStats() const {
+  if (!_writer) {
+    return {};
+  }
+  auto stats = StoreStats::FromReader(_writer->GetSnapshot());
+  stats.numBufferedDocs = _writer->BufferedDocs();
+  _maintenance.Fill(stats);
+  return stats;
 }
 
 ResultWithTime SearchTable::CleanupUnsafe() {
@@ -542,6 +577,7 @@ ResultWithTime SearchTable::CleanupUnsafe() {
     std::chrono::duration_cast<std::chrono::milliseconds>(
       std::chrono::steady_clock::now() - begin)
       .count();
+  _maintenance.RecordCleanup(result, time_ms);
   return {std::move(result), time_ms};
 }
 
@@ -558,7 +594,8 @@ void SearchTable::VacuumCompact() {
   RefreshResult code = RefreshResult::Undefined;
   RefreshUnsafe(/*wait=*/true, nullptr, code);
   bool empty = false;
-  CompactUnsafe(kFullMerge, kProgress, empty, /*field_options=*/nullptr);
+  const auto field_options = GetFieldOptions();
+  CompactUnsafe(kFullMerge, kProgress, empty, field_options.get());
   if (!empty) {
     RefreshUnsafe(/*wait=*/true, nullptr, code);
   }

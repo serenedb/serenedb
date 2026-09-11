@@ -59,7 +59,7 @@ IRS_FORCE_INLINE inline void skip_block32(DataInput& in, uint32_t size) {
 
   const uint32_t bits = in.ReadByte();
   if (kAllEqual == bits) {
-    in.ReadV32();
+    in.SkipV32();
   } else {
     in.Skip(packed::BytesRequired32(size, bits));
   }

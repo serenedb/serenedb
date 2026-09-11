@@ -24,6 +24,7 @@
 #include "filter_test_case_base.hpp"
 #include "formats/column/test_cs_helpers.hpp"
 #include "index/index_tests.hpp"
+#include "insert_field.hpp"
 #include "iresearch/index/index_features.hpp"
 #include "iresearch/index/norm.hpp"
 #include "iresearch/search/all_filter.hpp"
@@ -149,6 +150,7 @@ void TfidfTestCase::TestQueryNorms() {
 
     irs::ByRange filter;
     *filter.mutable_field_id() = kField;
+    filter.SetScorer(&scorer);
     filter.mutable_options()->range.min =
       irs::ViewCast<irs::byte_type>(std::string_view("6"));
     filter.mutable_options()->range.min_type = irs::BoundType::Exclusive;
@@ -165,18 +167,15 @@ void TfidfTestCase::TestQueryNorms() {
     tests::PreparedFilter prepared_filter{filter, reader, &scorer, counter};
 
     fetcher.Clear();
-    auto docs = prepared_filter.Execute(0);
-    auto score = docs->PrepareScore({
-      .segment = &segment,
-      .fetcher = &fetcher,
-    });
+    auto docs = prepared_filter.ExecuteScored(0, fetcher);
+    auto score = docs->PrepareScore();
 
-    while (!irs::doc_limits::eof(docs->advance())) {
-      fetcher.Fetch(docs->value());
+    while (!irs::doc_limits::eof(docs->Advance())) {
+      fetcher.Fetch(docs->Value());
       docs->FetchScoreArgs(0);
       irs::score_t score_value{};
       score.Score(&score_value, 1);
-      in.reset(values.Get(docs->value()));
+      in.reset(values.Get(docs->Value()));
 
       auto str_seq = irs::ReadString<std::string>(in);
       auto seq = strtoull(str_seq.c_str(), nullptr, 10);
@@ -200,6 +199,7 @@ void TfidfTestCase::TestQueryNorms() {
 
     irs::ByRange filter;
     *filter.mutable_field_id() = kField;
+    filter.SetScorer(&scorer);
     filter.mutable_options()->range.min =
       irs::ViewCast<irs::byte_type>(std::string_view("6"));
     filter.mutable_options()->range.min_type = irs::BoundType::Inclusive;
@@ -216,20 +216,17 @@ void TfidfTestCase::TestQueryNorms() {
     tests::PreparedFilter prepared_filter{filter, reader, &scorer, counter};
 
     fetcher.Clear();
-    auto docs = prepared_filter.Execute(0);
-    auto score = docs->PrepareScore({
-      .segment = &segment,
-      .fetcher = &fetcher,
-    });
+    auto docs = prepared_filter.ExecuteScored(0, fetcher);
+    auto score = docs->PrepareScore();
 
     std::vector<float_t> scores;
-    while (!irs::doc_limits::eof(docs->advance())) {
-      fetcher.Fetch(docs->value());
+    while (!irs::doc_limits::eof(docs->Advance())) {
+      fetcher.Fetch(docs->Value());
       docs->FetchScoreArgs(0);
       irs::score_t score_value{};
       score.Score(&score_value, 1);
       scores.emplace_back(score_value);
-      in.reset(values.Get(docs->value()));
+      in.reset(values.Get(docs->Value()));
 
       auto str_seq = irs::ReadString<std::string>(in);
       auto seq = strtoull(str_seq.c_str(), nullptr, 10);
@@ -383,24 +380,21 @@ TEST_P(TfidfTestCase, test_phrase) {
     tests::PreparedFilter prepared_filter{filter, *index, &scorer, counter};
 
     fetcher.Clear();
-    auto docs = prepared_filter.Execute(0);
-    auto score = docs->PrepareScore({
-      .segment = &segment,
-      .fetcher = &fetcher,
-    });
+    auto docs = prepared_filter.ExecuteScored(0, fetcher);
+    auto score = docs->PrepareScore();
 
     const auto* column = segment.Column(kName);
     ASSERT_NE(nullptr, column);
     irs::tests::BlobPointReader values{segment, *column};
 
-    while (!irs::doc_limits::eof(docs->advance())) {
-      fetcher.Fetch(docs->value());
+    while (!irs::doc_limits::eof(docs->Advance())) {
+      fetcher.Fetch(docs->Value());
       docs->FetchScoreArgs(0);
       irs::score_t score_value{};
       score.Score(&score_value, 1);
 
       irs::BytesViewInput in;
-      in.reset(values.Get(docs->value()));
+      in.reset(values.Get(docs->Value()));
       sorted.emplace(score_value, irs::ReadString<std::string>(in));
     }
 
@@ -429,7 +423,7 @@ TEST_P(TfidfTestCase, test_phrase) {
     auto& lt = phrase.push_back<irs::ByEditDistanceOptions>();
     lt.max_distance = 1;
     lt.term = irs::ViewCast<irs::byte_type>(std::string_view("biscuit"));
-    auto& ct = phrase.push_back<irs::ByTermsOptions>();
+    auto& ct = phrase.push_back<irs::TermSetOptions>();
     ct.terms.emplace(
       irs::ViewCast<irs::byte_type>(std::string_view("meringue")));
     ct.terms.emplace(
@@ -449,24 +443,21 @@ TEST_P(TfidfTestCase, test_phrase) {
                                           *index, &scorer, counter};
 
     fetcher.Clear();
-    auto docs = prepared_filter.Execute(0);
-    auto score = docs->PrepareScore({
-      .segment = &segment,
-      .fetcher = &fetcher,
-    });
+    auto docs = prepared_filter.ExecuteScored(0, fetcher);
+    auto score = docs->PrepareScore();
 
     const auto* column = segment.Column(kName);
     ASSERT_NE(nullptr, column);
     irs::tests::BlobPointReader values{segment, *column};
 
-    while (!irs::doc_limits::eof(docs->advance())) {
-      fetcher.Fetch(docs->value());
+    while (!irs::doc_limits::eof(docs->Advance())) {
+      fetcher.Fetch(docs->Value());
       docs->FetchScoreArgs(0);
       irs::score_t score_value{};
       score.Score(&score_value, 1);
 
       irs::BytesViewInput in;
-      in.reset(values.Get(docs->value()));
+      in.reset(values.Get(docs->Value()));
       sorted.emplace(score_value, irs::ReadString<std::string>(in));
     }
 
@@ -530,16 +521,13 @@ TEST_P(TfidfTestCase, test_query) {
     tests::PreparedFilter prepared_filter{filter, reader, &scorer, counter};
 
     fetcher.Clear();
-    auto docs = prepared_filter.Execute(0);
-    auto score = docs->PrepareScore({
-      .segment = &segment,
-      .fetcher = &fetcher,
-    });
+    auto docs = prepared_filter.ExecuteScored(0, fetcher);
+    auto score = docs->PrepareScore();
 
-    while (!irs::doc_limits::eof(docs->advance())) {
-      fetcher.Fetch(docs->value());
+    while (!irs::doc_limits::eof(docs->Advance())) {
+      fetcher.Fetch(docs->Value());
       docs->FetchScoreArgs(0);
-      in.reset(values.Get(docs->value()));
+      in.reset(values.Get(docs->Value()));
 
       irs::score_t score_value{};
       score.Score(&score_value, 1);
@@ -591,7 +579,8 @@ TEST_P(TfidfTestCase, test_query) {
         auto ctx = writer->GetBatch();
         {
           auto d = ctx.Insert();
-          ASSERT_TRUE(d.Insert(doc->indexed.begin(), doc->indexed.end()));
+          ASSERT_TRUE(
+            tests::InsertFields(d, doc->indexed.begin(), doc->indexed.end()));
           store_seq(d, *doc);
         }
         ctx.Commit();
@@ -609,7 +598,8 @@ TEST_P(TfidfTestCase, test_query) {
         auto ctx = writer->GetBatch();
         {
           auto d = ctx.Insert();
-          ASSERT_TRUE(d.Insert(doc->indexed.begin(), doc->indexed.end()));
+          ASSERT_TRUE(
+            tests::InsertFields(d, doc->indexed.begin(), doc->indexed.end()));
           store_seq(d, *doc);
         }
         ctx.Commit();
@@ -640,17 +630,14 @@ TEST_P(TfidfTestCase, test_query) {
       ASSERT_NE(nullptr, column);
       irs::tests::BlobPointReader values{segment, *column};
       fetcher.Clear();
-      auto docs = prepared_filter.Execute(i);
-      auto score = docs->PrepareScore({
-        .segment = &segment,
-        .fetcher = &fetcher,
-      });
+      auto docs = prepared_filter.ExecuteScored(i, fetcher);
+      auto score = docs->PrepareScore();
 
       for (irs::score_t score_value{};
-           !irs::doc_limits::eof(docs->advance());) {
-        fetcher.Fetch(docs->value());
+           !irs::doc_limits::eof(docs->Advance());) {
+        fetcher.Fetch(docs->Value());
         docs->FetchScoreArgs(0);
-        in.reset(values.Get(docs->value()));
+        in.reset(values.Get(docs->Value()));
 
         auto str_seq = irs::ReadString<std::string>(in);
         auto seq = strtoull(str_seq.c_str(), nullptr, 10);
@@ -703,7 +690,8 @@ TEST_P(TfidfTestCase, test_query) {
         auto ctx = writer->GetBatch();
         {
           auto d = ctx.Insert();
-          ASSERT_TRUE(d.Insert(doc->indexed.begin(), doc->indexed.end()));
+          ASSERT_TRUE(
+            tests::InsertFields(d, doc->indexed.begin(), doc->indexed.end()));
           store_seq(d, *doc);
         }
         ctx.Commit();
@@ -721,7 +709,8 @@ TEST_P(TfidfTestCase, test_query) {
         auto ctx = writer->GetBatch();
         {
           auto d = ctx.Insert();
-          ASSERT_TRUE(d.Insert(doc->indexed.begin(), doc->indexed.end()));
+          ASSERT_TRUE(
+            tests::InsertFields(d, doc->indexed.begin(), doc->indexed.end()));
           store_seq(d, *doc);
         }
         ctx.Commit();
@@ -733,21 +722,24 @@ TEST_P(TfidfTestCase, test_query) {
 
     auto reader =
       irs::DirectoryReader(dir(), codec(), irs::tests::DefaultReaderOptions());
-    irs::Or filter;
-    {
-      // doc 0, 2, 5
-      auto& sub = filter.add<irs::ByTerm>();
-      *sub.mutable_field_id() = kField;
-      sub.mutable_options()->term =
-        irs::ViewCast<irs::byte_type>(std::string_view("6"));
-    }
-    {
-      // doc 3, 7
-      auto& sub = filter.add<irs::ByTerm>();
-      *sub.mutable_field_id() = kField;
-      sub.mutable_options()->term =
-        irs::ViewCast<irs::byte_type>(std::string_view("8"));
-    }
+    irs::BooleanFilter filter;
+    // doc 0, 2, 5
+    filter.Add(
+      irs::TermClause{
+        .field = kField,
+        .term =
+          irs::bstring{irs::ViewCast<irs::byte_type>(std::string_view("6"))},
+      },
+      irs::Occur::Should);
+    // doc 3, 7
+    filter.Add(
+      irs::TermClause{
+        .field = kField,
+        .term =
+          irs::bstring{irs::ViewCast<irs::byte_type>(std::string_view("8"))},
+      },
+      irs::Occur::Should);
+    filter.SetMinShouldMatch(1);
 
     std::multimap<irs::score_t, uint64_t, std::greater<>> sorted;
     std::vector<uint64_t> expected{
@@ -763,16 +755,13 @@ TEST_P(TfidfTestCase, test_query) {
       ASSERT_NE(nullptr, column);
       irs::tests::BlobPointReader values{segment, *column};
       fetcher.Clear();
-      auto docs = prepared_filter.Execute(i);
-      auto score = docs->PrepareScore({
-        .segment = &segment,
-        .fetcher = &fetcher,
-      });
+      auto docs = prepared_filter.ExecuteScored(i, fetcher);
+      auto score = docs->PrepareScore();
 
-      while (!irs::doc_limits::eof(docs->advance())) {
-        fetcher.Fetch(docs->value());
+      while (!irs::doc_limits::eof(docs->Advance())) {
+        fetcher.Fetch(docs->Value());
         docs->FetchScoreArgs(0);
-        in.reset(values.Get(docs->value()));
+        in.reset(values.Get(docs->Value()));
 
         irs::score_t score_value{};
         score.Score(&score_value, 1);
@@ -826,7 +815,8 @@ TEST_P(TfidfTestCase, test_query) {
         auto ctx = writer->GetBatch();
         {
           auto d = ctx.Insert();
-          ASSERT_TRUE(d.Insert(doc->indexed.begin(), doc->indexed.end()));
+          ASSERT_TRUE(
+            tests::InsertFields(d, doc->indexed.begin(), doc->indexed.end()));
           store_seq(d, *doc);
         }
         ctx.Commit();
@@ -844,7 +834,8 @@ TEST_P(TfidfTestCase, test_query) {
         auto ctx = writer->GetBatch();
         {
           auto d = ctx.Insert();
-          ASSERT_TRUE(d.Insert(doc->indexed.begin(), doc->indexed.end()));
+          ASSERT_TRUE(
+            tests::InsertFields(d, doc->indexed.begin(), doc->indexed.end()));
           store_seq(d, *doc);
         }
         ctx.Commit();
@@ -858,6 +849,7 @@ TEST_P(TfidfTestCase, test_query) {
       irs::DirectoryReader(dir(), codec(), irs::tests::DefaultReaderOptions());
     irs::ByPrefix filter;
     *filter.mutable_field_id() = kPrefix;
+    filter.SetScorer(&scorer);
     filter.mutable_options()->term =
       irs::ViewCast<irs::byte_type>(std::string_view(""));
 
@@ -877,16 +869,13 @@ TEST_P(TfidfTestCase, test_query) {
       ASSERT_NE(nullptr, column);
       irs::tests::BlobPointReader values{segment, *column};
       fetcher.Clear();
-      auto docs = prepared_filter.Execute(i);
-      auto score = docs->PrepareScore({
-        .segment = &segment,
-        .fetcher = &fetcher,
-      });
+      auto docs = prepared_filter.ExecuteScored(i, fetcher);
+      auto score = docs->PrepareScore();
 
-      while (!irs::doc_limits::eof(docs->advance())) {
-        fetcher.Fetch(docs->value());
+      while (!irs::doc_limits::eof(docs->Advance())) {
+        fetcher.Fetch(docs->Value());
         docs->FetchScoreArgs(0);
-        in.reset(values.Get(docs->value()));
+        in.reset(values.Get(docs->Value()));
 
         irs::score_t score_value{};
         score.Score(&score_value, 1);
@@ -915,6 +904,7 @@ TEST_P(TfidfTestCase, test_query) {
 
     irs::ByRange filter;
     *filter.mutable_field_id() = kField;
+    filter.SetScorer(&scorer);
     filter.mutable_options()->range.min =
       irs::ViewCast<irs::byte_type>(std::string_view("6"));
     filter.mutable_options()->range.min_type = irs::BoundType::Exclusive;
@@ -928,16 +918,13 @@ TEST_P(TfidfTestCase, test_query) {
     irs::BytesViewInput in;
     tests::PreparedFilter prepared_filter{filter, reader, &scorer, counter};
     fetcher.Clear();
-    auto docs = prepared_filter.Execute(0);
-    auto score = docs->PrepareScore({
-      .segment = &segment,
-      .fetcher = &fetcher,
-    });
+    auto docs = prepared_filter.ExecuteScored(0, fetcher);
+    auto score = docs->PrepareScore();
 
-    for (irs::score_t score_value{}; !irs::doc_limits::eof(docs->advance());) {
-      fetcher.Fetch(docs->value());
+    for (irs::score_t score_value{}; !irs::doc_limits::eof(docs->Advance());) {
+      fetcher.Fetch(docs->Value());
       docs->FetchScoreArgs(0);
-      in.reset(values.Get(docs->value()));
+      in.reset(values.Get(docs->Value()));
 
       auto str_seq = irs::ReadString<std::string>(in);
       auto seq = strtoull(str_seq.c_str(), nullptr, 10);
@@ -956,20 +943,19 @@ TEST_P(TfidfTestCase, test_query) {
   EXPECT_GT(counter.max, 0);
   counter.Reset();
 
-  // by_range single + scored_terms_limit(0)
-  // by_range single + scored_terms_limit(1)
-  for (size_t limit = 0; limit != 2; ++limit) {
+  // by_range single
+  {
     irs::tests::BlobPointReader values{segment, *column};
 
     irs::ByRange filter;
     *filter.mutable_field_id() = kField;
+    filter.SetScorer(&scorer);
     filter.mutable_options()->range.min =
       irs::ViewCast<irs::byte_type>(std::string_view("8"));
     filter.mutable_options()->range.min_type = irs::BoundType::Inclusive;
     filter.mutable_options()->range.max =
       irs::ViewCast<irs::byte_type>(std::string_view("9"));
     filter.mutable_options()->range.max_type = irs::BoundType::Exclusive;
-    filter.mutable_options()->scored_terms_limit = limit;
 
     std::multimap<irs::score_t, uint64_t, std::greater<>> sorted;
     std::vector<uint64_t> expected{3, 7};
@@ -977,16 +963,13 @@ TEST_P(TfidfTestCase, test_query) {
     irs::BytesViewInput in;
     tests::PreparedFilter prepared_filter{filter, reader, &scorer, counter};
     fetcher.Clear();
-    auto docs = prepared_filter.Execute(0);
-    auto score = docs->PrepareScore({
-      .segment = &segment,
-      .fetcher = &fetcher,
-    });
+    auto docs = prepared_filter.ExecuteScored(0, fetcher);
+    auto score = docs->PrepareScore();
 
-    for (irs::score_t score_value{}; !irs::doc_limits::eof(docs->advance());) {
-      fetcher.Fetch(docs->value());
+    for (irs::score_t score_value{}; !irs::doc_limits::eof(docs->Advance());) {
+      fetcher.Fetch(docs->Value());
       docs->FetchScoreArgs(0);
-      in.reset(values.Get(docs->value()));
+      in.reset(values.Get(docs->Value()));
 
       auto str_seq = irs::ReadString<std::string>(in);
       auto seq = strtoull(str_seq.c_str(), nullptr, 10);
@@ -1011,6 +994,7 @@ TEST_P(TfidfTestCase, test_query) {
 
     irs::ByRange filter;
     *filter.mutable_field_id() = kField;
+    filter.SetScorer(&scorer);
     filter.mutable_options()->range.min =
       irs::ViewCast<irs::byte_type>(std::string_view("6"));
     filter.mutable_options()->range.min_type = irs::BoundType::Exclusive;
@@ -1024,16 +1008,13 @@ TEST_P(TfidfTestCase, test_query) {
     irs::BytesViewInput in;
     tests::PreparedFilter prepared_filter{filter, reader, &scorer, counter};
     fetcher.Clear();
-    auto docs = prepared_filter.Execute(0);
-    auto score = docs->PrepareScore({
-      .segment = &segment,
-      .fetcher = &fetcher,
-    });
+    auto docs = prepared_filter.ExecuteScored(0, fetcher);
+    auto score = docs->PrepareScore();
 
-    for (irs::score_t score_value{}; !irs::doc_limits::eof(docs->advance());) {
-      fetcher.Fetch(docs->value());
+    for (irs::score_t score_value{}; !irs::doc_limits::eof(docs->Advance());) {
+      fetcher.Fetch(docs->Value());
       docs->FetchScoreArgs(0);
-      in.reset(values.Get(docs->value()));
+      in.reset(values.Get(docs->Value()));
 
       auto str_seq = irs::ReadString<std::string>(in);
       auto seq = strtoull(str_seq.c_str(), nullptr, 10);
@@ -1058,6 +1039,7 @@ TEST_P(TfidfTestCase, test_query) {
 
     irs::ByRange filter;
     *filter.mutable_field_id() = kField;
+    filter.SetScorer(&scorer);
     filter.mutable_options()->range.min =
       irs::ViewCast<irs::byte_type>(std::string_view("6"));
     filter.mutable_options()->range.min_type = irs::BoundType::Inclusive;
@@ -1071,16 +1053,13 @@ TEST_P(TfidfTestCase, test_query) {
     irs::BytesViewInput in;
     tests::PreparedFilter prepared_filter{filter, reader, &scorer, counter};
     fetcher.Clear();
-    auto docs = prepared_filter.Execute(0);
-    auto score = docs->PrepareScore({
-      .segment = &segment,
-      .fetcher = &fetcher,
-    });
+    auto docs = prepared_filter.ExecuteScored(0, fetcher);
+    auto score = docs->PrepareScore();
 
-    for (irs::score_t score_value{}; !irs::doc_limits::eof(docs->advance());) {
-      fetcher.Fetch(docs->value());
+    for (irs::score_t score_value{}; !irs::doc_limits::eof(docs->Advance());) {
+      fetcher.Fetch(docs->Value());
       docs->FetchScoreArgs(0);
-      in.reset(values.Get(docs->value()));
+      in.reset(values.Get(docs->Value()));
 
       auto str_seq = irs::ReadString<std::string>(in);
       auto seq = strtoull(str_seq.c_str(), nullptr, 10);
@@ -1120,16 +1099,13 @@ TEST_P(TfidfTestCase, test_query) {
     irs::BytesViewInput in;
     tests::PreparedFilter prepared_filter{filter, reader, &scorer, counter};
     fetcher.Clear();
-    auto docs = prepared_filter.Execute(0);
-    auto score = docs->PrepareScore({
-      .segment = &segment,
-      .fetcher = &fetcher,
-    });
+    auto docs = prepared_filter.ExecuteScored(0, fetcher);
+    auto score = docs->PrepareScore();
 
-    for (irs::score_t score_value{}; !irs::doc_limits::eof(docs->advance());) {
-      fetcher.Fetch(docs->value());
+    for (irs::score_t score_value{}; !irs::doc_limits::eof(docs->Advance());) {
+      fetcher.Fetch(docs->Value());
       docs->FetchScoreArgs(0);
-      in.reset(values.Get(docs->value()));
+      in.reset(values.Get(docs->Value()));
 
       auto str_seq = irs::ReadString<std::string>(in);
       auto seq = strtoull(str_seq.c_str(), nullptr, 10);
@@ -1158,25 +1134,22 @@ TEST_P(TfidfTestCase, test_query) {
 
     tests::PreparedFilter prepared_filter{filter, reader, &scorer, counter};
     fetcher.Clear();
-    auto docs = prepared_filter.Execute(0);
-    auto score = docs->PrepareScore({
-      .segment = &segment,
-      .fetcher = &fetcher,
-    });
+    auto docs = prepared_filter.ExecuteScored(0, fetcher);
+    auto score = docs->PrepareScore();
 
     irs::doc_id_t doc = irs::doc_limits::min();
-    while (!irs::doc_limits::eof(docs->advance())) {
-      fetcher.Fetch(docs->value());
+    while (!irs::doc_limits::eof(docs->Advance())) {
+      fetcher.Fetch(docs->Value());
       docs->FetchScoreArgs(0);
-      ASSERT_EQ(doc, docs->value());
+      ASSERT_EQ(doc, docs->Value());
 
       irs::score_t score_value{};
       score.Score(&score_value, 1);
-      ASSERT_FALSE(values.IsNull(docs->value()));
+      ASSERT_FALSE(values.IsNull(docs->Value()));
       ++doc;
       ASSERT_EQ(1.5f, score_value);
     }
-    ASSERT_EQ(irs::doc_limits::eof(), docs->value());
+    ASSERT_EQ(irs::doc_limits::eof(), docs->Value());
   }
   EXPECT_EQ(counter.current, 0);
   EXPECT_GT(counter.max, 0);
@@ -1191,25 +1164,22 @@ TEST_P(TfidfTestCase, test_query) {
 
     tests::PreparedFilter prepared_filter{filter, reader, &scorer, counter};
     fetcher.Clear();
-    auto docs = prepared_filter.Execute(0);
-    auto score = docs->PrepareScore({
-      .segment = &segment,
-      .fetcher = &fetcher,
-    });
+    auto docs = prepared_filter.ExecuteScored(0, fetcher);
+    auto score = docs->PrepareScore();
 
     irs::doc_id_t doc = irs::doc_limits::min();
-    while (!irs::doc_limits::eof(docs->advance())) {
-      fetcher.Fetch(docs->value());
+    while (!irs::doc_limits::eof(docs->Advance())) {
+      fetcher.Fetch(docs->Value());
       docs->FetchScoreArgs(0);
-      ASSERT_EQ(doc, docs->value());
+      ASSERT_EQ(doc, docs->Value());
 
       irs::score_t score_value{};
       score.Score(&score_value, 1);
-      ASSERT_FALSE(values.IsNull(docs->value()));
+      ASSERT_FALSE(values.IsNull(docs->Value()));
       ++doc;
       ASSERT_EQ(0.f, score_value);
     }
-    ASSERT_EQ(irs::doc_limits::eof(), docs->value());
+    ASSERT_EQ(irs::doc_limits::eof(), docs->Value());
   }
   EXPECT_EQ(counter.current, 0);
   EXPECT_GT(counter.max, 0);
@@ -1285,16 +1255,13 @@ TEST_P(TfidfTestCase, test_order) {
     irs::BytesViewInput in;
     tests::PreparedFilter prepared{query, reader, &scorer, counter};
     fetcher.Clear();
-    auto docs = prepared.Execute(0);
-    auto score = docs->PrepareScore({
-      .segment = &segment,
-      .fetcher = &fetcher,
-    });
+    auto docs = prepared.ExecuteScored(0, fetcher);
+    auto score = docs->PrepareScore();
 
-    for (irs::score_t score_value{}; !irs::doc_limits::eof(docs->advance());) {
-      fetcher.Fetch(docs->value());
+    for (irs::score_t score_value{}; !irs::doc_limits::eof(docs->Advance());) {
+      fetcher.Fetch(docs->Value());
       docs->FetchScoreArgs(0);
-      in.reset(values.Get(docs->value()));
+      in.reset(values.Get(docs->Value()));
 
       auto str_seq = irs::ReadString<std::string>(in);
       seq = strtoull(str_seq.c_str(), nullptr, 10);

@@ -72,8 +72,7 @@ ObjectId ReadGeneratedPkSeqTag(const TableTags& tags) noexcept;
 
 // One SERIAL column of a CREATE TABLE. The catalog resolves the sequence's
 // name (mangling on collision), stamps the owning table id and sets the
-// column's nextval default; none of that is knowable before the mutation runs
-// under the catalog mutex.
+// column's nextval default; none of that is knowable before the mutation runs.
 struct SerialSequence {
   ObjectId column_id;
   SequenceOptions options;

@@ -26,6 +26,7 @@
 #include "basics/down_cast.h"
 #include "basics/static_strings.h"
 #include "catalog/ddl/catalog.h"
+#include "catalog/entry/duckdb_object_entry.h"
 #include "catalog/identifiers/object_id.h"
 #include "catalog/read/duckdb_catalog_sets.h"
 #include "catalog/role.h"
@@ -38,7 +39,7 @@ constexpr uint64_t kNullMask = MaskFromNulls({
   GetIndex(&PgAuthid::rolpassword),
 });
 
-Timestamptz ValidUntilOf(const catalog::Role& role) {
+Timestamptz ValidUntilOf(const catalog::SereneDBRoleEntry& role) {
   if (!role.HasValidUntil()) {
     return {};
   }
@@ -51,7 +52,7 @@ template<>
 catalog::MaterializedData SystemTableSnapshot<PgAuthid>::GetTableData() {
   std::vector<PgAuthid> values;
   catalog::VisitRoles(&_config.GetClientContext(),
-                      [&](const catalog::Role& role) {
+                      [&](const catalog::SereneDBRoleEntry& role) {
                         using catalog::RoleOption;
                         values.push_back(PgAuthid{
                           .oid = role.GetId().id(),

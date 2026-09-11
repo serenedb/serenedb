@@ -94,6 +94,8 @@ struct VectorScorerOptions {
   irs::VectorQuantization quant = irs::VectorQuantization::None;
   uint32_t nprobe = 1;
   uint32_t max_search_fanout = 16;
+  uint32_t ef_search = 0;
+  uint32_t min_ef = 0;
   float radius = std::numeric_limits<float>::max();
   bool radius_inclusive = false;
 
@@ -134,11 +136,11 @@ enum class TsDictTermUses : uint8_t {
 
 ENABLE_BITMASK_ENUM(TsDictTermUses);
 
-// The scorer `index`'s persisted per-block bounds may be pruned against, or
-// null when they cannot be: no index, no query scorer, no bounds, or bounds a
-// different scorer wrote.
-const irs::Scorer* ResolvePruneScorer(const catalog::InvertedIndex* index,
-                                      const irs::Scorer* scorer);
+// The scorer whose persisted per-block bounds may be pruned against, or null
+// when they cannot be: no query scorer, no bounds, or bounds a different scorer
+// wrote.
+const irs::Scorer* ResolvePruneScorer(
+  const std::optional<catalog::ScorerOptions>& topk, const irs::Scorer* scorer);
 
 enum class ScanEntryKind : uint8_t {
   BaseTable,
@@ -146,6 +148,7 @@ enum class ScanEntryKind : uint8_t {
   // A TableEngine::Search table: its iresearch store IS the table, so every
   // column is covered in `.col` and there is no separate lookup source.
   SearchTable,
+  SearchTableIndex,
 };
 
 struct SereneDBScanBindData : public duckdb::FunctionData {
@@ -159,7 +162,8 @@ struct SereneDBScanBindData : public duckdb::FunctionData {
   duckdb::optional_ptr<duckdb::TableCatalogEntry> table_entry;
   ScanEntryKind entry_kind = ScanEntryKind::BaseTable;
 
-  std::shared_ptr<const catalog::Index> inverted_index;
+  std::vector<std::shared_ptr<const catalog::Index>> indexes;
+  std::optional<catalog::ScorerOptions> topk_scorer;
 
   // The iresearch snapshot plus the query's search configuration (stored
   // filter, scorer, offsets, ts-dict requests). Every scan bound through this
@@ -252,8 +256,25 @@ struct SereneDBScanBindData : public duckdb::FunctionData {
     return entry_kind == ScanEntryKind::InvertedIndex;
   }
   bool IsSearchTableEntry() const noexcept {
-    return entry_kind == ScanEntryKind::SearchTable;
+    return entry_kind == ScanEntryKind::SearchTable ||
+           entry_kind == ScanEntryKind::SearchTableIndex;
   }
+  bool IsIndexRelation() const noexcept {
+    return entry_kind == ScanEntryKind::InvertedIndex ||
+           entry_kind == ScanEntryKind::SearchTableIndex;
+  }
+  const catalog::InvertedIndex& ScannedIndex() const noexcept {
+    SDB_ASSERT(IsIndexRelation() && !indexes.empty());
+    return catalog::InvertedInfo(*indexes.front());
+  }
+  std::vector<const catalog::InvertedIndex*> InvertedIndexes() const;
+
+  // True when this scan scores through an HNSW ANN index. HNSW is ANN-only:
+  // it has no postings to intersect and does not filter during traversal, so
+  // any predicate must keep the index out of the plan entirely -- a claimed
+  // conjunct would be silently dropped, and a pushed pre-filter would prune an
+  // already-localized candidate set down to nothing.
+  bool IsHnswScored() const noexcept;
 
   template<typename T>
   T& As() & {

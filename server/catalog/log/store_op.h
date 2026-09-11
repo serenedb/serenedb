@@ -30,6 +30,11 @@ namespace duckdb {
 struct CreateTableInfo;
 
 }  // namespace duckdb
+namespace sdb::search {
+
+class InvertedIndexStorage;
+
+}  // namespace sdb::search
 namespace sdb::catalog {
 
 class Index;
@@ -51,6 +56,11 @@ struct Targeted {
   // so the two versions it is built against travel with the op.
   duckdb::unique_ptr<duckdb::CreateTableInfo> table;
   std::shared_ptr<const Index> index;
+  // The iresearch directory the CREATE opened: the op injects its index before
+  // the entry that will carry the handle is visible to any other context, and
+  // a writer committing into it in that window has no other road to it. Replay
+  // carries none and resolves the committed entry's.
+  std::shared_ptr<search::InvertedIndexStorage> storage;
 };
 
 // Removes something that exists, so the catalog append is the ack point and the

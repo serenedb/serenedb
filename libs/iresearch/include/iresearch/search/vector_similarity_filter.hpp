@@ -33,7 +33,6 @@ struct ByVectorSimilarityOptions : VectorFilterOptions {
   using FilterType = ByVectorSimilarity;
 
   uint32_t nprobe = 1;
-  uint32_t max_search_fanout = 16;
 
   bool operator==(const ByVectorSimilarityOptions& rhs) const noexcept =
     default;
@@ -45,7 +44,9 @@ class ByVectorSimilarity final
   QueryBuilder::ptr PrepareSegment(const SubReader& segment,
                                    const PrepareContext& ctx) const final;
 
-  PrepareCollector::ptr MakeCollectorImpl(const Scorer* scorer) const final;
+  PrepareCollector::ptr MakeCollectorImpl(const Scorer* scorer,
+                                          StatsArena& stats,
+                                          uint32_t threads) const final;
 };
 
 }  // namespace irs

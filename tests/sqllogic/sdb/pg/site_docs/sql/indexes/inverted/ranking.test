@@ -43,7 +43,7 @@ WHERE description @@ ts_phrase('alien')
 ORDER BY relevance DESC, id;
 ----
 id	title	relevance
-7	Star Trek: The Motion Picture	1.9693236
+7	Star Trek: The Motion Picture	0.8951471
 
 # DOCS_TEST: example_002
 

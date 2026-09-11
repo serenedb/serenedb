@@ -98,9 +98,9 @@ QUERY PLAN
 │ ╭─ Or ─────────────╮                   │
 │ ╰─────────┬────────╯                   │
 │           ├────────────────╮           │
-│ ╭─ Term ──┴────────╮  ╭─ All ──╮       │
+│ ╭─ Terms ─┴────────╮  ╭─ All ──╮       │
 │ │ Field: s(string) │  ╰────────╯       │
-│ │ Value: alpha     │                   │
+│ │ Values: 'alpha'  │                   │
 │ ╰──────────────────╯                   │
 │ Score: bm25(k1=1.2, b=0.75)            │
 │ Projections: id,                       │
@@ -146,11 +146,12 @@ QUERY PLAN
 │ Index: fo_score_ng_idx                                                                  │
 │ Lookup: table                                                                           │
 │ Index Filter:                                                                           │
-│ ╭─ Terms ─────────────────────────────────────────────────────────────────────────────╮ │
+│ ╭─ Or ────────────────────────────────────────────────────────────────────────────────╮ │
+│ ╰──────────────────────────────────────────┬──────────────────────────────────────────╯ │
+│ ╭─ Terms ──────────────────────────────────┴──────────────────────────────────────────╮ │
 │ │ Field: g(string)                                                                    │ │
 │ │ Values:                                                                             │ │
 │ │ 'aly', 'al\\xff', 'ana', 'cal', 'ica', 'lyt', 'l\\xff', 'nal', 'tic', 'yti', '\\xffan' │ │
-│ │ Min Match: 1                                                                        │ │
 │ ╰─────────────────────────────────────────────────────────────────────────────────────╯ │
 │ Projections: id                                                                         │
 │ ~1 row                                                                                  │
@@ -164,9 +165,9 @@ QUERY PLAN
 │ Index: fo_score_ng_idx                        │
 │ Lookup: table                                 │
 │ Index Filter:                                 │
-│ ╭─ Ngram Similarity ────────────────────────╮ │
+│ ╭─ NGram Similarity ────────────────────────╮ │
 │ │ Field: g(string)                          │ │
-│ │ Ngrams:                                   │ │
+│ │ NGrams:                                   │ │
 │ │ \\xffanananalalylytytiticicacalal\\xffl\\xff │ │
 │ │ Threshold: 0.01                           │ │
 │ ╰───────────────────────────────────────────╯ │
@@ -218,10 +219,11 @@ QUERY PLAN
 │ Index: fo_score_idx          │
 │ Lookup: table                │
 │ Index Filter:                │
-│ ╭─ Terms ──────────────────╮ │
+│ ╭─ Or ─────────────────────╮ │
+│ ╰─────────────┬────────────╯ │
+│ ╭─ Terms ─────┴────────────╮ │
 │ │ Field: s(string)         │ │
 │ │ Values: 'alpha', 'gamma' │ │
-│ │ Min Match: 1             │ │
 │ ╰──────────────────────────╯ │
 │ Projections: id              │
 │ ~1 row                       │
@@ -235,10 +237,11 @@ QUERY PLAN
 │ Index: fo_score_idx                    │
 │ Lookup: table                          │
 │ Index Filter:                          │
-│ ╭─ Terms ──────────────────╮           │
+│ ╭─ Or ─────────────────────╮           │
+│ ╰─────────────┬────────────╯           │
+│ ╭─ Terms ─────┴────────────╮           │
 │ │ Field: s(string)         │           │
 │ │ Values: 'alpha', 'gamma' │           │
-│ │ Min Match: 1             │           │
 │ ╰──────────────────────────╯           │
 │ Score: bm25(k1=1.2, b=0.75)            │
 │ Projections: id,                       │
@@ -254,12 +257,14 @@ QUERY PLAN
 │ Index: fo_score_idx                        │
 │ Lookup: table                              │
 │ Index Filter:                              │
-│ ╭─ Exclusion ──────╮                       │
+│ ╭─ Bool ───────────╮                       │
 │ ╰─────────┬────────╯                       │
 │           ├─────────────────────╮          │
-│ ╭─ Term ──┴────────╮  ╭─ Term ──┴────────╮ │
+│ ╭─ Must ──┴────────╮  ╭─ Must Not ───────╮ │
+│ ╰─────────┬────────╯  ╰─────────┬────────╯ │
+│ ╭─ Terms ─┴────────╮  ╭─ Terms ─┴────────╮ │
 │ │ Field: t(string) │  │ Field: t(string) │ │
-│ │ Value: alpha     │  │ Value: beta      │ │
+│ │ Values: 'alpha'  │  │ Values: 'beta'   │ │
 │ ╰──────────────────╯  ╰──────────────────╯ │
 │ Projections: id                            │
 │ ~1 row                                     │
@@ -273,12 +278,14 @@ QUERY PLAN
 │ Index: fo_score_idx                        │
 │ Lookup: table                              │
 │ Index Filter:                              │
-│ ╭─ Exclusion ──────╮                       │
+│ ╭─ Bool ───────────╮                       │
 │ ╰─────────┬────────╯                       │
 │           ├─────────────────────╮          │
-│ ╭─ Term ──┴────────╮  ╭─ Term ──┴────────╮ │
+│ ╭─ Must ──┴────────╮  ╭─ Must Not ───────╮ │
+│ ╰─────────┬────────╯  ╰─────────┬────────╯ │
+│ ╭─ Terms ─┴────────╮  ╭─ Terms ─┴────────╮ │
 │ │ Field: t(string) │  │ Field: t(string) │ │
-│ │ Value: alpha     │  │ Value: beta      │ │
+│ │ Values: 'alpha'  │  │ Values: 'beta'   │ │
 │ ╰──────────────────╯  ╰──────────────────╯ │
 │ Score: bm25(k1=1.2, b=0.75)                │
 │ Projections: id, sdb_inverted_index_score  │
@@ -296,7 +303,6 @@ QUERY PLAN
 │ ╭─ Granular Range ──╮ │
 │ │ Field: n(numeric) │ │
 │ │ Range: >1, <4     │ │
-│ │ Boost: 2          │ │
 │ ╰───────────────────╯ │
 │ Projections: id       │
 │ ~1 row                │
@@ -332,7 +338,6 @@ QUERY PLAN
 │ ╭─ Term ───────────╮ │
 │ │ Field: t(string) │ │
 │ │ Value: alpha     │ │
-│ │ Boost: 2         │ │
 │ ╰──────────────────╯ │
 │ Projections: id      │
 │ ~1 row               │
@@ -349,9 +354,9 @@ QUERY PLAN
 │ ╭─ And ────────────╮                   │
 │ ╰─────────┬────────╯                   │
 │           ├────────────────╮           │
-│ ╭─ Term ──┴────────╮  ╭─ All ──╮       │
+│ ╭─ Terms ─┴────────╮  ╭─ All ──╮       │
 │ │ Field: t(string) │  ╰────────╯       │
-│ │ Value: alpha     │                   │
+│ │ Values: 'alpha'  │                   │
 │ ╰──────────────────╯                   │
 │ Score: bm25(k1=1.2, b=0.75)            │
 │ Projections: id,                       │
@@ -370,7 +375,6 @@ QUERY PLAN
 │ ╭─ Granular Range ──╮ │
 │ │ Field: n(numeric) │ │
 │ │ Range: >1, <4     │ │
-│ │ Boost: 2          │ │
 │ ╰───────────────────╯ │
 │ Projections: id       │
 │ ~1 row                │

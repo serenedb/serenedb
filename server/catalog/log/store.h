@@ -24,6 +24,7 @@
 #include <absl/synchronization/mutex.h>
 
 #include <cstdint>
+#include <duckdb/catalog/catalog_permissions.hpp>
 #include <duckdb/parser/parsed_data/alter_info.hpp>
 #include <duckdb/parser/parsed_data/create_index_info.hpp>
 #include <optional>
@@ -103,11 +104,14 @@ duckdb::AlterEntryData StoreTarget(duckdb::OnEntryNotFound if_not_found =
 void StoreAlter(duckdb::ClientContext* context, ObjectId database_id,
                 ObjectId relation, duckdb::unique_ptr<duckdb::AlterInfo> info);
 // `info` is what MakeStoreIndexInfo produced. An inverted index is built from
-// the catalog objects rather than by a plan, so those ride along.
+// the catalog objects rather than by a plan, so those ride along, and the
+// directory the CREATE opened rides too -- the op injects before the entry
+// that will carry the handle is visible anywhere else.
 void StoreCreateIndex(duckdb::ClientContext* context, ObjectId database_id,
                       duckdb::unique_ptr<duckdb::CreateIndexInfo> info,
                       duckdb::unique_ptr<duckdb::CreateTableInfo> table,
-                      ObjectId relation_id, std::shared_ptr<const Index> index);
+                      ObjectId relation_id, std::shared_ptr<const Index> index,
+                      std::shared_ptr<search::InvertedIndexStorage> storage);
 // `name` is what the physical index is filed under, i.e. the catalog name it
 // mirrors.
 void StoreDropIndex(duckdb::ClientContext* context, ObjectId database_id,
@@ -138,6 +142,16 @@ class CatalogStore {
     ObjectId parent_id;
     duckdb::CatalogType type{duckdb::CatalogType::INVALID};
     ObjectId id;
+  };
+
+  // One checkpoint record, copied off the entry the moment the walk saw it:
+  // the walk excludes no mutation, so nothing of the entry is kept.
+  struct CheckpointRecord {
+    CheckpointRecord(const duckdb::CatalogEntry& entry);
+
+    uint64_t oid;
+    duckdb::unique_ptr<duckdb::CreateInfo> info;
+    duckdb::CatalogPermissions permissions;
   };
 
   CatalogStore();
@@ -186,14 +200,11 @@ class CatalogStore {
   // Missing counter reads as 0.
   uint64_t GetSequenceValue(ObjectId sequence_id);
 
-  // Folds the log if it is worth folding. A rewrite reads the catalog and has
-  // to exclude the commits that write it, so this takes the catalog mutex --
-  // and only tries, so a caller that already holds it (a mutation on its way
-  // out) simply skips, and the next append attempts it again. The caller must
-  // hold no lock of this class.
+  // Folds the log if it is worth folding. A rewrite excludes no mutation: it
+  // reads what is committed and abandons if a commit lands meanwhile, and the
+  // next append attempts it again. The caller must hold no lock of this class.
   void TryCompact();
-  // Rewrites the file now, whatever the thresholds say (fault injection). The
-  // caller already holds the catalog mutex.
+  // Rewrites the file now, whatever the thresholds say (fault injection).
   void CompactNow();
 
   std::string_view WalDirectory() const noexcept { return _directory; }
@@ -212,15 +223,12 @@ class CatalogStore {
   inline static CatalogStore* gInstance = nullptr;
   // The catalog's entries as the log files them, parents ahead of children: a
   // checkpoint is replayed like any other run of records, so it has to arrive
-  // in an order every definition's ancestry is already in. The entries live in
-  // the CatalogSets and the caller holds the catalog mutex, so they outlive the
-  // walk.
-  static std::vector<duckdb::reference<duckdb::CatalogEntry>>
-  CheckpointEntriesOf();
+  // in an order every definition's ancestry is already in.
+  static std::vector<CheckpointRecord> CheckpointEntriesOf();
   void MaybeCompact() ABSL_EXCLUSIVE_LOCKS_REQUIRED(_mutex);
   // Rewrites the file as a checkpoint: the catalog's definitions and the state
-  // the store owns. The caller holds the catalog mutex, so no mutation can
-  // change the catalog it reads while it reads it.
+  // the store owns, read with no mutation excluded -- the rewrite abandons
+  // when a commit lands between the read and the swap.
   void Compact() ABSL_EXCLUSIVE_LOCKS_REQUIRED(_mutex);
 
   // Hands the batch to the databases its ops name. Throws the store's error as
@@ -248,9 +256,10 @@ class CatalogStore {
   // nextval must not serialize on it.
   static constexpr uint64_t kSequenceCompactCheck = 4096;
 
-  mutable absl::Mutex _seq_mutex;
-  containers::FlatHashMap<uint64_t, uint64_t> _sequences
-    ABSL_GUARDED_BY(_seq_mutex);
+  // Guarded by the cluster catalog log's lock (LockClusterCatalogWal): the map
+  // mirrors the log's sequence records, staged beside the file they replay
+  // from.
+  containers::FlatHashMap<uint64_t, uint64_t> _sequences;
 };
 
 CatalogStore& GetCatalogStore();

@@ -20,14 +20,17 @@
 
 #include "filter_optimizer.hpp"
 
+#include <cstdlib>
+#include <string>
+#include <string_view>
+
+#include "basics/down_cast.h"
 #include "iresearch/search/boolean_filter.hpp"
-#include "iresearch/search/mixed_boolean_filter.hpp"
 #include "iresearch/search/optimizer/boolean_rules.hpp"
 #include "iresearch/search/optimizer/levenshtein_prefix_rules.hpp"
 #include "iresearch/search/optimizer/lowering_rules.hpp"
-#include "iresearch/search/optimizer/negation_rules.hpp"
 #include "iresearch/search/optimizer/range_rules.hpp"
-#include "iresearch/search/optimizer/terms_rules.hpp"
+#include "iresearch/search/term_filter.hpp"
 
 namespace irs {
 namespace {
@@ -40,23 +43,31 @@ Registry& OptimizationRules() {
   return gRules;
 }
 
+void AssertValid([[maybe_unused]] const Filter& filter) {
+  SDB_ASSERT(filter.type() != Type<BooleanFilter>::id() ||
+             sdb::basics::downCast<BooleanFilter>(filter).Valid());
+}
+
 void RunRules(Filter::ptr& slot, const OptimizeContext& ctx) {
+  AssertValid(*slot);
   bool changed = true;
   const auto& optimizations = OptimizationRules();
   while (changed) {
     const auto it = optimizations.find(slot->type());
     changed = false;
     if (it == optimizations.end()) {
-      return;
+      break;
     }
     for (const auto& rule : it->second) {
       if (rule.apply(slot, ctx)) {
         SDB_ASSERT(slot);
+        AssertValid(*slot);
         changed = true;
         break;
       }
     }
   }
+  AssertValid(*slot);
 }
 
 void RunPass(Filter::ptr& root, const OptimizeContext& ctx) {
@@ -74,13 +85,51 @@ void RegisterRule(RuleDesc rule) {
 
 void InitOptimizeRules() {
   SDB_ASSERT(OptimizationRules().empty());
-  optimizer::InitBooleanRules();
-  optimizer::InitNegationRules();
-  optimizer::InitTermsRules();
-  optimizer::InitRangeRules();
-  optimizer::InitLevenshteinPrefixRules();
-  optimizer::InitLoweringRules();
+
+  optimizer::InitBooleanNormalizeTerms();
+
+  optimizer::InitBooleanFlatten();
+
+  optimizer::InitBooleanMinShouldMatch();
+  optimizer::InitRangeDegenerate();
+  optimizer::InitGranularRangeDegenerate();
+  optimizer::InitEditDistanceSimplify();
+  optimizer::InitPhraseSimplify();
+
+  optimizer::InitBooleanAbsorb();
+  optimizer::InitBooleanDedup();
+  optimizer::InitBooleanNullMarker();
+  optimizer::InitPhraseLower();
+  optimizer::InitWildcardSimplify();
+  optimizer::InitRegexpSimplify();
+
+  optimizer::InitOrAcceptorFusion();
+  optimizer::InitAndRangeMerge();
+  optimizer::InitLevenshteinPrefixFusion();
+  optimizer::InitNGramSimilarityLower();
+
+  optimizer::InitBooleanSingleClause();
 }
+
+#ifdef SDB_DEV
+namespace {
+
+void AssertNoTermChild(Filter::ptr& root) {
+  TraverseFilter(root, [](Filter::ptr& slot) {
+    if (slot->type() != Type<BooleanFilter>::id()) {
+      return;
+    }
+    const auto& node = sdb::basics::downCast<BooleanFilter>(*slot);
+    for (const auto occur : kAllOccur) {
+      for (const auto& child : node.Filters(occur)) {
+        SDB_ASSERT(child->type() != Type<ByTerm>::id());
+      }
+    }
+  });
+}
+
+}  // namespace
+#endif
 
 void Optimize(Filter::ptr& root, const OptimizeContext& ctx) {
   if (!root) {
@@ -88,7 +137,10 @@ void Optimize(Filter::ptr& root, const OptimizeContext& ctx) {
   }
   RunPass(root, ctx);
   optimizer::LowerAutomatons(root, ctx);
-  optimizer::FuseIntersections(root, ctx);
+  optimizer::FuseConjunctions(root, ctx);
+#ifdef SDB_DEV
+  AssertNoTermChild(root);
+#endif
 }
 
 }  // namespace irs

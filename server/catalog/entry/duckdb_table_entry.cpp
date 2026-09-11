@@ -348,6 +348,7 @@ duckdb::TableFunction SereneDBTableEntry::GetScanFunction(
     }
     data->table_entry = this;
     data->entry_kind = connector::ScanEntryKind::SearchTable;
+    data->topk_scorer = SearchOptions().topk_scorer;
     data->lookup_label = "search";
     data->snapshot = std::make_shared<search::InvertedIndexSnapshot>(
       irs::DirectoryReader{*reader}, nullptr);
@@ -400,12 +401,12 @@ duckdb::vector<duckdb::column_t> BuildRowIdColumns(
   pk_positions.reserve(pk_columns.size());
   for (const auto key : pk_columns) {
     if (pk_positions.insert(key.index).second) {
-      result.push_back(duckdb::VIRTUAL_COLUMN_START + key.index);
+      result.push_back(PKVirtualColumnId(key.index));
     }
   }
   for (auto idx : indexed_col_indices) {
     if (!pk_positions.contains(idx)) {
-      result.push_back(duckdb::VIRTUAL_COLUMN_START + idx);
+      result.push_back(PKVirtualColumnId(idx));
     }
   }
 
@@ -425,7 +426,7 @@ duckdb::virtual_column_map_t BuildVirtualColumns(
 
   const auto add = [&](size_t position) {
     const auto& column = columns.GetColumn(duckdb::LogicalIndex{position});
-    result.insert({duckdb::VIRTUAL_COLUMN_START + position,
+    result.insert({PKVirtualColumnId(position),
                    duckdb::TableColumn(column.Name(), column.Type())});
   };
   for (const auto key : pk_columns) {
@@ -433,7 +434,7 @@ duckdb::virtual_column_map_t BuildVirtualColumns(
   }
 
   for (auto idx : indexed_col_indices) {
-    if (!result.contains(duckdb::VIRTUAL_COLUMN_START + idx)) {
+    if (!result.contains(PKVirtualColumnId(idx))) {
       add(idx);
     }
   }
@@ -485,9 +486,9 @@ duckdb::TableStorageInfo BuildStorageInfo(
 
 duckdb::column_t SereneDBTableEntry::VirtualToPKColumnIndex(
   duckdb::column_t virtual_id) {
-  if (virtual_id >= duckdb::VIRTUAL_COLUMN_START &&
-      virtual_id < kColumnIdentifierGeneratedPk) {
-    return virtual_id - duckdb::VIRTUAL_COLUMN_START;
+  if (virtual_id >= kColumnIdentifierPkVirtualStart &&
+      virtual_id < kColumnIdentifierPkRowNumber) {
+    return virtual_id - kColumnIdentifierPkVirtualStart;
   }
   return duckdb::DConstants::INVALID_INDEX;
 }
@@ -621,7 +622,7 @@ duckdb::column_t RowIdentityColumnId(const duckdb::TableCatalogEntry& table,
                                      bool search_engine) {
   const auto pk_columns = TableEntryPKColumns(table);
   if (!search_engine && !pk_columns.empty()) {
-    return duckdb::VIRTUAL_COLUMN_START + pk_columns.front().index;
+    return PKVirtualColumnId(pk_columns.front().index);
   }
   return kColumnIdentifierGeneratedPk;
 }

@@ -40,8 +40,9 @@
 
 namespace sdb::catalog {
 
-Role::Role(ObjectId id, persistence::RoleData data)
-  : _options{static_cast<RoleOption>(data.options)},
+CreateRoleInfo::CreateRoleInfo(ObjectId id, persistence::RoleData data)
+  : duckdb::CreateInfo{duckdb::CatalogType::ROLE_ENTRY},
+    _options{static_cast<RoleOption>(data.options)},
     _member_of{std::move(data.member_of)},
     _conn_limit{data.conn_limit},
     _valid_until{std::move(data.valid_until)},
@@ -55,7 +56,7 @@ Role::Role(ObjectId id, persistence::RoleData data)
   }
 }
 
-persistence::RoleData Role::ToData() const {
+persistence::RoleData CreateRoleInfo::ToData() const {
   return persistence::RoleData{
     .name = std::string{GetName()},
     .options = static_cast<uint32_t>(_options),
@@ -68,7 +69,7 @@ persistence::RoleData Role::ToData() const {
   };
 }
 
-std::string Role::ToString() const {
+std::string CreateRoleInfo::ToString() const {
   std::string out = absl::StrCat(
     "CREATE ROLE ",
     duckdb::KeywordHelper::WriteOptionallyQuoted(std::string{GetName()}));
@@ -84,7 +85,7 @@ std::string Role::ToString() const {
   return absl::StrCat(out, ";");
 }
 
-void Role::SerializePayload(duckdb::Serializer& sink) const {
+void CreateRoleInfo::SerializePayload(duckdb::Serializer& sink) const {
   sink.WritePropertyWithDefault<duckdb::Identifier>(200, "name",
                                                     duckdb::Identifier{_name});
   sink.WritePropertyWithDefault(201, "options",
@@ -104,11 +105,11 @@ void Role::SerializePayload(duckdb::Serializer& sink) const {
   sink.WritePropertyWithDefault<uint64_t>(206, "sdb_id", _id.id());
 }
 
-duckdb::unique_ptr<duckdb::CreateInfo> Role::Deserialize(
+duckdb::unique_ptr<duckdb::CreateInfo> CreateRoleInfo::Deserialize(
   duckdb::Deserializer& src) {
-  auto role = std::make_shared<Role>();
-  role->_name = src.ReadPropertyWithDefault<duckdb::Identifier>(200, "name")
-                  .GetIdentifierName();
+  auto role = duckdb::make_uniq<CreateRoleInfo>();
+  role->SetRoleName(src.ReadPropertyWithDefault<duckdb::Identifier>(200, "name")
+                      .GetIdentifierName());
   role->_options = static_cast<RoleOption>(
     src.ReadPropertyWithDefault<uint32_t>(201, "options"));
   src.ReadPropertyWithDefault(202, "conn_limit", role->_conn_limit);
@@ -118,11 +119,11 @@ duckdb::unique_ptr<duckdb::CreateInfo> Role::Deserialize(
   auto refs = std::tie(role->_config, role->_member_of, role->_default_acls);
   basics::ReadTuple(src, refs);
   src.OnPropertyEnd();
-  role->_id = ObjectId{src.ReadPropertyWithDefault<uint64_t>(206, "sdb_id")};
-  return duckdb::make_uniq<CreateRoleInfo>(std::move(role));
+  role->SetId(ObjectId{src.ReadPropertyWithDefault<uint64_t>(206, "sdb_id")});
+  return role;
 }
 
-void Role::AddMembership(const Membership& edge) {
+void CreateRoleInfo::AddMembership(const Membership& edge) {
   if (edge.role == GetId()) {
     return;
   }
@@ -134,7 +135,7 @@ void Role::AddMembership(const Membership& edge) {
   }
 }
 
-void Role::RemoveMembership(ObjectId role) {
+void CreateRoleInfo::RemoveMembership(ObjectId role) {
   if (auto it = std::ranges::find(_member_of, role, &Membership::role);
       it != _member_of.end()) {
     _member_of.erase(it);
@@ -149,7 +150,7 @@ std::string_view ConfigKey(std::string_view entry) {
 
 }  // namespace
 
-void Role::SetConfig(std::string_view guc, std::string_view value) {
+void CreateRoleInfo::SetConfig(std::string_view guc, std::string_view value) {
   auto entry = absl::StrCat(guc, "=", value);
   auto it = std::ranges::find_if(
     _config, [&](const std::string& e) { return ConfigKey(e) == guc; });
@@ -160,14 +161,14 @@ void Role::SetConfig(std::string_view guc, std::string_view value) {
   }
 }
 
-void Role::ResetConfig(std::string_view guc) {
+void CreateRoleInfo::ResetConfig(std::string_view guc) {
   std::erase_if(_config,
                 [&](const std::string& e) { return ConfigKey(e) == guc; });
 }
 
-void Role::ChangeDefaultAcl(ObjectId schema, char objtype,
-                            duckdb::CatalogType type,
-                            absl::FunctionRef<void(Acl&)> mutate) {
+void CreateRoleInfo::ChangeDefaultAcl(ObjectId schema, char objtype,
+                                      duckdb::CatalogType type,
+                                      absl::FunctionRef<void(Acl&)> mutate) {
   const auto matches = [&](const DefaultAcl& d) {
     return d.schema == schema && d.objtype == objtype;
   };
@@ -194,30 +195,35 @@ void Role::ChangeDefaultAcl(ObjectId schema, char objtype,
   }
 }
 
-duckdb::unique_ptr<Role> Role::Clone() const {
-  return duckdb::make_uniq<Role>(GetId(), ToData());
+duckdb::unique_ptr<CreateRoleInfo> CreateRoleInfo::CopyRecord() const {
+  auto result = duckdb::make_uniq<CreateRoleInfo>(GetId(), ToData());
+  CopyProperties(*result);
+  return result;
 }
 
-CreateRoleInfo::CreateRoleInfo(std::shared_ptr<const Role> role)
-  : duckdb::CreateInfo{duckdb::CatalogType::ROLE_ENTRY},
-    _role{std::move(role)} {
-  oid = _role->GetId().id();
-  SetName(duckdb::Identifier{std::string{_role->GetName()}});
-}
+CreateRoleInfo::CreateRoleInfo()
+  : duckdb::CreateInfo{duckdb::CatalogType::ROLE_ENTRY} {}
 
 duckdb::unique_ptr<duckdb::CreateInfo> CreateRoleInfo::Copy() const {
-  // The role itself is shared: every version of it that a copy of this record
-  // reaches is the same object.
-  auto result = duckdb::make_uniq<CreateRoleInfo>(_role);
-  CopyProperties(*result);
-  return std::move(result);
+  return CopyRecord();
 }
 
 void CreateRoleInfo::Serialize(duckdb::Serializer& sink) const {
   duckdb::CreateInfo::Serialize(sink);
-  _role->SerializePayload(sink);
+  SerializePayload(sink);
 }
 
-std::string CreateRoleInfo::ToString() const { return _role->ToString(); }
+// The name and the id travel on CreateInfo, where every record carries them,
+// and on the fields the role's own shape states: both are set together so a
+// reader of either agrees.
+void CreateRoleInfo::SetRoleName(std::string_view name) {
+  _name = name;
+  SetName(duckdb::Identifier{_name});
+}
+
+void CreateRoleInfo::SetId(ObjectId id) noexcept {
+  _id = id;
+  oid = id.id();
+}
 
 }  // namespace sdb::catalog

@@ -1,0 +1,160 @@
+# optimize_top_k on a search table is a table option: the table's store writes
+# the score bounds, so top-k queries prune through the table scan and through
+# every index relation on it alike. The index-level option is refused there.
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY st_topk_en (template = 'text', locale = 'en_US.UTF-8', case = 'none', stemming = false, accent = false, frequency = true, position = true, norm = true);
+
+statement ok
+CREATE TABLE st_topk (id INTEGER PRIMARY KEY, body VARCHAR)
+WITH (storage = 'search', compaction_interval = 0, optimize_top_k = 'bm25(1.2, 0.75)');
+
+statement ok
+CREATE INDEX st_topk_idx ON st_topk USING inverted (body st_topk_en);
+
+statement ok
+INSERT INTO st_topk SELECT i, CASE WHEN i % 1000 = 500 THEN repeat('fox ', 30 + i / 1000) WHEN i % 17 = 0 THEN repeat('fox ', 1 + i % 3) ELSE 'dog ' END || repeat('filler ', (i * 104729) % 30) FROM range(30000) t(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) st_topk;
+
+query
+EXPLAIN SELECT id FROM st_topk WHERE body @@ ts_phrase('fox') ORDER BY BM25(st_topk.tableoid) DESC LIMIT 8;
+----
+QUERY PLAN
+╭─ TOP_N ────────────────────────────────╮
+│ Top: 8                                 │
+│ Order By: #1 DESC                      │
+│ ~8 rows                                │
+╰────────────────────┬───────────────────╯
+╭─ IRESEARCH_SCAN ───┴───────────────────╮
+│ Index: st_topk                         │
+│ Lookup: search                         │
+│ Index Filter:                          │
+│ ╭─ Term ──────────────╮                │
+│ │ Field: body(string) │                │
+│ │ Value: fox          │                │
+│ ╰─────────────────────╯                │
+│ Score: bm25(k1=1.2, b=0.75)            │
+│ Top: 8, optimized                      │
+│ Projections: id,                       │
+│              sdb_inverted_index_score  │
+│ ~6,000 rows                            │
+╰────────────────────────────────────────╯
+
+query
+EXPLAIN SELECT id FROM st_topk_idx WHERE body @@ ts_phrase('fox') ORDER BY BM25(st_topk_idx.tableoid) DESC LIMIT 8;
+----
+QUERY PLAN
+╭─ TOP_N ────────────────────────────────╮
+│ Top: 8                                 │
+│ Order By: #1 DESC                      │
+│ ~8 rows                                │
+╰────────────────────┬───────────────────╯
+╭─ IRESEARCH_SCAN ───┴───────────────────╮
+│ Index: st_topk_idx                     │
+│ Lookup: search                         │
+│ Index Filter:                          │
+│ ╭─ Term ──────────────╮                │
+│ │ Field: body(string) │                │
+│ │ Value: fox          │                │
+│ ╰─────────────────────╯                │
+│ Score: bm25(k1=1.2, b=0.75)            │
+│ Top: 8, optimized                      │
+│ Projections: id,                       │
+│              sdb_inverted_index_score  │
+│ ~6,000 rows                            │
+╰────────────────────────────────────────╯
+
+query
+SELECT (SELECT list(id) FROM (SELECT id FROM st_topk WHERE body @@ ts_phrase('fox') ORDER BY BM25(st_topk.tableoid) DESC LIMIT 8)) AS table_top8,
+       (SELECT list(id) FROM (SELECT id FROM st_topk_idx WHERE body @@ ts_phrase('fox') ORDER BY BM25(st_topk_idx.tableoid) DESC LIMIT 8)) AS index_top8,
+       (SELECT list(id) FROM (SELECT id FROM (SELECT id, BM25(st_topk_idx.tableoid) AS s FROM st_topk_idx WHERE body @@ ts_phrase('fox')) q ORDER BY s DESC LIMIT 8)) AS full_sort_top8;
+----
+table_top8	index_top8	full_sort_top8
+{28500,25500,22500,19500,16500,13500,10500,7500}	{28500,25500,22500,19500,16500,13500,10500,7500}	{28500,25500,22500,19500,16500,13500,10500,7500}
+
+query
+EXPLAIN SELECT id FROM st_topk_idx WHERE body @@ ts_phrase('fox') ORDER BY TFIDF(st_topk_idx.tableoid) DESC LIMIT 8;
+----
+QUERY PLAN
+╭─ TOP_N ────────────────────────────────╮
+│ Top: 8                                 │
+│ Order By: #1 DESC                      │
+│ ~8 rows                                │
+╰────────────────────┬───────────────────╯
+╭─ IRESEARCH_SCAN ───┴───────────────────╮
+│ Index: st_topk_idx                     │
+│ Lookup: search                         │
+│ Index Filter:                          │
+│ ╭─ Term ──────────────╮                │
+│ │ Field: body(string) │                │
+│ │ Value: fox          │                │
+│ ╰─────────────────────╯                │
+│ Score: tfidf(with_norms=false)         │
+│ Top: 8                                 │
+│ Projections: id,                       │
+│              sdb_inverted_index_score  │
+│ ~6,000 rows                            │
+╰────────────────────────────────────────╯
+
+statement ok
+CREATE TABLE st_plain (id INTEGER PRIMARY KEY, body VARCHAR)
+WITH (storage = 'search', compaction_interval = 0);
+
+statement ok
+CREATE INDEX st_plain_idx ON st_plain USING inverted (body st_topk_en);
+
+statement ok
+INSERT INTO st_plain VALUES (1, 'fox quick'), (2, 'fox lazy'), (3, 'lazy dog');
+
+statement ok
+VACUUM (REFRESH_TABLE) st_plain;
+
+query
+EXPLAIN SELECT id FROM st_plain WHERE body @@ ts_phrase('fox') ORDER BY BM25(st_plain.tableoid) DESC LIMIT 2;
+----
+QUERY PLAN
+╭─ TOP_N ────────────────────────────────╮
+│ Top: 2                                 │
+│ Order By: #1 DESC                      │
+│ ~1 row                                 │
+╰────────────────────┬───────────────────╯
+╭─ IRESEARCH_SCAN ───┴───────────────────╮
+│ Index: st_plain                        │
+│ Lookup: search                         │
+│ Index Filter:                          │
+│ ╭─ Term ──────────────╮                │
+│ │ Field: body(string) │                │
+│ │ Value: fox          │                │
+│ ╰─────────────────────╯                │
+│ Score: bm25(k1=1.2, b=0.75)            │
+│ Top: 2                                 │
+│ Projections: id,                       │
+│              sdb_inverted_index_score  │
+│ ~1 row                                 │
+╰────────────────────────────────────────╯
+
+statement ok
+CREATE TABLE st_empty (id INTEGER PRIMARY KEY, body VARCHAR)
+WITH (storage = 'search', compaction_interval = 0);
+
+statement error
+CREATE INDEX st_empty_topk ON st_empty USING inverted (body st_topk_en) WITH (optimize_top_k = 'bm25(1.2, 0.75)');
+----
+db error: ERROR: optimize_top_k is a table option on a search-backed table
+HINT: Set it in CREATE TABLE ... WITH (storage = 'search', optimize_top_k = '...'); the table's store keeps the score bounds every index on it prunes with.
+
+
+statement error
+CREATE TABLE st_expr (id INTEGER PRIMARY KEY, body VARCHAR) WITH (storage = 'search', optimize_top_k = 'bm25(1 + 0.2, 0.75)');
+----
+db error: ERROR: 'optimize_top_k' scorer args must be constants: 'bm25(1 + 0.2, 0.75)'
+HINT: Use e.g. 'tfidf()' or 'bm25(1.2, 0.75)'
+
+
+statement error
+CREATE TABLE st_bad (id INTEGER PRIMARY KEY, body VARCHAR) WITH (storage = 'search', optimize_top_k = 'nope()');
+----
+db error: ERROR: Unknown scorer 'nope'
+HINT: Expected one of: bm25, tfidf, lm_jm, lm_dirichlet, indri_dirichlet, dfi, idf, raw_boost, raw_tf, raw_dl

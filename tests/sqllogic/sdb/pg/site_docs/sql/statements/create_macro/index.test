@@ -355,7 +355,7 @@ aa
 
 statement ok
 SELECT schema_name, function_name, function_type, parameters
-FROM duckdb_functions()
+FROM sdb_functions()
 WHERE function_type IN ('macro', 'table_macro');
 
 # DOCS_TEST: example_035

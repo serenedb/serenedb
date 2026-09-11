@@ -32,7 +32,8 @@
 #include "basics/math_utils.hpp"
 #include "iresearch/error/error.hpp"
 #include "iresearch/formats/format_utils.hpp"
-#include "iresearch/formats/ivf/centroids.hpp"
+#include "iresearch/formats/hnsw/hnsw_reader.hpp"
+#include "iresearch/formats/ivf/ivf_reader.hpp"
 #include "iresearch/index/column_info.hpp"
 #include "iresearch/store/data_input.hpp"
 #include "iresearch/store/directory.hpp"
@@ -45,6 +46,7 @@ namespace {
 
 constexpr duckdb::field_id_t kFooterSlotTermDict = 100;
 constexpr duckdb::field_id_t kFooterSlotIvf = 101;
+constexpr duckdb::field_id_t kFooterSlotHnsw = 102;
 
 IndexInput::ptr OpenAndCheckHeader(const Directory& dir,
                                    std::string_view filename) {
@@ -64,8 +66,8 @@ struct IdxReader::Impl {
   Encryption::Stream::ptr cipher;
   IndexInput::ptr in;
   uint64_t body_start{};
-  std::vector<std::pair<field_id, CentroidsTree>> ivf_entries;
-  sdb::containers::FlatHashMap<field_id, size_t> ivf_by_id;
+  std::vector<std::pair<field_id, std::unique_ptr<AnnIndex>>> ann_entries;
+  sdb::containers::FlatHashMap<field_id, size_t> ann_by_id;
   std::vector<std::pair<field_id, TermDictMeta>> term_dicts;
 };
 
@@ -155,9 +157,29 @@ IdxReader::IdxReader(const Directory& dir, std::string_view segment_name)
         auto entry = CentroidsTree::Deserialize(*body, tree_byte_size);
         entry.SetQuantStatsLocation(stats_offset, stats_byte_size);
 
-        const size_t idx = _impl->ivf_entries.size();
-        _impl->ivf_entries.emplace_back(id, std::move(entry));
-        _impl->ivf_by_id.emplace(id, idx);
+        const size_t idx = _impl->ann_entries.size();
+        _impl->ann_entries.emplace_back(
+          id, std::make_unique<IvfIndex>(std::move(entry)));
+        _impl->ann_by_id.emplace(id, idx);
+      });
+    });
+  deserializer.ReadList(
+    kFooterSlotHnsw, "hnsw",
+    [&](duckdb::Deserializer::List& list, duckdb::idx_t /*i*/) {
+      list.ReadObject([&](duckdb::Deserializer& obj) {
+        const auto id = obj.ReadProperty<uint64_t>(0, "id");
+        const auto offset = obj.ReadProperty<uint64_t>(1, "offset");
+        const auto byte_size = obj.ReadProperty<uint64_t>(2, "byte_size");
+
+        auto body = _impl->in->Dup();
+        body->Seek(offset);
+        auto header = HnswIndex::ReadHeader(*body);
+
+        const size_t idx = _impl->ann_entries.size();
+        _impl->ann_entries.emplace_back(
+          id, std::make_unique<HnswIndex>(
+                header, HnswMeta{.offset = offset, .byte_size = byte_size}));
+        _impl->ann_by_id.emplace(id, idx);
       });
     });
   deserializer.End();
@@ -165,14 +187,15 @@ IdxReader::IdxReader(const Directory& dir, std::string_view segment_name)
 
 IdxReader::~IdxReader() = default;
 
-bool IdxReader::HasIvf(field_id id) const noexcept {
-  return _impl->ivf_by_id.contains(id);
+bool IdxReader::HasAnn(field_id id) const noexcept {
+  return _impl->ann_by_id.contains(id);
 }
 
-const CentroidsTree* IdxReader::Ivf(field_id id) const noexcept {
-  auto it = _impl->ivf_by_id.find(id);
-  return it == _impl->ivf_by_id.end() ? nullptr
-                                      : &_impl->ivf_entries[it->second].second;
+const AnnIndex* IdxReader::Ann(field_id id) const noexcept {
+  auto it = _impl->ann_by_id.find(id);
+  return it == _impl->ann_by_id.end()
+           ? nullptr
+           : _impl->ann_entries[it->second].second.get();
 }
 
 std::span<const std::pair<field_id, TermDictMeta>> IdxReader::TermDicts()

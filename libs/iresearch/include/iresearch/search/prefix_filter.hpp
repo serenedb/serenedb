@@ -43,11 +43,8 @@ struct ByPrefixOptions : ByPrefixFilterOptions {
   using FilterType = ByPrefix;
   using filter_options = ByPrefixFilterOptions;
 
-  size_t scored_terms_limit{1024};
-
   bool operator==(const ByPrefixOptions& rhs) const noexcept {
-    return filter_options::operator==(rhs) &&
-           scored_terms_limit == rhs.scored_terms_limit;
+    return filter_options::operator==(rhs);
   }
 };
 
@@ -61,6 +58,8 @@ struct PrefixAcceptor {
 
 class ByPrefix : public FilterWithField<ByPrefixOptions> {
  public:
+  ByPrefix() noexcept { SetScorer(&DefaultConstScore()); }
+
   static void visit(const SubReader& segment, const TermReader& reader,
                     const ByPrefixOptions& options, FilterVisitor& visitor);
 
@@ -71,7 +70,9 @@ class ByPrefix : public FilterWithField<ByPrefixOptions> {
                                           const irs::field_id field,
                                           const bytes_view term);
 
-  PrepareCollector::ptr MakeCollectorImpl(const Scorer* scorer) const final;
+  PrepareCollector::ptr MakeCollectorImpl(const Scorer* scorer,
+                                          StatsArena& stats,
+                                          uint32_t threads) const final;
 
   TermPredicate::ptr CompileTermPredicate() const final;
 

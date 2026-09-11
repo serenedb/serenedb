@@ -69,9 +69,7 @@ class SegmentReaderImpl final : public SubReader {
 
   const DocumentMask* docs_mask() const final { return _docs_mask.get(); }
 
-  DocIterator::ptr docs_iterator() const final;
-
-  DocIterator::ptr mask(DocIterator::ptr&& it) const final;
+  lead::Node::ptr docs_iterator() const final;
 
   const TermReader* field(field_id id) const final {
     return _field_reader->field(id);
@@ -84,8 +82,8 @@ class SegmentReaderImpl final : public SubReader {
   NormReader::ptr norms(field_id field) const final;
 
   const ColumnReader* Column(field_id field) const final;
-  const CentroidsTree* Ivf(field_id field) const final;
-  IndexInput::ptr ReopenIvf() const final;
+  const AnnIndex* Ann(field_id field) const final;
+  IndexInput::ptr ReopenAnn() const final;
   const ColReader* GetColReader() const final {
     return _data ? _data->col_reader.get() : nullptr;
   }

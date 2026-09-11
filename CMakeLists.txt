@@ -37,6 +37,8 @@ option(AUTO_UPDATE_MODULES "automatically update git modules" ON)
 
 option(SDB_IOURING "allow to use iouring" ON)
 
+option(SDB_EMBEDDED_DOCS "embed the documentation from docs/ into serened" ON)
+
 find_package(Git 1.5.3 REQUIRED)
 
 # ------------------------------------------------------------------------------

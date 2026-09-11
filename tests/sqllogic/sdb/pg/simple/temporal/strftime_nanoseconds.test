@@ -1,0 +1,37 @@
+statement ok
+SET TimeZone = 'Europe/Berlin';
+
+query
+SELECT strftime(TIMESTAMP_NS '2025-01-01 00:00:00.123456789', '%Y-%m-%d %H:%M:%S.%n %a %j %G-%V') AS naive, strftime(TIMESTAMP_NS '2025-01-01 00:00:00.123456789', '%n %Y') AS naive_short, strftime(TIMESTAMP_NS '2025-01-01 00:00:00.000000001', '%S.%n|%f|%g') AS naive_tail;
+----
+naive	naive_short	naive_tail
+2025-01-01 00:00:00.123456789 Wed 001 2025-01	123456789 2025	00.000000001|000000|000
+
+query
+SELECT strftime(TIMESTAMPTZ '2025-10-26 00:30:00.123456+00'::TIMESTAMPTZ_NS, '%Y-%m-%d %H:%M:%S.%n %z %Z %a %j %G-%V') AS zoned, strftime(TIMESTAMPTZ '1940-07-20 03:22:00.792914+00'::TIMESTAMPTZ_NS, '%n %Y') AS zoned_old, strftime(TIMESTAMPTZ '1850-06-01 12:00:00.5+00'::TIMESTAMPTZ_NS, '%Y-%m-%d %S.%n') AS zoned_outside_table;
+----
+zoned	zoned_old	zoned_outside_table
+2025-10-26 02:30:00.123456000 +02 Europe/Berlin Sun 299 2025-43	792914000 1940	1850-06-01 28.500000000
+
+statement ok
+CREATE TABLE ns_rows AS SELECT (TIMESTAMP_NS '2025-01-01 00:00:00.123456789' + INTERVAL (i * 977) MICROSECOND)::TIMESTAMP_NS AS ts, (TIMESTAMPTZ '2025-10-26 00:00:00+00' + INTERVAL (i * 977) MICROSECOND)::TIMESTAMPTZ_NS AS tstz, '%Y-%m-%d %H:%M:%S.%n %z %a %j %G-%V' || repeat('', i % 2) AS fmt FROM range(3000) t(i);
+
+statement ok
+CREATE TABLE ns_strings AS SELECT strftime(ts, '%Y-%m-%d %H:%M:%S.%n %a %j %G-%V') AS naive, strftime(tstz, '%Y-%m-%d %H:%M:%S.%n %z %a %j %G-%V') AS zoned, strftime(tstz, fmt) AS zoned_dynamic FROM ns_rows;
+
+query
+SELECT count(*), count(DISTINCT naive), count(DISTINCT zoned), min(length(naive)), max(length(naive)), min(length(zoned)), max(length(zoned)), count(*) FILTER (WHERE zoned <> zoned_dynamic) FROM ns_strings;
+----
+count	count	count	min	max	min	max	count
+3000	3000	3000	45	45	49	49	0
+
+query
+SELECT naive, zoned FROM ns_strings ORDER BY naive LIMIT 3;
+----
+naive	zoned
+2025-01-01 00:00:00.123457000 Wed 001 2025-01	2025-10-26 02:00:00.000000000 +02 Sun 299 2025-43
+2025-01-01 00:00:00.124434000 Wed 001 2025-01	2025-10-26 02:00:00.000977000 +02 Sun 299 2025-43
+2025-01-01 00:00:00.125411000 Wed 001 2025-01	2025-10-26 02:00:00.001954000 +02 Sun 299 2025-43
+
+statement ok
+SET TimeZone = 'Etc/UTC';

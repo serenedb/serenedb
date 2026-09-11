@@ -29,7 +29,7 @@
 
 namespace sdb::connector {
 
-void FromPrefix(irs::BooleanFilter& parent, const FilterContext& ctx,
+void FromPrefix(BoolTarget parent, const FilterContext& ctx,
                 const SearchColumnInfo& column_info,
                 const duckdb::BoundFunctionExpression& func) {
   SDB_ASSERT(func.GetChildren().size() == 1);
@@ -48,7 +48,6 @@ void FromPrefix(irs::BooleanFilter& parent, const FilterContext& ctx,
   *filter.mutable_field_id() =
     PickPerKindFieldId(column_info, duckdb::LogicalTypeId::VARCHAR);
   auto& pf_opts = *filter.mutable_options();
-  pf_opts.scored_terms_limit = ctx.scored_terms_limit;
   pf_opts.term.assign(irs::ViewCast<irs::byte_type>(std::string_view{prefix}));
 }
 

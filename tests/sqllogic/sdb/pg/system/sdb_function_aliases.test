@@ -1,5 +1,5 @@
 # Every duckdb_* metadata surface is also reachable under an sdb_* name:
-# 31 table functions, the 9 default views that shadow them, the 2 default table
+# 32 table functions, the 9 default views that shadow them, the 2 default table
 # macros and the duckdb_format_sql scalar. Aliases share the source's catalog
 # entry, so named parameters, overloads and pushdown flags come along for free.
 
@@ -25,14 +25,16 @@ statement ok
 CREATE SEQUENCE al_seq START 5
 
 
-# Drift guard: a fork rebase that adds a duckdb_* table function without an
-# alias fails here. alias_of is set on the copy, so the map is self-describing.
+# Drift guard: a fork rebase that adds a table function carrying duckdb_ in its
+# name without an alias fails here. The pattern is unanchored so a name that
+# embeds the substring, as truncate_duckdb_logs does, is covered too. alias_of
+# is set on the copy, so the map is self-describing.
 
 query
 SELECT count(*) AS unaliased
 FROM duckdb_functions() src
 WHERE src.database_name = 'system' AND src.schema_name = 'main'
-  AND src.function_type = 'table' AND src.function_name LIKE 'duckdb\_%'
+  AND src.function_type = 'table' AND src.function_name LIKE '%duckdb\_%'
   AND NOT EXISTS (
     SELECT 1 FROM duckdb_functions() a WHERE a.alias_of = src.function_name)
 ----
@@ -42,10 +44,22 @@ unaliased
 query
 SELECT count(DISTINCT function_name) AS aliases
 FROM duckdb_functions()
-WHERE alias_of IS NOT NULL AND function_name LIKE 'sdb\_%'
+WHERE alias_of IS NOT NULL AND function_name LIKE '%sdb\_%'
 ----
 aliases
-32
+33
+
+
+# The one alias whose name is not simply the source with a different prefix.
+# Not called here: it empties the log storage the whole server shares.
+
+query
+SELECT function_name, alias_of
+FROM duckdb_functions()
+WHERE function_name = 'truncate_sdb_logs'
+----
+function_name	alias_of
+truncate_sdb_logs	truncate_duckdb_logs
 
 
 # The alias returns the source's rows, not a re-stated shape. Scoped to this
@@ -54,23 +68,23 @@ aliases
 
 query
 SELECT
-  (SELECT count(*) FROM sdb_tables() WHERE table_name LIKE 'al%')
-    = (SELECT count(*) FROM duckdb_tables() WHERE table_name LIKE 'al%') AS tables,
-  (SELECT count(*) FROM sdb_columns() WHERE table_name LIKE 'al%')
-    = (SELECT count(*) FROM duckdb_columns() WHERE table_name LIKE 'al%') AS columns,
-  (SELECT count(*) FROM sdb_constraints() WHERE table_name LIKE 'al%')
-    = (SELECT count(*) FROM duckdb_constraints() WHERE table_name LIKE 'al%') AS constraints,
-  (SELECT count(*) FROM sdb_indexes() WHERE table_name LIKE 'al%')
-    = (SELECT count(*) FROM duckdb_indexes() WHERE table_name LIKE 'al%') AS indexes,
-  (SELECT count(*) FROM sdb_sequences() WHERE sequence_name LIKE 'al%')
-    = (SELECT count(*) FROM duckdb_sequences() WHERE sequence_name LIKE 'al%') AS sequences,
+  (SELECT count(*) FROM sdb_tables() WHERE database_name = current_database() AND table_name LIKE 'al%')
+    = (SELECT count(*) FROM duckdb_tables() WHERE database_name = current_database() AND table_name LIKE 'al%') AS tables,
+  (SELECT count(*) FROM sdb_columns() WHERE database_name = current_database() AND table_name LIKE 'al%')
+    = (SELECT count(*) FROM duckdb_columns() WHERE database_name = current_database() AND table_name LIKE 'al%') AS columns,
+  (SELECT count(*) FROM sdb_constraints() WHERE database_name = current_database() AND table_name LIKE 'al%')
+    = (SELECT count(*) FROM duckdb_constraints() WHERE database_name = current_database() AND table_name LIKE 'al%') AS constraints,
+  (SELECT count(*) FROM sdb_indexes() WHERE database_name = current_database() AND table_name LIKE 'al%')
+    = (SELECT count(*) FROM duckdb_indexes() WHERE database_name = current_database() AND table_name LIKE 'al%') AS indexes,
+  (SELECT count(*) FROM sdb_sequences() WHERE database_name = current_database() AND sequence_name LIKE 'al%')
+    = (SELECT count(*) FROM duckdb_sequences() WHERE database_name = current_database() AND sequence_name LIKE 'al%') AS sequences,
   (SELECT count(*) FROM sdb_types() WHERE type_name = 'BIGINT')
     = (SELECT count(*) FROM duckdb_types() WHERE type_name = 'BIGINT') AS types,
-  (SELECT count(*) FROM sdb_views() WHERE view_name LIKE 'al%')
-    = (SELECT count(*) FROM duckdb_views() WHERE view_name LIKE 'al%') AS views,
+  (SELECT count(*) FROM sdb_views() WHERE database_name = current_database() AND view_name LIKE 'al%')
+    = (SELECT count(*) FROM duckdb_views() WHERE database_name = current_database() AND view_name LIKE 'al%') AS views,
   (SELECT count(*) FROM sdb_schemas() WHERE schema_name = 'main')
     = (SELECT count(*) FROM duckdb_schemas() WHERE schema_name = 'main') AS schemas,
-  (SELECT count(*) FROM sdb_tables() WHERE table_name LIKE 'al%') > 0 AS not_vacuous
+  (SELECT count(*) FROM sdb_tables() WHERE database_name = current_database() AND table_name LIKE 'al%') > 0 AS not_vacuous
 ----
 tables	columns	constraints	indexes	sequences	types	views	schemas	not_vacuous
 t	t	t	t	t	t	t	t	t
@@ -81,23 +95,23 @@ t	t	t	t	t	t	t	t	t
 
 query
 SELECT
-  (SELECT count(*) FROM sdb_tables WHERE table_name LIKE 'al%')
-    = (SELECT count(*) FROM duckdb_tables WHERE table_name LIKE 'al%') AS tables,
-  (SELECT count(*) FROM sdb_columns WHERE table_name LIKE 'al%')
-    = (SELECT count(*) FROM duckdb_columns WHERE table_name LIKE 'al%') AS columns,
-  (SELECT count(*) FROM sdb_constraints WHERE table_name LIKE 'al%')
-    = (SELECT count(*) FROM duckdb_constraints WHERE table_name LIKE 'al%') AS constraints,
+  (SELECT count(*) FROM sdb_tables WHERE database_name = current_database() AND table_name LIKE 'al%')
+    = (SELECT count(*) FROM duckdb_tables WHERE database_name = current_database() AND table_name LIKE 'al%') AS tables,
+  (SELECT count(*) FROM sdb_columns WHERE database_name = current_database() AND table_name LIKE 'al%')
+    = (SELECT count(*) FROM duckdb_columns WHERE database_name = current_database() AND table_name LIKE 'al%') AS columns,
+  (SELECT count(*) FROM sdb_constraints WHERE database_name = current_database() AND table_name LIKE 'al%')
+    = (SELECT count(*) FROM duckdb_constraints WHERE database_name = current_database() AND table_name LIKE 'al%') AS constraints,
   (SELECT count(*) FROM sdb_databases WHERE database_name = current_database())
     = (SELECT count(*) FROM duckdb_databases WHERE database_name = current_database()) AS databases,
-  (SELECT count(*) FROM sdb_indexes WHERE table_name LIKE 'al%')
-    = (SELECT count(*) FROM duckdb_indexes WHERE table_name LIKE 'al%') AS indexes,
+  (SELECT count(*) FROM sdb_indexes WHERE database_name = current_database() AND table_name LIKE 'al%')
+    = (SELECT count(*) FROM duckdb_indexes WHERE database_name = current_database() AND table_name LIKE 'al%') AS indexes,
   (SELECT count(*) FROM sdb_schemas WHERE schema_name = 'main')
     = (SELECT count(*) FROM duckdb_schemas WHERE schema_name = 'main') AS schemas,
   (SELECT count(*) FROM sdb_types WHERE type_name = 'BIGINT')
     = (SELECT count(*) FROM duckdb_types WHERE type_name = 'BIGINT') AS types,
-  (SELECT count(*) FROM sdb_views WHERE view_name LIKE 'al%')
-    = (SELECT count(*) FROM duckdb_views WHERE view_name LIKE 'al%') AS views,
-  (SELECT count(*) FROM sdb_tables WHERE table_name LIKE 'al%') > 0 AS not_vacuous
+  (SELECT count(*) FROM sdb_views WHERE database_name = current_database() AND view_name LIKE 'al%')
+    = (SELECT count(*) FROM duckdb_views WHERE database_name = current_database() AND view_name LIKE 'al%') AS views,
+  (SELECT count(*) FROM sdb_tables WHERE database_name = current_database() AND table_name LIKE 'al%') > 0 AS not_vacuous
 ----
 tables	columns	constraints	databases	indexes	schemas	types	views	not_vacuous
 t	t	t	t	t	t	t	t	t
@@ -118,29 +132,29 @@ t
 query
 SELECT
   (SELECT count(*) FROM (
-     (SELECT * FROM sdb_tables WHERE table_name LIKE 'al%'
-      EXCEPT ALL SELECT * FROM duckdb_tables WHERE table_name LIKE 'al%')
+     (SELECT * FROM sdb_tables WHERE database_name = current_database() AND table_name LIKE 'al%'
+      EXCEPT ALL SELECT * FROM duckdb_tables WHERE database_name = current_database() AND table_name LIKE 'al%')
      UNION ALL
-     (SELECT * FROM duckdb_tables WHERE table_name LIKE 'al%'
-      EXCEPT ALL SELECT * FROM sdb_tables WHERE table_name LIKE 'al%')) z) AS tables,
+     (SELECT * FROM duckdb_tables WHERE database_name = current_database() AND table_name LIKE 'al%'
+      EXCEPT ALL SELECT * FROM sdb_tables WHERE database_name = current_database() AND table_name LIKE 'al%')) z) AS tables,
   (SELECT count(*) FROM (
-     (SELECT * FROM sdb_views WHERE view_name LIKE 'al%'
-      EXCEPT ALL SELECT * FROM duckdb_views WHERE view_name LIKE 'al%')
+     (SELECT * FROM sdb_views WHERE database_name = current_database() AND view_name LIKE 'al%'
+      EXCEPT ALL SELECT * FROM duckdb_views WHERE database_name = current_database() AND view_name LIKE 'al%')
      UNION ALL
-     (SELECT * FROM duckdb_views WHERE view_name LIKE 'al%'
-      EXCEPT ALL SELECT * FROM sdb_views WHERE view_name LIKE 'al%')) z) AS views,
+     (SELECT * FROM duckdb_views WHERE database_name = current_database() AND view_name LIKE 'al%'
+      EXCEPT ALL SELECT * FROM sdb_views WHERE database_name = current_database() AND view_name LIKE 'al%')) z) AS views,
   (SELECT count(*) FROM (
-     (SELECT * FROM sdb_indexes WHERE table_name LIKE 'al%'
-      EXCEPT ALL SELECT * FROM duckdb_indexes WHERE table_name LIKE 'al%')
+     (SELECT * FROM sdb_indexes WHERE database_name = current_database() AND table_name LIKE 'al%'
+      EXCEPT ALL SELECT * FROM duckdb_indexes WHERE database_name = current_database() AND table_name LIKE 'al%')
      UNION ALL
-     (SELECT * FROM duckdb_indexes WHERE table_name LIKE 'al%'
-      EXCEPT ALL SELECT * FROM sdb_indexes WHERE table_name LIKE 'al%')) z) AS indexes,
+     (SELECT * FROM duckdb_indexes WHERE database_name = current_database() AND table_name LIKE 'al%'
+      EXCEPT ALL SELECT * FROM sdb_indexes WHERE database_name = current_database() AND table_name LIKE 'al%')) z) AS indexes,
   (SELECT count(*) FROM (
-     (SELECT * FROM sdb_constraints WHERE table_name LIKE 'al%'
-      EXCEPT ALL SELECT * FROM duckdb_constraints WHERE table_name LIKE 'al%')
+     (SELECT * EXCLUDE (constraint_index) FROM sdb_constraints WHERE database_name = current_database() AND table_name LIKE 'al%'
+      EXCEPT ALL SELECT * EXCLUDE (constraint_index) FROM duckdb_constraints WHERE database_name = current_database() AND table_name LIKE 'al%')
      UNION ALL
-     (SELECT * FROM duckdb_constraints WHERE table_name LIKE 'al%'
-      EXCEPT ALL SELECT * FROM sdb_constraints WHERE table_name LIKE 'al%')) z) AS constraints
+     (SELECT * EXCLUDE (constraint_index) FROM duckdb_constraints WHERE database_name = current_database() AND table_name LIKE 'al%'
+      EXCEPT ALL SELECT * EXCLUDE (constraint_index) FROM sdb_constraints WHERE database_name = current_database() AND table_name LIKE 'al%')) z) AS constraints
 ----
 tables	views	indexes	constraints
 0	0	0	0
@@ -158,9 +172,9 @@ statement ok
 INSERT INTO duckdb_tables VALUES (42)
 
 query
-SELECT (SELECT count(*) FROM system.main.sdb_tables WHERE table_name LIKE 'al%')
-     = (SELECT count(*) FROM system.main.duckdb_tables WHERE table_name LIKE 'al%')
-   AND (SELECT count(*) FROM system.main.sdb_tables WHERE table_name LIKE 'al%') > 0
+SELECT (SELECT count(*) FROM system.main.sdb_tables WHERE database_name = current_database() AND table_name LIKE 'al%')
+     = (SELECT count(*) FROM system.main.duckdb_tables WHERE database_name = current_database() AND table_name LIKE 'al%')
+   AND (SELECT count(*) FROM system.main.sdb_tables WHERE database_name = current_database() AND table_name LIKE 'al%') > 0
    AS not_hijacked
 ----
 not_hijacked
@@ -257,6 +271,28 @@ SELECT
 ----
 profiling_settings	logs_parsed
 t	t
+
+
+# Macro aliases wrap their source instead of sharing its entry, so a parameter
+# reaches the source's body as a non-constant and only the positional form
+# binds. duckdb_logs_parsed's body needs log_type constant at bind time, which
+# a macro parameter is not, so no wrapper body can accept the named form -- the
+# aliases would have to restate the source's definition to do that. The source
+# itself takes log_type := either way.
+
+query
+SELECT (SELECT count(*) FROM (DESCRIBE SELECT * FROM sdb_logs_parsed('HTTP'))) > 0
+         AS alias_positional,
+       (SELECT count(*) FROM (DESCRIBE SELECT * FROM duckdb_logs_parsed(log_type := 'HTTP'))) > 0
+         AS source_named
+----
+alias_positional	source_named
+t	t
+
+statement error
+SELECT * FROM sdb_logs_parsed(log_type := 'HTTP')
+----
+db error: ERROR: Macro duckdb_logs_parsed() does not support the supplied arguments.<slt:ignore>
 
 
 # The scalar alias, both overloads.

@@ -35,6 +35,7 @@ inline constexpr std::string_view kSegmentMemoryMaxSetting =
   "segment_memory_max";
 inline constexpr std::string_view kSearchBackfillGroupBytesSetting =
   "search_backfill_group_bytes";
+inline constexpr std::string_view kOptimizeTopKSetting = "optimize_top_k";
 inline constexpr std::string_view kSegmentDocsMaxSetting = "segment_docs_max";
 inline constexpr std::string_view kCompactionMaxSegmentsSetting =
   "compaction_max_segments";

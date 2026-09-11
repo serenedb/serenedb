@@ -39,26 +39,27 @@ struct AutomatonOptions {
 
   bstring pattern;
   std::shared_ptr<const CompiledAcceptor> compiled;
-  size_t scored_terms_limit{1024};
 
   AutomatonOptions() = default;
-  AutomatonOptions(automaton acceptor, bytes_view pattern,
-                   size_t scored_terms_limit);
+  AutomatonOptions(automaton acceptor, bytes_view pattern);
 
   bool operator==(const AutomatonOptions& rhs) const noexcept {
-    return pattern == rhs.pattern &&
-           scored_terms_limit == rhs.scored_terms_limit;
+    return pattern == rhs.pattern;
   }
 };
 
 class AutomatonFilter final : public FilterWithField<AutomatonOptions> {
  public:
+  AutomatonFilter() noexcept { SetScorer(&DefaultConstScore()); }
+
   static field_visitor visitor(const automaton& acceptor);
 
   QueryBuilder::ptr PrepareSegment(const SubReader& segment,
                                    const PrepareContext& ctx) const final;
 
-  PrepareCollector::ptr MakeCollectorImpl(const Scorer* scorer) const final;
+  PrepareCollector::ptr MakeCollectorImpl(const Scorer* scorer,
+                                          StatsArena& stats,
+                                          uint32_t threads) const final;
 
   TermPredicate::ptr CompileTermPredicate() const final;
 

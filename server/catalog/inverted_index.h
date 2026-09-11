@@ -129,8 +129,8 @@ void Validate(std::string_view label, const duckdb::LogicalType& type);
 
 }  // namespace ivf
 
+using persistence::AnnColumnConfig;
 using persistence::ExpressionKey;
-using persistence::IVFColumnConfig;
 
 struct InvertedIndexEntryInfo {
   ObjectId text_dictionary = ObjectId::none();
@@ -141,27 +141,33 @@ struct InvertedIndexEntryInfo {
   bool hyperloglog = false;
   duckdb::CompressionType compression =
     duckdb::CompressionType::COMPRESSION_AUTO;
-  std::optional<IVFColumnConfig> ivf_config;
+  std::optional<AnnColumnConfig> ann_config;
 
   irs::field_id null_field_id = irs::field_limits::invalid();
   irs::field_id bool_field_id = irs::field_limits::invalid();
   irs::field_id numeric_field_id = irs::field_limits::invalid();
 
-  bool IsIVF() const noexcept { return ivf_config.has_value(); }
+  bool IsAnn() const noexcept { return ann_config.has_value(); }
+  bool IsIVF() const noexcept {
+    return ann_config && ann_config->kind == irs::AnnKind::Ivf;
+  }
+  bool IsHNSW() const noexcept {
+    return ann_config && ann_config->kind == irs::AnnKind::Hnsw;
+  }
   bool HasTextDictionary() const noexcept { return text_dictionary.isSet(); }
   bool HasJsonLeafFields() const noexcept {
     return irs::field_limits::valid(numeric_field_id) &&
            irs::field_limits::valid(bool_field_id);
   }
   bool IsTermDict() const noexcept {
-    return !IsIVF() && (indexed_term_dict || HasTextDictionary());
+    return !IsAnn() && (indexed_term_dict || HasTextDictionary());
   }
-  bool IsStored() const noexcept { return store_values || IsIVF(); }
+  bool IsStored() const noexcept { return store_values || IsAnn(); }
 };
 
-// The IVF descriptor for an entry with an ivf_config (nullopt otherwise), keyed
+// The ANN descriptor for an entry with an ann_config (nullopt otherwise), keyed
 // off `field_id` (its centroids/postings ids).
-std::optional<irs::IvfInfo> IvfInfoForEntry(
+std::optional<irs::AnnInfo> AnnInfoForEntry(
   irs::field_id field_id, const InvertedIndexEntryInfo& entry);
 
 // The text-search dictionaries an index's entries name, resolved once. The
@@ -188,13 +194,17 @@ struct ColumnTokenizer {
   Tokenizer::TokenizerWrapper analyzer;
   irs::IndexFeatures features = irs::IndexFeatures::None;
   irs::field_id tokenizer_column = irs::field_limits::invalid();
+  // No text dictionary: the whole value is one keyword term. The sink can
+  // invert it directly via Document::InsertKeyword, skipping the tokenizer.
+  bool verbatim = false;
 };
 
 // The analyzer + features for one entry: its text dictionary (the default
 // string tokenizer when absent) plus its synthetic tokenizer column.
 // Entry-level rather than index-level, for a config merged across several
 // indexes.
-ColumnTokenizer TokenizerForEntry(const TokenizerMap& dicts,
+ColumnTokenizer TokenizerForEntry(duckdb::ClientContext& ctx,
+                                  const TokenizerMap& dicts,
                                   const InvertedIndexEntryInfo& entry);
 
 // One inverted index, in the form a catalog entry is built from -- and also an
@@ -337,7 +347,8 @@ class InvertedIndex final : public Index, public irs::IndexFieldOptions {
   static void AppendKindSuffix(std::string& out,
                                const duckdb::LogicalType& type);
 
-  ColumnTokenizer GetTokenizer(const TokenizerMap& dicts,
+  ColumnTokenizer GetTokenizer(duckdb::ClientContext& ctx,
+                               const TokenizerMap& dicts,
                                irs::field_id field_id) const;
 
   bool IsKeywordField(duckdb::ClientContext& context,
@@ -346,7 +357,7 @@ class InvertedIndex final : public Index, public irs::IndexFieldOptions {
   irs::field_id FindFieldIdBySerialized(
     std::string_view serialized_expr) const noexcept;
 
-  std::optional<irs::IvfInfo> GetIvfInfo(irs::field_id field_id) const;
+  std::optional<irs::AnnInfo> GetAnnInfo(irs::field_id field_id) const;
 
   const InvertedIndexOptions& GetOptions() const noexcept { return _options; }
 

@@ -70,12 +70,23 @@ class JsonSource {
   using Document = simdjson::ondemand::document;
   using Value = simdjson::ondemand::value;
   using Object = simdjson::ondemand::object;
-  using JsonType = simdjson::ondemand::json_type;
+
+ private:
   using ArrayIterator = simdjson::ondemand::array_iterator;
   using ArrayRange = std::pair<ArrayIterator, ArrayIterator>;
 
  public:
+  using JsonType = simdjson::ondemand::json_type;
+
   explicit JsonSource(Document& doc) : _curr{doc.get_value().value()} {}
+
+  JsonType Type() {
+    JsonType type;
+    if (_curr.type().get(type) != simdjson::SUCCESS) [[unlikely]] {
+      THROW_SQL_ERROR(ERR_MSG("JSON: malformed value"));
+    }
+    return type;
+  }
 
   bool ReadBool() { return Read(_curr.get_bool(), JsonType::boolean); }
   int64_t ReadSignedInt64() {

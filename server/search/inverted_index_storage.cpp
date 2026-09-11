@@ -39,8 +39,11 @@
 #include <iresearch/store/directory_attributes.hpp>
 #include <iresearch/store/fs_directory.hpp>
 #include <iresearch/store/mmap_directory.hpp>
+#include <iresearch/utils/async.hpp>
 #include <memory>
 #include <system_error>
+#include <yaclib/coro/await.hpp>
+#include <yaclib/coro/future.hpp>
 
 #include "basics/assert.h"
 #include "basics/down_cast.h"
@@ -200,6 +203,7 @@ InvertedIndexStorage::InvertedIndexStorage(ObjectId db_id,
                                               resource_manager);
 
   irs::IndexWriterOptions writer_options;
+  writer_options.ann_env = &AnnBuildEnv();
   writer_options.segment_memory_max = options.segment_memory_max;
   writer_options.segment_docs_max = options.segment_docs_max;
 #ifdef SDB_DEV
@@ -295,21 +299,12 @@ InvertedIndexStorage::InvertedIndexStorage(ObjectId db_id,
     std::move(reader), std::move(file_manifest)));
 }
 
-void RemoveDroppedStorageDir(const std::filesystem::path& path,
-                             size_t parent_levels) {
+void RemoveDroppedStorageDir(const std::filesystem::path& path) {
   std::error_code ec;
   std::filesystem::remove_all(path, ec);
   if (ec) {
     SDB_WARN(GENERAL, "could not remove dropped storage '", path.string(),
              "': ", ec.message());
-    return;
-  }
-  auto parent = path;
-  for (size_t level = 0; level < parent_levels; ++level) {
-    parent = parent.parent_path();
-    if (!std::filesystem::remove(parent, ec) || ec) {
-      return;
-    }
   }
 }
 
@@ -325,7 +320,7 @@ InvertedIndexStorage::~InvertedIndexStorage() {
     return;
   }
   BackgroundScheduler::instance()
-    .Run([path = _path] { RemoveDroppedStorageDir(path, 3); })
+    .Run([path = _path] { RemoveDroppedStorageDir(path); })
     .Detach();
 }
 
@@ -365,34 +360,16 @@ void InvertedIndexStorage::CheckpointRefresh() {
                               /*for_checkpoint=*/true);
 }
 
-InvertedIndexStorage::Stats InvertedIndexStorage::UpdateStatsUnsafe(
+StoreStats InvertedIndexStorage::UpdateStatsUnsafe(
   InvertedIndexSnapshotPtr inverted_index_snapshot) const {
-  Stats stats;
+  StoreStats stats;
   if (inverted_index_snapshot) {
-    auto& reader = inverted_index_snapshot->reader;
-    SDB_ASSERT(reader);
-    auto& segments = reader->Meta().index_meta.segments;
-    stats.numSegments = segments.size();
-    stats.numDocs = reader->docs_count();
-    stats.numLiveDocs = reader->live_docs_count();
-    stats.numFiles = 1 + stats.numSegments;
-    for (const auto& segment : segments) {
-      const auto& meta = segment.meta;
-      stats.indexSize += meta.byte_size;
-      stats.numFiles += meta.files.size();
-    }
+    stats = StoreStats::FromReader(inverted_index_snapshot->reader);
   }
   if (_writer) {
     stats.numBufferedDocs = _writer->BufferedDocs();
   }
-  stats.numFailedCommits = _num_failed_commits.load(std::memory_order_relaxed);
-  stats.numFailedCleanups =
-    _num_failed_cleanups.load(std::memory_order_relaxed);
-  stats.numFailedConsolidations =
-    _num_failed_consolidations.load(std::memory_order_relaxed);
-  stats.avgCommitTimeMs = _avg_commit_time_ms.Average();
-  stats.avgCleanupTimeMs = _avg_cleanup_time_ms.Average();
-  stats.avgConsolidationTimeMs = _avg_consolidation_time_ms.Average();
+  _maintenance.Fill(stats);
   return stats;
 }
 
@@ -402,11 +379,7 @@ ResultWithTime InvertedIndexStorage::CleanupUnsafe() {
   uint64_t time_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
                        std::chrono::steady_clock::now() - begin)
                        .count();
-  if (!result.ok()) {
-    _num_failed_cleanups.fetch_add(1, std::memory_order_relaxed);
-  } else {
-    _avg_cleanup_time_ms.Record(time_ms);
-  }
+  _maintenance.RecordCleanup(result, time_ms);
   return {std::move(result), time_ms};
 }
 
@@ -428,18 +401,23 @@ ResultWithTime InvertedIndexStorage::CompactUnsafe(
   const irs::CompactionPolicy& policy,
   const irs::MergeWriter::FlushProgress& progress, bool& empty_compaction,
   const irs::IndexFieldOptions* field_options) {
+  return irs::GetReady(CompactUnsafeAsync(policy, progress, empty_compaction,
+                                          field_options, /*env=*/nullptr));
+}
+
+auto InvertedIndexStorage::CompactUnsafeAsync(
+  const irs::CompactionPolicy& policy,
+  const irs::MergeWriter::FlushProgress& progress, bool& empty_compaction,
+  const irs::IndexFieldOptions* field_options, const irs::AnnBuildEnv* env)
+  -> yaclib::Future<ResultWithTime> {
   auto begin = std::chrono::steady_clock::now();
-  auto result =
-    CompactUnsafeImpl(policy, progress, empty_compaction, field_options);
+  auto result = co_await CompactUnsafeImpl(policy, progress, empty_compaction,
+                                           field_options, env);
   uint64_t time_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
                        std::chrono::steady_clock::now() - begin)
                        .count();
-  if (!result.ok()) {
-    _num_failed_consolidations.fetch_add(1, std::memory_order_relaxed);
-  } else if (!empty_compaction) {
-    _avg_consolidation_time_ms.Record(time_ms);
-  }
-  return {std::move(result), time_ms};
+  _maintenance.RecordCompaction(result, empty_compaction, time_ms);
+  co_return ResultWithTime{std::move(result), time_ms};
 }
 
 ResultWithTime InvertedIndexStorage::RefreshUnsafe(
@@ -456,53 +434,51 @@ ResultWithTime InvertedIndexStorage::RefreshUnsafe(
   }
   SDB_IF_FAILURE("Search::CrashAfterCommit") { SDB_IMMEDIATE_ABORT(); }
 
-  if (!result.ok()) {
-    _num_failed_commits.fetch_add(1, std::memory_order_relaxed);
-  } else if (code == RefreshResult::Done) {
-    _avg_commit_time_ms.Record(time_ms);
-  }
+  _maintenance.RecordCommit(result, code, time_ms);
 
   return {std::move(result), time_ms};
 }
 
-absl::Status InvertedIndexStorage::CompactUnsafeImpl(
+auto InvertedIndexStorage::CompactUnsafeImpl(
   const irs::CompactionPolicy& policy,
   const irs::MergeWriter::FlushProgress& progress, bool& empty_compaction,
-  const irs::IndexFieldOptions* field_options) {
+  const irs::IndexFieldOptions* field_options, const irs::AnnBuildEnv* env)
+  -> yaclib::Future<absl::Status> {
   empty_compaction = false;
 
   if (!policy) {
-    return absl::InvalidArgumentError(
+    co_return absl::InvalidArgumentError(
       absl::StrCat("unset compaction policy while executing compaction policy "
                    "on Search index '",
                    GetId().id(), "'"));
   }
 
   try {
-    const auto res = _writer->Compact(policy, field_options, nullptr, progress);
+    const auto res = co_await _writer->CompactAsync(policy, field_options,
+                                                    nullptr, progress, env);
     if (res.error == irs::CompactionError::Fail) {
-      return absl::InternalError(absl::StrCat(
+      co_return absl::InternalError(absl::StrCat(
         "failure while executing compaction policy on Search index '",
         GetId().id(), "'"));
     }
     if (res.error == irs::CompactionError::Busy) {
       empty_compaction = false;
-      return absl::OkStatus();
+      co_return absl::OkStatus();
     }
 
     empty_compaction = (res.size == 0);
   } catch (const std::exception& e) {
-    return absl::InternalError(
+    co_return absl::InternalError(
       absl::StrCat("caught exception while executing compaction policy "
                    "on Search index '",
                    GetId().id(), "': ", e.what()));
   } catch (...) {
-    return absl::InternalError(
+    co_return absl::InternalError(
       absl::StrCat("caught exception while executing compaction policy "
                    "on Search index '",
                    GetId().id(), "'"));
   }
-  return absl::OkStatus();
+  co_return absl::OkStatus();
 }
 
 absl::Status InvertedIndexStorage::RefreshUnsafeImpl(
@@ -644,7 +620,7 @@ void InvertedIndexStorage::FinishCreation() {
   _phase = Phase::Active;
 }
 
-InvertedIndexStorage::Stats InvertedIndexStorage::GetStats() const {
+StoreStats InvertedIndexStorage::GetStats() const {
   return UpdateStatsUnsafe(GetInvertedIndexSnapshot());
 }
 

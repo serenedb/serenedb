@@ -70,6 +70,12 @@ inline constexpr duckdb::column_t kColumnIdentifierGeneratedPk =
 // skips it), so a virtual column under that id can never be named in SQL.
 inline constexpr duckdb::column_t kColumnIdentifierPkRowNumber =
   UINT64_C(18446744073709551610);
+inline constexpr duckdb::column_t kColumnIdentifierPkVirtualStart =
+  UINT64_C(9223372036854779904);
+
+constexpr duckdb::column_t PKVirtualColumnId(size_t position) noexcept {
+  return kColumnIdentifierPkVirtualStart + position;
+}
 
 class SereneDBTableEntry : public duckdb::DuckTableEntry {
  public:
@@ -153,8 +159,8 @@ class SereneDBTableEntry : public duckdb::DuckTableEntry {
   void UndoAlter(duckdb::ClientContext& context,
                  duckdb::AlterInfo& info) override;
 
-  // Convert a virtual column ID (VIRTUAL_COLUMN_START + i) back to a real
-  // column index. Returns DConstants::INVALID_INDEX if not a PK virtual col.
+  // Convert a virtual column ID (PKVirtualColumnId(i)) back to a real column
+  // index. Returns DConstants::INVALID_INDEX if not a PK virtual col.
   static duckdb::column_t VirtualToPKColumnIndex(duckdb::column_t virtual_id);
 
   // This version as a definition again -- the durable shape, which the log

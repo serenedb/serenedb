@@ -52,13 +52,12 @@
 #include "basics/duckdb_engine.h"
 #include "fst/arcsort.h"
 #include "fst/minimize.h"
-#include "iresearch/analysis/tokenizers.hpp"
+#include "insert_field.hpp"
+#include "iresearch/analysis/keyword_tokenizer.hpp"
 #include "iresearch/formats/formats.hpp"
 #include "iresearch/index/directory_reader.hpp"
 #include "iresearch/index/index_features.hpp"
 #include "iresearch/index/index_writer.hpp"
-#include "iresearch/search/bitset_doc_iterator.hpp"
-#include "iresearch/search/conjunction.hpp"
 #include "iresearch/search/prefix_filter.hpp"
 #include "iresearch/search/term_filter.hpp"
 #include "iresearch/search/term_iterator.hpp"
@@ -74,10 +73,9 @@ constexpr irs::field_id kKwFieldId = 1;
 struct KeywordField {
   irs::field_id Id() const noexcept { return id; }
 
-  irs::Tokenizer& GetTokens() const {
-    stream.reset(value);
-    return stream;
-  }
+  irs::analysis::Tokenizer& GetTokens() const { return stream; }
+
+  std::string_view Value() const noexcept { return value; }
 
   irs::IndexFeatures GetIndexFeatures() const noexcept {
     return irs::IndexFeatures::Freq;
@@ -87,7 +85,7 @@ struct KeywordField {
 
   irs::field_id id{irs::field_limits::invalid()};
   std::string_view value;
-  mutable irs::StringTokenizer stream;
+  mutable irs::KeywordTokenizer stream;
 };
 
 inline irs::bytes_view AsBytes(std::string_view s) noexcept {
@@ -141,7 +139,7 @@ const CachedIndex& IndexOf(size_t num_terms) {
     for (const auto& term : cached.terms) {
       field.value = term;
       auto doc = trx.Insert();
-      doc.Insert(field);
+      tests::InsertField(doc, field);
     }
     trx.Commit();
   }
@@ -550,35 +548,8 @@ BENCHMARK(FusedIntersectBuild)->Arg(10'000)->Unit(benchmark::kMicrosecond);
 BENCHMARK(FusedLockstepWalk)->Apply(ApplySizes);
 BENCHMARK(FusedDriverPlusPredicate)->Apply(ApplySizes);
 
-void WhereProbeWalk(benchmark::State& state) {
-  const auto& index = IndexOf(static_cast<size_t>(state.range(0)));
-  const auto& field = FieldOf(index);
-  const auto& seg = index.reader[0];
-  const auto docs_count = seg.docs_count();
-  const size_t words =
-    irs::bitset::bits_to_words(docs_count + irs::doc_limits::min());
-  std::vector<irs::bitset::word_t> set(words, ~irs::bitset::word_t{0});
-  size_t produced = 0;
-  for (auto _ : state) {
-    auto it = field.iterator();
-    size_t n = 0;
-    while (it->next()) {
-      std::vector<irs::ScoreAdapter> itrs;
-      itrs.emplace_back(it->postings(irs::IndexFeatures::None));
-      itrs.emplace_back(irs::memory::make_managed<irs::BitsetDocIterator>(
-        set.data(), set.data() + words));
-      auto docs = irs::MakeConjunction(irs::ScoreMergeType::Noop, {},
-                                       docs_count, std::move(itrs));
-      n += !irs::doc_limits::eof(docs->advance());
-    }
-    produced += n;
-  }
-  state.SetItemsProcessed(static_cast<int64_t>(produced));
-}
-
 BENCHMARK(FullWalk)->Apply(ApplySizes);
 BENCHMARK(FullWalkPredicate)->Apply(ApplySizes);
-BENCHMARK(WhereProbeWalk)->Apply(ApplySizes);
 
 // -- compiled TermIterator wrappers vs the raw loops above ------------------
 

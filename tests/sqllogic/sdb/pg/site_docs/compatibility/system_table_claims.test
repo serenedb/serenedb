@@ -192,7 +192,7 @@ SELECT * FROM pg_catalog."pg_extension" LIMIT 0;
 statement ok
 SELECT * FROM pg_catalog."pg_foreign_data_wrapper" LIMIT 0;
 
-# sys_tables: pg_foreign_server (🟢)
+# sys_tables: pg_foreign_server (🟡)
 statement ok
 SELECT * FROM pg_catalog."pg_foreign_server" LIMIT 0;
 

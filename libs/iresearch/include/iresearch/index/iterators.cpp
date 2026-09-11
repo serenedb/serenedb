@@ -27,65 +27,29 @@
 #include "iresearch/analysis/token_attributes.hpp"
 #include "iresearch/index/field_meta.hpp"
 #include "iresearch/search/column_collector.hpp"
-#include "iresearch/search/cost.hpp"
 #include "iresearch/search/scorer.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
 namespace irs {
 namespace {
 
-// Represents an iterator with no documents
-struct EmptyDocIterator : DocIterator {
-  EmptyDocIterator() { _doc = doc_limits::eof(); }
+// A term whose posting list holds nothing
+struct EmptyTermPostings : TermPostings {
+  EmptyTermPostings() { _doc = doc_limits::eof(); }
 
-  Attribute* GetMutable(TypeInfo::type_id id) noexcept final {
-    return Type<CostAttr>::id() == id ? &_cost : nullptr;
-  }
+  doc_id_t Advance() noexcept final { return doc_limits::eof(); }
 
-  doc_id_t advance() noexcept final { return doc_limits::eof(); }
-
-  doc_id_t seek(doc_id_t /*target*/) noexcept final {
-    return doc_limits::eof();
-  }
-
-  doc_id_t LazySeek(doc_id_t /*target*/) noexcept final {
-    return doc_limits::eof();
-  }
-
-  uint32_t count() final { return 0; }
-
-  void Collect(const ScoreFunction& scorer, ColumnArgsFetcher& fetcher,
-               ScoreCollector& collector) final {}
-
-  uint32_t EmitDocs(doc_id_t* out, doc_id_t min, doc_id_t max) final {
-    return 0;
-  }
-
-  uint32_t EmitScoredDocs(doc_id_t* out, score_t* scores, doc_id_t max,
-                          const ScoreFunction& scorer,
-                          ColumnArgsFetcher* fetcher, doc_id_t min) final {
-    return 0;
-  }
-
-  std::pair<doc_id_t, bool> FillBlock(doc_id_t min, doc_id_t max,
-                                      uint64_t* mask,
-                                      FillBlockScoreContext score,
-                                      FillBlockMatchContext match) final {
-    return {value(), true};
-  }
-
- private:
-  CostAttr _cost{0};
+  uint32_t GetFreq() const noexcept final { return 0; }
 };
 
-EmptyDocIterator gEmptyDocIterator;
+EmptyTermPostings gEmptyTermPostings;
 
 // Represents an iterator without terms
 struct EmptySeekTermIterator : SeekTermIterator {
   bytes_view value() const noexcept final { return {}; }
 
-  DocIterator::ptr postings(IndexFeatures /*features*/) const noexcept final {
-    return DocIterator::empty();
+  TermPostings::ptr postings(IndexFeatures /*features*/) const noexcept final {
+    return TermPostings::empty();
   }
 
   bool next() noexcept final { return false; }
@@ -111,8 +75,8 @@ SeekTermIterator::ptr SeekTermIterator::empty() noexcept {
   return memory::to_managed<SeekTermIterator>(gEmptySeekIterator);
 }
 
-DocIterator::ptr DocIterator::empty() noexcept {
-  return memory::to_managed<DocIterator>(gEmptyDocIterator);
+TermPostings::ptr TermPostings::empty() noexcept {
+  return memory::to_managed<TermPostings>(gEmptyTermPostings);
 }
 
 }  // namespace irs

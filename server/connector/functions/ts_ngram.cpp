@@ -19,7 +19,7 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include <duckdb/planner/expression/bound_cast_expression.hpp>
-#include <iresearch/analysis/token_attributes.hpp>
+#include <iresearch/analysis/token_sinks.hpp>
 #include <iresearch/search/ngram_similarity_filter.hpp>
 #include <iresearch/search/ngram_similarity_query.hpp>
 #include <iresearch/utils/string.hpp>
@@ -30,7 +30,7 @@
 
 namespace sdb::connector {
 
-void FromNgram(irs::BooleanFilter& filter, const FilterContext& ctx,
+void FromNGram(BoolTarget filter, const FilterContext& ctx,
                const SearchColumnInfo& column_info,
                const duckdb::BoundFunctionExpression& func) {
   static constexpr std::string_view kSyntaxHint =
@@ -78,10 +78,13 @@ void FromNgram(irs::BooleanFilter& filter, const FilterContext& ctx,
     PickPerKindFieldId(column_info, duckdb::LogicalTypeId::VARCHAR);
   ngram.mutable_options()->threshold = threshold;
   auto& analyzer = ctx.tokenizer;
-  analyzer.reset(std::string_view{target});
-  const irs::TermAttr* token = irs::get<irs::TermAttr>(analyzer);
-  while (analyzer.next()) {
-    ngram.mutable_options()->ngrams.emplace_back(token->value);
+  irs::ValueAnalyzer value_analyzer;
+  irs::ValueTokens tokens;
+  value_analyzer.Analyze(analyzer, target, tokens);
+  auto& ngrams = ngram.mutable_options()->ngrams;
+  ngrams.reserve(tokens.terms().size());
+  for (const auto& t : tokens.terms()) {
+    ngrams.emplace_back(irs::AsBytesView(t));
   }
 }
 

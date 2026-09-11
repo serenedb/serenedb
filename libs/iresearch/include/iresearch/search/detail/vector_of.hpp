@@ -68,7 +68,7 @@
 #include "iresearch/search/scored/detail/walk.hpp"
 #include "iresearch/search/scored/make.hpp"
 #include "iresearch/search/scores/scorer.hpp"
-#include "iresearch/search/top/detail/walk.hpp"
+#include "iresearch/search/top/walk.hpp"
 #include "iresearch/search/top/make.hpp"
 #include "iresearch/search/vector_similarity_query.hpp"
 #include "iresearch/store/data_input.hpp"

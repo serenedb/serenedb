@@ -33,12 +33,12 @@
 #include "iresearch/search/top/posting_pruned_disj.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
-namespace irs::top::detail {
+namespace irs::top {
 
 template<typename Input>
 class DisjunctionLead {
  public:
-  using Leaf = irs::detail::PostingPrunedDisj<Input>;
+  using Leaf = PostingPrunedDisj<Input>;
 
   template<typename Init>
   DisjunctionLead(size_t size, Init&& init)
@@ -149,4 +149,4 @@ class DisjunctionLead {
   doc_id_t _doc = doc_limits::invalid();
 };
 
-}  // namespace irs::top::detail
+}  // namespace irs::top

@@ -20,9 +20,9 @@
 
 #pragma once
 
-#include "iresearch/search/top/detail/prune_leaf.hpp"
+#include "iresearch/search/top/prune_leaf.hpp"
 
-namespace irs::detail {
+namespace irs::top {
 
 template<typename InputType>
 class PostingPrunedClause : public PruneLeafBase<InputType, false> {
@@ -51,7 +51,7 @@ class PostingPrunedClause : public PruneLeafBase<InputType, false> {
 
   void Prepare(const PostingMeta& meta, const IndexInput& doc_in,
                IndexFeatures layout, const SubReader& segment,
-               const TermReader& field, const ScoreArgs& args) {
+               const TermReader& field, const detail::ScoreArgs& args) {
     if (Base::PrepareCommon(meta, doc_in, layout, segment, field, args)) {
       _left_in_leaf = 0;
       _doc = doc_limits::min() + meta.doc_delta;
@@ -60,7 +60,7 @@ class PostingPrunedClause : public PruneLeafBase<InputType, false> {
 
   PostingPrunedClause(const PostingMeta& meta, const IndexInput& doc_in,
                       IndexFeatures layout, const SubReader& segment,
-                      const TermReader& field, const ScoreArgs& args) {
+                      const TermReader& field, const detail::ScoreArgs& args) {
     Prepare(meta, doc_in, layout, segment, field, args);
   }
 
@@ -193,4 +193,4 @@ class PostingPrunedClause : public PruneLeafBase<InputType, false> {
   ABSL_CACHELINE_ALIGNED uint32_t _gather[kScoreBlock]{};
 };
 
-}  // namespace irs::detail
+}  // namespace irs::top

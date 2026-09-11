@@ -29,7 +29,7 @@
 #include "iresearch/store/data_input.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
-namespace irs::top::detail {
+namespace irs::top {
 
 template<typename InputType, typename Table>
 class TermBlock : public irs::detail::PostingBatch<InputType, Table, true> {
@@ -72,4 +72,4 @@ class TermBlock : public irs::detail::PostingBatch<InputType, Table, true> {
   }
 };
 
-}  // namespace irs::top::detail
+}  // namespace irs::top

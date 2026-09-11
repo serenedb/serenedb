@@ -24,7 +24,7 @@
 #include "iresearch/search/detail/scored_context.hpp"
 #include "iresearch/search/lead/two_phase_scored.hpp"
 #include "iresearch/search/phrase_query.hpp"
-#include "iresearch/search/top/detail/walk.hpp"
+#include "iresearch/search/top/walk.hpp"
 #include "iresearch/search/top/make.hpp"
 
 namespace irs::top {

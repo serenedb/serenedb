@@ -27,7 +27,7 @@
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/search/detail/exclusion_of.hpp"
 #include "iresearch/search/detail/resolve.hpp"
-#include "iresearch/search/top/detail/prune_leaves.hpp"
+#include "iresearch/search/top/prune_leaves.hpp"
 #include "iresearch/search/top/make.hpp"
 #include "iresearch/search/top/posting_pruned_clause.hpp"
 #include "iresearch/search/top/posting_pruned_lead.hpp"
@@ -74,8 +74,8 @@ Root::ptr MakePrunedConjunction(
   SDB_ASSERT(doc != nullptr);
   const auto size = terms.size();
   return irs::detail::ResolveInput(*doc, [&]<typename Input> -> Root::ptr {
-    using Lead = irs::detail::PostingPrunedLead<Input>;
-    using Clause = irs::detail::PostingPrunedClause<Input>;
+    using Lead = PostingPrunedLead<Input>;
+    using Clause = PostingPrunedClause<Input>;
     const auto init = [&](auto& leaf, size_t i) {
       const auto& posting = terms[i];
       const auto& own = *posting.state.reader;
@@ -87,7 +87,7 @@ Root::ptr MakePrunedConjunction(
                              .fetcher = &ctx.fetcher,
                              .boost = posting.boost});
     };
-    using Others = detail::PruneLeaves<Clause>;
+    using Others = PruneLeaves<Clause>;
     if (excludes.empty() && exclude_filters.empty()) {
       return MakeShape<PrunedConjunction, Lead, Others, utils::Empty>(
         ctx, ctx.fetcher, size, init, std::forward_as_tuple());

@@ -44,7 +44,7 @@
 #include "iresearch/utils/attribute_provider.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
-namespace irs::detail {
+namespace irs::top {
 
 template<typename InputType, bool Standalone>
 class PruneLeafBase {
@@ -195,7 +195,7 @@ class PruneLeafBase {
 
   bool PrepareCommon(const PostingMeta& meta, const IndexInput& doc_in,
                      IndexFeatures layout, const SubReader& segment,
-                     const TermReader& field, const ScoreArgs& args) {
+                     const TermReader& field, const detail::ScoreArgs& args) {
     SDB_ASSERT(meta.docs_count != 0);
     SDB_ASSERT(args.scorer != nullptr);
     SDB_ASSERT(args.fetcher != nullptr);
@@ -394,14 +394,14 @@ class PruneLeafBase {
     _provider.freq.value = _freqs.data;
   }
 
-  EncBuf _enc;
-  FreqBuf _freqs;
+  detail::EncBuf _enc;
+  detail::FreqBuf _freqs;
   DocsBuf _docs;
   IndexInput::ptr _in;
   ColumnArgsFetcher* _fetcher = nullptr;
   ScoreFunction _score;
-  LeafProvider _provider;
-  LeafRecipe _recipe;
+  detail::LeafProvider _provider;
+  detail::LeafRecipe _recipe;
   SkipReader<BoundReadSkip, InputType> _skip;
   doc_id_t _doc = 0;
   uint32_t _left_in_leaf = 0;
@@ -414,4 +414,4 @@ class PruneLeafBase {
   bool _scored = false;
 };
 
-}  // namespace irs::detail
+}  // namespace irs::top

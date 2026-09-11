@@ -35,7 +35,7 @@
 #include "iresearch/search/detail/score_args.hpp"
 #include "iresearch/search/fill/leaves.hpp"
 #include "iresearch/search/filter.hpp"
-#include "iresearch/search/top/detail/walk.hpp"
+#include "iresearch/search/top/walk.hpp"
 #include "iresearch/search/top/posting_pruned_disj.hpp"
 #include "iresearch/search/top/pruned_disjunction.hpp"
 #include "iresearch/search/top/root.hpp"
@@ -73,13 +73,13 @@ Root::ptr MakePrepared(const Context& ctx, Make&& make) {
 }
 
 template<typename Node>
-using PlainWalk = detail::Walk<Node, utils::Empty>;
+using PlainWalk = Walk<Node, utils::Empty>;
 template<typename Node>
-using FilteredWalk = detail::Walk<Node, irs::detail::TableFilter*>;
+using FilteredWalk = Walk<Node, irs::detail::TableFilter*>;
 template<typename Node>
-using PlainConstantWalk = detail::ConstantWalk<Node, utils::Empty>;
+using PlainConstantWalk = ConstantWalk<Node, utils::Empty>;
 template<typename Node>
-using FilteredConstantWalk = detail::ConstantWalk<Node, irs::detail::TableFilter*>;
+using FilteredConstantWalk = ConstantWalk<Node, irs::detail::TableFilter*>;
 
 Root::ptr MakeRoot(const QueryBuilder& query, const Context& ctx);
 
@@ -183,7 +183,7 @@ Root::ptr MakePrunedDisjunction(
   }
   const auto* const doc = irs::detail::DocOf(irs::detail::FieldOf(terms.front(), field));
   return irs::detail::ResolveInput(*doc, [&]<typename Input> -> Root::ptr {
-    using Leaf = irs::detail::PostingPrunedDisj<Input>;
+    using Leaf = PostingPrunedDisj<Input>;
     const auto init = [&](Leaf& leaf, size_t i) {
       const auto posting = irs::detail::ClauseOf(terms[i], field, scorer, boost);
       const auto& own = *posting.state.reader;

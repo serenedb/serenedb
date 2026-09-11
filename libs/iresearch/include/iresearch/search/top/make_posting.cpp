@@ -23,7 +23,7 @@
 #include "iresearch/search/detail/resolve.hpp"
 #include "iresearch/search/lead/impl.hpp"
 #include "iresearch/search/lead/plan.hpp"
-#include "iresearch/search/top/detail/walk.hpp"
+#include "iresearch/search/top/walk.hpp"
 #include "iresearch/search/top/make.hpp"
 #include "iresearch/search/top/posting.hpp"
 
@@ -44,7 +44,7 @@ Root::ptr MakePosting(const irs::detail::PostingClause& posting, const SubReader
   if (const auto value = irs::detail::ConstantOf(segment, own, args)) {
     return lead::ResolvePostingDocs<Root::ptr>(
       posting, [&]<typename Leaf>(auto&&... rest) -> Root::ptr {
-        return MakeShape<detail::ConstantWalk, Leaf>(
+        return MakeShape<ConstantWalk, Leaf>(
           ctx, *value, std::forward<decltype(rest)>(rest)...);
       });
   }

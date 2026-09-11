@@ -30,7 +30,7 @@
 #include "iresearch/search/top/root.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
-namespace irs::top::detail {
+namespace irs::top {
 
 template<typename Node, typename Table>
 class Walk : public Root {
@@ -109,4 +109,4 @@ class ConstantWalk : public Root {
   [[no_unique_address]] Admit<Table> _admit;
 };
 
-}  // namespace irs::top::detail
+}  // namespace irs::top

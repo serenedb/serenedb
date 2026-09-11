@@ -20,9 +20,9 @@
 
 #pragma once
 
-#include "iresearch/search/top/detail/prune_leaf.hpp"
+#include "iresearch/search/top/prune_leaf.hpp"
 
-namespace irs::detail {
+namespace irs::top {
 
 template<typename InputType>
 class PostingPrunedLead : public PruneLeafBase<InputType, false> {
@@ -47,7 +47,7 @@ class PostingPrunedLead : public PruneLeafBase<InputType, false> {
 
   void Prepare(const PostingMeta& meta, const IndexInput& doc_in,
                IndexFeatures layout, const SubReader& segment,
-               const TermReader& field, const ScoreArgs& args) {
+               const TermReader& field, const detail::ScoreArgs& args) {
     if (Base::PrepareCommon(meta, doc_in, layout, segment, field, args)) {
       _left_in_leaf = 1;
     }
@@ -55,7 +55,7 @@ class PostingPrunedLead : public PruneLeafBase<InputType, false> {
 
   PostingPrunedLead(const PostingMeta& meta, const IndexInput& doc_in,
                     IndexFeatures layout, const SubReader& segment,
-                    const TermReader& field, const ScoreArgs& args) {
+                    const TermReader& field, const detail::ScoreArgs& args) {
     Prepare(meta, doc_in, layout, segment, field, args);
   }
 
@@ -160,4 +160,4 @@ class PostingPrunedLead : public PruneLeafBase<InputType, false> {
   }
 };
 
-}  // namespace irs::detail
+}  // namespace irs::top

@@ -33,7 +33,7 @@
 #include "iresearch/search/detail/exclude_block.hpp"
 #include "iresearch/search/score_function.hpp"
 #include "iresearch/search/top/admit.hpp"
-#include "iresearch/search/top/detail/prune_leaves.hpp"
+#include "iresearch/search/top/prune_leaves.hpp"
 #include "iresearch/search/top/root.hpp"
 #include "iresearch/utils/type_limits.hpp"
 

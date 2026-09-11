@@ -32,7 +32,7 @@
 #include "iresearch/search/detail/exclude_block.hpp"
 #include "iresearch/search/detail/score_args.hpp"
 #include "iresearch/search/top/admit.hpp"
-#include "iresearch/search/top/detail/term_block.hpp"
+#include "iresearch/search/top/term_block.hpp"
 #include "iresearch/search/top/root.hpp"
 #include "iresearch/store/data_input.hpp"
 #include "iresearch/utils/type_limits.hpp"
@@ -44,7 +44,7 @@ class Posting : public Root {
  public:
   static constexpr bool kTable = !std::is_same_v<Table, utils::Empty>;
   static constexpr bool kExcludes = !std::is_same_v<Excludes, utils::Empty>;
-  using Block = detail::TermBlock<InputType, Table>;
+  using Block = TermBlock<InputType, Table>;
 
   template<typename ExcludesArgs>
   Posting(Table table, std::piecewise_construct_t, ExcludesArgs&& excludes)

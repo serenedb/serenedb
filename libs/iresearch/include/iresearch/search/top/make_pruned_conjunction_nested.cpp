@@ -42,9 +42,9 @@
 #include "iresearch/search/multiterm_query.hpp"
 #include "iresearch/search/probe/boolean_window.hpp"
 #include "iresearch/search/probe/leaves.hpp"
-#include "iresearch/search/top/detail/disjunction_leaves.hpp"
-#include "iresearch/search/top/detail/prune_leaves.hpp"
-#include "iresearch/search/top/detail/pruned_clause.hpp"
+#include "iresearch/search/top/disjunction_leaves.hpp"
+#include "iresearch/search/top/prune_leaves.hpp"
+#include "iresearch/search/top/pruned_clause.hpp"
 #include "iresearch/search/top/make.hpp"
 #include "iresearch/search/top/posting_pruned_clause.hpp"
 #include "iresearch/search/top/posting_pruned_lead.hpp"
@@ -196,7 +196,7 @@ Root::ptr MakeNestedPrunedConjunction(
   const bool posting_lead = clauses.front().terms.size() == 1;
   const auto size = clauses.size();
   return irs::detail::ResolveInput(*doc, [&]<typename Input> -> Root::ptr {
-    using Leaf = irs::detail::PostingPrunedClause<Input>;
+    using Leaf = PostingPrunedClause<Input>;
     using Group = probe::OrLeaves<Leaf, 0, true>;
     using Window =
       probe::BooleanWindow<irs::detail::OrGroup<fill::SetLeaves<fill::Erased>>,
@@ -218,10 +218,10 @@ Root::ptr MakeNestedPrunedConjunction(
         prepare(one, clause.terms[j]);
       };
     };
-    const auto erased = [&](size_t i) -> detail::PrunedClause::ptr {
+    const auto erased = [&](size_t i) -> PrunedClause::ptr {
       const auto& clause = clauses[i];
       if (clause.constant != nullptr) {
-        return memory::make_managed<detail::PrunedClauseImpl<Window>>(
+        return memory::make_managed<PrunedClauseImpl<Window>>(
           std::piecewise_construct,
           std::forward_as_tuple(size_t{1},
                                 [&](fill::Erased& leaf, size_t) {
@@ -232,11 +232,11 @@ Root::ptr MakeNestedPrunedConjunction(
       if (clause.terms.size() == 1) {
         const auto& posting = clause.terms.front();
         const auto& own = *posting.state.reader;
-        return memory::make_managed<detail::PrunedClauseImpl<Leaf>>(
+        return memory::make_managed<PrunedClauseImpl<Leaf>>(
           posting.state.cookie, *doc, irs::detail::LayoutOf(own), segment, own,
           args(posting));
       }
-      return memory::make_managed<detail::PrunedClauseImpl<Group>>(
+      return memory::make_managed<PrunedClauseImpl<Group>>(
         clause.terms.size(), each(clause));
     };
     const auto build = [&]<typename Lead, typename Others>(
@@ -259,12 +259,12 @@ Root::ptr MakeNestedPrunedConjunction(
     };
     const auto make = [&]<typename Lead>(auto&& lead) -> Root::ptr {
       if (constants) {
-        using Others = detail::PruneLeaves<detail::ErasedClause>;
+        using Others = PruneLeaves<ErasedClause>;
         return build.template operator()<Lead, Others>(
           std::forward<decltype(lead)>(lead),
           [&](size_t i) { return std::make_tuple(erased(i + 1)); });
       }
-      using Others = detail::PruneLeaves<Group>;
+      using Others = PruneLeaves<Group>;
       return build.template operator()<Lead, Others>(
         std::forward<decltype(lead)>(lead), [&](size_t i) {
           const auto& clause = clauses[i + 1];
@@ -276,11 +276,11 @@ Root::ptr MakeNestedPrunedConjunction(
       const auto& posting = first.terms.front();
       const auto& own = *posting.state.reader;
       SDB_ASSERT(irs::detail::DocOf(own) == doc);
-      return make.template operator()<irs::detail::PostingPrunedLead<Input>>(
+      return make.template operator()<PostingPrunedLead<Input>>(
         std::forward_as_tuple(posting.state.cookie, *doc, irs::detail::LayoutOf(own),
                               segment, own, args(posting)));
     }
-    return make.template operator()<detail::DisjunctionLead<Input>>(
+    return make.template operator()<DisjunctionLead<Input>>(
       std::forward_as_tuple(first.terms.size(), each(first)));
   });
 }

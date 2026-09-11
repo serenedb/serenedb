@@ -27,7 +27,7 @@
 #include "iresearch/search/score_function.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
-namespace irs::top::detail {
+namespace irs::top {
 
 struct PrunedClause : memory::Managed {
   using ptr = memory::managed_ptr<PrunedClause>;
@@ -97,4 +97,4 @@ class ErasedClause {
   PrunedClause::ptr _node;
 };
 
-}  // namespace irs::top::detail
+}  // namespace irs::top

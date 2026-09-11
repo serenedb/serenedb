@@ -35,7 +35,7 @@
 #include "iresearch/search/score_function.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
-namespace irs::top::detail {
+namespace irs::top {
 
 template<typename Leaf, size_t N = 0>
 class PruneLeaves {
@@ -144,4 +144,4 @@ class PruneLeaves {
   irs::detail::RunOf<uint32_t, N> _order;
 };
 
-}  // namespace irs::top::detail
+}  // namespace irs::top

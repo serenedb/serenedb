@@ -26,7 +26,7 @@
 #include "iresearch/search/detail/geo_of.hpp"
 #include "iresearch/search/detail/scored_context.hpp"
 #include "iresearch/search/geo_query.hpp"
-#include "iresearch/search/top/detail/walk.hpp"
+#include "iresearch/search/top/walk.hpp"
 #include "iresearch/search/top/make.hpp"
 
 namespace irs::top {

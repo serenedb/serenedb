@@ -51,7 +51,7 @@ class Walk : public Root {
     uint32_t batch = 0;
 
     while (n != capacity) {
-      auto doc = _node.Advance();
+      auto doc = _node.Next();
       if constexpr (kTable) {
         if (const auto live = _table.Live(doc); live != doc) {
           doc = _node.Seek(live);
@@ -108,7 +108,7 @@ class ConstantWalk : public Root {
     uint32_t n = 0;
 
     while (n != capacity) {
-      auto doc = _node.Advance();
+      auto doc = _node.Next();
       if constexpr (kTable) {
         if (const auto live = _table.Live(doc); live != doc) {
           doc = _node.Seek(live);

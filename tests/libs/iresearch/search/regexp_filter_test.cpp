@@ -1003,7 +1003,7 @@ TEST_P(RegexpFilterTestCase, by_regexp_determinism) {
     tests::PreparedFilter p{*q, rdr, nullptr, irs::IResourceManager::gNoop};
     for (size_t i = 0; [[maybe_unused]] auto& s : rdr) {
       auto d = p.Execute(i);
-      while (d->Advance() != irs::doc_limits::eof()) {
+      while (d->Next() != irs::doc_limits::eof()) {
         run1.push_back(d->Value());
       }
       ++i;
@@ -1013,7 +1013,7 @@ TEST_P(RegexpFilterTestCase, by_regexp_determinism) {
     tests::PreparedFilter p{*q, rdr, nullptr, irs::IResourceManager::gNoop};
     for (size_t i = 0; [[maybe_unused]] auto& s : rdr) {
       auto d = p.Execute(i);
-      while (d->Advance() != irs::doc_limits::eof()) {
+      while (d->Next() != irs::doc_limits::eof()) {
         run2.push_back(d->Value());
       }
       ++i;
@@ -1083,7 +1083,7 @@ TEST_P(RegexpFilterTestCase, by_regexp_compaction) {
     tests::PreparedFilter p{*q, rdr, nullptr, irs::IResourceManager::gNoop};
     for (size_t i = 0; [[maybe_unused]] auto& s : rdr) {
       auto d = p.Execute(i);
-      while (d->Advance() != irs::doc_limits::eof()) {
+      while (d->Next() != irs::doc_limits::eof()) {
         result.push_back(d->Value());
       }
       ++i;
@@ -1586,7 +1586,7 @@ TEST_P(RegexpFilterTestCase, by_regexp_syntax_posix_accepts_posix_class) {
                                    irs::IResourceManager::gNoop};
     for (size_t i = 0; [[maybe_unused]] auto& s : rdr) {
       auto d = prepared.Execute(i);
-      while (d->Advance() != irs::doc_limits::eof()) {
+      while (d->Next() != irs::doc_limits::eof()) {
         out.push_back(d->Value());
       }
       ++i;
@@ -1630,7 +1630,7 @@ TEST_P(RegexpFilterTestCase, by_regexp_syntax_fast_paths_are_agnostic) {
                                    irs::IResourceManager::gNoop};
     for (size_t i = 0; [[maybe_unused]] auto& s : rdr) {
       auto d = prepared.Execute(i);
-      while (d->Advance() != irs::doc_limits::eof()) {
+      while (d->Next() != irs::doc_limits::eof()) {
         out.push_back(d->Value());
       }
       ++i;

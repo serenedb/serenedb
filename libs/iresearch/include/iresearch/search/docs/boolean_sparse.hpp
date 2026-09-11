@@ -60,7 +60,7 @@ class BooleanSparse : public Root {
       return 0;
     }
     uint32_t n = 0;
-    auto doc = _lead.Advance();
+    auto doc = _lead.Next();
 
     while (!doc_limits::eof(doc)) {
       if constexpr (kTable) {
@@ -86,7 +86,7 @@ class BooleanSparse : public Root {
       if (n == capacity) {
         return n;
       }
-      doc = _lead.Advance();
+      doc = _lead.Next();
     }
 
     _spent = true;

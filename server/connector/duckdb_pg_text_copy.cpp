@@ -526,7 +526,7 @@ void ScanFrom(duckdb::ClientContext& context, duckdb::TableFunctionInput& input,
       const auto nl = view.find(kRowSep);
       if (nl == std::string_view::npos) {
         g.partial.append(view.data(), view.size());
-        source.Advance(view.size());
+        source.Next(view.size());
         view = {};
         break;
       }
@@ -545,7 +545,7 @@ void ScanFrom(duckdb::ClientContext& context, duckdb::TableFunctionInput& input,
         ++row;
       }
       g.partial.clear();
-      source.Advance(nl + 1);
+      source.Next(nl + 1);
       view.remove_prefix(nl + 1);
     }
   }

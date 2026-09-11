@@ -43,7 +43,7 @@ class SegmentAllDocs : public lead::Node {
   explicit SegmentAllDocs(doc_id_t docs_count) noexcept
     : _max_doc{doc_limits::min() + docs_count - 1} {}
 
-  doc_id_t Advance() noexcept final {
+  doc_id_t Next() noexcept final {
     _doc = _doc < _max_doc ? _doc + 1 : doc_limits::eof();
     return _doc;
   }
@@ -71,7 +71,7 @@ class SegmentLiveDocs : public lead::Node {
     SDB_ASSERT(!doc_limits::eof(end));
   }
 
-  doc_id_t Advance() noexcept final {
+  doc_id_t Next() noexcept final {
     while (_next < _end) {
       _doc = _next++;
       if (!_docs_mask.contains(_doc)) {
@@ -86,7 +86,7 @@ class SegmentLiveDocs : public lead::Node {
       return _doc;
     }
     _next = target;
-    return Advance();
+    return Next();
   }
 
  private:

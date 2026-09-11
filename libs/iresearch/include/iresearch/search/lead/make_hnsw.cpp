@@ -52,7 +52,7 @@ class HnswHits : public Node {
   HnswHits(HnswHits&&) = delete;
   HnswHits& operator=(HnswHits&&) = delete;
 
-  doc_id_t Advance() final {
+  doc_id_t Next() final {
     if (_pos == _hits.size()) {
       return _doc = doc_limits::eof();
     }
@@ -66,7 +66,7 @@ class HnswHits : public Node {
     while (_pos != _hits.size() && _hits[_pos].doc < target) {
       ++_pos;
     }
-    return Advance();
+    return Next();
   }
 
   void FetchScoreArgs(uint32_t slot) final {

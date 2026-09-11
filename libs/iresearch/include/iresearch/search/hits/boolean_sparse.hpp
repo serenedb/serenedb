@@ -76,7 +76,7 @@ class BooleanSparse : public Root {
     SDB_ASSERT(capacity >= doc_limits::kMinCapacity);
     uint32_t n = 0;
     uint32_t batch = 0;
-    auto doc = _lead.Advance();
+    auto doc = _lead.Next();
     while (!doc_limits::eof(doc)) {
       if constexpr (kTable) {
         if (const auto live = _table.Live(doc); live != doc) {
@@ -98,7 +98,7 @@ class BooleanSparse : public Root {
       }
       if constexpr (kExcludes) {
         if (irs::detail::IsExcluded(_excludes, doc)) {
-          doc = _lead.Advance();
+          doc = _lead.Next();
           continue;
         }
       }
@@ -118,7 +118,7 @@ class BooleanSparse : public Root {
       if (n == capacity) {
         break;
       }
-      doc = _lead.Advance();
+      doc = _lead.Next();
     }
     if (batch != 0) {
       Score(out + n - batch, scores + n - batch, batch);

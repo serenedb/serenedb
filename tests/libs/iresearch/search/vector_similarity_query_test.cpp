@@ -39,7 +39,7 @@ inline constexpr irs::field_id kVec = 1;
 inline constexpr irs::field_id kName = 2;
 inline constexpr uint32_t kDim = 4;
 
-// The kNN query's lead must honor arbitrary interleavings of Advance() and
+// The kNN query's lead must honor arbitrary interleavings of Next() and
 // Seek(): the quantized per-cluster iterator serves docs from a buffered
 // posting leaf block whose underlying cursor already sits at the block's last
 // doc, so Seek() has to resolve targets from the buffer instead of delegating
@@ -189,9 +189,9 @@ TEST_F(VectorSimilarityQueryTest, AdvanceOnly) {
   Build(100);
   auto it = Execute();
   for (irs::doc_id_t doc = 1; doc <= _docs; ++doc) {
-    ASSERT_EQ(doc, it->Advance());
+    ASSERT_EQ(doc, it->Next());
   }
-  ASSERT_TRUE(irs::doc_limits::eof(it->Advance()));
+  ASSERT_TRUE(irs::doc_limits::eof(it->Next()));
 }
 
 TEST_F(VectorSimilarityQueryTest, SeekOnly) {
@@ -208,68 +208,68 @@ TEST_F(VectorSimilarityQueryTest, SeekOnly) {
   ASSERT_TRUE(irs::doc_limits::eof(beyond->Seek(101)));
 }
 
-// Single posting leaf block (docs < 128): the first Advance() buffers every
+// Single posting leaf block (docs < 128): the first Next() buffers every
 // doc, then each Seek() target lands inside that buffer.
 TEST_F(VectorSimilarityQueryTest, MixedAdvanceSeekSingleBlock) {
   Build(100);
   {
     auto it = Execute();
-    ASSERT_EQ(1, it->Advance());
+    ASSERT_EQ(1, it->Next());
     ASSERT_EQ(5, it->Seek(5));
-    ASSERT_EQ(6, it->Advance());
+    ASSERT_EQ(6, it->Next());
     ASSERT_EQ(6, it->Seek(6));
     ASSERT_EQ(6, it->Seek(3));
-    ASSERT_EQ(7, it->Advance());
+    ASSERT_EQ(7, it->Next());
     ASSERT_EQ(50, it->Seek(50));
-    ASSERT_EQ(51, it->Advance());
+    ASSERT_EQ(51, it->Next());
     ASSERT_EQ(100, it->Seek(100));
-    ASSERT_TRUE(irs::doc_limits::eof(it->Advance()));
+    ASSERT_TRUE(irs::doc_limits::eof(it->Next()));
   }
-  // Every gap size: Advance() to buffer the block, seek over 0..N-2 docs.
+  // Every gap size: Next() to buffer the block, seek over 0..N-2 docs.
   for (irs::doc_id_t target = 2; target <= _docs; ++target) {
     auto it = Execute();
-    ASSERT_EQ(1, it->Advance());
+    ASSERT_EQ(1, it->Next());
     ASSERT_EQ(target, it->Seek(target));
     if (target < _docs) {
-      ASSERT_EQ(target + 1, it->Advance());
+      ASSERT_EQ(target + 1, it->Next());
     } else {
-      ASSERT_TRUE(irs::doc_limits::eof(it->Advance()));
+      ASSERT_TRUE(irs::doc_limits::eof(it->Next()));
     }
   }
 }
 
 // Multiple leaf blocks (docs > 128): in-buffer seeks, cross-block seeks, and
-// Advance() resuming after both.
+// Next() resuming after both.
 TEST_F(VectorSimilarityQueryTest, MixedAdvanceSeekMultiBlock) {
   Build(300);
   {
     auto it = Execute();
-    ASSERT_EQ(1, it->Advance());
+    ASSERT_EQ(1, it->Next());
     ASSERT_EQ(100, it->Seek(100));
-    ASSERT_EQ(101, it->Advance());
+    ASSERT_EQ(101, it->Next());
     ASSERT_EQ(130, it->Seek(130));
-    ASSERT_EQ(131, it->Advance());
+    ASSERT_EQ(131, it->Next());
     ASSERT_EQ(256, it->Seek(256));
-    ASSERT_EQ(257, it->Advance());
+    ASSERT_EQ(257, it->Next());
     ASSERT_EQ(300, it->Seek(300));
-    ASSERT_TRUE(irs::doc_limits::eof(it->Advance()));
+    ASSERT_TRUE(irs::doc_limits::eof(it->Next()));
   }
   {
     auto it = Execute();
     for (irs::doc_id_t doc = 1; doc <= _docs; ++doc) {
-      ASSERT_EQ(doc, it->Advance());
+      ASSERT_EQ(doc, it->Next());
     }
-    ASSERT_TRUE(irs::doc_limits::eof(it->Advance()));
+    ASSERT_TRUE(irs::doc_limits::eof(it->Next()));
   }
   for (irs::doc_id_t target :
        {2u, 127u, 128u, 129u, 200u, 255u, 256u, 257u, 299u, 300u}) {
     auto it = Execute();
-    ASSERT_EQ(1, it->Advance());
+    ASSERT_EQ(1, it->Next());
     ASSERT_EQ(target, it->Seek(target));
     if (target < _docs) {
-      ASSERT_EQ(target + 1, it->Advance());
+      ASSERT_EQ(target + 1, it->Next());
     } else {
-      ASSERT_TRUE(irs::doc_limits::eof(it->Advance()));
+      ASSERT_TRUE(irs::doc_limits::eof(it->Next()));
     }
   }
 }

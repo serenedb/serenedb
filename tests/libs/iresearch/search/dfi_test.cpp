@@ -152,7 +152,7 @@ TEST_P(DFIIndexTest, scores_nonnegative_and_only_fire_above_expected) {
   auto score = docs->PrepareScore();
 
   std::map<irs::doc_id_t, irs::score_t> seen;
-  while (!irs::doc_limits::eof(docs->Advance())) {
+  while (!irs::doc_limits::eof(docs->Next())) {
     docs->FetchScoreArgs(0);
     fetcher.Fetch(docs->Value());
     irs::score_t s{};

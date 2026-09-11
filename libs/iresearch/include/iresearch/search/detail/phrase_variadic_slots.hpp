@@ -89,7 +89,7 @@ class PhraseVariadicSlots {
 
   doc_id_t Seek(doc_id_t from) { return Agree(Nth(0).Seek(from)); }
 
-  doc_id_t Next(doc_id_t) { return Agree(Nth(0).Advance()); }
+  doc_id_t Next(doc_id_t) { return Agree(Nth(0).Next()); }
 
   IRS_FORCE_INLINE doc_id_t ProbeRest(doc_id_t target) {
     for (auto it = _probes.begin() + 1, end = _probes.end(); it != end; ++it) {

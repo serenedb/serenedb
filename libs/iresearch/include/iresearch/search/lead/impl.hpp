@@ -40,7 +40,7 @@ class Impl : public Node {
   template<typename... Args>
   explicit Impl(Args&&... args) : _leaf{std::forward<Args>(args)...} {}
 
-  doc_id_t Advance() final { return _leaf.Advance(); }
+  doc_id_t Next() final { return _leaf.Next(); }
 
   doc_id_t Seek(doc_id_t target) final { return _leaf.Seek(target); }
 
@@ -68,7 +68,7 @@ class Erased {
 
   explicit Erased(Node::ptr node) noexcept : _node{std::move(node)} {}
 
-  IRS_FORCE_INLINE doc_id_t Advance() { return _node->Advance(); }
+  IRS_FORCE_INLINE doc_id_t Next() { return _node->Next(); }
 
   IRS_FORCE_INLINE doc_id_t Seek(doc_id_t target) {
     return _node->Seek(target);

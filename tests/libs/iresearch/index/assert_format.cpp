@@ -377,7 +377,7 @@ class PostingsImpl : public irs::TermPostings {
  public:
   PostingsImpl(irs::IndexFeatures features, const tests::Term& data);
 
-  irs::doc_id_t Advance() final {
+  irs::doc_id_t Next() final {
     if (_next == _data.postings.end()) {
       return _doc = irs::doc_limits::eof();
     }
@@ -556,11 +556,11 @@ void AssertDocs(irs::IndexFeatures features,
     irs::IndexFeatures::None != (features & irs::IndexFeatures::Freq);
 
   size_t doc_index = 0;
-  while (!irs::doc_limits::eof(expected_docs->Advance())) {
+  while (!irs::doc_limits::eof(expected_docs->Next())) {
     SCOPED_TRACE(absl::StrCat("doc_index=", doc_index++));
     const auto expected_doc = expected_docs->Value();
 
-    ASSERT_TRUE(!irs::doc_limits::eof(actual_docs->Advance()));
+    ASSERT_TRUE(!irs::doc_limits::eof(actual_docs->Next()));
     ASSERT_EQ(expected_doc, actual_docs->Value());
 
     if (!has_freq) {
@@ -607,7 +607,7 @@ void AssertDocs(irs::IndexFeatures features,
   }
 
   ASSERT_TRUE(irs::doc_limits::eof(expected_docs->Value()));
-  ASSERT_FALSE(!irs::doc_limits::eof(actual_docs->Advance()));
+  ASSERT_FALSE(!irs::doc_limits::eof(actual_docs->Next()));
   ASSERT_TRUE(irs::doc_limits::eof(actual_docs->Value()));
 }
 
@@ -642,17 +642,17 @@ void AssertSeek(const irs::SubReader& segment,
   ASSERT_TRUE(!irs::doc_limits::valid(expected_docs->Value()));
 
   size_t doc_index = 0;
-  while (!irs::doc_limits::eof(expected_docs->Advance())) {
+  while (!irs::doc_limits::eof(expected_docs->Next())) {
     SCOPED_TRACE(absl::StrCat("doc_index=", doc_index++));
     const auto expected_doc = expected_docs->Value();
 
-    ASSERT_EQ(expected_doc, seq_docs->Advance());
+    ASSERT_EQ(expected_doc, seq_docs->Next());
     ASSERT_EQ(expected_doc, seek_docs->Seek(expected_doc));
   }
 
   ASSERT_TRUE(irs::doc_limits::eof(expected_docs->Value()));
-  ASSERT_TRUE(irs::doc_limits::eof(seq_docs->Advance()));
-  ASSERT_TRUE(irs::doc_limits::eof(seek_docs->Advance()));
+  ASSERT_TRUE(irs::doc_limits::eof(seq_docs->Next()));
+  ASSERT_TRUE(irs::doc_limits::eof(seek_docs->Next()));
 
   // FIXME(gnusi): check BitUnion
 }

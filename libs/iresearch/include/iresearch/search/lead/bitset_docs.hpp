@@ -39,11 +39,11 @@ class BitsetDocs {
       _count{_set.WordCount()},
       _rest{_words[0]} {}
 
-  doc_id_t Advance() {
+  doc_id_t Next() {
     if (doc_limits::eof(_doc)) [[unlikely]] {
       return _doc;
     }
-    return Next();
+    return Scan();
   }
 
   doc_id_t Seek(doc_id_t target) {
@@ -62,11 +62,11 @@ class BitsetDocs {
       _rest = _words[word];
     }
     _rest &= ~uint64_t{0} << (offset % kBits);
-    return Next();
+    return Scan();
   }
 
  private:
-  doc_id_t Next() noexcept {
+  doc_id_t Scan() noexcept {
     while (_rest == 0) {
       if (++_word >= _count) [[unlikely]] {
         _word = _count;

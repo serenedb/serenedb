@@ -115,7 +115,7 @@ class CompoundPostings : public TermPostings {
   // consumer a fresh read of them.
   void Subscribe(AttrRefresh refresh) final { _refresh = refresh; }
 
-  doc_id_t Advance() final;
+  doc_id_t Next() final;
 
   uint32_t GetFreq() const final {
     SDB_ASSERT(_current_itr < _iterators.size());
@@ -130,7 +130,7 @@ class CompoundPostings : public TermPostings {
   ProgressTracker _progress;
 };
 
-doc_id_t CompoundPostings::Advance() {
+doc_id_t CompoundPostings::Next() {
   _progress();
 
   if (Aborted()) {
@@ -153,7 +153,7 @@ doc_id_t CompoundPostings::Advance() {
     }
 
     while (true) {
-      auto it_value = it->Advance();
+      auto it_value = it->Next();
       if (doc_limits::eof(it_value)) {
         break;
       }
@@ -460,8 +460,8 @@ doc_id_t ComputeDocIds(DocIdMapT& doc_id_map, const SubReader& reader,
     return doc_limits::invalid();
   }
   auto docs_itr = reader.docs_iterator();
-  for (auto src_doc_id = docs_itr->Advance(); !doc_limits::eof(src_doc_id);
-       src_doc_id = docs_itr->Advance(), ++next_id) {
+  for (auto src_doc_id = docs_itr->Next(); !doc_limits::eof(src_doc_id);
+       src_doc_id = docs_itr->Next(), ++next_id) {
     SDB_ASSERT(src_doc_id >= doc_limits::min());
     SDB_ASSERT(src_doc_id < reader.docs_count() + doc_limits::min());
     doc_id_map[src_doc_id] = next_id;

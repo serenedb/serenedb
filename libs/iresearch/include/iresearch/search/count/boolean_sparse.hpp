@@ -59,7 +59,7 @@ class BooleanSparse : public Root {
   uint64_t Run() final {
     uint64_t total = 0;
     uint32_t n = 0;
-    auto doc = _lead.Advance();
+    auto doc = _lead.Next();
 
     while (!doc_limits::eof(doc)) {
       if constexpr (kTable) {
@@ -88,7 +88,7 @@ class BooleanSparse : public Root {
         } else {
           total += static_cast<uint64_t>(kept);
         }
-        doc = _lead.Advance();
+        doc = _lead.Next();
       } else {
         doc = _lead.Seek(probe);
       }

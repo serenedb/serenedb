@@ -83,7 +83,7 @@ class ConjunctionLeaves {
 
   doc_id_t Seek(doc_id_t from) { return Agree(Lead().Seek(from)); }
 
-  doc_id_t Next() { return Agree(Lead().Advance()); }
+  doc_id_t Next() { return Agree(Lead().Next()); }
 
   IRS_FORCE_INLINE doc_id_t ProbeRest(doc_id_t target) {
     for (auto it = _slots.begin() + 1, end = _slots.end(); it != end; ++it) {

@@ -704,7 +704,7 @@ struct ReplayQueue {
       for (auto& trx : head.trxs) {
         queries = std::max<uint64_t>(queries, trx.GetQueries());
       }
-      const auto tick = search::TickDomain::Instance().Advance(queries + 1);
+      const auto tick = search::TickDomain::Instance().Next(queries + 1);
       // A small entry commits its one transaction; a range entry commits every
       // sub-range's transaction at this same tick (disjoint rowids, so equal
       // ticks are fine -- a later delete still masks them at a higher tick).
@@ -861,8 +861,8 @@ struct LiveFeed {
 
   // Phase 1 of the live commit, BEFORE the tick is allocated: finish
   // tokenization and pin every segment onto the flush context. RegisterFlush
-  // must precede TickDomain::Advance -- otherwise a refresh whose tick
-  // snapshot lands between the Advance and the pin could advance its committed
+  // must precede TickDomain::Next -- otherwise a refresh whose tick
+  // snapshot lands between the Next and the pin could advance its committed
   // tick past an unpinned segment (lost insert / FlushPending assert).
   // Returns the max per-segment query count for tick-range sizing.
   uint64_t Prepare() {

@@ -71,7 +71,7 @@ class ScoredWrapper : public irs::lead::Node {
     _provider.doc_block.value = _docs.data();
   }
 
-  irs::doc_id_t Advance() final { return _doc = _it->Advance(); }
+  irs::doc_id_t Next() final { return _doc = _it->Next(); }
 
   irs::doc_id_t Seek(irs::doc_id_t target) final {
     return _doc = _it->Seek(target);
@@ -410,14 +410,14 @@ struct FrequencyScore : public irs::ScorerBase<FrequencyScore, StatsT> {
 // can be empty, so the shape it is missing lives here.
 class LeadEmpty : public irs::lead::Node {
  public:
-  irs::doc_id_t Advance() final { return irs::doc_limits::eof(); }
+  irs::doc_id_t Next() final { return irs::doc_limits::eof(); }
 
   irs::doc_id_t Seek(irs::doc_id_t) final { return irs::doc_limits::eof(); }
 };
 
 class ScoredEmpty : public irs::lead::Node {
  public:
-  irs::doc_id_t Advance() final { return irs::doc_limits::eof(); }
+  irs::doc_id_t Next() final { return irs::doc_limits::eof(); }
 
   irs::doc_id_t Seek(irs::doc_id_t) final { return irs::doc_limits::eof(); }
 
@@ -433,7 +433,7 @@ class LeadCursor {
 
   irs::doc_id_t Value() const noexcept { return _doc; }
 
-  irs::doc_id_t Advance() { return _doc = _node->Advance(); }
+  irs::doc_id_t Next() { return _doc = _node->Next(); }
 
   irs::doc_id_t Seek(irs::doc_id_t target) {
     return _doc = _node->Seek(target);

@@ -114,7 +114,7 @@ void ValidateTerms(
 
     for (auto docs_itr =
            tests::MaskPostings(segment, term_itr->postings(index_features));
-         !irs::doc_limits::eof(docs_itr->Advance());) {
+         !irs::doc_limits::eof(docs_itr->Next());) {
       ASSERT_EQ(1, itr->second.erase(docs_itr->Value()));
 
       if (frequency) {
@@ -2006,8 +2006,8 @@ TEST_P(MergeWriterTestCase, test_merge_writer_columns_remove) {
       // Use docs_iterator() to confirm only one local doc id is live.
       std::vector<irs::doc_id_t> live;
       auto it = segment.docs_iterator();
-      for (auto doc = it->Advance(); !irs::doc_limits::eof(doc);
-           doc = it->Advance()) {
+      for (auto doc = it->Next(); !irs::doc_limits::eof(doc);
+           doc = it->Next()) {
         live.push_back(doc);
       }
       ASSERT_EQ(1u, live.size());

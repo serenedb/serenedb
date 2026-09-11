@@ -102,7 +102,7 @@ irs::lead::Node::ptr SearchRemoveFilter::MakeLead(
   return irs::memory::to_managed<irs::lead::Node>(self);
 }
 
-irs::doc_id_t SearchRemoveFilter::Advance() {
+irs::doc_id_t SearchRemoveFilter::Next() {
   while (true) {
     if (_pos == _pks.size()) [[unlikely]] {
       _doc = irs::doc_limits::eof();
@@ -203,11 +203,11 @@ irs::lead::Node::ptr SearchRemovePrefixFilter::MakeLead(
   return irs::memory::to_managed<irs::lead::Node>(self);
 }
 
-irs::doc_id_t SearchRemovePrefixFilter::Advance() {
+irs::doc_id_t SearchRemovePrefixFilter::Next() {
   while (true) {
     if (_postings) {
       while (true) {
-        const auto doc = _postings->Advance();
+        const auto doc = _postings->Next();
         if (irs::doc_limits::eof(doc)) {
           break;
         }

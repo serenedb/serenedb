@@ -218,7 +218,7 @@ std::map<irs::doc_id_t, irs::score_t> RunQuery(irs::IndexReader& index,
   auto score = docs->PrepareScore();
 
   std::map<irs::doc_id_t, irs::score_t> seen;
-  while (!irs::doc_limits::eof(docs->Advance())) {
+  while (!irs::doc_limits::eof(docs->Next())) {
     fetcher.Fetch(docs->Value());
     docs->FetchScoreArgs(0);
     irs::score_t s{};

@@ -33,7 +33,7 @@ namespace irs::lead {
 struct Node : memory::Managed {
   using ptr = memory::managed_ptr<Node>;
 
-  virtual doc_id_t Advance() = 0;
+  virtual doc_id_t Next() = 0;
 
   virtual doc_id_t Seek(doc_id_t target) = 0;
 

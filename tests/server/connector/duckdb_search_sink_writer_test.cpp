@@ -62,7 +62,7 @@ using namespace connector;
 irs::doc_id_t SeekPostings(irs::TermPostings& postings, irs::doc_id_t target) {
   auto doc = postings.Value();
   while (doc < target) {
-    doc = postings.Advance();
+    doc = postings.Next();
   }
   return doc;
 }
@@ -72,9 +72,9 @@ class MaskedPostings : public irs::TermPostings {
   MaskedPostings(irs::TermPostings::ptr postings, const irs::DocumentMask& mask)
     : _postings{std::move(postings)}, _mask{mask} {}
 
-  irs::doc_id_t Advance() final {
+  irs::doc_id_t Next() final {
     for (;;) {
-      _doc = _postings->Advance();
+      _doc = _postings->Next();
       if (irs::doc_limits::eof(_doc) || !_mask.contains(_doc)) {
         return _doc;
       }
@@ -431,10 +431,10 @@ TEST_F(DuckDBSearchSinkWriterTest, InsertDeleteMultipleColumns) {
       irs::ViewCast<irs::byte_type>(irs::BooleanTerm(col3))));
     auto bool_postings =
       MaskPostings(segment, bool_term_itr->postings(irs::IndexFeatures::None));
-    ASSERT_TRUE(!irs::doc_limits::eof(int32_postings->Advance()));
-    ASSERT_TRUE(!irs::doc_limits::eof(varchar_postings->Advance()));
-    ASSERT_TRUE(!irs::doc_limits::eof(real_postings->Advance()));
-    ASSERT_TRUE(!irs::doc_limits::eof(big_postings->Advance()));
+    ASSERT_TRUE(!irs::doc_limits::eof(int32_postings->Next()));
+    ASSERT_TRUE(!irs::doc_limits::eof(varchar_postings->Next()));
+    ASSERT_TRUE(!irs::doc_limits::eof(real_postings->Next()));
+    ASSERT_TRUE(!irs::doc_limits::eof(big_postings->Next()));
     ASSERT_EQ(big_postings->Value(), varchar_postings->Value());
     ASSERT_EQ(real_postings->Value(), varchar_postings->Value());
     ASSERT_EQ(int32_postings->Value(), varchar_postings->Value());
@@ -444,10 +444,10 @@ TEST_F(DuckDBSearchSinkWriterTest, InsertDeleteMultipleColumns) {
       SeekPostings(*bool_postings, int32_postings->Value())));
     ASSERT_EQ(int32_postings->Value(), bool_postings->Value());
     ASSERT_EQ(pk, read_pk_at(varchar_postings->Value()));
-    ASSERT_FALSE(!irs::doc_limits::eof(varchar_postings->Advance()));
-    ASSERT_FALSE(!irs::doc_limits::eof(int32_postings->Advance()));
-    ASSERT_FALSE(!irs::doc_limits::eof(real_postings->Advance()));
-    ASSERT_FALSE(!irs::doc_limits::eof(big_postings->Advance()));
+    ASSERT_FALSE(!irs::doc_limits::eof(varchar_postings->Next()));
+    ASSERT_FALSE(!irs::doc_limits::eof(int32_postings->Next()));
+    ASSERT_FALSE(!irs::doc_limits::eof(real_postings->Next()));
+    ASSERT_FALSE(!irs::doc_limits::eof(big_postings->Next()));
   };
   {
     auto reader = irs::DirectoryReader(_dir, _codec, {.db = &TestDb()});
@@ -603,7 +603,7 @@ TEST_F(DuckDBSearchSinkWriterTest, InsertNullsColumns) {
     ASSERT_TRUE(varchar_nulls_itr->next());
     auto varchar_postings =
       varchar_terms_itr->postings(irs::IndexFeatures::None);
-    ASSERT_TRUE(!irs::doc_limits::eof(varchar_postings->Advance()));
+    ASSERT_TRUE(!irs::doc_limits::eof(varchar_postings->Next()));
     ASSERT_EQ(1, read_pk_at(varchar_postings->Value()));
     auto varchar_nulls_postings =
       varchar_nulls_itr->postings(irs::IndexFeatures::None);
@@ -618,7 +618,7 @@ TEST_F(DuckDBSearchSinkWriterTest, InsertNullsColumns) {
     ASSERT_TRUE(irs::doc_limits::valid(
       SeekPostings(*unknown_postings, varchar_postings->Value())));
     ASSERT_EQ(varchar_postings->Value(), unknown_postings->Value());
-    ASSERT_FALSE(!irs::doc_limits::eof(varchar_postings->Advance()));
+    ASSERT_FALSE(!irs::doc_limits::eof(varchar_postings->Next()));
   }
   // Row 2  NULL, NULL
   {
@@ -652,7 +652,7 @@ TEST_F(DuckDBSearchSinkWriterTest, InsertNullsColumns) {
     ASSERT_TRUE(varchar_nulls_itr->next());
     auto varchar_postings =
       varchar_terms_itr->postings(irs::IndexFeatures::None);
-    ASSERT_TRUE(!irs::doc_limits::eof(varchar_postings->Advance()));
+    ASSERT_TRUE(!irs::doc_limits::eof(varchar_postings->Next()));
     ASSERT_EQ(3, read_pk_at(varchar_postings->Value()));
     auto varchar_nulls_postings =
       varchar_nulls_itr->postings(irs::IndexFeatures::None);
@@ -667,7 +667,7 @@ TEST_F(DuckDBSearchSinkWriterTest, InsertNullsColumns) {
     ASSERT_TRUE(irs::doc_limits::valid(
       SeekPostings(*unknown_postings, varchar_postings->Value())));
     ASSERT_EQ(varchar_postings->Value(), unknown_postings->Value());
-    ASSERT_FALSE(!irs::doc_limits::eof(varchar_postings->Advance()));
+    ASSERT_FALSE(!irs::doc_limits::eof(varchar_postings->Next()));
   }
   // Row 4 NULL, NULL
   {
@@ -738,7 +738,7 @@ TEST_F(DuckDBSearchSinkWriterTest, InsertStringPrefix) {
     irs::ViewCast<irs::byte_type>(std::string_view{"\x0foo", 4})));
 
   auto varchar_postings = varchar_terms_itr->postings(irs::IndexFeatures::None);
-  ASSERT_TRUE(!irs::doc_limits::eof(varchar_postings->Advance()));
+  ASSERT_TRUE(!irs::doc_limits::eof(varchar_postings->Next()));
   ASSERT_EQ(1, read_pk_at(varchar_postings->Value()));
 }
 
@@ -840,9 +840,9 @@ TEST_F(DuckDBSearchSinkWriterTest, InsertDeleteInsertWithExisting) {
       itr->seek(irs::ViewCast<irs::byte_type>(std::string_view{"value3", 6})));
     auto postings =
       MaskPostings(segment, itr->postings(irs::IndexFeatures::None));
-    ASSERT_TRUE(!irs::doc_limits::eof(postings->Advance()));
+    ASSERT_TRUE(!irs::doc_limits::eof(postings->Next()));
     ASSERT_EQ(1, read_pk_at(postings->Value()));
-    ASSERT_FALSE(!irs::doc_limits::eof(postings->Advance()));
+    ASSERT_FALSE(!irs::doc_limits::eof(postings->Next()));
   }
   // check deleted
   {
@@ -855,7 +855,7 @@ TEST_F(DuckDBSearchSinkWriterTest, InsertDeleteInsertWithExisting) {
       itr->seek(irs::ViewCast<irs::byte_type>(std::string_view{"value2", 6})));
     auto postings =
       MaskPostings(segment, itr->postings(irs::IndexFeatures::None));
-    ASSERT_FALSE(!irs::doc_limits::eof(postings->Advance()));
+    ASSERT_FALSE(!irs::doc_limits::eof(postings->Next()));
   }
   {
     auto& segment = reader[0];
@@ -867,7 +867,7 @@ TEST_F(DuckDBSearchSinkWriterTest, InsertDeleteInsertWithExisting) {
       itr->seek(irs::ViewCast<irs::byte_type>(std::string_view{"value1", 6})));
     auto postings =
       MaskPostings(segment, itr->postings(irs::IndexFeatures::None));
-    ASSERT_FALSE(!irs::doc_limits::eof(postings->Advance()));
+    ASSERT_FALSE(!irs::doc_limits::eof(postings->Next()));
   }
 }
 
@@ -908,9 +908,9 @@ TEST_F(DuckDBSearchSinkWriterTest, InsertDeleteInsertOnePending) {
       itr->seek(irs::ViewCast<irs::byte_type>(std::string_view{"value3", 6})));
     auto postings =
       MaskPostings(segment, itr->postings(irs::IndexFeatures::None));
-    ASSERT_TRUE(!irs::doc_limits::eof(postings->Advance()));
+    ASSERT_TRUE(!irs::doc_limits::eof(postings->Next()));
     ASSERT_EQ(1, read_pk_at(postings->Value()));
-    ASSERT_FALSE(!irs::doc_limits::eof(postings->Advance()));
+    ASSERT_FALSE(!irs::doc_limits::eof(postings->Next()));
   }
   // check deleted
   {
@@ -923,7 +923,7 @@ TEST_F(DuckDBSearchSinkWriterTest, InsertDeleteInsertOnePending) {
         irs::ViewCast<irs::byte_type>(std::string_view{"value2", 6})));
       auto postings =
         MaskPostings(segment, itr->postings(irs::IndexFeatures::None));
-      ASSERT_FALSE(!irs::doc_limits::eof(postings->Advance()));
+      ASSERT_FALSE(!irs::doc_limits::eof(postings->Next()));
     }
     {
       auto itr = varchar_terms->iterator();
@@ -931,7 +931,7 @@ TEST_F(DuckDBSearchSinkWriterTest, InsertDeleteInsertOnePending) {
         irs::ViewCast<irs::byte_type>(std::string_view{"value1", 6})));
       auto postings =
         MaskPostings(segment, itr->postings(irs::IndexFeatures::None));
-      ASSERT_FALSE(!irs::doc_limits::eof(postings->Advance()));
+      ASSERT_FALSE(!irs::doc_limits::eof(postings->Next()));
     }
   }
 }
@@ -984,9 +984,9 @@ TEST_F(DuckDBSearchSinkWriterTest, InsertDeleteInsertOnePendingWithFlush) {
         irs::ViewCast<irs::byte_type>(std::string_view{"value3", 6})));
       auto postings =
         MaskPostings(segment, itr->postings(irs::IndexFeatures::None));
-      ASSERT_TRUE(!irs::doc_limits::eof(postings->Advance()));
+      ASSERT_TRUE(!irs::doc_limits::eof(postings->Next()));
       ASSERT_EQ(1, read_pk_at(postings->Value()));
-      ASSERT_FALSE(!irs::doc_limits::eof(postings->Advance()));
+      ASSERT_FALSE(!irs::doc_limits::eof(postings->Next()));
     }
     // check deleted
     {
@@ -999,7 +999,7 @@ TEST_F(DuckDBSearchSinkWriterTest, InsertDeleteInsertOnePendingWithFlush) {
           irs::ViewCast<irs::byte_type>(std::string_view{"value1", 6})));
         auto postings =
           MaskPostings(segment, itr->postings(irs::IndexFeatures::None));
-        ASSERT_FALSE(!irs::doc_limits::eof(postings->Advance()));
+        ASSERT_FALSE(!irs::doc_limits::eof(postings->Next()));
       }
     }
     {
@@ -1012,7 +1012,7 @@ TEST_F(DuckDBSearchSinkWriterTest, InsertDeleteInsertOnePendingWithFlush) {
           irs::ViewCast<irs::byte_type>(std::string_view{"value2", 6})));
         auto postings =
           MaskPostings(segment, itr->postings(irs::IndexFeatures::None));
-        ASSERT_FALSE(!irs::doc_limits::eof(postings->Advance()));
+        ASSERT_FALSE(!irs::doc_limits::eof(postings->Next()));
       }
     }
   }
@@ -1056,9 +1056,9 @@ TEST_F(DuckDBSearchSinkWriterTest, DeleteNotMissedWithExisting) {
       itr->seek(irs::ViewCast<irs::byte_type>(std::string_view{"value2", 6})));
     auto postings =
       MaskPostings(segment, itr->postings(irs::IndexFeatures::None));
-    ASSERT_TRUE(!irs::doc_limits::eof(postings->Advance()));
+    ASSERT_TRUE(!irs::doc_limits::eof(postings->Next()));
     ASSERT_EQ(1, read_pk_at(postings->Value()));
-    ASSERT_FALSE(!irs::doc_limits::eof(postings->Advance()));
+    ASSERT_FALSE(!irs::doc_limits::eof(postings->Next()));
   }
   // check deleted
   {
@@ -1071,7 +1071,7 @@ TEST_F(DuckDBSearchSinkWriterTest, DeleteNotMissedWithExisting) {
       itr->seek(irs::ViewCast<irs::byte_type>(std::string_view{"value1", 6})));
     auto postings =
       MaskPostings(segment, itr->postings(irs::IndexFeatures::None));
-    ASSERT_FALSE(!irs::doc_limits::eof(postings->Advance()));
+    ASSERT_FALSE(!irs::doc_limits::eof(postings->Next()));
   }
 }
 

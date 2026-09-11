@@ -154,7 +154,7 @@ class Format10TestCase : public tests::FormatTestCase {
           }
 
           if (inc == 1) {
-            ASSERT_FALSE(!irs::doc_limits::eof(actual->Advance()));
+            ASSERT_FALSE(!irs::doc_limits::eof(actual->Next()));
             ASSERT_TRUE(irs::doc_limits::eof(actual->Value()));
 
             // seek after the existing documents
@@ -169,7 +169,7 @@ class Format10TestCase : public tests::FormatTestCase {
             read_meta, handles, field.index_features, irs::IndexFeatures::None,
             /*has_score_bounds=*/false);
           ASSERT_FALSE(irs::doc_limits::valid(it->Value()));
-          ASSERT_TRUE(!irs::doc_limits::eof(it->Advance()));
+          ASSERT_TRUE(!irs::doc_limits::eof(it->Next()));
           ASSERT_EQ(docs.front().first, it->Value());
           ASSERT_TRUE(irs::doc_limits::eof(it->Seek(docs.back().first + 42)));
         }
@@ -199,11 +199,11 @@ class Format10TestCase : public tests::FormatTestCase {
             ASSERT_EQ(doc->first, expected.SeekTo(doc->first));
             AssertFrequencyAndPositions(expected, *it, features);
             if (doc != docs.rbegin()) {
-              ASSERT_TRUE(!irs::doc_limits::eof(it->Advance()));
+              ASSERT_TRUE(!irs::doc_limits::eof(it->Next()));
               const auto expected_doc = (doc - 1)->first;
               ASSERT_EQ(expected_doc, it->Value());
 
-              ASSERT_TRUE(!irs::doc_limits::eof(expected.Advance()));
+              ASSERT_TRUE(!irs::doc_limits::eof(expected.Next()));
               ASSERT_EQ(expected_doc, expected.Value());
               AssertFrequencyAndPositions(expected, *it, features);
             }
@@ -218,7 +218,7 @@ class Format10TestCase : public tests::FormatTestCase {
           ASSERT_FALSE(irs::doc_limits::valid(it->Value()));
           ASSERT_FALSE(
             irs::doc_limits::valid(it->Seek(irs::doc_limits::invalid())));
-          ASSERT_TRUE(!irs::doc_limits::eof(it->Advance()));
+          ASSERT_TRUE(!irs::doc_limits::eof(it->Next()));
           ASSERT_EQ(docs.front().first, it->Value());
         }
 
@@ -229,7 +229,7 @@ class Format10TestCase : public tests::FormatTestCase {
             /*has_score_bounds=*/false);
           ASSERT_FALSE(irs::doc_limits::valid(it->Value()));
           ASSERT_TRUE(irs::doc_limits::eof(it->Seek(irs::doc_limits::eof())));
-          ASSERT_FALSE(!irs::doc_limits::eof(it->Advance()));
+          ASSERT_FALSE(!irs::doc_limits::eof(it->Next()));
           ASSERT_TRUE(irs::doc_limits::eof(it->Value()));
         }
       }
@@ -356,7 +356,7 @@ TEST_P(Format10TestCase, postings_read_write_single_doc) {
       // read documents
       auto it = reader->Postings(field.index_features, irs::IndexFeatures::None,
                                  read_meta, /*has_score_bounds=*/false);
-      for (size_t i = 0; !irs::doc_limits::eof(it->Advance());) {
+      for (size_t i = 0; !irs::doc_limits::eof(it->Next());) {
         ASSERT_EQ(docs0[i++].first, it->Value());
       }
     }
@@ -379,7 +379,7 @@ TEST_P(Format10TestCase, postings_read_write_single_doc) {
       // read documents
       auto it = reader->Postings(field.index_features, irs::IndexFeatures::None,
                                  read_meta, /*has_score_bounds=*/false);
-      for (size_t i = 0; !irs::doc_limits::eof(it->Advance());) {
+      for (size_t i = 0; !irs::doc_limits::eof(it->Next());) {
         ASSERT_EQ(docs1[i++].first, it->Value());
       }
     }
@@ -491,7 +491,7 @@ TEST_P(Format10TestCase, postings_read_write) {
       // read documents
       auto it = reader->Postings(field.index_features, irs::IndexFeatures::None,
                                  read_meta, /*has_score_bounds=*/false);
-      for (size_t i = 0; !irs::doc_limits::eof(it->Advance());) {
+      for (size_t i = 0; !irs::doc_limits::eof(it->Next());) {
         ASSERT_EQ(docs0[i++].first, it->Value());
       }
     }
@@ -513,7 +513,7 @@ TEST_P(Format10TestCase, postings_read_write) {
       // read documents
       auto it = reader->Postings(field.index_features, irs::IndexFeatures::None,
                                  read_meta, /*has_score_bounds=*/false);
-      for (size_t i = 0; !irs::doc_limits::eof(it->Advance());) {
+      for (size_t i = 0; !irs::doc_limits::eof(it->Next());) {
         ASSERT_EQ(docs1[i++].first, it->Value());
       }
     }

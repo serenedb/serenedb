@@ -115,7 +115,7 @@ class PostingLeaf {
   PostingLeaf(PostingLeaf&&) = delete;
   PostingLeaf& operator=(PostingLeaf&&) = delete;
 
-  IRS_FORCE_INLINE doc_id_t Advance() {
+  IRS_FORCE_INLINE doc_id_t Next() {
     if (_left_in_leaf == 0) [[unlikely]] {
       if (_left_in_list == 0) [[unlikely]] {
         return _doc = doc_limits::eof();

@@ -59,8 +59,8 @@ class NGramSlots {
   NGramSlots& operator=(NGramSlots&&) = delete;
 
  private:
-  template<typename Advance>
-  void Gather(Advance&& advance, doc_id_t from) {
+  template<typename Next>
+  void Gather(Next&& advance, doc_id_t from) {
     for (size_t i = 0; i != _live_count; ++i) {
       if (_live[i]->Value() < from) {
         advance(*_live[i]);

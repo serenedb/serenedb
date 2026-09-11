@@ -200,7 +200,7 @@ SkipList SkipList::Make(tests::FormatTestCase::TestPostings& it,
     }
   };
 
-  for (irs::doc_id_t i = 1; !irs::doc_limits::eof(it.Advance()); ++i) {
+  for (irs::doc_id_t i = 1; !irs::doc_limits::eof(it.Next()); ++i) {
     add(i, it.Value(), static_cast<irs::score_t>(it.GetFreq()));
   }
 
@@ -391,8 +391,8 @@ void Format15TestCase::AssertPostingsWalk(irs::PostingsReader& reader,
   TestPostings expected{docs, features};
   const bool has_freq = irs::IndexFeatures::None != (features & kFreq);
 
-  while (!irs::doc_limits::eof(expected.Advance())) {
-    ASSERT_FALSE(irs::doc_limits::eof(actual->Advance()));
+  while (!irs::doc_limits::eof(expected.Next())) {
+    ASSERT_FALSE(irs::doc_limits::eof(actual->Next()));
     ASSERT_EQ(expected.Value(), actual->Value());
     if (has_freq) {
       ASSERT_EQ(expected.GetFreq(), actual->GetFreq());
@@ -400,7 +400,7 @@ void Format15TestCase::AssertPostingsWalk(irs::PostingsReader& reader,
     AssertFrequencyAndPositions(expected, *actual, features);
   }
 
-  ASSERT_TRUE(irs::doc_limits::eof(actual->Advance()));
+  ASSERT_TRUE(irs::doc_limits::eof(actual->Next()));
 }
 
 void Format15TestCase::AssertBackwardsNext(irs::PostingsReader& reader,
@@ -420,12 +420,12 @@ void Format15TestCase::AssertBackwardsNext(irs::PostingsReader& reader,
     ASSERT_EQ(doc->first, expected.SeekTo(doc->first));
     AssertFrequencyAndPositions(expected, *actual, features);
 
-    while (!irs::doc_limits::eof(expected.Advance())) {
-      ASSERT_FALSE(irs::doc_limits::eof(actual->Advance()));
+    while (!irs::doc_limits::eof(expected.Next())) {
+      ASSERT_FALSE(irs::doc_limits::eof(actual->Next()));
       ASSERT_EQ(expected.Value(), actual->Value());
       AssertFrequencyAndPositions(expected, *actual, features);
     }
-    ASSERT_TRUE(irs::doc_limits::eof(actual->Advance()));
+    ASSERT_TRUE(irs::doc_limits::eof(actual->Next()));
     ASSERT_TRUE(irs::doc_limits::eof(actual->Value()));
   }
 }
@@ -456,7 +456,7 @@ void Format15TestCase::AssertDocsRandom(irs::PostingsReader& reader,
   }
 
   if (inc == 1) {
-    ASSERT_TRUE(irs::doc_limits::eof(actual->Advance()));
+    ASSERT_TRUE(irs::doc_limits::eof(actual->Next()));
     ASSERT_TRUE(irs::doc_limits::eof(actual->Value()));
 
     // Seek after the existing documents
@@ -475,9 +475,9 @@ void Format15TestCase::AssertDocsSeq(irs::PostingsReader& reader, DocsView docs,
 
   ASSERT_FALSE(irs::doc_limits::valid(actual->Value()));
 
-  while (!irs::doc_limits::eof(expected.Advance())) {
+  while (!irs::doc_limits::eof(expected.Next())) {
     const auto expected_doc_id = expected.Value();
-    ASSERT_FALSE(irs::doc_limits::eof(actual->Advance()));
+    ASSERT_FALSE(irs::doc_limits::eof(actual->Next()));
 
     ASSERT_EQ(expected_doc_id, actual->Value());
     ASSERT_EQ(expected_doc_id, actual->Seek(expected_doc_id));
@@ -489,7 +489,7 @@ void Format15TestCase::AssertDocsSeq(irs::PostingsReader& reader, DocsView docs,
     AssertFrequencyAndPositions(expected, *actual, features);
   }
 
-  ASSERT_TRUE(irs::doc_limits::eof(actual->Advance()));
+  ASSERT_TRUE(irs::doc_limits::eof(actual->Next()));
   ASSERT_TRUE(irs::doc_limits::eof(actual->Value()));
 
   // seek after the existing documents
@@ -534,7 +534,7 @@ void Format15TestCase::AssertCornerCases(irs::PostingsReader& reader,
   {
     auto it = GetIterator(reader, field_features, features, meta);
     ASSERT_FALSE(irs::doc_limits::valid(it->Value()));
-    ASSERT_TRUE(!irs::doc_limits::eof(it->Advance()));
+    ASSERT_TRUE(!irs::doc_limits::eof(it->Next()));
     ASSERT_EQ(docs.front().first, it->Value());
     ASSERT_TRUE(irs::doc_limits::eof(it->Seek(docs.back().first + 42)));
   }
@@ -544,7 +544,7 @@ void Format15TestCase::AssertCornerCases(irs::PostingsReader& reader,
     auto it = GetIterator(reader, field_features, features, meta);
     ASSERT_FALSE(irs::doc_limits::valid(it->Value()));
     ASSERT_FALSE(irs::doc_limits::valid(it->Seek(irs::doc_limits::invalid())));
-    ASSERT_TRUE(!irs::doc_limits::eof(it->Advance()));
+    ASSERT_TRUE(!irs::doc_limits::eof(it->Next()));
     ASSERT_EQ(docs.front().first, it->Value());
   }
 
@@ -553,7 +553,7 @@ void Format15TestCase::AssertCornerCases(irs::PostingsReader& reader,
     auto it = GetIterator(reader, field_features, features, meta);
     ASSERT_FALSE(irs::doc_limits::valid(it->Value()));
     ASSERT_TRUE(irs::doc_limits::eof(it->Seek(irs::doc_limits::eof())));
-    ASSERT_FALSE(!irs::doc_limits::eof(it->Advance()));
+    ASSERT_FALSE(!irs::doc_limits::eof(it->Next()));
     ASSERT_TRUE(irs::doc_limits::eof(it->Value()));
   }
 }

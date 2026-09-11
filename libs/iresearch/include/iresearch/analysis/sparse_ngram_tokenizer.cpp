@@ -97,7 +97,7 @@ void SparseNGramTokenizer::FillHashes(Cursor& ctx) {
   ctx.hash_end = end;
 }
 
-bool SparseNGramTokenizer::Advance(Cursor& ctx) {
+bool SparseNGramTokenizer::Next(Cursor& ctx) {
   const size_t pos_end = ctx.data.size() >= 2 ? ctx.data.size() - 1 : 0;
   HashAndPos* const base = _stack.data();
   HashAndPos* const limit = base + _stack.size();
@@ -216,7 +216,7 @@ bool SparseNGramTokenizer::DoFill(duckdb::string_t raw, TokenSink& sink) {
   EnsureScratch();
   const EmitKSlot* const pending = _pending.data();
   Cursor ctx{.data = {reinterpret_cast<const byte_type*>(raw.GetData()), size}};
-  while (Advance(ctx)) {
+  while (Next(ctx)) {
     sink.EmitK<Layout>(ctx.pending_size, ctx.data.data(),
                        ctx.data.data() + ctx.data.size(),
                        [&](size_t j) IRS_FORCE_INLINE { return pending[j]; });

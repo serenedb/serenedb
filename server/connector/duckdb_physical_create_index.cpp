@@ -633,7 +633,7 @@ SereneDBPhysicalCreateIndex::GetLocalSinkState(
       &catalog::InvertedInfo(*gstate.index_for_providers)});
   if (!TableOrNull()) {
     lstate->search_trx->SetTickSource([](uint64_t count) {
-      return search::TickDomain::Instance().Advance(count);
+      return search::TickDomain::Instance().Next(count);
     });
   }
 
@@ -821,7 +821,7 @@ duckdb::SinkCombineResultType SereneDBPhysicalCreateIndex::Combine(
       auto& trx = *lstate->search_trx;
       trx.RegisterFlush();
       committed = trx.FlushAndCommit(
-        search::TickDomain::Instance().Advance(trx.GetQueries() + 1));
+        search::TickDomain::Instance().Next(trx.GetQueries() + 1));
     }
     lstate->search_trx.reset();
     if (committed) {
@@ -866,7 +866,7 @@ duckdb::SinkFinalizeType SereneDBPhysicalCreateIndex::Finalize(
                   [&](size_t i) { return delete_log[i]; });
       trx.RegisterFlush();
       const auto last_tick =
-        search::TickDomain::Instance().Advance(delete_log.size() + 1);
+        search::TickDomain::Instance().Next(delete_log.size() + 1);
       if (!trx.Commit(last_tick)) {
         THROW_SQL_ERROR(
           ERR_CODE(ERRCODE_INTERNAL_ERROR),

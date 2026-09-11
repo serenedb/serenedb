@@ -2557,7 +2557,7 @@ class FieldReader::Impl {
       }
 
       doc_id_t d;
-      while (!doc_limits::eof(d = docs_it->Advance())) {
+      while (!doc_limits::eof(d = docs_it->Next())) {
         SDB_ASSERT(doc_limits::valid(d));
         if (!acceptor(d)) {
           break;

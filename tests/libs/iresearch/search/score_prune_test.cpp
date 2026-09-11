@@ -163,7 +163,7 @@ std::vector<Doc> ScorePruneTestCase::Collect(const irs::DirectoryReader& index,
       EXPECT_TRUE(std::is_heap(std::begin(sorted), std::end(sorted)));
     }
     irs::score_t score_value = 0;
-    while (!irs::doc_limits::eof(docs->Advance())) {
+    while (!irs::doc_limits::eof(docs->Next())) {
       auto doc = docs->Value();
       fetcher.Fetch(doc);
       docs->FetchScoreArgs(0);

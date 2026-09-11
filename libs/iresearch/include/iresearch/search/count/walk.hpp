@@ -46,7 +46,7 @@ class Walk : public Root {
   uint64_t Run() final {
     uint64_t total = 0;
     if constexpr (kTable) {
-      auto doc = _node.Advance();
+      auto doc = _node.Next();
       while (!doc_limits::eof(doc)) {
         const auto live = _table.Live(doc);
         if (live != doc) {
@@ -56,12 +56,12 @@ class Walk : public Root {
         uint32_t n = 0;
         do {
           _docs[n++] = doc;
-          doc = _node.Advance();
+          doc = _node.Next();
         } while (n != kRun && !doc_limits::eof(doc));
         total += _table.Run(_docs.data(), nullptr, n);
       }
     } else {
-      while (!doc_limits::eof(_node.Advance())) {
+      while (!doc_limits::eof(_node.Next())) {
         ++total;
       }
     }

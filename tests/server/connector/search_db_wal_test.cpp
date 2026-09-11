@@ -489,7 +489,7 @@ TEST_F(SearchDbWalTest, IdleShardAdvancedToCurrentTickUnpinsGc) {
   wal.OnShardCommit(ObjectId{7}, 2);  // min still 0 (shard 8 at 0) -> no GC
   EXPECT_TRUE(std::filesystem::exists(SegPath(1)));
 
-  // Advance the idle shard to the current WAL tick (the fix). min now rises to
+  // Next the idle shard to the current WAL tick (the fix). min now rises to
   // shard 7's tick (2), so consumed segments below it are reclaimed -- without
   // dropping shard 8.
   wal.OnShardCommit(ObjectId{8}, wal.CurrentTick());

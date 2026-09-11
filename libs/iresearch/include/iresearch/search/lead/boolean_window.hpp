@@ -68,7 +68,7 @@ class BooleanWindow {
   BooleanWindow(BooleanWindow&&) = delete;
   BooleanWindow& operator=(BooleanWindow&&) = delete;
 
-  doc_id_t Advance() { return Seek(_doc + 1); }
+  doc_id_t Next() { return Seek(_doc + 1); }
 
   doc_id_t Seek(doc_id_t target) {
     if (target <= _doc) {

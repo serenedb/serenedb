@@ -77,7 +77,7 @@ class BooleanSparse : public Root {
     ABSL_CACHELINE_ALIGNED doc_id_t docs[kBatch];
     ABSL_CACHELINE_ALIGNED score_t scores[kBatch];
     uint32_t batch = 0;
-    auto doc = _lead.Advance();
+    auto doc = _lead.Next();
     [[clang::code_align(64)]] while (!doc_limits::eof(doc)) {
       if constexpr (kProbes) {
         if (const auto probe = _probes.Probe(doc); probe != doc) {
@@ -93,7 +93,7 @@ class BooleanSparse : public Root {
       }
       if constexpr (kExcludes) {
         if (irs::detail::IsExcluded(_excludes, doc)) {
-          doc = _lead.Advance();
+          doc = _lead.Next();
           continue;
         }
       }
@@ -112,7 +112,7 @@ class BooleanSparse : public Root {
         _admit.AddDocs(collector, docs, kBatch, scores);
         batch = 0;
       }
-      doc = _lead.Advance();
+      doc = _lead.Next();
     }
     if (batch != 0) {
       _fetcher.Fetch(std::span<const doc_id_t>{docs, batch});

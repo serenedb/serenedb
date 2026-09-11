@@ -50,7 +50,7 @@ class WalkDocs {
     while (doc < max) {
       const size_t offset = doc - min;
       SetBit(mask[offset / detail::kWindowBits], offset % detail::kWindowBits);
-      doc = _leaf.Advance();
+      doc = _leaf.Next();
     }
     return _doc = doc;
   }
@@ -60,7 +60,7 @@ class WalkDocs {
     auto doc = From(min);
     while (doc < max) {
       cursor.Doc(doc - min);
-      doc = _leaf.Advance();
+      doc = _leaf.Next();
     }
     cursor.Settle(max - min);
     return _doc = doc;
@@ -72,7 +72,7 @@ class WalkDocs {
       const size_t offset = doc - min;
       UnsetBit(mask[offset / detail::kWindowBits],
                offset % detail::kWindowBits);
-      doc = _leaf.Advance();
+      doc = _leaf.Next();
     }
     return _doc = doc;
   }
@@ -120,7 +120,7 @@ class WalkScored {
         Settle(min, n, scores);
         n = 0;
       }
-      doc = _leaf.Advance();
+      doc = _leaf.Next();
     }
     Settle(min, n, scores);
     return _doc = doc;

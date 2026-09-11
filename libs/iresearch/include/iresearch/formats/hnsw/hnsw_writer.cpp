@@ -170,8 +170,8 @@ void HealNode(HnswGraphWriter& graph, const HnswGraph& src_graph,
   auto& seen = heal.seen;
   auto& walked = heal.walked;
   pool.clear();
-  seen.Advance();
-  walked.Advance();
+  seen.Next();
+  walked.Next();
   seen.TestAndSet(node);
   for (const auto id : links) {
     if (id == kHnswInvalidNode) {

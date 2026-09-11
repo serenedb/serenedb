@@ -76,7 +76,7 @@ bool IsValid(const ByNestedOptions::MatchType& match) noexcept {
 }
 
 struct EmptyParentsNode : ParentDocs {
-  doc_id_t Advance() final { return doc_limits::eof(); }
+  doc_id_t Next() final { return doc_limits::eof(); }
 
   doc_id_t Seek(doc_id_t) final { return doc_limits::eof(); }
 
@@ -84,7 +84,7 @@ struct EmptyParentsNode : ParentDocs {
 };
 
 struct EmptyDocsNode : lead::Node {
-  doc_id_t Advance() final { return doc_limits::eof(); }
+  doc_id_t Next() final { return doc_limits::eof(); }
 
   doc_id_t Seek(doc_id_t) final { return doc_limits::eof(); }
 };
@@ -108,7 +108,7 @@ class PlainChild {
 
   doc_id_t Seek(doc_id_t target) { return _doc = _child->Seek(target); }
 
-  doc_id_t Advance() { return _doc = _child->Advance(); }
+  doc_id_t Next() { return _doc = _child->Next(); }
 
   void Restart() noexcept {}
 
@@ -137,7 +137,7 @@ class ScoredChild {
 
   doc_id_t Seek(doc_id_t target) { return _doc = _child->Seek(target); }
 
-  doc_id_t Advance() { return _doc = _child->Advance(); }
+  doc_id_t Next() { return _doc = _child->Next(); }
 
   void Restart() noexcept {
     _held = 0;
@@ -208,7 +208,7 @@ struct AnyRule {
   static doc_id_t Skip(auto& child) noexcept { return child.Value(); }
 
   static void Settle(auto& child, doc_id_t parent, uint32_t slot) {
-    for (auto doc = child.Value(); doc < parent; doc = child.Advance()) {
+    for (auto doc = child.Value(); doc < parent; doc = child.Next()) {
       child.Take(doc);
     }
     child.Settle(slot);
@@ -226,7 +226,7 @@ class MinRule {
         return false;
       }
       child.Take(doc);
-      doc = child.Advance();
+      doc = child.Next();
     }
     return true;
   }
@@ -236,7 +236,7 @@ class MinRule {
   }
 
   static void Settle(auto& child, doc_id_t parent, uint32_t slot) {
-    for (auto doc = child.Value(); doc < parent; doc = child.Advance()) {
+    for (auto doc = child.Value(); doc < parent; doc = child.Next()) {
       child.Take(doc);
     }
     child.Settle(slot);
@@ -254,7 +254,7 @@ class RangeRule {
 
   bool Accept(auto& child, doc_id_t first, doc_id_t parent) const {
     doc_id_t count = 0;
-    for (auto doc = child.Seek(first); doc < parent; doc = child.Advance()) {
+    for (auto doc = child.Seek(first); doc < parent; doc = child.Next()) {
       if (++count > _range.max) {
         return false;
       }
@@ -288,11 +288,11 @@ class PredRule {
     }
     child.Take(doc);
     while (true) {
-      const auto want = _pred->Advance();
+      const auto want = _pred->Next();
       if (want >= parent) {
         return true;
       }
-      doc = child.Advance();
+      doc = child.Next();
       if (doc != want) {
         return false;
       }
@@ -334,7 +334,7 @@ class NestedSlots {
     if (skip > _doc) {
       return _doc = _parent->Seek(skip + 1);
     }
-    return _doc = _parent->Advance();
+    return _doc = _parent->Next();
   }
 
   bool Match(doc_id_t parent) {
@@ -364,7 +364,7 @@ class NestedScored {
 
   doc_id_t Value() const noexcept { return _doc; }
 
-  doc_id_t Advance() { return Converge(_slots.Next(_doc)); }
+  doc_id_t Next() { return Converge(_slots.Next(_doc)); }
 
   doc_id_t Seek(doc_id_t target) {
     if (target <= _doc) {

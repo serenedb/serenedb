@@ -583,7 +583,7 @@ TEST_P(ByEditDistanceTestCase, bm25) {
     };
 
     auto expected_doc = std::begin(kExpectedDocs);
-    while (!irs::doc_limits::eof(docs->Advance())) {
+    while (!irs::doc_limits::eof(docs->Next())) {
       fetcher.Fetch(docs->Value());
       docs->FetchScoreArgs(0);
       irs::score_t value;
@@ -593,7 +593,7 @@ TEST_P(ByEditDistanceTestCase, bm25) {
       ++expected_doc;
     }
 
-    ASSERT_FALSE(!irs::doc_limits::eof(docs->Advance()));
+    ASSERT_FALSE(!irs::doc_limits::eof(docs->Next()));
   }
   EXPECT_EQ(counter.current, 0);
   EXPECT_GT(counter.max, 0);
@@ -629,7 +629,7 @@ TEST_P(ByEditDistanceTestCase, bm25) {
     };
 
     auto expected_doc = std::begin(kExpectedDocs);
-    while (!irs::doc_limits::eof(docs->Advance())) {
+    while (!irs::doc_limits::eof(docs->Next())) {
       fetcher.Fetch(docs->Value());
       irs::score_t value;
       docs->FetchScoreArgs(0);
@@ -675,7 +675,7 @@ TEST_P(ByEditDistanceTestCase, bm25) {
     };
 
     auto expected_doc = std::begin(kExpectedDocs);
-    while (!irs::doc_limits::eof(docs->Advance())) {
+    while (!irs::doc_limits::eof(docs->Next())) {
       fetcher.Fetch(docs->Value());
       irs::score_t value;
       docs->FetchScoreArgs(0);
@@ -686,7 +686,7 @@ TEST_P(ByEditDistanceTestCase, bm25) {
       ++expected_doc;
     }
 
-    ASSERT_FALSE(!irs::doc_limits::eof(docs->Advance()));
+    ASSERT_FALSE(!irs::doc_limits::eof(docs->Next()));
   }
   EXPECT_EQ(counter.current, 0);
   EXPECT_GT(counter.max, 0);
@@ -725,14 +725,14 @@ TEST_P(ByEditDistanceTestCase, bm25) {
     };
 
     std::vector<std::pair<float_t, irs::doc_id_t>> actual_docs;
-    while (!irs::doc_limits::eof(docs->Advance())) {
+    while (!irs::doc_limits::eof(docs->Next())) {
       fetcher.Fetch(docs->Value());
       irs::score_t value;
       docs->FetchScoreArgs(0);
       score.Score(&value, 1);
       actual_docs.emplace_back(value, docs->Value());
     }
-    ASSERT_FALSE(!irs::doc_limits::eof(docs->Advance()));
+    ASSERT_FALSE(!irs::doc_limits::eof(docs->Next()));
     ASSERT_EQ(std::size(kExpectedDocs), actual_docs.size());
 
     std::sort(std::begin(actual_docs), std::end(actual_docs),
@@ -790,7 +790,7 @@ TEST_P(ByEditDistanceTestCase, bm25) {
     };
 
     std::vector<std::pair<float_t, irs::doc_id_t>> actual_docs;
-    while (!irs::doc_limits::eof(docs->Advance())) {
+    while (!irs::doc_limits::eof(docs->Next())) {
       fetcher.Fetch(docs->Value());
       irs::score_t value;
       docs->FetchScoreArgs(0);
@@ -798,7 +798,7 @@ TEST_P(ByEditDistanceTestCase, bm25) {
       actual_docs.emplace_back(value, docs->Value());
     }
 
-    ASSERT_FALSE(!irs::doc_limits::eof(docs->Advance()));
+    ASSERT_FALSE(!irs::doc_limits::eof(docs->Next()));
     ASSERT_EQ(std::size(kExpectedDocs), actual_docs.size());
 
     std::sort(std::begin(actual_docs), std::end(actual_docs),
@@ -858,7 +858,7 @@ TEST_P(ByEditDistanceTestCase, bm25) {
     };
 
     std::vector<std::pair<float_t, irs::doc_id_t>> actual_docs;
-    while (!irs::doc_limits::eof(docs->Advance())) {
+    while (!irs::doc_limits::eof(docs->Next())) {
       fetcher.Fetch(docs->Value());
       irs::score_t value;
       docs->FetchScoreArgs(0);
@@ -866,7 +866,7 @@ TEST_P(ByEditDistanceTestCase, bm25) {
       actual_docs.emplace_back(value, docs->Value());
     }
 
-    ASSERT_FALSE(!irs::doc_limits::eof(docs->Advance()));
+    ASSERT_FALSE(!irs::doc_limits::eof(docs->Next()));
     ASSERT_EQ(std::size(kExpectedDocs), actual_docs.size());
 
     std::sort(std::begin(actual_docs), std::end(actual_docs),
@@ -1117,7 +1117,7 @@ TEST_P(ByEditDistanceTestCase, blends_document_frequency) {
     fetcher.Clear();
     auto docs = prepared.ExecuteScored(0, fetcher);
     auto score = docs->PrepareScore();
-    while (!irs::doc_limits::eof(docs->Advance())) {
+    while (!irs::doc_limits::eof(docs->Next())) {
       fetcher.Fetch(docs->Value());
       docs->FetchScoreArgs(0);
       irs::score_t value{};

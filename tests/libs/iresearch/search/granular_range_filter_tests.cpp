@@ -228,7 +228,7 @@ class GranularRangeFilterTestCase : public tests::FilterTestCaseBase {
 
       for (size_t i = 0; [[maybe_unused]] const auto& sub : rdr) {
         auto docs = prepared.Execute(i);
-        for (; !irs::doc_limits::eof(docs->Advance());) {
+        for (; !irs::doc_limits::eof(docs->Next());) {
           actual.push_back(docs->Value());
         }
         ++i;
@@ -258,7 +258,7 @@ class GranularRangeFilterTestCase : public tests::FilterTestCaseBase {
 
       for (size_t i = 0; [[maybe_unused]] const auto& sub : rdr) {
         auto docs = prepared.Execute(i);
-        for (; !irs::doc_limits::eof(docs->Advance());) {
+        for (; !irs::doc_limits::eof(docs->Next());) {
           actual.push_back(docs->Value());
         }
         ++i;
@@ -284,7 +284,7 @@ class GranularRangeFilterTestCase : public tests::FilterTestCaseBase {
 
       for (size_t i = 0; [[maybe_unused]] const auto& sub : rdr) {
         auto docs = prepared.Execute(i);
-        for (; !irs::doc_limits::eof(docs->Advance());) {
+        for (; !irs::doc_limits::eof(docs->Next());) {
           actual.push_back(docs->Value());
         }
         ++i;
@@ -310,7 +310,7 @@ class GranularRangeFilterTestCase : public tests::FilterTestCaseBase {
 
       for (size_t i = 0; [[maybe_unused]] const auto& sub : rdr) {
         auto docs = prepared.Execute(i);
-        for (; !irs::doc_limits::eof(docs->Advance());) {
+        for (; !irs::doc_limits::eof(docs->Next());) {
           actual.push_back(docs->Value());
         }
         ++i;
@@ -333,7 +333,7 @@ class GranularRangeFilterTestCase : public tests::FilterTestCaseBase {
 
       for (size_t i = 0; [[maybe_unused]] const auto& sub : rdr) {
         auto docs = prepared.Execute(i);
-        for (; !irs::doc_limits::eof(docs->Advance());) {
+        for (; !irs::doc_limits::eof(docs->Next());) {
           actual.push_back(docs->Value());
         }
         ++i;
@@ -356,7 +356,7 @@ class GranularRangeFilterTestCase : public tests::FilterTestCaseBase {
 
       for (size_t i = 0; [[maybe_unused]] const auto& sub : rdr) {
         auto docs = prepared.Execute(i);
-        for (; !irs::doc_limits::eof(docs->Advance());) {
+        for (; !irs::doc_limits::eof(docs->Next());) {
           actual.push_back(docs->Value());
         }
         ++i;
@@ -383,7 +383,7 @@ class GranularRangeFilterTestCase : public tests::FilterTestCaseBase {
 
       for (size_t i = 0; [[maybe_unused]] const auto& sub : rdr) {
         auto docs = prepared.Execute(i);
-        for (; !irs::doc_limits::eof(docs->Advance());) {
+        for (; !irs::doc_limits::eof(docs->Next());) {
           actual.push_back(docs->Value());
         }
         ++i;
@@ -406,7 +406,7 @@ class GranularRangeFilterTestCase : public tests::FilterTestCaseBase {
 
       for (size_t i = 0; [[maybe_unused]] const auto& sub : rdr) {
         auto docs = prepared.Execute(i);
-        for (; !irs::doc_limits::eof(docs->Advance());) {
+        for (; !irs::doc_limits::eof(docs->Next());) {
           actual.push_back(docs->Value());
         }
         ++i;
@@ -427,7 +427,7 @@ class GranularRangeFilterTestCase : public tests::FilterTestCaseBase {
 
       for (size_t i = 0; [[maybe_unused]] const auto& sub : rdr) {
         auto docs = prepared.Execute(i);
-        for (; !irs::doc_limits::eof(docs->Advance());) {
+        for (; !irs::doc_limits::eof(docs->Next());) {
           actual.push_back(docs->Value());
         }
         ++i;
@@ -471,7 +471,7 @@ class GranularRangeFilterTestCase : public tests::FilterTestCaseBase {
 
       for (size_t i = 0; [[maybe_unused]] const auto& sub : rdr) {
         auto docs = prepared.Execute(i);
-        for (; !irs::doc_limits::eof(docs->Advance());) {
+        for (; !irs::doc_limits::eof(docs->Next());) {
           actual.push_back(docs->Value());
         }
         ++i;
@@ -503,7 +503,7 @@ class GranularRangeFilterTestCase : public tests::FilterTestCaseBase {
 
       for (size_t i = 0; [[maybe_unused]] const auto& sub : rdr) {
         auto docs = prepared.Execute(i);
-        for (; !irs::doc_limits::eof(docs->Advance());) {
+        for (; !irs::doc_limits::eof(docs->Next());) {
           actual.push_back(docs->Value());
         }
         ++i;
@@ -530,7 +530,7 @@ class GranularRangeFilterTestCase : public tests::FilterTestCaseBase {
 
       for (size_t i = 0; [[maybe_unused]] const auto& sub : rdr) {
         auto docs = prepared.Execute(i);
-        for (; !irs::doc_limits::eof(docs->Advance());) {
+        for (; !irs::doc_limits::eof(docs->Next());) {
           actual.push_back(docs->Value());
         }
         ++i;
@@ -560,7 +560,7 @@ class GranularRangeFilterTestCase : public tests::FilterTestCaseBase {
 
       for (size_t i = 0; [[maybe_unused]] const auto& sub : rdr) {
         auto docs = prepared.Execute(i);
-        for (; !irs::doc_limits::eof(docs->Advance());) {
+        for (; !irs::doc_limits::eof(docs->Next());) {
           actual.push_back(docs->Value());
         }
         ++i;
@@ -590,7 +590,7 @@ class GranularRangeFilterTestCase : public tests::FilterTestCaseBase {
 
       for (size_t i = 0; [[maybe_unused]] const auto& sub : rdr) {
         auto docs = prepared.Execute(i);
-        for (; !irs::doc_limits::eof(docs->Advance());) {
+        for (; !irs::doc_limits::eof(docs->Next());) {
           actual.push_back(docs->Value());
         }
         ++i;
@@ -620,7 +620,7 @@ class GranularRangeFilterTestCase : public tests::FilterTestCaseBase {
 
       for (size_t i = 0; [[maybe_unused]] const auto& sub : rdr) {
         auto docs = prepared.Execute(i);
-        for (; !irs::doc_limits::eof(docs->Advance());) {
+        for (; !irs::doc_limits::eof(docs->Next());) {
           actual.push_back(docs->Value());
         }
         ++i;
@@ -652,7 +652,7 @@ class GranularRangeFilterTestCase : public tests::FilterTestCaseBase {
 
       for (size_t i = 0; [[maybe_unused]] const auto& sub : rdr) {
         auto docs = prepared.Execute(i);
-        for (; !irs::doc_limits::eof(docs->Advance());) {
+        for (; !irs::doc_limits::eof(docs->Next());) {
           actual.push_back(docs->Value());
         }
         ++i;
@@ -684,7 +684,7 @@ class GranularRangeFilterTestCase : public tests::FilterTestCaseBase {
 
       for (size_t i = 0; [[maybe_unused]] const auto& sub : rdr) {
         auto docs = prepared.Execute(i);
-        for (; !irs::doc_limits::eof(docs->Advance());) {
+        for (; !irs::doc_limits::eof(docs->Next());) {
           actual.push_back(docs->Value());
         }
         ++i;
@@ -711,7 +711,7 @@ class GranularRangeFilterTestCase : public tests::FilterTestCaseBase {
 
       for (size_t i = 0; [[maybe_unused]] const auto& sub : rdr) {
         auto docs = prepared.Execute(i);
-        for (; !irs::doc_limits::eof(docs->Advance());) {
+        for (; !irs::doc_limits::eof(docs->Next());) {
           actual.push_back(docs->Value());
         }
         ++i;
@@ -741,7 +741,7 @@ class GranularRangeFilterTestCase : public tests::FilterTestCaseBase {
 
       for (size_t i = 0; [[maybe_unused]] const auto& sub : rdr) {
         auto docs = prepared.Execute(i);
-        for (; !irs::doc_limits::eof(docs->Advance());) {
+        for (; !irs::doc_limits::eof(docs->Next());) {
           actual.push_back(docs->Value());
         }
         ++i;
@@ -771,7 +771,7 @@ class GranularRangeFilterTestCase : public tests::FilterTestCaseBase {
 
       for (size_t i = 0; [[maybe_unused]] const auto& sub : rdr) {
         auto docs = prepared.Execute(i);
-        for (; !irs::doc_limits::eof(docs->Advance());) {
+        for (; !irs::doc_limits::eof(docs->Next());) {
           actual.push_back(docs->Value());
         }
         ++i;
@@ -801,7 +801,7 @@ class GranularRangeFilterTestCase : public tests::FilterTestCaseBase {
 
       for (size_t i = 0; [[maybe_unused]] const auto& sub : rdr) {
         auto docs = prepared.Execute(i);
-        for (; !irs::doc_limits::eof(docs->Advance());) {
+        for (; !irs::doc_limits::eof(docs->Next());) {
           actual.push_back(docs->Value());
         }
         ++i;
@@ -833,7 +833,7 @@ class GranularRangeFilterTestCase : public tests::FilterTestCaseBase {
 
       for (size_t i = 0; [[maybe_unused]] const auto& sub : rdr) {
         auto docs = prepared.Execute(i);
-        for (; !irs::doc_limits::eof(docs->Advance());) {
+        for (; !irs::doc_limits::eof(docs->Next());) {
           actual.push_back(docs->Value());
         }
         ++i;
@@ -865,7 +865,7 @@ class GranularRangeFilterTestCase : public tests::FilterTestCaseBase {
 
       for (size_t i = 0; [[maybe_unused]] const auto& sub : rdr) {
         auto docs = prepared.Execute(i);
-        for (; !irs::doc_limits::eof(docs->Advance());) {
+        for (; !irs::doc_limits::eof(docs->Next());) {
           actual.push_back(docs->Value());
         }
         ++i;
@@ -892,7 +892,7 @@ class GranularRangeFilterTestCase : public tests::FilterTestCaseBase {
 
       for (size_t i = 0; [[maybe_unused]] const auto& sub : rdr) {
         auto docs = prepared.Execute(i);
-        for (; !irs::doc_limits::eof(docs->Advance());) {
+        for (; !irs::doc_limits::eof(docs->Next());) {
           actual.push_back(docs->Value());
         }
         ++i;
@@ -921,7 +921,7 @@ class GranularRangeFilterTestCase : public tests::FilterTestCaseBase {
 
       for (size_t i = 0; [[maybe_unused]] const auto& sub : rdr) {
         auto docs = prepared.Execute(i);
-        for (; !irs::doc_limits::eof(docs->Advance());) {
+        for (; !irs::doc_limits::eof(docs->Next());) {
           actual.push_back(docs->Value());
         }
         ++i;
@@ -950,7 +950,7 @@ class GranularRangeFilterTestCase : public tests::FilterTestCaseBase {
 
       for (size_t i = 0; [[maybe_unused]] const auto& sub : rdr) {
         auto docs = prepared.Execute(i);
-        for (; !irs::doc_limits::eof(docs->Advance());) {
+        for (; !irs::doc_limits::eof(docs->Next());) {
           actual.push_back(docs->Value());
         }
         ++i;
@@ -979,7 +979,7 @@ class GranularRangeFilterTestCase : public tests::FilterTestCaseBase {
 
       for (size_t i = 0; [[maybe_unused]] const auto& sub : rdr) {
         auto docs = prepared.Execute(i);
-        for (; !irs::doc_limits::eof(docs->Advance());) {
+        for (; !irs::doc_limits::eof(docs->Next());) {
           actual.push_back(docs->Value());
         }
         ++i;
@@ -1010,7 +1010,7 @@ class GranularRangeFilterTestCase : public tests::FilterTestCaseBase {
 
       for (size_t i = 0; [[maybe_unused]] const auto& sub : rdr) {
         auto docs = prepared.Execute(i);
-        for (; !irs::doc_limits::eof(docs->Advance());) {
+        for (; !irs::doc_limits::eof(docs->Next());) {
           actual.push_back(docs->Value());
         }
         ++i;
@@ -1041,7 +1041,7 @@ class GranularRangeFilterTestCase : public tests::FilterTestCaseBase {
 
       for (size_t i = 0; [[maybe_unused]] const auto& sub : rdr) {
         auto docs = prepared.Execute(i);
-        for (; !irs::doc_limits::eof(docs->Advance());) {
+        for (; !irs::doc_limits::eof(docs->Next());) {
           actual.push_back(docs->Value());
         }
         ++i;
@@ -1068,7 +1068,7 @@ class GranularRangeFilterTestCase : public tests::FilterTestCaseBase {
 
       for (size_t i = 0; [[maybe_unused]] const auto& sub : rdr) {
         auto docs = prepared.Execute(i);
-        for (; !irs::doc_limits::eof(docs->Advance());) {
+        for (; !irs::doc_limits::eof(docs->Next());) {
           actual.push_back(docs->Value());
         }
         ++i;
@@ -1098,7 +1098,7 @@ class GranularRangeFilterTestCase : public tests::FilterTestCaseBase {
 
       for (size_t i = 0; [[maybe_unused]] const auto& sub : rdr) {
         auto docs = prepared.Execute(i);
-        for (; !irs::doc_limits::eof(docs->Advance());) {
+        for (; !irs::doc_limits::eof(docs->Next());) {
           actual.push_back(docs->Value());
         }
         ++i;
@@ -1127,7 +1127,7 @@ class GranularRangeFilterTestCase : public tests::FilterTestCaseBase {
 
       for (size_t i = 0; [[maybe_unused]] const auto& sub : rdr) {
         auto docs = prepared.Execute(i);
-        for (; !irs::doc_limits::eof(docs->Advance());) {
+        for (; !irs::doc_limits::eof(docs->Next());) {
           actual.push_back(docs->Value());
         }
         ++i;
@@ -1156,7 +1156,7 @@ class GranularRangeFilterTestCase : public tests::FilterTestCaseBase {
 
       for (size_t i = 0; [[maybe_unused]] const auto& sub : rdr) {
         auto docs = prepared.Execute(i);
-        for (; !irs::doc_limits::eof(docs->Advance());) {
+        for (; !irs::doc_limits::eof(docs->Next());) {
           actual.push_back(docs->Value());
         }
         ++i;
@@ -2009,7 +2009,7 @@ TEST_P(GranularRangeFilterTestCase, by_range_numeric_sequence) {
     std::set<std::string> actual;
 
     auto docs = prepared.Execute(0);
-    while (!irs::doc_limits::eof(docs->Advance())) {
+    while (!irs::doc_limits::eof(docs->Next())) {
       const auto doc = docs->Value();
       const auto bytes = values.Get(doc);
       irs::BytesViewInput in;
@@ -2055,7 +2055,7 @@ TEST_P(GranularRangeFilterTestCase, by_range_numeric_sequence) {
     std::set<std::string> actual;
 
     auto docs = prepared.Execute(0);
-    while (!irs::doc_limits::eof(docs->Advance())) {
+    while (!irs::doc_limits::eof(docs->Next())) {
       const auto doc = docs->Value();
       const auto bytes = values.Get(doc);
       irs::BytesViewInput in;
@@ -2104,7 +2104,7 @@ TEST_P(GranularRangeFilterTestCase, by_range_numeric_sequence) {
     std::set<std::string> actual;
 
     auto docs = prepared.Execute(0);
-    while (!irs::doc_limits::eof(docs->Advance())) {
+    while (!irs::doc_limits::eof(docs->Next())) {
       const auto doc = docs->Value();
       const auto bytes = values.Get(doc);
       irs::BytesViewInput in;
@@ -2150,7 +2150,7 @@ TEST_P(GranularRangeFilterTestCase, by_range_numeric_sequence) {
     std::set<std::string> actual;
 
     auto docs = prepared.Execute(0);
-    while (!irs::doc_limits::eof(docs->Advance())) {
+    while (!irs::doc_limits::eof(docs->Next())) {
       const auto doc = docs->Value();
       const auto bytes = values.Get(doc);
       irs::BytesViewInput in;

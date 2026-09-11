@@ -196,7 +196,7 @@ void CollectSegment(const tests::PreparedFilter& prepared, size_t i,
     ASSERT_NE(nullptr, docs);
     auto score = docs->PrepareScore();
 
-    while (!irs::doc_limits::eof(docs->Advance())) {
+    while (!irs::doc_limits::eof(docs->Next())) {
       docs->FetchScoreArgs(0);
       fetcher.Fetch(docs->Value());
       irs::score_t value = 0;
@@ -207,7 +207,7 @@ void CollectSegment(const tests::PreparedFilter& prepared, size_t i,
     auto docs = prepared.Execute(i);
     ASSERT_NE(nullptr, docs);
 
-    while (!irs::doc_limits::eof(docs->Advance())) {
+    while (!irs::doc_limits::eof(docs->Next())) {
       out.emplace_back(docs->Value(), 0.f);
     }
   }

@@ -105,7 +105,7 @@ class CopyInBridge {
     return {_ptr, _len};  // empty span == EOF (Finish set _eof, left _len 0)
   }
 
-  // Advance past `n` borrowed bytes; when the current frame fully drains,
+  // Next past `n` borrowed bytes; when the current frame fully drains,
   // re-arm the borrow latch and fire the want-more handshake so the feeder
   // advances to the next CopyData frame (which the next Window() will wait
   // for).

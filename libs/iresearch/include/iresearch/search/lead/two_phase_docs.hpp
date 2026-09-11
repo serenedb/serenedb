@@ -32,7 +32,7 @@ class TwoPhaseDocs {
   template<typename... Args>
   explicit TwoPhaseDocs(Args&&... args) : _slots{std::forward<Args>(args)...} {}
 
-  doc_id_t Advance() { return Converge(_slots.Next(_doc)); }
+  doc_id_t Next() { return Converge(_slots.Next(_doc)); }
 
   doc_id_t Seek(doc_id_t target) {
     if (target <= _doc) {

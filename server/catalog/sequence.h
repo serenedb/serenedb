@@ -117,7 +117,7 @@ class SequenceCounter {
   // handed out only once durably covered.
   uint64_t _durable ABSL_GUARDED_BY(_mtx) = 0;
   uint64_t _pending ABSL_GUARDED_BY(_mtx) = 0;
-  // Advance appends in flight; Write drains them so its authoritative
+  // Next appends in flight; Write drains them so its authoritative
   // the authoritative value lands after every advance it raced (wal order ==
   // map order).
   uint32_t _appends_in_flight ABSL_GUARDED_BY(_mtx) = 0;

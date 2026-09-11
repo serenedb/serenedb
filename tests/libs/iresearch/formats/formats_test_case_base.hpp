@@ -61,7 +61,7 @@ class SeekPostingsImpl : public SeekPostings {
     _leaf.Prepare(std::forward<Args>(args)...);
   }
 
-  irs::doc_id_t Advance() final { return _doc = _leaf.Advance(); }
+  irs::doc_id_t Next() final { return _doc = _leaf.Next(); }
 
   irs::doc_id_t Seek(irs::doc_id_t target) final {
     return _doc = _leaf.Seek(target);
@@ -195,7 +195,7 @@ class BatchingTermIterator final : public irs::TermOnlyIterator {
       auto* pos = docs->Positions();
       const auto* offs =
         pos != nullptr ? irs::get<irs::OffsAttr>(*pos) : nullptr;
-      while (!irs::doc_limits::eof(docs->Advance())) {
+      while (!irs::doc_limits::eof(docs->Next())) {
         const auto d = docs->Value();
         const uint32_t freq = has_freq ? docs->GetFreq() : 1;
         if (pos != nullptr) {
@@ -318,7 +318,7 @@ class FormatTestCase : public IndexTestBase {
           irs::IndexFeatures::None != (features & irs::IndexFeatures::Freq) &&
           irs::IndexFeatures::None != (features & irs::IndexFeatures::Pos)} {}
 
-    irs::doc_id_t Advance() final {
+    irs::doc_id_t Next() final {
       if (_next == _end) {
         return _doc = irs::doc_limits::eof();
       }
@@ -337,7 +337,7 @@ class FormatTestCase : public IndexTestBase {
 
     irs::doc_id_t SeekTo(irs::doc_id_t target) {
       while (_doc < target) {
-        Advance();
+        Next();
       }
       return _doc;
     }

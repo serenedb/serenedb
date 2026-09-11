@@ -61,7 +61,7 @@ class PostingPrunedLead : public PruneLeafBase<InputType, false> {
 
   doc_id_t BlockLast() const noexcept { return *(std::end(_docs) - 1); }
 
-  IRS_FORCE_INLINE doc_id_t Advance() {
+  IRS_FORCE_INLINE doc_id_t Next() {
     if (_left_in_leaf == 0) [[unlikely]] {
       if (_left_in_list == 0) [[unlikely]] {
         return _doc = doc_limits::eof();

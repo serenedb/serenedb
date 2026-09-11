@@ -337,7 +337,7 @@ void ScanFrom(duckdb::ClientContext&, duckdb::TableFunctionInput& input,
                         ERR_MSG("COPY FROM STDIN: truncated PGCOPY header"));
       }
       const auto take = std::min<int32_t>(ext, static_cast<int32_t>(v.size()));
-      source.Advance(static_cast<size_t>(take));
+      source.Next(static_cast<size_t>(take));
       ext -= take;
     }
     g.header_done = true;
@@ -360,8 +360,8 @@ void ScanFrom(duckdb::ClientContext&, duckdb::TableFunctionInput& input,
     // Fast path: the whole row (int16 count + every int32-len-prefixed field)
     // lies in the current window. Walk the field lengths once (no decode) to
     // confirm it fits and find the row end, then decode each field straight
-    // from the window -- no per-field Fill/View/Advance virtual call, one
-    // Advance per row. Any anomaly (too little in window, trailer, count
+    // from the window -- no per-field Fill/View/Next virtual call, one
+    // Next per row. Any anomaly (too little in window, trailer, count
     // mismatch, bad or straddling length, EOF) drops to the slow path below,
     // which owns the cross-frame stitching and all error/trailer handling.
     if (const auto win = source.View(); win.size() >= 2) {
@@ -406,7 +406,7 @@ void ScanFrom(duckdb::ClientContext&, duckdb::TableFunctionInput& input,
           }
           q += len;
         }
-        source.Advance(static_cast<size_t>(p - base));
+        source.Next(static_cast<size_t>(p - base));
         continue;
       }
     }
@@ -484,7 +484,7 @@ void ScanFrom(duckdb::ClientContext&, duckdb::TableFunctionInput& input,
       sdb::pg::VectorSink sink{vec, row};
       const bool ok = fn(dctx, {span, ulen}, sink);
       if (advance_after) {
-        source.Advance(ulen);
+        source.Next(ulen);
       }
       if (!ok) {
         THROW_SQL_ERROR(

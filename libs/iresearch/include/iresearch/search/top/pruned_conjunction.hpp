@@ -78,7 +78,7 @@ class PrunedConjunction : public Root {
   PrunedConjunction& operator=(PrunedConjunction&&) = delete;
 
   void Run(LoserScoreCollector& collector) final {
-    for (auto doc = _lead.Advance(); !doc_limits::eof(doc);) {
+    for (auto doc = _lead.Next(); !doc_limits::eof(doc);) {
       auto threshold = collector.ScoreThreshold();
       const auto others_end = _others.AdvanceTo(doc);
       const auto lead_last = _lead.BlockLast();

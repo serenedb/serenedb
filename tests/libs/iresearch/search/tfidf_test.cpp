@@ -170,7 +170,7 @@ void TfidfTestCase::TestQueryNorms() {
     auto docs = prepared_filter.ExecuteScored(0, fetcher);
     auto score = docs->PrepareScore();
 
-    while (!irs::doc_limits::eof(docs->Advance())) {
+    while (!irs::doc_limits::eof(docs->Next())) {
       fetcher.Fetch(docs->Value());
       docs->FetchScoreArgs(0);
       irs::score_t score_value{};
@@ -220,7 +220,7 @@ void TfidfTestCase::TestQueryNorms() {
     auto score = docs->PrepareScore();
 
     std::vector<float_t> scores;
-    while (!irs::doc_limits::eof(docs->Advance())) {
+    while (!irs::doc_limits::eof(docs->Next())) {
       fetcher.Fetch(docs->Value());
       docs->FetchScoreArgs(0);
       irs::score_t score_value{};
@@ -387,7 +387,7 @@ TEST_P(TfidfTestCase, test_phrase) {
     ASSERT_NE(nullptr, column);
     irs::tests::BlobPointReader values{segment, *column};
 
-    while (!irs::doc_limits::eof(docs->Advance())) {
+    while (!irs::doc_limits::eof(docs->Next())) {
       fetcher.Fetch(docs->Value());
       docs->FetchScoreArgs(0);
       irs::score_t score_value{};
@@ -450,7 +450,7 @@ TEST_P(TfidfTestCase, test_phrase) {
     ASSERT_NE(nullptr, column);
     irs::tests::BlobPointReader values{segment, *column};
 
-    while (!irs::doc_limits::eof(docs->Advance())) {
+    while (!irs::doc_limits::eof(docs->Next())) {
       fetcher.Fetch(docs->Value());
       docs->FetchScoreArgs(0);
       irs::score_t score_value{};
@@ -524,7 +524,7 @@ TEST_P(TfidfTestCase, test_query) {
     auto docs = prepared_filter.ExecuteScored(0, fetcher);
     auto score = docs->PrepareScore();
 
-    while (!irs::doc_limits::eof(docs->Advance())) {
+    while (!irs::doc_limits::eof(docs->Next())) {
       fetcher.Fetch(docs->Value());
       docs->FetchScoreArgs(0);
       in.reset(values.Get(docs->Value()));
@@ -634,7 +634,7 @@ TEST_P(TfidfTestCase, test_query) {
       auto score = docs->PrepareScore();
 
       for (irs::score_t score_value{};
-           !irs::doc_limits::eof(docs->Advance());) {
+           !irs::doc_limits::eof(docs->Next());) {
         fetcher.Fetch(docs->Value());
         docs->FetchScoreArgs(0);
         in.reset(values.Get(docs->Value()));
@@ -758,7 +758,7 @@ TEST_P(TfidfTestCase, test_query) {
       auto docs = prepared_filter.ExecuteScored(i, fetcher);
       auto score = docs->PrepareScore();
 
-      while (!irs::doc_limits::eof(docs->Advance())) {
+      while (!irs::doc_limits::eof(docs->Next())) {
         fetcher.Fetch(docs->Value());
         docs->FetchScoreArgs(0);
         in.reset(values.Get(docs->Value()));
@@ -872,7 +872,7 @@ TEST_P(TfidfTestCase, test_query) {
       auto docs = prepared_filter.ExecuteScored(i, fetcher);
       auto score = docs->PrepareScore();
 
-      while (!irs::doc_limits::eof(docs->Advance())) {
+      while (!irs::doc_limits::eof(docs->Next())) {
         fetcher.Fetch(docs->Value());
         docs->FetchScoreArgs(0);
         in.reset(values.Get(docs->Value()));
@@ -921,7 +921,7 @@ TEST_P(TfidfTestCase, test_query) {
     auto docs = prepared_filter.ExecuteScored(0, fetcher);
     auto score = docs->PrepareScore();
 
-    for (irs::score_t score_value{}; !irs::doc_limits::eof(docs->Advance());) {
+    for (irs::score_t score_value{}; !irs::doc_limits::eof(docs->Next());) {
       fetcher.Fetch(docs->Value());
       docs->FetchScoreArgs(0);
       in.reset(values.Get(docs->Value()));
@@ -966,7 +966,7 @@ TEST_P(TfidfTestCase, test_query) {
     auto docs = prepared_filter.ExecuteScored(0, fetcher);
     auto score = docs->PrepareScore();
 
-    for (irs::score_t score_value{}; !irs::doc_limits::eof(docs->Advance());) {
+    for (irs::score_t score_value{}; !irs::doc_limits::eof(docs->Next());) {
       fetcher.Fetch(docs->Value());
       docs->FetchScoreArgs(0);
       in.reset(values.Get(docs->Value()));
@@ -1011,7 +1011,7 @@ TEST_P(TfidfTestCase, test_query) {
     auto docs = prepared_filter.ExecuteScored(0, fetcher);
     auto score = docs->PrepareScore();
 
-    for (irs::score_t score_value{}; !irs::doc_limits::eof(docs->Advance());) {
+    for (irs::score_t score_value{}; !irs::doc_limits::eof(docs->Next());) {
       fetcher.Fetch(docs->Value());
       docs->FetchScoreArgs(0);
       in.reset(values.Get(docs->Value()));
@@ -1056,7 +1056,7 @@ TEST_P(TfidfTestCase, test_query) {
     auto docs = prepared_filter.ExecuteScored(0, fetcher);
     auto score = docs->PrepareScore();
 
-    for (irs::score_t score_value{}; !irs::doc_limits::eof(docs->Advance());) {
+    for (irs::score_t score_value{}; !irs::doc_limits::eof(docs->Next());) {
       fetcher.Fetch(docs->Value());
       docs->FetchScoreArgs(0);
       in.reset(values.Get(docs->Value()));
@@ -1102,7 +1102,7 @@ TEST_P(TfidfTestCase, test_query) {
     auto docs = prepared_filter.ExecuteScored(0, fetcher);
     auto score = docs->PrepareScore();
 
-    for (irs::score_t score_value{}; !irs::doc_limits::eof(docs->Advance());) {
+    for (irs::score_t score_value{}; !irs::doc_limits::eof(docs->Next());) {
       fetcher.Fetch(docs->Value());
       docs->FetchScoreArgs(0);
       in.reset(values.Get(docs->Value()));
@@ -1138,7 +1138,7 @@ TEST_P(TfidfTestCase, test_query) {
     auto score = docs->PrepareScore();
 
     irs::doc_id_t doc = irs::doc_limits::min();
-    while (!irs::doc_limits::eof(docs->Advance())) {
+    while (!irs::doc_limits::eof(docs->Next())) {
       fetcher.Fetch(docs->Value());
       docs->FetchScoreArgs(0);
       ASSERT_EQ(doc, docs->Value());
@@ -1168,7 +1168,7 @@ TEST_P(TfidfTestCase, test_query) {
     auto score = docs->PrepareScore();
 
     irs::doc_id_t doc = irs::doc_limits::min();
-    while (!irs::doc_limits::eof(docs->Advance())) {
+    while (!irs::doc_limits::eof(docs->Next())) {
       fetcher.Fetch(docs->Value());
       docs->FetchScoreArgs(0);
       ASSERT_EQ(doc, docs->Value());
@@ -1258,7 +1258,7 @@ TEST_P(TfidfTestCase, test_order) {
     auto docs = prepared.ExecuteScored(0, fetcher);
     auto score = docs->PrepareScore();
 
-    for (irs::score_t score_value{}; !irs::doc_limits::eof(docs->Advance());) {
+    for (irs::score_t score_value{}; !irs::doc_limits::eof(docs->Next());) {
       fetcher.Fetch(docs->Value());
       docs->FetchScoreArgs(0);
       in.reset(values.Get(docs->Value()));

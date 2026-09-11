@@ -41,7 +41,7 @@ class WildcardNGramSlotsDocs {
 
   doc_id_t Seek(doc_id_t target) { return _ngrams.Seek(target); }
 
-  doc_id_t Next(doc_id_t) { return _ngrams.Advance(); }
+  doc_id_t Next(doc_id_t) { return _ngrams.Next(); }
 
   bool Match(doc_id_t doc) { return _pattern.Check(doc); }
 

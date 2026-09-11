@@ -66,7 +66,7 @@ class BooleanSparse {
   BooleanSparse(BooleanSparse&&) = delete;
   BooleanSparse& operator=(BooleanSparse&&) = delete;
 
-  doc_id_t Advance() { return Converge(_lead.Advance()); }
+  doc_id_t Next() { return Converge(_lead.Next()); }
 
   doc_id_t Seek(doc_id_t target) {
     if (target <= _doc) {
@@ -136,7 +136,7 @@ class BooleanSparse {
       }
       if constexpr (kExcludes) {
         if (detail::IsExcluded(_excludes, doc)) {
-          doc = _lead.Advance();
+          doc = _lead.Next();
           continue;
         }
       }

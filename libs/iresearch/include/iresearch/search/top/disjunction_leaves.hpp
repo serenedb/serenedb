@@ -51,7 +51,7 @@ class DisjunctionLead {
 
   doc_id_t Value() const noexcept { return _doc; }
 
-  doc_id_t Advance() {
+  doc_id_t Next() {
     if (doc_limits::eof(_doc)) [[unlikely]] {
       return _doc;
     }

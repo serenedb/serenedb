@@ -185,7 +185,7 @@ class DocList {
 
   irs::doc_id_t Value() const noexcept { return _doc; }
 
-  irs::doc_id_t Advance() noexcept {
+  irs::doc_id_t Next() noexcept {
     if (_next == _docs.size()) {
       return _doc = irs::doc_limits::eof();
     }
@@ -196,7 +196,7 @@ class DocList {
     if (irs::doc_limits::eof(_doc) || target <= _doc) {
       return _doc;
     }
-    while (Advance() < target) {
+    while (Next() < target) {
     }
     return _doc;
   }
@@ -206,16 +206,16 @@ class DocList {
     const auto words = irs::detail::WindowWords(min, max);
     irs::detail::Clear(own, words);
     if (!irs::doc_limits::valid(_doc)) {
-      Advance();
+      Next();
     }
     while (_doc < min) {
-      Advance();
+      Next();
     }
     while (_doc < max) {
       const auto offset = _doc - min;
       own[offset / irs::detail::kWindowBits] |=
         uint64_t{1} << (offset % irs::detail::kWindowBits);
-      Advance();
+      Next();
     }
     return _doc;
   }
@@ -238,7 +238,7 @@ class LeadDocs : public irs::lead::Node {
  public:
   explicit LeadDocs(DocList::DocidsT docs) noexcept : _list{std::move(docs)} {}
 
-  irs::doc_id_t Advance() final { return _list.Advance(); }
+  irs::doc_id_t Next() final { return _list.Next(); }
 
   irs::doc_id_t Seek(irs::doc_id_t target) final { return _list.Seek(target); }
 
@@ -257,7 +257,7 @@ class LeadScored : public irs::lead::Node {
       _boost{boost},
       _stats{stats} {}
 
-  irs::doc_id_t Advance() final { return _list.Advance(); }
+  irs::doc_id_t Next() final { return _list.Next(); }
 
   irs::doc_id_t Seek(irs::doc_id_t target) final { return _list.Seek(target); }
 
@@ -436,7 +436,7 @@ class DocsRoot : public irs::docs::Root {
 
   uint32_t Run(irs::doc_id_t* out, uint32_t capacity) final {
     uint32_t size = 0;
-    while (size != capacity && !irs::doc_limits::eof(_list.Advance())) {
+    while (size != capacity && !irs::doc_limits::eof(_list.Next())) {
       out[size++] = _list.Value();
     }
     return size;
@@ -468,7 +468,7 @@ class ScoredRoot : public irs::hits::Root {
       .boost = _boost,
     });
     uint32_t size = 0;
-    while (size != capacity && !irs::doc_limits::eof(_list.Advance())) {
+    while (size != capacity && !irs::doc_limits::eof(_list.Next())) {
       docs[size] = _list.Value();
       scores[size] = score.Score();
       ++size;
@@ -726,10 +726,10 @@ detail::Boosted& AddDocs(irs::BooleanFilter& root, irs::Occur occur,
 
 std::vector<irs::doc_id_t> Collect(LeadCursor& docs) {
   std::vector<irs::doc_id_t> result;
-  while (!irs::doc_limits::eof(docs.Advance())) {
+  while (!irs::doc_limits::eof(docs.Next())) {
     result.push_back(docs.Value());
   }
-  EXPECT_TRUE(irs::doc_limits::eof(docs.Advance()));
+  EXPECT_TRUE(irs::doc_limits::eof(docs.Next()));
   EXPECT_TRUE(irs::doc_limits::eof(docs.Value()));
   return result;
 }
@@ -816,7 +816,7 @@ TEST(boolean_query_boost, hierarchy) {
     /* the first hit should be scored as 2*value^3 +2*value^3+value^2 since it
      * exists in all results */
     {
-      ASSERT_TRUE(!irs::doc_limits::eof(docs->Advance()));
+      ASSERT_TRUE(!irs::doc_limits::eof(docs->Next()));
       docs->FetchScoreArgs(0);
       const auto doc_boost = scr.Score();
       ASSERT_EQ(4 * value * value * value + value * value, doc_boost);
@@ -825,13 +825,13 @@ TEST(boolean_query_boost, hierarchy) {
     /* the second hit should be scored as 2*value^3+value^2 since it
      * exists in all results */
     {
-      ASSERT_TRUE(!irs::doc_limits::eof(docs->Advance()));
+      ASSERT_TRUE(!irs::doc_limits::eof(docs->Next()));
       docs->FetchScoreArgs(0);
       const auto doc_boost = scr.Score();
       ASSERT_EQ(4 * value * value * value + value * value, doc_boost);
     }
 
-    ASSERT_FALSE(!irs::doc_limits::eof(docs->Advance()));
+    ASSERT_FALSE(!irs::doc_limits::eof(docs->Next()));
   }
 
   {
@@ -872,7 +872,7 @@ TEST(boolean_query_boost, hierarchy) {
     /* the first hit should be scored as 2*value^3+value^2+3*value^2+value
      * since it exists in all results */
     {
-      ASSERT_TRUE(!irs::doc_limits::eof(docs->Advance()));
+      ASSERT_TRUE(!irs::doc_limits::eof(docs->Next()));
       docs->FetchScoreArgs(0);
       const auto doc_boost = scr.Score();
       ASSERT_EQ(2 * value * value * value + 4 * value * value + value,
@@ -882,7 +882,7 @@ TEST(boolean_query_boost, hierarchy) {
     /* the second hit should be scored as value^3+value^2+2*value^2 since it
      * exists in all results */
     {
-      ASSERT_TRUE(!irs::doc_limits::eof(docs->Advance()));
+      ASSERT_TRUE(!irs::doc_limits::eof(docs->Next()));
       docs->FetchScoreArgs(0);
       const auto doc_boost = scr.Score();
       ASSERT_EQ(value * value * value + 3 * value * value + value, doc_boost);
@@ -891,13 +891,13 @@ TEST(boolean_query_boost, hierarchy) {
     /* the third hit should be scored as value^3+value^2 since it
      * exists in all results */
     {
-      ASSERT_TRUE(!irs::doc_limits::eof(docs->Advance()));
+      ASSERT_TRUE(!irs::doc_limits::eof(docs->Next()));
       docs->FetchScoreArgs(0);
       const auto doc_boost = scr.Score();
       ASSERT_EQ(value * value * value + value * value + value, doc_boost);
     }
 
-    ASSERT_FALSE(!irs::doc_limits::eof(docs->Advance()));
+    ASSERT_FALSE(!irs::doc_limits::eof(docs->Next()));
   }
 
   {
@@ -936,7 +936,7 @@ TEST(boolean_query_boost, hierarchy) {
 
     // the first hit should be scored as value^3+2*value^2+3*value^2+value
     {
-      ASSERT_TRUE(!irs::doc_limits::eof(docs->Advance()));
+      ASSERT_TRUE(!irs::doc_limits::eof(docs->Next()));
       docs->FetchScoreArgs(0);
       const auto doc_boost = scr.Score();
       ASSERT_EQ(value * value * value + 5 * value * value + value, doc_boost);
@@ -944,7 +944,7 @@ TEST(boolean_query_boost, hierarchy) {
 
     // the second hit should be scored as value
     {
-      ASSERT_TRUE(!irs::doc_limits::eof(docs->Advance()));
+      ASSERT_TRUE(!irs::doc_limits::eof(docs->Next()));
       docs->FetchScoreArgs(0);
       const auto doc_boost = scr.Score();
       ASSERT_EQ(value, doc_boost);
@@ -952,13 +952,13 @@ TEST(boolean_query_boost, hierarchy) {
 
     // the third hit should be scored as value
     {
-      ASSERT_TRUE(!irs::doc_limits::eof(docs->Advance()));
+      ASSERT_TRUE(!irs::doc_limits::eof(docs->Next()));
       docs->FetchScoreArgs(0);
       const auto doc_boost = scr.Score();
       ASSERT_EQ(value, doc_boost);
     }
 
-    ASSERT_FALSE(!irs::doc_limits::eof(docs->Advance()));
+    ASSERT_FALSE(!irs::doc_limits::eof(docs->Next()));
   }
 }
 
@@ -980,11 +980,11 @@ TEST(boolean_query_boost, and_filter) {
 
     const auto scr = docs->PrepareScore();
     ASSERT_FALSE(scr.IsDefault());
-    ASSERT_TRUE(!irs::doc_limits::eof(docs->Advance()));
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->Next()));
     docs->FetchScoreArgs(0);
     const auto doc_boost = scr.Score();
     ASSERT_EQ(value, doc_boost);
-    ASSERT_FALSE(!irs::doc_limits::eof(docs->Advance()));
+    ASSERT_FALSE(!irs::doc_limits::eof(docs->Next()));
   }
 
   // boosted root & single boosted subquery (root boost folds into the child)
@@ -1006,11 +1006,11 @@ TEST(boolean_query_boost, and_filter) {
 
     const auto scr = docs->PrepareScore();
     ASSERT_FALSE(scr.IsDefault());
-    ASSERT_TRUE(!irs::doc_limits::eof(docs->Advance()));
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->Next()));
     docs->FetchScoreArgs(0);
     const auto doc_boost = scr.Score();
     ASSERT_EQ(value * value, doc_boost);
-    ASSERT_FALSE(!irs::doc_limits::eof(docs->Advance()));
+    ASSERT_FALSE(!irs::doc_limits::eof(docs->Next()));
   }
 
   // boosted root & several boosted subqueries
@@ -1034,12 +1034,12 @@ TEST(boolean_query_boost, and_filter) {
      * exists in both results */
     const auto scr = docs->PrepareScore();
     ASSERT_FALSE(scr.IsDefault());
-    ASSERT_TRUE(!irs::doc_limits::eof(docs->Advance()));
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->Next()));
     docs->FetchScoreArgs(0);
     const auto doc_boost = scr.Score();
     ASSERT_EQ(2 * value * value, doc_boost);
 
-    ASSERT_FALSE(!irs::doc_limits::eof(docs->Advance()));
+    ASSERT_FALSE(!irs::doc_limits::eof(docs->Next()));
   }
 
   // boosted root & several boosted subqueries
@@ -1063,12 +1063,12 @@ TEST(boolean_query_boost, and_filter) {
 
     const auto scr = docs->PrepareScore();
     ASSERT_FALSE(scr.IsDefault());
-    ASSERT_TRUE(!irs::doc_limits::eof(docs->Advance()));
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->Next()));
     docs->FetchScoreArgs(0);
     const auto doc_boost = scr.Score();
     ASSERT_EQ(3 * value * value + value, doc_boost);
 
-    ASSERT_FALSE(!irs::doc_limits::eof(docs->Advance()));
+    ASSERT_FALSE(!irs::doc_limits::eof(docs->Next()));
   }
 
   // unboosted root & several boosted subqueries
@@ -1091,12 +1091,12 @@ TEST(boolean_query_boost, and_filter) {
 
     const auto scr = docs->PrepareScore();
     ASSERT_FALSE(scr.IsDefault());
-    ASSERT_TRUE(!irs::doc_limits::eof(docs->Advance()));
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->Next()));
     docs->FetchScoreArgs(0);
     const auto doc_boost = scr.Score();
     ASSERT_EQ(3 * value, doc_boost);
 
-    ASSERT_FALSE(!irs::doc_limits::eof(docs->Advance()));
+    ASSERT_FALSE(!irs::doc_limits::eof(docs->Next()));
   }
 
   // unboosted root & several unboosted subqueries
@@ -1117,12 +1117,12 @@ TEST(boolean_query_boost, and_filter) {
 
     const auto scr = docs->PrepareScore();
     ASSERT_FALSE(scr.IsDefault());
-    ASSERT_TRUE(!irs::doc_limits::eof(docs->Advance()));
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->Next()));
     docs->FetchScoreArgs(0);
     const auto doc_boost = scr.Score();
     ASSERT_EQ(irs::score_t(0), doc_boost);
 
-    ASSERT_FALSE(!irs::doc_limits::eof(docs->Advance()));
+    ASSERT_FALSE(!irs::doc_limits::eof(docs->Next()));
   }
 }
 
@@ -1145,11 +1145,11 @@ TEST(boolean_query_boost, or_filter) {
 
     const auto scr = docs->PrepareScore();
     ASSERT_FALSE(scr.IsDefault());
-    ASSERT_TRUE(!irs::doc_limits::eof(docs->Advance()));
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->Next()));
     docs->FetchScoreArgs(0);
     const auto doc_boost = scr.Score();
     ASSERT_EQ(value, doc_boost);
-    ASSERT_FALSE(!irs::doc_limits::eof(docs->Advance()));
+    ASSERT_FALSE(!irs::doc_limits::eof(docs->Next()));
   }
 
   // boosted root & single boosted subquery (root boost folds into the child)
@@ -1172,11 +1172,11 @@ TEST(boolean_query_boost, or_filter) {
 
     const auto scr = docs->PrepareScore();
     ASSERT_FALSE(scr.IsDefault());
-    ASSERT_TRUE(!irs::doc_limits::eof(docs->Advance()));
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->Next()));
     docs->FetchScoreArgs(0);
     const auto doc_boost = scr.Score();
     ASSERT_EQ(value * value, doc_boost);
-    ASSERT_FALSE(!irs::doc_limits::eof(docs->Advance()));
+    ASSERT_FALSE(!irs::doc_limits::eof(docs->Next()));
   }
 
   // boosted root & several boosted subqueries
@@ -1201,20 +1201,20 @@ TEST(boolean_query_boost, or_filter) {
     ASSERT_FALSE(scr.IsDefault());
 
     {
-      ASSERT_TRUE(!irs::doc_limits::eof(docs->Advance()));
+      ASSERT_TRUE(!irs::doc_limits::eof(docs->Next()));
       docs->FetchScoreArgs(0);
       const auto doc_boost = scr.Score();
       ASSERT_EQ(2 * value * value, doc_boost);
     }
 
     {
-      ASSERT_TRUE(!irs::doc_limits::eof(docs->Advance()));
+      ASSERT_TRUE(!irs::doc_limits::eof(docs->Next()));
       docs->FetchScoreArgs(0);
       const auto doc_boost = scr.Score();
       ASSERT_EQ(value * value, doc_boost);
     }
 
-    ASSERT_FALSE(!irs::doc_limits::eof(docs->Advance()));
+    ASSERT_FALSE(!irs::doc_limits::eof(docs->Next()));
   }
 
   // unboosted root & several unboosted subqueries
@@ -1234,7 +1234,7 @@ TEST(boolean_query_boost, or_filter) {
 
     const auto scr = docs->PrepareScore();
     ASSERT_FALSE(scr.IsDefault());
-    ASSERT_TRUE(!irs::doc_limits::eof(docs->Advance()));
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->Next()));
     docs->FetchScoreArgs(0);
     const auto doc_boost = scr.Score();
     ASSERT_EQ(irs::score_t(0), doc_boost);
@@ -1592,13 +1592,13 @@ TEST(boolean_disjunction, seek_next) {
   ASSERT_TRUE(bool(it));
 
   ASSERT_EQ(5, it->Seek(4));
-  ASSERT_EQ(6, it->Advance());
-  ASSERT_EQ(7, it->Advance());
+  ASSERT_EQ(6, it->Next());
+  ASSERT_EQ(7, it->Next());
   ASSERT_EQ(11, it->Seek(10));
-  ASSERT_EQ(12, it->Advance());
-  ASSERT_EQ(29, it->Advance());
-  ASSERT_EQ(45, it->Advance());
-  ASSERT_TRUE(irs::doc_limits::eof(it->Advance()));
+  ASSERT_EQ(12, it->Next());
+  ASSERT_EQ(29, it->Next());
+  ASSERT_EQ(45, it->Next());
+  ASSERT_TRUE(irs::doc_limits::eof(it->Next()));
 }
 
 TEST(boolean_disjunction, scored) {
@@ -1620,11 +1620,11 @@ TEST(boolean_disjunction, scored) {
   const auto scr = it->PrepareScore();
   ASSERT_FALSE(scr.IsDefault());
 
-  ASSERT_EQ(1, it->Advance());
+  ASSERT_EQ(1, it->Next());
   it->FetchScoreArgs(0);
   ASSERT_EQ(2 * value, scr.Score());
 
-  ASSERT_EQ(2, it->Advance());
+  ASSERT_EQ(2, it->Next());
   it->FetchScoreArgs(0);
   ASSERT_EQ(value, scr.Score());
 }
@@ -1765,9 +1765,9 @@ TEST(boolean_conjunction, seek_next) {
   ASSERT_TRUE(bool(it));
 
   ASSERT_EQ(5, it->Seek(3));
-  ASSERT_EQ(9, it->Advance());
+  ASSERT_EQ(9, it->Next());
   ASSERT_EQ(45, it->Seek(10));
-  ASSERT_TRUE(irs::doc_limits::eof(it->Advance()));
+  ASSERT_TRUE(irs::doc_limits::eof(it->Next()));
 }
 
 TEST(boolean_conjunction, scored) {
@@ -1789,11 +1789,11 @@ TEST(boolean_conjunction, scored) {
   ASSERT_FALSE(scr.IsDefault());
 
   for (const irs::doc_id_t expected : {1, 5, 7}) {
-    ASSERT_EQ(expected, it->Advance());
+    ASSERT_EQ(expected, it->Next());
     it->FetchScoreArgs(0);
     ASSERT_EQ(2 * value, scr.Score());
   }
-  ASSERT_TRUE(irs::doc_limits::eof(it->Advance()));
+  ASSERT_TRUE(irs::doc_limits::eof(it->Next()));
 }
 
 TEST(boolean_exclusion, next) {
@@ -2259,13 +2259,13 @@ TEST(BooleanFilter_test, not_boosted) {
   const auto scr = docs->PrepareScore();
   ASSERT_FALSE(scr.IsDefault());
 
-  ASSERT_TRUE(!irs::doc_limits::eof(docs->Advance()));
+  ASSERT_TRUE(!irs::doc_limits::eof(docs->Next()));
   docs->FetchScoreArgs(0);
   const auto doc_boost = scr.Score();
   ASSERT_EQ(5., doc_boost);  // FIXME: should be 9 if we will boost negation
   ASSERT_EQ(1, docs->Value());
 
-  ASSERT_FALSE(!irs::doc_limits::eof(docs->Advance()));
+  ASSERT_FALSE(!irs::doc_limits::eof(docs->Next()));
 }
 
 TEST(BooleanFilter_test, optimize_all_unscored) {
@@ -2357,12 +2357,12 @@ TEST(BooleanFilter_test, boosted_not) {
   const auto scr = docs->PrepareScore();
   ASSERT_FALSE(scr.IsDefault());
 
-  ASSERT_TRUE(!irs::doc_limits::eof(docs->Advance()));
+  ASSERT_TRUE(!irs::doc_limits::eof(docs->Next()));
   docs->FetchScoreArgs(0);
   const auto doc_boost = scr.Score();
   ASSERT_EQ(5., doc_boost);  // FIXME: should be 9 if we will boost negation
   ASSERT_EQ(1, docs->Value());
-  ASSERT_FALSE(!irs::doc_limits::eof(docs->Advance()));
+  ASSERT_FALSE(!irs::doc_limits::eof(docs->Next()));
 }
 
 namespace {
@@ -3160,23 +3160,23 @@ TEST_P(BooleanFilterTestCase, or_sequential_multiple_segments) {
     tests::PreparedFilter prep{root, rdr};
     {
       auto docs = prep.Execute(0);
-      ASSERT_TRUE(!irs::doc_limits::eof(docs->Advance()));
+      ASSERT_TRUE(!irs::doc_limits::eof(docs->Next()));
       ASSERT_EQ(2, docs->Value());
-      ASSERT_FALSE(!irs::doc_limits::eof(docs->Advance()));
+      ASSERT_FALSE(!irs::doc_limits::eof(docs->Next()));
     }
 
     {
       auto docs = prep.Execute(1);
-      ASSERT_TRUE(!irs::doc_limits::eof(docs->Advance()));
+      ASSERT_TRUE(!irs::doc_limits::eof(docs->Next()));
       ASSERT_EQ(2, docs->Value());
-      ASSERT_FALSE(!irs::doc_limits::eof(docs->Advance()));
+      ASSERT_FALSE(!irs::doc_limits::eof(docs->Next()));
     }
 
     {
       auto docs = prep.Execute(2);
-      ASSERT_TRUE(!irs::doc_limits::eof(docs->Advance()));
+      ASSERT_TRUE(!irs::doc_limits::eof(docs->Next()));
       ASSERT_EQ(2, docs->Value());
-      ASSERT_FALSE(!irs::doc_limits::eof(docs->Advance()));
+      ASSERT_FALSE(!irs::doc_limits::eof(docs->Next()));
     }
   }
 }
@@ -3565,7 +3565,7 @@ TEST_P(BooleanFilterTestCase, not_standalone_sequential_ordered) {
 
     size_t docs_count = 0;
 
-    while (!irs::doc_limits::eof(filter_itr->Advance())) {
+    while (!irs::doc_limits::eof(filter_itr->Next())) {
       cur_doc = filter_itr->Value();
       filter_itr->FetchScoreArgs(0);
       irs::score_t score_value{};
@@ -3664,7 +3664,7 @@ TEST_P(BooleanFilterTestCase, not_sequential_ordered) {
 
     size_t docs_count = 0;
 
-    while (!irs::doc_limits::eof(filter_itr->Advance())) {
+    while (!irs::doc_limits::eof(filter_itr->Next())) {
       cur_doc = filter_itr->Value();
       filter_itr->FetchScoreArgs(0);
       irs::score_t score_value{};
@@ -4503,7 +4503,7 @@ TEST_P(BooleanFilterTestCase, mixed_ordered) {
       const auto scr = docs->PrepareScore();
 
       std::vector<irs::bstring> scores;
-      while (!irs::doc_limits::eof(docs->Advance())) {
+      while (!irs::doc_limits::eof(docs->Next())) {
         EXPECT_EQ(*expected_doc, docs->Value());
         ++expected_doc;
 
@@ -4534,7 +4534,7 @@ TEST_P(BooleanFilterTestCase, and_or_no_collector) {
     Docs docs;
     for (size_t i = 0, n = prepared.size(); i < n; ++i) {
       auto it = prepared.Execute(i);
-      while (!irs::doc_limits::eof(it->Advance())) {
+      while (!irs::doc_limits::eof(it->Next())) {
         docs.push_back(it->Value());
       }
     }

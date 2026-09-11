@@ -99,7 +99,7 @@ void FilterTestCaseBase::GetQueryResult(const PreparedFilter& prepared,
 
     result_costs.emplace_back(prepared.Estimate(i));
 
-    while (!irs::doc_limits::eof(sequential_docs->Advance())) {
+    while (!irs::doc_limits::eof(sequential_docs->Next())) {
       auto stateless_random_docs = prepared.Execute(i);
       ASSERT_NE(nullptr, stateless_random_docs);
       ASSERT_EQ(sequential_docs->Value(),
@@ -117,8 +117,8 @@ void FilterTestCaseBase::GetQueryResult(const PreparedFilter& prepared,
 
       result.push_back(sequential_docs->Value());
     }
-    ASSERT_FALSE(!irs::doc_limits::eof(sequential_docs->Advance()));
-    ASSERT_FALSE(!irs::doc_limits::eof(random_docs->Advance()));
+    ASSERT_FALSE(!irs::doc_limits::eof(sequential_docs->Next()));
+    ASSERT_FALSE(!irs::doc_limits::eof(random_docs->Next()));
     ASSERT_TRUE(irs::doc_limits::eof(sequential_docs->Value()));
 
     // seek to eof
@@ -147,7 +147,7 @@ void FilterTestCaseBase::GetQueryResult(const PreparedFilter& prepared,
 
     result_costs.emplace_back(prepared.Estimate(i));
 
-    while (!irs::doc_limits::eof(sequential_docs->Advance())) {
+    while (!irs::doc_limits::eof(sequential_docs->Next())) {
       irs::ColumnArgsFetcher stateless_fetcher;
       auto stateless_random_docs = prepared.ExecuteScored(i, stateless_fetcher);
       auto stateless_random_score = stateless_random_docs->PrepareScore();
@@ -184,8 +184,8 @@ void FilterTestCaseBase::GetQueryResult(const PreparedFilter& prepared,
       result.emplace_back(sequential_docs->Value(),
                           std::vector<irs::score_t>{score_value});
     }
-    ASSERT_FALSE(!irs::doc_limits::eof(sequential_docs->Advance()));
-    ASSERT_FALSE(!irs::doc_limits::eof(random_docs->Advance()));
+    ASSERT_FALSE(!irs::doc_limits::eof(sequential_docs->Next()));
+    ASSERT_FALSE(!irs::doc_limits::eof(random_docs->Next()));
     ASSERT_TRUE(irs::doc_limits::eof(sequential_docs->Value()));
 
     // seek to eof
@@ -237,10 +237,10 @@ void FilterTestCaseBase::CheckQuery(const irs::Filter& filter,
           ASSERT_EQ(expected, it.Seek(action.target));
         } else if constexpr (std::is_same_v<A, Next>) {
           ASSERT_EQ(!irs::doc_limits::eof(expected),
-                    !irs::doc_limits::eof(it.Advance()));
+                    !irs::doc_limits::eof(it.Next()));
         } else if constexpr (std::is_same_v<A, Skip>) {
           for (auto count = action.count; count; --count) {
-            it.Advance();
+            it.Next();
           }
         }
       },
@@ -345,21 +345,21 @@ void FilterTestCaseBase::MakeResult(const irs::Filter& filter,
       ASSERT_NE(nullptr, docs);
       auto score = docs->PrepareScore();
 
-      while (!irs::doc_limits::eof(docs->Advance())) {
+      while (!irs::doc_limits::eof(docs->Next())) {
         docs->FetchScoreArgs(0);
         fetcher.Fetch(docs->Value());
         score.Score(&score_value, 1);
         scored_result.emplace(score_value, docs->Value());
       }
-      ASSERT_FALSE(!irs::doc_limits::eof(docs->Advance()));
+      ASSERT_FALSE(!irs::doc_limits::eof(docs->Next()));
     } else {
       auto docs = prepared.Execute(i);
       ASSERT_NE(nullptr, docs);
 
-      while (!irs::doc_limits::eof(docs->Advance())) {
+      while (!irs::doc_limits::eof(docs->Next())) {
         scored_result.emplace(score_value, docs->Value());
       }
-      ASSERT_FALSE(!irs::doc_limits::eof(docs->Advance()));
+      ASSERT_FALSE(!irs::doc_limits::eof(docs->Next()));
     }
     ++i;
   }

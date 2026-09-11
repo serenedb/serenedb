@@ -746,7 +746,7 @@ void PostingsWriterImpl<FormatTraits>::Write(TermPostings& docs,
   uint32_t total_freq = 0;
 
   while (true) {
-    const auto doc = docs.Advance();
+    const auto doc = docs.Next();
     SDB_ASSERT(doc_limits::valid(doc));
     if (doc_limits::eof(doc)) {
       break;

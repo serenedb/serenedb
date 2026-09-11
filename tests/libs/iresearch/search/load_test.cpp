@@ -77,7 +77,7 @@ void FillViaAdvance(tests::LeadCursor& iter, irs::doc_id_t window_max,
   auto doc = iter.Value();
   while (!irs::doc_limits::eof(doc) && doc < window_max) {
     docs.push_back(doc);
-    doc = iter.Advance();
+    doc = iter.Next();
   }
 }
 
@@ -120,7 +120,7 @@ BeforeWindowFunc SeekToWindow() {
 BeforeWindowFunc AdvanceSkip(size_t count) {
   return [count](tests::LeadCursor& iter, irs::doc_id_t /*window_min*/) {
     for (size_t i = 0; i < count && !irs::doc_limits::eof(iter.Value()); ++i) {
-      iter.Advance();
+      iter.Next();
     }
   };
 }
@@ -215,7 +215,7 @@ size_t CompareWindowByWindow(tests::LeadCursor& reference_iter,
 size_t CompareEmitDocs(tests::LeadCursor& reference_iter, irs::docs::Root& root,
                        uint32_t capacity) {
   std::vector<irs::doc_id_t> reference_docs;
-  while (!irs::doc_limits::eof(reference_iter.Advance())) {
+  while (!irs::doc_limits::eof(reference_iter.Next())) {
     reference_docs.push_back(reference_iter.Value());
   }
 
@@ -292,7 +292,7 @@ void TestAdvanceVsFillBlock(const irs::DirectoryReader& reader,
       ASSERT_NE(nullptr, count);
       WindowFiller filler{std::move(fill)};
 
-      reference_iter.Advance();
+      reference_iter.Next();
 
       auto total =
         CompareWindowByWindow(reference_iter, filler, max_doc, window_size);
@@ -365,7 +365,7 @@ void TestInterleavedSeekFillBlock(const irs::DirectoryReader& reader,
       ASSERT_NE(nullptr, fill);
       WindowFiller filler{std::move(fill)};
 
-      reference_iter.Advance();
+      reference_iter.Next();
 
       BeforeWindowFunc noop;
       CompareWindowByWindow(reference_iter, filler, max_doc, window_size,
@@ -393,7 +393,7 @@ void TestAdvanceSkipFillBlock(const irs::DirectoryReader& reader,
         ASSERT_NE(nullptr, fill);
         WindowFiller filler{std::move(fill)};
 
-        reference_iter.Advance();
+        reference_iter.Next();
 
         CompareWindowByWindow(reference_iter, filler, max_doc, window_size,
                               AdvanceSkip(skip));
@@ -421,7 +421,7 @@ void TestSeekSkipFillBlock(const irs::DirectoryReader& reader,
         ASSERT_NE(nullptr, fill);
         WindowFiller filler{std::move(fill)};
 
-        reference_iter.Advance();
+        reference_iter.Next();
 
         CompareWindowByWindow(reference_iter, filler, max_doc, window_size,
                               SeekSkip(delta));
@@ -1095,8 +1095,8 @@ TEST_F(LoadTest, DisjunctionScoreAccuracy) {
         EXPECT_FALSE(score_func.IsDefault())
           << "Score function is default for term: " << term_str;
 
-        for (auto doc = it->Advance(); !irs::doc_limits::eof(doc);
-             doc = it->Advance()) {
+        for (auto doc = it->Next(); !irs::doc_limits::eof(doc);
+             doc = it->Next()) {
           fetcher.Fetch(doc);
           it->FetchScoreArgs(0);
           irs::score_t s = score_func.Score();
@@ -1120,8 +1120,8 @@ TEST_F(LoadTest, DisjunctionScoreAccuracy) {
         auto it = prepared.ExecuteScored(i, fetcher);
         auto score_func = it->PrepareScore();
 
-        for (auto doc = it->Advance(); !irs::doc_limits::eof(doc);
-             doc = it->Advance()) {
+        for (auto doc = it->Next(); !irs::doc_limits::eof(doc);
+             doc = it->Next()) {
           fetcher.Fetch(doc);
           it->FetchScoreArgs(0);
           irs::score_t s = score_func.Score();

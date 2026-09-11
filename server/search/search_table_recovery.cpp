@@ -234,7 +234,7 @@ void RunSearchTableRecovery(bool skip_wal_recovery) {
       ++recovered_shards;
     }
 
-    // Advance every shard -- including ones with no replayed records -- to the
+    // Next every shard -- including ones with no replayed records -- to the
     // recovered max tick, so an idle shard doesn't pin this database WAL's GC
     // floor after recovery. FinishRecovery is per-shard for the same reason:
     // one that adopted nothing still has to reclaim what the crash left behind.

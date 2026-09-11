@@ -184,9 +184,9 @@ class MaskedPostings : public irs::TermPostings {
                  const irs::DocumentMask& mask) noexcept
     : _postings{std::move(postings)}, _mask{&mask} {}
 
-  irs::doc_id_t Advance() final {
+  irs::doc_id_t Next() final {
     do {
-      _doc = _postings->Advance();
+      _doc = _postings->Next();
     } while (!irs::doc_limits::eof(_doc) && _mask->contains(_doc));
     return _doc;
   }

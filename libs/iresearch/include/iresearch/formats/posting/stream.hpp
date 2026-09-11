@@ -88,7 +88,7 @@ class PostingsStream : public TermPostings {
     }
   }
 
-  doc_id_t Advance() final {
+  doc_id_t Next() final {
     if (_left_in_leaf == 0) [[unlikely]] {
       if (_left_in_list == 0) [[unlikely]] {
         return _doc = doc_limits::eof();

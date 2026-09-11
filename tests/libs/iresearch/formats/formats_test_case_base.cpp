@@ -1482,7 +1482,7 @@ TEST_P(FormatTestCaseWithEncryption, open_non_ecnrypted_with_encrypted) {
 
     size_t hits = 0;
     for (auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
-         !irs::doc_limits::eof(docs_itr->Advance());) {
+         !irs::doc_limits::eof(docs_itr->Next());) {
       ++hits;
     }
     ASSERT_EQ(1, hits);

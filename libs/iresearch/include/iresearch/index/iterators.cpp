@@ -37,7 +37,7 @@ namespace {
 struct EmptyTermPostings : TermPostings {
   EmptyTermPostings() { _doc = doc_limits::eof(); }
 
-  doc_id_t Advance() noexcept final { return doc_limits::eof(); }
+  doc_id_t Next() noexcept final { return doc_limits::eof(); }
 
   uint32_t GetFreq() const noexcept final { return 0; }
 };

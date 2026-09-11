@@ -270,7 +270,7 @@ class VectorCluster {
     for (;;) {
       uint32_t len = 0;
       while (len != kRun) {
-        const auto doc = _list.Advance();
+        const auto doc = _list.Next();
         if (doc_limits::eof(doc)) {
           break;
         }

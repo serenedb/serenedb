@@ -2709,8 +2709,8 @@ uint32_t TsDictLocalState::WalkLive(irs::TermIterator& it, bool count_all) {
   std::array<irs::doc_id_t, kPlanBatch> cand_docs;
   for (;;) {
     uint32_t n = 0;
-    for (auto doc = postings->Advance(); !irs::doc_limits::eof(doc);
-         doc = postings->Advance()) {
+    for (auto doc = postings->Next(); !irs::doc_limits::eof(doc);
+         doc = postings->Next()) {
       if (!live.Contains(doc)) {
         continue;
       }

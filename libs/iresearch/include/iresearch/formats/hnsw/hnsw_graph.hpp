@@ -60,10 +60,10 @@ class HnswVisited {
       _marks.assign(n, 0);
       _generation = 0;
     }
-    Advance();
+    Next();
   }
 
-  void Advance() noexcept {
+  void Next() noexcept {
     if (++_generation == 0) {
       std::ranges::fill(_marks, 0);
       _generation = 1;
@@ -554,14 +554,14 @@ void HnswInsert(HnswGraphWriter& graph, uint32_t node, Dist& dist,
 
   HnswCandidate cur{dist.One(entry), entry};
   if (entry_top > top) {
-    s.search.visited.Advance();
+    s.search.visited.Next();
     cur = HnswGreedyDescent(graph.Graph(), dist, cur, entry_top, top, s.search);
   }
 
   s.pending.clear();
   const uint32_t start = std::min(top, entry_top);
   for (uint32_t level = start + 1; level-- > 0;) {
-    s.search.visited.Advance();
+    s.search.visited.Next();
     s.search.visited.TestAndSet(cur.node);
     s.search.nearest.assign(1, cur);
     HnswSearchLevel(graph.Graph(), dist, level, ef_construction, s.search);
@@ -611,7 +611,7 @@ void HnswSearchTopK(const HnswGraph& graph, Dist& dist, uint32_t ef,
   if (entry_top > 0) {
     cur = HnswGreedyDescent(graph, dist, cur, entry_top, 0, s);
   }
-  s.visited.Advance();
+  s.visited.Next();
   s.visited.TestAndSet(cur.node);
   s.nearest.assign(1, cur);
   HnswSearchLevel(graph, dist, 0, ef, s);
@@ -643,7 +643,7 @@ void HnswSearchRadius(const HnswGraph& graph, Dist& dist, score_t threshold,
     cur = HnswGreedyDescent(graph, dist, cur, entry_top, 0, s);
   }
 
-  s.visited.Advance();
+  s.visited.Next();
   s.visited.TestAndSet(cur.node);
   found.assign(1, cur);
   HnswSearchLevel(graph, dist, 0, kHnswDefaultEfSearch, s);

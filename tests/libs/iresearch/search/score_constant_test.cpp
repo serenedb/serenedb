@@ -268,7 +268,7 @@ TEST_P(ScoreConstantTest, every_combination_executes) {
       auto score = docs->PrepareScore();
 
       std::vector<irs::score_t> values;
-      while (!irs::doc_limits::eof(docs->Advance())) {
+      while (!irs::doc_limits::eof(docs->Next())) {
         docs->FetchScoreArgs(0);
         fetcher.Fetch(docs->Value());
         irs::score_t value = 0;
@@ -385,8 +385,8 @@ TEST_P(ScoreConstantTest, constant_over_freq_field_steps_over_full_blocks) {
   ASSERT_NE(nullptr, docs);
 
   std::vector<irs::doc_id_t> got;
-  for (auto doc = docs->Advance(); !irs::doc_limits::eof(doc);
-       doc = docs->Advance()) {
+  for (auto doc = docs->Next(); !irs::doc_limits::eof(doc);
+       doc = docs->Next()) {
     got.emplace_back(doc);
   }
   ASSERT_EQ(kDocs, got.size());
@@ -443,7 +443,7 @@ TEST_P(ScoreConstantTest, bm25_degrades_to_freq_one_norm_one) {
   auto docs = prepared.ExecuteScored(0, fetcher);
   ASSERT_NE(nullptr, docs);
   auto score = docs->PrepareScore();
-  while (!irs::doc_limits::eof(docs->Advance())) {
+  while (!irs::doc_limits::eof(docs->Next())) {
     docs->FetchScoreArgs(0);
     fetcher.Fetch(docs->Value());
     irs::score_t value = 0;

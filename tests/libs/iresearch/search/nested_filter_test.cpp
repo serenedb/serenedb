@@ -53,9 +53,9 @@ struct ChildIterator : irs::lead::Node {
     SDB_ASSERT(_it);
   }
 
-  irs::doc_id_t Advance() final {
+  irs::doc_id_t Next() final {
     while (true) {
-      const auto doc = _it->Advance();
+      const auto doc = _it->Next();
       if (irs::doc_limits::eof(doc) || !_parents.contains(doc)) {
         return _doc = doc;
       }
@@ -70,7 +70,7 @@ struct ChildIterator : irs::lead::Node {
     if (irs::doc_limits::eof(doc) || !_parents.contains(doc)) {
       return _doc = doc;
     }
-    return Advance();
+    return Next();
   }
 
  private:
@@ -86,7 +86,7 @@ class PrevDocWrapper : public irs::ParentDocs {
     SDB_ASSERT(_it);
   }
 
-  irs::doc_id_t Advance() final { return _doc = _it->Advance(); }
+  irs::doc_id_t Next() final { return _doc = _it->Next(); }
 
   irs::doc_id_t Seek(irs::doc_id_t target) final {
     return _doc = _it->Seek(target);
@@ -104,7 +104,7 @@ class VectorDocs : public irs::lead::Node {
   explicit VectorDocs(std::vector<irs::doc_id_t>&& docs) noexcept
     : _docs{std::move(docs)} {}
 
-  irs::doc_id_t Advance() final {
+  irs::doc_id_t Next() final {
     if (_pos >= _docs.size()) {
       return _doc = irs::doc_limits::eof();
     }
@@ -117,7 +117,7 @@ class VectorDocs : public irs::lead::Node {
     }
     auto it = std::lower_bound(_docs.begin() + _pos, _docs.end(), target);
     _pos = static_cast<size_t>(it - _docs.begin());
-    return Advance();
+    return Next();
   }
 
  private:
@@ -174,7 +174,7 @@ class ParentDocIterator : public irs::ParentDocs {
   explicit ParentDocIterator(std::vector<irs::doc_id_t>&& parents)
     : _parents{std::move(parents)} {}
 
-  irs::doc_id_t Advance() final {
+  irs::doc_id_t Next() final {
     if (_pos >= _parents.size()) {
       _prev = _doc;
       return _doc = irs::doc_limits::eof();

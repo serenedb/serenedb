@@ -173,7 +173,7 @@ void Bm25TestCase::TestQueryNorms() {
     auto docs = prepared_filter.ExecuteScored(0, fetcher);
     auto score = docs->PrepareScore();
 
-    while (!irs::doc_limits::eof(docs->Advance())) {
+    while (!irs::doc_limits::eof(docs->Next())) {
       fetcher.Fetch(docs->Value());
       docs->FetchScoreArgs(0);
       irs::score_t score_value{};
@@ -221,7 +221,7 @@ void Bm25TestCase::TestQueryNorms() {
     auto docs = prepared_filter.ExecuteScored(0, fetcher);
     auto score = docs->PrepareScore();
 
-    while (!irs::doc_limits::eof(docs->Advance())) {
+    while (!irs::doc_limits::eof(docs->Next())) {
       fetcher.Fetch(docs->Value());
       docs->FetchScoreArgs(0);
       irs::score_t score_value{};
@@ -345,7 +345,7 @@ TEST_P(Bm25TestCase, test_bm1_idf_only) {
     fetcher.Clear();
     auto docs = prepared_filter.ExecuteScored(0, fetcher);
     auto score = docs->PrepareScore();
-    while (!irs::doc_limits::eof(docs->Advance())) {
+    while (!irs::doc_limits::eof(docs->Next())) {
       fetcher.Fetch(docs->Value());
       docs->FetchScoreArgs(0);
       irs::score_t value{};
@@ -504,7 +504,7 @@ TEST_P(Bm25TestCase, test_phrase) {
     ASSERT_NE(nullptr, column);
     irs::tests::BlobPointReader values{segment, *column};
 
-    while (!irs::doc_limits::eof(docs->Advance())) {
+    while (!irs::doc_limits::eof(docs->Next())) {
       fetcher.Fetch(docs->Value());
       docs->FetchScoreArgs(0);
       irs::score_t score_value{};
@@ -566,7 +566,7 @@ TEST_P(Bm25TestCase, test_phrase) {
     ASSERT_NE(nullptr, column);
     irs::tests::BlobPointReader values{segment, *column};
 
-    while (!irs::doc_limits::eof(docs->Advance())) {
+    while (!irs::doc_limits::eof(docs->Next())) {
       fetcher.Fetch(docs->Value());
       docs->FetchScoreArgs(0);
       irs::score_t score_value{};
@@ -638,7 +638,7 @@ TEST_P(Bm25TestCase, test_query) {
     auto docs = prepared_filter.ExecuteScored(0, fetcher);
     auto score = docs->PrepareScore();
 
-    while (!irs::doc_limits::eof(docs->Advance())) {
+    while (!irs::doc_limits::eof(docs->Next())) {
       fetcher.Fetch(docs->Value());
       docs->FetchScoreArgs(0);
 
@@ -748,7 +748,7 @@ TEST_P(Bm25TestCase, test_query) {
       auto docs = prepared_filter.ExecuteScored(i, fetcher);
       auto score = docs->PrepareScore();
 
-      while (!irs::doc_limits::eof(docs->Advance())) {
+      while (!irs::doc_limits::eof(docs->Next())) {
         fetcher.Fetch(docs->Value());
         docs->FetchScoreArgs(0);
         irs::score_t score_value{};
@@ -873,7 +873,7 @@ TEST_P(Bm25TestCase, test_query) {
       auto docs = prepared_filter.ExecuteScored(i, fetcher);
       auto score = docs->PrepareScore();
 
-      while (!irs::doc_limits::eof(docs->Advance())) {
+      while (!irs::doc_limits::eof(docs->Next())) {
         fetcher.Fetch(docs->Value());
         docs->FetchScoreArgs(0);
         irs::score_t score_value{};
@@ -987,7 +987,7 @@ TEST_P(Bm25TestCase, test_query) {
       auto docs = prepared_filter.ExecuteScored(i, fetcher);
       auto score = docs->PrepareScore();
 
-      while (!irs::doc_limits::eof(docs->Advance())) {
+      while (!irs::doc_limits::eof(docs->Next())) {
         fetcher.Fetch(docs->Value());
         docs->FetchScoreArgs(0);
         irs::score_t score_value{};
@@ -1035,7 +1035,7 @@ TEST_P(Bm25TestCase, test_query) {
     auto docs = prepared_filter.ExecuteScored(0, fetcher);
     auto score = docs->PrepareScore();
 
-    while (!irs::doc_limits::eof(docs->Advance())) {
+    while (!irs::doc_limits::eof(docs->Next())) {
       fetcher.Fetch(docs->Value());
       docs->FetchScoreArgs(0);
       irs::score_t score_value{};
@@ -1081,7 +1081,7 @@ TEST_P(Bm25TestCase, test_query) {
     auto docs = prepared_filter.ExecuteScored(0, fetcher);
     auto score = docs->PrepareScore();
 
-    while (!irs::doc_limits::eof(docs->Advance())) {
+    while (!irs::doc_limits::eof(docs->Next())) {
       fetcher.Fetch(docs->Value());
       docs->FetchScoreArgs(0);
       irs::score_t score_value{};
@@ -1127,7 +1127,7 @@ TEST_P(Bm25TestCase, test_query) {
     auto docs = prepared_filter.ExecuteScored(0, fetcher);
     auto score = docs->PrepareScore();
 
-    while (!irs::doc_limits::eof(docs->Advance())) {
+    while (!irs::doc_limits::eof(docs->Next())) {
       fetcher.Fetch(docs->Value());
       docs->FetchScoreArgs(0);
       irs::score_t score_value{};
@@ -1173,7 +1173,7 @@ TEST_P(Bm25TestCase, test_query) {
     auto docs = prepared_filter.ExecuteScored(0, fetcher);
     auto score = docs->PrepareScore();
 
-    while (!irs::doc_limits::eof(docs->Advance())) {
+    while (!irs::doc_limits::eof(docs->Next())) {
       fetcher.Fetch(docs->Value());
       docs->FetchScoreArgs(0);
       irs::score_t score_value{};
@@ -1219,7 +1219,7 @@ TEST_P(Bm25TestCase, test_query) {
     auto docs = prepared_filter.ExecuteScored(0, fetcher);
     auto score = docs->PrepareScore();
 
-    while (!irs::doc_limits::eof(docs->Advance())) {
+    while (!irs::doc_limits::eof(docs->Next())) {
       fetcher.Fetch(docs->Value());
       docs->FetchScoreArgs(0);
       irs::score_t score_value{};
@@ -1256,7 +1256,7 @@ TEST_P(Bm25TestCase, test_query) {
     auto score = docs->PrepareScore();
 
     irs::doc_id_t doc = irs::doc_limits::min();
-    while (!irs::doc_limits::eof(docs->Advance())) {
+    while (!irs::doc_limits::eof(docs->Next())) {
       fetcher.Fetch(docs->Value());
       ASSERT_EQ(doc, docs->Value());
       irs::score_t score_value{};
@@ -1284,7 +1284,7 @@ TEST_P(Bm25TestCase, test_query) {
     auto score = docs->PrepareScore();
 
     irs::doc_id_t doc = irs::doc_limits::min();
-    while (!irs::doc_limits::eof(docs->Advance())) {
+    while (!irs::doc_limits::eof(docs->Next())) {
       ASSERT_EQ(doc, docs->Value());
 
       fetcher.Fetch(docs->Value());
@@ -1406,7 +1406,7 @@ TEST_P(Bm25TestCase, test_order) {
         auto docs = prepared.ExecuteScored(0, fetcher);
         auto score = docs->PrepareScore();
 
-        for (; !irs::doc_limits::eof(docs->Advance());) {
+        for (; !irs::doc_limits::eof(docs->Next());) {
           fetcher.Fetch(docs->Value());
           irs::score_t score_value{};
           score.Score(&score_value, 1);

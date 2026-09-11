@@ -1301,9 +1301,9 @@ TEST(InverterEndToEndTest, InsertKeywordAndTokensThroughWriter) {
     ASSERT_TRUE(terms->next());
     EXPECT_EQ(ToBytesView("alpha"), terms->value());
     auto docs = terms->postings(kKeywordFeatures);
-    ASSERT_FALSE(irs::doc_limits::eof(docs->Advance()));
-    ASSERT_FALSE(irs::doc_limits::eof(docs->Advance()));
-    ASSERT_TRUE(irs::doc_limits::eof(docs->Advance()));
+    ASSERT_FALSE(irs::doc_limits::eof(docs->Next()));
+    ASSERT_FALSE(irs::doc_limits::eof(docs->Next()));
+    ASSERT_TRUE(irs::doc_limits::eof(docs->Next()));
     ASSERT_TRUE(terms->next());
     EXPECT_EQ(ToBytesView("beta"), terms->value());
     ASSERT_FALSE(terms->next());
@@ -1321,13 +1321,13 @@ TEST(InverterEndToEndTest, InsertKeywordAndTokensThroughWriter) {
     auto* pos = docs->Positions();
     ASSERT_NE(nullptr, pos);
 
-    ASSERT_FALSE(irs::doc_limits::eof(docs->Advance()));
+    ASSERT_FALSE(irs::doc_limits::eof(docs->Next()));
     EXPECT_EQ(1, docs->GetFreq());
     ASSERT_TRUE(pos->next());
     EXPECT_EQ(3, pos->value());
 
-    ASSERT_FALSE(irs::doc_limits::eof(docs->Advance()));
-    ASSERT_FALSE(irs::doc_limits::eof(docs->Advance()));
+    ASSERT_FALSE(irs::doc_limits::eof(docs->Next()));
+    ASSERT_FALSE(irs::doc_limits::eof(docs->Next()));
     EXPECT_EQ(2, docs->GetFreq());
     ASSERT_TRUE(pos->next());
     EXPECT_EQ(1, pos->value());
@@ -1338,7 +1338,7 @@ TEST(InverterEndToEndTest, InsertKeywordAndTokensThroughWriter) {
     ASSERT_TRUE(pos->next());
     EXPECT_EQ(2, pos->value());
     ASSERT_FALSE(pos->next());
-    ASSERT_TRUE(irs::doc_limits::eof(docs->Advance()));
+    ASSERT_TRUE(irs::doc_limits::eof(docs->Next()));
   }
 }
 
@@ -1411,7 +1411,7 @@ TEST(InverterEndToEndTest, TermCrossingScatterBlockBoundary) {
     ASSERT_NE(nullptr, offs);
     doc_id_t expected = doc_limits::min();
     for (doc_id_t i = 0; i < kFreq3Docs; ++i, ++expected) {
-      ASSERT_EQ(expected, docs->Advance());
+      ASSERT_EQ(expected, docs->Next());
       ASSERT_EQ(3, docs->GetFreq());
       for (uint32_t k = 0; k < 3; ++k) {
         ASSERT_TRUE(pos->next());
@@ -1421,7 +1421,7 @@ TEST(InverterEndToEndTest, TermCrossingScatterBlockBoundary) {
       }
       ASSERT_FALSE(pos->next());
     }
-    ASSERT_TRUE(irs::doc_limits::eof(docs->Advance()));
+    ASSERT_TRUE(irs::doc_limits::eof(docs->Next()));
     ASSERT_FALSE(terms->next());
   }
   {
@@ -1432,10 +1432,10 @@ TEST(InverterEndToEndTest, TermCrossingScatterBlockBoundary) {
     auto docs = terms->postings(kFeatures);
     doc_id_t expected = doc_limits::min();
     for (doc_id_t i = 0; i < kFreq1Docs; ++i, ++expected) {
-      ASSERT_EQ(expected, docs->Advance());
+      ASSERT_EQ(expected, docs->Next());
       ASSERT_EQ(1, docs->GetFreq());
     }
-    ASSERT_TRUE(irs::doc_limits::eof(docs->Advance()));
+    ASSERT_TRUE(irs::doc_limits::eof(docs->Next()));
     ASSERT_FALSE(terms->next());
   }
 }
@@ -1566,15 +1566,15 @@ TEST(InverterEndToEndTest, NullBlockUvfInvalidRows) {
     ASSERT_TRUE(terms->next());
     EXPECT_EQ(ToBytesView("a"), terms->value());
     auto docs = terms->postings(IndexFeatures::None);
-    EXPECT_EQ(d, docs->Advance());
-    EXPECT_EQ(d + 3, docs->Advance());
-    ASSERT_TRUE(irs::doc_limits::eof(docs->Advance()));
+    EXPECT_EQ(d, docs->Next());
+    EXPECT_EQ(d + 3, docs->Next());
+    ASSERT_TRUE(irs::doc_limits::eof(docs->Next()));
     ASSERT_TRUE(terms->next());
     EXPECT_EQ(ToBytesView("c"), terms->value());
     docs = terms->postings(IndexFeatures::None);
-    EXPECT_EQ(d + 2, docs->Advance());
-    EXPECT_EQ(d + 5, docs->Advance());
-    ASSERT_TRUE(irs::doc_limits::eof(docs->Advance()));
+    EXPECT_EQ(d + 2, docs->Next());
+    EXPECT_EQ(d + 5, docs->Next());
+    ASSERT_TRUE(irs::doc_limits::eof(docs->Next()));
     ASSERT_FALSE(terms->next());
   }
 
@@ -1585,9 +1585,9 @@ TEST(InverterEndToEndTest, NullBlockUvfInvalidRows) {
     ASSERT_TRUE(terms->next());
     EXPECT_EQ(irs::bytes_view{}, terms->value());
     auto docs = terms->postings(IndexFeatures::None);
-    EXPECT_EQ(d + 1, docs->Advance());
-    EXPECT_EQ(d + 4, docs->Advance());
-    ASSERT_TRUE(irs::doc_limits::eof(docs->Advance()));
+    EXPECT_EQ(d + 1, docs->Next());
+    EXPECT_EQ(d + 4, docs->Next());
+    ASSERT_TRUE(irs::doc_limits::eof(docs->Next()));
     ASSERT_FALSE(terms->next());
   }
 }

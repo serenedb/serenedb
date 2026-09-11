@@ -460,7 +460,7 @@ TEST(GeoDistanceFilterTest, query) {
 
       size_t matched = 0;
       EXPECT_FALSE(irs::doc_limits::valid(it->Value()));
-      while (!irs::doc_limits::eof(it->Advance())) {
+      while (!irs::doc_limits::eof(it->Next())) {
         ++matched;
         auto doc_id = it->Value();
         EXPECT_EQ(doc_id, seek_it->Seek(doc_id));
@@ -478,7 +478,7 @@ TEST(GeoDistanceFilterTest, query) {
         auto it = prepared->Execute(i);
         EXPECT_NE(nullptr, it);
 
-        while (!irs::doc_limits::eof(it->Advance())) {
+        while (!irs::doc_limits::eof(it->Next())) {
           const auto doc_id = it->Value();
           auto seek_it = prepared->Execute(i);
           EXPECT_NE(nullptr, seek_it);
@@ -490,7 +490,7 @@ TEST(GeoDistanceFilterTest, query) {
                 actual_results.find(irs::tests::ReadStoredStr<std::string>(
                   values, seek_it->Value())));
             }
-          } while (!irs::doc_limits::eof(seek_it->Advance()));
+          } while (!irs::doc_limits::eof(seek_it->Next()));
           EXPECT_TRUE(irs::doc_limits::eof(seek_it->Value()));
         }
         EXPECT_TRUE(irs::doc_limits::eof(it->Value()));
@@ -951,7 +951,7 @@ TEST(GeoDistanceFilterTest, checkScorer) {
 
       EXPECT_FALSE(irs::doc_limits::valid(it->Value()));
 
-      while (!irs::doc_limits::eof(it->Advance())) {
+      while (!irs::doc_limits::eof(it->Next())) {
         const auto doc_id = it->Value();
         EXPECT_EQ(doc_id, seek_it->Seek(doc_id));
         EXPECT_FALSE(values.IsNull(doc_id));
@@ -979,7 +979,7 @@ TEST(GeoDistanceFilterTest, checkScorer) {
         auto it = prepared.Execute(i);
         EXPECT_NE(nullptr, it);
 
-        while (!irs::doc_limits::eof(it->Advance())) {
+        while (!irs::doc_limits::eof(it->Next())) {
           const auto doc_id = it->Value();
           auto seek_it = prepared.Execute(i);
           EXPECT_NE(nullptr, seek_it);
@@ -991,7 +991,7 @@ TEST(GeoDistanceFilterTest, checkScorer) {
                 actual_results.find(irs::tests::ReadStoredStr<std::string>(
                   values, seek_it->Value())));
             }
-          } while (!irs::doc_limits::eof(seek_it->Advance()));
+          } while (!irs::doc_limits::eof(seek_it->Next()));
           EXPECT_TRUE(irs::doc_limits::eof(seek_it->Value()));
         }
         EXPECT_TRUE(irs::doc_limits::eof(it->Value()));

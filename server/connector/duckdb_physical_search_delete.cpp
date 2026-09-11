@@ -206,7 +206,7 @@ duckdb::SinkFinalizeType SereneDBSearchDelete::Finalize(
     auto& gstate = input.global_state.Cast<IndexDeleteState>();
     gstate.trx->RegisterFlush();
     const auto tick =
-      search::TickDomain::Instance().Advance(gstate.trx->GetQueries() + 1);
+      search::TickDomain::Instance().Next(gstate.trx->GetQueries() + 1);
     if (!gstate.trx->Commit(tick)) {
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_INTERNAL_ERROR),
                       ERR_MSG("failed to commit the removes for index with id ",

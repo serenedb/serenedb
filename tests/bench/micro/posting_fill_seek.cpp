@@ -42,7 +42,7 @@
 //
 // The four drivers are the four ways the engine consumes a posting list:
 //
-//   Advance/<shape>  `lead::Node`, one document at a time, the fallback for
+//   Next/<shape>  `lead::Node`, one document at a time, the fallback for
 //                    everything.
 //   Emit/<shape>     `docs::Root`, the unscored single-term scan.
 //   Window/<shape>   `fill::Node`, the bitset window a conjunction intersects
@@ -318,9 +318,9 @@ constexpr uint32_t kCapacity = 2048;
 
 // -- drivers ------------------------------------------------------------
 
-size_t Advance(const irs::lead::Node::ptr& docs) {
+size_t Next(const irs::lead::Node::ptr& docs) {
   size_t n = 0;
-  while (!irs::doc_limits::eof(docs->Advance())) {
+  while (!irs::doc_limits::eof(docs->Next())) {
     ++n;
   }
   return n;
@@ -364,7 +364,7 @@ void BmAdvance(benchmark::State& state, std::string_view term) {
 
   size_t docs = 0;
   for (auto _ : state) {
-    docs += Advance(prepared.Lead());
+    docs += Next(prepared.Lead());
   }
   Report(state, docs);
 }
@@ -400,7 +400,7 @@ void BmWindow(benchmark::State& state, std::string_view term) {
   void Bm##name##Period(benchmark::State& s) { Bm##name(s, kPeriod); } \
   void Bm##name##Gen(benchmark::State& s) { Bm##name(s, kGen); }
 
-BM_SHAPES(Advance)
+BM_SHAPES(Next)
 BM_SHAPES(Emit)
 BM_SHAPES(Window)
 

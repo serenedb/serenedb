@@ -36,7 +36,7 @@ class SinglePostingDocs {
   SinglePostingDocs(SinglePostingDocs&&) = delete;
   SinglePostingDocs& operator=(SinglePostingDocs&&) = delete;
 
-  doc_id_t Advance() noexcept {
+  doc_id_t Next() noexcept {
     return _doc = _doc < _only ? _only : doc_limits::eof();
   }
 

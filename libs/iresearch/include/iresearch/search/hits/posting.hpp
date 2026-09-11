@@ -86,7 +86,7 @@ class BoostTerm {
         Flush(scores, held);
         held = 0;
       }
-      doc = _leaf.Advance();
+      doc = _leaf.Next();
       if (doc > last) {
         break;
       }

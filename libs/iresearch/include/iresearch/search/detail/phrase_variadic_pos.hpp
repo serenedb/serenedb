@@ -238,9 +238,9 @@ class PhraseVariadicPos {
 
   Position& Positions() noexcept { return _positions; }
 
-  doc_id_t Advance() {
+  doc_id_t Next() {
     if (_count == 1) [[likely]] {
-      return Settle(_begin[0].Advance());
+      return Settle(_begin[0].Next());
     }
     return Settle(Converge(_doc + 1));
   }

@@ -216,8 +216,8 @@ void RemoveFromExistingSegment(DocumentMask& deleted_docs,
   }
 
   const auto* docs_mask = reader.docs_mask();
-  for (auto doc_id = plan->Advance(); !doc_limits::eof(doc_id);
-       doc_id = plan->Advance()) {
+  for (auto doc_id = plan->Next(); !doc_limits::eof(doc_id);
+       doc_id = plan->Next()) {
     // if the indexed doc_id was already masked then it should be skipped
     if (docs_mask && docs_mask->contains(doc_id)) {
       continue;  // the current modification query does not match any records
@@ -250,8 +250,8 @@ bool RemoveFromImportedSegment(DocumentMask& deleted_docs,
   }
 
   bool modified = false;
-  for (auto doc = plan->Advance(); !doc_limits::eof(doc);
-       doc = plan->Advance()) {
+  for (auto doc = plan->Next(); !doc_limits::eof(doc);
+       doc = plan->Next()) {
     // if the indexed doc_id was already masked then it should be skipped
     if (!deleted_docs.insert(doc).second) {
       continue;  // the current modification query does not match any records
@@ -293,8 +293,8 @@ void FlushedSegmentContext::Remove(IndexWriter::QueryContext& query) {
   }
 
   auto* flushed_docs = segment.flushed_docs.data() + flushed.GetDocsBegin();
-  for (auto new_doc = plan->Advance(); !doc_limits::eof(new_doc);
-       new_doc = plan->Advance()) {
+  for (auto new_doc = plan->Next(); !doc_limits::eof(new_doc);
+       new_doc = plan->Next()) {
     const auto old_doc = New2Old(new_doc);
 
     const auto& doc = flushed_docs[old_doc - doc_limits::min()];
@@ -432,10 +432,10 @@ bool MapRemovals(const CandidatesMapping& candidates_mapping,
       // passed to the merge_writer
 
       // no more docs in merged reader
-      auto merged = merged_itr->Advance();
+      auto merged = merged_itr->Next();
       auto current = doc_limits::invalid();
       if (doc_limits::eof(merged)) {
-        current = current_itr->Advance();
+        current = current_itr->Next();
         if (!doc_limits::eof(current)) {
           SDB_WARN(IRESEARCH, "Failed to map removals for compacted segment '",
                    old_meta.name, "' version '", old_meta.version,
@@ -450,12 +450,12 @@ bool MapRemovals(const CandidatesMapping& candidates_mapping,
       }
 
       // mask all remaining doc_ids
-      current = current_itr->Advance();
+      current = current_itr->Next();
       if (doc_limits::eof(current)) {
         do {
           SDB_ASSERT(!merge_ctx.remap.IsMasked(merged));
           docs_mask.insert(merge_ctx.remap.Remap(merged));
-          merged = merged_itr->Advance();
+          merged = merged_itr->Next();
         } while (!doc_limits::eof(merged));
 
         continue;  // continue wih next mapping
@@ -468,7 +468,7 @@ bool MapRemovals(const CandidatesMapping& candidates_mapping,
           SDB_ASSERT(!merge_ctx.remap.IsMasked(merged));
           docs_mask.insert(merge_ctx.remap.Remap(merged));
 
-          merged = merged_itr->Advance();
+          merged = merged_itr->Next();
           if (doc_limits::eof(merged)) {
             SDB_WARN(IRESEARCH,
                      "Failed to map removals for compacted segment '",
@@ -492,9 +492,9 @@ bool MapRemovals(const CandidatesMapping& candidates_mapping,
         }
 
         // no more docs in merged reader
-        merged = merged_itr->Advance();
+        merged = merged_itr->Next();
         if (doc_limits::eof(merged)) {
-          current = current_itr->Advance();
+          current = current_itr->Next();
           if (!doc_limits::eof(current)) {
             SDB_WARN(IRESEARCH,
                      "Failed to map removals for compacted segment '",
@@ -510,12 +510,12 @@ bool MapRemovals(const CandidatesMapping& candidates_mapping,
         }
 
         // mask all remaining doc_ids
-        current = current_itr->Advance();
+        current = current_itr->Next();
         if (doc_limits::eof(current)) {
           do {
             SDB_ASSERT(!merge_ctx.remap.IsMasked(merged));
             docs_mask.insert(merge_ctx.remap.Remap(merged));
-            merged = merged_itr->Advance();
+            merged = merged_itr->Next();
           } while (!doc_limits::eof(merged));
 
           break;  // continue wih next mapping

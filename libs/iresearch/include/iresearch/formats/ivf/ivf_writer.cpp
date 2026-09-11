@@ -275,7 +275,7 @@ class IvfTermIterator final : public TermOnlyIterator {
       _doc = doc_limits::invalid();
     }
 
-    doc_id_t Advance() noexcept final {
+    doc_id_t Next() noexcept final {
       if (_pos >= _docs.size()) {
         return _doc = doc_limits::eof();
       }

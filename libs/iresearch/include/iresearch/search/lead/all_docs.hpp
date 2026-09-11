@@ -30,7 +30,7 @@ class AllDocs {
   explicit AllDocs(const SubReader& segment) noexcept
     : _last{static_cast<doc_id_t>(segment.docs_count())} {}
 
-  doc_id_t Advance() noexcept {
+  doc_id_t Next() noexcept {
     if (_doc >= _last) {
       return _doc = doc_limits::eof();
     }

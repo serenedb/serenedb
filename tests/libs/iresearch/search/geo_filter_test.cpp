@@ -360,7 +360,7 @@ TEST(GeoFilterTest, query) {
 
       size_t matched = 0;
       EXPECT_FALSE(irs::doc_limits::valid(it->Value()));
-      while (!irs::doc_limits::eof(it->Advance())) {
+      while (!irs::doc_limits::eof(it->Next())) {
         ++matched;
         auto doc_id = it->Value();
         EXPECT_EQ(doc_id, seek_it->Seek(doc_id));
@@ -378,7 +378,7 @@ TEST(GeoFilterTest, query) {
         auto it = prepared->Execute(i);
         EXPECT_NE(nullptr, it);
 
-        while (!irs::doc_limits::eof(it->Advance())) {
+        while (!irs::doc_limits::eof(it->Next())) {
           const auto doc_id = it->Value();
           auto seek_it = prepared->Execute(i);
           EXPECT_NE(nullptr, seek_it);
@@ -390,7 +390,7 @@ TEST(GeoFilterTest, query) {
                 actual_results.find(irs::tests::ReadStoredStr<std::string>(
                   values, seek_it->Value())));
             }
-          } while (!irs::doc_limits::eof(seek_it->Advance()));
+          } while (!irs::doc_limits::eof(seek_it->Next()));
           EXPECT_TRUE(irs::doc_limits::eof(seek_it->Value()));
         }
         EXPECT_TRUE(irs::doc_limits::eof(it->Value()));
@@ -714,7 +714,7 @@ TEST(GeoFilterTest, checkScorer) {
       EXPECT_FALSE(score.IsDefault());
 
       EXPECT_FALSE(irs::doc_limits::valid(it->Value()));
-      while (!irs::doc_limits::eof(it->Advance())) {
+      while (!irs::doc_limits::eof(it->Next())) {
         const auto doc_id = it->Value();
         EXPECT_EQ(doc_id, seek_it->Seek(doc_id));
         EXPECT_EQ(doc_id, seek_it->Seek(doc_id));
@@ -737,7 +737,7 @@ TEST(GeoFilterTest, checkScorer) {
         auto it = prepared.Execute(i);
         EXPECT_NE(nullptr, it);
 
-        while (!irs::doc_limits::eof(it->Advance())) {
+        while (!irs::doc_limits::eof(it->Next())) {
           const auto doc_id = it->Value();
           auto seek_it = prepared.Execute(i);
           EXPECT_NE(nullptr, seek_it);
@@ -749,7 +749,7 @@ TEST(GeoFilterTest, checkScorer) {
                 actual_results.find(irs::tests::ReadStoredStr<std::string>(
                   values, seek_it->Value())));
             }
-          } while (!irs::doc_limits::eof(seek_it->Advance()));
+          } while (!irs::doc_limits::eof(seek_it->Next()));
           EXPECT_TRUE(irs::doc_limits::eof(seek_it->Value()));
         }
         EXPECT_TRUE(irs::doc_limits::eof(it->Value()));
@@ -956,7 +956,7 @@ TEST(GeoFilterTest, per_node_scorer_override) {
       auto it = prepared.ExecuteScored(i++, fetcher);
       EXPECT_NE(nullptr, it);
       const auto score = it->PrepareScore();
-      while (!irs::doc_limits::eof(it->Advance())) {
+      while (!irs::doc_limits::eof(it->Next())) {
         it->FetchScoreArgs(0);
         fetcher.Fetch(it->Value());
         irs::score_t value{};

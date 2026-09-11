@@ -39,7 +39,7 @@ class GeoSlotsDocs {
 
   doc_id_t Seek(doc_id_t target) { return _cells.Seek(target); }
 
-  doc_id_t Next(doc_id_t) { return _cells.Advance(); }
+  doc_id_t Next(doc_id_t) { return _cells.Next(); }
 
   bool Match(doc_id_t doc) { return _shape.Check(doc); }
 

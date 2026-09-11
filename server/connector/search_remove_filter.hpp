@@ -66,7 +66,7 @@ class SearchRemoveFilter : public irs::Filter, public irs::lead::Node {
   irs::QueryBuilder::ptr PrepareSegment(
     const irs::SubReader& segment, const irs::PrepareContext& ctx) const final;
 
-  irs::doc_id_t Advance() final;
+  irs::doc_id_t Next() final;
 
   // The removal walk reads a segment front to back, so nothing seeks it.
   irs::doc_id_t Seek(irs::doc_id_t) noexcept final {
@@ -120,7 +120,7 @@ class SearchRemovePrefixFilter final : public irs::Filter,
   irs::lead::Node::ptr MakeLead(const irs::SubReader& segment,
                                 const irs::DocumentMask* pending) const;
 
-  irs::doc_id_t Advance() final;
+  irs::doc_id_t Next() final;
 
   irs::TypeInfo::type_id type() const noexcept final {
     return irs::Type<SearchRemovePrefixFilter>::id();

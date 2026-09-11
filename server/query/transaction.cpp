@@ -166,7 +166,7 @@ void Transaction::CommitSearch(
   };
 
   // Phase 1, before the tick exists: drain the workers and pin every staged
-  // segment onto the flush context. Pinning must precede Advance -- otherwise a
+  // segment onto the flush context. Pinning must precede Next -- otherwise a
   // refresh whose tick snapshot lands in between could advance its committed
   // tick past an unpinned segment (lost insert / FlushPending assert). Returns
   // each feed's widest query count, so the reserved band leaves every writer's
@@ -185,7 +185,7 @@ void Transaction::CommitSearch(
   }
 
   const auto last_tick =
-    search::TickDomain::Instance().Advance(max_queries + 1);
+    search::TickDomain::Instance().Next(max_queries + 1);
 
   std::move(rollback).Cancel();
 

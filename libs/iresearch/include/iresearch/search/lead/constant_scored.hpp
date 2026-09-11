@@ -40,7 +40,7 @@ class ConstantScored {
   ConstantScored(ConstantScored&&) = delete;
   ConstantScored& operator=(ConstantScored&&) = delete;
 
-  doc_id_t Advance() { return _doc = _leaf.Advance(); }
+  doc_id_t Next() { return _doc = _leaf.Next(); }
 
   doc_id_t Seek(doc_id_t target) { return _doc = _leaf.Seek(target); }
 

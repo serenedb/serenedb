@@ -72,7 +72,7 @@ class Cursor {
 
   irs::doc_id_t Value() const noexcept { return _doc; }
 
-  irs::doc_id_t Advance() { return _doc = _it.Advance(); }
+  irs::doc_id_t Next() { return _doc = _it.Next(); }
 
   irs::doc_id_t Seek(irs::doc_id_t target) { return _doc = _it.Seek(target); }
 
@@ -83,8 +83,8 @@ class Cursor {
 
 std::vector<irs::doc_id_t> Drain(Cursor& it) {
   std::vector<irs::doc_id_t> docs;
-  for (auto doc = it.Advance(); !irs::doc_limits::eof(doc);
-       doc = it.Advance()) {
+  for (auto doc = it.Next(); !irs::doc_limits::eof(doc);
+       doc = it.Next()) {
     docs.emplace_back(doc);
   }
   return docs;
@@ -163,10 +163,10 @@ TEST(bitset_lead_test, advance) {
     Cursor it{std::move(set)};
     ASSERT_EQ(irs::doc_limits::invalid(), it.Value());
 
-    ASSERT_TRUE(irs::doc_limits::eof(it.Advance()));
+    ASSERT_TRUE(irs::doc_limits::eof(it.Next()));
     ASSERT_TRUE(irs::doc_limits::eof(it.Value()));
 
-    ASSERT_TRUE(irs::doc_limits::eof(it.Advance()));
+    ASSERT_TRUE(irs::doc_limits::eof(it.Next()));
     ASSERT_TRUE(irs::doc_limits::eof(it.Value()));
   }
 
@@ -177,10 +177,10 @@ TEST(bitset_lead_test, advance) {
     Cursor it{std::move(set)};
     ASSERT_EQ(irs::doc_limits::invalid(), it.Value());
 
-    ASSERT_TRUE(irs::doc_limits::eof(it.Advance()));
+    ASSERT_TRUE(irs::doc_limits::eof(it.Next()));
     ASSERT_TRUE(irs::doc_limits::eof(it.Value()));
 
-    ASSERT_TRUE(irs::doc_limits::eof(it.Advance()));
+    ASSERT_TRUE(irs::doc_limits::eof(it.Next()));
     ASSERT_TRUE(irs::doc_limits::eof(it.Value()));
   }
 
@@ -194,8 +194,8 @@ TEST(bitset_lead_test, advance) {
 
     ASSERT_EQ(expected, Drain(it));
     ASSERT_TRUE(irs::doc_limits::eof(it.Value()));
-    ASSERT_TRUE(irs::doc_limits::eof(it.Advance()));
-    ASSERT_TRUE(irs::doc_limits::eof(it.Advance()));
+    ASSERT_TRUE(irs::doc_limits::eof(it.Next()));
+    ASSERT_TRUE(irs::doc_limits::eof(it.Next()));
   }
 
   // sparse: every second document
@@ -208,7 +208,7 @@ TEST(bitset_lead_test, advance) {
 
     ASSERT_EQ(expected, Drain(it));
     ASSERT_TRUE(irs::doc_limits::eof(it.Value()));
-    ASSERT_TRUE(irs::doc_limits::eof(it.Advance()));
+    ASSERT_TRUE(irs::doc_limits::eof(it.Next()));
   }
 
   // sparse with a dense region
@@ -222,7 +222,7 @@ TEST(bitset_lead_test, advance) {
 
     ASSERT_EQ(expected, Drain(it));
     ASSERT_TRUE(irs::doc_limits::eof(it.Value()));
-    ASSERT_TRUE(irs::doc_limits::eof(it.Advance()));
+    ASSERT_TRUE(irs::doc_limits::eof(it.Next()));
   }
 
   // sparse with a sparse region
@@ -236,7 +236,7 @@ TEST(bitset_lead_test, advance) {
 
     ASSERT_EQ(expected, Drain(it));
     ASSERT_TRUE(irs::doc_limits::eof(it.Value()));
-    ASSERT_TRUE(irs::doc_limits::eof(it.Advance()));
+    ASSERT_TRUE(irs::doc_limits::eof(it.Next()));
   }
 
   // one document, in the last word
@@ -249,7 +249,7 @@ TEST(bitset_lead_test, advance) {
 
     ASSERT_EQ(expected, Drain(it));
     ASSERT_TRUE(irs::doc_limits::eof(it.Value()));
-    ASSERT_TRUE(irs::doc_limits::eof(it.Advance()));
+    ASSERT_TRUE(irs::doc_limits::eof(it.Next()));
   }
 }
 
@@ -262,7 +262,7 @@ TEST(bitset_lead_test, seek) {
     ASSERT_TRUE(irs::doc_limits::eof(it.Seek(1)));
     ASSERT_TRUE(irs::doc_limits::eof(it.Value()));
 
-    ASSERT_TRUE(irs::doc_limits::eof(it.Advance()));
+    ASSERT_TRUE(irs::doc_limits::eof(it.Next()));
     ASSERT_TRUE(irs::doc_limits::eof(it.Value()));
   }
 
@@ -274,7 +274,7 @@ TEST(bitset_lead_test, seek) {
     ASSERT_TRUE(irs::doc_limits::eof(it.Seek(1)));
     ASSERT_TRUE(irs::doc_limits::eof(it.Value()));
 
-    ASSERT_TRUE(irs::doc_limits::eof(it.Advance()));
+    ASSERT_TRUE(irs::doc_limits::eof(it.Next()));
   }
 
   // dense, ascending targets
@@ -286,7 +286,7 @@ TEST(bitset_lead_test, seek) {
       ASSERT_EQ(expected, it.Seek(expected));
       ASSERT_EQ(expected, it.Value());
     }
-    ASSERT_TRUE(irs::doc_limits::eof(it.Advance()));
+    ASSERT_TRUE(irs::doc_limits::eof(it.Next()));
     ASSERT_TRUE(irs::doc_limits::eof(it.Value()));
   }
 
@@ -299,7 +299,7 @@ TEST(bitset_lead_test, seek) {
       ASSERT_EQ(100, it.Seek(target));
       ASSERT_EQ(100, it.Value());
     }
-    ASSERT_EQ(101, it.Advance());
+    ASSERT_EQ(101, it.Next());
   }
 
   // dense, seek past the last document
@@ -312,7 +312,7 @@ TEST(bitset_lead_test, seek) {
   {
     Cursor it{MakeSet(173, Range(1, 173))};
     ASSERT_EQ(173, it.Seek(173));
-    ASSERT_TRUE(irs::doc_limits::eof(it.Advance()));
+    ASSERT_TRUE(irs::doc_limits::eof(it.Next()));
   }
 
   // dense, seek to 'eof'
@@ -325,7 +325,7 @@ TEST(bitset_lead_test, seek) {
   {
     Cursor it{MakeSet(173, Range(1, 173))};
     ASSERT_EQ(irs::doc_limits::invalid(), it.Seek(irs::doc_limits::invalid()));
-    ASSERT_EQ(1, it.Advance());
+    ASSERT_EQ(1, it.Next());
   }
 
   // sparse: a target on a document nobody holds lands on the next one
@@ -339,7 +339,7 @@ TEST(bitset_lead_test, seek) {
       ASSERT_EQ(expected, it.Seek(expected));
       ASSERT_EQ(expected, it.Value());
     }
-    ASSERT_TRUE(irs::doc_limits::eof(it.Advance()));
+    ASSERT_TRUE(irs::doc_limits::eof(it.Next()));
     ASSERT_TRUE(irs::doc_limits::eof(it.Value()));
   }
 
@@ -352,7 +352,7 @@ TEST(bitset_lead_test, seek) {
       ASSERT_EQ(101, it.Seek(target));
       ASSERT_EQ(101, it.Value());
     }
-    ASSERT_EQ(103, it.Advance());
+    ASSERT_EQ(103, it.Next());
   }
 
   // sparse with a dense region
@@ -431,11 +431,11 @@ TEST(bitset_lead_test, seek_advance) {
       ASSERT_EQ(target, it.Value());
 
       for (irs::doc_id_t j = 1;
-           j <= kSteps && !irs::doc_limits::eof(it.Advance()); ++j) {
+           j <= kSteps && !irs::doc_limits::eof(it.Next()); ++j) {
         ASSERT_EQ(target + j, it.Value());
       }
     }
-    ASSERT_TRUE(irs::doc_limits::eof(it.Advance()));
+    ASSERT_TRUE(irs::doc_limits::eof(it.Next()));
     ASSERT_TRUE(irs::doc_limits::eof(it.Value()));
   }
 
@@ -445,10 +445,10 @@ TEST(bitset_lead_test, seek_advance) {
 
     ASSERT_EQ(50, it.Seek(50));
     for (irs::doc_id_t j = 1; j <= kSteps; ++j) {
-      ASSERT_EQ(50 + j, it.Advance());
+      ASSERT_EQ(50 + j, it.Next());
     }
     ASSERT_EQ(50 + kSteps, it.Seek(3));
-    ASSERT_EQ(50 + kSteps + 1, it.Advance());
+    ASSERT_EQ(50 + kSteps + 1, it.Next());
   }
 
   // sparse: every second document
@@ -461,11 +461,11 @@ TEST(bitset_lead_test, seek_advance) {
       ASSERT_EQ(target, it.Value());
 
       for (irs::doc_id_t j = 1;
-           j <= kSteps && !irs::doc_limits::eof(it.Advance()); ++j) {
+           j <= kSteps && !irs::doc_limits::eof(it.Next()); ++j) {
         ASSERT_EQ(target + 2 * j, it.Value());
       }
     }
-    ASSERT_TRUE(irs::doc_limits::eof(it.Advance()));
+    ASSERT_TRUE(irs::doc_limits::eof(it.Next()));
     ASSERT_TRUE(irs::doc_limits::eof(it.Value()));
   }
 
@@ -475,12 +475,12 @@ TEST(bitset_lead_test, seek_advance) {
       MakeSet(189, {71, 74, 82, 86, 93, 101, 103, 113, 121, 126, 182, 186})};
 
     ASSERT_EQ(71, it.Seek(68));
-    ASSERT_EQ(74, it.Advance());
-    ASSERT_EQ(82, it.Advance());
-    ASSERT_EQ(86, it.Advance());
+    ASSERT_EQ(74, it.Next());
+    ASSERT_EQ(82, it.Next());
+    ASSERT_EQ(86, it.Next());
     ASSERT_EQ(182, it.Seek(181));
-    ASSERT_EQ(186, it.Advance());
-    ASSERT_TRUE(irs::doc_limits::eof(it.Advance()));
+    ASSERT_EQ(186, it.Next());
+    ASSERT_TRUE(irs::doc_limits::eof(it.Next()));
     ASSERT_TRUE(irs::doc_limits::eof(it.Value()));
   }
 }

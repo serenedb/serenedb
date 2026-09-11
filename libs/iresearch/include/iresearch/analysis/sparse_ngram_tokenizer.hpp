@@ -70,7 +70,7 @@ class SparseNGramTokenizer final : public TypedTokenizer<SparseNGramTokenizer>,
   };
 
   void EnsureScratch();
-  bool Advance(Cursor& ctx);
+  bool Next(Cursor& ctx);
   void FillHashes(Cursor& ctx);
   IRS_FORCE_INLINE void StepAll(HashAndPos* base, HashAndPos* limit,
                                 HashAndPos*& top, EmitKSlot*& out, size_t i,

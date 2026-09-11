@@ -22,7 +22,7 @@
 
 #pragma once
 
-#include "iresearch/search/scores/scorer.hpp"
+#include "iresearch/search/scorers/scorer.hpp"
 
 namespace duckdb {
 

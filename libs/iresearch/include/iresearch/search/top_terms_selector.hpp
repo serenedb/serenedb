@@ -30,7 +30,7 @@
 #include "iresearch/analysis/token_attributes.hpp"
 #include "iresearch/formats/formats.hpp"
 #include "iresearch/index/iterators.hpp"
-#include "iresearch/search/scores/scorer.hpp"
+#include "iresearch/search/scorers/scorer.hpp"
 #include "iresearch/search/top_k_heap.hpp"
 #include "iresearch/utils/attribute_helper.hpp"
 

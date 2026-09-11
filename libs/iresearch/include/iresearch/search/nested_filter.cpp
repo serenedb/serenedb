@@ -33,7 +33,7 @@
 #include <variant>
 
 #include "iresearch/search/detail/node_of.hpp"
-#include "iresearch/search/detail/score/make_window.hpp"
+#include "iresearch/search/scorers/make_window.hpp"
 #include "iresearch/search/count/plan.hpp"
 #include "iresearch/search/count/walk.hpp"
 #include "iresearch/search/docs/plan.hpp"
@@ -45,9 +45,9 @@
 #include "iresearch/search/probe/constant_scored.hpp"
 #include "iresearch/search/probe/impl.hpp"
 #include "iresearch/search/query_builder_impl.hpp"
-#include "iresearch/search/score_function.hpp"
+#include "iresearch/search/scorers/score_function.hpp"
 #include "iresearch/search/scored/detail/walk.hpp"
-#include "iresearch/search/scores/scorer.hpp"
+#include "iresearch/search/scorers/scorer.hpp"
 #include "iresearch/search/top/walk.hpp"
 #include "iresearch/utils/type_limits.hpp"
 

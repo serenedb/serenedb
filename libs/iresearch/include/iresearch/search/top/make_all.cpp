@@ -19,7 +19,7 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include "iresearch/index/index_reader.hpp"
-#include "iresearch/search/detail/all_docs_score.hpp"
+#include "iresearch/search/scorers/all_docs_score.hpp"
 #include "iresearch/search/top/all.hpp"
 #include "iresearch/search/top/make.hpp"
 

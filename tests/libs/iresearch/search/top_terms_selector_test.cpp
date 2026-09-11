@@ -30,7 +30,7 @@
 #include "iresearch/search/collectors.hpp"
 #include "iresearch/search/filter.hpp"
 #include "iresearch/search/multiterm_query.hpp"
-#include "iresearch/search/scores/scorer.hpp"
+#include "iresearch/search/scorers/scorer.hpp"
 #include "iresearch/search/top_terms_selector.hpp"
 #include "tests_shared.hpp"
 

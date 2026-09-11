@@ -43,7 +43,7 @@
 #include <iresearch/search/all_filter.hpp>
 #include <iresearch/search/automaton_filter.hpp>
 #include <iresearch/search/boolean_filter.hpp>
-#include <iresearch/search/scores/constant_score.hpp>
+#include <iresearch/search/scorers/constant_score.hpp>
 #include <iresearch/search/granular_range_filter.hpp>
 #include <iresearch/search/levenshtein_filter.hpp>
 #include <iresearch/search/ngram_similarity_filter.hpp>
@@ -53,9 +53,9 @@
 #include <iresearch/search/prefix_filter.hpp>
 #include <iresearch/search/range_filter.hpp>
 #include <iresearch/search/regexp_filter.hpp>
-#include <iresearch/search/scores/scorer.hpp>
+#include <iresearch/search/scorers/scorer.hpp>
 #include <iresearch/search/term_filter.hpp>
-#include <iresearch/search/scores/unscored.hpp>
+#include <iresearch/search/scorers/unscored.hpp>
 #include <iresearch/search/wildcard_filter.hpp>
 #include <iresearch/search/wildcard_ngram_filter.hpp>
 #include <iresearch/types.hpp>

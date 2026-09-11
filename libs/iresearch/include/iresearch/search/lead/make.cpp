@@ -30,7 +30,7 @@
 #include "iresearch/search/boolean_filter.hpp"
 #include "iresearch/search/boolean_query.hpp"
 #include "iresearch/search/collectors.hpp"
-#include "iresearch/search/detail/all_docs_score.hpp"
+#include "iresearch/search/scorers/all_docs_score.hpp"
 #include "iresearch/search/detail/boolean_of.hpp"
 #include "iresearch/search/detail/collect.hpp"
 #include "iresearch/search/detail/phrase_of.hpp"

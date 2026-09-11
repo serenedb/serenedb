@@ -21,20 +21,20 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include <iresearch/index/index_reader_options.hpp>
-#include <iresearch/search/scores/scorer.hpp>
+#include <iresearch/search/scorers/scorer.hpp>
 
 #include "basics/duckdb_engine.h"
 #include "formats/column/test_cs_helpers.hpp"
 #include "index/index_tests.hpp"
 #include "iresearch/index/index_features.hpp"
 #include "iresearch/index/norm.hpp"
-#include "iresearch/search/scores/bm25.hpp"
+#include "iresearch/search/scorers/bm25.hpp"
 #include "iresearch/search/boolean_filter.hpp"
 #include "iresearch/search/column_collector.hpp"
 #include "iresearch/search/filter.hpp"
-#include "iresearch/search/score_function.hpp"
+#include "iresearch/search/scorers/score_function.hpp"
 #include "iresearch/search/term_filter.hpp"
-#include "iresearch/search/scores/tfidf.hpp"
+#include "iresearch/search/scorers/tfidf.hpp"
 #include "iresearch/types.hpp"
 #include "iresearch/utils/index_utils.hpp"
 #include "iresearch/utils/type_limits.hpp"

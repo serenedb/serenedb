@@ -18,7 +18,7 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include "iresearch/search/detail/score_provider.hpp"
+#include "iresearch/search/scorers/score_provider.hpp"
 #include "iresearch/search/detail/vector_of.hpp"
 #include "iresearch/search/top/make.hpp"
 

@@ -73,8 +73,8 @@
 
 #include "basics/shared.hpp"
 #include "iresearch/analysis/token_attributes.hpp"
-#include "iresearch/search/score_function.hpp"
-#include "iresearch/search/scores/scorer.hpp"
+#include "iresearch/search/scorers/score_function.hpp"
+#include "iresearch/search/scorers/scorer.hpp"
 
 namespace {
 

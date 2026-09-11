@@ -27,7 +27,7 @@
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/search/boolean_query.hpp"
 #include "iresearch/search/detail/collect.hpp"
-#include "iresearch/search/detail/score_policy.hpp"
+#include "iresearch/search/scorers/score_policy.hpp"
 #include "iresearch/search/detail/scored_context.hpp"
 #include "iresearch/search/probe/boolean_sparse.hpp"
 #include "iresearch/search/probe/impl.hpp"

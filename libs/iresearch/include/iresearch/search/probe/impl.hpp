@@ -27,7 +27,7 @@
 #include "basics/memory.hpp"
 #include "basics/shared.hpp"
 #include "iresearch/search/detail/erasure.hpp"
-#include "iresearch/search/detail/score_args.hpp"
+#include "iresearch/search/scorers/score_args.hpp"
 #include "iresearch/search/probe/concept.hpp"
 #include "iresearch/search/probe/node.hpp"
 #include "iresearch/utils/type_limits.hpp"

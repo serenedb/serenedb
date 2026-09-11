@@ -32,7 +32,7 @@
 #include <iresearch/index/column_extract.hpp>
 #include <iresearch/index/iterators.hpp>
 #include <iresearch/search/filter.hpp>
-#include <iresearch/search/scores/scorer.hpp>
+#include <iresearch/search/scorers/scorer.hpp>
 #include <iresearch/types.hpp>
 #include <limits>
 #include <memory>

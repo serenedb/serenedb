@@ -25,7 +25,7 @@
 #include <utility>
 
 #include "iresearch/index/iterators.hpp"
-#include "iresearch/search/scores/scorer.hpp"
+#include "iresearch/search/scorers/scorer.hpp"
 #include "iresearch/search/term_predicate.hpp"
 #include "iresearch/utils/string.hpp"
 

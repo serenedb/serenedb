@@ -129,11 +129,11 @@ set(IResearch_core_sources
     ./index/segment_writer.cpp
     ./search/all_filter.cpp
     ./search/granular_range_filter.cpp
-    ./search/score_function.cpp
-    ./search/detail/score/make_conjunction.cpp
-    ./search/detail/score/make_probe.cpp
-    ./search/detail/score/make_window.cpp
-    ./search/detail/score/root_window.cpp
+    ./search/scorers/score_function.cpp
+    ./search/scorers/make_conjunction.cpp
+    ./search/scorers/make_probe.cpp
+    ./search/scorers/make_window.cpp
+    ./search/scorers/root_window.cpp
     ./search/collectors.cpp
     ./search/filter.cpp
     ./search/term_filter.cpp
@@ -368,20 +368,20 @@ set(IResearch_core_sources
     ./search/vector_similarity_filter.cpp
     ./search/hnsw_query.cpp
     ./search/vector_similarity_query.cpp
-    ./search/scores/vector_similarity_scorer.cpp
+    ./search/scorers/vector_similarity_scorer.cpp
     ./search/vector_radius_filter.cpp
     ./search/geo_filter.cpp
-    ./search/scores/tfidf.cpp
-    ./search/scores/bm25.cpp
-    ./search/scores/lm_jelinek_mercer.cpp
-    ./search/scores/lm_dirichlet.cpp
-    ./search/scores/indri_dirichlet.cpp
-    ./search/scores/dfi.cpp
-    ./search/scores/idf.cpp
-    ./search/scores/raw_boost.cpp
-    ./search/scores/constant_score.cpp
-    ./search/scores/raw_tf.cpp
-    ./search/scores/raw_dl.cpp
+    ./search/scorers/tfidf.cpp
+    ./search/scorers/bm25.cpp
+    ./search/scorers/lm_jelinek_mercer.cpp
+    ./search/scorers/lm_dirichlet.cpp
+    ./search/scorers/indri_dirichlet.cpp
+    ./search/scorers/dfi.cpp
+    ./search/scorers/idf.cpp
+    ./search/scorers/raw_boost.cpp
+    ./search/scorers/constant_score.cpp
+    ./search/scorers/raw_tf.cpp
+    ./search/scorers/raw_dl.cpp
     ./store/data_input.cpp
     ./store/directory.cpp
     ./store/directory_attributes.cpp
@@ -467,8 +467,8 @@ include_directories(SYSTEM ${IRESEARCH_EXTERNAL_INCLUDES})
 add_library(iresearch-static STATIC ${IResearch_core_sources})
 
 set_source_files_properties(
-    search/scores/bm25.cpp
-    search/scores/tfidf.cpp
+    search/scorers/bm25.cpp
+    search/scorers/tfidf.cpp
     PROPERTIES
         COMPILE_OPTIONS
             "-fapprox-func -fno-math-errno -fassociative-math -freciprocal-math -fno-signed-zeros -fno-trapping-math -fno-rounding-math -ffp-contract=fast"

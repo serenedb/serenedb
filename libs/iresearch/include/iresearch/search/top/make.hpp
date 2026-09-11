@@ -32,7 +32,7 @@
 #include "iresearch/search/detail/collect_scored.hpp"
 #include "iresearch/search/detail/exclusion_of.hpp"
 #include "iresearch/search/detail/plan.hpp"
-#include "iresearch/search/detail/score_args.hpp"
+#include "iresearch/search/scorers/score_args.hpp"
 #include "iresearch/search/fill/leaves.hpp"
 #include "iresearch/search/filter.hpp"
 #include "iresearch/search/top/walk.hpp"

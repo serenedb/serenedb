@@ -27,7 +27,7 @@
 #include <iresearch/search/all_filter.hpp>
 #include <iresearch/search/automaton_filter.hpp>
 #include <iresearch/search/boolean_filter.hpp>
-#include <iresearch/search/scores/constant_score.hpp>
+#include <iresearch/search/scorers/constant_score.hpp>
 #include <iresearch/search/geo_filter.hpp>
 #include <iresearch/search/granular_range_filter.hpp>
 #include <iresearch/search/levenshtein_filter.hpp>

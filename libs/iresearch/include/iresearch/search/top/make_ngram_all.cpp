@@ -22,7 +22,7 @@
 #include <vector>
 
 #include "iresearch/index/index_reader.hpp"
-#include "iresearch/search/detail/all_docs_score.hpp"
+#include "iresearch/search/scorers/all_docs_score.hpp"
 #include "iresearch/search/detail/collect.hpp"
 #include "iresearch/search/detail/ngram_of.hpp"
 #include "iresearch/search/detail/scored_context.hpp"

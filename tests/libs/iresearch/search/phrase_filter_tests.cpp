@@ -27,7 +27,7 @@
 #include "iresearch/analysis/token_attributes.hpp"
 #include "iresearch/index/iterators.hpp"
 #include "iresearch/search/all_filter.hpp"
-#include "iresearch/search/scores/bm25.hpp"
+#include "iresearch/search/scorers/bm25.hpp"
 #include "iresearch/search/boolean_filter.hpp"
 #include "iresearch/search/filter_optimizer.hpp"
 #include "iresearch/search/multiterm_query.hpp"

@@ -31,7 +31,7 @@
 #include "basics/empty.hpp"
 #include "iresearch/search/column_collector.hpp"
 #include "iresearch/search/detail/exclude_block.hpp"
-#include "iresearch/search/score_function.hpp"
+#include "iresearch/search/scorers/score_function.hpp"
 #include "iresearch/search/top/admit.hpp"
 #include "iresearch/search/top/prune_leaves.hpp"
 #include "iresearch/search/top/root.hpp"

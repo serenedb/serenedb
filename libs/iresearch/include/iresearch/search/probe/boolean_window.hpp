@@ -34,11 +34,11 @@
 #include "basics/bit_utils.hpp"
 #include "basics/empty.hpp"
 #include "basics/shared.hpp"
-#include "iresearch/search/detail/score/make_window.hpp"
-#include "iresearch/search/detail/score_args.hpp"
-#include "iresearch/search/detail/score_policy.hpp"
+#include "iresearch/search/scorers/make_window.hpp"
+#include "iresearch/search/scorers/score_args.hpp"
+#include "iresearch/search/scorers/score_policy.hpp"
 #include "iresearch/search/detail/window.hpp"
-#include "iresearch/search/score_function.hpp"
+#include "iresearch/search/scorers/score_function.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
 namespace irs::probe {

@@ -23,7 +23,7 @@
 #include <algorithm>
 #include <cstdint>
 #include <iresearch/index/norm.hpp>
-#include <iresearch/search/score_function.hpp>
+#include <iresearch/search/scorers/score_function.hpp>
 #include <numeric>
 #include <random>
 #include <vector>

@@ -30,7 +30,7 @@
 #include "iresearch/search/detail/exclusion_of.hpp"
 #include "iresearch/search/detail/probe_leaves.hpp"
 #include "iresearch/search/detail/resolve.hpp"
-#include "iresearch/search/detail/score_policy.hpp"
+#include "iresearch/search/scorers/score_policy.hpp"
 #include "iresearch/search/probe/boolean_sparse.hpp"
 #include "iresearch/search/probe/impl.hpp"
 #include "iresearch/search/probe/leaves.hpp"

@@ -27,7 +27,7 @@
 #include "iresearch/formats/column/column_reader.hpp"
 #include "iresearch/index/index_writer.hpp"
 #include "iresearch/search/column_existence_filter.hpp"
-#include "iresearch/search/scores/scorer.hpp"
+#include "iresearch/search/scorers/scorer.hpp"
 #include "tests_shared.hpp"
 
 namespace {

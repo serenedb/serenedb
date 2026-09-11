@@ -28,7 +28,7 @@
 #include <iresearch/search/phrase_filter.hpp>
 #include <iresearch/search/phrase_query.hpp>
 #include <iresearch/search/range_filter.hpp>
-#include <iresearch/search/scores/scorer.hpp>
+#include <iresearch/search/scorers/scorer.hpp>
 #include <iresearch/utils/string.hpp>
 #include <limits>
 

@@ -39,7 +39,7 @@
 #include "iresearch/search/detail/plan.hpp"
 #include "iresearch/search/detail/probe_leaves.hpp"
 #include "iresearch/search/detail/resolve.hpp"
-#include "iresearch/search/detail/score_policy.hpp"
+#include "iresearch/search/scorers/score_policy.hpp"
 #include "iresearch/search/detail/scored_context.hpp"
 #include "iresearch/search/lead/impl.hpp"
 #include "iresearch/search/lead/make.hpp"

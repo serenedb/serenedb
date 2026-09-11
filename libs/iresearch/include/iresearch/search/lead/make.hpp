@@ -25,9 +25,9 @@
 #include <vector>
 
 #include "iresearch/formats/posting_meta.hpp"
-#include "iresearch/search/detail/all_docs_score.hpp"
+#include "iresearch/search/scorers/all_docs_score.hpp"
 #include "iresearch/search/detail/plan.hpp"
-#include "iresearch/search/detail/score_args.hpp"
+#include "iresearch/search/scorers/score_args.hpp"
 #include "iresearch/search/detail/scored_context.hpp"
 #include "iresearch/search/lead/node.hpp"
 #include "iresearch/search/states/term_state.hpp"

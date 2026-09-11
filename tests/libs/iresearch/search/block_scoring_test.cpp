@@ -39,11 +39,11 @@ std::ostream& operator<<(std::ostream& os, const std::pair<T1, T2>& p) {
 #include "iresearch/index/iterators.hpp"
 #include "iresearch/index/typed_terms.hpp"
 #include "iresearch/parser/parser.hpp"
-#include "iresearch/search/scores/bm25.hpp"
+#include "iresearch/search/scorers/bm25.hpp"
 #include "iresearch/search/boolean_filter.hpp"
 #include "iresearch/search/doc_collector.hpp"
 #include "iresearch/search/filter_optimizer.hpp"
-#include "iresearch/search/scores/tfidf.hpp"
+#include "iresearch/search/scorers/tfidf.hpp"
 #include "iresearch/types.hpp"
 #include "tests_shared.hpp"
 

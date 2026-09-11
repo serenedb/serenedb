@@ -26,14 +26,14 @@
 
 #include "basics/bit_utils.hpp"
 #include "iresearch/formats/posting_meta.hpp"
-#include "iresearch/search/detail/all_docs_score.hpp"
+#include "iresearch/search/scorers/all_docs_score.hpp"
 #include "iresearch/search/detail/posting_count.hpp"
 #include "iresearch/search/detail/posting_fill.hpp"
 #include "iresearch/search/detail/posting_probe.hpp"
-#include "iresearch/search/detail/score_args.hpp"
+#include "iresearch/search/scorers/score_args.hpp"
 #include "iresearch/search/detail/window.hpp"
 #include "iresearch/search/lead/posting_docs.hpp"
-#include "iresearch/search/scores/scorer.hpp"
+#include "iresearch/search/scorers/scorer.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
 namespace irs::detail {

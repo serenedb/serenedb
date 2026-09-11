@@ -24,7 +24,7 @@
 
 #include "basics/memory.hpp"
 #include "basics/shared.hpp"
-#include "iresearch/search/score_function.hpp"
+#include "iresearch/search/scorers/score_function.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
 namespace irs::top {

@@ -25,7 +25,7 @@
 #include "iresearch/formats/posting_meta.hpp"
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/search/detail/posting_batch.hpp"
-#include "iresearch/search/detail/score_args.hpp"
+#include "iresearch/search/scorers/score_args.hpp"
 #include "iresearch/store/data_input.hpp"
 #include "iresearch/utils/type_limits.hpp"
 

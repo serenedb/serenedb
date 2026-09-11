@@ -24,12 +24,12 @@
 #include <vector>
 
 #include "iresearch/search/column_collector.hpp"
-#include "iresearch/search/detail/all_docs_score.hpp"
-#include "iresearch/search/detail/score_args.hpp"
-#include "iresearch/search/detail/score_provider.hpp"
+#include "iresearch/search/scorers/all_docs_score.hpp"
+#include "iresearch/search/scorers/score_args.hpp"
+#include "iresearch/search/scorers/score_provider.hpp"
 #include "iresearch/search/hnsw_query.hpp"
-#include "iresearch/search/score_function.hpp"
-#include "iresearch/search/scores/scorer.hpp"
+#include "iresearch/search/scorers/score_function.hpp"
+#include "iresearch/search/scorers/scorer.hpp"
 #include "iresearch/search/top/make.hpp"
 
 namespace irs::top {

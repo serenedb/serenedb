@@ -31,7 +31,7 @@
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/index/iterators.hpp"
 #include "iresearch/index/norm.hpp"
-#include "iresearch/search/scores/scorer.hpp"
+#include "iresearch/search/scorers/scorer.hpp"
 #include "iresearch/store/memory_directory.hpp"
 #include "iresearch/utils/attribute_provider.hpp"
 #include "iresearch/utils/fixed_buffer.hpp"

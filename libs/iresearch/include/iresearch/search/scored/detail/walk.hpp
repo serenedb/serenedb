@@ -26,7 +26,7 @@
 
 #include "iresearch/search/column_collector.hpp"
 #include "iresearch/search/detail/table_filter.hpp"
-#include "iresearch/search/score_function.hpp"
+#include "iresearch/search/scorers/score_function.hpp"
 #include "iresearch/search/scored/root.hpp"
 #include "iresearch/utils/type_limits.hpp"
 

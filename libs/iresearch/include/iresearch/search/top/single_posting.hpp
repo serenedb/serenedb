@@ -21,9 +21,9 @@
 #pragma once
 
 #include "iresearch/index/index_reader.hpp"
-#include "iresearch/search/detail/all_docs_score.hpp"
-#include "iresearch/search/detail/score_args.hpp"
-#include "iresearch/search/scores/scorer.hpp"
+#include "iresearch/search/scorers/all_docs_score.hpp"
+#include "iresearch/search/scorers/score_args.hpp"
+#include "iresearch/search/scorers/scorer.hpp"
 #include "iresearch/search/top/admit.hpp"
 #include "iresearch/search/top/root.hpp"
 #include "iresearch/utils/type_limits.hpp"

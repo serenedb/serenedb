@@ -24,8 +24,8 @@
 #include "filter_test_case_base.hpp"
 #include "index/index_tests.hpp"
 #include "iresearch/index/index_features.hpp"
-#include "iresearch/search/scores/idf.hpp"
-#include "iresearch/search/scores/scorer.hpp"
+#include "iresearch/search/scorers/idf.hpp"
+#include "iresearch/search/scorers/scorer.hpp"
 #include "iresearch/search/term_filter.hpp"
 #include "tests_shared.hpp"
 

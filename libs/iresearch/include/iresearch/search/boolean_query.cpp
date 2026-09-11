@@ -27,7 +27,7 @@
 
 #include "basics/down_cast.h"
 #include "iresearch/search/all_filter.hpp"
-#include "iresearch/search/detail/all_docs_score.hpp"
+#include "iresearch/search/scorers/all_docs_score.hpp"
 #include "iresearch/search/estimate.hpp"
 #include "iresearch/search/multiterm_query.hpp"
 #include "iresearch/search/prepared_state_visitor.hpp"

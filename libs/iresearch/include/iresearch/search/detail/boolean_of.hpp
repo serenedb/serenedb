@@ -31,7 +31,7 @@
 #include "basics/empty.hpp"
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/search/boolean_query.hpp"
-#include "iresearch/search/detail/all_docs_score.hpp"
+#include "iresearch/search/scorers/all_docs_score.hpp"
 #include "iresearch/search/detail/boolean_bitset.hpp"
 #include "iresearch/search/detail/collect.hpp"
 #include "iresearch/search/detail/plan.hpp"

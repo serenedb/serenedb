@@ -27,7 +27,7 @@
 #include <string_view>
 #include <type_traits>
 
-#include "iresearch/search/score_function.hpp"
+#include "iresearch/search/scorers/score_function.hpp"
 #include "iresearch/utils/attribute_provider.hpp"
 
 namespace irs {

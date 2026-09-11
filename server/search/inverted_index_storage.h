@@ -30,7 +30,7 @@
 #include <functional>
 #include <iresearch/formats/ann_build_env.hpp>
 #include <iresearch/index/index_writer.hpp>
-#include <iresearch/search/scores/scorer.hpp>
+#include <iresearch/search/scorers/scorer.hpp>
 #include <limits>
 #include <map>
 #include <memory>

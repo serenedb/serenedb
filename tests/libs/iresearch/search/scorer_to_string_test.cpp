@@ -18,17 +18,17 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include "iresearch/search/scores/bm25.hpp"
-#include "iresearch/search/scores/dfi.hpp"
-#include "iresearch/search/scores/idf.hpp"
-#include "iresearch/search/scores/indri_dirichlet.hpp"
-#include "iresearch/search/scores/lm_dirichlet.hpp"
-#include "iresearch/search/scores/lm_jelinek_mercer.hpp"
-#include "iresearch/search/scores/raw_boost.hpp"
-#include "iresearch/search/scores/raw_dl.hpp"
-#include "iresearch/search/scores/raw_tf.hpp"
-#include "iresearch/search/scores/tfidf.hpp"
-#include "iresearch/search/scores/unscored.hpp"
+#include "iresearch/search/scorers/bm25.hpp"
+#include "iresearch/search/scorers/dfi.hpp"
+#include "iresearch/search/scorers/idf.hpp"
+#include "iresearch/search/scorers/indri_dirichlet.hpp"
+#include "iresearch/search/scorers/lm_dirichlet.hpp"
+#include "iresearch/search/scorers/lm_jelinek_mercer.hpp"
+#include "iresearch/search/scorers/raw_boost.hpp"
+#include "iresearch/search/scorers/raw_dl.hpp"
+#include "iresearch/search/scorers/raw_tf.hpp"
+#include "iresearch/search/scorers/tfidf.hpp"
+#include "iresearch/search/scorers/unscored.hpp"
 #include "tests_shared.hpp"
 
 namespace {

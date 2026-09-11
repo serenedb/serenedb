@@ -35,7 +35,7 @@
 #include "iresearch/formats/posting/iterator_pos.hpp"
 #include "iresearch/index/iterators.hpp"
 #include "iresearch/search/detail/phrase_iterator.hpp"
-#include "iresearch/search/score_function.hpp"
+#include "iresearch/search/scorers/score_function.hpp"
 
 namespace irs {
 namespace detail::slop {

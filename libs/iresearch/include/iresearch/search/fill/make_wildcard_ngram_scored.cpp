@@ -20,7 +20,7 @@
 
 #include <utility>
 
-#include "iresearch/search/detail/all_docs_score.hpp"
+#include "iresearch/search/scorers/all_docs_score.hpp"
 #include "iresearch/search/detail/scored_context.hpp"
 #include "iresearch/search/detail/wildcard_ngram_of.hpp"
 #include "iresearch/search/fill/plan.hpp"

@@ -24,7 +24,7 @@
 
 #include "basics/memory.hpp"
 #include "iresearch/index/iterators.hpp"
-#include "iresearch/search/detail/score/root_window.hpp"
+#include "iresearch/search/scorers/root_window.hpp"
 #include "iresearch/search/detail/scored_context.hpp"
 
 namespace irs::top {

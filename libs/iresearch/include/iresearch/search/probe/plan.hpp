@@ -29,7 +29,7 @@
 #include "iresearch/search/detail/posting_probe.hpp"
 #include "iresearch/search/detail/probe_leaves.hpp"
 #include "iresearch/search/detail/resolve.hpp"
-#include "iresearch/search/detail/score_policy.hpp"
+#include "iresearch/search/scorers/score_policy.hpp"
 #include "iresearch/search/probe/boolean_sparse.hpp"
 #include "iresearch/search/probe/boolean_window.hpp"
 #include "iresearch/search/probe/impl.hpp"

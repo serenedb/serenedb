@@ -24,7 +24,7 @@
 
 #include "basics/bit_utils.hpp"
 #include "iresearch/search/detail/window.hpp"
-#include "iresearch/search/scores/scorer.hpp"
+#include "iresearch/search/scorers/scorer.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
 namespace irs::fill {

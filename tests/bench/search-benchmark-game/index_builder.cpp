@@ -25,7 +25,7 @@
 #include <atomic>
 #include <cstdio>
 #include <duckdb/main/database.hpp>
-#include <iresearch/search/scores/bm25.hpp>
+#include <iresearch/search/scorers/bm25.hpp>
 #include <iresearch/store/store_utils.hpp>
 #include <iresearch/utils/index_utils.hpp>
 #include <istream>

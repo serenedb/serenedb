@@ -24,8 +24,8 @@
 
 #include "basics/assert.h"
 #include "iresearch/search/fill/concept.hpp"
-#include "iresearch/search/score_function.hpp"
-#include "iresearch/search/scores/scorer.hpp"
+#include "iresearch/search/scorers/score_function.hpp"
+#include "iresearch/search/scorers/scorer.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
 namespace irs::fill {

@@ -22,7 +22,7 @@
 
 #include <concepts>
 
-#include "iresearch/search/score_function.hpp"
+#include "iresearch/search/scorers/score_function.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
 namespace irs::lead {

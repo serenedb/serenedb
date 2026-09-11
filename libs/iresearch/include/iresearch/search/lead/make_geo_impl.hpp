@@ -23,7 +23,7 @@
 #include <cstdint>
 #include <utility>
 
-#include "iresearch/search/detail/all_docs_score.hpp"
+#include "iresearch/search/scorers/all_docs_score.hpp"
 #include "iresearch/search/detail/geo_of.hpp"
 #include "iresearch/search/detail/scored_context.hpp"
 #include "iresearch/search/geo_query.hpp"

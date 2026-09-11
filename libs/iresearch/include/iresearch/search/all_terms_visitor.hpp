@@ -26,7 +26,7 @@
 #include "iresearch/formats/formats.hpp"
 #include "iresearch/search/filter_visitor.hpp"
 #include "iresearch/search/multiterm_collector.hpp"
-#include "iresearch/search/scores/scorer.hpp"
+#include "iresearch/search/scorers/scorer.hpp"
 #include "iresearch/search/states/multiterm_state.hpp"
 
 namespace irs {

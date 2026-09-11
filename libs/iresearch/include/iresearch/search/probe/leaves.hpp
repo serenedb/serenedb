@@ -31,10 +31,10 @@
 #include "basics/empty.hpp"
 #include "basics/shared.hpp"
 #include "iresearch/search/detail/fixed_array.hpp"
-#include "iresearch/search/detail/score/make_probe.hpp"
-#include "iresearch/search/detail/score_args.hpp"
+#include "iresearch/search/scorers/make_probe.hpp"
+#include "iresearch/search/scorers/score_args.hpp"
 #include "iresearch/search/probe/concept.hpp"
-#include "iresearch/search/score_function.hpp"
+#include "iresearch/search/scorers/score_function.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
 namespace irs::probe {

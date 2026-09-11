@@ -22,7 +22,7 @@
 
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/search/boolean_query.hpp"
-#include "iresearch/search/detail/all_docs_score.hpp"
+#include "iresearch/search/scorers/all_docs_score.hpp"
 #include "iresearch/search/detail/resolve.hpp"
 #include "iresearch/search/scored/make_boolean.hpp"
 #include "iresearch/search/scored/posting.hpp"

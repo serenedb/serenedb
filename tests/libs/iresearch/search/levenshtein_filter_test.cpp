@@ -28,7 +28,7 @@
 #include "formats/column/test_cs_helpers.hpp"
 #include "iresearch/index/index_features.hpp"
 #include "iresearch/index/norm.hpp"
-#include "iresearch/search/scores/bm25.hpp"
+#include "iresearch/search/scorers/bm25.hpp"
 #include "iresearch/search/boolean_filter.hpp"
 #include "iresearch/search/boolean_query.hpp"
 #include "iresearch/search/column_collector.hpp"

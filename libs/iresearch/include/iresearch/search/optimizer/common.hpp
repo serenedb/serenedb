@@ -24,8 +24,8 @@
 
 #include "iresearch/search/all_filter.hpp"
 #include "iresearch/search/filter.hpp"
-#include "iresearch/search/score_function.hpp"
-#include "iresearch/search/scores/scorer.hpp"
+#include "iresearch/search/scorers/score_function.hpp"
+#include "iresearch/search/scorers/scorer.hpp"
 
 namespace irs::optimizer {
 

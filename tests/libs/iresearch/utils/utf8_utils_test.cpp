@@ -20,8 +20,11 @@
 /// @author Andrey Abramov
 ////////////////////////////////////////////////////////////////////////////////
 
+#include <absl/algorithm/container.h>
+
 #include "basics/std.hpp"
 #include "iresearch/utils/string.hpp"
+#include "iresearch/utils/utf8_character_utils.hpp"
 #include "iresearch/utils/utf8_utils.hpp"
 #include "tests_shared.hpp"
 
@@ -396,5 +399,20 @@ TEST(utf8_utils_test, FromChar32) {
     ASSERT_EQ(buf[1], 0x9F);
     ASSERT_EQ(buf[2], 0xA6);
     ASSERT_EQ(buf[3], 0x96);
+  }
+}
+
+TEST(utf8_utils_test, SimpleCaseStagesMatchTables) {
+  const auto lookup = [](const auto& table, uint32_t c) {
+    const auto it = absl::c_lower_bound(table, irs::utf8_utils::CaseMap{c, 0});
+    return it != table.end() && it->cp == c ? it->to : c;
+  };
+  for (uint32_t c = 0; c <= 0x110000; ++c) {
+    ASSERT_EQ(lookup(irs::utf8_utils::kSimpleLowerTable, c),
+              irs::utf8_utils::CharToLowerSimple(c))
+      << c;
+    ASSERT_EQ(lookup(irs::utf8_utils::kSimpleUpperTable, c),
+              irs::utf8_utils::CharToUpperSimple(c))
+      << c;
   }
 }

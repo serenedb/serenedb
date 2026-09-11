@@ -43,26 +43,21 @@ const ColumnReader* SegmentReader::Column(field_id field) const {
   return _impl->Column(field);
 }
 
-const CentroidsTree* SegmentReader::Ivf(field_id field) const {
-  return _impl->Ivf(field);
+const AnnIndex* SegmentReader::Ann(field_id field) const {
+  return _impl->Ann(field);
 }
 
-IndexInput::ptr SegmentReader::ReopenIvf() const { return _impl->ReopenIvf(); }
+IndexInput::ptr SegmentReader::ReopenAnn() const { return _impl->ReopenAnn(); }
 
 const ColReader* SegmentReader::GetColReader() const {
   return _impl ? _impl->GetColReader() : nullptr;
-}
-
-// FIXME find a better way to mask documents
-DocIterator::ptr SegmentReader::mask(DocIterator::ptr&& it) const {
-  return _impl->mask(std::move(it));
 }
 
 const TermReader* SegmentReader::field(field_id id) const {
   return _impl->field(id);
 }
 
-DocIterator::ptr SegmentReader::docs_iterator() const {
+lead::Node::ptr SegmentReader::docs_iterator() const {
   return _impl->docs_iterator();
 }
 

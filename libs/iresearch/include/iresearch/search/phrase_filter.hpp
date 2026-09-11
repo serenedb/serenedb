@@ -32,7 +32,7 @@
 #include "iresearch/search/range_filter.hpp"
 #include "iresearch/search/regexp_filter.hpp"
 #include "iresearch/search/term_filter.hpp"
-#include "iresearch/search/terms_filter.hpp"
+#include "iresearch/search/term_set.hpp"
 #include "iresearch/search/wildcard_filter.hpp"
 #include "iresearch/utils/levenshtein_default_pdp.hpp"
 
@@ -40,18 +40,16 @@ namespace irs {
 
 class ByPhrase;
 
-// Options for phrase filter
 class ByPhraseOptions {
  private:
   using phrase_part =
     std::variant<ByTermOptions, ByPrefixOptions, ByWildcardOptions,
-                 ByEditDistanceOptions, ByTermsOptions, ByRangeOptions,
+                 ByEditDistanceOptions, TermSetOptions, ByRangeOptions,
                  ByRegexpOptions, AutomatonOptions,
                  LevenshteinAutomatonOptions>;
 
   struct PhrasePartInfo {
     phrase_part part;
-    // TODO(Dronplane) what if negative offset limits?
     PosAttr::value_t offs_min{0};
     PosAttr::value_t offs_max{0};
 
@@ -63,58 +61,41 @@ class ByPhraseOptions {
  public:
   using FilterType = ByPhrase;
 
-  // Appends phrase part of type "PhrasePart" at a specified offset
-  // "offs" from the end of the phrase.
-  // Returns reference to the inserted phrase part.
   template<typename PhrasePart>
   PhrasePart& push_back(size_t offs = 0) {
-    // TODO (Dronplane): do we really want to keep this behaviour (implicit +1
-    // offset)?
     return insert(PhrasePart{}, offs + 1, offs + 1);
   }
 
   template<typename PhrasePart>
   PhrasePart& push_back(size_t offs_min, size_t offs_max) {
-    // TODO (Dronplane): Here it does not match behaviour of single offset
-    // push_back and has no implicit +1. Is it ok?
     return insert(PhrasePart{}, offs_min, offs_max);
   }
 
-  // Appends phrase part of type "PhrasePart" at a specified offset
-  // "offs" from the end of the phrase. Returns a reference to the
-  // inserted phrase part
   template<typename PhrasePart>
   PhrasePart& push_back(PhrasePart&& t, size_t offs = 0) {
     return insert(std::forward<PhrasePart>(t), offs + 1, offs + 1);
   }
 
-  // Returns true is options are equal, false - otherwise
   bool operator==(const ByPhraseOptions& rhs) const noexcept {
     return _phrase == rhs._phrase && _slop == rhs._slop;
   }
 
   bool LowerParts();
 
-  // Clear phrase contents
   void clear() noexcept {
     _phrase.clear();
     _is_simple_term_only = true;
     _slop = 0;
   }
 
-  // Returns true if phrase composed of simple terms only, false - otherwise
   bool simple() const noexcept { return _is_simple_term_only; }
 
-  // Returns true if phrase is empty, false - otherwise
   bool empty() const noexcept { return _phrase.empty(); }
 
-  // Returns size of the phrase
   size_t size() const noexcept { return _phrase.size(); }
 
-  // Returns iterator referring to the first part of the phrase
   phrase_type::const_iterator begin() const noexcept { return _phrase.begin(); }
 
-  // Returns iterator referring to past-the-end element of the phrase
   phrase_type::const_iterator end() const noexcept { return _phrase.end(); }
   PosAttr::value_t slop() const noexcept { return _slop; }
   void set_slop(PosAttr::value_t value) noexcept { _slop = value; }
@@ -143,7 +124,9 @@ class ByPhrase : public FilterWithField<ByPhraseOptions> {
   QueryBuilder::ptr PrepareSegment(const SubReader& segment,
                                    const PrepareContext& ctx) const final;
 
-  PrepareCollector::ptr MakeCollectorImpl(const Scorer* scorer) const final;
+  PrepareCollector::ptr MakeCollectorImpl(const Scorer* scorer,
+                                          StatsArena& stats,
+                                          uint32_t threads) const final;
 };
 
 }  // namespace irs

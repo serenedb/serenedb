@@ -38,6 +38,7 @@ namespace irs {
 struct SubReader;
 
 class ColumnReader;
+struct AnnIndex;
 class ReadContext;
 class ColReader;
 struct SegmentMeta;
@@ -148,11 +149,7 @@ struct SubReader : public IndexReader, public NormProvider {
 
   virtual const DocumentMask* docs_mask() const = 0;
 
-  virtual DocIterator::ptr docs_iterator() const = 0;
-
-  virtual DocIterator::ptr mask(DocIterator::ptr&& it) const {
-    return std::move(it);
-  }
+  virtual lead::Node::ptr docs_iterator() const = 0;
 
   virtual std::span<const field_id> field_ids() const = 0;
 
@@ -163,8 +160,8 @@ struct SubReader : public IndexReader, public NormProvider {
   virtual const ColumnReader* Column(field_id /*field*/) const {
     return nullptr;
   }
-  virtual const CentroidsTree* Ivf(field_id /*field*/) const { return nullptr; }
-  virtual IndexInput::ptr ReopenIvf() const { return nullptr; }
+  virtual const AnnIndex* Ann(field_id /*field*/) const { return nullptr; }
+  virtual IndexInput::ptr ReopenAnn() const { return nullptr; }
 };
 
 template<typename Visitor, typename FilterVisitor>

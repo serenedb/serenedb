@@ -18,13 +18,13 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
+#include "basics/down_cast.h"
 #include "iresearch/search/boolean_filter.hpp"
 #include "iresearch/search/filter_optimizer.hpp"
 #include "iresearch/search/levenshtein_filter.hpp"
 #include "iresearch/search/raw_tf.hpp"
 #include "iresearch/search/scorer.hpp"
 #include "iresearch/search/term_filter.hpp"
-#include "iresearch/search/terms_filter.hpp"
 #include "iresearch/search/unscored.hpp"
 #include "iresearch/search/wildcard_filter.hpp"
 #include "tests_shared.hpp"
@@ -46,6 +46,19 @@ irs::Filter::ptr Scored(std::string_view term, const irs::Scorer& scorer) {
   return filter;
 }
 
+std::span<const irs::TermClause> OptionalTerms(const irs::Filter& filter) {
+  return sdb::basics::downCast<irs::BooleanFilter>(filter).Terms(
+    irs::Occur::Should);
+}
+
+size_t CountScoredBy(std::span<const irs::TermClause> terms,
+                     const irs::Scorer* scorer) {
+  return static_cast<size_t>(std::count_if(
+    terms.begin(), terms.end(), [scorer](const irs::TermClause& clause) {
+      return clause.scorer == scorer;
+    }));
+}
+
 irs::Filter::ptr Optimized(irs::Filter::ptr filter) {
   irs::Optimize(filter, {.scored = true});
   return filter;
@@ -54,8 +67,9 @@ irs::Filter::ptr Optimized(irs::Filter::ptr filter) {
 TEST(optimizer_scorer_test, single_child_collapse_keeps_the_scorer) {
   irs::RawTF tf;
 
-  auto root = std::make_unique<irs::Or>();
-  root->add(Scored("fox", tf));
+  auto root = std::make_unique<irs::BooleanFilter>();
+  root->Add(Scored("fox", tf), irs::Occur::Should);
+  root->SetMinShouldMatch(1);
 
   auto f = Optimized(std::move(root));
 
@@ -63,127 +77,126 @@ TEST(optimizer_scorer_test, single_child_collapse_keeps_the_scorer) {
   ASSERT_EQ(&tf, f->GetScorer());
 }
 
-TEST(optimizer_scorer_test, terms_fusion_declines_an_overridden_sibling) {
+TEST(optimizer_scorer_test, term_clauses_keep_an_overridden_sibling_apart) {
   irs::RawTF tf;
 
-  auto root = std::make_unique<irs::Or>();
-  root->add(Scored("fox", tf));
-  root->add(Term("dog"));
+  auto root = std::make_unique<irs::BooleanFilter>();
+  root->Add(Scored("fox", tf), irs::Occur::Should);
+  root->Add(Term("dog"), irs::Occur::Should);
+  root->SetMinShouldMatch(1);
 
   auto f = Optimized(std::move(root));
 
-  ASSERT_EQ(irs::Type<irs::Or>::id(), f->type());
-  ASSERT_EQ(2u, f->GetChildren().size());
+  ASSERT_EQ(irs::Type<irs::BooleanFilter>::id(), f->type());
+  const auto terms = OptionalTerms(*f);
+  ASSERT_EQ(2u, terms.size());
+  ASSERT_EQ(1u, CountScoredBy(terms, &tf));
+  ASSERT_EQ(1u, CountScoredBy(terms, nullptr));
 }
 
-TEST(optimizer_scorer_test, terms_fusion_groups_around_an_override) {
+TEST(optimizer_scorer_test, term_clauses_group_around_an_override) {
   irs::RawTF tf;
 
-  auto root = std::make_unique<irs::Or>();
-  root->add(Scored("fox", tf));
-  root->add(Term("dog"));
-  root->add(Term("cat"));
-  root->add(Term("owl"));
+  auto root = std::make_unique<irs::BooleanFilter>();
+  root->Add(Scored("fox", tf), irs::Occur::Should);
+  root->Add(Term("dog"), irs::Occur::Should);
+  root->Add(Term("cat"), irs::Occur::Should);
+  root->Add(Term("owl"), irs::Occur::Should);
+  root->SetMinShouldMatch(1);
 
   auto f = Optimized(std::move(root));
 
-  ASSERT_EQ(irs::Type<irs::Or>::id(), f->type());
-  auto children = f->GetChildren();
-  ASSERT_EQ(2u, children.size());
-
-  size_t overridden = 0;
-  size_t fused = 0;
-  for (auto& child : children) {
-    if (child->GetScorer()) {
-      ++overridden;
-      ASSERT_EQ(&tf, child->GetScorer());
-      ASSERT_EQ(irs::Type<irs::ByTerm>::id(), child->type());
-    } else if (child->type() == irs::Type<irs::ByTerms>::id()) {
-      ++fused;
-      ASSERT_EQ(
-        3u, sdb::basics::downCast<irs::ByTerms>(*child).options().terms.size());
-    }
-  }
-  ASSERT_EQ(1u, overridden);
-  ASSERT_EQ(1u, fused);
+  ASSERT_EQ(irs::Type<irs::BooleanFilter>::id(), f->type());
+  const auto terms = OptionalTerms(*f);
+  ASSERT_EQ(4u, terms.size());
+  ASSERT_EQ(1u, CountScoredBy(terms, &tf));
+  ASSERT_EQ(3u, CountScoredBy(terms, nullptr));
 }
 
-TEST(optimizer_scorer_test, terms_fusion_groups_per_scorer) {
+TEST(optimizer_scorer_test, term_clauses_group_per_scorer) {
   irs::RawTF tf;
   irs::Unscored unscored;
 
-  auto root = std::make_unique<irs::Or>();
-  root->add(Scored("fox", tf));
-  root->add(Scored("dog", tf));
-  root->add(Scored("cat", unscored));
-  root->add(Scored("owl", unscored));
+  auto root = std::make_unique<irs::BooleanFilter>();
+  root->Add(Scored("fox", tf), irs::Occur::Should);
+  root->Add(Scored("dog", tf), irs::Occur::Should);
+  root->Add(Scored("cat", unscored), irs::Occur::Should);
+  root->Add(Scored("owl", unscored), irs::Occur::Should);
+  root->SetMinShouldMatch(1);
 
   auto f = Optimized(std::move(root));
 
-  ASSERT_EQ(irs::Type<irs::Or>::id(), f->type());
-  auto children = f->GetChildren();
-  ASSERT_EQ(2u, children.size());
-
-  for (auto& child : children) {
-    ASSERT_EQ(irs::Type<irs::ByTerms>::id(), child->type());
-    ASSERT_TRUE(child->GetScorer() == &tf || child->GetScorer() == &unscored);
-    ASSERT_EQ(
-      2u, sdb::basics::downCast<irs::ByTerms>(*child).options().terms.size());
-  }
+  ASSERT_EQ(irs::Type<irs::BooleanFilter>::id(), f->type());
+  const auto terms = OptionalTerms(*f);
+  ASSERT_EQ(4u, terms.size());
+  ASSERT_EQ(2u, CountScoredBy(terms, &tf));
+  ASSERT_EQ(2u, CountScoredBy(terms, &unscored));
 }
 
-TEST(optimizer_scorer_test, terms_fusion_skips_partial_under_min_match) {
+TEST(optimizer_scorer_test, term_clauses_survive_a_partial_min_match) {
   irs::RawTF tf;
 
-  auto root = std::make_unique<irs::Or>();
-  root->add(Scored("fox", tf));
-  root->add(Term("dog"));
-  root->add(Term("cat"));
-  root->add(Term("owl"));
-  root->min_match_count(2);
+  auto root = std::make_unique<irs::BooleanFilter>();
+  root->Add(Scored("fox", tf), irs::Occur::Should);
+  root->Add(Term("dog"), irs::Occur::Should);
+  root->Add(Term("cat"), irs::Occur::Should);
+  root->Add(Term("owl"), irs::Occur::Should);
+  root->SetMinShouldMatch(2);
 
   auto f = Optimized(std::move(root));
 
-  ASSERT_EQ(irs::Type<irs::Or>::id(), f->type());
-  ASSERT_EQ(4u, f->GetChildren().size());
+  ASSERT_EQ(irs::Type<irs::BooleanFilter>::id(), f->type());
+  const auto terms = OptionalTerms(*f);
+  ASSERT_EQ(4u, terms.size());
+  ASSERT_EQ(1u, CountScoredBy(terms, &tf));
 }
 
-TEST(optimizer_scorer_test, terms_fusion_unaffected_without_an_override) {
-  auto root = std::make_unique<irs::Or>();
-  root->add(Term("fox"));
-  root->add(Term("dog"));
+TEST(optimizer_scorer_test, term_clauses_unaffected_without_an_override) {
+  auto root = std::make_unique<irs::BooleanFilter>();
+  root->Add(Term("fox"), irs::Occur::Should);
+  root->Add(Term("dog"), irs::Occur::Should);
+  root->SetMinShouldMatch(1);
 
   auto f = Optimized(std::move(root));
 
-  ASSERT_EQ(irs::Type<irs::ByTerms>::id(), f->type());
+  ASSERT_EQ(irs::Type<irs::BooleanFilter>::id(), f->type());
+  const auto terms = OptionalTerms(*f);
+  ASSERT_EQ(2u, terms.size());
+  ASSERT_EQ(2u, CountScoredBy(terms, nullptr));
 }
 
-TEST(optimizer_scorer_test, terms_fusion_allowed_when_overrides_agree) {
+TEST(optimizer_scorer_test, term_clauses_keep_agreeing_overrides) {
   irs::RawTF tf;
 
-  auto root = std::make_unique<irs::Or>();
-  root->add(Scored("fox", tf));
-  root->add(Scored("dog", tf));
+  auto root = std::make_unique<irs::BooleanFilter>();
+  root->Add(Scored("fox", tf), irs::Occur::Should);
+  root->Add(Scored("dog", tf), irs::Occur::Should);
+  root->SetMinShouldMatch(1);
 
   auto f = Optimized(std::move(root));
 
-  ASSERT_EQ(irs::Type<irs::ByTerms>::id(), f->type());
-  ASSERT_EQ(&tf, f->GetScorer());
-  ASSERT_EQ(2u, sdb::basics::downCast<irs::ByTerms>(*f).options().terms.size());
+  ASSERT_EQ(irs::Type<irs::BooleanFilter>::id(), f->type());
+  const auto terms = OptionalTerms(*f);
+  ASSERT_EQ(2u, terms.size());
+  ASSERT_EQ(2u, CountScoredBy(terms, &tf));
 }
 
-TEST(optimizer_scorer_test, terms_fusion_declines_differing_overrides) {
+TEST(optimizer_scorer_test, term_clauses_keep_differing_overrides) {
   irs::RawTF tf;
   irs::Unscored unscored;
 
-  auto root = std::make_unique<irs::Or>();
-  root->add(Scored("fox", tf));
-  root->add(Scored("dog", unscored));
+  auto root = std::make_unique<irs::BooleanFilter>();
+  root->Add(Scored("fox", tf), irs::Occur::Should);
+  root->Add(Scored("dog", unscored), irs::Occur::Should);
+  root->SetMinShouldMatch(1);
 
   auto f = Optimized(std::move(root));
 
-  ASSERT_EQ(irs::Type<irs::Or>::id(), f->type());
-  ASSERT_EQ(2u, f->GetChildren().size());
+  ASSERT_EQ(irs::Type<irs::BooleanFilter>::id(), f->type());
+  const auto terms = OptionalTerms(*f);
+  ASSERT_EQ(2u, terms.size());
+  ASSERT_EQ(1u, CountScoredBy(terms, &tf));
+  ASSERT_EQ(1u, CountScoredBy(terms, &unscored));
 }
 
 // A rule that replaces the node an override sits on must carry the scorer over
@@ -191,15 +204,17 @@ TEST(optimizer_scorer_test, terms_fusion_declines_differing_overrides) {
 TEST(optimizer_scorer_test, rules_replacing_a_node_carry_the_scorer_over) {
   irs::RawTF tf;
 
-  auto root = std::make_unique<irs::Or>();
-  root->add(Term("fox"));
-  root->add(Term("dog"));
+  auto root = std::make_unique<irs::BooleanFilter>();
+  root->Add(Term("fox"), irs::Occur::Should);
+  root->Add(Term("dog"), irs::Occur::Should);
+  root->SetMinShouldMatch(1);
   root->SetScorer(&tf);
 
   auto f = Optimized(std::move(root));
 
-  ASSERT_EQ(irs::Type<irs::ByTerms>::id(), f->type());
+  ASSERT_EQ(irs::Type<irs::BooleanFilter>::id(), f->type());
   ASSERT_EQ(&tf, f->GetScorer());
+  ASSERT_EQ(2u, OptionalTerms(*f).size());
 }
 
 // Lowering replaces the node outright -- a wildcard becomes an automaton, an
@@ -243,14 +258,14 @@ TEST(optimizer_scorer_test, a_replacement_keeps_its_own_scorer) {
   irs::RawTF tf;
   irs::Unscored unscored;
 
-  auto root = std::make_unique<irs::Or>();
-  root->add(Scored("fox", unscored));
-  root->add(Scored("dog", unscored));
+  auto root = std::make_unique<irs::BooleanFilter>();
+  root->Add(Scored("fox", unscored), irs::Occur::Should);
+  root->SetMinShouldMatch(1);
   root->SetScorer(&tf);
 
   auto f = Optimized(std::move(root));
 
-  ASSERT_EQ(irs::Type<irs::ByTerms>::id(), f->type());
+  ASSERT_EQ(irs::Type<irs::ByTerm>::id(), f->type());
   ASSERT_EQ(&unscored, f->GetScorer());
 }
 

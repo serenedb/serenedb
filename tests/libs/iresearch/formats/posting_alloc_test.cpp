@@ -35,6 +35,7 @@
 #include "index/index_tests.hpp"
 #include "iresearch/formats/formats.hpp"
 #include "iresearch/index/index_reader.hpp"
+#include "iresearch/search/lead/make.hpp"
 
 #ifdef SERENEDB_HAVE_JEMALLOC
 #include <jemalloc/jemalloc.h>
@@ -85,10 +86,12 @@ TEST_P(PostingAllocTestCase, doc_iterator_construction_bytes) {
   // iterator has to set up its block machinery rather than take the df == 1
   // shortcut.
   const irs::TermReader* field = nullptr;
+  const irs::SubReader* found_segment = nullptr;
   for (auto& segment : *reader.GetImpl()) {
     for (auto field_id : segment.field_ids()) {
       if (const auto* f = segment.field(field_id); f && f->size() > 64) {
         field = f;
+        found_segment = &segment;
         break;
       }
     }
@@ -97,6 +100,7 @@ TEST_P(PostingAllocTestCase, doc_iterator_construction_bytes) {
     }
   }
   ASSERT_NE(nullptr, field);
+  ASSERT_NE(nullptr, found_segment);
 
   // The densest term in the field: the most block machinery any single term
   // makes the iterator set up, which is the worst case worth counting.
@@ -110,25 +114,23 @@ TEST_P(PostingAllocTestCase, doc_iterator_construction_bytes) {
     }
   }
   ASSERT_GT(chosen_storage.docs_count, 0u) << "field has no postings";
-  const irs::PostingMeta* chosen = &chosen_storage;
 
   constexpr size_t kWarmup = 64;
   constexpr size_t kRounds = 1024;
-  const irs::PostingCookie cookie{.cookie = chosen,
-                                  .stats = nullptr,
-                                  .boost = irs::kNoBoost,
-                                  .field = field->meta()};
+  ASSERT_NE(nullptr, irs::search::DocOf(*field));
+  const irs::search::PostingClause posting{
+    .state = irs::TermState{field, chosen_storage}};
 
   // Warm up so first-touch growth of any pooled structure is not attributed to
   // the measured rounds.
   for (size_t i = 0; i != kWarmup; ++i) {
-    auto docs = field->Iterator(irs::IndexFeatures::Freq, cookie, {});
+    auto docs = irs::lead::MakePostingDocs(posting, *found_segment);
     ASSERT_NE(nullptr, docs);
   }
 
   const auto before = ThreadAllocatedBytes();
   for (size_t i = 0; i != kRounds; ++i) {
-    auto docs = field->Iterator(irs::IndexFeatures::Freq, cookie, {});
+    auto docs = irs::lead::MakePostingDocs(posting, *found_segment);
     ASSERT_NE(nullptr, docs);
   }
   const auto after = ThreadAllocatedBytes();

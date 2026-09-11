@@ -125,7 +125,6 @@ TEST_P(IndriDirichletIndexTest, scores_are_finite) {
 
   auto index = open_reader();
   ASSERT_EQ(1, index->size());
-  auto& segment = *(index.begin());
 
   irs::ByTerm filter;
   *filter.mutable_field_id() = kBodyFieldId;
@@ -136,19 +135,16 @@ TEST_P(IndriDirichletIndexTest, scores_are_finite) {
   tests::PreparedFilter prepared{filter, *index, impl.get(), counter};
 
   irs::ColumnArgsFetcher fetcher;
-  auto docs = prepared.Execute(0);
-  auto score = docs->PrepareScore({
-    .segment = &segment,
-    .fetcher = &fetcher,
-  });
+  auto docs = prepared.ExecuteScored(0, fetcher);
+  auto score = docs->PrepareScore();
 
   std::map<irs::doc_id_t, irs::score_t> seen;
-  while (!irs::doc_limits::eof(docs->advance())) {
-    fetcher.Fetch(docs->value());
+  while (!irs::doc_limits::eof(docs->Advance())) {
     docs->FetchScoreArgs(0);
+    fetcher.Fetch(docs->Value());
     irs::score_t s{};
     score.Score(&s, 1);
-    seen.emplace(docs->value(), s);
+    seen.emplace(docs->Value(), s);
   }
   ASSERT_EQ(3u, seen.size());
   for (auto& [_, s] : seen) {

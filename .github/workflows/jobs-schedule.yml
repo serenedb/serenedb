@@ -16,7 +16,7 @@ jobs:
       LOCATION: linux-amd64
       CONFIG: coverage
       IRESEARCH: true
-      DUCKDB_SUITES: "core,avro,azure,httpfs,iceberg,inet,postgres_scanner,spatial"
+      DUCKDB_SUITES: "core,avro,azure,httpfs,iceberg,inet,markdown,postgres_scanner,spatial"
       SQLITE: true
       SQLSMITH: true
       FUZZ_QUERIES: "10000"
@@ -30,9 +30,11 @@ jobs:
       LOCATION: linux-amd64
       CONFIG: dev
       IRESEARCH: true
-      DUCKDB_SUITES: "core,avro,azure,httpfs,iceberg,inet,postgres_scanner,spatial"
+      DUCKDB_SUITES: "core,avro,azure,httpfs,iceberg,inet,markdown,postgres_scanner,spatial"
       SQLITE: true
       SQLSMITH: true
+      STRESS: true
+      STRESS_PROFILE: soak
     secrets: inherit
 
   macos:
@@ -48,7 +50,13 @@ jobs:
       UPLOAD_ARTIFACTS: false
 
   sanitizer:
-    if: github.event.schedule != '0 5 * * *'
+    # Explicit allowlist, not "not the 5am cron": any newly added schedule would
+    # otherwise silently start running a sanitizer build.
+    if: >-
+      github.event.schedule == '0 1 * * 1' ||
+      github.event.schedule == '0 1 * * 2' ||
+      github.event.schedule == '0 1 * * 3' ||
+      github.event.schedule == '0 1 * * 4'
     uses: ./.github/workflows/build-reusable.yml
     with:
       LOCATION: linux-amd64
@@ -60,11 +68,17 @@ jobs:
       # RUN_EXTRA: nightly sanitizers run the full in-scope set, not just ours + drivers.
       RUN_EXTRA: true
       IRESEARCH: true
-      DUCKDB_SUITES: "core,avro,azure,httpfs,iceberg,inet,postgres_scanner,spatial"
+      DUCKDB_SUITES: "core,avro,azure,httpfs,iceberg,inet,markdown,postgres_scanner,spatial"
       SQLITE: true
       SQLSMITH: true
       FUZZ_QUERIES: "10000"
       FUZZ_PARALLEL: "4"
+      STRESS: true
+      # The thread-sanitizer night gets the profile with the longer client
+      # deadlines; instrumented ops are far slower and would otherwise read as
+      # stalls.
+      STRESS_PROFILE: >-
+        ${{ github.event.schedule == '0 1 * * 4' && 'soak-tsan' || 'soak' }}
     secrets: inherit
 
   notify:

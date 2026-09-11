@@ -23,26 +23,25 @@
 
 #pragma once
 
-#include "iresearch/analysis/analyzer.hpp"
-#include "iresearch/analysis/token_attributes.hpp"
-#include "iresearch/utils/attribute_helper.hpp"
+#include "iresearch/analysis/tokenizer.hpp"
 
 namespace fasttext {
 
 class FastText;
 
 }  // namespace fasttext
+namespace duckdb {
+
+class SharedObjectCache;
+
+}  // namespace duckdb
 namespace irs::analysis {
 
 class ClassificationTokenizer final
-  : public TypedAnalyzer<ClassificationTokenizer>,
+  : public TypedTokenizer<ClassificationTokenizer>,
     private util::Noncopyable {
  public:
-  using model_ptr = std::shared_ptr<const fasttext::FastText>;
-  using model_provider_f = model_ptr (*)(std::string_view);
-
-  static model_provider_f set_model_provider(
-    model_provider_f provider) noexcept;
+  using model_ptr = duckdb::shared_ptr<const fasttext::FastText>;
 
   struct Options {
     using Owner = ClassificationTokenizer;
@@ -55,27 +54,28 @@ class ClassificationTokenizer final
     return "classification";
   }
 
-  static ptr Make(Options opts);
+  static ptr Make(Options opts, duckdb::SharedObjectCache& cache);
 
   explicit ClassificationTokenizer(const Options& options,
-                                   model_ptr mode) noexcept;
+                                   model_ptr model) noexcept;
 
-  Attribute* GetMutable(TypeInfo::type_id type) noexcept final {
-    return irs::GetMutable(_attrs, type);
+  TokenTraits Traits() const noexcept final {
+    return {
+      .explicit_pos = true,
+      .offsets = true,
+    };
   }
 
-  bool next() final;
-  bool reset(std::string_view data) final;
+  template<TokenLayout Layout>
+  bool DoFill(duckdb::string_t value, TokenSink& sink);
 
  private:
-  using attributes = std::tuple<IncAttr, OffsAttr, TermAttr>;
-
-  attributes _attrs;
   model_ptr _model;
   std::vector<std::pair<float, std::string>> _predictions;
-  std::vector<std::pair<float, std::string>>::iterator _predictions_it;
   double _threshold;
   int32_t _top_k;
 };
+
+extern template class TypedTokenizer<ClassificationTokenizer>;
 
 }  // namespace irs::analysis

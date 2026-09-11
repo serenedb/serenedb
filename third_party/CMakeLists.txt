@@ -155,32 +155,9 @@ set(WITH_SANITIZER "OFF" CACHE STRING "" FORCE)
 sdb_update_module(${GIT_EXECUTABLE} "zlib-ng" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
 add_subdirectory(zlib-ng)
 
-# Create ZLIB::ZLIB alias for velox compatibility
+# For compatibility
 add_library(ZLIB::ZLIB ALIAS zlib-ng)
-
-################################################################################
-## MINIZIP-NG
-################################################################################
-
-set(MZ_COMPAT ON CACHE BOOL "" FORCE)
-set(MZ_ZLIB ON CACHE BOOL "" FORCE)
 set(ZLIB_FOUND ON CACHE BOOL "" FORCE)
-set(MZ_BZIP2 OFF CACHE BOOL "" FORCE)
-set(MZ_LZMA OFF CACHE BOOL "" FORCE)
-set(MZ_ZSTD OFF CACHE BOOL "" FORCE)
-set(MZ_LIBCOMP OFF CACHE BOOL "" FORCE)
-set(MZ_FETCH_LIBS OFF CACHE BOOL "" FORCE)
-set(MZ_PKCRYPT OFF CACHE BOOL "" FORCE)
-set(MZ_WZAES OFF CACHE BOOL "" FORCE)
-set(MZ_OPENSSL OFF CACHE BOOL "" FORCE)
-set(MZ_LIBBSD OFF CACHE BOOL "" FORCE)
-set(MZ_ICONV OFF CACHE BOOL "" FORCE)
-set(MZ_SANITIZER "OFF" CACHE STRING "" FORCE)
-
-sdb_update_module(${GIT_EXECUTABLE} "minizip-ng" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
-add_subdirectory(minizip-ng)
-
-target_link_libraries(minizip PUBLIC zlib-ng)
 
 ################################################################################
 ## BOOST
@@ -192,7 +169,7 @@ add_subdirectory(boost)
 set(BOOST_VERSION ${BOOST_VERSION} PARENT_SCOPE)
 set(BOOST_INCLUDE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/boost")
 # explicitly set since suppressing Boost search
-# needed for iresearch and boost::text
+# needed for iresearch
 set(Boost_INCLUDE_DIRS "${BOOST_INCLUDE_PATH}")
 set(Boost_INCLUDE_DIRS "${Boost_INCLUDE_DIRS}" PARENT_SCOPE)
 
@@ -345,27 +322,6 @@ target_link_libraries(
 
 # TODO(mbkkt) make it submodule
 add_subdirectory(simdcomp)
-
-################################################################################
-### frozen library
-################################################################################
-
-set(FROZEN_INCLUDE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/frozen/include)
-set(FROZEN_INCLUDE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/frozen/include PARENT_SCOPE)
-
-################################################################################
-### Boost::Text library
-################################################################################
-
-set(CXX_STD ${CMAKE_CXX_STANDARD} CACHE STRING "" FORCE)
-# TODO(mbkkt) make it submodule
-add_subdirectory(text)
-target_compile_definitions(
-    text
-    PUBLIC
-        -DBOOST_STL_INTERFACES_DISABLE_CONCEPTS=1
-        -DBOOST_STL_INTERFACES_DISABLE_DEDUCED_THIS=1
-)
 
 ################################################################################
 ### fastText library
@@ -725,36 +681,6 @@ set(SQLITE3_LIBRARY _sqlite3 CACHE STRING "" FORCE)
 set(SQLITE3_VERSION "3.53.4" CACHE STRING "" FORCE)
 
 ################################################################################
-## expat (libexpat nests the cmake project one level down)
-################################################################################
-
-# Only GDAL's XML drivers (GML, KML, OSM) use expat, and none is in the
-# allowlist below, so the subdirectory is skipped. Flip ON to build them.
-set(GDAL_USE_EXPAT OFF CACHE BOOL "" FORCE)
-
-if(GDAL_USE_EXPAT)
-    foreach(flag BUILD_TOOLS BUILD_EXAMPLES BUILD_TESTS BUILD_DOCS BUILD_FUZZERS
-                 SHARED_LIBS ENABLE_INSTALL)
-        set(EXPAT_${flag} OFF CACHE BOOL "" FORCE)
-    endforeach()
-    sdb_update_module(${GIT_EXECUTABLE} "expat" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
-    add_subdirectory(expat/expat)
-
-    # expat's probes run at outer scope (extensions on) but it compiles with
-    # -std=c99, so they select backends glibc then hides (getentropy, O_CLOEXEC).
-    set_target_properties(expat PROPERTIES C_EXTENSIONS ON)
-
-    if(NOT TARGET EXPAT::EXPAT)
-        add_library(EXPAT::EXPAT ALIAS expat)
-    endif()
-    set(EXPAT_FOUND ON CACHE BOOL "" FORCE)
-    set(EXPAT_INCLUDE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/expat/expat/lib" CACHE PATH "" FORCE)
-    set(EXPAT_INCLUDE_DIRS "${CMAKE_CURRENT_SOURCE_DIR}/expat/expat/lib" CACHE STRING "" FORCE)
-    set(EXPAT_LIBRARY expat CACHE STRING "" FORCE)
-    set(EXPAT_LIBRARIES expat CACHE STRING "" FORCE)
-endif()
-
-################################################################################
 ## PROJ -- pinned to 9.3.1: PROJ validates proj.db's layout at runtime, and
 ## spatial's embedded proj_db.c is DATABASE.LAYOUT.VERSION 1.2 / PROJ 9.1.1.
 ################################################################################
@@ -789,62 +715,29 @@ sdb_update_module(${GIT_EXECUTABLE} "geos" ${CMAKE_CURRENT_SOURCE_DIR} "README.m
 add_subdirectory(geos)
 
 ################################################################################
-## GDAL -- core drivers only, then opt back in per driver.
-## GDAL_USE_EXTERNAL_LIBS=OFF defaults every GDAL_USE_<lib> off, so no system
-## package is reachable and only the bundled copies need naming.
+## cmark-gfm
 ################################################################################
 
-foreach(flag GDAL_BUILD_OPTIONAL_DRIVERS OGR_BUILD_OPTIONAL_DRIVERS BUILD_DOCS
-             BUILD_PYTHON_BINDINGS BUILD_JAVA_BINDINGS BUILD_CSHARP_BINDINGS
-             GDAL_ENABLE_PLUGINS GDAL_USE_EXTERNAL_LIBS)
-    set(${flag} OFF CACHE BOOL "" FORCE)
-endforeach()
+sdb_update_module(${GIT_EXECUTABLE} "cmark-gfm" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
 
-# Vector drivers worth having, all dependency-free or satisfied by what we vendor.
-set(OGR_ENABLE_DRIVER_GEOJSON ON CACHE BOOL "" FORCE)
-set(OGR_ENABLE_DRIVER_CSV ON CACHE BOOL "" FORCE)
-# Core driver, so it needs disabling by name: its internal shapelib target
-# collides with spatial's own vendored copy, which already backs ST_ReadSHP.
-set(OGR_ENABLE_DRIVER_SHAPE OFF CACHE BOOL "" FORCE)
-set(OGR_ENABLE_DRIVER_FLATGEOBUF ON CACHE BOOL "" FORCE)
-set(OGR_ENABLE_DRIVER_MEM ON CACHE BOOL "" FORCE)
-set(OGR_ENABLE_DRIVER_VRT ON CACHE BOOL "" FORCE)
-# All three need GDAL_USE_SQLITE3, which is off: sqlite3 is vendored only for
-# PROJ's proj.db, and GeoPackage would also need SQLite's R*Tree module.
-set(OGR_ENABLE_DRIVER_MVT OFF CACHE BOOL "" FORCE)
-set(OGR_ENABLE_DRIVER_GPKG OFF CACHE BOOL "" FORCE)
-set(OGR_ENABLE_DRIVER_SQLITE OFF CACHE BOOL "" FORCE)
+set(CMARK_TESTS OFF CACHE BOOL "" FORCE)
+set(CMARK_SHARED OFF CACHE BOOL "" FORCE)
+set(CMARK_STATIC ON CACHE BOOL "" FORCE)
 
-# PROJ is the only library GDAL takes from outside; its Find*.cmake modules do
-# not accept pre-seeded cache vars for in-tree targets, so bundle the rest.
-set(GDAL_USE_ZLIB_INTERNAL ON CACHE BOOL "" FORCE)
-set(GDAL_USE_JSONC_INTERNAL ON CACHE BOOL "" FORCE)
-set(GDAL_USE_LIBCSF_INTERNAL ON CACHE BOOL "" FORCE)
-# spatial only ever opens GDAL_OF_VECTOR, so the raster side is dead weight.
-# GDAL force-enables GTiff and the raster VRT even with optional drivers off
-# (frmts/CMakeLists.txt:41,55), and GTiff drags in libtiff/geotiff/jpeg/LERC.
-# *_INTERNAL defaults are ON, so each bundled copy needs naming.
-foreach(flag GDAL_ENABLE_DRIVER_GTIFF GDAL_ENABLE_DRIVER_VRT
-             GDAL_USE_TIFF_INTERNAL GDAL_USE_GEOTIFF_INTERNAL GDAL_USE_PNG_INTERNAL
-             GDAL_USE_GIF_INTERNAL GDAL_USE_JPEG_INTERNAL GDAL_USE_LERC_INTERNAL
-             GDAL_USE_QHULL_INTERNAL GDAL_USE_OPENCAD_INTERNAL
-             GDAL_USE_SHAPELIB_INTERNAL)
-    set(${flag} OFF CACHE BOOL "" FORCE)
-endforeach()
+add_subdirectory(cmark-gfm)
 
-# GDAL's FindPROJ.cmake needs PROJ_LIBRARY + PROJ_INCLUDE_DIR, and PROJ is
-# built in-tree with no installed copy to find.
-set(PROJ_INCLUDE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/proj/src" CACHE PATH "" FORCE)
-set(PROJ_LIBRARY "${CMAKE_CURRENT_BINARY_DIR}/proj/lib/libproj.a" CACHE FILEPATH "" FORCE)
-set(PROJ_FOUND ON CACHE BOOL "" FORCE)
-set(PROJ_VERSION_STRING "9.3.1" CACHE STRING "" FORCE)
-
-sdb_update_module(${GIT_EXECUTABLE} "gdal" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
-add_subdirectory(gdal)
-
-if(NOT TARGET GDAL::GDAL)
-    add_library(GDAL::GDAL ALIAS GDAL)
-endif()
+target_include_directories(
+    libcmark-gfm_static
+    SYSTEM
+    INTERFACE
+        ${CMAKE_CURRENT_SOURCE_DIR}/cmark-gfm/src
+        ${CMAKE_CURRENT_BINARY_DIR}/cmark-gfm/src
+)
+target_include_directories(
+    libcmark-gfm-extensions_static
+    SYSTEM
+    INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/cmark-gfm/extensions
+)
 
 ################################################################################
 ## duckdb
@@ -879,7 +772,7 @@ set(LATEST_STORAGE FALSE CACHE BOOL "" FORCE)
 # Suppress the per-extension "vcpkg.json present but VCPKG_BUILD not set" warning.
 set(VCPKG_BUILD ON CACHE BOOL "" FORCE)
 set(SPATIAL_USE_PROJ TRUE CACHE BOOL "" FORCE)
-set(SPATIAL_USE_GDAL TRUE CACHE BOOL "" FORCE)
+set(SPATIAL_USE_GDAL FALSE CACHE BOOL "" FORCE)
 set(SPATIAL_USE_NETWORK FALSE CACHE BOOL "" FORCE)
 set(SPATIAL_USE_GEOS TRUE CACHE BOOL "" FORCE)
 set(SPATIAL_USE_RTREE FALSE CACHE BOOL "" FORCE)
@@ -894,6 +787,7 @@ set(BUILD_EXTENSIONS
 # these files after the BUILD_EXTENSIONS list is resolved.
 set(DUCKDB_EXTENSION_CONFIGS
     "${CMAKE_CURRENT_SOURCE_DIR}/duckdb_clickhouse/extension_config.cmake"
+    "${CMAKE_CURRENT_SOURCE_DIR}/duckdb_markdown/extension_config.cmake"
     CACHE STRING
     ""
     FORCE
@@ -906,6 +800,7 @@ sdb_update_module(${GIT_EXECUTABLE} "duckdb_avro" ${CMAKE_CURRENT_SOURCE_DIR} "R
 sdb_update_module(${GIT_EXECUTABLE} "duckdb_iceberg" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
 sdb_update_module(${GIT_EXECUTABLE} "duckdb_postgres" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
 sdb_update_module(${GIT_EXECUTABLE} "duckdb_inet" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
+sdb_update_module(${GIT_EXECUTABLE} "duckdb_markdown" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
 sdb_update_module(${GIT_EXECUTABLE} "duckdb_spatial" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
 sdb_update_module(${GIT_EXECUTABLE} "database-connector" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
 
@@ -946,6 +841,7 @@ target_link_libraries(
         autocomplete_extension
         icu_extension
         inet_extension
+        markdown_extension
         spatial_extension
         # SIMD string-encoding routines (base64 + UTF-8/UTF-16/Latin-1). This
         # one PUBLIC edge propagates the simdutf include to duckdb core and to

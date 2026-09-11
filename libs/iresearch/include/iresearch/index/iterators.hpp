@@ -29,65 +29,67 @@
 
 #include <algorithm>
 #include <bit>
+#include <cstring>
+#include <limits>
+#include <span>
+#include <vector>
 
 #include "basics/assert.h"
 #include "basics/bit_utils.hpp"
-#include "basics/down_cast.h"
 #include "basics/memory.hpp"
 #include "basics/shared.hpp"
 #include "basics/system-compiler.h"
+#include "iresearch/error/error.hpp"
 #include "iresearch/formats/posting_meta.hpp"
 #include "iresearch/index/index_features.hpp"
-#include "iresearch/search/column_collector.hpp"
-#include "iresearch/search/score_function.hpp"
-#include "iresearch/search/scorer.hpp"
+#include "iresearch/search/lead/node.hpp"
 #include "iresearch/utils/attribute_provider.hpp"
 #include "iresearch/utils/iterator.hpp"
+#include "iresearch/utils/string.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
 namespace irs {
 
-struct PrepareScoreContext {
-  const SubReader* segment = nullptr;
-  ColumnArgsFetcher* fetcher = nullptr;
-};
+class PosAttr;
 
-struct FillBlockScoreContext {
-  const ScoreFunction* score = nullptr;
-  ColumnArgsFetcher* fetcher = nullptr;
-  score_t* IRS_RESTRICT score_window = nullptr;
-  ScoreMergeType merge_type = ScoreMergeType::Noop;
-};
+// One term's documents as a merge hands them to the postings writer: in
+// ascending order, one at a time, with what the field stores beside each of
+// them. A document stream and nothing else -- no score, no probe, no
+// two-phase check -- so it is a `lead::Node`. Flush hands the writer
+// `PostingRows` instead.
+struct TermPostings : lead::Node {
+  using ptr = memory::managed_ptr<TermPostings>;
 
-struct FillBlockMatchContext {
-  uint32_t* IRS_RESTRICT matches = 0;
-  size_t min_match_count = 0;
-};
+  // What a consumer is handed back when the attributes below change identity.
+  using AttrRefresh = absl::FunctionRef<void(TermPostings&)>;
 
-class ScoreCollector {
- public:
-  enum class Tag {
-    Loser,
-    Generic,
-  };
+  [[nodiscard]] static ptr empty() noexcept;
 
-  IRS_FORCE_INLINE Tag GetTag() const noexcept { return _tag; }
+  doc_id_t Value() const noexcept { return _doc; }
 
-  virtual void Add(score_t score, doc_id_t doc) = 0;
+  // The write path reads a list front to back, so no stream here seeks.
+  doc_id_t Seek(doc_id_t /*target*/) final {
+    SDB_ASSERT(false);
+    return _doc = doc_limits::eof();
+  }
 
-  virtual void ConsumeWindow(score_t* scores, uint64_t* mask, doc_id_t min,
-                             size_t num_blocks) = 0;
+  // The frequency of the document this stands on; unread for a field that
+  // stores none.
+  virtual uint32_t GetFreq() const = 0;
 
-  virtual void AddDocs(const doc_id_t* docs, size_t count,
-                       const score_t* scores) = 0;
+  // The positions of that document, null for a field that stores none. Where
+  // the field has offsets they are an attribute of what this returns.
+  virtual PosAttr* Positions() noexcept { return nullptr; }
+
+  // A stream concatenating several sources answers with a different provider
+  // once per source, and says so through this. The call is what arms the
+  // consumer, so a stream that answers with its own provider throughout still
+  // owes exactly one -- which is the default. Staying silent leaves the
+  // consumer holding nothing.
+  virtual void Subscribe(AttrRefresh refresh) { refresh(*this); }
 
  protected:
-  explicit ScoreCollector(Tag tag) noexcept : _tag{tag} {}
-
-  ~ScoreCollector() = default;
-
- private:
-  Tag _tag;
+  doc_id_t _doc = doc_limits::invalid();
 };
 
 struct ScoreDoc {
@@ -100,9 +102,18 @@ struct ScoreDoc {
 
 // TODO(mbkkt) Try to make it autovectorized,
 // otherwise try to use xsimd/neon specific intrinsics
-template<typename Derived>
-class ScoreCollectorBase : public ScoreCollector {
+class LoserScoreCollector {
  public:
+  LoserScoreCollector(score_t& score_threshold, std::span<ScoreDoc> hits)
+    : _score_threshold{&score_threshold},
+      _hits{hits.data()},
+      _k{hits.size()},
+      _tree(hits.size()) {
+    SDB_ASSERT(!hits.empty());
+  }
+
+  IRS_FORCE_INLINE size_t AcceptedCount() const noexcept { return _size; }
+
   void SetScoreThreshold(score_t& score_threshold) noexcept {
     SDB_ASSERT(score_threshold <= *_score_threshold);
     score_threshold = *_score_threshold;
@@ -123,16 +134,23 @@ class ScoreCollectorBase : public ScoreCollector {
 
   void SetSegment(uint32_t idx) noexcept { _current_segment = idx; }
 
+  // The `k`-th score this collector holds, and what a plan free to leave
+  // documents out is measured against. It only rises, and it spans every
+  // segment of the query, so a plan reads it as it goes rather than once.
+  IRS_FORCE_INLINE score_t ScoreThreshold() const noexcept {
+    return *_score_threshold;
+  }
+
   IRS_FORCE_INLINE uint64_t TotalMatches() const noexcept { return _count; }
 
-  IRS_FORCE_INLINE void Add(score_t score, doc_id_t doc) noexcept final {
+  IRS_FORCE_INLINE void Add(score_t score, doc_id_t doc) noexcept {
     ++_count;
     TryPush(*_score_threshold, score, doc);
   }
 
   IRS_FORCE_INLINE void ConsumeWindow(score_t* scores, uint64_t* mask,
                                       doc_id_t min,
-                                      size_t num_blocks) noexcept final {
+                                      size_t num_blocks) noexcept {
     score_t threshold = *_score_threshold;
     for (size_t i = 0; i < num_blocks; ++i) {
       auto word = mask[i];
@@ -161,7 +179,7 @@ class ScoreCollectorBase : public ScoreCollector {
   }
 
   IRS_FORCE_INLINE void AddDocs(const doc_id_t* docs, size_t count,
-                                const score_t* scores) noexcept final {
+                                const score_t* scores) noexcept {
     _count += count;
     score_t threshold = *_score_threshold;
     size_t i = 0;
@@ -182,23 +200,11 @@ class ScoreCollectorBase : public ScoreCollector {
     *_score_threshold = threshold;
   }
 
- protected:
-  ScoreCollectorBase(Tag tag, score_t& score_threshold) noexcept
-    : ScoreCollector{tag}, _score_threshold{&score_threshold} {}
-
-  uint64_t _count = 0;
-  uint32_t _current_segment = 0;
-  score_t* IRS_RESTRICT _score_threshold;
-
  private:
-  IRS_FORCE_INLINE Derived& Self() noexcept {
-    return static_cast<Derived&>(*this);
-  }
-
   IRS_FORCE_INLINE void TryPush(score_t& threshold, score_t score,
                                 doc_id_t doc) noexcept {
     if (score > threshold) {
-      Self().Push(threshold, score, doc);
+      Push(threshold, score, doc);
     }
   }
 
@@ -217,25 +223,7 @@ class ScoreCollectorBase : public ScoreCollector {
     return mask;
   }
 #endif
-};
 
-class LoserScoreCollector final
-  : public ScoreCollectorBase<LoserScoreCollector> {
-  using Base = ScoreCollectorBase<LoserScoreCollector>;
-  friend Base;
-
- public:
-  LoserScoreCollector(score_t& score_threshold, std::span<ScoreDoc> hits)
-    : Base{Tag::Loser, score_threshold},
-      _hits{hits.data()},
-      _k{hits.size()},
-      _tree(hits.size()) {
-    SDB_ASSERT(!hits.empty());
-  }
-
-  IRS_FORCE_INLINE size_t AcceptedCount() const noexcept { return _size; }
-
- private:
   struct Node {
     score_t score;
     uint32_t leaf;
@@ -299,6 +287,9 @@ class LoserScoreCollector final
     threshold = std::max(threshold, _root.score);
   }
 
+  uint64_t _count = 0;
+  uint32_t _current_segment = 0;
+  score_t* IRS_RESTRICT _score_threshold;
   ScoreDoc* IRS_RESTRICT _hits;
   size_t _k;
   std::vector<Node> _tree;
@@ -306,318 +297,127 @@ class LoserScoreCollector final
   Node _root{};
 };
 
-template<typename F>
-IRS_FORCE_INLINE auto ResolveScoreCollector(ScoreCollector& collector, F&& f) {
-  switch (collector.GetTag()) {
-    case ScoreCollector::Tag::Loser:
-      return std::forward<F>(f)(
-        sdb::basics::downCast<LoserScoreCollector>(collector));
-    case ScoreCollector::Tag::Generic:
-      return std::forward<F>(f)(collector);
-    default:
-      SDB_UNREACHABLE();
-  }
-}
+// One term's postings as block-contiguous columns: one row per (doc,
+// position) occurrence, docs non-decreasing, freq(doc) = run length of
+// equal doc. `pos`/`offs_*` are null when the field lacks the feature.
+struct PostingsSpan {
+  const uint32_t* docs;
+  const uint32_t* pos;
+  const uint32_t* offs_start;
+  const uint32_t* offs_end;
+  size_t count;
+};
 
-// An iterator providing sequential and random access to a posting list
-//
-// After creation iterator is in uninitialized state:
-//   - `value()` returns `doc_limits::invalid()` or `doc_limits::eof()`
-// `seek()` to:
-//   - `doc_limits::invalid()` is undefined and implementation dependent
-//   - `doc_limits::eof()` must always return `doc_limits::eof()`
-// Once iterator is exhausted:
-//   - `next()` must constantly return `false`
-//   - `seek()` to any value must return `doc_limits::eof()`
-//   - `value()` must return `doc_limits::eof()`
-struct DocIterator : AttributeProvider {
-  using ptr = memory::managed_ptr<DocIterator>;
+// One term's postings rows for a span-capable writer: either one
+// contiguous span, or a row range over 2-level blocked lanes (the flush
+// scatter shape), read in place -- no virtual dispatch, no copies.
+// `span.docs` selects the form.
+struct PostingRows {
+  PostingsSpan span;
+  const uint32_t* const* docs_blocks;
+  const uint32_t* const* pos_blocks;
+  const uint32_t* const* offs_start_blocks;
+  const uint32_t* const* offs_end_blocks;
+  uint64_t begin;
+  uint64_t end;
+  uint32_t block_shift;
 
-  [[nodiscard]] static DocIterator::ptr empty() noexcept;
-
-  IRS_FORCE_INLINE const doc_id_t& value() const noexcept { return _doc; }
-
-  virtual doc_id_t advance() = 0;
-
-  // Position iterator at a specified target and returns current value
-  // (for more information see class description)
-  virtual doc_id_t seek(doc_id_t target) = 0;
-
-  // If target is in the iterator: returns target and value() == target.
-  // If target isn't in the iterator: value() is unchanged (no advance).
-  // If target <= value(): returns target
-  virtual doc_id_t LazySeek(doc_id_t target) { return seek(target); }
-
-  virtual void Collect(const ScoreFunction& scorer, ColumnArgsFetcher& fetcher,
-                       ScoreCollector& collector) = 0;
-
-  virtual void FetchScoreArgs(uint16_t index) {}
-
-  virtual ScoreFunction PrepareScore(const PrepareScoreContext& ctx) {
-    return {};
+  // Walks doc runs in order: `on_doc(doc, freq)` once per doc with its
+  // complete freq (the skip protocol needs it up front), then
+  // `on_positions(pos, offs_start, offs_end, n)` for each contiguous piece
+  // of the doc's rows (one in all but the block-boundary case). The
+  // doc-only overload compiles the position emission out.
+  template<typename OnDoc>
+  void VisitRuns(OnDoc&& on_doc) const {
+    Visit<false>(on_doc, nullptr);
   }
 
-  virtual uint32_t count() = 0;
-
-  // Emit ascending matched doc-ids in [min, max) into `out`, return the count.
-  // Bitset-free counterpart of FillBlock for unscored scans. Self-positioning
-  // like EmitScoredDocs: value() may sit before the window (or be
-  // unpositioned), so docs < min are skipped -- the caller does NOT prime the
-  // iterator. Preconditions: min < max; `out` has room for max - min ids.
-  // Postcondition: value() == first doc >= max (or eof()), as for FillBlock.
-  virtual uint32_t EmitDocs(doc_id_t* out, doc_id_t min, doc_id_t max) = 0;
-
-  // Scored counterpart of EmitDocs: also emit each match's score into `scores`
-  // (parallel to `out`) via the block-scoring path (mirrors Collect), no
-  // bitset. Emits [min, max): value() may sit before the window (a
-  // block-positioned sub-iterator), so docs < min are skipped, not emitted.
-  virtual uint32_t EmitScoredDocs(doc_id_t* out, score_t* scores, doc_id_t max,
-                                  const ScoreFunction& scorer,
-                                  ColumnArgsFetcher* fetcher, doc_id_t min) = 0;
-
-  // Fill a bitmap window [min, max) with documents from this iterator.
-  // Preconditions:
-  //   - min < max
-  //   - value() >= min (iterator must be positioned at or after window start)
-  // For each doc in [value(), max):
-  //   - Sets bit (doc - min) in mask
-  //   - If TrackMatch: increments match count, sets bit only when threshold met
-  //   - If scoring: accumulates scores into score.score_window
-  // Returns {next_doc, empty}:
-  //   - next_doc: first doc >= max (next unprocessed), or eof() if exhausted
-  //   - empty: true if no documents matched (always false when !TrackMatch)
-  // Postcondition:
-  //   - value() == next_doc
-  virtual std::pair<doc_id_t, bool> FillBlock(doc_id_t min, doc_id_t max,
-                                              uint64_t* mask,
-                                              FillBlockScoreContext score,
-                                              FillBlockMatchContext match) = 0;
-
-  virtual uint32_t GetFreq() const {
-    SDB_ASSERT(false);
-    return 0;
-  }
-
- protected:
-  mutable doc_id_t _doc = doc_limits::invalid();
-
-  template<typename S>
-  IRS_FORCE_INLINE static uint32_t CountImpl(S& self) {
-    uint32_t count = 0;
-    while (!doc_limits::eof(self.S::advance())) {
-      ++count;
-    }
-    return count;
-  }
-
-  template<typename S>
-  IRS_FORCE_INLINE static uint32_t EmitDocsImpl(S& self, doc_id_t* out,
-                                                doc_id_t min, doc_id_t max) {
-    uint32_t n = 0;
-    for (auto doc = self.S::seek(min); doc < max; doc = self.S::advance()) {
-      out[n++] = doc;
-    }
-    return n;
-  }
-
-  template<typename S>
-  IRS_FORCE_INLINE static uint32_t EmitScoredDocsImpl(
-    S& self, doc_id_t* out, score_t* scores, doc_id_t max,
-    const ScoreFunction& scorer, ColumnArgsFetcher* fetcher, doc_id_t min) {
-    uint32_t n = 0;
-    auto doc = self.S::seek(min);
-    while (true) {
-      const uint32_t start = n;
-      for (scores_size_t i = 0; i != kScoreBlock; ++i) {
-        if (doc >= max) [[unlikely]] {
-          if (i != 0) {
-            if (fetcher) {
-              fetcher->Fetch(std::span<const doc_id_t>{out + start, i});
-            }
-            scorer.Score(scores + start, i);
-          }
-          return n;
-        }
-        out[n++] = doc;
-        self.S::FetchScoreArgs(i);
-        doc = self.S::advance();
-      }
-      if (fetcher) {
-        fetcher->FetchScoreBlock(
-          std::span<const doc_id_t, kScoreBlock>{out + start, kScoreBlock});
-      }
-      scorer.ScoreBlock(scores + start);
-    }
-  }
-
-  template<typename S>
-  IRS_FORCE_INLINE static void CollectImpl(S& self, const ScoreFunction& scorer,
-                                           ColumnArgsFetcher& fetcher,
-                                           ScoreCollector& c) {
-    ABSL_CACHELINE_ALIGNED std::array<score_t, kScoreBlock> scores;
-    ABSL_CACHELINE_ALIGNED std::array<doc_id_t, kScoreBlock> docs;
-    ResolveScoreCollector(c, [&](auto& collector) IRS_FORCE_INLINE {
-      while (true) {
-        for (size_t i = 0; i != kScoreBlock; ++i) {
-          const auto doc = self.S::advance();
-          if (doc_limits::eof(doc)) [[unlikely]] {
-            if (i != 0) {
-              fetcher.Fetch(std::span<const doc_id_t>{docs.data(), i});
-              scorer.Score(scores.data(), i);
-              for (size_t j = 0; j < i; ++j) {
-                collector.Add(scores[j], docs[j]);
-              }
-            }
-            return;
-          }
-          docs[i] = doc;
-          self.S::FetchScoreArgs(i);
-        }
-        fetcher.FetchScoreBlock(docs);
-        scorer.ScoreBlock(scores.data());
-        collector.AddDocs(docs.data(), kScoreBlock, scores.data());
-      }
-    });
-  }
-
-  template<typename S>
-  IRS_FORCE_INLINE static std::pair<doc_id_t, bool> FillBlockImpl(
-    S& self, doc_id_t min, doc_id_t max, uint64_t* mask,
-    FillBlockScoreContext score, FillBlockMatchContext match) {
-    if (!score.score || score.score->IsDefault()) {
-      score.merge_type = ScoreMergeType::Noop;
-    }
-
-    return ResolveMergeType(score.merge_type, [&]<ScoreMergeType MergeType> {
-      return ResolveBool(match.matches != nullptr, [&]<bool TrackMatch> {
-        return FillBlockImpl<MergeType, TrackMatch>(self, min, max, mask, score,
-                                                    match);
-      });
-    });
+  template<typename OnDoc, typename OnPositions>
+  void VisitRuns(OnDoc&& on_doc, OnPositions&& on_positions) const {
+    Visit<true>(on_doc, on_positions);
   }
 
  private:
-  template<ScoreMergeType MergeType, bool TrackMatch, typename S>
-  static std::pair<doc_id_t, bool> FillBlockImpl(
-    S& self, const doc_id_t min, const doc_id_t max,
-    uint64_t* IRS_RESTRICT mask, [[maybe_unused]] FillBlockScoreContext score,
-    [[maybe_unused]] FillBlockMatchContext match) {
-    SDB_ASSERT(min < max);
-    SDB_ASSERT(self.value() >= min);
-
-    [[maybe_unused]] std::array<score_t, kScoreBlock> score_buf;
-    [[maybe_unused]] std::array<doc_id_t, kScoreBlock> score_hits;
-    [[maybe_unused]] uint16_t score_index = 0;
-    [[maybe_unused]] auto flush_score = [&](size_t n) {
-      if constexpr (MergeType != ScoreMergeType::Noop) {
-        SDB_ASSERT(n);
-        SDB_ASSERT(score.score);
-
-        if (score.fetcher) {
-          score.fetcher->Fetch(std::span<const doc_id_t>{score_hits.data(), n});
+  template<bool WithPositions, typename OnDoc, typename OnPositions>
+  void Visit(OnDoc&& on_doc, OnPositions&& on_positions) const {
+    if (span.docs != nullptr) {
+      size_t i = 0;
+      while (i < span.count) {
+        const doc_id_t doc = span.docs[i];
+        size_t j = i + 1;
+        while (j < span.count && span.docs[j] == doc) {
+          ++j;
         }
-        if (n == kScoreBlock) [[likely]] {
-          score.score->ScoreBlock(score_buf.data());
-        } else {
-          score.score->Score(score_buf.data(), n);
+        on_doc(doc, static_cast<uint32_t>(j - i));
+        if constexpr (WithPositions) {
+          on_positions(span.pos + i,
+                       span.offs_start ? span.offs_start + i : nullptr,
+                       span.offs_end ? span.offs_end + i : nullptr, j - i);
         }
-        Merge<MergeType>(score.score_window, score_hits.data(), min,
-                         score_buf.data(), n);
-        score_index = 0;
+        i = j;
       }
+      return;
+    }
+    // blocked form, taken only by a block-crossing term: a flat row cursor
+    // makes runs cross block boundaries transparently, so the freq is
+    // complete before the doc is handed over; only position emission has
+    // to split at block edges (the lanes are not contiguous across them)
+    const uint64_t mask = (uint64_t{1} << block_shift) - 1;
+    const auto doc_at = [&](uint64_t row) {
+      return docs_blocks[row >> block_shift][row & mask];
     };
-
-    bool empty = true;
-    auto doc = self.value();
-    for (; doc < max; doc = self.S::advance()) {
-      SDB_ASSERT(doc >= min);
-      const auto offset = doc - min;
-
-      if constexpr (TrackMatch) {
-        SDB_ASSERT(match.matches);
-        const bool has_match = ++match.matches[offset] >= match.min_match_count;
-        SetBit(mask[offset / BitsRequired<uint64_t>()],
-               offset % BitsRequired<uint64_t>(), has_match);
-        empty &= !has_match;
-      } else {
-        SetBit(mask[offset / BitsRequired<uint64_t>()],
-               offset % BitsRequired<uint64_t>());
-        empty = false;
+    for (auto row = begin; row != end;) {
+      const doc_id_t doc = doc_at(row);
+      auto run_end = row + 1;
+      while (run_end != end && doc_at(run_end) == doc) {
+        ++run_end;
       }
-
-      if constexpr (MergeType != ScoreMergeType::Noop) {
-        score_hits[score_index] = doc;
-        self.S::FetchScoreArgs(score_index);
-        ++score_index;
-
-        if (score_index == kScoreBlock) {
-          flush_score(kScoreBlock);
+      on_doc(doc, static_cast<uint32_t>(run_end - row));
+      if constexpr (WithPositions) {
+        for (auto cur = row; cur != run_end;) {
+          const auto block = cur >> block_shift;
+          const auto off = static_cast<size_t>(cur & mask);
+          const auto stop = std::min(run_end, (block + 1) << block_shift);
+          on_positions(
+            pos_blocks[block] + off,
+            offs_start_blocks ? offs_start_blocks[block] + off : nullptr,
+            offs_end_blocks ? offs_end_blocks[block] + off : nullptr,
+            static_cast<size_t>(stop - cur));
+          cur = stop;
         }
       }
+      row = run_end;
     }
-
-    if constexpr (MergeType != ScoreMergeType::Noop) {
-      if (score_index) {
-        flush_score(score_index);
-      }
-    }
-
-    return {doc, empty};
   }
 };
 
-#define IRS_DOC_ITERATOR_FILL_BLOCK                                      \
-  std::pair<irs::doc_id_t, bool> FillBlock(                              \
-    irs::doc_id_t min, irs::doc_id_t max, uint64_t* mask,                \
-    irs::FillBlockScoreContext score, irs::FillBlockMatchContext match)  \
-    final {                                                              \
-    return irs::DocIterator::FillBlockImpl(*this, min, max, mask, score, \
-                                           match);                       \
-  }
-
-#define IRS_DOC_ITERATOR_COUNT \
-  uint32_t count() final { return irs::DocIterator::CountImpl(*this); }
-
-#define IRS_DOC_ITERATOR_COLLECT                                      \
-  void Collect(const irs::ScoreFunction& scorer,                      \
-               irs::ColumnArgsFetcher& fetcher,                       \
-               irs::ScoreCollector& collector) final {                \
-    irs::DocIterator::CollectImpl(*this, scorer, fetcher, collector); \
-  }
-
-#define IRS_DOC_ITERATOR_EMIT_DOCS                                            \
-  uint32_t EmitDocs(irs::doc_id_t* out, irs::doc_id_t min, irs::doc_id_t max) \
-    final {                                                                   \
-    return irs::DocIterator::EmitDocsImpl(*this, out, min, max);              \
-  }
-
-#define IRS_DOC_ITERATOR_EMIT_SCORED_DOCS                                      \
-  uint32_t EmitScoredDocs(irs::doc_id_t* out, irs::score_t* scores,            \
-                          irs::doc_id_t max, const irs::ScoreFunction& scorer, \
-                          irs::ColumnArgsFetcher* fetcher, irs::doc_id_t min)  \
-    final {                                                                    \
-    return irs::DocIterator::EmitScoredDocsImpl(*this, out, scores, max,       \
-                                                scorer, fetcher, min);         \
-  }
-
-#define IRS_DOC_ITERATOR_DEFAULTS \
-  IRS_DOC_ITERATOR_FILL_BLOCK     \
-  IRS_DOC_ITERATOR_COUNT          \
-  IRS_DOC_ITERATOR_COLLECT        \
-  IRS_DOC_ITERATOR_EMIT_DOCS      \
-  IRS_DOC_ITERATOR_EMIT_SCORED_DOCS
-
 // What a field writer reads: each term hands over its posting list whole,
-// which is what `PostingsWriter::Write` consumes. The write-side walk never
+// through the batched span pull when the reader provides one and through
+// `postings()`/`PostingsWriter::Write` otherwise. The write-side walk never
 // asks what a term's postings cost, so it owes no record -- a separate
 // contract rather than a mode of `TermIterator`.
 struct TermOnlyIterator : Iterator<bytes_view, AttributeProvider> {
   using ptr = memory::managed_ptr<TermOnlyIterator>;
 
-  // Return iterator over the associated posting list with the requested
-  // features.
-  [[nodiscard]] virtual DocIterator::ptr postings(
+  // Return the associated posting list with the requested features.
+  [[nodiscard]] virtual TermPostings::ptr postings(
     IndexFeatures features) const = 0;
+
+  // Columnar in-memory readers expose the current term's postings as
+  // in-place row views so a postings writer can consume them without
+  // per-doc iterator dispatch; file-backed and merge iterators keep
+  // `postings`.
+  // Batched term pull: fills a prefix of the parallel `terms`/`postings`
+  // arrays with consecutive terms. Returns how many terms were filled
+  // (0 = exhausted). Term views and row data stay valid until the following
+  // NextTermsWithPostings call. A reader without a batched pull is
+  // compaction-only and must never reach the flush path, so the default
+  // refuses rather than reporting an empty field.
+  virtual size_t NextTermsWithPostings(std::span<bytes_view> /*terms*/,
+                                       std::span<PostingRows> /*postings*/,
+                                       IndexFeatures /*features*/) {
+    throw IndexError{"term reader has no batched postings pull"};
+  }
 };
 
 struct TermIterator : TermOnlyIterator {
@@ -664,23 +464,6 @@ struct SeekTermIterator : TermIterator {
   // filter goes through here for that reason.
   virtual bool seek(bytes_view value) = 0;
 };
-
-// Position iterator to the specified target and returns current value
-// of the iterator. Returns `false` if iterator exhausted, `true` otherwise.
-template<typename Iterator, typename T, typename Less = std::less<T>>
-bool seek(Iterator& it, const T& target, Less less = Less()) {
-  const auto step = [&] {
-    if constexpr (requires { it.next(); }) {
-      return it.next();
-    } else {
-      return !doc_limits::eof(it.advance());
-    }
-  };
-  bool next = true;
-  while (less(it.value(), target) && (next = step())) {
-  }
-  return next;
-}
 
 // Position iterator to the specified min term or to the next term
 // after the min term depending on the specified `Include` value.

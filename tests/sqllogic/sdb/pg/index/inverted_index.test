@@ -249,10 +249,11 @@ QUERY PLAN
 ╭─ IRESEARCH_SCAN ────────────╮
 │ Index: vedernikoff_idx      │
 │ Index Filter:               │
-│ ╭─ Terms ─────────────────╮ │
+│ ╭─ And ───────────────────╮ │
+│ ╰────────────┬────────────╯ │
+│ ╭─ Terms ────┴────────────╮ │
 │ │ Field: b(string)        │ │
 │ │ Values: 'game', 'pudge' │ │
-│ │ Min Match: 2            │ │
 │ ╰─────────────────────────╯ │
 │ Output: row-count only      │
 │ ~1 row                      │

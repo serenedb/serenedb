@@ -265,12 +265,11 @@ void SereneDBClientState::TransactionCommit(
     }
   }
   tls_committing_ctx = nullptr;
-  // One transaction, one run, one flush: every attachment this commit touched
-  // has written its records by now, and a commit that wrote a role and a table
-  // is as whole as one that wrote only a table. The store connection's shell
-  // transactions own no run and must not end this one.
+  // Every attachment this commit touched has spliced its records by now; what
+  // this drains is a run its commit never ended -- and the store connection's
+  // shell transactions own no run and must not end this one.
   if (!_connection_ctx->IsStorageConnection()) {
-    catalog::EndClusterCatalogWal(/*committed=*/true);
+    catalog::EndCommittingCatalogRun(/*committed=*/true);
   }
   // What these cluster-wide caches hold is the committed set, and that is what
   // has just changed -- the write itself only made it visible here. Bumping any
@@ -285,9 +284,9 @@ void SereneDBClientState::TransactionCommit(
 void SereneDBClientState::TransactionRollback(
   duckdb::MetaTransaction& transaction, duckdb::ClientContext& context) {
   tls_committing_ctx = nullptr;
-  // The run stops where it started: nothing this transaction wrote is durable.
+  // The run's records are discarded: the log never saw them.
   if (!_connection_ctx->IsStorageConnection()) {
-    catalog::EndClusterCatalogWal(/*committed=*/false);
+    catalog::EndCommittingCatalogRun(/*committed=*/false);
   }
   if (std::exchange(_connection_ctx->wrote_roles, false)) {
     auth::BumpRoleGeneration();

@@ -1,0 +1,77 @@
+statement ok
+CREATE TEXT SEARCH DICTIONARY dd_en(
+    template = 'text', locale = 'en_US.UTF-8', case = 'lower',
+    stemming = false, accent = false, frequency = true, position = true,
+    norm = true
+);
+
+statement ok
+CREATE TABLE dd (id INTEGER PRIMARY KEY, body VARCHAR);
+
+statement ok
+INSERT INTO dd
+SELECT i, CASE WHEN i % 2 = 0 THEN 'fox ' ELSE 'cat ' END || repeat('dog ', (i * 7) % 11)
+FROM generate_series(1, 6000) s(i);
+
+statement ok
+CREATE INDEX dd_idx ON dd USING inverted (body dd_en) WITH (optimize_top_k = 'bm25(1.2, 0.75)');
+
+statement ok
+VACUUM (REFRESH_TABLE) dd;
+
+query
+EXPLAIN SELECT id FROM dd_idx WHERE body @@ ts_any(['fox', 'cat']) ORDER BY BM25(dd_idx.tableoid) DESC LIMIT 10;
+----
+QUERY PLAN
+╭─ TOP_N ────────────────────────────────╮
+│ Top: 10                                │
+│ Order By: #1 DESC                      │
+│ ~10 rows                               │
+╰────────────────────┬───────────────────╯
+╭─ IRESEARCH_SCAN ───┴───────────────────╮
+│ Index: dd_idx                          │
+│ Lookup: table                          │
+│ Index Filter:                          │
+│ ╭─ Or ─────────────────╮               │
+│ ╰───────────┬──────────╯               │
+│ ╭─ Terms ───┴──────────╮               │
+│ │ Field: body(string)  │               │
+│ │ Values: 'cat', 'fox' │               │
+│ ╰──────────────────────╯               │
+│ Score: bm25(k1=1.2, b=0.75)            │
+│ Top: 10, optimized                     │
+│ Projections: id,                       │
+│              sdb_inverted_index_score  │
+│ ~1,200 rows                            │
+╰────────────────────────────────────────╯
+
+query
+SELECT id FROM dd_idx WHERE body @@ ts_any(['fox', 'cat']) ORDER BY BM25(dd_idx.tableoid) DESC, id LIMIT 10;
+----
+id
+11
+22
+33
+44
+55
+66
+77
+88
+99
+110
+
+query
+SELECT
+  (SELECT list(id) FROM (SELECT id FROM dd_idx WHERE body @@ ts_any(['fox', 'cat']) ORDER BY BM25(dd_idx.tableoid) DESC, id LIMIT 100))
+  = (SELECT list(id) FROM (SELECT id FROM (SELECT id, BM25(dd_idx.tableoid) AS s FROM dd_idx WHERE body @@ ts_any(['fox', 'cat'])) q ORDER BY s DESC, id LIMIT 100)) AS top100_equal,
+  (SELECT list(id) FROM (SELECT id FROM dd_idx WHERE body @@ ts_any(['fox', 'cat']) ORDER BY BM25(dd_idx.tableoid) DESC, id LIMIT 1000))
+  = (SELECT list(id) FROM (SELECT id FROM (SELECT id, BM25(dd_idx.tableoid) AS s FROM dd_idx WHERE body @@ ts_any(['fox', 'cat'])) q ORDER BY s DESC, id LIMIT 1000)) AS top1000_equal;
+----
+top100_equal	top1000_equal
+t	t
+
+query
+SELECT count(*) FROM dd_idx WHERE body @@ ts_any(['fox', 'cat']);
+----
+count
+6000

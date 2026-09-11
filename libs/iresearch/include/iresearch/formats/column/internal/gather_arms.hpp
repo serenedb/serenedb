@@ -128,7 +128,7 @@ void GatherRows(const ColumnReader& reader, ColumnReader::ScanState& s,
 // GatherScatter/GatherDense bodies shared by the nested typed readers. The
 // gather helpers take the concrete `*this` (devirtualised `Kind::method`
 // calls), so the bodies can't live in a non-template base method; a macro
-// dedups them the same way IRS_DOC_ITERATOR_DEFAULTS does for iterators.
+// dedups them.
 #define IRS_COLUMN_READER_GATHER_SCATTER                                     \
   void GatherScatter(ScanState& s, uint64_t anchor,                          \
                      const duckdb::SelectionVector& sel, duckdb::idx_t hits, \

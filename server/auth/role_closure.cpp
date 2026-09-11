@@ -27,6 +27,7 @@
 #include <vector>
 
 #include "auth/acl.h"
+#include "catalog/entry/duckdb_object_entry.h"
 #include "catalog/read/duckdb_catalog_sets.h"
 #include "catalog/role.h"
 
@@ -103,7 +104,7 @@ std::shared_ptr<const RoleCache> gRoleCache =
 
 std::shared_ptr<const RoleGraph> LoadRoleGraph(duckdb::ClientContext* context) {
   auto graph = std::make_shared<RoleGraph>();
-  catalog::VisitRoles(context, [&](const catalog::Role& role) {
+  catalog::VisitRoles(context, [&](const catalog::SereneDBRoleEntry& role) {
     auto& node = graph->nodes[role.GetId()];
     node.name = role.GetName();
     node.member_of.assign(role.MemberOf().begin(), role.MemberOf().end());

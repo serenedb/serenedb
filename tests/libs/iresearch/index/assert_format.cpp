@@ -27,13 +27,14 @@
 
 #include <algorithm>
 #include <iostream>
+#include <iresearch/analysis/token_sinks.hpp>
 #include <unordered_set>
 
 #include "basics/bit_utils.hpp"
 #include "basics/down_cast.h"
 #include "formats/column/test_cs_helpers.hpp"
 #include "iresearch/analysis/token_attributes.hpp"
-#include "iresearch/analysis/tokenizers.hpp"
+#include "iresearch/analysis/tokenizer.hpp"
 #include "iresearch/index/comparer.hpp"
 #include "iresearch/index/directory_reader.hpp"
 #include "iresearch/index/directory_reader_impl.hpp"
@@ -41,7 +42,8 @@
 #include "iresearch/index/index_features.hpp"
 #include "iresearch/index/norm.hpp"
 #include "iresearch/search/boolean_filter.hpp"
-#include "iresearch/search/cost.hpp"
+#include "iresearch/search/lead/make.hpp"
+#include "iresearch/search/states/term_state.hpp"
 #include "iresearch/search/term_filter.hpp"
 #include "iresearch/search/term_iterator.hpp"
 #include "iresearch/search/term_predicate.hpp"
@@ -55,19 +57,41 @@
 
 namespace tests {
 
-void Posting::insert(uint32_t pos, uint32_t offs_start,
-                     const irs::AttributeProvider& attrs) {
-  auto* offs = irs::get<irs::OffsAttr>(attrs);
-  auto* pay = irs::get<irs::PayAttr>(attrs);
+void AssertTerm(size_t segment_index, size_t field_index, size_t term_index,
+                const irs::TermIterator& expected_term,
+                const irs::TermIterator& actual_term,
+                irs::IndexFeatures requested_features);
 
+namespace {
+
+bool MemcmpLess(const irs::byte_type* lhs, size_t lhs_size,
+                const irs::byte_type* rhs, size_t rhs_size) noexcept {
+  SDB_ASSERT(lhs && rhs);
+  const size_t size = std::min(lhs_size, rhs_size);
+  const auto res = ::memcmp(lhs, rhs, size);
+  if (0 == res) {
+    return lhs_size < rhs_size;
+  }
+  return res < 0;
+}
+
+}  // namespace
+
+void Posting::insert(uint32_t pos) {
+  _positions.emplace(pos, std::numeric_limits<uint32_t>::max(),
+                     std::numeric_limits<uint32_t>::max(), irs::bytes_view{});
+}
+
+void Posting::insert(uint32_t pos, uint32_t offs_start, bool has_offs,
+                     uint32_t tok_offs_start, uint32_t tok_offs_end) {
   uint32_t start = std::numeric_limits<uint32_t>::max();
   uint32_t end = std::numeric_limits<uint32_t>::max();
-  if (offs) {
-    start = offs_start + offs->start;
-    end = offs_start + offs->end;
+  if (has_offs) {
+    start = offs_start + tok_offs_start;
+    end = offs_start + tok_offs_end;
   }
 
-  _positions.emplace(pos, start, end, pay ? pay->value : irs::bytes_view{});
+  _positions.emplace(pos, start, end, irs::bytes_view{});
 }
 
 Posting& Term::insert(irs::doc_id_t id) {
@@ -77,8 +101,8 @@ Posting& Term::insert(irs::doc_id_t id) {
 Term::Term(irs::bytes_view data) : value(data) {}
 
 bool Term::operator<(const Term& rhs) const {
-  return irs::MemcmpLess(value.c_str(), value.size(), rhs.value.c_str(),
-                         rhs.value.size());
+  return MemcmpLess(value.c_str(), value.size(), rhs.value.c_str(),
+                    rhs.value.size());
 }
 
 void Term::sort(const std::map<irs::doc_id_t, irs::doc_id_t>& docs) {
@@ -129,6 +153,14 @@ uint64_t Field::total_freq() const {
     }
   }
 
+  return value;
+}
+
+uint64_t Field::total_doc_freq() const {
+  uint64_t value = 0;
+  for (auto& term : terms) {
+    value += term.postings.size();
+  }
   return value;
 }
 
@@ -213,10 +245,6 @@ void IndexSegment::insert_indexed(const Ifield& f) {
     _id_to_field.emplace_back(&field);
 
     if (irs::IsSubsetOf(irs::IndexFeatures::Norm, requested_features)) {
-      // Allocate an id for the field's norm column slot. Production code
-      // assigns this via the cs writer; in this expected-segment model
-      // we keep a stable per-segment counter matching the order norm
-      // fields are first seen.
       const size_t id = _columns.size();
       EXPECT_LE(id, std::numeric_limits<irs::field_id>::max());
       _columns.emplace_back(irs::field_id{id});
@@ -227,24 +255,58 @@ void IndexSegment::insert_indexed(const Ifield& f) {
 
   _doc_fields.insert(&field);
 
-  auto& stream = f.GetTokens();
+  if (const auto block_terms = f.BlockTerms(); block_terms.has_value()) {
+    const auto doc_id = doc();
+    uint32_t inc_value = 1;
+    for (const auto& block_term : *block_terms) {
+      tests::Term& trm = field.insert(block_term);
+      if (trm.postings.empty() ||
+          std::prev(std::end(trm.postings))->id() != doc_id) {
+        ++field.stats.num_unique;
+      }
+      tests::Posting& pst = trm.insert(doc_id);
+      field.stats.pos += inc_value;
+      field.stats.num_overlap += static_cast<uint32_t>(0 == inc_value);
+      ++field.stats.len;
+      pst.insert(field.stats.pos);
+      field.stats.max_term_freq =
+        std::max(field.stats.max_term_freq,
+                 static_cast<decltype(field.stats.max_term_freq)>(
+                   pst.positions().size()));
+      inc_value = 0;
+    }
+    if (!block_terms->empty()) {
+      field.docs.emplace(doc_id);
+    }
+    return;
+  }
 
-  auto* term = irs::get<irs::TermAttr>(stream);
-  SDB_ASSERT(term);
-  auto* inc = irs::get<irs::IncAttr>(stream);
-  SDB_ASSERT(inc);
-  auto* offs = irs::get<irs::OffsAttr>(stream);
+  auto& analyzer = f.GetTokens();
+
+  const bool has_offs = analyzer.Traits().offsets;
   if (irs::IndexFeatures::Offs ==
         (requested_features & irs::IndexFeatures::Offs) &&
-      offs) {
+      has_offs) {
     field.index_features |= irs::IndexFeatures::Offs;
   }
 
-  bool empty = true;
   const auto doc_id = doc();
 
-  while (stream.next()) {
-    tests::Term& trm = field.insert(term->value);
+  irs::ValueAnalyzer value_analyzer;
+  irs::ValueTokens<irs::TokenLayout::TermsPosOffs> tokens{analyzer.Traits()};
+  const auto fv = f.Value();
+  value_analyzer.Analyze(
+    analyzer, duckdb::string_t{fv.data(), static_cast<uint32_t>(fv.size())},
+    tokens);
+
+  const auto terms = tokens.terms();
+  const auto positions = tokens.pos();
+  const auto offs_start = tokens.offs_start();
+  const auto offs_end = tokens.offs_end();
+  uint32_t prev_pos = 0;
+  uint32_t last_offs_end = 0;
+  for (size_t i = 0; i < terms.size(); ++i) {
+    tests::Term& trm = field.insert(irs::AsBytesView(terms[i]));
 
     if (trm.postings.empty() ||
         std::prev(std::end(trm.postings))->id() != doc_id) {
@@ -252,23 +314,28 @@ void IndexSegment::insert_indexed(const Ifield& f) {
     }
 
     tests::Posting& pst = trm.insert(doc_id);
-    field.stats.pos += inc->value;
-    field.stats.num_overlap += static_cast<uint32_t>(0 == inc->value);
+    const uint32_t pos = positions[i];
+    const uint32_t start = offs_start.empty() ? 0 : offs_start[i];
+    const uint32_t end = offs_end.empty() ? 0 : offs_end[i];
+    const uint32_t inc = pos - prev_pos;
+    prev_pos = pos;
+    field.stats.pos += inc;
+    field.stats.num_overlap += static_cast<uint32_t>(0 == inc);
     ++field.stats.len;
-    pst.insert(field.stats.pos, field.stats.offs, stream);
+    pst.insert(field.stats.pos, field.stats.offs, has_offs, start, end);
     field.stats.max_term_freq = std::max(
       field.stats.max_term_freq,
       static_cast<decltype(field.stats.max_term_freq)>(pst.positions().size()));
 
-    empty = false;
+    last_offs_end = end;
   }
 
-  if (!empty) {
+  if (!terms.empty()) {
     field.docs.emplace(doc_id);
   }
 
-  if (offs) {
-    field.stats.offs += offs->end;
+  if (has_offs) {
+    field.stats.offs += last_offs_end;
   }
 }
 
@@ -306,16 +373,11 @@ void IndexSegment::sort(const irs::Comparer& comparator) {
   }
 }
 
-class DocIteratorImpl : public irs::DocIterator {
+class PostingsImpl : public irs::TermPostings {
  public:
-  DocIteratorImpl(irs::IndexFeatures features, const tests::Term& data);
+  PostingsImpl(irs::IndexFeatures features, const tests::Term& data);
 
-  irs::Attribute* GetMutable(irs::TypeInfo::type_id type) noexcept final {
-    const auto it = _attrs.find(type);
-    return it == _attrs.end() ? nullptr : it->second;
-  }
-
-  irs::doc_id_t advance() final {
+  irs::doc_id_t Advance() final {
     if (_next == _data.postings.end()) {
       return _doc = irs::doc_limits::eof();
     }
@@ -328,28 +390,14 @@ class DocIteratorImpl : public irs::DocIterator {
     return _doc;
   }
 
-  irs::doc_id_t seek(irs::doc_id_t id) final {
-    auto it = _data.postings.find(Posting{id});
+  uint32_t GetFreq() const final { return _freq; }
 
-    if (it == _data.postings.end()) {
-      _prev = _next = it;
-      return irs::doc_limits::eof();
-    }
-
-    _prev = it;
-    _next = ++it;
-    _doc = _prev->id();
-    _pos.Clear();
-
-    return _doc;
-  }
-
-  IRS_DOC_ITERATOR_DEFAULTS
+  irs::PosAttr* Positions() noexcept final { return _positions; }
 
  private:
   class PosIterator final : public irs::PosAttr {
    public:
-    PosIterator(const DocIteratorImpl& owner, irs::IndexFeatures features)
+    PosIterator(const PostingsImpl& owner, irs::IndexFeatures features)
       : _owner(owner) {
       if (irs::IndexFeatures::None != (features & irs::IndexFeatures::Offs)) {
         _poffs = &_offs;
@@ -384,41 +432,29 @@ class DocIteratorImpl : public irs::DocIterator {
       return true;
     }
 
-    void reset() final {
-      ASSERT_TRUE(false);  // unsupported
-    }
+    void reset() final { ASSERT_TRUE(false); }
 
    private:
     std::set<Posting::Position>::const_iterator _next;
     irs::OffsAttr _offs;
     irs::OffsAttr* _poffs{};
-    const DocIteratorImpl& _owner;
+    const PostingsImpl& _owner;
   };
 
   const tests::Term& _data;
-  std::map<irs::TypeInfo::type_id, irs::Attribute*> _attrs;
   uint32_t _freq = 0;
-  irs::FreqBlockAttr _freq_block{.value = &_freq};
-  irs::CostAttr _cost;
   PosIterator _pos;
+  irs::PosAttr* _positions{};
   std::set<Posting>::const_iterator _prev;
   std::set<Posting>::const_iterator _next;
 };
 
-DocIteratorImpl::DocIteratorImpl(irs::IndexFeatures features,
-                                 const tests::Term& data)
+PostingsImpl::PostingsImpl(irs::IndexFeatures features, const tests::Term& data)
   : _data(data), _pos(*this, features) {
   _next = _data.postings.begin();
 
-  _cost.reset(_data.postings.size());
-  _attrs[irs::Type<irs::CostAttr>::id()] = &_cost;
-
-  if (irs::IndexFeatures::None != (features & irs::IndexFeatures::Freq)) {
-    _attrs[irs::Type<irs::FreqBlockAttr>::id()] = &_freq_block;
-  }
-
   if (irs::IndexFeatures::None != (features & irs::IndexFeatures::Pos)) {
-    _attrs[irs::Type<irs::PosAttr>::id()] = &_pos;
+    _positions = &_pos;
   }
 }
 
@@ -475,16 +511,14 @@ class TermIterator : public irs::SeekTermIterator {
                                   : irs::SeekResult::NotFound;
   }
 
-  DocIteratorImpl::ptr postings(irs::IndexFeatures features) const final {
-    return irs::memory::make_managed<DocIteratorImpl>(
+  irs::TermPostings::ptr postings(irs::IndexFeatures features) const final {
+    return irs::memory::make_managed<PostingsImpl>(
       _data.index_features & features, *_prev);
   }
 
   const irs::PostingMeta& cookie() const final { return _meta; }
 
  private:
-  // The meta is an attribute, so it has to hold the current term's counts the
-  // moment the iterator lands on it -- not only when `cookie()` is asked for.
   void Position() {
     _value.value = _prev->value;
     _meta.docs_count = _prev->docs_count();
@@ -506,142 +540,131 @@ irs::SeekTermIterator::ptr Field::iterator() const {
   return irs::memory::make_managed<TermIterator>(*this);
 }
 
-template<typename IteratorFactory>
-void AssertDocs(size_t segment_index, size_t field_index, size_t term_index,
-                irs::DocIterator::ptr expected_docs,
-                IteratorFactory&& factory) {
+template<typename PostingsFactory>
+void AssertDocs(irs::IndexFeatures features,
+                irs::TermPostings::ptr expected_docs,
+                PostingsFactory&& factory) {
   ASSERT_NE(nullptr, expected_docs);
 
-  auto seq_docs = factory();
-  ASSERT_NE(nullptr, seq_docs);
+  auto actual_docs = factory();
+  ASSERT_NE(nullptr, actual_docs);
 
-  auto seek_docs = factory();
-  ASSERT_NE(nullptr, seek_docs);
+  ASSERT_TRUE(!irs::doc_limits::valid(expected_docs->Value()));
+  ASSERT_TRUE(!irs::doc_limits::valid(actual_docs->Value()));
 
-  ASSERT_TRUE(!irs::doc_limits::valid(expected_docs->value()));
-  ASSERT_TRUE(!irs::doc_limits::valid(seq_docs->value()));
-  ASSERT_TRUE(!irs::doc_limits::valid(seek_docs->value()));
+  const bool has_freq =
+    irs::IndexFeatures::None != (features & irs::IndexFeatures::Freq);
 
   size_t doc_index = 0;
-  while (!irs::doc_limits::eof(expected_docs->advance())) {
+  while (!irs::doc_limits::eof(expected_docs->Advance())) {
     SCOPED_TRACE(absl::StrCat("doc_index=", doc_index++));
-    const auto expected_doc = expected_docs->value();
+    const auto expected_doc = expected_docs->Value();
 
-    ASSERT_TRUE(!irs::doc_limits::eof(seq_docs->advance()));
-    ASSERT_EQ(expected_doc, seq_docs->value());
+    ASSERT_TRUE(!irs::doc_limits::eof(actual_docs->Advance()));
+    ASSERT_EQ(expected_doc, actual_docs->Value());
 
-    ASSERT_EQ(expected_doc, seek_docs->seek(expected_doc));
-    ASSERT_EQ(expected_doc, seek_docs->value());
+    if (!has_freq) {
+      continue;
+    }
+    ASSERT_EQ(expected_docs->GetFreq(), actual_docs->GetFreq());
 
-    // check document attributes
-    {
-      auto* expected_freq = irs::get<irs::FreqBlockAttr>(*expected_docs);
-      auto* actual_seq_freq = irs::get<irs::FreqBlockAttr>(*seq_docs);
-      auto* actual_seek_freq = irs::get<irs::FreqBlockAttr>(*seek_docs);
+    auto* expected_pos = expected_docs->Positions();
+    auto* actual_pos = actual_docs->Positions();
+    ASSERT_EQ(!expected_pos, !actual_pos);
 
-      if (expected_freq) {
-        expected_docs->FetchScoreArgs(0);
-        ASSERT_FALSE(!actual_seq_freq);
-        ASSERT_FALSE(!actual_seek_freq);
-        seq_docs->FetchScoreArgs(0);
-        ASSERT_EQ(expected_freq->value[0], actual_seq_freq->value[0]);
-        seek_docs->FetchScoreArgs(0);
-        ASSERT_EQ(expected_freq->value[0], actual_seek_freq->value[0]);
+    if (!expected_pos) {
+      continue;
+    }
+
+    auto* expected_offs = irs::get<irs::OffsAttr>(*expected_pos);
+    auto* actual_offs = irs::get<irs::OffsAttr>(*actual_pos);
+    ASSERT_EQ(!expected_offs, !actual_offs);
+
+    auto* expected_pay = irs::get<irs::PayAttr>(*expected_pos);
+    auto* actual_pay = irs::get<irs::PayAttr>(*actual_pos);
+    ASSERT_EQ(!expected_pay, !actual_pay);
+
+    ASSERT_TRUE(!irs::pos_limits::valid(expected_pos->value()));
+    ASSERT_TRUE(!irs::pos_limits::valid(actual_pos->value()));
+    size_t pos_index = 0;
+    for (; expected_pos->next();) {
+      SCOPED_TRACE(absl::StrCat("pos_index=", pos_index++));
+      ASSERT_TRUE(actual_pos->next());
+      ASSERT_EQ(expected_pos->value(), actual_pos->value());
+
+      if (expected_offs) {
+        ASSERT_EQ(expected_offs->start, actual_offs->start);
+        ASSERT_EQ(expected_offs->end, actual_offs->end);
       }
 
-      auto* expected_pos = irs::GetMutable<irs::PosAttr>(expected_docs.get());
-      auto* actual_seq_pos = irs::GetMutable<irs::PosAttr>(seq_docs.get());
-      auto* actual_seek_pos = irs::GetMutable<irs::PosAttr>(seek_docs.get());
-
-      if (expected_pos) {
-        ASSERT_FALSE(!actual_seq_pos);
-        ASSERT_FALSE(!actual_seek_freq);
-
-        auto* expected_offs = irs::get<irs::OffsAttr>(*expected_pos);
-        auto* actual_seq_offs = irs::get<irs::OffsAttr>(*actual_seq_pos);
-        auto* actual_seek_offs = irs::get<irs::OffsAttr>(*actual_seek_pos);
-        if (expected_offs) {
-          ASSERT_FALSE(!actual_seq_offs);
-          ASSERT_FALSE(!actual_seek_offs);
-        }
-        auto* expected_pay = irs::get<irs::PayAttr>(*expected_pos);
-        auto* actual_seq_pay = irs::get<irs::PayAttr>(*actual_seq_pos);
-        auto* actual_seek_pay = irs::get<irs::PayAttr>(*actual_seek_pos);
-        if (expected_pay) {
-          ASSERT_FALSE(!actual_seq_pay);
-          ASSERT_FALSE(!actual_seek_pay);
-        }
-        ASSERT_TRUE(!irs::pos_limits::valid(expected_pos->value()));
-        ASSERT_TRUE(!irs::pos_limits::valid(actual_seq_pos->value()));
-        ASSERT_TRUE(!irs::pos_limits::valid(actual_seek_pos->value()));
-        size_t pos_index = 0;
-        for (; expected_pos->next();) {
-          SCOPED_TRACE(absl::StrCat("pos_index=", pos_index++));
-          ASSERT_TRUE(actual_seq_pos->next());
-          ASSERT_EQ(expected_pos->value(), actual_seq_pos->value());
-          ASSERT_TRUE(actual_seek_pos->next());
-          ASSERT_EQ(expected_pos->value(), actual_seek_pos->value());
-
-          if (expected_offs) {
-            ASSERT_EQ(expected_offs->start, actual_seq_offs->start);
-            ASSERT_EQ(expected_offs->end, actual_seq_offs->end);
-            ASSERT_EQ(expected_offs->start, actual_seek_offs->start);
-            ASSERT_EQ(expected_offs->end, actual_seek_offs->end);
-          }
-
-          if (expected_pay) {
-            ASSERT_EQ(expected_pay->value, actual_seq_pay->value);
-            ASSERT_EQ(expected_pay->value, actual_seek_pay->value);
-          }
-        }
-        ASSERT_FALSE(actual_seq_pos->next());
-        ASSERT_FALSE(actual_seek_pos->next());
-        ASSERT_TRUE(irs::pos_limits::eof(expected_pos->value()));
-        ASSERT_TRUE(irs::pos_limits::eof(actual_seq_pos->value()));
-        ASSERT_TRUE(irs::pos_limits::eof(actual_seek_pos->value()));
+      if (expected_pay) {
+        ASSERT_EQ(expected_pay->value, actual_pay->value);
       }
     }
+    ASSERT_FALSE(actual_pos->next());
+    ASSERT_TRUE(irs::pos_limits::eof(expected_pos->value()));
+    ASSERT_TRUE(irs::pos_limits::eof(actual_pos->value()));
   }
 
-  ASSERT_TRUE(irs::doc_limits::eof(expected_docs->value()));
-  ASSERT_FALSE(!irs::doc_limits::eof(seq_docs->advance()));
-  ASSERT_TRUE(irs::doc_limits::eof(seq_docs->value()));
-  ASSERT_FALSE(!irs::doc_limits::eof(seek_docs->advance()));
-  ASSERT_TRUE(irs::doc_limits::eof(seek_docs->value()));
+  ASSERT_TRUE(irs::doc_limits::eof(expected_docs->Value()));
+  ASSERT_FALSE(!irs::doc_limits::eof(actual_docs->Advance()));
+  ASSERT_TRUE(irs::doc_limits::eof(actual_docs->Value()));
 }
 
-void AssertDocs(const irs::TermIterator& expected_term,
+irs::lead::Node::ptr MakeLeadDocs(const irs::SubReader& segment,
+                                  const irs::TermReader& actual_terms,
+                                  const irs::PostingMeta& actual_cookie) {
+  const irs::search::PostingClause posting{
+    .state = irs::TermState{&actual_terms, actual_cookie}};
+  if (irs::search::DocOf(actual_terms) == nullptr) {
+    return {};
+  }
+  return irs::lead::MakePostingDocs(posting, segment);
+}
+
+// A `lead::Node` answers documents and nothing else, so the frequencies and
+// positions the postings above carry are not asked of it -- what a seeking
+// plan owes is that it lands on the same documents a full walk does.
+void AssertSeek(const irs::SubReader& segment,
+                const irs::TermIterator& expected_term,
                 const irs::TermReader& actual_terms,
                 const irs::PostingMeta& actual_cookie,
-                irs::IndexFeatures requested_features, size_t segment_index,
-                size_t field_index, size_t term_index) {
-  AssertDocs(segment_index, field_index, term_index,
-             expected_term.postings(requested_features), [&] {
-               return actual_terms.Iterator(
-                 requested_features,
-                 {.cookie = &actual_cookie, .field = actual_terms.meta()});
-             });
+                irs::IndexFeatures requested_features) {
+  auto expected_docs = expected_term.postings(requested_features);
+  ASSERT_NE(nullptr, expected_docs);
 
-  AssertDocs(segment_index, field_index, term_index,
-             expected_term.postings(requested_features), [&] {
-               return actual_terms.Iterator(
-                 requested_features,
-                 {.cookie = &actual_cookie, .field = actual_terms.meta()}, {});
-             });
+  auto seq_docs = MakeLeadDocs(segment, actual_terms, actual_cookie);
+  ASSERT_NE(nullptr, seq_docs);
+
+  auto seek_docs = MakeLeadDocs(segment, actual_terms, actual_cookie);
+  ASSERT_NE(nullptr, seek_docs);
+
+  ASSERT_TRUE(!irs::doc_limits::valid(expected_docs->Value()));
+
+  size_t doc_index = 0;
+  while (!irs::doc_limits::eof(expected_docs->Advance())) {
+    SCOPED_TRACE(absl::StrCat("doc_index=", doc_index++));
+    const auto expected_doc = expected_docs->Value();
+
+    ASSERT_EQ(expected_doc, seq_docs->Advance());
+    ASSERT_EQ(expected_doc, seek_docs->Seek(expected_doc));
+  }
+
+  ASSERT_TRUE(irs::doc_limits::eof(expected_docs->Value()));
+  ASSERT_TRUE(irs::doc_limits::eof(seq_docs->Advance()));
+  ASSERT_TRUE(irs::doc_limits::eof(seek_docs->Advance()));
 
   // FIXME(gnusi): check BitUnion
 }
 
-void AssertTerm(size_t segment_index, size_t field_index, size_t term_index,
-                irs::TermIterator& expected_term,
+void AssertTerm(irs::TermIterator& expected_term,
                 irs::TermIterator& actual_term,
                 irs::IndexFeatures requested_features) {
   ASSERT_EQ(expected_term.value(), actual_term.value());
 
   ASSERT_EQ(expected_term.cookie().docs_count, actual_term.cookie().docs_count);
 
-  AssertDocs(segment_index, field_index, term_index,
-             expected_term.postings(requested_features),
+  AssertDocs(requested_features, expected_term.postings(requested_features),
              [&] { return actual_term.postings(requested_features); });
 }
 
@@ -660,8 +683,7 @@ irs::SeekTermIterator::ptr ActualTerms(const irs::TermReader& actual_field,
   return matcher ? actual_field.iterator(*matcher) : actual_field.iterator();
 }
 
-void AssertTermsNext(size_t segment_index, size_t field_index,
-                     const Field& expected_field,
+void AssertTermsNext(const irs::SubReader& segment, const Field& expected_field,
                      const irs::TermReader& actual_field,
                      irs::IndexFeatures features,
                      irs::automaton_table_matcher* matcher) {
@@ -680,10 +702,9 @@ void AssertTermsNext(size_t segment_index, size_t field_index,
     SCOPED_TRACE(absl::StrCat("term_index=", term_index++));
     ASSERT_TRUE(actual_term->next());
 
-    AssertTerm(segment_index, field_index, term_index, *expected_term,
-               *actual_term, features);
-    AssertDocs(*expected_term, actual_field, actual_term->cookie(), features,
-               segment_index, field_index, term_index);
+    AssertTerm(*expected_term, *actual_term, features);
+    AssertSeek(segment, *expected_term, actual_field, actual_term->cookie(),
+               features);
 
     if (irs::IsNull(actual_min)) {
       actual_min_buf = actual_term->value();
@@ -693,13 +714,7 @@ void AssertTermsNext(size_t segment_index, size_t field_index,
     actual_max_buf = actual_term->value();
     actual_max = actual_max_buf;
   }
-  // FIXME(@gnusi): currently `SeekTermIterator` crashes
-  //                if next() is called after iterator is exhausted
-  // ASSERT_FALSE(actual_term->next());
-  // ASSERT_FALSE(actual_term->next());
 
-  // check term reader -- a filtered walk sees a subset, so the field-wide
-  // counts and bounds are only the walk's own when nothing filters it
   if (!matcher) {
     ASSERT_EQ(expected_field.terms.size(), actual_size);
     ASSERT_EQ((expected_field.min)(), actual_min);
@@ -707,8 +722,7 @@ void AssertTermsNext(size_t segment_index, size_t field_index,
   }
 }
 
-void AssertTermsSeek(size_t segment_index, size_t field_index,
-                     const Field& expected_field,
+void AssertTermsSeek(const Field& expected_field,
                      const irs::TermReader& actual_field,
                      irs::IndexFeatures features,
                      irs::automaton_table_matcher* matcher,
@@ -724,41 +738,32 @@ void AssertTermsSeek(size_t segment_index, size_t field_index,
   size_t term_index = 0;
   for (; expected_term->next();) {
     SCOPED_TRACE(absl::StrCat("term_index=", term_index));
-    // seek with state
     {
       ASSERT_TRUE(actual_term_with_state->seek(expected_term->value()));
-      AssertTerm(segment_index, field_index, term_index, *expected_term,
-                 *actual_term_with_state, features);
+      AssertTerm(*expected_term, *actual_term_with_state, features);
     }
 
-    // seek without state random only
     {
       auto actual_term = actual_field.iterator();
       ASSERT_TRUE(actual_term->seek(expected_term->value()));
 
-      AssertTerm(segment_index, field_index, term_index, *expected_term,
-                 *actual_term, features);
+      AssertTerm(*expected_term, *actual_term, features);
     }
 
-    // seek with state random only
     {
       ASSERT_TRUE(
         actual_term_with_state_random_only->seek(expected_term->value()));
 
-      AssertTerm(segment_index, field_index, term_index, *expected_term,
-                 *actual_term_with_state_random_only, features);
+      AssertTerm(*expected_term, *actual_term_with_state_random_only, features);
     }
 
-    // seek without state, iterate forward
     irs::PostingMeta cookie;
     {
       auto actual_term = actual_field.iterator();
       ASSERT_TRUE(actual_term->seek(expected_term->value()));
-      AssertTerm(segment_index, field_index, term_index, *expected_term,
-                 *actual_term, features);
+      AssertTerm(*expected_term, *actual_term, features);
       cookie = actual_term->cookie();
 
-      // iterate forward
       {
         auto copy_expected_term =
           irs::memory::make_managed<TermIterator>(expected_field);
@@ -772,26 +777,20 @@ void AssertTermsSeek(size_t segment_index, size_t field_index,
           if (!copy_expected_next) {
             break;
           }
-          AssertTerm(segment_index, field_index, term_index,
-                     *copy_expected_term, *actual_term, features);
+          AssertTerm(*copy_expected_term, *actual_term, features);
         }
       }
 
-      // seek back to initial term
       ASSERT_TRUE(actual_term->seek(expected_term->value()));
-      AssertTerm(segment_index, field_index, term_index, *expected_term,
-                 *actual_term, features);
+      AssertTerm(*expected_term, *actual_term, features);
     }
 
-    // seek greater or equal without state, iterate forward
     {
       auto actual_term = actual_field.iterator();
       ASSERT_EQ(irs::SeekResult::Found,
                 actual_term->seek_ge(expected_term->value()));
-      AssertTerm(segment_index, field_index, term_index, *expected_term,
-                 *actual_term, features);
+      AssertTerm(*expected_term, *actual_term, features);
 
-      // iterate forward
       {
         auto copy_expected_term =
           irs::memory::make_managed<TermIterator>(expected_field);
@@ -804,51 +803,38 @@ void AssertTermsSeek(size_t segment_index, size_t field_index,
           if (!copy_expected_next) {
             break;
           }
-          AssertTerm(segment_index, field_index, term_index,
-                     *copy_expected_term, *actual_term, features);
+          AssertTerm(*copy_expected_term, *actual_term, features);
         }
       }
 
-      // seek back to initial term
       ASSERT_TRUE(actual_term->seek(expected_term->value()));
-      AssertTerm(segment_index, field_index, term_index, *expected_term,
-                 *actual_term, features);
+      AssertTerm(*expected_term, *actual_term, features);
     }
 
-    // seek to cookie without state, iterate to the end
     {
       auto actual_term = actual_field.iterator();
 
-      // seek to the same term
       ASSERT_TRUE(actual_term->seek(expected_term->value()));
-      AssertTerm(segment_index, field_index, term_index, *expected_term,
-                 *actual_term, features);
+      AssertTerm(*expected_term, *actual_term, features);
 
-      // seek to the same term
       ASSERT_TRUE(actual_term->seek(expected_term->value()));
-      AssertTerm(segment_index, field_index, term_index, *expected_term,
-                 *actual_term, features);
+      AssertTerm(*expected_term, *actual_term, features);
 
-      // seek greater equal to the same term
       ASSERT_EQ(irs::SeekResult::Found,
                 actual_term->seek_ge(expected_term->value()));
-      AssertTerm(segment_index, field_index, term_index, *expected_term,
-                 *actual_term, features);
+      AssertTerm(*expected_term, *actual_term, features);
     }
   }
 }
 
 void AssertIndex(irs::IndexReader::ptr actual_index,
                  const index_t& expected_index, irs::IndexFeatures features,
-                 size_t skip /*= 0*/,
-                 irs::automaton_table_matcher* matcher /*= nullptr*/) {
-  // check number of segments
+                 size_t skip, irs::automaton_table_matcher* matcher) {
   ASSERT_EQ(expected_index.size(), actual_index->size());
   size_t i = 0;
   size_t segment_index = 0;
   for (auto& actual_segment : *actual_index) {
     SCOPED_TRACE(absl::StrCat("segment_index=", segment_index++));
-    // skip segment if validation not required
     if (skip) {
       ++i;
       --skip;
@@ -857,15 +843,12 @@ void AssertIndex(irs::IndexReader::ptr actual_index,
 
     const tests::IndexSegment& expected_segment = expected_index[i];
 
-    // segment normally returns a reference to itself
     ASSERT_EQ(1, actual_segment.size());
     ASSERT_EQ(&actual_segment, &*actual_segment.begin());
 
-    // get field iterators
     auto& expected_fields = expected_segment.fields();
     auto expected_field = expected_fields.begin();
 
-    // iterate over fields by id
     auto actual_field_ids = actual_segment.field_ids();
     size_t field_index = 0;
     auto actual_id_it = actual_field_ids.begin();
@@ -875,25 +858,21 @@ void AssertIndex(irs::IndexReader::ptr actual_index,
       ASSERT_NE(expected_fields.end(), expected_field);
       ASSERT_EQ(expected_field->second.id, *actual_id_it);
 
-      // check field terms
       const auto* actual_terms = actual_segment.field(*actual_id_it);
       ASSERT_NE(nullptr, actual_terms);
       ASSERT_EQ(expected_field->second.id, actual_terms->meta().id);
       ASSERT_EQ(expected_field->second.index_features,
                 actual_terms->meta().index_features);
 
-      // check term reader
       ASSERT_EQ((expected_field->second.min)(), (actual_terms->min)());
       ASSERT_EQ((expected_field->second.max)(), (actual_terms->max)());
       ASSERT_EQ(expected_field->second.terms.size(), actual_terms->size());
       ASSERT_EQ(expected_field->second.docs.size(), actual_terms->docs_count());
 
-      // check field meta
       const irs::FieldMeta& expected_meta = expected_field->second;
       const irs::FieldMeta& actual_meta = actual_terms->meta();
       ASSERT_EQ(expected_meta.id, actual_meta.id);
       ASSERT_EQ(expected_meta.index_features, actual_meta.index_features);
-      // we don't check column ids as they are format dependent
       ASSERT_EQ(irs::field_limits::valid(expected_meta.norm),
                 irs::field_limits::valid(actual_meta.norm));
       ASSERT_EQ(
@@ -904,18 +883,20 @@ void AssertIndex(irs::IndexReader::ptr actual_index,
         irs::field_limits::valid(actual_meta.norm));
 
       auto* actual_freq = irs::get<irs::FreqAttr>(*actual_terms);
+      ASSERT_NE(nullptr, actual_freq);
       if (irs::IndexFeatures::None !=
           (expected_field->second.index_features & irs::IndexFeatures::Freq)) {
-        ASSERT_NE(nullptr, actual_freq);
         ASSERT_EQ(expected_field->second.total_freq(), actual_freq->value);
       } else {
-        ASSERT_EQ(nullptr, actual_freq);
+        ASSERT_EQ(expected_field->second.total_doc_freq(), actual_freq->value);
       }
 
-      AssertTermsNext(segment_index, field_index, expected_field->second,
-                      *actual_terms, features, matcher);
-      AssertTermsSeek(segment_index, field_index, expected_field->second,
-                      *actual_terms, features, matcher);
+      const auto field_features =
+        expected_field->second.index_features & features;
+      AssertTermsNext(actual_segment, expected_field->second, *actual_terms,
+                      field_features, matcher);
+      AssertTermsSeek(expected_field->second, *actual_terms, field_features,
+                      matcher);
     }
     ASSERT_EQ(actual_field_ids.end(), actual_id_it);
 
@@ -926,8 +907,7 @@ void AssertIndex(irs::IndexReader::ptr actual_index,
 
 void AssertIndex(const irs::Directory& dir, irs::Format::ptr codec,
                  const index_t& expected_index, irs::IndexFeatures features,
-                 size_t skip /*= 0*/,
-                 irs::automaton_table_matcher* matcher /*= nullptr*/) {
+                 size_t skip, irs::automaton_table_matcher* matcher) {
   auto reader =
     irs::DirectoryReader(dir, codec, ::irs::tests::DefaultReaderOptions());
   ASSERT_NE(nullptr, reader);
@@ -936,10 +916,3 @@ void AssertIndex(const irs::Directory& dir, irs::Format::ptr codec,
 }
 
 }  // namespace tests
-namespace irs {
-
-// use base irs::position type for ancestors
-template<>
-struct Type<::tests::DocIteratorImpl::PosIterator> : Type<irs::PosAttr> {};
-
-}  // namespace irs

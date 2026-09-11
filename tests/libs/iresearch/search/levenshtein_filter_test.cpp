@@ -20,6 +20,8 @@
 /// @author Andrey Abramov
 ////////////////////////////////////////////////////////////////////////////////
 
+#include <map>
+
 #include "basics/down_cast.h"
 #include "basics/misc.hpp"
 #include "filter_test_case_base.hpp"
@@ -28,12 +30,14 @@
 #include "iresearch/index/norm.hpp"
 #include "iresearch/search/bm25.hpp"
 #include "iresearch/search/boolean_filter.hpp"
+#include "iresearch/search/boolean_query.hpp"
 #include "iresearch/search/column_collector.hpp"
 #include "iresearch/search/filter_optimizer.hpp"
 #include "iresearch/search/levenshtein_filter.hpp"
 #include "iresearch/search/prefix_filter.hpp"
 #include "iresearch/search/term_filter.hpp"
 #include "iresearch/utils/levenshtein_default_pdp.hpp"
+#include "test_resources.hpp"
 #include "tests_shared.hpp"
 
 namespace {
@@ -149,13 +153,8 @@ TEST(by_edit_distance_test, boost) {
       irs::ViewCast<irs::byte_type>(std::string_view("bar*"));
 
     irs::Filter::ptr lowered = Lower(std::move(q));
-    tests::PreparedFilter prepared{*lowered, irs::SubReader::empty(), nullptr,
-                                   counter};
-    ASSERT_EQ(irs::kNoBoost, prepared.Query(0)->Boost());
+    ASSERT_EQ(irs::kNoBoost, lowered->GetBoost());
   }
-  EXPECT_EQ(counter.current, 0);
-  EXPECT_GT(counter.max, 0);
-  counter.Reset();
 
   // with boost
   {
@@ -168,32 +167,23 @@ TEST(by_edit_distance_test, boost) {
     q.SetBoost(boost);
 
     irs::Filter::ptr lowered = Lower(std::move(q));
+    ASSERT_EQ(boost, lowered->GetBoost());
+
+    // a segment without the field matches nothing, and nothing carries no
+    // boost -- so the boost is only observable where the field exists
     tests::PreparedFilter prepared{*lowered, irs::SubReader::empty(), nullptr,
                                    counter};
-    ASSERT_EQ(boost, prepared.Query(0)->Boost());
+    ASSERT_TRUE(irs::QueryBuilder::IsEmpty(*prepared.Query(0)));
+    ASSERT_EQ(irs::kNoBoost, prepared.Query(0)->Boost());
   }
   EXPECT_EQ(counter.current, 0);
-  EXPECT_GT(counter.max, 0);
   counter.Reset();
 }
 
-TEST(by_edit_distance_test, test_type_of_prepared_query) {
-  MaxMemoryCounter counter;
-  // term query
-  {
-    const auto lhs_filter = MakeTermFilter("foo", "bar");
-    tests::PreparedFilter lhs{lhs_filter, irs::SubReader::empty(), nullptr,
-                              counter};
-    const auto rhs_filter = Lower(MakeFilter("foo", "bar"));
-    tests::PreparedFilter rhs{*rhs_filter, irs::SubReader::empty(), nullptr,
-                              counter};
-    auto& lhs_ref = *lhs.Query(0);
-    auto& rhs_ref = *rhs.Query(0);
-    ASSERT_EQ(typeid(lhs_ref), typeid(rhs_ref));
-  }
-  EXPECT_EQ(counter.current, 0);
-  EXPECT_GT(counter.max, 0);
-  counter.Reset();
+TEST(by_edit_distance_test, type_of_lowered_filter) {
+  const auto lowered = Lower(MakeFilter("foo", "bar"));
+  ASSERT_NE(nullptr, lowered);
+  ASSERT_EQ(MakeTermFilter("foo", "bar").type(), lowered->type());
 }
 
 class ByEditDistanceTestCase : public tests::FilterTestCaseBase {};
@@ -268,7 +258,7 @@ TEST_P(ByEditDistanceTestCase, test_order) {
   }
 
   {
-    Docs docs{29};
+    Docs docs{28};
     Costs costs{docs.size()};
 
     size_t finish_count = 0;
@@ -356,7 +346,7 @@ TEST_P(ByEditDistanceTestCase, test_filter) {
   CheckQuery(*MakeLevenshtein("title", "", 1, 1024), Docs{28, 29}, Costs{2},
              rdr);
   CheckQuery(*MakeLevenshtein("title", "", 1, 0), Docs{28, 29}, Costs{2}, rdr);
-  CheckQuery(*MakeLevenshtein("title", "", 1, 1), Docs{29}, Costs{1}, rdr);
+  CheckQuery(*MakeLevenshtein("title", "", 1, 1), Docs{28}, Costs{1}, rdr);
   CheckQuery(*MakeLevenshtein("title", "aa", 1, 1024), Docs{27, 28}, Costs{2},
              rdr);
   CheckQuery(*MakeLevenshtein("title", "aa", 1, 0), Docs{27, 28}, Costs{2},
@@ -371,7 +361,7 @@ TEST_P(ByEditDistanceTestCase, test_filter) {
              rdr);
   CheckQuery(*MakeLevenshtein("title", "", 2, 0), Docs{27, 28, 29}, Costs{3},
              rdr);
-  CheckQuery(*MakeLevenshtein("title", "", 2, 1), Docs{29}, Costs{1}, rdr);
+  CheckQuery(*MakeLevenshtein("title", "", 2, 1), Docs{28}, Costs{1}, rdr);
   CheckQuery(*MakeLevenshtein("title", "", 2, 2), Docs{28, 29}, Costs{2}, rdr);
   CheckQuery(*MakeLevenshtein("title", "aa", 2, 1024), Docs{27, 28, 29, 30, 32},
              Costs{5}, rdr);
@@ -511,12 +501,13 @@ TEST_P(ByEditDistanceTestCase, bm25) {
   opts.case_convert = irs::Case::Lower;
   opts.explicit_stopwords_set = true;
   opts.stemming = false;
-  auto analyzer = irs::analysis::TextTokenizer::Make(std::move(opts));
+  auto analyzer =
+    irs::analysis::TextTokenizer::Make(std::move(opts), tests::Cache());
   ASSERT_NE(nullptr, analyzer);
 
   struct TextField : FieldBase {
    public:
-    TextField(irs::analysis::Analyzer& analyzer, std::string value)
+    TextField(irs::analysis::Tokenizer& analyzer, std::string value)
       : _value(std::move(value)), _analyzer(&analyzer) {
       this->Name("id");
       this->id = kIdId;
@@ -526,15 +517,13 @@ TEST_P(ByEditDistanceTestCase, bm25) {
 
     bool Write(irs::DataOutput&) const noexcept final { return true; }
 
-    irs::Tokenizer& GetTokens() const final {
-      const bool res = _analyzer->reset(_value);
-      EXPECT_TRUE(res);
-      return *_analyzer;
-    }
+    irs::analysis::Tokenizer& GetTokens() const final { return *_analyzer; }
+
+    std::string_view Value() const final { return _value; }
 
    private:
     std::string _value;
-    irs::analysis::Analyzer* _analyzer;
+    irs::analysis::Tokenizer* _analyzer;
   };
 
   {
@@ -580,33 +569,31 @@ TEST_P(ByEditDistanceTestCase, bm25) {
                                    counter};
     ASSERT_NE(nullptr, prepared.Query(0));
 
-    auto docs = prepared.Execute(0);
+    auto docs = prepared.ExecuteScored(0, fetcher);
     ASSERT_NE(nullptr, docs);
 
-    auto score = docs->PrepareScore({
-      .segment = &index[0],
-    });
+    auto score = docs->PrepareScore();
     ASSERT_FALSE(score.IsDefault());
 
     constexpr std::pair<float_t, irs::doc_id_t> kExpectedDocs[]{
-      {6.21361256f, 261},
-      {9.32042027f, 272},
-      {7.76701689f, 273},
-      {6.21361256f, 289},
+      {3.1589780f, 261},
+      {4.7384672f, 272},
+      {3.9487224f, 273},
+      {3.1589780f, 289},
     };
 
     auto expected_doc = std::begin(kExpectedDocs);
-    while (!irs::doc_limits::eof(docs->advance())) {
-      fetcher.Fetch(docs->value());
+    while (!irs::doc_limits::eof(docs->Advance())) {
+      fetcher.Fetch(docs->Value());
       docs->FetchScoreArgs(0);
       irs::score_t value;
       score.Score(&value, 1);
       ASSERT_FLOAT_EQ(expected_doc->first, value);
-      ASSERT_EQ(expected_doc->second, docs->value());
+      ASSERT_EQ(expected_doc->second, docs->Value());
       ++expected_doc;
     }
 
-    ASSERT_FALSE(!irs::doc_limits::eof(docs->advance()));
+    ASSERT_FALSE(!irs::doc_limits::eof(docs->Advance()));
   }
   EXPECT_EQ(counter.current, 0);
   EXPECT_GT(counter.max, 0);
@@ -629,28 +616,26 @@ TEST_P(ByEditDistanceTestCase, bm25) {
     ASSERT_NE(nullptr, prepared.Query(0));
 
     fetcher.Clear();
-    auto docs = prepared.Execute(0);
+    auto docs = prepared.ExecuteScored(0, fetcher);
     ASSERT_NE(nullptr, docs);
 
-    auto score = docs->PrepareScore({
-      .segment = &index[0],
-    });
+    auto score = docs->PrepareScore();
 
     ASSERT_FALSE(score.IsDefault());
 
     constexpr std::pair<float_t, irs::doc_id_t> kExpectedDocs[]{
-      {9.9112005f, 272},
-      {8.2593336f, 273},
+      {4.7384672f, 272},
+      {3.9487224f, 273},
     };
 
     auto expected_doc = std::begin(kExpectedDocs);
-    while (!irs::doc_limits::eof(docs->advance())) {
-      fetcher.Fetch(docs->value());
+    while (!irs::doc_limits::eof(docs->Advance())) {
+      fetcher.Fetch(docs->Value());
       irs::score_t value;
       docs->FetchScoreArgs(0);
       score.Score(&value, 1);
       ASSERT_FLOAT_EQ(expected_doc->first, value);
-      ASSERT_EQ(expected_doc->second, docs->value());
+      ASSERT_EQ(expected_doc->second, docs->Value());
       ++expected_doc;
     }
   }
@@ -677,33 +662,31 @@ TEST_P(ByEditDistanceTestCase, bm25) {
     ASSERT_NE(nullptr, prepared.Query(0));
 
     fetcher.Clear();
-    auto docs = prepared.Execute(0);
+    auto docs = prepared.ExecuteScored(0, fetcher);
     ASSERT_NE(nullptr, docs);
 
-    auto score = docs->PrepareScore({
-      .segment = &index[0],
-    });
+    auto score = docs->PrepareScore();
 
     ASSERT_FALSE(score.IsDefault());
 
     constexpr std::pair<float_t, irs::doc_id_t> kExpectedDocs[]{
-      {9.9112005f, 272},
-      {8.2593336f, 273},
+      {4.7384672f, 272},
+      {3.9487224f, 273},
     };
 
     auto expected_doc = std::begin(kExpectedDocs);
-    while (!irs::doc_limits::eof(docs->advance())) {
-      fetcher.Fetch(docs->value());
+    while (!irs::doc_limits::eof(docs->Advance())) {
+      fetcher.Fetch(docs->Value());
       irs::score_t value;
       docs->FetchScoreArgs(0);
       score.Score(&value, 1);
 
       ASSERT_FLOAT_EQ(expected_doc->first, value);
-      ASSERT_EQ(expected_doc->second, docs->value());
+      ASSERT_EQ(expected_doc->second, docs->Value());
       ++expected_doc;
     }
 
-    ASSERT_FALSE(!irs::doc_limits::eof(docs->advance()));
+    ASSERT_FALSE(!irs::doc_limits::eof(docs->Advance()));
   }
   EXPECT_EQ(counter.current, 0);
   EXPECT_GT(counter.max, 0);
@@ -726,32 +709,30 @@ TEST_P(ByEditDistanceTestCase, bm25) {
     ASSERT_NE(nullptr, prepared.Query(0));
 
     fetcher.Clear();
-    auto docs = prepared.Execute(0);
+    auto docs = prepared.ExecuteScored(0, fetcher);
     ASSERT_NE(nullptr, docs);
 
-    auto score = docs->PrepareScore({
-      .segment = &index[0],
-    });
+    auto score = docs->PrepareScore();
 
     ASSERT_FALSE(score.IsDefault());
 
     constexpr std::pair<float_t, irs::doc_id_t> kExpectedDocs[]{
-      {8.1443892f, 265},   {6.7869911f, 264},   {6.7869911f, 3054},
-      {6.7869911f, 3069},  {5.7922611f, 46355}, {5.7922611f, 46356},
-      {5.7922611f, 46357}, {5.4295926f, 263},   {5.4295926f, 3062},
-      {4.8268843f, 46353}, {4.8268843f, 46354}, {3.8615065f, 46350},
-      {3.8615065f, 46351}, {3.8615065f, 46352},
+      {4.2365541f, 265},   {3.5304618f, 264},   {3.5304618f, 3054},
+      {3.5304618f, 3069},  {3.0130219f, 46355}, {3.0130219f, 46356},
+      {3.0130219f, 46357}, {2.8243694f, 263},   {2.8243694f, 3062},
+      {2.5108514f, 46353}, {2.5108514f, 46354}, {2.0086813f, 46350},
+      {2.0086813f, 46351}, {2.0086813f, 46352},
     };
 
     std::vector<std::pair<float_t, irs::doc_id_t>> actual_docs;
-    while (!irs::doc_limits::eof(docs->advance())) {
-      fetcher.Fetch(docs->value());
+    while (!irs::doc_limits::eof(docs->Advance())) {
+      fetcher.Fetch(docs->Value());
       irs::score_t value;
       docs->FetchScoreArgs(0);
       score.Score(&value, 1);
-      actual_docs.emplace_back(value, docs->value());
+      actual_docs.emplace_back(value, docs->Value());
     }
-    ASSERT_FALSE(!irs::doc_limits::eof(docs->advance()));
+    ASSERT_FALSE(!irs::doc_limits::eof(docs->Advance()));
     ASSERT_EQ(std::size(kExpectedDocs), actual_docs.size());
 
     std::sort(std::begin(actual_docs), std::end(actual_docs),
@@ -795,32 +776,29 @@ TEST_P(ByEditDistanceTestCase, bm25) {
     ASSERT_NE(nullptr, prepared.Query(0));
 
     fetcher.Clear();
-    auto docs = prepared.Execute(0);
+    auto docs = prepared.ExecuteScored(0, fetcher);
     ASSERT_NE(nullptr, docs);
 
-    auto score = docs->PrepareScore({
-      .segment = &index[0],
-      .fetcher = &fetcher,
-    });
+    auto score = docs->PrepareScore();
 
     ASSERT_FALSE(score.IsDefault());
 
     constexpr std::pair<float_t, irs::doc_id_t> kExpectedDocs[]{
-      {3.8292055f, 275},
-      {2.7233176f, 46376},
-      {2.7233176f, 46377},
+      {1.7405479f, 275},
+      {1.2378716f, 46376},
+      {1.2378716f, 46377},
     };
 
     std::vector<std::pair<float_t, irs::doc_id_t>> actual_docs;
-    while (!irs::doc_limits::eof(docs->advance())) {
-      fetcher.Fetch(docs->value());
+    while (!irs::doc_limits::eof(docs->Advance())) {
+      fetcher.Fetch(docs->Value());
       irs::score_t value;
       docs->FetchScoreArgs(0);
       score.Score(&value, 1);
-      actual_docs.emplace_back(value, docs->value());
+      actual_docs.emplace_back(value, docs->Value());
     }
 
-    ASSERT_FALSE(!irs::doc_limits::eof(docs->advance()));
+    ASSERT_FALSE(!irs::doc_limits::eof(docs->Advance()));
     ASSERT_EQ(std::size(kExpectedDocs), actual_docs.size());
 
     std::sort(std::begin(actual_docs), std::end(actual_docs),
@@ -866,32 +844,29 @@ TEST_P(ByEditDistanceTestCase, bm25) {
     ASSERT_NE(nullptr, prepared.Query(0));
 
     fetcher.Clear();
-    auto docs = prepared.Execute(0);
+    auto docs = prepared.ExecuteScored(0, fetcher);
     ASSERT_NE(nullptr, docs);
 
-    auto score = docs->PrepareScore({
-      .segment = &index[0],
-      .fetcher = &fetcher,
-    });
+    auto score = docs->PrepareScore();
 
     ASSERT_FALSE(score.IsDefault());
 
     constexpr std::pair<float_t, irs::doc_id_t> kExpectedDocs[]{
-      {3.8292055f, 275},
-      {2.7233176f, 46376},
-      {2.7233176f, 46377},
+      {1.7405479f, 275},
+      {1.2378716f, 46376},
+      {1.2378716f, 46377},
     };
 
     std::vector<std::pair<float_t, irs::doc_id_t>> actual_docs;
-    while (!irs::doc_limits::eof(docs->advance())) {
-      fetcher.Fetch(docs->value());
+    while (!irs::doc_limits::eof(docs->Advance())) {
+      fetcher.Fetch(docs->Value());
       irs::score_t value;
       docs->FetchScoreArgs(0);
       score.Score(&value, 1);
-      actual_docs.emplace_back(value, docs->value());
+      actual_docs.emplace_back(value, docs->Value());
     }
 
-    ASSERT_FALSE(!irs::doc_limits::eof(docs->advance()));
+    ASSERT_FALSE(!irs::doc_limits::eof(docs->Advance()));
     ASSERT_EQ(std::size(kExpectedDocs), actual_docs.size());
 
     std::sort(std::begin(actual_docs), std::end(actual_docs),
@@ -1017,36 +992,43 @@ TEST_P(ByEditDistanceTestCase, visit) {
   }
 }
 
-static void AppendPrefix(irs::And& root, std::string_view field,
+static void AppendPrefix(irs::BooleanFilter& root, std::string_view field,
                          std::string_view term) {
-  auto& prefix = root.add<irs::ByPrefix>();
-  *prefix.mutable_field_id() = FieldIdFor(field);
-  prefix.mutable_options()->term = irs::ViewCast<irs::byte_type>(term);
+  auto prefix = std::make_unique<irs::ByPrefix>();
+  *prefix->mutable_field_id() = FieldIdFor(field);
+  prefix->mutable_options()->term = irs::ViewCast<irs::byte_type>(term);
+  root.Add(std::move(prefix), irs::Occur::Must);
+}
+
+static void AppendEditDistance(irs::BooleanFilter& root,
+                               irs::ByEditDistance filter) {
+  root.Add(std::make_unique<irs::ByEditDistance>(std::move(filter)),
+           irs::Occur::Must);
 }
 
 TEST(by_edit_distance_test, fuse_prefix_into_levenshtein) {
   {
-    irs::And root;
+    irs::BooleanFilter root;
     AppendPrefix(root, "title", "aa");
-    root.add<irs::ByEditDistance>(MakeFilter("title", "aaaa", 2, 0));
+    AppendEditDistance(root, MakeFilter("title", "aaaa", 2, 0));
     auto optimized = tests::Optimized(std::move(root));
     ASSERT_EQ(irs::Type<irs::LevenshteinAutomatonFilter>::id(),
               optimized->type());
     ASSERT_EQ(*optimized, *MakeLevenshtein("title", "aa", 2, 0, false, "aa"));
   }
   {
-    irs::And root;
+    irs::BooleanFilter root;
     AppendPrefix(root, "title", "aaa");
-    root.add<irs::ByEditDistance>(MakeFilter("title", "ab", 1, 0, false, "aa"));
+    AppendEditDistance(root, MakeFilter("title", "ab", 1, 0, false, "aa"));
     auto optimized = tests::Optimized(std::move(root));
     ASSERT_EQ(irs::Type<irs::LevenshteinAutomatonFilter>::id(),
               optimized->type());
     ASSERT_EQ(*optimized, *MakeLevenshtein("title", "b", 1, 0, false, "aaa"));
   }
   {
-    irs::And root;
+    irs::BooleanFilter root;
     AppendPrefix(root, "title", "aa");
-    root.add<irs::ByEditDistance>(MakeFilter("title", "b", 1, 0, false, "aaa"));
+    AppendEditDistance(root, MakeFilter("title", "b", 1, 0, false, "aaa"));
     auto optimized = tests::Optimized(std::move(root));
     ASSERT_EQ(irs::Type<irs::LevenshteinAutomatonFilter>::id(),
               optimized->type());
@@ -1055,37 +1037,42 @@ TEST(by_edit_distance_test, fuse_prefix_into_levenshtein) {
 }
 
 TEST(by_edit_distance_test, fuse_prefix_multiple) {
-  irs::And root;
+  irs::BooleanFilter root;
   AppendPrefix(root, "title", "aa");
-  root.add<irs::ByEditDistance>(MakeFilter("title", "aaaa", 2, 0));
-  root.add<irs::ByEditDistance>(MakeFilter("title", "aab", 1, 0));
+  AppendEditDistance(root, MakeFilter("title", "aaaa", 2, 0));
+  AppendEditDistance(root, MakeFilter("title", "aab", 1, 0));
   auto optimized = tests::Optimized(std::move(root));
-  ASSERT_EQ(irs::Type<irs::And>::id(), optimized->type());
-  auto& node = sdb::basics::downCast<irs::And>(*optimized);
-  ASSERT_EQ(2, node.size());
-  ASSERT_EQ(irs::Type<irs::LevenshteinAutomatonFilter>::id(), node[0].type());
-  ASSERT_EQ(irs::Type<irs::LevenshteinAutomatonFilter>::id(), node[1].type());
+  ASSERT_EQ(irs::Type<irs::BooleanFilter>::id(), optimized->type());
+  auto& node = sdb::basics::downCast<irs::BooleanFilter>(*optimized);
+  ASSERT_EQ(2, node.Size(irs::Occur::Must));
+  auto must = node.Filters(irs::Occur::Must);
+  ASSERT_EQ(2, must.size());
+  ASSERT_EQ(irs::Type<irs::LevenshteinAutomatonFilter>::id(), must[0]->type());
+  ASSERT_EQ(irs::Type<irs::LevenshteinAutomatonFilter>::id(), must[1]->type());
 }
 
 TEST(by_edit_distance_test, fuse_prefix_non_matching) {
-  irs::And root;
+  irs::BooleanFilter root;
   AppendPrefix(root, "title", "zz");
-  root.add<irs::ByEditDistance>(MakeFilter("title", "aaaa", 2, 0));
+  AppendEditDistance(root, MakeFilter("title", "aaaa", 2, 0));
   auto optimized = tests::Optimized(std::move(root));
-  ASSERT_EQ(irs::Type<irs::And>::id(), optimized->type());
-  auto& node = sdb::basics::downCast<irs::And>(*optimized);
-  ASSERT_EQ(2, node.size());
-  ASSERT_EQ(irs::Type<irs::ByPrefix>::id(), node[0].type());
-  ASSERT_EQ(irs::Type<irs::LevenshteinAutomatonFilter>::id(), node[1].type());
+  ASSERT_EQ(irs::Type<irs::BooleanFilter>::id(), optimized->type());
+  auto& node = sdb::basics::downCast<irs::BooleanFilter>(*optimized);
+  ASSERT_EQ(2, node.Size(irs::Occur::Must));
+  auto must = node.Filters(irs::Occur::Must);
+  ASSERT_EQ(2, must.size());
+  ASSERT_EQ(irs::Type<irs::ByPrefix>::id(), must[0]->type());
+  ASSERT_EQ(irs::Type<irs::LevenshteinAutomatonFilter>::id(), must[1]->type());
 }
 
 TEST(by_edit_distance_test, fuse_prefix_different_field) {
-  irs::And root;
+  irs::BooleanFilter root;
   AppendPrefix(root, "title", "aa");
-  root.add<irs::ByEditDistance>(MakeFilter("body", "aaaa", 2, 0));
+  AppendEditDistance(root, MakeFilter("body", "aaaa", 2, 0));
   auto optimized = tests::Optimized(std::move(root));
-  ASSERT_EQ(irs::Type<irs::And>::id(), optimized->type());
-  ASSERT_EQ(2, sdb::basics::downCast<irs::And>(*optimized).size());
+  ASSERT_EQ(irs::Type<irs::BooleanFilter>::id(), optimized->type());
+  ASSERT_EQ(2, sdb::basics::downCast<irs::BooleanFilter>(*optimized)
+                 .Size(irs::Occur::Must));
 }
 
 TEST_P(ByEditDistanceTestCase, fuse_prefix) {
@@ -1097,18 +1084,106 @@ TEST_P(ByEditDistanceTestCase, fuse_prefix) {
   auto rdr = open_reader(irs::tests::DefaultReaderOptions());
 
   {
-    irs::And root;
+    irs::BooleanFilter root;
     AppendPrefix(root, "title", "aa");
-    root.add<irs::ByEditDistance>(MakeFilter("title", "aaaa", 2, 1024));
+    AppendEditDistance(root, MakeFilter("title", "aaaa", 2, 1024));
     CheckQuery(*tests::Optimized(std::move(root)),
                Docs{5, 7, 13, 16, 19, 27, 32}, rdr);
   }
   {
-    irs::And root;
+    irs::BooleanFilter root;
     AppendPrefix(root, "title", "aaa");
-    root.add<irs::ByEditDistance>(MakeFilter("title", "aaaw", 0, 1024));
+    AppendEditDistance(root, MakeFilter("title", "aaaw", 0, 1024));
     CheckQuery(*tests::Optimized(std::move(root)), Docs{32}, rdr);
   }
+}
+
+TEST_P(ByEditDistanceTestCase, blends_document_frequency) {
+  {
+    tests::JsonDocGenerator gen(resource("levenshtein_sequential.json"),
+                                &tests::GenericJsonFieldFactory);
+    add_segment(gen);
+  }
+  auto rdr = open_reader(irs::tests::DefaultReaderOptions());
+  ASSERT_EQ(1, rdr.size());
+
+  auto scorer = irs::BM25::Make(irs::BM25::Options{});
+  MaxMemoryCounter counter;
+  irs::ColumnArgsFetcher fetcher;
+
+  const auto scores_of = [&](const irs::Filter& filter) {
+    std::map<irs::doc_id_t, irs::score_t> scores;
+    tests::PreparedFilter prepared{filter, rdr, scorer.get(), counter};
+    fetcher.Clear();
+    auto docs = prepared.ExecuteScored(0, fetcher);
+    auto score = docs->PrepareScore();
+    while (!irs::doc_limits::eof(docs->Advance())) {
+      fetcher.Fetch(docs->Value());
+      docs->FetchScoreArgs(0);
+      irs::score_t value{};
+      score.Score(&value, 1);
+      scores.emplace(docs->Value(), value);
+    }
+    return scores;
+  };
+
+  const auto exact = scores_of(MakeTermFilter("title", "aaaaaa"));
+  ASSERT_EQ(3, exact.size());
+  const auto exact_score = exact.begin()->second;
+  for (const auto& [doc, value] : exact) {
+    ASSERT_FLOAT_EQ(exact_score, value);
+  }
+
+  const auto fuzzy = scores_of(*MakeLevenshtein("title", "aaaaa", 1));
+  ASSERT_EQ(4, fuzzy.size());
+  for (const auto& [doc, value] : fuzzy) {
+    if (exact.contains(doc)) {
+      ASSERT_FLOAT_EQ(0.8f * exact_score, value) << doc;
+    } else {
+      ASSERT_FLOAT_EQ(exact_score, value) << doc;
+    }
+  }
+}
+
+TEST_P(ByEditDistanceTestCase, max_merge_is_kept_whole_in_a_sum_parent) {
+  {
+    tests::JsonDocGenerator gen(resource("levenshtein_sequential.json"),
+                                &tests::GenericJsonFieldFactory);
+    add_segment(gen);
+  }
+  auto rdr = open_reader(irs::tests::DefaultReaderOptions());
+  auto scorer = irs::BM25::Make(irs::BM25::Options{});
+
+  const auto make = [](irs::ScoreMergeType merge) {
+    auto root = std::make_unique<irs::BooleanFilter>();
+    root->SetMergeType(merge);
+    root->Add(MakeLevenshtein("title", "aaaaa", 1), irs::Occur::Should);
+    root->Add(std::make_unique<irs::ByTerm>(MakeTermFilter("title", "def")),
+              irs::Occur::Should);
+    root->SetMinShouldMatch(1);
+    return root;
+  };
+
+  using Sizes = std::pair<size_t, size_t>;
+  const auto should_of = [&](const irs::Filter& filter,
+                             const irs::Scorer* order) -> Sizes {
+    tests::PreparedFilter prepared{filter, rdr, order};
+    const auto* query = prepared.Query(0);
+    if (query == nullptr || query->Kind() != irs::QueryKind::Boolean) {
+      ADD_FAILURE() << "not a boolean query";
+      return {};
+    }
+    const auto& should =
+      sdb::basics::downCast<irs::BooleanQuery>(*query).Bucket(
+        irs::Occur::Should);
+    return {should.postings.size(), should.filters.size()};
+  };
+
+  const Sizes kept{1, 1};
+  const Sizes flat{3, 0};
+  EXPECT_EQ(kept, should_of(*make(irs::ScoreMergeType::Sum), scorer.get()));
+  EXPECT_EQ(flat, should_of(*make(irs::ScoreMergeType::Max), scorer.get()));
+  EXPECT_EQ(flat, should_of(*make(irs::ScoreMergeType::Sum), nullptr));
 }
 
 static constexpr auto kTestDirs = tests::GetDirectories<tests::kTypesDefault>();

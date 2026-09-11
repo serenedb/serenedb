@@ -18,10 +18,12 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
+#include <array>
 #include <duckdb/main/database.hpp>
 #include <iostream>
-#include <iresearch/analysis/analyzer.hpp>
 #include <iresearch/analysis/segmentation_tokenizer.hpp>
+#include <iresearch/analysis/token_batch.hpp>
+#include <iresearch/analysis/tokenizer.hpp>
 #include <iresearch/formats/column/col_reader.hpp>
 #include <iresearch/formats/formats.hpp>
 #include <iresearch/index/directory_reader.hpp>
@@ -68,7 +70,7 @@ inline constexpr irs::field_id kBodyFieldId = 1;
 struct TextField {
   irs::field_id id{kBodyFieldId};
   std::string_view text;
-  irs::analysis::Analyzer::ptr tokenizer{
+  irs::analysis::Tokenizer::ptr tokenizer{
     irs::analysis::SegmentationTokenizer::Make(
       irs::analysis::SegmentationTokenizer::Options{})};
 
@@ -79,11 +81,22 @@ struct TextField {
            irs::IndexFeatures::Norm;
   }
 
-  irs::Tokenizer& GetTokens() const {
-    tokenizer->reset(text);
-    return *tokenizer;
-  }
+  irs::analysis::Tokenizer& GetTokens() const { return *tokenizer; }
+
+  std::string_view Value() const noexcept { return text; }
 };
+
+bool InsertTokens(const irs::IndexWriter::Document& doc, const auto& field) {
+  const duckdb::string_t value{field.Value().data(),
+                               static_cast<uint32_t>(field.Value().size())};
+  const irs::doc_id_t doc_id = doc.DocId();
+  return doc.WithTokens(field.Id(), field.GetIndexFeatures(), nullptr,
+                        [&](irs::FieldInverter& fld, irs::TokenSink& w) {
+                          fld.Configure(field.GetTokens().Traits());
+                          field.GetTokens().Fill(value, doc_id, w,
+                                                 {fld.Layout()});
+                        });
+}
 
 // Six documents chosen to make each filter's effect visible. Tokens are
 // lowercase-segmented; the indexed terms for doc 0 are
@@ -123,7 +136,7 @@ irs::DirectoryReader BuildIndex(irs::Directory& dir,
     for (auto [name, text] : kCorpus) {
       body.text = text;
       auto doc = trx.Insert();
-      doc.Insert(body);
+      InsertTokens(doc, body);
       names_out.emplace_back(name);
     }
     trx.Commit();
@@ -139,25 +152,34 @@ std::vector<std::string> RunFilter(const irs::DirectoryReader& reader,
                                    const std::vector<std::string>& names) {
   irs::Optimize(filter, {.scored = false});
 
-  auto collector = filter->MakeCollector(nullptr);
+  // Nothing here scores, so there is no collector and no statistics.
   std::vector<irs::QueryBuilder::ptr> queries;
   queries.reserve(reader.size());
   for (auto& segment : reader) {
-    queries.emplace_back(
-      filter->PrepareSegment(segment, {.collector = collector.get()}));
+    queries.emplace_back(filter->PrepareSegment(segment, {}));
   }
-  const auto stats = collector->Finish(irs::IResourceManager::gNoop);
-
   std::vector<std::string> hits;
   for (auto& query : queries) {
     if (!query) {
       continue;
     }
-    auto it = query->Execute({}, stats);
-    while (!irs::doc_limits::eof(it->advance())) {
-      const auto idx = it->value() - irs::doc_limits::min();
-      if (idx < names.size()) {
-        hits.push_back(names[idx]);
+    auto plan = query->PlanDocs({});
+    if (!plan) {
+      continue;
+    }
+    // `Run` fills a whole block and its bitset path writes past the count it
+    // produced, so the buffer carries the slack and the capacity it is told
+    // about does not.
+    irs::SlackBuf<irs::doc_id_t, irs::doc_limits::kMinCapacity,
+                  irs::doc_limits::kDocsSlack>
+      docs;
+    for (uint32_t n = 0;
+         (n = plan->Run(docs.data(), irs::doc_limits::kMinCapacity)) != 0;) {
+      for (uint32_t i = 0; i != n; ++i) {
+        const auto idx = docs[i] - irs::doc_limits::min();
+        if (idx < names.size()) {
+          hits.push_back(names[idx]);
+        }
       }
     }
   }

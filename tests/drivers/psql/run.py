@@ -21,6 +21,7 @@ Use --update once against a postgres oracle to populate goldens:
 from __future__ import annotations
 
 import argparse
+import fcntl
 import dataclasses
 import hashlib
 import html
@@ -278,6 +279,11 @@ def main() -> int:
     if driver and "psql_psql" not in driver.split(","):
         print("[psql] psql_psql not selected via SDB_DRV_DRIVER; skipping", file=sys.stderr)
         return 0
+
+    # The unfiltered \du and \dg goldens list every role in the cluster, so no
+    # concurrent lane may hold one while this suite runs.
+    roles_lock = open("/tmp/sdb-drivers-global-roles.lock", "w")
+    fcntl.flock(roles_lock, fcntl.LOCK_EX)
     probe = _psql_command()
     if subprocess.run(["sh", "-c", f"command -v {shlex.quote(probe[0])}"], capture_output=True).returncode != 0:
         print(f"[psql] {probe[0]} not installed; skipping", file=sys.stderr)

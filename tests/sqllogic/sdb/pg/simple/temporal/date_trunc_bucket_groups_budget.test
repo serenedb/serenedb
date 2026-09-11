@@ -1,0 +1,266 @@
+statement ok
+SET TimeZone = 'Etc/UTC';
+
+statement ok
+CREATE TABLE hours AS SELECT TIMESTAMP '2024-01-01 00:00:00' + INTERVAL (i * 37) MINUTE AS ts, (i % 1000)::INTEGER AS v FROM range(0, 30000) t(i);
+
+query
+EXPLAIN SELECT date_trunc('hour', ts) AS h, count(*) AS c FROM hours GROUP BY 1;
+----
+QUERY PLAN
+╭─ PROJECTION ───────────────────────────────────────╮
+│ Projections:                                       │
+│ __internal_date_trunc_unbucket(#0, 3600000000, 0), │
+│ #1                                                 │
+│ ~15,000 rows                                       │
+╰──────────────────────────┬─────────────────────────╯
+╭─ PERFECT_HASH_GROUP_BY ──┴─────────────────────────╮
+│ Groups: #0                                         │
+│ Aggregates: count_star()                           │
+│ ~15,000 rows                                       │
+╰──────────────────────────┬─────────────────────────╯
+╭─ PROJECTION ─────────────┴─────────────────────────╮
+│ Projections:                                       │
+│ __internal_date_trunc_bucket(ts, 3600000000, 0)    │
+│ ~30,000 rows                                       │
+╰──────────────────────────┬─────────────────────────╯
+╭─ SEQ_SCAN ───────────────┴─────────────────────────╮
+│ Table: hours                                       │
+│ Type: Sequential Scan                              │
+│ Projections: ts                                    │
+│ ~30,000 rows                                       │
+╰────────────────────────────────────────────────────╯
+
+query
+EXPLAIN SELECT date_trunc('hour', ts) AS h, count(*) AS c, sum(v) AS s, avg(v) AS a, min(v) AS lo, max(v) AS hi FROM hours GROUP BY 1;
+----
+QUERY PLAN
+╭─ PROJECTION ─────────────────────────────────╮
+│ Projections:                                 │
+│ #0, #1, #2,                                  │
+│ "/"(CAST(#2 AS DOUBLE), CAST(#1 AS DOUBLE)), │
+│ #3, #4                                       │
+│ ~15,000 rows                                 │
+╰───────────────────────┬──────────────────────╯
+╭─ HASH_GROUP_BY ───────┴──────────────────────╮
+│ Groups: #0                                   │
+│ Aggregates: count_star(),                    │
+│             sum_no_overflow(#1), min(#1),    │
+│             max(#1)                          │
+│ ~15,000 rows                                 │
+╰───────────────────────┬──────────────────────╯
+╭─ PROJECTION ──────────┴──────────────────────╮
+│ Projections: h, v                            │
+│ ~30,000 rows                                 │
+╰───────────────────────┬──────────────────────╯
+╭─ SEQ_SCAN ────────────┴──────────────────────╮
+│ Table: hours                                 │
+│ Type: Sequential Scan                        │
+│ Projections: ts, v                           │
+│ ~30,000 rows                                 │
+╰──────────────────────────────────────────────╯
+
+query
+EXPLAIN SELECT date_trunc('day', ts) AS d, count(*) AS c, sum(v) AS s, avg(v) AS a, min(v) AS lo, max(v) AS hi FROM hours GROUP BY 1;
+----
+QUERY PLAN
+╭─ PROJECTION ────────────────────────────────────────╮
+│ Projections:                                        │
+│ #0, #1, #2,                                         │
+│ "/"(CAST(#3 AS DOUBLE), CAST(#6 AS DOUBLE)), #4, #5 │
+│ ~15,000 rows                                        │
+╰──────────────────────────┬──────────────────────────╯
+╭─ PROJECTION ─────────────┴──────────────────────────╮
+│ Projections:                                        │
+│ __internal_date_trunc_unbucket(#0, 86400000000, 0), │
+│ #1, #2, #2, #3, #4, #1                              │
+│ ~15,000 rows                                        │
+╰──────────────────────────┬──────────────────────────╯
+╭─ PERFECT_HASH_GROUP_BY ──┴──────────────────────────╮
+│ Groups: #0                                          │
+│ Aggregates: count_star(), sum_no_overflow(#1),      │
+│             min(#1), max(#1)                        │
+│ ~15,000 rows                                        │
+╰──────────────────────────┬──────────────────────────╯
+╭─ PROJECTION ─────────────┴──────────────────────────╮
+│ Projections:                                        │
+│ __internal_date_trunc_bucket(ts, 86400000000, 0), v │
+│ ~30,000 rows                                        │
+╰──────────────────────────┬──────────────────────────╯
+╭─ SEQ_SCAN ───────────────┴──────────────────────────╮
+│ Table: hours                                        │
+│ Type: Sequential Scan                               │
+│ Projections: ts, v                                  │
+│ ~30,000 rows                                        │
+╰─────────────────────────────────────────────────────╯
+
+query
+SELECT count(*) AS groups, sum(c) AS rows_total, min(h)::VARCHAR AS first, max(h)::VARCHAR AS last FROM (SELECT date_trunc('hour', ts) AS h, count(*) AS c FROM hours GROUP BY 1);
+----
+groups	rows_total	first	last
+18500	30000	2024-01-01 00:00:00	2026-02-09 19:00:00
+
+query
+SELECT date_trunc('hour', ts)::VARCHAR AS h, count(*) AS c, sum(v) AS s FROM hours GROUP BY 1 ORDER BY 1 LIMIT 3;
+----
+h	c	s
+2024-01-01 00:00:00	2	1
+2024-01-01 01:00:00	2	5
+2024-01-01 02:00:00	1	4
+
+query
+SELECT date_trunc('day', ts)::VARCHAR AS d, count(*) AS c, sum(v) AS s, min(v) AS lo, max(v) AS hi FROM hours GROUP BY 1 ORDER BY 1 LIMIT 3;
+----
+d	c	s	lo	hi
+2024-01-01 00:00:00	39	741	0	38
+2024-01-02 00:00:00	39	2262	39	77
+2024-01-03 00:00:00	39	3783	78	116
+
+statement ok
+CREATE TABLE ld AS SELECT TIMESTAMP '2023-11-15 00:00:00' + INTERVAL (i * 977) MINUTE AS ts, (TIMESTAMP '2023-11-15 00:00:00' + INTERVAL (i * 977) MINUTE)::TIMESTAMPTZ AS tstz, (DATE '2023-11-15' + (i % 500)::INTEGER)::DATE AS d, i AS v FROM range(0, 1500) t(i);
+
+statement ok
+INSERT INTO ld VALUES (NULL, NULL, NULL, -1);
+
+statement ok
+SET TimeZone = 'Europe/Berlin';
+
+query
+EXPLAIN SELECT last_day(tstz) AS d, count(*) AS c FROM ld GROUP BY 1;
+----
+QUERY PLAN
+╭─ PROJECTION ───────────────────────────────────────────────╮
+│ Projections:                                               │
+│ last_day(__internal_icu_date_trunc_unbucket('month', #0)), │
+│ #1                                                         │
+│ ~750 rows                                                  │
+╰──────────────────────────────┬─────────────────────────────╯
+╭─ PERFECT_HASH_GROUP_BY ──────┴─────────────────────────────╮
+│ Groups: #0                                                 │
+│ Aggregates: count_star()                                   │
+│ ~750 rows                                                  │
+╰──────────────────────────────┬─────────────────────────────╯
+╭─ PROJECTION ─────────────────┴─────────────────────────────╮
+│ Projections:                                               │
+│ __internal_icu_date_trunc_bucket('month', tstz)            │
+│ ~1,501 rows                                                │
+╰──────────────────────────────┬─────────────────────────────╯
+╭─ SEQ_SCAN ───────────────────┴─────────────────────────────╮
+│ Table: ld                                                  │
+│ Type: Sequential Scan                                      │
+│ Projections: tstz                                          │
+│ ~1,501 rows                                                │
+╰────────────────────────────────────────────────────────────╯
+
+query
+SELECT coalesce(last_day(ts)::VARCHAR, 'null') AS d, count(*) AS c FROM ld GROUP BY 1 ORDER BY 1 LIMIT 4;
+----
+d	c
+2023-11-30	24
+2023-12-31	46
+2024-01-31	45
+2024-02-29	43
+
+query
+SELECT coalesce(last_day(d)::VARCHAR, 'null') AS d, count(*) AS c FROM ld GROUP BY 1 ORDER BY 1 LIMIT 4;
+----
+d	c
+2023-11-30	48
+2023-12-31	93
+2024-01-31	93
+2024-02-29	87
+
+query
+SELECT coalesce(last_day(tstz)::VARCHAR, 'null') AS d, count(*) AS c, sum(v) AS s FROM ld GROUP BY 1 ORDER BY 1;
+----
+d	c	s
+2023-11-30	24	276
+2023-12-31	46	2139
+2024-01-31	45	4140
+2024-02-29	43	5848
+2024-03-31	46	8303
+2024-04-30	44	9922
+2024-05-31	46	12443
+2024-06-30	44	13882
+2024-07-31	46	16583
+2024-08-31	45	18270
+2024-09-30	44	19822
+2024-10-31	46	22793
+2024-11-30	44	23782
+2024-12-31	46	26933
+2025-01-31	46	29049
+2025-02-28	41	27675
+2025-03-31	46	33051
+2025-04-30	44	33594
+2025-05-31	46	37191
+2025-06-30	44	37554
+2025-07-31	46	41331
+2025-08-31	45	42480
+2025-09-30	44	43494
+2025-10-31	46	47541
+2025-11-30	44	47454
+2025-12-31	46	51681
+2026-01-31	46	53797
+2026-02-28	41	49733
+2026-03-31	46	57799
+2026-04-30	44	57266
+2026-05-31	46	61939
+2026-06-30	44	61226
+2026-07-31	46	66079
+2026-08-31	40	59180
+null	1	-1
+
+statement ok
+SET disabled_optimizers = 'compressed_materialization';
+
+query
+SELECT coalesce(last_day(tstz)::VARCHAR, 'null') AS d, count(*) AS c, sum(v) AS s FROM ld GROUP BY 1 ORDER BY 1;
+----
+d	c	s
+2023-11-30	24	276
+2023-12-31	46	2139
+2024-01-31	45	4140
+2024-02-29	43	5848
+2024-03-31	46	8303
+2024-04-30	44	9922
+2024-05-31	46	12443
+2024-06-30	44	13882
+2024-07-31	46	16583
+2024-08-31	45	18270
+2024-09-30	44	19822
+2024-10-31	46	22793
+2024-11-30	44	23782
+2024-12-31	46	26933
+2025-01-31	46	29049
+2025-02-28	41	27675
+2025-03-31	46	33051
+2025-04-30	44	33594
+2025-05-31	46	37191
+2025-06-30	44	37554
+2025-07-31	46	41331
+2025-08-31	45	42480
+2025-09-30	44	43494
+2025-10-31	46	47541
+2025-11-30	44	47454
+2025-12-31	46	51681
+2026-01-31	46	53797
+2026-02-28	41	49733
+2026-03-31	46	57799
+2026-04-30	44	57266
+2026-05-31	46	61939
+2026-06-30	44	61226
+2026-07-31	46	66079
+2026-08-31	40	59180
+null	1	-1
+
+query
+SELECT count(*) AS groups, sum(c) AS rows_total, min(h)::VARCHAR AS first, max(h)::VARCHAR AS last FROM (SELECT date_trunc('hour', ts) AS h, count(*) AS c FROM hours GROUP BY 1);
+----
+groups	rows_total	first	last
+18500	30000	2024-01-01 00:00:00	2026-02-09 19:00:00
+
+statement ok
+RESET disabled_optimizers;
+
+statement ok
+SET TimeZone = 'Etc/UTC';

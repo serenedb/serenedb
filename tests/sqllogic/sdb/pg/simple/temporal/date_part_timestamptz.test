@@ -1,0 +1,69 @@
+statement ok
+SET TimeZone = 'Europe/Berlin';
+
+query
+SELECT
+  date_part('hour', TIMESTAMPTZ '2024-10-27 00:30:00+00') AS hour_first_occurrence,
+  date_part('timezone', TIMESTAMPTZ '2024-10-27 00:30:00+00') AS offset_before_fallback,
+  date_part('timezone', TIMESTAMPTZ '2024-10-27 01:30:00+00') AS offset_after_fallback,
+  date_part('isodow', TIMESTAMPTZ '2024-10-27 00:30:00+00') AS isodow,
+  date_part('epoch', TIMESTAMPTZ '2024-10-27 00:30:00.5+00') AS epoch,
+  date_part('julian', TIMESTAMPTZ '2024-10-27 00:30:00+00') AS julian;
+----
+hour_first_occurrence	offset_before_fallback	offset_after_fallback	isodow	epoch	julian
+2	7200	3600	7	1729989000.5	2460611.1041666665
+
+query
+SELECT
+  (TIMESTAMPTZ '2024-03-31 01:30:00+00')::TIMESTAMP::VARCHAR AS to_naive_after_gap,
+  (TIMESTAMP '2024-03-31 02:30:00')::TIMESTAMPTZ::VARCHAR AS from_naive_in_gap,
+  (TIMESTAMP '2024-10-27 02:30:00')::TIMESTAMPTZ::VARCHAR AS from_naive_duplicated,
+  (TIMESTAMPTZ '2024-10-27 00:30:00+00')::TIMETZ::VARCHAR AS to_timetz,
+  timezone('America/New_York', TIMESTAMPTZ '2024-03-10 06:30:00+00')::VARCHAR AS at_time_zone_to_naive,
+  timezone('America/New_York', TIMESTAMP '2024-03-10 02:30:00')::VARCHAR AS at_time_zone_from_naive_in_gap;
+----
+to_naive_after_gap	from_naive_in_gap	from_naive_duplicated	to_timetz	at_time_zone_to_naive	at_time_zone_from_naive_in_gap
+2024-03-31 03:30:00	2024-03-31 03:30:00+02	2024-10-27 02:30:00+01	02:30:00+02	2024-03-10 01:30:00	2024-03-10 08:30:00+01
+
+query
+SELECT u, date_part(u, TIMESTAMPTZ '2024-10-27 00:30:00+00') AS part
+FROM (VALUES ('hour'), ('minute'), ('dow'), ('week'), ('timezone')) t(u) ORDER BY u;
+----
+u	part
+dow	0
+hour	2
+minute	30
+timezone	7200
+week	43
+
+
+statement ok
+SET TimeZone = 'America/Sao_Paulo';
+
+query
+SELECT
+  last_day(TIMESTAMPTZ '1965-01-15 12:00:00-03')::VARCHAR AS last_day_before_midnight_gap,
+  last_day(TIMESTAMPTZ '2024-02-10 12:00:00-03')::VARCHAR AS last_day_leap_february,
+  monthname(TIMESTAMPTZ '2024-02-29 02:59:59-03') AS monthname,
+  dayname(TIMESTAMPTZ '2024-02-29 02:59:59-03') AS dayname;
+----
+last_day_before_midnight_gap	last_day_leap_february	monthname	dayname
+1965-01-31	2024-02-29	February	Thursday
+
+
+statement ok
+SET TimeZone = 'Asia/Kolkata';
+
+query
+SELECT
+  date_part('hour', TIMESTAMPTZ '2024-03-15 14:45:00+00') AS hour,
+  date_part('minute', TIMESTAMPTZ '2024-03-15 14:45:00+00') AS minute,
+  date_part('timezone_hour', TIMESTAMPTZ '2024-03-15 14:45:00+00') AS timezone_hour,
+  date_part('timezone_minute', TIMESTAMPTZ '2024-03-15 14:45:00+00') AS timezone_minute;
+----
+hour	minute	timezone_hour	timezone_minute
+20	15	5	30
+
+
+statement ok
+RESET TimeZone;

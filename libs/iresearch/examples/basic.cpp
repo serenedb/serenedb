@@ -24,8 +24,9 @@
 #include <duckdb/common/vector/string_vector.hpp>
 #include <duckdb/main/database.hpp>
 #include <iostream>
-#include <iresearch/analysis/analyzer.hpp>
 #include <iresearch/analysis/segmentation_tokenizer.hpp>
+#include <iresearch/analysis/token_batch.hpp>
+#include <iresearch/analysis/tokenizer.hpp>
 #include <iresearch/formats/column/col_reader.hpp>
 #include <iresearch/formats/column/column_reader.hpp>
 #include <iresearch/formats/column/column_writer.hpp>
@@ -35,9 +36,9 @@
 #include <iresearch/index/norm.hpp>
 #include <iresearch/parser/parser.hpp>
 #include <iresearch/search/bm25.hpp>
+#include <iresearch/search/boolean_filter.hpp>
 #include <iresearch/search/doc_collector.hpp>
 #include <iresearch/search/filter_optimizer.hpp>
-#include <iresearch/search/mixed_boolean_filter.hpp>
 #include <iresearch/search/scorer.hpp>
 #include <iresearch/store/memory_directory.hpp>
 #include <iresearch/store/store_utils.hpp>
@@ -66,13 +67,13 @@ inline constexpr irs::field_id kTitleColumnId = 1;
 inline constexpr irs::field_id kBodyColumnId = 2;
 
 // A minimal text field that tokenizes its value for the inverted index.
-// Fields must provide: Name(), GetIndexFeatures(), GetTokens().
+// Fields must provide: Name(), GetIndexFeatures(), GetTokens(), Value().
 // Stored values are written separately into the .col writer (see
 // AppendStoredText below) -- the legacy `Write()` STORE callback is gone.
 struct TextField {
   irs::field_id id;
   std::string_view text;
-  irs::analysis::Analyzer::ptr tokenizer{
+  irs::analysis::Tokenizer::ptr tokenizer{
     irs::analysis::SegmentationTokenizer::Make(
       irs::analysis::SegmentationTokenizer::Options{})};
 
@@ -83,11 +84,22 @@ struct TextField {
            irs::IndexFeatures::Norm;
   }
 
-  irs::Tokenizer& GetTokens() const {
-    tokenizer->reset(text);
-    return *tokenizer;
-  }
+  irs::analysis::Tokenizer& GetTokens() const { return *tokenizer; }
+
+  std::string_view Value() const noexcept { return text; }
 };
+
+bool InsertTokens(const irs::IndexWriter::Document& doc, const auto& field) {
+  const duckdb::string_t value{field.Value().data(),
+                               static_cast<uint32_t>(field.Value().size())};
+  const irs::doc_id_t doc_id = doc.DocId();
+  return doc.WithTokens(field.Id(), field.GetIndexFeatures(), nullptr,
+                        [&](irs::FieldInverter& fld, irs::TokenSink& w) {
+                          fld.Configure(field.GetTokens().Traits());
+                          field.GetTokens().Fill(value, doc_id, w,
+                                                 {fld.Layout()});
+                        });
+}
 
 // Append one BLOB row to a cs column. Wraps the per-row-at-a-time pattern
 // the example uses (one Insert per doc, one stored value per field).
@@ -112,8 +124,8 @@ void IndexDocument(irs::IndexWriter::Transaction& ctx, TextField& title_field,
   body_field.text = body;
 
   auto doc = ctx.Insert();
-  std::array<TextField*, 2> fields{&title_field, &body_field};
-  doc.Insert(fields.begin(), fields.end());
+  InsertTokens(doc, title_field);
+  InsertTokens(doc, body_field);
 
   auto* cs = doc.GetColWriter();
   if (cs == nullptr) {
@@ -136,15 +148,15 @@ void IndexDocument(irs::IndexWriter::Transaction& ctx, TextField& title_field,
 //                   (term~N), ranges ([min TO max]).
 irs::Filter::ptr ParseQuery(std::string_view query_str,
                             irs::field_id default_field,
-                            irs::analysis::Analyzer& tokenizer,
+                            irs::analysis::Tokenizer& tokenizer,
                             bool scored = false) {
-  auto root = std::make_unique<irs::MixedBooleanFilter>();
+  auto root = std::make_unique<irs::BooleanFilter>();
   sdb::ParserContext context{*root, default_field, tokenizer};
   if (!sdb::ParseQuery(context, query_str)) {
     std::cerr << "Query parse error: " << context.error_message << "\n";
     return {};
   }
-  if (root->empty()) {
+  if (!root->Valid()) {
     return {};
   }
   irs::Filter::ptr filter = std::move(root);
@@ -155,22 +167,23 @@ irs::Filter::ptr ParseQuery(std::string_view query_str,
 // Helper: count documents matching a filter across all segments.
 size_t CountMatches(const irs::DirectoryReader& reader,
                     const irs::Filter& filter) {
-  auto collector = filter.MakeCollector(nullptr);
+  // Counting does not score, so there is no collector and no statistics.
   std::vector<irs::QueryBuilder::ptr> queries;
   queries.reserve(reader.size());
   for (auto& segment : reader) {
-    queries.emplace_back(
-      filter.PrepareSegment(segment, {.collector = collector.get()}));
+    queries.emplace_back(filter.PrepareSegment(segment, {}));
   }
-  const auto stats = collector->Finish(irs::IResourceManager::gNoop);
 
   size_t count = 0;
   for (auto& query : queries) {
     if (!query) {
       continue;
     }
-    auto docs = query->Execute({}, stats);
-    count += docs->count();
+    auto plan = query->PlanCount({});
+    if (!plan) {
+      continue;
+    }
+    count += plan->Run();
   }
   return count;
 }
@@ -238,7 +251,7 @@ void PrintIndexStats(const irs::DirectoryReader& reader) {
 
 // Search for a single term using Lucene syntax.
 void QuerySingleTerm(const irs::DirectoryReader& reader,
-                     irs::analysis::Analyzer& tokenizer) {
+                     irs::analysis::Tokenizer& tokenizer) {
   std::cout << "=== Single Term Query ===\n";
   auto filter = ParseQuery("search", kBodyColumnId, tokenizer);
   auto count = CountMatches(reader, *filter);
@@ -248,15 +261,15 @@ void QuerySingleTerm(const irs::DirectoryReader& reader,
 
 // Retrieve top-K results ranked by BM25 score.
 void QueryTopK(const irs::DirectoryReader& reader, const irs::Scorer& scorer,
-               irs::analysis::Analyzer& tokenizer) {
+               irs::analysis::Tokenizer& tokenizer) {
   std::cout << "=== Top-K with BM25 Scoring ===\n";
   auto filter = ParseQuery("search", kBodyColumnId, tokenizer, /*scored=*/true);
 
   constexpr size_t kTopK = 3;
   std::vector<irs::ScoreDoc> results(kTopK);
 
-  auto total = irs::ExecuteTopKWithCount(reader, *filter, scorer, kTopK,
-                                         std::span{results});
+  auto total = irs::ExecuteTopK(reader, *filter, scorer, kTopK,
+                                /*score_prune=*/false, std::span{results});
 
   std::cout << "Top " << kTopK << " results for 'search' "
             << "(total matches: " << total << "):\n";
@@ -269,7 +282,7 @@ void QueryTopK(const irs::DirectoryReader& reader, const irs::Scorer& scorer,
 
 // Search with boolean AND: both terms must be present.
 void QueryBooleanAnd(const irs::DirectoryReader& reader,
-                     irs::analysis::Analyzer& tokenizer) {
+                     irs::analysis::Tokenizer& tokenizer) {
   std::cout << "=== Boolean AND Query ===\n";
   auto filter = ParseQuery("+index +search", kBodyColumnId, tokenizer);
   auto count = CountMatches(reader, *filter);
@@ -278,7 +291,7 @@ void QueryBooleanAnd(const irs::DirectoryReader& reader,
 
 // Search with boolean OR: either term may match.
 void QueryBooleanOr(const irs::DirectoryReader& reader,
-                    irs::analysis::Analyzer& tokenizer) {
+                    irs::analysis::Tokenizer& tokenizer) {
   std::cout << "=== Boolean OR Query ===\n";
   auto filter = ParseQuery("database retrieval", kBodyColumnId, tokenizer);
   auto count = CountMatches(reader, *filter);
@@ -287,7 +300,7 @@ void QueryBooleanOr(const irs::DirectoryReader& reader,
 
 // Search for an exact phrase.
 void QueryPhrase(const irs::DirectoryReader& reader,
-                 irs::analysis::Analyzer& tokenizer) {
+                 irs::analysis::Tokenizer& tokenizer) {
   std::cout << "=== Phrase Query ===\n";
   auto filter = ParseQuery(R"("search engine")", kBodyColumnId, tokenizer);
   auto count = CountMatches(reader, *filter);
@@ -296,7 +309,7 @@ void QueryPhrase(const irs::DirectoryReader& reader,
 
 // Search using a prefix wildcard.
 void QueryPrefix(const irs::DirectoryReader& reader,
-                 irs::analysis::Analyzer& tokenizer) {
+                 irs::analysis::Tokenizer& tokenizer) {
   std::cout << "=== Prefix Query ===\n";
   auto filter = ParseQuery("rank*", kBodyColumnId, tokenizer);
   auto count = CountMatches(reader, *filter);
@@ -305,7 +318,7 @@ void QueryPrefix(const irs::DirectoryReader& reader,
 
 // Search with exclusion: require one term, exclude another.
 void QueryExclusion(const irs::DirectoryReader& reader,
-                    irs::analysis::Analyzer& tokenizer) {
+                    irs::analysis::Tokenizer& tokenizer) {
   std::cout << "=== Exclusion Query ===\n";
   auto filter = ParseQuery("+documents -database", kBodyColumnId, tokenizer);
   auto count = CountMatches(reader, *filter);
@@ -358,7 +371,7 @@ void ReadStoredFields(const irs::DirectoryReader& reader) {
 
 // Remove documents matching a query and print updated stats.
 void RemoveDocuments(irs::IndexWriter& writer,
-                     irs::analysis::Analyzer& tokenizer) {
+                     irs::analysis::Tokenizer& tokenizer) {
   std::cout << "=== Remove Documents ===\n";
   auto filter = ParseQuery("databases", kTitleColumnId, tokenizer);
   {

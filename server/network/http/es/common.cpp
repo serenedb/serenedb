@@ -24,6 +24,7 @@
 #include <simdjson.h>
 
 #include <duckdb/common/error_data.hpp>
+#include <utility>
 
 #include "network/pg/wire_frames.h"
 #include "pg/errcodes.h"
@@ -31,21 +32,21 @@
 
 namespace sdb::network::http::es {
 
-void WriteError(HttpResponseWriter& writer, int status, std::string_view type,
-                std::string_view reason) {
+void WriteError(HttpResponseWriter& writer, HttpStatus status,
+                std::string_view type, std::string_view reason) {
   simdjson::builder::string_builder sb;
   sb.append_raw(R"({"error":{"type":)");
   sb.escape_and_append_with_quotes(type);
   sb.append_raw(R"(,"reason":)");
   sb.escape_and_append_with_quotes(reason);
   sb.append_raw(R"(},"status":)");
-  sb.append(static_cast<int64_t>(status));
+  sb.append(static_cast<int64_t>(std::to_underlying(status)));
   sb.append_raw("}");
   WriteJson(writer, status, std::string_view{sb.view().value()});
 }
 
 void WriteIndexNotFound(HttpResponseWriter& writer, std::string_view index) {
-  WriteError(writer, 404, "index_not_found_exception",
+  WriteError(writer, HttpStatus::NotFound, "index_not_found_exception",
              absl::StrCat("no such index [", index, "]"));
 }
 
@@ -64,71 +65,43 @@ void WriteSqlError(HttpResponseWriter& writer, const duckdb::ErrorData& error,
       if (!index.empty()) {
         WriteIndexNotFound(writer, index);
       } else {
-        WriteError(writer, 404, "index_not_found_exception", data.errmsg);
+        WriteError(writer, HttpStatus::NotFound, "index_not_found_exception",
+                   data.errmsg);
       }
       return;
     case ERRCODE_DUPLICATE_TABLE:
-      WriteError(writer, 400, "resource_already_exists_exception", data.errmsg);
+      WriteError(writer, HttpStatus::BadRequest,
+                 "resource_already_exists_exception", data.errmsg);
       return;
     case ERRCODE_INVALID_NAME:
-      WriteError(writer, 400, "invalid_index_name_exception", data.errmsg);
+      WriteError(writer, HttpStatus::BadRequest, "invalid_index_name_exception",
+                 data.errmsg);
       return;
     case ERRCODE_INVALID_PARAMETER_VALUE:
-      WriteError(writer, 400, "illegal_argument_exception", data.errmsg);
+      WriteError(writer, HttpStatus::BadRequest, "illegal_argument_exception",
+                 data.errmsg);
       return;
     case ERRCODE_INVALID_TEXT_REPRESENTATION:
-      WriteError(writer, 400, "mapper_parsing_exception", data.errmsg);
+      WriteError(writer, HttpStatus::BadRequest, "mapper_parsing_exception",
+                 data.errmsg);
       return;
     case ERRCODE_UNIQUE_VIOLATION:
-      WriteError(writer, 409, "version_conflict_engine_exception", data.errmsg);
+      WriteError(writer, HttpStatus::Conflict,
+                 "version_conflict_engine_exception", data.errmsg);
       return;
     case ERRCODE_UNDEFINED_COLUMN:
       // Unknown field in a query/sort (BINDER errors land here too).
-      WriteError(writer, 400, "query_shard_exception", data.errmsg);
+      WriteError(writer, HttpStatus::BadRequest, "query_shard_exception",
+                 data.errmsg);
       return;
     case ERRCODE_INVALID_AUTHORIZATION_SPECIFICATION:
-      WriteError(writer, 403, "security_exception", data.errmsg);
+      WriteError(writer, HttpStatus::Forbidden, "security_exception",
+                 data.errmsg);
       return;
     default:
-      WriteError(writer, 500, "exception", data.errmsg);
+      WriteError(writer, HttpStatus::InternalError, "exception", data.errmsg);
       return;
   }
-}
-
-std::string SqlLiteral(std::string_view text) {
-  std::string out;
-  out.reserve(text.size() + 2);
-  out.push_back('\'');
-  for (const char c : text) {
-    if (c == '\'') {
-      out.push_back('\'');
-    }
-    out.push_back(c);
-  }
-  out.push_back('\'');
-  return out;
-}
-
-std::string SqlIdentifier(std::string_view name) {
-  std::string out;
-  out.reserve(name.size() + 2);
-  out.push_back('"');
-  for (const char c : name) {
-    if (c == '"') {
-      out.push_back('"');
-    }
-    out.push_back(c);
-  }
-  out.push_back('"');
-  return out;
-}
-
-std::string FlattenBody(const message::SequenceView& body) {
-  std::string out;
-  for (const auto buffer : body) {
-    out.append(reinterpret_cast<const char*>(buffer.data()), buffer.size());
-  }
-  return out;
 }
 
 }  // namespace sdb::network::http::es

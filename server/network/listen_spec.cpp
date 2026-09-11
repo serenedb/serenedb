@@ -20,7 +20,9 @@
 
 #include "network/listen_spec.h"
 
+#include <absl/algorithm/container.h>
 #include <absl/strings/ascii.h>
+#include <absl/strings/str_join.h>
 #include <absl/strings/str_split.h>
 #include <ada.h>
 #include <fast_float/fast_float.h>
@@ -128,11 +130,18 @@ void ApplyParam(ListenSpec& spec, std::string_view key,
       SDB_FATAL(GENERAL, "'api' is only valid on an http endpoint '", url, "'");
     }
     for (std::string_view a : absl::StrSplit(value, ',', absl::SkipEmpty())) {
-      if (a != "es" && a != "test") {
+      const auto it = absl::c_find_if(
+        kHttpApis, [&](const auto& api) { return api.first == a; });
+      if (it == kHttpApis.end()) {
         SDB_FATAL(GENERAL, "unknown api '", a, "' in endpoint '", url,
-                  "' (known: es, test)");
+                  "' (known: ",
+                  absl::StrJoin(kHttpApis, ", ",
+                                [](std::string* out, const auto& api) {
+                                  absl::StrAppend(out, api.first);
+                                }),
+                  ")");
       }
-      spec.apis.emplace_back(a);
+      spec.apis.push_back(it->second);
     }
   } else if (key == "mode") {
     if (!is_unix) {

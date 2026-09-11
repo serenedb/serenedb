@@ -26,7 +26,6 @@
 #include "iresearch/index/directory_reader.hpp"
 #include "iresearch/index/index_writer.hpp"
 #include "iresearch/index/iterators.hpp"
-#include "iresearch/search/cost.hpp"
 #include "iresearch/search/vector_similarity_filter.hpp"
 #include "iresearch/search/vector_similarity_query.hpp"
 #include "iresearch/store/memory_directory.hpp"
@@ -40,14 +39,18 @@ inline constexpr irs::field_id kVec = 1;
 inline constexpr irs::field_id kName = 2;
 inline constexpr uint32_t kDim = 4;
 
-// The executed KnnVectorQuery iterator must honor arbitrary interleavings of
-// advance() and seek(): the quantized per-cluster iterator serves docs from a
-// buffered posting leaf block whose underlying cursor already sits at the
-// block's last doc, so seek() has to resolve targets from the buffer instead
-// of delegating to the (already drained) source. A regression here silently
-// skips docs when a pushed-down filter makes the vector side the conjunction
-// lead (see the sqllogic counterpart in inverted_index_ivf_filter.test); this
-// drives the iterator directly, with no SQL planner in between.
+// The kNN query's lead must honor arbitrary interleavings of Advance() and
+// Seek(): the quantized per-cluster iterator serves docs from a buffered
+// posting leaf block whose underlying cursor already sits at the block's last
+// doc, so Seek() has to resolve targets from the buffer instead of delegating
+// to the (already drained) source. A regression here silently skips docs when
+// a pushed-down filter makes the vector side the conjunction lead (see the
+// sqllogic counterpart in inverted_index_ivf_filter.test); this drives the
+// node directly, with no SQL planner in between.
+//
+// `k` is intrinsic to a kNN query, so `lead::Node` has no plan for one and the
+// walk is `lead::Node`. Nothing here scores, so the context carries no
+// scorer and PrepareScore() is never called.
 
 irs::IndexWriterOptions MakeWriterOptions(
   duckdb::CompressionType compression =
@@ -59,7 +62,7 @@ irs::IndexWriterOptions MakeWriterOptions(
     irs::ColumnOptions col;
     if (id == kVec) {
       col.compression = compression;
-      col.ivf_info = irs::IvfInfo{
+      col.ann_info = irs::AnnInfo{
         .centroids_id = kVec,
         .postings_id = kVec,
         .d = kDim,
@@ -105,16 +108,17 @@ irs::DirectoryReader BuildIndex(
     irs::IndexWriter::Make(dir, codec, irs::kOmCreate, std::move(opts));
   EXPECT_NE(nullptr, writer);
 
-  irs::tests::StringField name_field;
-  name_field.field_name = "name";
-  name_field.id = kName;
-  name_field.value = "doc";
   {
     auto trx = writer->GetBatch();
+    const duckdb::string_t name_value{"doc", 3};
     for (irs::doc_id_t i = 0; i < n; ++i) {
       auto doc = trx.Insert();
-      EXPECT_TRUE(doc.Insert(name_field));
-      WriteVectorAt(*doc.GetColWriter(), doc.DocId(), doc.DocId());
+      const auto d = doc.DocId();
+      EXPECT_TRUE(doc.WithField(
+        kName, irs::IndexFeatures::Freq, [&](irs::FieldInverter& fld) {
+          return fld.InvertKeywords([&](auto&& emit) { emit(name_value, d); });
+        }));
+      WriteVectorAt(*doc.GetColWriter(), d, d);
     }
     trx.Commit();
   }
@@ -139,10 +143,10 @@ irs::ByVectorSimilarity MakeKnnFilter() {
 // everything PrepareSegment needs to stay on it, so the test cannot silently
 // degrade to the raw-rerank path and pass vacuously.
 void AssertQuantizedPath(const irs::SubReader& segment) {
-  const auto* ivf = segment.Ivf(kVec);
-  ASSERT_NE(nullptr, ivf);
-  ASSERT_FALSE(ivf->Empty());
-  ASSERT_TRUE(ivf->HasQuantStats());
+  const auto* ann = segment.Ann(kVec);
+  ASSERT_NE(nullptr, ann);
+  ASSERT_FALSE(ann->Empty());
+  ASSERT_TRUE(ann->HasQuantStats());
   const auto* postings = segment.field(kVec);
   ASSERT_NE(nullptr, postings);
   ASSERT_NE(irs::IndexFeatures::None,
@@ -165,13 +169,11 @@ class VectorSimilarityQueryTest : public ::testing::Test {
     ASSERT_EQ(1U, _prepared->size());
   }
 
-  irs::DocIterator::ptr Execute() {
-    auto it = _prepared->Execute(0);
+  std::unique_ptr<::tests::LeadCursor> Execute() {
+    auto it = _prepared->ExecuteScored(0, _fetcher);
     EXPECT_NE(nullptr, it);
-    EXPECT_FALSE(irs::doc_limits::valid(it->value()));
-    const auto* cost = irs::get<irs::CostAttr>(*it);
-    EXPECT_NE(nullptr, cost);
-    EXPECT_EQ(_docs, cost->estimate());
+    EXPECT_FALSE(irs::doc_limits::valid(it->Value()));
+    EXPECT_EQ(_docs, _prepared->Estimate(0));
     return it;
   }
 
@@ -179,6 +181,7 @@ class VectorSimilarityQueryTest : public ::testing::Test {
   irs::MemoryDirectory _dir;
   irs::DirectoryReader _reader;
   irs::ByVectorSimilarity _filter;
+  irs::ColumnArgsFetcher _fetcher;
   std::optional<::tests::PreparedFilter> _prepared;
 };
 
@@ -186,87 +189,87 @@ TEST_F(VectorSimilarityQueryTest, AdvanceOnly) {
   Build(100);
   auto it = Execute();
   for (irs::doc_id_t doc = 1; doc <= _docs; ++doc) {
-    ASSERT_EQ(doc, it->advance());
+    ASSERT_EQ(doc, it->Advance());
   }
-  ASSERT_TRUE(irs::doc_limits::eof(it->advance()));
+  ASSERT_TRUE(irs::doc_limits::eof(it->Advance()));
 }
 
 TEST_F(VectorSimilarityQueryTest, SeekOnly) {
   Build(100);
   auto it = Execute();
-  ASSERT_EQ(1, it->seek(1));
-  ASSERT_EQ(42, it->seek(42));
-  ASSERT_EQ(42, it->seek(42));
-  ASSERT_EQ(42, it->seek(7));
-  ASSERT_EQ(100, it->seek(100));
-  ASSERT_TRUE(irs::doc_limits::eof(it->seek(101)));
+  ASSERT_EQ(1, it->Seek(1));
+  ASSERT_EQ(42, it->Seek(42));
+  ASSERT_EQ(42, it->Seek(42));
+  ASSERT_EQ(42, it->Seek(7));
+  ASSERT_EQ(100, it->Seek(100));
+  ASSERT_TRUE(irs::doc_limits::eof(it->Seek(101)));
 
   auto beyond = Execute();
-  ASSERT_TRUE(irs::doc_limits::eof(beyond->seek(101)));
+  ASSERT_TRUE(irs::doc_limits::eof(beyond->Seek(101)));
 }
 
-// Single posting leaf block (docs < 128): the first advance() buffers every
-// doc, then each seek() target lands inside that buffer.
+// Single posting leaf block (docs < 128): the first Advance() buffers every
+// doc, then each Seek() target lands inside that buffer.
 TEST_F(VectorSimilarityQueryTest, MixedAdvanceSeekSingleBlock) {
   Build(100);
   {
     auto it = Execute();
-    ASSERT_EQ(1, it->advance());
-    ASSERT_EQ(5, it->seek(5));
-    ASSERT_EQ(6, it->advance());
-    ASSERT_EQ(6, it->seek(6));
-    ASSERT_EQ(6, it->seek(3));
-    ASSERT_EQ(7, it->advance());
-    ASSERT_EQ(50, it->seek(50));
-    ASSERT_EQ(51, it->advance());
-    ASSERT_EQ(100, it->seek(100));
-    ASSERT_TRUE(irs::doc_limits::eof(it->advance()));
+    ASSERT_EQ(1, it->Advance());
+    ASSERT_EQ(5, it->Seek(5));
+    ASSERT_EQ(6, it->Advance());
+    ASSERT_EQ(6, it->Seek(6));
+    ASSERT_EQ(6, it->Seek(3));
+    ASSERT_EQ(7, it->Advance());
+    ASSERT_EQ(50, it->Seek(50));
+    ASSERT_EQ(51, it->Advance());
+    ASSERT_EQ(100, it->Seek(100));
+    ASSERT_TRUE(irs::doc_limits::eof(it->Advance()));
   }
-  // Every gap size: advance() to buffer the block, seek over 0..N-2 docs.
+  // Every gap size: Advance() to buffer the block, seek over 0..N-2 docs.
   for (irs::doc_id_t target = 2; target <= _docs; ++target) {
     auto it = Execute();
-    ASSERT_EQ(1, it->advance());
-    ASSERT_EQ(target, it->seek(target));
+    ASSERT_EQ(1, it->Advance());
+    ASSERT_EQ(target, it->Seek(target));
     if (target < _docs) {
-      ASSERT_EQ(target + 1, it->advance());
+      ASSERT_EQ(target + 1, it->Advance());
     } else {
-      ASSERT_TRUE(irs::doc_limits::eof(it->advance()));
+      ASSERT_TRUE(irs::doc_limits::eof(it->Advance()));
     }
   }
 }
 
 // Multiple leaf blocks (docs > 128): in-buffer seeks, cross-block seeks, and
-// advance() resuming after both.
+// Advance() resuming after both.
 TEST_F(VectorSimilarityQueryTest, MixedAdvanceSeekMultiBlock) {
   Build(300);
   {
     auto it = Execute();
-    ASSERT_EQ(1, it->advance());
-    ASSERT_EQ(100, it->seek(100));
-    ASSERT_EQ(101, it->advance());
-    ASSERT_EQ(130, it->seek(130));
-    ASSERT_EQ(131, it->advance());
-    ASSERT_EQ(256, it->seek(256));
-    ASSERT_EQ(257, it->advance());
-    ASSERT_EQ(300, it->seek(300));
-    ASSERT_TRUE(irs::doc_limits::eof(it->advance()));
+    ASSERT_EQ(1, it->Advance());
+    ASSERT_EQ(100, it->Seek(100));
+    ASSERT_EQ(101, it->Advance());
+    ASSERT_EQ(130, it->Seek(130));
+    ASSERT_EQ(131, it->Advance());
+    ASSERT_EQ(256, it->Seek(256));
+    ASSERT_EQ(257, it->Advance());
+    ASSERT_EQ(300, it->Seek(300));
+    ASSERT_TRUE(irs::doc_limits::eof(it->Advance()));
   }
   {
     auto it = Execute();
     for (irs::doc_id_t doc = 1; doc <= _docs; ++doc) {
-      ASSERT_EQ(doc, it->advance());
+      ASSERT_EQ(doc, it->Advance());
     }
-    ASSERT_TRUE(irs::doc_limits::eof(it->advance()));
+    ASSERT_TRUE(irs::doc_limits::eof(it->Advance()));
   }
   for (irs::doc_id_t target :
        {2u, 127u, 128u, 129u, 200u, 255u, 256u, 257u, 299u, 300u}) {
     auto it = Execute();
-    ASSERT_EQ(1, it->advance());
-    ASSERT_EQ(target, it->seek(target));
+    ASSERT_EQ(1, it->Advance());
+    ASSERT_EQ(target, it->Seek(target));
     if (target < _docs) {
-      ASSERT_EQ(target + 1, it->advance());
+      ASSERT_EQ(target + 1, it->Advance());
     } else {
-      ASSERT_TRUE(irs::doc_limits::eof(it->advance()));
+      ASSERT_TRUE(irs::doc_limits::eof(it->Advance()));
     }
   }
 }

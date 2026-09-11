@@ -70,30 +70,34 @@ namespace persistence {
 struct RoleData;
 }
 
-// One role, as the catalog holds it. Roles are cluster-wide and duckdb has no
-// counterpart, so CatalogType gained ROLE_ENTRY: this is what a mutator fills
-// in, what the catalog log records, and what SereneDBRoleEntry is.
-class Role final {
+// One role, as the catalog holds it: the record a mutator authors, the log
+// writes and SereneDBRoleEntry is built from. Roles are cluster-wide and duckdb
+// has no counterpart, so CatalogType gained ROLE_ENTRY. A role carries no
+// schema, conflict mode or SQL text, so the fields below are all there is to
+// one -- the entry that holds this record is the role.
+class CreateRoleInfo final : public duckdb::CreateInfo {
  public:
-  Role() = default;
-  Role(ObjectId id, persistence::RoleData data);
+  CreateRoleInfo();
+  CreateRoleInfo(ObjectId id, persistence::RoleData data);
 
   persistence::RoleData ToData() const;
-  // The role's own fields and none of CreateInfo's: a role carries no schema,
-  // conflict mode or SQL text, and the catalog log reads it back through
-  // Deserialize below rather than through CreateInfo's type switch.
+  // The role's own fields and none of CreateInfo's: the catalog log reads it
+  // back through Deserialize below rather than through CreateInfo's type
+  // switch.
   void SerializePayload(duckdb::Serializer& sink) const;
-  std::string ToString() const;
-  duckdb::unique_ptr<Role> Clone() const;
+  void Serialize(duckdb::Serializer& sink) const final;
+  std::string ToString() const final;
+  duckdb::unique_ptr<duckdb::CreateInfo> Copy() const final;
+  duckdb::unique_ptr<CreateRoleInfo> CopyRecord() const;
 
   static duckdb::unique_ptr<duckdb::CreateInfo> Deserialize(
     duckdb::Deserializer& src);
 
   ObjectId GetId() const noexcept { return _id; }
-  void SetId(ObjectId id) noexcept { _id = id; }
+  void SetId(ObjectId id) noexcept;
 
   std::string_view GetName() const noexcept { return _name; }
-  void SetRoleName(std::string_view name) { _name = name; }
+  void SetRoleName(std::string_view name);
 
   RoleOption Options() const noexcept { return _options; }
   bool Has(RoleOption o) const noexcept {
@@ -141,22 +145,6 @@ class Role final {
   std::string _password;
   std::string _name;
   ObjectId _id;
-};
-
-// A role on its way into the catalog or into the log, which is the only place
-// this shape is used: the entry holds the role itself.
-class CreateRoleInfo final : public duckdb::CreateInfo {
- public:
-  explicit CreateRoleInfo(std::shared_ptr<const Role> role);
-
-  const std::shared_ptr<const Role>& GetRole() const noexcept { return _role; }
-
-  duckdb::unique_ptr<duckdb::CreateInfo> Copy() const final;
-  void Serialize(duckdb::Serializer& sink) const final;
-  std::string ToString() const final;
-
- private:
-  std::shared_ptr<const Role> _role;
 };
 
 }  // namespace sdb::catalog

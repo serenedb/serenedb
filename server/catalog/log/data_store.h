@@ -194,18 +194,17 @@ class DataStore {
 };
 
 // Opens the statement's transaction on the database it runs in, which is what
-// takes its shared checkpoint lock. Called before the catalog mutex: that lock
-// waits for a running checkpoint, and a checkpoint waits -- through the
-// inverted-index refresh -- for work that needs the catalog mutex. Does nothing
-// before the databases are attached or outside a transaction.
+// takes its shared checkpoint lock -- ahead of the mutation's own work, so the
+// statement never reaches for it while holding catalog state a checkpoint
+// waits on. Does nothing before the databases are attached or outside a
+// transaction.
 void JoinStoreTransaction(duckdb::ClientContext& context,
                           ObjectId fallback_database_id);
 // The same for a mutation that only knows the statement it belongs to: the
 // rows live in the attachment of the database the statement runs in. A
-// statement reaching into another database is not joined on purpose -- opening
-// a second attachment's transaction under the catalog mutex is the lock-order
-// inversion this exists to avoid, and writing two databases at once is refused
-// anyway. Null (boot, background tasks, teardown) is a no-op.
+// statement reaching into another database is not joined on purpose -- writing
+// two databases at once is refused anyway. Null (boot, background tasks,
+// teardown) is a no-op.
 void JoinStoreTransaction(duckdb::ClientContext* context);
 
 // Runs `fn` with a normal serenedb client context for `db`, for building

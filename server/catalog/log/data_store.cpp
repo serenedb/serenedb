@@ -471,8 +471,8 @@ absl::Status DataStore::ExecuteCreateStoreIndex(duckdb::ClientContext* context,
   }
   WithBindContext(*_target, [&](duckdb::ClientContext& bind_ctx) {
     connector::AddInjectedInvertedIndex(
-      list,
-      connector::MakeInjectedInvertedIndex(bind_ctx, storage, *table, index));
+      list, connector::MakeInjectedInvertedIndex(bind_ctx, storage, *table,
+                                                 index, op.storage));
   });
   return absl::OkStatus();
 }

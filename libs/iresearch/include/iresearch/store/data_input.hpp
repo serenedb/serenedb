@@ -34,6 +34,8 @@ namespace irs {
 
 class DataInput : public duckdb::ReadStream {
  public:
+  static constexpr bool kVolatileAlways = false;
+
   enum class Type {
     Generic,
     BytesViewInput,
@@ -49,6 +51,9 @@ class DataInput : public duckdb::ReadStream {
   virtual int64_t ReadI64() = 0;
   virtual uint32_t ReadV32() = 0;
   virtual uint64_t ReadV64() = 0;
+
+  virtual void SkipV32() = 0;
+  virtual void SkipV64() = 0;
 
   virtual void Skip(uint64_t count) = 0;
 
@@ -190,6 +195,15 @@ class BufferedIndexInput : public IndexInput {
     return Remain() < bytes_io<uint64_t>::kMaxVSize
              ? irs::vread<uint64_t>(*this)
              : irs::vread<uint64_t>(_begin);
+  }
+
+  void SkipV32() final {
+    Remain() < bytes_io<uint32_t>::kMaxVSize ? irs::vskip<uint32_t>(*this)
+                                             : irs::vskip<uint32_t>(_begin);
+  }
+  void SkipV64() final {
+    Remain() < bytes_io<uint64_t>::kMaxVSize ? irs::vskip<uint64_t>(*this)
+                                             : irs::vskip<uint64_t>(_begin);
   }
 
   uint64_t Position() const noexcept final { return _start + Offset(); }

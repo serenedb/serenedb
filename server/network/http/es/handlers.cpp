@@ -37,6 +37,7 @@
 
 #include "connector/duckdb_client_state.h"
 #include "connector/functions/es.h"
+#include "network/http/common.h"
 #include "network/http/es/common.h"
 #include "network/http/es/dsl.h"
 #include "network/http/handler.h"
@@ -131,7 +132,7 @@ class BulkHandler final : public HttpHandler {
       index = FirstActionIndex(body);
     }
     if (index.empty()) {
-      WriteError(writer, 400, "illegal_argument_exception",
+      WriteError(writer, HttpStatus::BadRequest, "illegal_argument_exception",
                  "an index is required in the request URL or in the action "
                  "metadata");
       co_return {};
@@ -155,7 +156,7 @@ class BulkHandler final : public HttpHandler {
     if (!co_await MaybeRefresh(ctx, request, index, writer)) {
       co_return {};
     }
-    WriteJson(writer, 200,
+    WriteJson(writer, HttpStatus::Ok,
               absl::StrCat("{\"took\":", TookMs(start),
                            ",\"errors\":false,\"items\":[", items, "]}"));
     co_return {};
@@ -188,7 +189,7 @@ class DocHandler final : public HttpHandler {
     sb.append_raw(R"(,"_version":1,"result":"created","_shards":{"total":1,)"
                   R"("successful":1,"failed":0},"_seq_no":0,)"
                   R"("_primary_term":1})");
-    WriteJson(writer, 201, std::string_view{sb.view().value()});
+    WriteJson(writer, HttpStatus::Created, std::string_view{sb.view().value()});
     co_return {};
   }
 };
@@ -201,7 +202,7 @@ class RefreshHandler final : public HttpHandler {
     const auto sql =
       absl::StrCat("CALL es_refresh(", SqlLiteral(request.Param("index")), ")");
     if (co_await RunSql(ctx, sql, writer)) {
-      WriteJson(writer, 200,
+      WriteJson(writer, HttpStatus::Ok,
                 R"({"_shards":{"total":1,"successful":1,"failed":0}})");
     }
     co_return {};
@@ -231,7 +232,8 @@ class GetDocHandler final : public HttpHandler {
     sb.escape_and_append_with_quotes(id);
     if (result->RowCount() == 0) {
       sb.append_raw(R"(,"found":false})");
-      WriteJson(writer, 404, std::string_view{sb.view().value()});
+      WriteJson(writer, HttpStatus::NotFound,
+                std::string_view{sb.view().value()});
       co_return {};
     }
     const auto source = result->GetValue(0, 0).GetValue<std::string>();
@@ -239,7 +241,7 @@ class GetDocHandler final : public HttpHandler {
                   R"("found":true,"_source":)");
     sb.append_raw(source);
     sb.append_raw("}");
-    WriteJson(writer, 200, std::string_view{sb.view().value()});
+    WriteJson(writer, HttpStatus::Ok, std::string_view{sb.view().value()});
     co_return {};
   }
 };
@@ -261,11 +263,12 @@ class GetSourceHandler final : public HttpHandler {
       co_return {};
     }
     if (result->RowCount() == 0) {
-      WriteError(writer, 404, "resource_not_found_exception",
+      WriteError(writer, HttpStatus::NotFound, "resource_not_found_exception",
                  absl::StrCat("Document not found [", index, "]/[", id, "]"));
       co_return {};
     }
-    WriteJson(writer, 200, result->GetValue(0, 0).GetValue<std::string>());
+    WriteJson(writer, HttpStatus::Ok,
+              result->GetValue(0, 0).GetValue<std::string>());
     co_return {};
   }
 };
@@ -449,7 +452,7 @@ void WriteScrollPage(http::HttpResponseWriter& writer, ScrollState& state,
     sb.append_raw("}");
   }
   sb.append_raw("]}}");
-  WriteJson(writer, 200, std::string_view{sb.view().value()});
+  WriteJson(writer, HttpStatus::Ok, std::string_view{sb.view().value()});
 }
 
 // The keyset page statement shared by the initial scroll search and
@@ -495,11 +498,11 @@ yaclib::Task<bool> RunAggregation(RequestContext& ctx, const Aggregation& agg,
     case Aggregation::Kind::kDateHistogram:
       // agg.interval comes from the calendar_interval whitelist.
       sql = absl::StrCat(
-        "SELECT epoch_ms(date_trunc('", agg.interval, "', ", field,
-        ")) AS k, strftime(date_trunc('", agg.interval, "', ", field,
-        "), '%Y-%m-%dT%H:%M:%S.000Z') AS ks, count(*) AS c FROM ", relation,
+        "SELECT epoch_ms(b) AS k, strftime(b, '%Y-%m-%dT%H:%M:%S.000Z') AS "
+        "ks, c FROM (SELECT date_trunc('",
+        agg.interval, "', ", field, ") AS b, count(*) AS c FROM ", relation,
         " WHERE (", filter, ") AND ", field,
-        " IS NOT NULL GROUP BY 1, 2 ORDER BY 1");
+        " IS NOT NULL GROUP BY 1) ORDER BY 1");
       break;
     default: {
       std::string_view fn;
@@ -615,7 +618,8 @@ yaclib::Task<bool> FetchFieldTypes(RequestContext& ctx, std::string_view index,
   }
   const auto mapping = result->GetValue(0, 0).GetValue<std::string>();
   if (!ParseFieldTypes(mapping, fields)) {
-    WriteError(writer, 500, "exception", "malformed index mapping");
+    WriteError(writer, HttpStatus::InternalError, "exception",
+               "malformed index mapping");
     co_return false;
   }
   co_return true;
@@ -639,7 +643,7 @@ class SearchHandler final : public HttpHandler {
                         http::HttpResponseWriter& writer) override {
     const auto index = request.Param("index");
     if (IsIndexPattern(index)) {
-      WriteJson(writer, 200,
+      WriteJson(writer, HttpStatus::Ok,
                 R"({"took":0,"timed_out":false,"_shards":{"total":0,)"
                 R"("successful":0,"skipped":0,"failed":0},"hits":{)"
                 R"("total":{"value":0,"relation":"eq"},"max_score":null,)"
@@ -653,7 +657,7 @@ class SearchHandler final : public HttpHandler {
       if (const auto value = request.Query(param);
           !value.empty() &&
           !absl::SimpleAtoi(value, param[0] == 's' ? &spec.size : &spec.from)) {
-        WriteError(writer, 400, "illegal_argument_exception",
+        WriteError(writer, HttpStatus::BadRequest, "illegal_argument_exception",
                    absl::StrCat("[", param, "] must be an integer"));
         co_return {};
       }
@@ -827,7 +831,7 @@ class SearchHandler final : public HttpHandler {
       sb.append_raw("}");
     }
     sb.append_raw("}");
-    WriteJson(writer, 200, std::string_view{sb.view().value()});
+    WriteJson(writer, HttpStatus::Ok, std::string_view{sb.view().value()});
     co_return {};
   }
 
@@ -840,13 +844,13 @@ class SearchHandler final : public HttpHandler {
                               std::chrono::steady_clock::time_point start) {
     for (const auto& [key, value] : request.query) {
       if (key == "sort" && value != "_doc" && value != "_doc:asc") {
-        WriteError(writer, 400, "illegal_argument_exception",
+        WriteError(writer, HttpStatus::BadRequest, "illegal_argument_exception",
                    "scroll supports only the _doc sort order yet");
         co_return {};
       }
     }
     if (!spec.sort_fields.empty() || !spec.aggs.empty() || spec.from != 0) {
-      WriteError(writer, 400, "illegal_argument_exception",
+      WriteError(writer, HttpStatus::BadRequest, "illegal_argument_exception",
                  "scroll supports only plain _doc-ordered requests yet");
       co_return {};
     }
@@ -888,13 +892,14 @@ class ScrollHandler final : public HttpHandler {
     std::string scroll_id{request.Query("scroll_id")};
     if (scroll_id.empty() &&
         !ParseScrollIdBody(FlattenBody(request.body), scroll_id)) {
-      WriteError(writer, 400, "illegal_argument_exception",
+      WriteError(writer, HttpStatus::BadRequest, "illegal_argument_exception",
                  "scroll_id is required");
       co_return {};
     }
     ScrollState state;
     if (!DecodeScrollId(scroll_id, state)) {
-      WriteError(writer, 404, "search_context_missing_exception",
+      WriteError(writer, HttpStatus::NotFound,
+                 "search_context_missing_exception",
                  "No search context found for the given scroll id");
       co_return {};
     }
@@ -963,7 +968,7 @@ class ClearScrollHandler final : public HttpHandler {
  public:
   yaclib::Task<> Handle(RequestContext&, const HttpRequest&,
                         http::HttpResponseWriter& writer) override {
-    WriteJson(writer, 200, R"({"succeeded":true,"num_freed":1})");
+    WriteJson(writer, HttpStatus::Ok, R"({"succeeded":true,"num_freed":1})");
     co_return {};
   }
 };
@@ -975,7 +980,7 @@ class CountHandler final : public HttpHandler {
                         http::HttpResponseWriter& writer) override {
     const auto index = request.Param("index");
     if (IsIndexPattern(index)) {
-      WriteJson(writer, 200,
+      WriteJson(writer, HttpStatus::Ok,
                 R"({"count":0,"_shards":{"total":0,"successful":0,)"
                 R"("skipped":0,"failed":0}})");
       co_return {};
@@ -998,7 +1003,7 @@ class CountHandler final : public HttpHandler {
       co_return {};
     }
     const auto count = result->GetValue(0, 0).GetValue<int64_t>();
-    WriteJson(writer, 200,
+    WriteJson(writer, HttpStatus::Ok,
               absl::StrCat("{\"count\":", count,
                            ",\"_shards\":{\"total\":1,\"successful\":1,"
                            "\"skipped\":0,\"failed\":0}}"));
@@ -1010,7 +1015,7 @@ class RootHandler final : public HttpHandler {
  public:
   yaclib::Task<> Handle(RequestContext&, const HttpRequest&,
                         http::HttpResponseWriter& writer) override {
-    WriteJson(writer, 200,
+    WriteJson(writer, HttpStatus::Ok,
               R"({"name":"serenedb","cluster_name":"serenedb","version":{)"
               R"("number":"8.11.0","build_flavor":"default"},)"
               R"("tagline":"You Know, for Search"})");
@@ -1023,7 +1028,7 @@ class HealthHandler final : public HttpHandler {
   yaclib::Task<> Handle(RequestContext&, const HttpRequest&,
                         http::HttpResponseWriter& writer) override {
     WriteJson(
-      writer, 200,
+      writer, HttpStatus::Ok,
       R"({"cluster_name":"serenedb","status":"green","timed_out":false,)"
       R"("number_of_nodes":1,"number_of_data_nodes":1,)"
       R"("active_primary_shards":0,"active_shards":0,"relocating_shards":0,)"
@@ -1046,7 +1051,7 @@ class CreateIndexHandler final : public HttpHandler {
                    SqlLiteral(FlattenBody(request.body)), ")");
     if (co_await RunSql(ctx, sql, writer)) {
       WriteJson(
-        writer, 200,
+        writer, HttpStatus::Ok,
         absl::StrCat(R"({"acknowledged":true,"shards_acknowledged":true,)"
                      R"("index":")",
                      index, R"("})"));
@@ -1063,7 +1068,7 @@ class DeleteIndexHandler final : public HttpHandler {
     const auto sql = absl::StrCat("CALL es_drop_index(",
                                   SqlLiteral(request.Param("index")), ")");
     if (co_await RunSql(ctx, sql, writer)) {
-      WriteJson(writer, 200, R"({"acknowledged":true})");
+      WriteJson(writer, HttpStatus::Ok, R"({"acknowledged":true})");
     }
     co_return {};
   }
@@ -1077,7 +1082,7 @@ class IndexExistsHandler final : public HttpHandler {
     const auto sql =
       absl::StrCat("CALL es_mapping(", SqlLiteral(request.Param("index")), ")");
     if (co_await RunSql(ctx, sql, writer)) {
-      WriteJson(writer, 200, "{}");
+      WriteJson(writer, HttpStatus::Ok, "{}");
     }
     co_return {};
   }
@@ -1096,7 +1101,7 @@ class MappingHandler final : public HttpHandler {
     }
     const auto mappings = result->GetValue(0, 0).GetValue<std::string>();
     WriteJson(
-      writer, 200,
+      writer, HttpStatus::Ok,
       absl::StrCat(R"({")", index, R"(":{"mappings":)", mappings, "}}"));
     co_return {};
   }
@@ -1134,9 +1139,9 @@ class CatIndicesHandler final : public HttpHandler {
     }
     if (json) {
       body.push_back(']');
-      WriteJson(writer, 200, body);
+      WriteJson(writer, HttpStatus::Ok, body);
     } else {
-      WriteText(writer, 200, body);
+      WriteText(writer, HttpStatus::Ok, body);
     }
     co_return {};
   }
@@ -1149,7 +1154,7 @@ class NodesStatsHandler final : public HttpHandler {
   yaclib::Task<> Handle(RequestContext&, const HttpRequest&,
                         http::HttpResponseWriter& writer) override {
     WriteJson(
-      writer, 200,
+      writer, HttpStatus::Ok,
       R"({"_nodes":{"total":1,"successful":1,"failed":0},)"
       R"("cluster_name":"serenedb","nodes":{"sdb0":{"name":"serenedb-0",)"
       R"("jvm":{"gc":{"collectors":{}},"mem":{"pools":{}}},)"
@@ -1165,7 +1170,7 @@ class ForceMergeHandler final : public HttpHandler {
  public:
   yaclib::Task<> Handle(RequestContext&, const HttpRequest&,
                         http::HttpResponseWriter& writer) override {
-    WriteJson(writer, 200,
+    WriteJson(writer, HttpStatus::Ok,
               R"({"_shards":{"total":1,"successful":1,"failed":0}})");
     co_return {};
   }
@@ -1178,7 +1183,7 @@ class ClusterSettingsHandler final : public HttpHandler {
  public:
   yaclib::Task<> Handle(RequestContext&, const HttpRequest&,
                         http::HttpResponseWriter& writer) override {
-    WriteJson(writer, 200,
+    WriteJson(writer, HttpStatus::Ok,
               R"({"acknowledged":true,"persistent":{},"transient":{}})");
     co_return {};
   }
@@ -1190,7 +1195,7 @@ class IndexStatsHandler final : public HttpHandler {
  public:
   yaclib::Task<> Handle(RequestContext&, const HttpRequest&,
                         http::HttpResponseWriter& writer) override {
-    WriteJson(writer, 200,
+    WriteJson(writer, HttpStatus::Ok,
               R"({"_shards":{"total":1,"successful":1,"failed":0},)"
               R"("_all":{"total":{"merges":{"current":0}},)"
               R"("primaries":{"merges":{"current":0}}},"indices":{}})");
@@ -1213,7 +1218,7 @@ class MgetHandler final : public HttpHandler {
       co_return {};
     }
     if (ids.empty()) {
-      WriteJson(writer, 200, R"({"docs":[]})");
+      WriteJson(writer, HttpStatus::Ok, R"({"docs":[]})");
       co_return {};
     }
     std::string in;
@@ -1255,7 +1260,7 @@ class MgetHandler final : public HttpHandler {
       }
     }
     sb.append_raw("]}");
-    WriteJson(writer, 200, std::string_view{sb.view().value()});
+    WriteJson(writer, HttpStatus::Ok, std::string_view{sb.view().value()});
     co_return {};
   }
 
@@ -1268,20 +1273,23 @@ class MgetHandler final : public HttpHandler {
       simdjson::ondemand::parser parser;
       simdjson::ondemand::document doc;
       if (parser.iterate(padded).get(doc) != simdjson::SUCCESS) {
-        WriteError(writer, 400, "parsing_exception", "malformed _mget body");
+        WriteError(writer, HttpStatus::BadRequest, "parsing_exception",
+                   "malformed _mget body");
         return false;
       }
       for (auto field : doc.get_object()) {
         std::string_view key;
         if (field.unescaped_key().get(key) != simdjson::SUCCESS) {
-          WriteError(writer, 400, "parsing_exception", "malformed _mget body");
+          WriteError(writer, HttpStatus::BadRequest, "parsing_exception",
+                     "malformed _mget body");
           return false;
         }
         if (key == "ids") {
           for (auto v : field.value().get_array()) {
             std::string_view id;
             if (v.get_string().get(id) != simdjson::SUCCESS) {
-              WriteError(writer, 400, "illegal_argument_exception",
+              WriteError(writer, HttpStatus::BadRequest,
+                         "illegal_argument_exception",
                          "_mget ids must be strings");
               return false;
             }
@@ -1303,7 +1311,7 @@ class MgetHandler final : public HttpHandler {
         }
       }
     } catch (const std::exception& e) {
-      WriteError(writer, 400, "parsing_exception", e.what());
+      WriteError(writer, HttpStatus::BadRequest, "parsing_exception", e.what());
       return false;
     }
     return true;
@@ -1326,9 +1334,9 @@ class ExistsDocHandler final : public HttpHandler {
       co_return {};
     }
     if (result->RowCount() == 0) {
-      WriteError(writer, 404, "not_found", "");
+      WriteError(writer, HttpStatus::NotFound, "not_found", "");
     } else {
-      WriteJson(writer, 200, "{}");
+      WriteJson(writer, HttpStatus::Ok, "{}");
     }
     co_return {};
   }
@@ -1348,7 +1356,7 @@ class IndexInfoHandler final : public HttpHandler {
     }
     const auto mappings = result->GetValue(0, 0).GetValue<std::string>();
     WriteJson(
-      writer, 200,
+      writer, HttpStatus::Ok,
       absl::StrCat(R"({")", index, R"(":{"aliases":{},"mappings":)", mappings,
                    R"(,"settings":{"index":{"number_of_shards":"1",)"
                    R"("number_of_replicas":"0","provided_name":")",
@@ -1369,9 +1377,10 @@ class CatCountHandler final : public HttpHandler {
     }
     const auto count = result->GetValue(0, 0).GetValue<int64_t>();
     if (request.Query("format") == "json") {
-      WriteJson(writer, 200, absl::StrCat(R"([{"count":")", count, R"("}])"));
+      WriteJson(writer, HttpStatus::Ok,
+                absl::StrCat(R"([{"count":")", count, R"("}])"));
     } else {
-      WriteText(writer, 200, absl::StrCat(count, "\n"));
+      WriteText(writer, HttpStatus::Ok, absl::StrCat(count, "\n"));
     }
     co_return {};
   }

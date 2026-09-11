@@ -28,7 +28,7 @@
 
 namespace sdb::connector {
 
-void FromCompound(irs::BooleanFilter& parent, const FilterContext& ctx,
+void FromCompound(BoolTarget parent, const FilterContext& ctx,
                   const SearchColumnInfo& column_info,
                   const duckdb::BoundFunctionExpression& func) {
   static constexpr std::string_view kSyntaxHint =
@@ -102,21 +102,25 @@ void FromCompound(irs::BooleanFilter& parent, const FilterContext& ctx,
     return;
   }
 
-  auto& and_filter = AddMaybeNegated<irs::And>(parent, ctx, column_info);
-  and_filter.SetBoost(ctx.boost);
+  // The three buckets of ts_compound are the three buckets of the node, so
+  // this is one node rather than a conjunction with a union inside it.
+  const auto required =
+    AddGroup(MaybeNegated(parent, ctx, column_info), irs::Occur::Must);
+  auto& node = *required.node;
+  node.SetBoost(ctx.boost);
 
   auto inner_ctx = ctx;
   inner_ctx.negated = false;
   inner_ctx.boost = irs::kNoBoost;
 
   for (const auto* clause : must) {
-    BuildTSQuery(and_filter, inner_ctx, column_info, *clause);
+    BuildTSQuery(required, inner_ctx, column_info, *clause);
   }
   if (!must_not.empty()) {
     auto neg_ctx = inner_ctx;
     neg_ctx.negated = true;
     for (const auto* clause : must_not) {
-      BuildTSQuery(and_filter, neg_ctx, column_info, *clause);
+      BuildTSQuery(required, neg_ctx, column_info, *clause);
     }
   }
   if (!should.empty()) {
@@ -131,11 +135,11 @@ void FromCompound(irs::BooleanFilter& parent, const FilterContext& ctx,
                         ERR_HINT(kSyntaxHint));
       }
     }
-    auto& or_filter = and_filter.add<irs::Or>();
-    or_filter.min_match_count(static_cast<size_t>(min_should));
+    const BoolTarget optional{&node, irs::Occur::Should};
     for (const auto* clause : should) {
-      BuildTSQuery(or_filter, inner_ctx, column_info, *clause);
+      BuildTSQuery(optional, inner_ctx, column_info, *clause);
     }
+    SetMinMatch(node, static_cast<size_t>(min_should));
   } else if (func.GetChildren().size() == 4) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),

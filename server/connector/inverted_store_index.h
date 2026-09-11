@@ -243,11 +243,16 @@ duckdb::unique_ptr<duckdb::BoundIndex> CreateInvertedInstance(
 
 // Builds a bound inverted index over store table `storage` for the catalog
 // index `inverted`, ready for TableIndexList injection. The indexed
-// expressions are bound once, up front (like ART).
+// expressions are bound once, up front (like ART). `attached_storage` is the
+// iresearch directory when the caller already holds it -- a CREATE's store op
+// runs before the entry that will carry it is visible to any other context,
+// and a writer committing into the injected index in that window has no other
+// road to it; null resolves through the catalog.
 duckdb::unique_ptr<InvertedStoreIndex> MakeInjectedInvertedIndex(
   duckdb::ClientContext& context, duckdb::DataTable& storage,
   const duckdb::CreateTableInfo& table,
-  std::shared_ptr<const catalog::Index> inverted);
+  std::shared_ptr<const catalog::Index> inverted,
+  std::shared_ptr<search::InvertedIndexStorage> attached_storage);
 
 // Puts an injected index into `list`, replacing the one already registered
 // under its store name. An injected index has no duckdb catalog entry keeping

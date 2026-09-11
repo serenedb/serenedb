@@ -38,7 +38,6 @@ struct CreateMacroInfo;
 }  // namespace duckdb
 namespace sdb::catalog {
 
-class Role;
 class CreateDatabaseInfo;
 class CreateIndexInfo;
 class Index;

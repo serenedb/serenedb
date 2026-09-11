@@ -173,8 +173,7 @@ struct FeedScratch {
   // Rowids of a scanned range, which run contiguously from the range's first
   // row -- generated in place rather than materialized into a side buffer.
   duckdb::Vector scan_rowids{duckdb::LogicalType::ROW_TYPE};
-  std::vector<std::string> keys;
-  std::vector<std::string_view> key_views;
+  std::vector<duckdb::string_t> key_terms;
   std::string delete_key;
   std::vector<duckdb::Vector> sliced;
   std::vector<ExpressionValue> values;
@@ -245,14 +244,11 @@ duckdb::idx_t FeedFilteredChunk(
   feed_rows->ToUnifiedFormat(count, row_fmt);
   const auto* row_data =
     duckdb::UnifiedVectorFormat::GetData<duckdb::row_t>(row_fmt);
-  auto& keys = scratch.keys;
-  auto& key_views = scratch.key_views;
-  keys.resize(count);
-  key_views.resize(count);
+  auto& key_terms = scratch.key_terms;
+  key_terms.resize(count);
   for (duckdb::idx_t i = 0; i < count; ++i) {
-    keys[i].clear();
-    primary_key::AppendSigned(keys[i], row_data[row_fmt.sel->get_index(i)]);
-    key_views[i] = keys[i];
+    key_terms[i] = catalog::duckdb_primary_key::SignedKeyTerm(
+      row_data[row_fmt.sel->get_index(i)]);
   }
 
   // Expression values were computed over the unfiltered batch, so a filtered
@@ -277,7 +273,7 @@ duckdb::idx_t FeedFilteredChunk(
     values.push_back({fields[i].field_id, &sliced.back()});
   }
 
-  FeedChunk(writer, count, PkChunk{.keys = key_views, .column = feed_rows},
+  FeedChunk(writer, count, PkChunk{.key_terms = key_terms, .column = feed_rows},
             *feed_chunk, columns, values);
   return count;
 }
@@ -306,10 +302,12 @@ struct FeedPool {
   // the executor and its result chunk are per-worker.
   struct Bundle {
     Bundle(FeedPool& pool, irs::IndexWriter::Transaction& trx)
-      : insert_writer{pool.MakeInsertWriter(trx)},
+      : expr_conn{pool.instance},
+        insert_writer{pool.MakeInsertWriter(trx, *expr_conn.context)},
         delete_writer{std::make_unique<DuckDBSearchSinkDeleteWriter>(trx)},
         exprs{std::make_unique<IndexExpressions>(pool.owner)} {}
 
+    duckdb::Connection expr_conn;
     std::unique_ptr<DuckDBSearchSinkInsertWriter> insert_writer;
     std::unique_ptr<DuckDBSearchSinkDeleteWriter> delete_writer;
     std::unique_ptr<IndexExpressions> exprs;
@@ -321,9 +319,9 @@ struct FeedPool {
   }
 
   std::unique_ptr<DuckDBSearchSinkInsertWriter> MakeInsertWriter(
-    irs::IndexWriter::Transaction& trx) {
+    irs::IndexWriter::Transaction& trx, duckdb::ClientContext& ctx) {
     return std::make_unique<DuckDBSearchSinkInsertWriter>(
-      trx, MakeTokenizerProvider(dicts, Info()), index->GetColumns(),
+      trx, MakeTokenizerProvider(ctx, dicts, Info()), index->GetColumns(),
       MakeEntryInfoProvider(Info()),
       PkPolicy{.index_term = Info().GetOptions().pk_term,
                .column = Info().GetOptions().pk_column});
@@ -1068,6 +1066,13 @@ InvertedStoreIndex::EnsureInvertedFeedSession() {
   auto storage =
     catalog::InvertedStorageIn(context, db.GetCatalog(), _index_id);
   if (!storage) {
+    // The handle is the object's, not a version's, so the committed entry
+    // answers for a transaction whose snapshot predates the index: an online
+    // build injects this index before its entry commits, and a writer that
+    // began before that commits into it after.
+    storage = catalog::InvertedStorageIn(nullptr, db.GetCatalog(), _index_id);
+  }
+  if (!storage) {
     storage = _attached_storage;
   }
   SDB_ENSURE(storage, "inverted index replay: storage ", _index_id.id(),
@@ -1631,7 +1636,8 @@ std::string InvertedStoreIndex::GetConstraintViolationMessage(
 duckdb::unique_ptr<InvertedStoreIndex> MakeInjectedInvertedIndex(
   duckdb::ClientContext& context, duckdb::DataTable& storage,
   const duckdb::CreateTableInfo& table,
-  std::shared_ptr<const catalog::Index> inverted) {
+  std::shared_ptr<const catalog::Index> inverted,
+  std::shared_ptr<search::InvertedIndexStorage> attached_storage) {
   duckdb::vector<duckdb::column_t> column_ids;
   duckdb::vector<duckdb::unique_ptr<duckdb::Expression>> exprs;
   const auto& defs = storage.Columns();
@@ -1689,11 +1695,17 @@ duckdb::unique_ptr<InvertedStoreIndex> MakeInjectedInvertedIndex(
       *bound, catalog::IdOf(table), col_id_to_pos));
     has_predicate = true;
   }
-  // Resolved here, where the statement that publishes this object is still on
-  // the context: from the commit-time feed on, the writers reaching it are
-  // other transactions, which cannot see an index that has not committed yet.
-  auto attached_storage = catalog::InvertedStorageIn(
-    &context, storage.db.GetCatalog(), inverted->GetId());
+  // Resolved here when the caller holds no handle of its own: through the
+  // context first, so the statement that publishes this object sees its
+  // uncommitted entry, then the committed view.
+  if (!attached_storage) {
+    attached_storage = catalog::InvertedStorageIn(
+      &context, storage.db.GetCatalog(), inverted->GetId());
+  }
+  if (!attached_storage) {
+    attached_storage =
+      catalog::InvertedStorageIn(storage.db.GetCatalog(), inverted->GetId());
+  }
   return duckdb::make_uniq<InvertedStoreIndex>(
     std::string{inverted->GetName()}, duckdb::TableIOManager::Get(storage),
     column_ids, exprs, storage.db, std::move(inverted),
@@ -1731,7 +1743,8 @@ duckdb::unique_ptr<duckdb::BoundIndex> CreateInvertedInstance(
              index_id.id(), " missing");
   auto& table = entry->Cast<catalog::SereneDBTableEntry>();
   return MakeInjectedInvertedIndex(input.context, table.GetStorage(),
-                                   *table.Definition(), std::move(inverted));
+                                   *table.Definition(), std::move(inverted),
+                                   /*attached_storage=*/nullptr);
 }
 
 void InjectExternalIndexes(duckdb::DataTable& storage) {
@@ -1778,7 +1791,8 @@ void InjectExternalIndexes(duckdb::DataTable& storage) {
     catalog::WithStoreBindContext(
       storage.db, [&](duckdb::ClientContext& bind_ctx) {
         AddInjectedInvertedIndex(
-          list, MakeInjectedInvertedIndex(bind_ctx, storage, *table, index));
+          list, MakeInjectedInvertedIndex(bind_ctx, storage, *table, index,
+                                          /*attached_storage=*/nullptr));
       });
   }
 }

@@ -10,6 +10,10 @@ If you noticed outdated comment or make some comment outdated, just remove it un
 - Read `CONTRIBUTING.md` -- it covers build, tests, branches, commits, PRs, and
 C++ style. This file only flags traps that aren't in there.
 
+- A user-visible feature is not finished until `docs/` describes it. Write the
+page in the same change, following the **Documentation** section of
+`CONTRIBUTING.md`, and say in your summary which page you added or updated.
+
 ## Before writing tests
 
 - Sqllogic: read a sibling `.test` first. Control directives, retry patterns,

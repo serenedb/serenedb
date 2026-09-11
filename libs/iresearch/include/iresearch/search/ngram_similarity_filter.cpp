@@ -27,7 +27,9 @@
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/search/collectors.hpp"
 #include "iresearch/search/ngram_similarity_query.hpp"
-#include "iresearch/search/terms_filter.hpp"
+#include "iresearch/search/term_filter.hpp"
+#include "iresearch/search/term_query.hpp"
+#include "iresearch/search/term_set.hpp"
 
 namespace irs {
 
@@ -46,6 +48,10 @@ QueryBuilder::ptr ByNGramSimilarity::PrepareSegment(
   const auto terms_count = ngrams.size();
   const auto min_match_count = MinMatchCount(terms_count, threshold);
 
+  if (terms_count == 1) {
+    return ByTerm::PrepareSegment(segment, ctx, field_name, ngrams.front());
+  }
+
   auto* ngram_collector =
     ctx.collector ? &sdb::basics::downCast<PhraseCollector>(*ctx.collector)
                   : nullptr;
@@ -56,58 +62,66 @@ QueryBuilder::ptr ByNGramSimilarity::PrepareSegment(
     return QueryBuilder::Empty();
   }
 
-  if (NGramSimilarityQuery::kRequiredFeatures !=
-      (field->meta().index_features &
-       NGramSimilarityQuery::kRequiredFeatures)) {
+  NGramState state{ctx.memory};
+  state.reader = field;
+  if (!search::ResolvePhrase(field, state.handles)) {
     return QueryBuilder::Empty();
   }
 
   if (ngram_collector) {
-    ngram_collector->Field().Collect(*field);
+    ngram_collector->Field(ctx.thread).Collect(*field);
   }
 
-  NGramState state{ctx.memory};
+  state.total_terms = terms_count;
   state.terms.reserve(terms_count);
 
   size_t term_idx = 0;
-  size_t count_terms = 0;
   auto term = field->iterator();
   for (const auto& ngram : ngrams) {
-    auto& term_state = state.terms.emplace_back();
     std::vector<TermCollector>* part = nullptr;
     if (ngram_collector) {
-      part = &ngram_collector->Part(term_idx);
+      part = &ngram_collector->Part(ctx.thread, term_idx);
       if (part->empty()) {
         part->emplace_back();
       }
     }
     if (term->seek(ngram)) {
-      term_state = term->cookie();
+      const auto& term_state = state.terms.emplace_back(term->cookie());
       if (part) {
         part->front().Collect(term_state);
       }
-      ++count_terms;
     }
-
     ++term_idx;
+    if (!ngram_collector &&
+        state.terms.size() + (terms_count - term_idx) < min_match_count) {
+      return QueryBuilder::Empty();
+    }
   }
 
-  if (count_terms < min_match_count) {
+  if (state.terms.size() < min_match_count) {
     return QueryBuilder::Empty();
   }
 
-  state.reader = field;
+  if (state.terms.size() == 1) {
+    return MakeTermQuery(ctx.memory, segment, field, state.terms.front(),
+                         ctx.boost * boost, ctx.Record());
+  }
 
-  return memory::make_tracked<NGramSimilarityQuery>(
+  auto query = memory::make_tracked<NGramSimilarityQuery>(
     ctx.memory, segment, min_match_count, std::move(state), ctx.boost * boost);
+  query->SetStats(ctx.Record());
+  return query;
 }
 
 PrepareCollector::ptr ByNGramSimilarity::MakeCollectorImpl(
-  const Scorer* scorer) const {
+  const Scorer* scorer, StatsArena& stats, uint32_t threads) const {
   const auto& ngrams = options().ngrams;
   const auto terms_count = ngrams.size();
   SDB_ASSERT(irs::field_limits::valid(field_id()));
-  return std::make_unique<PhraseCollector>(scorer, terms_count);
+  if (terms_count == 1) {
+    return std::make_unique<ByTermsCollector>(scorer, 1, stats, threads);
+  }
+  return std::make_unique<PhraseCollector>(scorer, terms_count, stats, threads);
 }
 
 }  // namespace irs

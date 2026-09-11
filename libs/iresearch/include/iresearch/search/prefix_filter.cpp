@@ -28,7 +28,7 @@
 #include "iresearch/index/iterators.hpp"
 #include "iresearch/search/all_filter.hpp"
 #include "iresearch/search/filter_visitor.hpp"
-#include "iresearch/search/limited_sample_selector.hpp"
+#include "iresearch/search/multiterm_collector.hpp"
 #include "iresearch/search/multiterm_query.hpp"
 #include "iresearch/search/term_iterator.hpp"
 
@@ -72,34 +72,29 @@ QueryBuilder::ptr ByPrefix::PrepareSegment(const SubReader& segment,
                                            const PrepareContext& ctx,
                                            const irs::field_id field,
                                            const bytes_view term) {
-  auto query = memory::make_tracked<MultiTermQuery>(
-    ctx.memory, segment, ctx.memory, ctx.boost, ScoreMergeType::Sum, size_t{1});
-
   const auto* reader = segment.field(field);
   if (!reader) {
-    return query;
+    return QueryBuilder::Empty();
   }
-
-  auto* collector =
-    ctx.collector
-      ? &sdb::basics::downCast<LimitedTermsCollector>(*ctx.collector)
-      : nullptr;
-  if (collector) {
-    collector->Field().Collect(*reader);
-  }
-  SampledMultiTermVisitor mtv{collector ? &collector->Limited() : nullptr,
-                              query->State()};
+  auto query = memory::make_tracked<MultiTermQuery>(
+    ctx.memory, segment, ctx.memory, ctx.boost, ScoreMergeType::Sum);
+  MultiTermVisitor mtv{ctx, query->State(), *reader};
   ByPrefixIterator terms{*reader, term};
-  if (terms.next()) {
-    mtv.Prepare(segment, *reader, terms.GetImpl());
-    VisitTerms(terms, mtv);
+  if (!terms.next()) {
+    return QueryBuilder::Empty();
   }
-  return query;
+  mtv.Prepare(segment, *reader, terms.GetImpl());
+  VisitTerms(terms, mtv);
+  return MultiTermQuery::Finish(std::move(query), ctx);
 }
 
-PrepareCollector::ptr ByPrefix::MakeCollectorImpl(const Scorer* scorer) const {
-  return std::make_unique<LimitedTermsCollector>(scorer,
-                                                 options().scored_terms_limit);
+PrepareCollector::ptr ByPrefix::MakeCollectorImpl(const Scorer* scorer,
+                                                  StatsArena& stats,
+                                                  uint32_t threads) const {
+  if (!ScoresPerDoc(scorer)) {
+    return std::make_unique<AllCollector>(scorer, stats);
+  }
+  return std::make_unique<MultiTermCollector>(scorer, stats, threads);
 }
 
 void ByPrefix::visit(const SubReader& segment, const TermReader& reader,

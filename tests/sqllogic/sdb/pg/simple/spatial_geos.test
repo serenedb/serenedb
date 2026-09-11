@@ -1,14 +1,13 @@
-# Pins the *shape* of the compiled-in spatial extension: all three optional
-# modules are built -- GEOS, PROJ and GDAL (SPATIAL_USE_GEOS / _PROJ / _GDAL in
-# third_party/CMakeLists.txt).
+# Pins the *shape* of the compiled-in spatial extension: GEOS and PROJ are built,
+# GDAL is not (SPATIAL_USE_GEOS / _PROJ / _GDAL in third_party/CMakeLists.txt).
 #
-# One liveness assert per module, so a module silently dropping out of the build
-# fails here rather than surfacing at the call site as a confusing "not in the
-# catalog, but it exists in the spatial extension" error.
+# One liveness assert per built module, so a module silently dropping out of the
+# build fails here rather than surfacing at the call site as a confusing "not in
+# the catalog, but it exists in the spatial extension" error.
 #
-# GDAL is built with GDAL_BUILD_OPTIONAL_DRIVERS=OFF plus an explicit driver
-# allowlist, so the driver list is pinned too -- adding or removing a driver
-# should show up as a diff here rather than silently.
+# GDAL is not vendored, so its whole surface -- ST_Read, ST_Read_Meta,
+# ST_Drivers and COPY ... (FORMAT GDAL) -- has to be absent rather than present
+# and failing at open time.
 #
 # The RTREE index is compiled out (SPATIAL_USE_RTREE=OFF) because SereneDB
 # indexes geometry through `USING inverted` instead, so this file pins that its
@@ -41,23 +40,32 @@ geom
 POINT (111319.49079327357 111325.1428663851)
 
 
-# --- GDAL: the driver allowlist ---
+# --- GDAL: nothing of it is registered ---
 
 query
-SELECT string_agg(short_name, ', ' ORDER BY short_name) AS drivers
-FROM ST_Drivers();
+SELECT count(*) AS v FROM duckdb_functions()
+WHERE function_name IN ('st_read', 'st_read_meta', 'st_drivers');
 ----
-drivers
-CSV, ESRIJSON, FlatGeobuf, GeoJSON, GeoJSONSeq, OGR_VRT, TopoJSON
+v
+0
 
 
-# ST_Read reaches GDAL rather than a stub: a missing file must produce GDAL's
-# own open error.
-
-query error
+statement error
 SELECT count(*) FROM ST_Read('/nonexistent.geojson');
 ----
-db error: ERROR: Could not open GDAL dataset at: /nonexistent.geojson<slt:ignore>
+db error: ERROR: Table Function with name "st_read" is not in the catalog<slt:ignore>
+
+
+statement error
+SELECT * FROM ST_Drivers();
+----
+db error: ERROR: Table Function with name "st_drivers" is not in the catalog<slt:ignore>
+
+
+statement error
+COPY (SELECT 'POINT (1 1)'::GEOMETRY AS geom) TO '/nonexistent-sdb-spatial-dir/out.geojson' (FORMAT GDAL);
+----
+db error: ERROR: Copy Function with name gdal does not exist!<slt:ignore>
 
 
 # --- spatial's RTREE index type stays unreachable on SereneDB tables ---

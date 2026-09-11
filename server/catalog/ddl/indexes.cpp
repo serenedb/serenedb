@@ -60,8 +60,8 @@ duckdb::unique_ptr<CreateIndexInfo> CreateIndexOnRelation(
                     ERR_MSG("Cannot create index without columns"));
   }
   JoinStoreTransaction(ax.context);
-  catalog::Catalog::MutationScope lock{catalog::GetCatalog()};
   const auto schema_id = catalog::ParentIdOf(relation);
+  catalog::EnsureWritableSchema(ax.context, schema_id);
   // The noun the refusal names is the relation's own kind: a view and a table
   // are both indexable and postgres says which one it refused.
   catalog::RequireOwner(ax.context, ax.role, relation.permissions,
@@ -104,6 +104,7 @@ duckdb::optional_ptr<duckdb::CatalogEntry> CreateIndexImpl(
   duckdb::ClientContext* context, CreateIndexInfo& index,
   CreateIndexOperationOptions operation_options) {
   const auto schema_id = index.GetSchemaId();
+  catalog::EnsureWritableSchema(context, schema_id);
   if (catalog::FindRelation(context, schema_id, index.GetName())) {
     ThrowDuplicateName(NameKind::Relation, index.GetName());
   }
@@ -145,6 +146,15 @@ duckdb::optional_ptr<duckdb::CatalogEntry> CreateIndexImpl(
   // storage-less (GetInvertedData() == null) and folds its columns into the
   // shard's merged config.
   const bool search_backed = entry != nullptr && entry->IsSearchTable();
+  if (index.IsInverted() && search_backed &&
+      InvertedInfo(*index.GetIndex()).GetTopKScorer()) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+      ERR_MSG("optimize_top_k is a table option on a search-backed table"),
+      ERR_HINT("Set it in CREATE TABLE ... WITH (storage = 'search', "
+               "optimize_top_k = '...'); the table's store keeps the score "
+               "bounds every index on it prunes with."));
+  }
   auto storage = index.IsInverted() && !search_backed
                    ? search::InvertedIndexStorage::Create(
                        db_id, InvertedInfo(*index.GetIndex()), /*is_new=*/true)
@@ -161,7 +171,7 @@ duckdb::optional_ptr<duckdb::CatalogEntry> CreateIndexImpl(
   if (store_index) {
     catalog::StoreCreateIndex(context, db_id, std::move(store_index),
                               std::move(table), index.GetRelationId(),
-                              index.GetIndex());
+                              index.GetIndex(), storage);
   }
   // After the store op, so a relation another transaction has already dropped
   // is refused by the rows rather than by the set -- the store names the
@@ -190,7 +200,6 @@ duckdb::optional_ptr<duckdb::CatalogEntry> CreateIndexImpl(
 
 void RenameIndex(duckdb::ClientContext* context, const CreateIndexInfo& index,
                  std::string_view new_name) {
-  catalog::Catalog::MutationScope mutation{catalog::GetCatalog()};
   const auto schema_id = index.GetSchemaId();
   auto renamed = RenamedIndexRecord(index, new_name);
   const auto db_id = catalog::SchemaDatabaseId(context, schema_id);
@@ -204,10 +213,10 @@ void RenameIndex(duckdb::ClientContext* context, const CreateIndexInfo& index,
   catalog::PutEntry(context, index.GetName(), std::move(renamed));
 }
 
-void DropIndexLocked(duckdb::ClientContext* context, ObjectId database_id,
-                     const CreateIndexInfo& index,
-                     std::shared_ptr<search::InvertedIndexStorage> storage,
-                     bool cascade) {
+void DropIndexResolved(duckdb::ClientContext* context, ObjectId database_id,
+                       const CreateIndexInfo& index,
+                       std::shared_ptr<search::InvertedIndexStorage> storage,
+                       bool cascade) {
   catalog::DropIndexEntry(context, index.GetSchemaId(), index.GetName());
   // Store-side index drop is synchronous: UNIQUE enforcement must stop when
   // DROP INDEX commits, not when the artifact half runs.
@@ -250,10 +259,8 @@ void DropIndexArtifacts(duckdb::ClientContext* context, ObjectId database_id,
       }
       // A failed build's compensating drop can arrive before the directory was
       // ever bound to an entry; the one the build created is removed directly.
-      search::RemoveDroppedStorageDir(
-        search::InvertedIndexStorage::GetPath(database_id, schema_id,
-                                              relation_id, index_id),
-        3);
+      search::RemoveDroppedStorageDir(search::InvertedIndexStorage::GetPath(
+        database_id, schema_id, relation_id, index_id));
     });
 }
 

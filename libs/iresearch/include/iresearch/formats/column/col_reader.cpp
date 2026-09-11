@@ -42,8 +42,8 @@
 namespace irs {
 namespace {
 
-IndexInput::ptr OpenColFile(const Directory& dir,
-                            std::string_view segment_name) {
+IndexInput::ptr OpenColFile(const Directory& dir, std::string_view segment_name,
+                            IOAdvice advice) {
   const std::string filename = FileName(segment_name);
   bool exists = false;
   if (!dir.exists(exists, filename)) {
@@ -53,7 +53,7 @@ IndexInput::ptr OpenColFile(const Directory& dir,
   if (!exists) {
     return nullptr;
   }
-  auto in = dir.open(filename, IOAdvice::SEQUENTIAL);
+  auto in = dir.open(filename, advice);
   if (!in) {
     throw IoError{
       absl::StrCat("col reader: cannot open .col file: ", filename)};
@@ -131,8 +131,8 @@ NormColumnMeta DeserializeNormMetas(duckdb::Deserializer& d, field_id id,
 }
 
 ColReader::ColReader(const Directory& dir, std::string_view segment_name,
-                     duckdb::DatabaseInstance& db)
-  : _db{&db}, _ctx{db, OpenColFile(dir, segment_name)} {
+                     duckdb::DatabaseInstance& db, IOAdvice advice)
+  : _db{&db}, _ctx{db, OpenColFile(dir, segment_name, advice)} {
   if (!_ctx.HasIn()) {
     return;
   }

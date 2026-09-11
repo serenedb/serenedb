@@ -27,10 +27,7 @@
 
 #include <algorithm>
 #include <duckdb/common/file_system.hpp>
-#include <iresearch/analysis/classification_tokenizer.hpp>
-#include <iresearch/analysis/fast_text_model.hpp>
-#include <iresearch/analysis/nearest_neighbors_tokenizer.hpp>
-#include <iresearch/analysis/tokenizers.hpp>
+#include <iresearch/analysis/tokenizer.hpp>
 #include <iresearch/formats/formats.hpp>
 #include <iresearch/search/filter_optimizer.hpp>
 #include <utility>
@@ -47,6 +44,7 @@
 #include "catalog/inverted_index.h"
 #include "pg/sql_exception_macro.h"
 #include "rest_server/database_path_feature.h"
+#include "scheduler/background_scheduler.h"
 #include "search/inverted_index_storage.h"
 #include "search/search_db_wal.h"
 #include "search/search_table_recovery.h"
@@ -58,11 +56,6 @@ ABSL_DECLARE_FLAG(uint64_t, background_threads);
 namespace sdb::search {
 
 SearchEngine::SearchEngine() : _dir_feature{DatabasePathFeature::instance()} {
-  ::irs::analysis::ClassificationTokenizer::set_model_provider(
-    &fast_text::CreateModel<fasttext::FastText>);
-  ::irs::analysis::NearestNeighborsTokenizer::set_model_provider(
-    &fast_text::CreateModel<fasttext::ImmutableFastText>);
-
   irs::formats::Init();
   irs::InitOptimizeRules();
 
@@ -79,6 +72,32 @@ int SearchEngine::MaxConcurrentCompactions() noexcept {
   // cleanup, and drop are light and interleave on the single spare thread.
   return std::max<int>(
     1, static_cast<int>(absl::GetFlag(FLAGS_background_threads)) - 1);
+}
+
+uint32_t SearchEngine::MaxAnnBuildWorkers() noexcept {
+  return std::max<uint32_t>(
+    1, static_cast<uint32_t>(BackgroundScheduler::AnnBuildBudget()));
+}
+
+uint32_t SearchEngine::MaxAnnWorkersPerBuild() noexcept {
+  return std::clamp<uint32_t>(static_cast<uint32_t>(MaxConcurrentCompactions()),
+                              1, 16);
+}
+
+uint32_t AnnAcquireWorkers(uint32_t want) noexcept {
+  return GetSearchEngine().AcquireAnnWorkers(want);
+}
+
+void AnnReleaseWorkers(uint32_t n) noexcept {
+  GetSearchEngine().ReleaseAnnWorkers(n);
+}
+
+const irs::AnnBuildEnv& AnnBuildEnv() {
+  static const irs::AnnBuildEnv env{
+    .executor = &BackgroundScheduler::instance().annExecutor(),
+    .acquire = AnnAcquireWorkers,
+    .release = AnnReleaseWorkers};
+  return env;
 }
 
 void SearchEngine::start() {

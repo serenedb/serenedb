@@ -56,6 +56,7 @@
 #include "network/cpu_resumer.h"
 #include "network/gate.h"
 #include "network/http/auth.h"
+#include "network/http/common.h"
 #include "network/http/h1_codec.h"
 #include "network/http/response_writer.h"
 #include "network/http/router.h"
@@ -515,9 +516,7 @@ yaclib::Future<> HttpSession<Kind>::SessionMain() {
       if (!co_await ReadBody(request, pinned_body)) {
         if (!SendBroken()) {
           http::HttpResponseWriter error_writer{_send, *this, false, false};
-          error_writer.Error(
-            _codec.ErrorStatus() != 0 ? _codec.ErrorStatus() : 400,
-            "bad_request");
+          error_writer.Error(_codec.ErrorStatus(), "bad_request");
           co_await DrainSendOnTask();
         }
         break;
@@ -529,7 +528,8 @@ yaclib::Future<> HttpSession<Kind>::SessionMain() {
 
       if (_max_conn != 0 && _active != nullptr &&
           _active->load(std::memory_order_relaxed) > _max_conn) {
-        writer.Fixed(503, "application/json",
+        writer.Fixed(http::HttpStatus::ServiceUnavailable,
+                     http::kJsonContentType,
                      R"({"error":"too_many_connections"})", "");
         co_await DrainSendOnTask();
         break;
@@ -555,7 +555,7 @@ yaclib::Future<> HttpSession<Kind>::SessionMain() {
             "\r\nAccess-Control-Allow-Credentials: true\r\nVary: Origin\r\n");
           if (request.method == HttpMethod::Options) {
             writer.Fixed(
-              204, "text/plain", "",
+              http::HttpStatus::NoContent, "text/plain", "",
               absl::StrCat(
                 cors_headers,
                 "Access-Control-Allow-Methods: GET, POST, PUT, DELETE, HEAD, "
@@ -580,8 +580,8 @@ yaclib::Future<> HttpSession<Kind>::SessionMain() {
       auto auth = _auth.Authenticate(request.Header(HttpHeader::Authorization),
                                      peer_is_loopback);
       _user = std::move(auth.context.user);
-      if (auth.status != 0) {
-        writer.Fixed(auth.status, "application/json",
+      if (auth.status != http::HttpStatus::None) {
+        writer.Fixed(auth.status, http::kJsonContentType,
                      R"({"error":"unauthorized"})",
                      "WWW-Authenticate: Basic realm=\"serenedb\"\r\n");
       } else if (HttpHandler* handler = _router.Match(request)) {
@@ -589,7 +589,7 @@ yaclib::Future<> HttpSession<Kind>::SessionMain() {
           co_await handler->Handle(*this, request, writer);
         } catch (const std::exception&) {
           if (!writer.HeadWritten()) {
-            writer.Error(500, "internal");
+            writer.Error(http::HttpStatus::InternalError, "internal");
           }
         }
         if (writer.HeadWritten() && !writer.Finished()) {
@@ -600,7 +600,7 @@ yaclib::Future<> HttpSession<Kind>::SessionMain() {
           break;
         }
         if (!writer.HeadWritten()) {
-          writer.Error(500, "internal");
+          writer.Error(http::HttpStatus::InternalError, "internal");
         }
         if (_connection_ctx) {
           // No NoticeResponse equivalent on this protocol (and the
@@ -608,7 +608,7 @@ yaclib::Future<> HttpSession<Kind>::SessionMain() {
           _connection_ctx->ConsumeNotices([](const sdb::pg::SqlErrorData&) {});
         }
       } else {
-        writer.Error(404, "not_found");
+        writer.Error(http::HttpStatus::NotFound, "not_found");
       }
       KickSend();
 

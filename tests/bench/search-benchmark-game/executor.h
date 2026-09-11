@@ -21,11 +21,12 @@
 #pragma once
 
 #include <cstdio>
-#include <iresearch/analysis/analyzer.hpp>
+#include <iresearch/analysis/tokenizer.hpp>
 #include <iresearch/formats/formats.hpp>
 #include <iresearch/index/directory_reader.hpp>
 #include <iresearch/index/index_writer.hpp>
 #include <iresearch/search/doc_collector.hpp>
+#include <iresearch/search/docs/root.hpp>
 #include <iresearch/search/filter.hpp>
 #include <iresearch/search/scorer.hpp>
 #include <iresearch/store/mmap_directory.hpp>
@@ -90,6 +91,7 @@ class Executor {
   size_t ExecuteTopKWithCount(size_t k, std::string_view query);
   size_t ExecuteCount(std::string_view query);
   size_t HashResults() const;
+  size_t HashResultsWithCount(size_t count) const;
   void PrintResults() const;
 
   // Where `Report::print` writes. The benchmark harness reads stderr; a test
@@ -103,7 +105,7 @@ class Executor {
     return std::span{self._results.data(), self._result_count};
   }
 
-  irs::Filter::ptr ParseFilter(std::string_view str);
+  irs::Filter::ptr ParseFilter(std::string_view str, bool scored);
 
  private:
   void ResetResults(size_t k) noexcept {
@@ -116,12 +118,14 @@ class Executor {
 
   std::vector<irs::ScoreDoc> _results;
   std::FILE* _print_out = stderr;
-  std::array<irs::doc_id_t, kEmitWindow> _emit_docs;
-  std::array<irs::score_t, kEmitWindow> _emit_scores;
+  irs::SlackBuf<irs::doc_id_t, kEmitWindow, irs::doc_limits::kDocsSlack>
+    _emit_docs;
+  irs::SlackBuf<irs::score_t, kEmitWindow, irs::doc_limits::kScoresSlack>
+    _emit_scores;
   size_t _result_count{0};
   irs::Scorer::ptr _scorer;
   irs::Scorer* _scorer_ptr{_scorer.get()};
-  irs::analysis::Analyzer::ptr _tokenizer;
+  irs::analysis::Tokenizer::ptr _tokenizer;
   irs::Format::ptr _format;
   irs::MMapDirectory _dir;
   irs::DirectoryReader _reader;

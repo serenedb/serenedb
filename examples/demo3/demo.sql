@@ -107,11 +107,11 @@ WHERE text @@ ts_levenshtein('tarintino', 2) LIMIT 5;
 
 
 -- =============================================================================
--- 4. Ngram (typo-tolerant substring matching)
+-- 4. NGram (typo-tolerant substring matching)
 -- =============================================================================
 -- The ngram index breaks each value into 3-character grams; the query is
 -- tokenized the same way and matched by Jaccard similarity.
-\echo === [4] Ngram: ts_ngram('directur', 0.6) -- substring/typo finds 'director'-like ===
+\echo === [4] NGram: ts_ngram('directur', 0.6) -- substring/typo finds 'director'-like ===
 SELECT label, left(text, 100) AS snippet FROM imdb_fts_idx
 WHERE text_ngram @@ ts_ngram('directur', 0.6) LIMIT 5;
 

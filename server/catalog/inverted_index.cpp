@@ -24,8 +24,8 @@
 #include <duckdb/common/serializer/memory_stream.hpp>
 #include <duckdb/common/serializer/serializer.hpp>
 #include <duckdb/main/attached_database.hpp>
-#include <iresearch/analysis/analyzer.hpp>
-#include <iresearch/analysis/tokenizers.hpp>
+#include <iresearch/analysis/keyword_tokenizer.hpp>
+#include <iresearch/analysis/tokenizer.hpp>
 
 #include "absl/algorithm/container.h"
 #include "basics/containers/flat_hash_set.h"
@@ -43,26 +43,33 @@
 
 namespace sdb::catalog {
 
-ColumnTokenizer DefaultColumnTokenizer() {
-  auto analyzer = std::make_unique<irs::StringTokenizer>();
-  return ColumnTokenizer{.analyzer = Tokenizer::TokenizerWrapper{
-                           analyzer.release(), Tokenizer::Deleter{nullptr}}};
+ColumnTokenizer DefaultColumnTokenizer(search::Features features) {
+  auto analyzer = std::make_unique<irs::KeywordTokenizer>();
+  return ColumnTokenizer{
+    .analyzer = Tokenizer::TokenizerWrapper{analyzer.release(),
+                                            Tokenizer::Deleter{nullptr}},
+    .features = features.GetIndexFeatures(),
+    .verbatim = true};
 }
 
 namespace {
 
-ColumnTokenizer BuildColumnTokenizer(const TokenizerMap& dicts,
+ColumnTokenizer BuildColumnTokenizer(duckdb::ClientContext& ctx,
+                                     const TokenizerMap& dicts,
                                      ObjectId text_dictionary,
                                      search::Features features) {
   if (!text_dictionary.isSet()) {
-    return DefaultColumnTokenizer();
+    return DefaultColumnTokenizer(features);
   }
   const auto it = dicts.find(text_dictionary);
   if (it == dicts.end() || !it->second) {
     THROW_SQL_ERROR(ERR_MSG("Dictionary for inverted index does not exists"));
   }
-  return ColumnTokenizer{.analyzer = it->second->GetTokenizer(),
-                         .features = features.GetIndexFeatures()};
+  auto analyzer = it->second->GetTokenizer(ctx);
+  const bool verbatim = analyzer->Traits().keyword;
+  return ColumnTokenizer{.analyzer = std::move(analyzer),
+                         .features = features.GetIndexFeatures(),
+                         .verbatim = verbatim};
 }
 
 using persistence::ColumnKey;
@@ -79,7 +86,7 @@ EntryConfigSerialized PackConfig(const InvertedIndexEntryInfo& entry) {
     .hyperloglog = entry.hyperloglog,
     .compression = entry.compression,
     .features = entry.features,
-    .ivf_config = entry.ivf_config,
+    .ann_config = entry.ann_config,
     .synthetic_column = entry.synthetic_column,
     .null_field_id = entry.null_field_id,
     .bool_field_id = entry.bool_field_id,
@@ -121,7 +128,7 @@ duckdb::unique_ptr<InvertedIndex> UnpackEntries(
                                 .indexed_term_dict = cfg.indexed_term_dict,
                                 .hyperloglog = cfg.hyperloglog,
                                 .compression = cfg.compression,
-                                .ivf_config = std::move(cfg.ivf_config),
+                                .ann_config = std::move(cfg.ann_config),
                                 .null_field_id = cfg.null_field_id,
                                 .bool_field_id = cfg.bool_field_id,
                                 .numeric_field_id = cfg.numeric_field_id,
@@ -442,10 +449,11 @@ void InvertedIndex::BuildFieldLookupIndex() {
   insert(term_dict::kPKFieldId, nullptr, term_dict::kPKFieldId);
 }
 
-ColumnTokenizer TokenizerForEntry(const TokenizerMap& dicts,
+ColumnTokenizer TokenizerForEntry(duckdb::ClientContext& ctx,
+                                  const TokenizerMap& dicts,
                                   const InvertedIndexEntryInfo& entry) {
   auto tokenizer =
-    BuildColumnTokenizer(dicts, entry.text_dictionary, entry.features);
+    BuildColumnTokenizer(ctx, dicts, entry.text_dictionary, entry.features);
   if (!entry.features.HasFeatures(irs::IndexFeatures::Norm) &&
       irs::field_limits::valid(entry.synthetic_column)) {
     tokenizer.tokenizer_column = entry.synthetic_column;
@@ -453,14 +461,15 @@ ColumnTokenizer TokenizerForEntry(const TokenizerMap& dicts,
   return tokenizer;
 }
 
-ColumnTokenizer InvertedIndex::GetTokenizer(const TokenizerMap& dicts,
+ColumnTokenizer InvertedIndex::GetTokenizer(duckdb::ClientContext& ctx,
+                                            const TokenizerMap& dicts,
                                             irs::field_id field_id) const {
   const auto* entry = FindEntry(field_id);
   if (entry == nullptr) {
     THROW_SQL_ERROR(
       ERR_MSG("Field id ", field_id, " not found in the index definition"));
   }
-  return TokenizerForEntry(dicts, *entry);
+  return TokenizerForEntry(ctx, dicts, *entry);
 }
 
 bool InvertedIndex::IsKeywordField(duckdb::ClientContext& context,
@@ -476,7 +485,7 @@ bool InvertedIndex::IsKeywordField(duckdb::ClientContext& context,
   if (!dict) {
     return false;
   }
-  return std::holds_alternative<irs::StringTokenizer::Options>(
+  return std::holds_alternative<irs::KeywordTokenizer::Options>(
     dict->Config().config);
 }
 
@@ -489,13 +498,14 @@ irs::field_id InvertedIndex::FindFieldIdBySerialized(
   return it->second;
 }
 
-std::optional<irs::IvfInfo> IvfInfoForEntry(
+std::optional<irs::AnnInfo> AnnInfoForEntry(
   irs::field_id field_id, const InvertedIndexEntryInfo& entry) {
-  if (!entry.ivf_config) {
+  if (!entry.ann_config) {
     return std::nullopt;
   }
-  const auto& cfg = *entry.ivf_config;
-  return irs::IvfInfo{
+  const auto& cfg = *entry.ann_config;
+  return irs::AnnInfo{
+    .kind = cfg.kind,
     .centroids_id = field_id,
     .postings_id = field_id,
     .d = cfg.d,
@@ -503,23 +513,25 @@ std::optional<irs::IvfInfo> IvfInfoForEntry(
     .quant = {.kind = cfg.quant, .pq_m = cfg.pq_m, .nb_bits = cfg.rabitq_bits},
     .sample_factor = cfg.sample_factor,
     .posting_size = cfg.posting_size,
+    .m = cfg.m,
+    .ef_construction = cfg.ef_construction,
   };
 }
 
-std::optional<irs::IvfInfo> InvertedIndex::GetIvfInfo(
+std::optional<irs::AnnInfo> InvertedIndex::GetAnnInfo(
   irs::field_id field_id) const {
   const auto* entry = FindEntry(field_id);
   if (!entry) {
     return std::nullopt;
   }
-  return IvfInfoForEntry(field_id, *entry);
+  return AnnInfoForEntry(field_id, *entry);
 }
 
 irs::ColumnOptions InvertedIndex::GetColumnOptions(irs::field_id id) const {
   if (const auto* entry = FindEntry(id)) {
     return {
       .compression = entry->compression,
-      .ivf_info = GetIvfInfo(id),
+      .ann_info = GetAnnInfo(id),
       .hyperloglog = entry->hyperloglog,
     };
   }

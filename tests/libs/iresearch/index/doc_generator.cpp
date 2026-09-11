@@ -29,25 +29,22 @@
 
 #include <cassert>
 #include <iomanip>
+#include <iresearch/analysis/numeric_terms.hpp>
+#include <iresearch/analysis/token_sinks.hpp>
 #include <numeric>
 #include <sstream>
 
 #include "basics/file_utils_ext.hpp"
 #include "iresearch/analysis/delimited_tokenizer.hpp"
-#include "iresearch/analysis/tokenizers.hpp"
-#include "iresearch/index/field_data.hpp"
 #include "iresearch/index/norm.hpp"
+#include "iresearch/index/typed_terms.hpp"
 #include "iresearch/store/store_utils.hpp"
+#include "iresearch/utils/numeric_utils.hpp"
 #include "utf8proc_wrapper.hpp"
 #include "utils/write_helpers.hpp"
 
 namespace tests {
 
-// Hashmap-backed runtime equivalent of the constexpr `FieldIdFor` if-chain in
-// the header. The JSON factories below call this per doc per field, so an
-// O(1) hash lookup wins over walking 35 string compares. The entries must
-// stay in lockstep with the constexpr table; the debug assert on every hit
-// keeps the two honest.
 irs::field_id FieldIdForRuntime(std::string_view name) {
   static const absl::flat_hash_map<std::string_view, irs::field_id> kTable = {
     {"seq", 1},
@@ -87,12 +84,9 @@ irs::field_id FieldIdForRuntime(std::string_view name) {
     {"updated", 35},
   };
   if (auto it = kTable.find(name); it != kTable.end()) {
-    // Sanity: hashmap and constexpr table agree.
     SDB_ASSERT(it->second == FieldIdFor(name));
     return it->second;
   }
-  // Unknown name -- fall through to the constexpr FNV fallback so the two
-  // code paths produce identical ids.
   return FieldIdFor(name);
 }
 
@@ -169,9 +163,18 @@ Document::Document(Document&& rhs) noexcept
     stored(std::move(rhs.stored)),
     sorted(std::move(rhs.sorted)) {}
 
-irs::Tokenizer& LongField::GetTokens() const {
-  _stream.reset(_value);
-  return _stream;
+std::optional<std::vector<irs::bstring>> LongField::BlockTerms() const {
+  std::vector<irs::bstring> terms;
+  irs::numeric_utils::ForEachNumericTerm(
+    _value, [&](irs::bytes_view term) { terms.emplace_back(term); });
+  return terms;
+}
+
+bool LongField::InsertBlockInto(const irs::IndexWriter::Document& doc) const {
+  return doc.WithField(id, index_features, [&](irs::FieldInverter& fld) {
+    return fld.InvertNumerics<int64_t>(
+      [&](auto&& emit) { emit(_value, doc.DocId()); });
+  });
 }
 
 bool LongField::Write(irs::DataOutput& out) const {
@@ -179,9 +182,18 @@ bool LongField::Write(irs::DataOutput& out) const {
   return true;
 }
 
-irs::Tokenizer& IntField::GetTokens() const {
-  _stream->reset(_value);
-  return *_stream;
+std::optional<std::vector<irs::bstring>> IntField::BlockTerms() const {
+  std::vector<irs::bstring> terms;
+  irs::numeric_utils::ForEachNumericTerm(
+    _value, [&](irs::bytes_view term) { terms.emplace_back(term); });
+  return terms;
+}
+
+bool IntField::InsertBlockInto(const irs::IndexWriter::Document& doc) const {
+  return doc.WithField(id, index_features, [&](irs::FieldInverter& fld) {
+    return fld.InvertNumerics<int32_t>(
+      [&](auto&& emit) { emit(_value, doc.DocId()); });
+  });
 }
 
 bool IntField::Write(irs::DataOutput& out) const {
@@ -189,9 +201,18 @@ bool IntField::Write(irs::DataOutput& out) const {
   return true;
 }
 
-irs::Tokenizer& DoubleField::GetTokens() const {
-  _stream.reset(_value);
-  return _stream;
+std::optional<std::vector<irs::bstring>> DoubleField::BlockTerms() const {
+  std::vector<irs::bstring> terms;
+  irs::numeric_utils::ForEachNumericTerm(
+    _value, [&](irs::bytes_view term) { terms.emplace_back(term); });
+  return terms;
+}
+
+bool DoubleField::InsertBlockInto(const irs::IndexWriter::Document& doc) const {
+  return doc.WithField(id, index_features, [&](irs::FieldInverter& fld) {
+    return fld.InvertNumerics<double_t>(
+      [&](auto&& emit) { emit(_value, doc.DocId()); });
+  });
 }
 
 bool DoubleField::Write(irs::DataOutput& out) const {
@@ -199,9 +220,18 @@ bool DoubleField::Write(irs::DataOutput& out) const {
   return true;
 }
 
-irs::Tokenizer& FloatField::GetTokens() const {
-  _stream.reset(_value);
-  return _stream;
+std::optional<std::vector<irs::bstring>> FloatField::BlockTerms() const {
+  std::vector<irs::bstring> terms;
+  irs::numeric_utils::ForEachNumericTerm(
+    _value, [&](irs::bytes_view term) { terms.emplace_back(term); });
+  return terms;
+}
+
+bool FloatField::InsertBlockInto(const irs::IndexWriter::Document& doc) const {
+  return doc.WithField(id, index_features, [&](irs::FieldInverter& fld) {
+    return fld.InvertNumerics<float_t>(
+      [&](auto&& emit) { emit(_value, doc.DocId()); });
+  });
 }
 
 bool FloatField::Write(irs::DataOutput& out) const {
@@ -209,10 +239,7 @@ bool FloatField::Write(irs::DataOutput& out) const {
   return true;
 }
 
-irs::Tokenizer& BinaryField::GetTokens() const {
-  _stream.reset(irs::ViewCast<char, irs::byte_type>(_value));
-  return _stream;
-}
+irs::analysis::Tokenizer& BinaryField::GetTokens() const { return _stream; }
 
 bool BinaryField::Write(irs::DataOutput& out) const {
   irs::WriteStr(out, _value);
@@ -278,8 +305,7 @@ bool Particle::remove_by_id(irs::field_id id) noexcept {
 }
 
 DelimDocGenerator::DelimDocGenerator(const std::filesystem::path& file,
-                                     DocTemplate& doc,
-                                     uint32_t delim /* = 0x0009 */)
+                                     DocTemplate& doc, uint32_t delim)
   : _ifs(file.native(), std::ifstream::in | std::ifstream::binary),
     _doc(&doc),
     _delim(delim) {
@@ -293,7 +319,6 @@ const Document* DelimDocGenerator::next() {
   }
 
   if (!simdutf::validate_utf8(_str.data(), _str.size())) {
-    /* invalid utf8 string */
     return nullptr;
   }
 
@@ -328,14 +353,14 @@ const Document* CsvDocGenerator::next() {
     return nullptr;
   }
 
-  auto* term = irs::get<irs::TermAttr>(*_stream);
-
-  if (!term || !_stream->reset(_line)) {
+  irs::ValueAnalyzer analyzer;
+  irs::ValueTokens tokens;
+  if (!analyzer.Analyze(*_stream, _line, tokens)) {
     return nullptr;
   }
-
-  for (size_t i = 0; _stream->next(); ++i) {
-    _doc.value(i, irs::ViewCast<char>(term->value));
+  size_t i = 0;
+  for (const auto& tok : tokens.terms()) {
+    _doc.value(i++, std::string_view{tok.GetData(), tok.GetSize()});
   }
 
   return &_doc;
@@ -353,16 +378,13 @@ namespace {
 
 namespace ondemand = simdjson::ondemand;
 
-// Maps a scalar on-demand value onto a JsonValue and hands it to the factory.
-// The factory must copy any string synchronously: on-demand string views are
-// only valid until the next value is parsed.
 void EmitScalar(const JsonDocGenerator::factory_f& factory, Document& doc,
                 const std::string& key, ondemand::value value) {
   JsonDocGenerator::JsonValue val;
   switch (value.type()) {
     case ondemand::json_type::null:
       val.vt = JsonDocGenerator::ValueType::NIL;
-      (void)value.is_null();  // consume the null token
+      (void)value.is_null();
       break;
     case ondemand::json_type::boolean:
       val.vt = JsonDocGenerator::ValueType::BOOL;
@@ -384,7 +406,7 @@ void EmitScalar(const JsonDocGenerator::factory_f& factory, Document& doc,
           val.dbl = number.get_double();
           break;
         case ondemand::number_type::big_integer:
-          return;  // unused by the test fixtures
+          return;
       }
       break;
     }
@@ -393,7 +415,7 @@ void EmitScalar(const JsonDocGenerator::factory_f& factory, Document& doc,
       val.str = std::string_view{value.get_string()};
       break;
     default:
-      return;  // array/object are recursed by the caller
+      return;
   }
   factory(doc, key, val);
 }
@@ -426,9 +448,6 @@ void WalkValue(const JsonDocGenerator::factory_f& factory, Document& doc,
   }
 }
 
-// The document set is a top-level array whose direct object children each
-// become one Document; every scalar becomes a field keyed by its immediate
-// enclosing key.
 void ParseJsonDocuments(const JsonDocGenerator::factory_f& factory,
                         ondemand::document& root, std::vector<Document>& docs) {
   for (auto element : root.get_array()) {
@@ -478,30 +497,6 @@ const Document* JsonDocGenerator::next() {
 
 void JsonDocGenerator::reset() { _next = _docs.begin(); }
 
-TokenizerPayload::TokenizerPayload(irs::Tokenizer* impl) : _impl(impl) {
-  SDB_ASSERT(_impl);
-  _term = irs::get<irs::TermAttr>(*_impl);
-  SDB_ASSERT(_term);
-}
-
-irs::Attribute* TokenizerPayload::GetMutable(
-  irs::TypeInfo::type_id type) noexcept {
-  if (irs::Type<irs::PayAttr>::id() == type) {
-    return &_pay;
-  }
-
-  return _impl->GetMutable(type);
-}
-
-bool TokenizerPayload::next() {
-  if (_impl->next()) {
-    _pay.value = _term->value;
-    return true;
-  }
-  _pay.value = {};
-  return false;
-}
-
 StringField::StringField(std::string_view name,
                          irs::IndexFeatures index_features) {
   this->index_features =
@@ -517,12 +512,11 @@ StringField::StringField(std::string_view name, std::string_view value,
   this->name = name;
 }
 
-// reject too long terms
+constexpr size_t kLegacyTermCap = 32768;
+
 void StringField::value(std::string_view str) {
-  const auto size_len =
-    irs::bytes_io<uint32_t>::vsize(irs::byte_block_pool::block_type::kSize);
-  const auto max_len = std::min<size_t>(
-    str.size(), irs::byte_block_pool::block_type::kSize - size_len);
+  const auto size_len = irs::bytes_io<uint32_t>::vsize(kLegacyTermCap);
+  const auto max_len = std::min<size_t>(str.size(), kLegacyTermCap - size_len);
   auto begin = str.begin();
   auto end = str.begin() + max_len;
   _value.assign(begin, end);
@@ -533,10 +527,7 @@ bool StringField::Write(irs::DataOutput& out) const {
   return true;
 }
 
-irs::Tokenizer& StringField::GetTokens() const {
-  _stream.reset(_value);
-  return _stream;
-}
+irs::analysis::Tokenizer& StringField::GetTokens() const { return _stream; }
 
 StringViewField::StringViewField(const std::string& name,
                                  irs::IndexFeatures index_features) {
@@ -552,12 +543,9 @@ StringViewField::StringViewField(const std::string& name,
   this->name = name;
 }
 
-// truncate very long terms
 void StringViewField::value(std::string_view str) {
-  const auto size_len =
-    irs::bytes_io<uint32_t>::vsize(irs::byte_block_pool::block_type::kSize);
-  const auto max_len = std::min<size_t>(
-    str.size(), irs::byte_block_pool::block_type::kSize - size_len);
+  const auto size_len = irs::bytes_io<uint32_t>::vsize(kLegacyTermCap);
+  const auto max_len = std::min<size_t>(str.size(), kLegacyTermCap - size_len);
 
   _value = std::string_view(str.data(), max_len);
 }
@@ -567,17 +555,10 @@ bool StringViewField::Write(irs::DataOutput& out) const {
   return true;
 }
 
-irs::Tokenizer& StringViewField::GetTokens() const {
-  _stream.reset(_value);
-  return _stream;
-}
+irs::analysis::Tokenizer& StringViewField::GetTokens() const { return _stream; }
 
 void EuroparlDocTemplate::init() {
   clear();
-  // SegmentWriter buckets fields by `field.Id()`; without a valid id every
-  // field collides on `field_limits::invalid()` and `index(...)` rejects the
-  // doc on the IsSubsetOf-features check. Assign a stable id per name via
-  // the canonical mapping.
   {
     auto f = std::make_shared<StringField>("title");
     f->id = tests::FieldIdFor("title");
@@ -642,7 +623,7 @@ void EuroparlDocTemplate::value(size_t idx, const std::string& value) {
   };
 
   switch (idx) {
-    case 0:  // title
+    case 0:
       _title = value;
       indexed.get_by_id<StringField>(tests::FieldIdFor("title"))->value(_title);
       indexed.get_by_id<text_ref_field>(tests::FieldIdFor("title_anl"))
@@ -650,13 +631,13 @@ void EuroparlDocTemplate::value(size_t idx, const std::string& value) {
       indexed.get_by_id<text_ref_field>(tests::FieldIdFor("title_anl_pay"))
         ->value(_title);
       break;
-    case 1:  // date
+    case 1:
       indexed.get_by_id<LongField>(tests::FieldIdFor("date"))
         ->value(gEtTime(value));
       indexed.get_by_id<StringField>(tests::FieldIdFor("datestr"))
         ->value(value);
       break;
-    case 2:  // body
+    case 2:
       _body = value;
       indexed.get_by_id<StringField>(tests::FieldIdFor("body"))->value(_body);
       indexed.get_by_id<text_ref_field>(tests::FieldIdFor("body_anl"))
@@ -678,11 +659,6 @@ void EuroparlDocTemplate::reset() { _idval = 0; }
 
 void GenericJsonFieldFactory(Document& doc, const std::string& name,
                              const JsonDocGenerator::JsonValue& data) {
-  // Every JSON-driven field must carry a stable id so the writer can bucket
-  // it (SegmentWriter indexes by `field.Id()`). Look up the canonical id
-  // for `name`; unknown names hash via the FNV-1a fallback inside
-  // `tests::FieldIdForRuntime`. The runtime variant is hashmap-backed for
-  // O(1) lookup on this per-doc, per-field hot path.
   const auto id = tests::FieldIdForRuntime(name);
   if (JsonDocGenerator::ValueType::STRING == data.vt) {
     auto f = std::make_shared<StringField>(name, data.str);
@@ -693,24 +669,20 @@ void GenericJsonFieldFactory(Document& doc, const std::string& name,
     auto& field = (doc.indexed.end() - 1).as<BinaryField>();
     field.Name(name);
     field.id = id;
-    field.value(
-      irs::ViewCast<irs::byte_type>(irs::NullTokenizer::value_null()));
+    field.value(irs::ViewCast<irs::byte_type>(irs::kNullTerm));
   } else if (JsonDocGenerator::ValueType::BOOL == data.vt && data.b) {
     doc.insert(std::make_shared<BinaryField>());
     auto& field = (doc.indexed.end() - 1).as<BinaryField>();
     field.Name(name);
     field.id = id;
-    field.value(
-      irs::ViewCast<irs::byte_type>(irs::BooleanTokenizer::value_true()));
+    field.value(irs::ViewCast<irs::byte_type>(irs::kTrueTerm));
   } else if (JsonDocGenerator::ValueType::BOOL == data.vt && !data.b) {
     doc.insert(std::make_shared<BinaryField>());
     auto& field = (doc.indexed.end() - 1).as<BinaryField>();
     field.Name(name);
     field.id = id;
-    field.value(
-      irs::ViewCast<irs::byte_type>(irs::BooleanTokenizer::value_false()));
+    field.value(irs::ViewCast<irs::byte_type>(irs::kFalseTerm));
   } else if (data.is_number()) {
-    // 'value' can be interpreted as a double
     doc.insert(std::make_shared<DoubleField>());
     auto& field = (doc.indexed.end() - 1).as<DoubleField>();
     field.Name(name);
@@ -724,19 +696,16 @@ void PayloadedJsonFieldFactory(Document& doc, const std::string& name,
   using TextField = TextField<std::string>;
 
   if (JsonDocGenerator::ValueType::STRING == data.vt) {
-    // Analyzed field with payload
     const auto anl_pay_name = std::string(name.c_str()) + "_anl_pay";
     auto anl_pay = std::make_shared<TextField>(anl_pay_name, data.str, true);
     anl_pay->id = tests::FieldIdForRuntime(anl_pay_name);
     doc.indexed.push_back(std::move(anl_pay));
 
-    // Analyzed field
     const auto anl_name = std::string(name.c_str()) + "_anl";
     auto anl = std::make_shared<TextField>(anl_name, data.str);
     anl->id = tests::FieldIdForRuntime(anl_name);
     doc.indexed.push_back(std::move(anl));
 
-    // Not analyzed field
     auto plain = std::make_shared<StringField>(name, data.str);
     plain->id = tests::FieldIdForRuntime(name);
     doc.insert(std::move(plain));
@@ -745,24 +714,20 @@ void PayloadedJsonFieldFactory(Document& doc, const std::string& name,
     auto& field = (doc.indexed.end() - 1).as<BinaryField>();
     field.Name(name);
     field.id = tests::FieldIdForRuntime(name);
-    field.value(
-      irs::ViewCast<irs::byte_type>(irs::NullTokenizer::value_null()));
+    field.value(irs::ViewCast<irs::byte_type>(irs::kNullTerm));
   } else if (JsonDocGenerator::ValueType::BOOL == data.vt && data.b) {
     doc.insert(std::make_shared<BinaryField>());
     auto& field = (doc.indexed.end() - 1).as<BinaryField>();
     field.Name(name);
     field.id = tests::FieldIdForRuntime(name);
-    field.value(
-      irs::ViewCast<irs::byte_type>(irs::BooleanTokenizer::value_true()));
+    field.value(irs::ViewCast<irs::byte_type>(irs::kTrueTerm));
   } else if (JsonDocGenerator::ValueType::BOOL == data.vt && !data.b) {
     doc.insert(std::make_shared<BinaryField>());
     auto& field = (doc.indexed.end() - 1).as<BinaryField>();
     field.Name(name);
     field.id = tests::FieldIdForRuntime(name);
-    field.value(
-      irs::ViewCast<irs::byte_type>(irs::BooleanTokenizer::value_false()));
+    field.value(irs::ViewCast<irs::byte_type>(irs::kFalseTerm));
   } else if (data.is_number()) {
-    // 'value' can be interpreted as a double
     doc.insert(std::make_shared<DoubleField>());
     auto& field = (doc.indexed.end() - 1).as<DoubleField>();
     field.Name(name);
@@ -783,8 +748,6 @@ void NormalizedStringJsonFieldFactory(Document& doc, const std::string& name,
   }
 }
 
-// Short-name alias for NormalizedStringJsonFieldFactory; both names are used
-// by different test suites.
 void NormStringJsonFieldFactory(Document& doc, const std::string& name,
                                 const JsonDocGenerator::JsonValue& data) {
   return NormalizedStringJsonFieldFactory(doc, name, data);

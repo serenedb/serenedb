@@ -1,0 +1,95 @@
+statement ok
+CREATE TEXT SEARCH DICTIONARY cn_en(
+    template = 'text', locale = 'en_US.UTF-8', case = 'lower',
+    stemming = false, accent = false, frequency = true, position = true,
+    norm = true
+);
+
+statement ok
+CREATE TABLE cn (id BIGINT PRIMARY KEY, body TEXT)
+WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+
+statement ok
+CREATE INDEX cn_idx ON cn USING inverted (body cn_en);
+
+statement ok
+CREATE TABLE cn_topk (id BIGINT PRIMARY KEY, body TEXT)
+WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0,
+      optimize_top_k = 'bm25(1.2, 0.75)');
+
+statement ok
+CREATE INDEX cn_topk_idx ON cn_topk USING inverted (body cn_en);
+
+statement ok
+INSERT INTO cn SELECT i, 'fox ' || repeat('dog ', i % 5) FROM generate_series(1, 200) s(i);
+
+statement ok
+INSERT INTO cn_topk SELECT i, 'fox ' || repeat('dog ', i % 5) FROM generate_series(1, 200) s(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) cn;
+
+statement ok
+VACUUM (REFRESH_TABLE) cn_topk;
+
+statement ok
+INSERT INTO cn SELECT i, 'fox ' || repeat('dog ', i % 5) FROM generate_series(201, 400) s(i);
+
+statement ok
+INSERT INTO cn_topk SELECT i, 'fox ' || repeat('dog ', i % 5) FROM generate_series(201, 400) s(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) cn;
+
+statement ok
+VACUUM (REFRESH_TABLE) cn_topk;
+
+query
+SELECT c.relname, m.value FROM sdb_metrics m JOIN pg_class c ON c.oid = m.relation_id
+WHERE m.metric = 'num_segments' AND c.relname IN ('cn', 'cn_topk') ORDER BY c.relname;
+----
+relname	value
+cn	2
+cn_topk	2
+
+statement ok
+VACUUM (COMPACT_TABLE) cn;
+
+statement ok
+VACUUM (COMPACT_TABLE) cn_topk;
+
+query
+SELECT c.relname, m.value FROM sdb_metrics m JOIN pg_class c ON c.oid = m.relation_id
+WHERE m.metric = 'num_segments' AND c.relname IN ('cn', 'cn_topk') ORDER BY c.relname;
+----
+relname	value
+cn	1
+cn_topk	1
+
+query
+SELECT count(*) FROM cn_idx WHERE body @@ ts_phrase('fox');
+----
+count
+400
+
+query
+SELECT id FROM cn_idx WHERE body @@ ts_phrase('fox') ORDER BY BM25(cn_idx.tableoid) DESC, id LIMIT 3;
+----
+id
+5
+10
+15
+
+query
+SELECT count(*) FROM cn_topk_idx WHERE body @@ ts_phrase('fox');
+----
+count
+400
+
+query
+SELECT id FROM cn_topk WHERE body @@ ts_phrase('fox') ORDER BY BM25(cn_topk.tableoid) DESC, id LIMIT 3;
+----
+id
+5
+10
+15

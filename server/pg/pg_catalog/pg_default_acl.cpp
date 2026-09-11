@@ -23,6 +23,7 @@
 #include "app/app_server.h"
 #include "basics/down_cast.h"
 #include "catalog/ddl/catalog.h"
+#include "catalog/entry/duckdb_object_entry.h"
 #include "catalog/read/duckdb_catalog_sets.h"
 #include "catalog/role.h"
 #include "pg/pg_catalog/fwd.h"
@@ -34,7 +35,7 @@ catalog::MaterializedData SystemTableSnapshot<PgDefaultAcl>::GetTableData() {
   std::vector<PgDefaultAcl> values;
   uint64_t oid = 1;
   catalog::VisitRoles(
-    &_config.GetClientContext(), [&](const catalog::Role& role) {
+    &_config.GetClientContext(), [&](const catalog::SereneDBRoleEntry& role) {
       for (const auto& entry : role.DefaultAcls()) {
         // defaclnamespace 0 == all schemas (the schema-less form).
         const uint64_t ns = entry.schema.isSet() ? entry.schema.id() : 0;

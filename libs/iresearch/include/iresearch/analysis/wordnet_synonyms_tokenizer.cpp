@@ -22,15 +22,14 @@
 
 #include <absl/strings/ascii.h>
 #include <absl/strings/str_cat.h>
-#include <absl/strings/str_replace.h>
 #include <absl/strings/str_split.h>
-#include <re2/re2.h>
 
+#include <cstring>
+#include <duckdb/common/crypto/md5.hpp>
 #include <string_view>
 #include <utility>
 
-#include "basics/log.h"
-#include "iresearch/analysis/token_attributes.hpp"
+#include "iresearch/analysis/token_batch.hpp"
 #include "pg/sql_exception_macro.h"
 
 namespace irs::analysis {
@@ -39,17 +38,15 @@ namespace {
 constexpr size_t kWordnetMinCountParams = 4;
 constexpr size_t kWordnetMaxCountParams = 6;
 
-const RE2 kWordnetPattern(R"(s\(([^)]*)\)\.)");
-
 bool RegexWordnet(const std::string_view input, std::string_view* result) {
-  if (input.length() <= 2) {
+  if (!input.starts_with("s(") || !input.ends_with(").")) {
     return false;
   }
-
-  if (!RE2::FullMatch(input, kWordnetPattern, result)) {
+  const auto params = input.substr(2, input.size() - 4);
+  if (params.find(')') != std::string_view::npos) {
     return false;
   }
-
+  *result = params;
   return true;
 }
 
@@ -76,15 +73,16 @@ std::vector<std::string_view> ParseParams(const std::string_view line,
 }  // namespace
 
 WordnetSynonymsTokenizer::SynonymsMap WordnetSynonymsTokenizer::Parse(
-  const std::string_view input) {
-  std::vector<std::string_view> lines = absl::StrSplit(input, '\n');
-
+  std::string& input) {
   size_t line_number{};
 
   SynonymsMap mapping;
 
-  for (const auto& line : lines) {
+  for (std::string_view line : absl::StrSplit(std::string_view{input}, '\n')) {
     line_number++;
+    if (line.ends_with('\r')) {
+      line.remove_suffix(1);
+    }
     if (line.empty()) {
       continue;
     }
@@ -102,76 +100,73 @@ WordnetSynonymsTokenizer::SynonymsMap WordnetSynonymsTokenizer::Parse(
                 line_number));
     }
 
-    std::string synonym = absl::StrReplaceAll(
-      raw_synonym.substr(1, raw_synonym.size() - 2), {{"''", "'"}});
+    std::string_view synonym = raw_synonym.substr(1, raw_synonym.size() - 2);
+    if (size_t quote = synonym.find("''"); quote != std::string_view::npos) {
+      char* dst = input.data() + (synonym.data() - input.data());
+      size_t size = quote + 1;
+      std::string_view tail = synonym.substr(quote + 2);
+      for (quote = tail.find("''"); quote != std::string_view::npos;
+           quote = tail.find("''")) {
+        std::memmove(dst + size, tail.data(), quote + 1);
+        size += quote + 1;
+        tail = tail.substr(quote + 2);
+      }
+      std::memmove(dst + size, tail.data(), tail.size());
+      size += tail.size();
+      synonym = {dst, size};
+    }
 
-    mapping[synonym].push_back(syn_set_id);
+    mapping[synonym].emplace_back(syn_set_id);
   }
 
-  for (auto& [word, synset] : mapping) {
+  mapping.ForEachMapped([](SynonymsGroups& synset) {
     absl::c_sort(synset);
     synset.erase(std::unique(synset.begin(), synset.end()), synset.end());
     synset.shrink_to_fit();
-  }
+  });
 
   return mapping;
 }
 
 WordnetSynonymsTokenizer::WordnetSynonymsTokenizer(
-  std::shared_ptr<const State> state) noexcept
+  duckdb::shared_ptr<const State> state) noexcept
   : _state(std::move(state)) {
   SDB_ASSERT(_state);
 }
 
-std::shared_ptr<const WordnetSynonymsTokenizer::State>
+duckdb::unique_ptr<WordnetSynonymsTokenizer::State>
 WordnetSynonymsTokenizer::MakeState(std::string text) {
-  auto state = std::make_shared<State>();
+  auto state = duckdb::make_uniq<State>();
 
-  // Order matters: views in `mapping`'s values point into `text`, so the
-  // backing buffer is populated before parsing builds the views over it.
   state->text = std::move(text);
   state->mapping = Parse(state->text);
 
   return state;
 }
 
-Analyzer::ptr WordnetSynonymsTokenizer::Make(Options opts) {
-  return std::make_unique<WordnetSynonymsTokenizer>(
-    MakeState(std::move(opts.synonyms_text)));
+Tokenizer::ptr WordnetSynonymsTokenizer::Make(
+  Options opts, duckdb::SharedObjectCache& cache) {
+  duckdb::MD5Context digest;
+  digest.Add(opts.synonyms_text);
+  char hex[duckdb::MD5Context::MD5_HASH_LENGTH_TEXT];
+  digest.FinishHex(hex);
+  auto state = cache.GetOrBuild<State>(std::string_view{hex, sizeof(hex)}, [&] {
+    return MakeState(std::move(opts.synonyms_text));
+  });
+  return std::make_unique<WordnetSynonymsTokenizer>(std::move(state));
 }
 
-bool WordnetSynonymsTokenizer::next() {
-  if (!_term_exists) {
-    return false;
+template<TokenLayout Layout, typename Sink>
+bool WordnetSynonymsTokenizer::DoFill(const duckdb::string_t& raw, Sink& sink) {
+  if (const auto* groups = _state->mapping.Find(raw); groups) {
+    for (const std::string_view group : *groups) {
+      sink.template Emit<Layout>(MakeTermView(group));
+    }
   }
-
-  auto& term = std::get<TermAttr>(_attrs);
-  term.value = ViewCast<byte_type>(*_curr);
-  _curr++;
-
-  if (_curr == _end) {
-    _term_exists = false;
-  }
-
   return true;
 }
 
-bool WordnetSynonymsTokenizer::reset(const std::string_view data) {
-  auto& offset = std::get<OffsAttr>(_attrs);
-  offset.start = 0;
-  offset.end = data.size();
-
-  const auto& mapping = _state->mapping;
-  if (const auto it = mapping.find(data); it == mapping.end()) {
-    _term_exists = false;
-  } else {
-    _begin = _curr = it->second.data();
-    _end = _curr + it->second.size();
-
-    _term_exists = true;
-  }
-
-  return true;
-}
+template class TypedTokenizer<WordnetSynonymsTokenizer>;
+template class TypedTokenExpander<WordnetSynonymsTokenizer>;
 
 }  // namespace irs::analysis

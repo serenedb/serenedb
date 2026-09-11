@@ -29,6 +29,7 @@
 #include <duckdb/common/types/data_chunk.hpp>
 #include <duckdb/main/connection.hpp>
 #include <iresearch/index/index_writer.hpp>
+#include <iresearch/search/all_filter.hpp>
 #include <limits>
 #include <memory>
 #include <span>
@@ -176,19 +177,9 @@ void RunSearchTableRecovery(bool skip_wal_recovery) {
       ctx.delete_sink->FinishImpl();
       ctx.max_tick = std::max(ctx.max_tick, tick);
     };
-    // TRUNCATE wipes the shard as of `tick`. Clear rolls back the open trx
-    // (discarding any pre-truncate replayed inserts -- superseded by the
-    // truncate) and drops on-disk published data <= tick; drop the sinks first
-    // so nothing pins the trx, then start a fresh trx. Post-truncate ops (in
-    // later records) lazily rebuild the sinks via ensure_ctx; if the truncate
-    // is last, Finalize commits the empty trx so the cleared state publishes.
     auto replay_truncate = [&](uint64_t tick, ObjectId table_id) {
-      auto& info = shards.at(table_id);
       auto& ctx = ensure_ctx(table_id);
-      ctx.insert_sink.reset();
-      ctx.delete_sink.reset();
-      info.search->Clear(tick);
-      ctx.trx = info.search->GetTransaction();
+      ctx.trx.Remove(std::make_shared<irs::All>());
       ctx.max_tick = std::max(ctx.max_tick, tick);
     };
     // Re-attach the files the crashed process already flushed instead of

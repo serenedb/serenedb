@@ -31,7 +31,6 @@ class ByNGramSimilarity;
 
 size_t MinMatchCount(size_t terms_count, float_t threshold) noexcept;
 
-// Options for ngram similarity filter
 struct ByNGramSimilarityOptions {
   using FilterType = ByNGramSimilarity;
 
@@ -61,7 +60,9 @@ class ByNGramSimilarity : public FilterWithField<ByNGramSimilarityOptions> {
                           options().threshold, GetBoost());
   }
 
-  PrepareCollector::ptr MakeCollectorImpl(const Scorer* scorer) const final;
+  PrepareCollector::ptr MakeCollectorImpl(const Scorer* scorer,
+                                          StatsArena& stats,
+                                          uint32_t threads) const final;
 };
 
 }  // namespace irs

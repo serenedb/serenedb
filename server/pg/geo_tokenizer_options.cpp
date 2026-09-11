@@ -20,7 +20,7 @@
 
 #include "pg/geo_tokenizer_options.h"
 
-#include <iresearch/analysis/geo_analyzer.hpp>
+#include <iresearch/analysis/geo_tokenizer.hpp>
 
 #include "magic_enum/magic_enum.hpp"
 #include "pg/errcodes.h"
@@ -29,7 +29,7 @@
 namespace sdb::pg::tokenizer_options {
 
 void CheckGeoJsonType(std::string_view option, std::string_view value) {
-  using Type = irs::analysis::GeoJsonAnalyzer::Type;
+  using Type = irs::analysis::GeoJsonTokenizer::Type;
   if (!magic_enum::enum_cast<Type>(value, magic_enum::case_insensitive)) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                     ERR_MSG("invalid value in \"", option, "\" parameter"),
@@ -38,7 +38,7 @@ void CheckGeoJsonType(std::string_view option, std::string_view value) {
 }
 
 void CheckGeoJsonCoding(std::string_view option, std::string_view value) {
-  using Coding = irs::analysis::GeoJsonAnalyzer::Coding;
+  using Coding = irs::analysis::GeoJsonTokenizer::Coding;
   const auto coding =
     magic_enum::enum_cast<Coding>(value, magic_enum::case_insensitive);
   if (!coding) {

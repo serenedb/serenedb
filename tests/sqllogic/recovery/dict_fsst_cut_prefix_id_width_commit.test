@@ -1,0 +1,107 @@
+# dict_fsst cut sizing: the prefix-id-width overflow on the path the incident took -- the optimistic
+# writer compressing the trailing partial row group inside COMMIT, not an explicit CHECKPOINT.
+#
+# dict_fsst_cut_prefix_id_width.test builds the overflowing segment and checkpoints it. Here the same
+# 43,750 crafted rows follow one full row group of filler, so the INSERT spans more than a row group:
+# LocalStorage::Flush then takes the bulk-append branch at commit and WriteUnflushedRowGroups compresses
+# the trailing partial row group right there, the way a large INSERT does. Before the fix that threw
+# "dict_fsst: refusing to write a cleaved segment layout ... past the ...-byte block" out of the commit
+# ("Failed to commit: ..."), rolling the whole statement back. No CHECKPOINT statement on purpose.
+#
+# The crafted shape is the sibling test's, shifted by the filler: 2 groups x 2600 rows of a 48-char
+# group prefix + digit + 7 pseudo-random printable chars, then 4-char singletons over all 95 printable
+# chars, then 3-char pairs sharing 2 chars. Default row groups, default block size.
+
+control substitution on
+
+
+statement ok
+ATTACH '${__TEST_DIR__}/dfpwc.db' AS dfpwc (TYPE duckdb, STORAGE_VERSION 'serenedb_v1');
+
+
+statement ok
+SET force_compression='dict_fsst';
+
+
+statement ok
+CREATE TABLE dfpwc.t AS
+  SELECT ord,
+    CASE WHEN ord < 122880 THEN 'f' || ord::VARCHAR
+    WHEN ord - 122880 < 5200 THEN
+      chr((65 + (ord - 122880) // 2600)::INTEGER) || 'QWERTYUIOPASDFGHJKLZXCVBNM0123456789QWERTYUIOPA'
+      || chr((48 + ((ord - 122880) % 2600) % 3)::INTEGER)
+      || chr((32 + ((((ord - 122880) % 2600) * 7919) % 857375) % 95)::INTEGER)
+      || chr((32 + (((((ord - 122880) % 2600) * 7919) % 857375) // 95) % 95)::INTEGER)
+      || chr((32 + (((((ord - 122880) % 2600) * 7919) % 857375) // 9025) % 95)::INTEGER)
+      || chr((32 + ((((ord - 122880) % 2600) * 104729) % 857375) % 95)::INTEGER)
+      || chr((32 + (((((ord - 122880) % 2600) * 104729) % 857375) // 95) % 95)::INTEGER)
+      || chr((32 + (((((ord - 122880) % 2600) * 104729) % 857375) // 9025) % 95)::INTEGER)
+      || chr((32 + (((ord - 122880) % 2600) * 31) % 95)::INTEGER)
+    WHEN ord - 122880 < 34000 THEN
+      chr((32 + (ord - 122880 - 5200) % 95)::INTEGER)
+      || chr((32 + ((((ord - 122880 - 5200) // 95) * 7919) % 857375) % 95)::INTEGER)
+      || chr((32 + (((((ord - 122880 - 5200) // 95) * 7919) % 857375) // 95) % 95)::INTEGER)
+      || chr((32 + (((((ord - 122880 - 5200) // 95) * 7919) % 857375) // 9025) % 95)::INTEGER)
+    ELSE
+      chr((97 + ((ord - 122880 - 34000) // 2) % 26)::INTEGER)
+      || chr((97 + (((ord - 122880 - 34000) // 2) // 26) % 26)::INTEGER)
+      || substr('abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ',
+                (2 * (((ord - 122880 - 34000) // 2) // 676) + ((ord - 122880 - 34000) % 2) + 1)::INTEGER, 1)
+    END AS s
+  FROM range(122880 + 43750) t(ord) ORDER BY ord;
+
+
+# every row of the crafted row group survived the commit with its exact value
+query
+SELECT count(*) AS n, count(DISTINCT s) AS dn,
+       bool_and(s = CASE WHEN ord - 122880 < 5200 THEN
+         chr((65 + (ord - 122880) // 2600)::INTEGER) || 'QWERTYUIOPASDFGHJKLZXCVBNM0123456789QWERTYUIOPA'
+         || chr((48 + ((ord - 122880) % 2600) % 3)::INTEGER)
+         || chr((32 + ((((ord - 122880) % 2600) * 7919) % 857375) % 95)::INTEGER)
+         || chr((32 + (((((ord - 122880) % 2600) * 7919) % 857375) // 95) % 95)::INTEGER)
+         || chr((32 + (((((ord - 122880) % 2600) * 7919) % 857375) // 9025) % 95)::INTEGER)
+         || chr((32 + ((((ord - 122880) % 2600) * 104729) % 857375) % 95)::INTEGER)
+         || chr((32 + (((((ord - 122880) % 2600) * 104729) % 857375) // 95) % 95)::INTEGER)
+         || chr((32 + (((((ord - 122880) % 2600) * 104729) % 857375) // 9025) % 95)::INTEGER)
+         || chr((32 + (((ord - 122880) % 2600) * 31) % 95)::INTEGER)
+       WHEN ord - 122880 < 34000 THEN
+         chr((32 + (ord - 122880 - 5200) % 95)::INTEGER)
+         || chr((32 + ((((ord - 122880 - 5200) // 95) * 7919) % 857375) % 95)::INTEGER)
+         || chr((32 + (((((ord - 122880 - 5200) // 95) * 7919) % 857375) // 95) % 95)::INTEGER)
+         || chr((32 + (((((ord - 122880 - 5200) // 95) * 7919) % 857375) // 9025) % 95)::INTEGER)
+       ELSE
+         chr((97 + ((ord - 122880 - 34000) // 2) % 26)::INTEGER)
+         || chr((97 + (((ord - 122880 - 34000) // 2) // 26) % 26)::INTEGER)
+         || substr('abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ',
+                   (2 * (((ord - 122880 - 34000) // 2) // 676) + ((ord - 122880 - 34000) % 2) + 1)::INTEGER, 1)
+       END) AS rows_match
+  FROM dfpwc.t WHERE ord >= 122880;
+----
+n	dn	rows_match
+43750	43750	t
+
+
+# the filler row group is intact too
+query
+SELECT count(*) AS n, bool_and(s = 'f' || ord::VARCHAR) AS filler_match FROM dfpwc.t WHERE ord < 122880;
+----
+n	filler_match
+122880	t
+
+
+# the column landed in dict_fsst
+query
+SELECT count(*) > 0 AS has_dict_fsst
+  FROM pragma_storage_info('dfpwc.t', include_segment_info=true)
+  WHERE column_name='s' AND compression='DICT_FSST';
+----
+has_dict_fsst
+t
+
+
+statement ok
+DROP TABLE dfpwc.t;
+
+
+statement ok
+DETACH dfpwc;

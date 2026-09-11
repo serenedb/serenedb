@@ -52,11 +52,8 @@ constexpr const T* TryGetValue(const T* value) noexcept {
   return value;
 }
 
-constexpr std::nullptr_t TryGetValue(utils::Empty /*value*/) noexcept {
-  return nullptr;
-}
+constexpr std::nullptr_t TryGetValue(utils::Empty) noexcept { return nullptr; }
 
-// Independence measure kernels; inlined by the templated scorer.
 template<DFIMeasure M>
 IRS_FORCE_INLINE score_t MeasureKernel(score_t diff,
                                        score_t expected) noexcept {
@@ -71,15 +68,12 @@ IRS_FORCE_INLINE score_t MeasureKernel(score_t diff,
   }
 }
 
-// score = boost * log2(measure(tf, expected) + 1) for tf > expected, else 0.
-//   expected = ratio * dl,  where ratio = (ttf_t + 1) / (ttf_field + 1)
 template<ScoreMergeType MergeType, DFIMeasure M, bool HasBoost>
 IRS_FORCE_INLINE void DFIImpl(
   score_t* IRS_RESTRICT res, scores_size_t n, const uint32_t* IRS_RESTRICT freq,
   const uint32_t* IRS_RESTRICT norm,
   [[maybe_unused]] const score_t* IRS_RESTRICT boost, score_t ratio,
   score_t const_boost) noexcept {
-  // 1 / ln(2) -- log2(x) = ln(x) * kInvLn2
   constexpr score_t kInvLn2 = 1.4426950408889634f;
   for (scores_size_t i = 0; i != n; ++i) {
     const score_t tf = TermCountToScore(freq[i]);
@@ -151,7 +145,7 @@ struct DFIScore : public ScoreOperator {
   [[no_unique_address]] utils::Need<HasFilterBoost, const score_t*>
     filter_boost;
   score_t boost;
-  score_t ratio;  // (ttf_t + 1) / (ttf_field + 1)
+  score_t ratio;
 };
 
 template<DFIMeasure M>
@@ -200,7 +194,7 @@ ScoreFunction DFI::PrepareScorer(const ScoreContext& ctx) const {
   }
 
   if (!norm) {
-    return ScoreFunction::Default();
+    norm = kNorms.data();
   }
 
   auto* filter_boost = [&] {
@@ -219,7 +213,7 @@ ScoreFunction DFI::PrepareScorer(const ScoreContext& ctx) const {
       return MakeScoreMeasure<DFIMeasure::ChiSquared>(ctx, *stats, freq, norm,
                                                       filter_boost);
   }
-  return ScoreFunction::Default();  // unreachable
+  return ScoreFunction::Default();
 }
 
 std::string DFI::ToString() const {
@@ -254,7 +248,6 @@ ScoreBoundSource::ptr DFI::PrepareScoreBoundSource() const {
 }
 
 bool DFI::Compatible(const ScorerOptions& persisted) const noexcept {
-  // A MinNorm bm25 writes its own b's argmax, not the plain min-norm pair.
   return irs::BoundTypeOf(persisted) == BoundTypeOf(Options{}) &&
          !std::get_if<ScorerOptions::Bm25>(&persisted.params);
 }

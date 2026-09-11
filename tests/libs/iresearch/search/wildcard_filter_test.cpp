@@ -81,12 +81,20 @@ irs::Filter::ptr MakeWildcard(irs::field_id field, std::string_view term) {
   return filter;
 }
 
+irs::Filter::ptr MakeWildcard(irs::field_id field, std::string_view term,
+                              const irs::Scorer* scorer) {
+  auto filter =
+    irs::CreateByWildcard(field, irs::ViewCast<irs::byte_type>(term));
+  filter->SetScorer(scorer);
+  irs::Optimize(filter, {.scored = true});
+  return filter;
+}
+
 }  // namespace
 
 TEST(by_wildcard_test, options) {
   irs::ByWildcardOptions opts;
   ASSERT_TRUE(opts.term.empty());
-  ASSERT_EQ(1024, opts.scored_terms_limit);
 }
 
 TEST(by_wildcard_test, ctor) {
@@ -103,173 +111,59 @@ TEST(by_wildcard_test, equal) {
   ASSERT_EQ(q, MakeFilter(kFieldId, "bar*"));
   ASSERT_NE(q, MakeFilter(kField1Id, "bar*"));
   ASSERT_NE(q, MakeFilter(kFieldId, "bar"));
-
-  irs::ByWildcard q1 = MakeFilter(kFieldId, "bar*");
-  q1.mutable_options()->scored_terms_limit = 100;
-  ASSERT_NE(q, q1);
 }
 
 TEST(by_wildcard_test, boost) {
   MaxMemoryCounter counter;
 
-  // no boost
+  // the boost reaches the filter
   {
     irs::Filter::ptr q = MakeWildcard(kFieldId, "bar*");
-
-    tests::PreparedFilter prepared{*q, irs::SubReader::empty(), nullptr,
-                                   counter};
-    ASSERT_EQ(irs::kNoBoost, prepared.Query(0)->Boost());
+    ASSERT_EQ(irs::kNoBoost, q->GetBoost());
   }
-  EXPECT_EQ(counter.current, 0);
-  EXPECT_GT(counter.max, 0);
-  counter.Reset();
 
-  // with boost
   {
     irs::score_t boost = 1.5f;
 
     irs::Filter::ptr q = irs::CreateByWildcard(
-      kFieldId, irs::ViewCast<irs::byte_type>(std::string_view("bar*")), 1024,
-      boost);
+      kFieldId, irs::ViewCast<irs::byte_type>(std::string_view("bar*")), boost);
     irs::Optimize(q);
+    ASSERT_EQ(boost, q->GetBoost());
 
+    // a segment without the field matches nothing, and nothing carries no
+    // boost -- so the boost is only observable where the field exists
     tests::PreparedFilter prepared{*q, irs::SubReader::empty(), nullptr,
                                    counter};
-    ASSERT_EQ(boost, prepared.Query(0)->Boost());
+    ASSERT_TRUE(irs::QueryBuilder::IsEmpty(*prepared.Query(0)));
+    ASSERT_EQ(irs::kNoBoost, prepared.Query(0)->Boost());
   }
   EXPECT_EQ(counter.current, 0);
-  EXPECT_GT(counter.max, 0);
   counter.Reset();
 }
 
-TEST(by_wildcard_test, test_type_of_prepared_query) {
-  MaxMemoryCounter counter;
+TEST(by_wildcard_test, type_of_lowered_filter) {
+  struct Case {
+    std::string_view pattern;
+    irs::TypeInfo::type_id type;
+  };
+  const Case cases[]{
+    {"bar", irs::Type<irs::ByTerm>::id()},
+    {"", irs::Type<irs::ByTerm>::id()},
+    {"foo\\%", irs::Type<irs::ByTerm>::id()},
+    {"bar%", irs::Type<irs::ByPrefix>::id()},
+    {"bar%%", irs::Type<irs::ByPrefix>::id()},
+    {"bar\\%", irs::Type<irs::ByTerm>::id()},
+    {"%", irs::Type<irs::ByPrefix>::id()},
+    {"%%", irs::Type<irs::ByPrefix>::id()},
+    {"\\%", irs::Type<irs::ByTerm>::id()},
+  };
 
-  // term query
-  {
-    tests::PreparedFilter lhs{MakeFilter<irs::ByTerm>(kFooId, "bar"),
-                              irs::SubReader::empty(), nullptr, counter};
-    tests::PreparedFilter rhs{*tests::Optimized(MakeFilter(kFooId, "bar")),
-                              irs::SubReader::empty(), nullptr, counter};
-    auto& lhs_ref = *lhs.Query(0);
-    auto& rhs_ref = *rhs.Query(0);
-    ASSERT_EQ(typeid(lhs_ref), typeid(rhs_ref));
+  for (const auto& c : cases) {
+    SCOPED_TRACE(c.pattern);
+    auto lowered = tests::Optimized(MakeFilter(kFooId, c.pattern));
+    ASSERT_NE(nullptr, lowered);
+    ASSERT_EQ(c.type, lowered->type());
   }
-  EXPECT_EQ(counter.current, 0);
-  EXPECT_GT(counter.max, 0);
-  counter.Reset();
-
-  // term query
-  {
-    tests::PreparedFilter lhs{MakeFilter<irs::ByTerm>(kFooId, ""),
-                              irs::SubReader::empty(), nullptr, counter};
-    tests::PreparedFilter rhs{*tests::Optimized(MakeFilter(kFooId, "")),
-                              irs::SubReader::empty(), nullptr, counter};
-    auto& lhs_ref = *lhs.Query(0);
-    auto& rhs_ref = *rhs.Query(0);
-    ASSERT_EQ(typeid(lhs_ref), typeid(rhs_ref));
-  }
-  EXPECT_EQ(counter.current, 0);
-  EXPECT_GT(counter.max, 0);
-  counter.Reset();
-
-  // term query
-  {
-    tests::PreparedFilter lhs{MakeFilter<irs::ByTerm>(kFooId, "foo%"),
-                              irs::SubReader::empty(), nullptr, counter};
-    tests::PreparedFilter rhs{*tests::Optimized(MakeFilter(kFooId, "foo\\%")),
-                              irs::SubReader::empty(), nullptr, counter};
-    auto& lhs_ref = *lhs.Query(0);
-    auto& rhs_ref = *rhs.Query(0);
-    ASSERT_EQ(typeid(lhs_ref), typeid(rhs_ref));
-  }
-  EXPECT_EQ(counter.current, 0);
-  EXPECT_GT(counter.max, 0);
-  counter.Reset();
-
-  // prefix query
-  {
-    tests::PreparedFilter lhs{MakeFilter<irs::ByPrefix>(kFooId, "bar"),
-                              irs::SubReader::empty(), nullptr, counter};
-    tests::PreparedFilter rhs{*tests::Optimized(MakeFilter(kFooId, "bar%")),
-                              irs::SubReader::empty(), nullptr, counter};
-    auto& lhs_ref = *lhs.Query(0);
-    auto& rhs_ref = *rhs.Query(0);
-    ASSERT_EQ(typeid(lhs_ref), typeid(rhs_ref));
-  }
-  EXPECT_EQ(counter.current, 0);
-  EXPECT_GT(counter.max, 0);
-  counter.Reset();
-
-  // prefix query
-  {
-    tests::PreparedFilter lhs{MakeFilter<irs::ByPrefix>(kFooId, "bar"),
-                              irs::SubReader::empty(), nullptr, counter};
-    tests::PreparedFilter rhs{*tests::Optimized(MakeFilter(kFooId, "bar%%")),
-                              irs::SubReader::empty(), nullptr, counter};
-    auto& lhs_ref = *lhs.Query(0);
-    auto& rhs_ref = *rhs.Query(0);
-    ASSERT_EQ(typeid(lhs_ref), typeid(rhs_ref));
-  }
-  EXPECT_EQ(counter.current, 0);
-  EXPECT_GT(counter.max, 0);
-  counter.Reset();
-
-  // term query
-  {
-    tests::PreparedFilter lhs{MakeFilter<irs::ByTerm>(kFooId, "bar%"),
-                              irs::SubReader::empty(), nullptr, counter};
-    tests::PreparedFilter rhs{*tests::Optimized(MakeFilter(kFooId, "bar\\%")),
-                              irs::SubReader::empty(), nullptr, counter};
-    auto& lhs_ref = *lhs.Query(0);
-    auto& rhs_ref = *rhs.Query(0);
-    ASSERT_EQ(typeid(lhs_ref), typeid(rhs_ref));
-  }
-  EXPECT_EQ(counter.current, 0);
-  EXPECT_GT(counter.max, 0);
-  counter.Reset();
-
-  // all query
-  {
-    tests::PreparedFilter lhs{MakeFilter<irs::ByPrefix>(kFooId, ""),
-                              irs::SubReader::empty(), nullptr, counter};
-    tests::PreparedFilter rhs{*tests::Optimized(MakeFilter(kFooId, "%")),
-                              irs::SubReader::empty(), nullptr, counter};
-    auto& lhs_ref = *lhs.Query(0);
-    auto& rhs_ref = *rhs.Query(0);
-    ASSERT_EQ(typeid(lhs_ref), typeid(rhs_ref));
-  }
-  EXPECT_EQ(counter.current, 0);
-  EXPECT_GT(counter.max, 0);
-  counter.Reset();
-
-  // all query
-  {
-    tests::PreparedFilter lhs{MakeFilter<irs::ByPrefix>(kFooId, ""),
-                              irs::SubReader::empty(), nullptr, counter};
-    tests::PreparedFilter rhs{*tests::Optimized(MakeFilter(kFooId, "%%")),
-                              irs::SubReader::empty(), nullptr, counter};
-    auto& lhs_ref = *lhs.Query(0);
-    auto& rhs_ref = *rhs.Query(0);
-    ASSERT_EQ(typeid(lhs_ref), typeid(rhs_ref));
-  }
-  EXPECT_EQ(counter.current, 0);
-  EXPECT_GT(counter.max, 0);
-  counter.Reset();
-
-  // term query
-  {
-    tests::PreparedFilter lhs{MakeFilter<irs::ByTerm>(kFooId, "%"),
-                              irs::SubReader::empty(), nullptr, counter};
-    tests::PreparedFilter rhs{*tests::Optimized(MakeFilter(kFooId, "\\%")),
-                              irs::SubReader::empty(), nullptr, counter};
-    auto& lhs_ref = *lhs.Query(0);
-    auto& rhs_ref = *rhs.Query(0);
-    ASSERT_EQ(typeid(lhs_ref), typeid(rhs_ref));
-  }
-  EXPECT_EQ(counter.current, 0);
-  EXPECT_GT(counter.max, 0);
-  counter.Reset();
 }
 
 class WildcardFilterTestCase : public tests::FilterTestCaseBase {};
@@ -308,7 +202,8 @@ TEST_P(WildcardFilterTestCase, simple_sequential_order) {
       finish_docs_with_field += field->docs_with_field;
       finish_docs_with_term += term->docs_with_term;
     };
-    CheckQuery(*MakeWildcard(kPrefixId, "%"), order, docs, rdr);
+    CheckQuery(*MakeWildcard(kPrefixId, "%", order.front().get()), order, docs,
+               rdr);
     ASSERT_EQ(9, finish_count);
     ASSERT_GT(finish_docs_with_field, 0u);  // scorer collected field stats
     ASSERT_GT(finish_docs_with_term, 0u);   // scorer collected term stats
@@ -322,7 +217,8 @@ TEST_P(WildcardFilterTestCase, simple_sequential_order) {
     std::array<irs::Scorer::ptr, 1> order{
       std::make_unique<tests::sort::FrequencySort>()};
 
-    CheckQuery(*MakeWildcard(kPrefixId, "%"), order, docs, rdr);
+    CheckQuery(*MakeWildcard(kPrefixId, "%", order.front().get()), order, docs,
+               rdr);
   }
 
   // prefix
@@ -333,7 +229,8 @@ TEST_P(WildcardFilterTestCase, simple_sequential_order) {
     std::array<irs::Scorer::ptr, 1> order{
       std::make_unique<tests::sort::FrequencySort>()};
 
-    CheckQuery(*MakeWildcard(kPrefixId, "a%"), order, docs, rdr);
+    CheckQuery(*MakeWildcard(kPrefixId, "a%", order.front().get()), order, docs,
+               rdr);
   }
 }
 

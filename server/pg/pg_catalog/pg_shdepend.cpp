@@ -96,7 +96,7 @@ catalog::MaterializedData SystemTableSnapshot<PgShdepend>::GetTableData() {
   // Collected before anything is resolved: reading an edge's dependent opens
   // the role set this walk is holding, and the lock behind it is not recursive.
   std::vector<ObjectId> roles;
-  catalog::VisitRoles(&context, [&](const catalog::Role& info) {
+  catalog::VisitRoles(&context, [&](const catalog::SereneDBRoleEntry& info) {
     roles.push_back(info.GetId());
   });
 

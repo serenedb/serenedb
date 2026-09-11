@@ -1,0 +1,264 @@
+statement ok
+SET TimeZone = 'Etc/UTC';
+
+statement ok
+CREATE TABLE tb AS SELECT TIMESTAMP '2025-09-28 00:00:00' + INTERVAL (i * 37) MINUTE AS ts, (TIMESTAMP '2025-09-28 00:00:00' + INTERVAL (i * 37) MINUTE)::TIMESTAMPTZ AS tstz, (DATE '2025-09-28' + (i % 400)::INTEGER)::DATE AS d, i AS v FROM range(0, 1500) t(i);
+
+statement ok
+INSERT INTO tb VALUES (NULL, NULL, NULL, -1);
+
+statement ok
+CREATE TABLE tb_inf AS SELECT * FROM tb;
+
+statement ok
+INSERT INTO tb_inf VALUES (TIMESTAMP 'infinity', TIMESTAMPTZ 'infinity', DATE 'infinity', -2);
+
+statement ok
+SET TimeZone = 'Europe/Berlin';
+
+query
+EXPLAIN SELECT strftime(ts, '%Y-%m') AS m, count(*) AS c FROM tb GROUP BY 1;
+----
+QUERY PLAN
+╭─ PROJECTION ───────────────────────────────────────────────────────╮
+│ Projections:                                                       │
+│ strftime(__internal_date_trunc_month_unbucket(#0, 1, 0), '%Y-%m'), │
+│ #1                                                                 │
+│ ~750 rows                                                          │
+╰──────────────────────────────────┬─────────────────────────────────╯
+╭─ PERFECT_HASH_GROUP_BY ──────────┴─────────────────────────────────╮
+│ Groups: #0                                                         │
+│ Aggregates: count_star()                                           │
+│ ~750 rows                                                          │
+╰──────────────────────────────────┬─────────────────────────────────╯
+╭─ PROJECTION ─────────────────────┴─────────────────────────────────╮
+│ Projections:                                                       │
+│ __internal_date_trunc_month_bucket(ts, 1, 0)                       │
+│ ~1,501 rows                                                        │
+╰──────────────────────────────────┬─────────────────────────────────╯
+╭─ SEQ_SCAN ───────────────────────┴─────────────────────────────────╮
+│ Table: tb                                                          │
+│ Type: Sequential Scan                                              │
+│ Projections: ts                                                    │
+│ ~1,501 rows                                                        │
+╰────────────────────────────────────────────────────────────────────╯
+
+query
+EXPLAIN SELECT strftime(ts, '%Y-%m-%d %I') AS h, count(*) AS c FROM tb GROUP BY 1;
+----
+QUERY PLAN
+╭─ HASH_GROUP_BY ──────────╮
+│ Groups: #0               │
+│ Aggregates: count_star() │
+│ ~750 rows                │
+╰─────────────┬────────────╯
+╭─ PROJECTION ┴────────────╮
+│ Projections: h           │
+│ ~1,501 rows              │
+╰─────────────┬────────────╯
+╭─ SEQ_SCAN ──┴────────────╮
+│ Table: tb                │
+│ Type: Sequential Scan    │
+│ Projections: ts          │
+│ ~1,501 rows              │
+╰──────────────────────────╯
+
+query
+EXPLAIN SELECT strftime(ts, '%Y-%m') AS m, count(*) AS c FROM tb_inf GROUP BY 1;
+----
+QUERY PLAN
+╭─ HASH_GROUP_BY ──────────╮
+│ Groups: #0               │
+│ Aggregates: count_star() │
+│ ~751 rows                │
+╰─────────────┬────────────╯
+╭─ PROJECTION ┴────────────╮
+│ Projections: m           │
+│ ~1,502 rows              │
+╰─────────────┬────────────╯
+╭─ SEQ_SCAN ──┴────────────╮
+│ Table: tb_inf            │
+│ Type: Sequential Scan    │
+│ Projections: ts          │
+│ ~1,502 rows              │
+╰──────────────────────────╯
+
+query
+EXPLAIN SELECT monthname(ts) AS m, count(*) AS c FROM tb GROUP BY 1;
+----
+QUERY PLAN
+╭─ PROJECTION ────────────────────────────╮
+│ Projections: __internal_month_name(#0), │
+│              #1                         │
+│ ~750 rows                               │
+╰────────────────────┬────────────────────╯
+╭─ PERFECT_HASH_GROUP_BY ─────────────────╮
+│ Groups: #0                              │
+│ Aggregates: count_star()                │
+│ ~750 rows                               │
+╰────────────────────┬────────────────────╯
+╭─ PROJECTION ───────┴────────────────────╮
+│ Projections:                            │
+│ __internal_month_of_year(ts)            │
+│ ~1,501 rows                             │
+╰────────────────────┬────────────────────╯
+╭─ SEQ_SCAN ─────────┴────────────────────╮
+│ Table: tb                               │
+│ Type: Sequential Scan                   │
+│ Projections: ts                         │
+│ ~1,501 rows                             │
+╰─────────────────────────────────────────╯
+
+query
+EXPLAIN SELECT strftime(tstz, '%Y-%m-%d %H') AS h, count(*) AS c FROM tb GROUP BY 1;
+----
+QUERY PLAN
+╭─ PROJECTION ─────────────────────────────────────────────────────────────╮
+│ Projections:                                                             │
+│ strftime(__internal_icu_date_trunc_unbucket('hour', #0), '%Y-%m-%d %H'), │
+│ #1                                                                       │
+│ ~750 rows                                                                │
+╰─────────────────────────────────────┬────────────────────────────────────╯
+╭─ PERFECT_HASH_GROUP_BY ─────────────┴────────────────────────────────────╮
+│ Groups: #0                                                               │
+│ Aggregates: count_star()                                                 │
+│ ~750 rows                                                                │
+╰─────────────────────────────────────┬────────────────────────────────────╯
+╭─ PROJECTION ────────────────────────┴────────────────────────────────────╮
+│ Projections:                                                             │
+│ __internal_icu_date_trunc_bucket('hour', tstz)                           │
+│ ~1,501 rows                                                              │
+╰─────────────────────────────────────┬────────────────────────────────────╯
+╭─ SEQ_SCAN ──────────────────────────┴────────────────────────────────────╮
+│ Table: tb                                                                │
+│ Type: Sequential Scan                                                    │
+│ Projections: tstz                                                        │
+│ ~1,501 rows                                                              │
+╰──────────────────────────────────────────────────────────────────────────╯
+
+query
+SELECT coalesce(strftime(ts, '%Y-%m'), 'null') AS m, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1 ORDER BY 1;
+----
+m	c	s
+2025-09	117	6786
+2025-10	1207	869040
+2025-11	176	248424
+null	1	-1
+
+query
+SELECT strftime(ts, '%Y %B %d %A') AS d, count(*) AS c FROM tb WHERE v BETWEEN 0 AND 120 GROUP BY 1 ORDER BY min(ts);
+----
+d	c
+2025 September 28 Sunday	39
+2025 September 29 Monday	39
+2025 September 30 Tuesday	39
+2025 October 01 Wednesday	4
+
+query
+SELECT strftime('%Y-%m-%d %I %p', ts) AS h, count(*) AS c FROM tb WHERE v BETWEEN 0 AND 40 GROUP BY 1 ORDER BY min(ts);
+----
+h	c
+2025-09-28 12 AM	2
+2025-09-28 01 AM	2
+2025-09-28 02 AM	1
+2025-09-28 03 AM	2
+2025-09-28 04 AM	2
+2025-09-28 05 AM	1
+2025-09-28 06 AM	2
+2025-09-28 07 AM	1
+2025-09-28 08 AM	2
+2025-09-28 09 AM	2
+2025-09-28 10 AM	1
+2025-09-28 11 AM	2
+2025-09-28 12 PM	2
+2025-09-28 01 PM	1
+2025-09-28 02 PM	2
+2025-09-28 03 PM	1
+2025-09-28 04 PM	2
+2025-09-28 05 PM	2
+2025-09-28 06 PM	1
+2025-09-28 07 PM	2
+2025-09-28 08 PM	2
+2025-09-28 09 PM	1
+2025-09-28 10 PM	2
+2025-09-28 11 PM	1
+2025-09-29 12 AM	2
+
+query
+SELECT strftime(d, '%Y-%m-%d %H:%M') AS k, count(*) AS c FROM tb WHERE v BETWEEN 0 AND 3 GROUP BY 1 ORDER BY 1;
+----
+k	c
+2025-09-28 00:00	1
+2025-09-29 00:00	1
+2025-09-30 00:00	1
+2025-10-01 00:00	1
+
+query
+SELECT coalesce(monthname(ts), 'null') AS m, count(*) AS c FROM tb_inf GROUP BY 1 ORDER BY 1;
+----
+m	c
+November	176
+October	1207
+September	117
+null	2
+
+query
+SELECT coalesce(dayname(d), 'null') AS d, count(*) AS c FROM tb_inf GROUP BY 1 ORDER BY 1;
+----
+d	c
+Friday	214
+Monday	214
+Saturday	213
+Sunday	217
+Thursday	214
+Tuesday	214
+Wednesday	214
+null	2
+
+query
+SELECT strftime(tstz, '%Y-%m-%d %H') AS h, count(*) AS c FROM tb WHERE tstz >= '2025-10-25 23:30:00+00' AND tstz < '2025-10-26 03:00:00+00' GROUP BY 1 ORDER BY 1;
+----
+h	c
+2025-10-26 01	1
+2025-10-26 02	3
+2025-10-26 03	2
+
+query
+SELECT coalesce(monthname(tstz), 'null') AS m, coalesce(dayname(tstz), 'null') AS d, count(*) AS c FROM tb_inf WHERE v BETWEEN 0 AND 40 OR v < 0 GROUP BY 1, 2 ORDER BY 1, 2;
+----
+m	d	c
+September	Monday	5
+September	Sunday	36
+null	null	2
+
+statement ok
+SET disabled_optimizers = 'compressed_materialization';
+
+query
+SELECT coalesce(strftime(ts, '%Y-%m'), 'null') AS m, count(*) AS c, sum(v) AS s FROM tb GROUP BY 1 ORDER BY 1;
+----
+m	c	s
+2025-09	117	6786
+2025-10	1207	869040
+2025-11	176	248424
+null	1	-1
+
+query
+SELECT coalesce(monthname(tstz), 'null') AS m, coalesce(dayname(tstz), 'null') AS d, count(*) AS c FROM tb_inf WHERE v BETWEEN 0 AND 40 OR v < 0 GROUP BY 1, 2 ORDER BY 1, 2;
+----
+m	d	c
+September	Monday	5
+September	Sunday	36
+null	null	2
+
+statement ok
+RESET disabled_optimizers;
+
+statement error
+SELECT __internal_month_name(13);
+----
+db error: ERROR: Month bucket 13 outside 1..12
+
+
+statement ok
+SET TimeZone = 'Etc/UTC';

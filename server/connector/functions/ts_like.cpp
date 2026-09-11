@@ -20,7 +20,7 @@
 
 #include <duckdb/planner/expression/bound_cast_expression.hpp>
 #include <iresearch/analysis/token_attributes.hpp>
-#include <iresearch/analysis/wildcard_analyzer.hpp>
+#include <iresearch/analysis/wildcard_tokenizer.hpp>
 #include <iresearch/search/wildcard_filter.hpp>
 #include <iresearch/search/wildcard_ngram_filter.hpp>
 #include <iresearch/utils/string.hpp>
@@ -32,7 +32,7 @@
 
 namespace sdb::connector {
 
-void FromLike(irs::BooleanFilter& parent, const FilterContext& ctx,
+void FromLike(BoolTarget parent, const FilterContext& ctx,
               const SearchColumnInfo& column_info,
               const duckdb::BoundFunctionExpression& func) {
   SDB_ASSERT(func.GetChildren().size() == 1);
@@ -50,15 +50,16 @@ void FromLike(irs::BooleanFilter& parent, const FilterContext& ctx,
   }
 
   if (column_info.tokenizer.analyzer->type() ==
-      irs::Type<irs::analysis::WildcardAnalyzer>::id()) {
-    auto& wf = AddMaybeNegated<irs::ByWildcardNgram>(parent, ctx, column_info);
+      irs::Type<irs::analysis::WildcardTokenizer>::id()) {
+    auto& wf = AddMaybeNegated<irs::ByWildcardNGram>(parent, ctx, column_info);
     wf.SetBoost(ctx.boost);
+    wf.SetScorer(&irs::ForceConstScore());
     *wf.mutable_field_id() =
       PickPerKindFieldId(column_info, duckdb::LogicalTypeId::VARCHAR);
     auto* opts = wf.mutable_options();
     *opts = {
       pattern,
-      basics::downCast<irs::analysis::WildcardAnalyzer>(
+      basics::downCast<irs::analysis::WildcardTokenizer>(
         *column_info.tokenizer.analyzer.get()),
       (column_info.tokenizer.features & irs::IndexFeatures::Pos) ==
         irs::IndexFeatures::Pos,
@@ -70,10 +71,9 @@ void FromLike(irs::BooleanFilter& parent, const FilterContext& ctx,
   }
   auto wildcard = irs::CreateByWildcard(
     PickPerKindFieldId(column_info, duckdb::LogicalTypeId::VARCHAR),
-    irs::ViewCast<irs::byte_type>(std::string_view{pattern}),
-    ctx.scored_terms_limit, ctx.boost);
+    irs::ViewCast<irs::byte_type>(std::string_view{pattern}), ctx.boost);
   if (!ctx.negated) {
-    parent.add(std::move(wildcard));
+    parent.Add(std::move(wildcard));
     return;
   }
   AddNegated(parent, column_info, std::move(wildcard));

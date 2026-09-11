@@ -1,0 +1,121 @@
+statement ok
+CREATE TABLE narrow AS SELECT (i - 3)::SMALLINT AS s, (i - 3)::INTEGER AS n, (i - 3)::BIGINT AS b
+FROM range(7) t(i);
+
+statement ok
+INSERT INTO narrow VALUES (NULL, NULL, NULL), (32767, 2147483647, 9223372036854775807),
+	(-32768, -2147483648, -9223372036854775808);
+
+statement ok
+CREATE OR REPLACE TABLE shapes AS SELECT * FROM (VALUES
+	('smallint equals above range', 'SELECT s FROM narrow WHERE s = 999999999999'),
+	('smallint equals below range', 'SELECT s FROM narrow WHERE s = -999999999999'),
+	('smallint at most above range', 'SELECT s FROM narrow WHERE s <= 999999999999'),
+	('smallint below above range', 'SELECT s FROM narrow WHERE s < 999999999999'),
+	('smallint at least below range', 'SELECT s FROM narrow WHERE s >= -999999999999'),
+	('smallint above above range', 'SELECT s FROM narrow WHERE s > 999999999999'),
+	('smallint distinct from above range', 'SELECT s FROM narrow WHERE s <> 999999999999'),
+	('smallint in list with one out of range', 'SELECT s FROM narrow WHERE s IN (999999999999, 1)'),
+	('smallint in list all out of range', 'SELECT s FROM narrow WHERE s IN (999999999999, -999999999999)'),
+	('smallint not in list with one out of range', 'SELECT s FROM narrow WHERE s NOT IN (999999999999, 1)'),
+	('smallint between out of range', 'SELECT s FROM narrow WHERE s BETWEEN -999999999999 AND 999999999999'),
+	('smallint between above range', 'SELECT s FROM narrow WHERE s BETWEEN 999999999998 AND 999999999999'),
+	('smallint at the edges', 'SELECT s FROM narrow WHERE s >= -32768 AND s <= 32767'),
+	('integer equals above range', 'SELECT n FROM narrow WHERE n = 999999999999'),
+	('integer in list with one out of range', 'SELECT n FROM narrow WHERE n IN (999999999999, 2, -999999999999)'),
+	('bigint equals in range', 'SELECT b FROM narrow WHERE b = 1'),
+	('bigint in list', 'SELECT b FROM narrow WHERE b IN (1, 2, 9223372036854775807)'),
+	('narrowing cast in the chain', 'SELECT s FROM (SELECT s, n, b FROM narrow WHERE s IS NULL OR s BETWEEN -1000 AND 1000) WHERE s::TINYINT = 1'),
+	('shifted then compared to a list', 'SELECT s FROM (SELECT s, n, b FROM narrow WHERE s IS NULL OR s BETWEEN -1000 AND 1000) WHERE (s + 1) IN (999999999999, 2)'),
+	('shifted then compared', 'SELECT s FROM (SELECT s, n, b FROM narrow WHERE s IS NULL OR s BETWEEN -1000 AND 1000) WHERE (s + 1) = 999999999999'),
+	('truncation over a narrow column', 'SELECT s FROM (SELECT s, n, b FROM narrow WHERE s IS NULL OR s BETWEEN -1000 AND 1000) WHERE floor(s / 2) * 2 = 999999999999')) t(shape, sql);
+
+statement ok
+SET disabled_optimizers = 'expression_rewriter';
+
+statement ok
+CREATE OR REPLACE TABLE narrow_off AS
+SELECT 'smallint equals above range' AS shape, keep::VARCHAR AS v FROM (SELECT s AS keep FROM narrow WHERE s = 999999999999)
+UNION ALL SELECT 'smallint equals below range' AS shape, keep::VARCHAR AS v FROM (SELECT s AS keep FROM narrow WHERE s = -999999999999)
+UNION ALL SELECT 'smallint at most above range' AS shape, keep::VARCHAR AS v FROM (SELECT s AS keep FROM narrow WHERE s <= 999999999999)
+UNION ALL SELECT 'smallint below above range' AS shape, keep::VARCHAR AS v FROM (SELECT s AS keep FROM narrow WHERE s < 999999999999)
+UNION ALL SELECT 'smallint at least below range' AS shape, keep::VARCHAR AS v FROM (SELECT s AS keep FROM narrow WHERE s >= -999999999999)
+UNION ALL SELECT 'smallint above above range' AS shape, keep::VARCHAR AS v FROM (SELECT s AS keep FROM narrow WHERE s > 999999999999)
+UNION ALL SELECT 'smallint distinct from above range' AS shape, keep::VARCHAR AS v FROM (SELECT s AS keep FROM narrow WHERE s <> 999999999999)
+UNION ALL SELECT 'smallint in list with one out of range' AS shape, keep::VARCHAR AS v FROM (SELECT s AS keep FROM narrow WHERE s IN (999999999999, 1))
+UNION ALL SELECT 'smallint in list all out of range' AS shape, keep::VARCHAR AS v FROM (SELECT s AS keep FROM narrow WHERE s IN (999999999999, -999999999999))
+UNION ALL SELECT 'smallint not in list with one out of range' AS shape, keep::VARCHAR AS v FROM (SELECT s AS keep FROM narrow WHERE s NOT IN (999999999999, 1))
+UNION ALL SELECT 'smallint between out of range' AS shape, keep::VARCHAR AS v FROM (SELECT s AS keep FROM narrow WHERE s BETWEEN -999999999999 AND 999999999999)
+UNION ALL SELECT 'smallint between above range' AS shape, keep::VARCHAR AS v FROM (SELECT s AS keep FROM narrow WHERE s BETWEEN 999999999998 AND 999999999999)
+UNION ALL SELECT 'smallint at the edges' AS shape, keep::VARCHAR AS v FROM (SELECT s AS keep FROM narrow WHERE s >= -32768 AND s <= 32767)
+UNION ALL SELECT 'integer equals above range' AS shape, keep::VARCHAR AS v FROM (SELECT n AS keep FROM narrow WHERE n = 999999999999)
+UNION ALL SELECT 'integer in list with one out of range' AS shape, keep::VARCHAR AS v FROM (SELECT n AS keep FROM narrow WHERE n IN (999999999999, 2, -999999999999))
+UNION ALL SELECT 'bigint equals in range' AS shape, keep::VARCHAR AS v FROM (SELECT b AS keep FROM narrow WHERE b = 1)
+UNION ALL SELECT 'bigint in list' AS shape, keep::VARCHAR AS v FROM (SELECT b AS keep FROM narrow WHERE b IN (1, 2, 9223372036854775807))
+UNION ALL SELECT 'narrowing cast in the chain' AS shape, keep::VARCHAR AS v FROM (SELECT s AS keep FROM (SELECT s, n, b FROM narrow WHERE s IS NULL OR s BETWEEN -1000 AND 1000) WHERE s::TINYINT = 1)
+UNION ALL SELECT 'shifted then compared to a list' AS shape, keep::VARCHAR AS v FROM (SELECT s AS keep FROM (SELECT s, n, b FROM narrow WHERE s IS NULL OR s BETWEEN -1000 AND 1000) WHERE (s + 1) IN (999999999999, 2))
+UNION ALL SELECT 'shifted then compared' AS shape, keep::VARCHAR AS v FROM (SELECT s AS keep FROM (SELECT s, n, b FROM narrow WHERE s IS NULL OR s BETWEEN -1000 AND 1000) WHERE (s + 1) = 999999999999)
+UNION ALL SELECT 'truncation over a narrow column' AS shape, keep::VARCHAR AS v FROM (SELECT s AS keep FROM (SELECT s, n, b FROM narrow WHERE s IS NULL OR s BETWEEN -1000 AND 1000) WHERE floor(s / 2) * 2 = 999999999999);
+
+statement ok
+SET disabled_optimizers = '';
+
+statement ok
+CREATE OR REPLACE TABLE narrow_on AS
+SELECT 'smallint equals above range' AS shape, keep::VARCHAR AS v FROM (SELECT s AS keep FROM narrow WHERE s = 999999999999)
+UNION ALL SELECT 'smallint equals below range' AS shape, keep::VARCHAR AS v FROM (SELECT s AS keep FROM narrow WHERE s = -999999999999)
+UNION ALL SELECT 'smallint at most above range' AS shape, keep::VARCHAR AS v FROM (SELECT s AS keep FROM narrow WHERE s <= 999999999999)
+UNION ALL SELECT 'smallint below above range' AS shape, keep::VARCHAR AS v FROM (SELECT s AS keep FROM narrow WHERE s < 999999999999)
+UNION ALL SELECT 'smallint at least below range' AS shape, keep::VARCHAR AS v FROM (SELECT s AS keep FROM narrow WHERE s >= -999999999999)
+UNION ALL SELECT 'smallint above above range' AS shape, keep::VARCHAR AS v FROM (SELECT s AS keep FROM narrow WHERE s > 999999999999)
+UNION ALL SELECT 'smallint distinct from above range' AS shape, keep::VARCHAR AS v FROM (SELECT s AS keep FROM narrow WHERE s <> 999999999999)
+UNION ALL SELECT 'smallint in list with one out of range' AS shape, keep::VARCHAR AS v FROM (SELECT s AS keep FROM narrow WHERE s IN (999999999999, 1))
+UNION ALL SELECT 'smallint in list all out of range' AS shape, keep::VARCHAR AS v FROM (SELECT s AS keep FROM narrow WHERE s IN (999999999999, -999999999999))
+UNION ALL SELECT 'smallint not in list with one out of range' AS shape, keep::VARCHAR AS v FROM (SELECT s AS keep FROM narrow WHERE s NOT IN (999999999999, 1))
+UNION ALL SELECT 'smallint between out of range' AS shape, keep::VARCHAR AS v FROM (SELECT s AS keep FROM narrow WHERE s BETWEEN -999999999999 AND 999999999999)
+UNION ALL SELECT 'smallint between above range' AS shape, keep::VARCHAR AS v FROM (SELECT s AS keep FROM narrow WHERE s BETWEEN 999999999998 AND 999999999999)
+UNION ALL SELECT 'smallint at the edges' AS shape, keep::VARCHAR AS v FROM (SELECT s AS keep FROM narrow WHERE s >= -32768 AND s <= 32767)
+UNION ALL SELECT 'integer equals above range' AS shape, keep::VARCHAR AS v FROM (SELECT n AS keep FROM narrow WHERE n = 999999999999)
+UNION ALL SELECT 'integer in list with one out of range' AS shape, keep::VARCHAR AS v FROM (SELECT n AS keep FROM narrow WHERE n IN (999999999999, 2, -999999999999))
+UNION ALL SELECT 'bigint equals in range' AS shape, keep::VARCHAR AS v FROM (SELECT b AS keep FROM narrow WHERE b = 1)
+UNION ALL SELECT 'bigint in list' AS shape, keep::VARCHAR AS v FROM (SELECT b AS keep FROM narrow WHERE b IN (1, 2, 9223372036854775807))
+UNION ALL SELECT 'narrowing cast in the chain' AS shape, keep::VARCHAR AS v FROM (SELECT s AS keep FROM (SELECT s, n, b FROM narrow WHERE s IS NULL OR s BETWEEN -1000 AND 1000) WHERE s::TINYINT = 1)
+UNION ALL SELECT 'shifted then compared to a list' AS shape, keep::VARCHAR AS v FROM (SELECT s AS keep FROM (SELECT s, n, b FROM narrow WHERE s IS NULL OR s BETWEEN -1000 AND 1000) WHERE (s + 1) IN (999999999999, 2))
+UNION ALL SELECT 'shifted then compared' AS shape, keep::VARCHAR AS v FROM (SELECT s AS keep FROM (SELECT s, n, b FROM narrow WHERE s IS NULL OR s BETWEEN -1000 AND 1000) WHERE (s + 1) = 999999999999)
+UNION ALL SELECT 'truncation over a narrow column' AS shape, keep::VARCHAR AS v FROM (SELECT s AS keep FROM (SELECT s, n, b FROM narrow WHERE s IS NULL OR s BETWEEN -1000 AND 1000) WHERE floor(s / 2) * 2 = 999999999999);
+
+query
+SELECT count(*) AS rows, count(DISTINCT shape) AS shapes,
+	(SELECT count(*) FROM (SELECT * FROM narrow_off EXCEPT ALL SELECT * FROM narrow_on)) AS lost,
+	(SELECT count(*) FROM (SELECT * FROM narrow_on EXCEPT ALL SELECT * FROM narrow_off)) AS gained
+FROM narrow_off;
+----
+rows	shapes	lost	gained
+70	13	0	0
+
+query
+SELECT shape, json_serialize_plan(sql, optimize := true)::VARCHAR LIKE '%LOGICAL_EMPTY_RESULT%' AS pruned_to_nothing
+FROM shapes ORDER BY 1;
+----
+shape	pruned_to_nothing
+bigint equals in range	f
+bigint in list	f
+integer equals above range	t
+integer in list with one out of range	f
+narrowing cast in the chain	f
+shifted then compared	f
+shifted then compared to a list	f
+smallint above above range	t
+smallint at least below range	f
+smallint at most above range	f
+smallint at the edges	f
+smallint below above range	f
+smallint between above range	f
+smallint between out of range	f
+smallint distinct from above range	f
+smallint equals above range	t
+smallint equals below range	f
+smallint in list all out of range	t
+smallint in list with one out of range	f
+smallint not in list with one out of range	f
+truncation over a narrow column	f

@@ -37,7 +37,7 @@ class IDF final : public irs::ScorerBase<IDF, IDFStats> {
     bool operator==(const Options&) const = default;
   };
 
-  static std::unique_ptr<IDF> Make(const Options& /*opts*/) {
+  static std::unique_ptr<IDF> Make(const Options&) {
     return std::make_unique<IDF>();
   }
 
@@ -47,6 +47,8 @@ class IDF final : public irs::ScorerBase<IDF, IDFStats> {
   IndexFeatures GetIndexFeatures() const noexcept final {
     return IndexFeatures::None;
   }
+
+  bool ScoresPerDoc() const noexcept final { return false; }
 
   ScoreFunction PrepareScorer(const ScoreContext& ctx) const final;
 };

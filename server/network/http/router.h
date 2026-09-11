@@ -41,7 +41,8 @@ class HttpRouter {
 
  private:
   // A route pattern is a list of '/'-delimited segments; `param` segments
-  // (`:name`) capture the request segment verbatim, the rest match literally.
+  // (`:name`) capture any request segment not starting with '_' (the API
+  // namespace, never a name in ES), the rest match literally.
   // No regex, optionals, or wildcards -- every ES/OS route is this shape, so a
   // segment walk beats per-request URL parsing + regex by ~30% of server CPU.
   struct Segment {

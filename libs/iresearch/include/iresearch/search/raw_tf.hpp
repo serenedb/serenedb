@@ -25,12 +25,6 @@
 
 namespace irs {
 
-// RawTF similarity
-//
-// score(doc, term) = boost * freq(doc, term)
-//
-// No IDF, no length normalization. Useful as a debugging / teaching
-// baseline and as a building block for custom scoring pipelines.
 class RawTF final : public irs::ScorerBase<RawTF, void> {
  public:
   static constexpr std::string_view type_name() noexcept { return "raw_tf"; }
@@ -44,7 +38,7 @@ class RawTF final : public irs::ScorerBase<RawTF, void> {
     return ScoreBoundType::MaxFreq;
   }
 
-  static std::unique_ptr<RawTF> Make(const Options& /*opts*/) {
+  static std::unique_ptr<RawTF> Make(const Options&) {
     return std::make_unique<RawTF>();
   }
 
@@ -57,6 +51,8 @@ class RawTF final : public irs::ScorerBase<RawTF, void> {
   ScoreBoundWriter::ptr PrepareScoreBoundWriter(size_t max_levels) const final;
 
   ScoreBoundSource::ptr PrepareScoreBoundSource() const final;
+
+  bool HasScoreBounds() const noexcept final { return true; }
 
   bool Compatible(const ScorerOptions& persisted) const noexcept final;
 

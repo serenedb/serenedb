@@ -30,6 +30,7 @@
 #include <absl/time/time.h>
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <cstdlib>
 #include <duckdb/main/database_manager.hpp>
@@ -125,22 +126,6 @@ void Catalog::RecordSequenceSeed(duckdb::ClientContext* /*context*/,
   GetCatalogStore().PutSequenceValue(id, seed);
 }
 
-// The lock is conditional and released by a guard, neither of which clang's
-// analysis can follow.
-ABSL_NO_THREAD_SAFETY_ANALYSIS bool Catalog::TryExcludingMutations(
-  absl::FunctionRef<void()> fn) {
-  // TryLock also fails when this very thread holds the mutex, which is the
-  // common case: a mutation attempts a fold on its way out.
-  if (!_mutex.TryLock()) {
-    return false;
-  }
-  const absl::Cleanup unlock = [this]() ABSL_NO_THREAD_SAFETY_ANALYSIS {
-    _mutex.Unlock();
-  };
-  fn();
-  return true;
-}
-
 void RequireDatabaseAccess(duckdb::ClientContext* context, ObjectId role,
                            const catalog::SereneDBDatabaseEntry* database,
                            AclMode need) {
@@ -154,8 +139,42 @@ void RequireDatabaseAccess(duckdb::ClientContext* context, ObjectId role,
                           database->name.GetIdentifierName()));
 }
 
+void EnsureWritableSchema(duckdb::ClientContext* context,
+                          std::string_view schema) {
+  struct ReadOnlySchema {
+    std::string_view name;
+    std::string_view detail;
+  };
+  constexpr std::array kReadOnlySchemas{
+    ReadOnlySchema{StaticStrings::kDocsSchema,
+                   "The embedded documentation is rebuilt from the server "
+                   "binary at startup."},
+  };
+  const auto it = absl::c_find_if(
+    kReadOnlySchemas, [&](const auto& entry) { return entry.name == schema; });
+  if (it == kReadOnlySchemas.end()) {
+    return;
+  }
+  if (context != nullptr) {
+    if (const auto* ctx = connector::GetSereneDBContextPtr(*context);
+        ctx != nullptr && ctx->IsSystemWriter()) {
+      return;
+    }
+  }
+  THROW_SQL_ERROR(ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
+                  ERR_MSG("schema \"", schema, "\" is read-only"),
+                  ERR_DETAIL(it->detail));
+}
+
+void EnsureWritableSchema(duckdb::ClientContext* context, ObjectId schema_id) {
+  if (const auto* schema = catalog::FindSchema(context, schema_id)) {
+    EnsureWritableSchema(context, schema->name.GetIdentifierName());
+  }
+}
+
 void RequireCreateOn(duckdb::ClientContext* context, ObjectId role,
                      ObjectId parent_id) {
+  EnsureWritableSchema(context, parent_id);
   const auto* schema = catalog::FindSchema(context, parent_id);
   if (schema == nullptr || auth::ClosureFor(context, role)
                              ->Can(duckdb::CatalogType::SCHEMA_ENTRY,
@@ -209,14 +228,15 @@ void RequireOwnerTransfer(const AccessContext& ax, ObjectId schema_id,
 void Catalog::DropResolved(duckdb::ClientContext* context, ObjectId parent_id,
                            duckdb::CatalogType type, ObjectId id,
                            std::string_view name, bool cascade) {
+  EnsureWritableSchema(context, parent_id);
   if (type == duckdb::CatalogType::INDEX_ENTRY) {
     // The definition outlives the entry: the artifact half reads it.
     if (const auto* entry =
           catalog::Find<SereneDBIndexEntry>(context, parent_id, id)) {
       const auto index = entry->GetInfo();
-      DropIndexLocked(context, catalog::SchemaDatabaseId(context, parent_id),
-                      index->Cast<catalog::CreateIndexInfo>(),
-                      entry->GetInvertedData(), cascade);
+      DropIndexResolved(context, catalog::SchemaDatabaseId(context, parent_id),
+                        index->Cast<catalog::CreateIndexInfo>(),
+                        entry->GetInvertedData(), cascade);
       return;
     }
   }
@@ -225,7 +245,7 @@ void Catalog::DropResolved(duckdb::ClientContext* context, ObjectId parent_id,
   // the indexes on a relation with it.
   catalog::DropEntryOfKind(context, type, parent_id, name, cascade);
   if (type == duckdb::CatalogType::SEQUENCE_ENTRY) {
-    GetCatalogStore().DropSequence(id);
+    DeferDropAction(context, [id] { GetCatalogStore().DropSequence(id); });
   }
 }
 
@@ -291,10 +311,7 @@ void OpenBootStorage() {
 
 }  // namespace
 
-void Catalog::FinalizeLoad() {
-  absl::MutexLock lock{&_mutex};
-  OpenBootStorage();
-}
+void Catalog::FinalizeLoad() { OpenBootStorage(); }
 
 namespace {
 
@@ -410,10 +427,7 @@ void ReclaimOrphanSequenceCounters() {
 // walk records them: the record is written here.
 void BootstrapEntry(duckdb::unique_ptr<duckdb::CreateInfo> info,
                     const Permissions& perm) {
-  auto* wal = ScopedCatalogWal().get();
-  SDB_ENSURE(wal != nullptr, "the catalog log is not open");
-  wal->WriteCreateEntry(*info, perm);
-  EndClusterCatalogWal(/*committed=*/true);
+  WriteBootstrapEntry(*info, perm);
   ReplayCatalogRecord(std::move(info), perm, /*dropped=*/false);
 }
 
@@ -427,7 +441,7 @@ void EnsureSystemDatabase() {
   // states.
   BootstrapEntry(duckdb::make_uniq<CreateDatabaseInfo>(
                    id::kSystemDB, StaticStrings::kDefaultDatabase, NextId()),
-                 Permissions{id::kRootUser});
+                 Permissions{id::kRootUser, {}, {}});
 }
 
 }  // namespace
@@ -536,7 +550,8 @@ void InitCatalog() {
   EnsureSystemDatabase();
 
   bool has_roles = false;
-  catalog::VisitRoles(nullptr, [&](const Role&) { has_roles = true; });
+  catalog::VisitRoles(nullptr,
+                      [&](const SereneDBRoleEntry&) { has_roles = true; });
   if (!has_roles) {
     std::string initial_verifier;
     if (const char* pw = std::getenv("POSTGRES_PASSWORD");
@@ -551,16 +566,15 @@ void InitCatalog() {
       SDB_INFO(GENERAL, "bootstrap: initial password set for role '",
                StaticStrings::kDefaultUser, "' from POSTGRES_PASSWORD");
     }
-    auto root = duckdb::make_uniq<Role>(
+    auto root = duckdb::make_uniq<CreateRoleInfo>(
       id::kRootUser, persistence::RoleData{
                        .name = std::string{StaticStrings::kDefaultUser},
                        .options = static_cast<uint32_t>(RoleOption::All),
-                       .conn_limit = Role::kNoConnLimit,
-                       .valid_until = Role::kNoValidUntil,
+                       .conn_limit = CreateRoleInfo::kNoConnLimit,
+                       .valid_until = CreateRoleInfo::kNoValidUntil,
                        .password = {std::move(initial_verifier)},
                      });
-    BootstrapEntry(duckdb::make_uniq<CreateRoleInfo>(std::move(root)),
-                   Permissions{});
+    BootstrapEntry(std::move(root), Permissions{});
   }
 
   GetCatalog().FinalizeLoad();

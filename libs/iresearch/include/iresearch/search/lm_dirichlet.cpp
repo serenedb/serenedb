@@ -47,9 +47,7 @@ constexpr const T* TryGetValue(const T* value) noexcept {
   return value;
 }
 
-constexpr std::nullptr_t TryGetValue(utils::Empty /*value*/) noexcept {
-  return nullptr;
-}
+constexpr std::nullptr_t TryGetValue(utils::Empty) noexcept { return nullptr; }
 
 template<ScoreMergeType MergeType, bool HasBoost>
 IRS_FORCE_INLINE void LmDirImpl(
@@ -57,16 +55,11 @@ IRS_FORCE_INLINE void LmDirImpl(
   const uint32_t* IRS_RESTRICT norm,
   [[maybe_unused]] const score_t* IRS_RESTRICT boost, score_t mu_p_inv,
   score_t mu, score_t const_boost) noexcept {
-  // mu_p_inv = 1 / (mu * collection_prob)
-  // score = log(1 + tf * mu_p_inv) + log(mu / (dl + mu))
-  //       = log(1 + tf * mu_p_inv) - log((dl + mu) / mu)
-  //       = log(1 + tf * mu_p_inv) - log1p(dl / mu)
-  // clamp to 0
   for (scores_size_t i = 0; i != n; ++i) {
     const score_t tf = TermCountToScore(freq[i]);
     const score_t dl = TermCountToScore(norm[i]);
     const score_t weight = std::log1p(tf * mu_p_inv);
-    const score_t doc_norm = std::log1p(dl / mu);  // = -log(mu/(dl+mu))
+    const score_t doc_norm = std::log1p(dl / mu);
     score_t r = weight - doc_norm;
     if (r < 0.f) {
       r = 0.f;
@@ -136,7 +129,7 @@ struct LmDirScore : public ScoreOperator {
     filter_boost;
   score_t boost;
   score_t mu;
-  score_t mu_p_inv;  // 1 / (mu * collection_prob)
+  score_t mu_p_inv;
 };
 
 }  // namespace
@@ -175,7 +168,7 @@ ScoreFunction LMDirichlet::PrepareScorer(const ScoreContext& ctx) const {
   }
 
   if (!norm) {
-    return ScoreFunction::Default();
+    norm = kNorms.data();
   }
 
   auto* filter_boost = [&] {
@@ -211,7 +204,6 @@ ScoreBoundSource::ptr LMDirichlet::PrepareScoreBoundSource() const {
 }
 
 bool LMDirichlet::Compatible(const ScorerOptions& persisted) const noexcept {
-  // A MinNorm bm25 writes its own b's argmax, not the plain min-norm pair.
   return irs::BoundTypeOf(persisted) == BoundTypeOf(Options{}) &&
          !std::get_if<ScorerOptions::Bm25>(&persisted.params);
 }

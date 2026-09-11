@@ -1,0 +1,136 @@
+# Structure of the typed object catalog derived from the embedded docs, checked
+# as invariants over every row so that adding or editing documentation pages
+# does not touch this file. Counts are loose lower bounds for the same reason.
+
+connection docs database=postgres
+query
+SELECT count(*) FROM sdb_docs.objects()
+WHERE kind IS NULL OR name IS NULL OR name = '' OR signature IS NULL OR path IS NULL;
+----
+count
+0
+
+# Every row points at a row of the docs table.
+connection docs database=postgres
+query
+SELECT count(*) FROM sdb_docs.objects() o
+WHERE NOT EXISTS (SELECT 1 FROM sdb_docs.docs d WHERE d.path = o.path);
+----
+count
+0
+
+# The page column is the file part of the path.
+connection docs database=postgres
+query
+SELECT count(*) FROM sdb_docs.objects() WHERE page <> split_part(path, '#', 1);
+----
+count
+0
+
+# Names are bare identifiers: no markdown, no signature, no leading whitespace.
+connection docs database=postgres
+query
+SELECT count(*) FROM sdb_docs.objects() WHERE name ~ '[`\[\]()]' OR name <> trim(name);
+----
+count
+0
+
+# A function's signature is its name applied to arguments, optionally qualified
+# by the schema the function lives in.
+connection docs database=postgres
+query
+SELECT bool_and(starts_with(signature, name || '(')
+                OR strpos(signature, '.' || name || '(') > 0)
+FROM sdb_docs.objects() WHERE kind = 'function';
+----
+bool_and
+t
+
+# Summaries are a single collapsed line, and nearly every object has one.
+connection docs database=postgres
+query
+SELECT count(*) FILTER (WHERE summary LIKE '%' || chr(10) || '%'),
+       count(*) FILTER (WHERE summary IS NULL) * 10 < count(*)
+FROM sdb_docs.objects();
+----
+count	?column?
+0	t
+
+# An object is identified by its kind, name and the doc row it came from.
+# Overloads legitimately repeat (kind, name), so the path is part of the key.
+connection docs database=postgres
+query
+SELECT count(*) FROM (
+  SELECT kind, name, path FROM sdb_docs.objects() GROUP BY 1, 2, 3 HAVING count(*) > 1);
+----
+count
+0
+
+# Every kind is populated.
+connection docs database=postgres
+query
+SELECT count(*) FILTER (WHERE kind = 'function') > 400,
+       count(*) FILTER (WHERE kind = 'statement') > 30,
+       count(*) FILTER (WHERE kind = 'tokenizer') > 20,
+       count(*) FILTER (WHERE kind = 'type') > 20,
+       count(*) FILTER (WHERE kind = 'setting') > 100,
+       count(*) FILTER (WHERE kind = 'index_type') = 2
+FROM sdb_docs.objects();
+----
+?column?	?column?	?column?	?column?	?column?	?column?
+t	t	t	t	t	t
+
+# Spot resolution across kinds.
+connection docs database=postgres
+query
+SELECT count(*) FILTER (WHERE kind = 'function' AND name = 'date_trunc') > 1,
+       count(*) FILTER (WHERE kind = 'statement' AND name = 'CREATE TABLE') = 1,
+       count(*) FILTER (WHERE kind = 'type' AND name = 'VARCHAR' AND aliases LIKE '%TEXT%') = 1,
+       count(*) FILTER (WHERE kind = 'index_type' AND name = 'inverted') = 1,
+       count(*) FILTER (WHERE kind = 'tokenizer' AND name = 'stem') = 1
+FROM sdb_docs.objects();
+----
+?column?	?column?	?column?	?column?	?column?
+t	t	t	t	t
+
+# The catalog knows object kinds, so a name documented only as a client method
+# or as parser syntax is never reported as a SQL function.
+connection docs database=postgres
+query
+SELECT count(*) FROM sdb_docs.objects()
+WHERE kind = 'function' AND lower(name) IN ('create', 'delete', 'similarity_search', 'drop_table');
+----
+count
+0
+
+# The feature documents itself: schema-qualified headings classify as functions.
+connection docs database=postgres
+query
+SELECT count(*) > 0 FROM sdb_docs.objects() WHERE kind = 'function' AND name = 'objects';
+----
+?column?
+t
+
+# Summaries carry no markdown link syntax.
+connection docs database=postgres
+query
+SELECT count(*) FROM sdb_docs.objects() WHERE summary ~ '\]\([^)]*\)';
+----
+count
+0
+
+connection docs database=postgres
+statement error
+DROP FUNCTION sdb_docs.objects();
+----
+db error: ERROR: schema "sdb_docs" is read-only
+DETAIL: The embedded documentation is rebuilt from the server binary at startup.
+
+
+connection docs database=postgres
+statement error
+CREATE OR REPLACE FUNCTION sdb_docs.summary(doc_content TEXT) RETURNS TEXT LANGUAGE SQL BEGIN ATOMIC SELECT ''; END;
+----
+db error: ERROR: schema "sdb_docs" is read-only
+DETAIL: The embedded documentation is rebuilt from the server binary at startup.
+

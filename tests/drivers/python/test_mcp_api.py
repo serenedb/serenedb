@@ -122,7 +122,13 @@ def test_ping(conn):
 def test_tools_list(conn):
     tools = rpc(conn, "tools/list")["result"]["tools"]
     names = [t["name"] for t in tools]
-    assert names == ["search_docs", "read_doc", "list_docs"]
+    assert names == [
+        "search_docs",
+        "read_doc",
+        "list_docs",
+        "list_objects",
+        "describe_object",
+    ]
     for tool in tools:
         assert tool["description"]
         assert tool["inputSchema"]["type"] == "object"
@@ -250,3 +256,72 @@ def test_list_docs_sections(conn):
     assert lines[0] == "sql/functions/search/scoring.md#Relevance_Scoring - Relevance Scoring"
     assert "sql/functions/search/scoring.md#Relevance_Scoring#Scorer_Functions - Scorer Functions (Relevance Scoring)" in lines
     assert len(lines) > 5
+
+
+def test_list_objects_by_kind(conn):
+    text, is_error = call_tool(conn, "list_objects", {"kind": "index_type"})
+    assert not is_error
+    lines = sorted(text.split("\n"))
+    assert len(lines) == 2
+    assert lines[0].startswith("art - ")
+    assert lines[1].startswith("inverted - ")
+
+
+def test_list_objects_all_kinds_are_labelled(conn):
+    text, is_error = call_tool(conn, "list_objects", {})
+    assert not is_error
+    lines = text.split("\n")
+    assert len(lines) > 400
+    kinds = {"function", "statement", "tokenizer", "type", "setting", "index_type"}
+    seen = set()
+    for line in lines:
+        for kind in kinds:
+            if f"({kind})" in line:
+                seen.add(kind)
+    assert seen == kinds
+
+
+def test_list_objects_unknown_kind(conn):
+    text, is_error = call_tool(conn, "list_objects", {"kind": "nonesuch"})
+    assert is_error and "Known kinds" in text
+
+
+def test_describe_object(conn):
+    text, is_error = call_tool(conn, "describe_object", {"name": "ts_phrase"})
+    assert not is_error
+    assert text.startswith("ts_phrase(")
+    assert "(function)" in text.split("\n")[0]
+    assert "path: sql/functions/search/full-text.md#" in text
+
+
+def test_describe_object_reports_every_kind(conn):
+    text, is_error = call_tool(conn, "describe_object", {"name": "minhash"})
+    assert not is_error
+    headers = [
+        line for line in text.split("\n") if line.endswith(("(function)", "(tokenizer)"))
+    ]
+    assert len(headers) == 2
+    assert "\n---\n" in text
+
+
+def test_describe_object_is_case_insensitive(conn):
+    text, is_error = call_tool(conn, "describe_object", {"name": "TS_PHRASE"})
+    assert not is_error and text.startswith("ts_phrase(")
+
+
+def test_describe_object_unknown_suggests(conn):
+    text, is_error = call_tool(conn, "describe_object", {"name": "to_tsvector"})
+    assert is_error
+    assert "No documented object named: to_tsvector" in text
+
+
+def test_describe_object_unknown_lists_similar(conn):
+    text, is_error = call_tool(conn, "describe_object", {"name": "phrase"})
+    assert is_error
+    assert "Maybe you meant:" in text
+    assert "ts_phrase(" in text
+
+
+def test_describe_object_empty_name(conn):
+    text, is_error = call_tool(conn, "describe_object", {"name": "   "})
+    assert is_error and "name" in text

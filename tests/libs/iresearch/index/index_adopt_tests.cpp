@@ -801,8 +801,8 @@ TEST_F(IndexAdoptTest, SegmentIdSeparatesConfigsAcrossAStraddlingWrite) {
     tests::StringField extra{"extra", "term"};
     extra.id = kExtraFieldId;
     auto doc = trx.Insert();
-    ASSERT_TRUE(doc.Insert(&name, &name + 1));
-    ASSERT_TRUE(doc.Insert(&extra, &extra + 1));
+    ASSERT_TRUE(tests::InsertFields(doc, &name, &name + 1));
+    ASSERT_TRUE(tests::InsertFields(doc, &extra, &extra + 1));
   }
   ASSERT_TRUE(trx.Commit(10));
   ASSERT_TRUE(_writer->RefreshCommit());

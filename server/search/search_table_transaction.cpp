@@ -170,6 +170,10 @@ void SearchTableTransaction::Abort() noexcept {
 
 void SearchTableTransaction::Commit() {
   SDB_ASSERT(!_writes.empty());
+  if (_changes.empty()) {
+    ReleaseWriters();
+    return;
+  }
   SDB_IF_FAILURE("crash_before_search_wal_commit") { SDB_IMMEDIATE_ABORT(); }
 
   const uint64_t record_tick = AppendCommit();
@@ -230,8 +234,11 @@ uint64_t SearchTableTransaction::AppendCommit() {
     SDB_ASSERT(wal == &w.shard->Wal(),
                "all search shards in a txn must share one database WAL");
     auto cit = _changes.find(table_id);
-    SDB_ASSERT(cit != _changes.end(),
-               "search shard with a trx but no manifest ops");
+    if (cit == _changes.end()) {
+      SDB_ASSERT(w.transactions.empty(),
+                 "search shard with a trx but no manifest ops");
+      continue;
+    }
     // A clearing TRUNCATE adds no trx but needs one tick for its Clear at the
     // band top.
 

@@ -1,5 +1,5 @@
 {
-  "description": "SereneDB test-config for the vendored duckdb_spatial test suite. GEOS and PROJ are built; GDAL is not vendored at all (SPATIAL_USE_GDAL=OFF), so every test that reaches a GDAL entry point is expected to fail -- see tests/duckdb/README.md.",
+  "description": "SereneDB test-config for the vendored duckdb_spatial test suite. GEOS, PROJ and GDAL are all built; GDAL uses GDAL_BUILD_OPTIONAL_DRIVERS=OFF with an explicit driver allowlist, so tests needing a driver outside that list are expected to fail -- see tests/duckdb/README.md.",
   "skip_tests": [
     {
       "reason": "Geometry zonemap pruning is disabled. spatial's GeometryPredicatePruneCallback reads per-child statistics through FunctionStatisticsPruneInput, using input.function.GetChildren() and input.ChildStats(idx); SereneDB's DuckDB predates that and its FunctionStatisticsPruneInput carries only bind_data and a single stats reference. TryGetGeometryPredicateOperands in src/spatial/util/geometry_predicate_stats.hpp is therefore stubbed to return false, which degrades the callback to NO_PRUNING_POSSIBLE -- correct results, no zonemap elimination. This file asserts that a predicate against a constant outside the column's extent collapses the plan to EMPTY_RESULT; it gets a real scan instead. Restoring it means either forward-porting the richer prune input into the vendored DuckDB or waiting for a DuckDB bump that carries it.",
@@ -8,18 +8,13 @@
       ]
     },
     {
-      "reason": "GDAL is not vendored (SPATIAL_USE_GDAL=OFF in third_party/CMakeLists.txt), so the extension registers none of ST_Read, ST_Read_Meta, ST_Drivers or COPY ... (FORMAT GDAL), and the GDAL /vsi file handler and the replacement scan that rewrites a spatial file name into ST_Read are gone with it. Every file under test/sql/gdal/ reaches one of those entry points. test/sql/shapefile/test_shapefile_read.test converts its fixture through ST_Read before comparing it against ST_ReadSHP; the shapefile reader itself is spatial's own vendored shapelib and still runs (test/sql/gdal/gdal_shapefile.test is the GDAL-side counterpart).",
+      "reason": "Needs a GDAL driver outside our allowlist. GDAL is built with GDAL_BUILD_OPTIONAL_DRIVERS=OFF and OGR_BUILD_OPTIONAL_DRIVERS=OFF plus an explicit set (GeoJSON, GeoJSONSeq, ESRIJSON, TopoJSON, CSV, FlatGeobuf, OGR_VRT), which keeps the GDAL build tractable -- 1853 source files -- and avoids vendoring further libraries. These files need drivers we deliberately excluded: Shapefile (also disabled because GDAL's internal shapelib target collides with duckdb_spatial's own vendored shapelib, which already backs ST_ReadSHP), OpenFileGDB, XLSX, and the GDAL COPY/write path. st_write_basic and gdal_axis_order each have one passing assertion before the driver-dependent one.",
       "paths": [
         "test/sql/gdal/gdal_axis_order.test",
-        "test/sql/gdal/gdal_filter_pushdown.test",
-        "test/sql/gdal/gdal_read.test",
         "test/sql/gdal/gdal_shapefile.test",
-        "test/sql/gdal/gdal_vsi.test",
         "test/sql/gdal/st_read_gdb.test",
-        "test/sql/gdal/st_read_order.test",
         "test/sql/gdal/st_read_xlsx.test",
         "test/sql/gdal/st_write_basic.test",
-        "test/sql/gdal/st_write_types.test",
         "test/sql/shapefile/test_shapefile_read.test"
       ]
     },
@@ -53,11 +48,27 @@
       ]
     },
     {
-      "reason": "Reads its own output back through a GDAL driver, which is not vendored. st_read_gpkg_fid reads a GeoPackage. The two ST_AsMVT files still exercise the writer -- spatial's MVT module is protozero-based and unaffected -- but verify it by reading the tile back through GDAL's MVT driver; st_asmvtgeom and st_tileenvelope do not read back and still run.",
+      "reason": "Needs a GDAL driver that requires GDAL_USE_SQLITE3, which is off. sqlite3 is vendored only for PROJ's embedded proj.db, and GeoPackage's spatial index is a SQLite R*Tree virtual table we do not compile in, so the sqlite, gpkg and mvt drivers are all disabled. st_read_gpkg_fid reads a GeoPackage. The two ST_AsMVT files still exercise the writer -- spatial's MVT module is protozero-based and unaffected -- but verify it by reading the tile back through GDAL's MVT driver; st_asmvtgeom and st_tileenvelope do not read back and still run.",
       "paths": [
         "test/sql/gdal/st_read_gpkg_fid.test",
         "test/sql/mvt/st_asmvt.test",
         "test/sql/mvt/st_asmvt_linestring.test"
+      ]
+    },
+    {
+      "reason": "GEOS is not vendored (SPATIAL_USE_GEOS=OFF, SPATIAL_USE_BOOST=ON): geometry operations run on Boost.Geometry, which has no equivalent for ST_MakeValid, ST_Node, ST_Polygonize, ST_BuildArea, ST_LineMerge, ST_SimplifyPreserveTopology, ST_ConcaveHull, ST_VoronoiDiagram, ST_MaximumInscribedCircle, ST_MinimumRotatedRectangle, ST_ReducePrecision, ST_AsMVTGeom or the seven ST_Coverage* functions, so none of them is registered. crs_propagation asserts the CRS survives ST_MakeValid among others. The rest of test/sql/geos/ uses functions Boost.Geometry does provide and is expected to run, but its files were written against GEOS output, so vertex order and WKT rounding may still differ -- add them here if they do.",
+      "paths": [
+        "test/sql/crs/crs_propagation.test",
+        "test/sql/geos/st_concavehull.test",
+        "test/sql/geos/st_coverageclean.test",
+        "test/sql/geos/st_maximuminscribedcircle.test",
+        "test/sql/geos/st_minimumrotatedrectangle.test",
+        "test/sql/geos/st_polygonize.test",
+        "test/sql/geos/st_voronoidiagram.test",
+        "test/sql/mvt/st_asmvtgeom.test",
+        "test/sql/postgis/st_coverageunion.test",
+        "test/sql/postgis/st_linemerge.test",
+        "test/sql/postgis/st_reduceprecision.test"
       ]
     }
   ]

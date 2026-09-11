@@ -106,3 +106,6 @@ WHERE relation_id = (SELECT oid FROM pg_class WHERE relname = 'st_idx');
 ----
 storage_less_index_rows
 0
+
+statement ok
+DROP TABLE st;

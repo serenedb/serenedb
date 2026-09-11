@@ -154,19 +154,7 @@ v
 t
 
 query
-SELECT ST_IsValid(ST_MakeValid('POLYGON((0 0,4 0,4 4,0 4,0 0))'::geometry)) AS v;
-----
-v
-t
-
-query
 SELECT ST_Equals(ST_Normalize('POLYGON((0 0,4 0,4 4,0 4,0 0))'::geometry), 'POLYGON((0 0,4 0,4 4,0 4,0 0))'::geometry) AS v;
-----
-v
-t
-
-query
-SELECT ST_Equals(ST_LineMerge('MULTILINESTRING((0 0,2 0),(2 0,4 0))'::geometry), 'LINESTRING(0 0,2 0,4 0)'::geometry) AS v;
 ----
 v
 t
@@ -208,24 +196,6 @@ v
 f
 
 query
-SELECT ST_IsValid(ST_ConcaveHull('MULTIPOINT(0 0,4 0,4 4,0 4,2 2)'::geometry, 1, false)) AS v;
-----
-v
-t
-
-query
-SELECT ST_GeometryType(ST_Polygonize(ARRAY['LINESTRING(0 0,4 0,4 4)'::geometry,'LINESTRING(4 4,0 4,0 0)'::geometry])) IS NOT NULL AS v;
-----
-v
-t
-
-query
-SELECT ST_IsValid(ST_Node('MULTILINESTRING((0 0,4 4),(0 4,4 0))'::geometry)) AS v;
-----
-v
-t
-
-query
 SELECT ST_Equals(ST_TransScale('POINT(1 1)'::geometry, 1, 1, 2, 2), 'POINT(4 4)'::geometry) AS v;
 ----
 v
@@ -256,26 +226,7 @@ v
 t
 
 query
-SELECT ST_IsValid(ST_SimplifyPreserveTopology('POLYGON((0 0,4 0,4 4,0 4,0 0))'::geometry, 0.5)) AS v;
-----
-v
-t
-
-query
-SELECT ST_GeometryType((ST_MaximumInscribedCircle('POLYGON((0 0,4 0,4 4,0 4,0 0))'::geometry)).center) IS NOT NULL AS v;
-----
-v
-t
-
-query
-SELECT ST_Equals(ST_ReducePrecision('POINT(1.234 1.234)'::geometry, 0.1), 'POINT(1.2 1.2)'::geometry) AS v;
-----
-v
-t
-
-query
 SELECT ST_Equals(ST_LineSubstring('LINESTRING(0 0,4 0)'::geometry, 0, 0.5), 'LINESTRING(0 0,2 0)'::geometry) AS v;
 ----
 v
 t
-

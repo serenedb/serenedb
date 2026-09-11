@@ -1,0 +1,4 @@
+{"type":"FeatureCollection","features":[
+{"type":"Feature","properties":{"name":"alpha","n":1},"geometry":{"type":"Point","coordinates":[1,2]}},
+{"type":"Feature","properties":{"name":"beta","n":2},"geometry":{"type":"Point","coordinates":[3,4]}},
+{"type":"Feature","properties":{"name":"gamma","n":3},"geometry":{"type":"Point","coordinates":[5,6]}}]}

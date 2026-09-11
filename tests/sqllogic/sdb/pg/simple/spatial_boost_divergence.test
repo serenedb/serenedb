@@ -1,0 +1,91 @@
+# Where the Boost.Geometry backend answers differently from PostGIS. Three
+# gaps, each with a one-line reason:
+#
+# 1. Mixed dimensions in ST_Union / ST_SymDifference are refused.
+#    Why: combining a point with a polygon produces a GEOMETRYCOLLECTION, and
+#    Boost.Geometry has no operation that emits one. Refusing beats guessing.
+#    ST_Intersection and ST_Difference are unaffected -- their result never
+#    needs a collection.
+#
+# 2. Z and M are dropped from every returned geometry.
+#    Why: Boost.Geometry's overlay is strictly 2D. PostGIS carries Z through and
+#    even interpolates it, so ST_Intersection of two 3D lines keeps a Z there
+#    and loses it here.
+#
+# 3. GEOMETRYCOLLECTION arguments are refused by every predicate except
+#    ST_Intersects and ST_Disjoint.
+#    Why: a collection's answer is not the OR of its parts' answers, and the
+#    engine offers no way to compute the real one.
+#
+# THIS FILE REQUIRES SPATIAL_USE_BOOST. Under the GEOS backend all three cases
+# answer instead of erroring, so it belongs in the change that flips the switch.
+
+# --- 1. mixed-dimension set operations ---
+
+statement error
+SELECT ST_Union('POINT(9 9)'::GEOMETRY, 'POLYGON((0 0,4 0,4 4,0 4,0 0))'::GEOMETRY);
+----
+db error: ERROR: this function needs both geometries to have the same dimension: mixing points, lines and polygons would produce a GEOMETRYCOLLECTION, which the geometry engine cannot build
+
+
+statement error
+SELECT ST_SymDifference('LINESTRING(9 9,10 10)'::GEOMETRY, 'POLYGON((0 0,4 0,4 4,0 4,0 0))'::GEOMETRY);
+----
+db error: ERROR: this function needs both geometries to have the same dimension: mixing points, lines and polygons would produce a GEOMETRYCOLLECTION, which the geometry engine cannot build
+
+
+# Same dimension is fine, and the operations that never need a collection take
+# mixed dimensions happily.
+
+query
+SELECT ST_Area(ST_Union('POLYGON((0 0,4 0,4 4,0 4,0 0))'::GEOMETRY, 'POLYGON((2 2,6 2,6 6,2 6,2 2))'::GEOMETRY)) AS same_dim_union,
+       ST_Area(ST_Difference('POLYGON((0 0,4 0,4 4,0 4,0 0))'::GEOMETRY, 'LINESTRING(0 2,4 2)'::GEOMETRY)) AS mixed_difference,
+       ST_Equals(ST_Intersection('POLYGON((0 0,4 0,4 4,0 4,0 0))'::GEOMETRY, 'POINT(1 1)'::GEOMETRY), 'POINT(1 1)'::GEOMETRY) AS mixed_intersection;
+----
+same_dim_union	mixed_difference	mixed_intersection
+28	16	t
+
+# --- 2. Z and M do not survive ---
+#
+# PostGIS answers POINT Z (2 2 6) for the intersection below and keeps Z through
+# ST_Reverse; both come back 2D here.
+
+query
+SELECT ST_HasZ(ST_Intersection('LINESTRING Z(0 0 5,4 4 5)'::GEOMETRY, 'LINESTRING Z(0 4 7,4 0 7)'::GEOMETRY)) AS intersection_z,
+       ST_HasZ(ST_Reverse('LINESTRING Z(0 0 1,2 2 3)'::GEOMETRY)) AS reverse_z,
+       ST_HasZ(ST_ConvexHull('LINESTRING Z(0 0 1,4 0 2,4 4 3)'::GEOMETRY)) AS hull_z;
+----
+intersection_z	reverse_z	hull_z
+f	f	f
+
+# The 2D answer itself is still correct.
+
+query
+SELECT ST_Equals(ST_Intersection('LINESTRING Z(0 0 5,4 4 5)'::GEOMETRY, 'LINESTRING Z(0 4 7,4 0 7)'::GEOMETRY),
+                 'POINT(2 2)'::GEOMETRY) AS shape_is_right;
+----
+shape_is_right
+t
+
+# --- 3. GEOMETRYCOLLECTION arguments ---
+
+statement error
+SELECT ST_Contains('POLYGON((0 0,4 0,4 4,0 4,0 0))'::GEOMETRY, 'GEOMETRYCOLLECTION(POINT(1 1),POINT(2 2))'::GEOMETRY);
+----
+db error: ERROR: this predicate does not support GEOMETRYCOLLECTION arguments
+
+
+statement error
+SELECT ST_Intersection('POLYGON((0 0,4 0,4 4,0 4,0 0))'::GEOMETRY, 'GEOMETRYCOLLECTION(POINT(1 1))'::GEOMETRY);
+----
+db error: ERROR: this function does not support GEOMETRYCOLLECTION arguments
+
+
+# The two that do decompose part-wise still work.
+
+query
+SELECT ST_Intersects('POLYGON((0 0,4 0,4 4,0 4,0 0))'::GEOMETRY, 'GEOMETRYCOLLECTION(POINT(1 1),POINT(9 9))'::GEOMETRY) AS intersects,
+       ST_Disjoint('POLYGON((0 0,4 0,4 4,0 4,0 0))'::GEOMETRY, 'GEOMETRYCOLLECTION(POINT(8 8),POINT(9 9))'::GEOMETRY) AS disjoint;
+----
+intersects	disjoint
+t	t

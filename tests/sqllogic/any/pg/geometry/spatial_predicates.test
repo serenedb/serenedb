@@ -115,4 +115,3 @@ SELECT ST_HasM('POINT ZM(1 2 3 4)'::geometry) AS v;
 ----
 v
 t
-

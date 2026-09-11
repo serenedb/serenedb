@@ -128,4 +128,3 @@ SELECT (ST_LineLocatePoint('LINESTRING(0 0,2 2,4 4)'::geometry, 'POINT(1 1)'::ge
 ----
 v
 250000
-

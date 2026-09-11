@@ -136,8 +136,7 @@ void ParseGeoConstant(const duckdb::Value& value,
     }
     case duckdb::LogicalTypeId::GEOMETRY: {
       if (duckdb::GeoType::HasCRS(value.type())) {
-        sdb::catalog::ValidateGeometryCRS84(value.type(),
-                                           "GEOMETRY constant");
+        sdb::catalog::ValidateGeometryCRS84(value.type(), "GEOMETRY constant");
       }
       const auto& wkb_str = duckdb::StringValue::Get(value);
       if (!sdb::geo::ParseShapeWKB(wkb_str, shape)) {

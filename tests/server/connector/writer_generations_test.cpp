@@ -18,10 +18,9 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include <gtest/gtest.h>
-
 #include <absl/synchronization/notification.h>
 #include <absl/time/time.h>
+#include <gtest/gtest.h>
 
 #include <chrono>
 #include <future>

@@ -72,7 +72,8 @@ struct RowSource {
   duckdb::SelectionVector live{STANDARD_VECTOR_SIZE};
 };
 
-// In place: RowSource owns a DataChunk and a selection vector, neither copyable.
+// In place: RowSource owns a DataChunk and a selection vector, neither
+// copyable.
 void InitRowSource(duckdb::ClientContext& context,
                    const SearchBackfillTarget& target, RowSource& source) {
   source.projections.reserve(target.column_ids.size() + 1);
@@ -102,8 +103,8 @@ uint64_t FeedSegment(duckdb::ClientContext& context, const irs::SubReader& sub,
   const auto* col_reader = sub.GetColReader();
   SDB_ENSURE(col_reader != nullptr,
              "search-table build: segment has no columnstore");
-  FullScanner scanner{*col_reader, source.projections, {}, &context,
-                      source.filter_states};
+  FullScanner scanner{
+    *col_reader, source.projections, {}, &context, source.filter_states};
   const auto* mask = sub.docs_mask();
   if (mask != nullptr && mask->empty()) {
     mask = nullptr;
@@ -111,8 +112,8 @@ uint64_t FeedSegment(duckdb::ClientContext& context, const irs::SubReader& sub,
   const uint64_t docs = sub.Meta().docs_count;
   uint64_t fed = 0;
   for (uint64_t row = 0; row < docs; row += STANDARD_VECTOR_SIZE) {
-    const auto take =
-      static_cast<duckdb::idx_t>(std::min<uint64_t>(STANDARD_VECTOR_SIZE, docs - row));
+    const auto take = static_cast<duckdb::idx_t>(
+      std::min<uint64_t>(STANDARD_VECTOR_SIZE, docs - row));
     auto& chunk = source.chunk;
     chunk.Reset();
     const auto produced = scanner.Scan(row, take, chunk);
@@ -145,9 +146,9 @@ void Publish(search::SearchTable& shard) {
   search::RefreshResult code = search::RefreshResult::Undefined;
   const auto result = shard.RefreshUnsafe(/*wait=*/true, nullptr, code);
   if (!result.res.ok()) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INTERNAL_ERROR),
-                    ERR_MSG("search-table build: publish failed: ",
-                            result.res.message()));
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_INTERNAL_ERROR),
+      ERR_MSG("search-table build: publish failed: ", result.res.message()));
   }
 }
 

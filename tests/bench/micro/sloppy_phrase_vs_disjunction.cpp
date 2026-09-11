@@ -60,7 +60,7 @@
 #include <iresearch/search/offsets/make.hpp>
 #include <iresearch/search/phrase_filter.hpp>
 #include <iresearch/search/phrase_query.hpp>
-#include <iresearch/search/slop_phrase.hpp>
+#include <iresearch/search/detail/slop_phrase.hpp>
 #include <iresearch/store/data_output.hpp>
 #include <iresearch/store/mmap_directory.hpp>
 #include <iresearch/utils/string.hpp>

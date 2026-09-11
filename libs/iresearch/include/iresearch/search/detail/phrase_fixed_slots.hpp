@@ -30,8 +30,8 @@
 
 #include "iresearch/formats/posting_meta.hpp"
 #include "iresearch/search/detail/conjunction_leaves.hpp"
-#include "iresearch/search/phrase_iterator.hpp"
-#include "iresearch/search/slop_phrase.hpp"
+#include "iresearch/search/detail/phrase_iterator.hpp"
+#include "iresearch/search/detail/slop_phrase.hpp"
 #include "iresearch/store/data_input.hpp"
 #include "iresearch/utils/type_limits.hpp"
 

@@ -33,7 +33,7 @@
 #include "iresearch/search/detail/all_docs_score.hpp"
 #include "iresearch/search/detail/boolean_of.hpp"
 #include "iresearch/search/detail/collect.hpp"
-#include "iresearch/search/offsets/phrase_of.hpp"
+#include "iresearch/search/detail/phrase_of.hpp"
 #include "iresearch/search/detail/scored_context.hpp"
 #include "iresearch/search/lead/make_boolean.hpp"
 #include "iresearch/search/lead/plan.hpp"

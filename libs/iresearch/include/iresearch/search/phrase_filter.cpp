@@ -30,7 +30,7 @@
 #include "iresearch/search/collectors.hpp"
 #include "iresearch/search/filter_visitor.hpp"
 #include "iresearch/search/levenshtein_filter.hpp"
-#include "iresearch/search/phrase_iterator.hpp"
+#include "iresearch/search/detail/phrase_iterator.hpp"
 #include "iresearch/search/phrase_query.hpp"
 #include "iresearch/search/prefix_filter.hpp"
 #include "iresearch/search/prepared_state_visitor.hpp"

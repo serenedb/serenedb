@@ -26,8 +26,8 @@
 #include <vector>
 
 #include "iresearch/search/detail/fixed_array.hpp"
-#include "iresearch/search/offsets/phrase_variadic_pos.hpp"
-#include "iresearch/search/phrase_iterator.hpp"
+#include "iresearch/search/detail/phrase_variadic_pos.hpp"
+#include "iresearch/search/detail/phrase_iterator.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
 namespace irs::detail {

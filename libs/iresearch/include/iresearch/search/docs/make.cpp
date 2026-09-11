@@ -24,8 +24,8 @@
 #include <utility>
 
 #include "iresearch/index/index_reader.hpp"
-#include "iresearch/search/offsets/ngram_of.hpp"
-#include "iresearch/search/offsets/phrase_of.hpp"
+#include "iresearch/search/detail/ngram_of.hpp"
+#include "iresearch/search/detail/phrase_of.hpp"
 #include "iresearch/search/docs/empty.hpp"
 #include "iresearch/search/docs/make_boolean.hpp"
 #include "iresearch/search/docs/masked.hpp"

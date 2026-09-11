@@ -30,15 +30,15 @@
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/search/detail/collect.hpp"
 #include "iresearch/search/detail/node_of.hpp"
-#include "iresearch/search/offsets/phrase_fixed_slots.hpp"
-#include "iresearch/search/offsets/phrase_variadic_slots.hpp"
+#include "iresearch/search/detail/phrase_fixed_slots.hpp"
+#include "iresearch/search/detail/phrase_variadic_slots.hpp"
 #include "iresearch/search/detail/plan.hpp"
 #include "iresearch/search/detail/posting_pos.hpp"
 #include "iresearch/search/fill/walk.hpp"
 #include "iresearch/search/lead/two_phase_docs.hpp"
 #include "iresearch/search/phrase_query.hpp"
 #include "iresearch/search/probe/two_phase_docs.hpp"
-#include "iresearch/search/slop_phrase.hpp"
+#include "iresearch/search/detail/slop_phrase.hpp"
 
 namespace irs::detail {
 

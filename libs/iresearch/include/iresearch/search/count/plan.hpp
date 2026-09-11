@@ -27,7 +27,7 @@
 #include "iresearch/formats/posting_meta.hpp"
 #include "iresearch/search/detail/bitset_of.hpp"
 #include "iresearch/search/detail/collect.hpp"
-#include "iresearch/search/offsets/phrase_of.hpp"
+#include "iresearch/search/detail/phrase_of.hpp"
 #include "iresearch/search/count/boolean_bitset.hpp"
 #include "iresearch/search/count/make.hpp"
 #include "iresearch/search/count/walk.hpp"

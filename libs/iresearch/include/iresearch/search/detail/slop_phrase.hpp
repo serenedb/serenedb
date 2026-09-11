@@ -34,7 +34,7 @@
 #include "iresearch/analysis/token_attributes.hpp"
 #include "iresearch/formats/posting/iterator_pos.hpp"
 #include "iresearch/index/iterators.hpp"
-#include "iresearch/search/phrase_iterator.hpp"
+#include "iresearch/search/detail/phrase_iterator.hpp"
 #include "iresearch/search/score_function.hpp"
 
 namespace irs {

@@ -21,8 +21,8 @@
 #include <span>
 
 #include "iresearch/index/index_reader.hpp"
-#include "iresearch/search/offsets/ngram_of.hpp"
-#include "iresearch/search/offsets/phrase_of.hpp"
+#include "iresearch/search/detail/ngram_of.hpp"
+#include "iresearch/search/detail/phrase_of.hpp"
 #include "iresearch/search/count/make_boolean.hpp"
 #include "iresearch/search/count/plan.hpp"
 #include "iresearch/search/multiterm_query.hpp"

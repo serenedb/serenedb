@@ -22,12 +22,12 @@
 #include <vector>
 
 #include "iresearch/index/index_reader.hpp"
-#include "iresearch/search/offsets/phrase_fixed_slots.hpp"
-#include "iresearch/search/offsets/phrase_of.hpp"
+#include "iresearch/search/detail/phrase_fixed_slots.hpp"
+#include "iresearch/search/detail/phrase_of.hpp"
 #include "iresearch/search/detail/posting_pos.hpp"
 #include "iresearch/search/detail/resolve.hpp"
 #include "iresearch/search/detail/scored_context.hpp"
-#include "iresearch/search/phrase_iterator.hpp"
+#include "iresearch/search/detail/phrase_iterator.hpp"
 #include "iresearch/search/phrase_query.hpp"
 #include "iresearch/search/top/make.hpp"
 #include "iresearch/search/top/pruned_phrase.hpp"

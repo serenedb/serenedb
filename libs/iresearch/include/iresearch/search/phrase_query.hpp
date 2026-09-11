@@ -28,7 +28,7 @@
 
 #include "basics/misc.hpp"
 #include "iresearch/search/estimate.hpp"
-#include "iresearch/search/phrase_iterator.hpp"
+#include "iresearch/search/detail/phrase_iterator.hpp"
 #include "iresearch/search/prepared_state_visitor.hpp"
 #include "iresearch/search/query_builder_impl.hpp"
 #include "iresearch/search/states/phrase_state.hpp"

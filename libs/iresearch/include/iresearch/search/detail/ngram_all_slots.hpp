@@ -26,7 +26,7 @@
 
 #include "iresearch/formats/posting_meta.hpp"
 #include "iresearch/search/detail/conjunction_leaves.hpp"
-#include "iresearch/search/ngram_matcher.hpp"
+#include "iresearch/search/detail/ngram_matcher.hpp"
 #include "iresearch/store/data_input.hpp"
 #include "iresearch/utils/type_limits.hpp"
 

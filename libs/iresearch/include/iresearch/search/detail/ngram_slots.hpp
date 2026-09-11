@@ -28,7 +28,7 @@
 #include <vector>
 
 #include "iresearch/search/detail/fixed_array.hpp"
-#include "iresearch/search/ngram_matcher.hpp"
+#include "iresearch/search/detail/ngram_matcher.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
 namespace irs::detail {

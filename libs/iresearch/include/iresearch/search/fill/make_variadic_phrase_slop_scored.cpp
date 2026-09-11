@@ -18,7 +18,7 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include "iresearch/search/offsets/phrase_of.hpp"
+#include "iresearch/search/detail/phrase_of.hpp"
 #include "iresearch/search/detail/scored_context.hpp"
 #include "iresearch/search/fill/plan.hpp"
 #include "iresearch/search/fill/walk.hpp"

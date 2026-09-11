@@ -20,7 +20,7 @@
 
 #include <utility>
 
-#include "iresearch/search/offsets/wildcard_ngram_of.hpp"
+#include "iresearch/search/detail/wildcard_ngram_of.hpp"
 #include "iresearch/search/probe/constant_scored.hpp"
 #include "iresearch/search/probe/make.hpp"
 #include "iresearch/search/wildcard_ngram_filter.hpp"

@@ -25,8 +25,8 @@
 
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/search/detail/collect.hpp"
-#include "iresearch/search/offsets/ngram_all_slots.hpp"
-#include "iresearch/search/offsets/ngram_slots.hpp"
+#include "iresearch/search/detail/ngram_all_slots.hpp"
+#include "iresearch/search/detail/ngram_slots.hpp"
 #include "iresearch/search/detail/node_of.hpp"
 #include "iresearch/search/detail/plan.hpp"
 #include "iresearch/search/detail/posting_pos.hpp"

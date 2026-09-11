@@ -89,7 +89,7 @@ query
 SELECT length(hash), layout FROM sdb_docs.meta;
 ----
 length	layout
-64	12
+64	13
 
 # The breadcrumb is indexed: a breadcrumb match names an ancestor heading.
 connection docs database=postgres

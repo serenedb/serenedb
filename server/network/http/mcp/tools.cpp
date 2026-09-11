@@ -163,12 +163,105 @@ yaclib::Task<ToolResult> ListDocs(RequestContext& ctx, const ToolArgs& args) {
   co_return ToolResult{std::move(text)};
 }
 
+// The catalog keyed by object rather than by page: one line per documented
+// function, statement, tokenizer, type, setting or index type.
+yaclib::Task<ToolResult> ListObjects(RequestContext& ctx,
+                                     const ToolArgs& args) {
+  const auto kind = args.kind.value_or("");
+  auto result = co_await ctx.RunQuery(
+    absl::StrCat(
+      "SELECT kind, signature, coalesce(summary, '') AS summary "
+      "FROM sdb_docs.objects() ",
+      kind.empty() ? "" : absl::StrCat("WHERE kind = ", SqlLiteral(kind), " "),
+      "ORDER BY kind, name, path"),
+    /*writes=*/false);
+  if (result->HasError()) {
+    co_return Error(absl::StrCat("list_objects failed: ", result->GetError()));
+  }
+  if (result->RowCount() == 0) {
+    co_return Error(absl::StrCat(
+      "No objects of kind: ", kind,
+      ". Known kinds: function, statement, tokenizer, type, setting, "
+      "index_type."));
+  }
+  std::string text;
+  for (size_t row = 0; row < result->RowCount(); ++row) {
+    absl::StrAppend(&text, row == 0 ? "" : "\n",
+                    Cell(*result, "signature", row));
+    if (kind.empty()) {
+      absl::StrAppend(&text, " (", Cell(*result, "kind", row), ")");
+    }
+    if (const auto summary = Cell(*result, "summary", row); !summary.empty()) {
+      absl::StrAppend(&text, " - ", summary);
+    }
+  }
+  co_return ToolResult{std::move(text)};
+}
+
+// Every object carrying the name, because a caller that does not know an
+// object's kind cannot disambiguate one.
+yaclib::Task<ToolResult> DescribeObject(RequestContext& ctx,
+                                        const ToolArgs& args) {
+  if (!args.name || absl::StripAsciiWhitespace(*args.name).empty()) {
+    co_return Error("describe_object: name must not be empty");
+  }
+  auto result = co_await ctx.RunQuery(
+    absl::StrCat("SELECT o.kind, o.signature, o.breadcrumb, o.path, d.content "
+                 "FROM sdb_docs.objects() o JOIN sdb_docs.docs d USING (path) "
+                 "WHERE lower(o.name) = lower(",
+                 SqlLiteral(*args.name), ") ORDER BY o.kind, o.path"),
+    /*writes=*/false);
+  if (result->HasError()) {
+    co_return Error(
+      absl::StrCat("describe_object failed: ", result->GetError()));
+  }
+  if (result->RowCount() == 0) {
+    auto similar = co_await ctx.RunQuery(
+      absl::StrCat("SELECT kind, signature FROM sdb_docs.objects() WHERE name "
+                   "ILIKE '%' || ",
+                   SqlLiteral(*args.name),
+                   " || '%' ORDER BY length(name), name LIMIT 10"),
+      /*writes=*/false);
+    std::string text =
+      absl::StrCat("No documented object named: ", *args.name, ".");
+    if (!similar->HasError() && similar->RowCount() > 0) {
+      absl::StrAppend(&text, "\n\nMaybe you meant:");
+      for (size_t row = 0; row < similar->RowCount(); ++row) {
+        absl::StrAppend(&text, "\n  ", Cell(*similar, "signature", row), " (",
+                        Cell(*similar, "kind", row), ")");
+      }
+    } else {
+      absl::StrAppend(&text,
+                      " Use list_objects to see what exists, or search_docs to "
+                      "search the prose.");
+    }
+    co_return Error(std::move(text));
+  }
+  std::string text;
+  for (size_t row = 0; row < result->RowCount(); ++row) {
+    absl::StrAppend(&text, row == 0 ? "" : "\n\n---\n\n",
+                    Cell(*result, "signature", row), " (",
+                    Cell(*result, "kind", row),
+                    ")\npath: ", Cell(*result, "path", row), "\n");
+    if (const auto breadcrumb = Cell(*result, "breadcrumb", row);
+        !breadcrumb.empty()) {
+      absl::StrAppend(&text, "in: ", breadcrumb, "\n");
+    }
+    if (const auto content = Cell(*result, "content", row); !content.empty()) {
+      absl::StrAppend(&text, "\n", content);
+    }
+  }
+  co_return ToolResult{std::move(text)};
+}
+
 using ToolFn = yaclib::Task<ToolResult> (*)(RequestContext&, const ToolArgs&);
 
-constexpr std::array<std::pair<std::string_view, ToolFn>, 3> kTools{{
+constexpr std::array<std::pair<std::string_view, ToolFn>, 5> kTools{{
   {"search_docs", &SearchDocs},
   {"read_doc", &ReadDoc},
   {"list_docs", &ListDocs},
+  {"list_objects", &ListObjects},
+  {"describe_object", &DescribeObject},
 }};
 
 }  // namespace
@@ -212,6 +305,31 @@ const ToolsList& Tools() {
                                         .description =
                                           "Path prefix to filter by; omit for "
                                           "all pages"}}}}},
+      {.name = "list_objects",
+       .description =
+         "List everything SereneDB documents, one line per object, as "
+         "'signature (kind) - summary'. Consult this before writing "
+         "SereneDB-specific SQL: SereneDB is not Postgres full-text search, so "
+         "a function you expect may not exist under the name you expect. Pass "
+         "a kind to keep the list small.",
+       .inputSchema =
+         {.properties = {{"kind",
+                          {.type = "string",
+                           .description =
+                             "One of function, statement, tokenizer, type, "
+                             "setting, index_type; omit for everything"}}}}},
+      {.name = "describe_object",
+       .description =
+         "Return the full documentation for a named object. Reports every "
+         "object carrying the name, since one name can be a function and a "
+         "data type at once. Use it to confirm a function exists and to read "
+         "its signature before calling it.",
+       .inputSchema = {.properties = {{"name",
+                                       {.type = "string",
+                                        .description =
+                                          "Bare object name as returned by "
+                                          "list_objects, e.g. 'ts_phrase'"}}},
+                       .required = {"name"}}},
     }};
   return list;
 }

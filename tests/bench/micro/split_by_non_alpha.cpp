@@ -109,7 +109,12 @@ void RunSplit(benchmark::State& state, const std::string& data) {
   SetBytes(state, data);
 }
 
-enum class Fold : uint8_t { None, PerTokenAbsl, PerTokenExact, PerValueAbsl };
+enum class Fold : uint8_t {
+  None,
+  PerTokenAbsl,
+  PerTokenExact,
+  PerValueAbsl,
+};
 
 template<Fold F>
 void RunEmit(benchmark::State& state, const std::string& data) {

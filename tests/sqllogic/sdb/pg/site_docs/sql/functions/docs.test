@@ -1,0 +1,78 @@
+# Examples for the documentation-function page. The embedded docs are built by
+# the server at startup, so these need no setup; they assert that each example
+# still runs rather than pinning output that changes whenever docs/ changes.
+
+# DOCS_TEST: example_001
+
+# DOCS_TEST_BODY
+
+connection docs database=postgres
+statement ok
+SELECT kind, count(*) FROM sdb_docs.objects() GROUP BY kind ORDER BY count(*) DESC;
+
+# DOCS_TEST: example_002
+
+# DOCS_TEST_BODY
+
+connection docs database=postgres
+statement ok
+SELECT name, signature, summary
+FROM sdb_docs.objects()
+WHERE kind = 'function' AND name = 'date_trunc'
+ORDER BY path;
+
+# DOCS_TEST: example_003
+
+# DOCS_TEST_BODY
+
+connection docs database=postgres
+statement ok
+SELECT name, summary FROM sdb_docs.objects() WHERE kind = 'tokenizer' ORDER BY name;
+
+# DOCS_TEST: example_004
+
+# DOCS_TEST_BODY
+
+connection docs database=postgres
+statement ok
+SELECT name, aliases FROM sdb_docs.objects() WHERE kind = 'type' AND aliases IS NOT NULL ORDER BY name;
+
+# DOCS_TEST: example_005
+
+# DOCS_TEST_BODY
+
+connection docs database=postgres
+statement ok
+SELECT path, title, breadcrumb, score FROM sdb_docs.search('inverted index options', 5);
+
+# DOCS_TEST: example_006
+
+# DOCS_TEST_BODY
+
+connection docs database=postgres
+statement ok
+SELECT sdb_docs.read('sql/indexes/index.md#Indexes');
+
+# DOCS_TEST: example_007
+
+# DOCS_TEST_BODY
+
+connection docs database=postgres
+statement ok
+SELECT path, title FROM sdb_docs.sections('sql/functions/search/') ORDER BY path;
+
+# DOCS_TEST: example_008
+
+# DOCS_TEST_BODY
+
+connection docs database=postgres
+statement ok
+SELECT path, title, breadcrumb FROM sdb_docs.reference('date_trunc');
+
+# DOCS_TEST: example_009
+
+# DOCS_TEST_BODY
+
+connection docs database=postgres
+statement ok
+SELECT sdb_docs.summary(content) FROM sdb_docs.docs WHERE path = 'sql/indexes/index.md#Indexes';

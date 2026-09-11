@@ -30,7 +30,7 @@
 #include "iresearch/index/index_features.hpp"
 #include "iresearch/index/norm.hpp"
 #include "iresearch/search/scorers/bm25.hpp"
-#include "iresearch/search/boolean_filter.hpp"
+#include "iresearch/search/filters/boolean_filter.hpp"
 #include "iresearch/search/scorers/all_docs_score.hpp"
 #include "iresearch/search/detail/resolve.hpp"
 #include "iresearch/search/scorers/constant_score.hpp"
@@ -43,7 +43,7 @@
 #include "iresearch/search/scorers/raw_dl.hpp"
 #include "iresearch/search/scorers/raw_tf.hpp"
 #include "iresearch/search/scorers/scorer.hpp"
-#include "iresearch/search/term_filter.hpp"
+#include "iresearch/search/filters/term_filter.hpp"
 #include "iresearch/search/scorers/tfidf.hpp"
 #include "tests_shared.hpp"
 

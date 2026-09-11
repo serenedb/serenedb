@@ -26,7 +26,7 @@
 #include <duckdb/planner/expression/bound_cast_expression.hpp>
 #include <duckdb/planner/expression/bound_function_expression.hpp>
 #include <iresearch/analysis/geo_tokenizer.hpp>
-#include <iresearch/search/geo_filter.hpp>
+#include <iresearch/search/filters/geo_filter.hpp>
 
 #include "basics/assert.h"
 #include "catalog/geo_validate.h"

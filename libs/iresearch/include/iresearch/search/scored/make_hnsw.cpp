@@ -28,7 +28,7 @@
 #include "iresearch/search/scorers/score_args.hpp"
 #include "iresearch/search/scorers/score_provider.hpp"
 #include "iresearch/search/detail/table_filter.hpp"
-#include "iresearch/search/hnsw_query.hpp"
+#include "iresearch/search/queries/hnsw_query.hpp"
 #include "iresearch/search/scorers/score_function.hpp"
 #include "iresearch/search/scored/make.hpp"
 #include "iresearch/search/scorers/scorer.hpp"

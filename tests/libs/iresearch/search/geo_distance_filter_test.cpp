@@ -28,7 +28,7 @@
 #include "iresearch/index/index_writer.hpp"
 #include "iresearch/index/iterators.hpp"
 #include "iresearch/search/collectors.hpp"
-#include "iresearch/search/geo_filter.hpp"
+#include "iresearch/search/filters/geo_filter.hpp"
 #include "iresearch/search/scorers/score_function.hpp"
 #include "iresearch/search/scorers/scorer.hpp"
 #include "iresearch/store/memory_directory.hpp"

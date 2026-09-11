@@ -26,7 +26,7 @@
 #include <utility>
 
 #include "iresearch/index/iterators.hpp"
-#include "iresearch/search/filter.hpp"
+#include "iresearch/search/filters/filter.hpp"
 #include "iresearch/utils/string.hpp"
 
 namespace irs {

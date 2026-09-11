@@ -36,7 +36,7 @@
 #include "iresearch/search/detail/posting_pos.hpp"
 #include "iresearch/search/fill/walk.hpp"
 #include "iresearch/search/lead/two_phase_docs.hpp"
-#include "iresearch/search/phrase_query.hpp"
+#include "iresearch/search/queries/phrase_query.hpp"
 #include "iresearch/search/probe/two_phase_docs.hpp"
 #include "iresearch/search/detail/slop_phrase.hpp"
 

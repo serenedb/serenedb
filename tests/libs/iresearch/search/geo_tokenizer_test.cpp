@@ -33,7 +33,7 @@
 #include "iresearch/analysis/geo_tokenizer.hpp"
 #include "iresearch/analysis/token_batch.hpp"
 #include "iresearch/analysis/token_sinks.hpp"
-#include "iresearch/search/geo_filter.hpp"
+#include "iresearch/search/filters/geo_filter.hpp"
 #include "tests_shared.hpp"
 
 using namespace irs;

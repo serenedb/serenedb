@@ -24,7 +24,7 @@
 #include "iresearch/search/docs/make.hpp"
 #include "iresearch/search/docs/plan.hpp"
 #include "iresearch/search/docs/walk.hpp"
-#include "iresearch/search/geo_query.hpp"
+#include "iresearch/search/queries/geo_query.hpp"
 
 namespace irs::docs {
 

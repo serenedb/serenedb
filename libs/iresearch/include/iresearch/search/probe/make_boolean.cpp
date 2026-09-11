@@ -23,7 +23,7 @@
 #include <utility>
 
 #include "iresearch/index/index_reader.hpp"
-#include "iresearch/search/boolean_query.hpp"
+#include "iresearch/search/queries/boolean_query.hpp"
 #include "iresearch/search/detail/collect.hpp"
 #include "basics/empty.hpp"
 #include "iresearch/search/probe/classify.hpp"

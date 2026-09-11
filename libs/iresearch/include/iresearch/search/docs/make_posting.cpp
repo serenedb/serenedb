@@ -21,7 +21,7 @@
 #include "iresearch/search/docs/plan.hpp"
 #include "iresearch/search/docs/posting.hpp"
 #include "iresearch/search/lead/plan.hpp"
-#include "iresearch/search/term_query.hpp"
+#include "iresearch/search/queries/term_query.hpp"
 
 namespace irs::docs {
 

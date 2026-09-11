@@ -25,7 +25,7 @@
 #include "iresearch/analysis/wildcard_tokenizer.hpp"
 #include "iresearch/index/directory_reader.hpp"
 #include "iresearch/index/index_writer.hpp"
-#include "iresearch/search/wildcard_ngram_filter.hpp"
+#include "iresearch/search/filters/wildcard_ngram_filter.hpp"
 #include "iresearch/store/memory_directory.hpp"
 #include "iresearch/utils/type_limits.hpp"
 #include "tests_shared.hpp"

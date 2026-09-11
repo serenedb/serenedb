@@ -24,7 +24,7 @@
 #include "iresearch/search/count/make.hpp"
 #include "iresearch/search/count/plan.hpp"
 #include "iresearch/search/count/walk.hpp"
-#include "iresearch/search/geo_query.hpp"
+#include "iresearch/search/queries/geo_query.hpp"
 
 namespace irs::count {
 

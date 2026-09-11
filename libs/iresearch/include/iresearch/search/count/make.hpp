@@ -26,7 +26,7 @@
 #include "iresearch/search/detail/plan.hpp"
 #include "iresearch/search/detail/table_filter.hpp"
 #include "iresearch/search/count/root.hpp"
-#include "iresearch/search/states/term_state.hpp"
+#include "iresearch/search/queries/term_state.hpp"
 
 namespace irs::count {
 

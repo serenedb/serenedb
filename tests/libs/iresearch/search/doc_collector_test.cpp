@@ -24,12 +24,12 @@
 
 #include "index/index_tests.hpp"
 #include "iresearch/analysis/token_attributes.hpp"
-#include "iresearch/search/all_filter.hpp"
-#include "iresearch/search/boolean_filter.hpp"
+#include "iresearch/search/filters/all_filter.hpp"
+#include "iresearch/search/filters/boolean_filter.hpp"
 #include "iresearch/search/doc_collector.hpp"
 #include "iresearch/search/scorers/score_function.hpp"
 #include "iresearch/search/scorers/scorer.hpp"
-#include "iresearch/search/term_filter.hpp"
+#include "iresearch/search/filters/term_filter.hpp"
 #include "iresearch/types.hpp"
 #include "tests_shared.hpp"
 

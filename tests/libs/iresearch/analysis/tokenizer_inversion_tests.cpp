@@ -38,7 +38,7 @@
 #include "iresearch/index/directory_reader.hpp"
 #include "iresearch/index/index_writer.hpp"
 #include "iresearch/index/inverter/fields_inverter.hpp"
-#include "iresearch/search/term_filter.hpp"
+#include "iresearch/search/filters/term_filter.hpp"
 #include "iresearch/store/memory_directory.hpp"
 #include "iresearch/utils/index_utils.hpp"
 #include "tests_shared.hpp"

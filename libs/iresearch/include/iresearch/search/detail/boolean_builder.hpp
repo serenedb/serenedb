@@ -29,7 +29,7 @@
 
 #include "basics/empty.hpp"
 #include "iresearch/index/index_reader.hpp"
-#include "iresearch/search/boolean_query.hpp"
+#include "iresearch/search/queries/boolean_query.hpp"
 #include "iresearch/search/detail/bitset_of.hpp"
 #include "iresearch/search/detail/boolean_bitset.hpp"
 #include "iresearch/search/detail/boolean_groups.hpp"

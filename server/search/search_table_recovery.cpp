@@ -29,7 +29,7 @@
 #include <duckdb/common/types/data_chunk.hpp>
 #include <duckdb/main/connection.hpp>
 #include <iresearch/index/index_writer.hpp>
-#include <iresearch/search/all_filter.hpp>
+#include <iresearch/search/filters/all_filter.hpp>
 #include <limits>
 #include <memory>
 #include <span>

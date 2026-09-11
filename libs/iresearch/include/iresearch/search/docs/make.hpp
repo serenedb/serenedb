@@ -26,7 +26,7 @@
 #include "iresearch/search/detail/plan.hpp"
 #include "iresearch/search/docs/empty.hpp"
 #include "iresearch/search/docs/root.hpp"
-#include "iresearch/search/states/term_state.hpp"
+#include "iresearch/search/queries/term_state.hpp"
 
 namespace irs::docs {
 

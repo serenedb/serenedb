@@ -36,9 +36,9 @@
 #include <iresearch/index/norm.hpp>
 #include <iresearch/parser/parser.hpp>
 #include <iresearch/search/scorers/bm25.hpp>
-#include <iresearch/search/boolean_filter.hpp>
+#include <iresearch/search/filters/boolean_filter.hpp>
 #include <iresearch/search/doc_collector.hpp>
-#include <iresearch/search/filter_optimizer.hpp>
+#include <iresearch/search/filters/filter_optimizer.hpp>
 #include <iresearch/search/scorers/scorer.hpp>
 #include <iresearch/store/memory_directory.hpp>
 #include <iresearch/store/store_utils.hpp>

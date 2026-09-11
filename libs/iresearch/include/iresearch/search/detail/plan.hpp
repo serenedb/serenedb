@@ -29,12 +29,12 @@
 #include "iresearch/search/detail/window.hpp"
 #include "iresearch/search/fill/impl.hpp"
 #include "iresearch/search/fill/node.hpp"
-#include "iresearch/search/filter.hpp"
+#include "iresearch/search/filters/filter.hpp"
 #include "iresearch/search/lead/impl.hpp"
 #include "iresearch/search/lead/node.hpp"
 #include "iresearch/search/probe/impl.hpp"
 #include "iresearch/search/probe/node.hpp"
-#include "iresearch/search/states/term_state.hpp"
+#include "iresearch/search/queries/term_state.hpp"
 
 namespace irs {
 

@@ -28,7 +28,7 @@
 #include "index/index_tests.hpp"
 #include "iresearch/formats/formats.hpp"
 #include "iresearch/index/index_writer.hpp"
-#include "iresearch/search/term_filter.hpp"
+#include "iresearch/search/filters/term_filter.hpp"
 #include "iresearch/store/directory_cleaner.hpp"
 #include "iresearch/store/memory_directory.hpp"
 #include "iresearch/utils/directory_utils.hpp"

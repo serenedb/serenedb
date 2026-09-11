@@ -34,7 +34,7 @@
 #include "iresearch/search/detail/plan.hpp"
 #include "iresearch/search/scorers/score_args.hpp"
 #include "iresearch/search/fill/leaves.hpp"
-#include "iresearch/search/filter.hpp"
+#include "iresearch/search/filters/filter.hpp"
 #include "iresearch/search/top/walk.hpp"
 #include "iresearch/search/top/posting_pruned_disj.hpp"
 #include "iresearch/search/top/pruned_disjunction.hpp"

@@ -26,7 +26,7 @@
 #include "iresearch/index/index_features.hpp"
 #include "iresearch/search/scorers/idf.hpp"
 #include "iresearch/search/scorers/scorer.hpp"
-#include "iresearch/search/term_filter.hpp"
+#include "iresearch/search/filters/term_filter.hpp"
 #include "tests_shared.hpp"
 
 namespace {

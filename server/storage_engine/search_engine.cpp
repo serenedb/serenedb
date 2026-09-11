@@ -29,7 +29,7 @@
 #include <duckdb/common/file_system.hpp>
 #include <iresearch/analysis/tokenizer.hpp>
 #include <iresearch/formats/formats.hpp>
-#include <iresearch/search/filter_optimizer.hpp>
+#include <iresearch/search/filters/filter_optimizer.hpp>
 #include <utility>
 
 #include "basics/assert.h"

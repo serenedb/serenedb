@@ -23,7 +23,7 @@
 
 #include "iresearch/search/detail/table_filter.hpp"
 #include "iresearch/search/docs/make.hpp"
-#include "iresearch/search/hnsw_query.hpp"
+#include "iresearch/search/queries/hnsw_query.hpp"
 
 namespace irs::docs {
 namespace {

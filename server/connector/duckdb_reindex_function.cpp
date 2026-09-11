@@ -60,7 +60,7 @@
 #include <duckdb/planner/filter/expression_filter.hpp>
 #include <duckdb/planner/operator/logical_get.hpp>
 #include <duckdb/planner/operator/logical_projection.hpp>
-#include <iresearch/search/all_filter.hpp>
+#include <iresearch/search/filters/all_filter.hpp>
 
 #include "auth/role_closure.h"
 #include "basics/assert.h"

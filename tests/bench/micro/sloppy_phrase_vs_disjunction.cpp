@@ -54,12 +54,12 @@
 #include <iresearch/index/directory_reader.hpp>
 #include <iresearch/index/index_features.hpp>
 #include <iresearch/index/index_writer.hpp>
-#include <iresearch/search/boolean_filter.hpp>
+#include <iresearch/search/filters/boolean_filter.hpp>
 #include <iresearch/search/count/make.hpp>
 #include <iresearch/search/docs/make.hpp>
 #include <iresearch/search/offsets/make.hpp>
-#include <iresearch/search/phrase_filter.hpp>
-#include <iresearch/search/phrase_query.hpp>
+#include <iresearch/search/filters/phrase_filter.hpp>
+#include <iresearch/search/queries/phrase_query.hpp>
 #include <iresearch/search/detail/slop_phrase.hpp>
 #include <iresearch/store/data_output.hpp>
 #include <iresearch/store/mmap_directory.hpp>

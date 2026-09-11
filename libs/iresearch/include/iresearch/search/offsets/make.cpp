@@ -22,8 +22,8 @@
 
 #include "iresearch/formats/formats.hpp"
 #include "iresearch/search/detail/phrase_of.hpp"
-#include "iresearch/search/ngram_similarity_query.hpp"
-#include "iresearch/search/phrase_query.hpp"
+#include "iresearch/search/queries/ngram_similarity_query.hpp"
+#include "iresearch/search/queries/phrase_query.hpp"
 
 namespace irs::offsets {
 

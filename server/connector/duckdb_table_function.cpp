@@ -41,9 +41,9 @@
 #include <duckdb/storage/statistics/struct_stats.hpp>
 #include <duckdb/storage/statistics/variant_stats.hpp>
 #include <iresearch/analysis/token_attributes.hpp>
-#include <iresearch/search/all_filter.hpp>
-#include <iresearch/search/vector_radius_filter.hpp>
-#include <iresearch/search/vector_similarity_filter.hpp>
+#include <iresearch/search/filters/all_filter.hpp>
+#include <iresearch/search/filters/vector_radius_filter.hpp>
+#include <iresearch/search/filters/vector_similarity_filter.hpp>
 #include <ranges>
 #include <span>
 

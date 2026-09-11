@@ -34,7 +34,7 @@
 #include "iresearch/search/detail/exclusion_of.hpp"
 #include "iresearch/search/detail/plan.hpp"
 #include "iresearch/search/detail/resolve.hpp"
-#include "iresearch/search/multiterm_query.hpp"
+#include "iresearch/search/queries/multiterm_query.hpp"
 
 namespace irs::detail {
 

@@ -35,7 +35,7 @@
 #include <duckdb/planner/operator/logical_order.hpp>
 #include <duckdb/planner/operator/logical_projection.hpp>
 #include <duckdb/planner/operator/logical_top_n.hpp>
-#include <iresearch/search/boolean_filter.hpp>
+#include <iresearch/search/filters/boolean_filter.hpp>
 #include <limits>
 #include <memory>
 #include <optional>
@@ -62,7 +62,7 @@
 #include "connector/optimizer/ts_dict_plan.hpp"
 #include "connector/search_filter_builder.hpp"
 #include "iresearch/formats/ivf/ivf_reader.hpp"
-#include "iresearch/search/optimizer/boolean_rules.hpp"
+#include "iresearch/search/filters/boolean_rules.hpp"
 #include "pg/connection_context.h"
 #include "pg/errcodes.h"
 #include "pg/sql_exception_macro.h"

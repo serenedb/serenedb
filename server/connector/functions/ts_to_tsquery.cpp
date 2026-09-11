@@ -21,7 +21,7 @@
 #include <duckdb/planner/expression/bound_cast_expression.hpp>
 #include <iresearch/analysis/token_attributes.hpp>
 #include <iresearch/parser/parser.hpp>
-#include <iresearch/search/boolean_filter.hpp>
+#include <iresearch/search/filters/boolean_filter.hpp>
 #include <iresearch/utils/string.hpp>
 
 #include "pg/errcodes.h"

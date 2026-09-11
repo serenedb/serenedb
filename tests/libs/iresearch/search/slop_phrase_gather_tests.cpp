@@ -34,9 +34,9 @@
 #include "iresearch/index/iterators.hpp"
 #include "iresearch/search/offsets/make.hpp"
 #include "iresearch/search/offsets/root.hpp"
-#include "iresearch/search/phrase_filter.hpp"
+#include "iresearch/search/filters/phrase_filter.hpp"
 #include "iresearch/search/detail/phrase_iterator.hpp"
-#include "iresearch/search/phrase_query.hpp"
+#include "iresearch/search/queries/phrase_query.hpp"
 #include "iresearch/search/detail/slop_phrase.hpp"
 #include "tests_shared.hpp"
 

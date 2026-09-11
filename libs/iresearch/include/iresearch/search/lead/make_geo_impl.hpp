@@ -26,7 +26,7 @@
 #include "iresearch/search/scorers/all_docs_score.hpp"
 #include "iresearch/search/detail/geo_of.hpp"
 #include "iresearch/search/detail/scored_context.hpp"
-#include "iresearch/search/geo_query.hpp"
+#include "iresearch/search/queries/geo_query.hpp"
 #include "iresearch/search/lead/constant_scored.hpp"
 #include "iresearch/search/lead/impl.hpp"
 #include "iresearch/search/lead/make.hpp"

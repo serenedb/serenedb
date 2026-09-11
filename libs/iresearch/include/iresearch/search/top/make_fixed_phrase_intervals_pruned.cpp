@@ -28,7 +28,7 @@
 #include "iresearch/search/detail/resolve.hpp"
 #include "iresearch/search/detail/scored_context.hpp"
 #include "iresearch/search/detail/phrase_iterator.hpp"
-#include "iresearch/search/phrase_query.hpp"
+#include "iresearch/search/queries/phrase_query.hpp"
 #include "iresearch/search/top/make.hpp"
 #include "iresearch/search/top/pruned_phrase.hpp"
 

@@ -28,8 +28,8 @@
 #include "iresearch/index/index_features.hpp"
 #include "iresearch/index/norm.hpp"
 #include "iresearch/search/scorers/bm25.hpp"
-#include "iresearch/search/filter_visitor.hpp"
-#include "iresearch/search/prefix_filter.hpp"
+#include "iresearch/search/filters/filter_visitor.hpp"
+#include "iresearch/search/filters/prefix_filter.hpp"
 #include "tests_shared.hpp"
 
 namespace {

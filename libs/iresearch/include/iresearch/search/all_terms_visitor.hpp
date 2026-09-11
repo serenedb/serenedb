@@ -24,10 +24,10 @@
 
 #include "basics/noncopyable.hpp"
 #include "iresearch/formats/formats.hpp"
-#include "iresearch/search/filter_visitor.hpp"
+#include "iresearch/search/filters/filter_visitor.hpp"
 #include "iresearch/search/multiterm_collector.hpp"
 #include "iresearch/search/scorers/scorer.hpp"
-#include "iresearch/search/states/multiterm_state.hpp"
+#include "iresearch/search/queries/multiterm_state.hpp"
 
 namespace irs {
 

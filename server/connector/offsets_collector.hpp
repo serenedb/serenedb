@@ -23,7 +23,7 @@
 #include <duckdb/common/types.hpp>
 #include <iresearch/search/offsets/make.hpp>
 #include <iresearch/search/offsets/root.hpp>
-#include <iresearch/search/prepared_state_visitor.hpp>
+#include <iresearch/search/queries/prepared_state_visitor.hpp>
 #include <span>
 #include <variant>
 #include <vector>

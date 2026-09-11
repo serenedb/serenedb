@@ -22,7 +22,7 @@
 #include "iresearch/search/detail/wildcard_ngram_of.hpp"
 #include "iresearch/search/top/walk.hpp"
 #include "iresearch/search/top/make.hpp"
-#include "iresearch/search/wildcard_ngram_filter.hpp"
+#include "iresearch/search/filters/wildcard_ngram_filter.hpp"
 
 namespace irs::top {
 

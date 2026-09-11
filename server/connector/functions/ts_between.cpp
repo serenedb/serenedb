@@ -22,8 +22,8 @@
 #include <iresearch/analysis/token_attributes.hpp>
 #include <iresearch/analysis/token_sinks.hpp>
 #include <iresearch/index/typed_terms.hpp>
-#include <iresearch/search/granular_range_filter.hpp>
-#include <iresearch/search/range_filter.hpp>
+#include <iresearch/search/filters/granular_range_filter.hpp>
+#include <iresearch/search/filters/range_filter.hpp>
 #include <iresearch/utils/string.hpp>
 #include <vector>
 

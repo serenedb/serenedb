@@ -22,7 +22,7 @@
 
 #include <cstdint>
 
-#include "iresearch/search/boolean_query.hpp"
+#include "iresearch/search/queries/boolean_query.hpp"
 
 namespace irs::probe {
 

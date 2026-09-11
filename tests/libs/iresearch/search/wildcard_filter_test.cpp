@@ -23,13 +23,13 @@
 #include <absl/strings/str_cat.h>
 
 #include "filter_test_case_base.hpp"
-#include "iresearch/search/all_filter.hpp"
-#include "iresearch/search/automaton_filter.hpp"
-#include "iresearch/search/filter_optimizer.hpp"
-#include "iresearch/search/multiterm_query.hpp"
-#include "iresearch/search/prefix_filter.hpp"
-#include "iresearch/search/term_filter.hpp"
-#include "iresearch/search/wildcard_filter.hpp"
+#include "iresearch/search/filters/all_filter.hpp"
+#include "iresearch/search/filters/automaton_filter.hpp"
+#include "iresearch/search/filters/filter_optimizer.hpp"
+#include "iresearch/search/queries/multiterm_query.hpp"
+#include "iresearch/search/filters/prefix_filter.hpp"
+#include "iresearch/search/filters/term_filter.hpp"
+#include "iresearch/search/filters/wildcard_filter.hpp"
 #include "tests_shared.hpp"
 
 namespace {

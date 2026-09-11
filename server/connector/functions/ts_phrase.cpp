@@ -25,9 +25,9 @@
 #include <duckdb/planner/expression/bound_cast_expression.hpp>
 #include <iresearch/analysis/token_attributes.hpp>
 #include <iresearch/analysis/token_sinks.hpp>
-#include <iresearch/search/phrase_filter.hpp>
-#include <iresearch/search/phrase_query.hpp>
-#include <iresearch/search/range_filter.hpp>
+#include <iresearch/search/filters/phrase_filter.hpp>
+#include <iresearch/search/queries/phrase_query.hpp>
+#include <iresearch/search/filters/range_filter.hpp>
 #include <iresearch/search/scorers/scorer.hpp>
 #include <iresearch/utils/string.hpp>
 #include <limits>

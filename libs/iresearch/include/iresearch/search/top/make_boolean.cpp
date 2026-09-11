@@ -20,7 +20,7 @@
 
 #include "iresearch/search/top/make_boolean.hpp"
 
-#include "iresearch/search/boolean_query.hpp"
+#include "iresearch/search/queries/boolean_query.hpp"
 #include "iresearch/search/detail/scored_builder.hpp"
 
 namespace irs::top {

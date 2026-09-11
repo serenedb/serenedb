@@ -26,7 +26,7 @@
 
 #include "basics/empty.hpp"
 #include "iresearch/index/index_reader.hpp"
-#include "iresearch/search/boolean_query.hpp"
+#include "iresearch/search/queries/boolean_query.hpp"
 #include "iresearch/search/detail/boolean_builder.hpp"
 #include "iresearch/search/fill/make.hpp"
 #include "iresearch/search/fill/walk.hpp"

@@ -40,8 +40,8 @@
 #include <iresearch/index/index_features.hpp>
 #include <iresearch/index/index_writer.hpp>
 #include <iresearch/search/count/make.hpp>
-#include <iresearch/search/regexp_filter.hpp>
-#include <iresearch/search/wildcard_filter.hpp>
+#include <iresearch/search/filters/regexp_filter.hpp>
+#include <iresearch/search/filters/wildcard_filter.hpp>
 #include <iresearch/store/data_output.hpp>
 #include <iresearch/store/mmap_directory.hpp>
 #include <iresearch/utils/string.hpp>

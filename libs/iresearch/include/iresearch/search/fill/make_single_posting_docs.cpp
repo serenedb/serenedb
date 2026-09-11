@@ -21,7 +21,7 @@
 #include "iresearch/search/fill/impl.hpp"
 #include "iresearch/search/fill/make.hpp"
 #include "iresearch/search/fill/single_posting_docs.hpp"
-#include "iresearch/search/states/term_state.hpp"
+#include "iresearch/search/queries/term_state.hpp"
 
 namespace irs::fill {
 

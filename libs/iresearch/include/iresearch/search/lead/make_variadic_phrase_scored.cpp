@@ -23,7 +23,7 @@
 #include "iresearch/search/lead/impl.hpp"
 #include "iresearch/search/lead/plan.hpp"
 #include "iresearch/search/lead/two_phase_scored.hpp"
-#include "iresearch/search/phrase_query.hpp"
+#include "iresearch/search/queries/phrase_query.hpp"
 
 namespace irs::lead {
 

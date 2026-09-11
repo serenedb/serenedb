@@ -25,10 +25,10 @@
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/planner/expression.hpp>
 #include <duckdb/planner/expression/bound_columnref_expression.hpp>
-#include <iresearch/search/all_filter.hpp>
-#include <iresearch/search/boolean_filter.hpp>
-#include <iresearch/search/filter.hpp>
-#include <iresearch/search/term_filter.hpp>
+#include <iresearch/search/filters/all_filter.hpp>
+#include <iresearch/search/filters/boolean_filter.hpp>
+#include <iresearch/search/filters/filter.hpp>
+#include <iresearch/search/filters/term_filter.hpp>
 #include <optional>
 #include <span>
 

@@ -22,7 +22,7 @@
 
 #include <utility>
 
-#include "iresearch/search/geo_query.hpp"
+#include "iresearch/search/queries/geo_query.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
 namespace irs::lead {

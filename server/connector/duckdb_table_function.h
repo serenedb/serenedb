@@ -26,7 +26,7 @@
 #include <duckdb/planner/operator/logical_get.hpp>
 #include <duckdb/storage/table/row_group_reorderer.hpp>
 #include <functional>
-#include <iresearch/search/filter.hpp>
+#include <iresearch/search/filters/filter.hpp>
 #include <iresearch/search/scorers/scorer.hpp>
 #include <iresearch/utils/string.hpp>
 #include <memory>

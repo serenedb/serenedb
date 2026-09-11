@@ -32,13 +32,13 @@
 #include "iresearch/search/lead/boolean_window.hpp"
 #include "iresearch/search/lead/two_phase_docs.hpp"
 #include "iresearch/search/lead/wildcard_ngram_slots_docs.hpp"
-#include "iresearch/search/multiterm_query.hpp"
+#include "iresearch/search/queries/multiterm_query.hpp"
 #include "iresearch/search/probe/all_docs.hpp"
 #include "iresearch/search/probe/leaves.hpp"
 #include "iresearch/search/probe/two_phase_docs.hpp"
 #include "iresearch/search/probe/wildcard_ngram_slots_docs.hpp"
-#include "iresearch/search/term_query.hpp"
-#include "iresearch/search/wildcard_ngram_filter.hpp"
+#include "iresearch/search/queries/term_query.hpp"
+#include "iresearch/search/filters/wildcard_ngram_filter.hpp"
 
 namespace irs::detail {
 

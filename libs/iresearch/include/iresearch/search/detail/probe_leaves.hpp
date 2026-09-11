@@ -37,7 +37,7 @@
 #include "iresearch/search/probe/impl.hpp"
 #include "iresearch/search/probe/make.hpp"
 #include "iresearch/search/probe/posting_scored.hpp"
-#include "iresearch/search/states/term_state.hpp"
+#include "iresearch/search/queries/term_state.hpp"
 
 namespace irs::detail {
 

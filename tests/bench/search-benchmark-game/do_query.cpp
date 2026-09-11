@@ -23,7 +23,7 @@
 
 #include <cstdio>
 #include <iostream>  // std::cin
-#include <iresearch/search/filter_optimizer.hpp>
+#include <iresearch/search/filters/filter_optimizer.hpp>
 #include <iresearch/utils/levenshtein_default_pdp.hpp>
 #include <string>
 

@@ -32,13 +32,13 @@
 #include "iresearch/search/detail/phrase_variadic_slots.hpp"
 #include "iresearch/search/detail/posting_pos.hpp"
 #include "iresearch/search/detail/resolve.hpp"
-#include "iresearch/search/ngram_similarity_query.hpp"
+#include "iresearch/search/queries/ngram_similarity_query.hpp"
 #include "iresearch/search/offsets/impl.hpp"
 #include "iresearch/search/offsets/ngram.hpp"
 #include "iresearch/search/offsets/phrase.hpp"
 #include "iresearch/search/offsets/posting.hpp"
 #include "iresearch/search/offsets/root.hpp"
-#include "iresearch/search/phrase_query.hpp"
+#include "iresearch/search/queries/phrase_query.hpp"
 
 namespace irs::detail {
 

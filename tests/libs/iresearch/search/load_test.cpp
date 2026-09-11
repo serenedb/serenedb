@@ -51,9 +51,9 @@
 #include "iresearch/search/count/root.hpp"
 #include "iresearch/search/docs/root.hpp"
 #include "iresearch/search/fill/node.hpp"
-#include "iresearch/search/filter.hpp"
+#include "iresearch/search/filters/filter.hpp"
 #include "iresearch/search/lead/node.hpp"
-#include "iresearch/search/term_filter.hpp"
+#include "iresearch/search/filters/term_filter.hpp"
 #include "search/filter_test_case_base.hpp"
 #include "tests_shared.hpp"
 

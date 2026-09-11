@@ -31,7 +31,7 @@
 #include "iresearch/index/directory_reader.hpp"
 #include "iresearch/index/index_writer.hpp"
 #include "iresearch/search/doc_collector.hpp"
-#include "iresearch/search/vector_similarity_filter.hpp"
+#include "iresearch/search/filters/vector_similarity_filter.hpp"
 #include "iresearch/search/scorers/vector_similarity_scorer.hpp"
 #include "iresearch/store/memory_directory.hpp"
 #include "iresearch/utils/index_utils.hpp"

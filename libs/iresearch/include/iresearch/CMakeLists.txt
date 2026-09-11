@@ -127,26 +127,26 @@ set(IResearch_core_sources
     ./index/inverter/columnar_flush.cpp
     ./index/inverter/fields_inverter.cpp
     ./index/segment_writer.cpp
-    ./search/all_filter.cpp
-    ./search/granular_range_filter.cpp
+    ./search/filters/all_filter.cpp
+    ./search/filters/granular_range_filter.cpp
     ./search/scorers/score_function.cpp
     ./search/scorers/make_conjunction.cpp
     ./search/scorers/make_probe.cpp
     ./search/scorers/make_window.cpp
     ./search/scorers/root_window.cpp
     ./search/collectors.cpp
-    ./search/filter.cpp
-    ./search/term_filter.cpp
-    ./search/nested_filter.cpp
+    ./search/filters/filter.cpp
+    ./search/filters/term_filter.cpp
+    ./search/filters/nested_filter.cpp
     ./search/term_set.cpp
-    ./search/prefix_filter.cpp
-    ./search/range_filter.cpp
-    ./search/phrase_filter.cpp
-    ./search/automaton_filter.cpp
-    ./search/wildcard_filter.cpp
-    ./search/regexp_filter.cpp
-    ./search/wildcard_ngram_filter.cpp
-    ./search/levenshtein_filter.cpp
+    ./search/filters/prefix_filter.cpp
+    ./search/filters/range_filter.cpp
+    ./search/filters/phrase_filter.cpp
+    ./search/filters/automaton_filter.cpp
+    ./search/filters/wildcard_filter.cpp
+    ./search/filters/regexp_filter.cpp
+    ./search/filters/wildcard_ngram_filter.cpp
+    ./search/filters/levenshtein_filter.cpp
     ./search/count/make.cpp
     ./search/count/make_hnsw.cpp
     ./search/count/make_ivf.cpp
@@ -355,22 +355,22 @@ set(IResearch_core_sources
     ./search/top/make_pruned_disjunction.cpp
     ./search/top/make_pruned_conjunction.cpp
     ./search/top/make_pruned_conjunction_nested.cpp
-    ./search/multiterm_query.cpp
-    ./search/term_query.cpp
-    ./search/boolean_filter.cpp
-    ./search/boolean_query.cpp
-    ./search/filter_optimizer.cpp
-    ./search/optimizer/boolean_rules.cpp
-    ./search/optimizer/range_rules.cpp
-    ./search/optimizer/lowering_rules.cpp
-    ./search/optimizer/levenshtein_prefix_rules.cpp
-    ./search/ngram_similarity_filter.cpp
-    ./search/vector_similarity_filter.cpp
-    ./search/hnsw_query.cpp
-    ./search/vector_similarity_query.cpp
+    ./search/queries/multiterm_query.cpp
+    ./search/queries/term_query.cpp
+    ./search/filters/boolean_filter.cpp
+    ./search/queries/boolean_query.cpp
+    ./search/filters/filter_optimizer.cpp
+    ./search/filters/boolean_rules.cpp
+    ./search/filters/range_rules.cpp
+    ./search/filters/lowering_rules.cpp
+    ./search/filters/levenshtein_prefix_rules.cpp
+    ./search/filters/ngram_similarity_filter.cpp
+    ./search/filters/vector_similarity_filter.cpp
+    ./search/queries/hnsw_query.cpp
+    ./search/queries/vector_similarity_query.cpp
     ./search/scorers/vector_similarity_scorer.cpp
-    ./search/vector_radius_filter.cpp
-    ./search/geo_filter.cpp
+    ./search/filters/vector_radius_filter.cpp
+    ./search/filters/geo_filter.cpp
     ./search/scorers/tfidf.cpp
     ./search/scorers/bm25.cpp
     ./search/scorers/lm_jelinek_mercer.cpp

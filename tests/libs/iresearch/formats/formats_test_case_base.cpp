@@ -43,7 +43,7 @@
 #include "iresearch/formats/index/idx_writer.hpp"
 #include "iresearch/index/index_meta.hpp"
 #include "iresearch/index/norm.hpp"
-#include "iresearch/search/term_filter.hpp"
+#include "iresearch/search/filters/term_filter.hpp"
 #include "iresearch/store/memory_directory.hpp"
 #include "iresearch/utils/type_limits.hpp"
 #include "utils/write_helpers.hpp"

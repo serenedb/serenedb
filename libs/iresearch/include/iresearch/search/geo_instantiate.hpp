@@ -20,7 +20,7 @@
 
 #pragma once
 
-#include "iresearch/search/geo_filter.hpp"
+#include "iresearch/search/filters/geo_filter.hpp"
 #include "iresearch/search/geo_parsers.hpp"
 
 #define IRS_GEO_PARSERS(F, ...)     \

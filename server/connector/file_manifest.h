@@ -22,7 +22,7 @@
 
 #include <cstdint>
 #include <duckdb/common/open_file_info.hpp>
-#include <iresearch/search/filter.hpp>
+#include <iresearch/search/filters/filter.hpp>
 #include <iresearch/utils/string.hpp>
 #include <memory>
 #include <optional>

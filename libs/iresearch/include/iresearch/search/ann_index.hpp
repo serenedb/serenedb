@@ -25,7 +25,7 @@
 #include <vector>
 
 #include "iresearch/index/column_info.hpp"
-#include "iresearch/search/filter.hpp"
+#include "iresearch/search/filters/filter.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
 namespace irs {

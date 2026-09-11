@@ -25,7 +25,7 @@
 #include "iresearch/search/detail/resolve.hpp"
 #include "iresearch/search/count/term_counts.hpp"
 #include "iresearch/search/count/term_counts_of.hpp"
-#include "iresearch/search/filter.hpp"
+#include "iresearch/search/filters/filter.hpp"
 
 namespace irs::count {
 

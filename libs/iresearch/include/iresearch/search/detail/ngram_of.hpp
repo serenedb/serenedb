@@ -33,7 +33,7 @@
 #include "iresearch/search/fill/set_leaves.hpp"
 #include "iresearch/search/fill/walk.hpp"
 #include "iresearch/search/lead/two_phase_docs.hpp"
-#include "iresearch/search/ngram_similarity_query.hpp"
+#include "iresearch/search/queries/ngram_similarity_query.hpp"
 #include "iresearch/search/probe/two_phase_docs.hpp"
 
 namespace irs::detail {

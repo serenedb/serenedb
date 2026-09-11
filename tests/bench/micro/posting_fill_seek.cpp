@@ -71,13 +71,13 @@
 #include <iresearch/index/directory_reader.hpp>
 #include <iresearch/index/index_features.hpp>
 #include <iresearch/index/index_writer.hpp>
-#include <iresearch/search/boolean_filter.hpp>
+#include <iresearch/search/filters/boolean_filter.hpp>
 #include <iresearch/search/detail/window.hpp>
 #include <iresearch/search/count/make.hpp>
 #include <iresearch/search/docs/make.hpp>
 #include <iresearch/search/fill/node.hpp>
 #include <iresearch/search/lead/node.hpp>
-#include <iresearch/search/term_filter.hpp>
+#include <iresearch/search/filters/term_filter.hpp>
 #include <iresearch/store/mmap_directory.hpp>
 #include <iresearch/utils/string.hpp>
 #include <map>

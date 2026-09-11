@@ -25,7 +25,7 @@
 #include "iresearch/search/probe/make.hpp"
 #include "iresearch/search/probe/two_phase_docs.hpp"
 #include "iresearch/search/probe/wildcard_ngram_slots_docs.hpp"
-#include "iresearch/search/wildcard_ngram_filter.hpp"
+#include "iresearch/search/filters/wildcard_ngram_filter.hpp"
 
 namespace irs::probe {
 

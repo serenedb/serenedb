@@ -36,8 +36,8 @@
 #include <iresearch/analysis/token_batch.hpp>
 #include <iresearch/analysis/token_sinks.hpp>
 #include <iresearch/analysis/union_tokenizer.hpp>
-#include <iresearch/search/boolean_filter.hpp>
-#include <iresearch/search/filter_optimizer.hpp>
+#include <iresearch/search/filters/boolean_filter.hpp>
+#include <iresearch/search/filters/filter_optimizer.hpp>
 #include <limits>
 #include <memory>
 #include <numeric>

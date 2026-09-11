@@ -31,7 +31,7 @@
 #include <iresearch/formats/formats.hpp>
 #include <iresearch/index/directory_reader.hpp>
 #include <iresearch/index/index_writer.hpp>
-#include <iresearch/search/geo_filter.hpp>
+#include <iresearch/search/filters/geo_filter.hpp>
 #include <iresearch/store/memory_directory.hpp>
 #include <memory>
 #include <string>

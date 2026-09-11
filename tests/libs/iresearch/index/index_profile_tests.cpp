@@ -30,7 +30,7 @@
 #include "formats/column/test_cs_helpers.hpp"
 #include "index_tests.hpp"
 #include "insert_field.hpp"
-#include "iresearch/search/term_filter.hpp"
+#include "iresearch/search/filters/term_filter.hpp"
 #include "iresearch/store/fs_directory.hpp"
 #include "iresearch/store/memory_directory.hpp"
 #include "iresearch/store/mmap_directory.hpp"

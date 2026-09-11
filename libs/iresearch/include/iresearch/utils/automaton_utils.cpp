@@ -27,7 +27,7 @@
 #include "fstext/determinize-star.h"
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/search/multiterm_collector.hpp"
-#include "iresearch/search/multiterm_query.hpp"
+#include "iresearch/search/queries/multiterm_query.hpp"
 #include "iresearch/utils/string.hpp"
 
 namespace irs {

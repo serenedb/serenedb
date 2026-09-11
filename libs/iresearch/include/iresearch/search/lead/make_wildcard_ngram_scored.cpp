@@ -23,7 +23,7 @@
 #include "iresearch/search/detail/wildcard_ngram_of.hpp"
 #include "iresearch/search/lead/constant_scored.hpp"
 #include "iresearch/search/lead/plan.hpp"
-#include "iresearch/search/wildcard_ngram_filter.hpp"
+#include "iresearch/search/filters/wildcard_ngram_filter.hpp"
 
 namespace irs::lead {
 

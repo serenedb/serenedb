@@ -30,10 +30,10 @@
 #include "iresearch/search/docs/make_boolean.hpp"
 #include "iresearch/search/docs/masked.hpp"
 #include "iresearch/search/docs/plan.hpp"
-#include "iresearch/search/multiterm_query.hpp"
-#include "iresearch/search/ngram_similarity_query.hpp"
-#include "iresearch/search/phrase_query.hpp"
-#include "iresearch/search/query_builder_impl.hpp"
+#include "iresearch/search/queries/multiterm_query.hpp"
+#include "iresearch/search/queries/ngram_similarity_query.hpp"
+#include "iresearch/search/queries/phrase_query.hpp"
+#include "iresearch/search/queries/query_builder_impl.hpp"
 
 namespace irs::docs {
 

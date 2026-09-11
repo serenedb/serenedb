@@ -24,7 +24,7 @@
 #include <utility>
 
 #include "iresearch/index/index_reader.hpp"
-#include "iresearch/search/boolean_query.hpp"
+#include "iresearch/search/queries/boolean_query.hpp"
 #include "iresearch/search/detail/boolean_builder.hpp"
 #include "iresearch/search/count/boolean_sparse.hpp"
 #include "iresearch/search/count/subtract.hpp"

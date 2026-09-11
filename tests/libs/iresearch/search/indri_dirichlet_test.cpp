@@ -28,7 +28,7 @@
 #include "iresearch/index/norm.hpp"
 #include "iresearch/search/scorers/indri_dirichlet.hpp"
 #include "iresearch/search/scorers/scorer.hpp"
-#include "iresearch/search/term_filter.hpp"
+#include "iresearch/search/filters/term_filter.hpp"
 #include "tests_shared.hpp"
 
 namespace {

@@ -27,7 +27,7 @@
 #include "iresearch/search/detail/scored_context.hpp"
 #include "iresearch/search/fill/make.hpp"
 #include "iresearch/search/fill/walk.hpp"
-#include "iresearch/search/geo_query.hpp"
+#include "iresearch/search/queries/geo_query.hpp"
 
 namespace irs::fill {
 

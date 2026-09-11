@@ -19,7 +19,7 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include "iresearch/search/count/make.hpp"
-#include "iresearch/search/hnsw_query.hpp"
+#include "iresearch/search/queries/hnsw_query.hpp"
 
 namespace irs::count {
 

@@ -33,7 +33,7 @@
 #include "iresearch/formats/formats.hpp"
 #include "iresearch/index/index_meta.hpp"
 #include "iresearch/index/index_writer.hpp"
-#include "iresearch/search/term_filter.hpp"
+#include "iresearch/search/filters/term_filter.hpp"
 #include "iresearch/store/mmap_directory.hpp"
 #include "iresearch/utils/directory_utils.hpp"
 #include "tests_shared.hpp"

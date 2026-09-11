@@ -20,7 +20,7 @@
 
 #include <duckdb/planner/expression/bound_cast_expression.hpp>
 #include <iresearch/analysis/token_attributes.hpp>
-#include <iresearch/search/prefix_filter.hpp>
+#include <iresearch/search/filters/prefix_filter.hpp>
 #include <iresearch/utils/string.hpp>
 
 #include "pg/errcodes.h"

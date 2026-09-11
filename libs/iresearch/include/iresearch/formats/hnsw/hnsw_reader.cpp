@@ -30,7 +30,7 @@
 #include "basics/memory.hpp"
 #include "basics/misc.hpp"
 #include "iresearch/index/index_reader.hpp"
-#include "iresearch/search/hnsw_query.hpp"
+#include "iresearch/search/queries/hnsw_query.hpp"
 #include "iresearch/store/data_input.hpp"
 
 namespace irs {

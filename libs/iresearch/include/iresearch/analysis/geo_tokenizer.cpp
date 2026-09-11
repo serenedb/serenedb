@@ -35,7 +35,7 @@
 #include "geo/geo_params.h"
 #include "geo/wkb.h"
 #include "iresearch/analysis/token_batch.hpp"
-#include "iresearch/search/geo_filter.hpp"
+#include "iresearch/search/filters/geo_filter.hpp"
 #include "pg/sql_exception_macro.h"
 
 namespace irs::analysis {

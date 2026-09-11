@@ -21,8 +21,8 @@
 #include <duckdb/planner/expression/bound_cast_expression.hpp>
 #include <iresearch/analysis/token_attributes.hpp>
 #include <iresearch/analysis/wildcard_tokenizer.hpp>
-#include <iresearch/search/wildcard_filter.hpp>
-#include <iresearch/search/wildcard_ngram_filter.hpp>
+#include <iresearch/search/filters/wildcard_filter.hpp>
+#include <iresearch/search/filters/wildcard_ngram_filter.hpp>
 #include <iresearch/utils/string.hpp>
 
 #include "basics/down_cast.h"

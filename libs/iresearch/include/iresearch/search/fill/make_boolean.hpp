@@ -45,12 +45,14 @@
 #include "iresearch/search/lead/boolean_sparse.hpp"
 #include "iresearch/search/lead/impl.hpp"
 #include "iresearch/search/lead/make.hpp"
+#include "iresearch/search/lead/make_boolean.hpp"
 
 namespace irs::fill {
 
 struct ScoredApi {
   using Result = Node::ptr;
   using Context = search::ScoredCtx;
+  using SparseApi = lead::ScoredApi;
 
   static constexpr bool kLazyGroups = false;
   static constexpr bool kSingleClause = false;
@@ -99,14 +101,9 @@ struct ScoredApi {
     std::span<const QueryBuilder::ptr> should_filters, search::Terms uniformity,
     uint32_t min_match, const SubReader& segment, const Context& ctx,
     ScoreMergeType merge, score_t absorbed) {
-    auto node = lead::MakeRequiredScored(must, must_filters, should,
-                                         should_filters, uniformity, min_match,
-                                         segment, ctx, merge, absorbed);
-    if (!node) {
-      return {};
-    }
-    return memory::make_managed<ByWalkScored<lead::Erased>>(
-      merge, *ctx.fetcher, lead::Erased{std::move(node)});
+    return search::builder::MakeNodeConjunctionWith<ScoredApi>(
+      must, must_filters, should, should_filters, uniformity, min_match,
+      segment, ctx, merge, absorbed);
   }
 
   static Result WrapMerge(ScoreMergeType merge, Result child) {

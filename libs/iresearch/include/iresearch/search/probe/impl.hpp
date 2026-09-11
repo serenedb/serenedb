@@ -26,6 +26,7 @@
 #include "basics/assert.h"
 #include "basics/memory.hpp"
 #include "basics/shared.hpp"
+#include "iresearch/search/common/erasure.hpp"
 #include "iresearch/search/common/score_args.hpp"
 #include "iresearch/search/probe/concept.hpp"
 #include "iresearch/search/probe/node.hpp"

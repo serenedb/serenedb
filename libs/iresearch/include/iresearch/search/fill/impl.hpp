@@ -26,6 +26,7 @@
 #include "basics/empty.hpp"
 #include "basics/memory.hpp"
 #include "basics/shared.hpp"
+#include "iresearch/search/common/erasure.hpp"
 #include "iresearch/search/common/window.hpp"
 #include "iresearch/search/fill/concept.hpp"
 #include "iresearch/search/fill/node.hpp"

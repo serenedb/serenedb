@@ -184,8 +184,8 @@ Result<Api> MakeNodeConjunctionWith(
   ScoreMergeType merge, score_t absorbed) {
   SDB_ASSERT(min_match != 0);
   SDB_ASSERT(!must.empty() || !must_filters.empty());
-  auto head =
-    MakeNodeConjunction<Api>(must, must_filters, segment, ctx, merge, absorbed);
+  auto head = MakeNodeConjunction<typename Api::SparseApi>(
+    must, must_filters, segment, ctx, merge, absorbed);
   if (!head) {
     return {};
   }

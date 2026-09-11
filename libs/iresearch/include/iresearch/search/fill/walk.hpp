@@ -26,6 +26,7 @@
 #include "basics/bit_utils.hpp"
 #include "basics/shared.hpp"
 #include "iresearch/search/column_collector.hpp"
+#include "iresearch/search/common/erasure.hpp"
 #include "iresearch/search/common/window.hpp"
 #include "iresearch/search/fill/impl.hpp"
 #include "iresearch/search/lead/concept.hpp"
@@ -39,6 +40,8 @@ namespace irs::fill {
 template<lead::Type Leaf>
 class WalkDocs {
  public:
+  static_assert(!search::kIsErased<Leaf>);
+
   template<typename... Args>
   explicit WalkDocs(Args&&... args) : _leaf{std::forward<Args>(args)...} {}
 
@@ -91,6 +94,8 @@ class WalkDocs {
 template<typename Leaf>
 class WalkScored {
  public:
+  static_assert(!search::kIsErased<Leaf>);
+
   template<typename... Args>
   explicit WalkScored(ScoreMergeType merge, ColumnArgsFetcher& fetcher,
                       Args&&... args)

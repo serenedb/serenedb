@@ -46,6 +46,7 @@ namespace irs::lead {
 struct ScoredApi {
   using Result = Node::ptr;
   using Context = search::ScoredCtx;
+  using SparseApi = ScoredApi;
 
   static constexpr bool kLazyGroups = true;
   static constexpr bool kSingleClause = true;

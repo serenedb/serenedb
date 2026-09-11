@@ -54,7 +54,6 @@ namespace irs::top {
 namespace {
 
 inline constexpr double kNestedMatchesPerHit = 30.0;
-inline constexpr double kNestedMatchesPerHitPair = 75.0;
 inline constexpr uint64_t kNestedOthersOverLead = 8;
 inline constexpr uint64_t kConstantLeadDensity = 16;
 
@@ -178,9 +177,7 @@ Root::ptr MakeNestedPrunedConjunction(
   }
   const double matches =
     static_cast<double>(clauses.front().docs) * std::sqrt(share);
-  const auto per_hit =
-    clauses.size() == 2 ? kNestedMatchesPerHitPair : kNestedMatchesPerHit;
-  if (matches < static_cast<double>(ctx.k) * per_hit) {
+  if (matches < static_cast<double>(ctx.k) * kNestedMatchesPerHit) {
     return {};
   }
   std::vector<fill::Node::ptr> fills(clauses.size());

@@ -404,21 +404,19 @@ class VectorClusters {
   Cluster& operator[](size_t i) noexcept { return _clusters[i]; }
 
  private:
-  static constexpr auto kBits = search::kWindowBits;
-  static constexpr auto kWindow = search::kWindowDocs;
 
   doc_id_t From(doc_id_t target) {
     if (doc_limits::eof(target)) {
       return _doc = doc_limits::eof();
     }
     for (;;) {
-      if (!_filled || target >= _min + kWindow) {
+      if (!_filled || target >= _min + search::kWindowDocs) {
         if (_live == 0) {
           return _doc = doc_limits::eof();
         }
         Refill(target);
       }
-      if (const auto found = Find(target - _min); found != kWindow) {
+      if (const auto found = Find(target - _min); found != search::kWindowDocs) {
         return _doc = _min + found;
       }
       if (_live == 0 || !search::NextWindow(_min, _next, target)) {
@@ -430,7 +428,7 @@ class VectorClusters {
   void Refill(doc_id_t target) {
     for (uint32_t w = 0; w != search::kWindowWords; ++w) {
       auto word = std::exchange(_mask[w], uint64_t{0});
-      const auto base = w * kBits;
+      const auto base = w * search::kWindowBits;
       while (word != 0) {
         _window[base + static_cast<uint32_t>(std::countr_zero(word))] = 0;
         word = PopBit(word);
@@ -443,7 +441,7 @@ class VectorClusters {
     for (size_t i = 0; i != _live; ++i) {
       const auto slot = _order[i];
       const auto next =
-        _clusters[slot].Fill(_min, _min + kWindow, _mask.data(), _window);
+        _clusters[slot].Fill(_min, _min + search::kWindowDocs, _mask.data(), _window);
       if (doc_limits::eof(next)) {
         continue;
       }
@@ -454,21 +452,21 @@ class VectorClusters {
   }
 
   doc_id_t Find(doc_id_t offset) const noexcept {
-    auto word = offset / kBits;
-    auto bits = _mask[word] & (~uint64_t{0} << (offset % kBits));
+    auto word = offset / search::kWindowBits;
+    auto bits = _mask[word] & (~uint64_t{0} << (offset % search::kWindowBits));
     for (;;) {
       if (bits != 0) {
-        return static_cast<doc_id_t>(word * kBits + std::countr_zero(bits));
+        return static_cast<doc_id_t>(word * search::kWindowBits + std::countr_zero(bits));
       }
       if (++word == search::kWindowWords) {
-        return kWindow;
+        return search::kWindowDocs;
       }
       bits = _mask[word];
     }
   }
 
   search::Scratch _mask{};
-  ABSL_CACHELINE_ALIGNED score_t _window[kWindow]{};
+  ABSL_CACHELINE_ALIGNED score_t _window[search::kWindowDocs]{};
   search::FixedArray<Cluster> _clusters;
   search::FixedArray<uint32_t> _order;
   size_t _live;

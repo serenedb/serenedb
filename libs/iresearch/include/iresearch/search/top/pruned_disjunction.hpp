@@ -48,9 +48,6 @@ namespace irs::top {
 template<typename Leaf, typename Excludes, typename Table>
 class PrunedDisjunction : public Root {
  public:
-  static constexpr doc_id_t kWordBits = search::kWindowBits;
-  static constexpr size_t kNumWords = search::kWindowWords;
-  static constexpr doc_id_t kWindow = search::kWindowDocs;
   static constexpr doc_id_t kExhaustiveWindowsMin = 2;
   static constexpr doc_id_t kExhaustiveWindowsMax = 16;
   static constexpr bool kExcludes = !std::is_same_v<Excludes, utils::Empty>;
@@ -105,12 +102,12 @@ class PrunedDisjunction : public Root {
         Finish(collector.ScoreThreshold());
         if (_first_essential == 0 && !doc_limits::eof(window_max)) {
           window_max =
-            std::max(window_max, window_min + kWindow * _exhaustive_windows);
+            std::max(window_max, window_min + search::kWindowDocs * _exhaustive_windows);
         }
       }
       if (_first_essential == 0) {
-        if (window_max <= _docs_end - kWindow && Saturating()) {
-          window_max = std::max(window_max, window_min + kWindow);
+        if (window_max <= _docs_end - search::kWindowDocs && Saturating()) {
+          window_max = std::max(window_max, window_min + search::kWindowDocs);
         }
         _exhaustive_windows =
           std::min(2 * _exhaustive_windows, kExhaustiveWindowsMax);
@@ -303,7 +300,7 @@ class PrunedDisjunction : public Root {
         second = cost;
       }
     }
-    return second * (kWindow / 2.0) >= kDenseSecond * _docs_count;
+    return second * (search::kWindowDocs / 2.0) >= kDenseSecond * _docs_count;
   }
 
   double Cost(double fill, size_t first, double scale,
@@ -328,7 +325,7 @@ class PrunedDisjunction : public Root {
       return false;
     }
     const double scale = static_cast<double>(span) / _docs_count;
-    const double windows = static_cast<double>(span) / kWindow;
+    const double windows = static_cast<double>(span) / search::kWindowDocs;
     double fill = 0;
     for (size_t i = scored; i != _sorted.size(); ++i) {
       fill += _sorted[i]->cost * scale;
@@ -368,7 +365,7 @@ class PrunedDisjunction : public Root {
       const auto sparse =
         32U * _num_outer_windows * static_cast<uint32_t>(_sorted.size());
       if (_num_candidates < sparse) {
-        _min_window_size = std::min<doc_id_t>(2 * _min_window_size, kWindow);
+        _min_window_size = std::min<doc_id_t>(2 * _min_window_size, search::kWindowDocs);
       } else {
         _min_window_size = 1;
       }
@@ -407,13 +404,13 @@ class PrunedDisjunction : public Root {
       ProcessSingleEssential(collector, max);
       return;
     }
-    if (const auto second = SecondEssentialDoc(); second >= min + kWindow / 2) {
+    if (const auto second = SecondEssentialDoc(); second >= min + search::kWindowDocs / 2) {
       ProcessSingleEssential(collector, std::min(max, second));
       UpdateHeapTop();
       return;
     }
 
-    max = std::min(min + kWindow, max);
+    max = std::min(min + search::kWindowDocs, max);
     ProcessEssential([&](Entry* entry) IRS_FORCE_INLINE {
       entry->leaf.Fill(min, max, _mask, _scores);
     });
@@ -423,7 +420,7 @@ class PrunedDisjunction : public Root {
 
     if (!_has_non_essential) {
       const auto before = collector.TotalMatches();
-      _admit.Window(collector, _scores, _mask, min, kNumWords);
+      _admit.Window(collector, _scores, _mask, min, search::kWindowWords);
       _num_candidates +=
         static_cast<uint32_t>(collector.TotalMatches() - before);
       return;
@@ -439,13 +436,13 @@ class PrunedDisjunction : public Root {
 
   size_t DrainCandidates(doc_id_t min) {
     size_t count = 0;
-    for (size_t i = 0; i != kNumWords; ++i) {
+    for (size_t i = 0; i != search::kWindowWords; ++i) {
       auto word = _mask[i];
       if (word == 0) {
         continue;
       }
       _mask[i] = 0;
-      const size_t base = i * kWordBits;
+      const size_t base = i * search::kWindowBits;
       do {
         const size_t offset =
           base + static_cast<size_t>(std::countr_zero(word));
@@ -501,10 +498,10 @@ class PrunedDisjunction : public Root {
     }
   }
 
-  ABSL_CACHELINE_ALIGNED uint64_t _mask[kNumWords]{};
-  ABSL_CACHELINE_ALIGNED score_t _scores[kWindow]{};
-  ABSL_CACHELINE_ALIGNED doc_id_t _cand_docs[kWindow];
-  ABSL_CACHELINE_ALIGNED score_t _cand_scores[kWindow];
+  ABSL_CACHELINE_ALIGNED uint64_t _mask[search::kWindowWords]{};
+  ABSL_CACHELINE_ALIGNED score_t _scores[search::kWindowDocs]{};
+  ABSL_CACHELINE_ALIGNED doc_id_t _cand_docs[search::kWindowDocs];
+  ABSL_CACHELINE_ALIGNED score_t _cand_scores[search::kWindowDocs];
 
   LoserScoreCollector* _collector = nullptr;
   search::FixedArray<Entry> _entries;

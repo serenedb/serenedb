@@ -38,8 +38,6 @@ namespace irs::top {
 template<typename Lead, typename Optional, typename Excludes, typename Table>
 class BooleanWindow : public Root {
  public:
-  static constexpr size_t kNumWords = search::kWindowWords;
-  static constexpr doc_id_t kWindow = search::kWindowDocs;
   static constexpr bool kLead = !std::is_same_v<Lead, utils::Empty>;
   static constexpr bool kOptional = !std::is_same_v<Optional, utils::Empty>;
   static constexpr bool kExcludes = !std::is_same_v<Excludes, utils::Empty>;
@@ -69,7 +67,7 @@ class BooleanWindow : public Root {
         break;
       }
       const auto min = next;
-      const auto max = min + kWindow;
+      const auto max = min + search::kWindowDocs;
       if constexpr (kLead) {
         next = _lead.FillOr(min, max, _mask);
         if constexpr (kExcludes) {
@@ -84,8 +82,8 @@ class BooleanWindow : public Root {
           _excludes.Remove(min, max, _mask, _window, score_t{0});
         }
       }
-      _score.Apply(_window, _mask, kNumWords);
-      _admit.Window(collector, _window, _mask, min, kNumWords);
+      _score.Apply(_window, _mask, search::kWindowWords);
+      _admit.Window(collector, _window, _mask, min, search::kWindowWords);
     }
     _admit.Flush(collector);
   }
@@ -93,11 +91,11 @@ class BooleanWindow : public Root {
  private:
   void Tally() {
     search::TallyMask(_mask, _mask, _optional.Counts(), _window,
-                      _optional.MinMatch(), kNumWords);
+                      _optional.MinMatch(), search::kWindowWords);
   }
 
-  ABSL_CACHELINE_ALIGNED uint64_t _mask[kNumWords]{};
-  ABSL_CACHELINE_ALIGNED score_t _window[kWindow]{};
+  ABSL_CACHELINE_ALIGNED uint64_t _mask[search::kWindowWords]{};
+  ABSL_CACHELINE_ALIGNED score_t _window[search::kWindowDocs]{};
   [[no_unique_address]] Lead _lead;
   [[no_unique_address]] Optional _optional;
   [[no_unique_address]] Excludes _excludes;

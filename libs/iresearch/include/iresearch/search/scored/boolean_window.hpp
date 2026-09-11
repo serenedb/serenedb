@@ -41,8 +41,6 @@ namespace irs::scored {
 template<typename Lead, typename Optional, typename Excludes, typename Table>
 class BooleanWindow : public Root {
  public:
-  static constexpr size_t kNumWords = search::kWindowWords;
-  static constexpr doc_id_t kWindow = search::kWindowDocs;
   static constexpr int kSparseWord = 32;
   static constexpr bool kLead = !std::is_same_v<Lead, utils::Empty>;
   static constexpr bool kOptional = !std::is_same_v<Optional, utils::Empty>;
@@ -63,7 +61,7 @@ class BooleanWindow : public Root {
         std::make_from_tuple<Excludes>(std::forward<ExcludesArgs>(excludes))},
       _constant{constant},
       _table{table} {
-    std::fill_n(_window, kWindow, _constant);
+    std::fill_n(_window, search::kWindowDocs, _constant);
   }
 
   BooleanWindow(BooleanWindow&&) = delete;
@@ -77,7 +75,7 @@ class BooleanWindow : public Root {
     for (;;) {
       const score_t* IRS_RESTRICT const window = _window;
       const auto min = _min;
-      for (; _word != kNumWords; ++_word) {
+      for (; _word != search::kWindowWords; ++_word) {
         auto word = _mask[_word];
         if (word == 0) {
           continue;
@@ -158,7 +156,7 @@ class BooleanWindow : public Root {
         return n;
       }
       _min = _next;
-      const auto max = _min + kWindow;
+      const auto max = _min + search::kWindowDocs;
       doc_id_t next;
       if constexpr (kLead) {
         next = _lead.FillOr(_min, max, _mask);
@@ -180,14 +178,14 @@ class BooleanWindow : public Root {
   }
 
  private:
-  ABSL_CACHELINE_ALIGNED uint64_t _mask[kNumWords]{};
-  ABSL_CACHELINE_ALIGNED score_t _window[kWindow];
+  ABSL_CACHELINE_ALIGNED uint64_t _mask[search::kWindowWords]{};
+  ABSL_CACHELINE_ALIGNED score_t _window[search::kWindowDocs];
   [[no_unique_address]] Lead _lead;
   [[no_unique_address]] Optional _optional;
   [[no_unique_address]] Excludes _excludes;
   doc_id_t _min = 0;
   doc_id_t _next = doc_limits::min();
-  uint32_t _word = kNumWords;
+  uint32_t _word = search::kWindowWords;
   score_t _constant;
   bool _spent = false;
   [[no_unique_address]] search::Narrowing<Table> _table;

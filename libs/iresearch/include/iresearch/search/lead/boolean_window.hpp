@@ -97,21 +97,19 @@ class BooleanWindow {
   }
 
  private:
-  static constexpr auto kBits = search::kWindowBits;
-  static constexpr auto kWindow = search::kWindowDocs;
 
   doc_id_t From(doc_id_t target) {
     if (doc_limits::eof(target)) {
       return doc_limits::eof();
     }
     for (;;) {
-      if (!_filled || target >= _min + kWindow) {
+      if (!_filled || target >= _min + search::kWindowDocs) {
         if (_spent) {
           return doc_limits::eof();
         }
         Refill(target);
       }
-      if (const auto found = Find(target - _min); found != kWindow) {
+      if (const auto found = Find(target - _min); found != search::kWindowDocs) {
         return _min + found;
       }
       if (_spent) {
@@ -130,7 +128,7 @@ class BooleanWindow {
       for (uint32_t w = 0; w != search::kWindowWords; ++w) {
         auto word = words[w];
         words[w] = 0;
-        const auto base = w * kBits;
+        const auto base = w * search::kWindowBits;
         while (word != 0) {
           _window[base + std::countr_zero(word)] = 0;
           word = PopBit(word);
@@ -141,7 +139,7 @@ class BooleanWindow {
     }
     _min = target;
     _filled = true;
-    const auto max = _min + kWindow;
+    const auto max = _min + search::kWindowDocs;
     doc_id_t next;
     if constexpr (kLead) {
       next = _lead.FillOr(_min, max, words);
@@ -161,14 +159,14 @@ class BooleanWindow {
   }
 
   doc_id_t Find(doc_id_t offset) const noexcept {
-    auto word = offset / kBits;
-    auto bits = _mask[word] & (~uint64_t{0} << (offset % kBits));
+    auto word = offset / search::kWindowBits;
+    auto bits = _mask[word] & (~uint64_t{0} << (offset % search::kWindowBits));
     for (;;) {
       if (bits != 0) {
-        return static_cast<doc_id_t>(word * kBits + std::countr_zero(bits));
+        return static_cast<doc_id_t>(word * search::kWindowBits + std::countr_zero(bits));
       }
       if (++word == search::kWindowWords) {
-        return kWindow;
+        return search::kWindowDocs;
       }
       bits = _mask[word];
     }
@@ -176,7 +174,7 @@ class BooleanWindow {
 
   search::Scratch _mask{};
   [[no_unique_address]] ABSL_CACHELINE_ALIGNED
-    utils::Need<kScored, score_t[kWindow]> _window{};
+    utils::Need<kScored, score_t[search::kWindowDocs]> _window{};
   [[no_unique_address]] ABSL_CACHELINE_ALIGNED
     utils::Need<kScored, score_t[kScoreBlock]> _gathered{};
   [[no_unique_address]] Lead _lead;

@@ -39,8 +39,6 @@ template<typename Input>
 class DisjunctionLead {
  public:
   using Leaf = search::PostingPrunedDisj<Input>;
-  static constexpr doc_id_t kWindow = search::kWindowDocs;
-  static constexpr size_t kNumWords = search::kWindowWords;
 
   template<typename Init>
   DisjunctionLead(size_t size, Init&& init)
@@ -74,7 +72,7 @@ class DisjunctionLead {
 
   doc_id_t BlockLast() {
     SDB_ASSERT(!doc_limits::eof(_doc));
-    auto last = _doc + (kWindow - 1);
+    auto last = _doc + (search::kWindowDocs - 1);
     for (auto& leaf : _leaves) {
       const auto doc = leaf.Value();
       if (doc_limits::eof(doc)) {
@@ -100,9 +98,9 @@ class DisjunctionLead {
   void ForEachScoredBlock(doc_id_t max, Visitor&& visit) {
     while (_doc < max) {
       const auto min = _doc;
-      const auto end = max - min > kWindow ? min + kWindow : max;
-      std::fill_n(_mask, kNumWords, uint64_t{0});
-      std::fill_n(_window, kWindow, score_t{0});
+      const auto end = max - min > search::kWindowDocs ? min + search::kWindowDocs : max;
+      std::fill_n(_mask, search::kWindowWords, uint64_t{0});
+      std::fill_n(_window, search::kWindowDocs, score_t{0});
       for (auto& leaf : _leaves) {
         if (leaf.Value() < min) {
           leaf.Seek(min);
@@ -124,7 +122,7 @@ class DisjunctionLead {
   template<typename Visitor>
   void Emit(doc_id_t min, Visitor&& visit) {
     uint32_t len = 0;
-    for (size_t w = 0; w != kNumWords; ++w) {
+    for (size_t w = 0; w != search::kWindowWords; ++w) {
       auto word = _mask[w];
       while (word != 0) {
         const auto offset = static_cast<uint32_t>(w * search::kWindowBits) +
@@ -143,8 +141,8 @@ class DisjunctionLead {
     }
   }
 
-  ABSL_CACHELINE_ALIGNED uint64_t _mask[kNumWords]{};
-  ABSL_CACHELINE_ALIGNED score_t _window[kWindow]{};
+  ABSL_CACHELINE_ALIGNED uint64_t _mask[search::kWindowWords]{};
+  ABSL_CACHELINE_ALIGNED score_t _window[search::kWindowDocs]{};
   ABSL_CACHELINE_ALIGNED doc_id_t _docs[doc_limits::kBlockSize]{};
   ABSL_CACHELINE_ALIGNED score_t _scores[doc_limits::kBlockSize]{};
   search::FixedArray<Leaf> _leaves;

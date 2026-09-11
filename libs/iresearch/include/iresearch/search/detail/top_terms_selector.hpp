@@ -30,8 +30,8 @@
 #include "iresearch/analysis/token_attributes.hpp"
 #include "iresearch/formats/formats.hpp"
 #include "iresearch/index/iterators.hpp"
-#include "iresearch/search/scorers/scorer.hpp"
 #include "iresearch/search/detail/top_k_heap.hpp"
+#include "iresearch/search/scorers/scorer.hpp"
 #include "iresearch/utils/attribute_helper.hpp"
 
 namespace irs {

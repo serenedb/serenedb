@@ -21,9 +21,9 @@
 #pragma once
 
 #include "iresearch/index/index_reader.hpp"
-#include "iresearch/search/scorers/all_docs_score.hpp"
 #include "iresearch/search/detail/scored_context.hpp"
 #include "iresearch/search/hits/root.hpp"
+#include "iresearch/search/scorers/all_docs_score.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
 namespace irs::hits {

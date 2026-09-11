@@ -25,10 +25,6 @@
 #include <vector>
 
 #include "iresearch/index/index_reader.hpp"
-#include "iresearch/search/filters/all_filter.hpp"
-#include "iresearch/search/filters/boolean_filter.hpp"
-#include "iresearch/search/queries/boolean_query.hpp"
-#include "iresearch/search/scorers/all_docs_score.hpp"
 #include "iresearch/search/detail/boolean_of.hpp"
 #include "iresearch/search/detail/collect.hpp"
 #include "iresearch/search/detail/collect_scored.hpp"
@@ -39,15 +35,19 @@
 #include "iresearch/search/fill/plan.hpp"
 #include "iresearch/search/fill/walk.hpp"
 #include "iresearch/search/fill/window_scored.hpp"
+#include "iresearch/search/filters/all_filter.hpp"
+#include "iresearch/search/filters/boolean_filter.hpp"
+#include "iresearch/search/filters/wildcard_ngram_filter.hpp"
 #include "iresearch/search/lead/impl.hpp"
 #include "iresearch/search/lead/make.hpp"
+#include "iresearch/search/probe/plan.hpp"
+#include "iresearch/search/queries/boolean_query.hpp"
 #include "iresearch/search/queries/multiterm_query.hpp"
 #include "iresearch/search/queries/ngram_similarity_query.hpp"
 #include "iresearch/search/queries/phrase_query.hpp"
-#include "iresearch/search/probe/plan.hpp"
 #include "iresearch/search/queries/query_builder_impl.hpp"
 #include "iresearch/search/queries/term_query.hpp"
-#include "iresearch/search/filters/wildcard_ngram_filter.hpp"
+#include "iresearch/search/scorers/all_docs_score.hpp"
 
 namespace irs::fill {
 

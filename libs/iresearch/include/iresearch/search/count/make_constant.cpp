@@ -19,10 +19,10 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include "iresearch/index/index_reader.hpp"
-#include "iresearch/search/filters/all_filter.hpp"
 #include "iresearch/search/count/constant.hpp"
 #include "iresearch/search/count/plan.hpp"
 #include "iresearch/search/count/walk.hpp"
+#include "iresearch/search/filters/all_filter.hpp"
 #include "iresearch/search/lead/all_docs.hpp"
 #include "iresearch/search/lead/make.hpp"
 #include "iresearch/search/lead/plan.hpp"

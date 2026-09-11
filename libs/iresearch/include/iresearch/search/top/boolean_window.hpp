@@ -91,7 +91,7 @@ class BooleanWindow : public Root {
  private:
   void Tally() {
     irs::detail::TallyMask(_mask, _mask, _optional.Counts(), _window,
-                      _optional.MinMatch(), irs::detail::kWindowWords);
+                           _optional.MinMatch(), irs::detail::kWindowWords);
   }
 
   ABSL_CACHELINE_ALIGNED uint64_t _mask[irs::detail::kWindowWords]{};

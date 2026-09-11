@@ -33,11 +33,11 @@
 #include "iresearch/search/detail/plan.hpp"
 #include "iresearch/search/detail/posting_probe.hpp"
 #include "iresearch/search/detail/resolve.hpp"
-#include "iresearch/search/scorers/score_args.hpp"
 #include "iresearch/search/probe/impl.hpp"
 #include "iresearch/search/probe/make.hpp"
 #include "iresearch/search/probe/posting_scored.hpp"
 #include "iresearch/search/queries/term_state.hpp"
+#include "iresearch/search/scorers/score_args.hpp"
 
 namespace irs::detail {
 

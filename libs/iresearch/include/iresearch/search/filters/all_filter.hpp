@@ -24,8 +24,8 @@
 
 #include <memory>
 
-#include "iresearch/search/queries/query_builder_impl.hpp"
 #include "iresearch/search/detail/term_iterator.hpp"
+#include "iresearch/search/queries/query_builder_impl.hpp"
 #include "iresearch/utils/string.hpp"
 
 namespace irs {

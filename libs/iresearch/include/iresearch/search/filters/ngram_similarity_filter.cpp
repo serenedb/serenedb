@@ -26,10 +26,10 @@
 #include "iresearch/index/field_meta.hpp"
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/search/detail/collectors.hpp"
-#include "iresearch/search/queries/ngram_similarity_query.hpp"
-#include "iresearch/search/filters/term_filter.hpp"
-#include "iresearch/search/queries/term_query.hpp"
 #include "iresearch/search/detail/term_set.hpp"
+#include "iresearch/search/filters/term_filter.hpp"
+#include "iresearch/search/queries/ngram_similarity_query.hpp"
+#include "iresearch/search/queries/term_query.hpp"
 
 namespace irs {
 

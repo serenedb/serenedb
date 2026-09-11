@@ -25,11 +25,11 @@
 
 #include <algorithm>
 
-#include "iresearch/search/detail/plan.hpp"
 #include "iresearch/search/detail/estimate.hpp"
+#include "iresearch/search/detail/plan.hpp"
+#include "iresearch/search/queries/ngram_state.hpp"
 #include "iresearch/search/queries/prepared_state_visitor.hpp"
 #include "iresearch/search/queries/query_builder_impl.hpp"
-#include "iresearch/search/queries/ngram_state.hpp"
 
 namespace irs {
 

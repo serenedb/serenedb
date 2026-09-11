@@ -18,8 +18,8 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include "iresearch/search/fill/make_geo_impl.hpp"
 #include "iresearch/search/detail/geo_instantiate.hpp"
+#include "iresearch/search/fill/make_geo_impl.hpp"
 
 namespace irs::fill {
 

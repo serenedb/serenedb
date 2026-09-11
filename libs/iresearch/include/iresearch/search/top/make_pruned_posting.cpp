@@ -34,10 +34,11 @@
 
 namespace irs::top {
 
-Root::ptr MakePrunedPosting(const irs::detail::PostingClause& posting,
-                            std::span<const irs::detail::PostingClause> excludes,
-                            std::span<const QueryBuilder::ptr> exclude_filters,
-                            const SubReader& segment, const Context& ctx) {
+Root::ptr MakePrunedPosting(
+  const irs::detail::PostingClause& posting,
+  std::span<const irs::detail::PostingClause> excludes,
+  std::span<const QueryBuilder::ptr> exclude_filters, const SubReader& segment,
+  const Context& ctx) {
   SDB_ASSERT(posting.state.reader != nullptr);
   if (posting.stats.stats == nullptr) {
     return {};
@@ -58,14 +59,14 @@ Root::ptr MakePrunedPosting(const irs::detail::PostingClause& posting,
   }
   const auto& doc = *irs::detail::DocOf(own);
   const irs::detail::ScoreArgs args{.scorer = posting.stats.scorer,
-                       .stats = posting.stats.stats,
-                       .fetcher = &ctx.fetcher,
-                       .boost = posting.boost};
+                                    .stats = posting.stats.stats,
+                                    .fetcher = &ctx.fetcher,
+                                    .boost = posting.boost};
   return irs::detail::ResolveInput(doc, [&]<typename Input> -> Root::ptr {
     if (excludes.empty() && exclude_filters.empty()) {
       return MakeShape<PrunedPosting, Input, utils::Empty>(
-        ctx, std::forward_as_tuple(), meta, doc, irs::detail::LayoutOf(own), segment,
-        own, args);
+        ctx, std::forward_as_tuple(), meta, doc, irs::detail::LayoutOf(own),
+        segment, own, args);
     }
     return irs::detail::BuildBlockExcludesOf<Root::ptr, Input>(
       excludes, exclude_filters, nullptr, segment,

@@ -30,8 +30,8 @@
 #include "basics/shared.hpp"
 #include "iresearch/search/detail/column_collector.hpp"
 #include "iresearch/search/detail/fixed_array.hpp"
-#include "iresearch/search/scorers/score_args.hpp"
 #include "iresearch/search/detail/score_filter.hpp"
+#include "iresearch/search/scorers/score_args.hpp"
 #include "iresearch/search/scorers/score_function.hpp"
 #include "iresearch/utils/type_limits.hpp"
 

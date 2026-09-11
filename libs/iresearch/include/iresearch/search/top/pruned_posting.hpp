@@ -34,8 +34,7 @@
 namespace irs::top {
 
 template<typename InputType, typename Excludes, typename Table>
-class PrunedPosting : public Root,
-                      public PruneLeafBase<InputType, true> {
+class PrunedPosting : public Root, public PruneLeafBase<InputType, true> {
   using Base = PruneLeafBase<InputType, true>;
 
   using Base::_doc;

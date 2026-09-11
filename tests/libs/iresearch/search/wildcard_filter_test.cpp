@@ -26,10 +26,10 @@
 #include "iresearch/search/filters/all_filter.hpp"
 #include "iresearch/search/filters/automaton_filter.hpp"
 #include "iresearch/search/filters/filter_optimizer.hpp"
-#include "iresearch/search/queries/multiterm_query.hpp"
 #include "iresearch/search/filters/prefix_filter.hpp"
 #include "iresearch/search/filters/term_filter.hpp"
 #include "iresearch/search/filters/wildcard_filter.hpp"
+#include "iresearch/search/queries/multiterm_query.hpp"
 #include "tests_shared.hpp"
 
 namespace {

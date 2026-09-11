@@ -18,11 +18,11 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include "iresearch/search/scorers/all_docs_score.hpp"
 #include "iresearch/search/detail/wildcard_ngram_of.hpp"
-#include "iresearch/search/hits/walk.hpp"
-#include "iresearch/search/hits/make.hpp"
 #include "iresearch/search/filters/wildcard_ngram_filter.hpp"
+#include "iresearch/search/hits/make.hpp"
+#include "iresearch/search/hits/walk.hpp"
+#include "iresearch/search/scorers/all_docs_score.hpp"
 
 namespace irs::hits {
 
@@ -32,9 +32,9 @@ Root::ptr MakeWildcardNGram(const WildcardNGramQuery& query,
   const auto record = query.Stats(ScoredOf(ctx));
   const auto value = irs::detail::AllDocsScore(
     query.Segment(), irs::detail::ScoreArgs{.scorer = record.scorer,
-                                       .stats = record.stats,
-                                       .fetcher = &ctx.fetcher,
-                                       .boost = query.Boost()});
+                                            .stats = record.stats,
+                                            .fetcher = &ctx.fetcher,
+                                            .boost = query.Boost()});
   if (ctx.table != nullptr) {
     return irs::detail::MakeWildcardNGram<FilteredConstantWalk, Root::ptr>(
       query, 0, ctx.table, value);

@@ -29,13 +29,13 @@
 #include "iresearch/search/detail/posting_probe.hpp"
 #include "iresearch/search/detail/probe_leaves.hpp"
 #include "iresearch/search/detail/resolve.hpp"
-#include "iresearch/search/scorers/score_policy.hpp"
 #include "iresearch/search/probe/boolean_sparse.hpp"
 #include "iresearch/search/probe/boolean_window.hpp"
 #include "iresearch/search/probe/impl.hpp"
 #include "iresearch/search/probe/leaves.hpp"
 #include "iresearch/search/probe/make.hpp"
 #include "iresearch/search/probe/single_posting.hpp"
+#include "iresearch/search/scorers/score_policy.hpp"
 
 namespace irs::probe {
 
@@ -148,14 +148,12 @@ Node::ptr MakeWindowDisjunctionScored(
 }
 
 template<typename Term, typename ClauseFn>
-Node::ptr MakeDisjunctionScored(std::span<const Term> terms,
-                                std::span<const QueryBuilder::ptr> filters,
-                                detail::Terms uniformity,
-                                const TermReader* field, const Scorer* scorer,
-                                score_t boost, const SubReader& segment,
-                                const detail::ScoreRecipe& recipe, ScoreMergeType merge,
-                                uint64_t interrogations, ClauseFn clause,
-                                const detail::ScoredCtx& ctx, score_t absorbed = 0) {
+Node::ptr MakeDisjunctionScored(
+  std::span<const Term> terms, std::span<const QueryBuilder::ptr> filters,
+  detail::Terms uniformity, const TermReader* field, const Scorer* scorer,
+  score_t boost, const SubReader& segment, const detail::ScoreRecipe& recipe,
+  ScoreMergeType merge, uint64_t interrogations, ClauseFn clause,
+  const detail::ScoredCtx& ctx, score_t absorbed = 0) {
   SDB_ASSERT(terms.size() + filters.size() > 1);
   if (filters.empty() && !terms.empty()) {
     const auto* const doc =
@@ -191,8 +189,8 @@ inline Node::ptr BuildOptionalProbeScored(
   std::span<const detail::PostingClause> should,
   std::span<const QueryBuilder::ptr> should_filters, detail::Terms uniformity,
   uint32_t min_should_match, const SubReader& segment,
-  const detail::ScoreRecipe& recipe, ScoreMergeType merge, uint64_t interrogations,
-  const detail::ScoredCtx& ctx) {
+  const detail::ScoreRecipe& recipe, ScoreMergeType merge,
+  uint64_t interrogations, const detail::ScoredCtx& ctx) {
   SDB_ASSERT(min_should_match != 0);
   SDB_ASSERT(should.size() + should_filters.size() >= min_should_match);
   return min_should_match == 1

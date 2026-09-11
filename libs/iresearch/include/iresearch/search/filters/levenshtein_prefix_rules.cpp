@@ -26,9 +26,9 @@
 #include <vector>
 
 #include "iresearch/search/filters/boolean_filter.hpp"
+#include "iresearch/search/filters/common.hpp"
 #include "iresearch/search/filters/filter_optimizer.hpp"
 #include "iresearch/search/filters/levenshtein_filter.hpp"
-#include "iresearch/search/filters/common.hpp"
 #include "iresearch/search/filters/prefix_filter.hpp"
 
 namespace irs::optimizer {

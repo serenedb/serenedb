@@ -19,18 +19,19 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include "iresearch/index/index_reader.hpp"
-#include "iresearch/search/scorers/all_docs_score.hpp"
 #include "iresearch/search/detail/collect.hpp"
 #include "iresearch/search/detail/fill_posting_scored.hpp"
 #include "iresearch/search/detail/posting_fill.hpp"
 #include "iresearch/search/fill/constant_scored.hpp"
 #include "iresearch/search/fill/impl.hpp"
 #include "iresearch/search/fill/make.hpp"
+#include "iresearch/search/scorers/all_docs_score.hpp"
 
 namespace irs::fill {
 
 Node::ptr MakePostingScored(const detail::PostingClause& posting,
-                            const SubReader& segment, const detail::ScoredCtx& ctx,
+                            const SubReader& segment,
+                            const detail::ScoredCtx& ctx,
                             ScoreMergeType merge) {
   SDB_ASSERT(posting.state.cookie.docs_count != 0);
   SDB_ASSERT(posting.state.reader != nullptr);

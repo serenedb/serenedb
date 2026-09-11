@@ -32,12 +32,12 @@
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/search/detail/collect.hpp"
 #include "iresearch/search/detail/resolve.hpp"
-#include "iresearch/search/scorers/score_args.hpp"
 #include "iresearch/search/lead/impl.hpp"
 #include "iresearch/search/lead/posting_scored.hpp"
 #include "iresearch/search/probe/impl.hpp"
 #include "iresearch/search/probe/leaves.hpp"
 #include "iresearch/search/probe/posting_scored.hpp"
+#include "iresearch/search/scorers/score_args.hpp"
 namespace irs::detail {
 
 template<typename Result, typename Term, typename MakeProbeClause,

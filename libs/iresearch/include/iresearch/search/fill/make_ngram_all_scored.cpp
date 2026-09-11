@@ -31,16 +31,17 @@
 namespace irs::fill {
 
 Node::ptr MakeNGramAllScored(const NGramSimilarityQuery& query,
-                             const detail::ScoredCtx& ctx, ScoreMergeType merge) {
+                             const detail::ScoredCtx& ctx,
+                             ScoreMergeType merge) {
   const auto record = query.Stats(ctx);
   const auto* const stats = record.stats;
   if (stats == nullptr) {
     return {};
   }
   const detail::ScoreArgs args{.scorer = record.scorer,
-                       .stats = stats,
-                       .fetcher = ctx.fetcher,
-                       .boost = query.Boost()};
+                               .stats = stats,
+                               .fetcher = ctx.fetcher,
+                               .boost = query.Boost()};
   return detail::BuildAll<true>(
     query, [&]<typename Slots>(auto&&... rest) -> Node::ptr {
       using Node = lead::TwoPhaseScored<Slots>;

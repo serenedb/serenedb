@@ -28,26 +28,26 @@
 #include "filter_test_case_base.hpp"
 #include "iresearch/index/field_meta.hpp"
 #include "iresearch/index/iterators.hpp"
-#include "iresearch/search/filters/all_filter.hpp"
-#include "iresearch/search/filters/automaton_filter.hpp"
-#include "iresearch/search/scorers/bm25.hpp"
-#include "iresearch/search/filters/boolean_filter.hpp"
-#include "iresearch/search/queries/boolean_query.hpp"
 #include "iresearch/search/detail/collectors.hpp"
 #include "iresearch/search/detail/column_collector.hpp"
 #include "iresearch/search/detail/window.hpp"
+#include "iresearch/search/filters/all_filter.hpp"
+#include "iresearch/search/filters/automaton_filter.hpp"
+#include "iresearch/search/filters/boolean_filter.hpp"
 #include "iresearch/search/filters/filter_optimizer.hpp"
 #include "iresearch/search/filters/granular_range_filter.hpp"
 #include "iresearch/search/filters/levenshtein_filter.hpp"
 #include "iresearch/search/filters/prefix_filter.hpp"
 #include "iresearch/search/filters/range_filter.hpp"
 #include "iresearch/search/filters/regexp_filter.hpp"
+#include "iresearch/search/filters/term_filter.hpp"
+#include "iresearch/search/filters/wildcard_filter.hpp"
+#include "iresearch/search/queries/boolean_query.hpp"
+#include "iresearch/search/queries/term_query.hpp"
+#include "iresearch/search/scorers/bm25.hpp"
 #include "iresearch/search/scorers/score_function.hpp"
 #include "iresearch/search/scorers/scorer.hpp"
-#include "iresearch/search/filters/term_filter.hpp"
-#include "iresearch/search/queries/term_query.hpp"
 #include "iresearch/search/scorers/tfidf.hpp"
-#include "iresearch/search/filters/wildcard_filter.hpp"
 #include "iresearch/utils/automaton_utils.hpp"
 #include "iresearch/utils/type_limits.hpp"
 #include "tests_shared.hpp"
@@ -510,8 +510,7 @@ struct Boosted : public irs::FilterWithType<Boosted> {
       return irs::memory::make_managed<DocsRoot>(docs);
     }
 
-    irs::hits::Root::ptr PlanScored(
-      const irs::hits::Context& ctx) const final {
+    irs::hits::Root::ptr PlanScored(const irs::hits::Context& ctx) const final {
       Boosted::gExecuteCount++;
       return irs::memory::make_managed<ScoredRoot>(docs, Segment(), ctx, _boost,
                                                    Stats().stats);

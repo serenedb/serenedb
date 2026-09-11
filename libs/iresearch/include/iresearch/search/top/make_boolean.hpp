@@ -29,10 +29,10 @@
 #include "basics/empty.hpp"
 #include "iresearch/search/detail/plan.hpp"
 #include "iresearch/search/detail/resolve.hpp"
-#include "iresearch/search/scorers/score_args.hpp"
-#include "iresearch/search/scorers/score_policy.hpp"
 #include "iresearch/search/detail/scored_builder.hpp"
 #include "iresearch/search/detail/scored_context.hpp"
+#include "iresearch/search/scorers/score_args.hpp"
+#include "iresearch/search/scorers/score_policy.hpp"
 #include "iresearch/search/top/boolean_sparse.hpp"
 #include "iresearch/search/top/boolean_window.hpp"
 #include "iresearch/search/top/make.hpp"
@@ -98,7 +98,7 @@ struct Api {
   }
 
   static irs::detail::ScoreRecipe Recipe(const SubReader& segment,
-                            const Context& ctx) noexcept {
+                                         const Context& ctx) noexcept {
     return {.segment = &segment, .fetcher = &ctx.fetcher};
   }
 
@@ -138,7 +138,8 @@ struct Api {
 
   static Result MakePrunedDisjunction(
     std::span<const irs::detail::PostingClause> should,
-    std::span<const QueryBuilder::ptr> should_filters, irs::detail::Terms uniformity,
+    std::span<const QueryBuilder::ptr> should_filters,
+    irs::detail::Terms uniformity,
     std::span<const irs::detail::PostingClause> excludes,
     std::span<const QueryBuilder::ptr> exclude_filters,
     const SubReader& segment, const Context& ctx, ScoreMergeType merge,
@@ -150,7 +151,8 @@ struct Api {
 
   static Result MakePrunedConjunction(
     std::span<const irs::detail::PostingClause> must,
-    std::span<const QueryBuilder::ptr> must_filters, irs::detail::Terms uniformity,
+    std::span<const QueryBuilder::ptr> must_filters,
+    irs::detail::Terms uniformity,
     std::span<const irs::detail::PostingClause> excludes,
     std::span<const QueryBuilder::ptr> exclude_filters,
     const SubReader& segment, const Context& ctx, ScoreMergeType merge) {
@@ -159,7 +161,8 @@ struct Api {
   }
 
   static Result MakePrunedPosting(
-    const irs::detail::PostingClause& posting, std::span<const irs::detail::PostingClause> excludes,
+    const irs::detail::PostingClause& posting,
+    std::span<const irs::detail::PostingClause> excludes,
     std::span<const QueryBuilder::ptr> exclude_filters,
     const SubReader& segment, const Context& ctx) {
     return top::MakePrunedPosting(posting, excludes, exclude_filters, segment,

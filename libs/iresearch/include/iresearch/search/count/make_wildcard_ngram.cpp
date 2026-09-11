@@ -18,9 +18,9 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include "iresearch/search/detail/wildcard_ngram_of.hpp"
 #include "iresearch/search/count/plan.hpp"
 #include "iresearch/search/count/walk.hpp"
+#include "iresearch/search/detail/wildcard_ngram_of.hpp"
 
 namespace irs::count {
 

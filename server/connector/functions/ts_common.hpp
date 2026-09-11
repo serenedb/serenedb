@@ -28,12 +28,12 @@
 #include <iresearch/analysis/tokenizer.hpp>
 #include <iresearch/search/filters/all_filter.hpp>
 #include <iresearch/search/filters/boolean_filter.hpp>
-#include <iresearch/search/scorers/constant_score.hpp>
 #include <iresearch/search/filters/levenshtein_filter.hpp>
 #include <iresearch/search/filters/phrase_filter.hpp>
 #include <iresearch/search/filters/range_filter.hpp>
-#include <iresearch/search/scorers/scorer.hpp>
 #include <iresearch/search/filters/term_filter.hpp>
+#include <iresearch/search/scorers/constant_score.hpp>
+#include <iresearch/search/scorers/scorer.hpp>
 #include <iresearch/types.hpp>
 #include <iresearch/utils/wildcard_utils.hpp>
 #include <magic_enum/magic_enum.hpp>

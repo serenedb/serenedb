@@ -29,8 +29,8 @@
 #include "iresearch/formats/column/col_reader.hpp"
 #include "iresearch/formats/column/column_reader.hpp"
 #include "iresearch/index/index_reader.hpp"
-#include "iresearch/search/filters/geo_filter.hpp"
 #include "iresearch/search/detail/geo_parsers.hpp"
+#include "iresearch/search/filters/geo_filter.hpp"
 #include "iresearch/search/queries/query_builder_impl.hpp"
 
 namespace irs {

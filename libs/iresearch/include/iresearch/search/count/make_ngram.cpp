@@ -21,9 +21,9 @@
 #include <utility>
 #include <vector>
 
-#include "iresearch/search/detail/ngram_of.hpp"
 #include "iresearch/search/count/plan.hpp"
 #include "iresearch/search/count/walk.hpp"
+#include "iresearch/search/detail/ngram_of.hpp"
 
 namespace irs::count {
 

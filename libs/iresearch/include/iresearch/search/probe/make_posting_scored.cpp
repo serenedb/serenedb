@@ -19,7 +19,6 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include "iresearch/index/index_reader.hpp"
-#include "iresearch/search/scorers/all_docs_score.hpp"
 #include "iresearch/search/detail/plain_scored.hpp"
 #include "iresearch/search/detail/resolve.hpp"
 #include "iresearch/search/probe/constant_scored.hpp"
@@ -27,6 +26,7 @@
 #include "iresearch/search/probe/make.hpp"
 #include "iresearch/search/probe/plan.hpp"
 #include "iresearch/search/probe/posting_scored.hpp"
+#include "iresearch/search/scorers/all_docs_score.hpp"
 
 namespace irs::probe {
 

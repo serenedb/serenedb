@@ -21,10 +21,10 @@
 #include <gtest/gtest.h>
 
 #include <array>
-#include <thread>
-#include <vector>
 #include <cstdint>
 #include <string>
+#include <thread>
+#include <vector>
 
 #include "basics/down_cast.h"
 #include "iresearch/analysis/segmentation_tokenizer.hpp"
@@ -2150,7 +2150,11 @@ TEST_F(LuceneParserTest, FnMaxWidthTooNarrowIsRefused) {
 
 namespace {
 
-enum class ParseOutcome : uint8_t { Accepted, Rejected, Threw };
+enum class ParseOutcome : uint8_t {
+  Accepted,
+  Rejected,
+  Threw,
+};
 
 ParseOutcome ParseOnce(std::string_view query) {
   irs::BooleanFilter root;
@@ -2167,20 +2171,13 @@ ParseOutcome ParseOnce(std::string_view query) {
 }
 
 constexpr std::string_view kConcurrentQueries[] = {
-  "hello",
-  "quick AND brown",
-  "+fox -red",
-  "\"hello world\"",
-  "hel*",
-  "content:alpha OR beta",
-  "[a TO z]",
-  "term~2",
-  "alpha^2.5",
-  "fn:ordered(alpha beta)",
-  "\"unterminated",
-  "[unclosed",
-  "((((",
-  "a AND",
+  "hello",          "quick AND brown",
+  "+fox -red",      "\"hello world\"",
+  "hel*",           "content:alpha OR beta",
+  "[a TO z]",       "term~2",
+  "alpha^2.5",      "fn:ordered(alpha beta)",
+  "\"unterminated", "[unclosed",
+  "((((",           "a AND",
 };
 
 }  // namespace

@@ -42,19 +42,20 @@
 #include "iresearch/formats/ivf/quantizer.hpp"
 #include "iresearch/formats/posting_meta.hpp"
 #include "iresearch/index/index_reader.hpp"
+#include "iresearch/search/count/plan.hpp"
+#include "iresearch/search/count/walk.hpp"
 #include "iresearch/search/detail/column_collector.hpp"
 #include "iresearch/search/detail/fixed_array.hpp"
 #include "iresearch/search/detail/resolve.hpp"
-#include "iresearch/search/scorers/score_args.hpp"
 #include "iresearch/search/detail/scored_context.hpp"
 #include "iresearch/search/detail/window.hpp"
-#include "iresearch/search/count/plan.hpp"
-#include "iresearch/search/count/walk.hpp"
 #include "iresearch/search/docs/plan.hpp"
 #include "iresearch/search/docs/walk.hpp"
 #include "iresearch/search/fill/impl.hpp"
 #include "iresearch/search/fill/make.hpp"
 #include "iresearch/search/fill/walk.hpp"
+#include "iresearch/search/hits/make.hpp"
+#include "iresearch/search/hits/walk.hpp"
 #include "iresearch/search/lead/impl.hpp"
 #include "iresearch/search/lead/make.hpp"
 #include "iresearch/search/lead/posting_docs.hpp"
@@ -64,13 +65,12 @@
 #include "iresearch/search/probe/make.hpp"
 #include "iresearch/search/probe/two_phase_docs.hpp"
 #include "iresearch/search/probe/two_phase_scored.hpp"
-#include "iresearch/search/scorers/score_function.hpp"
-#include "iresearch/search/hits/walk.hpp"
-#include "iresearch/search/hits/make.hpp"
-#include "iresearch/search/scorers/scorer.hpp"
-#include "iresearch/search/top/walk.hpp"
-#include "iresearch/search/top/make.hpp"
 #include "iresearch/search/queries/vector_similarity_query.hpp"
+#include "iresearch/search/scorers/score_args.hpp"
+#include "iresearch/search/scorers/score_function.hpp"
+#include "iresearch/search/scorers/scorer.hpp"
+#include "iresearch/search/top/make.hpp"
+#include "iresearch/search/top/walk.hpp"
 #include "iresearch/store/data_input.hpp"
 #include "iresearch/utils/attribute_provider.hpp"
 #include "iresearch/utils/type_limits.hpp"
@@ -404,7 +404,6 @@ class VectorClusters {
   Cluster& operator[](size_t i) noexcept { return _clusters[i]; }
 
  private:
-
   doc_id_t From(doc_id_t target) {
     if (doc_limits::eof(target)) {
       return _doc = doc_limits::eof();
@@ -416,7 +415,8 @@ class VectorClusters {
         }
         Refill(target);
       }
-      if (const auto found = Find(target - _min); found != detail::kWindowDocs) {
+      if (const auto found = Find(target - _min);
+          found != detail::kWindowDocs) {
         return _doc = _min + found;
       }
       if (_live == 0 || !detail::NextWindow(_min, _next, target)) {
@@ -440,8 +440,8 @@ class VectorClusters {
     size_t live = 0;
     for (size_t i = 0; i != _live; ++i) {
       const auto slot = _order[i];
-      const auto next =
-        _clusters[slot].Fill(_min, _min + detail::kWindowDocs, _mask.data(), _window);
+      const auto next = _clusters[slot].Fill(_min, _min + detail::kWindowDocs,
+                                             _mask.data(), _window);
       if (doc_limits::eof(next)) {
         continue;
       }
@@ -456,7 +456,8 @@ class VectorClusters {
     auto bits = _mask[word] & (~uint64_t{0} << (offset % detail::kWindowBits));
     for (;;) {
       if (bits != 0) {
-        return static_cast<doc_id_t>(word * detail::kWindowBits + std::countr_zero(bits));
+        return static_cast<doc_id_t>(word * detail::kWindowBits +
+                                     std::countr_zero(bits));
       }
       if (++word == detail::kWindowWords) {
         return detail::kWindowDocs;

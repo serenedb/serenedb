@@ -250,8 +250,7 @@ bool RemoveFromImportedSegment(DocumentMask& deleted_docs,
   }
 
   bool modified = false;
-  for (auto doc = plan->Next(); !doc_limits::eof(doc);
-       doc = plan->Next()) {
+  for (auto doc = plan->Next(); !doc_limits::eof(doc); doc = plan->Next()) {
     // if the indexed doc_id was already masked then it should be skipped
     if (!deleted_docs.insert(doc).second) {
       continue;  // the current modification query does not match any records

@@ -25,11 +25,11 @@
 #include "iresearch/search/fill/impl.hpp"
 #include "iresearch/search/fill/make.hpp"
 #include "iresearch/search/filters/filter.hpp"
+#include "iresearch/search/hits/make.hpp"
 #include "iresearch/search/lead/impl.hpp"
 #include "iresearch/search/lead/make.hpp"
 #include "iresearch/search/probe/impl.hpp"
 #include "iresearch/search/probe/make.hpp"
-#include "iresearch/search/hits/make.hpp"
 #include "iresearch/search/top/make.hpp"
 
 namespace irs {

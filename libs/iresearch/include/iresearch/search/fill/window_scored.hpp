@@ -39,8 +39,7 @@ template<ScoredType Child, ScoreMergeType Merge>
 class WindowScored {
  public:
   template<typename... Args>
-  explicit WindowScored(Args&&... args)
-    : _child{std::forward<Args>(args)...} {}
+  explicit WindowScored(Args&&... args) : _child{std::forward<Args>(args)...} {}
 
   doc_id_t Fill(doc_id_t min, doc_id_t max, uint64_t* IRS_RESTRICT mask,
                 score_t* IRS_RESTRICT scores) {

@@ -22,12 +22,12 @@
 
 #include <utility>
 
-#include "iresearch/search/scorers/all_docs_score.hpp"
 #include "iresearch/search/detail/geo_of.hpp"
 #include "iresearch/search/detail/scored_context.hpp"
 #include "iresearch/search/fill/make.hpp"
 #include "iresearch/search/fill/walk.hpp"
 #include "iresearch/search/queries/geo_query.hpp"
+#include "iresearch/search/scorers/all_docs_score.hpp"
 
 namespace irs::fill {
 
@@ -38,8 +38,8 @@ Node::ptr Make(const GeoQuery<Parser, Acceptor>& query) {
 }
 
 template<typename Parser, typename Acceptor>
-Node::ptr Make(const GeoQuery<Parser, Acceptor>& query, const detail::ScoredCtx& ctx,
-               ScoreMergeType merge) {
+Node::ptr Make(const GeoQuery<Parser, Acceptor>& query,
+               const detail::ScoredCtx& ctx, ScoreMergeType merge) {
   const auto record = query.Stats(ctx);
   const auto value = detail::AllDocsScore(
     query.Segment(), detail::ScoreArgs{.scorer = record.scorer,

@@ -170,8 +170,8 @@ ScoreFunction TFIDF::PrepareScorer(const ScoreContext& ctx) const {
       return attr ? &attr->value : nullptr;
     }();
     if (!norm) {
-      norm = ctx.fetcher.AddNorms(ctx.field.norm,
-                                  ctx.segment.norms(ctx.field.norm));
+      norm =
+        ctx.fetcher.AddNorms(ctx.field.norm, ctx.segment.norms(ctx.field.norm));
     }
   }
 

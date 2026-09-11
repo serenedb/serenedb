@@ -25,11 +25,11 @@
 
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/search/detail/column_collector.hpp"
-#include "iresearch/search/scorers/all_docs_score.hpp"
 #include "iresearch/search/detail/scored_context.hpp"
 #include "iresearch/search/detail/table_filter.hpp"
-#include "iresearch/search/scorers/score_function.hpp"
 #include "iresearch/search/hits/root.hpp"
+#include "iresearch/search/scorers/all_docs_score.hpp"
+#include "iresearch/search/scorers/score_function.hpp"
 #include "iresearch/utils/attribute_provider.hpp"
 #include "iresearch/utils/type_limits.hpp"
 

@@ -32,8 +32,8 @@
 #include "iresearch/search/detail/exclude_block.hpp"
 #include "iresearch/search/scorers/score_args.hpp"
 #include "iresearch/search/top/admit.hpp"
-#include "iresearch/search/top/term_block.hpp"
 #include "iresearch/search/top/root.hpp"
+#include "iresearch/search/top/term_block.hpp"
 #include "iresearch/store/data_input.hpp"
 #include "iresearch/utils/type_limits.hpp"
 

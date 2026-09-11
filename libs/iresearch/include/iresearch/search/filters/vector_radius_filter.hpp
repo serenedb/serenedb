@@ -20,8 +20,8 @@
 
 #pragma once
 
-#include "iresearch/search/filters/filter.hpp"
 #include "iresearch/search/detail/vector_filter_util.hpp"
+#include "iresearch/search/filters/filter.hpp"
 
 namespace irs {
 

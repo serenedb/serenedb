@@ -26,8 +26,8 @@
 
 #include "iresearch/search/detail/column_collector.hpp"
 #include "iresearch/search/detail/table_filter.hpp"
-#include "iresearch/search/scorers/score_function.hpp"
 #include "iresearch/search/hits/root.hpp"
+#include "iresearch/search/scorers/score_function.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
 namespace irs::hits {

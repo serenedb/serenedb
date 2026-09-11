@@ -23,8 +23,8 @@
 #pragma once
 
 #include "iresearch/index/iterators.hpp"
-#include "iresearch/search/filters/filter.hpp"
 #include "iresearch/search/detail/search_range.hpp"
+#include "iresearch/search/filters/filter.hpp"
 #include "iresearch/utils/string.hpp"
 
 namespace irs {

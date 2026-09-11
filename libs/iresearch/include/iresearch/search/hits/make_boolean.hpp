@@ -28,14 +28,14 @@
 #include "basics/empty.hpp"
 #include "iresearch/search/detail/plan.hpp"
 #include "iresearch/search/detail/resolve.hpp"
-#include "iresearch/search/scorers/score_args.hpp"
-#include "iresearch/search/scorers/score_policy.hpp"
 #include "iresearch/search/detail/scored_builder.hpp"
 #include "iresearch/search/detail/scored_context.hpp"
 #include "iresearch/search/hits/boolean_sparse.hpp"
 #include "iresearch/search/hits/boolean_window.hpp"
 #include "iresearch/search/hits/make.hpp"
 #include "iresearch/search/hits/posting.hpp"
+#include "iresearch/search/scorers/score_args.hpp"
+#include "iresearch/search/scorers/score_policy.hpp"
 
 namespace irs::hits {
 
@@ -96,7 +96,7 @@ struct Api {
   }
 
   static irs::detail::ScoreRecipe Recipe(const SubReader& segment,
-                            const Context& ctx) noexcept {
+                                         const Context& ctx) noexcept {
     return {.segment = &segment, .fetcher = &ctx.fetcher};
   }
 

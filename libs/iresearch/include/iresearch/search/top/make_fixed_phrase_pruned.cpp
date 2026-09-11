@@ -23,11 +23,11 @@
 
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/search/detail/phrase_fixed_slots.hpp"
+#include "iresearch/search/detail/phrase_iterator.hpp"
 #include "iresearch/search/detail/phrase_of.hpp"
 #include "iresearch/search/detail/posting_pos.hpp"
 #include "iresearch/search/detail/resolve.hpp"
 #include "iresearch/search/detail/scored_context.hpp"
-#include "iresearch/search/detail/phrase_iterator.hpp"
 #include "iresearch/search/queries/phrase_query.hpp"
 #include "iresearch/search/top/make.hpp"
 #include "iresearch/search/top/pruned_phrase.hpp"
@@ -62,14 +62,15 @@ Root::ptr MakeFixedPhrasePruned(const FixedPhraseQuery& query,
   const auto& h = state.handles;
   const std::span metas{state.metas.data(), state.metas.size()};
   const irs::detail::ScoreArgs args{.scorer = record.scorer,
-                               .stats = stats,
-                               .fetcher = &ctx.fetcher,
-                               .boost = query.Boost()};
+                                    .stats = stats,
+                                    .fetcher = &ctx.fetcher,
+                                    .boost = query.Boost()};
 
   return irs::detail::ResolveBounds(h.bounds, [&]<bool Bounds> -> Root::ptr {
     return irs::detail::ResolveInput(*h.doc, [&]<typename Input> -> Root::ptr {
       using Leaf = irs::detail::PostingPos<Input, Bounds>;
-      return irs::detail::ResolveArity<irs::detail::kSlotArity, irs::detail::kSlotFloor>(
+      return irs::detail::ResolveArity<irs::detail::kSlotArity,
+                                       irs::detail::kSlotFloor>(
         metas.size(), [&]<size_t N> -> Root::ptr {
           static constexpr size_t kSlots = N == 1 ? 0 : N;
           return MakeSlots<Leaf, kSlots>(query, metas, h, ctx, query.Segment(),

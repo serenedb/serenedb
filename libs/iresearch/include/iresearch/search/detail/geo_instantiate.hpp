@@ -20,8 +20,8 @@
 
 #pragma once
 
-#include "iresearch/search/filters/geo_filter.hpp"
 #include "iresearch/search/detail/geo_parsers.hpp"
+#include "iresearch/search/filters/geo_filter.hpp"
 
 #define IRS_GEO_PARSERS(F, ...)     \
   F(SourceJsonParser, __VA_ARGS__)  \

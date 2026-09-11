@@ -31,8 +31,8 @@
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/search/filters/all_filter.hpp"
 #include "iresearch/search/queries/prepared_state_visitor.hpp"
-#include "iresearch/search/scorers/scorer.hpp"
 #include "iresearch/search/queries/term_query.hpp"
+#include "iresearch/search/scorers/scorer.hpp"
 
 namespace irs {
 

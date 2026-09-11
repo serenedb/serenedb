@@ -28,10 +28,10 @@
 #include "iresearch/index/field_meta.hpp"
 #include "iresearch/index/index_features.hpp"
 #include "iresearch/index/index_reader.hpp"
-#include "iresearch/search/filters/filter_visitor.hpp"
 #include "iresearch/search/detail/multiterm_collector.hpp"
-#include "iresearch/search/queries/multiterm_query.hpp"
+#include "iresearch/search/filters/filter_visitor.hpp"
 #include "iresearch/search/filters/range_filter.hpp"
+#include "iresearch/search/queries/multiterm_query.hpp"
 
 namespace irs {
 namespace {

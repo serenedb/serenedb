@@ -21,10 +21,10 @@
 #include <utility>
 
 #include "iresearch/index/index_reader.hpp"
-#include "iresearch/search/detail/lazy_bitset.hpp"
-#include "iresearch/search/detail/resolve.hpp"
 #include "iresearch/search/count/term_counts.hpp"
 #include "iresearch/search/count/term_counts_of.hpp"
+#include "iresearch/search/detail/lazy_bitset.hpp"
+#include "iresearch/search/detail/resolve.hpp"
 #include "iresearch/search/filters/filter.hpp"
 
 namespace irs::count {

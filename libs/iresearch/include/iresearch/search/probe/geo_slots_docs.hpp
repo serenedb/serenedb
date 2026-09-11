@@ -24,8 +24,8 @@
 #include <vector>
 
 #include "iresearch/search/detail/posting_probe.hpp"
-#include "iresearch/search/queries/geo_query.hpp"
 #include "iresearch/search/probe/leaves.hpp"
+#include "iresearch/search/queries/geo_query.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
 namespace irs::probe {

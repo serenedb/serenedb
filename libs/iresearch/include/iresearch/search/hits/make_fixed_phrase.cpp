@@ -19,13 +19,13 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include "iresearch/index/index_reader.hpp"
-#include "iresearch/search/scorers/all_docs_score.hpp"
 #include "iresearch/search/detail/phrase_of.hpp"
 #include "iresearch/search/detail/scored_context.hpp"
+#include "iresearch/search/hits/make.hpp"
+#include "iresearch/search/hits/walk.hpp"
 #include "iresearch/search/lead/two_phase_scored.hpp"
 #include "iresearch/search/queries/phrase_query.hpp"
-#include "iresearch/search/hits/walk.hpp"
-#include "iresearch/search/hits/make.hpp"
+#include "iresearch/search/scorers/all_docs_score.hpp"
 
 namespace irs::hits {
 
@@ -36,28 +36,30 @@ Root::ptr MakeFixedPhrase(const FixedPhraseQuery& query, const Context& ctx) {
     return {};
   }
   const irs::detail::ScoreArgs args{.scorer = record.scorer,
-                               .stats = stats,
-                               .fetcher = &ctx.fetcher,
-                               .boost = query.Boost()};
+                                    .stats = stats,
+                                    .fetcher = &ctx.fetcher,
+                                    .boost = query.Boost()};
   if (const auto value =
         irs::detail::ConstantOf(query.Segment(), *query.state.reader, args)) {
     if (ctx.table != nullptr) {
       return irs::detail::MakeFixedPhraseOf<irs::detail::PhraseMatch::Plain,
-                                       FilteredConstantWalk, Root::ptr>(
+                                            FilteredConstantWalk, Root::ptr>(
         query, ctx.table, *value);
     }
     return irs::detail::MakeFixedPhraseOf<irs::detail::PhraseMatch::Plain,
-                                     PlainConstantWalk, Root::ptr>(
+                                          PlainConstantWalk, Root::ptr>(
       query, utils::Empty{}, *value);
   }
   if (ctx.table != nullptr) {
-    return irs::detail::MakeFixedPhraseOf<irs::detail::PhraseMatch::Plain, FilteredWalk,
-                                     Root::ptr, true, lead::TwoPhaseScored>(
+    return irs::detail::MakeFixedPhraseOf<irs::detail::PhraseMatch::Plain,
+                                          FilteredWalk, Root::ptr, true,
+                                          lead::TwoPhaseScored>(
       query, ctx.table, ctx.fetcher, query.Segment(), *query.state.reader,
       args);
   }
-  return irs::detail::MakeFixedPhraseOf<irs::detail::PhraseMatch::Plain, PlainWalk,
-                                   Root::ptr, true, lead::TwoPhaseScored>(
+  return irs::detail::MakeFixedPhraseOf<irs::detail::PhraseMatch::Plain,
+                                        PlainWalk, Root::ptr, true,
+                                        lead::TwoPhaseScored>(
     query, utils::Empty{}, ctx.fetcher, query.Segment(), *query.state.reader,
     args);
 }

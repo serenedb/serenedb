@@ -24,11 +24,11 @@
 #include <vector>
 
 #include "iresearch/search/detail/column_collector.hpp"
+#include "iresearch/search/queries/hnsw_query.hpp"
 #include "iresearch/search/scorers/all_docs_score.hpp"
 #include "iresearch/search/scorers/score_args.hpp"
-#include "iresearch/search/scorers/score_provider.hpp"
-#include "iresearch/search/queries/hnsw_query.hpp"
 #include "iresearch/search/scorers/score_function.hpp"
+#include "iresearch/search/scorers/score_provider.hpp"
 #include "iresearch/search/scorers/scorer.hpp"
 #include "iresearch/search/top/make.hpp"
 
@@ -87,9 +87,9 @@ Root::ptr Make(const HnswQuery& query, const Context& ctx) {
   }
   const auto record = query.Stats(ScoredOf(ctx));
   const irs::detail::ScoreArgs args{.scorer = record.scorer,
-                               .stats = record.stats,
-                               .fetcher = &ctx.fetcher,
-                               .boost = query.Boost()};
+                                    .stats = record.stats,
+                                    .fetcher = &ctx.fetcher,
+                                    .boost = query.Boost()};
   return memory::make_managed<HnswHits>(std::move(hits), query.Segment(),
                                         ctx.fetcher, args);
 }

@@ -19,11 +19,11 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include "iresearch/index/index_reader.hpp"
-#include "iresearch/search/queries/boolean_query.hpp"
 #include "iresearch/search/detail/scored_context.hpp"
 #include "iresearch/search/detail/scored_node_builder.hpp"
 #include "iresearch/search/fill/make.hpp"
 #include "iresearch/search/fill/make_boolean.hpp"
+#include "iresearch/search/queries/boolean_query.hpp"
 
 namespace irs::fill {
 

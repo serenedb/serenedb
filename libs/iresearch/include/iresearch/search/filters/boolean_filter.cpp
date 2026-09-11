@@ -25,8 +25,8 @@
 #include <utility>
 
 #include "basics/down_cast.h"
-#include "iresearch/search/queries/boolean_query.hpp"
 #include "iresearch/search/filters/term_filter.hpp"
+#include "iresearch/search/queries/boolean_query.hpp"
 
 namespace irs {
 namespace {

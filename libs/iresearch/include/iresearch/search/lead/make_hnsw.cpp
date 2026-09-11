@@ -21,12 +21,12 @@
 #include <utility>
 #include <vector>
 
+#include "iresearch/search/lead/make.hpp"
+#include "iresearch/search/queries/hnsw_query.hpp"
 #include "iresearch/search/scorers/all_docs_score.hpp"
 #include "iresearch/search/scorers/score_args.hpp"
-#include "iresearch/search/scorers/score_provider.hpp"
-#include "iresearch/search/queries/hnsw_query.hpp"
-#include "iresearch/search/lead/make.hpp"
 #include "iresearch/search/scorers/score_function.hpp"
+#include "iresearch/search/scorers/score_provider.hpp"
 #include "iresearch/search/scorers/scorer.hpp"
 
 namespace irs::lead {

@@ -21,9 +21,9 @@
 #include "automaton_filter.hpp"
 
 #include "iresearch/index/index_reader.hpp"
+#include "iresearch/search/detail/multiterm_collector.hpp"
 #include "iresearch/search/filters/all_filter.hpp"
 #include "iresearch/search/filters/filter_visitor.hpp"
-#include "iresearch/search/detail/multiterm_collector.hpp"
 #include "iresearch/utils/automaton_utils.hpp"
 
 namespace irs {

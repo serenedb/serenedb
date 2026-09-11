@@ -32,13 +32,13 @@
 #include "iresearch/search/detail/collect_scored.hpp"
 #include "iresearch/search/detail/exclusion_of.hpp"
 #include "iresearch/search/detail/plan.hpp"
-#include "iresearch/search/scorers/score_args.hpp"
 #include "iresearch/search/fill/leaves.hpp"
 #include "iresearch/search/filters/filter.hpp"
-#include "iresearch/search/top/walk.hpp"
+#include "iresearch/search/scorers/score_args.hpp"
 #include "iresearch/search/top/posting_pruned_disj.hpp"
 #include "iresearch/search/top/pruned_disjunction.hpp"
 #include "iresearch/search/top/root.hpp"
+#include "iresearch/search/top/walk.hpp"
 #include "pg/sql_exception_macro.h"
 
 namespace irs::top {
@@ -104,8 +104,8 @@ inline Root::ptr Make(const EmptyQueryBuilder&, const Context&) {
   return MakeEmpty();
 }
 
-Root::ptr MakePosting(const irs::detail::PostingClause& posting, const SubReader& segment,
-                      const Context& ctx);
+Root::ptr MakePosting(const irs::detail::PostingClause& posting,
+                      const SubReader& segment, const Context& ctx);
 Root::ptr MakeSinglePosting(const irs::detail::PostingClause& posting,
                             const SubReader& segment, const Context& ctx);
 Root::ptr MakeAll(const SubReader& segment, const Context& ctx,
@@ -136,10 +136,11 @@ Root::ptr MakeMasked(const QueryBuilder& query, const Context& ctx,
 
 Root::ptr MakePrunedPosting(const irs::detail::PostingClause& posting,
                             const SubReader& segment, const Context& ctx);
-Root::ptr MakePrunedPosting(const irs::detail::PostingClause& posting,
-                            std::span<const irs::detail::PostingClause> excludes,
-                            std::span<const QueryBuilder::ptr> exclude_filters,
-                            const SubReader& segment, const Context& ctx);
+Root::ptr MakePrunedPosting(
+  const irs::detail::PostingClause& posting,
+  std::span<const irs::detail::PostingClause> excludes,
+  std::span<const QueryBuilder::ptr> exclude_filters, const SubReader& segment,
+  const Context& ctx);
 
 Root::ptr MakeFixedPhrasePruned(const FixedPhraseQuery& query,
                                 const Context& ctx);
@@ -181,19 +182,21 @@ Root::ptr MakePrunedDisjunction(
   SDB_IF_FAILURE("irs::PruningIterator") {
     THROW_SQL_ERROR(ERR_MSG("intentional debug error"));
   }
-  const auto* const doc = irs::detail::DocOf(irs::detail::FieldOf(terms.front(), field));
+  const auto* const doc =
+    irs::detail::DocOf(irs::detail::FieldOf(terms.front(), field));
   return irs::detail::ResolveInput(*doc, [&]<typename Input> -> Root::ptr {
     using Leaf = PostingPrunedDisj<Input>;
     const auto init = [&](Leaf& leaf, size_t i) {
-      const auto posting = irs::detail::ClauseOf(terms[i], field, scorer, boost);
+      const auto posting =
+        irs::detail::ClauseOf(terms[i], field, scorer, boost);
       const auto& own = *posting.state.reader;
       SDB_ASSERT(irs::detail::DocOf(own) == doc);
-      leaf.Prepare(posting.state.cookie, *doc, irs::detail::LayoutOf(own), segment,
-                   own,
+      leaf.Prepare(posting.state.cookie, *doc, irs::detail::LayoutOf(own),
+                   segment, own,
                    irs::detail::ScoreArgs{.scorer = posting.stats.scorer,
-                             .stats = posting.stats.stats,
-                             .fetcher = &ctx.fetcher,
-                             .boost = posting.boost});
+                                          .stats = posting.stats.stats,
+                                          .fetcher = &ctx.fetcher,
+                                          .boost = posting.boost});
       return posting.state.cookie.docs_count;
     };
     const auto docs_count = static_cast<doc_id_t>(segment.docs_count());

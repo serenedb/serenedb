@@ -25,26 +25,29 @@
 
 #include "basics/empty.hpp"
 #include "iresearch/index/index_reader.hpp"
-#include "iresearch/search/queries/boolean_query.hpp"
 #include "iresearch/search/detail/collect.hpp"
-#include "iresearch/search/scorers/score_policy.hpp"
 #include "iresearch/search/detail/scored_context.hpp"
 #include "iresearch/search/probe/boolean_sparse.hpp"
-#include "iresearch/search/probe/impl.hpp"
 #include "iresearch/search/probe/classify.hpp"
+#include "iresearch/search/probe/impl.hpp"
 #include "iresearch/search/probe/make.hpp"
 #include "iresearch/search/probe/plan.hpp"
+#include "iresearch/search/queries/boolean_query.hpp"
+#include "iresearch/search/scorers/score_policy.hpp"
 
 namespace irs::probe {
 
-Node::ptr MakeRequiredScored(
-  std::span<const detail::PostingClause> must,
-  std::span<const QueryBuilder::ptr> must_filters,
-  detail::Terms must_uniformity, std::span<const detail::PostingClause> should,
-  std::span<const QueryBuilder::ptr> should_filters,
-  detail::Terms should_uniformity, uint32_t min_should_match,
-  const SubReader& segment, const detail::ScoreRecipe& recipe, ScoreMergeType merge,
-  uint64_t interrogations, const detail::ScoredCtx& ctx, score_t absorbed) {
+Node::ptr MakeRequiredScored(std::span<const detail::PostingClause> must,
+                             std::span<const QueryBuilder::ptr> must_filters,
+                             detail::Terms must_uniformity,
+                             std::span<const detail::PostingClause> should,
+                             std::span<const QueryBuilder::ptr> should_filters,
+                             detail::Terms should_uniformity,
+                             uint32_t min_should_match,
+                             const SubReader& segment,
+                             const detail::ScoreRecipe& recipe,
+                             ScoreMergeType merge, uint64_t interrogations,
+                             const detail::ScoredCtx& ctx, score_t absorbed) {
   if (min_should_match == 0) {
     return MakeSparseConjunctionScored(must, must_filters, must_uniformity,
                                        segment, recipe, merge, interrogations,

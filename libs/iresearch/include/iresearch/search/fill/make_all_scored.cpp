@@ -19,11 +19,11 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include "iresearch/index/index_reader.hpp"
-#include "iresearch/search/scorers/all_docs_score.hpp"
 #include "iresearch/search/fill/all_docs.hpp"
 #include "iresearch/search/fill/constant_scored.hpp"
 #include "iresearch/search/fill/impl.hpp"
 #include "iresearch/search/fill/plan.hpp"
+#include "iresearch/search/scorers/all_docs_score.hpp"
 
 namespace irs::fill {
 
@@ -32,9 +32,9 @@ Node::ptr MakeAllScored(const SubReader& segment, const detail::ScoredCtx& ctx,
                         score_t boost) {
   const auto value =
     detail::AllDocsScore(segment, detail::ScoreArgs{.scorer = record.scorer,
-                                            .stats = record.stats,
-                                            .fetcher = ctx.fetcher,
-                                            .boost = boost});
+                                                    .stats = record.stats,
+                                                    .fetcher = ctx.fetcher,
+                                                    .boost = boost});
   return memory::make_managed<Impl<ConstantScored<AllDocs>>>(merge, value,
                                                              segment);
 }

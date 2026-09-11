@@ -38,9 +38,9 @@ Node::ptr MakeNGramScored(const NGramSimilarityQuery& query,
     return {};
   }
   const detail::ScoreArgs args{.scorer = record.scorer,
-                       .stats = stats,
-                       .fetcher = ctx.fetcher,
-                       .boost = query.Boost()};
+                               .stats = stats,
+                               .fetcher = ctx.fetcher,
+                               .boost = query.Boost()};
   return detail::Build<true>(
     query, [&]<typename Slots>(auto&&... rest) -> Node::ptr {
       using Node = lead::TwoPhaseScored<Slots>;

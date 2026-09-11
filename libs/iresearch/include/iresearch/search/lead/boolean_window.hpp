@@ -31,9 +31,9 @@
 #include "basics/bit_utils.hpp"
 #include "basics/empty.hpp"
 #include "basics/shared.hpp"
+#include "iresearch/search/detail/window.hpp"
 #include "iresearch/search/scorers/make_window.hpp"
 #include "iresearch/search/scorers/score_args.hpp"
-#include "iresearch/search/detail/window.hpp"
 #include "iresearch/search/scorers/score_function.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
@@ -97,7 +97,6 @@ class BooleanWindow {
   }
 
  private:
-
   doc_id_t From(doc_id_t target) {
     if (doc_limits::eof(target)) {
       return doc_limits::eof();
@@ -109,7 +108,8 @@ class BooleanWindow {
         }
         Refill(target);
       }
-      if (const auto found = Find(target - _min); found != detail::kWindowDocs) {
+      if (const auto found = Find(target - _min);
+          found != detail::kWindowDocs) {
         return _min + found;
       }
       if (_spent) {
@@ -163,7 +163,8 @@ class BooleanWindow {
     auto bits = _mask[word] & (~uint64_t{0} << (offset % detail::kWindowBits));
     for (;;) {
       if (bits != 0) {
-        return static_cast<doc_id_t>(word * detail::kWindowBits + std::countr_zero(bits));
+        return static_cast<doc_id_t>(word * detail::kWindowBits +
+                                     std::countr_zero(bits));
       }
       if (++word == detail::kWindowWords) {
         return detail::kWindowDocs;

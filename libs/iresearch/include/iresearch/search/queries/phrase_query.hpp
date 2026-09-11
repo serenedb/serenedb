@@ -29,9 +29,9 @@
 #include "basics/misc.hpp"
 #include "iresearch/search/detail/estimate.hpp"
 #include "iresearch/search/detail/phrase_iterator.hpp"
+#include "iresearch/search/queries/phrase_state.hpp"
 #include "iresearch/search/queries/prepared_state_visitor.hpp"
 #include "iresearch/search/queries/query_builder_impl.hpp"
-#include "iresearch/search/queries/phrase_state.hpp"
 
 namespace irs {
 

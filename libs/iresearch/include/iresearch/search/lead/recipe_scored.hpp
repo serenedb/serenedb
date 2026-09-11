@@ -48,7 +48,8 @@ class RecipeScored {
   }
 
   template<typename... Args>
-  RecipeScored(const SubReader& segment, const detail::ScoreArgs& args, Args&&... leaf)
+  RecipeScored(const SubReader& segment, const detail::ScoreArgs& args,
+               Args&&... leaf)
     : _leaf{std::forward<Args>(leaf)...}, _segment{&segment}, _args{args} {
     SDB_ASSERT(_args.scorer != nullptr);
   }

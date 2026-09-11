@@ -22,10 +22,10 @@
 
 #include <utility>
 
+#include "iresearch/search/count/term_counts.hpp"
 #include "iresearch/search/detail/bitset_build.hpp"
 #include "iresearch/search/detail/lazy_bitset.hpp"
 #include "iresearch/search/detail/posting_probe.hpp"
-#include "iresearch/search/count/term_counts.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
 namespace irs::count {
@@ -33,8 +33,8 @@ namespace irs::count {
 template<typename Input>
 class TermCountsOf : public TermCounts {
  public:
-  TermCountsOf(detail::LazyBitset& set, const IndexInput& doc, IndexFeatures layout,
-               bool bounds) noexcept
+  TermCountsOf(detail::LazyBitset& set, const IndexInput& doc,
+               IndexFeatures layout, bool bounds) noexcept
     : _set{set}, _reader{doc}, _doc{&doc}, _layout{layout}, _bounds{bounds} {}
 
   uint64_t Count(const PostingMeta& term) final {

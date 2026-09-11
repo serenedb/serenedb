@@ -39,9 +39,9 @@ Node::ptr MakeVariadicPhraseIntervalsScored(const VariadicPhraseQuery& query,
                                       lead::TwoPhaseScored>(
     query, merge, *ctx.fetcher, query.Segment(), *query.state.reader,
     detail::ScoreArgs{.scorer = record.scorer,
-              .stats = stats,
-              .fetcher = ctx.fetcher,
-              .boost = query.Boost()});
+                      .stats = stats,
+                      .fetcher = ctx.fetcher,
+                      .boost = query.Boost()});
 }
 
 }  // namespace irs::fill

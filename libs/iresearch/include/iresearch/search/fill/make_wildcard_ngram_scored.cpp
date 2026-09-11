@@ -20,24 +20,25 @@
 
 #include <utility>
 
-#include "iresearch/search/scorers/all_docs_score.hpp"
 #include "iresearch/search/detail/scored_context.hpp"
 #include "iresearch/search/detail/wildcard_ngram_of.hpp"
 #include "iresearch/search/fill/plan.hpp"
 #include "iresearch/search/fill/walk.hpp"
 #include "iresearch/search/filters/wildcard_ngram_filter.hpp"
+#include "iresearch/search/scorers/all_docs_score.hpp"
 
 namespace irs::fill {
 
 Node::ptr MakeWildcardNGramScored(const WildcardNGramQuery& query,
-                                  const detail::ScoredCtx& ctx, ScoreMergeType merge) {
+                                  const detail::ScoredCtx& ctx,
+                                  ScoreMergeType merge) {
   SDB_ASSERT(query.Kind() != QueryKind::Empty);
   const auto record = query.Stats(ctx);
-  const auto value =
-    detail::AllDocsScore(query.Segment(), detail::ScoreArgs{.scorer = record.scorer,
-                                                    .stats = record.stats,
-                                                    .fetcher = ctx.fetcher,
-                                                    .boost = query.Boost()});
+  const auto value = detail::AllDocsScore(
+    query.Segment(), detail::ScoreArgs{.scorer = record.scorer,
+                                       .stats = record.stats,
+                                       .fetcher = ctx.fetcher,
+                                       .boost = query.Boost()});
   return detail::MakeWildcardNGram<WalkConstantScored, Node::ptr>(
     query, 0, merge, *ctx.fetcher, value);
 }

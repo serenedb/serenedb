@@ -27,10 +27,10 @@
 #include "iresearch/index/index_meta.hpp"
 #include "iresearch/search/detail/collect_scored.hpp"
 #include "iresearch/search/detail/plan.hpp"
-#include "iresearch/search/scorers/score_args.hpp"
 #include "iresearch/search/detail/scored_context.hpp"
-#include "iresearch/search/hits/walk.hpp"
 #include "iresearch/search/hits/root.hpp"
+#include "iresearch/search/hits/walk.hpp"
+#include "iresearch/search/scorers/score_args.hpp"
 
 namespace irs {
 namespace hits {
@@ -86,8 +86,8 @@ inline Root::ptr Make(const EmptyQueryBuilder&, const Context&) {
 Root::ptr Make(const HnswQuery& query, const Context& ctx);
 Root::ptr Make(const KnnVectorQuery& query, const Context& ctx);
 
-Root::ptr MakePosting(const irs::detail::PostingClause& posting, const SubReader& segment,
-                      const Context& ctx);
+Root::ptr MakePosting(const irs::detail::PostingClause& posting,
+                      const SubReader& segment, const Context& ctx);
 
 Root::ptr MakeSinglePosting(const irs::detail::PostingClause& posting,
                             const SubReader& segment, const Context& ctx);

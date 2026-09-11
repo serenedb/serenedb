@@ -23,8 +23,8 @@
 #include <utility>
 #include <vector>
 
-#include "iresearch/search/scorers/score_args.hpp"
 #include "iresearch/search/probe/impl.hpp"
+#include "iresearch/search/scorers/score_args.hpp"
 #include "iresearch/search/scorers/score_function.hpp"
 #include "iresearch/utils/type_limits.hpp"
 

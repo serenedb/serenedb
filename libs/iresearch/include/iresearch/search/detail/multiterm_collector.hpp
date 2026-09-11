@@ -35,8 +35,8 @@
 #include "iresearch/index/iterators.hpp"
 #include "iresearch/search/detail/collectors.hpp"
 #include "iresearch/search/filters/filter.hpp"
-#include "iresearch/search/scorers/scorer.hpp"
 #include "iresearch/search/queries/multiterm_state.hpp"
+#include "iresearch/search/scorers/scorer.hpp"
 #include "iresearch/utils/string.hpp"
 
 namespace irs {

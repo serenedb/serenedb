@@ -37,6 +37,7 @@
 #include <iresearch/analysis/wildcard_tokenizer.hpp>
 #include <iresearch/formats/formats.hpp>
 #include <iresearch/index/typed_terms.hpp>
+#include <iresearch/search/detail/term_set.hpp>
 #include <iresearch/search/filters/all_filter.hpp>
 #include <iresearch/search/filters/boolean_filter.hpp>
 #include <iresearch/search/filters/geo_filter.hpp>
@@ -48,7 +49,6 @@
 #include <iresearch/search/filters/range_filter.hpp>
 #include <iresearch/search/filters/regexp_filter.hpp>
 #include <iresearch/search/filters/term_filter.hpp>
-#include <iresearch/search/detail/term_set.hpp>
 #include <iresearch/search/filters/wildcard_filter.hpp>
 #include <iresearch/search/filters/wildcard_ngram_filter.hpp>
 #include <iresearch/utils/numeric_utils.hpp>

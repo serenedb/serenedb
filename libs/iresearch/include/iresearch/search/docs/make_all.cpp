@@ -19,9 +19,9 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include "iresearch/index/index_reader.hpp"
-#include "iresearch/search/filters/all_filter.hpp"
 #include "iresearch/search/docs/all.hpp"
 #include "iresearch/search/docs/plan.hpp"
+#include "iresearch/search/filters/all_filter.hpp"
 
 namespace irs::docs {
 

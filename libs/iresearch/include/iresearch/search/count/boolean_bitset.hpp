@@ -24,11 +24,11 @@
 #include <utility>
 
 #include "basics/empty.hpp"
+#include "iresearch/search/count/root.hpp"
 #include "iresearch/search/detail/bitset_build.hpp"
 #include "iresearch/search/detail/bitset_of.hpp"
 #include "iresearch/search/detail/bitset_storage.hpp"
 #include "iresearch/search/detail/table_filter.hpp"
-#include "iresearch/search/count/root.hpp"
 
 namespace irs::count {
 

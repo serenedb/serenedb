@@ -21,11 +21,11 @@
 #include <span>
 
 #include "iresearch/index/index_reader.hpp"
-#include "iresearch/search/queries/boolean_query.hpp"
 #include "iresearch/search/detail/scored_context.hpp"
 #include "iresearch/search/detail/scored_node_builder.hpp"
 #include "iresearch/search/lead/make.hpp"
 #include "iresearch/search/lead/make_boolean.hpp"
+#include "iresearch/search/queries/boolean_query.hpp"
 
 namespace irs::lead {
 
@@ -43,8 +43,9 @@ Node::ptr MakeRequiredScored(std::span<const detail::PostingClause> must,
                              std::span<const QueryBuilder::ptr> should_filters,
                              detail::Terms should_uniformity,
                              uint32_t min_should_match,
-                             const SubReader& segment, const detail::ScoredCtx& ctx,
-                             ScoreMergeType merge, score_t absorbed) {
+                             const SubReader& segment,
+                             const detail::ScoredCtx& ctx, ScoreMergeType merge,
+                             score_t absorbed) {
   return detail::builder::MakeNodeRequired<ScoredApi>(
     must, must_filters, should, should_filters, should_uniformity,
     min_should_match, segment, ctx, merge, absorbed);

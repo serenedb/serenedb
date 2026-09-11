@@ -32,7 +32,6 @@
 #include "iresearch/search/detail/collect.hpp"
 #include "iresearch/search/detail/collect_scored.hpp"
 #include "iresearch/search/detail/plan.hpp"
-#include "iresearch/search/scorers/score_policy.hpp"
 #include "iresearch/search/detail/scored_context.hpp"
 #include "iresearch/search/detail/scored_node_builder.hpp"
 #include "iresearch/search/fill/boolean_window.hpp"
@@ -46,6 +45,7 @@
 #include "iresearch/search/lead/impl.hpp"
 #include "iresearch/search/lead/make.hpp"
 #include "iresearch/search/lead/make_boolean.hpp"
+#include "iresearch/search/scorers/score_policy.hpp"
 
 namespace irs::fill {
 
@@ -157,8 +157,8 @@ template<typename Term>
 Node::ptr MakeWindowDisjunctionScored(
   std::span<const Term> terms, const TermReader* field, const Scorer* scorer,
   score_t boost, const IndexInput* doc, std::vector<Node::ptr>& rest,
-  detail::Terms uniformity, const detail::ScoreRecipe& recipe, ScoreMergeType merge,
-  score_t absorbed = 0) {
+  detail::Terms uniformity, const detail::ScoreRecipe& recipe,
+  ScoreMergeType merge, score_t absorbed = 0) {
   return detail::builder::MakeNodeDisjunctionWindow<ScoredApi, Term>(
     terms, field, scorer, boost, doc, rest, uniformity, recipe, merge,
     absorbed);

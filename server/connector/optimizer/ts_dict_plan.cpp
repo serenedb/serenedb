@@ -44,6 +44,7 @@
 #include <duckdb/planner/operator/logical_projection.hpp>
 #include <duckdb/planner/operator/logical_unnest.hpp>
 #include <iresearch/analysis/keyword_tokenizer.hpp>
+#include <iresearch/search/detail/term_set.hpp>
 #include <iresearch/search/filters/all_filter.hpp>
 #include <iresearch/search/filters/automaton_filter.hpp>
 #include <iresearch/search/filters/boolean_filter.hpp>
@@ -52,7 +53,6 @@
 #include <iresearch/search/filters/prefix_filter.hpp>
 #include <iresearch/search/filters/range_filter.hpp>
 #include <iresearch/search/filters/term_filter.hpp>
-#include <iresearch/search/detail/term_set.hpp>
 #include <memory>
 #include <numeric>
 #include <optional>

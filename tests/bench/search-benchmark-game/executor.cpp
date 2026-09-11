@@ -32,15 +32,15 @@
 #include <iresearch/analysis/token_sinks.hpp>
 #include <iresearch/index/norm.hpp>
 #include <iresearch/parser/parser.hpp>
-#include <iresearch/search/scorers/bm25.hpp>
-#include <iresearch/search/filters/boolean_filter.hpp>
 #include <iresearch/search/count/make.hpp>
 #include <iresearch/search/docs/make.hpp>
+#include <iresearch/search/filters/boolean_filter.hpp>
 #include <iresearch/search/filters/filter_optimizer.hpp>
 #include <iresearch/search/filters/ngram_similarity_filter.hpp>
 #include <iresearch/search/filters/phrase_filter.hpp>
-#include <iresearch/search/hits/root.hpp>
 #include <iresearch/search/filters/term_filter.hpp>
+#include <iresearch/search/hits/root.hpp>
+#include <iresearch/search/scorers/bm25.hpp>
 #include <iresearch/store/store_utils.hpp>
 #include <stdexcept>
 #include <tuple>
@@ -96,8 +96,6 @@ Command ParseCommand(std::string_view name) {
   }
 
   if (name == "count") {
-    // A count is a number and nothing else: there are no documents in hand to
-    // checksum or to print.
     if (cmd.report.hash || cmd.report.print) {
       return {};
     }
@@ -107,8 +105,8 @@ Command ParseCommand(std::string_view name) {
     cmd.kind = Kind::Docs;
     return cmd;
   }
-  if (name == "scored") {
-    cmd.kind = Kind::Scored;
+  if (name == "hits") {
+    cmd.kind = Kind::Hits;
     return cmd;
   }
 
@@ -123,7 +121,7 @@ Command ParseCommand(std::string_view name) {
   if (ec != std::errc{} || stop != end || cmd.k == 0) {
     return {};
   }
-  cmd.kind = Kind::TopK;
+  cmd.kind = Kind::Top;
   return cmd;
 }
 
@@ -137,30 +135,6 @@ Executor::Executor(std::string_view path, const BenchConfig& config)
       _dir, _format,
       {.scorer = _scorer_ptr,
        .db = &::sdb::DuckDBEngine::Instance().instance()})} {}
-
-// A debug knob, off unless `IRESEARCH_DISABLE_SHAPES` names shapes to skip,
-// comma separated (`count`, `docs`, `scored`). What it answers is the only
-// question that matters about a shape: is its plan faster than the path it
-// replaced -- measured in one binary over one index, so nothing but the plan
-// differs.
-bool ShapeDisabled(std::string_view shape) {
-  static const std::string kDisabled = [] {
-    const auto* const value = std::getenv("IRESEARCH_DISABLE_SHAPES");
-    return value != nullptr ? std::string{value} : std::string{};
-  }();
-  std::string_view rest{kDisabled};
-  while (!rest.empty()) {
-    const auto end = rest.find(',');
-    if (rest.substr(0, end) == shape) {
-      return true;
-    }
-    if (end == std::string_view::npos) {
-      break;
-    }
-    rest.remove_prefix(end + 1);
-  }
-  return false;
-}
 
 size_t Executor::ExecuteTopK(size_t k, std::string_view query) {
   ResetResults(k);
@@ -207,8 +181,7 @@ size_t Executor::ExecuteCount(std::string_view query) {
     if (!query) {
       continue;
     }
-    auto plan = ShapeDisabled("count") ? irs::count::Root::ptr{}
-                                       : irs::count::MakeRoot(*query);
+    auto plan = irs::count::MakeRoot(*query);
     if (!plan) {
       throw std::runtime_error{"no count plan for this query"};
     }
@@ -236,8 +209,7 @@ EmitResult Executor::ExecuteEmitDocs(std::string_view query, Report report) {
     if (!query) {
       continue;
     }
-    auto plan = ShapeDisabled("docs") ? irs::docs::Root::ptr{}
-                                      : irs::docs::MakeRoot(*query);
+    auto plan = irs::docs::MakeRoot(*query);
     if (!plan) {
       throw std::runtime_error{"no docs plan for this query"};
     }
@@ -260,8 +232,7 @@ EmitResult Executor::ExecuteEmitDocs(std::string_view query, Report report) {
   return result;
 }
 
-EmitResult Executor::ExecuteEmitScoredDocs(std::string_view query,
-                                           Report report) {
+EmitResult Executor::ExecuteEmitHits(std::string_view query, Report report) {
   auto filter = ParseFilter(query, true);
   if (!filter) {
     return {};
@@ -286,10 +257,8 @@ EmitResult Executor::ExecuteEmitScoredDocs(std::string_view query,
     if (!query) {
       continue;
     }
-    auto plan = ShapeDisabled("scored")
-                  ? irs::hits::Root::ptr{}
-                  : irs::hits::MakeRoot(
-                      *query, {.scorer = *_scorer_ptr, .fetcher = fetcher});
+    auto plan =
+      irs::hits::MakeRoot(*query, {.scorer = *_scorer_ptr, .fetcher = fetcher});
     if (!plan) {
       throw std::runtime_error{"no scored plan for this query"};
     }

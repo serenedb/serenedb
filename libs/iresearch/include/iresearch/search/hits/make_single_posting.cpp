@@ -32,9 +32,9 @@ Root::ptr MakeSinglePosting(const irs::detail::PostingClause& posting,
   auto root = memory::make_managed<SinglePosting>();
   root->Prepare(posting.state.cookie, segment, *posting.state.reader,
                 irs::detail::ScoreArgs{.scorer = posting.stats.scorer,
-                          .stats = posting.stats.stats,
-                          .fetcher = &ctx.fetcher,
-                          .boost = posting.boost});
+                                       .stats = posting.stats.stats,
+                                       .fetcher = &ctx.fetcher,
+                                       .boost = posting.boost});
   return root;
 }
 

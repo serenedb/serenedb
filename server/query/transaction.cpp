@@ -184,8 +184,7 @@ void Transaction::CommitSearch(
       std::uniform_int_distribution<int>(0, 20000)(gRng)));
   }
 
-  const auto last_tick =
-    search::TickDomain::Instance().Next(max_queries + 1);
+  const auto last_tick = search::TickDomain::Instance().Next(max_queries + 1);
 
   std::move(rollback).Cancel();
 

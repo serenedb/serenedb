@@ -22,8 +22,8 @@
 
 #include <utility>
 
-#include "iresearch/search/probe/impl.hpp"
 #include "iresearch/search/filters/wildcard_ngram_filter.hpp"
+#include "iresearch/search/probe/impl.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
 namespace irs::probe {

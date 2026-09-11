@@ -21,11 +21,11 @@
 #include <span>
 
 #include "iresearch/index/index_reader.hpp"
-#include "iresearch/search/queries/boolean_query.hpp"
-#include "iresearch/search/scorers/all_docs_score.hpp"
 #include "iresearch/search/detail/resolve.hpp"
 #include "iresearch/search/hits/make_boolean.hpp"
 #include "iresearch/search/hits/posting.hpp"
+#include "iresearch/search/queries/boolean_query.hpp"
+#include "iresearch/search/scorers/all_docs_score.hpp"
 
 namespace irs::hits {
 
@@ -61,13 +61,13 @@ Root::ptr MakeBoostedPosting(const BooleanQuery& query,
     return {};
   }
   const irs::detail::ScoreArgs args{.scorer = lead.stats.scorer,
-                       .stats = lead.stats.stats,
-                       .fetcher = &ctx.fetcher,
-                       .boost = lead.boost};
+                                    .stats = lead.stats.stats,
+                                    .fetcher = &ctx.fetcher,
+                                    .boost = lead.boost};
   const irs::detail::ScoreArgs boost_args{.scorer = boost.stats.scorer,
-                             .stats = boost.stats.stats,
-                             .fetcher = &ctx.fetcher,
-                             .boost = boost.boost};
+                                          .stats = boost.stats.stats,
+                                          .fetcher = &ctx.fetcher,
+                                          .boost = boost.boost};
   if (irs::detail::ConstantOf(segment, own, args) ||
       irs::detail::ConstantOf(segment, boost_own, boost_args)) {
     return {};

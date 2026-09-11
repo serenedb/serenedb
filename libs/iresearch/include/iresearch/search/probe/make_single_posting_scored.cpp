@@ -21,12 +21,12 @@
 #include <utility>
 
 #include "iresearch/index/index_reader.hpp"
-#include "iresearch/search/scorers/all_docs_score.hpp"
 #include "iresearch/search/detail/resolve.hpp"
 #include "iresearch/search/probe/constant_scored.hpp"
 #include "iresearch/search/probe/impl.hpp"
 #include "iresearch/search/probe/make.hpp"
 #include "iresearch/search/probe/single_posting.hpp"
+#include "iresearch/search/scorers/all_docs_score.hpp"
 
 namespace irs::probe {
 

@@ -23,13 +23,13 @@
 #include <cstdint>
 #include <utility>
 
-#include "iresearch/search/scorers/all_docs_score.hpp"
 #include "iresearch/search/detail/geo_of.hpp"
 #include "iresearch/search/detail/scored_context.hpp"
-#include "iresearch/search/queries/geo_query.hpp"
 #include "iresearch/search/probe/constant_scored.hpp"
 #include "iresearch/search/probe/impl.hpp"
 #include "iresearch/search/probe/make.hpp"
+#include "iresearch/search/queries/geo_query.hpp"
+#include "iresearch/search/scorers/all_docs_score.hpp"
 
 namespace irs::probe {
 
@@ -40,14 +40,14 @@ Node::ptr Make(const GeoQuery<Parser, Acceptor>& query,
 }
 
 template<typename Parser, typename Acceptor>
-Node::ptr Make(const GeoQuery<Parser, Acceptor>& query, const detail::ScoredCtx& ctx,
-               uint64_t interrogations) {
+Node::ptr Make(const GeoQuery<Parser, Acceptor>& query,
+               const detail::ScoredCtx& ctx, uint64_t interrogations) {
   const auto record = query.Stats(ctx);
-  const auto score =
-    detail::AllDocsScore(query.Segment(), detail::ScoreArgs{.scorer = record.scorer,
-                                                    .stats = record.stats,
-                                                    .fetcher = ctx.fetcher,
-                                                    .boost = query.Boost()});
+  const auto score = detail::AllDocsScore(
+    query.Segment(), detail::ScoreArgs{.scorer = record.scorer,
+                                       .stats = record.stats,
+                                       .fetcher = ctx.fetcher,
+                                       .boost = query.Boost()});
   return detail::MakeGeo<ConstantScoredImpl, Node::ptr>(query, interrogations,
                                                         score);
 }

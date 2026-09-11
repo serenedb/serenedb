@@ -23,9 +23,9 @@
 #include <span>
 
 #include "iresearch/index/index_reader.hpp"
-#include "iresearch/search/queries/boolean_query.hpp"
 #include "iresearch/search/detail/boolean_builder.hpp"
 #include "iresearch/search/docs/boolean_sparse.hpp"
+#include "iresearch/search/queries/boolean_query.hpp"
 
 namespace irs::docs {
 namespace {

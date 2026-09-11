@@ -18,8 +18,8 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include "iresearch/search/detail/vector_of.hpp"
 #include "iresearch/search/count/make.hpp"
+#include "iresearch/search/detail/vector_of.hpp"
 
 namespace irs::count {
 

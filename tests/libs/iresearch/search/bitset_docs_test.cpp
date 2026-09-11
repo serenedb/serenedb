@@ -83,8 +83,7 @@ class Cursor {
 
 std::vector<irs::doc_id_t> Drain(Cursor& it) {
   std::vector<irs::doc_id_t> docs;
-  for (auto doc = it.Next(); !irs::doc_limits::eof(doc);
-       doc = it.Next()) {
+  for (auto doc = it.Next(); !irs::doc_limits::eof(doc); doc = it.Next()) {
     docs.emplace_back(doc);
   }
   return docs;
@@ -430,8 +429,8 @@ TEST(bitset_lead_test, seek_advance) {
       ASSERT_EQ(target, it.Seek(target));
       ASSERT_EQ(target, it.Value());
 
-      for (irs::doc_id_t j = 1;
-           j <= kSteps && !irs::doc_limits::eof(it.Next()); ++j) {
+      for (irs::doc_id_t j = 1; j <= kSteps && !irs::doc_limits::eof(it.Next());
+           ++j) {
         ASSERT_EQ(target + j, it.Value());
       }
     }
@@ -460,8 +459,8 @@ TEST(bitset_lead_test, seek_advance) {
       ASSERT_EQ(target, it.Seek(target - 1));
       ASSERT_EQ(target, it.Value());
 
-      for (irs::doc_id_t j = 1;
-           j <= kSteps && !irs::doc_limits::eof(it.Next()); ++j) {
+      for (irs::doc_id_t j = 1; j <= kSteps && !irs::doc_limits::eof(it.Next());
+           ++j) {
         ASSERT_EQ(target + 2 * j, it.Value());
       }
     }

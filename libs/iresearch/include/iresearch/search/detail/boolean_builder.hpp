@@ -29,7 +29,6 @@
 
 #include "basics/empty.hpp"
 #include "iresearch/index/index_reader.hpp"
-#include "iresearch/search/queries/boolean_query.hpp"
 #include "iresearch/search/detail/bitset_of.hpp"
 #include "iresearch/search/detail/boolean_bitset.hpp"
 #include "iresearch/search/detail/boolean_groups.hpp"
@@ -45,6 +44,7 @@
 #include "iresearch/search/fill/set_leaves.hpp"
 #include "iresearch/search/lead/make.hpp"
 #include "iresearch/search/probe/plan.hpp"
+#include "iresearch/search/queries/boolean_query.hpp"
 
 namespace irs::detail::builder {
 

@@ -25,17 +25,17 @@
 #include "filter_test_case_base.hpp"
 #include "formats/column/test_cs_helpers.hpp"
 #include "index/doc_generator.hpp"
+#include "iresearch/search/detail/term_set.hpp"
 #include "iresearch/search/filters/all_filter.hpp"
 #include "iresearch/search/filters/boolean_filter.hpp"
-#include "iresearch/search/queries/boolean_query.hpp"
 #include "iresearch/search/filters/levenshtein_filter.hpp"
-#include "iresearch/search/queries/multiterm_query.hpp"
 #include "iresearch/search/filters/ngram_similarity_filter.hpp"
 #include "iresearch/search/filters/phrase_filter.hpp"
 #include "iresearch/search/filters/prefix_filter.hpp"
 #include "iresearch/search/filters/range_filter.hpp"
 #include "iresearch/search/filters/term_filter.hpp"
-#include "iresearch/search/detail/term_set.hpp"
+#include "iresearch/search/queries/boolean_query.hpp"
+#include "iresearch/search/queries/multiterm_query.hpp"
 
 namespace {
 

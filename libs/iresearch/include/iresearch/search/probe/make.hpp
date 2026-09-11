@@ -26,10 +26,10 @@
 
 #include "iresearch/formats/posting_meta.hpp"
 #include "iresearch/search/detail/plan.hpp"
-#include "iresearch/search/scorers/score_args.hpp"
 #include "iresearch/search/detail/scored_context.hpp"
 #include "iresearch/search/probe/node.hpp"
 #include "iresearch/search/queries/term_state.hpp"
+#include "iresearch/search/scorers/score_args.hpp"
 
 namespace irs::probe {
 
@@ -70,19 +70,21 @@ Node::ptr Make(const ByNestedQuery& query, const detail::ScoredCtx& ctx,
 inline Node::ptr Make(const HnswQuery&, const detail::ScoredCtx&, uint64_t) {
   return {};
 }
-inline Node::ptr Make(const KnnVectorQuery&, const detail::ScoredCtx&, uint64_t) {
+inline Node::ptr Make(const KnnVectorQuery&, const detail::ScoredCtx&,
+                      uint64_t) {
   return {};
 }
 Node::ptr Make(const RangeVectorQuery& query, const detail::ScoredCtx& ctx,
                uint64_t interrogations);
-inline Node::ptr Make(const EmptyQueryBuilder&, const detail::ScoredCtx&, uint64_t) {
+inline Node::ptr Make(const EmptyQueryBuilder&, const detail::ScoredCtx&,
+                      uint64_t) {
   return {};
 }
 Node::ptr Make(const BooleanQuery& query, const detail::ScoredCtx& ctx,
                uint64_t interrogations);
 template<typename Parser, typename Acceptor>
-Node::ptr Make(const GeoQuery<Parser, Acceptor>& query, const detail::ScoredCtx& ctx,
-               uint64_t interrogations);
+Node::ptr Make(const GeoQuery<Parser, Acceptor>& query,
+               const detail::ScoredCtx& ctx, uint64_t interrogations);
 
 Node::ptr MakePostingDocs(const detail::PostingClause& posting,
                           const SubReader& segment);
@@ -144,7 +146,8 @@ Node::ptr MakeSinglePostingScored(const detail::PostingClause& posting,
 
 Node::ptr MakeAllScored(const SubReader& segment, score_t score);
 
-inline auto ScoredClauseOf(const SubReader& segment, const detail::ScoredCtx& ctx,
+inline auto ScoredClauseOf(const SubReader& segment,
+                           const detail::ScoredCtx& ctx,
                            const detail::ScoreRecipe& recipe) {
   return [&](const detail::PostingClause& posting, const QueryBuilder* child,
              uint64_t interrogations) -> Node::ptr {
@@ -158,8 +161,9 @@ inline auto ScoredClauseOf(const SubReader& segment, const detail::ScoredCtx& ct
 Node::ptr MakeSparseConjunctionScored(
   std::span<const detail::PostingClause> terms,
   std::span<const QueryBuilder::ptr> filters, detail::Terms uniformity,
-  const SubReader& segment, const detail::ScoreRecipe& recipe, ScoreMergeType merge,
-  uint64_t interrogations, const detail::ScoredCtx& ctx, score_t absorbed = 0);
+  const SubReader& segment, const detail::ScoreRecipe& recipe,
+  ScoreMergeType merge, uint64_t interrogations, const detail::ScoredCtx& ctx,
+  score_t absorbed = 0);
 
 Node::ptr MakeRequiredScored(
   std::span<const detail::PostingClause> must,
@@ -167,15 +171,16 @@ Node::ptr MakeRequiredScored(
   detail::Terms must_uniformity, std::span<const detail::PostingClause> should,
   std::span<const QueryBuilder::ptr> should_filters,
   detail::Terms should_uniformity, uint32_t min_should_match,
-  const SubReader& segment, const detail::ScoreRecipe& recipe, ScoreMergeType merge,
-  uint64_t interrogations, const detail::ScoredCtx& ctx, score_t absorbed = 0);
+  const SubReader& segment, const detail::ScoreRecipe& recipe,
+  ScoreMergeType merge, uint64_t interrogations, const detail::ScoredCtx& ctx,
+  score_t absorbed = 0);
 
 Node::ptr MakeSparseThresholdScored(
   std::span<const detail::PostingClause> terms,
   std::span<const QueryBuilder::ptr> filters, detail::Terms uniformity,
-  const SubReader& segment, const detail::ScoreRecipe& recipe, ScoreMergeType merge,
-  uint32_t min_match, uint64_t interrogations, const detail::ScoredCtx& ctx,
-  score_t absorbed = 0);
+  const SubReader& segment, const detail::ScoreRecipe& recipe,
+  ScoreMergeType merge, uint32_t min_match, uint64_t interrogations,
+  const detail::ScoredCtx& ctx, score_t absorbed = 0);
 
 Node::ptr MakeSparseExclusionScored(
   std::span<const detail::PostingClause> must,
@@ -185,8 +190,8 @@ Node::ptr MakeSparseExclusionScored(
   detail::Terms should_uniformity, uint32_t min_should_match,
   std::span<const detail::PostingClause> exclude,
   std::span<const QueryBuilder::ptr> exclude_filters, const SubReader& segment,
-  const detail::ScoreRecipe& recipe, ScoreMergeType merge, uint64_t interrogations,
-  const detail::ScoredCtx& ctx, score_t absorbed = 0);
+  const detail::ScoreRecipe& recipe, ScoreMergeType merge,
+  uint64_t interrogations, const detail::ScoredCtx& ctx, score_t absorbed = 0);
 
 Node::ptr MakeSparseBoostScored(
   std::span<const detail::PostingClause> must,
@@ -194,8 +199,8 @@ Node::ptr MakeSparseBoostScored(
   detail::Terms must_uniformity, std::span<const detail::PostingClause> should,
   std::span<const QueryBuilder::ptr> should_filters,
   detail::Terms should_uniformity, const SubReader& segment,
-  const detail::ScoreRecipe& recipe, ScoreMergeType merge, uint64_t interrogations,
-  const detail::ScoredCtx& ctx, score_t absorbed = 0);
+  const detail::ScoreRecipe& recipe, ScoreMergeType merge,
+  uint64_t interrogations, const detail::ScoredCtx& ctx, score_t absorbed = 0);
 
 Node::ptr MakeFixedPhraseScored(const FixedPhraseQuery& query,
                                 const detail::ScoreArgs& args);

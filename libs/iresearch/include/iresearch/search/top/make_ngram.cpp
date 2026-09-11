@@ -22,14 +22,14 @@
 #include <vector>
 
 #include "iresearch/index/index_reader.hpp"
-#include "iresearch/search/scorers/all_docs_score.hpp"
 #include "iresearch/search/detail/collect.hpp"
 #include "iresearch/search/detail/ngram_of.hpp"
 #include "iresearch/search/detail/scored_context.hpp"
 #include "iresearch/search/lead/two_phase_scored.hpp"
 #include "iresearch/search/queries/ngram_similarity_query.hpp"
-#include "iresearch/search/top/walk.hpp"
+#include "iresearch/search/scorers/all_docs_score.hpp"
 #include "iresearch/search/top/make.hpp"
+#include "iresearch/search/top/walk.hpp"
 
 namespace irs::top {
 
@@ -40,15 +40,15 @@ Root::ptr MakeNGram(const NGramSimilarityQuery& query, const Context& ctx) {
     return {};
   }
   const irs::detail::ScoreArgs args{.scorer = record.scorer,
-                               .stats = stats,
-                               .fetcher = &ctx.fetcher,
-                               .boost = query.Boost()};
+                                    .stats = stats,
+                                    .fetcher = &ctx.fetcher,
+                                    .boost = query.Boost()};
   return irs::detail::Build<true>(
     query, [&]<typename Slots>(auto&&... rest) -> Root::ptr {
       using Node = lead::TwoPhaseScored<Slots>;
-      return MakeShape<Walk, Node>(
-        ctx, ctx.fetcher, query.Segment(), *query.State().reader, args,
-        std::forward<decltype(rest)>(rest)...);
+      return MakeShape<Walk, Node>(ctx, ctx.fetcher, query.Segment(),
+                                   *query.State().reader, args,
+                                   std::forward<decltype(rest)>(rest)...);
     });
 }
 

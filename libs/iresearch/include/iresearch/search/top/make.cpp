@@ -24,13 +24,13 @@
 #include <vector>
 
 #include "iresearch/index/index_reader.hpp"
-#include "iresearch/search/filters/all_filter.hpp"
-#include "iresearch/search/detail/collectors.hpp"
-#include "iresearch/search/scorers/all_docs_score.hpp"
 #include "iresearch/search/detail/collect.hpp"
+#include "iresearch/search/detail/collectors.hpp"
 #include "iresearch/search/detail/ngram_of.hpp"
 #include "iresearch/search/detail/phrase_of.hpp"
 #include "iresearch/search/detail/scored_context.hpp"
+#include "iresearch/search/filters/all_filter.hpp"
+#include "iresearch/search/filters/wildcard_ngram_filter.hpp"
 #include "iresearch/search/lead/impl.hpp"
 #include "iresearch/search/lead/make.hpp"
 #include "iresearch/search/lead/two_phase_docs.hpp"
@@ -39,10 +39,10 @@
 #include "iresearch/search/queries/phrase_query.hpp"
 #include "iresearch/search/queries/query_builder_impl.hpp"
 #include "iresearch/search/queries/term_query.hpp"
-#include "iresearch/search/top/walk.hpp"
+#include "iresearch/search/scorers/all_docs_score.hpp"
 #include "iresearch/search/top/empty.hpp"
 #include "iresearch/search/top/make_boolean.hpp"
-#include "iresearch/search/filters/wildcard_ngram_filter.hpp"
+#include "iresearch/search/top/walk.hpp"
 
 namespace irs::top {
 namespace {
@@ -66,11 +66,12 @@ Root::ptr MakeUnscored(const VariadicPhraseQuery& query, const Context& ctx) {
 }
 
 Root::ptr MakeUnscored(const NGramSimilarityQuery& query, const Context& ctx) {
-  return irs::detail::Build(query, [&]<typename Slots>(auto&&... args) -> Root::ptr {
-    using Node = lead::TwoPhaseDocs<Slots>;
-    return MakeShape<ConstantWalk, Node>(
-      ctx, score_t{0}, std::forward<decltype(args)>(args)...);
-  });
+  return irs::detail::Build(
+    query, [&]<typename Slots>(auto&&... args) -> Root::ptr {
+      using Node = lead::TwoPhaseDocs<Slots>;
+      return MakeShape<ConstantWalk, Node>(
+        ctx, score_t{0}, std::forward<decltype(args)>(args)...);
+    });
 }
 
 }  // namespace
@@ -79,8 +80,8 @@ Root::ptr MakeEmpty() { return memory::make_managed<Empty>(); }
 
 Root::ptr Make(const TermQuery& query, const Context& ctx) {
   const irs::detail::PostingClause posting{.state = query.State(),
-                              .boost = query.Boost(),
-                              .stats = query.Stats(ScoredOf(ctx))};
+                                           .boost = query.Boost(),
+                                           .stats = query.Stats(ScoredOf(ctx))};
   if (posting.state.cookie.docs_count == 1) {
     return MakeSinglePosting(posting, query.Segment(), ctx);
   }
@@ -100,7 +101,8 @@ Root::ptr Make(const MultiTermQuery& query, const Context& ctx) {
   const auto boost = query.Boost();
   const std::span<const MultiTermState::Entry> terms{state.Terms()};
   if (terms.size() == 1) {
-    const auto posting = irs::detail::ClauseOf(terms.front(), field, scorer, boost);
+    const auto posting =
+      irs::detail::ClauseOf(terms.front(), field, scorer, boost);
     if (posting.state.cookie.docs_count == 1) {
       return MakeSinglePosting(posting, query.Segment(), ctx);
     }

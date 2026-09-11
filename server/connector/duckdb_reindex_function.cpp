@@ -826,8 +826,7 @@ void RunFullRebuild(duckdb::ClientContext& context, ConnectionContext& conn_ctx,
   auto trx = storage.GetTransaction();
   trx.Remove(std::make_shared<irs::All>());
   trx.RegisterFlush();
-  if (!trx.Commit(
-        search::TickDomain::Instance().Next(trx.GetQueries() + 1))) {
+  if (!trx.Commit(search::TickDomain::Instance().Next(trx.GetQueries() + 1))) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INTERNAL_ERROR),
                     ERR_MSG("REINDEX of \"", target.name,
                             "\": failed to commit the remove-all"));

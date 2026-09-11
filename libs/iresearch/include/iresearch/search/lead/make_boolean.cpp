@@ -26,9 +26,9 @@
 
 #include "basics/empty.hpp"
 #include "iresearch/index/index_reader.hpp"
-#include "iresearch/search/queries/boolean_query.hpp"
 #include "iresearch/search/detail/boolean_builder.hpp"
 #include "iresearch/search/lead/boolean_sparse.hpp"
+#include "iresearch/search/queries/boolean_query.hpp"
 
 namespace irs::lead {
 namespace {
@@ -65,8 +65,8 @@ struct Api {
     return child.PlanLead({});
   }
 
-  static Result MakeTerm(const detail::PostingClause& term, const SubReader& segment,
-                         const Context&) {
+  static Result MakeTerm(const detail::PostingClause& term,
+                         const SubReader& segment, const Context&) {
     return LeadOf(term, nullptr, segment);
   }
 
@@ -78,10 +78,10 @@ struct Api {
     return nullptr;
   }
 
-  static Result MakeNegation(std::span<const detail::PostingClause> exclude_terms,
-                             std::span<const QueryBuilder::ptr> exclude_filters,
-                             const SubReader& segment, uint64_t candidates,
-                             const Context& ctx) {
+  static Result MakeNegation(
+    std::span<const detail::PostingClause> exclude_terms,
+    std::span<const QueryBuilder::ptr> exclude_filters,
+    const SubReader& segment, uint64_t candidates, const Context& ctx) {
     return detail::builder::MakeSparseNegation<Api>(
       exclude_terms, exclude_filters, segment, candidates, ctx);
   }

@@ -32,21 +32,21 @@
 #include <utility>
 #include <variant>
 
-#include "iresearch/search/detail/node_of.hpp"
-#include "iresearch/search/scorers/make_window.hpp"
 #include "iresearch/search/count/plan.hpp"
 #include "iresearch/search/count/walk.hpp"
+#include "iresearch/search/detail/node_of.hpp"
 #include "iresearch/search/docs/plan.hpp"
 #include "iresearch/search/docs/walk.hpp"
 #include "iresearch/search/fill/walk.hpp"
+#include "iresearch/search/hits/walk.hpp"
 #include "iresearch/search/lead/constant_scored.hpp"
 #include "iresearch/search/lead/impl.hpp"
-#include "iresearch/search/queries/prepared_state_visitor.hpp"
 #include "iresearch/search/probe/constant_scored.hpp"
 #include "iresearch/search/probe/impl.hpp"
+#include "iresearch/search/queries/prepared_state_visitor.hpp"
 #include "iresearch/search/queries/query_builder_impl.hpp"
+#include "iresearch/search/scorers/make_window.hpp"
 #include "iresearch/search/scorers/score_function.hpp"
-#include "iresearch/search/hits/walk.hpp"
 #include "iresearch/search/scorers/scorer.hpp"
 #include "iresearch/search/top/walk.hpp"
 #include "iresearch/utils/type_limits.hpp"
@@ -624,7 +624,8 @@ Node::ptr Make(const ByNestedQuery& query, uint64_t) {
   return PlanNestedDocs<Impl, Node::ptr>(query);
 }
 
-Node::ptr Make(const ByNestedQuery& query, const detail::ScoredCtx& ctx, uint64_t) {
+Node::ptr Make(const ByNestedQuery& query, const detail::ScoredCtx& ctx,
+               uint64_t) {
   if (query.ScoresChildren()) {
     return PlanNestedScored<Impl, Node::ptr>(query, ctx);
   }

@@ -19,27 +19,27 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include "iresearch/index/index_reader.hpp"
-#include "iresearch/search/scorers/all_docs_score.hpp"
 #include "iresearch/search/detail/resolve.hpp"
 #include "iresearch/search/lead/impl.hpp"
 #include "iresearch/search/lead/plan.hpp"
-#include "iresearch/search/top/walk.hpp"
+#include "iresearch/search/scorers/all_docs_score.hpp"
 #include "iresearch/search/top/make.hpp"
 #include "iresearch/search/top/posting.hpp"
+#include "iresearch/search/top/walk.hpp"
 
 namespace irs::top {
 
-Root::ptr MakePosting(const irs::detail::PostingClause& posting, const SubReader& segment,
-                      const Context& ctx) {
+Root::ptr MakePosting(const irs::detail::PostingClause& posting,
+                      const SubReader& segment, const Context& ctx) {
   const auto& meta = posting.state.cookie;
   SDB_ASSERT(meta.docs_count > 1, "a single document has its own unit");
   SDB_ASSERT(posting.state.reader != nullptr);
   const auto& own = *posting.state.reader;
   const auto* const doc = irs::detail::DocOf(own);
   const irs::detail::ScoreArgs args{.scorer = posting.stats.scorer,
-                       .stats = posting.stats.stats,
-                       .fetcher = &ctx.fetcher,
-                       .boost = posting.boost};
+                                    .stats = posting.stats.stats,
+                                    .fetcher = &ctx.fetcher,
+                                    .boost = posting.boost};
 
   if (const auto value = irs::detail::ConstantOf(segment, own, args)) {
     return lead::ResolvePostingDocs<Root::ptr>(

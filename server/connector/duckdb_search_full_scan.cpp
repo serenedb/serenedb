@@ -48,26 +48,26 @@
 #include <iresearch/formats/formats.hpp>
 #include <iresearch/index/directory_reader_impl.hpp>
 #include <iresearch/index/index_source.hpp>
-#include <iresearch/search/filters/all_filter.hpp>
-#include <iresearch/search/filters/automaton_filter.hpp>
-#include <iresearch/search/detail/lazy_bitset.hpp>
-#include <iresearch/search/detail/resolve.hpp>
 #include <iresearch/search/count/make.hpp>
 #include <iresearch/search/count/term_counts.hpp>
 #include <iresearch/search/detail/doc_collector.hpp>
+#include <iresearch/search/detail/lazy_bitset.hpp>
+#include <iresearch/search/detail/resolve.hpp>
+#include <iresearch/search/detail/term_set.hpp>
 #include <iresearch/search/docs/make.hpp>
+#include <iresearch/search/filters/all_filter.hpp>
+#include <iresearch/search/filters/automaton_filter.hpp>
 #include <iresearch/search/filters/filter_visitor.hpp>
 #include <iresearch/search/filters/levenshtein_filter.hpp>
 #include <iresearch/search/filters/prefix_filter.hpp>
 #include <iresearch/search/filters/range_filter.hpp>
-#include <iresearch/search/scorers/score_function.hpp>
-#include <iresearch/search/hits/make.hpp>
-#include <iresearch/search/scorers/scorer.hpp>
 #include <iresearch/search/filters/term_filter.hpp>
-#include <iresearch/search/detail/term_set.hpp>
-#include <iresearch/search/top/make.hpp>
+#include <iresearch/search/hits/make.hpp>
 #include <iresearch/search/queries/vector_similarity_query.hpp>
+#include <iresearch/search/scorers/score_function.hpp>
+#include <iresearch/search/scorers/scorer.hpp>
 #include <iresearch/search/scorers/vector_similarity_scorer.hpp>
+#include <iresearch/search/top/make.hpp>
 #include <iresearch/utils/string.hpp>
 #include <mutex>
 #include <optional>
@@ -2169,10 +2169,10 @@ void StreamScanLocalState::StartSegment(duckdb::ClientContext& /*ctx*/,
                "a scan that emits a score has a scorer to compute it with");
     score_fetcher.Clear();
     auto plan = irs::hits::MakeRoot(seg_query, {
-                                                   .scorer = *g.scorer_obj,
-                                                   .fetcher = score_fetcher,
-                                                   .table = skipper,
-                                                 });
+                                                 .scorer = *g.scorer_obj,
+                                                 .fetcher = score_fetcher,
+                                                 .table = skipper,
+                                               });
     EnsurePlanned(plan != nullptr);
     streaming = std::move(plan);
   } else {

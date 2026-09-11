@@ -26,13 +26,13 @@
 #include <variant>
 
 #include "iresearch/analysis/token_attributes.hpp"
+#include "iresearch/search/detail/term_set.hpp"
 #include "iresearch/search/filters/automaton_filter.hpp"
 #include "iresearch/search/filters/levenshtein_filter.hpp"
 #include "iresearch/search/filters/prefix_filter.hpp"
 #include "iresearch/search/filters/range_filter.hpp"
 #include "iresearch/search/filters/regexp_filter.hpp"
 #include "iresearch/search/filters/term_filter.hpp"
-#include "iresearch/search/detail/term_set.hpp"
 #include "iresearch/search/filters/wildcard_filter.hpp"
 #include "iresearch/utils/levenshtein_default_pdp.hpp"
 

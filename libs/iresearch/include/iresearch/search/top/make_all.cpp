@@ -29,9 +29,9 @@ Root::ptr MakeAll(const SubReader& segment, const Context& ctx,
                   const irs::detail::StatsRecord& record, score_t boost) {
   const auto count = static_cast<doc_id_t>(segment.docs_count());
   const irs::detail::ScoreArgs args{.scorer = record.scorer,
-                       .stats = record.stats,
-                       .fetcher = &ctx.fetcher,
-                       .boost = boost};
+                                    .stats = record.stats,
+                                    .fetcher = &ctx.fetcher,
+                                    .boost = boost};
   return MakeShape<All>(ctx, ctx.fetcher, count,
                         irs::detail::AllDocsScore(segment, args));
 }

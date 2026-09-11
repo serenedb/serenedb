@@ -21,10 +21,10 @@
 #include <span>
 
 #include "iresearch/index/index_reader.hpp"
-#include "iresearch/search/detail/ngram_of.hpp"
-#include "iresearch/search/detail/phrase_of.hpp"
 #include "iresearch/search/count/make_boolean.hpp"
 #include "iresearch/search/count/plan.hpp"
+#include "iresearch/search/detail/ngram_of.hpp"
+#include "iresearch/search/detail/phrase_of.hpp"
 #include "iresearch/search/queries/multiterm_query.hpp"
 #include "iresearch/search/queries/ngram_similarity_query.hpp"
 #include "iresearch/search/queries/phrase_query.hpp"

@@ -25,8 +25,8 @@
 #include <utility>
 
 #include "iresearch/index/iterators.hpp"
-#include "iresearch/search/scorers/scorer.hpp"
 #include "iresearch/search/detail/term_predicate.hpp"
+#include "iresearch/search/scorers/scorer.hpp"
 #include "iresearch/utils/string.hpp"
 
 namespace irs {

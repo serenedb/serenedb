@@ -26,20 +26,20 @@
 #include <type_traits>
 #include <variant>
 
+#include "iresearch/search/detail/term_set.hpp"
 #include "iresearch/search/filters/automaton_filter.hpp"
 #include "iresearch/search/filters/boolean_filter.hpp"
+#include "iresearch/search/filters/boolean_rules.hpp"
 #include "iresearch/search/filters/filter_optimizer.hpp"
 #include "iresearch/search/filters/levenshtein_filter.hpp"
 #include "iresearch/search/filters/ngram_similarity_filter.hpp"
-#include "iresearch/search/filters/boolean_rules.hpp"
 #include "iresearch/search/filters/phrase_filter.hpp"
 #include "iresearch/search/filters/prefix_filter.hpp"
 #include "iresearch/search/filters/range_filter.hpp"
 #include "iresearch/search/filters/regexp_filter.hpp"
-#include "iresearch/search/scorers/scorer.hpp"
 #include "iresearch/search/filters/term_filter.hpp"
-#include "iresearch/search/detail/term_set.hpp"
 #include "iresearch/search/filters/wildcard_filter.hpp"
+#include "iresearch/search/scorers/scorer.hpp"
 
 namespace irs::optimizer {
 namespace {

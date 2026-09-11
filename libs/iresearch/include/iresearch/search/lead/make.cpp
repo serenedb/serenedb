@@ -26,24 +26,24 @@
 #include <vector>
 
 #include "iresearch/index/index_reader.hpp"
-#include "iresearch/search/filters/all_filter.hpp"
-#include "iresearch/search/filters/boolean_filter.hpp"
-#include "iresearch/search/queries/boolean_query.hpp"
-#include "iresearch/search/detail/collectors.hpp"
-#include "iresearch/search/scorers/all_docs_score.hpp"
 #include "iresearch/search/detail/boolean_of.hpp"
 #include "iresearch/search/detail/collect.hpp"
+#include "iresearch/search/detail/collectors.hpp"
 #include "iresearch/search/detail/phrase_of.hpp"
 #include "iresearch/search/detail/scored_context.hpp"
+#include "iresearch/search/filters/all_filter.hpp"
+#include "iresearch/search/filters/boolean_filter.hpp"
+#include "iresearch/search/filters/wildcard_ngram_filter.hpp"
 #include "iresearch/search/lead/make_boolean.hpp"
 #include "iresearch/search/lead/plan.hpp"
+#include "iresearch/search/probe/plan.hpp"
+#include "iresearch/search/queries/boolean_query.hpp"
 #include "iresearch/search/queries/multiterm_query.hpp"
 #include "iresearch/search/queries/ngram_similarity_query.hpp"
 #include "iresearch/search/queries/phrase_query.hpp"
-#include "iresearch/search/probe/plan.hpp"
 #include "iresearch/search/queries/query_builder_impl.hpp"
 #include "iresearch/search/queries/term_query.hpp"
-#include "iresearch/search/filters/wildcard_ngram_filter.hpp"
+#include "iresearch/search/scorers/all_docs_score.hpp"
 
 namespace irs::lead {
 
@@ -52,8 +52,10 @@ Node::ptr Make(const TermQuery& query) {
 }
 
 Node::ptr Make(const TermQuery& query, const detail::ScoredCtx& ctx) {
-  const detail::PostingClause posting{query.State(), query.Boost(), query.Stats(ctx)};
-  const detail::ScoreRecipe recipe{.segment = &query.Segment(), .fetcher = ctx.fetcher};
+  const detail::PostingClause posting{query.State(), query.Boost(),
+                                      query.Stats(ctx)};
+  const detail::ScoreRecipe recipe{.segment = &query.Segment(),
+                                   .fetcher = ctx.fetcher};
   return MakePostingScored(posting, query.Segment(), recipe);
 }
 
@@ -79,7 +81,7 @@ Node::ptr Make(const MultiTermQuery& query, const detail::ScoredCtx& ctx) {
   const std::span<const MultiTermState::Entry> terms{state.Terms()};
   if (terms.size() == 1) {
     const detail::ScoreRecipe recipe{.segment = &query.Segment(),
-                             .fetcher = ctx.fetcher};
+                                     .fetcher = ctx.fetcher};
     return MakePostingScored(
       detail::ClauseOf(terms.front(), field, scorer, boost), query.Segment(),
       recipe);
@@ -99,9 +101,9 @@ Node::ptr Make(const FixedPhraseQuery& query) {
 Node::ptr Make(const FixedPhraseQuery& query, const detail::ScoredCtx& ctx) {
   const auto record = query.Stats(ctx);
   const detail::ScoreArgs args{.scorer = record.scorer,
-                       .stats = record.stats,
-                       .fetcher = ctx.fetcher,
-                       .boost = query.Boost()};
+                               .stats = record.stats,
+                               .fetcher = ctx.fetcher,
+                               .boost = query.Boost()};
   if (args.stats == nullptr) {
     return Make(query);
   }
@@ -121,9 +123,9 @@ Node::ptr Make(const VariadicPhraseQuery& query) {
 Node::ptr Make(const VariadicPhraseQuery& query, const detail::ScoredCtx& ctx) {
   const auto record = query.Stats(ctx);
   const detail::ScoreArgs args{.scorer = record.scorer,
-                       .stats = record.stats,
-                       .fetcher = ctx.fetcher,
-                       .boost = query.Boost()};
+                               .stats = record.stats,
+                               .fetcher = ctx.fetcher,
+                               .boost = query.Boost()};
   if (args.stats == nullptr) {
     return Make(query);
   }
@@ -137,15 +139,16 @@ Node::ptr Make(const NGramSimilarityQuery& query) {
   return query.Every() ? MakeNGramAllDocs(query) : MakeNGramDocs(query);
 }
 
-Node::ptr Make(const NGramSimilarityQuery& query, const detail::ScoredCtx& ctx) {
+Node::ptr Make(const NGramSimilarityQuery& query,
+               const detail::ScoredCtx& ctx) {
   const auto record = query.Stats(ctx);
   if (record.stats == nullptr) {
     return Make(query);
   }
   const detail::ScoreArgs args{.scorer = record.scorer,
-                       .stats = record.stats,
-                       .fetcher = ctx.fetcher,
-                       .boost = query.Boost()};
+                               .stats = record.stats,
+                               .fetcher = ctx.fetcher,
+                               .boost = query.Boost()};
   return query.Every() ? MakeNGramAllScored(query, args)
                        : MakeNGramScored(query, args);
 }
@@ -154,10 +157,11 @@ Node::ptr Make(const AllQuery& query) { return MakeAllDocs(query.Segment()); }
 
 Node::ptr Make(const AllQuery& query, const detail::ScoredCtx& ctx) {
   const auto record = query.Stats(ctx);
-  return MakeAllScored(query.Segment(), detail::ScoreArgs{.scorer = record.scorer,
-                                                  .stats = record.stats,
-                                                  .fetcher = ctx.fetcher,
-                                                  .boost = query.Boost()});
+  return MakeAllScored(query.Segment(),
+                       detail::ScoreArgs{.scorer = record.scorer,
+                                         .stats = record.stats,
+                                         .fetcher = ctx.fetcher,
+                                         .boost = query.Boost()});
 }
 
 Node::ptr Make(const WildcardNGramQuery& query) {
@@ -167,11 +171,11 @@ Node::ptr Make(const WildcardNGramQuery& query) {
 Node::ptr Make(const WildcardNGramQuery& query, const detail::ScoredCtx& ctx) {
   const auto record = query.Stats(ctx);
   return MakeWildcardNGramScored(
-    query,
-    detail::AllDocsScore(query.Segment(), detail::ScoreArgs{.scorer = record.scorer,
-                                                    .stats = record.stats,
-                                                    .fetcher = ctx.fetcher,
-                                                    .boost = query.Boost()}));
+    query, detail::AllDocsScore(query.Segment(),
+                                detail::ScoreArgs{.scorer = record.scorer,
+                                                  .stats = record.stats,
+                                                  .fetcher = ctx.fetcher,
+                                                  .boost = query.Boost()}));
 }
 
 }  // namespace irs::lead

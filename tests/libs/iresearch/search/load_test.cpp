@@ -47,13 +47,13 @@
 #include "index_builder.h"
 #include "insert_field.hpp"
 #include "iresearch/analysis/token_attributes.hpp"
-#include "iresearch/search/scorers/bm25.hpp"
 #include "iresearch/search/count/root.hpp"
 #include "iresearch/search/docs/root.hpp"
 #include "iresearch/search/fill/node.hpp"
 #include "iresearch/search/filters/filter.hpp"
-#include "iresearch/search/lead/node.hpp"
 #include "iresearch/search/filters/term_filter.hpp"
+#include "iresearch/search/lead/node.hpp"
+#include "iresearch/search/scorers/bm25.hpp"
 #include "search/filter_test_case_base.hpp"
 #include "tests_shared.hpp"
 
@@ -1215,11 +1215,10 @@ TEST_F(LoadTest, ReportIsOnlyAWayOfLooking) {
     EXPECT_EQ(docs_hash.hash, docs_both.hash);
     EXPECT_NE(0, docs.count);
 
-    const auto scored = gExecutor->ExecuteEmitScoredDocs(query, {});
-    const auto scored_hash =
-      gExecutor->ExecuteEmitScoredDocs(query, {.hash = true});
+    const auto scored = gExecutor->ExecuteEmitHits(query, {});
+    const auto scored_hash = gExecutor->ExecuteEmitHits(query, {.hash = true});
     const auto scored_both =
-      gExecutor->ExecuteEmitScoredDocs(query, {.hash = true, .print = false});
+      gExecutor->ExecuteEmitHits(query, {.hash = true, .print = false});
     EXPECT_EQ(scored.count, scored_hash.count);
     EXPECT_EQ(scored.count, scored_both.count);
     EXPECT_EQ(scored_hash.hash, scored_both.hash);
@@ -1285,10 +1284,10 @@ TEST(LoadTestCommands, Kinds) {
   EXPECT_FALSE(cmd.report.print);
 
   EXPECT_EQ(Kind::Docs, bench::ParseCommand("docs").kind);
-  EXPECT_EQ(Kind::Scored, bench::ParseCommand("scored").kind);
+  EXPECT_EQ(Kind::Hits, bench::ParseCommand("hits").kind);
 
   cmd = bench::ParseCommand("top_100");
-  EXPECT_EQ(Kind::TopK, cmd.kind);
+  EXPECT_EQ(Kind::Top, cmd.kind);
   EXPECT_EQ(100, cmd.k);
   EXPECT_TRUE(cmd.prune);
 }
@@ -1300,14 +1299,14 @@ TEST(LoadTestCommands, AnyK) {
         {"top_1000", 1000},
         {"top_4294967295", 4294967295}}) {
     const auto cmd = bench::ParseCommand(name);
-    EXPECT_EQ(bench::Kind::TopK, cmd.kind) << name;
+    EXPECT_EQ(bench::Kind::Top, cmd.kind) << name;
     EXPECT_EQ(k, cmd.k) << name;
   }
 }
 
 TEST(LoadTestCommands, CountSuffixTurnsPruningOff) {
   const auto cmd = bench::ParseCommand("top_100_count");
-  EXPECT_EQ(bench::Kind::TopK, cmd.kind);
+  EXPECT_EQ(bench::Kind::Top, cmd.kind);
   EXPECT_EQ(100, cmd.k);
   EXPECT_FALSE(cmd.prune);
 }

@@ -33,8 +33,8 @@
 #include "iresearch/search/filters/phrase_filter.hpp"
 #include "iresearch/search/filters/prefix_filter.hpp"
 #include "iresearch/search/filters/range_filter.hpp"
-#include "iresearch/search/scorers/scorer.hpp"
 #include "iresearch/search/filters/term_filter.hpp"
+#include "iresearch/search/scorers/scorer.hpp"
 #include "iresearch/search/scorers/tfidf.hpp"
 #include "iresearch/store/store_utils.hpp"
 #include "iresearch/utils/bytes_output.hpp"
@@ -633,8 +633,7 @@ TEST_P(TfidfTestCase, test_query) {
       auto docs = prepared_filter.ExecuteScored(i, fetcher);
       auto score = docs->PrepareScore();
 
-      for (irs::score_t score_value{};
-           !irs::doc_limits::eof(docs->Next());) {
+      for (irs::score_t score_value{}; !irs::doc_limits::eof(docs->Next());) {
         fetcher.Fetch(docs->Value());
         docs->FetchScoreArgs(0);
         in.reset(values.Get(docs->Value()));

@@ -50,8 +50,7 @@ class Masked : public Root {
   void Run(LoserScoreCollector& collector) final {
     uint32_t batch = 0;
 
-    for (auto doc = _node.Next(); !doc_limits::eof(doc);
-         doc = _node.Next()) {
+    for (auto doc = _node.Next(); !doc_limits::eof(doc); doc = _node.Next()) {
       if (_mask->contains(doc)) {
         continue;
       }

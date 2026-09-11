@@ -26,8 +26,8 @@
 
 #include "iresearch/formats/posting_meta.hpp"
 #include "iresearch/search/detail/resolve.hpp"
-#include "iresearch/search/scorers/scorer.hpp"
 #include "iresearch/search/queries/term_state.hpp"
+#include "iresearch/search/scorers/scorer.hpp"
 
 namespace irs {
 

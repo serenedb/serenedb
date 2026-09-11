@@ -98,7 +98,9 @@ class DisjunctionLead {
   void ForEachScoredBlock(doc_id_t max, Visitor&& visit) {
     while (_doc < max) {
       const auto min = _doc;
-      const auto end = max - min > irs::detail::kWindowDocs ? min + irs::detail::kWindowDocs : max;
+      const auto end = max - min > irs::detail::kWindowDocs
+                         ? min + irs::detail::kWindowDocs
+                         : max;
       std::fill_n(_mask, irs::detail::kWindowWords, uint64_t{0});
       std::fill_n(_window, irs::detail::kWindowDocs, score_t{0});
       for (auto& leaf : _leaves) {
@@ -125,8 +127,9 @@ class DisjunctionLead {
     for (size_t w = 0; w != irs::detail::kWindowWords; ++w) {
       auto word = _mask[w];
       while (word != 0) {
-        const auto offset = static_cast<uint32_t>(w * irs::detail::kWindowBits) +
-                            static_cast<uint32_t>(std::countr_zero(word));
+        const auto offset =
+          static_cast<uint32_t>(w * irs::detail::kWindowBits) +
+          static_cast<uint32_t>(std::countr_zero(word));
         word &= word - 1;
         _docs[len] = min + offset;
         _scores[len] = _window[offset];

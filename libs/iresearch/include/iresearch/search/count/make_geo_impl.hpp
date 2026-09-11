@@ -20,10 +20,10 @@
 
 #pragma once
 
-#include "iresearch/search/detail/geo_of.hpp"
 #include "iresearch/search/count/make.hpp"
 #include "iresearch/search/count/plan.hpp"
 #include "iresearch/search/count/walk.hpp"
+#include "iresearch/search/detail/geo_of.hpp"
 #include "iresearch/search/queries/geo_query.hpp"
 
 namespace irs::count {

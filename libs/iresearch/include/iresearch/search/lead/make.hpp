@@ -25,12 +25,12 @@
 #include <vector>
 
 #include "iresearch/formats/posting_meta.hpp"
-#include "iresearch/search/scorers/all_docs_score.hpp"
 #include "iresearch/search/detail/plan.hpp"
-#include "iresearch/search/scorers/score_args.hpp"
 #include "iresearch/search/detail/scored_context.hpp"
 #include "iresearch/search/lead/node.hpp"
 #include "iresearch/search/queries/term_state.hpp"
+#include "iresearch/search/scorers/all_docs_score.hpp"
+#include "iresearch/search/scorers/score_args.hpp"
 
 namespace irs::lead {
 
@@ -61,10 +61,13 @@ Node::ptr Make(const ByNestedQuery& query, const detail::ScoredCtx& ctx);
 Node::ptr Make(const HnswQuery& query, const detail::ScoredCtx& ctx);
 Node::ptr Make(const KnnVectorQuery& query, const detail::ScoredCtx& ctx);
 Node::ptr Make(const RangeVectorQuery& query, const detail::ScoredCtx& ctx);
-inline Node::ptr Make(const EmptyQueryBuilder&, const detail::ScoredCtx&) { return {}; }
+inline Node::ptr Make(const EmptyQueryBuilder&, const detail::ScoredCtx&) {
+  return {};
+}
 Node::ptr Make(const BooleanQuery& query, const detail::ScoredCtx& ctx);
 template<typename Parser, typename Acceptor>
-Node::ptr Make(const GeoQuery<Parser, Acceptor>& query, const detail::ScoredCtx& ctx);
+Node::ptr Make(const GeoQuery<Parser, Acceptor>& query,
+               const detail::ScoredCtx& ctx);
 
 Node::ptr MakePostingDocs(const detail::PostingClause& posting,
                           const SubReader& segment);
@@ -74,7 +77,8 @@ Node::ptr MakePostingScored(const detail::PostingClause& posting,
 
 Node::ptr MakeAllDocs(const SubReader& segment);
 Node::ptr MakeAllScored(const SubReader& segment, score_t score);
-Node::ptr MakeAllScored(const SubReader& segment, const detail::ScoreArgs& args);
+Node::ptr MakeAllScored(const SubReader& segment,
+                        const detail::ScoreArgs& args);
 
 Node::ptr MakeSparseConjunctionScored(
   std::span<const detail::PostingClause> terms,
@@ -123,7 +127,8 @@ Node::ptr MakeRequiredScored(std::span<const detail::PostingClause> must,
                              std::span<const QueryBuilder::ptr> should_filters,
                              detail::Terms should_uniformity,
                              uint32_t min_should_match,
-                             const SubReader& segment, const detail::ScoredCtx& ctx,
-                             ScoreMergeType merge, score_t absorbed);
+                             const SubReader& segment,
+                             const detail::ScoredCtx& ctx, ScoreMergeType merge,
+                             score_t absorbed);
 
 }  // namespace irs::lead

@@ -102,12 +102,15 @@ class PrunedDisjunction : public Root {
         Finish(collector.ScoreThreshold());
         if (_first_essential == 0 && !doc_limits::eof(window_max)) {
           window_max =
-            std::max(window_max, window_min + irs::detail::kWindowDocs * _exhaustive_windows);
+            std::max(window_max, window_min + irs::detail::kWindowDocs *
+                                                _exhaustive_windows);
         }
       }
       if (_first_essential == 0) {
-        if (window_max <= _docs_end - irs::detail::kWindowDocs && Saturating()) {
-          window_max = std::max(window_max, window_min + irs::detail::kWindowDocs);
+        if (window_max <= _docs_end - irs::detail::kWindowDocs &&
+            Saturating()) {
+          window_max =
+            std::max(window_max, window_min + irs::detail::kWindowDocs);
         }
         _exhaustive_windows =
           std::min(2 * _exhaustive_windows, kExhaustiveWindowsMax);
@@ -300,7 +303,8 @@ class PrunedDisjunction : public Root {
         second = cost;
       }
     }
-    return second * (irs::detail::kWindowDocs / 2.0) >= kDenseSecond * _docs_count;
+    return second * (irs::detail::kWindowDocs / 2.0) >=
+           kDenseSecond * _docs_count;
   }
 
   double Cost(double fill, size_t first, double scale,
@@ -365,7 +369,8 @@ class PrunedDisjunction : public Root {
       const auto sparse =
         32U * _num_outer_windows * static_cast<uint32_t>(_sorted.size());
       if (_num_candidates < sparse) {
-        _min_window_size = std::min<doc_id_t>(2 * _min_window_size, irs::detail::kWindowDocs);
+        _min_window_size =
+          std::min<doc_id_t>(2 * _min_window_size, irs::detail::kWindowDocs);
       } else {
         _min_window_size = 1;
       }
@@ -404,7 +409,8 @@ class PrunedDisjunction : public Root {
       ProcessSingleEssential(collector, max);
       return;
     }
-    if (const auto second = SecondEssentialDoc(); second >= min + irs::detail::kWindowDocs / 2) {
+    if (const auto second = SecondEssentialDoc();
+        second >= min + irs::detail::kWindowDocs / 2) {
       ProcessSingleEssential(collector, std::min(max, second));
       UpdateHeapTop();
       return;
@@ -459,9 +465,9 @@ class PrunedDisjunction : public Root {
   static void FilterCompetitive(Docs& docs, Scores& scores,
                                 score_t score_threshold) {
     SDB_ASSERT(score_threshold > 0);
-    const auto out =
-      irs::detail::FilterScores(docs.data, scores.data,
-                           static_cast<uint32_t>(docs.size()), score_threshold);
+    const auto out = irs::detail::FilterScores(
+      docs.data, scores.data, static_cast<uint32_t>(docs.size()),
+      score_threshold);
     docs.resize(out);
     scores.resize(out);
   }

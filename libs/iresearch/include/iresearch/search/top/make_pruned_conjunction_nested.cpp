@@ -30,24 +30,24 @@
 #include "basics/down_cast.h"
 #include "basics/empty.hpp"
 #include "iresearch/index/index_reader.hpp"
-#include "iresearch/search/queries/boolean_query.hpp"
-#include "iresearch/search/scorers/all_docs_score.hpp"
 #include "iresearch/search/detail/boolean_groups.hpp"
 #include "iresearch/search/detail/collect_scored.hpp"
 #include "iresearch/search/detail/exclusion_of.hpp"
 #include "iresearch/search/detail/resolve.hpp"
-#include "iresearch/search/scorers/score_policy.hpp"
 #include "iresearch/search/fill/impl.hpp"
 #include "iresearch/search/fill/set_leaves.hpp"
-#include "iresearch/search/queries/multiterm_query.hpp"
 #include "iresearch/search/probe/boolean_window.hpp"
 #include "iresearch/search/probe/leaves.hpp"
+#include "iresearch/search/queries/boolean_query.hpp"
+#include "iresearch/search/queries/multiterm_query.hpp"
+#include "iresearch/search/scorers/all_docs_score.hpp"
+#include "iresearch/search/scorers/score_policy.hpp"
 #include "iresearch/search/top/disjunction_leaves.hpp"
-#include "iresearch/search/top/prune_leaves.hpp"
-#include "iresearch/search/top/pruned_clause.hpp"
 #include "iresearch/search/top/make.hpp"
 #include "iresearch/search/top/posting_pruned_clause.hpp"
 #include "iresearch/search/top/posting_pruned_lead.hpp"
+#include "iresearch/search/top/prune_leaves.hpp"
+#include "iresearch/search/top/pruned_clause.hpp"
 #include "iresearch/search/top/pruned_conjunction.hpp"
 
 namespace irs::top {
@@ -101,7 +101,8 @@ bool ConstantTerms(const QueryBuilder& child, const SubReader& segment,
   const auto* const scorer = query.Stats(ScoredOf(ctx)).scorer;
   if (query.MergeType() != ScoreMergeType::Sum || field == nullptr ||
       scorer == nullptr || irs::detail::DocOf(*field) == nullptr ||
-      irs::detail::UniformityOf(*field, scorer) != irs::detail::Terms::Constant) {
+      irs::detail::UniformityOf(*field, scorer) !=
+        irs::detail::Terms::Constant) {
     return false;
   }
   const auto boost = query.Boost();
@@ -110,11 +111,11 @@ bool ConstantTerms(const QueryBuilder& child, const SubReader& segment,
     if (entry.stats == nullptr) {
       return false;
     }
-    bound +=
-      irs::detail::AllDocsScore(segment, irs::detail::ScoreArgs{.scorer = scorer,
-                                              .stats = entry.stats,
-                                              .fetcher = &ctx.fetcher,
-                                              .boost = entry.boost * boost});
+    bound += irs::detail::AllDocsScore(
+      segment, irs::detail::ScoreArgs{.scorer = scorer,
+                                      .stats = entry.stats,
+                                      .fetcher = &ctx.fetcher,
+                                      .boost = entry.boost * boost});
   }
   out = {.docs = query.EstimateMax(), .constant = &child, .bound = bound};
   return true;
@@ -190,8 +191,8 @@ Root::ptr MakeNestedPrunedConjunction(
       return {};
     }
   }
-  const auto* const doc =
-    irs::detail::DocOf(irs::detail::FieldOf(clauses.front().terms.front(), nullptr));
+  const auto* const doc = irs::detail::DocOf(
+    irs::detail::FieldOf(clauses.front().terms.front(), nullptr));
   SDB_ASSERT(doc != nullptr);
   const bool posting_lead = clauses.front().terms.size() == 1;
   const auto size = clauses.size();
@@ -203,15 +204,16 @@ Root::ptr MakeNestedPrunedConjunction(
                            irs::detail::Scored, true>;
     const auto args = [&](const irs::detail::PostingClause& posting) {
       return irs::detail::ScoreArgs{.scorer = posting.stats.scorer,
-                       .stats = posting.stats.stats,
-                       .fetcher = &ctx.fetcher,
-                       .boost = posting.boost};
+                                    .stats = posting.stats.stats,
+                                    .fetcher = &ctx.fetcher,
+                                    .boost = posting.boost};
     };
-    const auto prepare = [&](auto& leaf, const irs::detail::PostingClause& posting) {
+    const auto prepare = [&](auto& leaf,
+                             const irs::detail::PostingClause& posting) {
       const auto& own = *posting.state.reader;
       SDB_ASSERT(irs::detail::DocOf(own) == doc);
-      leaf.Prepare(posting.state.cookie, *doc, irs::detail::LayoutOf(own), segment,
-                   own, args(posting));
+      leaf.Prepare(posting.state.cookie, *doc, irs::detail::LayoutOf(own),
+                   segment, own, args(posting));
     };
     const auto each = [&](const NestedClause& clause) {
       return [&clause, &prepare](auto& one, size_t j) {
@@ -236,8 +238,8 @@ Root::ptr MakeNestedPrunedConjunction(
           posting.state.cookie, *doc, irs::detail::LayoutOf(own), segment, own,
           args(posting));
       }
-      return memory::make_managed<PrunedClauseImpl<Group>>(
-        clause.terms.size(), each(clause));
+      return memory::make_managed<PrunedClauseImpl<Group>>(clause.terms.size(),
+                                                           each(clause));
     };
     const auto build = [&]<typename Lead, typename Others>(
                          auto&& lead, auto&& others_args) -> Root::ptr {
@@ -277,8 +279,9 @@ Root::ptr MakeNestedPrunedConjunction(
       const auto& own = *posting.state.reader;
       SDB_ASSERT(irs::detail::DocOf(own) == doc);
       return make.template operator()<PostingPrunedLead<Input>>(
-        std::forward_as_tuple(posting.state.cookie, *doc, irs::detail::LayoutOf(own),
-                              segment, own, args(posting)));
+        std::forward_as_tuple(posting.state.cookie, *doc,
+                              irs::detail::LayoutOf(own), segment, own,
+                              args(posting)));
     }
     return make.template operator()<DisjunctionLead<Input>>(
       std::forward_as_tuple(first.terms.size(), each(first)));

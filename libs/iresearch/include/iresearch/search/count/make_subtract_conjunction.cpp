@@ -23,9 +23,9 @@
 #include <vector>
 
 #include "iresearch/index/index_reader.hpp"
-#include "iresearch/search/detail/collect.hpp"
 #include "iresearch/search/count/make_boolean.hpp"
 #include "iresearch/search/count/subtract.hpp"
+#include "iresearch/search/detail/collect.hpp"
 
 namespace irs::count {
 

@@ -45,7 +45,8 @@ class BooleanWindow : public Root {
   static constexpr bool kLead = !std::is_same_v<Lead, utils::Empty>;
   static constexpr bool kOptional = !std::is_same_v<Optional, utils::Empty>;
   static constexpr bool kExcludes = !std::is_same_v<Excludes, utils::Empty>;
-  static constexpr bool kResets = kOptional && !irs::detail::LazyReset<Optional>();
+  static constexpr bool kResets =
+    kOptional && !irs::detail::LazyReset<Optional>();
   static constexpr bool kTally = kOptional && irs::detail::Tallies<Optional>();
   static_assert(kLead != kOptional);
   static_assert(!kTally || !kExcludes);

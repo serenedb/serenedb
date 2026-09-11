@@ -22,13 +22,13 @@
 #include <span>
 #include <utility>
 
-#include "iresearch/index/index_reader.hpp"
-#include "iresearch/search/queries/boolean_query.hpp"
-#include "iresearch/search/detail/collect.hpp"
 #include "basics/empty.hpp"
+#include "iresearch/index/index_reader.hpp"
+#include "iresearch/search/detail/collect.hpp"
 #include "iresearch/search/probe/classify.hpp"
 #include "iresearch/search/probe/make.hpp"
 #include "iresearch/search/probe/plan.hpp"
+#include "iresearch/search/queries/boolean_query.hpp"
 
 namespace irs::probe {
 

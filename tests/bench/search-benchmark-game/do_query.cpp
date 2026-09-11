@@ -43,11 +43,11 @@ size_t ExecuteCommand(bench::Executor& executor, const bench::Command& cmd,
       const auto result = executor.ExecuteEmitDocs(query, cmd.report);
       return cmd.report.hash ? result.hash : result.count;
     }
-    case bench::Kind::Scored: {
-      const auto result = executor.ExecuteEmitScoredDocs(query, cmd.report);
+    case bench::Kind::Hits: {
+      const auto result = executor.ExecuteEmitHits(query, cmd.report);
       return cmd.report.hash ? result.hash : result.count;
     }
-    case bench::Kind::TopK: {
+    case bench::Kind::Top: {
       const auto count = cmd.prune
                            ? executor.ExecuteTopK(cmd.k, query)
                            : executor.ExecuteTopKWithCount(cmd.k, query);

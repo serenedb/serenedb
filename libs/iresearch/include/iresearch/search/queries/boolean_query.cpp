@@ -26,12 +26,12 @@
 #include <utility>
 
 #include "basics/down_cast.h"
-#include "iresearch/search/filters/all_filter.hpp"
-#include "iresearch/search/scorers/all_docs_score.hpp"
 #include "iresearch/search/detail/estimate.hpp"
+#include "iresearch/search/filters/all_filter.hpp"
 #include "iresearch/search/queries/multiterm_query.hpp"
 #include "iresearch/search/queries/prepared_state_visitor.hpp"
 #include "iresearch/search/queries/term_query.hpp"
+#include "iresearch/search/scorers/all_docs_score.hpp"
 
 namespace irs {
 namespace {

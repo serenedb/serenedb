@@ -32,11 +32,11 @@
 #include "iresearch/index/iterators.hpp"
 #include "iresearch/search/detail/column_collector.hpp"
 #include "iresearch/search/detail/exclude_block.hpp"
+#include "iresearch/search/lead/concept.hpp"
 #include "iresearch/search/scorers/make_conjunction.hpp"
 #include "iresearch/search/scorers/score_args.hpp"
-#include "iresearch/search/scorers/score_policy.hpp"
-#include "iresearch/search/lead/concept.hpp"
 #include "iresearch/search/scorers/score_function.hpp"
+#include "iresearch/search/scorers/score_policy.hpp"
 #include "iresearch/search/top/admit.hpp"
 #include "iresearch/search/top/root.hpp"
 #include "iresearch/utils/type_limits.hpp"
@@ -134,13 +134,14 @@ class BooleanSparse : public Root {
       }
       if constexpr (kOptional) {
         if constexpr (requires { _optional.PrepareScore(score.inner); }) {
-          irs::detail::AppendScorer(scorers, _optional.PrepareScore(score.inner));
+          irs::detail::AppendScorer(scorers,
+                                    _optional.PrepareScore(score.inner));
         } else {
           irs::detail::AppendScorer(scorers, _optional.PrepareScore());
         }
       }
       return irs::detail::MakeConjunctionScore(score.inner, std::move(scorers),
-                                          score.absorbed);
+                                               score.absorbed);
     }
   }
 

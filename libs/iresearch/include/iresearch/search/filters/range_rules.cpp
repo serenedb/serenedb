@@ -27,12 +27,12 @@
 #include <utility>
 #include <vector>
 
+#include "iresearch/search/detail/search_range.hpp"
 #include "iresearch/search/filters/boolean_filter.hpp"
+#include "iresearch/search/filters/common.hpp"
 #include "iresearch/search/filters/filter_optimizer.hpp"
 #include "iresearch/search/filters/granular_range_filter.hpp"
-#include "iresearch/search/filters/common.hpp"
 #include "iresearch/search/filters/range_filter.hpp"
-#include "iresearch/search/detail/search_range.hpp"
 #include "iresearch/search/filters/term_filter.hpp"
 
 namespace irs::optimizer {

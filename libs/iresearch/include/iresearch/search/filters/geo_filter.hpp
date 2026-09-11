@@ -27,8 +27,8 @@
 #include "basics/assert.h"
 #include "geo/coding.h"
 #include "geo/shape_container.h"
-#include "iresearch/search/filters/filter.hpp"
 #include "iresearch/search/detail/search_range.hpp"
+#include "iresearch/search/filters/filter.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
 namespace irs {

@@ -27,10 +27,10 @@
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/search/detail/exclusion_of.hpp"
 #include "iresearch/search/detail/resolve.hpp"
-#include "iresearch/search/top/prune_leaves.hpp"
 #include "iresearch/search/top/make.hpp"
 #include "iresearch/search/top/posting_pruned_clause.hpp"
 #include "iresearch/search/top/posting_pruned_lead.hpp"
+#include "iresearch/search/top/prune_leaves.hpp"
 #include "iresearch/search/top/pruned_conjunction.hpp"
 
 namespace irs::top {
@@ -80,12 +80,12 @@ Root::ptr MakePrunedConjunction(
       const auto& posting = terms[i];
       const auto& own = *posting.state.reader;
       SDB_ASSERT(irs::detail::DocOf(own) == doc);
-      leaf.Prepare(posting.state.cookie, *doc, irs::detail::LayoutOf(own), segment,
-                   own,
+      leaf.Prepare(posting.state.cookie, *doc, irs::detail::LayoutOf(own),
+                   segment, own,
                    irs::detail::ScoreArgs{.scorer = posting.stats.scorer,
-                             .stats = posting.stats.stats,
-                             .fetcher = &ctx.fetcher,
-                             .boost = posting.boost});
+                                          .stats = posting.stats.stats,
+                                          .fetcher = &ctx.fetcher,
+                                          .boost = posting.boost});
     };
     using Others = PruneLeaves<Clause>;
     if (excludes.empty() && exclude_filters.empty()) {

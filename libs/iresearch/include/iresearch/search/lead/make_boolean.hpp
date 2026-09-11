@@ -32,7 +32,6 @@
 #include "iresearch/search/detail/collect.hpp"
 #include "iresearch/search/detail/collect_scored.hpp"
 #include "iresearch/search/detail/plan.hpp"
-#include "iresearch/search/scorers/score_policy.hpp"
 #include "iresearch/search/detail/scored_context.hpp"
 #include "iresearch/search/detail/scored_node_builder.hpp"
 #include "iresearch/search/fill/set_leaves.hpp"
@@ -40,6 +39,7 @@
 #include "iresearch/search/lead/boolean_window.hpp"
 #include "iresearch/search/lead/impl.hpp"
 #include "iresearch/search/lead/plan.hpp"
+#include "iresearch/search/scorers/score_policy.hpp"
 
 namespace irs::lead {
 

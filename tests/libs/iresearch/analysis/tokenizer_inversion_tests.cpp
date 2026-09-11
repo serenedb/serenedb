@@ -148,8 +148,7 @@ void CollectKeys(const SubReader& segment, std::map<doc_id_t, size_t>& out) {
     auto docs = terms->postings(IndexFeatures::Freq);
     ASSERT_TRUE(docs);
     size_t seen = 0;
-    for (auto doc = docs->Next(); !doc_limits::eof(doc);
-         doc = docs->Next()) {
+    for (auto doc = docs->Next(); !doc_limits::eof(doc); doc = docs->Next()) {
       if (mask != nullptr && mask->contains(doc)) {
         continue;
       }
@@ -202,8 +201,7 @@ void CollectField(const SubReader& segment, const FieldPlan& field,
     ASSERT_EQ(want_pos, positions != nullptr) << "term=" << term;
     size_t docs_seen = 0;
 
-    for (auto doc = docs->Next(); !doc_limits::eof(doc);
-         doc = docs->Next()) {
+    for (auto doc = docs->Next(); !doc_limits::eof(doc); doc = docs->Next()) {
       if (mask != nullptr && mask->contains(doc)) {
         if (positions != nullptr) {
           while (positions->next()) {

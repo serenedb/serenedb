@@ -27,9 +27,9 @@
 #include <utility>
 
 #include "basics/empty.hpp"
+#include "iresearch/search/count/root.hpp"
 #include "iresearch/search/detail/table_filter.hpp"
 #include "iresearch/search/detail/window.hpp"
-#include "iresearch/search/count/root.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
 namespace irs::count {

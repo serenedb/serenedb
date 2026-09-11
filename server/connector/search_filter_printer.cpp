@@ -24,10 +24,11 @@
 #include <absl/strings/str_cat.h>
 #include <absl/strings/str_join.h>
 
+#include <iresearch/search/detail/search_range.hpp>
+#include <iresearch/search/detail/term_set.hpp>
 #include <iresearch/search/filters/all_filter.hpp>
 #include <iresearch/search/filters/automaton_filter.hpp>
 #include <iresearch/search/filters/boolean_filter.hpp>
-#include <iresearch/search/scorers/constant_score.hpp>
 #include <iresearch/search/filters/geo_filter.hpp>
 #include <iresearch/search/filters/granular_range_filter.hpp>
 #include <iresearch/search/filters/levenshtein_filter.hpp>
@@ -37,12 +38,11 @@
 #include <iresearch/search/filters/prefix_filter.hpp>
 #include <iresearch/search/filters/range_filter.hpp>
 #include <iresearch/search/filters/regexp_filter.hpp>
-#include <iresearch/search/detail/search_range.hpp>
 #include <iresearch/search/filters/term_filter.hpp>
-#include <iresearch/search/detail/term_set.hpp>
 #include <iresearch/search/filters/vector_radius_filter.hpp>
 #include <iresearch/search/filters/wildcard_filter.hpp>
 #include <iresearch/search/filters/wildcard_ngram_filter.hpp>
+#include <iresearch/search/scorers/constant_score.hpp>
 #include <iresearch/utils/numeric_utils.hpp>
 
 #include "basics/down_cast.h"

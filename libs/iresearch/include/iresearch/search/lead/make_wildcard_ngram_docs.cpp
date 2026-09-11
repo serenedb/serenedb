@@ -21,12 +21,12 @@
 #include <utility>
 
 #include "iresearch/index/index_reader.hpp"
+#include "iresearch/search/filters/wildcard_ngram_filter.hpp"
 #include "iresearch/search/lead/all_docs.hpp"
 #include "iresearch/search/lead/impl.hpp"
 #include "iresearch/search/lead/plan.hpp"
 #include "iresearch/search/lead/two_phase_docs.hpp"
 #include "iresearch/search/lead/wildcard_ngram_slots_docs.hpp"
-#include "iresearch/search/filters/wildcard_ngram_filter.hpp"
 
 namespace irs::lead {
 

@@ -32,6 +32,29 @@
 namespace irs { class Filter; }
 namespace sdb { struct ParserContext; }
 
+#ifndef YY_TYPEDEF_YY_SCANNER_T
+#define YY_TYPEDEF_YY_SCANNER_T
+typedef void* yyscan_t;
+#endif
+
+namespace sdb {
+
+class Scanner {
+ public:
+    explicit Scanner(std::string_view input);
+    ~Scanner();
+
+    Scanner(const Scanner&) = delete;
+    Scanner& operator=(const Scanner&) = delete;
+
+    yyscan_t yyscanner = nullptr;
+
+ private:
+    void* _buffer = nullptr;
+};
+
+}
+
 struct StringSpan {
     const char* data;
     size_t len;
@@ -46,11 +69,12 @@ struct StringSpan {
 %}
 
 %code {
-int yylex(YYSTYPE* yylval);
-void yyerror(sdb::ParserContext& ctx, const char *s);
+int yylex(YYSTYPE* yylval, yyscan_t yyscanner);
+void yyerror(sdb::ParserContext& ctx, yyscan_t yyscanner, const char *s);
 }
 
 %parse-param { sdb::ParserContext& ctx }
+%param { yyscan_t yyscanner }
 
 %union {
     StringSpan sv;
@@ -295,16 +319,11 @@ range_bound:
 
 %%
 
-void yyerror(sdb::ParserContext& ctx, const char *s) {
+void yyerror(sdb::ParserContext& ctx, yyscan_t, const char *s) {
     ctx.error_message = s;
 }
 
-extern void LexerSetInput(std::string_view input);
-extern void LexerCleanup(void);
-
 bool sdb::ParseQuery(sdb::ParserContext& ctx, std::string_view input) {
-    LexerSetInput(input);
-    int result = yyparse(ctx);
-    LexerCleanup();
-    return result == 0;
+    sdb::Scanner scanner{input};
+    return yyparse(ctx, scanner.yyscanner) == 0;
 }

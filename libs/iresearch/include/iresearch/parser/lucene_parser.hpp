@@ -59,13 +59,36 @@ extern int yydebug;
 namespace irs { class Filter; }
 namespace sdb { struct ParserContext; }
 
+#ifndef YY_TYPEDEF_YY_SCANNER_T
+#define YY_TYPEDEF_YY_SCANNER_T
+typedef void* yyscan_t;
+#endif
+
+namespace sdb {
+
+class Scanner {
+ public:
+    explicit Scanner(std::string_view input);
+    ~Scanner();
+
+    Scanner(const Scanner&) = delete;
+    Scanner& operator=(const Scanner&) = delete;
+
+    yyscan_t yyscanner = nullptr;
+
+ private:
+    void* _buffer = nullptr;
+};
+
+}
+
 struct StringSpan {
     const char* data;
     size_t len;
     operator std::string_view() const { return {data, len}; }
 };
 
-#line 68 "libs/iresearch/include/iresearch/parser/lucene_parser.hpp"
+#line 91 "libs/iresearch/include/iresearch/parser/lucene_parser.hpp"
 
 /* Token kinds.  */
 #ifndef YYTOKENTYPE
@@ -125,7 +148,7 @@ struct StringSpan {
 #if ! defined YYSTYPE && ! defined YYSTYPE_IS_DECLARED
 union YYSTYPE
 {
-#line 55 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
+#line 79 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
 
     StringSpan sv;
     // A number is a count where one is asked for and a term everywhere else,
@@ -139,7 +162,7 @@ union YYSTYPE
     struct { int min; int max; } gap;
     irs::Filter* filter;
 
-#line 142 "libs/iresearch/include/iresearch/parser/lucene_parser.hpp"
+#line 165 "libs/iresearch/include/iresearch/parser/lucene_parser.hpp"
 
 };
 typedef union YYSTYPE YYSTYPE;
@@ -150,7 +173,7 @@ typedef union YYSTYPE YYSTYPE;
 
 
 
-int yyparse (sdb::ParserContext& ctx);
+int yyparse (sdb::ParserContext& ctx, yyscan_t yyscanner);
 
 
 #endif /* !YY_YY_LIBS_IRESEARCH_INCLUDE_IRESEARCH_PARSER_LUCENE_PARSER_HPP_INCLUDED  */

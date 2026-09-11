@@ -23,17 +23,21 @@
 #include <fast_float/fast_float.h>
 
 #include <cstring>
+#include <stdexcept>
 #include <string_view>
 
 #include "lucene_parser.hpp"
 
-static YY_BUFFER_STATE current_buffer = nullptr;
+#pragma clang diagnostic ignored "-Wunused-function"
+#define YY_FATAL_ERROR(msg) throw std::runtime_error(msg)
 %}
 
 %option noyywrap
 %option nounput
 %option noinput
 %option bison-bridge
+%option reentrant
+%option never-interactive
 
 /* Inside quotes the words are words: `and` is a term there rather than an
    operator, and a phrase is a list of parts rather than one string to be
@@ -256,20 +260,23 @@ PWORD       ([^ \t\r\n"~*?\\]|{ESCAPED})
 
 %%
 
-void LexerSetInput(std::string_view input) {
-    if (current_buffer) {
-        yy_delete_buffer(current_buffer);
+namespace sdb {
+
+Scanner::Scanner(std::string_view input) {
+    if (yylex_init(&yyscanner) != 0) {
+        throw std::runtime_error("cannot initialize the query scanner");
     }
-    /* A query that failed to parse while inside quotes left the scanner
-       there, and the one after it would be read as the rest of a phrase --
-       silently, since a word is a word in both. Every query starts outside. */
-    BEGIN(INITIAL);
-    current_buffer = yy_scan_bytes(input.data(), static_cast<int>(input.size()));
+    _buffer = yy_scan_bytes(input.data(), static_cast<int>(input.size()),
+                            yyscanner);
+    if (_buffer == nullptr) {
+        yylex_destroy(yyscanner);
+        throw std::runtime_error("cannot buffer the query");
+    }
 }
 
-void LexerCleanup() {
-    if (current_buffer) {
-        yy_delete_buffer(current_buffer);
-        current_buffer = nullptr;
-    }
+Scanner::~Scanner() {
+    yy_delete_buffer(static_cast<YY_BUFFER_STATE>(_buffer), yyscanner);
+    yylex_destroy(yyscanner);
 }
+
+}  // namespace sdb

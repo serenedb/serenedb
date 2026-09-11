@@ -76,6 +76,4 @@ class NearestNeighborsTokenizer final
   int32_t _top_k;
 };
 
-extern template class TypedTokenizer<NearestNeighborsTokenizer>;
-
 }  // namespace irs::analysis

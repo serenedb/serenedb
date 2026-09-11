@@ -89,6 +89,4 @@ class SparseNGramTokenizer final : public TypedTokenizer<SparseNGramTokenizer>,
   std::vector<uint32_t> _hashes;
 };
 
-extern template class TypedTokenizer<SparseNGramTokenizer>;
-
 }  // namespace irs::analysis

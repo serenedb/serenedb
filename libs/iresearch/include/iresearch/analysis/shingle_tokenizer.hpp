@@ -136,8 +136,6 @@ class ShingleTokenizer final : public TypedTokenizer<ShingleTokenizer>,
   bstring _blob;
 };
 
-extern template class TypedTokenizer<ShingleTokenizer>;
-
 template<typename Context>
 void SerdeWrite(Context ctx, const ShingleTokenizer::Options& o) {
   sdb::basics::WriteTupleOrObject(

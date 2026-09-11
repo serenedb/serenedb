@@ -117,7 +117,4 @@ class SolrSynonymsTokenizer final
   duckdb::shared_ptr<const State> _state;
 };
 
-extern template class TypedTokenizer<SolrSynonymsTokenizer>;
-extern template class TypedTokenExpander<SolrSynonymsTokenizer>;
-
 }  // namespace irs::analysis

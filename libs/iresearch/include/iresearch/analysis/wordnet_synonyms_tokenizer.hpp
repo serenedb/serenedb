@@ -88,7 +88,4 @@ class WordnetSynonymsTokenizer final
   duckdb::shared_ptr<const State> _state;
 };
 
-extern template class TypedTokenizer<WordnetSynonymsTokenizer>;
-extern template class TypedTokenExpander<WordnetSynonymsTokenizer>;
-
 }  // namespace irs::analysis

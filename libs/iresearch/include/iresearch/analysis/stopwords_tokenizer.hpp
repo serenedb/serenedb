@@ -65,7 +65,4 @@ class StopwordsTokenizer final : public TypedTokenizer<StopwordsTokenizer>,
   duckdb::shared_ptr<const StopwordSet> _stopwords;
 };
 
-extern template class TypedTokenizer<StopwordsTokenizer>;
-extern template class TypedTokenStage<StopwordsTokenizer>;
-
 }  // namespace irs::analysis

@@ -57,8 +57,6 @@ class SplitByNonAlphaTokenizer final
   Options _options;
 };
 
-extern template class TypedTokenizer<SplitByNonAlphaTokenizer>;
-
 template<typename Context>
 void SerdeWrite(Context ctx, const SplitByNonAlphaTokenizer::Options& o) {
   sdb::basics::WriteTupleOrObject(ctx, std::tie(o.case_convert));

@@ -230,7 +230,4 @@ class GeoJsonTokenizer final : public TypedTokenizer<GeoJsonTokenizer>,
   Coding _coding;
 };
 
-extern template class TypedTokenizer<GeoPointTokenizer>;
-extern template class TypedTokenizer<GeoJsonTokenizer>;
-
 }  // namespace irs::analysis

@@ -109,8 +109,6 @@ class NGramTokenizer final : public TypedTokenizer<NGramTokenizer>,
   Kernel _kernel;
 };
 
-extern template class TypedTokenizer<NGramTokenizer>;
-
 }  // namespace irs::analysis
 namespace magic_enum {
 

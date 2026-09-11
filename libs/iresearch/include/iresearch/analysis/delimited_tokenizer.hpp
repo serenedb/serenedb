@@ -70,6 +70,4 @@ class DelimitedTokenizer final : public TypedTokenizer<DelimitedTokenizer>,
   Mode _mode;
 };
 
-extern template class TypedTokenizer<DelimitedTokenizer>;
-
 }  // namespace irs::analysis

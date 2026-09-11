@@ -96,8 +96,6 @@ class WildcardTokenizer final : public TypedTokenizer<WildcardTokenizer>,
   bool _base_stable = false;
 };
 
-extern template class TypedTokenizer<WildcardTokenizer>;
-
 template<typename Context>
 void SerdeWrite(Context ctx, const WildcardTokenizer::Options& o) {
   sdb::basics::WriteTupleOrObject(ctx, std::tie(o.base_analyzer, o.ngram_size));

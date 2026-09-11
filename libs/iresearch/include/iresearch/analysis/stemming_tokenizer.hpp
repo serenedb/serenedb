@@ -74,8 +74,5 @@ class StemmingTokenizer final : public TypedTokenizer<StemmingTokenizer>,
   dict::StemCache _cache;
 };
 
-extern template class TypedTokenizer<StemmingTokenizer>;
-extern template class TypedTokenStage<StemmingTokenizer>;
-
 }  // namespace analysis
 }  // namespace irs

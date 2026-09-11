@@ -143,6 +143,4 @@ class TextTokenizer final : public TypedTokenizer<TextTokenizer>,
   bool _ascii_fast;
 };
 
-extern template class TypedTokenizer<TextTokenizer>;
-
 }  // namespace irs::analysis

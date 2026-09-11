@@ -76,6 +76,4 @@ class ClassificationTokenizer final
   int32_t _top_k;
 };
 
-extern template class TypedTokenizer<ClassificationTokenizer>;
-
 }  // namespace irs::analysis

@@ -81,7 +81,4 @@ class CollationTokenizer final : public TypedTokenizer<CollationTokenizer>,
   std::vector<char16_t> _u16_buf;
 };
 
-extern template class TypedTokenizer<CollationTokenizer>;
-extern template class TypedTokenStage<CollationTokenizer>;
-
 }  // namespace irs::analysis

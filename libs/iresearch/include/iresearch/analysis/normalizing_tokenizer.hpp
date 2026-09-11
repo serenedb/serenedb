@@ -106,8 +106,5 @@ class NormalizingTokenizer final : public TypedTokenizer<NormalizingTokenizer>,
   CasePath _case_path = CasePath::Fast;
 };
 
-extern template class TypedTokenizer<NormalizingTokenizer>;
-extern template class TypedTokenStage<NormalizingTokenizer>;
-
 }  // namespace analysis
 }  // namespace irs

@@ -1,9 +1,11 @@
 control substitution on
 
 
-# A view over a function, across a restart. The mutual cycle this file used to
-# build (function body reading the view that reads the function) cannot be
-# created: CREATE OR REPLACE refuses to make an entry depend on itself.
+# A view over a function, across a restart. The mutual cycle a replaced function
+# body would build (the body reads the view that reads the function) cannot be
+# built: a replace is a drop plus a create, so the new definition is refused for
+# depending on the name it replaces. What this file asserts is that the one edge
+# there is survives a checkpoint and a crash, and that the refused drop names it.
 
 
 statement ok
@@ -22,10 +24,24 @@ statement ok
 CREATE VIEW clickclack_v AS SELECT babsky_fn(n) AS c FROM kostya_t;
 
 
+# The replaced body reads the view that reads this function.
 statement error
 CREATE OR REPLACE FUNCTION babsky_fn(x INT) AS (SELECT count(*)::INT FROM clickclack_v) + x;
 ----
-db error: ERROR: CREATE OR REPLACE is not allowed to depend on itself
+db error: ERROR: CREATE OR REPLACE is not allowed to depend on itself<slt:ignore>
+
+
+# The original definition is untouched by the refused statement.
+query
+SELECT c FROM clickclack_v ORDER BY c;
+----
+c
+2
+3
+
+
+statement ok
+CHECKPOINT;
 
 
 statement ok
@@ -50,8 +66,7 @@ c
 3
 
 
-# The view -> function edge came back with them: the function cannot be
-# dropped while the view reads it.
+# The edge came back with them, and the refused drop names it once.
 connection after_crash
 statement error
 DROP FUNCTION babsky_fn;

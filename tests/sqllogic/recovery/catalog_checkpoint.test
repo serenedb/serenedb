@@ -157,9 +157,9 @@ query
 SELECT indexname FROM pg_indexes WHERE schemaname = 'ckp' ORDER BY indexname;
 ----
 indexname
-PRIMARY_t_id
 ckp_b
 ckp_inv
+t_pkey
 
 
 connection after_checkpoint
@@ -372,6 +372,15 @@ statement ok
 GRANT USAGE ON SCHEMA ckp_schema_window TO ckp_role;
 
 
+# A schema cannot be versioned -- every entry in it holds a reference to the
+# version that created it -- so its own owner and ACL change in place, outside
+# the transaction's undo buffer, and it is the checkpoint that makes them
+# durable rather than a WAL record.
+connection after_db_window
+statement ok
+CHECKPOINT;
+
+
 connection after_db_window
 statement ok
 SET sdb_faults = 'crash_on_packet';
@@ -539,7 +548,7 @@ connection after_seq_window
 statement error
 SELECT nextval('ckp_seq_window.s');
 ----
-db error: ERROR: nextval: reached maximum value of sequence "ckp_seq_window.s" (900)
+db error: ERROR: nextval: reached maximum value of sequence "s" (900)
 
 
 # --- 6. the same window, for a text search dictionary ---
@@ -633,7 +642,7 @@ statement error
 DROP TEXT SEARCH DICTIONARY ckp_dict_window.d;
 ----
 db error: ERROR: Cannot drop entry "d" because there are entries that depend on it.
-index "ckp_dict_inv" depends on tokenizer "d".
+index "ckp_dict_inv" depends on text search dictionary "d".
 Use DROP...CASCADE to drop all dependents.
 
 

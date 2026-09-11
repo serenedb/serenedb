@@ -788,15 +788,6 @@ duckdb::PhysicalOperator& SereneDBCreateIndexPlan(
     }
   }
 
-  // Index expressions are computed by the pipeline, the way duckdb plans its
-  // own CREATE INDEX (plan_create_index.cpp AddProjection): a projection over
-  // the scan passes every scanned column through and appends one column per
-  // indexed expression, so the build sink just reads values. The predicate is
-  // already a LogicalFilter below this point.
-  // From op.expressions, not op.unbound_expressions: the latter are copies
-  // taken before binding resolution and still hold BoundColumnRefExpressions,
-  // which no ExpressionExecutor can run. op.expressions is what the resolver
-  // rewrote into chunk references, and what duckdb's own AddProjection uses.
   duckdb::vector<duckdb::unique_ptr<duckdb::Expression>> projected_exprs;
   for (size_t i = 0; i < op.info->parsed_expressions.size(); ++i) {
     if (op.info->parsed_expressions[i]->GetExpressionType() ==

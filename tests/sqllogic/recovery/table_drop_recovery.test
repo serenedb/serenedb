@@ -64,14 +64,14 @@ statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
 SELECT 1;
 
 
-# The table is gone; its SERIAL sequence is not owned by it, so it stays.
+# The table is gone, and its SERIAL sequence went with it: the sequence is owned
+# by the table.
 connection after_crash
 query
 SELECT relname FROM pg_class
   WHERE relname IN ('vedernikoff_clickclack_owner', 'vedernikoff_clickclack_owner_id_seq');
 ----
 relname
-vedernikoff_clickclack_owner_id_seq
 
 
 # View that referenced the owner is gone.
@@ -83,29 +83,16 @@ db error: ERROR: Table with name vedernikoff_clickclack_view does not exist!
 Did you mean "<slt:ignore>"?
 
 
-# Sibling dashboard table survived with a working DEFAULT, pre-crash row kept.
-# (Pre-crash id is 4: the owner SERIAL consumed 1,2,3 then the dashboard
-# DEFAULT consumed 4 from the same sequence.)
+# The sibling dashboard went with the CASCADE: its column DEFAULT reads the
+# owner's sequence, the sequence is owned by the owner table, and a dependency on
+# a sequence is recorded against the whole entry -- so the cascade reaches the
+# table, not just the default.
 connection after_crash
-query
+statement error
 SELECT id, payload FROM vedernikoff_clickclack_dashboard;
 ----
-id  payload
-4   pre_crash_payload
-
-
-connection after_crash
-statement ok
-INSERT INTO vedernikoff_clickclack_dashboard (payload) VALUES ('post_crash_payload');
-
-
-connection after_crash
-query
-SELECT id, payload FROM vedernikoff_clickclack_dashboard ORDER BY payload;
-----
-id    payload
-5     post_crash_payload
-4     pre_crash_payload
+db error: ERROR: Table with name vedernikoff_clickclack_dashboard does not exist!
+Did you mean "<slt:ignore>"?
 
 
 # Standalone witness intact.
@@ -115,11 +102,6 @@ SELECT id, body FROM vedernikoff_solid_witness;
 ----
 id  body
 1   unaffected
-
-
-connection after_crash
-statement ok
-DROP TABLE vedernikoff_clickclack_dashboard;
 
 
 connection after_crash

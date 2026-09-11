@@ -232,82 +232,61 @@ v
 
 
 # ----------------------------------------------------------------------
-# ALTER SCHEMA ... RENAME TO moves the name and nothing else. The schema
-# keeps its id and its contents' sets, so its tables are still found --
-# by name, and by the oid every by-id reader resolves through.
+# A schema has no alter road: it cannot be renamed. Every entry in a schema
+# holds a reference to the schema version that created it, so a second version
+# would leave the first one's tables with a freed parent -- which is why the
+# permission change is the one alter that applies in place.
 # ----------------------------------------------------------------------
 
 statement ok
-CREATE SCHEMA ctx_from
+CREATE SCHEMA ctx_keep
 
 
 statement ok
-CREATE TABLE ctx_from.t (a INT)
+CREATE TABLE ctx_keep.t (a INT)
 
 
 statement ok
-INSERT INTO ctx_from.t VALUES (9)
+INSERT INTO ctx_keep.t VALUES (9)
 
 
-statement ok
-ALTER SCHEMA ctx_from RENAME TO ctx_to
+statement error
+ALTER SCHEMA ctx_keep RENAME TO ctx_moved
+----
+db error: ERROR: Altering schemas is not yet supported<slt:ignore>
 
 
 query
-SELECT a FROM ctx_to.t
+SELECT a FROM ctx_keep.t
 ----
 a
 9
 
 
 query
-SELECT pg_relation_size('ctx_to.t') >= 0 AS by_oid
+SELECT pg_relation_size('ctx_keep.t') >= 0 AS by_oid
 ----
 by_oid
 t
 
 
-# A rename is a version of the entry like any other, so it rolls back.
-statement ok
-BEGIN
-
-
-statement ok
-ALTER SCHEMA ctx_to RENAME TO ctx_undone
-
-
-statement ok
-ROLLBACK
-
-
-query
-SELECT count(*) AS n FROM pg_namespace WHERE nspname = 'ctx_undone'
-----
-n
-0
-
-
 # ----------------------------------------------------------------------
-# CREATE SCHEMA ... AUTHORIZATION gives the schema to another role; the
-# bare form names it after that role.
+# The schema grammar takes no AUTHORIZATION clause: a schema is created under
+# the creating role.
 # ----------------------------------------------------------------------
 
 statement ok
 CREATE ROLE ctx_owner
 
 
-statement ok
-CREATE SCHEMA ctx_owned AUTHORIZATION ctx_owner
-
-
-statement ok
-CREATE SCHEMA AUTHORIZATION ctx_owner
-
-
 statement error
-CREATE SCHEMA ctx_nobody AUTHORIZATION ctx_missing
+CREATE SCHEMA ctx_owned AUTHORIZATION ctx_owner
 ----
-db error: ERROR: role "ctx_missing" does not exist
+db error: ERROR: syntax error at or near "AUTHORIZATION"<slt:ignore>
+
+
+statement ok
+CREATE SCHEMA ctx_owned
 
 
 # ----------------------------------------------------------------------
@@ -400,11 +379,11 @@ resumed
 t
 
 
-# The renamed schema came back renamed, and its table came back with the
-# rows the data file holds under the name it was written under.
+# The schema came back with its name, and its table came back with the rows the
+# data file holds.
 connection after_crash
 query
-SELECT a FROM ctx_to.t
+SELECT a FROM ctx_keep.t
 ----
 a
 9
@@ -412,12 +391,12 @@ a
 
 connection after_crash
 statement ok
-INSERT INTO ctx_to.t VALUES (10)
+INSERT INTO ctx_keep.t VALUES (10)
 
 
 connection after_crash
 query
-SELECT count(*) AS n FROM ctx_to.t
+SELECT count(*) AS n FROM ctx_keep.t
 ----
 n
 2
@@ -425,7 +404,7 @@ n
 
 connection after_crash
 query
-SELECT count(*) AS n FROM pg_namespace WHERE nspname IN ('ctx_from', 'ctx_undone')
+SELECT count(*) AS n FROM pg_namespace WHERE nspname IN ('ctx_moved', 'ctx_from')
 ----
 n
 0
@@ -435,6 +414,5 @@ connection after_crash
 query
 SELECT nspname, pg_get_userbyid(nspowner) AS owner FROM pg_namespace WHERE nspname IN ('ctx_owned', 'ctx_owner') ORDER BY 1
 ----
-nspname owner
-ctx_owned ctx_owner
-ctx_owner ctx_owner
+nspname	owner
+ctx_owned	postgres

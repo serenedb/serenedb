@@ -46,24 +46,26 @@ statement ok
 GRANT USAGE, CREATE ON SCHEMA xao_ofn_mop TO xao_ofn_babsky;
 
 
-# vedernikoff owns two function overloads plus a same-named procedure.
+# vedernikoff owns a function plus a same-named procedure. A name holds one
+# function here, so the second signature is a Postgres-only overload.
 connection cowner user=xao_ofn_vedernikoff password=xao_ofn_vedernikoff_pw
 statement ok
 CREATE FUNCTION xao_ofn_mop.clickclack(int) RETURNS int LANGUAGE sql AS 'SELECT $1';
 
 
 connection cowner user=xao_ofn_vedernikoff password=xao_ofn_vedernikoff_pw
+skipif serenedb # Postgres overloads by argument type
 statement ok
 CREATE FUNCTION xao_ofn_mop.clickclack(text) RETURNS text LANGUAGE sql AS 'SELECT $1';
 
 
-# (a) non-owner cannot drop a single (non-last) overload by signature.
+# (a) non-owner cannot drop the function by signature.
 connection cbabsky user=xao_ofn_babsky password=xao_ofn_babsky_pw
 statement error
 DROP FUNCTION xao_ofn_mop.clickclack(int);
 
 
-# (b) non-owner cannot replace an overload's body (same unqualified-name form on
+# (b) non-owner cannot replace the body (same unqualified-name form on
 # both engines, so the exact message is pinned here).
 connection cbabsky2 user=xao_ofn_babsky password=xao_ofn_babsky_pw
 statement error
@@ -72,7 +74,16 @@ CREATE OR REPLACE FUNCTION xao_ofn_mop.clickclack(int) RETURNS int LANGUAGE sql 
 db error: ERROR: must be owner of function clickclack<slt:ignore>
 
 
-# Both overloads survive after the denied attempts.
+# The definitions survive the denied attempts.
+onlyif serenedb
+query
+SELECT count(*) FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace WHERE n.nspname = 'xao_ofn_mop' AND p.proname = 'clickclack';
+----
+count
+1
+
+
+skipif serenedb
 query
 SELECT count(*) FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace WHERE n.nspname = 'xao_ofn_mop' AND p.proname = 'clickclack';
 ----
@@ -103,12 +114,21 @@ count
 2
 
 
-# The owner can still selectively drop an overload (leaves one behind).
+# The owner can drop it.
 connection cowner4 user=xao_ofn_vedernikoff password=xao_ofn_vedernikoff_pw
 statement ok
 DROP FUNCTION xao_ofn_mop.clickclack(int);
 
 
+onlyif serenedb
+query
+SELECT count(*) FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace WHERE n.nspname = 'xao_ofn_mop' AND p.proname = 'clickclack';
+----
+count
+0
+
+
+skipif serenedb
 query
 SELECT count(*) FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace WHERE n.nspname = 'xao_ofn_mop' AND p.proname = 'clickclack';
 ----

@@ -31,7 +31,7 @@ statement error
 DROP TEXT SEARCH DICTIONARY test_english;
 ----
 db error: ERROR: Cannot drop entry "test_english" because there are entries that depend on it.
-index "index_t" depends on tokenizer "test_english".
+index "index_t" depends on text search dictionary "test_english".
 Use DROP...CASCADE to drop all dependents.
 
 
@@ -157,7 +157,7 @@ CREATE INDEX test_index ON test USING inverted (i);
 statement error
 CREATE INDEX test_index ON test USING inverted (i);
 ----
-db error: ERROR: relation "test_index" already exists
+db error: ERROR: Index with name "test_index" already exists!
 
 
 statement ok
@@ -383,8 +383,7 @@ db error: ERROR: Can only delete from base table
 statement error
 DELETE FROM view_idx WHERE b = 'hello';
 ----
-db error: ERROR: cannot open relation "view_idx"
-DETAIL: This operation is not supported for indexes.
+db error: ERROR: Can only delete from base table<slt:ignore>
 
 
 statement error
@@ -412,34 +411,31 @@ CREATE INDEX idx_dml_idx ON idx_dml_test USING inverted(b);
 statement error
 INSERT INTO idx_dml_idx VALUES (1, 'hello');
 ----
-db error: ERROR: Could not convert string 'hello' to INT32
+db error: ERROR: Table with name idx_dml_idx does not exist!<slt:ignore>
 
 
 statement error
 UPDATE idx_dml_idx SET b = 'world' WHERE a = 1;
 ----
-db error: ERROR: cannot open relation "idx_dml_idx"
-DETAIL: This operation is not supported for indexes.
+db error: ERROR: projecting virtual column<slt:ignore>
 
 
 statement error
 DELETE FROM idx_dml_idx WHERE a = 1;
 ----
-db error: ERROR: cannot open relation "idx_dml_idx"
-DETAIL: This operation is not supported for indexes.
+db error: ERROR: projecting virtual column<slt:ignore>
 
 
 statement error
 COPY idx_dml_idx FROM '${__TEST_DIR__}/nonexistent.parquet' (FORMAT PARQUET);
 ----
-db error: ERROR: No files found that match the pattern "<slt:ignore>/nonexistent.parquet"
+db error: ERROR: Table with name idx_dml_idx does not exist!<slt:ignore>
 
 
 statement error
 CREATE INDEX idx_dml_idx2 ON idx_dml_idx USING inverted(b);
 ----
-db error: ERROR: cannot open relation "idx_dml_idx"
-DETAIL: This operation is not supported for indexes.
+db error: ERROR: can only create an index on a base table<slt:ignore>
 
 
 statement ok
@@ -511,10 +507,35 @@ statement ok
 CREATE TABLE s2.foo (a INTEGER, b VARCHAR);
 
 
-statement error
-CREATE INDEX idx ON s2.foo USING inverted(b s1.te);
+statement ok
+CREATE INDEX idx_cross ON s2.foo USING inverted(b s1.te);
+
+
+statement ok
+INSERT INTO s2.foo VALUES (1, 'cross schema dictionary');
+
+
+statement ok
+VACUUM (REFRESH_TABLE) s2.foo;
+
+
+query
+SELECT a FROM s2.idx_cross WHERE b @@ ts_phrase('dictionary');
 ----
-db error: ERROR: Accessing text dictionary from different schema is not supported
+a
+1
+
+
+statement ok
+SET search_path = s2, s1;
+
+
+statement ok
+CREATE INDEX idx_path ON s2.foo USING inverted(b te);
+
+
+statement ok
+RESET search_path;
 
 
 statement ok

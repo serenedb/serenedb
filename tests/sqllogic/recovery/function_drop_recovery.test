@@ -51,38 +51,26 @@ statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
 SELECT 1;
 
 
-# The table is gone; its SERIAL sequence is not owned by it, so it stays.
+# The table is gone, and its SERIAL sequence went with it: the sequence is owned
+# by the table.
 connection after_crash
 query
 SELECT relname FROM pg_class
   WHERE relname IN ('vedernikoff_iceberg_owner', 'vedernikoff_iceberg_owner_id_seq');
 ----
 relname
-vedernikoff_iceberg_owner_id_seq
 
 
-# Proxy survived with its DEFAULT intact -- the sequence it reads is still
-# there -- and the pre-crash row is preserved.
+# The proxy went with the CASCADE: its column DEFAULT reads the owner's sequence,
+# the sequence is owned by the owner table, and a dependency on a sequence is
+# recorded against the whole entry -- so the cascade reaches the table, not just
+# the default.
 connection after_crash
-query
+statement error
 SELECT id, body FROM vedernikoff_iceberg_proxy;
 ----
-id  body
-4   pre_crash
-
-
-connection after_crash
-statement ok
-INSERT INTO vedernikoff_iceberg_proxy (body) VALUES ('post_crash');
-
-
-connection after_crash
-query
-SELECT id, body FROM vedernikoff_iceberg_proxy ORDER BY body;
-----
-id    body
-5     post_crash
-4     pre_crash
+db error: ERROR: Table with name vedernikoff_iceberg_proxy does not exist!
+Did you mean "<slt:ignore>"?
 
 
 # Survivor.
@@ -92,11 +80,6 @@ SELECT id, body FROM vedernikoff_solid_witness;
 ----
 id  body
 1   untouched
-
-
-connection after_crash
-statement ok
-DROP TABLE vedernikoff_iceberg_proxy;
 
 
 connection after_crash

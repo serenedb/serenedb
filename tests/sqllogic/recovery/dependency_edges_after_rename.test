@@ -6,8 +6,10 @@ control substitution on
 # left the dependent behind in pg_class. The resolution now travels with the
 # definition, so boot installs ids instead of resolving names again.
 #
-# Every endpoint kind that can be renamed and be depended upon is here, each
-# with a control that is never renamed.
+# duckdb refuses to rename an object that something else depends on, so the
+# renames here are the ones it allows: the dependent side of an edge, and a
+# table whose only dependent is an index. Each pair has a control that is never
+# renamed.
 
 statement ok
 CREATE SCHEMA dre;
@@ -26,8 +28,16 @@ CREATE TABLE dre.ct(a INTEGER);
 statement ok
 CREATE VIEW dre.cv AS SELECT a FROM dre.ct;
 
-statement ok
+
+# The table cannot move while the view reads it.
+statement error
 ALTER TABLE dre.t RENAME TO t2;
+----
+db error: ERROR: Cannot alter entry "t" because there are entries that depend on it.<slt:ignore>
+
+
+statement ok
+ALTER VIEW dre.v RENAME TO v2;
 
 
 # view <- view
@@ -37,8 +47,14 @@ CREATE VIEW dre.vbase AS SELECT 1 AS x;
 statement ok
 CREATE VIEW dre.vtop AS SELECT x FROM dre.vbase;
 
-statement ok
+statement error
 ALTER VIEW dre.vbase RENAME TO vbase2;
+----
+db error: ERROR: Cannot alter entry "vbase" because there are entries that depend on it.<slt:ignore>
+
+
+statement ok
+ALTER VIEW dre.vtop RENAME TO vtop2;
 
 
 # function <- view
@@ -48,11 +64,17 @@ CREATE FUNCTION dre.f(i INTEGER) RETURNS INTEGER AS 'SELECT i + 1' LANGUAGE SQL;
 statement ok
 CREATE VIEW dre.fv AS SELECT dre.f(1) AS y;
 
-statement ok
+statement error
 ALTER FUNCTION dre.f RENAME TO f2;
+----
+db error: ERROR: Cannot alter entry "f" because there are entries that depend on it.<slt:ignore>
 
 
-# sequence <- column DEFAULT, under a table that is then renamed
+statement ok
+ALTER VIEW dre.fv RENAME TO fv2;
+
+
+# sequence <- column DEFAULT, where it is the dependent table that is renamed
 statement ok
 CREATE SEQUENCE dre.s;
 
@@ -63,7 +85,8 @@ statement ok
 ALTER TABLE dre.st RENAME TO st2;
 
 
-# table <- index, where the index is renamed and so is its table
+# table <- index, where the table is renamed: an index reads its table by
+# entry, so duckdb lets the rename through
 statement ok
 CREATE TABLE dre.it(a INTEGER);
 
@@ -71,34 +94,31 @@ statement ok
 CREATE INDEX it_idx ON dre.it(a);
 
 statement ok
-ALTER INDEX dre.it_idx RENAME TO it_idx2;
-
-statement ok
 ALTER TABLE dre.it RENAME TO it2;
 
 
 # The edges hold before the restart -- they always did.
 statement error
-DROP TABLE dre.t2;
+DROP TABLE dre.t;
 ----
-db error: ERROR: Cannot drop entry "t2" because there are entries that depend on it.
-view "v" depends on table "t2".
+db error: ERROR: Cannot drop entry "t" because there are entries that depend on it.
+view "v2" depends on table "t".
 Use DROP...CASCADE to drop all dependents.
 
 
 statement error
-DROP VIEW dre.vbase2;
+DROP VIEW dre.vbase;
 ----
-db error: ERROR: Cannot drop entry "vbase2" because there are entries that depend on it.
-view "vtop" depends on view "vbase2".
+db error: ERROR: Cannot drop entry "vbase" because there are entries that depend on it.
+view "vtop2" depends on view "vbase".
 Use DROP...CASCADE to drop all dependents.
 
 
 statement error
-DROP FUNCTION dre.f2;
+DROP FUNCTION dre.f;
 ----
-db error: ERROR: Cannot drop entry "f2" because there are entries that depend on it.
-view "fv" depends on macro function "f2".
+db error: ERROR: Cannot drop entry "f" because there are entries that depend on it.
+view "fv2" depends on macro function "f".
 Use DROP...CASCADE to drop all dependents.
 
 
@@ -112,17 +132,17 @@ SELECT 1;
 # Everything above, again, on a catalog that was rebuilt from the log.
 connection after_crash
 query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
-SELECT count(*) FROM pg_class WHERE relname IN ('v', 'cv', 'vtop', 'fv', 'st2');
+SELECT count(*) FROM pg_class WHERE relname IN ('v2', 'cv', 'vtop2', 'fv2', 'st2');
 ----
 count
 5
 
 connection after_crash
 statement error
-DROP TABLE dre.t2;
+DROP TABLE dre.t;
 ----
-db error: ERROR: Cannot drop entry "t2" because there are entries that depend on it.
-view "v" depends on table "t2".
+db error: ERROR: Cannot drop entry "t" because there are entries that depend on it.
+view "v2" depends on table "t".
 Use DROP...CASCADE to drop all dependents.
 
 
@@ -138,22 +158,23 @@ Use DROP...CASCADE to drop all dependents.
 
 connection after_crash
 statement error
-DROP VIEW dre.vbase2;
+DROP VIEW dre.vbase;
 ----
-db error: ERROR: Cannot drop entry "vbase2" because there are entries that depend on it.
-view "vtop" depends on view "vbase2".
+db error: ERROR: Cannot drop entry "vbase" because there are entries that depend on it.
+view "vtop2" depends on view "vbase".
 Use DROP...CASCADE to drop all dependents.
 
 
 connection after_crash
 statement error
-DROP FUNCTION dre.f2;
+DROP FUNCTION dre.f;
 ----
-db error: ERROR: Cannot drop entry "f2" because there are entries that depend on it.
-view "fv" depends on macro function "f2".
+db error: ERROR: Cannot drop entry "f" because there are entries that depend on it.
+view "fv2" depends on macro function "f".
 Use DROP...CASCADE to drop all dependents.
 
 
+# The renamed table kept the edge to the sequence its DEFAULT reads.
 connection after_crash
 statement error
 DROP SEQUENCE dre.s;
@@ -163,14 +184,14 @@ table "st2" depends on sequence "s".
 Use DROP...CASCADE to drop all dependents.
 
 
-# The renamed index still hangs off the renamed table, so the table's drop takes
-# it and nothing is left behind.
+# The index still hangs off the renamed table, so the table's drop takes it and
+# nothing is left behind.
 connection after_crash
 query ok
 SELECT indexname FROM pg_indexes WHERE tablename = 'it2';
 ----
 indexname
-it_idx2
+it_idx
 
 connection after_crash
 statement ok
@@ -178,7 +199,7 @@ DROP TABLE dre.it2;
 
 connection after_crash
 query ok
-SELECT count(*) FROM pg_class WHERE relname = 'it_idx2';
+SELECT count(*) FROM pg_class WHERE relname = 'it_idx';
 ----
 count
 0
@@ -187,33 +208,33 @@ count
 # CASCADE removes the dependent rather than leaving it dangling.
 connection after_crash
 statement ok
-DROP TABLE dre.t2 CASCADE;
+DROP TABLE dre.t CASCADE;
 
 connection after_crash
 query ok
-SELECT count(*) FROM pg_class WHERE relname = 'v';
+SELECT count(*) FROM pg_class WHERE relname = 'v2';
 ----
 count
 0
 
 connection after_crash
 statement ok
-DROP VIEW dre.vbase2 CASCADE;
+DROP VIEW dre.vbase CASCADE;
 
 connection after_crash
 query ok
-SELECT count(*) FROM pg_class WHERE relname = 'vtop';
+SELECT count(*) FROM pg_class WHERE relname = 'vtop2';
 ----
 count
 0
 
 connection after_crash
 statement ok
-DROP FUNCTION dre.f2 CASCADE;
+DROP FUNCTION dre.f CASCADE;
 
 connection after_crash
 query ok
-SELECT count(*) FROM pg_class WHERE relname = 'fv';
+SELECT count(*) FROM pg_class WHERE relname = 'fv2';
 ----
 count
 0
@@ -276,7 +297,7 @@ CREATE VIEW dre.pv AS SELECT a FROM dre.pt;
 
 connection after_gap
 statement ok
-ALTER TABLE dre.pt RENAME TO pt2;
+ALTER VIEW dre.pv RENAME TO pv2;
 
 connection after_gap
 statement ok
@@ -297,10 +318,10 @@ SELECT 1;
 
 connection after_compact
 statement error retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
-DROP TABLE dre.pt2;
+DROP TABLE dre.pt;
 ----
-db error: ERROR: Cannot drop entry "pt2" because there are entries that depend on it.
-view "pv" depends on table "pt2".
+db error: ERROR: Cannot drop entry "pt" because there are entries that depend on it.
+view "pv2" depends on table "pt".
 Use DROP...CASCADE to drop all dependents.
 
 

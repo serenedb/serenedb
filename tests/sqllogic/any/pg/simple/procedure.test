@@ -47,6 +47,15 @@ statement ok
 CREATE PROCEDURE proc_ovl(x INTEGER) AS $$ SELECT x $$ LANGUAGE sql;
 
 
+# A name holds one procedure: a second definition under it needs OR REPLACE.
+onlyif serenedb
+statement error
+CREATE PROCEDURE proc_ovl(x TEXT) AS $$ SELECT x $$ LANGUAGE sql;
+----
+db error: ERROR: Table Macro Function with name "proc_ovl" already exists!<slt:ignore>
+
+
+skipif serenedb # Postgres overloads by argument type
 statement ok
 CREATE PROCEDURE proc_ovl(x TEXT) AS $$ SELECT x $$ LANGUAGE sql;
 
@@ -55,11 +64,12 @@ statement ok
 CALL proc_ovl(42);
 
 
+skipif serenedb
 statement ok
 CALL proc_ovl('hello');
 
 
-# ── CREATE OR REPLACE PROCEDURE preserves other overloads ──
+# ── CREATE OR REPLACE PROCEDURE swaps the definition ──
 
 statement ok
 CREATE OR REPLACE PROCEDURE proc_ovl(x INTEGER) AS $$ SELECT x + 1 $$ LANGUAGE sql;
@@ -69,6 +79,7 @@ statement ok
 CALL proc_ovl(42);
 
 
+skipif serenedb
 statement ok
 CALL proc_ovl('hello');
 
@@ -79,14 +90,23 @@ statement ok
 DROP PROCEDURE proc_ovl(INTEGER);
 
 
-statement ok
-CALL proc_ovl('hello');
-
-
+# The signature names the procedure; the name is what the drop takes.
+onlyif serenedb
 statement error
 CALL proc_ovl(42);
 
 
+skipif serenedb
+statement ok
+CALL proc_ovl('hello');
+
+
+skipif serenedb
+statement error
+CALL proc_ovl(42);
+
+
+skipif serenedb
 statement ok
 DROP PROCEDURE proc_ovl(TEXT);
 

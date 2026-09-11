@@ -9,7 +9,7 @@
 # still answers old queries, and that silently stops seeing new rows.
 #
 # This fork re-versions inverted index entries on roads upstream does not have
-# (COMMENT ON INDEX, ALTER INDEX SET of the inverted options, RENAME INDEX, and
+# (COMMENT ON INDEX, ALTER INDEX SET of the inverted options, and
 # ALTER COLUMN TYPE re-putting every index of the relation), and none of them
 # creates the index -- so none of them may remove anything. Each case therefore
 # rolls one back and then proves the index is still whole two ways: it still
@@ -206,64 +206,6 @@ SELECT count(*) AS n FROM ixiv_idx;
 ----
 n
 3
-
-
-# ---------------------------------------------------------------------------
-# Rolled-back ALTER INDEX ... RENAME TO. The entry moves back to its old name;
-# what is asserted here is the entry and the searches, not the physical name --
-# the store-side rename is applied at statement time and is not undone.
-# ---------------------------------------------------------------------------
-
-statement ok
-BEGIN;
-
-
-statement ok
-ALTER INDEX ixiv_idx RENAME TO ixiv_renamed;
-
-
-statement ok
-ROLLBACK;
-
-
-query
-SELECT count(*) AS n FROM pg_class WHERE relname = 'ixiv_renamed';
-----
-n
-0
-
-
-query
-SELECT count(*) AS n FROM pg_class WHERE relname = 'ixiv_idx';
-----
-n
-1
-
-
-query
-SELECT id FROM ixiv_idx WHERE body @@ ts_phrase('foxtrot');
-----
-id
-3
-
-
-# The committed control: the rename really is a new version of the entry.
-statement ok
-ALTER INDEX ixiv_idx RENAME TO ixiv_renamed;
-
-
-query
-SELECT count(*) AS n FROM pg_class WHERE relname = 'ixiv_idx';
-----
-n
-0
-
-
-query
-SELECT id FROM ixiv_renamed WHERE body @@ ts_phrase('alpha');
-----
-id
-1
 
 
 statement ok

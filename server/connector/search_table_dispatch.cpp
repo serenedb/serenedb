@@ -27,12 +27,11 @@
 #include <duckdb/common/string_util.hpp>
 #include <duckdb/parser/expression/constant_expression.hpp>
 #include <duckdb/parser/parsed_data/create_sequence_info.hpp>
-#include <optional>
+#include <duckdb/planner/parsed_data/bound_create_table_info.hpp>
 #include <string>
 
-#include "basics/assert.h"
-#include "catalog1/catalog.h"
-#include "catalog1/entry/search_table.h"
+#include "catalog/catalog.h"
+#include "catalog/entry/search_table.h"
 #include "connector/primary_key.h"
 #include "pg/errcodes.h"
 #include "pg/sql_exception.h"
@@ -42,10 +41,9 @@
 namespace sdb::connector {
 namespace {
 
-// Extracts a string-valued WITH option. Returns std::nullopt if absent.
-// Throws on non-string shapes.
-std::optional<std::string> ExtractString(std::string_view option_key,
-                                         const duckdb::ParsedExpression& expr) {
+// Extracts a string-valued WITH option, throwing on any other shape.
+std::string ExtractString(std::string_view option_key,
+                          const duckdb::ParsedExpression& expr) {
   if (expr.GetExpressionType() != duckdb::ExpressionType::VALUE_CONSTANT) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_SYNTAX_ERROR),
@@ -73,8 +71,7 @@ catalog::TableEngine ReadStorageEngine(
     return catalog::TableEngine::Transactional;
   }
   auto value = ExtractString(catalog::kStorageOption, *it->second);
-  SDB_ASSERT(value);
-  auto lower = duckdb::StringUtil::Lower(*value);
+  auto lower = duckdb::StringUtil::Lower(value);
   if (lower == "transactional") {
     return catalog::TableEngine::Transactional;
   }
@@ -84,7 +81,7 @@ catalog::TableEngine ReadStorageEngine(
   THROW_SQL_ERROR(
     ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
     ERR_MSG("WITH option \"", catalog::kStorageOption,
-            "\" must be 'transactional' or 'search', got \"", *value, "\""));
+            "\" must be 'transactional' or 'search', got \"", value, "\""));
 }
 
 duckdb::Identifier GeneratedPkSequenceName(const duckdb::Identifier& table) {
@@ -93,23 +90,29 @@ duckdb::Identifier GeneratedPkSequenceName(const duckdb::Identifier& table) {
 
 void EnsureGeneratedPkSequence(duckdb::CatalogTransaction transaction,
                                duckdb::DuckSchemaEntry& schema,
-                               const catalog::SearchTableEntry& entry) {
+                               const catalog::SearchTableEntry& entry,
+                               duckdb::BoundCreateTableInfo& table_info) {
   if (!primary_key::KeyColumns(entry).empty()) {
     return;
   }
   duckdb::CreateSequenceInfo info;
   info.SetSequenceName(GeneratedPkSequenceName(entry.name));
   info.on_conflict = duckdb::OnCreateConflict::IGNORE_ON_CONFLICT;
-  info.internal = true;
-  schema.CreateSequence(transaction, info);
+  auto created = schema.CreateSequence(transaction, info);
+  if (!created) {
+    created = schema.GetEntry(transaction, duckdb::CatalogType::SEQUENCE_ENTRY,
+                              info.GetQualifiedName().Name());
+  }
+  if (created) {
+    table_info.dependencies.AddDependency(*created);
+  }
 }
 
 duckdb::optional_ptr<duckdb::SequenceCatalogEntry> FindGeneratedPkSequence(
   duckdb::ClientContext& context, const catalog::SearchTableEntry& entry) {
-  auto& schema = const_cast<duckdb::SchemaCatalogEntry&>(entry.ParentSchema());
-  auto found = schema.GetEntry(entry.catalog.GetCatalogTransaction(context),
-                               duckdb::CatalogType::SEQUENCE_ENTRY,
-                               GeneratedPkSequenceName(entry.name));
+  auto found = entry.schema.GetEntry(
+    entry.catalog.GetCatalogTransaction(context),
+    duckdb::CatalogType::SEQUENCE_ENTRY, GeneratedPkSequenceName(entry.name));
   return found ? &found->Cast<duckdb::SequenceCatalogEntry>() : nullptr;
 }
 

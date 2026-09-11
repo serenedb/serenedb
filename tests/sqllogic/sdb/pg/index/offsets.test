@@ -1184,8 +1184,10 @@ ts_offsets
 
 # --- ts_offsets on non-VARCHAR column ---
 # Standalone form requires VARCHAR body -- bind fails at type check.
-statement error No function matches the given name and argument types 'ts_offsets\(STRING_LITERAL, INTEGER_LITERAL, TSQUERY\)'
+statement error
 SELECT ts_offsets('standalone_dict', 42, ts_phrase('fox'))
+----
+db error: ERROR: No function matches the given name and argument types 'ts_offsets(STRING_LITERAL, INTEGER_LITERAL, tsquery)'. You might need to add explicit type casts.<slt:ignore>
 
 
 statement ok

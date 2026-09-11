@@ -27,7 +27,7 @@
 #include <memory>
 #include <string_view>
 
-#include "catalog1/entry/search_table.h"
+#include "catalog/entry/search_table.h"
 #include "connector/primary_key.h"
 namespace duckdb {
 
@@ -40,13 +40,15 @@ class TableCatalogEntry;
 namespace duckdb {
 
 class DuckSchemaEntry;
+struct BoundCreateTableInfo;
 
 }  // namespace duckdb
 namespace sdb::connector {
 
 void EnsureGeneratedPkSequence(duckdb::CatalogTransaction transaction,
                                duckdb::DuckSchemaEntry& schema,
-                               const catalog::SearchTableEntry& entry);
+                               const catalog::SearchTableEntry& entry,
+                               duckdb::BoundCreateTableInfo& info);
 
 duckdb::optional_ptr<duckdb::SequenceCatalogEntry> FindGeneratedPkSequence(
   duckdb::ClientContext& context, const catalog::SearchTableEntry& entry);

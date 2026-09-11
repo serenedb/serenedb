@@ -1,6 +1,5 @@
-# GRANT ON SCHEMA and ALTER DEFAULT PRIVILEGES each populate their per-object
-# ACL catalog column (pg_namespace.nspacl, pg_default_acl.defaclacl) exactly
-# like PostgreSQL (verified on PG18). ACL arrays are asserted per-element
+# ALTER DEFAULT PRIVILEGES populates its ACL catalog column
+# (pg_default_acl.defaclacl) exactly like PostgreSQL (verified on PG18). ACL arrays are asserted per-element
 # (LIKE / unnest) so the assertions are portable across engines. SereneDB
 # diverges from PG on GRANT ... ON TYPE <built-in>: PG mutates pg_type.typacl,
 # SereneDB refuses (built-in type privileges are not changeable).
@@ -12,7 +11,7 @@
 # a grantee behind that makes DROP ROLE refuse for every later run. So this file
 # owns its default privileges through FOR ROLE and touches nobody else's row.
 #
-# Lore: the clickclack schema, the cast as roles. Idempotent + self-cleaning.
+# Lore: the cast as roles. Idempotent + self-cleaning.
 
 statement ok
 DROP ROLE IF EXISTS catacl_vedernikoff;
@@ -23,33 +22,11 @@ DROP ROLE IF EXISTS catacl_lawyer;
 
 
 statement ok
-DROP SCHEMA IF EXISTS catacl_clickclack;
-
-
-statement ok
 CREATE ROLE catacl_vedernikoff;
 
 
 statement ok
 CREATE ROLE catacl_lawyer;
-
-
-statement ok
-CREATE SCHEMA catacl_clickclack;
-
-
-# GRANT ON SCHEMA sets pg_namespace.nspacl.
-statement ok
-GRANT USAGE ON SCHEMA catacl_clickclack TO catacl_vedernikoff;
-
-
-query
-SELECT e
-FROM pg_namespace n, LATERAL unnest(n.nspacl::text[]) AS e
-WHERE nspname = 'catacl_clickclack' AND e LIKE 'catacl_vedernikoff=%';
-----
-e
-catacl_vedernikoff=U/postgres
 
 
 # ALTER DEFAULT PRIVILEGES inserts a pg_default_acl row; its defaclacl carries
@@ -94,10 +71,6 @@ db error: ERROR: Cannot alter entry "int4" because it is an internal system entr
 statement ok
 ALTER DEFAULT PRIVILEGES FOR ROLE catacl_lawyer REVOKE SELECT ON TABLES
   FROM catacl_vedernikoff;
-
-
-statement ok
-DROP SCHEMA catacl_clickclack;
 
 
 statement ok

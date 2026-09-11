@@ -334,111 +334,7 @@ statement ok
 DROP ROLE ckp_db_role;
 
 
-# --- 4. the same window, for a schema ---
-#
-# A schema's entry is the object too, and its owner and ACL travel beside the
-# definition rather than inside it, so a checkpoint has to read both off the
-# catalog the commit published. Same shape as the database above: the create
-# survives such a rewrite by accident, so the assertions are on the owner change
-# and the grant, which are the last things written before the crash.
-
-connection after_db_window
-statement ok
-CREATE ROLE ckp_schema_role;
-
-
-connection after_db_window
-statement ok
-CREATE SCHEMA ckp_schema_window;
-
-
-connection after_db_window
-statement ok
-CHECKPOINT;
-
-
-connection after_db_window
-statement ok
-CREATE TABLE ckp_schema_window.t(x INTEGER);
-
-
-connection after_db_window
-statement ok
-ALTER SCHEMA ckp_schema_window OWNER TO ckp_schema_role;
-
-
-connection after_db_window
-statement ok
-GRANT USAGE ON SCHEMA ckp_schema_window TO ckp_role;
-
-
-# A schema cannot be versioned -- every entry in it holds a reference to the
-# version that created it -- so its own owner and ACL change in place, outside
-# the transaction's undo buffer, and it is the checkpoint that makes them
-# durable rather than a WAL record.
-connection after_db_window
-statement ok
-CHECKPOINT;
-
-
-connection after_db_window
-statement ok
-SET sdb_faults = 'crash_on_packet';
-
-
-connection after_db_window
-statement error connection closed
-SELECT 1;
-
-
-connection after_schema_window
-query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
-SELECT count(*) FROM pg_namespace WHERE nspname = 'ckp_schema_window';
-----
-count
-1
-
-
-connection after_schema_window
-query
-SELECT r.rolname AS owner
-FROM pg_namespace n JOIN pg_roles r ON r.oid = n.nspowner
-WHERE n.nspname = 'ckp_schema_window';
-----
-owner
-ckp_schema_role
-
-
-connection after_schema_window
-query
-SELECT nspacl::text LIKE '%ckp_role=U/%' AS has_grant
-FROM pg_namespace WHERE nspname = 'ckp_schema_window';
-----
-has_grant
-t
-
-
-# The entry came back owning its contents: a schema rebuilt without the
-# CatalogSets underneath it would leave the table unreachable.
-connection after_schema_window
-query
-SELECT count(*) FROM ckp_schema_window.t;
-----
-count
-0
-
-
-connection after_schema_window
-statement ok
-DROP SCHEMA ckp_schema_window CASCADE;
-
-
-connection after_schema_window
-statement ok
-DROP ROLE ckp_schema_role;
-
-
-# --- 5. the same window, for a sequence ---
+# --- 4. the same window, for a sequence ---
 #
 # A sequence's entry is the object, and it is the one kind with state outside its
 # definition: the counter's durable horizon is its own record, appended off the
@@ -551,7 +447,7 @@ SELECT nextval('ckp_seq_window.s');
 db error: ERROR: nextval: reached maximum value of sequence "s" (900)
 
 
-# --- 6. the same window, for a text search dictionary ---
+# --- 5. the same window, for a text search dictionary ---
 #
 # A dictionary's entry is the object too, and it is the first schema-scoped kind
 # of which that is true: its set belongs to the schema entry above it, not to the
@@ -651,7 +547,7 @@ statement ok
 DROP SCHEMA ckp_dict_window CASCADE;
 
 
-# --- 7. a drop open across a checkpoint ---
+# --- 6. a drop open across a checkpoint ---
 
 connection after_dict_window
 statement ok

@@ -18,7 +18,7 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include "catalog1/catalog.h"
+#include "catalog/catalog.h"
 
 #include <algorithm>
 #include <duckdb/catalog/default/default_schemas.hpp>
@@ -29,6 +29,7 @@
 #include <duckdb/main/attached_database.hpp>
 #include <duckdb/parser/expression/columnref_expression.hpp>
 #include <duckdb/parser/parsed_data/alter_info.hpp>
+#include <duckdb/parser/parsed_data/create_index_info.hpp>
 #include <duckdb/parser/parsed_data/create_schema_info.hpp>
 #include <duckdb/parser/parsed_data/drop_info.hpp>
 #include <duckdb/parser/parsed_expression_iterator.hpp>
@@ -36,10 +37,12 @@
 #include <duckdb/planner/binder.hpp>
 #include <duckdb/planner/expression_binder/index_binder.hpp>
 #include <duckdb/planner/operator/logical_create_index.hpp>
+#include <duckdb/planner/operator/logical_create_table.hpp>
 #include <duckdb/planner/operator/logical_delete.hpp>
 #include <duckdb/planner/operator/logical_filter.hpp>
 #include <duckdb/planner/operator/logical_get.hpp>
 #include <duckdb/planner/operator/logical_insert.hpp>
+#include <duckdb/planner/operator/logical_merge_into.hpp>
 #include <duckdb/planner/operator/logical_update.hpp>
 #include <duckdb/planner/parsed_data/bound_create_table_info.hpp>
 #include <duckdb/transaction/meta_transaction.hpp>
@@ -47,14 +50,14 @@
 
 #include "basics/assert.h"
 #include "basics/static_strings.h"
-#include "catalog1/cluster.h"
-#include "catalog1/entry/database.h"
-#include "catalog1/entry/foreign_server.h"
-#include "catalog1/entry/inverted_index.h"
-#include "catalog1/entry/role.h"
-#include "catalog1/entry/search_table.h"
-#include "catalog1/entry/system_table.h"
-#include "catalog1/entry/tokenizer.h"
+#include "catalog/cluster.h"
+#include "catalog/entry/database.h"
+#include "catalog/entry/foreign_server.h"
+#include "catalog/entry/inverted_index.h"
+#include "catalog/entry/role.h"
+#include "catalog/entry/search_table.h"
+#include "catalog/entry/system_table.h"
+#include "catalog/entry/tokenizer.h"
 #include "connector/duckdb_client_state.h"
 #include "connector/duckdb_physical_create_index.h"
 #include "connector/duckdb_physical_search_delete.h"
@@ -66,6 +69,7 @@
 #include "pg/errcodes.h"
 #include "pg/pg_types.h"
 #include "pg/sql_exception_macro.h"
+#include "query/config_variable_names.h"
 #include "search/search_table.h"
 
 namespace sdb::catalog {
@@ -172,7 +176,7 @@ duckdb::PhysicalOperator& SereneDBCatalog::PlanInsert(
   duckdb::LogicalInsert& op,
   duckdb::optional_ptr<duckdb::PhysicalOperator> plan) {
   const auto* entry = dynamic_cast<const SearchTableEntry*>(&op.table);
-  if (entry == nullptr) {
+  if (!entry) {
     return duckdb::DuckCatalog::PlanInsert(context, planner, op, plan);
   }
   SDB_ASSERT(plan);
@@ -186,8 +190,12 @@ duckdb::PhysicalOperator& SereneDBCatalog::PlanDelete(
   duckdb::ClientContext& context, duckdb::PhysicalPlanGenerator& planner,
   duckdb::LogicalDelete& op, duckdb::PhysicalOperator& plan) {
   const auto* entry = dynamic_cast<const SearchTableEntry*>(&op.table);
-  if (entry == nullptr) {
+  if (!entry) {
     return duckdb::DuckCatalog::PlanDelete(context, planner, op, plan);
+  }
+  if (op.is_truncate && context.transaction.IsAutoCommit()) {
+    return planner.Make<connector::SereneDBSearchTruncate>(
+      entry->Storage(), op.estimated_cardinality);
   }
   auto& del = planner.Make<connector::SereneDBSearchDelete>(
     *entry, std::move(op.expressions), op.types, op.estimated_cardinality,

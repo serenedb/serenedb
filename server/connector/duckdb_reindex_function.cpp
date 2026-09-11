@@ -53,10 +53,8 @@
 #include <duckdb/parser/parsed_data/create_index_info.hpp>
 #include <duckdb/parser/parsed_data/create_view_info.hpp>
 #include <duckdb/parser/parser.hpp>
-#include <duckdb/parser/query_node/delete_query_node.hpp>
 #include <duckdb/parser/query_node/select_node.hpp>
 #include <duckdb/parser/statement/create_statement.hpp>
-#include <duckdb/parser/statement/delete_statement.hpp>
 #include <duckdb/parser/statement/select_statement.hpp>
 #include <duckdb/parser/tableref/basetableref.hpp>
 #include <duckdb/parser/tableref/column_data_ref.hpp>
@@ -86,6 +84,7 @@
 #include "connector/inverted_store_index.h"
 #include "connector/primary_key.h"
 #include "connector/search_remove_filter.hpp"
+#include "connector/search_sink_writer.hpp"
 #include "connector/term_dict.h"
 #include "connector/view_fast_path.h"
 #include "core/deletes/iceberg_equality_delete.hpp"
@@ -276,31 +275,56 @@ class PassConnection {
   std::shared_ptr<ConnectionContext> _ctx;
 };
 
-// The condition runs as a real `DELETE FROM <index> WHERE ...` plan: the
-// index's own scan evaluates the rows, the sink removes the matched
-// (file, row) pks. False = the query cannot run (rescan is the fallback).
-bool RunPkScanRemoves(duckdb::ClientContext& context,
-                      ConnectionContext& conn_ctx, const ReindexTarget& target,
-                      duckdb::unique_ptr<duckdb::ParsedExpression> condition) {
+bool CollectDeadRowPks(duckdb::ClientContext& context,
+                       ConnectionContext& conn_ctx, const ReindexTarget& target,
+                       duckdb::unique_ptr<duckdb::ParsedExpression> condition,
+                       std::vector<std::string>& pks) {
   // Statement object, no SQL text: values travel verbatim.
-  auto statement = duckdb::make_uniq<duckdb::DeleteStatement>();
+  auto select = duckdb::make_uniq<duckdb::SelectNode>();
+  select->select_list.push_back(duckdb::make_uniq<duckdb::ColumnRefExpression>(
+    duckdb::Identifier{"file_index"}));
+  select->select_list.push_back(duckdb::make_uniq<duckdb::ColumnRefExpression>(
+    duckdb::Identifier{"row_number"}));
   auto table = duckdb::make_uniq<duckdb::BaseTableRef>();
   table->SetQualifiedName(duckdb::Identifier{target.database},
                           duckdb::Identifier{target.schema},
                           duckdb::Identifier{target.name});
-  statement->node->table = std::move(table);
-  statement->node->condition = std::move(condition);
-  // PlanDelete admits the index target only on an internal connection.
+  select->from_table = std::move(table);
+  select->where_clause = std::move(condition);
+  auto statement = duckdb::make_uniq<duckdb::SelectStatement>();
+  statement->node = std::move(select);
   PassConnection pass{context, conn_ctx, target};
   auto result = pass.Query(std::move(statement));
-  if (result->HasError()) {
+  const auto failed = [&](const std::string& error) {
     // The caller demotes to a full rescan either way; without this the reason
     // is invisible, and a road that cannot be planned looks like one that
     // simply had nothing to remove.
     SDB_WARN(SEARCH, "reindex \"", target.name,
              "\": removing dead rows by key failed, falling back to a rescan: ",
-             result->GetError());
+             error);
     return false;
+  };
+  if (result->HasError()) {
+    return failed(result->GetError());
+  }
+  for (;;) {
+    auto chunk = result->Fetch();
+    if (result->HasError()) {
+      return failed(result->GetError());
+    }
+    if (!chunk || chunk->size() == 0) {
+      break;
+    }
+    for (duckdb::idx_t row = 0; row < chunk->size(); ++row) {
+      const auto file = chunk->GetValue(0, row);
+      const auto row_number = chunk->GetValue(1, row);
+      if (file.IsNull() || row_number.IsNull()) {
+        continue;
+      }
+      auto pk = primary_key::PkFilePrefix(file.GetValue<uint64_t>());
+      primary_key::AppendSigned(pk, row_number.GetValue<int64_t>());
+      pks.push_back(std::move(pk));
+    }
   }
   return true;
 }
@@ -598,7 +622,8 @@ duckdb::unique_ptr<duckdb::ParsedExpression> BuildFileScope(
 bool RunEqualityRemoves(duckdb::ClientContext& context,
                         ConnectionContext& conn_ctx,
                         const ReindexTarget& target, const Source& src,
-                        IcebergObserve& observe) {
+                        IcebergObserve& observe,
+                        std::vector<std::string>& pks) {
   observe.EnsureDeletesProcessed();
   const auto& view_info = *target.view_info;
   if (absl::c_any_of(view_info.names, [](const duckdb::Identifier& name) {
@@ -622,9 +647,10 @@ bool RunEqualityRemoves(duckdb::ClientContext& context,
   if (branches.empty()) {
     return true;
   }
-  return RunPkScanRemoves(
+  return CollectDeadRowPks(
     context, conn_ctx, target,
-    CombineExprs(duckdb::ExpressionType::CONJUNCTION_OR, std::move(branches)));
+    CombineExprs(duckdb::ExpressionType::CONJUNCTION_OR, std::move(branches)),
+    pks);
 }
 
 // Every eq-covered file demotes to remove-and-rescan (its masks drop --
@@ -769,11 +795,12 @@ void RunDelta(duckdb::ClientContext& context, ConnectionContext& conn_ctx,
               Observe& observe, const search::FileManifest& manifest,
               search::InvertedIndexStorage& storage) {
   constexpr bool kIceberg = std::is_same_v<Observe, IcebergObserve>;
+  std::vector<std::string> eq_pks;
   if constexpr (kIceberg) {
     // Kind 3 first: a group with no road demotes its covered files into
     // kind 1's input.
     if (!observe.eq_covered.empty() &&
-        !RunEqualityRemoves(context, conn_ctx, target, src, observe)) {
+        !RunEqualityRemoves(context, conn_ctx, target, src, observe, eq_pks)) {
       DemoteEqCoveredToRescan(src, files, observe);
     }
   }
@@ -789,13 +816,21 @@ void RunDelta(duckdb::ClientContext& context, ConnectionContext& conn_ctx,
   // above them (the pass transactions pull domain ticks). A crash between
   // the two loses the removed rows until the next tick: the manifest
   // version only moves at the end, so the tick re-runs the delta.
-  if (file_removes || mask_removes) {
+  if (file_removes || mask_removes || !eq_pks.empty()) {
     auto trx = storage.GetTransaction();
     if (file_removes) {
       trx.Remove(std::move(file_removes));
     }
     if (mask_removes) {
       trx.Remove(std::move(mask_removes));
+    }
+    if (!eq_pks.empty()) {
+      SearchSinkDeleteBaseImpl remover{trx};
+      remover.InitImpl(eq_pks.size());
+      for (const auto& pk : eq_pks) {
+        remover.DeleteRowImpl(pk);
+      }
+      remover.FinishImpl();
     }
     trx.RegisterFlush();
     if (!trx.Commit(
@@ -1123,54 +1158,45 @@ constexpr const char* kReindexStubUser = "postgres";
 absl::Status RunReindexTick(duckdb::DatabaseInstance& db,
                             duckdb::idx_t database_id, duckdb::idx_t index_id) {
   try {
-    std::string database_name;
-    std::string index_name;
-    std::string schema_name;
-    std::string user;
-    duckdb::idx_t owner_id;
-    {
-      // Names and the owner resolve off the attachment through a system
-      // transaction: the session below impersonates the owner, which is not
-      // known yet.
-      const auto attached = FindAttachedById(db, database_id);
-      if (!attached) {
-        return absl::OkStatus();
-      }
-      database_name = attached->GetName().GetIdentifierName();
-      auto index = attached->GetCatalog()
-                     .Cast<catalog::SereneDBCatalog>()
-                     .FindIn<duckdb::DuckIndexEntry>(nullptr, index_id);
-      if (!index || index->index_type != "inverted") {
-        return absl::OkStatus();
-      }
-      index_name = index->name.GetIdentifierName();
-      const auto trx = duckdb::CatalogTransaction::GetSystemTransaction(db);
-      // The index names its relation, and duckdb keeps both halves of that
-      // name in step with a rename.
-      const duckdb::Identifier schema_ident = index->GetSchemaName();
-      auto schema = attached->GetCatalog().GetSchema(
-        trx, schema_ident, duckdb::OnEntryNotFound::RETURN_NULL);
-      const auto relation =
-        schema ? schema->GetEntry(trx, duckdb::CatalogType::TABLE_ENTRY,
-                                  index->GetTableName())
-               : nullptr;
-      if (!relation) {
-        return absl::OkStatus();
-      }
-      schema_name = schema_ident.GetIdentifierName();
-      // Ownership itself is real (pg_class.relowner asserts it), so the id is
-      // carried through.
-      owner_id = relation->permissions.owner;
-      // SDB_RBAC_DISABLED. This resolved the owner's role entry and ran the
-      // tick under its name. Impersonation only ever mattered for permission
-      // checks, and every check answers "allowed" until the RBAC phase -- so
-      // the name now reaches nothing but notices and the log, while a role
-      // that had gone missing failed the whole tick. Restore the lookup when
-      // enforcement lands.
-      user = kReindexStubUser;
+    const auto attached = FindAttachedById(db, database_id);
+    if (!attached) {
+      return absl::OkStatus();
     }
+    const std::string database_name = attached->GetName().GetIdentifierName();
+    // SDB_RBAC_DISABLED. The tick resolved the relation's owner role and ran
+    // under its name. Impersonation only ever mattered for permission checks,
+    // and every check answers "allowed" until the RBAC phase -- so the name now
+    // reaches nothing but notices and the log, while a role that had gone
+    // missing failed the whole tick. Restore the lookup when enforcement lands.
+    const std::string user = kReindexStubUser;
 
     duckdb::Connection conn{db};
+    conn.BeginTransaction();
+    auto& catalog = attached->GetCatalog().Cast<catalog::SereneDBCatalog>();
+    const auto trx = catalog.GetCatalogTransaction(*conn.context);
+    auto index =
+      catalog.FindIn<duckdb::DuckIndexEntry>(conn.context.get(), index_id);
+    if (!index || index->index_type != "inverted") {
+      return absl::OkStatus();
+    }
+    const std::string index_name = index->name.GetIdentifierName();
+    // The index names its relation, and duckdb keeps both halves of that
+    // name in step with a rename.
+    const duckdb::Identifier schema_ident = index->GetSchemaName();
+    auto schema = catalog.GetSchema(trx, schema_ident,
+                                    duckdb::OnEntryNotFound::RETURN_NULL);
+    const auto relation =
+      schema ? schema->GetEntry(trx, duckdb::CatalogType::TABLE_ENTRY,
+                                index->GetTableName())
+             : nullptr;
+    if (!relation) {
+      return absl::OkStatus();
+    }
+    const std::string schema_name = schema_ident.GetIdentifierName();
+    // Ownership itself is real (pg_class.relowner asserts it), so the id is
+    // carried through.
+    const duckdb::idx_t owner_id = relation->permissions.owner;
+
     auto ctx = std::make_shared<ConnectionContext>(
       *conn.context, user, owner_id, database_name, database_id, nullptr,
       /*backend_pid=*/0, nullptr);
@@ -1183,11 +1209,6 @@ absl::Status RunReindexTick(duckdb::DatabaseInstance& db,
         SDB_INFO(SEARCH, "reindex \"", index_name, "\": ", notice.errmsg);
       });
     };
-    // duckdb catalog lookups during the observe (object-store secrets)
-    // require an active transaction. Never committed: the connection's
-    // teardown rolls it back.
-    conn.BeginTransaction();
-
     RunReindex(*conn.context, index_name, schema_name, database_name);
     return absl::OkStatus();
   } catch (const SqlException& ex) {

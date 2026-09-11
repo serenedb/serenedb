@@ -20,6 +20,10 @@
 
 #include <gtest/gtest.h>
 
+#include <array>
+#include <thread>
+#include <vector>
+#include <cstdint>
 #include <string>
 
 #include "basics/down_cast.h"
@@ -2142,4 +2146,76 @@ TEST_F(LuceneParserTest, FnMaxWidthOverAPair) {
 
 TEST_F(LuceneParserTest, FnMaxWidthTooNarrowIsRefused) {
   EXPECT_ANY_THROW(sdb::ParseQuery(ctx, "fn:maxwidth(1 fn:ordered(a b))"));
+}
+
+namespace {
+
+enum class ParseOutcome : uint8_t { Accepted, Rejected, Threw };
+
+ParseOutcome ParseOnce(std::string_view query) {
+  irs::BooleanFilter root;
+  auto tokenizer = irs::analysis::SegmentationTokenizer::Make(
+    irs::analysis::SegmentationTokenizer::Options{});
+  sdb::ParserContext ctx{root, kFieldId, *tokenizer};
+  ctx.default_field_name = "content";
+  try {
+    return sdb::ParseQuery(ctx, query) ? ParseOutcome::Accepted
+                                       : ParseOutcome::Rejected;
+  } catch (...) {
+    return ParseOutcome::Threw;
+  }
+}
+
+constexpr std::string_view kConcurrentQueries[] = {
+  "hello",
+  "quick AND brown",
+  "+fox -red",
+  "\"hello world\"",
+  "hel*",
+  "content:alpha OR beta",
+  "[a TO z]",
+  "term~2",
+  "alpha^2.5",
+  "fn:ordered(alpha beta)",
+  "\"unterminated",
+  "[unclosed",
+  "((((",
+  "a AND",
+};
+
+}  // namespace
+
+TEST(LuceneParserConcurrency, ParsesDoNotShareScannerState) {
+  constexpr size_t kThreads = 16;
+  constexpr size_t kRounds = 400;
+  constexpr size_t kQueries = std::size(kConcurrentQueries);
+
+  std::array<ParseOutcome, kQueries> expected{};
+  for (size_t q = 0; q < kQueries; ++q) {
+    expected[q] = ParseOnce(kConcurrentQueries[q]);
+  }
+
+  std::vector<std::vector<ParseOutcome>> seen(
+    kThreads, std::vector<ParseOutcome>(kQueries, ParseOutcome::Accepted));
+  std::vector<std::thread> threads;
+  threads.reserve(kThreads);
+  for (size_t t = 0; t < kThreads; ++t) {
+    threads.emplace_back([t, &seen] {
+      for (size_t round = 0; round < kRounds; ++round) {
+        const size_t q = (round + t) % kQueries;
+        seen[t][q] = ParseOnce(kConcurrentQueries[q]);
+      }
+    });
+  }
+  for (auto& thread : threads) {
+    thread.join();
+  }
+
+  for (size_t t = 0; t < kThreads; ++t) {
+    for (size_t q = 0; q < kQueries; ++q) {
+      EXPECT_EQ(expected[q], seen[t][q])
+        << "thread " << t << " read `" << kConcurrentQueries[q]
+        << "` differently than a parse on its own";
+    }
+  }
 }

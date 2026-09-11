@@ -84,7 +84,7 @@ class ScoredWrapper : public irs::lead::Node {
       .segment = _segment,
       .field = {},
       .doc_attrs = _provider,
-      .fetcher = _ctx.fetcher,
+      .fetcher = *_ctx.fetcher,
       .stats = _record.stats,
     });
   }

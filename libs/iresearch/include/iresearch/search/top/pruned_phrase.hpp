@@ -54,7 +54,7 @@ class PrunedPhrase : public Root {
       .segment = segment,
       .field = field.meta(),
       .doc_attrs = _provider,
-      .fetcher = args.fetcher,
+      .fetcher = *args.fetcher,
       .stats = args.stats,
       .boost = args.boost,
     });

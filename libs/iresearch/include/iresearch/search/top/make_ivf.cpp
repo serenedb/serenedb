@@ -43,7 +43,7 @@ class VectorChain : public Root {
       .segment = segment,
       .field = field.meta(),
       .doc_attrs = _provider,
-      .fetcher = &fetcher,
+      .fetcher = fetcher,
       .stats = score.stats,
       .boost = score.boost,
     });

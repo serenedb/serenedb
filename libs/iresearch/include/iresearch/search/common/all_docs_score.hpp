@@ -55,7 +55,7 @@ inline ScoreFunction AllDocsScorer(const SubReader& segment,
     .segment = segment,
     .field = NoField(),
     .doc_attrs = NoAttributes(),
-    .fetcher = args.fetcher,
+    .fetcher = *args.fetcher,
     .stats = args.stats,
     .boost = args.boost,
   });
@@ -80,7 +80,7 @@ inline score_t ConstantTermScore(const SubReader& segment,
     .segment = segment,
     .field = field.meta(),
     .doc_attrs = provider,
-    .fetcher = args.fetcher,
+    .fetcher = *args.fetcher,
     .stats = args.stats,
     .boost = args.boost,
   });
@@ -97,7 +97,7 @@ inline std::optional<score_t> ConstantOf(const SubReader& segment,
         .segment = segment,
         .field = field.meta(),
         .doc_attrs = NoAttributes(),
-        .fetcher = args.fetcher,
+        .fetcher = *args.fetcher,
         .stats = args.stats,
         .boost = args.boost,
       })) {
@@ -122,7 +122,7 @@ inline score_t ConstantTermOf(const SubReader& segment, const TermReader& field,
         .segment = segment,
         .field = field.meta(),
         .doc_attrs = NoAttributes(),
-        .fetcher = args.fetcher,
+        .fetcher = *args.fetcher,
         .stats = args.stats,
         .boost = args.boost,
       })) {
@@ -148,13 +148,11 @@ inline score_t SingleDocScore(const SubReader& segment, const TermReader& field,
     .segment = segment,
     .field = field.meta(),
     .doc_attrs = provider,
-    .fetcher = args.fetcher,
+    .fetcher = *args.fetcher,
     .stats = args.stats,
     .boost = args.boost,
   });
-  if (args.fetcher != nullptr) {
-    args.fetcher->Fetch(doc);
-  }
+  args.fetcher->Fetch(doc);
   return score.Score();
 }
 

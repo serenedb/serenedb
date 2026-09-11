@@ -89,7 +89,7 @@ struct ScoreContext {
   const NormProvider& segment;
   const FieldProperties& field;
   const AttributeProvider& doc_attrs;
-  ColumnArgsFetcher* fetcher = nullptr;
+  ColumnArgsFetcher& fetcher;
   const byte_type* stats = nullptr;
   score_t boost = kNoBoost;
 };

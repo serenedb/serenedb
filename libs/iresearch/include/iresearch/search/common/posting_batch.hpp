@@ -105,7 +105,7 @@ class PostingBatch {
       .segment = segment,
       .field = field.meta(),
       .doc_attrs = _provider,
-      .fetcher = args.fetcher,
+      .fetcher = *args.fetcher,
       .stats = args.stats,
       .boost = args.boost,
     });
@@ -128,10 +128,8 @@ class PostingBatch {
   void ScoreBlock(const doc_id_t* docs, score_t* scores) {
     static_assert(Scored);
     FormatTraits128::ReadBlock(In(), Enc(), _freqs.data);
-    if (_score.fetcher != nullptr) {
-      _score.fetcher->FetchPostingBlock(
-        std::span<const doc_id_t, kBlock>{docs, kBlock});
-    }
+    _score.fetcher->FetchPostingBlock(
+      std::span<const doc_id_t, kBlock>{docs, kBlock});
     _score.score.ScorePostingBlock(scores);
   }
 
@@ -139,9 +137,7 @@ class PostingBatch {
     static_assert(Scored);
     FormatTraits128::ReadTail(len, In(), Enc(), _freqs.data);
     _provider.freq.value = _freqs.data + (kBlock - len);
-    if (_score.fetcher != nullptr) {
-      _score.fetcher->Fetch(std::span<const doc_id_t>{docs, len});
-    }
+    _score.fetcher->Fetch(std::span<const doc_id_t>{docs, len});
     _score.score.Score(scores, static_cast<scores_size_t>(len));
     _provider.freq.value = _freqs.data;
   }

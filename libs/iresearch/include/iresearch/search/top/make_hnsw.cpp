@@ -46,7 +46,7 @@ class HnswHits : public Root {
       .segment = segment,
       .field = search::NoField(),
       .doc_attrs = _provider,
-      .fetcher = &fetcher,
+      .fetcher = fetcher,
       .stats = args.stats,
       .boost = args.boost,
     });

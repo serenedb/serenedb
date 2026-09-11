@@ -434,7 +434,7 @@ TEST_P(ScoreConstantTest, bm25_degrades_to_freq_one_norm_one) {
     .segment = segment,
     .field = reader->meta(),
     .doc_attrs = provider,
-    .fetcher = &fetcher,
+    .fetcher = fetcher,
     .stats = prepared.Stats().stats,
     .boost = irs::kNoBoost,
   });

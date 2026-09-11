@@ -909,10 +909,11 @@ irs::score_t ScoreAt(const Scorer& scorer, const irs::byte_type* stats,
   attrs.freq = tf;
   attrs.norm.value = dl;
   const NoNorms segment;
+  irs::ColumnArgsFetcher fetcher;
   auto fn = scorer.PrepareScorer({.segment = segment,
                                   .field = {},
                                   .doc_attrs = attrs,
-                                  .fetcher = nullptr,
+                                  .fetcher = fetcher,
                                   .stats = stats,
                                   .boost = irs::kNoBoost});
   irs::score_t value{};

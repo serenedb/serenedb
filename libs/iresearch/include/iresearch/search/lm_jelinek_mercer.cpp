@@ -159,9 +159,9 @@ ScoreFunction LMJelinekMercer::PrepareScorer(const ScoreContext& ctx) const {
     return attr ? &attr->value : nullptr;
   }();
 
-  if (!norm && ctx.fetcher) {
+  if (!norm) {
     auto norm_reader = ctx.segment.norms(ctx.field.norm);
-    norm = ctx.fetcher->AddNorms(ctx.field.norm, std::move(norm_reader));
+    norm = ctx.fetcher.AddNorms(ctx.field.norm, std::move(norm_reader));
   }
 
   if (!norm) {

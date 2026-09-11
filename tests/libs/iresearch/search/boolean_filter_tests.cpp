@@ -268,7 +268,7 @@ class LeadScored : public irs::lead::Node {
       .segment = _segment,
       .field = {},
       .doc_attrs = _attrs,
-      .fetcher = _ctx.fetcher,
+      .fetcher = *_ctx.fetcher,
       .stats = _stats,
       .boost = _boost,
     });
@@ -313,7 +313,7 @@ class ProbeScored : public irs::probe::Node {
       .segment = _segment,
       .field = {},
       .doc_attrs = _attrs,
-      .fetcher = _ctx.fetcher,
+      .fetcher = *_ctx.fetcher,
       .stats = _stats,
       .boost = _boost,
     });
@@ -388,7 +388,7 @@ class FillScored : public irs::fill::Node {
       .segment = _segment,
       .field = {},
       .doc_attrs = _attrs,
-      .fetcher = _ctx.fetcher,
+      .fetcher = *_ctx.fetcher,
       .stats = _stats,
       .boost = _boost,
     });
@@ -463,7 +463,7 @@ class ScoredRoot : public irs::scored::Root {
       .segment = _segment,
       .field = {},
       .doc_attrs = _attrs,
-      .fetcher = &_ctx.fetcher,
+      .fetcher = _ctx.fetcher,
       .stats = _stats,
       .boost = _boost,
     });

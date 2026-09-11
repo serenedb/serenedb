@@ -43,7 +43,7 @@ class HnswHits : public Node {
       .segment = segment,
       .field = search::NoField(),
       .doc_attrs = _provider,
-      .fetcher = args.fetcher,
+      .fetcher = *args.fetcher,
       .stats = args.stats,
       .boost = args.boost,
     });

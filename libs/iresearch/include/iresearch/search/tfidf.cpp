@@ -169,9 +169,9 @@ ScoreFunction TFIDF::PrepareScorer(const ScoreContext& ctx) const {
       auto* attr = irs::get<Norm>(ctx.doc_attrs);
       return attr ? &attr->value : nullptr;
     }();
-    if (!norm && ctx.fetcher) {
-      norm = ctx.fetcher->AddNorms(ctx.field.norm,
-                                   ctx.segment.norms(ctx.field.norm));
+    if (!norm) {
+      norm = ctx.fetcher.AddNorms(ctx.field.norm,
+                                  ctx.segment.norms(ctx.field.norm));
     }
   }
 

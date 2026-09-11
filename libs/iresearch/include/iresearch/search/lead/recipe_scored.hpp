@@ -74,7 +74,7 @@ class RecipeScored {
       .segment = *_segment,
       .field = _field != nullptr ? _field->meta() : search::NoField(),
       .doc_attrs = search::NoAttributes(),
-      .fetcher = _args.fetcher,
+      .fetcher = *_args.fetcher,
       .stats = _args.stats,
       .boost = _args.boost,
     });

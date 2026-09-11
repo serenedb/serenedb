@@ -96,7 +96,7 @@ class TwoPhaseScored {
       .segment = *_recipe.segment,
       .field = _recipe.field->meta(),
       .doc_attrs = _provider,
-      .fetcher = _recipe.args.fetcher,
+      .fetcher = *_recipe.args.fetcher,
       .stats = _recipe.args.stats,
       .boost = _recipe.args.boost,
     });

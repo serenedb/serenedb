@@ -264,7 +264,7 @@ class PostingLeaf {
       .segment = segment,
       .field = field.meta(),
       .doc_attrs = _provider,
-      .fetcher = args.fetcher,
+      .fetcher = *args.fetcher,
       .stats = args.stats,
       .boost = args.boost,
     });
@@ -288,7 +288,7 @@ class PostingLeaf {
       .segment = *_recipe.segment,
       .field = _recipe.field->meta(),
       .doc_attrs = _provider,
-      .fetcher = _recipe.args.fetcher,
+      .fetcher = *_recipe.args.fetcher,
       .stats = _recipe.args.stats,
       .boost = _recipe.args.boost,
     });
@@ -349,17 +349,13 @@ class PostingLeaf {
     static_assert(Shape.scored && Shape.freqs && Shape.enc);
     const auto* const docs = _docs + offset;
     if (len == kBlock) {
-      if (_score.fetcher != nullptr) {
-        _score.fetcher->FetchPostingBlock(
-          std::span<const doc_id_t, kBlock>{docs, kBlock});
-      }
+      _score.fetcher->FetchPostingBlock(
+        std::span<const doc_id_t, kBlock>{docs, kBlock});
       _score.score.ScorePostingBlock(Scores());
       return;
     }
     _provider.freq.value = _freqs.data + offset;
-    if (_score.fetcher != nullptr) {
-      _score.fetcher->Fetch(std::span<const doc_id_t>{docs, len});
-    }
+    _score.fetcher->Fetch(std::span<const doc_id_t>{docs, len});
     _score.score.Score(Scores() + offset, static_cast<scores_size_t>(len));
     _provider.freq.value = _freqs.data;
   }

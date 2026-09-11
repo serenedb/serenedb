@@ -211,6 +211,7 @@ class PruneLeafBase {
         .segment = segment,
         .field = field.meta(),
         .doc_attrs = *source,
+        .fetcher = *args.fetcher,
         .stats = args.stats,
         .boost = args.boost,
       });
@@ -225,7 +226,7 @@ class PruneLeafBase {
       .segment = segment,
       .field = field.meta(),
       .doc_attrs = _provider,
-      .fetcher = args.fetcher,
+      .fetcher = *args.fetcher,
       .stats = args.stats,
       .boost = args.boost,
     });
